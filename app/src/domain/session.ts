@@ -23,6 +23,8 @@ export type Session = {
   procPid?: number;
   /** 막힌 이유: 'permission prompt'(도구 권한 창) · 'startup prompt'(시작 때 새 MCP 서버 등) → 앱이 자동 허용 / 'input needed'(선택지 질문) → 사람 몫 */
   waitingFor?: string;
+  /** 대화형만: 어디서 떴나(origin.rs). unattended = 예약 작업·붙은 사람 없는 tmux — 루틴 칸 "외부 예약"으로 따로 */
+  origin?: { unattended: boolean; via: string };
 };
 
 type RawAgent = {
@@ -90,8 +92,9 @@ export function parseAgents(json: string, devRoot: string, extras: string[] = []
       name: r.name ?? '',
       cwd,
       kind,
-      // status(busy/idle)가 있으면 그게 실제 상태다. 가져온(--resume) 세션은 대기 중에도 state가 blocked로 나온다(실측 2026-09-26)
-      state: toState(r.status ?? r.state),
+      // status(busy/idle)가 있으면 그게 실제 상태다. 가져온(--resume) 세션은 대기 중에도 state가 blocked로 나온다(실측 2026-09-26).
+      // 단 state: done 이면 답은 끝난 것 — 뒤에서 감시·에이전트가 돌면 status 가 busy 로 남는다(2026-09-28, 음성이 참모 답을 못 읽음)
+      state: r.state === 'done' ? 'idle' : toState(r.status ?? r.state),
       startedAt: r.startedAt ?? 0,
       sessionId: r.sessionId,
       pid: kind === 'interactive' ? r.pid : undefined,
@@ -119,7 +122,7 @@ const orchestratorLike = (name: string) => [assistant(), LEGACY_ASSISTANT].some(
 export function groupByProject(
   sessions: Session[],
   orchestratorCwd: string,
-): { orchestrator: Session | undefined; orchestrators: Session[]; helpers: Session[]; projects: ProjectGroup[] } {
+): { orchestrator: Session | undefined; orchestrators: Session[]; helpers: Session[]; projects: ProjectGroup[]; external: Session[] } {
   const orch = stripSlash(orchestratorCwd);
   // 이 폴더의 비서 이름 세션(⌘T로 여럿 띄운다: 참모·참모-2…, 옛 이름 참모·참모-2)과 터미널에서 연 대화형은 비서 — 이름이 설정 이름인 것이 대표(맨 앞).
   // 그 밖의 이름으로 띄운 백그라운드 세션은 비서가 부린 도우미(예: SNS 올리기) — 비서 화면에 끼면 칸을 차지해서 따로 뺀다(2026-09-28 사용자)
@@ -128,14 +131,16 @@ export function groupByProject(
   const here = inHq.filter((s) => !helpers.includes(s));
   const orchestrator = here.find((s) => s.name === assistant()) ?? here.find((s) => isOrchestratorName(s.name)) ?? here[0];
   const orchestrators = orchestrator ? [orchestrator, ...here.filter((s) => s !== orchestrator)] : [];
+  // 예약 작업이 아무도 안 보는 곳에서 띄운 대화형 — 프로젝트 세션이 아니라 루틴 칸 "외부 예약"(2026-09-28 아이맥 project-x)
+  const external = sessions.filter((s) => s.kind === 'interactive' && s.origin?.unattended && !inHq.includes(s));
   const byName = new Map<string, Session[]>();
   for (const s of sessions) {
-    if (inHq.includes(s)) continue;
+    if (inHq.includes(s) || external.includes(s)) continue;
     const list = byName.get(s.project) ?? [];
     list.push(s);
     byName.set(s.project, list);
   }
-  return { orchestrator, orchestrators, helpers, projects: [...byName].map(([name, list]) => ({ name, sessions: list })) };
+  return { orchestrator, orchestrators, helpers, projects: [...byName].map(([name, list]) => ({ name, sessions: list })), external };
 }
 
 /** ⌘W 로 끌 수 있나 — 비서 화면의 세션(참모·참모-2…·터미널에서 연 것)은 안 된다. 창 버튼의 끄기만 */

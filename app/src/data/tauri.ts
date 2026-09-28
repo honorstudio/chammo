@@ -66,6 +66,8 @@ export const supertonicInstall = () => invoke<void>('supertonic_install');
 /** `say -v ?` 목록 그대로 — 거르기는 domain/tts nativeVoices */
 export const nativeVoicesList = () => invoke<string>('native_voices');
 /** macOS 목소리를 소리 없이 미리 불러 둔다(들어보기 첫 지연 줄이기). 다른 음성 명령이면 아무것도 안 한다 */
+/** 대화형 세션 pid → 어디서 떴나(origin.rs). unattended = 예약 작업·붙은 사람 없는 tmux */
+export const sessionOrigins = (pids: number[]) => invoke<Record<string, { unattended: boolean; via: string }>>('session_origins', { pids });
 export const ttsWarm = (command: string) => invoke<void>('tts_warm', { command });
 
 /** `claude agents --json` 원문. 파싱은 domain/session.ts 의 parseAgents */

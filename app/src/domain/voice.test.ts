@@ -20,10 +20,10 @@ describe('speakable — 참모 답을 소리 내 읽기 좋게', () => {
 });
 
 describe('freshReplies — 참모가 새로 마친 답(읽기·물어봄 알림은 이것만). 같은 답은 한 번', () => {
-  const w = (state: Watch['state'], prompt?: string, reply?: string, midTurn?: boolean): Watch => ({
+  const w = (state: Watch['state'], prompt?: string, reply?: string, midTurn?: boolean, turnEnd?: boolean): Watch => ({
     id: 'b1',
     state,
-    activity: { prompt: prompt ? { ts: prompt, text: '지시' } : undefined, reply: reply ? { ts: reply, text: `답 ${reply}`, midTurn } : undefined },
+    activity: { prompt: prompt ? { ts: prompt, text: '지시' } : undefined, reply: reply ? { ts: reply, text: `답 ${reply}`, midTurn, turnEnd } : undefined },
   });
   // 폴링을 차례로 흘려 보내고 나온 답 ts 를 모은다
   const run = (steps: Watch[][]) => {
@@ -46,6 +46,17 @@ describe('freshReplies — 참모가 새로 마친 답(읽기·물어봄 알림�
       [w('idle', '09:34:25', '09:34:32')], // 다음 폴링들
     ]);
     expect(said).toEqual(['09:34:32']);
+  });
+
+  // 2026-09-28: 백그라운드 작업(job)으로 도는 참모는 답을 마치고 기다리는 동안에도 계속 working 으로 나왔다(10분 기록) → 한 번도 안 읽었다
+  it('상태가 계속 작업 중이어도 턴 끝(end_turn) 답이면 읽는다 — 한 번만', () => {
+    const said = run([
+      [w('working', '10:00:00', '10:00:05', false, true)], // 처음 본 답 — 기억만
+      [w('working', '10:01:00', '10:01:03', true)], // 새 지시, 턴 중간
+      [w('working', '10:01:00', '10:01:40', false, true)], // 턴 끝 — 상태는 여전히 working
+      [w('working', '10:01:00', '10:01:40', false, true)], // 다음 폴링 — 다시 안 읽는다
+    ]);
+    expect(said).toEqual(['10:01:40']);
   });
 
   it('긴 답 — 턴 중간 멘트("먼저 찾아볼게")는 안 읽고 턴 끝 답만', () => {
@@ -106,8 +117,24 @@ describe('pickSay — 참모가 따로 써 넘긴 음성용 말(scripts/say)', (
     '{"ts":"2026-09-28T01:06:00.000Z","session":"7272b9b1-95f2","text":"재시작할까?"}',
   ].join('\n');
   it('그 세션 것 중 이번 턴(지시 뒤) 것만 이어 붙인다', () => {
-    expect(pickSay(parseSay(log), '7272b9b1', '2026-09-28T01:04:00.000Z')).toBe('원인 찾았어. 재시작할까?');
+    expect(pickSay(parseSay(log), '7272b9b1', '2026-09-28T01:04:00.000Z')?.text).toBe('원인 찾았어. 재시작할까?');
   });
+  // 2026-09-28 아이맥: 사람 지시 없이 세션 회신으로 참모가 여러 번 답하면, 지시 뒤 말을 전부 붙여 읽어
+  // 첫 말을 또 하고 둘째 답엔 첫째+둘째를 같이 읽었다 → 이미 읽은 말(spoken 까지)은 빼고 새로 넘긴 것만
+  it('이미 읽은 말은 빼고 새로 넘긴 것만', () => {
+    const lines = parseSay(log);
+    const first = pickSay(lines, '7272b9b1', '2026-09-28T01:04:00.000Z', '');
+    expect(first).toEqual({ text: '원인 찾았어. 재시작할까?', last: '2026-09-28T01:06:00.000Z' });
+    const more = parseSay(log + '\n{"ts":"2026-09-28T01:09:00.000Z","session":"7272b9b1-95f2","text":"다 됐어."}');
+    expect(pickSay(more, '7272b9b1', '2026-09-28T01:04:00.000Z', first!.last)).toEqual({ text: '다 됐어.', last: '2026-09-28T01:09:00.000Z' });
+    expect(pickSay(lines, '7272b9b1', '2026-09-28T01:04:00.000Z', first!.last)).toBeUndefined();
+  });
+
+  it('한 번에 너무 많으면 마지막 세 개만 (저녁 내내 말이 몰려 6,500자를 읽었다)', () => {
+    const many = Array.from({ length: 6 }, (_, i) => `{"ts":"2026-09-28T02:0${i}:00.000Z","session":"7272b9b1-95f2","text":"말${i}"}`).join('\n');
+    expect(pickSay(parseSay(many), '7272b9b1', '')?.text).toBe('말3 말4 말5');
+  });
+
   it('이번 턴에 없으면 undefined — 앱 규칙으로 읽는다', () => {
     expect(pickSay(parseSay(log), '7272b9b1', '2026-09-28T01:07:00.000Z')).toBeUndefined();
     expect(pickSay(parseSay(''), '7272b9b1', '')).toBeUndefined();

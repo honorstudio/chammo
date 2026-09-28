@@ -1,4 +1,4 @@
-import { useEffect, useRef, type HTMLAttributes, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
@@ -60,6 +60,25 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
   // 글자 크기만 바꿀 때 터미널을 다시 만들지 않도록 인스턴스를 들고 있는다
   const live = useRef<{ term: Terminal; refit: () => void } | null>(null);
   const initialFont = useRef(fontSize);
+  // 화면 배율이 바뀌면(맥북 레티나 2배 → 외부 모니터 1배로 옮김) 터미널을 새로 만든다 — 켜질 때 배율로 잰 칸이 남아
+  // 최대화하면 화면이 깨졌고 ⌘2→⌘1(다시 만들기)로만 풀렸다(2026-09-28 사용자). 세션은 그대로, 화면만 다시 붙는다
+  const [epoch, setEpoch] = useState(0);
+  useEffect(() => {
+    let mq: MediaQueryList | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const watch = () => {
+      mq?.removeEventListener('change', onChange);
+      mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      mq.addEventListener('change', onChange);
+    };
+    function onChange() {
+      watch();
+      clearTimeout(timer);
+      timer = setTimeout(() => setEpoch((e) => e + 1), 300); // 창이 새 화면에 자리 잡은 뒤
+    }
+    watch();
+    return () => { mq?.removeEventListener('change', onChange); clearTimeout(timer); };
+  }, []);
 
   useEffect(() => {
     const el = host.current;
@@ -200,6 +219,18 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
     live.current = { term, refit };
     const ro = new ResizeObserver(() => requestAnimationFrame(refit));
     ro.observe(el);
+    // 글꼴이 늦게 오면(재부팅 직후 main.tsx 의 1.5초 대기를 넘기면) 임시 글꼴로 잰 칸 크기가 그대로 남아
+    // 줄 수가 모자라고 입력칸이 위로 붙었다 — ⌘2→⌘1 로 다시 열어야 풀렸다(2026-09-28 사용자). 글꼴이 다 오면 다시 잰다
+    const remeasure = () => {
+      if (disposed) return;
+      const f = term.options.fontFamily ?? TERM_FONT;
+      term.options.fontFamily = `${f} `; // 값이 바뀌어야 xterm 이 글자 칸을 다시 잰다
+      term.options.fontFamily = f;
+      term.clearTextureAtlas();
+      refit();
+    };
+    document.fonts.addEventListener('loadingdone', remeasure);
+    void document.fonts.ready.then(remeasure);
 
     return () => {
       disposed = true;
@@ -208,6 +239,7 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
       live.current = null;
       injectRef.current?.(null);
       ro.disconnect();
+      document.fonts.removeEventListener('loadingdone', remeasure);
       detachIme();
       box?.removeEventListener(DROP_EVENT, onDrop);
       mq.removeEventListener('change', onScheme);
@@ -215,7 +247,7 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
       if (id != null) void closePty(id);
       term.dispose();
     };
-  }, [command, cwd, readOnly, linkBase, home]);
+  }, [command, cwd, readOnly, linkBase, home, epoch]);
 
   // 글자 크기: 창(윈도우) 크기는 그대로 두고 칸 수만 다시 계산해 pty 에 알린다 — iTerm 처럼 창이 늘었다 줄었다 하지 않는다
   useEffect(() => {

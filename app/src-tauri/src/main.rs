@@ -28,6 +28,7 @@ mod review;
 mod setup;
 mod tama;
 mod theme;
+mod origin;
 mod tts;
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder};
@@ -310,6 +311,7 @@ fn main() {
             tts::supertonic_install,
             tts::native_voices,
             tts::tts_warm,
+            origin::session_origins,
             claude::append_task_event,
             claude::clipboard_write,
             review::repo_map,
@@ -349,6 +351,10 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("tauri 실행 실패")
         .run(|app, event| {
+            // 앱이 꺼질 때 말하던 음성도 같이 끈다 — 앱을 바꿔 넣어도 옛 앱이 띄운 음성이 계속 돌았다(2026-09-28)
+            if let tauri::RunEvent::Exit = event {
+                claude::stop_speaking();
+            }
             if let tauri::RunEvent::Reopen { .. } = event {
                 // ⌘Q 로 독에서 뺐다가 다시 열면(스포트라이트·런치패드·Dock) 독 아이콘을 되살린다
                 #[cfg(target_os = "macos")]

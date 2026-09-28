@@ -286,6 +286,8 @@ mod tests {
             for e in std::fs::read_dir(dir).unwrap().flatten() {
                 let p = e.path();
                 if p.is_dir() {
+                    // 파이썬 캐시는 스크립트를 불러 보면 생긴다 — 템플릿이 아니다
+                    if p.file_name().is_some_and(|n| n == "__pycache__") { continue }
                     walk(root, &p, out);
                 } else if p.file_name().is_some_and(|n| n != ".DS_Store") {
                     out.push(p.strip_prefix(root).unwrap().to_string_lossy().into_owned());

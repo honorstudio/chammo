@@ -64,6 +64,7 @@ import { canPlace, delivery, planRoom, seatSlots, stampSeen, withLounge, type Se
 import { spriteOf } from './ui/tama/lcd';
 import { Grip } from './ui/TaskPanel';
 import type { TaskCard } from './domain/tasks';
+import { sessionOrigins } from './data/tauri';
 import { appendTaskEvent, daemonStartedAt, readLiveSnap, resumeSession, writeLiveSnap, newSession, readAutoAllow, readCtx, sendToSession, setBadge, stopSession, tamaWidget, writeClipboard } from './data/tauri';
 import { parseAllowLog, type AllowLog } from './domain/autoAllow';
 import { useAutoAllow } from './ui/useAutoAllow';
@@ -246,6 +247,8 @@ export default function App() {
   };
   const prevStatus = useRef<Record<string, ActivityStatus>>({});
   const seenReplies = useRef<ReplySeen | null>(null); // 참모 답 중 이미 읽은(또는 처음 보고 넘긴) 것
+  const spokenSay = useRef<Record<string, string>>({});
+  const appStartedAt = useRef(new Date().toISOString()); // 세션 id → 이미 읽은 scripts/say 말의 마지막 ts(domain/voice pickSay)
   useEffect(() => save('fontSize', fontSize), [fontSize]);
   useEffect(() => save('sidebarOpen', sidebarOpen), [sidebarOpen]);
   useEffect(() => save('tasksOpen', tasksOpen), [tasksOpen]);
@@ -332,11 +335,16 @@ export default function App() {
     getAppEnv().then(setEnv).catch((e: unknown) => setError(tr(`앱 환경 읽기 실패: ${String(e)}`, `Could not read the app environment: ${String(e)}`)));
   }, [extrasKey]);
 
+  const origins = useRef(new Map<number, { unattended: boolean; via: string }>());
   const refresh = useCallback(async () => {
     if (!env) return;
     try {
       // 내 프로젝트 폴더·HQ 안의 세션만 — 이 맥의 다른 데서 띄운 Claude 세션이 섞이지 않게
-      const everyone = parseAgents(await listSessionsRaw(), env.devRoot, env.extraProjects);
+      const parsed = parseAgents(await listSessionsRaw(), env.devRoot, env.extraProjects);
+      // 대화형 세션이 어디서 떴나(사람 터미널 / 예약 작업) — pid 마다 한 번만 묻는다(안 바뀐다)
+      const ask = parsed.filter((x) => x.kind === 'interactive' && x.pid != null && !origins.current.has(x.pid)).map((x) => x.pid!);
+      if (ask.length) for (const [pid, o] of Object.entries(await sessionOrigins(ask).catch(() => ({})))) origins.current.set(Number(pid), o);
+      const everyone = parsed.map((x) => (x.kind === 'interactive' && x.pid != null && origins.current.has(x.pid) ? { ...x, origin: origins.current.get(x.pid) } : x));
       setAllSessions(everyone);
       const live = withinRoots(everyone, [env.devRoot, env.orchestratorCwd, ...env.extraProjects]);
       setSessions(live);
@@ -497,7 +505,13 @@ export default function App() {
       const x = orchActs.find((a) => a.session.id === f.id)!;
       const s = x.session;
       // 참모가 음성용 말을 따로 넘겼으면(scripts/say) 그걸, 아니면 답 앞부분 + 끝 질문
-      if (voiceRef.current) void readSay().catch(() => '').then((log) => pickSay(parseSay(log), s.id, x.activity.prompt?.ts ?? '') ?? f.reply.say).then((t) => (t ? speak(t) : undefined)).catch(() => {});
+      if (voiceRef.current) void readSay().catch(() => '').then((log) => {
+        // 앱을 켜기 전에 넘긴 말은 안 읽는다 — 켤 때마다 '이미 읽은 말' 기억이 비어 옛 말을 몰아 읽었다
+        const since = [x.activity.prompt?.ts ?? '', appStartedAt.current].sort().pop()!;
+        const p = pickSay(parseSay(log), s.id, since, spokenSay.current[s.id]);
+        if (p) spokenSay.current[s.id] = p.last; // 읽은 말은 다음 답에서 다시 안 읽는다
+        return p?.text ?? f.reply.say;
+      }).then((t) => (t ? speak(t) : undefined)).catch(() => {});
       if (f.reply.asks) notifyOnce({ kind: 'asks', session: s.id, orch: true, title: tr(`${s.name || assistant()} 답이 필요해`, `${s.name || assistant()} needs your answer`), body: f.reply.text });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -928,6 +942,20 @@ export default function App() {
     main = <LoadPage sys={loadMon.sys} report={loadMon.report} onOpen={openTarget} onKilled={() => void loadMon.refresh()} />;
   } else if (selected.kind === 'replay') {
     main = env ? <ReplayPage devRoot={env.devRoot} author={env.gitEmail} tasks={taskEvents} tama={tama.file} /> : null;
+  } else if (selected.kind === 'external') {
+    // 예약 작업이 아무도 안 보는 곳에서 띄운 대화형 세션 — 앱에서 화면을 붙일 수 없다(대화형은 attach 가 안 된다). 무엇인지만 보여 준다
+    const x = groups.external.find((e) => e.id === selected.id);
+    const a = x?.sessionId ? activity[x.sessionId] : undefined;
+    main = x ? (
+      <div className="empty ext-sess">
+        <b>{tr(`외부 예약 세션 — ${x.name || x.project}`, `Externally scheduled session — ${x.name || x.project}`)}</b>
+        <p>{tr('사람이 연 터미널이 아니라 예약 작업(크론·launchd)이나 아무도 안 붙은 tmux 에서 뜬 Claude 예요. 대화형이라 앱에서 화면을 열 수는 없어요.', "This Claude was started by a scheduled job (cron, launchd) or in a tmux nobody is attached to, not in a terminal you opened. It's interactive, so the app can't open its screen.")}</p>
+        <p>{tr('폴더', 'Folder')}: <code>{x.cwd}</code> · {tr('어디서', 'From')}: <code>{x.origin?.via}</code> · pid {x.pid}</p>
+        {a?.prompt && <p>{tr('마지막 지시', 'Last prompt')}: {a.prompt.text}</p>}
+        {a?.reply && <p>{tr('마지막 답', 'Last reply')}: {a.reply.text}</p>}
+        <p>{tr('필요 없으면 그 예약 작업을 끄거나 프로젝트 밖(홈 폴더 등)에서 뜨게 바꾸세요. 참모에게 맡겨도 돼요.', 'If you do not need it, turn that scheduled job off or have it start outside your projects (e.g. your home folder). You can ask the chief of staff.')}</p>
+      </div>
+    ) : <div className="empty"><b>{tr('세션이 끝났어요', 'The session has ended')}</b></div>;
   } else if (selected.kind === 'all') {
     const all = groups.projects.flatMap((p) => p.sessions);
     main = all.length ? (
@@ -980,6 +1008,7 @@ export default function App() {
         onSelect={setSelected}
         onAddProject={config && env ? () => void addProjectFolder() : undefined}
         helpers={groups.helpers}
+        external={groups.external.map((x) => ({ id: x.id, name: x.name || x.project, line: tr(`외부 예약 · ${x.project} · ${x.origin?.via ?? ''}`, `External schedule · ${x.project} · ${x.origin?.via ?? ''}`) }))}
         footer={env ? `${env.claudeVersion || tr('claude 버전 확인 실패', 'Could not read the claude version')} · ${env.claudeBin}` : undefined}
         badges={badges}
         idleProjects={idleProjects}

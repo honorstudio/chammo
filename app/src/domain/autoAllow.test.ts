@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { pickAllow } from './autoAllow';
+import { pickAllow, retryAfter } from './autoAllow';
 
 // 실제 화면 (2026-09-27, computer-use request_access — attach + pyte 로 뜬 것)
 const COMPUTER_USE = [
@@ -130,5 +130,13 @@ describe('영어 모드', () => {
   it('건너뛴 이유를 영어로', () => {
     setLang('en');
     expect(pickAllow('Enter your password')).toEqual({ skip: 'Sensitive prompt (password, verification, payment) — choose it yourself' });
+  });
+});
+
+// 2026-09-28: 22:47:16 에 허용한 참모 세션에 22초 뒤 다음 창이 떴는데, 같은 세션 1분 대기에 걸려 사용자가 직접 눌렀다
+describe('retryAfter — 같은 세션을 다시 보기까지', () => {
+  it('풀었으면 곧 다음 창을 받는다 (5초 — 막 풀린 창이 목록에 한 번 더 남아 있어도 헛손질 안 하게)', () => expect(retryAfter('allowed')).toBe(5_000));
+  it('건너뛰었거나 못 풀었으면 1분 — 같은 창을 계속 두드리지 않게', () => {
+    for (const r of ['skipped', 'stillOpen', 'failed'] as const) expect(retryAfter(r)).toBe(60_000);
   });
 });

@@ -8,11 +8,13 @@ import { StatusMark } from './StatusMark';
 import { assistant, tr } from '../i18n';
 import type { ProjectGroup, Session, SessionState } from '../domain/session';
 
-export type Selection = { kind: 'orchestrator' } | { kind: 'all' } | { kind: 'tama' } | { kind: 'replay' } | { kind: 'load' } | { kind: 'helpers' } | { kind: 'review'; key?: string } | { kind: 'project'; name: string } | { kind: 'routine'; name: string };
+export type Selection = { kind: 'orchestrator' } | { kind: 'all' } | { kind: 'tama' } | { kind: 'replay' } | { kind: 'load' } | { kind: 'helpers' } | { kind: 'review'; key?: string } | { kind: 'project'; name: string } | { kind: 'routine'; name: string } | { kind: 'external'; id: string };
 
 type Props = {
   /** 루틴(반복 업무) 줄 — 이름·상태·한 줄 설명 */
   routines?: { name: string; state: RoutineState; line: string }[];
+  /** 예약 작업이 아무도 안 보는 곳에서 띄운 대화형 세션 — 루틴 칸에 "외부 예약"으로(domain/session groupByProject) */
+  external?: { id: string; name: string; line: string }[];
   orchestrator: Session | undefined;
   projects: ProjectGroup[];
   selected: Selection;
@@ -61,9 +63,12 @@ function SessionMarks({ states }: { states: SessionState[] }) {
 }
 
 const isOn = (a: Selection, b: Selection) =>
-  a.kind === b.kind && (a.kind !== 'project' || b.kind !== 'project' || a.name === b.name);
+  a.kind === b.kind &&
+  (a.kind !== 'project' || b.kind !== 'project' || a.name === b.name) &&
+  (a.kind !== 'routine' || b.kind !== 'routine' || a.name === b.name) &&
+  (a.kind !== 'external' || b.kind !== 'external' || a.id === b.id);
 
-export function Sidebar({ routines, orchestrator, projects: allProjects, selected, onSelect, footer, badges, idleProjects: allIdle, query, onQuery, searchRef, ctxOf, review, onAddProject, helpers }: Props) {
+export function Sidebar({ routines, external = [], orchestrator, projects: allProjects, selected, onSelect, footer, badges, idleProjects: allIdle, query, onQuery, searchRef, ctxOf, review, onAddProject, helpers }: Props) {
   // 프로젝트에 세션이 여럿이면 가장 많이 찬 것 — 곧 요약될 세션을 놓치지 않게
   const ctxMax = (ss: Session[]) => ss.map((s) => ctxOf?.(s)).filter((x): x is number => x !== undefined).reduce<number | undefined>((m, x) => (m === undefined || x > m ? x : m), undefined);
   const running = allProjects.reduce((n, p) => n + p.sessions.length, 0);
@@ -127,16 +132,25 @@ export function Sidebar({ routines, orchestrator, projects: allProjects, selecte
         </button>
       )}
 
-      {routines && routines.length > 0 && (
+      {((routines && routines.length > 0) || external.length > 0) && (
         <>
-          <div className="grp">{tr(`루틴 · ${routines.length}`, `Routines · ${routines.length}`)}</div>
-          {routines.map((r) => (
+          <div className="grp">{tr(`루틴 · ${(routines?.length ?? 0) + external.length}`, `Routines · ${(routines?.length ?? 0) + external.length}`)}</div>
+          {(routines ?? []).map((r) => (
             <button key={r.name} className={`it ${isOn(selected, { kind: 'routine', name: r.name }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'routine', name: r.name })}>
               {/* 도는 중 = 도는 호, 실패·보고 없음 = 손바닥(네가 볼 차례), 성공 = 꽉 찬 원, 꺼 둠·첫 실행 전 = 빈 원 */}
               <StatusMark kind={ROUTINE_MARK[r.state]} />
               <span>
                 <div className="nm">{r.name}</div>
                 <div className="ln">{r.line}</div>
+              </span>
+            </button>
+          ))}
+          {external.map((x) => (
+            <button key={x.id} className={`it ${isOn(selected, { kind: 'external', id: x.id }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'external', id: x.id })}>
+              <StatusMark kind="idle" />
+              <span>
+                <div className="nm">{x.name}</div>
+                <div className="ln">{x.line}</div>
               </span>
             </button>
           ))}

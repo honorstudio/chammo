@@ -38,6 +38,13 @@ describe('parseAgents — claude agents --json을 앱 세션으로', () => {
     expect(parseAgents(JSON.stringify(raw), DEV).map((s) => s.state)).toEqual(['idle', 'working', 'blocked']);
   });
 
+  // 2026-09-28: 백그라운드 감시·에이전트를 걸어 둔 참모는 답을 마치고 쉬어도(state: done) status 가 busy 로 남았다
+  //  → '작업 중'으로 읽혀 음성 모드가 참모 답을 하나도 안 읽었다
+  it('state 가 done 이면 status 가 busy 여도 쉬는 중 — 답은 끝났고 뒤에서 도는 작업만 있다', () => {
+    const raw = [{ id: 'b5', cwd: `${DEV}/honor-orchestrator`, kind: 'background', state: 'done', status: 'busy', name: '참모-5' }];
+    expect(parseAgents(JSON.stringify(raw), DEV)[0]!.state).toBe('idle');
+  });
+
   it('id는 background의 짧은 id, interactive는 sessionId로 대신한다', () => {
     const s = parseAgents(JSON.stringify(RAW), DEV);
     expect(s.find((x) => x.name === 'oms')?.id).toBe('7ce32610');
@@ -117,6 +124,15 @@ describe('projectDir — 프로젝트 이름 → 폴더', () => {
 });
 
 describe('groupByProject — 사이드바용 묶기', () => {
+  // 2026-09-28 아이맥: 5분마다 도는 자동 실행이 project-x 폴더에 Claude 를 띄워, project-x 에 열리지도 않는 세션이 떠 있었다
+  it('예약 작업이 아무도 안 보는 곳에서 띄운 대화형 세션은 프로젝트에서 빼고 external 로', () => {
+    const cron: Session = { id: 's9', name: 'project-x-cb', cwd: `${DEV}/todo-api`, kind: 'interactive', state: 'idle', project: 'todo-api', workspace: null, startedAt: 0, origin: { unattended: true, via: 'tmux claude' } };
+    const mine: Session = { ...cron, id: 's8', name: 'mine', origin: { unattended: false, via: 'iTerm2' } };
+    const g = groupByProject([cron, mine], `${DEV}/honor-orchestrator`);
+    expect(g.external.map((x) => x.id)).toEqual(['s9']);
+    expect(g.projects.flatMap((p) => p.sessions).map((x) => x.id)).toEqual(['s8']);
+  });
+
   const sessions: Session[] = parseAgents(JSON.stringify(RAW), DEV);
 
   it('오케스트레이터(이 앱 폴더의 세션)는 따로 빼고, 나머지를 프로젝트별로 묶는다', () => {

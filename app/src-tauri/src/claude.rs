@@ -355,6 +355,39 @@ pub fn notify(title: String, body: String, target: Option<String>) {
 
 /// 음성 모드 — 설정의 ttsCommand(기본 macOS say)로 읽는다. 여러 개가 겹쳐도 차례로(한 번에 하나만 말하게 잠근다)
 static SPEAKING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// 멈출 때마다 1 씩 — 그 전에 줄 선 말은 차례가 와도 안 읽는다
+static SPEAK_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// 지금 읽는 프로세스 그룹(pgid = 띄운 프로세스 pid). 읽기 명령이 파이썬·afplay 를 또 띄워서 그룹째 끈다
+static SPEAKING_PID: std::sync::Mutex<Option<u32>> = std::sync::Mutex::new(None);
+#[cfg(test)]
+pub(crate) static SPEAK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) fn speak_gen() -> u64 {
+    SPEAK_GEN.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// 차례가 오면 읽는다 — 그사이 멈췄으면(gen 이 바뀌면) 안 읽는다. started 는 시작한 pid 를 받는다(테스트용)
+pub(crate) fn run_speech(argv: Vec<String>, gen: u64, mut started: impl FnMut(u32)) {
+    use std::os::unix::process::CommandExt;
+    let _turn = SPEAKING.lock().unwrap_or_else(|e| e.into_inner());
+    if speak_gen() != gen || argv.is_empty() {
+        return;
+    }
+    let Ok(mut child) = Command::new(&argv[0]).args(&argv[1..]).process_group(0).spawn() else { return };
+    *SPEAKING_PID.lock().unwrap_or_else(|e| e.into_inner()) = Some(child.id());
+    started(child.id());
+    let _ = child.wait();
+    *SPEAKING_PID.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// 지금 말하는 것과 줄 선 것까지 멈춘다 — 음성 모드를 끌 때·앱을 끌 때
+/// (2026-09-28 6,500자 음성이 8분째 돌았는데 멈출 방법이 없었다. 앱을 바꿔 넣어도 옛 앱이 띄운 음성은 계속 돌았다)
+pub fn stop_speaking() {
+    SPEAK_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    if let Some(pid) = *SPEAKING_PID.lock().unwrap_or_else(|e| e.into_inner()) {
+        let _ = Command::new("/bin/kill").args(["-TERM", &format!("-{pid}")]).status();
+    }
+}
 
 #[tauri::command]
 pub fn speak(text: String) {
@@ -362,10 +395,10 @@ pub fn speak(text: String) {
         return;
     }
     log_out("speak", &text);
+    let gen = speak_gen();
     std::thread::spawn(move || {
-        let _turn = SPEAKING.lock();
         let argv = crate::config::tts_argv(&crate::config::home(), &crate::config::current().tts_command, &text, |p| std::path::Path::new(p).is_file());
-        let _ = Command::new(&argv[0]).args(&argv[1..]).status();
+        run_speech(argv, gen, |_| {});
     });
 }
 
@@ -706,9 +739,50 @@ pub fn read_say() -> String {
 /// 음성 모드 켜짐/꺼짐을 파일로 — 참모 쪽 훅(scripts/voice-hint)이 읽고 "음성용 말을 따로 써라"를 알려 준다
 #[tauri::command]
 pub fn write_voice_mode(on: bool) -> Result<(), String> {
+    if !on {
+        stop_speaking(); // 끄면 말하던 것도 바로 멈춘다
+    }
     let path = orch_file("voice.json");
     std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
     std::fs::write(path, format!("{{\"on\":{on}}}")).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod speak_tests {
+    use super::{run_speech, stop_speaking, SPEAK_TEST_LOCK};
+    use std::time::{Duration, Instant};
+
+    fn alive(pid: u32) -> bool {
+        std::process::Command::new("/bin/kill").args(["-0", &pid.to_string()]).status().map(|s| s.success()).unwrap_or(false)
+    }
+
+    // 2026-09-28: 6,500자 음성이 8분째 돌았는데 멈출 방법이 없었다 — 음성 모드를 끄면 지금 말하는 것부터 멈춘다
+    #[test]
+    fn 멈추면_지금_읽는_것과_그_아래_프로세스까지_꺼진다() {
+        let _g = SPEAK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let argv = vec!["/bin/sh".to_string(), "-c".into(), "sleep 30 & echo $! > /tmp/chammo-speak-test.pid; wait".into()];
+        let h = std::thread::spawn(move || { run_speech(argv, super::speak_gen(), |pid| { let _ = tx.send(pid); }); });
+        let pid = rx.recv_timeout(Duration::from_secs(3)).expect("시작");
+        std::thread::sleep(Duration::from_millis(300));
+        let child: u32 = std::fs::read_to_string("/tmp/chammo-speak-test.pid").unwrap().trim().parse().unwrap();
+        let t = Instant::now();
+        stop_speaking();
+        h.join().unwrap();
+        assert!(t.elapsed() < Duration::from_secs(2));
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!alive(pid) && !alive(child), "셸과 그 아래 sleep 까지 꺼져야 한다");
+    }
+
+    #[test]
+    fn 멈춘_뒤엔_줄_서_있던_것도_안_읽는다() {
+        let _g = SPEAK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let queued = super::speak_gen();
+        stop_speaking();
+        let mut started = false;
+        run_speech(vec!["/usr/bin/true".into()], queued, |_| started = true);
+        assert!(!started);
+    }
 }
 
 #[cfg(test)]

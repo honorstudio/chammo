@@ -4,11 +4,10 @@
 import { useEffect, useRef } from 'react';
 import { listSessionsRaw, logAutoAllow, sendKeys, sessionScreen } from '../data/tauri';
 import { notifyOnce } from './notifier';
-import { pickAllow } from '../domain/autoAllow';
+import { pickAllow, retryAfter, type AllowOutcome } from '../domain/autoAllow';
 import { parseAgents, type Session } from '../domain/session';
 import { tr } from '../i18n';
 
-const RETRY_MS = 60_000;   // 같은 세션을 다시 보기까지 (못 풀었거나 건너뛴 창을 계속 두드리지 않게)
 const CHECK_MS = 4_000;    // 누른 뒤 풀렸는지 보기까지
 
 /** 자동 허용 대상 — 선택지 질문(input needed)은 아니다 */
@@ -17,27 +16,31 @@ const AUTO = ['permission prompt', 'startup prompt'];
 const whereOf = (s: Session) => (s.workspace ? `${s.project} / ${s.workspace}` : s.project);
 
 export function useAutoAllow(sessions: Session[], devRoot: string | undefined, onLog: () => void) {
-  const tried = useRef(new Map<string, number>());
+  /** 세션 id → 다시 봐도 되는 때 (domain/autoAllow retryAfter) */
+  const next = useRef(new Map<string, number>());
   const busy = useRef(false);
   useEffect(() => {
     if (busy.current || !devRoot) return;
     const now = Date.now();
-    const s = sessions.find((x) => x.kind === 'background' && AUTO.includes(x.waitingFor ?? '') && now - (tried.current.get(x.id) ?? 0) > RETRY_MS);
+    const s = sessions.find((x) => x.kind === 'background' && AUTO.includes(x.waitingFor ?? '') && now >= (next.current.get(x.id) ?? 0));
     if (!s) return;
     busy.current = true;
-    tried.current.set(s.id, now);
+    const done = (o: AllowOutcome) => next.current.set(s.id, Date.now() + retryAfter(o));
+    done('failed'); // 도는 동안은 다시 안 잡게
     const log = (ev: object) => logAutoAllow({ ts: new Date().toISOString(), where: whereOf(s), ...ev }).then(onLog).catch(() => {});
     void (async () => {
       try {
         const pick = pickAllow(await sessionScreen(s.id));
-        if ('skip' in pick) { await log({ result: tr(`건너뜀 — ${pick.skip}`, `Skipped — ${pick.skip}`) }); return; }
+        if ('skip' in pick) { done('skipped'); await log({ result: tr(`건너뜀 — ${pick.skip}`, `Skipped — ${pick.skip}`) }); return; }
         await sendKeys(s.id, pick.keys);
         await new Promise((r) => setTimeout(r, CHECK_MS));
         const after = parseAgents(await listSessionsRaw(), devRoot).find((x) => x.id === s.id);
         const ok = !after || !AUTO.includes(after.waitingFor ?? '');
+        done(ok ? 'allowed' : 'stillOpen');
         await log({ option: pick.option, result: ok ? tr('허용됨', 'Allowed') : tr('풀리지 않음 — 직접 봐줘', 'Still open — please check it') });
         if (!ok) notifyOnce({ kind: 'allowFail', session: s.id, orch: false, title: tr(`${whereOf(s)} 권한 창 자동 허용 실패`, `${whereOf(s)}: auto-allow failed`), body: tr(`"${pick.option}" 을 눌렀는데 창이 그대로야 — 열어서 봐줘`, `Pressed "${pick.option}" but the prompt is still there — open it and check`) });
       } catch (e: unknown) {
+        done('failed');
         await log({ result: tr(`실패 — ${String(e)}`, `Failed — ${String(e)}`) });
       } finally {
         busy.current = false;

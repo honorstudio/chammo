@@ -746,3 +746,8 @@ button.ld-row:hover { background: var(--panel); }
 .ld-top b { color: var(--text); }
 .ld-act { display: flex; align-items: center; justify-content: flex-end; gap: 12px; font-size: 12.5px; }
 .btn.danger { background: var(--danger-bg); color: var(--danger-ink); border-color: var(--danger-ink); }
+
+/* 외부 예약 세션 안내(App selected.kind === 'external') */
+.ext-sess { text-align: left; max-width: 640px; margin: 48px auto; gap: 10px; }
+.ext-sess p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-2, inherit); }
+.ext-sess code { font-size: 12px; }

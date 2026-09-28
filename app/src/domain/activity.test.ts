@@ -50,6 +50,19 @@ describe('summarizeTranscript — 세션 대화 기록 꼬리에서 마지막 �
     expect(summarizeTranscript([user('t1', '알림 봐줘'), mid, end].join('\n')).reply?.midTurn).toBeUndefined();
   });
 
+  it('턴 끝 답(end_turn)은 turnEnd — 세션 상태가 계속 작업 중으로 나와도 답이 끝난 걸 안다', () => {
+    const end = line({ type: 'assistant', timestamp: 't3', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: '다 됐어' }] } });
+    expect(summarizeTranscript([user('t1', '해줘'), end].join('\n')).reply?.turnEnd).toBe(true);
+    const mid = line({ type: 'assistant', timestamp: 't2', message: { stop_reason: 'tool_use', content: [{ type: 'text', text: '볼게' }] } });
+    expect(summarizeTranscript([user('t1', '해줘'), mid].join('\n')).reply?.turnEnd).toBeUndefined();
+  });
+
+  // 2026-09-28: 붙여넣기 메시지는 "<pasted_content" 로 시작해 훅 주입으로 오해 → 지시 시각이 옛것으로 남아 음성이 저녁 내내 말을 이어 읽었다
+  it('붙여넣은 메시지도 사람 지시다', () => {
+    const t = summarizeTranscript(user('t9', '<pasted_content id="x">\n무언가\n</pasted_content id="x">\n이거 봐줘'));
+    expect(t.prompt?.ts).toBe('t9');
+  });
+
   it('빈 기록', () => {
     expect(summarizeTranscript('')).toMatchObject({});
   });

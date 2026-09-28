@@ -40,6 +40,10 @@ export function pickAllow(screen: string): AllowPick {
   return { keys: (d > 0 ? DOWN.repeat(d) : UP.repeat(-d)) + '\r', option: options[target]! };
 }
 
+/** 같은 세션을 다시 보기까지 — 풀었으면 5초 뒤(곧 다음 창이 뜰 수 있다 — 막 풀린 창이 목록에 한 번 더 남아 있어도 헛손질 안 하게), 건너뛰었거나 못 풀었으면 1분(같은 창을 계속 두드리지 않게) */
+export type AllowOutcome = 'allowed' | 'skipped' | 'stillOpen' | 'failed';
+export const retryAfter = (o: AllowOutcome): number => (o === 'allowed' ? 5_000 : 60_000);
+
 export type AllowLog = { ts: string; where: string; option?: string; result: string };
 
 /** 자동 허용 기록(~/.honor-orchestrator/auto-allow.jsonl) — 최근 것이 위, 최대 n 개 */

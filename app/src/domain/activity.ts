@@ -5,8 +5,9 @@ import { asksUser } from './status';
 import { speakable } from './voice';
 
 /** asks: 자르기 전 전체 답으로 판단한 '사용자에게 묻는가'(text 는 화면용으로 잘린 것). say: 음성 모드로 읽을 글(domain/voice).
- *  midTurn: 도구를 부르기 전 중간 멘트("먼저 찾아볼게") — 턴 끝 답이 아니라 읽지·알리지 않는다 */
-export type Line = { ts: string; text: string; asks?: boolean; say?: string; midTurn?: boolean; /** 물어볼 때만 — 결정 대기함용 결론·질문(askView) */ ask?: AskView };
+ *  midTurn: 도구를 부르기 전 중간 멘트("먼저 찾아볼게") — 턴 끝 답이 아니라 읽지·알리지 않는다
+ *  turnEnd: 턴 끝 답(stop_reason end_turn) — 세션 상태가 계속 작업 중으로 나와도 답이 끝난 걸 안다(백그라운드 job 참모) */
+export type Line = { ts: string; text: string; asks?: boolean; say?: string; midTurn?: boolean; turnEnd?: boolean; /** 물어볼 때만 — 결정 대기함용 결론·질문(askView) */ ask?: AskView };
 /** tool = 마지막으로 부른 도구(사무실 행동·머리 위 한 줄) */
 export type Tool = { name: string; target: string; ts: string };
 export type Activity = { prompt?: Line; reply?: Line; tool?: Tool };
@@ -28,7 +29,8 @@ const squash = (s: string) => {
 };
 
 // 사람이 친 지시가 아닌 것: 슬래시 명령·훅 주입(<…>로 시작), 다른 세션이 보낸 메시지
-const isInjected = (t: string) => t.startsWith('<') || t.startsWith('Another Claude session sent a message');
+// 붙여넣은 글(<pasted_content …>)은 사람이 보낸 것 — 훅 주입으로 치면 지시 시각이 옛것으로 남는다(2026-09-28)
+const isInjected = (t: string) => (t.startsWith('<') && !t.startsWith('<pasted_content')) || t.startsWith('Another Claude session sent a message');
 
 export function summarizeTranscript(tail: string): Activity {
   const out: Activity = {};
@@ -49,6 +51,7 @@ export function summarizeTranscript(tail: string): Activity {
       const asks = asksUser(text);
       out.reply = { ts, text: squash(text), asks, say: speakable(text), ...(asks ? { ask: askView(text) } : {}) };
       if (d.message?.stop_reason === 'tool_use') out.reply.midTurn = true;
+      if (d.message?.stop_reason === 'end_turn') out.reply.turnEnd = true;
     }
   }
   return out;
