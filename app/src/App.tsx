@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { groupByProject, isOrchestratorName, nextOrchestratorName, orchView, parseAgents, projectDir, sessionsToStop, withinRoots, type Session } from './domain/session';
+import { closableByShortcut, groupByProject, isOrchestratorName, nextOrchestratorName, orchView, parseAgents, projectDir, sessionsToStop, withinRoots, type Session } from './domain/session';
 import { EMPTY_LAYOUT, layoutReducer, maxTarget, revealPane, type LayoutAction, type PaneLayout } from './domain/paneLayout';
 import { readUsage, todayCommits, type RepoToday } from './data/tauri';
 import { dayStart, parseUsage, type Usage } from './domain/usage';
@@ -67,6 +67,7 @@ import type { TaskCard } from './domain/tasks';
 import { appendTaskEvent, daemonStartedAt, readLiveSnap, resumeSession, writeLiveSnap, newSession, readAutoAllow, readCtx, sendToSession, setBadge, stopSession, tamaWidget, writeClipboard } from './data/tauri';
 import { parseAllowLog, type AllowLog } from './domain/autoAllow';
 import { useAutoAllow } from './ui/useAutoAllow';
+import { useForwardQuestions } from './ui/useForwardQuestions';
 import { buildInbox, findTarget, freshItems, popoverOpen, replyBlocked, RESUME_MSG, type InboxItem } from './domain/inbox';
 import { InboxPopover } from './ui/Inbox';
 import { ctxAlerts, parseCtx, type Ctx } from './domain/ctx';
@@ -523,7 +524,7 @@ export default function App() {
   closePaneRef.current = () => {
     const id = focused.current;
     const s = sessions.find((x) => x.id === id);
-    if (!s || s.id === groups.orchestrator?.id || isOrchestratorName(s.name)) { // 대표 비서(설정 이름·옛 이름)는 ⌘W 로 안 끈다
+    if (!s || !closableByShortcut(s, groups.orchestrators)) { // 비서(참모·참모-2…)는 ⌘W 로 안 끈다 — 리더 탭 닫으려던 ⌘W 에 참모-2 가 꺼졌다(2026-09-28)
       setError(s ? tr(`${assistant()}는 ⌘W로 안 꺼져 — 창 버튼의 끄기를 써줘`, `⌘W does not stop ${assistant()} — use the pane's stop button`) : tr('끌 창을 먼저 한 번 클릭해줘', 'Click the pane you want to stop first'));
       return;
     }
@@ -578,6 +579,10 @@ export default function App() {
 
   // 도구 권한 창은 앱이 이름으로 Allow 를 찾아 자동 허용 (결정 대기함엔 선택지 질문·민감한 창만 남는다)
   useAutoAllow(sessions, env?.devRoot, loadAllowLog);
+  // 하위 세션 선택지 창은 참모에게 넘긴다 — 참모가 골라 답하거나 사용자에게 묻는다. 사용자가 그 화면을 보고 있으면 안 넘긴다
+  const subSessions = useMemo(() => [...groups.helpers, ...groups.projects.flatMap((p) => p.sessions)], [groups]);
+  useForwardQuestions(subSessions, groups.orchestrator, (s) =>
+    document.hasFocus() && (selected.kind === 'project' ? selected.name === s.project : selected.kind === 'helpers' && groups.helpers.includes(s)));
   const inbox = buildInbox(allActs, taskEvents, new Set(dismissed), sessions, (s) => orchIds.has(s.id));
   // 새 결정이 생기면: 종 아래 드롭다운이 저절로 펼쳐짐 + macOS 알림. 개수는 상단 바 종·Dock 뱃지
   const inboxKeys = inbox.map((i) => i.key).join('|');
@@ -677,11 +682,12 @@ export default function App() {
   const openTarget = (target: string) => {
     const s = findTarget(sessions, target);
     if (!s) return;
-    // 참모(들)는 프로젝트가 아니라 참모 화면에 있다
+    // 참모(들)는 프로젝트가 아니라 참모 화면에, 도우미는 도우미 화면에 있다
     const orch = groups.orchestrators.some((o) => o.id === s.id);
-    setSelected(orch ? { kind: 'orchestrator' } : { kind: 'project', name: s.project });
+    const helper = groups.helpers.some((h) => h.id === s.id);
+    setSelected(orch ? { kind: 'orchestrator' } : helper ? { kind: 'helpers' } : { kind: 'project', name: s.project });
     // 가서 바로 칠 수 있게 — 가려져 있으면 드러내고 그 창에 포커스(사용자 2026-09-28: 알림 눌러 가도 다시 클릭해야 했다)
-    const key = orch ? (office ? 'orch-col' : 'orch') : `p:${s.project}`;
+    const key = orch ? (office ? 'orch-col' : 'orch') : helper ? 'helpers' : `p:${s.project}`;
     for (const a of revealPane(layoutOf(key), s.id)) dispatchFor(key)(a);
     focusedBy.current.set(key, s.id);
     focused.current = s.id;
@@ -769,7 +775,8 @@ export default function App() {
   };
 
   // 참모 화면 아래: 참모가 시킨 일 중 안 끝난 것의 세션을 최근 4개까지 한 줄로 미리보기(보기 전용)
-  const delegated = recentDelegated(cards, sessions);
+  // 도우미(비서 폴더의 다른 이름 세션)는 빼고 — 사이드바 "도우미"에 따로 있다
+  const delegated = recentDelegated(cards, sessions.filter((s) => !groups.helpers.includes(s)));
   const runningStrip = delegated.length > 0 && (
     <div className="running">
       <div className="running-head">{tr('지금 시킨 일', 'Delegated now')} · {delegated.length} <span className="dim">{tr('— 누르면 그 세션으로', '— click to open that session')}</span></div>
@@ -911,6 +918,12 @@ export default function App() {
     ) : <div className="empty"><b>{tr('루틴을 찾을 수 없어요', 'Routine not found')}</b></div>;
   } else if (selected.kind === 'review') {
     main = <ReviewPage data={review} sessions={sessions} stopped={stopped} taskEvents={taskEvents} selectedKey={selected.key} onSelectKey={(key) => setSelected({ kind: 'review', key })} onOpenSession={openTarget} />;
+  } else if (selected.kind === 'helpers') {
+    main = groups.helpers.length ? (
+      <SessionGrid sessions={groups.helpers} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => s.name} {...gridFocus('helpers')} onStop={closeSession} layout={layoutOf('helpers')} dispatch={dispatchFor('helpers')} onMessage={onMessage} memo={memo} />
+    ) : (
+      <div className="empty"><b>{tr('도우미 세션이 없어요', 'No helper sessions')}</b></div>
+    );
   } else if (selected.kind === 'load') {
     main = <LoadPage sys={loadMon.sys} report={loadMon.report} onOpen={openTarget} onKilled={() => void loadMon.refresh()} />;
   } else if (selected.kind === 'replay') {
@@ -966,6 +979,7 @@ export default function App() {
         selected={selected}
         onSelect={setSelected}
         onAddProject={config && env ? () => void addProjectFolder() : undefined}
+        helpers={groups.helpers}
         footer={env ? `${env.claudeVersion || tr('claude 버전 확인 실패', 'Could not read the claude version')} · ${env.claudeBin}` : undefined}
         badges={badges}
         idleProjects={idleProjects}

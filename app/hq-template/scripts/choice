@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Read and answer a session's choice prompt (AskUserQuestion) for it.
+하위 세션이 띄운 선택지 창(AskUserQuestion)을 비서가 읽고 대신 답한다.
+
+  scripts/choice show   <session id>            -> the pending questions with numbered options
+  scripts/choice answer <session id> <n> ...    -> one option number per question (e.g. answer 92dd8234 1 1)
+
+Session id = the 8-char id in `claude agents --json`; the app hands it to you when it says a session is stuck.
+Questions come from the transcript (jsonl) — `claude logs` is raw escape codes. Answers are keys typed into
+`claude attach` — SendMessage does not answer a choice prompt.
+Answer easy-to-undo ones (wording, color, layout) with the recommended option; ask the user first when it's theirs.
+Multi-select and free-text answers are not supported — ask the user to open that session's screen.
+"""
+import glob, json, os, pty, select, shutil, signal, subprocess, sys, time
+
+
+def data_dir(home=None, env=None, exists=os.path.isdir):
+    """Data folder — same rule as the app: $CHAMMO_HOME -> ~/.chammo (-> ~/.honor-orchestrator for old installs)"""
+    home = home or os.path.expanduser('~')
+    env = os.environ.get('CHAMMO_HOME', '') if env is None else env
+    if env.strip():
+        return os.path.expanduser(env.strip())
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not exists(new) and exists(old) else new
+
+
+def load_config(data):
+    try:
+        return json.load(open(os.path.join(data, 'config.json'), encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+
+
+LANG = 'en' if load_config(data_dir()).get('language') == 'en' else 'ko'
+
+
+def T(ko, en):
+    return en if LANG == 'en' else ko
+
+DOWN, ENTER = '\x1b[B', '\r'
+
+
+def claude_bin():
+    local = os.path.expanduser('~/.local/bin/claude')
+    return local if os.path.exists(local) else (shutil.which('claude') or 'claude')
+
+
+def agent(sid):
+    out = subprocess.run([claude_bin(), 'agents', '--json'], capture_output=True, text=True, timeout=30).stdout
+    return next((a for a in json.loads(out or '[]') if a.get('id') == sid), None)
+
+
+def transcript(session_id):
+    hits = glob.glob(os.path.expanduser(f'~/.claude/projects/*/{session_id}.jsonl'))
+    return hits[0] if hits else None
+
+
+def pending(lines):
+    """답(tool_result)이 아직 안 온 마지막 AskUserQuestion 의 questions — 없으면 None"""
+    asked, answered = [], set()
+    for line in lines:
+        try:
+            content = json.loads(line).get('message', {}).get('content')
+        except (ValueError, AttributeError):
+            continue
+        if not isinstance(content, list):
+            continue
+        for c in content:
+            if c.get('type') == 'tool_use' and c.get('name') == 'AskUserQuestion':
+                asked.append((c.get('id'), c.get('input', {}).get('questions') or []))
+            elif c.get('type') == 'tool_result':
+                answered.add(c.get('tool_use_id'))
+    open_ = [q for tid, q in asked if tid not in answered]
+    return open_[-1] if open_ else None
+
+
+def render(questions):
+    out = []
+    for i, q in enumerate(questions, 1):
+        out.append(f'{i}) {q.get("question", "")}' + (T('  [여러 개 고르기 — 못 넣음]', '  [multi-select — not supported]') if q.get('multiSelect') else ''))
+        for n, o in enumerate(q.get('options') or [], 1):
+            desc = f' — {o["description"]}' if o.get('description') else ''
+            out.append(f'   {n}. {o.get("label", "")}{desc}')
+    return '\n'.join(out)
+
+
+def keys_for(questions, picks):
+    """질문마다 커서가 맨 위에서 시작 → 번호-1 만큼 내리고 Enter. 질문이 여럿이면 마지막 확인 화면에서 Enter(제출)"""
+    if len(picks) != len(questions):
+        raise ValueError(T(f'질문이 {len(questions)}개야 — 번호도 {len(questions)}개 줘', f'{len(questions)} questions — give {len(questions)} numbers'))
+    keys = []
+    for q, n in zip(questions, picks):
+        if q.get('multiSelect'):
+            raise ValueError(T('여러 개 고르는 질문은 못 넣어 — 그 세션 화면에서 직접 골라야 해', "Can't answer a multi-select question — pick it on that session's screen"))
+        if not 1 <= n <= len(q.get('options') or []):
+            raise ValueError(T(f'"{q.get("question", "")}" 에는 {n}번이 없어', f'"{q.get("question", "")}" has no option {n}'))
+        keys += [DOWN] * (n - 1) + [ENTER]
+    if len(questions) > 1:
+        keys.append(ENTER)
+    return keys
+
+
+def send_keys(sid, keys):
+    """claude attach 를 가짜 터미널로 띄워 키를 하나씩 — 한꺼번에 넣으면 TUI 가 놓친다. attach 를 죽여도 세션은 산다"""
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.environ['TERM'] = 'xterm-256color'
+        os.execvp(claude_bin(), ['claude', 'attach', sid])
+
+    def drain(sec):
+        end = time.time() + sec
+        while time.time() < end:
+            if select.select([fd], [], [], 0.1)[0]:
+                try:
+                    os.read(fd, 65536)
+                except OSError:
+                    return
+    drain(2.0)
+    for k in keys:
+        os.write(fd, k.encode())
+        drain(1.0)
+    os.kill(pid, signal.SIGKILL)
+
+
+def load(sid):
+    a = agent(sid)
+    if not a:
+        sys.exit(T(f'{sid}: 그런 세션이 없어 (claude agents --json 의 id)', f'{sid}: no such session (use the id from claude agents --json)'))
+    path = transcript(a.get('sessionId', ''))
+    if not path:
+        return a, None
+    with open(path, encoding='utf-8') as f:
+        return a, pending(f)
+
+
+def main(argv):
+    if len(argv) < 2 or argv[0] not in ('show', 'answer'):
+        print(__doc__, file=sys.stderr)
+        return 2
+    sid = argv[1]
+    a, qs = load(sid)
+    if a.get('waitingFor') != 'input needed' or not qs:
+        print(T(f'{sid}: 선택지 창에서 멈춰 있지 않아 (상태 {a.get("state")}, {a.get("waitingFor") or "-"})', f'{sid}: not stuck on a choice prompt (state {a.get("state")}, {a.get("waitingFor") or "-"})'))
+        return 1
+    if argv[0] == 'show':
+        print(render(qs))
+        return 0
+    try:
+        keys = keys_for(qs, [int(x) for x in argv[2:]])
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 2
+    send_keys(sid, keys)
+    time.sleep(1.5)
+    after = agent(sid) or {}
+    if after.get('waitingFor') == 'input needed':
+        print(T(f'{sid}: 넣었는데 아직 선택지 창이야 — 사용자에게 그 세션 화면을 열어 달라고 해', f"{sid}: typed it but the prompt is still open — ask the user to open that session's screen"), file=sys.stderr)
+        return 1
+    print(T(f'{sid}: 답 넣음 → 지금 {after.get("state", "끝남")}', f'{sid}: answered -> now {after.get("state", "ended")}'))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

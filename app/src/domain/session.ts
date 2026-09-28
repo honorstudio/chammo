@@ -112,26 +112,34 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** 대표 비서 이름인가 — 설정 이름(assistant()) 또는 옛 이름 */
 export const isOrchestratorName = (name: string) => name === assistant() || name === LEGACY_ASSISTANT;
+/** 비서 이름 꼴 — 참모·참모-2(⌘T), 옛 이름 참모·참모-2 */
+const orchestratorLike = (name: string) => [assistant(), LEGACY_ASSISTANT].some((b) => name === b || new RegExp(`^${escapeRe(b)}-\\d+$`).test(name));
 
 /** 사이드바용: 이 앱 폴더의 세션(비서)은 따로, 나머지는 프로젝트별로. 순서는 들어온 대로 */
 export function groupByProject(
   sessions: Session[],
   orchestratorCwd: string,
-): { orchestrator: Session | undefined; orchestrators: Session[]; projects: ProjectGroup[] } {
+): { orchestrator: Session | undefined; orchestrators: Session[]; helpers: Session[]; projects: ProjectGroup[] } {
   const orch = stripSlash(orchestratorCwd);
-  // 이 폴더의 세션은 전부 비서다(⌘T로 여럿 띄운다) — 이름이 설정 이름인 것이 대표(맨 앞), 없으면 옛 이름 "참모"
-  const here = sessions.filter((s) => stripSlash(s.cwd) === orch);
+  // 이 폴더의 비서 이름 세션(⌘T로 여럿 띄운다: 참모·참모-2…, 옛 이름 참모·참모-2)과 터미널에서 연 대화형은 비서 — 이름이 설정 이름인 것이 대표(맨 앞).
+  // 그 밖의 이름으로 띄운 백그라운드 세션은 비서가 부린 도우미(예: SNS 올리기) — 비서 화면에 끼면 칸을 차지해서 따로 뺀다(2026-09-28 사용자)
+  const inHq = sessions.filter((s) => stripSlash(s.cwd) === orch);
+  const helpers = inHq.filter((s) => s.kind === 'background' && s.name !== '' && !orchestratorLike(s.name));
+  const here = inHq.filter((s) => !helpers.includes(s));
   const orchestrator = here.find((s) => s.name === assistant()) ?? here.find((s) => isOrchestratorName(s.name)) ?? here[0];
   const orchestrators = orchestrator ? [orchestrator, ...here.filter((s) => s !== orchestrator)] : [];
   const byName = new Map<string, Session[]>();
   for (const s of sessions) {
-    if (here.includes(s)) continue;
+    if (inHq.includes(s)) continue;
     const list = byName.get(s.project) ?? [];
     list.push(s);
     byName.set(s.project, list);
   }
-  return { orchestrator, orchestrators, projects: [...byName].map(([name, list]) => ({ name, sessions: list })) };
+  return { orchestrator, orchestrators, helpers, projects: [...byName].map(([name, list]) => ({ name, sessions: list })) };
 }
+
+/** ⌘W 로 끌 수 있나 — 비서 화면의 세션(참모·참모-2…·터미널에서 연 것)은 안 된다. 창 버튼의 끄기만 */
+export const closableByShortcut = (s: Session, orchestrators: Session[]): boolean => !orchestrators.some((o) => o.id === s.id) && !isOrchestratorName(s.name);
 
 /** ⌘T로 비서를 하나 더 띄울 때 이름: 참모 → 참모-2 → 참모-3 (지금 있는 가장 큰 번호 다음). 이름은 assistant() */
 export function nextOrchestratorName(names: string[]): string {

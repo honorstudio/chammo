@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { browserInstallCommand, browserStatus, checkEnv, claudeTrusted, notifyOpenSettings, notifyRequest, notifyStatus, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, spawnSession, ttsTest, writeConfig, type Config, type FolderStatus } from '../data/tauri';
+import { TtsField } from './TtsField';
+import { browserInstallCommand, browserStatus, checkEnv, claudeTrusted, notifyOpenSettings, notifyRequest, notifyStatus, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, spawnSession, writeConfig, type Config, type FolderStatus } from '../data/tauri';
 import { addExtraProject, canNext, parseClaudeVersion, setupCommand, setupReady, tildify, notifyRow, browserRow, versionFit, WIZARD, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
 import { nextOrchestratorName } from '../domain/session';
 import type { Features } from '../domain/config';
@@ -379,12 +380,7 @@ export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose }
           <Field label={tr('GitHub 아이디', 'GitHub username')} hint={tr('다마고치 CI 배틀과 PR 리뷰에 써요. 비워 둬도 돼요.', 'Used for the Tamagotchi CI battle and PR review. You can leave it empty.')}>
             <input value={draft.githubUser} onChange={(e) => set('githubUser', e.target.value)} spellCheck={false} />
           </Field>
-          <Field label={tr('음성 명령', 'Speech command')} hint={tr('읽을 글자를 마지막에 붙여 불러요. 기본은 macOS 의 say.', 'Called with the text as the last argument. The default is macOS say.')}>
-            <span className="su-inline">
-              <input value={draft.ttsCommand} placeholder="say" onChange={(e) => set('ttsCommand', e.target.value)} spellCheck={false} />
-              <button type="button" className="btn" onClick={() => void ttsTest(draft.ttsCommand, tr(`안녕하세요, ${name}예요.`, `Hi, I'm ${name}.`)).catch((e: unknown) => setError(String(e)))}>{tr('들어보기', 'Test')}</button>
-            </span>
-          </Field>
+          <TtsField value={draft.ttsCommand} onChange={(c) => set('ttsCommand', c)} name={name} onError={setError} />
           <Field label={tr('메모 폴더', 'Notes folder')} hint={tr('프로젝트별 메모(⌘M)가 저장되는 곳.', 'Where per-project notes (⌘M) are saved.')}>
             {pick('memoDir', tr('메모를 저장할 폴더를 골라 주세요', 'Choose where notes are saved'))}
           </Field>

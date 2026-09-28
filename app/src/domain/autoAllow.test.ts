@@ -39,6 +39,23 @@ const NEW_MCP = [
   '  Enter to confirm · Esc to cancel',
 ].join('\n');
 
+// 실제 화면 (2026-09-28 아이맥 — 참모(바이패스)가 auto 모드 세션에 SendMessage → 붙잡힘)
+const HELD = [
+  '──────────────────────────────────────────────────────────────────────',
+  ' Held message from another session',
+  '',
+  '  Another Claude session sent a message: from uds:/tmp/cc-socks/2802.sock [verified pid 2802] (peer claims name: 참모)',
+  '',
+  "  The sending session's permission mode class doesn't match this session's, so it wasn't delivered automatically.",
+  '',
+  '  Message body (this is what will be delivered):',
+  '  «빌드 끝나면 PR 번호만 알려 줘',
+  '  …[1 line, 20 chars total — full body will be delivered on approve]»',
+  '',
+  '    Deny — drop it and tell the sender it was declined',
+  '  ❯ Deliver this message to Claude',
+].join('\n');
+
 const DOWN = '\x1b[B', UP = '\x1b[A';
 
 describe('pickAllow — 권한 창에서 허용 줄을 이름으로 찾는다 (Enter = 맨 위 가정 금지)', () => {
@@ -54,14 +71,48 @@ describe('pickAllow — 권한 창에서 허용 줄을 이름으로 찾는다 (E
     expect(pickAllow(NEW_MCP)).toEqual({ keys: UP + UP + '\r', option: 'Use this MCP server' });
   });
 
+  it('세션끼리 붙잡힌 메시지: "Deliver" 로 전달한다 (참모 말이 앵무새처럼 반복되던 것)', () => {
+    expect(pickAllow(HELD)).toEqual({ keys: '\r', option: 'Deliver this message to Claude' });
+    const s = HELD.replace('    Deny —', '  ❯ Deny —').replace('  ❯ Deliver', '    Deliver');
+    expect(pickAllow(s)).toEqual({ keys: DOWN + '\r', option: 'Deliver this message to Claude' });
+  });
+
   it('커서가 아래에 있으면 위로', () => {
     const s = BASH.replace(' ❯ 1. Yes', '   1. Yes').replace('   3. No,', ' ❯ 3. No,');
     expect(pickAllow(s)).toEqual({ keys: UP + UP + '\r', option: '1. Yes' });
   });
 
-  it('비밀번호·2FA·결제·과금이 보이면 건드리지 않는다', () => {
+  it('비밀번호·2FA·결제·과금을 묻는 창이면 건드리지 않는다', () => {
     for (const w of ['password', '비밀번호', '2FA code', '결제', 'billing account', '카드'])
-      expect(pickAllow(BASH.replace('Bash command', `Bash command (${w})`)), w).toEqual({ skip: '민감한 창(비밀번호·인증·결제) — 직접 골라줘' });
+      expect(pickAllow(BASH.replace('Do you want to proceed?', `Do you want to proceed? (${w})`)), w).toEqual({ skip: '민감한 창(비밀번호·인증·결제) — 직접 골라줘' });
+  });
+
+  it('질문 줄이 없는 창(computer-use)은 창 전체를 본다 — 이유 줄에 결제가 있으면 건드리지 않는다', () => {
+    expect(pickAllow(COMPUTER_USE.replace('계산기 앱을 조작하기', '결제 앱을 조작하기'))).toEqual({ skip: '민감한 창(비밀번호·인증·결제) — 직접 골라줘' });
+  });
+
+  // 2026-09-28 project-b: 커밋 메시지(heredoc)에 "인증번호" 가 있어 10분 동안 건너뛰었다
+  it('명령 본문·위쪽 대화 기록의 낱말은 민감함으로 치지 않는다', () => {
+    const s = [
+      '❯ 결제 모듈 카드 등록 비밀번호 화면 고쳐줘',
+      '⏺ 인증번호 입력 흐름을 먼저 볼게',
+      '────────────────────────────────────────',
+      ' Bash command',
+      "   git commit -q -F - <<'EOF'",
+      '   - 로그인: 인증번호 입력 화면 정리',
+      '   - 결제 카드 password 처리',
+      '   EOF',
+      '   커밋',
+      ' Do you want to proceed?',
+      ' ❯ 1. Yes',
+      '   2. No, and tell Claude what to do differently (esc)',
+    ].join('\n');
+    expect(pickAllow(s)).toEqual({ keys: '\r', option: '1. Yes' });
+  });
+
+  it('구분선이 화면 밖으로 밀려난 긴 명령도 질문 줄 위는 보지 않는다', () => {
+    const s = ['   인증번호 → 결제', '   EOF', ' Do you want to proceed?', ' ❯ 1. Yes', '   2. No'].join('\n');
+    expect(pickAllow(s)).toEqual({ keys: '\r', option: '1. Yes' });
   });
 
   it('허용 줄이 없으면(선택지 질문 등) 안 누른다', () => {

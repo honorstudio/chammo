@@ -1,0 +1,8 @@
+#!/bin/bash
+# Chammo Supertonic 읽기 — speak [-v M1] "할 말"   (설정 > 음성 에서 Supertonic 을 고르면 앱이 이걸 부른다)
+DIR="$(cd "$(dirname "$0")" && pwd)"
+VOICE=M1
+if [ "$1" = "-v" ]; then VOICE="$2"; shift 2; fi
+BASE="$(mktemp -t chammo-tts)"
+"$DIR/venv/bin/python" "$DIR/say.py" "$BASE.wav" "$VOICE" "$*" && afplay "$BASE.wav"
+rm -f "$BASE" "$BASE.wav"

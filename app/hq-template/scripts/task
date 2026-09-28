@@ -18,7 +18,7 @@ code 3 — do NOT send the message; wait until the user answers the "OK to send?
 Deleting, pushing, deploying, sending and merging are not gated.
 
 Merge rule: `send` prints MERGE_RULE on stderr — append it to the end of your message to the session, so
-sessions open PRs but leave merging to you.
+sessions open PRs but leave merging to you. It also prints ASK_RULE — sessions' choice prompts are seen by no one.
 """
 import datetime, json, os, re, secrets, shutil, subprocess, sys
 
@@ -65,6 +65,10 @@ PAYMENT = re.compile(r'실결제|결제|환불|과금|\b(payments?|refunds?|bill
 
 MERGE_RULE = T('PR 은 올리고 머지하지 마 — CI 초록이면 PR 번호만 알려줘, 머지는 내가 한다.',
                "Open a PR but don't merge it — when CI is green just send me the PR number; I'll do the merge.")
+
+# A session's choice prompt (AskUserQuestion) is seen by no one and it just stops — decide easy things, ask the sender
+ASK_RULE = T('정할 게 생겨도 선택지 창(AskUserQuestion)은 띄우지 마 — 아무도 안 보고 있어서 그대로 멈춘다. 되돌리기 쉬운 것(문구·색·배치·이름)은 추천안으로 진행하고 회신에 "이렇게 정했다"고 적어. 꼭 물어야 하면 이 지시를 보낸 세션에 SendMessage 로 [무엇 때문에 / 선택지 / 추천] 을 보내고 답을 기다려.',
+             "Don't open a choice prompt (AskUserQuestion) — nobody is watching it, so you'd just stop. Decide easy-to-undo things (wording, color, layout, names) with your recommendation and say what you chose in your reply. If you really must ask, SendMessage the session that sent you this with [why / options / recommendation] and wait.")
 
 # How hard to verify — tasks with hidden edge cases get "verify hard", sketches get "be quick".
 HIGH = re.compile(r'결제|환불|보안|취약|권한|마이그|운영|배포|삭제|데이터|버그|고치|인증|로그인|토큰|시크릿|'
@@ -159,6 +163,7 @@ def main(a):
             print(T(f'검증 강도 {level} — 지시에 붙여: {line}', f'verification {level} — append to your message: {line}'), file=sys.stderr)
         for l in lessons_of(project):
             print(T(f'이 프로젝트 교훈 — 지시에 붙여: {l}', f'project lesson — append to your message: {l}'), file=sys.stderr)
+        print(T(f'메시지 끝에 붙여: {ASK_RULE}', f'append to the end of your message: {ASK_RULE}'), file=sys.stderr)
         print(T(f'메시지 끝에 붙여: {MERGE_RULE}', f'append to the end of your message: {MERGE_RULE}'), file=sys.stderr)
         return 0
     if cmd == 'lesson' and len(a) >= 3:

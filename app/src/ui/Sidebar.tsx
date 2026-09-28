@@ -8,7 +8,7 @@ import { StatusMark } from './StatusMark';
 import { assistant, tr } from '../i18n';
 import type { ProjectGroup, Session, SessionState } from '../domain/session';
 
-export type Selection = { kind: 'orchestrator' } | { kind: 'all' } | { kind: 'tama' } | { kind: 'replay' } | { kind: 'load' } | { kind: 'review'; key?: string } | { kind: 'project'; name: string } | { kind: 'routine'; name: string };
+export type Selection = { kind: 'orchestrator' } | { kind: 'all' } | { kind: 'tama' } | { kind: 'replay' } | { kind: 'load' } | { kind: 'helpers' } | { kind: 'review'; key?: string } | { kind: 'project'; name: string } | { kind: 'routine'; name: string };
 
 type Props = {
   /** 루틴(반복 업무) 줄 — 이름·상태·한 줄 설명 */
@@ -32,6 +32,8 @@ type Props = {
   review?: { confirm: number; open: number };
   /** 프로젝트 폴더 밖 폴더를 프로젝트로 추가(폴더 고르기 창). 없으면 버튼을 숨긴다 */
   onAddProject?: () => void;
+  /** 비서가 부린 도우미 세션(비서 폴더에서 도는 다른 이름) — 비서 칸에 안 끼고 여기 따로 */
+  helpers?: Session[];
 };
 
 const STATE_LABEL = (): Record<SessionState, string> => ({ working: tr('작업 중', 'Working'), blocked: tr('확인창', 'Prompt'), idle: tr('대기', 'Idle') });
@@ -61,7 +63,7 @@ function SessionMarks({ states }: { states: SessionState[] }) {
 const isOn = (a: Selection, b: Selection) =>
   a.kind === b.kind && (a.kind !== 'project' || b.kind !== 'project' || a.name === b.name);
 
-export function Sidebar({ routines, orchestrator, projects: allProjects, selected, onSelect, footer, badges, idleProjects: allIdle, query, onQuery, searchRef, ctxOf, review, onAddProject }: Props) {
+export function Sidebar({ routines, orchestrator, projects: allProjects, selected, onSelect, footer, badges, idleProjects: allIdle, query, onQuery, searchRef, ctxOf, review, onAddProject, helpers }: Props) {
   // 프로젝트에 세션이 여럿이면 가장 많이 찬 것 — 곧 요약될 세션을 놓치지 않게
   const ctxMax = (ss: Session[]) => ss.map((s) => ctxOf?.(s)).filter((x): x is number => x !== undefined).reduce<number | undefined>((m, x) => (m === undefined || x > m ? x : m), undefined);
   const running = allProjects.reduce((n, p) => n + p.sessions.length, 0);
@@ -113,6 +115,17 @@ export function Sidebar({ routines, orchestrator, projects: allProjects, selecte
           <div className="ln">{tr(`머지 전에 볼 것 ${review.confirm} · 열린 PR ${review.open}`, `To check ${review.confirm} · Open PRs ${review.open}`)}</div>
         </span>
       </button>}
+
+      {helpers && helpers.length > 0 && (
+        <button className={`it ${isOn(selected, { kind: 'helpers' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'helpers' })}
+          title={tr(`${assistant()}가 따로 띄운 도우미 세션`, `Helper sessions ${assistant()} started`)}>
+          <StatusMark kind={urgentKind(helpers.map((h) => h.state))} />
+          <span>
+            <div className="nm">{tr(`도우미 · ${helpers.length}`, `Helpers · ${helpers.length}`)}</div>
+            <div className="ln">{helpers.map((h) => h.name).join(' · ')}</div>
+          </span>
+        </button>
+      )}
 
       {routines && routines.length > 0 && (
         <>

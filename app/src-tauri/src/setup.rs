@@ -96,11 +96,16 @@ pub async fn check_env() -> EnvCheck {
     tauri::async_runtime::spawn_blocking(check).await.unwrap_or_default()
 }
 
-/// 설정 화면의 "들어보기" — 저장 전의 음성 명령으로 한 번 읽는다
+/// 설정 화면의 "들어보기" — 저장 전의 음성 명령으로 한 번 읽는다. 다 읽을 때까지 기다린다(버튼이 "읽는 중…")
 #[tauri::command]
-pub fn tts_test(command: String, text: String) -> Result<(), String> {
-    let argv = crate::config::tts_argv(&crate::config::home(), &command, &text, |p| std::path::Path::new(p).is_file());
-    Command::new(&argv[0]).args(&argv[1..]).spawn().map(|_| ()).map_err(|e| format!("{}: {e}", argv[0]))
+pub async fn tts_test(command: String, text: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let argv = crate::config::tts_argv(&crate::config::home(), &command, &text, |p| std::path::Path::new(p).is_file());
+        let status = Command::new(&argv[0]).args(&argv[1..]).status().map_err(|e| format!("{}: {e}", argv[0]))?;
+        if status.success() { Ok(()) } else { Err(format!("{}: {status}", argv[0])) }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Claude Code 가 이 폴더(또는 그 위 폴더)를 믿는다고 기록했나 — `~/.claude.json` 의 projects[경로].hasTrustDialogAccepted.

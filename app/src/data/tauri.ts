@@ -58,6 +58,15 @@ export const checkEnv = () => invoke<import('../domain/setup').EnvCheck>('check_
 export const claudeTrusted = (dir: string) => invoke<boolean>('claude_trusted', { dir });
 /** 저장 전의 음성 명령으로 한 번 읽어 보기 */
 export const ttsTest = (command: string, text: string) => invoke<void>('tts_test', { command, text });
+/** Supertonic — 설정에 적힐 실행기 경로와 받기가 끝났나 */
+export type SupertonicStatus = { runner: string; ready: boolean };
+export const supertonicStatus = () => invoke<SupertonicStatus>('supertonic_status');
+/** Supertonic 받기(약 550MB, 몇 분). 실패하면 설치 기록 끝부분 */
+export const supertonicInstall = () => invoke<void>('supertonic_install');
+/** `say -v ?` 목록 그대로 — 거르기는 domain/tts nativeVoices */
+export const nativeVoicesList = () => invoke<string>('native_voices');
+/** macOS 목소리를 소리 없이 미리 불러 둔다(들어보기 첫 지연 줄이기). 다른 음성 명령이면 아무것도 안 한다 */
+export const ttsWarm = (command: string) => invoke<void>('tts_warm', { command });
 
 /** `claude agents --json` 원문. 파싱은 domain/session.ts 의 parseAgents */
 export const listSessionsRaw = () => invoke<string>('list_sessions');
@@ -166,6 +175,9 @@ export const readMemos = (names: string[]) => invoke<Record<string, string>>('re
 export const writeMemo = (name: string, content: string) => invoke<void>('write_memo', { name, content });
 export const appendMemo = (name: string, entry: string) => invoke<void>('append_memo', { name, entry });
 export const readAutoAllow = () => invoke<string>('read_auto_allow');
+/** 한글 입력 진단 — <데이터 폴더>/ime-debug.on 이 있을 때만 켜진다(null = 꺼짐, 아니면 그 파일 내용) */
+export const imeDebugMode = () => invoke<string | null>('ime_debug_mode');
+export const imeLog = (lines: string) => invoke<void>('ime_log', { lines });
 
 /** Dock 아이콘 뱃지 숫자 (0 이면 지움) */
 export const setBadge = (count: number) => invoke<void>('set_badge', { count });

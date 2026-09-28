@@ -77,3 +77,9 @@
 .su-extra code { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .su-field-list > .su-list-row { display: grid; grid-template-columns: 150px 1fr; align-items: start; gap: 12px; }
 .su-field-list .su-label { padding-top: 6px; }
+.su-tts { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.su-tts-row { display: flex; align-items: center; gap: 10px; min-height: 36px; flex-wrap: wrap; }
+.su-tts-opt { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.su-tts-opt input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.su-tts select, .su-tts input[type='text'], .su-tts-row > input { height: 32px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 13px; }
+.su-tts-row > input { flex: 1; min-width: 160px; }

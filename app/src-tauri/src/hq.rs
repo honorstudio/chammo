@@ -24,6 +24,7 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "scripts/new-project", body: include_str!("../../hq-template/scripts/new-project"), exec: true },
     TemplateFile { path: "scripts/statusline", body: include_str!("../../hq-template/scripts/statusline"), exec: true },
     TemplateFile { path: "scripts/routine", body: include_str!("../../hq-template/scripts/routine"), exec: true },
+    TemplateFile { path: "scripts/choice", body: include_str!("../../hq-template/scripts/choice"), exec: true },
 ];
 
 #[derive(Serialize, Debug, Default, PartialEq)]

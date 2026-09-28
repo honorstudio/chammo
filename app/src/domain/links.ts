@@ -45,6 +45,13 @@ export function resolveLink(raw: string, base: string, home: string): Opened | n
 // 이름 글자는 유니코드 글자·숫자 — \w 는 영문만이라 한글 폴더에서 끊겼다(2026-09-28 사용자: ~/Desktop/ 까지만 잡힘)
 const PATH_RE = /(?:~\/|\/)?(?:[\p{L}\p{N}_.@-]+\/)+[\p{L}\p{N}_.@-]+\.[A-Za-z0-9]{1,8}(?::\d+(?::\d+)?)?|(?:~\/|\/)(?:[\p{L}\p{N}_.@-]+\/)*[\p{L}\p{N}_.@-]+(?::\d+)?/gu;
 const URL_RE = /https?:\/\/\S+/g;
+// 링크로 쓸 웹 주소 — 끝의 문장부호·닫는 괄호·따옴표는 뗀다
+const WEB_RE = /https?:\/\/[^\s<>"'`]+/g;
+
+/** 한 줄에서 웹 주소를 찾는다 */
+export function findUrls(line: string): { text: string; start: number }[] {
+  return [...line.matchAll(WEB_RE)].map((m) => ({ text: m[0].replace(/[.,:;!?)\]}>]+$/, ''), start: m.index! })).filter((m) => m.text.length > 'https://'.length);
+}
 
 /** 한 줄에서 링크로 안 찍힌 파일 경로를 찾는다. URL 안쪽은 건너뛴다 */
 export function findPaths(line: string): { text: string; start: number }[] {
@@ -65,7 +72,7 @@ export type Cell = { row: number; col: number };
 export type WrappedPath = { text: string; from: Cell; to: Cell };
 
 const EDGE = 4; // 앞 줄이 오른쪽 끝에서 이만큼 안이면 "꽉 찼다"(Claude 화면은 테두리·여백만큼 덜 찬다)
-const PATHY = /[\p{L}\p{N}_.@/~:-]/u;
+const PATHY = /[\p{L}\p{N}_.@/~:?=&%#+-]/u; // 경로·웹 주소에 들어가는 글자
 const MAX_ROWS = 3; // 경로 하나가 이보다 많은 줄에 걸치는 일은 드물다
 
 /**
@@ -94,7 +101,8 @@ export function findPathsWrapped(line: (i: number) => string | null, wrapped: (i
     for (let k = 0; k < text.length; k++) map.push({ row: r, col: lead + k });
     joined += text;
   }
-  return findPaths(joined)
+  // 웹 주소도 같이 — xterm 기본 링크(WebLinksAddon)는 Claude 화면이 직접 바꾼 줄을 못 이어 윗줄 조각만 잡았다(2026-09-28)
+  return [...findUrls(joined), ...findPaths(joined)]
     .map((m) => ({ text: m.text, from: map[m.start]!, to: map[m.start + m.text.length - 1]! }))
     .filter((m) => m.from.row <= at && m.to.row >= at);
 }

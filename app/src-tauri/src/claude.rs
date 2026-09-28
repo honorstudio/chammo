@@ -595,6 +595,21 @@ pub fn log_auto_allow(line: String) -> Result<(), String> {
     writeln!(f, "{}", line.trim()).map_err(|e| e.to_string())
 }
 
+/// 한글 입력 진단: <데이터 폴더>/ime-debug.on 이 있을 때만 켜진다(프론트가 시작할 때 한 번 묻는다).
+/// None = 꺼짐, Some(파일 내용) = 켜짐 — 내용에 "noswallow" 가 있으면 조합 이벤트를 막지 않고 본다
+#[tauri::command]
+pub fn ime_debug_mode() -> Option<String> {
+    std::fs::read_to_string(crate::config::data_file("ime-debug.on")).ok()
+}
+
+/// 한글 입력 진단 한 묶음 — <데이터 폴더>/ime-debug.jsonl
+#[tauri::command]
+pub fn ime_log(lines: String) -> Result<(), String> {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(crate::config::data_file("ime-debug.jsonl")).map_err(|e| e.to_string())?;
+    f.write_all(lines.as_bytes()).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn read_auto_allow() -> String {
     std::fs::read_to_string(crate::config::data_file("auto-allow.jsonl")).unwrap_or_default()

@@ -20,8 +20,9 @@ With five or ten projects open, the bottleneck is not the agents. It's you: swit
 - **Payment gate** — delegating anything that mentions payments, refunds or billing is held until you answer.
 - **Review and merge gates** — open PRs across your projects are checked for DB migrations, money, security and size (500+ lines). Gated PRs wait for you with a 3-line summary and diff; the rest are merged by the chief of staff once CI is green. "Merged today" has a one-click revert PR.
 - **Session revive** — when the Claude Code daemon restarts, Chammo notices which sessions went down and brings them back with their conversations. Tasks left without an owner are listed too.
-- **Permission prompts** — tool permission prompts in background sessions are answered with *Allow* by reading the prompt, never by guessing. Password, 2FA and payment prompts are left to you.
-- **Voice** — replies are spoken through a TTS command of your choice; you talk back with Claude Code's own voice input (hold space).
+- **Permission prompts** — tool permission prompts in background sessions are answered with *Allow* by reading the prompt, never by guessing. Prompts that ask for a password, a 2FA code or a payment are left to you (the words are looked for in what the prompt asks, not in the command being approved). Messages between sessions that Claude Code holds for approval ("Held message from another session") are delivered the same way.
+- **Stuck on a question** — if a project session stops on a multiple-choice question for 30 seconds, Chammo hands it to the chief of staff, who answers easy-to-undo ones (`scripts/choice`) and asks you about the rest. Sessions are also told to decide small things themselves instead of opening such prompts.
+- **Voice** — replies are spoken with a macOS voice or Supertonic (a natural on-device voice, downloaded only if you pick it); you talk back with Claude Code's own voice input (hold space).
 - **Reader** — a tabbed side panel for HTML design reviews, PDF, Markdown and images. Tear tabs off into windows. Sessions can open files in it (`scripts/show`).
 - **Day replay** — a day at a glance: commits per repo on a timeline, decisions made, and what carries over to tomorrow.
 - **Context meter and notes** — per-session context usage, and a notes pad per project that you can send into the session.
@@ -125,13 +126,19 @@ Everything lives in the data folder: `$CHAMMO_HOME`, or `~/.chammo` by default. 
 | `devRoot` | projects folder | first of `~/Developer`, `~/Projects`, `~/Desktop/dev` that exists |
 | `hqDir` | chief of staff's folder | `<data>/hq` |
 | `githubUser` | used for review and CI | from `gh api user` |
-| `ttsCommand` | command that speaks a line of text | macOS `say` |
+| `ttsCommand` | command that speaks a line of text (Settings > Voice writes it) | macOS `say` |
 | `memoDir` | where session notes are stored | `<data>/memo` |
 | `features` | `office`, `tama`, `gacha`, `review`, `voice` on/off | all on |
 
 ## Voice
 
-Turn on voice mode in the top bar. When the chief of staff finishes a reply or asks you something, Chammo passes a short spoken version to `ttsCommand` (the text is the last argument). The default is macOS `say`; any local or cloud TTS that takes text on the command line works. The assistant can also hand over exactly what to say with `scripts/say`, so tables and code don't get read aloud.
+Turn on voice mode in the top bar. When the chief of staff finishes a reply or asks you something, Chammo speaks a short version of it. Pick the voice in Settings > Voice:
+
+- **macOS voice** — works right away; choose any installed voice for your language.
+- **Supertonic** — a more natural voice that runs entirely on your Mac (no internet, about 1–2 s per sentence). Nothing is downloaded until you press **Download** (about 550 MB: a Python package and the Supertone voice model, OpenRAIL-M license). Needs `python3` (Xcode Command Line Tools).
+- **Custom command** — any local or cloud TTS that takes the text as its last argument (saved as `ttsCommand`).
+
+The assistant can also hand over exactly what to say with `scripts/say`, so tables and code don't get read aloud.
 
 To talk back, hold space in the chief of staff's terminal — that's Claude Code's own voice input. Chammo turns off macOS press-and-hold for itself so key repeat reaches Claude Code.
 
@@ -154,6 +161,6 @@ Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for
 
 [AGPL-3.0](LICENSE) © 2026 Honor Studio
 
-Third-party: the terminal's Hangul font `app/public/fonts/ChammoHangul.woff2` is a modified (Hangul-only) version of NAVER [D2Coding](https://github.com/naver/d2codingfont), renamed as the SIL Open Font License 1.1 requires — see [`app/public/fonts/OFL.txt`](app/public/fonts/OFL.txt). Libraries (Tauri, React, xterm.js, Playwright MCP, …) keep their own licenses (MIT / Apache-2.0); see each package.
+Third-party: the terminal's Hangul font `app/public/fonts/ChammoHangul.woff2` is a modified (Hangul-only) version of NAVER [D2Coding](https://github.com/naver/d2codingfont), renamed as the SIL Open Font License 1.1 requires — see [`app/public/fonts/OFL.txt`](app/public/fonts/OFL.txt). The optional Supertonic voice is downloaded to your Mac only when you pick it: the `supertonic` package (MIT) and the Supertone model under the [OpenRAIL-M license](https://huggingface.co/Supertone/supertonic-3) with its use restrictions. Libraries (Tauri, React, xterm.js, Playwright MCP, …) keep their own licenses (MIT / Apache-2.0); see each package.
 
 Chammo is an independent project. It is not affiliated with, endorsed by, or sponsored by Anthropic. Claude and Claude Code are trademarks of Anthropic.

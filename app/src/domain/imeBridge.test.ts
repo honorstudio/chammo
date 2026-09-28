@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diffInput, hasNonAscii, normalizeInput, toSequence, yieldsToXterm } from './imeBridge';
+import { diffInput, hasNonAscii, normalizeInput, toSequence, yieldsToXterm, imeStep } from './imeBridge';
 
 // 실측 이벤트 로그(2026-09-25, WKWebView 두벌식)에서 그대로 가져온 전후 쌍들
 describe('diffInput — 입력기가 바꿔치기한 텍스트칸의 전후 차이', () => {
@@ -94,5 +94,55 @@ describe('yieldsToXterm — 이 keydown 뒤의 입력은 xterm 몫인가 (조합
     expect(yieldsToXterm({ key: 'Enter', keyCode: 13 })).toBe(true);
     expect(yieldsToXterm({ key: 'a', keyCode: 65 })).toBe(true);
     expect(yieldsToXterm({ key: 'Backspace', keyCode: 8 })).toBe(true);
+  });
+});
+
+// 2026-09-28 실측(ime-debug.jsonl): 웹뷰가 조합 이벤트를 보내기 시작했고, 한글 입력기가 스페이스까지 조합으로 보낸다.
+// 글자가 확정될 때마다 deleteCompositionText(칸을 비움) → insertFromComposition(도로 넣음) 이 온다
+describe('imeStep — 입력 이벤트 하나를 pty 로 보낼 것으로', () => {
+  const DEL = '\x7f';
+  const run = (events: [string, string, string][]) => {
+    let held: string | null = null;
+    const out: (string | null)[] = [];
+    for (const [it, prev, now] of events) {
+      const r = imeStep(it, prev, now, held);
+      held = r.held;
+      out.push(r.send);
+    }
+    return out;
+  };
+
+  it('조합 중 글자는 바꿔치기 차이로', () => {
+    expect(run([['insertCompositionText', '', 'ㅅ'], ['insertCompositionText', 'ㅅ', '사']])).toEqual(['ㅅ', DEL + '사']);
+  });
+
+  it('확정 때 지웠다 도로 넣는 건 아무것도 안 보낸다', () => {
+    expect(run([['insertCompositionText', '사', '사 '], ['deleteCompositionText', '사 ', ''], ['insertFromComposition', '', '사 ']]))
+      .toEqual([' ', '', '']);
+  });
+
+  it('조합으로 온 스페이스는 한글이 없어도 보낸다 ("?" 뒤 띄어쓰기가 사라지던 것)', () => {
+    expect(run([['insertCompositionText', '', ' '], ['deleteCompositionText', ' ', ''], ['insertFromComposition', '', ' ']]))
+      .toEqual([' ', '', '']);
+  });
+
+  it('스페이스를 누르고 있으면 한 번에 하나씩 이어서 (음성 입력 스페이스 누르기)', () => {
+    const one: [string, string, string][] = [['insertCompositionText', '', ' '], ['deleteCompositionText', ' ', ''], ['insertFromComposition', '', ' ']];
+    const sent = run([...one, ...one, ...one]).filter((s) => s);
+    expect(sent).toEqual([' ', ' ', ' ']);
+  });
+
+  it('확정하면서 받침이 다음 글자로 넘어가면 그 차이만', () => {
+    // 글 + ㅐ → 그 + 래
+    expect(run([['insertCompositionText', '글', '그'], ['deleteCompositionText', '그', ''], ['insertFromComposition', '', '그']]))
+      .toEqual([DEL + '그', '', '']);
+  });
+
+  it('조합이 아닌 영문·스페이스는 xterm 몫 (null)', () => {
+    expect(run([['insertText', '', 'a'], ['insertText', '', ' ']])).toEqual([null, null]);
+  });
+
+  it('조합 이벤트가 없던 웹뷰(insertText·insertReplacementText)의 한글은 예전처럼', () => {
+    expect(run([['insertText', '', 'ㅇ'], ['insertReplacementText', 'ㅇ', '아']])).toEqual(['ㅇ', DEL + '아']);
   });
 });

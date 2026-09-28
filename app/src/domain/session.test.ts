@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setAssistant, setLang } from '../i18n';
-import { classifyWorkspace, groupByProject, projectDir, isOrchestratorName, nextOrchestratorName, orchView, parseAgents, type Session, withinRoots, sessionsToStop } from './session';
+import { classifyWorkspace, closableByShortcut, groupByProject, projectDir, isOrchestratorName, nextOrchestratorName, orchView, parseAgents, type Session, withinRoots, sessionsToStop } from './session';
 
 afterEach(() => { setLang('ko'); setAssistant(null); });
 
@@ -130,14 +130,28 @@ describe('groupByProject — 사이드바용 묶기', () => {
     expect(g.projects.find((p) => p.name === 'ops-hub')?.sessions.map((s) => s.workspace)).toEqual(['oms', null]);
   });
 
-  it('이 폴더에 세션이 여럿이면 전부 참모 — 이름이 "참모"인 게 맨 앞(대표)', () => {
+  it('이 폴더의 비서 이름 세션(참모·참모-2…)은 전부 비서 — 이름이 "참모"인 게 맨 앞(대표)', () => {
     const two = parseAgents(JSON.stringify([
-      { id: 'x1', cwd: `${DEV}/honor-orchestrator`, kind: 'background', state: 'blocked', status: 'idle', name: 'session-management-setup' },
+      { id: 'x1', cwd: `${DEV}/honor-orchestrator`, kind: 'background', state: 'blocked', status: 'idle', name: '참모-2' },
       { id: 'x2', cwd: `${DEV}/honor-orchestrator`, kind: 'background', state: 'working', name: '참모' },
+      { id: 'x3', cwd: `${DEV}/honor-orchestrator`, kind: 'background', state: 'working', name: '참모-3' },
     ]), DEV);
     const g = groupByProject(two, `${DEV}/honor-orchestrator`);
     expect(g.orchestrator?.id).toBe('x2');
-    expect(g.orchestrators.map((s) => s.id)).toEqual(['x2', 'x1']);
+    expect(g.orchestrators.map((s) => s.id)).toEqual(['x2', 'x1', 'x3']);
+    expect(g.helpers).toEqual([]);
+    expect(g.projects).toEqual([]);
+  });
+
+  it('비서 폴더에서 도는 다른 이름의 백그라운드 세션은 도우미 — 비서 화면에 끼지 않는다(사용자 2026-09-28: 올리기 도우미가 참모 칸을 차지)', () => {
+    const xs = parseAgents(JSON.stringify([
+      { id: 'b1', cwd: `${DEV}/honor-orchestrator`, kind: 'background', state: 'working', name: '참모' },
+      { id: 'h1', cwd: `${DEV}/honor-orchestrator`, kind: 'background', state: 'working', name: 'launch-post' },
+      { pid: 7, cwd: `${DEV}/honor-orchestrator`, kind: 'interactive', status: 'busy', name: 'honor-orchestrator-e7' },
+    ]), DEV);
+    const g = groupByProject(xs, `${DEV}/honor-orchestrator`);
+    expect(g.orchestrators.map((s) => s.name)).toEqual(['참모', 'honor-orchestrator-e7']); // 터미널에서 연 대화형은 비서 그대로
+    expect(g.helpers.map((s) => s.id)).toEqual(['h1']);
     expect(g.projects).toEqual([]);
   });
 
@@ -253,4 +267,22 @@ describe('sessionsToStop — "세션도 모두 끄고 끄기"가 끌 세션(사�
   it('Chammo 가 다루는 것(프로젝트 폴더·HQ 안)만, 다른 데서 띄운 세션은 안 끈다', () =>
     expect(sessionsToStop([s('a', '/dev/acme'), s('b', '/hq'), s('c', '/elsewhere/x')], ['/dev', '/hq']).map((x) => x.id)).toEqual(['a', 'b']));
   it('폴더를 모르면 아무것도 안 끈다(전부 끄는 쪽으로 틀리지 않게)', () => expect(sessionsToStop([s('a', '/dev/acme')], ['', ''])).toEqual([]));
+});
+
+describe('closableByShortcut — ⌘W 로 끌 수 있나(사용자 2026-09-28: 리더 탭 닫으려던 ⌘W 에 참모-2 가 꺼졌다)', () => {
+  const xs = parseAgents(JSON.stringify([
+    { id: 'b1', cwd: `${DEV}/honor-orchestrator`, kind: 'background', state: 'working', name: '참모' },
+    { id: 'b2', cwd: `${DEV}/honor-orchestrator`, kind: 'background', state: 'working', name: '참모-2' },
+    { id: 'h1', cwd: `${DEV}/honor-orchestrator`, kind: 'background', state: 'working', name: 'launch-post' },
+    { id: 'p1', cwd: `${DEV}/todo-api`, kind: 'background', state: 'working', name: 'fix' },
+  ]), DEV);
+  const g = groupByProject(xs, `${DEV}/honor-orchestrator`);
+  it('비서는 번호가 붙어도 안 된다', () => {
+    expect(closableByShortcut(xs[0]!, g.orchestrators)).toBe(false);
+    expect(closableByShortcut(xs[1]!, g.orchestrators)).toBe(false);
+  });
+  it('도우미·프로젝트 세션은 된다', () => {
+    expect(closableByShortcut(xs[2]!, g.orchestrators)).toBe(true);
+    expect(closableByShortcut(xs[3]!, g.orchestrators)).toBe(true);
+  });
 });

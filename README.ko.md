@@ -20,8 +20,9 @@ Chammo 는 혼자서 여러 프로젝트를 동시에 굴리는 사람을 위한
 - **결제 관문** — 결제·환불·과금이 들어간 위임은 당신이 답할 때까지 보내지 않습니다.
 - **리뷰·머지 관문** — 모든 프로젝트의 열린 PR 을 DB 마이그레이션·돈·보안·크기(500줄 이상) 기준으로 봅니다. 걸린 PR 은 세 줄 요약과 diff 를 들고 당신을 기다리고, 나머지는 CI 가 초록이면 참모가 머지합니다. '오늘 넣은 것'에서 되돌리기 PR 을 한 번에 만들 수 있습니다.
 - **세션 되살리기** — Claude Code 관리 프로그램(daemon)이 다시 켜지면 어떤 세션이 꺼졌는지 알아채고 대화 그대로 다시 띄웁니다. 주인을 잃은 일도 따로 보여 줍니다.
-- **권한 창** — 백그라운드 세션의 도구 권한 창은 화면을 읽어 *Allow* 를 이름으로 찾아 누릅니다(짐작으로 Enter 를 누르지 않습니다). 비밀번호·2FA·결제 창은 사람 몫으로 남깁니다.
-- **음성** — 답을 원하는 TTS 명령으로 읽어 주고, 대답은 Claude Code 자체 음성 입력(스페이스 길게 누르기)으로 합니다.
+- **권한 창** — 백그라운드 세션의 도구 권한 창은 화면을 읽어 *Allow* 를 이름으로 찾아 누릅니다(짐작으로 Enter 를 누르지 않습니다). 비밀번호·2FA 코드·결제를 **묻는** 창은 사람 몫으로 남깁니다(창이 묻는 말에서 찾고, 승인할 명령 본문은 보지 않습니다). Claude Code 가 세션끼리 주고받는 메시지를 승인 대기로 붙잡는 창("Held message from another session")도 같은 방식으로 전달합니다.
+- **선택지에서 멈춘 세션** — 프로젝트 세션이 선택지 질문에서 30초 넘게 멈추면 Chammo 가 참모에게 넘기고, 참모가 되돌리기 쉬운 건 직접 고르고(`scripts/choice`) 나머지는 당신에게 묻습니다. 세션들에게도 작은 건 스스로 정하라고 일러 둡니다.
+- **음성** — 답을 macOS 목소리나 Supertonic(이 맥에서 만드는 자연스러운 목소리, 고를 때만 받음)으로 읽어 주고, 대답은 Claude Code 자체 음성 입력(스페이스 길게 누르기)으로 합니다.
 - **리더** — 디자인 시안 HTML·PDF·마크다운·그림을 탭으로 보는 옆 패널. 탭을 끌어 새 창으로 뗄 수 있고, 세션이 `scripts/show` 로 파일을 띄울 수도 있습니다.
 - **하루 리플레이** — 저장소별 커밋 타임라인, 내린 결정, 내일로 넘길 일을 하루 단위로 돌려 봅니다.
 - **컨텍스트 미터·메모** — 세션별 컨텍스트 사용량, 그리고 프로젝트별 메모장(세션으로 바로 보내기 가능).
@@ -125,13 +126,19 @@ Chammo 는 따로 로그인하지 않습니다. 맥에 로그인된 `claude` 를
 | `devRoot` | 프로젝트 폴더 | `~/Developer`, `~/Projects`, `~/Desktop/dev` 중 먼저 있는 것 |
 | `hqDir` | 참모 세션 폴더 | `<데이터>/hq` |
 | `githubUser` | 리뷰·CI 에 쓰는 계정 | `gh api user` 로 자동 |
-| `ttsCommand` | 한 줄을 소리 내 읽는 명령 | macOS `say` |
+| `ttsCommand` | 한 줄을 소리 내 읽는 명령(설정 > 음성이 적어 줌) | macOS `say` |
 | `memoDir` | 세션 메모 저장 위치 | `<데이터>/memo` |
 | `features` | `office`, `tama`, `gacha`, `review`, `voice` 켜고 끄기 | 전부 켬 |
 
 ## 음성
 
-상단 바에서 음성 모드를 켜면, 참모가 답을 마치거나 무언가 물을 때 짧게 줄인 말을 `ttsCommand` 로 넘깁니다(글은 마지막 인자로 들어갑니다). 기본값은 macOS `say` 이고, 명령줄로 글을 받는 TTS 라면 로컬이든 클라우드든 됩니다. 참모가 `scripts/say` 로 들려줄 말을 따로 넘길 수도 있어서 표나 코드를 그대로 읽지 않습니다.
+상단 바에서 음성 모드를 켜면, 참모가 답을 마치거나 무언가 물을 때 짧게 줄인 말을 소리로 읽어 줍니다. 목소리는 설정 > 음성에서 고릅니다:
+
+- **macOS 목소리** — 바로 됩니다. 깔려 있는 그 언어 목소리 중에서 고릅니다.
+- **Supertonic** — 더 자연스러운 목소리를 이 맥에서 바로 만듭니다(인터넷 필요 없음, 한 문장 1~2초). **받기**를 누를 때만 내려받습니다(약 550MB: 파이썬 패키지와 Supertone 목소리 모델, OpenRAIL-M 라이선스). `python3`(Xcode 명령줄 도구)가 필요합니다.
+- **직접 입력** — 글을 마지막 인자로 받는 TTS 라면 로컬이든 클라우드든 됩니다(`ttsCommand` 로 저장).
+
+참모가 `scripts/say` 로 들려줄 말을 따로 넘길 수도 있어서 표나 코드를 그대로 읽지 않습니다.
 
 대답은 참모 터미널에서 스페이스를 길게 누르면 됩니다 — Claude Code 자체 음성 입력입니다. Chammo 는 키 반복이 Claude Code 까지 가도록 자기 앱에서만 macOS '길게 눌러 악센트 고르기'를 끕니다.
 
@@ -154,6 +161,6 @@ Chammo 는 전부 내 맥에서 돕니다. 서버도, 계정도, 사용 통계 �
 
 [AGPL-3.0](LICENSE) © 2026 Honor Studio
 
-서드파티: 터미널 한글 폰트 `app/public/fonts/ChammoHangul.woff2` 는 NAVER [D2Coding](https://github.com/naver/d2codingfont) 의 한글 영역만 자른 수정판이라, SIL Open Font License 1.1 에 따라 이름을 바꿨습니다 — [`app/public/fonts/OFL.txt`](app/public/fonts/OFL.txt). 라이브러리(Tauri·React·xterm.js·Playwright MCP 등)는 각자의 라이선스(MIT / Apache-2.0)를 따릅니다.
+서드파티: 터미널 한글 폰트 `app/public/fonts/ChammoHangul.woff2` 는 NAVER [D2Coding](https://github.com/naver/d2codingfont) 의 한글 영역만 자른 수정판이라, SIL Open Font License 1.1 에 따라 이름을 바꿨습니다 — [`app/public/fonts/OFL.txt`](app/public/fonts/OFL.txt). 선택 기능인 Supertonic 목소리는 고를 때만 이 맥에 내려받습니다: `supertonic` 패키지(MIT)와 Supertone 모델([OpenRAIL-M 라이선스](https://huggingface.co/Supertone/supertonic-3), 이용 제한 조항 포함). 라이브러리(Tauri·React·xterm.js·Playwright MCP 등)는 각자의 라이선스(MIT / Apache-2.0)를 따릅니다.
 
 Chammo 는 독립 프로젝트이며 Anthropic 과 제휴·보증·후원 관계가 없습니다. Claude 와 Claude Code 는 Anthropic 의 상표입니다.

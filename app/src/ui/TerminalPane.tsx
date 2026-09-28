@@ -2,15 +2,14 @@ import { useEffect, useRef, type HTMLAttributes, type ReactNode } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { WebLinksAddon } from '@xterm/addon-web-links';
 import { findPathsWrapped, resolveLink } from '../domain/links';
 import '@xterm/xterm/css/xterm.css';
-import { diffInput, hasNonAscii, normalizeInput, toSequence, yieldsToXterm } from '../domain/imeBridge';
+import { imeStep, normalizeInput, yieldsToXterm } from '../domain/imeBridge';
 import { macKeySequence, ctrlLetter } from '../domain/macKeys';
 import { copyKeyAction, parseOsc52 } from '../domain/clipboard';
 import { resizeAfterOpen } from '../domain/ptySize';
 import { followLink } from './followLink';
-import { closePty, openPty, openTarget, resizePty, writeClipboard, writePty } from '../data/tauri';
+import { closePty, imeDebugMode, imeLog, openPty, openTarget, resizePty, writeClipboard, writePty } from '../data/tauri';
 import { currentContrast, currentTheme, darkQuery } from './termTheme';
 import { IconNote } from './Icons';
 import { DROP_EVENT } from './fileDrop';
@@ -93,9 +92,8 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
-    // 링크로 안 찍힌 웹 주소
-    term.loadAddon(new WebLinksAddon((e, uri) => { if (e.metaKey) openLink(uri); }));
-    // 링크로 안 찍힌 파일 경로 (src/app.ts:12 같은 것)
+    // 링크로 안 찍힌 웹 주소·파일 경로 (https://…, src/app.ts:12 같은 것) — 둘 다 아래 한 곳에서.
+    // xterm 기본 웹 링크(WebLinksAddon)는 Claude 화면이 직접 바꾼 줄을 못 이어 윗줄 조각만 링크로 잡았다(2026-09-28 사용자)
     // 두 줄로 접힌 경로도 한 링크로(domain/links findPathsWrapped). 한글은 두 칸이라 글자 순번 → 화면 칸을 셀로 다시 센다
     const rowCells = (i: number): { text: string; cols: number[] } | null => {
       const l = term.buffer.active.getLine(i);
@@ -139,7 +137,7 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
     const write = (d: string) => {
       if (id != null) void writePty(id, d);
     };
-    term.onData(write);
+    term.onData((d) => { imeTrace?.('xterm', { d }); write(d); });
     injectRef.current?.({ write: (d) => { write(d); term.focus(); }, focus: () => term.focus() });
     // Claude 화면에서 드래그해 선택하면 Claude 가 OSC 52 로 "클립보드에 넣어라"를 보낸다 (domain/clipboard)
     const osc52 = term.parser.registerOscHandler(52, (data) => {
@@ -163,7 +161,7 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
       }
       return false; // keydown·keyup 둘 다 xterm 에 안 넘긴다
     });
-    const detachIme = readOnly ? () => {} : installImeBridge(term, write);
+    const detachIme = readOnly ? () => {} : installImeBridge(term, (d) => { imeTrace?.('bridge', { d }); write(d); });
     // 파일을 끌어다 놓으면(ui/fileDrop) 붙여넣기처럼 — Claude 가 붙여넣은 경로를 이미지로 읽는다
     const onDrop = (e: Event) => {
       term.paste((e as CustomEvent<string>).detail);
@@ -246,6 +244,17 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
   );
 }
 
+// 한글 입력 진단 — <데이터 폴더>/ime-debug.on 이 있으면 켤 때 한 번 켜진다. 0.5초마다 ime-debug.jsonl 에 몰아 쓴다
+let imeTrace: ((type: string, v: object) => void) | null = null;
+let imeNoSwallow = false;
+void imeDebugMode().then((mode) => {
+  if (mode == null) return;
+  imeNoSwallow = mode.includes('noswallow');
+  let buf: string[] = [];
+  imeTrace = (type, v) => buf.push(JSON.stringify({ t: Math.round(performance.now()), type, ...v }));
+  setInterval(() => { if (buf.length) { const out = buf.join('\n') + '\n'; buf = []; void imeLog(out).catch(() => {}); } }, 500);
+}).catch(() => {});
+
 /**
  * WKWebView 한글 입력 다리 (트러블슈팅 #99). 조상(term.element)에 capture 로 걸어야
  * xterm(textarea 자체 리스너)보다 먼저 받는다. 영어·단축키는 xterm 이 원래대로 처리한다.
@@ -255,6 +264,7 @@ function installImeBridge(term: Terminal, write: (d: string) => void): () => voi
   const root = term.element;
   if (!ta || !root) return () => {};
   let before: string | null = null;
+  let held: string | null = null; // 조합 확정 때 웹뷰가 잠깐 비운 칸(domain/imeBridge imeStep)
   let xtermOwns = false; // 입력기를 안 거친 키(스페이스·영문·Enter…)는 xterm 이 keydown 에서 이미 보냈다
 
   const onBeforeInput = () => {
@@ -276,10 +286,11 @@ function installImeBridge(term: Terminal, write: (d: string) => void): () => voi
     const prev = normalizeInput(before ?? '');
     const now = normalizeInput(ta.value);
     before = null;
-    if (!hasNonAscii(prev + now)) return;
+    const step = imeStep((e as InputEvent).inputType ?? '', prev, now, held);
+    held = step.held;
+    if (step.send == null) return;
     e.stopPropagation();
-    const seq = toSequence(diffInput(prev, now));
-    if (seq) write(seq);
+    if (step.send) write(step.send);
   };
   const onKeyDown = (e: KeyboardEvent) => {
     if (!yieldsToXterm(e)) return; // 조합 중이거나 수식키(Shift 등) — 조합을 끊지 않는다
@@ -290,12 +301,28 @@ function installImeBridge(term: Terminal, write: (d: string) => void): () => voi
     }, 0);
   };
 
+  // 웹뷰가 조합(composition) 이벤트를 보낼 때가 있다 — 그러면 xterm 도 조합이 끝날 때 글자를 또 보내서
+  // 한글이 두 번 들어간다("사이" → "사사이이", 2026-09-28 osascript 두벌식으로 재현). 한글은 이 다리가 보내니 xterm 조합 처리는 막는다
+  const COMPOSITION = ['compositionstart', 'compositionupdate', 'compositionend'];
+  const swallow = (e: Event) => { if (!imeNoSwallow) e.stopPropagation(); };
+
   root.addEventListener('beforeinput', onBeforeInput, true);
   root.addEventListener('input', onInput, true);
   root.addEventListener('keydown', onKeyDown, true);
+  for (const t of COMPOSITION) root.addEventListener(t, swallow, true);
+  // 진단(ime-debug.on): 키·입력·조합 이벤트를 그대로 적는다 — 진짜 키보드는 osascript 와 다른 길로 올 수 있어서
+  const TRACE = ['keydown', 'keyup', 'beforeinput', 'input', ...COMPOSITION];
+  const trace = (e: Event) => {
+    if (!imeTrace) return; // 진단 설정은 창이 뜬 뒤에 도착할 수 있어서 늘 걸어 두고 여기서 본다
+    const k = e as KeyboardEvent & InputEvent & CompositionEvent;
+    imeTrace?.(e.type, { key: k.key, code: k.code, kc: k.keyCode, rep: k.repeat, comp: k.isComposing, it: k.inputType, data: k.data, ta: ta.value });
+  };
+  for (const t of TRACE) root.addEventListener(t, trace, true);
   return () => {
+    for (const t of TRACE) root.removeEventListener(t, trace, true);
     root.removeEventListener('beforeinput', onBeforeInput, true);
     root.removeEventListener('input', onInput, true);
     root.removeEventListener('keydown', onKeyDown, true);
+    for (const t of COMPOSITION) root.removeEventListener(t, swallow, true);
   };
 }

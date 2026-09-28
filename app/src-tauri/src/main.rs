@@ -28,6 +28,7 @@ mod review;
 mod setup;
 mod tama;
 mod theme;
+mod tts;
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder};
 use tauri::Manager;
@@ -303,6 +304,12 @@ fn main() {
             claude::send_keys,
             claude::log_auto_allow,
             claude::read_auto_allow,
+            claude::ime_debug_mode,
+            claude::ime_log,
+            tts::supertonic_status,
+            tts::supertonic_install,
+            tts::native_voices,
+            tts::tts_warm,
             claude::append_task_event,
             claude::clipboard_write,
             review::repo_map,

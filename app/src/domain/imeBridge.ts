@@ -34,3 +34,19 @@ export function yieldsToXterm(e: { key: string; keyCode: number }): boolean {
   if (e.keyCode === 229) return false; // 입력기 조합 중
   return !NON_TEXT_KEYS.has(e.key);
 }
+
+// 2026-09-28: 웹뷰가 조합(composition) 이벤트를 보내기 시작했고, 한글 입력기가 스페이스까지 조합으로 보낸다.
+// 글자가 확정될 때마다 deleteCompositionText(칸을 비움) → insertFromComposition(도로 넣음) 이 온다.
+// 조합으로 온 입력은 한글이 없어도(스페이스) 다리가 보낸다 — xterm 조합 처리는 막아 뒀다(두 번 들어가서)
+const FROM_IME = new Set(['insertCompositionText', 'deleteCompositionText', 'insertFromComposition']);
+
+/**
+ * 입력 이벤트 하나 → pty 로 보낼 것. send: null = xterm 몫, '' = 다리가 맡았지만 보낼 게 없음.
+ * held = 확정 때 웹뷰가 잠깐 비운 텍스트칸 — 도로 넣을 때 그것과 비교해 지웠다 쓰는 소음을 없앤다
+ */
+export function imeStep(inputType: string, prev: string, now: string, held: string | null): { send: string | null; held: string | null } {
+  if (inputType === 'deleteCompositionText') return { send: '', held: held ?? prev };
+  if (FROM_IME.has(inputType)) return { send: toSequence(diffInput(held ?? prev, now)), held: null };
+  if (!hasNonAscii(prev + now)) return { send: null, held: null };
+  return { send: toSequence(diffInput(prev, now)), held: null };
+}

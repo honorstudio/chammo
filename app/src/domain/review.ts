@@ -1,4 +1,4 @@
-// 리뷰·머지 — 참모가 CI 초록만 보고 넣던 PR 을 개발자 보고 넣게(2026-09-27 사용자, 시안 docs/design-drafts/review-merge).
+// 리뷰·머지 — 참모가 CI 초록만 보고 넣던 PR 을 사용자가 보고 넣게(2026-09-27 사용자, 시안 docs/design-drafts/review-merge).
 // 평소엔 작업 패널에 '머지 전에 볼 것'(아래 gates 에 걸린 열린 PR)과 '오늘 넣은 것', 자세히는 사이드바 '리뷰' 화면.
 // gh 원문 파싱·판정·요약은 전부 여기(순수함수). gh 호출은 Rust review.rs
 import { isGeneratedPath, isTestPath } from './tama/sources';

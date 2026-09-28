@@ -91,6 +91,32 @@ describe('findPathsWrapped — 두 줄로 접힌 경로도 한 링크로 (2026-0
   });
 });
 
+describe('findPathsWrapped — 웹 주소도(사용자 2026-09-28: 좁은 창에서 URL 이 줄바꿈되면 윗줄 조각까지만 링크)', () => {
+  const at = (rows: string[], wrapped: boolean[] = []) => ({ line: (i: number) => rows[i] ?? null, wrapped: (i: number) => wrapped[i] ?? false });
+  const URL = 'https://example.com/d/00000000-0000-4000-8000-000000000000.abcdefghijklmnopqrstuvwx';
+
+  it('한 줄 URL 은 그대로(끝 구두점·괄호는 뗀다)', () => {
+    const { line, wrapped } = at([`링크: ${URL}). 끝`]);
+    expect(findPathsWrapped(line, wrapped, 0, 200).map((x) => x.text)).toEqual([URL]);
+  });
+
+  it('Claude 화면이 직접 접은 URL — 들여쓰기 건너뛰고 한 링크, 두 줄 어디를 눌러도', () => {
+    const head = `  링크: ${URL.slice(0, 60)}`;
+    const rows = [head, `  ${URL.slice(60)}`];
+    const { line, wrapped } = at(rows);
+    const cols = head.length + 1;
+    expect(findPathsWrapped(line, wrapped, 0, cols).map((x) => x.text)).toEqual([URL]);
+    expect(findPathsWrapped(line, wrapped, 1, cols).map((x) => x.text)).toEqual([URL]);
+  });
+
+  it('쿼리 문자열(?·=·&·%)이 줄 끝에 걸려도 잇는다', () => {
+    const u = 'https://example.com/search?q=chammo&page=2%20x';
+    const rows = [`  ${u.slice(0, 30)}`, `  ${u.slice(30)}`];
+    const { line, wrapped } = at(rows);
+    expect(findPathsWrapped(line, wrapped, 1, rows[0]!.length + 1).map((x) => x.text)).toEqual([u]);
+  });
+});
+
 describe('findPathsWrapped — 한글 줄', () => {
   it('끝까지 찼는지는 글자 수가 아니라 화면 칸으로 잰다(한글 두 칸)', () => {
     const rows = ['파일은 docs/a/', 'b.ts 에 있어'];

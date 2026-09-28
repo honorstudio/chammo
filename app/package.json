@@ -1,7 +1,7 @@
 {
   "name": "honor-orchestrator",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "AGPL-3.0-only",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
@@ -17,7 +17,6 @@
   "dependencies": {
     "@tauri-apps/api": "2",
     "@xterm/addon-fit": "0.11",
-    "@xterm/addon-web-links": "~0.12.0",
     "@xterm/addon-webgl": "0.19",
     "@xterm/xterm": "6",
     "dompurify": "^3.4.16",
