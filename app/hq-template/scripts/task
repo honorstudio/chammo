@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""Chammo task log — record what you delegate so the app's task panel shows it.
+Chammo 작업 기록 — 다른 세션에 시킨 일을 남기면 앱 오른쪽 작업 패널에 카드로 뜬다.
+
+  scripts/task send   <session id|name> "<what you asked, one line>"   -> prints the task id
+  scripts/task reply  <task id> "<summary of the reply>"
+  scripts/task done   <task id> "<result, one line>"
+  scripts/task note   <task id> "<progress note>"
+  scripts/task ask    <task id> "<what the user must decide>"          -> shows in the app's decision inbox
+  scripts/task answer <task id> "<what the user decided>"              -> leaves the inbox (the app writes this)
+  scripts/task list                                                    -> recent events
+  scripts/task lesson <project> "<a confirmed lesson, one line>"       -> attached next time you delegate there
+
+Log: <data folder>/tasks.jsonl (append-only). Data folder = $CHAMMO_HOME, else ~/.chammo.
+
+Payment gate: if the task mentions payments / refunds / billing, `send` only records it and exits with
+code 3 — do NOT send the message; wait until the user answers the "OK to send?" item in the decision inbox.
+Deleting, pushing, deploying, sending and merging are not gated.
+
+Merge rule: `send` prints MERGE_RULE on stderr — append it to the end of your message to the session, so
+sessions open PRs but leave merging to you.
+"""
+import datetime, json, os, re, secrets, shutil, subprocess, sys
+
+
+def data_dir(home=None, env=None, exists=os.path.isdir):
+    """Data folder — same rule as the app: $CHAMMO_HOME -> ~/.chammo (-> ~/.honor-orchestrator for old installs)"""
+    home = home or os.path.expanduser('~')
+    env = os.environ.get('CHAMMO_HOME', '') if env is None else env
+    if env.strip():
+        return os.path.expanduser(env.strip())
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not exists(new) and exists(old) else new
+
+
+def load_config(data):
+    try:
+        return json.load(open(os.path.join(data, 'config.json'), encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+
+
+def expand(p, home=None):
+    home = home or os.path.expanduser('~')
+    return home + p[1:] if p == '~' or p.startswith('~/') else p
+
+
+DATA = data_dir()
+CFG = load_config(DATA)
+LANG = 'en' if CFG.get('language') == 'en' else 'ko'
+
+
+def T(ko, en):
+    return en if LANG == 'en' else ko
+
+
+LOG = os.path.join(DATA, 'tasks.jsonl')
+LESSONS = os.path.join(DATA, 'lessons')
+DEV = expand(CFG.get('devRoot') or '~/Developer')
+# devRoot 밖에 따로 추가한 프로젝트 폴더들(설정 extraProjects)
+EXTRAS = [expand(x) for x in CFG.get('extraProjects') or [] if isinstance(x, str)]
+
+# Money moves: payments, refunds, billing. English words only as whole words (not "discharge").
+PAYMENT = re.compile(r'실결제|결제|환불|과금|\b(payments?|refunds?|billing|charges?|checkout)\b')
+
+MERGE_RULE = T('PR 은 올리고 머지하지 마 — CI 초록이면 PR 번호만 알려줘, 머지는 내가 한다.',
+               "Open a PR but don't merge it — when CI is green just send me the PR number; I'll do the merge.")
+
+# How hard to verify — tasks with hidden edge cases get "verify hard", sketches get "be quick".
+HIGH = re.compile(r'결제|환불|보안|취약|권한|마이그|운영|배포|삭제|데이터|버그|고치|인증|로그인|토큰|시크릿|'
+                  r'\b(security|vuln\w*|permissions?|rls|migrations?|production|prod|deploy\w*|delete|db|data|bugs?|fix\w*|auth\w*|login|tokens?|secrets?)\b')
+LOW = re.compile(r'시안|스케치|초안|문서|정리|조사|리서치|브레인|문구|카피|메모|'
+                 r'\b(mockups?|sketch\w*|drafts?|docs?|readme|research|brainstorm\w*|copy|notes?)\b')
+EFFORT_LINE = {
+    'high': T('검증이 중요한 일이야 — 먼저 재현하고, 예외·경계 케이스 테스트를 충분히 돌리고, 네 결과를 한 번 공격적으로 리뷰한 뒤 올려줘.',
+              'This one needs careful verification — reproduce first, test edge cases thoroughly, and review your own result critically before you report.'),
+    'low': T('빠르게 한 번 만들어서 보여줘 — 다듬기는 보고 나서.', 'Make a quick first version and show me — polish after I look.'),
+}
+
+
+def effort_for(text):
+    t = text.lower()
+    if HIGH.search(t):
+        return 'high', EFFORT_LINE['high']
+    if LOW.search(t):
+        return 'low', EFFORT_LINE['low']
+    return 'medium', ''
+
+
+def needs_confirm(text):
+    return bool(PAYMENT.search(text.lower()))
+
+
+def lessons_of(project):
+    try:
+        return [l.strip()[2:] for l in open(os.path.join(LESSONS, f'{project}.md'), encoding='utf-8') if l.startswith('- ')]
+    except OSError:
+        return []
+
+
+def project_of(target, agents, dev=None, extras=None):
+    """Project folder (under devRoot, or one added separately) of the target session (id or name). Worktrees map to the main project."""
+    dev = dev or DEV
+    extras = EXTRAS if extras is None else extras
+    for a in agents:
+        if target in (a.get('id'), a.get('name'), a.get('sessionId')):
+            cwd = os.path.normpath(a.get('cwd', ''))
+            for x in extras:
+                x = os.path.normpath(x)
+                if cwd == x or cwd.startswith(x + os.sep):
+                    return os.path.basename(x)
+            rel = os.path.relpath(a.get('cwd', ''), dev)
+            return None if rel.startswith('..') else rel.split(os.sep)[0]
+    return None
+
+
+def claude_bin():
+    return shutil.which('claude') or os.path.expanduser('~/.local/bin/claude')
+
+
+def load_agents():
+    try:
+        return json.loads(subprocess.run([claude_bin(), 'agents', '--json'], capture_output=True, text=True, timeout=10).stdout or '[]')
+    except Exception:
+        return []
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
+
+
+def append(ev):
+    os.makedirs(os.path.dirname(LOG), exist_ok=True)
+    with open(LOG, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(ev, ensure_ascii=False) + '\n')
+
+
+def main(a):
+    if not a or a[0] in ('-h', '--help'):
+        print(__doc__); return 0
+    cmd = a[0]
+    me = os.environ.get('CLAUDE_CODE_SESSION_ID')
+    if cmd == 'send' and len(a) >= 3:
+        tid = datetime.datetime.now().strftime('%m%d-%H%M-') + secrets.token_hex(2)
+        append({'ts': now(), 'type': 'send', 'task': tid, 'target': a[1], 'title': a[2]})
+        print(tid)
+        project = project_of(a[1], load_agents()) or a[1]
+        if needs_confirm(a[2]):
+            # the answer comes back to the assistant that asked (this session), not to the target
+            ev = {'ts': now(), 'type': 'ask', 'task': tid, 'note': T(f'결제 확인 — {project}: {a[2]} — 보내도 돼?', f'Payment check — {project}: {a[2]} — OK to send?')}
+            if me:
+                ev['to'] = me
+            append(ev)
+            print(T(f'주의: 결제가 걸린 일이야. 메시지를 보내지 말고 결정 대기함에서 사용자 답을 기다려 (task {tid})',
+                    f'STOP: this involves payments. Do not send the message; wait for the user in the decision inbox (task {tid})'), file=sys.stderr)
+            return 3
+        level, line = effort_for(a[2])
+        if line:
+            print(T(f'검증 강도 {level} — 지시에 붙여: {line}', f'verification {level} — append to your message: {line}'), file=sys.stderr)
+        for l in lessons_of(project):
+            print(T(f'이 프로젝트 교훈 — 지시에 붙여: {l}', f'project lesson — append to your message: {l}'), file=sys.stderr)
+        print(T(f'메시지 끝에 붙여: {MERGE_RULE}', f'append to the end of your message: {MERGE_RULE}'), file=sys.stderr)
+        return 0
+    if cmd == 'lesson' and len(a) >= 3:
+        os.makedirs(LESSONS, exist_ok=True)
+        with open(os.path.join(LESSONS, f'{a[1]}.md'), 'a', encoding='utf-8') as f:
+            f.write(f'- {a[2]}\n')
+        return 0
+    if cmd in ('reply', 'done', 'note', 'ask', 'answer') and len(a) >= 3:
+        ev = {'ts': now(), 'type': cmd, 'task': a[1], 'note': a[2]}
+        if cmd == 'ask' and me:
+            ev['to'] = me
+        append(ev)
+        return 0
+    if cmd == 'list':
+        if os.path.exists(LOG):
+            print(''.join(open(LOG, encoding='utf-8').readlines()[-20:]), end='')
+        return 0
+    print(__doc__, file=sys.stderr); return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

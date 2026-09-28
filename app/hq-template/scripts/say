@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Voice mode: hand the app the words to read aloud, instead of it reading your whole answer.
+음성 모드: 소리로 들려줄 말을 따로 넘긴다 — 앱이 답 대신 이걸 읽는다.
+
+  scripts/say "<what to say>"
+
+The app reads it as-is with the configured TTS command. Keep it as long as it matters: one sentence for small
+things, longer when it needs explaining. Say things in words (no tables, code names or paths) and always
+include any question the user must answer. When voice mode is off (<data folder>/voice.json) nothing is recorded.
+
+Log: <data folder>/say.jsonl — {ts, session (CLAUDE_CODE_SESSION_ID), text}
+"""
+import datetime, json, os, sys
+
+
+def data_dir(home=None, env=None, exists=os.path.isdir):
+    """Data folder — same rule as the app: $CHAMMO_HOME -> ~/.chammo (-> ~/.honor-orchestrator for old installs)"""
+    home = home or os.path.expanduser('~')
+    env = os.environ.get('CHAMMO_HOME', '') if env is None else env
+    if env.strip():
+        return os.path.expanduser(env.strip())
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not exists(new) and exists(old) else new
+
+
+DIR = data_dir()
+
+
+def lang(d=None):
+    try:
+        return 'en' if json.load(open(os.path.join(d or DIR, 'config.json'), encoding='utf-8')).get('language') == 'en' else 'ko'
+    except (OSError, ValueError):
+        return 'ko'
+
+
+def T(ko, en):
+    return en if lang() == 'en' else ko
+
+
+def voice_on(d=None):
+    try:
+        return bool(json.load(open(os.path.join(d or DIR, 'voice.json'))).get('on'))
+    except (OSError, ValueError):
+        return False
+
+
+def line(text, session, now=None):
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    return json.dumps({'ts': now.isoformat(timespec='milliseconds').replace('+00:00', 'Z'), 'session': session, 'text': text}, ensure_ascii=False)
+
+
+def main(argv):
+    text = ' '.join(argv).strip()
+    if not text:
+        print(__doc__, file=sys.stderr); return 2
+    if not voice_on():
+        print(T('음성 모드 꺼짐 — 기록 안 함', 'voice mode is off — not recorded')); return 0
+    os.makedirs(DIR, exist_ok=True)
+    with open(os.path.join(DIR, 'say.jsonl'), 'a', encoding='utf-8') as f:
+        f.write(line(text, os.environ.get('CLAUDE_CODE_SESSION_ID', '')) + '\n')
+    print(T('넘김 — 답이 끝나면 앱이 읽어', 'handed over — the app reads it when your answer ends')); return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

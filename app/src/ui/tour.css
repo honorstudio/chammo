@@ -1,0 +1,19 @@
+/* 둘러보기 — 화면 가운데 카드, 뒤는 어둡게 */
+.tour { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(0, 0, 0, .38); padding: 24px; }
+.tour-card { width: min(560px, 100%); background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 14px; padding: 22px 26px 20px; box-shadow: 0 24px 60px rgba(0, 0, 0, .28); }
+.tour-top { display: flex; align-items: center; margin-bottom: 6px; }
+.tour-count { font-size: 12px; color: var(--text-3); }
+.tour-skip { margin-left: auto; min-height: 32px; padding: 0 10px; border: 0; background: transparent; color: var(--text-2); font: inherit; font-size: 13px; cursor: pointer; border-radius: 6px; }
+.tour-skip:hover { background: var(--hover); }
+.tour-card h2 { font-size: 20px; line-height: 1.35; margin: 4px 0 10px; }
+.tour-card p { font-size: 14px; line-height: 1.7; color: var(--text-2); margin: 0; }
+.tour-keys { margin: 14px 0 0; display: grid; gap: 6px; }
+.tour-keys div { display: grid; grid-template-columns: 150px 1fr; gap: 12px; font-size: 13px; }
+.tour-keys dt { font-family: ui-monospace, "D2Coding", monospace; color: var(--text); }
+.tour-keys dd { margin: 0; color: var(--text-2); }
+.tour-nav { display: flex; align-items: center; gap: 8px; margin-top: 22px; }
+.tour-nav .grow { flex: 1; }
+.tour-nav .btn { min-height: 36px; }
+.tour-dots { display: flex; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.tour-dots li { width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); }
+.tour-dots li.on { background: var(--accent); }

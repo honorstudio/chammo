@@ -1,0 +1,34 @@
+import { describe, expect, it } from 'vitest';
+import { ctxAlerts, ctxLevel, parseCtx } from './ctx';
+
+const f = (sessionId: string, used: number, ts = 100) => JSON.stringify({ sessionId, used, size: 1_000_000, model: 'Opus 5.5', name: 'x', cwd: '/d', ts });
+
+describe('parseCtx — 상태줄이 세션마다 남긴 파일들', () => {
+  it('session_id → 사용 %', () => {
+    expect(parseCtx([f('a', 56), f('b', 81)])).toEqual({ a: { used: 56, ts: 100 }, b: { used: 81, ts: 100 } });
+  });
+
+  it('깨진 파일·숫자 아닌 값은 건너뛴다', () => {
+    expect(parseCtx(['{깨짐', JSON.stringify({ sessionId: 'c', used: null }), f('d', 12)])).toEqual({ d: { used: 12, ts: 100 } });
+  });
+});
+
+describe('ctxLevel — 색 구분', () => {
+  it('60 미만 보통 · 60 이상 주의 · 80 이상 위험', () => {
+    expect([10, 59, 60, 79, 80, 99].map(ctxLevel)).toEqual(['ok', 'ok', 'mid', 'mid', 'high', 'high']);
+  });
+});
+
+describe('ctxAlerts — 80% 를 넘는 순간만 알림 (켜자마자 쏟아지지 않게)', () => {
+  it('이전에 80 미만이던 세션이 80 이상이 되면', () => {
+    expect(ctxAlerts({ a: 79, b: 85 }, { a: 80, b: 90 })).toEqual(['a']);
+  });
+
+  it('처음 보는 세션은 알리지 않는다 (앱 켤 때)', () => {
+    expect(ctxAlerts({}, { a: 95 })).toEqual([]);
+  });
+
+  it('요약(compact)돼서 내려갔다가 다시 넘으면 또 알린다', () => {
+    expect(ctxAlerts({ a: 20 }, { a: 81 })).toEqual(['a']);
+  });
+});

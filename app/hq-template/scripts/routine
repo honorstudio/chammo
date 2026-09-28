@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+"""Routines — recurring jobs that wake up on a schedule, do one run by their instructions, and report.
+루틴 — 정해진 때 깨어나 지침서대로 한 번 일하고 결과를 남기는 반복 업무. 앱이 꺼져 있어도 macOS launchd 가 깨운다.
+
+  scripts/routine new <name> "<schedule>" "<what to do each run>" [--in <folder>]
+  scripts/routine list                      JSON: name, schedule, enabled, next run, last result
+  scripts/routine run <name>                run once now (launchd calls this with --scheduled)
+  scripts/routine pause <name> | resume <name> | remove <name>
+  scripts/routine report <name> ok|fail "<one line>"    the routine's session calls this when it finishes
+
+<schedule>: "daily 09:00" · "weekdays 09:00" · "weekly mon 09:00" · "every 30m" · "every 2h"
+            "매일 09:00" · "평일 09:00" · "매주 월 09:00" · "30분마다" · "2시간마다"
+Files: <data>/routines/<name>/{ROUTINE.md (instructions — edit freely), routine.json, runs.jsonl}.
+A routine runs in its own folder unless --in points at a project folder.
+"""
+import datetime, json, os, plistlib, re, shutil, subprocess, sys
+
+NAME = re.compile(r'^[a-z0-9][a-z0-9._-]{0,63}$')
+DAYS = {'sun': 0, 'mon': 1, 'tue': 2, 'wed': 3, 'thu': 4, 'fri': 5, 'sat': 6,
+        '일': 0, '월': 1, '화': 2, '수': 3, '목': 4, '금': 5, '토': 6}
+LABEL = 'app.chammo.routine.'
+
+
+def data_dir(home=None, env=None, exists=os.path.isdir):
+    """Data folder — same rule as the app: $CHAMMO_HOME -> ~/.chammo (-> ~/.honor-orchestrator for old installs)"""
+    home = home or os.path.expanduser('~')
+    env = os.environ.get('CHAMMO_HOME', '') if env is None else env
+    if env.strip():
+        return os.path.expanduser(env.strip())
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not exists(new) and exists(old) else new
+
+
+def _hm(text):
+    m = re.fullmatch(r'(\d{1,2}):(\d{2})', text or '')
+    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+        raise ValueError(f'time must be HH:MM: {text!r}')
+    return int(m.group(1)), int(m.group(2))
+
+
+def parse_schedule(text):
+    """일정 글자 → launchd 키(StartCalendarInterval / StartInterval). 모르는 모양이면 ValueError"""
+    t = (text or '').strip().lower()
+    m = re.fullmatch(r'(?:every\s+(\d+)\s*([mh])|(\d+)\s*(분|시간)마다)', t)
+    if m:
+        n, unit = (int(m.group(1)), m.group(2)) if m.group(1) else (int(m.group(3)), 'm' if m.group(4) == '분' else 'h')
+        if n <= 0:
+            raise ValueError('interval must be positive')
+        return {'StartInterval': n * (60 if unit == 'm' else 3600)}
+    parts = t.split()
+    if len(parts) == 2 and parts[0] in ('daily', '매일'):
+        h, mi = _hm(parts[1])
+        return {'StartCalendarInterval': {'Hour': h, 'Minute': mi}}
+    if len(parts) == 2 and parts[0] in ('weekdays', '평일'):
+        h, mi = _hm(parts[1])
+        return {'StartCalendarInterval': [{'Weekday': d, 'Hour': h, 'Minute': mi} for d in range(1, 6)]}
+    if len(parts) == 3 and parts[0] in ('weekly', '매주') and parts[1] in DAYS:
+        h, mi = _hm(parts[2])
+        return {'StartCalendarInterval': {'Weekday': DAYS[parts[1]], 'Hour': h, 'Minute': mi}}
+    raise ValueError(f'unknown schedule: {text!r} (e.g. "daily 09:00", "every 2h", "매일 09:00")')
+
+
+def next_run(schedule, now, last=None):
+    """다음 실행 시각(분 단위). 간격 일정은 마지막 시작 + 간격(없으면 지금 + 간격)"""
+    s = parse_schedule(schedule)
+    if 'StartInterval' in s:
+        base = last or now
+        nxt = base + datetime.timedelta(seconds=s['StartInterval'])
+        return max(nxt, now).replace(second=0, microsecond=0) if nxt < now else nxt.replace(second=0, microsecond=0)
+    slots = s['StartCalendarInterval']
+    slots = slots if isinstance(slots, list) else [slots]
+    best = None
+    for add in range(0, 8):
+        day = (now + datetime.timedelta(days=add)).date()
+        weekday = (day.weekday() + 1) % 7  # 파이썬 월=0 → launchd 일=0
+        for sl in slots:
+            if 'Weekday' in sl and sl['Weekday'] != weekday:
+                continue
+            at = datetime.datetime.combine(day, datetime.time(sl['Hour'], sl['Minute']))
+            if at > now and (best is None or at < best):
+                best = at
+        if best:
+            return best
+    return best
+
+
+def _paths(name, data):
+    d = os.path.join(data, 'routines', name)
+    return d, os.path.join(d, 'routine.json'), os.path.join(d, 'ROUTINE.md'), os.path.join(d, 'runs.jsonl')
+
+
+def _load(name, data):
+    d, cfg_path, _, _ = _paths(name, data)
+    if not os.path.isfile(cfg_path):
+        raise ValueError(f'no routine named {name!r}')
+    with open(cfg_path, encoding='utf-8') as f:
+        return json.load(f)
+
+
+def _save(cfg, data):
+    _, cfg_path, _, _ = _paths(cfg['name'], data)
+    with open(cfg_path, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+
+def _log(name, data, **event):
+    _, _, _, runs = _paths(name, data)
+    event = {'ts': datetime.datetime.now().isoformat(timespec='seconds'), **event}
+    with open(runs, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(event, ensure_ascii=False) + '\n')
+    return event
+
+
+def _plist_path(name, home):
+    return os.path.join(home, 'Library/LaunchAgents', f'{LABEL}{name}.plist')
+
+
+def _trust(path, home):
+    """claude --bg 가 이 폴더에서 뜨게 ~/.claude.json 에 믿음을 적는다(루틴이 만든 폴더에만)"""
+    cj = os.path.join(home, '.claude.json')
+    try:
+        with open(cj, encoding='utf-8') as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(d, dict) or not isinstance(d.setdefault('projects', {}), dict):
+        return False
+    d['projects'].setdefault(path, {})['hasTrustDialogAccepted'] = True
+    tmp = cj + '.chammo-tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, cj)
+    return True
+
+
+def _launchd_load(cfg, data, home, run, uid, python):
+    """launchd 에 올린다 — 앱이 꺼져 있어도 정해진 때 `routine run <name> --scheduled` 가 돈다"""
+    name = cfg['name']
+    tool = os.path.join(data, 'tools', 'routine')
+    script = tool if os.path.isfile(tool) else os.path.realpath(__file__)
+    path_env = ':'.join(dict.fromkeys([os.path.dirname(cfg['claude']), *os.environ.get('PATH', '/usr/bin:/bin').split(':'), '/usr/bin', '/bin']))
+    d, _, _, _ = _paths(name, data)
+    plist = {
+        'Label': LABEL + name,
+        'ProgramArguments': [python, script, 'run', name, '--scheduled'],
+        'EnvironmentVariables': {'CHAMMO_HOME': data, 'HOME': home, 'PATH': path_env},
+        'StandardOutPath': os.path.join(d, 'launchd.log'),
+        'StandardErrorPath': os.path.join(d, 'launchd.log'),
+        **parse_schedule(cfg['schedule']),
+    }
+    p = _plist_path(name, home)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, 'wb') as f:
+        plistlib.dump(plist, f)
+    run(['launchctl', 'bootout', f'gui/{uid}/{LABEL}{name}'], capture_output=True, text=True)  # 이미 올라가 있으면 새로
+    run(['launchctl', 'bootstrap', f'gui/{uid}', p], capture_output=True, text=True)
+    return p
+
+
+def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run, claude=None, python=None, uid=None):
+    if not NAME.match(name or '') or '..' in name:
+        raise ValueError(f'routine name must be lowercase letters, digits, - _ . : {name!r}')
+    parse_schedule(schedule)  # 먼저 검사 — 틀리면 아무것도 안 만든다
+    home = home or os.path.expanduser('~')
+    data = data or data_dir(home)
+    d, _, md, _ = _paths(name, data)
+    os.makedirs(d, exist_ok=True)
+    if not os.path.exists(md):
+        with open(md, 'w', encoding='utf-8') as f:
+            f.write(f'# Routine: {name}\n\nSchedule: {schedule}\n\n## Each run\n\n{what}\n\n'
+                    '## Done means\n\n(What must be true at the end of a good run.)\n\n'
+                    '## Report\n\nOne line: what you did and anything the user must look at.\n')
+    claude = claude or shutil.which('claude') or os.path.join(home, '.local/bin/claude')
+    cfg = {'name': name, 'schedule': schedule, 'cwd': os.path.abspath(os.path.expanduser(cwd)) if cwd else d,
+           'claude': claude, 'enabled': True, 'created': datetime.date.today().isoformat()}
+    _save(cfg, data)
+    if not cwd:
+        _trust(d, home)
+    plist = _launchd_load(cfg, data, home, run, uid if uid is not None else os.getuid(), python or sys.executable or '/usr/bin/python3')
+    return {'name': name, 'folder': d, 'instructions': md, 'plist': plist, 'next': next_run(schedule, datetime.datetime.now()).isoformat(timespec='minutes')}
+
+
+def _agents(claude, run):
+    r = run([claude, 'agents', '--json'], capture_output=True, text=True)
+    try:
+        return json.loads(r.stdout or '[]')
+    except ValueError:
+        return []
+
+
+def run_now(name, data=None, run=subprocess.run, scheduled=False):
+    """한 번 실행 — 지난 실행이 아직 돌면 건너뛰고, 끝난 지난 세션은 치우고 새 세션을 띄운다"""
+    data = data or data_dir()
+    cfg = _load(name, data)
+    if scheduled and not cfg.get('enabled', True):
+        return {'skipped': 'paused'}
+    session = f'routine-{name}'
+    mine = [a for a in _agents(cfg['claude'], run) if a.get('name') == session]
+    if any(a.get('status') == 'busy' for a in mine):
+        _log(name, data, event='skip', reason='still running')
+        return {'skipped': 'still running'}
+    for a in mine:
+        run([cfg['claude'], 'rm', a['id']], capture_output=True, text=True)
+    _, _, md, _ = _paths(name, data)
+    tool = os.path.join(data, 'tools', 'routine')
+    me = tool if os.path.isfile(tool) else os.path.realpath(__file__)
+    prompt = (f'You are the routine "{name}". Do ONE run now, exactly as the instructions in {md} say '
+              f'(read them first). Nobody is watching: do not ask questions. When you finish, run: '
+              f'python3 {me} report {name} ok "<one-line result>" — or `fail` with the reason if you could not finish.')
+    r = run([cfg['claude'], '--bg', '--dangerously-skip-permissions', '-n', session, prompt], cwd=cfg['cwd'],
+            capture_output=True, text=True, env=dict(os.environ, CHAMMO_HOME=data))
+    m = re.search(r'backgrounded\s*·\s*([0-9a-f]{6,})', re.sub(r'\x1b\[[0-9;]*m', '', r.stdout or ''))
+    sid = m.group(1) if m else None
+    _log(name, data, event='start', session=sid, scheduled=scheduled, error=None if sid else (r.stderr or r.stdout or '').strip()[:300])
+    return {'session': sid}
+
+
+def report(name, result, note, data=None):
+    if result not in ('ok', 'fail'):
+        raise ValueError('result must be ok or fail')
+    data = data or data_dir()
+    _load(name, data)
+    return _log(name, data, event='end', result=result, note=note)
+
+
+def set_enabled(name, on, data=None, home=None, run=subprocess.run, uid=None, python=None):
+    home = home or os.path.expanduser('~')
+    data = data or data_dir(home)
+    cfg = _load(name, data)
+    cfg['enabled'] = on
+    _save(cfg, data)
+    uid = uid if uid is not None else os.getuid()
+    if on:
+        _launchd_load(cfg, data, home, run, uid, python or sys.executable or '/usr/bin/python3')
+    else:
+        run(['launchctl', 'bootout', f'gui/{uid}/{LABEL}{name}'], capture_output=True, text=True)
+    return cfg
+
+
+def remove(name, data=None, home=None, run=subprocess.run, uid=None):
+    home = home or os.path.expanduser('~')
+    data = data or data_dir(home)
+    _load(name, data)
+    uid = uid if uid is not None else os.getuid()
+    run(['launchctl', 'bootout', f'gui/{uid}/{LABEL}{name}'], capture_output=True, text=True)
+    p = _plist_path(name, home)
+    if os.path.exists(p):
+        os.remove(p)
+    shutil.rmtree(_paths(name, data)[0], ignore_errors=True)
+    return {'removed': name}
+
+
+def list_routines(data=None, now=None):
+    data = data or data_dir()
+    now = now or datetime.datetime.now()
+    root = os.path.join(data, 'routines')
+    out = []
+    for name in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+        try:
+            cfg = _load(name, data)
+        except (ValueError, OSError):
+            continue
+        _, _, md, runs_path = _paths(name, data)
+        runs = []
+        if os.path.isfile(runs_path):
+            with open(runs_path, encoding='utf-8') as f:
+                runs = [json.loads(l) for l in f if l.strip()]
+        starts = [r for r in runs if r.get('event') == 'start']
+        ends = [r for r in runs if r.get('event') == 'end']
+        last_start = datetime.datetime.fromisoformat(starts[-1]['ts']) if starts else None
+        try:
+            nxt = next_run(cfg['schedule'], now, last=last_start)
+        except ValueError:
+            nxt = None
+        out.append({**cfg, 'instructions': md, 'next': nxt.isoformat(timespec='minutes') if nxt and cfg.get('enabled', True) else None,
+                    'last': ends[-1] if ends else None, 'lastStart': starts[-1] if starts else None, 'runs': runs[-20:]})
+    return out
+
+
+def main(argv):
+    if not argv:
+        print(__doc__, file=sys.stderr)
+        return 2
+    cmd, rest = argv[0], argv[1:]
+    try:
+        if cmd == 'new' and len(rest) >= 3:
+            cwd = rest[rest.index('--in') + 1] if '--in' in rest else None
+            out = new(rest[0], rest[1], rest[2], cwd=cwd)
+        elif cmd == 'list':
+            out = list_routines()
+        elif cmd == 'run' and rest:
+            out = run_now(rest[0], scheduled='--scheduled' in rest)
+        elif cmd in ('pause', 'resume') and rest:
+            out = set_enabled(rest[0], cmd == 'resume')
+        elif cmd == 'remove' and rest:
+            out = remove(rest[0])
+        elif cmd == 'report' and len(rest) >= 3:
+            out = report(rest[0], rest[1], ' '.join(rest[2:]))
+        else:
+            print(__doc__, file=sys.stderr)
+            return 2
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

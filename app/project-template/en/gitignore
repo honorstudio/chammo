@@ -1,0 +1,6 @@
+.shots/
+.DS_Store
+node_modules/
+.mcp.json
+.claude/settings.local.json
+.claude/worktrees/

@@ -1,0 +1,386 @@
+//! 설정 층 — 데이터 폴더와 config.json.
+//! 데이터 폴더 규칙은 Rust·scripts(hq-template 포함) 모두 같다: $CHAMMO_HOME → ~/.chammo →
+//! 단 ~/.chammo 가 없고 ~/.honor-orchestrator 가 있으면 그걸 그대로 쓴다(옛 설치의 기록을 옮기지 않는다)
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use std::sync::{OnceLock, RwLock};
+
+pub const DATA: &str = ".chammo";
+pub const LEGACY: &str = ".honor-orchestrator";
+
+pub fn home() -> String {
+    std::env::var("HOME").unwrap_or_default()
+}
+
+/// `~` / `~/…` 를 홈으로 푼다. 나머지는 그대로
+pub fn expand(home: &str, p: &str) -> String {
+    let p = p.trim();
+    if p == "~" {
+        home.to_string()
+    } else if let Some(rest) = p.strip_prefix("~/") {
+        format!("{home}/{rest}")
+    } else {
+        p.to_string()
+    }
+}
+
+/// 홈 아래 경로는 `~/…` 로 줄인다(설정 파일·화면에 보이는 모양)
+pub fn tilde(home: &str, p: &str) -> String {
+    match p.strip_prefix(home).filter(|_| !home.is_empty()) {
+        Some("") => "~".into(),
+        Some(rest) if rest.starts_with('/') => format!("~{rest}"),
+        _ => p.to_string(),
+    }
+}
+
+/// 데이터 폴더 고르기. `exists` 를 밖에서 받는 건 테스트 때문
+pub fn resolve_data_dir(home: &str, env: Option<&str>, exists: impl Fn(&str) -> bool) -> PathBuf {
+    if let Some(e) = env.map(str::trim).filter(|e| !e.is_empty()) {
+        return PathBuf::from(expand(home, e));
+    }
+    let new = format!("{home}/{DATA}");
+    let old = format!("{home}/{LEGACY}");
+    if !exists(&new) && exists(&old) {
+        PathBuf::from(old)
+    } else {
+        PathBuf::from(new)
+    }
+}
+
+/// 앱이 뜰 때 한 번 정하고 계속 쓴다(없으면 만든다 — 기록 파일을 붙여 쓰는 곳이 많아서)
+pub fn data_dir() -> &'static Path {
+    static D: OnceLock<PathBuf> = OnceLock::new();
+    D.get_or_init(|| {
+        let d = resolve_data_dir(&home(), std::env::var("CHAMMO_HOME").ok().as_deref(), |p| Path::new(p).is_dir());
+        let _ = std::fs::create_dir_all(&d);
+        d
+    })
+}
+
+/// 데이터 폴더 안 파일
+pub fn data_file(name: &str) -> PathBuf {
+    data_dir().join(name)
+}
+
+// ── config.json ──────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Features {
+    pub office: bool,
+    pub tama: bool,
+    pub gacha: bool,
+    pub review: bool,
+    pub voice: bool,
+}
+
+impl Default for Features {
+    fn default() -> Self {
+        Features { office: true, tama: true, gacha: true, review: true, voice: true }
+    }
+}
+
+/// 설정 파일(<데이터 폴더>/config.json). 경로는 `~/…` 모양 그대로 두고 쓸 때 푼다(expand).
+/// 빠진 칸은 기본값(serde default) — 옛 파일에 새 칸이 생겨도 안 깨진다
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Config {
+    /// "ko" | "en"
+    pub language: String,
+    /// 비서(오케스트레이터) 이름. 비면 참모/Chammo
+    pub assistant_name: String,
+    /// 프로젝트들이 사는 폴더
+    pub dev_root: String,
+    /// 비서 세션이 도는 폴더(HQ)
+    pub hq_dir: String,
+    /// devRoot 밖에 따로 둔 프로젝트 폴더들(`~/…` 모양). devRoot 아래 폴더와 똑같이 프로젝트로 본다
+    /// (아이맥 ~/automation/… 처럼 옮길 수 없는 폴더, 2026-09-28 사용자)
+    pub extra_projects: Vec<String>,
+    pub github_user: String,
+    /// 음성 모드로 읽을 명령. 글자를 마지막 인자로 받는다
+    pub tts_command: String,
+    pub memo_dir: String,
+    pub features: Features,
+    pub setup_done: bool,
+}
+
+/// macOS AppleLocale(ko_KR 등) → 언어
+pub fn lang_from_locale(locale: &str) -> &'static str {
+    if locale.trim().to_lowercase().starts_with("ko") { "ko" } else { "en" }
+}
+
+/// 새 설치 기본값. devRoot = ~/Developer·~/Projects·~/Desktop/dev 중 있는 첫 것(없으면 ~/Developer).
+/// githubUser 는 비워 둔다 — gh 는 네트워크라 설정 화면이 따로 채운다(detect_github_user)
+pub fn default_config(home: &str, data: &Path, lang: &str, exists: impl Fn(&str) -> bool) -> Config {
+    let dev = ["Developer", "Projects", "Desktop/dev"]
+        .iter()
+        .find(|d| exists(&format!("{home}/{d}")))
+        .unwrap_or(&"Developer");
+    let data = tilde(home, &data.to_string_lossy());
+    Config {
+        language: lang.into(),
+        assistant_name: String::new(),
+        dev_root: format!("~/{dev}"),
+        hq_dir: format!("{data}/hq"),
+        extra_projects: Vec::new(),
+        github_user: String::new(),
+        tts_command: "say".into(),
+        memo_dir: format!("{data}/memo"),
+        features: Features::default(),
+        setup_done: false,
+    }
+}
+
+/// 옛 설치(honor-orchestrator)를 쓰던 주인의 값 — 설정 파일 없이 옛 폴더만 있으면 이걸로 채워 오늘과 똑같이 돈다
+pub fn owner_config() -> Config {
+    Config {
+        language: "ko".into(),
+        assistant_name: "참모".into(),
+        dev_root: "~/Desktop/dev".into(),
+        hq_dir: "~/Desktop/dev/honor-orchestrator".into(),
+        extra_projects: Vec::new(),
+        github_user: "honorstudio".into(),
+        tts_command: "~/bin/local-say".into(),
+        memo_dir: "~/.config/holo/memo".into(),
+        features: Features::default(),
+        setup_done: true,
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Boot {
+    /// 저장된 설정
+    Saved(Config),
+    /// 옛 설치 — 주인 값으로 파일을 써 둔다
+    Owner(Config),
+    /// 새 설치 — 기본값(파일은 설정 화면에서 저장할 때 생긴다)
+    Fresh,
+}
+
+/// 켤 때 설정 정하기. text = config.json 내용(없으면 None). 깨진 파일은 없는 것처럼
+pub fn boot(home: &str, data: &Path, text: Option<&str>) -> Boot {
+    if let Some(c) = text.and_then(|t| serde_json::from_str::<Config>(t).ok()) {
+        return Boot::Saved(c);
+    }
+    if data == Path::new(&format!("{home}/{LEGACY}")) {
+        Boot::Owner(owner_config())
+    } else {
+        Boot::Fresh
+    }
+}
+
+fn system_lang() -> &'static str {
+    let out = std::process::Command::new("defaults").args(["read", "-g", "AppleLocale"]).output();
+    lang_from_locale(&out.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default())
+}
+
+fn write_file(c: &Config) -> Result<(), String> {
+    let path = data_file("config.json");
+    let tmp = data_file("config.json.tmp");
+    let text = serde_json::to_string_pretty(c).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, text + "\n").map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}
+
+static CURRENT: RwLock<Option<Config>> = RwLock::new(None);
+
+/// 지금 설정(처음 부를 때 파일을 읽고, 이후엔 기억해 둔 것)
+pub fn current() -> Config {
+    if let Some(c) = CURRENT.read().ok().and_then(|g| g.clone()) {
+        return c;
+    }
+    let home = home();
+    let text = std::fs::read_to_string(data_file("config.json")).ok();
+    let c = match boot(&home, data_dir(), text.as_deref()) {
+        Boot::Saved(c) => c,
+        Boot::Owner(c) => {
+            let _ = write_file(&c);
+            c
+        }
+        Boot::Fresh => default_config(&home, data_dir(), system_lang(), |p| Path::new(p).is_dir()),
+    };
+    if let Ok(mut g) = CURRENT.write() {
+        *g = Some(c.clone());
+    }
+    c
+}
+
+/// 음성 명령 + 읽을 글자 → 실행할 인자들. 명령 전체가 있는 파일이면 그대로(경로에 빈칸이 있어도),
+/// 아니면 빈칸으로 나눠 앞이 프로그램(`say -v Yuna` 처럼). 비어 있으면 macOS say
+pub fn tts_argv(home: &str, cmd: &str, text: &str, exists: impl Fn(&str) -> bool) -> Vec<String> {
+    let full = expand(home, cmd);
+    let mut argv: Vec<String> = if full.is_empty() {
+        vec!["say".into()]
+    } else if exists(&full) {
+        vec![full]
+    } else {
+        full.split_whitespace().map(|p| expand(home, p)).collect()
+    };
+    argv.push(text.into());
+    argv
+}
+
+/// 비서 폴더(HQ). 검증용 dev 앱은 CHAMMO_HQ(옛 이름 HONOR_ORCH_CWD)로 바꿔 진짜 비서와 안 섞이게
+pub fn hq_dir(home: &str, c: &Config, env: impl Fn(&str) -> Option<String>) -> String {
+    env("CHAMMO_HQ")
+        .or_else(|| env("HONOR_ORCH_CWD"))
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| expand(home, &c.hq_dir))
+}
+
+/// 비서 이름(메뉴 등 Rust 쪽 글자). 비어 있으면 참모/Chammo
+pub fn assistant_name() -> String {
+    let n = current().assistant_name.trim().to_string();
+    if n.is_empty() { crate::i18n::tr("참모", "Chammo").to_string() } else { n }
+}
+
+/// 설정 읽기. 바로 돌려준다 — GitHub 아이디는 설정 화면의 환경 점검(gh auth status, setup.rs)이 채운다
+/// (예전엔 여기서 `gh api user` 를 불러 첫 화면이 몇 초 늦었다)
+#[tauri::command]
+pub fn read_config() -> Config {
+    current()
+}
+
+/// 설정 파일을 다시 읽는다 — 참모(scripts/app project)가 config.json 을 직접 고친 뒤 앱이 부른다
+#[tauri::command]
+pub fn reload_config() -> Config {
+    if let Ok(mut g) = CURRENT.write() {
+        *g = None;
+    }
+    current()
+}
+
+/// 설정 저장. 앱은 저장 뒤 창을 다시 연다(언어·비서 이름은 뜰 때 정해서)
+#[tauri::command]
+pub fn write_config(config: Config) -> Result<(), String> {
+    write_file(&config)?;
+    if let Ok(mut g) = CURRENT.write() {
+        *g = Some(config);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 빠진_칸은_기본값() {
+        let c: Config = serde_json::from_str(r#"{"language":"en","features":{"tama":false}}"#).unwrap();
+        assert_eq!(c.language, "en");
+        assert!(!c.features.tama);
+        assert!(c.features.office && c.features.gacha && c.features.review && c.features.voice);
+        assert!(!c.setup_done);
+    }
+
+    #[test]
+    fn 파일_칸_이름은_카멜() {
+        let v = serde_json::to_value(owner_config()).unwrap();
+        for k in ["language", "assistantName", "devRoot", "hqDir", "extraProjects", "githubUser", "ttsCommand", "memoDir", "features", "setupDone"] {
+            assert!(v.get(k).is_some(), "{k}");
+        }
+    }
+
+    #[test]
+    fn 새_설치_기본값() {
+        let c = default_config("/h", Path::new("/h/.chammo"), "en", |p| p == "/h/Projects" || p == "/h/Desktop/dev");
+        assert_eq!(c.dev_root, "~/Projects"); // 있는 것 중 첫 번째
+        assert_eq!(c.hq_dir, "~/.chammo/hq");
+        assert_eq!(c.memo_dir, "~/.chammo/memo");
+        assert_eq!(c.tts_command, "say");
+        assert_eq!(c.language, "en");
+        assert!(!c.setup_done);
+        assert_eq!(default_config("/h", Path::new("/d"), "ko", |_| false).dev_root, "~/Developer");
+        assert_eq!(default_config("/h", Path::new("/d"), "ko", |_| false).hq_dir, "/d/hq");
+    }
+
+    #[test]
+    fn 옛_설치는_주인_값으로() {
+        let b = boot("/h", Path::new("/h/.honor-orchestrator"), None);
+        let Boot::Owner(c) = b else { panic!("{b:?}") };
+        assert_eq!(c.dev_root, "~/Desktop/dev");
+        assert_eq!(c.hq_dir, "~/Desktop/dev/honor-orchestrator");
+        assert_eq!(c.tts_command, "~/bin/local-say");
+        assert_eq!(c.memo_dir, "~/.config/holo/memo");
+        assert_eq!(c.github_user, "honorstudio");
+        assert_eq!(c.assistant_name, "참모");
+        assert_eq!(c.language, "ko");
+        assert!(c.setup_done);
+    }
+
+    #[test]
+    fn 저장된_설정이_있으면_그것() {
+        let b = boot("/h", Path::new("/h/.honor-orchestrator"), Some(r#"{"language":"en"}"#));
+        assert!(matches!(b, Boot::Saved(c) if c.language == "en"));
+    }
+
+    #[test]
+    fn 새_설치는_기본값_깨진_파일도() {
+        assert_eq!(boot("/h", Path::new("/h/.chammo"), None), Boot::Fresh);
+        assert_eq!(boot("/h", Path::new("/h/.chammo"), Some("깨짐")), Boot::Fresh);
+    }
+
+    #[test]
+    fn 음성_명령() {
+        let none = |_: &str| false;
+        assert_eq!(tts_argv("/h", "say", "안녕", none), ["say", "안녕"]);
+        assert_eq!(tts_argv("/h", "say -v Yuna", "hi", none), ["say", "-v", "Yuna", "hi"]);
+        assert_eq!(tts_argv("/h", "~/bin/local-say", "hi", |p| p == "/h/bin/local-say"), ["/h/bin/local-say", "hi"]);
+        assert_eq!(tts_argv("/h", "/My Tools/tts", "hi", |p| p == "/My Tools/tts"), ["/My Tools/tts", "hi"]);
+        assert_eq!(tts_argv("/h", " ", "hi", none), ["say", "hi"]);
+    }
+
+    #[test]
+    fn 비서_폴더는_환경변수가_먼저() {
+        let c = owner_config();
+        assert_eq!(hq_dir("/h", &c, |_| None), "/h/Desktop/dev/honor-orchestrator");
+        assert_eq!(hq_dir("/h", &c, |k| (k == "HONOR_ORCH_CWD").then(|| "/t/old".into())), "/t/old");
+        assert_eq!(hq_dir("/h", &c, |_| Some("/t/new".into())), "/t/new"); // CHAMMO_HQ 가 먼저
+    }
+
+    #[test]
+    fn 언어는_시스템_지역으로() {
+        assert_eq!(lang_from_locale("ko_KR"), "ko");
+        assert_eq!(lang_from_locale("en_US"), "en");
+        assert_eq!(lang_from_locale(""), "en");
+    }
+
+    #[test]
+    fn 환경변수가_먼저() {
+        let d = resolve_data_dir("/h", Some("/x/data"), |_| true);
+        assert_eq!(d, PathBuf::from("/x/data"));
+        assert_eq!(resolve_data_dir("/h", Some("~/d"), |_| false), PathBuf::from("/h/d"));
+    }
+
+    #[test]
+    fn 빈_환경변수는_없는_것() {
+        assert_eq!(resolve_data_dir("/h", Some("  "), |_| false), PathBuf::from("/h/.chammo"));
+    }
+
+    #[test]
+    fn 새_설치는_chammo() {
+        assert_eq!(resolve_data_dir("/h", None, |_| false), PathBuf::from("/h/.chammo"));
+    }
+
+    #[test]
+    fn 옛_폴더만_있으면_옛_폴더를_그대로() {
+        let d = resolve_data_dir("/h", None, |p| p == "/h/.honor-orchestrator");
+        assert_eq!(d, PathBuf::from("/h/.honor-orchestrator"));
+    }
+
+    #[test]
+    fn 둘_다_있으면_chammo() {
+        assert_eq!(resolve_data_dir("/h", None, |_| true), PathBuf::from("/h/.chammo"));
+    }
+
+    #[test]
+    fn 물결_풀기와_줄이기() {
+        assert_eq!(expand("/h", "~/Desktop/dev"), "/h/Desktop/dev");
+        assert_eq!(expand("/h", "~"), "/h");
+        assert_eq!(expand("/h", "/abs"), "/abs");
+        assert_eq!(tilde("/h", "/h/Desktop/dev"), "~/Desktop/dev");
+        assert_eq!(tilde("/h", "/h"), "~");
+        assert_eq!(tilde("/h", "/hx/a"), "/hx/a");
+        assert_eq!(tilde("", "/a"), "/a");
+    }
+}

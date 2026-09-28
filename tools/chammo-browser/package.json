@@ -1,0 +1,21 @@
+{
+  "name": "chammo-browser",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Per-project, logged-in, lock-protected Chromium profiles for Claude Code sessions (Playwright MCP wrapper)",
+  "main": "src/lock.js",
+  "bin": {
+    "chammo-browser": "bin/chammo-browser.js",
+    "chammo-browser-mcp": "bin/chammo-browser-mcp.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "@playwright/mcp": "0.0.80"
+  }
+}

@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""Operate the Chammo app for the user — voice mode, features, screens, the Tamagotchi.
+앱을 사용자 대신 조작한다 — 음성 모드·기능 켜기·화면 열기·다마고치.
+
+  scripts/app status                                   current settings as JSON (language, name, folders,
+                                                       features, voice mode, browser automation)
+  scripts/app voice on|off                             voice mode (the speaker button)
+  scripts/app feature office|tama|gacha|review|voice on|off
+                                                       turn a feature on/off (same as Settings > Features)
+  scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home
+  scripts/app close settings|office|reader|tasks|inbox
+  scripts/app focus <session id|name|project>          go to that session's (or project's) screen
+  scripts/app reader <file> [<file> ...]               open files in the reader (same as scripts/show)
+  scripts/app pet show|hide                            the Tamagotchi's floating window
+  scripts/app load [--json]                            what is loading this Mac, per session (CPU, memory, what runs),
+                                                       plus processes left behind by ended sessions
+  scripts/app project list                             project folders: devRoot's folders + ones added separately
+  scripts/app project add <folder>                     add a folder outside devRoot as a project (it stays where it is)
+  scripts/app project remove <folder|name>             stop treating it as a project (the folder is not touched)
+
+Log: <data folder>/app.jsonl — {ts, action, arg}. The running app checks it every 0.7 s and applies each
+line once; lines written while the app is closed are skipped.
+"""
+import datetime, json, os, subprocess, sys
+
+FEATURES = ('office', 'tama', 'gacha', 'review', 'voice')
+OPEN = ('settings', 'tour', 'office', 'review', 'all', 'replay', 'load', 'reader', 'tasks', 'inbox', 'home')
+CLOSE = ('settings', 'office', 'reader', 'tasks', 'inbox')
+ONOFF = ('on', 'off')
+
+
+def data_dir(home=None, env=None, exists=os.path.isdir):
+    """Data folder — same rule as the app: $CHAMMO_HOME -> ~/.chammo (-> ~/.honor-orchestrator for old installs)"""
+    home = home or os.path.expanduser('~')
+    env = os.environ.get('CHAMMO_HOME', '') if env is None else env
+    if env.strip():
+        return os.path.expanduser(env.strip())
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not exists(new) and exists(old) else new
+
+
+def read_json(path):
+    try:
+        with open(path, encoding='utf-8') as f:
+            v = json.load(f)
+        return v if isinstance(v, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def status(data):
+    """앱 설정·음성 모드·브라우저 자동화 — 빠진 기능 칸은 켜짐(앱과 같은 기본값)"""
+    c = read_json(os.path.join(data, 'config.json'))
+    f = c.get('features') if isinstance(c.get('features'), dict) else {}
+    return {
+        'language': c.get('language', ''),
+        'assistantName': c.get('assistantName', ''),
+        'devRoot': c.get('devRoot', ''),
+        'hqDir': c.get('hqDir', ''),
+        'extraProjects': extras_of(c),
+        'features': {k: bool(f.get(k, True)) for k in FEATURES},
+        'voiceMode': read_json(os.path.join(data, 'voice.json')).get('on') is True,
+        'browserAutomation': os.path.isfile(os.path.join(data, 'tools/chammo-browser/node_modules/@playwright/mcp/package.json')),
+        'dataDir': data,
+    }
+
+
+def extras_of(c):
+    v = c.get('extraProjects')
+    return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+
+
+def expand(p, home):
+    p = p.strip()
+    return home if p == '~' else os.path.join(home, p[2:]) if p.startswith('~/') else p
+
+
+def tilde(p, home):
+    p = os.path.normpath(p)
+    return '~' if p == home else '~' + p[len(home):] if p.startswith(home + os.sep) else p
+
+
+def write_config(data, c):
+    """다른 칸은 그대로 두고 통째로 바꿔 쓴다(쓰다 끊겨도 반쪽 파일이 안 남게)"""
+    path = os.path.join(data, 'config.json')
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(c, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def project(data, home, verb, arg):
+    """devRoot 밖 폴더를 프로젝트로 — (종료 코드, 할 말). 앱이 꺼져 있어도 반영되게 config.json 을 직접 고친다"""
+    c = read_json(os.path.join(data, 'config.json'))
+    dev = os.path.normpath(expand(c.get('devRoot') or '~/Developer', home))
+    extras = extras_of(c)
+    if verb == 'list':
+        names = sorted(n for n in (os.listdir(dev) if os.path.isdir(dev) else []) if not n.startswith('.') and os.path.isdir(os.path.join(dev, n)))
+        names += [os.path.basename(expand(x, home).rstrip('/')) for x in extras]
+        return 0, json.dumps({'devRoot': c.get('devRoot', ''), 'extraProjects': extras, 'projects': names}, ensure_ascii=False, indent=2)
+    full = os.path.normpath(expand(arg, home))
+    if verb == 'add':
+        if not os.path.isdir(full):
+            return 1, f'no such folder / 폴더가 없어: {arg}'
+        if full in (dev, home, '/'):
+            return 1, 'pick one project folder, not devRoot or home / 프로젝트 폴더 하나를 골라'
+        if full.startswith(dev + os.sep):
+            return 1, f'already a project (inside devRoot) / 이미 프로젝트 폴더 안이라 보여: {tilde(full, home)}'
+        t = tilde(full, home)
+        if t not in extras:
+            c['extraProjects'] = extras + [t]
+            write_config(data, c)
+        return 0, f'added / 추가: {t} (project "{os.path.basename(full)}")'
+    keep = [x for x in extras if os.path.normpath(expand(x, home)) != full and os.path.basename(expand(x, home).rstrip('/')) != arg.strip()]
+    if len(keep) == len(extras):
+        return 1, f'not an added project / 따로 추가한 프로젝트가 아니야: {arg}'
+    c['extraProjects'] = keep
+    write_config(data, c)
+    return 0, f'removed / 뺐어: {arg} (the folder itself is untouched / 폴더는 그대로)'
+
+
+def load(data, as_json=False):
+    """앱이 잴 때마다 남기는 load.json — 참모가 "왜 느려?"에 세션별로 답하게. (종료 코드, 본문, 경고)"""
+    s = read_json(os.path.join(data, 'load.json'))
+    if not s.get('at'):
+        return 1, '', 'no load data yet — the app measures while it runs / 아직 잰 기록이 없어(앱이 켜져 있을 때 잰다)'
+    warn = ''
+    try:
+        age = (datetime.datetime.now(datetime.timezone.utc) - datetime.datetime.fromisoformat(s['at'].replace('Z', '+00:00'))).total_seconds()
+        if age > 120:
+            warn = f'old data ({int(age // 60)} min ago) — is the app running? / {int(age // 60)}분 전 기록이야'
+    except (ValueError, TypeError):
+        pass
+    if as_json:
+        return 0, json.dumps(s, ensure_ascii=False, indent=2), warn
+    out = [f"load {s.get('load1')} on {s.get('cores')} cores (5 min {s.get('load5')}) · swap {s.get('swapUsedGb')}GB · {s.get('level')}",
+           'CPU % — 100 = one core', '', 'sessions:']
+    for x in s.get('sessions') or []:
+        out.append(f"  {x.get('name')} ({x.get('project')}): {x.get('cpu')}% · {x.get('mem')} — {', '.join(x.get('top') or []) or 'quiet'}")
+    orphans = s.get('orphans') or []
+    out.append(f'left behind by ended sessions: {len(orphans)}' + (' (the user can stop them in the app: Load screen)' if orphans else ''))
+    for o in orphans:
+        out.append(f"  pid {o.get('pid')} {o.get('what')}: {o.get('cpu')}% · {o.get('mem')} · up {o.get('age')}")
+    o, r = s.get('outside') or {}, s.get('rest') or {}
+    out.append(f"Claude outside Chammo: {o.get('cpu')}% · {o.get('mem')}")
+    out.append(f"other apps & system: {r.get('cpu')}% · {r.get('mem')} — {', '.join(r.get('top') or [])}")
+    return 0, '\n'.join(out), warn
+
+
+def parse(argv):
+    """명령 → (action, arg). 틀리면 None"""
+    if not argv:
+        return None
+    a, rest = argv[0], argv[1:]
+    if a == 'status' and not rest:
+        return ('status', '')
+    if a == 'voice' and len(rest) == 1 and rest[0] in ONOFF:
+        return ('voice', rest[0])
+    if a == 'feature' and len(rest) == 2 and rest[0] in FEATURES and rest[1] in ONOFF:
+        return ('feature', f'{rest[0]} {rest[1]}')
+    if a == 'open' and len(rest) == 1 and rest[0] in OPEN:
+        return ('open', rest[0])
+    if a == 'close' and len(rest) == 1 and rest[0] in CLOSE:
+        return ('close', rest[0])
+    if a == 'focus' and len(rest) == 1 and rest[0].strip():
+        return ('focus', rest[0].strip())
+    if a == 'pet' and len(rest) == 1 and rest[0] in ('show', 'hide'):
+        return ('pet', rest[0])
+    return None
+
+
+def warning(st, action, arg):
+    """꺼 둔 기능에 닿는 명령이면 한 줄 안내 — 앱은 그 명령을 무시한다(음성 켜기만 기능도 같이 켠다)"""
+    need = {('open', 'office'): 'office', ('open', 'review'): 'review', ('pet', 'show'): 'tama'}.get((action, arg))
+    if need and not st['features'][need]:
+        return f'{need} is turned off in Settings — the app will ignore this. Run: scripts/app feature {need} on'
+    if (action, arg) == ('voice', 'on') and not st['features']['voice']:
+        return 'the voice feature was off — the app turns it on too'
+    return None
+
+
+DONE = {
+    'voice': 'voice mode {arg}',
+    'feature': 'feature {arg}',
+    'open': 'opening {arg}',
+    'close': 'closing {arg}',
+    'focus': 'going to {arg}',
+    'pet': 'Tamagotchi window: {arg}',
+}
+
+
+def main(argv):
+    if argv[:1] == ['load']:
+        if argv[1:] not in ([], ['--json']):
+            print(__doc__, file=sys.stderr); return 2
+        code, body, warn = load(data_dir(), argv[1:] == ['--json'])
+        if body:
+            print(body)
+        if warn:
+            print(warn, file=sys.stderr)
+        return code
+    if argv[:1] == ['project']:
+        verb, rest = (argv[1] if len(argv) > 1 else ''), argv[2:]
+        if not ((verb == 'list' and not rest) or (verb in ('add', 'remove') and len(rest) == 1 and rest[0].strip())):
+            print(__doc__, file=sys.stderr); return 2
+        data, home = data_dir(), os.path.expanduser('~')
+        code, msg = project(data, home, verb, rest[0] if rest else '')
+        print(msg, file=sys.stdout if code == 0 else sys.stderr)
+        if code == 0 and verb != 'list':
+            line = {'ts': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), 'action': 'config', 'arg': 'reload'}
+            with open(os.path.join(data, 'app.jsonl'), 'a', encoding='utf-8') as f:
+                f.write(json.dumps(line) + '\n')
+        return code
+    if argv[:1] == ['reader']:
+        if len(argv) < 2:
+            print(__doc__, file=sys.stderr); return 2
+        show = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'show')
+        return subprocess.run([sys.executable, show, *argv[1:]]).returncode
+    cmd = parse(argv)
+    if not cmd:
+        print(__doc__, file=sys.stderr); return 2
+    data = data_dir()
+    st = status(data)
+    action, arg = cmd
+    if action == 'status':
+        print(json.dumps(st, ensure_ascii=False, indent=2)); return 0
+    note = warning(st, action, arg)
+    if note:
+        print(note, file=sys.stderr)
+    os.makedirs(data, exist_ok=True)
+    line = {'ts': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), 'action': action, 'arg': arg}
+    with open(os.path.join(data, 'app.jsonl'), 'a', encoding='utf-8') as f:
+        f.write(json.dumps(line, ensure_ascii=False) + '\n')
+    print(f'sent to the app / 앱에 넘김: {DONE[action].format(arg=arg)}')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

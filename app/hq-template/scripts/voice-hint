@@ -1,0 +1,15 @@
+#!/bin/sh
+# UserPromptSubmit hook — when the app's voice mode is on, remind the assistant to hand over spoken words (scripts/say).
+# UserPromptSubmit 훅 — 앱 음성 모드가 켜져 있으면 "들려줄 말을 따로 넘겨라"를 알린다.
+# Data folder — same rule as the app: $CHAMMO_HOME -> ~/.chammo (-> ~/.honor-orchestrator for old installs)
+d="${CHAMMO_HOME:-}"
+if [ -z "$d" ]; then
+  d="$HOME/.chammo"
+  if [ ! -d "$d" ] && [ -d "$HOME/.honor-orchestrator" ]; then d="$HOME/.honor-orchestrator"; fi
+fi
+grep -q '"on":true' "$d/voice.json" 2>/dev/null || exit 0
+if grep -q '"language": *"en"' "$d/config.json" 2>/dev/null; then
+  echo 'Voice mode is on — the user is listening, not reading. Right before you finish, run scripts/say "<what to say>" once. Length by importance (one sentence for small things, more when it needs explaining); use words instead of tables, code names or paths; always include any question the user must answer. Write your on-screen answer as usual.'
+else
+  echo '음성 모드 켜짐 — 사용자는 화면을 안 보고 소리만 듣는다. 답을 끝내기 직전에 scripts/say "들려줄 말" 을 한 번 불러라. 길이는 중요도대로(별거 아니면 한 문장, 설명이 필요하면 충분히), 표·코드 이름·경로 대신 말로 풀고, 사용자 답이 필요한 질문은 반드시 넣는다. 화면용 답은 평소대로 쓴다.'
+fi

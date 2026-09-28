@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Tauri 가 번들 Info.plist 에 합친다. 권한 창에 뜨는 설명 — src/macPermissions.test.ts -->
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>앱 안 Claude Code 세션의 음성 입력에 마이크를 씁니다.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>앱 안 Claude Code 세션이 다른 앱(브라우저·Finder·알림 등)을 조작할 때 씁니다.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>앱 안 Claude Code 세션이 카메라를 쓸 때 필요합니다.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>앱 안 Claude Code 세션이 연락처를 읽을 때 필요합니다.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>앱 안 Claude Code 세션이 캘린더를 읽을 때 필요합니다.</string>
+</dict>
+</plist>

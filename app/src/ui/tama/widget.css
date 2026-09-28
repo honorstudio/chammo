@@ -1,0 +1,31 @@
+/* 다마고치 위젯 창 — 창 자체가 216×246 고정. 색은 LCD(연두/검정 초록)에 맞춘 틀 색 */
+:root {
+  --tw-frame: #9eab78;
+  --tw-bar: #b7c492;
+  --tw-ink: #1e2a18;
+  --tw-dim: #4d5a3c;
+  --tw-over: rgba(195, 207, 159, .96);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --tw-frame: #1c2a1f;
+    --tw-bar: #0b140d;
+    --tw-ink: #a6e98f;
+    --tw-dim: #6c9a5e;
+    --tw-over: rgba(16, 27, 19, .96);
+  }
+}
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--tw-frame); user-select: none; -webkit-user-select: none; }
+body { font: 12px/1.45 -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif; color: var(--tw-ink); }
+.tw { display: flex; flex-direction: column; height: 100%; padding: 8px; box-sizing: border-box; gap: 6px; }
+.tw-screen { position: relative; border-radius: 10px; overflow: hidden; line-height: 0; }
+.tw-screen canvas { display: block; cursor: pointer; }
+.tw-over { position: absolute; inset: 0; background: var(--tw-over); display: flex; flex-direction: column; gap: 4px; padding: 8px; box-sizing: border-box; line-height: 1.4; overflow: auto; }
+.tw-over > b { font-size: 12.5px; margin-bottom: 2px; }
+.tw-over button { all: unset; cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--tw-dim); min-height: 30px; white-space: nowrap; }
+.tw-over button:hover { background: rgba(0, 0, 0, .06); }
+.tw-over button span, .dim { color: var(--tw-dim); font-size: 11px; }
+.tw-bar { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 4px 0 8px; border-radius: 8px; background: var(--tw-bar); cursor: grab; white-space: nowrap; overflow: hidden; }
+.tw-bar .sp { flex: 1; }
+.tw-bar button { all: unset; cursor: pointer; font-size: 11px; padding: 3px 8px; border-radius: 6px; color: var(--tw-dim); }
+.tw-bar button:hover { background: rgba(0, 0, 0, .08); color: var(--tw-ink); }

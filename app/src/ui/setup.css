@@ -1,0 +1,79 @@
+/* 설정·첫 실행 화면 — 창 전체를 덮는 한 장짜리 스크롤 페이지. 색은 styles.css 토큰만 */
+.setup { position: fixed; inset: 0; z-index: 50; overflow-y: auto; background: var(--bg); color: var(--text); }
+.setup-page { max-width: 760px; margin: 0 auto; padding: 40px 24px 56px; display: flex; flex-direction: column; gap: 16px; }
+
+.su-head { display: flex; align-items: flex-start; gap: 16px; }
+.su-head > div { flex: 1; }
+.su-head h1 { margin: 0 0 8px; font-size: 22px; font-weight: 700; }
+.su-head p { margin: 0; color: var(--text-2); line-height: 1.6; font-size: 13.5px; }
+
+.su-sec { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
+.su-sec h2 { margin: 0; font-size: 14.5px; font-weight: 700; }
+.su-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+.su-seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 9px; overflow: hidden; align-self: flex-start; }
+.su-seg button { min-height: 44px; min-width: 120px; padding: 0 18px; border: 0; background: var(--surface); color: var(--text-2); font-weight: 600; cursor: pointer; }
+.su-seg button + button { border-left: 1px solid var(--line-strong); }
+.su-seg button.on { background: var(--accent); color: var(--accent-ink); }
+
+.su-rows { display: flex; flex-direction: column; }
+.su-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.su-row:first-child { border-top: 0; }
+.su-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.su-row-text b { font-size: 13px; }
+.su-row-text span { font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
+.su-row-act { flex: 0 0 auto; }
+.su-mark { flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
+.su-mark.ok { background: var(--tag-done); color: var(--tag-done-ink); }
+.su-mark.need { background: var(--danger-bg); color: var(--danger-ink); }
+.su-mark.opt { background: var(--tag-bg); color: var(--text-3); }
+
+.su-term { height: 300px; display: flex; }
+.su-term > .pane { flex: 1; }
+
+.su-field { display: flex; flex-direction: column; gap: 6px; }
+.su-field label { display: grid; grid-template-columns: 150px 1fr; align-items: center; gap: 12px; }
+.su-label { font-size: 13px; font-weight: 600; }
+.su-control { display: flex; min-width: 0; }
+.su-control input { flex: 1; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 13px; }
+.su-control input:focus { outline: none; border-color: var(--accent); }
+.su-inline { display: flex; gap: 8px; flex: 1; min-width: 0; }
+.su-field > .su-hint { padding-left: 162px; }
+.su-hint { font-size: 12px; color: var(--text-3); line-height: 1.5; }
+.su-mini { height: 28px; padding: 0 10px; font-size: 12px; margin-left: 6px; }
+
+.su-feats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.su-feat { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; min-height: 44px; }
+.su-feat input { margin-top: 2px; width: 16px; height: 16px; accent-color: var(--accent); }
+.su-feat > span { display: flex; flex-direction: column; gap: 2px; }
+.su-feat b { font-size: 13px; }
+.su-feat > span > span { font-size: 12px; color: var(--text-2); line-height: 1.45; }
+
+.su-foot { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.su-go { min-width: 160px; height: 44px; font-size: 14px; }
+.su-note { align-self: stretch; padding: 10px 12px; border-radius: 8px; background: var(--tag-done); color: var(--tag-done-ink); font-size: 12.5px; }
+.su-error { align-self: stretch; padding: 10px 12px; border-radius: 8px; background: var(--danger-bg); color: var(--danger-ink); font-size: 12.5px; }
+
+/* 좁은 창(1024 아래로 줄였을 때) — 이름표를 위로 */
+@media (max-width: 720px) {
+  .su-field label { grid-template-columns: 1fr; gap: 6px; }
+  .su-field > .su-hint { padding-left: 0; }
+  .su-feats { grid-template-columns: 1fr; }
+}
+/* 첫 실행 마법사 — 위에 진행 점, 아래 뒤로/다음 */
+.su-steps { display: flex; gap: 6px; list-style: none; padding: 0; margin: 0 0 18px; }
+.su-steps li { flex: 1; height: 4px; border-radius: 2px; background: var(--line); }
+.su-steps li.done { background: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.su-steps li.on { background: var(--accent); }
+.su-nav { display: flex; align-items: center; gap: 8px; width: 100%; }
+.su-nav .grow { flex: 1; }
+.su-sum { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 12px 0 0; font-size: 13px; }
+.su-sum dt { color: var(--text-3); }
+.su-sum dd { margin: 0; font-family: ui-monospace, monospace; word-break: break-all; }
+
+/* 따로 둔 프로젝트 — 경로 한 줄씩 + 빼기, 맨 아래 폴더 추가 */
+.su-extras { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.su-extra { display: flex; align-items: center; gap: 8px; max-width: 100%; }
+.su-extra code { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.su-field-list > .su-list-row { display: grid; grid-template-columns: 150px 1fr; align-items: start; gap: 12px; }
+.su-field-list .su-label { padding-top: 6px; }

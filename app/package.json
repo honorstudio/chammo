@@ -1,0 +1,37 @@
+{
+  "name": "honor-orchestrator",
+  "private": true,
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2",
+    "@xterm/addon-fit": "0.11",
+    "@xterm/addon-web-links": "~0.12.0",
+    "@xterm/addon-webgl": "0.19",
+    "@xterm/xterm": "6",
+    "dompurify": "^3.4.16",
+    "marked": "^16.4.2",
+    "react": "19",
+    "react-dom": "19"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2",
+    "@types/react": "19",
+    "@types/react-dom": "19",
+    "@vitejs/plugin-react": "6",
+    "typescript": "5",
+    "vite": "8",
+    "vitest": "5"
+  }
+}

@@ -1,0 +1,27 @@
+[package]
+name = "honor-orchestrator"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["devtools"] }
+portable-pty = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 터미널 세션을 앱으로 옮길 때 그 프로세스에 SIGTERM
+libc = "0.2"
+# 권한 창 자동 허용: attach 출력을 화면 글자로 되살려 선택지를 읽는다
+vt100 = "0.15"
+
+# 알림을 앱 이름·아이콘으로(UNUserNotificationCenter). osascript 로 보내면 "스크립트 편집기" 로 묶이고 눌러도 앱이 안 열린다
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSDictionary", "NSError", "NSBundle", "NSArray", "NSObject", "block2"] }
+objc2-user-notifications = { version = "0.3", features = ["UNUserNotificationCenter", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationSettings", "block2"] }
+# 리더 Ctrl+Tab — 문서 프레임·PDF 안에 포커스가 있어도 앱 전체 키 입력을 먼저 본다(NSEvent 로컬 감시)
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSEvent", "NSResponder", "block2"] }

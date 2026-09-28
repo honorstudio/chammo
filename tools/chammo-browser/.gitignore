@@ -1,0 +1,7 @@
+node_modules/
+.DS_Store
+# 런타임 프로필/락은 데이터 폴더(<data>/browser)에 저장되므로 레포에 안 들어옴
+*.log
+.playwright-mcp/
+# 검증 스크립트 로그
+.shots/

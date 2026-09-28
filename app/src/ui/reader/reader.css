@@ -1,0 +1,74 @@
+/* 리더 — 메인 창 리더 패널과 떼어 낸 리더 창이 같이 쓴다. 떼어 낸 창(body.reader-win)만 색 토큰을 따로 둔다(메인은 styles.css 토큰) */
+body.reader-win { --bg: #ececef; --panel: #f6f6f8; --surface: #fff; --line: #dcdce1; --text: #1d1d20; --text-2: #4a4a52; --text-3: #8a8a92; --accent: #d9622b; --hover: rgba(0, 0, 0, .05); }
+@media (prefers-color-scheme: dark) { body.reader-win { --bg: #111114; --panel: #18181c; --surface: #1e1e22; --line: #2a2a30; --text: #e8e8ec; --text-2: #b4b4bc; --text-3: #7c7c86; --hover: rgba(255, 255, 255, .06); } }
+body.reader-win, body.reader-win #root { margin: 0; height: 100vh; }
+body.reader-win { background: var(--bg); color: var(--text); font: 13px -apple-system, "Pretendard", "Apple SD Gothic Neo", sans-serif; }
+.rd { height: 100%; display: flex; flex-direction: column; }
+.rd-tabs { display: flex; gap: 2px; padding: 6px 8px 0; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; min-height: 36px; box-sizing: border-box; scrollbar-width: none; }
+/* 탭 줄 스크롤 막대는 숨긴다(탭을 다 가렸다) — 가로 스크롤·세로 휠(TabStrip onWheel)로 넘긴다 */
+.rd-tabs::-webkit-scrollbar { display: none; }
+.rd-tab { display: flex; align-items: center; gap: 6px; max-width: 240px; padding: 7px 8px 7px 12px; border-radius: 8px 8px 0 0; color: var(--text-2); cursor: pointer; white-space: nowrap; }
+.rd-tab span { overflow: hidden; text-overflow: ellipsis; }
+.rd-tab:hover { background: var(--hover); }
+.rd-tab button { all: unset; width: 18px; height: 18px; border-radius: 4px; text-align: center; line-height: 18px; font-size: 10px; color: var(--text-3); }
+.rd-tab button:hover { background: var(--hover); color: var(--text); }
+.rd-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.rd-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font: 12px ui-monospace, monospace; direction: rtl; text-align: left; }
+.rd-bar button { all: unset; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--line); color: var(--text-2); font-size: 12px; cursor: pointer; }
+.rd-bar button:hover { background: var(--hover); color: var(--text); }
+.rd-body { flex: 1; min-height: 0; display: flex; background: var(--surface); }
+.rd-frame { flex: 1; border: 0; width: 100%; height: 100%; background: #fff; }
+.rd-image { flex: 1; overflow: auto; display: flex; align-items: flex-start; justify-content: center; padding: 24px; background: repeating-conic-gradient(var(--panel) 0 25%, var(--surface) 0 50%) 0 0 / 16px 16px; }
+.rd-image img { max-width: 100%; box-shadow: 0 4px 20px rgba(0, 0, 0, .15); }
+.rd-text { flex: 1; margin: 0; padding: 20px 24px; overflow: auto; font: 12.5px/1.6 ui-monospace, "D2Coding", monospace; white-space: pre-wrap; }
+.rd-empty { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px; text-align: center; color: var(--text-3); font-size: 14px; line-height: 1.6; }
+/* 탭 끌기 — 들린 탭은 흐리게, 끼울 자리는 왼쪽 주황 줄, 커서를 따라가는 탭 */
+.rd-tab { touch-action: none; user-select: none; position: relative; }
+.rd-tab.lifted { opacity: .35; }
+.rd-tab.drop-before::before, .rd-tabs-end.drop-before::before { content: ''; position: absolute; left: -2px; top: 6px; bottom: 6px; width: 3px; border-radius: 2px; background: var(--accent); }
+.rd-tabs-end { position: relative; flex: 1; min-width: 24px; }
+.rd-ghost { position: fixed; z-index: 100; pointer-events: none; transform: translate(-30%, -50%); padding: 7px 12px; border-radius: 8px; background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 8px 24px rgba(0, 0, 0, .3); border: 1px solid var(--line); white-space: nowrap; }
+.rd-ghost small { display: block; font-weight: 500; font-size: 11px; color: var(--accent); margin-top: 2px; }
+.rd-ghost.out { border-color: var(--accent); }
+/* 메인 창 리더 패널 — 작업 패널 왼쪽 */
+.reader-panel { position: relative; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--surface); outline: none; }
+.reader-panel .rd { min-height: 0; flex: 1; }
+.reader-panel.drop-over { box-shadow: inset 0 0 0 3px var(--accent); }
+/* 참모 화면 + 리더 패널을 한 칸에 — 크게면 리더가 참모 화면 자리를 덮는다(터미널은 그대로 두고 위에 얹어 크기가 안 바뀌게) */
+.work { flex: 1; min-width: 0; min-height: 0; display: flex; position: relative; }
+.reader-panel.full { position: absolute; inset: 0; z-index: 30; border-left: 0; }
+.rd-head { display: flex; align-items: stretch; background: var(--panel); border-bottom: 1px solid var(--line); }
+.rd-head .rd-tabs { flex: 1; min-width: 0; border-bottom: 0; }
+.rd-actions { display: flex; align-items: center; gap: 4px; padding: 0 8px; flex: 0 0 auto; }
+.rd-actions button { all: unset; padding: 4px 10px; border-radius: 6px; font-size: 12px; color: var(--text-2); cursor: pointer; }
+.rd-actions button:hover { background: var(--hover); color: var(--text); }
+.rd-actions button { width: 28px; height: 28px; padding: 0; display: flex; align-items: center; justify-content: center; }
+.rd-actions svg { width: 15px; height: 15px; }
+/* 켜진 탭 — 위 주황 띠 + 아래 도구 줄과 이어지는 바탕(크롬·VS Code 처럼). 나머지 탭은 흐리게 */
+.rd-tab { color: var(--text-3); border: 1px solid transparent; border-bottom: 0; margin-bottom: -1px; }
+.rd-tab.on { background: var(--surface); color: var(--text); font-weight: 700; border-color: var(--line); box-shadow: inset 0 2px 0 var(--accent); }
+/* 리더를 보고 있을 때(마지막으로 만진 게 리더 — ReaderPanel markReader) = 세션 칸처럼 주황 테두리 + 머리줄 물듦. ⌘W·Ctrl+Tab 이 탭으로 간다는 표시 */
+/* 테두리는 맨 위 층(::after)에 — outline 으로 그리면 문서 프레임(iframe)·도구 줄이 위에 그려져 가장자리가 잘려 보였다(사용자 2026-09-28) */
+.reader-panel.active::after { content: ''; position: absolute; inset: 0; border: 2px solid var(--accent); pointer-events: none; z-index: 50; }
+.reader-panel.active .rd-head { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+.reader-panel.active .rd-tab.on { color: var(--accent); }
+
+/* 마크다운 — 앱 화면에 바로 그린다(정리된 HTML). 앱 색 토큰을 따라 밝게·어둡게 */
+.rd-md { flex: 1; min-width: 0; height: 100%; overflow: auto; background: var(--surface); color: var(--text); }
+.rd-md main { max-width: 820px; margin: 0 auto; padding: 40px 48px 80px; font: 15px/1.75 -apple-system, "Pretendard", "Apple SD Gothic Neo", sans-serif; user-select: text; -webkit-user-select: text; }
+.rd-md h1, .rd-md h2, .rd-md h3 { line-height: 1.35; margin: 1.8em 0 .6em; }
+.rd-md h1 { font-size: 26px; margin-top: 0; }
+.rd-md h2 { font-size: 20px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.rd-md h3 { font-size: 16px; }
+.rd-md a { color: var(--accent); cursor: pointer; }
+.rd-md code { font: 13px ui-monospace, "D2Coding", monospace; background: var(--surface-2, var(--panel)); padding: 1px 5px; border-radius: 4px; }
+.rd-md pre { background: var(--surface-2, var(--panel)); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+.rd-md pre code { background: none; padding: 0; }
+.rd-md table { border-collapse: collapse; margin: 1em 0; font-size: 14px; display: block; overflow-x: auto; }
+.rd-md th, .rd-md td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+.rd-md th { background: var(--surface-2, var(--panel)); }
+.rd-md blockquote { margin: 1em 0; padding: 4px 16px; border-left: 3px solid var(--accent); color: var(--text-2); background: var(--surface-2, var(--panel)); }
+.rd-md img { max-width: 100%; }
+.rd-md hr { border: 0; border-top: 1px solid var(--line); margin: 2em 0; }
+.rd-md.cmd code { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; color: var(--accent); }
+.rd-md.cmd { cursor: pointer; }

@@ -1,0 +1,28 @@
+<!-- honor-orchestrator 앱 아이콘 원본. 가운데 = 참모(오케스트레이터), 둘레 = 프로젝트 세션들.
+     macOS 아이콘 격자: 1024 캔버스 안에 824 둥근 사각(여백 100) -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#26262c"/>
+      <stop offset="1" stop-color="#121215"/>
+    </linearGradient>
+    <radialGradient id="core" cx="0.5" cy="0.42" r="0.6">
+      <stop offset="0" stop-color="#ff9a5c"/>
+      <stop offset="1" stop-color="#d9622b"/>
+    </radialGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" fill="none" stroke="#ffffff" stroke-opacity=".08"/>
+  <g stroke="#d9622b" stroke-opacity=".55" stroke-width="22" stroke-linecap="round">
+    <line x1="512" y1="512" x2="512" y2="262"/>
+    <line x1="512" y1="512" x2="728" y2="637"/>
+    <line x1="512" y1="512" x2="296" y2="637"/>
+  </g>
+  <g fill="#e9e9ee">
+    <circle cx="512" cy="262" r="58"/>
+    <circle cx="728" cy="637" r="58"/>
+    <circle cx="296" cy="637" r="58"/>
+  </g>
+  <circle cx="512" cy="512" r="112" fill="url(#core)"/>
+  <circle cx="512" cy="512" r="150" fill="none" stroke="#d9622b" stroke-opacity=".3" stroke-width="10"/>
+</svg>

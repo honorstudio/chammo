@@ -1,0 +1,35 @@
+# 작업 캡처·산출물 — 루트에 떨어지는 잔여물만 막는다(에셋 폴더의 이미지는 그대로 커밋됨)
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.log
+/*.har
+.shots/
+.playwright-mcp/
+
+# 테스트·빌드 산출물
+test-results/
+playwright-report/
+coverage/
+dist/
+build/
+.next/
+*.tsbuildinfo
+
+# 로컬 전용
+.env
+.env.*
+!.env.example
+CLAUDE.local.md
+.DS_Store
+node_modules/
+
+# Rust 빌드 산출물
+target/
+target.noindex/
+app/src-tauri/gen/
+
+# 세션별 git worktree (claude -w / --worktree)
+.claude/worktrees/
+__pycache__/

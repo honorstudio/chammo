@@ -1,0 +1,3 @@
+# 빌드 산출물 폴더 — 이름 끝이 .noindex 면 스포트라이트가 안 뒤진다(빌드한 Chammo.app 이 설치한 앱과 같이 검색에 떴다)
+[build]
+target-dir = "target.noindex"

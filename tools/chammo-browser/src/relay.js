@@ -1,0 +1,163 @@
+// Claude ↔ @playwright/mcp 사이의 stdio JSON-RPC 중계 + 지연 락.
+//
+// 예전엔 래퍼가 **기동 시점**에 락을 잡았다. 그래서 브라우저를 한 번도 안 띄운
+// 유휴 세션이 프로필을 몇 시간씩 쥐고, 같은 폴더의 두 번째 세션은 락 실패 →
+// process.exit → Claude 엔 CONNECTION_CLOSED 로만 보였다(2026-09-27).
+//
+// 지금은 락을 **첫 tools/call 시점**에 잡는다:
+//   - initialize·tools/list 등은 락 없이 통과 → MCP 는 항상 연결된다
+//   - tools/call 때 락을 못 얻으면 프로세스를 죽이지 않고 그 호출에 도구 에러로 답한다
+//   - browser_close 가 성공하면 락을 놓는다 (프로세스 종료 시 해제는 래퍼가 담당)
+//   - idleMs 동안 tools/call 이 없으면 래퍼가 browser_close 를 대신 보내 락을 돌려준다
+//     (브라우저를 띄워 놓고 방치한 세션이 프로필을 계속 쥐는 걸 막는다)
+//
+// MCP stdio 전송은 "한 줄 = 한 JSON-RPC 메시지"다. 원문 줄을 그대로 넘기고,
+// 판단에 필요한 만큼만 파싱한다.
+
+const { StringDecoder } = require('string_decoder');
+
+const CLOSE_TOOL = 'browser_close';
+const DEFAULT_IDLE_MINUTES = 10;
+const IDLE_FLAG = '--idle-minutes=';
+
+/**
+ * 유휴 자동 닫기 시간. 우선순위: `--idle-minutes=N` 인자 > CHAMMO_BROWSER_IDLE_MINUTES > 10분.
+ * 0 이면 끔. 우리 인자는 playwright 로 넘기지 않도록 rest 에서 뺀다.
+ */
+function parseIdleMs(argv, env) {
+  let minutes = DEFAULT_IDLE_MINUTES;
+  const fromEnv = Number(env.CHAMMO_BROWSER_IDLE_MINUTES);
+  if (env.CHAMMO_BROWSER_IDLE_MINUTES != null && Number.isFinite(fromEnv) && fromEnv >= 0) minutes = fromEnv;
+  const rest = [];
+  for (const a of argv) {
+    if (!a.startsWith(IDLE_FLAG)) { rest.push(a); continue; }
+    const n = Number(a.slice(IDLE_FLAG.length));
+    if (Number.isFinite(n) && n >= 0) minutes = n;
+  }
+  return { idleMs: Math.round(minutes * 60000), rest };
+}
+
+function parse(line) {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
+  }
+}
+
+function lockedMessage(profile, r) {
+  if (r.reason === 'locked' && r.holder) {
+    return [
+      `프로필 '${profile}' 은(는) pid ${r.holder.pid}(시작 ${r.holder.startedAt})이 사용 중입니다.`,
+      `→ 그 세션에서 browser_close 를 부르거나 세션을 닫으면 풀립니다. 다음 호출 때 자동으로 다시 시도합니다.`,
+      `→ 유휴 세션이 쥐고 있는 게 확실하면: chammo-browser unlock ${profile}`,
+    ].join('\n');
+  }
+  return `프로필 '${profile}' 락 획득 실패: ${r.reason}. 다음 호출 때 다시 시도합니다.`;
+}
+
+/**
+ * @param {object} o
+ * @param {string} o.profile
+ * @param {() => {ok:boolean, reason?:string, holder?:object}} o.acquire
+ * @param {() => void} o.release
+ * @param {(line:string) => void} o.sendToChild   Claude → playwright
+ * @param {(line:string) => void} o.sendToClient  playwright/래퍼 → Claude
+ * @param {number} [o.idleMs=0]  0 이면 유휴 자동 닫기 끔
+ * @param {Function} [o.setTimer]  테스트용 주입 (기본 setTimeout)
+ * @param {Function} [o.clearTimer]
+ * @param {(msg:string) => void} [o.log]
+ */
+function createRelay({
+  profile, acquire, release, sendToChild, sendToClient,
+  idleMs = 0, setTimer = setTimeout, clearTimer = clearTimeout, log = () => {},
+}) {
+  let held = false;
+  const pending = new Map(); // 진행 중인 tools/call: id → 도구 이름
+  const internal = new Set(); // 래퍼가 직접 보낸 요청 id — 응답을 Claude 로 흘리지 않는다
+  let idleTimer = null;
+  let idleSeq = 0;
+
+  function disarm() {
+    if (idleTimer != null) clearTimer(idleTimer);
+    idleTimer = null;
+  }
+
+  function arm() {
+    disarm();
+    if (!idleMs || !held || pending.size > 0) return;
+    idleTimer = setTimer(onIdle, idleMs);
+    if (idleTimer && typeof idleTimer.unref === 'function') idleTimer.unref();
+  }
+
+  function onIdle() {
+    idleTimer = null;
+    // 콜백이 대기 중일 때 호출이 먼저 들어왔을 수 있다 → 그땐 닫지 않는다
+    if (!held || pending.size > 0) return;
+    const id = `chammo-idle-${++idleSeq}`;
+    log(`[chammo-browser-mcp] ${+(idleMs / 60000).toFixed(2)}분 동안 도구 호출이 없어 브라우저를 닫고 '${profile}' 락을 돌려줍니다.`);
+    internal.add(id);
+    pending.set(id, CLOSE_TOOL);
+    sendToChild(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: CLOSE_TOOL, arguments: {} } }));
+  }
+
+  function onClientLine(line) {
+    const msg = parse(line);
+    const isCall = msg && msg.method === 'tools/call' && msg.id != null;
+    if (!isCall) return sendToChild(line);
+
+    const name = msg.params && msg.params.name;
+    disarm();
+    // 락이 없으면 브라우저도 없다 → browser_close 는 락 없이 그대로 통과(no-op)
+    if (!held && name !== CLOSE_TOOL) {
+      const r = acquire();
+      if (!r.ok) {
+        return sendToClient(JSON.stringify({
+          jsonrpc: '2.0',
+          id: msg.id,
+          result: { content: [{ type: 'text', text: lockedMessage(profile, r) }], isError: true },
+        }));
+      }
+      held = true;
+    }
+    pending.set(msg.id, name);
+    sendToChild(line);
+  }
+
+  function onChildLine(line) {
+    const msg = parse(line);
+    if (msg && msg.id != null && pending.has(msg.id) && !msg.method) {
+      const name = pending.get(msg.id);
+      pending.delete(msg.id);
+      const succeeded = msg.result && !msg.result.isError;
+      // 다른 호출이 아직 돌고 있으면 그게 브라우저를 다시 띄웠을 수 있다 → 보수적으로 유지
+      if (name === CLOSE_TOOL && held && succeeded && pending.size === 0) {
+        release();
+        held = false;
+      }
+      arm();
+      if (internal.delete(msg.id)) return;
+    }
+    sendToClient(line);
+  }
+
+  return { onClientLine, onChildLine, holdsLock: () => held };
+}
+
+// 스트림 청크 → 완성된 줄 단위 콜백. 빈 줄은 버리고 CRLF 도 처리한다.
+// 멀티바이트(한글)가 청크 경계에서 잘려도 깨지지 않게 StringDecoder 를 쓴다.
+function createLineSplitter(onLine) {
+  const decoder = new StringDecoder('utf8');
+  let buf = '';
+  return (chunk) => {
+    buf += typeof chunk === 'string' ? chunk : decoder.write(chunk);
+    let i;
+    while ((i = buf.indexOf('\n')) !== -1) {
+      const line = buf.slice(0, i).replace(/\r$/, '');
+      buf = buf.slice(i + 1);
+      if (line) onLine(line);
+    }
+  };
+}
+
+module.exports = { createRelay, createLineSplitter, parseIdleMs };

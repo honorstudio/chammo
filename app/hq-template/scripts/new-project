@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""Create a project folder for new work, with the project harness, then hand it to a session.
+새 일을 맡을 프로젝트 폴더를 만들고 하네스를 깐다 — 그다음 그 폴더에서 세션을 띄워 맡긴다.
+
+  scripts/new-project <name> "<one-line summary>"
+
+<name>: lowercase letters, digits, - _ . (e.g. shop-landing). The folder is <devRoot>/<name>.
+It runs `git init` and lays down CLAUDE.md + docs/starter.md + docs/roadmap.md + docs/decisions/
+(files that already exist are never overwritten) and marks a folder it just created as trusted for Claude Code
+(an existing folder is left for the user to trust once). If the user has their own `project-starter` skill,
+it only creates the folder and tells you to start the session with /project-starter instead.
+Prints JSON: {path, existed, written, projectStarter, trusted, browser, next}.
+With browser automation installed, a new project also gets its own logged-in browser profile (.mcp.json).
+"""
+import datetime, json, os, re, shutil, subprocess, sys
+
+NAME = re.compile(r'^[a-z0-9][a-z0-9._-]{0,63}$')
+
+
+def valid_name(name):
+    return bool(NAME.match(name or '')) and '..' not in name
+
+
+def data_dir(home=None, env=None, exists=os.path.isdir):
+    """Data folder — same rule as the app: $CHAMMO_HOME -> ~/.chammo (-> ~/.honor-orchestrator for old installs)"""
+    home = home or os.path.expanduser('~')
+    env = os.environ.get('CHAMMO_HOME', '') if env is None else env
+    if env.strip():
+        return os.path.expanduser(env.strip())
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not exists(new) and exists(old) else new
+
+
+def config(data):
+    try:
+        with open(os.path.join(data, 'config.json'), encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def expand(p, home):
+    return home + p[1:] if p.startswith('~') else p
+
+
+def trust(path, home):
+    """claude --bg 가 새 폴더에서 뜨게 ~/.claude.json 에 '믿음'을 적는다 — 이 스크립트가 방금 만든 빈 폴더에만.
+    (부모 폴더를 믿어도 새 하위 폴더는 "Workspace not trusted" 로 거부됐다, 2026-09-28 실측) 파일이 없거나 깨졌으면 손대지 않는다"""
+    cj = os.path.join(home, '.claude.json')
+    try:
+        with open(cj, encoding='utf-8') as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(d, dict):
+        return False
+    projects = d.setdefault('projects', {})
+    if not isinstance(projects, dict):
+        return False
+    projects.setdefault(path, {})['hasTrustDialogAccepted'] = True
+    tmp = cj + '.chammo-tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, cj)  # 한 번에 바꿔 끼운다(쓰다 만 파일이 남지 않게)
+    return True
+
+
+def local_settings(path, enable=(), statusline=None):
+    """<프로젝트>/.claude/settings.local.json 에 합친다 — MCP 미리 승인, 앱 상태줄(사용량·대화 %)"""
+    sl = os.path.join(path, '.claude/settings.local.json')
+    try:
+        with open(sl, encoding='utf-8') as f:
+            s = json.load(f)
+    except (OSError, ValueError):
+        s = {}
+    for name in enable:
+        servers = s.setdefault('enabledMcpjsonServers', [])
+        if name not in servers:
+            servers.append(name)
+    if statusline:
+        s['statusLine'] = {'type': 'command', 'command': statusline}
+    os.makedirs(os.path.dirname(sl), exist_ok=True)
+    with open(sl, 'w', encoding='utf-8') as f:
+        json.dump(s, f, ensure_ascii=False, indent=2)
+
+
+def browser(path, name, data, node=None):
+    """브라우저 자동화가 깔려 있으면 이 프로젝트만의 브라우저 프로필(.mcp.json)을 만들고, 백그라운드 세션이 못 누르는
+    MCP 승인 창을 미리 승인해 둔다(.claude/settings.local.json). 여러 세션이 한 브라우저로 부딪히지 않게"""
+    tool = os.path.join(data, 'tools/chammo-browser')
+    if not os.path.isfile(os.path.join(tool, 'node_modules/@playwright/mcp/package.json')):
+        return False
+    node = node or shutil.which('node') or next((p for p in ['/opt/homebrew/bin/node', '/usr/local/bin/node'] if os.path.isfile(p)), None)
+    if not node or not os.path.isfile(node):
+        return False
+    env = dict(os.environ, CHAMMO_HOME=data)
+    r = subprocess.run([node, os.path.join(tool, 'bin/chammo-browser.js'), 'setup', name, path], env=env, capture_output=True, text=True)
+    if r.returncode != 0:
+        return False
+    local_settings(path, enable=['playwright'])
+    return True
+
+
+def create(name, summary, data=None, home=None, today=None, node=None):
+    """폴더·git·하네스. 있는 파일은 안 덮는다. 사용자 project-starter 스킬이 있으면 그 스킬에 맡긴다"""
+    if not valid_name(name):
+        raise ValueError(f'folder name must be lowercase letters, digits, - _ . : {name!r}')
+    home = home or os.path.expanduser('~')
+    data = data or data_dir(home)
+    cfg = config(data)
+    dev = expand(cfg.get('devRoot') or '~/Developer', home)
+    path = os.path.join(dev, name)
+    existed = os.path.isdir(path)
+    os.makedirs(path, exist_ok=True)
+    if not os.path.isdir(os.path.join(path, '.git')):
+        subprocess.run(['git', 'init', '-q'], cwd=path, check=False)
+    starter = os.path.isfile(os.path.join(home, '.claude/skills/project-starter/SKILL.md'))
+    written = []
+    if not starter:
+        lang = 'ko' if cfg.get('language') == 'ko' else 'en'
+        tpl = os.path.join(data, 'templates/project', lang)
+        date = today or datetime.date.today().isoformat()
+        for root, _, files in os.walk(tpl):
+            for fn in files:
+                src = os.path.join(root, fn)
+                rel = os.path.relpath(src, tpl)
+                rel = '.gitignore' if rel == 'gitignore' else rel
+                dest = os.path.join(path, rel)
+                if os.path.exists(dest):
+                    continue
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                with open(src, encoding='utf-8') as f:
+                    body = f.read().replace('{{name}}', name).replace('{{summary}}', summary).replace('{{date}}', date)
+                with open(dest, 'w', encoding='utf-8') as f:
+                    f.write(body)
+                written.append(rel)
+    trusted = False if existed else trust(path, home)
+    web = False if existed else browser(path, name, data, node)  # 있던 폴더(사용자 저장소)의 .mcp.json 은 대신 안 건드린다
+    status = os.path.join(data, 'tools/statusline')
+    if not existed and os.path.isfile(status):
+        local_settings(path, statusline=status)  # 이 세션의 대화 % 가 사이드바에 뜨게(사용자 원래 상태줄은 그 안에서 그대로)
+    first = '/project-starter ' if starter else ''
+    return {
+        'path': path,
+        'existed': existed,
+        'written': sorted(written),
+        'projectStarter': starter,
+        'trusted': trusted,
+        'browser': web,
+        'next': f'cd {path} && claude --bg -n {name} "{first}<first instruction>"',
+    }
+
+
+def main(argv):
+    if len(argv) < 2:
+        print(__doc__, file=sys.stderr)
+        return 2
+    try:
+        out = create(argv[0], ' '.join(argv[1:]))
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

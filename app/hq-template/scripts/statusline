@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Claude Code status line for Chammo sessions.
+Chammo 세션의 상태줄 — 앱이 읽을 사용량을 데이터 폴더에 남기고, 화면엔 사용자 원래 상태줄을 그대로 보여 준다.
+
+Writes <data>/statusline.json (5-hour / weekly usage for the top bar) and <data>/ctx/<session_id>.json
+(conversation fill per session for the sidebar). Then, if the user has their own statusLine in
+~/.claude/settings.json, it runs that with the same input and prints its output — so nothing changes on
+screen. Otherwise it prints a short "model · 42%".
+"""
+import json, os, subprocess, sys, time
+
+
+def data_dir(home=None, env=None, exists=os.path.isdir):
+    """Data folder — same rule as the app: $CHAMMO_HOME -> ~/.chammo (-> ~/.honor-orchestrator for old installs)"""
+    home = home or os.path.expanduser('~')
+    env = os.environ.get('CHAMMO_HOME', '') if env is None else env
+    if env.strip():
+        return os.path.expanduser(env.strip())
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not exists(new) and exists(old) else new
+
+
+def _write(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        f.write(text)
+    os.replace(tmp, path)  # 쓰는 도중 앱이 읽지 않게 한 번에 바꿔 끼운다
+
+
+def record(raw, data, now=None):
+    """사용량 원문과 세션별 컨텍스트 요약을 남긴다. 입력이 깨졌으면 아무것도 안 쓴다"""
+    try:
+        d = json.loads(raw)
+    except ValueError:
+        return
+    if not isinstance(d, dict):
+        return
+    if d.get('rate_limits'):  # 아직 API 를 안 부른 세션엔 없다 — 그걸로 덮으면 다른 세션이 남긴 사용량이 지워진다
+        _write(os.path.join(data, 'statusline.json'), raw)
+    sid = d.get('session_id')
+    if sid:
+        cw = d.get('context_window') or {}
+        ctx = {'sessionId': sid, 'used': cw.get('used_percentage'), 'size': cw.get('context_window_size'),
+               'model': (d.get('model') or {}).get('display_name'), 'name': d.get('session_name'), 'cwd': d.get('cwd'),
+               'ts': int(now if now is not None else time.time())}
+        _write(os.path.join(data, 'ctx', f'{sid}.json'), json.dumps(ctx, ensure_ascii=False))
+
+
+def user_command(home=None):
+    """사용자 원래 상태줄 명령 — 없거나 우리 것이면 None(자기 자신을 다시 부르지 않게)"""
+    home = home or os.path.expanduser('~')
+    try:
+        with open(os.path.join(home, '.claude/settings.json'), encoding='utf-8') as f:
+            cmd = ((json.load(f) or {}).get('statusLine') or {}).get('command')
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not cmd or 'chammo' in cmd or 'scripts/statusline' in cmd:
+        return None
+    return cmd
+
+
+def fallback(d):
+    model = (d.get('model') or {}).get('display_name') or ''
+    used = (d.get('context_window') or {}).get('used_percentage')
+    return f'{model} · {round(used)}%' if used is not None else model
+
+
+def main():
+    raw = sys.stdin.read()
+    try:
+        record(raw, data_dir())
+    except OSError:
+        pass
+    cmd = user_command()
+    if cmd:
+        r = subprocess.run(cmd, shell=True, input=raw, capture_output=True, text=True)
+        sys.stdout.write(r.stdout)
+        return 0
+    try:
+        sys.stdout.write(fallback(json.loads(raw)))
+    except ValueError:
+        pass
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

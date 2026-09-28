@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Open files in the app's reader panel — HTML mockups, PDFs, Markdown, images, text.
+파일을 앱 리더 창에 띄운다 — 시안 HTML·PDF·마크다운·그림·글.
+
+  scripts/show <file> [<file> ...]
+
+Relative paths are resolved from the current folder. Missing files and files outside your home folder are
+refused (the app won't open them either). Log: <data folder>/show.jsonl — {ts, path}. The app checks it
+every 0.7 s while it is running.
+"""
+import datetime, json, os, sys
+
+
+def data_dir(home=None, env=None, exists=os.path.isdir):
+    """Data folder — same rule as the app: $CHAMMO_HOME -> ~/.chammo (-> ~/.honor-orchestrator for old installs)"""
+    home = home or os.path.expanduser('~')
+    env = os.environ.get('CHAMMO_HOME', '') if env is None else env
+    if env.strip():
+        return os.path.expanduser(env.strip())
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not exists(new) and exists(old) else new
+
+
+LOG = os.path.join(data_dir(), 'show.jsonl')
+HOME = os.path.realpath(os.path.expanduser('~'))
+
+
+def resolve(p, cwd=None, home=HOME):
+    """Real absolute path, or None when missing or outside home"""
+    real = os.path.realpath(os.path.join(cwd or os.getcwd(), os.path.expanduser(p)))
+    if not os.path.isfile(real) or not (real == home or real.startswith(home + os.sep)):
+        return None
+    return real
+
+
+def main(argv):
+    if not argv:
+        print(__doc__, file=sys.stderr); return 2
+    bad = 0
+    os.makedirs(os.path.dirname(LOG), exist_ok=True)
+    for p in argv:
+        real = resolve(p)
+        if not real:
+            print(f'cannot open (missing or outside home) / 못 띄움(없거나 홈 밖): {p}', file=sys.stderr); bad += 1; continue
+        with open(LOG, 'a', encoding='utf-8') as f:
+            f.write(json.dumps({'ts': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), 'path': real}, ensure_ascii=False) + '\n')
+        print(f'sent to reader / 리더로 넘김: {real}')
+    return 1 if bad else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))
