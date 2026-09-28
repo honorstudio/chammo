@@ -1,6 +1,7 @@
 // 참모가 다른 세션에 시킨 일을 카드로. 참모가 `scripts/task`로 tasks.jsonl 에 이벤트를 한 줄씩 붙이고,
 // 앱은 그걸 읽어 세션 상태(agents --json)와 합쳐 보여준다. 파일은 append-only — 고치지 않고 이벤트만 쌓는다.
 
+import { tr } from '../i18n';
 import type { Session } from './session';
 
 export type TaskEvent = {
@@ -15,7 +16,13 @@ export type TaskEvent = {
   note?: string;
   /** ask 에만: 답장 받을 세션(물어본 참모의 session id). 없으면 일을 받은 세션 */
   to?: string;
+  /** send 에만: 검증 강도 — scripts/task 가 지시 내용으로 정한다(2026-09-29~, 옛 기록엔 없음) */
+  effort?: Effort;
+  /** note 에만: task retry 로 되돌려 보낸 몇 번째인지 */
+  retry?: number;
 };
+
+export type Effort = 'high' | 'medium' | 'low';
 
 export type TaskStatus = 'sent' | 'working' | 'needsInput' | 'replied' | 'done' | 'gone';
 
@@ -27,6 +34,9 @@ export type TaskCard = {
   note?: string;
   sentAt: string;
   updatedAt: string;
+  effort?: Effort;
+  /** 되돌려 보낸 횟수 — 세 번이면 계획이 틀린 것(Loops and Graphs) */
+  retries?: number;
 };
 
 /** 깨진 줄은 건너뛴다 — 참모가 쓰는 도중에 앱이 읽을 수 있다 */
@@ -51,7 +61,8 @@ export function foldTasks(events: TaskEvent[], sessions: Session[]): TaskCard[] 
     if (e.type === 'send') {
       byId.set(e.task, {
         id: e.task, target: e.target ?? '', title: e.title ?? '', status: 'sent',
-        sentAt: e.ts, updatedAt: e.ts, replied: false, finished: false,
+        sentAt: e.ts, updatedAt: e.ts, replied: false, finished: false, retries: 0,
+        ...(e.effort ? { effort: e.effort } : {}),
       });
       continue;
     }
@@ -62,6 +73,7 @@ export function foldTasks(events: TaskEvent[], sessions: Session[]): TaskCard[] 
     if (e.target) c.target = e.target;
     if (e.type === 'reply') c.replied = true;
     if (e.type === 'done') c.finished = true;
+    if (e.retry) c.retries = Math.max(c.retries ?? 0, e.retry);
   }
 
   const cards = [...byId.values()].map(({ replied, finished, ...c }): TaskCard => {
@@ -96,4 +108,18 @@ export function splitCards(cards: TaskCard[], now: number): { active: TaskCard[]
   const done = cards.filter((c) => c.status === 'done');
   const doneToday = done.filter((c) => Date.parse(c.updatedAt) >= start).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
   return { active, orphaned, doneToday, hidden: done.length - doneToday.length + gone.length - orphaned.length };
+}
+
+/**
+ * 줄 옆 작은 태그 — 꼼꼼히(검증 세게)·빠르게(스케치). 보통은 기본이라 안 단다(잡음).
+ * 되돌림은 두 번부터 보이고 세 번이면 급함: 네 번째를 보내지 말고 계획을 다시 볼 때
+ */
+export function taskTags(c: TaskCard): { text: string; hot: boolean }[] {
+  const out: { text: string; hot: boolean }[] = [];
+  if (c.effort === 'high') out.push({ text: tr('꼼꼼히', 'Careful'), hot: false });
+  if (c.effort === 'low') out.push({ text: tr('빠르게', 'Quick'), hot: false });
+  const n = c.retries ?? 0;
+  if (n >= 3) out.push({ text: tr(`되돌림 ${n} · 계획 다시`, `Sent back ${n} · rethink`), hot: true });
+  else if (n >= 2) out.push({ text: tr(`되돌림 ${n}`, `Sent back ${n}`), hot: false });
+  return out;
 }

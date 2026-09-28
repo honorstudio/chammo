@@ -175,6 +175,9 @@ export const logAutoAllow = (ev: object) => invoke<void>('log_auto_allow', { lin
 /** 프로젝트 이름 → HOLO MEMO 파일 내용(없으면 빈 문자열) */
 export const readMemos = (names: string[]) => invoke<Record<string, string>>('read_memos', { names });
 export const writeMemo = (name: string, content: string) => invoke<void>('write_memo', { name, content });
+export const readLessons = (names: string[]) => invoke<Record<string, string>>('read_lessons', { names });
+export const writeLessons = (name: string, content: string) => invoke<void>('write_lessons', { name, content });
+export const unmirrorLesson = (project: string, lesson: string) => invoke<boolean>('unmirror_lesson', { project, lesson });
 export const appendMemo = (name: string, entry: string) => invoke<void>('append_memo', { name, entry });
 export const readAutoAllow = () => invoke<string>('read_auto_allow');
 /** 한글 입력 진단 — <데이터 폴더>/ime-debug.on 이 있을 때만 켜진다(null = 꺼짐, 아니면 그 파일 내용) */

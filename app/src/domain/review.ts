@@ -73,21 +73,17 @@ export function groupFiles(files: PrFile[]): FileGroup[] {
   return ORDER.filter((k) => by.has(k)).map((k) => by.get(k)!);
 }
 
-/** 크기 판정에 세는 줄 — 코드·테스트·DB. 문서·시안·생성물은 뺀다(#392 는 +3,679 중 코드 +807) */
-export const codeAdditions = (files: PrFile[]) =>
-  files.filter((x) => ['code', 'test', 'db'].includes(fileKind(x.path))).reduce((n, x) => n + x.additions, 0);
+// ── 사용자 확인 조건 = 되돌리기 어려운 것 (DB·돈·보안). 운영 배포는 뺀다 — project-a 는 머지 = 배포라 전부 걸린다 ──
+// 2026-09-29 사용자: '+500줄'은 뺐다. 크기는 되돌리기 쉽다(Loops and Graphs — 문은 확신도·크기가 아니라 되돌리기 비용으로).
+// 운영에 직접 손대는 순간(마이그 적용·운영 데이터 삭제·운영 배포)은 머지 전이라 여기 말고 scripts/task 의 OPS_RULE 이 막는다
 
-// ── 사용자 확인 조건 (2026-09-27 사용자: DB·돈·보안·+500줄. 운영 배포는 뺀다 — project-a 는 머지 = 배포라 전부 걸린다) ──
-
-export type GateKind = 'db' | 'money' | 'security' | 'big';
+export type GateKind = 'db' | 'money' | 'security';
 export type Gate = { kind: GateKind; why: string };
 export const GATE_LABEL: Readonly<Record<GateKind, string>> = {
   get db() { return tr('DB 변경', 'DB change'); },
   get money() { return tr('돈', 'Money'); },
   get security() { return tr('보안', 'Security'); },
-  get big() { return tr('큼', 'Large'); },
 };
-export const BIG_LINES = 500;
 
 // DB: 본문은 SQL 낱말만. '마이그레이션' 은 "마이그레이션은 없다"(#462)처럼 부정으로 자주 나와 제목에서만 본다
 const DB_BODY = /\b(GRANT|REVOKE|RLS)\b|create policy|alter table|security definer/i;
@@ -118,8 +114,6 @@ export function gates(pr: OpenPr): Gate[] {
   const secWhy = quoted(pr.title.match(SEC_TITLE)) || (pr.body.match(SEC_ENV)?.[0] ?? '') || quoted(pr.body.match(SEC_WORD)) || (pr.files.find((x) => SEC_PATH.test(x.path))?.path ?? '');
   if (secWhy) out.push({ kind: 'security', why: secWhy });
 
-  const code = codeAdditions(pr.files);
-  if (code >= BIG_LINES) out.push({ kind: 'big', why: tr(`코드 +${code.toLocaleString('en-US')}`, `code +${code.toLocaleString('en-US')}`) });
   return out;
 }
 

@@ -1,7 +1,7 @@
 import type { Activity } from '../domain/activity';
 import type { Session } from '../domain/session';
 import type { ActivityStatus } from '../domain/status';
-import { splitCards, type TaskCard } from '../domain/tasks';
+import { splitCards, taskTags, type TaskCard } from '../domain/tasks';
 import { useRef, useState, type ReactNode } from 'react';
 import { assistant, tr } from '../i18n';
 
@@ -36,12 +36,12 @@ export function Sec({ title, count, open, onToggle, tone }: { title: string; cou
 }
 
 /** 한 줄 목록 — 상태 점 · 굵은 이름 · 한 줄 설명 · 시간. 카드는 결정 대기에만 쓴다(급한 게 눈에 띄게) */
-export function Row({ dot, name, line, sub, when, onClick, dim }: { dot: string; name: string; line: string; sub?: string; when: string; onClick: () => void; dim?: boolean }) {
+export function Row({ dot, name, line, sub, when, onClick, dim, tags }: { dot: string; name: string; line: string; sub?: string; when: string; onClick: () => void; dim?: boolean; /** 꼼꼼히·빠르게·되돌림 */ tags?: { text: string; hot: boolean }[] }) {
   return (
     <button className={`trow ${dim ? 'dim-row' : ''}`} onClick={onClick}>
       <span className={`tdot ${dot}`} />
       <span className="tmain">
-        <span className="thead"><b>{name}</b><span className="tline">{line}</span></span>
+        <span className="thead"><b>{name}</b>{tags?.map((t) => <span key={t.text} className={`ttag ${t.hot ? 'hot' : ''}`}>{t.text}</span>)}<span className="tline">{line}</span></span>
         {sub && <span className="tsub">{sub}</span>}
       </span>
       <span className="twhen">{when}</span>
@@ -121,13 +121,13 @@ export function TaskPanel({ width, onWidth, cards, activities, onOpen, top, bott
         <Sec title={tr('진행 중', 'In progress')} count={active.length} />
         {active.length === 0 && <div className="tempty">{tr(`${assistant()}가 시킨 일 중 안 끝난 게 없어`, `Nothing ${assistant()} delegated is still open`)}</div>}
         {active.map((c) => (
-          <Row key={c.id} dot={c.status} name={c.target} line={c.title} sub={c.note} when={hm(c.updatedAt)} onClick={() => onOpen(c.target)} />
+          <Row key={c.id} dot={c.status} name={c.target} line={c.title} sub={c.note} when={hm(c.updatedAt)} tags={taskTags(c)} onClick={() => onOpen(c.target)} />
         ))}
 
         {orphaned.length > 0 && <Sec title={tr('주인 잃은 일', 'Orphaned tasks')} count={orphaned.length} tone="hot" />}
         {orphaned.map((c) => (
           <div key={c.id} className="orphan">
-            <Row dot={c.status} name={c.target} line={c.title} sub={c.note} when={hm(c.updatedAt)} onClick={() => onOpen(c.target)} />
+            <Row dot={c.status} name={c.target} line={c.title} sub={c.note} when={hm(c.updatedAt)} tags={taskTags(c)} onClick={() => onOpen(c.target)} />
             {orphanActions?.(c)}
           </div>
         ))}

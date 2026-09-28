@@ -27,8 +27,8 @@ export const tourSteps = (): TourStep[] => {
     {
       title: tr('모든 세션은 진짜 Claude Code', 'Every session is a real Claude Code'),
       body: tr(
-        '⌘2 전체 보기에서 돌고 있는 세션을 한 화면에 봐요. 어느 창이든 직접 쳐서 끼어들어도 되고, ⌘Enter 로 크게 봤다가 되돌려요. PR 은 ⌘3 리뷰에서 관문(DB·돈·보안·+500줄)과 함께 봐요.',
-        'See every running session at once in All sessions (⌘2). Type into any of them to step in; ⌘Enter maximizes and restores a pane. PRs and their gates (DB, money, security, +500 lines) are under Review (⌘3).',
+        '⌘2 전체 보기에서 돌고 있는 세션을 한 화면에 봐요. 어느 창이든 직접 쳐서 끼어들어도 되고, ⌘Enter 로 크게 봤다가 되돌려요. PR 은 ⌘3 리뷰에서 관문(DB·돈·보안)과 함께 봐요.',
+        'See every running session at once in All sessions (⌘2). Type into any of them to step in; ⌘Enter maximizes and restores a pane. PRs and their gates (DB, money, security) are under Review (⌘3).',
       ),
     },
     {

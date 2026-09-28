@@ -16,6 +16,7 @@ mod debug;
 mod drop;
 #[cfg(target_os = "macos")]
 mod keyrepeat;
+mod lessons;
 mod load;
 mod memo;
 #[cfg(target_os = "macos")]
@@ -287,6 +288,9 @@ fn main() {
             claude::today_commits,
             claude::commit_log,
             claude::ci_runs,
+            lessons::read_lessons,
+            lessons::write_lessons,
+            lessons::unmirror_lesson,
             memo::read_memos,
             memo::append_memo,
             memo::write_memo,

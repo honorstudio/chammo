@@ -41,6 +41,7 @@ import { AdoptCard } from './ui/AdoptCard';
 import { ProjectBar } from './ui/ProjectBar';
 import { SessionGrid, type MemoHooks } from './ui/SessionGrid';
 import { MemoPanel } from './ui/MemoPanel';
+import { useLessons } from './ui/useLessons';
 import { useMemos } from './ui/useMemos';
 import { TerminalPane } from './ui/TerminalPane';
 import { StoppedStrip } from './ui/StoppedStrip';
@@ -574,6 +575,9 @@ export default function App() {
 
   // 세션 메모(⌘M) — 프로젝트별 HOLO MEMO 파일. 머리줄엔 최근 한 줄, 열린 창 위엔 메모판
   const memos = useMemos(sessions.map((s) => s.project));
+  // 같은 창 '교훈' 탭 — 참모 지시에 붙는 프로젝트 교훈(scripts/task lesson). 열린 창의 프로젝트만 읽는다
+  const lessons = useLessons(sessions.find((s) => s.id === memoOpen)?.project ?? null);
+  const lessonErr = (e: unknown) => setError(tr(`교훈 수정 실패: ${String(e)}`, `Could not update the lesson: ${String(e)}`));
   const memo: MemoHooks = {
     note: (s) => memos.items(s.project).at(-1)?.text,
     openId: memoOpen,
@@ -587,6 +591,9 @@ export default function App() {
         onCopy={(text) => void writeClipboard(text).catch(() => {})}
         onRemove={(item) => void memos.remove(s.project, item).catch((e: unknown) => setError(tr(`메모 삭제 실패: ${String(e)}`, `Could not delete the note: ${String(e)}`)))}
         onClose={() => setMemoOpen(null)}
+        lessons={{ mine: lessons.mine, common: lessons.common }}
+        onRemoveLesson={(name, l) => void lessons.remove(name, l).catch(lessonErr)}
+        onPromoteLesson={(l) => void lessons.promote(l).catch(lessonErr)}
       />
     ),
   };

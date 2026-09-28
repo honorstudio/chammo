@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { foldTasks, parseTaskLog, splitCards, type TaskCard, type TaskEvent } from './tasks';
+import { foldTasks, parseTaskLog, splitCards, taskTags, type TaskCard, type TaskEvent } from './tasks';
 import type { Session } from './session';
 
 const ev = (e: Partial<TaskEvent> & Pick<TaskEvent, 'type' | 'task'>): TaskEvent => ({ ts: '2026-09-26T12:00:00Z', ...e }) as TaskEvent;
@@ -130,5 +130,34 @@ describe('foldTasks — 대상 바꾸기', () => {
     );
     expect(cards[0]?.target).toBe('new56789');
     expect(cards[0]?.status).toBe('working');
+  });
+});
+
+describe('검증 강도·되돌림 — 예외가 숨은 일은 꼼꼼히, 세 번 되돌리면 계획을 다시', () => {
+  it('send 의 effort 와 retry 횟수가 카드로 온다', () => {
+    const cards = foldTasks(
+      [
+        ev({ type: 'send', task: 'k1', target: 'a', title: '로그인 버그', effort: 'high' }),
+        ev({ type: 'note', task: 'k1', note: '되돌림 1 — 타입', retry: 1 }),
+        ev({ type: 'note', task: 'k1', note: '되돌림 2 — 테스트', retry: 2 }),
+      ],
+      [sess('a', 'working')],
+    );
+    expect(cards[0]).toMatchObject({ effort: 'high', retries: 2 });
+  });
+
+  it('옛 기록(effort·retry 없음)은 태그 없음', () => {
+    const [c] = foldTasks([ev({ type: 'send', task: 'k1', target: 'a', title: 't' })], [sess('a', 'working')]);
+    expect(c!.retries).toBe(0);
+    expect(taskTags(c!)).toEqual([]);
+  });
+
+  it('보통(medium)은 태그를 안 단다 — 꼼꼼히·빠르게만, 되돌림은 두 번부터, 세 번이면 급함', () => {
+    const base = { id: 'k', target: 'a', title: 't', status: 'working' as const, sentAt: '', updatedAt: '', retries: 0 };
+    expect(taskTags({ ...base, effort: 'medium' })).toEqual([]);
+    expect(taskTags({ ...base, effort: 'high' })).toEqual([{ text: '꼼꼼히', hot: false }]);
+    expect(taskTags({ ...base, effort: 'low', retries: 1 })).toEqual([{ text: '빠르게', hot: false }]);
+    expect(taskTags({ ...base, retries: 2 })).toEqual([{ text: '되돌림 2', hot: false }]);
+    expect(taskTags({ ...base, retries: 3 })).toEqual([{ text: '되돌림 3 · 계획 다시', hot: true }]);
   });
 });

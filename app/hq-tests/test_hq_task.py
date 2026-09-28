@@ -61,6 +61,67 @@ class Effort(unittest.TestCase):
         self.assertEqual(task.effort_for('add an approve button')[0], 'medium')
 
 
+
+class Harness(unittest.TestCase):
+    # 시안→구현은 스케치가 아님, 공통 교훈, 세 번 되돌림, 증거 없는 done
+    def test_시안이라도_구현이면_low_아님(self):
+        self.assertNotEqual(task.effort_for('로그인 화면 시안 확정 → 구현')[0], 'low')
+        self.assertNotEqual(task.effort_for('implement the approved mockup')[0], 'low')
+        self.assertEqual(task.effort_for('OTA preview')[0], 'high')
+
+    def test_교훈_공통과_CLAUDE_local(self):
+        with tempfile.TemporaryDirectory() as d:
+            task.LESSONS, task.DEV = os.path.join(d, 'lessons'), d
+            os.makedirs(os.path.join(d, 'p'))
+            subprocess.run(['git', 'init', '-q', os.path.join(d, 'p')], check=True)
+            with open(os.path.join(d, 'p', '.gitignore'), 'w') as f:
+                f.write('CLAUDE.local.md\n')
+            with contextlib.redirect_stderr(io.StringIO()):
+                task.main(['lesson', '--all', 'common'])
+                task.main(['lesson', 'p', 'mine'])
+            self.assertEqual(task.lessons_of('p'), ['common', 'mine'])
+            with open(os.path.join(d, 'p', 'CLAUDE.local.md'), encoding='utf-8') as f:
+                self.assertIn('- mine\n', f.read())
+
+    def test_세_번째_되돌림과_증거(self):
+        with tempfile.TemporaryDirectory() as d:
+            task.LOG = os.path.join(d, 'tasks.jsonl')
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                for i in range(3):
+                    task.main(['retry', 't', str(i)])
+            self.assertEqual(task.retries('t'), 3)
+            self.assertTrue(err.getvalue().strip())
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                task.main(['done', 't', 'PR #3 merged'])
+            self.assertEqual(err.getvalue(), '')
+
+    def test_운영_관문과_출시_전(self):
+        with tempfile.TemporaryDirectory() as d:
+            task.LOG, task.LESSONS, task.OPS_FREE = os.path.join(d, 't.jsonl'), os.path.join(d, 'l'), os.path.join(d, 'o.json')
+            task.load_agents = lambda: []
+            def send():
+                err = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                    task.main(['send', 'p', 'add a button'])
+                return err.getvalue()
+            self.assertIn(task.OPS_RULE, send())
+            task.main(['prelaunch', 'p', 'on', 'pre-launch'])
+            self.assertNotIn(task.OPS_RULE, send())
+            task.main(['prelaunch', 'p', 'off'])
+            self.assertIn(task.OPS_RULE, send())
+
+    def test_회신의_교훈_줄을_적는다(self):
+        with tempfile.TemporaryDirectory() as d:
+            task.LOG, task.LESSONS, task.DEV = os.path.join(d, 't.jsonl'), os.path.join(d, 'l'), d
+            task.load_agents = lambda: []
+            with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()):
+                task.main(['send', 'p', 'add a button'])
+            with contextlib.redirect_stderr(io.StringIO()):
+                task.main(['reply', out.getvalue().strip(), 'done PR #1\nLesson: run the linter before commit\n교훈: 포트 3000 은 이미 쓰는 중'])
+            self.assertEqual(task.lessons_of('p'), ['run the linter before commit', '포트 3000 은 이미 쓰는 중'])
+
 class Project(unittest.TestCase):
     def test_세션_폴더로_프로젝트(self):
         agents = [{'id': 'a1', 'name': 'web', 'cwd': '/dev/web/.claude/worktrees/x'}, {'id': 'a2', 'cwd': '/else/y'}]

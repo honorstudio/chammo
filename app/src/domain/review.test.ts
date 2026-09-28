@@ -34,7 +34,7 @@ describe('groupFiles — 묶음마다 줄 수, 코드 먼저', () => {
   });
 });
 
-describe('gates — 사용자 확인이 필요한 PR (DB·돈·보안·+500줄). 운영 배포는 조건이 아니다', () => {
+describe('gates — 되돌리기 어려운 PR (DB·돈·보안). 크기·운영 배포는 조건이 아니다', () => {
   it('마이그레이션 파일 = DB', () => {
     const g = gates(pr({ title: 'run_tier_auto_adjust 실행 권한 회수', files: [f('supabase/migrations/20260927040000_revoke.sql', 26)] }));
     expect(g.map((x) => x.kind)).toEqual(['db', 'security']);
@@ -69,10 +69,8 @@ describe('gates — 사용자 확인이 필요한 PR (DB·돈·보안·+500줄).
       { kind: 'security', why: '"SECURITY DEFINER"' },
     ]);
   });
-  it('코드(+테스트·DB) 500줄 이상 = 큼. 문서·생성물은 안 센다 (#392 = 코드 +807)', () => {
-    const g = gates(pr({ files: [f('app/a.tsx', 557), f('app/a.test.ts', 250), f('docs/draft.html', 2872), f('pnpm-lock.yaml', 900)] }));
-    expect(g).toEqual([{ kind: 'big', why: '코드 +807' }]);
-    expect(gates(pr({ files: [f('app/a.tsx', 499), f('docs/x.md', 3000)] }))).toEqual([]);
+  it('크기는 조건이 아니다 — 큰 코드도 되돌리기 쉽다 (2026-09-29 사용자: 되돌리기 어려움으로. #482 +521 이 크기로 걸렸다)', () => {
+    expect(gates(pr({ files: [f('app/a.tsx', 557), f('app/a.test.ts', 250), f('docs/draft.html', 2872)] }))).toEqual([]);
   });
   it('배포만 걸리는 건 조건 아님 (ops-hub 는 머지 = Vercel 배포)', () => {
     expect(gates(pr({ title: '제안서 문구 수정', body: '머지하면 Vercel 운영 배포' }))).toEqual([]);
@@ -107,6 +105,6 @@ describe('영어 모드', () => {
     expect(GATE_LABEL.db).toBe('DB change');
     expect(FILE_KIND_LABEL.docs).toBe('Docs & drafts');
     const g = gates(pr({ files: [f('supabase/migrations/1.sql', 10), f('src/a.ts', 600)] }));
-    expect(g.map((x) => [x.kind, x.why])).toEqual([['db', '1 migration'], ['big', 'code +610']]);
+    expect(g.map((x) => [x.kind, x.why])).toEqual([['db', '1 migration']]);
   });
 });

@@ -2,6 +2,7 @@
 // Enter 저장 · ⌥/Shift+Enter 줄바꿈 · Esc 닫기. 항목마다 세션에 보내기(입력칸에 글자만, Enter 는 직접)·복사·삭제
 import { useEffect, useRef, useState } from 'react';
 import type { MemoItem } from '../domain/memo';
+import { COMMON } from '../domain/lessons';
 import { IconCheck, IconClose, IconCopy, IconSend, IconTrash } from './Icons';
 import { tr } from '../i18n';
 
@@ -13,9 +14,14 @@ type Props = {
   onCopy: (text: string) => void;
   onRemove: (item: MemoItem) => void;
   onClose: () => void;
+  /** '교훈' 탭 — 이 프로젝트 교훈과 모든 프로젝트 공통 교훈(참모 지시에 붙는다) */
+  lessons?: { mine: string[]; common: string[] };
+  onRemoveLesson?: (name: string, lesson: string) => void;
+  onPromoteLesson?: (lesson: string) => void;
 };
 
-export function MemoPanel({ project, items, onAdd, onSend, onCopy, onRemove, onClose }: Props) {
+export function MemoPanel({ project, items, onAdd, onSend, onCopy, onRemove, onClose, lessons, onRemoveLesson, onPromoteLesson }: Props) {
+  const [tab, setTab] = useState<'memo' | 'lessons'>('memo');
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   // 삭제는 두 번 눌러야 — 첫 번째는 3초 동안 '한 번 더'
@@ -65,10 +71,20 @@ export function MemoPanel({ project, items, onAdd, onSend, onCopy, onRemove, onC
   return (
     <div className="memo" onMouseDown={(e) => e.stopPropagation()}>
       <div className="memo-head">
-        <b>{tr('메모', 'Notes')}</b>
+        {lessons ? (
+          <span className="memo-tabs" role="tablist">
+            <button role="tab" aria-selected={tab === 'memo'} className={tab === 'memo' ? 'on' : ''} onClick={() => setTab('memo')}>{tr('메모', 'Notes')}</button>
+            <button role="tab" aria-selected={tab === 'lessons'} className={tab === 'lessons' ? 'on' : ''} onClick={() => setTab('lessons')}>
+              {tr('교훈', 'Lessons')}{lessons.mine.length > 0 && <span className="dim"> {lessons.mine.length}</span>}
+            </button>
+          </span>
+        ) : <b>{tr('메모', 'Notes')}</b>}
         <span className="dim">{project}</span>
         <button className="ib memo-close" title={tr('닫기 (Esc)', 'Close (Esc)')} aria-label={tr('닫기', 'Close')} onClick={onClose}><IconClose /></button>
       </div>
+      {tab === 'lessons' && lessons ? (
+        <LessonList project={project} lessons={lessons} onRemove={onRemoveLesson} onPromote={onPromoteLesson} />
+      ) : (<>
       <div className="memo-list" ref={list}>
         {items.length === 0 && <div className="memo-empty">{tr('아직 없어 — 지금 뭐 하는지, 보낼 프롬프트, 왜 그렇게 정했는지 적어 둬', "Nothing yet — jot down what you're doing, prompts to send, and why you decided things")}</div>}
         {items.map((it, i) => (
@@ -107,6 +123,52 @@ export function MemoPanel({ project, items, onAdd, onSend, onCopy, onRemove, onC
           <button className="ib pri" title={tr('저장 (Enter)', 'Save (Enter)')} aria-label={tr('저장', 'Save')} disabled={busy || !text.trim()} onClick={() => void save()}><IconCheck /></button>
         </div>
       </div>
+      </>)}
+    </div>
+  );
+}
+
+/**
+ * 교훈 목록 — 쌓이기만 하면 참모 지시가 무거워진다. 끝난 할 일·틀린 건 지우고(두 번 눌러), 여러 프로젝트에 통하는 건 공통으로.
+ * 지우면 프로젝트 CLAUDE.local.md 에 복사된 같은 줄도 빠진다
+ */
+function LessonList({ project, lessons, onRemove, onPromote }: {
+  project: string;
+  lessons: { mine: string[]; common: string[] };
+  onRemove?: (name: string, lesson: string) => void;
+  onPromote?: (lesson: string) => void;
+}) {
+  const [armed, setArmed] = useState<string | null>(null);
+  useEffect(() => {
+    if (armed === null) return;
+    const t = setTimeout(() => setArmed(null), 3000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  const del = (name: string, l: string) => {
+    const k = `${name}\n${l}`;
+    if (armed === k) { setArmed(null); onRemove?.(name, l); } else setArmed(k);
+  };
+  const row = (name: string, l: string, promote: boolean) => {
+    const k = `${name}\n${l}`;
+    return (
+      <div key={k} className="memo-item lesson-item">
+        <div className="memo-text">{l}</div>
+        <span className="memo-acts">
+          {promote && <button className="mini" title={tr('모든 프로젝트 지시에 붙게', 'Attach to every project')} onClick={() => onPromote?.(l)}>{tr('공통으로', 'Make common')}</button>}
+          <button className={`mini ${armed === k ? 'danger' : ''}`} onClick={() => del(name, l)}>
+            {armed === k ? tr('한 번 더', 'Again') : tr('지우기', 'Delete')}
+          </button>
+        </span>
+      </div>
+    );
+  };
+  return (
+    <div className="memo-list">
+      <div className="lesson-note dim">{tr('참모가 이 프로젝트에 일을 시킬 때 지시 끝에 붙는 것. 끝난 할 일·중복은 지워 줘', 'Attached to the end of every instruction sent to this project. Delete finished to-dos and duplicates')}</div>
+      {lessons.mine.length === 0 && <div className="memo-empty">{tr('이 프로젝트 교훈은 아직 없어', 'No lessons for this project yet')}</div>}
+      {lessons.mine.map((l) => row(project, l, true))}
+      {lessons.common.length > 0 && <div className="lesson-sec dim">{tr(`공통 ${lessons.common.length} — 모든 프로젝트`, `Common ${lessons.common.length} — every project`)}</div>}
+      {lessons.common.map((l) => row(COMMON, l, false))}
     </div>
   );
 }

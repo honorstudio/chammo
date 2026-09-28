@@ -3,19 +3,24 @@
 Chammo 작업 기록 — 다른 세션에 시킨 일을 남기면 앱 오른쪽 작업 패널에 카드로 뜬다.
 
   scripts/task send   <session id|name> "<what you asked, one line>"   -> prints the task id
-  scripts/task reply  <task id> "<summary of the reply>"
+  scripts/task reply  <task id> "<summary of the reply>"               -> 'Lesson: …' / '교훈: …' lines become project lessons
   scripts/task done   <task id> "<result, one line>"
   scripts/task note   <task id> "<progress note>"
   scripts/task ask    <task id> "<what the user must decide>"          -> shows in the app's decision inbox
   scripts/task answer <task id> "<what the user decided>"              -> leaves the inbox (the app writes this)
   scripts/task list                                                    -> recent events
-  scripts/task lesson <project> "<a confirmed lesson, one line>"       -> attached next time you delegate there
+  scripts/task lesson <project|--all> "<a confirmed lesson>"           -> attached next time you delegate there (--all = every project);
+                                                                          also kept in the project's CLAUDE.local.md (only if git-ignored)
+  scripts/task prelaunch <project> on "<why>" | off                   -> not launched yet: skip the stop-before-production rule there
+  scripts/task retry  <task id> "<what failed>"                        -> send one piece back; the third time says rethink the plan
 
 Log: <data folder>/tasks.jsonl (append-only). Data folder = $CHAMMO_HOME, else ~/.chammo.
 
 Payment gate: if the task mentions payments / refunds / billing, `send` only records it and exits with
 code 3 — do NOT send the message; wait until the user answers the "OK to send?" item in the decision inbox.
-Deleting, pushing, deploying, sending and merging are not gated.
+Production gate: `send` also appends OPS_RULE — sessions stop right before touching production (migrations on
+the production DB, deleting production data, production deploys/OTA, sends to real users) and ask you first.
+Projects not launched yet can skip that with `prelaunch <project> on`. Pushing and merging are not gated.
 
 Merge rule: `send` prints MERGE_RULE on stderr — append it to the end of your message to the session, so
 sessions open PRs but leave merging to you. It also prints ASK_RULE — sessions' choice prompts are seen by no one.
@@ -70,11 +75,43 @@ MERGE_RULE = T('PR 은 올리고 머지하지 마 — CI 초록이면 PR 번호�
 ASK_RULE = T('정할 게 생겨도 선택지 창(AskUserQuestion)은 띄우지 마 — 아무도 안 보고 있어서 그대로 멈춘다. 되돌리기 쉬운 것(문구·색·배치·이름)은 추천안으로 진행하고 회신에 "이렇게 정했다"고 적어. 꼭 물어야 하면 이 지시를 보낸 세션에 SendMessage 로 [무엇 때문에 / 선택지 / 추천] 을 보내고 답을 기다려.',
              "Don't open a choice prompt (AskUserQuestion) — nobody is watching it, so you'd just stop. Decide easy-to-undo things (wording, color, layout, names) with your recommendation and say what you chose in your reply. If you really must ask, SendMessage the session that sent you this with [why / options / recommendation] and wait.")
 
+# The hard-to-undo moment is touching production, not the merge — sessions stop right before it and ask the sender
+OPS_RULE = T('운영에 직접 손대기 직전(운영 DB 마이그 적용·운영 데이터 수정/삭제·운영 배포나 OTA·실사용자에게 나가는 발송)엔 멈추고, 이 지시를 보낸 세션에 SendMessage 로 [무엇을 / 누구에게 영향 / 되돌리는 법·백업] 을 보내고 답을 기다려. 코드·PR·로컬·미리보기·테스트 계정 로그인과 읽기는 묻지 말고 진행.',
+             'Right before you touch production (apply a migration to the production DB, change or delete production data, deploy or OTA to production, send anything to real users), stop and SendMessage the session that sent this with [what / who it affects / how to undo, backup], then wait. Code, PRs, local, previews, test-account logins and reads need no asking.')
+OPS_FREE = os.path.join(DATA, 'ops-free.json')
+
+
+def ops_free():
+    try:
+        with open(OPS_FREE, encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+# Sessions know their lessons best — they end the reply with 'Lesson:' lines and `reply` records them
+LESSON_RULE = T('이번에 부딪혀서 확인한 함정 중 다음에 이 프로젝트에서 또 걸릴 만한 게 있으면 회신 끝에 "교훈: <한 줄>" 로 한 줄씩 적어(없으면 안 적어도 돼). 한 번 하면 끝나는 할 일·이번 작업 결과는 교훈이 아니야.',
+                'If you hit a pitfall this time that will bite again in this project, end your reply with "Lesson: <one line>" per pitfall (skip it if none). One-off to-dos and this task\'s results are not lessons.')
+LESSON_LINE = re.compile(r'^\s*(?:[-*]\s*)?(?:교훈|lesson)\s*:\s*(.+?)\s*$', re.I)
+
+
+def lessons_in(text):
+    return [m.group(1) for m in map(LESSON_LINE.match, text.splitlines()) if m]
+
+
+# Checklist + proof + three strikes — so a progress report isn't mistaken for the end
+PROOF_RULE = T('단계가 셋 넘는 일이면 체크리스트(TaskCreate 나 docs/plans/)를 두고 다 지우기 전엔 끝났다고 하지 마. 끝났다고 할 땐 확인한 증거(PR 번호·주소·응답 코드·로그)를 같이 적고, 같은 조각이 세 번 실패하면 더 밀지 말고 이 지시를 보낸 세션에 계획부터 다시 물어.',
+               "If this has more than three steps, keep a checklist (TaskCreate or docs/plans/) and don't call it done until it's empty. When you say done, include the proof you checked (PR number, URL, status code, log). If the same piece fails three times, stop pushing and ask the session that sent this to rethink the plan.")
+
 # How hard to verify — tasks with hidden edge cases get "verify hard", sketches get "be quick".
 HIGH = re.compile(r'결제|환불|보안|취약|권한|마이그|운영|배포|삭제|데이터|버그|고치|인증|로그인|토큰|시크릿|'
-                  r'\b(security|vuln\w*|permissions?|rls|migrations?|production|prod|deploy\w*|delete|db|data|bugs?|fix\w*|auth\w*|login|tokens?|secrets?)\b')
+                  r'원인|수정|오류|에러|깨[짐지져]|누락|긴급|안 ?먹|안 ?[됨돼되]|두 번|스키마|'
+                  r'\b(security|vuln\w*|permissions?|rls|migrations?|production|prod|deploy\w*|delete|db|data|bugs?|fix\w*|auth\w*|login|tokens?|secrets?'
+                  r'|ota|eas update|errors?|broken|crash\w*|schema|urgent)\b')
 LOW = re.compile(r'시안|스케치|초안|문서|정리|조사|리서치|브레인|문구|카피|메모|'
                  r'\b(mockups?|sketch\w*|drafts?|docs?|readme|research|brainstorm\w*|copy|notes?)\b')
+# "mockup approved -> build it" is not a sketch
+BUILD = re.compile(r'구현|적용|개발|리디자인|만들|착수|\b(implement\w*|build|redesign\w*|apply)\b')
 EFFORT_LINE = {
     'high': T('검증이 중요한 일이야 — 먼저 재현하고, 예외·경계 케이스 테스트를 충분히 돌리고, 네 결과를 한 번 공격적으로 리뷰한 뒤 올려줘.',
               'This one needs careful verification — reproduce first, test edge cases thoroughly, and review your own result critically before you report.'),
@@ -86,7 +123,7 @@ def effort_for(text):
     t = text.lower()
     if HIGH.search(t):
         return 'high', EFFORT_LINE['high']
-    if LOW.search(t):
+    if LOW.search(t) and not BUILD.search(t):
         return 'low', EFFORT_LINE['low']
     return 'medium', ''
 
@@ -95,11 +132,91 @@ def needs_confirm(text):
     return bool(PAYMENT.search(text.lower()))
 
 
-def lessons_of(project):
+COMMON = '_common'   # lesson --all — attached to every project
+LESSON_MAX = 12      # more than this gets heavy, since all of it rides on every message
+
+
+def _lines(project):
     try:
-        return [l.strip()[2:] for l in open(os.path.join(LESSONS, f'{project}.md'), encoding='utf-8') if l.startswith('- ')]
+        with open(os.path.join(LESSONS, f'{project}.md'), encoding='utf-8') as f:
+            return [l.strip()[2:] for l in f if l.startswith('- ')]
     except OSError:
         return []
+
+
+def lessons_of(project):
+    return _lines(COMMON) + ([] if project == COMMON else _lines(project))
+
+
+def mirror_lesson(project, line):
+    """Also write it under '## Lessons' in the project's CLAUDE.local.md, so sessions you open there yourself see it.
+    Only when git ignores that file — a lesson can mention account names and must not get committed."""
+    root = os.path.join(DEV, project)
+    if not os.path.isdir(root):
+        return False
+    if subprocess.run(['git', '-C', root, 'check-ignore', '-q', 'CLAUDE.local.md'], capture_output=True).returncode != 0:
+        return False
+    path = os.path.join(root, 'CLAUDE.local.md')
+    body = open(path, encoding='utf-8').read() if os.path.exists(path) else ''
+    head = T('## 교훈', '## Lessons')
+    if head not in body:
+        body = body.rstrip('\n') + ('\n\n' if body.strip() else '') + T(f'{head} (확인된 것 — 같은 벽에 두 번 안 박게)\n', f'{head} (confirmed — so nobody hits the same wall twice)\n')
+    i = body.index(head)
+    j = body.find('\n## ', i + len(head))
+    j = len(body) if j < 0 else j + 1
+    part = body[i:j].rstrip('\n') + f'\n- {line}\n'
+    body = body[:i] + part + ('\n' + body[j:] if j < len(body) else '')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(body)
+    return True
+
+
+def add_lesson(project, line):
+    """Write it only if new (also skipped when it is already common). True if written"""
+    if line in _lines(project) or line in _lines(COMMON):
+        return False
+    os.makedirs(LESSONS, exist_ok=True)
+    with open(os.path.join(LESSONS, f'{project}.md'), 'a', encoding='utf-8') as f:
+        f.write(f'- {line}\n')
+    if project != COMMON:
+        mirror_lesson(project, line)
+    return True
+
+
+def target_of(tid):
+    target = None
+    try:
+        with open(LOG, encoding='utf-8') as f:
+            for l in f:
+                try:
+                    e = json.loads(l)
+                except ValueError:
+                    continue
+                if e.get('task') == tid and e.get('target'):
+                    target = e['target']
+    except OSError:
+        pass
+    return target
+
+
+def retries(tid):
+    n = 0
+    try:
+        with open(LOG, encoding='utf-8') as f:
+            for l in f:
+                try:
+                    e = json.loads(l)
+                except ValueError:
+                    continue
+                if e.get('task') == tid and e.get('retry'):
+                    n += 1
+    except OSError:
+        pass
+    return n
+
+
+# "Done" is not proof — a done note should carry something checked (PR, URL, commit, log, file)
+PROOF = re.compile(r'#\d+|https?://|\b[0-9a-f]{7,40}\b|\.(log|png|jpg|md|json|txt)\b|/|\b(PR|HTTP|200|CI|passed|green|verified)\b|확인|초록|통과')
 
 
 def project_of(target, agents, dev=None, extras=None):
@@ -146,7 +263,7 @@ def main(a):
     me = os.environ.get('CLAUDE_CODE_SESSION_ID')
     if cmd == 'send' and len(a) >= 3:
         tid = datetime.datetime.now().strftime('%m%d-%H%M-') + secrets.token_hex(2)
-        append({'ts': now(), 'type': 'send', 'task': tid, 'target': a[1], 'title': a[2]})
+        append({'ts': now(), 'type': 'send', 'task': tid, 'target': a[1], 'title': a[2], 'effort': effort_for(a[2])[0]})
         print(tid)
         project = project_of(a[1], load_agents()) or a[1]
         if needs_confirm(a[2]):
@@ -163,14 +280,54 @@ def main(a):
             print(T(f'검증 강도 {level} — 지시에 붙여: {line}', f'verification {level} — append to your message: {line}'), file=sys.stderr)
         for l in lessons_of(project):
             print(T(f'이 프로젝트 교훈 — 지시에 붙여: {l}', f'project lesson — append to your message: {l}'), file=sys.stderr)
+        free = ops_free().get(project)
+        if free:
+            print(T(f'메시지 끝에 붙여: {project} 는 {free} — 운영 반영(마이그·함수 배포·테스트 발송)도 묻지 말고 진행. 결제만 멈춰',
+                    f'append to the end of your message: {project} is {free} — apply production changes (migrations, function deploys, test sends) without asking. Stop only for payments.'), file=sys.stderr)
+        else:
+            print(T(f'메시지 끝에 붙여: {OPS_RULE}', f'append to the end of your message: {OPS_RULE}'), file=sys.stderr)
+        print(T(f'메시지 끝에 붙여: {PROOF_RULE}', f'append to the end of your message: {PROOF_RULE}'), file=sys.stderr)
+        print(T(f'메시지 끝에 붙여: {LESSON_RULE}', f'append to the end of your message: {LESSON_RULE}'), file=sys.stderr)
         print(T(f'메시지 끝에 붙여: {ASK_RULE}', f'append to the end of your message: {ASK_RULE}'), file=sys.stderr)
         print(T(f'메시지 끝에 붙여: {MERGE_RULE}', f'append to the end of your message: {MERGE_RULE}'), file=sys.stderr)
         return 0
     if cmd == 'lesson' and len(a) >= 3:
-        os.makedirs(LESSONS, exist_ok=True)
-        with open(os.path.join(LESSONS, f'{a[1]}.md'), 'a', encoding='utf-8') as f:
-            f.write(f'- {a[2]}\n')
+        project = COMMON if a[1] == '--all' else a[1]
+        add_lesson(project, a[2])
+        n = len(_lines(project))
+        if n > LESSON_MAX:
+            where = os.path.join(LESSONS, project + '.md')
+            print(T(f'{project} 교훈이 {n}줄 — 지시마다 통째로 붙으니 정리할 때야(끝난 할 일·중복은 빼고, 여러 프로젝트에 통하면 --all 로): {where}',
+                    f'{project} has {n} lessons — all of them ride on every message, time to prune (drop finished to-dos and duplicates; use --all for ones that apply everywhere): {where}'), file=sys.stderr)
         return 0
+    if cmd == 'prelaunch' and len(a) >= 3:
+        cur = ops_free()
+        if a[2] == 'on':
+            cur[a[1]] = a[3] if len(a) >= 4 else T('출시 전', 'not launched yet')
+        else:
+            cur.pop(a[1], None)
+        os.makedirs(os.path.dirname(OPS_FREE), exist_ok=True)
+        with open(OPS_FREE, 'w', encoding='utf-8') as f:
+            json.dump(cur, f, ensure_ascii=False, indent=2)
+        return 0
+    if cmd == 'retry' and len(a) >= 3:
+        n = retries(a[1]) + 1
+        append({'ts': now(), 'type': 'note', 'task': a[1], 'retry': n, 'note': T(f'되돌림 {n} — {a[2]}', f'sent back {n} — {a[2]}')})
+        if n >= 3:
+            print(T(f'같은 일 {n}번째 되돌림 — 더 밀지 말고 계획을 다시 봐: 무엇을 가정했나, 나누기가 맞나. 방향이 걸리면 사용자에게 한 줄로 확인',
+                    f'Sent back {n} times — stop pushing and rethink the plan: what did you assume, is the split right? If the direction is in doubt, check with the user in one line'), file=sys.stderr)
+        return 0
+    if cmd == 'reply' and len(a) >= 3:
+        found = lessons_in(a[2])
+        target = target_of(a[1]) if found else None
+        if target:
+            project = project_of(target, load_agents()) or target
+            added = [l for l in found if add_lesson(project, l)]
+            if added:
+                print(T(f'{project} 교훈 {len(added)}줄 적음: ', f'{project}: recorded {len(added)} lesson(s): ') + ' / '.join(added), file=sys.stderr)
+    if cmd == 'done' and len(a) >= 3 and not PROOF.search(a[2]):
+        print(T('done 에 증거가 없어 — "했다"만으론 몰라. PR 번호·주소·응답 코드·로그 중 하나를 확인해 적어 줘(이번 기록은 남김)',
+                'No proof in this done note — "did it" alone does not tell. Check and add one of: PR number, URL, status code, log (this entry is kept)'), file=sys.stderr)
     if cmd in ('reply', 'done', 'note', 'ask', 'answer') and len(a) >= 3:
         ev = {'ts': now(), 'type': cmd, 'task': a[1], 'note': a[2]}
         if cmd == 'ask' and me:

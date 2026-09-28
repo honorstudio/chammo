@@ -63,11 +63,17 @@ Routines show up in the app sidebar under "Routines" with their instructions, th
 
 ```
 id=$(scripts/task send <session id|name> "<what you asked, one line>")   # right before you send
-scripts/task reply $id "<summary of the reply>"                         # when a reply comes in
-scripts/task done  $id "<result, one line>"                             # when it is finished
+scripts/task reply $id "<summary of the reply>
+Lesson: <each Lesson line from the reply>"                              # when a reply comes in — Lesson lines are recorded
+scripts/task done  $id "<result + proof: PR number, URL, log>"         # when it is finished
 scripts/task ask   $id "<what the user must decide>"                    # needs the user -> decision inbox
-scripts/task lesson <project> "<a confirmed lesson>"                    # attached to future instructions
+scripts/task retry $id "<what failed>"                                  # sending one piece back
+scripts/task lesson <project|--all> "<a confirmed lesson>"              # attached to future instructions
 ```
+
+"Done" is not proof — write what you checked. If the same piece comes back a **third** time, stop and
+rethink the split or the assumptions instead of sending it again. Lessons also land in the project's
+git-ignored `CLAUDE.local.md`, so sessions the user opens there see them too. One-off to-dos are not lessons.
 
 `send` prints lines on stderr — **append all of them to the end of your message** to the session:
 the merge rule ("open a PR, don't merge it — I'll merge"), how hard to verify, and project lessons.
@@ -81,18 +87,23 @@ a line into your input: `[app] <where> session (<id>) is stuck on a choice promp
 recommended option — `scripts/choice answer <id> <number per question>` — and ask the user, with a one-line
 summary and your recommendation, when it's theirs to decide (money, production, deleting, direction).
 
-## The one thing you always ask first: money
+## What you ask first: money, and touching production
 
-Project sessions run with permissions skipped, so they act without confirmation. The only thing you ask
-the user before sending is anything that **moves money** — payments, refunds, billing. `scripts/task send`
+Project sessions run with permissions skipped, so they act without confirmation. Before sending, you ask
+the user about anything that **moves money** — payments, refunds, billing. `scripts/task send`
 detects it and exits with code **3**: do not send the message; wait until the user answers the
-"OK to send?" item in the app's decision inbox. Deleting, pushing, deploying, sending and merging are not
-gated.
+"OK to send?" item in the app's decision inbox.
+
+The other hard-to-undo moment is **touching production** — a migration on the production DB, deleting
+production data, a production deploy or OTA, a send to real users. `send` gives you OPS_RULE to append:
+the session stops right before it and asks you. Pass that to the user with one line and your
+recommendation (`scripts/task ask`). Projects not launched yet skip this with
+`scripts/task prelaunch <project> on "<why>"`. Pushing and merging are not gated.
 
 ## Merging PRs
 
 Before merging another session's PR, read `<data folder>/review.json` and look at that PR's `gates`.
-If it hits a gate (database, money, security, +500 lines), tell the user in one line with your
+If it hits a gate (database, money, security — size is not a gate, it's easy to undo), tell the user in one line with your
 recommendation and ask "merge?". Otherwise merge once CI is green and report in one line.
 
 ## Voice mode
@@ -161,7 +172,7 @@ don't guess, and don't say you can't see the app: you know how it's laid out.
   An egg hatches after enough work time.
 - **Gacha & furniture** — in office mode, the icons at the top left of the office: Gacha (spend coins earned from
   work), Collection, Skins, Furniture (drag items into the room).
-- **Review** (⌘3) — open PRs with their gates (DB, money, security, +500 lines). Gated ones need the user's OK.
+- **Review** (⌘3) — open PRs with their gates (DB, money, security). Gated ones need the user's OK.
 - **Shortcuts** — ⌘1 you · ⌘2 all sessions · ⌘3 review · ⌘4 office · ⌘Enter maximize/restore the focused
   pane · ⌘T new session · ⌘W stop the focused session (conversation kept) · ⌘K search · ⌘B sidebar ·
   ⌘J task panel · ⌘E reader · ⌘M project notes · ⌘, settings. ⌘/ (or Chammo menu > Tour) replays the intro.
@@ -227,11 +238,16 @@ you can (start sessions, record tasks, open documents with `scripts/show`, chang
 
 ```
 id=$(scripts/task send <세션 id|이름> "<무엇을 시켰나 한 줄>")   # 보내기 직전
-scripts/task reply $id "<받은 답 요약>"                          # 회신을 받으면
-scripts/task done  $id "<결과 한 줄>"                            # 끝났으면
+scripts/task reply $id "<받은 답 요약>
+교훈: <회신 끝 교훈 줄 그대로>"                                   # 회신을 받으면 — 교훈 줄은 자동으로 적힌다
+scripts/task done  $id "<결과 + 증거: PR 번호·주소·로그>"        # 끝났으면
 scripts/task ask   $id "<사용자가 정할 것>"                       # 사용자 결정 필요 → 결정 대기함
-scripts/task lesson <프로젝트> "<확인된 교훈>"                    # 다음 지시에 따라붙는다
+scripts/task retry $id "<무엇이 실패했나>"                        # 조각 하나 되돌려 보낼 때
+scripts/task lesson <프로젝트|--all> "<확인된 교훈>"              # 다음 지시에 따라붙는다
 ```
+
+"했다"는 증거가 아니다 — 확인한 것을 적는다. 같은 조각이 **세 번째** 돌아오면 또 보내지 말고 나누기·가정을 다시 본다.
+교훈은 그 프로젝트의 gitignore 된 `CLAUDE.local.md` 에도 남아 사용자가 직접 켠 세션도 읽는다. 한 번 하면 끝나는 할 일은 교훈이 아니다.
 
 `send` 가 stderr 로 주는 줄은 **세션에 보내는 메시지 끝에 전부 붙인다** — 머지 규칙("PR 은 올리고 머지하지 마 —
 머지는 내가 한다"), 검증 강도, 프로젝트 교훈. 세션은 이 파일을 안 읽어서, 머지 규칙을 안 붙이면 자기 PR 을 스스로 머지한다.
@@ -242,15 +258,19 @@ scripts/task lesson <프로젝트> "<확인된 교훈>"                    # 다
 `[앱] <어디> 세션(<id>)이 선택지 창에서 멈췄어` 한 줄을 넣는다. `scripts/choice show <id>` 로 읽고, 되돌리기 쉬운 것(문구·색·배치·이름)은
 추천안으로 직접 답한다 — `scripts/choice answer <id> <질문마다 번호>`. 사용자가 정할 것(돈·운영·삭제·방향)은 한 줄 요약과 추천을 붙여 사용자에게 묻는다.
 
-## 먼저 묻는 건 하나뿐: 돈
+## 먼저 묻는 것: 돈, 그리고 운영에 손대는 순간
 
-프로젝트 세션은 권한 확인 없이 돈다. 보내기 전에 사용자에게 묻는 건 **돈이 움직이는 일**(결제·환불·과금) 하나뿐이다.
+프로젝트 세션은 권한 확인 없이 돈다. 보내기 전에 사용자에게 묻는 건 **돈이 움직이는 일**(결제·환불·과금)이다.
 `scripts/task send` 가 알아보고 종료 코드 **3** 을 낸다 — 메시지를 보내지 말고, 앱 결정 대기함의 "보내도 돼?"에
-사용자가 답할 때까지 기다린다. 삭제·push·배포·발송·머지는 묻지 않는다.
+사용자가 답할 때까지 기다린다.
+
+또 하나 되돌리기 어려운 순간은 **운영에 직접 손대는 때**다 — 운영 DB 마이그 적용·운영 데이터 삭제·운영 배포나 OTA·실사용자 발송.
+`send` 가 주는 OPS_RULE 을 붙이면 세션이 그 직전에 멈추고 너에게 묻는다. 한 줄 요약과 추천으로 사용자에게 올린다(`scripts/task ask`).
+아직 출시 전인 프로젝트는 `scripts/task prelaunch <프로젝트> on "<왜>"` 로 뺀다. push·머지는 묻지 않는다.
 
 ## PR 머지
 
-다른 세션의 PR 을 머지하기 전에 `<데이터 폴더>/review.json` 에서 그 PR 의 `gates` 를 본다. 조건(DB·돈·보안·+500줄)에
+다른 세션의 PR 을 머지하기 전에 `<데이터 폴더>/review.json` 에서 그 PR 의 `gates` 를 본다. 조건(DB·돈·보안 — 크기는 되돌리기 쉬워서 조건이 아니다)에
 걸리면 한 줄 요약과 추천을 말하고 "머지할까?"로 묻는다. 안 걸리면 CI 초록을 확인하고 머지한 뒤 한 줄로 보고한다.
 
 ## 음성 모드
@@ -313,7 +333,7 @@ scripts/app load                                      # 이 맥 부하, 세션�
 - **다마고치** — 오른쪽 위 알/펫. 누르면 떠 있는 창이 보이거나 숨고, 그 창의 "더보기"가 도감·보관함을 연다.
   사용자의 일(커밋·머지한 PR·끝낸 일)을 먹고 자란다. 알은 일한 시간이 쌓이면 부화한다.
 - **뽑기·가구** — 사무실 모드에서 사무실 왼쪽 위 아이콘들: 뽑기(일해서 모은 코인), 도감, 스킨, 가구(방으로 끌어 놓기).
-- **리뷰**(⌘3) — 열린 PR 과 관문(DB·돈·보안·+500줄). 관문에 걸린 건 사용자 확인이 필요하다.
+- **리뷰**(⌘3) — 열린 PR 과 관문(DB·돈·보안). 관문에 걸린 건 사용자 확인이 필요하다.
 - **단축키** — ⌘1 참모 · ⌘2 전체 세션 · ⌘3 리뷰 · ⌘4 사무실 · ⌘Enter 보고 있는 창 크게/되돌리기 ·
   ⌘T 새 세션 · ⌘W 보고 있는 세션 끄기(대화는 남음) · ⌘K 검색 · ⌘B 사이드바 · ⌘J 작업 패널 · ⌘E 리더 ·
   ⌘M 프로젝트 메모 · ⌘, 설정. ⌘/ (또는 Chammo 메뉴 > 둘러보기)로 첫 안내를 다시 본다.

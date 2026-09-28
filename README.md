@@ -17,8 +17,9 @@ With five or ten projects open, the bottleneck is not the agents. It's you: swit
 - **Chief of staff session** — one live Claude Code session in your HQ folder. Talk to it (or type); it delegates, follows up and reports back in one line.
 - **One session per project** — real Claude Code background sessions (`claude --bg`), not one-shot `claude -p` runs. Slash commands like `/clear` and `/compact` work, and you can attach and take over any session yourself.
 - **Decision inbox** — a bell dropdown with only what the chief of staff escalates to you. Replying types straight into the session that asked.
-- **Payment gate** — delegating anything that mentions payments, refunds or billing is held until you answer.
-- **Review and merge gates** — open PRs across your projects are checked for DB migrations, money, security and size (500+ lines). Gated PRs wait for you with a 3-line summary and diff; the rest are merged by the chief of staff once CI is green. "Merged today" has a one-click revert PR.
+- **Payment and production gates** — delegating anything that mentions payments, refunds or billing is held until you answer. Sessions are also told to stop right before they touch production (a migration on the production DB, deleting production data, a production deploy or OTA, a send to real users) and ask first; projects that haven't launched yet can opt out.
+- **Review and merge gates** — open PRs across your projects are checked for what is hard to undo: DB migrations, money and security (size is not a gate). Gated PRs wait for you with a 3-line summary and diff; the rest are merged by the chief of staff once CI is green. "Merged today" has a one-click revert PR.
+- **Delegation that learns** — every instruction carries how hard to verify (careful for bugs, security and data; quick for sketches), a checklist-and-proof rule, and the project's lessons. Sessions end replies with `Lesson:` lines that become lessons for next time (copied into the project's git-ignored `CLAUDE.local.md` too, so sessions you open yourself see them). The task panel shows *Careful* / *Quick* and *Sent back N* (the third time says rethink the plan), and the notes window (⌘M) has a Lessons tab to prune them.
 - **Session revive** — when the Claude Code daemon restarts, Chammo notices which sessions went down and brings them back with their conversations. Tasks left without an owner are listed too.
 - **Permission prompts** — tool permission prompts in background sessions are answered with *Allow* by reading the prompt, never by guessing. Prompts that ask for a password, a 2FA code or a payment are left to you (the words are looked for in what the prompt asks, not in the command being approved). Messages between sessions that Claude Code holds for approval ("Held message from another session") are delivered the same way.
 - **Stuck on a question** — if a project session stops on a multiple-choice question for 30 seconds, Chammo hands it to the chief of staff, who answers easy-to-undo ones (`scripts/choice`) and asks you about the rest. Sessions are also told to decide small things themselves instead of opening such prompts.
@@ -150,7 +151,7 @@ Chammo runs entirely on your Mac. It has no server, no account and no telemetry.
 
 - **Early.** Chammo started as one person's daily tool and was opened up as is.
 - **It relies on undocumented Claude Code internals** — background sessions, `claude agents --json`, `claude attach`, the daemon lock file. It is tested with Claude Code 2.1.28x. A Claude Code update can break it; Chammo shows a warning when your version is outside the tested range.
-- **Background sessions run with `--dangerously-skip-permissions`.** The sessions act without asking. Chammo's gates (payments, gated merges) sit in front of that, but only use it on projects and machines where you're comfortable with that.
+- **Background sessions run with `--dangerously-skip-permissions`.** The sessions act without asking. Chammo's gates (payments, production changes, gated merges) sit in front of that, but only use it on projects and machines where you're comfortable with that.
 - macOS only.
 
 ## Contributing
