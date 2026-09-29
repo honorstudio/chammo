@@ -95,6 +95,7 @@ function Doc({ path, nonce }: { path: string; nonce: number }) {
   if (kind === 'html') return <iframe key={nonce} className="rd-frame" src={docUrl(path)} sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads" />;
   if (kind === 'pdf') return <iframe key={nonce} className="rd-frame" src={docUrl(path)} />;
   if (kind === 'image') return <div className="rd-image"><img key={nonce} src={docUrl(path)} alt={titleOf(path)} /></div>;
+  if (kind === 'video') return <div className="rd-video"><video key={nonce} src={docUrl(path)} controls playsInline /></div>;
   if (text == null) return <div className="rd-empty">{tr('읽는 중', 'Reading')}</div>;
   if (kind === 'md') return <MdDoc key={nonce} path={path} md={text} />;
   return <pre className="rd-text">{text}</pre>;
@@ -187,7 +188,7 @@ export function ReaderView({ surface, actions }: { surface: string; actions?: Re
         </div>
       )}
       <div className="rd-body">
-        {s.active ? <Doc path={s.active} nonce={nonce} /> : <div className="rd-empty">{tr(`파일을 여기에 끌어다 놓거나, ${assistant()}한테 "띄워줘"라고 해 — HTML 시안·PDF·마크다운·그림`, `Drop a file here, or ask ${assistant()} to show one — HTML designs, PDFs, Markdown, images`)}</div>}
+        {s.active ? <Doc path={s.active} nonce={nonce} /> : <div className="rd-empty">{tr(`파일을 여기에 끌어다 놓거나, ${assistant()}한테 "띄워줘"라고 해 — HTML 시안·PDF·마크다운·그림·영상`, `Drop a file here, or ask ${assistant()} to show one — HTML designs, PDFs, Markdown, images, videos`)}</div>}
       </div>
     </div>
   );

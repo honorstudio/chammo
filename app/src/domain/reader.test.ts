@@ -12,6 +12,13 @@ describe('kindOf — 확장자로 어떻게 보여줄지', () => {
     expect(kindOf('/a/data.json')).toBe('text');
     expect(kindOf('/a/Makefile')).toBe('text');
   });
+  // 2026-09-29 사용자: 리모션 영상을 띄웠는데 리더가 mp4 를 글로 읽으려 했다 → 앱 안에서 재생
+  it('영상(mp4·mov·webm·m4v)은 video', () => {
+    expect(kindOf('/a/project-x-promo-v1.mp4')).toBe('video');
+    expect(kindOf('/a/clip.MOV')).toBe('video');
+    expect(kindOf('/a/x.webm')).toBe('video');
+    expect(kindOf('/a/x.m4v')).toBe('video');
+  });
 });
 
 describe('titleOf — 탭 이름', () => {

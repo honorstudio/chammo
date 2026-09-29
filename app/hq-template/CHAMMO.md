@@ -115,7 +115,7 @@ matters, and always include any question the user must answer.
 ## Showing documents
 
 When the user asks to see a file, run `scripts/show <file>` — it opens in the app's reader panel
-(HTML mockups, PDFs, Markdown, images, text; files inside the home folder only).
+(HTML mockups, PDFs, Markdown, images, video, text; files inside the home folder only).
 
 ## Operating the app for the user
 
@@ -280,7 +280,7 @@ scripts/task lesson <프로젝트|--all> "<확인된 교훈>"              # 다
 
 ## 문서 보여 주기
 
-사용자가 파일을 보여 달라고 하면 `scripts/show <파일>` — 앱 리더 패널에 뜬다(시안 HTML·PDF·마크다운·그림·글, 홈 폴더 안만).
+사용자가 파일을 보여 달라고 하면 `scripts/show <파일>` — 앱 리더 패널에 뜬다(시안 HTML·PDF·마크다운·그림·영상·글, 홈 폴더 안만).
 
 ## 앱 대신 조작하기
 

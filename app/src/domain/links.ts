@@ -108,7 +108,7 @@ export function findPathsWrapped(line: (i: number) => string | null, wrapped: (i
 }
 
 /** 링크를 어디서 열까 — 웹은 기본 브라우저, 문서(리더가 그리는 것)는 리더, 나머지(코드·폴더)는 기본 앱 */
-const READER_EXT = /\.(md|markdown|html?|pdf|png|jpe?g|gif|webp|svg|txt)$/i;
+const READER_EXT = /\.(md|markdown|html?|pdf|png|jpe?g|gif|webp|svg|txt|mp4|m4v|mov|webm)$/i;
 export function routeOf(o: Opened): 'browser' | 'reader' | 'app' {
   if (o.kind === 'url') return 'browser';
   return READER_EXT.test(o.target) ? 'reader' : 'app';

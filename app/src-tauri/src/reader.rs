@@ -1,4 +1,4 @@
-//! 리더 — 디자인 큐레이션(HTML)·PDF·마크다운·그림을 탭으로 본다(사용자 2026-09-28).
+//! 리더 — 디자인 큐레이션(HTML)·PDF·마크다운·그림·영상을 탭으로 본다(사용자 2026-09-28).
 //! 탭이 사는 곳(surface) = 메인 창 작업 패널 왼쪽의 리더 패널("dock") + 크롬처럼 떼어 낸 창("reader-N").
 //! 탭 목록은 여기(Store) 한 곳에서 들고, 바뀌면 그 창에 window.__reader() 신호만 준다 — 창은 reader_state 로 다시 읽는다.
 //! ① hodoc://localhost/<절대 경로> 로 파일을 준다 — 홈 폴더 안만, 상대 경로(시안의 body/*.js)도 그대로 풀린다
@@ -179,7 +179,34 @@ pub fn mime_of(path: &Path) -> &'static str {
         Some("woff") => "font/woff",
         Some("ttf") => "font/ttf",
         Some("otf") => "font/otf",
+        Some("mp4" | "m4v") => "video/mp4",
+        Some("mov") => "video/quicktime",
+        Some("webm") => "video/webm",
         _ => "text/plain; charset=utf-8",
+    }
+}
+
+/// Range 머리("bytes=a-b", "bytes=a-", "bytes=-n") → 포함 구간 (시작, 끝). 파일 밖이거나 모양이 다르면 None
+pub fn range_of(header: &str, len: usize) -> Option<(usize, usize)> {
+    let (a, b) = header.trim().strip_prefix("bytes=")?.split(',').next()?.split_once('-')?;
+    let last = len.checked_sub(1)?;
+    let (start, end) = match (a.trim(), b.trim()) {
+        ("", n) => (len.saturating_sub(n.parse().ok()?), last),
+        (a, "") => (a.parse().ok()?, last),
+        (a, b) => (a.parse().ok()?, b.parse::<usize>().ok()?.min(last)),
+    };
+    (start <= end && start <= last).then_some((start, end))
+}
+
+/// 파일 내용 → 응답. 영상은 WebKit 이 Range 로 조각씩 달라고 해서 206 으로 그 조각만 준다(2026-09-29 리더 영상 재생)
+pub fn respond(body: &[u8], mime: &str, range: Option<&str>) -> Response<Vec<u8>> {
+    let base = || Response::builder().header("Content-Type", mime).header("Cache-Control", "no-store").header("Accept-Ranges", "bytes");
+    match range {
+        None => base().body(body.to_vec()).unwrap(),
+        Some(h) => match range_of(h, body.len()) {
+            Some((a, b)) => base().status(206).header("Content-Range", format!("bytes {a}-{b}/{}", body.len())).body(body[a..=b].to_vec()).unwrap(),
+            None => base().status(416).header("Content-Range", format!("bytes */{}", body.len())).body(Vec::new()).unwrap(),
+        },
     }
 }
 
@@ -187,8 +214,9 @@ pub fn mime_of(path: &Path) -> &'static str {
 pub fn serve<R: Runtime>(_ctx: tauri::UriSchemeContext<'_, R>, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     let not_found = || Response::builder().status(404).header("Content-Type", "text/plain; charset=utf-8").body(tr("없는 파일이거나 홈 폴더 밖이야", "File not found or outside the home folder").as_bytes().to_vec()).unwrap();
     let Some(path) = safe_path(req.uri().path(), &home()) else { return not_found() };
+    let range = req.headers().get("range").and_then(|v| v.to_str().ok());
     match std::fs::read(&path) {
-        Ok(body) => Response::builder().header("Content-Type", mime_of(&path)).header("Cache-Control", "no-store").body(body).unwrap(),
+        Ok(body) => respond(&body, mime_of(&path), range),
         Err(_) => not_found(),
     }
 }
@@ -450,6 +478,35 @@ mod tests {
         assert_eq!(mime_of(Path::new("/a/v3.HTML")), "text/html; charset=utf-8");
         assert_eq!(mime_of(Path::new("/a/x.pdf")), "application/pdf");
         assert_eq!(mime_of(Path::new("/a/Makefile")), "text/plain; charset=utf-8");
+        assert_eq!(mime_of(Path::new("/a/v1.MP4")), "video/mp4");
+        assert_eq!(mime_of(Path::new("/a/v1.mov")), "video/quicktime");
+        assert_eq!(mime_of(Path::new("/a/v1.webm")), "video/webm");
+    }
+
+    // 영상은 WebKit 이 Range 로 조각씩 달라고 한다 — 206 으로 그 조각만 줘야 재생·탐색이 된다
+    #[test]
+    fn byte_range() {
+        assert_eq!(range_of("bytes=0-1", 100), Some((0, 1)));
+        assert_eq!(range_of("bytes=10-", 100), Some((10, 99)));
+        assert_eq!(range_of("bytes=90-200", 100), Some((90, 99)));
+        assert_eq!(range_of("bytes=-10", 100), Some((90, 99)));
+        assert_eq!(range_of("bytes=100-", 100), None);
+        assert_eq!(range_of("bytes=5-2", 100), None);
+        assert_eq!(range_of("items=0-1", 100), None);
+        assert_eq!(range_of("bytes=0-1", 0), None);
+    }
+
+    #[test]
+    fn serve_range_206() {
+        let body: Vec<u8> = (0..100u8).collect();
+        let r = respond(&body, "video/mp4", Some("bytes=10-19"));
+        assert_eq!(r.status(), 206);
+        assert_eq!(r.headers()["Content-Range"], "bytes 10-19/100");
+        assert_eq!(r.body().as_slice(), &body[10..20]);
+        let full = respond(&body, "video/mp4", None);
+        assert_eq!((full.status().as_u16(), full.body().len()), (200, 100));
+        assert_eq!(full.headers()["Accept-Ranges"], "bytes");
+        assert_eq!(respond(&body, "video/mp4", Some("bytes=200-")).status(), 416);
     }
 
     fn st(tabs: &[&str], active: &str) -> Store {

@@ -135,6 +135,15 @@ describe('pickSay — 참모가 따로 써 넘긴 음성용 말(scripts/say)', (
     expect(pickSay(parseSay(many), '7272b9b1', '')?.text).toBe('말3 말4 말5');
   });
 
+  // 2026-09-29: 이어서 켠(--resume) 참모는 agents 의 짧은 id(a1b2c3d4)와 대화 id(e5f6a7b8-…)가 다르다.
+  // scripts/say 는 대화 id(CLAUDE_CODE_SESSION_ID)로 적으니 짧은 id 로만 찾으면 못 찾고, 앱이 답 앞 세 문장만 읽어 "말이 잘렸다"
+  it('이어서 켠 세션 — 짧은 id 가 달라도 대화 id 로 찾는다', () => {
+    const resumed = '{"ts":"2026-09-29T01:10:00.000Z","session":"e5f6a7b8-0000-4abc","text":"길게 설명한 말"}';
+    expect(pickSay(parseSay(resumed), 'a1b2c3d4', '')).toBeUndefined();
+    expect(pickSay(parseSay(resumed), ['a1b2c3d4', 'e5f6a7b8-0000-4abc'], '')?.text).toBe('길게 설명한 말');
+    expect(pickSay(parseSay(resumed), ['a1b2c3d4', undefined], '')).toBeUndefined();
+  });
+
   it('이번 턴에 없으면 undefined — 앱 규칙으로 읽는다', () => {
     expect(pickSay(parseSay(log), '7272b9b1', '2026-09-28T01:07:00.000Z')).toBeUndefined();
     expect(pickSay(parseSay(''), '7272b9b1', '')).toBeUndefined();

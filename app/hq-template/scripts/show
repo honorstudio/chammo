@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Open files in the app's reader panel — HTML mockups, PDFs, Markdown, images, text.
-파일을 앱 리더 창에 띄운다 — 시안 HTML·PDF·마크다운·그림·글.
+"""Open files in the app's reader panel — HTML mockups, PDFs, Markdown, images, video, text.
+파일을 앱 리더 창에 띄운다 — 시안 HTML·PDF·마크다운·그림·영상·글.
 
   scripts/show <file> [<file> ...]
 

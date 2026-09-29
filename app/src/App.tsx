@@ -509,7 +509,7 @@ export default function App() {
       if (voiceRef.current) void readSay().catch(() => '').then((log) => {
         // 앱을 켜기 전에 넘긴 말은 안 읽는다 — 켤 때마다 '이미 읽은 말' 기억이 비어 옛 말을 몰아 읽었다
         const since = [x.activity.prompt?.ts ?? '', appStartedAt.current].sort().pop()!;
-        const p = pickSay(parseSay(log), s.id, since, spokenSay.current[s.id]);
+        const p = pickSay(parseSay(log), [s.id, s.sessionId], since, spokenSay.current[s.id]);
         if (p) spokenSay.current[s.id] = p.last; // 읽은 말은 다음 답에서 다시 안 읽는다
         return p?.text ?? f.reply.say;
       }).then((t) => (t ? speak(t) : undefined)).catch(() => {});

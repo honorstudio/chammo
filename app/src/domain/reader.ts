@@ -1,8 +1,8 @@
 /**
- * 리더 창 — 디자인 큐레이션(HTML)·PDF·마크다운·그림을 한 창에서 탭으로 본다(사용자 2026-09-28).
+ * 리더 창 — 디자인 큐레이션(HTML)·PDF·마크다운·그림·영상을 한 창에서 탭으로 본다(사용자 2026-09-28).
  * 참모가 scripts/show 로 넘기거나 창에 끌어다 놓으면 열린다. 파일은 hodoc:// 로 읽는다(Rust reader.rs, 홈 폴더 안만)
  */
-export type DocKind = 'html' | 'pdf' | 'md' | 'image' | 'text';
+export type DocKind = 'html' | 'pdf' | 'md' | 'image' | 'video' | 'text';
 
 export function kindOf(path: string): DocKind {
   const ext = path.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '';
@@ -10,6 +10,7 @@ export function kindOf(path: string): DocKind {
   if (ext === 'pdf') return 'pdf';
   if (ext === 'md' || ext === 'markdown') return 'md';
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return 'image';
+  if (['mp4', 'm4v', 'mov', 'webm'].includes(ext)) return 'video';
   return 'text';
 }
 

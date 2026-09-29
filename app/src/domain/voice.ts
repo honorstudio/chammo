@@ -50,9 +50,11 @@ export function parseSay(raw: string): SayLine[] {
 /**
  * 그 세션(앞 8자리 id)이 이번 턴(since = 지시 시각) 안에 넘긴 말 중 아직 안 읽은 것(spoken 뒤)을 이어 붙인 것 + 그 마지막 ts.
  * 사람 지시 없이 세션 회신으로 여러 번 답하면 지시 뒤 말을 전부 붙여 읽어 앞 말을 되풀이했다(2026-09-28 아이맥). 없으면 undefined
+ * id 는 여러 개를 줄 수 있다 — 이어서 켠(--resume) 세션은 짧은 id 와 대화 id 가 달라서 둘 다로 찾는다(2026-09-29)
  */
-export function pickSay(lines: SayLine[], id: string, since: string, spoken = ''): { text: string; last: string } | undefined {
-  const mine = lines.filter((x) => x.session.startsWith(id) && x.ts >= since && x.ts > spoken && x.text.trim());
+export function pickSay(lines: SayLine[], id: string | (string | undefined)[], since: string, spoken = ''): { text: string; last: string } | undefined {
+  const ids = (Array.isArray(id) ? id : [id]).filter((v): v is string => !!v);
+  const mine = lines.filter((x) => ids.some((i) => x.session.startsWith(i)) && x.ts >= since && x.ts > spoken && x.text.trim());
   // 몰려 있으면 마지막 세 개만 — 저녁 내내 넘긴 말 6,500자를 한 번에 읽은 적이 있다(2026-09-28)
   return mine.length ? { text: mine.slice(-3).map((x) => x.text.trim()).join(' '), last: mine[mine.length - 1]!.ts } : undefined;
 }
