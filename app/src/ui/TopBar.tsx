@@ -4,7 +4,7 @@ import type { RepoToday } from '../data/tauri';
 import type { TamaFile } from '../domain/tama/store';
 import { TamaMini } from './tama/TamaMini';
 import type { Features } from '../domain/config';
-import { IconBell, IconGear, IconOffice, IconReader, IconReplay, IconSpeaker } from './Icons';
+import { IconBell, IconGear, IconOffice, IconReader, IconReplay, IconSpace, IconSpeaker } from './Icons';
 import { assistant, tr } from '../i18n';
 
 const level = (left: number) => (left >= 50 ? 'ok' : left >= 20 ? 'mid' : 'low');
@@ -24,7 +24,7 @@ function Meter({ label, l }: { label: string; l?: Limit }) {
 /** 앱 맨 위: Claude 사용 한도 · 오늘 커밋 · (오른쪽) 다마고치 자리 */
 type TamaProps = { file: TamaFile | null; widgetShown: boolean; onToggle: () => void };
 
-export function TopBar({ features, usage, today, tama, inboxCount, onInbox, onSettings, voice, onVoice, replayOn, onReplay, office, onOffice, reader, onReader, load, onLoad, loadOn }: { load?: { level: 'ok' | 'warn' | 'high'; load1: number; cores: number; swapGb: number }; onLoad: () => void; loadOn: boolean; features: Features; usage: Usage; today: RepoToday[]; tama: TamaProps; inboxCount: number; onInbox: () => void; onSettings: () => void; voice: boolean; onVoice: () => void; replayOn: boolean; onReplay: () => void; office: boolean; onOffice: () => void; reader: boolean; onReader: () => void }) {
+export function TopBar({ features, usage, today, tama, inboxCount, onInbox, onSettings, voice, onVoice, replayOn, onReplay, office, onOffice, space, onSpace, reader, onReader, load, onLoad, loadOn }: { load?: { level: 'ok' | 'warn' | 'high'; load1: number; cores: number; swapGb: number }; onLoad: () => void; loadOn: boolean; features: Features; usage: Usage; today: RepoToday[]; tama: TamaProps; inboxCount: number; onInbox: () => void; onSettings: () => void; voice: boolean; onVoice: () => void; replayOn: boolean; onReplay: () => void; office: boolean; onOffice: () => void; space: boolean; onSpace: () => void; reader: boolean; onReader: () => void }) {
   const commits = today.reduce((n, r) => n + r.commits, 0);
   const added = today.reduce((n, r) => n + r.added, 0);
   const deleted = today.reduce((n, r) => n + r.deleted, 0);
@@ -59,6 +59,11 @@ export function TopBar({ features, usage, today, tama, inboxCount, onInbox, onSe
         : tr(`사무실 모드 — ${assistant()} 화면을 픽셀 사무실로 (눌러서 켜기)`, `Office mode — show ${assistant()}'s screen as a pixel office (click to turn on)`)} aria-label={tr('사무실 모드', 'Office mode')} aria-pressed={office} onClick={onOffice}>
         <IconOffice />
       </button>}
+      <button className={`voice ${space ? 'on' : ''}`} aria-label={space ? tr('채팅 뷰', 'Chat view') : tr('터미널 뷰', 'Terminal view')} title={space
+        ? tr(`채팅 뷰 — 왼쪽 스페이스, 오른쪽 ${assistant()} 채팅 (눌러서 터미널 뷰로)`, `Chat view — space on the left, ${assistant()} chat on the right (click for terminal view)`)
+        : tr(`터미널 뷰 — 터미널과 리더 (눌러서 채팅 뷰로)`, `Terminal view — terminals and reader (click for chat view)`)} aria-pressed={space} onClick={onSpace}>
+        <IconSpace />
+      </button>
       <button className={`voice ${reader ? 'on' : ''}`} title={reader ? tr('리더 패널 닫기 (⌘E)', 'Close reader panel (⌘E)') : tr('리더 패널 — 시안·PDF·문서 (⌘E)', 'Reader panel — designs, PDFs, docs (⌘E)')} aria-label={tr('리더 패널', 'Reader panel')} aria-pressed={reader} onClick={onReader}>
         <IconReader />
       </button>

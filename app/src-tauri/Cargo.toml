@@ -1,6 +1,6 @@
 [package]
 name = "honor-orchestrator"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2021"
 license = "AGPL-3.0-only"
 
@@ -18,6 +18,12 @@ libc = "0.2"
 vt100 = "0.15"
 
 # 알림을 앱 이름·아이콘으로(UNUserNotificationCenter). osascript 로 보내면 "스크립트 편집기" 로 묶이고 눌러도 앱이 안 열린다
+# 윈도우 알림(토스트) — Tauri 알림 플러그인이 윈도우에서 쓰는 것과 같은 크레이트
+[target.'cfg(windows)'.dependencies]
+tauri-winrt-notification = "0.7"
+# 부하 보기 — 윈도우엔 ps·sysctl 이 없다. 맥 ps 모양 글로 만들어 넘긴다(load.rs)
+sysinfo = { version = "0.37", default-features = false, features = ["system"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 block2 = "0.6"

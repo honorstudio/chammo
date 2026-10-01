@@ -1,7 +1,7 @@
 {
   "name": "honor-orchestrator",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.2.0",
   "license": "AGPL-3.0-only",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
@@ -15,12 +15,16 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@blocknote/core": "0.51.4",
+    "@blocknote/mantine": "0.51.4",
+    "@blocknote/react": "0.51.4",
     "@tauri-apps/api": "2",
     "@xterm/addon-fit": "0.11",
     "@xterm/addon-webgl": "0.19",
     "@xterm/xterm": "6",
     "dompurify": "^3.4.16",
     "marked": "^16.4.2",
+    "pdfjs-dist": "6.3.289",
     "react": "19",
     "react-dom": "19"
   },

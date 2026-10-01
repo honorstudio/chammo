@@ -3,7 +3,6 @@
 //! (2026-09-28 아이맥 project-x — 5분마다 도는 자동 실행). 이런 건 루틴 칸에 "외부 예약"으로 따로 보인다
 use serde::Serialize;
 use std::collections::HashMap;
-use std::process::Command;
 
 /// 사람이 보는 터미널 앱(실행 파일 이름). 여기까지 거슬러 올라가면 사람이 연 세션
 const TERMINALS: &[&str] = &[
@@ -52,7 +51,7 @@ pub fn classify(pid: u32, procs: &HashMap<u32, (u32, String)>, panes: &[(u32, St
 }
 
 fn process_table() -> HashMap<u32, (u32, String)> {
-    let out = Command::new("/bin/ps").args(["-axo", "pid=,ppid=,comm="]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    let out = crate::platform::command("/bin/ps").args(["-axo", "pid=,ppid=,comm="]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
     out.lines().filter_map(parse_ps_line).collect()
 }
 
@@ -66,7 +65,7 @@ fn parse_ps_line(l: &str) -> Option<(u32, (u32, String))> {
 fn tmux_panes() -> Vec<(u32, String, u32)> {
     let bin = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/opt/local/bin/tmux", "/usr/bin/tmux"].into_iter().find(|p| std::path::Path::new(p).exists());
     let Some(bin) = bin else { return vec![] };
-    let out = Command::new(bin).args(["list-panes", "-a", "-F", "#{pane_pid}\t#{session_name}\t#{session_attached}"]).output();
+    let out = crate::platform::command(bin).args(["list-panes", "-a", "-F", "#{pane_pid}\t#{session_name}\t#{session_attached}"]).output();
     let Ok(out) = out else { return vec![] };
     String::from_utf8_lossy(&out.stdout)
         .lines()

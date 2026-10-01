@@ -1,14 +1,26 @@
-#!/usr/bin/env python3
-"""Open files in the app's reader panel — HTML mockups, PDFs, Markdown, images, video, text.
-파일을 앱 리더 창에 띄운다 — 시안 HTML·PDF·마크다운·그림·영상·글.
+#!/bin/sh
+''':'
+# sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
+':'''
+__doc__ = """Open files in the app — chat view: the space (Markdown as an editable page, the rest as a preview), terminal view: the reader.
+파일을 앱에 띄운다 — 채팅 뷰면 스페이스(마크다운은 고칠 수 있는 문서, 그 밖은 미리보기), 터미널 뷰면 리더.
 
   scripts/show <file> [<file> ...]
+  scripts/show <file> --line 264[-270] | --find "text" | --page 3 | --box x,y,w,h
+  scripts/show <file>:264[-270]
+
+Point at a spot / 짚어 보여 주기 — options apply to the file right before them. The app scrolls there
+(PDF·slides: that page) and flashes it for a few seconds. --find works for any kind and beats --line.
+--box is an area inside an image as left,top,width,height ratios (0-1).
 
 Relative paths are resolved from the current folder. Missing files and files outside your home folder are
 refused (the app won't open them either). Log: <data folder>/show.jsonl — {ts, path}. The app checks it
 every 0.7 s while it is running.
 """
-import datetime, json, os, sys
+import datetime, json, os, re, sys
 
 
 def data_dir(home=None, env=None, exists=os.path.isdir):
@@ -33,18 +45,75 @@ def resolve(p, cwd=None, home=HOME):
     return real
 
 
+def parse_args(argv):
+    """[(file, spot | None)] — --line/--find/--page/--box attach to the file before them; file:line works too"""
+    out = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ('--line', '--find', '--page', '--box') and out and i + 1 < len(argv):
+            v = argv[i + 1]
+            at = out[-1][1] or {}
+            if a == '--line':
+                lo, _, hi = v.partition('-')
+                at['line'] = int(lo)
+                if hi:
+                    at['lineEnd'] = int(hi)
+            elif a == '--find':
+                at['find'] = v
+            elif a == '--page':
+                at['page'] = int(v)
+            else:
+                at['box'] = [float(x) for x in v.split(',')][:4]
+            out[-1] = (out[-1][0], at)
+            i += 2
+            continue
+        m = re.match(r'^(.+?):(\d+)(?:-(\d+))?$', a)
+        if m and not os.path.exists(a):
+            at = {'line': int(m.group(2))}
+            if m.group(3):
+                at['lineEnd'] = int(m.group(3))
+            out.append((m.group(1), at))
+        else:
+            out.append((a, None))
+        i += 1
+    return out
+
+
+def record(real, env, cwd, ts, at=None):
+    """One show.jsonl line — who opened it (a background session's id = end of CLAUDE_JOB_DIR) and the folder,
+    so the chat view can group files under the assistant/session that showed them"""
+    r = {'ts': ts, 'path': real}
+    who = os.path.basename((env.get('CLAUDE_JOB_DIR') or '').rstrip('/'))
+    if who:
+        r['from'] = who
+    r['cwd'] = cwd
+    if at:
+        r['at'] = at
+    return r
+
+
+def shown_where(ddir):
+    """Where it will appear — the app writes its current view to view.json"""
+    try:
+        with open(os.path.join(ddir, 'view.json'), encoding='utf-8') as f:
+            return 'shown in the chat view space / 채팅 뷰 스페이스에 띄움' if json.load(f).get('view') == 'chat' else 'sent to reader / 리더로 넘김'
+    except Exception:
+        return 'sent to reader / 리더로 넘김'
+
+
 def main(argv):
     if not argv:
         print(__doc__, file=sys.stderr); return 2
     bad = 0
     os.makedirs(os.path.dirname(LOG), exist_ok=True)
-    for p in argv:
+    for p, at in parse_args(argv):
         real = resolve(p)
         if not real:
             print(f'cannot open (missing or outside home) / 못 띄움(없거나 홈 밖): {p}', file=sys.stderr); bad += 1; continue
         with open(LOG, 'a', encoding='utf-8') as f:
-            f.write(json.dumps({'ts': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), 'path': real}, ensure_ascii=False) + '\n')
-        print(f'sent to reader / 리더로 넘김: {real}')
+            f.write(json.dumps(record(real, os.environ, os.getcwd(), datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), at), ensure_ascii=False) + '\n')
+        print(f'{shown_where(os.path.dirname(LOG))}: {real}' + (f'  (spot / 짚음: {json.dumps(at, ensure_ascii=False)})' if at else ''))
     return 1 if bad else 0
 
 

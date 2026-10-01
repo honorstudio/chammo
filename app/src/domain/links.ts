@@ -4,13 +4,15 @@
 export type Opened = { kind: 'url'; target: string } | { kind: 'file'; target: string; line?: number };
 
 function normalize(path: string): string {
+  // 윈도우 드라이브(C:)는 앞에 / 를 안 붙인다
+  const drive = /^[A-Za-z]:(?=\/|$)/.exec(path)?.[0] ?? '';
   const out: string[] = [];
-  for (const part of path.split('/')) {
+  for (const part of path.slice(drive.length).split('/')) {
     if (part === '' || part === '.') continue;
     if (part === '..') out.pop();
     else out.push(part);
   }
-  return '/' + out.join('/');
+  return drive + '/' + out.join('/');
 }
 
 export function resolveLink(raw: string, base: string, home: string): Opened | null {
@@ -24,7 +26,7 @@ export function resolveLink(raw: string, base: string, home: string): Opened | n
     } catch {
       return null;
     }
-  } else if (/^[a-z][a-z0-9+.-]*:/i.test(text) && !/^[a-z]:\\/i.test(text)) {
+  } else if (/^[a-z][a-z0-9+.-]*:/i.test(text) && !/^[a-z]:[\\/]/i.test(text)) {
     return null; // javascript:, ssh: 등 — 파일·웹이 아닌 스킴은 열지 않는다
   } else {
     path = text;
@@ -35,7 +37,8 @@ export function resolveLink(raw: string, base: string, home: string): Opened | n
     path = m[1];
     line = Number(m[2]);
   }
-  if (path.startsWith('~/')) path = home + path.slice(1);
+  if (/^[a-z]:[\\/]/i.test(path)) path = path.replace(/\\/g, '/'); // 윈도우 절대 경로
+  else if (path.startsWith('~/')) path = home + path.slice(1);
   else if (!path.startsWith('/')) path = base + '/' + path;
   const target = normalize(path);
   return line == null ? { kind: 'file', target } : { kind: 'file', target, line };
@@ -43,7 +46,8 @@ export function resolveLink(raw: string, base: string, home: string): Opened | n
 
 // 경로 후보: ~/ · / · 상대 경로이면서 슬래시가 하나 이상 있거나 확장자가 있는 것. 뒤에 :줄(:칸) 허용.
 // 이름 글자는 유니코드 글자·숫자 — \w 는 영문만이라 한글 폴더에서 끊겼다(2026-09-28 사용자: ~/Desktop/ 까지만 잡힘)
-const PATH_RE = /(?:~\/|\/)?(?:[\p{L}\p{N}_.@-]+\/)+[\p{L}\p{N}_.@-]+\.[A-Za-z0-9]{1,8}(?::\d+(?::\d+)?)?|(?:~\/|\/)(?:[\p{L}\p{N}_.@-]+\/)*[\p{L}\p{N}_.@-]+(?::\d+)?/gu;
+// 맨 앞은 윈도우 드라이브 경로(C:\\… · C:/…) — 드라이브 글자부터 잡아야 뒤의 /… 만 떼어 잡지 않는다
+const PATH_RE = /[A-Za-z]:[\\/](?:[\p{L}\p{N}_.@-]+[\\/])*[\p{L}\p{N}_.@-]+(?::\d+(?::\d+)?)?|(?:~\/|\/)?(?:[\p{L}\p{N}_.@-]+\/)+[\p{L}\p{N}_.@-]+\.[A-Za-z0-9]{1,8}(?::\d+(?::\d+)?)?|(?:~\/|\/)(?:[\p{L}\p{N}_.@-]+\/)*[\p{L}\p{N}_.@-]+(?::\d+)?/gu;
 const URL_RE = /https?:\/\/\S+/g;
 // 링크로 쓸 웹 주소 — 끝의 문장부호·닫는 괄호·따옴표는 뗀다
 const WEB_RE = /https?:\/\/[^\s<>"'`]+/g;
@@ -62,7 +66,7 @@ export function findPaths(line: string): { text: string; start: number }[] {
     const start = m.index!;
     if (urls.some(([a, b]) => start >= a && start < b)) continue;
     let text = m[0].replace(/[.,:;]+$/, '');
-    if (!text.includes('/')) continue;
+    if (!/[\\/]/.test(text)) continue;
     out.push({ text, start });
   }
   return out;
@@ -72,7 +76,7 @@ export type Cell = { row: number; col: number };
 export type WrappedPath = { text: string; from: Cell; to: Cell };
 
 const EDGE = 4; // 앞 줄이 오른쪽 끝에서 이만큼 안이면 "꽉 찼다"(Claude 화면은 테두리·여백만큼 덜 찬다)
-const PATHY = /[\p{L}\p{N}_.@/~:?=&%#+-]/u; // 경로·웹 주소에 들어가는 글자
+const PATHY = /[\p{L}\p{N}_.@/\\~:?=&%#+-]/u; // 경로·웹 주소에 들어가는 글자
 const MAX_ROWS = 3; // 경로 하나가 이보다 많은 줄에 걸치는 일은 드물다
 
 /**

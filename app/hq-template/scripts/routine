@@ -1,5 +1,11 @@
-#!/usr/bin/env python3
-"""Routines — recurring jobs that wake up on a schedule, do one run by their instructions, and report.
+#!/bin/sh
+''':'
+# sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
+':'''
+__doc__ = """Routines — recurring jobs that wake up on a schedule, do one run by their instructions, and report.
 루틴 — 정해진 때 깨어나 지침서대로 한 번 일하고 결과를 남기는 반복 업무. 앱이 꺼져 있어도 macOS launchd 가 깨운다.
 
   scripts/routine new <name> "<schedule>" "<what to do each run>" [--in <folder>]
@@ -7,13 +13,17 @@
   scripts/routine run <name>                run once now (launchd calls this with --scheduled)
   scripts/routine pause <name> | resume <name> | remove <name>
   scripts/routine report <name> ok|fail "<one line>"    the routine's session calls this when it finishes
+  scripts/routine cloud add <name> "<schedule>" <https url> ["<note>"]   list a claude.ai cloud routine (runs there, not here)
+  scripts/routine cloud remove <name>                                    drop it from the list (the cloud routine itself stays)
 
 <schedule>: "daily 09:00" · "weekdays 09:00" · "weekly mon 09:00" · "every 30m" · "every 2h"
             "매일 09:00" · "평일 09:00" · "매주 월 09:00" · "30분마다" · "2시간마다"
 Files: <data>/routines/<name>/{ROUTINE.md (instructions — edit freely), routine.json, runs.jsonl}.
 A routine runs in its own folder unless --in points at a project folder.
+Cloud routines live in <data>/cloud-routines.json ([{name, schedule, url, note}]) — `list` shows them with kind "cloud";
+run/pause/resume/remove refuse them (do that on claude.ai).
 """
-import datetime, json, os, plistlib, re, shutil, subprocess, sys
+import datetime, json, os, plistlib, re, shutil, subprocess, sys, time
 
 NAME = re.compile(r'^[a-z0-9][a-z0-9._-]{0,63}$')
 DAYS = {'sun': 0, 'mon': 1, 'tue': 2, 'wed': 3, 'thu': 4, 'fri': 5, 'sat': 6,
@@ -85,13 +95,78 @@ def next_run(schedule, now, last=None):
 
 
 def _paths(name, data):
-    d = os.path.join(data, 'routines', name)
+    d = os.path.normpath(os.path.join(data, 'routines', name))  # 윈도우는 C:/…\\routines\\x 처럼 섞였다 — 한 모양으로
     return d, os.path.join(d, 'routine.json'), os.path.join(d, 'ROUTINE.md'), os.path.join(d, 'runs.jsonl')
+
+
+def _cloud_path(data):
+    return os.path.join(data, 'cloud-routines.json')
+
+
+def _cloud_ok(c):
+    return (isinstance(c, dict) and isinstance(c.get('name'), str) and NAME.match(c['name']) is not None
+            and isinstance(c.get('url'), str) and c['url'].startswith('https://'))
+
+
+def _cloud_read(data, strict=False):
+    """클라우드 루틴 목록 — 없으면 빈 목록. strict 면 깨진 파일에 ValueError(덮어쓰지 않게)"""
+    p = _cloud_path(data)
+    if not os.path.isfile(p):
+        return []
+    try:
+        with open(p, encoding='utf-8') as f:
+            v = json.load(f)
+        if not isinstance(v, list):
+            raise ValueError('not a list')
+    except (OSError, ValueError) as e:
+        if strict:
+            raise ValueError(f'{p} is unreadable ({e}) — fix or delete it first')
+        return []
+    return [c for c in v if _cloud_ok(c)]
+
+
+def _cloud_write(items, data):
+    p = _cloud_path(data)
+    os.makedirs(data, exist_ok=True)
+    tmp = p + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, p)
+
+
+def cloud_add(name, schedule, url, note='', data=None):
+    """claude.ai 클라우드 루틴을 목록에 적는다(같은 이름이면 고쳐 쓴다). 실행·예약은 claude.ai 가 한다"""
+    data = data or data_dir()
+    if not NAME.match(name or '') or '..' in name:
+        raise ValueError(f'routine name must be lowercase letters, digits, - _ . : {name!r}')
+    if not (schedule or '').strip():
+        raise ValueError('schedule is required (e.g. "매일 07:05")')
+    if not isinstance(url, str) or not url.startswith('https://'):
+        raise ValueError(f'url must start with https:// : {url!r}')
+    if os.path.isdir(_paths(name, data)[0]):
+        raise ValueError(f'a local routine is already named {name!r}')
+    items = [c for c in _cloud_read(data, strict=True) if c['name'] != name]
+    item = {'name': name, 'schedule': schedule.strip(), 'url': url, 'note': (note or '').strip()}
+    items.append(item)
+    _cloud_write(sorted(items, key=lambda c: c['name']), data)
+    return item
+
+
+def cloud_remove(name, data=None):
+    data = data or data_dir()
+    items = _cloud_read(data, strict=True)
+    if not any(c['name'] == name for c in items):
+        raise ValueError(f'no cloud routine named {name!r}')
+    _cloud_write([c for c in items if c['name'] != name], data)
+    return {'removed': name, 'kind': 'cloud'}
 
 
 def _load(name, data):
     d, cfg_path, _, _ = _paths(name, data)
     if not os.path.isfile(cfg_path):
+        if any(c['name'] == name for c in _cloud_read(data)):
+            raise ValueError(f'{name!r} is a cloud routine — run, pause or delete it on claude.ai '
+                             f'(`routine cloud remove {name}` only drops it from this list)')
         raise ValueError(f'no routine named {name!r}')
     with open(cfg_path, encoding='utf-8') as f:
         return json.load(f)
@@ -115,7 +190,26 @@ def _plist_path(name, home):
     return os.path.join(home, 'Library/LaunchAgents', f'{LABEL}{name}.plist')
 
 
-def _trust(path, home):
+def trust_key(path, win=None):
+    """.claude.json 의 폴더 키 — 윈도우 Claude Code 는 C:/… 처럼 슬래시로 찾는다(C:\\… 로 적으면 'Workspace not trusted')"""
+    win = os.name == 'nt' if win is None else win
+    return path.replace('\\', '/') if win else path
+
+
+def swap_in(tmp, cj):
+    """다 쓴 임시 파일로 바꿔 끼운다. 윈도우는 claude 가 파일을 쥐고 있으면 바꿔치기가 막힌다 → 잠깐 기다렸다가, 끝내 안 되면 제자리에 쓴다"""
+    for _ in range(5):
+        try:
+            os.replace(tmp, cj)
+            return
+        except PermissionError:
+            time.sleep(0.2)
+    with open(tmp, encoding='utf-8') as src, open(cj, 'w', encoding='utf-8') as dst:
+        dst.write(src.read())
+    os.remove(tmp)
+
+
+def _trust(path, home, win=None):
     """claude --bg 가 이 폴더에서 뜨게 ~/.claude.json 에 믿음을 적는다(루틴이 만든 폴더에만)"""
     cj = os.path.join(home, '.claude.json')
     try:
@@ -125,11 +219,11 @@ def _trust(path, home):
         return False
     if not isinstance(d, dict) or not isinstance(d.setdefault('projects', {}), dict):
         return False
-    d['projects'].setdefault(path, {})['hasTrustDialogAccepted'] = True
+    d['projects'].setdefault(trust_key(path, win), {})['hasTrustDialogAccepted'] = True
     tmp = cj + '.chammo-tmp'
     with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(d, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, cj)
+    swap_in(tmp, cj)
     return True
 
 
@@ -157,12 +251,52 @@ def _launchd_load(cfg, data, home, run, uid, python):
     return p
 
 
-def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run, claude=None, python=None, uid=None):
+TASK = 'Chammo\\'
+WIN_DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']  # launchd Weekday 0=일
+NOWIN = {'creationflags': 0x08000000} if os.name == 'nt' else {}  # 윈도우: claude 를 띄울 때 콘솔 창이 번쩍이지 않게
+# schtasks 는 윈도우 콘솔 인코딩(cp949)으로 답한다 — UTF-8 로 읽으면 읽기 스레드가 UnicodeDecodeError 로 죽었다
+SCHT = {**NOWIN, 'encoding': 'oem', 'errors': 'replace'} if os.name == 'nt' else {}
+
+
+def schtasks_args(name, schedule, command):
+    """윈도우 작업 스케줄러 등록 인자 — launchd 일정(parse_schedule)을 그대로 옮긴다"""
+    s = parse_schedule(schedule)
+    base = ['schtasks', '/Create', '/F', '/TN', TASK + name, '/TR', command]
+    if 'StartInterval' in s:
+        sec = s['StartInterval']
+        return base + (['/SC', 'HOURLY', '/MO', str(sec // 3600)] if sec % 3600 == 0 else ['/SC', 'MINUTE', '/MO', str(max(1, sec // 60))])
+    slots = s['StartCalendarInterval']
+    slots = slots if isinstance(slots, list) else [slots]
+    hm = f"{slots[0]['Hour']:02d}:{slots[0]['Minute']:02d}"
+    days = [WIN_DAYS[x['Weekday']] for x in slots if 'Weekday' in x]
+    return base + (['/SC', 'WEEKLY', '/D', ','.join(days), '/ST', hm] if days else ['/SC', 'DAILY', '/ST', hm])
+
+
+def _schtasks_load(cfg, data, run, python):
+    """작업 스케줄러에 올린다 — 앱이 꺼져 있어도 정해진 때 돈다. pythonw 로 돌려 콘솔 창을 안 띄운다"""
+    tool = os.path.join(data, 'tools', 'routine')
+    script = tool if os.path.isfile(tool) else os.path.realpath(__file__)
+    pyw = os.path.join(os.path.dirname(python), 'pythonw.exe')
+    exe = pyw if os.path.isfile(pyw) else python
+    r = run(schtasks_args(cfg['name'], cfg['schedule'], f'"{exe}" "{script}" run {cfg["name"]} --scheduled'), capture_output=True, text=True, **SCHT)
+    if r.returncode != 0:  # 조용히 넘어가면 작업이 안 생긴 이유를 알 수 없다(윈도우 첫 시험)
+        raise ValueError(f'schtasks failed: {(r.stderr or r.stdout or "").strip()}')
+    return TASK + cfg['name']
+
+
+def _uid(uid):
+    return uid if uid is not None else os.getuid()
+
+
+def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run, claude=None, python=None, uid=None, win=None):
+    win = os.name == 'nt' if win is None else win
     if not NAME.match(name or '') or '..' in name:
         raise ValueError(f'routine name must be lowercase letters, digits, - _ . : {name!r}')
     parse_schedule(schedule)  # 먼저 검사 — 틀리면 아무것도 안 만든다
     home = home or os.path.expanduser('~')
     data = data or data_dir(home)
+    if any(c['name'] == name for c in _cloud_read(data)):
+        raise ValueError(f'a cloud routine is already named {name!r}')
     d, _, md, _ = _paths(name, data)
     os.makedirs(d, exist_ok=True)
     if not os.path.exists(md):
@@ -171,13 +305,13 @@ def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run
                     '## Done means\n\n(What must be true at the end of a good run.)\n\n'
                     '## Report\n\nOne line: what you did and anything the user must look at.\n')
     claude = claude or shutil.which('claude') or os.path.join(home, '.local/bin/claude')
-    cfg = {'name': name, 'schedule': schedule, 'cwd': os.path.abspath(os.path.expanduser(cwd)) if cwd else d,
+    cfg = {'name': name, 'schedule': schedule, 'cwd': os.path.abspath(os.path.expanduser(cwd)) if cwd else os.path.normpath(d),  # 윈도우는 C:/…\\routines\\x 처럼 섞였다
            'claude': claude, 'enabled': True, 'created': datetime.date.today().isoformat()}
     _save(cfg, data)
     if not cwd:
         _trust(d, home)
-    plist = _launchd_load(cfg, data, home, run, uid if uid is not None else os.getuid(), python or sys.executable or '/usr/bin/python3')
-    return {'name': name, 'folder': d, 'instructions': md, 'plist': plist, 'next': next_run(schedule, datetime.datetime.now()).isoformat(timespec='minutes')}
+    where = _schtasks_load(cfg, data, run, python or sys.executable) if win else _launchd_load(cfg, data, home, run, _uid(uid), python or sys.executable or '/usr/bin/python3')
+    return {'name': name, 'folder': d, 'instructions': md, 'task' if win else 'plist': where, 'next': next_run(schedule, datetime.datetime.now()).isoformat(timespec='minutes')}
 
 
 def _agents(claude, run):
@@ -206,9 +340,9 @@ def run_now(name, data=None, run=subprocess.run, scheduled=False):
     me = tool if os.path.isfile(tool) else os.path.realpath(__file__)
     prompt = (f'You are the routine "{name}". Do ONE run now, exactly as the instructions in {md} say '
               f'(read them first). Nobody is watching: do not ask questions. When you finish, run: '
-              f'python3 {me} report {name} ok "<one-line result>" — or `fail` with the reason if you could not finish.')
+              f'sh "{me}" report {name} ok "<one-line result>" — or `fail` with the reason if you could not finish.')
     r = run([cfg['claude'], '--bg', '--dangerously-skip-permissions', '-n', session, prompt], cwd=cfg['cwd'],
-            capture_output=True, text=True, env=dict(os.environ, CHAMMO_HOME=data))
+            capture_output=True, text=True, env=dict(os.environ, CHAMMO_HOME=data), **NOWIN)
     m = re.search(r'backgrounded\s*·\s*([0-9a-f]{6,})', re.sub(r'\x1b\[[0-9;]*m', '', r.stdout or ''))
     sid = m.group(1) if m else None
     _log(name, data, event='start', session=sid, scheduled=scheduled, error=None if sid else (r.stderr or r.stdout or '').strip()[:300])
@@ -223,26 +357,34 @@ def report(name, result, note, data=None):
     return _log(name, data, event='end', result=result, note=note)
 
 
-def set_enabled(name, on, data=None, home=None, run=subprocess.run, uid=None, python=None):
+def set_enabled(name, on, data=None, home=None, run=subprocess.run, uid=None, python=None, win=None):
+    win = os.name == 'nt' if win is None else win
     home = home or os.path.expanduser('~')
     data = data or data_dir(home)
     cfg = _load(name, data)
     cfg['enabled'] = on
     _save(cfg, data)
-    uid = uid if uid is not None else os.getuid()
-    if on:
-        _launchd_load(cfg, data, home, run, uid, python or sys.executable or '/usr/bin/python3')
+    if win:
+        if on:
+            _schtasks_load(cfg, data, run, python or sys.executable)
+        else:
+            run(['schtasks', '/Change', '/TN', TASK + name, '/DISABLE'], capture_output=True, text=True, **SCHT)
+    elif on:
+        _launchd_load(cfg, data, home, run, _uid(uid), python or sys.executable or '/usr/bin/python3')
     else:
-        run(['launchctl', 'bootout', f'gui/{uid}/{LABEL}{name}'], capture_output=True, text=True)
+        run(['launchctl', 'bootout', f'gui/{_uid(uid)}/{LABEL}{name}'], capture_output=True, text=True)
     return cfg
 
 
-def remove(name, data=None, home=None, run=subprocess.run, uid=None):
+def remove(name, data=None, home=None, run=subprocess.run, uid=None, win=None):
+    win = os.name == 'nt' if win is None else win
     home = home or os.path.expanduser('~')
     data = data or data_dir(home)
     _load(name, data)
-    uid = uid if uid is not None else os.getuid()
-    run(['launchctl', 'bootout', f'gui/{uid}/{LABEL}{name}'], capture_output=True, text=True)
+    if win:
+        run(['schtasks', '/Delete', '/TN', TASK + name, '/F'], capture_output=True, text=True, **SCHT)
+    else:
+        run(['launchctl', 'bootout', f'gui/{_uid(uid)}/{LABEL}{name}'], capture_output=True, text=True)
     p = _plist_path(name, home)
     if os.path.exists(p):
         os.remove(p)
@@ -272,8 +414,15 @@ def list_routines(data=None, now=None):
             nxt = next_run(cfg['schedule'], now, last=last_start)
         except ValueError:
             nxt = None
-        out.append({**cfg, 'instructions': md, 'next': nxt.isoformat(timespec='minutes') if nxt and cfg.get('enabled', True) else None,
+        out.append({**cfg, 'kind': 'local', 'instructions': md, 'next': nxt.isoformat(timespec='minutes') if nxt and cfg.get('enabled', True) else None,
                     'last': ends[-1] if ends else None, 'lastStart': starts[-1] if starts else None, 'runs': runs[-20:]})
+    local = {r['name'] for r in out}
+    for c in sorted(_cloud_read(data), key=lambda c: c['name']):
+        if c['name'] in local:
+            continue  # 손으로 고친 파일이 로컬 이름과 겹치면 로컬이 이긴다
+        out.append({'name': c['name'], 'kind': 'cloud', 'schedule': str(c.get('schedule') or ''), 'url': c['url'],
+                    'note': str(c.get('note') or ''), 'cwd': '', 'instructions': '', 'enabled': True,
+                    'next': None, 'last': None, 'lastStart': None, 'runs': []})
     return out
 
 
@@ -296,6 +445,10 @@ def main(argv):
             out = remove(rest[0])
         elif cmd == 'report' and len(rest) >= 3:
             out = report(rest[0], rest[1], ' '.join(rest[2:]))
+        elif cmd == 'cloud' and rest[:1] == ['add'] and len(rest) >= 4:
+            out = cloud_add(rest[1], rest[2], rest[3], ' '.join(rest[4:]))
+        elif cmd == 'cloud' and rest[:1] == ['remove'] and len(rest) == 2:
+            out = cloud_remove(rest[1])
         else:
             print(__doc__, file=sys.stderr)
             return 2

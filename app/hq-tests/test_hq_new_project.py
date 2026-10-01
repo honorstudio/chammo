@@ -173,3 +173,23 @@ class StatusLine(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TrustOnWindows(unittest.TestCase):
+    """윈도우 Claude Code 는 .claude.json 키를 C:/… 로 찾는다 — C:\\… 로 적으니 'Workspace not trusted'. 
+    또 claude 가 파일을 쥐고 있으면 바꿔치기(os.replace)가 PermissionError — 제자리에 쓴다"""
+    def test_키는_슬래시로_바꿔치기가_막히면_제자리에(self):
+        with tempfile.TemporaryDirectory() as h:
+            cj = os.path.join(h, '.claude.json')
+            open(cj, 'w', encoding='utf-8').write('{"projects": {}}')
+            real = os.replace
+            def locked(a, b):
+                raise PermissionError('in use')
+            os.replace = locked
+            try:
+                self.assertTrue(np.trust('C:\\Users\\a\\dev\\x', h, win=True))
+            finally:
+                os.replace = real
+            d = json.load(open(cj, encoding='utf-8'))
+            self.assertTrue(d['projects']['C:/Users/a/dev/x']['hasTrustDialogAccepted'])
+            self.assertFalse(os.path.exists(cj + '.chammo-tmp'))

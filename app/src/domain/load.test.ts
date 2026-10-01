@@ -167,3 +167,12 @@ describe('summarize — 참모가 읽을 요약', () => {
     expect(s.orphans[0]).toMatchObject({ pid: 400, what: 'next dev', age: '1일' });
   });
 });
+
+describe('윈도우 — load.rs 가 sysinfo 값을 맥 모양 글로 만든다(ps_line·sys_lines 와 같은 글)', () => {
+  it('프로세스·부하를 그대로 읽는다', () => {
+    const [p] = parsePs('42 7 12.3 2048 01:05 C:\\x\\claude.exe attach a');
+    expect(p).toEqual({ pid: 42, ppid: 7, cpu: 12.3, rssKb: 2048, etime: '01:05', cmd: 'C:\\x\\claude.exe attach a' });
+    const s = parseSys('8\n{ 4.00 4.00 4.00 }\ntotal = 4096.00M  used = 1024.00M  free = 3072.00M\n17179869184');
+    expect(s).toEqual({ cores: 8, load1: 4, load5: 4, load15: 4, swapUsedMb: 1024, swapTotalMb: 4096, memTotalMb: 16384 });
+  });
+});

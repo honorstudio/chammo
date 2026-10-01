@@ -9,7 +9,7 @@
 .tour-card p { font-size: 14px; line-height: 1.7; color: var(--text-2); margin: 0; }
 .tour-keys { margin: 14px 0 0; display: grid; gap: 6px; }
 .tour-keys div { display: grid; grid-template-columns: 150px 1fr; gap: 12px; font-size: 13px; }
-.tour-keys dt { font-family: ui-monospace, "D2Coding", monospace; color: var(--text); }
+.tour-keys dt { font-family: ui-monospace, "D2Coding", "Cascadia Mono", Consolas, monospace; color: var(--text); }
 .tour-keys dd { margin: 0; color: var(--text-2); }
 .tour-nav { display: flex; align-items: center; gap: 8px; margin-top: 22px; }
 .tour-nav .grow { flex: 1; }

@@ -70,9 +70,21 @@ export function revealPane(s: Pick<PaneLayout, 'maximized' | 'collapsed'>, id: s
   return out;
 }
 
-/** ⌘Enter 대상 — 마지막으로 누른 창 → 입력 커서가 있는 창 → 첫 창. shown = 지금 이 격자에 보이는 창들 */
+/** ⌘₩ 대상 — 마지막으로 누른 창 → 입력 커서가 있는 창 → 첫 창. shown = 지금 이 격자에 보이는 창들 */
 export function maxTarget(remembered: string | undefined, active: string | null, shown: string[]): string | null {
   if (remembered && shown.includes(remembered)) return remembered;
   if (active && shown.includes(active)) return active;
   return shown[0] ?? null;
+}
+
+/**
+ * "그 세션으로 가기"(알림·결정 대기함)가 포커스를 보낼 격자 이름. 참모는 스페이스·사무실 모드면 오른쪽 열(orch-col)에 있다 —
+ * 스페이스 모드에서 'orch'(화면에 없는 격자)로 보내 아무 데도 안 갔다(2026-09-30 사용자)
+ */
+export function gridKeyOf(
+  s: { kind: 'orch' } | { kind: 'helper' } | { kind: 'project'; project: string },
+  mode: { space: boolean; office: boolean },
+): string {
+  if (s.kind === 'orch') return mode.space || mode.office ? 'orch-col' : 'orch';
+  return s.kind === 'helper' ? 'helpers' : `p:${s.project}`;
 }

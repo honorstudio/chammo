@@ -9,7 +9,7 @@ pub const DATA: &str = ".chammo";
 pub const LEGACY: &str = ".honor-orchestrator";
 
 pub fn home() -> String {
-    std::env::var("HOME").unwrap_or_default()
+    crate::platform::home()
 }
 
 /// `~` / `~/…` 를 홈으로 푼다. 나머지는 그대로
@@ -102,9 +102,13 @@ pub struct Config {
     pub memo_dir: String,
     pub features: Features,
     pub setup_done: bool,
+    /// 말하기 키(누르고 말하면 세션에 음성 입력) — "" 끔 · "fn" 지구본 · "right-option" 오른쪽 ⌥. 기본 끔(0.2.0)
+    pub talk_key: String,
+    /// 앱 밖에서도 말하기 키를 본다 — 손쉬운 사용 권한이 필요해서 켤 때만 묻는다
+    pub talk_anywhere: bool,
 }
 
-/// macOS AppleLocale(ko_KR 등) → 언어
+/// 시스템 언어(맥 ko_KR·윈도우 ko-KR 등) → 언어
 pub fn lang_from_locale(locale: &str) -> &'static str {
     if locale.trim().to_lowercase().starts_with("ko") { "ko" } else { "en" }
 }
@@ -128,6 +132,8 @@ pub fn default_config(home: &str, data: &Path, lang: &str, exists: impl Fn(&str)
         memo_dir: format!("{data}/memo"),
         features: Features::default(),
         setup_done: false,
+        talk_key: String::new(),
+        talk_anywhere: false,
     }
 }
 
@@ -144,6 +150,8 @@ pub fn owner_config() -> Config {
         memo_dir: "~/.config/holo/memo".into(),
         features: Features::default(),
         setup_done: true,
+        talk_key: "fn".into(),
+        talk_anywhere: true,
     }
 }
 
@@ -170,8 +178,7 @@ pub fn boot(home: &str, data: &Path, text: Option<&str>) -> Boot {
 }
 
 fn system_lang() -> &'static str {
-    let out = std::process::Command::new("defaults").args(["read", "-g", "AppleLocale"]).output();
-    lang_from_locale(&out.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default())
+    lang_from_locale(&crate::platform::system_locale())
 }
 
 fn write_file(c: &Config) -> Result<(), String> {
@@ -217,7 +224,22 @@ pub fn tts_argv(home: &str, cmd: &str, text: &str, exists: impl Fn(&str) -> bool
         full.split_whitespace().map(|p| expand(home, p)).collect()
     };
     argv.push(text.into());
-    argv
+    if cfg!(windows) { say_for_windows(argv) } else { argv }
+}
+
+/// 윈도우엔 say 가 없다 — `say [-v 이름] 글자` 를 윈도우 기본 음성(System.Speech)으로 바꾼다. 이름의 _ 는 빈칸
+pub fn say_for_windows(argv: Vec<String>) -> Vec<String> {
+    if argv.first().map(String::as_str) != Some("say") || argv.len() < 2 {
+        return argv;
+    }
+    let q = |s: &str| format!("'{}'", s.replace('\'', "''"));
+    let text = argv.last().unwrap();
+    let voice = match (argv.get(1).map(String::as_str), argv.get(2)) {
+        (Some("-v"), Some(v)) if argv.len() == 4 => format!("$s.SelectVoice({}); ", q(&v.replace('_', " "))),
+        _ => String::new(),
+    };
+    let script = format!("$ProgressPreference = 'SilentlyContinue'; Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; {voice}$s.Speak({})", q(text));
+    vec!["powershell".into(), "-NoProfile".into(), "-NonInteractive".into(), "-EncodedCommand".into(), crate::platform::encode_ps(&script)]
 }
 
 /// 비서 폴더(HQ). 검증용 dev 앱은 CHAMMO_HQ(옛 이름 HONOR_ORCH_CWD)로 바꿔 진짜 비서와 안 섞이게
@@ -252,8 +274,16 @@ pub fn reload_config() -> Config {
 
 /// 설정 저장. 앱은 저장 뒤 창을 다시 연다(언어·비서 이름은 뜰 때 정해서)
 #[tauri::command]
-pub fn write_config(config: Config) -> Result<(), String> {
+pub fn write_config<R: tauri::Runtime>(app: tauri::AppHandle<R>, config: Config) -> Result<(), String> {
     write_file(&config)?;
+    #[cfg(target_os = "macos")]
+    {
+        // 말하기 키 설정은 바로 — 앱 밖 모니터는 메인 스레드에서 깐다
+        let (k, a) = (config.talk_key.clone(), config.talk_anywhere);
+        let _ = app.run_on_main_thread(move || crate::keys_mac::apply_talk(&k, a));
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = &app;
     if let Ok(mut g) = CURRENT.write() {
         *g = Some(config);
     }
@@ -271,12 +301,22 @@ mod tests {
         assert!(!c.features.tama);
         assert!(c.features.office && c.features.gacha && c.features.review && c.features.voice);
         assert!(!c.setup_done);
+        // 말하기 키는 기본 끔 — 공개판이 첫 실행에 설명 없이 손쉬운 사용 권한을 묻고 지구본 키를 앱 밖에서도 봤다(0.2.0 검증)
+        assert_eq!(c.talk_key, "");
+        assert!(!c.talk_anywhere);
+    }
+
+    #[test]
+    fn 주인은_지금처럼_지구본_키_어디서든() {
+        let c = owner_config();
+        assert_eq!(c.talk_key, "fn");
+        assert!(c.talk_anywhere);
     }
 
     #[test]
     fn 파일_칸_이름은_카멜() {
         let v = serde_json::to_value(owner_config()).unwrap();
-        for k in ["language", "assistantName", "devRoot", "hqDir", "extraProjects", "githubUser", "ttsCommand", "memoDir", "features", "setupDone"] {
+        for k in ["language", "assistantName", "devRoot", "hqDir", "extraProjects", "githubUser", "ttsCommand", "memoDir", "features", "setupDone", "talkKey", "talkAnywhere"] {
             assert!(v.get(k).is_some(), "{k}");
         }
     }
@@ -331,6 +371,22 @@ mod tests {
     }
 
     #[test]
+    fn 윈도우_say_는_파워셸_음성으로() {
+        let a = say_for_windows(vec!["say".into(), "it's \"ok\"".into()]);
+        assert_eq!(&a[..4], ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand"]);
+        let script = crate::platform::decode_ps(&a[4]);
+        assert!(script.contains("SpeechSynthesizer"));
+        assert!(script.contains("Speak('it''s \"ok\"')"));
+        assert!(!script.contains("SelectVoice"));
+        let v = say_for_windows(vec!["say".into(), "-v".into(), "Microsoft_Heami_Desktop".into(), "안녕".into()]);
+        let script = crate::platform::decode_ps(&v[4]);
+        assert!(script.contains("SelectVoice('Microsoft Heami Desktop')"));
+        assert!(script.contains("Speak('안녕')"));
+        // say 가 아니면 손대지 않는다
+        assert_eq!(say_for_windows(vec!["C:/t/speak.exe".into(), "hi".into()]), ["C:/t/speak.exe", "hi"]);
+    }
+
+    #[test]
     fn 비서_폴더는_환경변수가_먼저() {
         let c = owner_config();
         assert_eq!(hq_dir("/h", &c, |_| None), "/h/Desktop/dev/honor-orchestrator");
@@ -343,6 +399,7 @@ mod tests {
         assert_eq!(lang_from_locale("ko_KR"), "ko");
         assert_eq!(lang_from_locale("en_US"), "en");
         assert_eq!(lang_from_locale(""), "en");
+        assert_eq!(lang_from_locale("ko-KR\r\n"), "ko"); // 윈도우 PowerShell (Get-UICulture).Name
     }
 
     #[test]

@@ -13,16 +13,16 @@ body.reader-win { background: var(--bg); color: var(--text); font: 13px -apple-s
 .rd-tab button { all: unset; width: 18px; height: 18px; border-radius: 4px; text-align: center; line-height: 18px; font-size: 10px; color: var(--text-3); }
 .rd-tab button:hover { background: var(--hover); color: var(--text); }
 .rd-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface); border-bottom: 1px solid var(--line); }
-.rd-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font: 12px ui-monospace, monospace; direction: rtl; text-align: left; }
+.rd-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font: 12px ui-monospace, "Cascadia Mono", Consolas, monospace; direction: rtl; text-align: left; }
 .rd-bar button { all: unset; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--line); color: var(--text-2); font-size: 12px; cursor: pointer; }
 .rd-bar button:hover { background: var(--hover); color: var(--text); }
 .rd-body { flex: 1; min-height: 0; display: flex; background: var(--surface); }
 .rd-frame { flex: 1; border: 0; width: 100%; height: 100%; background: #fff; }
-.rd-image { flex: 1; overflow: auto; display: flex; align-items: flex-start; justify-content: center; padding: 24px; background: repeating-conic-gradient(var(--panel) 0 25%, var(--surface) 0 50%) 0 0 / 16px 16px; }
-.rd-image img { max-width: 100%; box-shadow: 0 4px 20px rgba(0, 0, 0, .15); }
+.rd-image { flex: 1; overflow: auto; display: flex; align-items: flex-start; padding: 24px; background: repeating-conic-gradient(var(--panel) 0 25%, var(--surface) 0 50%) 0 0 / 16px 16px; }
+.rd-image img { max-width: 100%; margin: 0 auto; flex: none; box-shadow: 0 4px 20px rgba(0, 0, 0, .15); }
 .rd-video { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; background: #000; }
 .rd-video video { max-width: 100%; max-height: 100%; }
-.rd-text { flex: 1; margin: 0; padding: 20px 24px; overflow: auto; font: 12.5px/1.6 ui-monospace, "D2Coding", monospace; white-space: pre-wrap; }
+.rd-text { flex: 1; margin: 0; padding: 20px 24px; overflow: auto; font: 12.5px/1.6 ui-monospace, "D2Coding", "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; }
 .rd-empty { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px; text-align: center; color: var(--text-3); font-size: 14px; line-height: 1.6; }
 /* 탭 끌기 — 들린 탭은 흐리게, 끼울 자리는 왼쪽 주황 줄, 커서를 따라가는 탭 */
 .rd-tab { touch-action: none; user-select: none; position: relative; }
@@ -63,14 +63,55 @@ body.reader-win { background: var(--bg); color: var(--text); font: 13px -apple-s
 .rd-md h2 { font-size: 20px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
 .rd-md h3 { font-size: 16px; }
 .rd-md a { color: var(--accent); cursor: pointer; }
-.rd-md code { font: 13px ui-monospace, "D2Coding", monospace; background: var(--surface-2, var(--panel)); padding: 1px 5px; border-radius: 4px; }
+.rd-md code { font: 13px ui-monospace, "D2Coding", "Cascadia Mono", Consolas, monospace; background: var(--surface-2, var(--panel)); padding: 1px 5px; border-radius: 4px; }
 .rd-md pre { background: var(--surface-2, var(--panel)); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
 .rd-md pre code { background: none; padding: 0; }
 .rd-md table { border-collapse: collapse; margin: 1em 0; font-size: 14px; display: block; overflow-x: auto; }
 .rd-md th, .rd-md td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
 .rd-md th { background: var(--surface-2, var(--panel)); }
-.rd-md blockquote { margin: 1em 0; padding: 4px 16px; border-left: 3px solid var(--accent); color: var(--text-2); background: var(--surface-2, var(--panel)); }
+.rd-md blockquote { margin: 1em 0; padding: 8px 16px; border-radius: 10px; color: var(--text-2); background: var(--surface-2, var(--panel)); }
 .rd-md img { max-width: 100%; }
 .rd-md hr { border: 0; border-top: 1px solid var(--line); margin: 2em 0; }
 .rd-md.cmd code { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; color: var(--accent); }
 .rd-md.cmd { cursor: pointer; }
+/* 확대 — 축소·비율·확대 버튼(비율을 누르면 100%), 문서 프레임 틀 */
+.rd-zoom { display: flex; align-items: center; gap: 2px; }
+.rd-bar .rd-zoom button { display: flex; align-items: center; justify-content: center; min-width: 28px; height: 26px; padding: 0 6px; box-sizing: border-box; }
+.rd-bar .rd-zoom button svg { width: 15px; height: 15px; }
+.rd-bar .rd-zoom .rd-zoom-pct { min-width: 50px; font-variant-numeric: tabular-nums; }
+.rd-zoombox { flex: 1; min-width: 0; min-height: 0; display: flex; overflow: hidden; }
+.rd-zoombox.scroll { overflow: auto; }
+.rd-image.fit { align-items: center; overflow: hidden; }
+.rd-image.fit img { max-height: 100%; object-fit: contain; }
+/* 스페이스 — 편집기 */
+.rd-bar button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.space-editor { height: 100%; overflow-y: auto; padding: 24px 12px 80px; }
+.space-editor .bn-editor { font-family: inherit; }
+/* 스페이스 — 오른쪽 아래 "보낼 것" 칩(숨 쉬듯), 올리면 미리보기 */
+.rd-body { position: relative; }
+.sp-fab-wrap { position: absolute; right: 16px; bottom: 16px; z-index: 20; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.sp-fab { all: unset; cursor: pointer; height: 34px; padding: 0 14px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 12.5px; font-weight: 700; box-shadow: 0 6px 18px rgba(0, 0, 0, .18); display: inline-flex; align-items: center; }
+.sp-fab.live { animation: sp-breathe 2.4s ease-in-out infinite; }
+@keyframes sp-breathe { 0%, 100% { box-shadow: 0 6px 18px rgba(0, 0, 0, .18), 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); } 50% { box-shadow: 0 6px 18px rgba(0, 0, 0, .18), 0 0 0 8px color-mix(in srgb, var(--accent) 0%, transparent); transform: translateY(-1px); } }
+@media (prefers-reduced-motion: reduce) { .sp-fab.live { animation: none; } }
+.sp-pop { width: min(460px, 80vw); max-height: 60vh; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 16px 40px rgba(0, 0, 0, .18); font-size: 12.5px; }
+.sp-pop-head { display: flex; align-items: baseline; gap: 8px; }
+.sp-preview { margin: 0; flex: 1; min-height: 60px; overflow: auto; white-space: pre-wrap; font-family: Menlo, "Cascadia Mono", Consolas, monospace; font-size: 11.5px; background: var(--panel); border-radius: 8px; padding: 8px 10px; }
+.sp-comments { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 120px; overflow: auto; }
+.sp-comments li { display: flex; gap: 8px; align-items: center; }
+.sp-comments .q { color: var(--text-3); max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-comments .t { flex: 1; min-width: 0; }
+.sp-pop-foot { display: flex; gap: 6px; }
+.sp-pop-foot input { flex: 1; min-width: 0; height: 30px; border: 1px solid var(--line-strong); border-radius: 7px; padding: 0 10px; font: inherit; background: var(--surface); color: var(--text); }
+.sp-err { color: var(--danger-ink); font-size: 11.5px; }
+/* 줄 코멘트 쓰는 줄 */
+.sp-cdraft { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 12.5px; }
+.sp-cdraft .q { max-width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); padding: 0 6px; border-radius: 4px; background: var(--hover); }
+.sp-cdraft input { flex: 1; min-width: 0; height: 28px; border: 1px solid var(--line-strong); border-radius: 7px; padding: 0 8px; font: inherit; background: var(--surface); color: var(--text); }
+/* 소리·워드·그 밖의 파일 */
+.rd-extra { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); }
+.rd-extra > img { flex: 1; min-height: 0; object-fit: contain; padding: 16px; }
+.rd-extra > iframe { flex: 1; border: 0; background: #fff; }
+.rd-extra > audio { margin: auto; width: min(520px, 90%); }
+.rd-extra-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--text-2); }
+.rd-extra-bar span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { setAssistant, setLang } from '../i18n';
+import { assistant, setAssistant, setLang } from '../i18n';
 import { classifyWorkspace, closableByShortcut, groupByProject, projectDir, isOrchestratorName, nextOrchestratorName, orchView, parseAgents, type Session, withinRoots, sessionsToStop } from './session';
 
 afterEach(() => { setLang('ko'); setAssistant(null); });
@@ -36,6 +36,16 @@ describe('parseAgents — claude agents --json을 앱 세션으로', () => {
       { id: 'a3', cwd: `${DEV}/todo-api`, kind: 'background', state: 'blocked', name: 'z' },
     ];
     expect(parseAgents(JSON.stringify(raw), DEV).map((s) => s.state)).toEqual(['idle', 'working', 'blocked']);
+  });
+
+  // 2026-09-30: Claude Code 는 턴을 끝내고 사람 답을 기다리면 status idle + state blocked(권한 창 이유 없음), 일을 끝냈으면 done 으로 준다
+  it('쉬는데 state 가 blocked(이유 없음)면 사람 답 기다림 표시', () => {
+    const raw = [
+      { id: 'w1', cwd: `${DEV}/todo-api`, kind: 'background', state: 'blocked', status: 'idle', name: 'x' },
+      { id: 'w2', cwd: `${DEV}/todo-api`, kind: 'background', state: 'done', status: 'idle', name: 'y' },
+      { id: 'w3', cwd: `${DEV}/todo-api`, kind: 'background', state: 'blocked', status: 'idle', waitingFor: 'input needed', name: 'z' },
+    ];
+    expect(parseAgents(JSON.stringify(raw), DEV).map((s) => !!s.awaiting)).toEqual([true, false, false]);
   });
 
   // 2026-09-28: 백그라운드 감시·에이전트를 걸어 둔 참모는 답을 마치고 쉬어도(state: done) status 가 busy 로 남았다
@@ -300,5 +310,20 @@ describe('closableByShortcut — ⌘W 로 끌 수 있나(사용자 2026-09-28: �
   it('도우미·프로젝트 세션은 된다', () => {
     expect(closableByShortcut(xs[2]!, g.orchestrators)).toBe(true);
     expect(closableByShortcut(xs[3]!, g.orchestrators)).toBe(true);
+  });
+});
+
+describe('윈도우 — agents 의 C:\\… cwd 도 HQ·프로젝트로 알아본다(윈도우 5단계 "참모 세션이 없어요")', () => {
+  it('cwd 를 C:/… 로 맞춰 HQ 비서와 프로젝트를 가른다', () => {
+    const raw = [
+      { id: 'a', name: assistant(), cwd: 'C:\\Users\\me\\.chammo\\hq', kind: 'background', status: 'idle', state: 'blocked' },
+      { id: 'b', name: 'shop', cwd: 'C:\\Users\\me\\dev\\shop', kind: 'background', status: 'busy' },
+    ];
+    const s = parseAgents(JSON.stringify(raw), 'C:/Users/me/dev');
+    expect(s.map((x) => x.cwd)).toEqual(['C:/Users/me/.chammo/hq', 'C:/Users/me/dev/shop']);
+    expect(s[1]!.project).toBe('shop');
+    const g = groupByProject(s, 'C:/Users/me/.chammo/hq');
+    expect(g.orchestrator?.id).toBe('a');
+    expect(withinRoots(s, ['C:/Users/me/dev', 'C:/Users/me/.chammo/hq'])).toHaveLength(2);
   });
 });

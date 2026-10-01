@@ -117,6 +117,23 @@ describe('splitCards — 작업 패널: 진행 중 / 오늘 끝난 일 / 오래�
     expect(r.doneToday).toEqual([]);
     expect(r.hidden).toBe(1);
   });
+
+  // 2026-09-29 사용자 "진행 중인 거 끝난 거 처리가 안 되고 계속 쌓인다" — project-x 한 세션에 안 닫힌 일이 열 개 넘게.
+  // 세션은 한 번에 한 가지를 한다 → 같은 세션에 더 새 일이 갔으면 앞의 일은 '끝 기록 없는 일'로 접는다
+  it('같은 세션에 더 새 일이 갔으면 앞의 안 닫힌 일은 진행 중에서 빼 superseded 로', () => {
+    const at = (h: number) => new Date(2026, 8, 27, h).toISOString();
+    const cards = [
+      { ...c('new', 'working', at(11)), sentAt: at(11) },
+      { ...c('old1', 'working', at(10)), sentAt: at(9) },
+      { ...c('old2', 'replied', at(8)), sentAt: at(7) },
+      { ...c('other', 'replied', at(8)), target: 'blog-bot', sentAt: at(7) },
+      { ...c('fin', 'done', at(10)), sentAt: at(6) },
+    ];
+    const r = splitCards(cards, now);
+    expect(r.active.map((x) => x.id)).toEqual(['new', 'other']);
+    expect(r.superseded.map((x) => x.id)).toEqual(['old1', 'old2']);
+    expect(r.doneToday.map((x) => x.id)).toEqual(['fin']);
+  });
 });
 
 describe('foldTasks — 대상 바꾸기', () => {

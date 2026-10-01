@@ -1,6 +1,7 @@
 // 꺼진 세션(이어갈 수 있는 것)과, 참모 화면 아래 띄울 "지금 시킨 일" 세션 고르기.
 
 import { classifyWorkspace, type Session } from './session';
+import { fwd } from './paths';
 import type { TaskCard } from './tasks';
 
 export type StoppedSession = {
@@ -29,7 +30,7 @@ export function parseStopped(json: string, devRoot: string, extras: string[] = [
   return (raw as Record<string, unknown>[])
     .filter((r) => REASONS.has(String(r.state)) && typeof r.sessionId === 'string')
     .map((r) => {
-      const cwd = String(r.cwd ?? '');
+      const cwd = fwd(String(r.cwd ?? ''));
       return {
         id: String(r.id ?? r.sessionId),
         sessionId: String(r.sessionId),

@@ -22,20 +22,46 @@ fn wants_window(line: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// 선택지 답 넣기(윈도우 scripts/choice — 가짜 터미널이 없어 앱이 대신 누른다). 위·아래 화살표·Enter 만 받는다
+pub fn keys_request(line: &str) -> Option<(String, String)> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v.get("action")?.as_str()? != "keys" {
+        return None;
+    }
+    let id = v["arg"]["id"].as_str()?;
+    let keys = v["arg"]["keys"].as_str()?;
+    let id_ok = !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    let rest = keys.replace("\x1b[A", "").replace("\x1b[B", "").replace('\r', "");
+    (id_ok && !keys.is_empty() && rest.is_empty()).then(|| (id.to_string(), keys.to_string()))
+}
+
 pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
     let app = app.clone();
     std::thread::spawn(move || {
         let file = crate::config::data_file("app.jsonl");
-        let mut offset = std::fs::read_to_string(&file).map(|s| s.len()).unwrap_or(0);
+        // 바이트로 읽어 깨진 글자는 바꿔 넣는다 — read_to_string 은 UTF-8 이 아닌 바이트가 하나라도 있으면 매번 실패해 감시가 영영 멈춘다
+        let read = |f: &std::path::Path| std::fs::read(f).map(|b| String::from_utf8_lossy(&b).into_owned());
+        let mut offset = read(&file).map(|s| s.len()).unwrap_or(0);
+        // 윈도우에서 선택지 키가 한 번도 안 들어갔다 — 감시가 어느 파일을 보고 무엇을 받았는지 남긴다
+        crate::claude::log_out("appctl-watch", &format!("{} offset {offset}", file.display()));
         loop {
             std::thread::sleep(std::time::Duration::from_millis(700));
-            let Ok(content) = std::fs::read_to_string(&file) else { continue };
+            let Ok(content) = read(&file) else { continue };
             if content.len() == offset {
                 continue;
             }
             let (lines, next) = new_lines(&content, offset);
             offset = next;
             for line in lines {
+                crate::claude::log_out("appctl", &line.chars().take(120).collect::<String>());
+                if let Some((id, keys)) = keys_request(&line) {
+                    std::thread::spawn(move || {
+                        crate::claude::log_out("choice-keys", &format!("{id} start"));
+                        let r = crate::claude::press_keys(&id, &keys);
+                        crate::claude::log_out("choice-keys", &format!("{id} {}", if r.is_ok() { "ok" } else { "fail" }));
+                    });
+                    continue;
+                }
                 let Some(w) = app.get_webview_window("main") else { continue };
                 if wants_window(&line) {
                     let _ = w.show();
@@ -51,6 +77,17 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 키_넣기_요청은_화살표와_enter_만() {
+        let ok = r#"{"ts":"1","action":"keys","arg":{"id":"9b9042fe","keys":"\u001b[B\u001b[B\r"}}"#;
+        assert_eq!(keys_request(ok), Some(("9b9042fe".into(), "\x1b[B\x1b[B\r".into())));
+        // 글자·다른 제어 문자는 거절 — 이 줄로 세션에 아무 말이나 치게 할 수는 없다
+        assert_eq!(keys_request(r#"{"action":"keys","arg":{"id":"a","keys":"rm -rf /\r"}}"#), None);
+        assert_eq!(keys_request(r#"{"action":"keys","arg":{"id":"a;b","keys":"\r"}}"#), None);
+        assert_eq!(keys_request(r#"{"action":"voice","arg":"on"}"#), None);
+        assert_eq!(keys_request(r#"{"action":"keys","arg":{"id":"a","keys":""}}"#), None);
+    }
 
     #[test]
     fn 새_줄만_객체만() {

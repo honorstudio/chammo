@@ -151,8 +151,20 @@ describe('pathCandidates — 리더 문서 속 경로 ⌘클릭: 문서 폴더�
 describe('projectOrder — 문서 속 경로가 다른 프로젝트 기준일 때 볼 순서(사용자 2026-09-28: 상태 보고서의 docs/… 가 안 열렸다)', () => {
   const projects = ['acme-shop', 'hello-docs', 'project-a', 'todo-api'];
   it('같은 문단에 이름이 나온 프로젝트를 먼저, 나머지는 그대로', () =>
-    expect(projectOrder(projects, '힐노트: hello-docs/docs/starter.md · docs/roadmap.md')).toEqual(['hello-docs', 'acme-shop', 'project-a', 'todo-api']));
+    expect(projectOrder(projects, '노트앱: hello-docs/docs/starter.md · docs/roadmap.md')).toEqual(['hello-docs', 'acme-shop', 'project-a', 'todo-api']));
   it('이름이 둘이면 먼저 나온 순서', () =>
     expect(projectOrder(projects, 'project-a 와 hello-docs')).toEqual(['project-a', 'hello-docs', 'acme-shop', 'todo-api']));
   it('이름이 없으면 원래 순서', () => expect(projectOrder(projects, '그냥 문장')).toEqual(projects));
+});
+
+describe('윈도우 경로(C:\\… · C:/…)도 링크로 — 터미널 Ctrl+클릭이 아무것도 안 했다(윈도우판)', () => {
+  it('줄에서 찾는다', () => {
+    expect(findPaths('폴더는 C:\\Users\\me\\dev 에 있어').map((m) => m.text)).toEqual(['C:\\Users\\me\\dev']);
+    expect(findPaths('see C:/Users/me/dev/a.ts:12').map((m) => m.text)).toEqual(['C:/Users/me/dev/a.ts:12']);
+    expect(findPaths('C:\\Users\\me\\한글폴더\\메모.md').map((m) => m.text)).toEqual(['C:\\Users\\me\\한글폴더\\메모.md']);
+  });
+  it('풀면 / 경로로(앞에 base 를 안 붙인다)', () => {
+    expect(resolveLink('C:\\Users\\me\\dev', 'C:/Users/me/.chammo/hq', 'C:/Users/me')).toEqual({ kind: 'file', target: 'C:/Users/me/dev' });
+    expect(resolveLink('c:/x/a.ts:7', '/base', '/h')).toEqual({ kind: 'file', target: 'c:/x/a.ts', line: 7 });
+  });
 });

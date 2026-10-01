@@ -22,14 +22,14 @@ pub fn export(data: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// 버튼으로 할 수 있는 것만 — 이름은 스크립트가 다시 검사한다
+/// 버튼으로 할 수 있는 것만 — 이름은 스크립트가 다시 검사한다(클라우드 루틴 이름이면 스크립트가 거절)
 pub fn allowed(action: &str) -> bool {
     matches!(action, "run" | "pause" | "resume" | "remove")
 }
 
 fn script(args: &[&str]) -> Result<String, String> {
     let data = crate::config::data_dir();
-    let out = std::process::Command::new("/usr/bin/python3")
+    let out = crate::platform::python()
         .arg(tool_path(data))
         .args(args)
         .env("CHAMMO_HOME", data)
@@ -76,7 +76,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         export(&d).unwrap();
         let p = tool_path(&d);
-        assert!(std::fs::read_to_string(&p).unwrap().contains("def run_now"));
+        let body = std::fs::read_to_string(&p).unwrap();
+        assert!(body.contains("def run_now"));
+        // 클라우드 루틴(claude.ai)은 목록에만 — routine_do 로 온 run·pause·remove 는 스크립트가 거절한다
+        assert!(body.contains("def cloud_add") && body.contains("is a cloud routine"));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

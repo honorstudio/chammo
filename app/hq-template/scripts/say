@@ -1,5 +1,11 @@
-#!/usr/bin/env python3
-"""Voice mode: hand the app the words to read aloud, instead of it reading your whole answer.
+#!/bin/sh
+''':'
+# sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
+':'''
+__doc__ = """Voice mode: hand the app the words to read aloud, instead of it reading your whole answer.
 음성 모드: 소리로 들려줄 말을 따로 넘긴다 — 앱이 답 대신 이걸 읽는다.
 
   scripts/say "<what to say>"
@@ -39,7 +45,7 @@ def T(ko, en):
 
 def voice_on(d=None):
     try:
-        return bool(json.load(open(os.path.join(d or DIR, 'voice.json'))).get('on'))
+        return bool(json.load(open(os.path.join(d or DIR, 'voice.json'), encoding='utf-8')).get('on'))
     except (OSError, ValueError):
         return False
 

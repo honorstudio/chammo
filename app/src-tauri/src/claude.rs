@@ -1,7 +1,6 @@
 //! 맥에 깔린 `claude` 를 찾아 부른다. 앱은 로그인하지 않는다 — 사용자의 claude 로그인을 그대로 쓴다(ADR 0003).
 
 use serde::Serialize;
-use std::process::Command;
 
 /// 공식 설치본(`~/.local/bin/claude`)이 있으면 그것. `exists` 를 밖에서 받는 건 테스트 때문.
 pub fn resolve_claude_bin(home: &str, exists: impl Fn(&str) -> bool) -> Option<String> {
@@ -13,13 +12,13 @@ pub fn resolve_claude_bin(home: &str, exists: impl Fn(&str) -> bool) -> Option<S
 /// 그래서 PATH 검색은 마지막 수단이고, 그때도 사용자가 터미널에서 쓰는 것과 같은 대화형 셸(`-lic`)로 찾는다.
 fn shell_lookup() -> Option<String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let out = Command::new(shell).args(["-lic", "command -v claude"]).output().ok()?;
+    let out = crate::platform::command(shell).args(["-lic", "command -v claude"]).output().ok()?;
     let text = String::from_utf8(out.stdout).ok()?;
     text.lines().last().map(|l| l.trim().to_string()).filter(|l| !l.is_empty())
 }
 
 pub fn claude_bin() -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = crate::platform::home();
     resolve_claude_bin(&home, |p| std::path::Path::new(p).exists())
         .or_else(|| crate::setup::find("claude"))
         .or_else(shell_lookup)
@@ -48,7 +47,7 @@ pub fn user_path(shell_out: &str, current: &str) -> Option<String> {
 /// 그래서 앱이 뜰 때 한 번, 터미널과 같은 대화형 셸의 PATH 를 받아 자기 PATH 로 삼는다 — 이후 띄우는 건 전부 이걸 물려받는다
 pub fn adopt_user_path() {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let Ok(out) = Command::new(shell).args(["-lic", &format!("printf '\\n{PATH_MARK}%s' \"$PATH\"")]).stdin(std::process::Stdio::null()).output() else { return };
+    let Ok(out) = crate::platform::command(shell).args(["-lic", &format!("printf '\\n{PATH_MARK}%s' \"$PATH\"")]).stdin(std::process::Stdio::null()).output() else { return };
     let current = std::env::var("PATH").unwrap_or_default();
     if let Some(p) = user_path(&String::from_utf8_lossy(&out.stdout), &current) {
         std::env::set_var("PATH", p);
@@ -56,7 +55,7 @@ pub fn adopt_user_path() {
 }
 
 fn run(args: &[&str]) -> Result<String, String> {
-    let out = Command::new(claude_bin()).args(args).output().map_err(|e| e.to_string())?;
+    let out = crate::platform::command(claude_bin()).args(args).output().map_err(|e| e.to_string())?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
@@ -116,7 +115,7 @@ pub async fn list_sessions() -> Result<String, String> {
 #[tauri::command]
 pub async fn spawn_session(cwd: String, name: String, prompt: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
-        let out = Command::new(claude_bin())
+        let out = crate::platform::command(claude_bin())
             .current_dir(&cwd)
             .args(["--bg", "--dangerously-skip-permissions", "-n", &name, &prompt])
             .output()
@@ -131,8 +130,7 @@ pub async fn spawn_session(cwd: String, name: String, prompt: String) -> Result<
 }
 
 fn alive(pid: i32) -> bool {
-    // 신호 0 = 보내지 않고 존재만 확인
-    unsafe { libc::kill(pid, 0) == 0 }
+    crate::platform::pid_alive(pid)
 }
 
 /// `agents --json` 에 이 대화가 아직 돌고 있다고 나오나. 프로세스가 끝나도 목록에서 빠지는 데 시차가 있어서,
@@ -159,7 +157,7 @@ fn wait_until(mut done: impl FnMut() -> bool, secs: u64) -> bool {
 pub async fn adopt_session(pid: i32, session_id: String, cwd: String, name: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if alive(pid) {
-            unsafe { libc::kill(pid, libc::SIGTERM) };
+            crate::platform::terminate(pid);
             if !wait_until(|| !alive(pid), 10) {
                 return Err(if crate::i18n::is_en() {
                     format!("The terminal session (pid {pid}) did not exit within 10 seconds — please close it in that terminal")
@@ -171,7 +169,7 @@ pub async fn adopt_session(pid: i32, session_id: String, cwd: String, name: Stri
         if !wait_until(|| !still_listed(&session_id), 10) {
             return Err(crate::i18n::tr("세션이 아직 목록에 남아 있어 — 잠깐 뒤에 다시 눌러줘", "The session is still listed — please try again in a moment").into());
         }
-        let out = Command::new(claude_bin())
+        let out = crate::platform::command(claude_bin())
             .current_dir(&cwd)
             .args(["--bg", "--dangerously-skip-permissions", "-n", &name, "--resume", &session_id])
             .output()
@@ -195,7 +193,7 @@ pub async fn new_session(cwd: String, name: String, worktree: Option<String>) ->
             args.push("-w".into());
             args.push(w.trim().to_string());
         }
-        let out = Command::new(claude_bin()).current_dir(&cwd).args(&args).output().map_err(|e| e.to_string())?;
+        let out = crate::platform::command(claude_bin()).current_dir(&cwd).args(&args).output().map_err(|e| e.to_string())?;
         let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
         if !out.status.success() {
             return Err(text.trim().to_string());
@@ -216,6 +214,18 @@ pub async fn stop_session(id: String) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// 세션을 끄고 목록에서도 지운다(`claude stop` + `claude rm`) — 꺼진 참모가 "꺼진 세션"에 계속 남지 않게(2026-09-30 사용자).
+/// 대화 기록 파일(~/.claude/projects)은 남는다
+#[tauri::command]
+pub async fn remove_session(id: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let _ = run(&["stop", &id]);
+        run(&["rm", &id]).map(|s| s.trim().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 참모가 `scripts/task` 로 쌓는 작업 기록. 없으면 빈 문자열. 파싱은 프론트 domain/tasks.ts
 #[tauri::command]
 pub fn read_tasks() -> String {
@@ -229,7 +239,7 @@ pub async fn read_transcript_tails(session_ids: Vec<String>) -> std::collections
     use std::io::{Read, Seek, SeekFrom};
     const TAIL: u64 = 256 * 1024;
     tauri::async_runtime::spawn_blocking(move || {
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = crate::platform::home();
         let dirs: Vec<_> = std::fs::read_dir(format!("{home}/.claude/projects"))
             .map(|rd| rd.flatten().map(|e| e.path()).collect())
             .unwrap_or_default();
@@ -250,6 +260,192 @@ pub async fn read_transcript_tails(session_ids: Vec<String>) -> std::collections
     .unwrap_or_default()
 }
 
+/// 채팅 보기(스페이스 모드)가 대화 기록을 이어 읽은 결과. next = 다음에 넘길 자리, reset = 처음부터 다시 그려야 함
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptChunk {
+    pub text: String,
+    pub next: u64,
+    pub reset: bool,
+}
+
+/// 처음(또는 파일이 줄어 자리가 안 맞으면) 끝 1MB 부터 — 긴 대화 전체를 매번 그리지 않게
+const CHAT_HEAD: u64 = 1024 * 1024;
+/// 처음 읽을 때 적어도 이만큼 줄은 보이게, 창은 최대 이만큼까지 넓힌다
+const CHAT_MIN_LINES: usize = 200;
+const CHAT_MAX: u64 = 32 * 1024 * 1024;
+
+/// from 부터 끝까지 읽되 마지막 줄바꿈까지만(쓰는 중인 줄은 다음에). 처음 읽을 땐 끝 1MB, 잘린 첫 줄은 버린다
+pub fn read_chunk(path: &std::path::Path, from: Option<u64>) -> std::io::Result<TranscriptChunk> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path)?;
+    let len = f.metadata()?.len();
+    let reset = !matches!(from, Some(n) if n <= len);
+    let mut window = CHAT_HEAD;
+    let (start, buf) = loop {
+        let start = if reset { len.saturating_sub(window) } else { from.unwrap_or(0) };
+        f.seek(SeekFrom::Start(start))?;
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf)?;
+        // 끝에 큰 줄(그림 읽은 도구 결과 등)이 있으면 줄 몇 개 안 남는다 — 줄이 충분할 때까지 넓힌다
+        let lines = buf.iter().filter(|&&b| b == b'\n').count();
+        if !reset || start == 0 || lines >= CHAT_MIN_LINES || window >= CHAT_MAX { break (start, buf) }
+        window *= 4;
+    };
+    let end = buf.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+    let mut body = &buf[..end];
+    if reset && start > 0 {
+        let cut = body.iter().position(|&b| b == b'\n').map_or(body.len(), |i| i + 1);
+        body = &body[cut..];
+    }
+    Ok(TranscriptChunk { text: String::from_utf8_lossy(body).into_owned(), next: start + end as u64, reset })
+}
+
+/// 채팅 보기용 대화 기록 이어 읽기. 파일이 없으면(아직 첫 지시 전) 빈 조각
+#[tauri::command]
+pub async fn read_transcript(session_id: String, from: Option<u64>) -> TranscriptChunk {
+    tauri::async_runtime::spawn_blocking(move || {
+        let empty = TranscriptChunk { text: String::new(), next: 0, reset: from.is_some() };
+        let home = crate::platform::home();
+        let Ok(rd) = std::fs::read_dir(format!("{home}/.claude/projects")) else { return empty };
+        let Some(path) = rd.flatten().map(|e| e.path().join(format!("{session_id}.jsonl"))).find(|p| p.exists()) else { return empty };
+        read_chunk(&path, from).unwrap_or(empty)
+    })
+    .await
+    .unwrap_or(TranscriptChunk { text: String::new(), next: 0, reset: false })
+}
+
+/// 세션 할 일 목록 한 줄(Claude Code TaskCreate — ~/.claude/tasks/session-<대화 id 앞 8자리>/<n>.json)
+#[derive(Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTask {
+    pub id: String,
+    pub subject: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_form: Option<String>,
+}
+
+/// 파일 내용들 → 번호 순 목록. 깨진 파일은 건너뛴다(쓰는 중일 수 있다)
+pub fn parse_tasks(files: &[String]) -> Vec<SessionTask> {
+    let mut v: Vec<SessionTask> = files.iter().filter_map(|t| serde_json::from_str(t).ok()).collect();
+    v.sort_by_key(|t| t.id.parse::<u64>().unwrap_or(u64::MAX));
+    v
+}
+
+/// 채팅 판 위 '할 일' 칸 — 터미널에서 "N tasks (…)" 로 보이던 것. 다 끝나면 Claude 가 파일을 지워 빈 목록
+#[tauri::command]
+pub async fn read_session_tasks(session_id: String) -> Vec<SessionTask> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let short: String = session_id.chars().take(8).collect();
+        let home = crate::platform::home();
+        let dir = format!("{home}/.claude/tasks/session-{short}");
+        let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+        let files: Vec<String> = rd
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+            .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+            .collect();
+        parse_tasks(&files)
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod task_tests {
+    use super::*;
+    #[test]
+    fn 번호_순으로_깨진_파일은_건너뛴다() {
+        let files = vec![
+            r#"{"id":"10","subject":"열","status":"pending","blocks":[],"blockedBy":[]}"#.to_string(),
+            r#"{"id":"2","subject":"둘","status":"in_progress","activeForm":"둘 하는 중"}"#.to_string(),
+            "{ 깨짐".to_string(),
+        ];
+        let v = parse_tasks(&files);
+        assert_eq!(v.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["2", "10"]);
+        assert_eq!(v[0].active_form.as_deref(), Some("둘 하는 중"));
+    }
+}
+
+#[cfg(test)]
+mod typed_tests {
+    #[test]
+    fn 줄바꿈은_esc_cr_한_조각_탭은_띄어쓰기() {
+        let s = super::typed_segs("가\t나\n다");
+        assert_eq!(s, vec!["가  나".as_bytes().to_vec(), b"\x1b\r".to_vec(), "다".as_bytes().to_vec()]);
+    }
+}
+
+#[cfg(test)]
+mod reply_tests {
+    #[test]
+    fn 답장은_감싸지_않고_치는_글_탭은_띄어쓰기_enter_는_안_붙인다() {
+        // 붙여넣기로 감싸면 긴 글이 '붙여넣은 글'로 간다(2026-09-30 실험). Enter 는 attach_type 이 쉬었다가 따로 넣는다
+        assert_eq!(super::reply_text("응\t그걸로"), b"\xec\x9d\x91  \xea\xb7\xb8\xea\xb1\xb8\xeb\xa1\x9c".to_vec());
+        assert!(!super::reply_text("a").contains(&b'\r'));
+    }
+}
+
+#[cfg(test)]
+mod chat_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn file(tag: &str, body: &[u8]) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("chammo-chat-test-{tag}-{}", std::process::id()));
+        std::fs::File::create(&p).unwrap().write_all(body).unwrap();
+        p
+    }
+
+    #[test]
+    fn 처음엔_처음부터_마지막_줄바꿈까지() {
+        let p = file("first", b"{\"a\":1}\n{\"b\":2}\n{\"c\":");
+        let c = read_chunk(&p, None).unwrap();
+        assert_eq!(c, TranscriptChunk { text: "{\"a\":1}\n{\"b\":2}\n".into(), next: 16, reset: true });
+    }
+
+    #[test]
+    fn 이어_읽기는_새로_붙은_것만() {
+        let p = file("next", b"{\"a\":1}\n{\"b\":2}\n");
+        let c = read_chunk(&p, Some(8)).unwrap();
+        assert_eq!(c, TranscriptChunk { text: "{\"b\":2}\n".into(), next: 16, reset: false });
+        assert_eq!(read_chunk(&p, Some(16)).unwrap().text, "");
+    }
+
+    #[test]
+    fn 파일이_줄었으면_다시_처음부터() {
+        let p = file("shrunk", b"{\"a\":1}\n");
+        let c = read_chunk(&p, Some(999)).unwrap();
+        assert!(c.reset);
+        assert_eq!(c.text, "{\"a\":1}\n");
+    }
+
+    #[test]
+    fn 큰_파일은_끝_1mb_부터_잘린_첫_줄은_버린다() {
+        let line = format!("{{\"x\":\"{}\"}}\n", "a".repeat(1000));
+        let body = line.repeat(1100); // 약 1.1MB
+        let p = file("big", body.as_bytes());
+        let c = read_chunk(&p, None).unwrap();
+        assert!(c.reset);
+        assert!(c.text.starts_with("{\"x\""));
+        assert_eq!(c.next, body.len() as u64);
+        assert!((c.text.len() as u64) <= CHAT_HEAD);
+    }
+
+    #[test]
+    fn 끝에_큰_줄이_있어도_앞_대화가_남는다() {
+        // 화면 캡처를 읽은 줄 하나가 1MB 를 넘어 끝 1MB 가 그 줄 조각뿐 → 대화가 통째로 사라졌다(2026-09-30 사용자)
+        let small = "{\"a\":1}\n".repeat(50);
+        let big = format!("{{\"img\":\"{}\"}}\n", "b".repeat(1_500_000));
+        let p = file("bigtail", format!("{small}{big}").as_bytes());
+        let c = read_chunk(&p, None).unwrap();
+        assert!(c.text.starts_with("{\"a\":1}\n"));
+        assert!(c.text.ends_with(&big));
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectDoc {
@@ -268,7 +464,7 @@ pub(crate) fn clt_ready() -> bool {
     if OK.load(Ordering::Relaxed) {
         return true;
     }
-    let ok = Command::new("/usr/bin/xcode-select").arg("-p").output().is_ok_and(|o| o.status.success());
+    let ok = crate::platform::git_ready();
     if ok {
         OK.store(true, Ordering::Relaxed);
     }
@@ -279,7 +475,7 @@ pub(crate) fn git(dir: &std::path::Path, args: &[&str]) -> String {
     if !clt_ready() {
         return String::new();
     }
-    Command::new("git")
+    crate::platform::command("git")
         .arg("-C")
         .arg(dir)
         .args(args)
@@ -343,12 +539,12 @@ pub(crate) fn log_out(kind: &str, text: &str) {
 #[tauri::command]
 pub fn notify(title: String, body: String, target: Option<String>) {
     log_out("notify", &format!("{title} — {body}"));
-    #[cfg(target_os = "macos")]
-    if crate::notify_mac::send(&title, &body, target.as_deref().unwrap_or("")) {
+    if crate::notify_mac::send(&title, &body, target.as_deref().unwrap_or("")) { // 윈도우는 토스트(notify_other)
         return;
     }
     let _ = target;
-    let _ = Command::new("osascript")
+    #[cfg(target_os = "macos")] // 윈도우 알림은 아직 없다(notify_other)
+    let _ = crate::platform::command("osascript")
         .args(["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", &title, &body])
         .spawn();
 }
@@ -368,12 +564,11 @@ pub(crate) fn speak_gen() -> u64 {
 
 /// 차례가 오면 읽는다 — 그사이 멈췄으면(gen 이 바뀌면) 안 읽는다. started 는 시작한 pid 를 받는다(테스트용)
 pub(crate) fn run_speech(argv: Vec<String>, gen: u64, mut started: impl FnMut(u32)) {
-    use std::os::unix::process::CommandExt;
     let _turn = SPEAKING.lock().unwrap_or_else(|e| e.into_inner());
     if speak_gen() != gen || argv.is_empty() {
         return;
     }
-    let Ok(mut child) = Command::new(&argv[0]).args(&argv[1..]).process_group(0).spawn() else { return };
+    let Ok(mut child) = crate::platform::spawn_group(crate::platform::command(&argv[0]).args(&argv[1..])) else { return };
     *SPEAKING_PID.lock().unwrap_or_else(|e| e.into_inner()) = Some(child.id());
     started(child.id());
     let _ = child.wait();
@@ -385,7 +580,7 @@ pub(crate) fn run_speech(argv: Vec<String>, gen: u64, mut started: impl FnMut(u3
 pub fn stop_speaking() {
     SPEAK_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     if let Some(pid) = *SPEAKING_PID.lock().unwrap_or_else(|e| e.into_inner()) {
-        let _ = Command::new("/bin/kill").args(["-TERM", &format!("-{pid}")]).status();
+        crate::platform::stop_group(pid);
     }
 }
 
@@ -418,7 +613,7 @@ pub async fn list_sessions_all() -> Result<String, String> {
 #[tauri::command]
 pub async fn resume_session(cwd: String, session_id: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
-        let out = Command::new(claude_bin())
+        let out = crate::platform::command(claude_bin())
             .current_dir(&cwd)
             // 이어서 켤 때도 권한 확인 없이 — 안 붙이면 daemon 재시작 뒤 되살린 세션이 auto 모드로 떠서
             // Bash 마다 사용자 승인을 기다렸다(2026-09-28, 사용자 요청 "항상 바이패스로 켜지게"). CLAUDE.md 원칙 3
@@ -525,7 +720,7 @@ pub async fn ci_runs(dev_root: String, user: String, since: String) -> String {
                 let repo = url.split("github.com").nth(1)?.trim_start_matches([':', '/']).trim_end_matches(".git").to_string();
                 let (gh, user, since) = (gh.clone(), user.clone(), since.clone());
                 Some(std::thread::spawn(move || {
-                    let out = Command::new(&gh)
+                    let out = crate::platform::command(&gh)
                         .args(["run", "list", "-R", &repo, "--user", &user, "--created", &format!(">={since}"), "--limit", "300", "--json", "conclusion,status,createdAt"])
                         .output();
                     let json = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
@@ -552,42 +747,195 @@ pub fn read_ctx() -> Vec<String> {
 /// 세션에 잠깐 `claude attach` 를 붙여 화면을 읽고(vt100 으로 글자 화면 복원) 키를 넣은 뒤 뗀다.
 /// attach 를 떼도 세션은 안 죽는다. keys 가 None 이면 화면만 읽는다
 fn with_attach(id: &str, keys: Option<&[u8]>) -> Result<String, String> {
-    use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+    use std::time::Duration;
+    attach_do(id, |w| {
+        if let Some(k) = keys {
+            // 화살표·글자는 하나씩 조금 쉬어 가며 — 한꺼번에 넣으면 TUI 가 놓칠 수 있다
+            for chunk in k.split_inclusive(|&b| b == b'\r' || b == b'~' || b == b'A' || b == b'B') {
+                w.write_all(chunk)?;
+                std::thread::sleep(Duration::from_millis(150));
+            }
+            std::thread::sleep(Duration::from_millis(700));
+        }
+        Ok(())
+    })
+}
+
+/// 선택지 답(화살표·Enter)을 누른다 — 윈도우 scripts/choice 가 app.jsonl 로 부탁한다(appctl)
+pub(crate) fn press_keys(id: &str, keys: &str) -> Result<(), String> {
+    with_attach(id, Some(keys.as_bytes())).map(|_| ())
+}
+
+/// 글을 사람이 치듯 넣고 0.4초 쉬었다가 Enter(따로). 결정 대기함 답장·참모 입력칸 전달
+fn attach_type(id: &str, text: &[u8]) -> Result<(), String> {
+    attach_type_segs(id, &text.chunks(256).map(<[u8]>::to_vec).collect::<Vec<_>>())
+}
+
+/// 여러 줄 글을 치는 조각들 — 줄마다 글(256 바이트씩) + 줄바꿈 Option+Enter(ESC CR 는 한 조각으로: 따로 가면 Esc 로 먹혀 멈춘다)
+pub(crate) fn typed_segs(text: &str) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    for (i, line) in text.replace('\t', "  ").split('\n').enumerate() {
+        if i > 0 {
+            out.push(b"\x1b\r".to_vec());
+        }
+        out.extend(line.as_bytes().chunks(256).map(<[u8]>::to_vec));
+    }
+    out
+}
+
+/// 여러 줄 글 보내기(스페이스 → 참모). 결정 대기함 답장과 같이 치고 0.4초 뒤 Enter
+#[tauri::command]
+pub async fn send_text_to_session(id: String, text: String) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Err(crate::i18n::tr("빈 글", "Empty text").into());
+    }
+    let segs = typed_segs(&text);
+    let who = id.clone();
+    let short: String = text.chars().take(80).collect();
+    let r = tauri::async_runtime::spawn_blocking(move || attach_type_segs(&id, &segs)).await.map_err(|e| e.to_string()).and_then(|r| r);
+    log_out("space-send", &format!("{who} {} {short}", if r.is_ok() { "ok" } else { "fail" }));
+    r
+}
+
+fn attach_type_segs(id: &str, segs: &[Vec<u8>]) -> Result<(), String> {
+    use std::time::Duration;
+    attach_do(id, |w| {
+        for chunk in segs {
+            w.write_all(chunk)?;
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::thread::sleep(Duration::from_millis(400));
+        w.write_all(b"\r")?;
+        std::thread::sleep(Duration::from_millis(700));
+        Ok(())
+    })
+    .map(|_| ())
+}
+
+/// attach 를 붙여 화면을 읽고 write 로 키를 넣은 뒤 뗀다
+fn attach_do(id: &str, write: impl FnOnce(&mut dyn std::io::Write) -> std::io::Result<()>) -> Result<String, String> {
     use std::io::Write;
+    use std::ops::Not;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
     let (rows, cols) = (40u16, 120u16);
-    let pair = native_pty_system()
-        .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
-        .map_err(|e| e.to_string())?;
-    let mut cmd = CommandBuilder::new(claude_bin());
-    cmd.args(["attach", id]);
-    cmd.env("TERM", "xterm-256color");
-    let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
-    drop(pair.slave);
+    // 윈도우 진단: 어느 단계에서 멈추는지·몇 바이트 받았는지 notify.log 에 남긴다(맥은 안 남김)
+    let trace = |step: &str| if cfg!(windows) { log_out("attach", &format!("{id} {step}")) };
     let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 0)));
-    let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-    let p2 = parser.clone();
-    std::thread::spawn(move || {
-        let mut buf = [0u8; 8192];
-        while let Ok(n) = std::io::Read::read(&mut reader, &mut buf) {
-            if n == 0 { break; }
-            p2.lock().unwrap().process(&buf[..n]);
+    let got = Arc::new(AtomicUsize::new(0));
+    // 쓰기는 띄운 뒤에 생긴다 — 읽기 스레드가 "커서 어디?"에 답하려고 같은 자리를 나눠 쓴다
+    // 질문이 쓰기보다 먼저 오면(띄우자마자 온다) 기억해 뒀다가 쓰기가 생기는 순간 답한다 — 둘 다 같은 잠금 안에서(윈도우는 매번 469바이트에서 멈췄다)
+    let slot: Arc<Mutex<(Option<Box<dyn std::io::Write + Send>>, bool)>> = Arc::new(Mutex::new((None, false)));
+    // 받은 앞부분(진단용, 윈도우만 기록) + 조각 경계에 걸린 질문도 잡게 앞 조각 끝 몇 바이트
+    let head = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let (p2, g2, s2, h2) = (parser.clone(), got.clone(), slot.clone(), head.clone());
+    let mut tail: Vec<u8> = Vec::new();
+    let idc = id.to_string();
+    trace("open");
+    // 터미널 보기와 같은 길(pty::spawn_pty, 셸로 감싸 홈에서) — 따로 짠 길은 윈도우에서 화면이 0바이트였다
+    let (master, writer, mut child) = crate::pty::spawn_pty(&crate::pty::attach_line(&claude_bin(), id, cfg!(windows)), None, cols, rows, move |b| {
+        g2.fetch_add(b.len(), Ordering::Relaxed);
+        {
+            let mut h = h2.lock().unwrap();
+            if h.len() < 600 { let n = (600 - h.len()).min(b.len()); h.extend_from_slice(&b[..n]); }
         }
-    });
-    let mut w = pair.master.take_writer().map_err(|e| e.to_string())?;
-    std::thread::sleep(Duration::from_millis(1500)); // 화면이 붙을 때까지
-    let screen = parser.lock().unwrap().screen().contents();
-    if let Some(k) = keys {
-        // 화살표·글자는 하나씩 조금 쉬어 가며 — 한꺼번에 넣으면 TUI 가 놓칠 수 있다
-        for chunk in k.split_inclusive(|&b| b == b'\r' || b == b'~' || b == b'A' || b == b'B') {
-            w.write_all(chunk).map_err(|e| e.to_string())?;
-            std::thread::sleep(Duration::from_millis(150));
+        // 윈도우 가짜 콘솔(ConPTY)은 먼저 "커서 어디?"(ESC[6n)를 묻고 답이 올 때까지 안 그린다 — 터미널 보기는 xterm.js 가 답한다
+        let mut joined = std::mem::take(&mut tail);
+        joined.extend_from_slice(b);
+        if asks_cursor(&joined) {
+            let mut g = s2.lock().unwrap();
+            match g.0.as_mut() {
+                Some(w) => {
+                    let _ = w.write_all(b"\x1b[1;1R");
+                    if cfg!(windows) { log_out("attach", &format!("{idc} cursor-answered")); }
+                }
+                None => g.1 = true,
+            }
         }
-        std::thread::sleep(Duration::from_millis(700));
+        tail = joined[joined.len().saturating_sub(3)..].to_vec();
+        p2.lock().unwrap().process(b);
+        true
+    })?;
+    {
+        let mut g = slot.lock().unwrap();
+        let mut writer = writer;
+        if g.1 {
+            let _ = writer.write_all(b"\x1b[1;1R");
+            trace("cursor-answered-late");
+        }
+        g.0 = Some(writer);
     }
+    trace("spawned");
+    // 윈도우: claude attach 가 크기 바뀜을 한 번 받기 전엔 화면을 안 그렸다(cmd 지우기 두 번 뒤 0글자) — 터미널 보기는
+    // 창에 맞출 때 크기를 바꿔 줘서 그려졌다. 한 칸 줄였다 되돌린다(맥은 바로 그려서 안 건드린다)
+    if cfg!(windows) {
+        std::thread::sleep(Duration::from_millis(800));
+        let _ = master.resize(portable_pty::PtySize { rows, cols: cols - 1, pixel_width: 0, pixel_height: 0 });
+        std::thread::sleep(Duration::from_millis(200));
+        let _ = master.resize(portable_pty::PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
+        trace("resized");
+    }
+    // 화면이 붙을 때까지 — 1.5초 기다리고, 글자가 아직 없으면 조금씩 더(최대 8초)
+    std::thread::sleep(Duration::from_millis(1500));
+    let started = std::time::Instant::now();
+    // 윈도우는 더 길게(25초) — 보이는 콘솔에서도 attach 가 그리기까지 6초쯤 걸렸고 cmd·백신 검사까지 얹힌다. 2초마다 받은 바이트를 남긴다
+    let limit = Duration::from_millis(if cfg!(windows) { 25_000 } else { 6_500 });
+    let mut next_note = Duration::from_secs(2);
+    while screen_ready(&parser.lock().unwrap().screen().contents()).not() && started.elapsed() < limit {
+        std::thread::sleep(Duration::from_millis(250));
+        if started.elapsed() >= next_note {
+            trace(&format!("wait {}s bytes {}", next_note.as_secs(), got.load(Ordering::Relaxed)));
+            next_note += Duration::from_secs(2);
+        }
+    }
+    let screen = parser.lock().unwrap().screen().contents();
+    trace(&format!("bytes {} head {}", got.load(Ordering::Relaxed), String::from_utf8_lossy(&head.lock().unwrap()).escape_debug()));
+    let close = |master: Box<dyn portable_pty::MasterPty + Send>| {
+        // 윈도우: 가짜 콘솔 닫기가 영영 안 돌아왔다 — 딴 스레드에 맡긴다
+        if cfg!(windows) { std::thread::spawn(move || drop(master)); } else { drop(master); }
+    };
+    // attach 가 벌써 끝났거나(없는 세션 — 오류 글만 찍고 나간다) 그 오류 글이 떴으면 누를 곳이 없다
+    if matches!(child.try_wait(), Ok(Some(_))) || screen.contains("No job matching") {
+        trace("exited");
+        close(master);
+        return Err(crate::i18n::tr("세션에 붙지 못했어(없는 세션?)", "Couldn't attach (no such session?)").into());
+    }
+    if !screen_ready(&screen) {
+        // 붙지 못했는데 누르면 허공에 간다 — 실패로 알린다
+        trace("no-screen");
+        let _ = child.kill();
+        close(master);
+        return Err(crate::i18n::tr("세션 화면이 안 떴어", "The session screen didn't come up").into());
+    }
+    trace("write");
+    let r = match slot.lock().unwrap().0.as_mut() {
+        Some(w) => write(&mut **w).map_err(|e| e.to_string()),
+        None => Err("no writer".into()),
+    };
+    trace("kill");
     let _ = child.kill();
-    Ok(screen)
+    slot.lock().unwrap().0.take();
+    close(master);
+    trace("done");
+    r.map(|_| screen)
+}
+
+/// 가짜 콘솔이 "커서 어디?"(ESC[6n)를 물었나 — 답(ESC[1;1R)을 해야 그리기 시작한다
+fn asks_cursor(out: &[u8]) -> bool {
+    out.windows(4).any(|x| x == b"\x1b[6n")
+}
+
+/// attach 화면에 글자가 떴나(빈칸 말고 몇 글자라도) — 붙기 전에 누른 키는 버려진다
+fn screen_ready(screen: &str) -> bool {
+    screen.chars().filter(|c| !c.is_whitespace()).count() >= 20
+}
+
+/// 답장 글(한 줄): 사람이 치듯 그대로, 탭은 띄어쓰기(탭은 자동완성). Enter 는 attach_type 이 쉬었다가 따로 넣는다.
+/// 2026-09-30: 빠르게 친 글 + 바로 Enter → Claude 가 Enter 를 줄바꿈으로 넣어 안 보내졌다(참모 입력칸에 쌓임·알림 답장 유실).
+/// 붙여넣기 표시로 감싸면 보내지긴 하지만 긴 글이 '붙여넣은 글'이 된다 — 시험 세션 실측으로 둘 다 피하는 게 이 방식
+pub(crate) fn reply_text(line: &str) -> Vec<u8> {
+    line.replace('\t', "  ").into_bytes()
 }
 
 /// 결정 대기함 답장: 그 세션 입력칸에 사람이 치는 것과 똑같이 글자 + Enter.
@@ -598,11 +946,16 @@ pub async fn send_to_session(id: String, text: String) -> Result<(), String> {
     if line.trim().is_empty() {
         return Err(crate::i18n::tr("빈 답장", "Empty reply").into());
     }
-    let mut keys = line.into_bytes();
-    keys.push(b'\r');
-    tauri::async_runtime::spawn_blocking(move || with_attach(&id, Some(&keys)).map(|_| ()))
+    let short: String = line.chars().take(80).collect();
+    let keys = reply_text(&line);
+    // 답장이 어디로 갔는지 남긴다 — "알림에 답했는데 안 갔다"(2026-09-30)를 기록으로 가리려고
+    let who = id.clone();
+    let r = tauri::async_runtime::spawn_blocking(move || attach_type(&id, &keys))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+        .and_then(|r| r);
+    log_out("reply", &format!("{who} {} {short}", if r.is_ok() { "ok" } else { "fail" }));
+    r
 }
 
 /// 권한 창 자동 허용 1단계: 지금 화면 글자. 판단은 domain/autoAllow.ts
@@ -667,28 +1020,21 @@ pub fn append_task_event(line: String) -> Result<(), String> {
 pub fn open_target(kind: String, target: String) -> Result<(), String> {
     match kind.as_str() {
         "url" if target.starts_with("http://") || target.starts_with("https://") => {}
+        // 말하기 키 안내의 "키보드 설정 열기" — 이 주소 하나만(🌐 키 동작을 '아무것도 안 함'으로)
+        "url" if target == "x-apple.systempreferences:com.apple.Keyboard-Settings.extension" => {}
         "file" if std::path::Path::new(&target).exists() => {}
         "file" => return Err(format!("{}: {target}", crate::i18n::tr("파일이 없어", "File not found"))),
         _ => return Err(crate::i18n::tr("열 수 없는 링크", "This link cannot be opened").into()),
     }
-    Command::new("open").arg(&target).spawn().map(|_| ()).map_err(|e| e.to_string())
+    crate::platform::open_path(&target).map_err(|e| e.to_string())
 }
 
-/// 터미널에서 복사한 글자를 macOS 클립보드에 넣는다(`pbcopy`).
+/// 터미널에서 복사한 글자를 클립보드에 넣는다(맥 pbcopy·윈도우 clip.exe — platform::clipboard_write).
 /// 웹뷰의 navigator.clipboard 는 사용자 입력 도중이 아니면 막히는데, OSC 52 는 pty 출력으로 늦게 도착한다.
 /// GUI 앱은 LANG 이 비어 있어서 그대로 두면 pbcopy 가 한글을 깨뜨린다 — UTF-8 로 못 박는다
 #[tauri::command]
 pub fn clipboard_write(text: String) -> Result<(), String> {
-    use std::io::Write;
-    let mut child = Command::new("pbcopy")
-        .env("LANG", "en_US.UTF-8")
-        .env("LC_CTYPE", "UTF-8")
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    child.stdin.take().ok_or("pbcopy 입력 없음")?.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
-    let status = child.wait().map_err(|e| e.to_string())?;
-    if status.success() { Ok(()) } else { Err(format!("pbcopy 실패: {status}")) }
+    crate::platform::clipboard_write(&text)
 }
 
 /// 관리 프로그램 lock 파일 글자 → 시작 시각(ms). 모양이 다르거나 없으면 None
@@ -700,7 +1046,7 @@ pub(crate) fn parse_daemon_started_at(text: &str) -> Option<i64> {
 /// 바뀌면 재시작된 것 → 직전에 살아 있던 세션이 꺼졌다(domain/revive.ts)
 #[tauri::command]
 pub fn daemon_started_at() -> Option<i64> {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = crate::platform::home();
     parse_daemon_started_at(&std::fs::read_to_string(format!("{home}/.claude/daemon.lock")).ok()?)
 }
 
@@ -753,7 +1099,7 @@ mod speak_tests {
     use std::time::{Duration, Instant};
 
     fn alive(pid: u32) -> bool {
-        std::process::Command::new("/bin/kill").args(["-0", &pid.to_string()]).status().map(|s| s.success()).unwrap_or(false)
+        crate::platform::command("/bin/kill").args(["-0", &pid.to_string()]).status().map(|s| s.success()).unwrap_or(false)
     }
 
     // 2026-09-28: 6,500자 음성이 8분째 돌았는데 멈출 방법이 없었다 — 음성 모드를 끄면 지금 말하는 것부터 멈춘다
@@ -819,5 +1165,24 @@ mod tests {
     #[test]
     fn falls_back_when_missing() {
         assert_eq!(resolve_claude_bin("/h", |_| false), None);
+    }
+}
+
+#[cfg(test)]
+mod attach_tests {
+    use super::{asks_cursor, screen_ready};
+
+    #[test]
+    fn 가짜_콘솔의_커서_질문을_알아본다() {
+        assert!(asks_cursor(b"\x1b[?9001h\x1b[?1004h\x1b[6n"));
+        assert!(!asks_cursor(b"\x1b[6"));
+        assert!(!asks_cursor("사과와 배".as_bytes()));
+    }
+
+    #[test]
+    fn 화면에_글자가_떠야_키를_누른다() {
+        assert!(!screen_ready(""));
+        assert!(!screen_ready("   \n\n  "));
+        assert!(screen_ready("☐ 과일\n사과와 배 중 뭘 고를래?\n› 1. 사과 — 사과를 고른다\n  2. 배 — 배를 고른다"));
     }
 }

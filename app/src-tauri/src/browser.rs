@@ -70,7 +70,7 @@ pub fn browser_status() -> BrowserStatus {
     let node = node_bin();
     let node_version = node
         .as_ref()
-        .and_then(|n| std::process::Command::new(n).arg("--version").output().ok())
+        .and_then(|n| crate::platform::command(n).arg("--version").output().ok())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
     BrowserStatus {

@@ -4,10 +4,9 @@
 
 use crate::claude::{gh_bin, git};
 use serde::Deserialize;
-use std::process::Command;
 
 fn gh(args: &[&str]) -> Result<String, String> {
-    let o = Command::new(gh_bin()).args(args).output().map_err(|e| if crate::i18n::is_en() { format!("Failed to run gh: {e}") } else { format!("gh 실행 실패: {e}") })?;
+    let o = crate::platform::command(gh_bin()).args(args).output().map_err(|e| if crate::i18n::is_en() { format!("Failed to run gh: {e}") } else { format!("gh 실행 실패: {e}") })?;
     if o.status.success() {
         Ok(String::from_utf8_lossy(&o.stdout).into_owned())
     } else {

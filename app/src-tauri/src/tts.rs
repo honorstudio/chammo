@@ -3,7 +3,6 @@
 //! 설정에는 실행기 경로(`…/speak -v M1`)가 음성 명령으로 적히고, 읽기는 예전처럼 tts_argv 가 부른다
 use serde::Serialize;
 use std::path::PathBuf;
-use std::process::Command;
 
 const SAY_PY: &str = include_str!("../tts/say.py");
 const SPEAK: &str = include_str!("../tts/speak");
@@ -49,12 +48,11 @@ pub async fn supertonic_install() -> Result<(), String> {
             let p = d.join(name);
             std::fs::write(&p, body).map_err(|e| format!("{name}: {e}"))?;
             if exec {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755));
+                crate::platform::make_executable(&p);
             }
         }
         let log = std::fs::File::create(d.join("install.log")).map_err(|e| e.to_string())?;
-        let status = Command::new("/bin/bash")
+        let status = crate::platform::command("/bin/bash")
             .arg(d.join("install.sh"))
             .arg(&d)
             .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin")
@@ -90,14 +88,14 @@ pub fn tts_warm(command: String) {
     let argv = crate::config::tts_argv(&crate::config::home(), &command, " ", |p| std::path::Path::new(p).is_file());
     let out = std::env::temp_dir().join("chammo-tts-warm.aiff");
     if let Some(w) = warm_argv(&argv, &out.to_string_lossy()) {
-        let _ = Command::new(&w[0]).args(&w[1..]).spawn();
+        let _ = crate::platform::command(&w[0]).args(&w[1..]).spawn();
     }
 }
 
 /// `say -v ?` 목록 그대로 — 언어별로 거르는 건 프론트(domain/tts nativeVoices)
 #[tauri::command]
 pub fn native_voices() -> String {
-    Command::new("say").args(["-v", "?"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+    crate::platform::native_voices()
 }
 
 #[cfg(test)]

@@ -69,7 +69,7 @@
 .su-nav .grow { flex: 1; }
 .su-sum { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 12px 0 0; font-size: 13px; }
 .su-sum dt { color: var(--text-3); }
-.su-sum dd { margin: 0; font-family: ui-monospace, monospace; word-break: break-all; }
+.su-sum dd { margin: 0; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; word-break: break-all; }
 
 /* 따로 둔 프로젝트 — 경로 한 줄씩 + 빼기, 맨 아래 폴더 추가 */
 .su-extras { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
@@ -83,3 +83,9 @@
 .su-tts-opt input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
 .su-tts select, .su-tts input[type='text'], .su-tts-row > input { height: 32px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 13px; }
 .su-tts-row > input { flex: 1; min-width: 160px; }
+/* 말하기 키 — 고르기 + 앱 밖에서도 */
+.su-control:has(.su-check) { flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.su-check { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
+.su-control .su-check input { flex: 0 0 auto; width: 15px; height: 15px; padding: 0; margin: 0; accent-color: var(--accent); }
+/* 고르기 동그라미·체크 줄은 항목 칸(.su-field label = 이름 150px | 입력) 규칙을 받지 않는다 — 동그라미와 글자가 150px 떨어졌다(공개판 시험 2026-09-30) */
+.su-field label.su-tts-opt, .su-field label.su-check { display: inline-flex; grid-template-columns: none; align-items: center; gap: 8px; }

@@ -49,7 +49,7 @@ export function Row({ dot, name, line, sub, when, onClick, dim, tags }: { dot: s
   );
 }
 
-type Props = { width: number; onWidth: (w: number) => void; cards: TaskCard[]; activities: SessionActivity[]; onOpen: (target: string) => void; /** 맨 위 리뷰(머지 전에 볼 것·오늘 넣은 것) */ top?: ReactNode; /** 맨 아래 자동 허용 기록 */ bottom?: ReactNode; /** 주인 잃은 일 줄 아래 버튼(이어서 켜기·끝난 걸로) */ orphanActions?: (c: TaskCard) => ReactNode };
+type Props = { width: number; onWidth: (w: number) => void; cards: TaskCard[]; activities: SessionActivity[]; onOpen: (target: string) => void; /** 맨 위 리뷰(머지 전에 볼 것·오늘 넣은 것) */ top?: ReactNode; /** 맨 아래 자동 허용 기록 */ bottom?: ReactNode; /** 주인 잃은 일 줄 아래 버튼(이어서 켜기·끝난 걸로) */ orphanActions?: (c: TaskCard) => ReactNode; /** 끝 기록 없는 일 한꺼번에 끝난 걸로 */ onFinishMany?: (cs: TaskCard[]) => void };
 
 const hm = (iso: string) => {
   const d = new Date(iso);
@@ -89,10 +89,11 @@ export function Grip({ width, onWidth, min = 220, max = 560 }: { width: number; 
   );
 }
 
-export function TaskPanel({ width, onWidth, cards, activities, onOpen, top, bottom, orphanActions }: Props) {
+export function TaskPanel({ width, onWidth, cards, activities, onOpen, top, bottom, orphanActions, onFinishMany }: Props) {
   const [showDone, setShowDone] = useState(false);
   const [showStale, setShowStale] = useState(false);
-  const { active, orphaned, doneToday, hidden } = splitCards(cards, Date.now());
+  const [showOld, setShowOld] = useState(false);
+  const { active, superseded, orphaned, doneToday, hidden } = splitCards(cards, Date.now());
   const live = activities.filter((a) => a.status !== 'stale');
   const stale = activities.filter((a) => a.status === 'stale');
   const sessionRow = ({ session: s, activity: a, status }: SessionActivity) => (
@@ -113,7 +114,7 @@ export function TaskPanel({ width, onWidth, cards, activities, onOpen, top, bott
       <Grip width={width} onWidth={onWidth} />
       <div className="panel-head">
         <b>{tr('작업', 'Tasks')}</b>
-        <span className="dim">⌘J</span>
+        <span className="dim">{tr('⌘J', '⌘J')}</span>
       </div>
       <div className="tasks-list">
         {top}
@@ -123,6 +124,15 @@ export function TaskPanel({ width, onWidth, cards, activities, onOpen, top, bott
         {active.map((c) => (
           <Row key={c.id} dot={c.status} name={c.target} line={c.title} sub={c.note} when={hm(c.updatedAt)} tags={taskTags(c)} onClick={() => onOpen(c.target)} />
         ))}
+
+        {/* 같은 세션에 더 새 일이 가서 넘어간 일 — 회신 받고 끝 기록만 안 남은 것들(2026-09-29 사용자: 계속 쌓이기만) */}
+        {superseded.length > 0 && <Sec title={tr('끝 기록 없는 일', 'Not marked done')} count={superseded.length} open={showOld} onToggle={() => setShowOld((v) => !v)} />}
+        {showOld && superseded.map((c) => (
+          <Row key={c.id} dot={c.status} name={c.target} line={c.title} sub={c.note} when={hm(c.updatedAt)} onClick={() => onOpen(c.target)} dim />
+        ))}
+        {showOld && superseded.length > 0 && onFinishMany && (
+          <div className="revive-acts"><button className="mini" onClick={() => onFinishMany(superseded)}>{tr(`${superseded.length}개 모두 끝난 걸로`, `Mark all ${superseded.length} done`)}</button></div>
+        )}
 
         {orphaned.length > 0 && <Sec title={tr('주인 잃은 일', 'Orphaned tasks')} count={orphaned.length} tone="hot" />}
         {orphaned.map((c) => (

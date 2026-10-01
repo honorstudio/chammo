@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { copyKeyAction, parseOsc52 } from './clipboard';
+import { copyKeyAction, parseOsc52, winTermKey } from './clipboard';
 
 const b64 = (s: string) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
 const key = (k: string, mods: Partial<{ metaKey: boolean; altKey: boolean; ctrlKey: boolean; shiftKey: boolean }> = {}) => ({
@@ -57,5 +57,22 @@ describe('copyKeyAction', () => {
     expect(copyKeyAction(key('c', { ctrlKey: true }), true)).toBeNull(); // Ctrl+C 는 Claude 로 가는 중단 키
     expect(copyKeyAction(key('c', { metaKey: true, shiftKey: true }), true)).toBeNull();
     expect(copyKeyAction(key('v', { metaKey: true }), true)).toBeNull();
+  });
+});
+
+describe('윈도우 터미널 복사·붙여넣기 — 윈도우 터미널 관례(Ctrl+C 는 선택이 있을 때만 복사, 없으면 멈추기)', () => {
+  const k = (code: string, m: { ctrl?: boolean; shift?: boolean; alt?: boolean } = {}) =>
+    ({ key: code.slice(3).toLowerCase(), code, ctrlKey: !!m.ctrl, shiftKey: !!m.shift, altKey: !!m.alt, metaKey: false });
+  it('Ctrl+Shift+C = 복사(선택 없으면 삼킴), Ctrl+C 는 선택이 있을 때만 복사', () => {
+    expect(winTermKey(k('KeyC', { ctrl: true, shift: true }), true)).toBe('copy');
+    expect(winTermKey(k('KeyC', { ctrl: true, shift: true }), false)).toBe('swallow');
+    expect(winTermKey(k('KeyC', { ctrl: true }), true)).toBe('copy');
+    expect(winTermKey(k('KeyC', { ctrl: true }), false)).toBeNull(); // 터미널로 — Claude 멈추기
+  });
+  it('Ctrl+V·Ctrl+Shift+V = 글 붙여넣기(웹뷰에 맡긴다), Alt+V 는 Claude 그림 붙여넣기라 그대로', () => {
+    expect(winTermKey(k('KeyV', { ctrl: true }), false)).toBe('paste');
+    expect(winTermKey(k('KeyV', { ctrl: true, shift: true }), false)).toBe('paste');
+    expect(winTermKey(k('KeyV', { alt: true }), false)).toBeNull();
+    expect(winTermKey(k('KeyX', { ctrl: true }), false)).toBeNull();
   });
 });

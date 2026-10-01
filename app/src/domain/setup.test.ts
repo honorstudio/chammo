@@ -138,3 +138,21 @@ describe('addExtraProject — 프로젝트 폴더 밖 폴더를 하나씩 추가
     expect(addExtraProject([], '/Users/me', '~/Desktop/dev', '/Users/me').note).toBe('root');
   });
 });
+
+describe('setupCommand — 윈도우(cmd /C 가 읽는 모양, 윈도우판)', () => {
+  const c = 'C:\\Users\\a\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe';
+  it('폴더 믿기: cd /d "폴더" && "claude"', () => {
+    expect(setupCommand('trust', { claude: c }, '', 'C:\\Users\\a\\dev', true)).toBe(`cd /d "C:\\Users\\a\\dev" && "${c}"`);
+    // 홈(C:\Users\a) + ~/.chammo/hq 가 합쳐져 \ 와 / 가 섞여 온다 — 윈도우 모양으로 맞춘다
+    expect(setupCommand('trust', { claude: c }, '', 'C:\\Users\\a/.chammo/hq', true)).toBe(`cd /d "C:\\Users\\a\\.chammo\\hq" && "${c}"`);
+  });
+  it('로그인: 큰따옴표 + 끝 안내는 & echo', () => {
+    expect(setupCommand('login', { claude: c }, '끝났어요 & 닫으세요', undefined, true)).toBe(`"${c}" auth login & echo. & echo 끝났어요 ^& 닫으세요`);
+  });
+  it('설치: PowerShell 설치 스크립트', () => {
+    expect(setupCommand('install', {}, '끝', undefined, true)).toBe('powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex" & echo. & echo 끝');
+  });
+  it('맥은 그대로', () => {
+    expect(setupCommand('trust', { claude: '/h/claude' }, '', '/h/dev', false)).toBe("cd '/h/dev' && exec '/h/claude'");
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampFont, dedupeMs, menuAction, onceWithin, shortcutFor } from './shortcuts';
+import { clampFont, dedupeMs, gotoOfNum, menuAction, onceWithin, shortcutFor } from './shortcuts';
 
 const k = (key: string, mods: { meta?: boolean; shift?: boolean; alt?: boolean; ctrl?: boolean } = {}) => ({
   key,
@@ -10,11 +10,25 @@ const k = (key: string, mods: { meta?: boolean; shift?: boolean; alt?: boolean; 
 });
 
 describe('shortcutFor — 앱 단축키', () => {
-  it('⌘1 참모, ⌘2 전체 보기', () => {
-    expect(shortcutFor(k('1', { meta: true }))).toEqual({ type: 'goto', to: 'orchestrator' });
-    expect(shortcutFor(k('2', { meta: true }))).toEqual({ type: 'goto', to: 'all' });
-    expect(shortcutFor(k('3', { meta: true }))).toEqual({ type: 'goto', to: 'review' }); // 2026-09-27 사용자
-    expect(shortcutFor(k('4', { meta: true }))).toEqual({ type: 'goto', to: 'office' });
+  // 2026-09-30 사용자: 스페이스가 기본이 되며 ⌘1~9 = 채팅 탭. 화면 이동은 ⌥⌘1~4(스페이스를 끄면 ⌘1~4 도 예전처럼 — App 이 가른다)
+  it('⌘1~9 는 숫자 칸(채팅 탭 N번)', () => {
+    expect(shortcutFor(k('1', { meta: true }))).toEqual({ type: 'num', n: 1 });
+    expect(shortcutFor(k('9', { meta: true }))).toEqual({ type: 'num', n: 9 });
+  });
+
+  it('⌥⌘1 참모 · ⌥⌘2 전체 보기 · ⌥⌘3 리뷰 · ⌥⌘4 사무실 — ⌥ 로 글자가 바뀌어도 키 자리(code)로', () => {
+    const alt = (code: string) => ({ ...k('¡', { meta: true, alt: true }), code });
+    expect(shortcutFor(alt('Digit1'))).toEqual({ type: 'goto', to: 'orchestrator' });
+    expect(shortcutFor(alt('Digit2'))).toEqual({ type: 'goto', to: 'all' });
+    expect(shortcutFor(alt('Digit3'))).toEqual({ type: 'goto', to: 'review' });
+    expect(shortcutFor(alt('Digit4'))).toEqual({ type: 'goto', to: 'office' });
+    expect(shortcutFor(alt('Digit5'))).toBeNull();
+  });
+
+  it('숫자 칸 → 스페이스를 끈 화면에선 예전 화면 이동', () => {
+    expect(gotoOfNum(1)).toEqual({ type: 'goto', to: 'orchestrator' });
+    expect(gotoOfNum(4)).toEqual({ type: 'goto', to: 'office' });
+    expect(gotoOfNum(5)).toBeNull();
   });
 
   it('⌘= / ⌘+ 글자 키우기 (Shift를 눌러 +로 쳐도)', () => {
@@ -34,6 +48,9 @@ describe('shortcutFor — 앱 단축키', () => {
 
   it('⌘K 검색, ⌘W 보고 있는 창의 세션 끄기', () => {
     expect(shortcutFor(k('k', { meta: true }))).toEqual({ type: 'search' });
+    // ⌘F = 찾기(문서가 열려 있으면 문서 찾기 — README 에 적은 대로, 공개 2차 검증에서 안 붙어 있던 것), 한글 입력이면 ㄹ
+    expect(shortcutFor(k('f', { meta: true }))).toEqual({ type: 'search' });
+    expect(shortcutFor(k('ㄹ', { meta: true }))).toEqual({ type: 'search' });
     expect(shortcutFor(k('w', { meta: true }))).toEqual({ type: 'closePane' });
   });
 
@@ -73,6 +90,18 @@ describe('clampFont — 글자 크기 범위', () => {
     expect(shortcutFor(k('ㅅ', { meta: true }))).toEqual({ type: 'newSession' });
     expect(shortcutFor(k('ㅈ', { meta: true }))).toEqual({ type: 'closePane' });
     expect(shortcutFor(k('ㅏ', { meta: true }))).toEqual({ type: 'search' });
+  });
+});
+
+describe('⌘A — 보고 있는 곳만 전체 선택 (사용자 2026-09-29)', () => {
+  it('⌘A · 한글 입력 상태 ⌘ㅁ', () => {
+    expect(shortcutFor(k('a', { meta: true }))).toEqual({ type: 'selectAll' });
+    expect(shortcutFor(k('ㅁ', { meta: true }))).toEqual({ type: 'selectAll' });
+    expect(shortcutFor(k('a', { meta: true, shift: true }))).toBeNull();
+  });
+  it('메뉴 전체 선택도 같은 동작, 키와 메뉴가 둘 다 와도 한 번', () => {
+    expect(menuAction('select_all')).toEqual({ type: 'selectAll' });
+    expect(dedupeMs({ type: 'selectAll' })).toBeGreaterThan(0);
   });
 });
 
@@ -126,10 +155,14 @@ describe('설정 — 메뉴 Chammo > 설정…(⌘,)', () => {
   });
 });
 
-describe('⌘Enter(⌘⇧Enter 도) — 보고 있는 창 크게·되돌리기', () => {
-  it('⌘⇧Enter 는 창 크게 토글', () => expect(shortcutFor(k('Enter', { meta: true, shift: true }))).toEqual({ type: 'maximizePane' }));
-  it('⌘Enter 도 같은 동작(사용자 2026-09-28)', () => expect(shortcutFor(k('Enter', { meta: true }))).toEqual({ type: 'maximizePane' }));
-  it('⌥·⌃ 가 섞이면 안 잡는다(터미널 몫)', () => expect(shortcutFor(k('Enter', { meta: true, alt: true }))).toBeNull());
+describe('⌘₩(⌘`) — 보고 있는 창 크게·되돌리기 (2026-09-30: ⌘Enter 는 채팅 끊고 보내기로)', () => {
+  it('한글 입력 상태의 ⌘₩', () => expect(shortcutFor(k('₩', { meta: true }))).toEqual({ type: 'maximizePane' }));
+  it('영문 입력 상태의 ⌘`', () => expect(shortcutFor(k('`', { meta: true }))).toEqual({ type: 'maximizePane' }));
+  it('⌘Enter 는 더 이상 창 크게가 아니다(채팅 입력칸 몫)', () => {
+    expect(shortcutFor(k('Enter', { meta: true }))).toBeNull();
+    expect(shortcutFor(k('Enter', { meta: true, shift: true }))).toBeNull();
+  });
+  it('⌥·⌃ 가 섞이면 안 잡는다(터미널 몫)', () => expect(shortcutFor(k('₩', { meta: true, alt: true }))).toBeNull());
   it('메뉴 항목에서도 같은 동작', () => expect(menuAction('pane_max')).toEqual({ type: 'maximizePane' }));
 });
 

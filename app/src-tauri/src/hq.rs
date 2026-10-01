@@ -49,7 +49,7 @@ pub fn install(dir: &Path, overwrite: bool) -> std::io::Result<HqReport> {
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&dest, f.body)?;
+        std::fs::write(&dest, body_for(f))?;
         #[cfg(unix)]
         if f.exec {
             use std::os::unix::fs::PermissionsExt;
@@ -58,6 +58,11 @@ pub fn install(dir: &Path, overwrite: bool) -> std::io::Result<HqReport> {
         report.written.push(f.path.into());
     }
     Ok(report)
+}
+
+/// 깔 글 — 윈도우면 안내문(CHAMMO.md)의 맥 단축키 표기(⌘J)를 윈도우 키로. 참모가 그대로 읽고 말한다
+fn body_for(f: &TemplateFile) -> String {
+    if cfg!(windows) && f.path == "CHAMMO.md" { crate::platform::win_keys(f.body) } else { f.body.to_string() }
 }
 
 /// HQ 세션의 도구가 앱과 같은 데이터 폴더를 쓰게 .claude/settings.json 의 env.CHAMMO_HOME 에 적는다.
@@ -74,10 +79,14 @@ pub fn pin_data_dir(dir: &Path, data_dir: &str) -> std::io::Result<()> {
     if !v["env"].is_object() {
         v["env"] = serde_json::json!({});
     }
-    v["env"]["CHAMMO_HOME"] = serde_json::Value::String(data_dir.into());
+    // / 로만 — 윈도우는 홈(C:\Users\me) + "/.chammo" 가 섞여 도구 출력에도 그대로 보였다(파이썬·bash 둘 다 / 를 받는다)
+    v["env"]["CHAMMO_HOME"] = serde_json::Value::String(data_dir.replace('\\', "/"));
+    // 파이썬 도구(scripts/*)가 UTF-8 로 읽고 쓰고 출력하게 — 윈도우 파이썬 기본은 cp949 라 한글이 깨진다(맥은 원래 UTF-8)
+    v["env"]["PYTHONUTF8"] = serde_json::Value::String("1".into());
     // 상태줄 — 상단 바 5시간·주간 사용량과 세션별 대화 %를 남기는 앱 스크립트(사용자 원래 상태줄은 그 안에서 그대로 돈다).
     // 예전엔 주인 개인 상태줄 스크립트만 이 파일을 써서 새 사용자에겐 사용량이 영영 안 떴다(아이맥 실측)
-    v["statusLine"] = serde_json::json!({ "type": "command", "command": statusline_path(Path::new(data_dir)).to_string_lossy() });
+    // 명령은 bash 가 읽는다 — 윈도우 경로의 \ 는 이스케이프로 먹히니 / 로만(C:/Users/…, Git Bash 가 알아듣는다)
+    v["statusLine"] = serde_json::json!({ "type": "command", "command": statusline_path(Path::new(data_dir)).to_string_lossy().replace('\\', "/") });
     if v == before {
         return Ok(());
     }
@@ -99,7 +108,7 @@ pub fn refresh(dir: &Path) -> std::io::Result<()> {
         if f.path == "CLAUDE.md" {
             let cur = std::fs::read_to_string(&dest).unwrap_or_default();
             if cur.is_empty() || cur.starts_with(OLD_TEMPLATE_HEAD) {
-                std::fs::write(&dest, f.body)?;
+                std::fs::write(&dest, body_for(f))?;
             } else if !cur.contains("@CHAMMO.md") {
                 std::fs::write(&dest, format!("{}\n\n@CHAMMO.md\n", cur.trim_end()))?;
             }
@@ -111,7 +120,7 @@ pub fn refresh(dir: &Path) -> std::io::Result<()> {
         if let Some(p) = dest.parent() {
             std::fs::create_dir_all(p)?;
         }
-        std::fs::write(&dest, f.body)?;
+        std::fs::write(&dest, body_for(f))?;
         #[cfg(unix)]
         if f.exec {
             use std::os::unix::fs::PermissionsExt;
@@ -234,10 +243,24 @@ mod tests {
         assert_eq!(v["statusLine"]["command"], "/Users/me/demo-data/tools/statusline");
         // 원래 있던 훅은 그대로
         assert!(v["hooks"]["UserPromptSubmit"].is_array());
+        // 파이썬 도구가 UTF-8 로 읽고 쓰게 — 윈도우 기본(cp949)이면 한글 출력·JSON 이 깨진다. 맥은 원래 UTF-8
+        assert_eq!(v["env"]["PYTHONUTF8"], "1");
         // 두 번 불러도 같다
         pin_data_dir(&d, "/Users/me/demo-data").unwrap();
         let again: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join(".claude/settings.json")).unwrap()).unwrap();
         assert_eq!(again, v);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 윈도우_상태줄_경로는_슬래시로() {
+        // bash 가 C:\Users\me/.chammo\tools 의 \U·\t 를 먹어 경로가 깨졌다 — / 로만 적는다
+        let d = temp("env-win");
+        install(&d, false).unwrap();
+        pin_data_dir(&d, r"C:\Users\me/.chammo").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join(".claude/settings.json")).unwrap()).unwrap();
+        assert_eq!(v["statusLine"]["command"], "C:/Users/me/.chammo/tools/statusline");
+        assert_eq!(v["env"]["CHAMMO_HOME"], "C:/Users/me/.chammo");
         let _ = std::fs::remove_dir_all(&d);
     }
 

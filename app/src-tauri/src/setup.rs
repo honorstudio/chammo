@@ -1,13 +1,30 @@
 //! 환경 점검 — 처음 켠 맥에 Claude Code·로그인·git(Xcode 명령줄 도구)·gh 가 있는지.
 //! 판단(글자 → 결과)은 순수 함수로 두고 테스트한다. 명령은 몇 초 안에 안 끝나면 없는 것으로 친다(설정 화면이 멈추지 않게)
 use serde::Serialize;
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
 use std::time::Duration;
 
 /// claude 를 찾는 순서: 공식 설치본(~/.local/bin) → 앱이 받아 둔 대화형 셸 PATH → brew(Apple 칩·인텔) 자리.
 /// 공식 설치본이 먼저인 건 PATH 앞쪽에 옛 brew claude 가 있을 수 있어서(claude.rs resolve_claude_bin)
 pub fn pick_bin(name: &str, home: &str, path_env: &str, exists: impl Fn(&str) -> bool) -> Option<String> {
+    pick_bin_for(name, home, path_env, cfg!(windows), exists)
+}
+
+/// 실행 파일 찾기 — 윈도우는 PATH 를 ; 로 가르고 .exe·.cmd 를 붙여 본다(C:\… 의 : 에서 잘못 쪼개졌다, 윈도우판 3단계)
+pub fn pick_bin_for(name: &str, home: &str, path_env: &str, win: bool, exists: impl Fn(&str) -> bool) -> Option<String> {
     let mut cands: Vec<String> = Vec::new();
+    if win {
+        let names = [format!("{name}.exe"), format!("{name}.cmd"), name.to_string()];
+        if name == "claude" {
+            cands.push(format!("{home}\\.local\\bin\\claude.exe"));
+        }
+        for d in path_env.split(';').filter(|d| !d.trim().is_empty()) {
+            for n in &names {
+                cands.push(format!("{}\\{n}", d.trim_end_matches(['\\', '/'])));
+            }
+        }
+        return cands.into_iter().find(|c| exists(c));
+    }
     if name == "claude" {
         cands.push(format!("{home}/.local/bin/claude"));
     }
@@ -17,7 +34,6 @@ pub fn pick_bin(name: &str, home: &str, path_env: &str, exists: impl Fn(&str) ->
     cands.into_iter().find(|c| exists(c))
 }
 
-/// `claude auth status` 출력 → 로그인했나. JSON(`"loggedIn": true`)이 기본, 옛 글자 출력도 받는다
 pub fn parse_auth_status(out: &str) -> bool {
     if let Some(v) = out.find('{').and_then(|i| serde_json::from_str::<serde_json::Value>(&out[i..]).ok()) {
         return v.get("loggedIn").and_then(|b| b.as_bool()).unwrap_or(false);
@@ -43,7 +59,7 @@ pub fn parse_gh_user(out: &str) -> Option<String> {
 
 /// 명령을 돌리되 secs 안에 안 끝나면 None(프로세스는 버린다)
 fn run_for(bin: &str, args: &[&str], secs: u64) -> Option<Output> {
-    let child = Command::new(bin).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().ok()?;
+    let child = crate::platform::command(bin).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().ok()?;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _ = tx.send(child.wait_with_output());
@@ -101,7 +117,7 @@ pub async fn check_env() -> EnvCheck {
 pub async fn tts_test(command: String, text: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let argv = crate::config::tts_argv(&crate::config::home(), &command, &text, |p| std::path::Path::new(p).is_file());
-        let status = Command::new(&argv[0]).args(&argv[1..]).status().map_err(|e| format!("{}: {e}", argv[0]))?;
+        let status = crate::platform::command(&argv[0]).args(&argv[1..]).status().map_err(|e| format!("{}: {e}", argv[0]))?;
         if status.success() { Ok(()) } else { Err(format!("{}: {status}", argv[0])) }
     })
     .await
@@ -113,20 +129,33 @@ pub async fn tts_test(command: String, text: String) -> Result<(), String> {
 pub fn trusted_in(claude_json: &str, dir: &str) -> bool {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(claude_json) else { return false };
     let Some(projects) = v.get("projects").and_then(|p| p.as_object()) else { return false };
-    let mut cur = Some(std::path::Path::new(dir.trim_end_matches('/')));
-    while let Some(p) = cur {
-        let key = p.to_string_lossy();
-        if projects.get(key.as_ref()).and_then(|e| e.get("hasTrustDialogAccepted")).and_then(|t| t.as_bool()) == Some(true) {
+    // 윈도우는 키가 C:/… 나 C:\… 로 적히고 대소문자를 안 가린다 → 슬래시·소문자로 맞춰 비교
+    let drive = |s: &str| s.as_bytes().get(1) == Some(&b':');
+    let norm = |s: &str| {
+        let t = s.replace('\\', "/");
+        let t = t.trim_end_matches('/').to_string();
+        if drive(&t) { t.to_lowercase() } else { t }
+    };
+    let accepted: Vec<String> = projects
+        .iter()
+        .filter(|(_, e)| e.get("hasTrustDialogAccepted").and_then(|t| t.as_bool()) == Some(true))
+        .map(|(k, _)| norm(k))
+        .collect();
+    let mut cur = norm(dir);
+    loop {
+        if !cur.is_empty() && accepted.iter().any(|k| *k == cur) {
             return true;
         }
-        cur = p.parent().filter(|q| !q.as_os_str().is_empty());
+        match cur.rfind('/') {
+            Some(i) if i > 0 => cur.truncate(i),
+            _ => return false,
+        }
     }
-    false
 }
 
 #[tauri::command]
 pub fn claude_trusted(dir: String) -> bool {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = crate::platform::home();
     let text = std::fs::read_to_string(format!("{home}/.claude.json")).unwrap_or_default();
     trusted_in(&text, &crate::config::expand(&home, &dir))
 }
@@ -140,18 +169,34 @@ fn as_quote(s: &str) -> String {
 /// async 라 창이 떠 있는 동안 앱이 멈추지 않는다. start 가 있는 폴더면 거기서 연다
 #[tauri::command]
 pub async fn pick_folder(prompt: String, start: Option<String>) -> Result<Option<String>, String> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let mut script = format!("POSIX path of (choose folder with prompt {}", as_quote(&prompt));
-    if let Some(dir) = start.map(|d| crate::config::expand(&home, &d)).filter(|d| std::path::Path::new(d).is_dir()) {
-        script += &format!(" default location (POSIX file {})", as_quote(&dir));
+    let home = crate::platform::home();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let start = start.map(|d| crate::config::expand(&home, &d)).filter(|d| std::path::Path::new(d).is_dir());
+        let script = crate::platform::folder_dialog_script(&prompt, start.as_deref());
+        let out = crate::platform::command("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand", &crate::platform::encode_ps(&script)])
+            .creation_flags(0x0800_0000)
+            .output()
+            .map_err(|e| e.to_string())?;
+        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        Ok((!path.is_empty()).then_some(path))
     }
-    script += ")";
-    let out = std::process::Command::new("/usr/bin/osascript").args(["-e", &script]).output().map_err(|e| e.to_string())?;
-    if out.status.success() {
-        return Ok(Some(String::from_utf8_lossy(&out.stdout).trim().to_string()));
+    #[cfg(not(windows))]
+    {
+        let mut script = format!("POSIX path of (choose folder with prompt {}", as_quote(&prompt));
+        if let Some(dir) = start.map(|d| crate::config::expand(&home, &d)).filter(|d| std::path::Path::new(d).is_dir()) {
+            script += &format!(" default location (POSIX file {})", as_quote(&dir));
+        }
+        script += ")";
+        let out = crate::platform::command("/usr/bin/osascript").args(["-e", &script]).output().map_err(|e| e.to_string())?;
+        if out.status.success() {
+            return Ok(Some(String::from_utf8_lossy(&out.stdout).trim().to_string()));
+        }
+        let err = String::from_utf8_lossy(&out.stderr);
+        if err.contains("-128") { Ok(None) } else { Err(err.trim().to_string()) } // -128 = 사용자가 취소
     }
-    let err = String::from_utf8_lossy(&out.stderr);
-    if err.contains("-128") { Ok(None) } else { Err(err.trim().to_string()) } // -128 = 사용자가 취소
 }
 
 #[cfg(test)]
@@ -211,4 +256,24 @@ mod tests {
         assert!(!trusted_in(j, "/u/other"));
         assert!(!trusted_in("깨짐", "/u/dev"));
     }
+    #[test]
+    fn 윈도우_믿음은_슬래시와_대소문자_무관() {
+        let j = r#"{"projects":{"C:/Users/me/dev":{"hasTrustDialogAccepted":true}}}"#;
+        assert!(trusted_in(j, r"C:\Users\me/dev"));
+        assert!(trusted_in(j, r"c:\users\me\dev\shop\"));
+        assert!(!trusted_in(j, r"C:\Users\me"));
+        let j2 = r#"{"projects":{"C:\\Users\\me\\dev":{"hasTrustDialogAccepted":true}}}"#;
+        assert!(trusted_in(j2, "C:/Users/me/dev/hq"));
+    }
+    #[test]
+    fn 윈도우_path_는_세미콜론과_exe() {
+        let path = r"C:\Windows\system32;C:\Users\a\AppData\Local\Microsoft\WinGet\Links;";
+        let found = pick_bin_for("claude", r"C:\Users\a", path, true, |p| p == r"C:\Users\a\AppData\Local\Microsoft\WinGet\Links\claude.exe");
+        assert_eq!(found.as_deref(), Some(r"C:\Users\a\AppData\Local\Microsoft\WinGet\Links\claude.exe"));
+        let local = pick_bin_for("claude", r"C:\Users\a", path, true, |p| p == r"C:\Users\a\.local\bin\claude.exe");
+        assert_eq!(local.as_deref(), Some(r"C:\Users\a\.local\bin\claude.exe"));
+        let npm = pick_bin_for("gh", r"C:\Users\a", r"C:\x\npm", true, |p| p == r"C:\x\npm\gh.cmd");
+        assert_eq!(npm.as_deref(), Some(r"C:\x\npm\gh.cmd"));
+    }
+
 }

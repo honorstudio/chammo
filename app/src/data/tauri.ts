@@ -1,6 +1,7 @@
 // Rust 커맨드 호출을 한 곳에 모은다. UI 는 이 파일만 알고, invoke 이름은 여기서만 쓴다.
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type { Features } from '../domain/config';
+import { fwd } from '../domain/paths';
 
 export type AppEnv = {
   home: string;
@@ -17,7 +18,15 @@ export type AppEnv = {
   dataDir: string;
 };
 
-export const getAppEnv = () => invoke<AppEnv>('app_env');
+/** 경로는 fwd 로 — 윈도우는 C:\Users\me/.chammo/hq 처럼 섞여 와 claude agents 의 cwd 와 안 맞았다 */
+export const getAppEnv = () => invoke<AppEnv>('app_env').then((e) => ({
+  ...e,
+  home: fwd(e.home),
+  devRoot: fwd(e.devRoot),
+  extraProjects: e.extraProjects.map(fwd),
+  orchestratorCwd: fwd(e.orchestratorCwd),
+  dataDir: fwd(e.dataDir),
+}));
 
 // ── 설정(config.json, Rust config.rs). 화면에 비추는 판단은 domain/config.ts ──
 export type { Features };
@@ -33,6 +42,10 @@ export type Config = {
   memoDir: string;
   features: Features;
   setupDone: boolean;
+  /** 말하기 키 — '' 끔 · 'fn' 지구본 · 'right-option' 오른쪽 ⌥ */
+  talkKey?: string;
+  /** 앱 밖에서도 말하기 키를 본다(손쉬운 사용 권한) */
+  talkAnywhere?: boolean;
 };
 /** 설정 읽기 — 새 설치면 기본값(GitHub 아이디는 gh 로 채워 본다) */
 export const readConfig = () => invoke<Config>('read_config');
@@ -91,6 +104,14 @@ export function openPty(
 export const writePty = (id: number, data: string) => invoke<void>('pty_write', { id, data });
 export const resizePty = (id: number, cols: number, rows: number) => invoke<void>('pty_resize', { id, cols, rows });
 export const closePty = (id: number) => invoke<void>('pty_close', { id });
+/** 지구본(fn) 키 말하기가 스페이스를 흘릴 pty — 마지막으로 포커스를 받은 입력 창 */
+export const pttTarget = (id: number | null) => invoke<void>('ptt_target', { id });
+/** 지구본 키 말하기가 끝난 pty 를 받는다(한 번만 등록 — 여러 창은 TerminalPane 이 나눠 듣는다) */
+export const pttWatch = (cb: (ptyId: number) => void) => {
+  const ch = new Channel<number>();
+  ch.onmessage = cb;
+  return invoke<void>('ptt_watch', { onStop: ch });
+};
 
 /** 터미널 대화형 세션을 끝내고 같은 대화를 백그라운드로 이어간다. 돌려주는 건 `claude --bg` 출력 */
 export const adoptSession = (pid: number, sessionId: string, cwd: string, name: string) =>
@@ -102,6 +123,8 @@ export const newSession = (cwd: string, name: string, worktree?: string) =>
 
 /** 백그라운드 세션을 끈다. 대화는 남는다 */
 export const stopSession = (id: string) => invoke<string>('stop_session', { id });
+/** 세션을 끄고 목록에서도 지운다(claude stop + rm). 대화 기록 파일은 남는다 */
+export const removeSession = (id: string) => invoke<string>('remove_session', { id });
 
 /** 참모 작업 기록(tasks.jsonl) 원문 */
 export const readTasks = () => invoke<string>('read_tasks');
@@ -227,3 +250,18 @@ export const loadEnv = (pids: number[]) => invoke<string>('load_env', { pids });
 /** 주인 없는 프로세스 끄기 — Claude 가 띄운 것만(Rust 가 확인). 끈 프로세스 수 */
 export const loadKill = (pid: number) => invoke<number>('load_kill', { pid });
 export const loadSave = (json: string) => invoke<void>('load_save', { json });
+
+/** 채팅 보기용 대화 기록 이어 읽기 — from 을 안 주면 끝 1MB 부터. reset 이면 처음부터 다시 그린다 */
+export type TranscriptChunk = { text: string; next: number; reset: boolean };
+export const readTranscript = (sessionId: string, from?: number) =>
+  invoke<TranscriptChunk>('read_transcript', { sessionId, from: from ?? null });
+
+/** 세션 할 일 목록(Claude Code TaskCreate) — 다 끝나면 빈 목록 */
+export type SessionTask = { id: string; subject: string; status: string; activeForm?: string };
+export const readSessionTasks = (sessionId: string) => invoke<SessionTask[]>('read_session_tasks', { sessionId });
+
+/** 여러 줄 글을 그 세션 입력칸에 치고 보낸다(스페이스 → 참모). 줄바꿈 = Option+Enter */
+export const sendTextToSession = (id: string, text: string) => invoke<void>('send_text_to_session', { id, text });
+
+/** scripts/show 기록 꼬리 — 세션마다 보여 준 파일(domain/spaceNav shownFiles) */
+export const readShowLog = () => invoke<string>('read_show_log');

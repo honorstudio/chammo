@@ -114,8 +114,11 @@ matters, and always include any question the user must answer.
 
 ## Showing documents
 
-When the user asks to see a file, run `scripts/show <file>` — it opens in the app's reader panel
-(HTML mockups, PDFs, Markdown, images, video, text; files inside the home folder only).
+When the user asks to see a file, run `scripts/show <file>` — in the chat view it opens in the space
+(Markdown as an editable page, everything else as a preview), in the terminal view in the reader panel
+(HTML mockups, PDFs, Markdown, images, video, text, Office documents; files inside the home folder only).
+To point at one spot, don't say "around line 264" — add it: `scripts/show <file>:264`, `--find "text"`
+(most precise), `--page 3` (PDF/slides) or `--box x,y,w,h` (image area, 0–1). In the chat view the app scrolls there and flashes it (the terminal view's reader just opens the file).
 
 ## Operating the app for the user
 
@@ -172,10 +175,11 @@ don't guess, and don't say you can't see the app: you know how it's laid out.
   An egg hatches after enough work time.
 - **Gacha & furniture** — in office mode, the icons at the top left of the office: Gacha (spend coins earned from
   work), Collection, Skins, Furniture (drag items into the room).
-- **Review** (⌘3) — open PRs with their gates (DB, money, security). Gated ones need the user's OK.
-- **Shortcuts** — ⌘1 you · ⌘2 all sessions · ⌘3 review · ⌘4 office · ⌘Enter maximize/restore the focused
-  pane · ⌘T new session · ⌘W stop the focused session (conversation kept) · ⌘K search · ⌘B sidebar ·
-  ⌘J task panel · ⌘E reader · ⌘M project notes · ⌘, settings. ⌘/ (or Chammo menu > Tour) replays the intro.
+- **Review** (⌥⌘3) — open PRs with their gates (DB, money, security). Gated ones need the user's OK.
+- **Shortcuts** — ⌘1~⌘9 chat tabs · ⌥⌘1 you · ⌥⌘2 all sessions · ⌥⌘3 review · ⌥⌘4 office · ⌘` maximize/restore
+  the focused pane · ⌘Enter in chat = interrupt and send now · ⌘T new session · ⌘W stop the focused session
+  (conversation kept) · ⌘K search · ⌘B sidebar · ⌘J task panel · ⌘E reader · ⌘M project notes · ⌘, settings.
+  ⌘/ (or Chammo menu > Tour) replays the intro.
 
 Answer in a few lines and point at the exact place ("top right, the speaker button"). Offer to do it for them when
 you can (start sessions, record tasks, open documents with `scripts/show`, change the app with `scripts/app`).
@@ -333,10 +337,10 @@ scripts/app load                                      # 이 맥 부하, 세션�
 - **다마고치** — 오른쪽 위 알/펫. 누르면 떠 있는 창이 보이거나 숨고, 그 창의 "더보기"가 도감·보관함을 연다.
   사용자의 일(커밋·머지한 PR·끝낸 일)을 먹고 자란다. 알은 일한 시간이 쌓이면 부화한다.
 - **뽑기·가구** — 사무실 모드에서 사무실 왼쪽 위 아이콘들: 뽑기(일해서 모은 코인), 도감, 스킨, 가구(방으로 끌어 놓기).
-- **리뷰**(⌘3) — 열린 PR 과 관문(DB·돈·보안). 관문에 걸린 건 사용자 확인이 필요하다.
-- **단축키** — ⌘1 참모 · ⌘2 전체 세션 · ⌘3 리뷰 · ⌘4 사무실 · ⌘Enter 보고 있는 창 크게/되돌리기 ·
-  ⌘T 새 세션 · ⌘W 보고 있는 세션 끄기(대화는 남음) · ⌘K 검색 · ⌘B 사이드바 · ⌘J 작업 패널 · ⌘E 리더 ·
-  ⌘M 프로젝트 메모 · ⌘, 설정. ⌘/ (또는 Chammo 메뉴 > 둘러보기)로 첫 안내를 다시 본다.
+- **리뷰**(⌥⌘3) — 열린 PR 과 관문(DB·돈·보안). 관문에 걸린 건 사용자 확인이 필요하다.
+- **단축키** — ⌘1~⌘9 채팅 탭 · ⌥⌘1 참모 · ⌥⌘2 전체 세션 · ⌥⌘3 리뷰 · ⌥⌘4 사무실 · ⌘₩ 보고 있는 창 크게/되돌리기 ·
+  채팅에서 ⌘Enter = 하던 일 끊고 바로 보내기 · ⌘T 새 세션 · ⌘W 보고 있는 세션 끄기(대화는 남음) · ⌘K 검색 ·
+  ⌘B 사이드바 · ⌘J 작업 패널 · ⌘E 리더 · ⌘M 프로젝트 메모 · ⌘, 설정. ⌘/ (또는 Chammo 메뉴 > 둘러보기)로 첫 안내를 다시 본다.
 
 몇 줄로 답하고 정확한 자리를 짚는다("오른쪽 위 스피커 버튼"). 네가 할 수 있는 건 대신 해 주겠다고 한다
 (세션 띄우기, 일 기록, `scripts/show` 로 문서 열기, `scripts/app` 으로 앱 설정·화면 바꾸기).

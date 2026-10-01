@@ -1,11 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import { openTarget } from '../data/tauri';
-import { routineStateLabel, scheduleText, type Routine, type RoutineEvent, type RoutineState } from '../domain/routine';
+import { cloudUrl, isCloud, routineStateLabel, scheduleText, type Routine, type RoutineEvent, type RoutineState } from '../domain/routine';
 import { tr } from '../i18n';
 import { MdDoc } from './reader/Reader';
 import { TerminalPane } from './TerminalPane';
 import './reader/reader.css';
+import { attachCommand } from '../domain/termCommand';
 
 type Props = {
   routine: Routine;
@@ -25,8 +26,46 @@ function eventText(e: RoutineEvent): string {
   return `${e.result === 'fail' ? tr('실패', 'Failed') : tr('성공', 'OK')}${e.note ? ` — ${e.note}` : ''}`;
 }
 
-/** 루틴 화면 — 왼쪽 지침서, 오른쪽 지금 도는 세션 + 실행 기록(사용자 2026-09-28: "한쪽에는 지침서, 실제로 돌 땐 그게 보이게") */
-export function RoutinePage({ routine: r, state, liveSession, claudeBin, fontSize, onAction }: Props) {
+/** 루틴 화면 — 로컬(launchd)은 지침서·실행 기록, 클라우드(claude.ai)는 설명과 "열기"만 */
+export function RoutinePage(props: Props) {
+  return isCloud(props.routine) ? <CloudRoutinePage routine={props.routine} /> : <LocalRoutinePage {...props} />;
+}
+
+/** 클라우드 루틴 — 여기서 돌리지 않는다. 실행·일시정지·지우기·기록은 claude.ai 에서(주소를 기본 브라우저로) */
+function CloudRoutinePage({ routine: r }: { routine: Routine }) {
+  const url = cloudUrl(r);
+  return (
+    <div className="routine">
+      <div className="bar">
+        <b>{r.name}</b>
+        <span className="tag rt-cloud">{tr('클라우드', 'Cloud')}</span>
+        <span className="dim">{scheduleText(r.schedule)} · {tr('claude.ai 에서 돌아요', 'Runs on claude.ai')}</span>
+        <span className="sp" />
+        <button className="btn pri" disabled={!url} onClick={() => url && void openTarget('url', url).catch(() => {})}>{tr('열기', 'Open')}</button>
+      </div>
+      <div className="routine-body routine-cloud-body">
+        <section className="routine-doc">
+          <div className="routine-h">{tr('클라우드 루틴', 'Cloud routine')}</div>
+          <dl className="routine-cloud">
+            <dt>{tr('일정', 'Schedule')}</dt>
+            <dd>{scheduleText(r.schedule)}</dd>
+            {r.note && (<><dt>{tr('메모', 'Note')}</dt><dd>{r.note}</dd></>)}
+            <dt>{tr('주소', 'Address')}</dt>
+            <dd className="mono">{url ?? tr('주소가 없거나 https 가 아니에요', 'No https address')}</dd>
+          </dl>
+          <p className="routine-cloud-help dim">
+            {tr('이 루틴은 이 맥이 아니라 claude.ai 클라우드에서 돌아요. 실행·일시정지·지우기와 실행 기록은 "열기"로 claude.ai 에서 보세요. 목록에서만 빼려면 ',
+              'This routine runs in the claude.ai cloud, not on this Mac. Run, pause, delete it and see its runs on claude.ai via "Open". To drop it from this list only: ')}
+            <code>scripts/routine cloud remove {r.name}</code>
+          </p>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+/** 로컬 루틴 화면 — 왼쪽 지침서, 오른쪽 지금 도는 세션 + 실행 기록(사용자 2026-09-28: "한쪽에는 지침서, 실제로 돌 땐 그게 보이게") */
+function LocalRoutinePage({ routine: r, state, liveSession, claudeBin, fontSize, onAction }: Props) {
   const [md, setMd] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sure, setSure] = useState(false);
@@ -58,7 +97,7 @@ export function RoutinePage({ routine: r, state, liveSession, claudeBin, fontSiz
         <section className="routine-side">
           {liveSession && (
             <div className="routine-live">
-              <TerminalPane command={`exec '${claudeBin}' attach ${liveSession}`} title={tr('지금 도는 중', 'Running now')} subtitle={`routine-${r.name}`} fontSize={fontSize} linkBase={r.cwd} />
+              <TerminalPane command={attachCommand(claudeBin, liveSession)} title={tr('지금 도는 중', 'Running now')} subtitle={`routine-${r.name}`} fontSize={fontSize} linkBase={r.cwd} />
             </div>
           )}
           <div className="routine-h">{tr('실행 기록', 'Runs')}</div>

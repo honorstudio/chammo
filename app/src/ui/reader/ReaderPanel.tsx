@@ -21,7 +21,8 @@ export const readerFocused = () => lastReader && !!document.querySelector('.read
  * 자리(웹뷰 좌표)를 Rust 에 알려 준다 — 떼어 낸 창의 탭을 여기 놓았는지 판단용
  */
 /** full = 크게(비서 화면 자리까지 덮는다), 작게 = 작업 패널 옆 폭(사용자 2026-09-28) */
-export function ReaderPanel({ width, onWidth, full, onFull, onClose }: { width: number; onWidth: (w: number) => void; full: boolean; onFull: () => void; onClose: () => void }) {
+/** fill = 스페이스 모드 왼쪽 칸을 채운다(끌어 넓히기·크게 버튼 없음) */
+export function ReaderPanel({ width, onWidth, full, onFull, onClose, fill, send, sendTo }: { width: number; onWidth: (w: number) => void; full: boolean; onFull: () => void; onClose: () => void; fill?: boolean; send?: (text: string) => Promise<void>; sendTo?: string }) {
   const box = useRef<HTMLElement>(null);
   // 무엇을 마지막으로 만졌나 — 리더 안을 누르면 리더, 밖(터미널 등)을 누르거나 포커스가 밖으로 가면 해제.
   // 문서 프레임(다른 출처) 안 클릭은 부모에 pointerdown 이 안 온다 → 창이 blur 되고 포커스가 프레임이면 리더
@@ -45,11 +46,11 @@ export function ReaderPanel({ width, onWidth, full, onFull, onClose }: { width: 
     return () => { ro.disconnect(); window.removeEventListener('resize', report); void invoke('reader_dock_rect', { rect: null }).catch(() => {}); };
   }, [full]);
   return (
-    <aside className={`reader-panel ${full ? 'full' : ''}`} ref={box} tabIndex={-1} style={full ? undefined : { flex: `0 0 ${width}px`, width }}>
-      {!full && <Grip width={width} onWidth={onWidth} min={320} max={1400} />}
-      <ReaderView surface="dock" actions={<>
-        <button onClick={onFull} title={full ? tr('작게 — 작업 패널 옆으로 (⌘⇧E)', 'Smaller — next to the task panel (⌘⇧E)') : tr('크게 — 가운데 화면 전체로 (⌘⇧E)', 'Larger — fill the center (⌘⇧E)')} aria-label={full ? tr('작게', 'Smaller') : tr('크게', 'Larger')}>{full ? <IconRestore /> : <IconMaximize />}</button>
-        <button onClick={onClose} title={tr('리더 패널 닫기 (⌘E)', 'Close reader panel (⌘E)')} aria-label={tr('닫기', 'Close')}><IconClose /></button>
+    <aside className={`reader-panel ${fill ? 'fill' : full ? 'full' : ''}`} ref={box} tabIndex={-1} style={full || fill ? undefined : { flex: `0 0 ${width}px`, width }}>
+      {!full && !fill && <Grip width={width} onWidth={onWidth} min={320} max={1400} />}
+      <ReaderView surface="dock" send={send} sendTo={sendTo} actions={<>
+        {!fill && <button onClick={onFull} title={full ? tr('작게 — 작업 패널 옆으로 (⌘⇧E)', 'Smaller — next to the task panel (⌘⇧E)') : tr('크게 — 가운데 화면 전체로 (⌘⇧E)', 'Larger — fill the center (⌘⇧E)')} aria-label={full ? tr('작게', 'Smaller') : tr('크게', 'Larger')}>{full ? <IconRestore /> : <IconMaximize />}</button>}
+        <button onClick={onClose} title={fill ? tr('스페이스 모드 끄기', 'Turn off space mode') : tr('리더 패널 닫기 (⌘E)', 'Close reader panel (⌘E)')} aria-label={tr('닫기', 'Close')}><IconClose /></button>
       </>} />
     </aside>
   );

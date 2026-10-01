@@ -88,15 +88,20 @@ Chammo does not log in to anything; it uses the `claude` login already on your M
 
 | Keys | What |
 |---|---|
-| ⌘1 · ⌘2 · ⌘3 · ⌘4 | Chief of staff · all sessions · review · office |
-| ⌘Enter | Maximize / restore the focused pane |
+| ⌘1 – ⌘9 | Chat view (default): switch chat tabs (assistants) |
+| ⌥⌘1 · ⌥⌘2 · ⌥⌘3 · ⌥⌘4 | Chief of staff · all sessions · review · office (⌘1–4 with the chat view off) |
+| ⌘` | Maximize / restore the focused pane |
+| ⌘Enter | Chat: interrupt and send now |
+| ⌘F | Find in document |
 | ⌘T · ⌘W | New session · stop the focused session (the conversation is kept) |
 | ⌘K · ⌘B · ⌘J | Project search · sidebar · task panel |
 | ⌘E · ⌘⇧E | Reader panel · reader full size |
 | ⌘M | Notes for the focused project |
 | ⌘, | Settings |
 
-Each screen remembers the pane you last clicked, so switching with ⌘1/⌘2 or jumping to a session from a notification leaves that pane ready to type in.
+**Talk key** (Settings > Talk key, off by default): hold the key and speak to dictate into the session input you are looking at. Pick Globe (fn) or right ⌥; pressing it together with another key does not count. If you pick Globe, set macOS "Press 🌐 key to" to "Do Nothing". Accessibility permission is asked only when you turn on "Also while using other apps". It needs Claude Code voice input (`/voice`) turned on, and if the dictated text is still unsent a few seconds after you stop talking, the chat view sends it.
+
+Each chat tab remembers the screen you were on, and switching tabs or jumping to a session from a notification leaves its input ready to type in.
 
 ## How it works
 
@@ -162,6 +167,6 @@ Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for
 
 [AGPL-3.0](LICENSE) © 2026 Honor Studio
 
-Third-party: the terminal's Hangul font `app/public/fonts/ChammoHangul.woff2` is a modified (Hangul-only) version of NAVER [D2Coding](https://github.com/naver/d2codingfont), renamed as the SIL Open Font License 1.1 requires — see [`app/public/fonts/OFL.txt`](app/public/fonts/OFL.txt). The optional Supertonic voice is downloaded to your Mac only when you pick it: the `supertonic` package (MIT) and the Supertone model under the [OpenRAIL-M license](https://huggingface.co/Supertone/supertonic-3) with its use restrictions. Libraries (Tauri, React, xterm.js, Playwright MCP, …) keep their own licenses (MIT / Apache-2.0); see each package.
+Third-party: the terminal's Hangul font `app/public/fonts/ChammoHangul.woff2` is a modified (Hangul-only) version of NAVER [D2Coding](https://github.com/naver/d2codingfont), renamed as the SIL Open Font License 1.1 requires — see [`app/public/fonts/OFL.txt`](app/public/fonts/OFL.txt). The optional Supertonic voice is downloaded to your Mac only when you pick it: the `supertonic` package (MIT) and the Supertone model under the [OpenRAIL-M license](https://huggingface.co/Supertone/supertonic-3) with its use restrictions. Libraries (Tauri, React, xterm.js, BlockNote, pdf.js, Playwright MCP, …) keep their own licenses (MIT / Apache-2.0 / MPL-2.0); see each package.
 
 Chammo is an independent project. It is not affiliated with, endorsed by, or sponsored by Anthropic. Claude and Claude Code are trademarks of Anthropic.

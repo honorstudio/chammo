@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { buildInbox, freshItems, popoverOpen, LOGIN_STALL, replyBlocked, RESUME_MSG } from './inbox';
+import { bornAfter, buildInbox, findTarget, freshItems, popoverOpen, LOGIN_STALL, replyBlocked, RESUME_MSG } from './inbox';
 import type { Session } from './session';
 import type { ActivityStatus } from './status';
 import type { TaskEvent } from './tasks';
@@ -127,6 +127,16 @@ describe('freshItems — 새로 생긴 결정만 알림(토스트·macOS 알림)
   });
 });
 
+describe('bornAfter — 앱을 켜기 전에 생긴 결정은 알림으로 다시 안 띄운다(윈도우 설치판: 켤 때마다 옛 결정이 토스트로 줄줄이)', () => {
+  const at = (ts: string) => ({ key: ts, kind: 'decide' as const, project: 'p', where: '', text: '?', ts });
+  const start = Date.parse('2026-10-01T01:40:00+09:00');
+  it('켠 뒤 것만', () => {
+    expect(bornAfter(at('2026-10-01T01:39:00+09:00'), start)).toBe(false);
+    expect(bornAfter(at('2026-10-01T01:41:00+09:00'), start)).toBe(true);
+  });
+  it('시각을 못 읽으면 알린다(예전처럼)', () => expect(bornAfter(at('?'), start)).toBe(true));
+});
+
 describe('popoverOpen — 결정이 들어오면 펼치고, 내가 닫으면(나중에) 다음 새 결정까지 접어 둔다', () => {
   const it1 = { key: 'a', kind: 'ask' as const, project: 'todo-api', where: '', text: '?', ts: '1' };
   const it2 = { ...it1, key: 'b' };
@@ -146,5 +156,19 @@ describe('영어 모드', () => {
     const items = buildInbox([act(x, 'blocked')], [], new Set(), [x], () => true);
     expect(items[0]?.text).toBe('Waiting on a prompt or choice — open it and pick one');
     expect(replyBlocked({ key: 'k', kind: 'ask', project: 'p', where: '', text: '', ts: '', target: 'nope' }, [x])).toBe('Session not found — if it stopped, resume it first');
+  });
+});
+
+describe('findTarget — 기록의 대상으로 지금 세션 찾기', () => {
+  const live = [{ ...s('aa11bb22', 'project-a'), name: 'oms', sessionId: 'aa11bb22-aaaa' }, { ...s('cc33dd44', 'hello-docs'), name: 'notes' }];
+  it('id·이름·전체 sessionId', () => {
+    expect(findTarget(live, 'aa11bb22')?.id).toBe('aa11bb22');
+    expect(findTarget(live, 'oms')?.id).toBe('aa11bb22');
+    expect(findTarget(live, 'aa11bb22-aaaa')?.id).toBe('aa11bb22');
+  });
+  it('"이름 [id 앞자리]" — id 가 살아 있으면 그 세션, 다시 켜져 id 가 바뀌었으면 이름으로(잡은 표시가 사라졌다, 2026-09-30)', () => {
+    expect(findTarget(live, 'oms [aa11bb]')?.id).toBe('aa11bb22');
+    expect(findTarget(live, 'oms [ee5566]')?.id).toBe('aa11bb22');
+    expect(findTarget(live, 'gone [ee5566]')).toBeUndefined();
   });
 });

@@ -6,21 +6,47 @@ import { findPathsWrapped, resolveLink } from '../domain/links';
 import '@xterm/xterm/css/xterm.css';
 import { imeStep, normalizeInput, yieldsToXterm } from '../domain/imeBridge';
 import { macKeySequence, ctrlLetter } from '../domain/macKeys';
-import { copyKeyAction, parseOsc52 } from '../domain/clipboard';
+import { copyKeyAction, parseOsc52, winTermKey } from '../domain/clipboard';
+import { IS_WIN } from '../domain/reader';
+import { modKey } from '../domain/keys';
 import { resizeAfterOpen } from '../domain/ptySize';
 import { followLink } from './followLink';
-import { closePty, imeDebugMode, imeLog, openPty, openTarget, resizePty, writeClipboard, writePty } from '../data/tauri';
+import { closePty, imeDebugMode, imeLog, openPty, openTarget, pttTarget, pttWatch, resizePty, writeClipboard, writePty } from '../data/tauri';
 import { currentContrast, currentTheme, darkQuery } from './termTheme';
 import { IconNote } from './Icons';
 import { DROP_EVENT } from './fileDrop';
 import { tr } from '../i18n';
 
+// 지구본 키 말하기 끝 알림 — Rust 채널은 하나라 여기서 창들에 나눠 준다
+const pttListeners = new Set<(ptyId: number) => void>();
+let pttWatching = false;
+function onPttStop(cb: (ptyId: number) => void) {
+  pttListeners.add(cb);
+  if (!pttWatching) { pttWatching = true; void pttWatch((id) => pttListeners.forEach((f) => f(id))).catch(() => { pttWatching = false; }); }
+  return () => { pttListeners.delete(cb); };
+}
+
+/** 화면에 붙은 터미널 — ⌘A 가 보고 있는 터미널 하나만 전체 선택하게(사용자 2026-09-29) */
+const TERMS = new WeakMap<Element, Terminal>();
+/** from 이 들어 있는 터미널을 전체 선택. 터미널 안이 아니면 false */
+export function selectAllTerminalAt(from: Element | null): boolean {
+  for (let el = from; el; el = el.parentElement) {
+    const t = TERMS.get(el);
+    if (t) { t.selectAll(); return true; }
+  }
+  return false;
+}
+
 // 아이콘(Nerd Font 글리프: 상태줄 파워라인 등)은 맥에 깔린 Meslo Nerd Font, 한글은 번들한 Chammo Hangul(D2Coding 한글 수정판), 나머지는 Menlo.
+// 윈도우는 Menlo 가 없어 Cascadia Mono·Consolas — 없으면 한글 윈도우 기본 고정폭(굴림체)으로 넘어가 줄이 겹치고 \ 가 ₩ 로 보였다(윈도우판)
 // 폰트는 main.tsx 에서 그리기 전에 미리 불러온다 — 늦게 오면 xterm 이 칸 폭을 잘못 잰다
 export const TERM_FONT =
-  '"MesloLGSDZ Nerd Font Mono", "MesloLGS NF", "MesloLGLDZ Nerd Font Mono", "Chammo Hangul", Menlo, "Apple SD Gothic Neo", monospace';
+  '"MesloLGSDZ Nerd Font Mono", "MesloLGS NF", "MesloLGLDZ Nerd Font Mono", "Chammo Hangul", Menlo, "Cascadia Mono", Consolas, "Apple SD Gothic Neo", monospace';
 
-export type PaneApi = { write: (data: string) => void; focus: () => void };
+/** write = 입력칸에 넣고 터미널에 포커스, raw = 포커스는 그대로 두고 넣기(채팅 입력칸이 보낼 때),
+ *  claimPtt = 지구본 키 말하기를 이 창으로(채팅 입력칸에 포커스가 가면 터미널이 포커스를 안 받아서),
+ *  screen = 지금 보이는 줄들 + 커서(칸, 줄) — 채팅 판이 입력칸 글을 읽는다 */
+export type PaneApi = { write: (data: string) => void; raw: (data: string) => void; focus: () => void; claimPtt: () => void; screen: () => { lines: string[]; cursor: [number, number] } };
 
 type Props = {
   /** pty 에서 돌릴 셸 명령. `exec '<claude>' attach <id>` 처럼 절대 경로로 */
@@ -46,15 +72,22 @@ type Props = {
   onNoteClick?: () => void;
   /** 터미널 위에 띄우는 판(메모) */
   overlay?: ReactNode;
+  /** 이 창에서 지구본 키 말하기가 끝났을 때(녹음이 켜졌던 경우만) */
+  onVoiceStop?: () => void;
   /** 이 창을 밖에서 다루는 손잡이 — 입력칸에 글자 넣기(메모 → 세션에 보내기)·포커스 되돌리기(메모판 닫을 때). 창이 닫히면 null */
   inject?: (api: PaneApi | null) => void;
 };
 
-export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize, readOnly, onHeadClick, headDrag, linkBase, home, onFocus, note, onNoteClick, overlay, inject }: Props) {
+export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize, readOnly, onHeadClick, headDrag, linkBase, home, onFocus, note, onNoteClick, overlay, inject, onVoiceStop }: Props) {
+  const voiceRef = useRef(onVoiceStop);
+  voiceRef.current = onVoiceStop;
   const focusRef = useRef(onFocus);
   focusRef.current = onFocus;
   const injectRef = useRef(inject);
   injectRef.current = inject;
+  // 채팅 판 등이 덮여 있으면 끌어 놓은 파일을 넣고도 포커스는 그쪽 입력칸에 둔다(숨은 터미널로 타자가 새지 않게)
+  const covered = useRef(false);
+  covered.current = !!overlay;
   const host = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
   // 글자 크기만 바꿀 때 터미널을 다시 만들지 않도록 인스턴스를 들고 있는다
@@ -105,7 +138,7 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
       linkHandler: {
         allowNonHttpProtocols: true,
         activate: (e, text) => {
-          if (e.metaKey) openLink(text);
+          if (modKey(e, IS_WIN)) openLink(text);
         },
       },
     });
@@ -140,7 +173,7 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
           text: m.text,
           range: { start: { x: cell(m.from.row, m.from.col), y: m.from.row + 1 }, end: { x: cell(m.to.row, m.to.col), y: m.to.row + 1 } },
           decorations: { underline: true, pointerCursor: true },
-          activate: (e: MouseEvent) => { if (e.metaKey) openLink(m.text); },
+          activate: (e: MouseEvent) => { if (modKey(e, IS_WIN)) openLink(m.text); },
         })));
       },
     });
@@ -157,7 +190,13 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
       if (id != null) void writePty(id, d);
     };
     term.onData((d) => { imeTrace?.('xterm', { d }); write(d); });
-    injectRef.current?.({ write: (d) => { write(d); term.focus(); }, focus: () => term.focus() });
+    injectRef.current?.({ write: (d) => { write(d); term.focus(); }, raw: write, focus: () => term.focus(), claimPtt: () => { if (!readOnly && id != null) void pttTarget(id); },
+      screen: () => {
+        const b = term.buffer.active;
+        const lines: string[] = [];
+        for (let y = 0; y < term.rows; y++) lines.push(b.getLine(b.baseY + y)?.translateToString(true) ?? '');
+        return { lines, cursor: [b.cursorX, b.cursorY] };
+      } });
     // Claude 화면에서 드래그해 선택하면 Claude 가 OSC 52 로 "클립보드에 넣어라"를 보낸다 (domain/clipboard)
     const osc52 = term.parser.registerOscHandler(52, (data) => {
       const text = parseOsc52(data);
@@ -165,6 +204,13 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
       return true;
     });
     term.attachCustomKeyEventHandler((e) => {
+      const win = IS_WIN ? winTermKey(e, term.hasSelection()) : null;
+      if (win === 'paste') return false; // 웹뷰가 붙여넣는다(xterm 이 ^V 를 보내지 않게만)
+      if (win) {
+        e.preventDefault();
+        if (win === 'copy' && e.type === 'keydown') { void writeClipboard(term.getSelection()).catch(() => {}); term.clearSelection(); }
+        return false;
+      }
       const copy = copyKeyAction(e, term.hasSelection());
       if (copy) {
         // 삼키지 않고 편집 메뉴로 넘기면 복사할 게 없어서 삑 소리가 난다
@@ -180,15 +226,18 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
       }
       return false; // keydown·keyup 둘 다 xterm 에 안 넘긴다
     });
+    const offPtt = readOnly ? () => {} : onPttStop((n) => { if (n === id) voiceRef.current?.(); });
     const detachIme = readOnly ? () => {} : installImeBridge(term, (d) => { imeTrace?.('bridge', { d }); write(d); });
     // 파일을 끌어다 놓으면(ui/fileDrop) 붙여넣기처럼 — Claude 가 붙여넣은 경로를 이미지로 읽는다
     const onDrop = (e: Event) => {
       term.paste((e as CustomEvent<string>).detail);
-      term.focus();
+      if (!covered.current) term.focus();
     };
     const box = root.current;
     if (!readOnly) box?.addEventListener(DROP_EVENT, onDrop);
-    const onTermFocus = () => focusRef.current?.();
+    TERMS.set(el, term);
+    // 지구본 키 말하기(ptt)는 마지막으로 포커스를 받은 입력 창에 쓴다
+    const onTermFocus = () => { focusRef.current?.(); if (!readOnly && id != null) void pttTarget(id); };
     term.textarea?.addEventListener('focus', onTermFocus);
     // macOS 다크/라이트가 바뀌면 터미널 색도 바로 따라간다
     const mq = darkQuery();
@@ -201,6 +250,7 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
     void openPty(command, cwd, cols, rows, (bytes) => term.write(bytes)).then((n) => {
       if (disposed) { void closePty(n); return; }
       id = n;
+      if (!readOnly && document.activeElement === term.textarea) void pttTarget(n);
       // 여는 사이 레이아웃이 자리 잡으며 크기가 바뀌었으면(앱을 막 켰을 때) 그 크기를 지금 알린다 — 안 그러면 버려진다
       fit.fit();
       const next = resizeAfterOpen({ cols, rows }, { cols: term.cols, rows: term.rows });
@@ -241,10 +291,12 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
       ro.disconnect();
       document.fonts.removeEventListener('loadingdone', remeasure);
       detachIme();
+      offPtt();
       box?.removeEventListener(DROP_EVENT, onDrop);
       mq.removeEventListener('change', onScheme);
       term.textarea?.removeEventListener('focus', onTermFocus);
       if (id != null) void closePty(id);
+      TERMS.delete(el);
       term.dispose();
     };
   }, [command, cwd, readOnly, linkBase, home, epoch]);

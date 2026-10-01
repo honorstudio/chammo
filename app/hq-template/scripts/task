@@ -1,5 +1,11 @@
-#!/usr/bin/env python3
-"""Chammo task log — record what you delegate so the app's task panel shows it.
+#!/bin/sh
+''':'
+# sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
+':'''
+__doc__ = """Chammo task log — record what you delegate so the app's task panel shows it.
 Chammo 작업 기록 — 다른 세션에 시킨 일을 남기면 앱 오른쪽 작업 패널에 카드로 뜬다.
 
   scripts/task send   <session id|name> "<what you asked, one line>"   -> prints the task id
@@ -199,6 +205,23 @@ def target_of(tid):
     return target
 
 
+def open_tasks(target):
+    """Tasks sent to that session with no done yet [(id, title)] — close them before sending the next one"""
+    sent, done = {}, set()
+    try:
+        for l in open(LOG, encoding='utf-8'):
+            try:
+                e = json.loads(l)
+            except ValueError:
+                continue
+            if e.get('type') == 'send' and e.get('target') == target:
+                sent[e['task']] = e.get('title', '')
+            elif e.get('type') == 'done':
+                done.add(e.get('task'))
+    except OSError:
+        pass
+    return [(t, title) for t, title in sent.items() if t not in done]
+
 def retries(tid):
     n = 0
     try:
@@ -262,8 +285,20 @@ def main(a):
     cmd = a[0]
     me = os.environ.get('CLAUDE_CODE_SESSION_ID')
     if cmd == 'send' and len(a) >= 3:
+        left = open_tasks(a[1])
+        if left:
+            print(T(f'{a[1]} 에 안 닫은 일 {len(left)}개 — 끝났으면 먼저 task done(작업 패널에 계속 쌓인다):',
+                    f'{a[1]} has {len(left)} open task(s) — if finished, task done them first (they pile up in the task panel):'), file=sys.stderr)
+            for t, title in left[-3:]:
+                print(f'  {t}  {title[:50]}', file=sys.stderr)
         tid = datetime.datetime.now().strftime('%m%d-%H%M-') + secrets.token_hex(2)
-        append({'ts': now(), 'type': 'send', 'task': tid, 'target': a[1], 'title': a[2], 'effort': effort_for(a[2])[0]})
+        ev = {'ts': now(), 'type': 'send', 'task': tid, 'target': a[1], 'title': a[2], 'effort': effort_for(a[2])[0]}
+        # who asked — the background session id (end of CLAUDE_JOB_DIR); the chat view groups sessions by assistant with it
+        # 시킨 참모 — 채팅 뷰 대시보드가 참모마다 잡은 세션을 가른다
+        who = os.path.basename((os.environ.get('CLAUDE_JOB_DIR') or '').rstrip('/'))
+        if who:
+            ev['from'] = who
+        append(ev)
         print(tid)
         project = project_of(a[1], load_agents()) or a[1]
         if needs_confirm(a[2]):

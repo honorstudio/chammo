@@ -7,10 +7,11 @@ import { speakable } from './voice';
 /** asks: 자르기 전 전체 답으로 판단한 '사용자에게 묻는가'(text 는 화면용으로 잘린 것). say: 음성 모드로 읽을 글(domain/voice).
  *  midTurn: 도구를 부르기 전 중간 멘트("먼저 찾아볼게") — 턴 끝 답이 아니라 읽지·알리지 않는다
  *  turnEnd: 턴 끝 답(stop_reason end_turn) — 세션 상태가 계속 작업 중으로 나와도 답이 끝난 걸 안다(백그라운드 job 참모) */
-export type Line = { ts: string; text: string; asks?: boolean; say?: string; midTurn?: boolean; turnEnd?: boolean; /** 물어볼 때만 — 결정 대기함용 결론·질문(askView) */ ask?: AskView };
+export type Line = { ts: string; text: string; /** 답 끝 200자 — 넘길 때 끝의 질문·요청이 보이게(text 는 앞에서 자른다) */ tail?: string; asks?: boolean; say?: string; midTurn?: boolean; turnEnd?: boolean; /** 물어볼 때만 — 결정 대기함용 결론·질문(askView) */ ask?: AskView };
 /** tool = 마지막으로 부른 도구(사무실 행동·머리 위 한 줄) */
 export type Tool = { name: string; target: string; ts: string };
-export type Activity = { prompt?: Line; reply?: Line; tool?: Tool };
+/** messaged = 마지막으로 SendMessage 를 부른 시각 — 이미 참모에게 보고했는지(참모 기록이 커서 거기선 못 찾았다, 2026-09-30) */
+export type Activity = { prompt?: Line; reply?: Line; tool?: Tool; messaged?: string };
 
 const MAX = 240;
 
@@ -43,13 +44,18 @@ export function summarizeTranscript(tail: string): Activity {
       continue; // 꼬리를 잘라 읽어서 첫 줄은 깨져 있을 수 있다
     }
     const ts = d.timestamp ?? '';
-    if (d.type === 'assistant') { const t = lastTool(d.message?.content, ts); if (t) out.tool = t; }
+    if (d.type === 'assistant') {
+      const t = lastTool(d.message?.content, ts);
+      if (t) out.tool = t;
+      if (Array.isArray(d.message?.content) && d.message!.content.some((b) => (b as { type?: string; name?: string }).type === 'tool_use' && (b as { name?: string }).name === 'SendMessage')) out.messaged = ts;
+    }
     const text = textOf(d.message?.content).trim();
     if (!text) continue;
     if (d.type === 'user' && !d.isMeta && !isInjected(text)) out.prompt = { ts, text: squash(text) };
     else if (d.type === 'assistant') {
       const asks = asksUser(text);
-      out.reply = { ts, text: squash(text), asks, say: speakable(text), ...(asks ? { ask: askView(text) } : {}) };
+      const flat = text.replace(/\s+/g, ' ').trim();
+      out.reply = { ts, text: squash(text), tail: flat.length > 200 ? '…' + flat.slice(-200) : flat, asks, say: speakable(text), ...(asks ? { ask: askView(text) } : {}) };
       if (d.message?.stop_reason === 'tool_use') out.reply.midTurn = true;
       if (d.message?.stop_reason === 'end_turn') out.reply.turnEnd = true;
     }
@@ -84,16 +90,20 @@ function lastTool(content: unknown, ts: string): Tool | null {
   const uses = content.filter((b): b is { type: string; name: string; input?: Record<string, unknown> } => !!b && typeof b === 'object' && (b as { type?: string }).type === 'tool_use');
   const u = uses[uses.length - 1];
   if (!u) return null;
-  const i = u.input ?? {};
+  return { name: u.name, target: toolTarget(u.input), ts };
+}
+
+/** 도구 입력 → 대상 한 토막(파일 이름·명령 앞부분·찾는 말·주소). 채팅 도구 묶음(domain/chat)도 쓴다 */
+export function toolTarget(input: Record<string, unknown> | undefined): string {
+  const i = input ?? {};
   const str = (k: string) => (typeof i[k] === 'string' ? (i[k] as string) : '');
-  let target = '';
-  if (str('file_path')) target = base(str('file_path'));
-  else if (str('command')) target = cut(str('command').replace(/\s+/g, ' ').trim());
-  else if (str('pattern')) target = cut(str('pattern'));
-  else if (str('url')) target = cut(str('url').replace(/^https?:\/\//, ''));
-  else if (str('query')) target = cut(str('query'));
-  else if (str('description')) target = cut(str('description'));
-  return { name: u.name, target, ts };
+  if (str('file_path')) return base(str('file_path'));
+  if (str('command')) return cut(str('command').replace(/\s+/g, ' ').trim());
+  if (str('pattern')) return cut(str('pattern'));
+  if (str('url')) return cut(str('url').replace(/^https?:\/\//, ''));
+  if (str('query')) return cut(str('query'));
+  if (str('description')) return cut(str('description'));
+  return '';
 }
 
 /** 사무실 행동 — 고치기(타닥타닥)·읽기(서류 넘김)·실행(진행 막대·톱니)·웹(지구본)·분신·생각(전구) */

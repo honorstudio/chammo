@@ -9,10 +9,12 @@ type Props = {
   onCollapse: () => void;
   /** 없으면 끄기 버튼을 안 보인다 (터미널 대화형 세션 등) */
   onStop?: () => Promise<void>;
+  /** 채팅 뷰 — 접기도 뺀다(끄기는 onStop 을 안 넘겨서 뺀다, 2026-09-30 사용자) */
+  compact?: boolean;
 };
 
 /** 창 머리줄 아이콘 버튼: 크게 ↔ 원래대로 · 접기 · 끄기(한 번 더 확인). 이름이 길어도 밀리지 않게 아이콘만 */
-export function PaneControls({ maximized, onMaximize, onRestore, onCollapse, onStop }: Props) {
+export function PaneControls({ maximized, onMaximize, onRestore, onCollapse, onStop, compact }: Props) {
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -46,7 +48,7 @@ export function PaneControls({ maximized, onMaximize, onRestore, onCollapse, onS
       ) : (
         <button className="ib" title={tr('크게', 'Maximize')} aria-label={tr('크게', 'Maximize')} onClick={onMaximize}><IconMaximize /></button>
       )}
-      <button className="ib" title={tr('접기', 'Collapse')} aria-label={tr('접기', 'Collapse')} onClick={onCollapse}><IconCollapse /></button>
+      {!compact && <button className="ib" title={tr('접기', 'Collapse')} aria-label={tr('접기', 'Collapse')} onClick={onCollapse}><IconCollapse /></button>}
       {onStop && (
         <button className="ib danger" title={tr('끄기 (대화는 남아)', 'Stop (conversation is kept)')} aria-label={tr('끄기', 'Stop')} onClick={() => setArmed(true)}><IconPower /></button>
       )}

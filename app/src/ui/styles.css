@@ -80,6 +80,8 @@
 
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; }
+/* 앱 전체가 브라우저처럼 튕기며 스크롤되지 않게(2026-09-30 사용자) */
+html, body { overflow: hidden; overscroll-behavior: none; }
 body {
   background: var(--bg);
   color: var(--text);
@@ -131,7 +133,9 @@ button { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) { .sm svg { animation: none !important; } }
 
 /* ── 메인 ── */
-.main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+.main { position: relative; flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+.toasts { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 45; display: flex; flex-direction: column; gap: 6px; max-width: min(640px, 90%); pointer-events: none; }
+.toasts .banner { border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, .12); }
 .banner { padding: 8px 14px; background: var(--warn-bg); color: var(--warn-ink); font-size: 12px; border-bottom: 1px solid var(--line); }
 .panes, .grid { flex: 1; gap: 6px; padding: 6px; min-height: 0; }
 .panes { display: flex; flex-direction: column; } /* 접은 창 띠가 격자 아래로 — 가로면 크게 한 창 옆에 띠가 끼어 공간이 샌다(사용자 2026-09-28) */
@@ -140,7 +144,7 @@ button { font: inherit; color: inherit; }
 .pane-head { display: flex; gap: 8px; align-items: center; height: 34px; padding: 0 6px 0 12px; background: var(--surface-2); border-bottom: 1px solid var(--line); font-size: 12px; white-space: nowrap; }
 /* 이름이 길어도 버튼이 밀려나지 않게 — 글자는 줄이고 버튼은 고정 */
 .pane-head > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.pane-head .sub { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+.pane-head .sub { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); font-family: ui-monospace, Menlo, "Cascadia Mono", Consolas, monospace; font-size: 11px; }
 .pane-head .note { min-width: 0; flex: 1 1 0; display: inline-flex; align-items: center; justify-content: flex-end; gap: 5px; color: var(--text-3); font-size: 11.5px; cursor: pointer; padding: 3px 6px; border-radius: 6px; }
 .pane-head .note svg { flex: 0 0 auto; width: 15px; height: 15px; color: var(--accent); }
 .pane-head .note-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -148,7 +152,9 @@ button { font: inherit; color: inherit; }
 .pane-head .note.empty svg { color: var(--text-3); }
 .pane-head .note:hover { background: var(--hover); color: var(--text-2); }
 .pane-head .ctl { margin-left: auto; flex: 0 0 auto; display: inline-flex; gap: 2px; align-items: center; }
-.pane-body { flex: 1; min-height: 0; padding: 4px 0 0 6px; }
+/* content-box — xterm FitAddon 은 부모의 계산된 height·width 를 그대로 칸 수로 나눈다. 전역 border-box 면 여백(위 4·왼 6)까지 들어가
+   마지막 줄 아래 4px 가 잘렸다(윈도우 상태줄 반쯤 잘림 실측: 부모 840 = 여백 포함, 터미널 840 → 4px 넘침) */
+.pane-body { flex: 1; min-height: 0; padding: 4px 0 0 6px; box-sizing: content-box; }
 .pane.readonly .pane-head { cursor: pointer; }
 
 .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--text-3); }
@@ -382,7 +388,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .memo-empty { font-size: 12px; color: var(--text-3); padding: 14px 6px; text-align: center; }
 .memo-item { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 6px 6px; border-radius: 8px; }
 .memo-item:hover { background: var(--hover); }
-.memo-ts { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--text-3); padding-top: 2px; }
+.memo-ts { font-family: ui-monospace, Menlo, "Cascadia Mono", Consolas, monospace; font-size: 11px; color: var(--text-3); padding-top: 2px; }
 .memo-text { font-size: 12.5px; line-height: 1.55; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 .memo-acts { display: flex; gap: 4px; opacity: .45; transition: opacity .12s; }
 .memo-item:hover .memo-acts, .memo-acts:focus-within { opacity: 1; }
@@ -416,7 +422,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .rp-controls { display: flex; align-items: center; gap: 10px; }
 .rp-controls .ib { width: 34px; height: 34px; }
 .rp-controls .ib svg { width: 16px; height: 16px; }
-.rp-clock { font-family: ui-monospace, Menlo, monospace; font-size: 16px; min-width: 52px; }
+.rp-clock { font-family: ui-monospace, Menlo, "Cascadia Mono", Consolas, monospace; font-size: 16px; min-width: 52px; }
 .rp-range { flex: 1; accent-color: var(--accent); }
 .rp-lanes { display: flex; flex-direction: column; gap: 4px; }
 .rp-axis { position: relative; height: 16px; margin-left: 110px; font-size: 10.5px; color: var(--text-3); }
@@ -446,7 +452,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .rp-feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .rp-card { display: grid; grid-template-columns: 44px auto minmax(60px, 140px) 1fr; gap: 8px; align-items: center; font-size: 12px; padding: 5px 8px; border-radius: 8px; }
 .rp-card.fresh { background: var(--tray); }
-.rp-card-t { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--text-3); }
+.rp-card-t { font-family: ui-monospace, Menlo, "Cascadia Mono", Consolas, monospace; font-size: 11px; color: var(--text-3); }
 .rp-card-lane { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-card-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-tag.big, .rp-tag.ask { background: var(--danger-bg); color: var(--danger-ink); }
@@ -481,7 +487,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .rv-rows { flex: 1; overflow: auto; min-height: 0; }
 .rv-row { all: unset; box-sizing: border-box; width: 100%; display: flex; flex-direction: column; gap: 3px; padding: 9px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
 .rv-row:hover { background: var(--hover); }
-.rv-row.on { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+.rv-row.on { background: color-mix(in srgb, var(--accent) 10%, var(--surface-2)); }
 .rv-l1 { display: flex; gap: 6px; font-size: 11.5px; color: var(--text-3); }
 .rv-l1 b { color: var(--text-2); font-weight: 650; }
 .rv-ti { font-size: 12.8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -516,7 +522,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .rv-diff { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 6px; background: var(--surface); }
 .rv-dh { all: unset; display: block; box-sizing: border-box; width: 100%; padding: 6px 10px; background: var(--surface-2); font-size: 12px; cursor: pointer; color: var(--text-2); }
 .rv-dh b { color: var(--text); font-weight: 600; }
-.rv-diff pre { margin: 0; padding: 6px 0; font: 11.5px/1.55 "D2Coding", "SF Mono", Menlo, monospace; overflow-x: auto; }
+.rv-diff pre { margin: 0; padding: 6px 0; font: 11.5px/1.55 "D2Coding", "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace; overflow-x: auto; }
 .rv-diff pre span { display: block; padding: 0 10px; white-space: pre; }
 .rv-diff pre .a { background: color-mix(in srgb, var(--idle) 14%, transparent); }
 .rv-diff pre .d { background: color-mix(in srgb, var(--danger-ink) 14%, transparent); }
@@ -649,7 +655,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 /* 가구 놓기 (ui/office/FurniturePanel) */
 
 .inbox-lead { font-size: 12px; color: var(--text-3); margin: 2px 0; }
-.office-tag .office-doing { display: block; font-size: 10px; font-weight: 600; opacity: .7; font-family: ui-monospace, monospace; text-align: center; animation: doingflash 2.5s ease-out forwards; }
+.office-tag .office-doing { display: block; font-size: 10px; font-weight: 600; opacity: .7; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; text-align: center; animation: doingflash 2.5s ease-out forwards; }
 @keyframes doingflash { 0% { opacity: 0; transform: translateY(-3px); } 12% { opacity: .8; transform: none; } 75% { opacity: .8; } 100% { opacity: 0; } }
 .office-peek { position: absolute; z-index: 6; width: 460px; height: 260px; display: flex; border-radius: 10px; overflow: hidden; box-shadow: 0 14px 40px rgba(0, 0, 0, .35); border: 1px solid var(--line-strong); background: #1e1e22; }
 .office-peek > * { flex: 1; min-width: 0; }
@@ -672,7 +678,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .dock-card.st-working .dock-verb { color: #2f74e0; }
 .dock-card.st-asks .dock-verb { color: #b07800; }
 .dock-ago { margin-left: auto; font-size: 10px; color: #9a8a7c; white-space: nowrap; }
-.dock-now, .dock-old { font-family: ui-monospace, monospace; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dock-now, .dock-old { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dock-old { color: #9a8a7c; font-size: 10px; }
 .dock-note { font-size: 11px; color: #5a4a3c; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35; }
 
@@ -721,6 +727,14 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .routine-runs li .t { color: var(--text-3); font-variant-numeric: tabular-nums; }
 .routine-runs li.fail { color: #c0392b; }
 .routine-runs li.skip { color: var(--text-3); }
+/* 클라우드 루틴(claude.ai) — 사이드바 배지 + 설명 화면 */
+.tag.rt-cloud { margin-left: 6px; vertical-align: 1px; font-weight: 600; }
+.routine-cloud-body { grid-template-columns: minmax(0, 720px); }
+.routine-cloud { display: grid; grid-template-columns: 64px 1fr; gap: 8px 14px; margin: 0; padding: 16px 18px 6px; font-size: 13px; line-height: 1.5; }
+.routine-cloud dt { color: var(--text-3); }
+.routine-cloud dd { margin: 0; overflow-wrap: anywhere; }
+.routine-cloud dd.mono, .routine-cloud-help code { font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+.routine-cloud-help { padding: 6px 18px 18px; margin: 0; font-size: 12.5px; line-height: 1.6; }
 
 /* 부하 모니터 — 상단 바 칸 + 부하 화면(LoadPage) */
 .load-chip { display: inline-flex; align-items: baseline; gap: 6px; font: inherit; color: inherit; background: none; border: 0; padding: 2px 6px; border-radius: 6px; cursor: pointer; }
@@ -758,3 +772,35 @@ button.ld-row:hover { background: var(--panel); }
 .ext-sess { text-align: left; max-width: 640px; margin: 48px auto; gap: 10px; }
 .ext-sess p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-2, inherit); }
 .ext-sess code { font-size: 12px; }
+
+/* 참모 끄기 확인·이름 바꾸기·오른쪽 클릭 메뉴(2026-09-30 사용자) */
+.od-back { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, #000 30%, transparent); backdrop-filter: blur(3px); animation: od-in .14s ease-out; }
+.od-box { width: min(380px, 90vw); display: flex; flex-direction: column; gap: 10px; padding: 18px; border-radius: 16px; background: var(--surface); color: var(--text); box-shadow: 0 24px 60px rgba(0, 0, 0, .3), 0 0 0 1px var(--line); font-size: 13px; animation: od-pop .18s cubic-bezier(.2, .9, .3, 1.1); }
+.od-box b { font-size: 15px; }
+.od-box p { margin: 0; color: var(--text-2); line-height: 1.55; }
+.od-box input { height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); font: inherit; font-size: 14px; }
+.od-box input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+.od-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.od-foot button { all: unset; cursor: pointer; height: 34px; padding: 0 14px; border-radius: 10px; font-weight: 600; background: var(--surface-2); color: var(--text-2); }
+.od-foot button.pri { background: var(--accent); color: var(--accent-ink); }
+.od-foot button.danger { background: #d23f3f; color: #fff; }
+.od-foot button:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+.od-menu { position: fixed; z-index: 2100; min-width: 170px; padding: 5px; border-radius: 12px; background: var(--surface); box-shadow: 0 14px 36px rgba(0, 0, 0, .2), 0 0 0 1px var(--line); display: flex; flex-direction: column; animation: od-in .1s ease-out; }
+.od-menu button { all: unset; cursor: pointer; padding: 7px 12px; border-radius: 8px; font-size: 13px; color: var(--text); }
+.od-menu button:hover { background: var(--hover); }
+.od-menu button.danger { color: #d23f3f; }
+@keyframes od-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes od-pop { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+.orch-name-edit { outline: none; border-radius: 4px; padding: 0 3px; margin: 0 -3px; background: var(--surface); color: var(--text); box-shadow: 0 0 0 2px var(--accent); cursor: text; min-width: 2ch; display: inline-block; }
+
+/* 짚어 보여 주기 — scripts/show --line/--find/--box 로 가리킨 곳. 글자는 몇 번 깜빡이고 옅게 남았다가 사라지고, 둘레는 빛이 두 번 퍼진다 */
+::highlight(cv-flash) { background-color: #ffd24d; color: #1a1a1a; }
+::highlight(cv-flash-soft) { background-color: color-mix(in srgb, #ffd24d 45%, transparent); }
+.cv-flash-ring, .pv-box { position: absolute; z-index: 3; pointer-events: none; border-radius: 10px; box-shadow: 0 0 0 2px #f0a020, 0 0 0 6px color-mix(in srgb, #f0a020 25%, transparent); animation: cv-flash-ring 1.1s ease-out 3; }
+.cv-flash-ring { animation-fill-mode: forwards; }
+.pv-box { border-radius: 6px; background: color-mix(in srgb, #ffd24d 12%, transparent); }
+@keyframes cv-flash-ring {
+  0% { box-shadow: 0 0 0 2px #f0a020, 0 0 0 0 color-mix(in srgb, #f0a020 55%, transparent); }
+  70% { box-shadow: 0 0 0 2px #f0a020, 0 0 0 14px color-mix(in srgb, #f0a020 0%, transparent); }
+  100% { box-shadow: 0 0 0 2px color-mix(in srgb, #f0a020 60%, transparent), 0 0 0 0 transparent; }
+}

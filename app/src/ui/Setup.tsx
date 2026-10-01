@@ -7,6 +7,7 @@ import type { Features } from '../domain/config';
 import { setAssistant, tr, type Lang } from '../i18n';
 import { TerminalPane } from './TerminalPane';
 import './setup.css';
+import { IS_WIN } from '../domain/reader';
 
 /**
  * 설정 화면 = 첫 실행 안내 겸용. 아무것도 안 깔린 맥에서도 여기서 차례로 끝낼 수 있게:
@@ -304,7 +305,7 @@ export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose }
   const checkSec = (
         <section className="su-sec">
           <div className="su-sec-head">
-            <h2>{num(2)}{tr('이 맥 점검', 'Check this Mac')}</h2>
+            <h2>{num(2)}{IS_WIN ? tr('이 PC 점검', 'Check this PC') : tr('이 맥 점검', 'Check this Mac')}</h2>
             <button className="btn" disabled={checking} onClick={() => void recheck()}>{checking ? tr('확인하는 중…', 'Checking…') : tr('다시 확인', 'Check again')}</button>
           </div>
           {!check ? <div className="su-hint">{tr('필요한 도구가 있는지 보고 있어요…', 'Looking for the tools Chammo needs…')}</div> : (
@@ -316,8 +317,8 @@ export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose }
                     <button className="btn pri" onClick={() => run('login')}>{tr('로그인하기', 'Sign in')}</button>
                   </Row>)}
               {check.clt
-                ? <Row state="ok" title={tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={tr('있어요.', 'Installed.')} />
-                : <Row state="need" title={tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={tr('git 이 들어 있는 Apple 도구예요. 누르면 macOS 설치 창이 떠요 — 설치에 몇 분 걸려요.', "Apple's tools that include git. The button opens the macOS installer — it takes a few minutes.")}>
+                ? <Row state="ok" title={IS_WIN ? 'git' : tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={tr('있어요.', 'Installed.')} />
+                : <Row state="need" title={IS_WIN ? 'git' : tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={IS_WIN ? tr('git 이 필요해요. 누르면 winget 으로 설치해요 — 몇 분 걸려요.', 'git is required. The button installs it with winget — it takes a few minutes.') : tr('git 이 들어 있는 Apple 도구예요. 누르면 macOS 설치 창이 떠요 — 설치에 몇 분 걸려요.', "Apple's tools that include git. The button opens the macOS installer — it takes a few minutes.")}>
                     <button className="btn pri" onClick={() => run('clt')}>{tr('설치하기', 'Install')}</button>
                   </Row>}
               {check.ghUser
@@ -381,6 +382,23 @@ export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose }
             <input value={draft.githubUser} onChange={(e) => set('githubUser', e.target.value)} spellCheck={false} />
           </Field>
           <TtsField value={draft.ttsCommand} onChange={(c) => set('ttsCommand', c)} name={name} onError={setError} />
+          {/* 말하기 키는 맥 전용(ptt.rs 가 macOS 이벤트 탭) — 윈도우판은 아직 없다 */}
+          {!IS_WIN && <Field label={tr('말하기 키', 'Talk key')}
+            hint={draft.talkKey === 'fn'
+              ? <>{tr('누르고 말하면 세션 입력칸에 받아 적어요. 다른 키와 같이 누르면(fn+화살표 등) 말하기로 안 봐요. 맥 설정의 "🌐 키를 누르면"을 "아무것도 안 함"으로 두세요 — 안 그러면 한/영 전환·받아쓰기와 겹쳐요.', 'Hold and speak to dictate into the session input. Pressing it with another key (fn+arrows, etc.) doesn\'t count. Set macOS "Press 🌐 key to" to "Do Nothing" — otherwise it clashes with input switching and dictation.')} <button type="button" className="btn su-mini" onClick={() => void openTarget('url', 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension').catch(() => {})}>{tr('키보드 설정 열기', 'Open Keyboard settings')}</button></>
+              : draft.talkKey === 'right-option'
+                ? tr('오른쪽 ⌥ 를 누르고 말하면 세션 입력칸에 받아 적어요. 다른 키와 같이 누르면 말하기로 안 봐요.', 'Hold right ⌥ and speak to dictate into the session input. Pressing it with another key doesn\'t count.')
+                : tr('키를 누르고 말하면 세션 입력칸에 받아 적는 기능이에요. 꺼 두면 아무 키도 가로채지 않아요.', 'Hold a key and speak to dictate into the session input. Off means no key is watched.')}>
+            <span className="su-seg" role="radiogroup" aria-label={tr('말하기 키', 'Talk key')}>
+              {([['', tr('끔', 'Off')], ['fn', tr('지구본(fn)', 'Globe (fn)')], ['right-option', tr('오른쪽 ⌥', 'Right ⌥')]] as const).map(([v, label]) => (
+                <button key={v} type="button" role="radio" aria-checked={(draft.talkKey ?? '') === v} className={(draft.talkKey ?? '') === v ? 'on' : ''} onClick={() => set('talkKey', v)}>{label}</button>
+              ))}
+            </span>
+            {draft.talkKey ? (
+              <label className="su-check"><input type="checkbox" checked={!!draft.talkAnywhere} onChange={(e) => set('talkAnywhere', e.target.checked)} />
+                {tr('다른 앱을 보고 있을 때도(손쉬운 사용 권한을 한 번 물어요)', 'Also while using other apps (asks for Accessibility permission once)')}</label>
+            ) : null}
+          </Field>}
           <Field label={tr('메모 폴더', 'Notes folder')} hint={tr('프로젝트별 메모(⌘M)가 저장되는 곳.', 'Where per-project notes (⌘M) are saved.')}>
             {pick('memoDir', tr('메모를 저장할 폴더를 골라 주세요', 'Choose where notes are saved'))}
           </Field>
@@ -417,7 +435,9 @@ export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose }
               <div className="su-rows">
                 <Row state={n.state} title={tr('알림', 'Notifications')}
                   text={n.state === 'ok' ? tr('켜져 있어요. 결정이 필요하거나 답을 기다리면 알려 드려요.', 'On. You get told when a decision or an answer is needed.')
-                    : n.action === 'settings' ? tr('꺼져 있어요. 시스템 설정 > 알림 > Chammo 에서 "알림 허용"을 켜 주세요 — 안 켜면 결정 대기·답 필요 알림이 안 와요.', 'Off. Turn on "Allow notifications" in System Settings > Notifications > Chammo — otherwise you miss decision and answer alerts.')
+                    : n.action === 'settings' ? (IS_WIN
+                      ? tr('꺼져 있어요. 윈도우 설정 > 시스템 > 알림에서 알림을 켜 주세요 — 안 켜면 결정 대기·답 필요 알림이 안 와요.', 'Off. Turn notifications on in Windows Settings > System > Notifications — otherwise you miss decision and answer alerts.')
+                      : tr('꺼져 있어요. 시스템 설정 > 알림 > Chammo 에서 "알림 허용"을 켜 주세요 — 안 켜면 결정 대기·답 필요 알림이 안 와요.', 'Off. Turn on "Allow notifications" in System Settings > Notifications > Chammo — otherwise you miss decision and answer alerts.'))
                     : n.action === 'request' ? tr('결정이 필요하거나 답을 기다릴 때 알려 드려요. 버튼을 누르면 macOS 가 한 번 물어봐요.', 'Get told when a decision or an answer is needed. The button makes macOS ask once.')
                     : tr('이 빌드에서는 확인할 수 없어요.', 'Cannot be checked in this build.')}>
                   {n.action === 'request' && <button className="btn pri" onClick={() => void notifyRequest().then(() => notifyStatus()).then(setNotify, () => {})}>{tr('알림 허용', 'Allow')}</button>}
@@ -467,7 +487,7 @@ export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose }
             <dt>{tr('비서 이름', 'Assistant')}</dt><dd>{name}</dd>
             <dt>{tr('프로젝트 폴더', 'Projects')}</dt><dd>{draft.devRoot}</dd>
             <dt>{tr('HQ 폴더', 'HQ')}</dt><dd>{draft.hqDir}</dd>
-            <dt>{tr('음성', 'Speech')}</dt><dd>{draft.ttsCommand || 'say'}</dd>
+            <dt>{tr('음성', 'Speech')}</dt><dd>{IS_WIN && /^(say( -v \S+)?)?$/.test(draft.ttsCommand.trim()) ? tr('Windows 목소리', 'Windows voice') : draft.ttsCommand || 'say'}</dd>
           </dl>
         </section>
   );

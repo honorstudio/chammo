@@ -4,6 +4,9 @@
  * (main.tsx 가 App 을 불러오기 전에 setLang), 설정에서 바꾸면 창을 다시 연다 — 그래서 모듈 맨 위의 표(가챠 이름 등)도 tr 로 된다.
  * 세 번째 언어가 필요해지면 그때 키 방식으로 옮긴다(2026-09-28 결정: 지금은 ko·en 만)
  */
+import { keyLabel } from '../domain/keys';
+import { IS_WIN } from '../domain/reader';
+
 export type Lang = 'ko' | 'en';
 
 let lang: Lang = 'ko';
@@ -11,7 +14,10 @@ let assistantName: string | null = null;
 
 export const setLang = (l: Lang) => { lang = l; };
 export const getLang = (): Lang => lang;
-export const tr = (ko: string, en: string): string => (lang === 'en' ? en : ko);
+/** 윈도우면 글 속 맥 단축키 표기(⌘M·⌥⌘2)를 윈도우 키로(domain/keys) — 문구마다 따로 안 적게 여기서 한 번 */
+let winKeys = IS_WIN;
+export const setWinKeys = (w: boolean) => { winKeys = w; };
+export const tr = (ko: string, en: string): string => keyLabel(lang === 'en' ? en : ko, winKeys);
 
 /** 처음 켤 때 — 저장된 언어가 있으면 그것, 없으면 시스템 언어가 한국어일 때만 ko */
 export function pickLang(saved: string | null, system: string): Lang {

@@ -69,8 +69,7 @@ pub fn export_templates(data: &Path) -> std::io::Result<()> {
 }
 
 fn today() -> String {
-    let out = std::process::Command::new("date").arg("+%Y-%m-%d").output();
-    out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    crate::platform::today()
 }
 
 /// 프로젝트 화면의 "하네스 깔기" — 빈 자리만 채운다. 설명은 사용자가 나중에 고친다

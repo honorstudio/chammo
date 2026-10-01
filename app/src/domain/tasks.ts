@@ -7,10 +7,13 @@ import type { Session } from './session';
 export type TaskEvent = {
   ts: string;
   /** ask = 사용자 결정을 기다림(결정 대기함에 뜸), answer = 사용자가 답함 */
-  type: 'send' | 'reply' | 'done' | 'note' | 'ask' | 'answer';
+  /** own = 누가 시켰는지 안 남은 옛 일에 사용자가 주인 참모를 붙임(채팅 뷰 대시보드, from 에 그 참모) */
+  type: 'send' | 'reply' | 'done' | 'note' | 'ask' | 'answer' | 'own';
   task: string;
   /** send: 대상 세션의 id 또는 이름. 그 뒤 이벤트에 있으면 대상을 그 세션으로 옮긴다(주인 잃은 일을 이어서 켰을 때) */
   target?: string;
+  /** send 에만: 시킨 참모(백그라운드 세션 id) — 채팅 뷰 스페이스가 참모별로 가른다(2026-09-30~, 옛 기록엔 없음) */
+  from?: string;
   /** send 에만: 무엇을 시켰나 한 줄 */
   title?: string;
   note?: string;
@@ -98,16 +101,21 @@ const ORPHAN_DAYS = 7;
  * 끝난 카드가 끝없이 쌓여 급한 게 안 보이던 것(2026-09-27 사용자). 세션 없음을 끝난 일에 섞었더니
  * 재시작으로 죽은 일 3건이 묻혔다(2026-09-27) — 그래서 따로 뺀다
  */
-export function splitCards(cards: TaskCard[], now: number): { active: TaskCard[]; orphaned: TaskCard[]; doneToday: TaskCard[]; hidden: number } {
+export function splitCards(cards: TaskCard[], now: number): { active: TaskCard[]; superseded: TaskCard[]; orphaned: TaskCard[]; doneToday: TaskCard[]; hidden: number } {
   const d = new Date(now);
   if (d.getHours() < 5) d.setDate(d.getDate() - 1);
   const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 5).getTime();
-  const active = cards.filter((c) => c.status !== 'done' && c.status !== 'gone');
+  const open = cards.filter((c) => c.status !== 'done' && c.status !== 'gone');
+  // 세션은 한 번에 한 가지 — 같은 세션에 더 새 일이 갔으면 앞의 안 닫힌 일은 '끝 기록 없는 일'(2026-09-29 사용자: 계속 쌓이기만)
+  const newest = new Map<string, string>();
+  for (const c of cards) if ((newest.get(c.target) ?? '') < c.sentAt) newest.set(c.target, c.sentAt);
+  const superseded = open.filter((c) => c.sentAt < newest.get(c.target)!);
+  const active = open.filter((c) => !superseded.includes(c));
   const gone = cards.filter((c) => c.status === 'gone');
   const orphaned = gone.filter((c) => now - Date.parse(c.sentAt) <= ORPHAN_DAYS * 86_400_000);
   const done = cards.filter((c) => c.status === 'done');
   const doneToday = done.filter((c) => Date.parse(c.updatedAt) >= start).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
-  return { active, orphaned, doneToday, hidden: done.length - doneToday.length + gone.length - orphaned.length };
+  return { active, superseded, orphaned, doneToday, hidden: done.length - doneToday.length + gone.length - orphaned.length };
 }
 
 /**

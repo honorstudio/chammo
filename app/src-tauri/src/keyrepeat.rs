@@ -65,7 +65,7 @@ mod tests {
         let domain = format!("app.chammo.keyrepeat-test.{tag}");
         let name = NSString::from_str(&domain);
         unsafe { let _: () = msg_send![d, removePersistentDomainForName: &*name]; }
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = crate::platform::home();
         let _ = std::fs::remove_file(format!("{home}/Library/Preferences/{domain}.plist"));
     }
 

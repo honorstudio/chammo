@@ -1,0 +1,162 @@
+/* 스페이스 모드 채팅 — 터미널 창 머리줄(34px) 아래를 덮는다. 색은 앱 토큰만(다크 모드는 토큰이 바꾼다) */
+.chat { position: absolute; left: 0; right: 0; top: 35px; bottom: 0; z-index: 3; display: flex; flex-direction: column; background: var(--surface); }
+.chat-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 12px 4px; font-size: 13px; line-height: 1.55; }
+.chat-inner { display: flex; flex-direction: column; gap: 8px; }
+.chat-row { display: flex; }
+.chat-row.me { justify-content: flex-end; }
+.bubble { max-width: 88%; padding: 8px 12px; border-radius: 12px; background: var(--surface-2); color: var(--text); overflow-wrap: anywhere; }
+.bubble.me { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); white-space: pre-wrap; border-bottom-right-radius: 4px; }
+.bubble.md { border-bottom-left-radius: 4px; }
+.bubble.pending { opacity: .6; }
+.chat-meta { display: block; margin-top: 2px; font-size: 11px; color: var(--text-3); }
+.bubble.md > :first-child { margin-top: 0; }
+.bubble.md > :last-child { margin-bottom: 0; }
+.bubble.md p, .bubble.md ul, .bubble.md ol { margin: 6px 0; }
+.bubble.md ul, .bubble.md ol { padding-left: 20px; }
+.bubble.md h1, .bubble.md h2, .bubble.md h3 { font-size: 14px; margin: 10px 0 4px; }
+.bubble.md code { font-family: Menlo, "Cascadia Mono", Consolas, monospace; font-size: 12px; background: var(--hover); padding: 1px 4px; border-radius: 4px; }
+.bubble.md pre { background: var(--bg); padding: 8px 10px; border-radius: 8px; overflow-x: auto; }
+.bubble.md pre code { background: none; padding: 0; }
+.bubble.md table { border-collapse: collapse; font-size: 12px; display: block; overflow-x: auto; }
+.bubble.md th, .bubble.md td { border: 1px solid var(--line); padding: 3px 6px; text-align: left; }
+.bubble.md a { color: var(--accent); }
+.chat-note { align-self: center; font-size: 11px; color: var(--text-3); padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; }
+.chat-tools { align-self: flex-start; max-width: 88%; font-size: 12px; color: var(--text-2); }
+.chat-tools summary { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 2px 0; }
+.chat-tools ul { margin: 4px 0 0; padding-left: 16px; }
+.chat-tools li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-busy { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
+.chat-more, .chat-empty { align-self: center; font-size: 12px; color: var(--text-3); }
+.chat-more { background: none; border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; cursor: pointer; min-height: 28px; }
+.chat-input { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 6px; padding: 8px; border-top: 1px solid var(--line); background: var(--panel); }
+.chat-input textarea { flex: 1; resize: none; font: inherit; font-size: 13px; line-height: 1.45; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); overflow-y: auto; }
+.chat-input textarea:focus { outline: none; border-color: var(--accent); }
+
+/* 스페이스 모드 틀 — 왼쪽 리더가 칸을 채우고, 오른쪽 채팅 열 머리에 쌓기/탭 */
+.reader-panel.fill { flex: 1; min-width: 0; border-left: 0; }
+.space-chat-head { display: flex; align-items: center; justify-content: space-between; height: 36px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 12.5px; }
+.seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 7px; overflow: hidden; }
+.seg button { all: unset; cursor: pointer; font-size: 11.5px; font-weight: 600; padding: 3px 10px; color: var(--text-2); }
+.seg button + button { border-left: 1px solid var(--line-strong); }
+.seg button.on { background: var(--surface); color: var(--accent); }
+.chat-tabs { display: flex; gap: 4px; padding: 6px 8px 0; overflow-x: auto; }
+.chat-tabs button { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 7px 7px 0 0; font-size: 12px; font-weight: 600; color: var(--text-3); white-space: nowrap; }
+.chat-tabs button.on { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
+.space-left { min-width: 0; }
+/* 터미널 입력칸 글(지구본 키로 받아 적은 말) — 채팅 입력칸 바로 위 */
+.chat-term { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); font-size: 12.5px; }
+.chat-term-label { flex: 0 0 auto; font-size: 11px; font-weight: 700; color: var(--accent); }
+.chat-term-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 96px; overflow-y: auto; }
+.mini.pri { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.seg button { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 22px; padding: 0 6px; }
+.seg button svg { width: 15px; height: 15px; }
+/* 붙인 그림 — 말풍선 썸네일(누르면 크게), 보내기 전 입력칸 위 썸네일 */
+.chat-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.chat-thumb { max-height: 96px; max-width: 160px; border-radius: 6px; cursor: zoom-in; display: block; }
+.chat-thumb.big { max-height: none; max-width: 100%; cursor: zoom-out; }
+.chat-attach { display: inline-flex; gap: 4px; flex: 0 0 auto; }
+.chat-attach img { height: 36px; max-width: 64px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line); }
+.chat-file { font-size: 11px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+/* 할 일 칸 — 채팅 맨 위, 접었다 폈다 */
+.chat-tasks { border-bottom: 1px solid var(--line); background: var(--panel); font-size: 12px; }
+.chat-tasks-head { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 4px 12px; }
+.chat-tasks-now { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--working); }
+.chat-tasks-fold { margin-left: auto; color: var(--text-3); font-size: 11px; }
+.chat-tasks ul { list-style: none; margin: 0; padding: 0 12px 8px; max-height: 30vh; overflow-y: auto; }
+.chat-tasks li { display: flex; align-items: flex-start; gap: 8px; padding: 2px 0; line-height: 1.45; }
+.chat-tasks .mark { flex: 0 0 10px; width: 10px; height: 10px; margin-top: 4px; border-radius: 3px; border: 1.5px solid var(--line-strong); }
+.chat-tasks .st-in_progress .mark { border-color: var(--working); background: var(--working); }
+.chat-tasks .st-completed .mark { border-color: var(--idle); background: var(--idle); }
+.chat-tasks .st-completed .subj { color: var(--text-3); text-decoration: line-through; }
+.chat-tasks .st-in_progress .subj { font-weight: 600; }
+/* 힌트 — 필요할 때만(일하는 중 + 쓰는 중), 끄면 다시 안 뜬다 */
+.chat-hint { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 4px 12px; font-size: 11px; color: var(--text-3); background: var(--panel); border-top: 1px solid var(--line); }
+.chat-hint span { flex: 1; min-width: 0; }
+.chat-hint button { all: unset; cursor: pointer; color: var(--text-2); text-decoration: underline; }
+/* 보내기·멈추기 — 아이콘만, 네모 버튼(44px 터치는 아니지만 데스크톱 기준 34px) */
+.chat-input .btn.icon { width: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.chat-input .btn.icon svg { width: 16px; height: 16px; }
+/* 상태 줄(작업 중·선택 기다림) — 입력칸 바로 위, 늘 보인다 */
+.chat-status { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 5px 12px; font-size: 12px; color: var(--text-2); border-top: 1px solid var(--line); background: var(--panel); white-space: nowrap; overflow: hidden; }
+.chat-status span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.chat-status > span:not(.chat-ctx):not(.spin) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* 대화 압축 중 — 작업 중과 헷갈리지 않게 보라 */
+.chat-compact { display: inline-flex; align-items: center; gap: 8px; color: #7b5fc7; font-weight: 600; }
+.chat-compact .spin { border-color: color-mix(in srgb, #7b5fc7 30%, transparent); border-top-color: #7b5fc7; }
+/* 남은 컨텍스트 고리 — 상태 줄 오른쪽 끝 */
+.chat-status > .chat-ctx { margin-left: auto; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; overflow: visible; font-size: 11.5px; font-weight: 600; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.chat-ctx svg { width: 16px; height: 16px; transform: rotate(-90deg); }
+.chat-ctx circle { fill: none; stroke-width: 2.4; }
+.chat-ctx .bg { stroke: var(--line); }
+.chat-ctx .fg { stroke: #2f7a57; stroke-linecap: round; transition: stroke-dasharray .4s ease; }
+.chat-ctx.mid .fg { stroke: #c98a00; } .chat-ctx.mid { color: #a87300; }
+.chat-ctx.high .fg { stroke: #c0392b; } .chat-ctx.high { color: #c0392b; }
+/* 그림 이름표 @img1 */
+.chat-att { position: relative; display: inline-block; }
+.chat-att em { position: absolute; left: 4px; bottom: 4px; font-style: normal; font-size: 10.5px; font-weight: 700; color: #fff; background: rgba(0, 0, 0, .55); border-radius: 4px; padding: 0 4px; }
+/* @ 로 붙인 것 고르기 */
+.chat-mention { flex: 0 0 auto; display: flex; gap: 6px; padding: 6px 10px 0; background: var(--panel); }
+.chat-mention button { all: unset; cursor: pointer; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface); }
+.chat-mention button[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
+.bubble .chat-file { display: inline-block; margin: 0 2px; vertical-align: baseline; }
+.chat-file { display: inline-flex; align-items: center; gap: 4px; }
+.chat-file svg { width: 13px; height: 13px; }
+/* @img1·@file1 칩 — 말풍선은 진짜 칩, 입력칸은 뒤판에 칠해 칩처럼(글자 폭은 그대로라 커서가 안 어긋난다) */
+.at-chip { display: inline-block; padding: 0 5px; margin: 0 1px; border-radius: 5px; font-size: 12px; font-weight: 700; background: color-mix(in srgb, var(--accent) 16%, var(--surface)); color: var(--accent); }
+.chat-field { position: relative; flex: 1; display: flex; min-width: 0; border-radius: 8px; background: var(--surface); }
+.chat-field textarea { position: relative; z-index: 1; background: transparent !important; }
+.chat-backdrop { position: absolute; inset: 0; padding: 8px 10px; border: 1px solid transparent; font: inherit; font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; color: transparent; overflow: hidden; pointer-events: none; }
+.chat-backdrop mark.at { color: transparent; background: color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 4px; }
+/* 다른 세션·앱이 보낸 말 — 가운데 카드(사용자 말풍선과 구분) */
+.chat-relay { align-self: center; width: min(92%, 520px); padding: 8px 12px; border-radius: 10px; border: 1px dashed var(--line-strong); background: var(--panel); font-size: 12.5px; cursor: pointer; }
+.chat-relay .who { font-size: 11px; font-weight: 700; color: var(--text-3); margin-bottom: 3px; }
+.chat-relay .body { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.chat-relay.open .body { display: block; }
+/* 탭 보기 — 탭과 창을 붙이고, 고른(포커스 있는) 창 테두리를 탭까지 */
+.tabbed { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.tabbed .grid { padding-top: 0; }
+.tabbed .chat-tabs { padding: 6px 6px 0; gap: 2px; }
+.tabbed .chat-tabs button.on { position: relative; z-index: 2; margin-bottom: -1px; border: 1px solid var(--line); border-bottom-color: transparent; box-shadow: none; background: var(--surface-2); }
+.tabbed:focus-within .chat-tabs button.on { border: 2px solid var(--accent); border-bottom: 0; margin-bottom: -2px; padding-bottom: 2px; background: color-mix(in srgb, var(--accent) 10%, var(--surface-2)); color: var(--accent); }
+
+/* 말풍선 참조 @chat1 — 올리면 옆에 "참조", 누르면 입력칸에 이름표(2026-09-30 사용자) */
+.chat-row { align-items: flex-end; gap: 6px; }
+.chat-row.relay { justify-content: center; }
+.chat-row.relay .chat-relay { align-self: auto; }
+.chat-refbtn { flex: none; visibility: hidden; padding: 2px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text-3); font-size: 11px; cursor: pointer; }
+.chat-row:hover .chat-refbtn { visibility: visible; }
+.chat-refbtn:hover { color: var(--accent); border-color: var(--accent); }
+.chat-refs { display: flex; flex-direction: column; gap: 4px; padding: 6px 10px 0; }
+.chat-ref { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
+.chat-ref .q { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); }
+.chat-quote { margin-top: 6px; padding: 4px 8px; border-radius: 6px; background: color-mix(in srgb, var(--surface) 60%, transparent); font-size: 12px; }
+.chat-quote .q { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; color: var(--text-3); }
+/* 채팅 뷰: 고른 창 표시는 탭에만 — 창 전체 테두리는 안 칠한다(2026-09-30 사용자). 쌓기 보기는 머리줄 글자색만 */
+.office-chats .pane:not(.readonly):focus-within { border-color: var(--line); box-shadow: none; }
+.office-chats .tabbed .pane:not(.readonly):focus-within .pane-head { background: var(--surface-2); }
+.office-chats .tabbed .pane:not(.readonly):focus-within .pane-head > b { color: inherit; }
+.office-chats .pane:not(.readonly):focus-within .pane-head { background: var(--surface-2); }
+/* 탭 보기에서 뒤에 붙여 둔 창 — 크기는 그대로(터미널 폭이 안 바뀌게), 안 보이고 안 눌린다 */
+.cell.behind { visibility: hidden; pointer-events: none; }
+.cell:not(.behind) .chat { animation: cv-tab-in .16s ease-out; }
+@keyframes cv-tab-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+/* 참모 탭 끄기 X — 올리면 그 탭에만 */
+.chat-tabs button { position: relative; }
+.chat-tabs .tab-x { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin: 0 -4px 0 2px; border-radius: 50%; opacity: 0; transition: opacity .12s, background .12s; }
+.chat-tabs .tab-x svg { width: 10px; height: 10px; }
+.chat-tabs button:hover .tab-x { opacity: .7; }
+.chat-tabs .tab-x:hover { opacity: 1 !important; background: rgba(127, 127, 127, .25); }
+/* 맨 아래로 — 위로 많이 올려 읽을 때만, 입력칸 위 가운데에 떠 있다 */
+.chat { position: absolute; }
+.chat-bottom { all: unset; position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 6; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 14px 0 10px; border-radius: 999px; background: var(--surface); color: var(--text-2); font-size: 12px; font-weight: 600; box-shadow: 0 6px 18px rgba(0, 0, 0, .14), 0 0 0 1px var(--line); animation: cv-rise .18s ease-out; }
+.chat-bottom svg { width: 13px; height: 13px; transform: rotate(90deg); }
+.chat-bottom:hover { color: var(--accent); }
+/* 스페이스 파일을 끌고 오는 중 */
+.chat.drop-hot::after { content: ""; position: absolute; inset: 6px; border-radius: 14px; border: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); pointer-events: none; z-index: 8; }
+.chat.drop-hot .chat-input { border-color: var(--accent); }
+[draggable="true"] { -webkit-user-drag: element; }
+
+/* 탭 줄 끝의 + — 참모 하나 더(⌘T). 탭처럼 보이지 않게 작은 네모 */
+.chat-tabs .tab-add { width: 28px; padding: 0; justify-content: center; border-radius: 7px; color: var(--text-3); position: sticky; right: 0; flex: 0 0 auto; background: var(--surface); } /* 탭이 넘쳐도 + 는 오른쪽 끝에 보이게 */
+.chat-tabs .tab-add:hover { background: var(--hover); color: var(--text); }
+.chat-tabs .tab-add svg { width: 13px; height: 13px; }

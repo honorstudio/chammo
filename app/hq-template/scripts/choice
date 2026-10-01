@@ -1,5 +1,11 @@
-#!/usr/bin/env python3
-"""Read and answer a session's choice prompt (AskUserQuestion) for it.
+#!/bin/sh
+''':'
+# sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
+':'''
+__doc__ = """Read and answer a session's choice prompt (AskUserQuestion) for it.
 하위 세션이 띄운 선택지 창(AskUserQuestion)을 비서가 읽고 대신 답한다.
 
   scripts/choice show   <session id>            -> the pending questions with numbered options
@@ -11,7 +17,7 @@ Questions come from the transcript (jsonl) — `claude logs` is raw escape codes
 Answer easy-to-undo ones (wording, color, layout) with the recommended option; ask the user first when it's theirs.
 Multi-select and free-text answers are not supported — ask the user to open that session's screen.
 """
-import glob, json, os, pty, select, shutil, signal, subprocess, sys, time
+import glob, json, os, shutil, signal, subprocess, sys, time
 
 
 def data_dir(home=None, env=None, exists=os.path.isdir):
@@ -100,8 +106,19 @@ def keys_for(questions, picks):
     return keys
 
 
+def ask_app_keys(sid, keys, data=None):
+    """앱에 부탁 — <데이터 폴더>/app.jsonl 에 한 줄. 앱(appctl)이 0.7초 안에 읽고 그 세션에 붙어 누른다(앱이 켜져 있어야 한다)"""
+    line = {'ts': time.strftime('%Y-%m-%dT%H:%M:%S'), 'action': 'keys', 'arg': {'id': sid, 'keys': ''.join(keys)}}
+    with open(os.path.join(data or data_dir(), 'app.jsonl'), 'a', encoding='utf-8') as f:
+        f.write(json.dumps(line, ensure_ascii=False) + '\n')
+
+
 def send_keys(sid, keys):
     """claude attach 를 가짜 터미널로 띄워 키를 하나씩 — 한꺼번에 넣으면 TUI 가 놓친다. attach 를 죽여도 세션은 산다"""
+    if os.name == 'nt':  # 가짜 터미널(pty)은 유닉스에만 — 윈도우는 앱이 붙어서 대신 누른다
+        ask_app_keys(sid, keys)
+        return
+    import pty, select
     pid, fd = pty.fork()
     if pid == 0:
         os.environ['TERM'] = 'xterm-256color'
@@ -151,7 +168,7 @@ def main(argv):
         print(e, file=sys.stderr)
         return 2
     send_keys(sid, keys)
-    time.sleep(1.5)
+    time.sleep(6 if os.name == 'nt' else 1.5)  # 윈도우는 앱이 읽고(0.7초) 붙고(1.5초) 누르는 시간까지
     after = agent(sid) or {}
     if after.get('waitingFor') == 'input needed':
         print(T(f'{sid}: 넣었는데 아직 선택지 창이야 — 사용자에게 그 세션 화면을 열어 달라고 해', f"{sid}: typed it but the prompt is still open — ask the user to open that session's screen"), file=sys.stderr)

@@ -31,9 +31,17 @@ export const RESUME_MSG = tr('로그인 오류로 멈췄었어(다시 로그인�
 
 type Act = { session: Session; status: ActivityStatus; activity: Activity };
 
-/** 기록에 적힌 대상(세션 id·이름·전체 sessionId)으로 세션 찾기 */
-export const findTarget = (sessions: Session[], target?: string) =>
-  target ? sessions.find((x) => x.id === target || x.name === target || x.sessionId === target) : undefined;
+/** 기록에 적힌 대상(세션 id·이름·전체 sessionId, 또는 `task send` 가 남기는 "이름 [id 앞자리]")으로 세션 찾기.
+ *  세션이 다시 켜져 id 가 바뀌면 이름으로 — 안 그러면 잡은 표시·결정 대기함 프로젝트가 사라졌다(2026-09-30) */
+export const findTarget = (sessions: Session[], target?: string): Session | undefined => {
+  if (!target) return undefined;
+  const exact = sessions.find((x) => x.id === target || x.name === target || x.sessionId === target);
+  if (exact) return exact;
+  const m = target.match(/^(.+?) \[([0-9a-f]{4,})\]$/);
+  if (!m) return undefined;
+  const [, name, pre] = m;
+  return sessions.find((x) => x.id.startsWith(pre!) || x.sessionId?.startsWith(pre!)) ?? sessions.find((x) => x.name === name);
+};
 
 /** sessions: 기록의 대상 세션 → 프로젝트 이름을 찾는 데 쓴다. isOrch: 참모 세션인가(질문·확인창은 참모 것만) */
 export function buildInbox(
@@ -88,6 +96,9 @@ export function replyBlocked(item: InboxItem, sessions: Session[]): string | nul
 export function freshItems(prev: ReadonlySet<string> | null, items: InboxItem[]): InboxItem[] {
   return prev ? items.filter((i) => !prev.has(i.key)) : [];
 }
+
+/** 앱을 켠 뒤에 생긴 결정인가 — 켤 때 목록이 늦게 채워져 옛 결정이 전부 '새 것'으로 알림이 갔다. 시각을 못 읽으면 참 */
+export const bornAfter = (i: InboxItem, sinceMs: number): boolean => !(Date.parse(i.ts) < sinceMs);
 
 /** 종 아래 결정 드롭다운을 펼칠지. 결정이 들어오면 펼치고, 사용자가 닫으면("나중에") 다음 새 결정이 올 때까지 접어 둔다 */
 export function popoverOpen(wasOpen: boolean, prev: ReadonlySet<string> | null, items: InboxItem[]): boolean {

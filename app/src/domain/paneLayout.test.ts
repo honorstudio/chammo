@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY_LAYOUT, layoutReducer, visiblePanes, paneToFocus, revealPane, maxTarget, type PaneLayout } from './paneLayout';
+import { EMPTY_LAYOUT, gridKeyOf, layoutReducer, visiblePanes, paneToFocus, revealPane, maxTarget, type PaneLayout } from './paneLayout';
 
 const ids = ['a', 'b', 'c'];
 
@@ -101,4 +101,16 @@ describe('maxTarget — ⌘Enter 로 크게 할 창(재시작·⌘2 직후엔 �
   it('그것도 없으면 첫 창', () => expect(maxTarget(undefined, null, ['a', 'b'])).toBe('a'));
   it('기록된 창이 이 화면에 없으면(꺼졌으면) 무시', () => expect(maxTarget('z', null, ['a', 'b'])).toBe('a'));
   it('창이 없으면 null', () => expect(maxTarget(undefined, null, [])).toBeNull());
+});
+
+describe('gridKeyOf — 알림·결정 대기함에서 "그 세션으로" 갈 격자', () => {
+  it('참모는 스페이스·사무실이면 오른쪽 열, 아니면 참모 격자', () => {
+    expect(gridKeyOf({ kind: 'orch' }, { space: true, office: false })).toBe('orch-col');
+    expect(gridKeyOf({ kind: 'orch' }, { space: false, office: true })).toBe('orch-col');
+    expect(gridKeyOf({ kind: 'orch' }, { space: false, office: false })).toBe('orch');
+  });
+  it('도우미·프로젝트는 그대로', () => {
+    expect(gridKeyOf({ kind: 'helper' }, { space: true, office: false })).toBe('helpers');
+    expect(gridKeyOf({ kind: 'project', project: 'project-x-app' }, { space: true, office: false })).toBe('p:project-x-app');
+  });
 });

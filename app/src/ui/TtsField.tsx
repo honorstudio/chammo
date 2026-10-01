@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { nativeVoicesList, supertonicInstall, supertonicStatus, ttsTest, ttsWarm, type SupertonicStatus } from '../data/tauri';
 import { nativeVoices, readTts, SUPERTONIC_VOICES, ttsCommand, type TtsChoice, type TtsEngine } from '../domain/tts';
 import { getLang, tr } from '../i18n';
+import { IS_WIN } from '../domain/reader';
 
 type Props = { value: string; onChange: (command: string) => void; name: string; onError: (e: string) => void };
 
@@ -66,7 +67,7 @@ export function TtsField({ value, onChange, name, onError }: Props) {
         <span className="su-label">{tr('음성', 'Voice')}</span>
         <div className="su-tts">
           <div className="su-tts-row">
-            {radio('native', tr('macOS 목소리', 'macOS voice'))}
+            {radio('native', IS_WIN ? tr('Windows 목소리', 'Windows voice') : tr('macOS 목소리', 'macOS voice'))}
             {choice.engine === 'native' && (
               <select value={choice.voice} onChange={(e) => pick({ engine: 'native', voice: e.target.value, command: '' })}>
                 <option value="">{tr('시스템 기본', 'System default')}</option>
@@ -74,7 +75,7 @@ export function TtsField({ value, onChange, name, onError }: Props) {
               </select>
             )}
           </div>
-          <div className="su-tts-row">
+          {!IS_WIN && <div className="su-tts-row">
             {radio('supertonic', tr('Supertonic — 더 자연스러운 목소리', 'Supertonic — a more natural voice'), !st?.ready)}
             {choice.engine === 'supertonic' && (
               <select value={choice.voice} onChange={(e) => pick({ engine: 'supertonic', voice: e.target.value, command: '' })}>
@@ -86,7 +87,7 @@ export function TtsField({ value, onChange, name, onError }: Props) {
                 {installing ? tr('받는 중… 몇 분 걸려요', 'Downloading… takes a few minutes') : tr('받기 (약 550MB)', 'Download (about 550 MB)')}
               </button>
             )}
-          </div>
+          </div>}
           <div className="su-tts-row">
             {radio('custom', tr('직접 입력', 'Custom command'))}
             {choice.engine === 'custom' && (
@@ -96,10 +97,10 @@ export function TtsField({ value, onChange, name, onError }: Props) {
           <div className="su-tts-row">
             <button type="button" className="btn" disabled={testing} onClick={() => void test()}>{testing ? tr('읽는 중…', 'Speaking…') : tr('들어보기', 'Test')}</button>
           </div>
-          <div className="su-hint">{tr(
+          {!IS_WIN && <div className="su-hint">{tr(
             'Supertonic 은 이 맥에서 바로 읽어요(인터넷 필요 없음, 한 문장 1~2초). 받기를 누르면 파이썬 패키지와 목소리 모델(Supertone, OpenRAIL-M 라이선스)을 이 맥에 내려받아요. M 은 남자, F 는 여자 목소리.',
             'Supertonic speaks right on this Mac (no internet, 1–2 s per sentence). Download fetches a Python package and the voice model (Supertone, OpenRAIL-M license) to this Mac. M voices are male, F voices female.',
-          )}</div>
+          )}</div>}
         </div>
       </div>
     </div>

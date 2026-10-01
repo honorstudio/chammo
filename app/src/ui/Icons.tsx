@@ -100,3 +100,71 @@ export const IconGear = () => (
 export const IconOffice = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M8 3.5 14 6.5 8 9.5 2 6.5Z M2 6.5v3.5l6 3 6-3V6.5 M8 9.5V13" /></svg>
 );
+/** 스페이스(대화 화면): 앞뒤로 겹친 말풍선 두 개 — 문서+말풍선은 한눈에 안 읽혔다(2026-09-30 사용자) */
+export const IconSpace = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M2.5 3h7a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H6L3.5 11V9h-1a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z M10.5 6h3a1 1 0 0 1 1 1v3.5a1 1 0 0 1-1 1h-.5v1.8L10.8 11.5H8.5a1 1 0 0 1-1-1V9" /></svg>
+);
+/** 채팅 보기: 말풍선 하나 */
+export const IconChat = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M3 3h10a1.2 1.2 0 0 1 1.2 1.2v5.6A1.2 1.2 0 0 1 13 11H7l-3 2.5V11H3a1.2 1.2 0 0 1-1.2-1.2V4.2A1.2 1.2 0 0 1 3 3Z" /></svg>
+);
+/** 터미널 보기: 네모 안 >_ */
+export const IconTerminal = () => (
+  <svg viewBox="0 0 16 16" {...P}><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6" /><path d="M4.5 6.3 6.6 8.2 4.5 10.1 M8.2 10.2h3.3" /></svg>
+);
+/** 파일: 모서리 접힌 종이 */
+export const IconFile = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M4 2h5l3 3v9H4z M9 2v3h3" /></svg>
+);
+/** 멈추기: 네모 */
+export const IconStop = () => (
+  <svg viewBox="0 0 16 16" {...P}><rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor" /></svg>
+);
+/** 쌓기: 위아래로 놓인 두 칸 */
+export const IconStack = () => (
+  <svg viewBox="0 0 16 16" {...P}><rect x="2.5" y="2.5" width="11" height="4.5" rx="1.2" /><rect x="2.5" y="9" width="11" height="4.5" rx="1.2" /></svg>
+);
+/** 탭: 위에 탭 머리(앞 탭은 본문과 이어짐) + 한 칸 */
+export const IconTabs = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M2.5 13.5V4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5h5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1Z M9.5 5.5V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5" /></svg>
+);
+/** 축소: 돋보기 안에 빼기 */
+export const IconZoomOut = () => (
+  <svg viewBox="0 0 16 16" {...P}><circle cx="7" cy="7" r="4.5" /><path d="M10.4 10.4L14 14M5 7h4" /></svg>
+);
+/** 확대: 돋보기 안에 더하기 */
+export const IconZoomIn = () => (
+  <svg viewBox="0 0 16 16" {...P}><circle cx="7" cy="7" r="4.5" /><path d="M10.4 10.4L14 14M5 7h4M7 5v4" /></svg>
+);
+/** 대시보드: 네 칸 */
+export const IconDashboard = () => (
+  <svg viewBox="0 0 16 16" {...P}><rect x="2.3" y="2.3" width="4.9" height="4.9" rx="1.2" /><rect x="8.8" y="2.3" width="4.9" height="4.9" rx="1.2" /><rect x="2.3" y="8.8" width="4.9" height="4.9" rx="1.2" /><rect x="8.8" y="8.8" width="4.9" height="4.9" rx="1.2" /></svg>
+);
+/** 페이지: 접힌 종이에 줄 두 개 */
+export const IconPage = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M4 1.8h5.2L12.5 5v9.2H4Z M9.2 1.8V5h3.3 M6 8.3h4.5 M6 10.8h3.2" /></svg>
+);
+/** 펼침 화살표(오른쪽) — 펼치면 90도 돌린다 */
+export const IconChevron = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M6 3.8 10.2 8 6 12.2" /></svg>
+);
+/** 더하기 */
+export const IconPlus = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M8 3v10M3 8h10" /></svg>
+);
+/** 고정: 압정 */
+export const IconPin = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M6 2h4l-.6 4 2.6 2.4H4L6.6 6Z M8 8.4V14" /></svg>
+);
+/** 프로젝트: 폴더 */
+export const IconFolder = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M1.8 4.2a1 1 0 0 1 1-1h3.4l1.4 1.6h5.6a1 1 0 0 1 1 1v6.9a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1Z" /></svg>
+);
+/** 내 페이지: 사람 */
+export const IconPerson = () => (
+  <svg viewBox="0 0 16 16" {...P}><circle cx="8" cy="5.4" r="2.6" /><path d="M3 13.8c.6-2.6 2.6-4 5-4s4.4 1.4 5 4" /></svg>
+);
+/** 찾기: 돋보기 */
+export const IconSearch = () => (
+  <svg viewBox="0 0 16 16" {...P}><circle cx="7" cy="7" r="4.5" /><path d="M10.4 10.4L14 14" /></svg>
+);

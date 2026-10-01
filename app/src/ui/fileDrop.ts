@@ -7,9 +7,12 @@ export type DropEvent = { type: 'over' | 'drop' | 'leave'; x?: number; y?: numbe
 
 /** 칸이 이 이벤트를 받으면 자기 xterm 에 붙여넣는다 (TerminalPane) */
 export const DROP_EVENT = 'honor-drop';
+/** 같은 칸에 놓은 파일 경로들(배열) — 채팅 판이 보내기 전 썸네일로 쓴다 */
+export const DROP_PATHS_EVENT = 'honor-drop-paths';
 
 function targetAt(x: number, y: number): HTMLElement | null {
-  const els = [...document.querySelectorAll<HTMLElement>('.pane[data-drop]')];
+  // 탭 보기에서 뒤에 숨겨 둔 창(.cell.behind)은 보이는 창과 같은 자리라 빼야 한다 — 참모1 에 놓은 파일이 참모-2 로 갔다(2026-09-30 사용자)
+  const els = [...document.querySelectorAll<HTMLElement>('.pane[data-drop]')].filter((el) => !el.closest('.cell.behind'));
   const rects = els.map((el, i) => {
     const r = el.getBoundingClientRect();
     return { id: String(i), left: r.left, top: r.top, right: r.right, bottom: r.bottom };
@@ -41,10 +44,23 @@ export function installFileDrop(): () => void {
     if (e.type === 'over') return light(el);
     light(null);
     const text = dropText(e.paths ?? []);
-    if (el && text) el.dispatchEvent(new CustomEvent(DROP_EVENT, { detail: text }));
+    if (el && text) {
+      el.dispatchEvent(new CustomEvent(DROP_EVENT, { detail: text }));
+      el.dispatchEvent(new CustomEvent(DROP_PATHS_EVENT, { detail: e.paths ?? [] }));
+    }
   };
   return () => {
     light(null);
     delete w.__drop;
   };
+}
+
+/** 파일을 그 세션 채팅에 붙인다 — 끌어다 놓기와 똑같이(터미널 입력칸에 경로, 채팅엔 @img·@file 이름표). 스페이스 미리보기·문서의 "채팅에 붙이기" */
+export function attachToChat(sessionId: string, paths: string[]): boolean {
+  const el = document.querySelector<HTMLElement>(`.cell[data-session="${CSS.escape(sessionId)}"] .pane[data-drop]`);
+  const text = dropText(paths);
+  if (!el || !text) return false;
+  el.dispatchEvent(new CustomEvent(DROP_EVENT, { detail: text }));
+  el.dispatchEvent(new CustomEvent(DROP_PATHS_EVENT, { detail: paths }));
+  return true;
 }

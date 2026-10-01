@@ -1,5 +1,11 @@
-#!/usr/bin/env python3
-"""Create a project folder for new work, with the project harness, then hand it to a session.
+#!/bin/sh
+''':'
+# sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
+':'''
+__doc__ = """Create a project folder for new work, with the project harness, then hand it to a session.
 새 일을 맡을 프로젝트 폴더를 만들고 하네스를 깐다 — 그다음 그 폴더에서 세션을 띄워 맡긴다.
 
   scripts/new-project <name> "<one-line summary>"
@@ -12,7 +18,7 @@ it only creates the folder and tells you to start the session with /project-star
 Prints JSON: {path, existed, written, projectStarter, trusted, browser, next}.
 With browser automation installed, a new project also gets its own logged-in browser profile (.mcp.json).
 """
-import datetime, json, os, re, shutil, subprocess, sys
+import datetime, json, os, re, shutil, subprocess, sys, time
 
 NAME = re.compile(r'^[a-z0-9][a-z0-9._-]{0,63}$')
 
@@ -43,7 +49,26 @@ def expand(p, home):
     return home + p[1:] if p.startswith('~') else p
 
 
-def trust(path, home):
+def trust_key(path, win=None):
+    """.claude.json 의 폴더 키 — 윈도우 Claude Code 는 C:/… 처럼 슬래시로 찾는다(C:\\… 로 적으면 'Workspace not trusted')"""
+    win = os.name == 'nt' if win is None else win
+    return path.replace('\\', '/') if win else path
+
+
+def swap_in(tmp, cj):
+    """다 쓴 임시 파일로 바꿔 끼운다. 윈도우는 claude 가 파일을 쥐고 있으면 바꿔치기가 막힌다 → 잠깐 기다렸다가, 끝내 안 되면 제자리에 쓴다"""
+    for _ in range(5):
+        try:
+            os.replace(tmp, cj)
+            return
+        except PermissionError:
+            time.sleep(0.2)
+    with open(tmp, encoding='utf-8') as src, open(cj, 'w', encoding='utf-8') as dst:
+        dst.write(src.read())
+    os.remove(tmp)
+
+
+def trust(path, home, win=None):
     """claude --bg 가 새 폴더에서 뜨게 ~/.claude.json 에 '믿음'을 적는다 — 이 스크립트가 방금 만든 빈 폴더에만.
     (부모 폴더를 믿어도 새 하위 폴더는 "Workspace not trusted" 로 거부됐다, 2026-09-28 실측) 파일이 없거나 깨졌으면 손대지 않는다"""
     cj = os.path.join(home, '.claude.json')
@@ -57,11 +82,11 @@ def trust(path, home):
     projects = d.setdefault('projects', {})
     if not isinstance(projects, dict):
         return False
-    projects.setdefault(path, {})['hasTrustDialogAccepted'] = True
+    projects.setdefault(trust_key(path, win), {})['hasTrustDialogAccepted'] = True
     tmp = cj + '.chammo-tmp'
     with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(d, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, cj)  # 한 번에 바꿔 끼운다(쓰다 만 파일이 남지 않게)
+    swap_in(tmp, cj)  # 한 번에 바꿔 끼운다(쓰다 만 파일이 남지 않게)
     return True
 
 

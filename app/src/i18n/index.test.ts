@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { assistant, getLang, pickLang, setAssistant, setLang, tr } from './index';
+import { assistant, getLang, pickLang, setAssistant, setLang, setWinKeys, tr } from './index';
 
 afterEach(() => { setLang('ko'); setAssistant(null); });
 
@@ -28,5 +28,15 @@ describe('assistant — 비서 이름(설정). 없으면 언어별 기본', () =
     expect(assistant()).toBe('Chammo');
     setAssistant('두목');
     expect(assistant()).toBe('두목');
+  });
+});
+
+describe('tr — 윈도우면 단축키 표기(⌘M)를 윈도우 키로(Ctrl+Shift+M)', () => {
+  afterEach(() => setWinKeys(false));
+  it('윈도우는 바꾸고 맥은 그대로', () => {
+    setWinKeys(true);
+    expect(tr('메모 열기 (⌘M)', 'Open notes (⌘M)')).toBe('메모 열기 (Ctrl+Shift+M)');
+    setWinKeys(false);
+    expect(tr('메모 열기 (⌘M)', 'Open notes (⌘M)')).toBe('메모 열기 (⌘M)');
   });
 });

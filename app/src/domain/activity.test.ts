@@ -119,3 +119,17 @@ describe('workAct — 도구 → 사무실 행동', () => {
     expect(workAct(undefined)).toBe('think');
   });
 });
+
+describe('summarizeTranscript — 넘기기 판단용(2026-09-30 한 프로젝트 오판)', () => {
+  const tool = (ts: string, name: string) => line({ type: 'assistant', timestamp: ts, message: { content: [{ type: 'tool_use', name, input: {} }] } });
+  it('마지막 SendMessage 시각을 남긴다(이미 참모에게 보고했는지)', () => {
+    const t = [user('t1', '해줘'), tool('t2', 'SendMessage'), tool('t3', 'Bash'), asst('t4', '끝')].join('\n');
+    expect(summarizeTranscript(t).messaged).toBe('t2');
+  });
+  it('답의 끝부분을 따로 남긴다 — 앞에서 자른 글엔 끝의 질문이 빠졌다', () => {
+    const long = '앞부분 설명 '.repeat(40) + '사용자가 직접 인증 풀어야 해';
+    const r = summarizeTranscript(asst('t1', long)).reply!;
+    expect(r.tail?.endsWith('사용자가 직접 인증 풀어야 해')).toBe(true);
+    expect(r.tail!.length).toBeLessThanOrEqual(201);
+  });
+});

@@ -1,5 +1,6 @@
 // `claude agents --json` 결과를 앱이 쓰는 세션 모델로. 순수 TS — 프레임워크·Tauri import 없음.
 import { assistant, tr } from '../i18n';
+import { fwd } from './paths';
 
 export type SessionState = 'working' | 'blocked' | 'idle';
 export type SessionKind = 'background' | 'interactive';
@@ -23,6 +24,10 @@ export type Session = {
   procPid?: number;
   /** 막힌 이유: 'permission prompt'(도구 권한 창) · 'startup prompt'(시작 때 새 MCP 서버 등) → 앱이 자동 허용 / 'input needed'(선택지 질문) → 사람 몫 */
   waitingFor?: string;
+  /** Claude 판단: 턴을 끝내고 사람 답을 기다림(status idle + state blocked, 창 이유 없음). 일을 끝냈으면 state done — 2026-09-30 실측 */
+  awaiting?: boolean;
+  /** 맡은 일을 끝내고 쉬는 세션(state: done) — 붙여도 화면이 비어 대시보드는 요약으로 보인다 */
+  finished?: boolean;
   /** 대화형만: 어디서 떴나(origin.rs). unattended = 예약 작업·붙은 사람 없는 tmux — 루틴 칸 "외부 예약"으로 따로 */
   origin?: { unattended: boolean; via: string };
 };
@@ -85,7 +90,7 @@ export function parseAgents(json: string, devRoot: string, extras: string[] = []
   const raw: unknown = JSON.parse(json);
   if (!Array.isArray(raw)) throw new Error(tr('claude agents --json: 배열이 아님', 'claude agents --json: not an array'));
   return (raw as RawAgent[]).map((r) => {
-    const cwd = r.cwd ?? '';
+    const cwd = fwd(r.cwd ?? '');
     const kind: SessionKind = r.kind === 'interactive' ? 'interactive' : 'background';
     return {
       id: r.id ?? r.sessionId ?? String(r.pid ?? ''),
@@ -95,12 +100,14 @@ export function parseAgents(json: string, devRoot: string, extras: string[] = []
       // status(busy/idle)가 있으면 그게 실제 상태다. 가져온(--resume) 세션은 대기 중에도 state가 blocked로 나온다(실측 2026-09-26).
       // 단 state: done 이면 답은 끝난 것 — 뒤에서 감시·에이전트가 돌면 status 가 busy 로 남는다(2026-09-28, 음성이 참모 답을 못 읽음)
       state: r.state === 'done' ? 'idle' : toState(r.status ?? r.state),
+      ...(r.state === 'done' ? { finished: true } : {}),
       startedAt: r.startedAt ?? 0,
       sessionId: r.sessionId,
       pid: kind === 'interactive' ? r.pid : undefined,
       procPid: r.pid,
       // status 없이 state: blocked 만 = 세션이 시작도 전에 멈춘 창(새 MCP 서버 허용 등) — 실측 2026-09-27
       waitingFor: r.waitingFor ?? (r.status === undefined && r.state === 'blocked' ? 'startup prompt' : undefined),
+      ...(r.status === 'idle' && r.state === 'blocked' && !r.waitingFor ? { awaiting: true } : {}),
       ...classifyWorkspace(cwd, devRoot, extras),
     };
   });

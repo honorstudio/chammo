@@ -88,15 +88,20 @@ Chammo 는 따로 로그인하지 않습니다. 맥에 로그인된 `claude` 를
 
 | 키 | 하는 일 |
 |---|---|
-| ⌘1 · ⌘2 · ⌘3 · ⌘4 | 참모 · 전체 세션 · 리뷰 · 사무실 |
-| ⌘Enter | 보고 있는 창 크게 / 되돌리기 |
+| ⌘1 ~ ⌘9 | 채팅 뷰(기본): 채팅 탭(참모) 옮기기 |
+| ⌥⌘1 · ⌥⌘2 · ⌥⌘3 · ⌥⌘4 | 참모 · 전체 세션 · 리뷰 · 사무실 (채팅 뷰를 끄면 ⌘1~4) |
+| ⌘` | 보고 있는 창 크게 / 되돌리기 |
+| ⌘Enter | 채팅: 하던 일 멈추고 바로 보내기 |
+| ⌘F | 문서 찾기 |
 | ⌘T · ⌘W | 새 세션 · 보고 있는 세션 끄기(대화는 남음) |
 | ⌘K · ⌘B · ⌘J | 프로젝트 검색 · 사이드바 · 작업 패널 |
 | ⌘E · ⌘⇧E | 리더 패널 · 리더 크게 |
 | ⌘M | 보고 있는 프로젝트 메모 |
 | ⌘, | 설정 |
 
-화면마다 마지막으로 누른 창을 기억해서, ⌘1·⌘2 로 오가거나 알림을 눌러 세션으로 가도 그 창이 바로 입력을 받습니다.
+**말하기 키**(설정 > 말하기 키, 기본 끔): 키를 누르고 말하면 보고 있는 세션 입력칸에 받아 적습니다. 지구본(fn) 또는 오른쪽 ⌥ 를 고를 수 있고, 다른 키와 같이 누르면 말하기로 보지 않습니다. 지구본을 고르면 맥 설정의 "🌐 키를 누르면"을 "아무것도 안 함"으로 두세요. "다른 앱을 보고 있을 때도"를 켤 때만 손쉬운 사용 권한을 묻습니다. Claude Code 음성 입력(`/voice`)이 켜져 있어야 받아 적고, 말이 끝나고 몇 초가 지나도 안 보내졌으면 채팅 뷰가 대신 보냅니다.
+
+채팅 탭마다 보던 화면을 기억하고, 탭을 바꾸거나 알림을 눌러 세션으로 가도 그 입력칸이 바로 입력을 받습니다.
 
 ## 동작 방식
 
@@ -162,6 +167,6 @@ Chammo 는 전부 내 맥에서 돕니다. 서버도, 계정도, 사용 통계 �
 
 [AGPL-3.0](LICENSE) © 2026 Honor Studio
 
-서드파티: 터미널 한글 폰트 `app/public/fonts/ChammoHangul.woff2` 는 NAVER [D2Coding](https://github.com/naver/d2codingfont) 의 한글 영역만 자른 수정판이라, SIL Open Font License 1.1 에 따라 이름을 바꿨습니다 — [`app/public/fonts/OFL.txt`](app/public/fonts/OFL.txt). 선택 기능인 Supertonic 목소리는 고를 때만 이 맥에 내려받습니다: `supertonic` 패키지(MIT)와 Supertone 모델([OpenRAIL-M 라이선스](https://huggingface.co/Supertone/supertonic-3), 이용 제한 조항 포함). 라이브러리(Tauri·React·xterm.js·Playwright MCP 등)는 각자의 라이선스(MIT / Apache-2.0)를 따릅니다.
+서드파티: 터미널 한글 폰트 `app/public/fonts/ChammoHangul.woff2` 는 NAVER [D2Coding](https://github.com/naver/d2codingfont) 의 한글 영역만 자른 수정판이라, SIL Open Font License 1.1 에 따라 이름을 바꿨습니다 — [`app/public/fonts/OFL.txt`](app/public/fonts/OFL.txt). 선택 기능인 Supertonic 목소리는 고를 때만 이 맥에 내려받습니다: `supertonic` 패키지(MIT)와 Supertone 모델([OpenRAIL-M 라이선스](https://huggingface.co/Supertone/supertonic-3), 이용 제한 조항 포함). 라이브러리(Tauri·React·xterm.js·BlockNote·pdf.js·Playwright MCP 등)는 각자의 라이선스(MIT / Apache-2.0 / MPL-2.0)를 따릅니다.
 
 Chammo 는 독립 프로젝트이며 Anthropic 과 제휴·보증·후원 관계가 없습니다. Claude 와 Claude Code 는 Anthropic 의 상표입니다.

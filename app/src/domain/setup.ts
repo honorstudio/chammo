@@ -1,3 +1,4 @@
+import { IS_WIN } from './reader';
 // 환경 점검 판단 — Claude Code 버전이 확인된 범위인가, 설정을 끝내도 되나
 // Chammo 는 Claude Code 의 백그라운드 세션 기능(--bg·agents --json·attach)에 기댄다. 확인한 범위는 2.1.280 이상의 2.1.x
 
@@ -49,7 +50,8 @@ export type SetupTask = 'install' | 'update' | 'login' | 'clt' | 'ghLogin' | 'tr
  * 설정 화면의 터미널에서 돌릴 한 번짜리 명령. 끝나면 무엇을 하면 되는지 한 줄 찍는다(done).
  * claude·gh 는 찾은 절대 경로로(앱의 PATH 에 없을 수 있어서)
  */
-export function setupCommand(task: SetupTask, bins: { claude?: string | null; gh?: string | null }, done: string, dir?: string): string {
+export function setupCommand(task: SetupTask, bins: { claude?: string | null; gh?: string | null }, done: string, dir?: string, win = IS_WIN): string {
+  if (win) return winSetupCommand(task, bins, done, dir);
   const tail = `; echo; echo ${shq(done)}`;
   switch (task) {
     case 'install':
@@ -69,6 +71,31 @@ export function setupCommand(task: SetupTask, bins: { claude?: string | null; gh
     case 'trust':
       // 폴더 믿기 — 그 폴더에서 claude 를 대화형으로 켠다. 뜨는 질문에 Enter(예) → 기록되면 앱이 창을 닫는다(claude 도 같이 꺼진다)
       return `cd ${shq(dir ?? '.')} && exec ${shq(bins.claude || 'claude')}`;
+  }
+}
+
+/** cmd 큰따옴표 */
+const dq = (s: string) => `"${s.replace(/"/g, '""')}"`;
+/** cmd echo 에 그대로 찍히게 — & | < > ^ 는 ^ 로 */
+const cmdEcho = (s: string) => s.replace(/[&|<>^]/g, '^$&');
+
+/** 윈도우 설정 명령 — cmd /C 가 읽는다(작은따옴표·exec·; 가 안 먹어서 폴더 믿기가 "구문이 잘못됨"으로 끝났다, 윈도우판) */
+function winSetupCommand(task: SetupTask, bins: { claude?: string | null; gh?: string | null }, done: string, dir?: string): string {
+  const tail = done ? ` & echo. & echo ${cmdEcho(done)}` : '';
+  const claude = dq(bins.claude || 'claude');
+  switch (task) {
+    case 'install':
+      return `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"${tail}`;
+    case 'update':
+      return `${claude} update${tail}`;
+    case 'login':
+      return `${claude} auth login${tail}`;
+    case 'clt':
+      return `winget install -e --id Git.Git${tail}`;
+    case 'ghLogin':
+      return `${dq(bins.gh || 'gh')} auth login${tail}`;
+    case 'trust':
+      return `cd /d ${dq((dir ?? '.').replace(/\//g, '\\'))} && ${claude}`;
   }
 }
 

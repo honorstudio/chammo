@@ -1,7 +1,11 @@
 // 앱 단축키. ⌘ 단독 조합만 쓴다 — Ctrl·Alt 조합은 터미널(Claude 입력칸) 몫이라 뺏으면 안 된다.
+import { winToMac } from './keys';
+import { IS_WIN } from './reader';
 
 export type Shortcut =
   | { type: 'goto'; to: 'orchestrator' | 'all' | 'tama' | 'review' | 'office' }
+  /** ⌘1~9 — 스페이스면 채팅 탭 N번, 아니면 gotoOfNum(예전 화면 이동) */
+  | { type: 'num'; n: number }
   | { type: 'font'; delta: 1 | -1 }
   | { type: 'fontReset' }
   | { type: 'toggleSidebar' }
@@ -18,24 +22,30 @@ export type Shortcut =
   | { type: 'settings' }
   | { type: 'maximizePane' }
   | { type: 'tour' }
-  | { type: 'quitAsk' };
+  | { type: 'quitAsk' }
+  | { type: 'selectAll' };
 
-type KeyLike = { key: string; metaKey: boolean; shiftKey: boolean; altKey: boolean; ctrlKey: boolean };
+type KeyLike = { key: string; code?: string; metaKey: boolean; shiftKey: boolean; altKey: boolean; ctrlKey: boolean };
+
+const GOTO: Record<number, Shortcut> = { 1: { type: 'goto', to: 'orchestrator' }, 2: { type: 'goto', to: 'all' }, 3: { type: 'goto', to: 'review' }, 4: { type: 'goto', to: 'office' } };
+/** 숫자 칸 → 화면 이동(스페이스를 끈 화면에서 ⌘1~4, 늘 ⌥⌘1~4) */
+export const gotoOfNum = (n: number): Shortcut | null => GOTO[n] ?? null;
 
 // 한글 입력 상태에선 같은 자리 키가 자모로 들어온다 — 영문 키로 바꿔 읽는다
-const HANGUL_KEY: Record<string, string> = { ㅠ: 'b', ㅓ: 'j', ㅏ: 'k', ㅈ: 'w', ㅅ: 't', ㅡ: 'm', ㄷ: 'e', ㄸ: 'E' };
+const HANGUL_KEY: Record<string, string> = { ㅁ: 'a', ㅠ: 'b', ㅓ: 'j', ㅏ: 'k', ㅈ: 'w', ㅅ: 't', ㅡ: 'm', ㄷ: 'e', ㄸ: 'E', ㄹ: 'f' };
 
-export function shortcutFor(e: KeyLike): Shortcut | null {
+export function shortcutFor(input: KeyLike, win = IS_WIN): Shortcut | null {
+  // 윈도우는 Ctrl(+Shift) 조합을 맥 ⌘ 조합으로 바꿔 읽는다(domain/keys)
+  const e = win ? winToMac(input) : input;
+  if (!e) return null;
+  // ⌥⌘1~4 = 화면 이동. ⌥ 를 누르면 글자가 바뀌니(¡™£¢) 키 자리로 읽는다
+  if (e.metaKey && e.altKey && !e.ctrlKey) {
+    const d = e.code?.match(/^Digit([1-9])$/);
+    return d ? gotoOfNum(Number(d[1])) : null;
+  }
   if (!e.metaKey || e.altKey || e.ctrlKey) return null;
+  if (/^[1-9]$/.test(e.key) && !e.shiftKey) return { type: 'num', n: Number(e.key) }; // ⌘1~9 = 채팅 탭(2026-09-30 사용자)
   switch (HANGUL_KEY[e.key] ?? e.key) {
-    case '1':
-      return { type: 'goto', to: 'orchestrator' };
-    case '2':
-      return { type: 'goto', to: 'all' };
-    case '3':
-      return { type: 'goto', to: 'review' };
-    case '4':
-      return { type: 'goto', to: 'office' }; // 사무실 뷰 — ⌘1 은 참모 터미널 격자
     case '=':
     case '+':
       return { type: 'font', delta: 1 };
@@ -43,11 +53,14 @@ export function shortcutFor(e: KeyLike): Shortcut | null {
       return { type: 'font', delta: -1 };
     case '0':
       return { type: 'fontReset' };
+    case 'a':
+      return e.shiftKey ? null : { type: 'selectAll' }; // 보고 있는 곳(터미널 창·리더 문서·입력칸)만
     case 'b':
       return { type: 'toggleSidebar' };
     case 'j':
       return { type: 'toggleTasks' };
     case 'k':
+    case 'f': // ⌘F — 문서가 열려 있으면 문서 찾기, 아니면 ⌘K 와 같은 검색(App 'search')
       return { type: 'search' };
     case 'w':
       return { type: 'closePane' }; // 보고 있는 창의 세션을 끈다 (대화는 남는다)
@@ -59,8 +72,9 @@ export function shortcutFor(e: KeyLike): Shortcut | null {
       return { type: 'toggleReader' }; // 작업 패널 왼쪽 리더 패널
     case 'E':
       return { type: 'readerFull' }; // ⌘⇧E 리더 크게·작게
-    case 'Enter':
-      return { type: 'maximizePane' }; // ⌘Enter · ⌘⇧Enter(iTerm2·Warp 관례) — 보고 있는 창 크게/되돌리기
+    case '`':
+    case '₩':
+      return { type: 'maximizePane' }; // ⌘₩(한글 입력)·⌘` — 보고 있는 창 크게/되돌리기. ⌘Enter 는 채팅 '끊고 보내기'에 내줬다(2026-09-30 사용자)
     case '/':
       return { type: 'tour' }; // 둘러보기 다시 보기
     case ',':
@@ -98,6 +112,7 @@ const MENU: Record<string, Shortcut> = {
   reader_close: { type: 'readerClose' },
   settings: { type: 'settings' },
   pane_max: { type: 'maximizePane' },
+  select_all: { type: 'selectAll' },
   tour: { type: 'tour' },
   app_quit_all: { type: 'quitAsk' },
 };

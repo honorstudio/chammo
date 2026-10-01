@@ -11,8 +11,8 @@ import type { ProjectGroup, Session, SessionState } from '../domain/session';
 export type Selection = { kind: 'orchestrator' } | { kind: 'all' } | { kind: 'tama' } | { kind: 'replay' } | { kind: 'load' } | { kind: 'helpers' } | { kind: 'review'; key?: string } | { kind: 'project'; name: string } | { kind: 'routine'; name: string } | { kind: 'external'; id: string };
 
 type Props = {
-  /** 루틴(반복 업무) 줄 — 이름·상태·한 줄 설명 */
-  routines?: { name: string; state: RoutineState; line: string }[];
+  /** 루틴(반복 업무) 줄 — 이름·상태·한 줄 설명. cloud = claude.ai 클라우드 루틴("클라우드" 배지) */
+  routines?: { name: string; state: RoutineState; line: string; cloud?: boolean }[];
   /** 예약 작업이 아무도 안 보는 곳에서 띄운 대화형 세션 — 루틴 칸에 "외부 예약"으로(domain/session groupByProject) */
   external?: { id: string; name: string; line: string }[];
   orchestrator: Session | undefined;
@@ -44,7 +44,7 @@ const Badges = ({ list }: { list?: string[] }) =>
   list && list.length ? <div className="badges">{list.join(' · ')}</div> : null;
 
 /** 대화 사용량 — 60% 넘으면 노랑, 80% 넘으면 빨강 */
-const Ctx = ({ v }: { v?: number }) =>
+export const Ctx = ({ v }: { v?: number }) =>
   v === undefined ? null : (
     <span className={`ctx ${ctxLevel(v)}`} title={tr('컨텍스트(대화 메모리) 사용량 — 80% 넘으면 곧 요약된다', 'Context (conversation memory) used — over 80% means it will be compacted soon')}>
       <IconDb />{v}%
@@ -137,10 +137,10 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
           <div className="grp">{tr(`루틴 · ${(routines?.length ?? 0) + external.length}`, `Routines · ${(routines?.length ?? 0) + external.length}`)}</div>
           {(routines ?? []).map((r) => (
             <button key={r.name} className={`it ${isOn(selected, { kind: 'routine', name: r.name }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'routine', name: r.name })}>
-              {/* 도는 중 = 도는 호, 실패·보고 없음 = 손바닥(네가 볼 차례), 성공 = 꽉 찬 원, 꺼 둠·첫 실행 전 = 빈 원 */}
+              {/* 도는 중 = 도는 호, 실패·보고 없음 = 손바닥(네가 볼 차례), 성공 = 꽉 찬 원, 꺼 둠·첫 실행 전·클라우드 = 빈 원 */}
               <StatusMark kind={ROUTINE_MARK[r.state]} />
               <span>
-                <div className="nm">{r.name}</div>
+                <div className="nm">{r.name}{r.cloud && <span className="tag rt-cloud">{tr('클라우드', 'Cloud')}</span>}</div>
                 <div className="ln">{r.line}</div>
               </span>
             </button>
@@ -202,7 +202,7 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
   );
 }
 
-const ROUTINE_MARK: Record<RoutineState, StatusKind> = { running: 'working', failed: 'waiting', noReport: 'waiting', ok: 'idle', paused: 'none', waiting: 'none' };
+const ROUTINE_MARK: Record<RoutineState, StatusKind> = { running: 'working', failed: 'waiting', noReport: 'waiting', ok: 'idle', paused: 'none', waiting: 'none', cloud: 'none' };
 
 function describe(sessions: Session[]): string {
   if (sessions.length === 1) {

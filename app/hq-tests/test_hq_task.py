@@ -47,10 +47,34 @@ class Send(unittest.TestCase):
         self.assertIn(task.MERGE_RULE, err)
         self.assertEqual([e['type'] for e in events], ['send'])
 
+    def test_시킨_참모를_from_으로_남긴다(self):
+        # 채팅 뷰 대시보드가 참모마다 잡은 세션을 가른다 — 없으면 공개판에서 맡긴 일이 전부 '누가 시켰는지 모르는 일'(0.2.0 검증)
+        old = os.environ.get('CLAUDE_JOB_DIR')
+        os.environ['CLAUDE_JOB_DIR'] = '/h/.claude/jobs/abcd1234'
+        try:
+            _, _, _, events = self.run_send('button color')
+        finally:
+            if old is None:
+                os.environ.pop('CLAUDE_JOB_DIR', None)
+            else:
+                os.environ['CLAUDE_JOB_DIR'] = old
+        self.assertEqual(events[0]['from'], 'abcd1234')
+
     def test_결제_일은_코드_3과_결정_대기(self):
         code, _, _, events = self.run_send('refund flow')
         self.assertEqual(code, 3)
         self.assertEqual([e['type'] for e in events], ['send', 'ask'])
+
+
+class OpenTasks(unittest.TestCase):
+    def test_only_open_tasks_of_that_session(self):
+        with tempfile.TemporaryDirectory() as d:
+            task.LOG = os.path.join(d, 'tasks.jsonl')
+            task.append({'ts': 't', 'type': 'send', 'task': 'a', 'target': 'api', 'title': 'first'})
+            task.append({'ts': 't', 'type': 'send', 'task': 'b', 'target': 'api', 'title': 'second'})
+            task.append({'ts': 't', 'type': 'done', 'task': 'b', 'note': '#12 merged'})
+            task.append({'ts': 't', 'type': 'send', 'task': 'c', 'target': 'web', 'title': 'other'})
+            self.assertEqual(task.open_tasks('api'), [('a', 'first')])
 
 
 class Effort(unittest.TestCase):
