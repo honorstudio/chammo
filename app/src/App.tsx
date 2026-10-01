@@ -881,6 +881,21 @@ export default function App() {
   useEffect(() => { if (slotsKey !== JSON.stringify(seats)) setSeats(JSON.parse(slotsKey)); }, [slotsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   activeGrid.current = null; // 격자를 그리는 갈래가 gridFocus 로 다시 채운다
+  /** 루틴 화면 — 사이드바(터미널 뷰)와 채팅 뷰 스페이스가 같이 쓴다. removed: 지운 뒤 갈 곳 */
+  const routinePage = (name: string, removed: () => void) => {
+    const r = routines.find((x) => x.name === name);
+    const live = r && !isCloud(r) ? allSessions.find((x) => x.name === `routine-${name}` && x.state !== 'idle') : undefined;
+    return r ? (
+      <RoutinePage routine={r} state={routineState(r, allSessions)} liveSession={live?.id ?? null} claudeBin={bin} fontSize={fontSize}
+        onAction={async (a) => {
+          try { await routineDo(r.name, a); } catch (e: unknown) { setError(tr(`루틴 ${r.name}: ${String(e)}`, `Routine ${r.name}: ${String(e)}`)); }
+          if (a === 'remove') removed();
+          pullRoutines();
+          void refresh();
+        }} />
+    ) : <div className="empty"><b>{tr('루틴을 찾을 수 없어요', 'Routine not found')}</b></div>;
+  };
+  const routineItems = routines.map((r) => { const st = routineState(r, allSessions); return { name: r.name, state: st, line: routineLine(r, st), cloud: isCloud(r) }; });
   let main;
   let spaceShown = false; // 스페이스 모드면 리더가 왼쪽 칸이라 오른쪽 리더 패널은 안 띄운다
   if (selected.kind === 'orchestrator') {
@@ -910,6 +925,7 @@ export default function App() {
             ctxOf={ctxOf} onAddProject={config && env ? () => void addProjectFolder() : undefined}
             onRemoveStopped={(x) => { markPending(x.sessionId); void removeSession(x.id).then(() => refresh(), (e: unknown) => onMessage(tr(`지우기 실패: ${String(e)}`, `Remove failed: ${String(e)}`))); }}
             onNewOrch={env ? () => void spawnOrchestrator() : undefined}
+            routines={routineItems} routinePage={(name) => routinePage(name, () => {})}
             onNewSession={(root, name) => void newSession(root, name).then(() => onMessage(null), (e: unknown) => onMessage(tr(`새 세션 실패: ${String(e)}`, `New session failed: ${String(e)}`)))}
             sessions={sessions} events={taskEvents} claudeBin={bin} fontSize={fontSize} home={env?.home} live={liveLines}
             onClose={() => setSpace(false)} onOpenSession={(id) => { setSpace(false); openTarget(id); }}
@@ -1028,17 +1044,7 @@ export default function App() {
   } else if (selected.kind === 'tama') {
     main = <TamaPage file={tama.file} apply={tama.apply} />;
   } else if (selected.kind === 'routine') {
-    const r = routines.find((x) => x.name === selected.name);
-    const live = r && !isCloud(r) ? allSessions.find((x) => x.name === `routine-${selected.name}` && x.state !== 'idle') : undefined;
-    main = r ? (
-      <RoutinePage routine={r} state={routineState(r, allSessions)} liveSession={live?.id ?? null} claudeBin={bin} fontSize={fontSize}
-        onAction={async (a) => {
-          try { await routineDo(r.name, a); } catch (e: unknown) { setError(tr(`루틴 ${r.name}: ${String(e)}`, `Routine ${r.name}: ${String(e)}`)); }
-          if (a === 'remove') setSelected({ kind: 'orchestrator' });
-          pullRoutines();
-          void refresh();
-        }} />
-    ) : <div className="empty"><b>{tr('루틴을 찾을 수 없어요', 'Routine not found')}</b></div>;
+    main = routinePage(selected.name, () => setSelected({ kind: 'orchestrator' }));
   } else if (selected.kind === 'review') {
     main = <ReviewPage data={review} sessions={sessions} stopped={stopped} taskEvents={taskEvents} selectedKey={selected.key} onSelectKey={(key) => setSelected({ kind: 'review', key })} onOpenSession={openTarget} />;
   } else if (selected.kind === 'helpers') {
@@ -1117,7 +1123,7 @@ export default function App() {
     <div className="app">
       {/* 채팅 뷰에선 세션 사이드바 대신 스페이스 메뉴(오케스트레이터·프로젝트 세션)가 ⌘B 자리 — 2026-09-30 사용자 */}
       {sidebarOpen && !spaceShown && <Sidebar
-        routines={routines.map((r) => { const st = routineState(r, allSessions); return { name: r.name, state: st, line: routineLine(r, st), cloud: isCloud(r) }; })}
+        routines={routineItems}
         orchestrator={groups.orchestrator}
         projects={groups.projects}
         selected={selected}

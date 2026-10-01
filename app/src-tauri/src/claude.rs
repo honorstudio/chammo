@@ -748,6 +748,10 @@ pub fn read_ctx() -> Vec<String> {
 /// attach 를 떼도 세션은 안 죽는다. keys 가 None 이면 화면만 읽는다
 fn with_attach(id: &str, keys: Option<&[u8]>) -> Result<String, String> {
     use std::time::Duration;
+    // 윈도우: 화면만 읽으려고 새로 붙으면 열린 터미널 보기가 쫓겨난다 — 열려 있으면 읽지 않는다
+    if cfg!(windows) && keys.is_none() && crate::pty::session_writer(id).is_some() {
+        return Err(crate::i18n::tr("터미널 보기가 붙어 있어 화면을 따로 못 읽어", "A terminal view is attached — can't read the screen separately").into());
+    }
     attach_do(id, |w| {
         if let Some(k) = keys {
             // 화살표·글자는 하나씩 조금 쉬어 가며 — 한꺼번에 넣으면 TUI 가 놓칠 수 있다
@@ -814,6 +818,20 @@ fn attach_type_segs(id: &str, segs: &[Vec<u8>]) -> Result<(), String> {
 
 /// attach 를 붙여 화면을 읽고 write 로 키를 넣은 뒤 뗀다
 fn attach_do(id: &str, write: impl FnOnce(&mut dyn std::io::Write) -> std::io::Result<()>) -> Result<String, String> {
+    // 윈도우: 앱이 이 세션 터미널 보기를 열어 두었으면 거기에 바로 쓴다 — 새로 붙으면 그 창이 쫓겨나고(세션당 한 창) 붙는 데 20초 걸렸다.
+    // 화면 글자는 없으니 빈 글로 돌려준다(권한 창 자동 허용의 화면 읽기는 with_attach 가 따로 막는다)
+    if cfg!(windows) {
+        if let Some(w) = crate::pty::session_writer(id) {
+            log_out("attach", &format!("{id} via-open-terminal"));
+            let mut g = w.lock().unwrap();
+            return write(&mut **g).map(|_| String::new()).map_err(|e| e.to_string());
+        }
+    }
+    attach_new(id, write)
+}
+
+/// 새로 붙어서(claude attach) 화면을 읽고 키를 넣은 뒤 뗀다
+fn attach_new(id: &str, write: impl FnOnce(&mut dyn std::io::Write) -> std::io::Result<()>) -> Result<String, String> {
     use std::io::Write;
     use std::ops::Not;
     use std::sync::atomic::{AtomicUsize, Ordering};

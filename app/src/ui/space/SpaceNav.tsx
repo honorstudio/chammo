@@ -12,6 +12,7 @@ import { IconClose } from '../Icons';
 import { orchBadge } from '../../domain/orchLabel';
 import { keyLabel } from '../../domain/keys';
 import { IS_WIN } from '../../domain/reader';
+import type { RoutineState } from '../../domain/routine';
 
 export type ProjectGroup = { name: string; root: string; sessions: Session[] };
 
@@ -33,7 +34,7 @@ export function StateMark({ s }: { s: Session }) {
  * 채팅 뷰 메뉴(⌘B) — v10: 오케스트레이터(참모마다 대시보드 + 문서) → 내 페이지 → 프로젝트(대시보드 + 문서).
  * 참모 문서 = 고정한 것 + 이번에 띄운 md(최근 먼저). 펼치고 접기는 기억한다
  */
-export function SpaceNav({ onNewOrch, helpers = [], pagesRoot = '', onChatTab, ctxOf, onAddProject, idle = [], offOrchs = [], onResume, onRemoveStopped, orchs, viewId, colorOf, projects, holders, pick, onPick, orchDocsOf, isPinned, onTogglePin, pages, pageTitle, onNewPage, onOpenFile, selectedFile, onTrashPage }: {
+export function SpaceNav({ onNewOrch, routines = [], helpers = [], pagesRoot = '', onChatTab, ctxOf, onAddProject, idle = [], offOrchs = [], onResume, onRemoveStopped, orchs, viewId, colorOf, projects, holders, pick, onPick, orchDocsOf, isPinned, onTogglePin, pages, pageTitle, onNewPage, onOpenFile, selectedFile, onTrashPage }: {
   /** 내 페이지 지우기 — 휴지통으로(하위 페이지 같이) */
   onTrashPage?: (path: string) => void;
   /** 세션이 안 떠 있는 프로젝트 — 흐리게, 누르면 그 프로젝트 대시보드 */
@@ -63,6 +64,8 @@ export function SpaceNav({ onNewOrch, helpers = [], pagesRoot = '', onChatTab, c
   pages: string[];
   /** 도우미 세션 — 예전 사이드바 '도우미' 칸처럼 */
   helpers?: Session[];
+  /** 루틴(사이드바 '루틴' 칸과 같은 것) — 채팅 뷰엔 루틴을 볼 곳이 없었다(2026-10-01 사용자) */
+  routines?: { name: string; state: RoutineState; line: string; cloud?: boolean }[];
   /** 내 페이지 폴더 — 하위 페이지 들여쓰기 기준 */
   pagesRoot?: string;
   pageTitle: (path: string) => string;
@@ -164,6 +167,16 @@ export function SpaceNav({ onNewOrch, helpers = [], pagesRoot = '', onChatTab, c
         </div>
       ))}
 
+      {routines.length > 0 && <div className="cv-sec click" onClick={() => flipSec('routines')}><span className="with-ic">{secFold('routines')}{tr('루틴', 'Routines')}</span><span className="cv-count">{routines.length}</span></div>}
+      {secOpen('routines') && routines.map((r) => (
+        <div key={r.name} className={`cv-row top ${pick === `r:${r.name}` ? 'on' : ''}`} onClick={() => onPick(`r:${r.name}`)} title={r.cloud ? `${r.line} · ${tr('클라우드', 'Cloud')}` : r.line}>
+          <span className="cv-fold small blank" />
+          <span className="cv-label">{r.name}</span>
+          {/* 도는 중 = 도는 호, 실패·보고 없음 = 볼 차례 표시, 나머지는 표시 없음(사이드바와 같은 뜻) */}
+          {r.state === 'running' ? <span className="cv-spin" title={r.line} /> : r.state === 'failed' || r.state === 'noReport' ? <span className="cv-ask" title={r.line} /> : null}
+        </div>
+      ))}
+
       <div className={`cv-sec click ${pick === 'm:' ? 'here' : ''}`} onClick={() => onPick('m:')} title={tr('내 페이지 첫 화면 — 화살표로 접기', 'My pages home — arrow to fold')}><span className="with-ic"><span onClick={(e) => { e.stopPropagation(); flipSec('pages'); }}>{secFold('pages')}</span><IconPerson />{tr('내 페이지', 'My pages')}</span>
         <button className="cv-act show" onClick={(e) => { e.stopPropagation(); onNewPage(); }} title={tr('새 페이지', 'New page')} aria-label={tr('새 페이지', 'New page')}><IconPlus /></button></div>
       {secOpen('pages') && pages.length === 0 && <button className="cv-empty" onClick={onNewPage}>{tr('+ 첫 페이지 만들기', '+ Create your first page')}</button>}
@@ -183,7 +196,7 @@ export function SpaceNav({ onNewOrch, helpers = [], pagesRoot = '', onChatTab, c
               <button className={`cv-fold ${isOpen(k) ? 'open' : ''}`} onClick={(e) => { e.stopPropagation(); toggle(k); }} aria-label={isOpen(k) ? tr('접기', 'Collapse') : tr('펼치기', 'Expand')}><IconChevron /></button>
               <span className="cv-ic"><IconFolder /></span>
               <span className="cv-label">{g.name}</span>
-              {held.length > 0 && <span className="cv-holders" title={tr('잡고 있는 참모', 'Held by')}>{held.map((o) => { const x = orchs.find((y) => y.id === o); return <i key={o} style={{ background: colorOf(o) }} title={x ? label(x) : o}>{(x?.name || '참모').replace(/^참모-?/, '') || '1'}</i>; })}</span>}
+              {held.length > 0 && <span className="cv-holders" title={tr('잡고 있는 참모', 'Held by')}>{held.map((o) => { const x = orchs.find((y) => y.id === o); return <i key={o} style={{ background: colorOf(o) }} title={x ? label(x) : o}>{orchBadge(x?.name || '')}</i>; })}</span>}
               {busy && <StateMark s={busy} />}
               <Ctx v={g.sessions.map((x) => ctxOf?.(x)).filter((x): x is number => x !== undefined).reduce<number | undefined>((m, x) => (m === undefined || x > m ? x : m), undefined)} />
             </div>

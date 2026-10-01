@@ -9,10 +9,21 @@ use std::sync::Mutex;
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::State;
 
+type SharedWriter = std::sync::Arc<Mutex<Box<dyn Write + Send>>>;
+
 struct Pty {
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    writer: SharedWriter,
     child: Box<dyn Child + Send + Sync>,
+}
+
+/// 열린 터미널 보기가 어느 세션에 붙어 있나(pty id, 세션 id, 쓰기) — 윈도우는 claude attach 가 세션당 한 창만 붙게 해서,
+/// 키를 넣으려고 새로 붙으면 터미널 보기가 "Session opened in another window" 로 쫓겨났다(2026-10-01). 열린 것에 바로 쓴다
+static OPEN: Mutex<Vec<(u32, String, SharedWriter)>> = Mutex::new(Vec::new());
+
+/// 이 세션에 붙어 있는 터미널 보기의 쓰기(가장 최근 것). 없으면 None
+pub(crate) fn session_writer(session: &str) -> Option<SharedWriter> {
+    OPEN.lock().unwrap().iter().rev().find(|(_, s, _)| s == session).map(|(_, _, w)| w.clone())
 }
 
 #[derive(Default)]
@@ -92,6 +103,10 @@ pub fn pty_open(
 ) -> Result<u32, String> {
     let (master, writer, child) = spawn_pty(&command, cwd, cols, rows, move |b| on_data.send(InvokeResponseBody::Raw(b.to_vec())).is_ok())?;
     let id = state.next.fetch_add(1, Ordering::SeqCst) + 1;
+    let writer: SharedWriter = std::sync::Arc::new(Mutex::new(writer));
+    if let Some(session) = session_of(&command) {
+        OPEN.lock().unwrap().push((id, session, writer.clone()));
+    }
     state.map.lock().unwrap().insert(id, Pty { master, writer, child });
     Ok(id)
 }
@@ -99,7 +114,7 @@ pub fn pty_open(
 /// 앱 안에서 바로 쓰기 — 지구본 키 말하기(ptt)가 스페이스를 흘린다
 pub fn write_to(state: &Ptys, id: u32, data: &str) {
     if let Some(p) = state.map.lock().unwrap().get_mut(&id) {
-        let _ = p.writer.write_all(data.as_bytes());
+        let _ = p.writer.lock().unwrap().write_all(data.as_bytes());
     }
 }
 
@@ -109,7 +124,8 @@ pub fn pty_write(state: State<Ptys>, id: u32, data: String) -> Result<(), String
     let p = map.get_mut(&id).ok_or(crate::i18n::tr("없는 pty", "No such pty"))?;
     #[cfg(debug_assertions)]
     log_write(id, &data);
-    p.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())
+    let r = p.writer.lock().unwrap().write_all(data.as_bytes()).map_err(|e| e.to_string());
+    r
 }
 
 /// dev 검증용 — HONOR_ORCH_PTY_LOG=<파일> 이면 pty 로 보낸 글자를 한 줄씩(ms 시각·이스케이프) 남긴다. 디버그 빌드에만 있다
@@ -134,6 +150,7 @@ pub fn pty_resize(state: State<Ptys>, id: u32, cols: u16, rows: u16) -> Result<(
 #[tauri::command]
 pub fn pty_close(state: State<Ptys>, id: u32) {
     crate::ptt::forget(id);
+    OPEN.lock().unwrap().retain(|(pid, _, _)| *pid != id);
     if let Some(mut p) = state.map.lock().unwrap().remove(&id) {
         let _ = p.child.kill();
     }

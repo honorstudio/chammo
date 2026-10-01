@@ -30,6 +30,7 @@ import type { NoteBase } from '../../domain/noteEdits';
 import { projectRoot } from '../../domain/spaceTree';
 import './space.css';
 import { attachCommand } from '../../domain/termCommand';
+import type { RoutineState } from '../../domain/routine';
 
 /** 참모마다 색 — 메뉴 아바타, 프로젝트 옆 "잡고 있는 참모" 점(2026-09-30 사용자) */
 export const ORCH_COLORS = ['#d9622b', '#2f74e0', '#1f9a62', '#9b51e0', '#c98a00', '#d23f6b'];
@@ -46,7 +47,7 @@ const loadTitles = (): Record<string, string> => { try { return JSON.parse(local
  * 채팅 뷰의 스페이스(큰 창 전체) — v10: 왼쪽 메뉴 트리(참모·프로젝트마다 대시보드 + 문서, 내 페이지),
  * 가운데 = 고른 것(대시보드 / 노션식 문서 / 세션 터미널). 참모·맡긴 세션이 띄운 파일은 위에 모달
  */
-export function SpaceView({ orchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, send, sendTo, live = {}, menuOpen = true, idle = [], stopped = [], orchCwd = '', onResume, onRemoveStopped, onNewSession, onNewOrch, ctxOf, onAddProject, onChatTab, helpers = [] }: {
+export function SpaceView({ orchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, send, sendTo, live = {}, menuOpen = true, idle = [], stopped = [], orchCwd = '', onResume, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, ctxOf, onAddProject, onChatTab, helpers = [] }: {
   /** 세션이 안 떠 있는 프로젝트(예전 사이드바처럼 흐리게) */
   idle?: { name: string; root: string }[];
   /** 꺼진 세션(이어서 켤 수 있는 것) */
@@ -63,6 +64,9 @@ export function SpaceView({ orchs, orch: chatOrch, projectSessions, sessions, ev
   onNewSession?: (root: string, name: string) => void;
   /** 참모 하나 더(⌘T 와 같다) — 채팅 탭 줄·오케스트레이터 칸의 + */
   onNewOrch?: () => void;
+  /** 루틴 목록·화면(App 이 사이드바와 같은 RoutinePage 를 만들어 준다) */
+  routines?: { name: string; state: RoutineState; line: string; cloud?: boolean }[];
+  routinePage?: (name: string) => React.ReactNode;
   live?: Record<string, LiveLine>;
   orchs: Session[];
   /** 지금 채팅 탭 참모 */
@@ -370,6 +374,8 @@ export function SpaceView({ orchs, orch: chatOrch, projectSessions, sessions, ev
           } />
       );
     })();
+  } else if (pick.startsWith('r:')) {
+    main = routinePage?.(pick.slice(2)) ?? null;
   } else if (pick === 'm:') {
     main = <PagesHome pages={pages} titleOf={pageName} onOpen={(p) => setPick(`d:${p}`)} onNew={newPage} />;
   } else if (pick.startsWith('d:')) {
@@ -407,7 +413,7 @@ export function SpaceView({ orchs, orch: chatOrch, projectSessions, sessions, ev
   return (
     <div className="space cv">
       {menuOpen && (
-        <SpaceNav onNewOrch={onNewOrch} onTrashPage={(p) => void invoke('trash_page', { path: p }).then(() => { if (pick === `d:${p}` || pick.startsWith(`d:${p.replace(/\.md$/, '')}/`)) setPick('m:'); loadPages(); }).catch(() => {})} idle={idle} offOrchs={stopped.filter((x, i, all) => x.cwd === orchCwd && isOrchestratorName(x.name) && !orchs.some((o) => o.name === x.name) && all.findIndex((y) => y.cwd === orchCwd && y.name === x.name) === i)} helpers={helpers} onChatTab={onChatTab} ctxOf={ctxOf} onAddProject={onAddProject} onResume={onResume} onRemoveStopped={onRemoveStopped} orchs={orchs} viewId={orch?.id} colorOf={colorOf} projects={groups} holders={holders} pick={pick}
+        <SpaceNav onNewOrch={onNewOrch} routines={routines} onTrashPage={(p) => void invoke('trash_page', { path: p }).then(() => { if (pick === `d:${p}` || pick.startsWith(`d:${p.replace(/\.md$/, '')}/`)) setPick('m:'); loadPages(); }).catch(() => {})} idle={idle} offOrchs={stopped.filter((x, i, all) => x.cwd === orchCwd && isOrchestratorName(x.name) && !orchs.some((o) => o.name === x.name) && all.findIndex((y) => y.cwd === orchCwd && y.name === x.name) === i)} helpers={helpers} onChatTab={onChatTab} ctxOf={ctxOf} onAddProject={onAddProject} onResume={onResume} onRemoveStopped={onRemoveStopped} orchs={orchs} viewId={orch?.id} colorOf={colorOf} projects={groups} holders={holders} pick={pick}
           onPick={(k, orchId) => { setPick(k); if (orchId) setNav((n) => ({ ...n, view: orchId })); }}
           orchDocsOf={(o) => orchDocs(log, o.id, pins[pinKey(o)] ?? [])} isPinned={isPinned} onTogglePin={togglePin}
           pagesRoot={pagesRoot} pages={pages} pageTitle={pageName} onNewPage={newPage}
