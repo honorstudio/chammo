@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { orphanSession, parseStopped, recentDelegated, resumable, type StoppedSession } from './stopped';
+import { orphanSession, parseStopped, recentDelegated, resumable, sameOrchSlot, stoppedOrchs, type StoppedSession } from './stopped';
 import type { TaskCard } from './tasks';
 import type { Session } from './session';
 
@@ -90,5 +90,35 @@ describe('orphanSession — 주인 잃은 일을 이어서 켤 세션', () => {
   });
   it('기록이 없으면 undefined — 버튼을 막는다', () => {
     expect(orphanSession('todo-api', list)).toBeUndefined();
+  });
+});
+
+describe('stoppedOrchs — 오케스트레이터 패널의 꺼진 참모', () => {
+  const st = (id: string, name: string, cwd = '/h/.chammo/hq'): StoppedSession => ({ id, sessionId: `${id}-sid`, name, cwd, project: 'hq', workspace: null, reason: 'stopped', startedAt: 0 });
+  const HQ = '/h/.chammo/hq';
+  it('번호 붙은 참모·옛 이름(참모-2)도 — 끄면 패널에서 사라졌다(2026-10-01 사용자)', () => {
+    expect(stoppedOrchs([st('a', '참모-2'), st('b', '참모-3'), st('c', '참모')], HQ, []).map((x) => x.id)).toEqual(['a', 'b', 'c']);
+  });
+  it('도우미(비서 이름이 아닌 것)·다른 폴더는 뺀다', () => {
+    expect(stoppedOrchs([st('a', 'sns-post'), st('b', '참모-2', '/h/dev/acme')], HQ, [])).toEqual([]);
+  });
+  it('같은 이름으로 지금 떠 있으면 뺀다, 같은 이름이 여럿이면 가장 최근(앞) 하나', () => {
+    const live = [{ name: '참모-2' }];
+    expect(stoppedOrchs([st('a', '참모-2'), st('b', '참모-3'), st('c', '참모-3')], HQ, live).map((x) => x.id)).toEqual(['b']);
+  });
+  it('윈도우 경로 모양이 달라도 같은 HQ 로 본다', () => {
+    expect(stoppedOrchs([st('a', '참모-2', 'C:/Users/me/.chammo/hq')], 'C:\\Users\\me\\.chammo\\hq', []).map((x) => x.id)).toEqual(['a']);
+  });
+});
+
+describe('sameOrchSlot — 꺼진 참모를 지울 때 같은 이름으로 쌓인 것 전부', () => {
+  const st = (id: string, name: string, cwd = '/h/.chammo/hq'): StoppedSession => ({ id, sessionId: `${id}-sid`, name, cwd, project: 'hq', workspace: null, reason: 'stopped', startedAt: 0 });
+  it('같은 HQ·같은 이름 전부 — 패널엔 최근 하나만 보여서 지워도 다음 옛것이 올라왔다(참모-3 이 8개, 2026-10-01 사용자)', () => {
+    const all = [st('a', '참모-3'), st('b', '참모-2'), st('c', '참모-3'), st('d', '참모-3', '/h/dev/acme'), st('e', '참모-3')];
+    expect(sameOrchSlot(all, all[0]!, '/h/.chammo/hq').map((x) => x.id)).toEqual(['a', 'c', 'e']);
+  });
+  it('HQ 가 아니거나 참모 이름이 아니면 그것 하나만', () => {
+    const all = [st('a', 'sns-post'), st('b', 'sns-post')];
+    expect(sameOrchSlot(all, all[0]!, '/h/.chammo/hq').map((x) => x.id)).toEqual(['a']);
   });
 });

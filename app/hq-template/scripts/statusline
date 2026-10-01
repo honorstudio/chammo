@@ -48,7 +48,8 @@ def record(raw, data, now=None):
     if sid:
         cw = d.get('context_window') or {}
         ctx = {'sessionId': sid, 'used': cw.get('used_percentage'), 'size': cw.get('context_window_size'),
-               'model': (d.get('model') or {}).get('display_name'), 'name': d.get('session_name'), 'cwd': d.get('cwd'),
+               'model': (d.get('model') or {}).get('display_name'), 'modelId': (d.get('model') or {}).get('id'),
+               'effort': (d.get('effort') or {}).get('level'), 'name': d.get('session_name'), 'cwd': d.get('cwd'),
                'ts': int(now if now is not None else time.time())}
         _write(os.path.join(data, 'ctx', f'{sid}.json'), json.dumps(ctx, ensure_ascii=False))
 

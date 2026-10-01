@@ -4,7 +4,7 @@ import { resizeTracks, tracksFor } from '../domain/gridSizing';
 import { paneToFocus, visiblePanes, type LayoutAction, type PaneLayout } from '../domain/paneLayout';
 import type { Session } from '../domain/session';
 import { pasteSequence } from '../domain/memo';
-import { typedChunks } from '../domain/chat';
+import { enterDelay, typedChunks } from '../domain/chat';
 import { AdoptCard } from './AdoptCard';
 import { statusKind } from '../domain/statusMark';
 import { IconChat, IconClose, IconExpand, IconMaximize, IconPlus, IconTerminal } from './Icons';
@@ -17,6 +17,8 @@ import { assistant, tr } from '../i18n';
 import { attachCommand } from '../domain/termCommand';
 import { keyLabel } from '../domain/keys';
 import { IS_WIN } from '../domain/reader';
+import { runModelPick } from './chat/modelPickRun';
+import { pickLog } from '../data/tauri';
 
 type Props = {
   sessions: Session[];
@@ -46,6 +48,8 @@ type Props = {
   chat?: 'stack' | 'tabs';
   /** 세션마다 컨텍스트 쓴 % — 채팅 입력칸 위 고리 */
   ctxOf?: (s: Session) => number | undefined;
+  /** 채팅 머리줄 칩용 모델·에포트 */
+  modelOf?: (s: Session) => { model?: string; modelId?: string; effort?: string } | undefined;
 };
 
 /** 창마다 메모: 머리줄 최근 한 줄 + 열린 창(openId) 위에 메모판. send 는 그 창 입력칸에 붙여넣기 */
@@ -65,7 +69,7 @@ function typeAndSend(api: PaneApi | undefined, text: string, delay = 0) {
   if (!api) return;
   let t = delay;
   for (const c of typedChunks(text)) { const at = t; setTimeout(() => api.raw(c), at); t += 6; }
-  setTimeout(() => api.raw('\r'), t + 400);
+  setTimeout(() => api.raw('\r'), t + enterDelay(text.length, IS_WIN));
 }
 const cumulative = (fr: number[]) => {
   const total = fr.reduce((a, b) => a + b, 0);
@@ -77,7 +81,7 @@ const cumulative = (fr: number[]) => {
  * 세션 여러 개를 격자로 + 접은 창은 아래 띠. 띠의 창은 attach 를 떼어 둔다(메모리).
  * 경계선을 끌면 열·줄 비율이 바뀌고, 머리줄을 끌어 다른 창에 놓으면 자리가 바뀐다
  */
-export function SessionGrid({ sessions, claudeBin, layout, dispatch, onMessage, fontSize, home, onFocusSession, initialFocus, focusRequest, gridId, onStop, titleOf = paneTitle, memo, column, chat, ctxOf, onAdd }: Props) {
+export function SessionGrid({ sessions, claudeBin, layout, dispatch, onMessage, fontSize, home, onFocusSession, initialFocus, focusRequest, gridId, onStop, titleOf = paneTitle, memo, column, chat, ctxOf, modelOf, onAdd }: Props) {
   const panes = useRef(new Map<string, PaneApi>());
   // 채팅 판: 터미널로 돌려 본 창들, 창마다 채팅 입력칸 포커스
   const [termView, setTermView] = useState<Set<string>>(() => new Set());
@@ -281,10 +285,25 @@ export function SessionGrid({ sessions, claudeBin, layout, dispatch, onMessage, 
                         if (want.current === id) focusNow(id); // 새로 붙은 창(화면 복귀·되돌리기)이 기다리던 창이면
                       }}
                       onVoiceStop={chat ? () => setVoiceStops((v) => ({ ...v, [id]: (v[id] ?? 0) + 1 })) : undefined}
-                      overlay={memo?.openId === id ? memo.panel(s, (text) => panes.current.get(id)?.write(pasteSequence(text))) : chatOn(id) ? (
+                      overlay={!chatOn(id) && memo?.openId !== id ? null : <>{/* 메모판은 채팅 위에 덮는다 — 예전엔 메모를 열면 채팅을 빼서 뒤 터미널이 드러났다(2026-10-01 사용자) */}{chatOn(id) ? (
                         <ChatView
                           sessionId={s.sessionId}
                           ctx={ctxOf?.(s)}
+                          modelInfo={modelOf?.(s)}
+                          cwd={s.cwd}
+                          pickModel={async (want) => {
+                            const api = panes.current.get(id);
+                            if (!api) return { ok: false as const, why: tr('터미널이 아직 안 붙었어요', 'Terminal not attached yet') };
+                            const r = await runModelPick(api, want, { id });
+                            if (!r.ok) {
+                              // 자동으로 못 맞췄으면 — 그때 화면을 로그로 남기고, 기존처럼 터미널로 넘겨 고르는 창을 열어 준다(2026-10-01 사용자). 열린 채 멈추지 않게 runModelPick 이 이미 닫았다
+                              void pickLog(`--- ${new Date().toISOString()} ${s.name} want=${JSON.stringify(want)} why=${r.why}\n${(r.screen ?? []).join('\n')}`).catch(() => {});
+                              onMessage(tr(`모델 바꾸기를 자동으로 못 했어요 (${r.why}) — 터미널 화면으로 넘겨서 고르는 창을 열어 뒀어요`, `Couldn't change the model automatically (${r.why}) — switched to the terminal with the picker open`));
+                              showTerm(id, true);
+                              setTimeout(() => typeAndSend(panes.current.get(id), '/model'), 300);
+                            }
+                            return r;
+                          }}
                           state={s.state}
                           send={(text) => {
                             typeAndSend(panes.current.get(id), text);
@@ -308,7 +327,7 @@ export function SessionGrid({ sessions, claudeBin, layout, dispatch, onMessage, 
                           }}
                           focusRef={(fn) => { if (fn) chatFocus.current.set(id, fn); else chatFocus.current.delete(id); }}
                         />
-                      ) : null}
+                      ) : null}{memo?.openId === id && memo.panel(s, (text) => panes.current.get(id)?.write(pasteSequence(text)))}</>}
                     />
                   ) : (
                     <AdoptCard session={s} title={titleOf(s)} onDone={onMessage} />

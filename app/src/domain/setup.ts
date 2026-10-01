@@ -87,6 +87,8 @@ function winSetupCommand(task: SetupTask, bins: { claude?: string | null; gh?: s
     case 'install':
       return `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"${tail}`;
     case 'update':
+      // winget 으로 깐 claude(…\WinGet\Links·Packages)는 claude update 로 못 올린다 — 자기가 "winget upgrade" 하라고 한다(2026-10-01 윈도우 PC)
+      if (/\\WinGet\\/i.test(bins.claude ?? '')) return `winget upgrade -e --id Anthropic.ClaudeCode --accept-source-agreements --accept-package-agreements${tail}`;
       return `${claude} update${tail}`;
     case 'login':
       return `${claude} auth login${tail}`;

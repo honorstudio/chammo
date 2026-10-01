@@ -14,7 +14,7 @@ def load(name):
 
 
 sl = load('statusline')
-INPUT = {'session_id': 'abc', 'cwd': '/p', 'session_name': 'acme', 'model': {'display_name': 'Opus'},
+INPUT = {'session_id': 'abc', 'cwd': '/p', 'session_name': 'acme', 'model': {'id': 'claude-opus-5-5', 'display_name': 'Opus'}, 'effort': {'level': 'high'},
          'context_window': {'used_percentage': 42.4, 'context_window_size': 200000},
          'rate_limits': {'five_hour': {'used_percentage': 10}, 'seven_day': {'used_percentage': 30}}}
 
@@ -26,7 +26,15 @@ class Record(unittest.TestCase):
             sl.record(json.dumps(INPUT), d, now=1000)
             self.assertEqual(json.loads(pathlib.Path(d, 'statusline.json').read_text())['rate_limits']['five_hour']['used_percentage'], 10)
             ctx = json.loads(pathlib.Path(d, 'ctx/abc.json').read_text())
-            self.assertEqual(ctx, {'sessionId': 'abc', 'used': 42.4, 'size': 200000, 'model': 'Opus', 'name': 'acme', 'cwd': '/p', 'ts': 1000})
+            self.assertEqual(ctx, {'sessionId': 'abc', 'used': 42.4, 'size': 200000, 'model': 'Opus', 'modelId': 'claude-opus-5-5', 'effort': 'high', 'name': 'acme', 'cwd': '/p', 'ts': 1000})
+
+    def test_에포트가_없는_입력도_쓴다(self):
+        # 옛 Claude Code 는 effort 를 안 준다 — 칩은 모델만 보여 주면 된다
+        with tempfile.TemporaryDirectory() as d:
+            sl.record(json.dumps({'session_id': 'z', 'model': {'display_name': 'Haiku'}}), d, now=5)
+            ctx = json.loads(pathlib.Path(d, 'ctx/z.json').read_text())
+            self.assertIsNone(ctx['effort'])
+            self.assertIsNone(ctx['modelId'])
 
     def test_사용량이_없는_입력은_사용량_파일을_안_덮는다(self):
         # 세션이 아직 API 를 안 불렀으면 rate_limits 가 없다 — 다른 세션이 남긴 사용량을 지우면 상단 바가 비었다(아이맥 실측)

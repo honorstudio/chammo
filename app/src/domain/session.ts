@@ -123,7 +123,7 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /** 대표 비서 이름인가 — 설정 이름(assistant()) 또는 옛 이름 */
 export const isOrchestratorName = (name: string) => name === assistant() || name === LEGACY_ASSISTANT;
 /** 비서 이름 꼴 — 참모·참모-2(⌘T), 옛 이름 참모·참모-2 */
-const orchestratorLike = (name: string) => [assistant(), LEGACY_ASSISTANT].some((b) => name === b || new RegExp(`^${escapeRe(b)}-\\d+$`).test(name));
+export const orchestratorLike = (name: string) => [assistant(), LEGACY_ASSISTANT].some((b) => name === b || new RegExp(`^${escapeRe(b)}-\\d+$`).test(name));
 
 /** 사이드바용: 이 앱 폴더의 세션(비서)은 따로, 나머지는 프로젝트별로. 순서는 들어온 대로 */
 export function groupByProject(

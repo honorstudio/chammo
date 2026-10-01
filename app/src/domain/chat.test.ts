@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatItem } from './chat';
+import { enterDelay } from './chat';
 import { appendChat, chatBusy, mdSafe, parseChat, promptInput, splitPaths, splitRefs, stillPending, pendingLeft, clickFocusesInput, stuckInInput, taskCounts, termRest, typedChunks, withRefs } from './chat';
 
 const line = (o: object) => JSON.stringify(o);
@@ -302,5 +303,23 @@ describe('clickFocusesInput — 채팅 창 아무 데나 눌러도 입력칸으�
   });
   it('버튼·링크·입력칸을 누르면 원래대로', () => {
     expect(clickFocusesInput({ interactive: true, selected: '' })).toBe(false);
+  });
+});
+
+describe('enterDelay — 글을 친 뒤 Enter 까지 기다리는 시간', () => {
+  it('맥은 늘 0.4초', () => expect(enterDelay(2000, false)).toBe(400));
+  it('윈도우는 글이 길수록 더 — 긴 지시의 Enter 가 줄바꿈으로 들어가 안 보내졌다(최대 3.4초)', () => {
+    expect(enterDelay(10, true)).toBe(410);
+    expect(enterDelay(1000, true)).toBe(1400);
+    expect(enterDelay(99999, true)).toBe(3400);
+  });
+});
+
+describe('pendingLeft — / 명령은 기록에 안 남을 수 있어 몇 초 뒤 지운다(2026-10-01 사용자: /rc 보내는 중이 끝까지 남았다)', () => {
+  it('/ 로 시작하면 4초 뒤 사라지고, 그 전엔 남는다. 보통 글은 그대로', () => {
+    const t0 = 1_000_000;
+    expect(pendingLeft([{ text: '/rc', at: t0 }], [], t0 + 3000)).toHaveLength(1);
+    expect(pendingLeft([{ text: '/rc', at: t0 }], [], t0 + 4500)).toEqual([]);
+    expect(pendingLeft([{ text: '안녕', at: t0 }], [], t0 + 60_000)).toHaveLength(1);
   });
 });

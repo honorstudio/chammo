@@ -9,6 +9,10 @@ export type DropEvent = { type: 'over' | 'drop' | 'leave'; x?: number; y?: numbe
 export const DROP_EVENT = 'honor-drop';
 /** 같은 칸에 놓은 파일 경로들(배열) — 채팅 판이 보내기 전 썸네일로 쓴다 */
 export const DROP_PATHS_EVENT = 'honor-drop-paths';
+/** 스페이스 문서 편집기에 놓은 파일 — SpaceEditor 가 그림 블록으로 넣는다 */
+export const DOC_DROP_EVENT = 'honor-doc-drop';
+/** 문서 편집기 위를 지나는 중(detail = {x,y}, 벗어나면 null) — 놓일 자리 줄을 그린다 */
+export const DOC_OVER_EVENT = 'honor-doc-over';
 
 function targetAt(x: number, y: number): HTMLElement | null {
   // 탭 보기에서 뒤에 숨겨 둔 창(.cell.behind)은 보이는 창과 같은 자리라 빼야 한다 — 참모1 에 놓은 파일이 참모-2 로 갔다(2026-09-30 사용자)
@@ -30,8 +34,23 @@ export function installFileDrop(): () => void {
     lit = el;
   };
   const w = window as unknown as { __drop?: (e: DropEvent) => void };
+  let overDoc: HTMLElement | null = null;
   w.__drop = (e) => {
-    if (e.type === 'leave' || e.x === undefined || e.y === undefined) return light(null);
+    if (e.type === 'leave' || e.x === undefined || e.y === undefined) {
+      overDoc?.dispatchEvent(new CustomEvent(DOC_OVER_EVENT, { detail: null }));
+      overDoc = null;
+      return light(null);
+    }
+    // 스페이스 문서 편집기 위면 그림 블록으로(BlockNote 는 창이 가로챈 파일 끌기를 못 받는다 — 2026-10-01 사용자)
+    const doc = (document.elementFromPoint(e.x, e.y) as HTMLElement | null)?.closest<HTMLElement>('.space-editor') ?? null;
+    if (overDoc && overDoc !== doc) { overDoc.dispatchEvent(new CustomEvent(DOC_OVER_EVENT, { detail: null })); overDoc = null; }
+    if (doc) {
+      if (e.type === 'over') { overDoc = doc; doc.dispatchEvent(new CustomEvent(DOC_OVER_EVENT, { detail: { x: e.x, y: e.y } })); return; }
+      overDoc = null;
+      doc.dispatchEvent(new CustomEvent(DOC_OVER_EVENT, { detail: null }));
+      if (e.paths?.length) doc.dispatchEvent(new CustomEvent(DOC_DROP_EVENT, { detail: { paths: e.paths, x: e.x, y: e.y } }));
+      return;
+    }
     // 리더 패널 위면 파일을 탭으로 연다(터미널 붙여넣기 대신)
     const reader = (document.elementFromPoint(e.x, e.y) as HTMLElement | null)?.closest<HTMLElement>('.reader-panel') ?? null;
     if (reader) {

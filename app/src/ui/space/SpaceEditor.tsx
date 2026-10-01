@@ -9,9 +9,22 @@ import { BlockNoteSchema, defaultBlockSpecs, type BlockNoteEditor } from '@block
 import { DocDirContext, PageBlock, toPageBlocks } from './PageBlock';
 
 // 기본 블록 + 하위 페이지 블록(노션처럼)
+// 편집기의 다운로드 버튼은 window.open(앱 파일 주소)인데 앱 창 안에선 아무 일도 안 일어났다 — 그 주소면 기본 앱으로 연다(2026-10-01 사용자)
+if (typeof window !== 'undefined' && !(window as { __docOpen?: boolean }).__docOpen) {
+  (window as { __docOpen?: boolean }).__docOpen = true;
+  const nativeOpen = window.open.bind(window);
+  window.open = (url?: string | URL, ...rest: [string?, string?]) => {
+    const p = url ? pathOfDocUrl(String(url)) : null;
+    if (p) { void invoke('open_target', { kind: 'file', target: p }).catch(() => {}); return null; }
+    return nativeOpen(url, ...rest);
+  };
+}
+
 const schema = BlockNoteSchema.create({ blockSpecs: { ...defaultBlockSpecs, page: PageBlock() } });
 import { CanvasListBackspace } from './listBackspace';
-import { docUrl } from '../../domain/reader';
+import { docUrl, pathOfDocUrl } from '../../domain/reader';
+import { docDropBlocks, dropSlot } from '../../domain/drop';
+import { DOC_DROP_EVENT, DOC_OVER_EVENT } from '../fileDrop';
 
 const dark = () => document.documentElement.dataset.theme === 'dark' || (document.documentElement.dataset.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
 
@@ -35,6 +48,41 @@ export default function SpaceEditor({ md, docPath, onReady, onChange, onEditor, 
     resolveFileUrl: async (url: string) => (/^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith('/') ? url : new URL(url, docUrl(dir + '/')).href),
   });
   useEffect(() => { onEditor?.(editor as unknown as BlockNoteEditor); return () => onEditor?.(null); }, [editor]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 파인더에서 끌어다 놓은 파일 — 문서 옆 assets/ 로 복사해 가장 가까운 블록 위/아래에(그림·영상·소리, 나머지는 파일).
+  // 지나가는 동안 들어갈 자리를 가로줄로 보여 준다(2026-10-01 사용자 — 정확히 블록 위에 놓아야만 들어가서 불편)
+  const box = useRef<HTMLDivElement>(null);
+  const [line, setLine] = useState<number | null>(null);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const slotAt = (y: number) => dropSlot([...el.querySelectorAll<HTMLElement>('.bn-block-outer[data-id]')].map((b) => {
+      const r = b.getBoundingClientRect();
+      return { id: b.dataset.id!, top: r.top, bottom: r.bottom };
+    }), y);
+    const over = (ev: Event) => {
+      const d = (ev as CustomEvent<{ x: number; y: number } | null>).detail;
+      const slot = d ? slotAt(d.y) : null;
+      setLine(slot ? slot.y - el.getBoundingClientRect().top : null);
+    };
+    const on = (ev: Event) => {
+      const { paths, y } = (ev as CustomEvent<{ paths: string[]; x: number; y: number }>).detail;
+      setLine(null);
+      const items = docDropBlocks(paths);
+      if (!items.length) return;
+      const slot = slotAt(y);
+      const at = (slot && editor.getBlock(slot.id)) || editor.getTextCursorPosition().block;
+      const place = slot?.place ?? 'after';
+      void Promise.all(items.map((it) => invoke<string>('copy_asset', { docPath, src: it.path }))).then((urls) => {
+        const name = (p: string) => p.split(/[\\/]/).pop() ?? p;
+        editor.insertBlocks(items.map((it, i) => (it.type === 'file'
+          ? { type: 'file' as const, props: { url: urls[i]!, name: name(it.path) } }
+          : { type: it.type, props: { url: urls[i]! } })), at, place);
+      }).catch(() => {});
+    };
+    el.addEventListener(DOC_OVER_EVENT, over);
+    el.addEventListener(DOC_DROP_EVENT, on);
+    return () => { el.removeEventListener(DOC_DROP_EVENT, on); el.removeEventListener(DOC_OVER_EVENT, over); };
+  }, [editor, docPath]);
   const ready = useRef(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(dark() ? 'dark' : 'light');
   useEffect(() => {
@@ -58,7 +106,8 @@ export default function SpaceEditor({ md, docPath, onReady, onChange, onEditor, 
   }, []);
   return (
     <DocDirContext.Provider value={dir}>
-    <div className="space-editor">
+    <div className="space-editor" ref={box}>
+      {line !== null && <div className="sp-drop-line" style={{ top: line }} />}
       <BlockNoteView
         editor={editor}
         theme={theme}

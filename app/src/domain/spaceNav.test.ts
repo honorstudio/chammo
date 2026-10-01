@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { followChat, heldBy, holderMap, newShows, orphanSends, shownFiles } from './spaceNav';
+import { followChat, heldBy, holderMap, newShows, orphanSends, shownFiles, transcriptTargets } from './spaceNav';
 import type { TaskEvent } from './tasks';
 
 const T = Date.parse('2026-09-30T04:00:00Z');
@@ -129,5 +129,44 @@ describe('orphanSends — 누가 시켰는지 모르는 열린 일(대시보드 
       ev({ type: 'send', task: 'e', target: 'old', ts: '2026-09-28T00:00:00Z' }),
     ];
     expect(orphanSends(evs, T).map((x) => [x.task, x.target, x.title])).toEqual([['a', 'oms', 'OMS 정리']]);
+  });
+});
+
+describe('transcriptTargets — 참모 대화 기록에서 띄우거나 말 건 세션(작업 기록 없이도)', () => {
+  const line = (name: string, input: Record<string, unknown>) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name, input }] } });
+  it('claude --bg … -n 이름 과 SendMessage 받는 이(뒤 [ref] 는 뗀다) — 작업 기록 없이 띄운 세션도 잡는다', () => {
+    const tail = [
+      line('Bash', { command: 'cd ~/dev/acme-shop && claude --bg --dangerously-skip-permissions -n report-fix "x"' }),
+      line('Bash', { command: "claude --bg -n 'font-fix' --model opus \"y\"" }),
+      line('SendMessage', { to: 'worker [abc123]', message: 'x' }),
+      line('SendMessage', { to: 'notes', message: 'y' }),
+    ].join('\n');
+    expect(transcriptTargets(tail)).toEqual(['report-fix', 'font-fix', 'worker', 'notes']);
+  });
+  it('변수 이름($repo)·main(자기 부모)·깨진 줄·다른 도구는 뺀다, 같은 이름은 한 번', () => {
+    const tail = [
+      line('Bash', { command: 'claude --bg -n "starter-$repo" "x"' }),
+      line('SendMessage', { to: 'main', message: 'x' }),
+      '{깨짐',
+      line('Read', { file_path: '/x' }),
+      line('SendMessage', { to: 'worker', message: '1' }),
+      line('SendMessage', { to: 'worker [abc123]', message: '2' }),
+    ].join('\n');
+    expect(transcriptTargets(tail)).toEqual(['worker']);
+  });
+});
+
+describe('transcriptTargets — 글 안에 든 claude --bg 는 안 친다(2026-10-01 오탐: 테스트 코드 예시 문장으로 내가 project-a 를 잡은 걸로 보였다)', () => {
+  const bash = (command: string) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } });
+  it('heredoc 본문·따옴표 안·grep 검색어는 빼고, 실제로 실행한 줄만', () => {
+    const tail = [
+      bash("cat >> x.test.ts <<'EOF'\n  line('Bash', { command: 'cd ~/dev/acme-shop && claude --bg -n report-fix \"x\"' }),\nEOF"),
+      bash("python3 -c \"print('claude --bg -n ghost')\""),
+      bash("grep -n 'claude --bg -n fake' file.ts"),
+      bash('echo "claude --bg -n echoed"'),
+      bash('cd /h/dev/acme && claude --bg --dangerously-skip-permissions -n real-one "지시"'),
+      bash('X=1; claude --bg -n "second one" "y"'),
+    ].join('\n');
+    expect(transcriptTargets(tail)).toEqual(['real-one', 'second one']);
   });
 });

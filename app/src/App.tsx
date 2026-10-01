@@ -19,6 +19,9 @@ import { level } from './domain/load';
 import { pickFolder, readConfig, reloadConfig, routineDo, routinesList, tamaMore, type Config } from './data/tauri';
 import { allowed, featuresOf, mirrorPlan } from './domain/config';
 import { addExtraProject, versionWarning } from './domain/setup';
+import { useUpdates } from './ui/useUpdates';
+import { picking } from './ui/chat/modelPickRun';
+import { openTarget as openLink } from './data/tauri';
 import { assistant, getLang, tr } from './i18n';
 import { getAppEnv, listSessionsAllRaw, listSessionsRaw, readSay, writeVoiceMode, speak, projectScan, readTasks, readTranscriptTails, spawnSession, type AppEnv } from './data/tauri';
 import { freshReplies, parseSay, pickSay, type ReplySeen } from './domain/voice';
@@ -135,6 +138,7 @@ function mirrorConfig(c: Config) {
 
 export default function App() {
   const [env, setEnv] = useState<AppEnv | null>(null);
+  const updates = useUpdates(env?.claudeVersion);
   // 설정(config.json) — 못 읽은 동안엔 기능을 다 켠 것으로(featuresOf)
   const [config, setConfig] = useState<Config | null>(null);
   const features = featuresOf(config);
@@ -150,6 +154,7 @@ export default function App() {
   // ⌘Q 종료 확인 — 앱만 끌지, Chammo 가 다루는 세션까지 끌지
   const [quitOpen, setQuitOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsStart, setSettingsStart] = useState<'update' | undefined>();
   featuresRef.current = features;
   useEffect(() => {
     readConfig().then((c) => { mirrorConfig(c); setConfig(c); }).catch(() => {});
@@ -207,6 +212,8 @@ export default function App() {
   const [inboxOpen, setInboxOpen] = useState(false);
   // Claude Code 버전이 확인된 범위(2.1.28x) 밖이면 경고 한 줄 — 막지는 않는다. 닫으면 그 버전은 다시 안 띄운다
   const [verDismissed, setVerDismissed] = useState<string | null>(() => load('claudeVersionDismissed', null));
+  const [updDismissed, setUpdDismissed] = useState<string | null>(() => load('updateDismissed', null));
+  useEffect(() => save('updateDismissed', updDismissed), [updDismissed]);
   useEffect(() => save('claudeVersionDismissed', verDismissed), [verDismissed]);
   // 음성 모드: 참모가 답을 마치면 참모세이로 읽는다(누워 있을 때). 켜 둔 건 다음에 켜도 남는다
   const [voice, setVoice] = useState<boolean>(() => load('voiceMode', false));
@@ -535,7 +542,7 @@ export default function App() {
     const next = Object.fromEntries(orchActs.map((x) => [x.session.id, x.status]));
     for (const t of transitions(prevStatus.current, next)) {
       const x = orchActs.find((a) => a.session.id === t.id);
-      if (!x || t.to !== 'blocked') continue;
+      if (!x || t.to !== 'blocked' || picking.has(x.session.id)) continue; // 모델 칩이 고르는 창을 다루는 중
       const name = x.session.name || assistant();
       const body = blockedBody(x.session.waitingFor);
       if (voiceRef.current) void speak(`${name} ${body}`).catch(() => {});
@@ -563,6 +570,7 @@ export default function App() {
 
   // 컨텍스트 80% 를 넘는 순간 macOS 알림 — 곧 자동 요약되니 /compact 하거나 새 세션으로 넘길 때. 참모 세션만(하위 세션은 참모가 챙긴다)
   const ctxOf = (s: Session) => (s.sessionId ? ctx[s.sessionId]?.used : undefined);
+  const modelOf = (s: Session) => (s.sessionId ? ctx[s.sessionId] : undefined);
   useEffect(() => {
     const now = Object.fromEntries(Object.entries(ctx).map(([k, v]) => [k, v.used]));
     if (prevCtx.current) {
@@ -653,7 +661,7 @@ export default function App() {
     document.hasFocus() && (selected.kind === 'project' ? selected.name === s.project : selected.kind === 'helpers' && groups.helpers.includes(s)),
     allActs.filter(({ session: s }) => !orchIds.has(s.id)),
     groups.orchestrators.map((o) => o.sessionId).filter((x): x is string => !!x));
-  const inbox = buildInbox(allActs, taskEvents, new Set(dismissed), sessions, (s) => orchIds.has(s.id));
+  const inbox = buildInbox(allActs, taskEvents, new Set(dismissed), sessions, (s) => orchIds.has(s.id)).filter((i) => !(i.kind === 'blocked' && picking.has(i.target ?? '')));
   // 새 결정이 생기면: 종 아래 드롭다운이 저절로 펼쳐짐 + macOS 알림. 개수는 상단 바 종·Dock 뱃지
   const inboxKeys = inbox.map((i) => i.key).join('|');
   useEffect(() => {
@@ -925,7 +933,7 @@ export default function App() {
             ctxOf={ctxOf} onAddProject={config && env ? () => void addProjectFolder() : undefined}
             onRemoveStopped={(x) => { markPending(x.sessionId); void removeSession(x.id).then(() => refresh(), (e: unknown) => onMessage(tr(`지우기 실패: ${String(e)}`, `Remove failed: ${String(e)}`))); }}
             onNewOrch={env ? () => void spawnOrchestrator() : undefined}
-            routines={routineItems} routinePage={(name) => routinePage(name, () => {})}
+            routines={routineItems} routinePage={routinePage}
             onNewSession={(root, name) => void newSession(root, name).then(() => onMessage(null), (e: unknown) => onMessage(tr(`새 세션 실패: ${String(e)}`, `New session failed: ${String(e)}`)))}
             sessions={sessions} events={taskEvents} claudeBin={bin} fontSize={fontSize} home={env?.home} live={liveLines}
             onClose={() => setSpace(false)} onOpenSession={(id) => { setSpace(false); openTarget(id); }}
@@ -944,7 +952,7 @@ export default function App() {
                 <button className={chatView === 'tabs' ? 'on' : ''} aria-pressed={chatView === 'tabs'} aria-label={tr('탭', 'Tabs')} title={tr('탭 — 한 번에 한 세션', 'Tabs — one session at a time')} onClick={() => setChatView('tabs')}><IconTabs /></button>
               </span>
             </div>
-            <SessionGrid column chat={chatView} ctxOf={ctxOf} onAdd={env ? () => void spawnOrchestrator() : undefined} sessions={groups.orchestrators} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => orchLabel(s.id) ?? (s.name || assistant())} {...gridFocus('orch-col')} onStop={closeSession} layout={layoutOf('orch-col')} dispatch={dispatchFor('orch-col')} onMessage={onMessage} memo={memo} />
+            <SessionGrid column chat={chatView} ctxOf={ctxOf} modelOf={modelOf} onAdd={env ? () => void spawnOrchestrator() : undefined} sessions={groups.orchestrators} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => orchLabel(s.id) ?? (s.name || assistant())} {...gridFocus('orch-col')} onStop={closeSession} layout={layoutOf('orch-col')} dispatch={dispatchFor('orch-col')} onMessage={onMessage} memo={memo} />
           </div>
         </div>
       );
@@ -1100,7 +1108,7 @@ export default function App() {
   spaceShownRef.current = spaceShown;
 
   const setup = config && (firstRun || settingsOpen) && (
-    <Setup config={config} firstRun={firstRun} orchestratorNames={groups.orchestrators.map((s) => s.name)} fontSize={fontSize} onClose={() => setSettingsOpen(false)} />
+    <Setup config={config} firstRun={firstRun} orchestratorNames={groups.orchestrators.map((s) => s.name)} fontSize={fontSize} start={settingsStart} onClose={() => { setSettingsOpen(false); setSettingsStart(undefined); void getAppEnv().then(setEnv).catch(() => {}); /* 업데이트했으면 새 버전 번호로 */ }} />
   );
   if (firstRun) return setup;
 
@@ -1151,7 +1159,22 @@ export default function App() {
             )}
           </div>
         )}
-        {env && (() => {
+        {/* 새 버전 — 켜자마자·6시간마다 보고, 있으면 늘 띄운다(닫으면 그 버전만 안 띄움). 2026-10-01 사용자 */}
+        {updates.app && updDismissed !== `app:${updates.app.version}` && (
+          <div className="banner warn">
+            <span>{tr(`Chammo ${updates.app.version} 이 나왔어요 (지금 ${updates.appNow}). 받아서 설치하면 새 기능·고침이 들어가요.`, `Chammo ${updates.app.version} is out (you have ${updates.appNow}). Download and install it to get the new features and fixes.`)}</span>
+            <button className="btn pri" onClick={() => void openLink('url', updates.app!.url).catch(() => {})}>{tr('받기', 'Download')}</button>
+            <button className="btn" onClick={() => setUpdDismissed(`app:${updates.app!.version}`)}>{tr('나중에', 'Later')}</button>
+          </div>
+        )}
+        {updates.claude && updDismissed !== `claude:${updates.claude}` && (
+          <div className="banner warn">
+            <span>{tr(`Claude Code ${updates.claude} 이 나왔어요 (지금 ${env?.claudeVersion.trim() ?? ''}). 올리면 새로 띄우는 세션부터 새 버전으로 돌아요.`, `Claude Code ${updates.claude} is out (you have ${env?.claudeVersion.trim() ?? ''}). New sessions use it after the update.`)}</span>
+            <button className="btn pri" onClick={() => { setSettingsStart('update'); setSettingsOpen(true); }}>{tr('업데이트', 'Update')}</button>
+            <button className="btn" onClick={() => setUpdDismissed(`claude:${updates.claude}`)}>{tr('나중에', 'Later')}</button>
+          </div>
+        )}
+        {env && !updates.claude && (() => {
           const w = versionWarning(env.claudeVersion, verDismissed);
           if (!w) return null;
           const v = env.claudeVersion.trim();

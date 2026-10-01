@@ -27,3 +27,38 @@ pub fn debug_dump(name: String, text: String) -> Result<(), String> {
     let safe: String = name.chars().map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' }).collect();
     std::fs::write(format!("{dir}/{safe}.txt"), text).map_err(|e| e.to_string())
 }
+
+/// 모델 칩이 실패했을 때 그때 터미널 화면을 <데이터 폴더>/pick-debug.log 에 덧붙인다(로컬 파일, 200KB 넘으면 앞을 버린다) — 실제 앱에서 왜 못 읽었는지 보려고
+#[tauri::command]
+pub fn pick_log(text: String) -> Result<(), String> {
+    append_capped(&crate::config::data_file("pick-debug.log"), &text, 200 * 1024).map_err(|e| e.to_string())
+}
+
+pub fn append_capped(path: &std::path::Path, text: &str, cap: usize) -> std::io::Result<()> {
+    let mut cur = std::fs::read_to_string(path).unwrap_or_default();
+    cur.push_str(text);
+    if !text.ends_with('\n') { cur.push('\n'); }
+    if cur.len() > cap {
+        let mut cut = cur.len() - cap;
+        while !cur.is_char_boundary(cut) { cut += 1; }
+        cur = cur[cut..].to_string();
+    }
+    if let Some(d) = path.parent() { std::fs::create_dir_all(d)?; }
+    std::fs::write(path, cur)
+}
+
+#[cfg(test)]
+mod pick_log_tests {
+    #[test]
+    fn 덧붙이고_크기를_넘으면_앞을_버린다() {
+        let p = std::env::temp_dir().join(format!("chammo-picklog-{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&p);
+        super::append_capped(&p, "하나", 100).unwrap();
+        super::append_capped(&p, "둘", 100).unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "하나\n둘\n");
+        super::append_capped(&p, &"가".repeat(60), 100).unwrap(); // 180 바이트 → 100 이하로 앞을 자른다(글자 경계 지킴)
+        let t = std::fs::read_to_string(&p).unwrap();
+        assert!(t.len() <= 100 && t.ends_with("가\n"), "{}", t.len());
+        let _ = std::fs::remove_file(&p);
+    }
+}

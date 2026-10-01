@@ -148,9 +148,14 @@ export function stillPending(pending: string[], items: ChatItem[]): string[] {
 
 /** 보내는 중 말풍선 중 아직 기록에 안 들어온 것 — 보낸 뒤(몇 초 여유)에 들어온 내 말하고만 맞춘다.
  *  기록 전체와 맞추니 예전 말에 같은 글("한국말로")이 있으면 방금 보낸 말이 바로 사라졌다(2026-09-30 사용자) */
-export function pendingLeft<T extends { text: string; at: number }>(pending: T[], items: ChatItem[]): T[] {
-  return pending.filter((p) => stillPending([p.text], items.filter((i) => i.kind === 'user' && Date.parse(i.ts) >= p.at - 10_000)).length > 0);
+export function pendingLeft<T extends { text: string; at: number }>(pending: T[], items: ChatItem[], now = Date.now()): T[] {
+  return pending.filter((p) => {
+    // / 명령(/rc·/model 등)은 보통 말처럼 기록에 안 남을 때가 있다 — 4초 지나면 보낸 걸로 친다(2026-10-01 사용자)
+    if (p.text.trimStart().startsWith('/') && now - p.at > SLASH_PENDING_MS) return false;
+    return stillPending([p.text], items.filter((i) => i.kind === 'user' && Date.parse(i.ts) >= p.at - 10_000)).length > 0;
+  });
 }
+const SLASH_PENDING_MS = 4000;
 
 /** 보내는 중인 말이 Enter 없이 터미널 입력칸에 그대로 있으면 그 말 — 쉬는데 남아 있으면 Enter 를 다시 넣는다 */
 export function stuckInInput(pending: string[], input: string): string | null {
@@ -200,6 +205,9 @@ export const mdSafe = (text: string) =>
  * 사용자 지시로 덜 믿는다 — 감싸지 않고 치되 줄바꿈은 Option+Enter(ESC CR), 탭은 띄어쓰기(탭은 자동완성이 된다).
  * 마지막 Enter 는 보내는 쪽이 조금 쉬었다가 따로 넣는다(바로 넣으면 줄바꿈으로 먹힌다). 2026-09-30 시험 세션 실측
  */
+/** 글을 다 친 뒤 Enter 까지 기다릴 시간(ms). 윈도우는 가짜 콘솔(ConPTY)이 글을 늦게 넘겨 긴 지시의 Enter 가 줄바꿈으로 들어갔다 — 글 길이만큼 더(최대 +3초) */
+export const enterDelay = (len: number, win: boolean): number => (win ? 400 + Math.min(len, 3000) : 400);
+
 export function typedChunks(text: string, size = 200): string[] {
   const out: string[] = [];
   text.replace(/\t/g, '  ').split('\n').forEach((line, i) => {

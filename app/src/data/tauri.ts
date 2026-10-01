@@ -130,6 +130,8 @@ export const removeSession = (id: string) => invoke<string>('remove_session', { 
 export const readTasks = () => invoke<string>('read_tasks');
 
 /** 세션 대화 기록 꼬리 — { sessionId: 원문 } */
+/** 참모 대화 기록에서 세션 띄움·말 건 줄만, from 바이트 뒤로(처음은 0 = 전체) */
+export const spawnLines = (sessionId: string, from: number) => invoke<{ lines: string[]; next: number } | null>('spawn_lines', { sessionId, from });
 export const readTranscriptTails = (sessionIds: string[]) =>
   invoke<Record<string, string>>('read_transcript_tails', { sessionIds });
 
@@ -217,6 +219,10 @@ export const todayCommits = (devRoot: string, author: string, since: string) =>
 /** 클립보드에 글자 넣기 (Rust pbcopy — 웹뷰 clipboard API 는 입력 도중이 아니면 막힌다) */
 export const writeClipboard = (text: string) => invoke<void>('clipboard_write', { text });
 
+/** 이 앱 버전 — 새 버전 알림용 */
+/** 모델 칩이 실패했을 때 그때 터미널 화면을 로컬 로그(<데이터>/pick-debug.log)에 */
+export const pickLog = (text: string) => invoke<void>('pick_log', { text });
+export const appVersion = () => invoke<string>('app_version');
 export const openTarget = (kind: 'url' | 'file', target: string) => invoke<void>('open_target', { kind, target });
 
 // ── 리뷰·머지 (Rust review.rs, 파싱은 domain/reviewSource.ts) ──

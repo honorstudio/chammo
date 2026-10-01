@@ -199,8 +199,20 @@ pub async fn pick_folder(prompt: String, start: Option<String>) -> Result<Option
     }
 }
 
+/// 이 앱 버전(Cargo.toml) — 새 버전 알림이 GitHub 최신 릴리스와 견준다(2026-10-01 사용자)
+#[tauri::command]
+pub fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").into()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn 앱_버전은_세_자리() {
+        let v = super::app_version();
+        assert_eq!(v.split('.').count(), 3, "{v}");
+        assert!(v.split('.').all(|p| p.parse::<u32>().is_ok()), "{v}");
+    }
     use super::*;
 
     #[test]

@@ -152,6 +152,16 @@ describe('setupCommand — 윈도우(cmd /C 가 읽는 모양, 윈도우판)', (
   it('설치: PowerShell 설치 스크립트', () => {
     expect(setupCommand('install', {}, '끝', undefined, true)).toBe('powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex" & echo. & echo 끝');
   });
+  it('업데이트: winget 으로 깐 claude 면 winget upgrade(claude update 는 winget 것을 못 올린다, 2026-10-01 윈도우 PC 2.1.283)', () => {
+    expect(setupCommand('update', { claude: c }, '끝', undefined, true)).toBe('winget upgrade -e --id Anthropic.ClaudeCode --accept-source-agreements --accept-package-agreements & echo. & echo 끝');
+    // 링크 말고 실제 패키지 폴더 경로로 와도
+    const real = 'C:\\Users\\a\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe';
+    expect(setupCommand('update', { claude: real }, '', undefined, true)).toContain('winget upgrade -e --id Anthropic.ClaudeCode');
+  });
+  it('업데이트: 공식 설치(.local\\bin) 면 그 claude 로 update', () => {
+    const own = 'C:\\Users\\a\\.local\\bin\\claude.exe';
+    expect(setupCommand('update', { claude: own }, '', undefined, true)).toBe(`"${own}" update`);
+  });
   it('맥은 그대로', () => {
     expect(setupCommand('trust', { claude: '/h/claude' }, '', '/h/dev', false)).toBe("cd '/h/dev' && exec '/h/claude'");
   });

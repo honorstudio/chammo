@@ -33,6 +33,7 @@ mod routines;
 mod pty;
 mod review;
 mod setup;
+mod slash;
 mod tama;
 mod theme;
 mod origin;
@@ -296,6 +297,10 @@ fn main() {
             hq::folder_status,
             hq::make_dir,
             setup::check_env,
+            setup::app_version,
+            debug::pick_log,
+            slash::slash_commands,
+            slash::spawn_lines,
             setup::claude_trusted,
             setup::pick_folder,
             tama::tama_more,
@@ -341,6 +346,7 @@ fn main() {
             reader::new_page,
             reader::space_log_append,
             reader::save_asset,
+            reader::copy_asset,
             reader::read_show_log,
             claude::project_scan,
             claude::notify,

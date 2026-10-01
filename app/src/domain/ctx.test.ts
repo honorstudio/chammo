@@ -5,11 +5,21 @@ const f = (sessionId: string, used: number, ts = 100) => JSON.stringify({ sessio
 
 describe('parseCtx — 상태줄이 세션마다 남긴 파일들', () => {
   it('session_id → 사용 %', () => {
-    expect(parseCtx([f('a', 56), f('b', 81)])).toEqual({ a: { used: 56, ts: 100 }, b: { used: 81, ts: 100 } });
+    expect(parseCtx([f('a', 56), f('b', 81)])).toEqual({ a: { used: 56, ts: 100, model: 'Opus 5.5' }, b: { used: 81, ts: 100, model: 'Opus 5.5' } });
   });
 
   it('깨진 파일·숫자 아닌 값은 건너뛴다', () => {
-    expect(parseCtx(['{깨짐', JSON.stringify({ sessionId: 'c', used: null }), f('d', 12)])).toEqual({ d: { used: 12, ts: 100 } });
+    expect(parseCtx(['{깨짐', JSON.stringify({ sessionId: 'c', used: null }), f('d', 12)])).toEqual({ d: { used: 12, ts: 100, model: 'Opus 5.5' } });
+  });
+});
+
+describe('parseCtx — 모델·에포트(채팅 칩)', () => {
+  it('모델 이름·id·에포트를 같이 읽는다', () => {
+    const j = JSON.stringify({ sessionId: 'a', used: 5, model: 'Sonnet 5.5', modelId: 'claude-sonnet-5-5', effort: 'high', ts: 9 });
+    expect(parseCtx([j]).a).toEqual({ used: 5, ts: 9, model: 'Sonnet 5.5', modelId: 'claude-sonnet-5-5', effort: 'high' });
+  });
+  it('옛 파일(모델·에포트 없음)은 값 없이 읽힌다', () => {
+    expect(parseCtx([JSON.stringify({ sessionId: 'a', used: 5, ts: 9 })]).a).toEqual({ used: 5, ts: 9 });
   });
 });
 

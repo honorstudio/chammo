@@ -4,6 +4,10 @@ import DOMPurify from 'dompurify';
 import { draftStore } from '../../domain/chatDraft';
 import { isCompacting } from '../../domain/compacting';
 import { ctxLevel } from '../../domain/ctx';
+import { invoke } from '@tauri-apps/api/core';
+import { ModelChip, type ModelInfo } from './ModelChip';
+import type { PickResult, PickWant } from './modelPickRun';
+import { builtinSlash, completeSlash, matchSlash, slashQuery, type SlashItem } from '../../domain/slash';
 import { appendChat, chatBusy, mdSafe, parseChat, pendingLeft, clickFocusesInput, promptInput, splitPaths, splitRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
 import { openTarget, readSessionTasks, readTranscript, type SessionTask } from '../../data/tauri';
 import { modKey } from '../../domain/keys';
@@ -44,10 +48,15 @@ const drafts = draftStore((() => { try { return window.localStorage; } catch { r
  * 스페이스 모드의 채팅 보기(2026-09-30 사용자). 터미널(TUI)은 뒤에 그대로 붙어 있고, 이건 그 위에 덮는 판이다.
  * 읽기 = 대화 기록 이어 읽기, 쓰기 = 그 터미널 입력칸에 붙여넣고 Enter(send). 멈추기 = Esc
  */
-export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInputFocus, focusRef, screen, submitTerminal, pasteImage, sendNow, voiceStop = 0, sendQueuedNow, clearTerminal, paneId, ctx }: {
+export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInputFocus, focusRef, screen, submitTerminal, pasteImage, sendNow, voiceStop = 0, sendQueuedNow, clearTerminal, paneId, ctx, modelInfo, pickModel, cwd }: {
   sessionId?: string;
   /** 컨텍스트 쓴 % — 입력칸 위 오른쪽 고리 */
   ctx?: number;
+  /** 지금 모델·에포트(상태줄 파일) — 머리줄 칩. runCommand 로 /model·/effort 를 보내 바꾼다 */
+  modelInfo?: ModelInfo;
+  pickModel?: (want: PickWant) => Promise<PickResult>;
+  /** 세션 폴더 — / 자동완성에 그 프로젝트 스킬·명령을 넣는다 */
+  cwd?: string;
   state: string;
   send: (text: string) => void;
   interrupt: () => void;
@@ -77,6 +86,21 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
   const [items, setItems] = useState<ChatItem[]>([]);
   const [limit, setLimit] = useState(PAGE);
   const [draft, setDraft] = useState(() => drafts.load(paneId).text);
+  // / 자동완성(2026-10-01 사용자) — 기본 명령 + 사용자·프로젝트 스킬·명령. 커서가 첫 단어 안일 때만 뜬다
+  const [caret, setCaret] = useState(0);
+  const [slashAll, setSlashAll] = useState<SlashItem[]>(builtinSlash);
+  const [slashSel, setSlashSel] = useState(0);
+  const [slashOff, setSlashOff] = useState<string | null>(null); // Esc 로 닫은 그 글자 — 글자가 바뀌면 다시 뜬다
+  useEffect(() => {
+    let alive = true;
+    void invoke<SlashItem[]>('slash_commands', { cwd: cwd ?? null }).then((x) => { if (alive) setSlashAll([...builtinSlash(), ...x]); }).catch(() => {});
+    return () => { alive = false; };
+  }, [cwd]);
+  const slashQ = slashQuery(draft, caret);
+  const slashList = slashQ !== null && slashOff !== draft ? matchSlash(slashAll, slashQ) : [];
+  const slashOpen = slashList.length > 0 && !(slashList.length === 1 && slashList[0]!.name === slashQ);
+  useEffect(() => { setSlashSel(0); }, [slashQ]);
+  const slashFill = (name: string) => { const v = completeSlash(draft, name); setDraft(v); setCaret(name.length + 2); requestAnimationFrame(() => input.current?.setSelectionRange(name.length + 2, name.length + 2)); };
   const [pending, setPending] = useState<{ text: string; at: number }[]>(() => (paneId ? pendingBy.get(paneId) ?? [] : []));
   useEffect(() => { if (paneId) pendingBy.set(paneId, pending); }, [paneId, pending]);
   const list = useRef<HTMLDivElement>(null);
@@ -206,9 +230,15 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
 
   const waiting = useMemo(() => {
     const now = Date.now();
-    return pendingLeft(pending, items).filter((p) => now - p.at < PENDING_MS);
+    return pendingLeft(pending, items, now).filter((p) => now - p.at < PENDING_MS);
   }, [pending, items]);
   useEffect(() => { if (waiting.length !== pending.length) setPending(waiting); }, [waiting, pending.length]);
+  // / 명령은 4초 뒤 지우는데(domain/chat pendingLeft) 기록이 안 바뀌면 다시 셀 일이 없다 — 시계로 한 번 더 센다
+  useEffect(() => {
+    if (!pending.some((p) => p.text.trimStart().startsWith('/'))) return;
+    const t = window.setTimeout(() => setPending((p) => [...p]), 4500);
+    return () => window.clearTimeout(t);
+  }, [pending]);
 
   // 입력칸은 글 높이만큼 늘어난다(줄바꿈 수로 세면 긴 한 줄이 두 줄에서 멈췄다 — 2026-09-30 사용자)
   useLayoutEffect(() => {
@@ -389,7 +419,7 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
       </div>
       {away && <button className="chat-bottom" onClick={toBottom} title={tr('맨 아래로', 'Jump to latest')}><IconChevron />{tr('맨 아래로', 'Latest')}</button>}
       {/* 상태 줄 — 목록 끝에 두면 스크롤에 가려 작업 중인지 몰랐다(2026-09-30 사용자). 입력칸 바로 위에 늘 */}
-      {(state === 'blocked' || busy || compacting || ctx !== undefined) && (
+      {(state === 'blocked' || busy || compacting || ctx !== undefined || modelInfo?.model) && (
         <div className="chat-status">
           {compacting ? (
             <span className="chat-compact"><span className="spin" />{tr('대화 압축 중 — 앞 대화를 요약하고 있어요', 'Compacting — summarizing earlier conversation')}</span>
@@ -398,6 +428,11 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
           ) : busy ? (
             <><span className="spin" /><span>{tr('작업 중', 'Working')}{lastTool ? ` · ${lastTool}` : ''}</span></>
           ) : null}
+          {modelInfo?.model && pickModel && (() => {
+            const lockedWhy = termText ? tr('터미널 입력칸에 쓰던 글이 있어서 못 바꿔요 — 먼저 보내거나 지워 주세요', 'There is text in the terminal input — send or clear it first')
+              : busy || compacting ? tr('작업 중엔 못 바꿔요 — 끝나면 바꿔 주세요', "Can't change while it's working") : state === 'blocked' ? tr('터미널에서 선택을 기다리는 중이라 못 바꿔요', 'Waiting for a choice in the terminal') : undefined;
+            return <ModelChip info={modelInfo} pick={pickModel} locked={!!lockedWhy} lockedWhy={lockedWhy} />;
+          })()}
           {ctx !== undefined && <CtxRing used={ctx} />}
         </div>
       )}
@@ -437,6 +472,16 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
           ))}
         </div>
       )}
+      {slashOpen && (
+        <div className="chat-mention chat-slash" role="listbox">
+          {slashList.map((it, i) => (
+            <button key={it.name} role="option" aria-selected={i === slashSel} className={i === slashSel ? 'on' : ''} onMouseEnter={() => setSlashSel(i)}
+              onMouseDown={(e) => { e.preventDefault(); slashFill(it.name); input.current?.focus(); }}>
+              <b>/{it.name}</b><span className="dim">{it.desc}</span>{i === slashSel && <span className="dim key">Tab</span>}
+            </button>
+          ))}
+        </div>
+      )}
       {(() => {
         const m = draft.match(/@(\w*)$/);
         const opts = m ? [...attached.map((a) => a.label), ...refs.map((r) => r.label)].filter((l): l is string => !!l && l.startsWith(`@${m[1]}`) && l !== `@${m[1]}`) : [];
@@ -458,9 +503,16 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
           value={draft}
           rows={1}
           placeholder={tr('메시지 — Enter 보내기, Shift+Enter 줄바꿈', 'Message — Enter to send, Shift+Enter for a new line')}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => { setDraft(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); }}
+          onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
           onFocus={onInputFocus}
           onKeyDown={(e) => {
+            // / 자동완성이 떠 있으면: ↑↓ 고르기, Tab·Enter 채우기, Esc 닫기 — 터미널 Claude 와 같은 손버릇
+            if (slashOpen && !e.nativeEvent.isComposing) {
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setSlashSel((i) => (i + (e.key === 'ArrowDown' ? 1 : slashList.length - 1)) % slashList.length); return; }
+              if ((e.key === 'Tab' && !e.shiftKey) || (e.key === 'Enter' && !e.shiftKey && !modKey(e, IS_WIN))) { e.preventDefault(); slashFill(slashList[slashSel]!.name); return; }
+              if (e.key === 'Escape') { e.preventDefault(); setSlashOff(draft); return; }
+            }
             // Enter = 보내기(일하는 중이면 줄 서 있다가 중간에 들어간다), ⌘Enter = 끊고 바로 보내기(2026-09-30 사용자)
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();

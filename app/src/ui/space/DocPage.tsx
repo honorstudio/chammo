@@ -86,9 +86,12 @@ export function DocPage({ path, title, owner, pinned, onPin, send, sendTo, onTit
       }}>
         <div className="cv-doc-body" ref={bodyRef} onClickCapture={(e) => {
           // 문서 속 링크 — 다른 페이지·파일(상대 경로)이면 스페이스에서 연다, 웹 주소는 그대로
-          const a = (e.target as HTMLElement).closest('a');
-          const href = a?.getAttribute('href') ?? '';
-          if (!a || !href || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('#') || !onOpenPath) return;
+          // 파일 블록(끌어다 놓은 PDF·PPT 등)은 이름을 누르면 같은 길로 — 편집기 기본 동작은 앱 창에서 아무 일도 안 했다(2026-10-01 사용자)
+          const t = e.target as HTMLElement;
+          const fileUrl = t.closest('.bn-file-name-with-icon') ? t.closest<HTMLElement>('[data-content-type="file"]')?.getAttribute('data-url') : null;
+          const a = t.closest('a');
+          const href = fileUrl ?? a?.getAttribute('href') ?? '';
+          if ((!a && !fileUrl) || !href || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('#') || !onOpenPath) return;
           e.preventDefault(); e.stopPropagation();
           const dir = path.replace(/\/[^/]*$/, '');
           const abs = href.startsWith('/') ? decodeURI(href) : new URL(href, `file://${encodeURI(dir)}/`).pathname;

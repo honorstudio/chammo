@@ -10,6 +10,7 @@ import { dragPath, dragProps } from './dragPath';
 import { OrchName, useOrchActions } from '../orchActions';
 import { IconClose } from '../Icons';
 import { orchBadge } from '../../domain/orchLabel';
+import { orchLabel } from '../orchLabels';
 import { keyLabel } from '../../domain/keys';
 import { IS_WIN } from '../../domain/reader';
 import type { RoutineState } from '../../domain/routine';
@@ -142,18 +143,18 @@ export function SpaceNav({ onNewOrch, routines = [], helpers = [], pagesRoot = '
         );
       })}
 
-      {secOpen('orch') && offOrchs.slice(0, 4).map((x) => (
-        <div key={x.id} className="cv-row top off" title={`${x.name} — ${tr('꺼짐 · 오른쪽 클릭: 켜기·지우기', 'stopped · right-click: resume·remove')}`}
+      {secOpen('orch') && offOrchs.slice(0, 6).map((x) => { const nm = orchLabel(x.id) ?? x.name; return (
+        <div key={x.id} className="cv-row top off" title={`${orchLabel(x.id) ?? x.name} — ${tr('꺼짐 · 오른쪽 클릭: 켜기·지우기', 'stopped · right-click: resume·remove')}`}
           onContextMenu={act ? (e) => act.openMenu(e, [
             ...(onResume ? [{ label: tr('이어서 켜기', 'Resume'), run: () => onResume(x) }] : []),
-            { label: tr('목록에서 지우기', 'Remove from list'), danger: true, run: () => act.confirm({ title: tr(`${x.name} 지울까?`, `Remove ${x.name}?`), body: tr('꺼진 세션 목록에서 빼(대화 기록 파일은 남아).', 'Removes it from stopped sessions (the transcript file stays).'), ok: tr('지우기', 'Remove'), run: () => onRemoveStopped?.(x) }) },
+            { label: tr('목록에서 지우기', 'Remove from list'), danger: true, run: () => act.confirm({ title: tr(`${x.name} 지울까?`, `Remove ${x.name}?`), body: tr('꺼진 세션 목록에서 빼 — 같은 이름으로 쌓인 옛 기록도 같이(대화 기록 파일은 남아).', 'Removes it from stopped sessions, with older ones under the same name (transcript files stay).'), ok: tr('지우기', 'Remove'), run: () => onRemoveStopped?.(x) }) },
           ]) : undefined}>
           <span className="cv-fold small blank" />
-          <span className="cv-avatar off">{orchBadge(x.name || '')}</span>
-          <span className="cv-label">{x.name}</span>
+          <span className="cv-avatar off">{orchBadge(nm)}</span>
+          <span className="cv-label">{nm}</span>
           {onResume && <button className="cv-act show" onClick={() => onResume(x)} title={tr('이어서 켜기', 'Resume')}>{tr('켜기', 'On')}</button>}
         </div>
-      ))}
+      ); })}
 
       {helpers.length > 0 && <div className="cv-sec click" onClick={() => flipSec('helpers')}><span className="with-ic">{secFold('helpers')}{tr('도우미', 'Helpers')}</span><span className="cv-count">{helpers.length}</span></div>}
       {secOpen('helpers') && helpers.map((h) => (

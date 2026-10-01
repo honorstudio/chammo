@@ -1,11 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { appendTaskEvent, readSessionTasks, readShowLog, readTranscriptTails, sendTextToSession } from '../../data/tauri';
+import { appendTaskEvent, readSessionTasks, readShowLog, readTranscriptTails, sendTextToSession, spawnLines } from '../../data/tauri';
 import { dashFiles, type DashFile } from '../../domain/dashboard';
 import { findTarget } from '../../domain/inbox';
 import { kindOf } from '../../domain/reader';
-import { isOrchestratorName, type Session } from '../../domain/session';
-import { holderMap, newShows, orphanSends, shownFiles } from '../../domain/spaceNav';
+import type { Session } from '../../domain/session';
+import { sameOrchSlot, stoppedOrchs } from '../../domain/stopped';
+import { holderMap, newShows, orphanSends, shownFiles, transcriptTargets } from '../../domain/spaceNav';
 import { orchDocs, projectGroups } from '../../domain/spaceTree';
 import { termTail } from '../../domain/termTail';
 import { starterLists } from '../../domain/starterLists';
@@ -66,7 +67,7 @@ export function SpaceView({ orchs, orch: chatOrch, projectSessions, sessions, ev
   onNewOrch?: () => void;
   /** 루틴 목록·화면(App 이 사이드바와 같은 RoutinePage 를 만들어 준다) */
   routines?: { name: string; state: RoutineState; line: string; cloud?: boolean }[];
-  routinePage?: (name: string) => React.ReactNode;
+  routinePage?: (name: string, removed: () => void) => React.ReactNode;
   live?: Record<string, LiveLine>;
   orchs: Session[];
   /** 지금 채팅 탭 참모 */
@@ -128,7 +129,9 @@ export function SpaceView({ orchs, orch: chatOrch, projectSessions, sessions, ev
     if (!hold) return;
     let r2 = 0;
     const r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setHold(false)); });
-    return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); };
+    // 창이 가려져 있거나 앞에 없으면 웹뷰가 그리기 신호(rAF)를 멈춰, 대시보드가 빈 화면으로 남았다(2026-10-01 사용자) — 시계로도 푼다
+    const t = window.setTimeout(() => setHold(false), 200);
+    return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); window.clearTimeout(t); };
   }, [hold]);
   useEffect(() => {
     if (!switching) return;
@@ -139,7 +142,58 @@ export function SpaceView({ orchs, orch: chatOrch, projectSessions, sessions, ev
   const oname = (o: Session) => act?.nameOf(o) ?? (o.name || tr('참모', 'Assistant'));
   const orchIds = orchs.map((o) => o.id);
   const colorOf = (id: string) => ORCH_COLORS[Math.max(0, orchIds.indexOf(id)) % ORCH_COLORS.length]!;
-  const holders = holderMap(events, orchIds, (t) => findTarget(sessions, t)?.id, Date.now());
+  // 참모가 작업 기록 없이 띄웠거나 말 건 세션도 그 참모 것으로 — 대화 기록 꼬리에서 15초마다(앱이 켜져 있는 동안 모아 둔다, 2026-10-01 사용자)
+  // 한 번 찾은 건 저장해 둔다 — 참모 sessionId 별 {찾은 이름들, 읽은 자리}. 처음엔 기록 전체를 훑고(끝 256KB 만 보면 앞서 띄운 세션을 놓쳤다, 2026-10-01 사용자),
+  // 그 뒤로는 늘어난 부분만. 떠 있는 세션으로 풀릴 때만 쓰니 옛 이름은 해가 없다
+  const SPAWN_KEY = 'spawnedBy2';
+  const spawnStore = useRef<Record<string, { names: string[]; off: number }>>((() => { try { return JSON.parse(localStorage.getItem(SPAWN_KEY) ?? '{}') as Record<string, { names: string[]; off: number }>; } catch { return {}; } })());
+  const spawned = useRef(new Map<string, Set<string>>());
+  const [spawnTick, setSpawnTick] = useState(0);
+  const orchSidKey = orchs.map((o) => `${o.id}:${o.sessionId ?? ''}`).join();
+  useEffect(() => {
+    let alive = true;
+    let running = false;
+    const tick = async () => {
+      if (running) return;
+      running = true;
+      try {
+        let grew = false;
+        for (const o of orchs) {
+          const sid = o.sessionId;
+          if (!sid) continue;
+          const st = spawnStore.current[sid] ?? { names: [], off: 0 };
+          const set = spawned.current.get(o.id) ?? new Set<string>(st.names);
+          if (!spawned.current.has(o.id) && set.size > 0) grew = true;
+          const r = await spawnLines(sid, st.off).catch(() => null);
+          if (!alive) return;
+          if (r) {
+            for (const n of transcriptTargets(r.lines.join('\n'))) if (!set.has(n)) { set.add(n); grew = true; }
+            spawnStore.current[sid] = { names: [...set].slice(-80), off: r.next };
+          }
+          spawned.current.set(o.id, set);
+        }
+        if (grew) {
+          setSpawnTick((n) => n + 1);
+          try { localStorage.setItem(SPAWN_KEY, JSON.stringify(spawnStore.current)); } catch { /* 이번 실행만 */ }
+        }
+      } finally { running = false; }
+    };
+    void tick();
+    const t = window.setInterval(() => void tick(), 15_000);
+    return () => { alive = false; window.clearInterval(t); };
+  }, [orchSidKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const holders = useMemo(() => {
+    const m = holderMap(events, orchIds, (t) => findTarget(sessions, t)?.id, Date.now());
+    for (const [oid, names] of spawned.current) {
+      for (const n of names) {
+        const id = findTarget(sessions, n)?.id;
+        if (!id || orchIds.includes(id)) continue;
+        const list = m.get(id) ?? [];
+        if (!list.includes(oid)) m.set(id, [...list, oid]);
+      }
+    }
+    return m;
+  }, [events, orchIds.join(), sessions, spawnTick]); // eslint-disable-line react-hooks/exhaustive-deps
   const heldBy = (o?: Session) => (o ? projectSessions.filter((s) => holders.get(s.id)?.includes(o.id)) : []);
   const groups = useMemo(() => projectGroups(projectSessions), [projectSessions]);
   const orphans = orphanSends(events, Date.now());
@@ -375,7 +429,7 @@ export function SpaceView({ orchs, orch: chatOrch, projectSessions, sessions, ev
       );
     })();
   } else if (pick.startsWith('r:')) {
-    main = routinePage?.(pick.slice(2)) ?? null;
+    main = routinePage?.(pick.slice(2), () => setPick(chatOrch ? `o:${chatOrch.id}` : '')) ?? null; // 지우면 참모 화면으로 — '찾을 수 없어요'에 남지 않게
   } else if (pick === 'm:') {
     main = <PagesHome pages={pages} titleOf={pageName} onOpen={(p) => setPick(`d:${p}`)} onNew={newPage} />;
   } else if (pick.startsWith('d:')) {
@@ -413,7 +467,7 @@ export function SpaceView({ orchs, orch: chatOrch, projectSessions, sessions, ev
   return (
     <div className="space cv">
       {menuOpen && (
-        <SpaceNav onNewOrch={onNewOrch} routines={routines} onTrashPage={(p) => void invoke('trash_page', { path: p }).then(() => { if (pick === `d:${p}` || pick.startsWith(`d:${p.replace(/\.md$/, '')}/`)) setPick('m:'); loadPages(); }).catch(() => {})} idle={idle} offOrchs={stopped.filter((x, i, all) => x.cwd === orchCwd && isOrchestratorName(x.name) && !orchs.some((o) => o.name === x.name) && all.findIndex((y) => y.cwd === orchCwd && y.name === x.name) === i)} helpers={helpers} onChatTab={onChatTab} ctxOf={ctxOf} onAddProject={onAddProject} onResume={onResume} onRemoveStopped={onRemoveStopped} orchs={orchs} viewId={orch?.id} colorOf={colorOf} projects={groups} holders={holders} pick={pick}
+        <SpaceNav onNewOrch={onNewOrch} routines={routines} onTrashPage={(p) => void invoke('trash_page', { path: p }).then(() => { if (pick === `d:${p}` || pick.startsWith(`d:${p.replace(/\.md$/, '')}/`)) setPick('m:'); loadPages(); }).catch(() => {})} idle={idle} offOrchs={stoppedOrchs(stopped, orchCwd, orchs)} helpers={helpers} onChatTab={onChatTab} ctxOf={ctxOf} onAddProject={onAddProject} onResume={onResume} onRemoveStopped={onRemoveStopped ? (x) => sameOrchSlot(stopped, x, orchCwd).forEach((y) => onRemoveStopped(y)) : undefined} orchs={orchs} viewId={orch?.id} colorOf={colorOf} projects={groups} holders={holders} pick={pick}
           onPick={(k, orchId) => { setPick(k); if (orchId) setNav((n) => ({ ...n, view: orchId })); }}
           orchDocsOf={(o) => orchDocs(log, o.id, pins[pinKey(o)] ?? [])} isPinned={isPinned} onTogglePin={togglePin}
           pagesRoot={pagesRoot} pages={pages} pageTitle={pageName} onNewPage={newPage}

@@ -168,8 +168,15 @@ def main(argv):
         print(e, file=sys.stderr)
         return 2
     send_keys(sid, keys)
-    time.sleep(6 if os.name == 'nt' else 1.5)  # 윈도우는 앱이 읽고(0.7초) 붙고(1.5초) 누르는 시간까지
+    # 윈도우는 앱이 대신 누른다 — 열린 터미널이 없으면 새로 붙는 데 10~20초 걸려 30초까지 기다린다(맥은 1.5초)
+    end = time.time() + (30 if os.name == 'nt' else 1.5)
     after = agent(sid) or {}
+    while os.name == 'nt' and after.get('waitingFor') == 'input needed' and time.time() < end:
+        time.sleep(2)
+        after = agent(sid) or {}
+    if os.name != 'nt':
+        time.sleep(1.5)
+        after = agent(sid) or {}
     if after.get('waitingFor') == 'input needed':
         print(T(f'{sid}: 넣었는데 아직 선택지 창이야 — 사용자에게 그 세션 화면을 열어 달라고 해', f"{sid}: typed it but the prompt is still open — ask the user to open that session's screen"), file=sys.stderr)
         return 1

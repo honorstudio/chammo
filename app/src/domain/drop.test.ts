@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dropText, paneAt, shellEscape } from './drop';
+import { dropText, paneAt, shellEscape, docDropBlocks, dropSlot } from './drop';
 
 describe('shellEscape — iTerm 처럼 경로를 백슬래시로 이스케이프', () => {
   it('평범한 경로는 그대로', () => {
@@ -60,5 +60,46 @@ describe('paneAt — 드롭한 점이 어느 칸인가', () => {
   });
   it('겹치면 나중 것(위에 그려진 것)', () => {
     expect(paneAt([...panes, { id: 'top', left: 40, top: 40, right: 60, bottom: 60 }], 50, 50)).toBe('top');
+  });
+});
+
+describe('docDropBlocks — 문서 편집기에 끌어다 놓은 파일의 블록 종류', () => {
+  it('그림·영상·소리는 그 블록, 나머지(PDF·문서·압축)는 파일 블록', () => {
+    expect(docDropBlocks(['/a/b.PNG', '/a/c.mp4', '/a/d.mp3', '/a/e.pdf', 'C:\\x\\f.zip'])).toEqual([
+      { path: '/a/b.PNG', type: 'image' },
+      { path: '/a/c.mp4', type: 'video' },
+      { path: '/a/d.mp3', type: 'audio' },
+      { path: '/a/e.pdf', type: 'file' },
+      { path: 'C:\\x\\f.zip', type: 'file' },
+    ]);
+  });
+  it('빈 목록은 빈 배열', () => {
+    expect(docDropBlocks([])).toEqual([]);
+  });
+});
+
+describe('dropSlot — 문서에 놓을 자리(가장 가까운 블록의 위/아래)', () => {
+  const blocks = [
+    { id: 'a', top: 0, bottom: 40 },
+    { id: 'b', top: 50, bottom: 90 },
+    { id: 'c', top: 100, bottom: 140 },
+  ];
+  it('블록 위쪽 절반이면 그 앞, 아래쪽 절반이면 그 뒤', () => {
+    expect(dropSlot(blocks, 55)).toEqual({ id: 'b', place: 'before', y: 50 });
+    expect(dropSlot(blocks, 85)).toEqual({ id: 'b', place: 'after', y: 90 });
+  });
+  it('블록 사이 빈 곳은 가까운 쪽 블록에 붙는다', () => {
+    expect(dropSlot(blocks, 43)).toEqual({ id: 'a', place: 'after', y: 40 });
+    expect(dropSlot(blocks, 48)).toEqual({ id: 'b', place: 'before', y: 50 });
+  });
+  it('맨 위보다 위면 첫 블록 앞, 맨 아래보다 아래면 마지막 블록 뒤', () => {
+    expect(dropSlot(blocks, -20)).toEqual({ id: 'a', place: 'before', y: 0 });
+    expect(dropSlot(blocks, 400)).toEqual({ id: 'c', place: 'after', y: 140 });
+  });
+  it('겹치면(목록 속 블록) 안쪽 작은 블록', () => {
+    expect(dropSlot([{ id: 'list', top: 0, bottom: 100 }, { id: 'child', top: 60, bottom: 80 }], 75)).toEqual({ id: 'child', place: 'after', y: 80 });
+  });
+  it('블록이 없으면 null', () => {
+    expect(dropSlot([], 10)).toBeNull();
   });
 });

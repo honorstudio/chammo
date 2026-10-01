@@ -774,6 +774,26 @@ pub fn save_asset(doc_path: String, name: String, bytes: Vec<u8>) -> Result<Stri
     Ok(format!("assets/{file}"))
 }
 
+/// 스페이스 문서 편집기에 파인더에서 끌어다 놓은 파일(그림·영상·PDF 등) — 문서 옆 assets/ 로 복사하고 md 에 넣을 상대 경로를 돌려준다.
+/// 앱 창이 파일 끌기를 먼저 가로채서 편집기(BlockNote)가 못 받았다(2026-10-01 사용자)
+#[tauri::command]
+pub fn copy_asset(doc_path: String, src: String) -> Result<String, String> {
+    let doc = safe_path(&doc_path, &home()).ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
+    copy_asset_into(&doc, Path::new(&src), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0))
+}
+
+/// 파일 하나 복사(폴더는 거절) — 이름은 asset_name(시각-원래이름)
+pub fn copy_asset_into(doc: &Path, src: &Path, ms: u128) -> Result<String, String> {
+    if !src.is_file() {
+        return Err(tr("파일이 아니에요", "Not a file").into());
+    }
+    let dir = doc.parent().ok_or("no parent")?.join("assets");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let file = asset_name(&src.file_name().and_then(|n| n.to_str()).unwrap_or("image.png"), ms);
+    std::fs::copy(src, dir.join(&file)).map_err(|e| e.to_string())?;
+    Ok(format!("assets/{file}"))
+}
+
 /// 경로 없는 그림(채팅에 붙인 그림 등)을 앱 데이터 폴더/attach 에 파일로 — "채팅에 붙이기"가 경로로 넘기게(2026-09-30 사용자)
 #[tauri::command]
 pub fn save_attach(name: String, bytes: Vec<u8>) -> Result<String, String> {
@@ -879,6 +899,26 @@ mod tests {
         assert_eq!(super::asset_name("스크린샷 1.png", 42), "42-스크린샷_1.png");
         assert_eq!(super::asset_name("../../etc/passwd", 7), "7-passwd");
         assert_eq!(super::asset_name("", 7), "7-image.png");
+    }
+
+    #[test]
+    fn 끌어다_놓은_파일은_문서_옆_assets_로_복사() {
+        let root = std::env::temp_dir().join(format!("chammo-asset-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        let doc = root.join("pages/메모.md");
+        std::fs::write(&doc, "# 메모").unwrap();
+        let src = root.join("스크린샷 1.PNG");
+        std::fs::write(&src, b"png-bytes").unwrap();
+        let rel = super::copy_asset_into(&doc, &src, 42).unwrap();
+        assert_eq!(rel, "assets/42-스크린샷_1.PNG");
+        assert_eq!(std::fs::read(root.join("pages").join(&rel)).unwrap(), b"png-bytes");
+        // 영상·PDF 같은 다른 파일도 복사, 폴더·없는 파일은 거절
+        std::fs::write(root.join("보고서.pdf"), b"pdf").unwrap();
+        assert_eq!(super::copy_asset_into(&doc, &root.join("보고서.pdf"), 2).unwrap(), "assets/2-보고서.pdf");
+        assert!(super::copy_asset_into(&doc, &root.join("pages"), 1).is_err());
+        assert!(super::copy_asset_into(&doc, &root.join("없음.png"), 1).is_err());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

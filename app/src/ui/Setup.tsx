@@ -22,6 +22,8 @@ type Props = {
   orchestratorNames: string[];
   fontSize: number;
   onClose: () => void;
+  /** 열자마자 할 일 — 'update' = 점검 단계에서 Claude Code 업데이트를 바로 돌린다(새 버전 알림 띠의 버튼) */
+  start?: 'update';
 };
 
 const reopen = () => {
@@ -80,12 +82,12 @@ const features = (): [keyof Features, string, string][] => [
   ['voice', tr('음성 모드', 'Voice mode'), tr('비서의 답을 소리로 읽어 줘요', "Reads the assistant's replies aloud")],
 ];
 
-export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose }: Props) {
+export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose, start }: Props) {
   const [draft, setDraft] = useState<Config>(config);
   const set = <K extends keyof Config>(k: K, v: Config[K]) => setDraft((d) => ({ ...d, [k]: v }));
   const [check, setCheck] = useState<EnvCheck | null>(null);
   const [checking, setChecking] = useState(false);
-  const [task, setTask] = useState<SetupTask | null>(null);
+  const [task, setTask] = useState<SetupTask | null>(start ?? null);
   const [dev, setDev] = useState<FolderStatus | null>(null);
   const [hq, setHq] = useState<FolderStatus | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -491,7 +493,7 @@ export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose }
           </dl>
         </section>
   );
-  const [step, setStep] = useState<WizardStep>('welcome');
+  const [step, setStep] = useState<WizardStep>(start ? 'check' : 'welcome');
   const at = WIZARD.indexOf(step);
   const sectionOf: Record<WizardStep, ReactNode> = { welcome: langSec, check: checkSec, basics: basicsSec, features: featSec, ready: readySec };
 

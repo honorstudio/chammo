@@ -65,5 +65,14 @@ export function docUrl(path: string, win = IS_WIN): string {
 /** 이 앱의 파일 주소인가 — 맥 hodoc://, 윈도우 http://hodoc.localhost */
 export const isDocUrl = (u: URL) => u.protocol === 'hodoc:' || (u.protocol === 'http:' && u.hostname === 'hodoc.localhost');
 
+/** 앱 파일 주소 → 파일 경로(아니면 null). 편집기 다운로드 버튼이 window.open 으로 이 주소를 연다 — 기본 앱으로 넘긴다(2026-10-01 사용자) */
+export function pathOfDocUrl(url: string, win = IS_WIN): string | null {
+  let u: URL;
+  try { u = new URL(url); } catch { return null; }
+  if (!isDocUrl(u)) return null;
+  const p = decodeURIComponent(u.pathname);
+  return win && /^\/[A-Za-z]:\//.test(p) ? p.slice(1).replace(/\//g, '\\') : p;
+}
+
 /** 윈도우에서 도나 — 주소 모양·경로 처리가 갈린다 */
 export const IS_WIN = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);

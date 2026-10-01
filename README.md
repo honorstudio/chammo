@@ -6,7 +6,7 @@
 
 ![Chammo demo](docs/screenshots/demo.gif)
 
-Chammo (Korean *참모*, "chief of staff", said *CHAM-oh*) is a macOS app for one person running many projects at once. You talk to a single live Claude Code session — your chief of staff. It starts a background Claude Code session per project, hands out the work, reads the results, merges what is safe to merge, and comes back to you only for the calls that can't be undone. Every session is a real interactive Claude Code session you can open and type into at any moment, and each one shows up as a small pixel character in an office that works, reads and runs depending on what it is doing.
+Chammo (Korean *참모*, "chief of staff", said *CHAM-oh*) is a desktop app for macOS (Windows in preview) for one person running many projects at once. You talk to a single live Claude Code session — your chief of staff. It starts a background Claude Code session per project, hands out the work, reads the results, merges what is safe to merge, and comes back to you only for the calls that can't be undone. Every session is a real interactive Claude Code session you can open and type into at any moment, and each one shows up as a small pixel character in an office that works, reads and runs depending on what it is doing.
 
 ## Why
 
@@ -30,7 +30,7 @@ With five or ten projects open, the bottleneck is not the agents. It's you: swit
 - **Pixel office** — each session is a tamagotchi-like character at a desk. It types when editing, reads papers when reading, watches a progress bar when running commands, and the chief of staff walks paperwork over when it delegates.
 - **Pet and gacha** — a pet that grows from your commits, PRs and CI runs (74 species), and a capsule machine fed by coins from merges and commits: office skins, furniture, hats, window views.
 - **Projects with a harness** — new work gets its own project folder (the chief of staff names and creates it) with CLAUDE.md, a living `docs/starter.md` and `docs/roadmap.md` that each session reads first and updates when it finishes. Existing files are never overwritten; if you already use your own `project-starter` skill, Chammo uses that instead. Projects that live somewhere else stay where they are — add the folder from the sidebar ("Add folder"), Settings, or just ask the chief of staff.
-- **Routines** — recurring work ("post to the blog every morning", "check orders every 2 hours") becomes a routine with its own instructions file. macOS wakes it on schedule even when the app is closed; each run is a real Claude Code session that follows the instructions and reports back. The sidebar shows the next run, the live run and the history. Claude sessions that your own cron or launchd jobs start in a project folder (in a tmux nobody is attached to, for example) are listed there too as *external schedules* instead of cluttering the project.
+- **Routines** — recurring work ("post to the blog every morning", "check orders every 2 hours") becomes a routine with its own instructions file. macOS (Task Scheduler on Windows) wakes it on schedule even when the app is closed; each run is a real Claude Code session that follows the instructions and reports back. The sidebar shows the next run, the live run and the history. Claude sessions that your own cron or launchd jobs start in a project folder (in a tmux nobody is attached to, for example) are listed there too as *external schedules* instead of cluttering the project.
 - **It operates the app for you** — ask the chief of staff to turn voice mode on, open settings, hide the office or jump to a session, and it does it.
 - **A browser per project (optional)** — with Node.js 20+, one click installs browser automation: each project gets its own Chromium profile that stays logged in, with a lock so two sessions never fight over one browser.
 - **Korean and English** — the whole UI, switchable in settings.
@@ -46,7 +46,7 @@ The playful parts (office, pet, gacha) can each be turned off.
 
 ## Requirements
 
-- A Mac with Apple silicon (M1 or later), macOS 14 or later
+- A Mac with Apple silicon (M1 or later), macOS 14 or later — or a Windows 10/11 x64 PC (preview, see below)
 - An internet connection and a Claude account (Pro, Max, …)
 
 Everything else — Xcode Command Line Tools, Claude Code (2.1.280+), signing in, GitHub CLI (optional) — is checked on first launch and installed or updated with one button. You don't need to set anything up beforehand.
@@ -60,6 +60,8 @@ Everything else — Xcode Command Line Tools, Claude Code (2.1.280+), signing in
 ```sh
 curl -fsSL https://raw.githubusercontent.com/honorstudio/chammo/main/scripts/install.sh | bash
 ```
+
+**Windows (preview)** — download `Chammo_x.y.z_x64-setup.exe` from [Releases](https://github.com/honorstudio/chammo/releases) and run it. It installs for your user only (no administrator prompt) and fetches WebView2 if it is missing. The installer is not code-signed yet, so SmartScreen may say *Windows protected your PC* — click **More info > Run anyway**. First launch checks git (installed with winget) and Claude Code the same way the Mac version does. The chief of staff's helper scripts need **Python 3** (`py -3` or `python`) — install it from python.org or with `winget install Python.Python.3.12` if you don't have it. Shortcuts swap ⌘ for Ctrl: Ctrl+Shift with letters (⌘B → Ctrl+Shift+B), plain Ctrl with digits and symbols (⌘1 → Ctrl+1, ⌘, → Ctrl+,). Routines are scheduled with Windows Task Scheduler.
 
 **From source** — needs Rust (stable), Node.js 22+, pnpm and Xcode Command Line Tools.
 
@@ -150,14 +152,14 @@ To talk back, hold space in the chief of staff's terminal — that's Claude Code
 
 ## Privacy
 
-Chammo runs entirely on your Mac. It has no server, no account and no telemetry. It does not call any AI API itself — all model traffic is Claude Code's, and all GitHub traffic is `gh`'s, with your own logins. Its files stay in the data folder.
+Chammo runs entirely on your Mac. It has no server, no account and no telemetry. It does not call any AI API itself — all model traffic is Claude Code's, and all GitHub traffic is `gh`'s, with your own logins. The one thing Chammo fetches itself is a version check — at launch and every few hours it reads the latest Claude Code version from the npm registry and the latest Chammo release from GitHub (no login, nothing about you is sent), so it can tell you when an update is out. Its files stay in the data folder.
 
 ## Status and limitations
 
 - **Early.** Chammo started as one person's daily tool and was opened up as is.
 - **It relies on undocumented Claude Code internals** — background sessions, `claude agents --json`, `claude attach`, the daemon lock file. It is tested with Claude Code 2.1.28x. A Claude Code update can break it; Chammo shows a warning when your version is outside the tested range.
 - **Background sessions run with `--dangerously-skip-permissions`.** The sessions act without asking. Chammo's gates (payments, production changes, gated merges) sit in front of that, but only use it on projects and machines where you're comfortable with that.
-- macOS only.
+- **Windows is a preview.** It covers chat, terminals, delegation, decisions, choices, routines and notifications. Not there yet: the talk key, Supertonic (replies are read with a Windows voice), Word/Office file previews, and a signed installer. The per-project browser hasn't been tested on Windows. In the terminal view Hangul is drawn a little wider than on the Mac.
 
 ## Contributing
 

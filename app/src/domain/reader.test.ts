@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { docUrl, isDocUrl, dropIndex, inStrip, kindOf, titleOf, pageDoc } from './reader';
+import { docUrl, isDocUrl, dropIndex, inStrip, kindOf, titleOf, pageDoc, pathOfDocUrl } from './reader';
 
 describe('kindOf — 확장자로 어떻게 보여줄지', () => {
   it('html·pdf·md·그림·나머지 글', () => {
@@ -88,5 +88,18 @@ describe('docUrl — 윈도우(WebView2 는 사용자 주소를 http://<이름>.
     expect(isDocUrl(new URL('hodoc://localhost/Users/a/x.md'))).toBe(true);
     expect(isDocUrl(new URL('http://hodoc.localhost/C%3A/x.md'))).toBe(true);
     expect(isDocUrl(new URL('https://example.com/x'))).toBe(false);
+  });
+});
+
+describe('pathOfDocUrl — 앱 파일 주소를 다시 파일 경로로(편집기 다운로드 버튼)', () => {
+  it('맥 hodoc 주소 → 한글·공백 풀린 경로', () => {
+    expect(pathOfDocUrl(docUrl('/Users/me/문서 1/assets/a b.pptx', false))).toBe('/Users/me/문서 1/assets/a b.pptx');
+  });
+  it('윈도우 주소 → 드라이브 경로(앞 / 없이, 역슬래시)', () => {
+    expect(pathOfDocUrl(docUrl('C:\\Users\\me\\assets\\a.pdf', true), true)).toBe('C:\\Users\\me\\assets\\a.pdf');
+  });
+  it('웹 주소·이상한 글자는 null', () => {
+    expect(pathOfDocUrl('https://example.com/a.pdf')).toBeNull();
+    expect(pathOfDocUrl('not a url')).toBeNull();
   });
 });
