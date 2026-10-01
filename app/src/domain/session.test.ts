@@ -327,3 +327,38 @@ describe('윈도우 — agents 의 C:\\… cwd 도 HQ·프로젝트로 알아본
     expect(withinRoots(s, ['C:/Users/me/dev', 'C:/Users/me/.chammo/hq'])).toHaveLength(2);
   });
 });
+
+describe('classifyWorkspace — 윈도우 경로(대소문자·역슬래시 섞임, 2026-10-01 윈도우 PC)', () => {
+  const W = 'C:/Users/me/Desktop/dev';
+  it('대소문자가 달라도(윈도우는 같은 폴더) 그 아래 프로젝트·작업공간으로', () => {
+    expect(classifyWorkspace('C:/Users/me/desktop/dev/acme-shop', W)).toEqual({ project: 'acme-shop', workspace: null });
+    expect(classifyWorkspace('c:/users/me/DESKTOP/dev/acme-shop/.claude/worktrees/fix', W)).toEqual({ project: 'acme-shop', workspace: 'fix' });
+  });
+  it('devRoot 가 역슬래시로 와도', () => {
+    expect(classifyWorkspace('C:/Users/me/Desktop/dev/todo-api/src', 'C:\\Users\\me\\Desktop\\dev')).toEqual({ project: 'todo-api', workspace: null });
+  });
+  it('추가 폴더도 대소문자 무시', () => {
+    expect(classifyWorkspace('c:/work/blog-bot/content', W, ['C:\\Work\\blog-bot'])).toEqual({ project: 'blog-bot', workspace: null });
+  });
+  it('맥 경로는 그대로 대소문자를 가린다', () => {
+    expect(classifyWorkspace('/users/me/dev/acme-shop', '/Users/me/dev')).toEqual({ project: 'acme-shop', workspace: null }); // 밖 → 폴더 이름
+  });
+});
+
+describe('dev 폴더 자체에서 연 세션 — 프로젝트가 아니라 "프로젝트 밖"(2026-10-01 사용자: dev 가 통째로 프로젝트로 잡혔다)', () => {
+  it('classifyWorkspace 가 loose 로 표시한다(맥·윈도우 대소문자 무시)', () => {
+    expect(classifyWorkspace(DEV, DEV)).toEqual({ project: 'dev', workspace: null, loose: true });
+    expect(classifyWorkspace('c:/users/me/desktop/dev', 'C:\\Users\\me\\Desktop\\dev')).toEqual({ project: 'dev', workspace: null, loose: true });
+    expect(classifyWorkspace(`${DEV}/todo-api`, DEV)).toEqual({ project: 'todo-api', workspace: null });
+  });
+  it('groupByProject 는 loose 세션을 프로젝트에서 빼서 따로 모은다', () => {
+    const raw = [
+      { id: 'a', name: 'notes-chat', cwd: DEV, kind: 'interactive', status: 'idle' },
+      { id: 'b', name: 'image-chat', cwd: `${DEV}/`, kind: 'interactive', status: 'idle' },
+      { id: 'c', name: 'todo', cwd: `${DEV}/todo-api`, kind: 'background', status: 'idle' },
+    ];
+    const g = groupByProject(parseAgents(JSON.stringify(raw), DEV), `${DEV}/honor-orchestrator`);
+    expect(g.loose.map((x) => x.id)).toEqual(['a', 'b']);
+    expect(g.projects.map((p) => p.name)).toEqual(['todo-api']);
+  });
+});

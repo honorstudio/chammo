@@ -48,7 +48,7 @@ const loadTitles = (): Record<string, string> => { try { return JSON.parse(local
  * 채팅 뷰의 스페이스(큰 창 전체) — v10: 왼쪽 메뉴 트리(참모·프로젝트마다 대시보드 + 문서, 내 페이지),
  * 가운데 = 고른 것(대시보드 / 노션식 문서 / 세션 터미널). 참모·맡긴 세션이 띄운 파일은 위에 모달
  */
-export function SpaceView({ orchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, send, sendTo, live = {}, menuOpen = true, idle = [], stopped = [], orchCwd = '', onResume, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, ctxOf, onAddProject, onChatTab, helpers = [] }: {
+export function SpaceView({ orchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, send, sendTo, live = {}, menuOpen = true, idle = [], stopped = [], orchCwd = '', onResume, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, ctxOf, onAddProject, onChatTab, helpers = [], loose = [] }: {
   /** 세션이 안 떠 있는 프로젝트(예전 사이드바처럼 흐리게) */
   idle?: { name: string; root: string }[];
   /** 꺼진 세션(이어서 켤 수 있는 것) */
@@ -62,6 +62,7 @@ export function SpaceView({ orchs, orch: chatOrch, projectSessions, sessions, ev
   onChatTab?: (id: string) => void;
   /** 도우미 세션(프로젝트가 아닌 일 — 이 폴더에서 띄운 것) */
   helpers?: Session[];
+  loose?: Session[];
   onNewSession?: (root: string, name: string) => void;
   /** 참모 하나 더(⌘T 와 같다) — 채팅 탭 줄·오케스트레이터 칸의 + */
   onNewOrch?: () => void;
@@ -467,7 +468,7 @@ export function SpaceView({ orchs, orch: chatOrch, projectSessions, sessions, ev
   return (
     <div className="space cv">
       {menuOpen && (
-        <SpaceNav onNewOrch={onNewOrch} routines={routines} onTrashPage={(p) => void invoke('trash_page', { path: p }).then(() => { if (pick === `d:${p}` || pick.startsWith(`d:${p.replace(/\.md$/, '')}/`)) setPick('m:'); loadPages(); }).catch(() => {})} idle={idle} offOrchs={stoppedOrchs(stopped, orchCwd, orchs)} helpers={helpers} onChatTab={onChatTab} ctxOf={ctxOf} onAddProject={onAddProject} onResume={onResume} onRemoveStopped={onRemoveStopped ? (x) => sameOrchSlot(stopped, x, orchCwd).forEach((y) => onRemoveStopped(y)) : undefined} orchs={orchs} viewId={orch?.id} colorOf={colorOf} projects={groups} holders={holders} pick={pick}
+        <SpaceNav onNewOrch={onNewOrch} routines={routines} onTrashPage={(p) => void invoke('trash_page', { path: p }).then(() => { if (pick === `d:${p}` || pick.startsWith(`d:${p.replace(/\.md$/, '')}/`)) setPick('m:'); loadPages(); }).catch(() => {})} idle={idle} offOrchs={stoppedOrchs(stopped, orchCwd, orchs)} helpers={helpers} loose={loose} onChatTab={onChatTab} ctxOf={ctxOf} onAddProject={onAddProject} onResume={onResume} onRemoveStopped={onRemoveStopped ? (x) => sameOrchSlot(stopped, x, orchCwd).forEach((y) => onRemoveStopped(y)) : undefined} orchs={orchs} viewId={orch?.id} colorOf={colorOf} projects={groups} holders={holders} pick={pick}
           onPick={(k, orchId) => { setPick(k); if (orchId) setNav((n) => ({ ...n, view: orchId })); }}
           orchDocsOf={(o) => orchDocs(log, o.id, pins[pinKey(o)] ?? [])} isPinned={isPinned} onTogglePin={togglePin}
           pagesRoot={pagesRoot} pages={pages} pageTitle={pageName} onNewPage={newPage}

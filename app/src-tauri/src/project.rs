@@ -92,8 +92,10 @@ pub fn dirs(home: &str, dev_root: &str, extras: &[String]) -> Vec<(String, std::
     let mut out: Vec<(String, std::path::PathBuf)> = Vec::new();
     if let Ok(rd) = std::fs::read_dir(crate::config::expand(home, dev_root)) {
         for e in rd.flatten() {
-            if e.path().is_dir() {
-                out.push((e.file_name().to_string_lossy().into_owned(), e.path()));
+            let name = e.file_name().to_string_lossy().into_owned();
+            // 숨김 폴더(.claude·.playwright-mcp 등)는 프로젝트가 아니다 — dev 바로 아래에서 Claude 를 열면 생긴다(2026-10-01 윈도우 PC)
+            if e.path().is_dir() && !name.starts_with('.') {
+                out.push((name, e.path()));
             }
         }
     }
@@ -120,6 +122,17 @@ mod tests {
         let d = std::env::temp_dir().join(format!("chammo-proj-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    #[test]
+    fn 숨김_폴더는_프로젝트가_아니다() {
+        let d = temp("hidden");
+        for f in ["acme-shop", ".claude", ".playwright-mcp", "todo-api"] { std::fs::create_dir_all(d.join(f)).unwrap(); }
+        std::fs::write(d.join("notes.txt"), "x").unwrap();
+        let mut names: Vec<String> = dirs("/nowhere", &d.to_string_lossy(), &[]).into_iter().map(|(n, _)| n).collect();
+        names.sort();
+        assert_eq!(names, vec!["acme-shop", "todo-api"]);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

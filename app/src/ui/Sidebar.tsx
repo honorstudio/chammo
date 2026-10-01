@@ -8,7 +8,7 @@ import { StatusMark } from './StatusMark';
 import { assistant, tr } from '../i18n';
 import type { ProjectGroup, Session, SessionState } from '../domain/session';
 
-export type Selection = { kind: 'orchestrator' } | { kind: 'all' } | { kind: 'tama' } | { kind: 'replay' } | { kind: 'load' } | { kind: 'helpers' } | { kind: 'review'; key?: string } | { kind: 'project'; name: string } | { kind: 'routine'; name: string } | { kind: 'external'; id: string };
+export type Selection = { kind: 'orchestrator' } | { kind: 'all' } | { kind: 'tama' } | { kind: 'replay' } | { kind: 'load' } | { kind: 'helpers' } | { kind: 'loose' } | { kind: 'review'; key?: string } | { kind: 'project'; name: string } | { kind: 'routine'; name: string } | { kind: 'external'; id: string };
 
 type Props = {
   /** 루틴(반복 업무) 줄 — 이름·상태·한 줄 설명. cloud = claude.ai 클라우드 루틴("클라우드" 배지) */
@@ -36,6 +36,8 @@ type Props = {
   onAddProject?: () => void;
   /** 비서가 부린 도우미 세션(비서 폴더에서 도는 다른 이름) — 비서 칸에 안 끼고 여기 따로 */
   helpers?: Session[];
+  /** dev 폴더 자체에서 연 세션('프로젝트 밖') */
+  loose?: Session[];
 };
 
 const STATE_LABEL = (): Record<SessionState, string> => ({ working: tr('작업 중', 'Working'), blocked: tr('확인창', 'Prompt'), idle: tr('대기', 'Idle') });
@@ -68,7 +70,7 @@ const isOn = (a: Selection, b: Selection) =>
   (a.kind !== 'routine' || b.kind !== 'routine' || a.name === b.name) &&
   (a.kind !== 'external' || b.kind !== 'external' || a.id === b.id);
 
-export function Sidebar({ routines, external = [], orchestrator, projects: allProjects, selected, onSelect, footer, badges, idleProjects: allIdle, query, onQuery, searchRef, ctxOf, review, onAddProject, helpers }: Props) {
+export function Sidebar({ routines, external = [], orchestrator, projects: allProjects, selected, onSelect, footer, badges, idleProjects: allIdle, query, onQuery, searchRef, ctxOf, review, onAddProject, helpers, loose }: Props) {
   // 프로젝트에 세션이 여럿이면 가장 많이 찬 것 — 곧 요약될 세션을 놓치지 않게
   const ctxMax = (ss: Session[]) => ss.map((s) => ctxOf?.(s)).filter((x): x is number => x !== undefined).reduce<number | undefined>((m, x) => (m === undefined || x > m ? x : m), undefined);
   const running = allProjects.reduce((n, p) => n + p.sessions.length, 0);
@@ -128,6 +130,17 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
           <span>
             <div className="nm">{tr(`도우미 · ${helpers.length}`, `Helpers · ${helpers.length}`)}</div>
             <div className="ln">{helpers.map((h) => h.name).join(' · ')}</div>
+          </span>
+        </button>
+      )}
+
+      {loose && loose.length > 0 && (
+        <button className={`it ${isOn(selected, { kind: 'loose' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'loose' })}
+          title={tr('프로젝트 폴더가 아니라 dev 폴더 자체에서 연 세션', 'Sessions opened in the projects folder itself, not in a project')}>
+          <StatusMark kind={urgentKind(loose.map((h) => h.state))} />
+          <span>
+            <div className="nm">{tr(`프로젝트 밖 · ${loose.length}`, `Outside projects · ${loose.length}`)}</div>
+            <div className="ln">{loose.map((h) => h.name || h.id).join(' · ')}</div>
           </span>
         </button>
       )}

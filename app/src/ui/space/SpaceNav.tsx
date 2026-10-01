@@ -35,13 +35,15 @@ export function StateMark({ s }: { s: Session }) {
  * 채팅 뷰 메뉴(⌘B) — v10: 오케스트레이터(참모마다 대시보드 + 문서) → 내 페이지 → 프로젝트(대시보드 + 문서).
  * 참모 문서 = 고정한 것 + 이번에 띄운 md(최근 먼저). 펼치고 접기는 기억한다
  */
-export function SpaceNav({ onNewOrch, routines = [], helpers = [], pagesRoot = '', onChatTab, ctxOf, onAddProject, idle = [], offOrchs = [], onResume, onRemoveStopped, orchs, viewId, colorOf, projects, holders, pick, onPick, orchDocsOf, isPinned, onTogglePin, pages, pageTitle, onNewPage, onOpenFile, selectedFile, onTrashPage }: {
+export function SpaceNav({ onNewOrch, routines = [], helpers = [], loose = [], pagesRoot = '', onChatTab, ctxOf, onAddProject, idle = [], offOrchs = [], onResume, onRemoveStopped, orchs, viewId, colorOf, projects, holders, pick, onPick, orchDocsOf, isPinned, onTogglePin, pages, pageTitle, onNewPage, onOpenFile, selectedFile, onTrashPage }: {
   /** 내 페이지 지우기 — 휴지통으로(하위 페이지 같이) */
   onTrashPage?: (path: string) => void;
   /** 세션이 안 떠 있는 프로젝트 — 흐리게, 누르면 그 프로젝트 대시보드 */
   idle?: { name: string; root: string }[];
   /** 꺼진 참모 — 흐리게, 이어서 켜기 */
   offOrchs?: StoppedSession[];
+  /** dev 폴더 자체에서 연 세션('프로젝트 밖') */
+  loose?: Session[];
   onResume?: (s: StoppedSession) => void;
   onRemoveStopped?: (s: StoppedSession) => void;
   /** 컨텍스트(대화 메모리) 사용량 % — 예전 사이드바와 같은 값 */
@@ -163,6 +165,18 @@ export function SpaceNav({ onNewOrch, routines = [], helpers = [], pagesRoot = '
           <span className="cv-fold small blank" />
           <span className="cv-ic"><IconTerminal /></span>
           <span className="cv-label">{h.name}</span>
+          <StateMark s={h} />
+          <Ctx v={ctxOf?.(h)} />
+        </div>
+      ))}
+
+      {loose.length > 0 && <div className="cv-sec click" onClick={() => flipSec('loose')} title={tr('프로젝트 폴더가 아니라 dev 폴더 자체에서 연 세션', 'Sessions opened in the projects folder itself, not in a project')}><span className="with-ic">{secFold('loose')}{tr('프로젝트 밖', 'Outside projects')}</span><span className="cv-count">{loose.length}</span></div>}
+      {secOpen('loose') && loose.map((h) => (
+        <div key={h.id} className={`cv-row top ${pick === `s:${h.id}` ? 'on' : ''}`} onClick={() => onPick(`s:${h.id}`)} title={`${h.name || h.id} · ${stateWord(h)}`}
+          onContextMenu={act ? (e) => act.menu(e, h) : undefined}>
+          <span className="cv-fold small blank" />
+          <span className="cv-ic"><IconTerminal /></span>
+          <span className="cv-label">{h.name || h.id}</span>
           <StateMark s={h} />
           <Ctx v={ctxOf?.(h)} />
         </div>

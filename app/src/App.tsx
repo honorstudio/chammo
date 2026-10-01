@@ -656,9 +656,9 @@ export default function App() {
   // 도구 권한 창은 앱이 이름으로 Allow 를 찾아 자동 허용 (결정 대기함엔 선택지 질문·민감한 창만 남는다)
   useAutoAllow(sessions, env?.devRoot, loadAllowLog);
   // 하위 세션 선택지 창은 참모에게 넘긴다 — 참모가 골라 답하거나 사용자에게 묻는다. 사용자가 그 화면을 보고 있으면 안 넘긴다
-  const subSessions = useMemo(() => [...groups.helpers, ...groups.projects.flatMap((p) => p.sessions)], [groups]);
+  const subSessions = useMemo(() => [...groups.helpers, ...groups.loose, ...groups.projects.flatMap((p) => p.sessions)], [groups]);
   useForwardQuestions(subSessions, groups.orchestrator, (s) =>
-    document.hasFocus() && (selected.kind === 'project' ? selected.name === s.project : selected.kind === 'helpers' && groups.helpers.includes(s)),
+    document.hasFocus() && (selected.kind === 'project' ? selected.name === s.project : selected.kind === 'helpers' ? groups.helpers.includes(s) : selected.kind === 'loose' && groups.loose.includes(s)),
     allActs.filter(({ session: s }) => !orchIds.has(s.id)),
     groups.orchestrators.map((o) => o.sessionId).filter((x): x is string => !!x));
   const inbox = buildInbox(allActs, taskEvents, new Set(dismissed), sessions, (s) => orchIds.has(s.id)).filter((i) => !(i.kind === 'blocked' && picking.has(i.target ?? '')));
@@ -769,7 +769,8 @@ export default function App() {
     // 참모(들)는 프로젝트가 아니라 참모 화면에, 도우미는 도우미 화면에 있다
     const orch = groups.orchestrators.some((o) => o.id === s.id);
     const helper = groups.helpers.some((h) => h.id === s.id);
-    setSelected(orch ? { kind: 'orchestrator' } : helper ? { kind: 'helpers' } : { kind: 'project', name: s.project });
+    const loose = groups.loose.some((h) => h.id === s.id);
+    setSelected(orch ? { kind: 'orchestrator' } : helper ? { kind: 'helpers' } : loose ? { kind: 'loose' } : { kind: 'project', name: s.project });
     // 가서 바로 칠 수 있게 — 가려져 있으면 드러내고 그 창에 포커스(사용자 2026-09-28: 알림 눌러 가도 다시 클릭해야 했다)
     const key = gridKeyOf(orch ? { kind: 'orch' } : helper ? { kind: 'helper' } : { kind: 'project', project: s.project }, { space, office });
     for (const a of revealPane(layoutOf(key), s.id)) dispatchFor(key)(a);
@@ -930,6 +931,7 @@ export default function App() {
             onResume={(x) => { markPending(x.sessionId); void resumeSession(x.cwd, x.sessionId).then(() => onMessage(null), (e: unknown) => onMessage(tr(`이어서 띄우기 실패: ${String(e)}`, `Resume failed: ${String(e)}`))); }}
             onChatTab={(id) => { focusedBy.current.set('orch-col', id); setChatTab(id); setFocusReq((r) => ({ key: 'orch-col', id, n: (r?.n ?? 0) + 1 })); }}
             helpers={groups.helpers}
+            loose={groups.loose}
             ctxOf={ctxOf} onAddProject={config && env ? () => void addProjectFolder() : undefined}
             onRemoveStopped={(x) => { markPending(x.sessionId); void removeSession(x.id).then(() => refresh(), (e: unknown) => onMessage(tr(`지우기 실패: ${String(e)}`, `Remove failed: ${String(e)}`))); }}
             onNewOrch={env ? () => void spawnOrchestrator() : undefined}
@@ -1061,6 +1063,12 @@ export default function App() {
     ) : (
       <div className="empty"><b>{tr('도우미 세션이 없어요', 'No helper sessions')}</b></div>
     );
+  } else if (selected.kind === 'loose') {
+    main = groups.loose.length ? (
+      <SessionGrid sessions={groups.loose} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => s.name || s.id} {...gridFocus('loose')} onStop={closeSession} layout={layoutOf('loose')} dispatch={dispatchFor('loose')} onMessage={onMessage} memo={memo} />
+    ) : (
+      <div className="empty"><b>{tr('프로젝트 밖 세션이 없어요', 'No sessions outside projects')}</b></div>
+    );
   } else if (selected.kind === 'load') {
     main = <LoadPage sys={loadMon.sys} report={loadMon.report} onOpen={openTarget} onKilled={() => void loadMon.refresh()} />;
   } else if (selected.kind === 'replay') {
@@ -1138,6 +1146,7 @@ export default function App() {
         onSelect={setSelected}
         onAddProject={config && env ? () => void addProjectFolder() : undefined}
         helpers={groups.helpers}
+        loose={groups.loose}
         external={groups.external.map((x) => ({ id: x.id, name: x.name || x.project, line: tr(`외부 예약 · ${x.project} · ${x.origin?.via ?? ''}`, `External schedule · ${x.project} · ${x.origin?.via ?? ''}`) }))}
         footer={env ? `${env.claudeVersion || tr('claude 버전 확인 실패', 'Could not read the claude version')} · ${env.claudeBin}` : undefined}
         badges={badges}

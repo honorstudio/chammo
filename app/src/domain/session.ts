@@ -15,6 +15,8 @@ export type Session = {
   project: string;
   /** `.claude/worktrees/<이름>`이면 그 이름, 프로젝트 본체면 null */
   workspace: string | null;
+  /** dev 폴더 자체에서 연 세션 — 어느 프로젝트도 아님('프로젝트 밖') */
+  loose?: true;
   startedAt: number;
   /** 대화 기록 id — `claude --bg --resume`에 쓴다. `/clear` 하면 바뀐다 */
   sessionId?: string;
@@ -67,17 +69,21 @@ const baseName = (p: string) => p.split('/').filter(Boolean).pop() ?? p;
  * cwd → 프로젝트 / 작업공간(worktree). 프로젝트 = devRoot 바로 아래 폴더, 또는 설정에서 따로 추가한 폴더(extras, 푼 경로)
  * — 아이맥 ~/automation/… 처럼 devRoot 로 못 옮기는 폴더(2026-09-28 사용자)
  */
-export function classifyWorkspace(cwd: string, devRoot: string, extras: string[] = []): { project: string; workspace: string | null } {
-  const path = stripSlash(cwd);
+export function classifyWorkspace(cwd: string, devRoot: string, extras: string[] = []): { project: string; workspace: string | null; loose?: true } {
+  // 윈도우 경로는 / 로 맞추고 대소문자를 안 가린다(윈도우는 desktop·Desktop 이 같은 폴더 — 2026-10-01 윈도우 PC). 이름은 cwd 에 적힌 대로 쓴다
+  const path = stripSlash(fwd(cwd));
+  const win = /^[A-Za-z]:\//.test(path);
+  const key = (p: string) => (win ? p.toLowerCase() : p);
+  const within = (root: string) => key(path) === key(root) || key(path).startsWith(`${key(root)}/`);
   const worktreeOf = (rest: string[]) => (rest[0] === '.claude' && rest[1] === 'worktrees' ? rest[2] ?? null : null);
-  for (const x of extras.map(stripSlash).filter(Boolean)) {
-    if (path === x || path.startsWith(`${x}/`)) return { project: baseName(x), workspace: worktreeOf(path.slice(x.length + 1).split('/')) };
+  for (const x of extras.map((e) => stripSlash(fwd(e))).filter(Boolean)) {
+    if (within(x)) return { project: baseName(x), workspace: worktreeOf(path.slice(x.length + 1).split('/')) };
   }
-  const root = stripSlash(devRoot) + '/';
-  if (!path.startsWith(root)) {
-    return { project: baseName(path), workspace: null };
-  }
-  const rel = path.slice(root.length).split('/');
+  const root = stripSlash(fwd(devRoot));
+  // dev 폴더 자체에서 연 세션은 어느 프로젝트도 아니다 — '프로젝트 밖'(2026-10-01 사용자: dev 가 통째로 프로젝트로 잡혔다)
+  if (key(path) === key(root)) return { project: baseName(path), workspace: null, loose: true };
+  if (!within(root)) return { project: baseName(path), workspace: null };
+  const rel = path.slice(root.length + 1).split('/');
   return { project: rel[0] ?? path, workspace: worktreeOf(rel.slice(1)) };
 }
 
@@ -129,7 +135,7 @@ export const orchestratorLike = (name: string) => [assistant(), LEGACY_ASSISTANT
 export function groupByProject(
   sessions: Session[],
   orchestratorCwd: string,
-): { orchestrator: Session | undefined; orchestrators: Session[]; helpers: Session[]; projects: ProjectGroup[]; external: Session[] } {
+): { orchestrator: Session | undefined; orchestrators: Session[]; helpers: Session[]; projects: ProjectGroup[]; external: Session[]; loose: Session[] } {
   const orch = stripSlash(orchestratorCwd);
   // 이 폴더의 비서 이름 세션(⌘T로 여럿 띄운다: 참모·참모-2…, 옛 이름 참모·참모-2)과 터미널에서 연 대화형은 비서 — 이름이 설정 이름인 것이 대표(맨 앞).
   // 그 밖의 이름으로 띄운 백그라운드 세션은 비서가 부린 도우미(예: SNS 올리기) — 비서 화면에 끼면 칸을 차지해서 따로 뺀다(2026-09-28 사용자)
@@ -140,14 +146,16 @@ export function groupByProject(
   const orchestrators = orchestrator ? [orchestrator, ...here.filter((s) => s !== orchestrator)] : [];
   // 예약 작업이 아무도 안 보는 곳에서 띄운 대화형 — 프로젝트 세션이 아니라 루틴 칸 "외부 예약"(2026-09-28 아이맥 project-x)
   const external = sessions.filter((s) => s.kind === 'interactive' && s.origin?.unattended && !inHq.includes(s));
+  // dev 폴더 자체에서 연 세션 — 프로젝트가 아니라 따로('프로젝트 밖')
+  const loose = sessions.filter((s) => s.loose && !inHq.includes(s) && !external.includes(s));
   const byName = new Map<string, Session[]>();
   for (const s of sessions) {
-    if (inHq.includes(s) || external.includes(s)) continue;
+    if (inHq.includes(s) || external.includes(s) || loose.includes(s)) continue;
     const list = byName.get(s.project) ?? [];
     list.push(s);
     byName.set(s.project, list);
   }
-  return { orchestrator, orchestrators, helpers, projects: [...byName].map(([name, list]) => ({ name, sessions: list })), external };
+  return { orchestrator, orchestrators, helpers, projects: [...byName].map(([name, list]) => ({ name, sessions: list })), external, loose };
 }
 
 /** ⌘W 로 끌 수 있나 — 비서 화면의 세션(참모·참모-2…·터미널에서 연 것)은 안 된다. 창 버튼의 끄기만 */
