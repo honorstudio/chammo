@@ -11,7 +11,9 @@ import { IS_WIN } from '../domain/reader';
 import { modKey } from '../domain/keys';
 import { resizeAfterOpen } from '../domain/ptySize';
 import { followLink } from './followLink';
-import { closePty, imeDebugMode, imeLog, openPty, openTarget, pttTarget, pttWatch, resizePty, writeClipboard, writePty } from '../data/tauri';
+import { closePty, openPty, openTarget, pttTarget, pttWatch, resizePty, writeClipboard, writePty } from '../data/tauri';
+import { imeNoSwallow, imeTrace } from './imeTrace';
+import { seqShape, traceOf } from '../domain/imeGuard';
 import { currentContrast, currentTheme, darkQuery } from './termTheme';
 import { IconNote } from './Icons';
 import { DROP_EVENT } from './fileDrop';
@@ -54,6 +56,8 @@ type Props = {
   cwd?: string;
   title: string;
   subtitle?: string;
+  /** 부제가 경로·이름이 아니라 글(참모 맡은 일)이면 — 고정폭 글꼴 말고 */
+  subPlain?: boolean;
   /** 머리줄 오른쪽 버튼들 (크게·접기·끄기) */
   controls?: ReactNode;
   fontSize: number;
@@ -78,7 +82,7 @@ type Props = {
   inject?: (api: PaneApi | null) => void;
 };
 
-export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize, readOnly, onHeadClick, headDrag, linkBase, home, onFocus, note, onNoteClick, overlay, inject, onVoiceStop }: Props) {
+export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls, fontSize, readOnly, onHeadClick, headDrag, linkBase, home, onFocus, note, onNoteClick, overlay, inject, onVoiceStop }: Props) {
   const voiceRef = useRef(onVoiceStop);
   voiceRef.current = onVoiceStop;
   const focusRef = useRef(onFocus);
@@ -189,7 +193,7 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
     const write = (d: string) => {
       if (id != null) void writePty(id, d);
     };
-    term.onData((d) => { imeTrace?.('xterm', { d }); write(d); });
+    term.onData((d) => { imeTrace?.('xterm', { d: seqShape(d) }); write(d); });
     injectRef.current?.({ write: (d) => { write(d); term.focus(); }, raw: write, focus: () => term.focus(), claimPtt: () => { if (!readOnly && id != null) void pttTarget(id); },
       screen: () => {
         const b = term.buffer.active;
@@ -227,7 +231,7 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
       return false; // keydown·keyup 둘 다 xterm 에 안 넘긴다
     });
     const offPtt = readOnly ? () => {} : onPttStop((n) => { if (n === id) voiceRef.current?.(); });
-    const detachIme = readOnly ? () => {} : installImeBridge(term, (d) => { imeTrace?.('bridge', { d }); write(d); });
+    const detachIme = readOnly ? () => {} : installImeBridge(term, (d) => { imeTrace?.('bridge', { d: seqShape(d) }); write(d); });
     // 파일을 끌어다 놓으면(ui/fileDrop) 붙여넣기처럼 — Claude 가 붙여넣은 경로를 이미지로 읽는다
     const onDrop = (e: Event) => {
       term.paste((e as CustomEvent<string>).detail);
@@ -313,7 +317,7 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
     <div ref={root} className={`pane ${readOnly ? 'readonly' : ''}`} data-drop={readOnly ? undefined : ''}>
       <div className="pane-head" onClick={onHeadClick} title={onHeadClick ? tr('눌러서 이 세션으로', 'Click to go to this session') : headDrag ? tr('끌어서 자리 바꾸기', 'Drag to reorder') : undefined} {...headDrag}>
         <b>{title}</b>
-        <span className="sub">{subtitle}</span>
+        <span className={subPlain ? 'sub plain' : 'sub'} title={subPlain ? subtitle : undefined}>{subtitle}</span>
         {onNoteClick && (
           <span className={`note ${note ? '' : 'empty'}`} role="button" aria-label={tr('메모', 'Notes')} title={note ? tr(`${note}\n\n눌러서 메모 (⌘M)`, `${note}\n\nClick for notes (⌘M)`) : tr('메모 열기 (⌘M)', 'Open notes (⌘M)')} onClick={(e) => { e.stopPropagation(); onNoteClick(); }}>
             <IconNote />
@@ -327,17 +331,6 @@ export function TerminalPane({ command, cwd, title, subtitle, controls, fontSize
     </div>
   );
 }
-
-// 한글 입력 진단 — <데이터 폴더>/ime-debug.on 이 있으면 켤 때 한 번 켜진다. 0.5초마다 ime-debug.jsonl 에 몰아 쓴다
-let imeTrace: ((type: string, v: object) => void) | null = null;
-let imeNoSwallow = false;
-void imeDebugMode().then((mode) => {
-  if (mode == null) return;
-  imeNoSwallow = mode.includes('noswallow');
-  let buf: string[] = [];
-  imeTrace = (type, v) => buf.push(JSON.stringify({ t: Math.round(performance.now()), type, ...v }));
-  setInterval(() => { if (buf.length) { const out = buf.join('\n') + '\n'; buf = []; void imeLog(out).catch(() => {}); } }, 500);
-}).catch(() => {});
 
 /**
  * WKWebView 한글 입력 다리 (트러블슈팅 #99). 조상(term.element)에 capture 로 걸어야
@@ -394,12 +387,12 @@ function installImeBridge(term: Terminal, write: (d: string) => void): () => voi
   root.addEventListener('input', onInput, true);
   root.addEventListener('keydown', onKeyDown, true);
   for (const t of COMPOSITION) root.addEventListener(t, swallow, true);
-  // 진단(ime-debug.on): 키·입력·조합 이벤트를 그대로 적는다 — 진짜 키보드는 osascript 와 다른 길로 올 수 있어서
+  // 진단(ime-debug.on): 키·입력·조합 이벤트를 적는다 — 진짜 키보드는 osascript 와 다른 길로 올 수 있어서. 친 글자는 안 남긴다(종류·길이만, domain/imeGuard)
   const TRACE = ['keydown', 'keyup', 'beforeinput', 'input', ...COMPOSITION];
   const trace = (e: Event) => {
     if (!imeTrace) return; // 진단 설정은 창이 뜬 뒤에 도착할 수 있어서 늘 걸어 두고 여기서 본다
     const k = e as KeyboardEvent & InputEvent & CompositionEvent;
-    imeTrace?.(e.type, { key: k.key, code: k.code, kc: k.keyCode, rep: k.repeat, comp: k.isComposing, it: k.inputType, data: k.data, ta: ta.value });
+    imeTrace?.(e.type, { ...traceOf({ type: e.type, key: k.key, keyCode: k.keyCode, isComposing: k.isComposing, inputType: k.inputType, data: k.data }, 'xterm', ta.value.length), rep: k.repeat });
   };
   for (const t of TRACE) root.addEventListener(t, trace, true);
   return () => {

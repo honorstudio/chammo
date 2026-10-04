@@ -1,6 +1,11 @@
 // Rust 커맨드 호출을 한 곳에 모은다. UI 는 이 파일만 알고, invoke 이름은 여기서만 쓴다.
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type { Features } from '../domain/config';
+import type { AccountsView } from '../domain/accounts';
+import type { PreviewPhase } from '../domain/voiceDial';
+import type { SayNow } from '../domain/speakGlow';
+import type { ApiGot } from '../domain/accountAuto';
+import type { DeviceRow } from '../domain/mobileDevices';
 import { fwd } from '../domain/paths';
 
 export type AppEnv = {
@@ -122,6 +127,13 @@ export const newSession = (cwd: string, name: string, worktree?: string) =>
   invoke<string>('new_session', { cwd, name, worktree: worktree ?? null });
 
 /** 백그라운드 세션을 끈다. 대화는 남는다 */
+/** 참모 고정 — <데이터>/orch-pins.json(폰과 같은 파일), 대화 id 를 고정한 순서대로 */
+export const readOrchPins = () => invoke<string[]>('read_orch_pins');
+export const setOrchPin = (sessionId: string, on: boolean) => invoke<string[]>('set_orch_pin', { sessionId, on });
+/** 참모 맡은 일 — <데이터>/orch-roles.json(폰·이름표 훅과 같은 파일), 기본 이름(참모-3)별. name 에 별명이 붙어 있어도 된다 */
+export const readOrchRoles = () => invoke<Record<string, { role: string; at: number }>>('read_orch_roles');
+/** fresh = 새 참모를 띄울 때 — 옛 번호의 맡은 일을 덮고 태어난 때(born)를 적는다(그 전 기록은 안 센다) */
+export const setOrchRole = (name: string, role: string, fresh = false) => invoke<Record<string, { role: string; at: number; born?: number }>>('set_orch_role', { name, role, fresh });
 export const stopSession = (id: string) => invoke<string>('stop_session', { id });
 /** 세션을 끄고 목록에서도 지운다(claude stop + rm). 대화 기록 파일은 남는다 */
 export const removeSession = (id: string) => invoke<string>('remove_session', { id });
@@ -132,6 +144,8 @@ export const readTasks = () => invoke<string>('read_tasks');
 /** 세션 대화 기록 꼬리 — { sessionId: 원문 } */
 /** 참모 대화 기록에서 세션 띄움·말 건 줄만, from 바이트 뒤로(처음은 0 = 전체) */
 export const spawnLines = (sessionId: string, from: number) => invoke<{ lines: string[]; next: number } | null>('spawn_lines', { sessionId, from });
+/** 참모가 띄운 분신(Agent) 기록 꼬리 — ids = Agent 호출 tool_use id */
+export const subagentTails = (sessionId: string, ids: string[]) => invoke<{ toolUseId: string; agentId: string; mtime: number; tail: string }[]>('subagent_tails', { sessionId, ids });
 export const readTranscriptTails = (sessionIds: string[]) =>
   invoke<Record<string, string>>('read_transcript_tails', { sessionIds });
 
@@ -140,7 +154,14 @@ export const projectScan = (devRoot: string) => invoke<import('../domain/status'
 
 /** macOS 알림 */
 /** 참모세이로 읽기(음성 모드). 차례로 말한다 */
-export const speak = (text: string) => invoke<void>('speak', { text });
+/** voice = 그 참모 목소리(M1~F5) — 설정이 Supertonic 실행기일 때만 바뀐다(Rust tts::with_voice) */
+/** from = 읽는 말의 주인(참모 세션 id) — 그 참모 탭·프사가 소리 크기대로 빛난다(speakGlow) */
+export const speak = (text: string, voice?: string, from?: string) => invoke<void>('speak', { text, voice: voice ?? null, from: from ?? null });
+export const speakNowState = (known: number) => invoke<SayNow>('speak_now_state', { known });
+/** 프사 창 들어 보기 — id 는 부를 때마다 늘리는 번호. 상태(준비 중·재생 중·끝·멈춤)는 speakPreviewState 로 묻는다 */
+export const speakPreview = (id: number, text: string, voice: string) => invoke<void>('speak_preview', { id, text, voice });
+export const speakPreviewState = () => invoke<{ id: number; phase: PreviewPhase }>('speak_preview_state');
+export const speakPreviewStop = (id: number) => invoke<void>('speak_preview_stop', { id });
 /** target = 알림을 누르면 갈 곳(domain/notify noteTarget) — 눌리면 window.__notifyClick(target) 으로 돌아온다 */
 export const notify = (title: string, body: string, target: string) => invoke<void>('notify', { title, body, target });
 
@@ -148,7 +169,8 @@ export const notify = (title: string, body: string, target: string) => invoke<vo
 export const listSessionsAllRaw = () => invoke<string>('list_sessions_all');
 
 /** 꺼진 세션을 같은 대화 그대로 다시 띄운다 */
-export const resumeSession = (cwd: string, sessionId: string) => invoke<string>('resume_session', { cwd, sessionId });
+/** id = `agents --json` 의 짧은 번호 — 주면 같은 번호로 되살린다(respawn), 없으면 새 번호 복사본(--bg --resume) */
+export const resumeSession = (cwd: string, sessionId: string, id?: string) => invoke<string>('resume_session', { cwd, sessionId, id: id ?? null });
 
 /** 관리 프로그램(claude daemon) 시작 시각 ms — 바뀌면 재시작. 안 떠 있으면 null */
 export const daemonStartedAt = () => invoke<number | null>('daemon_started_at');
@@ -222,6 +244,26 @@ export const writeClipboard = (text: string) => invoke<void>('clipboard_write', 
 /** 이 앱 버전 — 새 버전 알림용 */
 /** 모델 칩이 실패했을 때 그때 터미널 화면을 로컬 로그(<데이터>/pick-debug.log)에 */
 export const pickLog = (text: string) => invoke<void>('pick_log', { text });
+/** Claude 기본값 칸(model·effortLevel·modelSettings) 떠 두기·되돌리기 — 모델 칩이 /model·/effort 를 친 뒤 "이 세션만"으로 돌린다 */
+export const claudeDefaults = {
+  snapshot: () => invoke<string>('claude_defaults_snapshot'),
+  restore: (snap: string) => invoke<boolean>('claude_defaults_restore', { snap }),
+};
+/** 계정 칸 — 로그인을 칸마다 키체인에 보관해 두고 바꿔 끼운다. 토큰은 화면에 안 온다 */
+export const accountsApi = {
+  view: () => invoke<AccountsView>('accounts_view'),
+  capture: (name?: string) => invoke<AccountsView>('accounts_capture', { name: name ?? null }),
+  switchTo: (id: string) => invoke<AccountsView>('accounts_switch', { id }),
+  rename: (id: string, name: string) => invoke<AccountsView>('accounts_rename', { id, name }),
+  reorder: (ids: string[]) => invoke<AccountsView>('accounts_reorder', { ids }),
+  remove: (id: string) => invoke<AccountsView>('accounts_remove', { id }),
+  /** 자동 전환 상태 윗단 키 합치기(null = 지움) */
+  autoPatch: (patch: Record<string, unknown>) => invoke<AccountsView>('accounts_auto_patch', { patch }),
+  /** 상태줄 사용량 + 파일 고친 시각(ms) */
+  usageAt: () => invoke<{ json: string; at: number }>('read_usage_at'),
+  /** 칸마다 사용량을 그 계정 토큰으로 바로(Rust 가 토큰을 쥐고 묻는다 — 여기엔 퍼센트·시각만). live = 지금 로그인도 */
+  usage: (ids: string[], live: boolean) => invoke<ApiGot[]>('accounts_usage', { ids, live }),
+};
 export const appVersion = () => invoke<string>('app_version');
 export const openTarget = (kind: 'url' | 'file', target: string) => invoke<void>('open_target', { kind, target });
 
@@ -243,10 +285,10 @@ export const pickFolder = (prompt: string, start?: string) => invoke<string | nu
 export const notifyStatus = () => invoke<'granted' | 'denied' | 'notDetermined' | 'unavailable'>('notify_status');
 export const notifyRequest = () => invoke<boolean>('notify_request');
 export const notifyOpenSettings = () => invoke<void>('notify_open_settings');
-export const tamaMore = () => invoke<void>('tama_more');
 export const harnessProject = (dir: string) => invoke<{ written: string[]; kept: string[] }>('harness_project', { dir });
 export const browserStatus = () => invoke<import('../domain/setup').BrowserStatus>('browser_status');
-export const browserInstallCommand = () => invoke<string>('browser_install_command');
+export const browserSetupStart = () => invoke<void>('browser_setup_start');
+export const browserSetupState = () => invoke<import('../domain/setup').BrowserSetupState>('browser_setup_state');
 export const routinesList = () => invoke<string>('routines_list');
 export const routineDo = (name: string, action: 'run' | 'pause' | 'resume' | 'remove') => invoke<string>('routine_do', { name, action });
 
@@ -258,7 +300,8 @@ export const loadKill = (pid: number) => invoke<number>('load_kill', { pid });
 export const loadSave = (json: string) => invoke<void>('load_save', { json });
 
 /** 채팅 보기용 대화 기록 이어 읽기 — from 을 안 주면 끝 1MB 부터. reset 이면 처음부터 다시 그린다 */
-export type TranscriptChunk = { text: string; next: number; reset: boolean };
+/** start = text 첫 줄의 파일 자리(폰이 그 앞을 거슬러 읽는다) */
+export type TranscriptChunk = { text: string; next: number; reset: boolean; start?: number };
 export const readTranscript = (sessionId: string, from?: number) =>
   invoke<TranscriptChunk>('read_transcript', { sessionId, from: from ?? null });
 
@@ -271,3 +314,28 @@ export const sendTextToSession = (id: string, text: string) => invoke<void>('sen
 
 /** scripts/show 기록 꼬리 — 세션마다 보여 준 파일(domain/spaceNav shownFiles) */
 export const readShowLog = () => invoke<string>('read_show_log');
+/** 다마고치 '대화' 먹이 — 대화 기록 id 들에 사람이 건 말의 시각(`id\t시각` 줄, 새로 붙은 줄만 읽는다) */
+export const humanTurns = (sessionIds: string[]) => invoke<string>('human_turns', { sessionIds });
+/** space-log.jsonl 꼬리 — 다마고치 목욕·놀아주기 */
+export const readSpaceLog = () => invoke<string>('read_space_log');
+
+/** 참모 프사(Rust avatar.rs) — 거르기는 domain/avatar parseEntries. 그림은 Array.from 으로(save_asset 과 같은 길) */
+export const readAvatars = () => invoke<unknown>('avatars_read');
+export const saveAvatarFile = (key: string, avatar: unknown, image: Uint8Array | null) =>
+  invoke<unknown>('avatar_save', { key, avatar, image: image ? Array.from(image) : null });
+export const deleteAvatarFile = (key: string) => invoke<void>('avatar_delete', { key });
+
+/** 모바일(폰 → 테일스케일) — 켜고 끄기·짝짓기 QR·연결된 기기(Rust mobile.rs·mobile_pair.rs). 마스터 열쇠는 폰으로 안 나간다 */
+/** 기기 줄 하나 = 열쇠 하나(사파리·홈 화면 앱은 따로) — group 이 같으면 같은 폰(domain/mobileDevices) */
+export type MobileDevice = DeviceRow;
+export type MobileStatus = { on: boolean; running: boolean; bind: string | null; error: string | null; https: boolean; httpsNote: string | null; devices: MobileDevice[] };
+/** 짝짓기 QR — 10분 지나거나 한 번 쓰면 죽는다 */
+export type PairQr = { url: string; qrSvg: string | null; expires: number };
+export const mobileApi = {
+  status: () => invoke<MobileStatus>('mobile_status'),
+  set: (on: boolean) => invoke<MobileStatus>('mobile_set', { on }),
+  pairNew: () => invoke<PairQr>('mobile_pair_new'),
+  /** 폰 하나 끊기 — group 을 주면 그 폰의 사파리·홈 화면 앱 둘 다 */
+  removeDevice: (id: string) => invoke<MobileStatus>('mobile_device_remove', { id }),
+  clearDevices: () => invoke<MobileStatus>('mobile_devices_clear'),
+};

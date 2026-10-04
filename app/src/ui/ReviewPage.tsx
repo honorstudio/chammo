@@ -1,5 +1,6 @@
 // 사이드바 '리뷰' — 왼쪽 PR 목록, 오른쪽 한 건(요약 3줄·걸린 조건·파일 묶음·CI·diff 접기·머지/수정 요청/나중에).
 // 오늘 머지된 건 되돌리기(revert PR 만들기만). 시안 docs/design-drafts/review-merge A안
+import { IconRefresh } from './Icons';
 import { useEffect, useRef, useState } from 'react';
 import { openTarget, prDiff } from '../data/tauri';
 import { ciState, FILE_KIND_LABEL, GATE_LABEL, groupFiles, type CiState, type OpenPr } from '../domain/review';
@@ -60,7 +61,7 @@ export function ReviewPage({ data, sessions, stopped, taskEvents, selectedKey, o
         <div className="rv-head">
           <b>{tr('리뷰', 'Review')}</b>
           <span className="dim">{data.busy ? tr('읽는 중…', 'Reading…') : data.scannedAt ? tr(`${ago(new Date(data.scannedAt).toISOString(), now)} 읽음 · ${((data.tookMs ?? 0) / 1000).toFixed(1)}초`, `Read ${ago(new Date(data.scannedAt).toISOString(), now)} · ${((data.tookMs ?? 0) / 1000).toFixed(1)}s`) : ''}</span>
-          <button className="btn sm" onClick={data.refresh} disabled={data.busy}>{tr('새로고침', 'Refresh')}</button>
+          <button className={`btn sm rv-refresh ${data.busy ? 'spinning' : ''}`} onClick={data.refresh} disabled={data.busy} aria-label={tr('새로고침', 'Refresh')} title={tr('새로고침 — GitHub 에서 다시 읽기', 'Refresh — read GitHub again')}><IconRefresh /></button>
         </div>
         {data.error && <div className="rv-err">{tr('GitHub 읽기 실패', 'Failed to read GitHub')} — {data.error}</div>}
         <div className="rv-chips">

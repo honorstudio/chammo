@@ -2,7 +2,9 @@
  * 리더 창 — 디자인 큐레이션(HTML)·PDF·마크다운·그림·영상을 한 창에서 탭으로 본다(사용자 2026-09-28).
  * 참모가 scripts/show 로 넘기거나 창에 끌어다 놓으면 열린다. 파일은 hodoc:// 로 읽는다(Rust reader.rs, 홈 폴더 안만)
  */
-export type DocKind = 'html' | 'pdf' | 'md' | 'image' | 'video' | 'audio' | 'office' | 'text' | 'other';
+import { isWebUrl, webTitle } from './webUrl';
+
+export type DocKind = 'web' | 'html' | 'pdf' | 'md' | 'image' | 'video' | 'audio' | 'office' | 'text' | 'other';
 
 const IMAGE = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'ico', 'tif', 'tiff', 'heic', 'heif'];
 const VIDEO = ['mp4', 'm4v', 'mov', 'webm'];
@@ -20,6 +22,7 @@ const PAGE_DOC = [...OFFICE, 'ppt', 'pptx', 'pps', 'ppsx', 'odp', 'key', 'xls', 
 export const pageDoc = (path: string) => PAGE_DOC.includes(path.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '');
 
 export function kindOf(path: string): DocKind {
+  if (isWebUrl(path)) return 'web'; // scripts/show http(s) 주소 — 앱 안 주소 미리보기
   const name = path.toLowerCase().split('/').pop() ?? '';
   const ext = name.match(/\.([a-z0-9]+)$/)?.[1] ?? '';
   if (ext === 'html' || ext === 'htm') return 'html';
@@ -37,6 +40,7 @@ export function kindOf(path: string): DocKind {
 const PLAIN = /^(index\.html?|readme\.md)$/i;
 /** 탭 이름 — 파일 이름. index.html·README.md 처럼 흔한 이름은 폴더를 앞에 붙인다 */
 export function titleOf(path: string): string {
+  if (isWebUrl(path)) return webTitle(path);
   const parts = path.split('/').filter(Boolean);
   const name = parts[parts.length - 1] ?? path;
   return PLAIN.test(name) && parts.length > 1 ? `${parts[parts.length - 2]}/${name}` : name;
@@ -60,6 +64,14 @@ export function docUrl(path: string, win = IS_WIN): string {
   const p = path.replace(/\\/g, '/');
   const enc = (p.startsWith('/') ? p : `/${p}`).split('/').map(encodeURIComponent).join('/');
   return win ? `http://hodoc.localhost${enc}` : `hodoc://localhost${enc}`;
+}
+
+/** 문서(md) 속 그림·파일 주소 → 보여 줄 주소. 상대 경로는 문서 폴더 기준, 절대 경로(/Users/…·C:\…)는 앱 파일 주소로,
+ *  이미 주소(https·data·hodoc)면 그대로. 절대 경로를 그대로 두면 앱 주소 밑에서 찾아 그림이 깨졌다(2026-10-01 사용자) */
+export function docFileUrl(url: string, dir: string, win = IS_WIN): string {
+  if (/^[a-z]:[\\/]/i.test(url) || (url.startsWith('/') && !url.startsWith('//'))) return docUrl(url, win);
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith('//')) return url;
+  return new URL(url, docUrl(dir + '/', win)).href;
 }
 
 /** 이 앱의 파일 주소인가 — 맥 hodoc://, 윈도우 http://hodoc.localhost */

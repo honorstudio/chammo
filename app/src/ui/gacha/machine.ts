@@ -28,6 +28,9 @@ export const newShow = (kind: Show['kind'], items: { id: string; rarity: Rarity 
   kind, t0: performance.now(), rarity: items[items.length - 1]!.rarity, item: items[items.length - 1]!.id, items, parts: [], shake: 0, cap: null, flags: new Set(), onCard,
 });
 
+/** 건너뛰기 — 시계를 끝 너머로 돌려 다음 프레임에 결과(펑·카드)가 바로 나온다. 결과는 이미 저장돼 있다 */
+export const skipShow = (s: Show, now: number) => { s.t0 = Math.min(s.t0, now - 60_000); };
+
 // ───────── 도구 ─────────
 const disc = (b: B, cx: number, cy: number, r: number, c: string) => { for (let dy = -r; dy <= r; dy++) { const w = Math.floor(Math.sqrt(r * r - dy * dy + r * 0.8)); b.rect(cx - w, cy + dy, w * 2 + 1, 1, c); } };
 const ellipse = (b: B, cx: number, cy: number, rx: number, ry: number, c: string) => { for (let dy = -ry; dy <= ry; dy++) { const w = Math.floor(rx * Math.sqrt(Math.max(0, 1 - (dy * dy) / (ry * ry)))); b.rect(cx - w, cy + dy, w * 2 + 1, 1, c); } };

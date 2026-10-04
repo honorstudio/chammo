@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { activityStatus, asksUser, docBadges, needsHarness, transitions, type ProjectDoc } from './status';
+import { activityStatus, asksUser, docBadges, needsHarness, sessionStatus, statusTone, statusWord, transitions, type ActivityStatus, type ProjectDoc } from './status';
 
 const NOW = Date.parse('2026-09-27T12:00:00Z');
+/** 사무실 현황판이 말을 고르는 길(dock) — 책상 status 를 그대로 statusWord 에 */
+const officeLike = (st: ActivityStatus) => st;
 const at = (h: number) => new Date(NOW - h * 3600_000).toISOString();
 
 describe('asksUser — 마지막 답이 사용자에게 묻는 말인가', () => {
@@ -53,7 +55,7 @@ describe('activityStatus — 세션 현황 카드 상태', () => {
     expect(activityStatus('idle', { prompt: { ts: at(2), text: 'x' }, reply: { ts: at(1), text: '머지할까?' } }, NOW)).toBe('asks');
   });
 
-  it('쉬는데 지시 뒤에 답이 왔고 질문이 아니면 끝남', () => {
+  it('쉬는데 지시 뒤에 답이 왔고 질문이 아니면 답함(done)', () => {
     expect(activityStatus('idle', { prompt: { ts: at(2), text: 'x' }, reply: { ts: at(1), text: '머지했어' } }, NOW)).toBe('done');
   });
 
@@ -120,4 +122,41 @@ describe('needsHarness — 프로젝트 화면에 "하네스 깔기" 버튼을 �
   });
   it('둘 다 있으면 안 띄운다', () => expect(needsHarness(doc({}))).toBe(false));
   it('모르면(스캔 전) 안 띄운다', () => expect(needsHarness(undefined)).toBe(false));
+});
+
+describe('상태 말 하나로 — 메뉴·대시보드·사무실이 같은 판단(오피스 A 1단계, 2026-10-04)', () => {
+  it('같은 세션이면 메뉴(statusOf)와 사무실(현황판)이 같은 상태 — 답이 질문꼴이 아니면 답함(예전 메뉴는 awaiting 으로 물어봄)', () => {
+    const st = activityStatus('idle', { prompt: { ts: at(2), text: 'x' }, reply: { ts: at(1), text: '로그인 화면까지 갔어' } }, NOW);
+    expect(statusWord(st)).toBe('답함');
+    expect(statusWord(officeLike(st))).toBe('답함');
+  });
+  it('대화 기록 없이 세션만으로 — 메뉴가 기록을 아직 못 읽었을 때', () => {
+    expect(sessionStatus({ state: 'working' })).toBe('working');
+    expect(sessionStatus({ state: 'idle', awaiting: true } as never)).toBe('idle'); // awaiting = 턴 끝난 대부분 — 묻는다는 뜻 아님
+    expect(sessionStatus({ state: 'blocked' })).toBe('blocked');
+    expect(sessionStatus({ state: 'idle' })).toBe('idle');
+  });
+  it('말은 한 표 — 같은 상태면 어디서나 같은 말', () => {
+    expect(['working', 'asks', 'blocked', 'done', 'idle', 'stale'].map((x) => statusWord(x as never))).toEqual(['일하는 중', '물어봄', '기다림', '답함', '쉼', '잠듦']);
+  });
+  it('표시 색 갈래 — 일함(도는 고리)·물음(노란 점)·나머지(없음)', () => {
+    expect(statusTone('working')).toBe('run');
+    expect(statusTone('asks')).toBe('ask');
+    expect(statusTone('blocked')).toBe('ask');
+    expect(statusTone('done')).toBe('idle');
+  });
+  it('영어', () => {
+    setLang('en');
+    expect(statusWord('asks')).toBe('Asking');
+    expect(statusWord('done')).toBe('Replied');
+    setLang('ko');
+  });
+});
+
+// 답하고 다음 지시를 기다리는 살아 있는 세션이 '끝남'이라 꺼진 세션(끔·끝남 줄)과 구별이 안 됐다(2026-10-04 QA N4)
+describe('statusWord — 살아 있는 세션의 말은 꺼진 세션 말과 겹치지 않는다', () => {
+  it("답을 끝낸(done) 세션은 '답함' — '끝남'은 꺼진 세션 줄에만", () => {
+    expect(statusWord('done')).toBe('답함');
+    expect((['working', 'asks', 'blocked', 'done', 'idle', 'stale'] as const).map(statusWord)).not.toContain('끝남');
+  });
 });

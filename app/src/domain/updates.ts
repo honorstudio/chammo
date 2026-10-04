@@ -7,6 +7,15 @@ function parts(v: string): number[] | null {
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
+/** 화면에 보일 번호만 — "2.1.288 (Claude Code)" 꼬리를 떼야 "(지금 …)" 안에서 괄호가 안 겹친다. 못 읽으면 다듬은 원문 */
+export const verLabel = (v: string): string => parts(v)?.join('.') ?? v.trim();
+
+/** Claude Code 새 버전 띠 문구 [한글, 영어] */
+export const claudeUpdateNote = (latest: string, cur: string): [string, string] => [
+  `Claude Code ${latest} 이 나왔어요 (지금 ${verLabel(cur)}). 올리면 새로 띄우는 세션부터 새 버전으로 돌아요.`,
+  `Claude Code ${latest} is out (you have ${verLabel(cur)}). New sessions use it after the update.`,
+];
+
 /** a<b 면 음수, 같으면 0, a>b 면 양수. 하나라도 못 읽으면 0(같다고 봐서 알리지 않는다) */
 export function cmpVer(a: string, b: string): number {
   const x = parts(a), y = parts(b);

@@ -5,7 +5,7 @@
 .chat-row { display: flex; }
 .chat-row.me { justify-content: flex-end; }
 .bubble { max-width: 88%; padding: 8px 12px; border-radius: 12px; background: var(--surface-2); color: var(--text); overflow-wrap: anywhere; }
-.bubble.me { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); white-space: pre-wrap; border-bottom-right-radius: 4px; }
+.bubble.me { background: color-mix(in srgb, var(--orch, var(--accent)) 14%, var(--surface)); white-space: pre-wrap; border-bottom-right-radius: 4px; }
 .bubble.md { border-bottom-left-radius: 4px; }
 .bubble.pending { opacity: .6; }
 .chat-meta { display: block; margin-top: 2px; font-size: 11px; color: var(--text-3); }
@@ -19,7 +19,18 @@
 .bubble.md pre code { background: none; padding: 0; }
 .bubble.md table { border-collapse: collapse; font-size: 12px; display: block; overflow-x: auto; }
 .bubble.md th, .bubble.md td { border: 1px solid var(--line); padding: 3px 6px; text-align: left; }
-.bubble.md a { color: var(--accent); }
+.bubble.md a { color: var(--orch-text, var(--accent)); }
+.chat-cmd { position: relative; align-self: stretch; margin: 2px 24px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.chat-cmd-name { font-size: 11px; color: var(--text-3); margin-bottom: 4px; }
+.chat-cmd pre { margin: 0; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: var(--text-2); white-space: pre-wrap; word-break: break-word; }
+.chat-cmd.clip pre { max-height: calc(12 * 1.45em); overflow: hidden; -webkit-mask-image: linear-gradient(#000 75%, transparent); mask-image: linear-gradient(#000 75%, transparent); }
+.chat-cmd-fold { position: absolute; right: 6px; bottom: 4px; width: 28px; height: 28px; display: grid; place-items: center; border: 0; background: none; color: var(--text-3); cursor: pointer; border-radius: 6px; }
+.chat-cmd-fold:hover { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
+.chat-cmd-fold svg { transform: rotate(90deg); }
+.chat-cmd-fold.open svg { transform: rotate(-90deg); }
+.chat-mem { position: relative; padding-right: 36px; }
+.chat-mem-empty { padding: 8px 10px; font-size: 12px; }
+.chat-mem .chat-mem-close { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; padding: 0; display: grid; place-items: center; }
 .chat-note { align-self: center; font-size: 11px; color: var(--text-3); padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; }
 .chat-tools { align-self: flex-start; max-width: 88%; font-size: 12px; color: var(--text-2); }
 .chat-tools summary { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 2px 0; }
@@ -30,7 +41,7 @@
 .chat-more { background: none; border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; cursor: pointer; min-height: 28px; }
 .chat-input { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 6px; padding: 8px; border-top: 1px solid var(--line); background: var(--panel); }
 .chat-input textarea { flex: 1; resize: none; font: inherit; font-size: 13px; line-height: 1.45; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); overflow-y: auto; }
-.chat-input textarea:focus { outline: none; border-color: var(--accent); }
+.chat-input textarea:focus { outline: none; border-color: var(--orch, var(--accent)); }
 
 /* 스페이스 모드 틀 — 왼쪽 리더가 칸을 채우고, 오른쪽 채팅 열 머리에 쌓기/탭 */
 .reader-panel.fill { flex: 1; min-width: 0; border-left: 0; }
@@ -38,16 +49,16 @@
 .seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 7px; overflow: hidden; }
 .seg button { all: unset; cursor: pointer; font-size: 11.5px; font-weight: 600; padding: 3px 10px; color: var(--text-2); }
 .seg button + button { border-left: 1px solid var(--line-strong); }
-.seg button.on { background: var(--surface); color: var(--accent); }
+.seg button.on { background: var(--surface); color: var(--orch-text, var(--accent)); }
 .chat-tabs { display: flex; gap: 4px; padding: 6px 8px 0; overflow-x: auto; }
 .chat-tabs button { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 7px 7px 0 0; font-size: 12px; font-weight: 600; color: var(--text-3); white-space: nowrap; }
 .chat-tabs button.on { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
 .space-left { min-width: 0; }
 /* 터미널 입력칸 글(지구본 키로 받아 적은 말) — 채팅 입력칸 바로 위 */
-.chat-term { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); font-size: 12.5px; }
-.chat-term-label { flex: 0 0 auto; font-size: 11px; font-weight: 700; color: var(--accent); }
+.chat-term { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--orch, var(--accent)) 8%, var(--panel)); font-size: 12.5px; }
+.chat-term-label { flex: 0 0 auto; font-size: 11px; font-weight: 700; color: var(--orch-text, var(--accent)); }
 .chat-term-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 96px; overflow-y: auto; }
-.mini.pri { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.mini.pri { background: var(--orch-solid, var(--accent)); border-color: var(--orch-solid, var(--accent)); color: var(--orch-ink, var(--accent-ink)); }
 .seg button { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 22px; padding: 0 6px; }
 .seg button svg { width: 15px; height: 15px; }
 /* 붙인 그림 — 말풍선 썸네일(누르면 크게), 보내기 전 입력칸 위 썸네일 */
@@ -76,6 +87,16 @@
 /* 보내기·멈추기 — 아이콘만, 네모 버튼(44px 터치는 아니지만 데스크톱 기준 34px) */
 .chat-input .btn.icon { width: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 .chat-input .btn.icon svg { width: 16px; height: 16px; }
+/* 보내기(↵)·멈춤(■) — 작은 둥근 네모(--send-s). Enter 로 보내니 누를 일이 적다(2026-10-02 사용자 "작게").
+   --send-h = 입력칸 한 줄 높이. 아래 끝 맞춤 + 아래 여백 (한 줄 높이 - 버튼) / 2 → 한 줄이면 가운데, 여러 줄이면 마지막 줄 옆 */
+.chat-input { --send-h: 37px; --send-s: 26px; } /* 글 13px×1.45 + 위아래 여백 16 + 테두리 2 → 37 */
+.chat-input textarea { min-height: var(--send-h); }
+.chat-input .chat-send, .chat-input .chat-stop { flex: 0 0 auto; width: var(--send-s); height: var(--send-s); min-height: 0; margin-bottom: calc((var(--send-h) - var(--send-s)) / 2); padding: 0; border-radius: 7px;
+  display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 1px solid var(--line-strong); color: var(--text-3); }
+.chat-input .chat-send:disabled { opacity: 1; }
+.chat-input .chat-send:not(:disabled) { background: var(--orch-solid, var(--accent)); border-color: var(--orch-solid, var(--accent)); color: var(--orch-ink, var(--accent-ink)); }
+.chat-input .chat-stop { background: var(--surface); color: var(--text); }
+.chat-input .chat-send svg, .chat-input .chat-stop svg { width: 14px; height: 14px; }
 /* 상태 줄(작업 중·선택 기다림) — 입력칸 바로 위, 늘 보인다 */
 .chat-status { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 5px 12px; font-size: 12px; color: var(--text-2); border-top: 1px solid var(--line); background: var(--panel); white-space: nowrap; overflow: hidden; }
 .chat-status span:last-child { overflow: hidden; text-overflow: ellipsis; }
@@ -88,7 +109,7 @@
 .chat-ctx svg { width: 16px; height: 16px; transform: rotate(-90deg); }
 .chat-ctx circle { fill: none; stroke-width: 2.4; }
 .chat-ctx .bg { stroke: var(--line); }
-.chat-ctx .fg { stroke: #2f7a57; stroke-linecap: round; transition: stroke-dasharray .4s ease; }
+.chat-ctx .fg { stroke: var(--orch, #2f7a57); stroke-linecap: round; transition: stroke-dasharray .4s ease; }
 .chat-ctx.mid .fg { stroke: #c98a00; } .chat-ctx.mid { color: #a87300; }
 .chat-ctx.high .fg { stroke: #c0392b; } .chat-ctx.high { color: #c0392b; }
 /* 모델·에포트 칩 — 글자만(2026-10-01). 메뉴는 상태줄(overflow hidden)에 안 잘리게 화면 위에 고정 */
@@ -101,7 +122,7 @@
 .mc-h { width: 44px; font-size: 11px; font-weight: 600; color: var(--text-3); }
 .mc-row button { border: 0; background: var(--hover); color: var(--text-2); padding: 4px 10px; min-height: 28px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer; }
 .mc-row button:hover:not(:disabled):not(.sel) { background: var(--line); color: var(--text); }
-.mc-row button.sel { background: var(--accent); color: #fff; cursor: default; }
+.mc-row button.sel { background: var(--orch-solid, var(--accent)); color: var(--orch-ink, #fff); cursor: default; }
 .mc-row button:disabled { opacity: .4; cursor: not-allowed; }
 .mc-fail { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: #c0392b; }
 .mc-note { font-size: 11px; line-height: 1.4; color: var(--text-3); }
@@ -111,16 +132,16 @@
 /* @ 로 붙인 것 고르기 */
 .chat-mention { flex: 0 0 auto; display: flex; gap: 6px; padding: 6px 10px 0; background: var(--panel); }
 .chat-mention button { all: unset; cursor: pointer; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface); }
-.chat-mention button[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
+.chat-mention button[aria-selected="true"] { border-color: var(--orch, var(--accent)); color: var(--orch-text, var(--accent)); }
 .bubble .chat-file { display: inline-block; margin: 0 2px; vertical-align: baseline; }
 .chat-file { display: inline-flex; align-items: center; gap: 4px; }
 .chat-file svg { width: 13px; height: 13px; }
 /* @img1·@file1 칩 — 말풍선은 진짜 칩, 입력칸은 뒤판에 칠해 칩처럼(글자 폭은 그대로라 커서가 안 어긋난다) */
-.at-chip { display: inline-block; padding: 0 5px; margin: 0 1px; border-radius: 5px; font-size: 12px; font-weight: 700; background: color-mix(in srgb, var(--accent) 16%, var(--surface)); color: var(--accent); }
+.at-chip { display: inline-block; padding: 0 5px; margin: 0 1px; border-radius: 5px; font-size: 12px; font-weight: 700; background: color-mix(in srgb, var(--orch, var(--accent)) 16%, var(--surface)); color: var(--orch-text, var(--accent)); }
 .chat-field { position: relative; flex: 1; display: flex; min-width: 0; border-radius: 8px; background: var(--surface); }
 .chat-field textarea { position: relative; z-index: 1; background: transparent !important; }
 .chat-backdrop { position: absolute; inset: 0; padding: 8px 10px; border: 1px solid transparent; font: inherit; font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; color: transparent; overflow: hidden; pointer-events: none; }
-.chat-backdrop mark.at { color: transparent; background: color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 4px; }
+.chat-backdrop mark.at { color: transparent; background: color-mix(in srgb, var(--orch, var(--accent)) 22%, transparent); border-radius: 4px; }
 /* 다른 세션·앱이 보낸 말 — 가운데 카드(사용자 말풍선과 구분) */
 .chat-relay { align-self: center; width: min(92%, 520px); padding: 8px 12px; border-radius: 10px; border: 1px dashed var(--line-strong); background: var(--panel); font-size: 12.5px; cursor: pointer; }
 .chat-relay .who { font-size: 11px; font-weight: 700; color: var(--text-3); margin-bottom: 3px; }
@@ -131,7 +152,7 @@
 .tabbed .grid { padding-top: 0; }
 .tabbed .chat-tabs { padding: 6px 6px 0; gap: 2px; }
 .tabbed .chat-tabs button.on { position: relative; z-index: 2; margin-bottom: -1px; border: 1px solid var(--line); border-bottom-color: transparent; box-shadow: none; background: var(--surface-2); }
-.tabbed:focus-within .chat-tabs button.on { border: 2px solid var(--accent); border-bottom: 0; margin-bottom: -2px; padding-bottom: 2px; background: color-mix(in srgb, var(--accent) 10%, var(--surface-2)); color: var(--accent); }
+.tabbed:focus-within .chat-tabs button.on { border: 2px solid var(--orch, var(--accent)); border-bottom: 0; margin-bottom: -2px; padding-bottom: 2px; background: color-mix(in srgb, var(--orch, var(--accent)) 10%, var(--surface-2)); color: var(--orch-text, var(--accent)); }
 
 /* 말풍선 참조 @chat1 — 올리면 옆에 "참조", 누르면 입력칸에 이름표(2026-09-30 사용자) */
 .chat-row { align-items: flex-end; gap: 6px; }
@@ -139,7 +160,7 @@
 .chat-row.relay .chat-relay { align-self: auto; }
 .chat-refbtn { flex: none; visibility: hidden; padding: 2px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text-3); font-size: 11px; cursor: pointer; }
 .chat-row:hover .chat-refbtn { visibility: visible; }
-.chat-refbtn:hover { color: var(--accent); border-color: var(--accent); }
+.chat-refbtn:hover { color: var(--orch-text, var(--accent)); border-color: var(--orch, var(--accent)); }
 .chat-refs { display: flex; flex-direction: column; gap: 4px; padding: 6px 10px 0; }
 .chat-ref { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
 .chat-ref .q { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); }
@@ -164,10 +185,10 @@
 .chat { position: absolute; }
 .chat-bottom { all: unset; position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 6; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 14px 0 10px; border-radius: 999px; background: var(--surface); color: var(--text-2); font-size: 12px; font-weight: 600; box-shadow: 0 6px 18px rgba(0, 0, 0, .14), 0 0 0 1px var(--line); animation: cv-rise .18s ease-out; }
 .chat-bottom svg { width: 13px; height: 13px; transform: rotate(90deg); }
-.chat-bottom:hover { color: var(--accent); }
+.chat-bottom:hover { color: var(--orch-text, var(--accent)); }
 /* 스페이스 파일을 끌고 오는 중 */
-.chat.drop-hot::after { content: ""; position: absolute; inset: 6px; border-radius: 14px; border: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); pointer-events: none; z-index: 8; }
-.chat.drop-hot .chat-input { border-color: var(--accent); }
+.chat.drop-hot::after { content: ""; position: absolute; inset: 6px; border-radius: 14px; border: 2px dashed var(--orch, var(--accent)); background: color-mix(in srgb, var(--orch, var(--accent)) 6%, transparent); pointer-events: none; z-index: 8; }
+.chat.drop-hot .chat-input { border-color: var(--orch, var(--accent)); }
 [draggable="true"] { -webkit-user-drag: element; }
 
 /* 탭 줄 끝의 + — 참모 하나 더(⌘T). 탭처럼 보이지 않게 작은 네모 */
@@ -182,3 +203,31 @@
 .chat-slash button .dim { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-slash button .key { margin-left: auto; flex: 0 0 auto; }
 .chat-slash button.on { background: var(--hover); }
+
+/* 터미널에 뜬 선택 창을 채팅 안에 — 질문 + 선택지 버튼(2026-10-01 사용자 "cli 안 거치게") */
+.chat-dialog { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--orch, var(--accent)) 6%, var(--panel)); max-height: 45%; overflow: auto; }
+.chat-dialog .cd-tabs { font-size: 11px; color: var(--text-3); }
+.chat-dialog .cd-q { font-size: 13px; font-weight: 600; color: var(--text); white-space: pre-wrap; }
+.chat-dialog .cd-opts { display: flex; flex-direction: column; gap: 6px; }
+.chat-dialog .cd-opt { all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-height: 36px; padding: 7px 11px; border-radius: 9px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.chat-dialog .cd-opt:hover { box-shadow: inset 0 0 0 1px var(--orch, var(--accent)); }
+.chat-dialog .cd-opt.cur { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--orch, var(--accent)) 70%, transparent); }
+.chat-dialog .cd-opt:disabled { opacity: .55; cursor: default; }
+.chat-dialog .cd-label { font-size: 13px; color: var(--text); }
+.chat-dialog .cd-detail { font-size: 11.5px; color: var(--text-3); }
+.chat-dialog .cd-free input { width: 100%; box-sizing: border-box; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; }
+.chat-dialog .cd-foot { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-3); }
+.chat-dialog .cd-foot span { margin-right: auto; }
+
+/* 참모 방 색 — SessionGrid 가 참모 칸(.cell)·탭에 --orch 세트를 깐다(domain/orchTheme). 없으면 앱 강조색 그대로(2026-10-02 사용자 "옮겨진 티가 나게") */
+.cell, .chat-tabs button { --orch-text: var(--orch-text-light); }
+@media (prefers-color-scheme: dark) { .cell, .chat-tabs button { --orch-text: var(--orch-text-dark); } }
+.cell .chat .btn.pri { background: var(--orch-solid, var(--accent)); border-color: var(--orch-solid, var(--accent)); color: var(--orch-ink, var(--accent-ink)); }
+.chat-tabs button.on { color: var(--orch-text, var(--text)); }
+
+/* 말하는 참모 빛 — 채팅 탭(고른·안 고른 둘 다) 둘레를 그 참모 색(--orch)으로, 소리 크기(--speak-level)대로. 프사는 avatar.css.
+   전체 둘레 빛(왼쪽 띠 금지), 전환 없이 — 끊으면 그 프레임에 0. 칸(네모) 둘레 빛은 뺐다(2026-10-03 사용자 "네모 쪽엔 글로우 없어도 될 것 같아") */
+/* 채팅 뷰 탭 규칙(space.css)이 box-shadow: none 을 더 센 선택자로 걸어 둬서, 말하는 동안에만 붙는 이 빛은 !important 로 이긴다 */
+.chat-tabs button.st-speak { transition: none !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--orch, var(--text-3)) 70%, transparent), 0 0 calc(4px + 14px * var(--speak-level, 0)) calc(1px * var(--speak-level, 0)) var(--orch, var(--text-3)) !important; }
+

@@ -184,5 +184,5 @@ pub async fn notify_request() -> bool {
 /// 거부돼 있으면 앱은 다시 못 묻는다 — 시스템 설정 알림 화면을 연다
 #[tauri::command]
 pub fn notify_open_settings() {
-    let _ = crate::platform::command("/usr/bin/open").arg("x-apple.systempreferences:com.apple.Notifications-Settings.extension").spawn();
+    let _ = crate::platform::spawn_reaped(crate::platform::command("/usr/bin/open").arg("x-apple.systempreferences:com.apple.Notifications-Settings.extension"));
 }

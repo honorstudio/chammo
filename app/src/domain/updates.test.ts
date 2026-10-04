@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appUpdate, claudeBehind, cmpVer, parseLatestApp } from './updates';
+import { appUpdate, claudeBehind, claudeUpdateNote, cmpVer, parseLatestApp, verLabel } from './updates';
 
 describe('cmpVer — 버전 비교', () => {
   it('앞 v·뒤 꼬리 무시, 숫자로', () => {
@@ -53,5 +53,22 @@ describe('appUpdate — 이 앱보다 새 Chammo 가 있으면', () => {
     expect(appUpdate('0.2.3', latest)).toBeNull();
     expect(appUpdate('0.2.4', latest)).toBeNull();
     expect(appUpdate('0.2.2', null)).toBeNull();
+  });
+});
+
+describe('업데이트 띠 문구 — 괄호가 겹치지 않게', () => {
+  it('claude --version 꼬리 "(Claude Code)" 는 떼고 번호만', () => {
+    expect(verLabel('2.1.288 (Claude Code)\n')).toBe('2.1.288');
+    expect(verLabel('v0.2.3')).toBe('0.2.3');
+    expect(verLabel(' 이상한 글 ')).toBe('이상한 글');
+  });
+  it('재현: 띠 문구에 "(지금 2.1.288 (Claude Code))" 처럼 괄호 안 괄호가 없다', () => {
+    const [ko, en] = claudeUpdateNote('2.1.290', '2.1.288 (Claude Code)');
+    for (const t of [ko, en]) {
+      expect(t).not.toMatch(/\([^)]*\(/);
+      expect(t).toContain('2.1.288');
+      expect(t).not.toContain('(Claude Code)');
+    }
+    expect(ko).toBe('Claude Code 2.1.290 이 나왔어요 (지금 2.1.288). 올리면 새로 띄우는 세션부터 새 버전으로 돌아요.');
   });
 });

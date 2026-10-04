@@ -1,0 +1,3 @@
+{ "mcpServers": {
+    "playwright": { "command": "isolated-browser", "args": ["proj-a"] }
+} }

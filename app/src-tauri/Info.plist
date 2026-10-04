@@ -13,5 +13,14 @@
 	<string>앱 안 Claude Code 세션이 연락처를 읽을 때 필요합니다.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>앱 안 Claude Code 세션이 캘린더를 읽을 때 필요합니다.</string>
+	<!-- 맥 기본 창(파일 고르기 시트 등)을 사용자 언어로 — 없으면 개발 지역(English)으로 떨어져 한국어 맥에서도 영어였다(2026-10-04 QA N5). 개발 지역은 그대로 -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>ko</string>
+	</array>
+	<!-- 이 판은 launchd 가 --routine-tick 으로 불러도 창 없이 예약만 돌린다 — scripts/routine 이 이 표시가 있는 앱만 실행기로 쓴다(옛 판에 인자를 주면 창이 뜬다) -->
+	<key>ChammoRoutineTick</key>
+	<true/>
 </dict>
 </plist>

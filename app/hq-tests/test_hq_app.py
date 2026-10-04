@@ -38,6 +38,13 @@ class DataDir(unittest.TestCase):
         self.assertEqual(app.data_dir('/h', '', lambda p: p == '/h/.honor-orchestrator'), '/h/.honor-orchestrator')
 
 
+class AutoReviveDefault(unittest.TestCase):
+    def test_빠지면_꺼짐_다른_기능은_켜짐(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = app.status(d)['features']
+            self.assertIs(f['autoRevive'], False)
+            self.assertIs(f['office'], True)
+
 class Parse(unittest.TestCase):
     def test_맞는_명령(self):
         self.assertEqual(app.parse(['voice', 'on']), ('voice', 'on'))
@@ -47,6 +54,10 @@ class Parse(unittest.TestCase):
         self.assertEqual(app.parse(['focus', 'acme-shop']), ('focus', 'acme-shop'))
         self.assertEqual(app.parse(['pet', 'hide']), ('pet', 'hide'))
         self.assertEqual(app.parse(['status']), ('status', ''))
+        self.assertEqual(app.parse(['open', 'harnitor']), ('open', 'harnitor'))
+        # 무인 맥에서 '자동으로 다시 켜기' — 앱(appctl)은 받는데 스크립트가 몰라서 못 켰다(2026-10-05 아이맥)
+        self.assertEqual(app.parse(['feature', 'autoRevive', 'on']), ('feature', 'autoRevive on'))
+        self.assertEqual(app.parse(['close', 'harnitor']), ('close', 'harnitor'))
 
     def test_틀린_명령은_None(self):
         for bad in ([], ['voice'], ['voice', 'loud'], ['feature', 'gold', 'on'], ['feature', 'office'],
@@ -63,7 +74,7 @@ class Status(unittest.TestCase):
             open(os.path.join(d, 'voice.json'), 'w').write('{"on":true}')
             s = app.status(d)
             self.assertEqual((s['language'], s['assistantName'], s['devRoot']), ('en', 'Max', '~/Projects'))
-            self.assertEqual(s['features'], {'office': False, 'tama': True, 'gacha': True, 'review': True, 'voice': True})
+            self.assertEqual(s['features'], {'office': False, 'tama': True, 'gacha': True, 'review': True, 'voice': True, 'autoRevive': False, 'computerUse': False})
             self.assertTrue(s['voiceMode'])
             self.assertFalse(s['browserAutomation'])
             pkg = os.path.join(d, 'tools/chammo-browser/node_modules/@playwright/mcp')
@@ -74,7 +85,7 @@ class Status(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             s = app.status(d)
             self.assertFalse(s['voiceMode'])
-            self.assertTrue(all(s['features'].values()))
+            self.assertTrue(all(v for k, v in s['features'].items() if k not in app.OFF_BY_DEFAULT))
 
     def test_명령으로_JSON(self):
         with tempfile.TemporaryDirectory() as d:
@@ -119,6 +130,43 @@ class Send(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertEqual([l['path'] for l in lines(d, 'show.jsonl')], [doc])
             self.assertEqual(lines(d), [])
+
+
+class Harness(unittest.TestCase):
+    """참모가 하네스를 글로 읽는다 — 앱이 엔진으로 훑어 <데이터>/harness.txt 에 적어 준다(2026-10-01 사용자 하니터)"""
+
+    def test_요청을_남기고_답을_읽는다(self):
+        import threading, time
+        with tempfile.TemporaryDirectory() as d:
+            def answer():  # 앱 흉내 — 요청 줄의 id 로 답한다
+                for _ in range(100):
+                    got = [l for l in lines(d) if l['action'] == 'harness']
+                    if got:
+                        with open(os.path.join(d, 'harness.txt'), 'w') as f:
+                            f.write(f"#id {got[0]['id']}\n하네스 — ~/.claude\n진단 (0)\n")
+                        return
+                    time.sleep(0.05)
+            th = threading.Thread(target=answer); th.start()
+            r = run(d, 'harness', 'shop')
+            th.join()
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('하네스 — ~/.claude', r.stdout)
+            self.assertNotIn('#id', r.stdout)
+            req = [l for l in lines(d) if l['action'] == 'harness'][0]
+            self.assertEqual(req['arg'], 'shop')
+
+    def test_옛_답은_안_읽는다_앱이_꺼져_있으면_1(self):
+        with tempfile.TemporaryDirectory() as d:
+            open(os.path.join(d, 'harness.txt'), 'w').write('#id old\n옛 답\n')
+            env = {'CHAMMO_HOME': d, 'HOME': d, 'PATH': '/usr/bin:/bin', 'CHAMMO_HARNESS_WAIT': '0.5'}
+            r = subprocess.run([sys.executable, str(SCRIPT), 'harness'], env=env, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 1)
+            self.assertNotIn('옛 답', r.stdout)
+            self.assertIn('Chammo', r.stderr)
+
+    def test_인자는_프로젝트_하나까지(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(run(d, 'harness', 'a', 'b').returncode, 2)
 
 
 if __name__ == '__main__':

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { MemoItem } from '../domain/memo';
 import { COMMON } from '../domain/lessons';
 import { IconCheck, IconClose, IconCopy, IconSend, IconTrash } from './Icons';
-import { tr } from '../i18n';
+import { assistant, josa, tr } from '../i18n';
 
 type Props = {
   project: string;
@@ -164,7 +164,7 @@ function LessonList({ project, lessons, onRemove, onPromote }: {
   };
   return (
     <div className="memo-list">
-      <div className="lesson-note dim">{tr('참모가 이 프로젝트에 일을 시킬 때 지시 끝에 붙는 것. 끝난 할 일·중복은 지워 줘', 'Attached to the end of every instruction sent to this project. Delete finished to-dos and duplicates')}</div>
+      <div className="lesson-note dim">{tr(`${josa(assistant(), '이', '가')} 이 프로젝트에 일을 시킬 때 지시 끝에 붙는 것. 끝난 할 일·중복은 지워 줘`, 'Attached to the end of every instruction sent to this project. Delete finished to-dos and duplicates')}</div>
       {lessons.mine.length === 0 && <div className="memo-empty">{tr('이 프로젝트 교훈은 아직 없어', 'No lessons for this project yet')}</div>}
       {lessons.mine.map((l) => row(project, l, true))}
       {lessons.common.length > 0 && <div className="lesson-sec dim">{tr(`공통 ${lessons.common.length} — 모든 프로젝트`, `Common ${lessons.common.length} — every project`)}</div>}

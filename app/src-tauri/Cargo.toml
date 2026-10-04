@@ -1,8 +1,12 @@
 [package]
 name = "honor-orchestrator"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 license = "AGPL-3.0-only"
+
+# 하니터 엔진(vendor/harnitor-core) — 같은 워크스페이스에 둬야 cargo test 가 엔진 테스트도 돈다
+[workspace]
+members = [".", "vendor/harnitor-core"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -11,11 +15,30 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["devtools"] }
 portable-pty = "0.9"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 # 터미널 세션을 앱으로 옮길 때 그 프로세스에 SIGTERM
 libc = "0.2"
 # 권한 창 자동 허용: attach 출력을 화면 글자로 되살려 선택지를 읽는다
 vt100 = "0.15"
+# 하니터 — 하네스 보기·끄고 켜기·되돌리기(vendor/HARNITOR.md). notify 는 ~/.claude 가 바뀌면 화면을 다시 그리게
+harnitor-core = { path = "vendor/harnitor-core" }
+notify = "8"
+# 모바일 서버(mobile.rs) — 요청 머리 읽기는 검증된 파서로(손으로 안 짠다), 열쇠는 OS 난수로. 둘 다 이미 락에 있던 것
+httparse = "1"
+# 파일 길 경로(?path=) 풀기 — 이미 락에 있던 것
+percent-encoding = "2"
+# 모바일 기기 토큰은 해시만 저장(mobile_pair) — 이미 락에 있던 것
+sha2 = "0.10"
+getrandom = "0.3"
+# 설정 화면의 접속 QR — svg 만(그림 크레이트 없이)
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+# 세션 브라우저 앱에서 보기(agent_browser.rs) — 에이전트 크롬 CDP 웹소켓(동기 클라이언트 하나, TLS 없음) + 화면 프레임(base64 jpeg) 풀기. base64 는 이미 락에 있던 것
+tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+base64 = "0.22"
+# 폰 푸시(push.rs) — VAPID 서명(ES256)·몸통 암호화(RFC 8291: ECDH + HKDF + AES-128-GCM). 순수 러스트(RustCrypto), 보내기는 맥 curl 이라 TLS 크레이트는 안 더한다
+p256 = { version = "0.13", default-features = false, features = ["ecdh", "ecdsa", "std"] }
+hkdf = "0.12"
+aes-gcm = "0.10"
 
 # 알림을 앱 이름·아이콘으로(UNUserNotificationCenter). osascript 로 보내면 "스크립트 편집기" 로 묶이고 눌러도 앱이 안 열린다
 # 윈도우 알림(토스트) — Tauri 알림 플러그인이 윈도우에서 쓰는 것과 같은 크레이트
@@ -30,4 +53,6 @@ block2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSDictionary", "NSError", "NSBundle", "NSArray", "NSObject", "block2"] }
 objc2-user-notifications = { version = "0.3", features = ["UNUserNotificationCenter", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationSettings", "block2"] }
 # 리더 Ctrl+Tab — 문서 프레임·PDF 안에 포커스가 있어도 앱 전체 키 입력을 먼저 본다(NSEvent 로컬 감시)
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSEvent", "NSResponder", "block2"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSEvent", "NSResponder", "block2", "NSRunningApplication", "libc"] }
+# 계정 칸 — 키체인 읽고 쓰기. security -i 는 한 줄 4,000자에서 잘려 실제 로그인(11KB)을 못 썼다(2026-10-02)
+security-framework = "3.7.0"

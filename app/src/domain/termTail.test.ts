@@ -23,4 +23,8 @@ describe('termTail — 대화 기록 꼬리를 터미널처럼 몇 줄(대시보
   it('끝에서 n 줄만', () => {
     expect(termTail(tail, 2)).toEqual(['⏺ Bash(테스트 돌리기)', '  ⎿ Tests 12 passed']);
   });
+  it('터미널 색 코드(ESC[…m)는 지운다 — 네모 X 로 보였다(2026-10-02 사용자)', () => {
+    const ansi = L({ type: 'user', message: { content: [{ type: 'tool_result', content: '\x1b[2m      Tests \x1b[22m \x1b[1m\x1b[32m1274 passed\x1b[39m\x1b[22m\x1b[90m (1274)\x1b[39m' }] } });
+    expect(termTail(ansi, 1)).toEqual(['  ⎿ Tests  1274 passed (1274)']);
+  });
 });

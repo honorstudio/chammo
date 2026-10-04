@@ -1,12 +1,14 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import { openTarget } from '../data/tauri';
-import { cloudUrl, isCloud, routineStateLabel, scheduleText, type Routine, type RoutineEvent, type RoutineState } from '../domain/routine';
-import { tr } from '../i18n';
+import { cloudUrl, isCloud, routineRef, routineStateLabel, scheduleText, type Routine, type RoutineEvent, type RoutineState } from '../domain/routine';
+import { assistant, tr } from '../i18n';
 import { MdDoc } from './reader/Reader';
 import { TerminalPane } from './TerminalPane';
 import './reader/reader.css';
 import { attachCommand } from '../domain/termCommand';
+import { IconPause, IconPencil, IconPlay, IconPower, IconSend, IconTrash } from './Icons';
+import { dragProps } from './space/dragPath';
 
 type Props = {
   routine: Routine;
@@ -16,36 +18,39 @@ type Props = {
   claudeBin: string;
   fontSize: number;
   onAction: (action: 'run' | 'pause' | 'resume' | 'remove') => Promise<void>;
+  /** 지금 채팅 참모 입력칸에 이 예약 참조 글을 넣는다(없으면 버튼 없음) */
+  onToChat?: (text: string) => void;
 };
 
 const when = (ts: string) => ts.replace('T', ' ').slice(5, 16);
 
 function eventText(e: RoutineEvent): string {
   if (e.event === 'start') return e.error ? tr(`시작 실패 — ${e.error}`, `Could not start — ${e.error}`) : tr(e.session ? '시작' : '시작', 'Started');
-  if (e.event === 'skip') return tr('건너뜀 — 지난 실행이 아직 도는 중', 'Skipped — the last run is still going');
+  if (e.event === 'skip') return e.reason === 'still running' || !e.reason ? tr('건너뜀 — 지난 실행이 아직 도는 중', 'Skipped — the last run is still going') : tr(`건너뜀 — ${e.reason}`, `Skipped — ${e.reason}`);
   return `${e.result === 'fail' ? tr('실패', 'Failed') : tr('성공', 'OK')}${e.note ? ` — ${e.note}` : ''}`;
 }
 
-/** 루틴 화면 — 로컬(launchd)은 지침서·실행 기록, 클라우드(claude.ai)는 설명과 "열기"만 */
+/** 예약(루틴) 화면 — 로컬(launchd)은 지침서·실행 기록, 클라우드(claude.ai)는 설명과 "열기"만 */
 export function RoutinePage(props: Props) {
-  return isCloud(props.routine) ? <CloudRoutinePage routine={props.routine} /> : <LocalRoutinePage {...props} />;
+  return isCloud(props.routine) ? <CloudRoutinePage routine={props.routine} onToChat={props.onToChat} /> : <LocalRoutinePage {...props} />;
 }
 
 /** 클라우드 루틴 — 여기서 돌리지 않는다. 실행·일시정지·지우기·기록은 claude.ai 에서(주소를 기본 브라우저로) */
-function CloudRoutinePage({ routine: r }: { routine: Routine }) {
+function CloudRoutinePage({ routine: r, onToChat }: { routine: Routine; onToChat?: (text: string) => void }) {
   const url = cloudUrl(r);
   return (
     <div className="routine">
       <div className="bar">
-        <b>{r.name}</b>
+        <b className="routine-name" {...dragProps({ kind: 'text', text: routineRef(r) }, r.name)} title={tr(`끌어서 ${assistant()} 입력칸에 넣기`, 'Drag into the assistant input')}>{r.name}</b>
         <span className="tag rt-cloud">{tr('클라우드', 'Cloud')}</span>
         <span className="dim">{scheduleText(r.schedule)} · {tr('claude.ai 에서 돌아요', 'Runs on claude.ai')}</span>
         <span className="sp" />
+        {onToChat && <ToChatButton text={routineRef(r)} onToChat={onToChat} />}
         <button className="btn pri" disabled={!url} onClick={() => url && void openTarget('url', url).catch(() => {})}>{tr('열기', 'Open')}</button>
       </div>
       <div className="routine-body routine-cloud-body">
         <section className="routine-doc">
-          <div className="routine-h">{tr('클라우드 루틴', 'Cloud routine')}</div>
+          <div className="routine-h">{tr('클라우드 예약', 'Cloud schedule')}</div>
           <dl className="routine-cloud">
             <dt>{tr('일정', 'Schedule')}</dt>
             <dd>{scheduleText(r.schedule)}</dd>
@@ -54,8 +59,8 @@ function CloudRoutinePage({ routine: r }: { routine: Routine }) {
             <dd className="mono">{url ?? tr('주소가 없거나 https 가 아니에요', 'No https address')}</dd>
           </dl>
           <p className="routine-cloud-help dim">
-            {tr('이 루틴은 이 맥이 아니라 claude.ai 클라우드에서 돌아요. 실행·일시정지·지우기와 실행 기록은 "열기"로 claude.ai 에서 보세요. 목록에서만 빼려면 ',
-              'This routine runs in the claude.ai cloud, not on this Mac. Run, pause, delete it and see its runs on claude.ai via "Open". To drop it from this list only: ')}
+            {tr('이 예약은 이 맥이 아니라 claude.ai 클라우드에서 돌아요. 실행·일시정지·지우기와 실행 기록은 "열기"로 claude.ai 에서 보세요. 목록에서만 빼려면 ',
+              'This job runs in the claude.ai cloud, not on this Mac. Run, pause, delete it and see its runs on claude.ai via "Open". To drop it from this list only: ')}
             <code>scripts/routine cloud remove {r.name}</code>
           </p>
         </section>
@@ -65,7 +70,7 @@ function CloudRoutinePage({ routine: r }: { routine: Routine }) {
 }
 
 /** 로컬 루틴 화면 — 왼쪽 지침서, 오른쪽 지금 도는 세션 + 실행 기록(사용자 2026-09-28: "한쪽에는 지침서, 실제로 돌 땐 그게 보이게") */
-function LocalRoutinePage({ routine: r, state, liveSession, claudeBin, fontSize, onAction }: Props) {
+function LocalRoutinePage({ routine: r, state, liveSession, claudeBin, fontSize, onAction, onToChat }: Props) {
   const [md, setMd] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sure, setSure] = useState(false);
@@ -81,13 +86,19 @@ function LocalRoutinePage({ routine: r, state, liveSession, claudeBin, fontSize,
   return (
     <div className="routine">
       <div className="bar">
-        <b>{r.name}</b>
-        <span className="dim">{scheduleText(r.schedule)} · {r.next ? tr(`다음 ${when(r.next)}`, `Next ${when(r.next)}`) : tr('예약 없음', 'Not scheduled')} · {routineStateLabel(state)}</span>
+        <b className="routine-name" {...dragProps({ kind: 'text', text: routineRef(r) }, r.name)} title={tr(`끌어서 ${assistant()} 입력칸에 넣기`, 'Drag into the assistant input')}>{r.name}</b>
+        <span className="dim">{[r.once ? `${scheduleText(r.schedule)} · ${tr('한 번', 'once')}` : scheduleText(r.schedule), r.next ? tr(`다음 ${when(r.next)}`, `Next ${when(r.next)}`) : r.once ? '' : tr('다음 없음', 'Nothing next'), routineStateLabel(state)].filter(Boolean).join(' · ')}</span>
         <span className="sp" />
-        <button className="btn pri" disabled={busy || state === 'running'} onClick={() => void act('run')}>{tr('지금 실행', 'Run now')}</button>
-        <button className="btn" disabled={busy} onClick={() => void act(r.enabled ? 'pause' : 'resume')}>{r.enabled ? tr('일시정지', 'Pause') : tr('다시 켜기', 'Resume')}</button>
-        <button className="btn" onClick={() => void openTarget('file', r.instructions)}>{tr('지침서 고치기', 'Edit instructions')}</button>
-        <button className="btn" disabled={busy} onClick={() => (sure ? void act('remove') : setSure(true))}>{sure ? tr('정말 지우기', 'Really delete') : tr('지우기', 'Delete')}</button>
+        {/* 글 버튼 넷 → 아이콘(2026-10-02 사용자). 이름은 title·aria-label 로 */}
+        <div className="routine-acts">
+          {onToChat && <ToChatButton text={routineRef(r)} onToChat={onToChat} />}
+          <button className="ib" disabled={busy || state === 'running'} title={tr('지금 실행', 'Run now')} aria-label={tr('지금 실행', 'Run now')} onClick={() => void act('run')}><IconPlay /></button>
+          <button className="ib" disabled={busy} title={r.enabled ? tr('일시정지', 'Pause') : tr('다시 켜기', 'Resume')} aria-label={r.enabled ? tr('일시정지', 'Pause') : tr('다시 켜기', 'Resume')}
+            onClick={() => void act(r.enabled ? 'pause' : 'resume')}>{r.enabled ? <IconPause /> : <IconPower />}</button>
+          <button className="ib" title={tr('지침서 고치기 — 기본 앱으로 열기', 'Edit instructions — open in the default app')} aria-label={tr('지침서 고치기', 'Edit instructions')} onClick={() => void openTarget('file', r.instructions)}><IconPencil /></button>
+          <button className={`ib danger ${sure ? 'armed' : ''}`} disabled={busy} title={sure ? tr('한 번 더 누르면 지워요', 'Click again to delete') : tr('지우기', 'Delete')} aria-label={sure ? tr('정말 지우기', 'Really delete') : tr('지우기', 'Delete')}
+            onClick={() => (sure ? void act('remove') : setSure(true))}><IconTrash /></button>
+        </div>
       </div>
       <div className="routine-body">
         <section className="routine-doc">
@@ -113,5 +124,13 @@ function LocalRoutinePage({ routine: r, state, liveSession, claudeBin, fontSize,
         </section>
       </div>
     </div>
+  );
+}
+
+/** 채팅 참모 입력칸에 참조 글 넣기 — 보내지는 않는다(Enter 는 사용자가) */
+function ToChatButton({ text, onToChat }: { text: string; onToChat: (text: string) => void }) {
+  return (
+    <button className="ib" title={tr(`${assistant()} 입력칸에 넣기 — 끌어다 놓아도 돼요`, 'Put in the assistant input — or drag it there')} aria-label={tr(`${assistant()} 입력칸에 넣기`, 'Put in the assistant input')}
+      onClick={() => onToChat(text)}><IconSend /></button>
   );
 }

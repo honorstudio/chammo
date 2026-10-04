@@ -1,0 +1,47 @@
+/* ═══ 직접 답하기 카드(시안 A 흐름 속 카드, 2026-10-03) — 왼쪽 띠 없이 전체 테두리·옅은 면. 위험한 승인 버튼만 빨강 ═══ */
+/* 데스크톱 채팅과 폰이 같이 쓴다 — 두 쪽 토큰 이름이 같다(--surface·--line-strong·--text…). 위험 빨강은 테마와 상관없이 하나(흰 글자 버튼) */
+.dc-row, .dc-card, .dc-mini, .dc-done { --dc-red: #b42318; }
+.dc-row { justify-content: stretch; }
+.dc-row > * { flex: 1; min-width: 0; max-width: 560px; }
+.dc-card { box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; padding: 14px; border-radius: 14px; border: 1px solid var(--line-strong); background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, .05); font-size: 13.5px; line-height: 1.5; color: var(--text); }
+.dc-card.dc-hot { border-color: color-mix(in srgb, var(--dc-red) 35%, var(--line-strong)); background: color-mix(in srgb, var(--dc-red) 5%, var(--surface)); }
+.dc-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.dc-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dc-who b { font-size: 13px; }
+.dc-what { font-size: 12px; color: var(--text-3); }
+.dc-av { width: 26px; height: 26px; flex: 0 0 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--text-2); color: var(--surface); font-size: 11px; font-weight: 700; }
+.dc-done .dc-av, .dc-mini .dc-av { width: 20px; height: 20px; flex-basis: 20px; font-size: 10px; }
+.dc-risk { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11.5px; font-weight: 800; white-space: nowrap; }
+.dc-danger { background: color-mix(in srgb, var(--dc-red) 14%, var(--surface)); color: color-mix(in srgb, var(--dc-red) 75%, var(--text)); }
+.dc-warn { background: color-mix(in srgb, var(--blocked) 18%, var(--surface)); color: color-mix(in srgb, var(--blocked) 70%, var(--text)); }
+.dc-plain { background: var(--surface-2); color: var(--text-2); }
+.dc-amount { font-size: 26px; font-weight: 800; letter-spacing: -.01em; }
+.dc-q { font-size: 14px; font-weight: 600; }
+.dc-muted { font-size: 12px; color: var(--text-3); }
+.dc-if { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 0; font-size: 12.5px; color: var(--text-2); }
+.dc-if dt { color: var(--text-3); white-space: nowrap; }
+.dc-if dd { margin: 0; }
+.dc-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.dc-acts { display: flex; gap: 8px; justify-content: flex-end; align-items: center; flex-wrap: wrap; }
+.dc-btn { all: unset; box-sizing: border-box; min-height: 40px; padding: 0 16px; border-radius: 9px; font-weight: 700; font-size: 13.5px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.dc-btn:disabled { opacity: .5; cursor: default; }
+.dc-btn:focus-visible, .dc-link:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.dc-go { background: var(--text); color: var(--surface); }
+.dc-go.dc-pay { background: var(--dc-red); color: #fff; }
+.dc-no { background: var(--surface); border: 1px solid var(--line-strong); color: var(--text); }
+.dc-link { all: unset; font-size: 12.5px; color: var(--text-2); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.dc-free { margin-right: auto; }
+.dc-freebox { display: flex; flex-direction: column; gap: 6px; }
+.dc-freebox textarea { box-sizing: border-box; width: 100%; resize: vertical; padding: 9px 11px; border-radius: 9px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); font: inherit; }
+.dc-err { font-size: 12.5px; color: color-mix(in srgb, var(--dc-red) 80%, var(--text)); }
+.dc-mini { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); font-size: 13px; }
+.dc-mini .dc-t { flex: 1; min-width: 0; }
+.dc-mini .dc-t .dc-muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-done { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); font-size: 12.5px; }
+.dc-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dc-end { margin-left: auto; font-weight: 700; white-space: nowrap; }
+.dc-steps { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--text-3); }
+.dc-steps em { font-style: normal; }
+.dc-steps .on { color: var(--text); font-weight: 700; }
+.dc-steps i { display: inline-block; width: 6px; height: 6px; margin-right: 4px; border-radius: 50%; background: var(--line-strong); vertical-align: middle; }
+.dc-steps .on i { background: var(--working, #2f7a57); }

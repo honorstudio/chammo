@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { effortChoices, effortMoves, familyOf, MODEL_CHOICES, modelChip, modelMoves, parsePicker } from './modelPick';
+import { effortChoices, effortMoves, familyOf, MODEL_CHOICES, modelChip, modelMoves, parsePicker, switchConfirm, commandResult, modelCommand } from './modelPick';
 
 describe('familyOf — 모델 이름·id 에서 계열', () => {
   it('id·표시 이름 어느 쪽이든', () => {
@@ -25,9 +25,9 @@ describe('effortChoices — 모델마다 고를 수 있는 단계', () => {
     expect(effortChoices('opus').map((e) => e.level)).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
     expect(effortChoices('opus').every((e) => !e.disabled)).toBe(true);
   });
-  it('소넷 xhigh 는 막는다(더 비싸고 약했다, 2026-09 실측) — 이유를 같이', () => {
+  it('소넷 xhigh 도 고를 수 있다 — 막지 않고 안내만(공개판 사용자에겐 제약이었다, 2026-10-01 사용자)', () => {
     const x = effortChoices('sonnet').find((e) => e.level === 'xhigh')!;
-    expect(x.disabled).toBe(true);
+    expect(x.disabled).toBe(false);
     expect(x.why).toMatch(/소넷|Sonnet/);
     expect(effortChoices('sonnet').find((e) => e.level === 'high')!.disabled).toBe(false);
   });
@@ -120,5 +120,45 @@ describe('effortMoves — 슬라이더(→ 로 low→medium→high→xhigh→max
     expect(effortMoves('high', 'high')).toEqual([]);
     expect(effortMoves('high', 'ultra')).toBeNull();
     expect(effortMoves(undefined, 'high')).toBeNull();
+  });
+});
+
+describe('switchConfirm — 대화가 길면 /model 뒤에 "Switch model?" 확인 창이 뜬다(2026-10-01 실측)', () => {
+  const dialog = ['▔▔▔▔', '   Switch model?', '   Your next response will be slower and use more', '   ❯ 1. Yes, switch to Sonnet 5.5', '     2. No, go back'];
+  it('확인 창이면 true', () => { expect(switchConfirm(dialog)).toBe(true); });
+  it('보통 화면이면 false', () => { expect(switchConfirm(['❯ /model sonnet', '  ⎿  Set model to Sonnet 5.5'])).toBe(false); });
+});
+
+describe('commandResult — 친 명령(/model sonnet·/effort high) 바로 아래 결과 줄', () => {
+  it('바꿨다', () => {
+    const l = ['❯ /model sonnet', '  ⎿  Set model to Sonnet 5.5 and saved as your default for', '     new sessions'];
+    expect(commandResult(l, '/model sonnet')).toEqual({ ok: true, text: 'Set model to Sonnet 5.5 and saved as your default for' });
+  });
+  it('이미 그 모델', () => {
+    expect(commandResult(['❯ /model opus', '  ⎿  Kept model as Opus 5.5'], '/model opus')?.ok).toBe(true);
+  });
+  it('에포트', () => {
+    expect(commandResult(['❯ /effort high', '  ⎿  Set effort level to high (saved as your default for'], '/effort high')?.ok).toBe(true);
+  });
+  it('예전에 친 같은 명령의 결과는 안 본다 — 마지막으로 친 줄 아래만', () => {
+    const l = ['❯ /model sonnet', '  ⎿  Set model to Sonnet 5.5', '⏺ 준비됐어', '❯ /model sonnet'];
+    expect(commandResult(l, '/model sonnet')).toBeNull();
+  });
+  it('아직 결과가 없으면 null', () => { expect(commandResult(['❯ /effort low'], '/effort low')).toBeNull(); });
+  it('명령 줄이 안 보이면 null', () => { expect(commandResult(['아무것도'], '/effort low')).toBeNull(); });
+  it('안 되는 결과면 ok:false 와 그 글', () => {
+    expect(commandResult(['❯ /effort high', '  ⎿  Effort not supported for Haiku 4.5'], '/effort high')).toEqual({ ok: false, text: 'Effort not supported for Haiku 4.5' });
+  });
+});
+
+describe('modelCommand — 채팅에서 친 /model·/effort 를 칩으로 돌린다(터미널 고르는 창은 Enter 가 바로 골라 버려 기본값이 저장됐다, 2026-10-01 시험)', () => {
+  it('/model 만 — 칩 메뉴를 연다', () => { expect(modelCommand('/model')).toEqual({ open: true }); expect(modelCommand(' /model  ')).toEqual({ open: true }); });
+  it('/model 별칭', () => { expect(modelCommand('/model sonnet')).toEqual({ want: { model: 'sonnet' } }); expect(modelCommand('/model Opus')).toEqual({ want: { model: 'opus' } }); });
+  it('/effort 단계', () => { expect(modelCommand('/effort high')).toEqual({ want: { effort: 'high' } }); expect(modelCommand('/effort')).toEqual({ open: true }); });
+  it('모르는 이름·다른 글은 그대로 보낸다', () => {
+    expect(modelCommand('/model claude-opus-4-8')).toBeNull();
+    expect(modelCommand('/effort turbo')).toBeNull();
+    expect(modelCommand('/model sonnet\n그리고 이것도')).toBeNull();
+    expect(modelCommand('모델 바꿔줘')).toBeNull();
   });
 });

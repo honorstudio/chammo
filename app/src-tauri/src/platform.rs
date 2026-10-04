@@ -3,15 +3,44 @@
 use std::path::Path;
 use std::process::{Child, Command};
 
-/// 그 프로세스가 아직 살아 있나(보내지 않고 존재만 확인)
+/// 그 프로세스가 아직 살아 있나(보내지 않고 존재만 확인). 끝났는데 부모가 안 거둔 좀비는 죽은 것 —
+/// kill -0 은 좀비에도 성공해서 '앱으로 가져오기'가 좀비가 끝나길 10초 기다리다 실패했다(2026-10-05 아이맥 QA)
 #[cfg(unix)]
 pub fn pid_alive(pid: i32) -> bool {
-    unsafe { libc::kill(pid, 0) == 0 }
+    let exists = unsafe { libc::kill(pid, 0) == 0 };
+    exists && !zombie(pid)
+}
+/// 맥: proc_pidinfo 는 좀비면 실패해서(ESRCH) ps 처럼 sysctl(KERN_PROC_PID) 의 kinfo_proc.kp_proc.p_stat 을 본다.
+/// libc 크레이트에 kinfo_proc 이 없어 크기(648)·자리(36)를 박는다 — arm64·x86_64 같음, 크기가 다르면 좀비 아님으로
+#[cfg(target_os = "macos")]
+fn zombie(pid: i32) -> bool {
+    const SIZE: usize = 648;
+    const P_STAT: usize = 36;
+    let mut buf = [0u8; SIZE];
+    let mut len = SIZE;
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PID, pid];
+    let r = unsafe { libc::sysctl(mib.as_mut_ptr(), 4, buf.as_mut_ptr() as *mut libc::c_void, &mut len, std::ptr::null_mut(), 0) };
+    r == 0 && len == SIZE && buf[P_STAT] as u32 == libc::SZOMB
+}
+#[cfg(all(unix, not(target_os = "macos")))]
+fn zombie(pid: i32) -> bool {
+    // /proc/<pid>/stat 의 세 번째 칸(이름 괄호 뒤)이 Z
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).ok().and_then(|s| s.rsplit_once(')').map(|(_, r)| r.trim_start().starts_with('Z'))).unwrap_or(false)
 }
 #[cfg(windows)]
 pub fn pid_alive(pid: i32) -> bool {
     Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"]).output()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains(&format!("\"{pid}\""))).unwrap_or(false)
+}
+
+/// 띄우고 기다리지 않는다 — 끝나면 뒤에서 거둬 좀비(<defunct>)가 안 남게. pid 를 돌려준다
+pub fn spawn_reaped(cmd: &mut Command) -> std::io::Result<u32> {
+    let mut child = cmd.spawn()?;
+    let pid = child.id();
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(pid)
 }
 
 /// 끝내 달라고 부탁한다(맥 SIGTERM, 윈도우 taskkill — 강제 아님)
@@ -253,7 +282,34 @@ pub fn open_path(target: &str) -> std::io::Result<()> {
         c.arg(target);
         c
     };
-    c.spawn().map(|_| ())
+    spawn_reaped(&mut c).map(|_| ())
+}
+
+/// 크롬에서 열기 — 기본 브라우저 말고 깔린 구글 크롬(2026-10-02 사용자 "크롬에서 보기"). 크롬이 없으면 기본 브라우저.
+/// 무엇으로 열었는지("chrome" | "default") 돌려준다. 윈도우는 chrome.exe 를 직접(cmd start 는 주소 속 & 에서 끊긴다)
+pub fn open_in_chrome(url: &str) -> std::io::Result<String> {
+    #[cfg(windows)]
+    let ok = chrome_exe_candidates(|k| std::env::var(k).ok()).into_iter().find(|p| p.is_file())
+        .is_some_and(|exe| command(exe).arg(url).spawn().is_ok());
+    #[cfg(not(windows))]
+    let ok = command("open").args(mac_chrome_args(url)).status().is_ok_and(|s| s.success());
+    if ok {
+        return Ok("chrome".into());
+    }
+    open_path(url).map(|_| "default".into())
+}
+/// 맥 — open -a "Google Chrome" <주소>. 크롬이 없으면 open 이 실패 코드로 끝난다
+#[cfg_attr(windows, allow(dead_code))]
+pub fn mac_chrome_args(url: &str) -> [&str; 3] {
+    ["-a", "Google Chrome", url]
+}
+/// 윈도우 크롬이 깔리는 자리(전체 사용자 → 32비트 → 이 사용자)
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn chrome_exe_candidates(env: impl Fn(&str) -> Option<String>) -> Vec<std::path::PathBuf> {
+    ["ProgramFiles", "ProgramFiles(x86)", "LocalAppData"].iter()
+        .filter_map(|k| env(k).filter(|v| !v.is_empty()))
+        .map(|d| std::path::Path::new(&d).join("Google").join("Chrome").join("Application").join("chrome.exe"))
+        .collect()
 }
 
 /// 윈도우 폴더 고르기 창(파워셸 FolderBrowserDialog). 고른 경로를 UTF-8 로 한 줄, 취소면 빈 줄
@@ -337,6 +393,65 @@ pub fn toast_app_id(exe_dir: &str, identifier: &str, powershell: &str) -> String
     }
 }
 
+/// 시간 제한 있는 실행 — 넘으면 죽이고 TimedOut. 출력은 따로 읽는 스레드로(파이프가 차서 멈추지 않게).
+/// 모바일 서버가 부르는 외부 명령(claude agents·tailscale·예약 스크립트)이 멈추면 연결 자리가 안 풀렸다(2026-10-02 보안 재검토)
+pub fn run_capped(cmd: &mut Command, limit: std::time::Duration) -> std::io::Result<std::process::Output> {
+    use std::io::Read;
+    use std::process::Stdio;
+    use std::sync::{Arc, Mutex};
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    // 자기 프로세스 그룹으로 — 시간이 넘으면 손자까지 그룹째 죽인다(직계만 죽이면 손자가 남아 파이프를 쥐었다)
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let mut child = cmd.spawn()?;
+    // 출력은 버퍼에 이어 담는다 — 그룹을 벗어난 손자(데몬)가 파이프를 계속 쥐어도 기다림을 끊고 받은 데까지 돌려줄 수 있게
+    let pipe = |r: Option<Box<dyn Read + Send>>| {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let (b2, (tx, rx)) = (buf.clone(), std::sync::mpsc::channel::<()>());
+        std::thread::spawn(move || {
+            if let Some(mut r) = r {
+                let mut chunk = [0u8; 8192];
+                while let Ok(n) = r.read(&mut chunk) {
+                    if n == 0 {
+                        break;
+                    }
+                    b2.lock().unwrap().extend_from_slice(&chunk[..n]);
+                }
+            }
+            let _ = tx.send(());
+        });
+        (buf, rx)
+    };
+    let (out, out_done) = pipe(child.stdout.take().map(|x| Box::new(x) as Box<dyn Read + Send>));
+    let (err, err_done) = pipe(child.stderr.take().map(|x| Box::new(x) as Box<dyn Read + Send>));
+    let until = std::time::Instant::now() + limit;
+    let status = loop {
+        if let Some(st) = child.try_wait()? {
+            break st;
+        }
+        if std::time::Instant::now() >= until {
+            #[cfg(unix)]
+            unsafe {
+                libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "command timed out"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    // 끝났어도 파이프를 쥔 손자가 있으면 읽기가 안 끝난다 — 2초만 기다리고 받은 데까지
+    let grace_end = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    for done in [&out_done, &err_done] {
+        let _ = done.recv_timeout(grace_end.saturating_duration_since(std::time::Instant::now()));
+    }
+    let take = |b: &Arc<Mutex<Vec<u8>>>| std::mem::take(&mut *b.lock().unwrap());
+    Ok(std::process::Output { status, stdout: take(&out), stderr: take(&err) })
+}
+
 /// 파이썬 도구(루틴 등)를 돌릴 명령 — 맥 /usr/bin/python3, 윈도우는 py -3 → python 중 도는 것
 /// (윈도우 python3 는 스토어 대리 실행기라 종료 49로 죽는다). 윈도우는 UTF-8 로(cp949 면 한글이 깨진다)·창 없이
 pub fn python() -> Command {
@@ -405,6 +520,42 @@ pub fn git_ready() -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    // 2026-10-05 아이맥 QA: 마법사 '믿기' pty 의 claude 가 좀비로 남았는데 kill -0 은 성공해서 '앱으로 가져오기'가 10초 기다리다 실패했다
+    #[cfg(unix)]
+    #[test]
+    fn 좀비는_산_것으로_안_본다() {
+        let mut child = super::command("/bin/sh").args(["-c", "exit 0"]).spawn().unwrap();
+        let pid = child.id() as i32;
+        std::thread::sleep(std::time::Duration::from_millis(400)); // 끝났지만 아직 안 거둠 = 좀비
+        let zombie_alive = super::pid_alive(pid);
+        let _ = child.wait();
+        assert!(!zombie_alive, "끝나고 안 거둔 프로세스(좀비)를 살아 있다고 봤다");
+        let mut live = super::command("/bin/sleep").arg("5").spawn().unwrap();
+        assert!(super::pid_alive(live.id() as i32), "도는 프로세스는 살아 있다");
+        let _ = live.kill();
+        let _ = live.wait();
+    }
+
+    // 띄우고 기다리지 않는 길(say 미리 데우기·알림 osascript·open)도 끝나면 거둔다 — 개발판 마법사 한 바퀴에 좀비 3개(say 2·vdisplay 1)
+    #[cfg(unix)]
+    #[test]
+    fn 띄우고_버리는_길도_좀비를_안_남긴다() {
+        let pid = super::spawn_reaped(&mut super::command("/bin/sh").args(["-c", "exit 0"])).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        let o = super::command("/bin/ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().unwrap();
+        assert!(String::from_utf8_lossy(&o.stdout).trim().is_empty(), "끝난 자식이 좀비로 남았다");
+    }
+
+    #[test]
+    fn 크롬_열기_인자() {
+        assert_eq!(super::mac_chrome_args("http://localhost:3000/?a=1&b=2"), ["-a", "Google Chrome", "http://localhost:3000/?a=1&b=2"]);
+        let env = |k: &str| match k { "ProgramFiles" => Some(r"C:\Program Files".to_string()), "LocalAppData" => Some(r"C:\Users\u\AppData\Local".into()), _ => None };
+        let c = super::chrome_exe_candidates(env);
+        assert_eq!(c.len(), 2);
+        assert!(c[0].to_string_lossy().ends_with("chrome.exe") && c[0].to_string_lossy().contains("Program Files"));
+        assert!(super::chrome_exe_candidates(|_| Some(String::new())).is_empty());
+    }
     use super::*;
 
     #[test]

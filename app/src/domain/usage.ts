@@ -27,6 +27,9 @@ export function parseUsage(json: string, now: number): Usage {
   return out;
 }
 
+/** 남은 % 막대 색 — 50% 이상 넉넉, 20% 이상 보통, 그 아래 모자람(위 막대·계정 팝오버가 같이 쓴다) */
+export const usageLevel = (left: number) => (left >= 50 ? 'ok' : left >= 20 ? 'mid' : 'low');
+
 export function fmtResetIn(sec: number): string {
   if (sec <= 0) return tr('곧', 'soon');
   const d = Math.floor(sec / 86400);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampFont, dedupeMs, gotoOfNum, menuAction, onceWithin, shortcutFor } from './shortcuts';
+import { clampFont, dedupeMs, gotoOfNum, menuAction, onceAcross, onceWithin, shortcutFor } from './shortcuts';
 
 const k = (key: string, mods: { meta?: boolean; shift?: boolean; alt?: boolean; ctrl?: boolean } = {}) => ({
   key,
@@ -99,9 +99,8 @@ describe('⌘A — 보고 있는 곳만 전체 선택 (사용자 2026-09-29)', (
     expect(shortcutFor(k('ㅁ', { meta: true }))).toEqual({ type: 'selectAll' });
     expect(shortcutFor(k('a', { meta: true, shift: true }))).toBeNull();
   });
-  it('메뉴 전체 선택도 같은 동작, 키와 메뉴가 둘 다 와도 한 번', () => {
+  it('메뉴 전체 선택도 같은 동작(키와 메뉴가 둘 다 와도 한 번 — onceAcross)', () => {
     expect(menuAction('select_all')).toEqual({ type: 'selectAll' });
-    expect(dedupeMs({ type: 'selectAll' })).toBeGreaterThan(0);
   });
 });
 
@@ -139,6 +138,32 @@ describe('onceWithin — 메뉴 단축키와 키 입력이 같이 와도 한 번
   });
 });
 
+describe('onceAcross — ⌘A: 같은 누름이 메뉴·키 두 갈래로 오면 한 번, 키로 빠르게 두 번은 두 번(칸 → 문서)', () => {
+  it('키로 연달아 누른 건 둘 다 산다', () => {
+    const gate = onceAcross(400);
+    expect(gate('key', 1000)).toBe(true);
+    expect(gate('key', 1150)).toBe(true);
+  });
+  it('키 뒤 400ms 안의 메뉴(같은 누름)는 버린다 — 반대 순서도', () => {
+    const gate = onceAcross(400);
+    expect(gate('key', 1000)).toBe(true);
+    expect(gate('menu', 1050)).toBe(false);
+    expect(gate('menu', 2000)).toBe(true);
+    expect(gate('key', 2100)).toBe(false);
+  });
+  it('짝을 하나 버렸으면 다음 누름은 산다(세 번째를 또 버리지 않게)', () => {
+    const gate = onceAcross(400);
+    expect(gate('key', 1000)).toBe(true);
+    expect(gate('menu', 1010)).toBe(false);
+    expect(gate('key', 1200)).toBe(true);
+  });
+  it('400ms 지나면 다른 갈래도 산다(메뉴바를 마우스로 누른 것)', () => {
+    const gate = onceAcross(400);
+    expect(gate('key', 1000)).toBe(true);
+    expect(gate('menu', 1500)).toBe(true);
+  });
+});
+
 describe('dedupeMs — 메뉴·키 입력 두 갈래가 늦게 와도 토글이 두 번 돌지 않게', () => {
   it('토글(메모·사이드바·작업 패널…)은 400ms', () => {
     expect(dedupeMs({ type: 'memo' })).toBe(400);
@@ -155,6 +180,11 @@ describe('설정 — 메뉴 Chammo > 설정…(⌘,)', () => {
   });
 });
 
+describe('하니터 — 메뉴 Chammo > 하니터(하네스)…, 탑바 버튼과 같은 동작(2026-10-01 사용자)', () => {
+  it('메뉴 항목은 하니터 열고 닫기', () => expect(menuAction('harnitor')).toEqual({ type: 'harnitor' }));
+  it('토글이라 메뉴·키 두 갈래가 겹쳐도 한 번만(400ms)', () => expect(dedupeMs({ type: 'harnitor' })).toBe(400));
+});
+
 describe('⌘₩(⌘`) — 보고 있는 창 크게·되돌리기 (2026-09-30: ⌘Enter 는 채팅 끊고 보내기로)', () => {
   it('한글 입력 상태의 ⌘₩', () => expect(shortcutFor(k('₩', { meta: true }))).toEqual({ type: 'maximizePane' }));
   it('영문 입력 상태의 ⌘`', () => expect(shortcutFor(k('`', { meta: true }))).toEqual({ type: 'maximizePane' }));
@@ -169,4 +199,17 @@ describe('⌘₩(⌘`) — 보고 있는 창 크게·되돌리기 (2026-09-30: �
 describe('종료 — ⌘Q 는 Rust 가 독에서 빼고(웹뷰로 안 옴), ⌥⌘Q "완전히 종료"만 묻는다', () => {
   it('완전히 종료는 묻기', () => expect(menuAction('app_quit_all')).toEqual({ type: 'quitAsk' }));
   it('⌘Q 는 웹뷰 동작이 아니다', () => expect(menuAction('app_quit')).toBeNull());
+});
+
+describe('⌘[ ⌘] — 스페이스 뒤로·앞으로(왔던 곳, 2026-10-04 QA D2)', () => {
+  const mk = (key: string, code: string) => ({ key, code, metaKey: true, shiftKey: false, altKey: false, ctrlKey: false });
+  it('⌘[ = 뒤로, ⌘] = 앞으로(한글 입력이어도 키 자리로)', () => {
+    expect(shortcutFor(mk('[', 'BracketLeft'))).toEqual({ type: 'nav', dir: -1 });
+    expect(shortcutFor(mk(']', 'BracketRight'))).toEqual({ type: 'nav', dir: 1 });
+    expect(shortcutFor(mk('「', 'BracketLeft'))).toEqual({ type: 'nav', dir: -1 });
+  });
+  it('⌘⇧[ ⌘⇧] (탭 넘기기 관례)는 안 잡는다', () => {
+    expect(shortcutFor({ ...mk('{', 'BracketLeft'), shiftKey: true })).toBeNull();
+  });
+  it('빠르게 여러 번 = 여러 칸(거르지 않는다)', () => expect(dedupeMs({ type: 'nav', dir: -1 })).toBe(0));
 });

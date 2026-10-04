@@ -9,7 +9,7 @@ __doc__ = """Read and answer a session's choice prompt (AskUserQuestion) for it.
 하위 세션이 띄운 선택지 창(AskUserQuestion)을 비서가 읽고 대신 답한다.
 
   scripts/choice show   <session id>            -> the pending questions with numbered options
-  scripts/choice answer <session id> <n> ...    -> one option number per question (e.g. answer 92dd8234 1 1)
+  scripts/choice answer <session id> <n> ...    -> one option number per question (e.g. answer c0ffee01 1 1)
 
 Session id = the 8-char id in `claude agents --json`; the app hands it to you when it says a session is stuck.
 Questions come from the transcript (jsonl) — `claude logs` is raw escape codes. Answers are keys typed into

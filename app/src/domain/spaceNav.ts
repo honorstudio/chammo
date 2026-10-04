@@ -5,7 +5,7 @@ import type { TaskEvent } from './tasks';
 const DAY = 24 * 3600_000;
 
 /** 일마다 주인 참모 — send 의 from, 사용자가 나중에 붙인 own 이 있으면 그것. 둘 다 없으면 주인 없음 */
-function owners(events: TaskEvent[]): Map<string, string> {
+export function owners(events: TaskEvent[]): Map<string, string> {
   const m = new Map<string, string>();
   for (const e of events) if ((e.type === 'send' || e.type === 'own') && e.from) m.set(e.task, e.from);
   return m;
@@ -42,12 +42,14 @@ export function orphanSends(events: TaskEvent[], now: number): { task: string; t
 }
 
 /** scripts/show 기록(show.jsonl)에서 그 세션이 보여 준 파일 — 최근 순, 같은 파일은 한 번 */
-export function shownFiles(log: string, sessionId: string): { path: string; ts: string }[] {
-  const rows: { path: string; ts: string }[] = [];
+export function shownFiles(log: string, sessionId: string): { path: string; ts: string; at?: ShowAt }[] {
+  const rows: { path: string; ts: string; at?: ShowAt }[] = [];
   for (const line of log.split('\n')) {
     try {
-      const r = JSON.parse(line) as { path?: string; ts?: string; from?: string };
-      if (r.from === sessionId && r.path) rows.push({ path: r.path, ts: r.ts ?? '' });
+      const r = JSON.parse(line) as { path?: string; ts?: string; from?: string; at?: unknown; gone?: boolean };
+      const at = parseAt(r.at);
+      // gone = 앱이 기록을 읽을 때 본 폴더에서도 못 찾은 파일(reader::read_show_log) — 눌러도 열 게 없어 뺀다
+      if (r.from === sessionId && r.path && !r.gone) rows.push({ path: r.path, ts: r.ts ?? '', ...(at ? { at } : {}) });
     } catch {
       // 깨진 줄은 건너뛴다
     }
@@ -68,6 +70,21 @@ export function holderMap(events: TaskEvent[], orchIds: string[], resolve: (targ
     }
   }
   return m;
+}
+
+/** 대화 기록으로 잡은 세션(`claude --bg … -n`·SendMessage)을 holderMap 에 더한다 — 단 작업 기록에 이미 주인이 있으면 그 세션은 건너뛴다.
+ *  task handoff 로 넘긴 세션이 처음 띄운 참모 대시보드에 계속 남았다(2026-10-02 사용자). 원본 지도는 안 바꾼다 */
+export function addSpawned(m: Map<string, string[]>, spawned: Map<string, Set<string>>, resolve: (target: string) => string | undefined, orchIds: string[]): Map<string, string[]> {
+  const out = new Map(m);
+  for (const [oid, names] of spawned) {
+    for (const n of names) {
+      const id = resolve(n);
+      if (!id || orchIds.includes(id) || m.has(id)) continue;
+      const list = out.get(id) ?? [];
+      if (!list.includes(oid)) out.set(id, [...list, oid]);
+    }
+  }
+  return out;
 }
 
 /** since(ms) 뒤에 지켜보는 세션들이 띄운 파일 — 오래된 순. 채팅 뷰에선 이걸 스페이스 위 모달로 띄운다 */
@@ -151,4 +168,51 @@ export function shellCommands(cmd: string): string[][] {
   }
   endCmd();
   return out;
+}
+
+/** 띄운 문서를 둘 참모 — 참모가 띄웠으면 그 참모, 하위 세션이 띄웠으면 그 세션을 잡은 참모(첫째), 모르면 null(지금 보는 화면).
+ *  참모1 이 띄운 문서가 보고 있던 참모2 화면에 뜨고, 참모1 탭엔 없었다(2026-10-01 사용자) */
+export function showOwner(by: string, orchIds: string[], holders: Map<string, string[]>): string | null {
+  if (!by) return null;
+  if (orchIds.includes(by)) return by;
+  return holders.get(by)?.find((o) => orchIds.includes(o)) ?? null;
+}
+
+/** 하니터 열기·닫기 → 다음 화면. 하니터도 탭마다 기억되는 스페이스 화면 하나('h:')다 — 큐레이션처럼.
+ * 앱 전체에 고정이면 다른 탭으로 가도 남아 있고 다른 참모가 띄운 게 가려졌다(2026-10-02 사용자).
+ * before = 그 탭에서 열기 전에 보던 화면(닫으면 거기로), home = 그 참모 대시보드 */
+export function harnitorPick(pick: string, req: 'open' | 'close' | 'toggle', before: string, home: string): { pick: string; before: string } {
+  return screenPick('h:', pick, req, before, home);
+}
+
+/** 도구(t:, 프로젝트 도구는 t:<폴더>) — 위 막대 아이콘으로 여닫는다(2026-10-05 사용자). 열면 참모 HQ 기준 't:' */
+export function toolsPick(pick: string, req: 'open' | 'close' | 'toggle', before: string, home: string): { pick: string; before: string } {
+  return screenPick('t:', pick, req, before, home);
+}
+
+function screenPick(key: string, pick: string, req: 'open' | 'close' | 'toggle', before: string, home: string): { pick: string; before: string } {
+  const open = pick.startsWith(key);
+  const want = req === 'toggle' ? !open : req === 'open';
+  if (want === open) return { pick, before };
+  return want ? { pick: key, before: pick } : { pick: before || home, before: '' };
+}
+
+/** 채팅 뷰의 focus — 터미널 뷰로 넘어가지 않고 스페이스에 그 대시보드를 띄운다(2026-10-02 사용자 "보여 달라기 전엔 CLI 안 보여 줘도").
+ *  세션 → 그 프로젝트 대시보드(참모면 참모 대시보드), 프로젝트 이름 → 그 프로젝트(세션이 안 떠 있어도). 모르면 null */
+export function focusPick(
+  plan: { session: string } | { project: string },
+  sessions: { id: string; cwd: string; project: string }[],
+  groups: { name: string; root: string }[],
+  idle: { name: string; root: string }[],
+  orchIds: string[],
+): string | null {
+  const rootOf = (name: string) => groups.find((g) => g.name === name)?.root ?? idle.find((g) => g.name === name)?.root;
+  if ('session' in plan) {
+    if (orchIds.includes(plan.session)) return `o:${plan.session}`;
+    const s = sessions.find((x) => x.id === plan.session);
+    const r = s && (rootOf(s.project) ?? groups.find((g) => s.cwd === g.root || s.cwd.startsWith(`${g.root}/`))?.root);
+    return r ? `p:${r}` : null;
+  }
+  const r = rootOf(plan.project);
+  return r ? `p:${r}` : null;
 }

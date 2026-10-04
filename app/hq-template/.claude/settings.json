@@ -13,5 +13,10 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "deny": [
+      "AskUserQuestion"
+    ]
   }
 }

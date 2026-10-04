@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
-import { tr } from '../../i18n';
+import { assistant, tr } from '../../i18n';
 import { IconPage, IconPlus } from '../Icons';
 import { dragPath } from './dragPath';
 
@@ -30,7 +30,7 @@ export function PagesHome({ pages, titleOf, onOpen, onNew }: { pages: string[]; 
     <div className="cv-dash">
       <header className="cv-page-head">
         <span className="cv-avatar lg mine"><IconPage /></span>
-        <div className="cv-titles"><h1>{tr('내 페이지', 'My pages')}</h1><p>{tr(`페이지 ${pages.length} · 사용자 개인 공간(참모도 같이 씀)`, `${pages.length} pages · your space`)}</p></div>
+        <div className="cv-titles"><h1>{tr('내 페이지', 'My pages')}</h1><p>{tr(`페이지 ${pages.length} · 개인 공간(${assistant()}도 같이 씀)`, `${pages.length} pages · your space`)}</p></div>
         <button className="cv-btn solid head-act" onClick={onNew}><IconPlus />{tr('새 페이지', 'New page')}</button>
       </header>
       <section className="cv-files">

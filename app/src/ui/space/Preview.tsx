@@ -5,14 +5,17 @@ import type { DashFile } from '../../domain/dashboard';
 import { keepCenter, parseBox, resizeBox, type Box, type Edge } from '../../domain/previewBox';
 import { docUrl, kindOf, pageDoc } from '../../domain/reader';
 import { FIT, IMAGE_STEPS, stepZoom, withZoom, zoomable, zoomLabel, zoomOf, type ZoomMap } from '../../domain/readerZoom';
-import { tr } from '../../i18n';
+import { assistant, josa, tr } from '../../i18n';
+import { sendPreview } from '../../domain/sendPreview';
 import { IconClose, IconMaximize, IconRestore, IconSend, IconZoomIn, IconZoomOut } from '../Icons';
 import { Confirm } from '../OrchDialogs';
 import { ExtraDoc, frameStyle, HtmlFrame, loadZoom, MdDoc, ZOOM_KEY } from '../reader/Reader';
 import { flashWhenReady } from '../flash';
 import { isCurationHtml } from '../../domain/curation';
+import { webTitle } from '../../domain/webUrl';
+import { WebPage } from '../WebPage';
 
-const fileName = (p: string) => (p.startsWith('data:') ? tr('붙인 그림', 'Attached image') : p.split('/').pop() ?? p);
+const fileName = (p: string) => (p.startsWith('data:') ? tr('붙인 그림', 'Attached image') : kindOf(p) === 'web' ? webTitle(p) : p.split('/').pop() ?? p);
 const BOX_KEY = 'previewBox';
 const loadBox = () => { try { return parseBox(localStorage.getItem(BOX_KEY)); } catch { return null; } };
 const EDGES: Edge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
@@ -65,22 +68,24 @@ export function Preview({ f, onClose, onAttach, onSendText, onCuration }: { f: D
     try { await onSendText(cur.text); setCurSent('sent'); } catch { setCurSent('fail'); }
   };
 
-  // 큐레이션 시안의 "참모에게 보내기" — 프레임이 {hodoc:'curation', text} 를 보낸다. 보내고 답을 돌려준다(2026-09-30 사용자)
+  // 큐레이션 시안의 "참모에게 보내기" — 프레임이 {hodoc:'curation', text} 를 보낸다(2026-09-30 사용자). 바로 안 보내고 미리보기로 묻는다 —
+  // 시안 안 글은 웹에서 긁어 온 것일 수 있고, iframe 안 클릭이 사람 동작인지 부모는 못 본다(프롬프트 주입 막기, 2026-10-03)
   const sendText = useRef(onSendText);
   sendText.current = onSendText;
+  const [askSend, setAskSend] = useState<{ text: string; reply: (ok: boolean, error?: string) => void } | null>(null);
   useEffect(() => {
     const on = (e: MessageEvent) => {
       const d = e.data as { hodoc?: string; text?: string } | null;
       if (d?.hodoc !== 'curation' || typeof d.text !== 'string') return;
       const reply = (ok: boolean, error?: string) => (e.source as Window | null)?.postMessage({ hodoc: 'curation-sent', ok, error }, '*');
       if (!sendText.current) { reply(false, tr('여기선 못 보내 — 결과 복사로', "Can't send from here — copy instead")); return; }
-      sendText.current(d.text).then(() => reply(true), (err) => reply(false, String(err)));
+      setAskSend({ text: d.text, reply });
     };
     window.addEventListener('message', on);
     return () => window.removeEventListener('message', on);
   }, []);
   useEffect(() => {
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.isComposing && !document.querySelector('.od-back')) { e.preventDefault(); e.stopPropagation(); close.current(); } };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.isComposing && !document.querySelector('.od-back') && !(e.target as HTMLElement | null)?.classList?.contains('wp-addr')) { e.preventDefault(); e.stopPropagation(); close.current(); } };
     const msg = (e: MessageEvent) => { if ((e.data as { hodoc?: string } | null)?.hodoc === 'esc') close.current(); };
     window.addEventListener('keydown', key, true);
     window.addEventListener('message', msg);
@@ -211,10 +216,16 @@ export function Preview({ f, onClose, onAttach, onSendText, onCuration }: { f: D
               <button onClick={() => zoomBy.current(1)} title={tr('확대 (⌘+)', 'Zoom in (⌘+)')} aria-label={tr('확대', 'Zoom in')}><IconZoomIn /></button>
             </div>
           )}
-          {onAttach && <button className="pv-attach" onClick={() => { onAttach(); onClose(); }} title={tr('지금 채팅 입력칸에 이 파일을 붙인다 — 보낼 때 참모가 경로로 받아 본다', 'Attach to the chat input — the assistant gets the path')}>{tr('채팅에 붙이기', 'Attach to chat')}</button>}
+          {onAttach && <button className="pv-attach" onClick={() => { onAttach(); onClose(); }} title={tr(`지금 채팅 입력칸에 이 파일을 붙인다 — 보낼 때 ${josa(assistant(), '이', '가')} 경로로 받아 본다`, 'Attach to the chat input — the assistant gets the path')}>{tr('채팅에 붙이기', 'Attach to chat')}</button>}
           <button className="pv-ic" onClick={() => setMax((m) => !m)} title={max ? tr('원래 크기 (⌘`)', 'Restore (⌘`)') : tr('가득 채우기 (⌘`)', 'Fill (⌘`)')} aria-label={max ? tr('원래 크기', 'Restore') : tr('가득 채우기', 'Fill')}>{max ? <IconRestore /> : <IconMaximize />}</button>
           <button className="pv-ic" onClick={onClose} title={tr('닫기 (Esc)', 'Close (Esc)')} aria-label={tr('닫기', 'Close')}><IconClose /></button>
         </div>
+        {askSend && (() => {
+          const p = sendPreview(askSend.text);
+          return <Confirm title={tr(`${assistant()}에게 보낼까? (${p.chars}자)`, `Send to ${assistant()}? (${p.chars} chars)`)} body={`${p.lines.join('\n')}${p.more ? '\n…' : ''}`} ok={tr('보내기', 'Send')}
+            onCancel={() => { askSend.reply(false, tr('취소했어', 'Cancelled')); setAskSend(null); }}
+            onOk={() => { const a = askSend; setAskSend(null); sendText.current?.(a.text).then(() => a.reply(true), (err) => a.reply(false, String(err))); }} />;
+        })()}
         {askReset && <Confirm title={tr('처음부터 할까?', 'Start over?')} body={tr('이 시안에 표시한 것과 메모를 모두 지워.', 'Clears every mark and note on this draft.')} ok={tr('지우기', 'Clear')} danger
           onCancel={() => setAskReset(false)} onOk={() => { setAskReset(false); curFrame()?.postMessage({ hodoc: 'cur-cmd', cmd: 'reset' }, '*'); }} />}
         {cur && (
@@ -227,11 +238,12 @@ export function Preview({ f, onClose, onAttach, onSendText, onCuration }: { f: D
             <span className="pv-cur-hint">{tr('블록에 올리고 1·2·3', 'Hover a block, press 1·2·3')}</span>
             <button className="pv-cur-reset" onClick={() => setAskReset(true)}>{tr('처음부터', 'Reset')}</button>
             {onSendText && <button className={`pv-cur-send ${curSent}`} disabled={curSent === 'sending'} onClick={() => void sendCur()}>
-              <IconSend />{curSent === 'sending' ? tr('보내는 중', 'Sending') : curSent === 'sent' ? tr('보냈어 — 다시 보내기', 'Sent — send again') : curSent === 'fail' ? tr('못 보냄 — 다시', 'Failed — retry') : tr('참모에게 보내기', 'Send to assistant')}</button>}
+              <IconSend />{curSent === 'sending' ? tr('보내는 중', 'Sending') : curSent === 'sent' ? tr('보냈어 — 다시 보내기', 'Sent — send again') : curSent === 'fail' ? tr('못 보냄 — 다시', 'Failed — retry') : tr(`${assistant()}에게 보내기`, 'Send to assistant')}</button>}
           </div>
         )}
         <div className="content" ref={content}>
-          {kind === 'image' ? <div className={`pv-image ${sized ? '' : 'fit'}`} ref={imgBox}><img src={f.path.startsWith('data:') ? f.path : docUrl(f.path)} alt="" onLoad={(e) => setNatural(e.currentTarget.naturalWidth / (window.devicePixelRatio || 1))}
+          {kind === 'web' ? <WebPage url={f.path} />
+            : kind === 'image' ? <div className={`pv-image ${sized ? '' : 'fit'}`} ref={imgBox}><img src={f.path.startsWith('data:') ? f.path : docUrl(f.path)} alt="" onLoad={(e) => setNatural(e.currentTarget.naturalWidth / (window.devicePixelRatio || 1))}
               style={sized ? { maxWidth: 'none', maxHeight: 'none', width: `${natural * zoom / 100}px` } : undefined} />{boxAt && <span className="pv-box" style={boxAt} />}</div>
             : kind === 'html' ? <div className="rd-zoombox"><HtmlFrame className="rd-frame" src={docUrl(f.path)} zoom={zoom} point={at} pointKey={f.ts} sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads" /></div>
             : kind === 'pdf' ? <Suspense fallback={<div className="dim">{tr('여는 중', 'Opening')}</div>}><PdfView path={f.path} zoom={zoom} at={f.at} atKey={f.ts} /></Suspense>

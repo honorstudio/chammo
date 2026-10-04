@@ -114,3 +114,11 @@ describe('gridKeyOf — 알림·결정 대기함에서 "그 세션으로" 갈 �
     expect(gridKeyOf({ kind: 'project', project: 'project-x-app' }, { space: true, office: false })).toBe('p:project-x-app');
   });
 });
+
+describe('visiblePanes 고정 — 고정한 참모 탭은 끌어 둔 순서보다 앞(2026-10-03 사용자 "PC 에도")', () => {
+  it('pinned(고정 순서) 먼저, 나머지는 끌어 둔 순서', () => {
+    const s: PaneLayout = { ...EMPTY_LAYOUT, order: ['c', 'b', 'a'] };
+    expect(visiblePanes(['a', 'b', 'c'], s).shown).toEqual(['c', 'b', 'a']);
+    expect(visiblePanes(['a', 'b', 'c'], s, ['a']).shown).toEqual(['a', 'c', 'b']);
+  });
+});

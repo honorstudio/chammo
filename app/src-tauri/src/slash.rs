@@ -57,14 +57,17 @@ pub fn scan(dot_claude: &Path, out: &mut Vec<SlashItem>) {
     }
 }
 
-/// 프로젝트 것 먼저(같은 이름이면 프로젝트가 이긴다), 그다음 사용자 것
+/// 프로젝트 것 먼저(같은 이름이면 프로젝트가 이긴다), 그다음 사용자 것, 끝에 켜진 플러그인 것
 #[tauri::command]
 pub fn slash_commands(cwd: Option<String>) -> Vec<SlashItem> {
     let mut out = Vec::new();
-    if let Some(c) = cwd.filter(|c| !c.is_empty()) {
-        scan(&Path::new(&c).join(".claude"), &mut out);
+    if let Some(c) = cwd.as_deref().filter(|c| !c.is_empty()) {
+        scan(&Path::new(c).join(".claude"), &mut out);
     }
-    scan(&Path::new(&crate::config::home()).join(".claude"), &mut out);
+    let root = cwd.as_deref().filter(|c| !c.is_empty()).map(Path::new);
+    scan(&crate::tools::cfg().dir, &mut out); // CLAUDE_CONFIG_DIR 를 쓰면 그 밑(도구 화면과 같은 자리)
+    // 켜진 플러그인 스킬 — `플러그인:스킬`(Claude 가 부르는 이름 그대로, 2026-10-04 사용자)
+    out.extend(crate::tools_plugins::enabled_plugin_skills(root).into_iter().map(|s| SlashItem { name: s.name, desc: shorten(&s.desc, 80), kind: "skill" }));
     out
 }
 
@@ -94,11 +97,70 @@ pub fn scan_spawn_lines(path: &Path, from: u64) -> std::io::Result<SpawnLines> {
         if buf.last() != Some(&b'\n') { break; } // 아직 쓰는 중인 줄 — 다음에
         pos += n as u64;
         let text = String::from_utf8_lossy(&buf);
-        if text.contains("\"tool_use\"") && (text.contains("claude --bg") || text.contains("\"SendMessage\"")) && lines.len() < 5000 {
+        if keep_spawn_line(&text) && lines.len() < 5000 {
             lines.push(text.trim_end().to_string());
         }
     }
     Ok(SpawnLines { lines, next: pos })
+}
+
+/// 고를 줄 — 세션 띄움(`claude --bg`)·말 건(SendMessage)·분신(Agent 호출, 띄운 결과의 agentId, 끝 알림 <task-notification>).
+/// 분신은 domain/subAgents foldAgents 가 읽는다(2026-10-02 사용자 — 대시보드 제목 아래 분신 목록)
+fn keep_spawn_line(text: &str) -> bool {
+    let tool = text.contains("\"tool_use\"") && (text.contains("claude --bg") || text.contains("\"SendMessage\"") || text.contains("\"name\":\"Agent\""));
+    let user = text.starts_with("{") && (text.contains("\"type\":\"user\"") || text.contains("\"type\":\"queued_command\""));
+    tool || (user && (text.contains("<task-notification>") || (text.contains("\"toolUseResult\"") && text.contains("\"agentId\""))))
+}
+
+/// subagent_tails 결과 — 분신 하나의 기록 꼬리
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SubTail {
+    pub tool_use_id: String,
+    pub agent_id: String,
+    /// 기록 파일 마지막으로 고친 때(ms) — 오래 조용하면 화면이 '조용함'
+    pub mtime: u64,
+    pub tail: String,
+}
+
+/// subagents 폴더에서 물어본 호출(tool_use id)의 분신 기록 꼬리 — meta.json 의 toolUseId 로 짝을 찾는다. 끝 max 바이트, 잘린 첫 줄은 버린다
+pub fn read_subagent_tails(dir: &Path, ids: &[String], max: u64) -> Vec<SubTail> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else { return out };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(agent) = name.strip_prefix("agent-").and_then(|n| n.strip_suffix(".meta.json")) else { continue };
+        let Ok(meta) = std::fs::read_to_string(e.path()) else { continue };
+        let Some(tid) = serde_json::from_str::<serde_json::Value>(&meta).ok().and_then(|v| v["toolUseId"].as_str().map(String::from)) else { continue };
+        if !ids.contains(&tid) { continue; }
+        let Ok(mut f) = std::fs::File::open(dir.join(format!("agent-{agent}.jsonl"))) else { continue };
+        let md = f.metadata().ok();
+        let len = md.as_ref().map(|m| m.len()).unwrap_or(0);
+        let mtime = md.and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
+        let start = len.saturating_sub(max);
+        let _ = f.seek(SeekFrom::Start(start));
+        let mut buf = Vec::new();
+        if f.read_to_end(&mut buf).is_err() { continue; }
+        let mut text = String::from_utf8_lossy(&buf).into_owned();
+        if start > 0 { text = text.split_once('\n').map(|(_, r)| r.to_string()).unwrap_or_default(); }
+        out.push(SubTail { tool_use_id: tid, agent_id: agent.to_string(), mtime, tail: text });
+    }
+    out
+}
+
+/// 참모(session_id) 가 띄운 분신들의 기록 꼬리 — ~/.claude/projects/<프로젝트>/<세션>/subagents
+#[tauri::command]
+pub async fn subagent_tails(session_id: String, ids: Vec<String>) -> Vec<SubTail> {
+    if !valid_sid(&session_id) || ids.is_empty() { return Vec::new(); }
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::platform::home();
+        let Ok(rd) = std::fs::read_dir(format!("{home}/.claude/projects")) else { return Vec::new() };
+        let Some(dir) = rd.flatten().map(|e| e.path().join(&session_id).join("subagents")).find(|p| p.is_dir()) else { return Vec::new() };
+        read_subagent_tails(&dir, &ids, 128 * 1024)
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -187,5 +249,35 @@ mod tests {
         std::fs::write(&p, format!("{a}\n")).unwrap();
         assert_eq!(scan_spawn_lines(&p, 99_999).unwrap().lines.len(), 1);
         let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn 분신_띄움과_끝_알림_줄도_고른다() {
+        let p = std::env::temp_dir().join(format!("chammo-agents-{}.jsonl", std::process::id()));
+        let call = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Agent","input":{"description":"조사"}}]}}"#;
+        let launched = r#"{"type":"user","toolUseResult":{"status":"async_launched","agentId":"a1"},"message":{"content":[{"type":"tool_result","tool_use_id":"t1"}]}}"#;
+        let note = r#"{"type":"user","message":{"content":"<task-notification>\n<tool-use-id>t1</tool-use-id>\n<status>completed</status>"}}"#;
+        let queued = r#"{"type":"queue-operation","content":"<task-notification>\n<tool-use-id>t1</tool-use-id>"}"#; // 줄 서기 기록 — 뺀다
+        let plain = r#"{"type":"user","message":{"content":"그냥 말"}}"#;
+        let mid = r#"{"type":"attachment","attachment":{"type":"queued_command","prompt":"<task-notification>\n<tool-use-id>t1</tool-use-id>"}}"#; // 일하는 도중 끝 알림
+        std::fs::write(&p, format!("{call}\n{launched}\n{note}\n{queued}\n{plain}\n{mid}\n")).unwrap();
+        assert_eq!(scan_spawn_lines(&p, 0).unwrap().lines, vec![call.to_string(), launched.to_string(), note.to_string(), mid.to_string()]);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn 분신_기록_꼬리는_띄운_호출_id_로_찾는다() {
+        let dir = std::env::temp_dir().join(format!("chammo-sub-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("agent-a1.meta.json"), r#"{"agentType":"general-purpose","description":"조사","toolUseId":"t1"}"#).unwrap();
+        std::fs::write(dir.join("agent-a1.jsonl"), format!("{}\n{{\"type\":\"assistant\"}}\n", "x".repeat(200))).unwrap();
+        std::fs::write(dir.join("agent-a2.meta.json"), r#"{"toolUseId":"t2"}"#).unwrap(); // 안 물어본 것 — 뺀다
+        let got = read_subagent_tails(&dir, &["t1".to_string(), "t9".to_string()], 64);
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].tool_use_id.as_str(), got[0].agent_id.as_str()), ("t1", "a1"));
+        assert_eq!(got[0].tail, "{\"type\":\"assistant\"}\n"); // 끝 64바이트 — 잘린 첫 줄은 버린다
+        assert!(got[0].mtime > 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

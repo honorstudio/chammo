@@ -1,5 +1,5 @@
 """HQ 템플릿 scripts/task 테스트 (공개판): python3 -m unittest discover -s app/hq-tests"""
-import contextlib, importlib.machinery, importlib.util, io, json, os, pathlib, subprocess, sys, tempfile, unittest
+import contextlib, datetime, importlib.machinery, importlib.util, io, json, os, pathlib, subprocess, sys, tempfile, unittest
 
 sys.dont_write_bytecode = True  # 템플릿 폴더에 __pycache__ 가 생기지 않게
 
@@ -157,6 +157,115 @@ class Project(unittest.TestCase):
         agents = [{'id': 'o1', 'name': 'blog-bot', 'cwd': '/u/automation/blog-bot/content'}, {'id': 'o2', 'cwd': '/u/automation/blog-bot-old'}]
         self.assertEqual(task.project_of('o1', agents, '/dev', ['/u/automation/blog-bot/']), 'blog-bot')
         self.assertIsNone(task.project_of('o2', agents, '/dev', ['/u/automation/blog-bot']))
+
+
+class OrchRoles(unittest.TestCase):
+    # 2026-10-04 참모 역할 — send 가 project·fromName 을 남기고, 같은 프로젝트를 다른 참모가 최근 맡겨 왔으면 한 번 알린다
+    DEV = '/d/dev'
+    AGENTS = [
+        {'id': 'aaaa0001', 'name': '참모 · 뽀삐', 'cwd': '/d/hq'},
+        {'id': 'bbbb0002', 'name': '참모-2 · 두부', 'cwd': '/d/hq'},
+        {'id': 'cccc0003', 'name': 'alpha-shop', 'cwd': '/d/dev/alpha-shop'},
+        {'id': 'dddd0004', 'name': 'fix-cart', 'cwd': '/d/dev/alpha-shop/.claude/worktrees/fix-cart'},
+    ]
+
+    def run_send(self, target, me='aaaa0001', seed=(), agents=None, again=False):
+        task.load_agents = lambda: agents if agents is not None else self.AGENTS
+        task.DEV = self.DEV
+        out, err = io.StringIO(), io.StringIO()
+        old = os.environ.get('CLAUDE_JOB_DIR')
+        os.environ['CLAUDE_JOB_DIR'] = f'/h/.claude/jobs/{me}'
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                task.LOG = os.path.join(d, 'tasks.jsonl')
+                task.LESSONS = os.path.join(d, 'lessons')
+                with open(task.LOG, 'w', encoding='utf-8') as f:
+                    for e in seed:
+                        f.write(json.dumps(e, ensure_ascii=False) + '\n')
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    task.main(['send', target, '장바구니 버그'])
+                    if again:
+                        task.main(['send', target, '장바구니 버그 2'])
+                events = [json.loads(l) for l in open(task.LOG, encoding='utf-8')]
+        finally:
+            if old is None:
+                os.environ.pop('CLAUDE_JOB_DIR', None)
+            else:
+                os.environ['CLAUDE_JOB_DIR'] = old
+        return err.getvalue(), events
+
+    def ago(self, h):
+        return (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=h)).isoformat(timespec='seconds')
+
+    def test_send_는_프로젝트와_시킨_참모_기본_이름을_남긴다(self):
+        _, ev = self.run_send('fix-cart')
+        self.assertEqual((ev[-1]['project'], ev[-1]['fromName'], ev[-1]['from']), ('alpha-shop', '참모', 'aaaa0001'))
+
+    def test_참모에게_넘긴_일은_프로젝트를_안_적는다(self):
+        _, ev = self.run_send('참모-2 · 두부')
+        self.assertNotIn('project', ev[-1])
+
+    def test_다른_참모가_최근_맡긴_프로젝트면_한_번_알린다(self):
+        seed = [{'ts': self.ago(20), 'type': 'send', 'task': 't1', 'target': 'alpha-shop', 'from': 'bbbb0002'}]
+        err, _ = self.run_send('fix-cart', seed=seed, again=True)
+        self.assertEqual(err.count('참모-2 · 두부'), 1, err)
+        self.assertIn('handoff', err)
+
+    def test_기록의_fromName_과_project_로도_찾는다(self):
+        seed = [{'ts': self.ago(5), 'type': 'send', 'task': 't1', 'target': '사라진-세션', 'from': 'zzzz9999', 'fromName': '참모-2', 'project': 'alpha-shop'}]
+        err, _ = self.run_send('alpha-shop', seed=seed)
+        self.assertIn('참모-2 · 두부', err)
+
+    def test_알리지_않는_때(self):
+        old = [{'ts': self.ago(4 * 24), 'type': 'send', 'task': 't1', 'target': 'alpha-shop', 'from': 'bbbb0002'}]
+        mine = [{'ts': self.ago(2), 'type': 'send', 'task': 't2', 'target': 'alpha-shop', 'from': 'aaaa0001'}]
+        gone = [{'ts': self.ago(2), 'type': 'send', 'task': 't3', 'target': 'alpha-shop', 'from': 'eeee0005', 'fromName': '참모-5'}]
+        other_project = [{'ts': self.ago(2), 'type': 'send', 'task': 't4', 'target': 'beta', 'from': 'bbbb0002', 'project': 'beta-blog'}]
+        for seed in (old, mine, gone, other_project):
+            err, _ = self.run_send('alpha-shop', seed=seed)
+            self.assertNotIn('handoff', err, seed)
+
+    def test_넘겨받은_일은_새_주인으로(self):
+        # 두부가 맡긴 일을 뽀삐가 넘겨받았으면(own) 뽀삐 몫 — 겹침 아님
+        seed = [{'ts': self.ago(5), 'type': 'send', 'task': 't1', 'target': 'alpha-shop', 'from': 'bbbb0002'},
+                {'ts': self.ago(4), 'type': 'own', 'task': 't1', 'from': 'aaaa0001'}]
+        err, _ = self.run_send('alpha-shop', seed=seed)
+        self.assertNotIn('handoff', err)
+
+    def test_HQ_도우미에게_보낸_일은_프로젝트를_안_적는다(self):
+        agents = self.AGENTS + [{'id': 'hhhh0007', 'name': 'sns-post', 'cwd': '/d/dev/hq'}]
+        old = task.HQ
+        task.HQ = '/d/dev/hq'
+        try:
+            _, ev = self.run_send('sns-post', agents=agents)
+        finally:
+            task.HQ = old
+        self.assertNotIn('project', ev[-1])
+
+    def test_번호를_다시_쓴_새_참모의_옛_기록은_겹침이_아니다(self):
+        seed = [{'ts': self.ago(20), 'type': 'send', 'task': 't1', 'target': 'alpha-shop', 'from': 'old00002', 'fromName': '참모-2'}]
+        with tempfile.TemporaryDirectory() as d:
+            born = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=5)).timestamp() * 1000
+            with open(os.path.join(d, 'orch-roles.json'), 'w', encoding='utf-8') as f:
+                json.dump({'참모-2': {'role': '', 'at': 1, 'born': born}}, f)
+            self.assertIsNone(task.overlap_with('alpha-shop', '참모', self.AGENTS, seed, roles_dir=d))
+            self.assertEqual(task.overlap_with('alpha-shop', '참모', self.AGENTS, seed), '참모-2 · 두부')
+
+    def test_겹침_확인이_터져도_send_는_성공(self):
+        seed = [{'ts': 12345, 'type': 'send', 'task': 't1', 'target': 'alpha-shop', 'from': 'bbbb0002'}, {'type': 'own'}]
+        err, ev = self.run_send('alpha-shop', seed=seed)
+        self.assertEqual(ev[-1]['target'], 'alpha-shop')
+
+    def test_handoff_는_새_주인_기본_이름도_남긴다(self):
+        task.load_agents = lambda: self.AGENTS
+        with tempfile.TemporaryDirectory() as d:
+            task.LOG = os.path.join(d, 'tasks.jsonl')
+            with open(task.LOG, 'w', encoding='utf-8') as f:
+                f.write(json.dumps({'ts': self.ago(1), 'type': 'send', 'task': 't1', 'target': 'alpha-shop', 'from': 'aaaa0001'}) + '\n')
+            with contextlib.redirect_stdout(io.StringIO()):
+                task.handoff('alpha-shop', '두부')
+            last = [json.loads(l) for l in open(task.LOG, encoding='utf-8')][-1]
+        self.assertEqual((last['type'], last['from'], last['fromName']), ('own', 'bbbb0002', '참모-2'))
 
 
 if __name__ == '__main__':

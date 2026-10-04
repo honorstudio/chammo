@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dashFiles, dashRequests } from './dashboard';
+import { dashFiles, dashRequests, ownBrowserLine, paneState } from './dashboard';
 import type { ChatItem } from './chat';
 import type { TaskEvent } from './tasks';
 
@@ -56,5 +56,33 @@ describe('dashFiles — 대시보드 "주고받은 파일"(참모·맡긴 세션
   it('사용자가 채팅에 붙인 그림도(data URL)', () => {
     const imgs = [{ ts: '2026-09-30T04:00:00Z', src: 'data:image/png;base64,A' }];
     expect(dashFiles(log, 'b1', [], imgs)[0]).toEqual({ path: 'data:image/png;base64,A', ts: '2026-09-30T04:00:00Z', by: 'me' });
+  });
+});
+
+describe('ownBrowserLine — 참모 자기 브라우저는 위 큰 칸이 아니라 아래 세션 칸 줄 맨 앞 칸 하나로(2026-10-03 사용자 "아래쪽에만")', () => {
+  const live = { profile: 'orch', pid: 1, sessionPid: 2, url: 'https://mail.example.com/', title: '메일', tabs: [], tool: '화면 읽기', toolAt: 0, busy: true, ts: 0 };
+  it('세션 칸과 같은 모양 — 이름·브라우저·꼬리, 일하는 중이면 run', () => {
+    const l = ownBrowserLine('참모-5', { live, tail: ['> 지시'] });
+    expect(l).toMatchObject({ name: '참모-5', status: 'run', line: '화면 읽기', tail: ['> 지시'], browser: live });
+    expect(l.id.startsWith('orch-web:')).toBe(true);
+  });
+  it('쉬면 wait(쉼)', () => expect(ownBrowserLine('참모', { live: { ...live, busy: false } }).status).toBe('wait'));
+});
+
+// 답하고 다음 지시를 기다리는 살아 있는 세션 칸 머리가 '끝남'이었다 — agents 의 state done 은 '턴 끝'이지 꺼짐이 아니다(2026-10-04 QA N4).
+// 꺼진 세션은 목록에서 빠져 따로(끔·끝남 줄) 보인다 — 목록에 있으면 살아 있다
+describe('paneState — 대시보드 세션 칸 머리 상태', () => {
+  it('재현: 턴을 끝낸(state done) 살아 있는 세션은 끝남이 아니라 지금 상태(쉼)', () => {
+    expect(paneState({ finished: true }, { status: 'wait' })).toEqual({ status: 'wait', finished: true });
+  });
+  it('턴을 끝내고 물어본 세션은 기다림', () => {
+    expect(paneState({ finished: true }, { status: 'ask' })).toEqual({ status: 'ask', finished: true });
+  });
+  it('활동을 아직 못 읽었으면 쉼', () => {
+    expect(paneState({ finished: true }, undefined)).toEqual({ status: 'wait', finished: true });
+    expect(paneState({}, undefined)).toEqual({ status: 'wait', finished: false });
+  });
+  it('일하는 세션은 일하는 중', () => {
+    expect(paneState({}, { status: 'run' })).toEqual({ status: 'run', finished: false });
   });
 });

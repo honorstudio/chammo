@@ -79,7 +79,7 @@ describe('foldTasks — 이벤트를 카드로', () => {
   });
 
   it('대상은 세션 id나 이름 어느 쪽으로 적어도 찾는다', () => {
-    const s = { ...sess('3ae12f81', 'working'), name: 'ops-hub' };
+    const s = { ...sess('abc12345', 'working'), name: 'ops-hub' };
     const cards = foldTasks([ev({ type: 'send', task: 'k1', target: 'ops-hub', title: 't' })], [s]);
     expect(cards[0]?.status).toBe('working');
   });

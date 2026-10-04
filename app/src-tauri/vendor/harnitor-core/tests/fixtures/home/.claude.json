@@ -1,0 +1,25 @@
+{
+  "projects": {
+    "FIXTURE_HOME": {},
+    "FIXTURE_HOME/projects/proj-a": {
+      "disabledMcpServers": [
+        "ghostserver"
+      ]
+    },
+    "FIXTURE_HOME/Projects/proj-a": {},
+    "FIXTURE_HOME/projects/proj-b": {},
+    "FIXTURE_HOME/projects/vanished": {}
+  },
+  "mcpServers": {
+    "userserver": {
+      "command": "user-mcp",
+      "args": []
+    },
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest"
+      ]
+    }
+  }
+}

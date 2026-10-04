@@ -23,6 +23,8 @@ export function asksUser(reply: string): boolean {
   return ASK_END.test(tail) || ASK_WORDS.test(tail) || PERMIT.test(text.slice(-400));
 }
 
+/** 메뉴·대시보드·사무실이 다 이 판단 하나를 쓴다(2026-10-04 오피스 A 1단계). 메뉴는 CLI 의 awaiting(state blocked + status idle)을
+ *  '물어봄'으로 써서 사무실 '끝남'과 갈렸는데, awaiting 은 턴을 끝낸 세션 대부분(실측 21개 중 12개)이라 '묻는다'는 뜻이 아니다 — 답 글로 본다 */
 export function activityStatus(state: SessionState, a: Activity, now: number): ActivityStatus {
   if (state === 'working') return 'working';
   if (state === 'blocked') return 'blocked';
@@ -33,6 +35,24 @@ export function activityStatus(state: SessionState, a: Activity, now: number): A
   if (a.prompt && a.prompt.ts > a.reply.ts) return 'idle'; // 지시를 받고 답 없이 멈춤
   return (a.reply.asks ?? asksUser(a.reply.text)) ? 'asks' : 'done';
 }
+
+/** 대화 기록 없이 세션만으로 — 기록을 아직 못 읽었을 때 메뉴 표시(awaiting 은 안 본다, 위 activityStatus) */
+export const sessionStatus = (s: { state: SessionState }): ActivityStatus => activityStatus(s.state, {}, 0);
+
+/** 상태 말 — 메뉴·대시보드·사무실 현황판이 이 표 하나만 쓴다 */
+export function statusWord(st: ActivityStatus): string {
+  switch (st) {
+    case 'working': return tr('일하는 중', 'Working');
+    case 'asks': return tr('물어봄', 'Asking');
+    case 'blocked': return tr('기다림', 'Waiting');
+    case 'done': return tr('답함', 'Replied'); // 살아서 다음 지시를 기다림 — '끝남'은 꺼진 세션 줄(StoppedStrip)에만(2026-10-04 QA N4)
+    case 'stale': return tr('잠듦', 'Asleep');
+    default: return tr('쉼', 'Idle');
+  }
+}
+
+/** 표시 갈래 — run = 도는 고리, ask = 노란 점, idle = 표시 없음 */
+export const statusTone = (st: ActivityStatus): 'run' | 'ask' | 'idle' => (st === 'working' ? 'run' : st === 'asks' || st === 'blocked' ? 'ask' : 'idle');
 
 const NOTIFY: ActivityStatus[] = ['done', 'asks', 'blocked'];
 

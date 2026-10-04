@@ -110,29 +110,29 @@ describe('speakable — 앞 문장만 읽어도 끝의 질문은 꼭', () => {
 
 describe('pickSay — 참모가 따로 써 넘긴 음성용 말(scripts/say)', () => {
   const log = [
-    '{"ts":"2026-09-28T01:00:00.000Z","session":"7272b9b1-95f2","text":"옛 턴"}',
+    '{"ts":"2026-09-28T01:00:00.000Z","session":"dead0004-0000","text":"옛 턴"}',
     '깨진 줄',
-    '{"ts":"2026-09-28T01:05:00.000Z","session":"7272b9b1-95f2","text":"원인 찾았어."}',
+    '{"ts":"2026-09-28T01:05:00.000Z","session":"dead0004-0000","text":"원인 찾았어."}',
     '{"ts":"2026-09-28T01:05:30.000Z","session":"aaaa1111-0000","text":"다른 세션"}',
-    '{"ts":"2026-09-28T01:06:00.000Z","session":"7272b9b1-95f2","text":"재시작할까?"}',
+    '{"ts":"2026-09-28T01:06:00.000Z","session":"dead0004-0000","text":"재시작할까?"}',
   ].join('\n');
   it('그 세션 것 중 이번 턴(지시 뒤) 것만 이어 붙인다', () => {
-    expect(pickSay(parseSay(log), '7272b9b1', '2026-09-28T01:04:00.000Z')?.text).toBe('원인 찾았어. 재시작할까?');
+    expect(pickSay(parseSay(log), 'dead0004', '2026-09-28T01:04:00.000Z')?.text).toBe('원인 찾았어. 재시작할까?');
   });
   // 2026-09-28 아이맥: 사람 지시 없이 세션 회신으로 참모가 여러 번 답하면, 지시 뒤 말을 전부 붙여 읽어
   // 첫 말을 또 하고 둘째 답엔 첫째+둘째를 같이 읽었다 → 이미 읽은 말(spoken 까지)은 빼고 새로 넘긴 것만
   it('이미 읽은 말은 빼고 새로 넘긴 것만', () => {
     const lines = parseSay(log);
-    const first = pickSay(lines, '7272b9b1', '2026-09-28T01:04:00.000Z', '');
+    const first = pickSay(lines, 'dead0004', '2026-09-28T01:04:00.000Z', '');
     expect(first).toEqual({ text: '원인 찾았어. 재시작할까?', last: '2026-09-28T01:06:00.000Z' });
-    const more = parseSay(log + '\n{"ts":"2026-09-28T01:09:00.000Z","session":"7272b9b1-95f2","text":"다 됐어."}');
-    expect(pickSay(more, '7272b9b1', '2026-09-28T01:04:00.000Z', first!.last)).toEqual({ text: '다 됐어.', last: '2026-09-28T01:09:00.000Z' });
-    expect(pickSay(lines, '7272b9b1', '2026-09-28T01:04:00.000Z', first!.last)).toBeUndefined();
+    const more = parseSay(log + '\n{"ts":"2026-09-28T01:09:00.000Z","session":"dead0004-0000","text":"다 됐어."}');
+    expect(pickSay(more, 'dead0004', '2026-09-28T01:04:00.000Z', first!.last)).toEqual({ text: '다 됐어.', last: '2026-09-28T01:09:00.000Z' });
+    expect(pickSay(lines, 'dead0004', '2026-09-28T01:04:00.000Z', first!.last)).toBeUndefined();
   });
 
   it('한 번에 너무 많으면 마지막 세 개만 (저녁 내내 말이 몰려 6,500자를 읽었다)', () => {
-    const many = Array.from({ length: 6 }, (_, i) => `{"ts":"2026-09-28T02:0${i}:00.000Z","session":"7272b9b1-95f2","text":"말${i}"}`).join('\n');
-    expect(pickSay(parseSay(many), '7272b9b1', '')?.text).toBe('말3 말4 말5');
+    const many = Array.from({ length: 6 }, (_, i) => `{"ts":"2026-09-28T02:0${i}:00.000Z","session":"dead0004-0000","text":"말${i}"}`).join('\n');
+    expect(pickSay(parseSay(many), 'dead0004', '')?.text).toBe('말3 말4 말5');
   });
 
   // 2026-09-29: 이어서 켠(--resume) 참모는 agents 의 짧은 id(a1b2c3d4)와 대화 id(e5f6a7b8-…)가 다르다.
@@ -145,8 +145,8 @@ describe('pickSay — 참모가 따로 써 넘긴 음성용 말(scripts/say)', (
   });
 
   it('이번 턴에 없으면 undefined — 앱 규칙으로 읽는다', () => {
-    expect(pickSay(parseSay(log), '7272b9b1', '2026-09-28T01:07:00.000Z')).toBeUndefined();
-    expect(pickSay(parseSay(''), '7272b9b1', '')).toBeUndefined();
+    expect(pickSay(parseSay(log), 'dead0004', '2026-09-28T01:07:00.000Z')).toBeUndefined();
+    expect(pickSay(parseSay(''), 'dead0004', '')).toBeUndefined();
   });
 });
 

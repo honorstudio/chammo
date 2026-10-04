@@ -248,7 +248,10 @@ pub fn serve<R: Runtime>(_ctx: tauri::UriSchemeContext<'_, R>, req: Request<Vec<
 
 /// 리더 패널에 탭으로 연다 — 메인 창을 앞으로, 패널이 닫혀 있으면 연다
 pub fn open<R: Runtime>(app: &tauri::AppHandle<R>, paths: Vec<String>) {
-    let ok: Vec<String> = paths.into_iter().filter_map(|p| safe_path(&p, &home())).map(|p| p.to_string_lossy().into_owned()).collect();
+    // http(s) 주소는 그대로(주소 미리보기 — webpage.rs), 파일은 홈 폴더 안만
+    let ok: Vec<String> = paths.into_iter()
+        .filter_map(|p| if crate::webpage::parse_web_url(&p).is_some() { Some(p) } else { safe_path(&p, &home()).map(|p| p.to_string_lossy().into_owned()) })
+        .collect();
     if ok.is_empty() {
         return;
     }
@@ -460,35 +463,104 @@ pub fn read_doc_text(path: String) -> Result<String, String> {
     std::fs::read_to_string(p).map_err(|e| e.to_string())
 }
 
-/// 스페이스(리더 편집)에서 고친 md 저장 — 홈 안 이미 있는 md·txt 만, 임시 파일에 쓰고 바꿔 끼운다(쓰다 멈춰도 원본이 안 깨지게)
+/// 편집기가 알던 판과 지금 파일이 달라 저장하지 않았다 — 앞쪽(SpaceEditor)이 이 글로 알아보고 바깥 판을 합친다
+pub const CHANGED_OUTSIDE: &str = "CHANGED_OUTSIDE";
+
+/// 파일 도장(바뀐 시각 나노초:크기) — 열어 둔 문서를 밖이 고쳤나 가볍게 본다(글을 통째로 읽지 않게). 없으면 None
+pub fn stamp_of(p: &Path) -> Option<String> {
+    let m = std::fs::metadata(p).ok()?;
+    let t = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    Some(format!("{t}:{}", m.len()))
+}
+
+/// 열어 둔 문서의 도장 — 지워졌거나 이름이 바뀌었으면 오류
 #[tauri::command]
-pub fn write_doc_text(path: String, text: String) -> Result<(), String> {
+pub fn doc_stamp(path: String) -> Result<String, String> {
+    let p = safe_path(&path, &home()).ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
+    stamp_of(&p).ok_or_else(|| tr("파일을 못 읽었어", "Could not read the file").into())
+}
+
+/// 알던 판(expected)이 지금 파일과 같을 때만 쓴다 — 다르면 CHANGED_OUTSIDE(밖에서 고친 줄을 덮지 않게, 2026-10-04 QA D1).
+/// 없는 파일은 다시 만들지 않는다(지워졌거나 이름이 바뀐 것). 임시 파일에 쓰고 바꿔 끼운다(쓰다 멈춰도 원본이 안 깨지게)
+fn write_checked(p: &Path, text: &str, expected: Option<&str>, keep: impl Fn(&Path)) -> Result<String, String> {
+    let now = std::fs::read(p).map_err(|e| e.to_string())?;
+    if expected.is_some_and(|x| x.as_bytes() != now.as_slice()) {
+        return Err(CHANGED_OUTSIDE.into());
+    }
+    keep(p);
+    let tmp = p.with_extension("chammo-tmp");
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, p).map_err(|e| e.to_string())?;
+    stamp_of(p).ok_or_else(|| tr("파일을 못 읽었어", "Could not read the file").into())
+}
+
+/// 스페이스(리더 편집)에서 고친 md 저장 — 홈 안 이미 있는 md·txt 만. expected = 편집기가 마지막으로 본 파일 글(없으면 확인 없이).
+/// 돌려주는 값 = 쓴 뒤 파일 도장
+#[tauri::command]
+pub fn write_doc_text(path: String, text: String, expected: Option<String>) -> Result<String, String> {
     let p = safe_path(&path, &home()).ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
     if !editable(&p) {
         return Err(tr("마크다운·글 파일만 고칠 수 있어", "Only Markdown and text files can be edited").into());
     }
-    keep_history(&p);
-    let tmp = p.with_extension("chammo-tmp");
-    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &p).map_err(|e| e.to_string())
+    write_checked(&p, &text, expected.as_deref(), keep_history)
+}
+
+/// 충돌에서 진 판을 history 에 남긴다 — tag "outside" = '내 판으로 저장' 으로 덮일 바깥 판(초까지 이름에 — 덮기 전 판 남기기는
+/// 분마다 첫 판 하나라 같은 분에 앞서 저장했으면 바깥 판이 빠졌다, 2026-10-04 실측), 그 밖 = 내 판(바깥 판 불러오기·파일이 없어져 못 씀)
+#[tauri::command]
+pub fn keep_doc_version(path: String, text: String, tag: Option<String>) -> Result<(), String> {
+    // 파일이 지워졌거나 이름이 바뀐 뒤에도 남겨야 한다 — 그땐 폴더로 홈 안인지 보고 이름을 붙인다
+    let p = safe_path(&path, &home())
+        .or_else(|| {
+            let q = Path::new(&path);
+            Some(safe_path(q.parent()?.to_str()?, &home())?.join(q.file_name()?))
+        })
+        .ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
+    let dir = history_dir(&p).ok_or(tr("history 폴더를 못 만들었어", "Could not create the history folder"))?;
+    // 분마다 한 장(같은 분이면 새 판으로 덮는다 — 파일이 없는 동안 칠 때마다 쌓이지 않게). 이름은 keep_history 와 같은 분 단위로 시작해
+    // 오래된 것부터 지우는 정렬(이름 순)에서 제자리에 선다
+    std::fs::write(dir.join(history_name(tag.as_deref(), std::time::SystemTime::now())), text).map_err(|e| e.to_string())?;
+    trim_history(&dir);
+    Ok(())
+}
+
+/// 진 판 이름 — 바깥 판은 초까지(하나도 빠지지 않게), 내 판은 분마다 한 장(파일이 없는 동안 칠 때마다 쌓이지 않게)
+fn history_name(tag: Option<&str>, at: std::time::SystemTime) -> String {
+    let secs = at.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    match tag {
+        Some("outside") => format!("{}-outside-{:02}.md", secs / 60, secs % 60),
+        _ => format!("{}-mine.md", secs / 60),
+    }
+}
+
+fn now_minute() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() / 60).unwrap_or(0)
+}
+
+/// 파일마다 최근 50개만
+fn trim_history(dir: &Path) {
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        let mut v: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+        v.sort();
+        let extra = v.len().saturating_sub(50);
+        for x in v.into_iter().take(extra) { let _ = std::fs::remove_file(x); }
+    }
+}
+
+fn history_dir(p: &Path) -> Option<PathBuf> {
+    let key: String = p.to_string_lossy().chars().map(|c| if c.is_alphanumeric() || c == '.' || c == '-' { c } else { '_' }).collect();
+    let dir = crate::config::data_file("history").join(key);
+    std::fs::create_dir_all(&dir).ok().map(|_| dir)
 }
 
 /// 고치기 전 판을 앱 데이터 폴더/history/<파일>/ 에 남긴다(파일마다 최근 50개) — 편집기에서 한 번에 지워진 게 저장돼
 /// 페이지가 날아간 적이 있다(2026-09-30 사용자). 같은 분 안에서는 한 번만(타자마다 쌓이지 않게)
 fn keep_history(p: &Path) {
     let Ok(old) = std::fs::read(p) else { return };
-    let key: String = p.to_string_lossy().chars().map(|c| if c.is_alphanumeric() || c == '.' || c == '-' { c } else { '_' }).collect();
-    let dir = crate::config::data_file("history").join(key);
-    if std::fs::create_dir_all(&dir).is_err() { return; }
-    let minute = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() / 60).unwrap_or(0);
-    let file = dir.join(format!("{minute}.md"));
+    let Some(dir) = history_dir(p) else { return };
+    let file = dir.join(format!("{}.md", now_minute()));
     if !file.exists() { let _ = std::fs::write(&file, old); }
-    if let Ok(rd) = std::fs::read_dir(&dir) {
-        let mut v: Vec<_> = rd.flatten().map(|e| e.path()).collect();
-        v.sort();
-        let extra = v.len().saturating_sub(50);
-        for x in v.into_iter().take(extra) { let _ = std::fs::remove_file(x); }
-    }
+    trim_history(&dir);
 }
 
 /// 폴더 안 md 파일(바로 아래만) + 하위 폴더 이름들 안 md — 채팅 뷰 메뉴의 프로젝트 문서(docs/, docs/decisions/)·내 페이지. 홈 안만, 이름 순
@@ -606,6 +678,17 @@ pub async fn page_doc(path: String) -> Result<String, String> {
 }
 
 /// 엑셀·키노트·PSD 같은 건 QuickLook 이 그린 첫 장 그림(PNG) — 앱 데이터 폴더/ql 에 두고 경로를 돌려준다(hodoc 으로 보인다)
+/// 썸네일 폴더 — 원본 전체 경로마다 따로(<ql>/<경로 FNV-1a 해시>). 파일 이름으로만 두면 다른 폴더의
+/// 같은 이름(v2.html 등)이 서로의 썸네일을 받아 갔다(2026-10-02 사용자: 대시보드 카드와 연 파일이 다름)
+fn ql_dir(base: &std::path::Path, p: &std::path::Path) -> std::path::PathBuf {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in p.to_string_lossy().as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    base.join(format!("{h:016x}"))
+}
+
 #[tauri::command]
 pub async fn ql_thumb(path: String) -> Result<String, String> {
     if !cfg!(target_os = "macos") {
@@ -613,7 +696,7 @@ pub async fn ql_thumb(path: String) -> Result<String, String> {
     }
     let p = safe_path(&path, &home()).ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
     tauri::async_runtime::spawn_blocking(move || {
-        let dir = crate::config::data_file("ql");
+        let dir = ql_dir(&crate::config::data_file("ql"), &p);
         let _ = std::fs::create_dir_all(&dir);
         // 원본보다 새 그림이 이미 있으면 그대로(앱을 다시 켤 때마다 qlmanage 를 돌리지 않게)
         let done = dir.join(format!("{}.png", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
@@ -751,9 +834,15 @@ pub fn trash_page(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// scripts/show 기록 꼬리(최근 64KB) — 채팅 뷰 스페이스가 세션마다 보여 준 파일을 모은다. 파싱은 domain/spaceNav
+/// scripts/show 기록 꼬리(최근 64KB) — 채팅 뷰 스페이스가 세션마다 보여 준 파일을 모은다. 파싱은 domain/spaceNav.
+/// 닫힌 워크트리 안 경로는 본 폴더 자리로 풀고, 못 찾은 줄엔 gone 을 단다(mobile_files::resolve_show_log — 폰도 이 함수로 읽는다)
 #[tauri::command]
 pub fn read_show_log() -> String {
+    let h = home();
+    crate::mobile_files::resolve_show_log(&read_show_tail(), &std::fs::canonicalize(&h).unwrap_or(h))
+}
+
+fn read_show_tail() -> String {
     use std::io::{Read, Seek, SeekFrom};
     let Ok(mut f) = std::fs::File::open(crate::config::data_file("show.jsonl")) else { return String::new() };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
@@ -872,6 +961,19 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod ql_dir_tests {
+    #[test]
+    fn 이름이_같아도_경로가_다르면_썸네일_폴더가_다르다() {
+        let base = std::path::Path::new("/d/ql");
+        let a = super::ql_dir(base, std::path::Path::new("/h/a/avatar/v2.html"));
+        let b = super::ql_dir(base, std::path::Path::new("/h/b/oms-first-mail/v2.html"));
+        assert_ne!(a, b);
+        assert_eq!(a, super::ql_dir(base, std::path::Path::new("/h/a/avatar/v2.html")));
+        assert!(a.starts_with(base));
+    }
 }
 
 #[cfg(test)]
@@ -1070,5 +1172,88 @@ mod tests {
         let all = format!("{a}깨진 줄\n{{\"ts\":\"2\",\"path\":\"/b.pdf\"}}\n");
         assert_eq!(new_paths(&all, a.len()), (vec!["/b.pdf".to_string()], all.len()));
         assert_eq!(new_paths(a, 999).0, vec!["/a.md".to_string()]); // 파일이 줄었으면 처음부터
+    }
+
+    // 열어 둔 문서를 밖(참모·세션)이 고친 뒤 편집기가 저장하면 밖에서 고친 줄이 말없이 사라졌다(2026-10-04 QA D1)
+    fn doc_dir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("chammo-doc-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn 재현_밖에서_고친_파일은_편집기가_알던_판이_아니면_덮지_않는다() {
+        let d = doc_dir("cas");
+        let p = d.join("메모.md");
+        std::fs::write(&p, "# 장보기\n\n우유\n").unwrap();
+        // 참모가 끝에 한 줄
+        std::fs::write(&p, "# 장보기\n\n우유\n\n사과\n").unwrap();
+        let kept = std::cell::RefCell::new(0);
+        let r = super::write_checked(&p, "# 장보기 메모\n\n우유\n", Some("# 장보기\n\n우유\n"), |_| *kept.borrow_mut() += 1);
+        assert_eq!(r, Err(super::CHANGED_OUTSIDE.to_string()));
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "# 장보기\n\n우유\n\n사과\n", "바깥 줄이 그대로");
+        assert_eq!(*kept.borrow(), 0, "안 쓰면 이전 판도 안 남긴다");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 알던_판이_맞으면_쓰고_새_도장을_준다() {
+        let d = doc_dir("ok");
+        let p = d.join("a.md");
+        std::fs::write(&p, "옛 글\n").unwrap();
+        let kept = std::cell::RefCell::new(0);
+        let stamp = super::write_checked(&p, "새 글\n", Some("옛 글\n"), |_| *kept.borrow_mut() += 1).unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "새 글\n");
+        assert_eq!(*kept.borrow(), 1, "덮기 전 판은 history 로");
+        assert_eq!(Some(stamp), super::stamp_of(&p));
+        assert!(!d.join("a.chammo-tmp").exists());
+        // 알던 판을 안 주면(옛 부르는 쪽) 예전처럼 쓴다
+        assert!(super::write_checked(&p, "또\n", None, |_| {}).is_ok());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 지워지거나_이름이_바뀐_파일은_다시_만들지_않는다() {
+        let d = doc_dir("gone");
+        let p = d.join("없어짐.md");
+        assert!(super::write_checked(&p, "글\n", Some("글\n"), |_| {}).is_err());
+        assert!(!p.exists());
+        assert_eq!(super::stamp_of(&p), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 도장은_내용이_바뀌면_달라진다() {
+        let d = doc_dir("stamp");
+        let p = d.join("b.md");
+        std::fs::write(&p, "하나\n").unwrap();
+        let a = super::stamp_of(&p).unwrap();
+        std::fs::write(&p, "하나 둘\n").unwrap();
+        assert_ne!(super::stamp_of(&p).unwrap(), a);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn history_는_최근_50개_내_판도_같은_줄에서() {
+        let d = doc_dir("hist");
+        for m in 100..160u32 { std::fs::write(d.join(format!("{m}.md")), "").unwrap(); }
+        std::fs::write(d.join("159-mine.md"), "내 판").unwrap();
+        std::fs::write(d.join("99-mine.md"), "아주 옛 내 판").unwrap(); // 분 번호 자리수가 달라도 이름 순 = 문자 순 — 지금 분 번호(8자리)에선 같은 자리
+        super::trim_history(&d);
+        let mut left: Vec<String> = std::fs::read_dir(&d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left.len(), 50);
+        assert!(left.contains(&"159-mine.md".to_string()), "가장 새 내 판은 남는다");
+        assert!(!left.contains(&"100.md".to_string()), "가장 옛 것부터 지운다");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 진_판_이름은_바깥_판은_초까지_내_판은_분마다() {
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(29_850_823 * 60 + 7);
+        assert_eq!(super::history_name(Some("outside"), t), "29850823-outside-07.md");
+        assert_eq!(super::history_name(None, t), "29850823-mine.md");
+        assert_eq!(super::history_name(Some("../x"), t), "29850823-mine.md", "모르는 표시는 이름에 안 넣는다");
     }
 }

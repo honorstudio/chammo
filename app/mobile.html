@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- 상태 막대(시간·배터리 줄) 색을 직접 — 안 정하면 iOS 가 페이지 맨 위 색을 뽑아 칠해서, 키보드로 페이지가 밀리면 회색이 됐다(2026-10-03 사용자) -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="theme-color" content="#f6f6f8" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#151518" media="(prefers-color-scheme: dark)" />
+    <meta name="apple-mobile-web-app-title" content="참모" />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <!-- 홈 화면 앱 시작 그림 — 웹을 띄우기 전 흰 화면 대신 앱 바탕색 + 파란 모찌(앱 스플래시와 같은 모양, 2026-10-03). 주요 아이폰 크기만 -->
+    <link rel="apple-touch-startup-image" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/assets/splash-light-1170x2532.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" href="/assets/splash-dark-1170x2532.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/assets/splash-light-1179x2556.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" href="/assets/splash-dark-1179x2556.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/assets/splash-light-1206x2622.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" href="/assets/splash-dark-1206x2622.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 420px) and (device-height: 912px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/assets/splash-light-1260x2736.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 420px) and (device-height: 912px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" href="/assets/splash-dark-1260x2736.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/assets/splash-light-1290x2796.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" href="/assets/splash-dark-1290x2796.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/assets/splash-light-1320x2868.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" href="/assets/splash-dark-1320x2868.png" />
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png" />
+    <title>참모</title>
+    <!-- 첫 그림 — JS 가 오기 전부터 보이는 파란 모찌(홈 화면 시작 그림과 같은 자리·크기·색). 앱이 첫 화면을 받으면 걷는다(ui/mobile/bootSplash).
+         예전엔 JS(565KB)가 온 뒤에야 모찌가 나오고 2.5초에 걷혀 '불러오는 중…' 글자 화면이 떴다(2026-10-04 사용자 LTE). 폰 서버 CSP 가 인라인 스크립트를 막으니 그림·스타일만 -->
+    <style>
+      html { background: #f6f6f8; }
+      #boot-splash { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: #f6f6f8; opacity: 1; transition: opacity .15s ease; }
+      #boot-splash.out { opacity: 0; pointer-events: none; }
+      #boot-splash svg { width: 96px; height: 96px; animation: boot-breathe 1.6s ease-in-out infinite; }
+      @keyframes boot-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+      @media (prefers-color-scheme: dark) { html, #boot-splash { background: #151518; } }
+      @media (prefers-reduced-motion: reduce) { #boot-splash svg { animation: none; } #boot-splash { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <div id="boot-splash" role="status" aria-label="여는 중"><svg viewBox="0 0 40 40" aria-hidden="true"><path fill="#2f74e0" d="M20 7C27 7 31 11.5 32.2 17.5C33.2 22.5 36.5 25 36 29C35.4 33.5 29 34.5 20 34.5C11 34.5 4.6 33.5 4 29C3.5 25 6.8 22.5 7.8 17.5C9 11.5 13 7 20 7Z"/><ellipse fill="#fff" cx="13.7" cy="22.5" rx="2.29" ry="3.33"/><ellipse fill="#fff" cx="26.3" cy="22.5" rx="2.29" ry="3.33"/></svg></div>
+    <div id="root"></div>
+    <script type="module" src="/src/mobile.tsx"></script>
+  </body>
+</html>

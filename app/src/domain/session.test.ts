@@ -8,11 +8,11 @@ const DEV = '/Users/acme/Desktop/dev';
 
 // `claude agents --json` 실물 모양 (2026-09-25). background는 id·state, interactive는 pid·status
 const RAW = [
-  { id: '270af8a2', cwd: `${DEV}/quest-game`, kind: 'background', startedAt: 1, sessionId: 's1', name: 'add-deduction-game-mode', state: 'blocked' },
+  { id: 'face0005', cwd: `${DEV}/quest-game`, kind: 'background', startedAt: 1, sessionId: 's1', name: 'add-deduction-game-mode', state: 'blocked' },
   { pid: 6268, cwd: `${DEV}/honor-orchestrator`, kind: 'interactive', startedAt: 2, sessionId: 's2', name: 'honor-orchestrator-e7', status: 'busy' },
-  { id: '7ce32610', cwd: `${DEV}/ops-hub/.claude/worktrees/oms`, kind: 'background', startedAt: 3, sessionId: 's3', name: 'oms', state: 'working' },
-  { id: 'cd1de525', cwd: `${DEV}/todo-api`, kind: 'background', startedAt: 4, sessionId: 's4', name: 'spike-1', state: 'done' },
-  { id: '9d43b05c', cwd: `${DEV}/ops-hub`, kind: 'background', startedAt: 5, sessionId: 's5', name: 'main', state: 'idle' },
+  { id: '1a2b3c4d', cwd: `${DEV}/ops-hub/.claude/worktrees/oms`, kind: 'background', startedAt: 3, sessionId: 's3', name: 'oms', state: 'working' },
+  { id: 'cafe0006', cwd: `${DEV}/todo-api`, kind: 'background', startedAt: 4, sessionId: 's4', name: 'spike-1', state: 'done' },
+  { id: '5e6f7a8b', cwd: `${DEV}/ops-hub`, kind: 'background', startedAt: 5, sessionId: 's5', name: 'main', state: 'idle' },
 ];
 
 describe('parseAgents — claude agents --json을 앱 세션으로', () => {
@@ -57,7 +57,7 @@ describe('parseAgents — claude agents --json을 앱 세션으로', () => {
 
   it('id는 background의 짧은 id, interactive는 sessionId로 대신한다', () => {
     const s = parseAgents(JSON.stringify(RAW), DEV);
-    expect(s.find((x) => x.name === 'oms')?.id).toBe('7ce32610');
+    expect(s.find((x) => x.name === 'oms')?.id).toBe('1a2b3c4d');
     expect(s.find((x) => x.name === 'honor-orchestrator-e7')?.id).toBe('s2');
   });
 
@@ -360,5 +360,34 @@ describe('dev 폴더 자체에서 연 세션 — 프로젝트가 아니라 "프�
     const g = groupByProject(parseAgents(JSON.stringify(raw), DEV), `${DEV}/honor-orchestrator`);
     expect(g.loose.map((x) => x.id)).toEqual(['a', 'b']);
     expect(g.projects.map((p) => p.name)).toEqual(['todo-api']);
+  });
+});
+
+describe('별명이 실린 진짜 이름도 참모 — 참모-3 · 별명', () => {
+  it('참모 판정·대표·다음 번호는 기본 이름으로', () => {
+    expect(isOrchestratorName('참모 · 하니터')).toBe(true);
+    expect(isOrchestratorName('참모-3 · 하니터')).toBe(false);
+    expect(nextOrchestratorName(['참모', '참모-3 · 업데이트'])).toBe('참모-4');
+  });
+});
+
+describe('언어를 바꿔도 참모는 참모 — 기본 이름이 참모↔Chammo 로 바뀌어도(2026-10-03 QA 18번: 도우미 칸으로 밀리고 새 참모가 떴다)', () => {
+  const hq = `${DEV}/honor-orchestrator`;
+  const xs = () => parseAgents(JSON.stringify([
+    { id: 'a', cwd: hq, kind: 'background', state: 'working', name: '참모' },
+    { id: 'b', cwd: hq, kind: 'background', state: 'working', name: '참모-2 · 둘째' },
+    { id: 'h', cwd: hq, kind: 'background', state: 'working', name: 'launch-post' },
+  ]), DEV);
+  it('영어로 바꿔도 한국어 기본 이름 세션은 참모, 도우미는 도우미', () => {
+    setLang('en');
+    const g = groupByProject(xs(), hq);
+    expect(g.orchestrators.map((s) => s.id)).toEqual(['a', 'b']);
+    expect(g.helpers.map((s) => s.id)).toEqual(['h']);
+    expect(isOrchestratorName('참모')).toBe(true);
+  });
+  it('한국어로 바꿔도 영어 기본 이름 세션은 참모', () => {
+    setLang('ko');
+    expect(isOrchestratorName('Chammo')).toBe(true);
+    expect(groupByProject(parseAgents(JSON.stringify([{ id: 'c', cwd: hq, kind: 'background', state: 'working', name: 'Chammo-2 · Dev' }]), DEV), hq).helpers).toEqual([]);
   });
 });

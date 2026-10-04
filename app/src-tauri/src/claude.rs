@@ -114,19 +114,20 @@ pub async fn list_sessions() -> Result<String, String> {
 /// 돌려주는 건 `backgrounded · <id> · <이름>` 한 줄
 #[tauri::command]
 pub async fn spawn_session(cwd: String, name: String, prompt: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
-        let out = crate::platform::command(claude_bin())
-            .current_dir(&cwd)
-            .args(["--bg", "--dangerously-skip-permissions", "-n", &name, &prompt])
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-        }
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || spawn_blocking(&cwd, &name, &prompt)).await.map_err(|e| e.to_string())?
+}
+
+/// spawn_session 의 몸통 — 폰 서버(mobile.rs)도 같은 길로 띄운다
+pub fn spawn_blocking(cwd: &str, name: &str, prompt: &str) -> Result<String, String> {
+    let out = crate::platform::command(claude_bin())
+        .current_dir(cwd)
+        .args(["--bg", "--dangerously-skip-permissions", "-n", name, prompt])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 fn alive(pid: i32) -> bool {
@@ -137,6 +138,17 @@ fn alive(pid: i32) -> bool {
 /// 그 사이에 이어붙이면 CLI 가 "아직 돈다"며 복사본을 만든다(실측 2026-09-26)
 fn still_listed(session_id: &str) -> bool {
     run(&["agents", "--json"]).map(|j| j.contains(session_id)).unwrap_or(false)
+}
+
+/// 그 짧은 번호의 세션이 목록에 있나(직접 답하기 카드 — 꺼진 세션엔 안 친다). state done(일 끝남 판단)이어도 살아 있어
+/// 입력을 받는다 — 카드를 올리고 턴을 끝낸 세션을 Claude 가 done 으로 표시해 카드가 '꺼짐'으로 막혔다(2026-10-03 QA)
+pub(crate) fn listed_alive(short_id: &str) -> bool {
+    if short_id.is_empty() {
+        return false;
+    }
+    let Ok(j) = run(&["agents", "--json"]) else { return false };
+    let v: serde_json::Value = serde_json::from_str(&j).unwrap_or_default();
+    v.as_array().is_some_and(|a| a.iter().any(|x| x["id"] == short_id))
 }
 
 fn wait_until(mut done: impl FnMut() -> bool, secs: u64) -> bool {
@@ -214,6 +226,17 @@ pub async fn stop_session(id: String) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// stop_session 의 몸통 — 폰 서버(참모 재우기)도 같은 길로
+pub fn stop_blocking(id: &str) -> Result<String, String> {
+    run(&["stop", id]).map(|s| s.trim().to_string())
+}
+
+/// remove_session 의 몸통 — 폰 서버(참모 제거)도 같은 길로. 꺼진 세션이면 stop 은 실패해도 넘어간다
+pub fn remove_blocking(id: &str) -> Result<String, String> {
+    let _ = run(&["stop", id]);
+    run(&["rm", id]).map(|s| s.trim().to_string())
+}
+
 /// 세션을 끄고 목록에서도 지운다(`claude stop` + `claude rm`) — 꺼진 참모가 "꺼진 세션"에 계속 남지 않게(2026-09-30 사용자).
 /// 대화 기록 파일(~/.claude/projects)은 남는다
 #[tauri::command]
@@ -236,28 +259,28 @@ pub fn read_tasks() -> String {
 /// 파싱은 프론트 domain/activity.ts. 없는 세션은 결과에서 빠진다
 #[tauri::command]
 pub async fn read_transcript_tails(session_ids: Vec<String>) -> std::collections::HashMap<String, String> {
+    tauri::async_runtime::spawn_blocking(move || transcript_tails(&session_ids, 256 * 1024)).await.unwrap_or_default()
+}
+
+/// 대화 기록 꼬리 tail 바이트씩 — 폰 서버는 더 짧게 읽는다(꺼진 참모가 하던 일 한 줄이면 된다)
+pub fn transcript_tails(session_ids: &[String], tail: u64) -> std::collections::HashMap<String, String> {
     use std::io::{Read, Seek, SeekFrom};
-    const TAIL: u64 = 256 * 1024;
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::platform::home();
-        let dirs: Vec<_> = std::fs::read_dir(format!("{home}/.claude/projects"))
-            .map(|rd| rd.flatten().map(|e| e.path()).collect())
-            .unwrap_or_default();
-        let mut out = std::collections::HashMap::new();
-        for sid in session_ids {
-            let Some(path) = dirs.iter().map(|d| d.join(format!("{sid}.jsonl"))).find(|p| p.exists()) else { continue };
-            let Ok(mut f) = std::fs::File::open(&path) else { continue };
-            let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-            let _ = f.seek(SeekFrom::Start(len.saturating_sub(TAIL)));
-            let mut buf = Vec::new();
-            if f.read_to_end(&mut buf).is_ok() {
-                out.insert(sid, String::from_utf8_lossy(&buf).into_owned());
-            }
+    let home = crate::platform::home();
+    let dirs: Vec<_> = std::fs::read_dir(format!("{home}/.claude/projects"))
+        .map(|rd| rd.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    let mut out = std::collections::HashMap::new();
+    for sid in session_ids {
+        let Some(path) = dirs.iter().map(|d| d.join(format!("{sid}.jsonl"))).find(|p| p.exists()) else { continue };
+        let Ok(mut f) = std::fs::File::open(&path) else { continue };
+        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+        let _ = f.seek(SeekFrom::Start(len.saturating_sub(tail)));
+        let mut buf = Vec::new();
+        if f.read_to_end(&mut buf).is_ok() {
+            out.insert(sid.clone(), String::from_utf8_lossy(&buf).into_owned());
         }
-        out
-    })
-    .await
-    .unwrap_or_default()
+    }
+    out
 }
 
 /// 채팅 보기(스페이스 모드)가 대화 기록을 이어 읽은 결과. next = 다음에 넘길 자리, reset = 처음부터 다시 그려야 함
@@ -267,6 +290,49 @@ pub struct TranscriptChunk {
     pub text: String,
     pub next: u64,
     pub reset: bool,
+    /// text 의 첫 줄이 파일에서 시작하는 자리 — 폰이 그 앞을 거슬러 읽는다(read_before)
+    pub start: u64,
+}
+
+/// 폰 처음 읽기 — 끝 256KB 부터, 줄 60개가 될 때까지 넓히되 2MB 까지(앞은 위로 올리면 read_before 로).
+/// 참모-2 기록(174MB)은 끝 1MB 에 줄이 123개라 4MB 를 한 번에 보내 LTE 에서 늦거나 끊겨 목록이 비었다(2026-10-03)
+pub const PHONE_HEAD: u64 = 256 * 1024;
+pub const PHONE_MIN_LINES: usize = 60;
+pub const PHONE_MAX: u64 = 2 * 1024 * 1024;
+/// 위로 올렸을 때 한 번에 거슬러 읽는 양
+pub const PHONE_BEFORE: u64 = 512 * 1024;
+
+/// 거슬러 읽은 앞 대화 — start 부터 before 까지의 온전한 줄들
+#[derive(Serialize, Debug, PartialEq)]
+pub struct Earlier {
+    pub text: String,
+    pub start: u64,
+}
+
+/// before(줄 처음 자리) 앞 size 바이트 안의 온전한 줄들. 창 안에 온전한 줄이 없으면(줄 하나가 창보다 큼) 창을 넓혀 그 줄을 통째로
+pub fn read_before(path: &std::path::Path, before: u64, size: u64) -> std::io::Result<Earlier> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path)?;
+    let before = before.min(f.metadata()?.len());
+    let mut win = size.max(1);
+    loop {
+        let from = before.saturating_sub(win);
+        if from == 0 {
+            f.seek(SeekFrom::Start(0))?;
+            let mut buf = vec![0u8; before as usize];
+            f.read_exact(&mut buf)?;
+            return Ok(Earlier { text: String::from_utf8_lossy(&buf).into_owned(), start: 0 });
+        }
+        // 창 바로 앞 한 바이트까지 — 그게 줄바꿈이면 창이 줄 처음에서 시작한다
+        let pre = from - 1;
+        f.seek(SeekFrom::Start(pre))?;
+        let mut buf = vec![0u8; (before - pre) as usize];
+        f.read_exact(&mut buf)?;
+        if let Some(i) = buf.iter().position(|&b| b == b'\n').filter(|&i| i + 1 < buf.len()) {
+            return Ok(Earlier { text: String::from_utf8_lossy(&buf[i + 1..]).into_owned(), start: pre + i as u64 + 1 });
+        }
+        win = win.saturating_mul(2);
+    }
 }
 
 /// 처음(또는 파일이 줄어 자리가 안 맞으면) 끝 1MB 부터 — 긴 대화 전체를 매번 그리지 않게
@@ -277,11 +343,16 @@ const CHAT_MAX: u64 = 32 * 1024 * 1024;
 
 /// from 부터 끝까지 읽되 마지막 줄바꿈까지만(쓰는 중인 줄은 다음에). 처음 읽을 땐 끝 1MB, 잘린 첫 줄은 버린다
 pub fn read_chunk(path: &std::path::Path, from: Option<u64>) -> std::io::Result<TranscriptChunk> {
+    read_chunk_with(path, from, CHAT_HEAD, CHAT_MIN_LINES, CHAT_MAX)
+}
+
+/// 처음 창(head)·적어도 줄 수(min_lines)·최대 창(max)을 정해 읽는다 — 데스크톱은 1MB·200줄·32MB, 폰은 가볍게(PHONE_*)
+pub fn read_chunk_with(path: &std::path::Path, from: Option<u64>, head: u64, min_lines: usize, max: u64) -> std::io::Result<TranscriptChunk> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path)?;
     let len = f.metadata()?.len();
     let reset = !matches!(from, Some(n) if n <= len);
-    let mut window = CHAT_HEAD;
+    let mut window = head;
     let (start, buf) = loop {
         let start = if reset { len.saturating_sub(window) } else { from.unwrap_or(0) };
         f.seek(SeekFrom::Start(start))?;
@@ -289,30 +360,49 @@ pub fn read_chunk(path: &std::path::Path, from: Option<u64>) -> std::io::Result<
         f.read_to_end(&mut buf)?;
         // 끝에 큰 줄(그림 읽은 도구 결과 등)이 있으면 줄 몇 개 안 남는다 — 줄이 충분할 때까지 넓힌다
         let lines = buf.iter().filter(|&&b| b == b'\n').count();
-        if !reset || start == 0 || lines >= CHAT_MIN_LINES || window >= CHAT_MAX { break (start, buf) }
+        if !reset || start == 0 || lines >= min_lines || window >= max { break (start, buf) }
         window *= 4;
     };
     let end = buf.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
     let mut body = &buf[..end];
+    let mut first = start;
     if reset && start > 0 {
         let cut = body.iter().position(|&b| b == b'\n').map_or(body.len(), |i| i + 1);
         body = &body[cut..];
+        first = start + cut as u64;
     }
-    Ok(TranscriptChunk { text: String::from_utf8_lossy(body).into_owned(), next: start + end as u64, reset })
+    Ok(TranscriptChunk { text: String::from_utf8_lossy(body).into_owned(), next: start + end as u64, reset, start: first })
 }
 
 /// 채팅 보기용 대화 기록 이어 읽기. 파일이 없으면(아직 첫 지시 전) 빈 조각
 #[tauri::command]
 pub async fn read_transcript(session_id: String, from: Option<u64>) -> TranscriptChunk {
     tauri::async_runtime::spawn_blocking(move || {
-        let empty = TranscriptChunk { text: String::new(), next: 0, reset: from.is_some() };
-        let home = crate::platform::home();
-        let Ok(rd) = std::fs::read_dir(format!("{home}/.claude/projects")) else { return empty };
-        let Some(path) = rd.flatten().map(|e| e.path().join(format!("{session_id}.jsonl"))).find(|p| p.exists()) else { return empty };
+        let empty = TranscriptChunk { text: String::new(), next: 0, reset: from.is_some(), start: 0 };
+        let Some(path) = transcript_path(&session_id) else { return empty };
         read_chunk(&path, from).unwrap_or(empty)
     })
     .await
-    .unwrap_or(TranscriptChunk { text: String::new(), next: 0, reset: false })
+    .unwrap_or(TranscriptChunk { text: String::new(), next: 0, reset: false, start: 0 })
+}
+
+/// 그 대화의 기록 파일(~/.claude/projects/<폴더>/<sessionId>.jsonl)
+fn transcript_path(session_id: &str) -> Option<std::path::PathBuf> {
+    let home = crate::platform::home();
+    let rd = std::fs::read_dir(format!("{home}/.claude/projects")).ok()?;
+    rd.flatten().map(|e| e.path().join(format!("{session_id}.jsonl"))).find(|p| p.exists())
+}
+
+/// 폰 대화 이어 읽기 — 처음은 가볍게(PHONE_*)
+pub fn read_transcript_phone(session_id: &str, from: Option<u64>) -> TranscriptChunk {
+    let empty = TranscriptChunk { text: String::new(), next: 0, reset: from.is_some(), start: 0 };
+    let Some(path) = transcript_path(session_id) else { return empty };
+    read_chunk_with(&path, from, PHONE_HEAD, PHONE_MIN_LINES, PHONE_MAX).unwrap_or(empty)
+}
+
+/// 폰 앞 대화 — before 앞 512KB 의 온전한 줄들(위로 올렸을 때)
+pub fn read_transcript_before(session_id: &str, before: u64) -> Earlier {
+    transcript_path(session_id).and_then(|p| read_before(&p, before, PHONE_BEFORE).ok()).unwrap_or(Earlier { text: String::new(), start: 0 })
 }
 
 /// 세션 할 일 목록 한 줄(Claude Code TaskCreate — ~/.claude/tasks/session-<대화 id 앞 8자리>/<n>.json)
@@ -403,14 +493,14 @@ mod chat_tests {
     fn 처음엔_처음부터_마지막_줄바꿈까지() {
         let p = file("first", b"{\"a\":1}\n{\"b\":2}\n{\"c\":");
         let c = read_chunk(&p, None).unwrap();
-        assert_eq!(c, TranscriptChunk { text: "{\"a\":1}\n{\"b\":2}\n".into(), next: 16, reset: true });
+        assert_eq!(c, TranscriptChunk { text: "{\"a\":1}\n{\"b\":2}\n".into(), next: 16, reset: true, start: 0 });
     }
 
     #[test]
     fn 이어_읽기는_새로_붙은_것만() {
         let p = file("next", b"{\"a\":1}\n{\"b\":2}\n");
         let c = read_chunk(&p, Some(8)).unwrap();
-        assert_eq!(c, TranscriptChunk { text: "{\"b\":2}\n".into(), next: 16, reset: false });
+        assert_eq!(c, TranscriptChunk { text: "{\"b\":2}\n".into(), next: 16, reset: false, start: 8 });
         assert_eq!(read_chunk(&p, Some(16)).unwrap().text, "");
     }
 
@@ -443,6 +533,45 @@ mod chat_tests {
         let c = read_chunk(&p, None).unwrap();
         assert!(c.text.starts_with("{\"a\":1}\n"));
         assert!(c.text.ends_with(&big));
+    }
+
+    #[test]
+    fn 처음_읽기는_첫_줄의_자리를_같이_준다() {
+        // 폰이 그 앞을 거슬러 읽는다(read_before) — 잘린 첫 줄을 버린 뒤의 자리
+        let line = format!("{{\"x\":\"{}\"}}\n", "a".repeat(1000));
+        let body = line.repeat(1100);
+        let p = file("start", body.as_bytes());
+        let c = read_chunk(&p, None).unwrap();
+        assert_eq!(c.start + c.text.len() as u64, c.next);
+        assert_eq!(c.start % line.len() as u64, 0, "줄 처음");
+    }
+
+    #[test]
+    fn 폰_처음_읽기는_가볍게() {
+        // 참모-2 기록은 174MB — 끝 1MB 에 줄이 123개라 4MB 까지 넓혀 한 번에 보냈다(LTE 에서 늦거나 끊겨 빈 목록, 2026-10-03)
+        let line = format!("{{\"x\":\"{}\"}}\n", "a".repeat(1000));
+        let p = file("lite", line.repeat(3000).as_bytes());
+        let c = read_chunk_with(&p, None, PHONE_HEAD, PHONE_MIN_LINES, PHONE_MAX).unwrap();
+        assert!(c.text.len() as u64 <= PHONE_HEAD, "{}", c.text.len());
+        assert!(c.text.lines().count() >= PHONE_MIN_LINES);
+    }
+
+    #[test]
+    fn 앞_대화는_줄_단위로_거슬러_읽는다() {
+        let p = file("before", b"{\"a\":1}\n{\"b\":2}\n{\"c\":3}\n{\"d\":4}\n");
+        // 끝(32)에서 16바이트 앞 — 줄 둘
+        let e = read_before(&p, 32, 16).unwrap();
+        assert_eq!((e.text.as_str(), e.start), ("{\"c\":3}\n{\"d\":4}\n", 16));
+        // 12바이트만 — 잘린 줄은 버리고 온전한 줄 하나
+        let e = read_before(&p, 32, 12).unwrap();
+        assert_eq!((e.text.as_str(), e.start), ("{\"d\":4}\n", 24));
+        // 맨 앞까지
+        let e = read_before(&p, 16, 999).unwrap();
+        assert_eq!((e.text.as_str(), e.start), ("{\"a\":1}\n{\"b\":2}\n", 0));
+        assert_eq!(read_before(&p, 0, 999).unwrap().text, "");
+        // 한 줄이 창보다 크면 그 줄은 통째로(안 그러면 영영 못 넘어간다)
+        let e = read_before(&p, 8, 3).unwrap();
+        assert_eq!((e.text.as_str(), e.start), ("{\"a\":1}\n", 0));
     }
 }
 
@@ -539,14 +668,15 @@ pub(crate) fn log_out(kind: &str, text: &str) {
 #[tauri::command]
 pub fn notify(title: String, body: String, target: Option<String>) {
     log_out("notify", &format!("{title} — {body}"));
+    // 폰 푸시도 같이 — 이 알림은 이미 domain/notify 정책·'참모 창 보고 있으면 안 보냄'을 거쳤다(ui/notifier)
+    crate::push::send_all(&title, &body, target.as_deref().unwrap_or(""));
     if crate::notify_mac::send(&title, &body, target.as_deref().unwrap_or("")) { // 윈도우는 토스트(notify_other)
         return;
     }
     let _ = target;
     #[cfg(target_os = "macos")] // 윈도우 알림은 아직 없다(notify_other)
-    let _ = crate::platform::command("osascript")
-        .args(["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", &title, &body])
-        .spawn();
+    let _ = crate::platform::spawn_reaped(crate::platform::command("osascript")
+        .args(["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", &title, &body]));
 }
 
 /// 음성 모드 — 설정의 ttsCommand(기본 macOS say)로 읽는다. 여러 개가 겹쳐도 차례로(한 번에 하나만 말하게 잠근다)
@@ -563,38 +693,296 @@ pub(crate) fn speak_gen() -> u64 {
 }
 
 /// 차례가 오면 읽는다 — 그사이 멈췄으면(gen 이 바뀌면) 안 읽는다. started 는 시작한 pid 를 받는다(테스트용)
-pub(crate) fn run_speech(argv: Vec<String>, gen: u64, mut started: impl FnMut(u32)) {
+/// who = 읽는 말의 주인(참모 세션 짧은 id) — 화면이 그 참모 탭·프사를 소리 크기대로 빛낸다(speak_now, 2026-10-03 사용자)
+pub(crate) fn run_speech(argv: Vec<String>, gen: u64, who: Option<String>, mut started: impl FnMut(u32)) {
     let _turn = SPEAKING.lock().unwrap_or_else(|e| e.into_inner());
     if speak_gen() != gen || argv.is_empty() {
         return;
     }
-    let Ok(mut child) = crate::platform::spawn_group(crate::platform::command(&argv[0]).args(&argv[1..])) else { return };
+    // Supertonic 은 wav 를 만든 뒤 PLAYING 을 찍고 튼다 — 그 전엔 '기다림'(빛 없음). 다른 명령은 곧바로 소리
+    let prepared = is_supertonic_runner(&argv[0]);
+    let id = say_begin(who, prepared);
+    let mut cmd = crate::platform::command(&argv[0]);
+    cmd.args(&argv[1..]).stdout(std::process::Stdio::piped());
+    let Ok(mut child) = crate::platform::spawn_group(&mut cmd) else { say_end(id); return };
     *SPEAKING_PID.lock().unwrap_or_else(|e| e.into_inner()) = Some(child.id());
     started(child.id());
+    if let Some(out) = child.stdout.take() {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+            if let Some(path) = parse_playing(&line) {
+                // afplay 가 틀기 전에 곡선을 뽑는다 — 파일은 실행기가 끝나며 지운다(복사·보관 안 함)
+                let env = path.and_then(|p| std::fs::read(p).ok()).and_then(|b| wav_envelope(&b, HOP_MS));
+                say_playing(id, env);
+            }
+        }
+    }
     let _ = child.wait();
     *SPEAKING_PID.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    say_end(id);
+}
+
+/// 소리 크기 곡선 한 칸 = 25ms
+const HOP_MS: u32 = 25;
+
+/// 지금 읽는 말 — 기다림(만드는 중) · 재생 중 · 끝 · 멈춤
+#[derive(Clone, Copy, PartialEq, Debug, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SayPhase { Waiting, Playing, Done, Stopped }
+
+#[derive(serde::Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SayNow {
+    /// 읽기마다 늘 커지는 번호(시각에서) — 늦게 온 옛 상태가 빛을 다시 켜지 않게 화면이 이걸로 거른다
+    pub id: u64,
+    pub from: Option<String>,
+    pub phase: SayPhase,
+    /// 소리가 난 시각(유닉스 ms) — 화면이 지금 시각 - 이것으로 곡선 칸을 찾는다
+    pub started_ms: u64,
+    pub hop_ms: u32,
+    /// 0~255. 이미 받은 번호(known)면 None — 묻기마다 곡선을 다시 보내지 않는다. 파일이 없는 명령도 None(화면은 숨쉬기 빛)
+    pub env: Option<Vec<u8>>,
+}
+
+struct SayState { id: u64, from: Option<String>, phase: SayPhase, started_ms: u64, env: Option<std::sync::Arc<Vec<u8>>> }
+static SAY_NOW: std::sync::Mutex<SayState> = std::sync::Mutex::new(SayState { id: 0, from: None, phase: SayPhase::Done, started_ms: 0, env: None });
+
+fn say_state() -> std::sync::MutexGuard<'static, SayState> {
+    SAY_NOW.lock().unwrap_or_else(|e| e.into_inner())
+}
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+fn say_begin(from: Option<String>, prepared: bool) -> u64 {
+    let mut s = say_state();
+    let id = (s.id + 1).max(now_ms());
+    *s = SayState { id, from, phase: if prepared { SayPhase::Waiting } else { SayPhase::Playing }, started_ms: if prepared { 0 } else { now_ms() }, env: None };
+    id
+}
+fn say_playing(id: u64, env: Option<Vec<u8>>) {
+    let mut s = say_state();
+    if s.id == id && s.phase == SayPhase::Waiting {
+        s.phase = SayPhase::Playing;
+        s.started_ms = now_ms();
+        s.env = env.map(std::sync::Arc::new);
+    }
+}
+/// 끝 — 이미 멈춤이면 그대로 둔다(끊긴 프로세스가 늦게 끝나며 '끝'으로 덮지 않게)
+fn say_end(id: u64) {
+    let mut s = say_state();
+    if s.id == id && matches!(s.phase, SayPhase::Waiting | SayPhase::Playing) {
+        s.phase = SayPhase::Done;
+    }
+}
+
+/// 화면이 묻는다 — known = 곡선을 이미 받은 번호
+pub(crate) fn speak_now(known: u64) -> SayNow {
+    let s = say_state();
+    let env = if s.id != known && s.phase == SayPhase::Playing { s.env.as_ref().map(|e| e.to_vec()) } else { None };
+    SayNow { id: s.id, from: s.from.clone(), phase: s.phase, started_ms: s.started_ms, hop_ms: HOP_MS, env }
+}
+
+#[tauri::command]
+pub fn speak_now_state(known: Option<u64>) -> SayNow {
+    speak_now(known.unwrap_or(0))
+}
+
+/// "PLAYING" 또는 "PLAYING <wav 경로>" — 경로가 있으면 곡선을 뽑는다(옛 실행기는 경로 없이 찍는다)
+pub(crate) fn parse_playing(line: &str) -> Option<Option<String>> {
+    let t = line.trim();
+    if t == "PLAYING" {
+        return Some(None);
+    }
+    t.strip_prefix("PLAYING ").map(|p| Some(p.trim().to_string()).filter(|p| !p.is_empty()))
+}
+
+/// 16bit PCM wav → hop_ms 마다 크기(RMS) 0~255. 가장 큰 칸을 255 로(말 안에서 크고 작음이 보이게). 그 밖의 형식은 None
+pub(crate) fn wav_envelope(b: &[u8], hop_ms: u32) -> Option<Vec<u8>> {
+    if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
+        return None;
+    }
+    let (mut fmt, mut data) = (None, None);
+    let mut i = 12;
+    while i + 8 <= b.len() {
+        let size = u32::from_le_bytes(b[i + 4..i + 8].try_into().ok()?) as usize;
+        let body = &b[i + 8..(i + 8 + size).min(b.len())];
+        match &b[i..i + 4] {
+            b"fmt " if body.len() >= 16 => fmt = Some(body),
+            b"data" => data = Some(body),
+            _ => {}
+        }
+        i += 8 + size + (size & 1);
+    }
+    let (fmt, data) = (fmt?, data?);
+    let u16at = |o: usize| u16::from_le_bytes([fmt[o], fmt[o + 1]]);
+    let (format, channels, rate, bits) = (u16at(0), u16at(2).max(1) as usize, u32::from_le_bytes(fmt[4..8].try_into().ok()?), u16at(14));
+    if format != 1 || bits != 16 || rate == 0 {
+        return None;
+    }
+    let frame = 2 * channels;
+    let per = ((rate as u64 * hop_ms as u64 / 1000) as usize).max(1) * frame;
+    let rms: Vec<f64> = data
+        .chunks(per)
+        .map(|c| {
+            let n = c.len() / 2;
+            let sum: f64 = c.chunks_exact(2).map(|s| { let v = i16::from_le_bytes([s[0], s[1]]) as f64 / 32768.0; v * v }).sum();
+            if n == 0 { 0.0 } else { (sum / n as f64).sqrt() }
+        })
+        .collect();
+    let peak = rms.iter().cloned().fold(0.0, f64::max);
+    Some(rms.iter().map(|&r| if peak < 1e-4 { 0 } else { (r / peak * 255.0).round() as u8 }).collect())
 }
 
 /// 지금 말하는 것과 줄 선 것까지 멈춘다 — 음성 모드를 끌 때·앱을 끌 때
 /// (2026-09-28 6,500자 음성이 8분째 돌았는데 멈출 방법이 없었다. 앱을 바꿔 넣어도 옛 앱이 띄운 음성은 계속 돌았다)
 pub fn stop_speaking() {
+    { // 화면 빛은 프로세스가 죽기 전에 먼저 끈다(2026-10-03 사용자 "끊으면 즉시")
+        let mut s = say_state();
+        if matches!(s.phase, SayPhase::Waiting | SayPhase::Playing) { s.phase = SayPhase::Stopped; }
+    }
     SPEAK_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     if let Some(pid) = *SPEAKING_PID.lock().unwrap_or_else(|e| e.into_inner()) {
         crate::platform::stop_group(pid);
     }
 }
 
+/// voice = 그 참모 목소리(M1~F5) — Supertonic 실행기 설정일 때만 바뀌고, 아니면 설정 그대로(tts::with_voice)
 #[tauri::command]
-pub fn speak(text: String) {
+pub fn speak(text: String, voice: Option<String>, from: Option<String>) {
     if text.trim().is_empty() {
         return;
     }
     log_out("speak", &text);
     let gen = speak_gen();
     std::thread::spawn(move || {
-        let argv = crate::config::tts_argv(&crate::config::home(), &crate::config::current().tts_command, &text, |p| std::path::Path::new(p).is_file());
-        run_speech(argv, gen, |_| {});
+        let home = crate::config::home();
+        let base = crate::config::current().tts_command;
+        let cmd = voice.as_deref().and_then(|v| crate::tts::with_voice(&home, &base, v)).unwrap_or(base);
+        let argv = crate::config::tts_argv(&home, &cmd, &text, |p| std::path::Path::new(p).is_file());
+        if argv.first().is_some_and(|p| is_supertonic_runner(p)) { crate::tts::refresh_installed(); } // 깔린 옛 실행기면 wav 경로를 찍는 새것으로
+        run_speech(argv, gen, from, |_| {});
     });
+}
+
+/// 들어 보기(프사 창 목소리 다이얼) 상태 — 준비 중(Supertonic 이 wav 를 만드는 1~2초) · 재생 중 · 끝 · 멈춤(2026-10-02 사용자)
+/// 이벤트 대신 프론트가 재생하는 몇 초만 짧게 묻는다(앱 다른 곳도 묻는 방식)
+#[derive(Clone, Copy, PartialEq, Debug, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Phase { Preparing, Playing, Done, Stopped }
+
+#[derive(serde::Serialize)]
+pub struct PreviewState { pub id: u64, pub phase: Phase }
+
+struct Preview { id: u64, phase: Phase, pid: Option<u32>, stopping: bool }
+static PREVIEW: std::sync::Mutex<Preview> = std::sync::Mutex::new(Preview { id: 0, phase: Phase::Done, pid: None, stopping: false });
+
+fn preview() -> std::sync::MutexGuard<'static, Preview> {
+    PREVIEW.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Supertonic 실행기는 afplay 직전에 이 한 줄을 찍는다(tts/speak) — 그때부터 소리
+pub(crate) fn is_playing_line(line: &str) -> bool {
+    parse_playing(line).is_some()
+}
+
+/// 만들기(준비) 단계가 따로 있는 실행기 — 앱의 Supertonic 실행기. say·직접 명령은 곧바로 재생으로 본다
+pub(crate) fn is_supertonic_runner(prog: &str) -> bool {
+    let p = prog.replace('\\', "/");
+    p.ends_with("/tts/supertonic/speak") || p.ends_with("/tts/supertonic/speak.cmd")
+}
+
+pub(crate) fn preview_state() -> PreviewState {
+    let p = preview();
+    PreviewState { id: p.id, phase: p.phase }
+}
+
+/// 새 들어 보기 차례 — 앞 들어 보기가 아직 돌면 멈춘다(빨리 넘기면 마지막 것만). 같은 번호면 그대로(이미 멈춤을 눌렀으면 false)
+fn begin_preview(id: u64) -> bool {
+    let mut p = preview();
+    if p.id == id {
+        return !p.stopping;
+    }
+    if let Some(pid) = p.pid.take() {
+        crate::platform::stop_group(pid);
+    }
+    *p = Preview { id, phase: Phase::Preparing, pid: None, stopping: false };
+    true
+}
+
+/// 들어 보기 한 번 — 참모 답 읽기와는 같은 차례 잠금을 쓴다
+pub(crate) fn run_preview(argv: Vec<String>, id: u64, prepared: bool) {
+    if !begin_preview(id) {
+        return;
+    }
+    let _turn = SPEAKING.lock().unwrap_or_else(|e| e.into_inner());
+    let gen = speak_gen();
+    if preview().id != id || argv.is_empty() {
+        return;
+    }
+    let mut cmd = crate::platform::command(&argv[0]);
+    cmd.args(&argv[1..]).stdout(std::process::Stdio::piped());
+    let Ok(mut child) = crate::platform::spawn_group(&mut cmd) else {
+        let mut p = preview();
+        if p.id == id { p.phase = Phase::Done; }
+        return;
+    };
+    *SPEAKING_PID.lock().unwrap_or_else(|e| e.into_inner()) = Some(child.id());
+    {
+        let mut p = preview();
+        if p.id == id {
+            p.pid = Some(child.id());
+            if !prepared { p.phase = Phase::Playing; }
+        }
+    }
+    if let Some(out) = child.stdout.take() {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+            if is_playing_line(&line) {
+                let mut p = preview();
+                if p.id == id && p.phase == Phase::Preparing { p.phase = Phase::Playing; }
+            }
+        }
+    }
+    let _ = child.wait();
+    *SPEAKING_PID.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    let mut p = preview();
+    if p.id == id {
+        p.pid = None;
+        p.phase = if p.stopping || speak_gen() != gen { Phase::Stopped } else { Phase::Done };
+    }
+}
+
+/// 프사 창 목소리 들어 보기 — id 는 프론트가 매기는 번호(가장 큰 것이 지금 것)
+#[tauri::command]
+pub fn speak_preview(id: u64, text: String, voice: Option<String>) {
+    if text.trim().is_empty() {
+        return;
+    }
+    begin_preview(id); // 바로 묻는 첫 번에도 '준비 중', 앞 들어 보기는 여기서 멈춘다
+    std::thread::spawn(move || {
+        let home = crate::config::home();
+        let base = crate::config::current().tts_command;
+        let cmd = voice.as_deref().and_then(|v| crate::tts::with_voice(&home, &base, v)).unwrap_or(base);
+        let argv = crate::config::tts_argv(&home, &cmd, &text, |p| std::path::Path::new(p).is_file());
+        let prepared = argv.first().is_some_and(|p| is_supertonic_runner(p));
+        if prepared { crate::tts::refresh_installed(); }
+        run_preview(argv, id, prepared);
+    });
+}
+
+#[tauri::command]
+pub fn speak_preview_state() -> PreviewState {
+    preview_state()
+}
+
+/// 그 들어 보기만 멈춘다 — 참모 답 읽기 줄은 건드리지 않는다
+#[tauri::command]
+pub fn speak_preview_stop(id: u64) {
+    let mut p = preview();
+    if p.id != id { return; }
+    p.stopping = true;
+    match p.pid { Some(pid) => crate::platform::stop_group(pid), None => p.phase = Phase::Stopped }
 }
 
 /// 꺼진 세션까지 포함한 목록. 파싱은 프론트 domain/stopped.ts
@@ -610,30 +998,66 @@ pub async fn list_sessions_all() -> Result<String, String> {
 /// 꺼진 세션을 같은 대화 그대로 백그라운드에서 다시 띄운다.
 /// 옵션(-n·권한 모드)을 붙이면 CLI 가 "저장된 옵션과 다르다"며 **복사본**을 만든다(실측 2026-09-27).
 /// 꺼진 백그라운드 세션을 이어서 켠다. 옵션을 기억할 거라 믿고 `--bg --resume` 만 줬다가 권한 모드가 풀렸다 → 권한 옵션을 다시 준다
+/// 되살리기 1순위 — `claude respawn <짧은 번호>`. 같은 세션 번호·이름·권한 모드 그대로 다시 켠다.
+/// `--bg --resume` 은 언제나 새 번호 **복사본**을 만들고, 압축한 세션이면 새 기록이 마지막 압축 지점부터라
+/// 채팅 뷰에서 그 앞 대화·주고받은 파일이 사라져 보였고 이름도 새로 붙었다(2026-10-01 사용자, 참모-2 가 새 번호로 갈렸다).
+/// 짧은 번호(16진수 8자)가 아니면 빈 목록 — 예전처럼 이어 띄운다
+fn revive_args(id: Option<&str>) -> Vec<String> {
+    match id {
+        Some(i) if i.len() == 8 && i.chars().all(|c| c.is_ascii_hexdigit()) => vec!["respawn".into(), i.into()],
+        _ => vec![],
+    }
+}
+
 #[tauri::command]
-pub async fn resume_session(cwd: String, session_id: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
-        let out = crate::platform::command(claude_bin())
-            .current_dir(&cwd)
-            // 이어서 켤 때도 권한 확인 없이 — 안 붙이면 daemon 재시작 뒤 되살린 세션이 auto 모드로 떠서
-            // Bash 마다 사용자 승인을 기다렸다(2026-09-28, 사용자 요청 "항상 바이패스로 켜지게"). CLAUDE.md 원칙 3
-            .args(["--bg", "--dangerously-skip-permissions", "--resume", &session_id])
-            .output()
-            .map_err(|e| e.to_string())?;
-        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        if !out.status.success() {
-            return Err(text.trim().to_string());
+pub async fn resume_session(cwd: String, session_id: String, id: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || resume_blocking(&cwd, &session_id, id.as_deref())).await.map_err(|e| e.to_string())?
+}
+
+/// resume_session 의 몸통 — 폰 서버(mobile.rs)도 같은 길로 되살린다
+pub fn resume_blocking(cwd: &str, session_id: &str, id: Option<&str>) -> Result<String, String> {
+    let first = revive_args(id);
+    if !first.is_empty() {
+        if let Ok(out) = crate::platform::command(claude_bin()).current_dir(cwd).args(&first).output() {
+            let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+            if out.status.success() && text.contains("respawned") {
+                return Ok(text.trim().to_string());
+            }
         }
-        Ok(text.trim().to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    }
+    let out = crate::platform::command(claude_bin())
+        .current_dir(cwd)
+        // 이어서 켤 때도 권한 확인 없이 — 안 붙이면 daemon 재시작 뒤 되살린 세션이 auto 모드로 떠서
+        // Bash 마다 사용자 승인을 기다렸다(2026-09-28, 사용자 요청 "항상 바이패스로 켜지게"). CLAUDE.md 원칙 3
+        .args(["--bg", "--dangerously-skip-permissions", "--resume", session_id])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if !out.status.success() {
+        return Err(text.trim().to_string());
+    }
+    Ok(text.trim().to_string())
 }
 
 /// 상태줄 스크립트가 남긴 최신 입력(사용 한도 포함). 없으면 빈 문자열. 파싱은 domain/usage.ts
 #[tauri::command]
 pub fn read_usage() -> String {
     std::fs::read_to_string(crate::config::data_file("statusline.json")).unwrap_or_default()
+}
+
+#[derive(Serialize)]
+pub struct UsageAt {
+    pub json: String,
+    /// 파일 고친 시각(ms) — 계정을 바꾼 뒤 새 값인지 가리는 데 쓴다. 없으면 0
+    pub at: u64,
+}
+
+/// 사용량 + 언제 쓰였나. 계정 자동 전환이 '바꾼 뒤에 쓰인 값'만 새 계정 것으로 본다(domain/accountAuto.ts)
+#[tauri::command]
+pub fn read_usage_at() -> UsageAt {
+    let p = crate::config::data_file("statusline.json");
+    let at = std::fs::metadata(&p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
+    UsageAt { json: std::fs::read_to_string(&p).unwrap_or_default(), at }
 }
 
 #[derive(Serialize)]
@@ -801,8 +1225,20 @@ pub async fn send_text_to_session(id: String, text: String) -> Result<(), String
     r
 }
 
+/// 직접 답하기 카드 답 치기 — send_text_to_session 과 같은 길인데 친 글을 로그에 안 남긴다(사람이 카드에 쓴 글, 2026-10-03 QA)
+pub(crate) fn type_text_quiet(id: &str, text: &str) -> Result<(), String> {
+    let r = attach_type_segs(id, &typed_segs(text));
+    log_out("direct-send", &format!("{id} {}", if r.is_ok() { "ok" } else { "fail" }));
+    r
+}
+
+/// 세션에 글을 치는 일은 한 번에 하나 — 둘이 겹치면 한 입력칸에 섞여 들어간다
+/// (2026-10-02: /rename 뒤에 다른 글이 붙어 이름이 '참모-3 · 쇼핑몰 문의 좀 모였나? 답한 거?'가 됐다)
+static TYPE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn attach_type_segs(id: &str, segs: &[Vec<u8>]) -> Result<(), String> {
     use std::time::Duration;
+    let _turn = TYPE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     attach_do(id, |w| {
         for chunk in segs {
             w.write_all(chunk)?;
@@ -814,6 +1250,12 @@ fn attach_type_segs(id: &str, segs: &[Vec<u8>]) -> Result<(), String> {
         Ok(())
     })
     .map(|_| ())
+}
+
+/// 하던 일 멈추기(폰 /api/interrupt) — Esc 한 번. 글 치기와 같은 잠금을 잡는다: 폰이 글을 치는 도중에 Esc 가 끼면 치던 글 사이에 들어간다
+pub fn interrupt_session(id: &str) -> Result<(), String> {
+    let _turn = TYPE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    with_attach(id, Some(b"\x1b")).map(|_| ())
 }
 
 /// attach 를 붙여 화면을 읽고 write 로 키를 넣은 뒤 뗀다
@@ -922,7 +1364,7 @@ fn attach_new(id: &str, write: impl FnOnce(&mut dyn std::io::Write) -> std::io::
     if !screen_ready(&screen) {
         // 붙지 못했는데 누르면 허공에 간다 — 실패로 알린다
         trace("no-screen");
-        let _ = child.kill();
+        crate::pty::reap(child);
         close(master);
         return Err(crate::i18n::tr("세션 화면이 안 떴어", "The session screen didn't come up").into());
     }
@@ -932,7 +1374,7 @@ fn attach_new(id: &str, write: impl FnOnce(&mut dyn std::io::Write) -> std::io::
         None => Err("no writer".into()),
     };
     trace("kill");
-    let _ = child.kill();
+    crate::pty::reap(child);
     slot.lock().unwrap().0.take();
     close(master);
     trace("done");
@@ -1100,6 +1542,31 @@ pub fn read_say() -> String {
     lines[lines.len().saturating_sub(100)..].join("\n")
 }
 
+/// 지금 사용자가 보는 화면 한 줄(domain/viewNow) — 참모 훅(scripts/voice-hint)이 지시마다 붙인다(2026-10-02 사용자 "내가 보는 화면을 니가 감지하느냐").
+/// 첫 줄은 앱 pid — 훅이 앱이 살아 있을 때만 붙이게(꺼진 앱의 옛 화면을 지금 화면처럼 말하지 않게)
+pub fn view_body(pid: u32, text: &str) -> String {
+    let one: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    format!("{pid}\n{}\n", one.chars().take(600).collect::<String>())
+}
+
+#[tauri::command]
+pub fn write_view(text: String) -> Result<(), String> {
+    let path = orch_file("view.txt");
+    std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("txt.tmp");
+    std::fs::write(&tmp, view_body(std::process::id(), &text)).map_err(|e| e.to_string())?;
+    std::fs::rename(tmp, path).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod view_tests {
+    #[test]
+    fn 화면_줄은_pid_다음_한_줄로() {
+        assert_eq!(super::view_body(42, "채팅 뷰 · 채팅 탭 참모\n하니터"), "42\n채팅 뷰 · 채팅 탭 참모 하니터\n");
+        assert_eq!(super::view_body(1, &"가".repeat(900)).chars().count(), 2 + 600 + 1, "너무 길면 자른다(지시마다 붙는다)");
+    }
+}
+
 /// 음성 모드 켜짐/꺼짐을 파일로 — 참모 쪽 훅(scripts/voice-hint)이 읽고 "음성용 말을 따로 써라"를 알려 준다
 #[tauri::command]
 pub fn write_voice_mode(on: bool) -> Result<(), String> {
@@ -1126,7 +1593,7 @@ mod speak_tests {
         let _g = SPEAK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (tx, rx) = std::sync::mpsc::channel();
         let argv = vec!["/bin/sh".to_string(), "-c".into(), "sleep 30 & echo $! > /tmp/chammo-speak-test.pid; wait".into()];
-        let h = std::thread::spawn(move || { run_speech(argv, super::speak_gen(), |pid| { let _ = tx.send(pid); }); });
+        let h = std::thread::spawn(move || { run_speech(argv, super::speak_gen(), None, |pid| { let _ = tx.send(pid); }); });
         let pid = rx.recv_timeout(Duration::from_secs(3)).expect("시작");
         std::thread::sleep(Duration::from_millis(300));
         let child: u32 = std::fs::read_to_string("/tmp/chammo-speak-test.pid").unwrap().trim().parse().unwrap();
@@ -1144,14 +1611,23 @@ mod speak_tests {
         let queued = super::speak_gen();
         stop_speaking();
         let mut started = false;
-        run_speech(vec!["/usr/bin/true".into()], queued, |_| started = true);
+        run_speech(vec!["/usr/bin/true".into()], queued, None, |_| started = true);
         assert!(!started);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_daemon_started_at, resolve_claude_bin, user_path};
+    use super::{parse_daemon_started_at, resolve_claude_bin, revive_args, user_path};
+    #[test]
+    fn 꺼진_세션은_respawn_으로_같은_번호_그대로_되살린다() {
+        // --bg --resume 은 언제나 새 번호 복사본을 만들고, 압축한 세션이면 마지막 압축 앞 대화가 새 기록에 없다(2026-10-01 실측)
+        assert_eq!(revive_args(Some("f00d0001")), vec!["respawn".to_string(), "f00d0001".to_string()]);
+        // 짧은 번호가 아니면(목록에 없던 옛 기록) respawn 을 못 쓴다 — 예전처럼 이어 띄우기
+        assert!(revive_args(None).is_empty());
+        assert!(revive_args(Some("f00d0001-0000-4000-8000-004027383809")).is_empty());
+        assert!(revive_args(Some("x; rm")).is_empty());
+    }
 
     #[test]
     fn user_path_takes_interactive_shell_first() {
@@ -1202,5 +1678,199 @@ mod attach_tests {
         assert!(!screen_ready(""));
         assert!(!screen_ready("   \n\n  "));
         assert!(screen_ready("☐ 과일\n사과와 배 중 뭘 고를래?\n› 1. 사과 — 사과를 고른다\n  2. 배 — 배를 고른다"));
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::{is_playing_line, is_supertonic_runner, preview_state, run_preview, speak_preview_stop, Phase, SPEAK_TEST_LOCK};
+    use std::time::Duration;
+
+    fn sh(script: &str) -> Vec<String> {
+        vec!["/bin/sh".to_string(), "-c".into(), script.into()]
+    }
+    fn wait_for(id: u64, want: Phase, ms: u64) -> bool {
+        for _ in 0..(ms / 20) {
+            let s = preview_state();
+            if s.id == id && s.phase == want { return true; }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
+    }
+
+    // 2026-10-02 사용자 "목소리가 바로 안 나와서 준비할 때·재생 중일 때 표시" — Supertonic 은 wav 를 만든 뒤(준비) afplay 직전에 PLAYING 을 찍는다
+    #[test]
+    fn 준비하다가_playing_줄에서_재생_끝나면_done() {
+        let _g = SPEAK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let h = std::thread::spawn(|| run_preview(sh("sleep 0.3; echo PLAYING; sleep 0.3"), 101, true));
+        assert!(wait_for(101, Phase::Preparing, 200));
+        assert!(wait_for(101, Phase::Playing, 1500));
+        h.join().unwrap();
+        assert_eq!(preview_state().phase, Phase::Done);
+    }
+
+    #[test]
+    fn 만들기_단계가_없는_명령은_바로_재생_중() {
+        let _g = SPEAK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let h = std::thread::spawn(|| run_preview(sh("sleep 0.4"), 102, false));
+        assert!(wait_for(102, Phase::Playing, 300));
+        h.join().unwrap();
+        assert_eq!(preview_state().phase, Phase::Done);
+    }
+
+    #[test]
+    fn 새_들어보기가_오면_앞_소리는_멈추고_마지막_것만() {
+        let _g = SPEAK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let a = std::thread::spawn(|| run_preview(sh("echo PLAYING; sleep 30"), 103, true));
+        assert!(wait_for(103, Phase::Playing, 1500));
+        let t = std::time::Instant::now();
+        let b = std::thread::spawn(|| run_preview(sh("echo PLAYING; sleep 0.2"), 104, true));
+        a.join().unwrap();
+        assert!(t.elapsed() < Duration::from_secs(3), "앞 소리가 멈춰야 한다");
+        b.join().unwrap();
+        let s = preview_state();
+        assert_eq!((s.id, s.phase), (104, Phase::Done));
+    }
+
+    #[test]
+    fn 멈춤을_누르면_stopped() {
+        let _g = SPEAK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let h = std::thread::spawn(|| run_preview(sh("echo PLAYING; sleep 30"), 105, true));
+        assert!(wait_for(105, Phase::Playing, 1500));
+        speak_preview_stop(105);
+        h.join().unwrap();
+        assert_eq!(preview_state().phase, Phase::Stopped);
+    }
+
+    #[test]
+    fn playing_줄은_그_한_단어만() {
+        assert!(is_playing_line("PLAYING"));
+        assert!(is_playing_line(" PLAYING\r\n"));
+        assert!(is_playing_line("PLAYING /tmp/x.wav"), "wav 경로를 달고 와도 재생(2026-10-03 빛)");
+        assert!(!is_playing_line("PLAYINGX"));
+        assert!(!is_playing_line("loading model"));
+    }
+
+    #[test]
+    fn supertonic_실행기만_준비_단계가_있다() {
+        assert!(is_supertonic_runner("/Users/a/.honor-orchestrator/tts/supertonic/speak"));
+        assert!(is_supertonic_runner("C:\\Users\\a\\.chammo\\tts\\supertonic\\speak.cmd"));
+        assert!(!is_supertonic_runner("say"));
+        assert!(!is_supertonic_runner("/Users/a/bin/local-say"));
+    }
+}
+
+#[cfg(test)]
+mod glow_tests {
+    use super::{parse_playing, run_speech, speak_gen, speak_now, stop_speaking, wav_envelope, SayPhase, SPEAK_TEST_LOCK};
+    use std::time::Duration;
+
+    fn sh(script: &str) -> Vec<String> {
+        vec!["/bin/sh".to_string(), "-c".into(), script.into()]
+    }
+    /// 16bit 모노 wav — 구간마다 크기(0~1) 사인파
+    fn wav(rate: u32, parts: &[(f32, f32)]) -> Vec<u8> {
+        let mut pcm: Vec<u8> = vec![];
+        for &(secs, amp) in parts {
+            for i in 0..(rate as f32 * secs) as usize {
+                let v = (amp * (i as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin() * 32767.0) as i16;
+                pcm.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        let mut b = b"RIFF".to_vec();
+        b.extend_from_slice(&(36 + pcm.len() as u32).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        b.extend_from_slice(&1u16.to_le_bytes()); // 모노
+        b.extend_from_slice(&rate.to_le_bytes());
+        b.extend_from_slice(&(rate * 2).to_le_bytes());
+        b.extend_from_slice(&2u16.to_le_bytes());
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&(pcm.len() as u32).to_le_bytes());
+        b.extend(pcm);
+        b
+    }
+    fn wait_phase(want: SayPhase, ms: u64) -> bool {
+        for _ in 0..(ms / 10) {
+            if speak_now(0).phase == want { return true; }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    // 2026-10-03 사용자 "소리 크기에 따라 글로우가 움직이면" — wav 에서 25ms 마다 크기(RMS)를 뽑는다
+    #[test]
+    fn wav_에서_25ms_마다_크기_곡선() {
+        let w = wav(24_000, &[(0.1, 0.0), (0.1, 0.8), (0.1, 0.4)]);
+        let e = wav_envelope(&w, 25).expect("곡선");
+        assert_eq!(e.len(), 12);
+        assert!(e[..4].iter().all(|&v| v == 0), "조용한 앞부분은 0: {e:?}");
+        assert!(e[4..8].iter().all(|&v| v >= 240), "가장 큰 구간이 꽉 참: {e:?}");
+        assert!(e[8..].iter().all(|&v| (110..=145).contains(&v)), "절반 크기면 절반쯤: {e:?}");
+    }
+
+    #[test]
+    fn wav_가_아니거나_16bit_가_아니면_곡선_없음() {
+        assert!(wav_envelope(b"not a wav", 25).is_none());
+        let mut w = wav(24_000, &[(0.05, 0.5)]);
+        w[34] = 8; // 8bit 라고 속이면
+        assert!(wav_envelope(&w, 25).is_none());
+    }
+
+    #[test]
+    fn playing_줄은_파일_경로를_달고_올_수_있다() {
+        assert_eq!(parse_playing("PLAYING"), Some(None));
+        assert_eq!(parse_playing("PLAYING /tmp/a b.wav\n"), Some(Some("/tmp/a b.wav".to_string())));
+        assert_eq!(parse_playing("PLAYINGX"), None);
+        assert_eq!(parse_playing("loading"), None);
+    }
+
+    #[test]
+    fn 누가_말하는지와_곡선이_재생_시작에_실린다() {
+        let _g = SPEAK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let p = std::env::temp_dir().join(format!("chammo-glow-{}.wav", std::process::id()));
+        std::fs::write(&p, wav(24_000, &[(0.2, 0.5)])).unwrap();
+        // 실제처럼 …/tts/supertonic/speak 경로의 실행기 — 만들기(0.2초) 뒤 PLAYING <wav>
+        let dir = std::env::temp_dir().join(format!("chammo-glow-{}/tts/supertonic", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let runner = dir.join("speak");
+        std::fs::write(&runner, format!("#!/bin/sh\nsleep 0.2; echo \"PLAYING {}\"; sleep 0.4\n", p.display())).unwrap();
+        crate::platform::make_executable(&runner);
+        let argv = vec![runner.to_string_lossy().to_string()];
+        let h = std::thread::spawn(move || run_speech(argv, speak_gen(), Some("f00d0002".into()), |_| {}));
+        assert!(wait_phase(SayPhase::Waiting, 150), "만드는 동안은 기다림(빛 없음)");
+        assert!(wait_phase(SayPhase::Playing, 1500));
+        let s = speak_now(0);
+        assert_eq!(s.from.as_deref(), Some("f00d0002"));
+        assert_eq!(s.hop_ms, 25);
+        assert_eq!(s.env.as_ref().map(Vec::len), Some(8));
+        assert!(s.started_ms > 0);
+        assert!(speak_now(s.id).env.is_none(), "이미 받은 번호면 곡선은 다시 안 보낸다");
+        h.join().unwrap();
+        assert_eq!(speak_now(0).phase, SayPhase::Done, "자연히 끝나면 끝");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn 파일_없는_명령은_곧바로_재생_곡선_없음() {
+        let _g = SPEAK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let h = std::thread::spawn(|| run_speech(sh("sleep 0.3"), speak_gen(), Some("f00d0003".into()), |_| {}));
+        assert!(wait_phase(SayPhase::Playing, 200));
+        assert!(speak_now(0).env.is_none(), "곡선이 없으면 화면이 숨쉬기 빛");
+        h.join().unwrap();
+    }
+
+    // 사용자가 끊으면 그 순간 빛 0 — 프로세스가 죽기 전에 상태부터 멈춤, 늦게 끝난 프로세스가 '끝'으로 덮지 않는다
+    #[test]
+    fn 끊으면_프로세스보다_먼저_멈춤이고_그대로_남는다() {
+        let _g = SPEAK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let h = std::thread::spawn(|| run_speech(sh("echo PLAYING; sleep 30"), speak_gen(), Some("f00d0001".into()), |_| {}));
+        assert!(wait_phase(SayPhase::Playing, 1500));
+        stop_speaking();
+        assert_eq!(speak_now(0).phase, SayPhase::Stopped, "stop_speaking 이 돌아온 순간 이미 멈춤");
+        h.join().unwrap();
+        assert_eq!(speak_now(0).phase, SayPhase::Stopped);
     }
 }

@@ -50,16 +50,20 @@ export function buildInbox(
   dismissed: ReadonlySet<string>,
   sessions: Session[] = [],
   isOrch: (s: Session) => boolean = () => false,
+  /** 참모 화면 이름 — 참모 물음·확인창 카드 제목(없으면 폴더 이름, 참모가 여럿이면 누가 묻는지 몰랐다) */
+  orchName?: (s: Session) => string,
 ): InboxItem[] {
   const out: InboxItem[] = [];
   for (const { session: s, status, activity: a } of activities) {
     const ts = a.reply?.ts ?? '';
-    const at = { project: s.project, where: s.workspace ?? '' };
+    const at: { project: string; where: string } = { project: s.project, where: s.workspace ?? '' };
     if (status !== 'working' && status !== 'blocked' && LOGIN_STALL.test(a.reply?.text ?? '')) {
       out.push({ key: `login:${s.id}:${ts}`, kind: 'login', ...at, text: tr('로그인 오류로 멈춰 있어 — 이어서 누르면 다시 돌아', 'Stopped on a login error — press Resume to restart it'), ts, target: s.id });
       continue;
     }
     if (!isOrch(s)) continue;
+    const who = orchName?.(s);
+    if (who) Object.assign(at, { project: who, where: '' });
     // 물음은 결론 첫 문장(lead) + 마지막 질문(text) — 앞에서 자른 답은 질문이 잘렸다(domain/activity askView)
     if (status === 'asks') out.push({ key: `ask:${s.id}:${ts}`, kind: 'ask', ...at, text: a.reply?.ask?.q || a.reply?.text || '', ...(a.reply?.ask?.lead ? { lead: a.reply.ask.lead } : {}), ts, target: s.id });
     if (status === 'blocked') out.push({ key: `blocked:${s.id}:${ts}`, kind: 'blocked', ...at, text: tr('확인창·선택지에서 멈춰 있어 — 열어서 골라줘', 'Waiting on a prompt or choice — open it and pick one'), ts, target: s.id });

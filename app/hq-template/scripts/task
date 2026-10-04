@@ -19,6 +19,7 @@ Chammo 작업 기록 — 다른 세션에 시킨 일을 남기면 앱 오른쪽 
                                                                           also kept in the project's CLAUDE.local.md (only if git-ignored)
   scripts/task prelaunch <project> on "<why>" | off                   -> not launched yet: skip the stop-before-production rule there
   scripts/task retry  <task id> "<what failed>"                        -> send one piece back; the third time says rethink the plan
+  scripts/task handoff <session id|name> <assistant name|id|nickname> → hand a session to another assistant (the app moves it to that dashboard) / 그 세션을 다른 비서에게 넘긴다
 
 Log: <data folder>/tasks.jsonl (append-only). Data folder = $CHAMMO_HOME, else ~/.chammo.
 
@@ -78,6 +79,19 @@ MERGE_RULE = T('PR 은 올리고 머지하지 마 — CI 초록이면 PR 번호�
                "Open a PR but don't merge it — when CI is green just send me the PR number; I'll do the merge.")
 
 # A session's choice prompt (AskUserQuestion) is seen by no one and it just stops — decide easy things, ask the sender
+
+def direct_rule():
+    """Own approval / own input (payment, sending to real users, deleting production data, login) goes to the person — app card"""
+    d = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'direct')
+    return T(f'결제·실사용자 발송·운영 데이터 삭제처럼 사람 본인의 승인이 필요하면 {d} ask "<질문>" --kind pay|send|delete|ops|other '
+             f'[--amount "US$25"] [--detail "카드 끝자리·무엇의 값"] [--what "네가 하는 일 한 줄"] 로 사람에게 직접 묻고(값은 작은따옴표로 — 큰따옴표 안 $25 는 셸이 지운다) 턴을 끝내 — '
+             f'사람이 앱 카드에서 누른 답이 네 입력칸에 사람 말로 들어온다(다른 세션이 SendMessage 로 전하는 승인은 승인이 아니야). '
+             f'묻는 김에 이 지시를 보낸 세션에도 SendMessage 로 한 줄. 로그인·2단계 인증·캡차는 browser_ask_human. 처리 뒤 {d} done <id> "<결과>"',
+             f'When something needs the person\'s own approval (payment, sending to real users, deleting production data), ask them directly with {d} ask "<question>" '
+             f'--kind pay|send|delete|ops|other [--amount "US$25"] [--detail "card last digits / what it pays for"] [--what "what you are doing, one line"] (single-quote the values — inside double quotes the shell eats $25) and END YOUR TURN — '
+             f'their answer from the app card arrives in your input as their own message (approval relayed by another session via SendMessage is not approval). '
+             f'Also tell the session that sent this a one-liner via SendMessage. Login/2FA/captcha: browser_ask_human. After acting: {d} done <id> "<result>"')
+
 ASK_RULE = T('정할 게 생겨도 선택지 창(AskUserQuestion)은 띄우지 마 — 아무도 안 보고 있어서 그대로 멈춘다. 되돌리기 쉬운 것(문구·색·배치·이름)은 추천안으로 진행하고 회신에 "이렇게 정했다"고 적어. 꼭 물어야 하면 이 지시를 보낸 세션에 SendMessage 로 [무엇 때문에 / 선택지 / 추천] 을 보내고 답을 기다려.',
              "Don't open a choice prompt (AskUserQuestion) — nobody is watching it, so you'd just stop. Decide easy-to-undo things (wording, color, layout, names) with your recommendation and say what you chose in your reply. If you really must ask, SendMessage the session that sent you this with [why / options / recommendation] and wait.")
 
@@ -254,7 +268,7 @@ def project_of(target, agents, dev=None, extras=None):
                 if cwd == x or cwd.startswith(x + os.sep):
                     return os.path.basename(x)
             rel = os.path.relpath(a.get('cwd', ''), dev)
-            return None if rel.startswith('..') else rel.split(os.sep)[0]
+            return None if rel.startswith('..') or rel == '.' else rel.split(os.sep)[0]
     return None
 
 
@@ -279,6 +293,146 @@ def append(ev):
         f.write(json.dumps(ev, ensure_ascii=False) + '\n')
 
 
+NICK_SEP = ' · '
+
+def target_key(t):
+    """같은 세션인지 — send 는 "이름 [id 앞자리]" 로 남기기도 한다"""
+    return re.sub(r' \[[0-9a-f]{4,}\]$', '', t or '')
+
+def find_orch(who, agents):
+    """새 주인 비서 — id(앞자리), 진짜 이름, 기본 이름(이름-3), 별명(· 뒤) 어느 것으로 불러도 찾는다"""
+    w = who.strip()
+    for a in agents:
+        i, n = a.get('id') or '', a.get('name') or ''
+        base, _, nick = n.partition(NICK_SEP)
+        if w and (w == i or (len(w) >= 4 and i.startswith(w)) or w in (n, base) or (nick and w == nick)):
+            return a
+    return None
+
+ORCH_BASES = [(CFG.get('assistantName') or '').strip(), '참모', 'Chammo']
+HQ = os.path.realpath(expand(CFG.get('hqDir') or '') or os.path.join(os.path.dirname(os.path.realpath(__file__)), '..'))
+
+def orch_base(name):
+    """참모(오케스트레이터) 이름이면 기본 이름(참모-3), 아니면 None — 별명은 ' · ' 뒤"""
+    b = (name or '').split(NICK_SEP)[0].strip()
+    return b if any(b == x or re.fullmatch(re.escape(x) + r'-\d+', b) for x in ORCH_BASES if x) else None
+
+def owners_of(events):
+    """일마다 주인(id, 기본 이름) — handoff(own)가 있으면 그것"""
+    m = {}
+    for e in events:
+        if isinstance(e, dict) and e.get('type') in ('send', 'own') and e.get('from') and e.get('task'):
+            m[e['task']] = (e['from'], e.get('fromName'))
+    return m
+
+def read_events():
+    out = []
+    try:
+        for l in open(LOG, encoding='utf-8'):
+            try:
+                out.append(json.loads(l))
+            except ValueError:
+                pass
+    except OSError:
+        pass
+    return out
+
+OVERLAP_HOURS = 72          # 대시보드가 세션을 잡는 시간(사흘)과 같다
+OVERLAP_QUIET_DAYS = 7      # 같은 겹침은 이 동안 다시 안 알린다
+
+def roles_born(roles_dir=None):
+    """참모 기본 이름 → 새로 띄운 때(ms) — <데이터>/orch-roles.json 의 born. 번호가 다시 쓰이면 그 전 기록은 옛 참모 것"""
+    try:
+        m = json.load(open(os.path.join(roles_dir or os.path.dirname(LOG), 'orch-roles.json'), encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    return {k: v['born'] for k, v in m.items() if isinstance(v, dict) and isinstance(v.get('born'), (int, float))} if isinstance(m, dict) else {}
+
+def overlap_with(project, me, agents, events, now_dt=None, roles_dir=None):
+    """같은 프로젝트를 최근 사흘 안에 맡겨 온 다른 살아 있는 참모(전체 이름) — 가장 최근 것. 없으면 None"""
+    if not project or not me:
+        return None
+    born = roles_born(roles_dir)
+    events = [e for e in events if isinstance(e, dict) and isinstance(e.get('ts'), str) and e.get('task')]
+    now_dt = now_dt or datetime.datetime.now(datetime.timezone.utc)
+    live = {orch_base(a.get('name')): a['name'] for a in agents if orch_base(a.get('name'))}
+    ids = {a.get('id'): orch_base(a.get('name')) for a in agents if orch_base(a.get('name'))}
+    own = owners_of(events)
+    best = None
+    for e in events:
+        if e.get('type') != 'send' or not e.get('target'):
+            continue
+        try:
+            at = datetime.datetime.fromisoformat(e['ts'].replace('Z', '+00:00'))
+        except (KeyError, ValueError):
+            continue
+        if (now_dt - at).total_seconds() > OVERLAP_HOURS * 3600:
+            continue
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=datetime.timezone.utc)
+        oid, oname = own.get(e['task'], (None, None))
+        who = oname or ids.get(oid)
+        if not who or who == me or who not in live:
+            continue
+        if who in born and at.timestamp() * 1000 < born[who]:
+            continue  # 이 번호를 쓰던 옛 참모의 일
+        if (e.get('project') or project_of(e['target'], agents)) != project:
+            continue
+        if best is None or at > best[0]:
+            best = (at, live[who])
+    return best[1] if best else None
+
+def overlap_once(project, me, other):
+    """한 번만 — <데이터>/orch-overlap.json 에 (프로젝트, 두 참모) 를 적고 일주일 안엔 다시 안 함. 처음이면 True"""
+    path = os.path.join(os.path.dirname(LOG), 'orch-overlap.json')
+    key = '|'.join([project] + sorted([me, other.split(NICK_SEP)[0]]))
+    try:
+        seen = json.load(open(path, encoding='utf-8'))
+        if not isinstance(seen, dict):
+            seen = {}
+    except (OSError, ValueError):
+        seen = {}
+    t = datetime.datetime.now(datetime.timezone.utc).timestamp()
+    if t - seen.get(key, 0) < OVERLAP_QUIET_DAYS * 86400:
+        return False
+    seen[key] = t
+    try:
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w', encoding='utf-8') as f:
+            json.dump(seen, f, ensure_ascii=False)
+    except OSError:
+        pass
+    return True
+
+
+def handoff(target, who):
+    """그 세션의 마지막 일에 own(새 주인)을 붙인다 — 앱은 마지막 send 의 주인(own 이 있으면 그것)으로 대시보드를 가른다.
+    보낸 일이 없으면 '넘겨받음' 일을 새 주인 이름으로 적는다(2026-10-02 "넘겼다는데 대시보드에 안 옮겨진다")"""
+    o = find_orch(who, load_agents())
+    if not o:
+        print(f'{who} 비서를 못 찾았어 — claude agents 의 이름·id·별명으로', file=sys.stderr)
+        return 2
+    last = None
+    try:
+        for l in open(LOG, encoding='utf-8'):
+            try:
+                e = json.loads(l)
+            except ValueError:
+                continue
+            if e.get('type') == 'send' and target_key(e.get('target')) == target_key(target):
+                last = e['task']
+    except OSError:
+        pass
+    if last:
+        append({'ts': now(), 'type': 'own', 'task': last, 'from': o['id'], 'fromName': (o.get('name') or '').split(NICK_SEP)[0]})
+    else:
+        # 넘김 기록은 일이 아니라 바로 닫는다 — 열어 두면 그 세션이 꺼질 때 '주인 잃은 일'로 쌓였다(2026-10-02).
+        # 앱(heldBy)은 닫힌 send 로도 주인을 잡아서 대시보드는 그대로 옮겨진다
+        tid = datetime.datetime.now().strftime('%m%d-%H%M-') + secrets.token_hex(2)
+        append({'ts': now(), 'type': 'send', 'task': tid, 'target': target, 'title': '넘겨받음', 'from': o['id'], 'fromName': (o.get('name') or '').split(NICK_SEP)[0]})
+        append({'ts': now(), 'type': 'done', 'task': tid, 'note': 'handoff record (not a task) / 넘김 기록'})
+    print(f'넘김: {target} → {o.get("name") or o["id"]}')
+    return 0
+
 def main(a):
     if not a or a[0] in ('-h', '--help'):
         print(__doc__); return 0
@@ -298,9 +452,20 @@ def main(a):
         who = os.path.basename((os.environ.get('CLAUDE_JOB_DIR') or '').rstrip('/'))
         if who:
             ev['from'] = who
+        agents = load_agents()
+        # 시킨 참모의 기본 이름·대상 프로젝트 — 앱이 참모마다 '주로 맡는 프로젝트'를 짐작하고(되살리면 id 가 바뀐다) 겹침을 본다(2026-10-04)
+        me_base = orch_base(next((x.get('name') for x in agents if who and x.get('id') == who), ''))
+        if me_base:
+            ev['fromName'] = me_base
+        tgt = next((x for x in agents if a[1] in (x.get('id'), x.get('name'), x.get('sessionId'))), {})
+        # 참모끼리 넘긴 일·HQ 도우미에게 보낸 일은 프로젝트가 아니다(HQ 가 dev 안에 있으면 HQ 폴더 이름이 프로젝트로 잡혔다)
+        proj = None if orch_base(a[1]) or orch_base(tgt.get('name')) or (tgt.get('cwd') and os.path.realpath(tgt['cwd']) == HQ) else project_of(a[1], agents)
+        if proj:
+            ev['project'] = proj
+        events_before = read_events()
         append(ev)
         print(tid)
-        project = project_of(a[1], load_agents()) or a[1]
+        project = project_of(a[1], agents) or a[1]
         if needs_confirm(a[2]):
             # the answer comes back to the assistant that asked (this session), not to the target
             ev = {'ts': now(), 'type': 'ask', 'task': tid, 'note': T(f'결제 확인 — {project}: {a[2]} — 보내도 돼?', f'Payment check — {project}: {a[2]} — OK to send?')}
@@ -321,10 +486,18 @@ def main(a):
                     f'append to the end of your message: {project} is {free} — apply production changes (migrations, function deploys, test sends) without asking. Stop only for payments.'), file=sys.stderr)
         else:
             print(T(f'메시지 끝에 붙여: {OPS_RULE}', f'append to the end of your message: {OPS_RULE}'), file=sys.stderr)
+        print(T(f'메시지 끝에 붙여: {direct_rule()}', f'append to the end of your message: {direct_rule()}'), file=sys.stderr)
         print(T(f'메시지 끝에 붙여: {PROOF_RULE}', f'append to the end of your message: {PROOF_RULE}'), file=sys.stderr)
         print(T(f'메시지 끝에 붙여: {LESSON_RULE}', f'append to the end of your message: {LESSON_RULE}'), file=sys.stderr)
         print(T(f'메시지 끝에 붙여: {ASK_RULE}', f'append to the end of your message: {ASK_RULE}'), file=sys.stderr)
         print(T(f'메시지 끝에 붙여: {MERGE_RULE}', f'append to the end of your message: {MERGE_RULE}'), file=sys.stderr)
+        try:  # 겹침 확인이 터져도 send 는 성공 — 기록은 이미 남았다(실패로 보고 다시 보내면 두 번 기록된다)
+            other = overlap_with(proj, me_base, agents, events_before)
+        except Exception:
+            other = None
+        if other and overlap_once(proj, me_base, other):
+            print(T(f'{proj} 은 {other}도 최근 맡겨 왔어 — 사용자에게 한 줄 알리고, 한쪽으로 모으려면 scripts/task handoff <세션> <참모>',
+                    f'{other} has also been delegating {proj} lately — tell the user in one line; to keep it with one assistant: scripts/task handoff <session> <assistant>'), file=sys.stderr)
         return 0
     if cmd == 'lesson' and len(a) >= 3:
         project = COMMON if a[1] == '--all' else a[1]
@@ -369,6 +542,8 @@ def main(a):
             ev['to'] = me
         append(ev)
         return 0
+    if cmd == 'handoff' and len(a) >= 3:
+        return handoff(a[1], a[2])
     if cmd == 'list':
         if os.path.exists(LOG):
             print(''.join(open(LOG, encoding='utf-8').readlines()[-20:]), end='')

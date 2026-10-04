@@ -1,7 +1,7 @@
 //! 브라우저 자동화(chammo-browser) — 프로젝트마다 로그인 유지·락 보호되는 크로미움 프로필을 준다.
 //! 여러 세션이 한 브라우저를 같이 쓰다 부딪히지 않게(사용자 2026-09-28: "그래야 사용자들이 에이전트를 다중으로 쓸 수 있다").
-//! 도구 코드(tools/chammo-browser)는 실행 파일에 넣어 두고, 설정 마법사에서 <데이터>/tools/chammo-browser 에 풀어
-//! `npm ci` 로 의존성(@playwright/mcp)을 받는다. Node.js 20 이상이 있어야 한다 — 없으면 안내만 한다(선택 기능)
+//! 도구 코드(tools/chammo-browser)는 실행 파일에 넣어 두고, 설정 > 브라우저 자동화의 '설치'가 <데이터>/tools/chammo-browser 에 풀어
+//! 의존성(@playwright/mcp)까지 받는다 — Node·크롬 베타까지 없는 것만 차례로(browser_setup.rs, 2026-10-05 '딸깍')
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -15,6 +15,13 @@ pub const FILES: &[(&str, &str)] = &[
     ("src/lock.js", include_str!("../../../tools/chammo-browser/src/lock.js")),
     ("src/relay.js", include_str!("../../../tools/chammo-browser/src/relay.js")),
     ("src/setup.js", include_str!("../../../tools/chammo-browser/src/setup.js")),
+    ("src/focus.js", include_str!("../../../tools/chammo-browser/src/focus.js")),
+    ("src/window.js", include_str!("../../../tools/chammo-browser/src/window.js")),
+    ("src/live.js", include_str!("../../../tools/chammo-browser/src/live.js")),
+    ("src/minimize.js", include_str!("../../../tools/chammo-browser/src/minimize.js")),
+    ("src/guard.js", include_str!("../../../tools/chammo-browser/src/guard.js")),
+    ("src/check.js", include_str!("../../../tools/chammo-browser/src/check.js")),
+    ("src/features.js", include_str!("../../../tools/chammo-browser/src/features.js")),
 ];
 
 pub const MIN_NODE: u32 = 20;
@@ -28,9 +35,30 @@ pub fn tool_dir(data: &Path) -> PathBuf {
     data.join("tools/chammo-browser")
 }
 
-/// 깔렸나 = 의존성까지 받아졌나
+/// 앱이 원하는 @playwright/mcp 버전(실행 파일에 넣은 package.json 의 dependencies)
+pub fn wanted_mcp_version() -> Option<String> {
+    let pkg: serde_json::Value = serde_json::from_str(FILES[0].1).ok()?;
+    pkg.pointer("/dependencies/@playwright~1mcp")?.as_str().map(str::to_string)
+}
+
+/// 깔렸나 = 앱이 원하는 버전의 의존성까지 받아졌나. 앱 업데이트로 버전이 올라가면 '안 깔림' → 설정 화면에 설치 버튼이 다시 뜬다
 pub fn installed(data: &Path) -> bool {
-    tool_dir(data).join("node_modules/@playwright/mcp/package.json").is_file()
+    let Ok(raw) = std::fs::read_to_string(tool_dir(data).join("node_modules/@playwright/mcp/package.json")) else { return false };
+    let have = serde_json::from_str::<serde_json::Value>(&raw).ok().and_then(|v| v.get("version")?.as_str().map(str::to_string));
+    have.is_some() && have == wanted_mcp_version()
+}
+
+/// 앱을 켤 때 — 이미 깐 사용자의 도구 코드를 앱 것으로 간다(설치 버튼 때만 풀면 앱을 올려도 옛 래퍼가 계속 돈다, 2026-10-03).
+/// 한 번도 안 깐 사용자에겐 아무것도 안 만든다. 같은 내용은 다시 안 쓴다
+pub fn refresh(data: &Path) -> std::io::Result<()> {
+    let dir = tool_dir(data);
+    if !dir.join("bin").is_dir() {
+        return Ok(());
+    }
+    if FILES.iter().any(|(p, body)| std::fs::read_to_string(dir.join(p)).ok().as_deref() != Some(*body)) {
+        export(data)?;
+    }
+    Ok(())
 }
 
 /// 도구 코드를 데이터 폴더에 푼다(앱 것이라 덮어씀). 프로필은 <데이터>/browser 에 따로 있어 안 건드린다
@@ -49,52 +77,58 @@ pub fn export(data: &Path) -> std::io::Result<PathBuf> {
 #[derive(Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserStatus {
-    /// node 실행 파일(없으면 None)
+    /// 쓸 node 실행 파일(없으면 None) — 시스템 20 이상 또는 앱이 받은 것
     pub node: Option<String>,
     pub node_version: String,
     /// node 가 MIN_NODE 이상
     pub node_ok: bool,
+    /// "system" | "ours" | ""
+    pub node_source: String,
+    /// 도구 부품(@playwright/mcp)이 앱이 원하는 판으로 받아졌나
     pub installed: bool,
-    /// 구글 크롬 — @playwright/mcp 기본 채널. 없으면 첫 브라우저 도구 호출에서 안내가 뜬다
+    /// 구글 크롬(일반이든 베타든) — 하나도 없으면 세션 브라우저가 안 뜬다
     pub chrome: bool,
+    /// 크롬 베타 — 세션 크롬을 사용자 크롬과 Dock·⌘Tab 에서 안 섞이게
+    pub chrome_beta: bool,
+    /// 설치 끝에 시험으로 한 번 열어 봤나
+    pub checked: bool,
+    /// 다 됨 — 설정 줄이 '준비됐어요'
+    pub ready: bool,
 }
 
-fn node_bin() -> Option<String> {
-    let home = crate::config::home();
-    crate::setup::pick_bin("node", &home, &std::env::var("PATH").unwrap_or_default(), |p| Path::new(p).is_file())
+/// Playwright 의 chrome 채널이 찾는 자리(맥 1곳, 윈도우 LOCALAPPDATA·ProgramFiles·ProgramFiles(x86)).
+/// 예전엔 맥 경로만 봐서 윈도우에선 크롬이 있어도 늘 "크롬이 있어야" 안내가 떴다
+pub fn chrome_paths(win: bool, env: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    if !win {
+        return vec!["/Applications/Google Chrome.app".to_string()];
+    }
+    ["LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)"]
+        .iter()
+        .filter_map(|k| env(k))
+        .map(|root| format!(r"{}\Google\Chrome\Application\chrome.exe", root.trim_end_matches(['\\', '/'])))
+        .collect()
 }
 
-/// 설정 마법사 "브라우저 자동화" 줄
+/// 설정 "브라우저 자동화" 줄 — 확인 목록(Node · 크롬 베타 · 도구 부품 · 시험 열기)
 #[tauri::command]
 pub fn browser_status() -> BrowserStatus {
-    let node = node_bin();
-    let node_version = node
-        .as_ref()
-        .and_then(|n| crate::platform::command(n).arg("--version").output().ok())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
+    let data = crate::config::data_dir();
+    let node = crate::browser_setup::chosen_node(data);
+    let h = crate::browser_setup::have(data);
+    let home = crate::config::home();
+    let user_chrome = std::path::Path::new(&home).join("Applications/Google Chrome.app");
+    let chrome = h.chrome_beta || user_chrome.exists() || chrome_paths(cfg!(windows), |k| std::env::var(k).ok()).iter().any(|p| Path::new(p).exists());
     BrowserStatus {
-        node_ok: node_major(&node_version).is_some_and(|m| m >= MIN_NODE),
-        node,
-        node_version,
-        installed: installed(crate::config::data_dir()),
-        chrome: Path::new("/Applications/Google Chrome.app").is_dir(),
+        node_ok: node.is_some(),
+        node_version: node.as_ref().map(|n| n.1.clone()).unwrap_or_else(|| crate::browser_setup::system_node(data).map(|s| s.1).unwrap_or_default()),
+        node_source: node.as_ref().map(|n| n.2.to_string()).unwrap_or_default(),
+        node: node.map(|n| n.0.to_string_lossy().into_owned()),
+        installed: h.parts,
+        chrome,
+        chrome_beta: h.chrome_beta,
+        checked: h.checked,
+        ready: crate::browser_setup::plan(h).is_empty(),
     }
-}
-
-/// 설치 — 도구 코드를 풀고, 설정 화면 터미널에서 돌릴 명령을 돌려준다(npm ci 는 인터넷이 필요해 사람이 보는 앞에서)
-#[tauri::command]
-pub fn browser_install_command() -> Result<String, String> {
-    let dir = export(crate::config::data_dir()).map_err(|e| e.to_string())?;
-    let node = node_bin().ok_or(crate::i18n::tr("Node.js 가 없어요", "Node.js is not installed"))?;
-    let npm = Path::new(&node).with_file_name("npm");
-    let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
-    Ok(format!(
-        "cd {} && {} ci --omit=dev --no-audit --no-fund && echo && echo {}",
-        q(&dir.to_string_lossy()),
-        q(&npm.to_string_lossy()),
-        q(crate::i18n::tr("브라우저 자동화 준비 끝. 이 창은 닫아도 돼요.", "Browser automation is ready. You can close this."))
-    ))
 }
 
 #[cfg(test)]
@@ -118,7 +152,7 @@ mod tests {
         assert!(dir.join("package-lock.json").is_file());
         assert!(!installed(&d)); // npm ci 전
         std::fs::create_dir_all(dir.join("node_modules/@playwright/mcp")).unwrap();
-        std::fs::write(dir.join("node_modules/@playwright/mcp/package.json"), "{}").unwrap();
+        std::fs::write(dir.join("node_modules/@playwright/mcp/package.json"), format!(r#"{{"version":"{}"}}"#, wanted_mcp_version().unwrap())).unwrap();
         assert!(installed(&d));
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -134,4 +168,40 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn 크롬_자리_맥은_응용프로그램_윈도우는_세_곳() {
+        assert_eq!(chrome_paths(false, |_| None), vec!["/Applications/Google Chrome.app".to_string()]);
+        let env = |k: &str| match k {
+            "LOCALAPPDATA" => Some(r"C:\Users\a\AppData\Local".to_string()),
+            "ProgramFiles" => Some(r"C:\Program Files".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            chrome_paths(true, env),
+            vec![r"C:\Users\a\AppData\Local\Google\Chrome\Application\chrome.exe".to_string(), r"C:\Program Files\Google\Chrome\Application\chrome.exe".to_string()]
+        );
+    }
+
+    #[test]
+    fn 앱이_새_버전이면_깔린_도구_코드를_갈고_의존성_버전이_다르면_다시_설치로() {
+        let d = std::env::temp_dir().join(format!("chammo-browser-refresh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        // 한 번도 안 깐 사용자에겐 아무것도 안 푼다
+        refresh(&d).unwrap();
+        assert!(!tool_dir(&d).exists());
+        // 옛 버전 코드가 깔려 있으면 앱 것으로 간다
+        let dir = export(&d).unwrap();
+        std::fs::write(dir.join("src/relay.js"), "// old").unwrap();
+        refresh(&d).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("src/relay.js")).unwrap(), include_str!("../../../tools/chammo-browser/src/relay.js"));
+        // 받아 둔 @playwright/mcp 가 앱이 원하는 버전이 아니면 '안 깔림' → 설정 화면에 설치 버튼이 다시 뜬다
+        let pkg = dir.join("node_modules/@playwright/mcp");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("package.json"), r#"{"version":"0.0.1"}"#).unwrap();
+        assert!(!installed(&d));
+        std::fs::write(pkg.join("package.json"), format!(r#"{{"version":"{}"}}"#, wanted_mcp_version().unwrap())).unwrap();
+        assert!(installed(&d));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
 }

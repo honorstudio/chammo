@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dismissLost, parseSnap, stepSnapshot, type LiveSnap } from './revive';
+import { autoRestore, parseSnap, stepSnapshot, type LiveSnap } from './revive';
 import type { Session } from './session';
 
 const bg = (name: string, sessionId: string): Session => ({
@@ -14,7 +14,7 @@ const NEW = 2_000_000;
 describe('stepSnapshot — 관리 프로그램 재시작으로 꺼진 세션 찾기', () => {
   it('처음엔 살아 있는 백그라운드 세션만 적는다', () => {
     const term: Session = { ...bg('term', 'tttt0000-1'), kind: 'interactive' };
-    expect(stepSnapshot(null, OLD, [bg('todo-api', 'kkkk0000-1'), term], 0)).toEqual(snap(OLD, [s('todo-api', 'kkkk0000-1')]));
+    expect(stepSnapshot(null, OLD, [bg('todo-api', 'kkkk0000-1'), term], 0)).toEqual(snap(OLD, [{ ...s('todo-api', 'kkkk0000-1'), id: 'kkkk0000', busy: false }])); // 짧은 번호도 — 되살릴 때 같은 번호로(respawn)
   });
 
   it('관리 프로그램 시작 시각이 바뀌면 직전에 살아 있던 세션이 꺼진 세션이 된다', () => {
@@ -73,13 +73,6 @@ describe('stepSnapshot — 관리 프로그램 재시작으로 꺼진 세션 찾
   });
 });
 
-describe('dismissLost — "안 켬"', () => {
-  it('꺼진 목록만 비운다', () => {
-    const st = snap(NEW, [s('todo-api', 'k1')], [s('acme-shop', 't1')]);
-    expect(dismissLost(st)).toEqual(snap(NEW, [s('todo-api', 'k1')], []));
-  });
-});
-
 describe('parseSnap — live.json 읽기', () => {
   it('없거나 깨졌으면 null', () => {
     expect(parseSnap('')).toBeNull();
@@ -89,5 +82,33 @@ describe('parseSnap — live.json 읽기', () => {
   it('모양이 맞으면 그대로', () => {
     const st = snap(NEW, [s('todo-api', 'k1')], [s('acme-shop', 't1')]);
     expect(parseSnap(JSON.stringify(st))).toEqual(st);
+  });
+});
+
+// 2026-10-01 아이맥 재부팅 실측 — 앱은 다시 떴는데 비서·하위 세션이 다 꺼진 채로 "다시 켜기" 버튼만 떠 있었다.
+// 무인 기계라 누를 사람이 없다 → 설정(autoRevive)을 켜면 앱이 스스로 이어서 켠다.
+describe('autoRestore — 무인 기계에서 재시작 뒤 스스로 되살리기', () => {
+  const base = { enabled: true, ready: true, lost: [] as LiveSnap['lost'], tried: new Set<string>() };
+
+  it('꺼 두면 아무것도 안 한다 — 사람이 쓰는 맥에선 지금처럼 버튼만', () => {
+    expect(autoRestore({ ...base, enabled: false, lost: [s('아이맥', 'a1')] })).toEqual({ kind: 'none' });
+  });
+
+  it('세션 목록을 아직 못 읽었으면 기다린다', () => {
+    expect(autoRestore({ ...base, ready: false, lost: [s('아이맥', 'a1')] })).toEqual({ kind: 'none' });
+  });
+
+  it('꺼진 세션이 있으면 이어서 켠다', () => {
+    expect(autoRestore({ ...base, lost: [s('아이맥', 'a1'), s('project-x', 'o1')] })).toEqual({ kind: 'revive', sessions: [s('아이맥', 'a1'), s('project-x', 'o1')] });
+  });
+
+  it('한 번 시도한 세션은 다시 시도하지 않는다 — 실패해도 매 폴링마다 두드리지 않게', () => {
+    expect(autoRestore({ ...base, lost: [s('아이맥', 'a1'), s('project-x', 'o1')], tried: new Set(['a1']) })).toEqual({ kind: 'revive', sessions: [s('project-x', 'o1')] });
+    expect(autoRestore({ ...base, lost: [s('아이맥', 'a1')], tried: new Set(['a1']) })).toEqual({ kind: 'none' });
+  });
+
+  // 2026-10-03 사용자: 앱이 스스로 참모를 새로 만들지 않는다 — 참모가 없으면 오케스트레이터 홈에서 사람이 고른다
+  it('되살릴 게 없으면 참모가 0개여도 아무것도 안 한다(새로 띄우지 않는다)', () => {
+    expect(autoRestore({ ...base })).toEqual({ kind: 'none' });
   });
 });

@@ -133,3 +133,51 @@ describe('summarizeTranscript — 넘기기 판단용(2026-09-30 한 프로젝�
     expect(r.tail!.length).toBeLessThanOrEqual(201);
   });
 });
+
+describe('limit — 사용 한도로 멈춘 세션(대화 기록의 API 오류 줄, 2026-10-02)', () => {
+  const err = (ts: string, text: string, error?: string) =>
+    JSON.stringify({ type: 'assistant', timestamp: ts, isApiErrorMessage: true, ...(error ? { error } : {}), message: { model: '<synthetic>', content: [{ type: 'text', text }] } });
+  const user = (ts: string, text: string) => JSON.stringify({ type: 'user', timestamp: ts, message: { content: text } });
+
+  it('글로 잡는다 — "hit your … limit"(NAS 원문)', () => {
+    const a = summarizeTranscript([user('2026-10-02T10:00:00Z', '고쳐줘'), err('2026-10-02T10:05:00Z', "You've hit your weekly limit · resets 11am (Asia/Seoul)")].join('\n'));
+    expect(a.limit).toEqual({ ts: '2026-10-02T10:05:00Z', text: "You've hit your weekly limit · resets 11am (Asia/Seoul)" });
+  });
+
+  it('오류 종류로도 잡는다 — 문구가 바뀌어도', () => {
+    const a = summarizeTranscript(err('2026-10-02T10:05:00Z', 'Claude AI usage cap · try later', 'rate_limit'));
+    expect(a.limit?.ts).toBe('2026-10-02T10:05:00Z');
+  });
+
+  it('일시적 429·529·과부하는 한도가 아니다(Claude Code 가 다시 시도한다)', () => {
+    expect(summarizeTranscript(err('t', 'API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment.', 'server_error')).limit).toBeUndefined();
+    expect(summarizeTranscript(err('t', 'API Error: 429 Too many requests — try again in a moment.', 'rate_limit')).limit).toBeUndefined();
+  });
+
+  it('API 오류 줄이 아니면 같은 글이어도 아니다(세션이 한도 얘기를 한 것)', () => {
+    const a = summarizeTranscript(JSON.stringify({ type: 'assistant', timestamp: 't', message: { content: [{ type: 'text', text: "You've hit your session limit 문구를 잡아야 해" }] } }));
+    expect(a.limit).toBeUndefined();
+  });
+
+  it('그 뒤에 새 줄(계속해 등)이 오면 멈춘 게 아니다', () => {
+    const a = summarizeTranscript([err('2026-10-02T10:05:00Z', "You've hit your session limit · resets 3:45pm"), user('2026-10-02T10:06:00Z', '계속해')].join('\n'));
+    expect(a.limit).toBeUndefined();
+  });
+});
+
+describe('summarizeTranscript lastAt — 마지막 대화 줄 시각(꺼진 세션이 턴 중간이었나)', () => {
+  const toolOnly = (ts: string) => line({ type: 'assistant', timestamp: ts, message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: { command: 'gh pr checks' } }], stop_reason: 'tool_use' } });
+  it('글 없는 도구 줄·다른 세션 메시지·작업 알림도 센다 — 답 뒤에 오면 답보다 늦다', () => {
+    const a = summarizeTranscript([asst('2026-10-04T01:00:00Z', '다 했어'), user('2026-10-04T01:05:00Z', 'Another Claude session sent a message: 이것도'), toolOnly('2026-10-04T01:05:03Z')].join('\n'));
+    expect(a.reply?.ts).toBe('2026-10-04T01:00:00Z');
+    expect(a.lastAt).toBe('2026-10-04T01:05:03Z');
+  });
+  it('끝에 시스템 줄만 붙으면 답 시각 그대로', () => {
+    const a = summarizeTranscript([asst('2026-10-04T01:00:00Z', '다 했어'), line({ type: 'system', subtype: 'stop_hook_summary', timestamp: '2026-10-04T01:00:01Z' }), line({ type: 'last-prompt' })].join('\n'));
+    expect(a.lastAt).toBe('2026-10-04T01:00:00Z');
+  });
+  it('큐에 쌓인 입력(attachment)도 센다', () => {
+    const a = summarizeTranscript([asst('2026-10-04T01:00:00Z', '다 했어'), line({ type: 'attachment', timestamp: '2026-10-04T01:02:00Z', attachment: { type: 'queued_command' } })].join('\n'));
+    expect(a.lastAt).toBe('2026-10-04T01:02:00Z');
+  });
+});

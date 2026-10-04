@@ -45,12 +45,15 @@ function parse(line) {
   }
 }
 
+// 공개판엔 chammo-browser 명령이 PATH 에 없다(앱이 데이터 폴더에 풀기만 한다) — 그대로 쳐서 되는 모양으로 안내
+const UNLOCK_CLI = require('path').join(__dirname, '..', 'bin', 'chammo-browser.js');
+
 function lockedMessage(profile, r) {
   if (r.reason === 'locked' && r.holder) {
     return [
       `프로필 '${profile}' 은(는) pid ${r.holder.pid}(시작 ${r.holder.startedAt})이 사용 중입니다.`,
       `→ 그 세션에서 browser_close 를 부르거나 세션을 닫으면 풀립니다. 다음 호출 때 자동으로 다시 시도합니다.`,
-      `→ 유휴 세션이 쥐고 있는 게 확실하면: chammo-browser unlock ${profile}`,
+      `→ 유휴 세션이 쥐고 있는 게 확실하면: node "${UNLOCK_CLI}" unlock ${profile}`,
     ].join('\n');
   }
   return `프로필 '${profile}' 락 획득 실패: ${r.reason}. 다음 호출 때 다시 시도합니다.`;
@@ -67,16 +70,28 @@ function lockedMessage(profile, r) {
  * @param {Function} [o.setTimer]  테스트용 주입 (기본 setTimeout)
  * @param {Function} [o.clearTimer]
  * @param {(msg:string) => void} [o.log]
+ * @param {(name:string, args:object) => void} [o.onCallStart]  Claude 의 도구 호출이 playwright 로 갈 때(앞 앱 되돌리기·세션 브라우저 상태)
+ * @param {(name:string, result:object) => void} [o.onCallEnd]    그 응답이 왔을 때
+ * @param {object[]} [o.extraTools]  래퍼가 직접 맡는 도구 — tools/list 응답 끝에 더한다
+ * @param {(name:string, args:object) => (Promise<object>|null)} [o.onLocalTool]  그 도구면 결과 Promise, 아니면 null(playwright 로)
+ * @param {(name:string) => {name:string, arguments:object}[]} [o.beforeCall]  브라우저가 떠 있을 때 세션 호출 앞에 먼저 보낼 내부 호출들 —
+ *   다 답할 때까지 세션 호출(과 뒤에 온 줄)을 잡아 둔다. 답은 세션에 안 보인다
  */
 function createRelay({
   profile, acquire, release, sendToChild, sendToClient,
   idleMs = 0, setTimer = setTimeout, clearTimer = clearTimeout, log = () => {},
+  onCallStart = () => {}, onCallEnd = () => {}, extraTools = [], onLocalTool = () => null, beforeCall = () => [],
 }) {
+  const lists = new Set(); // tools/list 요청 id — 응답에 래퍼 도구를 더한다
   let held = false;
   const pending = new Map(); // 진행 중인 tools/call: id → 도구 이름
   const internal = new Set(); // 래퍼가 직접 보낸 요청 id — 응답을 Claude 로 흘리지 않는다
   let idleTimer = null;
   let idleSeq = 0;
+  let preSeq = 0;
+  const preWait = new Set(); // 답을 기다리는 내부 선행 호출 id
+  const waiting = []; // 그동안 온 세션 줄 — 순서대로 다시 처리
+  let localRunning = 0; // 도는 래퍼 도구 수 — 사람 부르기를 기다리는 동안 유휴 닫기가 크롬을 끄지 않게(2026-10-05 QA 5)
 
   function disarm() {
     if (idleTimer != null) clearTimer(idleTimer);
@@ -85,7 +100,7 @@ function createRelay({
 
   function arm() {
     disarm();
-    if (!idleMs || !held || pending.size > 0) return;
+    if (!idleMs || !held || pending.size > 0 || localRunning > 0) return;
     idleTimer = setTimer(onIdle, idleMs);
     if (idleTimer && typeof idleTimer.unref === 'function') idleTimer.unref();
   }
@@ -93,7 +108,7 @@ function createRelay({
   function onIdle() {
     idleTimer = null;
     // 콜백이 대기 중일 때 호출이 먼저 들어왔을 수 있다 → 그땐 닫지 않는다
-    if (!held || pending.size > 0) return;
+    if (!held || pending.size > 0 || localRunning > 0) return;
     const id = `chammo-idle-${++idleSeq}`;
     log(`[chammo-browser-mcp] ${+(idleMs / 60000).toFixed(2)}분 동안 도구 호출이 없어 브라우저를 닫고 '${profile}' 락을 돌려줍니다.`);
     internal.add(id);
@@ -102,11 +117,25 @@ function createRelay({
   }
 
   function onClientLine(line) {
+    if (preWait.size > 0) return void waiting.push(line);
     const msg = parse(line);
+    if (msg && msg.method === 'tools/list' && msg.id != null && extraTools.length) lists.add(msg.id);
     const isCall = msg && msg.method === 'tools/call' && msg.id != null;
     if (!isCall) return sendToChild(line);
 
     const name = msg.params && msg.params.name;
+    // 래퍼 도구(사람 부르기 등) — playwright 로 안 보내고 락도 안 잡는다
+    const local = onLocalTool(name, (msg.params && msg.params.arguments) || {});
+    if (local) {
+      disarm();
+      localRunning += 1;
+      const settle = () => { localRunning -= 1; arm(); };
+      Promise.resolve(local).finally(settle).then(
+        (result) => sendToClient(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result })),
+        (e) => sendToClient(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text: String(e && e.message || e) }], isError: true } })),
+      );
+      return;
+    }
     disarm();
     // 락이 없으면 브라우저도 없다 → browser_close 는 락 없이 그대로 통과(no-op)
     if (!held && name !== CLOSE_TOOL) {
@@ -120,12 +149,30 @@ function createRelay({
       }
       held = true;
     }
+    // 브라우저가 떠 있으면 먼저 치울 것(사람이 앱에서 연 파일 창 등) — 그게 끝난 뒤 이 줄을 다시 처리한다
+    const pre = held && name !== CLOSE_TOOL ? beforeCall(name) || [] : [];
+    if (pre.length) {
+      waiting.push(line);
+      for (const c of pre) {
+        const id = `chammo-pre-${++preSeq}`;
+        internal.add(id);
+        preWait.add(id);
+        pending.set(id, c.name);
+        sendToChild(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: c.name, arguments: c.arguments || {} } }));
+      }
+      return;
+    }
     pending.set(msg.id, name);
+    onCallStart(name, (msg.params && msg.params.arguments) || {});
     sendToChild(line);
   }
 
   function onChildLine(line) {
     const msg = parse(line);
+    if (msg && msg.id != null && lists.delete(msg.id) && msg.result && Array.isArray(msg.result.tools)) {
+      msg.result.tools = [...msg.result.tools, ...extraTools];
+      return sendToClient(JSON.stringify(msg));
+    }
     if (msg && msg.id != null && pending.has(msg.id) && !msg.method) {
       const name = pending.get(msg.id);
       pending.delete(msg.id);
@@ -136,7 +183,13 @@ function createRelay({
         held = false;
       }
       arm();
-      if (internal.delete(msg.id)) return;
+      if (internal.delete(msg.id)) {
+        if (preWait.delete(msg.id) && preWait.size === 0) {
+          for (const l of waiting.splice(0)) onClientLine(l);
+        }
+        return;
+      }
+      onCallEnd(name, msg.result || msg.error || {});
     }
     sendToClient(line);
   }

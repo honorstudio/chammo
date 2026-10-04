@@ -14,6 +14,10 @@ export type TaskEvent = {
   target?: string;
   /** send 에만: 시킨 참모(백그라운드 세션 id) — 채팅 뷰 스페이스가 참모별로 가른다(2026-09-30~, 옛 기록엔 없음) */
   from?: string;
+  /** send·own: 시킨 참모의 기본 이름(참모-3) — 되살리면 id 가 바뀌어서(2026-10-04~, 옛 기록엔 없음) */
+  fromName?: string;
+  /** send 에만: 대상 세션의 프로젝트(dev 아래 폴더) — 맡은 일 자동 추론용(2026-10-04~, 옛 기록엔 없음) */
+  project?: string;
   /** send 에만: 무엇을 시켰나 한 줄 */
   title?: string;
   note?: string;

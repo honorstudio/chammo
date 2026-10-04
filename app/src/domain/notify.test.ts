@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { blockedBody, NOTIFY_GAP_MS, noteKey, noteTarget, readNoteTarget, shouldNotify, wants, type Note } from './notify';
+import { blockedBody, nativeWhenFocused, NOTIFY_GAP_MS, noteKey, noteTarget, readNoteTarget, shouldNotify, wants, type Note } from './notify';
 
 describe('wants — 어떤 알림을 보내나 (사용자 2026-09-27 "필요한 것만")', () => {
   it('결정 대기(task ask·로그인 오류)·권한 창 자동 허용 실패는 늘 보낸다', () => {
@@ -82,5 +82,22 @@ describe('영어 모드', () => {
     setLang('en');
     expect(blockedBody('permission prompt')).toBe('Stopped at a permission prompt');
     expect(blockedBody()).toBe('Stopped at a prompt');
+  });
+});
+
+describe('nativeWhenFocused — 참모 창을 보고 있으면 앱 안에 뜨는 것은 맥 알림을 안 보낸다(2026-10-03 사용자)', () => {
+  it('참모 물어봄·확인창·결정·로그인 오류는 앱 안에 뜨니까 보고 있으면 안 보냄', () => {
+    for (const k of ['asks', 'blocked', 'decide', 'login'] as const) expect(nativeWhenFocused(k)).toBe(false);
+  });
+  it('권한 자동 허용 실패·계정·컨텍스트는 앱 안에 따로 안 뜨니 보고 있어도 보냄', () => {
+    for (const k of ['allowFail', 'accounts', 'ctx'] as const) expect(nativeWhenFocused(k)).toBe(true);
+  });
+});
+
+import { nativeWhenFocused as nwf, wants as wantsK } from './notify';
+describe('human — 세션 브라우저가 사람을 부름(browser_ask_human)', () => {
+  it('하위 세션이어도 알리고, 앱을 보고 있으면 앱 안 모달만', () => {
+    expect(wantsK('human', false)).toBe(true);
+    expect(nwf('human')).toBe(false);
   });
 });

@@ -14,7 +14,7 @@ function textNodes(root: HTMLElement): Text[] {
   return out;
 }
 
-function scrollParent(el: HTMLElement | null): HTMLElement | null {
+export function scrollParent(el: HTMLElement | null): HTMLElement | null {
   for (let e = el; e; e = e.parentElement) {
     const o = getComputedStyle(e).overflowY;
     if ((o === 'auto' || o === 'scroll') && e.scrollHeight > e.clientHeight) return e;

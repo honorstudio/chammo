@@ -1,0 +1,216 @@
+#!/bin/sh
+''':'
+# sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+exit 0
+':'''
+__doc__ = """Assistant roster — the voice-hint hook prints it on every prompt: who the other assistants are, what each one handles
+(set by the user, else guessed from the last 7 days of delegations), and to hand work that belongs to another one over to it.
+참모 이름표 — 훅(voice-hint)이 매 지시마다 붙인다: 다른 참모가 누구고 각자 무슨 일을 맡는지(사람이 적은 것, 없으면 최근 7일 맡긴 일로 짐작),
+자기 몫이 아닌 일은 맞는 참모에게 넘기라고. stdin = 훅 입력(session_id). 맡은 일 = <데이터>/orch-roles.json(앱 이름 창·폰 메뉴에서 적는다)"""
+import datetime, json, os, re, shutil, subprocess, sys
+
+SEP = ' · '
+WINDOW_H = 7 * 24
+TOP = 3
+
+
+def data_dir():
+    env = os.environ.get('CHAMMO_HOME', '').strip()
+    if env:
+        return os.path.expanduser(env)
+    home = os.path.expanduser('~')
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not os.path.isdir(new) and os.path.isdir(old) else new
+
+
+def read_json(path, default):
+    try:
+        with open(path, encoding='utf-8') as f:
+            v = json.load(f)
+        return v if isinstance(v, type(default)) else default
+    except (OSError, ValueError):
+        return default
+
+
+def read_events(path):
+    out = []
+    try:
+        with open(path, encoding='utf-8') as f:
+            for line in f:
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    pass
+    except OSError:
+        pass
+    return out
+
+
+def norm_dir(p):
+    return os.path.expanduser(p or '').replace('\\', '/').rstrip('/')
+
+
+def bases_of(cfg):
+    """참모로 치는 기본 이름 — 설정 이름과 두 언어 기본 이름(앱 domain/session assistantBases 와 같다)"""
+    return [b for b in [(cfg.get('assistantName') or '').strip(), '참모', 'Chammo'] if b]
+
+
+def orch_base(name, bases):
+    b = (name or '').split(SEP)[0].strip()
+    return b if any(b == x or re.fullmatch(re.escape(x) + r'-\d+', b) for x in bases) else None
+
+
+def project_of(cwd, dev):
+    """dev 루트 아래 첫 폴더(워크트리여도 본체) — 밖이거나 dev 자체면 None"""
+    c, d = norm_dir(cwd), norm_dir(dev)
+    if not d or not c.startswith(d + '/'):
+        return None
+    return c[len(d) + 1:].split('/')[0] or None
+
+
+def parse_ts(v):
+    """기록 시각 — 문자열만, 시간대가 없으면 UTC 로 본다. 못 읽으면 None"""
+    if not isinstance(v, str):
+        return None
+    try:
+        at = datetime.datetime.fromisoformat(v.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    return at if at.tzinfo else at.replace(tzinfo=datetime.timezone.utc)
+
+
+def born_of(roles, base):
+    """이 이름으로 새 참모를 띄운 때(ms) — 그 전 기록은 번호를 쓰던 옛 참모 것"""
+    r = roles.get(base) if isinstance(roles, dict) else None
+    b = r.get('born') if isinstance(r, dict) else None
+    return b if isinstance(b, (int, float)) else None
+
+
+def infer(events, agents, orchs, bases, dev, now, roles=None, hq=''):
+    """참모(기본 이름)마다 최근 7일 주로 맡긴 프로젝트 — 많은 순 → 최근 순, 3개(앱 domain/orchRoles inferRoles 와 같은 규칙).
+    이상한 줄은 건너뛴다(훅이 죽으면 이름표가 통째로 빠진다)"""
+    events = [e for e in events if isinstance(e, dict)]
+    own = {}
+    for e in events:
+        if e.get('type') in ('send', 'own') and e.get('from'):
+            own[e.get('task')] = (e['from'], e.get('fromName'))
+    ids = {a.get('id'): orch_base(a.get('name'), bases) for a in orchs}
+    tally = {}
+    for e in events:
+        if e.get('type') != 'send' or not isinstance(e.get('target'), str) or not e['target']:
+            continue
+        at = parse_ts(e.get('ts'))
+        if not at or (now - at).total_seconds() > WINDOW_H * 3600:
+            continue
+        oid, oname = own.get(e.get('task'), (None, None))
+        who = orch_base(oname, bases) if isinstance(oname, str) and oname else ids.get(oid)
+        if not who:
+            continue
+        born = born_of(roles, who)
+        if born is not None and at.timestamp() * 1000 < born:
+            continue  # 이 번호를 쓰던 옛 참모의 일
+        t = e['target']
+        tgt = next((a for a in agents if t in (a.get('id'), a.get('name'), a.get('sessionId'))), None)
+        if orch_base(t, bases) or (tgt and orch_base(tgt.get('name'), bases) and tgt in orchs):
+            continue  # 참모끼리 넘긴 일
+        if tgt and hq and norm_dir(tgt.get('cwd')) == hq:
+            continue  # HQ 도우미에게 보낸 일 — 프로젝트 일이 아니다
+        proj = e.get('project') if isinstance(e.get('project'), str) else None
+        proj = proj or (project_of(tgt.get('cwd'), dev) if tgt else None)
+        if not proj:
+            continue
+        per = tally.setdefault(who, {})
+        n, last = per.get(proj, (0, at))
+        per[proj] = (n + 1, max(last, at))
+    return {w: [p for p, _ in sorted(per.items(), key=lambda kv: (-kv[1][0], -kv[1][1].timestamp()))[:TOP]] for w, per in tally.items()}
+
+
+def ga(word):
+    """조사 이/가 — 받침 있으면 이(설정 이름을 사용자가 정해서 갈린다)"""
+    c = word[-1:] if word else ''
+    return '이' if '가' <= c <= '힣' and (ord(c) - 0xAC00) % 28 else '가'
+
+
+def build(me_sid, agents, roles, events, cfg, now):
+    """훅에 찍을 글 — 참모가 나 하나뿐이고 맡은 일도 짐작도 없으면 빈 글"""
+    en = cfg.get('language') == 'en'
+    bases = bases_of(cfg)
+    hq = norm_dir(cfg.get('hqDir'))
+    orchs = [a for a in agents if orch_base(a.get('name'), bases) and (not hq or norm_dir(a.get('cwd')) == hq)]
+    if not orchs:
+        return ''
+    roles = roles if isinstance(roles, dict) else {}
+    guessed = infer(events, agents, orchs, bases, cfg.get('devRoot') or '', now, roles, hq)
+    sep = ', ' if en else '·'
+
+    def what(name):
+        b = orch_base(name, bases)
+        r = roles.get(b)
+        role = ' '.join(r['role'].split()) if isinstance(r, dict) and isinstance(r.get('role'), str) else ''
+        g = guessed.get(b) or []
+        recent = (f'last 7 days: mostly {sep.join(g)}' if en else f'최근 7일: 주로 {sep.join(g)}') if g else ''
+        if role:
+            return (f' — handles: {role}' if en else f' — 맡은 일: {role}') + (f'({recent})' if recent else '')
+        return f' — {recent}' if recent else ''
+
+    mine = next((a for a in orchs if me_sid and a.get('sessionId') == me_sid), None)
+    others = [a for a in orchs if a is not mine]
+    name = cfg.get('assistantName') or ('Chammo' if en else '참모')
+    if not others and not (mine and what(mine['name'])):
+        return ''
+    me = (f'You = {mine["name"]}{what(mine["name"])}. ' if en else f'너 = {mine["name"]}{what(mine["name"])}. ') if mine else ''
+    rows = ' / '.join(f'{a["name"]}{what(a["name"])}' for a in others) or ('none' if en else '없음')
+    told = any(what(a['name']) for a in others)
+    if en:
+        out = (f'{name} roster: {me}Other {name}s: {rows}. The SendMessage address is the name exactly as written here (including the part after " · ");'
+               f' to the user, call them by that nickname, not the number.')
+        if told:
+            out += (f' When a request is not yours and matches what another {name} handles (its project name or kind of work appears in that line), do not do it yourself:'
+                    f' hand it to that one with SendMessage and tell the user in one line ("handed to …"). What the user set is the rule, the last 7 days are a hint;'
+                    f' if nobody fits or it is unclear, do it yourself.')
+    else:
+        out = (f'{name} 이름표: {me}다른 {name}: {rows}. SendMessage 주소는 여기 적힌 이름 그대로(" · " 뒤까지),'
+               f' 사용자에게 말할 땐(음성 포함) 번호 말고 " · " 뒤 별명으로 부른다.')
+        if told:
+            out += (f' 일을 받으면: 네 맡은 일이 아니고 다른 {name} 맡은 일에 맞으면(그 줄에 요청의 프로젝트 이름이나 일 종류가 있으면) 직접 하지 말고'
+                    f' 그 {name}에게 SendMessage 로 넘기고 사용자에게 "○○에게 넘겼어" 한 줄. 사람이 적은 맡은 일이 기준, 최근 7일은 참고.'
+                    f' 맞는 {name}{ga(name)} 없거나 애매하면 네가 한다.')
+    return out
+
+
+def live_agents(d):
+    """떠 있는 세션 — claude agents. 맥이 바쁘면 몇 초씩 걸려(실측 5.7초) 이름표가 통째로 빠졌다(2026-10-04 QA) —
+    늦거나 실패하면 앱이 적어 둔 세션 목록(<데이터>/live.json, 앱이 목록이 바뀔 때마다 쓴다)으로"""
+    claude = shutil.which('claude') or os.path.expanduser('~/.local/bin/claude')
+    try:
+        v = json.loads(subprocess.run([claude, 'agents', '--json'], capture_output=True, text=True, timeout=4).stdout or '[]')
+        if isinstance(v, list) and v:
+            return v
+    except Exception:
+        pass
+    snap = read_json(os.path.join(d, 'live.json'), {})
+    rows = snap.get('sessions') if isinstance(snap, dict) else None
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+
+def main():
+    try:
+        me = json.load(sys.stdin).get('session_id', '')
+    except Exception:
+        me = ''
+    d = data_dir()
+    agents = live_agents(d)
+    cfg = read_json(os.path.join(d, 'config.json'), {})
+    try:
+        out = build(me, [a for a in agents if isinstance(a, dict)] if isinstance(agents, list) else [], read_json(os.path.join(d, 'orch-roles.json'), {}),
+                    read_events(os.path.join(d, 'tasks.jsonl')), cfg, datetime.datetime.now(datetime.timezone.utc))
+    except Exception:
+        out = ''  # 이름표가 빠질 뿐 — 지시는 그대로 간다
+    if out:
+        print(out)
+
+
+if __name__ == '__main__':
+    main()

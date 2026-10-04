@@ -1,0 +1,29 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest"
+      ]
+    },
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ]
+    },
+    "secretful": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "some-mcp",
+        "--api-key",
+        "sk-FAKE-0123456789abcdefghij"
+      ]
+    },
+    "urlful": {
+      "url": "https://example.test/mcp?token=FAKE-tok-abcdefghij0123456789"
+    }
+  }
+}

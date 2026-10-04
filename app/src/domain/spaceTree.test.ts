@@ -15,6 +15,10 @@ describe('orchDocs — 참모 밑 문서: 고정은 늘, 나머지는 그 참모
     expect(orchDocs(log, 'b1', ['/d/b.md'])).toEqual({ pinned: ['/d/b.md'], recent: ['/d/a.md'] });
     expect(orchDocs(log, 'b1', [])).toEqual({ pinned: [], recent: ['/d/a.md', '/d/b.md'] });
   });
+  it('지워진 문서(gone)는 최근 목록에서 뺀다', () => {
+    const l = `${log}\n${JSON.stringify({ ts: '2026-09-30T06:00:00Z', path: '/d/gone.md', from: 'b1', gone: true })}`;
+    expect(orchDocs(l, 'b1', []).recent).toEqual(['/d/a.md', '/d/b.md']);
+  });
 });
 
 describe('projectRoot / projectGroups — 프로젝트마다 워크트리 세션을 묶는다', () => {

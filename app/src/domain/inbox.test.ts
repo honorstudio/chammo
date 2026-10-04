@@ -26,6 +26,13 @@ describe('buildInbox — 나한테 온 것만 한 칸에', () => {
     expect(items.map((i) => [i.kind, i.project])).toEqual([['ask', 'honor-orchestrator']]);
   });
 
+  it('참모가 여럿이면 제목은 폴더 이름(hq) 말고 그 참모 이름 — 누가 묻는지(2026-10-04 QA)', () => {
+    const a = { ...s('o1', 'hq'), name: '참모-2 · 뽀삐' };
+    const b = { ...s('o2', 'hq'), name: '참모-3' };
+    const items = buildInbox([act(a, 'asks', '어느 안으로 할까?'), act(b, 'blocked')], [], new Set(), [], () => true, (x) => (x.id === 'o1' ? '뽀삐' : '참모 C'));
+    expect(items.map((i) => [i.kind, i.project, i.where])).toEqual([['ask', '뽀삐', ''], ['blocked', '참모 C', '']]);
+  });
+
   it('scripts/task ask 로 올린 결정 — answer·done 이 오기 전까지', () => {
     const evs = [ev('send', 't1', '2026-09-27T00:00:00Z', { target: 'todo-api', title: '결제 붙이기' }), ev('ask', 't1', '2026-09-27T00:10:00Z', { note: '실결제 테스트 해도 돼?' })];
     expect(buildInbox([], evs, new Set()).map((i) => [i.kind, i.where, i.text, i.target])).toEqual([['decide', '결제 붙이기', '실결제 테스트 해도 돼?', 'todo-api']]);

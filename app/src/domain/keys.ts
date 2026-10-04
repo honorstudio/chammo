@@ -1,6 +1,6 @@
 // 윈도우 단축키 규칙 — 맥은 ⌘ 조합을 앱이, Ctrl 조합을 터미널(Claude 입력칸)이 쓴다. 윈도우엔 ⌘ 가 없다.
 // Ctrl+글자(C·D·K·W·T·B·E·A…)는 Claude·셸이 쓰니 앱은 Ctrl+Shift+글자(윈도우 터미널과 같은 관례),
-// 숫자·기호는 Ctrl 하나. 예외: ⌘⇧E(리더 크게) → Ctrl+Alt+E, ⌘/(둘러보기) → Ctrl+Shift+/(Ctrl+/ 는 되돌리기)
+// 숫자·기호는 Ctrl 하나. 예외: ⌘⇧E(리더 크게) → Ctrl+Alt+E, ⌘/(둘러보기) → Ctrl+Shift+/(Ctrl+/ 는 되돌리기), ⌘[ ⌘](뒤로·앞으로) → Ctrl+Shift+[ ](Ctrl+[ 는 Esc)
 // 메뉴 단축키(Rust main.rs accel)도 같은 규칙이다 — 하나를 바꾸면 둘 다
 
 type KeyLike = { key: string; code?: string; metaKey: boolean; shiftKey: boolean; altKey: boolean; ctrlKey: boolean };
@@ -29,6 +29,8 @@ export function winToMac(e: KeyLike): KeyLike | null {
   }
   if (e.shiftKey) {
     if (letter) return mac(letter.toLowerCase());
+    // Ctrl+[ 는 터미널 Esc — 뒤로·앞으로는 Ctrl+Shift+[ ]
+    if (code === 'BracketLeft' || code === 'BracketRight') return { ...mac(code === 'BracketLeft' ? '[' : ']'), code };
     if (code === 'Slash') return mac('/');
     if (code === 'Equal') return mac('+');
     return null;
@@ -49,7 +51,7 @@ export function keyLabel(text: string, win: boolean): string {
     if (/클릭|[Cc]lick/.test(k)) return `Ctrl+${k.replace(/^\+/, '')}`;
     if (/^\s$/.test(k)) return `Ctrl${k}`;
     if (/^[A-Za-z]$/.test(k)) return `Ctrl+${alt ? 'Alt+' : ''}Shift+${k.toUpperCase()}`;
-    if (k === '/') return 'Ctrl+Shift+/';
+    if (k === '/' || k === '[' || k === ']') return `Ctrl+Shift+${k}`;
     if (k === '₩') return 'Ctrl+`';
     return `Ctrl+${alt ? 'Alt+' : ''}${shift ? 'Shift+' : ''}${k}`;
   });

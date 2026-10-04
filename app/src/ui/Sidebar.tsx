@@ -1,18 +1,18 @@
-import type { RefObject } from 'react';
+import { useState, type RefObject } from 'react';
 import { searchProjects } from '../domain/search';
 import { ctxLevel } from '../domain/ctx';
 import { sessionMarks, statusKind, urgentKind, type StatusKind } from '../domain/statusMark';
-import type { RoutineState } from '../domain/routine';
+import { groupRoutines, type RoutineItem, type RoutineState } from '../domain/routine';
 import { IconDb } from './Icons';
 import { StatusMark } from './StatusMark';
-import { assistant, tr } from '../i18n';
+import { assistant, josa, tr } from '../i18n';
 import type { ProjectGroup, Session, SessionState } from '../domain/session';
 
-export type Selection = { kind: 'orchestrator' } | { kind: 'all' } | { kind: 'tama' } | { kind: 'replay' } | { kind: 'load' } | { kind: 'helpers' } | { kind: 'loose' } | { kind: 'review'; key?: string } | { kind: 'project'; name: string } | { kind: 'routine'; name: string } | { kind: 'external'; id: string };
+export type Selection = { kind: 'orchestrator' } | { kind: 'orchHome' } | { kind: 'all' } | { kind: 'tama' } | { kind: 'replay' } | { kind: 'load' } | { kind: 'helpers' } | { kind: 'loose' } | { kind: 'review'; key?: string } | { kind: 'project'; name: string } | { kind: 'routine'; name: string } | { kind: 'external'; id: string };
 
 type Props = {
   /** 루틴(반복 업무) 줄 — 이름·상태·한 줄 설명. cloud = claude.ai 클라우드 루틴("클라우드" 배지) */
-  routines?: { name: string; state: RoutineState; line: string; cloud?: boolean }[];
+  routines?: RoutineItem[];
   /** 예약 작업이 아무도 안 보는 곳에서 띄운 대화형 세션 — 루틴 칸에 "외부 예약"으로(domain/session groupByProject) */
   external?: { id: string; name: string; line: string }[];
   orchestrator: Session | undefined;
@@ -74,6 +74,19 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
   // 프로젝트에 세션이 여럿이면 가장 많이 찬 것 — 곧 요약될 세션을 놓치지 않게
   const ctxMax = (ss: Session[]) => ss.map((s) => ctxOf?.(s)).filter((x): x is number => x !== undefined).reduce<number | undefined>((m, x) => (m === undefined || x > m ? x : m), undefined);
   const running = allProjects.reduce((n, p) => n + p.sessions.length, 0);
+  const sched = groupRoutines(routines ?? []);
+  const [doneOpen, setDoneOpen] = useState(false);
+  // 예약 한 줄 — 첫째 줄 이름 + 상태 글자, 둘째 줄 언제(다음 실행·날짜·남은 횟수)
+  const schedItem = (r: RoutineItem) => (
+    <button key={r.name} className={`it ${isOn(selected, { kind: 'routine', name: r.name }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'routine', name: r.name })}>
+      {/* 도는 중 = 도는 호, 실패·보고 없음 = 손바닥(네가 볼 차례), 성공·끝남 = 꽉 찬 원, 꺼 둠·첫 실행 전·클라우드 = 빈 원 */}
+      <StatusMark kind={ROUTINE_MARK[r.state]} />
+      <span>
+        <div className="nm">{r.name}{r.cloud ? <span className="tag rt-cloud">{tr('클라우드', 'Cloud')}</span> : <span className={`sched-st st-${r.state}`}>{r.status}</span>}</div>
+        <div className="ln">{r.line}</div>
+      </span>
+    </button>
+  );
   // 검색: 세션 있는 것과 없는 것을 같은 기준으로 거른다
   const liveNames = searchProjects(query, allProjects.map((p) => p.name));
   const projects = liveNames.map((n) => allProjects.find((p) => p.name === n)!);
@@ -100,7 +113,7 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
           }}
         />
       </div>
-      <div className="grp">{tr('오케스트레이터', 'Orchestrator')}</div>
+      <button className={`grp-link ${isOn(selected, { kind: 'orchHome' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'orchHome' })} title={tr(`오케스트레이터 홈 — 어떤 ${josa(assistant(), '을', '를')} 켤지`, 'Orchestrator home — pick who to run')}>{tr('오케스트레이터', 'Orchestrator')}</button>
       <button className={`it ${isOn(selected, { kind: 'orchestrator' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'orchestrator' })}>
         <StatusMark kind={statusKind(orchestrator?.state)} />
         <span>
@@ -116,7 +129,7 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
         </span>
       </button>
       {review && <button className={`it ${isOn(selected, { kind: 'review' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'review' })}>
-        <span className="st" style={{ background: review?.confirm ? 'var(--accent)' : 'transparent', border: review?.confirm ? 0 : '1.5px solid #a3a3a3' }} />
+        <span className="st" style={{ background: review?.confirm ? 'var(--blocked)' : 'transparent', border: review?.confirm ? 0 : '1.5px solid #a3a3a3' }} />
         <span>
           <div className="nm">{tr('리뷰', 'Review')}</div>
           <div className="ln">{tr(`머지 전에 볼 것 ${review.confirm} · 열린 PR ${review.open}`, `To check ${review.confirm} · Open PRs ${review.open}`)}</div>
@@ -147,17 +160,15 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
 
       {((routines && routines.length > 0) || external.length > 0) && (
         <>
-          <div className="grp">{tr(`루틴 · ${(routines?.length ?? 0) + external.length}`, `Routines · ${(routines?.length ?? 0) + external.length}`)}</div>
-          {(routines ?? []).map((r) => (
-            <button key={r.name} className={`it ${isOn(selected, { kind: 'routine', name: r.name }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'routine', name: r.name })}>
-              {/* 도는 중 = 도는 호, 실패·보고 없음 = 손바닥(네가 볼 차례), 성공 = 꽉 찬 원, 꺼 둠·첫 실행 전·클라우드 = 빈 원 */}
-              <StatusMark kind={ROUTINE_MARK[r.state]} />
-              <span>
-                <div className="nm">{r.name}{r.cloud && <span className="tag rt-cloud">{tr('클라우드', 'Cloud')}</span>}</div>
-                <div className="ln">{r.line}</div>
-              </span>
+          <div className="grp">{tr(`예약 · ${sched.active.length + external.length}`, `Scheduled · ${sched.active.length + external.length}`)}</div>
+          {sched.active.map(schedItem)}
+          {sched.done.length > 0 && (
+            <button type="button" className="it sched-fold" onClick={() => setDoneOpen((v) => !v)}>
+              <StatusMark kind="none" />
+              <span><div className="ln">{doneOpen ? tr(`끝난 예약 ${sched.done.length}개 접기`, `Hide ${sched.done.length} finished`) : tr(`끝난 예약 ${sched.done.length}개`, `${sched.done.length} finished`)}</div></span>
             </button>
-          ))}
+          )}
+          {doneOpen && sched.done.map(schedItem)}
           {external.map((x) => (
             <button key={x.id} className={`it ${isOn(selected, { kind: 'external', id: x.id }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'external', id: x.id })}>
               <StatusMark kind="idle" />
@@ -215,7 +226,7 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
   );
 }
 
-const ROUTINE_MARK: Record<RoutineState, StatusKind> = { running: 'working', failed: 'waiting', noReport: 'waiting', ok: 'idle', paused: 'none', waiting: 'none', cloud: 'none' };
+const ROUTINE_MARK: Record<RoutineState, StatusKind> = { running: 'working', failed: 'waiting', noReport: 'waiting', ok: 'idle', done: 'idle', paused: 'none', waiting: 'none', cloud: 'none' };
 
 function describe(sessions: Session[]): string {
   if (sessions.length === 1) {

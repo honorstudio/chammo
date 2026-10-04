@@ -1,0 +1,18 @@
+[package]
+name = "harnitor-core"
+description = "Claude Code 하네스를 읽어 계층·연결·사용 이력을 뽑아내는 스캐너"
+# 하니터 워크스페이스에서 물려받던 값을 풀어 적었다(vendor/HARNITOR.md)
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+thiserror = "2"
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = "3"

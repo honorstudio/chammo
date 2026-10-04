@@ -71,6 +71,14 @@ switch (cmd) {
     console.log('다음 세션에서 이 폴더로 Claude 를 열면 신뢰 승인 후 자동 적용됩니다.');
     break;
   }
+  case 'check': {
+    // 시험 열기 — 앱이 설치 끝에 부른다. 한 줄 JSON, 실패면 종료 코드 1
+    require('../src/check').check().then((r) => {
+      console.log(JSON.stringify(r));
+      process.exit(r.ok ? 0 : 1);
+    });
+    break;
+  }
   default:
     console.log(`chammo-browser — 프로젝트별 격리 브라우저 프로필 + 락 매니저
 사용법:
@@ -79,6 +87,7 @@ switch (cmd) {
   chammo-browser clean                 죽은 락 일괄 청소
   chammo-browser profiles              등록된 프로필 목록
   chammo-browser setup <프로필> [폴더]   폴더의 .mcp.json 에 playwright 등록(다른 서버는 유지)
+  chammo-browser check                 세션이 쓸 크롬을 헤드리스로 한 번 띄워 본다(한 줄 JSON)
 
 저장 위치: ${paths.ROOT}
   (CHAMMO_BROWSER_HOME > $CHAMMO_HOME/browser > ~/.chammo/browser)`);

@@ -73,3 +73,12 @@ export function moveId(ids: string[], from: string, target: string, after: boole
   rest.splice(rest.indexOf(target) + (after ? 1 : 0), 0, from);
   return rest;
 }
+
+/** 할 일·결정 판 접힘 — localStorage 값 '1' 이면 접힘. 저장소가 막혀 있으면(사파리 사생활 모드 등) 펼침 */
+export function foldedFrom(read: () => string | null): boolean {
+  try {
+    return read() === '1';
+  } catch {
+    return false;
+  }
+}

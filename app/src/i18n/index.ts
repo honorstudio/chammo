@@ -28,3 +28,9 @@ export function pickLang(saved: string | null, system: string): Lang {
 /** 비서(오케스트레이터) 이름 — 설정에서 정한다. 없으면 참모/Chammo */
 export const setAssistant = (name: string | null) => { assistantName = name?.trim() || null; };
 export const assistant = (): string => assistantName ?? tr('참모', 'Chammo');
+
+/** 이름 + 조사 — 받침이 있으면 앞의 것(두목이), 없으면 뒤의 것(참모가). 비서 이름을 사용자가 정하니까 */
+export const josa = (w: string, withBatchim: string, without: string): string => {
+  const c = w.charCodeAt(w.length - 1) - 0xac00;
+  return `${w}${c >= 0 && c <= 11171 && c % 28 ? withBatchim : without}`;
+};

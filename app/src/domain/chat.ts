@@ -8,13 +8,13 @@ export type ChatItem =
   | { kind: 'user'; id: string; ts: string; text: string; /** 붙인 그림(data URL) — 말풍선 썸네일 */ images?: string[] }
   | { kind: 'assistant'; id: string; ts: string; text: string }
   | { kind: 'tools'; id: string; ts: string; tools: ChatTool[] }
-  /** 슬래시 명령 — 말풍선 대신 작은 줄 */
-  | { kind: 'note'; id: string; ts: string; text: string }
+  /** 슬래시 명령 — 말풍선 대신 작은 줄. out = 명령 결과(/context·/cost 등, 색 코드 뺀 글) */
+  | { kind: 'note'; id: string; ts: string; text: string; out?: string }
   /** 다른 세션이 보낸 말·앱이 넘긴 줄 — 가운데 카드(from = 보낸 쪽). 사용자 말풍선처럼 보였다(2026-09-30) */
   | { kind: 'relay'; id: string; ts: string; from: string; text: string };
 
 type Block = { type?: string; text?: string; name?: string; input?: Record<string, unknown>; source?: { type?: string; media_type?: string; data?: string } };
-type Rec = { type?: string; uuid?: string; timestamp?: string; isMeta?: boolean; isSidechain?: boolean; isCompactSummary?: boolean; message?: { content?: unknown };
+type Rec = { type?: string; subtype?: string; content?: unknown; uuid?: string; timestamp?: string; isMeta?: boolean; isSidechain?: boolean; isCompactSummary?: boolean; message?: { content?: unknown };
   /** 일하는 중에 끼어든 메시지는 user 줄이 아니라 queued_command 첨부로 남는다(2026-09-30 실측) */
   attachment?: { type?: string; prompt?: unknown; origin?: { kind?: string } } };
 
@@ -51,6 +51,16 @@ function relayOf(t: string): { from: string; text: string } | null {
   return m ? { from: m[1]!, text: m[2]!.trim() } : null;
 }
 
+/** 터미널 색·굵기 코드(ESC[…m) — 채팅에선 뺀다 */
+const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
+/** 명령 결과 줄(<local-command-stdout>·stderr) → 결과 글(빈 글 가능), 아니면 null */
+function commandOut(t: string): string | null {
+  const m = t.match(/^<local-command-(?:stdout|stderr)>([\s\S]*)<\/local-command-(?:stdout|stderr)>\s*$/);
+  return m ? m[1]!.replace(ANSI, '').replace(/[ \t]+$/gm, '').replace(/^\n+|\s+$/g, '').replace(/^ (?=\S)/, '') : null;
+}
+/** 명령 결과 — push 가 앞 명령 줄에 붙인다(합치기 전 잠깐 쓰는 모양) */
+type Out = { kind: 'out'; id: string; ts: string; out: string };
+
 /** 사람이 친 게 아닌 user 줄 — 슬래시 명령·다른 세션 메시지는 알림 줄, 나머지 주입(<system-reminder> 등)은 숨김 */
 function injected(t: string): { note: string } | 'hide' | null {
   const cmd = t.match(/^<command-name>(\/[^<]*)<\/command-name>/);
@@ -65,10 +75,17 @@ const chatTarget = (input: Record<string, unknown> | undefined) =>
   typeof input?.description === 'string' && input.description.trim() ? input.description.trim() : toolTarget(input);
 
 /** 한 줄 → 새 항목들(합치기 전) */
-function itemsOf(r: Rec): ChatItem[] {
+function itemsOf(r: Rec): (ChatItem | Out)[] {
   if (r.isSidechain) return [];
   const id = r.uuid ?? '';
   const ts = r.timestamp ?? '';
+  // 백그라운드 세션의 슬래시 명령·결과는 system(local_command) 줄로 남는다(2.1.289 실측)
+  if (r.type === 'system' && r.subtype === 'local_command' && typeof r.content === 'string') {
+    const out = commandOut(r.content);
+    if (out !== null) return [{ kind: 'out', id, ts, out }];
+    const inj = injected(r.content);
+    return inj && inj !== 'hide' ? [{ kind: 'note', id, ts, text: inj.note }] : [];
+  }
   if (r.type === 'user') {
     if (r.isMeta) return [];
     // 컨텍스트가 차서 앞부분을 요약해 넣은 글 — 사용자가 친 말이 아니다
@@ -77,6 +94,8 @@ function itemsOf(r: Rec): ChatItem[] {
     if (!text && !images.length) return [];
     const rel = text ? relayOf(text) : null;
     if (rel) return [{ kind: 'relay', id, ts, ...rel }];
+    const out = commandOut(text);
+    if (out !== null) return [{ kind: 'out', id, ts, out }];
     if (text.startsWith('Another Claude session sent a message')) return [{ kind: 'relay', id, ts, from: '다른 세션', text: text.replace(/^Another Claude session sent a message:?\s*/, '') }];
     const inj = text ? injected(text) : null;
     if (inj === 'hide') return [];
@@ -102,9 +121,15 @@ function itemsOf(r: Rec): ChatItem[] {
   return [];
 }
 
-/** 끝 항목과 이어지면 합친다 — 도구끼리는 한 묶음, 답 조각끼리는 한 말풍선. list 를 제자리에서 바꾼다 */
-function push(list: ChatItem[], it: ChatItem) {
+/** 끝 항목과 이어지면 합친다 — 도구끼리는 한 묶음, 답 조각끼리는 한 말풍선, 명령 결과는 앞 명령 줄 밑에. list 를 제자리에서 바꾼다 */
+function push(list: ChatItem[], it: ChatItem | Out) {
   const last = list[list.length - 1];
+  if (it.kind === 'out') {
+    if (!it.out) return; // 빈 결과 — 명령 줄만
+    if (last?.kind === 'note' && last.out === undefined && last.text.startsWith('/')) list[list.length - 1] = { ...last, out: it.out };
+    else list.push({ kind: 'note', id: it.id, ts: it.ts, text: '', out: it.out });
+    return;
+  }
   if (last?.kind === 'tools' && it.kind === 'tools') list[list.length - 1] = { ...last, tools: [...last.tools, ...it.tools] };
   else if (last?.kind === 'assistant' && it.kind === 'assistant') list[list.length - 1] = { ...last, text: `${last.text}\n\n${it.text}` };
   else list.push(it);
@@ -138,9 +163,14 @@ export function appendChat(prev: ChatItem[], chunk: string): ChatItem[] {
 }
 
 /** 입력칸에서 보낸 글 중 아직 기록에 안 뜬 것 — 세션이 바쁘면 줄 서 있다가 나중에 뜬다 */
+/** 입력칸에 그려지는 표시 글자 — 음성 받아 적기 표시(▬·▁▂▃)·도형·블록·자리표시(U+FFFC/FFFD)·사설 영역 글리프. 말이 아니다 */
+const MARKS = /[\u2580-\u259F\u25A0-\u25FF\uFFFC\uFFFD\uE000-\uF8FF]/g;
+export const stripMarks = (t: string) => t.replace(MARKS, '');
+
 export function stillPending(pending: string[], items: ChatItem[]): string[] {
   // 역슬래시는 빼고 비교 — 줄 끝 \ 는 Claude 입력칸이 '줄 이어 쓰기'로 먹는다
-  const norm = (t: string) => t.replace(IMAGE_TOKEN, '').replace(/\\/g, '').replace(/\s+/g, ' ').trim();
+  // 표시 글자(▬ 등)도 빼고 — 음성으로 받아 적은 글을 입력칸에서 읽으면 끝에 붙어 와 영영 안 맞았다(2026-10-01 사용자)
+  const norm = (t: string) => stripMarks(t).replace(IMAGE_TOKEN, '').replace(/\\/g, '').replace(/\s+/g, ' ').trim();
   const seen = items.filter((i) => i.kind === 'user').map((i) => norm((i as { text: string }).text));
   // 그림을 같이 보내면 기록엔 [Image #n] 이 붙는다 — 그 표시는 빼고 비교(2026-09-30: 보내는 중이 안 사라졌다)
   return pending.filter((p) => { const n = norm(p); return !!n && !seen.some((t) => t === n || t.includes(n)); });
@@ -162,17 +192,27 @@ export function stuckInInput(pending: string[], input: string): string | null {
   const sq = (t: string) => t.replace(/\s+/g, '');
   const n = sq(input);
   if (!n) return null;
-  return pending.find((p) => sq(p) === n) ?? null;
+  // / 명령은 빼고 — 고르는 창이 열려 있으면 그 Enter 가 창에서 골라 버린다
+  return pending.find((p) => !p.trimStart().startsWith('/') && sq(p) === n) ?? null;
 }
 
 /** 작업 중 = 세션이 working 이고 마지막이 답이 아님. 백그라운드 job 참모는 쉬어도 working 으로 나와서 마지막 항목으로 가른다 */
 export const chatBusy = (state: string, items: ChatItem[]) => state === 'working' && items[items.length - 1]?.kind !== 'assistant';
+
+/** 입력칸 오른쪽 버튼 — 보내기는 쓴 글(또는 터미널 입력칸 글)이 있을 때만 칠하고, 일하는 중에 칸이 비면 옆에 '멈춤'.
+ *  일하는 중에 글이 있으면 보내기만(Enter 는 줄 섰다가 중간에 들어간다) — 2026-10-02 보내기 버튼 시안 방향 2 */
+export const sendControls = (busy: boolean, draft: string, termText: string) => ({
+  canSend: !!draft.trim() || !!termText,
+  stop: busy && !draft.trim(),
+});
 
 /**
  * 터미널 화면(보이는 줄들)에서 Claude 입력칸 글. 입력칸 = 마지막 구분선 두 개 사이, 첫 줄은 `>`/`❯` 로 시작.
  * cursor = [칸, 줄](보이는 줄 기준). 커서가 프롬프트 바로 뒤면 빈 칸 — 흐린 안내 문구는 글자만으론 구분이 안 돼서.
  * 입력칸 모양이 아니면 null(선택지 창 등). 지구본 키로 받아 적은 말을 채팅 화면에 보여 주는 데 쓴다(2026-09-30 사용자)
  */
+const PLACEHOLDERS = [/^Press (up|↑) to edit queued messages?$/i];
+
 export function promptInput(lines: string[], cursor: [number, number]): string | null {
   const rules: number[] = [];
   lines.forEach((l, i) => { if (/^\s*─{4,}/.test(l)) rules.push(i); });
@@ -183,7 +223,9 @@ export function promptInput(lines: string[], cursor: [number, number]): string |
   if (!m) return null;
   const [cx, cy] = cursor;
   if (cy === a + 1 && cx <= m[1]!.length && body.length === 1) return '';
-  return [m[2]!, ...body.slice(1).map((l) => l.replace(/^ {2}/, ''))].map((l) => l.trimEnd()).join('\n').trim();
+  const text = [m[2]!, ...body.slice(1).map((l) => l.replace(/^ {2}/, ''))].map((l) => stripMarks(l).trimEnd()).join('\n').trim();
+  // Claude 가 빈 입력칸에 흐리게 띄우는 안내 — 커서 자리로 못 가를 때가 있다. 그대로 두면 앱이 보낸 말로 알고 Enter 를 넣었다(2026-10-01 사용자)
+  return PLACEHOLDERS.some((r) => r.test(text)) ? '' : text;
 }
 
 /** 할 일 칸 머리줄 — 터미널의 "N tasks (1 done, 1 in progress, 0 open)" */

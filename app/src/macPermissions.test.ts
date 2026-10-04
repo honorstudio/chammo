@@ -30,3 +30,12 @@ describe('macOS 권한 — 하위 세션이 쓰는 권한은 앱이 가지고 �
     expect(value).toMatch(/[가-힣]/); // 권한 창에 한국어로
   });
 });
+
+// 맥 기본 창(파일 고르기 시트 등)이 영어(Favorites·Cancel·Open)였다 — 앱이 한국어 지역화를 선언하지 않아 개발 지역(English)으로 떨어졌다(2026-10-04 QA N5).
+// 지역화 목록을 선언하면 맥이 사용자 언어 순서대로 고른다: 한국어 사용자 → 한국어, 영어 사용자 → 영어, 그 밖 → 개발 지역(영어) 그대로
+describe('macOS 지역화 — 맥 기본 창이 사용자 언어를 따라간다', () => {
+  const localizations = /<key>CFBundleLocalizations<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(infoPlist)?.[1] ?? '';
+  const langs = [...localizations.matchAll(/<string>([^<]+)<\/string>/g)].map((m) => m[1]);
+  it('한국어·영어를 선언한다', () => expect(langs).toEqual(expect.arrayContaining(['ko', 'en'])));
+  it('개발 지역은 건드리지 않는다(영어 사용자·다른 언어 사용자는 지금처럼 영어)', () => expect(plistKeys('Info.plist')).not.toContain('CFBundleDevelopmentRegion'));
+});

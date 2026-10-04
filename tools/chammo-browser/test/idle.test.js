@@ -134,3 +134,32 @@ test('parseIdleMs: 기본 10분, 인자 우선, 환경변수, 0=끔, 인자는 p
   assert.deepStrictEqual(parseIdleMs(['--idle-minutes=0'], {}), { idleMs: 0, rest: [] });
   assert.deepStrictEqual(parseIdleMs([], { CHAMMO_BROWSER_IDLE_MINUTES: 'abc' }), { idleMs: 600000, rest: [] });
 });
+
+test('래퍼 도구(사람 부르기)가 도는 동안엔 유휴 닫기를 안 한다 — 사람이 로그인하는 도중 10분 닫기가 크롬을 껐다(2026-10-05 QA 5)', async () => {
+  const lockDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chammo-idle-'));
+  const timers = fakeTimers();
+  const toChild = [];
+  let finish;
+  const relay = createRelay({
+    profile: 'acme-shop',
+    acquire: () => lock.acquire('acme-shop', { lockDir, pid: process.pid }),
+    release: () => lock.release('acme-shop', { lockDir, pid: process.pid }),
+    sendToChild: (line) => toChild.push(line),
+    sendToClient: () => {},
+    idleMs: 600000,
+    setTimer: timers.setTimer,
+    clearTimer: timers.clearTimer,
+    onLocalTool: (name) => (name === 'browser_ask_human' ? new Promise((r) => { finish = r; }) : null),
+  });
+  relay.onClientLine(call(1, 'browser_navigate'));
+  relay.onChildLine(ok(1));
+  const stale = timers.callbacks(); // 부름 직전에 이미 만료 콜백이 올라간 경합까지
+  relay.onClientLine(call(2, 'browser_ask_human'));
+  assert.strictEqual(timers.armed(), 0, '부르는 동안 타이머 없음');
+  const n = toChild.length;
+  stale.forEach((fn) => fn());
+  assert.strictEqual(toChild.length, n, '부르는 동안 browser_close 를 안 보낸다');
+  finish({ content: [{ type: 'text', text: 'ok' }] });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(timers.armed(), 1, '끝나면 다시 건다');
+});

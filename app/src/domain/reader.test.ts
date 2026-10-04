@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { docUrl, isDocUrl, dropIndex, inStrip, kindOf, titleOf, pageDoc, pathOfDocUrl } from './reader';
+import { docUrl, isDocUrl, dropIndex, inStrip, kindOf, titleOf, pageDoc, pathOfDocUrl, docFileUrl } from './reader';
 
 describe('kindOf — 확장자로 어떻게 보여줄지', () => {
   it('html·pdf·md·그림·나머지 글', () => {
@@ -101,5 +101,23 @@ describe('pathOfDocUrl — 앱 파일 주소를 다시 파일 경로로(편집�
   it('웹 주소·이상한 글자는 null', () => {
     expect(pathOfDocUrl('https://example.com/a.pdf')).toBeNull();
     expect(pathOfDocUrl('not a url')).toBeNull();
+  });
+});
+
+describe('docFileUrl — 문서 속 그림·파일 주소(편집기가 보여 줄 때)', () => {
+  const dir = '/Users/me/dev/hq/.shots';
+  it('절대 경로(/Users/…)도 앱 파일 주소로 — 그대로 두면 앱 주소 밑에서 찾아 그림이 깨졌다(2026-10-01 사용자)', () => {
+    expect(docFileUrl('/Users/me/dev/other/.shots/a.png', dir, false)).toBe('hodoc://localhost/Users/me/dev/other/.shots/a.png');
+  });
+  it('상대 경로는 문서 폴더 기준', () => {
+    expect(docFileUrl('assets/b.png', dir, false)).toBe('hodoc://localhost/Users/me/dev/hq/.shots/assets/b.png');
+  });
+  it('이미 주소면 그대로(https·data·hodoc)', () => {
+    expect(docFileUrl('https://x.com/a.png', dir, false)).toBe('https://x.com/a.png');
+    expect(docFileUrl('data:image/png;base64,AA', dir, false)).toBe('data:image/png;base64,AA');
+    expect(docFileUrl('hodoc://localhost/Users/me/a.png', dir, false)).toBe('hodoc://localhost/Users/me/a.png');
+  });
+  it('윈도우 드라이브 경로(C:/…, C:\\…)도 파일로', () => {
+    expect(docFileUrl('C:\\Users\\me\\a.png', 'C:/Users/me/hq', true)).toBe('http://hodoc.localhost/C%3A/Users/me/a.png');
   });
 });

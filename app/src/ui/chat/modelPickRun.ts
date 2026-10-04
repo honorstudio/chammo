@@ -1,93 +1,90 @@
-// 모델·에포트 바꾸기 실행 — 그 세션 터미널에 /model 을 치고, 고르는 창이 뜨면 화면을 읽어 화살표로 맞춘 뒤 `s`(이 세션만)로 확정한다.
-// Enter·번호키는 절대 안 쓴다 — 그건 "새 세션 기본값"까지 저장한다(2026-10-01 실측). 중간에 이상하면 Esc 로 닫는다(아무것도 확정 안 됨)
+// 모델·에포트 바꾸기 실행 — 그 세션 터미널에 `/model sonnet`·`/effort high` 를 쳐서 바꾸고(목록 화면을 안 읽는다),
+// 대화가 길면 뜨는 "Switch model?" 확인 창에선 예(1)를 누른다. 이 명령들은 "새 세션 기본값"까지 ~/.claude/settings.json 에 적어서
+// 치기 전에 기본값 칸을 떠 두고 끝나면 되돌린다 — 돌고 있는 세션은 되돌려도 바꾼 값을 쓴다(2026-10-01 실측).
+// 예전엔 /model 고르는 창을 화살표로 맞췄는데 창이 열린 채 남으면 채팅이 통째로 사라졌고, 실패 때 누른 Esc 가 하던 일을 끊었다.
+// 이제 Esc 는 확인 창이나 고르는 창이 화면에 있을 때만 누른다
 import { tr } from '../../i18n';
-import { effortMoves, modelMoves, parsePicker, type PickerView } from '../../domain/modelPick';
+import { commandResult, familyOf, parsePicker, switchConfirm } from '../../domain/modelPick';
+import { promptInput } from '../../domain/chat';
 
-export type PickApi = { raw: (data: string) => void; screen: () => { lines: string[] } | undefined };
+export type PickApi = { raw: (data: string) => void; screen: () => { lines: string[]; cursor?: [number, number] } | undefined };
 export type PickWant = { model?: 'opus' | 'sonnet' | 'haiku'; effort?: string };
 export type PickResult = { ok: true; same?: boolean } | { ok: false; why: string; screen?: string[] };
-type Opts = { sleep?: (ms: number) => Promise<void>; openTries?: number; id?: string };
+/** Claude 기본값 칸 떠 두기·되돌리기(앱은 Rust 명령, 시험은 가짜) */
+export type Defaults = { snapshot: () => Promise<string>; restore: (snap: string) => Promise<boolean> };
+type Info = { model?: string; modelId?: string; effort?: string };
+/** current = 그 세션 지금 모델·에포트(상태줄이 남긴 ctx). 일하는 중엔 친 명령 줄이 화면에 안 남아 결과 줄로는 못 알아본다 */
+type Opts = { sleep?: (ms: number) => Promise<void>; waitTries?: number; id?: string; defaults: Defaults; current?: () => Info | undefined };
 
-/** 지금 칩이 고르는 창을 다루는 세션 — 그동안 '선택지에서 멈췄어' 알림·결정 대기를 안 띄운다(2026-10-01 사용자) */
+/** 지금 칩이 바꾸는 중인 세션 — 그동안 '선택지에서 멈췄어' 알림·결정 대기를 안 띄운다(2026-10-01 사용자) */
 export const picking = new Set<string>();
 
-const KEY = { UP: '\x1b[A', DOWN: '\x1b[B', RIGHT: '\x1b[C', LEFT: '\x1b[D' } as const;
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-export async function runModelPick(api: PickApi, want: PickWant, o: Opts = {}): Promise<PickResult> {
-  if (o.id) picking.add(o.id);
-  const sleep = o.sleep ?? wait;
-  const snap = () => { try { return api.screen()?.lines.map((l) => l.trimEnd()).filter(Boolean); } catch { return undefined; } };
-  try {
-    let r: PickResult;
-    try { r = await pick(api, want, o); } catch (e) { r = { ok: false, why: tr(`예상 못 한 오류 — ${String(e)}`, `Unexpected error — ${String(e)}`) }; }
-    if (r.ok) return r;
-    // 실패하면 그때 화면을 붙여 돌려주고(로그용), 창이 확실히 닫히게 Esc 를 최대 3번 — 열린 채 두면 세션이 '선택 대기'로 멈춘다(2026-10-01 사용자)
-    const screen = snap();
-    for (let i = 0; i < 3; i++) {
-      let open = true;
-      try { open = !!parsePicker(api.screen()?.lines ?? []); } catch { open = true; }
-      if (!open && i > 0) break;
-      api.raw('\x1b');
-      await sleep(250);
-      try { if (!parsePicker(api.screen()?.lines ?? [])) break; } catch { /* 한 번 더 */ }
-    }
-    return { ...r, screen };
-  } finally {
-    if (o.id) { const id = o.id; setTimeout(() => picking.delete(id), 4000); } // 상태가 몇 초 늦게 돌아온다
-  }
+// 하나씩 — 연달아 누르면 둘째가 첫째가 아직 안 되돌린 기본값을 원래 값으로 떠 두고 되돌렸다(2026-10-01 실측: model 이 opus 로 남았다).
+// 되돌리기가 다 끝날 때까지(guard) 새로 뜨지 않고 처음 떠 둔 값을 그대로 쓴다
+let chain: Promise<unknown> = Promise.resolve();
+let guard: { snap: string; until: number } | null = null;
+
+export function runModelPick(api: PickApi, want: PickWant, o: Opts): Promise<PickResult> {
+  const run = chain.then(() => runOne(api, want, o));
+  chain = run.catch(() => {});
+  return run;
 }
 
-async function pick(api: PickApi, want: PickWant, o: Opts): Promise<PickResult> {
+const matches = (cmd: string, i: Info | undefined) => {
+  const [, kind, v] = cmd.split(/[/ ]/);
+  if (!i) return false;
+  return kind === 'model' ? familyOf(i.modelId ?? i.model) === v : i.effort === v;
+};
+
+async function runOne(api: PickApi, want: PickWant, o: Opts): Promise<PickResult> {
+  if (o.id) picking.add(o.id);
   const sleep = o.sleep ?? wait;
-  const tries = o.openTries ?? 30; // 120ms × 30 ≈ 3.6초
-  const read = (): PickerView | null => parsePicker(api.screen()?.lines ?? []);
-  const cancel = async (why: string): Promise<PickResult> => { api.raw('\x1b'); await sleep(150); return { ok: false, why }; };
-  const press = async (keys: (keyof typeof KEY)[]) => { for (const k of keys) { api.raw(KEY[k]); await sleep(90); } await sleep(250); };
-
-  api.raw('/model');
-  await sleep(400);
-  api.raw('\r');
-  let v: PickerView | null = null;
-  for (let i = 0; i < tries && !v; i++) { await sleep(120); v = read(); }
-  if (!v) return cancel(tr('모델 고르는 창이 안 열렸어요', "The model picker didn't open"));
-
-  if (!want.model && !want.effort) return cancel(tr('바꿀 게 없어요', 'Nothing to change'));
-  let changed = false;
-  if (want.model) {
-    // 채팅 칸 뒤 터미널이 낮으면 목록이 몇 줄만 보이고 접힌다 — 맨 위로 올라간 뒤 그 계열이 처음 보이는 줄까지 내려간다(최신이 위에 있다)
-    const startN = v.rows[v.cursor]!.n;
-    for (let i = 0; i < 25 && v.rows[v.cursor]!.n !== 1; i++) { await press(['UP']); v = read(); if (!v) return cancel(tr('고르는 창을 다시 못 읽었어요', "Couldn't read the picker again")); }
-    let found = false;
-    for (let i = 0; i < 25 && !found; i++) {
-      const mv = modelMoves(v, want.model);
-      if (mv) {
-        if (mv.length) { await press(mv); v = read(); if (!v) return cancel(tr('고르는 창을 다시 못 읽었어요', "Couldn't read the picker again")); }
-        found = modelMoves(v, want.model)?.length === 0;
-        if (!found) return cancel(tr('모델 줄을 못 맞췄어요', "Couldn't land on the model row"));
-      } else {
-        const before = v.rows[v.cursor]!.n;
-        await press(['DOWN']); v = read();
-        if (!v) return cancel(tr('고르는 창을 다시 못 읽었어요', "Couldn't read the picker again"));
-        if (v.rows[v.cursor]!.n === before) break; // 맨 아래
+  const lines = () => { try { return api.screen()?.lines ?? []; } catch { return []; } };
+  let snap: string | null = null;
+  try {
+    const cmds = [want.model && `/model ${want.model}`, want.effort && `/effort ${want.effort}`].filter((c): c is string => !!c);
+    if (!cmds.length) return { ok: false, why: tr('바꿀 게 없어요', 'Nothing to change') };
+    // 예전 방식이 남긴 고르는 창이 열려 있으면 닫는다(열려 있으니 Esc 가 하던 일을 끊지 않는다)
+    if (parsePicker(lines())) { api.raw('\x1b'); await sleep(300); }
+    const s0 = api.screen();
+    const typed = s0 ? promptInput(s0.lines, s0.cursor ?? [-1, -1]) : null;
+    if (typed) return { ok: false, why: tr('터미널 입력칸에 쓰던 글이 있어요 — 먼저 보내거나 지워 주세요', 'There is text in the terminal input — send or clear it first') };
+    snap = guard && Date.now() < guard.until ? guard.snap : await o.defaults.snapshot().catch(() => null);
+    let changed = false;
+    for (const cmd of cmds) {
+      const was = matches(cmd, o.current?.()); // 치기 전 값 — 이미 그 값이면 상태줄로는 끝을 못 가린다
+      api.raw(cmd);
+      await sleep(300);
+      api.raw('\r');
+      let r: { ok: boolean; text: string } | null = null;
+      let pressed = 0;
+      for (let i = 0; i < (o.waitTries ?? 100) && !r; i++) { // 200ms × 100 = 20초 — 일하는 중이면 조금 늦게 돈다
+        await sleep(200);
+        const l = lines();
+        if (switchConfirm(l) && pressed < 2) { api.raw(pressed === 0 ? '1' : '\r'); pressed++; await sleep(400); continue; }
+        r = commandResult(l, cmd);
+        if (!r && !was && matches(cmd, o.current?.())) r = { ok: true, text: 'Set (상태줄로 확인)' };
       }
+      if (!r) {
+        if (switchConfirm(lines())) { api.raw('\x1b'); await sleep(200); } // 확인 창이 남아 있을 때만 닫는다
+        return { ok: false, why: tr(`${cmd} 결과가 안 나왔어요`, `No result from ${cmd}`), screen: lines().map((x) => x.trimEnd()).filter(Boolean) };
+      }
+      if (!r.ok) return { ok: false, why: r.text, screen: lines().map((x) => x.trimEnd()).filter(Boolean) };
+      if (!/^Kept/.test(r.text)) changed = true;
     }
-    if (!found) return cancel(tr('그 모델이 목록에 없어요', "That model isn't in the list"));
-    if (v.rows[v.cursor]!.n !== startN) changed = true;
-  }
-  if (want.effort) {
-    if (!v.effortOk) return cancel(tr('이 모델은 에포트를 못 골라요', "This model doesn't take an effort level"));
-    const em = effortMoves(v.effort, want.effort);
-    if (!em) return cancel(tr('에포트 단계를 못 읽었어요', "Couldn't read the effort level"));
-    if (em.length > 0) {
-      await press(em);
-      v = read();
-      if (!v || v.effort !== want.effort) return cancel(tr('에포트가 안 맞춰졌어요', "Couldn't set the effort level"));
-      changed = true;
+    return changed ? { ok: true } : { ok: true, same: true };
+  } catch (e) {
+    return { ok: false, why: tr(`예상 못 한 오류 — ${String(e)}`, `Unexpected error — ${String(e)}`) };
+  } finally {
+    // 기본값 되돌리기 — 바로 한 번, 늦게 적힐 때를 대비해 조금 뒤 한 번 더
+    if (snap !== null) {
+      const s = snap;
+      guard = { snap: s, until: Date.now() + 6000 };
+      await o.defaults.restore(s).catch(() => false);
+      for (const ms of [1500, 5000]) setTimeout(() => { void o.defaults.restore(s).catch(() => false); }, ms);
     }
+    if (o.id) { const id = o.id; setTimeout(() => picking.delete(id), 4000); } // 상태가 몇 초 늦게 돌아온다
   }
-  if (!changed) { api.raw('\x1b'); await sleep(150); return { ok: true, same: true }; } // 이미 그 값 — 그냥 닫는다
-  api.raw('s'); // 이 세션만(Enter 는 기본값까지 저장해서 안 쓴다)
-  await sleep(500);
-  return { ok: true };
 }

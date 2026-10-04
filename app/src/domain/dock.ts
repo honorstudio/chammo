@@ -1,6 +1,6 @@
 import { tr } from '../i18n';
 import type { WorkAct } from './activity';
-import type { OfficeState } from './office';
+import { statusWord, type ActivityStatus } from './status';
 
 /** 사무실 아래 현황판 — 누가 무슨 일을 하는지 얼굴 옆에 늘 띄운다(사용자 2026-09-27: 일반 비서 화면의 아래 터미널처럼) */
 // 부를 때마다 만든다 — 언어를 바꾼 테스트에서도 맞게(표가 작아 비용 없음)
@@ -8,13 +8,11 @@ const VERB = (): Record<WorkAct, string> => ({
   type: tr('고치는 중', 'Editing'), read: tr('읽는 중', 'Reading'), run: tr('실행 중', 'Running'),
   web: tr('웹 보는 중', 'Browsing'), agent: tr('분신 보냄', 'Sent a helper'), think: tr('생각 중', 'Thinking'),
 });
-const STATE = (): Record<Exclude<OfficeState, 'working'>, string> => ({
-  asks: tr('물어봄', 'Asking'), done: tr('끝남', 'Done'), wait: tr('대기', 'Idle'), sleep: tr('잠듦', 'Asleep'),
-});
-
-export function dockLine(st: OfficeState, act: WorkAct | undefined, doing: string | undefined): { verb: string; text: string } {
+/** st = 원래 상태(메뉴와 같은 말 — statusWord), human = 브라우저가 사람을 부른 이유(있으면 무슨 상태든 그게 먼저) */
+export function dockLine(st: ActivityStatus, act: WorkAct | undefined, doing: string | undefined, human?: string): { verb: string; text: string } {
+  if (human !== undefined) return { verb: tr('사람 필요', 'Needs you'), text: human };
   if (st === 'working') return { verb: VERB()[act ?? 'think'], text: doing ?? '' };
-  return { verb: STATE()[st], text: '' };
+  return { verb: statusWord(st), text: '' };
 }
 
 export type Tick = { text: string; at: number };

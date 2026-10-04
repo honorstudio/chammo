@@ -3,6 +3,7 @@
 
 import { tr } from '../i18n';
 import type { TamaEvent } from './tama/pet';
+import { DAY_EXTRA, SHOW_PER_DAY } from './tama/sources';
 
 export type Rarity = '흔함' | '보통' | '희귀' | '전설';
 export type ItemKind = 'skin' | 'furn' | 'hat' | 'window' | 'friend' | 'fx' | 'action';
@@ -136,14 +137,35 @@ export const itemOf = (id: string) => CATALOG.find((c) => c.id === id);
 export const PRICE = 100;
 export const PRICE_TEN = 900;
 export const PITY = 50;
+/** 중복 환급 — ★5 가 된 뒤의 중복만 50, 그 전엔 10(중복은 별로 쓰인다, 2026-10-04 QA 추천 D) */
 export const REFUND = 50;
+export const REFUND_LOW = 10;
+
+/** 별 — ★2~★5 가 되는 중복 누적 수. 가진 개수(owned) - 1 = 중복이라 새 저장 칸 없이 옛 파일의 중복도 그대로 별이 된다 */
+export const STAR_AT = [1, 3, 6, 10] as const;
+export const MAX_STAR = 5;
+/** 가진 개수 → 별(0 = 없음, 1~5) */
+export const starOf = (count: number): number => (count > 0 ? 1 + STAR_AT.filter((d) => count - 1 >= d).length : 0);
+/** 다음 별까지 남은 중복 수 — 없거나 ★5 면 null */
+export const nextStar = (count: number): number | null => {
+  const next = STAR_AT.find((d) => count - 1 < d);
+  return count > 0 && next !== undefined ? next - (count - 1) : null;
+};
+/** 도감 머리의 별 합계 — 카탈로그에 있는 것만 */
+export const starTotal = (f: GachaFile) => ({ have: CATALOG.reduce((n, c) => n + starOf(f.owned[c.id] ?? 0), 0), max: CATALOG.length * MAX_STAR });
 const HISTORY = 30;
 
 export type Pulled = { t: number; id: string; dup: boolean };
 export type GachaFile = {
   coins: number;
-  /** 이 시각 이후의 사건만 코인으로 센다(이미 센 것 다시 안 셈) */
+  /** 이미 센 사건 중 가장 늦은 시각(옛 판은 이것 하나로만 셌다) */
   since: number;
+  /** 늦게 읽힌 사건(커밋 5분·CI 10분마다 읽고 CI 는 시작 시각) — floor 뒤 사건은 keys 에 없으면 센다.
+   *  at = 이걸 쓸 때의 since. 옛 판이 since 만 옮겼으면(되돌렸다 옴) 어긋나서 since 까지를 센 것으로 친다 */
+  late?: { floor: number; at: number; keys: string[] };
+  /** 하루 소프트 상한 손잡이 — 기본 꺼짐(사용자 2026-10-04 "헤비는 빨라도 된다"). 켜면 today 에 그날 번 원래 코인을 센다 */
+  softCap?: boolean;
+  today?: { start: number; raw: number };
   owned: Record<string, number>;
   /** 마지막 전설 뒤로 뽑은 횟수 — PITY 번째는 전설 */
   pity: number;
@@ -163,15 +185,37 @@ export function parseGacha(text: string, since: number): GachaFile {
   try {
     const v = JSON.parse(text) as Partial<GachaFile>;
     if (typeof v.coins !== 'number' || typeof v.since !== 'number') return { ...EMPTY_GACHA, since };
-    return { ...EMPTY_GACHA, ...v, owned: v.owned ?? {}, history: v.history ?? [], equip: v.equip ?? {} } as GachaFile;
+    const l = v.late;
+    const late = l && typeof l.floor === 'number' && typeof l.at === 'number' && Array.isArray(l.keys) ? l : undefined;
+    return { ...EMPTY_GACHA, ...v, owned: v.owned ?? {}, history: v.history ?? [], equip: v.equip ?? {}, late } as GachaFile;
   } catch {
     return { ...EMPTY_GACHA, since };
   }
 }
 
-/** 사건 하나의 코인 — 머지 10 · 시킨 일 끝남 3 · CI 통과 2 · 테스트 커밋 2 · +300줄 이하 커밋 1(쪼갠 커밋 습관) */
+/** 코인 버는 법(뽑기 화면 표) — coinsFor 와 같은 값이어야 한다(테스트가 맞춘다). 끝낸 일 상한은 tama/sources.balanceFeed */
+export const COIN_RULES: [number, string][] = [
+  [10, tr('머지 · 결과물', 'Merge · result')],
+  [3, tr('시킨 일 끝남', 'Task done')],
+  [2, tr('CI 통과 · 검토 · 예약 · 테스트 든 커밋', 'CI pass · review · schedule · commit with tests')],
+  [1, tr('300줄 이하 커밋 · 대화 · 문서', 'Commit ≤300 lines · talk · doc')],
+];
+/** 상한 — 구절마다 끊기지 않게 배열로 */
+export const COIN_LIMITS: string[] = [
+  tr(`결과물 하루 ${SHOW_PER_DAY}`, `Results ${SHOW_PER_DAY}/day`),
+  tr('대화·문서 한 시간 1', 'Talk & docs 1/hour'),
+  tr(`커밋·머지·CI 말고는 하루 ${DAY_EXTRA}건까지`, `Besides commits, merges and CI: ${DAY_EXTRA}/day`),
+];
+
+/** 사건 하나의 코인 — 다마고치 먹이와 같은 '끝낸 일' 통. 마무리(머지·결과물) 10 · 시킨 일 끝남 3 · 검사 통과(CI·예약·시안 검토) 2
+ *  · 테스트 커밋 2 · 작은 일(+300줄 이하 커밋·대화·문서 고침) 1. 메아리(같은 일 두 번·하루 상한 넘음, tama/sources.balanceFeed)는 0 */
 function coinsFor(e: TamaEvent): number {
+  if (e.echo) return 0;
   switch (e.type) {
+    case 'show': return 10;
+    case 'routine': return e.pass ? 2 : 0;
+    case 'review': return 2;
+    case 'talk': case 'doc': return 1;
     case 'pr': return 10;
     case 'task': return 3;
     case 'ci': return e.pass ? 2 : 0;
@@ -180,14 +224,52 @@ function coinsFor(e: TamaEvent): number {
   }
 }
 
+/** 늦게 온 사건을 얼마나 기다리나 — 그보다 늦으면 안 센다(키를 무한히 쌓지 않게) */
+export const LATE_MS = 86_400_000;
+const KIND: Record<TamaEvent['type'], string> = { commit: 'c', ci: 'i', pr: 'p', task: 't', show: 's', talk: 'k', routine: 'r', doc: 'd', review: 'v', work: 'w' };
+const keyT = (k: string) => parseInt(k.slice(1), 36);
+
+/** 하루 소프트 상한 — 200 까지 그대로, 600 까지 절반, 그 위 1/5. 끝수가 새지 않게 '누적 지급액'의 차로 준다 */
+const SOFT = [[200, 1], [600, 0.5], [Infinity, 0.2]] as const;
+const softTotal = (raw: number) => {
+  let paid = 0, from = 0;
+  for (const [to, rate] of SOFT) { paid += (Math.min(raw, to) - from) * rate; if (raw <= to) break; from = to; }
+  return Math.floor(paid + 1e-9);
+};
+/** 그날 이미 raw 만큼 번 뒤에 add 를 더 벌면 실제로 받는 코인 */
+export const softPay = (raw: number, add: number) => softTotal(raw + add) - softTotal(raw);
+
 export function earn(f: GachaFile, events: TamaEvent[], _now: number): { file: GachaFile; gained: number } {
+  // 처음(옛 파일)이거나 옛 판이 since 를 옮겼으면 since 까지는 이미 센 것 — 지난 구멍은 소급하지 않는다
+  const fresh = !f.late || f.late.at !== f.since;
+  const floor = fresh ? f.since : f.late!.floor;
+  const seen = new Set(fresh ? [] : f.late!.keys);
+  const nth = new Map<string, number>();
   let gained = 0, since = f.since;
+  let today = f.today ?? { start: 0, raw: 0 };
+  const added: string[] = [];
   for (const e of events) {
-    if (e.t <= f.since) continue;
-    gained += coinsFor(e);
+    if (e.t <= floor) continue;
+    const base = KIND[e.type] + e.t.toString(36);
+    const n = nth.get(base) ?? 0;
+    nth.set(base, n + 1);
+    const key = n ? `${base}~${n}` : base; // 같은 시각·같은 종류가 여럿이면 몇 번째인지로
+    if (seen.has(key)) continue;
+    seen.add(key);
+    added.push(key);
+    const c = coinsFor(e);
+    if (f.softCap && c) {
+      const day = dayStartAt(e.t);
+      if (day > today.start) today = { start: day, raw: 0 };
+      gained += softPay(today.raw, c);
+      today = { ...today, raw: today.raw + c };
+    } else gained += c;
     since = Math.max(since, e.t);
   }
-  return { file: gained || since !== f.since ? { ...f, coins: f.coins + gained, since } : f, gained };
+  if (!added.length && !fresh) return { file: f, gained: 0 };
+  const nextFloor = Math.max(floor, since - LATE_MS);
+  const keys = [...seen].filter((k) => keyT(k) > nextFloor);
+  return { file: { ...f, coins: f.coins + gained, since, late: { floor: nextFloor, at: since, keys }, ...(f.softCap ? { today } : {}) }, gained };
 }
 
 export function rollRarity(x: number): Rarity {
@@ -199,7 +281,8 @@ const pick = (rarity: Rarity, x: number): Item => {
   return list[Math.min(list.length - 1, Math.floor(x * list.length))]!;
 };
 
-export type PullResult = { id: string; rarity: Rarity; name: string; dup: boolean; refund: number };
+/** star = 뽑은 뒤 별, up = 이번에 별이 올랐나 */
+export type PullResult = { id: string; rarity: Rarity; name: string; dup: boolean; refund: number; star: number; up: boolean };
 
 /** n = 1 | 10. rng 는 0~1 (테스트에서 고정). 코인이 모자라면 null */
 export function pull(f: GachaFile, n: 1 | 10, rng: () => number, now = Date.now()): { file: GachaFile; results: PullResult[] } | null {
@@ -219,10 +302,14 @@ export function pull(f: GachaFile, n: 1 | 10, rng: () => number, now = Date.now(
   if (n === 10 && !rarities.some((r) => r === '희귀' || r === '전설')) rarities[9] = '희귀';
   const results = rarities.map((r): PullResult => {
     const item = pick(r, rng());
-    const dup = (owned[item.id] ?? 0) > 0;
-    owned[item.id] = (owned[item.id] ?? 0) + 1;
-    if (dup) { refund += REFUND; shards += 1; }
-    return { id: item.id, rarity: r, name: item.name, dup, refund: dup ? REFUND : 0 };
+    const had = owned[item.id] ?? 0;
+    const dup = had > 0;
+    owned[item.id] = had + 1;
+    // 이미 ★5 인 것의 중복만 50. 조각은 이제 화면에 안 쓰지만 옛 판으로 되돌려도 숫자가 맞게 계속 센다
+    const back = !dup ? 0 : starOf(had) === MAX_STAR ? REFUND : REFUND_LOW;
+    if (dup) { refund += back; shards += 1; }
+    const star = starOf(had + 1);
+    return { id: item.id, rarity: r, name: item.name, dup, refund: back, star, up: dup && star > starOf(had) };
   });
   const history = [...f.history, ...results.map((x) => ({ t: now, id: x.id, dup: x.dup }))].slice(-HISTORY);
   return { file: { ...f, coins: f.coins - cost + refund, owned, pity, shards, history }, results };

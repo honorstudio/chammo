@@ -22,6 +22,9 @@ export function canAdopt(s: Session): AdoptCheck {
 export function parseSpawnOutput(out: string): { id: string; copy: boolean } {
   const copy = out.match(/started a copy as ([0-9a-f]+)/);
   if (copy?.[1]) return { id: copy[1], copy: true };
+  // claude respawn <id> — 같은 세션을 같은 번호로 다시 켠다
+  const re = out.match(/respawned ([0-9a-f]+)/);
+  if (re?.[1]) return { id: re[1], copy: false };
   const bg = out.match(/backgrounded · ([0-9a-f]+)/);
   if (bg?.[1]) return { id: bg[1], copy: false };
   throw new Error(`${tr('claude --bg 출력을 못 읽었어', "Couldn't read claude --bg output")}: ${out.trim().slice(0, 120)}`);

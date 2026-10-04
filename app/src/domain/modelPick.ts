@@ -1,6 +1,6 @@
 // 채팅 머리줄의 모델·에포트 칩 — 지금 값은 상태줄이 남긴 ctx 파일(domain/ctx)에서(2026-10-01 사용자: 터미널에 가서 /model 을 쳐야 해서 UI 로 붙여 달라).
-// 바꾸기는 /model 을 인자 없이 쳐서 고르는 창을 열고, 화살표로 모델·에포트를 맞춘 뒤 `s`(이 세션만)로 확정한다.
-// ⚠️ `/model opus`·`/effort low` 처럼 인자를 주거나 번호키·Enter 로 확정하면 "새 세션 기본값"까지 ~/.claude/settings.json 에 저장돼 버린다(실측).
+// 바꾸기는 `/model sonnet`·`/effort high` 를 치고, 그 명령이 ~/.claude/settings.json 에 적는 "새 세션 기본값"은 앱이 되돌린다(ui/chat/modelPickRun, 2026-10-01 실측).
+// parsePicker 등은 예전 방식(고르는 창 화살표)이 남긴 창을 알아보는 데만 쓴다.
 // 판단(화면 읽기·눌러야 할 키)만 여기, 키를 보내는 건 ui/chat/modelPickRun.ts
 
 import { tr } from '../i18n';
@@ -30,8 +30,9 @@ const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 /** 이 모델에서 고를 수 있는 에포트 단계. 하이쿠·모르는 모델은 에포트를 안 만진다(빈 배열) */
 export function effortChoices(family: Family): EffortChoice[] {
   if (family !== 'opus' && family !== 'sonnet') return [];
+  // 소넷 xhigh 는 막던 것을 풀었다 — 고를 수 있고 안내만 남긴다(공개판 사용자에겐 제약이었다, 2026-10-01 사용자)
   return LEVELS.map((level) => (family === 'sonnet' && level === 'xhigh'
-    ? { level, disabled: true, why: tr('소넷 xhigh 는 토큰을 많이 쓰고 high 보다 낫지 않아요 — high 까지만', 'Sonnet at xhigh uses many more tokens without beating high — up to high') }
+    ? { level, disabled: false, why: tr('소넷 xhigh 는 토큰을 많이 쓰는 데 비해 high 보다 크게 낫지 않을 수 있어요', 'Sonnet at xhigh uses many more tokens and may not beat high by much') }
     : { level, disabled: false }));
 }
 
@@ -79,4 +80,37 @@ export function effortMoves(cur: string | undefined, want: string): ('LEFT' | 'R
   if (c < 0 || w < 0) return null;
   const n = (w - c + SLIDER.length) % SLIDER.length;
   return n <= SLIDER.length / 2 ? Array<'RIGHT'>(n).fill('RIGHT') : Array<'LEFT'>(SLIDER.length - n).fill('LEFT');
+}
+
+/** /model 뒤 "Switch model?" 확인 창(대화가 길면 캐시를 다시 읽는다고 묻는다)인가 — 1번(Yes)이 고른 자리에 있을 때만 */
+export function switchConfirm(lines: string[]): boolean {
+  return lines.some((l) => l.includes('Switch model?')) && lines.some((l) => /^\s*❯\s*1\.\s*Yes/.test(l));
+}
+
+/** 친 명령(`/model sonnet`·`/effort high`)의 결과 — 그 명령을 마지막으로 친 줄 바로 아래 ⎿ 줄. 아직 없으면 null.
+ *  예전에 같은 명령을 쳤어도 마지막 것만 본다 */
+export function commandResult(lines: string[], cmd: string): { ok: boolean; text: string } | null {
+  let at = -1;
+  lines.forEach((l, i) => { if (l.replace(/^\s*[❯>]\s*/, '').trim() === cmd) at = i; });
+  if (at < 0) return null;
+  for (const l of lines.slice(at + 1)) {
+    const m = l.match(/^\s*⎿\s+(.+)$/);
+    if (!m) continue;
+    const text = m[1]!.trim();
+    return { ok: /^(Set model to|Kept model as|Set effort level to|Kept effort)/.test(text), text };
+  }
+  return null;
+}
+
+/** 채팅에서 친 /model·/effort — 칩으로 돌린다(open = 칩 메뉴 열기, want = 그 값으로 바꾸기). 아니면 null(그대로 보낸다).
+ *  터미널의 /model 고르는 창은 보낸 Enter 가 창을 바로 골라 지금 모델이 기본값으로 저장됐다(2026-10-01 시험) */
+export function modelCommand(text: string): { open: true } | { want: { model?: 'opus' | 'sonnet' | 'haiku'; effort?: string } } | null {
+  const t = text.trim();
+  if (t.includes('\n')) return null;
+  const m = t.match(/^\/(model|effort)(?:\s+(\S+))?$/i);
+  if (!m) return null;
+  const arg = m[2]?.toLowerCase();
+  if (!arg) return { open: true };
+  if (m[1]!.toLowerCase() === 'model') return MODEL_CHOICES.some((c) => c.alias === arg) ? { want: { model: arg as 'opus' | 'sonnet' | 'haiku' } } : null;
+  return ['low', 'medium', 'high', 'xhigh', 'max'].includes(arg) ? { want: { effort: arg } } : null;
 }

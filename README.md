@@ -30,9 +30,14 @@ With five or ten projects open, the bottleneck is not the agents. It's you: swit
 - **Pixel office** — each session is a tamagotchi-like character at a desk. It types when editing, reads papers when reading, watches a progress bar when running commands, and the chief of staff walks paperwork over when it delegates.
 - **Pet and gacha** — a pet that grows from your commits, PRs and CI runs (74 species), and a capsule machine fed by coins from merges and commits: office skins, furniture, hats, window views.
 - **Projects with a harness** — new work gets its own project folder (the chief of staff names and creates it) with CLAUDE.md, a living `docs/starter.md` and `docs/roadmap.md` that each session reads first and updates when it finishes. Existing files are never overwritten; if you already use your own `project-starter` skill, Chammo uses that instead. Projects that live somewhere else stay where they are — add the folder from the sidebar ("Add folder"), Settings, or just ask the chief of staff.
-- **Routines** — recurring work ("post to the blog every morning", "check orders every 2 hours") becomes a routine with its own instructions file. macOS (Task Scheduler on Windows) wakes it on schedule even when the app is closed; each run is a real Claude Code session that follows the instructions and reports back. The sidebar shows the next run, the live run and the history. Claude sessions that your own cron or launchd jobs start in a project folder (in a tmux nobody is attached to, for example) are listed there too as *external schedules* instead of cluttering the project.
+- **Routines** — recurring work ("post to the blog every morning", "check orders every 2 hours") becomes a routine with its own instructions file — or runs once at a date and time you pick. macOS (Task Scheduler on Windows) wakes it on schedule even when the app is closed; each run is a real Claude Code session that follows the instructions and reports back. The sidebar shows the next run, the live run and the history. Claude sessions that your own cron or launchd jobs start in a project folder (in a tmux nobody is attached to, for example) are listed there too as *external schedules* instead of cluttering the project.
 - **It operates the app for you** — ask the chief of staff to turn voice mode on, open settings, hide the office or jump to a session, and it does it.
-- **A browser per project (optional)** — with Node.js 20+, one click installs browser automation: each project gets its own Chromium profile that stays logged in, with a lock so two sessions never fight over one browser.
+- **A browser per project (optional)** — one "Install" button in Settings. It fetches only what is missing (Node.js, Chrome Beta, the tool parts — no admin password; downloads are used only after the official checksum or Google signature checks out). Each project gets its own Chrome profile that stays logged in, with a lock so two sessions never fight over one browser. Session browsers run in Chrome Beta, so they never mix with your everyday Chrome in the Dock, and you can watch them live inside the app.
+- **Tools** — the wrench in the top bar lists MCP servers, plugins and skills. Turn them on per project or everywhere, add or remove servers, sign in, add marketplaces and install plugins.
+- **Roles** — give each chief of staff a role ("development", "design") apart from its name. They see each other's roles and hand work to the right one.
+- **Pages** — notes and documents open as Notion-like pages: drag blocks, insert with `/`, and edits made outside the app are merged instead of overwritten.
+- **On your phone (optional, Tailscale)** — pair a phone with a QR code (Settings > Mobile) and talk to your chief of staff, answer decisions and get notifications from a home-screen web app. The server listens only on your tailnet.
+- **Several Claude accounts (optional)** — keep more than one login in Settings > Accounts; Chammo can switch to the next one when the current one nears its limit.
 - **Korean and English** — the whole UI, switchable in settings.
 
 The playful parts (office, pet, gacha) can each be turned off.
@@ -61,7 +66,7 @@ Everything else — Xcode Command Line Tools, Claude Code (2.1.280+), signing in
 curl -fsSL https://raw.githubusercontent.com/honorstudio/chammo/main/scripts/install.sh | bash
 ```
 
-**Windows (preview)** — download `Chammo_x.y.z_x64-setup.exe` from [Releases](https://github.com/honorstudio/chammo/releases) and run it. It installs for your user only (no administrator prompt) and fetches WebView2 if it is missing. The installer is not code-signed yet, so SmartScreen may say *Windows protected your PC* — click **More info > Run anyway**. First launch checks git (installed with winget) and Claude Code the same way the Mac version does. The chief of staff's helper scripts need **Python 3** (`py -3` or `python`) — install it from python.org or with `winget install Python.Python.3.12` if you don't have it. Shortcuts swap ⌘ for Ctrl: Ctrl+Shift with letters (⌘B → Ctrl+Shift+B), plain Ctrl with digits and symbols (⌘1 → Ctrl+1, ⌘, → Ctrl+,). Routines are scheduled with Windows Task Scheduler.
+**Windows (preview)** — the Windows build is currently 0.2.3; 0.2.4 for Windows is coming soon. Download `Chammo_x.y.z_x64-setup.exe` from [Releases](https://github.com/honorstudio/chammo/releases) and run it. It installs for your user only (no administrator prompt) and fetches WebView2 if it is missing. The installer is not code-signed yet, so SmartScreen may say *Windows protected your PC* — click **More info > Run anyway**. First launch checks git (installed with winget) and Claude Code the same way the Mac version does. The chief of staff's helper scripts need **Python 3** (`py -3` or `python`) — install it from python.org or with `winget install Python.Python.3.12` if you don't have it. Shortcuts swap ⌘ for Ctrl: Ctrl+Shift with letters (⌘B → Ctrl+Shift+B), plain Ctrl with digits and symbols (⌘1 → Ctrl+1, ⌘, → Ctrl+,). Routines are scheduled with Windows Task Scheduler.
 
 **From source** — needs Rust (stable), Node.js 22+, pnpm and Xcode Command Line Tools.
 
@@ -81,10 +86,10 @@ A five-step setup wizard opens. One thing per screen; you move on once it's done
 1. **Welcome & language** — Korean or English.
 2. **Check this Mac** — Xcode Command Line Tools, Claude Code (updated if it's too old), Claude sign-in, GitHub sign-in (optional). Anything missing is one button away, handled in a terminal inside the app.
 3. **Basics** — the assistant's name, the **projects folder** (where your repos live — each folder inside is a project) and the **HQ folder** (where the chief of staff session runs — created with its instructions and helper scripts). Pick folders with **Choose** in the standard macOS dialog. Last, let Claude Code **trust** both folders once (in the terminal, press ↓ to *Yes, I trust this folder*, then Enter).
-4. **Features** — turn the office, Tamagotchi, gacha, review and voice on or off.
+4. **Features** — turn the office, Tamagotchi, gacha, review and voice on or off, install browser automation (optional), and choose whether sessions may control your screen (off by default).
 5. **Ready** — a summary, then Chammo starts the chief of staff session.
 
-Chammo does not log in to anything; it uses the `claude` login already on your Mac (if it expires, the decision inbox tells you). Reopen settings any time with the **gear** button at the top right or **Chammo > Settings…** (⌘,).
+Chammo does not log in to anything; it uses the `claude` login already on your Mac (if it expires, the decision inbox tells you). Reopen settings any time with **Chammo > Settings…** (⌘,). The layered button at the top right opens **Harnitor** — view, toggle and undo skills, hooks, MCP servers and plugins.
 
 ## Shortcuts
 
@@ -131,12 +136,12 @@ Everything lives in the data folder: `$CHAMMO_HOME`, or `~/.chammo` by default. 
 |---|---|---|
 | `language` | `"ko"` or `"en"` | system language |
 | `assistantName` | name of your chief of staff | `Chammo` / `참모` |
-| `devRoot` | projects folder | first of `~/Developer`, `~/Projects`, `~/Desktop/dev` that exists |
+| `devRoot` | projects folder | `~/Developer` or `~/Projects` (whichever exists); the setup wizard lets you pick or create one. The Desktop is never read until you choose it |
 | `hqDir` | chief of staff's folder | `<data>/hq` |
 | `githubUser` | used for review and CI | from `gh api user` |
 | `ttsCommand` | command that speaks a line of text (Settings > Voice writes it) | macOS `say` |
 | `memoDir` | where session notes are stored | `<data>/memo` |
-| `features` | `office`, `tama`, `gacha`, `review`, `voice` on/off | all on |
+| `features` | `office`, `tama`, `gacha`, `review`, `voice`, `agentView` (watch session browsers in the app), `autoRevive` (bring stopped sessions back on their own — for unattended Macs), `computerUse` (let sessions control the screen in every project) | on, except `autoRevive` and `computerUse` |
 
 ## Voice
 
@@ -152,7 +157,16 @@ To talk back, hold space in the chief of staff's terminal — that's Claude Code
 
 ## Privacy
 
-Chammo runs entirely on your Mac. It has no server, no account and no telemetry. It does not call any AI API itself — all model traffic is Claude Code's, and all GitHub traffic is `gh`'s, with your own logins. The one thing Chammo fetches itself is a version check — at launch and every few hours it reads the latest Claude Code version from the npm registry and the latest Chammo release from GitHub (no login, nothing about you is sent), so it can tell you when an update is out. Its files stay in the data folder.
+Chammo runs entirely on your Mac. It has no server, no account and no telemetry. It never sends your conversations or code anywhere — all model traffic is Claude Code's, and all GitHub traffic is `gh`'s, with your own logins. Chammo itself reaches the internet only for the things below — apart from the version check, only when you use that feature:
+
+- **Version check** — at launch and every few hours it reads the latest Claude Code version from the npm registry and the latest Chammo release from GitHub. No login; nothing about you is sent.
+- **Browser automation install** (when you press Install) — downloads Node.js from nodejs.org, Chrome Beta from dl.google.com and the browser tool parts from the npm registry. Plain downloads; nothing about you is sent.
+- **Account usage** (only if you saved accounts in Settings > Accounts) — asks api.anthropic.com for each account's 5-hour and weekly usage with that account's own sign-in token, the same request Claude Code's `/usage` makes. Only the percentages and reset times are kept.
+- **Phone notifications** (only if you paired a phone and turned notifications on) — the notification's title and one line go to your phone's push service (Apple, Google or Mozilla), end-to-end encrypted so the push service can't read them.
+- **Harnitor fonts** — opening the Harnitor screen loads its fonts from Google Fonts.
+- **Installers you start** — the setup wizard's install buttons (Claude Code from claude.ai, the GitHub CLI, …) and the Supertonic voice's **Download** (a Python package from PyPI and the Supertone model) fetch from their official sources.
+
+Its files stay in the data folder.
 
 ## Status and limitations
 

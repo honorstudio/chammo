@@ -33,3 +33,6 @@ app/src-tauri/gen/
 # 세션별 git worktree (claude -w / --worktree)
 .claude/worktrees/
 __pycache__/
+
+# 하니터 엔진 테스트 픽스처 — 가짜 하네스라 .mcp.json·CLAUDE.local.md·settings.local.json 도 커밋한다(안 담기면 깨끗한 클론에서 테스트가 깨진다)
+!app/src-tauri/vendor/harnitor-core/tests/fixtures/**

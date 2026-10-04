@@ -1,6 +1,7 @@
 // `claude agents --json` 결과를 앱이 쓰는 세션 모델로. 순수 TS — 프레임워크·Tauri import 없음.
 import { assistant, tr } from '../i18n';
 import { fwd } from './paths';
+import { splitOrchName } from './orchLabel';
 
 export type SessionState = 'working' | 'blocked' | 'idle';
 export type SessionKind = 'background' | 'interactive';
@@ -126,10 +127,16 @@ const LEGACY_ASSISTANT = '참모';
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** 대표 비서 이름인가 — 설정 이름(assistant()) 또는 옛 이름 */
-export const isOrchestratorName = (name: string) => name === assistant() || name === LEGACY_ASSISTANT;
+/** 두 언어의 기본 비서 이름 — 설정 이름이 비어 있으면 언어를 바꿀 때 기본 이름이 참모↔Chammo 로 바뀐다. 이미 있는 참모가
+ *  도우미 칸으로 밀리고 참모 0명으로 보이지 않게 둘 다 비서로 친다(2026-10-03 QA 18번) */
+const DEFAULT_ASSISTANTS = ['참모', 'Chammo'];
+/** 비서로 치는 기본 이름들 — 설정 이름이 먼저 */
+const assistantBases = () => [...new Set([assistant(), LEGACY_ASSISTANT, ...DEFAULT_ASSISTANTS])];
+
+/** 대표 비서 이름인가 — 설정 이름(assistant())·옛 이름·두 언어 기본 이름 */
+export const isOrchestratorName = (name: string) => assistantBases().includes(splitOrchName(name).base);
 /** 비서 이름 꼴 — 참모·참모-2(⌘T), 옛 이름 참모·참모-2 */
-export const orchestratorLike = (name: string) => [assistant(), LEGACY_ASSISTANT].some((b) => name === b || new RegExp(`^${escapeRe(b)}-\\d+$`).test(name));
+export const orchestratorLike = (name: string) => { const n = splitOrchName(name).base; return assistantBases().some((b) => n === b || new RegExp(`^${escapeRe(b)}-\\d+$`).test(n)); };
 
 /** 사이드바용: 이 앱 폴더의 세션(비서)은 따로, 나머지는 프로젝트별로. 순서는 들어온 대로 */
 export function groupByProject(
@@ -165,7 +172,7 @@ export const closableByShortcut = (s: Session, orchestrators: Session[]): boolea
 export function nextOrchestratorName(names: string[]): string {
   const base = assistant();
   const re = new RegExp(`^${escapeRe(base)}-(\\d+)$`);
-  const nums = names.map((n) => (n === base ? 1 : Number(re.exec(n)?.[1] ?? 0))).filter((n) => n > 0);
+  const nums = names.map((x) => splitOrchName(x).base).map((n) => (n === base ? 1 : Number(re.exec(n)?.[1] ?? 0))).filter((n) => n > 0);
   return nums.length ? `${base}-${Math.max(...nums) + 1}` : base;
 }
 

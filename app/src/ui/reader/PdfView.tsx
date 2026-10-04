@@ -15,7 +15,8 @@ type Doc = pdfjs.PDFDocumentProxy;
  * PDF 를 직접 그린다(pdf.js) — 기본 뷰어(iframe)로는 그 페이지로 보내거나 글을 반짝일 수 없었다(2026-09-30 사용자 "피디에프·피피티면 페이지도 맞춰서").
  * 파워포인트·워드는 LibreOffice 로 바꾼 PDF 를 여기서 그린다. 보이는 페이지만 그리고, 짚은 곳(at)은 그 페이지로 가서 반짝인다
  */
-export default function PdfView({ path, zoom = 100, at, atKey }: { path: string; zoom?: number; at?: ShowAt; atKey?: string }) {
+/** load = 바이트 읽는 길 — 없으면 맥 앱(read_doc_bytes), 폰은 폰 서버에서 받아 넘긴다 */
+export default function PdfView({ path, zoom = 100, at, atKey, load }: { path: string; zoom?: number; at?: ShowAt; atKey?: string; load?: (path: string) => Promise<ArrayBuffer> }) {
   const box = useRef<HTMLDivElement>(null);
   const [doc, setDoc] = useState<Doc | null>(null);
   const [size, setSize] = useState<{ w: number; h: number }[]>([]);
@@ -26,7 +27,7 @@ export default function PdfView({ path, zoom = 100, at, atKey }: { path: string;
     let dead = false;
     let task: ReturnType<typeof pdfjs.getDocument> | null = null;
     setDoc(null); setErr(''); setSize([]);
-    void invoke<ArrayBuffer>('read_doc_bytes', { path })
+    void (load ? load(path) : invoke<ArrayBuffer>('read_doc_bytes', { path }))
       .then((buf) => { task = pdfjs.getDocument({ data: new Uint8Array(buf) }); return task.promise; })
       .then(async (x) => {
         if (dead) return;

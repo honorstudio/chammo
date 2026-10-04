@@ -1,0 +1,15 @@
+/* 주소 미리보기(WebPage) — 막대 + 자식 웹뷰가 붙는 칸. 웹뷰가 칸 위에 따로 뜨니 칸 자체는 비어 있다 */
+.wp { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.wp-bar { position: relative; display: flex; align-items: center; gap: 2px; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.wp-ic { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 30px; flex: none; border: 0; border-radius: 6px; background: transparent; color: var(--text-2); cursor: pointer; }
+.wp-ic:hover { background: var(--hover, rgba(0, 0, 0, .06)); color: var(--text); }
+.wp-ic:focus-visible { outline: 2px solid var(--accent, #4a7cff); outline-offset: -2px; }
+.wp-ic svg { width: 15px; height: 15px; }
+.wp-addr { flex: 1; min-width: 0; height: 30px; margin: 0 4px; padding: 0 10px; border: 1px solid var(--line); border-radius: 15px; background: var(--bg, transparent); color: var(--text); font: inherit; font-size: 12.5px; }
+.wp-addr:focus { outline: none; border-color: var(--accent, #4a7cff); }
+.wp-addr.wp-bad { border-color: #d64545; }
+/* 불러오는 중 — 막대 아래 얇은 줄이 흐른다 */
+.wp-bar.wp-loading::after { content: ''; position: absolute; left: 0; bottom: -1px; height: 2px; width: 30%; background: var(--accent, #4a7cff); animation: wp-load 1.1s ease-in-out infinite; }
+@keyframes wp-load { from { left: -30%; } to { left: 100%; } }
+.wp-page { flex: 1; min-height: 0; position: relative; background: #fff; }
+.wp-err { padding: 16px; color: #d64545; font-size: 13px; }

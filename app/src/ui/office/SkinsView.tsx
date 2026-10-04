@@ -1,10 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { CATALOG, rarityLabel } from '../../domain/gacha';
 import { planRoom, type Room } from '../../domain/office';
 import { drawRoom, roomSize } from './draw';
 import { SubHead } from './OfficeMenu';
 import { SKIN_NAMES, skinOf } from './skins';
 import { tr } from '../../i18n';
+import { Stars } from '../gacha/Stars';
 
 // 미리보기용 작은 방 — 반장 + 세 명
 const SAMPLE: Room = planRoom(
@@ -26,10 +27,11 @@ function Preview({ skin }: { skin: string }) {
 }
 
 /** 스킨(사무실 칸 안) — 가진 스킨은 미리보기를 눌러 바꾸고, 없는 건 실루엣(뽑기에서) */
-export function SkinsView({ owned, current, onSkin, coins, onClose }: { owned: string[]; current: string; onSkin: (id: string) => void; coins?: number; onClose: () => void }) {
+/** counts = 뽑기에서 가진 개수(별) */
+export function SkinsView({ owned, current, onSkin, coins, counts, onClose, nav }: { owned: string[]; current: string; onSkin: (id: string) => void; coins?: number; counts?: Record<string, number>; onClose: () => void; nav?: ReactNode }) {
   return (
     <div className="office-sub skins">
-      <SubHead onClose={onClose} title={`${tr('스킨', 'Skins')} ${owned.length} / ${SKIN_NAMES.length}`} coins={coins} />
+      <SubHead onClose={onClose} title={`${tr('스킨', 'Skins')} ${owned.length} / ${SKIN_NAMES.length}`} nav={nav} coins={coins} />
       <div className="skins-grid">
         {SKIN_NAMES.map(([id, name]) => {
           const have = owned.includes(id);
@@ -40,7 +42,7 @@ export function SkinsView({ owned, current, onSkin, coins, onClose }: { owned: s
             <button key={id} className={`skin-cell ${have ? '' : 'locked'} ${id === current ? 'on' : ''}`} disabled={!have} onClick={() => onSkin(id)} title={have ? `${name}${id === current ? tr(' — 지금 쓰는 중', ' — in use') : tr(' — 눌러서 바꾸기', ' — click to switch')}` : tr('뽑기에서 나와', 'Comes from the gacha')}>
               {have ? <Preview skin={id} /> : <span className="skin-lock">?</span>}
               <span className="skin-name">{have ? name : '?'}</span>
-              <span className={`dex-rare r-${rarity}`}>{label}{id === current ? tr(' · 사용 중', ' · in use') : ''}</span>
+              <span className="skin-meta"><span className={`dex-rare r-${rarity}`}>{label}{id === current ? tr(' · 사용 중', ' · in use') : ''}</span>{have && <Stars count={counts?.[`skin.${id}`] ?? 0} />}</span>
             </button>
           );
         })}

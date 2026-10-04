@@ -32,16 +32,19 @@ describe('canAdopt — 터미널 세션을 앱으로 옮겨도 되나', () => {
 });
 
 describe('parseSpawnOutput — claude --bg 출력 한 줄', () => {
+  it('respawn 은 같은 세션 그대로 — 복사본이 아니다(2026-10-01 되살리면 새 번호·압축 앞 대화가 사라졌다)', () => {
+    expect(parseSpawnOutput('respawned f00d0001\n')).toEqual({ id: 'f00d0001', copy: false });
+  });
   it('새로 띄움', () => {
-    expect(parseSpawnOutput('backgrounded · 7ce32610 · orch-probe\n  claude agents  list sessions')).toEqual({ id: '7ce32610', copy: false });
+    expect(parseSpawnOutput('backgrounded · 1a2b3c4d · orch-probe\n  claude agents  list sessions')).toEqual({ id: '1a2b3c4d', copy: false });
   });
 
   it('이어붙이기 성공 (이름 없이)', () => {
-    expect(parseSpawnOutput('backgrounded · 8633b288')).toEqual({ id: '8633b288', copy: false });
+    expect(parseSpawnOutput('backgrounded · feed0002')).toEqual({ id: 'feed0002', copy: false });
   });
 
   it('원본이 아직 살아 있어 복사본이 생김 — 경고해야 한다', () => {
-    const out = 'note: session 8633b288 is already running in the background, so this started a copy as be71fb28. `claude attach 8633b288` opens the original.';
+    const out = 'note: session feed0002 is already running in the background, so this started a copy as be71fb28. `claude attach feed0002` opens the original.';
     expect(parseSpawnOutput(out)).toEqual({ id: 'be71fb28', copy: true });
   });
 

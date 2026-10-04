@@ -5,7 +5,9 @@
 import { tr } from '../i18n';
 const SENSITIVE = /password|비밀번호|2fa|otp|인증\s*번호|결제|payment|billing|과금|credit card|카드/i;
 const ALLOW = /\b(allow|yes|approve|continue|use|deliver)\b|허용|승인|전달/i;
-const NOT = /deny|don't|do not|\bno\b|without|reject|cancel|거절|거부|다시 묻지/i;
+const NOT = /deny|don't|do not|without|reject|cancel|거절|거부|다시 묻지/i;
+/** "No" 는 줄 맨 앞일 때만 거절 — "Yes, and switch to BYPASS PERMISSIONS (no further prompts)" 의 no 는 아니다(2026-10-01 플랜 승인 창) */
+const NO_FIRST = /^(\d+\.\s*)?no\b/i;
 const DOWN = '\x1b[B';
 const UP = '\x1b[A';
 
@@ -24,19 +26,28 @@ export function pickAllow(screen: string): AllowPick {
   // 선택지 = 커서 줄과 글자 시작 칸이 같은, 이어진 줄들
   const col = lines[cur]!.indexOf('❯') + 2;
   const textAt = (l: string) => (l.replace('❯', ' ').search(/\S/));
+  // 한 선택지가 여러 줄로 접히면 이어지는 줄은 더 안쪽에서 시작한다 — 그 줄은 앞 선택지에 붙인다
+  const isOpt = (l: string) => textAt(l) === col;
+  const isMore = (l: string) => !!l.trim() && textAt(l) > col;
   let top = cur, bottom = cur;
-  while (top > 0 && textAt(lines[top - 1]!) === col) top--;
-  while (bottom < lines.length - 1 && textAt(lines[bottom + 1]!) === col) bottom++;
-  const options = lines.slice(top, bottom + 1).map((l) => l.replace('❯', ' ').trim());
+  while (top > 0 && (isOpt(lines[top - 1]!) || isMore(lines[top - 1]!))) top--;
+  while (top < cur && !isOpt(lines[top]!)) top++;
+  while (bottom < lines.length - 1 && (isOpt(lines[bottom + 1]!) || isMore(lines[bottom + 1]!))) bottom++;
+  const options: string[] = [];
+  let curOpt = 0;
+  for (let i = top; i <= bottom; i++) {
+    const t = lines[i]!.replace('❯', ' ').trim();
+    if (isOpt(lines[i]!)) { if (i === cur) curOpt = options.length; options.push(t); } else options[options.length - 1] += ` ${t}`;
+  }
   // 선택지 바로 위 "…?" 줄(Do you want to proceed?)이 창이 묻는 말 — 그 위는 도구 인자(명령·diff)라 안 본다.
   // 그런 줄이 없는 창(computer-use·새 MCP)은 창 전체를 본다
   let q = top - 1;
   while (q >= 0 && !lines[q]!.trim()) q--;
   const asked = q >= 0 && /\?\s*(\(.*\))?\s*$/.test(lines[q]!) ? lines.slice(q) : lines;
   if (SENSITIVE.test(asked.join('\n'))) return SENSITIVE_SKIP();
-  const target = options.findIndex((o) => ALLOW.test(o) && !NOT.test(o));
+  const target = options.findIndex((o) => ALLOW.test(o) && !NOT.test(o) && !NO_FIRST.test(o));
   if (target < 0) return { skip: tr('허용 줄을 못 찾았어', "Couldn't find an allow option") };
-  const d = target - (cur - top);
+  const d = target - curOpt;
   return { keys: (d > 0 ? DOWN.repeat(d) : UP.repeat(-d)) + '\r', option: options[target]! };
 }
 

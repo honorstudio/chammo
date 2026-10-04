@@ -81,7 +81,7 @@ describe('taskEvents — 참모가 시킨 일이 끝난 시각', () => {
       { ts: t, type: 'send', task: '1', target: 'a', title: 'x' },
       { ts: t, type: 'done', task: '1' },
       { ts: 'garbage', type: 'done', task: '2' },
-    ])).toEqual([{ t: Date.parse(t), type: 'task' }]);
+    ])).toEqual([{ t: Date.parse(t), type: 'task', label: 'x' }]);
   });
 });
 

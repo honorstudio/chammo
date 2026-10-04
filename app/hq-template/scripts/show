@@ -11,6 +11,7 @@ __doc__ = """Open files in the app — chat view: the space (Markdown as an edit
   scripts/show <file> [<file> ...]
   scripts/show <file> --line 264[-270] | --find "text" | --page 3 | --box x,y,w,h
   scripts/show <file>:264[-270]
+  scripts/show http://localhost:3000   — an http(s) address opens in the in-app preview (reload, back, open in Chrome)
 
 Point at a spot / 짚어 보여 주기 — options apply to the file right before them. The app scrolls there
 (PDF·slides: that page) and flashes it for a few seconds. --find works for any kind and beats --line.
@@ -20,7 +21,7 @@ Relative paths are resolved from the current folder. Missing files and files out
 refused (the app won't open them either). Log: <data folder>/show.jsonl — {ts, path}. The app checks it
 every 0.7 s while it is running.
 """
-import datetime, json, os, re, sys
+import datetime, json, os, re, sys, urllib.parse
 
 
 def data_dir(home=None, env=None, exists=os.path.isdir):
@@ -35,6 +36,17 @@ def data_dir(home=None, env=None, exists=os.path.isdir):
 
 LOG = os.path.join(data_dir(), 'show.jsonl')
 HOME = os.path.realpath(os.path.expanduser('~'))
+
+
+def web_url(s):
+    """The address itself when it is http(s), else None — needs a scheme and host, no spaces or control characters (the app checks again)"""
+    if not re.match(r'^https?://[^/?#\s]', s or '', re.I) or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in s):
+        return None
+    try:
+        host = urllib.parse.urlsplit(s).hostname
+    except ValueError:  # http://[깨진 주소
+        return None
+    return s if host else None
 
 
 def resolve(p, cwd=None, home=HOME):
@@ -68,7 +80,7 @@ def parse_args(argv):
             out[-1] = (out[-1][0], at)
             i += 2
             continue
-        m = re.match(r'^(.+?):(\d+)(?:-(\d+))?$', a)
+        m = None if web_url(a) else re.match(r'^(.+?):(\d+)(?:-(\d+))?$', a)
         if m and not os.path.exists(a):
             at = {'line': int(m.group(2))}
             if m.group(3):
@@ -108,7 +120,7 @@ def main(argv):
     bad = 0
     os.makedirs(os.path.dirname(LOG), exist_ok=True)
     for p, at in parse_args(argv):
-        real = resolve(p)
+        real = web_url(p) or resolve(p)
         if not real:
             print(f'cannot open (missing or outside home) / 못 띄움(없거나 홈 밖): {p}', file=sys.stderr); bad += 1; continue
         with open(LOG, 'a', encoding='utf-8') as f:

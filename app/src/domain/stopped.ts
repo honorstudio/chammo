@@ -2,6 +2,7 @@
 
 import { classifyWorkspace, orchestratorLike, type Session } from './session';
 import { fwd } from './paths';
+import { splitOrchName } from './orchLabel';
 import type { TaskCard } from './tasks';
 
 export type StoppedSession = {
@@ -83,17 +84,38 @@ export function orphanSession(target: string, stopped: StoppedSession[]): Stoppe
  *  예전엔 이름이 딱 '참모'일 때만 통과해서 번호 붙은 참모는 끄는 순간 사라졌다(2026-10-01 사용자) */
 export function stoppedOrchs(stopped: StoppedSession[], orchCwd: string, live: { name: string }[]): StoppedSession[] {
   const hq = fwd(orchCwd).replace(/\/+$/, '').toLowerCase();
-  const seen = new Set(live.map((o) => o.name));
-  return stopped.filter((x) => {
-    if (fwd(x.cwd).replace(/\/+$/, '').toLowerCase() !== hq || !orchestratorLike(x.name) || seen.has(x.name)) return false;
-    seen.add(x.name);
-    return true;
-  });
+  const shadow = orchShadow(live);
+  return stopped.filter((x) => fwd(x.cwd).replace(/\/+$/, '').toLowerCase() === hq && orchestratorLike(x.name) && shadow(x.name));
 }
+
+/**
+ * 꺼진 참모 기록을 보일지 — 보이면 true(그리고 기억해서 다음 같은 것은 숨긴다).
+ * 별명 없는 기록(참모-5)은 같은 번호가 이미 있으면 숨긴다 — 진짜 이름에 별명이 실리기 전 옛 이름·복사본(참모-2 가 7개).
+ * 별명이 있으면 번호+별명이 같을 때만 숨긴다 — 번호가 같아도 별명이 다르면 다른 참모다(2026-10-02 참모-3 둘 사고:
+ * 살아 있는 '참모-3 · 서버 정리' 때문에 꺼진 '참모-3 · 쇼핑몰 문의'가 사이드바에서 사라졌다)
+ */
+export function orchShadow(live: { name: string }[]): (name: string) => boolean {
+  const bases = new Set<string>();
+  const fulls = new Set<string>();
+  const add = (n: string) => { const { base, nick } = splitOrchName(n); bases.add(base); fulls.add(`${base}${NICK}${nick ?? ''}`); };
+  live.forEach((o) => add(o.name));
+  return (name) => {
+    const { base, nick } = splitOrchName(name);
+    if (nick ? fulls.has(`${base}${NICK}${nick}`) : bases.has(base)) return false;
+    add(name);
+    return true;
+  };
+}
+const NICK = '\u0000';
 
 /** 꺼진 참모 하나를 지울 때 같이 지울 것 — 같은 HQ·같은 참모 이름으로 쌓인 꺼진 세션 전부(패널엔 최근 하나만 보여서, 하나만 지우면 다음 옛것이 올라왔다). 참모가 아니면 그것 하나 */
 export function sameOrchSlot(stopped: StoppedSession[], x: StoppedSession, orchCwd: string): StoppedSession[] {
   const norm = (p: string) => fwd(p).replace(/\/+$/, '').toLowerCase();
   if (norm(x.cwd) !== norm(orchCwd) || !orchestratorLike(x.name)) return [x];
-  return stopped.filter((y) => y.name === x.name && norm(y.cwd) === norm(orchCwd));
+  // 같은 번호 + 같은 별명, 그리고 별명 없는 옛 복사본만 — 번호가 같아도 별명이 다르면 다른 참모라 남긴다(2026-10-02 참모-3 둘)
+  const { base: b, nick: n } = splitOrchName(x.name);
+  return stopped.filter((y) => {
+    const { base, nick } = splitOrchName(y.name);
+    return base === b && norm(y.cwd) === norm(orchCwd) && (!nick || nick === n);
+  });
 }

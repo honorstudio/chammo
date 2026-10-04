@@ -11,27 +11,36 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
   scripts/app status                                   current settings as JSON (language, name, folders,
                                                        features, voice mode, browser automation)
   scripts/app voice on|off                             voice mode (the speaker button)
-  scripts/app feature office|tama|gacha|review|voice on|off
+  scripts/app feature office|tama|gacha|review|voice|autoRevive|computerUse on|off
                                                        turn a feature on/off (same as Settings > Features)
-  scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home
-  scripts/app close settings|office|reader|tasks|inbox
-  scripts/app focus <session id|name|project>          go to that session's (or project's) screen
+  scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home|harnitor|tools
+  scripts/app close settings|office|reader|tasks|inbox|harnitor|tools
+  scripts/app focus <session id|name|project>          show that project's dashboard (chat view: in the space — no terminal)
+  scripts/app focus --terminal <session|project>       open its terminal (CLI) — only when the user asks for the terminal
   scripts/app reader <file> [<file> ...]               open files in the reader (same as scripts/show)
+  scripts/app harness [<project name|folder>]          the user's harness as text — skills, MCP, hooks, plugins, what is
+                                                       turned off, findings (the app scans it; Chammo must be open).
+                                                       To change anything, open Harnitor (open harnitor) — after the user agrees
   scripts/app pet show|hide                            the Tamagotchi's floating window
   scripts/app load [--json]                            what is loading this Mac, per session (CPU, memory, what runs),
                                                        plus processes left behind by ended sessions
   scripts/app project list                             project folders: devRoot's folders + ones added separately
   scripts/app project add <folder>                     add a folder outside devRoot as a project (it stays where it is)
   scripts/app project remove <folder|name>             stop treating it as a project (the folder is not touched)
+  scripts/app push "<title>" ["<one line>"]            push a notification to the user's phone (home-screen web app
+                                                       with the bell on). Sent even while the user looks at the Mac.
+                                                       Title + 60 chars only — no secrets. Exit 4 = no subscribed
+                                                       phone → fall back to another channel (e.g. Slack)
 
 Log: <data folder>/app.jsonl — {ts, action, arg}. The running app checks it every 0.7 s and applies each
 line once; lines written while the app is closed are skipped.
 """
 import datetime, json, os, subprocess, sys
 
-FEATURES = ('office', 'tama', 'gacha', 'review', 'voice')
-OPEN = ('settings', 'tour', 'office', 'review', 'all', 'replay', 'load', 'reader', 'tasks', 'inbox', 'home')
-CLOSE = ('settings', 'office', 'reader', 'tasks', 'inbox')
+FEATURES = ('office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'computerUse')
+OFF_BY_DEFAULT = ('autoRevive', 'computerUse')  # 앱 기본값과 같게 — 무인 맥에서만 켠다 · 화면 조종은 사용자가 고른다
+OPEN = ('settings', 'tour', 'office', 'review', 'all', 'replay', 'load', 'reader', 'tasks', 'inbox', 'home', 'harnitor', 'tools')
+CLOSE = ('settings', 'office', 'reader', 'tasks', 'inbox', 'harnitor', 'tools')
 ONOFF = ('on', 'off')
 
 
@@ -55,7 +64,7 @@ def read_json(path):
 
 
 def status(data):
-    """앱 설정·음성 모드·브라우저 자동화 — 빠진 기능 칸은 켜짐(앱과 같은 기본값)"""
+    """앱 설정·음성 모드·브라우저 자동화 — 빠진 기능 칸은 켜짐, autoRevive·computerUse 만 꺼짐(앱과 같은 기본값)"""
     c = read_json(os.path.join(data, 'config.json'))
     f = c.get('features') if isinstance(c.get('features'), dict) else {}
     return {
@@ -64,7 +73,7 @@ def status(data):
         'devRoot': c.get('devRoot', ''),
         'hqDir': c.get('hqDir', ''),
         'extraProjects': extras_of(c),
-        'features': {k: bool(f.get(k, True)) for k in FEATURES},
+        'features': {k: bool(f.get(k, k not in OFF_BY_DEFAULT)) for k in FEATURES},
         'voiceMode': read_json(os.path.join(data, 'voice.json')).get('on') is True,
         'browserAutomation': os.path.isfile(os.path.join(data, 'tools/chammo-browser/node_modules/@playwright/mcp/package.json')),
         'dataDir': data,
@@ -168,6 +177,10 @@ def parse(argv):
         return ('open', rest[0])
     if a == 'close' and len(rest) == 1 and rest[0] in CLOSE:
         return ('close', rest[0])
+    # 채팅 뷰에선 그 대시보드를 스페이스에 띄운다. 터미널(CLI)은 --terminal 로 명시할 때만(2026-10-02)
+    if a == 'focus' and len(rest) == 2 and '--terminal' in rest:
+        t = [x for x in rest if x != '--terminal'][0].strip()
+        return ('focus', f'--terminal {t}') if t else None
     if a == 'focus' and len(rest) == 1 and rest[0].strip():
         return ('focus', rest[0].strip())
     if a == 'pet' and len(rest) == 1 and rest[0] in ('show', 'hide'):
@@ -195,7 +208,68 @@ DONE = {
 }
 
 
+def harness(data, project, wait):
+    """앱에 하네스 글을 부탁하고 답(<데이터>/harness.txt, 첫 줄 "#id <id>")을 기다린다 — 엔진은 앱 안(하니터)에만 있다"""
+    import time, uuid
+    rid = uuid.uuid4().hex[:12]
+    os.makedirs(data, exist_ok=True)
+    line = {'ts': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), 'action': 'harness', 'arg': project, 'id': rid}
+    with open(os.path.join(data, 'app.jsonl'), 'a', encoding='utf-8') as f:
+        f.write(json.dumps(line, ensure_ascii=False) + '\n')
+    out = os.path.join(data, 'harness.txt')
+    end = time.time() + wait
+    while time.time() < end:
+        try:
+            with open(out, encoding='utf-8') as f:
+                text = f.read()
+            head, _, body = text.partition('\n')
+            if head == f'#id {rid}':
+                return 0, body.rstrip('\n')
+        except OSError:
+            pass
+        time.sleep(0.2)
+    return 1, f'Chammo did not answer in {wait:g}s — is the app open? / 앱이 답하지 않았어 — Chammo 가 켜져 있어야 해'
+
+
+def push_subs(data):
+    """지금 짝지어 있는 기기의 푸시 구독 수 — 앱(push.rs live_subs)과 같은 셈"""
+    def load(name):
+        try:
+            with open(os.path.join(data, name), encoding='utf-8') as f:
+                v = json.load(f)
+            return v if isinstance(v, list) else []
+        except (OSError, ValueError):
+            return []
+    devices = {d.get('id') for d in load('mobile-devices.json') if isinstance(d, dict)}
+    return sum(1 for s in load('push-subs.json') if isinstance(s, dict) and s.get('device') in devices)
+
+
 def main(argv):
+    # 폰 푸시 — 참모가 일부러 부르는 것이라 맥 창을 보고 있어도 보낸다. 구독이 없으면 4(다른 길로 떨어지게)
+    if argv[:1] == ['push']:
+        rest = argv[1:]
+        if not (1 <= len(rest) <= 2) or not rest[0].strip():
+            print(__doc__, file=sys.stderr); return 2
+        data = data_dir()
+        if push_subs(data) == 0:
+            print('no push subscription — turn on the bell in the phone app / 구독 없음 — 폰 홈 화면 앱에서 종을 켜야 해', file=sys.stderr)
+            return 4
+        arg = {'title': rest[0].strip(), 'body': rest[1].strip() if len(rest) > 1 else ''}
+        line = {'ts': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), 'action': 'push', 'arg': arg}
+        with open(os.path.join(data, 'app.jsonl'), 'a', encoding='utf-8') as f:
+            f.write(json.dumps(line, ensure_ascii=False) + '\n')
+        print(f'sent to the app / 앱에 넘김: push {arg["title"]}')
+        return 0
+    if argv[:1] == ['harness']:
+        if len(argv) > 2:
+            print(__doc__, file=sys.stderr); return 2
+        try:
+            wait = float(os.environ.get('CHAMMO_HARNESS_WAIT', '') or 30)
+        except ValueError:
+            wait = 30
+        code, msg = harness(data_dir(), argv[1].strip() if len(argv) == 2 else '', wait)
+        print(msg, file=sys.stdout if code == 0 else sys.stderr)
+        return code
     if argv[:1] == ['load']:
         if argv[1:] not in ([], ['--json']):
             print(__doc__, file=sys.stderr); return 2

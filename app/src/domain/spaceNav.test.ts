@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { followChat, heldBy, holderMap, newShows, orphanSends, shownFiles, transcriptTargets } from './spaceNav';
+import { addSpawned, focusPick, followChat, harnitorPick, heldBy, toolsPick, holderMap, newShows, orphanSends, showOwner, shownFiles, transcriptTargets } from './spaceNav';
 import type { TaskEvent } from './tasks';
 
 const T = Date.parse('2026-09-30T04:00:00Z');
@@ -46,6 +46,14 @@ describe('heldBy — 이 참모가 잡고 있는 세션(채팅 뷰 스페이스 
 });
 
 describe('shownFiles — 그 세션이 보여 준 파일(scripts/show 기록)', () => {
+  it('지워진 파일(gone — 앱이 기록을 읽을 때 단다)은 목록에서 뺀다', () => {
+    const l = [JSON.stringify({ ts: '1', path: '/d/a.md', from: 's' }), JSON.stringify({ ts: '2', path: '/d/x.png', from: 's', gone: true })].join('\n');
+    expect(shownFiles(l, 's').map((f) => f.path)).toEqual(['/d/a.md']);
+  });
+  it('짚은 곳(at)도 같이 — 가장 최근 줄 것', () => {
+    const l = [JSON.stringify({ ts: '1', path: '/d/a.md', from: 's', at: { line: 3 } }), JSON.stringify({ ts: '2', path: '/d/a.md', from: 's', at: { find: '제목' } })].join('\n');
+    expect(shownFiles(l, 's')).toEqual([{ path: '/d/a.md', ts: '2', at: { find: '제목' } }]);
+  });
   const log = [
     JSON.stringify({ ts: '1', path: '/d/demo-lab/index.html', from: 'sess-x', cwd: '/d/demo-lab' }),
     JSON.stringify({ ts: '2', path: '/d/other/a.md', from: 'zzz' }),
@@ -168,5 +176,87 @@ describe('transcriptTargets — 글 안에 든 claude --bg 는 안 친다(2026-1
       bash('X=1; claude --bg -n "second one" "y"'),
     ].join('\n');
     expect(transcriptTargets(tail)).toEqual(['real-one', 'second one']);
+  });
+});
+
+describe('showOwner — 띄운 문서를 어느 참모 화면에 둘까(2026-10-01 사용자: 참모1 이 띄운 게 보고 있던 참모2 화면에 떴다)', () => {
+  const holders = new Map([['w1', ['o1']], ['w2', ['o2', 'o1']]]);
+  it('참모가 띄웠으면 그 참모', () => {
+    expect(showOwner('o1', ['o1', 'o2'], holders)).toBe('o1');
+  });
+  it('하위 세션이 띄웠으면 그 세션을 잡은 참모(여럿이면 첫째)', () => {
+    expect(showOwner('w1', ['o1', 'o2'], holders)).toBe('o1');
+    expect(showOwner('w2', ['o1', 'o2'], holders)).toBe('o2');
+  });
+  it('모르는 세션·사람(me)·빈 값이면 null — 지금 보는 화면에', () => {
+    expect(showOwner('stranger', ['o1'], holders)).toBeNull();
+    expect(showOwner('me', ['o1'], holders)).toBeNull();
+    expect(showOwner('', ['o1'], holders)).toBeNull();
+  });
+});
+
+describe('harnitorPick — 하니터도 탭마다 기억되는 화면 하나(h:), 큐레이션처럼', () => {
+  // 2026-10-02 사용자: 하니터가 앱 전체에 고정이라 다른 탭으로 가도 남아 있고, 다른 참모가 띄운 게 가려질 것 같았다
+  it('열면 보던 화면을 기억하고 h: 로', () => {
+    expect(harnitorPick('o:a', 'open', '', 'o:a')).toEqual({ pick: 'h:', before: 'o:a' });
+    expect(harnitorPick('d:/x.md', 'toggle', '', 'o:a')).toEqual({ pick: 'h:', before: 'd:/x.md' });
+  });
+  it('닫으면 열기 전 화면으로', () => {
+    expect(harnitorPick('h:', 'close', 'd:/x.md', 'o:a')).toEqual({ pick: 'd:/x.md', before: '' });
+    expect(harnitorPick('h:', 'toggle', 's:1', 'o:a')).toEqual({ pick: 's:1', before: '' });
+  });
+  it('기억이 없으면 그 참모 대시보드로', () => {
+    expect(harnitorPick('h:', 'close', '', 'o:a').pick).toBe('o:a');
+  });
+  it('이미 열려 있으면 열기는 그대로, 안 열려 있으면 닫기는 그대로', () => {
+    expect(harnitorPick('h:', 'open', 'o:a', 'o:a')).toEqual({ pick: 'h:', before: 'o:a' });
+    expect(harnitorPick('o:a', 'close', '', 'o:a')).toEqual({ pick: 'o:a', before: '' });
+  });
+});
+
+describe('toolsPick — 위 막대 도구 아이콘(2026-10-05 사용자): 하니터처럼 탭마다 열고 닫기, 프로젝트 도구(t:<폴더>)도 열린 걸로', () => {
+  it('열면 참모 HQ 기준 도구(t:)로, 보던 화면은 기억', () => {
+    expect(toolsPick('o:a', 'toggle', '', 'o:a')).toEqual({ pick: 't:', before: 'o:a' });
+    expect(toolsPick('d:/x.md', 'open', '', 'o:a')).toEqual({ pick: 't:', before: 'd:/x.md' });
+  });
+  it('프로젝트 대시보드에서 연 도구(t:/d/project-b)도 열린 것 — 다시 누르면 닫고 그 전 화면으로', () => {
+    expect(toolsPick('t:/d/project-b', 'toggle', 'p:/d/project-b', 'o:a')).toEqual({ pick: 'p:/d/project-b', before: '' });
+    expect(toolsPick('t:/d/project-b', 'open', 'p:/d/project-b', 'o:a')).toEqual({ pick: 't:/d/project-b', before: 'p:/d/project-b' });
+  });
+  it('기억이 없으면 그 참모 대시보드로, 안 열려 있으면 닫기는 그대로', () => {
+    expect(toolsPick('t:', 'close', '', 'o:a').pick).toBe('o:a');
+    expect(toolsPick('h:', 'close', '', 'o:a')).toEqual({ pick: 'h:', before: '' });
+  });
+});
+
+describe('focusPick — 채팅 뷰에서 focus 는 스페이스 대시보드로(터미널로 넘어가지 않는다)', () => {
+  const sessions = [{ id: 's1', cwd: '/d/project-b', project: 'project-b' }, { id: 'o1', cwd: '/hq', project: '' }];
+  const groups = [{ name: 'project-b', root: '/d/project-b' }];
+  const idle = [{ name: 'project-x-app', root: '/d/project-x-app' }];
+  it('세션이면 그 프로젝트 대시보드', () => expect(focusPick({ session: 's1' }, sessions, groups, idle, ['o1'])).toBe('p:/d/project-b'));
+  it('참모면 그 참모 대시보드', () => expect(focusPick({ session: 'o1' }, sessions, groups, idle, ['o1'])).toBe('o:o1'));
+  it('프로젝트 이름이면 그 프로젝트 — 세션이 안 떠 있어도', () => {
+    expect(focusPick({ project: 'project-b' }, sessions, groups, idle, [])).toBe('p:/d/project-b');
+    expect(focusPick({ project: 'project-x-app' }, sessions, groups, idle, [])).toBe('p:/d/project-x-app');
+  });
+  it('모르면 null', () => expect(focusPick({ project: 'nope' }, sessions, groups, idle, [])).toBeNull());
+});
+
+describe('addSpawned — 대화 기록으로 잡은 세션은 작업 기록 주인이 없을 때만(handoff 가 이긴다, 2026-10-02)', () => {
+  const resolve = (n: string) => ({ 'project-b-platform': 's1', helper: 's2' } as Record<string, string>)[n];
+  it('작업 기록에 주인이 있으면 처음 띄운 참모 기록으로 덧붙이지 않는다', () => {
+    const m = new Map([['s1', ['o5']]]); // handoff 로 참모-5 가 주인
+    const out = addSpawned(m, new Map([['o4', new Set(['project-b-platform'])]]), resolve, ['o4', 'o5']);
+    expect(out.get('s1')).toEqual(['o5']);
+  });
+  it('작업 기록에 없는 세션(task send 없이 띄운 도우미)은 대화 기록으로 붙인다', () => {
+    const out = addSpawned(new Map(), new Map([['o4', new Set(['helper'])]]), resolve, ['o4']);
+    expect(out.get('s2')).toEqual(['o4']);
+  });
+  it('참모 자신이나 없는 세션은 빼고, 원본 지도는 안 건드린다', () => {
+    const m = new Map<string, string[]>();
+    const out = addSpawned(m, new Map([['o4', new Set(['o5name', 'gone'])]]), (n) => (n === 'o5name' ? 'o5' : undefined), ['o4', 'o5']);
+    expect(out.size).toBe(0);
+    expect(m.size).toBe(0);
   });
 });

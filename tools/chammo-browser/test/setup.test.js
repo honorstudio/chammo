@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { setupMcp } = require('../src/setup');
+const { setupMcp, stableNode } = require('../src/setup');
 
 const NODE = '/opt/node/bin/node';
 const WRAPPER = '/opt/chammo-browser/bin/chammo-browser-mcp.js';
@@ -72,9 +72,9 @@ test('데이터 폴더를 바꿔 둔 환경이면 그 루트를 env 로 고정�
 
 test('기본값: node 는 실제 경로(realpath), 래퍼는 이 패키지의 bin 절대경로', () => {
   const dir = tmp();
-  setupMcp({ profile: 'acme-shop', dir, env: {} });
+  setupMcp({ profile: 'acme-shop', dir, env: {}, home: tmp() }); // 홈 밖 경로라 ${HOME} 로 안 바뀐다, 데이터 폴더에 node 링크 없음
   const e = read(dir).mcpServers.playwright;
-  assert.strictEqual(e.command, fs.realpathSync(process.execPath));
+  assert.strictEqual(e.command, stableNode(fs.realpathSync(process.execPath)));
   assert.ok(path.isAbsolute(e.args[0]) && fs.existsSync(e.args[0]));
   assert.strictEqual(path.basename(e.args[0]), 'chammo-browser-mcp.js');
 });
@@ -91,4 +91,53 @@ test('CLI setup: PATH 에 없어도 node 로 직접 실행해 등록되고, 바�
   assert.strictEqual(read(dir).mcpServers.playwright.args[1], 'acme-shop');
   const bad = spawnSync(process.execPath, [cli, 'setup', '../x', dir], { env, encoding: 'utf8' });
   assert.notStrictEqual(bad.status, 0);
+});
+
+test('Homebrew node 는 버전 폴더(Cellar/…/26.8.1) 말고 버전 없는 opt 경로로 — brew upgrade 가 옛 버전을 지우면 .mcp.json 이 죽는다', () => {
+  const has = (set) => (p) => set.includes(p);
+  assert.strictEqual(
+    stableNode('/opt/homebrew/Cellar/node/26.8.1/bin/node', has(['/opt/homebrew/opt/node/bin/node'])),
+    '/opt/homebrew/opt/node/bin/node',
+  );
+  assert.strictEqual(
+    stableNode('/usr/local/Cellar/node@22/22.11.0/bin/node', has(['/usr/local/opt/node@22/bin/node'])),
+    '/usr/local/opt/node@22/bin/node',
+  );
+  // opt 링크가 없으면 그대로, Cellar 가 아니면 그대로(nvm·fnm·공식 설치판)
+  assert.strictEqual(stableNode('/opt/homebrew/Cellar/node/26.8.1/bin/node', has([])), '/opt/homebrew/Cellar/node/26.8.1/bin/node');
+  assert.strictEqual(stableNode('/usr/local/bin/node', has(['/usr/local/opt/node/bin/node'])), '/usr/local/bin/node');
+  assert.strictEqual(stableNode('C:\\Program Files\\nodejs\\node.exe', has([])), 'C:\\Program Files\\nodejs\\node.exe');
+});
+
+test('데이터 폴더에 node 링크(tools/bin/node)가 있으면 그걸 — 앱이 고른 node(시스템 20+ 또는 받은 것)를 한 곳에서 가리킨다', () => {
+  if (process.platform === 'win32') return;
+  const home = tmp();
+  const data = path.join(home, '.chammo');
+  fs.mkdirSync(path.join(data, 'tools', 'bin'), { recursive: true });
+  fs.symlinkSync(process.execPath, path.join(data, 'tools', 'bin', 'node'));
+  const dir = tmp();
+  setupMcp({ profile: 'acme-shop', dir, env: {}, home, wrapperPath: path.join(data, 'tools/chammo-browser/bin/chammo-browser-mcp.js') });
+  const e = read(dir).mcpServers.playwright;
+  // 홈 아래 경로는 ${HOME} 로 — git 으로 다른 맥(다른 사용자 이름)에 가도 뜬다(Claude 가 .mcp.json 에서 풀어 준다)
+  assert.strictEqual(e.command, '${HOME}/.chammo/tools/bin/node');
+  assert.deepStrictEqual(e.args, ['${HOME}/.chammo/tools/chammo-browser/bin/chammo-browser-mcp.js', 'acme-shop']);
+});
+
+test('링크가 깨져 있으면(가리키던 node 가 지워짐) 지금 node 로', () => {
+  if (process.platform === 'win32') return;
+  const home = tmp();
+  fs.mkdirSync(path.join(home, '.chammo', 'tools', 'bin'), { recursive: true });
+  fs.symlinkSync('/nonexistent/node', path.join(home, '.chammo', 'tools', 'bin', 'node'));
+  const dir = tmp();
+  setupMcp({ profile: 'acme-shop', dir, env: {}, home });
+  assert.strictEqual(read(dir).mcpServers.playwright.command, stableNode(fs.realpathSync(process.execPath)));
+});
+
+test('홈 경로 바꾸기 — 맥은 홈 아래만 ${HOME}, 윈도우는 그대로(풀기 실측 전)', () => {
+  const { homeVar } = require('../src/setup');
+  assert.strictEqual(homeVar('/Users/a/.chammo/tools/bin/node', '/Users/a', 'darwin'), '${HOME}/.chammo/tools/bin/node');
+  assert.strictEqual(homeVar('/Users/ab/x', '/Users/a', 'darwin'), '/Users/ab/x'); // 이름이 겹치는 다른 사용자
+  assert.strictEqual(homeVar('/opt/homebrew/opt/node/bin/node', '/Users/a', 'darwin'), '/opt/homebrew/opt/node/bin/node');
+  assert.strictEqual(homeVar('C:\\Users\\a\\.chammo\\tools\\node\\node.exe', 'C:\\Users\\a', 'win32'), 'C:\\Users\\a\\.chammo\\tools\\node\\node.exe');
+  assert.strictEqual(homeVar('/x', '', 'darwin'), '/x');
 });

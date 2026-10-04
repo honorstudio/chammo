@@ -31,6 +31,9 @@ export function completeSlash(draft: string, name: string): string {
   return `/${name} ${rest}`;
 }
 
+/** `/memory` 만 보냈나 — 백그라운드 세션에선 고를 창이 터미널에만 떠서, 앱이 받아 CLAUDE.md·메모리 md 를 스페이스 문서로 연다(2026-10-04 사용자) */
+export const isMemoryCmd = (draft: string) => draft.trim() === '/memory';
+
 /** Claude Code 기본 명령 — 자주 쓰는 것만(2.1.28x). 설명은 짧게, 앱 언어로 */
 const BUILTIN: [string, string, string][] = [
   ['clear', '대화 비우고 새로 시작', 'Clear the conversation and start fresh'],
@@ -40,7 +43,7 @@ const BUILTIN: [string, string, string][] = [
   ['context', '컨텍스트 쓴 양 보기', 'Show context usage'],
   ['resume', '지난 대화 이어 가기', 'Resume a past conversation'],
   ['rewind', '앞 지점으로 되돌리기', 'Rewind to an earlier point'],
-  ['memory', 'CLAUDE.md 메모리 고치기', 'Edit CLAUDE.md memory'],
+  ['memory', 'CLAUDE.md·메모리 문서 열기', 'Open CLAUDE.md and memory files'],
   ['init', '이 폴더 CLAUDE.md 만들기', 'Create CLAUDE.md for this folder'],
   ['review', 'PR 리뷰', 'Review a pull request'],
   ['agents', '서브에이전트 관리', 'Manage subagents'],

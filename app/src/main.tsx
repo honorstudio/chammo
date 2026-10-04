@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { pickLang, setAssistant, setLang } from './i18n';
 import './ui/styles.css';
 import { installFileDrop } from './ui/fileDrop';
+import { installImeGuard } from './ui/imeGuard';
 
 // 언어·비서 이름은 App 을 불러오기 **전에** 정한다 — 모듈 맨 위의 표(가챠 이름 등)가 tr() 로 된 채 평가되기 때문.
 // 설정(config.json)의 값을 localStorage 에 비춰 둔 것을 읽는다(동기). 설정에서 바꾸면 창을 다시 연다
@@ -12,6 +13,9 @@ setAssistant(saved('assistantName'));
 
 // 터미널에 파일 끌어다 놓기 — Rust 가 window.__drop 으로 넘긴다
 installFileDrop();
+
+// 한글 조합 중 창 전환 막이 — 조합 중에 창이 초점을 잃으면 그 칸을 다시 잡아 확정한다(domain/imeGuard)
+installImeGuard();
 
 // 터미널 폰트를 먼저 불러온 뒤 그린다 (xterm 은 처음 열 때 칸 폭을 잰다). 실패해도 1.5초 뒤엔 그린다
 const fonts = Promise.all([

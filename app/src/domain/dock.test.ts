@@ -12,9 +12,10 @@ describe('dockLine — 사무실 아래 현황판 한 줄', () => {
   });
   it('작업 중이 아니면 상태만', () => {
     expect(dockLine('asks', undefined, undefined).verb).toBe('물어봄');
-    expect(dockLine('done', undefined, undefined).verb).toBe('끝남');
-    expect(dockLine('wait', undefined, undefined).verb).toBe('대기');
-    expect(dockLine('sleep', undefined, undefined).verb).toBe('잠듦');
+    expect(dockLine('done', undefined, undefined).verb).toBe('답함');
+    expect(dockLine('idle', undefined, undefined).verb).toBe('쉼'); // 메뉴와 같은 말(statusWord) — 예전 '대기'
+    expect(dockLine('stale', undefined, undefined).verb).toBe('잠듦');
+    expect(dockLine('blocked', undefined, undefined).verb).toBe('기다림'); // 사무실 짓은 물어봄과 같지만 말은 메뉴처럼
   });
 });
 
@@ -57,5 +58,14 @@ describe('영어 현황판', () => {
     expect(dockLine('asks', undefined, undefined).verb).toBe('Asking');
     expect(ago(0, 9_000)).toBe('now');
     expect(ago(0, 3 * 60_000)).toBe('3m');
+  });
+});
+
+describe('사람 필요 — 브라우저가 사람을 부르면 무슨 상태든 그게 먼저(오피스 A 1단계)', () => {
+  it('일하는 중이어도 사람 필요, 한 줄은 부른 이유', () => {
+    expect(dockLine('working', 'web', 'browser_ask_human', '로그인 해 줘')).toEqual({ verb: '사람 필요', text: '로그인 해 줘' });
+  });
+  it('이유가 비면 빈 줄', () => {
+    expect(dockLine('idle', undefined, undefined, '')).toEqual({ verb: '사람 필요', text: '' });
   });
 });

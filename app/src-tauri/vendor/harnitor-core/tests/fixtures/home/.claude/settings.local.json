@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": ["mcp__localonly__run", "Bash(ls:*)"],
+    "deny": ["mcp__banned__anything"]
+  },
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "", "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/local-hook.sh" }] }
+    ]
+  }
+}

@@ -2,9 +2,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { BlockNoteEditor } from '@blocknote/core';
 import { docTitle } from '../../domain/spaceTree';
+import { safeDecode } from '../../domain/mdLinks';
 import { tr } from '../../i18n';
 import { IconChevron, IconPin } from '../Icons';
-import { lastSaved, saveSoon } from './docSave';
+import { lastSaved } from './docSave';
 import { setBaseline } from './pending';
 import { SendFab } from './SendFab';
 import { FindBar } from './FindBar';
@@ -18,7 +19,7 @@ const SpaceEditor = lazy(() => import('./SpaceEditor'));
  * 문서 페이지 — 노션처럼 바로 고친다(리더 아님, 2026-09-30 사용자). 저장은 저절로, 고친 줄은 모아 두었다가
  * 오른쪽 아래 "보낼 것"으로 참모에게. 위 줄 = 어디 문서인지(주인 / 이름) + 고정
  */
-export function DocPage({ path, title, owner, pinned, onPin, send, sendTo, onTitle, onAttach, onBack, onNewSubpage, onOpenPath, at, atKey }: {
+export function DocPage({ lead, tail, path, title, owner, pinned, onPin, send, sendTo, onTitle, onAttach, onBack, onNewSubpage, onOpenPath, at, atKey }: {
   /** 짚어 보여 줄 곳(scripts/show --line/--find) — atKey 가 바뀔 때마다 다시 반짝 */
   at?: ShowAt;
   atKey?: string;
@@ -28,6 +29,10 @@ export function DocPage({ path, title, owner, pinned, onPin, send, sendTo, onTit
   onOpenPath?: (abs: string) => void;
   /** 뒤로(앞 화면, 없으면 주인 대시보드) */
   onBack?: () => void;
+  /** 머리줄 맨 앞(채팅 뷰 스페이스 ↔ 사무실 두 칸) */
+  lead?: React.ReactNode;
+  /** 머리줄 맨 끝(사무실 위 창의 크게·닫기) */
+  tail?: React.ReactNode;
   onAttach?: () => void;
   path: string;
   owner: string;
@@ -60,6 +65,7 @@ export function DocPage({ path, title, owner, pinned, onPin, send, sendTo, onTit
   return (
     <div className="cv-doc">
       <div className="cv-doc-bar">
+        {lead}
         <span className="cv-crumb">{onBack ? <button className="cv-back" onClick={onBack} title={tr('뒤로', 'Back')}><IconChevron />{owner}</button> : <span>{owner}</span>}<i>/</i><b>{title ?? docTitle(path)}</b></span>
         <span className="cv-sp" />
         {onAttach && <button className="cv-btn ghost" onClick={onAttach} title={tr('채팅 입력칸에 이 문서를 붙인다', 'Attach this document to the chat input')}>{tr('채팅에 붙이기', 'Attach to chat')}</button>}
@@ -68,6 +74,7 @@ export function DocPage({ path, title, owner, pinned, onPin, send, sendTo, onTit
             <IconPin />{pinned ? tr('고정됨', 'Pinned') : tr('고정', 'Pin')}
           </button>
         )}
+        {tail}
       </div>
       {finding && <FindBar root={() => bodyRef.current} onClose={() => setFinding(false)} />}
       <div className="cv-doc-scroll" onMouseDown={(e) => {
@@ -94,8 +101,8 @@ export function DocPage({ path, title, owner, pinned, onPin, send, sendTo, onTit
           if ((!a && !fileUrl) || !href || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('#') || !onOpenPath) return;
           e.preventDefault(); e.stopPropagation();
           const dir = path.replace(/\/[^/]*$/, '');
-          const abs = href.startsWith('/') ? decodeURI(href) : new URL(href, `file://${encodeURI(dir)}/`).pathname;
-          onOpenPath(decodeURI(abs));
+          const abs = href.startsWith('/') ? safeDecode(href) : new URL(href, `file://${encodeURI(dir)}/`).pathname;
+          onOpenPath(safeDecode(abs));
         }}>
           {err ? <div className="cv-blank">{tr('못 읽었어', "Couldn't read it")} — {err}</div>
             : text == null ? <div className="cv-blank">{tr('여는 중', 'Opening')}</div>
@@ -103,7 +110,7 @@ export function DocPage({ path, title, owner, pinned, onPin, send, sendTo, onTit
               <Suspense fallback={<div className="cv-blank">{tr('편집기 여는 중', 'Opening the editor')}</div>}>
                 <SpaceEditor key={path} md={text} docPath={path} onNewSubpage={onNewSubpage} onEditor={(ed) => { editorRef.current = ed; }}
                   onReady={(n) => { lastSaved.set(path, n); setBaseline(path, n); }}
-                  onChange={(m) => { saveSoon(path, m); const t = h1(m); if (t) onTitle?.(t); }} />
+                  onChange={(m) => { const t = h1(m); if (t) onTitle?.(t); }} />
               </Suspense>
             )}
         </div>

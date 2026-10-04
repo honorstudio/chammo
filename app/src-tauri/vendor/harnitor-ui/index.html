@@ -1,0 +1,3193 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Harnitor 하네스 리포트</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+:root{--ground:#EDF0F4;--surface:#F9FAFC;--surface-2:#F1F4F8;--surface-3:#E5EAF1;
+ --ink:#182231;--ink-2:#455468;--ink-3:#6E7F93;--line:#D3DAE3;--line-2:#BFC8D4;
+ --copper:#A85C29;--copper-soft:#C08050;--copper-wash:#F2E5DA;
+ --teal:#1F6E60;--teal-wash:#DEEDE9;--alert:#9E3A2C;--alert-wash:#F5E1DD;
+ --doc:#3D5B7D;--doc-wash:#E1E8F1}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+ --ground:#10141A;--surface:#171C23;--surface-2:#1D232C;--surface-3:#232A34;
+ --ink:#DFE5ED;--ink-2:#A0AEBF;--ink-3:#78889B;--line:#272F3A;--line-2:#3A4552;
+ --copper:#D9884C;--copper-soft:#96603A;--copper-wash:#2C2119;
+ --teal:#4EAF9B;--teal-wash:#172A28;--alert:#D97462;--alert-wash:#2E1D1A;
+ --doc:#7C9CC2;--doc-wash:#1B242F}}
+:root[data-theme="dark"]{--ground:#10141A;--surface:#171C23;--surface-2:#1D232C;--surface-3:#232A34;
+ --ink:#DFE5ED;--ink-2:#A0AEBF;--ink-3:#78889B;--line:#272F3A;--line-2:#3A4552;
+ --copper:#D9884C;--copper-soft:#96603A;--copper-wash:#2C2119;
+ --teal:#4EAF9B;--teal-wash:#172A28;--alert:#D97462;--alert-wash:#2E1D1A;
+ --doc:#7C9CC2;--doc-wash:#1B242F}
+*{box-sizing:border-box}
+/* 앱 셸: 헤더·푸터·양옆 패널은 화면 가장자리에 붙어 고정되고, 가운데만 스크롤한다.
+   grid/flex 자식은 min-height:0 이 없으면 내용만큼 늘어나 overflow가 먹지 않는다 —
+   이게 없어서 .stage가 1436px로 자라며 페이지 전체가 스크롤됐다. */
+html,body{height:100%;overflow:hidden}
+body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.55 'IBM Plex Sans KR',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mono{font-family:'IBM Plex Mono','IBM Plex Sans KR',monospace;font-variant-numeric:tabular-nums}
+.app{display:flex;flex-direction:column;height:100dvh;overflow:hidden}
+.top{flex:none;display:flex;align-items:flex-end;gap:20px;flex-wrap:wrap;padding:16px 20px 12px;border-bottom:1px solid var(--line);background:var(--surface)}
+.brand{margin-right:auto}
+.brand h1{font-family:'Bricolage Grotesque','IBM Plex Sans KR',sans-serif;font-size:22px;font-weight:700;letter-spacing:-.025em;margin:0 0 1px;line-height:1.1}
+.brand .s{font-size:11.5px;color:var(--ink-3)}
+.stat{display:flex;flex-direction:column;min-width:48px}
+.stat b{font-family:'Bricolage Grotesque','IBM Plex Mono',monospace;font-size:20px;font-weight:600;line-height:1.15;font-variant-numeric:tabular-nums}
+.stat span{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.stat.a b{color:var(--alert)}.stat.c b{color:var(--copper)}
+.btn{font:inherit;font-size:12px;color:var(--ink-2);background:var(--surface-2);border:1px solid var(--line-2);border-radius:6px;padding:5px 11px;cursor:pointer}
+.btn[aria-pressed="true"]{background:var(--copper-wash);border-color:var(--copper);color:var(--copper)}
+.body{display:grid;grid-template-columns:190px minmax(0,1fr) 300px;flex:1 1 auto;min-height:0;overflow:hidden}
+.rail{border-right:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.rail .h{padding:10px 12px;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);display:flex;justify-content:space-between}
+.rail .list{overflow-y:auto;padding:0 7px 12px;display:flex;flex-direction:column;gap:2px}
+/* 헤더의 돋보기. 아이콘 라이브러리를 쓰지 않고 직접 그린다 */
+.rail .h{flex:none;align-items:center;gap:6px;position:relative;min-height:24px}
+.ic{background:none;border:0;padding:2px 3px;color:var(--ink-3);cursor:pointer;
+ display:inline-flex;align-items:center;border-radius:4px;line-height:0}
+/* 눈에는 안 보이되 읽어 주는 기계에는 남는다. 아이콘만 있는 버튼에 이름을 주는 방법. */
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.ic:hover{color:var(--copper);background:var(--surface-2)}
+.ic:focus-visible{outline:2px solid var(--copper);outline-offset:1px}
+.ic[aria-pressed="true"]{color:var(--copper);background:var(--copper-wash)}
+/* **옆으로** 펼쳐진다. 헤더 줄 안에서 폭이 자라 "프로젝트 22 GIT" 을 덮는다 —
+   열고 닫는 것이라 그 글자를 잠깐 가려도 잃는 게 없고, 세로로 열면 목록이 통째로
+   밀려나며 방금 보던 줄이 어디 갔는지 다시 찾아야 한다. */
+.pjq{position:absolute;right:34px;top:50%;transform:translateY(-50%);
+ width:0;opacity:0;overflow:hidden;pointer-events:none;
+ transition:width .22s cubic-bezier(.2,.8,.3,1),opacity .15s ease}
+.pjq.open{width:calc(100% - 46px);opacity:1;pointer-events:auto}
+.pjq input{width:100%;height:22px;box-sizing:border-box;font:inherit;font-size:11px;
+ letter-spacing:0;text-transform:none;
+ padding:0 7px;border:1px solid var(--line-2);border-radius:5px;
+ background:var(--surface-2);color:var(--ink)}
+.pjq input:focus{outline:none;border-color:var(--copper)}
+.pjnone{flex:none;padding:2px 14px 12px;font-size:10.5px;color:var(--ink-3)}
+/* 숨김이 확실히 먹게 못박는다 — `.pj{display:flex}` 가 [hidden] 을 이긴다 */
+.pj[hidden]{display:none}
+@media (prefers-reduced-motion:reduce){.pjq{transition:none}}
+.ic{position:relative;z-index:1}
+.ic.hide{opacity:0;pointer-events:none}
+.ic{transition:opacity .14s ease}
+/* 떠다니는 작은 메뉴. 정렬 고르기와 우클릭이 같은 것을 쓴다 */
+/* 연결 트리. 들여쓰기로 깊이를, 세로선으로 계보를 보여준다 */
+.tree{display:flex;flex-direction:column;gap:1px;margin-top:3px}
+.tn{display:flex;align-items:center;gap:3px;padding-left:calc(var(--d,0) * 13px)}
+.tw{width:14px;height:14px;flex:none;background:none;border:0;padding:0;cursor:pointer;
+ color:var(--ink-3);display:inline-flex;align-items:center;justify-content:center;line-height:0}
+.tw:hover{color:var(--copper)}
+.tw[aria-expanded="true"] svg{transform:rotate(90deg)}
+.tw svg{transition:transform .14s ease}
+.tl{flex:1;min-width:0;text-align:left;background:none;border:1px solid transparent;
+ font-family:'IBM Plex Mono','IBM Plex Sans KR',monospace;font-size:10.5px;color:var(--ink-2);
+ padding:2px 5px;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:5px;
+ overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl:hover{border-color:var(--copper);color:var(--ink)}
+.tl .w{font-size:8.5px;color:var(--ink-3);flex:none}
+.tl .more{font-size:8.5px;color:var(--line-2);margin-left:auto;flex:none}
+.tl .cy{font-size:8.5px;color:var(--alert);margin-left:auto;flex:none}
+.menu{position:fixed;z-index:90;min-width:132px;padding:4px;border-radius:8px;
+ background:var(--surface);border:1px solid var(--line-2);
+ box-shadow:0 8px 24px rgba(10,14,20,.18);display:flex;flex-direction:column;gap:1px}
+.menu[hidden]{display:none}
+.mi{background:none;border:0;text-align:left;font:inherit;font-size:11.5px;color:var(--ink);
+ padding:6px 9px;border-radius:5px;cursor:pointer;white-space:nowrap}
+.mi:hover{background:var(--surface-2)}
+.mi.on{color:var(--copper)}
+/* 고른 것에 점을 찍는다. 체크 글자를 쓰면 줄마다 폭이 달라져 목록이 흔들린다 */
+.mi.on::before{content:'';display:inline-block;width:5px;height:5px;border-radius:50%;
+ background:var(--copper);margin-right:6px;vertical-align:1px}
+.mi:not(.on)::before{content:'';display:inline-block;width:5px;margin-right:6px}
+/* 묶음. 머리를 누르면 접힌다 */
+.grp{display:flex;flex-direction:column}
+.gh{display:flex;align-items:center;gap:5px;background:none;border:0;cursor:pointer;
+ padding:7px 6px 4px;font:inherit;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;
+ color:var(--ink-3);border-radius:5px}
+.gh:hover{color:var(--ink-2)}
+.gh:focus-visible{outline:2px solid var(--copper);outline-offset:-2px}
+.gh .n{margin-left:auto;font-size:9px;color:var(--line-2)}
+.gh .cv{transform:rotate(90deg);transition:transform .16s ease}
+.grp.fold .gh .cv{transform:rotate(0deg)}
+.gb{display:flex;flex-direction:column;gap:2px}
+.grp.fold .gb{display:none}
+.pj{text-align:left;font:inherit;background:none;border:1px solid transparent;border-radius:6px;padding:6px 8px;cursor:pointer;display:flex;flex-direction:column;color:var(--ink-2)}
+.pj:hover{background:var(--surface-2);color:var(--ink)}
+.pj[aria-current="true"]{background:var(--copper-wash);border-color:var(--copper-soft);color:var(--ink)}
+.pj .nm{font-size:12.5px;font-weight:500;display:flex;align-items:center;gap:6px}
+.pj .c{font-size:10px;color:var(--ink-3)}
+.gd{width:5px;height:5px;border-radius:50%;background:var(--teal);flex:none}.gd.no{background:var(--line-2)}
+.stage{overflow:auto;position:relative;background:var(--ground);min-height:0;min-width:0}
+/* 무대 위 탭. 하네스와 코드는 **다른 질문**이라 한 화면에 겹쳐 놓지 않는다 */
+.tabs{position:sticky;top:0;z-index:9;display:flex;gap:2px;padding:8px 16px 0;background:var(--ground)}
+.tab{background:none;border:0;border-bottom:2px solid transparent;padding:5px 10px 6px;
+ font:inherit;font-size:11.5px;color:var(--ink-3);cursor:pointer}
+.tab:hover{color:var(--ink-2)}
+.tab[aria-pressed="true"]{color:var(--copper);border-bottom-color:var(--copper)}
+.tab:focus-visible{outline:2px solid var(--copper);outline-offset:-2px}
+/* 폴더 구조. 인스펙터의 연결 트리와 **다르게** 보여야 한다 —
+   저건 "무엇이 무엇을 부르나"이고 이건 "코드가 어떻게 놓였나"다.
+   그래서 여기는 폴더 모양과 배지로 그리고, 저기는 글자만으로 그린다. */
+.arch{padding:14px 16px 28px;min-width:520px}
+.fr{display:flex;align-items:center;gap:6px;padding-left:calc(var(--d,0) * 15px);
+ border-radius:6px;min-height:24px}
+.fr:hover{background:var(--surface-2)}
+.fx{width:15px;height:15px;flex:none;background:none;border:0;padding:0;cursor:pointer;
+ color:var(--ink-3);display:inline-flex;align-items:center;justify-content:center;line-height:0}
+.fx:hover{color:var(--copper)}
+.fx[aria-expanded="true"] svg{transform:rotate(90deg)}
+.fx svg{transition:transform .14s ease}
+.fn{font-family:'IBM Plex Mono','IBM Plex Sans KR',monospace;font-size:11.5px;color:var(--ink-2)}
+.fc{font-size:9.5px;color:var(--line-2);font-variant-numeric:tabular-nums}
+.fm{font-size:8.5px;padding:1px 5px;border-radius:3px;border:1px solid var(--line-2);
+ background:var(--surface-2);color:var(--ink-3);white-space:nowrap}
+.fm.claude{border-color:var(--copper-soft);background:var(--copper-wash);color:var(--copper)}
+.fm.guide{border-color:var(--doc);background:var(--doc-wash);color:var(--doc)}
+.fm.mcp{border-color:var(--teal);background:var(--teal-wash);color:var(--teal)}
+.fm.skill{border-color:var(--copper-soft);color:var(--copper)}
+/* ── 청사진 ─────────────────────────────────────────────────────
+   무대는 **입구**(진단·목록), 오른쪽은 **대화 + 담긴 것**. 시안 v4 배치 A. */
+.gate{padding:14px 16px 28px;min-width:460px}
+.gsec{margin-bottom:16px}
+.gh{display:flex;align-items:baseline;gap:8px;font-size:11px;color:var(--ink-3);margin-bottom:6px}
+.gh b{font-size:11.5px;color:var(--ink-2)}
+.gh .btn{flex:none;white-space:nowrap;margin-left:auto}
+.dcard{border:1px solid var(--line);border-left-width:2px;border-radius:7px;background:var(--surface);
+ padding:8px 10px;margin-bottom:6px;display:flex;align-items:center;gap:9px}
+.dcard.problem{border-left-color:var(--alert)}
+.dcard.cost{border-left-color:var(--copper)}
+.dcard.note{border-left-color:var(--line-2)}
+.dcard .t{flex:1;font-size:11.5px}
+.dcard .btn{flex:none;white-space:nowrap}
+.dcard .ev{font-size:10px;color:var(--ink-3);margin-top:2px;font-family:'IBM Plex Mono',monospace}
+.hint{display:flex;align-items:center;gap:9px;padding:6px 9px;border:1px solid var(--line);
+ border-radius:7px;background:var(--surface);margin-bottom:5px}
+.hleft{display:flex;flex-direction:column;min-width:130px}
+.htech{font-size:11.5px}
+.hev{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--ink-3)}
+.hmiss{flex:1;font-size:11px;color:var(--copper)}
+.hopen{flex:1;font-size:11px;color:var(--ink-2)}
+.hok{flex:1;font-size:11px;color:var(--ink-3);font-family:'IBM Plex Mono',monospace}
+.hint .btn{flex:none;white-space:nowrap}
+.fixnote{font-size:10px;color:var(--ink-3);white-space:nowrap;flex:none}
+.dpick{margin:-2px 0 8px;padding:2px 0 4px 10px;border-left:2px solid var(--line-2)}
+.grow{display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:6px;min-height:26px}
+.grow:hover{background:var(--surface-2)}
+/* 담긴 줄은 **줄 자체로** 말한다. 앞에 체크 네모를 뒀었는데, 담는 길이 끌어다 꽂는 것으로
+   갈리면서 네모는 누를 것도 아니면서 자리만 차지하게 됐다. */
+.grow.in{background:var(--copper-wash);box-shadow:inset 2px 0 0 var(--copper)}
+.grow.in .gname{color:var(--copper)}
+.gname{flex:1;font-family:'IBM Plex Mono','IBM Plex Sans KR',monospace;font-size:11.5px;color:var(--ink-2)}
+.gtok{font-size:10.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.gcall{font-size:9.5px;padding:1px 5px;border-radius:3px;background:var(--surface-3);color:var(--ink-3)}
+.gcall.hot{background:var(--teal-wash);color:var(--teal)}
+.gcall.no{color:var(--alert)}
+/* 오른쪽 패널 */
+/* `display` 를 준 요소는 `[hidden]` 의 display:none 을 이긴다 — 명시적으로 되돌린다 */
+.bpside[hidden],.insp[hidden]{display:none}
+.bpside{display:flex;flex-direction:column;min-height:0;
+ border-left:1px solid var(--line);background:var(--surface)}
+.works{display:flex;gap:3px;padding:8px 10px 0;flex:none;flex-wrap:wrap;align-items:center}
+.wtabb{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;padding:3px 6px 3px 8px;
+ border-radius:6px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-3);
+ cursor:pointer;max-width:150px}
+.wtabb:hover{border-color:var(--line-2);color:var(--ink-2)}
+.wtabb.on{border-color:var(--copper);background:var(--copper-wash);color:var(--copper)}
+.wtabb .tt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:none;border:0;
+ color:inherit;font:inherit;cursor:pointer;padding:0;max-width:110px;text-align:left}
+.wtabb .n{font-variant-numeric:tabular-nums;opacity:.75}
+.wtabb .x{border:0;background:none;color:inherit;cursor:pointer;font-size:12px;opacity:.55;
+ padding:0;width:16px;height:16px;line-height:16px;text-align:center;border-radius:4px;flex:none}
+.wtabb .x:hover{opacity:1;color:var(--alert);background:var(--surface-3)}
+.wnew{font-size:11px;padding:3px 8px;border-radius:6px;border:1px dashed var(--line-2);
+ background:none;color:var(--ink-3);cursor:pointer}
+.wnew:hover{border-color:var(--copper);color:var(--copper)}
+.bptabs{display:flex;gap:2px;padding:9px 12px 0;flex:none}
+.bt{background:none;border:0;border-bottom:2px solid transparent;padding:4px 9px 6px;font:inherit;
+ font-size:11.5px;color:var(--ink-3);cursor:pointer}
+.bt.on{color:var(--copper);border-bottom-color:var(--copper)}
+.bt b{font-variant-numeric:tabular-nums}
+.chat,.queue{flex:1;overflow:auto;padding:11px 12px;min-height:0}
+.bub{border-radius:9px;padding:7px 9px;font-size:11.5px;line-height:1.6;margin-bottom:6px;max-width:94%}
+.bub.me{background:var(--surface-3);color:var(--ink);margin-left:auto}
+.bub.ai{background:var(--surface-2);border:1px solid var(--line);color:var(--ink-2)}
+.bub.act{background:var(--copper-wash);border:1px solid var(--copper-soft);color:var(--copper);font-size:11px}
+.bub.err{background:var(--alert-wash);border:1px solid var(--alert);color:var(--alert)}
+.qitem{display:flex;align-items:center;gap:7px;padding:5px 6px;border-radius:6px;font-size:11px;margin-bottom:2px}
+.qitem.rm{background:var(--copper-wash)} .qitem.add{background:var(--teal-wash)}
+.qitem .nm{flex:1;font-family:'IBM Plex Mono',monospace;font-size:11px}
+.qitem .del{background:none;border:0;color:var(--ink-3);cursor:pointer;font-size:12px;padding:0 3px}
+.qitem .del:hover{color:var(--alert)}
+.qbad{font-size:10px;color:var(--alert);padding:2px 6px}
+.sums{display:flex;gap:12px;padding:9px 12px;border-top:1px solid var(--line);flex:none}
+.sums div{flex:1}
+.sums .lb{font-size:9.5px;color:var(--ink-3)}
+.sums .vv{font-family:'IBM Plex Mono',monospace;font-size:13px;font-variant-numeric:tabular-nums}
+.cut{color:var(--teal)}
+/* 담아둔 것이 대화 옆에 늘 보인다. 여기서 빼는 게 목록을 다시 찾아가는 것보다 빠르다. */
+.chipline{display:flex;margin-bottom:6px}
+.bub.offer{max-width:100%}
+.oh{font-size:11px;color:var(--ink-3);margin-bottom:5px}
+.orow{display:flex;align-items:center;gap:7px;padding:3px 0}
+/* 이름 칸. **`.on` 으로 두면 안 된다** — 켜짐/골라짐을 나타내는 `on` 은 칩·작업탭·메뉴가
+   모두 쓰는 상태 클래스라, 전역 `.on` 에 `flex:1` 이 들어 있으면 그게 그대로 얹힌다.
+   `flex:1` 은 `flex-basis:0` 이라, 줄에 여유가 있으면 늘어나고 없으면 글자가 잘릴 만큼
+   찌그러진다 — 실측: 고른 작업탭이 max-width 까지 늘어나고, 호버한 스킬 칩은
+   `engineering-checklist` 가 `en` 으로 줄었다. 이름을 바꾸고 `.orow` 안으로 가둔다. */
+.orow .onm{flex:1;font-family:'IBM Plex Mono','IBM Plex Sans KR',monospace;font-size:11px;
+ overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.orow .btn{flex:none;padding:2px 8px;font-size:10.5px}
+.ofoot{font-size:9.5px;color:var(--ink-3);margin-top:6px}
+.bub.notes{padding:5px 8px}
+.nh{background:none;border:0;color:var(--ink-3);font:inherit;font-size:10.5px;cursor:pointer;padding:2px 0}
+.nh:hover{color:var(--ink-2)}
+.nb{margin-top:4px}
+.nline{font-size:11px;line-height:1.6;color:var(--ink-2);padding:3px 0;
+ border-top:1px solid var(--line)}
+/* 끌고 다니는 조각. `position:fixed` 가 없으면 문서 흐름에 붙어 손을 안 따라온다. */
+.dragchip{position:fixed;z-index:120;pointer-events:none;font-size:10.5px;padding:3px 9px;
+ border-radius:12px;border:1px solid var(--copper);background:var(--copper-wash);color:var(--copper);
+ font-family:'IBM Plex Mono','IBM Plex Sans KR',monospace;white-space:nowrap;
+ box-shadow:0 6px 18px rgba(0,0,0,.45)}
+.grab{cursor:grab;user-select:none;-webkit-user-select:none}
+.grab:active{cursor:grabbing}
+.grow.drag,.hint.drag{opacity:.4}
+.chip2{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;padding:2px 4px 2px 7px;
+ border-radius:12px;border:1px solid var(--line-2);background:var(--surface-2);color:var(--ink-2);
+ font-family:'IBM Plex Mono','IBM Plex Sans KR',monospace;max-width:100%}
+.chip2.add{border-color:var(--teal);color:var(--teal);background:var(--teal-wash)}
+.chip2.fix{border-color:var(--alert);color:var(--alert);background:var(--alert-wash)}
+.chip2 .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip2.slot{border-style:dashed;border-color:var(--copper);color:var(--copper);background:var(--copper-wash);opacity:.85}
+.chip2 .x{border:0;background:none;color:inherit;cursor:pointer;font-size:12px;opacity:.55;
+ width:15px;height:15px;line-height:15px;text-align:center;border-radius:50%;flex:none;padding:0}
+.chip2 .x:hover{opacity:1;background:var(--surface-3)}
+.grow[draggable]{cursor:grab}
+.grow.drag{opacity:.45}
+.bpask{display:flex;align-items:center;gap:6px;padding:9px 12px;border-top:1px solid var(--line);flex:none}
+.send{flex:none;width:28px;height:28px;border-radius:7px;border:1px solid var(--line-2);
+ background:var(--surface-2);color:var(--ink-2);cursor:pointer;display:inline-flex;
+ align-items:center;justify-content:center;padding:0}
+.send:hover{border-color:var(--copper);color:var(--copper)}
+.send:disabled{opacity:.45;cursor:default}
+/* 보내는 동안엔 멈춤 단추가 된다 */
+.send.stop{border-color:var(--alert);color:var(--alert)}
+.send.stop svg{display:none}
+.send.stop::after{content:'';width:9px;height:9px;background:currentColor;border-radius:2px}
+.send:focus-visible{outline:2px solid var(--copper);outline-offset:1px}
+/* 칩과 글이 **한 줄에 섞이는** 자리. 담은 것을 문장 안에 두고 이야기한다. */
+.qbox{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--line);
+ border-radius:6px;padding:6px 8px;font:inherit;font-size:11.5px;color:var(--ink);
+ line-height:1.7;max-height:110px;overflow-y:auto;outline:none;white-space:pre-wrap;
+ word-break:break-word}
+.qbox:empty::before{content:attr(data-ph);color:var(--ink-3)}
+.inchip{display:inline-flex;align-items:center;gap:3px;vertical-align:baseline;
+ font-family:'IBM Plex Mono','IBM Plex Sans KR',monospace;font-size:10.5px;
+ padding:1px 6px;margin:0 2px;border-radius:10px;border:1px solid var(--copper-soft);
+ background:var(--copper-wash);color:var(--copper);user-select:none}
+.inchip.add{border-color:var(--teal);background:var(--teal-wash);color:var(--teal)}
+.inchip.fix{border-color:var(--alert);background:var(--alert-wash);color:var(--alert)}
+.qbox:focus{border-color:var(--copper)}
+.bpask.over .qbox{border-color:var(--copper);border-style:dashed;background:var(--copper-wash)}
+.gempty{font-size:11px;color:var(--ink-3);padding:10px 2px;line-height:1.6}
+/* 읽어보기 — 적용 직전에 무엇이 어떻게 바뀌는지 한 화면에 */
+.rvtop{display:flex;align-items:flex-end;gap:22px;background:var(--surface);
+ border:1px solid var(--line);border-radius:9px;padding:13px 15px;margin-bottom:12px}
+.rvcell .lb{font-size:9.5px;color:var(--ink-3)}
+.rvcell .vv{font-family:'IBM Plex Mono',monospace;font-size:20px;font-variant-numeric:tabular-nums;line-height:1.15}
+.rvarrow{color:var(--copper);font-size:14px;padding-bottom:10px}
+.rvsave{margin-left:auto;text-align:right}
+.rvgrp{margin-bottom:11px}
+.rvh{font-size:11px;color:var(--ink-3);margin-bottom:5px;display:flex;gap:7px;align-items:baseline}
+.rvh b{font-size:11.5px}
+.rvitem{display:flex;align-items:center;gap:8px;padding:4px 7px;border-radius:5px;font-size:11.5px}
+.rvitem .nm{font-family:'IBM Plex Mono',monospace;font-size:11.5px;flex:1}
+.rvitem.rm{background:var(--copper-wash)} .rvitem.add{background:var(--teal-wash)}
+.rvfiles{font-family:'IBM Plex Mono',monospace;font-size:10.5px;line-height:1.75;color:var(--ink-2);
+ background:var(--surface-2);border:1px solid var(--line);border-radius:7px;padding:9px 11px;
+ max-height:190px;overflow:auto;white-space:pre-wrap}
+.rvbar{display:flex;align-items:center;gap:9px;margin-top:13px;padding-top:12px;border-top:1px solid var(--line)}
+.bubact{display:flex;gap:6px;margin-top:7px}
+.bubact button{font-size:10.5px;padding:3px 9px;border-radius:5px;border:1px solid var(--copper-soft);
+ background:var(--copper-wash);color:var(--copper);cursor:pointer;font-family:inherit}
+.bubact button:hover{border-color:var(--copper)}
+.archnote{font-size:11px;color:var(--ink-3);padding:2px 0 14px;line-height:1.7}
+.archnote b{color:var(--ink-2);font-size:11.5px}
+/* 하네스가 닿은 줄. 이름 색으로 표시한다 — 좌측 선은 행 라디우스에 휘어 괄호처럼 보인다 */
+.fr.lit .fn{color:var(--copper)}
+.fm.go{cursor:pointer;font-family:inherit}
+.fm.go:hover{border-color:var(--copper);color:var(--copper);background:var(--copper-wash)}
+.wrap{position:relative;padding:12px 16px 28px;min-width:660px}
+/* 곡선은 **모든 것 위에** 그린다.
+   스코프 머리글(`.sh`)이 sticky 라 z-index 를 쥐고 있어서, 그보다 아래 두면
+   스코프를 넘나드는 연결이 머리글에 잘려 **끊어진 것처럼** 보인다.
+   얇은 선이 머리글 위를 지나는 것보다 연결이 끊겨 보이는 쪽이 나쁘다. */
+svg.wires{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:8;overflow:visible}
+.scope{border:1px solid var(--line);border-radius:11px;background:var(--surface);overflow:hidden}
+.scope.proj{background:var(--surface-2);border-color:var(--line-2)}
+.sh{display:flex;align-items:center;gap:11px;padding:9px 13px;border-bottom:1px solid var(--line);background:var(--surface-3);position:sticky;top:0;z-index:6}
+.sh .n{font-family:'Bricolage Grotesque','IBM Plex Mono',monospace;font-size:18px;font-weight:600;color:var(--copper);line-height:1}
+.sh b{font-family:'Bricolage Grotesque','IBM Plex Sans KR',sans-serif;font-size:13.5px;font-weight:600;display:block;line-height:1.25}
+.sh .p{font-size:10px;color:var(--ink-3);font-family:'IBM Plex Mono',monospace}
+.sh .note{margin-left:auto;font-size:10.5px;color:var(--ink-3);text-align:right;max-width:300px;line-height:1.4}
+.rows{padding:9px 11px 12px}
+.lrow{display:grid;grid-template-columns:100px minmax(0,1fr);gap:0 11px;align-items:start}
+.ll{padding-top:7px;text-align:right}
+.ll b{font-size:12px;font-weight:600;color:var(--ink-2);display:block;line-height:1.3}
+.ll em{font-size:9.5px;font-style:normal;color:var(--ink-3);line-height:1.35;display:block}
+.ll .num{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--line-2)}
+.box{background:var(--ground);border:1px solid var(--line);border-radius:8px;padding:7px 8px;display:flex;flex-wrap:wrap;gap:4px;align-content:flex-start;min-height:38px}
+.scope.proj .box{background:var(--surface)}
+.box .none{font-size:11px;color:var(--ink-3);font-style:italic}
+.flow{grid-column:2;position:relative;height:26px;padding-left:26px;display:flex;align-items:center}
+.flow i{position:absolute;left:11px;top:0;bottom:6px;width:1.5px;background:var(--line-2)}
+.flow u{position:absolute;left:7.5px;bottom:0;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid var(--line-2)}
+.flow em{font-size:10px;font-style:normal;color:var(--ink-3)}
+.sflow{display:flex;align-items:center;justify-content:center;gap:10px;padding:9px 0;position:relative}
+.sflow i{height:1.5px;flex:0 1 90px;background:var(--copper-soft)}
+.sflow em{font-size:11px;font-style:normal;color:var(--copper);font-weight:500}
+.sflow u{width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:7px solid var(--copper-soft);position:absolute;left:50%;bottom:2px;transform:translateX(-50%)}
+.chip{font-family:'IBM Plex Mono','IBM Plex Sans KR',monospace;font-size:10.5px;padding:2.5px 7px;border-radius:5px;border:1px solid var(--line-2);background:var(--surface-2);color:var(--ink-2);cursor:pointer;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;display:inline-flex;align-items:center;gap:4px}
+.scope.proj .chip{background:var(--surface)}
+.chip:hover{border-color:var(--copper);color:var(--ink)}
+.chip:focus-visible{outline:2px solid var(--copper);outline-offset:1px}
+.chip.hook{border-color:var(--copper-soft);background:var(--copper-wash);color:var(--copper)}
+.chip.doc{border-color:var(--doc);background:var(--doc-wash);color:var(--doc)}
+.chip.mcp{border-color:var(--teal);background:var(--teal-wash);color:var(--teal)}
+.chip.ghost{border-style:dashed;border-color:var(--alert);color:var(--alert);background:var(--alert-wash)}
+/* 선언은 있는데 **아무도 안 읽는** 자리에 있는 것. 꺼진 것(취소선)과 다르다 —
+   끈 적이 없는데도 안 도는 것이라, 같은 모양으로 그리면 원인을 잘못 짚는다. */
+/* 방금 생긴 것. 한 번 밝혔다가 가라앉는다 — 계속 빛나면 그게 상태처럼 읽힌다. */
+@keyframes fresh{0%{box-shadow:0 0 0 0 var(--copper)}15%{box-shadow:0 0 0 3px var(--copper-wash)}100%{box-shadow:0 0 0 0 transparent}}
+.chip.fresh{animation:fresh 2.4s ease-out}
+@media (prefers-reduced-motion:reduce){.chip.fresh{animation:none;outline:2px solid var(--copper);outline-offset:2px}}
+.chip.unread{border-style:dashed;border-color:var(--alert);color:var(--alert);
+ background:repeating-linear-gradient(135deg,var(--alert-wash),var(--alert-wash) 4px,transparent 4px,transparent 8px)}
+.chip.homeonly{border-style:dashed;border-color:var(--copper-soft);color:var(--copper-soft)}
+.chip.idle{border-style:dashed}
+.chip.dim{opacity:.18}
+.chip.on{border-color:var(--copper);color:var(--copper);background:var(--copper-wash);box-shadow:inset 0 0 0 1px var(--copper)}
+.chip.rel{border-color:var(--copper-soft);color:var(--ink)}
+.chip .k{font-size:8.5px;opacity:.7}
+.chip .u{font-size:8.5px;font-variant-numeric:tabular-nums;padding:0 3px;border-radius:2px;background:var(--teal-wash);color:var(--teal);border:1px solid var(--teal)}
+.chip .u.z{background:transparent;color:var(--ink-3);border-color:var(--line-2)}
+.insp{border-left:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.ih{padding:13px 15px 10px;border-bottom:1px solid var(--line)}
+.ih .k{display:inline-block;font-size:9px;letter-spacing:.07em;text-transform:uppercase;padding:2px 6px;border-radius:3px;border:1px solid var(--line-2);color:var(--ink-3);margin-bottom:5px}
+.ih h2{font-size:14px;margin:0 0 2px;font-weight:600;word-break:break-all;font-family:'IBM Plex Mono','IBM Plex Sans KR',monospace}
+.ih .m{font-size:11px;color:var(--ink-3)}
+.ib{padding:11px 15px 15px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:11px}
+.fld .l{font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);margin-bottom:3px}
+.fld .v{font-size:12px;color:var(--ink-2);line-height:1.6}
+.fld .v.code{font-family:'IBM Plex Mono',monospace;font-size:10.5px;background:var(--surface-2);padding:5px 7px;border-radius:5px;word-break:break-all}
+.rl{display:flex;flex-direction:column;gap:2px}
+.rl button{font:inherit;font-size:11px;text-align:left;background:var(--surface-2);border:1px solid transparent;border-radius:4px;padding:3px 7px;cursor:pointer;color:var(--ink-2);display:flex;gap:5px;align-items:center;width:100%}
+.rl button:hover{border-color:var(--copper-soft);color:var(--ink)}
+.rl button .w{font-size:9px;color:var(--ink-3);margin-left:auto;flex:none}
+details summary{font-size:10.5px;color:var(--ink-3);cursor:pointer}
+details .v{margin-top:5px;font-size:11px;color:var(--ink-3);line-height:1.6;background:var(--surface-2);padding:6px 8px;border-radius:5px;max-height:170px;overflow-y:auto}
+.actions{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.actions .hint{font-size:10.5px;color:var(--ink-3)}
+.btn.danger{border-color:var(--alert);color:var(--alert);background:var(--alert-wash)}
+.btn.danger:hover{background:var(--alert);color:var(--surface)}
+/* 검색 팔레트 — 항목을 훑는 동안 뒤 계층이 실시간으로 반응한다.
+   그래서 배경을 완전히 가리지 않고 위쪽에 띄운다. */
+.pal[hidden]{display:none}
+.pal{position:fixed;inset:0;z-index:80;display:flex;justify-content:center;
+ align-items:flex-start;padding:7vh 20px 20px;pointer-events:none}
+/* 배경을 덮지 않는다 — 훑는 동안 뒤 계층에서 곡선이 살아나는 게 이 기능의 핵심이다.
+   대신 팔레트 자체에만 그림자를 줘서 떠 보이게 한다. */
+.pal>*{pointer-events:auto}
+.pal::before{content:"";position:absolute;inset:0;background:linear-gradient(
+ to bottom, rgba(10,14,20,.30) 0%, rgba(10,14,20,.10) 34%, transparent 52%);pointer-events:none}
+.palbox{position:relative;width:100%;max-width:620px;background:var(--surface);border:1px solid var(--line-2);
+ border-radius:12px;box-shadow:0 20px 56px rgba(0,0,0,.42);overflow:hidden;
+ display:flex;flex-direction:column;max-height:64vh}
+.palin{display:flex;align-items:center;gap:9px;padding:12px 15px;border-bottom:1px solid var(--line)}
+.palin svg{flex:none;opacity:.55}
+.palin input{flex:1;border:0;outline:0;background:none;color:var(--ink);font:inherit;font-size:15px}
+.palin input::placeholder{color:var(--ink-3)}
+.palin kbd{font:11px/1 'IBM Plex Mono',monospace;color:var(--ink-3);border:1px solid var(--line-2);
+ border-radius:4px;padding:3px 5px;background:var(--surface-2)}
+.palres{overflow-y:auto;padding:5px;display:flex;flex-direction:column;gap:1px}
+.palrow{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:7px;cursor:pointer;
+ border:1px solid transparent}
+.palrow[aria-selected="true"]{background:var(--copper-wash);border-color:var(--copper-soft)}
+.palrow .nm{font-family:'IBM Plex Mono','IBM Plex Sans KR',monospace;font-size:12.5px;color:var(--ink);
+ overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.palrow .nm b{color:var(--copper);font-weight:600}
+.palrow .kind{font-size:9.5px;letter-spacing:.04em;padding:1.5px 6px;border-radius:4px;flex:none;
+ border:1px solid var(--line-2);color:var(--ink-3)}
+.palrow .kind.hook{border-color:var(--copper-soft);color:var(--copper)}
+.palrow .kind.mcp{border-color:var(--teal);color:var(--teal)}
+.palrow .kind.doc{border-color:var(--doc);color:var(--doc)}
+.palrow .meta{margin-left:auto;font-size:10.5px;color:var(--ink-3);flex:none}
+.palempty{padding:22px 16px;text-align:center;font-size:12.5px;color:var(--ink-3)}
+.palhint{padding:8px 15px;border-top:1px solid var(--line);font-size:10.5px;color:var(--ink-3);
+ display:flex;gap:14px;flex-wrap:wrap}
+.busy[hidden]{display:none}
+.busy{position:fixed;inset:0;background:rgba(10,14,20,.34);z-index:70;display:flex;
+ align-items:center;justify-content:center;flex-direction:column;gap:14px}
+.busy .ring{width:34px;height:34px;border-radius:50%;border:3px solid var(--line-2);
+ border-top-color:var(--copper);animation:spin .8s linear infinite}
+.busy .msg{font-size:13px;color:var(--ink);background:var(--surface);padding:8px 16px;
+ border-radius:8px;border:1px solid var(--line-2)}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.busy .ring{animation-duration:2.4s}}
+.chip.off{border-style:dashed;opacity:.55;text-decoration:line-through;
+ text-decoration-thickness:1px;text-decoration-color:var(--ink-3)}
+/* 꺼진 것을 골라도 **고른 티가 나야 한다.** 흐린 채로 두면 눌렀는지 아닌지 알 수 없다 —
+   꺼진 것을 다시 켜려고 누르는 게 흔한 동작이라 더 그렇다. */
+.chip.off.on{opacity:1;text-decoration-color:var(--copper)}
+.chip.off.rel{opacity:.85}
+.modalback[hidden]{display:none}
+.modalback{position:fixed;inset:0;background:rgba(10,14,20,.45);display:flex;align-items:center;
+ justify-content:center;z-index:50;padding:24px}
+.modal{background:var(--surface);border:1px solid var(--line-2);border-radius:12px;padding:20px 22px;
+ max-width:620px;width:100%;max-height:80vh;overflow:auto;box-shadow:0 18px 50px rgba(0,0,0,.28)}
+.modal h3{margin:0 0 8px;font-family:'Bricolage Grotesque','IBM Plex Sans KR',sans-serif;font-size:17px}
+.modal .sum{font-size:13px;color:var(--ink-2);margin:0 0 6px;line-height:1.6}
+.modal .delta{font-size:12.5px;color:var(--copper);margin:0 0 10px;font-weight:500}
+.modal .changes{background:var(--surface-2);border-radius:6px;padding:9px 11px;margin-bottom:10px;
+ max-height:220px;overflow:auto}
+.modal .chg{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--ink-2);
+ line-height:1.7;word-break:break-all}
+.modal .warn{font-size:11.5px;color:var(--ink-3);line-height:1.6;margin:0 0 4px}
+/* 지금 돌고 있는 세션. 구조(스캔)와 달리 초 단위로 바뀌는 값이라
+   같은 헤더에 두되 색과 맥동으로 '살아 있는 값'임을 구분한다. */
+.stat.live{background:none;border:0;padding:0;cursor:pointer;text-align:left;font:inherit;color:inherit}
+.stat.live b{color:var(--teal);position:relative;padding-left:14px}
+.stat.live b::before{content:'';position:absolute;left:0;top:calc(50% - 3px);width:7px;height:7px;
+ border-radius:50%;background:var(--teal);animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.28;transform:scale(.85)}45%{opacity:1;transform:scale(1)}}
+.stat.live:hover span{color:var(--ink-2)}
+/* 프로젝트 목록에서 지금 세션이 붙어 있는 줄 */
+.pj .now{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--teal);
+ margin-left:6px;vertical-align:middle;animation:pulse 2.4s ease-in-out infinite}
+.pj .now.idle{background:var(--line-2);animation:none}
+.sess{display:flex;flex-direction:column;gap:2px;padding:9px 11px;border:1px solid var(--line);
+ border-radius:8px;background:var(--surface-2);margin-bottom:7px}
+.sess .w{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink);word-break:break-all}
+.sess .m{font-size:10.5px;color:var(--ink-3);display:flex;gap:8px;flex-wrap:wrap}
+.sess.hot{border-color:var(--teal);background:var(--teal-wash)}
+@media (prefers-reduced-motion:reduce){.stat.live b::before,.pj .now{animation:none;opacity:1}}
+/* 부팅 스플래시. 창은 즉시 뜨는데 스캔은 2.4초라 그 사이가 빈 화면이었다.
+   마크업을 HTML에 정적으로 박아 두므로 **JS가 돌기 전에도** 보인다 —
+   스크립트가 늦거나 죽어도 빈 화면이 되지 않는다.
+
+   움직임은 장식이 아니라 이 도구가 하는 말 그대로다:
+   층이 위에서 아래로 쌓이고(로드 순서), 곡선이 그어지고(연결),
+   그 위로 신호가 흐른다(무언가 부르고 있다). */
+#splash{position:fixed;inset:0;z-index:80;background:var(--ground);
+ display:flex;flex-direction:column;align-items:center;justify-content:center;
+ transition:opacity .34s ease}
+#splash.gone{opacity:0;pointer-events:none}
+/* viewBox 는 앱 아이콘의 여백을 잘라낸 값이다 — 아이콘은 라운드 사각형 안에 들어가야
+   해서 여백이 필요하지만, 스플래시에서는 그 여백이 그림을 작아 보이게만 한다. */
+#splash .mark{width:248px;height:208px;flex:none;margin-bottom:26px;
+ animation:srise .6s cubic-bezier(.2,.85,.3,1) backwards}
+#splash .ttl{font-family:'Bricolage Grotesque','IBM Plex Sans KR',sans-serif;
+ font-size:26px;font-weight:700;letter-spacing:-.03em;line-height:1;
+ animation:sup .55s ease-out .16s backwards}
+#splash .msg{font-size:13px;color:var(--ink-2);margin-top:9px;
+ animation:sup .55s ease-out .24s backwards}
+#splash .path{font-family:'IBM Plex Mono',monospace;font-size:10.5px;
+ color:var(--ink-3);opacity:.65;letter-spacing:.05em;margin-top:16px;
+ animation:sup .55s ease-out .34s backwards}
+#splash .slow{font-size:11.5px;line-height:1.65;color:var(--ink-3);max-width:320px;
+ text-align:center;opacity:0;transition:opacity .5s ease;margin-top:22px}
+#splash .slow.on{opacity:1}
+@keyframes srise{from{opacity:0;transform:translateY(12px) scale(.965)}to{opacity:1;transform:none}}
+@keyframes sup{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+/* 스코프 테두리는 층보다 먼저, 조용히 들어온다 */
+#splash .scope{animation:sfade .55s ease-out backwards}
+@keyframes sfade{from{opacity:0}to{opacity:1}}
+/* 층: 왼쪽부터 한 번 자라 자리를 잡고(쌓임), 그 뒤로는 위에서 아래로 밝기가 훑고 지나간다 */
+#splash .bar{transform-box:fill-box;transform-origin:left center;
+ animation:sgrow .5s cubic-bezier(.2,.85,.28,1) backwards,
+           sglow 2.2s ease-in-out infinite}
+@keyframes sgrow{from{transform:scaleX(.05);opacity:0}to{transform:scaleX(1);opacity:1}}
+@keyframes sglow{0%,72%,100%{opacity:.5}22%{opacity:1}}
+/* 곡선: pathLength=100 이라 길이가 다른 셋이 같은 속도로 그어진다. 한 번 긋고 남는다 */
+#splash .wire{stroke-dasharray:100;stroke-dashoffset:100;
+ animation:swire .85s cubic-bezier(.35,.1,.25,1) forwards}
+@keyframes swire{to{stroke-dashoffset:0}}
+#splash .dot{transform-box:fill-box;transform-origin:center;
+ animation:spop .5s cubic-bezier(.3,1.5,.55,1) backwards}
+@keyframes spop{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}
+/* 신호. 곡선을 타고 흐르는 것이 이 화면에서 유일하게 계속 움직이는 것이다 —
+   '읽는 중'이라는 말을 글자 말고 그림으로도 한다.
+   같은 곡선을 밝은 색으로 한 벌 더 얹고 dash 한 조각만 남겨 이동시킨다.
+   (처음엔 offset-path 로 점을 굴렸는데, 선과 같은 구리색이라 눈에 띄지 않았다.) */
+#splash{--flow:#FFAB5C}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) #splash{--flow:#FFD8A8}}
+:root[data-theme="dark"] #splash{--flow:#FFD8A8}
+#splash .flow{stroke:var(--flow);stroke-width:21;stroke-dasharray:16 220;stroke-dashoffset:16;opacity:0;
+ animation:sflow 2.2s cubic-bezier(.45,.05,.35,1) infinite}
+@keyframes sflow{
+ 0%{stroke-dashoffset:16;opacity:0}
+ 12%{opacity:1}
+ 64%{stroke-dashoffset:-100;opacity:1}
+ 76%,100%{stroke-dashoffset:-100;opacity:0}}
+@media (prefers-reduced-motion:reduce){
+ #splash .mark,#splash .ttl,#splash .msg,#splash .path,
+ #splash .scope,#splash .bar,#splash .dot{animation:none;opacity:1;transform:none}
+ #splash .wire{animation:none;stroke-dashoffset:0}
+ #splash .flow{animation:none;opacity:0}}
+.fatal{padding:44px;max-width:760px;margin:0 auto;font-family:'IBM Plex Sans KR',sans-serif}
+.fatal h2{font-size:19px;margin:0 0 12px;color:var(--alert)}
+.fatal pre{font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:1.7;color:var(--ink-2);
+ background:var(--surface-2);padding:14px 16px;border-radius:8px;white-space:pre-wrap;word-break:break-word}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:60;
+ background:var(--ink);color:var(--ground);font-size:12.5px;padding:10px 16px;border-radius:8px;
+ max-width:70vw;box-shadow:0 8px 26px rgba(0,0,0,.3)}
+.toast.bad{background:var(--alert);color:#fff}
+pre.body{margin:5px 0 0;font-family:'IBM Plex Mono',monospace;font-size:10.5px;line-height:1.6;
+ background:var(--surface-2);color:var(--ink-2);padding:9px 11px;border-radius:6px;
+ max-height:52vh;overflow:auto;white-space:pre-wrap;word-break:break-word;border:1px solid var(--line)}
+details.bodybox summary{font-size:11px;color:var(--copper);cursor:pointer;padding:3px 0;font-weight:500}
+details.bodybox summary:hover{text-decoration:underline}
+.note{font-size:11.5px;line-height:1.6;color:var(--ink-2);background:var(--surface-2);border-left:2px solid var(--copper-soft);padding:7px 10px;border-radius:0 5px 5px 0}
+.diag{border-top:1px solid var(--line);background:var(--surface-2);flex:none;display:flex;flex-direction:column;min-height:0;max-height:46%}
+.diag .h{padding:8px 15px;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.diag ul{list-style:none;margin:0;padding:0 10px 10px;display:flex;flex-direction:column;gap:5px;max-height:34vh;overflow-y:auto}
+.d{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--ink-3);border-radius:5px;padding:6px 9px;cursor:pointer}
+.d.problem{border-left-color:var(--alert)}.d.cost{border-left-color:var(--copper)}
+.d .t{font-size:11.5px;font-weight:500}
+/* 어느 프로젝트 이야기인지. 전역 진단에는 안 붙는다 — 붙은 것만 눈에 띄어야 뜻이 산다 */
+.d .own{margin-left:6px;font-size:9px;font-weight:400;letter-spacing:.03em;
+ padding:1px 5px;border-radius:3px;background:var(--surface-3);color:var(--ink-3);
+ border:1px solid var(--line);vertical-align:1px}
+.d .c{font-size:10.5px;color:var(--ink-3);margin-top:1px;line-height:1.5;display:none}
+.d.pick .c{display:block}
+.d .ev{font-size:10px;color:var(--ink-3);margin-top:4px;display:none;font-family:'IBM Plex Mono',monospace;word-break:break-all}
+.d.pick .ev{display:block}
+/* 진단이 짚은 대상.
+   선택 표시(구리 실선 + 배경)와 **색만으로** 겨루면 둘 다 흐릿해진다.
+   그래서 자리와 형태를 나눈다 — 선택은 칩 안쪽(테두리·배경), 진단은 칩 바깥(점선 외곽선).
+   겹쳐도 서로를 가리지 않고, 무엇이 무엇인지 한눈에 갈린다. */
+.chip.flag{outline:2px dashed var(--alert);outline-offset:2px}
+/* 흐려져도 짚은 건 보여야 한다. 사라지면 무엇을 보던 중이었는지 잃는다. */
+.chip.dim.flag{opacity:.55}
+.pj.flag{box-shadow:inset 3px 0 0 var(--alert)}
+/* 지금 짚고 있는 진단 */
+.d.pick{background:var(--surface-3);border-color:var(--line-2)}
+.d.pick .t::after{content:'●';color:var(--alert);font-size:8px;vertical-align:middle;margin-left:6px}
+
+.foot{flex:none;border-top:1px solid var(--line);background:var(--surface);padding:8px 20px;display:flex;gap:14px;flex-wrap:wrap;font-size:10.5px;color:var(--ink-3);align-items:center}
+.foot .sp{margin-left:auto}
+.lg{display:flex;gap:11px;flex-wrap:wrap}.lg span{display:flex;align-items:center;gap:4px}
+.lg s{width:15px;height:2px;text-decoration:none;display:block;border-radius:2px}
+@media (max-width:1180px){html,body{overflow:auto}.app{height:auto;min-height:100dvh}.body{grid-template-columns:1fr;overflow:visible}.stage{overflow:visible}.rail{border-right:0;border-bottom:1px solid var(--line);max-height:170px}.insp{border-left:0;border-top:1px solid var(--line)}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style></head><body>
+<div id="bootlog" style="position:fixed;left:0;right:0;top:0;z-index:99;background:#7a1f14;color:#fff;
+ font:12px/1.5 ui-monospace,monospace;padding:6px 12px;white-space:pre-wrap" data-i18n>JS 미실행 — 스크립트가 아예 안 돌았다</div>
+<div id="splash">
+ <svg class="mark" viewBox="146 190 780 656" aria-hidden="true">
+  <rect class="scope" style="animation-delay:.02s" x="168" y="212" width="688" height="268" rx="46"
+        fill="none" stroke="var(--line-2)" stroke-width="10"/>
+  <rect class="scope" style="animation-delay:.10s" x="168" y="556" width="688" height="268" rx="46"
+        fill="none" stroke="var(--line)" stroke-width="10"/>
+  <g fill="var(--ink-2)">
+   <rect class="bar" style="animation-delay:.06s,.80s" x="224" y="266" width="392" height="30" rx="15"/>
+   <rect class="bar" style="animation-delay:.11s,.87s" x="224" y="336" width="286" height="30" rx="15"/>
+   <rect class="bar" style="animation-delay:.16s,.94s" x="224" y="406" width="500" height="30" rx="15"/>
+  </g>
+  <g fill="var(--ink-3)">
+   <rect class="bar" style="animation-delay:.21s,1.01s" x="224" y="610" width="300" height="30" rx="15"/>
+   <rect class="bar" style="animation-delay:.26s,1.08s" x="224" y="680" width="432" height="30" rx="15"/>
+   <rect class="bar" style="animation-delay:.31s,1.15s" x="224" y="750" width="238" height="30" rx="15"/>
+  </g>
+  <g fill="none" stroke="var(--copper)" stroke-width="17" stroke-linecap="round">
+   <path class="wire" pathLength="100" style="animation-delay:.34s" d="M666 281 C 806 281, 806 421, 740 421"/>
+   <path class="wire" pathLength="100" style="animation-delay:.46s" d="M700 625 C 812 625, 812 765, 500 765"/>
+   <path class="wire" pathLength="100" style="animation-delay:.58s;opacity:.55" d="M560 351 C 900 351, 900 695, 686 695"/>
+  </g>
+  <circle class="dot" style="animation-delay:.98s" cx="740" cy="421" r="21" fill="var(--copper)"/>
+  <circle class="dot" style="animation-delay:1.10s" cx="686" cy="695" r="21" fill="var(--copper-soft)"/>
+  <g fill="none" stroke-width="17" stroke-linecap="round">
+   <path class="flow" pathLength="100" style="animation-delay:1.00s" d="M666 281 C 806 281, 806 421, 740 421"/>
+   <path class="flow" pathLength="100" style="animation-delay:1.22s" d="M700 625 C 812 625, 812 765, 500 765"/>
+   <path class="flow" pathLength="100" style="animation-delay:1.44s" d="M560 351 C 900 351, 900 695, 686 695"/>
+  </g>
+ </svg>
+ <div class="ttl">Harnitor</div>
+ <div class="msg" data-i18n>하네스를 읽는 중</div>
+ <div class="path">~/.claude &rarr; <span data-i18n>프로젝트</span> &rarr; <span data-i18n>유효 하네스</span></div>
+ <div class="slow" data-i18n>사용 이력을 세는 중이다. 세션 기록이 많으면 몇 초 걸린다.</div>
+</div>
+<div class="app">
+ <header class="top">
+  <div class="brand"><h1 id="title">하네스 리포트</h1>
+   <div class="s" data-i18n>위에서 아래로 = 로드·영향 순서 · 항목을 누르면 실제 연결이 곡선으로 뜬다</div></div>
+  <div class="stat"><b id="sProj">0</b><span data-i18n>프로젝트</span></div>
+  <div class="stat"><b id="sSkill">0</b><span data-i18n>스킬</span></div>
+  <div class="stat"><b id="sEdge">0</b><span data-i18n>연결</span></div>
+  <div class="stat c"><b id="sTok">0</b><span data-i18n>설명 토큰</span></div>
+  <div class="stat a"><b id="sDiag">0</b><span data-i18n>진단</span></div>
+  <button class="stat live" id="sLive" hidden type="button" title=""><b id="sSess">0</b><span data-i18n>도는 세션</span></button>
+  <button class="btn" id="tUse" aria-pressed="true" data-i18n>사용 횟수</button>
+  <button class="btn" id="tIdle" aria-pressed="false" data-i18n>안 쓰는 것만</button>
+  <button class="btn" id="bUndo" hidden data-i18n>되돌리기</button>
+  <button class="btn" id="bFind" data-i18n>찾기</button>
+  <button class="btn" id="bLang" title="Language">EN</button>
+ </header>
+ <div class="body">
+  <aside class="rail">
+   <div class="h"><span data-i18n>프로젝트</span>
+    <button class="ic" id="pjSort" type="button" aria-haspopup="menu" aria-expanded="false"
+     style="margin-left:auto"><span class="sr" data-i18n>정렬 방식</span>
+     <svg viewBox="0 0 14 14" width="12" height="12" aria-hidden="true">
+      <path d="M2 3.5h10M2 7h7M2 10.5h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+     </svg></button>
+    <div class="pjq" id="pjq"><input id="pjqi" type="text" spellcheck="false"
+      autocomplete="off" data-i18n-ph placeholder="이름으로 좁히기"></div>
+    <button class="ic" id="pjFind" type="button" aria-pressed="false"><span class="sr" data-i18n>프로젝트 찾기</span>
+     <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <circle cx="6.8" cy="6.8" r="4.3" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <path d="M10 10 L14 14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+     </svg></button></div>
+   <div class="list" id="pjList"></div>
+   <div class="pjnone" id="pjNone" hidden data-i18n>맞는 프로젝트가 없다</div></aside>
+  <div class="stage">
+   <div class="tabs" id="tabs" hidden>
+    <button class="tab" id="tabHarness" type="button" aria-pressed="true" data-i18n>하네스</button>
+    <button class="tab" id="tabArch" type="button" aria-pressed="false" data-i18n>구조</button>
+    <button class="tab" id="tabBp" type="button" aria-pressed="false" data-i18n>청사진</button>
+   </div>
+   <div class="wrap" id="wrap">
+    <svg class="wires" id="wires"><g id="wg"></g></svg>
+    <div id="layers"></div></div>
+   <div class="arch" id="arch" hidden></div>
+   <div class="gate" id="gate" hidden></div></div>
+  <aside class="bpside" id="bpside" hidden>
+   <div class="works" id="works"></div>
+   <div class="chat" id="chat"></div>
+   <div class="bpask"><div id="bpq" class="qbox" contenteditable="true" role="textbox" aria-multiline="true"
+     data-ph="물어보기…"></div>
+    <button class="send" id="bpGo" type="button"><span class="sr" data-i18n>보내기</span>
+     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path d="M1.9 7.7 L14.1 2.3 L9.7 14 L7.5 9.5 Z M7.5 9.5 L14.1 2.3"
+       fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+     </svg></button></div>
+  </aside>
+  <aside class="insp" id="insp">
+   <div class="ih"><span class="k" id="iK" data-i18n>선택 없음</span><h2 id="iN" data-i18n>항목을 눌러봐</h2>
+    <div class="m" id="iM" data-i18n>칩에 올리면 연결이 곡선으로 뜨고, 누르면 고정된다.</div></div>
+   <div class="ib" id="iB"></div>
+   <div class="diag"><div class="h" data-i18n>진단 — 이 프로젝트에 걸리는 것</div><ul id="dl"></ul></div>
+  </aside>
+ </div>
+ <div class="menu" id="ctx" hidden role="menu"></div>
+<div class="pal" id="pal" hidden>
+  <div class="palbox">
+    <div class="palin">
+      <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M10.6 10.6 L14 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      <input id="palq" autocomplete="off" spellcheck="false">
+      <kbd>esc</kbd>
+    </div>
+    <div class="palres" id="palres"></div>
+    <div class="palhint" id="palhint"></div>
+  </div>
+</div>
+
+<footer class="foot">
+  <div class="lg">
+   <span><s style="background:var(--copper)"></s><i data-i18n>훅이 환기</i></span>
+   <span><s style="background:var(--doc)"></s><i data-i18n>지침이 지시</i></span>
+   <span><s style="background:var(--ink-3)"></s><i data-i18n>스킬끼리 참조</i></span>
+   <span><s style="background:var(--teal)"></s><i data-i18n>MCP 호출</i></span>
+   <span><s style="background:var(--alert)"></s><i data-i18n>없는 서버 호출</i></span>
+  </div>
+  <span class="sp mono" id="fInfo"></span>
+ </footer>
+</div>
+<script>
+/*__HARNITOR_DATA__*/
+// 데이터는 두 곳에서 온다:
+//  · CLI 리포트(`harnitor view`) — 위 자리에 통째로 박혀 온다
+//  · 데스크톱 앱 — 코어를 직접 불러 받는다 (그래야 고친 즉시 다시 읽는다)
+
+/* ── 언어 ──────────────────────────────────────────────────────────────
+   키를 따로 만들지 않고 **한국어 원문을 그대로 키로 쓴다.**
+   한국어는 사전이 필요 없고(키가 곧 값), 코드에서 t('되돌리기')가 무엇인지
+   바로 읽힌다. 사전에 없으면 원문이 그대로 나오므로 빠뜨려도 화면이 깨지지 않는다. */
+const EN = {
+"하네스 리포트": "Harness Report",
+"위에서 아래로 = 로드·영향 순서 · 항목을 누르면 실제 연결이 곡선으로 뜬다": "Top to bottom = load & influence order · click an item to trace its real connections",
+"프로젝트": "Projects",
+"스킬": "Skills",
+"연결": "Links",
+"설명 토큰": "Desc. tokens",
+"진단": "Findings",
+"사용 횟수": "Usage",
+"안 쓰는 것만": "Unused only",
+"되돌리기": "Undo",
+"선택 없음": "Nothing selected",
+"항목을 눌러봐": "Pick an item",
+"칩에 올리면 연결이 곡선으로 뜨고, 누르면 고정된다.": "Hover to trace connections; click to pin them.",
+"진단 — 이 프로젝트에 걸리는 것": "Findings in this project",
+"훅이 환기": "Hook nudges",
+"지침이 지시": "Guide directs",
+"스킬끼리 참조": "Skill refers",
+"MCP 호출": "MCP call",
+"없는 서버 호출": "Undeclared server",
+"글로벌": "Global",
+"훅": "Hooks",
+"지침": "Guides",
+"MCP": "MCP",
+"지식": "Knowledge",
+"이벤트마다 자동 발동": "fires on every event",
+"홈에서만": "home only",
+"이 선언은 홈에서 세션을 열 때만 읽힌다. `.mcp.json` 은 그 폴더에서 열 때 로드되는 파일이라, 홈 밖에서는 없는 것과 같다. 자기 `.mcp.json` 이 있는 프로젝트는 그쪽이 이기니 영향이 없지만, 아무것도 선언하지 않은 폴더에서는 이것도 안 뜬다. 어디서나 쓰려면 ~/.claude.json 의 mcpServers 로 옮긴다.": "This declaration is read only when you open a session in the home folder. A `.mcp.json` is loaded from the folder you open, so outside home it may as well not exist. Projects with their own `.mcp.json` win anyway, but a folder that declares nothing gets nothing. To use it everywhere, move it into `mcpServers` in ~/.claude.json.",
+"세션 내내 로드됨": "loaded for the whole session",
+"환기·호출될 때 로드": "loaded when nudged or called",
+"스킬이 부르는 도구": "tools skills call",
+"스코프별로 쌓임": "accumulates per scope",
+"환기한다": "nudges",
+"지시한다": "directs",
+"호출한다": "calls",
+"읽고 쓴다": "reads & writes",
+"먼저 로드된다 · 모든 프로젝트에 공통으로 깔리는 바닥": "loaded first · the common floor under every project",
+"그 위에 얹힌다 · 이름이 겹치면 이쪽이 이기고, 안 겹치면 더해진다": "layered on top · same name wins here, different names add up",
+"프로젝트 폴더로 들어가면 그 위에 얹힌다": "entering a project folder layers this on top",
+"없음": "none",
+"꺼짐": "off",
+"전체": "any",
+"경로": "Path",
+"역할": "Role",
+"매처": "Matcher",
+"이벤트": "Event",
+"실행": "Runs",
+"실행 방식": "Command",
+"선언 위치": "Declared in",
+"쌓인 건수": "Entries",
+"참고문서": "References",
+"무엇을 하는 스킬인가": "What this skill does",
+"호출 기록": "Call history",
+"매 세션 드는 비용": "Cost per session",
+"0회 — 기록에 없다": "0 — not in the records",
+"MCP 서버": "MCP server",
+"선언 안 된 MCP": "Undeclared MCP",
+"플러그인": "plugin",
+"이걸 부르는 것": "Called by",
+"이게 부르는 것": "Calls",
+"SKILL.md 본문 읽기": "Read SKILL.md",
+"CLAUDE.md 본문 읽기": "Read CLAUDE.md",
+"훅 스크립트 읽기": "Read hook script",
+"(설명 없음 — 자동 발동이 잘 안 된다)": "(no description — it will rarely trigger on its own)",
+"모든 세션에 로드되는 전역 지침": "global guide loaded into every session",
+"이 프로젝트의 공유 지침": "this project's shared guide",
+"로컬 전용 지침 — 계정·키": "local-only guide — accounts & keys",
+"이 훅 끄기": "Turn this hook off",
+"이 훅 다시 켜기": "Turn this hook back on",
+"선언은 그대로 두고 이 프로젝트에서만 막는다.": "The declaration stays; it is blocked only in this project.",
+"원본은 .harnitor/disabled 에 남는다.": "The original is kept in .harnitor/disabled.",
+"이 프로젝트에서 꺼져 있다 — 선언은 살아 있고 호출만 막힌 상태다.": "Disabled in this project — the declaration is alive; only calls are blocked.",
+"안 뜸": "never starts",
+
+"이 선언은 아무도 읽지 않는다. `.mcp.json` 은 프로젝트 스코프 파일이라 프로젝트 폴더에 있을 때만 로드되고, ~/.claude/ 에 둔 것은 어느 세션도 보지 않는다. 모든 프로젝트에서 쓰려면 ~/.claude.json 의 mcpServers 로 옮겨야 한다.": "Nothing reads this declaration. `.mcp.json` is a project-scoped file — it loads only from a project folder, and one placed in ~/.claude/ is seen by no session. To use it everywhere, move it into mcpServers in ~/.claude.json.",
+"꺼둔 훅이다 — 원본은 .harnitor/disabled/hooks.json 에 있다.": "A hook you turned off — the original is in .harnitor/disabled/hooks.json.",
+"이 스킬 끄기": "Turn this skill off",
+"이 스킬 다시 켜기": "Turn this skill back on",
+"미리보기부터 뜬다": "a preview comes first",
+"이렇게 바뀐다": "Here is what changes",
+"실행한다": "Apply",
+"그만둔다": "Cancel",
+"이걸 되돌린다": "This is what gets undone",
+"되돌린다": "Undo it",
+"파일을 지우지 않는다. 실행 전 원본이 백업되고, 되돌리기 버튼으로 한 번에 취소된다.": "Nothing is deleted. The original is backed up first, and Undo reverses it in one step.",
+"되돌릴 변경이 없다": "Nothing to undo",
+"데이터가 없다": "No data",
+"하네스를 읽지 못했다": "Could not read the harness",
+"화면을 그리지 못했다": "Could not draw the screen",
+"백업하고 적용하는 중…": "Backing up and applying…",
+"바뀐 하네스를 다시 읽는 중…": "Re-reading the changed harness…",
+"하네스를 다시 읽는 중…": "Re-reading the harness…",
+"되돌리는 중…": "Undoing…",
+"무엇을 되돌릴지 확인하는 중…": "Checking what would be undone…",
+"끄는 계획을 세우는 중…": "Planning the change…",
+"켜는 계획을 세우는 중…": "Planning the change…",
+"계획을 세우지 못했다: ": "Could not plan: ",
+"되돌리지 못했다: ": "Could not undo: ",
+"확인하지 못했다: ": "Could not check: ",
+"실패: ": "Failed: ",
+"되돌렸다: ": "Undone: ",
+"이 스킬 폴더는 심볼릭 링크다 — 실체는 다른 곳에 있다.": "This skill folder is a symlink — the real files live elsewhere.",
+"지침은 덮어쓰기가 아니라 누적이다 — 전역이 먼저, 프로젝트가 뒤에 붙는다.": "Guides accumulate rather than override — global loads first, then the project's.",
+"훅은 사람이 부르지 않아도 도는 유일한 계층이다. 여기서 시작해 아래로 흐른다.": "Hooks are the only layer that runs without anyone calling it. Everything below starts here.",
+"SKILL.md 없이 references/만 있는 폴더다 — 스킬이 아니라 그 스코프에 쌓인 지식이다.": "A folder with references/ but no SKILL.md — not a skill, but knowledge accumulated in this scope.",
+"이 파일은 계정·키를 담으라고 만든 자리다. 리포트는 공유될 수 있으므로 Harnitor는 내용을 아예 읽지 않는다 — 존재만 표시한다.": "This file exists to hold accounts and keys. Reports can be shared, so Harnitor never reads its contents — it only shows that the file is there.",
+"MCP는 이름이 같을 때만 우선순위가 높은 스코프가 이긴다(Local > Project > User). 이름이 다르면 양쪽 다 살아서 함께 쓰인다.": "For MCP, the higher-priority scope wins only when names collide (Local > Project > User). Different names all stay and work together.",
+"스킬이 이 서버의 도구를 부르는데 어디에도 선언이 없다. 실제로 호출하면 실패한다. 다만 MCP를 설명하는 스킬이 예시로 이름만 적어둔 경우도 있으니 원문 확인이 필요하다.": "A skill calls this server's tools but it is declared nowhere. The call would fail. That said, skills that document MCP sometimes just list server names as examples — check the source.",
+"호출 0회라고 안 쓰는 스킬이라 단정할 수는 없다 — 기록이 정리된 옛 세션은 안 잡히고, 최근 만든 스킬은 당연히 0이다. 다만 설명 토큰은 쓰든 안 쓰든 매 세션 낸다.": "Zero calls does not prove a skill is unused — pruned sessions are not counted, and a recently added skill is naturally at zero. What is certain is that its description costs tokens every session either way.",
+"이 데려온 스킬이다. 하네스는 사용자가 넣지 않아도 이렇게 부푼다.": " brought this skill in. A harness grows even when you never added anything.",
+"도는 세션": "live sessions",
+"지금 돌고 있는 Claude Code": "Claude Code running right now",
+"세션을 읽지 못했다": "Could not read sessions",
+"이 폴더의 기록이 마지막으로 쓰인 때다. 같은 폴더에서 두 세션이 돌면 둘 다 같은 값을 가리킨다.": "When this folder's log was last written. If two sessions run in the same folder, both show the same value.",
+"활동 기록 없음": "no activity on record",
+"하네스를 읽는 중": "Reading your harness",
+"유효 하네스": "effective harness",
+"사용 이력을 세는 중이다. 세션 기록이 많으면 몇 초 걸린다.": "Counting skill usage. This takes a few seconds when there are many session logs.",
+"JS 미실행 — 스크립트가 아예 안 돌았다": "JS never ran — the script did not execute at all",
+"JS 실행됨 · __TAURI__=": "JS running · __TAURI__=",
+"JS 에러: ": "JS error: ",
+"scan 호출 중…": "calling scan…",
+"scan 응답 받음 · 프로젝트 ": "scan returned · projects ",
+"window.__TAURI__ 도 __HARNITOR_DATA__ 도 없다.": "Neither window.__TAURI__ nor __HARNITOR_DATA__ is present.",
+"· CLI 리포트라면: harnitor view 로 다시 만들어라": "· For a CLI report: regenerate it with `harnitor view`",
+"· 앱이라면: tauri.conf.json 의 app.withGlobalTauri 가 true 여야 한다": "· For the app: app.withGlobalTauri must be true in tauri.conf.json",
+"갱신하지 못했다": "Could not refresh",
+"여기서 이어지는 것": "What follows from here",
+"이미 지나옴": "already seen",
+"펼치기": "Expand",
+"접기": "Collapse",
+"하네스": "Harness",
+"구조": "Structure",
+"읽는 중…": "Reading…",
+"읽을 것이 없다": "Nothing to read",
+"구조를 읽지 못했다": "Could not read the structure",
+"더 있음": "more inside",
+"폴더만 그린다 — 파일은 개수로 접었다. node_modules 처럼 남의 코드나 만들어진 자리는 들어가지 않는다.": "Folders only — files are collapsed into a count. Places like node_modules (someone else's code, or generated) are skipped.",
+"구리색으로 표시된 자리가 하네스가 닿은 곳이다. 배지를 누르면 하네스 화면의 그 항목으로 간다.": "The copper-marked rows are where the harness reaches. Click a badge to jump to that item on the harness view.",
+"이 프로젝트에는 자기 하네스가 없다 — 글로벌만 그대로 적용된다.": "This project has no harness of its own — only the global one applies.",
+"하네스 화면에서 보기": "Show on the harness view",
+"하네스 화면에 그 항목이 없다": "That item is not on the harness view",
+"청사진": "Blueprint",
+"빼기": "Remove",
+"담기": "Add",
+"담김": "Added",
+"이미 담은 것 말고 새로 제안할 건 없다고 한다.": "It says there is nothing new beyond what you already added.",
+"멈췄다": "Stopped",
+"멈추기": "Stop",
+"더하기 — 길을 놓는다": "Add — open a path",
+"건드리는 파일": "Files touched",
+"바꿀 파일이 없다": "No files to change",
+"할 수 없어서 빠지는 것": "Left out — cannot be done",
+"원본은 .harnitor/backups/ 에 남는다 · 되돌릴 수 있다": "Originals go to .harnitor/backups/ — reversible",
+"더 담기": "Add more",
+"청사진 읽어보기": "Read the blueprint",
+"더 물어보기": "Ask again",
+"계산 중…": "Computing…",
+"지금": "Now",
+"바꾼 뒤": "After",
+"바뀌는 것 보기": "See what changes",
+"못 하는 것": "Blocked",
+" 토큰": " tokens",
+"매 세션 아끼는 토큰": "Tokens saved per session",
+"적용했다. 되돌리려면 상단의 되돌리기를 눌러라.": "Applied. Use Undo at the top to reverse it.",
+"대화": "Chat",
+"새 작업": "New",
+"닫는다": "Close",
+"새 작업 열기": "Open a new one",
+"이 작업 닫기": "Close this",
+"보내기": "Send",
+"물어보기": "Ask",
+"물어보기…": "Ask…",
+"물어보는 중…": "Asking…",
+"전부 담기": "Add all",
+"골라 담기": "Pick",
+"이 프로젝트에 맞을 것": "What would fit this project",
+"파일이 말해주는 것 — 힌트다": "what the files say — a hint",
+"다루는 스킬이 없다": "no skill covers it",
+"만들기 이야기": "Talk about making one",
+"담고 이야기": "Add & talk",
+"길 놓기 이야기": "Talk about opening a path",
+"고칠 수 있지만 아직 안 만들었다": "fixable, not built yet",
+"손으로 고쳐야 한다": "needs a human",
+"알아두면 되는 것": "just worth knowing",
+"깨짐": "broken",
+"접기": "Collapse",
+"담을 수 있는 대상이 없다": "Nothing here can be added",
+"0회가 \"안 쓴다\"는 뜻은 아니다 — 사고가 안 나서, 최근에 만들어서, 가끔 쓰는 것이라서 0일 수 있다. 목록을 훑어 뺄 것은 빼라.": "Zero calls does not mean unused — it can be zero because nothing went wrong, because it is new, or because it is only needed occasionally. Skim the list and drop what should stay.",
+"글로벌 스킬": "Global skills",
+"호출 0회만": "Never called only",
+"전체 보기": "Show all",
+"걸리는 게 없다": "Nothing found",
+"매 세션 토큰": "Tokens per session",
+"열린 길": "Open paths",
+"담아두지 못했다": "Could not save",
+"계산하지 못했다": "Could not compute",
+"아직 담은 게 없다. 왼쪽에서 골라 담아라.": "Nothing added yet — pick from the left.",
+"왼쪽에서 담으면 여기 남는다. AI 에게 물어보면 무엇을 끄고 무엇에 길을 놓을지 제안한다.": "What you add on the left shows up here. Ask the AI and it will propose what to turn off and what to open a path for.",
+"길을 놓으려면 어떤 말에 반응할지 정해야 한다. AI 에게 물어보면 낱말을 제안한다.": "Opening a path means deciding which words it reacts to. Ask the AI and it will propose them.",
+"담을 만한 게 없다고 한다.": "It says there is nothing worth adding.",
+"claude CLI 를 찾지 못했다 — AI 제안만 못 쓴다. 고르고 담는 건 그대로 된다.": "Could not find the claude CLI — only AI suggestions are unavailable. Picking and adding still work.",
+"정렬 방식": "Sort by",
+"활성화순": "Recently active",
+"고정됨": "Pinned",
+"이름순": "Name",
+"스킬순": "Skills",
+"위에 고정": "Pin to top",
+"위 고정 풀기": "Unpin",
+"프로젝트 찾기": "Find a project",
+"이름으로 좁히기": "Narrow by name",
+"맞는 프로젝트가 없다": "No project matches",
+"찾기": "Find",
+"스킬·훅·MCP 이름으로 찾기": "Find a skill, hook, or MCP…",
+"맞는 항목이 없다": "No matches",
+"오르내리기": "move",
+"선택": "select",
+"닫기": "close"
+};
+let LANG = (()=>{
+  try{ const v=localStorage.getItem('harnitor-lang'); if(v) return v; }catch(e){}
+  return (navigator.language||'en').toLowerCase().startsWith('ko') ? 'ko' : 'en';
+})();
+const t = s => LANG==='en' ? (EN[s] ?? s) : s;
+
+/* 숫자·날짜가 끼어드는 문장은 조각을 이어 붙이면 어순이 무너진다. 문장째로 만든다. */
+const F = {
+  usage:(n,d)      => LANG==='en' ? `${n} calls · last ${d}` : `${n}회 · 마지막 ${d}`,
+  relates:(i,o)    => LANG==='en' ? `${i} call this · it calls ${o}` : `${i}개가 이걸 부르고, 이건 ${o}개를 부른다`,
+  cost:(n)         => LANG==='en' ? `${n} tokens (the description is always in the system prompt)`
+                                  : `${n} 토큰 (설명이 시스템 프롬프트에 항상 들어간다)`,
+  delta:(n)        => LANG==='en' ? (n<0 ? `Saves ${-n} description tokens per session`
+                                         : `Adds ${n} description tokens per session`)
+                                  : `매 세션 설명 토큰이 ${n<0?'줄어든다 ':'늘어난다 '}${Math.abs(n)} 토큰`,
+  undoScope:(n,b)  => LANG==='en' ? `Reverses ${n} change(s). Backup: ${b}` : `바꾼 것 ${n}건을 원래대로 돌린다. 백업: ${b}`,
+  body:(l,kb)      => LANG==='en' ? `${l} lines · ${kb}KB` : `${l}줄 · ${kb}KB`,
+  more:(n)         => LANG==='en' ? `· … and ${n} more` : `· … 외 ${n}건`,
+  entries:(n)      => LANG==='en' ? `${n} entries` : `${n}건`,
+  fileCount:(n)    => LANG==='en' ? `${n} files` : `파일 ${n}`,
+  putIn:(n)        => LANG==='en' ? `added — ${n}` : `담음 — ${n}`,
+  tookIn:(n)       => LANG==='en' ? `added ${n} item(s)` : `${n}개 담음`,
+  recap:(names)    => LANG==='en'
+    ? `Suggests: ${names.slice(0,2).join(', ')}${names.length>2?` and ${names.length-2} more`:''}`
+    : `이렇게 하자고 한다 — ${names.slice(0,2).join(', ')}${names.length>2?` 외 ${names.length-2}건`:''}`,
+  alreadyIn:(n)    => LANG==='en' ? `${n} already added` : `이미 담은 것 ${n}건은 뺐다`,
+  whyN:(n)         => LANG==='en' ? `why — ${n} points` : `왜 그런지 ${n}줄`,
+  addAll:(n)       => LANG==='en' ? `add all ${n}` : `${n}건 전부 담기`,
+  tookMs:(ms)      => LANG==='en' ? `answered in ${(ms/1000).toFixed(1)}s` : `${(ms/1000).toFixed(1)}초 걸렸다`,
+  paths:(a,b)      => LANG==='en' ? `open paths ${a} → ${b}` : `열린 길 ${a} → ${b}`,
+  applyN:(n)       => LANG==='en' ? `apply ${n}` : `${n}건 적용`,
+  andMore:(n,c)    => LANG==='en' ? `${n} +${c-1}` : `${n} 외 ${c-1}`,
+  closeAsk:(t,n)   => LANG==='en'
+    ? `Close "${t}"? ${n} item(s) in its blueprint will be lost.`
+    : `"${t}" 을 닫을까? 담아둔 ${n}건이 사라진다.`,
+  unlinkedSkills:(s)=> LANG==='en' ? `${s} — nothing calls it` : `${s} — 아무도 안 부른다`,
+  newName:(tech)  => (tech.replace(/[^a-zA-Z0-9]+/g,'-').replace(/^-|-$/g,'').toLowerCase()||'new')+'-helper',
+  newDesc:(tech,ev)=> LANG==='en'
+    ? `Helps with ${tech} work in this project (found by ${ev}). Refine the name and trigger in chat.`
+    : `이 프로젝트의 ${tech} 작업을 돕는다(${ev} 로 확인). 이름과 트리거는 대화로 다듬는다.`,
+  askMake:(tech,ev)=> LANG==='en'
+    ? `This project uses ${tech} (${ev}). What skill would help here? Propose a name and description.`
+    : `이 프로젝트는 ${tech} 를 쓴다(${ev}). 여기 어떤 스킬이 있으면 좋을까? 이름과 설명을 제안해줘.`,
+  askLink:(sk,tech)=> LANG==='en'
+    ? `${sk} covers ${tech} but nothing calls it. Which words should open it?`
+    : `${sk} 가 ${tech} 를 다루는데 아무도 안 부른다. 어떤 말에 반응하면 좋을까?`,
+  folderSum:(d,m)  => LANG==='en' ? `${d} folders · ${m} touched by the harness`
+                                  : `폴더 ${d}개 · 하네스가 닿은 자리 ${m}곳`,
+  mcpOff:(p)       => LANG==='en' ? `Disable in ${p}` : `${p}에서 끄기`,
+  offHere:(p)      => LANG==='en' ? `off in ${p}` : `${p}에서 꺼짐`,
+  changed:(a,g)    => LANG==='en'
+    ? [a?`${a} new`:null, g?`${g} gone`:null].filter(Boolean).join(' · ')+' — the harness changed'
+    : '하네스가 바뀌었다 — '+[a?`${a}개 생김`:null, g?`${g}개 사라짐`:null].filter(Boolean).join(' · '),
+  deadCalled:(n)   => LANG==='en'
+    ? `${n} skill(s) call this server, and every one of those calls fails — the server never starts.`
+    : `스킬 ${n}개가 이 서버를 부르는데, 그 호출은 전부 실패한다 — 서버가 아예 뜨지 않는다.`,
+  mcpOn:(p)        => LANG==='en' ? `Re-enable in ${p}` : `${p}에서 다시 켜기`,
+  sessAgo:(d)      => LANG==='en' ? `active ${d} ago` : `${d} 전 활동`,
+  sessUp:(d)       => LANG==='en' ? `up ${d}` : `${d}째 실행`,
+  sessOn:(n)       => LANG==='en' ? `${n} session(s) here` : `여기서 ${n}개`,
+  count:(n)        => LANG==='en' ? `×${n}` : `${n}회`,
+  railCount:(s,m,d)=> LANG==='en' ? `skills ${s} · MCP ${m}${d?' · dup':''}` : `스킬 ${s} · MCP ${m}${d?' · 중복':''}`,
+  scopeProject:(n) => LANG==='en' ? `Project ${n}` : `프로젝트 ${n}`,
+  pluginBrought:(p)=> LANG==='en' ? `Plugin ${p} brought this skill in. A harness grows even when you never added anything.`
+                                  : `플러그인 ${p}이 데려온 스킬이다. 하네스는 사용자가 넣지 않아도 이렇게 부푼다.`,
+};
+
+const bl=document.getElementById('bootlog');
+// JS가 돌기 시작하면 배너는 곧바로 숨는다. 다시 보이는 건 에러가 났을 때뿐이다 —
+// '지워야 사라지는' 구조는 지우는 지점을 놓치면 그대로 남는다.
+if(bl) bl.hidden=true;
+const blog=m=>{ if(bl){ bl.hidden=false; bl.textContent=m; } };
+// 정상 경로에서는 배너에 아무것도 쓰지 않는다. 위에서 이미 숨겼고, 다시 뜨는 건 에러뿐이다.
+window.addEventListener('error',e=>blog(t('JS 에러: ')+e.message+' @'+e.filename+':'+e.lineno));
+const TAURI = window.__TAURI__ || null;
+let H = (typeof window.__HARNITOR_DATA__ !== 'undefined') ? window.__HARNITOR_DATA__ : null;
+const invoke = (cmd, args) => TAURI.core.invoke(cmd, args);
+const $=s=>document.querySelector(s);
+// 번역 함수 t() 를 가리지 않도록 지역 이름에 t 를 쓰지 않는다.
+const el=(tag,c,x)=>{const e=document.createElement(tag);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
+const short=p=>String(p||'').replace(H.home,'~');
+// H는 앱에서 비동기로 온다. 최상위에서 H를 건드리면 데이터가 오기 전에 터진다 —
+// 실제로 여기서 'null is not an object (evaluating H.usage)'로 화면이 통째로 죽었다.
+let USE=new Map();
+const rebuildUse=()=>{ USE=new Map((H.usage||[]).map(u=>[u.skill,u])); };
+const useOf=n=>{const u=USE.get(n);if(u)return u.count;
+  for(const [k,v] of USE) if(k.endsWith(':'+n)) return v.count; return 0;};
+const hookId=cmd=>{const tok=String(cmd).split(/\s+/).pop();return tok.replace(/^~\//,'').replace(/^.*\/\.claude\//,'.claude/')};
+// 키만 담는다. t()를 여기서 부르면 언어를 바꿔도 첫 값이 굳는다.
+const LAYERS=[{k:'hook',n:'1',tk:'훅',rk:'이벤트마다 자동 발동'},
+ {k:'doc',n:'2',tk:'지침',rk:'세션 내내 로드됨'},
+ {k:'skill',n:'3',tk:'스킬',rk:'환기·호출될 때 로드'},
+ {k:'mcp',n:'4',tk:'MCP',rk:'스킬이 부르는 도구'},
+ {k:'kb',n:'5',tk:'지식',rk:'스코프별로 쌓임'}];
+const FLOW=['환기한다','지시한다','호출한다','읽고 쓴다'];
+const EK={hook_triggers:'--copper',doc_directs:'--doc',skill_refers:'--ink-3',calls_mcp:'--teal',
+ calls_missing_mcp:'--alert',skill_writes_knowledge:'--copper-soft'};
+const SC=s=>s==='global'?'g':'p';
+const ID=(l,s,n)=>l+':'+s+':'+n;
+let cur=null,sel=null,hov=null,showUse=true,idleOnly=false;
+
+function edgeEnds(e){
+  const sl=e.kind==='hook_triggers'?'hook':e.kind==='doc_directs'?'doc':'skill';
+  const tl=(e.kind==='calls_mcp'||e.kind==='calls_missing_mcp')?'mcp':e.kind==='skill_writes_knowledge'?'kb':'skill';
+  return [ID(sl,SC(e.from_scope),e.from),ID(tl,SC(e.to_scope),e.to)];
+}
+function visibleEdges(){
+  // 엣지에 주인(project)이 있으면 그 프로젝트를 볼 때만 그린다.
+  // 예전에는 **이름이 같으면** 끌어왔는데, 같은 이름 스킬이 여러 곳에 있으면
+  // (실측: verify-tests 세 곳) 지금 보는 프로젝트에 남의 연결선이 섞여 그려졌다.
+  return H.edges.filter(e=> e.project ? (cur && e.project===cur.path) : true);
+}
+let EDGES=[];
+/// 지금 짚고 있는 진단(규칙 이름). 항목 선택(sel)과 **따로** 산다 —
+/// 진단은 "누가 문제인가", 선택은 "무엇과 이어져 있나"라서 겹쳐 보여야 한다.
+let diagSel=null;
+function related(id){const ins=[],outs=[];
+  EDGES.forEach(e=>{const [a,b]=edgeEnds(e);if(b===id)ins.push({e,a});if(a===id)outs.push({e,b})});
+  return {ins,outs,set:new Set([id,...ins.map(x=>x.a),...outs.map(x=>x.b)])}}
+
+function chips(layer,sc){
+  const p=cur,out=[];
+  if(layer==='hook'){
+    const hs=sc==='g'?H.global.hooks:(p?p.hooks:[]);
+    hs.forEach(h=>out.push({n:hookId(h.command),label:hookId(h.command).split('/').pop(),cls:'hook',kind:'hook',d:h,tag:h.event}));
+    // 꺼둔 훅도 보여준다. 목록에서 사라지면 다시 켤 방법이 없다.
+    if(sc==='g')(H.global.disabled_hooks||[]).forEach(h=>out.push({n:hookId(h.command),
+      label:hookId(h.command).split('/').pop(),cls:'hook off',kind:'hook',d:h,off:true,tag:t('꺼짐')}));
+  }
+  if(layer==='doc'){
+    if(sc==='g'){if(H.global.claude_md)out.push({n:'CLAUDE.md',label:'CLAUDE.md',cls:'doc',kind:'doc',
+      d:{d:t('모든 세션에 로드되는 전역 지침')},tag:Math.round(H.global.claude_md_bytes/1024)+'KB'})}
+    else if(p){if(p.has_claude_md)out.push({n:'CLAUDE.md',label:'CLAUDE.md',cls:'doc',kind:'doc',d:{d:t('이 프로젝트의 공유 지침')},tag:'git'});
+      if(p.has_claude_local_md)out.push({n:'CLAUDE.local.md',label:'CLAUDE.local.md',cls:'doc',kind:'doc',d:{d:t('로컬 전용 지침 — 계정·키')},tag:'local'})}
+  }
+  if(layer==='skill'){
+    const ps=new Set((p?.skills||[]).map(s=>s.name));
+    const list=sc==='g'?H.global.skills:(p?p.skills:[]);
+    list.forEach(s=>out.push({n:s.name,label:s.name,kind:'skill',d:s,dup:sc==='g'?ps.has(s.name):(H.global.skills.some(g=>g.name===s.name))}));
+    if(sc==='g'){
+      H.global.plugins.filter(x=>x.enabled).forEach(pl=>pl.skills.forEach(s=>
+        out.push({n:s.name,label:s.name,kind:'skill',d:s,plugin:pl.name})));
+      // 꺼진 것도 보여준다. 목록에서 사라지면 다시 켤 방법이 없다
+      (H.global.disabled_skills||[]).forEach(s=>
+        out.push({n:s.name,label:s.name,kind:'skill',d:s,cls:'off',off:true,tag:t('꺼짐')}));
+    }
+  }
+  if(layer==='mcp'){
+    const list=sc==='g'?H.global.mcp:(p?p.mcp:[]);
+    const pm=new Set((p?.mcp||[]).map(m=>m.name));
+    // 끄기는 프로젝트 단위다 — 같은 전역 서버가 이 프로젝트에서만 꺼져 있을 수 있다.
+    const off=new Set(p?.disabled_mcp||[]);
+    // 태그에 **어디서** 꺼졌는지를 적는다. 그냥 "꺼짐" 이라고만 하면 전역으로 읽히는데,
+    // MCP 끄기는 프로젝트 단위다 — 같은 서버가 옆 프로젝트에서는 멀쩡히 산다.
+    // 세 상태가 다르다: 그냥 있음 / 이 프로젝트에서 꺼짐 / **아무도 안 읽는 자리에 선언됨**.
+    // 마지막 것은 끈 적이 없는데도 안 도는 것이라, 꺼짐과 같은 모양으로 그리면 안 된다.
+    // ⚠️ 두 상태를 겹쳐 그리지 않는다. 안 읽히는 자리에 있는데 취소선까지 그으면
+    // "내가 꺼서 안 도는구나" 로 읽힌다 — 실제 원인은 자리가 틀린 것이고, 켠다고 돌지 않는다.
+    // 원인은 하나로 보여야 고칠 자리를 안다.
+    // 세 자리가 있고 운명이 다르다 — 어디서나 읽힘 / 아무도 안 읽음 / **홈에서만** 읽힘.
+    // 마지막 것을 죽은 것과 같이 그리면 "이것도 안 되는구나" 로 읽히는데, 실제로는
+    // 홈에서 열면 뜬다. 반대로 살아 있는 것과 같이 그리면 다른 폴더에서 왜 없는지 모른다.
+    list.forEach(m=>{const dead=m.loaded==='never', homeOnly=m.loaded==='home_only',
+      hidden=!dead&&!homeOnly&&off.has(m.name);
+      out.push({n:m.name,label:m.name,
+      cls:'mcp'+(dead?' unread':(homeOnly?' homeonly':(hidden?' off':''))),kind:'mcp',d:m,
+      off:hidden,
+      tag: dead ? t('안 뜸') : (homeOnly ? t('홈에서만') : (hidden?F.offHere(p?p.name:'—'):undefined)),
+      dup:sc==='g'?pm.has(m.name):H.global.mcp.some(g=>g.name===m.name)})});
+    if(sc==='g'){
+      // 유령은 **어디에도 이름이 없는 것**만. 이미 목록에 있으면(예: 안 읽히는 자리에
+      // 선언된 서버) 그 칩이 이미 상황을 말하고 있다 — 같은 이름을 두 번 그리면
+      // 하나는 "안 뜸", 하나는 "없음" 으로 보여 무슨 상황인지 알 수 없게 된다.
+      const known=new Set(out.map(c=>c.n));
+      new Set(EDGES.filter(e=>e.kind==='calls_missing_mcp').map(e=>e.to))
+        .forEach(g=>{ if(!known.has(g)) out.push({n:g,label:g,cls:'ghost',kind:'mcpx',d:{name:g}}) });
+    }
+  }
+  if(layer==='kb'){
+    const list=sc==='g'?H.global.knowledge:(p?p.knowledge:[]);
+    list.forEach(k=>out.push({n:k.name,label:k.name,kind:'kb',d:k,tag:F.entries(k.entries)}));
+  }
+  return out;
+}
+
+/// 강조 상태만 바꾼다. **DOM을 다시 만들지 않는다.**
+///
+/// 예전에는 호버마다 render()를 불렀는데, 그러면 칩 128개가 통째로 교체돼
+/// (실측 32ms) 마우스가 칩을 떠나는 순간 노드가 갈렸다. mousedown과 mouseup이
+/// 서로 다른 노드에 떨어져 **click 이벤트가 아예 발생하지 않았다** —
+/// 느린 것보다 안 눌리는 게 더 큰 문제였다.
+/// 진단이 짚은 이름들. **호버마다 다시 만들지 않는다** —
+/// paintFocus 는 마우스가 움직이는 내내 도는 자리라, 여기서 진단 목록을 뒤지고
+/// Set 을 새로 만들면 그 비용이 그대로 손끝에 걸린다(실측: 0.2ms → 0.44ms).
+let FLAGSET=null;
+function refreshFlags(){
+  const dg = diagSel ? (H.diagnoses||[]).find(x=>x.rule===diagSel) : null;
+  FLAGSET = dg ? new Set(dg.targets||[]) : null;
+  // 프로젝트 목록은 진단이 바뀔 때만 손대면 된다. 호버와는 상관이 없다.
+  document.querySelectorAll('#pjList .pj').forEach(b=>{
+    b.classList.toggle('flag', !!(FLAGSET && FLAGSET.has(b.dataset.name)));
+  });
+}
+
+function paintFocus(){
+  const focus=sel||hov;
+  const R=focus?related(focus):null;
+  // 두 겹이 **동시에** 산다. 진단은 "누가 문제인가"를 계속 짚고 있고,
+  // 그 위에서 항목 하나를 골라 "무엇과 이어져 있나"를 본다.
+  // 그래서 진단 표시는 흐려진 칩에도 남는다 — 사라지면 무엇을 보던 중이었는지 잃는다.
+  const flag=FLAGSET;
+  document.querySelectorAll('.chip').forEach(c=>{
+    c.classList.remove('on','rel','dim');
+    if(flag) c.classList.toggle('flag', flag.has(c.dataset.n));
+    if(!R) return;
+    const id=c.dataset.id;
+    c.classList.add(R.set.has(id)?(id===focus?'on':'rel'):'dim');
+  });
+  wires(R);
+}
+
+/// 데이터나 필터가 바뀔 때만 부른다. 강조만 바뀔 때는 paintFocus().
+function render(){
+  EDGES=visibleEdges();
+  const p=cur,L=$('#layers');L.innerHTML='';
+  const focus=sel||hov,R=focus?related(focus):null;
+  const FLAG=FLAGSET;
+  const SCOPES=[{k:'g',n:'1',t:t('글로벌'),path:'~/.claude',note:t('먼저 로드된다 · 모든 프로젝트에 공통으로 깔리는 바닥')},
+   {k:'p',n:'2',t:F.scopeProject(p?p.name:'—'),path:p?short(p.path):'—',note:t('그 위에 얹힌다 · 이름이 겹치면 이쪽이 이기고, 안 겹치면 더해진다')}];
+
+  SCOPES.forEach((sp,si)=>{
+    const sec=el('section','scope'+(sp.k==='p'?' proj':''));
+    const hd=el('header','sh');hd.appendChild(el('span','n',sp.n));
+    const tt=el('div');tt.appendChild(el('b',null,sp.t));tt.appendChild(el('span','p',sp.path));
+    hd.appendChild(tt);hd.appendChild(el('span','note',sp.note));sec.appendChild(hd);
+    const rows=el('div','rows');
+    LAYERS.forEach((ly,i)=>{
+      const r=el('div','lrow'),ll=el('div','ll');
+      ll.appendChild(el('div','num',sp.n+'-'+ly.n));ll.appendChild(el('b',null,t(ly.tk)));ll.appendChild(el('em',null,t(ly.rk)));
+      r.appendChild(ll);
+      const box=el('div','box');
+      let cs=chips(ly.k,sp.k);
+      if(idleOnly&&ly.k==='skill')cs=cs.filter(c=>useOf(c.n)===0);
+      if(!cs.length)box.appendChild(el('div','none',t('없음')));
+      cs.forEach(c=>{
+        const id=ID(ly.k,sp.k,c.n),uc=(ly.k==='skill')?useOf(c.n):null;
+        const b=el('button','chip '+(c.cls||'')+(c.dup?' dup':'')+(uc===0?' idle':'')
+          +(FLAG&&FLAG.has(c.n)?' flag':'')
+          +(R?(R.set.has(id)?(id===focus?' on':' rel'):' dim'):''));
+        b.type='button';b.dataset.id=id;b.dataset.n=c.n;b.appendChild(document.createTextNode(c.label));
+        if(c.tag)b.appendChild(el('span','k',c.tag));
+        if(c.plugin)b.appendChild(el('span','k',t('플러그인')));
+        if(showUse&&uc!==null)b.appendChild(el('span','u'+(uc?'':' z'),F.count(uc)));
+        b.onmouseenter=()=>{if(!sel){hov=id;paintFocus()}};
+        b.onmouseleave=()=>{if(!sel){hov=null;paintFocus()}};
+        b.onclick=()=>{sel=(sel===id?null:id);hov=null;paintFocus();
+          if(sel) inspect(ly.k,c,id,sp.k);};
+        box.appendChild(b);
+      });
+      r.appendChild(box);rows.appendChild(r);
+      if(i<LAYERS.length-1){const f=el('div','lrow');f.appendChild(el('div'));
+        const fl=el('div','flow');fl.appendChild(el('i'));fl.appendChild(el('u'));fl.appendChild(el('em',null,t(FLOW[i])));
+        f.appendChild(fl);rows.appendChild(f)}
+    });
+    sec.appendChild(rows);L.appendChild(sec);
+    if(si===0){const sf=el('div','sflow');sf.appendChild(el('i'));
+      sf.appendChild(el('em',null,t('프로젝트 폴더로 들어가면 그 위에 얹힌다')));
+      sf.appendChild(el('i'));sf.appendChild(el('u'));L.appendChild(sf)}
+  });
+  const tok=H.global.skills.reduce((a,s)=>a+(s.description_tokens||0),0)
+    +H.global.plugins.filter(x=>x.enabled).reduce((a,x)=>a+x.skills.reduce((b,s)=>b+(s.description_tokens||0),0),0);
+  // 플러그인이 데려온 스킬도 실제로 로드된다 — 세지 않으면 화면에 보이는 수와 어긋난다
+  const plugSk=H.global.plugins.filter(x=>x.enabled).reduce((a,x)=>a+x.skills.length,0);
+  $('#sSkill').textContent=H.global.skills.length+plugSk+(p?p.skills.length:0);
+  // 헤더는 **전체** 통계다. 프로젝트·스킬 수가 전역인데 연결만 지금 화면 기준이면
+  // 프로젝트를 옮길 때마다 숫자가 널뛰어 무엇을 세는 값인지 알 수 없다.
+  // (화면에 그려지는 건 주인이 맞는 것만 — `visibleEdges()`)
+  // 제목은 지금 보고 있는 프로젝트다. 화면 전체가 그 프로젝트 기준으로 합성돼 있으니
+  // "하네스 리포트" 라고만 두면 어느 하네스인지가 빠진다.
+  $('#title').textContent = cur ? cur.name : t('하네스 리포트');
+  document.title = (cur ? cur.name+' — ' : '') + (LANG==='en' ? 'Harnitor' : 'Harnitor 하네스 리포트');
+  $('#sEdge').textContent=H.edges.length;$('#sTok').textContent=(tok/1000).toFixed(1)+'k';
+  $('#fInfo').textContent=p?short(p.path):'';
+  requestAnimationFrame(()=>{cacheRects();wires(R)});
+}
+
+/// 칩 위치 캐시. 호버는 레이아웃을 바꾸지 않으므로 한 번 재두면 계속 쓴다.
+let RECT=new Map();
+function cacheRects(){
+  const wrap=$('#wrap').getBoundingClientRect();
+  RECT.clear();
+  document.querySelectorAll('.chip').forEach(c=>{
+    const r=c.getBoundingClientRect();
+    RECT.set(c.dataset.id,{x:r.left-wrap.left+r.width/2,y:r.top-wrap.top+r.height/2,h:r.height/2});
+  });
+}
+
+function wires(R){
+  const g=$('#wg');g.innerHTML='';if(!R)return;
+  const NS='http://www.w3.org/2000/svg';
+  if(!RECT.size) cacheRects();
+  const pos=id=>RECT.get(id)||null;
+  const draw=(a,b,k)=>{const A=pos(a),B=pos(b);if(!A||!B)return;
+    const col='var('+(EK[k]||'--ink-3')+')';
+    const ay=A.y+(B.y>A.y?A.h:-A.h),by=B.y+(B.y>A.y?-B.h:B.h),dx=B.x-A.x,dy=by-ay,ad=Math.abs(dy);
+    let d,c2x,c2y,ex,ey;
+    if(ad>14){const bow=Math.min(ad*.18,120)*(A.x<=B.x?1:-1);
+      c2x=B.x-bow*.4;c2y=by-dy*.45;ex=B.x;ey=by;
+      d=`M${A.x},${ay} C${A.x+bow},${ay+dy*.45} ${c2x},${c2y} ${ex},${ey}`}
+    else{c2x=B.x-dx*.35;c2y=B.y-24;ex=B.x;ey=B.y;
+      d=`M${A.x},${A.y} C${A.x+dx*.35},${A.y-24} ${c2x},${c2y} ${ex},${ey}`}
+    const p=document.createElementNS(NS,'path');p.setAttribute('d',d);p.setAttribute('fill','none');
+    p.style.stroke=col;p.style.strokeWidth=(k==='hook_triggers'?1.9:1.4)+'px';
+    p.style.opacity=(k==='skill_refers'?.45:.8);
+    if(k==='skill_writes_knowledge')p.style.strokeDasharray='3 2.5';
+    g.appendChild(p);
+    const ang=Math.atan2(ey-c2y,ex-c2x),s=4.4,tri=document.createElementNS(NS,'path');
+    tri.setAttribute('d',`M${ex},${ey} L${ex-s*Math.cos(ang-.42)},${ey-s*Math.sin(ang-.42)} L${ex-s*Math.cos(ang+.42)},${ey-s*Math.sin(ang+.42)} Z`);
+    tri.style.fill=col;tri.style.opacity=(k==='skill_refers'?.45:.9);g.appendChild(tri)};
+  R.outs.forEach(x=>{const [a,b]=edgeEnds(x.e);draw(a,b,x.e.kind)});
+  R.ins.forEach(x=>{const [a,b]=edgeEnds(x.e);draw(a,b,x.e.kind)});
+}
+
+function inspect(layer,c,id,sc){
+  // 다른 항목을 고르면 펼쳐둔 가지는 놓는다. 남겨두면 남의 사슬이 열린 채로 보인다.
+  if(inspect._last !== id){ TOPEN.clear(); inspect._last = id; }
+  const KN={hook:t('훅'),doc:t('지침'),skill:t('스킬'),mcp:t('MCP 서버'),mcpx:t('선언 안 된 MCP'),kb:t('지식')};
+  $('#iK').textContent=KN[c.kind]+' · '+(sc==='g'?t('글로벌'):t('프로젝트'));
+  $('#iN').textContent=c.label;const b=$('#iB');b.innerHTML='';
+  const fld=(l,v,code)=>{const f=el('div','fld');f.appendChild(el('div','l',l));f.appendChild(el('div','v'+(code?' code':''),v));b.appendChild(f)};
+  const note=t=>b.appendChild(el('div','note',t));
+  const bodyBox=(label,text)=>{
+    if(!text) return;
+    const dt=el('details','bodybox');
+    const lines=text.split('\n').length;
+    dt.appendChild(el('summary',null,label+' ('+F.body(lines,Math.round(text.length/1024*10)/10)+')'));
+    dt.appendChild(el('pre','body',text));
+    b.appendChild(dt);
+  };
+  const d=c.d||{},R=related(id);
+  $('#iM').textContent=F.relates(R.ins.length,R.outs.length);
+  if(c.kind==='skill'){
+    fld(t('무엇을 하는 스킬인가'),d.description||t('(설명 없음 — 자동 발동이 잘 안 된다)'));
+    const u=USE.get(c.n);
+    fld(t('호출 기록'),u?F.usage(u.count,(u.last_used||'?').slice(0,10)):t('0회 — 기록에 없다'));
+    fld(t('매 세션 드는 비용'),F.cost(d.description_tokens||0));
+    if(d.reference_count)fld(t('참고문서'),d.reference_count+'개');
+    bodyBox(t('SKILL.md 본문 읽기'), d.body);
+    if(TAURI) actionRow(c,sc);
+    if(c.plugin)note(F.pluginBrought(c.plugin));
+    if(d.is_symlink)note(t('이 스킬 폴더는 심볼릭 링크다 — 실체는 다른 곳에 있다.'));
+    if(!u)note(t('호출 0회라고 안 쓰는 스킬이라 단정할 수는 없다 — 기록이 정리된 옛 세션은 안 잡히고, 최근 만든 스킬은 당연히 0이다. 다만 설명 토큰은 쓰든 안 쓰든 매 세션 낸다.'));
+    fld(t('경로'),short(d.path),true);
+  }else if(c.kind==='mcp'){
+    fld(t('실행 방식'),[(d.command||d.url||'—'),...(d.args||[])].join(' '),true);
+    if(d.declared_in)fld(t('선언 위치'),d.declared_in,true);
+    // **이 서버의 사정을 먼저 말한다.** 일반 규칙을 앞에 두면 정작 왜 안 도는지가
+    // 세 번째 줄로 밀려서, 읽는 사람은 규칙만 읽고 창을 닫는다.
+    if(d.loaded==='never'){
+      const callers=(H.edges||[]).filter(e=>e.to===c.n && e.kind==='calls_missing_mcp').length;
+      note(t('이 선언은 아무도 읽지 않는다. `.mcp.json` 은 프로젝트 스코프 파일이라 프로젝트 폴더에 있을 때만 로드되고, ~/.claude/ 에 둔 것은 어느 세션도 보지 않는다. 모든 프로젝트에서 쓰려면 ~/.claude.json 의 mcpServers 로 옮겨야 한다.'));
+      if(callers) note(F.deadCalled(callers));
+    }
+    if(d.loaded==='home_only'){
+      note(t('이 선언은 홈에서 세션을 열 때만 읽힌다. `.mcp.json` 은 그 폴더에서 열 때 로드되는 파일이라, 홈 밖에서는 없는 것과 같다. 자기 `.mcp.json` 이 있는 프로젝트는 그쪽이 이기니 영향이 없지만, 아무것도 선언하지 않은 폴더에서는 이것도 안 뜬다. 어디서나 쓰려면 ~/.claude.json 의 mcpServers 로 옮긴다.'));
+    }
+    if(c.off)note(t('이 프로젝트에서 꺼져 있다 — 선언은 살아 있고 호출만 막힌 상태다.'));
+    note(t('MCP는 이름이 같을 때만 우선순위가 높은 스코프가 이긴다(Local > Project > User). 이름이 다르면 양쪽 다 살아서 함께 쓰인다.'));
+    // 안 읽히는 선언은 끄고 켤 것이 없다. 어차피 안 돌고, 버튼을 두면
+    // 눌러서 고칠 수 있다는 뜻이 되어 엉뚱한 데를 만지게 한다.
+    if(TAURI && cur && d.loaded==='always') actionRow(c,sc);
+  }else if(c.kind==='mcpx'){
+    note(t('스킬이 이 서버의 도구를 부르는데 어디에도 선언이 없다. 실제로 호출하면 실패한다. 다만 MCP를 설명하는 스킬이 예시로 이름만 적어둔 경우도 있으니 원문 확인이 필요하다.'));
+  }else if(c.kind==='kb'){
+    fld(t('쌓인 건수'),F.entries(d.entries||0));fld(t('경로'),short(d.path),true);
+    note(t('SKILL.md 없이 references/만 있는 폴더다 — 스킬이 아니라 그 스코프에 쌓인 지식이다.'));
+  }else if(c.kind==='hook'){
+    fld(t('이벤트'),d.event||'—');fld(t('매처'),d.matcher||t('전체'));fld(t('실행'),d.command||'—',true);
+    bodyBox(t('훅 스크립트 읽기'), d.body);
+    note(t('훅은 사람이 부르지 않아도 도는 유일한 계층이다. 여기서 시작해 아래로 흐른다.'));
+    if(c.off)note(t('꺼둔 훅이다 — 원본은 .harnitor/disabled/hooks.json 에 있다.'));
+    if(TAURI) actionRow(c,sc);
+  }else{fld(t('역할'),d.d||'—');
+    if(c.n==='CLAUDE.md'&&sc==='g') bodyBox(t('CLAUDE.md 본문 읽기'), H.global.claude_md_body);
+    if(c.n==='CLAUDE.local.md') note(t('이 파일은 계정·키를 담으라고 만든 자리다. 리포트는 공유될 수 있으므로 Harnitor는 내용을 아예 읽지 않는다 — 존재만 표시한다.'));
+    note(t('지침은 덮어쓰기가 아니라 누적이다 — 전역이 먼저, 프로젝트가 뒤에 붙는다.'))}
+  const mk=(label,arr,key)=>{if(!arr.length)return;
+    const f=el('div','fld');f.appendChild(el('div','l',label+' ('+arr.length+')'));
+    const w=el('div','rl');
+    arr.slice(0,14).forEach(x=>{const oid=x[key],parts=oid.split(':');
+      const btn=el('button',null,parts.slice(2).join(':'));
+      btn.appendChild(el('span','w',{hook_triggers:t('훅'),doc_directs:t('지침'),skill_refers:t('스킬'),
+        calls_mcp:t('MCP'),calls_missing_mcp:t('없음'),skill_writes_knowledge:t('지식')}[x.e.kind]));
+      btn.onclick=()=>{const t2=$('#wrap').querySelector('[data-id="'+CSS.escape(oid)+'"]');if(t2)t2.click()};
+      w.appendChild(btn)});
+    f.appendChild(w);b.appendChild(f)};
+  mk(t('이걸 부르는 것'),R.ins,'a');
+  // 내려가는 쪽은 트리로. 올라가는 쪽(이걸 부르는 것)은 목록 그대로 둔다 —
+  // 역방향까지 트리로 그리면 화살표가 두 방향으로 갈려 어느 쪽이 흐름인지 흐려진다.
+  treeBox(b, id);
+}
+
+
+/// 연결을 따라 내려가며 펼쳐 보는 트리.
+///
+/// 지금 화면(층 + 곡선)은 "전체가 어떻게 놓였나"에 답한다. 이건 다른 질문에 답한다 —
+/// **"이 하나에서 무엇이 이어지나."** 곡선은 한 겹만 보여주는데, 훅이 스킬을 부르고
+/// 그 스킬이 또 다른 스킬을 부르는 사슬은 눌러 가며 따라가야만 보였다.
+///
+/// 자유 그래프가 아니라 **방향이 있는 트리**다. 시작점에서 아래로만 간다 —
+/// force 그래프는 위계가 없어 "뿌려진" 걸로 보여 이미 버린 길이다(절대원칙 7).
+let TOPEN = new Set();          // 펼쳐 둔 가지. 경로로 기억한다(같은 이름이 여러 자리에 온다)
+const TREE_MAX = 6;             // 더 내려가지 않는다. 사슬이 길어도 읽을 수 있는 깊이가 있다
+
+function treeRows(rootId){
+  const rows=[];
+  const walk=(id, depth, path, kind)=>{
+    // **이미 지나온 자리면 멈춘다.** 스킬이 서로를 부르는 고리가 실제로 있어서,
+    // 막지 않으면 같은 사슬을 무한히 판다.
+    const loop = path.slice(0,-1).includes(id);
+    const kids = loop ? [] : related(id).outs;
+    const key  = path.join('>');
+    rows.push({id, depth, kind, key, loop, kids:kids.length});
+    if(loop || depth>=TREE_MAX) return;
+    // 루트의 첫 겹은 늘 보인다. 그 아래는 눌러야 열린다 —
+    // 다 펼쳐 두면 100줄이 쏟아져 트리의 뜻이 사라진다.
+    if(depth>0 && !TOPEN.has(key)) return;
+    kids.forEach(k=>walk(k.b, depth+1, [...path,k.b], k.e.kind));
+  };
+  walk(rootId, 0, [rootId], null);
+  return rows;
+}
+
+const EDGE_WORD = () => ({hook_triggers:t('훅'),doc_directs:t('지침'),skill_refers:t('스킬'),
+  calls_mcp:t('MCP'),calls_missing_mcp:t('없음'),skill_writes_knowledge:t('지식')});
+
+function treeBox(box, rootId){
+  // 한 번만 재고 그 결과로 판단한다. 두 번 부르면 그리는 값을 두 번 계산하게 된다.
+  if(related(rootId).outs.length===0) return;    // 이어지는 게 없으면 그리지 않는다
+  const f=el('div','fld');
+  // **자기만 다시 그린다.** 인스펙터 전체를 다시 그리게 하면 바깥 상태(지금 고른 항목)에
+  // 기대게 되고, 그게 비어 있는 순간 통째로 터진다 — 실제로 그렇게 터졌다.
+  const paint=()=>{
+    f.innerHTML='';
+    const rows=treeRows(rootId), words=EDGE_WORD();
+    f.appendChild(el('div','l', t('여기서 이어지는 것')+' ('+(rows.length-1)+')'));
+    const tb=el('div','tree');
+    rows.slice(1).forEach(r=>{
+      const row=el('div','tn'); row.style.setProperty('--d', r.depth-1);
+      if(r.kids && !r.loop){
+        const tw=el('button','tw'); tw.type='button';
+        const on=TOPEN.has(r.key);
+        tw.setAttribute('aria-expanded', on);
+        tw.title = on ? t('접기') : t('펼치기');
+        tw.innerHTML='<svg viewBox="0 0 10 10" width="8" height="8" aria-hidden="true">'+
+          '<path d="M2.5 1.5 L7 5 L2.5 8.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        tw.onclick=e=>{ e.stopPropagation(); on?TOPEN.delete(r.key):TOPEN.add(r.key); paint(); };
+        row.appendChild(tw);
+      } else {
+        row.appendChild(el('span','tw'));        // 자리를 비워 글자가 층을 지키게 한다
+      }
+      const lb=el('button','tl', r.id.split(':').slice(2).join(':'));
+      lb.type='button';
+      lb.appendChild(el('span','w', words[r.kind]||''));
+      if(r.loop) lb.appendChild(el('span','cy', t('이미 지나옴')));
+      else if(r.kids && !TOPEN.has(r.key)) lb.appendChild(el('span','more', '+'+r.kids));
+      lb.onclick=()=>{ const c=$('#wrap').querySelector('[data-id="'+CSS.escape(r.id)+'"]'); if(c) c.click() };
+      row.appendChild(lb);
+      tb.appendChild(row);
+    });
+    f.appendChild(tb);
+  };
+  paint();
+  box.appendChild(f);
+}
+
+
+
+/// ── 청사진 ────────────────────────────────────────────────────────
+///
+/// 무대는 **입구**(진단·스킬 목록), 오른쪽은 **대화 + 담긴 것**.
+/// 담는 것과 적용하는 것을 갈라 둔다 — 담긴 채로 며칠 두는 게 실제 쓰임이다.
+const BP = {
+  on:false, view:'gate', hints:null, opened:new Set(), works:[], wid:null, delta:null, plan:null, tab:'chat', busy:false, sel:new Set(),
+
+  key(){ return cur ? cur.path : null },
+
+  /// 지금 보고 있는 작업. 없으면 빈 것을 준다 — 화면이 null 을 안 만나게.
+  w(){
+    return this.works.find(x=>x.id===this.wid)
+        || {id:null, title:'', chat:[], updated:0};
+  },
+  /// 담긴 것은 **대화에 박힌 칩에서 뽑는다.** 따로 들고 있으면 두 곳이 어긋난다.
+  get data(){ return {intents: this.intentsOf(this.w())} },
+  intentsOf(w){ return (w.chat||[]).filter(c=>c.kind==='chip' && c.intent).map(c=>c.intent) },
+  get chat(){ return this.w().chat },
+
+  /// 작업 목록을 그린다. **여러 개가 나란히 살고 하나씩 닫힌다.**
+  paintWorks(){
+    const box=$('#works'); box.innerHTML='';
+    this.works.forEach(w=>{
+      // **버튼 안에 버튼을 넣지 않는다.** HTML 이 금지해서 브라우저가 구조를 재배치하고,
+      // 그러면 닫기 단추가 아예 안 눌린다(실측: 무반응).
+      const b=el('div','wtabb'+(w.id===this.wid?' on':''));
+      b.setAttribute('role','tab');
+      const open=el('button','tt'); open.type='button'; open.textContent=this.labelOf(w);
+      open.onclick=()=>{ this.wid=w.id; this.view='gate'; this.plan=null; this.paint(); this.refresh(); };
+      b.appendChild(open);
+      const n=this.intentsOf(w).length;
+      if(n) b.appendChild(el('span','n', String(n)));
+      const x=el('button','x'); x.type='button'; x.textContent='×';
+      x.title=t('이 작업 닫기');
+      x.onclick=()=>this.closeWork(w);
+      b.appendChild(x);
+      box.appendChild(b);
+    });
+    const add=el('button','wnew'); add.type='button'; add.textContent='+';
+    add.title=t('새 작업 열기');
+    add.onclick=()=>this.newWork();
+    box.appendChild(add);
+  },
+  labelOf(w){
+    if(w.title && w.title.trim()) return w.title;
+    const me=w.chat.find(c=>c.kind==='me');
+    if(me) return me.text.slice(0,20);
+    const its=this.intentsOf(w);
+    if(its.length){
+      const i=its[0];
+      // 링크 치우기는 이름이 없고 경로만 있다 — 마지막 조각을 쓴다
+      const nm = i.name || i.skill || (i.path ? String(i.path).split('/').pop() : '');
+      const n = its.length;
+      return n>1 ? F.andMore(nm, n) : nm;
+    }
+    return t('새 작업');
+  },
+  newWork(){
+    const id='w'+Date.now().toString(36);
+    this.works.unshift({id, title:'', chat:[], updated:Date.now()});
+    this.wid=id; this.view='gate'; this.plan=null;
+    this.persist();          // 열자마자 저장한다 — 안 그러면 껐다 켜면 사라진다
+    this.paint(); this.refresh();
+  },
+  /// 닫으면 **되돌릴 수 없다.** 담긴 게 있으면 먼저 묻는다.
+  closeWork(w){
+    const n=this.intentsOf(w).length;
+    // 담긴 게 있으면 먼저 묻는다. `confirm` 은 이 웹뷰에서 안 뜰 수 있어
+    // 늘 취소로 읽힌다 — 이 앱이 이미 쓰는 모달을 쓴다.
+    if(n) askThen(F.closeAsk(this.labelOf(w), n), t('닫는다'), ()=>this.doClose(w));
+    else this.doClose(w);
+  },
+  async doClose(w){
+    this.works=this.works.filter(x=>x.id!==w.id);
+    try{ if(w.id) await invoke('work_close',{project:this.key(), id:w.id}) }
+    catch(e){ this.say('err', String(e)) }
+    if(this.wid===w.id) this.wid = this.works.length ? this.works[0].id : null;
+    if(!this.works.length) this.newWork(); else { this.paint(); this.refresh() }
+  },
+
+  async show(){
+    // 여기서 터지면 화면이 조용히 비어서 원인을 못 찾는다(실측: 무대·패널이 통째로 빈 채로 떴다).
+    try{ await this._show() }catch(e){ toast('청사진: '+(e&&e.message||e), true) }
+  },
+  async _show(){
+    if(!TAURI || !cur) return;
+    this.on=true;
+    $('#wrap').hidden=true; $('#arch').hidden=true; $('#gate').hidden=false;
+    $('#insp').hidden=true; $('#bpside').hidden=false;
+    ['tabHarness','tabArch','tabBp'].forEach(id=>$('#'+id).setAttribute('aria-pressed', id==='tabBp'));
+    const desk = await invoke('desk_load',{project:this.key()});
+    this.works = desk.works || [];
+    this.sel.clear();
+    // 작업이 없으면 하나 연다. **여기서 return 하지 않는다** —
+    // 그러면 아래 힌트를 못 불러 "이 프로젝트에 맞을 것"이 영영 안 뜬다(실측).
+    if(!this.works.length) this.newWork();
+    else { this.wid = this.works[0].id; this.paint(); await this.refresh(); }
+    await this.loadHints();
+  },
+  hide(){
+    this.on=false;
+    $('#gate').hidden=true; $('#bpside').hidden=true; $('#insp').hidden=false;
+  },
+
+  /// **저장은 몰아서 한 번.** 진단 하나에서 42개를 담으면 add 가 42번 도는데,
+  /// 매번 통째로 보내면 나중에 시작한 저장이 먼저 끝나 옛 상태가 덮어쓴다
+  /// (실측: 42개를 담았는데 35개만 남았다). 잦아든 뒤 한 번만 쓴다.
+  /// 힌트는 파일을 훑으므로 화면이 뜬 뒤에 채운다 — 첫 그림을 늦추지 않는다.
+  async loadHints(){
+    try{ this.hints = await invoke('stack_hints',{project:this.key()}) }
+    catch(e){ this.hints=[] }
+    if(this.view==='gate') this.paintGate();
+  },
+
+  persist(){
+    clearTimeout(this._save);
+    this._save = setTimeout(async()=>{
+      const w=this.w(); if(!w.id) return;
+      try{ await invoke('work_save',{project:this.key(), work:w}) }
+      catch(e){ this.say('err', t('담아두지 못했다')+': '+e) }
+    }, 150);
+  },
+  /// **매번 다시 계산한다.** 담아둔 사이에 하네스가 바뀌었을 수 있어서,
+  /// 무효가 된 것은 delta.rejected 에 이유와 함께 돌아온다.
+  refresh(){
+    clearTimeout(this._calc);
+    this._calc = setTimeout(async()=>{
+      try{ this.delta = await invoke('blueprint_preview',{lang:LANG, project:this.key(), blueprint:this.data}) }
+      catch(e){ this.delta=null; this.say('err', t('계산하지 못했다')+': '+e) }
+      this.paintChat();
+    }, 150);
+  },
+
+  /// 담는다 — **대화의 그 자리에 칩을 박는다.** `at` 이 없으면 맨 뒤.
+  add(intent, at){
+    const same = JSON.stringify(intent);
+    if(this.data.intents.some(x=>JSON.stringify(x)===same)) return false;
+    const line = {kind:'chip', text:this.chipLabel(intent), intent};
+    if(at===undefined || at<0 || at>this.chat.length) this.chat.push(line);
+    else this.chat.splice(at, 0, line);
+    this.persist(); this.refresh(); this.paintWorks(); this.paintChat();
+    clearTimeout(this._paint);
+    this._paint = setTimeout(()=>this.paintGate(), 60);
+    return true;
+  },
+  /// 대화에서 칩 한 줄을 뺀다.
+  removeChip(idx){
+    this.chat.splice(idx,1);
+    this.persist(); this.refresh(); this.paintChat(); this.paintGate(); this.paintWorks();
+  },
+  /// 담긴 것 i 번째를 뺀다(대화의 몇 번째 칩인지 찾아서).
+  remove(i){
+    let n=-1;
+    for(let k=0;k<this.chat.length;k++){
+      if(this.chat[k].kind==='chip' && this.chat[k].intent && ++n===i){ this.removeChip(k); return }
+    }
+  },
+  say(kind, text){ this.chat.push({kind,text,intent:null}); this.persist(); this.paintChat() },
+
+  paint(){ this.paintWorks(); this.paintGate(); this.paintChat() },
+
+  chipLabel(it){
+    const nm = it.name || it.skill || (it.path ? String(it.path).split('/').pop() : '');
+    if(it.op==='move_scope') return `${nm} → ${it.project}`;
+    if(it.op==='link_hook')  return `${nm} + 훅`;
+    if(it.op==='link_doc')   return `${nm} + 지침`;
+    if(it.op==='create_skill') return `+ ${nm}`;
+    if(it.op==='remove_link') return `${nm} 치움`;
+    return nm;
+  },
+
+
+  /// 힌트에서 대화로 넘어간다. **바로 담지 않는다** —
+  /// 무엇을 만들고 어떤 낱말로 열지는 사람이 정할 일이라 질문을 대신 채워 준다.
+  /// 물어볼 말을 **입력창에 채워만 둔다.** 앱이 만든 문장을 AI 말풍선으로 넣지 않는다 —
+  /// AI 가 한 말이 아니고, 칩과 입력창에 이미 같은 내용이 있어 중복이다(사용자가 지적).
+  askMake(h){ this.fillAsk(F.askMake(h.tech, h.evidence)) },
+  askLink(h){ this.fillAsk(F.askLink(h.unlinked.join(', '), h.tech)) },
+  fillAsk(text){
+    const q=$('#bpq');
+    if(this.readAsk().text) { q.focus(); return }   // 쓰던 게 있으면 안 덮는다
+    q.appendChild(document.createTextNode(text)); q.focus();
+  },
+
+  /// 이 행을 **집어서 대화에 박을 수 있게** 한다.
+  ///
+  /// HTML5 드래그(`draggable`)가 아니라 마우스 이벤트로 만든다 — 웹뷰에서 안 먹었다(실측).
+  /// 끄는 동안 **들어갈 자리가 점선 칩으로** 대화 안을 따라다니고, 놓으면 그 자리에 박힌다.
+  /// 클릭 토글도 그대로 둔다 — 5px 안 움직이면 클릭으로 본다.
+  dragable(row, intent){
+    row.classList.add('grab');
+    row.addEventListener('mousedown', e=>{
+      if(e.button!==0 || (e.target.closest && e.target.closest('button'))) return;
+      // **막지 않으면 네이티브 텍스트 선택이 먼저 걸려** mousemove 를 가져간다.
+      // 이것 때문에 드래그가 아예 안 잡혔다(실측).
+      e.preventDefault();
+      const sx=e.clientX, sy=e.clientY;
+      let ghost=null, armed=false, slot=null, at=-1;
+
+      // 입력창이 받는다. **거기로 가져가라**는 게 눈에 보여야 한다.
+      const ask=()=>$('.bpask');
+      const over=ev=>{
+        const r=ask().getBoundingClientRect();
+        const hit = ev.clientX>=r.left && ev.clientX<=r.right
+                 && ev.clientY>=r.top-10 && ev.clientY<=r.bottom;
+        ask().classList.toggle('over', hit);
+        return hit;
+      };
+
+      const move=ev=>{
+        if(!armed){
+          if(Math.abs(ev.clientX-sx)+Math.abs(ev.clientY-sy) < 5) return;
+          armed=true; row.classList.add('drag');
+          ghost=el('div','dragchip', this.chipLabel(intent));
+          document.body.appendChild(ghost);
+        }
+        ghost.style.left=(ev.clientX+8)+'px';
+        ghost.style.top=(ev.clientY+8)+'px';
+        at = over(ev) ? 1 : -1;
+      };
+
+      const up=()=>{
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        row.classList.remove('drag');
+        if(ghost) ghost.remove();
+        ask().classList.remove('over');
+        if(!armed) return;              // 안 움직였으면 클릭이다
+        if(at>=0) this.insertChip(intent);   // 입력창 안, 쓰던 자리에 꽂힌다
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+  },
+
+  /// 담겨 있으면 빼고, 없으면 담는다.
+  toggleSkill(name){
+    const i=this.data.intents.findIndex(x=>x.name===name && x.op==='disable');
+    if(i>=0) this.remove(i);
+    else this.insertChip({op:'disable',kind:'skill',scope:'global',name});
+  },
+
+  /// 깨진 링크를 담고/뺀다. **지우지 않고 보관함으로 옮긴다**(절대원칙 1).
+  toggleLink(path){
+    const i=this.data.intents.findIndex(x=>x.op==='remove_link' && x.path===path);
+    if(i>=0) this.remove(i);
+    else this.insertChip({op:'remove_link', path});
+  },
+
+  /// 이 진단이 가리키는 스킬들. **근거 문장에서 이름을 뽑는다.**
+  /// 화면에 없는 이름(플러그인 스킬 등)은 뺀다 — 담아도 적용할 파일이 없다.
+  diagTargets(d){
+    // 깨진 링크는 경로가 대상이다. 스킬 이름으로 찾으면 하나도 안 걸린다.
+    if(d.rule.startsWith('link.broken')){
+      return (d.evidence||[]).map(e=>{
+        const path=String(e).split('→')[0].trim();
+        return {name:path, link:true, description_tokens:0};
+      });
+    }
+    const names=(d.evidence||[]).map(e=>String(e).split(/[\s·(]/)[0]).filter(Boolean);
+    const seen=new Set(); const out=[];
+    names.forEach(n=>{
+      if(seen.has(n)) return; seen.add(n);
+      const sk=H.global.skills.find(s=>s.name===n);
+      if(sk) out.push(sk);
+    });
+    return out.sort((a,b)=>b.description_tokens-a.description_tokens);
+  },
+
+  /// 진단마다 **지금 무엇을 할 수 있는지**. 버튼을 안 다는 것만으로는 부족하다 —
+  /// 왜 없는지 화면이 말하지 않으면 사람은 고장으로 읽는다(사용자가 지적).
+  ///
+  /// `pick` 담을 수 있다 · `soon` 할 수 있지만 아직 안 만들었다 ·
+  /// `manual` 사람이 봐야 한다 · `state` 고칠 게 아니라 알아둘 것
+  FIX:{
+    'skill.never_called':'pick',
+    'skill.unlinked':'pick',
+    'link.broken':'pick',
+    'link.broken.project':'pick',
+    'mcp.permission_without_server':'soon',
+    'mcp.server_without_permission':'soon',
+    'mcp.declared_where_nobody_reads':'soon',
+    'project.case_duplicate':'soon',
+    'mcp.missing_server_called':'manual',
+    'mcp.scoped_server_called':'manual',
+    'stale.always_on':'manual',
+    'stale.skill':'manual',
+    'conflict.global_ban':'manual',
+    'dup.instructions':'manual',
+    'dup.memory':'manual',
+    'dup.skill':'manual',
+    'skill.frontmatter':'manual',
+    'project.no_harness':'state',
+  },
+  fixOf(rule){ return this.FIX[rule] || 'state' },
+  canTake(rule){ return this.fixOf(rule)==='pick' },
+
+  paintGate(){
+    if(this.view==='review') return this.paintReview();
+    const box=$('#gate'); box.innerHTML='';
+    const inQ = new Set(this.data.intents.map(i=>i.name||i.skill));
+
+    this.paintSummary(box);
+
+    // 1) 이 프로젝트에 맞을 것 — **힌트다.** 무엇을 만들지는 대화로 정한다.
+    if(this.hints && this.hints.length){
+      const hs=el('div','gsec');
+      const hh=el('div','gh'); hh.appendChild(el('b',null,t('이 프로젝트에 맞을 것')));
+      hh.appendChild(el('span',null,t('파일이 말해주는 것 — 힌트다')));
+      hs.appendChild(hh);
+      this.hints.forEach(h=>{
+        const row=el('div','hint');
+        const left=el('div','hleft');
+        left.appendChild(el('b','htech',h.tech));
+        left.appendChild(el('span','hev',h.evidence));
+        row.appendChild(left);
+        if(h.skills.length===0){
+          row.appendChild(el('span','hmiss',t('다루는 스킬이 없다')));
+          // 끌어서 담으면 "만들자"가 들어간다. 이름·설명은 대화로 다듬는다.
+          const it={op:'create_skill', name:F.newName(h.tech),
+                    description:F.newDesc(h.tech,h.evidence), scope:'global'};
+          this.dragable(row, it);
+          const b=el('button','btn'); b.type='button'; b.textContent=t('담고 이야기');
+          b.onclick=()=>{ this.insertChip(it); this.askMake(h) };
+          row.appendChild(b);
+        } else if(h.unlinked.length){
+          row.appendChild(el('span','hopen', F.unlinkedSkills(h.unlinked.join(', '))));
+          const it={op:'link_hook', skill:h.unlinked[0],
+                    words:[h.tech], event:'UserPromptSubmit'};
+          this.dragable(row, it);
+          const b=el('button','btn'); b.type='button'; b.textContent=t('담고 이야기');
+          b.onclick=()=>{ this.insertChip(it); this.askLink(h) };
+          row.appendChild(b);
+        } else {
+          row.appendChild(el('span','hok', h.skills.join(', ')));
+        }
+        hs.appendChild(row);
+      });
+      box.appendChild(hs);
+    }
+
+    // 2) 진단
+    const ds = visibleDiagnoses();
+    const s1=el('div','gsec');
+    const h1=el('div','gh'); h1.appendChild(el('b',null,t('진단')));
+    h1.appendChild(el('span',null,F.entries(ds.length)));
+    s1.appendChild(h1);
+    if(!ds.length) s1.appendChild(el('div','gempty',t('걸리는 게 없다')));
+    ds.forEach(d=>{
+      const c=el('div','dcard '+d.severity);
+      const tx=el('div','t'); tx.appendChild(document.createTextNode(d.title));
+      if(d.evidence && d.evidence.length)
+        tx.appendChild(el('div','ev', d.evidence.slice(0,3).map(short).join(' · ')));
+      c.appendChild(tx);
+      const key=d.rule+'|'+d.title;
+      const how=this.fixOf(d.rule);
+      if(how!=='pick'){
+        c.appendChild(el('span','fixnote', {
+          soon:  t('고칠 수 있지만 아직 안 만들었다'),
+          manual:t('손으로 고쳐야 한다'),
+          state: t('알아두면 되는 것'),
+        }[how]));
+      }
+      if(this.canTake(d.rule)){
+        const open=this.opened.has(key);
+        const pick=el('button','btn'); pick.type='button';
+        pick.textContent = open ? t('접기') : t('골라 담기');
+        pick.onclick=()=>{ open?this.opened.delete(key):this.opened.add(key); this.paintGate() };
+        c.appendChild(pick);
+        const all=el('button','btn'); all.type='button'; all.textContent=t('전부 담기');
+        all.onclick=()=>this.fromDiagnosis(d);
+        c.appendChild(all);
+      }
+      s1.appendChild(c);
+
+      // 펼치면 대상이 하나씩 나온다. 여기서 골라 담는다.
+      if(this.opened.has(key)){
+        const list=this.diagTargets(d), box2=el('div','dpick');
+        if(!list.length) box2.appendChild(el('div','gempty',t('담을 수 있는 대상이 없다')));
+        list.slice(0,40).forEach(sk=>{
+          const taken=inQ.has(sk.name);
+          const r=el('div','grow'+(taken?' in':''));
+          r.appendChild(el('span','gname',sk.name));
+          if(sk.link){
+            r.appendChild(el('span','gcall no',t('깨짐')));
+            r.onclick=()=>this.toggleLink(sk.name);
+            this.dragable(r, {op:'remove_link', path:sk.name});
+          } else {
+            const uc=useOf(sk.name);
+            r.appendChild(el('span','gcall'+(uc?' hot':' no'),F.count(uc)));
+            r.appendChild(el('span','gtok',sk.description_tokens));
+            r.onclick=()=>this.toggleSkill(sk.name);
+            this.dragable(r, {op:'disable',kind:'skill',scope:'global',name:sk.name});
+          }
+          box2.appendChild(r);
+        });
+        if(list.length>40) box2.appendChild(el('div','gempty',F.more(list.length-40)));
+        s1.appendChild(box2);
+      }
+    });
+    box.appendChild(s1);
+
+    // 2) 스킬 목록 — 다중 선택으로 끄기
+    const s2=el('div','gsec');
+    const h2=el('div','gh'); h2.appendChild(el('b',null,t('글로벌 스킬')));
+    h2.appendChild(el('span',null,F.entries(H.global.skills.length)));
+    const only=el('button','btn'); only.type='button';
+    only.textContent = this.idleOnly ? t('전체 보기') : t('호출 0회만');
+    only.onclick=()=>{ this.idleOnly=!this.idleOnly; this.paintGate() };
+    h2.appendChild(el('span',null,'')); h2.appendChild(only);
+    s2.appendChild(h2);
+
+    let list=[...H.global.skills];
+    if(this.idleOnly) list=list.filter(x=>useOf(x.name)===0);
+    list.sort((a,b)=>b.description_tokens-a.description_tokens);
+    list.slice(0,60).forEach(sk=>{
+      const uc=useOf(sk.name), taken=inQ.has(sk.name);
+      const r=el('div','grow'+(taken?' in':''));
+      r.appendChild(el('span','gname',sk.name));
+      r.appendChild(el('span','gcall'+(uc?' hot':' no'),F.count(uc)));
+      r.appendChild(el('span','gtok',sk.description_tokens));
+      r.onclick=()=>this.toggleSkill(sk.name);
+      this.dragable(r, {op:'disable',kind:'skill',scope:'global',name:sk.name});
+      s2.appendChild(r);
+    });
+    if(list.length>60) s2.appendChild(el('div','gempty',F.more(list.length-60)));
+    box.appendChild(s2);
+  },
+
+  /// 적용 직전 화면. **무엇이 어떻게 바뀌는지 한 화면에** 놓고 거기서 누른다.
+  async review(){
+    this.view='review'; this.paintReview();
+    try{
+      const all=this.data.intents.map((_,i)=>i);
+      this.plan = await invoke('blueprint_plan',{lang:LANG, project:this.key(), blueprint:this.data, pick:all});
+    }catch(e){ this.plan={summaries:[],files:[],rejected:[String(e)]} }
+    this.paintReview();
+  },
+  backToGate(){ this.view='gate'; this.plan=null; this.paintGate() },
+
+  paintReview(){
+    const box=$('#gate'); box.innerHTML='';
+    const d=this.delta, its=this.data.intents;
+    if(!its.length){ this.backToGate(); return }
+
+    // 수치 — 토큰과 열린 길을 나란히
+    const top=el('div','rvtop');
+    const cell=(lb,a,b,cut)=>{const c=el('div','rvcell');c.appendChild(el('div','lb',lb));
+      const v=el('div','vv'); v.appendChild(document.createTextNode(a));
+      c.appendChild(v); return c};
+    if(d){
+      top.appendChild(cell(t('지금'), d.before.global_tokens+t(' 토큰')));
+      top.appendChild(el('div','rvarrow','→'));
+      const after=cell(t('바꾼 뒤'), d.after.global_tokens+t(' 토큰'));
+      after.querySelector('.vv').classList.add('cut');
+      top.appendChild(after);
+      const save=el('div','rvcell rvsave');
+      save.appendChild(el('div','lb',t('매 세션 아끼는 토큰')));
+      const sv=el('div','vv cut', (d.before.global_tokens-d.after.global_tokens).toString());
+      save.appendChild(sv);
+      save.appendChild(el('div','lb', F.paths(d.before.open_paths, d.after.open_paths)));
+      top.appendChild(save);
+    }
+    box.appendChild(top);
+
+    // 빼기 / 더하기를 갈라 보여준다
+    const isAdd=i=>i.op==='link_hook'||i.op==='link_doc'||i.op==='create_skill';
+    const links=its.filter(isAdd), rest=its.filter(i=>!isAdd(i));
+    const group=(title,list,cls,sign)=>{
+      if(!list.length) return;
+      const g=el('div','rvgrp'), h=el('div','rvh');
+      h.appendChild(el('b',null,title)); h.appendChild(el('span',null,F.entries(list.length)));
+      g.appendChild(h);
+      list.slice(0,14).forEach(i=>{
+        const r=el('div','rvitem '+cls);
+        r.appendChild(el('span',null,sign));
+        r.appendChild(el('span','nm', this.chipLabel(i)));
+        g.appendChild(r);
+      });
+      if(list.length>14) g.appendChild(el('div','gempty',F.more(list.length-14)));
+      box.appendChild(g);
+    };
+    group(t('빼기'), rest, 'rm', '−');
+    group(t('더하기 — 길을 놓는다'), links, 'add', '+');
+
+    // 바뀌는 파일
+    const fh=el('div','rvh'); fh.appendChild(el('b',null,t('건드리는 파일')));
+    if(!this.plan) fh.appendChild(el('span',null,t('계산 중…')));
+    else fh.appendChild(el('span',null,F.entries(this.plan.files.length)));
+    box.appendChild(fh);
+    box.appendChild(el('div','rvfiles', this.plan
+      ? (this.plan.files.join('\n') || t('바꿀 파일이 없다'))
+      : '…'));
+    if(this.plan && this.plan.rejected.length){
+      const w=el('div','rvgrp'); w.appendChild(el('div','rvh', t('할 수 없어서 빠지는 것')));
+      this.plan.rejected.slice(0,6).forEach(r=>w.appendChild(el('div','qbad', r)));
+      box.appendChild(w);
+    }
+
+    // 적용
+    const bar=el('div','rvbar');
+    bar.appendChild(el('span','gempty', t('원본은 .harnitor/backups/ 에 남는다 · 되돌릴 수 있다')));
+    const back=el('button','btn'); back.type='button'; back.textContent=t('더 담기');
+    back.onclick=()=>this.backToGate();
+    const go=el('button','btn pri'); go.type='button';
+    go.textContent=F.applyN(this.plan?this.plan.summaries.length:its.length);
+    go.disabled=!this.plan || !this.plan.summaries.length;
+    go.onclick=()=>this.apply();
+    bar.appendChild(back); bar.appendChild(go);
+    box.appendChild(bar);
+  },
+
+  async apply(){
+    if(this.busy) return;
+    this.busy=true;
+    const all=this.data.intents.map((_,i)=>i);
+    let r;
+    try{ r = await invoke('blueprint_apply',{lang:LANG, project:this.key(), blueprint:this.data, pick:all}) }
+    catch(e){ r={done:[],failed:[String(e)]} }
+    this.busy=false;
+    (r.done||[]).forEach(x=>this.say('act', x));
+    (r.failed||[]).forEach(x=>this.say('err', x));
+    // 적용된 것만 뺀다 — 실패한 건 남겨야 다시 시도할 수 있다.
+    if(r.done && r.done.length) this.w().blueprint = {intents:[]};
+    this.persist();
+    this.view='gate'; this.plan=null;
+    if(r.done && r.done.length) this.say('ai', t('적용했다. 되돌리려면 상단의 되돌리기를 눌러라.'));
+    await reload();          // 하네스가 바뀌었으니 다시 읽는다
+    this.paint(); this.refresh();
+  },
+
+  /// 진단 하나에서 담는다. **한꺼번에 담되 무엇을 담았는지 말한다.**
+  fromDiagnosis(d){
+    // **대상 뽑기는 펼치기와 같은 함수를 쓴다.** 따로 두면 한쪽만 고쳐진다 —
+    // 실제로 깨진 링크가 펼치기에서는 담기고 전부 담기에서는 안 담겼다.
+    const targets = this.diagTargets(d);
+    let n=0;
+    targets.forEach(x=>{
+      if(x.link){
+        if(this.add({op:'remove_link', path:x.name}, false)) n++;
+      } else if(d.rule==='skill.never_called'){
+        if(this.add({op:'disable',kind:'skill',scope:'global',name:x.name}, false)) n++;
+      }
+      // skill.unlinked 는 낱말을 사람이 정해야 해서 자동으로 담지 않는다.
+    });
+    if(d.rule==='skill.unlinked'){
+      this.say('ai', t('길을 놓으려면 어떤 말에 반응할지 정해야 한다. AI 에게 물어보면 낱말을 제안한다.'));
+    } else {
+      this.say('act', F.tookIn(n));
+      if(d.rule==='skill.never_called'){
+        // 실측: post-mortem 은 448토큰에 0회지만 **사고가 안 나서** 0회다.
+        this.say('ai', t('0회가 "안 쓴다"는 뜻은 아니다 — 사고가 안 나서, 최근에 만들어서, 가끔 쓰는 것이라서 0일 수 있다. 목록을 훑어 뺄 것은 빼라.'));
+      }
+    }
+  },
+
+  /// 담긴 것의 **효과**를 좌측 위에 낸다 — 무엇이 담겼는지는 칩이 보여준다.
+  /// 세 군데(칩·탭·읽어보기)에 같은 걸 그리다가 구조를 못 알아보게 됐다(사용자가 지적).
+  paintSummary(box){
+    const d=this.delta, n=this.data.intents.length;
+    if(!n) return;
+    const bar=el('div','rvtop'); bar.style.padding='10px 13px';
+    if(d){
+      const cell=(lb,v,cut)=>{const c=el('div','rvcell');c.appendChild(el('div','lb',lb));
+        c.appendChild(el('div','vv'+(cut?' cut':''), String(v))); return c};
+      bar.appendChild(cell(t('지금'), d.before.global_tokens));
+      bar.appendChild(el('div','rvarrow','→'));
+      bar.appendChild(cell(t('바꾼 뒤'), d.after.global_tokens, true));
+      const save=d.before.global_tokens-d.after.global_tokens;
+      const s2=el('div','rvcell'); s2.appendChild(el('div','lb',t('열린 길')));
+      s2.appendChild(el('div','vv'+(d.after.open_paths>d.before.open_paths?' cut':''),
+        `${d.before.open_paths} → ${d.after.open_paths}`));
+      bar.appendChild(s2);
+      const bad=(this.delta.rejected||[]).length;
+      if(bad){ const w=el('div','rvcell'); w.appendChild(el('div','lb',t('못 하는 것')));
+        w.appendChild(el('div','vv warn', String(bad))); bar.appendChild(w); }
+    }
+    const go=el('button','btn pri'); go.type='button'; go.style.marginLeft='auto';
+    go.textContent=t('바뀌는 것 보기'); go.onclick=()=>this.review();
+    bar.appendChild(go);
+    box.appendChild(bar);
+  },
+
+  paintChat(){
+    const box=$('#chat'); box.innerHTML='';
+    if(!this.chat.length){
+      box.appendChild(el('div','gempty',
+        t('왼쪽에서 담으면 여기 남는다. AI 에게 물어보면 무엇을 끄고 무엇에 길을 놓을지 제안한다.')));
+    }
+    this.chat.forEach((m,idx)=>{
+      if(m.kind==='chip' && m.intent){
+        const it=m.intent;
+        const link = it.op==='link_hook'||it.op==='link_doc'||it.op==='create_skill';
+        const fix  = it.op==='remove_link';
+        const row=el('div','chipline');
+        const c=el('div','chip2'+(link?' add':fix?' fix':''));
+        c.appendChild(el('span','t', this.chipLabel(it)));
+        const x=el('button','x'); x.type='button'; x.textContent='×'; x.title=t('빼기');
+        x.onclick=()=>this.removeChip(idx);
+        c.appendChild(x); row.appendChild(c);
+        box.appendChild(row);
+        return;
+      }
+      if(m.kind==='notes' && m.notes){
+        const w=el('div','bub ai notes');
+        const h=el('button','nh'); h.type='button';
+        h.textContent=F.whyN(m.notes.length)+(m.open?' ▾':' ▸');
+        const body=el('div','nb'); body.hidden=!m.open;
+        m.notes.forEach(n=>body.appendChild(el('div','nline', n)));
+        h.onclick=()=>{ m.open=!m.open; this.paintChat() };
+        w.appendChild(h); w.appendChild(body);
+        box.appendChild(w);
+        return;
+      }
+      if(m.kind==='offer' && m.offers){
+        // **무엇을 하자는 건지 한 줄로 먼저.** 목록만 늘어놓으면 뭘 하자는 건지 안 읽힌다.
+        const card=el('div','bub ai offer');
+        card.appendChild(el('div','oh', F.recap(m.offers.map(x=>this.chipLabel(x)))));
+        m.offers.forEach(it=>{
+          const r=el('div','orow');
+          r.appendChild(el('span','onm', this.chipLabel(it)));
+          const b2=el('button','btn'); b2.type='button'; b2.textContent=t('담기');
+          b2.onclick=()=>{ this.add(it); b2.textContent=t('담김'); b2.disabled=true; };
+          r.appendChild(b2);
+          card.appendChild(r);
+        });
+        if(m.offers.length>1){
+          const all=el('button','btn pri'); all.type='button'; all.style.marginTop='6px';
+          all.textContent=F.addAll(m.offers.length);
+          all.onclick=()=>{ m.offers.forEach(it=>this.add(it)) };
+          card.appendChild(all);
+        }
+        const foot=[];
+        if(m.skipped) foot.push(F.alreadyIn(m.skipped));
+        if(m.took) foot.push(F.tookMs(m.took));
+        if(foot.length) card.appendChild(el('div','ofoot', foot.join(' · ')));
+        box.appendChild(card);
+        return;
+      }
+      if(m.kind==='me' && m.chips && m.chips.length){
+        const b=el('div','bub me');
+        // 글 안의 칩 라벨을 칩 모양으로 되살린다 — 순서를 지킨다
+        let rest=m.text;
+        m.chips.forEach(c=>{
+          const lb=this.chipLabel(c), i=rest.indexOf(lb);
+          if(i<0) return;
+          if(i>0) b.appendChild(document.createTextNode(rest.slice(0,i)));
+          const link=c.op==='link_hook'||c.op==='link_doc'||c.op==='create_skill';
+          const fix =c.op==='remove_link';
+          b.appendChild(el('span','inchip'+(link?' add':fix?' fix':''), lb));
+          rest=rest.slice(i+lb.length);
+        });
+        if(rest) b.appendChild(document.createTextNode(rest));
+        box.appendChild(b);
+        return;
+      }
+      const b=el('div','bub '+m.kind, m.text);
+      // 말풍선 안에서 바로 다음 단계로 간다 — 입력창까지 내려가지 않아도 되게.
+      if(m.act){
+        const row=el('div','bubact');
+        m.act.forEach(a=>{ const x=el('button',null,a.label); x.type='button'; x.onclick=a.on; row.appendChild(x) });
+        b.appendChild(row);
+      }
+      box.appendChild(b);
+    });
+    box.scrollTop=box.scrollHeight;
+  },
+
+  /// 스트림 조각을 받는다. **말풍선 하나를 계속 고쳐 쓴다** — 조각마다 새로 만들면
+  /// 대화가 글자 수만큼 늘어난다.
+  tick(ev){
+    const live = this.chat[this.chat.length-1];
+    if(ev.phase==='stage'){
+      if(live && live.live) live.text = ev.label + '…';
+      else this.chat.push({kind:'ai', text:ev.label+'…', intent:null, live:true});
+    } else if(ev.phase==='text'){
+      if(live && live.live && !live.streaming){ live.text=''; live.streaming=true }
+      if(live && live.live) live.text += ev.chunk;
+      else this.chat.push({kind:'ai', text:ev.chunk, intent:null, live:true, streaming:true});
+    }
+    this.paintChat();
+  },
+
+  /// 칩을 **입력창 안 캐럿 자리에** 꽂는다. 문장과 섞여야 "이거를 이렇게 해줘"가 된다.
+  insertChip(intent){
+    const box=$('#bpq');
+    const it=intent;
+    const link = it.op==='link_hook'||it.op==='link_doc'||it.op==='create_skill';
+    const fix  = it.op==='remove_link';
+    const chip=el('span','inchip'+(link?' add':fix?' fix':''), this.chipLabel(it));
+    chip.contentEditable='false';
+    chip.dataset.intent=JSON.stringify(it);
+
+    // 캐럿을 못 잡는 경우가 있다(포커스 전, 다른 곳을 눌렀을 때) — 그때는 끝에 붙인다.
+    try{
+      box.focus();
+      const sel=window.getSelection();
+      let placed=false;
+      if(sel && sel.rangeCount && box.contains(sel.anchorNode)){
+        const r=sel.getRangeAt(0);
+        r.deleteContents(); r.insertNode(chip); placed=true;
+      }
+      if(!placed) box.appendChild(chip);
+      // 칩 뒤에 한 칸 — 바로 이어서 쓸 수 있게
+      const sp=document.createTextNode('\u00a0');
+      if(chip.parentNode) chip.parentNode.insertBefore(sp, chip.nextSibling);
+      if(sel){
+        const r2=document.createRange();
+        r2.setStartAfter(sp); r2.collapse(true);
+        sel.removeAllRanges(); sel.addRange(r2);
+      }
+    }catch(e){
+      box.appendChild(chip);
+      toast('칩을 넣다 걸렸다: '+(e&&e.message||e), true);
+    }
+  },
+
+  /// 캐럿 바로 앞이 칩이면 **그 뒤 한 칸까지 통째로** 지운다. 지웠으면 true.
+  ///
+  /// 칩을 꽂을 때 이어 쓰라고 한 칸(` `)을 붙여 두는데, 그 탓에 백스페이스
+  /// 첫 타는 공백만 먹고 칩은 남았다 — 사람 눈에는 **두 번 눌러야 지워지는** 것으로 보인다.
+  /// 칩과 그 한 칸은 넣을 때 한 덩어리였으니 지울 때도 한 덩어리로 다룬다.
+  eatChip(){
+    const box=$('#bpq'), sel=window.getSelection();
+    if(!sel || !sel.isCollapsed || !sel.rangeCount) return false;
+    const r=sel.getRangeAt(0);
+    if(!box.contains(r.startContainer)) return false;
+    // **눈에 안 보이는 글자는 이스케이프로 적는다.** 붙일 때 넣는 건 한 칸(\u00a0)인데
+    // 비교를 그냥 스페이스로 적었다가 한 번도 안 걸렸다(실측). 손으로 친 칸도 받아 준다.
+    const isPad=c=> c==='\u00a0' || c===' ';
+    const n=r.startContainer, off=r.startOffset;
+    let pad=null, prev=null;
+    if(n.nodeType===3){
+      // 글자 한가운데면 글자를 지우는 게 맞다. 우리가 붙인 한 칸일 때만 넘어간다.
+      if(off===0) prev=n.previousSibling;
+      else if(off===1 && isPad(n.nodeValue[0])){ pad=n; prev=n.previousSibling }
+      else return false;
+    } else {
+      // 칩을 꽂은 직후의 캐럿은 **글자 안이 아니라 노드 경계**에 선다(`setStartAfter`).
+      // 그래서 컨테이너가 입력창 자신이고, 바로 앞은 칩이 아니라 그 한 칸이다 —
+      // 이걸 안 보고 넘어가서 정작 칩을 꽂자마자 누른 백스페이스가 안 먹었다(실측).
+      prev = off>0 ? n.childNodes[off-1] : n.previousSibling;
+      if(prev && prev.nodeType===3 && prev.nodeValue.length===1 && isPad(prev.nodeValue[0])){
+        pad=prev; prev=prev.previousSibling;
+      }
+    }
+    if(!prev || prev.nodeType!==1 || !prev.classList.contains('inchip')) return false;
+    const before=prev.previousSibling;        // 지운 자리에 캐럿을 되돌리려면 먼저 잡아둔다
+    const keepPad = pad && pad.nodeValue.length>1;   // 뒤에 이어 쓴 글이 있으면 한 칸만 뗀다
+    if(pad){ keepPad ? pad.deleteData(0,1) : pad.remove() }
+    prev.remove();
+    const r2=document.createRange();
+    if(keepPad) r2.setStart(pad,0);
+    else if(before) r2.setStartAfter(before);
+    else r2.setStart(box,0);
+    r2.collapse(true); sel.removeAllRanges(); sel.addRange(r2);
+    return true;
+  },
+
+  /// 입력창에서 글과 칩을 꺼낸다.
+  readAsk(){
+    const box=$('#bpq');
+    const chips=[...box.querySelectorAll('.inchip')].map(c=>{
+      try{ return JSON.parse(c.dataset.intent) }catch(e){ return null }
+    }).filter(Boolean);
+    return {text: box.innerText.replace(/\u00a0/g,' ').trim(), chips};
+  },
+  clearAsk(){ $('#bpq').innerHTML=''; },
+
+  /// 돌고 있는 요청을 멈춘다. Esc 로도, 보내기 자리의 멈춤 단추로도.
+  async stop(){
+    if(!this.busy) { this.clearAsk(); return }   // 돌고 있지 않으면 쓰던 걸 비운다
+    try{ await invoke('ai_stop') }catch(e){}
+  },
+
+  async ask(){
+    if(this.busy) return;
+    const {text:q, chips} = this.readAsk();
+    if(!q && !chips.length) return;
+    this.clearAsk();
+    // **무엇을 가리켜 물었는지 대화에도 남긴다.** 글자로만 남으면 칩이었는지 모른다.
+    this.chat.push({kind:'me', text:q || chips.map(c=>this.chipLabel(c)).join(' '),
+                    intent:null, chips});
+    this.persist(); this.paintChat();
+    this.busy=true;
+    $('#bpGo').classList.add('stop'); $('#bpGo').title=t('멈추기');
+    this.chat.push({kind:'ai', text:t('물어보는 중…'), live:true});
+    this.paintChat();
+    // 답이 오는 동안 조각을 짧게 되묻는다. 55초를 침묵으로 두면 멈춘 줄 안다.
+    const poll = setInterval(async()=>{
+      try{
+        const ticks = await invoke('ai_progress');
+        (ticks||[]).forEach(x=>this.tick(x));
+      }catch(e){}
+    }, 120);
+    let r;
+    // 담아둔 것(배경)과 **이번 문장이 가리킨 것**(질문 대상)을 갈라 넘긴다.
+    // 합쳐 보내면 "이거 문제 뭐야?"에 대고 하네스 전체를 설명한다(실측 2026-09-01).
+    try{ r = await invoke('ai_propose',{project:cur?cur.name:null, goal:q,
+           basket:{intents:this.data.intents}, focus:{intents:chips}}) }
+    catch(e){ r = {status:'failed', reason:String(e)} }
+    clearInterval(poll);
+    try{ (await invoke('ai_progress')||[]).forEach(x=>this.tick(x)) }catch(e){}
+    this.busy=false;
+    $('#bpGo').classList.remove('stop'); $('#bpGo').title=t('보내기');
+    // 흘러가던 말풍선을 마무리한다 — 남은 JSON 은 사람이 읽을 게 아니라 잘라낸다.
+    const live=this.chat[this.chat.length-1];
+    if(live && live.live){
+      live.live=false;
+      const cut=live.text.indexOf('{');
+      live.text = (cut>0 ? live.text.slice(0,cut) : live.text).trim();
+      if(!live.text) this.chat.pop();
+    }
+
+    if(r.status==='no_cli'){
+      this.say('err', t('claude CLI 를 찾지 못했다 — AI 제안만 못 쓴다. 고르고 담는 건 그대로 된다.'));
+    } else if(r.status==='failed'){
+      this.say('err', r.reason);
+    } else if(r.status==='unusable'){
+      this.say('err', r.reason + (r.raw_head?' · '+r.raw_head.slice(0,80):''));
+    } else {
+      // 근거를 한 줄씩 쏟으면 화면이 갑자기 채워진다. 접어 두고 필요할 때 편다.
+      if((r.notes||[]).length) this.chat.push({kind:'notes', text:'', intent:null, notes:r.notes});
+      // **이미 담은 것은 빼고 보여준다.** 방금 그걸 두고 이야기했는데 또 제안하면
+      // 읽는 사람이 화가 난다(사용자가 지적).
+      const had=new Set([...this.data.intents, ...chips].map(x=>JSON.stringify(x)));
+      const all=(r.blueprint?.intents)||[];
+      const ins=all.filter(x=>!had.has(JSON.stringify(x)));
+      if(!all.length) this.say('ai', t('담을 만한 게 없다고 한다.'));
+      else if(!ins.length) this.say('ai', t('이미 담은 것 말고 새로 제안할 건 없다고 한다.'));
+      // **자동으로 담지 않는다.** 제안일 뿐이라 사람이 골라야 한다 —
+      // 실측: "ㅇ" 한 글자에 25개가 묻지도 않고 담겼다.
+      else this.chat.push({kind:'offer', text:'', intent:null, offers:ins,
+                           took:r.took_ms, skipped:all.length-ins.length});
+
+    }
+    this.paintChat();
+  }
+};
+
+/// ── 구조: 이 하네스가 코드의 어느 자리에 붙어 있나 ────────────────────
+///
+/// 파일 탐색기를 하나 더 만들려는 게 아니다. Finder 는 이미 있다.
+/// **폴더만** 그리고 파일은 개수로 접는다 — 실측에서 깊이 3까지 파일을 다 세면
+/// 1,400개가 넘는데, 그건 구조가 아니라 목록이다. 폴더는 같은 깊이에서 150~180개다.
+const ARCH={
+  on:false, root:null, open:new Set(), depth:4, loading:false,
+  async show(){
+    // 여기서 터지면 화면이 조용히 비어서 원인을 못 찾는다(실측: 무대·패널이 통째로 빈 채로 떴다).
+    try{ await this._show() }catch(e){ toast('청사진: '+(e&&e.message||e), true) }
+  },
+  async _show(){
+    if(!TAURI || !cur) return;
+    this.on=true;
+    $('#wrap').hidden=true; $('#arch').hidden=false;
+    $('#tabHarness').setAttribute('aria-pressed','false');
+    $('#tabArch').setAttribute('aria-pressed','true');
+    // 프로젝트가 바뀌었으면 다시 읽는다. 같은 프로젝트면 접었다 편 상태를 지킨다.
+    if(this.root && this.root.__path===cur.path){ this.paint(); return }
+    this.loading=true; this.paint();
+    try{
+      const t=await invoke('folder_tree',{path:cur.path, depth:this.depth});
+      t.__path=cur.path; this.root=t; this.open=new Set(['']); this.openHarness(t);
+    }catch(e){ this.root=null; toast(t('구조를 읽지 못했다')+': '+e, true) }
+    this.loading=false; this.paint();
+  },
+  hide(){
+    this.on=false;
+    $('#wrap').hidden=false; $('#arch').hidden=true;
+    $('#tabHarness').setAttribute('aria-pressed','true');
+    $('#tabArch').setAttribute('aria-pressed','false');
+  },
+  /// 하네스가 닿은 가지는 **미리 펴 둔다.** 접힌 채로 두면 `.claude` 배지 하나만 보이고,
+  /// 그건 Finder 도 보여주는 것이다. 이 화면이 답해야 하는 건
+  /// "하네스가 이 코드의 어디까지 들어와 있나" 이므로 그 자리는 열려 있어야 한다.
+  /// **조상만 연다.** 마크가 붙은 폴더 자신은 종점이라 펼 이유가 없다 —
+  /// 스킬 폴더를 다 펴면 `references/`·`scripts/` 까지 쏟아져서 17개 스킬이 60줄이 된다.
+  openHarness(n){
+    let deep=false;
+    n.dirs.forEach(k=>{ if(this.openHarness(k)) deep=true });
+    if(deep) this.open.add(n.rel);
+    return deep || n.marks.length>0;
+  },
+  count(n){ let d=1,m=n.marks.length?1:0;
+    n.dirs.forEach(k=>{const r=this.count(k); d+=r[0]; m+=r[1]}); return [d,m] },
+  paint(){
+    const box=$('#arch'); box.innerHTML='';
+    if(this.loading){ box.appendChild(el('div','archnote',t('읽는 중…'))); return }
+    if(!this.root){ box.appendChild(el('div','archnote',t('읽을 것이 없다'))); return }
+    const [nd,nm]=this.count(this.root);
+    const sum=el('div','archnote');
+    sum.appendChild(el('b',null,F.folderSum(nd,nm)));
+    sum.appendChild(document.createElement('br'));
+    // 하네스가 하나도 안 닿으면 그게 이 화면의 결론이다 — 폴더를 세는 것보다 그 문장이 정보다
+    sum.appendChild(el('span',null, nm ? t('구리색으로 표시된 자리가 하네스가 닿은 곳이다. 배지를 누르면 하네스 화면의 그 항목으로 간다.')
+      : t('이 프로젝트에는 자기 하네스가 없다 — 글로벌만 그대로 적용된다.')));
+    box.appendChild(sum);
+    const words={claude_dir:t('하네스'),guide:'CLAUDE.md',local_guide:'CLAUDE.local.md',
+                 mcp:'.mcp.json',skill:t('스킬'),hooks:t('훅')};
+    const cls={claude_dir:'claude',guide:'guide',local_guide:'guide',mcp:'mcp',skill:'skill',hooks:'claude'};
+    const row=(n,d)=>{
+      const r=el('div','fr'+(n.marks.length?' lit':'')); r.style.setProperty('--d',d);
+      const kids=n.dirs.length>0 || n.truncated;
+      if(kids){
+        const fx=el('button','fx'); fx.type='button';
+        const on=this.open.has(n.rel);
+        fx.setAttribute('aria-expanded',on);
+        fx.innerHTML='<svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true">'+
+          '<path d="M2.5 1.5 L7 5 L2.5 8.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        fx.onclick=()=>{ on?this.open.delete(n.rel):this.open.add(n.rel); this.paint(); };
+        r.appendChild(fx);
+      } else r.appendChild(el('span','fx'));
+      // 폴더는 직접 그린다. 아이콘 라이브러리를 쓰지 않는다.
+      const ic=document.createElement('span'); ic.className='fx'; ic.style.color='var(--line-2)';
+      ic.innerHTML='<svg viewBox="0 0 14 14" width="11" height="11" aria-hidden="true">'+
+        '<path d="M1.5 3.4h3.6l1.2 1.4h6.2v6.3a.9.9 0 0 1-.9.9H2.4a.9.9 0 0 1-.9-.9z" '+
+        'fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>';
+      r.appendChild(ic);
+      r.appendChild(el('span','fn', n.name));
+      if(n.files) r.appendChild(el('span','fc', F.fileCount(n.files)));
+      n.marks.forEach(m=>{
+        const to=this.jump(m,n);
+        const b=el(to?'button':'span','fm '+(cls[m]||'')+(to?' go':''), words[m]||m);
+        if(to){ b.type='button'; b.title=t('하네스 화면에서 보기'); b.onclick=()=>this.goto(to) }
+        r.appendChild(b);
+      });
+      if(n.truncated) r.appendChild(el('span','fc', t('더 있음')));
+      box.appendChild(r);
+      if(this.open.has(n.rel)) n.dirs.forEach(k=>row(k,d+1));
+    };
+    row(this.root,0);
+  },
+  /// 이 자리가 하네스 화면의 어느 항목인가. 없으면 null — `.mcp.json` 은 서버가 여럿이라
+  /// 어느 칩으로 갈지 정할 수 없고, `.claude/` 자체는 칩이 아니라 자리다.
+  jump(mark,node){
+    if(mark==='guide')       return ID('doc','p','CLAUDE.md');
+    if(mark==='local_guide') return ID('doc','p','CLAUDE.local.md');
+    if(mark==='skill')       return ID('skill','p',node.name);
+    return null;
+  },
+  goto(id){
+    this.hide();
+    const c=$('#wrap').querySelector('[data-id="'+CSS.escape(id)+'"]');
+    if(!c){ toast(t('하네스 화면에 그 항목이 없다'), true); return }
+    c.click(); c.scrollIntoView({block:'center',behavior:'smooth'});
+  }
+};
+
+/// 끄기/켜기 버튼. **누른다고 바로 바뀌지 않는다** — 미리보기를 먼저 보여준다(ADR-0004).
+///
+/// 종류마다 "끈다"의 뜻이 다르다. 스킬은 폴더를 옮기고, MCP 는 등록부 스위치를 내리고,
+/// 훅은 보관함으로 옮긴다. 버튼 글도 그 차이를 그대로 말해야 한다 —
+/// 특히 MCP 는 **이 프로젝트에서만** 꺼지는데 그냥 "끄기"라고 하면 전역으로 읽힌다.
+function actionRow(c, sc){
+  const off=!!c.off;
+  let call=null, label=null, hint=t('미리보기부터 뜬다');
+
+  if(c.kind==='skill'){
+    // 플러그인이 데려온 스킬은 낱개로 못 끈다 — 플러그인 단위로 붙었다 떨어진다
+    if(c.plugin) return;
+    // 프로젝트 스킬은 아직 열지 않았다. 보관함이 글로벌과 한 자리라
+    // 켤 때 글로벌로 옮겨가 버린다(기술부채).
+    if(sc!=='g') return;
+    call=()=>invoke(off?'plan_enable':'plan_disable',{name:c.n,lang:LANG});
+    label=off?t('이 스킬 다시 켜기'):t('이 스킬 끄기');
+  }else if(c.kind==='mcp'){
+    if(!cur) return;
+    // 안 읽히는 선언은 끄고 켤 것이 없다. 어차피 안 돌고, 버튼을 두면
+    // 눌러서 고칠 수 있다는 뜻이 되어 엉뚱한 데를 만지게 한다.
+    if(c.d && c.d.loaded!=='always') return;
+    call=()=>invoke('plan_toggle_mcp',{project:cur.path,name:c.n,enabled:off,lang:LANG});
+    label=off?F.mcpOn(cur.name):F.mcpOff(cur.name);
+    hint=t('선언은 그대로 두고 이 프로젝트에서만 막는다.');
+  }else if(c.kind==='hook'){
+    call=()=>invoke('plan_toggle_hook',{event:c.d.event,command:c.d.command,enabled:off,lang:LANG});
+    label=off?t('이 훅 다시 켜기'):t('이 훅 끄기');
+    hint=t('원본은 .harnitor/disabled 에 남는다.');
+  }else return;
+
+  const b=$('#iB');
+  const row=el('div','actions');
+  const btn=el('button','btn'+(off?'':' danger'), label);
+  btn.type='button';
+  btn.onclick=async()=>{
+    btn.disabled=true;
+    busy(off?t('켜는 계획을 세우는 중…'):t('끄는 계획을 세우는 중…'));
+    try{
+      const plan=await call();
+      idle(); confirmPlan(plan);
+    }catch(e){ idle(); toast('계획을 세우지 못했다: '+e, true) }
+    btn.disabled=false;
+  };
+  row.appendChild(btn);
+  row.appendChild(el('span','hint',hint));
+  b.appendChild(row);
+}
+
+/// 무엇이 바뀌는지 보여주고, 사람이 누른 것만 실행한다.
+function confirmPlan(plan){
+  const back=el('div','modalback');
+  const box=el('div','modal');
+  box.appendChild(el('h3',null,t('이렇게 바뀐다')));
+  box.appendChild(el('p','sum',plan.summary));
+  if(plan.token_delta){
+    box.appendChild(el('p','delta',
+      F.delta(plan.token_delta)));
+  }
+  const list=el('div','changes');
+  plan.changes.forEach(c=>{
+    const line=c.kind==='MovePath'
+      ? short(c.from)+'  →  '+short(c.to)
+      : short(c.file)+'  ·  '+c.pointer+' = '+JSON.stringify(c.to);
+    list.appendChild(el('div','chg',line));
+  });
+  box.appendChild(list);
+  box.appendChild(el('p','warn',t('파일을 지우지 않는다. 실행 전 원본이 백업되고, 되돌리기 버튼으로 한 번에 취소된다.')));
+  const row=el('div','actions');
+  const go=el('button','btn danger',t('실행한다'));go.type='button';
+  const no=el('button','btn',t('그만둔다'));no.type='button';
+  go.onclick=async()=>{
+    go.disabled=true;
+    back.remove();
+    busy(t('백업하고 적용하는 중…'));
+    try{
+      const msg=await invoke('apply_plan',{plan});
+      busy(t('바뀐 하네스를 다시 읽는 중…'));
+      await reload();
+      idle(); toast(msg);
+    }catch(e){ idle(); toast('실패: '+e,true) }
+  };
+  no.onclick=()=>back.remove();
+  row.appendChild(go);row.appendChild(no);box.appendChild(row);
+  back.appendChild(box);
+  back.onclick=e=>{if(e.target===back)back.remove()};
+  document.body.appendChild(back);
+}
+
+/// 진행 중임을 보여준다. 화면을 덮되 **무엇을 하는 중인지** 적는다.
+let busyEl=null;
+function busy(msg){
+  idle();
+  busyEl=el('div','busy');
+  busyEl.appendChild(el('div','ring'));
+  busyEl.appendChild(el('div','msg',msg));
+  document.body.appendChild(busyEl);
+}
+function idle(){ if(busyEl){busyEl.remove();busyEl=null} }
+
+/// 되돌리기 확인. **무엇이 되돌려지는지 보여주고 나서** 실행한다.
+/// 짧게 묻고 실행한다. `confirm` 을 쓰지 않는 이유는 위 주석 참조.
+function askThen(msg, okLabel, on){
+  const back=el('div','modalback'), box=el('div','modal');
+  box.appendChild(el('p','sum',msg));
+  const row=el('div','actions');
+  const go=el('button','btn danger',okLabel); go.type='button';
+  const no=el('button','btn',t('그만둔다')); no.type='button';
+  go.onclick=()=>{ back.remove(); on(); };
+  no.onclick=()=>back.remove();
+  row.appendChild(no); row.appendChild(go);
+  box.appendChild(row); back.appendChild(box);
+  back.onclick=e=>{ if(e.target===back) back.remove() };
+  document.body.appendChild(back);
+}
+
+function confirmUndo(peek){
+  const back=el('div','modalback');
+  const box=el('div','modal');
+  box.appendChild(el('h3',null,t('이걸 되돌린다')));
+  box.appendChild(el('p','sum',peek.summary));
+  box.appendChild(el('p','warn',F.undoScope(peek.change_count,short(peek.backup_dir))));
+  const row=el('div','actions');
+  const go=el('button','btn danger',t('되돌린다'));go.type='button';
+  const no=el('button','btn',t('그만둔다'));no.type='button';
+  go.onclick=async()=>{
+    back.remove(); busy(t('되돌리는 중…'));
+    try{
+      const msg=await invoke('undo');
+      busy(t('하네스를 다시 읽는 중…'));
+      await reload();
+      idle(); toast('되돌렸다: '+msg);
+    }catch(e){ idle(); toast('되돌리지 못했다: '+e,true) }
+  };
+  no.onclick=()=>back.remove();
+  row.appendChild(go);row.appendChild(no);box.appendChild(row);
+  back.appendChild(box);
+  back.onclick=e=>{if(e.target===back)back.remove()};
+  document.body.appendChild(back);
+}
+
+
+/* ── 검색 팔레트 ────────────────────────────────────────────────────────
+   찾기가 아니라 **훑기**로 만든다. 목록에서 방향키로 오르내리기만 해도
+   뒤 계층에서 그 항목이 살아나고 연결이 곡선으로 뻗는다 — 칩에 마우스를
+   올렸을 때와 정확히 같은 동작이다(paintFocus를 그대로 쓴다). */
+const PAL = {
+  open:false, rows:[], idx:0, restore:null,
+  el:()=>$('#pal'), q:()=>$('#palq'), list:()=>$('#palres'),
+};
+
+/// 띄엄띄엄 쳐도 찾는다: 'trbl' → 'troubleshooting'.
+/// 연속으로 맞을수록, 앞쪽에서 맞을수록, 단어 첫 글자에 맞을수록 점수가 높다.
+function fuzzy(needle, hay){
+  const n=needle.toLowerCase(), h=hay.toLowerCase();
+  if(!n) return {score:0, hits:[]};
+  let i=0, score=0, streak=0, hits=[];
+  for(let j=0; j<h.length && i<n.length; j++){
+    if(h[j]!==n[i]) { streak=0; continue; }
+    hits.push(j);
+    streak++;
+    score += 10 + streak*4;                        // 연속이면 가산
+    if(j===0 || /[-_:. /]/.test(h[j-1])) score += 12; // 단어 첫 글자
+    i++;
+  }
+  if(i<n.length) return null;                       // 전부 못 찾으면 탈락
+  score -= Math.floor(hits[0]*0.6);                 // 늦게 시작할수록 감점
+  score -= Math.floor((h.length-n.length)*0.2);     // 길수록 조금 감점
+  return {score, hits};
+}
+
+function markup(text, hits){
+  const f=document.createDocumentFragment();
+  let last=0;
+  hits.forEach(i=>{
+    if(i>last) f.appendChild(document.createTextNode(text.slice(last,i)));
+    const b=document.createElement('b'); b.textContent=text[i]; f.appendChild(b);
+    last=i+1;
+  });
+  if(last<text.length) f.appendChild(document.createTextNode(text.slice(last)));
+  return f;
+}
+
+/// 화면에 있는 모든 칩을 검색 대상으로 모은다. 별도 색인을 두지 않는다 —
+/// 보이는 것과 찾히는 것이 어긋나면 그게 더 헷갈린다.
+function palIndex(){
+  return [...document.querySelectorAll('.chip')].map(el=>{
+    const id=el.dataset.id, i=id.indexOf(':'), j=id.indexOf(':',i+1);
+    return { id, el, layer:id.slice(0,i), scope:id.slice(i+1,j), name:id.slice(j+1) };
+  });
+}
+
+function palOpen(){
+  if(PAL.open) return;
+  PAL.open=true; PAL.restore={sel,hov};
+  PAL.el().hidden=false;
+  PAL.q().value=''; PAL.q().placeholder=t('스킬·훅·MCP 이름으로 찾기');
+  $('#palhint').innerHTML='';
+  [[t('오르내리기'),'↑ ↓'],[t('선택'),'enter'],[t('닫기'),'esc']].forEach(([lbl,key])=>{
+    const s=el('span',null,lbl+' '); const k=el('kbd',null,key); s.appendChild(k);
+    $('#palhint').appendChild(s);
+  });
+  palRender('');
+  PAL.q().focus();
+}
+
+function palClose(restore){
+  if(!PAL.open) return;
+  PAL.open=false; PAL.el().hidden=true;
+  if(restore && PAL.restore){ sel=PAL.restore.sel; hov=PAL.restore.hov; paintFocus(); }
+  PAL.restore=null;
+}
+
+function palRender(q){
+  const idx=palIndex();
+  let scored;
+  if(!q){
+    scored = idx.slice(0,40).map(o=>({o, m:{hits:[]}}));
+  }else{
+    scored = idx.map(o=>({o, m:fuzzy(q,o.name)})).filter(x=>x.m)
+                .sort((a,b)=>b.m.score-a.m.score).slice(0,40);
+    // 순서를 못 맞추면 한 번 더 느슨하게 본다.
+    // 'arck'로 'arkcli-*'를 찾는 것처럼 글자 순서를 헷갈리는 건 흔한 일인데,
+    // 눈앞에 보이는 항목이 안 나오면 도구가 고장난 것처럼 느껴진다.
+    if(!scored.length){
+      // 순서만 무시하고 **글자 수는 지킨다**. 중복을 합쳐 버리면
+      // 'zzzz'가 z 하나로 줄어 'size'·'optimization'까지 걸린다(실제로 걸렸다).
+      const need={};
+      for(const c of q.toLowerCase()) if(c.trim()) need[c]=(need[c]||0)+1;
+      scored = idx.map(o=>{
+        const h=o.name.toLowerCase();
+        const hits=[];
+        for(const [c,n] of Object.entries(need)){
+          let from=0, found=0;
+          for(let k=0;k<n;k++){
+            const i=h.indexOf(c,from);
+            if(i<0) break;
+            hits.push(i); from=i+1; found++;
+          }
+          if(found<n) return null;      // 필요한 만큼 없으면 탈락
+        }
+        return {o, m:{score:-1, hits:[...new Set(hits)].sort((a,b)=>a-b)}};
+      }).filter(Boolean).sort((a,b)=>a.o.name.length-b.o.name.length).slice(0,40);
+    }
+  }
+  PAL.rows=scored; PAL.idx=0;
+
+  const box=PAL.list(); box.innerHTML='';
+  if(!scored.length){
+    box.appendChild(el('div','palempty',t('맞는 항목이 없다')));
+    paintFocusFor(null);
+    return;
+  }
+  const KIND={hook:t('훅'),doc:t('지침'),skill:t('스킬'),mcp:'MCP',kb:t('지식')};
+  scored.forEach((x,i)=>{
+    const r=el('div','palrow'); r.setAttribute('role','option'); r.dataset.i=i;
+    r.setAttribute('aria-selected', i===0 ? 'true':'false');
+    const k=el('span','kind '+x.o.layer, KIND[x.o.layer]||x.o.layer);
+    const nm=el('span','nm'); nm.appendChild(markup(x.o.name, x.m.hits||[]));
+    r.appendChild(k); r.appendChild(nm);
+    r.appendChild(el('span','meta', x.o.scope==='g'?t('글로벌'):t('프로젝트')));
+    // 훑기만 해도 뒤 계층이 반응한다
+    r.onmouseenter=()=>palMove(i,false);
+    r.onclick=()=>palPick(i);
+    box.appendChild(r);
+  });
+  palMove(0,true);
+}
+
+/// 팔레트에서 고른 항목을 뒤 계층에서 살린다. 칩 hover와 같은 경로다.
+function paintFocusFor(id){ hov=id; sel=null; paintFocus(); }
+
+function palMove(i, quiet){
+  if(!PAL.rows.length) return;
+  PAL.idx=(i+PAL.rows.length)%PAL.rows.length;
+  [...PAL.list().children].forEach((c,n)=>{
+    if(c.dataset.i!==undefined) c.setAttribute('aria-selected', n===PAL.idx?'true':'false');
+  });
+  const row=PAL.list().children[PAL.idx];
+  if(row && !quiet) row.scrollIntoView({block:'nearest'});
+  const hit=PAL.rows[PAL.idx];
+  if(hit){
+    paintFocusFor(hit.o.id);
+    hit.o.el.scrollIntoView({block:'nearest', behavior:'smooth'});
+  }
+}
+
+function palPick(i){
+  const hit=PAL.rows[i ?? PAL.idx]; if(!hit) return;
+  palClose(false);
+  hit.o.el.click();                     // 칩을 실제로 누른 것과 같게 둔다
+  hit.o.el.scrollIntoView({block:'center', behavior:'smooth'});
+}
+
+function toast(msg,bad){
+  const box=el('div','toast'+(bad?' bad':''),msg);
+  document.body.appendChild(box);
+  setTimeout(()=>box.remove(),bad?7000:4200);
+}
+
+/// 하네스를 다시 읽어 화면을 갱신한다. 앱에서만 의미가 있다.
+
+/// 하네스는 **손보면서 켜두는** 도구다. 파일이 바뀌면 화면이 다시 그려지는데,
+/// 그때 무엇이 달라졌는지 말해 주지 않으면 27개 프로젝트 · 100개 칩 중에서
+/// 사람이 눈으로 찾아야 한다. 새로 생긴 것을 잠깐 밝히고, 사라진 것은 세어 알린다.
+let SEEN = null;   // 마지막으로 그린 칩 id 집합. 첫 렌더는 비교하지 않는다(전부 새것이라)
+
+function snapshotChips(){
+  return new Set([...document.querySelectorAll('.chip')].map(c=>c.dataset.id));
+}
+
+/// 다시 그린 뒤 호출한다. 새로 생긴 칩을 잠깐 밝히고, 사라진 개수를 돌려준다.
+function markChanges(){
+  const now = snapshotChips();
+  if(!SEEN){ SEEN = now; return {added:0, gone:0} }
+  let added = 0;
+  now.forEach(id=>{
+    if(SEEN.has(id)) return;
+    added++;
+    const el = document.querySelector('[data-id="'+CSS.escape(id)+'"]');
+    if(!el) return;
+    el.classList.add('fresh');
+    // 한 번만 밝힌다. 클래스를 남겨두면 다음 갱신에서도 새것처럼 보인다.
+    setTimeout(()=>el.classList.remove('fresh'), 2600);
+  });
+  let gone = 0;
+  SEEN.forEach(id=>{ if(!now.has(id)) gone++ });
+  SEEN = now;
+  return {added, gone};
+}
+
+async function reload(){
+  if(!TAURI) return;
+  // 과거 호출 기록은 토글로 바뀌지 않는다 — 1.5GB를 다시 훑지 않는다
+  // (실측: 포함 2.60초 → 생략 0.07초). 셸이 마지막 값을 기억했다가 넘겨주므로
+  // **진단도 같은 근거로 계산된다** — 여기서 화면만 되살리면 진단 숫자가 부푼다.
+  H=await invoke('scan_fast',{lang:LANG});
+  rebuildUse();
+  buildProjectList();
+  render();
+  // 무엇이 달라졌는지 짚는다. 이 도구는 하네스를 **고치면서** 켜두는 물건이라,
+  // 방금 내가 한 일이 화면에 어떻게 반영됐는지가 바로 보여야 한다.
+  const ch = markChanges();
+  if(ch.added || ch.gone) toast(F.changed(ch.added, ch.gone));
+  // 선택을 정리한다. 둘 중 하나다:
+  //  · 항목이 사라졌으면 선택도 놓는다 (하이라이트 없이 엉뚱한 게 잡혀 있는 걸 막는다)
+  //  · 아직 있으면 **인스펙터를 다시 그린다** — 껐는데 버튼이 '끄기'로 남아 있으면
+  //    사용자는 안 먹은 줄 안다
+  if(sel){
+    if(document.querySelector('[data-id="'+CSS.escape(sel)+'"]')){
+      paintFocus(); reinspect(sel);
+    }else{
+      sel=null; hov=null; paintFocus(); clearInspector();
+    }
+  }
+}
+
+
+/// ── 지금 돌고 있는 세션 ────────────────────────────────────────────────
+/// 스캔 결과는 파일을 고칠 때만 바뀌지만 이건 초 단위로 바뀐다. 그래서
+/// **전체 render() 를 부르지 않는다** — 호버마다 DOM 을 갈아치웠다가 클릭이
+/// 통째로 죽은 적이 있다. 여기서는 숫자와 점만 덧칠한다.
+let SESS=[];
+
+/// 초를 사람이 읽는 길이로. 큰 단위 하나만 쓴다.
+function durOf(sec){
+  if(sec==null) return null;
+  if(sec<60) return LANG==='en'?`${sec}s`:`${sec}초`;
+  if(sec<3600) return LANG==='en'?`${Math.floor(sec/60)}m`:`${Math.floor(sec/60)}분`;
+  if(sec<86400) return LANG==='en'?`${Math.floor(sec/3600)}h`:`${Math.floor(sec/3600)}시간`;
+  return LANG==='en'?`${Math.floor(sec/86400)}d`:`${Math.floor(sec/86400)}일`;
+}
+/// 5분 안에 기록이 쓰였으면 '지금 뭔가 하는 중'으로 본다.
+const HOT=300;
+const isHot=s=>s.idle_secs!=null && s.idle_secs<HOT;
+
+function paintSessions(){
+  const btn=$('#sLive'); if(!btn) return;
+  btn.hidden = !SESS.length;
+  $('#sSess').textContent=SESS.length;
+  btn.title=t('지금 돌고 있는 Claude Code');
+  // 프로젝트 줄에 점을 얹는다. 경로가 정확히 같은 것만 — 이름만 같은 남의
+  // 프로젝트에 불을 켜면 그게 곧 오탐이다.
+  const byPath=new Map();
+  SESS.forEach(s=>{ if(s.cwd) byPath.set(s.cwd, (byPath.get(s.cwd)||[]).concat([s])) });
+  document.querySelectorAll('#pjList .pj').forEach(b=>{
+    const old=b.querySelector('.now'); if(old) old.remove();
+    const here=byPath.get(b.dataset.path); if(!here) return;
+    const d=el('span','now'+(here.some(isHot)?'':' idle'));
+    d.title=F.sessOn(here.length);
+    b.querySelector('.nm').appendChild(d);
+  });
+}
+
+/// 세션 목록을 인스펙터에 편다. 하네스 구조가 아니라 **지금 상태**를 보는 자리다.
+function inspectSessions(){
+  sel=null; hov=null; paintFocus();
+  $('#iK').textContent=t('도는 세션');
+  $('#iN').textContent=SESS.length;
+  $('#iM').textContent=t('지금 돌고 있는 Claude Code');
+  const b=$('#iB'); b.innerHTML='';
+  SESS.forEach(s=>{
+    const box=el('div','sess'+(isHot(s)?' hot':''));
+    box.appendChild(el('div','w', s.cwd ? short(s.cwd) : '—'));
+    const m=el('div','m');
+    m.appendChild(el('span',null,'pid '+s.pid));
+    m.appendChild(el('span',null,F.sessUp(durOf(s.uptime_secs))));
+    m.appendChild(el('span',null, s.idle_secs!=null ? F.sessAgo(durOf(s.idle_secs)) : t('활동 기록 없음')));
+    box.appendChild(m);
+    b.appendChild(box);
+  });
+  // 이 값이 무엇을 재는지 숨기지 않는다 — pid 와 세션 파일을 잇는 정확한 방법이 없다
+  const note=el('div','m',t('이 폴더의 기록이 마지막으로 쓰인 때다. 같은 폴더에서 두 세션이 돌면 둘 다 같은 값을 가리킨다.'));
+  note.style.cssText='font-size:10.5px;color:var(--ink-3);line-height:1.55;margin-top:4px';
+  b.appendChild(note);
+}
+
+async function pollSessions(){
+  if(!TAURI) return;
+  try{ SESS=await invoke('sessions') }catch(e){ SESS=[] }
+  paintSessions();
+}
+
+function clearInspector(){
+  $('#iK').textContent=t('선택 없음');
+  $('#iN').textContent=t('항목을 눌러봐');
+  $('#iM').textContent=t('칩에 올리면 연결이 곡선으로 뜨고, 누르면 고정된다.');
+  $('#iB').innerHTML='';
+}
+
+/// id만으로 그 항목을 다시 찾아 인스펙터를 갱신한다.
+function reinspect(id){
+  const i=id.indexOf(':'), j=id.indexOf(':', i+1);
+  const layer=id.slice(0,i), sc=id.slice(i+1,j), name=id.slice(j+1);
+  const c=chips(layer,sc).find(x=>x.n===name);
+  if(c) inspect(layer,c,id,sc); else clearInspector();
+}
+
+/// 지금 보고 있는 프로젝트에서 **실제로 걸리는** 진단.
+/// 주인이 없는 것(글로벌 설정 이야기)은 어느 프로젝트를 보든 늘 해당된다.
+function visibleDiagnoses(){
+  return H.diagnoses.filter(x => !x.project || (cur && x.project===cur.path));
+}
+
+function buildDiagnoses(){
+const dl=$('#dl');
+dl.innerHTML='';
+const list=visibleDiagnoses();
+// 프로젝트를 옮겼는데 짚어둔 진단이 여기 없으면 놓는다 —
+// 안 그러면 화면에 없는 것을 짚고 있는 상태가 된다
+if(diagSel && !list.some(x=>x.rule===diagSel && (!x.project || x.project===cur?.path))) diagSel=null;
+list.forEach(x=>{
+  const li=el('li','d '+x.severity);
+  const head=el('div','t',x.title);
+  // 같은 규칙이 스코프별로 갈리면 **제목이 똑같이 두 번** 뜬다
+  // (실측: "대상이 사라진 심볼릭 링크 1개" 가 글로벌 것과 project-b 것으로 나란히).
+  // 어느 쪽 이야기인지 적어야 고칠 자리를 안다.
+  if(x.project){
+    const own=H.projects.find(p=>p.path===x.project);
+    head.appendChild(el('span','own', own?own.name:'—'));
+  }
+  li.appendChild(head);
+  li.appendChild(el('div','c',x.detail));
+  const ev=el('div','ev');x.evidence.slice(0,12).forEach(e=>ev.appendChild(el('div',null,'· '+short(e))));
+  if(x.evidence.length>12)ev.appendChild(el('div',null,F.more(x.evidence.length-12)));
+  li.appendChild(ev);
+  li.dataset.rule=x.rule;
+  if(x.rule===diagSel) li.classList.add('pick');
+  li.onclick=()=>{
+    // 같은 걸 다시 누르면 짚기를 놓는다 — 켜기만 되고 못 끄면 화면이 갇힌다
+    diagSel = (diagSel===x.rule) ? null : x.rule;
+    [...dl.children].forEach(n=>n.classList.toggle('pick', n.dataset.rule===diagSel));
+    refreshFlags();
+    paintFocus();
+  };
+  dl.appendChild(li)});
+// 헤더는 하네스 **전체**의 건강 상태다(프로젝트·스킬 수와 같은 기준).
+// 지금 화면에 걸리는 것만 세면 프로젝트를 옮길 때마다 숫자가 널뛴다.
+$('#sDiag').textContent=H.diagnoses.length;
+}
+
+
+/// 프로젝트 좁히기. 27개가 한 줄씩 쌓이면 눈으로 훑는 것보다 치는 게 빠르다.
+/// 위쪽 Cmd+K 팔레트와 **다른 일**을 한다 — 저건 항목을 찾아 가는 것이고, 이건 목록을 줄이는 것이다.
+const PJQ={
+  box:()=>$('#pjq'), input:()=>$('#pjqi'), btn:()=>$('#pjFind'),
+  open(on){
+    const b=this.box();
+    if(on===undefined) on=!b.classList.contains('open');
+    b.classList.toggle('open', on);
+    this.btn().setAttribute('aria-pressed', on);
+    // 좁히는 동안에는 정렬 아이콘이 비킨다. 입력창이 그 위를 반쯤 덮으면 지저분하고,
+    // 좁히는 중에 정렬을 바꿀 일도 없다.
+    $('#pjSort').classList.toggle('hide', on);
+    if(on){ this.input().focus(); this.input().select(); }
+    else { this.input().value=''; this.apply(''); }
+  },
+  /// 목록을 좁힌다. 팔레트와 같은 퍼지 매칭을 쓴다 — 두 군데가 다르게 걸리면
+  /// 같은 글자를 쳤는데 결과가 달라 보인다.
+  apply(q){
+    const rows=[...document.querySelectorAll('#pjList .pj')];
+    if(!q){ rows.forEach(b=>b.hidden=false); $('#pjNone').hidden=true; return }
+    const s=q.toLowerCase();
+    // **이름에 그대로 들어 있는 것이 있으면 그것만 보여준다.**
+    // 퍼지는 오타나 줄임말을 건지는 그물이지, 정확히 맞는 게 있는데도 흩뿌리라는 뜻이 아니다
+    // (실측: `ho` 로 honor-* 를 찾는데 slack-orc**h**estrat**o**r 까지 걸려 나왔다).
+    const exact=rows.filter(b=>(b.dataset.name||'').toLowerCase().includes(s));
+    const keep=new Set(exact.length ? exact : rows.filter(b=>fuzzy(s,b.dataset.name||'')!==null));
+    rows.forEach(b=>b.hidden=!keep.has(b));
+    $('#pjNone').hidden = keep.size>0;
+  }
+};
+
+
+
+/// 떠다니는 작은 메뉴. **정렬 고르기와 우클릭이 같은 것을 쓴다** —
+/// 생김새가 두 벌이면 같은 조작인데 다른 물건처럼 보인다.
+const MENU={
+  el:()=>$('#ctx'),
+  /// items: [{label, on, checked, danger}]  ·  anchor 는 {x,y} 또는 기준 요소
+  open(anchor, items){
+    const m=this.el(); m.innerHTML='';
+    items.forEach(it=>{
+      const b=el('button','mi'+(it.checked?' on':''), it.label);
+      b.type='button'; b.setAttribute('role','menuitem');
+      b.onclick=()=>{ this.close(); it.on&&it.on(); };
+      m.appendChild(b);
+    });
+    m.hidden=false;
+    // 화면 밖으로 나가지 않게 민다. 오른쪽 끝 프로젝트 목록에서 열면 쉽게 넘친다.
+    const r=m.getBoundingClientRect();
+    let x, y;
+    if(anchor && anchor.getBoundingClientRect){
+      const a=anchor.getBoundingClientRect(); x=a.left; y=a.bottom+4;
+      this._from=anchor;
+    }else{ x=anchor.x; y=anchor.y; this._from=null; }
+    m.style.left=Math.max(6, Math.min(x, innerWidth  - r.width  - 6))+'px';
+    m.style.top =Math.max(6, Math.min(y, innerHeight - r.height - 6))+'px';
+    // **연 버튼 자신은 바깥이 아니다.** 여기서 닫아 버리면 곧이어 오는 click 이
+    // "닫혀 있으니 열자"로 읽혀 다시 열린다 — 다시 눌러도 안 닫히는 이유가 그것이었다.
+    this._away = ev=>{
+      if(m.contains(ev.target)) return;
+      if(this._from && this._from.contains(ev.target)) return;
+      this.close();
+    };
+    this._key  = ev=>{ if(ev.key==='Escape'){ ev.preventDefault(); this.close() } };
+    setTimeout(()=>{ addEventListener('mousedown',this._away); addEventListener('keydown',this._key) },0);
+  },
+  close(){
+    const m=this.el(); if(m.hidden) return;
+    m.hidden=true;
+    removeEventListener('mousedown',this._away); removeEventListener('keydown',this._key);
+    $('#pjSort').setAttribute('aria-expanded','false');
+  }
+};
+
+/// 접어둔 묶음. 고정한 것과 나머지를 따로 여닫는다.
+function folded(){ try{ return new Set(JSON.parse(localStorage.getItem('harnitor-folded')||'[]')) }catch(e){ return new Set() } }
+function toggleFold(key){
+  const f=folded();
+  f.has(key) ? f.delete(key) : f.add(key);
+  try{ localStorage.setItem('harnitor-folded', JSON.stringify([...f])) }catch(e){}
+  buildProjectList();
+}
+
+/// 프로젝트를 어떤 순서로 볼 것인가. **앱을 켤 때 정해지고 그대로 간다** —
+/// 작업하면서 커밋이 쌓일 때마다 목록이 움직이면 방금 누른 자리가 딴 데로 간다.
+let SORT = (()=>{ try{ return localStorage.getItem('harnitor-sort')||'recent' }catch(e){ return 'recent' } })();
+const SORT_ORDER = ['recent','name','skills'];
+const SORT_LABEL = () => ({recent:t('활성화순'), name:t('이름순'), skills:t('스킬순')})[SORT];
+
+/// 위에 붙여둔 프로젝트. 여러 개 붙일 수 있고, 정렬을 바꿔도 위에 남는다.
+function pins(){ try{ return new Set(JSON.parse(localStorage.getItem('harnitor-pins')||'[]')) }catch(e){ return new Set() } }
+function setPins(set){ try{ localStorage.setItem('harnitor-pins', JSON.stringify([...set])) }catch(e){} }
+function togglePin(path){
+  const p=pins();
+  p.has(path) ? p.delete(path) : p.add(path);
+  setPins(p);
+  buildProjectList();
+}
+
+/// 정렬한 프로젝트. **붙여둔 것이 먼저**, 그 안에서는 고른 규칙을 따른다.
+function sortedProjects(){
+  const by = {
+    // 커밋 시각이 없는 것(git 아님)은 뒤로. 없는 값을 0으로 두면 "아주 오래된 것"처럼 섞인다
+    recent:(a,b)=>(b.last_commit||0)-(a.last_commit||0) || a.name.localeCompare(b.name),
+    name:(a,b)=>a.name.localeCompare(b.name),
+    skills:(a,b)=>b.skills.length-a.skills.length || a.name.localeCompare(b.name),
+  }[SORT] || ((a,b)=>a.name.localeCompare(b.name));
+  const arr=[...H.projects].sort(by), P=pins();
+  return [...arr.filter(p=>P.has(p.path)), ...arr.filter(p=>!P.has(p.path))];
+}
+
+function buildProjectList(){
+const list=$('#pjList');
+list.innerHTML='';
+const P=pins(), rows=sortedProjects(), F0=folded();
+const mkRow=(p)=>{
+  const b=el('button','pj');b.type='button';b.dataset.path=p.path;b.dataset.name=p.name;
+  const nm=el('div','nm');nm.appendChild(el('span','gd'+(p.is_git?'':' no')));
+  nm.appendChild(document.createTextNode(p.name));
+  b.appendChild(nm);
+  b.appendChild(el('div','c',F.railCount(p.skills.length,p.mcp.length,p.duplicate_paths.length)));
+  b.onclick=()=>{cur=p;sel=null;hov=null;
+    document.querySelectorAll('#pjList .pj').forEach(c=>c.setAttribute('aria-current','false'));
+    b.setAttribute('aria-current','true');
+    // 옆 패널에 남의 프로젝트에서 고른 항목이 그대로 있으면, 거기 뜬 끄기 버튼이
+    // **지금 보는 프로젝트의 것처럼** 보인다. 옮길 때는 놓는다.
+    clearInspector();buildDiagnoses();render();
+    if(ARCH.on) ARCH.show();
+    if(BP.on) BP.show();};
+  // 고정은 우클릭으로. 줄마다 압정을 띄우면 27개가 목록 읽기를 방해한다.
+  b.oncontextmenu=e=>{
+    e.preventDefault();
+    const on=pins().has(p.path);
+    MENU.open({x:e.clientX,y:e.clientY},[
+      {label: on?t('위 고정 풀기'):t('위에 고정'), on:()=>togglePin(p.path)},
+    ]);
+  };
+  return b;
+};
+/// 묶음 하나. 머리를 누르면 접힌다.
+const mkGroup=(key,label,items)=>{
+  if(!items.length) return;
+  const open=!F0.has(key);
+  const g=el('div','grp'+(open?'':' fold'));
+  const h=el('button','gh');h.type='button';h.setAttribute('aria-expanded',open);
+  h.innerHTML='<svg class="cv" viewBox="0 0 10 10" width="8" height="8" aria-hidden="true">'+
+    '<path d="M2.5 1.5 L7 5 L2.5 8.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  h.appendChild(el('span',null,label));
+  h.appendChild(el('span','n',items.length));
+  h.onclick=()=>toggleFold(key);
+  const body=el('div','gb');
+  items.forEach(p=>body.appendChild(mkRow(p)));
+  g.appendChild(h);g.appendChild(body);
+  list.appendChild(g);
+};
+mkGroup('pin', t('고정됨'), rows.filter(p=>P.has(p.path)));
+mkGroup('all', t('프로젝트'), rows.filter(p=>!P.has(p.path)));
+// **보던 프로젝트를 지킨다.** 목록을 다시 그릴 때마다 스킬이 제일 많은 데로 돌리면,
+// 스킬 하나 껐다고 화면이 남의 프로젝트로 튄다 — 그러면 방금 뭘 껐는지도 못 본다.
+// 경로로 다시 찾는 이유는 스캔이 새 객체를 만들기 때문이다(같은 프로젝트라도 참조가 다르다).
+// 처음 열 때는 **목록 맨 위**를 고른다. 정렬이 "최근순" 이면 방금 만지던 프로젝트가
+// 거기 있다 — 스킬이 제일 많은 데를 고르던 옛 방식은 정렬을 바꿔도 늘 같은 데로 갔다.
+const keep = cur && H.projects.find(p=>p.path===cur.path);
+cur = keep || (rows.length ? rows[0] : null);
+// 정렬·핀으로 순서가 바뀌므로 **경로로 찾는다.** 인덱스로 짚으면 엉뚱한 줄이 켜진다.
+if(cur){ const b=list.querySelector('.pj[data-path="'+CSS.escape(cur.path)+'"]'); if(b) b.setAttribute('aria-current','true'); }
+// 목록을 새로 그렸으니 좁히기를 다시 얹는다. 안 하면 스캔 뒤에 필터가 풀린다.
+if($('#pjq').classList.contains('open')) PJQ.apply($('#pjqi').value.trim());
+$('#sProj').textContent=H.projects.length;
+$('#pjSort').title=SORT_LABEL();
+paintSessions();
+buildDiagnoses();
+refreshFlags();
+}
+const list=$('#pjList');
+$('#tUse').onclick=e=>{showUse=!showUse;e.target.setAttribute('aria-pressed',showUse);render()};
+$('#tIdle').onclick=e=>{idleOnly=!idleOnly;e.target.setAttribute('aria-pressed',idleOnly);sel=null;render()};
+$('#wrap').addEventListener('click',e=>{if(e.target===e.currentTarget){sel=null;hov=null;paintFocus()}});
+new ResizeObserver(()=>{cacheRects();wires(sel||hov?related(sel||hov):null)}).observe($('#wrap'));
+
+/// 화면에 아무것도 안 뜨는 것보다 **왜 안 뜨는지 뜨는 편이 낫다**.
+/// 조용히 빈 화면이 되면 원인을 찾을 단서가 사라진다.
+/// 부팅 스플래시 제어. 마크업은 HTML에 이미 떠 있고, 여기서는 **걷는 일만** 한다.
+/// '그려서 띄우는' 구조로 만들면 그리기 전에 죽었을 때 다시 빈 화면이 된다.
+const SPLASH={
+  t:null, born:performance.now(),
+  start(){ this.t=setTimeout(()=>{
+    const s=document.getElementById('splash');
+    // 3초를 넘기면 왜 오래 걸리는지 말해 준다. 진행률을 지어내지는 않는다 —
+    // 스캐너가 단계를 알려주지 않는데 막대를 채우면 그건 거짓말이다.
+    if(s) s.querySelector('.slow').classList.add('on');
+  },3000) },
+  stop(){ clearTimeout(this.t); this.t=null },
+  /// minMs: 최소 노출. 스캔이 빨리 끝나면 진입 애니메이션이 중간에 잘려 번쩍이고 만다.
+  /// 앱은 층이 다 쌓이고 신호가 한 번 흐를 때까지 기다리고,
+  /// CLI 리포트는 데이터가 이미 손에 있으므로 0 — 볼 때마다 기다릴 이유가 없다.
+  done(minMs){
+    this.stop();
+    const s=document.getElementById('splash'); if(!s) return;
+    const wait=Math.max(0,(minMs||0)-(performance.now()-this.born));
+    setTimeout(()=>{ s.classList.add('gone'); setTimeout(()=>s.remove(),360) }, wait);
+  }
+};
+
+function fatal(title, detail){
+  SPLASH.stop();
+  document.body.innerHTML='';
+  const box=el('div','fatal');
+  box.appendChild(el('h2',null,title));
+  box.appendChild(el('pre',null,detail));
+  document.body.appendChild(box);
+}
+
+/// HTML에 박힌 정적 텍스트를 현재 언어로 바꾼다.
+/// 원문(한국어)을 키로 쓰므로 `data-i18n` 요소는 처음 값을 원본으로 기억해 둔다.
+function applyStaticI18n(){
+  // 자리표시 글도 화면에 뜨는 말이다 — 빠뜨리면 영어 화면에 한국어가 한 줄 남는다
+  document.querySelectorAll('[data-i18n-ph]').forEach(e=>{
+    if(!e.dataset.ko) e.dataset.ko=e.placeholder;
+    e.placeholder=t(e.dataset.ko);
+  });
+  document.querySelectorAll('[data-i18n]').forEach(e=>{
+    if(!e.dataset.ko) e.dataset.ko=e.textContent.trim();
+    e.textContent=t(e.dataset.ko);
+  });
+  // 제목은 render() 에서 프로젝트 이름으로 정한다. 여기서는 손대지 않는다.
+  if(!H || !H.projects || !H.projects.length){
+    document.title = LANG==='en' ? 'Harnitor — Harness Report' : 'Harnitor 하네스 리포트';
+  }
+  const st=$('#pjSort'); if(st) st.title=SORT_LABEL();
+  const b=$('#bLang'); if(b) b.textContent = LANG==='en' ? '한국어' : 'EN';
+}
+
+function setLang(next){
+  LANG=next;
+  try{ localStorage.setItem('harnitor-lang',next) }catch(e){}
+  applyStaticI18n();
+  if(H){ buildProjectList(); render(); clearInspector(); }
+  // 진단 문구는 화면 사전이 아니라 **코어가 만든다**(숫자가 박힌 문장이라 키가 안 나온다).
+  // 그래서 언어를 바꾸면 다시 받아야 한다 — 안 하면 진단만 옛 언어로 남는다.
+  if(TAURI) reload();
+}
+
+async function boot(){
+  // 스플래시 문구부터 현재 언어로 맞춘다 — 스캔이 도는 2.4초 동안
+  // 영어 사용자에게 한국어가 떠 있으면 안 된다.
+  try{ applyStaticI18n() }catch(e){}
+  SPLASH.start();
+  try{
+    if(!H){
+      if(!TAURI){
+        fatal(t('데이터가 없다'),
+          'window.__TAURI__ 도 __HARNITOR_DATA__ 도 없다.\n\n'+
+          '· CLI 리포트라면: harnitor view 로 다시 만들어라\n'+
+          t('· 앱이라면: tauri.conf.json 의 app.withGlobalTauri 가 true 여야 한다'));
+        return;
+      }
+      H=await invoke('scan',{lang:LANG});
+    }
+  }catch(e){
+    fatal(t('하네스를 읽지 못했다'), String(e && e.stack || e));
+    return;
+  }
+  if(TAURI){
+    $('#bUndo').hidden=false;
+    $('#bUndo').onclick=async()=>{
+      busy(t('무엇을 되돌릴지 확인하는 중…'));
+      let peek;
+      try{ peek=await invoke('peek_undo') }
+      catch(e){ idle(); toast('확인하지 못했다: '+e,true); return }
+      idle();
+      if(!peek){ toast('되돌릴 변경이 없다'); return }
+      confirmUndo(peek);
+    };
+    // 하네스가 바뀌면 알아서 다시 그린다 — 손보면서 켜두는 도구라 이게 제품의 일부다
+    // 실패를 삼키지 않는다. `async` 안에서 터진 예외는 window error 로도 안 잡혀서,
+    // 조용히 아무 일도 안 일어난 것처럼 보인다 — 그게 제일 찾기 어렵다.
+    TAURI.event.listen('harness-changed', async ()=>{
+      try{ await reload() }
+      catch(e){ toast(t('갱신하지 못했다')+': '+e, true) }
+    });
+    // 세션은 파일이 아니라 프로세스 사건이라 감시로는 안 잡힌다. 셸이 4초마다 세어 보낸다.
+    TAURI.event.listen('sessions-changed',e=>{ SESS=e.payload||[]; paintSessions() });
+    $('#sLive').onclick=()=>inspectSessions();
+    pollSessions();
+  }
+  try{
+    applyStaticI18n();
+    $('#bFind').onclick=()=>palOpen();
+    $('#tabs').hidden=false;
+    $('#tabHarness').onclick=()=>{ ARCH.hide(); BP.hide() };
+    $('#tabArch').onclick=()=>{ BP.hide(); ARCH.show() };
+    $('#tabBp').onclick=()=>{ ARCH.hide(); BP.show() };
+    $('#bpGo').onclick=()=>{ BP.busy ? BP.stop() : BP.ask() };
+    // 엔터로 보내고 **쉬프트+엔터로 줄을 바꾼다.** 물어볼 말이 한 줄로 끝나지 않는다.
+    // 엔터로 보내고 **쉬프트+엔터로 줄을 바꾼다.**
+    $('#bpq').onkeydown=e=>{
+      if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); BP.ask(); return }
+      if(e.key==='Escape'){ e.preventDefault(); BP.stop(); return }
+      if(e.key==='Backspace' && BP.eatChip()) e.preventDefault();
+    };
+    // 서식이 붙은 붙여넣기는 글자만 받는다 — 칩과 섞이면 모양이 깨진다
+    $('#bpq').addEventListener('paste', e=>{
+      e.preventDefault();
+      const txt=(e.clipboardData||window.clipboardData).getData('text');
+      document.execCommand('insertText', false, txt);
+    });
+    PJQ.btn().onclick=()=>PJQ.open();
+    $('#pjSort').onclick=()=>{
+      const b=$('#pjSort');
+      if(!MENU.el().hidden){ MENU.close(); return }
+      b.setAttribute('aria-expanded','true');
+      MENU.open(b, SORT_ORDER.map(k=>({
+        label:{recent:t('활성화순'),name:t('이름순'),skills:t('스킬순')}[k],
+        checked:SORT===k,
+        on:()=>{ SORT=k; try{ localStorage.setItem('harnitor-sort',k) }catch(e){} buildProjectList(); }
+      })));
+    };
+    PJQ.input().addEventListener('input',e=>PJQ.apply(e.target.value.trim()));
+    PJQ.input().addEventListener('keydown',e=>{
+      // 여기서 Esc 를 먹는다. 안 그러면 아래 전역 처리로 내려가 팔레트 쪽 규칙과 엉킨다.
+      if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); PJQ.open(false); PJQ.btn().focus(); }
+    });
+    PAL.q().addEventListener('input',e=>palRender(e.target.value.trim()));
+    PAL.el().addEventListener('click',e=>{ if(e.target===PAL.el()) palClose(true) });
+    document.addEventListener('keydown',e=>{
+      const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
+      // Cmd+F는 뺏지 않는다 — 그건 웹뷰의 '페이지에서 글자 찾기'이고 그것대로 쓸모가 있다.
+      if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); palOpen(); return }
+      if(e.key==='/' && !typing && !PAL.open){ e.preventDefault(); palOpen(); return }
+      if(!PAL.open) return;
+      if(e.key==='Escape'){ e.preventDefault(); palClose(true) }
+      else if(e.key==='ArrowDown'){ e.preventDefault(); palMove(PAL.idx+1) }
+      else if(e.key==='ArrowUp'){ e.preventDefault(); palMove(PAL.idx-1) }
+      else if(e.key==='Enter'){ e.preventDefault(); palPick() }
+    });
+    const lb=$('#bLang'); if(lb) lb.onclick=()=>setLang(LANG==='en'?'ko':'en');
+    rebuildUse();
+    buildProjectList();
+    render();
+    markChanges();          // 첫 화면을 기준으로 삼는다(여기서는 아무것도 안 밝힌다)
+    SPLASH.done(TAURI?1650:0);
+  }catch(e){ fatal(t('화면을 그리지 못했다'), String(e && e.stack || e)); }
+}
+boot();
+</script></body></html>

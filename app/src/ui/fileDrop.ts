@@ -11,6 +11,8 @@ export const DROP_EVENT = 'honor-drop';
 export const DROP_PATHS_EVENT = 'honor-drop-paths';
 /** 스페이스 문서 편집기에 놓은 파일 — SpaceEditor 가 그림 블록으로 넣는다 */
 export const DOC_DROP_EVENT = 'honor-doc-drop';
+/** 세션 브라우저 크게 보기 화면에 놓은 파일(detail = {paths, x, y}) — 모달이 그 자리 파일 칸에 넣는다 */
+export const AGENT_DROP_EVENT = 'honor-agent-drop';
 /** 문서 편집기 위를 지나는 중(detail = {x,y}, 벗어나면 null) — 놓일 자리 줄을 그린다 */
 export const DOC_OVER_EVENT = 'honor-doc-over';
 
@@ -49,6 +51,14 @@ export function installFileDrop(): () => void {
       overDoc = null;
       doc.dispatchEvent(new CustomEvent(DOC_OVER_EVENT, { detail: null }));
       if (e.paths?.length) doc.dispatchEvent(new CustomEvent(DOC_DROP_EVENT, { detail: { paths: e.paths, x: e.x, y: e.y } }));
+      return;
+    }
+    // 세션 브라우저 크게 보기 화면 위면 그 페이지에 놓는다(모달이 앱 창 전체를 덮으니 다른 칸보다 먼저)
+    const abm = (document.elementFromPoint(e.x, e.y) as HTMLElement | null)?.closest<HTMLElement>('.abm-screen') ?? null;
+    if (abm) {
+      if (e.type === 'over') return light(abm);
+      light(null);
+      if (e.paths?.length) abm.dispatchEvent(new CustomEvent(AGENT_DROP_EVENT, { detail: { paths: e.paths, x: e.x, y: e.y } }));
       return;
     }
     // 리더 패널 위면 파일을 탭으로 연다(터미널 붙여넣기 대신)

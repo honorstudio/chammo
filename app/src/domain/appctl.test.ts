@@ -12,6 +12,10 @@ describe('intentOf — scripts/app 한 줄 → 앱이 할 일', () => {
   it('기능 켜기·끄기 — "이름 on|off"', () => {
     expect(intentOf({ action: 'feature', arg: 'office off' })).toEqual({ kind: 'feature', name: 'office', on: false });
     expect(intentOf({ action: 'feature', arg: 'tama on' })).toEqual({ kind: 'feature', name: 'tama', on: true });
+    // 무인 기계 — 참모가 scripts/app feature autoRevive on 으로 켠다(2026-10-01 아이맥)
+    expect(intentOf({ action: 'feature', arg: 'autoRevive on' })).toEqual({ kind: 'feature', name: 'autoRevive', on: true });
+    // 화면 조종 모든 프로젝트(2026-10-05)
+    expect(intentOf({ action: 'feature', arg: 'computerUse on' })).toEqual({ kind: 'feature', name: 'computerUse', on: true });
   });
 
   it('열기·닫기·세션으로 가기·다마고치', () => {
@@ -20,6 +24,18 @@ describe('intentOf — scripts/app 한 줄 → 앱이 할 일', () => {
     expect(intentOf({ action: 'focus', arg: ' acme-shop ' })).toEqual({ kind: 'focus', target: 'acme-shop' });
     expect(intentOf({ action: 'pet', arg: 'show' })).toEqual({ kind: 'pet', show: true });
     expect(intentOf({ action: 'pet', arg: 'hide' })).toEqual({ kind: 'pet', show: false });
+  });
+
+  it('하니터 열고 닫기 — 오케스트레이터가 하네스를 보여 줄 때(2026-10-01 사용자)', () => {
+    expect(intentOf({ action: 'open', arg: 'harnitor' })).toEqual({ kind: 'open', what: 'harnitor' });
+    expect(intentOf({ action: 'close', arg: 'harnitor' })).toEqual({ kind: 'close', what: 'harnitor' });
+    expect(openShortcut('harnitor')).toBeNull();
+  });
+
+  it('도구 열고 닫기 — 위 막대 아이콘과 같은 화면(2026-10-05)', () => {
+    expect(intentOf({ action: 'open', arg: 'tools' })).toEqual({ kind: 'open', what: 'tools' });
+    expect(intentOf({ action: 'close', arg: 'tools' })).toEqual({ kind: 'close', what: 'tools' });
+    expect(openShortcut('tools')).toBeNull();
   });
 
   it('모르는 동작·인자·깨진 줄은 무시', () => {
@@ -89,5 +105,22 @@ describe('intentOf — 설정 다시 읽기(참모 scripts/app project 가 confi
   it('config reload 만 받는다', () => {
     expect(intentOf({ action: 'config', arg: 'reload' })).toEqual({ kind: 'reload' });
     expect(intentOf({ action: 'config', arg: 'wipe' })).toBeNull();
+  });
+});
+
+describe('focus --terminal — 터미널(CLI)은 명시할 때만 (2026-10-02 사용자)', () => {
+  // "acme-shop 이랑 todo-api 거 화면에 띄워 줘" 가 문서를 보자는 말이었는데 세션 CLI 가 떴다
+  it('--terminal 이 붙으면 터미널로, 없으면 스페이스로', () => {
+    expect(intentOf({ action: 'focus', arg: '--terminal acme' })).toEqual({ kind: 'focus', target: 'acme', terminal: true });
+    expect(intentOf({ action: 'focus', arg: 'acme' })).toEqual({ kind: 'focus', target: 'acme' });
+  });
+});
+
+describe("intentOf orch-label — 폰에서 바꾼 참모 별명을 맥 앱 별명에(2026-10-04 사용자 '이름 바꾸기 폰에서도')", () => {
+  it('id·nick 이 글이면 label, 아니면 무시', () => {
+    expect(intentOf({ action: 'orch-label', arg: { id: 'aaaa0001', nick: '디자인' } })).toEqual({ kind: 'label', id: 'aaaa0001', nick: '디자인' });
+    expect(intentOf({ action: 'orch-label', arg: { id: 'aaaa0001', nick: '' } })).toEqual({ kind: 'label', id: 'aaaa0001', nick: '' });
+    expect(intentOf({ action: 'orch-label', arg: { id: 1, nick: 'x' } })).toBeNull();
+    expect(intentOf({ action: 'orch-label', arg: 'aaaa0001 x' })).toBeNull();
   });
 });

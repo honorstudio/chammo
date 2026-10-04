@@ -77,3 +77,12 @@ describe('code 가 빈 키(원격 입력·일부 입력기) — key 로 대신 �
     expect(shortcutFor(k('b', '', { ctrl: true }), true)).toBeNull();
   });
 });
+
+describe('윈도우 뒤로·앞으로 — Ctrl+[ 는 터미널 Esc 라 뺏지 않는다', () => {
+  it('Ctrl+Shift+[ ] = ⌘[ ⌘], Ctrl+[ 는 터미널로', () => {
+    expect(shortcutFor(k('{', 'BracketLeft', { ctrl: true, shift: true }), true)).toEqual({ type: 'nav', dir: -1 });
+    expect(shortcutFor(k('}', 'BracketRight', { ctrl: true, shift: true }), true)).toEqual({ type: 'nav', dir: 1 });
+    expect(shortcutFor(k('[', 'BracketLeft', { ctrl: true }), true)).toBeNull();
+  });
+  it('화면 표기도 Ctrl+Shift+[', () => expect(keyLabel('⌘[', true)).toBe('Ctrl+Shift+['));
+});

@@ -62,10 +62,10 @@ describe('nextForward — 하위 세션 선택지 창을 참모에게 넘길 때
 
 describe('forwardText — 참모 입력칸에 들어갈 한 줄', () => {
   it('어디·세션 id·읽고 답하는 명령', () => {
-    const t = forwardText(asking('92dd8234', { project: 'video-app', name: 'project-x-video' }));
+    const t = forwardText(asking('c0ffee01', { project: 'video-app', name: 'project-x-video' }));
     expect(t).toContain('video-app');
     expect(t).toContain('project-x-video');
-    expect(t).toContain('scripts/choice show 92dd8234');
+    expect(t).toContain('scripts/choice show c0ffee01');
     expect(t).not.toContain('\n');
   });
 });
@@ -153,5 +153,70 @@ describe('넘기기 실패는 세 번까지만 다시 — 윈도우에서 답장
     expect(retryAfterFail(fails, 'a')).toBe(true);
     expect(retryAfterFail(fails, 'a')).toBe(false);
     expect(retryAfterFail(fails, 'b')).toBe(true); // 다른 세션은 따로 센다
+  });
+});
+
+import { forwardTo, inputWaitText } from './forwardQuestion';
+import type { TaskEvent } from './tasks';
+
+describe('forwardTo — 멈춘 하위 세션을 맡긴 참모에게(2026-10-03: 개발 담당 세션 알림이 맨 앞 참모에게 4번 갔다)', () => {
+  const front = s('o-front', { name: '참모-2 · 참모 업데이트', state: 'idle' });
+  const dev = s('o-dev', { name: '참모-5 · 개발 담당', state: 'idle' });
+  const orchs = [front, dev];
+  const sub = asking('a1b2c3d4', { name: 'project-b-fix', project: 'project-b' });
+  const other = s('e5f6a7b8', { name: 'project-b-ui', project: 'project-b' });
+  const send = (task: string, target: string, from: string, ts = '2026-10-03T01:00:00Z'): TaskEvent => ({ ts, type: 'send', task, target, from });
+  const all = [front, dev, sub, other];
+
+  it('그 세션에 마지막으로 일을 보낸 참모', () => {
+    const ev = [send('t1', 'project-b-fix', 'o-front', '2026-10-03T00:00:00Z'), send('t2', 'project-b-fix [a1b2c3d4]', 'o-dev', '2026-10-03T01:00:00Z')];
+    expect(forwardTo(sub, ev, orchs, all, front)?.id).toBe('o-dev');
+  });
+  it('넘겨받은 일(own)이면 새 주인', () => {
+    const ev = [send('t1', 'project-b-fix', 'o-front'), { ts: '2026-10-03T02:00:00Z', type: 'own', task: 't1', from: 'o-dev' } as TaskEvent];
+    expect(forwardTo(sub, ev, orchs, all, front)?.id).toBe('o-dev');
+  });
+  it('맡긴 기록이 없으면 그 프로젝트를 최근에 맡긴 참모', () => {
+    expect(forwardTo(sub, [send('t3', 'project-b-ui', 'o-dev')], orchs, all, front)?.id).toBe('o-dev');
+  });
+  it('맡긴 참모가 꺼졌으면 프로젝트 → 그것도 없으면 맨 앞 참모', () => {
+    expect(forwardTo(sub, [send('t1', 'project-b-fix', 'o-gone')], orchs, all, front)?.id).toBe('o-front');
+    expect(forwardTo(sub, [], orchs, all, front)?.id).toBe('o-front');
+  });
+  it('앞 단계로 못 정하면 맡은 일로 고른 참모(heir), 그것도 없으면 맨 앞 — heir 는 앞 단계를 이기지 않는다', () => {
+    const heir = () => dev;
+    expect(forwardTo(sub, [send('t1', 'project-b-fix', 'o-gone')], orchs, all, front, heir)?.id).toBe('o-dev');
+    expect(forwardTo(sub, [send('t1', 'project-b-fix', 'o-gone')], orchs, all, front, () => undefined)?.id).toBe('o-front');
+    expect(forwardTo(sub, [send('t1', 'project-b-fix', 'o-front')], orchs, all, front, heir)?.id).toBe('o-front');
+  });
+});
+
+describe('nextForward — 받을 참모를 세션마다', () => {
+  const dev = s('o-dev', { name: '참모-5', state: 'idle' });
+  it('맡긴 참모가 확인창에 걸려 있으면 그 참모를 기다린다', () => {
+    const r = nextForward([asking('x')], () => ({ ...dev, state: 'blocked' }), new Map([['x', 0]]), GRACE_MS, never);
+    expect(r.sub).toBeUndefined();
+    const r2 = nextForward([asking('x')], () => dev, r.track, GRACE_MS + 1, never);
+    expect(r2.sub?.id).toBe('x');
+    expect(r2.to?.id).toBe('o-dev');
+  });
+  it('넘긴 멈춤은 상태가 잠깐 흔들려도 다시 안 넘긴다 — 세션이 다시 일을 해야 새 멈춤', () => {
+    const a = nextForward([asking('x')], () => dev, new Map([['x', 0]]), GRACE_MS, never);
+    expect(a.sub?.id).toBe('x');
+    const flick = nextForward([s('x', { state: 'blocked' })], () => dev, a.track, GRACE_MS + 1, never); // input needed 가 한 번 빠짐
+    const again = nextForward([asking('x')], () => dev, flick.track, GRACE_MS * 3, never);
+    expect(again.sub).toBeUndefined();
+    const worked = nextForward([s('x', { state: 'working' })], () => dev, again.track, GRACE_MS * 4, never);
+    const next = nextForward([asking('x')], () => dev, worked.track, GRACE_MS * 5, never);
+    expect(nextForward([asking('x')], () => dev, next.track, GRACE_MS * 6, never).sub?.id).toBe('x');
+  });
+});
+
+describe('inputWaitText — input needed 인데 선택지 창(AskUserQuestion)이 아닐 때', () => {
+  it('"입력 기다림"으로, choice 안내 없이', () => {
+    const t = inputWaitText(asking('a1b2c3d4', { name: 'project-b-fix', project: 'project-b' }));
+    expect(t).toContain('입력 기다림');
+    expect(t).not.toContain('choice');
+    expect(t).toContain('a1b2c3d4');
   });
 });

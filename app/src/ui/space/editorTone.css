@@ -1,0 +1,39 @@
+/*
+ * 문서 편집기(BlockNote) 색·손 모양 — 스페이스 문서 페이지·떼어 낸 리더 창 공통.
+ * 기본 파랑(블록 고르면 4px 파란 테두리·글 선택색) 대신 앱 톤, 누를 수 있는 곳은 손가락(2026-10-04 사용자 "파랑 위주·포인터 안 바뀜")
+ */
+.space-editor .bn-editor ::selection { background: color-mix(in srgb, var(--text) 16%, transparent); }
+/* 그림·파일·표 같은 블록을 통째로 고르면 — 파란 테두리 대신 얇은 회색 둘레 */
+.space-editor .bn-block-content.ProseMirror-selectednode > *,
+.space-editor .ProseMirror-selectednode > .bn-block-content > * { outline: 0; box-shadow: 0 0 0 2px var(--line-strong, var(--line)); border-radius: 6px; }
+/* 페이지 블록은 노션처럼 옅은 면으로 */
+.space-editor .bn-block-content[data-content-type="page"].ProseMirror-selectednode > *,
+.space-editor .ProseMirror-selectednode > .bn-block-content[data-content-type="page"] > * { box-shadow: none; }
+.space-editor .ProseMirror-selectednode .cv-pageblock button { background: var(--hover); }
+/* 문서 속 링크 — 파랑 대신 글자색 + 밑줄 */
+.space-editor .bn-editor a { color: inherit; text-decoration: underline; text-decoration-color: var(--line-strong, var(--line)); text-underline-offset: 2px; cursor: pointer; }
+.space-editor .bn-editor a:hover { text-decoration-color: var(--text); }
+.space-editor .bn-editor input[type="checkbox"] { accent-color: var(--text); cursor: pointer; }
+/* 손가락 — 블록 옆 +·메뉴, 떠 있는 메뉴·서식 막대 */
+.space-editor .bn-side-menu button,
+.space-editor .bn-suggestion-menu-item,
+.space-editor .bn-formatting-toolbar button,
+.space-editor .bn-toolbar button,
+.space-editor [role="menuitem"],
+.space-editor [data-file-block] .bn-add-file-button { cursor: pointer; }
+.space-editor .bn-side-menu [draggable="true"] { cursor: grab; }
+/* 블록 끌기(blockDrag.ts) — 놓일 자리는 가로줄(잡은 블록 흐리게는 blockDrag 가 번호로 건다) */
+html.cv-block-dragging, html.cv-block-dragging * { cursor: grabbing !important; user-select: none; }
+.space-editor { position: relative; }
+.sp-drop-line { position: absolute; left: 0; right: 0; height: 3px; margin-top: -1.5px; border-radius: 2px; background: var(--accent); pointer-events: none; z-index: 5; }
+/* 밖에서도 고쳐 저장을 멈췄을 때·파일이 없어졌을 때 — 문서 맨 위에 붙는 알림(docSync.ts). 강조는 옅은 면 + 둘레 */
+.cv-doc-sync { position: sticky; top: 0; z-index: 6; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--text) 6%, var(--surface, var(--bg, #fff))); box-shadow: inset 0 0 0 1px var(--line); font-size: 13px; line-height: 1.5; color: var(--text); }
+.cv-doc-sync span { flex: 1 1 260px; }
+.cv-doc-sync button { all: unset; box-sizing: border-box; cursor: pointer; min-height: 30px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: 8px; font-size: 12.5px; font-weight: 600; color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong, var(--line)); }
+.cv-doc-sync button:hover { background: var(--hover); }
+.cv-doc-sync button.solid { background: var(--text); color: var(--surface, var(--bg, #fff)); box-shadow: none; }
+/* "/" 메뉴 — BlockNote 는 남은 공간 전부(601px)까지 키워 본문을 크게 덮었다(2026-10-04 QA N8). 노션 정도(360px)에서 멈추고 안에서 스크롤.
+   남은 공간이 더 좁으면 그쪽 — 감싼 칸(남은 공간 상한이 붙는 곳)을 세로 flex 로 해서 메뉴가 그 안으로 줄어들게 */
+.space-editor div:has(> .bn-suggestion-menu) { display: flex; flex-direction: column; }
+.space-editor .bn-mantine .bn-suggestion-menu,
+.space-editor .bn-suggestion-menu { max-height: 360px; min-height: 0; flex: 0 1 auto; }

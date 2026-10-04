@@ -1,0 +1,79 @@
+/* 도구 화면 — 줄마다 토글 + 이름 + 한 줄 설명 + 상태 점(2026-10-04). 강조는 옅은 면·전체 테두리만(왼쪽 띠 금지) */
+.tl-body { max-width: 860px; }
+.tl-root { all: unset; cursor: pointer; font-size: 12.5px; color: var(--text-3); padding: 2px 18px 2px 0; background: no-repeat right 2px center / 9px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a8a92' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E"); }
+.tl-root:hover { color: var(--text); }
+.tl-root:focus-visible { box-shadow: 0 0 0 2px var(--accent); border-radius: 4px; }
+.tl-ic { width: 32px; height: 32px; padding: 0; justify-content: center; margin-left: auto; }
+.tl-ic svg { width: 16px; height: 16px; }
+
+.tl-sec { margin: 0 0 28px; }
+.tl-head { display: flex; align-items: center; gap: 10px; min-height: 32px; margin: 0 0 6px; }
+.tl-head h2 { margin: 0; font-size: 13px; font-weight: 700; color: var(--text-2); }
+.tl-hint { font-size: 11.5px; color: var(--text-3); }
+.tl-head > :last-child:not(h2) { margin-left: auto; }
+.tl-empty { padding: 10px 2px; font-size: 12.5px; color: var(--text-3); }
+
+.tl-row { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 4px 10px; border-radius: 10px; }
+.tl-row:hover { background: var(--hover); }
+.tl-row.off .tl-main b { color: var(--text-3); }
+.tl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.tl-main b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-main span { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-row.skill .tl-main b { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; font-weight: 500; }
+.tl-meta { flex: 0 0 auto; font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+
+/* 상태 점 */
+.tl-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong, #c8c8cf); }
+.tl-dot.ok, .tl-dot.builtin { background: var(--idle); }
+.tl-dot.fail { background: var(--danger-ink); }
+.tl-dot.auth { background: var(--blocked); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blocked) 22%, transparent); }
+.tl-dot.pending { background: var(--blocked); }
+.tl-dot.checking { background: transparent; border: 1.5px solid var(--text-3); border-right-color: transparent; animation: tl-spin .8s linear infinite; }
+@keyframes tl-spin { to { transform: rotate(360deg); } }
+
+/* 켜기·끄기 — 44px 누르는 자리 안에 작은 손잡이 */
+.tl-sw { all: unset; flex: 0 0 auto; box-sizing: border-box; width: 44px; height: 36px; display: grid; place-items: center; cursor: pointer; }
+.tl-sw i { position: relative; display: block; width: 32px; height: 18px; border-radius: 999px; background: var(--line-strong, #c8c8cf); transition: background .15s; }
+.tl-sw i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--surface, #fff); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: transform .15s; }
+.tl-sw.on i { background: var(--accent); }
+.tl-sw.on i::after { transform: translateX(14px); background: var(--accent-ink); }
+.tl-sw:disabled { cursor: default; opacity: .4; }
+.tl-sw:focus-visible i { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
+
+/* 이 프로젝트 / 모든 프로젝트 */
+.tl-seg { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); }
+.tl-seg button { all: unset; cursor: pointer; font-size: 11.5px; padding: 3px 10px; border-radius: 6px; color: var(--text-3); }
+.tl-seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+.tl-seg button:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+
+.tl-act { all: unset; flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; color: var(--text-3); cursor: pointer; }
+.tl-act svg { width: 15px; height: 15px; }
+.tl-act:hover { background: var(--hover); color: var(--text); }
+.tl-act:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.tl-find { all: unset; box-sizing: border-box; width: 180px; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); font-size: 12.5px; color: var(--text); background: var(--surface); }
+.tl-find:focus { border-color: var(--text-3); }
+
+.tl-notice { display: flex; align-items: center; gap: 12px; margin: 0 0 18px; padding: 10px 14px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); font-size: 12.5px; color: var(--text-2); }
+.tl-notice .cv-btn { margin-left: auto; }
+.tl-err { margin: 0 0 14px; padding: 10px 14px; border-radius: 10px; background: var(--danger-bg); color: var(--danger-ink); font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
+
+/* 2단계 — 더하기 칸·마켓플레이스·설치 */
+.tl-head.sub { margin-top: 18px; }
+.tl-head h3 { margin: 0; font-size: 12px; font-weight: 700; color: var(--text-3); }
+.tl-sub { margin: 8px 0 4px; }
+.tl-find.wide { width: 100%; }
+.tl-act.on { color: var(--text); background: var(--hover); }
+.tl-act:disabled { opacity: .4; cursor: default; }
+.tl-row .tl-act.hover { opacity: 0; }
+.tl-row:hover .tl-act.hover, .tl-row .tl-act.hover:focus-visible { opacity: 1; }
+.tl-login { flex: 0 0 auto; }
+.tl-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 12px; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); }
+.tl-form input, .tl-form select { all: unset; box-sizing: border-box; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-size: 12.5px; color: var(--text); }
+.tl-form input { width: 140px; }
+.tl-form input.wide { flex: 1; min-width: 220px; }
+.tl-form select { cursor: pointer; padding-right: 26px; background: var(--surface) no-repeat right 9px center / 9px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a8a92' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E"); }
+.tl-form input:focus, .tl-form select:focus-visible { border-color: var(--text-3); }
+.tl-form .cv-btn:disabled { opacity: .45; cursor: default; }
+.tl-head .tl-seg { margin-left: auto; }
+.tl-head .tl-seg ~ :last-child { margin-left: 4px; }
+.tl-form select { line-height: 30px; }

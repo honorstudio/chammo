@@ -1,0 +1,66 @@
+/* 참모 대시보드 '펫' 탭 — 둘레는 앱 무채색 토큰, 초록은 LCD 캔버스(drawSprite) 안에만(시안 tama-v2 v1 B). 상태 클래스는 pv- 접두 */
+.pv { display: flex; flex-direction: column; gap: 14px; padding: 4px 0 32px; max-width: 880px; }
+.pv-blank { color: var(--text-3); font-size: 12.5px; padding: 6px 0; }
+.pv-lcd { display: block; border-radius: 10px; }
+.pv-empty { width: 120px; height: 120px; background: var(--surface-2); }
+.pv-now { display: flex; gap: 18px; align-items: center; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.pv-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.pv-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.pv-name b { font-size: 15px; }
+.pv-name span { color: var(--text-3); font-size: 12px; }
+.pv-stat { display: grid; grid-template-columns: 40px 1fr 44px; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); max-width: 340px; }
+.pv-stat i { height: 5px; border-radius: 3px; background: var(--hover); overflow: hidden; }
+.pv-stat i b { display: block; height: 100%; background: var(--text); border-radius: 3px; }
+.pv-stat em { font-style: normal; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-3); }
+.pv-warn { font-size: 12px; color: var(--danger-ink); }
+.pv-acts { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; align-self: stretch; }
+.pv-ic { all: unset; cursor: pointer; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; color: var(--text-2); }
+.pv-ic:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.pv-ic:disabled { opacity: .35; cursor: default; }
+.pv-ic svg { width: 17px; height: 17px; }
+.pv-coin { all: unset; cursor: pointer; margin-top: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-2); font-variant-numeric: tabular-nums; }
+.pv-coin i { width: 10px; height: 10px; border-radius: 50%; background: #e0b94f; box-shadow: inset -2px -2px 0 #b3871f; }
+.pv-coin:hover { background: var(--hover); color: var(--text); }
+.pv-h { font-size: 13px; font-weight: 600; display: flex; gap: 6px; align-items: baseline; margin-bottom: 6px; }
+.pv-h span { font-weight: 500; color: var(--text-3); font-size: 12px; }
+.pv-fed ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.pv-fed li { display: grid; grid-template-columns: 42px 20px 1fr auto; align-items: center; gap: 8px; padding: 5px 2px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.pv-fed li:last-child { border-bottom: 0; }
+.pv-fed time { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.pv-by { display: inline-flex; }
+.pv-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-fed em { font-style: normal; font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--hover); color: var(--text-2); }
+.pv-fed .pv-more { display: block; color: var(--text-3); }
+.pv-tabs { display: flex; gap: 2px; padding: 3px; background: var(--hover); border-radius: 9px; width: max-content; }
+.pv-tabs button { all: unset; cursor: pointer; padding: 4px 12px; border-radius: 7px; font-size: 12px; color: var(--text-2); }
+.pv-tabs button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+.pv-dex { display: flex; flex-direction: column; gap: 10px; }
+.pv-line { display: grid; grid-template-columns: 64px 1fr; gap: 10px; align-items: start; }
+.pv-line-name { padding-top: 10px; }
+.pv-line-name { font-size: 12px; color: var(--text-3); }
+.pv-cells { display: flex; flex-wrap: wrap; gap: 6px; }
+.pv-cell { width: 36px; height: 36px; border-radius: 8px; display: block; }
+.pv-cell .pv-lcd { border-radius: 8px; }
+.pv-cell.off { background: var(--hover); }
+.pv-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.pv-badge { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px dashed var(--line-strong); color: var(--text-3); cursor: default; }
+.pv-badge.got { border: 1px solid var(--text); background: var(--text); color: var(--surface); }
+.pv-box { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.pv-slot { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); min-height: 48px; }
+.pv-slot .pv-name { flex: 1; flex-direction: column; gap: 0; }
+.pv-slot.off { border-style: dashed; background: transparent; }
+.pv-graves { list-style: none; margin: 0; padding: 0; }
+.pv-graves li { display: flex; gap: 10px; align-items: baseline; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.pv-graves span { color: var(--text-3); font-size: 12px; }
+.pv-foot { display: flex; justify-content: flex-end; }
+.pv-restart { all: unset; cursor: pointer; font-size: 12px; color: var(--text-3); padding: 4px 8px; border-radius: 6px; }
+.pv-restart:hover, .pv-restart.sure { color: var(--danger-ink); background: var(--hover); }
+/* 대시보드 머리의 대시보드·펫 갈래 */
+.cv-seg { display: flex; gap: 2px; padding: 3px; background: var(--hover); border-radius: 9px; }
+.cv-seg button { all: unset; cursor: pointer; padding: 3px 11px; border-radius: 7px; font-size: 12px; color: var(--text-2); }
+.cv-seg button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+/* 터미널 뷰의 다마고치 페이지(사이드바 '다마고치')도 같은 화면 */
+.pv-page { flex: 1; overflow: auto; padding: 20px 24px; }
+/* 대시보드 안 펫 탭 — 주고받은 파일 칸과 같은 여백·스크롤 */
+.cv-pet { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 36px 28px; }
+@container (max-width: 760px) { .cv-pet { padding: 6px 18px 20px; } }

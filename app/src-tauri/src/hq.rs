@@ -19,8 +19,10 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "scripts/task", body: include_str!("../../hq-template/scripts/task"), exec: true },
     TemplateFile { path: "scripts/say", body: include_str!("../../hq-template/scripts/say"), exec: true },
     TemplateFile { path: "scripts/show", body: include_str!("../../hq-template/scripts/show"), exec: true },
+    TemplateFile { path: "scripts/direct", body: include_str!("../../hq-template/scripts/direct"), exec: true },
     TemplateFile { path: "scripts/app", body: include_str!("../../hq-template/scripts/app"), exec: true },
     TemplateFile { path: "scripts/voice-hint", body: include_str!("../../hq-template/scripts/voice-hint"), exec: true },
+    TemplateFile { path: "scripts/orch-roster", body: include_str!("../../hq-template/scripts/orch-roster"), exec: true },
     TemplateFile { path: "scripts/new-project", body: include_str!("../../hq-template/scripts/new-project"), exec: true },
     TemplateFile { path: "scripts/statusline", body: include_str!("../../hq-template/scripts/statusline"), exec: true },
     TemplateFile { path: "scripts/routine", body: include_str!("../../hq-template/scripts/routine"), exec: true },
@@ -87,6 +89,18 @@ pub fn pin_data_dir(dir: &Path, data_dir: &str) -> std::io::Result<()> {
     // 예전엔 주인 개인 상태줄 스크립트만 이 파일을 써서 새 사용자에겐 사용량이 영영 안 떴다(아이맥 실측)
     // 명령은 bash 가 읽는다 — 윈도우 경로의 \ 는 이스케이프로 먹히니 / 로만(C:/Users/…, Git Bash 가 알아듣는다)
     v["statusLine"] = serde_json::json!({ "type": "command", "command": statusline_path(Path::new(data_dir)).to_string_lossy().replace('\\', "/") });
+    // 참모는 사용자에게 선택지 창(AskUserQuestion)을 띄우지 않는다 — 채팅 뷰엔 안 보여 터미널로 가야 했고,
+    // 쉬운 건 스스로 정하고 중요한 것만 답 끝에 글로 묻는 게 참모 일이다(2026-10-01 사용자). 막으면 도구가 아예 빠진다(우회 모드에서도)
+    if !v["permissions"].is_object() {
+        v["permissions"] = serde_json::json!({});
+    }
+    if !v["permissions"]["deny"].is_array() {
+        v["permissions"]["deny"] = serde_json::json!([]);
+    }
+    let deny = v["permissions"]["deny"].as_array_mut().expect("방금 배열로 맞췄다");
+    if !deny.iter().any(|x| x == "AskUserQuestion") {
+        deny.push(serde_json::Value::String("AskUserQuestion".into()));
+    }
     if v == before {
         return Ok(());
     }
@@ -249,6 +263,22 @@ mod tests {
         pin_data_dir(&d, "/Users/me/demo-data").unwrap();
         let again: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join(".claude/settings.json")).unwrap()).unwrap();
         assert_eq!(again, v);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn hq_세션은_선택지_창_도구를_못_쓴다() {
+        // 참모가 사용자에게 선택지 창(AskUserQuestion)을 띄우면 채팅 뷰에선 안 보여 터미널로 가야 했다(2026-10-01 윈도우 참모들).
+        // 막으면 도구가 아예 빠지고 참모는 답 끝에 글로 묻는다 — 우회 모드에서도 막힌다(실측)
+        let d = temp("deny-ask");
+        install(&d, false).unwrap();
+        // 이미 깐 HQ(옛 설정, 사용자가 넣은 deny 가 있을 수도)
+        std::fs::write(d.join(".claude/settings.json"), r#"{"permissions":{"deny":["Bash(rm -rf /)"]}}"#).unwrap();
+        pin_data_dir(&d, "/Users/me/demo-data").unwrap();
+        pin_data_dir(&d, "/Users/me/demo-data").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join(".claude/settings.json")).unwrap()).unwrap();
+        let deny: Vec<&str> = v["permissions"]["deny"].as_array().unwrap().iter().filter_map(|x| x.as_str()).collect();
+        assert_eq!(deny, vec!["Bash(rm -rf /)", "AskUserQuestion"]); // 사용자 것은 그대로, 두 번 불러도 한 번만
         let _ = std::fs::remove_dir_all(&d);
     }
 

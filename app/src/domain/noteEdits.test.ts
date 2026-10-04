@@ -63,3 +63,13 @@ describe('moveId — 할 일 순서 바꾸기(끌어서 다른 줄 위·아래�
     expect(moveId(['a', 'b'], 'x', 'a', true)).toEqual(['a', 'b']);
   });
 });
+
+import { foldedFrom } from './noteEdits';
+describe('foldedFrom — 할 일·결정 판 접힘 기억(localStorage 값)', () => {
+  it('"1" 이면 접힘, 없거나 다른 값·읽기 실패면 펼침', () => {
+    expect(foldedFrom(() => '1')).toBe(true);
+    expect(foldedFrom(() => null)).toBe(false);
+    expect(foldedFrom(() => '0')).toBe(false);
+    expect(foldedFrom(() => { throw new Error('storage blocked'); })).toBe(false);
+  });
+});

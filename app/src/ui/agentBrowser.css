@@ -1,0 +1,85 @@
+/* 세션 브라우저 칸(AgentBrowser) — 크게: 화면 + 아래 작은 터미널 띠 / 작게: 위 작은 브라우저 띠 + 터미널. 클래스는 ab- 접두(전역 짧은 클래스와 안 겹치게) */
+.ab { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #141417; border-radius: 10px; overflow: hidden; }
+.ab-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ab-bar { display: flex; align-items: center; gap: 4px; padding: 6px 8px; background: #1c1c21; }
+.ab-tabs { flex: 1; min-width: 0; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.ab-tab { all: unset; box-sizing: border-box; max-width: 180px; min-height: 28px; padding: 5px 10px; border-radius: 6px; font-size: 12px; color: #a6a6b0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.ab-tab:hover { background: rgba(255, 255, 255, .06); color: #e6e6ec; }
+.ab-tab.ab-on { background: rgba(255, 255, 255, .12); color: #fff; font-weight: 600; }
+/* 대화상자가 떠 있는 탭 — 작은 점(왼쪽 띠 말고) */
+.ab-tab.ab-dlg::after { content: ''; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: #f0a020; vertical-align: middle; }
+.ab-tab:focus-visible, .ab-ic:focus-visible, .ab-strip:focus-visible, .ab-follow:focus-visible { outline: 2px solid #6b8cff; outline-offset: -2px; }
+.ab-follow { all: unset; padding: 5px 10px; border-radius: 6px; font-size: 12px; color: #c9d4ff; background: rgba(107, 140, 255, .18); cursor: pointer; white-space: nowrap; }
+.ab-ic { all: unset; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; flex: none; border-radius: 6px; color: #a6a6b0; cursor: pointer; }
+.ab-ic:hover { background: rgba(255, 255, 255, .08); color: #fff; }
+.ab-ic svg { width: 15px; height: 15px; }
+/* 화면은 칸에 꽉 채워 contain — 퍼센트 최대 크기는 부모 높이가 애매하면 안 먹어 칸 밖으로 넘쳤다(2026-10-03 사용자 "화면 밖으로") */
+.ab-screen { flex: 1; min-height: 0; position: relative; overflow: hidden; background: #0d0d10; }
+.ab-screen img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+.ab-screen .ab-wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.ab-wait { color: #75757f; font-size: 12px; }
+.ab-wait.ab-fail { gap: 6px; padding: 0 16px; text-align: center; color: #b4b4bd; }
+.ab-doing { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font: 11.5px/1.5 "MesloLGS NF", ui-monospace, Menlo, Consolas, monospace; color: #c9c9d1; background: #18181c; white-space: nowrap; overflow: hidden; }
+.ab-doing span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.ab-doing.ab-busy { color: #fff; }
+/* 아래 터미널 — 크게일 땐 작은 띠, 작게일 땐 칸을 채운다 */
+.ab-below { display: flex; min-height: 0; }
+.ab-big .ab-below { flex: 0 0 auto; height: 96px; overflow: hidden; }
+.ab-small .ab-below { flex: 1; }
+.ab-below > * { flex: 1; min-width: 0; }
+/* 작은 브라우저 띠 */
+.ab-strip { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 8px 6px 6px; background: #1c1c21; cursor: pointer; font-size: 12px; color: #a6a6b0; }
+.ab-strip:hover { background: #232329; }
+.ab-strip img, .ab-strip .ab-thumb { width: 56px; height: 34px; flex: none; object-fit: cover; border-radius: 4px; background: #0d0d10; }
+.ab-strip b { flex: none; max-width: 40%; color: #e6e6ec; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ab-strip > span:not(.ab-ic):not(.ab-thumb) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 세션 화면(가운데 큰 칸) — 크게일 땐 아래 터미널을 조금 더 */
+.ab.ab-page.ab-big .ab-below { height: 34%; min-height: 160px; }
+/* 아래 칸에 든 요약 줄(cv-pane-body)이 칸을 채우면 줄이 눌려 겹쳤다 — 줄은 안 줄어들게 */
+.ab-below .cv-pane-body span { flex: none; }
+/* 크게 보기 모달 — 앱 창 전체 위(이미지 미리보기와 같은 결). 화면은 contain, 그 위를 눌러 직접 조작 */
+.abm-back { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 28px; background: rgba(0, 0, 0, .55); }
+.abm:focus { outline: none; }
+.abm { width: min(1400px, 100%); height: min(940px, 100%); display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; background: #141417; box-shadow: 0 20px 60px rgba(0, 0, 0, .45); position: relative; }
+.abm-bar { display: flex; align-items: center; gap: 4px; padding: 8px 10px; background: #1c1c21; }
+.abm-ask { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: color-mix(in srgb, #f0a020 18%, #1c1c21); color: #f5e6c8; font-size: 13px; }
+.abm-ask span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.abm-done { all: unset; cursor: pointer; padding: 7px 14px; min-height: 30px; box-sizing: border-box; border-radius: 8px; background: #f0a020; color: #1a1205; font-weight: 700; font-size: 13px; }
+.abm-done:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.abm-screen { flex: 1; min-height: 0; position: relative; background: #0d0d10; cursor: default; touch-action: none; }
+.abm-screen img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; }
+.abm-screen .ab-wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+/* 숨은 글칸 — 화면 위에 보이지 않게 두되 초점·한글 조합은 받는다 */
+.abm-field { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; resize: none; pointer-events: none; }
+.abm-dialog { position: absolute; left: 50%; top: 30%; transform: translateX(-50%); width: min(440px, 90%); padding: 18px; border-radius: 12px; background: #24242a; color: #eee; box-shadow: 0 12px 40px rgba(0, 0, 0, .5); }
+.abm-dialog p { margin: 0 0 12px; white-space: pre-wrap; word-break: break-word; font-size: 14px; line-height: 1.5; }
+.abm-dialog input { width: 100%; box-sizing: border-box; height: 34px; margin-bottom: 12px; padding: 0 10px; border-radius: 8px; border: 1px solid #444; background: #18181c; color: #eee; font: inherit; }
+.abm-dialog-btns { display: flex; justify-content: flex-end; gap: 8px; }
+.abm-dialog-btns button { all: unset; cursor: pointer; min-width: 64px; min-height: 32px; padding: 0 14px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; background: #33333b; font-size: 13px; }
+.abm-dialog-btns button.on { background: #6b8cff; color: #fff; font-weight: 700; }
+.abm-dialog-btns button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+/* 멈춘 탭 — 앱이 답할 수 없는 대화상자(앱이 붙기 전에 뜬 것·답을 크롬이 거절) — 진짜 크롬에서 풀게 */
+.abm-stuck { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: rgba(240, 160, 32, .14); color: #f3d29a; font-size: 13px; }
+.abm-stuck span { flex: 1; min-width: 0; }
+.abm-stuck button { all: unset; cursor: pointer; min-height: 32px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: 8px; background: #f0a020; color: #1a1205; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.abm-stuck button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.ab-ask { all: unset; cursor: pointer; padding: 4px 10px; border-radius: 6px; background: #f0a020; color: #1a1205; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.abm-more { position: relative; }
+.abm-menu { position: absolute; right: 0; top: 32px; z-index: 2; min-width: 160px; padding: 4px; border-radius: 8px; background: #26262c; border: 1px solid rgba(255, 255, 255, .1); box-shadow: 0 8px 24px rgba(0, 0, 0, .4); }
+.abm-menu button { all: unset; display: block; width: 100%; box-sizing: border-box; padding: 8px 10px; min-height: 32px; border-radius: 6px; font-size: 13px; color: #e6e6ea; cursor: pointer; }
+.abm-menu button:hover, .abm-menu button:focus-visible { background: rgba(255, 255, 255, .08); }
+.abm-note { font-size: 12px; color: #e8b86a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.abm-screen.drop-over { outline: 2px dashed #6b8cff; outline-offset: -4px; }
+/* 맨 위 줄 — 어느 세션 · 진짜 주소 · 줄 선 다른 부름(2026-10-04 QA B1·B3) */
+.abm-who { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 6px 14px; background: #17171b; font-size: 13px; color: #c8c8d0; }
+.abm-who > b { flex: none; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #f0f0f4; font-weight: 600; }
+.abm-site { display: inline-flex; align-items: center; gap: 5px; min-width: 0; padding: 3px 10px; border-radius: 999px; background: #26262c; color: #e6e6ec; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: abm-flash 1.2s ease-out; }
+.abm-site em { font-style: normal; font-family: -apple-system, system-ui, sans-serif; color: #ffb4a8; }
+.abm-insecure { background: color-mix(in srgb, #e5534b 22%, #1c1c21); }
+@keyframes abm-flash { from { box-shadow: inset 0 0 0 2px #f0c860; } to { box-shadow: inset 0 0 0 2px transparent; } }
+.abm-queue { margin-left: auto; display: flex; gap: 6px; min-width: 0; overflow-x: auto; }
+.abm-queue button { all: unset; cursor: pointer; flex: none; padding: 5px 12px; min-height: 28px; box-sizing: border-box; border-radius: 999px; background: color-mix(in srgb, #f0a020 26%, #1c1c21); color: #f5e6c8; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.abm-queue button:hover { background: color-mix(in srgb, #f0a020 38%, #1c1c21); }
+.abm-queue button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+/* 작게 접힌 띠에도 사람 필요(QA B2) */
+.ab-strip .ab-ask-tag { flex: none; font-style: normal; padding: 2px 8px; border-radius: 6px; background: #f0a020; color: #1a1205; font-size: 11px; font-weight: 700; }

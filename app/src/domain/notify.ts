@@ -1,10 +1,10 @@
 // macOS 알림 정책 — 사용자 2026-09-27 "너무 쓸데없이 많이 쌓이고 부정확하다, 필요한 것만".
 // Claude Code 전역 훅 알림은 껐고, 알림은 앱만 보낸다. 보내는 것:
-//   결정 대기(task ask·로그인 오류) · 참모가 묻거나 확인창에서 멈춤 · 권한 창 자동 허용 실패 · 참모 컨텍스트 80%
+//   결정 대기(task ask·로그인 오류) · 참모가 묻거나 확인창에서 멈춤 · 권한 창 자동 허용 실패 · 참모 컨텍스트 80% · 계정 다 소진·자동 전환 실패
 // 안 보내는 것: 하위 세션 '끝났어'(한 턴만 끝나도 떠서 부정확 — 결과는 참모가 정리해 전한다), 다마고치 업적(앱 안에만)
 import { tr } from '../i18n';
 
-export type NoteKind = 'decide' | 'login' | 'allowFail' | 'asks' | 'blocked' | 'ctx';
+export type NoteKind = 'decide' | 'login' | 'allowFail' | 'asks' | 'blocked' | 'ctx' | 'accounts' | 'human';
 /** session = 알림을 묶는 단위(세션 id 등). orch = 참모 세션에서 난 일인가 */
 export type Note = { kind: NoteKind; session: string; orch: boolean; title: string; body: string };
 
@@ -12,7 +12,11 @@ export const NOTIFY_GAP_MS = 2 * 60_000;
 
 /** 물어봄·확인창·컨텍스트는 참모 세션만 — 하위 세션은 참모가 관리한다 */
 export const wants = (kind: NoteKind, orch: boolean) =>
-  kind === 'decide' || kind === 'login' || kind === 'allowFail' || orch;
+  kind === 'decide' || kind === 'login' || kind === 'allowFail' || kind === 'accounts' || kind === 'human' || orch;
+
+/** 참모 창을 보고 있을 때도 맥 알림을 보낼까 — 물어봄·확인창·결정·로그인 오류는 앱 안(알림 띠·결정 대기 드롭다운)에 뜨니
+ *  보고 있으면 맥 알림은 겹친다(2026-10-03 사용자 "참모를 보고 있으면 네이티브에선 안 와도"). 나머지는 앱 안에 따로 안 떠서 보낸다 */
+export const nativeWhenFocused = (kind: NoteKind) => !(kind === 'asks' || kind === 'blocked' || kind === 'decide' || kind === 'login' || kind === 'human'); // human = 세션 브라우저가 사람을 부름 — 앱 안에 크게 보기 모달이 뜬다
 
 export const noteKey = (n: Note) => `${n.session}|${n.kind}`;
 

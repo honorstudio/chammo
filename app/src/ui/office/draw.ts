@@ -117,7 +117,7 @@ export function roomSize(room: Room) {
 
 /** 이름표·눌러서 열기용 좌표(캔버스 논리 좌표) */
 /** doing = 작업 중일 때 머리 위 한 줄('Edit ambassador.ts') */
-export type Spot = { id: string; label: string; x: number; y: number; hx: number; hy: number; st: Desk['st']; doing?: string };
+export type Spot = { id: string; label: string; x: number; y: number; hx: number; hy: number; st: Desk['st']; doing?: string; /** 사람 필요 이유 */ human?: string };
 
 /** 펑 — 세션이 생기거나 사라진 자리(칸 좌표)와 지난 시간(ms). 생길 땐 연기가 걷힐 즈음 캐릭터가 보인다 */
 export type Poof = { id: string; gx: number; gy: number; age: number };
@@ -187,7 +187,8 @@ export function drawRoom(ctx: CanvasRenderingContext2D, room: Room, sk: Skin, t:
       else if (act === 'run') bob = t % 8 < 4 ? 0 : -1;
       else if (act === 'web' || act === 'agent') bob = t % 6 < 3 ? 0 : -1;
       else if (act === 'think') bob = t % 10 < 5 ? 0 : -1;
-      if (d.st === 'asks') bob = [0, -2, -3, -2, 0, 0, 0, 0][t % 8]!;
+      const human = d.human !== undefined; // 세션 브라우저가 사람을 부름 — 무슨 상태든 빨간 ! 가 먼저
+      if (d.st === 'asks' || human) bob = [0, -2, -3, -2, 0, 0, 0, 0][t % 8]!;
       // 반장 반응(domain/office bossReaction) — 상태 연출보다 앞선다
       const react = d.boss ? boss?.mode : undefined;
       if (react === 'ask') bob = [0, -4, -7, -8, -7, -4, 0, 0][t % 8]!;
@@ -247,13 +248,17 @@ export function drawRoom(ctx: CanvasRenderingContext2D, room: Room, sk: Skin, t:
           else if (k < 6) { b.rect(hx - 11, hy + 2, 2, 5, fill); b.rect(hx + 10, hy + 2, 2, 5, fill); }
           for (let c = 0; c < 3; c++) { const a = (t + c * 3) % 10; const cx = hx - 6 + c * 6, cy = hy - 4 - a * 2; const w = [5, 3, 1, 3][(t + c) % 4]!; b.rect(cx - Math.floor(w / 2), cy, w, 5, '#e0b94f'); b.rect(cx - Math.floor(w / 2), cy + 4, w, 1, '#b3871f'); }
         }
+      } else if (human) {
+        // 빨간 판 + 흰 ! (반장 '물어봄'의 빨간 ! 와 같은 글자) — 깜빡이지 않고 늘 보인다
+        b.rect(hx - 5, hy - 11, 11, 11, '#d9462f'); b.rect(hx - 4, hy - 12, 9, 1, '#d9462f'); b.rect(hx - 1, hy, 3, 2, '#d9462f');
+        glyph(b, '!', hx - 1, hy - 9, '#ffffff');
       } else if (d.st === 'asks') {
         b.rect(hx - 4, hy - 9, 9, 9, sk.paper); b.rect(hx - 3, hy - 10, 7, 1, sk.paper); b.rect(hx - 1, hy, 2, 2, sk.paper);
         glyph(b, t % 6 < 4 ? '?' : '!', hx - 1, hy - 8, sk.line);
       }
       // 작업 중 소품 — 반장이 말풍선을 띄우는 동안엔 머리 위를 비운다
       if (act && !d.empty && walker?.awayId !== d.id) {
-        const top = !react;
+        const top = !react && !human; // 머리 위는 반장 말풍선·사람 필요 ! 가 먼저
         if (act === 'type') for (let k = 0; k < 2; k++) { const [sx, sy] = P(cx + (((t * 7 + i * 3 + k * 5) % 7) - 3) * 0.08, d.gy + 0.72, 10); b.rect(sx, sy - (t + k) % 3, 1, 1, k ? '#fff1a6' : sk.paper); }
         if (act === 'read') { const w = t % 8 < 4 ? 6 : 4; b.rect(px - 3, py - 8 + bob, w, 5, sk.paper); b.rect(px - 2, py - 7 + bob, w - 2, 1, sk.grain); b.rect(px - 2, py - 5 + bob, w - 3, 1, sk.grain); }
         if (act === 'run' && top) { const k = t % 2; b.rect(hx - 2, hy - 6, 5, 5, sk.line); b.rect(hx - 1, hy - 5, 3, 3, sk.paper); b.rect(hx + (k ? -3 : 3), hy - 4, 1, 1, sk.line); b.rect(hx, hy + (k ? -8 : 0), 1, 1, sk.line); }
@@ -274,7 +279,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, room: Room, sk: Skin, t:
         b.rect(zx, zy, 4, 1, sk.line); b.rect(zx + 2, zy + 1, 1, 1, sk.line); b.rect(zx + 1, zy + 2, 1, 1, sk.line); b.rect(zx, zy + 3, 4, 1, sk.line);
       }
       const [lx, ly] = P(d.gx + d.w / 2, d.gy + 1.15);
-      if (!d.empty) spots.push({ id: d.id, label: d.label, x: lx, y: ly + 1, hx: px, hy: py - 8, st: d.st, ...(d.st === 'working' && d.doing ? { doing: d.doing } : {}) });
+      if (!d.empty) spots.push({ id: d.id, label: d.label, x: lx, y: ly + 1, hx: px, hy: py - 8, st: d.st, ...(d.st === 'working' && d.doing ? { doing: d.doing } : {}), ...(human ? { human: d.human } : {}) });
     },
   }));
 

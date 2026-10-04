@@ -151,14 +151,65 @@ pub fn pty_resize(state: State<Ptys>, id: u32, cols: u16, rows: u16) -> Result<(
 pub fn pty_close(state: State<Ptys>, id: u32) {
     crate::ptt::forget(id);
     OPEN.lock().unwrap().retain(|(pid, _, _)| *pid != id);
-    if let Some(mut p) = state.map.lock().unwrap().remove(&id) {
-        let _ = p.child.kill();
+    if let Some(p) = state.map.lock().unwrap().remove(&id) {
+        reap(p.child);
     }
+}
+
+/// 자식을 끝내고 거둔다. portable-pty kill 은 SIGHUP 뒤 0.25초 안에 안 끝나면 SIGKILL 만 하고 거두지 않아
+/// 좀비가 남았다 — pid 가 남으니 claude agents 가 마법사 '믿기' claude 를 산 세션으로 보여 줬다(2026-10-05 아이맥 QA).
+/// wait 는 SIGKILL 뒤라 곧 돌아오지만 부르는 쪽(IPC·attach)을 붙잡지 않게 뒤에서
+pub(crate) fn reap(mut child: Box<dyn Child + Send + Sync>) {
+    let _ = child.kill();
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::{attach_line, session_of};
+
+    #[cfg(unix)]
+    fn stat_of(pid: u32) -> String {
+        let o = crate::platform::command("/bin/ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().unwrap();
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    }
+
+    // 2026-10-05 아이맥 QA: 마법사 '믿기' 터미널을 닫은 뒤 claude 가 <defunct> 로 남아 agents 가 HQ 세션을 산 걸로 봤다.
+    // portable-pty kill 은 SIGHUP 뒤 0.25초 안에 안 끝나면 SIGKILL 만 하고 거두지 않는다 — 닫기는 끝까지 거둔다
+    #[cfg(unix)]
+    #[test]
+    fn 닫으면_자식이_좀비로_안_남는다() {
+        // HUP 를 무시하는 자식 = 끝내는 데 시간이 걸리는 claude 흉내(무시는 exec 뒤에도 이어진다)
+        let (master, writer, child) = super::spawn_pty("trap '' HUP; exec /bin/sleep 30", None, 80, 24, |_| true).unwrap();
+        let pid = child.process_id().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        super::reap(child);
+        drop(writer);
+        drop(master);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut st = stat_of(pid);
+        while !st.is_empty() && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            st = stat_of(pid);
+        }
+        assert!(st.is_empty(), "닫은 뒤에도 프로세스가 남았다(상태 {st})");
+    }
+
+    // 스스로 끝난 자식(사용자가 claude 를 /exit)도 닫을 때 거둔다
+    #[cfg(unix)]
+    #[test]
+    fn 먼저_끝난_자식도_닫으면_거둔다() {
+        let (master, writer, child) = super::spawn_pty("exit 0", None, 80, 24, |_| true).unwrap();
+        let pid = child.process_id().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        super::reap(child);
+        drop(writer);
+        drop(master);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        assert!(stat_of(pid).is_empty(), "먼저 끝난 자식이 좀비로 남았다");
+    }
 
     #[test]
     fn 명령에서_붙는_세션을_읽는다() {

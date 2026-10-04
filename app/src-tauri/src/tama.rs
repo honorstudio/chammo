@@ -96,20 +96,119 @@ pub fn write_gacha(json: String) -> Result<(), String> {
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
-/// 다마고치 더보기 창(도감·보관함) — 있으면 앞으로, 없으면 만든다. 메인 창 페이지 대신 다마고치 틀의 따로 창(사용자 2026-09-28)
-#[tauri::command]
-pub fn tama_more(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("tama-more") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
-        return Ok(());
+/// 다마고치 '대화' 먹이 — 대화 기록 한 줄이 사람이 직접 건 말이면 그 시각(ISO). 도구 결과·메타·슬래시 명령·앱이 넣은 [앱] 알림·
+/// 다른 세션이 보낸 말(peer)·작업 끝 알림은 빼고, origin.kind 가 human 인 user 줄만
+fn human_turn_ts(line: &str) -> Option<String> {
+    if !line.contains("\"human\"") || !line.contains("\"user\"") {
+        return None; // 대부분의 줄을 JSON 파싱 없이 거른다
     }
-    tauri::WebviewWindowBuilder::new(&app, "tama-more", tauri::WebviewUrl::App("tama-more.html".into()))
-        .title(crate::i18n::tr("다마고치", "Tamagotchi"))
-        .inner_size(900.0, 680.0)
-        .min_inner_size(560.0, 420.0)
-        .build()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v.get("type")?.as_str()? != "user" || v.get("isMeta").and_then(|m| m.as_bool()).unwrap_or(false) {
+        return None;
+    }
+    if v.pointer("/origin/kind").and_then(|k| k.as_str()) != Some("human") {
+        return None;
+    }
+    let content = v.pointer("/message/content")?;
+    let text = match content {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(a) => {
+            if a.iter().any(|x| x.get("type").and_then(|t| t.as_str()) == Some("tool_result")) {
+                return None;
+            }
+            a.iter().find_map(|x| x.get("text").and_then(|t| t.as_str())).unwrap_or("").to_string()
+        }
+        _ => return None,
+    };
+    let t = text.trim_start();
+    if t.is_empty() || t.starts_with("[앱]") || t.starts_with("<command-") || t.starts_with("<local-command") {
+        return None;
+    }
+    v.get("timestamp")?.as_str().map(str::to_string)
+}
+
+/// 대화 기록마다 어디까지 읽었나 + 찾은 시각들 — 1분마다 불려도 새로 붙은 줄만 읽는다(기록이 수십 MB 라)
+static TURNS: std::sync::Mutex<Option<std::collections::HashMap<std::path::PathBuf, (u64, Vec<String>)>>> = std::sync::Mutex::new(None);
+const TURNS_KEEP: usize = 400;
+
+/// 세션들(대화 기록 id)에 사람이 건 말의 시각 — `대화 기록 id\t시각` 줄. 파싱은 domain/tama/signals.talkFeed
+#[tauri::command]
+pub async fn human_turns(session_ids: Vec<String>) -> String {
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::{Read, Seek, SeekFrom};
+        let home = crate::platform::home();
+        let dirs: Vec<_> = std::fs::read_dir(format!("{home}/.claude/projects")).map(|rd| rd.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+        let mut guard = TURNS.lock().unwrap();
+        let cache = guard.get_or_insert_with(Default::default);
+        let mut out = String::new();
+        for sid in session_ids {
+            let Some(path) = dirs.iter().map(|d| d.join(format!("{sid}.jsonl"))).find(|p| p.exists()) else { continue };
+            let entry = cache.entry(path.clone()).or_insert((0, Vec::new()));
+            let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            if len < entry.0 {
+                *entry = (0, Vec::new()); // 기록이 새로 쓰였다
+            }
+            if len > entry.0 {
+                if let Ok(mut f) = std::fs::File::open(&path) {
+                    let _ = f.seek(SeekFrom::Start(entry.0));
+                    let mut buf = Vec::new();
+                    let _ = f.read_to_end(&mut buf);
+                    // 끝까지 안 쓰인 줄은 다음에 — 마지막 줄바꿈까지만
+                    let upto = buf.iter().rposition(|&b| b == b'\n').map(|i| i + 1).unwrap_or(0);
+                    for line in String::from_utf8_lossy(&buf[..upto]).lines() {
+                        if let Some(ts) = human_turn_ts(line) {
+                            entry.1.push(ts);
+                        }
+                    }
+                    let n = entry.1.len();
+                    if n > TURNS_KEEP {
+                        entry.1.drain(..n - TURNS_KEEP);
+                    }
+                    entry.0 += upto as u64;
+                }
+            }
+            for ts in &entry.1 {
+                out.push_str(&format!("{sid}\t{ts}\n"));
+            }
+        }
+        out
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// 스페이스 고친 기록 꼬리(64KB) — 다마고치 목욕·놀아주기·대화(domain/tama/signals.spaceFeed)
+#[tauri::command]
+pub fn read_space_log() -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(crate::config::data_file("space-log.jsonl")) else { return String::new() };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let _ = f.seek(SeekFrom::Start(len.saturating_sub(64 * 1024)));
+    let mut buf = Vec::new();
+    let _ = f.read_to_end(&mut buf);
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::human_turn_ts;
+
+    #[test]
+    fn human_turn_only_people() {
+        let typed = r#"{"type":"user","message":{"role":"user","content":"ㄱㄱ"},"timestamp":"2026-10-02T14:57:53.339Z","origin":{"kind":"human"},"promptSource":"typed"}"#;
+        assert_eq!(human_turn_ts(typed).as_deref(), Some("2026-10-02T14:57:53.339Z"));
+        let arr = r#"{"type":"user","message":{"content":[{"type":"text","text":"사진 봐"}]},"timestamp":"T","origin":{"kind":"human"}}"#;
+        assert_eq!(human_turn_ts(arr).as_deref(), Some("T"));
+        for no in [
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"x"}]},"timestamp":"T","origin":{"kind":"human"}}"#,
+            r#"{"type":"user","isMeta":true,"message":{"content":"x"},"timestamp":"T","origin":{"kind":"human"}}"#,
+            r#"{"type":"user","message":{"content":"[앱] project-b / 멈춤"},"timestamp":"T","origin":{"kind":"human"}}"#,
+            r#"{"type":"user","message":{"content":"<command-name>/clear</command-name>"},"timestamp":"T","origin":{"kind":"human"}}"#,
+            r#"{"type":"user","message":{"content":"<task-notification>"},"timestamp":"T","origin":{"kind":"task-notification"}}"#,
+            r#"{"type":"user","message":{"content":"from peer"},"timestamp":"T","turnOrigin":"peer"}"#,
+            r#"{"type":"assistant","message":{"content":"human"},"timestamp":"T","origin":{"kind":"human"}}"#,
+        ] {
+            assert_eq!(human_turn_ts(no), None, "{no}");
+        }
+    }
 }

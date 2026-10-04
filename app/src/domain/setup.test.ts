@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addExtraProject, parseClaudeVersion, setupCommand, setupReady, shq, versionFit, versionWarning, type EnvCheck, WIZARD, canNext, tildify, notifyRow, browserRow } from './setup';
+import { addExtraProject, parseClaudeVersion, setupCommand, setupReady, shq, versionFit, versionWarning, type EnvCheck, WIZARD, canNext, tildify, notifyRow, browserRow, browserChecklist } from './setup';
 
 describe('Claude Code 버전', () => {
   it('버전 글자를 숫자로', () => {
@@ -112,15 +112,27 @@ describe('알림 권한 줄 — 놓치면 결정 대기·답 필요 알림이 �
   it('못 읽으면(개발 빌드 등) 선택으로 두고 막지 않는다', () => expect(notifyRow('unavailable')).toEqual({ state: 'opt', action: null }));
 });
 
-describe('브라우저 자동화 줄 — 선택 기능. Node 20+ 가 있어야 깔 수 있다', () => {
-  const base = { node: '/opt/homebrew/bin/node', nodeVersion: 'v22.3.0', nodeOk: true, installed: false, chrome: true };
-  it('깔려 있으면 됨', () => expect(browserRow({ ...base, installed: true })).toEqual({ state: 'ok', action: null }));
-  it('Node 가 있으면 설치 버튼', () => expect(browserRow(base)).toEqual({ state: 'opt', action: 'install' }));
-  it('Node 가 없거나 옛 버전이면 Node 받기 안내', () => {
-    expect(browserRow({ ...base, node: null, nodeVersion: '', nodeOk: false })).toEqual({ state: 'opt', action: 'getNode' });
-    expect(browserRow({ ...base, nodeVersion: 'v18.1.0', nodeOk: false })).toEqual({ state: 'opt', action: 'getNode' });
+describe('브라우저 자동화 줄 — 설치 버튼 하나, 없는 것만 받는다(2026-10-05 딸깍)', () => {
+  const ready = { node: '/opt/homebrew/bin/node', nodeVersion: 'v22.3.0', nodeOk: true, nodeSource: 'system' as const, installed: true, chrome: true, chromeBeta: true, checked: true, ready: true };
+  const fresh = { node: null, nodeVersion: '', nodeOk: false, nodeSource: '' as const, installed: false, chrome: false, chromeBeta: false, checked: false, ready: false };
+  const idle = { running: false, step: null, pct: null, text: '', error: null, done: false };
+  it('다 됐으면 됨', () => expect(browserRow(ready, idle)).toEqual({ state: 'ok', action: null, busy: false }));
+  it('하나라도 없으면 설치 — Node 가 없어도(앱이 받는다)', () => {
+    expect(browserRow(fresh, idle)).toEqual({ state: 'opt', action: 'install', busy: false });
+    expect(browserRow({ ...ready, chromeBeta: false, ready: false }, idle).action).toBe('install');
   });
-  it('모르면(읽기 실패) 아무 버튼도 없이 선택', () => expect(browserRow(null)).toEqual({ state: 'opt', action: null }));
+  it('도는 중이면 버튼 없이 진행, 실패하면 다시 시도', () => {
+    expect(browserRow(fresh, { ...idle, running: true, step: 'chrome', pct: 40 })).toEqual({ state: 'opt', action: null, busy: true });
+    expect(browserRow(fresh, { ...idle, step: 'chrome', error: '인터넷에 연결할 수 없어요' }).action).toBe('retry');
+  });
+  it('모르면(읽기 실패) 버튼 없이 선택', () => expect(browserRow(null, null)).toEqual({ state: 'opt', action: null, busy: false }));
+  it('확인 목록 네 칸 — 있는 것·지금 하는 것·실패한 것', () => {
+    expect(browserChecklist(ready, idle).map((c) => c.state)).toEqual(['ok', 'ok', 'ok', 'ok']);
+    expect(browserChecklist({ ...fresh, nodeOk: true }, { ...idle, running: true, step: 'chrome' }).map((c) => [c.key, c.state])).toEqual([
+      ['node', 'ok'], ['chrome', 'now'], ['parts', 'todo'], ['check', 'todo'],
+    ]);
+    expect(browserChecklist(fresh, { ...idle, step: 'node', error: 'x' })[0]?.state).toBe('fail');
+  });
 });
 
 describe('addExtraProject — 프로젝트 폴더 밖 폴더를 하나씩 추가(사용자 2026-09-28: 아이맥 ~/automation/…)', () => {
@@ -152,11 +164,39 @@ describe('setupCommand — 윈도우(cmd /C 가 읽는 모양, 윈도우판)', (
   it('설치: PowerShell 설치 스크립트', () => {
     expect(setupCommand('install', {}, '끝', undefined, true)).toBe('powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex" & echo. & echo 끝');
   });
+  // -EncodedCommand 는 UTF-16LE base64 — 풀어서 본다
+  const decode = (cmd: string) => {
+    const b64 = /-EncodedCommand (\S+)/.exec(cmd)?.[1] ?? '';
+    const bin = atob(b64);
+    let out = '';
+    for (let i = 0; i < bin.length; i += 2) out += String.fromCharCode(bin.charCodeAt(i) | (bin.charCodeAt(i + 1) << 8));
+    return out;
+  };
   it('업데이트: winget 으로 깐 claude 면 winget upgrade(claude update 는 winget 것을 못 올린다, 2026-10-01 윈도우 PC 2.1.283)', () => {
-    expect(setupCommand('update', { claude: c }, '끝', undefined, true)).toBe('winget upgrade -e --id Anthropic.ClaudeCode --accept-source-agreements --accept-package-agreements & echo. & echo 끝');
+    const cmd = setupCommand('update', { claude: c }, '끝', undefined, true);
+    expect(cmd.startsWith('powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ')).toBe(true);
+    expect(cmd.endsWith(' & echo. & echo 끝')).toBe(true);
+    expect(decode(cmd)).toContain('winget upgrade -e --id Anthropic.ClaudeCode --accept-source-agreements --accept-package-agreements');
     // 링크 말고 실제 패키지 폴더 경로로 와도
     const real = 'C:\\Users\\a\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe';
-    expect(setupCommand('update', { claude: real }, '', undefined, true)).toContain('winget upgrade -e --id Anthropic.ClaudeCode');
+    expect(decode(setupCommand('update', { claude: real }, '', undefined, true))).toContain('winget upgrade -e --id Anthropic.ClaudeCode');
+  });
+  it('업데이트(winget): 돌고 있는 claude 가 claude.exe 를 잠가도 — 먼저 이름을 비켜 두고 올리고, 실패하면 되돌린다(2026-10-01 0x8a150003 Access is denied)', () => {
+    const s = decode(setupCommand('update', { claude: c }, '', undefined, true));
+    const rename = s.indexOf("Rename-Item -LiteralPath $exe -NewName $old");
+    const upgrade = s.indexOf('winget upgrade');
+    const restore = s.indexOf("Rename-Item -LiteralPath (Join-Path $dir $old) -NewName 'claude.exe'");
+    expect(rename).toBeGreaterThan(-1);
+    expect(upgrade).toBeGreaterThan(rename);
+    expect(restore).toBeGreaterThan(upgrade);
+    // 지난번에 비켜 둔 옛 파일은 지운다(잠겨 있으면 넘어간다)
+    expect(s).toContain("'claude.exe.old-*'");
+    expect(s).toContain('-ErrorAction SilentlyContinue');
+    // winget 종료 코드를 돌려주되 '이미 최신'(0x8A15002B)은 성공으로 — 참모 PC 실측
+    expect(s).toContain('-1978335189');
+    expect(s.trim().endsWith('exit $code')).toBe(true);
+    // 진행 표시가 #< CLIXML 덩어리로 터미널에 깨져 나왔다 — 끈다
+    expect(s.startsWith("$ProgressPreference = 'SilentlyContinue'")).toBe(true);
   });
   it('업데이트: 공식 설치(.local\\bin) 면 그 claude 로 update', () => {
     const own = 'C:\\Users\\a\\.local\\bin\\claude.exe';

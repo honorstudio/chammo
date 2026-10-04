@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatItem } from './chat';
-import { enterDelay } from './chat';
+import { enterDelay, sendControls } from './chat';
 import { appendChat, chatBusy, mdSafe, parseChat, promptInput, splitPaths, splitRefs, stillPending, pendingLeft, clickFocusesInput, stuckInInput, taskCounts, termRest, typedChunks, withRefs } from './chat';
 
 const line = (o: object) => JSON.stringify(o);
@@ -61,6 +61,44 @@ describe('parseChat — 대화 기록을 말풍선 항목으로', () => {
   it('슬래시 명령은 작은 알림 줄로', () => {
     const t = user('c1', '<command-name>/compact</command-name>\n<command-message>compact</command-message>');
     expect(parseChat(t)).toEqual([{ kind: 'note', id: 'c1', ts: 't-c1', text: '/compact' }]);
+  });
+
+  it('명령 결과(/context·/cost 등)는 명령 줄 밑에 붙여 보인다 — 백그라운드 세션은 system 줄로 남는다(2026-10-04 사용자, 실측 2.1.289)', () => {
+    const sys = (uuid: string, content: string) => line({ type: 'system', subtype: 'local_command', uuid, timestamp: `t-${uuid}`, content, level: 'info' });
+    const t = [
+      sys('c1', '<command-name>/context</command-name>\n            <command-message>context</command-message>\n            <command-args></command-args>'),
+      sys('o1', '<local-command-stdout> \u001b[1mContext Usage\u001b[22m\n\u001b[38;2;136;136;136m⛀ \u001b[39m  Opus 5.5</local-command-stdout>'),
+      user('m1', '## Context Usage\n…', { isMeta: true }), // 같은 결과의 마크다운 판 — 안 보인다
+    ].join('\n');
+    expect(parseChat(t)).toEqual([{ kind: 'note', id: 'c1', ts: 't-c1', text: '/context', out: 'Context Usage\n⛀   Opus 5.5' }]);
+  });
+
+  it('사람 줄로 남은 명령 결과·오류도 같이 — 결과가 비면 명령 줄만', () => {
+    const t = [
+      user('c1', '<command-name>/cost</command-name>\n<command-message>cost</command-message>'),
+      user('o1', '<local-command-stdout>Total cost: $0.12</local-command-stdout>'),
+      user('c2', '<command-name>/status</command-name>'),
+      user('o2', '<local-command-stdout></local-command-stdout>'),
+      user('c3', '<command-name>/nope</command-name>'),
+      user('o3', '<local-command-stderr>Unknown command</local-command-stderr>'),
+    ].join('\n');
+    expect(parseChat(t)).toEqual([
+      { kind: 'note', id: 'c1', ts: 't-c1', text: '/cost', out: 'Total cost: $0.12' },
+      { kind: 'note', id: 'c2', ts: 't-c2', text: '/status' },
+      { kind: 'note', id: 'c3', ts: 't-c3', text: '/nope', out: 'Unknown command' },
+    ]);
+  });
+
+  it('명령 줄 없이 온 결과는 결과만 있는 알림 줄로', () => {
+    const t = user('o1', '<local-command-stdout>Session renamed to: 참모-5</local-command-stdout>');
+    expect(parseChat(t)).toEqual([{ kind: 'note', id: 'o1', ts: 't-o1', text: '', out: 'Session renamed to: 참모-5' }]);
+  });
+
+  it('명령 결과는 이어 붙이기(appendChat)에서도 앞 명령 줄에 붙는다', () => {
+    const first = parseChat(user('c1', '<command-name>/cost</command-name>'));
+    const next = appendChat(first, user('o1', '<local-command-stdout>$0.12</local-command-stdout>'));
+    expect(next).toEqual([{ kind: 'note', id: 'c1', ts: 't-c1', text: '/cost', out: '$0.12' }]);
+    expect(first).toEqual([{ kind: 'note', id: 'c1', ts: 't-c1', text: '/cost' }]); // 앞 배열은 안 건드린다
   });
 
   it('다른 세션이 보낸 말·앱이 넘긴 줄은 가운데 카드(보낸 쪽 이름) — 사용자 말풍선처럼 보였다(2026-09-30)', () => {
@@ -259,6 +297,9 @@ describe('말풍선 참조 @chat1 — 앞 말풍선을 입력칸에 끌어와 �
 });
 
 describe('stuckInInput — 보낸 말이 Enter 없이 입력칸에 남은 것(참모 1→2→1 오가다 안 보내졌다, 2026-09-30 사용자)', () => {
+  it('/ 명령은 다시 누르지 않는다 — /model 고르는 창이 열린 뒤 그 Enter 가 지금 모델을 기본값으로 저장했다(2026-10-01 시험)', () => {
+    expect(stuckInInput(['/model'], '/model')).toBeNull();
+  });
   it('보내는 중인 말과 입력칸 글이 같으면(띄어쓰기·줄바꿈 무시) 그 말', () => {
     expect(stuckInInput(['도메인은 어떻게 됐어?'], '도메인은 어떻게\n됐어?')).toBe('도메인은 어떻게 됐어?');
   });
@@ -274,6 +315,33 @@ describe('stillPending — 줄 끝 역슬래시(\\)는 입력칸이 줄 이어 �
     const sent = '[스페이스] 사용자가 고친 것\n+ 끝난다(서류는 안 보낸다).\\\n+ 다음 줄';
     const items: ChatItem[] = [{ kind: 'user', id: 'u', ts: 't', text: '[스페이스] 사용자가 고친 것\n+ 끝난다(서류는 안 보낸다).\n+ 다음 줄' }];
     expect(stillPending([sent], items)).toEqual([]);
+  });
+});
+
+describe('stillPending — 음성으로 받아 적을 때 입력칸에 그려지는 표시 글자(▬·▁▂▃·□)는 빼고 맞춘다', () => {
+  it('끝에 표시 글자가 붙어 읽혀도 도착한 걸로(2026-10-01 사용자: 음성으로 보낸 말이 보내는 중으로 계속 남았다)', () => {
+    const items: ChatItem[] = [{ kind: 'user', id: 'u', ts: 't', text: '일단 확대 풀고' }];
+    expect(stillPending(['일단 확대 풀고▬'], items)).toEqual([]);
+    expect(stillPending(['일단 확대 풀고 ▁▂▃'], items)).toEqual([]);
+    expect(stillPending(['일단 확대 풀고\uFFFC'], items)).toEqual([]);
+  });
+  it('글 자체가 다르면 그대로 보내는 중', () => {
+    const items: ChatItem[] = [{ kind: 'user', id: 'u', ts: 't', text: '일단 확대 풀고' }];
+    expect(stillPending(['소넷 풀고▬'], items)).toEqual(['소넷 풀고▬']);
+  });
+});
+
+describe('promptInput — 입력칸 표시 글자는 글로 안 친다', () => {
+  const box = (...input: string[]) => ['──────────────── 참모-2 ─', ...input, '────────────────────────'];
+  it('받아 적은 글 끝의 ▬ 는 빼고', () => {
+    expect(promptInput(box('> 기터브에서 받은 거는 어떻게▬'), [20, 1])).toBe('기터브에서 받은 거는 어떻게');
+  });
+  it('대기 중 안내 문구(Press up to edit queued messages)는 글이 아니다 — 보내는 중 말풍선으로 떴다(2026-10-01 사용자)', () => {
+    expect(promptInput(box('> Press up to edit queued messages'), [40, 1])).toBe('');
+    expect(promptInput(box('❯ Press ↑ to edit queued messages'), [40, 1])).toBe('');
+  });
+  it('표시 글자만 있으면 빈 칸', () => {
+    expect(promptInput(box('> ▁▂▃▅'), [6, 1])).toBe('');
   });
 });
 
@@ -321,5 +389,25 @@ describe('pendingLeft — / 명령은 기록에 안 남을 수 있어 몇 초 �
     expect(pendingLeft([{ text: '/rc', at: t0 }], [], t0 + 3000)).toHaveLength(1);
     expect(pendingLeft([{ text: '/rc', at: t0 }], [], t0 + 4500)).toEqual([]);
     expect(pendingLeft([{ text: '안녕', at: t0 }], [], t0 + 60_000)).toHaveLength(1);
+  });
+});
+
+describe('sendControls — 입력칸 오른쪽 버튼(2026-10-02 보내기 버튼 시안 v1 방향 2)', () => {
+  it('글 없음 = 보내기 흐림, 멈춤 없음', () => {
+    expect(sendControls(false, '', '')).toEqual({ canSend: false, stop: false });
+    expect(sendControls(false, '  \n', '')).toEqual({ canSend: false, stop: false });
+  });
+  it('글 있음 = 보내기 칠함', () => {
+    expect(sendControls(false, '안녕', '')).toEqual({ canSend: true, stop: false });
+  });
+  it('일하는 중 + 빈칸 = 옆에 멈춤, 보내기는 흐림 그대로', () => {
+    expect(sendControls(true, '', '')).toEqual({ canSend: false, stop: true });
+  });
+  it('일하는 중 + 글 있음 = 보내기만(Enter 는 줄 섰다 들어간다)', () => {
+    expect(sendControls(true, '이것도', '')).toEqual({ canSend: true, stop: false });
+  });
+  it('터미널 입력칸에 쓰던 글만 있어도 보낼 수 있다', () => {
+    expect(sendControls(false, '', '/model')).toEqual({ canSend: true, stop: false });
+    expect(sendControls(true, '', '/model')).toEqual({ canSend: true, stop: true });
   });
 });

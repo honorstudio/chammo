@@ -5,6 +5,7 @@ import type { ActivityStatus } from '../../domain/status';
 import { drawRoom, POOF_MS, roomSize, type Deco, type Poof, type Spot } from './draw';
 import { skinOf } from './skins';
 import { tr } from '../../i18n';
+import { isAttended } from '../attention';
 
 const FRAME_MS = 120; // 도트 느낌 — 초당 8장쯤(펑이 너무 뚝뚝 끊기지 않게)
 
@@ -22,7 +23,7 @@ export type BossIn = { status: ActivityStatus; reply: { text: string; ts: number
  */
 export type EditMode = { drag: string | null; ok: (cell: [number, number]) => boolean; onPick: (id: string) => void; onDrop: (cell: [number, number] | null, e: PointerEvent) => void };
 
-export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen, coins, gain, onGacha, bossIn, deco, peek }: { room: Room; skin?: string; /** 아래에 덮이는 높이(가구 트레이) — 방을 그만큼 위로 올려 가리지 않게 */ bottom?: number; /** 왼쪽 위 메뉴 */ menu?: ReactNode; /** 이름표에 마우스를 올리면 띄울 미니 터미널(읽기 전용, 머리줄에 지금 하는 일). null 이면 안 띄움 */ peek?: (id: string, doing?: string) => ReactNode; edit?: EditMode; deliver?: (now: number) => Delivery | null; onOpen: (id: string) => void; /** 가챠 코인(오른쪽 위) — 누르면 뽑기 페이지 */ coins?: number; gain?: { n: number; at: number } | null; onGacha?: () => void; bossIn?: BossIn; /** 뽑기로 얻어 장착한 것 — 모자·창밖·펑 대신·춤. cat·coffee 는 펫 친구·커피 액션 */ deco?: Deco & { hasCat?: boolean; coffee?: boolean } }) {
+export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen, coins, gain, onGacha, bossIn, deco, peek, dim }: { room: Room; skin?: string; /** 이름표를 옅게 할 세션(채팅 뷰: 지금 채팅 탭 참모가 시킨 것만 진하게) */ dim?: (id: string) => boolean; /** 아래에 덮이는 높이(가구 트레이) — 방을 그만큼 위로 올려 가리지 않게 */ bottom?: number; /** 왼쪽 위 메뉴 */ menu?: ReactNode; /** 이름표에 마우스를 올리면 띄울 미니 터미널(읽기 전용, 머리줄에 지금 하는 일). null 이면 안 띄움 */ peek?: (id: string, doing?: string) => ReactNode; edit?: EditMode; deliver?: (now: number) => Delivery | null; onOpen: (id: string) => void; /** 가챠 코인(오른쪽 위) — 누르면 뽑기 페이지 */ coins?: number; gain?: { n: number; at: number } | null; onGacha?: () => void; bossIn?: BossIn; /** 뽑기로 얻어 장착한 것 — 모자·창밖·펑 대신·춤. cat·coffee 는 펫 친구·커피 액션 */ deco?: Deco & { hasCat?: boolean; coffee?: boolean } }) {
   const wrap = useRef<HTMLDivElement>(null);
   const cv = useRef<HTMLCanvasElement>(null);
   const [scale, setScale] = useState(3);
@@ -83,7 +84,11 @@ export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen
     // 펑: 책상 주인이 바뀌는 순간(새로 앉음·나감)을 잡는다. 첫 프레임은 원래 있던 거라 안 터뜨린다
     let seen: Map<string, [number, number]> | null = null;
     let poofs: (Poof & { t0: number })[] = [];
+    let drawn = false;
     const frame = () => {
+      // 사람이 안 보면(ui/attention — 다른 앱이 앞·입력 2분 없음·덮개) 그리지 않는다. 첫 장은 그린다(빈 캔버스로 두지 않게)
+      if (drawn && !isAttended()) return;
+      drawn = true;
       const { room: r, sk: s, deliver: dv, bossIn: bi, deco: dc, edit: ed, hover: hv } = latest.current;
       const { W: w0, H: h0 } = roomSize(r);
       if (c.width !== w0 || c.height !== h0) { c.width = w0; c.height = h0; }
@@ -102,7 +107,7 @@ export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen
       const walker = dv?.(now) ?? (dc?.coffee && !br ? coffeeWalk(r, now) : null);
       const sp = drawRoom(ctx, r, s, t++, { walker, poofs, boss: br, deco: { ...dc, cat: dc?.hasCat ? catWalk(r, now) : null }, edit: ed ? { hover: hv, ok: hv ? ed.ok(hv) : false, ghost: ed.drag } : undefined });
       // 이름표는 자리가 바뀔 때만 다시 그린다(매 프레임 setState 하면 화면 전체가 다시 그려진다)
-      const key = sp.map((x) => `${x.id}:${x.x}:${x.y}:${x.st}:${x.label}:${x.doing ?? ''}`).join('|');
+      const key = sp.map((x) => `${x.id}:${x.x}:${x.y}:${x.st}:${x.label}:${x.doing ?? ''}:${x.human ?? '-'}`).join('|');
       if (key !== lastKey) {
         lastKey = key; setSpots(sp);
         for (const x of sp) {
@@ -159,9 +164,9 @@ export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen
         {spots.map((s) => (
           <button
             key={s.id}
-            className={`office-tag ${sk.label} ${s.st === 'asks' ? 'hot' : ''}`}
+            className={`office-tag ${sk.label} ${s.human !== undefined ? 'human' : s.st === 'asks' ? 'hot' : ''} ${s.human === undefined && dim?.(s.id) ? 'st-dim' : ''}`}
             style={{ left: s.x * scale, top: s.y * scale }}
-            title={tr(`${s.label} — 눌러서 그 세션으로`, `${s.label} — click to open the session`)}
+            title={s.human !== undefined ? tr(`${s.label} — 사람 필요${s.human ? `: ${s.human}` : ''} · 눌러서 브라우저 열기`, `${s.label} — needs you${s.human ? `: ${s.human}` : ''} · click to open the browser`) : tr(`${s.label} — 눌러서 그 세션으로`, `${s.label} — click to open the session`)}
             onClick={() => onOpen(s.id)}
             onMouseEnter={peek && !edit ? () => peekOn(s.id) : undefined}
             onMouseLeave={peek && !edit ? peekOff : undefined}

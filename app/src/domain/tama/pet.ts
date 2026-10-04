@@ -5,12 +5,20 @@ import { careMs, DEFAULT_CAL, inactiveWorkdays, type Calendar } from './clock';
 import { isFullMoonNight } from './moon';
 import { evolve, stageOf, ZERO, type Counters, type Egg, type Slot } from './tree';
 
-export type TamaEvent =
+/** by = 먹여 준 참모(세션 이름), label = 무슨 일이었나 — '오늘 먹은 것' 줄에 쓴다. 계산엔 안 쓴다.
+ *  echo = 같은 일을 다른 갈래로 또 센 것·하루 상한 넘은 것(sources.balanceFeed) — 먹이지 않고 살아 있다는 표시만 */
+type Tag = { by?: string; label?: string; echo?: boolean };
+export type TamaEvent = Tag & (
   | { t: number; type: 'commit'; lines: number; hasTest: boolean }
   | { t: number; type: 'pr' }                        // PR 머지 = 특식
-  | { t: number; type: 'task' }                      // 참모가 시킨 일이 끝남
+  | { t: number; type: 'task' }                      // 참모가 시킨 일이 끝남 = 밥
   | { t: number; type: 'ci'; pass: boolean }         // 배틀 한 판
-  | { t: number; type: 'work'; minutes: number };    // 세션이 일한 시간 → 훈련
+  | { t: number; type: 'work'; minutes: number }     // 세션이 일한 시간 → 훈련
+  | { t: number; type: 'show' }                      // 보여준 결과물 = 특식 (하루 3개까지 — sources 가 거른다)
+  | { t: number; type: 'talk' }                      // 참모와 대화 = 간식 (한 시간에 1번)
+  | { t: number; type: 'routine'; pass: boolean }    // 예약 보고 = 끼니 + 배틀
+  | { t: number; type: 'doc' }                       // 문서 고침 = 목욕
+  | { t: number; type: 'review' });                  // 시안 검토 = 놀아주기
 
 export type Pet = {
   egg: Egg;
@@ -100,10 +108,21 @@ function check(p: Pet, t: number, cal: Calendar) {
   }
 }
 
+/** 먹이 — 어떤 끝낸 일이든 같은 밥. 아플 땐 세 번이 약 */
 function feed(p: Pet, n: number) {
   p.fedFull = Math.min(MAX_FULL, fullness(p) + n);
   p.fedCare = 0;
   p.hungerMistakes = 0;
+  if (p.sick && ++p.medicine >= 3) { p.sick = false; p.sickCare = 0; p.medicine = 0; }
+}
+
+function battle(p: Pet, pass: boolean) {
+  bump(p, 'battles');
+  if (!pass) { p.streak = 0; return; }
+  bump(p, 'wins');
+  p.streak = (p.streak ?? 0) + 1;
+  p.c = { ...p.c, bestStreak: Math.max(p.c.bestStreak ?? 0, p.streak) };
+  p.life = { ...p.life, bestStreak: Math.max(p.life.bestStreak ?? 0, p.streak) };
 }
 
 /** 과식 기준(시간당 커밋 수)을 날마다 구한다 — 하루는 새벽 5시에 시작 */
@@ -123,6 +142,11 @@ function apply(p: Pet, e: TamaEvent, line: (t: number) => number) {
   p.lastActive = e.t;
   const at = new Date(e.t), h = at.getHours();
   if (isFullMoonNight(e.t)) bump(p, 'moon');
+  if (e.echo) {
+    // 시킨 일 횟수는 위임 기록이라 메아리여도 센다(물결 궁극체·위임왕)
+    if (e.type === 'task') { bump(p, 'tasksDone'); if (h >= 1 && h < 5) bump(p, 'dawnTasks'); }
+    return;
+  }
   switch (e.type) {
     case 'commit': {
       bump(p, 'commits');
@@ -137,7 +161,6 @@ function apply(p: Pet, e: TamaEvent, line: (t: number) => number) {
         p.poops--; p.cleanCredit = 0;
         if (p.poops === 0) p.poopCare = 0;
       }
-      if (p.sick && ++p.medicine >= 3) { p.sick = false; p.sickCare = 0; p.medicine = 0; }
       return;
     }
     case 'pr':
@@ -148,14 +171,31 @@ function apply(p: Pet, e: TamaEvent, line: (t: number) => number) {
     case 'task':
       bump(p, 'tasksDone');
       if (h >= 1 && h < 5) bump(p, 'dawnTasks');
+      feed(p, 1);
       return;
     case 'ci':
-      bump(p, 'battles');
-      if (!e.pass) { p.streak = 0; return; }
-      bump(p, 'wins');
-      p.streak = (p.streak ?? 0) + 1;
-      p.c = { ...p.c, bestStreak: Math.max(p.c.bestStreak ?? 0, p.streak) };
-      p.life = { ...p.life, bestStreak: Math.max(p.life.bestStreak ?? 0, p.streak) };
+      battle(p, e.pass);
+      return;
+    case 'show':
+      bump(p, 'shows');
+      feed(p, 2);
+      return;
+    case 'talk':
+      bump(p, 'talks');
+      feed(p, 1);
+      return;
+    case 'routine':
+      bump(p, 'routines');
+      if (e.pass) bump(p, 'routineWins');
+      feed(p, 1);
+      battle(p, e.pass);
+      return;
+    case 'doc':
+      bump(p, 'docs');
+      if (p.poops > 0) { p.poops--; p.cleanCredit = 0; if (p.poops === 0) p.poopCare = 0; }
+      return;
+    case 'review':
+      bump(p, 'plays');
       return;
     case 'work': {
       p.workCarry += e.minutes;

@@ -1,5 +1,6 @@
 // 한 화면(프로젝트 화면·전체 보기) 안의 창 배치. 크게 한 창 하나 + 아래 띠로 접어 둔 창들.
 // 띠로 내려간 창은 attach 를 떼어 둔다 — attach 하나가 약 137MB라 안 보이는 창은 붙여 둘 이유가 없다(ADR 0003).
+import { pinFirst } from './orchPins';
 
 import { applyOrder, moveTo } from './gridSizing';
 
@@ -49,8 +50,9 @@ export function layoutReducer(s: PaneLayout, a: LayoutAction): PaneLayout {
 }
 
 /** ids 는 지금 살아 있는 세션 순서. 사라진 세션의 기록은 무시한다 */
-export function visiblePanes(allIds: string[], s: PaneLayout): { shown: string[]; strip: string[] } {
-  const ids = applyOrder(allIds, s.order);
+/** pinned = 고정한 창 id(고정 순서) — 끌어 둔 순서보다 앞(domain/orchPins) */
+export function visiblePanes(allIds: string[], s: PaneLayout, pinned: string[] = []): { shown: string[]; strip: string[] } {
+  const ids = pinFirst(applyOrder(allIds, s.order), pinned, (x) => x);
   if (s.maximized && ids.includes(s.maximized)) {
     return { shown: [s.maximized], strip: ids.filter((x) => x !== s.maximized) };
   }

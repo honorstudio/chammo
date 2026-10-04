@@ -15,7 +15,7 @@ export const zoomLabel = (z: number) => (z === FIT ? '맞춤' : `${z}%`);
 export type ZoomMap = Partial<Record<DocKind, number>>;
 
 /** 영상은 확대할 게 없다(창에 맞춰 튼다) */
-export const zoomable = (k: DocKind) => k !== 'video' && k !== 'audio' && k !== 'other';
+export const zoomable = (k: DocKind) => k !== 'video' && k !== 'audio' && k !== 'other' && k !== 'web'; // 주소는 페이지가 스스로(⌘+ 는 웹뷰 안)
 
 /** 다음 단계 — 단계 사이 값이면 그 방향의 가장 가까운 단계, 끝이면 그대로 */
 export function stepZoom(z: number, dir: 1 | -1, steps: readonly number[] = ZOOM_STEPS): number {

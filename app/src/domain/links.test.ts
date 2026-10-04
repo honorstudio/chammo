@@ -51,7 +51,7 @@ describe('findPaths — 링크로 안 찍힌 평범한 경로도 찾기', () => 
   });
 
   it('한글 폴더·파일 이름도 끝까지(사용자 2026-09-28: ~/Desktop/ 까지만 잡혀 계약서가 안 열렸다)', () => {
-    const p = '~/Desktop/오늘위생환경_견적/오늘위생환경_리플렛팜플렛POP_용역계약서_20260923_부가세별도.docx';
+    const p = '~/Desktop/가게_견적/가게_리플렛팜플렛_용역계약서_20260101_부가세별도.docx';
     expect(findPaths(`계약서는 ${p} 에 있어`).map((m) => m.text)).toEqual([p]);
     expect(findPaths('docs/회의록/9월.md 참고').map((m) => m.text)).toEqual(['docs/회의록/9월.md']);
   });

@@ -22,6 +22,8 @@ export type TamaFile = {
   badges?: Record<string, number>;
   /** 지금 세션이 일하는 중인가 — 메인 창이 쓰고 위젯이 훈련 표시등으로 읽는다 */
   busy?: boolean;
+  /** 돌보는 참모(마지막으로 먹인 참모) — 메인 창이 쓰고 위젯 막대가 그 프사를 그린다 */
+  keeper?: { name: string; color: string };
 };
 
 export const EMPTY_FILE: TamaFile = { pet: null, work: [], dex: [], graves: [], box: [] };

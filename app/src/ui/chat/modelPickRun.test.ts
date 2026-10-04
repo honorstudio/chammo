@@ -1,128 +1,133 @@
 import { describe, expect, it } from 'vitest';
-import { runModelPick } from './modelPickRun';
+import { runModelPick, type Defaults } from './modelPickRun';
 
-// 가짜 터미널 — /model 을 치고 Enter 하면 고르는 창이 열리고, 화살표·s·Esc 에 진짜처럼 반응한다.
-// Enter·번호키로 확정하면 "기본값 저장"으로 기록한다(그러면 안 된다)
+// 가짜 터미널 — `/model sonnet`·`/effort high` 를 치고 Enter 하면 진짜처럼 결과 줄을 낸다.
+// 대화가 길면(confirm) "Switch model?" 확인 창이 먼저 뜨고 1 을 눌러야 바뀐다. 바꾸면 기본값 파일(defaults)에도 적는다(진짜도 그렇다)
 class FakeTui {
-  names = ['Default (recommended)', 'Opus 5.5', 'Fable 5.1', 'Sonnet 5.5', 'Haiku 4.5', 'Sonnet 5', 'Opus 5'];
-  cursor: number;
-  open = false;
+  log: string[] = ['❯ 준비만 해 둬', '⏺ 준비됐어'];
   buf = '';
-  slider = ['low', 'medium', 'high', 'xhigh', 'max'];
-  effort: number;
-  model: string;
-  savedDefault = false;
-  committed: string | null = null;
-  neverOpens = false;
-  /** 보이는 모델 줄 수(채팅 칸 뒤 터미널이 낮으면 2줄만 보이고 나머지는 '… +N models') */
-  window = 99;
-  constructor(model = 'Opus 5.5', effort = 'high') { this.model = model; this.cursor = this.names.indexOf(model); this.effort = this.slider.indexOf(effort); }
+  model = 'Opus 5.5';
+  effort = 'medium';
+  confirm = false;
+  asking: string | null = null;
+  keys: string[] = [];
+  silent = false;
+  busy = false;
+  info = () => ({ model: this.model, effort: this.effort });
+  defaults: Record<string, unknown> = { model: 'claude-opus-5-5', effortLevel: 'xhigh', other: 1 };
+  constructor(o: Partial<FakeTui> = {}) { Object.assign(this, o); }
   raw = (d: string) => {
-    if (!this.open) {
-      if (d === '\r') { if (this.buf === '/model' && !this.neverOpens) { this.open = true; this.cursor = this.names.indexOf(this.model); } this.buf = ''; return; }
-      this.buf += d; return;
+    this.keys.push(d);
+    if (this.asking) {
+      if (d === '1' || d === '\r') { this.apply(this.asking); this.asking = null; }
+      else if (d === '\x1b' || d === '2') { this.log.push('  ⎿  Kept model as ' + this.model); this.asking = null; }
+      return;
     }
-    if (d === '\x1b[A') this.cursor = Math.max(0, this.cursor - 1);
-    else if (d === '\x1b[B') this.cursor = Math.min(this.names.length - 1, this.cursor + 1);
-    else if (d === '\x1b[C' && this.supports()) this.effort = (this.effort + 1) % 5;
-    else if (d === '\x1b[D' && this.supports()) this.effort = (this.effort + 4) % 5;
-    else if (d === 's') { this.model = this.names[this.cursor]!; this.committed = `${this.model}/${this.slider[this.effort]}`; this.open = false; }
-    else if (d === '\x1b') this.open = false;
-    else if (d === '\r' || /^\d$/.test(d)) { this.savedDefault = true; this.open = false; }
+    if (d !== '\r') { this.buf += d; return; }
+    const cmd = this.buf; this.buf = '';
+    if (!this.busy) this.log.push(`❯ ${cmd}`); // 일하는 중엔 친 명령 줄이 안 남고 결과만 알림 줄로 뜬다(2026-10-01 실측)
+    if (this.silent) return;
+    const m = cmd.match(/^\/model (\w+)$/);
+    if (m) { if (this.confirm && !this.model.toLowerCase().startsWith(m[1]!)) this.asking = cmd; else this.apply(cmd); return; }
+    const e = cmd.match(/^\/effort (\w+)$/);
+    if (e) {
+      if (this.model.startsWith('Haiku')) { this.log.push('  ⎿  Effort not supported for Haiku 4.5'); return; }
+      this.effort = e[1]!; this.defaults = { ...this.defaults, effortLevel: e[1] };
+      this.log.push(`${this.busy ? '  ' : '  ⎿  '}Set effort level to ${e[1]} (saved as your default for`);
+    }
   };
-  supports = () => !this.names[this.cursor]!.startsWith('Haiku');
+  apply = (cmd: string) => {
+    const a = cmd.split(' ')[1]!;
+    const name = { opus: 'Opus 5.5', sonnet: 'Sonnet 5.5', haiku: 'Haiku 4.5' }[a]!;
+    if (name === this.model) { this.log.push(`  ⎿  Kept model as ${name}`); return; }
+    this.model = name; this.defaults = { ...this.defaults, model: a };
+    this.log.push(`${this.busy ? '  ' : '  ⎿  '}Set model to ${name} and saved as your default for`);
+  };
   screen = () => {
-    if (!this.open) return { lines: ['❯ /model', '  ⎿  ready'] };
-    const lines = ['   Select model', '   Switch between Claude models.'];
-    const from = Math.max(0, Math.min(this.cursor - Math.floor(this.window / 2), this.names.length - this.window));
-    this.names.forEach((n, i) => { if (i >= from && i < from + this.window) lines.push(`  ${i === this.cursor ? '❯' : ' '} ${i + 1}.  ${n}${n === this.model ? ' ✔' : ''}               desc`); });
-    if (this.window < this.names.length) lines.push(`      … +${this.names.length - this.window} models`);
-    lines.push(this.supports() ? `   ● ${['Low', 'Medium', 'High', 'xHigh', 'Max'][this.effort]} effort ←/→ to adjust` : '   ○ Effort not supported for Haiku 4.5');
-    lines.push('   Enter to set as default · s to use this session only · Esc to cancel');
-    return { lines };
+    if (this.asking) return { lines: [...this.log, '▔▔▔', '   Switch model?', `   ❯ 1. Yes, switch to ${this.asking.split(' ')[1]}`, '     2. No, go back'], cursor: [0, 0] as [number, number] };
+    const lines = [...this.log, '────────', '❯ ' + this.buf, '────────', '  Opus 5.5 · medium'];
+    return { lines, cursor: [2 + this.buf.length, this.log.length + 1] as [number, number] };
   };
+  /** 앱이 기본값을 떠 두고 되돌리는 자리 — 진짜는 ~/.claude/settings.json */
+  store = (): Defaults => ({
+    snapshot: async () => JSON.stringify({ model: this.defaults.model, effortLevel: this.defaults.effortLevel }),
+    restore: async (s: string) => { this.defaults = { ...this.defaults, ...JSON.parse(s) }; return true; },
+  });
 }
 const fast = { sleep: async () => {} };
 
-describe('runModelPick — 고르는 창을 화살표로 맞추고 s(이 세션만)로 확정', () => {
-  it('모델만 바꾸기', async () => {
-    const t = new FakeTui('Opus 5.5', 'high');
-    const r = await runModelPick(t, { model: 'sonnet' }, fast);
+describe('runModelPick — 명령으로 바꾸고(/model·/effort) 기본값은 되돌린다(이 세션만)', () => {
+  it('모델만 — 바꾸고 기본값 파일은 그대로', async () => {
+    const t = new FakeTui();
+    expect(await runModelPick(t, { model: 'sonnet' }, { ...fast, defaults: t.store() })).toEqual({ ok: true });
+    expect(t.model).toBe('Sonnet 5.5');
+    expect(t.defaults.model).toBe('claude-opus-5-5');
+  });
+  it('에포트만', async () => {
+    const t = new FakeTui();
+    expect((await runModelPick(t, { effort: 'high' }, { ...fast, defaults: t.store() })).ok).toBe(true);
+    expect(t.effort).toBe('high');
+    expect(t.defaults.effortLevel).toBe('xhigh');
+  });
+  it('대화가 길면 뜨는 "Switch model?" 확인 창에서 예(1)를 누른다 — 안 누르면 세션이 그 창에서 멈췄다(2026-10-01 실측)', async () => {
+    const t = new FakeTui({ confirm: true });
+    expect((await runModelPick(t, { model: 'sonnet' }, { ...fast, defaults: t.store() })).ok).toBe(true);
+    expect(t.model).toBe('Sonnet 5.5');
+    expect(t.asking).toBeNull();
+  });
+  it('이미 그 모델이면 같다고 돌려준다', async () => {
+    const t = new FakeTui();
+    expect(await runModelPick(t, { model: 'opus' }, { ...fast, defaults: t.store() })).toEqual({ ok: true, same: true });
+  });
+  it('안 되는 조합(하이쿠 에포트)은 그 글로 실패 — Esc 는 안 누른다', async () => {
+    const t = new FakeTui({ model: 'Haiku 4.5' });
+    const r = await runModelPick(t, { effort: 'high' }, { ...fast, defaults: t.store() });
+    expect(r.ok).toBe(false);
+    expect(r.ok ? '' : r.why).toMatch(/Effort not supported/);
+    expect(t.keys).not.toContain('\x1b');
+  });
+  it('결과가 안 나오면(일하는 중 등) 기다리다 실패 — 그래도 Esc 는 안 누른다(누르면 하던 일이 끊겼다)', async () => {
+    const t = new FakeTui({ silent: true });
+    const r = await runModelPick(t, { model: 'sonnet' }, { ...fast, defaults: t.store(), waitTries: 5 });
+    expect(r.ok).toBe(false);
+    expect(t.keys).not.toContain('\x1b');
+  });
+  it('실패해도 기본값은 되돌린다', async () => {
+    const t = new FakeTui({ model: 'Haiku 4.5' });
+    t.defaults.effortLevel = 'xhigh';
+    const store = t.store();
+    const snap = await store.snapshot();
+    t.defaults = { ...t.defaults, effortLevel: 'low' }; // 명령이 적었다고 치고
+    await store.restore(snap);
+    expect(t.defaults.effortLevel).toBe('xhigh');
+  });
+  it('둘 다 — 모델 먼저, 에포트 다음', async () => {
+    const t = new FakeTui();
+    expect((await runModelPick(t, { model: 'sonnet', effort: 'high' }, { ...fast, defaults: t.store() })).ok).toBe(true);
+    expect([t.model, t.effort]).toEqual(['Sonnet 5.5', 'high']);
+    expect(t.defaults).toMatchObject({ model: 'claude-opus-5-5', effortLevel: 'xhigh' });
+  });
+  it('일하는 중 — 친 명령 줄 없이 알림 줄만 떠도 세션 상태(상태줄)가 바뀌면 끝난 걸로(20초씩 기다렸다, 2026-10-01 실측)', async () => {
+    const t = new FakeTui({ busy: true });
+    let polls = 0;
+    const r = await runModelPick(t, { model: 'sonnet' }, { sleep: async () => { polls++; }, defaults: t.store(), current: t.info });
     expect(r).toEqual({ ok: true });
-    expect(t.committed).toBe('Sonnet 5.5/high');
-    expect(t.savedDefault).toBe(false);
+    expect(polls).toBeLessThan(10);
+    expect(t.defaults.model).toBe('claude-opus-5-5');
   });
-  it('에포트만 바꾸기', async () => {
-    const t = new FakeTui('Opus 5.5', 'high');
-    expect(await runModelPick(t, { effort: 'low' }, fast)).toEqual({ ok: true });
-    expect(t.committed).toBe('Opus 5.5/low');
-    expect(t.savedDefault).toBe(false);
+  it('두 번 연달아 눌러도 하나씩 — 둘째가 더럽혀진 기본값을 원래 값으로 알고 되돌리지 않는다(2026-10-01 실측: model 이 opus 로 남았다)', async () => {
+    const t = new FakeTui({ busy: true });
+    const store = t.store();
+    const o = { ...fast, defaults: store, current: t.info };
+    await Promise.all([runModelPick(t, { model: 'sonnet' }, o), runModelPick(t, { effort: 'high' }, o)]);
+    expect([t.model, t.effort]).toEqual(['Sonnet 5.5', 'high']);
+    expect(t.defaults).toMatchObject({ model: 'claude-opus-5-5', effortLevel: 'xhigh' });
   });
-  it('둘 다', async () => {
-    const t = new FakeTui('Sonnet 5.5', 'medium');
-    expect(await runModelPick(t, { model: 'opus', effort: 'xhigh' }, fast)).toEqual({ ok: true });
-    expect(t.committed).toBe('Opus 5.5/xhigh');
-    expect(t.savedDefault).toBe(false);
-  });
-  it('창이 안 열리면 Esc 로 닫고 실패(기본값은 안 건드림)', async () => {
+  it('입력칸에 글이 있으면 안 친다(섞인다)', async () => {
     const t = new FakeTui();
-    t.neverOpens = true;
-    const r = await runModelPick(t, { model: 'sonnet' }, { sleep: async () => {}, openTries: 3 });
+    t.buf = '쓰던 글';
+    const r = await runModelPick(t, { model: 'sonnet' }, { ...fast, defaults: t.store() });
     expect(r.ok).toBe(false);
-    expect(t.committed).toBeNull();
-    expect(t.savedDefault).toBe(false);
-  });
-  it('하이쿠로 바꾸면서 에포트를 요구하면 실패하고 Esc — 아무것도 확정 안 함', async () => {
-    const t = new FakeTui('Opus 5.5', 'high');
-    const r = await runModelPick(t, { model: 'haiku', effort: 'low' }, fast);
-    expect(r.ok).toBe(false);
-    expect(t.committed).toBeNull();
-    expect(t.open).toBe(false);
-    expect(t.savedDefault).toBe(false);
-  });
-  it('이미 그 값이면 창을 열었다가 그냥 닫는다(확정 안 함)', async () => {
-    const t = new FakeTui('Opus 5.5', 'high');
-    expect(await runModelPick(t, { model: 'opus', effort: 'high' }, fast)).toEqual({ ok: true, same: true });
-    expect(t.committed).toBeNull();
-    expect(t.open).toBe(false);
-  });
-  it('목록이 접혀(2줄만 보여) 원하는 모델이 안 보이면 한 줄씩 내려가며 찾는다 — 낮은 채팅 칸에서 소넷을 못 찾고 취소했다(2026-10-01 사용자)', async () => {
-    const t = new FakeTui('Opus 5.5', 'high');
-    t.window = 2;
-    expect(await runModelPick(t, { model: 'haiku' }, fast)).toEqual({ ok: true });
-    expect(t.committed).toBe('Haiku 4.5/high');
-    expect(t.savedDefault).toBe(false);
-  });
-  it('위쪽에 있는 것도(커서가 아래에 있을 때)', async () => {
-    const t = new FakeTui('Haiku 4.5', 'high');
-    t.window = 2;
-    expect(await runModelPick(t, { model: 'opus' }, fast)).toEqual({ ok: true });
-    expect(t.committed).toBe('Opus 5.5/high');
-  });
-  it('도중에 화면 읽기가 터져도(예외) Esc 로 닫고 실패로 돌려준다 — 창이 열린 채 멈추지 않게', async () => {
-    const t = new FakeTui('Opus 5.5', 'high');
-    let n = 0;
-    const api = { raw: t.raw, screen: () => { if (++n > 1) throw new Error('boom'); return t.screen(); } };
-    const r = await runModelPick(api, { model: 'sonnet' }, fast);
-    expect(r.ok).toBe(false);
-    expect(t.open).toBe(false);
-    expect(t.committed).toBeNull();
-    expect(t.savedDefault).toBe(false);
-  });
-  it('실패하면 그때 화면을 돌려줘 로그로 남긴다', async () => {
-    const t = new FakeTui();
-    t.neverOpens = true;
-    const r = await runModelPick(t, { model: 'sonnet' }, { sleep: async () => {}, openTries: 2 });
-    expect(r).toMatchObject({ ok: false, screen: ['❯ /model', '  ⎿  ready'] });
-  });
-  it('Esc 한 번에 안 닫히면 또 눌러 닫는다(최대 3번)', async () => {
-    const t = new FakeTui('Opus 5.5', 'high');
-    const esc = t.raw;
-    let escs = 0;
-    const api = { raw: (d: string) => { if (d === '\x1b' && ++escs === 1) return; esc(d); }, screen: t.screen };
-    const r = await runModelPick(api, { model: 'haiku', effort: 'low' }, fast); // 하이쿠+에포트 → 실패 경로
-    expect(r.ok).toBe(false);
-    expect(t.open).toBe(false);
-    expect(escs).toBeGreaterThanOrEqual(2);
+    expect(t.model).toBe('Opus 5.5');
   });
 });

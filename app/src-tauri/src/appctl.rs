@@ -35,6 +35,30 @@ pub fn keys_request(line: &str) -> Option<(String, String)> {
     (id_ok && !keys.is_empty() && rest.is_empty()).then(|| (id.to_string(), keys.to_string()))
 }
 
+/// 하네스 글 요청(scripts/app harness) → (id, 프로젝트). id 는 답 파일 첫 줄에 그대로 쓰니 글자·숫자·- 만
+pub fn harness_request(line: &str) -> Option<(String, Option<String>)> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v.get("action")?.as_str()? != "harness" {
+        return None;
+    }
+    let id = v.get("id")?.as_str()?;
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return None;
+    }
+    let p = v.get("arg").and_then(|a| a.as_str()).map(str::trim).filter(|a| !a.is_empty()).map(str::to_owned);
+    Some((id.to_string(), p))
+}
+
+/// 폰 푸시(scripts/app push) → (제목, 한 줄). 문구 자르기는 push::payload 가 한다(제목 80자·한 줄 60자)
+pub fn push_request(line: &str) -> Option<(String, String)> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v.get("action")?.as_str()? != "push" {
+        return None;
+    }
+    let title = v["arg"]["title"].as_str()?.trim();
+    (!title.is_empty()).then(|| (title.to_string(), v["arg"]["body"].as_str().unwrap_or("").trim().to_string()))
+}
+
 pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
     let app = app.clone();
     std::thread::spawn(move || {
@@ -59,6 +83,24 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                         crate::claude::log_out("choice-keys", &format!("{id} start"));
                         let r = crate::claude::press_keys(&id, &keys);
                         crate::claude::log_out("choice-keys", &format!("{id} {}", if r.is_ok() { "ok" } else { "fail" }));
+                    });
+                    continue;
+                }
+                // 폰 푸시 — 참모가 일부러 부른 것이라 맥 창을 보고 있어도 보낸다. 진짜 데이터 폴더·모바일 켬·짝지은 기기 구독만(push::send_all)
+                if let Some((title, body)) = push_request(&line) {
+                    crate::push::send_all(&title, &body, "");
+                    continue;
+                }
+                // 하네스 글 — 창 없이 엔진으로 훑어 <데이터>/harness.txt 에 "#id <id>" 다음 줄부터 적는다(전체 스캔 2초대라 따로)
+                if let Some((id, project)) = harness_request(&line) {
+                    std::thread::spawn(move || {
+                        let lang = harnitor_core::i18n::Lang::parse(&crate::config::current().language);
+                        let text = crate::harnitor::report_at(&crate::harnitor::home(), lang, project.as_deref());
+                        let file = crate::config::data_file("harness.txt");
+                        let tmp = file.with_extension("txt.tmp");
+                        if std::fs::write(&tmp, format!("#id {id}\n{text}\n")).is_ok() {
+                            let _ = std::fs::rename(&tmp, &file);
+                        }
                     });
                     continue;
                 }
@@ -87,6 +129,25 @@ mod tests {
         assert_eq!(keys_request(r#"{"action":"keys","arg":{"id":"a;b","keys":"\r"}}"#), None);
         assert_eq!(keys_request(r#"{"action":"voice","arg":"on"}"#), None);
         assert_eq!(keys_request(r#"{"action":"keys","arg":{"id":"a","keys":""}}"#), None);
+    }
+
+    #[test]
+    fn 하네스_글_요청은_id_와_프로젝트() {
+        assert_eq!(harness_request(r#"{"action":"harness","arg":"","id":"a1b2"}"#), Some(("a1b2".into(), None)));
+        assert_eq!(harness_request(r#"{"action":"harness","arg":" shop ","id":"x9"}"#), Some(("x9".into(), Some("shop".into()))));
+        // id 는 파일 첫 줄에 그대로 쓰니 글자·숫자·- 만
+        assert_eq!(harness_request(r#"{"action":"harness","arg":"","id":"a\nb"}"#), None);
+        assert_eq!(harness_request(r#"{"action":"harness","arg":""}"#), None);
+        assert_eq!(harness_request(r#"{"action":"open","arg":"harnitor","id":"a"}"#), None);
+    }
+
+    #[test]
+    fn 폰_푸시_요청은_제목과_한_줄() {
+        assert_eq!(push_request(r#"{"action":"push","arg":{"title":" 빌드 끝 ","body":"확인해 줘"}}"#), Some(("빌드 끝".into(), "확인해 줘".into())));
+        assert_eq!(push_request(r#"{"action":"push","arg":{"title":"끝"}}"#), Some(("끝".into(), String::new())));
+        assert_eq!(push_request(r#"{"action":"push","arg":{"title":"  ","body":"x"}}"#), None, "제목은 있어야");
+        assert_eq!(push_request(r#"{"action":"push","arg":"끝"}"#), None);
+        assert_eq!(push_request(r#"{"action":"voice","arg":{"title":"x"}}"#), None);
     }
 
     #[test]

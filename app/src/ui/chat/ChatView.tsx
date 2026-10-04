@@ -1,21 +1,24 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
 import { draftStore } from '../../domain/chatDraft';
 import { isCompacting } from '../../domain/compacting';
 import { ctxLevel } from '../../domain/ctx';
 import { invoke } from '@tauri-apps/api/core';
 import { ModelChip, type ModelInfo } from './ModelChip';
+import { ChatDialog } from './ChatDialog';
+import { modelCommand } from '../../domain/modelPick';
+import { screenDialog, type ScreenDialog } from '../../domain/screenDialog';
 import type { PickResult, PickWant } from './modelPickRun';
-import { builtinSlash, completeSlash, matchSlash, slashQuery, type SlashItem } from '../../domain/slash';
-import { appendChat, chatBusy, mdSafe, parseChat, pendingLeft, clickFocusesInput, promptInput, splitPaths, splitRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
+import { builtinSlash, completeSlash, isMemoryCmd, matchSlash, slashQuery, type SlashItem } from '../../domain/slash';
+import { appendChat, chatBusy, parseChat, pendingLeft, clickFocusesInput, promptInput, sendControls, splitPaths, splitRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
+import { mdToHtml } from '../md';
 import { openTarget, readSessionTasks, readTranscript, type SessionTask } from '../../data/tauri';
 import { modKey } from '../../domain/keys';
 import { docUrl, IS_WIN } from '../../domain/reader';
 import { DROP_PATHS_EVENT } from '../fileDrop';
 import { tr } from '../../i18n';
-import { IconChevron, IconFile, IconSend, IconStop } from '../Icons';
+import { IconChevron, IconClose, IconEnter, IconFile, IconStop } from '../Icons';
 import { CHAT_INSERT, PATH_MIME } from '../space/dragPath';
+import { OPEN_PAGE } from '../space/PageBlock';
 import { attachToChat } from '../fileDrop';
 import './chat.css';
 
@@ -31,7 +34,7 @@ const mdCache = new Map<string, string>();
 const md = (text: string) => {
   const hit = mdCache.get(text);
   if (hit !== undefined) return hit;
-  const html = DOMPurify.sanitize(marked.parse(mdSafe(text), { async: false, breaks: true }) as string, { FORBID_TAGS: ['style', 'iframe', 'object', 'embed', 'form', 'img'] });
+  const html = mdToHtml(text);
   if (mdCache.size > 3000) mdCache.clear();
   mdCache.set(text, html);
   return html;
@@ -48,7 +51,11 @@ const drafts = draftStore((() => { try { return window.localStorage; } catch { r
  * 스페이스 모드의 채팅 보기(2026-09-30 사용자). 터미널(TUI)은 뒤에 그대로 붙어 있고, 이건 그 위에 덮는 판이다.
  * 읽기 = 대화 기록 이어 읽기, 쓰기 = 그 터미널 입력칸에 붙여넣고 Enter(send). 멈추기 = Esc
  */
-export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInputFocus, focusRef, screen, submitTerminal, pasteImage, sendNow, voiceStop = 0, sendQueuedNow, clearTerminal, paneId, ctx, modelInfo, pickModel, cwd }: {
+export function ChatView({ extra = [], fontSize, sessionId, state, send, interrupt, rawKeys, onTerminal, onInputFocus, focusRef, screen, submitTerminal, pasteImage, sendNow, voiceStop = 0, sendQueuedNow, clearTerminal, paneId, ctx, modelInfo, pickModel, cwd }: {
+  /** 대화 사이에 시각 순으로 끼울 것 — 직접 답하기 카드(useDirectCards) */
+  extra?: { ts: string; key: string; node: React.ReactNode }[];
+  /** 글자 크기(⌘+/⌘−) — 바뀌면 입력칸 높이를 다시 잰다(채팅 글자가 이걸 따라 커진다, space.css --chat-k) */
+  fontSize?: number;
   sessionId?: string;
   /** 컨텍스트 쓴 % — 입력칸 위 오른쪽 고리 */
   ctx?: number;
@@ -60,6 +67,8 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
   state: string;
   send: (text: string) => void;
   interrupt: () => void;
+  /** 터미널에 키를 하나씩(선택 창 버튼) — 한꺼번에 넣으면 TUI 가 놓친다 */
+  rawKeys?: (seq: string[]) => Promise<void>;
   /** 터미널로 보기 — 선택지·권한 창처럼 채팅에 안 그려지는 화면일 때 */
   onTerminal: () => void;
   /** 뒤 터미널 화면 — 입력칸에 들어간 글(지구본 키로 받아 적은 말)을 채팅에 보여 준다 */
@@ -101,6 +110,14 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
   const slashOpen = slashList.length > 0 && !(slashList.length === 1 && slashList[0]!.name === slashQ);
   useEffect(() => { setSlashSel(0); }, [slashQ]);
   const slashFill = (name: string) => { const v = completeSlash(draft, name); setDraft(v); setCaret(name.length + 2); requestAnimationFrame(() => input.current?.setSelectionRange(name.length + 2, name.length + 2)); };
+  // /memory — 터미널 고를 창 대신 CLAUDE.md·메모리 md 목록, 누르면 스페이스 문서로(2026-10-04 사용자)
+  const [memList, setMemList] = useState<MemoryFile[] | null>(null);
+  const openMemory = () => void invoke<MemoryFile[]>('memory_files_for', { root: cwd ?? null }).then(setMemList).catch(() => setMemList([]));
+  const openDoc = (path: string) => {
+    setMemList(null);
+    if (document.querySelector('.space-mode')) window.dispatchEvent(new CustomEvent(OPEN_PAGE, { detail: path }));
+    else void openTarget('file', path);
+  };
   const [pending, setPending] = useState<{ text: string; at: number }[]>(() => (paneId ? pendingBy.get(paneId) ?? [] : []));
   useEffect(() => { if (paneId) pendingBy.set(paneId, pending); }, [paneId, pending]);
   const list = useRef<HTMLDivElement>(null);
@@ -247,10 +264,13 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
     el.style.height = 'auto';
     // 상한은 이 채팅 칸 높이의 45% — 창 높이로 재면 쌓기 보기의 작은 칸에서 입력칸이 칸을 넘어 아래가 잘렸다(2026-09-30)
     const room = root.current?.clientHeight ?? window.innerHeight;
-    el.style.height = `${Math.min(el.scrollHeight + 2, Math.max(60, Math.round(room * 0.45)))}px`;
+    // 테두리는 실제 두께로 — 2px 를 늘 더하니 테두리 없는 채팅 뷰에선 한 줄 칸이 2px 커져 보내기 버튼이 아래로 쏠렸다(2026-10-02 사용자)
+    const cs = getComputedStyle(el);
+    const border = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+    el.style.height = `${Math.min(el.scrollHeight + border, Math.max(60, Math.round(room * 0.45)))}px`;
     const l = list.current; // 입력칸이 커져 목록이 줄면 맨 아래가 가려졌다 — 그 자리에서 바로 내린다
     if (l && stick.current) l.scrollTop = l.scrollHeight;
-  }, [draft]);
+  }, [draft, fontSize]);
 
   // 맨 아래를 보고 있었으면 새 말이 와도 맨 아래에 붙어 있는다. 위로 올려 읽는 중이면 그대로.
   // 내용·칸 높이가 바뀔 때마다(탭→쌓기로 다시 붙음, 입력칸이 커짐, 그림이 늦게 뜸) 따라간다 — 중간에 멈춰 있었다(2026-09-30)
@@ -272,6 +292,12 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
   // 터미널 입력칸 글 — 지구본 키로 말하면 거기 받아 적힌다. 터미널로 바꾸지 않고 여기 보여 준다(2026-09-30 사용자)
   const [termText, setTermText] = useState('');
   const [compacting, setCompacting] = useState(false);
+  // 터미널에 뜬 선택 창 — 채팅에 버튼으로(2026-10-01 사용자 "cli 안 거치게")
+  const [dialog, setDialog] = useState<ScreenDialog | null>(null);
+  /** 늘리면 모델 칩 메뉴가 열린다(채팅에 /model 만 쳤을 때) */
+  const [chipOpen, setChipOpen] = useState(0);
+  const dialogRef = useRef<ScreenDialog | null>(null);
+  dialogRef.current = dialog;
   // 보낸 직후엔 보낸 글이 터미널 입력칸을 잠깐 지나간다 — 그 사이엔 위 줄에 안 띄운다(번쩍였다, 2026-09-30 사용자)
   const quietUntil = useRef(0);
   const empties = useRef(0);
@@ -282,6 +308,8 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
       const t = s && Date.now() >= quietUntil.current ? promptInput(s.lines, s.cursor) ?? '' : '';
       setTermText((prev) => (prev === t ? prev : t));
       setCompacting(isCompacting(s?.lines));
+      const d = s ? screenDialog(s.lines) : null;
+      setDialog((prev) => (JSON.stringify(prev) === JSON.stringify(d) ? prev : d));
       // 터미널 입력칸이 비면(보냈거나 지웠거나) 붙인 것도 비운다 — 한 번 빈칸으로 읽혔다고 지우면 썸네일이 사라지고 [Image #n] 만 남았다
       empties.current = t ? 0 : empties.current + 1;
       // 입력칸에 @file·@img 이름표가 남아 있거나 방금 붙였으면 아직 쓰는 중 — 번호를 1로 되돌리면 두 파일이 같은 @file1 이 됐다(2026-09-30 사용자)
@@ -300,7 +328,7 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
     if (!voiceStop) return;
     const t = window.setTimeout(() => {
       const left = termRef.current;
-      if (!left || /\[Image #\d+\]/.test(left) || draftRef.current.trim()) return;
+      if (!left || /\[Image #\d+\]/.test(left) || draftRef.current.trim() || dialogRef.current) return;
       submitTerminal();
       setPending((p) => [...p, { text: left, at: Date.now() }]);
       quietUntil.current = Date.now() + 1500;
@@ -312,20 +340,21 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
   // 보낸 말이 Enter 없이 입력칸에 남았고 참모가 쉬고 있으면 Enter 를 한 번 더 — 참모 1→2→1 오가다 입력칸에 남아
   // 안 보내졌다(2026-09-30 사용자). 치는 중(0.4초 뒤 Enter)과 헷갈리지 않게 2초 그대로일 때만, 같은 말은 한 번만
   const busy = chatBusy(state, items);
+  const ctl = sendControls(busy, draft, termText);
   const retried = useRef(new Set<string>());
   useEffect(() => {
-    if (busy || state === 'blocked') return;
+    if (busy || state === 'blocked' || dialog) return; // 선택 창이 떠 있으면 Enter 가 창에서 골라 버린다
     const stuck = stuckInInput(waiting.map((p) => p.text), termText);
     if (!stuck || retried.current.has(stuck)) return;
     const t = window.setTimeout(() => {
-      if (stuckInInput([stuck], termRef.current) !== stuck) return;
+      if (stuckInInput([stuck], termRef.current) !== stuck || dialogRef.current) return;
       retried.current.add(stuck);
       submitTerminal();
       quietUntil.current = Date.now() + 1500;
     }, 2000);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [termText, busy, state, waiting]);
+  }, [termText, busy, state, waiting, dialog]);
 
   const atBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   // 위로 많이 올려 읽는 중이면 "맨 아래로" 버튼(2026-09-30 사용자)
@@ -354,6 +383,15 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
     quietUntil.current = Date.now() + 1500;
     if (!text && termText) { submitTerminal(); setPending((p) => [...p, { text: termText, at: Date.now() }]); stick.current = true; return; }
     if (!text) return;
+    // /model·/effort 는 터미널 고르는 창 대신 칩으로 — 창은 보낸 Enter 가 바로 골라 기본값이 저장됐다(2026-10-01 시험)
+    if (isMemoryCmd(text)) { setDraft(''); setSlashOff(''); openMemory(); return; }
+    const mc = pickModel ? modelCommand(text) : null;
+    if (mc && pickModel) {
+      setDraft(''); setSlashOff('');
+      if ('open' in mc) setChipOpen((n) => n + 1);
+      else void pickModel(mc.want);
+      return;
+    }
     if (now) sendNow(text);
     else send(text);
     setPending((p) => [...p, { text, at: Date.now() }]);
@@ -413,25 +451,38 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
         <div className="chat-inner" ref={inner}>
         {items.length > limit && <button className="chat-more" onClick={() => setLimit((n) => n + PAGE)}>{tr(`앞 대화 더 보기 (${items.length - limit})`, `Show earlier (${items.length - limit})`)}</button>}
         {!sessionId && <div className="chat-empty">{tr('아직 대화 기록이 없어요. 아래에 첫 지시를 보내 보세요', 'No conversation yet. Send the first message below')}</div>}
-        {shown.map((it) => <Bubble key={`${it.kind}:${it.id}`} it={it} onRef={stableRef} />)}
+        {(() => {
+          // 끼울 것(직접 답하기 카드)을 시각 순으로 말풍선 사이에 — 그 뒤 말보다 앞에
+          const xs = [...extra].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+          let i = 0;
+          const out: React.ReactNode[] = [];
+          for (const it of shown) {
+            while (i < xs.length && Date.parse(xs[i]!.ts) <= Date.parse(it.ts)) { out.push(<div key={xs[i]!.key}>{xs[i]!.node}</div>); i++; }
+            out.push(<Bubble key={`${it.kind}:${it.id}`} it={it} onRef={stableRef} />);
+          }
+          for (; i < xs.length; i++) out.push(<div key={xs[i]!.key}>{xs[i]!.node}</div>);
+          return out;
+        })()}
         {waiting.map((p) => <div key={p.at} className="chat-row me"><div className="bubble me pending">{splitRefs(p.text).body}<span className="chat-meta">{tr('보내는 중', 'Sending')}</span></div></div>)}
         </div>
       </div>
       {away && <button className="chat-bottom" onClick={toBottom} title={tr('맨 아래로', 'Jump to latest')}><IconChevron />{tr('맨 아래로', 'Latest')}</button>}
+      {dialog && rawKeys && <ChatDialog d={dialog} keys={rawKeys} read={() => { const s = screen?.(); return s ? screenDialog(s.lines) : null; }} onTerminal={onTerminal} />}
       {/* 상태 줄 — 목록 끝에 두면 스크롤에 가려 작업 중인지 몰랐다(2026-09-30 사용자). 입력칸 바로 위에 늘 */}
       {(state === 'blocked' || busy || compacting || ctx !== undefined || modelInfo?.model) && (
         <div className="chat-status">
           {compacting ? (
             <span className="chat-compact"><span className="spin" />{tr('대화 압축 중 — 앞 대화를 요약하고 있어요', 'Compacting — summarizing earlier conversation')}</span>
-          ) : state === 'blocked' ? (
+          ) : state === 'blocked' && !(dialog && rawKeys) ? (
             <><span>{tr('터미널에서 선택을 기다리고 있어요', 'Waiting for a choice in the terminal')}</span><button className="chat-more" onClick={onTerminal}>{tr('터미널로 보기', 'Show terminal')}</button></>
           ) : busy ? (
             <><span className="spin" /><span>{tr('작업 중', 'Working')}{lastTool ? ` · ${lastTool}` : ''}</span></>
           ) : null}
           {modelInfo?.model && pickModel && (() => {
             const lockedWhy = termText ? tr('터미널 입력칸에 쓰던 글이 있어서 못 바꿔요 — 먼저 보내거나 지워 주세요', 'There is text in the terminal input — send or clear it first')
-              : busy || compacting ? tr('작업 중엔 못 바꿔요 — 끝나면 바꿔 주세요', "Can't change while it's working") : state === 'blocked' ? tr('터미널에서 선택을 기다리는 중이라 못 바꿔요', 'Waiting for a choice in the terminal') : undefined;
-            return <ModelChip info={modelInfo} pick={pickModel} locked={!!lockedWhy} lockedWhy={lockedWhy} />;
+              // 일하는 중에도 바꾼다 — /model·/effort 는 일하는 중에도 바로 먹는다(2026-10-01 실측). 압축 중만 막는다
+              : compacting ? tr('대화를 줄이는 중이라 못 바꿔요 — 끝나면 바꿔 주세요', "Can't change while compacting") : state === 'blocked' ? tr('터미널에서 선택을 기다리는 중이라 못 바꿔요', 'Waiting for a choice in the terminal') : undefined;
+            return <ModelChip info={modelInfo} pick={pickModel} locked={!!lockedWhy} lockedWhy={lockedWhy} openSignal={chipOpen} />;
           })()}
           {ctx !== undefined && <CtxRing used={ctx} />}
         </div>
@@ -472,6 +523,17 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
           ))}
         </div>
       )}
+      {memList && (
+        <div className="chat-mention chat-slash chat-mem" role="listbox" aria-label={tr('메모리 문서', 'Memory files')} onKeyDown={(e) => { if (e.key === 'Escape') { setMemList(null); input.current?.focus(); } }}>
+          {memList.length === 0 && <div className="dim chat-mem-empty">{tr('CLAUDE.md·메모리 문서가 아직 없어요', 'No CLAUDE.md or memory files yet')}</div>}
+          {memList.map((m, i) => (
+            <button key={m.path} role="option" aria-selected={false} autoFocus={i === 0} onClick={() => openDoc(m.path)} title={m.path}>
+              <b>{memoryLabel(m.kind)}</b><span className="dim">{m.path.replace(/^.*?(\/[^/]+\/[^/]+)$/, '…$1')}</span>
+            </button>
+          ))}
+          <button className="chat-mem-close" onClick={() => { setMemList(null); input.current?.focus(); }} aria-label={tr('닫기', 'Close')} title={tr('닫기', 'Close')}><IconClose /></button>
+        </div>
+      )}
       {slashOpen && (
         <div className="chat-mention chat-slash" role="listbox">
           {slashList.map((it, i) => (
@@ -510,7 +572,9 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
             // / 자동완성이 떠 있으면: ↑↓ 고르기, Tab·Enter 채우기, Esc 닫기 — 터미널 Claude 와 같은 손버릇
             if (slashOpen && !e.nativeEvent.isComposing) {
               if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setSlashSel((i) => (i + (e.key === 'ArrowDown' ? 1 : slashList.length - 1)) % slashList.length); return; }
-              if ((e.key === 'Tab' && !e.shiftKey) || (e.key === 'Enter' && !e.shiftKey && !modKey(e, IS_WIN))) { e.preventDefault(); slashFill(slashList[slashSel]!.name); return; }
+              // 이미 다 친 이름(/model)에서 Enter 는 보내기 — 비슷한 이름이 더 있으면 채우기만 해서 Enter 를 두 번 눌러야 했다(2026-10-01 시험)
+              const exact = slashList[slashSel]!.name === slashQ;
+              if ((e.key === 'Tab' && !e.shiftKey) || (e.key === 'Enter' && !e.shiftKey && !modKey(e, IS_WIN) && !exact)) { e.preventDefault(); slashFill(slashList[slashSel]!.name); return; }
               if (e.key === 'Escape') { e.preventDefault(); setSlashOff(draft); return; }
             }
             // Enter = 보내기(일하는 중이면 줄 서 있다가 중간에 들어간다), ⌘Enter = 끊고 바로 보내기(2026-09-30 사용자)
@@ -545,8 +609,8 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
           }}
         />
         </div>
-        {busy && !draft.trim() && <button className="btn icon" onClick={interrupt} aria-label={tr('멈추기', 'Stop')} title={tr('멈추기 — Esc 를 보내 하던 일을 멈춘다', 'Stop — send Esc to interrupt')}><IconStop /></button>}
-        <button className="btn pri icon" disabled={!draft.trim() && !termText} onClick={() => submit()} aria-label={tr('보내기', 'Send')} title={tr('보내기 (Enter) · 끊고 보내기 (⌘Enter)', 'Send (Enter) · Interrupt & send (⌘Enter)')}><IconSend /></button>
+        {ctl.stop && <button className="btn chat-stop" onClick={interrupt} aria-label={tr('멈춤', 'Stop')} title={tr('멈춤 — Esc 를 보내 하던 일을 멈춘다', 'Stop — send Esc to interrupt')}><IconStop /></button>}
+        <button className="btn chat-send" disabled={!ctl.canSend} onClick={() => submit()} aria-label={tr('보내기', 'Send')} title={tr('보내기 (Enter) · 끊고 보내기 (⌘Enter)', 'Send (Enter) · Interrupt & send (⌘Enter)')}><IconEnter /></button>
       </div>
     </div>
   );
@@ -554,6 +618,8 @@ export function ChatView({ sessionId, state, send, interrupt, onTerminal, onInpu
 
 const hhmm = (ts: string) => { const d = new Date(ts); return Number.isNaN(d.getTime()) ? '' : ` ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 /** 말풍선 옆 "참조" — 누르면 입력칸에 @chatN */
+type MemoryFile = { kind: 'user' | 'project' | 'local' | 'memory'; path: string };
+
 const RefBtn = ({ onClick }: { onClick: () => void }) => (
   <button className="chat-refbtn" onClick={(e) => { e.stopPropagation(); onClick(); }} title={tr('이 말풍선을 입력칸에 참조로 넣기', 'Reference this bubble in the input')}>{tr('참조', 'Quote')}</button>
 );
@@ -573,7 +639,7 @@ const Bubble = memo(function Bubble({ it, onRef }: { it: ChatItem; onRef: (who: 
     );
   }
   if (it.kind === 'assistant') return <div className="chat-row"><div className="bubble md" dangerouslySetInnerHTML={{ __html: md(it.text) }} /><RefBtn onClick={() => onRef(tr(`답${hhmm(it.ts)}`, `Reply${hhmm(it.ts)}`), it.text)} /></div>;
-  if (it.kind === 'note') return <div className="chat-note">{it.text}</div>;
+  if (it.kind === 'note') return it.out ? <CmdOut name={it.text} out={it.out} /> : <div className="chat-note">{it.text}</div>;
   if (it.kind === 'relay') return <div className="chat-row relay"><Relay from={it.from} text={it.text} /><RefBtn onClick={() => onRef(it.from === '앱' ? tr('앱이 전함', 'From the app') : tr(`${it.from} 세션`, it.from), it.text)} /></div>;
   const last = it.tools[it.tools.length - 1]!;
   return (
@@ -583,6 +649,26 @@ const Bubble = memo(function Bubble({ it, onRef }: { it: ChatItem; onRef: (who: 
     </details>
   );
 });
+
+/** 명령 결과(/context·/cost 등) — 고정폭 글, 길면 접어 두고 화살표로 펼치기 */
+function CmdOut({ name, out }: { name: string; out: string }) {
+  const [open, setOpen] = useState(false);
+  const long = out.split('\n').length > 12;
+  return (
+    <div className={`chat-cmd ${long && !open ? 'clip' : ''}`}>
+      {name && <div className="chat-cmd-name">{name}</div>}
+      <pre>{out}</pre>
+      {long && <button className={`chat-cmd-fold ${open ? 'open' : ''}`} onClick={() => setOpen((o) => !o)} aria-label={open ? tr('접기', 'Collapse') : tr('펼치기', 'Expand')} title={open ? tr('접기', 'Collapse') : tr('펼치기', 'Expand')}><IconChevron /></button>}
+    </div>
+  );
+}
+
+/** /memory 목록 이름 — 어느 범위 파일인지 */
+const memoryLabel = (k: MemoryFile['kind']) =>
+  k === 'user' ? tr('내 CLAUDE.md — 모든 프로젝트', 'My CLAUDE.md — all projects')
+  : k === 'project' ? tr('프로젝트 CLAUDE.md', 'Project CLAUDE.md')
+  : k === 'local' ? tr('CLAUDE.local.md — 나만', 'CLAUDE.local.md — just me')
+  : tr('자동 메모리', 'Auto memory');
 
 /** 말풍선 속 그림 — 누르면 크게, 한 번 더 누르면 작게 */
 function Thumb({ src, label }: { src: string; label: string }) {

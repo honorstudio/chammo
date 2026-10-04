@@ -1,12 +1,15 @@
 // 메인 창이 다마고치를 계산한다: 1분마다 tama.json 을 읽고 → 작업 기록(커밋·CI·시킨 일·세션 작업)을 먹여 → 다시 쓴다.
 // 위젯 창은 그 파일을 읽어 그리기만 한다
 import { useEffect, useRef, useState } from 'react';
-import { ciRuns, commitLog, readTama, tamaRequest, tamaWidget, writeTama, type AppEnv } from '../../data/tauri';
+import { ciRuns, commitLog, humanTurns, readShowLog, readSpaceLog, readTama, tamaRequest, tamaWidget, writeTama, type AppEnv } from '../../data/tauri';
+import type { Routine } from '../../domain/routine';
+import { keeperOf, routineFeed, showFeed, spaceFeed, talkFeed } from '../../domain/tama/signals';
+import { orchColor } from '../../domain/avatar';
 import { earnedBadges, unlockBadges } from '../../domain/tama/badges';
 import type { Session } from '../../domain/session';
 import type { TaskEvent } from '../../domain/tasks';
 import type { TamaEvent } from '../../domain/tama/pet';
-import { parseCiRuns, parseCommitLog, taskEvents } from '../../domain/tama/sources';
+import { balanceFeed, parseCiRuns, parseCommitLog, taskEvents } from '../../domain/tama/sources';
 import { addWork, parseTamaFile, step, workMinutes, type TamaFile } from '../../domain/tama/store';
 
 const STEP_MS = 60_000;
@@ -17,7 +20,7 @@ const DAY = 86_400_000;
 type Cache = { at: number; key: string; events: TamaEvent[] };
 
 /** onRequest: 위젯이 부탁한 것("dex" = 다마고치 페이지) */
-export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEvent[], onRequest: (kind: string) => void) {
+export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEvent[], routines: Routine[], orchs: Session[], onRequest: (kind: string) => void) {
   const [file, setFile] = useState<TamaFile | null>(null);
   // 먹이 사건(커밋·PR·CI·시킨 일) — 머지 가챠 코인도 같은 사건으로 센다(useGacha)
   const [feed, setFeed] = useState<TamaEvent[]>([]);
@@ -25,8 +28,8 @@ export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEven
   const pending = useRef(0);
   const lastPoll = useRef(Date.now());
   const busy = sessions.filter((s) => s.state === 'working').length;
-  const latest = useRef({ busy, tasks, onRequest });
-  latest.current = { busy, tasks, onRequest };
+  const latest = useRef({ busy, tasks, routines, sessions, orchs, onRequest });
+  latest.current = { busy, tasks, routines, sessions, orchs, onRequest };
   const commits = useRef<Cache>({ at: 0, key: '', events: [] });
   const ci = useRef<Cache>({ at: 0, key: '', events: [] });
 
@@ -55,12 +58,23 @@ export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEven
       if (now - ci.current.at > CI_MS || ci.current.key !== day) {
         ci.current = { at: now, key: day, events: parseCiRuns(env.githubUser ? await ciRuns(env.devRoot, env.githubUser, day) : '') };
       }
-      const events = [...commits.current.events, ...ci.current.events, ...taskEvents(latest.current.tasks)];
+      // 끝낸 일 먹이(2026-10-03) — 개발 안 해도 키운다. 대화는 대화 기록 id → 세션 id 로 바꿔 '누가 먹였나'를 맞춘다
+      const live = latest.current.sessions.filter((s) => s.sessionId);
+      const bySid = new Map(live.map((s) => [s.sessionId!, s.id]));
+      const [shows, talks, space] = await Promise.all([readShowLog().catch(() => ''), humanTurns(live.map((s) => s.sessionId!)).catch(() => ''), readSpaceLog().catch(() => '')]);
+      const extra = [
+        ...taskEvents(latest.current.tasks), ...showFeed(shows), ...spaceFeed(space), ...routineFeed(latest.current.routines),
+        ...talkFeed(talks).map((e) => ({ ...e, by: e.by && bySid.get(e.by) })),
+      ];
+      const events = balanceFeed([...commits.current.events, ...ci.current.events, ...extra]);
       if (alive) setFeed(events);
       if (f.pet && !f.pet.dead) f = step(f, events, now);
       // 업적: 딴 것은 다마고치 화면에만 — macOS 알림은 안 보낸다(사용자 2026-09-27, domain/notify)
       f = unlockBadges(f, earnedBadges(f, commits.current.events, now), now).file;
-      f = { ...f, busy: latest.current.busy > 0 };
+      const ids = latest.current.orchs.map((o) => o.id);
+      const kid = keeperOf(events, ids);
+      const k = latest.current.orchs.find((o) => o.id === kid);
+      f = { ...f, busy: latest.current.busy > 0, keeper: k ? { name: k.name, color: orchColor(k.name) } : undefined };
       // 계산하는 사이 사람이 바꿨으면(알 고르기·보관함·처음부터 → rev 증가) 이번 계산은 버리고 다음 분에 다시
       const again = parseTamaFile(await readTama());
       if ((again.rev ?? 0) !== (f.rev ?? 0)) return;

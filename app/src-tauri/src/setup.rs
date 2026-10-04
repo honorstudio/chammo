@@ -157,7 +157,13 @@ pub fn trusted_in(claude_json: &str, dir: &str) -> bool {
 pub fn claude_trusted(dir: String) -> bool {
     let home = crate::platform::home();
     let text = std::fs::read_to_string(format!("{home}/.claude.json")).unwrap_or_default();
-    trusted_in(&text, &crate::config::expand(&home, &dir))
+    trusted_at(&text, &crate::config::expand(&home, &dir))
+}
+
+/// 그대로 못 찾으면 진짜 경로로 한 번 더 — claude 는 링크를 풀어 적는다(/tmp → /private/tmp, 링크 건 프로젝트 폴더)
+fn trusted_at(claude_json: &str, dir: &str) -> bool {
+    trusted_in(claude_json, dir)
+        || std::fs::canonicalize(dir).is_ok_and(|real| real.to_str().is_some_and(|r| r != dir && trusted_in(claude_json, r)))
 }
 
 /** AppleScript 글자 안에 넣을 수 있게 — 역슬래시·큰따옴표만 막으면 된다 */
@@ -207,6 +213,21 @@ pub fn app_version() -> String {
 
 #[cfg(test)]
 mod tests {
+    // claude 는 믿은 폴더를 진짜 경로(/private/tmp/…)로 적는다 — 링크 경로(/tmp/…)를 고르면 믿기를 마쳐도 마법사가 못 넘어갔다(2026-10-05 개발판 실측)
+    #[cfg(unix)]
+    #[test]
+    fn 링크_경로로_골라도_믿음을_찾는다() {
+        let d = std::env::temp_dir().join(format!("chammo-trustlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("real")).unwrap();
+        std::os::unix::fs::symlink(d.join("real"), d.join("link")).unwrap();
+        let real = std::fs::canonicalize(d.join("real")).unwrap();
+        let json = format!(r#"{{"projects":{{"{}":{{"hasTrustDialogAccepted":true}}}}}}"#, real.display());
+        assert!(super::trusted_at(&json, &d.join("link").to_string_lossy()));
+        assert!(!super::trusted_at(&json, &d.to_string_lossy()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn 앱_버전은_세_자리() {
         let v = super::app_version();

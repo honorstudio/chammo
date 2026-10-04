@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bossReaction, canPlace, catWalk, cellAt, furnitureAt, coffeeWalk, delivery, officeState, seatSlots, stampSeen, withLounge, planRoom, speciesFor, type Seat } from './office';
+import { bossReaction, canPlace, catWalk, cellAt, dockOrder, furnitureAt, coffeeWalk, delivery, officeState, seatSlots, stampSeen, withLounge, planRoom, speciesFor, type Seat } from './office';
 
 const seat = (id: string, project: string, status: Seat['status'] = 'working', extra: Partial<Seat> = {}): Seat => ({ id, label: project, project, status, startedAt: 0, ...extra });
 
@@ -301,4 +301,29 @@ describe('furnitureAt — 가구 놓기에서 놓인 가구를 집는다(심즈�
     expect(furnitureAt(room, ox, oy, x, y)).toBe('furn.lamp');
   });
   it('빈 곳이면 null', () => { expect(furnitureAt(room, ox, oy, 0, 0)).toBeNull(); });
+});
+
+describe('사람 필요·상태 원본이 책상까지(오피스 A 1단계)', () => {
+  it('책상에 원래 상태(status)와 사람 필요 이유(human)가 실린다 — 현황판이 메뉴와 같은 말을 쓰게', () => {
+    const r = planRoom([], [seat('a', 'shop', 'blocked'), seat('b', 'web', 'working', { human: '로그인 해 줘' })], 'bear');
+    const a = r.desks.find((d) => d.id === 'a')!, b = r.desks.find((d) => d.id === 'b')!;
+    expect(a.st).toBe('asks');
+    expect(a.status).toBe('blocked');
+    expect(a.human).toBeUndefined();
+    expect(b.human).toBe('로그인 해 줘');
+  });
+});
+
+describe('dockOrder — 현황판 순서: 사람 필요 → 지금 탭 참모가 시킨 것 → 나머지', () => {
+  const r = planRoom([], [seat('a', 'aa'), seat('b', 'bb'), seat('c', 'cc', 'working', { human: '' }), seat('d', 'dd')], 'bear');
+  const desks = r.desks.filter((d) => !d.boss && !d.empty);
+  it('사람 필요가 맨 앞(이유가 빈 글자여도)', () => {
+    expect(dockOrder(desks).map((d) => d.id)[0]).toBe('c');
+  });
+  it('옅게 할 것(dim)은 뒤로, 같은 칸 안에선 원래 순서', () => {
+    expect(dockOrder(desks, (id) => id === 'a' || id === 'b').map((d) => d.id)).toEqual(['c', 'd', 'a', 'b']);
+  });
+  it('사람 필요는 옅게 할 세션이어도 맨 앞', () => {
+    expect(dockOrder(desks, (id) => id === 'c').map((d) => d.id)[0]).toBe('c');
+  });
 });

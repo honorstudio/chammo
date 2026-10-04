@@ -2,6 +2,7 @@
 // 이 컴퓨터에 기억(localStorage) — 앱을 껐다 켜도 안 보낸 고친 것이 남는다
 import { useSyncExternalStore } from 'react';
 import { mdDiff, type LineComment, type MdDiff } from '../../domain/space';
+import { rebase } from '../../domain/docMerge';
 
 type Doc = { baseline: string; current: string };
 const KEY = 'spacePending';
@@ -50,4 +51,12 @@ export function markSent() {
 /** 보낼 것 — 고친 문서들 + 줄 코멘트 */
 export function usePending() {
   return useSyncExternalStore((f) => { listeners.add(f); return () => listeners.delete(f); }, () => state);
+}
+/** 밖(참모·세션)에서 들어온 변경(before → after) — '사용자가 고친 것'이 아니다. 기준에도 같은 바깥 변경을 옮겨서
+ *  보낼 것엔 사용자가 고친 줄만 남게(줄 단위 3자 합치기 — 기준과 겹쳐 못 옮기면 지금 판만 바꾼다) */
+export function absorbOutside(path: string, before: string, after: string) {
+  const d = docs.get(path);
+  if (!d) return;
+  docs.set(path, { baseline: rebase(d.baseline, before, after) ?? d.baseline, current: after });
+  emit();
 }

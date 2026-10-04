@@ -96,6 +96,12 @@ class ShowPoint(unittest.TestCase):
         r = show.record('/h/a.md', {'CLAUDE_JOB_DIR': '/h/.claude/jobs/abcd1234'}, '/h/p', 't', {'page': 2})
         self.assertEqual(r, {'ts': 't', 'path': '/h/a.md', 'from': 'abcd1234', 'cwd': '/h/p', 'at': {'page': 2}})
 
+    def test_web_url(self):
+        self.assertEqual(show.web_url('http://localhost:3000'), 'http://localhost:3000')
+        self.assertIsNone(show.web_url('file:///etc/passwd'))
+        self.assertIsNone(show.web_url('javascript:alert(1)'))
+        self.assertEqual(show.parse_args(['http://localhost:3000']), [('http://localhost:3000', None)])
+
     def test_shown_where(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertIn('reader', show.shown_where(d))

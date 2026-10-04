@@ -68,9 +68,16 @@ def swap_in(tmp, cj):
     os.remove(tmp)
 
 
-def trust(path, home, win=None):
+def computer_use_on(cfg):
+    """앱 기능 '화면 조종 모든 프로젝트'(features.computerUse) — 기본 끔"""
+    f = cfg.get('features') if isinstance(cfg.get('features'), dict) else {}
+    return f.get('computerUse') is True
+
+
+def trust(path, home, win=None, computer_use=False):
     """claude --bg 가 새 폴더에서 뜨게 ~/.claude.json 에 '믿음'을 적는다 — 이 스크립트가 방금 만든 빈 폴더에만.
-    (부모 폴더를 믿어도 새 하위 폴더는 "Workspace not trusted" 로 거부됐다, 2026-09-28 실측) 파일이 없거나 깨졌으면 손대지 않는다"""
+    (부모 폴더를 믿어도 새 하위 폴더는 "Workspace not trusted" 로 거부됐다, 2026-09-28 실측) 파일이 없거나 깨졌으면 손대지 않는다.
+    computer_use 면 내장 화면 조종도 켠다 — Claude Code 는 projects.<경로>.enabledMcpServers 에 있어야 켠다(앱 computer_use.rs 와 같은 자리)"""
     cj = os.path.join(home, '.claude.json')
     try:
         with open(cj, encoding='utf-8') as f:
@@ -82,7 +89,11 @@ def trust(path, home, win=None):
     projects = d.setdefault('projects', {})
     if not isinstance(projects, dict):
         return False
-    projects.setdefault(trust_key(path, win), {})['hasTrustDialogAccepted'] = True
+    p = projects.setdefault(trust_key(path, win), {})
+    p['hasTrustDialogAccepted'] = True
+    if computer_use:
+        on = p.get('enabledMcpServers') if isinstance(p.get('enabledMcpServers'), list) else []
+        p['enabledMcpServers'] = on if 'computer-use' in on else on + ['computer-use']
     tmp = cj + '.chammo-tmp'
     with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(d, f, ensure_ascii=False, indent=2)
@@ -109,13 +120,39 @@ def local_settings(path, enable=(), statusline=None):
         json.dump(s, f, ensure_ascii=False, indent=2)
 
 
+def gitignore(path, line):
+    """<폴더>/.gitignore 에 한 줄 — 있던 줄은 그대로, 이미 있으면 안 더한다"""
+    gi = os.path.join(path, '.gitignore')
+    try:
+        with open(gi, encoding='utf-8') as f:
+            body = f.read()
+    except OSError:
+        body = ''
+    if line in body.splitlines():
+        return
+    with open(gi, 'w', encoding='utf-8') as f:
+        f.write(body + ('' if not body or body.endswith('\n') else '\n') + line + '\n')
+
+
+def pick_node(data, which=shutil.which, win=None):
+    """브라우저 도구를 돌릴 node — 앱이 고른 것(<데이터>/tools/bin/node 링크) → 앱이 받은 것 → PATH·brew.
+    .mcp.json 은 이 node 경로를 적으니 Homebrew 버전 폴더가 박히지 않게 링크부터(앱 browser_setup)"""
+    win = os.name == 'nt' if win is None else win
+    tools = os.path.join(data, 'tools')
+    mine = [os.path.join(tools, 'node', 'node.exe')] if win else [os.path.join(tools, 'bin', 'node'), os.path.join(tools, 'node', 'bin', 'node')]
+    for p in mine:
+        if os.path.isfile(p):  # 링크면 가리키는 게 있어야
+            return p
+    return which('node') or next((p for p in ['/opt/homebrew/bin/node', '/usr/local/bin/node'] if not win and os.path.isfile(p)), None)
+
+
 def browser(path, name, data, node=None):
     """브라우저 자동화가 깔려 있으면 이 프로젝트만의 브라우저 프로필(.mcp.json)을 만들고, 백그라운드 세션이 못 누르는
     MCP 승인 창을 미리 승인해 둔다(.claude/settings.local.json). 여러 세션이 한 브라우저로 부딪히지 않게"""
     tool = os.path.join(data, 'tools/chammo-browser')
     if not os.path.isfile(os.path.join(tool, 'node_modules/@playwright/mcp/package.json')):
         return False
-    node = node or shutil.which('node') or next((p for p in ['/opt/homebrew/bin/node', '/usr/local/bin/node'] if os.path.isfile(p)), None)
+    node = node or pick_node(data)
     if not node or not os.path.isfile(node):
         return False
     env = dict(os.environ, CHAMMO_HOME=data)
@@ -123,6 +160,7 @@ def browser(path, name, data, node=None):
     if r.returncode != 0:
         return False
     local_settings(path, enable=['playwright'])
+    gitignore(path, '.playwright-mcp/')  # playwright MCP 가 폴더에 남기는 페이지 스냅샷 — git 에 섞이지 않게
     return True
 
 
@@ -159,7 +197,7 @@ def create(name, summary, data=None, home=None, today=None, node=None):
                 with open(dest, 'w', encoding='utf-8') as f:
                     f.write(body)
                 written.append(rel)
-    trusted = False if existed else trust(path, home)
+    trusted = False if existed else trust(path, home, computer_use=computer_use_on(cfg))  # 있던 폴더는 앱이 켤 때 넣는다
     web = False if existed else browser(path, name, data, node)  # 있던 폴더(사용자 저장소)의 .mcp.json 은 대신 안 건드린다
     status = os.path.join(data, 'tools/statusline')
     if not existed and os.path.isfile(status):

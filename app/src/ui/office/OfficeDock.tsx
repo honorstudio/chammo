@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ago, dockLine, pushTick, type Tick } from '../../domain/dock';
-import type { Desk } from '../../domain/office';
+import { dockOrder, type Desk } from '../../domain/office';
 import { scaled } from '../gacha/icons';
 import { brush, pet } from './draw';
 import type { Skin } from './skins';
@@ -23,7 +23,8 @@ function Face({ spr, fill, sk }: { spr: string; fill: string; sk: Skin }) {
  * 사무실 머리 위 글씨는 화면을 가려서 2.5초만 띄우는데, 여기는 늘 보인다(사용자 2026-09-27).
  * notes = 일 안 할 때 보일 한 줄(물어본 질문·마지막 답)
  */
-export function OfficeDock({ desks, sk, notes = {}, onOpen }: { desks: Desk[]; sk: Skin; notes?: Record<string, string>; onOpen: (id: string) => void }) {
+export function OfficeDock({ desks, sk, notes = {}, onOpen, dim }: { desks: Desk[]; sk: Skin; notes?: Record<string, string>; onOpen: (id: string) => void;
+  /** 옅게 할 세션(채팅 뷰: 지금 탭 참모가 안 시킨 것) — 이름표와 같은 기준, 뒤로 보낸다. 사람 필요는 늘 맨 앞·진하게 */ dim?: (id: string) => boolean }) {
   const [ticks, setTicks] = useState<Record<string, Tick[]>>({});
   const [now, setNow] = useState(Date.now());
   const key = desks.map((d) => `${d.id}:${d.doing ?? ''}`).join('|');
@@ -43,12 +44,14 @@ export function OfficeDock({ desks, sk, notes = {}, onOpen }: { desks: Desk[]; s
   if (!desks.length) return null;
   return (
     <div className="office-dock">
-      {desks.map((d) => {
-        const line = dockLine(d.st, d.act, d.doing);
+      {dockOrder(desks, dim).map((d) => {
+        const human = d.human !== undefined;
+        const line = dockLine(d.status ?? 'idle', d.act, d.doing, d.human);
         const [cur, ...old] = ticks[d.id] ?? [];
-        const live = d.st === 'working';
+        const live = d.st === 'working' && !human;
         return (
-          <button key={d.id} className={`dock-card st-${d.st}`} onClick={() => onOpen(d.id)} title={tr('눌러서 이 세션 열기', 'Click to open this session')}>
+          <button key={d.id} className={`dock-card st-${human ? 'human' : d.st} ${!human && dim?.(d.id) ? 'st-dim' : ''}`} onClick={() => onOpen(d.id)}
+            title={human ? tr('눌러서 브라우저 열기', 'Click to open the browser') : tr('눌러서 이 세션 열기', 'Click to open this session')}>
             <Face spr={d.spr} fill={sk.pets[d.color % sk.pets.length]!} sk={sk} />
             <span className="dock-main">
               <span className="dock-head">
@@ -56,7 +59,7 @@ export function OfficeDock({ desks, sk, notes = {}, onOpen }: { desks: Desk[]; s
                 <span className="dock-verb">{line.verb}</span>
                 {live && cur && <span className="dock-ago">{ago(cur.at, now)}</span>}
               </span>
-              <span className={live ? 'dock-now' : 'dock-note'}>{live ? line.text || '…' : notes[d.id] ?? ''}</span>
+              <span className={live ? 'dock-now' : 'dock-note'}>{live ? line.text || '…' : human ? line.text : notes[d.id] ?? ''}</span>
               {live && old.map((x, i) => <span key={i} className="dock-old">{x.text}</span>)}
             </span>
           </button>

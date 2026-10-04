@@ -25,10 +25,16 @@ export type Counters = {
   dawnTasks: number;  // 새벽 1~5시에 끝난 시킨 일 — 물결 숨은 진화
   bestStreak: number; // 이 단계에서 CI 가장 긴 연속 통과 — 잎사귀 숨은 진화
   moon: number;       // 보름달 밤 활동 — 별 숨은 진화
+  shows: number;      // 보여준 결과물(scripts/show) — 특식, 불씨 궁극체의 '마무리'
+  talks: number;      // 참모와 대화 — 간식
+  routines: number;   // 예약 보고 = 배틀 한 판
+  routineWins: number;
+  docs: number;       // 문서 고침 — 목욕
+  plays: number;      // 시안 검토 — 놀아주기
   luck: number;       // 0~1, 알을 고를 때 한 번 정한다 — 별알 궁극체가 매시간 다시 굴려 결국 통과하는 걸 막는다
 };
 
-export const ZERO: Counters = { mistakes: 0, training: 0, overfeed: 0, battles: 0, wins: 0, prMerges: 0, tasksDone: 0, commits: 0, testCommits: 0, friPr: 0, dawnTasks: 0, bestStreak: 0, moon: 0, luck: 0 };
+export const ZERO: Counters = { mistakes: 0, training: 0, overfeed: 0, battles: 0, wins: 0, prMerges: 0, tasksDone: 0, commits: 0, testCommits: 0, friPr: 0, dawnTasks: 0, bestStreak: 0, moon: 0, shows: 0, talks: 0, routines: 0, routineWins: 0, docs: 0, plays: 0, luck: 0 };
 
 const STAGE: Record<Slot, number> = { egg: 0, i1: 1, i2: 2, r1: 3, r2: 3, cG: 4, cD: 4, cA: 4, cT: 4, cM: 4, cS: 4, cN: 4, cX: 4, p1: 5, p2: 5, p3: 5, m1: 6, m2: 6, jA: 6, jB: 6 };
 export const stageOf = (s: Slot) => STAGE[s];
@@ -36,10 +42,13 @@ export const stageOf = (s: Slot) => STAGE[s];
 const between = (n: number, lo: number, hi: number) => n >= lo && n <= hi;
 
 /** 궁극체로 가는 계열별 조건 (돌봄 실수 0~2 는 공통) */
+// 일 종류로 센다(2026-10-03) — 개발 안 해도 넷 다 열린다. 불씨 = 마무리(PR 머지·결과물), 잎사귀 = 검사 비율(테스트 커밋·예약 성공·시안 검토)
+const checked = (c: Counters) => c.testCommits + c.routineWins + c.plays;
+const checkable = (c: Counters) => c.commits + c.routines + c.plays;
 const MEGA: Record<Egg, (c: Counters) => boolean> = {
-  fire: (c) => c.prMerges >= 5,
+  fire: (c) => c.prMerges + c.shows >= 5,
   wave: (c) => c.tasksDone >= 10,
-  leaf: (c) => c.commits > 0 && c.testCommits / c.commits >= 0.5,
+  leaf: (c) => checkable(c) > 0 && checked(c) / checkable(c) >= 0.5,
   star: (c) => c.luck < 0.5,
 };
 

@@ -1,8 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
+import { emptyStore } from '../../domain/curation';
+import { orchVars } from '../../domain/orchTheme';
 import { docUrl } from '../../domain/reader';
 import { tr } from '../../i18n';
-import { IconClose, IconSend } from '../Icons';
+import { IconClose, IconSend, IconZoomIn, IconZoomOut } from '../Icons';
+import { stepZoom, zoomLabel } from '../../domain/readerZoom';
 import { HtmlFrame } from '../reader/Reader';
 
 export type CurState = {
@@ -19,11 +22,14 @@ export type CurState = {
   /** 시안에서 지금 고른 블록 */
   sel: string;
   /** 표시·메모·덱 메모 그대로 — 앱이 파일로도 적어 둔다 */
-  store?: { marks: Record<string, string>; notes: Record<string, string>; decks: Record<string, string> };
+  /** 시안은 marks·notes·decks, 흐름은 marks·notes·picks·flows — 앱은 통째로 파일에 적고 되돌릴 뿐이다 */
+  store?: Record<string, Record<string, unknown> | undefined>;
+  /** 껍데기가 받은 확대 — 이 칸이 없으면 옛 껍데기라 앱이 문서째 확대한다 */
+  zoom?: number;
 };
 
-const emptyStore = (d?: CurState['store']) => !d || (!Object.keys(d.marks ?? {}).length && !Object.keys(d.notes ?? {}).length && !Object.keys(d.decks ?? {}).length);
 
+const CUR_ZOOM_KEY = 'curZoom';
 const KIND = (): Record<string, string> => ({ design: tr('디자인', 'Design'), flow: tr('흐름', 'Flow'), copy: tr('문구', 'Copy'), media: tr('영상·이미지', 'Media') });
 
 /**
@@ -31,7 +37,7 @@ const KIND = (): Record<string, string> => ({ design: tr('디자인', 'Design'),
  * 위: 제목·종류·진행 게이지·닫기 / 왼쪽: 시안 목차(덱마다 진행 칸) / 가운데: 시안(블록 오른쪽 칸에서 ○△✕·메모, J·K·1·2·3·M) /
  * 오른쪽 아래: 참모에게 보내기(우리 핵심 — 꾸물거리고, 다 표시하면 살아난다). 표시는 시안이 기억하고, 결과는 앱이 curation/ 에 적어 둔다
  */
-export function CurationMode({ path, onClose, onSend, sendTo }: { path: string; onClose: () => void; onSend?: (text: string) => Promise<void>; sendTo: string }) {
+export function CurationMode({ path, onClose, onSend, sendTo, color }: { path: string; onClose: () => void; onSend?: (text: string) => Promise<void>; sendTo: string; color?: string }) {
   const [st, setSt] = useState<CurState | null>(null);
   const [sent, setSent] = useState<'idle' | 'sending' | 'sent' | 'fail'>('idle');
   const [deckAt, setDeckAt] = useState(0);
@@ -45,7 +51,7 @@ export function CurationMode({ path, onClose, onSend, sendTo }: { path: string; 
     const on = (e: MessageEvent) => {
       const d = e.data as ({ hodoc?: string } & Partial<CurState>) | null;
       if (d?.hodoc !== 'cur-state' || typeof d.text !== 'string') return;
-      setSt({ title: d.title ?? '', kind: d.kind, total: d.total ?? 0, done: d.done ?? 0, counts: d.counts ?? {}, labels: d.labels ?? [], decks: d.decks ?? [], text: d.text, blocks: d.blocks ?? [], sel: d.sel ?? '' });
+      setSt({ title: d.title ?? '', kind: d.kind, total: d.total ?? 0, done: d.done ?? 0, counts: d.counts ?? {}, labels: d.labels ?? [], decks: d.decks ?? [], text: d.text, blocks: d.blocks ?? [], sel: d.sel ?? '', zoom: d.zoom });
       if (d.sel) { const b = (d.blocks ?? []).find((x) => x.k === d.sel); if (b && b.deck >= 0) setDeckAt(b.deck); }
       setSent((x) => (x === 'sent' ? 'idle' : x));
       // 앱 안 브라우저 저장소는 다시 켜면 비었다 — 처음 알림이 비어 있으면 파일에 적어 둔 표시를 되돌린다. 확인 전엔 안 적는다(좋은 기록을 빈 걸로 덮지 않게)
@@ -77,14 +83,36 @@ export function CurationMode({ path, onClose, onSend, sendTo }: { path: string; 
     return () => { window.removeEventListener('message', on); window.removeEventListener('keydown', key); window.removeEventListener('message', esc); window.clearTimeout(ping); };
   }, [path]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 확대 ⌘+ ⌘- ⌘0 — 눌러서 고르는 방식이라 넓은 PC 시안도 키워서 본다(2026-10-01 사용자). 껍데기가 맞춤 크기에 곱한다
+  const [zoom, setZoom] = useState(() => { try { const z = Number(localStorage.getItem(CUR_ZOOM_KEY)); return z > 0 ? z : 100; } catch { return 100; } });
+  const zoomBy = useRef<(d: 1 | -1 | 0) => void>(() => {});
+  zoomBy.current = (d) => {
+    const z = d === 0 ? 100 : stepZoom(zoom, d);
+    setZoom(z);
+    try { localStorage.setItem(CUR_ZOOM_KEY, String(z)); } catch { /* 이번엔 된다 */ }
+  };
+  // 메뉴 ⌘+ ⌘- ⌘0 은 App 이 __previewZoom 부터 본다 — 검토 모드가 떠 있으면 여기로
+  useEffect(() => {
+    const w = window as unknown as { __previewZoom?: (d: 1 | -1 | 0) => void };
+    const mine = (d: 1 | -1 | 0) => zoomBy.current(d);
+    w.__previewZoom = mine;
+    return () => { if (w.__previewZoom === mine) delete w.__previewZoom; };
+  }, []);
+  // 껍데기가 알려 온 확대와 다르면 보낸다 — 시안을 다시 읽어도(새로 고침) 따라간다
+  const shellZoom = st?.zoom;
+  useEffect(() => { if (shellZoom !== undefined && Math.abs(shellZoom - zoom / 100) > 0.001) cmd({ cmd: 'zoom', z: zoom / 100 }); }, [shellZoom, zoom]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const total = st?.total ?? 0;
   const done = st?.done ?? 0;
   const full = total > 0 && done >= total;
   const pct = total ? Math.round((done / total) * 100) : 0;
+  // 보내기 전에 덧붙일 말 — 버튼에 올리면 펼쳐지는 칸(2026-10-01 사용자)
+  const [extra, setExtra] = useState('');
   const send = async () => {
     if (!st || !onSend) return;
     setSent('sending');
-    try { await onSend(st.text); setSent('sent'); } catch { setSent('fail'); }
+    const more = extra.trim();
+    try { await onSend(more ? `${st.text}\n\n${tr('덧붙이는 말', 'Additional note')}: ${more}` : st.text); setSent('sent'); setExtra(''); void invoke('space_log_append', { line: JSON.stringify({ ts: new Date().toISOString(), who: '사용자', kind: 'review', path }) }).catch(() => {}); } catch { setSent('fail'); }
   };
   const goto = (i: number) => { setDeckAt(i); cmd({ cmd: 'goto', deck: i }); };
   // 펼친 카드 — 시안에서 고른 블록을 따라간다(J·K·블록 누르기). 펼친 카드를 다시 누르면 접는다
@@ -105,64 +133,30 @@ export function CurationMode({ path, onClose, onSend, sendTo }: { path: string; 
         <span className="cur-mode-n">{tr(`${done} / ${total} 표시`, `${done} / ${total}`)}</span>
         {st?.labels.map((l) => <span key={l.v} className={`cur-mode-chip ${l.v}`}><i />{l.title} {st.counts[l.v] ?? 0}</span>)}
         <span className="cur-mode-sp" />
+        {st && st.total > st.done && <button className="cur-mode-close" onClick={() => cmd({ cmd: 'next' })} title={tr('다음 안 고른 블록으로', 'Next unmarked block')}>{tr(`남은 ${st.total - st.done} · 다음`, `${st.total - st.done} left · Next`)}</button>}
+        <span className="rd-zoom cur-mode-zoom">
+          <button onClick={() => zoomBy.current(-1)} title={tr('축소 (⌘-)', 'Zoom out (⌘-)')} aria-label={tr('축소', 'Zoom out')}><IconZoomOut /></button>
+          <button className="rd-zoom-pct" onClick={() => zoomBy.current(0)} title={tr('원래 크기 (⌘0)', 'Actual size (⌘0)')}>{zoomLabel(zoom)}</button>
+          <button onClick={() => zoomBy.current(1)} title={tr('확대 (⌘+)', 'Zoom in (⌘+)')} aria-label={tr('확대', 'Zoom in')}><IconZoomIn /></button>
+        </span>
         <span className="cur-mode-saved">{tr('자동 저장', 'Autosaved')}</span>
         <button className="cur-mode-close" onClick={onClose} title={tr('닫기 (Esc) — 표시는 그대로 남아', 'Close (Esc) — marks are kept')}><IconClose />{tr('닫기', 'Close')}</button>
       </header>
       <div className="cur-mode-body">
         {/* 왼쪽 시안 목차는 뺐다 — 오른쪽 카드 목록이 시안별로 묶여 겹쳤고, 가운데 시안이 좁아졌다(2026-09-30 사용자) */}
         <div className="cur-mode-stage">
-          <HtmlFrame className="rd-frame" src={docUrl(path)} zoom={100} sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads" />
+          <HtmlFrame className="rd-frame" src={docUrl(path)} zoom={st && st.zoom === undefined ? zoom : 100} sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads" />
         </div>
-        {/* 표시 목록 — 블록 옆 칸은 블록 높이와 어긋났다. 앱이 한 줄씩 그리고, 누르면 시안이 그 블록을 짚는다(2026-09-30 사용자) */}
-        <aside className="cur-mode-marks" aria-label={tr('표시', 'Marks')}>
-          <div className="cur-mode-marks-keys">{tr('J·K 이동 · 1·2·3 표시 · M 메모', 'J·K move · 1·2·3 mark · M note')}</div>
-          <div className="cur-mode-marks-list">
-            {(st?.decks ?? []).map((d, di) => {
-              const bs = (st?.blocks ?? []).filter((b) => b.deck === di);
-              if (!bs.length) return null;
-              return (
-                <section key={di} className="cur-mark-deck">
-                  <button className={`cur-mark-deck-h ${deckAt === di ? 'on' : ''}`} onClick={() => goto(di)}>
-                    <b>{d.name}</b><span>{bs.filter((b) => b.v).length} / {bs.length}</span>
-                  </button>
-                  <ul>
-                    {bs.map((b) => {
-                      const open = b.k === openK;
-                      const li = (st?.labels ?? []).findIndex((l) => l.v === b.v);
-                      return (
-                        <li key={b.k} ref={open ? openRow : undefined} className={`cur-mark ${open ? 'open' : ''} ${b.v}`}>
-                          <button className="cur-mark-h" aria-expanded={open} title={b.k}
-                            onClick={() => { if (open) setOpenK(null); else { setOpenK(b.k); cmd({ cmd: 'select', k: b.k }); } }}>
-                            <span className={`st ${b.v || 'none'}`}>{li >= 0 ? <MarkIcon i={li} /> : null}</span>
-                            <span className="nm">{b.k.replace(/^[A-Z]\d*-/, '')}</span>
-                            {b.note && !open && <span className="has-note" title={b.note}>{tr('메모', 'Note')}</span>}
-                            <svg className="chev" viewBox="0 0 12 12" width="12" height="12" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 2.5 8 6l-3.5 3.5" /></svg>
-                          </button>
-                          {open && (
-                            <div className="cur-mark-body">
-                              <div className="btns">
-                                {(st?.labels ?? []).map((l, i) => (
-                                  <button key={l.v} className={`${l.v} ${b.v === l.v ? 'on' : ''}`} title={`${l.title} (${i + 1})`} aria-label={l.title}
-                                    onClick={() => cmd({ cmd: 'mark', k: b.k, v: l.v })}><MarkIcon i={i} /><span>{l.title}</span></button>
-                                ))}
-                              </div>
-                              <textarea ref={(el) => { if (el) notes.current.set(b.k, el); else notes.current.delete(b.k); }} rows={1} defaultValue={b.note}
-                                placeholder={tr('메모 (M)', 'Note (M)')}
-                                onInput={(e) => { const t = e.currentTarget.value; window.clearTimeout(noteT.current); noteT.current = window.setTimeout(() => cmd({ cmd: 'note', k: b.k, text: t }), 350); }}
-                                onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); e.currentTarget.blur(); } }} />
-                            </div>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </section>
-              );
-            })}
-          </div>
-        </aside>
+        {/* 오른쪽 표시 목록은 뺐다 — 블록을 누르면 그 자리에 고르는 창이 떠서, 목록까지 마우스를 옮기지 않는다(2026-10-01 사용자). 시안 자리도 넓어진다 */}
       </div>
       {onSend && (
+        <div className={`cur-send-wrap ${extra.trim() ? 'has' : ''}`} style={color ? orchVars(color) as React.CSSProperties : undefined}>
+        <div className="cur-send-card">
+          <label htmlFor="cur-extra">{tr(`${sendTo}에게 같이 보낼 말`, `Note for ${sendTo}`)}</label>
+          <textarea id="cur-extra" value={extra} rows={3} placeholder={tr('선택 — 비워 둬도 돼요. ⌘Enter 보내기', 'Optional — ⌘Enter to send')}
+            onChange={(e) => setExtra(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } e.stopPropagation(); }} />
+        </div>
         <button className={`cur-send ${full ? 'full' : ''} ${sent}`} onClick={() => void send()} disabled={sent === 'sending'}
           aria-label={tr(`${sendTo}에게 결과 보내기`, `Send results to ${sendTo}`)}
           title={sent === 'sent' ? tr('보냈어', 'Sent') : sent === 'fail' ? tr('못 보냄 — 다시 누르기', 'Failed — press again') : tr(`${sendTo}에게 보내기 · ${done}/${total} 표시 — 다 안 봐도 보낼 수 있어`, `Send to ${sendTo} · ${done}/${total} marked`)}>
@@ -170,6 +164,7 @@ export function CurationMode({ path, onClose, onSend, sendTo }: { path: string; 
           <span className="cur-send-ring" style={{ ['--p' as string]: `${pct}%` }}><span className="cur-send-plane"><IconSend /></span></span>
           <span className="cur-send-n">{sent === 'sent' ? '✓' : `${done}/${total}`}</span>
         </button>
+        </div>
       )}
     </div>
   );

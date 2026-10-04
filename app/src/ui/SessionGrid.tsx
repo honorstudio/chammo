@@ -18,9 +18,15 @@ import { attachCommand } from '../domain/termCommand';
 import { keyLabel } from '../domain/keys';
 import { IS_WIN } from '../domain/reader';
 import { runModelPick } from './chat/modelPickRun';
-import { pickLog } from '../data/tauri';
+import { claudeDefaults, pickLog } from '../data/tauri';
+import { OrchAvatar, avatarState, orchColor, useAvatars } from './avatar';
+import { bodyColor } from '../domain/avatar';
+import { useSpeaking } from './speakGlow';
+import { orchVars } from '../domain/orchTheme';
 
 type Props = {
+  /** 고정한 참모 창 id(고정 순서) — 채팅 탭이 끌어 둔 순서보다 앞 */
+  pinnedIds?: string[];
   sessions: Session[];
   claudeBin: string;
   layout: PaneLayout;
@@ -39,6 +45,10 @@ type Props = {
   onStop: (s: Session) => void;
   /** 창 제목. 기본은 프로젝트(/ worktree), 비서 화면은 세션 이름 */
   titleOf?: (s: Session) => string;
+  /** 칸 머리 이름 옆 회색 한 줄(참모 맡은 일) — 없으면 진짜 이름(titleOf 를 안 줄 때만) */
+  subOf?: (s: Session) => string | undefined;
+  /** 채팅 대화 사이에 끼울 것(직접 답하기 카드) — 참모 채팅만 */
+  extraOf?: (s: Session) => { ts: string; key: string; node: ReactNode }[];
   memo?: MemoHooks;
   /** 채팅 탭 줄 끝의 + — 참모 하나 더(⌘T) */
   onAdd?: () => void;
@@ -81,8 +91,14 @@ const cumulative = (fr: number[]) => {
  * 세션 여러 개를 격자로 + 접은 창은 아래 띠. 띠의 창은 attach 를 떼어 둔다(메모리).
  * 경계선을 끌면 열·줄 비율이 바뀌고, 머리줄을 끌어 다른 창에 놓으면 자리가 바뀐다
  */
-export function SessionGrid({ sessions, claudeBin, layout, dispatch, onMessage, fontSize, home, onFocusSession, initialFocus, focusRequest, gridId, onStop, titleOf = paneTitle, memo, column, chat, ctxOf, modelOf, onAdd }: Props) {
+export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, onMessage, fontSize, home, onFocusSession, initialFocus, focusRequest, gridId, onStop, titleOf = paneTitle, subOf, memo, column, chat, ctxOf, modelOf, onAdd, pinnedIds = [] }: Props) {
+  const speaking = useSpeaking(); // 음성 모드에서 지금 소리 내는 참모 — 그 채팅 탭 둘레만 빛난다(칸·프사·왼쪽 목록은 뺐다, 2026-10-03 사용자)
   const panes = useRef(new Map<string, PaneApi>());
+  // 모델 칩 — 바꾸는 동안 지금 모델·에포트(상태줄)를 새로 읽게(일하는 중엔 화면 글로는 끝을 못 알아본다)
+  const modelOfRef = useRef(modelOf);
+  modelOfRef.current = modelOf;
+  // 개발판에서만 — 시험 도구가 창 화면을 읽고 키를 넣게(모델 칩 실측, 2026-10-01)
+  if (import.meta.env.DEV) (window as unknown as { __panes?: unknown }).__panes = panes.current;
   // 채팅 판: 터미널로 돌려 본 창들, 창마다 채팅 입력칸 포커스
   const [termView, setTermView] = useState<Set<string>>(() => new Set());
   const chatOn = (id: string) => !!chat && !termView.has(id);
@@ -134,7 +150,11 @@ export function SessionGrid({ sessions, claudeBin, layout, dispatch, onMessage, 
   // 채팅 뷰 참모 탭: 끄기·이름 바꾸기(탭 보기일 때만)
   const actions = useOrchActions();
   const orch = chat === 'tabs' ? actions : null;
-  const vis = visiblePanes(sessions.map((s) => s.id), layout);
+  const { saved: avatars } = useAvatars();
+  /** 참모 색 — 프사에서 고른 색, 없으면 순서 색(사이드바와 같은 순서) */
+  const colorOfOrch = (x: Session) => bodyColor(avatars, x.name || '', orchColor(x.name || ''));
+  // 고정한 참모 탭은 끌어 둔 순서보다 앞 — 들어온 sessions 가 이미 고정 순서라 그 순서대로(App pinFirst)
+  const vis = visiblePanes(sessions.map((s) => s.id), layout, pinnedIds);
   // 탭 보기: 펼친 창 중 고른 하나만 보인다. 나머지도 같은 칸 뒤에 붙여 둔 채 숨긴다 — 떼었다 다시 붙이면
   // 탭을 바꿀 때마다 attach·대화 다시 읽기로 한 박자 늦었다(2026-09-30 사용자 "채팅 1,2 로 갈 때 딜레이")
   const active = vis.shown.includes(tab ?? '') ? tab! : vis.shown[0] ?? null;
@@ -216,10 +236,10 @@ export function SessionGrid({ sessions, claudeBin, layout, dispatch, onMessage, 
           {vis.shown.map((id, i) => {
             const s = byId.get(id)!;
             return (
-              <button key={id} role="tab" aria-selected={id === active} className={id === active ? 'on' : ''} title={i < 9 ? `${keyLabel(`⌘${i + 1}`, IS_WIN)} · ${tr('두 번 눌러 이름 바꾸기', 'double-click to rename')}` : undefined}
+              <button key={id} role="tab" aria-selected={id === active} className={`${id === active ? 'on' : ''}${speaking === id ? ' st-speak' : ''}`} style={orch ? orchVars(colorOfOrch(s)) as React.CSSProperties : undefined} title={[subOf?.(s), i < 9 ? `${keyLabel(`⌘${i + 1}`, IS_WIN)} · ${tr('두 번 눌러 이름 바꾸기', 'double-click to rename')}` : undefined].filter(Boolean).join('\n') || undefined}
                 onClick={() => { setTab(id); last.current = id; onFocusSession?.(id); window.dispatchEvent(new CustomEvent('chat-tab-pick', { detail: id })); requestAnimationFrame(() => focusPane(id)); window.setTimeout(() => focusPane(id), 180); /* 스페이스가 바뀌며 포커스를 뺏을 수 있어 한 번 더 — 탭을 바꾸면 입력칸에 바로(2026-09-30 사용자) */ }}
-                onDoubleClick={() => orch?.askRename(s)} onContextMenu={orch ? (e) => orch.menu(e, s) : undefined}>
-                <StatusMark kind={statusKind(s.state)} />{orch ? <OrchName s={s} /> : titleOf(s)}
+                onDoubleClick={() => orch?.askRename(s)} onContextMenu={orch ? (e) => orch.menu(e, s, orchColor(s.name || '')) : undefined}>
+                {orch ? <OrchAvatar name={s.name || ''} size={18} state={avatarState(s)} color={orchColor(s.name || '')} label={orch.nameOf(s)} /> : <StatusMark kind={statusKind(s.state)} />}{orch ? <OrchName s={s} /> : titleOf(s)}
                 {orch && s.kind === 'background' && (
                   <span className="tab-x" role="button" aria-label={tr('세션 끄기', 'Stop session')} title={tr('세션 끄기(⌘W)', 'Stop session (⌘W)')}
                     onClick={(e) => { e.stopPropagation(); orch.askStop(s); }}><IconClose /></span>
@@ -265,12 +285,13 @@ export function SessionGrid({ sessions, claudeBin, layout, dispatch, onMessage, 
               ) : controls;
               return (
                 <div key={id} data-session={id} className={`cell ${over === id ? 'over' : ''} ${dragging === id ? 'dragging' : ''} ${behind ? 'behind' : ''}`} {...cellDrop(id)}
-                  style={tabbed ? { gridArea: '1 / 1 / 2 / 2' } : undefined} aria-hidden={behind || undefined}>
+                  style={{ ...(tabbed ? { gridArea: '1 / 1 / 2 / 2' } : {}), ...(chat ? orchVars(colorOfOrch(s)) : {}) } as React.CSSProperties} aria-hidden={behind || undefined}>
                   {s.kind === 'background' ? (
                     <TerminalPane
                       command={attachCommand(claudeBin, id)}
                       title={titleOf(s)}
-                      subtitle={s.name}
+                      subPlain={!!subOf}
+                      subtitle={subOf ? subOf(s) : titleOf === paneTitle ? s.name : undefined} /* 이름을 따로 주는 칸(참모 등)은 그 이름만 — 진짜 이름엔 번호가 있다(2026-10-02). 참모는 맡은 일 */
                       controls={withChat}
                       fontSize={fontSize}
                       headDrag={headDrag(id)}
@@ -287,6 +308,8 @@ export function SessionGrid({ sessions, claudeBin, layout, dispatch, onMessage, 
                       onVoiceStop={chat ? () => setVoiceStops((v) => ({ ...v, [id]: (v[id] ?? 0) + 1 })) : undefined}
                       overlay={!chatOn(id) && memo?.openId !== id ? null : <>{/* 메모판은 채팅 위에 덮는다 — 예전엔 메모를 열면 채팅을 빼서 뒤 터미널이 드러났다(2026-10-01 사용자) */}{chatOn(id) ? (
                         <ChatView
+                          extra={extraOf?.(s)}
+                          fontSize={fontSize}
                           sessionId={s.sessionId}
                           ctx={ctxOf?.(s)}
                           modelInfo={modelOf?.(s)}
@@ -294,14 +317,9 @@ export function SessionGrid({ sessions, claudeBin, layout, dispatch, onMessage, 
                           pickModel={async (want) => {
                             const api = panes.current.get(id);
                             if (!api) return { ok: false as const, why: tr('터미널이 아직 안 붙었어요', 'Terminal not attached yet') };
-                            const r = await runModelPick(api, want, { id });
-                            if (!r.ok) {
-                              // 자동으로 못 맞췄으면 — 그때 화면을 로그로 남기고, 기존처럼 터미널로 넘겨 고르는 창을 열어 준다(2026-10-01 사용자). 열린 채 멈추지 않게 runModelPick 이 이미 닫았다
-                              void pickLog(`--- ${new Date().toISOString()} ${s.name} want=${JSON.stringify(want)} why=${r.why}\n${(r.screen ?? []).join('\n')}`).catch(() => {});
-                              onMessage(tr(`모델 바꾸기를 자동으로 못 했어요 (${r.why}) — 터미널 화면으로 넘겨서 고르는 창을 열어 뒀어요`, `Couldn't change the model automatically (${r.why}) — switched to the terminal with the picker open`));
-                              showTerm(id, true);
-                              setTimeout(() => typeAndSend(panes.current.get(id), '/model'), 300);
-                            }
+                            const r = await runModelPick(api, want, { id, defaults: claudeDefaults, current: () => modelOfRef.current?.(s) });
+                            // 못 바꿨으면 그때 화면을 로그로 남기고 칩 옆에 이유만 — 터미널로 넘기지 않는다(2026-10-01 사용자 "완벽하게 UI 로만")
+                            if (!r.ok) void pickLog(`--- ${new Date().toISOString()} ${s.name} want=${JSON.stringify(want)} why=${r.why}\n${(r.screen ?? []).join('\n')}`).catch(() => {});
                             return r;
                           }}
                           state={s.state}
@@ -311,6 +329,7 @@ export function SessionGrid({ sessions, claudeBin, layout, dispatch, onMessage, 
                             onFocusSession?.(id);
                           }}
                           interrupt={() => panes.current.get(id)?.raw('\x1b')}
+                          rawKeys={async (seq) => { for (const k of seq) { panes.current.get(id)?.raw(k); await new Promise((r) => setTimeout(r, 120)); } }}
                           onTerminal={() => showTerm(id, true)}
                           onInputFocus={() => panes.current.get(id)?.claimPtt()}
                           screen={() => panes.current.get(id)?.screen()}

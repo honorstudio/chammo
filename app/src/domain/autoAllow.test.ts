@@ -77,6 +77,21 @@ describe('pickAllow — 권한 창에서 허용 줄을 이름으로 찾는다 (E
     expect(pickAllow(s)).toEqual({ keys: DOWN + '\r', option: 'Deliver this message to Claude' });
   });
 
+  it('플랜 승인 창: 줄이 접힌 1번 "Yes, and switch to BYPASS PERMISSIONS (no …" 를 고른다 — "no" 때문에 2번(수동 승인)을 골라 바이패스가 풀렸다(2026-10-01 실측)', () => {
+    const plan = [
+      '  ─────────────────────────────────────────────────────',
+      '   Claude has written up a plan and is ready to',
+      '   execute. Would you like to proceed?',
+      '   ❯ 1. Yes, and switch to BYPASS PERMISSIONS (no',
+      '        further prompts) for this session',
+      '     2. Yes, manually approve edits',
+      '     3. Tell Claude what to change',
+      '        shift+tab to approve with this feedback',
+      '   ctrl+g to edit in Vim ·',
+    ].join('\n');
+    expect(pickAllow(plan)).toEqual({ keys: '\r', option: '1. Yes, and switch to BYPASS PERMISSIONS (no further prompts) for this session' });
+  });
+
   it('커서가 아래에 있으면 위로', () => {
     const s = BASH.replace(' ❯ 1. Yes', '   1. Yes').replace('   3. No,', ' ❯ 3. No,');
     expect(pickAllow(s)).toEqual({ keys: UP + UP + '\r', option: '1. Yes' });

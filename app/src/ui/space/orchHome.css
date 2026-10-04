@@ -1,0 +1,33 @@
+/* 오케스트레이터 홈 — 참모 고르기(ui/space/OrchHome). 대시보드(cv-dash) 머리 결 그대로, 줄은 카드 하나에 이어 붙인 목록 */
+/* 터미널 뷰엔 .space 가 없어 --cv-* 토큰이 비어 있다 — 값은 직접 */
+.oh { background: var(--surface); overflow-y: auto; }
+.oh .cv-page-head { align-items: center; }
+.oh-new { all: unset; box-sizing: border-box; margin-left: auto; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; color: var(--text-2); cursor: pointer; box-shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 0 0 1px var(--line); background: var(--surface); }
+.oh-new:hover { background: var(--hover); color: var(--text); }
+.oh-new:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.oh-new svg { width: 16px; height: 16px; }
+.oh-body { padding: 0 36px 36px; display: flex; flex-direction: column; gap: 24px; max-width: 760px; }
+.oh-list { display: flex; flex-direction: column; border-radius: 12px; box-shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 0 0 1px var(--line); background: var(--surface); overflow: hidden; }
+.oh-list > .cv-h2 { margin: 0; padding: 12px 16px 6px; }
+.oh-row { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 10px 16px; cursor: pointer; border-top: 1px solid var(--line); }
+.oh-list > .oh-row:first-child, .oh-list > .cv-h2 + .oh-row { border-top: 0; }
+.oh-row:hover { background: var(--hover); }
+.oh-row:focus-visible { background: var(--hover); box-shadow: inset 0 0 0 2px var(--accent); }
+.oh-row:disabled, .oh-row.st-making { cursor: default; opacity: .7; }
+.oh-row.st-making:hover { background: none; }
+.oh-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.oh-l1 { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; color: var(--text); }
+.oh-l1 b { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oh-when { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.oh-l2 { font-size: 12.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oh-row.st-off .oh-l1 b { color: var(--text-2); }
+.oh-go { flex-shrink: 0; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; color: var(--text-3); }
+.oh-row:hover .oh-go { color: var(--text); background: var(--surface-2); }
+.oh-go svg { width: 14px; height: 14px; }
+.oh-empty { flex: 1; display: grid; place-items: center; padding: 40px; }
+.oh-empty-in { display: flex; flex-direction: column; align-items: center; gap: 24px; }
+.oh-big { font-size: 15px; padding: 14px 28px; min-height: 48px; border-radius: 12px; }
+@media (max-width: 560px) { .oh-body { padding: 0 16px 24px; } }
+/* 재시작으로 멈춘 일 — 알릴 참모가 없을 때만 한 줄(버튼 없음). 옅은 면 색, 왼쪽 띠 없음 */
+.oh-wait { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 10px; background: var(--surface-2); color: var(--text-2); font-size: 13px; line-height: 1.4; }
+.oh-wait svg { flex-shrink: 0; width: 14px; height: 14px; color: var(--text-3); }

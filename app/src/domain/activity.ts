@@ -11,7 +11,15 @@ export type Line = { ts: string; text: string; /** 답 끝 200자 — 넘길 때
 /** tool = 마지막으로 부른 도구(사무실 행동·머리 위 한 줄) */
 export type Tool = { name: string; target: string; ts: string };
 /** messaged = 마지막으로 SendMessage 를 부른 시각 — 이미 참모에게 보고했는지(참모 기록이 커서 거기선 못 찾았다, 2026-09-30) */
-export type Activity = { prompt?: Line; reply?: Line; tool?: Tool; messaged?: string };
+export type Activity = { prompt?: Line; reply?: Line; tool?: Tool; messaged?: string; /** 사용 한도 오류로 멈춤 — 그 오류 줄이 마지막(뒤에 새 줄이 없음)일 때만 */ limit?: { ts: string; text: string }; /** 마지막 대화 줄(user·assistant·attachment) 시각 — 글 없는 도구 줄·다른 세션 메시지·작업 알림까지. 답보다 늦으면 그 뒤 턴이 돌던 중(lostTriage) */ lastAt?: string };
+
+/** 사용 한도 오류 줄인가 — API 오류 줄(isApiErrorMessage)이면서 오류 종류가 rate_limit 류이거나 글에 "hit your … limit".
+ *  문구가 바뀐 적이 있어 둘 중 하나만 맞아도 잡는다. 일시적 429·529·과부하는 Claude Code 가 다시 시도하니 아니다(2026-10-02) */
+export function isLimitError(d: { isApiErrorMessage?: boolean; error?: string }, text: string): boolean {
+  if (d.isApiErrorMessage !== true) return false;
+  if (/\b(429|529)\b|overloaded|try again in a moment/i.test(text)) return false;
+  return /rate_limit/i.test(d.error ?? '') || /hit your\b.*\blimit/i.test(text) || /usage limit reached|(5-hour|weekly|session) limit reached/i.test(text);
+}
 
 const MAX = 240;
 
@@ -37,13 +45,15 @@ export function summarizeTranscript(tail: string): Activity {
   const out: Activity = {};
   for (const raw of tail.split('\n')) {
     if (!raw.trim()) continue;
-    let d: { type?: string; timestamp?: string; isMeta?: boolean; message?: { content?: unknown; stop_reason?: string } };
+    let d: { type?: string; timestamp?: string; isMeta?: boolean; isApiErrorMessage?: boolean; error?: string; message?: { content?: unknown; stop_reason?: string } };
     try {
       d = JSON.parse(raw);
     } catch {
       continue; // 꼬리를 잘라 읽어서 첫 줄은 깨져 있을 수 있다
     }
     const ts = d.timestamp ?? '';
+    if (ts && (d.type === 'user' || d.type === 'assistant' || d.type === 'attachment')) out.lastAt = ts;
+    if (d.type === 'user' || d.type === 'assistant') delete out.limit; // 오류 뒤에 새 줄이 오면 멈춘 게 아니다
     if (d.type === 'assistant') {
       const t = lastTool(d.message?.content, ts);
       if (t) out.tool = t;
@@ -51,6 +61,7 @@ export function summarizeTranscript(tail: string): Activity {
     }
     const text = textOf(d.message?.content).trim();
     if (!text) continue;
+    if (d.type === 'assistant' && isLimitError(d, text)) out.limit = { ts, text: text.slice(0, MAX) }; // 답으로도 그대로 남긴다(대시보드에 보이게)
     if (d.type === 'user' && !d.isMeta && !isInjected(text)) out.prompt = { ts, text: squash(text) };
     else if (d.type === 'assistant') {
       const asks = asksUser(text);

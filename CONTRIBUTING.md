@@ -28,7 +28,7 @@ Run all three before opening a PR:
 cd app
 pnpm test                               # vitest — domain logic
 pnpm typecheck                          # tsc --noEmit
-cargo test --manifest-path src-tauri/Cargo.toml
+cargo test --workspace --manifest-path src-tauri/Cargo.toml   # app + vendored Harnitor engine
 ```
 
 Where code goes:

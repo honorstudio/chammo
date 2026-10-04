@@ -50,7 +50,7 @@ describe('recentDelegated — 참모 화면 아래 한 줄로 띄울 "지금 시
 
   it('대상은 이름으로 적어도 찾는다', () => {
     const cards = [card('1', 'ops-hub', 'working', 't1')];
-    expect(recentDelegated(cards, [bg('3ae12f81', 'ops-hub')]).map((s) => s.id)).toEqual(['3ae12f81']);
+    expect(recentDelegated(cards, [bg('abc12345', 'ops-hub')]).map((s) => s.id)).toEqual(['abc12345']);
   });
 });
 
@@ -120,5 +120,45 @@ describe('sameOrchSlot — 꺼진 참모를 지울 때 같은 이름으로 쌓�
   it('HQ 가 아니거나 참모 이름이 아니면 그것 하나만', () => {
     const all = [st('a', 'sns-post'), st('b', 'sns-post')];
     expect(sameOrchSlot(all, all[0]!, '/h/.chammo/hq').map((x) => x.id)).toEqual(['a']);
+  });
+});
+
+describe('stoppedOrchs — 별명이 실린 이름도 기본 이름(번호)으로 같은 참모 (2026-10-02)', () => {
+  const st = (id: string, name: string) => ({ id, sessionId: id, name, cwd: '/hq', ts: '2026-10-02T00:00:00Z' }) as unknown as StoppedSession;
+  it('켜져 있는 참모-5 · 별명이 있으면 꺼진 옛 참모-5 는 안 보인다', () => {
+    expect(stoppedOrchs([st('a', '참모-5')], '/hq', [{ name: '참모-5 · 개발 담당' }])).toEqual([]);
+  });
+  it('꺼진 것끼리도 같은 번호는 하나만', () => {
+    expect(stoppedOrchs([st('a', '참모-3 · 디자인'), st('b', '참모-3')], '/hq', []).map((x) => x.id)).toEqual(['a']);
+  });
+});
+
+describe('stoppedOrchs — 기본 이름이 같아도 별명이 다르면 다른 참모(2026-10-02 참모-3 둘 사고)', () => {
+  const st = (id: string, name: string, startedAt = 0): StoppedSession => ({ id, sessionId: `s-${id}`, name, cwd: '/hq', project: 'hq', workspace: null, reason: 'stopped', startedAt });
+  it('살아 있는 "참모-3 · 서버 정리" 가 있어도 꺼진 "참모-3 · 쇼핑몰 문의" 는 보인다', () => {
+    const got = stoppedOrchs([st('f1', '참모-3 · 쇼핑몰 문의')], '/hq', [{ name: '참모-3 · 서버 정리' }]);
+    expect(got.map((x) => x.name)).toEqual(['참모-3 · 쇼핑몰 문의']);
+  });
+  it('별명 없는 옛 기록(참모-2 복사본들)은 같은 번호가 살아 있으면 숨기고, 꺼진 것끼리는 하나로', () => {
+    expect(stoppedOrchs([st('a', '참모-2'), st('b', '참모-2')], '/hq', [{ name: '참모-2 · 참모 업데이트' }])).toEqual([]);
+    expect(stoppedOrchs([st('a', '참모-2', 9), st('b', '참모-2', 5)], '/hq', []).map((x) => x.id)).toEqual(['a']);
+  });
+  it('같은 별명으로 살아 있으면 숨긴다(이름 바뀌기 전 기록)', () => {
+    expect(stoppedOrchs([st('a', '참모-5 · 개발 담당')], '/hq', [{ name: '참모-5 · 개발 담당' }])).toEqual([]);
+  });
+  it('꺼진 것 둘이 기본 이름은 같고 별명이 다르면 둘 다', () => {
+    expect(stoppedOrchs([st('a', '참모-3 · 서버'), st('b', '참모-3 · 쇼핑몰')], '/hq', []).length).toBe(2);
+  });
+});
+
+describe('sameOrchSlot — 지울 때 번호가 같아도 별명이 다른 참모는 안 지운다(2026-10-02 참모-3 둘)', () => {
+  const st = (id: string, name: string): StoppedSession => ({ id, sessionId: `${id}-sid`, name, cwd: '/hq', project: 'hq', workspace: null, reason: 'stopped', startedAt: 0 });
+  it('"참모-3 · 서버" 를 지우면 같은 별명·별명 없는 옛 복사본만, "참모-3 · 쇼핑몰" 는 남긴다', () => {
+    const all = [st('n', '참모-3 · 서버'), st('l', '참모-3 · 쇼핑몰'), st('old', '참모-3'), st('n2', '참모-3 · 서버')];
+    expect(sameOrchSlot(all, all[0]!, '/hq').map((x) => x.id)).toEqual(['n', 'old', 'n2']);
+  });
+  it('별명 없는 걸 지우면 별명 없는 같은 번호만', () => {
+    const all = [st('a', '참모-3'), st('l', '참모-3 · 쇼핑몰'), st('b', '참모-3')];
+    expect(sameOrchSlot(all, all[0]!, '/hq').map((x) => x.id)).toEqual(['a', 'b']);
   });
 });

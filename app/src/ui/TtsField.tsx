@@ -98,8 +98,8 @@ export function TtsField({ value, onChange, name, onError }: Props) {
             <button type="button" className="btn" disabled={testing} onClick={() => void test()}>{testing ? tr('읽는 중…', 'Speaking…') : tr('들어보기', 'Test')}</button>
           </div>
           {!IS_WIN && <div className="su-hint">{tr(
-            'Supertonic 은 이 맥에서 바로 읽어요(인터넷 필요 없음, 한 문장 1~2초). 받기를 누르면 파이썬 패키지와 목소리 모델(Supertone, OpenRAIL-M 라이선스)을 이 맥에 내려받아요. M 은 남자, F 는 여자 목소리.',
-            'Supertonic speaks right on this Mac (no internet, 1–2 s per sentence). Download fetches a Python package and the voice model (Supertone, OpenRAIL-M license) to this Mac. M voices are male, F voices female.',
+            'Supertonic 은 이 맥에서 바로 읽어요(인터넷 필요 없음, 한 문장 1~2초). 받기를 누르면 파이썬 패키지와 목소리 모델(Supertone, OpenRAIL-M 라이선스)을 이 맥에 내려받아요.',
+            'Supertonic speaks right on this Mac (no internet, 1–2 s per sentence). Download fetches a Python package and the voice model (Supertone, OpenRAIL-M license) to this Mac.',
           )}</div>}
         </div>
       </div>

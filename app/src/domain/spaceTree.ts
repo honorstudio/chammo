@@ -7,8 +7,8 @@ export function orchDocs(showLog: string, orchId: string, pinned: string[]): { p
   const lines = showLog.split('\n').reverse();
   for (const line of lines) {
     try {
-      const r = JSON.parse(line) as { path?: string; from?: string };
-      if (r.from !== orchId || !r.path || !/\.md$/i.test(r.path) || seen.has(r.path)) continue;
+      const r = JSON.parse(line) as { path?: string; from?: string; gone?: boolean };
+      if (r.from !== orchId || !r.path || r.gone || !/\.md$/i.test(r.path) || seen.has(r.path)) continue;
       seen.add(r.path);
       recent.push(r.path);
     } catch {

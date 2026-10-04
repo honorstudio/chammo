@@ -22,8 +22,12 @@ export type Shortcut =
   | { type: 'settings' }
   | { type: 'maximizePane' }
   | { type: 'tour' }
+  /** 하니터(하네스 보기·끄고 켜기) 열고 닫기 — 탑바 버튼·메뉴 */
+  | { type: 'harnitor' }
   | { type: 'quitAsk' }
-  | { type: 'selectAll' };
+  | { type: 'selectAll' }
+  /** ⌘[ ⌘] — 스페이스 뒤로(왔던 곳)·앞으로(2026-10-04 QA D2) */
+  | { type: 'nav'; dir: -1 | 1 };
 
 type KeyLike = { key: string; code?: string; metaKey: boolean; shiftKey: boolean; altKey: boolean; ctrlKey: boolean };
 
@@ -45,6 +49,10 @@ export function shortcutFor(input: KeyLike, win = IS_WIN): Shortcut | null {
   }
   if (!e.metaKey || e.altKey || e.ctrlKey) return null;
   if (/^[1-9]$/.test(e.key) && !e.shiftKey) return { type: 'num', n: Number(e.key) }; // ⌘1~9 = 채팅 탭(2026-09-30 사용자)
+  // ⌘[ ⌘] = 뒤로·앞으로 — 입력기에 따라 글자가 바뀌니(「) 키 자리로. ⌘⇧[ ] 는 안 잡는다
+  if (!e.shiftKey && (e.code === 'BracketLeft' || e.code === 'BracketRight' || e.key === '[' || e.key === ']')) {
+    return { type: 'nav', dir: e.code === 'BracketRight' || e.key === ']' ? 1 : -1 };
+  }
   switch (HANGUL_KEY[e.key] ?? e.key) {
     case '=':
     case '+':
@@ -114,13 +122,27 @@ const MENU: Record<string, Shortcut> = {
   pane_max: { type: 'maximizePane' },
   select_all: { type: 'selectAll' },
   tour: { type: 'tour' },
+  harnitor: { type: 'harnitor' },
   app_quit_all: { type: 'quitAsk' },
 };
 export const menuAction = (id: string): Shortcut | null => MENU[id] ?? null;
 
 /** 같은 동작으로 칠 시간. 토글은 두 갈래(메뉴·키 입력)가 150ms 넘게 벌어져 와도 열었다 바로 닫히면 안 된다(⌘M 실측).
  *  글자 크기만 연달아 누를 수 있게 짧게. 리더 Ctrl+Tab 은 한 길(keys_mac)로만 와서 거르지 않는다(빠르게 누르면 씹혔다, 2026-09-28) */
-export const dedupeMs = (sc: Shortcut) => (sc.type === 'readerTab' ? 0 : sc.type === 'font' ? 150 : 400);
+export const dedupeMs = (sc: Shortcut) => (sc.type === 'readerTab' || sc.type === 'nav' ? 0 : sc.type === 'font' ? 150 : 400);
+
+/**
+ * ⌘A 용 — 같은 누름이 메뉴·키 입력 두 갈래로 오면 한 번만, 같은 갈래로 연달아 온 건 다 산다.
+ * 문서 편집기 ⌘A 는 누를 때마다 칸 → 문서로 넓혀서(ui/space/selectAllStep), onceWithin 처럼 400ms 안의 두 번째 키를 버리면 빠르게 두 번 눌러도 안 넓어졌다
+ */
+export function onceAcross(ms: number) {
+  let last: { src: 'key' | 'menu'; at: number } | null = null;
+  return (src: 'key' | 'menu', now: number) => {
+    const dup = last !== null && last.src !== src && now - last.at < ms;
+    last = dup ? null : { src, at: now };
+    return !dup;
+  };
+}
 
 /** 메뉴 단축키와 웹뷰 키 입력이 둘 다 오면(맥이 어느 쪽을 먼저 주는지는 키마다 다르다) 한 번만 — 토글이 두 번 돌면 제자리 */
 export function onceWithin(ms: number) {

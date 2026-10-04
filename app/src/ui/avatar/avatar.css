@@ -1,0 +1,224 @@
+/* 참모 프사 — 시안 docs/design-drafts/avatar v2 확정. transform·opacity 만 움직인다(사이드바에 여럿 떠도 가볍게).
+ * 상태 st-*, 전환 tr-*, 표정 xp-* 는 전역 짧은 클래스와 안 겹치게 전부 oa- 접두 */
+.oa { position: relative; display: inline-block; flex: 0 0 auto; width: var(--oa-s); height: var(--oa-s); line-height: 0; vertical-align: middle; }
+.oa { --oa-c: var(--oa-body); --oa-eye: #fff; }
+/* 참모 색 면 위 — 몸 = 면 위 글자색(흰색), 눈 = 면 색. 고른 탭 알약(포커스 = 참모 색 면)은 자동 */
+.oa-oncolor { --oa-c: var(--orch-ink, #fff); --oa-eye: var(--orch-solid, var(--oa-body)); }
+/* 고른 탭 알약(포커스 밖 = 앱 글자색 면) — 몸 = 바탕색, 눈 = 테마별로 맞춘 참모 글자색 */
+.space-mode .chat-tabs button.on .oa { --oa-c: var(--surface); --oa-eye: var(--orch-text, var(--oa-body)); }
+.space-mode .tabbed:focus-within .chat-tabs button.on .oa { --oa-c: var(--orch-ink, #fff); --oa-eye: var(--orch-solid, var(--oa-body)); }
+.oa > svg { width: 100%; height: 100%; display: block; overflow: visible; transition: filter .7s, opacity .7s; }
+.oa svg * { transform-box: fill-box; transform-origin: 50% 50%; }
+.oa .oa-tr, .oa .oa-all { transform-origin: 50% 100%; }
+.oa-body { fill: var(--oa-c); }
+.oa-body.oa-round { stroke: var(--oa-c); stroke-width: 5; stroke-linejoin: round; }
+.oa-body.oa-hexa { stroke: var(--oa-c); stroke-width: 3.4; stroke-linejoin: round; }
+.oa-stem { fill: none; stroke: var(--oa-c); stroke-width: 2; stroke-linecap: round; }
+.oa-w { fill: var(--oa-eye); }
+.oa-k { fill: #1d1d20; }
+.oa-gl { fill: #fff; }
+/* 알약 안 — 까만 눈은 눈 색으로, 눈동자는 몸 색으로(눈 종류마다 안 묻히게) */
+:is(.oa-oncolor, .space-mode .chat-tabs button.on .oa) .oa-eyev > .oa-k { fill: var(--oa-eye); }
+:is(.oa-oncolor, .space-mode .chat-tabs button.on .oa) .oa-pup .oa-k { fill: var(--oa-c); }
+:is(.oa-oncolor, .space-mode .chat-tabs button.on .oa) .oa-gl { fill: var(--oa-c); }
+/* 눈꺼풀 = 몸 색 조각 — 위는 내려오고 아래는 올라와 가운데서 만난다 */
+.oa-lt, .oa-lb { fill: var(--oa-c); }
+.oa .oa-lt { transform-origin: 50% 0; transform: scaleY(var(--oa-lid, 0)); }
+.oa .oa-lb { transform-origin: 50% 100%; transform: scaleY(0); }
+.oa-shut { fill: none; stroke: var(--oa-eye); stroke-width: 1.9; stroke-linecap: round; opacity: 0; transition: opacity .2s; }
+.oa-smile { fill: none; stroke: var(--oa-eye); stroke-width: 2.2; stroke-linecap: round; display: none; }
+.oa-s16 .oa-gl { display: none; }
+.oa-s16 .oa-eye { transform: scale(1.22); }
+.oa-s16 .oa-shut { stroke-width: 2.6; }
+
+/* 일함 — 눈이 먼저 휙(오버슛), 몸이 한 박자 늦게 기울고, 끝엔 아래를 보며 끄덕 */
+.oa-st-work { --oa-lid: .22; }
+.oa-st-work .oa-face { animation: oa-w-face calc(2.9s * var(--oa-k)) infinite var(--oa-d); }
+.oa-st-work .oa-pup { animation: oa-w-pup calc(2.9s * var(--oa-k)) infinite var(--oa-d); }
+.oa-st-work .oa-all { animation: oa-w-body calc(2.9s * var(--oa-k)) infinite var(--oa-d); }
+@keyframes oa-w-face {
+  0%, 6% { transform: translate(0, 0); animation-timing-function: cubic-bezier(.2, 1.6, .4, 1); }
+  13%, 38% { transform: translate(-2.8px, 0); animation-timing-function: cubic-bezier(.2, 1.6, .4, 1); }
+  45%, 64% { transform: translate(2.8px, -.4px); animation-timing-function: cubic-bezier(.3, 1.2, .5, 1); }
+  71%, 88% { transform: translate(.6px, 1.6px); animation-timing-function: cubic-bezier(.4, 0, .2, 1); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes oa-w-pup {
+  0%, 6% { transform: translate(0, 0); animation-timing-function: cubic-bezier(.2, 1.6, .4, 1); }
+  12%, 38% { transform: translate(-1.1px, 0); animation-timing-function: cubic-bezier(.2, 1.6, .4, 1); }
+  44%, 64% { transform: translate(1.1px, 0); }
+  70%, 88% { transform: translate(0, .7px); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes oa-w-body {
+  0%, 10% { transform: rotate(0) scale(1); animation-timing-function: cubic-bezier(.3, 1.5, .5, 1); }
+  19% { transform: rotate(-4.5deg) scale(1.03, .97); }
+  25%, 42% { transform: rotate(-2.4deg) scale(1); }
+  50% { transform: rotate(4.5deg) scale(1.03, .97); animation-timing-function: ease-out; }
+  56%, 68% { transform: rotate(2.4deg) scale(1); }
+  76% { transform: rotate(0) scale(1.05, .94); }
+  82%, 92% { transform: rotate(0) scale(.99, 1.01); }
+  100% { transform: rotate(0) scale(1); }
+}
+/* 깜빡임 — 무한 키프레임 대신 6~8초마다 oa-blink 를 잠깐 단다(ui/avatar/blink.ts). 일함은 휙, 쉼은 느릿하게 */
+.oa-st-work.oa-blink .oa-lt { animation: oa-blink-t .2s ease-in-out; }
+.oa-st-work.oa-blink .oa-lb { animation: oa-blink-b .2s ease-in-out; }
+@keyframes oa-blink-t { 0%, 100% { transform: scaleY(var(--oa-lid, 0)); } 50% { transform: scaleY(1); } }
+@keyframes oa-blink-b { 0%, 100% { transform: scaleY(0); } 50% { transform: scaleY(1); } }
+
+/* 쉼 — 아주 조용히: 느린 숨, 느린 깜빡 */
+.oa-st-rest { --oa-lid: .12; }
+.oa-st-rest .oa-all { animation: oa-breathe calc(6.2s * var(--oa-k)) ease-in-out infinite var(--oa-d); }
+.oa-st-rest.oa-blink .oa-lt { animation: oa-sblink-t .7s; }
+.oa-st-rest.oa-blink .oa-lb { animation: oa-sblink-b .7s; }
+@keyframes oa-breathe { 0%, 100% { transform: scale(1); } 45% { transform: scale(.988, 1.018); } }
+@keyframes oa-sblink-t { 0%, 100% { transform: scaleY(var(--oa-lid, 0)); animation-timing-function: ease-in; } 25%, 44% { transform: scaleY(1); animation-timing-function: cubic-bezier(.3, 0, .3, 1); } 75% { transform: scaleY(var(--oa-lid, 0)); } }
+@keyframes oa-sblink-b { 0%, 100% { transform: scaleY(0); animation-timing-function: ease-in; } 25%, 44% { transform: scaleY(1); } 75% { transform: scaleY(0); } }
+
+/* 물음 — 웅크림 → 늘어나며 뜀 → 납작 착지 → 출렁 → 갸웃. 눈은 정면, 정점에서 커진다 */
+.oa-st-ask .oa-all { animation: oa-a-body calc(2.5s * var(--oa-k)) infinite var(--oa-d); }
+.oa-st-ask .oa-eyes { animation: oa-a-eyes calc(2.5s * var(--oa-k)) infinite var(--oa-d); }
+@keyframes oa-a-body {
+  0% { transform: translateY(0) rotate(0) scale(1); animation-timing-function: ease-out; }
+  9% { transform: translateY(0) scale(1.13, .85); animation-timing-function: cubic-bezier(.2, .9, .3, 1); }
+  20% { transform: translateY(-7px) scale(.9, 1.13); animation-timing-function: ease-out; }
+  28% { transform: translateY(-8.5px) scale(1); animation-timing-function: ease-in; }
+  37% { transform: translateY(0) scale(1.16, .83); animation-timing-function: cubic-bezier(.3, 1.7, .5, 1); }
+  47% { transform: translateY(0) scale(.96, 1.04); }
+  55% { transform: translateY(0) scale(1.02, .98); }
+  61% { transform: translateY(0) rotate(0) scale(1); animation-timing-function: cubic-bezier(.3, 1.5, .5, 1); }
+  70%, 84% { transform: translateY(0) rotate(-7deg) scale(1); animation-timing-function: cubic-bezier(.3, 1.5, .5, 1); }
+  93%, 100% { transform: translateY(0) rotate(0) scale(1); }
+}
+@keyframes oa-a-eyes { 0%, 9% { transform: scale(1.12); } 22% { transform: scale(1.32); } 30% { transform: scale(1.28); } 37% { transform: scale(1.05, .82); } 48%, 100% { transform: scale(1.14); } }
+
+/* 꺼짐 — 위아래 눈꺼풀 닫힘 + 감은 눈 선, 살짝 주저앉고 색이 빠진다 */
+.oa-st-off .oa-tr { transform: scale(1.05, .92); }
+.oa.oa-st-off .oa-lt, .oa.oa-st-off .oa-lb { transform: scaleY(1); }
+.oa-st-off .oa-shut { opacity: 1; transition-delay: .5s; }
+.oa-st-off > svg { filter: saturate(.12); opacity: .6; }
+
+/* 전환 — 상태가 바뀔 때 한 번 */
+.oa.oa-tr-wake .oa-tr { animation: oa-t-wake .9s both; }
+.oa.oa-tr-wake .oa-lt { animation: oa-t-open-t .55s .12s both; }
+.oa.oa-tr-wake .oa-lb { animation: oa-t-open-b .55s .12s both; }
+.oa.oa-tr-alert .oa-tr { animation: oa-t-alert .5s both; }
+.oa.oa-tr-alert .oa-face { animation: oa-t-pop .45s cubic-bezier(.2, 1.7, .4, 1) both; }
+.oa.oa-tr-sleep .oa-tr { animation: oa-t-sleep 1s ease-in-out both; }
+.oa.oa-tr-sleep .oa-lt { animation: oa-t-close-t .7s .15s ease-in both; }
+.oa.oa-tr-sleep .oa-lb { animation: oa-t-close-b .7s .15s ease-in both; }
+.oa.oa-tr-calm .oa-tr { animation: oa-t-calm 1s ease-in-out both; }
+.oa.oa-tr-calm .oa-lt { animation: oa-t-half-t 1s ease-in-out both; }
+.oa.oa-tr-joy .oa-tr { animation: oa-t-joy .9s both; }
+.oa-tr-joy .oa-eyev, .oa-tr-joy .oa-lt, .oa-tr-joy .oa-lb { display: none; }
+.oa-tr-joy .oa-smile { display: inline; }
+@keyframes oa-t-wake { 0% { transform: scale(1.05, .92); } 28% { transform: scale(.9, 1.14); animation-timing-function: cubic-bezier(.3, 1.5, .5, 1); } 55% { transform: scale(1.06, .95); } 76% { transform: scale(.98, 1.02); } 100% { transform: scale(1); } }
+@keyframes oa-t-open-t { 0% { transform: scaleY(1); } 55% { transform: scaleY(0); } 100% { transform: scaleY(var(--oa-lid, 0)); } }
+@keyframes oa-t-open-b { 0% { transform: scaleY(1); } 55%, 100% { transform: scaleY(0); } }
+@keyframes oa-t-alert { 0% { transform: translateY(0) scale(1); } 35% { transform: translateY(-3.5px) scale(.93, 1.09); } 70% { transform: translateY(0) scale(1.05, .95); } 100% { transform: translateY(0) scale(1); } }
+@keyframes oa-t-pop { 0% { transform: scale(.6); } 100% { transform: scale(1); } }
+@keyframes oa-t-sleep { 0% { transform: scale(1); } 35% { transform: scale(.97, 1.04); } 100% { transform: scale(1.05, .92); } }
+@keyframes oa-t-close-t { 0% { transform: scaleY(var(--oa-lid, 0)); } 100% { transform: scaleY(1); } }
+@keyframes oa-t-close-b { 0% { transform: scaleY(0); } 100% { transform: scaleY(1); } }
+@keyframes oa-t-calm { 0% { transform: scale(1); } 35% { transform: scale(1.05, .94); } 70% { transform: scale(.99, 1.01); } 100% { transform: scale(1); } }
+@keyframes oa-t-half-t { 0%, 100% { transform: scaleY(var(--oa-lid, 0)); } 40%, 62% { transform: scaleY(.6); } }
+@keyframes oa-t-joy { 0% { transform: translateY(0) scale(1); } 15% { transform: scale(1.1, .88); } 38% { transform: translateY(-6px) scale(.92, 1.1); } 60% { transform: translateY(0) scale(1.1, .9); } 80% { transform: scale(.98, 1.02); } 100% { transform: scale(1); } }
+
+/* 올린 그림 — 동그랗게 잘림, 눈이 없으니 상태는 고리로(일함 도는 고리·물음 통통+고리·꺼짐 흑백) */
+.oa-img { border-radius: 50%; }
+.oa-img .oa-pic { position: absolute; inset: 0; border-radius: 50%; overflow: hidden; background: var(--surface-2); }
+.oa-img .oa-pic img, .oa-img .oa-pic canvas { width: 100%; height: 100%; object-fit: cover; display: block; transform-origin: 50% 50%; }
+.oa-img::before { content: ""; position: absolute; inset: -3px; border-radius: 50%; pointer-events: none; }
+.oa-img.oa-s16::before { inset: -2px; }
+.oa-img.oa-st-work::before { background: conic-gradient(var(--oa-c) 0 30%, transparent 30% 100%); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px)); mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px)); animation: oa-spin calc(1.3s * var(--oa-k)) linear infinite; }
+.oa-img.oa-st-ask { animation: oa-a-body calc(2.5s * var(--oa-k)) infinite var(--oa-d); transform-origin: 50% 100%; }
+.oa-img.oa-st-ask::before { box-shadow: 0 0 0 2px var(--oa-c); }
+.oa-img.oa-st-off .oa-pic { filter: grayscale(1); opacity: .55; }
+@keyframes oa-spin { to { transform: rotate(360deg); } }
+
+/* 화면 밖이면 멈춘다(그리는 값 그대로 멈춤 — 다시 보이면 이어서) */
+.oa.oa-hidden svg *, .oa.oa-hidden, .oa.oa-hidden::before { animation-play-state: paused !important; }
+/* 사람이 안 보면(ui/attention — 창 숨김·다른 앱이 앞·입력 2분 없음) 멈춘 그림. 그 자리에서 얼리면 감은 눈·뛰는 중으로 굳어
+ * 상태를 틀리게 보여서 기본 자세로 돌린다 — 일함·쉼은 눈꺼풀 높이, 물음은 큰 눈, 꺼짐은 감은 눈, 올린 그림은 고리 그대로 */
+html.oa-paused .oa svg *, html.oa-paused .oa, html.oa-paused .oa::before { animation: none !important; }
+html.oa-paused .oa-st-ask .oa-eyes { transform: scale(1.14); }
+@media (prefers-reduced-motion: reduce) {
+  .oa svg, .oa svg *, .oa, .oa::before { animation: none !important; transition: none !important; }
+}
+
+/* 누를 수 있는 프사(대시보드 머리) — 올리면 "바꾸기" */
+.oa-btn { all: unset; position: relative; display: inline-flex; border-radius: 50%; cursor: pointer; }
+.oa-btn:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+.oa-btn .oa-change { position: absolute; inset: -4px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: rgba(20, 20, 22, .55); color: #fff; font-size: 11px; font-weight: 700; opacity: 0; transition: opacity .15s; }
+.oa-btn:hover .oa-change, .oa-btn:focus-visible .oa-change { opacity: 1; }
+
+/* 겹친 프사(프로젝트 줄) — 바닥 색으로 1px 테두리를 둘러 겹쳐도 갈린다 */
+.oa-stack { display: inline-flex; align-items: center; }
+.oa-stack > .oa + .oa { margin-left: -5px; }
+.oa-stack > .oa { filter: drop-shadow(1px 0 0 var(--oa-bg, var(--panel))) drop-shadow(-1px 0 0 var(--oa-bg, var(--panel))) drop-shadow(0 1px 0 var(--oa-bg, var(--panel))) drop-shadow(0 -1px 0 var(--oa-bg, var(--panel))); }
+
+/* 프사 바꾸기 창 — 이름 바꾸기 창(od-box)을 넓혀 쓴다 */
+.od-box.oa-picker { width: min(440px, 92vw); max-height: 90vh; overflow-y: auto; }
+.oa-pk-prev { display: flex; align-items: center; justify-content: center; gap: 22px; padding: 8px 0 4px; }
+.oa-pk-sizes { display: flex; align-items: center; gap: 14px; }
+.oa-seg { display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--surface-2); }
+.oa-seg button { all: unset; flex: 1; text-align: center; min-height: 32px; line-height: 32px; border-radius: 8px; cursor: pointer; font-size: 12.5px; color: var(--text-2); }
+.oa-seg button.oa-on { background: var(--surface); color: var(--text); font-weight: 700; box-shadow: 0 1px 2px rgba(0, 0, 0, .08), 0 0 0 1px var(--line); }
+.oa-seg button:focus-visible, .oa-opt:focus-visible, .oa-sw:focus-visible, .oa-txt:focus-visible, .oa-crop:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.oa-lbl { font-size: 11px; font-weight: 600; color: var(--text-3); margin-top: 2px; }
+.oa-opts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.oa-opt { all: unset; box-sizing: border-box; width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; }
+.oa-opt.oa-on { border-color: var(--text); box-shadow: inset 0 0 0 1px var(--text); }
+.oa-sw { all: unset; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .08); }
+.oa-sw.oa-on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--text); }
+.oa-txt { all: unset; min-height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); font-size: 12px; cursor: pointer; color: var(--text-2); }
+.oa-txt.oa-on { border-color: var(--text); color: var(--text); font-weight: 700; }
+.oa-drop { position: relative; display: flex; flex-direction: column; gap: 2px; align-items: center; padding: 16px 12px; border: 1.5px dashed var(--line-strong); border-radius: 12px; cursor: pointer; color: var(--text-2); font-size: 12.5px; }
+.oa-drop small { color: var(--text-3); }
+.oa-drop input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.oa-drop:focus-within { outline: 2px solid var(--text); outline-offset: 2px; }
+.oa-crop { position: relative; width: 200px; height: 200px; margin: 0 auto; border-radius: 12px; overflow: hidden; background: var(--surface-2); cursor: grab; touch-action: none; }
+.oa-crop img { width: 100%; height: 100%; object-fit: cover; display: block; transform-origin: 50% 50%; pointer-events: none; user-select: none; }
+.oa-crop .oa-mask { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at center, transparent 0 99px, rgba(20, 20, 22, .55) 100px); box-shadow: inset 0 0 0 0 transparent; }
+.oa-zoom { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-2); }
+.oa-zoom input { flex: 1; min-height: 28px; }
+.oa-err { font-size: 12px; color: var(--danger-ink); background: var(--danger-bg); border-radius: 8px; padding: 6px 10px; }
+.od-foot .oa-reset { margin-right: auto; background: none; color: var(--text-3); }
+.od-foot button:disabled { opacity: .5; cursor: default; }
+
+/* 목소리 다이얼 — 하나씩 넘기면 바로 들린다(2026-10-02 목소리 고르기 시안 B). 준비 중 = 점 셋, 재생 중 = 참모 색 막대 */
+.oa-dial { display: flex; flex-direction: column; gap: 8px; }
+.oa-dial-row { display: flex; align-items: center; gap: 8px; border-radius: 14px; touch-action: pan-y; }
+.oa-dial-row:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+.oa-dial-arrow { all: unset; box-sizing: border-box; flex: 0 0 auto; width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line); display: inline-flex; align-items: center; justify-content: center; color: var(--text-2); cursor: pointer; }
+.oa-dial-arrow:hover { background: var(--hover); }
+.oa-dial-arrow svg { width: 16px; height: 16px; }
+.oa-dial-face { all: unset; box-sizing: border-box; flex: 1; min-width: 0; min-height: 76px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border-radius: 14px; background: var(--surface-2); cursor: pointer; }
+.oa-dial-face:disabled { cursor: default; }
+.oa-dial-face:focus-visible, .oa-dial-arrow:focus-visible, .oa-dial-def:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.oa-dial-names { display: flex; align-items: baseline; gap: 10px; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.oa-dial-names b { font-size: 17px; color: var(--text); }
+.oa-dial-st { height: 18px; display: inline-flex; align-items: center; }
+.oa-dial-play { display: inline-flex; color: var(--text-3); }
+.oa-dial-play svg { width: 14px; height: 14px; }
+.oa-dial-dots { display: inline-flex; gap: 4px; }
+.oa-dial-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--text-3); animation: oa-dial-dot 1s ease-in-out infinite; }
+.oa-dial-dots i:nth-child(2) { animation-delay: .15s; }
+.oa-dial-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes oa-dial-dot { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+.oa-dial-wave { display: inline-flex; align-items: center; gap: 2px; height: 18px; }
+.oa-dial-wave i { width: 2.5px; height: 14px; border-radius: 2px; background: var(--oa-dial-c, var(--text)); animation: oa-dial-wv .7s ease-in-out infinite alternate; }
+.oa-dial-wave i:nth-child(2n) { animation-delay: .18s; height: 9px; }
+.oa-dial-wave i:nth-child(3n) { animation-delay: .35s; height: 16px; }
+@keyframes oa-dial-wv { to { transform: scaleY(.4); } }
+.oa-dial-foot { position: relative; display: flex; align-items: center; justify-content: center; min-height: 44px; }
+.oa-dial-dotsrow { display: inline-flex; gap: 5px; align-items: center; }
+.oa-dial-dotsrow i { width: 6px; height: 6px; border-radius: 3px; background: var(--line); transition: width .15s; }
+.oa-dial-dotsrow i.on { width: 16px; background: var(--text); }
+.oa-dial-def { all: unset; box-sizing: border-box; position: absolute; right: 0; width: 44px; height: 44px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--text-2); cursor: pointer; }
+.oa-dial-def:hover { background: var(--hover); }
+.oa-dial-def:disabled { opacity: .35; cursor: default; }
+.oa-dial-def svg { width: 17px; height: 17px; }
+@media (prefers-reduced-motion: reduce) { .oa-dial-dots i, .oa-dial-wave i { animation: none; } }
+.oa-note { font-size: 11.5px; color: var(--text-3); line-height: 1.5; }
+

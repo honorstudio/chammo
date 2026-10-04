@@ -127,6 +127,25 @@ class Browser(unittest.TestCase):
         node.chmod(0o755)
         return str(node)
 
+    def test_node_는_앱이_고른_것부터_링크_받은_것_시스템_순(self):
+        # 앱이 고른 node(<데이터>/tools/bin/node 링크) → 앱이 받은 node → PATH — .mcp.json 에 버전 폴더가 박히지 않게(⑧)
+        with tempfile.TemporaryDirectory() as root:
+            data = pathlib.Path(root) / 'd'
+            ours = data / 'tools/node/bin/node'
+            ours.parent.mkdir(parents=True)
+            ours.write_text('')
+            self.assertEqual(np.pick_node(str(data), which=lambda _: '/opt/homebrew/bin/node', win=False), str(ours))
+            link = data / 'tools/bin/node'
+            link.parent.mkdir(parents=True)
+            link.symlink_to('../node/bin/node')
+            self.assertEqual(np.pick_node(str(data), which=lambda _: '/opt/homebrew/bin/node', win=False), str(link))
+            empty = pathlib.Path(root) / 'empty'
+            self.assertEqual(np.pick_node(str(empty), which=lambda _: '/usr/bin/node', win=False), '/usr/bin/node')
+            win = pathlib.Path(root) / 'w'
+            (win / 'tools/node').mkdir(parents=True)
+            (win / 'tools/node/node.exe').write_text('')
+            self.assertEqual(np.pick_node(str(win), which=lambda _: None, win=True), str(win / 'tools/node/node.exe'))
+
     def test_깔려_있으면_새_프로젝트에_브라우저_프로필과_미리_승인(self):
         with tempfile.TemporaryDirectory() as root:
             data, dev = fake_data(root)
@@ -136,6 +155,16 @@ class Browser(unittest.TestCase):
             self.assertTrue(out['browser'])
             self.assertEqual(json.loads((p / '.mcp.json').read_text())['mcpServers']['playwright']['args'], ['web-app'])
             self.assertEqual(json.loads((p / '.claude/settings.local.json').read_text())['enabledMcpjsonServers'], ['playwright'])
+            # playwright MCP 가 프로젝트 폴더에 남기는 스냅샷이 git 에 섞이지 않게
+            self.assertIn('.playwright-mcp/', (p / '.gitignore').read_text().splitlines())
+
+    def test_gitignore_는_있던_줄을_살리고_한_번만_더한다(self):
+        with tempfile.TemporaryDirectory() as root:
+            p = pathlib.Path(root)
+            (p / '.gitignore').write_text('node_modules/')  # 끝 줄바꿈 없음
+            np.gitignore(str(p), '.playwright-mcp/')
+            np.gitignore(str(p), '.playwright-mcp/')
+            self.assertEqual((p / '.gitignore').read_text(), 'node_modules/\n.playwright-mcp/\n')
 
     def test_안_깔려_있으면_건너뛴다(self):
         with tempfile.TemporaryDirectory() as root:

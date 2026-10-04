@@ -5,20 +5,22 @@ import type { Session } from './session';
 import type { Shortcut } from './shortcuts';
 import { findTarget } from './inbox';
 
-export const OPEN = ['settings', 'tour', 'office', 'review', 'all', 'replay', 'load', 'reader', 'tasks', 'inbox', 'home'] as const;
+export const OPEN = ['settings', 'tour', 'office', 'review', 'all', 'replay', 'load', 'reader', 'tasks', 'inbox', 'home', 'harnitor', 'tools'] as const;
 export type OpenWhat = (typeof OPEN)[number];
-export const CLOSE = ['settings', 'office', 'reader', 'tasks', 'inbox'] as const;
+export const CLOSE = ['settings', 'office', 'reader', 'tasks', 'inbox', 'harnitor', 'tools'] as const;
 export type CloseWhat = (typeof CLOSE)[number];
-const FEATURES: (keyof Features)[] = ['office', 'tama', 'gacha', 'review', 'voice'];
+const FEATURES: (keyof Features)[] = ['office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'computerUse'];
 
 export type AppIntent =
   | { kind: 'voice'; on: boolean }
   | { kind: 'feature'; name: keyof Features; on: boolean }
   | { kind: 'open'; what: OpenWhat }
   | { kind: 'close'; what: CloseWhat }
-  | { kind: 'focus'; target: string }
+  | { kind: 'focus'; target: string; terminal?: true }
   | { kind: 'pet'; show: boolean }
-  | { kind: 'reload' };
+  | { kind: 'reload' }
+  /** 폰(폰 서버 /api/rename)이 바꾼 참모 별명 — 앱 별명에 넣으면 쉬는 때 /rename 이 따라간다 */
+  | { kind: 'label'; id: string; nick: string };
 
 const onOff = (v: string | undefined) => (v === 'on' ? true : v === 'off' ? false : null);
 
@@ -27,6 +29,10 @@ export function intentOf(line: unknown): AppIntent | null {
   if (!line || typeof line !== 'object') return null;
   const { action, arg } = line as { action?: unknown; arg?: unknown };
   const a = typeof arg === 'string' ? arg.trim() : '';
+  if (action === 'orch-label') {
+    const o = arg as { id?: unknown; nick?: unknown } | null;
+    return o && typeof o === 'object' && typeof o.id === 'string' && typeof o.nick === 'string' ? { kind: 'label', id: o.id, nick: o.nick } : null;
+  }
   if (action === 'voice') {
     const on = onOff(a);
     return on === null ? null : { kind: 'voice', on };
@@ -38,7 +44,12 @@ export function intentOf(line: unknown): AppIntent | null {
   }
   if (action === 'open') return (OPEN as readonly string[]).includes(a) ? { kind: 'open', what: a as OpenWhat } : null;
   if (action === 'close') return (CLOSE as readonly string[]).includes(a) ? { kind: 'close', what: a as CloseWhat } : null;
-  if (action === 'focus') return a ? { kind: 'focus', target: a } : null;
+  // 터미널(CLI)은 --terminal 로 명시할 때만 — 채팅 뷰에서 "띄워 줘"가 세션 CLI 로 넘어갔다(2026-10-02 사용자)
+  if (action === 'focus') {
+    const m = a.match(/^--terminal\s+(.+)$/);
+    if (m) return { kind: 'focus', target: m[1]!.trim(), terminal: true };
+    return a ? { kind: 'focus', target: a } : null;
+  }
   if (action === 'config') return a === 'reload' ? { kind: 'reload' } : null;
   if (action === 'pet') return a === 'show' || a === 'hide' ? { kind: 'pet', show: a === 'show' } : null;
   return null;

@@ -7,10 +7,16 @@ echo "python not found — install Python 3 (winget install Python.Python.3.12)"
 ':'''
 __doc__ = """Routines — recurring jobs that wake up on a schedule, do one run by their instructions, and report.
 루틴 — 정해진 때 깨어나 지침서대로 한 번 일하고 결과를 남기는 반복 업무. 앱이 꺼져 있어도 macOS launchd 가 깨운다.
+맥은 launchd 항목 하나(app.chammo.routines.<데이터 폴더>)가 1분마다 `tick` 으로 때가 된 예약만 돌린다 — 예약마다 항목을 걸면
+걸 때마다 '백그라운드 활동' 알림이 뜨고 로그인 항목에 python 이 쌓였다(2026-10-03). 앱이 깔려 있으면 앱 실행 파일(--routine-tick)로 건다.
 
   scripts/routine new <name> "<schedule>" "<what to do each run>" [--in <folder>]
   scripts/routine list                      JSON: name, schedule, enabled, next run, last result
-  scripts/routine run <name>                run once now (launchd calls this with --scheduled)
+  scripts/routine run <name>                run once now
+  scripts/routine tick                      run every routine that is due (launchd calls this every minute)
+  scripts/routine install [--launcher <app executable>]   move old per-routine launchd jobs to the one tick job (the app calls this)
+  (new/resume/install hang the tick only for the real data folder ~/.honor-orchestrator or ~/.chammo — a test CHAMMO_HOME
+   gets none unless --allow-test-tick or CHAMMO_ALLOW_TEST_TICK=1)
   scripts/routine pause <name> | resume <name> | remove <name>
   scripts/routine report <name> ok|fail "<one line>"    the routine's session calls this when it finishes
   scripts/routine cloud add <name> "<schedule>" <https url> ["<note>"]   list a claude.ai cloud routine (runs there, not here)
@@ -18,17 +24,29 @@ __doc__ = """Routines — recurring jobs that wake up on a schedule, do one run 
 
 <schedule>: "daily 09:00" · "weekdays 09:00" · "weekly mon 09:00" · "every 30m" · "every 2h"
             "매일 09:00" · "평일 09:00" · "매주 월 09:00" · "30분마다" · "2시간마다"
+            one-off dates: "10/06 09:00" · "2026-10-06 09:00" · several with commas "10/06 09:00, 10/13 09:00"
+            (a date without a year means the next one; after the last date runs, the routine turns itself off)
 Files: <data>/routines/<name>/{ROUTINE.md (instructions — edit freely), routine.json, runs.jsonl}.
 A routine runs in its own folder unless --in points at a project folder.
 Cloud routines live in <data>/cloud-routines.json ([{name, schedule, url, note}]) — `list` shows them with kind "cloud";
 run/pause/resume/remove refuse them (do that on claude.ai).
 """
 import datetime, json, os, plistlib, re, shutil, subprocess, sys, time
+try:
+    import resource
+except ImportError:  # 윈도우
+    resource = None
 
 NAME = re.compile(r'^[a-z0-9][a-z0-9._-]{0,63}$')
 DAYS = {'sun': 0, 'mon': 1, 'tue': 2, 'wed': 3, 'thu': 4, 'fri': 5, 'sat': 6,
         '일': 0, '월': 1, '화': 2, '수': 3, '목': 4, '금': 5, '토': 6}
-LABEL = 'app.chammo.routine.'
+LABEL = 'app.chammo.routine.'  # 옛 예약별 항목 — 옮기기·지우기 때 내리기만 한다
+TICK = 'app.chammo.routines'
+TICK_FLAG = '--routine-tick'
+PUBLIC_ID = 'app.chammo.desktop'
+REAL_DATA = ('.honor-orchestrator', '.chammo')  # 개인 앱·공개판의 진짜 데이터 폴더 — 이것만 진짜 launchd 로 깨운다
+SKIP_TEST = 'test data folder'
+BASE_PATH = ['.local/bin', '/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin']
 
 
 def data_dir(home=None, env=None, exists=os.path.isdir):
@@ -48,8 +66,66 @@ def _hm(text):
     return int(m.group(1)), int(m.group(2))
 
 
+DATED = re.compile(r'(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})/(\d{1,2}))\s+(\d{1,2}:\d{2})')
+
+
+def is_dated(text):
+    """한 번짜리(날짜) 일정인가 — '10/06 09:00' · '2026-10-06 09:00' 으로 시작"""
+    return re.match(r'\s*(?:\d{4}-\d|\d{1,2}/\d)', text or '') is not None
+
+
+def _dated_parts(text):
+    """날짜 일정 → [(연도|None, 월, 일, 시, 분)]. 틀린 날짜·모양이면 ValueError"""
+    out = []
+    for part in (text or '').split(','):
+        m = DATED.fullmatch(part.strip())
+        if not m:
+            raise ValueError(f'date must look like "10/06 09:00" or "2026-10-06 09:00": {part.strip()!r}')
+        y, mo, d = (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m.group(1) else (None, int(m.group(4)), int(m.group(5)))
+        h, mi = _hm(m.group(6))
+        try:
+            datetime.date(y or 2000, mo, d)  # 연도 없으면 윤년으로 검사(02/29 허용)
+        except ValueError:
+            raise ValueError(f'no such date: {part.strip()!r}')
+        out.append((y, mo, d, h, mi))
+    return out
+
+
+def dated_slots(text, base=None):
+    """날짜 일정의 실제 시각들(정렬·중복 없음). 연도가 없으면 base(오늘) 기준 — 올해 날짜가 반년 넘게 지났으면 내년(12월에 '01/05'),
+    반년 안쪽으로 지났으면 올해 그대로(어제 날짜를 잘못 친 것 — 지난 날짜로 거절되게)"""
+    base = base or datetime.date.today()
+    out = set()
+    for y, mo, d, h, mi in _dated_parts(text):
+        if y is None:
+            y = base.year
+            try:
+                this = datetime.date(y, mo, d)
+            except ValueError:  # 02/29 인데 올해가 윤년이 아님
+                this = None
+            if this is None or (base - this).days > 183:
+                y += 1
+            while True:  # 02/29 는 다음 윤년까지
+                try:
+                    datetime.date(y, mo, d)
+                    break
+                except ValueError:
+                    y += 1
+        out.add(datetime.datetime(y, mo, d, h, mi))
+    return sorted(out)
+
+
+def remaining(schedule, now):
+    """날짜 일정에서 아직 안 온 실행 수(반복 일정은 None)"""
+    return sum(1 for s in dated_slots(schedule, now.date()) if s > now) if is_dated(schedule) else None
+
+
 def parse_schedule(text):
-    """일정 글자 → launchd 키(StartCalendarInterval / StartInterval). 모르는 모양이면 ValueError"""
+    """일정 글자 → launchd 키(StartCalendarInterval / StartInterval). 모르는 모양이면 ValueError.
+    날짜 일정은 Month·Day 로 걸려 해마다 깨우니, 연도는 run 이 거른다(_pending)"""
+    if is_dated(text):
+        keys = sorted({(mo, d, h, mi) for _, mo, d, h, mi in _dated_parts(text)})
+        return {'StartCalendarInterval': [{'Month': mo, 'Day': d, 'Hour': h, 'Minute': mi} for mo, d, h, mi in keys]}
     t = (text or '').strip().lower()
     m = re.fullmatch(r'(?:every\s+(\d+)\s*([mh])|(\d+)\s*(분|시간)마다)', t)
     if m:
@@ -71,7 +147,9 @@ def parse_schedule(text):
 
 
 def next_run(schedule, now, last=None):
-    """다음 실행 시각(분 단위). 간격 일정은 마지막 시작 + 간격(없으면 지금 + 간격)"""
+    """다음 실행 시각(분 단위). 간격 일정은 마지막 시작 + 간격(없으면 지금 + 간격). 날짜 일정은 다 지났으면 None"""
+    if is_dated(schedule):
+        return next((s for s in dated_slots(schedule, now.date()) if s > now), None)
     s = parse_schedule(schedule)
     if 'StartInterval' in s:
         base = last or now
@@ -92,6 +170,37 @@ def next_run(schedule, now, last=None):
         if best:
             return best
     return best
+
+
+def _minute(t):
+    return t.replace(second=0, microsecond=0)
+
+
+def _last_slot(schedule, now):
+    """매일·평일·매주 일정에서 now 이전(포함) 가장 늦은 칸"""
+    slots = parse_schedule(schedule)['StartCalendarInterval']
+    slots = slots if isinstance(slots, list) else [slots]
+    for back in range(0, 8):
+        day = (now - datetime.timedelta(days=back)).date()
+        weekday = (day.weekday() + 1) % 7  # 파이썬 월=0 → launchd 일=0
+        at = [datetime.datetime.combine(day, datetime.time(sl['Hour'], sl['Minute'])) for sl in slots if sl.get('Weekday', weekday) == weekday]
+        at = [a for a in at if a <= now]
+        if at:
+            return max(at)
+    return None
+
+
+def due(schedule, last, now, created=None):
+    """이번 tick 에 돌 차례인가 — last(지난번에 처리한 시각) 뒤로 now 까지 지난 칸이 있으면 True. 여러 칸이 밀려도 한 번(launchd 가 잠에서 깨며 몰아 한 번 돌던 것과 같다).
+    틀린 일정은 ValueError"""
+    now, last = _minute(now), _minute(last)
+    if is_dated(schedule):
+        return any(last < s <= now for s in dated_slots(schedule, created or now.date()))
+    s = parse_schedule(schedule)
+    if 'StartInterval' in s:
+        return now >= last + datetime.timedelta(seconds=s['StartInterval'])
+    slot = _last_slot(schedule, now)
+    return slot is not None and slot > last
 
 
 def _paths(name, data):
@@ -178,9 +287,9 @@ def _save(cfg, data):
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 
-def _log(name, data, **event):
+def _log(name, data, now=None, **event):
     _, _, _, runs = _paths(name, data)
-    event = {'ts': datetime.datetime.now().isoformat(timespec='seconds'), **event}
+    event = {'ts': (now or datetime.datetime.now()).isoformat(timespec='seconds'), **event}
     with open(runs, 'a', encoding='utf-8') as f:
         f.write(json.dumps(event, ensure_ascii=False) + '\n')
     return event
@@ -227,28 +336,226 @@ def _trust(path, home, win=None):
     return True
 
 
-def _launchd_load(cfg, data, home, run, uid, python):
-    """launchd 에 올린다 — 앱이 꺼져 있어도 정해진 때 `routine run <name> --scheduled` 가 돈다"""
-    name = cfg['name']
+def _read_plist(path):
+    try:
+        with open(path, 'rb') as f:
+            v = plistlib.load(f)
+        return v if isinstance(v, dict) else None
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return None
+
+
+def tick_label(data):
+    """tick 항목 이름 — 데이터 폴더마다 따로(시험 앱 ~/.chammo-test 가 진짜를 덮지 않게, 두 앱이 다른 폴더를 쓰면 각자)"""
+    slug = re.sub(r'[^a-z0-9-]+', '-', os.path.basename(os.path.normpath(data)).lower()).strip('-') or 'data'
+    return f'{TICK}.{slug}'
+
+
+def _tick_plist(data, home):
+    return os.path.join(home, 'Library/LaunchAgents', tick_label(data) + '.plist')
+
+
+def _tick_last(name, data):
+    """예약별 '지난번에 tick 이 처리한 시각' — 없으면 None"""
+    try:
+        with open(os.path.join(_paths(name, data)[0], 'tick.json'), encoding='utf-8') as f:
+            return datetime.datetime.fromisoformat(json.load(f)['last'])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _tick_mark(name, data, at):
+    d = _paths(name, data)[0]
+    tmp = os.path.join(d, 'tick.json.tmp')
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump({'last': _minute(at).isoformat(timespec='minutes')}, f)
+    os.replace(tmp, os.path.join(d, 'tick.json'))
+
+
+def _local_names(data):
+    root = os.path.join(data, 'routines')
+    return [n for n in sorted(os.listdir(root)) if os.path.isfile(_paths(n, data)[1])] if os.path.isdir(root) else []
+
+
+def _bundle_info(app):
+    """앱 번들 → (실행 파일, 번들 id) — 예약 깨우기(--routine-tick)를 아는 판(Info.plist ChammoRoutineTick)만. 옛 앱에 인자를 주면 창이 뜬다"""
+    info = _read_plist(os.path.join(app, 'Contents/Info.plist')) or {}
+    if info.get('ChammoRoutineTick') is not True or not info.get('CFBundleExecutable'):
+        return None
+    exe = os.path.join(app, 'Contents/MacOS', info['CFBundleExecutable'])
+    return (exe, info.get('CFBundleIdentifier') or '') if os.path.isfile(exe) else None
+
+
+def _app_of(exe):
+    m = re.fullmatch(r'(.+\.app)/Contents/MacOS/[^/]+', exe or '')
+    return m.group(1) if m else None
+
+
+def _installed_apps(root='/Applications'):
+    try:
+        return [os.path.join(root, a) for a in sorted(os.listdir(root)) if a.endswith('.app')]
+    except OSError:
+        return []
+
+
+def pick_launcher(given=None, current=None, apps=None):
+    """tick 을 부를 실행 파일 — 지금 걸린 앱이 멀쩡하면 그대로(두 앱이 데이터 폴더를 같이 쓰면 켤 때마다 뒤바뀌지 않게) → 부른 앱 →
+    깔린 앱(직접 빌드한 판이 공개판보다 먼저). 맥은 실행 파일의 서명으로 알림·로그인 항목 이름을 정한다 — 브루 파이썬(adhoc)은 'python3.14' 로
+    따로 쌓였다. 없으면 None(파이썬으로)"""
+    for exe in (current, given):
+        app = _app_of(exe)
+        if app and (_bundle_info(app) or (None,))[0] == exe:
+            return exe
+    found = [b for b in map(_bundle_info, _installed_apps() if apps is None else apps) if b]
+    return min(found, key=lambda b: b[1] == PUBLIC_ID)[0] if found else None
+
+
+def real_data(data, home):
+    """개인 앱·공개판의 진짜 데이터 폴더인가 — 시험 CHAMMO_HOME(~/.chammo-qa·~/.chammo-test)은 아니다"""
+    return os.path.realpath(data) in {os.path.realpath(os.path.join(home, d)) for d in REAL_DATA}
+
+
+def _tick_allowed(data, home, allow_test):
+    """시험 폴더에 진짜 tick 을 걸면 정해진 때 시험 HQ 에 진짜 claude 세션이 뜬다(2026-10-03 qa-chat — 개발판이 ~/.chammo-qa 로 걸었다)"""
+    if allow_test is None:
+        allow_test = os.environ.get('CHAMMO_ALLOW_TEST_TICK') == '1'
+    return allow_test or real_data(data, home)
+
+
+def tick_path(paths, claude_dirs=(), home=None):
+    """tick 의 PATH — 부른 쪽(앱·셸) 환경을 그대로 잇지 않는다. claude 폴더 + 이어받은 PATH 중 실제로 있는 폴더 + 기본.
+    fnm 임시 폴더(셸마다 생겼다 사라짐)·node_modules(워크트리)·.claude 작업 폴더는 뺀다"""
+    home = home or os.path.expanduser('~')
+    junk = ('fnm_multishells', '/node_modules/', '/.claude/')
+    kept = [p for ps in paths for p in (ps or '').split(':') if p and not any(j in p + '/' for j in junk) and os.path.isdir(p)]
+    base = [p if p.startswith('/') else os.path.join(home, p) for p in BASE_PATH]
+    return ':'.join(dict.fromkeys(p for p in [*claude_dirs, *kept, *base] if p and os.path.isdir(p)))
+
+
+def _drop_ticker(data, home, run, uid):
+    p = _tick_plist(data, home)
+    if os.path.exists(p):
+        run(['launchctl', 'bootout', f'gui/{_uid(uid)}/{tick_label(data)}'], capture_output=True, text=True)
+        os.remove(p)
+
+
+def ensure_ticker(data, home, run=subprocess.run, uid=None, python=None, launcher=None, apps=None, extra_path=(), allow_test=None):
+    """1분마다 `routine tick` 을 부르는 launchd 항목 하나를 건다. 이미 같은 모양으로 걸려 있으면 손대지 않는다(다시 등록하면 알림이 또 뜰 수 있다).
+    시험 데이터 폴더면 걸지 않고(이미 걸려 있으면 내리고) skipped 를 돌려준다"""
+    if not _tick_allowed(data, home, allow_test):
+        _drop_ticker(data, home, run, uid)
+        return {'ticker': None, 'plist': None, 'skipped': SKIP_TEST}
+    label, path = tick_label(data), _tick_plist(data, home)
+    old = _read_plist(path) or {}
+    exe = pick_launcher(launcher, (old.get('ProgramArguments') or [None])[0], apps)
     tool = os.path.join(data, 'tools', 'routine')
-    script = tool if os.path.isfile(tool) else os.path.realpath(__file__)
-    path_env = ':'.join(dict.fromkeys([os.path.dirname(cfg['claude']), *os.environ.get('PATH', '/usr/bin:/bin').split(':'), '/usr/bin', '/bin']))
-    d, _, _, _ = _paths(name, data)
+    try:
+        with open(tool, encoding='utf-8') as f:
+            fresh = 'def tick(' in f.read()  # 앱을 아직 안 올렸으면 옛 스크립트엔 tick 이 없다
+    except OSError:
+        fresh = False
+    script = tool if fresh else os.path.realpath(__file__)
+    claude_dirs = []
+    for n in _local_names(data):
+        try:
+            claude_dirs.append(os.path.dirname(_load(n, data).get('claude') or ''))
+        except (ValueError, OSError):
+            pass
+    # PATH 는 걸려 있던 것(없으면 옛 예약별 항목 것)에서 있는 폴더만 — 부르는 쪽 환경을 섞으면 셸마다 달라 항목을 계속 다시 쓴다
+    old_path = (old.get('EnvironmentVariables') or {}).get('PATH', '')
+    path_env = tick_path([old_path] if old_path else list(extra_path), claude_dirs, home)
+    log = os.path.join(data, 'tools', 'routine-tick.log')
     plist = {
-        'Label': LABEL + name,
-        'ProgramArguments': [python, script, 'run', name, '--scheduled'],
+        'Label': label,
+        'AssociatedBundleIdentifiers': [(_bundle_info(_app_of(exe)) or (None, ''))[1] or PUBLIC_ID if exe else PUBLIC_ID],
+        'ProgramArguments': [exe, TICK_FLAG] if exe else [python or sys.executable or '/usr/bin/python3', script, 'tick'],
         'EnvironmentVariables': {'CHAMMO_HOME': data, 'HOME': home, 'PATH': path_env},
-        'StandardOutPath': os.path.join(d, 'launchd.log'),
-        'StandardErrorPath': os.path.join(d, 'launchd.log'),
-        **parse_schedule(cfg['schedule']),
+        'StartInterval': 60,
+        'RunAtLoad': True,  # 로그인하자마자 한 번 — 꺼져 있던 동안 밀린 칸
+        'StandardOutPath': log,
+        'StandardErrorPath': log,
     }
-    p = _plist_path(name, home)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, 'wb') as f:
+    target = f'gui/{_uid(uid)}/{label}'
+    if old == plist and run(['launchctl', 'print', target], capture_output=True, text=True).returncode == 0:
+        return {'ticker': label, 'plist': path, 'program': plist['ProgramArguments'][0], 'changed': False}
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    os.makedirs(os.path.dirname(log), exist_ok=True)
+    with open(path, 'wb') as f:
         plistlib.dump(plist, f)
-    run(['launchctl', 'bootout', f'gui/{uid}/{LABEL}{name}'], capture_output=True, text=True)  # 이미 올라가 있으면 새로
-    run(['launchctl', 'bootstrap', f'gui/{uid}', p], capture_output=True, text=True)
-    return p
+    run(['launchctl', 'bootout', target], capture_output=True, text=True)
+    run(['launchctl', 'bootstrap', f'gui/{_uid(uid)}', path], capture_output=True, text=True)
+    return {'ticker': label, 'plist': path, 'program': plist['ProgramArguments'][0], 'changed': True}
+
+
+def _legacy_out(name, home, run, uid):
+    """옛 예약별 launchd 항목을 내린다(있으면)"""
+    run(['launchctl', 'bootout', f'gui/{_uid(uid)}/{LABEL}{name}'], capture_output=True, text=True)
+    p = _plist_path(name, home)
+    if os.path.exists(p):
+        os.remove(p)
+
+
+def install(data=None, home=None, run=subprocess.run, uid=None, python=None, launcher=None, apps=None, now=None, allow_test=None):
+    """예약 깨우기를 하나로 — 이 데이터 폴더의 옛 예약별 항목(app.chammo.routine.<이름>)을 내리고 tick 하나를 건다. 앱이 켤 때마다 불러도 같다.
+    예약이 하나도 없으면 아무것도 안 건다(첫 실행에 '백그라운드 활동' 알림이 괜히 안 뜨게)"""
+    home = home or os.path.expanduser('~')
+    data = data or data_dir(home)
+    now = now or datetime.datetime.now()
+    names = _local_names(data)
+    for n in names:  # 기록 먼저 — 기준 시각이 없으면 지금부터 센다(옛 칸을 몰아 돌리지 않게). N마다는 마지막 시작부터(다음 실행이 옮긴 시각으로 밀리지 않게)
+        if _tick_last(n, data) is None:
+            starts = [r['ts'] for r in _runs(n, data) if r.get('event') == 'start']
+            try:
+                interval = 'StartInterval' in parse_schedule(_load(n, data)['schedule'])
+            except (ValueError, OSError, KeyError):
+                interval = False
+            last = datetime.datetime.fromisoformat(starts[-1]) if interval and starts else now
+            _tick_mark(n, data, min(last, now))
+    removed, paths = [], []
+    la = os.path.join(home, 'Library/LaunchAgents')
+    for f in sorted(os.listdir(la)) if os.path.isdir(la) else []:
+        if not (f.startswith(LABEL) and f.endswith('.plist')):
+            continue
+        p = _read_plist(os.path.join(la, f)) or {}
+        env = p.get('EnvironmentVariables') or {}
+        if os.path.realpath(env.get('CHAMMO_HOME') or '/nonexistent') != os.path.realpath(data):
+            continue  # 다른 데이터 폴더(시험 앱 등) 것은 그대로
+        paths.append(env.get('PATH') or '')
+        name = f[len(LABEL):-len('.plist')]
+        _legacy_out(name, home, run, uid)  # 옛 것을 먼저 내린다 — 같이 걸려 있으면 한 칸이 두 번 돈다
+        removed.append(name)
+    if not names and not os.path.exists(_tick_plist(data, home)) and _tick_allowed(data, home, allow_test):
+        return {'ticker': None, 'removed': removed}
+    return {**ensure_ticker(data, home, run, uid, python, launcher, apps, extra_path=paths, allow_test=allow_test), 'removed': removed}
+
+
+def tick(data=None, now=None, run=subprocess.run, home=None, uid=None):
+    """launchd 가 1분마다 부른다 — 켜진 예약마다 지난번 처리 뒤로 지난 칸이 있으면 한 번 돌린다"""
+    data = data or data_dir()
+    now = now or datetime.datetime.now()
+    home = home or os.path.expanduser('~')
+    out = []
+    for name in _local_names(data):
+        try:
+            cfg = _load(name, data)
+            if not cfg.get('enabled', True):
+                continue
+            last = _tick_last(name, data)
+            if last is None:  # 처음 보는 예약 — 지금부터 센다
+                _tick_mark(name, data, now)
+                continue
+            created = datetime.date.fromisoformat(cfg['created']) if cfg.get('created') else None
+            if not due(cfg['schedule'], last, now, created):
+                if is_dated(cfg['schedule']) and not _pending(cfg, data, now) and \
+                        all(s < now - datetime.timedelta(days=1) for s in dated_slots(cfg['schedule'], created or now.date())):
+                    cfg['finished'] = now.isoformat(timespec='seconds')  # 마지막 날짜가 돌았는데 하루가 지나도 보고가 없다 — 이제 끈다
+                    _finish(cfg, data, home, run, uid, False)
+                continue
+            _tick_mark(name, data, now)  # 기록 먼저 — 띄우다 죽어도 다음 tick 이 같은 칸을 또 돌리지 않게
+            out.append({'name': name, **run_now(name, data=data, run=run, scheduled=True, now=now, home=home, uid=uid, win=False)})
+        except Exception as e:  # 한 예약이 깨져도 나머지는 돈다
+            out.append({'name': name, 'error': f'{type(e).__name__}: {e}'})
+    return out
 
 
 TASK = 'Chammo\\'
@@ -267,6 +574,8 @@ def schtasks_args(name, schedule, command):
         return base + (['/SC', 'HOURLY', '/MO', str(sec // 3600)] if sec % 3600 == 0 else ['/SC', 'MINUTE', '/MO', str(max(1, sec // 60))])
     slots = s['StartCalendarInterval']
     slots = slots if isinstance(slots, list) else [slots]
+    if is_dated(schedule) and len({(x['Hour'], x['Minute']) for x in slots}) > 1:
+        raise ValueError('on Windows, all dates need the same time of day (it wakes daily and skips other days)')
     hm = f"{slots[0]['Hour']:02d}:{slots[0]['Minute']:02d}"
     days = [WIN_DAYS[x['Weekday']] for x in slots if 'Weekday' in x]
     return base + (['/SC', 'WEEKLY', '/D', ','.join(days), '/ST', hm] if days else ['/SC', 'DAILY', '/ST', hm])
@@ -288,11 +597,17 @@ def _uid(uid):
     return uid if uid is not None else os.getuid()
 
 
-def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run, claude=None, python=None, uid=None, win=None):
+def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run, claude=None, python=None, uid=None, win=None, now=None, apps=None, allow_test=None):
     win = os.name == 'nt' if win is None else win
+    now = now or datetime.datetime.now()
     if not NAME.match(name or '') or '..' in name:
         raise ValueError(f'routine name must be lowercase letters, digits, - _ . : {name!r}')
     parse_schedule(schedule)  # 먼저 검사 — 틀리면 아무것도 안 만든다
+    if is_dated(schedule):  # 연도를 박아 둔다(나중에 '가까운 해'가 바뀌지 않게) — 지난 날짜는 빼고, 다 지났으면 거절
+        future = [s for s in dated_slots(schedule, now.date()) if s > now]
+        if not future:
+            raise ValueError(f'all dates are in the past: {schedule!r}')
+        schedule = ', '.join(s.strftime('%Y-%m-%d %H:%M') for s in future)
     home = home or os.path.expanduser('~')
     data = data or data_dir(home)
     if any(c['name'] == name for c in _cloud_read(data)):
@@ -310,8 +625,15 @@ def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run
     _save(cfg, data)
     if not cwd:
         _trust(d, home)
-    where = _schtasks_load(cfg, data, run, python or sys.executable) if win else _launchd_load(cfg, data, home, run, _uid(uid), python or sys.executable or '/usr/bin/python3')
-    return {'name': name, 'folder': d, 'instructions': md, 'task' if win else 'plist': where, 'next': next_run(schedule, datetime.datetime.now()).isoformat(timespec='minutes')}
+    skipped = None
+    if win:
+        where = _schtasks_load(cfg, data, run, python or sys.executable)
+    else:
+        _tick_mark(name, data, now)
+        t = ensure_ticker(data, home, run, uid, python, apps=apps, allow_test=allow_test)
+        where, skipped = t['plist'], t.get('skipped')
+    out = {'name': name, 'folder': d, 'instructions': md, 'task' if win else 'plist': where, 'next': next_run(schedule, now).isoformat(timespec='minutes')}
+    return {**out, 'skipped': skipped} if skipped else out
 
 
 def _agents(claude, run):
@@ -322,12 +644,70 @@ def _agents(claude, run):
         return []
 
 
-def run_now(name, data=None, run=subprocess.run, scheduled=False):
-    """한 번 실행 — 지난 실행이 아직 돌면 건너뛰고, 끝난 지난 세션은 치우고 새 세션을 띄운다"""
+def _runs(name, data):
+    _, _, _, runs_path = _paths(name, data)
+    if not os.path.isfile(runs_path):
+        return []
+    with open(runs_path, encoding='utf-8') as f:
+        return [json.loads(l) for l in f if l.strip()]
+
+
+def _pending(cfg, data, now):
+    """날짜 일정에서 아직 예약으로 안 돈 시각들 — 그 시각 뒤에 예약 시작(scheduled) 기록이 없는 것. 사람이 누른 '지금 실행'은 안 센다"""
+    starts = [datetime.datetime.fromisoformat(r['ts']) for r in _runs(cfg['name'], data) if r.get('event') == 'start' and r.get('scheduled')]
+    base = datetime.date.fromisoformat(cfg['created']) if cfg.get('created') else now.date()
+    return [s for s in dated_slots(cfg['schedule'], base) if not any(st >= s for st in starts)]
+
+
+def _finish(cfg, data, home, run, uid, win):
+    """마지막 날짜까지 돈 한 번짜리 예약을 끈다 — 앱엔 '끝남'. 예약(plist·작업)을 내리는 건 맨 끝(launchd 가 부른 run 이면 자기 자신이 내려간다)"""
+    cfg['enabled'] = False
+    cfg['finished'] = datetime.datetime.now().isoformat(timespec='seconds') if 'finished' not in cfg else cfg['finished']
+    _save(cfg, data)
+    p = _plist_path(cfg['name'], home)
+    if os.path.exists(p):
+        os.remove(p)
+    if win:
+        run(['schtasks', '/Delete', '/TN', TASK + cfg['name'], '/F'], capture_output=True, text=True, **SCHT)
+    else:
+        run(['launchctl', 'bootout', f'gui/{_uid(uid)}/{LABEL}{cfg["name"]}'], capture_output=True, text=True)
+
+
+def raise_open_files():
+    """launchd 로 깬 프로세스는 파일 열기 소프트 제한이 256 이라 claude --bg 가 'low max file descriptors' 로 시작부터 죽는다
+    (2026-10-03 nightly-check) — 띄우기 전에 하드 한도까지 올린다. 맥은 OPEN_MAX(10240) 위를 거절할 수 있어 되는 데까지 내린다"""
+    if resource is None:
+        return
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        top = 65536 if hard == resource.RLIM_INFINITY else hard
+        for want in (top, 10240, 4096):
+            if want <= soft or want > top:
+                continue
+            try:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (want, hard))
+                return
+            except (ValueError, OSError):
+                pass
+    except (ValueError, OSError):
+        pass
+
+
+def run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, home=None, uid=None, win=None):
+    """한 번 실행 — 지난 실행이 아직 돌면 건너뛰고, 끝난 지난 세션은 치우고 새 세션을 띄운다.
+    날짜 일정은 launchd 가 해마다(윈도우는 날마다) 깨우니, 예약으로 깨면 아직 안 돈 날짜가 왔을 때만 돈다"""
     data = data or data_dir()
+    now = now or datetime.datetime.now()
     cfg = _load(name, data)
     if scheduled and not cfg.get('enabled', True):
         return {'skipped': 'paused'}
+    if scheduled and is_dated(cfg['schedule']):
+        pending = _pending(cfg, data, now)
+        if not any(s <= now + datetime.timedelta(minutes=1) for s in pending):
+            if not pending:  # 마지막 날짜가 돌았는데 보고 없이 해가 바뀌었다 — 이제 끈다
+                cfg['finished'] = now.isoformat(timespec='seconds')
+                _finish(cfg, data, home or os.path.expanduser('~'), run, uid, os.name == 'nt' if win is None else win)
+            return {'skipped': 'not due'}
     session = f'routine-{name}'
     mine = [a for a in _agents(cfg['claude'], run) if a.get('name') == session]
     if any(a.get('status') == 'busy' for a in mine):
@@ -341,27 +721,38 @@ def run_now(name, data=None, run=subprocess.run, scheduled=False):
     prompt = (f'You are the routine "{name}". Do ONE run now, exactly as the instructions in {md} say '
               f'(read them first). Nobody is watching: do not ask questions. When you finish, run: '
               f'sh "{me}" report {name} ok "<one-line result>" — or `fail` with the reason if you could not finish.')
+    raise_open_files()
     r = run([cfg['claude'], '--bg', '--dangerously-skip-permissions', '-n', session, prompt], cwd=cfg['cwd'],
             capture_output=True, text=True, env=dict(os.environ, CHAMMO_HOME=data), **NOWIN)
     m = re.search(r'backgrounded\s*·\s*([0-9a-f]{6,})', re.sub(r'\x1b\[[0-9;]*m', '', r.stdout or ''))
     sid = m.group(1) if m else None
-    _log(name, data, event='start', session=sid, scheduled=scheduled, error=None if sid else (r.stderr or r.stdout or '').strip()[:300])
+    _log(name, data, now=now, event='start', session=sid, scheduled=scheduled, error=None if sid else (r.stderr or r.stdout or '').strip()[:300])
     return {'session': sid}
 
 
-def report(name, result, note, data=None):
+def report(name, result, note, data=None, home=None, run=subprocess.run, uid=None, win=None, now=None):
+    """루틴 세션이 끝나며 부른다. 한 번짜리 예약이 마지막 날짜까지 다 돌았으면 여기서 스스로 꺼진다"""
     if result not in ('ok', 'fail'):
         raise ValueError('result must be ok or fail')
     data = data or data_dir()
-    _load(name, data)
-    return _log(name, data, event='end', result=result, note=note)
+    now = now or datetime.datetime.now()
+    cfg = _load(name, data)
+    event = _log(name, data, now=now, event='end', result=result, note=note)
+    if is_dated(cfg['schedule']) and cfg.get('enabled', True) and not _pending(cfg, data, now):
+        cfg['finished'] = now.isoformat(timespec='seconds')
+        _finish(cfg, data, home or os.path.expanduser('~'), run, uid, os.name == 'nt' if win is None else win)
+    return event
 
 
-def set_enabled(name, on, data=None, home=None, run=subprocess.run, uid=None, python=None, win=None):
+def set_enabled(name, on, data=None, home=None, run=subprocess.run, uid=None, python=None, win=None, now=None, apps=None, allow_test=None):
     win = os.name == 'nt' if win is None else win
     home = home or os.path.expanduser('~')
     data = data or data_dir(home)
     cfg = _load(name, data)
+    if on and is_dated(cfg['schedule']):
+        if next_run(cfg['schedule'], now or datetime.datetime.now()) is None:
+            raise ValueError(f'all dates are in the past: {cfg["schedule"]!r} — make a new one')
+        cfg.pop('finished', None)
     cfg['enabled'] = on
     _save(cfg, data)
     if win:
@@ -369,10 +760,11 @@ def set_enabled(name, on, data=None, home=None, run=subprocess.run, uid=None, py
             _schtasks_load(cfg, data, run, python or sys.executable)
         else:
             run(['schtasks', '/Change', '/TN', TASK + name, '/DISABLE'], capture_output=True, text=True, **SCHT)
-    elif on:
-        _launchd_load(cfg, data, home, run, _uid(uid), python or sys.executable or '/usr/bin/python3')
+    elif on:  # 꺼 둔 동안 지난 칸을 몰아 돌리지 않게 지금부터 센다
+        _tick_mark(name, data, now or datetime.datetime.now())
+        ensure_ticker(data, home, run, uid, python, apps=apps, allow_test=allow_test)
     else:
-        run(['launchctl', 'bootout', f'gui/{_uid(uid)}/{LABEL}{name}'], capture_output=True, text=True)
+        _legacy_out(name, home, run, uid)
     return cfg
 
 
@@ -384,10 +776,7 @@ def remove(name, data=None, home=None, run=subprocess.run, uid=None, win=None):
     if win:
         run(['schtasks', '/Delete', '/TN', TASK + name, '/F'], capture_output=True, text=True, **SCHT)
     else:
-        run(['launchctl', 'bootout', f'gui/{_uid(uid)}/{LABEL}{name}'], capture_output=True, text=True)
-    p = _plist_path(name, home)
-    if os.path.exists(p):
-        os.remove(p)
+        _legacy_out(name, home, run, uid)
     shutil.rmtree(_paths(name, data)[0], ignore_errors=True)
     return {'removed': name}
 
@@ -402,19 +791,21 @@ def list_routines(data=None, now=None):
             cfg = _load(name, data)
         except (ValueError, OSError):
             continue
-        _, _, md, runs_path = _paths(name, data)
-        runs = []
-        if os.path.isfile(runs_path):
-            with open(runs_path, encoding='utf-8') as f:
-                runs = [json.loads(l) for l in f if l.strip()]
+        _, _, md, _ = _paths(name, data)
+        runs = _runs(name, data)
         starts = [r for r in runs if r.get('event') == 'start']
         ends = [r for r in runs if r.get('event') == 'end']
         last_start = datetime.datetime.fromisoformat(starts[-1]['ts']) if starts else None
         try:
-            nxt = next_run(cfg['schedule'], now, last=last_start)
+            nxt = next_run(cfg['schedule'], now, last=_tick_last(name, data) or last_start)
         except ValueError:
             nxt = None
-        out.append({**cfg, 'kind': 'local', 'instructions': md, 'next': nxt.isoformat(timespec='minutes') if nxt and cfg.get('enabled', True) else None,
+        once = is_dated(cfg['schedule'])
+        try:
+            left = remaining(cfg['schedule'], now) if once else None
+        except ValueError:
+            left = None
+        out.append({**cfg, 'kind': 'local', 'once': once, 'remaining': left, 'finished': cfg.get('finished'), 'instructions': md, 'next': nxt.isoformat(timespec='minutes') if nxt and cfg.get('enabled', True) else None,
                     'last': ends[-1] if ends else None, 'lastStart': starts[-1] if starts else None, 'runs': runs[-20:]})
     local = {r['name'] for r in out}
     for c in sorted(_cloud_read(data), key=lambda c: c['name']):
@@ -431,16 +822,27 @@ def main(argv):
         print(__doc__, file=sys.stderr)
         return 2
     cmd, rest = argv[0], argv[1:]
+    allow = True if '--allow-test-tick' in rest else None
+    rest = [a for a in rest if a != '--allow-test-tick']
     try:
         if cmd == 'new' and len(rest) >= 3:
             cwd = rest[rest.index('--in') + 1] if '--in' in rest else None
-            out = new(rest[0], rest[1], rest[2], cwd=cwd)
+            out = new(rest[0], rest[1], rest[2], cwd=cwd, allow_test=allow)
         elif cmd == 'list':
             out = list_routines()
+        elif cmd == 'tick':
+            log = os.path.join(data_dir(), 'tools', 'routine-tick.log')
+            if os.path.isfile(log) and os.path.getsize(log) > 1_000_000:
+                open(log, 'w', encoding='utf-8').close()  # 1분마다 붙으니 커지면 비운다
+            out = tick()
+            if not out:
+                return 0  # 돌린 게 없으면 기록도 안 남긴다
+        elif cmd == 'install':
+            out = install(launcher=rest[rest.index('--launcher') + 1] if '--launcher' in rest[:-1] else None, allow_test=allow)
         elif cmd == 'run' and rest:
             out = run_now(rest[0], scheduled='--scheduled' in rest)
         elif cmd in ('pause', 'resume') and rest:
-            out = set_enabled(rest[0], cmd == 'resume')
+            out = set_enabled(rest[0], cmd == 'resume', allow_test=allow)
         elif cmd == 'remove' and rest:
             out = remove(rest[0])
         elif cmd == 'report' and len(rest) >= 3:
@@ -455,6 +857,9 @@ def main(argv):
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2
+    if isinstance(out, dict) and out.get('skipped') == SKIP_TEST:
+        print(f'{data_dir()} is a test data folder — no launchd wake-up (use --allow-test-tick to hang one) / '
+              '시험 데이터 폴더라 깨우기를 안 건다', file=sys.stderr)
     print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
     return 0
 

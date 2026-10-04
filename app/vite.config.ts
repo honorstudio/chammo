@@ -6,10 +6,13 @@ export default defineConfig({
   plugins: [react()],
   clearScreen: false,
   server: { port: 1420, strictPort: true },
-  // 창 셋: 메인(index.html) + 항상 위에 떠 있는 다마고치 위젯(widget.html) + 문서 리더(reader.html) + 다마고치 더보기(tama-more.html)
-  build: { outDir: 'dist', target: 'safari17', rollupOptions: { input: { main: 'index.html', widget: 'widget.html', reader: 'reader.html', tamaMore: 'tama-more.html' } } },
+  // 창 셋: 메인(index.html) + 항상 위에 떠 있는 다마고치 위젯(widget.html) + 문서 리더(reader.html)
+  // + 폰 화면(mobile.html) — 창이 아니라 모바일 서버(src-tauri/src/mobile.rs)가 테일스케일로 내보낸다
+  build: { outDir: 'dist', target: 'safari17', rollupOptions: { input: { main: 'index.html', widget: 'widget.html', reader: 'reader.html', mobile: 'mobile.html' } } },
   test: {
     include: ['src/**/*.test.ts'],
     environment: 'node',
+    // CSS 는 기본으로 빈 글이 된다 — 폰 화면 배치(foldLayout)·프사 멈춤(avatarCss) 규칙을 ?raw 로 읽는 테스트가 있어서 이 파일들만 그대로
+    css: { include: [/mobile\.css/, /avatar\.css/] },
   },
 });

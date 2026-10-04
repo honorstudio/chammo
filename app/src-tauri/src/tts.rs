@@ -71,6 +71,22 @@ pub async fn supertonic_install() -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+/// 깔린 실행기가 앱의 것과 다르면 새것으로 — 받기 때 한 번만 써져서, 실행기를 고쳐도(PLAYING 줄, 2026-10-02) 옛것이 남는다.
+/// 받기가 끝난 곳(ready)만. 모델·가상환경은 그대로
+pub(crate) fn refresh_runner(d: &std::path::Path) {
+    if !d.join("ready").exists() {
+        return;
+    }
+    let p = d.join("speak");
+    if std::fs::read_to_string(&p).ok().as_deref() != Some(SPEAK) && std::fs::write(&p, SPEAK).is_ok() {
+        crate::platform::make_executable(&p);
+    }
+}
+
+pub(crate) fn refresh_installed() {
+    refresh_runner(&dir());
+}
+
 /// 미리 데우기 인자 — macOS say 만: 같은 목소리로 빈칸 하나를 파일로 만든다(소리 없이 목소리를 불러 둔다).
 /// 처음 쓰는 목소리는 불러오느라 "들어보기"가 몇 초 늦었다(2026-09-28 아이맥). 스피커가 잠들었다 깨는 1초 남짓은 못 줄인다
 pub fn warm_argv(argv: &[String], out: &str) -> Option<Vec<String>> {
@@ -82,13 +98,39 @@ pub fn warm_argv(argv: &[String], out: &str) -> Option<Vec<String>> {
     Some(v)
 }
 
+/// Supertonic 목소리 10개 — 참모마다 고르는 목소리(avatars/<기본 이름>.json voice)도 이 안에서만
+pub const VOICES: [&str; 10] = ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"];
+
+/// 음성 명령의 목소리만 바꾼다 — 앱의 Supertonic 실행기(<데이터 폴더>/tts/supertonic/speak)일 때만.
+/// macOS say·직접 입력(local-say 등 — 거기선 -v 가 OpenAI 로 간다)은 None = 손대지 않고 설정 그대로 읽는다
+pub fn with_voice(home: &str, cmd: &str, voice: &str) -> Option<String> {
+    if !VOICES.contains(&voice) {
+        return None;
+    }
+    let mut parts = cmd.split_whitespace();
+    let prog = parts.next()?;
+    let full = crate::config::expand(home, prog).replace('\\', "/");
+    if !full.ends_with("/tts/supertonic/speak") && !full.ends_with("/tts/supertonic/speak.cmd") {
+        return None;
+    }
+    let rest: Vec<&str> = parts.collect();
+    let mut out = vec![prog.to_string(), "-v".into(), voice.to_string()];
+    let mut i = 0;
+    while i < rest.len() {
+        if rest[i] == "-v" { i += 2; continue; } // 있던 목소리는 뺀다
+        out.push(rest[i].to_string());
+        i += 1;
+    }
+    Some(out.join(" "))
+}
+
 /// 설정 화면이 열리거나 목소리를 바꿀 때 — 기다리지 않는다
 #[tauri::command]
 pub fn tts_warm(command: String) {
     let argv = crate::config::tts_argv(&crate::config::home(), &command, " ", |p| std::path::Path::new(p).is_file());
     let out = std::env::temp_dir().join("chammo-tts-warm.aiff");
     if let Some(w) = warm_argv(&argv, &out.to_string_lossy()) {
-        let _ = crate::platform::command(&w[0]).args(&w[1..]).spawn();
+        let _ = crate::platform::spawn_reaped(crate::platform::command(&w[0]).args(&w[1..]));
     }
 }
 
@@ -101,6 +143,21 @@ pub fn native_voices() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 참모_목소리는_supertonic_실행기일_때만_바꾼다() {
+        let h = "/Users/me";
+        assert_eq!(with_voice(h, "~/.chammo/tts/supertonic/speak -v M1", "F3").as_deref(), Some("~/.chammo/tts/supertonic/speak -v F3"));
+        assert_eq!(with_voice(h, "/Users/me/.honor-orchestrator/tts/supertonic/speak", "M2").as_deref(), Some("/Users/me/.honor-orchestrator/tts/supertonic/speak -v M2"));
+        // macOS say·local-say(-v 가 OpenAI)·OpenAI 직접 입력은 그대로
+        assert_eq!(with_voice(h, "say -v Yuna", "F1"), None);
+        assert_eq!(with_voice(h, "~/bin/local-say", "F1"), None);
+        assert_eq!(with_voice(h, "~/bin/local-say -openai", "F1"), None);
+        // 허용 목록 밖 목소리·주입 시도는 거절
+        assert_eq!(with_voice(h, "~/.chammo/tts/supertonic/speak -v M1", "X9"), None);
+        assert_eq!(with_voice(h, "~/.chammo/tts/supertonic/speak -v M1", "M1; rm -rf ~"), None);
+        assert_eq!(with_voice(h, "", "M1"), None);
+    }
 
     #[test]
     fn macos_목소리만_소리_없이_파일로_미리_부른다() {
@@ -122,5 +179,37 @@ mod tests {
     fn 설치_스크립트는_마지막에_ready_를_남긴다() {
         assert!(INSTALL.trim_end().ends_with(r#"touch "$DIR/ready""#));
         assert!(SPEAK.contains("afplay"));
+    }
+}
+
+#[cfg(test)]
+mod runner_tests {
+    use super::{refresh_runner, SPEAK};
+
+    // 깔린 실행기는 받기 때 한 번만 써진다 — PLAYING 줄이 없는 옛 실행기면 '재생 중'을 영영 모른다
+    #[test]
+    fn 깔린_옛_실행기는_새것으로_바꾼다() {
+        let d = std::env::temp_dir().join(format!("chammo-runner-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("speak"), "#!/bin/bash\nafplay x\n").unwrap();
+        refresh_runner(&d);
+        assert!(std::fs::read_to_string(d.join("speak")).unwrap().contains("afplay x"), "받기가 안 끝났으면(ready 없음) 건드리지 않는다");
+        std::fs::write(d.join("ready"), "").unwrap();
+        refresh_runner(&d);
+        assert_eq!(std::fs::read_to_string(d.join("speak")).unwrap(), SPEAK);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert!(std::fs::metadata(d.join("speak")).unwrap().permissions().mode() & 0o111 != 0);
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 실행기는_afplay_직전에_playing_을_찍는다() {
+        let i = SPEAK.find("echo \"PLAYING $BASE.wav\"").expect("PLAYING <wav> 줄 — 곡선을 뽑게 경로를 단다");
+        assert!(SPEAK.contains("trap 'rm -f"), "멈춤으로 끊겨도 임시 wav 를 지운다");
+        assert!(i < SPEAK.rfind("afplay").unwrap());
     }
 }

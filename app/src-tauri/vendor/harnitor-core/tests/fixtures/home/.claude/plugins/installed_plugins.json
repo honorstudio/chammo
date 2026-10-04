@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "plugins": {
+    "vendorpack@somemarket": [
+      {
+        "scope": "user",
+        "installPath": "FIXTURE_HOME/.claude/plugins/cache/vendorpack"
+      }
+    ],
+    "disabledpack@somemarket": [
+      {
+        "scope": "user",
+        "installPath": "FIXTURE_HOME/.claude/plugins/cache/nowhere"
+      }
+    ]
+  }
+}

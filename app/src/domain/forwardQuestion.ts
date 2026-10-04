@@ -4,10 +4,35 @@
 import { tr } from '../i18n';
 import type { Activity } from './activity';
 import type { Session } from './session';
+import type { TaskEvent } from './tasks';
+import { findTarget } from './inbox';
+import { owners } from './spaceNav';
 
 export const GRACE_MS = 30_000;
 
-/** 세션 id → 선택지 창에서 처음 본 때. 넘기고 나면 FORWARDED — 창이 닫히면 지운다 */
+/**
+ * 멈춘 하위 세션을 받을 참모 — 그 세션에 마지막으로 일을 보낸(넘겨받았으면 새 주인) 참모 → 같은 프로젝트를 최근에 맡긴 참모 → 맡은 일로 고른 참모(heir) → 맨 앞 참모.
+ * 꺼진 참모는 건너뛴다. 맨 앞 참모에게만 보내서 개발 담당 세션 알림이 참모 업데이트에게 갔다(2026-10-03)
+ */
+export function forwardTo(sub: Session, events: TaskEvent[], orchs: Session[], sessions: Session[], front?: Session, heir?: (sub: Session) => Session | undefined): Session | undefined {
+  const own = owners(events);
+  const alive = (id?: string) => orchs.find((o) => o.id === id);
+  const sends = events.filter((e) => e.type === 'send' && e.target).reverse(); // 기록은 덧붙이는 순서 = 최근이 뒤
+  const last = sends.find((e) => findTarget(sessions, e.target)?.id === sub.id);
+  const mine = last && alive(own.get(last.task));
+  if (mine) return mine;
+  if (sub.project) {
+    for (const e of sends) {
+      const t = findTarget(sessions, e.target);
+      const o = t && t.project === sub.project && !orchs.includes(t) ? alive(own.get(e.task)) : undefined;
+      if (o) return o;
+    }
+  }
+  // 그다음 맡은 일로(domain/orchRoles roleHeir) — 맡던 참모가 꺼졌을 때 대신 맡은 참모에게(2026-10-04 QA ⑥: 새 참모 말고 맨 앞으로 갔다)
+  return heir?.(sub) ?? front;
+}
+
+/** 세션 id → 선택지 창에서 처음 본 때. 넘기고 나면 FORWARDED — 세션이 다시 일하거나(working) 없어지면 지운다 */
 export type AskTrack = Map<string, number>;
 const FORWARDED = -1;
 
@@ -17,18 +42,25 @@ const FORWARDED = -1;
  */
 export function nextForward(
   subs: Session[],
-  orch: Session | undefined,
+  orch: Session | undefined | ((s: Session) => Session | undefined),
   track: AskTrack,
   now: number,
   watching: (s: Session) => boolean,
-): { sub?: Session; track: AskTrack } {
+): { sub?: Session; to?: Session; track: AskTrack } {
   const next: AskTrack = new Map();
   const asking = subs.filter((s) => s.kind === 'background' && s.waitingFor === 'input needed');
   for (const s of asking) next.set(s.id, track.get(s.id) ?? now);
-  if (!orch || orch.state === 'blocked') return { track: next };
-  const sub = asking.find((s) => next.get(s.id) !== FORWARDED && now - next.get(s.id)! >= GRACE_MS && !watching(s));
-  if (sub) next.set(sub.id, FORWARDED);
-  return { sub, track: next };
+  // 넘긴 멈춤은 상태가 잠깐 흔들려(input needed 가 한 번 빠짐) 돌아와도 다시 안 넘긴다 — 세션이 다시 일해야(working) 새 멈춤
+  for (const s of subs) if (!next.has(s.id) && track.get(s.id) === FORWARDED && s.state !== 'working') next.set(s.id, FORWARDED);
+  const toOf = typeof orch === 'function' ? orch : () => orch;
+  for (const s of asking) {
+    if (next.get(s.id) === FORWARDED || now - next.get(s.id)! < GRACE_MS || watching(s)) continue;
+    const to = toOf(s);
+    if (!to || to.state === 'blocked') continue; // 받을 참모가 확인창에 걸려 있으면 기다린다
+    next.set(s.id, FORWARDED);
+    return { sub: s, to, track: next };
+  }
+  return { track: next };
 }
 
 const whereOf = (s: Session) => [s.project, s.workspace, s.name && s.name !== s.project ? s.name : null].filter(Boolean).join(' / ');
@@ -38,6 +70,13 @@ export const forwardText = (s: Session) =>
   tr(
     `[앱] ${whereOf(s)} 세션(${s.id})이 선택지 창에서 멈췄어 — scripts/choice show ${s.id} 로 읽고, 되돌리기 쉬운 건 네가 골라 scripts/choice answer ${s.id} <번호…> 로 답하고, 사용자가 정할 거면 물어봐`,
     `[app] ${whereOf(s)} session (${s.id}) is stuck on a choice prompt — read it with scripts/choice show ${s.id}; answer easy-to-undo ones yourself with scripts/choice answer ${s.id} <numbers…>, and ask the user when it's theirs to decide`,
+  );
+
+/** input needed 인데 선택지 창(AskUserQuestion)이 아닐 때 — scripts/choice 로는 못 읽는다 */
+export const inputWaitText = (s: Session) =>
+  tr(
+    `[앱] ${whereOf(s)} 세션(${s.id})이 입력 기다림으로 멈췄어(선택지 창 아님) — 화면을 봐야 해서, 되돌리기 어려운 거면 사용자에게 그 세션 화면을 열어 달라고 해`,
+    `[app] ${whereOf(s)} session (${s.id}) is stopped waiting for input (not a choice prompt) — it needs its screen; ask the user to open that session's screen`,
   );
 
 // ── 질문으로 턴을 끝내고 기다리는 하위 세션(2026-09-30 조사: 사용자가 "멈췄다"고 알린 14건 중 1위) ──
@@ -53,13 +92,15 @@ export const askKeyOf = (c: AskCand) => `${c.session.id}:${c.activity.reply?.ts 
 
 export function nextAskForward(
   cands: AskCand[],
-  orch: Session | undefined,
+  orch: Session | undefined | ((s: Session) => Session | undefined),
   done: ReadonlySet<string>,
   now: number,
   watching: (s: Session) => boolean,
 ): AskCand | undefined {
-  if (!orch || orch.state === 'blocked') return undefined;
+  const toOf = typeof orch === 'function' ? orch : () => orch;
   return cands.find((c) => {
+    const to = toOf(c.session);
+    if (!to || to.state === 'blocked') return false;
     const { session: s, activity: a } = c;
     const r = a.reply;
     if (s.kind !== 'background' || s.state !== 'idle' || !r?.turnEnd) return false;

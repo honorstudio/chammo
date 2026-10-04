@@ -49,13 +49,15 @@ export function parseCommitLog(raw: string): TamaEvent[] {
   return out;
 }
 
-/** 참모가 시킨 일이 끝남 = 단백질 */
+/** 참모가 시킨 일이 끝남 = 밥. 이름 = 시킬 때 한 줄, by = 시킨 참모(옛 기록엔 없음) */
 export function taskEvents(events: TaskEvent[]): TamaEvent[] {
-  return events
-    .filter((e) => e.type === 'done')
-    .map((e) => Date.parse(e.ts))
-    .filter((t) => Number.isFinite(t))
-    .map((t) => ({ t, type: 'task' as const }));
+  const sent = new Map(events.filter((e) => e.type === 'send').map((e) => [e.task, e]));
+  return events.flatMap((e) => {
+    const t = Date.parse(e.ts);
+    if (e.type !== 'done' || !Number.isFinite(t)) return [];
+    const s = sent.get(e.task);
+    return [{ t, type: 'task' as const, ...(s?.title ? { label: s.title } : {}), ...(s?.from ? { by: s.from } : {}) }];
+  });
 }
 
 type GhRun = { conclusion?: string; status?: string; createdAt?: string };
@@ -78,4 +80,42 @@ export function parseCiRuns(raw: string): TamaEvent[] {
     }
   }
   return out;
+}
+
+const HOUR = 3_600_000;
+const SAME_WORK_MS = 30 * 60_000;
+/** 커밋·PR 말고 '끝낸 일' 먹이 — 하루(새벽 5시~) 합쳐 이만큼까지 */
+export const DAY_EXTRA = 10;
+export const SHOW_PER_DAY = 3;
+const EXTRA = new Set<TamaEvent['type']>(['task', 'show', 'talk', 'routine', 'doc', 'review']);
+const HOURLY = new Set<TamaEvent['type']>(['talk', 'doc']);
+const dayOf = (t: number) => { const d = new Date(t - 5 * HOUR); return d.getFullYear() * 400 + d.getMonth() * 32 + d.getDate(); };
+
+/**
+ * 개발자가 두 갈래(커밋·PR + 끝낸 일)로 먹여도 넘치지 않게 — 넘는 것은 echo(먹이지 않고 살아 있다는 표시만, 코인 0).
+ * ① 커밋·PR 뒤 30분 안의 시킨 일·결과물은 같은 일 ② 결과물 하루 3(같은 파일은 한 번) ③ 대화·문서 고침 한 시간에 1 ④ 끝낸 일 하루 합쳐 10.
+ * 커밋·PR 은 그대로(과식은 pet.ts 가 따로 본다). 시각순으로 돌려준다
+ */
+export function balanceFeed(events: TamaEvent[]): TamaEvent[] {
+  const sorted = [...events].sort((a, b) => a.t - b.t);
+  const dev = sorted.filter((e) => e.type === 'commit' || e.type === 'pr').map((e) => e.t);
+  const perDay = new Map<number, { all: number; show: number }>();
+  const shown = new Set<string>(); // 하루·파일 — 같은 결과물을 또 띄운 건 한 번
+  const lastHourly = new Map<TamaEvent['type'], number>();
+  let j = 0, lastDev = -Infinity;
+  return sorted.map((e) => {
+    while (j < dev.length && dev[j]! <= e.t) lastDev = dev[j++]!;
+    if (!EXTRA.has(e.type) || e.echo) return e;
+    const echo = { ...e, echo: true };
+    if ((e.type === 'task' || e.type === 'show') && e.t - lastDev <= SAME_WORK_MS) return echo;
+    const last = lastHourly.get(e.type);
+    if (HOURLY.has(e.type) && last !== undefined && e.t - last < HOUR) return echo;
+    const d = dayOf(e.t);
+    if (e.type === 'show' && e.label) { const k = `${d}:${e.label}`; if (shown.has(k)) return echo; shown.add(k); }
+    const c = perDay.get(d) ?? { all: 0, show: 0 };
+    if (c.all >= DAY_EXTRA || (e.type === 'show' && c.show >= SHOW_PER_DAY)) return echo;
+    perDay.set(d, { all: c.all + 1, show: c.show + (e.type === 'show' ? 1 : 0) });
+    if (HOURLY.has(e.type)) lastHourly.set(e.type, e.t);
+    return e;
+  });
 }

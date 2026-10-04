@@ -1,18 +1,16 @@
 // 다마고치 업적 — 도감·평생 기록·커밋 습관(작은 커밋·테스트·연속)으로 딴다. 한 번 따면 계속 남는다
-import { assistant, tr } from '../../i18n';
+import { assistant, josa, tr } from '../../i18n';
 import type { TamaEvent } from './pet';
 import type { TamaFile } from './store';
 
 export type Badge = { id: string; name: string; hint: string };
 
-/** 이름 뒤 조사 — 받침이 있으면 '이', 없으면 '가'(비서 이름을 사용자가 정하니까) */
-const iga = (w: string) => { const c = w.charCodeAt(w.length - 1) - 0xac00; return c >= 0 && c <= 11171 && c % 28 ? '이' : '가'; };
 const who = assistant();
 
 export const BADGES: Badge[] = [
   { id: 'hatch', name: tr('첫 부화', 'First Hatch'), hint: tr('알에서 처음 깨어났다', 'Hatched from an egg for the first time') },
   { id: 'allEggs', name: tr('네 알 다 키움', 'All Four Eggs'), hint: tr('불씨·물결·잎사귀·별 알을 모두 부화시켰다', 'Hatched Ember, Wave, Leaf and Star eggs') },
-  { id: 'perfect', name: tr('첫 완전체', 'First Perfect'), hint: tr('CI 15번 중 12번 통과해서 완전체까지', 'Passed 12 of 15 CI runs to reach Perfect') },
+  { id: 'perfect', name: tr('첫 완전체', 'First Perfect'), hint: tr('배틀(CI·예약) 15번 중 12번 이겨서 완전체까지', 'Won 12 of 15 battles (CI or schedules) to reach Perfect') },
   { id: 'ultimate', name: tr('첫 궁극체', 'First Ultimate'), hint: tr('7일을 키워 궁극체까지', 'Raised one for 7 days to Ultimate') },
   { id: 'noGrave', name: tr('무덤 없이 궁극체', 'Ultimate, No Graves'), hint: tr('한 마리도 안 죽이고 궁극체까지', 'Reached Ultimate without losing a single pet') },
   { id: 'turnaround', name: tr('반전', 'Turnaround'), hint: tr('잘못 키운 갈래를 배틀로 이겨내 반전 완전체로', 'Battled a bad branch back into a comeback Perfect') },
@@ -24,7 +22,7 @@ export const BADGES: Badge[] = [
   { id: 'testHalf', name: tr('테스트 반', 'Half Tested'), hint: tr('하루 커밋 10개 이상 중 절반 넘게 테스트 포함', '10+ commits in a day, more than half with tests') },
   { id: 'week', name: tr('7일 연속', '7-Day Streak'), hint: tr('7일 내리 커밋했다', 'Committed 7 days in a row') },
   { id: 'ciStreak', name: tr('초록 20연승', '20 Greens in a Row'), hint: tr('CI 20번 연속 통과', 'CI passed 20 times in a row') },
-  { id: 'delegator', name: tr('위임왕', 'Delegation King'), hint: tr(`${who}${iga(who)} 시킨 일 50개가 끝났다`, `50 tasks delegated by ${who} are done`) },
+  { id: 'delegator', name: tr('위임왕', 'Delegation King'), hint: tr(`${josa(who, '이', '가')} 시킨 일 50개가 끝났다`, `50 tasks delegated by ${who} are done`) },
 ];
 
 const HOUR = 3_600_000;

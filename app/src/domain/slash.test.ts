@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { completeSlash, matchSlash, slashQuery, type SlashItem } from './slash';
+import { completeSlash, isMemoryCmd, matchSlash, slashQuery, type SlashItem } from './slash';
 
 describe('slashQuery — 지금 / 명령 이름을 치는 중인가', () => {
   it('맨 앞 / 뒤 첫 단어를 치는 중이면 그 글자', () => {
@@ -44,5 +44,20 @@ describe('completeSlash — Tab 으로 채우기', () => {
   it('첫 줄 명령 이름을 바꾸고 뒤에 한 칸, 다음 줄은 그대로', () => {
     expect(completeSlash('/mo', 'model')).toBe('/model ');
     expect(completeSlash('/mo\n둘째 줄', 'model')).toBe('/model \n둘째 줄');
+  });
+});
+
+describe('플러그인 스킬·/memory', () => {
+  it('플러그인 스킬은 `플러그인:스킬` 이름 — 스킬 이름만 쳐도 가운데 맞기로 뜬다', () => {
+    const all: SlashItem[] = [...items, { name: 'document-skills:xlsx', desc: '표', kind: 'skill' }];
+    expect(matchSlash(all, 'xlsx').map((i) => i.name)).toEqual(['document-skills:xlsx']);
+    expect(matchSlash(all, 'document').map((i) => i.name)).toEqual(['document-skills:xlsx']);
+  });
+  it('/memory 만 보내면 앱이 받는다(앞뒤 빈칸 괜찮음) — 인자가 붙으면 세션으로', () => {
+    expect(isMemoryCmd('/memory')).toBe(true);
+    expect(isMemoryCmd('  /memory \n')).toBe(true);
+    expect(isMemoryCmd('/memory 이거 기억해')).toBe(false);
+    expect(isMemoryCmd('/memoryx')).toBe(false);
+    expect(isMemoryCmd('memory')).toBe(false);
   });
 });

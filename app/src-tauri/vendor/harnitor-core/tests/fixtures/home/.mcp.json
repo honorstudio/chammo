@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "homefallback": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest", "--extension"],
+      "env": {
+        "SOME_TOKEN": "FAKE-token-do-not-use-0123456789"
+      }
+    }
+  }
+}

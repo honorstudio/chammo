@@ -20,7 +20,7 @@ export function StoppedStrip({ list, onDone, onPending }: Props) {
     setBusy(s.id);
     onPending(s.sessionId); // 목록이 갱신되기 전(3초)에 또 눌러 복사본이 생기지 않게 바로 숨긴다
     try {
-      await resumeSession(s.cwd, s.sessionId);
+      await resumeSession(s.cwd, s.sessionId, s.id);
       onDone(null);
     } catch (e: unknown) {
       onDone(tr(`이어서 띄우기 실패: ${String(e)}`, `Resume failed: ${String(e)}`));

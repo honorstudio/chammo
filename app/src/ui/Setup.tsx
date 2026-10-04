@@ -1,25 +1,26 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { TtsField } from './TtsField';
-import { browserInstallCommand, browserStatus, checkEnv, claudeTrusted, notifyOpenSettings, notifyRequest, notifyStatus, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, spawnSession, writeConfig, type Config, type FolderStatus } from '../data/tauri';
-import { addExtraProject, canNext, parseClaudeVersion, setupCommand, setupReady, tildify, notifyRow, browserRow, versionFit, WIZARD, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
-import { nextOrchestratorName } from '../domain/session';
+import { browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, notifyOpenSettings, notifyRequest, notifyStatus, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
+import { addExtraProject, canNext, parseClaudeVersion, setupCommand, setupReady, tildify, notifyRow, browserRow, browserChecklist, versionFit, WIZARD, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
 import type { Features } from '../domain/config';
-import { setAssistant, tr, type Lang } from '../i18n';
+import { tr, type Lang } from '../i18n';
 import { TerminalPane } from './TerminalPane';
+import { AccountsSection } from './AccountsSection';
+import { MobileSection } from './MobileSection';
 import './setup.css';
 import { IS_WIN } from '../domain/reader';
+import { BrandMark } from './avatar';
 
 /**
  * 설정 화면 = 첫 실행 안내 겸용. 아무것도 안 깔린 맥에서도 여기서 차례로 끝낼 수 있게:
- * ① 언어 ② 환경 점검(없으면 앱 안 터미널로 설치·로그인) ③ 비서 이름·폴더들 ④ 기능 켜기 ⑤ 시작하기(HQ 만들고 비서 세션 띄우기)
+ * ① 언어 ② 환경 점검(없으면 앱 안 터미널로 설치·로그인) ③ 비서 이름·폴더들 ④ 기능 켜기 ⑤ 시작하기(HQ 만들기).
+ * 비서 세션은 띄우지 않는다 — 오케스트레이터 홈에서 사람이 만든다(2026-10-03 사용자)
  * 언어·비서 이름은 창이 뜰 때 정하므로 저장하면 창을 다시 연다
  */
 type Props = {
   config: Config;
-  /** 첫 실행(setupDone 아님) — 닫기 없음, 끝 버튼이 '시작하기'이고 비서 세션을 띄운다 */
+  /** 첫 실행(setupDone 아님) — 닫기 없음, 끝 버튼이 '시작하기' */
   firstRun: boolean;
-  /** 지금 떠 있는 비서 세션 이름들 — 이미 있으면 또 띄우지 않는다 */
-  orchestratorNames: string[];
   fontSize: number;
   onClose: () => void;
   /** 열자마자 할 일 — 'update' = 점검 단계에서 Claude Code 업데이트를 바로 돌린다(새 버전 알림 띠의 버튼) */
@@ -80,9 +81,13 @@ const features = (): [keyof Features, string, string][] => [
   ['gacha', tr('뽑기', 'Gacha'), tr('머지·커밋으로 모은 코인으로 사무실 꾸미기', 'Decorate the office with coins earned from merges and commits')],
   ['review', tr('PR 리뷰', 'PR review'), tr('열린 PR 과 머지 전에 볼 것을 모아 보여 줘요 (gh 필요)', 'Collects open PRs and what to check before merging (needs gh)')],
   ['voice', tr('음성 모드', 'Voice mode'), tr('비서의 답을 소리로 읽어 줘요', "Reads the assistant's replies aloud")],
+  ['agentView', tr('세션 브라우저 앱에서 보기', 'Watch session browsers in the app'), tr('세션이 브라우저를 쓰면 그 화면을 대시보드에 띄워요. 그동안 이 맥의 다른 프로그램도 그 크롬을 조종할 수 있는 틈이 생겨요 — 켜고 끈 건 세션을 새로 켜야 적용돼요', 'Shows what a session\'s browser is doing on its dashboard. While on, other programs on this Mac could also control that Chrome — changes apply to sessions started afterwards')],
+  // 맥만 — Claude Code 내장 화면 조종(computer-use)은 맥에서만 준다
+  ...(IS_WIN ? [] : [['computerUse', tr('화면 조종 모든 프로젝트', 'Screen control in all projects'), tr('세션이 이 맥 화면을 보고 클릭·입력할 수 있게(Claude Code computer-use) 모든 프로젝트에서 켜요. 쓸 때마다 앱별로 허락을 묻지만, 켜 두면 세션이 내 화면을 움직일 수 있어요 — 끄면 모든 프로젝트에서 빠져요', 'Lets sessions see and click on this Mac\'s screen (Claude Code computer-use) in every project. It still asks per app, but while on, sessions can move your screen — turning it off removes it from every project')] as [keyof Features, string, string]]),
+  ['autoRevive', tr('자동으로 다시 켜기', 'Auto-resume'), tr('맥이 재시작돼 꺼진 세션 중 일이 남은 것을 혼자 이어서 켜요 — 사람이 앞에 없는 맥용', 'Resumes sessions a restart stopped mid-work, on its own — for unattended Macs')],
 ];
 
-export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose, start }: Props) {
+export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
   const [draft, setDraft] = useState<Config>(config);
   const set = <K extends keyof Config>(k: K, v: Config[K]) => setDraft((d) => ({ ...d, [k]: v }));
   const [check, setCheck] = useState<EnvCheck | null>(null);
@@ -100,20 +105,26 @@ export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose, 
   const [home, setHome] = useState('');
   // 알림 권한 — 놓치면 결정 대기·답 필요 알림이 안 온다. 시스템 설정에서 켜고 돌아오면 창이 앞으로 올 때 다시 읽는다
   const [notify, setNotify] = useState<NotifyStatus>('unavailable');
-  // 브라우저 자동화(선택) — 프로젝트마다 따로 된 로그인 유지 브라우저. Node 20+ 가 있어야 깐다
+  // 브라우저 자동화(선택) — 프로젝트마다 따로 된 로그인 유지 브라우저. '설치' 하나로 Node·크롬 베타·부품·시험 열기 중 없는 것만
   const [browser, setBrowser] = useState<BrowserStatus | null>(null);
-  const [browserCmd, setBrowserCmd] = useState<string | null>(null);
+  const [browserRun, setBrowserRun] = useState<BrowserSetupState | null>(null);
   const readBrowser = () => void browserStatus().then(setBrowser, () => {});
+  const readBrowserRun = () => void browserSetupState().then(setBrowserRun, () => {});
   useEffect(() => {
     readBrowser();
-    window.addEventListener('focus', readBrowser); // Node 를 깔고 돌아오면 다시 본다
+    readBrowserRun(); // 설치 중에 화면을 닫았다 열어도 이어서 보인다
+    window.addEventListener('focus', readBrowser);
     return () => window.removeEventListener('focus', readBrowser);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { // 설치 중엔 5초마다 — 끝나면 줄이 "준비됐어요"로 바뀐다
-    if (!browserCmd) return;
-    const t = setInterval(readBrowser, 5000);
+  useEffect(() => { // 도는 동안 0.5초마다 — 끝나면 확인 목록을 다시 읽는다
+    if (!browserRun?.running) return;
+    const t = setInterval(() => void browserSetupState().then((r) => {
+      setBrowserRun(r);
+      if (!r.running) readBrowser();
+    }, () => {}), 500);
     return () => clearInterval(t);
-  }, [browserCmd]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [browserRun?.running]); // eslint-disable-line react-hooks/exhaustive-deps
+  const startBrowser = () => void browserSetupStart().then(readBrowserRun, (e: unknown) => setError(String(e)));
   useEffect(() => {
     const read = () => void notifyStatus().then(setNotify, () => {});
     read();
@@ -264,12 +275,6 @@ export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose, 
       await writeConfig(next);
       mirror(next);
       await rebuildMenu().catch(() => {}); // 메뉴가 옛 글자로 남아도 다음에 켜면 바뀐다
-      if (firstRun && orchestratorNames.length === 0) {
-        // 저장한 설정의 HQ 에서 비서를 띄운다(이름은 새 이름으로)
-        setAssistant(next.assistantName);
-        const env = await getAppEnv();
-        await spawnSession(env.orchestratorCwd, nextOrchestratorName(orchestratorNames), tr('세션 준비됐어. 지시 기다릴게.', 'Session ready. Waiting for instructions.'));
-      }
       reopen();
     } catch (e: unknown) {
       setError(tr(`저장하지 못했어요: ${String(e)}`, `Could not save: ${String(e)}`));
@@ -449,24 +454,34 @@ export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose, 
             );
           })()}
           {(() => {
-            const b = browserRow(browser);
+            const b = browserRow(browser, browserRun);
+            const label: Record<string, string> = { node: 'Node.js', chrome: tr('크롬 베타', 'Chrome Beta'), parts: tr('도구 부품', 'Tool parts'), check: tr('시험 열기', 'Test open') };
             return (
               <div className="su-rows">
                 <Row state={b.state} title={tr('브라우저 자동화 (선택)', 'Browser automation (optional)')}
-                  text={b.state === 'ok' ? tr('준비됐어요. 새 프로젝트마다 로그인이 유지되는 브라우저를 따로 줘서, 여러 세션이 웹 작업을 해도 안 부딪혀요.', 'Ready. Each new project gets its own browser that stays logged in, so sessions working on the web never collide.')
-                    : b.action === 'install' ? tr('세션이 웹사이트를 열고 누르고 확인하게 해요. 프로젝트마다 따로 된 브라우저라 안 부딪혀요. 버튼을 누르면 아래 터미널에서 받아요(1분쯤).', 'Lets sessions open, click and check websites — a separate browser per project, so they never collide. The button downloads it in the terminal below (about a minute).')
-                    : b.action === 'getNode' ? tr(`Node.js ${browser?.nodeVersion ? `(${browser.nodeVersion}, 20 이상 필요)` : ''}가 있어야 해요. 받아서 깔고 이 화면으로 돌아오면 설치 버튼이 나와요.`, `Needs Node.js ${browser?.nodeVersion ? `(${browser.nodeVersion}; 20 or later)` : ''}. Install it, come back here, and the install button appears.`)
+                  text={b.state === 'ok' ? tr('준비됐어요. 프로젝트마다 로그인이 유지되는 브라우저를 따로 줘요.', 'Ready. Each project gets its own browser that stays logged in.')
+                    : browser ? tr('세션이 웹사이트를 열고 확인하게 해요. 없는 것만 받아요 — 관리자 암호는 안 물어요.', 'Lets sessions open and check websites. Only what is missing is downloaded — no admin password.')
                     : tr('확인하는 중…', 'Checking…')}>
-                  {b.action === 'install' && <button className="btn pri" onClick={() => void browserInstallCommand().then(setBrowserCmd, (e: unknown) => setError(String(e)))}>{tr('설치하기', 'Install')}</button>}
-                  {b.action === 'getNode' && <button className="btn" onClick={() => void openTarget('url', 'https://nodejs.org/en/download')}>{tr('Node.js 받기', 'Get Node.js')}</button>}
+                  {b.action && <button className="btn pri" onClick={startBrowser}>{b.action === 'retry' ? tr('다시 시도', 'Try again') : tr('설치', 'Install')}</button>}
                 </Row>
-                {b.state === 'ok' && browser && !browser.chrome && <div className="su-hint">{tr('구글 크롬이 있어야 브라우저가 떠요 — 없으면 google.com/chrome 에서 받아 주세요.', 'Google Chrome is needed for the browser to open — get it from google.com/chrome.')}</div>}
-                {browserCmd && (
-                  <div className="su-term">
-                    <TerminalPane key="browser-install" command={browserCmd} title={tr('브라우저 자동화 설치', 'Installing browser automation')} fontSize={fontSize}
-                      controls={<button className="btn su-mini" onClick={() => { setBrowserCmd(null); readBrowser(); }}>{tr('닫기', 'Close')}</button>} />
+                {browser && (
+                  <ul className="su-checks">
+                    {browserChecklist(browser, browserRun).map((c) => (
+                      <li key={c.key} className={`st-${c.state}`}>
+                        <span className="su-dot" aria-hidden />{label[c.key]}
+                        {c.key === 'node' && browser.nodeOk && <small>{browser.nodeVersion}</small>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {b.busy && browserRun && (
+                  <div className="su-progress" role="status">
+                    <div className={`su-bar${browserRun.pct == null ? ' flow' : ''}`}><i style={{ width: `${browserRun.pct ?? 100}%` }} /></div>
+                    <span>{browserRun.text}</span>
                   </div>
                 )}
+                {!b.busy && browserRun?.error && <div className="su-hint su-err">{browserRun.error}</div>}
+                {!b.busy && browserRun?.done && browserRun.note && <div className="su-hint">{browserRun.note}</div>}
               </div>
             );
           })()}
@@ -484,7 +499,7 @@ export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose, 
   const readySec = (
         <section className="su-sec">
           <h2>{tr('준비 끝', 'All set')}</h2>
-          <p className="su-hint">{tr(`시작하기를 누르면 HQ 폴더를 만들고 ${name}를 깨워요. 처음 인사가 오면 말을 걸어 보세요 — 예: "acme-shop 에 README 정리 시켜줘".`, `Press Get started to create the HQ folder and wake up ${name}. When it says hello, talk to it — e.g. "ask acme-shop to tidy up its README".`)}</p>
+          <p className="su-hint">{tr(`시작하기를 누르면 HQ 폴더를 만들어요. 첫 화면에서 '새 ${name} 만들기'를 누르고 말을 걸어 보세요 — 예: "acme-shop 에 README 정리 시켜줘".`, `Press Get started to create the HQ folder. On the first screen, press 'Create a new ${name}' and talk to it — e.g. "ask acme-shop to tidy up its README".`)}</p>
           <dl className="su-sum">
             <dt>{tr('비서 이름', 'Assistant')}</dt><dd>{name}</dd>
             <dt>{tr('프로젝트 폴더', 'Projects')}</dt><dd>{draft.devRoot}</dd>
@@ -502,6 +517,7 @@ export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose, 
       <div className="setup-page">
         <header className="su-head">
           <div>
+            {firstRun && <BrandMark size={64} className="su-brand" />}
             <h1>{firstRun ? tr('Chammo 에 오신 걸 환영해요', 'Welcome to Chammo') : tr('설정', 'Settings')}</h1>
             <p>{firstRun
               ? (step === 'welcome' ? tr('Chammo 는 Claude Code 세션들을 굴리는 참모예요. 결정은 당신이, 일은 참모가. 다섯 단계면 끝나요.', 'Chammo is a chief of staff that runs your Claude Code sessions. You make the calls; it runs the team. Five short steps and you are in.') : tr(`${at + 1} / ${WIZARD.length} 단계`, `Step ${at + 1} of ${WIZARD.length}`))
@@ -515,7 +531,7 @@ export function Setup({ config, firstRun, orchestratorNames, fontSize, onClose, 
           </ol>
         )}
 
-        {firstRun ? sectionOf[step] : <>{langSec}{checkSec}{basicsSec}{featSec}</>}
+        {firstRun ? sectionOf[step] : <>{langSec}{checkSec}{basicsSec}{featSec}{!IS_WIN && <AccountsSection title={`5. ${tr('계정', 'Accounts')}`} claude={check?.claudePath} fontSize={fontSize} />}{!IS_WIN && <MobileSection title={`6. ${tr('모바일', 'Mobile')}`} />}</>}
 
         <footer className="su-foot">
           {note && <div className="su-note">{note}</div>}

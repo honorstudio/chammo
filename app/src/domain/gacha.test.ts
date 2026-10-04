@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setLang } from '../i18n';
-import { CATALOG, dayStartAt, earn, EMPTY_GACHA, ownedOf, ownedSkins, parseGacha, place, pull, rarityLabel, rollRarity, toggleEquip, type GachaFile } from './gacha';
+import { CATALOG, COIN_RULES, dayStartAt, earn, EMPTY_GACHA, starOf, starTotal, nextStar, softPay, ownedOf, ownedSkins, parseGacha, place, pull, rarityLabel, rollRarity, toggleEquip, type GachaFile } from './gacha';
 
 const rngOf = (...xs: number[]) => { let i = 0; return () => xs[i++ % xs.length]!; };
 const withCoins = (coins: number, extra: Partial<GachaFile> = {}): GachaFile => ({ ...EMPTY_GACHA, coins, ...extra });
@@ -27,8 +27,87 @@ describe('earn — 코인은 일한 만큼(다마고치 먹이와 같은 사건)
     expect(r.file.since).toBe(60);
   });
 
+  it('끝낸 일도 같은 통 — 결과물 10 · 예약 성공 2 · 시안 검토 2 · 대화 1 · 문서 고침 1, 메아리는 0', () => {
+    const r = earn(withCoins(0, { since: 0 }), [
+      { t: 10, type: 'show' },
+      { t: 11, type: 'routine', pass: true },
+      { t: 12, type: 'routine', pass: false },
+      { t: 13, type: 'review' },
+      { t: 14, type: 'talk' },
+      { t: 15, type: 'doc' },
+      { t: 16, type: 'task', echo: true },
+      { t: 17, type: 'show', echo: true },
+    ], 100);
+    expect(r.gained).toBe(10 + 2 + 0 + 2 + 1 + 1);
+    expect(r.file.since).toBe(17);
+  });
+
+  it('옛 gacha.json(새 칸 없음)도 그대로 읽고, 이미 센 시각 앞의 새 갈래 사건은 소급하지 않는다', () => {
+    const old = parseGacha(JSON.stringify({ coins: 42, since: 1000, owned: {}, pity: 3, shards: 0, history: [] }), 0);
+    expect(old.coins).toBe(42);
+    expect(earn(old, [{ t: 900, type: 'show' }, { t: 950, type: 'talk' }], 2000).gained).toBe(0);
+  });
+
   it('일한 시간(work)은 코인이 아니다', () => {
     expect(earn(withCoins(0, { since: 0 }), [{ t: 5, type: 'work', minutes: 30 }], 10).gained).toBe(0);
+  });
+
+  // 늦게 읽힌 사건(2026-10-04 QA 1번) — 대화·시킨 일은 1분, 커밋은 5분, CI 는 10분마다 읽고 CI 는 시작 시각으로 찍힌다
+  it('대화가 먼저 들어와 since 가 앞으로 가도, 그 뒤 늦게 읽힌 커밋·CI 는 센다', () => {
+    const first = earn(withCoins(0, { since: 0 }), [{ t: 1000, type: 'talk' }], 1000).file;
+    const r = earn(first, [
+      { t: 1000, type: 'talk' },
+      { t: 900, type: 'commit', lines: 50, hasTest: true },
+      { t: 800, type: 'ci', pass: true },
+    ], 1100);
+    expect(r.gained).toBe(3 + 2);
+    expect(r.file.coins).toBe(1 + 3 + 2);
+  });
+
+  it('같은 사건을 몇 번 다시 읽어도 한 번만 센다', () => {
+    const evs = [{ t: 1000, type: 'talk' as const }];
+    let f = earn(withCoins(0, { since: 0 }), evs, 1000).file;
+    const late = [...evs, { t: 900, type: 'pr' as const }, { t: 950, type: 'ci' as const, pass: true }];
+    f = earn(f, late, 1100).file;
+    const again = earn(f, late, 1200);
+    expect(again.gained).toBe(0);
+    expect(again.file.coins).toBe(1 + 10 + 2);
+  });
+
+  it('같은 시각·같은 종류 사건이 둘이면 둘 다, 다시 읽어도 둘만', () => {
+    const evs = [{ t: 500, type: 'pr' as const }, { t: 500, type: 'pr' as const }];
+    const a = earn(withCoins(0, { since: 0 }), evs, 600);
+    expect(a.gained).toBe(20);
+    expect(earn(a.file, evs, 700).gained).toBe(0);
+  });
+
+  it('하루보다 더 늦게 온 사건은 세지 않고, 기억해 둔 키는 하루치만 남긴다', () => {
+    const DAY = 86_400_000;
+    let f = earn(withCoins(0, { since: 0 }), [{ t: 1, type: 'pr' }], 1).file;
+    f = earn(f, [{ t: 3 * DAY, type: 'talk' }], 3 * DAY).file;
+    expect(earn(f, [{ t: 2 * DAY - 10, type: 'pr' }], 3 * DAY).gained).toBe(0);
+    expect(earn(f, [{ t: 2 * DAY + 10, type: 'pr' }], 3 * DAY).gained).toBe(10);
+    expect(JSON.stringify(f)).not.toContain('"p1'); // 하루 넘게 지난 키는 지운다
+  });
+
+  it('옛 파일(늦은 사건 칸 없음)은 since 까지를 이미 센 것으로 — 지난 구멍은 소급하지 않는다', () => {
+    const old = parseGacha(JSON.stringify({ coins: 42, since: 1000, owned: {}, pity: 0, shards: 0, history: [] }), 0);
+    const r = earn(old, [{ t: 900, type: 'pr' }, { t: 1100, type: 'talk' }], 1200);
+    expect(r.gained).toBe(1);
+    expect(earn(r.file, [{ t: 1050, type: 'pr' }, { t: 1100, type: 'talk' }], 1300).gained).toBe(10);
+  });
+
+  it('늦은 사건 칸이 깨졌으면 버리고 since 까지를 센 것으로', () => {
+    const f = parseGacha(JSON.stringify({ coins: 1, since: 1000, owned: {}, pity: 0, shards: 0, history: [], late: { floor: 0, at: 1000, keys: 'x' } }), 0);
+    expect(f.late).toBeUndefined();
+    expect(earn(f, [{ t: 900, type: 'pr' }, { t: 1100, type: 'pr' }], 1200).gained).toBe(10);
+  });
+
+  it('옛 판으로 되돌렸다 온 파일(since 만 앞으로 감)은 그 since 까지를 센 것으로 — 두 번 세지 않는다', () => {
+    const f = earn(withCoins(0, { since: 0 }), [{ t: 1000, type: 'talk' }], 1000).file;
+    // 옛 판은 since 만 알고 earn 해서 since 를 2000 으로 옮겼다(그 사이 900 의 PR 은 옛 판이 셌다고 친다)
+    const rolled: GachaFile = { ...f, since: 2000, coins: f.coins + 10 };
+    expect(earn(rolled, [{ t: 900, type: 'pr' }, { t: 1500, type: 'pr' }, { t: 2500, type: 'pr' }], 2600).gained).toBe(10);
   });
 });
 
@@ -52,12 +131,21 @@ describe('pull — 뽑기', () => {
     expect(r.file.owned[r.results[0]!.id]).toBe(1);
   });
 
-  it('중복이면 코인 50 돌려받고 조각 1', () => {
+  it('중복이면 별이 오른다(★5 전엔 코인 10만 돌려받음) — 조각은 옛 판을 위해 그대로 센다', () => {
     const first = pull(withCoins(300), 1, rngOf(0.1, 0))!;
+    expect(first.results[0]).toMatchObject({ dup: false, star: 1, up: false, refund: 0 });
     const again = pull(first.file, 1, rngOf(0.1, 0))!;
-    expect(again.results[0]).toMatchObject({ dup: true, refund: 50 });
-    expect(again.file.coins).toBe(300 - 100 - 100 + 50);
+    expect(again.results[0]).toMatchObject({ dup: true, star: 2, up: true, refund: 10 });
+    expect(again.file.coins).toBe(300 - 100 - 100 + 10);
     expect(again.file.shards).toBe(1);
+  });
+
+  it('★5(중복 10) 뒤의 중복은 코인 50 — 별은 ★5 에서 멈춘다', () => {
+    const id = pull(withCoins(100), 1, rngOf(0.1, 0))!.results[0]!.id;
+    const at = (n: number) => pull(withCoins(100, { owned: { [id]: n } }), 1, rngOf(0.1, 0))!.results[0]!;
+    expect(at(10)).toMatchObject({ star: 5, up: true, refund: 10 }); // 중복 9 → 10 = ★5 가 되는 판
+    expect(at(11)).toMatchObject({ star: 5, up: false, refund: 50 });
+    expect(at(4)).toMatchObject({ star: 3, up: false, refund: 10 }); // 중복 3 → 4 는 아직 ★3
   });
 
   it('10번 = 900, 희귀 이상이 하나도 없으면 마지막이 희귀로', () => {
@@ -161,5 +249,70 @@ describe('영어 — 등급·아이템 이름', () => {
     expect(g.itemOf('friend.cat')?.name).toBe('Pet pal — Office Cat');
     for (const c of g.CATALOG) expect(c.name, c.id).toMatch(/^[\x20-\x7e]+ — [\x20-\x7e]+$/);
     i18n.setLang('ko');
+  });
+});
+
+describe('별 — 중복을 별로(★2~★5 = 중복 누적 1·3·6·10)', () => {
+  it('가진 개수(owned) → 별. 없으면 0, 하나면 ★1', () => {
+    expect([0, 1, 2, 3, 4, 5, 6, 7, 10, 11, 99].map(starOf)).toEqual([0, 1, 2, 2, 3, 3, 3, 4, 4, 5, 5]);
+  });
+
+  it('다음 별까지 남은 중복 — ★5 면 null', () => {
+    expect(nextStar(1)).toBe(1);
+    expect(nextStar(2)).toBe(2);
+    expect(nextStar(7)).toBe(4);
+    expect(nextStar(11)).toBeNull();
+    expect(nextStar(0)).toBeNull();
+  });
+
+  it('남아 있던 조각(옛 중복)은 owned 숫자에 이미 들어 있어 새 저장 없이 별로 — 잃는 것 없음', () => {
+    const old = parseGacha(JSON.stringify({ coins: 5, since: 1, owned: { 'skin.mint': 4, 'skin.cafe': 1, 'furn.sofa': 12 }, pity: 0, shards: 14, history: [] }), 0);
+    expect(starOf(old.owned['skin.mint']!)).toBe(3);
+    expect(starTotal(old)).toEqual({ have: 3 + 1 + 5, max: CATALOG.length * 5 });
+  });
+
+  it('별 합계는 카탈로그에 없는 옛 id 를 세지 않는다', () => {
+    expect(starTotal(withCoins(0, { owned: { 'skin.gone': 30 } })).have).toBe(0);
+  });
+});
+
+
+describe('softPay — 하루 소프트 상한 손잡이(기본 꺼짐): 200 까지 그대로, 600 까지 절반, 그 위 1/5', () => {
+  it('구간 경계', () => {
+    expect(softPay(0, 200)).toBe(200);
+    expect(softPay(200, 400)).toBe(200);
+    expect(softPay(600, 100)).toBe(20);
+    expect(softPay(0, 1500)).toBe(200 + 200 + 180);
+  });
+
+  it('조금씩 나눠 받아도 한 번에 받은 것과 같다(끝수 안 샘)', () => {
+    let raw = 0, paid = 0;
+    for (let i = 0; i < 1500; i++) { paid += softPay(raw, 1); raw += 1; }
+    expect(paid).toBe(softPay(0, 1500));
+  });
+
+  it('꺼져 있으면(기본) 그대로, 켜면 그날 몫만 줄고 다음 날 다시 200 까지 그대로', () => {
+    const H = 3_600_000;
+    const day0 = dayStartAt(new Date(2026, 9, 4, 12).getTime());
+    const prs = (from: number, n: number) => Array.from({ length: n }, (_, i) => ({ t: from + i * 1000, type: 'pr' as const }));
+    const ev = prs(day0 + H, 30); // 300 코인
+    expect(earn(withCoins(0, { since: day0 }), ev, day0 + 2 * H).gained).toBe(300);
+    const on = earn(withCoins(0, { since: day0, softCap: true }), ev, day0 + 2 * H);
+    expect(on.gained).toBe(250);
+    const next = earn(on.file, [...ev, ...prs(day0 + 25 * H, 10)], day0 + 26 * H);
+    expect(next.gained).toBe(100);
+  });
+});
+
+describe('코인 버는 법 표 — 화면 글과 실제 계산이 같다', () => {
+  it('표의 숫자가 earn 과 맞다', () => {
+    const one = (e: Parameters<typeof earn>[1][number]) => earn(withCoins(0, { since: 0 }), [e], 10).gained;
+    const val = Object.fromEntries(COIN_RULES.map(([n]) => [n, n]));
+    expect(one({ t: 1, type: 'pr' })).toBe(val[10]);
+    expect(one({ t: 1, type: 'show' })).toBe(val[10]);
+    expect(one({ t: 1, type: 'task' })).toBe(val[3]);
+    expect([one({ t: 1, type: 'ci', pass: true }), one({ t: 1, type: 'review' }), one({ t: 1, type: 'routine', pass: true }), one({ t: 1, type: 'commit', lines: 900, hasTest: true })]).toEqual([2, 2, 2, 2]);
+    expect([one({ t: 1, type: 'commit', lines: 300, hasTest: false }), one({ t: 1, type: 'talk' }), one({ t: 1, type: 'doc' })]).toEqual([1, 1, 1]);
+    expect(COIN_RULES.map(([n]) => n)).toEqual([10, 3, 2, 1]);
   });
 });

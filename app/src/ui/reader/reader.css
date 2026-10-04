@@ -1,6 +1,6 @@
 /* 리더 — 메인 창 리더 패널과 떼어 낸 리더 창이 같이 쓴다. 떼어 낸 창(body.reader-win)만 색 토큰을 따로 둔다(메인은 styles.css 토큰) */
-body.reader-win { --bg: #ececef; --panel: #f6f6f8; --surface: #fff; --line: #dcdce1; --text: #1d1d20; --text-2: #4a4a52; --text-3: #8a8a92; --accent: #d9622b; --hover: rgba(0, 0, 0, .05); }
-@media (prefers-color-scheme: dark) { body.reader-win { --bg: #111114; --panel: #18181c; --surface: #1e1e22; --line: #2a2a30; --text: #e8e8ec; --text-2: #b4b4bc; --text-3: #7c7c86; --hover: rgba(255, 255, 255, .06); } }
+body.reader-win { --bg: #ececef; --panel: #f6f6f8; --surface: #fff; --line: #dcdce1; --text: #1d1d20; --text-2: #4a4a52; --text-3: #8a8a92; --accent: #1d1d20; --hover: rgba(0, 0, 0, .05); }
+@media (prefers-color-scheme: dark) { body.reader-win { --bg: #111114; --accent: #e7e7ea; --accent-ink: #151518; --panel: #18181c; --surface: #1e1e22; --line: #2a2a30; --text: #e8e8ec; --text-2: #b4b4bc; --text-3: #7c7c86; --hover: rgba(255, 255, 255, .06); } }
 body.reader-win, body.reader-win #root { margin: 0; height: 100vh; }
 body.reader-win { background: var(--bg); color: var(--text); font: 13px -apple-system, "Pretendard", "Apple SD Gothic Neo", sans-serif; }
 .rd { height: 100%; display: flex; flex-direction: column; }

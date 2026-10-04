@@ -4,5 +4,6 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 VOICE=M1
 if [ "$1" = "-v" ]; then VOICE="$2"; shift 2; fi
 BASE="$(mktemp -t chammo-tts)"
-"$DIR/venv/bin/python" "$DIR/say.py" "$BASE.wav" "$VOICE" "$*" && afplay "$BASE.wav"
-rm -f "$BASE" "$BASE.wav"
+trap 'rm -f "$BASE" "$BASE.wav"' EXIT INT TERM # 멈춤으로 끊겨도 임시 wav 를 지운다
+# PLAYING <wav> = 이제 소리가 난다 — 앱이 '준비 중 → 재생 중' 을 알고(들어 보기), 틀기 전에 그 wav 에서 소리 크기 곡선을 뽑는다(빛, 2026-10-03)
+"$DIR/venv/bin/python" "$DIR/say.py" "$BASE.wav" "$VOICE" "$*" && echo "PLAYING $BASE.wav" && afplay "$BASE.wav"

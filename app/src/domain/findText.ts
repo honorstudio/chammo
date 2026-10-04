@@ -33,3 +33,11 @@ export function locate(parts: string[], needle: string, nth: number): { start: [
   };
   return { start: at(hit[0], false), end: at(hit[0] + hit[1], true) };
 }
+
+/** 찾기를 시작할 결과 — tops(결과마다 문서 안 세로 위치) 중 보던 자리(anchor) 이후 가장 가까운 것, 없으면 처음 것(브라우저 찾기처럼).
+ *  맨 위 첫 결과로 튀면 보던 자리를 잃었다(2026-10-04 QA N2) */
+export function startAt(tops: number[], anchor: number): number {
+  let best = -1;
+  tops.forEach((t, i) => { if (t >= anchor && (best < 0 || t < tops[best]!)) best = i; });
+  return best < 0 ? 0 : best;
+}

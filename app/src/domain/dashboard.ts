@@ -4,6 +4,7 @@ import type { ChatItem } from './chat';
 import { asksUser } from './status';
 import { shownFiles } from './spaceNav';
 import type { TaskEvent } from './tasks';
+import type { Live } from './agentBrowser';
 
 export type DashSub = { target: string; title: string; done: boolean };
 export type DashRequest = { id: string; ts: string; text: string; status: 'doing' | 'ask' | 'done'; subs: DashSub[] };
@@ -36,4 +37,20 @@ export function dashFiles(showLog: string, orchId: string, heldIds: string[], my
   for (const id of [orchId, ...heldIds]) for (const f of shownFiles(showLog, id)) files.push({ ...f, by: id });
   for (const im of myImages) files.push({ path: im.src, ts: im.ts, by: 'me' });
   return files.sort((x, y) => (x.ts < y.ts ? 1 : x.ts > y.ts ? -1 : 0));
+}
+
+/** 참모 자기 브라우저 칸의 id 머리 — 세션 id 가 아니라서 터미널 붙이기·끄기를 하지 않는다 */
+export const OWN_WEB = 'orch-web:';
+/**
+ * 참모 자기 브라우저 → 아래 세션 칸 줄 맨 앞 칸 하나(세션 칸과 같은 크기·같은 줄, 가로 스크롤). 위 큰 칸으로 띄우면 '주고받은 파일'을
+ * 밀어냈다(2026-10-03 사용자 "아래쪽에만 나와야 하는데 위로 자꾸 침범해"). 크게 보기는 칸의 크게 보기(모달)로
+ */
+export function ownBrowserLine(name: string, b: { live: Live; tail?: string[] }) {
+  return { id: OWN_WEB + b.live.profile, name, status: (b.live.busy ? 'run' : 'wait') as 'run' | 'wait', line: b.live.tool, tail: b.tail, browser: b.live };
+}
+
+/** 대시보드 세션 칸 머리 — 목록에 있는 세션은 살아 있다. agents 의 state done(finished)은 '턴을 끝냈다'일 뿐이라 머리는 지금 상태(쉼·기다림)로,
+ *  finished 는 '붙여도 화면이 비어 처음엔 요약' 판단에만 쓴다(2026-10-04 QA N4 — 다음 지시를 기다리는 세션이 '끝남'으로 보였다) */
+export function paneState(s: { finished?: boolean }, live: { status: 'run' | 'ask' | 'wait' } | undefined): { status: 'run' | 'ask' | 'wait'; finished: boolean } {
+  return { status: live?.status ?? 'wait', finished: !!s.finished };
 }

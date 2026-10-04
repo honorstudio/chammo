@@ -28,10 +28,11 @@ export const speciesFor = (project: string) => ROSTER[hash(project) % ROSTER.len
 /** 몸통 색 번호 — 스킨 팔레트에서 고른다 */
 export const colorFor = (key: string) => hash(key + '#c');
 
-/** act = 작업 중일 때 도구로 정한 행동, doing = 머리 위 한 줄('Edit ambassador.ts') */
-export type Seat = { id: string; label: string; project: string; status: ActivityStatus; startedAt: number; act?: WorkAct; doing?: string };
+/** act = 작업 중일 때 도구로 정한 행동, doing = 머리 위 한 줄('Edit ambassador.ts'), human = 세션 브라우저가 사람을 부른 이유(browser_ask_human) */
+export type Seat = { id: string; label: string; project: string; status: ActivityStatus; startedAt: number; act?: WorkAct; doing?: string; human?: string };
 /** empty = 세션이 나간 자리(빈 책상) — 다른 세션이 밀려 앉지 않게 남겨 둔다 */
-export type Desk = { id: string; label: string; gx: number; gy: number; w: number; boss?: boolean; empty?: boolean; spr: string; st: OfficeState; color: number; act?: WorkAct; doing?: string };
+export type Desk = { id: string; label: string; gx: number; gy: number; w: number; boss?: boolean; empty?: boolean; spr: string; st: OfficeState; color: number; act?: WorkAct; doing?: string;
+  /** 원래 상태 — 말(statusWord)은 이걸로, 짓(st)은 물어봄·확인창을 하나로 */ status?: ActivityStatus; human?: string };
 /** pushed = 놓아 둔 칸을 새 책상이 덮어서 휴게실로 비켜 있음(자리가 비면 돌아간다) */
 export type Placed = { id: string; gx: number; gy: number; pushed?: boolean };
 /** furniture = 휴게실에 놓인 가구(withLounge) */
@@ -50,8 +51,8 @@ const ROW_GAP = 2.1;
 export function planRoom(orchestrators: Seat[], workers: Seat[], boss: string, slots?: (string | null)[]): Room {
   const desks: Desk[] = [];
   const mk = (s: Seat, gx: number, gy: number, spr: string, w = 1.6, isBoss = false): Desk => ({
-    id: s.id, label: s.label, gx, gy, w, spr, st: officeState(s.status), color: colorFor(s.project + s.label), ...(isBoss ? { boss: true } : {}),
-    ...(s.act ? { act: s.act } : {}), ...(s.doing ? { doing: s.doing } : {}),
+    id: s.id, label: s.label, gx, gy, w, spr, st: officeState(s.status), status: s.status, color: colorFor(s.project + s.label), ...(isBoss ? { boss: true } : {}),
+    ...(s.act ? { act: s.act } : {}), ...(s.doing ? { doing: s.doing } : {}), ...(s.human !== undefined ? { human: s.human } : {}),
   });
   const [head, ...rest] = orchestrators;
   if (head) desks.push(mk(head, 2.8, BACK_Y, boss, 2.4, true));
@@ -68,6 +69,12 @@ export function planRoom(orchestrators: Seat[], workers: Seat[], boss: string, s
   });
   const lines = Math.max(2, Math.ceil(front.length / 3));
   return { cols: COLS, rows: Math.ceil(ROW0 + ROW_GAP * (lines - 1) + 1.8), desks };
+}
+
+/** 현황판 순서 — 사람 필요 → 지금 탭 참모가 시킨 것(dim 아님) → 나머지. 같은 칸 안에선 원래 순서 */
+export function dockOrder<D extends { id: string; human?: string }>(desks: D[], dim?: (id: string) => boolean): D[] {
+  const rank = (d: D) => (d.human !== undefined ? 0 : dim?.(d.id) ? 2 : 1);
+  return desks.map((d, i) => [d, i] as const).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([d]) => d);
 }
 
 /** 반장이 서류 들고 걷는 중 — at = 지금 칸 좌표, awayId = 비어 있는 반장 책상 */

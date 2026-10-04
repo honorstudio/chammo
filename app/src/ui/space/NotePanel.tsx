@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { applyNotes, composeNoteSend, emptyEdits, moveId, type NoteBase, type NoteEditsT } from '../../domain/noteEdits';
+import { applyNotes, composeNoteSend, emptyEdits, foldedFrom, moveId, type NoteBase, type NoteEditsT } from '../../domain/noteEdits';
 import { tr } from '../../i18n';
-import { IconClose, IconPlus, IconSend } from '../Icons';
+import { IconChevron, IconClose, IconPlus, IconSend } from '../Icons';
+
+// 판 접힘 — 참모마다가 아니라 한 벌(브라우저 칸이 보일 때 가운데 파일 칸을 넓히려고, 2026-10-03 사용자)
+const FOLD_KEY = 'notePanelFolded';
 
 const load = (k: string): NoteEditsT => { try { return { ...emptyEdits(), ...(JSON.parse(localStorage.getItem(k) ?? 'null') ?? {}) }; } catch { return emptyEdits(); } };
 
@@ -31,6 +34,8 @@ export function NotePanel({ base, storeKey, send, sendTo, onOpenStarter }: {
   onOpenStarter?: () => void;
 }) {
   const [tab, setTab] = useState<'tasks' | 'decisions'>('tasks');
+  const [folded, setFolded] = useState(() => foldedFrom(() => localStorage.getItem(FOLD_KEY)));
+  const fold = (v: boolean) => { setFolded(v); try { localStorage.setItem(FOLD_KEY, v ? '1' : '0'); } catch { /* 이번 실행만 */ } };
   const [e, setE] = useState<NoteEditsT>(() => load(storeKey));
   useEffect(() => { setE(load(storeKey)); }, [storeKey]);
   const save = (next: NoteEditsT) => { setE(next); try { localStorage.setItem(storeKey, JSON.stringify(next)); } catch { /* 이번 실행만 */ } };
@@ -98,12 +103,13 @@ export function NotePanel({ base, storeKey, send, sendTo, onOpenStarter }: {
   };
   const counts = { tasks: v.tasks.filter((t) => t.state !== 'removed' && !t.done).length, decisions: v.decisions.filter((d) => d.state !== 'removed').length };
   return (
-    <div className={`np ${changes ? 'dirty' : ''}`}>
+    <div className={`np ${changes ? 'dirty' : ''} ${folded ? 'np-folded' : ''}`}>
       <div className="np-tabs" role="tablist">
-        <button role="tab" aria-selected={tab === 'tasks'} className={tab === 'tasks' ? 'on' : ''} onClick={() => setTab('tasks')}>{tr('할 일', 'Tasks')}<span>{counts.tasks}</span></button>
-        <button role="tab" aria-selected={tab === 'decisions'} className={tab === 'decisions' ? 'on' : ''} onClick={() => setTab('decisions')}>{tr('최근 결정', 'Decisions')}<span>{counts.decisions}</span></button>
+        <button role="tab" aria-selected={tab === 'tasks'} className={tab === 'tasks' ? 'on' : ''} onClick={() => { setTab('tasks'); if (folded) fold(false); }}>{tr('할 일', 'Tasks')}<span>{counts.tasks}</span></button>
+        <button role="tab" aria-selected={tab === 'decisions'} className={tab === 'decisions' ? 'on' : ''} onClick={() => { setTab('decisions'); if (folded) fold(false); }}>{tr('최근 결정', 'Decisions')}<span>{counts.decisions}</span></button>
         <span className="np-sp" />
-        {tab === 'decisions' && onOpenStarter && <button className="np-link" onClick={onOpenStarter}>{tr('starter', 'starter')}</button>}
+        {tab === 'decisions' && onOpenStarter && !folded && <button className="np-link" onClick={onOpenStarter}>{tr('starter', 'starter')}</button>}
+        <button className="np-fold" onClick={() => fold(!folded)} aria-expanded={!folded} title={folded ? tr('판 펴기', 'Expand') : tr('판 접기', 'Collapse')} aria-label={folded ? tr('판 펴기', 'Expand') : tr('판 접기', 'Collapse')}><IconChevron /></button>
       </div>
       <ul className="np-list">
         {tab === 'tasks' ? v.tasks.map((t) => (

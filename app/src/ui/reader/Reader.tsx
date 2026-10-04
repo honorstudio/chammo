@@ -3,7 +3,7 @@ import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { modKey } from '../../domain/keys';
-import { docUrl, IS_WIN, isDocUrl, dropIndex, inStrip, kindOf, titleOf, type DocKind, type Surface } from '../../domain/reader';
+import { docUrl, IS_WIN, isDocUrl, dropIndex, inStrip, kindOf, titleOf, type DocKind, type Surface, docFileUrl } from '../../domain/reader';
 import { FIT, IMAGE_STEPS, parseZoom, stepZoom, withZoom, zoomable, zoomLabel, zoomOf, type ZoomMap } from '../../domain/readerZoom';
 import { IconZoomIn, IconZoomOut } from '../Icons';
 import { selectAllHere } from '../selectAll';
@@ -13,7 +13,8 @@ import { cleanPathText, pathCandidates, projectOrder } from '../../domain/links'
 import { followLink } from '../followLink';
 import { addComment, setBaseline } from '../space/pending';
 import { SendFab } from '../space/SendFab';
-import { lastSaved, saveSoon } from '../space/docSave';
+import { lastSaved } from '../space/docSave';
+import { WebPage } from '../WebPage';
 import type { BlockNoteEditor } from '@blocknote/core';
 
 // 스페이스 편집기(BlockNote)는 고칠 때만 불러온다 — 보기만 할 땐 무게를 안 싣는다
@@ -83,7 +84,7 @@ export function MdDoc({ path, md, zoom = 100 }: { path: string; md: string; zoom
   const dir = path.replace(/\/[^/]*$/, '');
   const html = DOMPurify.sanitize(marked.parse(md, { async: false }) as string, { FORBID_TAGS: ['style', 'iframe', 'object', 'embed', 'form'] });
   // 그림의 상대 경로는 문서 폴더 기준 hodoc:// 로(리더가 홈 안 파일만 내준다)
-  const withImgs = html.replace(/(<img\b[^>]*\bsrc=")(?![a-z][a-z0-9+.-]*:|\/\/)([^"]+)"/gi, (_m, pre: string, src: string) => `${pre}${new URL(src, docUrl(dir + '/')).href}"`);
+  const withImgs = html.replace(/(<img\b[^>]*\bsrc=")([^"]+)"/gi, (_m, pre: string, src: string) => `${pre}${docFileUrl(src, dir)}"`);
   // ⌘ 를 누르고 있는 동안 경로(코드 글자)에 밑줄·손가락 — 누를 수 있다는 표시(터미널과 같게, 사용자 2026-09-28)
   const [cmd, setCmd] = useState(false);
   useEffect(() => {
@@ -159,6 +160,7 @@ function Doc({ path, nonce, zoom, editing }: { path: string; nonce: number; zoom
     if (kind === 'md' || kind === 'text') invoke<string>('read_doc_text', { path }).then(setText, (e) => setErr(String(e)));
   }, [path, kind, nonce]);
   if (err) return <div className="rd-empty">{tr('못 읽었어', "Couldn't read it")} — {err}</div>;
+  if (kind === 'web') return <WebPage key={nonce} url={path} />;
   // HTML 시안: 스크립트·저장소는 되지만 앱 기능(invoke)엔 못 닿는 다른 출처(hodoc://)에서 돈다(2026-09-28 실측)
   if (kind === 'html') return <div className="rd-zoombox"><HtmlFrame key={nonce} className="rd-frame" zoom={zoom} src={docUrl(path)} sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads" /></div>;
   if (kind === 'pdf') return <div className="rd-zoombox scroll"><iframe key={nonce} className="rd-frame" style={frameStyle(kind, zoom)} src={docUrl(path)} /></div>;
@@ -176,7 +178,7 @@ function Doc({ path, nonce, zoom, editing }: { path: string; nonce: number; zoom
     return (
       <Suspense fallback={<div className="rd-empty">{tr('편집기 여는 중', 'Opening the editor')}</div>}>
         <SpaceEditor key={`${path}:${nonce}`} md={text} docPath={path} onEditor={(ed) => { if (ed) editors.set(path, ed); else editors.delete(path); }}
-          onReady={(n) => { lastSaved.set(path, n); setBaseline(path, n); }} onChange={(m) => saveSoon(path, m)} />
+          onReady={(n) => { lastSaved.set(path, n); setBaseline(path, n); }} onChange={() => {}} />
       </Suspense>
     );
   }
@@ -308,7 +310,8 @@ export function ReaderView({ surface, actions, send, sendTo }: { surface: string
         <TabStrip surface={surface} s={s} />
         {actions && <div className="rd-actions">{actions}</div>}
       </div>
-      {s.active && (
+      {/* 주소(web)는 WebPage 가 제 막대(뒤로·새로고침·주소·크롬에서 열기)를 쓴다 */}
+      {s.active && kind !== 'web' && (
         <div className="rd-bar">
           <span className="rd-path"><bdi>{s.active}</bdi></span>
           {kind && zoomable(kind) && (
@@ -320,7 +323,7 @@ export function ReaderView({ surface, actions, send, sendTo }: { surface: string
           )}
           {kind === 'md' && s.active && (
             <button className={editing[s.active] ? 'on' : ''} onClick={() => { const p = s.active!; setEditing((e) => ({ ...e, [p]: !e[p] })); if (editing[p]) setNonce((n) => n + 1); }}
-              title={editing[s.active] ? tr('보기로 — 고친 건 저장돼 있어', 'Back to view — edits are saved') : tr('노션처럼 고치기 — 저장은 저절로, 고친 건 모아서 참모에게', 'Edit like Notion — saves automatically; send edits to the assistant together')}>
+              title={editing[s.active] ? tr('보기로 — 고친 건 저장돼 있어', 'Back to view — edits are saved') : tr(`노션처럼 고치기 — 저장은 저절로, 고친 건 모아서 ${assistant()}에게`, 'Edit like Notion — saves automatically; send edits to the assistant together')}>
               {editing[s.active] ? tr('다 고침', 'Done') : tr('고치기', 'Edit')}
             </button>
           )}

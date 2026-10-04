@@ -57,6 +57,15 @@ pub fn data_dir() -> &'static Path {
     })
 }
 
+/// 진짜 데이터 폴더인가(~/.chammo·~/.honor-orchestrator) — 시험 폴더(CHAMMO_HOME=~/.chammo-test 등)면 false.
+/// 맥 전역에 남는 것(tailscale serve·launchd)은 진짜 폴더일 때만 건다(scripts routine real_data 와 같은 판단, 2026-10-03)
+pub fn is_real_data(home: &str, dir: &Path) -> bool {
+    let d = dir.to_string_lossy().replace('\\', "/");
+    let d = d.trim_end_matches('/');
+    let h = home.replace('\\', "/");
+    [DATA, LEGACY].iter().any(|n| d == format!("{}/{n}", h.trim_end_matches('/')))
+}
+
 /// 데이터 폴더 안 파일
 pub fn data_file(name: &str) -> PathBuf {
     data_dir().join(name)
@@ -72,11 +81,18 @@ pub struct Features {
     pub gacha: bool,
     pub review: bool,
     pub voice: bool,
+    /// 재시작으로 꺼진 세션을 사람 없이 이어서 켜기(무인 기계용, domain/revive). 기본 끔 — 앱(TS)만 읽지만 여기 없으면 저장 때 버려졌다(2026-10-04)
+    pub auto_revive: bool,
+    /// 세션 브라우저 앱에서 보기 — 참모 브라우저 래퍼가 이 값을 읽어 크롬 CDP 포트를 연다(tools/chammo-browser/src/live.js). 기본 켬
+    pub agent_view: bool,
+    /// 화면 조종(Claude Code 내장 MCP computer-use)을 앱이 아는 모든 프로젝트에서 켜기 — 켜면 빠진 프로젝트에 넣어 준다(computer_use.rs).
+    /// 사용자 화면을 조종하는 기능이라 기본 끔, 마법사·설정에서 고른다(2026-10-05)
+    pub computer_use: bool,
 }
 
 impl Default for Features {
     fn default() -> Self {
-        Features { office: true, tama: true, gacha: true, review: true, voice: true }
+        Features { office: true, tama: true, gacha: true, review: true, voice: true, auto_revive: false, agent_view: true, computer_use: false }
     }
 }
 
@@ -113,10 +129,12 @@ pub fn lang_from_locale(locale: &str) -> &'static str {
     if locale.trim().to_lowercase().starts_with("ko") { "ko" } else { "en" }
 }
 
-/// 새 설치 기본값. devRoot = ~/Developer·~/Projects·~/Desktop/dev 중 있는 첫 것(없으면 ~/Developer).
+/// 새 설치 기본값. devRoot = ~/Developer·~/Projects 중 있는 첫 것(없으면 ~/Developer).
+/// ~/Desktop/dev 는 묻지 않는다 — 맥 보호 폴더(데스크탑)라 있는지만 봐도 앱이 뜨자마자 권한 창이 떴다(2026-10-05 아이맥 QA).
+/// 거기 두는 사람은 마법사에서 고른다(고를 때 묻는 건 사람이 한 일이라 이유가 보인다)
 /// githubUser 는 비워 둔다 — gh 는 네트워크라 설정 화면이 따로 채운다(detect_github_user)
 pub fn default_config(home: &str, data: &Path, lang: &str, exists: impl Fn(&str) -> bool) -> Config {
-    let dev = ["Developer", "Projects", "Desktop/dev"]
+    let dev = ["Developer", "Projects"]
         .iter()
         .find(|d| exists(&format!("{home}/{d}")))
         .unwrap_or(&"Developer");
@@ -275,6 +293,7 @@ pub fn reload_config() -> Config {
 /// 설정 저장. 앱은 저장 뒤 창을 다시 연다(언어·비서 이름은 뜰 때 정해서)
 #[tauri::command]
 pub fn write_config<R: tauri::Runtime>(app: tauri::AppHandle<R>, config: Config) -> Result<(), String> {
+    let was = current().features.computer_use;
     write_file(&config)?;
     #[cfg(target_os = "macos")]
     {
@@ -284,9 +303,15 @@ pub fn write_config<R: tauri::Runtime>(app: tauri::AppHandle<R>, config: Config)
     }
     #[cfg(not(target_os = "macos"))]
     let _ = &app;
+    let now = config.features.computer_use;
     if let Ok(mut g) = CURRENT.write() {
         *g = Some(config);
     }
+    // 화면 조종 — 바꿨으면 모든 프로젝트에 넣거나 빼고, 켜 둔 채 저장이면 새로 생긴 프로젝트(따로 둔 폴더 추가 등)에만
+    std::thread::spawn(move || {
+        let r = if was != now { crate::computer_use::turned(now) } else { crate::computer_use::sweep() };
+        if let Err(e) = r { crate::claude::log_out("computer-use", &e); }
+    });
     Ok(())
 }
 
@@ -295,11 +320,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn 진짜_데이터_폴더는_홈의_chammo_와_옛_이름만() {
+        let h = "/Users/me";
+        assert!(is_real_data(h, Path::new("/Users/me/.chammo")));
+        assert!(is_real_data(h, Path::new("/Users/me/.honor-orchestrator/")));
+        // 시험 폴더(CHAMMO_HOME=~/.chammo-test 등)는 맥 전역에 남는 것(launchd·tailscale serve)을 걸지 않는다
+        for d in [".chammo-test", ".chammo-test-agent", ".chammo-qa", "demo-data", ".chammo/sub"] {
+            assert!(!is_real_data(h, &Path::new(h).join(d)), "{d}");
+        }
+    }
+
+    #[test]
     fn 빠진_칸은_기본값() {
         let c: Config = serde_json::from_str(r#"{"language":"en","features":{"tama":false}}"#).unwrap();
         assert_eq!(c.language, "en");
         assert!(!c.features.tama);
         assert!(c.features.office && c.features.gacha && c.features.review && c.features.voice);
+        assert!(c.features.agent_view, "세션 브라우저 앱에서 보기는 기본 켬");
+        let off: Config = serde_json::from_str(r#"{"features":{"agentView":false}}"#).unwrap();
+        assert!(!off.features.agent_view);
+        assert!(serde_json::to_string(&off).unwrap().contains("\"agentView\":false"), "끈 값이 저장된다(래퍼가 읽는다)");
         assert!(!c.setup_done);
         // 말하기 키는 기본 끔 — 공개판이 첫 실행에 설명 없이 손쉬운 사용 권한을 묻고 지구본 키를 앱 밖에서도 봤다(0.2.0 검증)
         assert_eq!(c.talk_key, "");
@@ -314,6 +354,61 @@ mod tests {
     }
 
     #[test]
+    fn 기능_칸은_쓰기_읽기_왕복에서_안_사라진다() {
+        // 앱(TS)이 보낸 설정을 그대로 저장했다가 다시 읽는다 — 구조체에 없는 칸은 serde 가 조용히 버린다
+        let sent = r#"{"features":{"office":true,"tama":true,"gacha":true,"review":true,"voice":true,"autoRevive":true,"agentView":false}}"#;
+        let c: Config = serde_json::from_str(sent).unwrap();
+        let back = serde_json::to_value(&c).unwrap();
+        assert_eq!(back["features"]["autoRevive"], serde_json::json!(true), "자동으로 다시 켜기가 저장에서 사라짐");
+        assert_eq!(back["features"]["agentView"], serde_json::json!(false));
+    }
+
+    /// TS 소스에서 `{ 이름: 값, … }` / `이름?: 타입;` 줄의 칸 이름만 뽑는다(정규식 크레이트 없이)
+    fn ts_keys(block: &str) -> Vec<(String, String)> {
+        block
+            .split([',', '\n', ';'])
+            .filter_map(|part| {
+                let t = part.trim().trim_start_matches('{').trim();
+                let name: String = t.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+                let rest = t[name.len()..].trim_start_matches('?');
+                (!name.is_empty() && rest.starts_with(':')).then(|| (name, rest[1..].trim().trim_end_matches('}').trim().to_string()))
+            })
+            .collect()
+    }
+    fn ts_block<'a>(src: &'a str, head: &str, end: &str) -> &'a str {
+        let i = src.find(head).unwrap_or_else(|| panic!("TS 소스에 {head} 없음")) + head.len();
+        &src[i..i + src[i..].find(end).unwrap()]
+    }
+
+    #[test]
+    fn 기능_칸과_기본값이_ts_와_같다() {
+        // 앱 화면(domain/config.ts ALL_ON)이 아는 기능 = 설정 파일(Rust Features)이 저장하는 기능, 기본값까지
+        let ts = include_str!("../../src/domain/config.ts");
+        let all_on = ts_keys(ts_block(ts, "export const ALL_ON: Features = {", "};"));
+        let rust = serde_json::to_value(Features::default()).unwrap();
+        let rust = rust.as_object().unwrap();
+        let ts_names: Vec<&str> = all_on.iter().map(|(k, _)| k.as_str()).collect();
+        let rust_names: Vec<&str> = rust.keys().map(|k| k.as_str()).collect();
+        assert_eq!(ts_names, rust_names, "TS ALL_ON 과 Rust Features 칸이 다르다");
+        for (k, v) in &all_on {
+            assert_eq!(rust[k].to_string(), *v, "{k} 기본값이 TS·Rust 가 다르다");
+        }
+    }
+
+    #[test]
+    fn 설정_칸이_ts_와_같다() {
+        // data/tauri.ts 의 Config 타입 칸 = Rust Config 가 저장하는 칸
+        let ts = include_str!("../../src/data/tauri.ts");
+        let mut ts_names: Vec<String> = ts_keys(ts_block(ts, "export type Config = {", "};")).into_iter().map(|(k, _)| k).collect();
+        let v = serde_json::to_value(Config::default()).unwrap();
+        let mut rust_names: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+        assert!(ts_names.len() >= 10, "TS Config 칸을 못 읽었다: {ts_names:?}");
+        ts_names.sort();
+        rust_names.sort();
+        assert_eq!(ts_names, rust_names, "TS Config 와 Rust Config 칸이 다르다");
+    }
+
+    #[test]
     fn 파일_칸_이름은_카멜() {
         let v = serde_json::to_value(owner_config()).unwrap();
         for k in ["language", "assistantName", "devRoot", "hqDir", "extraProjects", "githubUser", "ttsCommand", "memoDir", "features", "setupDone", "talkKey", "talkAnywhere"] {
@@ -321,9 +416,21 @@ mod tests {
         }
     }
 
+    // 2026-10-05 아이맥 QA: 기본값을 고르며 ~/Desktop/dev 를 물어(is_dir) 앱이 뜨자마자·폴더 고르기 전에
+    // '데스크탑 폴더 접근' 권한 창이 떴다 — 맥 보호 폴더(데스크탑·문서·다운로드)는 사용자가 고르기 전엔 안 건드린다
+    #[test]
+    fn 새_설치_기본값은_보호_폴더를_안_묻는다() {
+        let asked = std::cell::RefCell::new(Vec::<String>::new());
+        let c = default_config("/h", Path::new("/h/.chammo"), "ko", |p| { asked.borrow_mut().push(p.to_string()); p == "/h/Desktop/dev" });
+        for p in asked.borrow().iter() {
+            assert!(!["/h/Desktop", "/h/Documents", "/h/Downloads"].iter().any(|x| p.starts_with(x)), "보호 폴더를 물었다: {p}");
+        }
+        assert_eq!(c.dev_root, "~/Developer");
+    }
+
     #[test]
     fn 새_설치_기본값() {
-        let c = default_config("/h", Path::new("/h/.chammo"), "en", |p| p == "/h/Projects" || p == "/h/Desktop/dev");
+        let c = default_config("/h", Path::new("/h/.chammo"), "en", |p| p == "/h/Projects");
         assert_eq!(c.dev_root, "~/Projects"); // 있는 것 중 첫 번째
         assert_eq!(c.hq_dir, "~/.chammo/hq");
         assert_eq!(c.memo_dir, "~/.chammo/memo");
