@@ -2,7 +2,7 @@
 // 화면 이름은 '예약'(2026-10-02), 코드·파일·명령은 옛 이름 routine 그대로
 import { tr } from '../i18n';
 
-export type RoutineEvent = { event: 'start' | 'end' | 'skip'; ts: string; result?: 'ok' | 'fail'; note?: string; session?: string | null; reason?: string; error?: string | null };
+export type RoutineEvent = { event: 'start' | 'end' | 'skip' | 'retry'; ts: string; result?: 'ok' | 'fail'; note?: string; session?: string | null; reason?: string; error?: string | null };
 export type Routine = {
   name: string;
   /** local = 이 맥 launchd · cloud = claude.ai 클라우드 루틴(<데이터>/cloud-routines.json, 목록에만). 옛 스크립트는 안 줘서 없으면 local */
@@ -53,6 +53,18 @@ export function routineState(r: Routine, sessions: { name: string; state: string
   if (!r.lastStart) return 'waiting';
   if (!r.last || r.last.ts < r.lastStart.ts) return 'noReport';
   return r.last.result === 'fail' ? 'failed' : 'ok';
+}
+
+/** 실행 기록 한 줄 — retry 는 scripts/routine run_now 가 한 번 더 띄운 것: 폴더 믿음이 지워져 다시 적음 / 시작이 일시 오류로 죽어 잠깐 쉬고 다시 */
+export function runEventText(e: RoutineEvent): string {
+  if (e.event === 'start') return e.error ? tr(`시작 실패 — ${e.error}`, `Could not start — ${e.error}`) : tr('시작', 'Started');
+  if (e.event === 'skip') return e.reason === 'still running' || !e.reason ? tr('건너뜀 — 지난 실행이 아직 도는 중', 'Skipped — the last run is still going') : tr(`건너뜀 — ${e.reason}`, `Skipped — ${e.reason}`);
+  if (e.event === 'retry') {
+    if (e.reason?.startsWith('workspace not trusted') || !e.reason) return tr('다시 시도 — 폴더 믿음이 풀려 있어 다시 적음', 'Retried — workspace trust was reset');
+    const why = /^start failed \((.*)\) — /.exec(e.reason)?.[1] ?? e.reason;
+    return tr(`다시 시도 — 시작이 실패해 잠깐 쉬고 한 번 더 (${why})`, `Retried — failed to start, waited and tried once more (${why})`);
+  }
+  return `${e.result === 'fail' ? tr('실패', 'Failed') : tr('성공', 'OK')}${e.note ? ` — ${e.note}` : ''}`;
 }
 
 export const routineStateLabel = (s: RoutineState) =>

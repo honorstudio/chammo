@@ -232,16 +232,66 @@ pub fn with_esc_bridge(body: &[u8]) -> Vec<u8> {
     out
 }
 
+/// 시안(HTML)은 앱과 다른 불투명 출처에서 돈다(2026-10-06, 폰 html_page 와 같은 원칙) — 같은 출처(hodoc://localhost)를 주면
+/// 시안 스크립트가 fetch('hodoc://localhost/<홈 아무 파일>')로 비밀 파일을 읽고 밖으로 보낼 수 있었다(실측: 시험 비밀 파일 200).
+/// iframe 이 allow-same-origin 을 달아도 이 머리글의 sandbox 가 이긴다. 스크립트·확인 창(confirm)은 돌고, 옆 파일(그림·css·js)과
+/// 웹 글꼴·라이브러리는 불리되, 밖으로 보내기(fetch·XHR·폼)·팝업·위 창 옮기기는 막는다
+pub const DOC_CSP: &str = "sandbox allow-scripts allow-modals; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' hodoc: http://hodoc.localhost https:; style-src 'unsafe-inline' hodoc: http://hodoc.localhost https:; img-src hodoc: http://hodoc.localhost https: data: blob:; font-src hodoc: http://hodoc.localhost https: data:; media-src hodoc: http://hodoc.localhost https: data: blob:; frame-src hodoc: http://hodoc.localhost; connect-src 'none'; form-action 'none'; base-uri 'none'";
+
+/// 불투명 출처에선 localStorage·sessionStorage 가 예외를 던진다 — 시안 스크립트보다 먼저 메모리 저장소를 끼운다.
+/// 이 칸(iframe) 안 새로 고침(검토 틀 '초기화')에도 남게 window.name 에 이어 쓴다. 칸을 새로 열면 비고, 표시는 앱이 cur-state 로 받아
+/// curation/ 파일에 적었다가 restore 로 되돌린다(HtmlFrame)
+pub const MEM_STORAGE: &str = r#"<script>(function(){var K='__chammoMem:',all={};try{if(window.name.indexOf(K)===0)all=JSON.parse(window.name.slice(K.length))||{}}catch(e){all={}}
+function save(){try{window.name=K+JSON.stringify(all)}catch(e){}}
+function mk(n){var m=all[n]&&typeof all[n]==='object'?all[n]:(all[n]={}),h=Object.prototype.hasOwnProperty,s={getItem:function(k){k=String(k);return h.call(m,k)?m[k]:null},setItem:function(k,v){m[String(k)]=String(v);save()},removeItem:function(k){delete m[String(k)];save()},clear:function(){for(var k in m)if(h.call(m,k))delete m[k];save()},key:function(i){var ks=Object.keys(m);return i>=0&&i<ks.length?ks[i]:null}};Object.defineProperty(s,'length',{get:function(){return Object.keys(m).length}});return s}
+[['localStorage','local'],['sessionStorage','session']].forEach(function(p){try{window[p[0]].length}catch(e){try{Object.defineProperty(window,p[0],{value:mk(p[1]),configurable:true})}catch(_){}}})})()</script>"#;
+
+/// `<name ...>` 여는 태그 끝 다음 자리 — `<head` 로 `<header>` 를 잡지 않게 이름 뒤 글자를 본다. 바이트로 봐서 UTF-8 이 아닌 시안도 안 깨진다
+pub(crate) fn tag_end(low: &[u8], name: &str) -> Option<usize> {
+    let open = format!("<{name}");
+    let open = open.as_bytes();
+    let mut from = 0;
+    while let Some(i) = low.get(from..)?.windows(open.len()).position(|w| w == open).map(|i| from + i) {
+        let after = i + open.len();
+        if low.get(after).is_some_and(|c| *c == b'>' || *c == b'/' || c.is_ascii_whitespace()) {
+            return low[after..].iter().position(|c| *c == b'>').map(|j| after + j + 1);
+        }
+        from = after;
+    }
+    None
+}
+
+/// HTML 에 앱 몫을 끼운다 — 앞(<head> 바로 뒤, 없으면 <html>·doctype 뒤, 다 없으면 맨 앞)에 메모리 저장소, 끝에 Esc·확대 다리
+fn with_doc_shims(body: &[u8]) -> Vec<u8> {
+    let low = body.to_ascii_lowercase();
+    let at = tag_end(&low, "head").or_else(|| tag_end(&low, "html")).or_else(|| tag_end(&low, "!doctype")).unwrap_or(0);
+    let mut out = Vec::with_capacity(body.len() + MEM_STORAGE.len() + ESC_BRIDGE.len());
+    out.extend_from_slice(&body[..at]);
+    out.extend_from_slice(MEM_STORAGE.as_bytes());
+    out.extend_from_slice(&with_esc_bridge(&body[at..]));
+    out
+}
+
+/// hodoc 응답 — HTML 은 샌드박스·끼움, 글꼴은 불투명 출처 시안이 읽게 CORS 를 연다(글·JSON 같은 건 안 연다)
+pub fn doc_response(body: Vec<u8>, mime: &str, range: Option<&str>) -> Response<Vec<u8>> {
+    let html = mime.starts_with("text/html");
+    let mut r = if html && range.is_none() { respond(&with_doc_shims(&body), mime, None) } else { respond(&body, mime, range) };
+    let h = r.headers_mut();
+    if html {
+        h.insert("Content-Security-Policy", tauri::http::HeaderValue::from_static(DOC_CSP));
+    } else if mime.starts_with("font/") {
+        h.insert("Access-Control-Allow-Origin", tauri::http::HeaderValue::from_static("*"));
+    }
+    r
+}
+
 /// hodoc:// 요청 처리
 pub fn serve<R: Runtime>(_ctx: tauri::UriSchemeContext<'_, R>, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     let not_found = || Response::builder().status(404).header("Content-Type", "text/plain; charset=utf-8").body(tr("없는 파일이거나 홈 폴더 밖이야", "File not found or outside the home folder").as_bytes().to_vec()).unwrap();
     let Some(path) = safe_path(req.uri().path(), &home()) else { return not_found() };
     let range = req.headers().get("range").and_then(|v| v.to_str().ok());
     match std::fs::read(&path) {
-        Ok(body) => {
-            let mime = mime_of(&path);
-            if mime.starts_with("text/html") && range.is_none() { respond(&with_esc_bridge(&body), mime, None) } else { respond(&body, mime, range) }
-        }
+        Ok(body) => doc_response(body, mime_of(&path), range),
         Err(_) => not_found(),
     }
 }
@@ -988,6 +1038,46 @@ mod tests {
         assert_eq!(super::page_file_name("이번 주 생각", |_| false), "이번 주 생각.md");
         assert_eq!(super::page_file_name("a/b:c", |_| false), "a-b-c.md");
         assert_eq!(super::page_file_name("메모", |n| n == "메모.md" || n == "메모 2.md"), "메모 3.md");
+    }
+    #[test]
+    fn 시안_html_은_불투명_출처_샌드박스로_낸다() {
+        let r = super::doc_response(b"<!doctype html><html><head><title>t</title><script>localStorage.x=1</script></head><body>hi</body></html>".to_vec(), "text/html; charset=utf-8", None);
+        let csp = r.headers()["Content-Security-Policy"].to_str().unwrap();
+        // 같은 출처를 주지 않는다 — 앱 출처·hodoc 의 홈 파일 읽기(fetch)에 못 닿게, 밖으로 보내기도 막는다
+        assert!(csp.starts_with("sandbox allow-scripts allow-modals;"), "{csp}");
+        assert!(!csp.contains("allow-same-origin") && !csp.contains("allow-popups") && !csp.contains("allow-top-navigation"), "{csp}");
+        assert!(csp.contains("connect-src 'none'") && csp.contains("form-action 'none'"), "{csp}");
+        // 옆 파일(그림·스크립트·css)과 웹 글꼴은 그대로 불린다
+        assert!(csp.contains("img-src hodoc: http://hodoc.localhost https: data: blob:"), "{csp}");
+        assert!(csp.contains("frame-src hodoc: http://hodoc.localhost"), "{csp}");
+        let body = String::from_utf8(r.body().clone()).unwrap();
+        let shim = body.find("__chammoMem").expect("메모리 저장소");
+        assert!(body.find("<head>").unwrap() < shim && shim < body.find("<title>").unwrap(), "head 바로 뒤, 시안 스크립트보다 먼저");
+        assert!(body.ends_with("</script>") && body.contains("postMessage({hodoc:'esc'}"), "Esc·확대 다리는 그대로 끝에");
+    }
+    #[test]
+    fn head_없는_html_도_맨_앞쪽에_끼운다() {
+        let r = super::doc_response(b"<p>bare</p><script>1</script>".to_vec(), "text/html; charset=utf-8", None);
+        let body = String::from_utf8(r.body().clone()).unwrap();
+        assert!(body.starts_with("<script>") && body.find("__chammoMem").unwrap() < body.find("<p>bare").unwrap());
+    }
+    #[test]
+    fn html_아닌_파일은_그대로_글꼴만_다른_출처에_연다() {
+        let png = super::doc_response(vec![1, 2, 3], "image/png", None);
+        assert!(png.headers().get("Content-Security-Policy").is_none() && png.headers().get("Access-Control-Allow-Origin").is_none());
+        assert_eq!(png.body().as_slice(), &[1, 2, 3]);
+        // 불투명 출처 시안이 옆 글꼴(@font-face)을 읽으려면 CORS 가 필요하다 — 글꼴만(글·JSON 은 안 연다)
+        assert_eq!(super::doc_response(vec![0], "font/woff2", None).headers()["Access-Control-Allow-Origin"], "*");
+        assert!(super::doc_response(vec![0], "text/plain; charset=utf-8", None).headers().get("Access-Control-Allow-Origin").is_none());
+        assert!(super::doc_response(vec![0], "application/json; charset=utf-8", None).headers().get("Access-Control-Allow-Origin").is_none());
+        // html 조각 요청(Range)도 샌드박스를 단다
+        let part = super::doc_response(b"<html><script>1</script></html>".to_vec(), "text/html; charset=utf-8", Some("bytes=0-5"));
+        assert!(part.headers()["Content-Security-Policy"].to_str().unwrap().starts_with("sandbox allow-scripts"));
+    }
+    #[test]
+    fn 메모리_저장소는_window_name_에_이어_쓴다() {
+        // 시안이 스스로 새로 고침(초기화)해도 이 칸 안에선 표시가 남고, 지운 건 지운 채로 — 칸(iframe)을 새로 만들면 앱이 파일로 되돌린다
+        assert!(super::MEM_STORAGE.contains("window.name") && super::MEM_STORAGE.contains("sessionStorage") && super::MEM_STORAGE.contains("localStorage"));
     }
     #[test]
     fn esc_bridge_appended_to_html() {

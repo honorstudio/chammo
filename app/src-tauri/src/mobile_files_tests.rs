@@ -29,6 +29,15 @@ fn 허용_집합은_보여준_파일_지침서_starter() {
 }
 
 #[test]
+fn 윈도우_hq_starter_는_폰이_묻는_슬래시_모양으로() {
+    // 폰은 env.hqDir(fwd) + '/docs/starter.md' 로 묻는다 — 허용 집합은 글자 그대로 비교라 윈도우 join(역슬래시)·섞인 HQ 로는 늘 403 이었다(2026-10-05)
+    let v = allowed_files("", "[]", Path::new("/data"), "C:\\Users\\Me/.chammo/hq");
+    assert!(v.iter().any(|p| p == "C:/Users/Me/.chammo/hq/docs/starter.md"), "{v:?}");
+    // 맥은 그대로 한 줄
+    assert_eq!(allowed_files("", "[]", Path::new("/data"), "/hq/"), vec!["/hq/docs/starter.md"]);
+}
+
+#[test]
 fn 집합_안의_진짜_파일만() {
     let d = tmp("pick");
     let f = d.join("doc.md");

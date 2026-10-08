@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { accountsApi } from '../data/tauri';
-import { ACCOUNTS_CHANGED, accountError, addState, moved, slotText, slotUsageText, type AccountsView } from '../domain/accounts';
+import { ACCOUNTS_CHANGED, accountError, addState, moved, pinText, slotText, slotUsageText, type AccountsView } from '../domain/accounts';
 import { readAuto, slotStatus } from '../domain/accountAuto';
 import { pinActive, switchPinned } from './accountSwitch';
 import { setupCommand } from '../domain/setup';
@@ -86,7 +86,7 @@ export function AccountsSection({ title, claude, fontSize }: { title: string; cl
       <div className="su-rows">
         {list.map((a, i) => {
           const on = a.id === view?.active;
-          const st = slotStatus(auto.slots[a.id], now);
+          const st = slotStatus(auto.slots[a.id], now, auto.pinned === a.id);
           return (
             <div className="su-row acct-row" key={a.id}>
               <span className="acct-order">{i + 1}</span>
@@ -97,7 +97,7 @@ export function AccountsSection({ title, claude, fontSize }: { title: string; cl
                 <span>
                   {[a.email, a.plan].filter(Boolean).join(' · ')}
                   {on && <b className="acct-on">{tr(' · 지금 쓰는 중', ' · In use')}</b>}
-                  {auto.pinned === a.id && <b>{tr(' · 고정', ' · Pinned')}</b>}
+                  {auto.pinned === a.id && <b>{` · ${pinText(auto.on)}`}</b>}
                   <span className={st.kind === 'ok' ? '' : 'acct-st-out'}>{` · ${slotText(st, now)}`}</span>
                   {slotUsageText(auto.slots[a.id], now) && <span className="acct-usage">{` · ${slotUsageText(auto.slots[a.id], now)}`}</span>}
                 </span>

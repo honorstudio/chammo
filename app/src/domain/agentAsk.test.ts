@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ASK_EMPTY, askClose, askOpen, askStep, askWaiting, openLive, type AskState } from './agentAsk';
+import { ASK_EMPTY, askClose, askOpen, askShown, askStep, askWaiting, openLive, type AskState } from './agentAsk';
 import type { Live } from './agentBrowser';
 
 const live = (profile: string, o: Partial<Live> = {}): Live => ({ profile, pid: 10, sessionPid: 20, url: 'https://a.com/', title: 'A', tabs: [], tool: '', toolAt: 0, busy: false, ts: 0, ...o });
@@ -60,11 +60,11 @@ describe('경계 — 거의 동시·세션 끝남·같은 프로필 다른 세�
     s = step(s, [asking('web-1', 5), live('web-2')]);
     expect(askClose(s, [asking('web-1', 5), live('web-2')]).open).toBeNull();
   });
-  it('모달 연 채 그 세션 브라우저가 사라지면 닫힌다(두 번 연속 없을 때 — 아래 깜빡임)', () => {
+  it('모달 연 채 그 세션 브라우저가 사라져도 저절로 닫지 않는다 — 모달이 \'닫혔어\' 덮개를 띄우고 사람이 닫는다', () => {
     let s = step(ASK_EMPTY, [asking('web-1', 5)]);
     s = step(s, []);
     s = step(s, []);
-    expect(s.open).toBeNull();
+    expect(s.open?.profile).toBe('web-1');
     expect(openLive(s, [])).toBeUndefined();
   });
   it('끝난 세션 자리를 다른 세션 브라우저가 같은 프로필로 잡으면 — 모달이 그 브라우저로 넘어가지 않는다', () => {
@@ -87,16 +87,13 @@ describe('경계 — 거의 동시·세션 끝남·같은 프로필 다른 세�
   });
 });
 
-describe('리뷰 — 상태 파일이 한 번 안 보인 걸로는 안 닫는다(치던 모달이 사라지지 않게)', () => {
-  it('한 번 빠지면 그대로, 두 번 연속이면 닫는다', () => {
+describe('리뷰 — 상태 파일이 안 보인 걸로는 안 닫는다(치던 모달이 사라지지 않게)', () => {
+  it('빠졌다 다시 보이면 그 모달 그대로 이어진다(같은 래퍼가 크롬을 다시 띄운 것)', () => {
     let s = step(ASK_EMPTY, [asking('web-1', 5)]);
     s = step(s, []);
     expect(s.open?.profile).toBe('web-1');
-    s = step(s, [asking('web-1', 5)]);
-    s = step(s, []);
-    expect(s.open?.profile).toBe('web-1'); // 다시 보였으면 셈을 처음부터
-    s = step(s, []);
-    expect(s.open).toBeNull();
+    s = step(s, [asking('web-1', 5, { url: 'https://b.com/' })]);
+    expect(openLive(s, [asking('web-1', 5, { url: 'https://b.com/' })])?.url).toBe('https://b.com/');
   });
   it('같은 프로필을 다른 래퍼가 잡았으면 바로 닫는다', () => {
     const s = step(ASK_EMPTY, [asking('web-1', 5)]);
@@ -125,5 +122,36 @@ describe('리뷰 — 닫기가 두 번 와도(⌘W 키+메뉴 두 갈래) 줄 �
     expect(s.open?.profile).toBe('web-2');
     s = askClose(s, lives, who);
     expect(s.open?.profile).toBe('web-2');
+  });
+});
+
+describe('2026-10-05 사용자 실사용 — 세션 브라우저가 닫혔는데 모달에 마지막 화면이 \'사진\'처럼 남아 진짜 화면인 줄 알았다', () => {
+  // 원인: 호스트는 lives 가 바뀔 때만 askStep 을 돌려서, 목록이 한 번 비고 그대로면 '두 번 연속 없으면 닫기'의 두 번째가 영영 안 왔다 —
+  // 모달은 마지막 live(ask 포함)를 붙든 채 '다 했어'까지 그대로 보였다
+  it('목록에서 빠진 브라우저를 붙들고 있으면 gone — 모달이 닫힘 덮개를 그린다', () => {
+    const l = asking('web-1', 5);
+    const s = step(ASK_EMPTY, [l]);
+    expect(askShown(s, [l], undefined)).toEqual({ live: l, gone: false });
+    const after = step(s, []); // 크롬이 꺼져 상태 파일이 숨겨짐 — 이 뒤로 lives 는 [] 그대로(다음 틱이 없다)
+    expect(askShown(after, [], l)).toEqual({ live: l, gone: true });
+  });
+  it('다른 브라우저(다른 래퍼)의 마지막 것은 붙들지 않는다', () => {
+    const s = step(ASK_EMPTY, [asking('web-1', 5)]);
+    expect(askShown(step(s, []), [], asking('web-1', 5, { pid: 99 })).live).toBeUndefined();
+  });
+  it('리뷰 — 닫힌 모달이 줄 선 다음 부름을 막지 않는다: 열린 브라우저가 목록에 없고 다른 세션이 부르면 그걸 띄운다(저절로 — 글칸 포커스 없음)', () => {
+    let s = step(ASK_EMPTY, [asking('web-1', 5)]);
+    s = step(s, []); // web-1 크롬 꺼짐 — 모달은 '닫혔어' 덮개로 남는다
+    expect(s.open?.profile).toBe('web-1');
+    s = step(s, [asking('web-2', 8)]);
+    expect(s.open).toMatchObject({ profile: 'web-2', byHuman: false });
+  });
+  it('열린 브라우저가 목록에 있으면 다른 부름이 와도 그대로(B1)', () => {
+    let s = step(ASK_EMPTY, [asking('web-1', 5)]);
+    s = step(s, [asking('web-1', 5), asking('web-2', 8)]);
+    expect(s.open?.profile).toBe('web-1');
+  });
+  it('모달이 닫혀 있으면 없음', () => {
+    expect(askShown(ASK_EMPTY, [asking('web-1', 5)], asking('web-1', 5)).live).toBeUndefined();
   });
 });

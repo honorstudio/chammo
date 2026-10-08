@@ -14,7 +14,7 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
   scripts/app feature office|tama|gacha|review|voice|autoRevive|computerUse on|off
                                                        turn a feature on/off (same as Settings > Features)
   scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home|harnitor|tools
-  scripts/app close settings|office|reader|tasks|inbox|harnitor|tools
+  scripts/app close settings|office|reader|tasks|inbox|harnitor|tools|review
   scripts/app focus <session id|name|project>          show that project's dashboard (chat view: in the space — no terminal)
   scripts/app focus --terminal <session|project>       open its terminal (CLI) — only when the user asks for the terminal
   scripts/app reader <file> [<file> ...]               open files in the reader (same as scripts/show)
@@ -27,6 +27,14 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
   scripts/app project list                             project folders: devRoot's folders + ones added separately
   scripts/app project add <folder>                     add a folder outside devRoot as a project (it stays where it is)
   scripts/app project remove <folder|name>             stop treating it as a project (the folder is not touched)
+  scripts/app trust <folder>                           let Claude Code start sessions in a folder you just cloned or made
+                                                       (fixes "Workspace not trusted"). Only inside the projects folder the
+                                                       user trusted; exit 3 = not covered → ask the user to trust it once
+  scripts/app browser status|connect <project|folder>  this project's own logged-in browser (chammo-browser): connect
+                                                       registers it for this folder only (~/.claude.json local scope) —
+                                                       the repo's .mcp.json is never touched. Restart that folder's
+                                                       running sessions afterwards (claude respawn <id>). Chammo must be open
+  scripts/app browser need <project|folder> [<why>]    put a "Connect browser" card in the decision inbox for the user
   scripts/app push "<title>" ["<one line>"]            push a notification to the user's phone (home-screen web app
                                                        with the bell on). Sent even while the user looks at the Mac.
                                                        Title + 60 chars only — no secrets. Exit 4 = no subscribed
@@ -40,7 +48,7 @@ import datetime, json, os, subprocess, sys
 FEATURES = ('office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'computerUse')
 OFF_BY_DEFAULT = ('autoRevive', 'computerUse')  # 앱 기본값과 같게 — 무인 맥에서만 켠다 · 화면 조종은 사용자가 고른다
 OPEN = ('settings', 'tour', 'office', 'review', 'all', 'replay', 'load', 'reader', 'tasks', 'inbox', 'home', 'harnitor', 'tools')
-CLOSE = ('settings', 'office', 'reader', 'tasks', 'inbox', 'harnitor', 'tools')
+CLOSE = ('settings', 'office', 'reader', 'tasks', 'inbox', 'harnitor', 'tools', 'review')
 ONOFF = ('on', 'off')
 
 
@@ -162,6 +170,53 @@ def load(data, as_json=False):
     return 0, '\n'.join(out), warn
 
 
+def _new_project():
+    """옆 scripts/new-project 의 믿음 적기(trust)를 그대로 쓴다 — 같은 길(임시 파일+바꿔 끼우기)"""
+    import importlib.machinery, importlib.util
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'new-project')
+    loader = importlib.machinery.SourceFileLoader('chammo_new_project', path)
+    mod = importlib.util.module_from_spec(importlib.util.spec_from_loader('chammo_new_project', loader))
+    loader.exec_module(mod)
+    return mod
+
+
+def _trusted(projects, path):
+    """Claude Code 처럼 위 폴더 믿음도 물려받는다"""
+    cur = path
+    while True:
+        p = projects.get(cur)
+        if isinstance(p, dict) and p.get('hasTrustDialogAccepted') is True:
+            return True
+        up = os.path.dirname(cur)
+        if up == cur:
+            return False
+        cur = up
+
+
+def trust(data, home, folder):
+    """사용자가 믿은 프로젝트 폴더(앱이 남긴 trust-consent.json) 아래면 그 폴더 믿음을 적는다 — (종료 코드, 할 말).
+    clone·직접 만든 폴더는 믿음이 없어 `claude --bg` 가 'Workspace not trusted' 로 멈췄다(2026-10-06 이슈 #1)"""
+    full = os.path.realpath(expand(folder, home))
+    if not os.path.isdir(full):
+        return 1, f'no such folder / 폴더가 없어: {folder}'
+    root = read_json(os.path.join(data, 'trust-consent.json')).get('root') or ''
+    root = root.replace('\\', '/').rstrip('/')
+    key = full.replace('\\', '/') if os.name == 'nt' else full
+    if not root or not (key == root or key.startswith(root + '/')):
+        return 3, (f'not inside a projects folder the user trusted — ask them to run `! cd "{full}" && claude` once, pick '
+                   f'"Yes, I trust this folder", then /exit / 사용자가 믿은 프로젝트 폴더 밖이야 — 사용자에게 한 번 믿어 달라고 해')
+    cj = os.path.join(home, '.claude.json')
+    projects = read_json(cj).get('projects')
+    projects = projects if isinstance(projects, dict) else {}
+    if _trusted(projects, key) and _trusted(projects, root):
+        return 0, f'already trusted / 이미 믿음: {full}'
+    np = _new_project()
+    for k in ([root] if not _trusted(projects, root) else []) + ([full] if full != root else []):
+        if not np.trust(k, home):
+            return 1, f'could not write {cj} / 못 적었어'
+    return 0, f'trusted / 믿음 적음: {full} — start the session again / 세션을 다시 띄워'
+
+
 def parse(argv):
     """명령 → (action, arg). 틀리면 None"""
     if not argv:
@@ -208,15 +263,15 @@ DONE = {
 }
 
 
-def harness(data, project, wait):
-    """앱에 하네스 글을 부탁하고 답(<데이터>/harness.txt, 첫 줄 "#id <id>")을 기다린다 — 엔진은 앱 안(하니터)에만 있다"""
+def ask_app(data, action, arg, out_name, wait):
+    """앱에 부탁하고 답(<데이터>/<out_name>, 첫 줄 "#id <id>")을 기다린다 — (종료 코드, 답 본문)"""
     import time, uuid
     rid = uuid.uuid4().hex[:12]
     os.makedirs(data, exist_ok=True)
-    line = {'ts': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), 'action': 'harness', 'arg': project, 'id': rid}
+    line = {'ts': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), 'action': action, 'arg': arg, 'id': rid}
     with open(os.path.join(data, 'app.jsonl'), 'a', encoding='utf-8') as f:
         f.write(json.dumps(line, ensure_ascii=False) + '\n')
-    out = os.path.join(data, 'harness.txt')
+    out = os.path.join(data, out_name)
     end = time.time() + wait
     while time.time() < end:
         try:
@@ -229,6 +284,59 @@ def harness(data, project, wait):
             pass
         time.sleep(0.2)
     return 1, f'Chammo did not answer in {wait:g}s — is the app open? / 앱이 답하지 않았어 — Chammo 가 켜져 있어야 해'
+
+
+def harness(data, project, wait):
+    """앱에 하네스 글을 부탁한다 — 엔진은 앱 안(하니터)에만 있다"""
+    return ask_app(data, 'harness', project, 'harness.txt', wait)
+
+
+def project_dir(data, home, arg):
+    """프로젝트 이름(devRoot 아래·따로 추가한 것) 또는 폴더 → 폴더 절대 경로. 못 찾으면 None"""
+    a = arg.strip()
+    if not a:
+        return None
+    if '/' in a or '\\' in a or a.startswith('~'):
+        return os.path.normpath(expand(a, home))
+    c = read_json(os.path.join(data, 'config.json'))
+    dev = os.path.normpath(expand(c.get('devRoot') or '~/Developer', home))
+    for x in extras_of(c):
+        full = os.path.normpath(expand(x, home))
+        if os.path.basename(full.rstrip('/')) == a:
+            return full
+    return os.path.join(dev, a) if a not in ('.', '..') else None
+
+
+def browser(data, home, verb, arg, wait):
+    """참모 브라우저 연결 — 앱이 폴더를 읽고 ~/.claude.json 에 적는다(HQ 는 데스크탑 권한이 막혀 있을 수 있다 — GitHub #1·#2)"""
+    d = project_dir(data, home, arg)
+    if not d:
+        return 1, f'which project? / 어느 프로젝트?: {arg}'
+    if verb == 'need':
+        return 0, None
+    code, body = ask_app(data, 'browser', {'verb': verb, 'dir': d}, 'browser-attach.txt', wait)
+    if code:
+        return code, body
+    try:
+        r = json.loads(body)
+    except ValueError:
+        return 1, body
+    if not r.get('ok'):
+        return 1, f"{r.get('error')} ({tilde(d, home)})"
+    l = r.get('link') or {}
+    t = tilde(d, home)
+    if not l.get('available'):
+        return 1, f'browser automation is not installed — ask the user to press Install in Settings → Features → Browser automation / 브라우저 자동화가 안 깔려 있어 — 사용자에게 설정 → 기능 → 브라우저 자동화의 설치를 부탁해 ({t})'
+    if not l.get('connected'):
+        return 3, f'not connected / 안 붙어 있어: {t} — scripts/app browser connect {arg}'
+    tools = f"mcp__{l.get('name')}__* (browser_ask_human)"
+    where = 'repo .mcp.json (new project)' if l.get('scope') == 'project' else 'this folder only (~/.claude.json local) — repo files untouched / 이 폴더만, 저장소 파일은 그대로'
+    msg = f'connected / 붙어 있어: {t} → {tools}, {where}'
+    if l.get('other'):
+        msg += '\n  the repo\'s own "playwright" stays too — both start / 저장소의 다른 playwright 도 그대로 같이 뜬다'
+    if l.get('added'):
+        msg += '\n  running sessions in that folder must restart to get it: claude respawn <id> / 그 폴더에 떠 있는 세션은 다시 켜야 붙어'
+    return 0, msg
 
 
 def push_subs(data):
@@ -270,6 +378,25 @@ def main(argv):
         code, msg = harness(data_dir(), argv[1].strip() if len(argv) == 2 else '', wait)
         print(msg, file=sys.stdout if code == 0 else sys.stderr)
         return code
+    if argv[:1] == ['browser']:
+        verb, rest = (argv[1] if len(argv) > 1 else ''), argv[2:]
+        if not ((verb in ('status', 'connect') and len(rest) == 1) or (verb == 'need' and 1 <= len(rest) <= 2)):
+            print(__doc__, file=sys.stderr); return 2
+        data, home = data_dir(), os.path.expanduser('~')
+        try:
+            wait = float(os.environ.get('CHAMMO_APP_WAIT', '') or 20)
+        except ValueError:
+            wait = 20
+        code, msg = browser(data, home, verb, rest[0], wait)
+        if verb == 'need' and code == 0:
+            # 카드는 화면이 그린다 — 앱이 지금 상태를 다시 보고 붙어 있으면 안 띄운다
+            arg = {'dir': project_dir(data, home, rest[0]), 'why': rest[1].strip() if len(rest) > 1 else ''}
+            line = {'ts': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), 'action': 'browser-need', 'arg': arg}
+            with open(os.path.join(data, 'app.jsonl'), 'a', encoding='utf-8') as f:
+                f.write(json.dumps(line, ensure_ascii=False) + '\n')
+            msg = f'sent to the app / 앱에 넘김: browser card for {tilde(arg["dir"], home)}'
+        print(msg, file=sys.stdout if code == 0 else sys.stderr)
+        return code
     if argv[:1] == ['load']:
         if argv[1:] not in ([], ['--json']):
             print(__doc__, file=sys.stderr); return 2
@@ -290,6 +417,12 @@ def main(argv):
             line = {'ts': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), 'action': 'config', 'arg': 'reload'}
             with open(os.path.join(data, 'app.jsonl'), 'a', encoding='utf-8') as f:
                 f.write(json.dumps(line) + '\n')
+        return code
+    if argv[:1] == ['trust']:
+        if len(argv) != 2 or not argv[1].strip():
+            print(__doc__, file=sys.stderr); return 2
+        code, msg = trust(data_dir(), os.path.expanduser('~'), argv[1])
+        print(msg, file=sys.stdout if code == 0 else sys.stderr)
         return code
     if argv[:1] == ['reader']:
         if len(argv) < 2:

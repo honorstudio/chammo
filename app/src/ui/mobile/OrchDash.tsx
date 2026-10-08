@@ -1,11 +1,16 @@
 // 바닥 — 지금 참모의 대시보드(시안 A1·v3 T): 머리줄(이름·컨텍스트·예약 버튼·사용량) · 시킨 일 접는 한 줄 · 주고받은 파일 카드(화면 대부분)
 import { useEffect, useMemo, useState } from 'react';
-import { readFileText, readShowLog, readUsage } from '../../data/web';
+import { readAccounts, readFileText, readLoad, readShowLog, readUsage } from '../../data/web';
+import { accountHead, headUsage, readPhoneAccounts } from '../../domain/phoneAccounts';
+import { AccountSheet } from './AccountSheet';
+import { LoadSheet } from './LoadSheet';
+import { PhoneLoginCard } from './PhoneLogin';
+import { loadChip, readPhoneLoad } from '../../domain/phoneLoad';
 import { starterLists } from '../../domain/starterLists';
 import type { Ctx } from '../../domain/ctx';
 import { dashFiles, type DashFile } from '../../domain/dashboard';
 import { textHead, webParts } from '../../domain/phoneFile';
-import { foldSummary, heldIds, orchTasks, phoneName, usageText } from '../../domain/mobile';
+import { foldSummary, heldIds, orchTasks, phoneName } from '../../domain/mobile';
 import type { Session } from '../../domain/session';
 import type { TaskCard, TaskEvent } from '../../domain/tasks';
 import type { ChatItem } from '../../domain/chat';
@@ -19,8 +24,11 @@ import type { Push } from './usePush';
 import { HomeAppLink } from './HomeAppLink';
 import { useBlobUrl } from './useBlobUrl';
 import { MAvatar } from './MAvatar';
+import { ProfileSheet } from './ProfileSheet';
+import { usePendingNicks } from './pendingNicks';
 import { useMemoPoll } from './usePoll';
 import { remember, remembered } from './memo';
+import { Notice } from './Notice';
 
 const FOLD_KEY = 'm.taskFold';
 const loadFold = () => { try { return localStorage.getItem(FOLD_KEY) === 'open'; } catch { return false; } };
@@ -83,6 +91,18 @@ export function OrchDash({ orch, orchs, asking, sessions, ctx, items, events, ro
   // 화면을 오가도 마지막 값을 바로 — 뒤에서 새로 받는다(ui/mobile/memo). 파일 칸은 한 번도 못 받았을 때만 뼈대
   const [showLog, showLoaded] = useMemoPoll('shows', readShowLog, 5000, '');
   const [usage] = useMemoPoll('usage', readUsage, 30_000, '{}');
+  // 계정 칸(이름·사용량) — 머리줄 계정 이름, 누르면 계정 시트. 바꾼 직후엔 맥 답을 먼저 보이고 다음 받기에 맞춘다
+  const [acctText] = useMemoPoll('accounts', () => readAccounts(), 30_000, '');
+  const [acctNow, setAcctNow] = useState<string | null>(null);
+  useEffect(() => { setAcctNow(null); }, [acctText]);
+  const acct = acctNow ?? acctText;
+  const [acctOpen, setAcctOpen] = useState(false);
+  // 맥 부하 — 머리줄 칩(점 + 1분 부하), 누르면 시트. 앱이 10초마다 적으니 15초마다
+  const [loadText] = useMemoPoll('load', () => readLoad(), 15_000, '');
+  const [loadNow, setLoadNow] = useState<string | null>(null);
+  useEffect(() => { setLoadNow(null); }, [loadText]);
+  const [loadOpen, setLoadOpen] = useState(false);
+  const chip = loadChip(readPhoneLoad(loadNow ?? loadText));
   const [open, setOpen] = useState(loadFold);
   const [view, setView] = useState<DashFile | null>(null);
   const now = Date.now();
@@ -95,15 +115,21 @@ export function OrchDash({ orch, orchs, asking, sessions, ctx, items, events, ro
   const c = orch.sessionId ? ctx[orch.sessionId] : undefined;
   const sessionCtx = (target: string) => { const s = sessions.find((x) => x.id === target || x.name === target); return s?.sessionId ? ctx[s.sessionId]?.used : undefined; };
   const toggle = () => { setOpen(!open); saveFold(!open); };
-  const usageLine = usageText(usage, now);
+  const acctView = readPhoneAccounts(acct);
+  const usageLine = headUsage(acctView, usage, now);
+  const head = accountHead(acctView);
   const [first, ...rest] = files;
+  const [profile, setProfile] = useState(false); // 머리 아바타 → 프로필 창(이름 바꾸기)
+  const title = usePendingNicks(orchs).nameOf(orch);
 
   return (
     <div className="m-dash">
       <header className="m-dash-head">
         <div className="m-dash-row">
-          <MAvatar orch={orch} orchs={orchs} size={44} asking={asking} />
-          <div className="m-dash-title">{phoneName(orch.name, orchs)}</div>
+          <button type="button" className="m-dash-av" onClick={() => setProfile(true)} aria-label={`${title} 프로필`} title="프로필">
+            <MAvatar orch={orch} orchs={orchs} size={44} asking={asking} />
+          </button>
+          <div className="m-dash-title">{title}</div>
           {push.can !== 'unsupported' && (
             <button type="button" className={push.on ? 'm-rt-btn m-ico m-bell m-on' : 'm-rt-btn m-ico m-bell'} disabled={push.busy} onClick={bell}
               aria-label={push.on ? '폰 알림 켜짐 — 끄기' : '폰 알림 꺼짐 — 켜기'} aria-pressed={push.on} title={push.on ? '폰 알림 켜짐' : '폰 알림 꺼짐'}>
@@ -118,12 +144,26 @@ export function OrchDash({ orch, orchs, asking, sessions, ctx, items, events, ro
           </button>
         </div>
         <div className="m-dash-row m-muted m-sm">
-          <span>대시보드{c ? ` · 컨텍스트 ${Math.round(c.used)}%` : ''}</span>
-          {usageLine && <span className="m-usage">{usageLine}</span>}
+          <span className="m-dash-sub">대시보드{c ? ` · 컨텍스트 ${Math.round(c.used)}%` : ''}</span>
+          {chip && (
+            <button type="button" className={`m-load-chip ${chip.cls}`} onClick={() => setLoadOpen(true)} aria-label={`${chip.aria} — 부하 보기`} title="맥 부하">
+              <span className="m-load-pill"><span className="m-load-dot" aria-hidden="true" />{chip.text}</span>
+            </button>
+          )}
+          {(usageLine || head) && (
+            <button type="button" className="m-usage m-acct-head" onClick={() => setAcctOpen(true)} aria-label={`계정${head ? ` ${head}` : ''}${usageLine ? ` · ${usageLine}` : ''} — 계정 보기`}>
+              {head && <b>{head}</b>}{head && usageLine && <span aria-hidden="true">·</span>}{usageLine && <span>{usageLine}</span>}
+            </button>
+          )}
         </div>
       </header>
-      {(pushHint || push.error) && <div className="m-note-line" role="status" onClick={() => { setPushHint(null); push.setError(null); }}>{push.error ?? pushHint}</div>}
-      {pushHint && push.can === 'need-home' && <HomeAppLink />}
+      <PhoneLoginCard />
+      {/* 알림 종 안내·오류 — 가운데 알림 모달. 홈 화면 앱 안내는 연결 버튼이 붙어 사람이 닫을 때까지 */}
+      {(pushHint || push.error) && (
+        <Notice text={push.error ?? pushHint ?? ''} error={!!push.error} onClose={() => { setPushHint(null); push.setError(null); }}>
+          {!push.error && push.can === 'need-home' && <HomeAppLink />}
+        </Notice>
+      )}
       {askOff && (
         <div className="m-confirm" role="alertdialog" aria-label="폰 알림 끄기 확인">
           <div>폰 알림을 끌까요? 참모가 물어도 폰에 안 와요.</div>
@@ -191,6 +231,9 @@ export function OrchDash({ orch, orchs, asking, sessions, ctx, items, events, ro
       {first && <FileCard f={first} big who={who(first.by)} onOpen={() => setView(first)} />}
       {rest.length > 0 && <div className="m-files">{rest.map((f) => <FileCard key={`${f.path}-${f.ts}`} f={f} who={who(f.by)} onOpen={() => setView(f)} />)}</div>}
       {allFiles.length > fileMax && <button type="button" className="m-btn m-more" onClick={() => setFileMax(fileMax + FILES_STEP)}>더 보기 · {allFiles.length - fileMax}개 남음</button>}
+      {acctOpen && <AccountSheet text={acct} onChanged={setAcctNow} onClose={() => setAcctOpen(false)} />}
+      {loadOpen && <LoadSheet text={loadNow ?? loadText} onChanged={setLoadNow} onClose={() => setLoadOpen(false)} />}
+      {profile && <ProfileSheet orch={orch} orchs={orchs} onClose={() => setProfile(false)} />}
       {peek && <SessionPeek s={peek} lives={lives} onClose={() => setPeek(null)} />}
       {view && <FileView path={view.path} title={baseName(view.path)} at={view.at} orch={orch.id} onClose={() => setView(null)} />}
     </div>

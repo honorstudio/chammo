@@ -1,11 +1,12 @@
 // 폰 화면 판단 — 예약 담당 참모, 세션 목록에 붙은 컨텍스트, 그림 붙여 보내기 글. 화면·통신 없음
+import { tr } from '../i18n';
 import { askView, summarizeTranscript } from './activity';
 import { chatBusy, splitPaths, type ChatItem } from './chat';
 import { parseCtx, type Ctx } from './ctx';
 import { dropText } from './drop';
 import { findTarget } from './inbox';
 import type { Session } from './session';
-import { displayName, shownName } from './orchLabel';
+import { displayName, shownName, splitOrchName, withNick } from './orchLabel';
 import { groupByProject, orchestratorLike } from './session';
 import { homeRows, resumedOrch, type HomeRow } from './orchHome';
 import { heldBy } from './spaceNav';
@@ -100,7 +101,8 @@ export function orchAsk(items: ChatItem[], state: Session['state']): { ts: strin
   return { ts: last.ts, ...askView(last.text) };
 }
 
-export type Waiting = { orch: string; name: string; kind: 'ask' | 'blocked' | 'decide'; ts: string; q: string; lead?: string };
+/** taskId = decide 의 작업 id — 폰에서 답하면 그 일에 answer 를 남겨 카드가 빠진다(/api/task-answer) */
+export type Waiting = { orch: string; name: string; kind: 'ask' | 'blocked' | 'decide'; ts: string; q: string; lead?: string; taskId?: string };
 
 /** 사용자 답을 기다리는 것 — 참모 답 끝 질문(asks: 참모 id → orchAsk) · 확인창·선택지에서 멈춤 · scripts/task ask(답 받을 참모 = to). 최근 위.
  *  하위 세션 물음은 참모가 대신 답하니 넣지 않는다(시안 v3 전제) */
@@ -116,7 +118,7 @@ export function waitingList(orchs: Session[], asks: Record<string, { ts: string;
   for (const e of last.values()) {
     if (e.type !== 'ask' || !e.note) continue;
     const o = findTarget(orchs, e.to);
-    if (o) out.push({ orch: o.id, name: o.name, kind: 'decide', ts: e.ts, q: e.note });
+    if (o) out.push({ orch: o.id, name: o.name, kind: 'decide', ts: e.ts, q: e.note, taskId: e.task });
   }
   return out.sort((x, y) => (x.ts < y.ts ? 1 : x.ts > y.ts ? -1 : 0));
 }
@@ -214,6 +216,20 @@ export function phoneName(name: string, orchs: { name: string }[]): string {
   return orchestratorLike(name) ? displayName(name, undefined, orchs) : shownName(name);
 }
 
+/** 폰에서 바꾼 이름(id → 별명, 빈 글 = 처음 이름) — 맥이 쉬는 때 /rename 으로 진짜 이름에 실을 때까지 폰엔 바로 새 이름 */
+export function pendingName(s: { id: string; name: string }, nicks: Record<string, string>, orchs: { name: string }[]): string {
+  return s.id in nicks ? phoneName(withNick(s.name, nicks[s.id] ?? ''), orchs) : phoneName(s.name, orchs);
+}
+
+/** 진짜 이름에 실린 것은 뺀다 — 뺄 게 없으면 같은 객체 */
+export function prunePendingNicks(nicks: Record<string, string>, orchs: { id: string; name: string }[]): Record<string, string> {
+  const done = orchs.filter((o) => o.id in nicks && (splitOrchName(o.name).nick ?? '') === nicks[o.id]);
+  if (!done.length) return nicks;
+  const n = { ...nicks };
+  for (const o of done) delete n[o.id];
+  return n;
+}
+
 /** 폰 참모 깨우기 목록 — /api/stopped(HQ 의 꺼진 대화) 중 참모 이름인 것, 살아 있는 대화는 빼고, 마지막으로 일한 때 최근 순.
  *  하던 일 = /api/tails 꼬리(데스크톱 오케스트레이터 홈 homeRows 와 같은 셈) */
 export function offOrchRows(stoppedJson: string, env: { devRoot: string; extraProjects: string[]; hqDir: string }, live: Session[], tails: Record<string, string>): HomeRow[] {
@@ -234,6 +250,61 @@ export function waitAnswer(w: Waiting, answer: string): string | null {
   const a = answer.trim();
   if (!a || w.kind === 'blocked') return null;
   return w.kind === 'decide' ? `[결정 대기함] ${w.q}\n→ ${a}` : a;
+}
+
+/** 카드 열쇠 — 결정은 일 id, 그 밖은 참모·종류·시각(시트를 다시 열어도 같은 카드로 알아본다) */
+export const waitKey = (w: Waiting) => (w.kind === 'decide' && w.taskId ? `task:${w.taskId}` : `${w.kind}:${w.orch}:${w.ts}`);
+
+/** 폰에서 답한 카드(열쇠 → 답·보낸 때). fail = 결정 기록이 실패해 되돌림(카드가 다시 보이고 그 답을 채워 둔다) */
+export type WaitSent = Record<string, { a: string; at: number; fail?: boolean }>;
+
+/** 답한 결정 카드는 맥 기록(answer)이 따라올 때까지 숨긴다. 참모 물음 카드는 남겨 '보냈어요'(참모가 일을 시작하면 빠진다) */
+export const shownWaiting = (list: Waiting[], sent: WaitSent) => list.filter((w) => w.kind !== 'decide' || !sent[waitKey(w)] || !!sent[waitKey(w)]!.fail);
+
+/** 목록에서 빠진 카드의 보낸 표시는 지운다 — 남길 게 다 남으면 같은 객체 */
+export function pruneWaitSent(sent: WaitSent, list: Waiting[]): WaitSent {
+  const keys = new Set(list.map(waitKey));
+  const next = Object.fromEntries(Object.entries(sent).filter(([k]) => keys.has(k)));
+  return Object.keys(next).length === Object.keys(sent).length ? sent : next;
+}
+
+/** 같은 카드에 같은 답을 2분 안에 또 보내나 — 막는다(2026-10-06 사용자 ㄱㄱ 세 번) */
+export const WAIT_DUP_MS = 120_000;
+export const dupAnswer = (sent: WaitSent, key: string, answer: string, now: number) => {
+  const p = sent[key];
+  return !!p && !p.fail && p.a === answer.trim() && now - p.at <= WAIT_DUP_MS;
+};
+
+/** 결정 답 기록 실패 — not waiting(이미 답함·다른 데서 답함)·too soon(방금 보냄)은 숨긴 채 글을 안 보낸다, 나머지(끊김·502)는 되돌려 다시 */
+export function answerFail(message: string): 'gone' | 'soon' | 'retry' {
+  const m = message.trim();
+  return m === 'not waiting' ? 'gone' : m === 'too soon' ? 'soon' : 'retry';
+}
+
+/** 이미 켜진 참모를 눌렀을 때(서버 already) — 오류가 아니다, 그 참모로 옮긴다 */
+export const wakeAlreadyText = () => tr('이미 켜져 있어요 — 그리로 옮길게요', 'Already running — taking you there');
+/** 켜기·만들기 실패 — 서버 낱말(mobile_http.rs 의 Resp::text)마다 사람 말로, 모르는 것은 원문 없이 한 줄.
+ *  refresh = 꺼진 목록이 낡았다(이미 켜졌거나 지워짐) → 목록을 바로 다시 받는다 */
+export function wakeFailText(message: string, mode: 'wake' | 'make'): { text: string; refresh: boolean } {
+  switch (message.trim()) {
+    case 'no such stopped assistant':
+      return { text: tr('그 대화는 이미 켜졌거나 지워졌어요 — 목록을 새로 고쳤어요', 'That one is already running or was removed — list refreshed'), refresh: true };
+    case 'too soon':
+      return { text: tr('방금 눌렀어요 — 잠깐 뒤에 다시 해 주세요', 'Just tried — give it a moment'), refresh: false };
+    case 'mac side took too long':
+      return { text: tr('맥이 바빠서 답이 늦어요 — 잠시 뒤 목록을 봐 주세요', 'The Mac is busy — check the list in a moment'), refresh: true };
+    case 'name taken':
+      return { text: tr('이미 있는 이름이에요', 'That name is taken'), refresh: false };
+    case 'bad name':
+      return { text: tr('쓸 수 없는 이름이에요', "That name can't be used"), refresh: false };
+    case 'Load failed':
+    case 'Failed to fetch':
+    case 'NetworkError when attempting to fetch resource.':
+      return { text: tr('맥에 닿지 않아요 — 연결을 확인해 주세요', "Can't reach the Mac — check the connection"), refresh: false };
+  }
+  return mode === 'wake'
+    ? { text: tr('못 켰어요 — 맥에서 확인해 주세요', "Couldn't start it — check on the Mac"), refresh: true }
+    : { text: tr('못 만들었어요 — 맥에서 확인해 주세요', "Couldn't create it — check on the Mac"), refresh: false };
 }
 
 const RANK: Record<string, number> = { blocked: 0, working: 1 };

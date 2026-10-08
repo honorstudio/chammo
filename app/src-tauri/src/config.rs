@@ -12,6 +12,16 @@ pub fn home() -> String {
     crate::platform::home()
 }
 
+/// 윈도우 경로(C:\… · C:/…)만 / 로, 드라이브 글자는 대문자로. 맥 경로는 손대지 않는다 — 앱 domain/paths fwd 와 같은 규칙.
+/// 폰에 내보내는 경로용(폰은 / 기준으로 비교한다). 윈도우도 / 경로를 그대로 받는다
+pub fn fwd(p: &str) -> String {
+    let b = p.as_bytes();
+    if b.len() < 3 || !b[0].is_ascii_alphabetic() || b[1] != b':' || !matches!(b[2], b'\\' | b'/') {
+        return p.to_string();
+    }
+    format!("{}{}", (b[0] as char).to_ascii_uppercase(), p[1..].replace('\\', "/"))
+}
+
 /// `~` / `~/…` 를 홈으로 푼다. 나머지는 그대로
 pub fn expand(home: &str, p: &str) -> String {
     let p = p.trim();
@@ -318,6 +328,16 @@ pub fn write_config<R: tauri::Runtime>(app: tauri::AppHandle<R>, config: Config)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 윈도우_경로만_슬래시로_드라이브는_대문자로() {
+        // 폰 /api/env 의 hqDir 이 C:\Users\Me/.chammo/hq 로 섞여 와 폰이 참모를 0개로 봤다(2026-10-05) — 앱 domain/paths fwd 와 같은 규칙
+        assert_eq!(fwd("C:\\Users\\Me/.chammo/hq"), "C:/Users/Me/.chammo/hq");
+        assert_eq!(fwd("c:\\dev"), "C:/dev");
+        assert_eq!(fwd("/Users/a/odd\\name"), "/Users/a/odd\\name");
+        assert_eq!(fwd("~/x"), "~/x");
+        assert_eq!(fwd(""), "");
+    }
 
     #[test]
     fn 진짜_데이터_폴더는_홈의_chammo_와_옛_이름만() {

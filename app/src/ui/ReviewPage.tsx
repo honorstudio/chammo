@@ -1,9 +1,10 @@
 // 사이드바 '리뷰' — 왼쪽 PR 목록, 오른쪽 한 건(요약 3줄·걸린 조건·파일 묶음·CI·diff 접기·머지/수정 요청/나중에).
 // 오늘 머지된 건 되돌리기(revert PR 만들기만). 시안 docs/design-drafts/review-merge A안
-import { IconRefresh } from './Icons';
-import { useEffect, useRef, useState } from 'react';
+// 리뷰 칸이 받은 폭이 모자라면(채팅 패널을 연 채팅 뷰) 목록·상세를 한 칸씩 — 상세 왼쪽 위 뒤로 아이콘으로 목록에
+import { IconBack, IconChevron, IconRefresh } from './Icons';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { openTarget, prDiff } from '../data/tauri';
-import { ciState, FILE_KIND_LABEL, GATE_LABEL, groupFiles, type CiState, type OpenPr } from '../domain/review';
+import { ciState, FILE_KIND_LABEL, GATE_LABEL, groupFiles, reviewPanes, splitPath, type CiState, type OpenPr } from '../domain/review';
 import { parseDiff, type DiffFile, type MergedPr } from '../domain/reviewSource';
 import { pickSession, sessionOf, splitOpen, summarize, type Reviewed } from '../domain/reviewSummary';
 import type { Session } from '../domain/session';
@@ -53,10 +54,16 @@ export function ReviewPage({ data, sessions, stopped, taskEvents, selectedKey, o
   }, [selectedKey]);
   const list = groups[filter];
   const cur = [...data.open, ...data.merged].find((x) => x.key === selectedKey) ?? list[0];
+  // 한 칸 모드에서 상세를 열었나 — 밖(작업 패널)에서 PR 을 골라 들어오면 상세부터
+  const [detailOpen, setDetailOpen] = useState(!!selectedKey);
+  useEffect(() => { if (selectedKey) setDetailOpen(true); }, [selectedKey]);
+  const box = useRef<HTMLDivElement>(null);
+  const width = useWidth(box);
+  const panes = reviewPanes(width, detailOpen && !!cur);
 
   const projectOf = (t: string) => sessions.find((s) => s.id === t || s.name === t)?.project ?? stopped.find((s) => s.name === t)?.project;
   return (
-    <div className="rv">
+    <div className={`rv panes-${panes}`} ref={box}>
       <div className="rv-list">
         <div className="rv-head">
           <b>{tr('리뷰', 'Review')}</b>
@@ -66,13 +73,13 @@ export function ReviewPage({ data, sessions, stopped, taskEvents, selectedKey, o
         {data.error && <div className="rv-err">{tr('GitHub 읽기 실패', 'Failed to read GitHub')} — {data.error}</div>}
         <div className="rv-chips">
           {FILTERS.map((k) => (
-            <button key={k} className={`chip ${filter === k ? 'on' : ''}`} onClick={() => setFilter(k)}>{FILTER_LABEL()[k]} {groups[k].length}</button>
+            <button key={k} className={`chip ${filter === k ? 'on' : ''} ${groups[k].length ? '' : 'zero'}`} onClick={() => setFilter(k)}>{FILTER_LABEL()[k]}<span className="n">{groups[k].length}</span></button>
           ))}
         </div>
         <div className="rv-rows">
           {list.length === 0 && <div className="tempty">{filter === 'confirm' ? tr('직접 볼 PR 이 없어', 'No PRs for you to check') : tr('없어', 'None')}</div>}
           {list.map((x) => (
-            <button key={x.key} className={`rv-row ${cur?.key === x.key ? 'on' : ''}`} onClick={() => onSelectKey(x.key)}>
+            <button key={x.key} className={`rv-row ${cur?.key === x.key ? 'on' : ''}`} onClick={() => { onSelectKey(x.key); setDetailOpen(true); }}>
               <span className="rv-l1"><b>{x.folder}</b> #{x.number}<span className="grow" />{'mergedAt' in x ? hm(x.mergedAt) : ago(x.updatedAt, now)}</span>
               <span className="rv-ti">{x.title}</span>
               {'gates' in x && (
@@ -88,6 +95,12 @@ export function ReviewPage({ data, sessions, stopped, taskEvents, selectedKey, o
         </div>
       </div>
       <div className="rv-detail">
+        {panes === 'detail' && cur && (
+          <div className="rv-dbar">
+            <button className="ib rv-back" onClick={() => setDetailOpen(false)} aria-label={tr('목록으로', 'Back to list')} title={tr('목록으로', 'Back to list')}><IconBack /></button>
+            <span>{FILTER_LABEL()[filter]}</span>
+          </div>
+        )}
         {!cur && <div className="empty"><b>{tr('고를 PR 이 없어', 'No PR to pick')}</b></div>}
         {cur && 'gates' in cur && (
           <OpenDetail key={cur.key} pr={cur} data={data} now={now} onOpenSession={onOpenSession}
@@ -100,7 +113,27 @@ export function ReviewPage({ data, sessions, stopped, taskEvents, selectedKey, o
   );
 }
 
-const Ci = ({ state }: { state: CiState }) => <span className={`ci ${state}`}>{CI_LABEL()[state]}</span>;
+// 상태 클래스는 st- 접두 — 앱 전역에 .running(대시보드 칸: 240px 세로 flex·옅은 파란 판)이 있어 덮였다(2026-10-06 '파란 상자 가운데 주황 점')
+const Ci = ({ state }: { state: CiState }) => <span className={`ci st-${state}`}>{CI_LABEL()[state]}</span>;
+
+/** 리뷰 칸이 실제로 받은 폭 — 창 폭이 아니라(채팅 패널·사이드바가 가져간 만큼 빠진 값) */
+function useWidth(ref: RefObject<HTMLElement | null>) {
+  const [w, setW] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setW(Math.round(el.clientWidth)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+  return w;
+}
+
+/** 폴더는 흐리게·줄여도 되고, 파일 이름은 끝까지 */
+const PathText = ({ path }: { path: string }) => {
+  const { dir, name } = splitPath(path);
+  return <span className="rv-path" title={path}>{dir && <span className="dir">{dir}</span>}<span className="name">{name}</span></span>;
+};
 
 /** 되돌리기 어려운 버튼은 두 번 누르기 — 첫 번째는 3초 동안 '한 번 더' 로 바뀐다(메모 삭제와 같은 방식) */
 function useArm(): [boolean, () => boolean] {
@@ -152,26 +185,28 @@ function OpenDetail({ pr, data, now, session, named, onOpenSession }: { pr: Revi
         {pr.gates.length ? pr.gates.map((g) => <span key={g.kind} className={`gate ${g.kind}`}>{GATE_LABEL[g.kind]} — {g.why}</span>) : <span className="dim">{tr(`걸린 조건 없음 — ${assistant()}가 넣어도 되는 PR`, `No conditions hit — ${assistant()} can merge this`)}</span>}
       </div>
 
-      <div className="rv-cols">
-        <div>
-          <div className="rv-h">{tr('바뀐 파일', 'Changed files')} {pr.files.length}</div>
-          <div className="rv-files">
-            {groupFiles(pr.files).map((g) => (
-              <details key={g.kind} open={g.kind === 'code' || g.kind === 'db'}>
-                <summary><b>{FILE_KIND_LABEL[g.kind]} {g.files.length}</b><span className="grow" /><span className="plus">+{n(g.additions)}</span> <span className="minus">−{n(g.deletions)}</span></summary>
-                {g.files.map((f) => <div key={f.path} className="rv-file"><span className="p">{f.path}</span><span className="plus">+{f.additions}</span> <span className="minus">−{f.deletions}</span></div>)}
-              </details>
-            ))}
-          </div>
+      <div>
+        <div className="rv-h">{tr('CI · 검사', 'CI · checks')}</div>
+        <div className="rv-checks">
+          {pr.checks.length === 0 && <div className="rv-check-none dim">{tr('검사 기록 없음', 'No checks')}</div>}
+          {pr.checks.map((c, i) => (
+            <button key={i} className={`rv-check st-${c.state}`} disabled={!c.url} onClick={() => c.url && void openTarget('url', c.url)} title={c.url ? tr('GitHub에서 로그 보기', 'Open log on GitHub') : undefined}>
+              <span className="rv-ck-nm">{c.name}</span>
+              <span className="rv-ck-st">{c.state === 'pass' ? tr('통과', 'Passed') : c.state === 'fail' ? tr('실패', 'Failed') : c.state === 'skip' ? tr('건너뜀', 'Skipped') : tr('도는 중', 'Running')}</span>
+            </button>
+          ))}
         </div>
-        <div>
-          <div className="rv-h">{tr('CI · 검사', 'CI · checks')}</div>
-          <div className="rv-checks">
-            {pr.checks.length === 0 && <span className="dim">{tr('검사 기록 없음', 'No checks')}</span>}
-            {pr.checks.map((c, i) => (
-              <button key={i} className={`rv-check ${c.state}`} onClick={() => c.url && void openTarget('url', c.url)}>{c.state === 'pass' ? tr('통과', 'Passed') : c.state === 'fail' ? tr('실패', 'Failed') : c.state === 'skip' ? tr('건너뜀', 'Skipped') : tr('도는 중', 'Running')} · {c.name}</button>
-            ))}
-          </div>
+      </div>
+
+      <div>
+        <div className="rv-h">{tr('바뀐 파일', 'Changed files')} {pr.files.length}</div>
+        <div className="rv-files">
+          {groupFiles(pr.files).map((g) => (
+            <details key={g.kind} open={g.kind === 'code' || g.kind === 'db'}>
+              <summary><b>{FILE_KIND_LABEL[g.kind]} {g.files.length}</b><span className="grow" /><span className="plus">+{n(g.additions)}</span> <span className="minus">−{n(g.deletions)}</span></summary>
+              {g.files.map((f) => <div key={f.path} className="rv-file"><PathText path={f.path} /><span className="num"><span className="plus">+{f.additions}</span> <span className="minus">−{f.deletions}</span></span></div>)}
+            </details>
+          ))}
         </div>
       </div>
 
@@ -222,7 +257,7 @@ function Diff({ pr }: { pr: OpenPr }) {
       {!files && !err && <div className="dim">{tr('읽는 중…', 'Reading…')}</div>}
       {files?.map((f) => (
         <div key={f.path} className="rv-diff">
-          <button className="rv-dh" onClick={() => toggle(f.path)}>{openSet.has(f.path) ? tr('접기', 'Hide') : tr('펼치기', 'Show')} · <b>{f.path}</b></button>
+          <button className={`rv-dh ${openSet.has(f.path) ? 'open' : ''}`} onClick={() => toggle(f.path)} aria-expanded={openSet.has(f.path)} aria-label={`${openSet.has(f.path) ? tr('접기', 'Hide') : tr('펼치기', 'Show')} ${f.path}`}><IconChevron /><PathText path={f.path} /></button>
           {openSet.has(f.path) && (
             <pre>{f.lines.map((l, i) => <span key={i} className={l.startsWith('@@') ? 'h' : l.startsWith('+') ? 'a' : l.startsWith('-') ? 'd' : ''}>{l || ' '}</span>)}{f.cut > 0 && <span className="h">{tr(`… ${f.cut}줄 더 — GitHub에서`, `… ${f.cut} more lines — see GitHub`)}</span>}</pre>
           )}

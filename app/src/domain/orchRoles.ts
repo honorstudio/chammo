@@ -4,6 +4,7 @@
 import { tr } from '../i18n';
 import { findTarget } from './inbox';
 import { splitOrchName } from './orchLabel';
+import { pathKey } from './paths';
 import type { Session } from './session';
 import type { TaskEvent } from './tasks';
 
@@ -62,7 +63,7 @@ const ownerBase = (o: { id: string; name?: string } | undefined, known: { id: st
  * known = 켜진·꺼진 참모(id·이름). 대상이 참모 세션이면(참모끼리 넘김) 빼고, 프로젝트를 모르면 버린다(지어내지 않음)
  */
 export function inferRoles(events: TaskEvent[], known: { id: string; name: string }[], sessions: Session[], now: number, opt: { roles?: RoleMap; hq?: string } = {}): Record<string, string[]> {
-  const hq = opt.hq?.replace(/\/+$/, '');
+  const hq = opt.hq ? pathKey(opt.hq) : undefined;
   const own = ownersOf(events);
   const orchIds = new Set(known.map((k) => k.id));
   const orchBases = new Set(known.map((k) => baseOf(k.name)));
@@ -77,7 +78,7 @@ export function inferRoles(events: TaskEvent[], known: { id: string; name: strin
     if (born !== undefined && at < born) continue; // 이 번호를 쓰던 옛 참모의 일
     const t = findTarget(sessions, e.target);
     if ((t && orchIds.has(t.id)) || orchBases.has(baseOf(e.target))) continue;
-    if (hq && t && t.cwd.replace(/\/+$/, '') === hq) continue; // HQ 도우미에게 보낸 일 — 프로젝트 일이 아니다
+    if (hq && t && pathKey(t.cwd) === hq) continue; // HQ 도우미에게 보낸 일 — 프로젝트 일이 아니다
     const project = e.project || (t && !t.loose ? t.project : undefined);
     if (!project) continue;
     const per = tally.get(who) ?? new Map<string, { n: number; at: number }>();

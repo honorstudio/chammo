@@ -33,9 +33,14 @@ const rows = (raw: string, map: RepoMap) =>
     .filter(({ r, repo }) => typeof r.number === 'number' && map[repo.toLowerCase()] !== undefined)
     .map(({ r, repo }) => ({ r, repo, folder: map[repo.toLowerCase()]!, key: `${repo}#${r.number}` }));
 
-/** gh search prs --state open — dev 아래 저장소만. 상세는 updatedAt 이 바뀐 것만 다시 읽는다 */
+/** gh search prs --state open — dev 아래 저장소만. 상세는 needsView 인 것만 다시 읽는다 */
 export const parseHits = (raw: string, map: RepoMap): Hit[] =>
   rows(raw, map).map(({ r, repo, folder, key }) => ({ key, repo, folder, number: r.number!, updatedAt: r.updatedAt ?? '' }));
+
+/** 상세(gh pr view)를 다시 읽을지 — updatedAt 이 바뀌었거나, 도는 중인 검사가 있을 때.
+ *  검사가 끝나도 PR updatedAt 은 안 바뀐다(#483 실측: updatedAt 08:45:05, CI 끝 08:47:37) — updatedAt 만 보면 'CI 도는 중'에 굳는다 */
+export const needsView = (cached: OpenPr | undefined, hit: Hit): boolean =>
+  !cached || cached.updatedAt !== hit.updatedAt || cached.checks.some((c) => c.state === 'running');
 
 /** gh search prs --merged — 검색 결과엔 mergedAt 이 없어 closedAt(머지 = 닫힘)을 쓴다. 최근 위 */
 export const parseMerged = (raw: string, map: RepoMap): MergedPr[] =>

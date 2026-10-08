@@ -42,7 +42,7 @@ export function MobileSection({ title }: { title: string }) {
     void f().then(setSt, (e: unknown) => setErr(String(e))).finally(() => setBusy(false));
   };
   const phones = phoneGroups(st?.devices ?? []);
-  const kindWords = { safari: tr('사파리', 'Safari'), browser: tr('브라우저', 'Browser'), home: tr('홈 화면 앱', 'Home Screen app') };
+  const kindWords = { safari: tr('사파리', 'Safari'), browser: tr('브라우저', 'Browser'), home: tr('홈 화면 앱', 'Home Screen app'), peer: tr('다른 기기 참모', 'Chammo on another device') };
   const newQr = () => {
     setErr(null);
     void mobileApi.pairNew().then((q) => { setQr(q); setNow(Date.now()); }, (e: unknown) => setErr(String(e)));

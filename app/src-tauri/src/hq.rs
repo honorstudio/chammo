@@ -15,6 +15,8 @@ pub struct TemplateFile {
 pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "CLAUDE.md", body: include_str!("../../hq-template/CLAUDE.md"), exec: false },
     TemplateFile { path: "CHAMMO.md", body: include_str!("../../hq-template/CHAMMO.md"), exec: false },
+    // 한글 절반 — CHAMMO.md 끝의 @CHAMMO.ko.md 로 이어 읽는다. 개인 HQ(이 저장소 CLAUDE.md)는 이 파일만 import 해서 영문을 안 싣는다
+    TemplateFile { path: "CHAMMO.ko.md", body: include_str!("../../hq-template/CHAMMO.ko.md"), exec: false },
     TemplateFile { path: ".claude/settings.json", body: include_str!("../../hq-template/.claude/settings.json"), exec: false },
     TemplateFile { path: "scripts/task", body: include_str!("../../hq-template/scripts/task"), exec: true },
     TemplateFile { path: "scripts/say", body: include_str!("../../hq-template/scripts/say"), exec: true },
@@ -27,6 +29,14 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "scripts/statusline", body: include_str!("../../hq-template/scripts/statusline"), exec: true },
     TemplateFile { path: "scripts/routine", body: include_str!("../../hq-template/scripts/routine"), exec: true },
     TemplateFile { path: "scripts/choice", body: include_str!("../../hq-template/scripts/choice"), exec: true },
+    TemplateFile { path: "scripts/skill-hint", body: include_str!("../../hq-template/scripts/skill-hint"), exec: true },
+    // scripts/task 가 import 하는 모듈(교훈 → 프로젝트 스킬) — 직접 실행하지 않는다
+    TemplateFile { path: "scripts/lesson_skill.py", body: include_str!("../../hq-template/scripts/lesson_skill.py"), exec: false },
+    TemplateFile { path: ".claude/skills/hq-browser/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-browser/SKILL.md"), exec: false },
+    TemplateFile { path: ".claude/skills/hq-folders/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-folders/SKILL.md"), exec: false },
+    TemplateFile { path: ".claude/skills/hq-routine/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-routine/SKILL.md"), exec: false },
+    TemplateFile { path: ".claude/skills/hq-app/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-app/SKILL.md"), exec: false },
+    TemplateFile { path: ".claude/skills/hq-login/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-login/SKILL.md"), exec: false },
 ];
 
 #[derive(Serialize, Debug, Default, PartialEq)]
@@ -64,7 +74,7 @@ pub fn install(dir: &Path, overwrite: bool) -> std::io::Result<HqReport> {
 
 /// 깔 글 — 윈도우면 안내문(CHAMMO.md)의 맥 단축키 표기(⌘J)를 윈도우 키로. 참모가 그대로 읽고 말한다
 fn body_for(f: &TemplateFile) -> String {
-    if cfg!(windows) && f.path == "CHAMMO.md" { crate::platform::win_keys(f.body) } else { f.body.to_string() }
+    if cfg!(windows) && (f.path.starts_with("CHAMMO") || f.path.starts_with(".claude/skills/hq-")) { crate::platform::win_keys(f.body) } else { f.body.to_string() }
 }
 
 /// HQ 세션의 도구가 앱과 같은 데이터 폴더를 쓰게 .claude/settings.json 의 env.CHAMMO_HOME 에 적는다.
@@ -113,11 +123,11 @@ pub fn pin_data_dir(dir: &Path, data_dir: &str) -> std::io::Result<()> {
 /// 예전 템플릿이 통째로 CLAUDE.md 였던 HQ — 첫 줄로 알아본다(사용자가 안 고쳤으면 새 짧은 파일로 바꿔도 된다)
 const OLD_TEMPLATE_HEAD: &str = "# Chammo HQ — chief-of-staff session";
 
-/// 이미 깐 HQ 도 새 기능을 받게 — 앱이 켤 때마다. 앱 몫(CHAMMO.md·scripts/*)은 새로 쓰고,
+/// 이미 깐 HQ 도 새 기능을 받게 — 앱이 켤 때마다. 앱 몫(CHAMMO.md·CHAMMO.ko.md·scripts/*·.claude/skills/hq-*)은 새로 쓰고,
 /// 사용자 몫(CLAUDE.md)은 `@CHAMMO.md` 한 줄만 보장한다(옛 템플릿 그대로면 새 짧은 파일로). 아이맥 HQ 가 새 스크립트를 못 받았다
 pub fn refresh(dir: &Path) -> std::io::Result<()> {
     for f in TEMPLATE {
-        let app_owned = f.path == "CHAMMO.md" || f.path.starts_with("scripts/");
+        let app_owned = f.path.starts_with("CHAMMO") || f.path.starts_with("scripts/") || f.path.starts_with(".claude/skills/hq-");
         let dest = dir.join(f.path);
         if f.path == "CLAUDE.md" {
             let cur = std::fs::read_to_string(&dest).unwrap_or_default();
@@ -225,11 +235,21 @@ mod tests {
         std::fs::create_dir_all(d.join("scripts")).unwrap();
         std::fs::write(d.join("CLAUDE.md"), "# Chammo HQ — chief-of-staff session\n옛 내용").unwrap();
         std::fs::write(d.join("scripts/task"), "옛 스크립트").unwrap();
+        std::fs::write(d.join("CHAMMO.ko.md"), "옛 한글 안내").unwrap();
+        std::fs::create_dir_all(d.join(".claude/skills/hq-login")).unwrap();
+        std::fs::write(d.join(".claude/skills/hq-login/SKILL.md"), "옛 스킬").unwrap();
         refresh(&d).unwrap();
         let claude = std::fs::read_to_string(d.join("CLAUDE.md")).unwrap();
         assert!(claude.contains("@CHAMMO.md") && !claude.contains("옛 내용"));
-        assert!(d.join("CHAMMO.md").is_file());
+        assert!(std::fs::read_to_string(d.join("CHAMMO.md")).unwrap().contains("@CHAMMO.ko.md"));
+        // 한글 절반은 따로 — 앱 몫이라 켤 때마다 새로 쓴다(개인 HQ 가 이 파일만 import 한다)
+        assert!(std::fs::read_to_string(d.join("CHAMMO.ko.md")).unwrap().starts_with("# Chammo HQ — 참모 세션"));
         assert!(d.join("scripts/routine").is_file());
+        // 상황별 안내는 HQ 스킬 — 앱 몫이라 켤 때마다 새로 쓴다(늘 실리는 안내문을 줄이려고 뺐다)
+        assert!(std::fs::read_to_string(d.join(".claude/skills/hq-login/SKILL.md")).unwrap().starts_with("---\nname: hq-login"));
+        for n in ["hq-browser", "hq-folders", "hq-routine", "hq-app"] {
+            assert!(d.join(format!(".claude/skills/{n}/SKILL.md")).is_file(), "{n}");
+        }
         assert_ne!(std::fs::read_to_string(d.join("scripts/task")).unwrap(), "옛 스크립트");
         let _ = std::fs::remove_dir_all(&d);
     }

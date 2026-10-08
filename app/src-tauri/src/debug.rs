@@ -41,6 +41,14 @@ pub fn pick_log(text: String) -> Result<(), String> {
     append_capped(&crate::config::data_file("pick-debug.log"), &text, 200 * 1024).map_err(|e| e.to_string())
 }
 
+/// 채팅 뷰 스페이스가 바뀐 한 줄(종류만 — 화면 종류·이유, 경로·세션 번호 없음)을 <데이터 폴더>/space-trace.log 에(100KB 넘으면 앞을 버린다).
+/// 스페이스가 저절로 튀면(2026-10-06 사용자) 어느 길로 바뀌었는지 남기려고 — 늘 켜져 있다
+#[tauri::command]
+pub fn space_trace(line: String) -> Result<(), String> {
+    serde_json::from_str::<serde_json::Value>(&line).map_err(|e| format!("JSON 아님: {e}"))?;
+    append_capped(&crate::config::data_file("space-trace.log"), line.trim(), 100 * 1024).map_err(|e| e.to_string())
+}
+
 pub fn append_capped(path: &std::path::Path, text: &str, cap: usize) -> std::io::Result<()> {
     let mut cur = std::fs::read_to_string(path).unwrap_or_default();
     cur.push_str(text);

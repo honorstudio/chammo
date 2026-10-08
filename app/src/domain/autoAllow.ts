@@ -40,10 +40,11 @@ export function pickAllow(screen: string): AllowPick {
     if (isOpt(lines[i]!)) { if (i === cur) curOpt = options.length; options.push(t); } else options[options.length - 1] += ` ${t}`;
   }
   // 선택지 바로 위 "…?" 줄(Do you want to proceed?)이 창이 묻는 말 — 그 위는 도구 인자(명령·diff)라 안 본다.
-  // 그런 줄이 없는 창(computer-use·새 MCP)은 창 전체를 본다
+  // 그런 줄이 없는 창(computer-use·새 MCP)은 창 전체를 본다. 마지막 선택지 아래(Esc 안내·세션 작업 목록)는 안 본다 —
+  // 작업 이름 "카드 늘 보이게 …" 를 결제로 읽어 훅 확인 창을 30분 건너뛰었다(2026-10-05)
   let q = top - 1;
   while (q >= 0 && !lines[q]!.trim()) q--;
-  const asked = q >= 0 && /\?\s*(\(.*\))?\s*$/.test(lines[q]!) ? lines.slice(q) : lines;
+  const asked = lines.slice(q >= 0 && /\?\s*(\(.*\))?\s*$/.test(lines[q]!) ? q : 0, bottom + 1);
   if (SENSITIVE.test(asked.join('\n'))) return SENSITIVE_SKIP();
   const target = options.findIndex((o) => ALLOW.test(o) && !NOT.test(o) && !NO_FIRST.test(o));
   if (target < 0) return { skip: tr('허용 줄을 못 찾았어', "Couldn't find an allow option") };

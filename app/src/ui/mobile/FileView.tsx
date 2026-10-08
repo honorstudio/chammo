@@ -10,6 +10,7 @@ import PdfSheet from './PdfSheet';
 import HtmlSheet from './HtmlSheet';
 import { OfficeSheet, VideoSheet } from './OfficeSheet';
 import { CodeText, CsvTable, MdDoc } from './FileText';
+import { IconClose } from '../Icons';
 
 const WHY: Record<string, string> = { 'secret inside': '글 속에 키가 보여서 폰엔 안 보여 줘요 — 맥에서 열어 주세요', 'not allowed': '폰에서 열 수 없는 파일이에요', 'file too large': '너무 커서 폰에선 못 열어요 — 맥에서' };
 
@@ -36,8 +37,8 @@ function TextView({ path, data, kind, title, at, onClose }: { path: string; data
   return (
     <div className="m-view" role="dialog" aria-label={title}>
       <div className="m-picker-head">
-        <b className="m-view-title">{title}</b>
-        <button type="button" className="m-plain" onClick={onClose}>닫기</button>
+        <b className="m-view-title m-view-file">{title}</b>
+        <button type="button" className="m-rt-btn m-ico" onClick={onClose} aria-label="닫기" title="닫기"><IconClose /></button>
       </div>
       <div className="m-view-body">
         {data && blob && <img src={blob} alt={title} />}

@@ -66,14 +66,49 @@ const pathx = require('path');
 test('가상 모니터 — 앱이 적은 자리가 있고 그 도우미가 살아 있으면 거기에 크롬 창(크기는 그 화면 안)', () => {
   const d = fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'chammo-vd-'));
   const f = pathx.join(d, 'vdisplay.json');
-  assert.strictEqual(virtualDisplay(f, () => true), null, '파일 없으면 null');
+  // 화면 목록을 못 읽을 때(osascript 실패)만 자리 파일 값을 쓴다
+  const noScreens = () => null;
+  assert.strictEqual(virtualDisplay(f, () => true, noScreens), null, '파일 없으면 null');
   fsx.writeFileSync(f, JSON.stringify({ pid: 4242, bounds: [3390, 1080, 1440, 900] }));
-  assert.deepStrictEqual(virtualDisplay(f, (p) => p === 4242), { pos: [3390 + 24, 1080 + 24], size: [1394, 852] });
-  assert.strictEqual(virtualDisplay(f, () => false), null, '도우미가 죽었으면 null(보이는 창으로)');
+  assert.deepStrictEqual(virtualDisplay(f, (p) => p === 4242, noScreens), { pos: [3390 + 24, 1080 + 24], size: [1394, 852] });
+  assert.strictEqual(virtualDisplay(f, () => false, noScreens), null, '도우미가 죽었으면 null(보이는 창으로)');
   fsx.writeFileSync(f, '{깨짐');
-  assert.strictEqual(virtualDisplay(f, () => true), null);
+  assert.strictEqual(virtualDisplay(f, () => true, noScreens), null);
   fsx.writeFileSync(f, JSON.stringify({ pid: 1, bounds: [0, 0, 100, 100] }));
-  assert.strictEqual(virtualDisplay(f, () => true), null, '너무 작은 화면은 안 쓴다');
+  assert.strictEqual(virtualDisplay(f, () => true, noScreens), null, '너무 작은 화면은 안 쓴다');
+});
+
+// 2026-10-06 이 맥 실측 배치(코코아 좌표, 주 화면 왼쪽 아래 원점): LG 주 화면 · 맥북 · 'Chammo agents' 가짜 화면(크롬 좌표 -2910,956)
+const LG = [0, 0, 1920, 1080];
+const BOOK = [-1470, 124, 1470, 956];
+const FAKE = [-2910, -776, 1440, 900];
+const layout = (extra = {}) => () => ({ screens: [LG, BOOK, FAKE], names: ['LG FULL HD', 'Built-in Retina Display', 'Chammo agents'], main: LG, ...extra });
+
+test('가상 모니터 — 자리는 자리 파일 값 말고 지금 화면 목록의 Chammo agents 화면에서(크롬 좌표로)', () => {
+  const d = fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'chammo-vd-'));
+  const f = pathx.join(d, 'vdisplay.json');
+  // 2026-10-06: 자리 파일이 [0,0,1440,900] 으로 낡아 세션 크롬이 LG 화면 24,24 에 떴다
+  fsx.writeFileSync(f, JSON.stringify({ pid: 4242, bounds: [0, 0, 1440, 900] }));
+  assert.deepStrictEqual(virtualDisplay(f, () => true, layout()), { pos: [-2910 + 24, 956 + 24], size: [1394, 852] });
+  // 다른 앱 벌이 자리 파일을 지워도 가짜 화면이 떠 있으면 거기에(지워진 사이 뜬 크롬이 화면 밖→끌려와 보였다)
+  fsx.rmSync(f);
+  assert.deepStrictEqual(virtualDisplay(f, () => true, layout()), { pos: [-2910 + 24, 956 + 24], size: [1394, 852] });
+});
+
+test('가상 모니터 — 목록에 Chammo agents 화면이 없거나 진짜 화면과 겹치면 null(자리 파일이 있어도)', () => {
+  const d = fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'chammo-vd-'));
+  const f = pathx.join(d, 'vdisplay.json');
+  fsx.writeFileSync(f, JSON.stringify({ pid: 4242, bounds: [-2910, 956, 1440, 900] }));
+  const none = () => ({ screens: [LG, BOOK], names: ['LG FULL HD', 'Built-in Retina Display'], main: LG });
+  assert.strictEqual(virtualDisplay(f, () => true, none), null, '앱이 꺼져 가짜 화면이 없다');
+  const mirrored = () => ({ screens: [LG, BOOK, [0, 180, 1440, 900]], names: ['LG FULL HD', 'Built-in Retina Display', 'Chammo agents'], main: LG });
+  assert.strictEqual(virtualDisplay(f, () => true, mirrored), null, '진짜 화면 위에 겹친 자리');
+  // 덮개 닫고 큰 모니터도 꺼져 가짜 화면 하나만 남으면 (0,0)이어도 그게 맞다
+  const alone = () => ({ screens: [[0, 0, 1440, 900]], names: ['Chammo agents'], main: [0, 0, 1440, 900] });
+  assert.deepStrictEqual(virtualDisplay(f, () => true, alone), { pos: [24, 24], size: [1394, 852] });
+  // 이름이 없는 옛 목록(names 없음)이면 자리 파일 값 — 예전 동작
+  const old = () => ({ screens: [LG, BOOK], main: LG });
+  assert.deepStrictEqual(virtualDisplay(f, () => true, old), { pos: [-2910 + 24, 956 + 24], size: [1394, 852] });
 });
 
 const { chromeChannel } = require('../src/window');
@@ -105,9 +140,17 @@ test('가짜 화면 기다리기 — 앱이 다시 켜지는 사이면 자리 �
 
 test('가짜 화면 기다리기 — 끝내 없으면 null(기다린 만큼만)', () => {
   let t = 0;
-  const got = waitVirtualDisplay(() => null, { ms: 300, step: 100, sleep: (ms) => { t += ms; } });
+  const got = waitVirtualDisplay(() => null, { ms: 300, step: 100, sleep: (ms) => { t += ms; }, now: () => t });
   assert.strictEqual(got, null);
   assert.strictEqual(t, 300);
+});
+test('가짜 화면 기다리기 — 읽기에 걸린 시간도 기다린 시간에 든다(화면 목록 읽기 한 번 ~120ms)', () => {
+  let t = 0;
+  let reads = 0;
+  const got = waitVirtualDisplay(() => { reads += 1; t += 120; return null; }, { ms: 3000, step: 100, sleep: (ms) => { t += ms; }, now: () => t });
+  assert.strictEqual(got, null);
+  assert.ok(t <= 3000 + 220, `3초 남짓에서 멈춘다(지난 시간 ${t}ms)`);
+  assert.ok(reads <= 15, `읽기 ${reads}번`);
 });
 
 test('화면 밖 자리 — 모든 화면 오른쪽 바깥(크롬 좌표)', () => {

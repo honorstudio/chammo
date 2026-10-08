@@ -3,6 +3,7 @@ import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { modKey } from '../../domain/keys';
+import { curStep, DOC_SANDBOX, emptyStore } from '../../domain/curation';
 import { docUrl, IS_WIN, isDocUrl, dropIndex, inStrip, kindOf, titleOf, type DocKind, type Surface, docFileUrl } from '../../domain/reader';
 import { FIT, IMAGE_STEPS, parseZoom, stepZoom, withZoom, zoomable, zoomLabel, zoomOf, type ZoomMap } from '../../domain/readerZoom';
 import { IconZoomIn, IconZoomOut } from '../Icons';
@@ -114,8 +115,10 @@ export function frameStyle(kind: DocKind, z: number): React.CSSProperties | unde
  * HTML 시안 프레임 — 확대는 hodoc 이 HTML 에 심은 한 줄이 받아 문서 자체를 zoom 한다(글자를 다시 그려 선명).
  * 다른 출처라 직접은 못 건드려 postMessage 로 넘긴다. 처음 뜰 때도 한 번
  */
-/** point = 짚어 보여 줄 곳(슬라이드 번호·찾을 글) — 페이지가 다 뜬 뒤에 페이지 안 다리에 넘긴다(시간을 정해 두고 보내면 늦게 뜨는 문서에서 사라졌다) */
-export function HtmlFrame({ src, zoom, className, sandbox, point, pointKey }: { src: string; zoom: number; className?: string; sandbox: string; point?: { page?: number; find?: string }; pointKey?: string }) {
+/** point = 짚어 보여 줄 곳(슬라이드 번호·찾을 글) — 페이지가 다 뜬 뒤에 페이지 안 다리에 넘긴다(시간을 정해 두고 보내면 늦게 뜨는 문서에서 사라졌다)
+ *  record = 검토용 시안이면 그 경로 — 시안이 알려 오는 표시(cur-state)를 curation/ 에 적고, 칸을 새로 열면 거기서 되돌린다(불투명 출처라 시안 저장소는 칸과 함께 사라진다).
+ *  샌드박스는 늘 DOC_SANDBOX(같은 출처 없음) — 부르는 쪽이 고르지 않는다 */
+export function HtmlFrame({ src, zoom, className, point, pointKey, record }: { src: string; zoom: number; className?: string; point?: { page?: number; find?: string }; pointKey?: string; record?: string }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const loaded = useRef(false);
   const post = () => ref.current?.contentWindow?.postMessage({ hodocZoom: zoom / 100 }, '*');
@@ -123,7 +126,40 @@ export function HtmlFrame({ src, zoom, className, sandbox, point, pointKey }: { 
   useEffect(post, [zoom]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (loaded.current) aim(); }, [pointKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loaded.current = false; }, [src]);
-  return <iframe ref={ref} className={className} src={src} sandbox={sandbox} onLoad={() => { loaded.current = true; post(); window.setTimeout(aim, 150); }} />;
+  useEffect(() => {
+    if (!record) return;
+    let first = true;
+    let saveT = 0;
+    let pending: { text: string; json: string } | null = null;
+    const flush = () => {
+      window.clearTimeout(saveT);
+      if (!pending) return;
+      const { text, json } = pending;
+      pending = null;
+      void invoke('save_curation', { path: record, text }).catch(() => {});
+      void invoke('save_curation_state', { path: record, json }).catch(() => {});
+    };
+    const on = (e: MessageEvent) => {
+      const win = ref.current?.contentWindow;
+      if (!win || e.source !== win) return; // 이 칸이 보낸 것만 — 다른 칸·창이 이 시안 기록을 못 덮게
+      const step = curStep(first, e.data);
+      if (!step) return;
+      first = false;
+      if (step.do === 'restore') {
+        void invoke<string>('read_curation_state', { path: record }).then((j) => {
+          try { const data = JSON.parse(j) as Record<string, unknown>; if (!emptyStore(data)) win.postMessage({ hodoc: 'cur-cmd', cmd: 'restore', data }, '*'); } catch { /* 없거나 깨짐 */ }
+        }, () => {});
+        return;
+      }
+      pending = { text: step.text, json: step.json };
+      window.clearTimeout(saveT);
+      saveT = window.setTimeout(flush, 600);
+    };
+    window.addEventListener('message', on);
+    // 닫히거나 다른 시안으로 바뀌면 기다리던 저장을 바로 — 표시하고 곧바로 Esc 로 닫아도 마지막 표시가 남게
+    return () => { window.removeEventListener('message', on); flush(); };
+  }, [record, src]);
+  return <iframe ref={ref} className={className} src={src} sandbox={DOC_SANDBOX} onLoad={() => { loaded.current = true; post(); window.setTimeout(aim, 150); }} />;
 }
 
 /**
@@ -161,8 +197,8 @@ function Doc({ path, nonce, zoom, editing }: { path: string; nonce: number; zoom
   }, [path, kind, nonce]);
   if (err) return <div className="rd-empty">{tr('못 읽었어', "Couldn't read it")} — {err}</div>;
   if (kind === 'web') return <WebPage key={nonce} url={path} />;
-  // HTML 시안: 스크립트·저장소는 되지만 앱 기능(invoke)엔 못 닿는 다른 출처(hodoc://)에서 돈다(2026-09-28 실측)
-  if (kind === 'html') return <div className="rd-zoombox"><HtmlFrame key={nonce} className="rd-frame" zoom={zoom} src={docUrl(path)} sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads" /></div>;
+  // HTML 시안: 스크립트는 돌되 앱과 다른 불투명 출처(DOC_SANDBOX + hodoc 머리글 sandbox)에서 — 앱 기능·홈 파일에 못 닿는다(2026-10-06)
+  if (kind === 'html') return <div className="rd-zoombox"><HtmlFrame key={nonce} className="rd-frame" zoom={zoom} src={docUrl(path)} record={path} /></div>;
   if (kind === 'pdf') return <div className="rd-zoombox scroll"><iframe key={nonce} className="rd-frame" style={frameStyle(kind, zoom)} src={docUrl(path)} /></div>;
   if (kind === 'image') {
     // 맞춤 = 창 안에 통째로(작은 그림은 원래 크기), 그 밖 = 실제 픽셀(레티나 2배 캡처는 절반 폭이 100%) × %

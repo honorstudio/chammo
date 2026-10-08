@@ -1,6 +1,10 @@
 // 스페이스(리더를 노션처럼 고치는 공간) — 사용자가 페이지에서 고친 것을 모아 참모에게 보낸다(2026-09-30 사용자: 스페이스 기획 v1·v2).
 // 페이지 = 로컬 md 파일, 고친 기록 = space-log.jsonl, 보내기는 문서를 연 때(또는 지난번 보낸 때)와 지금을 비교해 한 번에.
 
+/** 채팅 패널 보기 방식 — 쌓기(여러 칸 위아래) / 탭(하나로 보기). 저장값이 없을 때만 기본값(2026-10-06 사용자: 하나로 보는 게 맞다) */
+export type ChatView = 'stack' | 'tabs';
+export const chatViewOf = (stored: unknown): ChatView => (stored === 'stack' || stored === 'tabs' ? stored : 'tabs');
+
 export type MdDiff = { added: string[]; removed: string[] };
 
 const lines = (md: string) => md.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim());

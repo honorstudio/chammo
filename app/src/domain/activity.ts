@@ -11,7 +11,7 @@ export type Line = { ts: string; text: string; /** 답 끝 200자 — 넘길 때
 /** tool = 마지막으로 부른 도구(사무실 행동·머리 위 한 줄) */
 export type Tool = { name: string; target: string; ts: string };
 /** messaged = 마지막으로 SendMessage 를 부른 시각 — 이미 참모에게 보고했는지(참모 기록이 커서 거기선 못 찾았다, 2026-09-30) */
-export type Activity = { prompt?: Line; reply?: Line; tool?: Tool; messaged?: string; /** 사용 한도 오류로 멈춤 — 그 오류 줄이 마지막(뒤에 새 줄이 없음)일 때만 */ limit?: { ts: string; text: string }; /** 마지막 대화 줄(user·assistant·attachment) 시각 — 글 없는 도구 줄·다른 세션 메시지·작업 알림까지. 답보다 늦으면 그 뒤 턴이 돌던 중(lostTriage) */ lastAt?: string };
+export type Activity = { prompt?: Line; reply?: Line; tool?: Tool; messaged?: string; /** 사용 한도 오류로 멈춤 — 그 오류 줄이 마지막(뒤에 새 줄이 없음)일 때만 */ limit?: { ts: string; text: string }; /** 로그인이 풀려 멈춤 — 그 오류 줄이 마지막일 때만(limit 과 같은 규칙). retry = 갱신 겹침(로그인 풀림 아님 — 잠깐 뒤 다시) */ auth?: { ts: string; text: string; retry?: true }; /** 마지막 대화 줄(user·assistant·attachment) 시각 — 글 없는 도구 줄·다른 세션 메시지·작업 알림까지. 답보다 늦으면 그 뒤 턴이 돌던 중(lostTriage) */ lastAt?: string };
 
 /** 사용 한도 오류 줄인가 — API 오류 줄(isApiErrorMessage)이면서 오류 종류가 rate_limit 류이거나 글에 "hit your … limit".
  *  문구가 바뀐 적이 있어 둘 중 하나만 맞아도 잡는다. 일시적 429·529·과부하는 Claude Code 가 다시 시도하니 아니다(2026-10-02) */
@@ -19,6 +19,22 @@ export function isLimitError(d: { isApiErrorMessage?: boolean; error?: string },
   if (d.isApiErrorMessage !== true) return false;
   if (/\b(429|529)\b|overloaded|try again in a moment/i.test(text)) return false;
   return /rate_limit/i.test(d.error ?? '') || /hit your\b.*\blimit/i.test(text) || /usage limit reached|(5-hour|weekly|session) limit reached/i.test(text);
+}
+
+/** 로그인이 풀려 멈춘 줄인가 — API 오류 줄이면서 오류 종류 authentication_failed 이거나 글이 /login 을 하라는 것.
+ *  실측 원문(2026-10-06 아이맥·09-26 맥북): "Login expired · Please run /login" · "Not logged in · Please run /login".
+ *  "Could not refresh your login because another … process is refreshing it · Try again in a minute" 은 갱신이 겹친 것(server_error) —
+ *  Claude Code 가 다시 해 보고 대개 풀리니 로그인 풀림이 아니다 */
+export function isAuthError(d: { isApiErrorMessage?: boolean; error?: string }, text: string): boolean {
+  if (d.isApiErrorMessage !== true) return false;
+  if (/another claude code process is refreshing|try again in a minute/i.test(text)) return false;
+  return d.error === 'authentication_failed' || /please run \/login|login expired|not logged in|oauth token has expired|invalid api key/i.test(text);
+}
+
+/** 토큰 갱신이 세션끼리 겹친 줄 — "Could not refresh your login because another … · Try again in a minute"(server_error).
+ *  로그인은 멀쩡하고 턴만 멈췄다 — 잠깐 뒤 이어서면 된다(실측 2026-09-27 project-b-g) */
+export function isRefreshStall(d: { isApiErrorMessage?: boolean }, text: string): boolean {
+  return d.isApiErrorMessage === true && /could not refresh your login/i.test(text);
 }
 
 const MAX = 240;
@@ -53,7 +69,10 @@ export function summarizeTranscript(tail: string): Activity {
     }
     const ts = d.timestamp ?? '';
     if (ts && (d.type === 'user' || d.type === 'assistant' || d.type === 'attachment')) out.lastAt = ts;
-    if (d.type === 'user' || d.type === 'assistant') delete out.limit; // 오류 뒤에 새 줄이 오면 멈춘 게 아니다
+    if (d.type === 'user' || d.type === 'assistant') {
+      delete out.limit; // 오류 뒤에 새 줄이 오면 멈춘 게 아니다
+      delete out.auth;
+    }
     if (d.type === 'assistant') {
       const t = lastTool(d.message?.content, ts);
       if (t) out.tool = t;
@@ -62,6 +81,8 @@ export function summarizeTranscript(tail: string): Activity {
     const text = textOf(d.message?.content).trim();
     if (!text) continue;
     if (d.type === 'assistant' && isLimitError(d, text)) out.limit = { ts, text: text.slice(0, MAX) }; // 답으로도 그대로 남긴다(대시보드에 보이게)
+    else if (d.type === 'assistant' && isAuthError(d, text)) out.auth = { ts, text: text.slice(0, MAX) };
+    else if (d.type === 'assistant' && isRefreshStall(d, text)) out.auth = { ts, text: text.slice(0, MAX), retry: true };
     if (d.type === 'user' && !d.isMeta && !isInjected(text)) out.prompt = { ts, text: squash(text) };
     else if (d.type === 'assistant') {
       const asks = asksUser(text);

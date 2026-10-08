@@ -14,6 +14,19 @@ def load(name):
 
 
 rt = load('routine')
+_HOME = None
+
+
+def setUpModule():
+    # home 을 안 넘긴 run_now 가 진짜 ~/.claude.json 을 건드리지 않게 — HOME 을 임시 폴더로
+    global _HOME
+    _HOME = tempfile.TemporaryDirectory()
+    unittest.mock.patch.dict(os.environ, {'HOME': _HOME.name}).start()
+
+
+def tearDownModule():
+    unittest.mock.patch.stopall()
+    _HOME.cleanup()
 
 
 class Calls:
@@ -145,6 +158,367 @@ class Lifecycle(unittest.TestCase):
         self.assertIn(['launchctl', 'bootout', 'gui/501/app.chammo.routine.blog-daily'], calls.calls)  # 옛 항목이 남아 있었어도
         self.assertFalse(pathlib.Path(rt._plist_path('blog-daily', str(self.home))).exists())
         self.assertFalse((self.data / 'routines/blog-daily').exists())
+
+
+class SpawnTrust(unittest.TestCase):
+    """띄우기 직전에 루틴 폴더 믿음을 다시 본다 — 떠 있던 claude 가 ~/.claude.json 을 제 메모리 값으로 덮어 False 로 돌려놓는다(2026-10-05 예약 하나가 시작부터 실패)"""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(self.tmp.name)
+        self.home, self.data = root, root / 'data'
+        self.data.mkdir()
+        self.cj = root / '.claude.json'
+        self.cj.write_text(json.dumps({'projects': {}}))
+        rt.new('k-check', 'daily 09:00', 'Check.', data=str(self.data), home=str(self.home), run=Calls(), claude='/bin/claude',
+               python='/usr/bin/python3', uid=501, apps=[], allow_test=True)
+        self.d = str(self.data / 'routines/k-check')
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def clobber(self):
+        """claude 가 덮어쓴 모양 — 키는 있고 False, 다른 칸·다른 최상위 값은 살아 있어야 한다"""
+        cfg = json.loads(self.cj.read_text())
+        cfg['projects'][self.d] = {'hasTrustDialogAccepted': False, 'allowedTools': []}
+        cfg['userID'] = 'keep-me'
+        self.cj.write_text(json.dumps(cfg))
+
+    def trust(self):
+        return json.loads(self.cj.read_text())['projects'].get(self.d, {}).get('hasTrustDialogAccepted')
+
+    def runs(self):
+        return [json.loads(l) for l in (self.data / 'routines/k-check/runs.jsonl').read_text().splitlines()]
+
+    def test_지워진_믿음은_띄우기_전에_다시_적는다(self):
+        self.clobber()
+        calls = Calls()
+        r = rt.run_now('k-check', data=str(self.data), run=calls, home=str(self.home))
+        self.assertEqual(r['session'], '1a2b3c4d')
+        self.assertIs(self.trust(), True)
+        cfg = json.loads(self.cj.read_text())
+        self.assertEqual((cfg['userID'], cfg['projects'][self.d]['allowedTools']), ('keep-me', []))  # 한 키만 바꾼다
+        self.assertFalse(any(n.startswith('.claude.json.') for n in os.listdir(self.home)))  # 임시 파일이 안 남는다
+
+    def test_키가_없어도_적는다(self):
+        self.cj.write_text(json.dumps({'projects': {}}))
+        rt.run_now('k-check', data=str(self.data), run=Calls(), home=str(self.home))
+        self.assertIs(self.trust(), True)
+
+    def test_이미_믿으면_파일을_안_쓴다(self):
+        before = self.cj.read_bytes()
+        os.utime(self.cj, (1_000_000, 1_000_000))
+        rt.run_now('k-check', data=str(self.data), run=Calls(), home=str(self.home))
+        self.assertEqual((self.cj.read_bytes(), self.cj.stat().st_mtime), (before, 1_000_000))
+
+    def test_파일_권한을_지킨다(self):
+        self.clobber()
+        os.chmod(self.cj, 0o600)
+        rt.run_now('k-check', data=str(self.data), run=Calls(), home=str(self.home))
+        self.assertEqual(self.cj.stat().st_mode & 0o777, 0o600)
+
+    def test_tick_도_띄우기_전에_믿음을_본다(self):
+        rt._tick_mark('k-check', str(self.data), datetime.datetime(2026, 10, 5, 8, 0))
+        self.clobber()
+        out = rt.tick(data=str(self.data), now=datetime.datetime(2026, 10, 5, 9, 0), run=Calls(), home=str(self.home), uid=501)
+        self.assertEqual(out[0]['session'], '1a2b3c4d')
+        self.assertIs(self.trust(), True)
+
+    def test_프로젝트_폴더는_믿음을_안_적는다(self):
+        # --in 폴더는 사람이 고른 곳 — 믿음은 아래 폴더로 번지니 ~ 같은 넓은 폴더를 조용히 믿지 않는다
+        proj = self.home / 'proj'
+        proj.mkdir()
+        rt.new('in-proj', 'daily 09:00', 'x', cwd=str(proj), data=str(self.data), home=str(self.home), run=Calls(), claude='/bin/claude',
+               python='/usr/bin/python3', uid=501, apps=[], allow_test=True)
+        rt.run_now('in-proj', data=str(self.data), run=Calls(), home=str(self.home))
+        self.assertNotIn(str(proj), json.loads(self.cj.read_text())['projects'])
+
+    def test_믿음_실패로_죽으면_다시_적고_한_번만_다시(self):
+        test = self
+
+        class Untrusted(Calls):
+            def __init__(self, fails):
+                super().__init__()
+                self.fails = fails
+
+            def __call__(self, argv, **kw):
+                if '--bg' in argv and self.fails:
+                    self.fails -= 1
+                    self.calls.append(argv)
+                    test.clobber()  # 띄우는 사이에 또 덮였다
+                    return type('R', (), {'returncode': 1, 'stdout': '',
+                                          'stderr': f'Workspace not trusted. Run `claude` in {test.d} once and accept the trust prompt'})()
+                return super().__call__(argv, **kw)
+
+        calls = Untrusted(1)
+        r = rt.run_now('k-check', data=str(self.data), run=calls, home=str(self.home))
+        self.assertEqual(r['session'], '1a2b3c4d')
+        self.assertEqual(len([c for c in calls.calls if '--bg' in c]), 2)
+        self.assertIs(self.trust(), True)
+        runs = self.runs()
+        self.assertEqual([e['event'] for e in runs], ['retry', 'start'])
+        self.assertIn('not trusted', runs[0]['reason'])
+        self.assertEqual(runs[1]['session'], '1a2b3c4d')
+        # 두 번 다 실패하면 세 번째는 안 하고 오류를 남긴다
+        calls = Untrusted(5)
+        r = rt.run_now('k-check', data=str(self.data), run=calls, home=str(self.home))
+        self.assertIsNone(r['session'])
+        self.assertEqual(len([c for c in calls.calls if '--bg' in c]), 2)
+        self.assertIn('Workspace not trusted', self.runs()[-1]['error'])
+
+    def test_다른_오류는_다시_안_한다(self):
+        calls = Calls(spawn_out='error: low max file descriptors\n')
+        r = rt.run_now('k-check', data=str(self.data), run=calls, home=str(self.home))
+        self.assertIsNone(r['session'])
+        self.assertEqual(len([c for c in calls.calls if '--bg' in c]), 1)
+
+
+class SpawnStagger(unittest.TestCase):
+    """같은 tick 에 때가 된 예약 여럿은 차례로, 사이를 띄워 띄운다. 시작이 일시 오류로 죽으면 잠깐 쉬고 한 번 더
+    (2026-10-06 09:00 예약 둘이 'An unknown error occurred (Unexpected)' 로 둘 다 시작 실패 — 26분 뒤 손으로 돌리니 둘 다 됐다)"""
+    UNEXPECTED = 'error: An unknown error occurred (Unexpected)\n'
+    NOW = datetime.datetime(2026, 10, 6, 8, 0)
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(self.tmp.name)
+        self.home, self.data = root, root / 'data'
+        self.data.mkdir()
+        (root / '.claude.json').write_text(json.dumps({'projects': {}}))
+        self.slept = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def new(self, name, sched='daily 09:00', cwd=None):
+        rt.new(name, sched, 'x', cwd=cwd, data=str(self.data), home=str(self.home), run=Calls(), claude='/bin/claude',
+               python='/usr/bin/python3', uid=501, now=self.NOW, apps=[], allow_test=True)
+
+    def sleep(self, s):
+        self.slept.append(s)
+
+    def tick(self, calls, now=datetime.datetime(2026, 10, 6, 9, 0, 8)):
+        return rt.tick(data=str(self.data), now=now, run=calls, home=str(self.home), uid=501, sleep=self.sleep)
+
+    def run_now(self, name, calls):
+        return rt.run_now(name, data=str(self.data), run=calls, home=str(self.home), sleep=self.sleep)
+
+    def runs(self, name):
+        return [json.loads(l) for l in (self.data / f'routines/{name}/runs.jsonl').read_text().splitlines()]
+
+    @staticmethod
+    def spawns(calls):
+        return [c[c.index('-n') + 1] for c in calls.calls if '--bg' in c]
+
+    class Flaky(Calls):
+        """--bg 를 차례대로 outs 의 답으로 — None 이면 성공. 실패할 때 세션이 생겼으면(made) agents 에 보인다"""
+        def __init__(self, outs, made=False):
+            super().__init__()
+            self.outs, self.made, self.live = list(outs), made, []
+
+        def __call__(self, argv, **kw):
+            if argv[1:3] == ['agents', '--json']:
+                self.calls.append(argv)
+                return type('R', (), {'returncode': 0, 'stdout': json.dumps(self.live), 'stderr': ''})()
+            if '--bg' in argv and self.outs:
+                out = self.outs.pop(0)
+                if out is not None:
+                    self.calls.append(argv)
+                    if self.made:
+                        self.live.append({'id': 'feedface', 'name': argv[argv.index('-n') + 1], 'status': 'busy'})
+                    return type('R', (), {'returncode': 1, 'stdout': '', 'stderr': out})()
+            return super().__call__(argv, **kw)
+
+    def test_같은_tick_두_예약은_차례로_사이를_띄운다(self):
+        self.new('nightly-check')
+        self.new('weekly-cleanup', sched='10/06 09:00, 10/13 09:00')
+        rt._tick_mark('nightly-check', str(self.data), self.NOW)
+        rt._tick_mark('weekly-cleanup', str(self.data), self.NOW)
+        calls = Calls()
+        out = self.tick(calls)
+        self.assertEqual([(r['name'], r.get('session')) for r in out], [('nightly-check', '1a2b3c4d'), ('weekly-cleanup', '1a2b3c4d')])
+        self.assertEqual(self.spawns(calls), ['routine-nightly-check', 'routine-weekly-cleanup'])
+        self.assertEqual(self.slept, [rt.SPAWN_GAP])  # 두 번 띄우는 사이에 한 번 — 첫 예약 앞엔 안 쉰다
+
+    def test_세_예약이면_간격_두_번_혼자면_안_쉰다(self):
+        for n in ('a', 'b', 'c'):
+            self.new(n)
+            rt._tick_mark(n, str(self.data), self.NOW)
+        self.tick(Calls())
+        self.assertEqual(self.slept, [rt.SPAWN_GAP] * 2)
+        self.slept.clear()
+        self.tick(Calls(), now=datetime.datetime(2026, 10, 7, 9, 0))
+        self.assertEqual(len(self.slept), 2)
+        self.new('solo', sched='daily 07:30')
+        rt._tick_mark('solo', str(self.data), datetime.datetime(2026, 10, 7, 9, 1))
+        self.slept.clear()
+        self.tick(Calls(), now=datetime.datetime(2026, 10, 8, 7, 30))
+        self.assertEqual(self.slept, [])
+
+    def test_안_띄운_예약은_간격을_쓰지_않는다(self):
+        # 지난 실행이 아직 도는 예약은 건너뛴다 — 그 앞뒤로 쉴 까닭이 없다
+        for n in ('a', 'b', 'c'):
+            self.new(n)
+            rt._tick_mark(n, str(self.data), self.NOW)
+        calls = Calls(agents=json.dumps([{'id': 'x1', 'name': 'routine-a', 'status': 'busy'}]))
+        out = self.tick(calls)
+        self.assertEqual([r.get('skipped') or r.get('session') for r in out], ['still running', '1a2b3c4d', '1a2b3c4d'])
+        self.assertEqual(self.slept, [rt.SPAWN_GAP])
+
+    def test_unknown_error_면_쉬고_한_번_다시(self):
+        self.new('nightly-check')
+        calls = self.Flaky([self.UNEXPECTED])
+        r = self.run_now('nightly-check', calls)
+        self.assertEqual(r['session'], '1a2b3c4d')
+        self.assertEqual(len(self.spawns(calls)), 2)
+        self.assertEqual(self.slept, [rt.RETRY_WAIT])
+        runs = self.runs('nightly-check')
+        self.assertEqual([e['event'] for e in runs], ['retry', 'start'])
+        self.assertIn('An unknown error occurred (Unexpected)', runs[0]['reason'])
+        self.assertEqual((runs[1]['session'], runs[1]['error']), ('1a2b3c4d', None))
+
+    def test_두_번_다_실패하면_원문을_남기고_세_번째는_없다(self):
+        self.new('nightly-check')
+        calls = self.Flaky([self.UNEXPECTED, 'error: An unknown error occurred (Unexpected) again\n', self.UNEXPECTED])
+        r = self.run_now('nightly-check', calls)
+        self.assertIsNone(r['session'])
+        self.assertEqual(len(self.spawns(calls)), 2)
+        last = self.runs('nightly-check')[-1]
+        self.assertEqual((last['event'], last['error']), ('start', 'error: An unknown error occurred (Unexpected) again'))
+
+    def test_빈_답으로_죽어도_다시(self):
+        self.new('nightly-check')
+        calls = self.Flaky([''])
+        self.assertEqual(self.run_now('nightly-check', calls)['session'], '1a2b3c4d')
+        self.assertIn('no output', self.runs('nightly-check')[0]['reason'])
+
+    def test_파일_한도_오류는_다시_안_한다(self):
+        # 같은 프로세스 한도로는 다시 해도 똑같다 — raise_open_files 가 맡는다
+        self.new('nightly-check')
+        calls = self.Flaky(['error: An unknown error occurred, possibly due to low max file descriptors (Unexpected)\n\nCurrent limit: 256\n'])
+        self.assertIsNone(self.run_now('nightly-check', calls)['session'])
+        self.assertEqual((len(self.spawns(calls)), self.slept), (1, []))
+        self.assertIn('max file descriptors', self.runs('nightly-check')[-1]['error'])
+
+    def test_실패했는데_세션이_생겼으면_다시_안_띄운다(self):
+        # 답 모양만 못 읽었고 세션은 떴다 — 또 띄우면 같은 이름 세션이 둘
+        self.new('nightly-check')
+        calls = self.Flaky([self.UNEXPECTED], made=True)
+        r = self.run_now('nightly-check', calls)
+        self.assertEqual(len(self.spawns(calls)), 1)
+        self.assertIsNone(r['session'])
+        self.assertEqual([e['event'] for e in self.runs('nightly-check')], ['start'])
+
+    def test_못_치운_지난_세션은_이번_세션으로_안_센다(self):
+        self.new('nightly-check')
+        calls = self.Flaky([self.UNEXPECTED])
+        calls.live = [{'id': 'old1', 'name': 'routine-nightly-check', 'status': 'idle'}]  # 끝난 지난 세션 — rm 이 안 먹었다
+        self.assertEqual(self.run_now('nightly-check', calls)['session'], '1a2b3c4d')
+        self.assertEqual(len(self.spawns(calls)), 2)
+
+    def test_프로젝트_폴더_예약도_일시_오류는_다시(self):
+        proj = self.home / 'proj'
+        proj.mkdir()
+        self.new('in-proj', cwd=str(proj))
+        calls = self.Flaky([self.UNEXPECTED])
+        self.assertEqual(self.run_now('in-proj', calls)['session'], '1a2b3c4d')
+        self.assertNotIn(str(proj), json.loads((self.home / '.claude.json').read_text())['projects'])  # 믿음은 여전히 안 적는다
+
+    def test_tick_에서_앞_예약이_끝내_실패해도_뒤_예약은_뜬다(self):
+        self.new('a')
+        self.new('b')
+        rt._tick_mark('a', str(self.data), self.NOW)
+        rt._tick_mark('b', str(self.data), self.NOW)
+        calls = self.Flaky([self.UNEXPECTED, self.UNEXPECTED])
+        out = self.tick(calls)
+        self.assertEqual([r.get('session') for r in out], [None, '1a2b3c4d'])
+        self.assertEqual(self.spawns(calls), ['routine-a', 'routine-a', 'routine-b'])
+        self.assertEqual(self.slept, [rt.RETRY_WAIT, rt.SPAWN_GAP])
+
+
+class FakeClaudeE2E(unittest.TestCase):
+    """진짜 프로세스로 — 가짜 claude 는 $HOME/.claude.json 에서 cwd 믿음이 True 가 아니면 진짜처럼 'Workspace not trusted' 로 죽는다"""
+    FAKE = ('''#!/usr/bin/env python3
+import json, os, sys
+if sys.argv[1:3] == ['agents', '--json']:
+    print('[]'); sys.exit(0)
+cj = json.load(open(os.path.join(os.environ['HOME'], '.claude.json')))
+if (cj.get('projects', {}).get(os.getcwd(), {}) or {}).get('hasTrustDialogAccepted') is not True:
+    print('Workspace not trusted. Run `claude` in ' + os.getcwd() + ' once and accept the trust prompt', file=sys.stderr); sys.exit(1)
+print('backgrounded \u00b7 deadbeef \u00b7 routine-x')
+''')
+
+    def test_routine_run_명령이_덮인_믿음을_되살려_띄운다(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as t:
+            root = pathlib.Path(os.path.realpath(t))
+            data, claude = root / 'data', root / 'claude'
+            claude.write_text(self.FAKE)
+            claude.chmod(0o755)
+            (root / '.claude.json').write_text(json.dumps({'projects': {}}))
+            rt.new('e2e', 'daily 09:00', 'x', data=str(data), home=str(root), run=Calls(), claude=str(claude),
+                   python='/usr/bin/python3', uid=501, apps=[], allow_test=True)
+            d = str(data / 'routines/e2e')
+            (root / '.claude.json').write_text(json.dumps({'projects': {d: {'hasTrustDialogAccepted': False}}}))
+            env = dict(os.environ, HOME=str(root), CHAMMO_HOME=str(data))
+            p = subprocess.run([sys.executable, str(SCRIPTS / 'routine'), 'run', 'e2e'], env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertEqual(json.loads(p.stdout)['session'], 'deadbeef')
+            last = json.loads((data / 'routines/e2e/runs.jsonl').read_text().splitlines()[-1])
+            self.assertEqual((last['event'], last['session'], last['error']), ('start', 'deadbeef', None))
+
+
+class FakeClaudeTickE2E(unittest.TestCase):
+    """진짜 프로세스로 `routine tick` — 가짜 claude 는 ① 맨 처음 --bg 를 'unknown error (Unexpected)' 로 죽이고
+    ② 앞 세션을 띄운 지 2초 안에 또 오면 같은 오류로 죽는다(daemon 이 대기 세션을 다시 데우는 중 흉내). 실제로 쉬어서 8초쯤 걸린다"""
+    FAKE = ('''#!/usr/bin/env python3
+import json, os, sys, time
+st = os.environ['FAKE_STATE']
+if sys.argv[1:3] == ['agents', '--json']:
+    print('[]'); sys.exit(0)
+cj = json.load(open(os.path.join(os.environ['HOME'], '.claude.json')))
+if (cj.get('projects', {}).get(os.getcwd(), {}) or {}).get('hasTrustDialogAccepted') is not True:
+    print('Workspace not trusted', file=sys.stderr); sys.exit(1)
+now = time.time()
+name = sys.argv[sys.argv.index('-n') + 1]
+first = not os.path.exists(st + '.first')
+last = float(open(st + '.last').read()) if os.path.exists(st + '.last') else 0
+ok = not first and now - last >= 2
+open(st + '.first', 'w').close()
+with open(st + '.log', 'a') as f:
+    f.write(json.dumps({'t': now, 'name': name, 'ok': ok}) + '\\n')
+if not ok:
+    print('error: An unknown error occurred (Unexpected)', file=sys.stderr); sys.exit(1)
+open(st + '.last', 'w').write(str(now))
+print('backgrounded \\u00b7 %08x \\u00b7 %s' % (int(now * 1000) & 0xffffffff, name))
+''')
+
+    def test_같은_tick_두_예약_첫_실패는_재시도_둘째는_간격_두고(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as t:
+            root = pathlib.Path(os.path.realpath(t))
+            data, claude, st = root / 'data', root / 'claude', root / 'state'
+            claude.write_text(self.FAKE)
+            claude.chmod(0o755)
+            (root / '.claude.json').write_text(json.dumps({'projects': {}}))
+            earlier = datetime.datetime.now() - datetime.timedelta(hours=2)
+            for n in ('nightly-check', 'weekly-cleanup'):
+                rt.new(n, 'every 30m', 'x', data=str(data), home=str(root), run=Calls(), claude=str(claude),
+                       python='/usr/bin/python3', uid=501, now=earlier, apps=[], allow_test=True)
+                rt._tick_mark(n, str(data), earlier)
+            env = dict(os.environ, HOME=str(root), CHAMMO_HOME=str(data), FAKE_STATE=str(st))
+            p = subprocess.run([sys.executable, str(SCRIPTS / 'routine'), 'tick'], env=env, capture_output=True, text=True, timeout=60)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            out = json.loads(p.stdout)
+            self.assertEqual([r['name'] for r in out], ['nightly-check', 'weekly-cleanup'])
+            self.assertTrue(all(r['session'] for r in out), out)
+            log = [json.loads(l) for l in (root / 'state.log').read_text().splitlines()]
+            self.assertEqual([(c['name'], c['ok']) for c in log],
+                             [('routine-nightly-check', False), ('routine-nightly-check', True), ('routine-weekly-cleanup', True)])
+            self.assertGreaterEqual(log[1]['t'] - log[0]['t'], rt.RETRY_WAIT)
+            self.assertGreaterEqual(log[2]['t'] - log[1]['t'], rt.SPAWN_GAP)
+            runs = [json.loads(l) for l in (data / 'routines/nightly-check/runs.jsonl').read_text().splitlines()]
+            self.assertEqual([e['event'] for e in runs], ['retry', 'start'])
+            self.assertIn('Unexpected', runs[0]['reason'])
 
 
 class Cloud(unittest.TestCase):
@@ -510,7 +884,7 @@ class Ticker(unittest.TestCase):
                       python='/usr/bin/python3', uid=501, now=now, apps=[], allow_test=True)
 
     def tick(self, now, calls=None):
-        return rt.tick(data=str(self.data), now=now, run=calls or Calls(), home=str(self.home), uid=501)
+        return rt.tick(data=str(self.data), now=now, run=calls or Calls(), home=str(self.home), uid=501, sleep=lambda s: None)
 
     def plist(self):
         import plistlib
@@ -602,6 +976,25 @@ class Ticker(unittest.TestCase):
         _, chammo = fake_app(self.apps, 'Chammo', 'Chammo')
         self.assertEqual(rt.pick_launcher(given=chammo, current=mine, apps=[]), mine)  # 두 앱이 데이터를 같이 쓰면 켤 때마다 뒤바뀌지 않게
         self.assertEqual(rt.pick_launcher(given=chammo, current='/gone/X.app/Contents/MacOS/X', apps=[]), chammo)
+
+    def test_개인_앱_번들_이름을_바꾸면_다음_켤_때_새_경로로_다시_건다(self):
+        # 2026-10-06 honor-orchestrator.app → 'Chammo Dev.app'(번들 id·실행 파일 이름은 그대로). 옛 번들을 치워야 새 앱이 켤 때 갈아 건다
+        old_app, old = fake_app(self.apps, 'honor-orchestrator', 'honor-orchestrator', ident='com.honorstudio.honor-orchestrator')
+        self.new('morning')
+        rt.install(data=str(self.data), home=str(self.home), run=Calls(), uid=501, python='/usr/bin/python3', launcher=old, now=self.NOW, apps=[], allow_test=True)
+        self.assertEqual(self.plist()['ProgramArguments'][0], old)
+        _, new = fake_app(self.apps, 'Chammo Dev', 'honor-orchestrator', ident='com.honorstudio.honor-orchestrator')
+        rt.install(data=str(self.data), home=str(self.home), run=Calls(), uid=501, python='/usr/bin/python3', launcher=new, now=self.NOW, apps=[], allow_test=True)
+        self.assertEqual(self.plist()['ProgramArguments'][0], old)  # 옛 번들이 남아 있으면 그대로 — 그래서 교체 때 옛 번들을 먼저 치운다
+        import shutil
+        shutil.rmtree(old_app)
+        calls = Calls()
+        rt.install(data=str(self.data), home=str(self.home), run=calls, uid=501, python='/usr/bin/python3', launcher=new, now=self.NOW, apps=[], allow_test=True)
+        p = self.plist()
+        self.assertEqual(p['ProgramArguments'], [new, '--routine-tick'])
+        self.assertIn('Chammo Dev.app/Contents/MacOS/honor-orchestrator', new)
+        self.assertEqual(p['AssociatedBundleIdentifiers'], ['com.honorstudio.honor-orchestrator'])
+        self.assertTrue(any(c[:2] == ['launchctl', 'bootstrap'] for c in calls.calls))
 
     def test_앱이_있으면_앱_실행_파일로_건다(self):
         _, mine = fake_app(self.apps, 'honor-orchestrator', 'honor-orchestrator')

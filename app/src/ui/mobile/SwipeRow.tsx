@@ -1,4 +1,5 @@
-// 밀면 뒤 버튼이 드러나는 줄 — iOS 메일처럼. 오른쪽→왼쪽이면 오른쪽 버튼(재우기·제거 등, 글자 — 위험 동작), 왼쪽→오른쪽이면 왼쪽 버튼(고정 — 익숙한 동작이라 아이콘)
+// 밀면 뒤 버튼이 드러나는 줄 — iOS 메일처럼. 오른쪽→왼쪽이면 오른쪽 버튼(재우기·깨우기·제거), 왼쪽→오른쪽이면 왼쪽 버튼(고정).
+// 익숙한 동작이라 아이콘(2026-10-05 사용자), 되돌리기 어려운 제거는 누른 뒤 글자 확인을 부르는 쪽이 띄운다
 // (2026-10-03 사용자 "달 아이콘 뭐야? 스와이프 액션으로" / "반대로 밀면 고정"). 끝까지 밀어도 실행하지 않고 버튼만 드러난다.
 // 한 번에 한 줄만 열리고, 가로로 미는 동안은 세로 스크롤이 안 움직인다
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -11,8 +12,8 @@ const ICON_BTN = 72;
 
 /** onMenu = 길게 누르기(0.5초, 거의 안 움직임)·오른쪽 클릭 — 이름 바꾸기 등 메뉴. menuLabel = 화면 읽기(VoiceOver)용 숨은 메뉴 버튼 이름 */
 export function SwipeRow({ id, openId, setOpenId, actions, start = [], className, onMenu, menuLabel, children }: { id: string; openId: string | null; setOpenId: (id: string | null) => void; actions: SwipeAction[]; start?: SwipeAction[]; className?: string; onMenu?: () => void; menuLabel?: string; children: ReactNode }) {
-  const width = actions.length * BTN;
-  const startW = start.length * ICON_BTN;
+  const width = actions.reduce((w, a) => w + (a.icon ? ICON_BTN : BTN), 0);
+  const startW = start.reduce((w, a) => w + (a.icon ? ICON_BTN : BTN), 0);
   const open = openId === id;
   const front = useRef<HTMLDivElement>(null);
   const [x, setX] = useState(0);
@@ -74,7 +75,7 @@ export function SwipeRow({ id, openId, setOpenId, actions, start = [], className
       onClick={() => { setOpenId(null); a.onPress(); }}>{a.icon ?? a.label}</button>
   );
   return (
-    <div className={`m-swipe ${className ?? ''}`} data-swipe={id} onContextMenu={onMenu ? (e) => { e.preventDefault(); onMenu(); } : undefined}>
+    <div className={`m-swipe${x < 0 ? ' m-show-end' : x > 0 ? ' m-show-start' : ''} ${className ?? ''}`} data-swipe={id} onContextMenu={onMenu ? (e) => { e.preventDefault(); onMenu(); } : undefined}>
       {onMenu && <button type="button" className="m-sr" onClick={onMenu}>{menuLabel ?? '메뉴'}</button>}
       {start.length > 0 && <div className="m-swipe-acts m-swipe-start" style={{ width: startW }} aria-hidden={!open || x <= 0}>{start.map((a) => btn(a, 'start'))}</div>}
       <div className="m-swipe-acts" style={{ width }} aria-hidden={!open || x >= 0}>{actions.map((a) => btn(a, 'end'))}</div>

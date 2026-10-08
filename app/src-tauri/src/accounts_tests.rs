@@ -378,3 +378,43 @@ fn 자동_상태는_보관_바꾸기에도_남고_patch_는_윗단_키만_합친
     assert!(matches!(patch_auto(&e.list, &json!({ "x": "y".repeat(70 * 1024) })).unwrap_err(), Error::Io(_)));
     assert_eq!(load(&e.list).unwrap().auto["on"], false);
 }
+
+#[test]
+fn 폰_바꾸기는_바꾼_칸에_고정까지_한_번에() {
+    let e = Env::two("phone-pin");
+    patch_auto(&e.list, &json!({ "on": true, "pinned": "a2", "nudged": { "s1": 1 } })).unwrap();
+    let pool = switch_pinned(&e.store, &e.live, &e.list, "a1", 4242).unwrap();
+    assert_eq!(pool.current.as_deref(), Some("a1"));
+    assert_eq!(e.live_tok().as_deref(), Some("tokA"));
+    assert_eq!((pool.auto["pinned"].clone(), pool.auto["switchedAt"].clone()), (json!("a1"), json!(4242)));
+    // 다른 자동 상태 키는 그대로(자동 켜짐·깨운 기록)
+    assert_eq!((pool.auto["on"].clone(), pool.auto["nudged"]["s1"].clone()), (json!(true), json!(1)));
+}
+
+#[test]
+fn 폰_바꾸기_실패면_고정도_안_바뀐다() {
+    let e = Env::two("phone-fail");
+    patch_auto(&e.list, &json!({ "pinned": "a2", "switchedAt": 1 })).unwrap();
+    // 키체인 잠김(폰은 창을 못 띄워 이걸로 끝난다)
+    *e.store.locked.borrow_mut() = true;
+    assert_eq!(switch_pinned(&e.store, &e.live, &e.list, "a1", 9).unwrap_err(), Error::Locked);
+    *e.store.locked.borrow_mut() = false;
+    // 없는 칸
+    assert_eq!(switch_pinned(&e.store, &e.live, &e.list, "zz", 9).unwrap_err(), Error::Unknown);
+    // 로그인 칸 쓰기 실패 — 되돌린다
+    *e.store.fail_set.borrow_mut() = Some(LIVE.into());
+    assert!(switch_pinned(&e.store, &e.live, &e.list, "a1", 9).is_err());
+    *e.store.fail_set.borrow_mut() = None;
+    let p = e.pool();
+    assert_eq!((p.current.as_deref(), p.switching.clone()), (Some("a2"), None));
+    assert_eq!(e.live_tok().as_deref(), Some("tokB"));
+    assert_eq!((p.auto["pinned"].clone(), p.auto["switchedAt"].clone()), (json!("a2"), json!(1)));
+}
+
+#[test]
+fn 폰_바꾸기_지금_칸으로_또_누르면_고정만_새로() {
+    let e = Env::two("phone-same");
+    let pool = switch_pinned(&e.store, &e.live, &e.list, "a2", 7).unwrap();
+    assert_eq!((pool.current.as_deref(), pool.auto["pinned"].clone()), (Some("a2"), json!("a2")));
+    assert_eq!(e.live_tok().as_deref(), Some("tokB"));
+}

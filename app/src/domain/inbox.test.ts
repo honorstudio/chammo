@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { bornAfter, buildInbox, findTarget, freshItems, popoverOpen, LOGIN_STALL, replyBlocked, RESUME_MSG } from './inbox';
+import { bornAfter, buildInbox, findTarget, freshItems, popoverOpen, replyBlocked } from './inbox';
 import type { Session } from './session';
 import type { ActivityStatus } from './status';
 import type { TaskEvent } from './tasks';
@@ -85,27 +85,11 @@ describe('어느 프로젝트 이야기인지 — 모든 칸에 project', () => 
   });
 });
 
-describe('로그인 오류로 멈춘 세션 — 이어서 버튼', () => {
-  const err = 'Could not refresh your login because another Claude Code process is refreshing it (or exited mid-refresh) · Try again in a minute; if it keeps happening, close other Claude Code windows or sign in again with /login';
-
-  it('마지막 답이 로그인 오류면 login 칸 (물어봄이 아니라)', () => {
-    const items = buildInbox([act(s('g', 'acme-shop-platform', 'pr-g'), 'done', err)], [], new Set());
-    expect(items).toMatchObject([{ kind: 'login', project: 'acme-shop-platform', where: 'pr-g', target: 'g' }]);
-  });
-
-  it('일하는 중이면(이미 다시 돌면) 안 띄운다', () => {
-    expect(buildInbox([act(s('g', 'x'), 'working', err)], [], new Set())).toEqual([]);
-  });
-
-  it('여러 오류 문구', () => {
-    for (const t of [err, 'OAuth token has expired. Please run /login', 'API Error: 401 authentication_error', 'Invalid API key · Please run /login'])
-      expect(LOGIN_STALL.test(t), t).toBe(true);
-    expect(LOGIN_STALL.test('로그인 화면 고쳤어')).toBe(false);
-  });
-
-  it('이어서 보낼 말은 사람이 친 것처럼 꾸미지 않는다', () => {
-    expect(RESUME_MSG).toContain('로그인');
-    expect(RESUME_MSG).toContain('이어서');
+describe('로그인 오류로 멈춘 세션 — 세션마다 칸을 안 띄운다(카드 하나, domain/login)', () => {
+  const err = 'Login expired · Please run /login';
+  it('로그인 필요(status login)는 결정 대기 칸이 아니다 — 맨 위 로그인 카드가 묶어서 보여 준다', () => {
+    expect(buildInbox([act(s('g', 'acme-shop-platform', 'pr-g'), 'login', err)], [], new Set())).toEqual([]);
+    expect(buildInbox([act(s('b', 'hq'), 'login', err)], [], new Set(), [], () => true)).toEqual([]); // 참모여도
   });
 });
 

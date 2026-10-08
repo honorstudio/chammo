@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cleanLabel, displayName, dupRenames, labelRenames, nickProblem, RENAME_MAX, RENAME_RETRY_MS, renamesToSend, renameTo, shownName, splitOrchName, withNick } from './orchLabel';
+import { cleanLabel, displayName, dupRenames, labelRenames, nickProblem, RENAME_MAX, RENAME_RETRY_MS, renamesToSend, renameTo, shownName, splitOrchName, withNick, nickChange } from './orchLabel';
 
 describe('cleanLabel — 참모 별명(개발·디자인 등, 사용자 마음대로. 비우면 설정 이름으로 돌아감)', () => {
   it('앞뒤 공백을 떼고 24자까지, 비었으면 null(설정 이름)', () => {
@@ -141,5 +141,17 @@ describe('labelRenames — 앱 별명과 진짜 이름이 다른 참모 → 보�
     const orchs = [{ id: 'a', name: '참모-3' }, { id: 'b', name: '참모-4 · 디자인' }, { id: 'c', name: '참모-5 · 개발' }];
     expect(labelRenames(orchs, { a: '서버', b: '디자인', c: '운영' })).toEqual([{ id: 'a', to: '참모-3 · 서버' }, { id: 'c', to: '참모-5 · 운영' }]);
     expect(labelRenames(orchs, {})).toEqual([]);
+  });
+});
+
+describe('nickChange — 프로필 창 이름 칸: 바뀌었을 때만 바꿀 별명(빈 글 = 처음 이름으로)', () => {
+  it('같으면 null(공백·길이 정리 뒤 비교)', () => {
+    expect(nickChange('참모 업데이트', '  참모   업데이트 ')).toBeNull();
+    expect(nickChange('', '   ')).toBeNull();
+  });
+  it('바뀌면 정리한 별명, 비우면 빈 글', () => {
+    expect(nickChange('참모 업데이트', ' 참모 고치기')).toBe('참모 고치기');
+    expect(nickChange('참모 업데이트', '')).toBe('');
+    expect(nickChange('', '디자인')).toBe('디자인');
   });
 });

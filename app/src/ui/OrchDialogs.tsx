@@ -48,7 +48,7 @@ export function NameNew({ baseName, color, check, onMake, onCancel }: { baseName
       <div className="od-box" role="dialog" aria-label={tr(`새 ${assistant()} 이름`, 'Name the new assistant')} onMouseDown={(e) => e.stopPropagation()}>
         <b>{tr(`새 ${assistant()} 이름`, 'Name the new assistant')}</b>
         <div className="od-newav">
-          <button className="oa-btn" onClick={() => setPicking(true)} aria-label={tr('프사 고르기', 'Choose avatar')} title={tr('프사 고르기', 'Choose avatar')}>
+          <button className="oa-btn" onClick={() => setPicking(true)} aria-label={tr('프로필 고르기', 'Choose avatar')} title={tr('프로필 고르기', 'Choose avatar')}>
             <OrchAvatar name={realName} size={56} state="rest" color={color} label={label} /><span className="oa-change" aria-hidden="true">{tr('바꾸기', 'Change')}</span>
           </button>
         </div>

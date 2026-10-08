@@ -29,6 +29,8 @@ pub fn allowed_files(show_log: &str, routines_json: &str, data_dir: &Path, hq_di
     }
     if !hq_dir.is_empty() {
         v.push(Path::new(hq_dir).join("docs/starter.md").to_string_lossy().into_owned());
+        // 폰이 묻는 모양(/api/env hqDir 는 fwd + '/docs/starter.md') — 윈도우 join 은 역슬래시라 글자 비교에서 늘 403 이었다(2026-10-05). 맥은 위와 같아 아래서 하나로
+        v.push(format!("{}/docs/starter.md", crate::config::fwd(hq_dir).trim_end_matches('/')));
     }
     let mut seen = std::collections::HashSet::new();
     v.retain(|p| seen.insert(p.clone()));

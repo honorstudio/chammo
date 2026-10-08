@@ -1,6 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
-import { emptyStore } from '../../domain/curation';
 import { orchVars } from '../../domain/orchTheme';
 import { docUrl } from '../../domain/reader';
 import { tr } from '../../i18n';
@@ -35,14 +34,12 @@ const KIND = (): Record<string, string> => ({ design: tr('디자인', 'Design'),
 /**
  * 시안 검토 모드 — 스페이스 전체(왼쪽 메뉴 자리까지, 채팅 열은 그대로)를 검토에 쓴다(2026-09-30 사용자 v12).
  * 위: 제목·종류·진행 게이지·닫기 / 왼쪽: 시안 목차(덱마다 진행 칸) / 가운데: 시안(블록 오른쪽 칸에서 ○△✕·메모, J·K·1·2·3·M) /
- * 오른쪽 아래: 참모에게 보내기(우리 핵심 — 꾸물거리고, 다 표시하면 살아난다). 표시는 시안이 기억하고, 결과는 앱이 curation/ 에 적어 둔다
+ * 오른쪽 아래: 참모에게 보내기(우리 핵심 — 꾸물거리고, 다 표시하면 살아난다). 표시는 시안이 기억하고, 결과는 앱이 curation/ 에 적어 둔다(HtmlFrame record)
  */
 export function CurationMode({ path, onClose, onSend, sendTo, color }: { path: string; onClose: () => void; onSend?: (text: string) => Promise<void>; sendTo: string; color?: string }) {
   const [st, setSt] = useState<CurState | null>(null);
   const [sent, setSent] = useState<'idle' | 'sending' | 'sent' | 'fail'>('idle');
   const [deckAt, setDeckAt] = useState(0);
-  const saveT = useRef(0);
-  const checked = useRef(false);
   const notes = useRef(new Map<string, HTMLTextAreaElement>());
   const noteT = useRef(0);
   const cmd = (c: Record<string, unknown>) => frame()?.postMessage({ hodoc: 'cur-cmd', ...c }, '*');
@@ -54,20 +51,7 @@ export function CurationMode({ path, onClose, onSend, sendTo, color }: { path: s
       setSt({ title: d.title ?? '', kind: d.kind, total: d.total ?? 0, done: d.done ?? 0, counts: d.counts ?? {}, labels: d.labels ?? [], decks: d.decks ?? [], text: d.text, blocks: d.blocks ?? [], sel: d.sel ?? '', zoom: d.zoom });
       if (d.sel) { const b = (d.blocks ?? []).find((x) => x.k === d.sel); if (b && b.deck >= 0) setDeckAt(b.deck); }
       setSent((x) => (x === 'sent' ? 'idle' : x));
-      // 앱 안 브라우저 저장소는 다시 켜면 비었다 — 처음 알림이 비어 있으면 파일에 적어 둔 표시를 되돌린다. 확인 전엔 안 적는다(좋은 기록을 빈 걸로 덮지 않게)
-      if (!checked.current) {
-        checked.current = true;
-        if (emptyStore(d.store)) {
-          void invoke<string>('read_curation_state', { path }).then((j) => {
-            try { const data = JSON.parse(j) as CurState['store']; if (!emptyStore(data)) frame()?.postMessage({ hodoc: 'cur-cmd', cmd: 'restore', data }, '*'); } catch { /* 없거나 깨짐 */ }
-          });
-          return;
-        }
-      }
-      window.clearTimeout(saveT.current);
-      const text = d.text;
-      const json = JSON.stringify(d.store ?? {});
-      saveT.current = window.setTimeout(() => { void invoke('save_curation', { path, text }).catch(() => {}); void invoke('save_curation_state', { path, json }).catch(() => {}); }, 600);
+      // 파일에 적기·칸을 새로 열 때 되돌리기는 HtmlFrame(record)이 한다 — 리더·미리보기와 같은 길
     };
     window.addEventListener('message', on);
     const ping = window.setTimeout(() => frame()?.postMessage({ hodoc: 'cur-cmd', cmd: 'ping' }, '*'), 800);
@@ -145,7 +129,7 @@ export function CurationMode({ path, onClose, onSend, sendTo, color }: { path: s
       <div className="cur-mode-body">
         {/* 왼쪽 시안 목차는 뺐다 — 오른쪽 카드 목록이 시안별로 묶여 겹쳤고, 가운데 시안이 좁아졌다(2026-09-30 사용자) */}
         <div className="cur-mode-stage">
-          <HtmlFrame className="rd-frame" src={docUrl(path)} zoom={st && st.zoom === undefined ? zoom : 100} sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads" />
+          <HtmlFrame className="rd-frame" src={docUrl(path)} zoom={st && st.zoom === undefined ? zoom : 100} record={path} />
         </div>
         {/* 오른쪽 표시 목록은 뺐다 — 블록을 누르면 그 자리에 고르는 창이 떠서, 목록까지 마우스를 옮기지 않는다(2026-10-01 사용자). 시안 자리도 넓어진다 */}
       </div>

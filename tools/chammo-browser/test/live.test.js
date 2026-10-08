@@ -80,7 +80,7 @@ test('상태 파일 — 도구 호출·응답마다 600 권한으로, 포트를 
   const s = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepStrictEqual({ ...s }, {
     profile: 'acme', pid: 11, sessionPid: 22, port: 5000, wsPath: '/devtools/browser/abc',
-    url: 'https://a.com/', title: 'A', tabs: [], tool: '이동 https://a.com/', toolAt: 1000, busy: false, ask: null, ts: 2000,
+    url: 'https://a.com/', title: 'A', tabs: [], tool: '이동 https://a.com/', toolAt: 1000, busy: false, ask: null, gate: false, held: 0, ts: 2000,
   });
   assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
   assert.strictEqual(fs.statSync(path.dirname(file)).mode & 0o777, 0o700);
@@ -232,4 +232,21 @@ test('포트 확인 — 127.0.0.1 에 듣는 곳이 있으면 true, 없으면 fa
   srv.close();
   await new Promise((r) => srv.once('close', r));
   assert.strictEqual(await portOpen(port), false);
+});
+
+test('개입 문지기 — gate 를 켜고 만든 래퍼는 상태에 gate:true, 세션이 기다리는 동안 held 시각', () => {
+  const root = tmp();
+  const prof = path.join(root, 'profiles', 'acme');
+  fs.mkdirSync(prof, { recursive: true });
+  fs.writeFileSync(path.join(prof, 'DevToolsActivePort'), '5000\n/devtools/browser/abc\n');
+  let t = 1000;
+  const live = createLive({ profile: 'acme', root, profileDir: prof, pid: 11, ppid: 22, now: () => t, gate: true });
+  live.onCall('browser_navigate', { url: 'https://a.com/' });
+  const read = () => JSON.parse(fs.readFileSync(liveFile(root, 'acme'), 'utf8'));
+  assert.strictEqual(read().gate, true);
+  t = 5000;
+  live.held(true);
+  assert.strictEqual(read().held, 5000);
+  live.held(false);
+  assert.strictEqual(read().held, 0);
 });

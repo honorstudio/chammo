@@ -6,7 +6,25 @@ export type LiveTab = { index: number; title: string; url: string; current: bool
 /** 래퍼 상태 파일 — 하는 일 한 줄(tool)엔 값이 없다(live.js toolLine) */
 export type Live = { profile: string; pid: number; sessionPid: number; url: string; title: string; tabs: LiveTab[]; tool: string; toolAt: number; busy: boolean; ts: number;
   /** 세션이 사람을 부름(browser_ask_human) — 앱이 크게 띄운다 */
-  ask?: { reason: string; at: number } | null };
+  ask?: { reason: string; at: number } | null;
+  /** 래퍼가 개입 때 세션 도구를 붙잡을 수 있다(없으면 스크립트 크롬·옛 래퍼 — 멈추지 못함) */
+  gate?: boolean;
+  /** 세션 도구가 사람이 돌려주길 기다리기 시작한 때(ms, 0 = 안 기다림) */
+  held?: number;
+  /** 사람이 개입 중(앱 takeover.rs 가 채움) */
+  takeover?: { by: 'desktop' | 'phone'; at: number } | null };
+
+/** 사람이 조작해도 되나(2026-10-06 사용자) — 평소엔 보기만(view), 개입 중(mine)·세션이 부르는 중(ask)만 조작 */
+export type Control = 'view' | 'mine' | 'ask';
+export const controlOf = (l: Live | undefined): Control => (!l ? 'view' : l.ask ? 'ask' : l.takeover ? 'mine' : 'view');
+
+/** 개입 중 한 줄 — 누가 쥐었나·세션이 기다리나. 멈추지 못하는 브라우저(gate 없음)면 섞일 수 있다고. 개입 아니면 null */
+export function takeoverLine(l: Live): string | null {
+  if (!l.takeover) return null;
+  const who = l.takeover.by === 'phone' ? tr('폰에서 조작 중', 'Being controlled from the phone') : tr('사람이 조작 중', 'You are in control');
+  if (!l.gate) return `${who} — ${tr('이 브라우저는 세션을 멈추지 못해 (조작이 섞일 수 있어)', 'this browser cannot pause the session (actions may mix)')}`;
+  return `${who} — ${l.held ? tr('세션은 기다리는 중', 'the session is waiting') : tr('세션이 브라우저를 쓰려 하면 기다려', 'the session will wait if it needs the browser')}`;
+}
 export type CdpPage = { id: string; url: string; title: string };
 export type Tab = { id: string; label: string; url: string; active: boolean; dialog: boolean };
 
@@ -74,4 +92,27 @@ export function askName(live: Live, sessions: { procPid?: number; name?: string;
 export function frameTrouble(error: string | null | undefined): 'off' | 'fail' | null {
   if (!error) return null;
   return /no live|refused|reset|closed|broken pipe|os error (32|54|61)/i.test(error) ? 'off' : 'fail';
+}
+
+/** 지금 탭을 이만큼 넘게 모르면(주소 확인 중) 이유를 보이고 입력을 막는다 — 탭 이동·팝업 닫힘 같은 잠깐은 그 안에 끝난다 */
+export const UNSURE_MS = 3000;
+/** 목록에서 이만큼 넘게 빠져야 닫힘 — 바쁜 맥에서 포트 확인(300ms)이 한 번 늦으면 한 틱(1.5초) 빠진다(리뷰). 그동안 입력은 Rust 가 상태 파일로 보낸다 */
+export const GONE_MS = 2500;
+/** 탭 0개가 이만큼 이어져야 닫힘 — 세션이 탭을 바꾸며 닫고 열기·꺼낸 창을 닫은 뒤 빈 탭 다시 열기(keep_loop 400ms)가 겹치는 틈(리뷰) */
+export const EMPTY_MS = 1500;
+
+export type ScreenKind = 'ok' | 'checking' | 'closed' | 'fail';
+/**
+ * 크게 보기 화면이 진짜 화면인가(2026-10-05 사용자 실사용 — 닫힌 브라우저의 마지막 화면이 '사진'처럼 남아 눌러도 안 먹었다).
+ * closed = 브라우저가 닫힘(목록에서 빠짐·포트에 못 붙음·붙었는데 탭 0개 — 맥 크롬은 마지막 창을 닫아도 포트가 산다),
+ * fail = 화면을 못 받음, checking = 지금 탭을 모름(UNSURE_MS 안이면 막지 않는다 — 친 건 Rust 가 버리고 띠로 알린다).
+ * blocked = 입력을 막는다(보내 봐야 버려진다). why = '주소 확인 중' 대신 머리에 보일 이유. *Ms = 그 상태가 이어진 시간
+ */
+export function browserScreen(x: { goneMs: number; error: string; attached: boolean; pages: number; emptyMs: number; current: boolean; unsureMs: number }): { kind: ScreenKind; why: string; blocked: boolean } {
+  const trouble = frameTrouble(x.error);
+  if (x.goneMs >= GONE_MS || trouble === 'off' || (x.attached && x.pages === 0 && x.emptyMs >= EMPTY_MS)) return { kind: 'closed', why: tr('브라우저 닫힘', 'Browser closed'), blocked: true };
+  if (trouble === 'fail') return { kind: 'fail', why: tr('화면 못 받음', 'No screen'), blocked: true };
+  if (x.current) return { kind: 'ok', why: '', blocked: false };
+  if (x.unsureMs < UNSURE_MS) return { kind: 'checking', why: '', blocked: false };
+  return { kind: 'checking', why: x.attached ? tr('지금 탭을 못 찾음', 'No current tab') : tr('브라우저에 붙는 중', 'Connecting to the browser'), blocked: true };
 }

@@ -1,4 +1,4 @@
-// 작업 패널 맨 위 — 평소엔 여기만 본다(시안 D안): 사용자 확인 조건에 걸린 열린 PR + 오늘 넣은 것. 누르면 사이드바 '리뷰' 화면의 그 PR
+// 작업 패널 맨 위 — 평소엔 여기만 본다(시안 D안): 사용자 확인 조건에 걸린 열린 PR + 오늘 넣은 것. 누르면 리뷰 화면(위 막대 리뷰 아이콘)의 그 PR
 import { useState } from 'react';
 import { GATE_LABEL } from '../domain/review';
 import { splitOpen } from '../domain/reviewSummary';

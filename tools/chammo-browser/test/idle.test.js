@@ -163,3 +163,29 @@ test('래퍼 도구(사람 부르기)가 도는 동안엔 유휴 닫기를 안 �
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(timers.armed(), 1, '끝나면 다시 건다');
 });
+
+test('스크립트가 같은 크롬을 같이 쓰는 동안은(canClose false) 유휴 닫기를 미루고 다시 잰다', () => {
+  const lockDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chammo-idle-'));
+  const timers = fakeTimers();
+  const toChild = [];
+  let busy = true;
+  const relay = createRelay({
+    profile: 'acme-shop',
+    acquire: () => lock.acquire('acme-shop', { lockDir }),
+    release: () => lock.release('acme-shop', { lockDir }),
+    sendToChild: (line) => toChild.push(line),
+    sendToClient: () => {},
+    idleMs: 1000,
+    setTimer: timers.setTimer,
+    clearTimer: timers.clearTimer,
+    canClose: () => !busy,
+  });
+  relay.onClientLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_navigate', arguments: {} } }));
+  relay.onChildLine(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { content: [] } }));
+  timers.fire();
+  assert.equal(toChild.filter((l) => l.includes('browser_close')).length, 0);
+  assert.equal(timers.armed(), 1); // 다시 잰다
+  busy = false;
+  timers.fire();
+  assert.equal(toChild.filter((l) => l.includes('browser_close')).length, 1);
+});

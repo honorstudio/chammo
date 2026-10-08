@@ -12,6 +12,7 @@ import { modKey } from '../domain/keys';
 import { resizeAfterOpen } from '../domain/ptySize';
 import { followLink } from './followLink';
 import { closePty, openPty, openTarget, pttTarget, pttWatch, resizePty, writeClipboard, writePty } from '../data/tauri';
+import { pendingWrites } from '../domain/ptyWrites';
 import { imeNoSwallow, imeTrace } from './imeTrace';
 import { seqShape, traceOf } from '../domain/imeGuard';
 import { currentContrast, currentTheme, darkQuery } from './termTheme';
@@ -190,9 +191,9 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
 
     let id: number | null = null;
     let disposed = false;
-    const write = (d: string) => {
-      if (id != null) void writePty(id, d);
-    };
+    // 번호를 받기 전에 쓴 것(윈도우 가짜 콘솔의 첫 "커서 어디?" 답 등)은 모아 뒀다가 보낸다 — domain/ptyWrites
+    const pending = pendingWrites((n, d) => void writePty(n, d));
+    const write = (d: string) => pending.write(d);
     term.onData((d) => { imeTrace?.('xterm', { d: seqShape(d) }); write(d); });
     injectRef.current?.({ write: (d) => { write(d); term.focus(); }, raw: write, focus: () => term.focus(), claimPtt: () => { if (!readOnly && id != null) void pttTarget(id); },
       screen: () => {
@@ -254,6 +255,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
     void openPty(command, cwd, cols, rows, (bytes) => term.write(bytes)).then((n) => {
       if (disposed) { void closePty(n); return; }
       id = n;
+      pending.open(n);
       if (!readOnly && document.activeElement === term.textarea) void pttTarget(n);
       // 여는 사이 레이아웃이 자리 잡으며 크기가 바뀌었으면(앱을 막 켰을 때) 그 크기를 지금 알린다 — 안 그러면 버려진다
       fit.fit();
@@ -288,6 +290,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
 
     return () => {
       disposed = true;
+      pending.close();
       pathLinks.dispose();
       osc52.dispose();
       live.current = null;

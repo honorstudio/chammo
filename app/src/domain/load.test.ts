@@ -62,6 +62,12 @@ describe('procLabel — 무엇이 먹나', () => {
   it('모르는 건 실행 파일 이름', () => {
     expect(procLabel('/usr/local/bin/ffmpeg -i a.mov')).toBe('ffmpeg');
   });
+  it('맥 앱은 번들 이름 — 경로에 빈칸이 있어도', () => {
+    // Chammo 와 Chammo Dev 가 둘 다 'Chammo' 로 보였다(빈칸에서 잘림)
+    expect(procLabel('/Applications/Chammo Dev.app/Contents/MacOS/honor-orchestrator')).toBe('Chammo Dev');
+    expect(procLabel('/Applications/Chammo.app/Contents/MacOS/Chammo --routine-tick')).toBe('Chammo');
+    expect(procLabel('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --type=x')).toBe('Google Chrome');
+  });
   it('node·python 은 돌리는 스크립트 이름', () => {
     expect(procLabel('node /u/app/node_modules/.bin/tsc --noEmit -p .')).toBe('tsc');
     expect(procLabel('/usr/bin/python3 -u /u/.chammo/tools/routine run blog')).toBe('routine');

@@ -1,11 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ASK_EMPTY, askClose, askOpen, askStep, askWaiting, openLive, type AskState } from '../domain/agentAsk';
-import { currentSite, tabStrip, type Live } from '../domain/agentBrowser';
+import { ASK_EMPTY, askClose, askOpen, askShown, askStep, askWaiting, type AskState } from '../domain/agentAsk';
+import { controlOf, currentSite, tabStrip, takeoverLine, type Live } from '../domain/agentBrowser';
 import { approach, escCancelsDialog, escClose, keyEvents, keyTarget, menuRoute, modsOf, pointIn, unfocusedKey, type InputEv } from '../domain/agentInput';
 import { tr } from '../i18n';
-import { FrameWait, useAgentFrame, useAgentTabs } from './AgentBrowser';
+import { FrameView, useAgentFrame, useAgentTabs, useBrowserScreen } from './AgentBrowser';
 import { AGENT_DROP_EVENT } from './fileDrop';
 import { IconClose, IconMore } from './Icons';
 
@@ -34,6 +34,13 @@ export function browserMenu(id: string): boolean {
 type Expect = { target: string; url: string } | null;
 // pid = 모달이 보는 래퍼 — Rust 가 지금 그 프로필의 래퍼가 이것일 때만 넣는다(다른 세션 브라우저가 같은 프로필을 잡았으면 버림)
 const send = (profile: string, pid: number, expect: Expect, events: InputEv[]) => void invoke('agent_input', { profile, pid, expect, events }).catch(() => {});
+/** 막힌 화면(닫힘·못 받음)·보기만(개입 전)엔 안 보낸다 — Rust 도 개입·부름이 아니면 버린다(agent_browser human_ok) */
+const sendIf = (blocked: { current: boolean }, profile: string, pid: number, expect: Expect, events: InputEv[]) => { if (!blocked.current) send(profile, pid, expect, events); };
+/** 사람 개입 시작·돌려주기(2026-10-06 사용자) — 래퍼가 그동안 세션 도구를 붙잡고, 돌려주면 사람이 한 일 꼬리표를 준다 */
+/** 막 개입한 브라우저 — 칸의 '개입'으로 열린 모달이 목록(1.5초)을 기다리지 않고 바로 조작되게 */
+const took = new Map<string, number>();
+export const takeOver = (profile: string, pid: number) => invoke('agent_takeover', { profile, pid, by: 'desktop' }).then(() => { took.set(`${profile}:${pid}`, Date.now()); });
+export const handBack = (profile: string, pid: number) => invoke('agent_handback', { profile, pid });
 
 /**
  * 세션 브라우저 '크게 보기'(2026-10-03 사용자 "이게 크게 보여야 해. 이미지 모달로 볼 때처럼") — 앱 창 전체 위, Esc·바깥·× 로 닫기.
@@ -42,8 +49,10 @@ const send = (profile: string, pid: number, expect: Expect, events: InputEv[]) =
  * 세션이 사람을 부르면(browser_ask_human) 맨 위에 이유와 '다 했어'. 페이지가 띄운 JS 대화상자는 여기서 고른다.
  * 맨 위 줄 = 어느 세션 · 진짜 주소(크롬이 아는 지금 탭 주소 — 입력이 가는 탭, 페이지가 못 바꾼다) · 줄 선 다른 부름(눌러야 바뀐다)
  */
-export function AgentBrowserModal({ live, name, focus, waiting, onSwitch, onClose }: {
+export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, onClose }: {
   live: Live;
+  /** 목록에서 빠진 브라우저를 붙든 채(크롬 꺼짐) — 마지막 화면은 흐리게 + '닫혔어', 입력·'다 했어'는 막는다 */
+  gone: boolean;
   /** 어느 세션 브라우저인지(프로젝트 · 세션 이름) */
   name: string;
   /** 사람이 눌러 열었으면 글칸에 바로 포커스 — 저절로 뜬 모달은 화면을 눌러야(치던 다른 글이 브라우저로 안 가게) */
@@ -54,7 +63,18 @@ export function AgentBrowserModal({ live, name, focus, waiting, onSwitch, onClos
   onClose: () => void;
 }) {
   const { src } = useAgentFrame(live.profile, 66); // 크게 보는 동안 ~15fps
-  const { pages, current, pinned, shown, setShown, dialog, dialogTabs, stuck, chooser, dropped, error } = useAgentTabs(live.profile, 400); // 주소가 바뀌면 머리 도메인이 빨리 따라오게
+  const tabsNow = useAgentTabs(live.profile, 400); // 주소가 바뀌면 머리 도메인이 빨리 따라오게
+  const { pages, current, pinned, shown, setShown, dialog, dialogTabs, stuck, chooser, dropped, error, popup } = tabsNow;
+  // 화면이 진짜인가 — 아니면(닫힘·못 받음·오래 주소 모름) 입력을 막는다. 보내 봐야 Rust 가 버린다(예전엔 사진 위를 눌러도 아무 일이 없었다)
+  const scr = useBrowserScreen(tabsNow, gone);
+  // 평소엔 보기만 — 개입(mine)·세션이 부름(ask) 동안만 화면 조작. 누르면 목록(1.5초)을 기다리지 않고 바로 바뀐 것으로 본다(want)
+  const [want, setWant] = useState<boolean | null>(() => (Date.now() - (took.get(`${live.profile}:${live.pid}`) ?? 0) < 5000 ? true : null));
+  const liveMine = !!live.takeover;
+  useEffect(() => { if (want !== null && want === liveMine) setWant(null); }, [liveMine, want]);
+  const ctl = controlOf({ ...live, takeover: (want ?? liveMine) ? live.takeover ?? { by: 'desktop', at: Date.now() } : null });
+  const canCtl = ctl !== 'view' && !gone;
+  const blocked = useRef(false);
+  blocked.current = scr.blocked || !canCtl;
   const curUrl = pages.find((p) => p.id === current)?.url;
   const expect = useRef<Expect>(null);
   expect.current = current && curUrl != null ? { target: current, url: curUrl } : null;
@@ -73,16 +93,21 @@ export function AgentBrowserModal({ live, name, focus, waiting, onSwitch, onClos
   const close = useRef(onClose);
   close.current = onClose;
   // 지금 탭 대화상자에 답 — 그 대화상자가 뜬 탭(current)으로 묶어 보낸다(다른 탭 대화상자로 안 가게)
-  const answer = (accept: boolean) => void invoke('agent_dialog', { profile: live.profile, pid, target: current, accept, prompt: accept && prompt != null ? prompt : null }).catch(() => {});
+  // 대화상자 답도 브라우저를 건드리는 것 — 보기만이었으면 개입부터
+  const answer = (accept: boolean) => {
+    const go = () => invoke('agent_dialog', { profile: live.profile, pid, target: current, accept, prompt: accept && prompt != null ? prompt : null });
+    void (canCtl ? go() : takeOver(live.profile, pid).then(() => { setWant(true); return go(); })).catch(() => {});
+  };
   const dialogKey = useRef<((accept: boolean) => void) | null>(null);
   dialogKey.current = dialog ? answer : null;
 
   // 사람이 눌러 열었으면 글칸에. 저절로 뜬 모달은 글칸 말고 모달 자체에 — 뒤 터미널·채팅에 포커스가 남으면 화면 속 칸에 친 줄 알았던
   // 비밀번호가 보이지 않는 뒤 칸으로 갔다(리뷰). 화면을 누르면 그때 글칸으로
+  // 보기만일 땐 글칸에 안 둔다 — 키가 브라우저로 안 가고 Esc·⌘W 는 모달 닫기
   useEffect(() => {
-    if (focus) field.current?.focus();
+    if (focus && canCtl) field.current?.focus();
     else { (document.activeElement as HTMLElement | null)?.blur(); box.current?.focus(); }
-  }, [focus]);
+  }, [focus, canCtl]);
   useEffect(() => { modalUp = true; return () => { modalUp = false; }; }, []);
   // 탭·주소가 바뀌어 Rust 가 버린 입력이 생기면 알린다(처음 본 수는 기준만)
   const seenDrop = useRef<number | null>(null);
@@ -111,7 +136,7 @@ export function AgentBrowserModal({ live, name, focus, waiting, onSwitch, onClos
         escAt = now;
       }
       const k = keyEvents(e);
-      if (k) { stop(e); send(prof.current, pid, expect.current, k); }
+      if (k) { stop(e); sendIf(blocked, prof.current, pid, expect.current, k); }
     };
     const shut = () => close.current();
     window.addEventListener('keydown', on, true);
@@ -134,7 +159,7 @@ export function AgentBrowserModal({ live, name, focus, waiting, onSwitch, onClos
     const on = (e: Event) => {
       const d = (e as CustomEvent<{ paths: string[]; x: number; y: number }>).detail;
       const p = at({ clientX: d.x, clientY: d.y });
-      if (p && d.paths.length && expect.current) void invoke('agent_drop_files', { profile: prof.current, pid, expect: expect.current, paths: d.paths, x: p.x, y: p.y }).catch(() => {});
+      if (p && d.paths.length && expect.current && !blocked.current) void invoke('agent_drop_files', { profile: prof.current, pid, expect: expect.current, paths: d.paths, x: p.x, y: p.y }).catch(() => {});
     };
     el.addEventListener(AGENT_DROP_EVENT, on);
     return () => el.removeEventListener(AGENT_DROP_EVENT, on);
@@ -153,12 +178,15 @@ export function AgentBrowserModal({ live, name, focus, waiting, onSwitch, onClos
     // 멀리서 바로 누르면 사이 이동을 끼운다(순간이동으로 안 보이게)
     const lead: InputEv[] = type === 'mousePressed' ? approach(lastPt.current, p).map((q) => ({ kind: 'mouse', type: 'mouseMoved', x: q.x, y: q.y, button: 'none', modifiers: 0 })) : [];
     lastPt.current = p;
-    send(live.profile, pid, expect.current, [...lead, { kind: 'mouse', type, x: p.x, y: p.y, button: type === 'mouseMoved' ? 'none' : button, clickCount: type === 'mouseMoved' ? 0 : Math.max(1, e.detail || 1), modifiers: modsOf(e) }]);
+    sendIf(blocked, live.profile, pid, expect.current, [...lead, { kind: 'mouse', type, x: p.x, y: p.y, button: type === 'mouseMoved' ? 'none' : button, clickCount: type === 'mouseMoved' ? 0 : Math.max(1, e.detail || 1), modifiers: modsOf(e) }]);
   };
   const pick = (id: string) => void invoke('agent_pin', { profile: live.profile, target: pinned && id === current ? null : id }).catch(() => {});
   const done = () => void invoke('agent_ask_done', { profile: live.profile, pid }).then(onClose, () => {});
   const tabs = tabStrip(pages, current, dialogTabs);
-  const showChrome = () => void invoke('agent_focus', { profile: live.profile }).then(() => setShown(true), () => {});
+  // 진짜 크롬 창을 꺼내면 직접 만질 수 있다 — Rust 가 개입부터 켠다(agent_focus)
+  const showChrome = () => void invoke('agent_focus', { profile: live.profile }).then(() => { setShown(true); if (ctl === 'view') setWant(true); }, () => {});
+  const take = () => void takeOver(live.profile, pid).then(() => { setWant(true); field.current?.focus(); }, () => setNote(tr('개입을 못 켰어 — 브라우저가 바뀌었을 수 있어', 'Could not take over — the browser may have changed')));
+  const give = () => void handBack(live.profile, pid).then(() => setWant(false), () => setWant(false));
   const ask = live.ask;
   const site = currentSite(pages, current);
 
@@ -169,11 +197,13 @@ export function AgentBrowserModal({ live, name, focus, waiting, onSwitch, onClos
           <b title={name}>{name}</b>
           {/* 주소가 바뀌면 key 가 바뀌어 한 번 반짝인다 — 치기 전에 사이트가 바뀐 걸 놓치지 않게.
               자물쇠는 안 그린다 — 인증서 오류 화면도 주소는 https 라 '안전'으로 잘못 보였다(리뷰). https 가 아니면만 표시 */}
-          {site
+          {scr.kind === 'closed' || scr.kind === 'fail'
+            ? <span className="abm-site abm-insecure">{scr.why}</span>
+            : site
             ? <span key={site.host} className={`abm-site ${site.secure ? '' : 'abm-insecure'}`} title={tr('크롬이 아는 지금 탭 주소 — 입력은 이 사이트로 간다', 'The address Chrome reports — what you type goes here')}>
                 {site.host}{!site.secure && <em>{tr('안전하지 않음', 'Not secure')}</em>}
               </span>
-            : <span className="abm-site abm-insecure">{tr('주소 확인 중', 'Checking address')}</span>}
+            : <span className="abm-site abm-insecure">{scr.why || tr('주소 확인 중', 'Checking address')}</span>}
           {waiting.length > 0 && (
             <div className="abm-queue" aria-label={tr('사람을 기다리는 다른 세션', 'Other sessions waiting')}>
               {waiting.map((w) => <button key={`${w.live.profile}:${w.live.pid}`} onClick={() => onSwitch(w.live)} title={w.live.ask?.reason || ''}>{tr(`${w.name}도 불러요`, `${w.name} needs you too`)}</button>)}
@@ -185,6 +215,8 @@ export function AgentBrowserModal({ live, name, focus, waiting, onSwitch, onClos
             {tabs.map((t) => <button key={t.id} role="tab" aria-selected={t.active} className={`ab-tab ${t.active ? 'ab-on' : ''} ${t.dialog ? 'ab-dlg' : ''}`} onClick={() => pick(t.id)} title={t.dialog ? `${t.url} — ${tr('대화상자', 'Dialog')}` : t.url}>{t.label}</button>)}
           </div>
           {note && <span className="abm-note">{note}</span>}
+          {/* 개입 — 낯선 동작이라 글자(전역 UI 규칙). 누르면 그때부터 화면을 조작하고 세션은 브라우저 일을 멈춘다 */}
+          {ctl === 'view' && !gone && scr.kind !== 'closed' && <button className="abm-takeover" onClick={take} title={tr('직접 조작 — 그동안 세션은 브라우저 일을 멈춰요', 'Take control — the session pauses its browser work')}>{tr('개입', 'Take over')}</button>}
           {/* 진짜 크롬 창 꺼내기는 더보기 안에 — 기본은 여기서 다 한다(꺼낸 창을 닫으면 앱이 빈 탭을 다시 열어 둔다) */}
           <div className="abm-more">
             <button className="ab-ic" onClick={() => setMore((m) => !m)} aria-expanded={more} title={tr('더보기', 'More')} aria-label={tr('더보기', 'More')}><IconMore /></button>
@@ -201,33 +233,47 @@ export function AgentBrowserModal({ live, name, focus, waiting, onSwitch, onClos
         {ask && (
           <div className="abm-ask">
             <span>{tr('세션이 불러요', 'The session needs you')} — {ask.reason}</span>
-            <button className="abm-done" onClick={done}>{tr('다 했어', 'Done')}</button>
+            {/* 크롬이 꺼져 목록에서 빠졌으면(앱은 바로, 래퍼는 몇 초 안에 알아채 세션에 '꺼졌어'를 준다) 다 했다고 해도 볼 화면이 없다 — 막아 보인다 */}
+            <button className="abm-done" onClick={done} disabled={gone && scr.kind === 'closed'} title={gone && scr.kind === 'closed' ? tr('브라우저가 닫혀서 세션이 다시 열어야 해', 'The browser is closed — the session has to open it again') : undefined}>{tr('다 했어', 'Done')}</button>
+          </div>
+        )}
+        {ctl === 'mine' && (
+          <div className="abm-take" role="status">
+            <span>{takeoverLine({ ...live, takeover: live.takeover ?? { by: 'desktop', at: Date.now() } })}</span>
+            <button className="abm-give" onClick={give}>{tr('돌려주기', 'Hand back')}</button>
           </div>
         )}
         {/* 앱이 답할 수 없는 대화상자(앱이 붙기 전에 뜬 것·답을 크롬이 거절)에 막힌 페이지 — 진짜 크롬 창에서 풀게(QA B6) */}
+        {/* 크롬 자체 창(패스키·Touch ID·폰 QR·USB 키)은 이 그림에 안 찍힌다 — 진짜 크롬 창을 꺼내면 같이 보인다(2026-10-06 슬랙 패스키) */}
+        {popup && !shown && !stuck && (
+          <div className="abm-stuck" role="status">
+            <span>{tr('크롬이 여기 안 보이는 창을 띄웠어 (패스키 등)', 'Chrome opened a window this view can’t show (passkey etc.)')}</span>
+            <button onClick={showChrome}>{tr('크롬에서 보기', 'Show in Chrome')}</button>
+          </div>
+        )}
         {stuck && !shown && (
           <div className="abm-stuck" role="status">
             <span>{tr('페이지가 멈춰 있어 — 대화상자가 떠 있을 수 있어', 'The page is stuck — a dialog may be open')}</span>
             <button onClick={showChrome}>{tr('크롬에서 보기', 'Show in Chrome')}</button>
           </div>
         )}
-        <div className="abm-screen" ref={screen}
-          onPointerDown={(e) => { e.preventDefault(); field.current?.focus(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); mouse('mousePressed', e); }}
+        <div className={`abm-screen ${scr.blocked ? 'abm-blocked' : ''}`} ref={screen}
+          onPointerDown={(e) => { e.preventDefault(); if (blocked.current) return; field.current?.focus(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); mouse('mousePressed', e); }}
           onPointerUp={(e) => mouse('mouseReleased', e)}
           onPointerMove={(e) => { const t = performance.now(); if (t - lastMove.current < 30) return; lastMove.current = t; mouse('mouseMoved', e); }}
-          onWheel={(e) => { const p = at(e); if (p) send(live.profile, pid, expect.current, [{ kind: 'mouse', type: 'mouseWheel', x: p.x, y: p.y, deltaX: e.deltaX, deltaY: e.deltaY, modifiers: modsOf(e) }]); }}
+          onWheel={(e) => { const p = at(e); if (p) sendIf(blocked, live.profile, pid, expect.current, [{ kind: 'mouse', type: 'mouseWheel', x: p.x, y: p.y, deltaX: e.deltaX, deltaY: e.deltaY, modifiers: modsOf(e) }]); }}
           onContextMenu={(e) => e.preventDefault()}>
-          {src ? <img ref={img} src={src} alt={live.title || live.url} draggable={false} /> : <FrameWait profile={live.profile} error={error} />}
+          <FrameView profile={live.profile} src={src} scr={scr} error={error} alt={live.title || live.url} imgRef={img} />
           {/* 숨은 글칸 — 글자를 받아 insertText 로. 값은 보내자마자 비운다(남기지 않는다) */}
-          <textarea ref={field} className="abm-field" aria-label={tr('세션 브라우저에 입력', 'Type into the session browser')} autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+          <textarea ref={field} className="abm-field" readOnly={scr.blocked || !canCtl} aria-label={tr('세션 브라우저에 입력', 'Type into the session browser')} autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
             onInput={(e) => {
               const t = e.currentTarget;
               if ((e.nativeEvent as InputEvent).isComposing) return;
-              if (t.value) send(live.profile, pid, expect.current, [{ kind: 'text', text: t.value }]);
+              if (t.value) sendIf(blocked, live.profile, pid, expect.current, [{ kind: 'text', text: t.value }]);
               t.value = '';
             }}
-            onCompositionEnd={(e) => { const v = e.data || e.currentTarget.value; if (v) send(live.profile, pid, expect.current, [{ kind: 'text', text: v }]); e.currentTarget.value = ''; }}
-            onPaste={(e) => { e.preventDefault(); const v = e.clipboardData.getData('text'); if (v) send(live.profile, pid, expect.current, [{ kind: 'text', text: v }]); }} />
+            onCompositionEnd={(e) => { const v = e.data || e.currentTarget.value; if (v) sendIf(blocked, live.profile, pid, expect.current, [{ kind: 'text', text: v }]); e.currentTarget.value = ''; }}
+            onPaste={(e) => { e.preventDefault(); const v = e.clipboardData.getData('text'); if (v) sendIf(blocked, live.profile, pid, expect.current, [{ kind: 'text', text: v }]); }} />
         </div>
         {dialog && (
           <div className="abm-dialog" role="alertdialog" aria-label={tr('페이지 대화상자', 'Page dialog')}>
@@ -271,14 +317,13 @@ export function AgentAskHost({ lives, nameOf, notify }: { lives: Live[]; nameOf:
     update(() => r.state);
     for (const l of r.notify) notify(l.profile, l.ask?.reason ?? '');
   }, [lives]); // eslint-disable-line react-hooks/exhaustive-deps
-  // 상태 파일이 한 번 깜빡여 목록에서 빠진 동안은 마지막 것을 붙든다(입력은 Rust 가 래퍼를 못 찾아 버린다)
+  // 목록에서 빠진 동안은 마지막 것을 붙든다 — 모달은 저절로 안 닫고 gone 으로 '닫혔어' 덮개를 그린다(입력은 막는다)
   const last = useRef<Live | undefined>(undefined);
-  const found = openLive(st, lives);
-  if (found) last.current = found;
-  const live = found ?? (st.open && last.current && last.current.profile === st.open.profile && last.current.pid === st.open.pid ? last.current : undefined);
+  const { live, gone } = askShown(st, lives, last.current);
+  if (live && !gone) last.current = live;
   if (!live || !st.open) return null;
   // key = 브라우저가 바뀌면 모달을 새로(글칸·대화상자 입력이 옛 브라우저 것과 안 섞이게)
-  return <AgentBrowserModal key={`${live.profile}:${live.pid}`} live={live} name={nameOf(live)} focus={st.open.byHuman}
+  return <AgentBrowserModal key={`${live.profile}:${live.pid}`} live={live} gone={gone} name={nameOf(live)} focus={st.open.byHuman}
     waiting={askWaiting(st, lives).map((l) => ({ live: l, name: nameOf(l) }))}
     onSwitch={(l) => update((s) => askOpen(s, l))} onClose={() => update((s) => askClose(s, livesRef.current, live))} />;
 }

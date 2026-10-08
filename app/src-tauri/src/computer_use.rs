@@ -17,7 +17,7 @@ fn dump(v: &Value) -> Result<String, String> {
 }
 
 /// Claude Code 가 새 프로젝트에 쓰는 기본 칸 — 칸이 있으면 Claude 는 기본값을 안 섞고 그대로 쓰니 반쪽 칸을 만들지 않는다
-fn new_project() -> Value {
+pub(crate) fn new_project() -> Value {
     json!({"allowedTools": [], "mcpContextUris": [], "mcpServers": {}, "enabledMcpjsonServers": [], "disabledMcpjsonServers": [],
         "hasTrustDialogAccepted": false, "hasClaudeMdExternalIncludesApproved": false, "hasClaudeMdExternalIncludesWarningShown": false})
 }
@@ -121,7 +121,7 @@ fn write_seen(v: &[String]) -> Result<(), String> {
 
 /// ~/.claude.json 고치기 — 백업 → 임시 파일 → 바꿔 끼우기 → 다시 읽어 확인. 다른 세션이 수시로 쓰니
 /// 확인이 틀리면(사이에 덮였다) 새로 읽어 다시, 세 번까지. 안 바뀔 거면 아무것도 안 쓴다
-fn edit(f: impl Fn(&str) -> Result<Option<String>, String>, ok: impl Fn(&Value) -> bool) -> Result<bool, String> {
+pub(crate) fn edit(mut f: impl FnMut(&str) -> Result<Option<String>, String>, ok: impl Fn(&Value) -> bool) -> Result<bool, String> {
     let c = crate::tools::cfg();
     let mut backed = false;
     for _ in 0..3 {

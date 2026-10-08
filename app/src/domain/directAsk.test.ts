@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { directCards, kindView } from './directAsk';
+import { cardLine, cardShow, directCards, dismiss, kindView, LINE_TTL } from './directAsk';
 
 const ask = (id: string, from: string, ts: string, more: object = {}) => JSON.stringify({ ts, type: 'ask', id, from, cwd: '/dev/project-x', q: '결제할까요?', kind: 'pay', yes: '결제 승인', no: '거절', options: [], ...more });
 const row = (o: object) => JSON.stringify(o);
@@ -26,6 +26,7 @@ describe('directCards — 직접 답하기 카드 기록 → 카드와 상태', 
     expect(directCards(log, got)[0]!.state).toBe('got');
     const done = env({ a1b2c3d4: { ts: '2026-10-03T06:01:02Z', text: '… 카드 c1 …' } }, { a1b2c3d4: { ts: '2026-10-03T06:03:00Z', turnEnd: true } });
     expect(directCards(log, done)[0]!.state).toBe('done');
+    expect(directCards(log, done)[0]!.lastTs).toBe('2026-10-03T06:03:00Z'); // 데스크톱은 턴 끝 = 처리된 때 — 한 줄은 거기서부터
   });
   it('세션이 done 을 남기면 처리됨 + 결과 한 줄', () => {
     const log = [ask('c1', 'a1b2c3d4', T0), row({ type: 'answer', id: 'c1', pick: 'yes', ts: T0 }), row({ type: 'done', id: 'c1', note: '결제 완료', ts: T0 })].join('\n');
@@ -51,5 +52,50 @@ describe('kindView — 위험 말과 색', () => {
     expect(kindView('send')).toMatchObject({ word: '발송', tone: 'warn' });
     expect(kindView('login').word).toBe('로그인');
     expect(kindView('weird' as never).word).toBe('확인');
+  });
+});
+
+describe('cardShow — 답·처리가 끝난 카드는 한 줄, 5분 뒤 사라짐(2026-10-05 사용자 폰 "안 사라지는 거야?")', () => {
+  const at = (iso: string) => Date.parse(iso);
+  const answered = [ask('c1', 'a1b2c3d4', T0), row({ type: 'answer', id: 'c1', pick: 'yes', label: '결제 승인', ts: '2026-10-03T06:01:00Z' })];
+  it('기다림·실패는 늘 크게 — 오래됐어도, 치웠어도', () => {
+    const [w] = directCards(ask('c1', 'a1b2c3d4', T0), env());
+    expect(cardShow(w!, at(T0) + 3 * 3600_000, {})).toBe('full');
+    const [f] = directCards([...answered, row({ type: 'answer-failed', id: 'c1', ts: '2026-10-03T06:01:01Z' })].join('\n'), env());
+    expect(cardShow(f!, at(T0) + 3600_000, dismiss({}, f!))).toBe('full');
+  });
+  it('답하면 바로 한 줄, 마지막 소식에서 5분이 지나면 숨김', () => {
+    const [c] = directCards(answered.join('\n'), env());
+    expect(c!.lastTs).toBe('2026-10-03T06:01:00Z');
+    expect(cardShow(c!, at('2026-10-03T06:01:00Z') + 1000, {})).toBe('line');
+    expect(cardShow(c!, at('2026-10-03T06:01:00Z') + LINE_TTL - 1, {})).toBe('line');
+    expect(cardShow(c!, at('2026-10-03T06:01:00Z') + LINE_TTL, {})).toBe('hide');
+  });
+  it('세션이 나중에 처리됨을 남기면 그때부터 다시 5분 — 결과는 한 번 보인다', () => {
+    const [c] = directCards([...answered, row({ type: 'done', id: 'c1', note: '결제 완료', ts: '2026-10-03T06:20:00Z' })].join('\n'), env());
+    expect(c!.lastTs).toBe('2026-10-03T06:20:00Z');
+    expect(cardShow(c!, at('2026-10-03T06:22:00Z'), {})).toBe('line');
+  });
+  it('닫기·밀기로 치우면 바로 숨김 — 그 뒤 새 소식(처리됨)이 오면 한 줄로 다시', () => {
+    const [c] = directCards(answered.join('\n'), env());
+    const gone = dismiss({}, c!);
+    expect(cardShow(c!, at('2026-10-03T06:01:05Z'), gone)).toBe('hide');
+    const [d] = directCards([...answered, row({ type: 'done', id: 'c1', note: '결제 완료', ts: '2026-10-03T06:03:00Z' })].join('\n'), env());
+    expect(cardShow(d!, at('2026-10-03T06:03:05Z'), gone)).toBe('line');
+  });
+  it('치운 목록은 오래된 것부터 버려 50개를 넘지 않는다', () => {
+    let m = {};
+    for (let i = 0; i < 60; i++) m = dismiss(m, { id: `c${i}`, lastTs: T0 } as never);
+    expect(Object.keys(m)).toHaveLength(50);
+    expect(Object.keys(m)[0]).toBe('c10');
+  });
+  it('한 줄 글 — 결과는 세션이 남긴 한 줄, 없으면 상태 말', () => {
+    const [d] = directCards([...answered, row({ type: 'done', id: 'c1', note: '결제 완료', ts: '2026-10-03T06:03:00Z' })].join('\n'), env());
+    expect(cardLine(d!)).toEqual({ what: '결제', result: '결제 완료', at: '2026-10-03T06:03:00Z' });
+    const [s] = directCards(answered.join('\n'), env());
+    expect(cardLine(s!).result).toBe('결제 승인 · 보냄');
+    expect(cardLine(directCards(ask('c1', 'deadbeef', T0), env())[0]!).result).toBe('세션이 꺼졌어요');
+    const [a] = directCards(ask('c9', 'deadbeef', T0, { amount: 'US$25' }), env());
+    expect(cardLine(a!).what).toBe('결제 US$25');
   });
 });

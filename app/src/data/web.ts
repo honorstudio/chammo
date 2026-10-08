@@ -2,7 +2,8 @@
 // 이름·모양은 tauri.ts 와 같게 둬서 domain/* 을 그대로 쓴다.
 // 인증 = 이 기기 토큰을 localStorage 에 두고 Authorization: Bearer 로만(쿠키는 포트를 안 가려 같은 호스트 다른 포트 서버로 샌다 — 2026-10-02 재검토).
 // localStorage 는 출처(스킴+호스트+포트)마다 따로라 다른 포트·홈 화면 앱과 안 섞인다
-import type { TranscriptChunk } from './tauri';
+import { makeApi } from './peerApi';
+export type { MobileEnv } from './peerApi';
 
 /** 열쇠가 없거나 바뀌었다 — 맥 앱 설정의 QR(열쇠 든 주소)로 다시 열어야 한다 */
 export class NoKeyError extends Error {
@@ -10,8 +11,6 @@ export class NoKeyError extends Error {
     super('no key');
   }
 }
-
-export type MobileEnv = { assistantName: string; language: string; devRoot: string; extraProjects: string[]; hqDir: string };
 
 const TOKEN_KEY = 'chammo.token';
 const getToken = (): string | null => { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } };
@@ -83,40 +82,26 @@ const getJson = <T>(path: string, signal?: AbortSignal) => timed(path, signal, (
 const post = <T>(path: string, body: object) =>
   call(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json() as Promise<T>);
 
-export const getEnv = (signal?: AbortSignal) => getJson<MobileEnv>('/api/env', signal);
-/** `claude agents --json` 원문 — 파싱은 domain/session.ts parseAgents */
-export const listSessionsRaw = (signal?: AbortSignal) => getText('/api/sessions', signal);
-/** 대화 기록 이어 읽기 — 세션 id(UUID)로만 */
-export const readTranscript = (sessionId: string, from?: number, signal?: AbortSignal) =>
-  getJson<TranscriptChunk>(`/api/transcript?id=${encodeURIComponent(sessionId)}${from === undefined ? '' : `&from=${from}`}`, signal);
-/** 앞 대화 — before(첫 줄 자리) 앞의 온전한 줄들. start = 그 첫 줄 자리(0 이면 대화 처음) */
-export const readTranscriptBefore = (sessionId: string, before: number) =>
-  getJson<{ text: string; start: number }>(`/api/transcript?id=${encodeURIComponent(sessionId)}&before=${before}`);
-export const readTasks = () => getText('/api/tasks');
-export const routinesList = () => getText('/api/routines');
-export const readUsage = () => getText('/api/usage');
+/** 보기·채팅·대기함 길 — 다른 기기 참모(data/remote)와 같은 판을 fetch 로 */
+const api = makeApi({ text: getText, json: getJson, post, bytes: (path) => call(path).then((r) => r.arrayBuffer()) });
+export const {
+  getEnv, listSessionsRaw, readTranscript, readTranscriptBefore, readTasks, routinesList, readUsage, readLoad, readDirect, directAnswer, taskAnswer,
+  sendTextToSession, sendStatus, interruptSession, listStoppedOrchs, readTails, listBrowsers, browserFrame, readPins, readRoles,
+} = api;
+
+/** 계정 칸 — 이름·요금제·사용량·쉬는 때만(맥이 이메일·토큰을 안 낸다). 읽기는 domain/phoneAccounts readPhoneAccounts */
+export const readAccounts = (signal?: AbortSignal) => getText('/api/accounts', signal);
+/** 이 계정으로 — 맥 키체인 로그인을 바꿔 끼우고 그 칸에 고정(데스크톱 '이 계정으로'와 같은 길). 답 = 바뀐 계정 칸 원문 */
+export const switchAccount = (id: string) => post<unknown>('/api/account-switch', { id }).then((v) => JSON.stringify(v));
+/** 자동 전환 켜기·끄기 */
+export const setAccountAuto = (on: boolean) => post<unknown>('/api/account-auto', { on }).then((v) => JSON.stringify(v));
+/** 로그인 풀림(login.rs) — 맥 판단 + 폰 로그인 흐름 · 시작 · 코드 한 줄 · 그만. 해석은 domain/phoneLogin */
+export const readLogin = (signal?: AbortSignal) => getText('/api/login', signal);
+export const loginStart = () => post<unknown>('/api/login-start', {});
+export const loginCode = (code: string) => post<unknown>('/api/login-code', { code });
+export const loginCancel = () => post<unknown>('/api/login-cancel', {});
 /** scripts/show 기록 꼬리 — 대시보드 파일 카드(domain/dashboard dashFiles) */
 export const readShowLog = () => getText('/api/shows');
-/** 직접 답하기 카드 기록(direct.jsonl) — 상태는 domain/directAsk */
-export const readDirect = () => getText('/api/direct');
-/** 사람이 폰 카드에서 누른 답 — 맥이 그 세션 입력칸에 사람 말로 친다(데스크톱과 같은 문지기) */
-export const directAnswer = (id: string, pick: unknown) => post<{ ok: true }>('/api/direct-answer', { id, pick }).then(() => undefined);
-/** 비서 세션(HQ 폴더)에만 — 다른 세션이면 서버가 403 */
-export const sendTextToSession = (id: string, text: string, cid?: string) => post<{ ok: true }>('/api/send', cid ? { id, text, cid } : { id, text }).then(() => undefined);
-/** 폰이 보낸 말을 맥이 뒤에서 쳤나(보낼 함 cid) — typing·done·failed·unknown */
-export const sendStatus = (cid: string) => getJson<{ state: string; error?: string }>(`/api/send-status?cid=${encodeURIComponent(cid)}`);
-/** 멈춤 — 비서 세션에 Esc 한 번. 이미 쉬는 중(409 not working)·연타(429 too soon)는 결과로 돌려준다(서버 mobile_http 의 글 그대로) */
-export async function interruptSession(id: string): Promise<'ok' | 'idle' | 'soon'> {
-  try {
-    await post<{ ok: true }>('/api/interrupt', { id });
-    return 'ok';
-  } catch (e) {
-    const m = (e as Error).message;
-    if (m === 'not working') return 'idle';
-    if (m === 'too soon') return 'soon';
-    throw e;
-  }
-}
 /** 허용 집합 안의 파일 주소(서버가 고른 것만 열린다 — 보여 준 파일·예약 지침서·HQ starter). thumb = 그림 긴 변 480px JPEG */
 /** 썸네일 긴 변 — 작은 카드 360·큰 카드 720·오피스 첫 장 크게 1600 */
 export type ThumbSize = 360 | 720 | 1600;
@@ -156,14 +141,17 @@ export const routineDo = (name: string, action: 'run' | 'pause' | 'resume') => p
 
 /** 참모 프사 — 데스크톱에서 바꾼 모양·그림을 폰에도. 그림은 토큰을 실어 받아 blob 주소로(키로만 찾는다) */
 const avatarBlobs = new Map<string, string>();
+const avatarBlobV = new Map<string, number>(); // 다시 읽을 때(돌아옴마다) 판이 같은 그림은 다시 안 받는다
 export async function readAvatarsForPhone(): Promise<unknown> {
   const list = await getJson<{ key: string; avatar: { kind: string }; v: number }[]>('/api/avatars');
   await Promise.all(list.filter((e) => e.avatar.kind === 'image').map(async (e) => {
+    if (avatarBlobs.has(e.key) && avatarBlobV.get(e.key) === e.v) return;
     try {
       const blob = await call(`/api/avatar-image?key=${encodeURIComponent(e.key)}`).then((r) => r.blob());
       const old = avatarBlobs.get(e.key);
       if (old) URL.revokeObjectURL(old);
       avatarBlobs.set(e.key, URL.createObjectURL(blob));
+      avatarBlobV.set(e.key, e.v);
     } catch {
       // 그림을 못 받으면 OrchAvatar 가 기본형으로 그린다
     }
@@ -172,19 +160,15 @@ export async function readAvatarsForPhone(): Promise<unknown> {
 }
 export const avatarBlobUrl = (key: string) => avatarBlobs.get(key) ?? null;
 
-/** 꺼진 참모 — HQ 폴더의 꺼진 대화 원문(파싱은 domain/stopped). 하던 일은 readTails 로 */
-export const listStoppedOrchs = () => getText('/api/stopped');
-/** 대화 기록 꼬리(세션 번호 → 꼬리 글) — 한 번에 12개까지 */
-export const readTails = (sessionIds: string[]) => (sessionIds.length ? getJson<Record<string, string>>(`/api/tails?ids=${sessionIds.slice(0, 12).map(encodeURIComponent).join(',')}`) : Promise.resolve({}));
-/** 꺼진 참모를 그 대화 그대로 다시 켠다(HQ 폴더 것만 — 서버가 다시 본다) */
-export const respawnOrch = (sessionId: string) => post<{ ok: true }>('/api/respawn', { sessionId }).then(() => undefined);
+/** 꺼진 참모를 그 대화 그대로 다시 켠다(HQ 폴더 것만 — 서버가 다시 본다). already = 이미 켜져 있어서 아무것도 안 했다(낡은 목록에서 누름) */
+export const respawnOrch = (sessionId: string) => post<{ ok: true; already?: boolean }>('/api/respawn', { sessionId }).then((r) => ({ already: !!r.already }));
 /** 새 참모 — 별명만 보내고 진짜 이름(번호)은 서버가 지어 돌려준다 */
 export const spawnOrch = (nick: string, role = '') => post<{ ok: true; name: string }>('/api/spawn', { nick, role }).then((r) => r.name);
 
-/** 떠 있는 세션 브라우저(보기에 필요한 것만 — 포트·devtools 경로는 맥 안에서만) */
-export const listBrowsers = () => getJson<import('../domain/agentBrowser').Live[]>('/api/browsers');
-/** 세션 브라우저 화면 한 장 — since 보다 새 것이 있으면 [순번 8바이트][jpeg](domain/agentBrowser unpackFrame), 없으면 빈 것 */
-export const browserFrame = (profile: string, since: number) => call(`/api/browser-frame?profile=${encodeURIComponent(profile)}&since=${since}`).then((r) => r.arrayBuffer());
+/** 사람 개입 켜기·돌려주기(세션이 부르는 중이면 돌려주기 = '다 했어') — 그 세션(sessionPid)의 브라우저일 때만 */
+export const browserTakeover = (profile: string, sessionPid: number, on: boolean) => post<{ ok: true }>('/api/browser-takeover', { profile, sessionPid, on }).then(() => undefined);
+/** 개입 중 누르기·글자·스크롤 — 맥이 개입·부름이 아니면 버린다 */
+export const browserInput = (profile: string, sessionPid: number, events: import('../domain/agentInput').InputEv[]) => post<{ ok: true }>('/api/browser-input', { profile, sessionPid, events }).then(() => undefined);
 
 /** 폰 푸시 — 맥 앱의 VAPID 공개 키, 이 기기 구독 넣기·빼기(구독은 열쇠의 기기에 묶인다) */
 export const getPushKey = () => getJson<{ key: string }>('/api/push-key').then((r) => r.key);
@@ -194,15 +178,9 @@ export const pushUnsubscribe = (endpoint: string) => post<{ ok: true }>('/api/pu
 /** 홈 화면 앱 연결 코드 — 이 기기(열쇠)로 새 일회용 코드(10분·한 번)를 받는다. 홈 화면 앱에 붙여 넣어 짝짓는다 */
 export const newPairCode = () => post<{ code: string; expires: number }>('/api/pair-code', {});
 
-/** 참모 재우기 — claude stop(HQ 참모만, 서버가 다시 본다). 대화는 남아 '꺼져 있음'에서 다시 깨울 수 있다 */
-/** 참모 제거 — claude stop(켜져 있으면) + rm. 목록에서 빠지고 대화 기록 파일은 맥에 남는다(다시 깨울 수는 없다) */
-/** 참모 고정 — 맥 <데이터>/orch-pins.json(데스크톱과 같은 파일). 글 그대로(domain/orchPins parsePins) */
-export const readPins = () => getText('/api/pins');
 export const setPin = (sessionId: string, on: boolean) => post<string[]>('/api/pin', { sessionId, on });
 /** 참모 별명 — 맥 앱 별명이 바뀌고 쉬는 때 /rename '참모-N · 별명'(앞 번호는 맥이 진짜 이름에서). 빈 글 = 설정 이름으로 */
 export const renameOrch = (id: string, nick: string) => post<{ ok: true }>('/api/rename', { id, nick }).then(() => undefined);
-/** 참모 맡은 일 — 맥 <데이터>/orch-roles.json(데스크톱과 같은 파일). 글 그대로(domain/orchRoles parseRoles) */
-export const readRoles = () => getText('/api/roles');
 /** 켜진 참모만(id), 비우면 지움. 돌려주는 건 바뀐 전체 */
 export const setRole = (id: string, role: string) => post<Record<string, { role: string; at: number }>>('/api/role', { id, role });
 export const removeOrch = (id: string) => post<{ ok: true }>('/api/remove', { id }).then(() => undefined);

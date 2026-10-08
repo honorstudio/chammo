@@ -1,10 +1,14 @@
 /* ═══ 직접 답하기 카드(시안 A 흐름 속 카드, 2026-10-03) — 왼쪽 띠 없이 전체 테두리·옅은 면. 위험한 승인 버튼만 빨강 ═══ */
 /* 데스크톱 채팅과 폰이 같이 쓴다 — 두 쪽 토큰 이름이 같다(--surface·--line-strong·--text…). 위험 빨강은 테마와 상관없이 하나(흰 글자 버튼) */
 .dc-row, .dc-card, .dc-mini, .dc-done { --dc-red: #b42318; }
+/* 결정 대기함 안 — 드롭다운 폭에 맞춘다 */
+.inbox-direct { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; }
 .dc-row { justify-content: stretch; }
 .dc-row > * { flex: 1; min-width: 0; max-width: 560px; }
 .dc-card { box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; padding: 14px; border-radius: 14px; border: 1px solid var(--line-strong); background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, .05); font-size: 13.5px; line-height: 1.5; color: var(--text); }
 .dc-card.dc-hot { border-color: color-mix(in srgb, var(--dc-red) 35%, var(--line-strong)); background: color-mix(in srgb, var(--dc-red) 5%, var(--surface)); }
+.dc-card.dc-off { background: var(--surface-2); box-shadow: none; }
+.dc-off .dc-top .dc-x { margin: -12px -12px -12px 0; }
 .dc-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .dc-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .dc-who b { font-size: 13px; }
@@ -37,9 +41,18 @@
 .dc-mini { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); font-size: 13px; }
 .dc-mini .dc-t { flex: 1; min-width: 0; }
 .dc-mini .dc-t .dc-muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dc-done { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); font-size: 12.5px; }
-.dc-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.dc-end { margin-left: auto; font-weight: 700; white-space: nowrap; }
+.dc-done { display: flex; flex-direction: column; gap: 6px; padding: 0 0 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); font-size: 12.5px; touch-action: pan-y; transition: transform .15s ease, opacity .15s ease; }
+.dc-line { display: flex; align-items: center; min-width: 0; }
+.dc-fold { all: unset; box-sizing: border-box; flex: 1; min-width: 0; min-height: 44px; display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.dc-fold > * { flex: none; }
+.dc-fold > b { flex: 0 1 auto; max-width: 32%; overflow: hidden; text-overflow: ellipsis; }
+.dc-fold > .dc-what1 { flex: 0 1 auto; min-width: 0; max-width: 26%; overflow: hidden; text-overflow: ellipsis; }
+.dc-res { flex: 1 1 0; min-width: 3em; overflow: hidden; text-overflow: ellipsis; font-weight: 700; }
+.dc-fold:focus-visible, .dc-x:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; border-radius: 10px; }
+.dc-x { all: unset; box-sizing: border-box; flex: 0 0 44px; width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-3); cursor: pointer; }
+.dc-x svg { width: 14px; height: 14px; }
+.dc-x:hover { color: var(--text); }
+.dc-more { display: flex; flex-direction: column; gap: 6px; padding: 0 12px 10px 0; line-height: 1.5; }
 .dc-steps { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--text-3); }
 .dc-steps em { font-style: normal; }
 .dc-steps .on { color: var(--text); font-weight: 700; }

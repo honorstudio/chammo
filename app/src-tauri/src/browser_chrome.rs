@@ -134,6 +134,28 @@ pub fn clean_parts(dest_dir: &Path, alive: impl Fn(i32) -> bool) {
 /// 윈도우 설치기 서명 — Authenticode 유효 + 서명자 Google LLC. 경로는 환경 변수로 넘긴다(스크립트에 글자로 안 끼운다)
 pub const WIN_SIG_PS: &str = "$s = Get-AuthenticodeSignature -LiteralPath $env:CHAMMO_FILE; if ($s.Status -eq 'Valid' -and $s.SignerCertificate.Subject -match '(^|, )O=Google LLC(,|$)') { exit 0 } else { Write-Output $s.Status; exit 1 }";
 
+/// 설치 뒤 새로 생긴 바탕화면 크롬 바로가기 — 이름에 chrome 이 든 .lnk 중 설치 전 목록에 없던 것만(사용자가 둔 것은 안 건드린다).
+/// 이름은 언어마다 다르다('Chrome 베타'·'Google Chrome Beta')
+pub fn new_chrome_shortcuts(before: &[String], after: &[String]) -> Vec<String> {
+    // 윈도우 파일 이름은 대소문자를 안 가린다 — 비교도 소문자로
+    let before: std::collections::HashSet<String> = before.iter().map(|n| n.to_lowercase()).collect();
+    after.iter().filter(|n| { let l = n.to_lowercase(); l.ends_with(".lnk") && l.contains("chrome") && !before.contains(&l) }).cloned().collect()
+}
+
+/// 바탕화면 폴더(OneDrive 로 옮겨졌을 수 있어 셸에 묻는다)
+#[cfg_attr(not(windows), allow(dead_code))]
+fn desktop_dir() -> Option<PathBuf> {
+    let ps = crate::browser_get::sys_tool("WindowsPowerShell\\v1.0\\powershell");
+    let out = crate::platform::run_capped(crate::platform::command(ps).args(["-NoProfile", "-NonInteractive", "-Command", "[Environment]::GetFolderPath('Desktop')"]), std::time::Duration::from_secs(30)).ok()?;
+    let d = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !d.is_empty()).then(|| PathBuf::from(d)).filter(|p| p.is_dir())
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn file_names(dir: &Path) -> Option<Vec<String>> {
+    Some(std::fs::read_dir(dir).ok()?.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+}
+
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn install_beta_win(setup: &Path, poll: &dyn Fn() -> bool, say: &dyn Fn(&str)) -> Result<(), String> {
     say(crate::i18n::tr("크롬 베타 서명 확인하는 중", "Checking Chrome Beta's signature"));
@@ -146,10 +168,19 @@ pub fn install_beta_win(setup: &Path, poll: &dyn Fn() -> bool, say: &dyn Fn(&str
         return Err(format!("{} ({})", crate::i18n::tr("받은 크롬의 서명이 구글 것이 아니에요", "The downloaded Chrome is not signed by Google"), String::from_utf8_lossy(&ps.stdout).trim()));
     }
     say(crate::i18n::tr("크롬 베타 설치하는 중", "Installing Chrome Beta"));
+    // 구글 설치기는 사용자 설치에서 바탕화면 바로가기를 만든다(QA 2026-10-05) — 설치 전 목록을 찍어 두고 새로 생긴 크롬 바로가기만 지운다
+    let desk = desktop_dir().and_then(|d| file_names(&d).map(|b| (d, b)));
     // 설치기가 나머지를 받아 깐다(사용자 설치라 관리자 창 없음). 끝난 뒤에도 파일이 늦게 보일 수 있어 2분까지 본다
     let _ = crate::platform::run_capped(crate::platform::command(setup).args(["/silent", "/install"]), std::time::Duration::from_secs(900));
     for _ in 0..120 {
         if poll() {
+            if let Some((d, before)) = &desk {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                for n in new_chrome_shortcuts(before, &file_names(d).unwrap_or_default()) {
+                    let gone = std::fs::remove_file(d.join(&n)).is_ok();
+                    crate::claude::log_out("browser-setup", &format!("desktop shortcut {n} removed={gone}"));
+                }
+            }
             return Ok(());
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
@@ -161,6 +192,20 @@ pub fn install_beta_win(setup: &Path, poll: &dyn Fn() -> bool, say: &dyn Fn(&str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 설치_뒤_새로_생긴_크롬_바로가기만_지운다() {
+        // 윈도우 QA: 크롬 베타 사용자 설치가 바탕화면에 'Chrome 베타' 바로가기를 만들었다(설치기 기본)
+        let before = ["내 문서.lnk", "Google Chrome.lnk", "메모.txt"].map(String::from).to_vec();
+        let after = ["내 문서.lnk", "Google Chrome.lnk", "메모.txt", "Chrome 베타.lnk", "Google Chrome Beta.LNK", "새 게임.lnk", "chrome 메모.txt"].map(String::from).to_vec();
+        assert_eq!(new_chrome_shortcuts(&before, &after), vec!["Chrome 베타.lnk".to_string(), "Google Chrome Beta.LNK".to_string()]);
+        // 원래 있던 사용자 크롬 바로가기·크롬과 무관한 새 바로가기·.lnk 아닌 파일은 안 건드린다
+        assert!(new_chrome_shortcuts(&after, &after).is_empty());
+        // 윈도우 파일 이름은 대소문자를 안 가린다 — 사용자가 둔 것을 설치기가 대소문자만 바꿔 다시 만들어도 사용자 것
+        let mine = ["google chrome beta.lnk".to_string()];
+        assert!(new_chrome_shortcuts(&mine, &["Google Chrome Beta.lnk".to_string()]).is_empty());
+        // 설치 전 목록을 못 읽었으면(None 대신 빈 목록이 아니라) 아무것도 안 지운다 — 호출부가 막는다
+    }
 
     #[test]
     fn 크롬_베타_자리_관리자_아니면_내_응용프로그램() {

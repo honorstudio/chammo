@@ -1,3 +1,4 @@
+import { wizardAccess, type Access } from './access';
 import { IS_WIN } from './reader';
 // 환경 점검 판단 — Claude Code 버전이 확인된 범위인가, 설정을 끝내도 되나
 // Chammo 는 Claude Code 의 백그라운드 세션 기능(--bg·agents --json·attach)에 기댄다. 확인한 범위는 2.1.280 이상의 2.1.x
@@ -9,6 +10,8 @@ export type EnvCheck = {
   clt: boolean;
   ghPath: string | null;
   ghUser: string | null;
+  /** gh 가 쓰는 계정 토큰이 깨짐(만료·취소) — 다시 로그인 필요 */
+  ghStale: boolean;
 };
 
 /** "2.1.283 (Claude Code)" → [2, 1, 283]. 모양이 다르면 null */
@@ -141,9 +144,10 @@ export const WIZARD: WizardStep[] = ['welcome', 'check', 'basics', 'features', '
 export type Trust = { dev: boolean; hq: boolean };
 /** 다음으로 넘어갈 수 있나 — 점검 단계는 Claude Code 설치·로그인·명령줄 도구가, 기본 설정 단계는 두 폴더 믿기가 다 돼야.
  *  마지막 단계는 '시작하기'라 다음이 없다 */
-export function canNext(step: WizardStep, check: EnvCheck | null, trust?: Trust): boolean {
+export function canNext(step: WizardStep, check: EnvCheck | null, trust?: Trust, access?: Access | null): boolean {
   if (step === 'check') return setupReady(check);
-  if (step === 'basics') return !!trust?.dev && !!trust?.hq;
+  // 고른 프로젝트 폴더를 맥이 막고 있으면 세션이 'Unexpected' 로만 실패한다(이슈 #1) — 여기서 멈춰 세운다
+  if (step === 'basics') return !!trust?.dev && !!trust?.hq && !wizardAccess(access ?? null).block;
   return step !== 'ready';
 }
 
@@ -154,6 +158,13 @@ export function tildify(path: string, home: string): string {
   if (!h) return p;
   if (p === h) return '~';
   return p.startsWith(h + '/') ? '~' + p.slice(h.length) : p;
+}
+
+/** GitHub CLI 줄 — 깨진 토큰은 '로그인됨'이 아니라 다시 로그인(이름만 보고 됨이라 했다, 2026-10-05) */
+export function ghRow(c: Pick<EnvCheck, 'ghPath' | 'ghUser' | 'ghStale'>): 'ok' | 'relogin' | 'login' | 'install' {
+  if (c.ghStale) return 'relogin';
+  if (c.ghUser) return 'ok';
+  return c.ghPath ? 'login' : 'install';
 }
 
 /** macOS 알림 권한 — Rust notify_status 가 준다 */

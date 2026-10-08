@@ -88,6 +88,9 @@ describe('slotText — 설정 칸 상태 글', () => {
     expect(slotText({ kind: 'week', until: new Date(2026, 9, 8, 16, 0).getTime() }, now)).toBe('주간 소진 ~10/08 16:00');
     expect(slotText({ kind: 'limit', until: new Date(2026, 9, 2, 19, 0).getTime() }, now)).toBe('한도 걸림 ~19:00');
   });
+  it('로그인 풀림은 시각 없이 — 다시 로그인해야 풀린다', () => {
+    expect(slotText({ kind: 'auth', until: now + 30 * 86_400_000 }, now)).toBe('로그인 필요');
+  });
 });
 
 describe('usageOf — 위 막대 사용량(지금 칸 기록 = 계정 토큰으로 물은 값·지문이 맞는 상태줄 값)', () => {
@@ -121,8 +124,12 @@ describe('popRows — 계정 칩 팝오버 줄(글자 적게: 이름·5시간·�
 
   it('지금 계정·고정·남은 %(위 막대와 같은 기준)·리셋 시각(5시간 시:분, 주간 요일 시:분)·몇 분 전', () => {
     const [b, a] = popRows(view({ auto }), now);
-    expect(b).toEqual({ id: 'a2', name: '작은 것', on: true, pinned: true, five: 40, week: 90, note: '5시간 22:20 · 주간 목 16:00 초기화 · 3분 전', title: 'b@x.com · Max 5x' });
-    expect(a).toEqual({ id: 'a1', name: '큰 것', on: false, pinned: false, five: null, week: null, note: '주간 소진 ~10/08 16:00', title: 'a@x.com · Max 20x' });
+    expect(b).toEqual({ id: 'a2', name: '작은 것', on: true, pinned: true, pinHint: true, five: 40, week: 90, note: '5시간 22:20 · 주간 목 16:00 초기화 · 3분 전', title: 'b@x.com · Max 5x' });
+    expect(a).toEqual({ id: 'a1', name: '큰 것', on: false, pinned: false, pinHint: false, five: null, week: null, note: '주간 소진 ~10/08 16:00', title: 'a@x.com · Max 20x' });
+  });
+
+  it('고정 표시 — 자동 전환이 켜져 있을 때만 "다 쓰면 넘어감"(pinHint)', () => {
+    expect(popRows(view({ auto: { ...auto, on: false } }), now)[0]).toMatchObject({ pinned: true, pinHint: false });
   });
 
   it('값이 없으면 null(— 로 그린다), 칸이 없으면 빈 목록', () => {

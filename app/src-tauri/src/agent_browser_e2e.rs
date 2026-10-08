@@ -49,7 +49,7 @@ fn start(profile: &str) -> (Chrome, Live) {
         let mut l = t.lines();
         Some((l.next()?.trim().parse::<u16>().ok()?, l.next()?.trim().to_string()))
     });
-    let live = Live { profile: profile.into(), pid, session_pid: 1, port, ws_path: ws, url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None };
+    let live = Live { profile: profile.into(), pid, session_pid: 1, port, ws_path: ws, url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None };
     std::fs::create_dir_all(live_dir()).unwrap();
     std::fs::write(live_dir().join(format!("{profile}.json")), serde_json::to_string(&live).unwrap()).unwrap();
     (c, live)
@@ -187,4 +187,103 @@ fn agent_dialog_e2e() {
 
     let _ = owner.eval(&sa, "1");
     let _ = std::fs::remove_file(live_dir().join(format!("{profile}.json")));
+}
+
+/// 2026-10-05 사용자 실사용 — 세션 브라우저가 닫혔는데 모달엔 마지막 화면이 '사진'처럼 남고 머리엔 '주소 확인 중'만 계속.
+/// 일꾼이 그 두 상태를 모달이 가를 수 있게 알려 주는지 진짜 크롬으로 — ① 크롬은 살았는데 탭이 0개 ② 다시 열면 이어짐 ③ 크롬이 죽음.
+/// `CHAMMO_HOME=<빈 시험 폴더> cargo test agent_closed_e2e -- --ignored --nocapture --test-threads=1`
+#[test]
+#[ignore]
+fn agent_closed_e2e() {
+    let profile = format!("e2e-closed-{}", std::process::id());
+    let (chrome, live) = start(&profile);
+    let mut owner = Owner::new(&live);
+    let (a, _sa) = owner.tab("data:text/html,<title>A</title><p>A");
+    let w = Watch::on(&profile);
+    show(&profile, &a);
+    wait_for("첫 화면", 10, || (frame_bytes(&profile, 0).len() > 8).then_some(()));
+    agent_pin(profile.clone(), None);
+
+    // ① 탭을 다 닫는다(맥에서 마지막 창을 닫은 것과 같다 — 크롬 프로세스·디버깅 포트는 산다)
+    let got = owner.cdp.call("Target.getTargets", serde_json::json!({}), None, |_| {}).unwrap();
+    for t in got["targetInfos"].as_array().unwrap().iter().filter_map(page_of) {
+        let _ = owner.cdp.call("Target.closeTarget", serde_json::json!({ "targetId": t.id }), None, |_| {});
+    }
+    let t = wait_for("탭 0개", 10, || {
+        let t = agent_tabs(profile.clone());
+        (t.pages.is_empty() && t.current.is_none()).then_some(t)
+    });
+    assert!(port_open(live.port), "크롬이 살아 있어야 이 경우다");
+    assert!(t.attached, "붙은 채 탭이 0개 — 모달이 '붙는 중'과 갈라 '닫혔어'를 그릴 수 있어야 한다");
+    assert_eq!(t.error, "", "오류가 없다 — 그래서 예전 모달은 '주소 확인 중'만 띄웠다");
+    // 덮개의 다시 시도 — 도는 일꾼도 끊고 새로 붙는다(탭 0개 그대로라도 다시 읽는다)
+    let old = with_workers(|ws| ws.get(&profile).map(|w| Arc::as_ptr(&w.view) as usize));
+    agent_retry(profile.clone());
+    wait_for("다시 시도로 새 일꾼", 10, || {
+        let t = agent_tabs(profile.clone());
+        let now = with_workers(|ws| ws.get(&profile).map(|w| Arc::as_ptr(&w.view) as usize));
+        (now != old && t.attached && t.pages.is_empty()).then_some(())
+    });
+
+    // ② 세션이 다시 열면 이어진다
+    let (b, _sb) = owner.tab("data:text/html,<title>B</title><p>B");
+    wait_for("다시 열면 그 탭", 10, || (agent_tabs(profile.clone()).current.as_deref() == Some(b.as_str())).then_some(()));
+
+    // ③ 크롬이 죽는다 — 화면 받기 이유가 '꺼짐' 쪽으로(모달은 화면이 있어도 덮개를 그려야 한다)
+    drop(owner);
+    drop(chrome);
+    let t = wait_for("죽은 크롬 이유", 15, || {
+        let t = agent_tabs(profile.clone());
+        (!t.error.is_empty()).then_some(t)
+    });
+    assert!(!t.attached);
+    let off = ["no live", "refused", "reset", "closed", "broken pipe", "os error 32", "os error 54", "os error 61"];
+    assert!(off.iter().any(|k| t.error.to_lowercase().contains(k)), "꺼짐으로 읽혀야 한다: {}", t.error);
+    drop(w);
+    let _ = std::fs::remove_file(live_dir().join(format!("{profile}.json")));
+}
+
+/// 스크립트가 `chammo-browser launch` 로 띄운 크롬(2026-10-06 아이맥 project-x) — 앱이 세션 브라우저 목록에 그 세션 것(CLAUDE_PID)으로 넣고
+/// 화면을 받고, 주인 스크립트가 끝나면 목록에서 빠진다. node 와 tools/chammo-browser 의존성(npm ci)이 있어야 한다.
+/// `CHAMMO_HOME=<빈 시험 폴더> cargo test agent_script_e2e -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn agent_script_e2e() {
+    let home = std::env::var("HOME").unwrap_or_default();
+    assert!(!crate::config::is_real_data(&home, crate::config::data_dir()), "CHAMMO_HOME 을 시험 폴더로 줘");
+    let profile = format!("e2e-script-{}", std::process::id());
+    let tool = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/chammo-browser/bin/chammo-browser.js");
+    // 주인 스크립트 흉내 — 죽이면 지킴이가 크롬을 닫는다
+    let mut owner = crate::platform::command("sleep").arg("120").spawn().expect("sleep");
+    let out = crate::platform::command("node")
+        .arg(&tool)
+        .args(["launch", &profile, "--headless", "--owner", &owner.id().to_string()])
+        .env("CLAUDE_PID", "4242")
+        .output()
+        .expect("node");
+    let r: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|_| panic!("launch 출력: {}", String::from_utf8_lossy(&out.stdout)));
+    assert_eq!(r["ok"], true, "{r}");
+    let holder = r["holder"].as_i64().unwrap() as i32;
+
+    // ① 앱 목록에 — 그 세션(CLAUDE_PID) 것으로, 주인 = 지킴이
+    let live = wait_for("앱 세션 브라우저 목록", 15, || agent_lives().into_iter().find(|l| l.profile == profile));
+    assert_eq!(live.session_pid, 4242);
+    assert_eq!(live.pid, holder);
+    assert!(r["wsEndpoint"].as_str().unwrap().ends_with(&live.ws_path), "launch 가 준 주소 = 앱이 붙는 주소");
+
+    // ② 스크립트가 탭을 열면 상태 파일 주소가 따라오고, 앱 일꾼이 그 화면을 받는다
+    let mut cdp = Owner::new(&live);
+    let (tab, _s) = cdp.tab("data:text/html,<title>script-tab</title><h1 style='font-size:80px'>script</h1>");
+    let w = Watch::on(&profile);
+    wait_for("상태 파일에 지금 주소", 15, || read_live(&profile).filter(|l| l.url.starts_with("data:text/html")).map(|_| ()));
+    show(&profile, &tab);
+    wait_for("첫 화면", 15, || (frame_bytes(&profile, 0).len() > 8).then_some(()));
+
+    // ③ 주인 스크립트가 끝나면 지킴이가 닫는다 — 목록에서 빠지고 락도 없다
+    drop(cdp);
+    let _ = owner.kill();
+    let _ = owner.wait();
+    wait_for("주인이 끝나면 목록에서 빠짐", 15, || (!agent_lives().iter().any(|l| l.profile == profile) && !crate::platform::pid_alive(holder)).then_some(()));
+    assert!(!crate::config::data_file("browser").join("locks").join(format!("{profile}.lock")).exists(), "락 반납");
+    drop(w);
 }

@@ -49,6 +49,21 @@ pub fn harness_request(line: &str) -> Option<(String, Option<String>)> {
     Some((id.to_string(), p))
 }
 
+/// 참모 브라우저 연결(scripts/app browser status|connect <폴더>) → (id, 동사, 폴더). 'need'(카드)는 화면 몫이라 여기선 안 받는다
+pub fn browser_request(line: &str) -> Option<(String, String, String)> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v.get("action")?.as_str()? != "browser" {
+        return None;
+    }
+    let id = v.get("id")?.as_str()?;
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return None;
+    }
+    let verb = v["arg"]["verb"].as_str()?;
+    let dir = v["arg"]["dir"].as_str()?.trim();
+    (matches!(verb, "status" | "connect") && !dir.is_empty()).then(|| (id.to_string(), verb.to_string(), dir.to_string()))
+}
+
 /// 폰 푸시(scripts/app push) → (제목, 한 줄). 문구 자르기는 push::payload 가 한다(제목 80자·한 줄 60자)
 pub fn push_request(line: &str) -> Option<(String, String)> {
     let v: serde_json::Value = serde_json::from_str(line).ok()?;
@@ -59,6 +74,44 @@ pub fn push_request(line: &str) -> Option<(String, String)> {
     (!title.is_empty()).then(|| (title.to_string(), v["arg"]["body"].as_str().unwrap_or("").trim().to_string()))
 }
 
+/// 자리표 알림(scripts/slot — 만료로 넘겨받음·--force 정리·기다리는데 주인이 쉼) → (짧은 세션 번호, 칠 한 줄).
+/// 문구는 여기서 정한다 — 줄에는 자리·까닭·주인 이름만 오고 다 거른다(이 줄로 세션에 아무 말이나 치게 할 수는 없다)
+pub fn slot_notice_request(line: &str, lang: &str) -> Option<(String, String)> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v.get("action")?.as_str()? != "slot-notice" {
+        return None;
+    }
+    let a = &v["arg"];
+    let sid = a["session"].as_str()?;
+    let slot = a["slot"].as_str()?;
+    let by = a["by"].as_str()?;
+    let sid_ok = sid.len() >= 8 && sid.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
+    let by_ok = !by.is_empty() && by.chars().count() <= 64 && by.chars().all(|c| c.is_alphanumeric() || "-_.".contains(c));
+    if !sid_ok || !by_ok || !crate::load::SLOT_TTL.iter().any(|(n, _)| *n == slot) {
+        return None;
+    }
+    let en = lang == "en";
+    let text = match (a["why"].as_str()?, en) {
+        ("ttl", false) => format!("[자리표] {slot} 자리가 TTL 이 지나 {by} 에게 넘어갔어 — 그 자리로 하던 일(빌드·기기 조작)은 지금 멈춰. 다시 쓰려면 줄부터: 명령은 slot run {slot} <프로젝트> -- <명령>, 기기 조작은 slot take {slot} <프로젝트> --wait 1800"),
+        ("ttl", true) => format!("[slot] Your {slot} slot passed its TTL and went to {by} — stop what you were running on it (builds, device control). To use it again, queue first: slot run {slot} <project> -- <command>, or slot take {slot} <project> --wait 1800 for device control"),
+        ("force", false) => format!("[자리표] {by} 가 오래 잡힌 네 {slot} 자리를 정리했어 — 그 자리로 하던 일은 멈추고, 다시 쓰려면 slot run {slot} <프로젝트> -- <명령> 또는 slot take {slot} <프로젝트> --wait 1800"),
+        ("force", true) => format!("[slot] {by} cleared your {slot} slot (held too long) — stop what you were running on it; to use it again: slot run {slot} <project> -- <command> or slot take {slot} <project> --wait 1800"),
+        ("wait", false) => format!("[자리표] {by} 가 {slot} 자리를 기다리는데 네가 쉬는 중이라 알려 — 다 썼으면 slot give {slot} <프로젝트>, 아직 쓰면 slot renew {slot} <프로젝트>"),
+        ("wait", true) => format!("[slot] {by} is waiting for the {slot} slot while you are idle — if you are done, slot give {slot} <project>; if you still need it, slot renew {slot} <project>"),
+        _ => return None,
+    };
+    Some((sid[..8].to_string(), text))
+}
+
+/// 같은 알림(세션·자리·까닭)은 5분에 한 번 — 여럿이 기다리면 각자 찌른다
+pub fn first_in(seen: &mut std::collections::HashMap<String, u64>, key: &str, now: u64) -> bool {
+    if seen.get(key).is_some_and(|t| now < t + 300) {
+        return false;
+    }
+    seen.insert(key.to_string(), now);
+    true
+}
+
 pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
     let app = app.clone();
     std::thread::spawn(move || {
@@ -66,6 +119,7 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
         // 바이트로 읽어 깨진 글자는 바꿔 넣는다 — read_to_string 은 UTF-8 이 아닌 바이트가 하나라도 있으면 매번 실패해 감시가 영영 멈춘다
         let read = |f: &std::path::Path| std::fs::read(f).map(|b| String::from_utf8_lossy(&b).into_owned());
         let mut offset = read(&file).map(|s| s.len()).unwrap_or(0);
+        let mut slot_seen = std::collections::HashMap::new();
         // 윈도우에서 선택지 키가 한 번도 안 들어갔다 — 감시가 어느 파일을 보고 무엇을 받았는지 남긴다
         crate::claude::log_out("appctl-watch", &format!("{} offset {offset}", file.display()));
         loop {
@@ -91,6 +145,18 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                     crate::push::send_all(&title, &body, "");
                     continue;
                 }
+                // 자리표 알림 — 쥔 세션에 정해진 한 줄. 창은 안 띄운다
+                if let Some((id, text)) = slot_notice_request(&line, &crate::config::current().language) {
+                    let v: serde_json::Value = serde_json::from_str(&line).unwrap_or_default();
+                    let key = format!("{id}|{}|{}", v["arg"]["slot"].as_str().unwrap_or(""), v["arg"]["why"].as_str().unwrap_or(""));
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                    if first_in(&mut slot_seen, &key, now) {
+                        std::thread::spawn(move || {
+                            let _ = crate::claude::type_text_tagged(&id, &text, "slot-notice");
+                        });
+                    }
+                    continue;
+                }
                 // 하네스 글 — 창 없이 엔진으로 훑어 <데이터>/harness.txt 에 "#id <id>" 다음 줄부터 적는다(전체 스캔 2초대라 따로)
                 if let Some((id, project)) = harness_request(&line) {
                     std::thread::spawn(move || {
@@ -99,6 +165,19 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                         let file = crate::config::data_file("harness.txt");
                         let tmp = file.with_extension("txt.tmp");
                         if std::fs::write(&tmp, format!("#id {id}\n{text}\n")).is_ok() {
+                            let _ = std::fs::rename(&tmp, &file);
+                        }
+                    });
+                    continue;
+                }
+                // 참모 브라우저 연결 — HQ 는 데스크탑 권한이 막혀 있을 수 있어(#1) 앱이 대신 읽고 ~/.claude.json 에 적는다.
+                // 답은 <데이터>/browser-attach.txt("#id <id>" 다음 줄 JSON)
+                if let Some((id, verb, dir)) = browser_request(&line) {
+                    std::thread::spawn(move || {
+                        let ans = crate::browser_attach::answer(&verb, &dir);
+                        let file = crate::config::data_file("browser-attach.txt");
+                        let tmp = file.with_extension("txt.tmp");
+                        if std::fs::write(&tmp, format!("#id {id}\n{ans}\n")).is_ok() {
                             let _ = std::fs::rename(&tmp, &file);
                         }
                     });
@@ -122,8 +201,8 @@ mod tests {
 
     #[test]
     fn 키_넣기_요청은_화살표와_enter_만() {
-        let ok = r#"{"ts":"1","action":"keys","arg":{"id":"9b9042fe","keys":"\u001b[B\u001b[B\r"}}"#;
-        assert_eq!(keys_request(ok), Some(("9b9042fe".into(), "\x1b[B\x1b[B\r".into())));
+        let ok = r#"{"ts":"1","action":"keys","arg":{"id":"c0ffee12","keys":"\u001b[B\u001b[B\r"}}"#;
+        assert_eq!(keys_request(ok), Some(("c0ffee12".into(), "\x1b[B\x1b[B\r".into())));
         // 글자·다른 제어 문자는 거절 — 이 줄로 세션에 아무 말이나 치게 할 수는 없다
         assert_eq!(keys_request(r#"{"action":"keys","arg":{"id":"a","keys":"rm -rf /\r"}}"#), None);
         assert_eq!(keys_request(r#"{"action":"keys","arg":{"id":"a;b","keys":"\r"}}"#), None);
@@ -139,6 +218,17 @@ mod tests {
         assert_eq!(harness_request(r#"{"action":"harness","arg":"","id":"a\nb"}"#), None);
         assert_eq!(harness_request(r#"{"action":"harness","arg":""}"#), None);
         assert_eq!(harness_request(r#"{"action":"open","arg":"harnitor","id":"a"}"#), None);
+    }
+
+    #[test]
+    fn 브라우저_연결_요청은_id_동사_폴더() {
+        let l = r#"{"action":"browser","id":"ab-1","arg":{"verb":"connect","dir":"~/dev/shop"}}"#;
+        assert_eq!(browser_request(l), Some(("ab-1".into(), "connect".into(), "~/dev/shop".into())));
+        assert!(browser_request(r#"{"action":"browser","id":"x","arg":{"verb":"status","dir":"/d"}}"#).is_some());
+        assert_eq!(browser_request(r#"{"action":"browser","id":"x","arg":{"verb":"rm","dir":"/d"}}"#), None); // 모르는 동사
+        assert_eq!(browser_request(r#"{"action":"browser","id":"x/../y","arg":{"verb":"status","dir":"/d"}}"#), None); // 답 파일에 쓰는 id
+        assert_eq!(browser_request(r#"{"action":"browser","id":"x","arg":{"verb":"status","dir":"  "}}"#), None);
+        assert_eq!(browser_request(r#"{"action":"browser-need","id":"x","arg":{"dir":"/d"}}"#), None); // 카드는 화면으로
     }
 
     #[test]
@@ -166,5 +256,44 @@ mod tests {
         assert!(wants_window(r#"{"action":"focus","arg":"acme"}"#));
         assert!(!wants_window(r#"{"action":"voice","arg":"on"}"#));
         assert!(!wants_window("깨짐"));
+    }
+
+    #[test]
+    fn 자리_알림은_정해진_문구만_쥔_세션에() {
+        // scripts/slot 이 만료로 넘겨받거나 --force 로 정리하면 쥔 세션에 알린다(2026-10-05 헬로노트 gradle 이 자리 잃고도 계속 돔)
+        let ttl = r#"{"action":"slot-notice","arg":{"session":"5eed0a01-ff12-4abc-9def-000000000000","slot":"galaxy","why":"ttl","by":"project-b-platform"}}"#;
+        let (id, text) = slot_notice_request(ttl, "ko").unwrap();
+        assert_eq!(id, "5eed0a01", "attach 는 짧은 번호로");
+        assert!(text.starts_with("[자리표] galaxy 자리"), "{text}");
+        assert!(text.contains("project-b-platform") && text.contains("slot run galaxy"), "{text}");
+        assert!(!text.contains('\n'), "한 줄 — 줄바꿈이면 입력칸에서 먼저 보내진다");
+        let wait = ttl.replace(r#""why":"ttl""#, r#""why":"wait""#);
+        assert!(slot_notice_request(&wait, "ko").unwrap().1.contains("slot give galaxy"));
+        let force = ttl.replace(r#""why":"ttl""#, r#""why":"force""#);
+        assert!(slot_notice_request(&force, "ko").unwrap().1.contains("정리"));
+        assert!(slot_notice_request(&force, "en").unwrap().1.starts_with("[slot] "));
+    }
+
+    #[test]
+    fn 자리_알림으로_아무_말이나_치게_할_수는_없다() {
+        let ok = |arg: &str| slot_notice_request(&format!(r#"{{"action":"slot-notice","arg":{arg}}}"#), "ko");
+        assert!(ok(r#"{"session":"5eed0a01-ff12","slot":"build","why":"ttl","by":"project-x-app"}"#).is_some());
+        assert!(ok(r#"{"session":"5eed0a01-ff12","slot":"gpu","why":"ttl","by":"project-x-app"}"#).is_none(), "모르는 자리");
+        assert!(ok(r#"{"session":"5eed0a01-ff12","slot":"build","why":"rm","by":"project-x-app"}"#).is_none(), "모르는 까닭");
+        assert!(ok(r#"{"session":"5eed0a01-ff12","slot":"build","why":"ttl","by":"x\r/clear"}"#).is_none(), "주인 이름에 제어 문자·명령");
+        assert!(ok(r#"{"session":"5eed0a01-ff12","slot":"build","why":"ttl","by":"a b"}"#).is_none());
+        assert!(ok(&format!(r#"{{"session":"5eed0a01-ff12","slot":"build","why":"ttl","by":"{}"}}"#, "a".repeat(65))).is_none());
+        assert!(ok(r#"{"session":"9ea8;rm","slot":"build","why":"ttl","by":"project-x-app"}"#).is_none(), "세션 번호는 16진수·- 만");
+        assert!(ok(r#"{"session":"9ea8","slot":"build","why":"ttl","by":"project-x-app"}"#).is_none(), "짧은 번호보다 짧으면");
+        assert!(slot_notice_request(r#"{"action":"push","arg":{"title":"x"}}"#, "ko").is_none());
+    }
+
+    #[test]
+    fn 같은_자리_알림은_5분에_한_번() {
+        let mut seen = std::collections::HashMap::new();
+        assert!(first_in(&mut seen, "a|build|wait", 1000));
+        assert!(!first_in(&mut seen, "a|build|wait", 1200), "여럿이 기다려도 한 번");
+        assert!(first_in(&mut seen, "a|build|ttl", 1200), "까닭이 다르면 따로");
+        assert!(first_in(&mut seen, "a|build|wait", 1301));
     }
 }

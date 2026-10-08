@@ -1,6 +1,7 @@
 //! 모바일 — 폰(테일스케일)에서 참모를 보는 작은 웹 서버. 문지기(열쇠·주소·허용 목록)는 mobile_http.rs, 여긴 켜고 끄기와 맥 쪽 일.
-//! 묶는 주소: ① 테일스케일 인터페이스(utun 등)의 100.x 가 있으면 거기만 ② 없고 tailscaled 가 userspace 모드로 돌면 127.0.0.1 만
+//! 묶는 주소: ① 테일스케일 인터페이스(맥 utun·윈도우 Wintun)의 100.x 가 있으면 거기만 ② 없고 tailscaled 가 userspace 모드로 돌면 127.0.0.1 만
 //! (그 모드는 100.x 로 온 연결을 tailscaled 가 127.0.0.1 로 넘긴다) ③ 둘 다 아니면 안 연다. 0.0.0.0·LAN 주소는 어떤 경우에도 안 묶는다.
+//! 윈도우는 ①에 127.0.0.1 도 같이 묶고 serve(https)는 그쪽으로 넘긴다 — Wintun tailscaled 는 serve 백엔드로 자기 100.x 에 못 붙는다(binds·serve_host)
 //! 접속 = 짝짓기(mobile_pair): QR 엔 10분 한 번짜리 코드만, 기기별 토큰은 해시만 <데이터>/mobile-devices.json(600). 켜고 끈 상태는 <데이터>/mobile.json — 기본 꺼짐
 use crate::mobile_http::{self, Backend, Gate};
 use serde::Serialize;
@@ -118,19 +119,35 @@ fn iface_addrs() -> Vec<(String, Ipv4Addr)> {
     out
 }
 
+/// 윈도우엔 getifaddrs 가 없다 — 테일스케일이 말한 내 주소(Self IP)에 이 PC 가 실제로 묶일 수 있으면(Wintun 'Tailscale' 어댑터)
+/// 그 하나만 'tailscale' 이름으로 돌려준다. 묶일 수 없으면(어댑터 내려감) 빈 목록 = 서버를 안 연다
+pub fn ts_self_iface(self_ip: Option<Ipv4Addr>, is_local: impl Fn(Ipv4Addr) -> bool) -> Vec<(String, Ipv4Addr)> {
+    self_ip.filter(|ip| is_cgnat(*ip) && is_local(*ip)).map(|ip| vec![("tailscale".to_string(), ip)]).unwrap_or_default()
+}
+
 #[cfg(not(unix))]
 fn iface_addrs() -> Vec<(String, Ipv4Addr)> {
-    Vec::new() // 윈도우는 아직 — 서버를 안 연다
+    ts_self_iface(tailscale_status("").map(|st| st.ip), |ip| std::net::UdpSocket::bind((ip, 0)).is_ok())
+}
+
+/// tailscale CLI 후보 자리 — 맥은 brew·앱 번들, 윈도우는 Program Files 아래(설치기 기본)
+pub fn tailscale_candidates(win: bool, program_files: Option<&str>) -> Vec<String> {
+    if win {
+        return vec![format!(r"{}\Tailscale\tailscale.exe", program_files.unwrap_or(r"C:\Program Files"))];
+    }
+    ["/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"].map(str::to_string).to_vec()
 }
 
 fn tailscale_bin() -> Option<String> {
-    ["/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]
-        .into_iter()
-        .find(|p| Path::new(p).is_file())
-        .map(str::to_string)
+    tailscale_candidates(cfg!(windows), std::env::var("ProgramFiles").ok().as_deref()).into_iter().find(|p| Path::new(p).is_file())
 }
 
 fn tailscale_status(socket: &str) -> Option<TsStatus> {
+    parse_status(&tailscale_status_json(socket)?)
+}
+
+/// `tailscale status --json` 원문 — 다른 기기 참모 찾기(remote.rs)도 같은 것을 읽는다
+pub fn tailscale_status_json(socket: &str) -> Option<String> {
     let bin = tailscale_bin()?;
     let mut c = crate::platform::command(&bin);
     if !socket.is_empty() {
@@ -138,7 +155,7 @@ fn tailscale_status(socket: &str) -> Option<TsStatus> {
     }
     // 맞은편 확인(받는 스레드)이 부르니 멈추면 안 된다 — 5초 넘으면 죽인다
     let out = crate::platform::run_capped(c.args(["status", "--json"]), Duration::from_secs(5)).ok()?;
-    out.status.success().then(|| parse_status(&String::from_utf8_lossy(&out.stdout))).flatten()
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// 묶을 곳 정하기(순수) — 테일스케일이 말한 내 주소(Self IP)와 **같은** 주소를 가진 utun·tailscale 인터페이스에만(WARP·NetBird 도 utun 에 100.x 를 쓴다),
@@ -204,6 +221,8 @@ pub enum ServeState {
     Other(String),
     /// 그 이름이 funnel 로 인터넷에 열려 있다 — 모바일을 안 켠다
     Funnel,
+    /// 윈도우 0.2.4 가 걸던 옛 대상(http://<내 100.x>:포트, 502 나던 것) — 우리 것이니 갈아 끼운다
+    Legacy,
 }
 
 /// 그 이름의 어느 포트든 funnel(인터넷 공개)이 켜져 있나
@@ -244,19 +263,97 @@ fn tailscale(t: &Tailnet, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// serve(https) 가 넘길 곳 — 윈도우 tailscaled(서비스·Wintun)는 serve 백엔드로 자기 100.x 에 못 붙어 21초 뒤 502(윈도우 QA 2026-10-05) → 127.0.0.1.
+/// 맥 utun 은 100.x 로 되니 묶은 곳 그대로(userspace 는 원래 127.0.0.1)
+pub fn serve_host(t: &Tailnet, win: bool) -> IpAddr {
+    if win { IpAddr::V4(Ipv4Addr::LOCALHOST) } else { t.bind }
+}
+
+/// 다 묶기에 실패했을 때 다시 해 볼 곳 — 윈도우에서 127.0.0.1:포트를 남이 쥐고 있으면 예전처럼 100.x 만(https 는 못 건다)
+pub fn fallback_binds(t: &Tailnet, win: bool) -> Option<Vec<IpAddr>> {
+    (binds(t, win).len() > 1).then(|| vec![t.bind])
+}
+
+/// 실제로 묶을 곳 — 묶은 곳 + serve 가 들어올 곳(윈도우 127.0.0.1). 0.0.0.0·LAN 은 없다
+pub fn binds(t: &Tailnet, win: bool) -> Vec<IpAddr> {
+    let mut v = vec![t.bind];
+    let s = serve_host(t, win);
+    if !v.contains(&s) {
+        v.push(s);
+    }
+    v
+}
+
+pub fn serve_target_for(t: &Tailnet, port: u16, win: bool) -> String {
+    format!("http://{}:{port}", serve_host(t, win))
+}
+
 fn serve_target(t: &Tailnet, port: u16) -> String {
-    format!("http://{}:{port}", t.bind)
+    serve_target_for(t, port, cfg!(windows))
+}
+
+/// serve_state + 윈도우면 옛 대상(http://<묶은 100.x>:포트)도 우리 것(Legacy)으로 — 포트·주소가 정확히 같고 넘김이 그 하나일 때만
+pub fn serve_state_for(json: &str, dns: &str, t: &Tailnet, port: u16, win: bool) -> ServeState {
+    let now = serve_target_for(t, port, win);
+    let old = format!("http://{}:{port}", t.bind);
+    match serve_state(json, dns, &now) {
+        ServeState::Other(_) if win && old != now && serve_state(json, dns, &old) == ServeState::Ours => ServeState::Legacy,
+        s => s,
+    }
 }
 
 /// https://<맥>.ts.net → 이 서버. 남의 443 설정은 덮지 않는다
 fn https_on(t: &Tailnet, port: u16) -> Result<(), String> {
     let dns = t.dns.as_deref().ok_or("MagicDNS 이름이 없어요")?;
     let target = serve_target(t, port);
-    match serve_state(&tailscale(t, &["serve", "status", "--json"])?, dns, &target) {
+    match serve_state_for(&tailscale(t, &["serve", "status", "--json"])?, dns, t, port, cfg!(windows)) {
         ServeState::Ours => Ok(()),
+        ServeState::Legacy => {
+            tailscale(t, &["serve", "--https=443", "off"])?;
+            tailscale(t, &["serve", "--bg", "--https=443", &target]).map(|_| ())
+        }
         ServeState::Funnel => Err(format!("{dns} 가 funnel 로 인터넷에 열려 있어요")),
         ServeState::Other(what) => Err(format!("{dns}:443 에 다른 serve 설정이 있어 건드리지 않았어요 ({what})")),
         ServeState::Free => tailscale(t, &["serve", "--bg", "--https=443", &target]).map(|_| ()),
+    }
+}
+
+/// https 자기 확인 — serve 를 걸었다고 열리는 게 아니다(윈도우 0.2.4: 걸렸는데 21초 뒤 502). 껍데기(/)는 열쇠 없이 200.
+/// 첫 요청은 테일스케일이 인증서를 받느라 느릴 수 있어 60초
+const HTTPS_CHECK_SECS: &str = "60";
+
+/// 이 PC 의 DNS(MagicDNS 꺼짐)·HTTPS_PROXY·사내망 인증서 폐기 확인에 흔들리지 않게 — 이름은 내 100.x 로 바로, 프록시 없이,
+/// 윈도우 Schannel 은 폐기 확인 없이(7.44+, 윈도우 기본 curl 7.55+). 인증서 이름·체인 확인은 그대로
+pub fn https_check_args_for(dns: &str, ip: Ipv4Addr, win: bool) -> Vec<String> {
+    let null = if win { "NUL" } else { "/dev/null" };
+    let mut a: Vec<String> = ["-sS", "--proto", "=https", "--max-time", HTTPS_CHECK_SECS, "-o", null, "-w", "%{http_code}", "--noproxy", "*"].map(str::to_string).to_vec();
+    a.extend(["--resolve".to_string(), format!("{dns}:443:{ip}")]);
+    if win {
+        a.push("--ssl-no-revoke".into());
+    }
+    a.push(format!("https://{dns}/"));
+    a
+}
+
+/// curl 종료 코드·응답 코드 → 안 열렸으면 이유(열렸으면 None)
+pub fn https_check_reason(code: Option<i32>, http: &str) -> Option<String> {
+    let http = http.trim();
+    if code == Some(0) && http.len() == 3 && (http.starts_with('2') || http.starts_with('3')) {
+        return None;
+    }
+    let what = match (code, http) {
+        (Some(0), h) => format!("HTTP {h}"),
+        (Some(c), _) => format!("curl {c}"),
+        (None, _) => "curl ?".to_string(),
+    };
+    Some(format!("{} ({what})", crate::i18n::tr("테일스케일 https 주소가 안 열려서 폰은 http 주소로 붙어요 — 폰 마이크는 안 돼요", "The Tailscale HTTPS address did not open, so the phone uses the plain HTTP address — the phone mic won't work")))
+}
+
+fn https_check(dns: &str, ip: Ipv4Addr) -> Option<String> {
+    let mut c = crate::platform::command(crate::browser_get::sys_tool("curl"));
+    match crate::platform::run_capped(c.args(https_check_args_for(dns, ip, cfg!(windows))), Duration::from_secs(65)) {
+        Ok(o) => https_check_reason(o.status.code(), &String::from_utf8_lossy(&o.stdout)),
+        Err(e) => Some(format!("{} ({e})", https_check_reason(None, "").unwrap_or_default())),
     }
 }
 
@@ -283,9 +380,9 @@ fn funnel_check() -> bool {
     true
 }
 
-/// 뜰 때 정리할 serve 인가 — 모바일이 꺼져 있는데 우리 포트로 넘기는 serve 가 남아 있으면(강제 종료·크래시 뒤)
-pub fn stale_serve(on: bool, json: &str, dns: &str, target: &str) -> bool {
-    !on && serve_state(json, dns, target) == ServeState::Ours
+/// 뜰 때 정리할 serve 인가 — 모바일이 꺼져 있는데 우리 포트로 넘기는 serve(옛 대상 포함)가 남아 있으면(강제 종료·크래시 뒤)
+pub fn stale_state(on: bool, s: &ServeState) -> bool {
+    !on && matches!(s, ServeState::Ours | ServeState::Legacy)
 }
 
 /// tailscale serve(맥 전역에 남는 설정)를 만져도 되나 — 진짜 데이터 폴더일 때만
@@ -296,7 +393,7 @@ fn serve_allowed() -> bool {
 /// 끌 때 — 우리 것일 때만 내린다
 fn https_off(t: &Tailnet, port: u16) {
     let Some(dns) = t.dns.as_deref() else { return };
-    if tailscale(t, &["serve", "status", "--json"]).is_ok_and(|j| serve_state(&j, dns, &serve_target(t, port)) == ServeState::Ours) {
+    if tailscale(t, &["serve", "status", "--json"]).is_ok_and(|j| matches!(serve_state_for(&j, dns, t, port, cfg!(windows)), ServeState::Ours | ServeState::Legacy)) {
         let _ = tailscale(t, &["serve", "--https=443", "off"]);
     }
 }
@@ -410,36 +507,47 @@ impl Drop for ConnSlot {
     }
 }
 
-/// 서버 하나 띄우기 — 묶기에 성공하면 받는 스레드를 돌리고 멈춤 깃발을 돌려준다
-pub fn serve(bind: SocketAddr, gate: Gate, be: Arc<dyn Backend>, peers: Arc<Peers>) -> std::io::Result<(Arc<AtomicBool>, SocketAddr)> {
-    let listener = TcpListener::bind(bind)?;
-    let local = listener.local_addr()?;
-    listener.set_nonblocking(true)?;
+/// 서버 띄우기 — 주소마다 묶고(하나라도 못 묶으면 다 풀고 실패) 받는 스레드를 돌린다. 멈춤 깃발·연결 상한은 함께 쓴다
+pub fn serve(binds: &[SocketAddr], gate: impl Into<Arc<Gate>>, be: Arc<dyn Backend>, peers: Arc<Peers>) -> std::io::Result<(Arc<AtomicBool>, Vec<SocketAddr>)> {
+    let mut listeners = Vec::new();
+    for a in binds {
+        let l = TcpListener::bind(a).map_err(|e| std::io::Error::new(e.kind(), format!("{a} — {e}")))?;
+        l.set_nonblocking(true)?;
+        listeners.push(l);
+    }
+    let locals = listeners.iter().map(|l| l.local_addr()).collect::<std::io::Result<Vec<_>>>()?;
     let stop = Arc::new(AtomicBool::new(false));
-    let stop2 = stop.clone();
-    let gate = Arc::new(gate);
+    let gate: Arc<Gate> = gate.into();
     let active = Arc::new(AtomicUsize::new(0));
-    std::thread::spawn(move || {
-        while !stop2.load(Ordering::Relaxed) {
-            match listener.accept() {
-                Ok((s, peer)) => {
-                    if active.load(Ordering::Relaxed) >= MAX_CONNS || !peers.allows(peer.ip()) {
-                        continue; // 그냥 닫는다
-                    }
-                    // 맥(BSD)에선 받은 소켓이 듣는 소켓의 non-blocking 을 물려받는다
-                    let _ = s.set_nonblocking(false);
-                    active.fetch_add(1, Ordering::Relaxed);
-                    let slot = ConnSlot(active.clone());
-                    let (g, b) = (gate.clone(), be.clone());
-                    // 자리(slot)는 처리가 끝날 때 놓인다 — 504 로 먼저 끊어도 맥 쪽 일이 돌고 있으면 계속 센다
-                    std::thread::spawn(move || mobile_http::serve_conn_guarded(s, g, b, mobile_http::REQ_DEADLINE, slot));
+    for listener in listeners {
+        let (stop2, gate, be, peers, active) = (stop.clone(), gate.clone(), be.clone(), peers.clone(), active.clone());
+        std::thread::spawn(move || accept_loop(listener, stop2, gate, be, peers, active));
+    }
+    Ok((stop, locals))
+}
+
+fn accept_loop(listener: TcpListener, stop2: Arc<AtomicBool>, gate: Arc<Gate>, be: Arc<dyn Backend>, peers: Arc<Peers>, active: Arc<AtomicUsize>) {
+    while !stop2.load(Ordering::Relaxed) {
+        match listener.accept() {
+            Ok((s, peer)) => {
+                if !peers.allows(peer.ip()) {
+                    continue; // 그냥 닫는다
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(50)),
-                Err(_) => std::thread::sleep(Duration::from_millis(200)),
+                // 받는 스레드가 주소마다 하나라 세기와 상한 확인을 한 번에(따로 하면 둘이 동시에 넘는다)
+                let slot = ConnSlot(active.clone());
+                if active.fetch_add(1, Ordering::Relaxed) >= MAX_CONNS {
+                    continue; // slot 이 놓이며 도로 줄인다
+                }
+                // 맥(BSD)에선 받은 소켓이 듣는 소켓의 non-blocking 을 물려받는다
+                let _ = s.set_nonblocking(false);
+                let (g, b) = (gate.clone(), be.clone());
+                // 자리(slot)는 처리가 끝날 때 놓인다 — 504 로 먼저 끊어도 맥 쪽 일이 돌고 있으면 계속 센다
+                std::thread::spawn(move || mobile_http::serve_conn_guarded(s, g, b, mobile_http::REQ_DEADLINE, slot));
             }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(50)),
+            Err(_) => std::thread::sleep(Duration::from_millis(200)),
         }
-    });
-    Ok((stop, local))
+    }
 }
 
 /// keep_https = 열쇠만 바꿔 다시 띄울 때(serve 는 같은 포트라 그대로 둔다)
@@ -469,10 +577,21 @@ fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
     let be: Arc<dyn Backend> = Arc::new(MacBackend { app: app.clone() });
     let sock = t.socket.clone();
     let peers = Arc::new(Peers::new(allowed_peers(&t.ip, &t.peers), move || tailscale_status(&sock).map(|st| allowed_peers(&st.ip, &st.peers))));
-    let (stop, _) = serve(SocketAddr::new(t.bind, port), gate, be, peers).map_err(|e| format!("{}:{port} — {e}", t.bind))?;
+    let at = |ips: Vec<IpAddr>| ips.into_iter().map(|ip| SocketAddr::new(ip, port)).collect::<Vec<_>>();
+    let gate = Arc::new(gate);
+    let (stop, loopback_err) = match serve(&at(binds(&t, cfg!(windows))), gate.clone(), be.clone(), peers.clone()) {
+        Ok((stop, _)) => (stop, None),
+        Err(e) => match fallback_binds(&t, cfg!(windows)) {
+            // 127.0.0.1 쪽을 못 잡았다 — 100.x http 라도 열고 https 는 안 건다(serve 가 넘길 곳이 없다)
+            Some(fb) => (serve(&at(fb), gate, be, peers).map_err(|e2| format!("{e} / {e2}"))?.0, Some(e.to_string())),
+            None => return Err(e.to_string()),
+        },
+    };
     // tailscale serve 는 tailscaled 상태에 남아 재시작 뒤에도 그대로다 — 시험 데이터 폴더 개발판이 443 을 자기 포트로 걸면
     // 진짜 앱이 '다른 serve'로 보고 물러나 사용자 폰이 못 붙었다(2026-10-03). 시험 폴더면 serve 는 아예 안 건드린다(127.0.0.1:<포트>로 바로)
-    let (https, https_note) = if !serve_allowed() {
+    let (https, https_note) = if let Some(e) = loopback_err {
+        (false, Some(format!("{} ({e})", crate::i18n::tr("다른 프로그램이 이 포트를 쓰고 있어 테일스케일 https 는 안 걸었어요 — 폰은 http 주소로 붙어요", "Another program is using this port, so Tailscale HTTPS was not set up — the phone uses the plain HTTP address"))))
+    } else if !serve_allowed() {
         (false, Some(crate::i18n::tr("시험 데이터 폴더라 테일스케일 https 는 안 걸었어요", "Test data folder — Tailscale HTTPS was not set up").to_string()))
     } else {
         match https_on(&t, port) {
@@ -481,7 +600,27 @@ fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
         }
     };
     let watch = stop.clone();
+    let check = (https && cfg!(windows)).then(|| (t.dns.clone().unwrap_or_default(), t.ip, stop.clone()));
     *RUNNING.lock().unwrap() = Some(Running { stop, tailnet: t, port, https, https_note });
+    // 윈도우는 serve 를 건 뒤 실제로 열리나 본다(최대 60초라 켜기를 붙잡지 않게 따로) — 안 열리면 serve 를 내리고 http 로, 이유는 화면에
+    if let Some((dns, ip, me)) = check {
+        std::thread::spawn(move || {
+            let Some(why) = https_check(&dns, ip) else { return };
+            crate::claude::log_out("mobile", &format!("https self-check failed: {why}"));
+            let (t, port) = {
+                let mut r = RUNNING.lock().unwrap();
+                let Some(r) = r.as_mut().filter(|r| Arc::ptr_eq(&r.stop, &me) && r.https) else { return };
+                r.https = false;
+                r.https_note = Some(why);
+                (r.tailnet.clone(), r.port)
+            };
+            // 잠금 밖에서 — tailscale CLI 는 15초까지 걸린다(그동안 상태 묻기가 막히지 않게). 우리 것일 때만 내린다.
+            // 그 사이 다시 켜졌으면(새 인스턴스가 이 serve 를 이어받음) 건드리지 않는다
+            if RUNNING.lock().unwrap().as_ref().is_some_and(|r| Arc::ptr_eq(&r.stop, &me)) {
+                https_off(&t, port);
+            }
+        });
+    }
     // 켜져 있는 동안 30초마다 funnel 다시 보기 — 이 서버가 멈추면(깃발) 같이 끝난다
     std::thread::spawn(move || loop {
         for _ in 0..30 {
@@ -519,7 +658,7 @@ pub fn boot<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         std::thread::spawn(|| {
             let Some(t) = detect() else { return };
             let (Some(dns), Ok(json)) = (t.dns.as_deref(), tailscale(&t, &["serve", "status", "--json"])) else { return };
-            if stale_serve(false, &json, dns, &serve_target(&t, port())) {
+            if stale_state(false, &serve_state_for(&json, dns, &t, port(), cfg!(windows))) {
                 let _ = tailscale(&t, &["serve", "--https=443", "off"]);
             }
         });
@@ -647,6 +786,16 @@ fn tail_lines(s: String, max: usize) -> String {
     s[start..].to_string()
 }
 
+impl<R: tauri::Runtime> MacBackend<R> {
+    /// 데스크톱 위 막대·설정 계정 칸·자동 전환이 바로 다시 읽게(domain/accounts ACCOUNTS_CHANGED). 창이 없으면 15초 뒤 저절로
+    fn accounts_changed(&self) {
+        use tauri::Manager;
+        if let Some(w) = self.app.get_webview_window("main") {
+            let _ = w.eval("window.dispatchEvent(new Event('chammo-accounts-changed'))");
+        }
+    }
+}
+
 impl<R: tauri::Runtime> Backend for MacBackend<R> {
     fn env(&self) -> serde_json::Value {
         let c = crate::config::current();
@@ -654,9 +803,10 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         serde_json::json!({
             "assistantName": crate::config::assistant_name(),
             "language": c.language,
-            "devRoot": crate::config::expand(&home, &c.dev_root),
-            "extraProjects": c.extra_projects.iter().map(|p| crate::config::expand(&home, p).trim_end_matches('/').to_string()).collect::<Vec<_>>(),
-            "hqDir": self.hq_dir(),
+            // 경로는 fwd — 윈도우는 expand 가 C:\Users\me/.chammo/hq 처럼 섞어 폰이 agents cwd 와 못 맞췄다(2026-10-05). 맥은 그대로
+            "devRoot": crate::config::fwd(&crate::config::expand(&home, &c.dev_root)),
+            "extraProjects": c.extra_projects.iter().map(|p| crate::config::fwd(crate::config::expand(&home, p).trim_end_matches('/'))).collect::<Vec<_>>(),
+            "hqDir": crate::config::fwd(&self.hq_dir()),
         })
     }
     fn sessions(&self) -> Result<String, String> {
@@ -692,6 +842,12 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     fn browser_frame(&self, profile: &str, since: u64) -> Vec<u8> {
         crate::agent_browser::frame_bytes(profile, since)
     }
+    fn browser_takeover(&self, profile: &str, session_pid: i32, on: bool) -> Result<(), String> {
+        crate::agent_browser::phone_takeover(profile, session_pid, on)
+    }
+    fn browser_input(&self, profile: &str, session_pid: i32, events: Vec<crate::agent_input::InputEv>) -> Result<(), String> {
+        crate::agent_browser::phone_input(profile, session_pid, events)
+    }
     fn tails(&self, ids: &[String]) -> serde_json::Value {
         // 하던 일 한 줄이면 된다 — 꼬리 48KB 씩(폰으로 보내는 크기)
         serde_json::to_value(crate::claude::transcript_tails(ids, 48 * 1024)).unwrap_or_default()
@@ -708,6 +864,9 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     }
     fn tasks(&self) -> String {
         tail_lines(crate::claude::read_tasks(), 512 * 1024)
+    }
+    fn append_task(&self, line: &str) -> Result<(), String> {
+        crate::claude::append_task_event(line.to_string())
     }
     fn routines(&self) -> Result<String, String> {
         crate::routines::list_result()
@@ -752,6 +911,33 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     }
     fn direct_log(&self) -> String {
         crate::direct::direct_log()
+    }
+    fn accounts(&self) -> Result<serde_json::Value, String> {
+        crate::accounts_cmd::phone_accounts().and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+    }
+    fn account_switch(&self, id: &str) -> Result<serde_json::Value, String> {
+        let r = crate::accounts_cmd::phone_switch(id);
+        self.accounts_changed(); // 실패해도 — 되돌리기·바꾸는 중 표시가 바뀌었을 수 있다
+        r.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+    }
+    fn account_auto(&self, on: bool) -> Result<serde_json::Value, String> {
+        let r = crate::accounts_cmd::phone_auto_on(on);
+        self.accounts_changed();
+        r.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+    }
+    fn login_view(&self) -> serde_json::Value {
+        crate::login::phone_view(&self.data_dir())
+    }
+    fn login_start(&self) -> Result<serde_json::Value, String> {
+        let line = crate::login::login_line(&crate::claude::claude_bin(), cfg!(windows));
+        serde_json::to_value(crate::login::flow_start(&line)).map_err(|e| e.to_string())
+    }
+    fn login_code(&self, code: &str) -> Result<serde_json::Value, String> {
+        let st = crate::login::flow_code(code).map_err(|e| e.to_string())?;
+        serde_json::to_value(st).map_err(|e| e.to_string())
+    }
+    fn login_cancel(&self) {
+        crate::login::flow_cancel();
     }
     fn direct_answer(&self, id: &str, pick: &crate::direct::Pick) -> Result<(), String> {
         crate::direct::answer(id, pick, "phone")

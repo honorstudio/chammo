@@ -41,6 +41,10 @@ describe('envFromCache — 지난번 맥 정보(먼저 그리고 새로 받아 �
   it('모르는 칸은 버린다 — 맥이 준 것만 남긴다', () => {
     expect(envFromCache(JSON.stringify({ ...env, token: 'x' }))).toEqual(env);
   });
+  it('고치기 전 윈도우 폰이 기억한 섞인 경로도 / 로 — 새로 받기 전 첫 그림부터 참모가 보이게(2026-10-05)', () => {
+    const win = { ...env, devRoot: 'C:\\Users\\Me/dev', extraProjects: ['C:\\x\\y'], hqDir: 'C:\\Users\\Me/.chammo/hq' };
+    expect(envFromCache(JSON.stringify(win))).toEqual({ ...env, devRoot: 'C:/Users/Me/dev', extraProjects: ['C:/x/y'], hqDir: 'C:/Users/Me/.chammo/hq' });
+  });
 });
 
 describe('firstThumbs — 대시보드 첫 카드들 썸네일(첫 카드 720, 나머지 360)만 미리', () => {

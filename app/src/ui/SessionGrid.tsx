@@ -5,6 +5,7 @@ import { paneToFocus, visiblePanes, type LayoutAction, type PaneLayout } from '.
 import type { Session } from '../domain/session';
 import { pasteSequence } from '../domain/memo';
 import { enterDelay, typedChunks } from '../domain/chat';
+import { escPlan } from '../domain/chatQueue';
 import { AdoptCard } from './AdoptCard';
 import { statusKind } from '../domain/statusMark';
 import { IconChat, IconClose, IconExpand, IconMaximize, IconPlus, IconTerminal } from './Icons';
@@ -39,6 +40,8 @@ type Props = {
   initialFocus?: string;
   /** "그 세션으로 가기" — n 이 바뀌면 그 창에 포커스(창이 앞으로 오는 사이 한 번 더 준다) */
   focusRequest?: { id: string; n: number };
+  /** focusRequest 를 처리했으면 — 부르는 쪽이 비운다(한 번만, 다시 그려질 때 또 돌지 않게) */
+  onFocusRequestDone?: (n: number) => void;
   /** 격자 이름(App 의 레이아웃 키) — ⌘₩ 가 지금 보이는 창을 DOM 에서 찾는다 */
   gridId?: string;
   /** 끄기 — App 이 화면에서 먼저 치우고 뒤에서 끈다 */
@@ -48,7 +51,7 @@ type Props = {
   /** 칸 머리 이름 옆 회색 한 줄(참모 맡은 일) — 없으면 진짜 이름(titleOf 를 안 줄 때만) */
   subOf?: (s: Session) => string | undefined;
   /** 채팅 대화 사이에 끼울 것(직접 답하기 카드) — 참모 채팅만 */
-  extraOf?: (s: Session) => { ts: string; key: string; node: ReactNode }[];
+  extraOf?: (s: Session) => { ts: string; key: string; pin?: boolean; node: ReactNode }[];
   memo?: MemoHooks;
   /** 채팅 탭 줄 끝의 + — 참모 하나 더(⌘T) */
   onAdd?: () => void;
@@ -74,12 +77,38 @@ export const paneTitle = (s: Session) => (s.workspace ? `${s.project} / ${s.work
 
 const DRAG_MIME = 'text/x-orch-pane';
 
-/** 채팅 보내기 — 사람이 치듯 조각으로 넣고 0.4초 쉬었다가 Enter(붙여넣기로 감싸면 긴 글이 "붙여넣은 글"로 간다, domain/chat typedChunks) */
-function typeAndSend(api: PaneApi | undefined, text: string, delay = 0) {
+/** 세션별 '앱이 글을 치는 중' 끝 시각과 마지막 Esc 시각 — 치는 중엔 다음 글·Esc 가 끼어들지 않게(2026-10-06 보내는 중 유령) */
+const typingTill = new Map<string, number>();
+const escAt = new Map<string, number>();
+
+/** 채팅 보내기 — 사람이 치듯 조각으로 넣고 0.4초 쉬었다가 Enter(붙여넣기로 감싸면 긴 글이 "붙여넣은 글"로 간다, domain/chat typedChunks).
+ *  앞 글을 아직 치는 중이면 그 Enter 뒤에 친다 — 0.4초 안에 두 번 보내면 두 글이 한 입력칸에 붙어 한 말로 갔다.
+ *  enter=false 면 입력칸에 넣기만(빼고 남은 말 되돌려 놓기) */
+function typeAndSend(id: string, api: PaneApi | undefined, text: string, delay = 0, enter = true) {
   if (!api) return;
-  let t = delay;
+  const now = Date.now();
+  let t = Math.max(delay, (typingTill.get(id) ?? 0) - now + 100);
   for (const c of typedChunks(text)) { const at = t; setTimeout(() => api.raw(c), at); t += 6; }
-  setTimeout(() => api.raw('\r'), t + enterDelay(text.length, IS_WIN));
+  if (enter) { t += enterDelay(text.length, IS_WIN); const at = t; setTimeout(() => api.raw('\r'), at); }
+  typingTill.set(id, now + t + 50);
+}
+
+/** 입력칸 지우기(백스페이스 n개) — 앞 글을 치는 중이면 그 뒤에. 지운 뒤 칠 글은 typeAndSend 가 다시 이 뒤에 줄 선다 */
+function clearInput(id: string, api: PaneApi | undefined, n: number) {
+  if (!api) return;
+  const wait = Math.max(0, (typingTill.get(id) ?? 0) - Date.now() + 100);
+  if (!wait) { api.raw('\x7f'.repeat(n)); return; }
+  setTimeout(() => api.raw('\x7f'.repeat(n)), wait);
+  typingTill.set(id, Date.now() + wait + 50);
+}
+
+/** 세션에 Esc 한 번 — Claude 는 쉴 때 Esc 두 번을 '입력칸 지우기'로 받아 걸린 말이 흔적 없이 지워졌다. 거른 건 false(domain/chatQueue escPlan) */
+function escOnce(id: string, api: PaneApi | undefined): boolean {
+  const now = Date.now();
+  if (!api || !escPlan(now, escAt.get(id) ?? 0, typingTill.get(id) ?? 0)) return false;
+  escAt.set(id, now);
+  api.raw('\x1b');
+  return true;
 }
 const cumulative = (fr: number[]) => {
   const total = fr.reduce((a, b) => a + b, 0);
@@ -91,7 +120,7 @@ const cumulative = (fr: number[]) => {
  * 세션 여러 개를 격자로 + 접은 창은 아래 띠. 띠의 창은 attach 를 떼어 둔다(메모리).
  * 경계선을 끌면 열·줄 비율이 바뀌고, 머리줄을 끌어 다른 창에 놓으면 자리가 바뀐다
  */
-export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, onMessage, fontSize, home, onFocusSession, initialFocus, focusRequest, gridId, onStop, titleOf = paneTitle, subOf, memo, column, chat, ctxOf, modelOf, onAdd, pinnedIds = [] }: Props) {
+export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, onMessage, fontSize, home, onFocusSession, initialFocus, focusRequest, onFocusRequestDone, gridId, onStop, titleOf = paneTitle, subOf, memo, column, chat, ctxOf, modelOf, onAdd, pinnedIds = [] }: Props) {
   const speaking = useSpeaking(); // 음성 모드에서 지금 소리 내는 참모 — 그 채팅 탭 둘레만 빛난다(칸·프사·왼쪽 목록은 뺐다, 2026-10-03 사용자)
   const panes = useRef(new Map<string, PaneApi>());
   // 모델 칩 — 바꾸는 동안 지금 모델·에포트(상태줄)를 새로 읽게(일하는 중엔 화면 글로는 끝을 못 알아본다)
@@ -110,7 +139,8 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
     if (f) f();
     else panes.current.get(id)?.focus();
   };
-  const [tab, setTab] = useState<string | null>(null);
+  // 처음엔 이 격자에서 마지막으로 누른 창(App focusedBy) — 화면을 떠났다 돌아와 다시 그려질 때 첫 탭으로 떨어져 스페이스까지 끌려갔다(2026-10-06)
+  const [tab, setTab] = useState<string | null>(initialFocus ?? null);
   // 지구본 키 말하기가 끝난 창 — 채팅 판이 4초 뒤에도 받아 적은 글이 남아 있으면 대신 Enter(autoSubmit 이 가끔 안 보냈다)
   const [voiceStops, setVoiceStops] = useState<Record<string, number>>({});
   const showTerm = (id: string, on: boolean) => setTermView((v) => { const n = new Set(v); if (on) n.add(id); else n.delete(id); return n; });
@@ -137,14 +167,19 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
     if (prev === wasMax.current) return;
     focusNow(paneToFocus({ maximized: layout.maximized ?? null, wasMaximized: prev, last: last.current }));
   }, [layout.maximized]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 두 번째 포커스 시계는 요청이 비워져도(아래 onFocusRequestDone) 살아 있어야 한다 — 격자가 사라질 때만 끈다
+  const again = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(again.current), []);
   useEffect(() => {
     if (!focusRequest) return;
-    last.current = focusRequest.id;
-    setTab(focusRequest.id); // 탭 보기면 그 탭으로(⌘1~9·세션으로 가기)
-    if (chat === 'tabs') window.dispatchEvent(new CustomEvent('chat-tab-pick', { detail: focusRequest.id })); // 스페이스도 그 참모 대시보드로
-    focusNow(focusRequest.id);
-    const again = setTimeout(() => focusPane(focusRequest.id), 250); // 알림을 눌러 창이 앞으로 오는 중이면 첫 포커스가 씹힌다
-    return () => clearTimeout(again);
+    const { id, n } = focusRequest;
+    last.current = id;
+    setTab(id); // 탭 보기면 그 탭으로(⌘1~9·세션으로 가기)
+    if (chat === 'tabs') window.dispatchEvent(new CustomEvent('chat-tab-pick', { detail: id })); // 스페이스도 그 참모 대시보드로
+    focusNow(id);
+    window.clearTimeout(again.current);
+    again.current = window.setTimeout(() => focusPane(id), 250); // 알림을 눌러 창이 앞으로 오는 중이면 첫 포커스가 씹힌다
+    onFocusRequestDone?.(n);
   }, [focusRequest?.n]); // eslint-disable-line react-hooks/exhaustive-deps
   const byId = new Map(sessions.map((s) => [s.id, s]));
   // 채팅 뷰 참모 탭: 끄기·이름 바꾸기(탭 보기일 때만)
@@ -324,11 +359,11 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           }}
                           state={s.state}
                           send={(text) => {
-                            typeAndSend(panes.current.get(id), text);
+                            typeAndSend(id, panes.current.get(id), text);
                             last.current = id;
                             onFocusSession?.(id);
                           }}
-                          interrupt={() => panes.current.get(id)?.raw('\x1b')}
+                          interrupt={() => escOnce(id, panes.current.get(id))}
                           rawKeys={async (seq) => { for (const k of seq) { panes.current.get(id)?.raw(k); await new Promise((r) => setTimeout(r, 120)); } }}
                           onTerminal={() => showTerm(id, true)}
                           onInputFocus={() => panes.current.get(id)?.claimPtt()}
@@ -337,13 +372,9 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           pasteImage={() => panes.current.get(id)?.raw('\x16')}
                           voiceStop={voiceStops[id] ?? 0}
                           paneId={id}
-                          clearTerminal={(n) => panes.current.get(id)?.raw('\x7f'.repeat(n))}
-                          sendQueuedNow={() => panes.current.get(id)?.raw('\x1b')} // 멈추면 Claude 가 줄 선 말을 곧바로 보낸다(2026-09-30 시험 세션 실측)
-                          sendNow={(text) => {
-                            const api = panes.current.get(id);
-                            api?.raw('\x1b'); // 하던 일 멈추기
-                            typeAndSend(api, text, 400);
-                          }}
+                          clearTerminal={(n) => clearInput(id, panes.current.get(id), n)}
+                          sendQueuedNow={() => escOnce(id, panes.current.get(id))} // 멈추면 Claude 가 줄 선 말을 곧바로 보낸다(2026-09-30 시험 세션 실측)
+                          typeOnly={(text) => typeAndSend(id, panes.current.get(id), text, 0, false)}
                           focusRef={(fn) => { if (fn) chatFocus.current.set(id, fn); else chatFocus.current.delete(id); }}
                         />
                       ) : null}{memo?.openId === id && memo.panel(s, (text) => panes.current.get(id)?.write(pasteSequence(text)))}</>}

@@ -165,6 +165,47 @@ describe('limit — 사용 한도로 멈춘 세션(대화 기록의 API 오류 �
   });
 });
 
+describe('auth — 로그인이 풀려 멈춘 세션(2026-10-06 아이맥 참모 실측 원문)', () => {
+  const err = (ts: string, text: string, error?: string) =>
+    JSON.stringify({ type: 'assistant', timestamp: ts, isApiErrorMessage: true, ...(error ? { error } : {}), message: { model: '<synthetic>', content: [{ type: 'text', text }] } });
+  const user = (ts: string, text: string) => JSON.stringify({ type: 'user', timestamp: ts, message: { content: text } });
+
+  it('Login expired · Please run /login (error authentication_failed)', () => {
+    const a = summarizeTranscript([user('2026-10-06T00:30:21Z', '클론해줘'), err('2026-10-06T00:30:22Z', 'Login expired · Please run /login', 'authentication_failed')].join('\n'));
+    expect(a.auth).toEqual({ ts: '2026-10-06T00:30:22Z', text: 'Login expired · Please run /login' });
+    expect(a.limit).toBeUndefined();
+  });
+
+  it('Not logged in · Please run /login — 오류 종류가 없어도 글로', () => {
+    expect(summarizeTranscript(err('t', 'Not logged in · Please run /login')).auth?.ts).toBe('t');
+    expect(summarizeTranscript(err('t', 'OAuth token has expired. Please obtain a new token or refresh your existing token.', 'authentication_failed')).auth?.ts).toBe('t');
+  });
+
+  it('갱신 겹침(server_error · Try again in a minute)은 로그인 풀림이 아니라 잠깐 뒤 다시(retry) — 실측 2026-09-27 project-b-g', () => {
+    const t = 'Could not refresh your login because another Claude Code process is refreshing it (or exited mid-refresh) · Try again in a minute; if it keeps happening, close other Claude Code windows or sign in again with /login';
+    expect(summarizeTranscript(err('t', t, 'server_error')).auth).toEqual({ ts: 't', text: t.slice(0, 240), retry: true });
+  });
+
+  it('API 오류 줄이 아니면(답 글에 문구를 인용) 아니다', () => {
+    const a = summarizeTranscript(JSON.stringify({ type: 'assistant', timestamp: 't', message: { content: [{ type: 'text', text: '세션이 Login expired · Please run /login 으로 멈췄어' }] } }));
+    expect(a.auth).toBeUndefined();
+  });
+
+  it('"다시 로그인함, 이어서" 뒤 또 같은 오류면 그 새 오류가 남는다(아이맥 00:30:31)', () => {
+    const a = summarizeTranscript([
+      err('2026-10-06T00:30:22Z', 'Login expired · Please run /login', 'authentication_failed'),
+      user('2026-10-06T00:30:31Z', '로그인 오류로 멈췄었어(다시 로그인함). 하던 거 이어서 해줘.'),
+      err('2026-10-06T00:30:31.8Z', 'Login expired · Please run /login', 'authentication_failed'),
+    ].join('\n'));
+    expect(a.auth?.ts).toBe('2026-10-06T00:30:31.8Z');
+  });
+
+  it('그 뒤에 정상 답이 오면 풀린 것이다', () => {
+    const ok = JSON.stringify({ type: 'assistant', timestamp: '2026-10-06T00:31:39Z', message: { content: [{ type: 'text', text: '클론했어' }] } });
+    expect(summarizeTranscript([err('2026-10-06T00:30:22Z', 'Login expired · Please run /login', 'authentication_failed'), ok].join('\n')).auth).toBeUndefined();
+  });
+});
+
 describe('summarizeTranscript lastAt — 마지막 대화 줄 시각(꺼진 세션이 턴 중간이었나)', () => {
   const toolOnly = (ts: string) => line({ type: 'assistant', timestamp: ts, message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: { command: 'gh pr checks' } }], stop_reason: 'tool_use' } });
   it('글 없는 도구 줄·다른 세션 메시지·작업 알림도 센다 — 답 뒤에 오면 답보다 늦다', () => {

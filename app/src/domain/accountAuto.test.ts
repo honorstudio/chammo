@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { afterSwitch, applyApi, changedKeys, fpOf, migrate, fmtUntil, markNudged, pinPatch, stuckOf, parseResets, readAuto, readWins, slotStatus, step, LEARN_MS, MIN_GAP_MS, type AutoState, type Input } from './accountAuto';
+import { afterSwitch, applyApi, changedKeys, fpOf, migrate, fmtUntil, markNudged, pinPatch, stuckOf, parseResets, readAuto, readWins, slotStatus, step, LEARN_MS, MIN_GAP_MS, PIN_THRESHOLD, type AutoState, type Input } from './accountAuto';
 
 // 로컬 시각으로 — 22:20 같은 '다시 열리는 시각'을 사람 눈으로 맞춘다
 const at = (h: number, m = 0, d = 2, s = 0) => new Date(2026, 9, d, h, m, s).getTime();
@@ -229,12 +229,89 @@ describe('step — 손으로 고른 칸', () => {
   });
   it('고정한 칸이 소진되면 자동으로 넘기고 고정을 푼다', () => {
     const s = base({ pinned: 'a', slots: { b: { fp: WB, blockedUntil: at(23), blockFp: WB }, a: { fp: WA }, c: {} } });
-    const p = tick(s, at(18, 30), usageA(95, at(22, 20)), { active: 'a', ids: ['b', 'a', 'c'] });
+    const p = tick(s, at(18, 30), usageA(PIN_THRESHOLD, at(22, 20)), { active: 'a', ids: ['b', 'a', 'c'] });
     expect(p.switchTo).toBe('c');
     expect(p.state.pinned).toBeNull();
+    expect(p.unpinned).toBe(true);
   });
   it('고정한 칸이 지금 로그인이 아니면(밖에서 바꿈) 고정을 푼다', () => {
     expect(tick(base({ pinned: 'a' }), at(18, 30), null).state.pinned).toBeNull();
+  });
+});
+
+describe('step — 고정한 칸은 95% 문턱이 아니라 진짜 다 찰 때까지(2026-10-06 프로젝트B 주간 95%)', () => {
+  // b = 손으로 고른 프로젝트B(주간 95%·앞 순서 아님), a = 여유 있는 계정
+  const pinB = (p: Partial<AutoState> = {}) => base({ pinned: 'b', switchedAt: at(17), slots: { b: { fp: WB }, a: { fp: WA, week: { used: 68, resetsAt: WA } } }, ...p });
+
+  it('고정 + 주간 95~98% → 안 넘어가고 고정도 그대로', () => {
+    for (const used of [95, 97, PIN_THRESHOLD - 1]) {
+      const p = tick(pinB(), at(18, 30), usage(10, at(22, 20), used));
+      expect(p.switchTo).toBeNull();
+      expect(p.state.pinned).toBe('b');
+      expect(p.state.slots.b?.blockedUntil).toBeUndefined();
+      expect(p.unpinned).toBeUndefined();
+    }
+  });
+
+  it('고정 + 5시간 창 95% 도 마찬가지', () => {
+    const p = tick(pinB(), at(18, 30), usage(96, at(22, 20), 10));
+    expect(p.switchTo).toBeNull();
+  });
+
+  it('고정 + 주간 99% → 넘기고 고정을 풀고 알린다(unpinned)', () => {
+    const p = tick(pinB(), at(18, 30), usage(10, at(22, 20), PIN_THRESHOLD));
+    expect(p.switchTo).toBe('a');
+    expect(p.why).toBe('week');
+    expect(p.state.pinned).toBeNull();
+    expect(p.unpinned).toBe(true);
+    expect(p.state.slots.b?.blockedUntil).toBe(WB);
+  });
+
+  it('고정 + 한도 오류로 세션이 멈춤(429) → 95% 아래여도 넘기고 고정 풀림·계속해', () => {
+    const p = tick(pinB(), at(18, 30), usage(10, at(22, 20), 60), { stuck: [{ session: 's1', ts: at(18, 20), resetsAt: at(22, 20) }] });
+    expect(p.switchTo).toBe('a');
+    expect(p.why).toBe('limit');
+    expect(p.state.pinned).toBeNull();
+    expect(p.unpinned).toBe(true);
+    expect(p.nudge).toEqual(['s1']);
+  });
+
+  it('고정한 뒤(switchedAt 이전)에 난 한도 오류는 이 계정 탓이 아니다', () => {
+    const p = tick(pinB(), at(18, 30), usage(10, at(22, 20), 96), { stuck: [{ session: 's1', ts: at(16, 50) }] });
+    expect(p.switchTo).toBeNull();
+    expect(p.state.pinned).toBe('b');
+  });
+
+  it('고정 안 함 + 95% → 예전처럼 넘어간다(unpinned 아님)', () => {
+    const p = tick(pinB({ pinned: null }), at(18, 30), usage(10, at(22, 20), 95));
+    expect(p.switchTo).toBe('a');
+    expect(p.unpinned).toBeUndefined();
+  });
+
+  it('고정한 칸에 옛 95% 막힘 기록이 남아 있어도(자동 켜져 있을 때 막힌 채 손으로 고름) 풀어서 쓴다', () => {
+    const s = pinB({ slots: { b: { fp: WB, week: { used: 96, resetsAt: WB }, blockedUntil: WB, why: 'week', blockFp: WB }, a: { fp: WA } } });
+    const p = tick(s, at(18, 30), null);
+    expect(p.switchTo).toBeNull();
+    expect(p.state.pinned).toBe('b');
+    expect(p.state.slots.b?.blockedUntil).toBeUndefined();
+  });
+
+  it('고정한 칸의 한도 오류 막힘(limit)·로그인 막힘은 풀지 않는다', () => {
+    const s = pinB({ slots: { b: { fp: WB, blockedUntil: at(22), why: 'limit', blockFp: WB }, a: { fp: WA } } });
+    expect(tick(s, at(18, 30), null).switchTo).toBe('a');
+  });
+
+  it('MIN_GAP — 고정 아니면 돌아오기는 바꾼 뒤 간격을 지킨다(고정이 안 풀어 준다)', () => {
+    const s = base({ switchedAt: at(18, 30), slots: { b: { fp: WB }, a: { fp: WA } } });
+    expect(tick(s, at(18, 30) + MIN_GAP_MS - 1000, null, { active: 'a' }).switchTo).toBeNull();
+    expect(tick(s, at(18, 30) + MIN_GAP_MS + 1000, null, { active: 'a' }).switchTo).toBe('b');
+  });
+
+  it('다른 칸(쉬는 칸)은 고정과 상관없이 95% 면 못 쓴다 — 넘길 곳으로 안 고른다', () => {
+    const s = pinB({ slots: { b: { fp: WB }, a: { fp: WA, week: { used: 96, resetsAt: WA } } } });
+    const p = tick(s, at(18, 30), usage(10, at(22, 20), PIN_THRESHOLD));
+    expect(p.switchTo).toBeNull();
+    expect(p.allOut).not.toBeNull();
   });
 });
 
@@ -337,6 +414,12 @@ describe('slotStatus — 설정 칸 상태', () => {
     expect(slotStatus({ blockedUntil: at(17) }, at(18))).toEqual({ kind: 'ok' });
     expect(slotStatus(undefined, at(18))).toEqual({ kind: 'ok' });
   });
+  it('고정한 칸은 95~98% 도 쓸 수 있음, 99% 부터 소진', () => {
+    const wk = (used: number) => ({ week: { used, resetsAt: at(16, 0, 8) } });
+    expect(slotStatus(wk(96), at(18), true)).toEqual({ kind: 'ok' });
+    expect(slotStatus(wk(PIN_THRESHOLD), at(18), true)).toEqual({ kind: 'week', until: at(16, 0, 8) });
+    expect(slotStatus(wk(96), at(18), false)).toEqual({ kind: 'week', until: at(16, 0, 8) });
+  });
 });
 
 describe('fmtUntil — 다시 열리는 시각 글', () => {
@@ -431,5 +514,80 @@ describe('applyApi — 계정 토큰으로 바로 물은 값(주인이 확실하
   it('fpOf — 분 단위로', () => {
     expect(fpOf(WB - 363)).toBe(WB);
     expect(fpOf(WB + 29_000)).toBe(WB);
+  });
+});
+
+describe('로그인 풀림 — 지금 칸 로그인이 죽으면 그 칸을 막고 다음 칸으로(2026-10-06)', () => {
+  const authStuck = (ts: number) => [{ session: 's1', ts, auth: true as const }];
+
+  it('바꾼 뒤에 난 로그인 오류 = 지금 칸 로그인 풀림 → 그 칸을 로그인 필요로 막고 넘긴다. 계속해는 안 보낸다(로그인 쪽이 키체인이 바뀐 걸 보고 이어서)', () => {
+    const p = tick(base({ switchedAt: at(17) }), at(18, 30), null, { stuck: authStuck(at(18, 20)) });
+    expect(p.switchTo).toBe('a');
+    expect(p.why).toBe('auth');
+    expect(p.state.slots.b?.why).toBe('auth');
+    expect(p.state.slots.b?.blockedUntil).toBeGreaterThan(at(18, 30, 9)); // 시각으로는 안 풀린다
+    expect(p.nudge).toEqual([]);
+    expect(slotStatus(p.state.slots.b, at(19)).kind).toBe('auth');
+  });
+
+  it('지금 로그인 토큰으로 물은 사용량이 401 이어도 같은 신호 — 멈춘 세션이 없어도', () => {
+    const s = applyApi(base({ switchedAt: at(17) }), [{ who: 'b', status: 'auth' }], IDS, at(18, 29));
+    expect(s.slots.b?.authAt).toBe(at(18, 29));
+    const p = tick(s, at(18, 30), null);
+    expect(p.switchTo).toBe('a');
+    expect(p.why).toBe('auth');
+  });
+
+  it('바꾸기 전 옛 칸에서 난 로그인 오류는 지금 칸 탓이 아니다', () => {
+    const p = tick(base({ switchedAt: at(18, 25) }), at(18, 30), null, { stuck: authStuck(at(18, 20)) });
+    expect(p.switchTo).toBeNull();
+    expect(p.nudge).toEqual([]);
+  });
+
+  it('그 칸 토큰으로 물은 값이 다시 ok 면 풀린다(다시 로그인해 보관함)', () => {
+    const blocked = tick(base({ switchedAt: at(17) }), at(18, 30), null, { stuck: authStuck(at(18, 20)) }).state;
+    const s = applyApi(blocked, [{ who: 'b', status: 'ok', five: { used: 5, resetsAt: at(22) }, week: { used: 5, resetsAt: WB } }], IDS, at(19));
+    expect(s.slots.b?.blockedUntil).toBeUndefined();
+    expect(s.slots.b?.why).toBeUndefined();
+    expect(s.slots.b?.authAt).toBeUndefined();
+    expect(s.slots.b?.openedAt).toBe(at(19)); // 그 전에 난 오류로 다시 막지 않게
+  });
+
+  it('다른 이유(한도)로 막힌 칸은 사용량 ok 로 안 풀린다', () => {
+    const s0 = base({ slots: { b: { fp: WB, blockedUntil: at(22, 20), why: 'five', blockFp: WB }, a: { fp: WA } } });
+    const s = applyApi(s0, [{ who: 'b', status: 'ok', five: { used: 96, resetsAt: at(22, 20) }, week: { used: 5, resetsAt: WB } }], IDS, at(19));
+    expect(s.slots.b?.blockedUntil).toBe(at(22, 20));
+  });
+
+  it('모든 칸이 로그인 필요면 다 찼어 알림은 안 낸다(로그인 카드 몫) — 넘기지도 않는다', () => {
+    const s = base({ switchedAt: at(17), slots: { b: { fp: WB }, a: { fp: WA, blockedUntil: at(18, 0, 30), why: 'auth' } } });
+    const p = tick(s, at(18, 30), null, { stuck: authStuck(at(18, 20)) });
+    expect(p.switchTo).toBeNull();
+    expect(p.allOut).toBeNull();
+  });
+
+  it('하나는 한도·하나는 로그인이면 다 찼어 시각은 한도 칸 것', () => {
+    const s = base({ switchedAt: at(17), slots: { b: { fp: WB }, a: { fp: WA, blockedUntil: at(23), blockFp: WA, why: 'five' } } });
+    const p = tick(s, at(18, 30), null, { stuck: authStuck(at(18, 20)) });
+    expect(p.allOut?.until).toBe(at(23));
+  });
+
+  it('쉬는 칸의 보관 토큰이 401 이면 그 칸도 로그인 필요 — 그리로 넘기지 않는다', () => {
+    const s = applyApi(base({ switchedAt: at(17) }), [{ who: 'a', status: 'auth' }], IDS, at(18, 29));
+    const p = tick(s, at(18, 30), null, { stuck: authStuck(at(18, 20)) });
+    expect(p.state.slots.a?.why).toBe('auth');
+    expect(p.switchTo).toBeNull();
+    expect(p.allOut).toBeNull();
+  });
+
+  it('readAuto 가 why auth·authAt 을 읽는다', () => {
+    expect(readAuto({ v: 2, slots: { b: { why: 'auth', authAt: 5, blockedUntil: 9 } } }).slots.b).toEqual({ why: 'auth', authAt: 5, blockedUntil: 9 });
+  });
+
+  it('stuckOf — 로그인 오류로 멈춘 백그라운드 세션도 auth 표시로', () => {
+    const acts = [{ session: { id: 's1', kind: 'background' as const, state: 'idle' as const }, activity: { auth: { ts: '2026-10-06T00:30:22Z', text: 'Login expired · Please run /login' } } }];
+    expect(stuckOf(acts)).toEqual([{ session: 's1', ts: Date.parse('2026-10-06T00:30:22Z'), auth: true }]);
+    // 갱신 겹침은 칸 탓이 아니다
+    expect(stuckOf([{ ...acts[0]!, activity: { auth: { ...acts[0]!.activity.auth, retry: true as const } } }])).toEqual([]);
   });
 });

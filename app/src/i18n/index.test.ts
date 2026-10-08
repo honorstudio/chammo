@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { assistant, getLang, josa, pickLang, setAssistant, setLang, setWinKeys, tr } from './index';
+import { assistant, getLang, josa, machine, pickLang, setAssistant, setLang, setWinKeys, tr } from './index';
 
 afterEach(() => { setLang('ko'); setAssistant(null); });
 
@@ -45,4 +45,21 @@ describe('josa — 이름 뒤 조사(비서 이름을 사용자가 정하니까 
   it('받침 없으면 뒤의 것', () => expect(josa('참모', '이', '가')).toBe('참모가'));
   it('받침 있으면 앞의 것', () => expect(josa('두목', '이', '가')).toBe('두목이'));
   it('한글이 아니면 받침 없는 쪽', () => expect(josa('Chammo', '을', '를')).toBe('Chammo를'));
+});
+
+describe('machine — 이 컴퓨터를 부르는 말(윈도우에 맥 문구가 나왔다, 2026-10-05)', () => {
+  it('윈도우는 PC, 맥은 맥/Mac', () => {
+    setLang('ko');
+    expect(machine(true)).toBe('PC');
+    expect(machine(false)).toBe('맥');
+    setLang('en');
+    expect(machine(true)).toBe('PC');
+    expect(machine(false)).toBe('Mac');
+    setLang('ko');
+  });
+  it('조사가 붙는다 — 맥이 / PC가', () => {
+    setLang('ko');
+    expect(josa(machine(false), '이', '가')).toBe('맥이');
+    expect(josa(machine(true), '이', '가')).toBe('PC가');
+  });
 });

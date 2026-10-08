@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { appendTaskEvent, prMerge, prRevert, prSearch, prViews, repoMap, sendToSession, writeReviewState, type AppEnv } from '../data/tauri';
 import { gates, type OpenPr } from '../domain/review';
-import { parseHits, parseMerged, parseRepoMap, parseView, type MergedPr, type RepoMap } from '../domain/reviewSource';
+import { needsView, parseHits, parseMerged, parseRepoMap, parseView, type MergedPr, type RepoMap } from '../domain/reviewSource';
 import { sinceIso, taskId, type Reviewed } from '../domain/reviewSummary';
 import { dayStart } from '../domain/usage';
 import { tr } from '../i18n';
@@ -73,7 +73,7 @@ export function useReview(env: AppEnv | null, onTaskLogged: () => void): ReviewD
       const m = map.current.map;
       const [openRaw, mergedRaw] = await Promise.all([prSearch(), prSearch(sinceIso(dayStart(new Date())))]);
       const hits = parseHits(openRaw, m);
-      const stale = hits.filter((h) => cache.current.get(h.key)?.updatedAt !== h.updatedAt);
+      const stale = hits.filter((h) => needsView(cache.current.get(h.key), h));
       const raws = stale.length ? await prViews(stale.map((h) => ({ repo: h.repo, number: h.number }))) : [];
       stale.forEach((h, i) => {
         const p = parseView(raws[i] ?? '', h.folder, h.repo);

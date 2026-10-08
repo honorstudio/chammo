@@ -368,6 +368,17 @@ pub fn switch(store: &dyn Store, live: &Live, list: &Path, id: &str) -> Result<P
     Ok(pool)
 }
 
+/// 손으로 바꾸기(폰) — 바꿔 끼운 뒤 그 칸에 고정 + 바꾼 시각. 데스크톱은 화면이 두 번 부른다(ui/accountSwitch switchPinned).
+/// 고정은 실제로 로그인 표시가 그 칸과 맞을 때만(바꾸기가 끝까지 됐을 때)
+pub fn switch_pinned(store: &dyn Store, live: &Live, list: &Path, id: &str, now_ms: i64) -> Result<Pool, Error> {
+    let pool = switch(store, live, list, id)?;
+    let on = read_oauth(&live.claude_json).as_ref().and_then(key);
+    if pool.current.as_deref() == Some(id) && slot(&pool, id).and_then(|a| key(&a.oauth)) == on && on.is_some() {
+        return patch_auto(list, &serde_json::json!({ "pinned": id, "switchedAt": now_ms }));
+    }
+    Ok(pool)
+}
+
 /// 자동 상태 윗단 키만 합친다(null 이면 그 키 지움). 화면이 보내는 값이라 모양·크기를 본다
 pub fn patch_auto(list: &Path, patch: &Value) -> Result<Pool, Error> {
     let obj = patch.as_object().ok_or_else(|| io("자동 상태는 객체여야 해요"))?;

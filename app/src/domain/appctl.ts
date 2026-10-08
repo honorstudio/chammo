@@ -7,7 +7,7 @@ import { findTarget } from './inbox';
 
 export const OPEN = ['settings', 'tour', 'office', 'review', 'all', 'replay', 'load', 'reader', 'tasks', 'inbox', 'home', 'harnitor', 'tools'] as const;
 export type OpenWhat = (typeof OPEN)[number];
-export const CLOSE = ['settings', 'office', 'reader', 'tasks', 'inbox', 'harnitor', 'tools'] as const;
+export const CLOSE = ['settings', 'office', 'reader', 'tasks', 'inbox', 'harnitor', 'tools', 'review'] as const;
 export type CloseWhat = (typeof CLOSE)[number];
 const FEATURES: (keyof Features)[] = ['office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'computerUse'];
 
@@ -20,7 +20,9 @@ export type AppIntent =
   | { kind: 'pet'; show: boolean }
   | { kind: 'reload' }
   /** 폰(폰 서버 /api/rename)이 바꾼 참모 별명 — 앱 별명에 넣으면 쉬는 때 /rename 이 따라간다 */
-  | { kind: 'label'; id: string; nick: string };
+  | { kind: 'label'; id: string; nick: string }
+  /** 브라우저 일인데 그 프로젝트에 이 프로젝트 브라우저가 없다 — 결정 대기함 [연결] 카드(task send·scripts/app browser need, GitHub #2) */
+  | { kind: 'browserNeed'; dir: string; session: string; why: string };
 
 const onOff = (v: string | undefined) => (v === 'on' ? true : v === 'off' ? false : null);
 
@@ -32,6 +34,13 @@ export function intentOf(line: unknown): AppIntent | null {
   if (action === 'orch-label') {
     const o = arg as { id?: unknown; nick?: unknown } | null;
     return o && typeof o === 'object' && typeof o.id === 'string' && typeof o.nick === 'string' ? { kind: 'label', id: o.id, nick: o.nick } : null;
+  }
+  if (action === 'browser-need') {
+    const o = arg as { dir?: unknown; session?: unknown; why?: unknown } | null;
+    const dir = o && typeof o === 'object' && typeof o.dir === 'string' ? o.dir.trim() : '';
+    if (!dir) return null;
+    const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+    return { kind: 'browserNeed', dir, session: str(o!.session), why: str(o!.why) };
   }
   if (action === 'voice') {
     const on = onOff(a);

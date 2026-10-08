@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addExtraProject, parseClaudeVersion, setupCommand, setupReady, shq, versionFit, versionWarning, type EnvCheck, WIZARD, canNext, tildify, notifyRow, browserRow, browserChecklist } from './setup';
+import { addExtraProject, parseClaudeVersion, setupCommand, setupReady, shq, versionFit, versionWarning, type EnvCheck, WIZARD, canNext, tildify, notifyRow, browserRow, browserChecklist, ghRow } from './setup';
 
 describe('Claude Code 버전', () => {
   it('버전 글자를 숫자로', () => {
@@ -29,7 +29,7 @@ describe('Claude Code 버전', () => {
 });
 
 describe('setupReady — 설정을 끝낼 수 있나', () => {
-  const ok: EnvCheck = { claudePath: '/h/.local/bin/claude', claudeVersion: '2.1.283', loggedIn: true, clt: true, ghPath: null, ghUser: null };
+  const ok: EnvCheck = { claudePath: '/h/.local/bin/claude', claudeVersion: '2.1.283', loggedIn: true, clt: true, ghPath: null, ghUser: null, ghStale: false };
   it('Claude Code 설치·로그인·명령줄 도구가 다 있어야 한다. gh 는 없어도 된다', () => {
     expect(setupReady(ok)).toBe(true);
     expect(setupReady(null)).toBe(false);
@@ -89,7 +89,7 @@ describe('폴더 고르기 결과를 입력칸 모양으로', () => {
 });
 
 describe('Claude Code 옛 버전 — 올려야 다음으로 (아이맥 2.1.267 실측)', () => {
-  const ok: EnvCheck = { claudePath: '/h/.local/bin/claude', claudeVersion: '2.1.283', loggedIn: true, clt: true, ghPath: null, ghUser: null };
+  const ok: EnvCheck = { claudePath: '/h/.local/bin/claude', claudeVersion: '2.1.283', loggedIn: true, clt: true, ghPath: null, ghUser: null, ghStale: false };
   it('옛 버전이면 설정을 못 끝낸다', () => expect(setupReady({ ...ok, claudeVersion: '2.1.267 (Claude Code)' })).toBe(false));
   it('버전을 못 읽었거나 더 새것이면 막지 않는다', () => {
     expect(setupReady({ ...ok, claudeVersion: '' })).toBe(true);
@@ -204,5 +204,19 @@ describe('setupCommand — 윈도우(cmd /C 가 읽는 모양, 윈도우판)', (
   });
   it('맥은 그대로', () => {
     expect(setupCommand('trust', { claude: '/h/claude' }, '', '/h/dev', false)).toBe("cd '/h/dev' && exec '/h/claude'");
+  });
+});
+
+describe('ghRow — GitHub CLI 줄', () => {
+  const base = { ghPath: 'C:\\gh.exe', ghUser: null, ghStale: false };
+  it('멀쩡한 계정이면 됨', () => expect(ghRow({ ...base, ghUser: 'octo' })).toBe('ok'));
+  it('토큰이 깨졌으면 로그인됨이 아니라 다시 로그인(윈도우 QA 2026-10-05)', () => {
+    expect(ghRow({ ...base, ghStale: true })).toBe('relogin');
+    // Rust 가 둘 다 주는 일은 없지만, 와도 깨짐이 이긴다
+    expect(ghRow({ ...base, ghUser: 'octo', ghStale: true })).toBe('relogin');
+  });
+  it('깔렸는데 로그인 전 · 안 깔림', () => {
+    expect(ghRow(base)).toBe('login');
+    expect(ghRow({ ghPath: null, ghUser: null, ghStale: false })).toBe('install');
   });
 });

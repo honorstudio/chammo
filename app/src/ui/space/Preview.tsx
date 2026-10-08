@@ -37,7 +37,6 @@ export function Preview({ f, onClose, onAttach, onSendText, onCuration }: { f: D
   type Cur = { total: number; done: number; counts: Record<string, number>; labels: { v: string; title: string }[]; text: string };
   const [cur, setCur] = useState<Cur | null>(null);
   const [curSent, setCurSent] = useState<'idle' | 'sending' | 'sent' | 'fail'>('idle');
-  const curSave = useRef(0);
   const onCurationRef = useRef(onCuration);
   onCurationRef.current = onCuration;
   // 검토용 시안이면 창을 한 번도 안 그리고 바로 검토 모드로 — 확인하는 동안(몇 ms)은 아무것도 안 그린다(깜빡임, 2026-09-30 사용자)
@@ -54,9 +53,7 @@ export function Preview({ f, onClose, onAttach, onSendText, onCuration }: { f: D
       if (onCurationRef.current) { onCurationRef.current(f.path, f.by); return; }
       setCur({ total: d.total ?? 0, done: d.done ?? 0, counts: d.counts ?? {}, labels: d.labels ?? [], text: d.text });
       setCurSent((x) => (x === 'sent' ? 'idle' : x));
-      window.clearTimeout(curSave.current);
-      const text = d.text;
-      curSave.current = window.setTimeout(() => void invoke('save_curation', { path: f.path, text }).catch(() => {}), 700);
+      // 파일에 적기·되돌리기는 HtmlFrame(record)이 한다
     };
     window.addEventListener('message', on);
     return () => window.removeEventListener('message', on);
@@ -245,7 +242,7 @@ export function Preview({ f, onClose, onAttach, onSendText, onCuration }: { f: D
           {kind === 'web' ? <WebPage url={f.path} />
             : kind === 'image' ? <div className={`pv-image ${sized ? '' : 'fit'}`} ref={imgBox}><img src={f.path.startsWith('data:') ? f.path : docUrl(f.path)} alt="" onLoad={(e) => setNatural(e.currentTarget.naturalWidth / (window.devicePixelRatio || 1))}
               style={sized ? { maxWidth: 'none', maxHeight: 'none', width: `${natural * zoom / 100}px` } : undefined} />{boxAt && <span className="pv-box" style={boxAt} />}</div>
-            : kind === 'html' ? <div className="rd-zoombox"><HtmlFrame className="rd-frame" src={docUrl(f.path)} zoom={zoom} point={at} pointKey={f.ts} sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads" /></div>
+            : kind === 'html' ? <div className="rd-zoombox"><HtmlFrame className="rd-frame" src={docUrl(f.path)} zoom={zoom} point={at} pointKey={f.ts} record={f.path} /></div>
             : kind === 'pdf' ? <Suspense fallback={<div className="dim">{tr('여는 중', 'Opening')}</div>}><PdfView path={f.path} zoom={zoom} at={f.at} atKey={f.ts} /></Suspense>
             : (kind === 'office' || kind === 'other') && pageDoc(f.path) ? <OfficeDoc f={f} zoom={zoom} fallback={kind} />
             : kind === 'audio' || kind === 'office' || kind === 'other' ? <ExtraDoc path={f.path} kind={kind} />
@@ -271,5 +268,5 @@ function OfficeDoc({ f, zoom, fallback }: { f: DashFile; zoom: number; fallback:
   if (main === null) return <div className="dim">{tr('미리보기 만드는 중', 'Making a preview')}</div>;
   if (main === false) return <ExtraDoc path={f.path} kind={fallback} />;
   if (kindOf(main) === 'pdf') return <Suspense fallback={<div className="dim">{tr('여는 중', 'Opening')}</div>}><PdfView path={main} zoom={zoom} at={f.at} atKey={f.ts} /></Suspense>;
-  return <div className="rd-zoombox"><HtmlFrame className="rd-frame" src={docUrl(main)} zoom={zoom} point={f.at} pointKey={f.ts} sandbox="allow-scripts allow-same-origin" /></div>;
+  return <div className="rd-zoombox"><HtmlFrame className="rd-frame" src={docUrl(main)} zoom={zoom} point={f.at} pointKey={f.ts} /></div>;
 }

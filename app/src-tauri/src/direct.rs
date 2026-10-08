@@ -133,7 +133,7 @@ pub fn answer(id: &str, pick: &Pick, by: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn chrono_now() -> String {
+pub(crate) fn chrono_now() -> String {
     let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     // RFC3339 UTC — 프론트 Date.parse 가 읽는다
     let secs = d.as_secs() as i64;
@@ -154,6 +154,37 @@ fn civil(z: i64) -> (i64, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// 앱이 카드를 처음 화면에 그렸다는 줄(2026-10-05 아이맥 — 참모가 기록에 ask 줄만 보고 떴다고 믿었다) — scripts/direct ask·status 가 읽는다.
+/// 없는 카드면 거절, 같은 카드·같은 자리 줄이 이미 있으면 None(또 안 쓴다). 자리 이름은 제어 문자 빼고 60자
+pub fn shown_row(log: &str, id: &str, place: &str, ts: &str) -> Result<Option<Value>, Refuse> {
+    let rows: Vec<Value> = log.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    if !rows.iter().any(|r| r["type"] == "ask" && r["id"] == id) {
+        return Err(Refuse::NotFound);
+    }
+    let place: String = place.chars().filter(|c| !c.is_control()).take(60).collect();
+    if place.trim().is_empty() {
+        return Err(Refuse::Bad("empty place".into()));
+    }
+    if rows.iter().any(|r| r["type"] == "shown" && r["id"] == id && r["where"] == place.as_str()) {
+        return Ok(None);
+    }
+    Ok(Some(json!({ "ts": ts, "type": "shown", "id": id, "where": place })))
+}
+
+/// 데스크톱 카드가 화면에 보였다 — 메인 창에서만. 기록 쓰기는 답과 같은 자물쇠 안에서(맞춰 보고 쓰는 사이 겹치지 않게)
+#[tauri::command]
+pub fn direct_shown(window: tauri::WebviewWindow, id: String, place: String) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("main window only".into());
+    }
+    let _one = ANSWER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let log = std::fs::read_to_string(log_path()).unwrap_or_default();
+    match shown_row(&log, &id, &place, &chrono_now()).map_err(refuse_text)? {
+        Some(row) => append(&row),
+        None => Ok(()),
+    }
 }
 
 /// 카드 기록 원문(프론트 domain/directAsk 가 읽는다)
@@ -224,6 +255,27 @@ mod tests {
         assert_eq!(serde_json::from_str::<Pick>(r#"{"pick":"option","option":1}"#).unwrap(), Pick::Option { option: 1 });
         assert_eq!(serde_json::from_str::<Pick>(r#"{"pick":"yes"}"#).unwrap(), Pick::Yes);
         assert!(serde_json::from_str::<Pick>(r#"{"pick":"rm"}"#).is_err());
+    }
+
+    #[test]
+    fn 보임_줄은_있는_카드에_자리마다_한_번() {
+        let t = "2026-10-05T10:26:28Z";
+        let row = shown_row(ASK, "ab12cd34", "chat:참모", t).unwrap().unwrap();
+        assert_eq!(row, json!({ "ts": t, "type": "shown", "id": "ab12cd34", "where": "chat:참모" }));
+        let again = format!("{ASK}\n{row}");
+        assert_eq!(shown_row(&again, "ab12cd34", "chat:참모", t).unwrap(), None, "같은 자리는 또 안 쓴다");
+        assert!(shown_row(&again, "ab12cd34", "inbox", t).unwrap().is_some(), "다른 자리는 쓴다");
+        assert_eq!(shown_row(ASK, "zz", "inbox", t).unwrap_err(), Refuse::NotFound);
+        let odd = shown_row(ASK, "ab12cd34", &format!("chat:\n{}", "가".repeat(100)), t).unwrap().unwrap();
+        let w = odd["where"].as_str().unwrap();
+        assert!(!w.contains('\n') && w.chars().count() == 60, "{w}");
+        assert!(shown_row(ASK, "ab12cd34", "\n\t", t).is_err());
+    }
+
+    #[test]
+    fn 보임_줄은_답할_수_있나에_영향_없다() {
+        let shown = format!("{ASK}\n{}", r#"{"type":"shown","id":"ab12cd34","where":"inbox"}"#);
+        assert!(check(&shown, "ab12cd34").is_ok());
     }
 
     #[test]

@@ -5,7 +5,7 @@ import type { RepoToday } from '../data/tauri';
 import type { TamaFile } from '../domain/tama/store';
 import { TamaMini } from './tama/TamaMini';
 import type { Features } from '../domain/config';
-import { IconBell, IconHarness, IconOffice, IconReader, IconReplay, IconSpace, IconSpeaker, IconTerminal, IconTools } from './Icons';
+import { IconBell, IconHarness, IconOffice, IconReader, IconReplay, IconReview, IconSpace, IconSpeaker, IconTerminal, IconTools } from './Icons';
 import { barItems, type BarItem } from '../domain/topbarMenu';
 import { assistant, tr } from '../i18n';
 import { ageText, allOut, type AccountsView } from '../domain/accounts';
@@ -28,7 +28,7 @@ function Meter({ label, l, age }: { label: string; l?: Limit; age?: number | nul
 /** 앱 맨 위: Claude 사용 한도 · 오늘 커밋 · (오른쪽) 다마고치 자리 */
 type TamaProps = { file: TamaFile | null; widgetShown: boolean; onToggle: () => void };
 
-export function TopBar({ features, usage, usageAge, account, accounts, onSettings, today, tama, inboxCount, onInbox, harnitor, onHarnitor, tools, onTools, voice, onVoice, replayOn, onReplay, office, onOffice, space, onView, reader, onReader, load, onLoad, loadOn }: { load?: { level: 'ok' | 'warn' | 'high'; load1: number; cores: number; swapGb: number }; onLoad: () => void; loadOn: boolean; features: Features; usage: Usage; usageAge?: number | null; account: { name: string; title: string; known: boolean } | null; accounts: AccountsView | null; onSettings: () => void; today: RepoToday[]; tama: TamaProps; inboxCount: number; onInbox: () => void; harnitor: boolean; onHarnitor: () => void; /** 도구 화면이 지금 탭에 떠 있나 */ tools: boolean; onTools: () => void; voice: boolean; onVoice: () => void; replayOn: boolean; onReplay: () => void; office: boolean; onOffice: () => void; /** 지금 뷰가 채팅 뷰인가 */ space: boolean; onView: (chat: boolean) => void; reader: boolean; onReader: () => void }) {
+export function TopBar({ features, usage, usageAge, account, accounts, onSettings, today, tama, inboxCount, onInbox, harnitor, onHarnitor, tools, onTools, review, onReview, voice, onVoice, replayOn, onReplay, office, onOffice, space, onView, reader, onReader, load, onLoad, loadOn }: { load?: { level: 'ok' | 'warn' | 'high'; load1: number; cores: number; swapGb: number }; onLoad: () => void; loadOn: boolean; features: Features; usage: Usage; usageAge?: number | null; account: { name: string; title: string; known: boolean } | null; accounts: AccountsView | null; onSettings: () => void; today: RepoToday[]; tama: TamaProps; inboxCount: number; onInbox: () => void; harnitor: boolean; onHarnitor: () => void; /** 도구 화면이 지금 탭에 떠 있나 */ tools: boolean; onTools: () => void; /** 리뷰 — on = 리뷰 화면이 떠 있나, confirm = 머지 전에 사람이 볼 PR 수 */ review: { on: boolean; confirm: number }; onReview: () => void; voice: boolean; onVoice: () => void; replayOn: boolean; onReplay: () => void; office: boolean; onOffice: () => void; /** 지금 뷰가 채팅 뷰인가 */ space: boolean; onView: (chat: boolean) => void; reader: boolean; onReader: () => void }) {
   const commits = today.reduce((n, r) => n + r.commits, 0);
   const added = today.reduce((n, r) => n + r.added, 0);
   const deleted = today.reduce((n, r) => n + r.deleted, 0);
@@ -82,6 +82,12 @@ export function TopBar({ features, usage, usageAge, account, accounts, onSetting
           tools: <button key="tools" className={`voice ${tools ? 'on' : ''}`} title={tools ? tr('도구 닫기', 'Close tools') : tr('도구 — MCP·플러그인·스킬 보고 끄고 켜기', 'Tools — see and toggle MCP, plugins and skills')} aria-label={tr('도구', 'Tools')} aria-pressed={tools} onClick={onTools}><IconTools /></button>,
           // 하니터: 설정 버튼 자리 — 설정은 메뉴 Chammo > 설정…(⌘,)으로만(2026-10-01 사용자)
           harnitor: <button key="harnitor" className={`voice ${harnitor ? 'on' : ''}`} title={harnitor ? tr('하니터 닫기', 'Close Harnitor') : tr('하니터 — 스킬·훅·MCP·플러그인 보기·끄고 켜기', 'Harnitor — view and toggle skills, hooks, MCP, plugins')} aria-label={tr('하니터', 'Harnitor')} aria-pressed={harnitor} onClick={onHarnitor}><IconHarness /></button>,
+          // 리뷰(PR) — 사이드바 줄에서 옮김(2026-10-06 사용자). 숫자는 머지 전에 볼 것이 있을 때만
+          review: <button key="review" className={`voice rv-btn ${review.on ? 'on' : ''}`} title={review.on ? tr('리뷰 닫기', 'Close review') : review.confirm ? tr(`리뷰 — 머지 전에 볼 것 ${review.confirm}개`, `Review — ${review.confirm} to check before merging`) : tr('리뷰', 'Review')}
+            aria-label={review.confirm ? tr(`리뷰, 볼 것 ${review.confirm}개`, `Review, ${review.confirm} to check`) : tr('리뷰', 'Review')} aria-pressed={review.on} onClick={onReview}>
+            <IconReview />
+            {review.confirm > 0 && <span className="rv-n">{review.confirm}</span>}
+          </button>,
           // 맨 끝: 결정 대기 드롭다운이 바로 아래(오른쪽 위)에 펼쳐진다
           inbox: <button key="inbox" className={`bell ${inboxCount ? 'on' : ''}`} title={inboxCount ? tr(`결정 대기 ${inboxCount}개 — 눌러서 보기`, `${inboxCount} decisions waiting — click to view`) : tr('결정 대기 없음', 'No decisions waiting')} onClick={onInbox}>
             <IconBell />

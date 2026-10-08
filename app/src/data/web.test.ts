@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { interruptSession, pair } from './web';
+import { getEnv, interruptSession, pair } from './web';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -96,5 +96,21 @@ describe('멈춤 — 비서 세션에 Esc 한 번(/api/interrupt)', () => {
     expect(await interruptSession('aaaa0001')).toBe('soon');
     vi.stubGlobal('fetch', vi.fn(async () => new Response('no such session', { status: 404 })));
     await expect(interruptSession('aaaa0001')).rejects.toThrow('no such session');
+  });
+});
+
+describe('getEnv — 윈도우 맥 경로를 앱과 같은 / 모양으로(폰 "떠 있는 참모가 없어요", 2026-10-05)', () => {
+  const box = () => vi.stubGlobal('localStorage', { getItem: () => 't'.repeat(64), setItem: () => {}, removeItem: () => {} });
+  it('hqDir·devRoot·extraProjects 를 fwd', async () => {
+    box();
+    const raw = { assistantName: '참모', language: 'ko', devRoot: 'C:\\Users\\Me/Desktop/dev', extraProjects: ['C:\\Users\\Me\\automation\\bot'], hqDir: 'C:\\Users\\Me/.chammo/hq' };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(raw), { status: 200 })));
+    expect(await getEnv()).toEqual({ ...raw, devRoot: 'C:/Users/Me/Desktop/dev', extraProjects: ['C:/Users/Me/automation/bot'], hqDir: 'C:/Users/Me/.chammo/hq' });
+  });
+  it('맥 경로는 그대로', async () => {
+    box();
+    const raw = { assistantName: '참모', language: 'ko', devRoot: '/Users/me/dev', extraProjects: ['/Users/me/odd\\name'], hqDir: '/Users/me/.chammo/hq' };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(raw), { status: 200 })));
+    expect(await getEnv()).toEqual(raw);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addSpawned, focusPick, followChat, harnitorPick, heldBy, toolsPick, holderMap, newShows, orphanSends, showOwner, shownFiles, transcriptTargets } from './spaceNav';
+import { addSpawned, focusPick, followChat, harnitorPick, heldBy, reviewPick, toolsPick, holderMap, newShows, orphanSends, showOwner, shownFiles, transcriptTargets } from './spaceNav';
 import type { TaskEvent } from './tasks';
 
 const T = Date.parse('2026-09-30T04:00:00Z');
@@ -226,6 +226,20 @@ describe('toolsPick — 위 막대 도구 아이콘(2026-10-05 사용자): 하�
   it('기억이 없으면 그 참모 대시보드로, 안 열려 있으면 닫기는 그대로', () => {
     expect(toolsPick('t:', 'close', '', 'o:a').pick).toBe('o:a');
     expect(toolsPick('h:', 'close', '', 'o:a')).toEqual({ pick: 'h:', before: '' });
+  });
+});
+
+describe('reviewPick — 위 막대 리뷰 아이콘(2026-10-06 사용자): 도구처럼 탭마다 열고 닫기, PR 하나 고른 것(rv:<키>)도 열린 걸로', () => {
+  it('열면 리뷰 첫 화면(rv:)으로, 보던 화면은 기억', () => {
+    expect(reviewPick('o:a', 'toggle', '', 'o:a')).toEqual({ pick: 'rv:', before: 'o:a' });
+    expect(reviewPick('p:/d/project-b', 'open', '', 'o:a')).toEqual({ pick: 'rv:', before: 'p:/d/project-b' });
+  });
+  it('PR 하나를 보고 있어도(rv:project-b#12) 열린 것 — 다시 누르면 닫고 그 전 화면으로, 열기는 그대로', () => {
+    expect(reviewPick('rv:project-b#12', 'toggle', 'd:/x.md', 'o:a')).toEqual({ pick: 'd:/x.md', before: '' });
+    expect(reviewPick('rv:project-b#12', 'open', 'd:/x.md', 'o:a')).toEqual({ pick: 'rv:project-b#12', before: 'd:/x.md' });
+  });
+  it('기억이 없으면 그 참모 대시보드로', () => {
+    expect(reviewPick('rv:', 'close', '', 'o:a').pick).toBe('o:a');
   });
 });
 

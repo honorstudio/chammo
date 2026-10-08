@@ -1,4 +1,5 @@
-// 결정 대기함 — 참모가 나한테 물은 것만 모은다: 참모 세션의 질문·확인창, 참모가 scripts/task ask 로 올린 결정, 로그인 오류로 멈춘 세션.
+// 결정 대기함 — 참모가 나한테 물은 것만 모은다: 참모 세션의 질문·확인창, 참모가 scripts/task ask 로 올린 결정.
+// 로그인 오류로 멈춘 세션은 세션마다 칸을 안 띄운다 — 맨 위 로그인 카드 하나(domain/login, ui/LoginCard)
 // 하위 세션이 물은 건 참모한테 한 말이라 뺀다 — 나한테 올릴지는 참모가 정한다(사용자 2026-09-27)
 import { tr } from '../i18n';
 import type { Activity } from './activity';
@@ -6,7 +7,7 @@ import type { Session } from './session';
 import type { ActivityStatus } from './status';
 import type { TaskEvent } from './tasks';
 
-export type InboxKind = 'ask' | 'blocked' | 'decide' | 'login';
+export type InboxKind = 'ask' | 'blocked' | 'decide';
 export type InboxItem = {
   /** 처리함으로 치울 때 쓰는 열쇠 — 같은 질문이면 같은 열쇠(새 질문이 오면 다시 뜨게) */
   key: string;
@@ -24,10 +25,6 @@ export type InboxItem = {
   taskId?: string;
 };
 
-/** 로그인 토큰 갱신이 세션끼리 겹치거나 만료돼 대화가 멈춘 흔적 — 실측 2026-09-27(project-b-g) */
-export const LOGIN_STALL = /could not refresh your login|sign in again with \/login|please run \/login|oauth token has expired|authentication_error|invalid api key/i;
-/** 로그인 오류로 멈춘 세션에 '이어서' 누르면 보내는 말 — 사용자가 친 말처럼 꾸미지 않는다 */
-export const RESUME_MSG = tr('로그인 오류로 멈췄었어(다시 로그인함). 하던 거 이어서 해줘.', 'You stopped on a login error (signed in again). Please continue where you left off.');
 
 type Act = { session: Session; status: ActivityStatus; activity: Activity };
 
@@ -57,10 +54,6 @@ export function buildInbox(
   for (const { session: s, status, activity: a } of activities) {
     const ts = a.reply?.ts ?? '';
     const at: { project: string; where: string } = { project: s.project, where: s.workspace ?? '' };
-    if (status !== 'working' && status !== 'blocked' && LOGIN_STALL.test(a.reply?.text ?? '')) {
-      out.push({ key: `login:${s.id}:${ts}`, kind: 'login', ...at, text: tr('로그인 오류로 멈춰 있어 — 이어서 누르면 다시 돌아', 'Stopped on a login error — press Resume to restart it'), ts, target: s.id });
-      continue;
-    }
     if (!isOrch(s)) continue;
     const who = orchName?.(s);
     if (who) Object.assign(at, { project: who, where: '' });

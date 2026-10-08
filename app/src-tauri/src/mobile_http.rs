@@ -29,6 +29,10 @@ pub trait Backend: Send + Sync {
     fn routines(&self) -> Result<String, String>;
     fn usage(&self) -> String;
     fn send(&self, id: &str, text: &str) -> Result<(), String>;
+    /// 작업 기록(tasks.jsonl)에 한 줄 — 결정 대기함 답(answer). 데스크톱 append_task_event 와 같은 파일
+    fn append_task(&self, _line: &str) -> Result<(), String> {
+        Err("not supported".into())
+    }
     /// 직접 답하기 카드 기록 원문(<데이터>/direct.jsonl)
     fn direct_log(&self) -> String {
         String::new()
@@ -90,6 +94,35 @@ pub trait Backend: Send + Sync {
     fn push_unsubscribe(&self, device: &str, endpoint: &str) -> Result<(), String>;
     /// 그 브라우저 화면 한 장 — since 보다 새 것이 있으면 [순번 8바이트 LE][jpeg], 없으면 빈 것(agent_browser::frame_bytes)
     fn browser_frame(&self, profile: &str, since: u64) -> Vec<u8>;
+    /// 사람 개입(2026-10-06 사용자) — on 이면 그 세션 브라우저에 개입, 아니면 돌려주기(세션이 부르는 중이면 '다 했어')
+    fn browser_takeover(&self, _profile: &str, _session_pid: i32, _on: bool) -> Result<(), String> {
+        Err("not supported".into())
+    }
+    /// 개입 중 폰에서 누르기·글자·스크롤 — 개입·부름이 아니면 맥이 버린다(agent_browser human_ok)
+    fn browser_input(&self, _profile: &str, _session_pid: i32, _events: Vec<crate::agent_input::InputEv>) -> Result<(), String> {
+        Err("not supported".into())
+    }
+    /// 계정 칸 — 이름·요금제·사용량·쉬는 때만(accounts_cmd::PhoneView, 이메일·토큰 없음) · 바꾸기(데스크톱과 같은 길 + 고정) · 자동 전환 켜기
+    fn accounts(&self) -> Result<serde_json::Value, String> {
+        Err("unsupported".into())
+    }
+    fn account_switch(&self, _id: &str) -> Result<serde_json::Value, String> {
+        Err("unsupported".into())
+    }
+    fn account_auto(&self, _on: bool) -> Result<serde_json::Value, String> {
+        Err("unsupported".into())
+    }
+    /// 로그인 풀림(login.rs) — 화면이 적은 판단 + 폰 로그인 흐름 · 시작 · 코드 한 줄(값은 어디에도 안 남긴다) · 그만
+    fn login_view(&self) -> serde_json::Value {
+        serde_json::json!({ "need": null, "flow": { "state": "idle" } })
+    }
+    fn login_start(&self) -> Result<serde_json::Value, String> {
+        Err("unsupported".into())
+    }
+    fn login_code(&self, _code: &str) -> Result<serde_json::Value, String> {
+        Err("unsupported".into())
+    }
+    fn login_cancel(&self) {}
 }
 
 /// 이 서버 하나의 문지기 — 짝지은 기기들·받아 줄 주소(Host 헤더 값: "100.x.y.z:47123" 등)·쓰기를 받아 줄 출처(Origin).
@@ -127,6 +160,9 @@ const SEND_KEEP: Duration = Duration::from_secs(600);
 pub fn body_deadline(base: std::time::Instant, len: usize) -> std::time::Instant {
     base + Duration::from_secs((len as u64).div_ceil(64_000).min(180))
 }
+
+/// 다른 기기 참모와 말하는 약속 번호 — /api 길을 바꾸면 올린다(손님은 이 번호로 기능을 켜고 끈다)
+pub const PROTO: u32 = 1;
 
 /// 멈춤 연타 간격
 pub const STOP_GAP: Duration = Duration::from_secs(2);
@@ -194,6 +230,39 @@ pub fn is_session_uuid(s: &str) -> bool {
 /// `claude agents --json` 의 짧은 id(16진 8자리)
 pub fn is_short_id(s: &str) -> bool {
     s.len() == 8 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// 작업 id — scripts/task 는 1006-1615-5e02, 옛 기록엔 report-fix 같은 이름도 있다. 글자·숫자·-·_ 만, 40자까지
+fn is_task_id(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 40 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+enum AnswerState {
+    Waiting,
+    /// 폰이 2분 안에 같은 답을 이미 남겼다 — 응답이 끊겨 다시 누른 것. 새 줄 없이 받아 준다(폰은 그때 글을 보낸다)
+    Replay,
+    No,
+}
+
+/// 그 일이 지금 답을 기다리나 — send 를 뺀 마지막 이벤트가 ask(domain/mobile waitingList 와 같은 판단). 깨진 줄은 건너뛴다
+fn task_answer_state(log: &str, task: &str, note: &str, now_ms: i64) -> AnswerState {
+    let mut last = None;
+    for line in log.lines() {
+        let Ok(e) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        if e["task"] == task && e["type"] != "send" {
+            last = Some(e);
+        }
+    }
+    let Some(e) = last else { return AnswerState::No };
+    if e["type"] == "ask" {
+        return AnswerState::Waiting;
+    }
+    let recent = e["ts"].as_str().and_then(crate::accounts_usage::iso_ms).is_some_and(|t| (now_ms - t).abs() <= 120_000);
+    if e["type"] == "answer" && e["by"] == "phone" && e["note"] == note && recent {
+        AnswerState::Replay
+    } else {
+        AnswerState::No
+    }
 }
 
 fn is_routine_name(s: &str) -> bool {
@@ -399,6 +468,11 @@ struct PairBody {
     /// 이 저장 공간에 남아 있던 옛 열쇠 — 맞으면 새 줄 대신 그 줄의 열쇠를 바꿔 끼운다(같은 폰이 줄줄이 쌓이지 않게, 2026-10-05)
     #[serde(default)]
     prev: Option<String>,
+    /// 다른 기기의 참모 앱이 붙는다 — 이름은 몸통 name 에서(폰은 UA 에서, name 무시)
+    #[serde(default)]
+    peer: bool,
+    #[serde(default)]
+    name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -420,6 +494,35 @@ fn cid_ok(c: &str) -> bool {
 struct InterruptBody {
     id: String,
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AccountSwitchBody {
+    id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AccountAutoBody {
+    on: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoginCodeBody {
+    code: String,
+}
+
+/// 폰 로그인 시작은 몇 초에 한 번 — 두 번 탭에 pty 가 둘 뜨지 않게(흐름도 하나만 받지만 앞에서 막는다)
+pub const LOGIN_GAP: Duration = Duration::from_secs(3);
+
+/// 계정 칸 id — 맥이 만든 "a<밀리초>" 모양(영숫자·-·_ 64자). 백업 칸 이름은 칸이 아니다
+fn account_id_ok(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') && id != crate::accounts::BACKUP_FIRST && id != crate::accounts::BACKUP_LAST
+}
+
+/// 계정 바꾸기는 몇 초에 한 번 — 두 번 탭·다른 탭에서 겹쳐 눌러도 한 번만(칸이 달라도)
+pub const ACCOUNT_GAP: Duration = Duration::from_secs(4);
 
 #[derive(Deserialize)]
 struct PinBody {
@@ -490,25 +593,11 @@ addEventListener('touchend',function(e){if(d0&&e.touches.length<2){d0=0;parent.p
 /// 틀이 뒤에서 같은 세기로 높이·글꼴을 정해 메모 칸은 html 을 붙여 세기를 올린다
 const HTML_HEAD: &str = r#"<style>html{-webkit-text-size-adjust:100%;text-size-adjust:100%}@media (pointer:coarse){.cur-pick button{min-width:44px;min-height:44px}html .cur-pick input{height:44px;font-size:16px}}</style>"#;
 
-/// `<name ...>` 여는 태그 끝 다음 자리 — `<head` 로 `<header>` 를 잡지 않게 이름 뒤 글자를 본다
-fn tag_end(low: &str, name: &str) -> Option<usize> {
-    let open = format!("<{name}");
-    let mut from = 0;
-    while let Some(i) = low[from..].find(&open).map(|i| from + i) {
-        let after = i + open.len();
-        if low[after..].chars().next().is_some_and(|c| c == '>' || c == '/' || c.is_ascii_whitespace()) {
-            return low[after..].find('>').map(|j| after + j + 1);
-        }
-        from = after;
-    }
-    None
-}
-
 /// <head ...> 바로 뒤에 끼운다 — 시안 스크립트보다 먼저 돌아야 저장소가 갈린다. head 가 없으면 <html> 뒤, 그것도 없으면
 /// doctype 뒤(doctype 앞에 무엇이 오면 쿼크 모드가 된다), 다 없으면 맨 앞
 fn inject_shim(html: &str) -> String {
     let low = html.to_ascii_lowercase();
-    let at = tag_end(&low, "head").or_else(|| tag_end(&low, "html")).or_else(|| tag_end(&low, "!doctype")).unwrap_or(0);
+    let at = ["head", "html", "!doctype"].iter().find_map(|n| crate::reader::tag_end(low.as_bytes(), n)).unwrap_or(0);
     format!("{}{HTML_HEAD}{HTML_SHIM}{}", &html[..at], &html[at..])
 }
 
@@ -661,6 +750,13 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             None => Resp::text(404, "not found"),
         };
     }
+    // 다른 기기 참모가 '여기 참모가 있나·말이 통하나'만 묻는다 — 열쇠 없이, 앱 표시·약속 번호·버전·OS 만(이름·경로·세션은 없음)
+    if req.path == "/api/hello" {
+        if !is_get {
+            return Resp::text(405, "method not allowed");
+        }
+        return Resp::json(&serde_json::json!({ "app": "chammo", "proto": PROTO, "version": env!("CARGO_PKG_VERSION"), "os": std::env::consts::OS }));
+    }
     // 짝짓기 — 코드가 열쇠라 토큰 없이. 같은 출처 JSON 만, 토큰은 응답 몸으로(쿠키 없음) → 페이지가 localStorage 에
     if req.path == "/api/pair" {
         if req.method != "POST" {
@@ -670,8 +766,12 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             return Resp::text(403, "bad origin");
         }
         let b: PairBody = match body(req) { Ok(b) => b, Err(r) => return r };
-        let name = crate::mobile_pair::device_name(req.header("user-agent").unwrap_or(""));
-        let p = crate::mobile_pair::Pairing { name: &name, home: b.home, prev: b.prev.as_deref() };
+        let name = match (b.peer, b.name.as_deref().map(str::trim).filter(|n| !n.is_empty())) {
+            (true, Some(n)) => n.to_string(),
+            (true, None) => "참모".into(),
+            (false, _) => crate::mobile_pair::device_name(req.header("user-agent").unwrap_or("")),
+        };
+        let p = crate::mobile_pair::Pairing { name: &name, home: b.home && !b.peer, prev: b.prev.as_deref(), peer: b.peer };
         return match gate.devices.pair_with(&b.code, &p, std::time::SystemTime::now()) {
             Some(token) => Resp::json(&serde_json::json!({ "token": token })),
             None => Resp::text(401, "짝짓기 코드가 틀렸거나 10분이 지났어요 — 맥 설정 > 모바일에서 QR 을 새로 만들어 주세요"),
@@ -738,6 +838,11 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             Err(e) => Resp::text(502, &format!("예약 목록을 못 읽었어요: {e}")),
         },
         ("GET", "/api/usage") => Resp::raw_json(be.usage()),
+        // 맥 부하 — 앱이 적는 load.json + 빌드·시뮬레이터·갤럭시 자리 누가(읽기만)
+        ("GET", "/api/load") => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            Resp::json(&crate::load::phone_load(&be.data_dir(), now))
+        }
         ("GET", "/api/file") => file_resp(req, be),
         // 대시보드 파일 카드 — 누가 무엇을 보여 줬나(scripts/show 기록 꼬리). 파일 내용은 /api/file 이 따로 거른다
         // 참모 프사 — 데스크톱에서 바꾼 모양·그림을 폰에도. 그림은 키로만(경로를 받지 않는다)
@@ -837,7 +942,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Err(e) => Resp::text(502, &e),
             }
         }
-        ("POST", "/api/send" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/open-mac" | "/api/direct-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role") if !same_origin_write(req, gate) => Resp::text(403, "bad origin"),
+        ("POST", "/api/send" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/open-mac" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input") if !same_origin_write(req, gate) => Resp::text(403, "bad origin"),
         // html 시안 표 — 보여 준 html 만, 글 속 비밀은 안 낸다
         ("POST", "/api/html-ticket") => {
             let b: PathBody = match body(req) { Ok(b) => b, Err(r) => return r };
@@ -1000,7 +1105,8 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Err(e) => Resp::text(502, &e),
             }
         }
-        // 꺼진 참모 다시 켜기 — HQ 폴더의 꺼진 대화만, 같은 대화는 10초에 한 번
+        // 꺼진 참모 다시 켜기 — HQ 폴더의 꺼진 대화만, 같은 대화는 10초에 한 번.
+        // 이미 켜진 HQ 대화면(폰 목록이 낡음) 다시 켜지 않고 already — respawn 은 재시작이라 하던 턴이 끊긴다(2026-10-05)
         ("POST", "/api/respawn") => {
             let b: RespawnBody = match body(req) { Ok(b) => b, Err(r) => return r };
             if !is_session_uuid(&b.session_id) {
@@ -1011,6 +1117,9 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 (Err(e), _) | (_, Err(e)) => return Resp::text(502, &e),
             };
             let hq = be.hq_dir();
+            if crate::mobile_wake::hq_live(&live, &hq, &b.session_id) {
+                return Resp::json(&serde_json::json!({ "ok": true, "already": true }));
+            }
             let Some(off) = crate::mobile_wake::hq_stopped(&all, &live, &hq).into_iter().find(|a| a["sessionId"] == b.session_id.as_str()) else {
                 return Resp::text(404, "no such stopped assistant");
             };
@@ -1050,7 +1159,85 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             }
         }
         // 직접 답하기 카드(2026-10-03) — 읽기, 그리고 사람이 폰 카드에서 누른 답. 데스크톱과 같은 문지기(direct::answer: 이미 답함·지난 질문·꺼진 세션 거절)
+        ("GET", "/api/accounts") => match be.accounts() {
+            Ok(v) => Resp::json(&v),
+            Err(e) => Resp::text(502, &e),
+        },
+        // 계정 바꾸기 — 같은 출처 문지기 뒤. 맥 키체인 칸을 바꿔 끼운다(데스크톱 '이 계정으로'와 같은 길). 실패는 오류 이름 그대로(화면이 글로)
+        ("POST", "/api/account-switch") => {
+            let b: AccountSwitchBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            if !account_id_ok(&b.id) {
+                return Resp::text(400, "bad id");
+            }
+            if !once_per(gate, "account-switch", ACCOUNT_GAP) {
+                return Resp::text(429, "too soon");
+            }
+            match be.account_switch(&b.id) {
+                Ok(v) => Resp::json(&v),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
+        ("POST", "/api/account-auto") => {
+            let b: AccountAutoBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            match be.account_auto(b.on) {
+                Ok(v) => Resp::json(&v),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
+        // 로그인 풀림 — 보기는 열쇠만, 쓰기는 같은 출처 문지기 뒤(위 줄)
+        ("GET", "/api/login") => Resp::json(&be.login_view()),
+        ("POST", "/api/login-start") => {
+            if !once_per(gate, "login-start", LOGIN_GAP) {
+                return Resp::text(429, "too soon");
+            }
+            match be.login_start() {
+                Ok(v) => Resp::json(&v),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
+        ("POST", "/api/login-code") => {
+            let b: LoginCodeBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            if !crate::login::code_ok(&b.code) {
+                return Resp::text(400, "bad code");
+            }
+            match be.login_code(&b.code) {
+                Ok(v) => Resp::json(&v),
+                Err(e) => Resp::text(409, &e),
+            }
+        }
+        ("POST", "/api/login-cancel") => {
+            be.login_cancel();
+            Resp::json(&serde_json::json!({ "ok": true }))
+        }
         ("GET", "/api/direct") => Resp::new(200, "text/plain; charset=utf-8", be.direct_log()),
+        ("POST", "/api/browser-takeover" | "/api/browser-input") => {
+            #[derive(serde::Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct B {
+                profile: String,
+                session_pid: i32,
+                #[serde(default)]
+                on: bool,
+                #[serde(default)]
+                events: Vec<crate::agent_input::InputEv>,
+            }
+            let b: B = match body(req) { Ok(b) => b, Err(r) => return r };
+            if b.profile.is_empty() || b.profile.len() > 64 || !b.profile.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                return Resp::text(400, "bad profile");
+            }
+            if b.events.len() > 50 {
+                return Resp::text(400, "too many events");
+            }
+            // 폰이 본 그 세션 브라우저일 때만(세션이 바뀌었으면 남의 브라우저에 안 간다)
+            if !be.browser_lives().as_array().is_some_and(|l| l.iter().any(|x| x["profile"] == b.profile.as_str() && x["sessionPid"] == b.session_pid)) {
+                return Resp::text(404, "no such browser");
+            }
+            let r = if req.path == "/api/browser-input" { be.browser_input(&b.profile, b.session_pid, b.events) } else { be.browser_takeover(&b.profile, b.session_pid, b.on) };
+            match r {
+                Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+                Err(e) => Resp::text(409, &e),
+            }
+        }
         ("POST", "/api/direct-answer") => {
             #[derive(serde::Deserialize)]
             struct B {
@@ -1064,6 +1251,37 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             match be.direct_answer(&b.id, &b.pick) {
                 Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
                 Err(e) => Resp::text(409, &e),
+            }
+        }
+        // 결정 대기함(scripts/task ask) 답 — 그 일의 마지막 이벤트(send 빼고, 앱 waitingList 와 같이)가 물음일 때만 answer 한 줄.
+        // 폰이 이걸 안 남겨 카드가 안 빠졌고 같은 답을 세 번 보냈다(2026-10-06). 같은 일은 5초에 한 번(기록이 바뀌기 전 두 번 붙지 않게)
+        ("POST", "/api/task-answer") => {
+            #[derive(serde::Deserialize)]
+            struct B {
+                task: String,
+                note: String,
+            }
+            let mut b: B = match body(req) { Ok(b) => b, Err(r) => return r };
+            if !is_task_id(&b.task) {
+                return Resp::text(400, "bad task");
+            }
+            b.note.retain(|c| !c.is_control() || c == '\n' || c == '\t');
+            let note = b.note.trim();
+            if note.is_empty() || note.chars().count() > MAX_TEXT {
+                return Resp::text(400, "bad text");
+            }
+            if !once_per(gate, &format!("task-answer:{}", b.task), Duration::from_secs(5)) {
+                return Resp::text(429, "too soon");
+            }
+            match task_answer_state(&be.tasks(), &b.task, note, crate::orch_roles::now_ms() as i64) {
+                AnswerState::Waiting => {}
+                AnswerState::Replay => return Resp::json(&serde_json::json!({ "ok": true, "again": true })),
+                AnswerState::No => return Resp::text(409, "not waiting"),
+            }
+            let row = serde_json::json!({ "ts": crate::direct::chrono_now(), "type": "answer", "task": b.task, "note": note, "by": "phone" });
+            match be.append_task(&row.to_string()) {
+                Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+                Err(e) => Resp::text(502, &e),
             }
         }
         ("POST", "/api/send") => {
@@ -1151,7 +1369,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Err(e) => Resp::text(400, &e),
             }
         }
-        (_, "/api/env" | "/api/sessions" | "/api/transcript" | "/api/tasks" | "/api/routines" | "/api/usage" | "/api/file" | "/api/shows" | "/api/avatars" | "/api/avatar-image" | "/api/send" | "/api/attach" | "/api/routine" | "/api/interrupt" | "/api/stopped" | "/api/tails" | "/api/respawn" | "/api/spawn" | "/api/browsers" | "/api/browser-frame" | "/api/push-key" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/send-status" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/curation-state" | "/api/media-ticket" | "/api/open-mac" | "/api/direct" | "/api/direct-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/pins" | "/api/role" | "/api/roles") => {
+        (_, "/api/env" | "/api/sessions" | "/api/transcript" | "/api/tasks" | "/api/routines" | "/api/usage" | "/api/load" | "/api/file" | "/api/shows" | "/api/avatars" | "/api/avatar-image" | "/api/send" | "/api/attach" | "/api/routine" | "/api/interrupt" | "/api/stopped" | "/api/tails" | "/api/respawn" | "/api/spawn" | "/api/browsers" | "/api/browser-frame" | "/api/push-key" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/send-status" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/curation-state" | "/api/media-ticket" | "/api/open-mac" | "/api/direct" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/pins" | "/api/role" | "/api/roles" | "/api/accounts" | "/api/account-switch" | "/api/account-auto" | "/api/login" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input") => {
             Resp::text(405, "method not allowed")
         }
         _ => Resp::text(404, "not found"),
@@ -1200,7 +1418,7 @@ pub fn head_check(req: &Req, gate: &Gate) -> Option<Resp> {
     if req.method != "POST" && !has_body {
         return None;
     }
-    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role") {
+    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input") {
         return Some(Resp::text(404, "not found"));
     }
     // 짝짓기는 코드가 열쇠 — 출처·JSON 만 본다

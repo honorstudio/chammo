@@ -44,6 +44,19 @@ function userParts(content: unknown): { text: string; images: string[] } {
 }
 const userText = (content: unknown) => userParts(content).text;
 
+/** 도구 결과의 사람 개입 꼬리표 → 첫 줄('사람이 브라우저를 3분 조작하고 돌려줬어'). 아직 조작 중 안내·다른 결과는 null */
+const TAKEOVER = /\[사람 개입\] (사람이 [^\n]*조작하고 돌려줬어)/;
+function takeoverNote(content: unknown): string | null {
+  for (const b of blocks(content)) {
+    if (b.type !== 'tool_result') continue;
+    for (const c of blocks((b as { content?: unknown }).content)) {
+      const m = c.type === 'text' && c.text?.match(TAKEOVER);
+      if (m) return m[1]!;
+    }
+  }
+  return null;
+}
+
 /** 다른 세션이 보낸 말(<cross-session-message from-name=…>)·앱이 넘긴 줄([앱] …) → 보낸 쪽과 본문 */
 function relayOf(t: string): { from: string; text: string } | null {
   if (t.startsWith('[앱] ')) return { from: '앱', text: t.replace(/^\[앱\]\s*/, '').trim() };
@@ -88,6 +101,9 @@ function itemsOf(r: Rec): (ChatItem | Out)[] {
   }
   if (r.type === 'user') {
     if (r.isMeta) return [];
+    // 사람이 세션 브라우저에 개입했다 돌려줌 — 도구 결과의 꼬리표([사람 개입], tools/chammo-browser src/takeover.js)를 한 줄로
+    const take = takeoverNote(r.message?.content);
+    if (take) return [{ kind: 'note', id, ts, text: take }];
     // 컨텍스트가 차서 앞부분을 요약해 넣은 글 — 사용자가 친 말이 아니다
     if (r.isCompactSummary) return [{ kind: 'note', id, ts, text: '대화가 길어서 앞부분을 요약했어' }];
     const { text, images } = userParts(r.message?.content);
@@ -105,6 +121,9 @@ function itemsOf(r: Rec): (ChatItem | Out)[] {
   if (r.type === 'attachment') {
     const a = r.attachment;
     if (a?.type !== 'queued_command') return [];
+    // 120초 넘게 붙잡혀 배경으로 넘어간 브라우저 도구 — 돌려준 꼬리표가 끝 알림(task-notification)으로 온다(2026-10-06 실측)
+    const take = typeof a.prompt === 'string' && a.prompt.startsWith('<task-notification>') ? a.prompt.match(TAKEOVER) : null;
+    if (take) return [{ kind: 'note', id, ts, text: take[1]! }];
     const text = userText(a.prompt);
     const rel = text ? relayOf(text) : null;
     if (rel) return [{ kind: 'relay', id, ts, ...rel }]; // 일하는 중에 들어온 다른 세션 말
@@ -167,10 +186,12 @@ export function appendChat(prev: ChatItem[], chunk: string): ChatItem[] {
 const MARKS = /[\u2580-\u259F\u25A0-\u25FF\uFFFC\uFFFD\uE000-\uF8FF]/g;
 export const stripMarks = (t: string) => t.replace(MARKS, '');
 
+/** 보낸 글과 기록·큐의 글을 맞댈 모양 — 역슬래시는 빼고(줄 끝 \ 는 Claude 입력칸이 '줄 이어 쓰기'로 먹는다),
+ *  표시 글자(▬ 등)도 빼고(음성으로 받아 적은 글을 입력칸에서 읽으면 끝에 붙어 와 영영 안 맞았다, 2026-10-01 사용자) */
+export const chatNorm = (t: string) => stripMarks(t).replace(IMAGE_TOKEN, '').replace(/\\/g, '').replace(/\s+/g, ' ').trim();
+
 export function stillPending(pending: string[], items: ChatItem[]): string[] {
-  // 역슬래시는 빼고 비교 — 줄 끝 \ 는 Claude 입력칸이 '줄 이어 쓰기'로 먹는다
-  // 표시 글자(▬ 등)도 빼고 — 음성으로 받아 적은 글을 입력칸에서 읽으면 끝에 붙어 와 영영 안 맞았다(2026-10-01 사용자)
-  const norm = (t: string) => stripMarks(t).replace(IMAGE_TOKEN, '').replace(/\\/g, '').replace(/\s+/g, ' ').trim();
+  const norm = chatNorm;
   const seen = items.filter((i) => i.kind === 'user').map((i) => norm((i as { text: string }).text));
   // 그림을 같이 보내면 기록엔 [Image #n] 이 붙는다 — 그 표시는 빼고 비교(2026-09-30: 보내는 중이 안 사라졌다)
   return pending.filter((p) => { const n = norm(p); return !!n && !seen.some((t) => t === n || t.includes(n)); });
@@ -178,11 +199,12 @@ export function stillPending(pending: string[], items: ChatItem[]): string[] {
 
 /** 보내는 중 말풍선 중 아직 기록에 안 들어온 것 — 보낸 뒤(몇 초 여유)에 들어온 내 말하고만 맞춘다.
  *  기록 전체와 맞추니 예전 말에 같은 글("한국말로")이 있으면 방금 보낸 말이 바로 사라졌다(2026-09-30 사용자) */
-export function pendingLeft<T extends { text: string; at: number }>(pending: T[], items: ChatItem[], now = Date.now()): T[] {
+export function pendingLeft<T extends { text: string; at: number; since?: number }>(pending: T[], items: ChatItem[], now = Date.now()): T[] {
   return pending.filter((p) => {
     // / 명령(/rc·/model 등)은 보통 말처럼 기록에 안 남을 때가 있다 — 4초 지나면 보낸 걸로 친다(2026-10-01 사용자)
     if (p.text.trimStart().startsWith('/') && now - p.at > SLASH_PENDING_MS) return false;
-    return stillPending([p.text], items.filter((i) => i.kind === 'user' && Date.parse(i.ts) >= p.at - 10_000)).length > 0;
+    // since = 이 시각 뒤 기록만 — 끊겨서 입력칸에 되돌아온 말은 방금 전 기록이 있어도 안 간 말이다(2026-10-06)
+    return stillPending([p.text], items.filter((i) => i.kind === 'user' && Date.parse(i.ts) >= (p.since ?? p.at - 10_000))).length > 0;
   });
 }
 const SLASH_PENDING_MS = 4000;

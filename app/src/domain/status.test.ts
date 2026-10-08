@@ -70,6 +70,28 @@ describe('activityStatus — 세션 현황 카드 상태', () => {
   it('기록이 없으면 대기', () => {
     expect(activityStatus('idle', {}, NOW)).toBe('idle');
   });
+
+  it('로그인이 풀려 멈췄으면 로그인 필요 — 오래됐어도(로그인은 저절로 안 풀린다)', () => {
+    const auth = { ts: at(1), text: 'Login expired · Please run /login' };
+    expect(activityStatus('idle', { reply: { ts: at(1), text: auth.text }, auth }, NOW)).toBe('login');
+    expect(activityStatus('idle', { reply: { ts: at(30), text: auth.text }, auth: { ...auth, ts: at(30) } }, NOW)).toBe('login');
+  });
+
+  it('갱신 겹침(retry)은 로그인 필요가 아니다 — 잠깐 뒤 저절로 이어서', () => {
+    const auth = { ts: at(1), text: 'Could not refresh your login · Try again in a minute', retry: true as const };
+    expect(activityStatus('idle', { reply: { ts: at(1), text: auth.text }, auth }, NOW)).toBe('done');
+  });
+
+  it('일하는 중·확인창이면 그쪽이 먼저(로그인 오류 줄이 마지막이어도 지금은 다른 일)', () => {
+    const auth = { ts: at(1), text: 'Login expired · Please run /login' };
+    expect(activityStatus('working', { auth }, NOW)).toBe('working');
+    expect(activityStatus('blocked', { auth }, NOW)).toBe('blocked');
+  });
+
+  it('로그인 필요 말·표시', () => {
+    expect(statusWord('login')).toBe('로그인 필요');
+    expect(statusTone('login')).toBe('ask');
+  });
 });
 
 describe('transitions — 알림 보낼 변화만 고른다', () => {

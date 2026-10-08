@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { accountsApi } from '../data/tauri';
-import { ACCOUNTS_CHANGED, accountError, allOut, popRows, type AccountsView } from '../domain/accounts';
+import { ACCOUNTS_CHANGED, accountError, allOut, pinText, popRows, type AccountsView } from '../domain/accounts';
 import { readAuto } from '../domain/accountAuto';
 import { usageLevel } from '../domain/usage';
 import { tr } from '../i18n';
@@ -69,7 +69,7 @@ export function AccountPopover({ view, anchor, chip, onClose, onSettings }: { vi
             <span className="acct-pop-name">
               <b>{r.name}</b>
               {r.on && <span className="acct-pop-tag">{tr('지금', 'Now')}</span>}
-              {r.pinned && <span className="acct-pop-tag">{tr('고정', 'Pinned')}</span>}
+              {r.pinned && !r.pinHint && <span className="acct-pop-tag">{pinText(false)}</span>}
             </span>
             <Bar label={tr('5시간', '5h')} left={r.five} />
             <Bar label={tr('주간', 'Week')} left={r.week} />
@@ -77,6 +77,7 @@ export function AccountPopover({ view, anchor, chip, onClose, onSettings }: { vi
               ? <span className="acct-pop-btn-gap" />
               : <button type="button" className="btn acct-pop-btn" disabled={busy} onClick={() => void act(() => switchPinned(r.id))}>{tr('이 계정으로', 'Use')}</button>}
           </div>
+          {r.pinHint && <div className="acct-pop-note">{pinText(true)}</div>}
           {r.note && <div className="acct-pop-note">{r.note}</div>}
         </div>
       ))}

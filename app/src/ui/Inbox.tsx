@@ -1,12 +1,12 @@
 // 결정 대기함 — 상단 바 종을 누르면 아래로 펼쳐지는 드롭다운. 작업 패널과 따로 논다.
 // 여기서 바로 답장(그 세션 입력칸에 들어감)·열기·처리함
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { InboxItem } from '../domain/inbox';
-import { IconCheck, IconClose, IconOpen, IconResume, IconSend } from './Icons';
+import { IconCheck, IconClose, IconOpen, IconSend } from './Icons';
 import { tr } from '../i18n';
 
 const KIND = (): Record<InboxItem['kind'], string> => ({
-  ask: tr('물어봄', 'Question'), blocked: tr('확인창', 'Prompt'), decide: tr('결정', 'Decision'), login: tr('로그인 오류', 'Login error'),
+  ask: tr('물어봄', 'Question'), blocked: tr('확인창', 'Prompt'), decide: tr('결정', 'Decision'),
 });
 
 const time = (iso: string) => {
@@ -21,16 +21,21 @@ type Props = {
   onReply: (item: InboxItem, text: string) => Promise<void>;
   onOpen: (target: string) => void;
   onDismiss: (item: InboxItem) => void;
-  /** 로그인 오류로 멈춘 세션 이어서 돌리기 */
-  onResume: (items: InboxItem[]) => Promise<void>;
+  /** 로그인 풀림 카드(ui/LoginCard) — 맨 위에, 하나 */
+  login?: ReactNode;
+  /** 브라우저 연결 카드(ui/BrowserAttach) — 로그인 카드 다음 */
+  browser?: ReactNode;
+  browserCount?: number;
+  /** 직접 답하기 카드(하위 세션이 사람 승인을 기다림) — 맨 위에 */
+  direct?: ReactNode;
+  directCount?: number;
 };
 
-function Row({ item, onReply, onOpen, onDismiss, blockedWhy, onResume }: { item: InboxItem } & Omit<Props, 'items'>) {
+function Row({ item, onReply, onOpen, onDismiss, blockedWhy }: { item: InboxItem } & Omit<Props, 'items' | 'direct' | 'login' | 'browser'>) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
-  const [resuming, setResuming] = useState(false);
-  const why = item.kind === 'blocked' || item.kind === 'login' ? null : item.target ? blockedWhy(item) : null;
-  const canReply = item.kind !== 'blocked' && item.kind !== 'login' && !!item.target && !why;
+  const why = item.kind === 'blocked' ? null : item.target ? blockedWhy(item) : null;
+  const canReply = item.kind !== 'blocked' && !!item.target && !why;
   const send = async () => {
     if (!text.trim()) return;
     setBusy(true);
@@ -65,11 +70,6 @@ function Row({ item, onReply, onOpen, onDismiss, blockedWhy, onResume }: { item:
       )}
       {why && <div className="inbox-why">{why}</div>}
       <div className="inbox-acts">
-        {item.kind === 'login' && (
-          <button className="ib pri" title={tr('이어서 — 하던 거 다시 돌리기', 'Resume — pick up where it left off')} aria-label={tr('이어서', 'Resume')} disabled={resuming} onClick={() => { setResuming(true); void onResume([item]).finally(() => setResuming(false)); }}>
-            <IconResume />
-          </button>
-        )}
         {item.target && <button className="ib" title={tr('그 세션 열기', 'Open that session')} aria-label={tr('열기', 'Open')} onClick={() => onOpen(item.target!)}><IconOpen /></button>}
         <button className="ib" title={tr('처리함 — 목록에서 치우기', 'Done — remove from list')} aria-label={tr('처리함', 'Done')} onClick={() => onDismiss(item)}><IconCheck /></button>
       </div>
@@ -78,19 +78,15 @@ function Row({ item, onReply, onOpen, onDismiss, blockedWhy, onResume }: { item:
 }
 
 function Inbox(props: Props) {
-  const [all, setAll] = useState(false);
-  if (props.items.length === 0) return <div className="inbox-empty">{tr('결정할 거 없어', 'Nothing to decide')}</div>;
-  const stalls = props.items.filter((i) => i.kind === 'login');
+  if (props.items.length === 0 && !props.direct && !props.login && !props.browser) return <div className="inbox-empty">{tr('결정할 거 없어', 'Nothing to decide')}</div>;
   return (
     <div className="inbox">
       <div className="tasks-sec inbox-head">
-        {tr('결정 대기', 'Decisions')} <span>{props.items.length}</span>
-        {stalls.length > 1 && (
-          <button className="ib pri inbox-all" title={tr(`로그인 오류 ${stalls.length}개 전부 이어서`, `Resume all ${stalls.length} login errors`)} aria-label={tr('전부 이어서', 'Resume all')} disabled={all} onClick={() => { setAll(true); void props.onResume(stalls).finally(() => setAll(false)); }}>
-            <IconResume />
-          </button>
-        )}
+        {tr('결정 대기', 'Decisions')} <span>{props.items.length + (props.directCount ?? 0) + (props.login ? 1 : 0) + (props.browserCount ?? 0)}</span>
       </div>
+      {props.login}
+      {props.browser}
+      {props.direct}
       {props.items.map((it) => <Row key={it.key} item={it} {...props} />)}
     </div>
   );

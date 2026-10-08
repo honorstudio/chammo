@@ -71,9 +71,60 @@ fn json_path() -> std::path::PathBuf {
     crate::config::data_file("browser").join("vdisplay.json")
 }
 
-/// 지금 가짜 화면(있으면)
+/// 지금 가짜 화면(있으면) — 도우미가 찍은 자리를 믿지 않고 그때 화면 목록에서 읽는다. 도우미가 (0,0)을 찍은 채 다시 안 찍어
+/// 앱이 세션 크롬을 LG 화면 왼쪽 위로 옮겨 두고, 새 탭마다 크롬이 스스로 보여 번쩍였다(2026-10-06). 번호는 이 앱 도우미 것,
+/// 없으면 자리 파일의 것(진짜 데이터 폴더로 뜬 다른 앱 벌이 도우미를 쥔 때)
 pub fn bounds() -> Option<(u32, Rect)> {
-    RUN.lock().ok()?.as_ref()?.bounds
+    let id = fake_id()?;
+    live_rect(id, &cg::displays()).map(|r| (id, r))
+}
+
+/// 가짜 화면 번호 — 보이는 화면 고르기(visible_displays)는 자리가 이상해도 이 번호로 뺀다
+fn fake_id() -> Option<u32> {
+    if let Some(id) = RUN.lock().ok().and_then(|g| g.as_ref().and_then(|r| r.bounds.map(|b| b.0))) {
+        return Some(id);
+    }
+    let text = std::fs::read_to_string(json_path()).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let pid = v["pid"].as_u64()? as u32;
+    helper_alive(pid).then_some(v["displayID"].as_u64()? as u32)
+}
+
+/// 그 번호 화면의 지금 자리 — 목록에 없거나 다른 화면과 겹치면(면적이 생기면) None. 혼자 남은 가짜 화면(덮개 닫힘)은 (0,0)이어도 그대로
+pub fn live_rect(id: u32, displays: &[(u32, Rect, bool)]) -> Option<Rect> {
+    let r = displays.iter().find(|d| d.0 == id)?.1;
+    let overlaps = |o: &Rect| r.x < o.x + o.w && o.x < r.x + r.w && r.y < o.y + o.h && o.y < r.y + r.h;
+    (!displays.iter().any(|d| d.0 != id && overlaps(&d.1))).then_some(r)
+}
+
+/// 자리 파일의 도우미 pid
+pub fn json_pid(text: &str) -> Option<u32> {
+    serde_json::from_str::<serde_json::Value>(text).ok()?["pid"].as_u64().map(|p| p as u32)
+}
+
+/// 자리 파일을 지워도 되나 — 내 도우미가 적은 것(또는 깨진 것)만. 진짜 데이터 폴더로 뜬 두 번째 앱이 켜면서·도우미가 실패하면서
+/// 개인 앱 것을 지워, 그 뒤 뜬 세션 크롬이 화면 밖에 떴다가 맥에 끌려와 사용자 화면에 보였다(2026-10-06)
+pub fn may_remove(file_pid: Option<u32>, mine: Option<u32>) -> bool {
+    file_pid.is_none() || file_pid == mine
+}
+
+/// 다른 앱 벌의 도우미가 이미 가짜 화면을 쥐고 있나 — 그러면 새로 안 띄운다(같은 이름·번호라 두 번째는 'create failed' 로 죽는다, 실측)
+pub fn owned_elsewhere(file_pid: Option<u32>, helper_alive: impl Fn(u32) -> bool) -> bool {
+    file_pid.is_some_and(helper_alive)
+}
+
+fn helper_alive(pid: u32) -> bool {
+    crate::platform::pid_alive(pid as i32)
+        && crate::platform::command("/bin/ps").args(["-o", "comm=", "-p", &pid.to_string()]).output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim_end().ends_with("chammo-vdisplay"))
+}
+
+/// 자리 파일을 내 것일 때만 지운다
+fn remove_mine(mine: Option<u32>) {
+    let p = json_path();
+    let file_pid = std::fs::read_to_string(&p).ok().and_then(|t| json_pid(&t));
+    if std::fs::metadata(&p).is_ok() && may_remove(file_pid, mine) {
+        let _ = std::fs::remove_file(&p);
+    }
 }
 
 fn write_json(pid: u32, id: u32, r: Rect) {
@@ -100,6 +151,12 @@ pub fn start() {
         return;
     }
     std::thread::spawn(|| {
+        // 진짜 데이터 폴더로 다른 앱 벌이 떠 있으면 그 도우미가 쥔 화면·자리 파일을 그대로 쓴다
+        let file_pid = std::fs::read_to_string(json_path()).ok().and_then(|t| json_pid(&t));
+        if owned_elsewhere(file_pid, helper_alive) {
+            return;
+        }
+        // 살아 있는 주인이 없다 — 남은 파일은 낡은 것
         let _ = std::fs::remove_file(json_path());
         let exe = crate::config::data_file("tools").join("chammo-vdisplay");
         if std::fs::read(&exe).map(|b| b != HELPER).unwrap_or(true) {
@@ -131,13 +188,16 @@ pub fn start() {
                         run.bounds = Some((id, r));
                     }
                 }
-                write_json(pid, id, r);
+                // 자리 파일엔 찍힌 값 말고 지금 진짜 자리를(진짜 화면과 겹치는 자리면 안 적는다 — 래퍼가 그 자리에 크롬을 띄운다)
+                if let Some((_, live)) = bounds() {
+                    write_json(pid, id, live);
+                }
                 // 가짜 화면이 새로 생기거나 자리가 바뀌었다 — 옛 좌표에 남은 세션 크롬을 그리로(안 그러면 새 탭이 뜰 때 사용자 화면에 잠깐 보였다)
                 std::thread::spawn(crate::agent_browser::rehome_all);
             }
         }
-        // 도우미가 끝났다 — 자리 파일을 지워 래퍼가 보이는 자리로 돌아가게
-        let _ = std::fs::remove_file(json_path());
+        // 도우미가 끝났다 — 내 자리 파일이면 지워 래퍼가 다른 자리로 돌아가게
+        remove_mine(Some(pid));
         // 끝난 도우미를 거둔다 — 그냥 버리면 좀비(<defunct>)로 남았다
         let ended = RUN.lock().ok().and_then(|mut g| g.take());
         if let Some(mut run) = ended {
@@ -149,14 +209,14 @@ pub fn start() {
 /// 앱이 꺼질 때 — 가짜 화면 위 크롬은 화면이 사라지면 어느 화면도 아닌 좌표에 남는다(실측). 먼저 가린 뒤(agent_browser) 도우미를 끈다
 pub fn stop() {
     let run = RUN.lock().ok().and_then(|mut g| g.take());
-    if let Some(mut run) = run {
-        if let Some(mut stdin) = run.child.stdin.take() {
-            let _ = stdin.flush();
-        }
-        let _ = run.child.kill();
-        let _ = run.child.wait();
+    let Some(mut run) = run else { return };
+    let pid = run.child.id();
+    if let Some(mut stdin) = run.child.stdin.take() {
+        let _ = stdin.flush();
     }
-    let _ = std::fs::remove_file(json_path());
+    let _ = run.child.kill();
+    let _ = run.child.wait();
+    remove_mine(Some(pid));
 }
 
 // ── 화면 목록(CoreGraphics) ────────────────────────────────────────
@@ -211,7 +271,7 @@ mod cg {
 
 /// 보이는 화면들(가짜 화면 빼고) — (네모, 내장인가)
 pub fn visible_displays() -> Vec<(Rect, bool)> {
-    let fake = bounds().map(|b| b.0);
+    let fake = fake_id();
     cg::displays().into_iter().filter(|d| Some(d.0) != fake).map(|d| (d.1, d.2)).collect()
 }
 
@@ -246,6 +306,42 @@ mod tests {
         let out = crate::platform::command(&exe).arg("--test").output().unwrap();
         let _ = std::fs::remove_file(&exe);
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    }
+
+    #[test]
+    fn 가짜_화면_자리는_그때_화면_목록에서_읽는다() {
+        let vd = Rect { x: -2910.0, y: 956.0, w: 1440.0, h: 900.0 };
+        let now = [(3, MAIN, false), (1, BOOK, true), (64, vd, false)];
+        assert_eq!(live_rect(64, &now), Some(vd));
+        assert_eq!(live_rect(65, &now), None, "목록에 없는 번호(지워진 가짜 화면)");
+        // 2026-10-06 실측: 도우미가 (0,0)을 찍어 앱이 그 자리를 기억 → 세션 크롬을 LG 화면 24,48 로 옮겨 새 탭마다 번쩍
+        let stale = [(3, MAIN, false), (1, BOOK, true), (64, Rect { x: 0.0, y: 0.0, w: 1440.0, h: 900.0 }, false)];
+        assert_eq!(live_rect(64, &stale), None, "진짜 화면과 겹치면 가짜 화면 자리로 안 쓴다");
+        // 덮개 닫고 큰 모니터도 꺼져 가짜 화면 하나만 남으면 (0,0)이어도 그게 맞다(아무도 안 본다)
+        let alone = [(64, Rect { x: 0.0, y: 0.0, w: 1440.0, h: 900.0 }, false)];
+        assert_eq!(live_rect(64, &alone), Some(alone[0].1));
+        // 모서리 한 점만 닿는 건 겹침이 아니다(도우미가 두는 자리)
+        let corner = [(3, MAIN, false), (64, Rect { x: 1920.0, y: 1080.0, w: 1440.0, h: 900.0 }, false)];
+        assert!(live_rect(64, &corner).is_some());
+    }
+
+    #[test]
+    fn 자리_파일은_주인_도우미만_지운다() {
+        assert_eq!(json_pid(r#"{"pid":67205,"displayID":64,"bounds":[-2910,956,1440,900]}"#), Some(67205));
+        assert_eq!(json_pid("깨짐"), None);
+        assert!(may_remove(Some(67205), Some(67205)));
+        // 2026-10-06: 진짜 데이터 폴더로 뜬 두 번째 앱이 켜면서·자기 도우미가 실패하면서 개인 앱 것을 지웠다
+        assert!(!may_remove(Some(67205), Some(7800)), "남의 도우미 것");
+        assert!(!may_remove(Some(67205), None), "도우미를 못 띄운 앱");
+        assert!(may_remove(None, None), "깨진 파일은 치워도 된다");
+    }
+
+    #[test]
+    fn 다른_앱이_쥔_가짜_화면이면_새로_안_띄운다() {
+        let helper = |p: u32| p == 67205;
+        assert!(owned_elsewhere(Some(67205), helper), "살아 있는 남의 도우미");
+        assert!(!owned_elsewhere(Some(4242), helper), "죽었거나 번호만 같은 다른 프로그램(낡은 파일)");
+        assert!(!owned_elsewhere(None, helper));
     }
 
     #[test]

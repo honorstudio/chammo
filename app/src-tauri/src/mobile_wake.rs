@@ -35,6 +35,11 @@ pub fn hq_stopped(all_json: &str, live_json: &str, hq: &str) -> Vec<Value> {
         .collect()
 }
 
+/// 그 대화가 HQ 폴더에서 지금 살아 있나(live = `agents --json`) — 폰이 낡은 꺼진 목록에서 누른 것
+pub fn hq_live(live_json: &str, hq: &str, session_id: &str) -> bool {
+    list(live_json).iter().any(|a| a["sessionId"].as_str() == Some(session_id) && same_dir(a["cwd"].as_str().unwrap_or(""), hq))
+}
+
 /// HQ 폴더에서 쓴 적 있는 이름 전부(살아 있는·꺼진) — 번호와 별명 겹침을 이걸로 센다
 pub fn hq_names(all_json: &str, hq: &str) -> Vec<String> {
     list(all_json).iter().filter(|a| same_dir(a["cwd"].as_str().unwrap_or(""), hq)).filter_map(|a| a["name"].as_str().map(str::to_string)).collect()

@@ -118,3 +118,22 @@ describe('escCancelsDialog — 페이지 대화상자가 떠 있으면 Esc 는 �
     expect(escCancelsDialog({ key: 'Enter' }, true)).toBe(false);
   });
 });
+
+import { phoneGesture, phoneKey } from './agentInput';
+describe('폰 개입 — 손가락을 브라우저 입력으로(2026-10-06 사용자 ⑥)', () => {
+  it('짧게 누르면 그 자리 누르기(이동·누름·뗌)', () => {
+    const ev = phoneGesture({ x: 0.5, y: 0.25 }, 3, 2, 2);
+    expect(ev.map((e) => (e.kind === 'mouse' ? e.type : e.kind))).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
+    expect(ev[1]).toMatchObject({ x: 0.5, y: 0.25, button: 'left', clickCount: 1 });
+  });
+  it('밀면 스크롤 — 위로 밀면 아래로(손가락 반대), 화면 배율만큼', () => {
+    const [w] = phoneGesture({ x: 0.5, y: 0.5 }, 0, -100, 2);
+    expect(w).toMatchObject({ kind: 'mouse', type: 'mouseWheel', deltaX: 0, deltaY: 200 });
+    const [h] = phoneGesture({ x: 0.5, y: 0.5 }, 40, 2, 1);
+    expect(h).toMatchObject({ deltaX: -40, deltaY: -2 });
+  });
+  it('키 — Enter 는 줄바꿈 글자까지, Backspace 는 누름·뗌만', () => {
+    expect(phoneKey('Enter').map((e) => (e.kind === 'key' ? e.type : ''))).toEqual(['rawKeyDown', 'char', 'keyUp']);
+    expect(phoneKey('Backspace').map((e) => (e.kind === 'key' ? e.type : ''))).toEqual(['rawKeyDown', 'keyUp']);
+  });
+});

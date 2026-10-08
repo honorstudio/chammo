@@ -60,6 +60,9 @@ const LABELS: [RegExp, string][] = [
 
 export function procLabel(cmd: string): string {
   for (const [re, name] of LABELS) if (re.test(cmd)) return name;
+  // 맥 앱은 번들 이름 — 빈칸에서 자르면 Chammo Dev·Google Chrome 이 'Chammo'·'Google' 이 된다
+  const app = /\/([^/]+)\.app\/Contents\/MacOS\//.exec(cmd);
+  if (app) return app[1]!;
   const words = cmd.split(/\s+/);
   const base = (w: string) => w.split('/').pop() || w;
   const bin = base(words[0] ?? cmd);

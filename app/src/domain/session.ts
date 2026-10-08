@@ -1,6 +1,6 @@
 // `claude agents --json` 결과를 앱이 쓰는 세션 모델로. 순수 TS — 프레임워크·Tauri import 없음.
 import { assistant, tr } from '../i18n';
-import { fwd } from './paths';
+import { fwd, pathKey } from './paths';
 import { splitOrchName } from './orchLabel';
 
 export type SessionState = 'working' | 'blocked' | 'idle';
@@ -143,10 +143,10 @@ export function groupByProject(
   sessions: Session[],
   orchestratorCwd: string,
 ): { orchestrator: Session | undefined; orchestrators: Session[]; helpers: Session[]; projects: ProjectGroup[]; external: Session[]; loose: Session[] } {
-  const orch = stripSlash(orchestratorCwd);
+  const orch = pathKey(orchestratorCwd);
   // 이 폴더의 비서 이름 세션(⌘T로 여럿 띄운다: 참모·참모-2…, 옛 이름 참모·참모-2)과 터미널에서 연 대화형은 비서 — 이름이 설정 이름인 것이 대표(맨 앞).
   // 그 밖의 이름으로 띄운 백그라운드 세션은 비서가 부린 도우미(예: SNS 올리기) — 비서 화면에 끼면 칸을 차지해서 따로 뺀다(2026-09-28 사용자)
-  const inHq = sessions.filter((s) => stripSlash(s.cwd) === orch);
+  const inHq = sessions.filter((s) => pathKey(s.cwd) === orch);
   const helpers = inHq.filter((s) => s.kind === 'background' && s.name !== '' && !orchestratorLike(s.name));
   const here = inHq.filter((s) => !helpers.includes(s));
   const orchestrator = here.find((s) => s.name === assistant()) ?? here.find((s) => isOrchestratorName(s.name)) ?? here[0];

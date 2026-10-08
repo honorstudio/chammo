@@ -117,4 +117,4 @@ Rule of thumb: Rust runs things and returns raw output; TypeScript in `domain/` 
 
 ## HQ folder
 
-The chief of staff is an ordinary Claude Code session. What makes it a chief of staff is its folder: a `CLAUDE.md` that explains the job (delegate, log with `scripts/task`, merge only what isn't gated, ask only for what can't be undone), the helper scripts, and a `.claude/settings.json` hook that reminds it when voice mode is on. Chammo creates this folder from `app/hq-template/` on first run; after that it's yours to edit.
+The chief of staff is an ordinary Claude Code session. What makes it a chief of staff is its folder: a `CLAUDE.md` that explains the job (delegate, log with `scripts/task`, merge only what isn't gated, ask only for what can't be undone), the helper scripts, situational guides as HQ skills (`.claude/skills/hq-*` — browser, sign-in, scheduling, folders, operating the app — loaded only when needed), and a `.claude/settings.json` hook that reminds it when voice mode is on and names the skill a prompt needs. Chammo creates this folder from `app/hq-template/` on first run; after that it's yours to edit.

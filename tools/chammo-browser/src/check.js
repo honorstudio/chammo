@@ -2,13 +2,15 @@
 // launch() 는 플레이라이트가 만든 임시 프로필이라 사람 프로필·세션 프로필을 안 건드리고, 헤드리스라 화면에 안 뜬다
 const { chromeLaunch } = require('./window');
 const { featureArgs } = require('./features');
+const { sessionChrome } = require('./appcopy');
 
 function defaultLaunch(opts) {
   return require('playwright-core').chromium.launch(opts);
 }
 
 /** @returns {Promise<{ok:true, channel:string|null, version:string} | {ok:false, error:string}>} */
-async function check({ pick = chromeLaunch, launch = defaultLaunch, timeoutMs = 90_000 } = {}) {
+// 세션이 쓸 그 크롬 = 맥이면 Chammo Browser 사본 — 설치 끝의 시험 열기가 사본을 처음 만들고 한 번 띄워 본다
+async function check({ pick = () => sessionChrome(chromeLaunch()), launch = defaultLaunch, timeoutMs = 90_000 } = {}) {
   const c = pick();
   if (!c.found) return { ok: false, error: 'no-chrome' };
   let timer;

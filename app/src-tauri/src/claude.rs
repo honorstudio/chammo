@@ -119,13 +119,15 @@ pub async fn spawn_session(cwd: String, name: String, prompt: String) -> Result<
 
 /// spawn_session 의 몸통 — 폰 서버(mobile.rs)도 같은 길로 띄운다
 pub fn spawn_blocking(cwd: &str, name: &str, prompt: &str) -> Result<String, String> {
+    crate::trust::before_spawn(cwd);
+    crate::browser_attach::reassert_for(cwd);
     let out = crate::platform::command(claude_bin())
         .current_dir(cwd)
         .args(["--bg", "--dangerously-skip-permissions", "-n", name, prompt])
         .output()
         .map_err(|e| e.to_string())?;
     if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        return Err(crate::access::explain_spawn_error(String::from_utf8_lossy(&out.stderr).trim(), cwd));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
@@ -181,6 +183,7 @@ pub async fn adopt_session(pid: i32, session_id: String, cwd: String, name: Stri
         if !wait_until(|| !still_listed(&session_id), 10) {
             return Err(crate::i18n::tr("세션이 아직 목록에 남아 있어 — 잠깐 뒤에 다시 눌러줘", "The session is still listed — please try again in a moment").into());
         }
+        crate::trust::before_spawn(&cwd);
         let out = crate::platform::command(claude_bin())
             .current_dir(&cwd)
             .args(["--bg", "--dangerously-skip-permissions", "-n", &name, "--resume", &session_id])
@@ -200,15 +203,17 @@ pub async fn adopt_session(pid: i32, session_id: String, cwd: String, name: Stri
 #[tauri::command]
 pub async fn new_session(cwd: String, name: String, worktree: Option<String>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        crate::browser_attach::reassert_for(&cwd);
         let mut args: Vec<String> = vec!["--bg".into(), "--dangerously-skip-permissions".into(), "-n".into(), name];
         if let Some(w) = worktree.filter(|w| !w.trim().is_empty()) {
             args.push("-w".into());
             args.push(w.trim().to_string());
         }
+        crate::trust::before_spawn(&cwd);
         let out = crate::platform::command(claude_bin()).current_dir(&cwd).args(&args).output().map_err(|e| e.to_string())?;
         let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
         if !out.status.success() {
-            return Err(text.trim().to_string());
+            return Err(crate::access::explain_spawn_error(text.trim(), &cwd));
         }
         Ok(text.trim().to_string())
     })
@@ -679,6 +684,32 @@ pub fn notify(title: String, body: String, target: Option<String>) {
         .args(["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", &title, &body]));
 }
 
+/// '보고 있나' — 메인 창이 보이고·최소화 안 됐고·앞에 있을 때만
+pub fn watched(focused: bool, minimized: bool, visible: bool) -> bool {
+    focused && !minimized && visible
+}
+
+/// 메인 창을 보고 있나 — WebView2 는 최소화·다른 창 앞이어도 document.hasFocus()=true 라 웹 값으로 못 가린다(윈도우 QA 2026-10-05). 못 읽으면 안 보는 것으로
+#[tauri::command]
+pub fn main_watched<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> bool {
+    use tauri::Manager;
+    app.get_webview_window("main").is_some_and(|w| watched(w.is_focused().unwrap_or(false), w.is_minimized().unwrap_or(true), w.is_visible().unwrap_or(false)))
+}
+
+#[cfg(test)]
+mod watched_tests {
+    use super::watched;
+    #[test]
+    fn 보이고_최소화_안_됐고_앞에_있을_때만_보고_있다() {
+        assert!(watched(true, false, true));
+        // 윈도우 QA 2026-10-05: 최소화·다른 창 앞이어도 WebView2 는 hasFocus=true 였다 — Rust 창 상태로는 갈린다
+        assert!(!watched(true, true, true), "최소화");
+        assert!(!watched(false, false, true), "다른 창이 앞");
+        assert!(!watched(true, false, false), "숨김(트레이)");
+        assert!(!watched(false, true, false));
+    }
+}
+
 /// 음성 모드 — 설정의 ttsCommand(기본 macOS say)로 읽는다. 여러 개가 겹쳐도 차례로(한 번에 하나만 말하게 잠근다)
 static SPEAKING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// 멈출 때마다 1 씩 — 그 전에 줄 선 말은 차례가 와도 안 읽는다
@@ -1009,13 +1040,34 @@ fn revive_args(id: Option<&str>) -> Vec<String> {
     }
 }
 
+/// `agents --json` 원문에 그 대화가 살아 있나 — state 가 done 이어도 목록에 있으면 산 것(턴을 끝내고 기다리는 중)
+fn live_has(live_json: &str, session_id: &str) -> bool {
+    !session_id.is_empty()
+        && serde_json::from_str::<serde_json::Value>(live_json)
+            .ok()
+            .and_then(|v| v.as_array().cloned())
+            .is_some_and(|a| a.iter().any(|x| x["sessionId"].as_str() == Some(session_id)))
+}
+
+/// 꺼진 세션 이어서 켜기(데스크톱 ▷·주인 잃은 일). 그사이 다른 길로 이미 켜졌으면 아무것도 안 한다 —
+/// respawn 은 '재시작'이라 살아 있는 세션에 부르면 하던 턴이 끊긴다(낡은 꺼진 목록에서 누름, 2026-10-05). 목록을 못 읽으면 예전처럼 켠다
 #[tauri::command]
 pub async fn resume_session(cwd: String, session_id: String, id: Option<String>) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || resume_blocking(&cwd, &session_id, id.as_deref())).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        let live = crate::platform::run_capped(crate::platform::command(claude_bin()).args(["agents", "--json"]), std::time::Duration::from_secs(10));
+        if live.is_ok_and(|o| o.status.success() && live_has(&String::from_utf8_lossy(&o.stdout), &session_id)) {
+            return Ok("already running".to_string());
+        }
+        resume_blocking(&cwd, &session_id, id.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// resume_session 의 몸통 — 폰 서버(mobile.rs)도 같은 길로 되살린다
 pub fn resume_blocking(cwd: &str, session_id: &str, id: Option<&str>) -> Result<String, String> {
+    crate::trust::before_spawn(cwd);
+    crate::browser_attach::reassert_for(cwd);
     let first = revive_args(id);
     if !first.is_empty() {
         if let Ok(out) = crate::platform::command(claude_bin()).current_dir(cwd).args(&first).output() {
@@ -1173,7 +1225,7 @@ pub fn read_ctx() -> Vec<String> {
 fn with_attach(id: &str, keys: Option<&[u8]>) -> Result<String, String> {
     use std::time::Duration;
     // 윈도우: 화면만 읽으려고 새로 붙으면 열린 터미널 보기가 쫓겨난다 — 열려 있으면 읽지 않는다
-    if cfg!(windows) && keys.is_none() && crate::pty::session_writer(id).is_some() {
+    if cfg!(windows) && keys.is_none() && crate::pty::session_has_view(id) {
         return Err(crate::i18n::tr("터미널 보기가 붙어 있어 화면을 따로 못 읽어", "A terminal view is attached — can't read the screen separately").into());
     }
     attach_do(id, |w| {
@@ -1227,8 +1279,13 @@ pub async fn send_text_to_session(id: String, text: String) -> Result<(), String
 
 /// 직접 답하기 카드 답 치기 — send_text_to_session 과 같은 길인데 친 글을 로그에 안 남긴다(사람이 카드에 쓴 글, 2026-10-03 QA)
 pub(crate) fn type_text_quiet(id: &str, text: &str) -> Result<(), String> {
+    type_text_tagged(id, text, "direct-send")
+}
+
+/// 글 없이 꼬리표만 남기고 세션에 친다 — 자리표 알림(appctl slot-notice) 등
+pub(crate) fn type_text_tagged(id: &str, text: &str, tag: &str) -> Result<(), String> {
     let r = attach_type_segs(id, &typed_segs(text));
-    log_out("direct-send", &format!("{id} {}", if r.is_ok() { "ok" } else { "fail" }));
+    log_out(tag, &format!("{id} {}", if r.is_ok() { "ok" } else { "fail" }));
     r
 }
 
@@ -1267,6 +1324,10 @@ fn attach_do(id: &str, write: impl FnOnce(&mut dyn std::io::Write) -> std::io::R
             log_out("attach", &format!("{id} via-open-terminal"));
             let mut g = w.lock().unwrap();
             return write(&mut **g).map(|_| String::new()).map_err(|e| e.to_string());
+        }
+        // 열린 보기가 화면을 못 받았으면(가짜 콘솔이 멈춤) 거기 쓰면 허공에 간다 — 새로 붙는다
+        if crate::pty::session_has_view(id) {
+            log_out("attach", &format!("{id} open-terminal-not-ready"));
         }
     }
     attach_new(id, write)
@@ -1618,7 +1679,16 @@ mod speak_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_daemon_started_at, resolve_claude_bin, revive_args, user_path};
+    use super::{live_has, parse_daemon_started_at, resolve_claude_bin, revive_args, user_path};
+    #[test]
+    fn 살아_있는_세션은_되살리기_대상이_아니다() {
+        // claude respawn 은 '재시작'이라 살아 있는 세션에 부르면 하던 턴이 끊긴다 — 낡은 꺼진 목록에서 ▷ 를 눌러도(2026-10-05)
+        let live = r#"[{"id":"aaaa0001","sessionId":"11111111-1111-4111-8111-111111111111","state":"done","status":"idle"}]"#;
+        assert!(live_has(live, "11111111-1111-4111-8111-111111111111"));
+        assert!(!live_has(live, "22222222-2222-4222-8222-222222222222"));
+        assert!(!live_has("not json", "11111111-1111-4111-8111-111111111111"));
+        assert!(!live_has(live, ""));
+    }
     #[test]
     fn 꺼진_세션은_respawn_으로_같은_번호_그대로_되살린다() {
         // --bg --resume 은 언제나 새 번호 복사본을 만들고, 압축한 세션이면 마지막 압축 앞 대화가 새 기록에 없다(2026-10-01 실측)

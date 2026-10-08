@@ -50,6 +50,11 @@ node <data>/tools/chammo-browser/bin/chammo-browser.js setup <folder-name> <abso
 - **Timing:** Claude Code reads `.mcp.json` when a session starts. Sessions already running need a restart to pick it up.
 - **Trust prompt:** project `.mcp.json` servers need a one-time approval. Background sessions cannot answer it, so the app should pre-approve, e.g. `"enabledMcpjsonServers": ["playwright"]` in `<project>/.claude/settings.local.json`.
 - **Absolute paths in `.mcp.json`:** the file becomes machine-specific. If the project repo commits `.mcp.json`, warn the user (or offer to add it to that repo's `.gitignore`). An alternative is a local-scope server (`claude mcp add --scope local ...`), which lives outside the repo and outranks `.mcp.json`.
+  Chammo does exactly this for projects it did not create (cloned repos): `browser_attach.rs` writes our entry into `~/.claude.json` `projects.<git root>.mcpServers` — as `playwright`, or as `chammo-browser` when the repo already has a `playwright` — and leaves the repo's `.mcp.json` alone.
 - **Showing lock state:** read `<data>/browser/locks/*.lock` directly — JSON `{ profile, pid, startedAt }`. A lock whose pid is dead is stale (`chammo-browser clean` removes those; `unlock <profile>` forces one).
 - **Idle release:** a session that stops using the browser gives the profile back after 10 minutes (`--idle-minutes=N` in `args`, `0` = never).
 - **Logging in:** the first time a project needs a site, the user logs in inside that profile's browser window; later sessions of the same project start logged in.
+- **Scripts:** project scripts get their browser with `chammo-browser launch <profile>` (README → Scripts). The holder writes the
+  same `<data>/browser/live/<profile>.json` as the wrapper (pid = holder, `sessionPid` = `CLAUDE_PID`), so the app needs nothing new.
+  Script users are listed in `<data>/browser/locks/<profile>.users/<pid>`; a `<profile>.closing` file means the owner is closing.
+

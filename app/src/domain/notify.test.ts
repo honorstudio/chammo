@@ -101,3 +101,21 @@ describe('human — 세션 브라우저가 사람을 부름(browser_ask_human)',
     expect(nwf('human')).toBe(false);
   });
 });
+
+import { watching } from './notify';
+describe('watching — 참모 창을 보고 있나', () => {
+  it('맥은 웹 값 그대로(문서 포커스·안 숨김)', () => {
+    expect(watching(false, { focus: true, hidden: false })).toBe(true);
+    expect(watching(false, { focus: false, hidden: false })).toBe(false);
+    expect(watching(false, { focus: true, hidden: true })).toBe(false);
+    // 맥은 Rust 값이 와도 안 본다(지금 동작 그대로)
+    expect(watching(false, { focus: true, hidden: false }, false)).toBe(true);
+  });
+  it('윈도우는 Rust 창 상태만 — WebView2 는 최소화·뒤에 있어도 hasFocus=true(2026-10-05 QA)', () => {
+    expect(watching(true, { focus: true, hidden: false }, false)).toBe(false);
+    expect(watching(true, { focus: true, hidden: false }, true)).toBe(true);
+    // Rust 를 못 물으면 보고 있지 않은 것으로 — 알림을 놓치는 쪽보다 한 번 더 보내는 쪽
+    expect(watching(true, { focus: true, hidden: false }, null)).toBe(false);
+    expect(watching(true, { focus: true, hidden: false })).toBe(false);
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { askName, browserBig, currentSite, frameTrouble, liveOf, paneStatus, siteOf, tabStrip, unpackFrame, type Live } from './agentBrowser';
+import { askName, controlOf, takeoverLine, browserBig, browserScreen, currentSite, EMPTY_MS, frameTrouble, GONE_MS, UNSURE_MS, liveOf, paneStatus, siteOf, tabStrip, unpackFrame, type Live } from './agentBrowser';
 
 const live = (o: Partial<Live> = {}): Live => ({ profile: 'acme', pid: 11, sessionPid: 22, url: 'https://a.com/', title: 'A', tabs: [], tool: '이동 https://a.com/', toolAt: 1000, busy: false, ts: 1000, ...o });
 
@@ -127,5 +127,70 @@ describe('frameTrouble — 화면 받기 실패 이유(Rust 일꾼 error)를 사
   });
   it('그 밖은 못 받음(이유는 툴팁에)', () => {
     expect(frameTrouble('HTTP error: 404 Not Found')).toBe('fail');
+  });
+});
+
+describe('2026-10-05 사용자 실사용 — 닫힌 브라우저의 마지막 화면을 진짜 화면으로 착각했다(사진 위를 눌러도 안 먹음)', () => {
+  const base = { goneMs: 0, error: '', attached: true, pages: 1, emptyMs: 0, current: true, unsureMs: 0 };
+  it('평소 — 그대로, 입력 받음', () => {
+    expect(browserScreen(base)).toEqual({ kind: 'ok', why: '', blocked: false });
+  });
+  it('목록에서 빠짐(래퍼가 크롬이 꺼진 걸 보고 숨김) — 닫힘, 입력 막음', () => {
+    expect(browserScreen({ ...base, goneMs: GONE_MS, attached: false, pages: 0, current: false, unsureMs: 60_000 })).toMatchObject({ kind: 'closed', blocked: true });
+  });
+  it('포트에 못 붙음(연결 거절) — 화면이 있어도 닫힘. 예전엔 화면이 있으면 이유를 안 그렸다', () => {
+    expect(browserScreen({ ...base, error: 'Connection refused (os error 61)', attached: false, pages: 0, current: false })).toMatchObject({ kind: 'closed', blocked: true });
+  });
+  it('크롬은 살았는데 탭이 0개(맥 크롬은 마지막 창을 닫아도 프로세스·포트가 남는다) — 닫힘. 예전엔 오류 없이 \'주소 확인 중\'만', () => {
+    expect(browserScreen({ ...base, pages: 0, emptyMs: EMPTY_MS, current: false, unsureMs: EMPTY_MS })).toMatchObject({ kind: 'closed', blocked: true });
+  });
+  it('그 밖의 실패 — 화면 못 받음, 입력 막음', () => {
+    expect(browserScreen({ ...base, error: 'Target.getTargets: no answer', attached: false, current: false })).toMatchObject({ kind: 'fail', blocked: true });
+  });
+  it('경계 — 탭 이동 중 잠깐 지금 탭을 모름: 막지 않는다(친 건 Rust 가 버리고 띠로 알린다)', () => {
+    expect(browserScreen({ ...base, current: false, unsureMs: UNSURE_MS - 1 })).toMatchObject({ kind: 'checking', why: '', blocked: false });
+  });
+  it('경계 — 막 붙는 중(일꾼이 아직 탭 목록 전): 잠깐은 기다림', () => {
+    expect(browserScreen({ ...base, attached: false, pages: 0, current: false, unsureMs: 100 })).toMatchObject({ kind: 'checking', blocked: false });
+  });
+  it('\'주소 확인 중\'이 몇 초 넘게 이어지면 이유를 보이고 막는다 — 붙는 중', () => {
+    const r = browserScreen({ ...base, attached: false, pages: 0, current: false, unsureMs: UNSURE_MS });
+    expect(r.kind).toBe('checking');
+    expect(r.why).not.toBe('');
+    expect(r.blocked).toBe(true);
+  });
+  it('\'주소 확인 중\'이 몇 초 넘게 — 탭은 있는데 지금 탭을 못 정함', () => {
+    const r = browserScreen({ ...base, current: false, unsureMs: UNSURE_MS + 5000 });
+    expect(r).toMatchObject({ kind: 'checking', blocked: true });
+    expect(r.why).not.toBe(browserScreen({ ...base, attached: false, pages: 0, current: false, unsureMs: UNSURE_MS }).why);
+  });
+  it('목록에서 빠진 게 먼저 — 오류·탭보다 앞선다', () => {
+    expect(browserScreen({ ...base, goneMs: GONE_MS }).kind).toBe('closed');
+  });
+  // 리뷰 — 바쁜 맥에서 포트 확인이 한 번 늦거나(목록에서 한 틱 빠짐), 탭 닫기·새로 열기가 겹쳐 잠깐 0개면 덮개가 깜빡이며 입력을 막았다
+  it('경계 — 목록에서 한 틱(1.5초) 빠진 건 닫힘이 아니다: 입력도 그대로(Rust 는 상태 파일로 보낸다)', () => {
+    expect(browserScreen({ ...base, goneMs: GONE_MS - 1 })).toMatchObject({ kind: 'ok', blocked: false });
+    expect(GONE_MS).toBeGreaterThan(1500);
+  });
+  it('경계 — 탭이 잠깐 0개(세션이 탭을 바꾸며 닫고 열기·꺼낸 창 닫힘 뒤 빈 탭 다시 열기)는 닫힘이 아니다', () => {
+    expect(browserScreen({ ...base, pages: 0, emptyMs: EMPTY_MS - 1, current: false, unsureMs: EMPTY_MS - 1 })).toMatchObject({ kind: 'checking', blocked: false });
+  });
+});
+
+describe('사람 개입(2026-10-06 사용자) — 평소 보기만, 개입·부름 동안만 조작', () => {
+  const base: Live = { profile: 'p', pid: 1, sessionPid: 2, url: '', title: '', tabs: [], tool: '', toolAt: 0, busy: false, ts: 0 };
+  it('controlOf — 부름이면 ask, 개입이면 mine, 아니면 view', () => {
+    expect(controlOf(undefined)).toBe('view');
+    expect(controlOf(base)).toBe('view');
+    expect(controlOf({ ...base, takeover: { by: 'desktop', at: 1 } })).toBe('mine');
+    expect(controlOf({ ...base, ask: { reason: 'r', at: 1 }, takeover: { by: 'desktop', at: 1 } })).toBe('ask');
+  });
+  it('takeoverLine — 누가·세션이 기다리나·멈추지 못하는 브라우저', () => {
+    expect(takeoverLine(base)).toBeNull();
+    const t = { ...base, gate: true, takeover: { by: 'desktop' as const, at: 1 } };
+    expect(takeoverLine(t)).toMatch(/사람이 조작 중/);
+    expect(takeoverLine({ ...t, held: 5 })).toMatch(/세션은 기다리는 중/);
+    expect(takeoverLine({ ...t, takeover: { by: 'phone', at: 1 } })).toMatch(/폰에서/);
+    expect(takeoverLine({ ...t, gate: false })).toMatch(/멈추지 못/);
   });
 });

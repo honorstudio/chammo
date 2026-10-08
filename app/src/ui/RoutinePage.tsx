@@ -1,8 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import { openTarget } from '../data/tauri';
-import { cloudUrl, isCloud, routineRef, routineStateLabel, scheduleText, type Routine, type RoutineEvent, type RoutineState } from '../domain/routine';
-import { assistant, tr } from '../i18n';
+import { cloudUrl, isCloud, routineRef, routineStateLabel, runEventText, scheduleText, type Routine, type RoutineState } from '../domain/routine';
+import { assistant, josa, machine, tr } from '../i18n';
 import { MdDoc } from './reader/Reader';
 import { TerminalPane } from './TerminalPane';
 import './reader/reader.css';
@@ -23,12 +23,6 @@ type Props = {
 };
 
 const when = (ts: string) => ts.replace('T', ' ').slice(5, 16);
-
-function eventText(e: RoutineEvent): string {
-  if (e.event === 'start') return e.error ? tr(`시작 실패 — ${e.error}`, `Could not start — ${e.error}`) : tr(e.session ? '시작' : '시작', 'Started');
-  if (e.event === 'skip') return e.reason === 'still running' || !e.reason ? tr('건너뜀 — 지난 실행이 아직 도는 중', 'Skipped — the last run is still going') : tr(`건너뜀 — ${e.reason}`, `Skipped — ${e.reason}`);
-  return `${e.result === 'fail' ? tr('실패', 'Failed') : tr('성공', 'OK')}${e.note ? ` — ${e.note}` : ''}`;
-}
 
 /** 예약(루틴) 화면 — 로컬(launchd)은 지침서·실행 기록, 클라우드(claude.ai)는 설명과 "열기"만 */
 export function RoutinePage(props: Props) {
@@ -59,8 +53,8 @@ function CloudRoutinePage({ routine: r, onToChat }: { routine: Routine; onToChat
             <dd className="mono">{url ?? tr('주소가 없거나 https 가 아니에요', 'No https address')}</dd>
           </dl>
           <p className="routine-cloud-help dim">
-            {tr('이 예약은 이 맥이 아니라 claude.ai 클라우드에서 돌아요. 실행·일시정지·지우기와 실행 기록은 "열기"로 claude.ai 에서 보세요. 목록에서만 빼려면 ',
-              'This job runs in the claude.ai cloud, not on this Mac. Run, pause, delete it and see its runs on claude.ai via "Open". To drop it from this list only: ')}
+            {tr(`이 예약은 이 ${josa(machine(), '이', '가')} 아니라 claude.ai 클라우드에서 돌아요. 실행·일시정지·지우기와 실행 기록은 "열기"로 claude.ai 에서 보세요. 목록에서만 빼려면 `,
+              `This job runs in the claude.ai cloud, not on this ${machine()}. Run, pause, delete it and see its runs on claude.ai via "Open". To drop it from this list only: `)}
             <code>scripts/routine cloud remove {r.name}</code>
           </p>
         </section>
@@ -115,9 +109,9 @@ function LocalRoutinePage({ routine: r, state, liveSession, claudeBin, fontSize,
           <ol className="routine-runs">
             {runs.length === 0 && <li className="dim">{tr('아직 한 번도 안 돌았어요. "지금 실행"으로 시험해 보세요.', 'Never run yet. Try "Run now".')}</li>}
             {runs.map((e, i) => (
-              <li key={i} className={e.event === 'end' ? (e.result === 'fail' ? 'fail' : 'ok') : e.event}>
+              <li key={i} className={e.event === 'end' ? (e.result === 'fail' ? 'fail' : 'ok') : e.event === 'retry' ? 'skip' : e.event}>
                 <span className="t">{when(e.ts)}</span>
-                <span>{eventText(e)}</span>
+                <span>{runEventText(e)}</span>
               </li>
             ))}
           </ol>

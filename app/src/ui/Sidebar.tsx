@@ -30,8 +30,6 @@ type Props = {
   ctxOf?: (s: Session) => number | undefined;
   /** 다마고치 메뉴 아래 줄 (예: '망치곰 · 성장기') */
   searchRef: RefObject<HTMLInputElement | null>;
-  /** 리뷰: 사람이 볼 PR 수(머지 전에 볼 것) · 열린 PR 전체. 없으면 리뷰 기능이 꺼진 것 — 입구를 숨긴다 */
-  review?: { confirm: number; open: number };
   /** 프로젝트 폴더 밖 폴더를 프로젝트로 추가(폴더 고르기 창). 없으면 버튼을 숨긴다 */
   onAddProject?: () => void;
   /** 비서가 부린 도우미 세션(비서 폴더에서 도는 다른 이름) — 비서 칸에 안 끼고 여기 따로 */
@@ -70,7 +68,7 @@ const isOn = (a: Selection, b: Selection) =>
   (a.kind !== 'routine' || b.kind !== 'routine' || a.name === b.name) &&
   (a.kind !== 'external' || b.kind !== 'external' || a.id === b.id);
 
-export function Sidebar({ routines, external = [], orchestrator, projects: allProjects, selected, onSelect, footer, badges, idleProjects: allIdle, query, onQuery, searchRef, ctxOf, review, onAddProject, helpers, loose }: Props) {
+export function Sidebar({ routines, external = [], orchestrator, projects: allProjects, selected, onSelect, footer, badges, idleProjects: allIdle, query, onQuery, searchRef, ctxOf, onAddProject, helpers, loose }: Props) {
   // 프로젝트에 세션이 여럿이면 가장 많이 찬 것 — 곧 요약될 세션을 놓치지 않게
   const ctxMax = (ss: Session[]) => ss.map((s) => ctxOf?.(s)).filter((x): x is number => x !== undefined).reduce<number | undefined>((m, x) => (m === undefined || x > m ? x : m), undefined);
   const running = allProjects.reduce((n, p) => n + p.sessions.length, 0);
@@ -128,13 +126,7 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
           <div className="ln">{tr(`돌고 있는 창 ${running}개`, `${running} running`)}</div>
         </span>
       </button>
-      {review && <button className={`it ${isOn(selected, { kind: 'review' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'review' })}>
-        <span className="st" style={{ background: review?.confirm ? 'var(--blocked)' : 'transparent', border: review?.confirm ? 0 : '1.5px solid #a3a3a3' }} />
-        <span>
-          <div className="nm">{tr('리뷰', 'Review')}</div>
-          <div className="ln">{tr(`머지 전에 볼 것 ${review.confirm} · 열린 PR ${review.open}`, `To check ${review.confirm} · Open PRs ${review.open}`)}</div>
-        </span>
-      </button>}
+      {/* 리뷰는 위 막대 아이콘으로 옮겼다 — 사이드바는 세션이 사는 곳만(2026-10-06 사용자) */}
 
       {helpers && helpers.length > 0 && (
         <button className={`it ${isOn(selected, { kind: 'helpers' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'helpers' })}

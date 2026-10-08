@@ -48,7 +48,7 @@ export function StateMark({ st }: { st: ActivityStatus }) {
  * 채팅 뷰 메뉴(⌘B) — v10: 오케스트레이터(참모마다 대시보드 + 문서) → 내 페이지 → 프로젝트(대시보드 + 문서).
  * 참모 문서 = 고정한 것 + 이번에 띄운 md(최근 먼저). 펼치고 접기는 기억한다
  */
-export function SpaceNav({ statusOf = sessionStatus, orchPins = [], stoppingIds = [], startingOrchs = [], onNewOrch, routines = [], helpers = [], loose = [], review, pagesRoot = '', onChatTab, ctxOf, onAddProject, idle = [], offOrchs = [], onResume, onRemoveStopped, orchs, viewId, colorOf, projects, holders, pick, onPick, orchDocsOf, isPinned, onTogglePin, pages, pageTitle, onNewPage, onOpenFile, selectedFile, onTrashPage }: {
+export function SpaceNav({ statusOf = sessionStatus, orchPins = [], stoppingIds = [], startingOrchs = [], onNewOrch, routines = [], helpers = [], loose = [], pagesRoot = '', onChatTab, ctxOf, onAddProject, idle = [], offOrchs = [], onResume, onRemoveStopped, orchs, viewId, colorOf, projects, holders, pick, onPick, orchDocsOf, isPinned, onTogglePin, pages, pageTitle, onNewPage, onOpenFile, selectedFile, onTrashPage }: {
   /** 세션 상태(메뉴·대시보드·사무실 같은 판단) — 없으면 세션만으로 */
   statusOf?: (s: Session) => ActivityStatus;
   orchPins?: string[];
@@ -63,8 +63,6 @@ export function SpaceNav({ statusOf = sessionStatus, orchPins = [], stoppingIds 
   startingOrchs?: StoppedSession[];
   /** dev 폴더 자체에서 연 세션('프로젝트 밖') */
   loose?: Session[];
-  /** 리뷰 — 머지 전에 볼 것·열린 PR 수. 누르면 스페이스에 리뷰 화면 */
-  review?: { confirm: number; open: number };
   onResume?: (s: StoppedSession) => void;
   onRemoveStopped?: (s: StoppedSession) => void;
   /** 컨텍스트(대화 메모리) 사용량 % — 예전 사이드바와 같은 값 */
@@ -235,15 +233,7 @@ export function SpaceNav({ statusOf = sessionStatus, orchPins = [], stoppingIds 
         </div>
       ))}
 
-      {review && (
-        <div {...rowKeys} className={`cv-row top ${pick.startsWith('rv:') ? 'on' : ''}`} onClick={() => onPick('rv:')}
-          title={tr('머지 전에 볼 것과 열린 PR', 'Items to check before merging, and open PRs')}>
-          <span className="cv-fold small blank" />
-          <span className="cv-label">{tr('리뷰', 'Review')}</span>
-          <span className={`cv-count ${review.confirm ? 'hot' : ''}`}>{tr(`볼 것 ${review.confirm} · PR ${review.open}`, `Check ${review.confirm} · PRs ${review.open}`)}</span>
-        </div>
-      )}
-
+      {/* 리뷰는 위 막대 아이콘으로 옮겼다 — 이 칸은 세션이 사는 곳만(2026-10-06 사용자) */}
       {/* 예약(반복·한 번) — 화면 이름만 '예약', 칸 키·코드는 routines 그대로(2026-10-02) */}
       {routines.length > 0 && <div className="cv-sec click" onClick={() => flipSec('routines')}><span className="with-ic">{secFold('routines')}{tr('예약', 'Scheduled')}</span><span className="cv-count">{schedGroups.active.length}</span></div>}
       {secOpen('routines') && schedGroups.active.map(schedRow)}

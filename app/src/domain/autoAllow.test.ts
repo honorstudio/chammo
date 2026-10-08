@@ -130,6 +130,47 @@ describe('pickAllow — 권한 창에서 허용 줄을 이름으로 찾는다 (E
     expect(pickAllow(s)).toEqual({ keys: '\r', option: '1. Yes' });
   });
 
+  // 실제 화면 (2026-10-06, 앱과 같은 길 — attach + vt100 120×40). 훅 ask 창 아래에 세션 작업 목록이 붙는다.
+  // 2026-10-04·10-05: 작업 이름의 "카드"("카드 늘 보이게 …")를 결제 낱말로 읽어 커밋 크기 확인 창을 30분 건너뛰었다
+  const HOOK_ASK_WITH_TASKS = [
+    '╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌',
+    ' git commit -q -m "카드 목록 시험 커밋"',
+    '╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌',
+    ' │ Hook PreToolUse:Bash requires confirmation for this command:',
+    ' │ 커밋 크기 규칙 초과: +501줄 / 6개 파일 (상한 300줄).',
+    ' │',
+    ' │ 가장 큰 파일:',
+    ' │   +301    big.txt',
+    ' │ 되돌릴 단위가 여럿이면 쪼개고, 한 덩어리가 맞으면 그대로 진행해.',
+    ' settings.json to update hooks',
+    '',
+    ' Do you want to proceed?',
+    ' ❯ 1. Yes',
+    '   2. No',
+    '',
+    ' Esc to cancel · Tab to amend',
+    '',
+    '',
+    '  1 tasks (0 done, 1 open)',
+    '  ◻ 카드 목록 정리',
+  ].join('\n');
+
+  it('창 아래 작업 목록의 낱말은 민감함으로 치지 않는다 — 훅 확인 창(커밋 크기)', () => {
+    expect(pickAllow(HOOK_ASK_WITH_TASKS)).toEqual({ keys: '\r', option: '1. Yes' });
+    for (const w of ['결제 테스트', '비밀번호 바꾸기 화면', '2FA 붙이기'])
+      expect(pickAllow(HOOK_ASK_WITH_TASKS.replace('카드 목록 정리', w)), w).toEqual({ keys: '\r', option: '1. Yes' });
+  });
+
+  it('질문 줄이 없는 창도 창 아래 작업 목록은 안 본다', () => {
+    const s = `${COMPUTER_USE}\n\n  2 tasks (1 done, 1 open)\n  ◻ 결제 카드 등록 화면`;
+    expect(pickAllow(s)).toEqual({ keys: DOWN + '\r', option: 'Allow for this session (1 app)' });
+  });
+
+  it('창 안(질문·선택지)의 민감한 낱말은 작업 목록이 붙어도 그대로 건너뛴다', () => {
+    expect(pickAllow(HOOK_ASK_WITH_TASKS.replace('Do you want to proceed?', 'Do you want to proceed? (결제)'))).toEqual({ skip: '민감한 창(비밀번호·인증·결제) — 직접 골라줘' });
+    expect(pickAllow(`${COMPUTER_USE.replace('계산기 앱을 조작하기', '결제 앱을 조작하기')}\n\n  ◻ 목록 정리`)).toEqual({ skip: '민감한 창(비밀번호·인증·결제) — 직접 골라줘' });
+  });
+
   it('허용 줄이 없으면(선택지 질문 등) 안 누른다', () => {
     const q = ['────', ' 어느 쪽?', ' ❯ 1. 첫째(A)', '   2. 둘째(B)'].join('\n');
     expect(pickAllow(q)).toEqual({ skip: '허용 줄을 못 찾았어' });

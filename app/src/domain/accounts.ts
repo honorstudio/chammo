@@ -55,6 +55,8 @@ export function allOut(v: AccountsView | null, now: number): string | null {
 /** 설정 칸 상태 글 — 쓸 수 있음 / 5시간 소진 ~22:20 / 주간 소진 ~10/08 16:00 / 한도 걸림 ~19:00 */
 export function slotText(st: ReturnType<typeof slotStatus>, now: number): string {
   if (st.kind === 'ok') return tr('쓸 수 있음', 'Available');
+  if (st.kind === 'auth') return tr('로그인 필요', 'Sign-in needed'); // 시각으로 안 풀린다
+
   const when = fmtUntil(st.until, now);
   if (st.kind === 'week') return tr(`주간 소진 ~${when}`, `Weekly limit ~${when}`);
   if (st.kind === 'limit') return tr(`한도 걸림 ~${when}`, `Hit the limit ~${when}`);
@@ -101,7 +103,8 @@ export function weekText(t: number): string {
 }
 
 /** 계정 칩 팝오버 한 줄 — 이름·5시간·주간 '남은 %'(위 막대와 같은 기준, 값 없으면 null)·작은 한 줄(리셋 시각·몇 분 전, 막혔으면 그 상태)·마우스 올림(이메일·요금제) */
-export type PopRow = { id: string; name: string; on: boolean; pinned: boolean; five: number | null; week: number | null; note: string; title: string };
+/** pinHint = 고정이고 자동 전환이 켜져 있다 — '고정 — 다 쓰면 넘어감' 을 보인다 */
+export type PopRow = { id: string; name: string; on: boolean; pinned: boolean; pinHint: boolean; five: number | null; week: number | null; note: string; title: string };
 export function popRows(v: AccountsView | null, now: number): PopRow[] {
   if (!v) return [];
   const auto = readAuto(v.auto);
@@ -109,7 +112,7 @@ export function popRows(v: AccountsView | null, now: number): PopRow[] {
     const sl = auto.slots[a.id];
     const five = sl?.five && sl.five.resetsAt > now ? sl.five : null;
     const week = sl?.week && sl.week.resetsAt > now ? sl.week : null;
-    const st = slotStatus(sl, now);
+    const st = slotStatus(sl, now, auto.pinned === a.id);
     const resets = [five && tr(`5시간 ${fmtUntil(five.resetsAt, now)}`, `5h ${fmtUntil(five.resetsAt, now)}`), week && tr(`주간 ${weekText(week.resetsAt)}`, `week ${weekText(week.resetsAt)}`)].filter(Boolean).join(' · ');
     const note = st.kind !== 'ok'
       ? slotText(st, now)
@@ -119,12 +122,18 @@ export function popRows(v: AccountsView | null, now: number): PopRow[] {
       name: a.name || a.email,
       on: a.id === v.active,
       pinned: auto.pinned === a.id,
+      pinHint: auto.pinned === a.id && auto.on,
       five: five ? 100 - Math.round(five.used) : null,
       week: week ? 100 - Math.round(week.used) : null,
       note,
       title: [a.email, a.plan].filter(Boolean).join(' · '),
     };
   });
+}
+
+/** 고정 표시 글 — 자동 전환이 켜져 있으면 '다 쓰면 넘어감'까지 */
+export function pinText(hint: boolean): string {
+  return hint ? tr('고정 — 다 쓰면 넘어감', 'Pinned — switches when used up') : tr('고정', 'Pinned');
 }
 
 /** Rust 오류 이름 → 사람 글 */

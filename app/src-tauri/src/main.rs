@@ -4,6 +4,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod access;
 mod appctl;
 mod avatar;
 mod claude;
@@ -13,6 +14,7 @@ mod accounts_store;
 mod accounts_usage;
 mod claude_defaults;
 mod computer_use;
+mod browser_attach;
 mod config;
 mod harnitor;
 mod hq;
@@ -28,12 +30,15 @@ mod keyrepeat;
 mod lessons;
 mod lid;
 mod load;
+mod login;
 mod memo;
 mod mobile;
 mod mobile_files;
 mod mobile_http;
 mod mobile_pair;
 mod mobile_wake;
+mod remote;
+mod remote_net;
 mod orch_pins;
 mod orch_roles;
 mod push;
@@ -45,11 +50,16 @@ mod notify_mac;
 mod notify_mac;
 mod platform;
 mod agent_browser;
+mod chrome_popup;
 mod agent_input;
+mod takeover;
+mod takeover_note;
 mod direct;
 mod vdisplay;
 mod webpage;
 mod project;
+mod trust;
+mod copies;
 mod browser;
 mod browser_chrome;
 mod browser_fix;
@@ -94,15 +104,25 @@ pub fn route_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>, id: &str) {
     }
 }
 
+/// 메뉴에 쓰는 앱 이름 — 공개판 Chammo, 개인 빌드 Chammo Dev(tauri.private.json productName)
+fn quit_label(en: bool, name: &str) -> String {
+    if en { format!("Close {name} (sessions keep running)") } else { format!("{name} 닫기 (세션은 계속)") }
+}
+
+fn about_label(en: bool, name: &str) -> String {
+    if en { format!("About {name}") } else { format!("{name} 정보") }
+}
+
 /// 앱 메뉴. 기본 메뉴의 "윈도우 닫기(⌘W)"를 뺐다 — ⌘W 는 앱이 "보고 있는 창의 세션 끄기"로 쓴다.
 /// 편집 메뉴는 남긴다(없으면 웹뷰에서 ⌘C·⌘V 가 안 먹는다). 글자는 설정 언어로, 꺼 둔 기능(사무실·다마고치·리뷰)의 항목은 뺀다.
 /// 설정을 저장하면 rebuild_menu 로 다시 만든다
 fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
     use i18n::tr;
     let f = config::current().features;
-    let app_menu = SubmenuBuilder::new(app, "Chammo")
+    let name = &app.package_info().name;
+    let app_menu = SubmenuBuilder::new(app, name)
         // 윈도우는 기본 글자가 영어(About·Maximize)라 이름을 붙인다. 맥은 시스템 글자 그대로
-        .item(&PredefinedMenuItem::about(app, (!cfg!(target_os = "macos")).then_some(tr("Chammo 정보", "About Chammo")), None)?)
+        .item(&PredefinedMenuItem::about(app, (!cfg!(target_os = "macos")).then(|| about_label(i18n::is_en(), name)).as_deref(), None)?)
         .separator()
         // 설정·첫 실행 화면(ui/Setup.tsx) — macOS 관례 ⌘,
         .item(&MenuItem::with_id(app, "settings", tr("설정…", "Settings…"), true, Some(&*platform::accel("CmdOrCtrl+,")))?)
@@ -120,7 +140,7 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
     let app_menu = app_menu
         // ⌘Q = 창을 숨기고 독에서도 뺀다(세션·알림은 그대로). 진짜로 끄면 세션(데몬)이 Chammo 식구로 남아 독에 "백그라운드에서 중단"이
         // 붙어 있었다(아이맥 lsappinfo: exited-with-subordinates). 세션까지 다 끄는 건 ⌥⌘Q(묻고 끔, ui/QuitDialog) — 사용자 2026-09-28
-        .item(&MenuItem::with_id(app, "app_quit", tr("Chammo 닫기 (세션은 계속)", "Close Chammo (sessions keep running)"), true, Some(&*platform::accel("CmdOrCtrl+Q")))?)
+        .item(&MenuItem::with_id(app, "app_quit", quit_label(i18n::is_en(), name), true, Some(&*platform::accel("CmdOrCtrl+Q")))?)
         .item(&MenuItem::with_id(app, "app_quit_all", tr("완전히 종료 — 세션도 끄기…", "Quit Completely — Stop Sessions…"), true, Some(&*platform::accel("CmdOrCtrl+Alt+Q")))?)
         .build()?;
     let edit = SubmenuBuilder::new(app, tr("편집", "Edit"));
@@ -311,6 +331,8 @@ fn main() {
             reader::watch(app.handle());
             // 화면 조종을 모든 프로젝트에 켜 뒀으면 그사이 생긴 프로젝트에 넣는다(~/.claude.json, 바뀔 때만 백업·쓰기)
             std::thread::spawn(|| if let Err(e) = computer_use::sweep() { claude::log_out("computer-use", &e); });
+            // 있던 프로젝트에 붙여 둔 참모 브라우저(local scope)를 떠 있던 claude 가 지웠으면 다시(GitHub #2)
+            std::thread::spawn(|| { browser_attach::reassert(); });
             // 세션 크롬 가리기 지킴이(세션 브라우저 앱에서 보기) — 앱이 떠 있을 때만 가려진다
             agent_browser::watch_hidden();
             // 가상 모니터 — 세션 크롬을 눈에 안 보이는 화면에(안 되는 맥이면 조용히 안 함)
@@ -319,6 +341,10 @@ fn main() {
             appctl::watch(app.handle());
             // 덮개 닫힘 → 바로 프사·말하는 빛·오피스 멈춤(ui/attention). 3초마다 읽고 바뀔 때만 알림, 맥만
             lid::start(app.handle());
+            // 창 제목도 앱 이름으로 — 설정 파일 제목(Chammo)은 공개판 것이라 개인 빌드(Chammo Dev)와 섞여 보였다
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_title(&app.package_info().name);
+            }
             tama::place(app);
             debug::place_dev_window(app.handle()); // 개발판은 작업 화면 말고 옆 화면에
             notify_mac::init(app.handle()); // 윈도우는 notify_other(토스트)
@@ -379,6 +405,10 @@ fn main() {
         .register_uri_scheme_protocol("harnitor", |ctx, req| if webpage::blocked(ctx.webview_label()) { forbidden() } else { harnitor::serve(ctx, req) })
         .manage(pty::Ptys::default())
         .invoke_handler(no_web_preview(tauri::generate_handler![
+            remote::remote_devices,
+            remote::remote_pair,
+            remote::remote_unpair,
+            remote::remote_call,
             agent_browser::agent_lives,
             agent_browser::agent_retry,
             agent_browser::agent_frame,
@@ -387,8 +417,10 @@ fn main() {
             agent_browser::agent_focus,
             agent_browser::agent_hide,
             agent_browser::agent_input,
+            agent_browser::agent_takeover,
+            agent_browser::agent_handback,
             agent_browser::agent_dialog,
-            agent_browser::agent_ask_done, direct::direct_log, direct::direct_answer, agent_browser::agent_drop_files, agent_browser::agent_choose_files,
+            agent_browser::agent_ask_done, direct::direct_log, direct::direct_answer, direct::direct_shown, agent_browser::agent_drop_files, agent_browser::agent_choose_files,
             webpage::web_open,
             webpage::web_bounds,
             webpage::web_go,
@@ -411,12 +443,15 @@ fn main() {
             load::load_env,
             load::load_kill,
             load::load_save,
+            login::login_probe,
+            login::login_save,
             hq::create_hq,
             hq::folder_status,
             hq::make_dir,
             setup::check_env,
             setup::app_version,
             debug::pick_log,
+            debug::space_trace,
             slash::slash_commands,
             slash::spawn_lines,
             slash::subagent_tails,
@@ -436,10 +471,14 @@ fn main() {
             tools::tools_plugin_install,
             tools_plugins::memory_files_for,
             setup::claude_trusted,
+            access::project_access,
+            copies::app_copies,
             setup::pick_folder,
             project::harness_project,
             browser::browser_status,
             browser_setup::browser_setup_start,
+            browser_attach::project_browser,
+            browser_attach::project_browser_attach,
             browser_setup::browser_setup_state,
             routines::routines_list,
             routines::routine_do,
@@ -507,6 +546,7 @@ fn main() {
             reader::read_show_log,
             claude::project_scan,
             claude::notify,
+            claude::main_watched,
             claude::speak,
             claude::speak_now_state,
             claude::speak_preview,
@@ -649,5 +689,14 @@ mod conf_tests {
         let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         let main = conf["app"]["windows"].as_array().unwrap().iter().find(|w| w["label"] == "main").unwrap();
         assert_eq!(main["acceptFirstMouse"], true);
+    }
+
+    // 개인 빌드(Chammo Dev)와 공개판(Chammo)이 같은 맥에 있어 메뉴 글자도 제 이름을 쓴다(2026-10-06 사용자)
+    #[test]
+    fn 메뉴_글자는_앱_이름을_따른다() {
+        assert_eq!(super::quit_label(false, "Chammo Dev"), "Chammo Dev 닫기 (세션은 계속)");
+        assert_eq!(super::quit_label(true, "Chammo"), "Close Chammo (sessions keep running)");
+        assert_eq!(super::about_label(false, "Chammo Dev"), "Chammo Dev 정보");
+        assert_eq!(super::about_label(true, "Chammo"), "About Chammo");
     }
 }

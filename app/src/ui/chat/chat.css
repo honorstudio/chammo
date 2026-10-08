@@ -8,6 +8,10 @@
 .bubble.me { background: color-mix(in srgb, var(--orch, var(--accent)) 14%, var(--surface)); white-space: pre-wrap; border-bottom-right-radius: 4px; }
 .bubble.md { border-bottom-left-radius: 4px; }
 .bubble.pending { opacity: .6; }
+/* 보낸 말이 멈춰 있으면(대기·걸림·안 감) 흐리게 두지 않는다 — 버튼을 눌러야 한다(2026-10-06) */
+.bubble.pending:not(.st-sending) { opacity: 1; }
+.bubble.pending.st-input .chat-meta, .bubble.pending.st-lost .chat-meta { color: var(--warn-ink); }
+.chat-pend-acts { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; }
 .chat-meta { display: block; margin-top: 2px; font-size: 11px; color: var(--text-3); }
 .bubble.md > :first-child { margin-top: 0; }
 .bubble.md > :last-child { margin-bottom: 0; }

@@ -53,15 +53,39 @@ function windowSize(info, pos) {
   return w > 200 && h > 200 ? [Math.floor(w), Math.floor(h)] : null;
 }
 
+/** 앱의 chammo-vdisplay 도우미가 만드는 가짜 화면 이름(tools/chammo-vdisplay main.swift desc.name) */
+const VD_NAME = 'Chammo agents';
+
 /**
- * 가상 모니터(앱의 chammo-vdisplay 도우미가 만든 눈에 안 보이는 화면) — 앱이 <데이터>/browser/vdisplay.json 에
- * {pid, bounds:[x,y,w,h]}(크롬 좌표, 왼쪽 위 원점)를 적어 두면 크롬 창을 거기 띄운다. 도우미가 죽었거나 파일이 이상하면 null(보이는 창 그대로)
+ * 가상 모니터(앱의 chammo-vdisplay 도우미가 만든 눈에 안 보이는 화면)에 크롬 창을 띄울 자리 {pos, size}, 없으면 null(다른 자리로).
+ * 자리는 그때 화면 목록(screens = macScreens)의 'Chammo agents' 화면에서 읽는다 — 앱이 적는 <데이터>/browser/vdisplay.json 값은
+ * 낡을 수 있어서(2026-10-06 [0,0,…] 으로 남아 세션 크롬이 LG 화면 24,24 에 떴다), 그 화면이 진짜 화면과 겹쳐도 안 쓴다.
+ * 자리 파일이 지워졌어도 가짜 화면이 떠 있으면 거기에(진짜 데이터 폴더로 뜬 다른 앱 벌이 지웠다).
+ * 화면 목록을 못 읽을 때(osascript 실패·이름 없는 목록)만 자리 파일 {pid, bounds:[x,y,w,h]}(크롬 좌표) — 도우미가 살아 있을 때
  */
-function virtualDisplay(file, alive = pidAlive) {
+function virtualDisplay(file, alive = pidAlive, screens = macScreens) {
+  const info = screens();
+  if (info && Array.isArray(info.screens) && Array.isArray(info.names)) return fit(namedScreen(info));
   let v;
   try { v = JSON.parse(require('fs').readFileSync(file, 'utf8')); } catch { return null; }
   const b = v && Array.isArray(v.bounds) && v.bounds.length === 4 && v.bounds.every(Number.isFinite) ? v.bounds : null;
-  if (!b || !Number.isInteger(v.pid) || !alive(v.pid) || b[2] < 800 || b[3] < 600) return null;
+  if (!b || !Number.isInteger(v.pid) || !alive(v.pid)) return null;
+  return fit(b);
+}
+
+/** 화면 목록에서 가짜 화면을 크롬 좌표 [왼쪽, 위, 폭, 높이]로 — 없거나 다른 화면과 겹치면(면적이 생기면) null */
+function namedScreen({ screens, names }) {
+  const i = names.indexOf(VD_NAME);
+  if (i < 0 || !screens[i] || !screens[0]) return null;
+  const primaryH = screens[0][3];
+  const top = (s) => [s[0], primaryH - (s[1] + s[3]), s[2], s[3]];
+  const r = top(screens[i]);
+  const hit = (o) => r[0] < o[0] + o[2] && o[0] < r[0] + r[2] && r[1] < o[1] + o[3] && o[1] < r[1] + r[3];
+  return screens.some((s, j) => j !== i && hit(top(s))) ? null : r;
+}
+
+function fit(b) {
+  if (!b || b[2] < 800 || b[3] < 600) return null;
   return { pos: [b[0] + 24, b[1] + 24], size: [Math.min(MAX_W, b[2] - 46), Math.min(MAX_H, b[3] - 48)] };
 }
 
@@ -108,8 +132,9 @@ function chromeLaunch({ platform = process.platform, exists = (p) => require('fs
 const JXA = `ObjC.import("AppKit");
 const f = (s) => { const r = s.frame; return [r.origin.x, r.origin.y, r.size.width, r.size.height]; };
 const all = $.NSScreen.screens; const out = [];
-for (let i = 0; i < all.count; i++) out.push(f(all.objectAtIndex(i)));
-JSON.stringify({ screens: out, main: f($.NSScreen.mainScreen) })`;
+const names = [];
+for (let i = 0; i < all.count; i++) { const s = all.objectAtIndex(i); out.push(f(s)); names.push(s.localizedName.js); }
+JSON.stringify({ screens: out, names, main: f($.NSScreen.mainScreen) })`;
 
 function macScreens() {
   const r = spawnSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', JXA], { encoding: 'utf8', timeout: 3000 });
@@ -138,10 +163,12 @@ function chromeArgs(pos, debugPort = false, size = null, platform = process.plat
  * 가짜 화면 자리를 몇 초 기다린다 — 앱이 다시 켜지는 사이·도우미가 막 뜨는 중이면 곧 생긴다. 안 기다리면 그 사이 뜬 세션 크롬이
  * 사용자 화면에 보였다(2026-10-03, 맥북 하나일 때). read 는 virtualDisplay 를 부르는 함수, sleep 은 동기(시작할 때 한 번이라 막아도 된다)
  */
-function waitVirtualDisplay(read, { ms = 3000, step = 100, sleep = sleepSync } = {}) {
-  for (let t = 0; ; t += step) {
+function waitVirtualDisplay(read, { ms = 3000, step = 100, sleep = sleepSync, now = Date.now } = {}) {
+  // 읽기(화면 목록 osascript ~120ms)에 걸린 시간도 센다 — 횟수로 세면 가짜 화면이 끝내 없는 기계에서 세션이 두 배 넘게 늦게 떴다
+  const start = now();
+  for (;;) {
     const v = read();
-    if (v || t >= ms) return v || null;
+    if (v || now() - start >= ms) return v || null;
     sleep(step);
   }
 }
@@ -157,4 +184,20 @@ function offscreenPosition(info) {
   return [Math.round(right + 4000), 0];
 }
 
-module.exports = { offsetFor, windowPosition, windowSize, virtualDisplay, chromeChannel, chromeLaunch, chromeArgs, macScreens, waitVirtualDisplay, offscreenPosition };
+/**
+ * 세션 크롬 창 자리·크기 — MCP 래퍼와 스크립트 지킴이(chammo-browser launch)가 같이 쓴다.
+ * 세션 브라우저 앱에서 보기가 켜져 있고(watchable) 앱이 가상 모니터를 띄워 뒀으면 거기에(사용자 화면 어디에도 안 보이게), 아니면 비켜 놓은 자리.
+ * 앱이 있는 맥이면(appHere) 가짜 화면 자리를 3초 기다리고 — 앱이 다시 켜지는 사이·도우미가 막 뜨는 중이면 곧 생긴다 —
+ * 그래도 없으면 화면 밖에(사용자 화면에 안 뜨게, 2026-10-03 맥북 하나일 때). 앱이 아예 없는 기계는 보이는 자리.
+ * offPos = 화면 밖에 띄웠으면 그 자리(크롬이 끌어오면 minimize.js 가 최소화)
+ */
+function placement({ profile, watchable, appHere, vdFile, mac = process.platform === 'darwin' }) {
+  const vd = mac && watchable ? (appHere ? waitVirtualDisplay(() => virtualDisplay(vdFile)) : virtualDisplay(vdFile)) : null;
+  const screens = mac && !vd ? { ...(macScreens() || {}), profile } : null;
+  const offPos = mac && watchable && appHere && !vd ? offscreenPosition(screens) : null;
+  const pos = vd ? vd.pos : offPos || (screens ? windowPosition(screens) : null);
+  const size = vd ? vd.size : offPos ? [1280, 800] : screens ? windowSize(screens, pos) : null;
+  return { pos, size, offPos };
+}
+
+module.exports = { placement, offsetFor, windowPosition, windowSize, virtualDisplay, chromeChannel, chromeLaunch, chromeArgs, macScreens, waitVirtualDisplay, offscreenPosition };

@@ -190,6 +190,11 @@ export function toolsPick(pick: string, req: 'open' | 'close' | 'toggle', before
   return screenPick('t:', pick, req, before, home);
 }
 
+/** 리뷰(rv:, PR 하나는 rv:<키>) — 위 막대 아이콘으로 여닫는다(2026-10-06 사용자, 사이드바 줄에서 옮김) */
+export function reviewPick(pick: string, req: 'open' | 'close' | 'toggle', before: string, home: string): { pick: string; before: string } {
+  return screenPick('rv:', pick, req, before, home);
+}
+
 function screenPick(key: string, pick: string, req: 'open' | 'close' | 'toggle', before: string, home: string): { pick: string; before: string } {
   const open = pick.startsWith(key);
   const want = req === 'toggle' ? !open : req === 'open';

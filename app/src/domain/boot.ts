@@ -2,6 +2,7 @@
 // 스플래시(모찌) 동안 첫 화면에 쓸 것을 미리 받아 기억에 넣고, 다 되거나 마감이면 한 번에 보인다(2026-10-03 사용자). 계산만
 import { fileKind } from './phoneFile';
 import { dashFiles } from './dashboard';
+import { fwdEnv } from './paths';
 
 export const SPLASH_MAX = 2500;
 /** 늦게 준비됐을 때(느린 망 첫 켜기) 미리 받기를 더 기다리는 시간 — 준비되자마자 걷으면 칸이 '뚝뚝' 다시 나온다 */
@@ -34,7 +35,8 @@ export function envFromCache(raw: string | null): BootEnv | null {
     const str = (x: unknown): x is string => typeof x === 'string';
     if (!str(v.assistantName) || !str(v.language) || !str(v.devRoot) || !str(v.hqDir) || !v.hqDir) return null;
     if (!Array.isArray(v.extraProjects) || !v.extraProjects.every(str)) return null;
-    return { assistantName: v.assistantName, language: v.language, devRoot: v.devRoot, extraProjects: v.extraProjects, hqDir: v.hqDir };
+    // 고치기 전 윈도우 폰이 기억한 섞인 경로(C:\Users\me/.chammo/hq)도 맞춘다
+    return fwdEnv({ assistantName: v.assistantName, language: v.language, devRoot: v.devRoot, extraProjects: v.extraProjects, hqDir: v.hqDir });
   } catch {
     return null;
   }

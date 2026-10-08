@@ -140,7 +140,7 @@ fn code_at(st: &Devices, now: SystemTime) -> String {
 
 fn pair_as(st: &Devices, name: &str, home: bool, prev: Option<&str>, now: SystemTime) -> String {
     let c = code_at(st, now);
-    st.pair_with(&c, &Pairing { name, home, prev }, now).unwrap()
+    st.pair_with(&c, &Pairing { name, home, prev, peer: false }, now).unwrap()
 }
 
 #[test]
@@ -206,7 +206,7 @@ fn 홈_화면_앱은_코드_낸_기기_아래로_묶이고_다시_하면_바꿔_
     let sid = st.check(&safari, now).unwrap();
     let home_pair = |st: &Devices| {
         let c = st.new_code_from(&sid, now).unwrap();
-        st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None }, now).unwrap()
+        st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None, peer: false }, now).unwrap()
     };
     let h1 = home_pair(&st);
     let l = st.list();
@@ -226,12 +226,12 @@ fn 다른_이름_기기에_붙인_코드는_묶지_않는다() {
     let safari = pair_as(&st, "iPhone", false, None, now);
     let sid = st.check(&safari, now).unwrap();
     let c = st.new_code_from(&sid, now).unwrap();
-    st.pair_with(&c, &Pairing { name: "iPad", home: true, prev: None }, now).unwrap();
+    st.pair_with(&c, &Pairing { name: "iPad", home: true, prev: None, peer: false }, now).unwrap();
     let ipad = st.list().into_iter().find(|d| d.name == "iPad").unwrap();
     assert_ne!(ipad.group, sid);
     // 홈 화면 앱이 아닌 브라우저에 붙여도(다른 브라우저일 수 있다) 묶지 않는다
     let c = st.new_code_from(&sid, now).unwrap();
-    st.pair_with(&c, &Pairing { name: "iPhone", home: false, prev: None }, now).unwrap();
+    st.pair_with(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false }, now).unwrap();
     assert_eq!(st.list().iter().filter(|d| d.group == sid).count(), 1);
 }
 
@@ -256,7 +256,7 @@ fn 끊기는_기기_통째로_사파리와_홈_화면_앱_둘_다() {
     let other = pair_as(&st, "iPad", false, None, now);
     let sid = st.check(&safari, now).unwrap();
     let c = st.new_code_from(&sid, now).unwrap();
-    let home = st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None }, now).unwrap();
+    let home = st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None, peer: false }, now).unwrap();
     st.remove(&sid).unwrap();
     assert!(st.check(&safari, now).is_none() && st.check(&home, now).is_none());
     assert!(st.check(&other, now).is_some());
@@ -280,7 +280,7 @@ fn 상한을_넘으면_가장_오래_안_쓴_줄부터_뺀다() {
 }
 
 fn dev(id: &str, created: u64, last: Option<u64>) -> Device {
-    Device { id: id.into(), name: "iPhone".into(), hash: sha(id), created, last_seen: last, home: false, group: None, paired: None }
+    Device { id: id.into(), name: "iPhone".into(), hash: sha(id), created, last_seen: last, home: false, group: None, paired: None, peer: false }
 }
 
 #[test]
@@ -360,10 +360,10 @@ fn 바꿔_끼울_때도_코드는_한_번만() {
     let now = SystemTime::now();
     let t1 = pair_as(&st, "iPhone", false, None, now);
     let c = st.new_code(now).unwrap();
-    assert!(st.pair_with(&c, &Pairing { name: "iPhone", home: false, prev: Some(&t1) }, now).is_some());
-    assert!(st.pair_with(&c, &Pairing { name: "iPhone", home: false, prev: Some(&t1) }, now).is_none());
+    assert!(st.pair_with(&c, &Pairing { name: "iPhone", home: false, prev: Some(&t1), peer: false }, now).is_some());
+    assert!(st.pair_with(&c, &Pairing { name: "iPhone", home: false, prev: Some(&t1), peer: false }, now).is_none());
     // 코드 없이 옛 열쇠만으로는 안 된다
-    assert!(st.pair_with("", &Pairing { name: "iPhone", home: false, prev: Some(&t1) }, now).is_none());
+    assert!(st.pair_with("", &Pairing { name: "iPhone", home: false, prev: Some(&t1), peer: false }, now).is_none());
 }
 
 #[test]
@@ -373,12 +373,49 @@ fn 홈_화면_앱이_낸_코드로는_그_앱을_바꿔_끼우지_않는다() {
     let safari = pair_as(&st, "iPhone", false, None, now);
     let sid = st.check(&safari, now).unwrap();
     let c = st.new_code_from(&sid, now).unwrap();
-    let home = st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None }, now).unwrap();
+    let home = st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None, peer: false }, now).unwrap();
     let hid = st.check(&home, now).unwrap();
     // 그 홈 화면 앱이 코드를 내서 다른 홈 화면 앱(같은 기종 다른 폰일 수 있다)이 붙는다
     let c = st.new_code_from(&hid, now).unwrap();
-    let other = st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None }, now).unwrap();
+    let other = st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None, peer: false }, now).unwrap();
     assert!(st.check(&home, now).is_some(), "코드를 낸 앱이 끊겼다");
     assert!(st.check(&other, now).is_some());
     assert_eq!(st.list().len(), 3);
+}
+
+#[test]
+fn md1_틀린_코드를_5번_내면_그_코드는_죽는다() {
+    // 128비트라 맞히기는 못 해도, 연타는 코드 하나당 5번까지만 — 넘으면 맞는 코드도 안 된다(새 코드는 된다)
+    let st = Devices::memory();
+    let now = SystemTime::now();
+    let code = st.new_code(now).unwrap();
+    for _ in 0..4 {
+        assert!(st.pair(&"0".repeat(32), "x", now).is_none());
+    }
+    assert!(st.pair(&code, "iPhone", now).is_some(), "4번 틀려도 아직 된다");
+    let c2 = st.new_code(now).unwrap();
+    for _ in 0..5 {
+        assert!(st.pair(&"0".repeat(32), "x", now).is_none());
+    }
+    assert!(st.pair(&c2, "iPhone", now).is_none(), "5번 틀리면 코드가 죽는다");
+    let c3 = st.new_code(now).unwrap();
+    assert!(st.pair(&c3, "iPhone", now).is_some(), "새 코드는 셈이 처음부터");
+}
+
+#[test]
+fn md1_다른_참모_짝짓기는_peer_줄로_남고_이름은_거른다() {
+    let st = Devices::memory();
+    let now = SystemTime::now();
+    let c = st.new_code(now).unwrap();
+    let tok = st.pair_with(&c, &Pairing { name: "참모 · my-mac\u{1b}[31m\n", home: false, prev: None, peer: true }, now).unwrap();
+    let id = st.check(&tok, now).unwrap();
+    let v = st.list().into_iter().find(|d| d.id == id).unwrap();
+    assert!(v.peer);
+    assert!(!v.home);
+    assert_eq!(v.name, "참모 · my-mac[31m", "제어 글자는 빠진다");
+    // 폰 줄은 peer 가 아니다
+    let c2 = st.new_code(now).unwrap();
+    let t2 = st.pair(&c2, "iPhone", now).unwrap();
+    let id2 = st.check(&t2, now).unwrap();
+    assert!(!st.list().into_iter().find(|d| d.id == id2).unwrap().peer);
 }

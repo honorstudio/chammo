@@ -6,7 +6,8 @@ import { getEnv, listBrowsers, listSessionsRaw, NoKeyError, readTasks, routinesL
 import type { Live } from '../../domain/agentBrowser';
 import type { Ctx } from '../../domain/ctx';
 import { josa, setAssistant } from '../../i18n';
-import { ctxFromAgents, nextAfterStop, phoneName, routineOrch, waitingList, type Snap, type Waiting } from '../../domain/mobile';
+import { ctxFromAgents, nextAfterStop, phoneName, routineOrch, shownWaiting, waitingList, type Snap, type WaitSent, type Waiting } from '../../domain/mobile';
+import { useWaitSent } from './waitSent';
 import { parseTaskLog, type TaskEvent } from '../../domain/tasks';
 import { parseRoutines, routineState } from '../../domain/routine';
 import { groupByProject, parseAgents, type Session } from '../../domain/session';
@@ -24,8 +25,9 @@ import { goFrom } from '../../domain/mobilePush';
 import type { NoteTarget } from '../../domain/notify';
 import { SessionsBoard } from './SessionsBoard';
 import { PairHelp } from './PairHelp';
-import { NewOrchForm, OffOrchList, useOffOrchs, useWake, type Wake } from './OrchWake';
+import { NewOrchForm, OffOrchList, useOffOrchs, useWake, WakeNotice, type Wake } from './OrchWake';
 import { MAvatar, useOrchColor } from './MAvatar';
+import { usePendingNicks } from './pendingNicks';
 import { orchVars } from '../../domain/orchTheme';
 import { useMobileChat } from './useMobileChat';
 import { useOrchAsks } from './useOrchAsks';
@@ -37,6 +39,9 @@ import { hideBootSplash } from './bootSplash';
 import { IconRefresh } from '../Icons';
 import { makePoller, RESUME_EVENT } from '../../domain/poller';
 import { installResume } from './resume';
+import { installFreshBuild } from './freshBuild';
+import { Notice } from './Notice';
+import { PhoneLoginCard } from './PhoneLogin';
 import { preloadFirstScreen } from './bootPreload';
 
 const ORCH_KEY = 'm.orch';
@@ -50,18 +55,18 @@ const forgetEnv = () => { try { localStorage.removeItem(ENV_KEY); } catch { /* �
 const sameEnv = (a: MobileEnv | null, b: MobileEnv) => !!a && JSON.stringify(a) === JSON.stringify(b);
 
 type View = 'dash' | 'routines' | 'sessions';
-type SpaceProps = { orch: Session; orchs: Session[]; sessions: Session[]; events: TaskEvent[]; waiting: Waiting[]; ask: { lead: string; q: string } | null; ctx: Record<string, Ctx>; env: MobileEnv; snap: Snap; setSnap: (s: Snap) => void; onPick: (id: string) => void; onStopped: (id: string) => void; wake: Wake; lives: Live[]; push: Push; view: View; setView: (v: View) => void; vp: Viewport; stateAt: number; lines: Record<string, string> };
+type SpaceProps = { orch: Session; orchs: Session[]; sessions: Session[]; events: TaskEvent[]; waiting: Waiting[]; waitSent: WaitSent; ask: { lead: string; q: string } | null; ctx: Record<string, Ctx>; env: MobileEnv; snap: Snap; setSnap: (s: Snap) => void; onPick: (id: string) => void; onStopped: (id: string) => void; wake: Wake; lives: Live[]; push: Push; view: View; setView: (v: View) => void; vp: Viewport; stateAt: number; lines: Record<string, string> };
 
 /** 입력칸 최대 높이 — 7줄(16px 글자 기준 176px)과 보이는 화면 26%(반 시트의 40%) 중 작은 쪽 */
 const inputMax = (h: number) => Math.min(176, Math.round(h * 0.26));
 
-function OrchSpace({ orch, orchs, sessions, events, waiting, ask, ctx, env, snap, setSnap, onPick, onStopped, wake, lives, push, view, setView, vp, stateAt, lines }: SpaceProps) {
+function OrchSpace({ orch, orchs, sessions, events, waiting, waitSent, ask, ctx, env, snap, setSnap, onPick, onStopped, wake, lives, push, view, setView, vp, stateAt, lines }: SpaceProps) {
   const [picker, setPicker] = useState(false);
   const chat = useMobileChat(orch, snap === 'peek' ? 10_000 : 2000, stateAt);
   const [routinesRaw] = useMemoPoll('routines', routinesList, 30_000, '[]');
   const running = parseRoutines(routinesRaw).filter((r) => routineState(r, sessions) === 'running').length;
   const color = useOrchColor(orch, orchs);
-  const nm = phoneName(orch.name, orchs);
+  const nm = usePendingNicks(orchs).nameOf(orch); // 폰에서 바꾼 이름이 맥 진짜 이름에 실리기 전에도 새 이름
   // 직접 답하기 카드 — 기다리는 게 새로 생기면 시트를 반쯤 열고, 접힌 줄에도 알린다(시트 안에만 두면 접혀서 안 보였다, 2026-10-03 QA)
   const direct = usePhoneDirect(orch, orchs, sessions, events);
   const asking = direct.filter(needsAnswer);
@@ -90,13 +95,13 @@ function OrchSpace({ orch, orchs, sessions, events, waiting, ask, ctx, env, snap
             draftKey={orch.id} onChip={() => setPicker(true)} onFocus={() => snap === 'peek' && setSnap('half')} send={chat.send} />
         }
       >
-        {chat.error && <div className="m-error">{chat.error}</div>}
+        {chat.error && <Notice text={chat.error} error onClose={() => chat.setError(null)} />}
         <MessageList items={chat.items} earlier={chat.earlier} loading={chat.loading} stale={chat.stale} out={chat.out} onRetry={chat.retry} onDrop={chat.drop} live={chat.live} ask={ask} who={<MAvatar orch={orch} orchs={orchs} size={28} asking />} />
         {/* 직접 답하기 카드 — 맡긴 세션이 본인 승인을 기다릴 때(채팅 끝, 입력칸 바로 위) */}
         <DirectCards mine={direct} sessions={sessions} />
       </ChatSheet>
       {picker && (
-        <OrchPicker title={env.assistantName} env={env} wake={wake} onStopped={onStopped} orchs={orchs} current={orch.id} ctx={ctx} waiting={waiting} lines={lines} events={events} sessions={sessions}
+        <OrchPicker title={env.assistantName} env={env} wake={wake} onStopped={onStopped} orchs={orchs} current={orch.id} ctx={ctx} waiting={waiting} sent={waitSent} lines={lines} events={events} sessions={sessions}
           onClose={() => setPicker(false)}
           onPick={(id) => { setPicker(false); onPick(id); }} />
       )}
@@ -114,7 +119,8 @@ function WakeHome({ env, orchs, wake }: { env: MobileEnv; orchs: Session[]; wake
       <BrandMark size={64} className="m-brand" />
       <h1>{env.assistantName}</h1>
       <p className="m-muted">떠 있는 {josa(env.assistantName, '이', '가')} 없어요. 꺼진 {josa(env.assistantName, '을', '를')} 누르면 그 대화 그대로 켜요</p>
-      {wake.error && <div className="m-error">{wake.error}</div>}
+      <WakeNotice wake={wake} />
+      <PhoneLoginCard />
       {naming
         ? <NewOrchForm title={env.assistantName} taken={taken} wake={wake} onDone={() => setNaming(false)} />
         : <button type="button" className="m-send" disabled={!!wake.making || !!wake.starting} onClick={() => setNaming(true)}>{wake.making ? `${phoneName(wake.making, orchs)} 만드는 중…` : `새 ${env.assistantName} 만들기`}</button>}
@@ -140,7 +146,10 @@ export function MobileApp() {
   const taskLog = usePoll(readTasks, 5000, '');
   const events = useMemo(() => parseTaskLog(taskLog), [taskLog]);
   const { asks, lines } = useOrchAsks(orchs);
-  const waiting = useMemo(() => waitingList(orchs, asks, events), [orchs, asks, events]);
+  // 폰에서 답한 결정 카드는 맥 기록이 따라올 때까지 숨긴다 — 칩 숫자·시트가 같이(waitSent)
+  const waitingRaw = useMemo(() => waitingList(orchs, asks, events), [orchs, asks, events]);
+  const waitSent = useWaitSent(waitingRaw);
+  const waiting = useMemo(() => shownWaiting(waitingRaw, waitSent), [waitingRaw, waitSent]);
   const [error, setError] = useState<string | null>(null);
   const frame = useRef<HTMLDivElement>(null);
   const vp = useViewport(frame);
@@ -230,6 +239,7 @@ export function MobileApp() {
     poller.current = p;
     p.start();
     installResume();
+    installFreshBuild();
     const wake = () => p.kick();
     window.addEventListener(RESUME_EVENT, wake);
     return () => { window.removeEventListener(RESUME_EVENT, wake); p.stop(); poller.current = null; };
@@ -294,7 +304,7 @@ export function MobileApp() {
     // 키보드가 올라오면 보이는 영역에 화면 틀을 맞춘다 — 입력줄이 키보드 바로 위, 대화 목록은 그 위에 남는다
     <div ref={frame} className="m-app" style={{ top: vp.top, height: vp.h }}>
       {error && <div className="m-error m-top-err">{error}</div>}
-      <OrchSpace key={orch.id} orch={orch} orchs={orchs} sessions={sessions} events={events} waiting={waiting} ask={asks[orch.id] ?? null} ctx={ctx} env={env} snap={snap} setSnap={setSnap} vp={vp} stateAt={stateAt} lines={lines}
+      <OrchSpace key={orch.id} orch={orch} orchs={orchs} sessions={sessions} events={events} waiting={waiting} waitSent={waitSent} ask={asks[orch.id] ?? null} ctx={ctx} env={env} snap={snap} setSnap={setSnap} vp={vp} stateAt={stateAt} lines={lines}
         view={view} setView={setView} onPick={go} onStopped={stopped} wake={wake} lives={lives} push={push} />
     </div>,
   );

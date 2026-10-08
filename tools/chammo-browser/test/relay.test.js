@@ -237,3 +237,167 @@ test('먼저 보낼 내부 호출 — 락이 없으면(브라우저 없음) 묻�
   assert.strictEqual(asked, 0);
   assert.strictEqual(toChild.length, 1);
 });
+
+// ── 사람 개입(gate) ─────────────────────────────────────────────
+const callA = (id, name, args = {}) => rpc(id, 'tools/call', { name, arguments: args });
+const flush = () => new Promise((r) => setTimeout(r, 0));
+function deferred() { let resolve; const p = new Promise((r) => { resolve = r; }); return { p, resolve }; }
+
+test('gate 가 붙잡으면 돌려줄 때까지 playwright 로 안 보내고, 실행 안 함이면 꼬리표로 답한다', async () => {
+  const dir = tmpLockDir();
+  const d = deferred();
+  const { relay, toChild, toClient } = makeRelay(dir, process.pid, 'acme-shop', { gate: (n) => (n === 'browser_click' ? d.p : null) });
+  relay.onClientLine(callA(5, 'browser_click', { target: 'e8' }));
+  await flush();
+  assert.strictEqual(toChild.length, 0);
+  assert.strictEqual(toClient.length, 0);
+  d.resolve({ run: false, isError: true, note: '[사람 개입] 꼬리표' });
+  await flush(); await flush();
+  assert.strictEqual(toChild.length, 0, '실행 안 함');
+  const r = JSON.parse(toClient[0]);
+  assert.strictEqual(r.id, 5);
+  assert.strictEqual(r.result.isError, true);
+  assert.match(r.result.content[0].text, /꼬리표/);
+});
+
+test('gate 가 실행이면 보내고, 응답 앞에 꼬리표를 붙인다', async () => {
+  const dir = tmpLockDir();
+  const { relay, toChild, toClient } = makeRelay(dir, process.pid, 'acme-shop', { gate: (n) => (n === 'browser_snapshot' ? Promise.resolve({ run: true, note: '[사람 개입] 앞줄' }) : null) });
+  relay.onClientLine(callA(6, 'browser_snapshot'));
+  await flush(); await flush();
+  assert.strictEqual(toChild.length, 1);
+  relay.onChildLine(ok(6));
+  const r = JSON.parse(toClient[0]);
+  assert.strictEqual(r.result.content[0].text, '[사람 개입] 앞줄');
+  assert.strictEqual(r.result.content[1].text, 'ok');
+});
+
+test('붙잡힌 동안 유휴 닫기를 안 한다', async () => {
+  const dir = tmpLockDir();
+  const timers = [];
+  const d = deferred();
+  const { relay, toChild } = makeRelay(dir, process.pid, 'acme-shop', {
+    idleMs: 1000, setTimer: (f) => { timers.push(f); return timers.length; }, clearTimer: () => {},
+    gate: (n) => (n === 'browser_click' ? d.p : null),
+  });
+  relay.onClientLine(callA(1, 'browser_navigate', { url: 'https://a' }));
+  relay.onChildLine(ok(1));
+  relay.onClientLine(callA(2, 'browser_click'));
+  for (const f of timers.splice(0)) f();
+  assert.ok(!toChild.some((l) => l.includes('chammo-idle')), '붙잡힌 동안 닫지 않음');
+  d.resolve({ run: false, isError: true, note: 'x' });
+  await flush(); await flush();
+});
+
+test('canClose 가 false 면 유휴 닫기를 미루고 다시 잰다(사람이 개입 중)', () => {
+  const dir = tmpLockDir();
+  const timers = [];
+  let can = false;
+  const { relay, toChild } = makeRelay(dir, process.pid, 'acme-shop', {
+    idleMs: 1000, setTimer: (f) => { timers.push(f); return timers.length; }, clearTimer: () => {}, canClose: () => can,
+  });
+  relay.onClientLine(callA(1, 'browser_navigate', { url: 'https://a' }));
+  relay.onChildLine(ok(1));
+  timers.shift()();
+  assert.ok(!toChild.some((l) => l.includes('chammo-idle')));
+  assert.strictEqual(timers.length, 1, '다시 잰다');
+  can = true;
+  timers.shift()();
+  assert.ok(toChild.some((l) => l.includes('chammo-idle')));
+});
+
+test('붙잡힌 호출을 세션이 취소하면(notifications/cancelled) 돌려줘도 답하지 않는다', async () => {
+  const dir = tmpLockDir();
+  const d = deferred();
+  const { relay, toChild, toClient } = makeRelay(dir, process.pid, 'acme-shop', { gate: () => d.p });
+  relay.onClientLine(callA(9, 'browser_click'));
+  relay.onClientLine(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 9 } }));
+  d.resolve({ run: true, note: 'n' });
+  await flush(); await flush();
+  assert.ok(!toChild.some((l) => l.includes('"id":9')), '취소된 호출은 안 보낸다');
+  assert.ok(!toClient.some((l) => l.includes('"id":9')));
+});
+
+test('래퍼 도구(사람 부르기)도 gate 를 거친다 — 실행이면 결과 앞에 꼬리표', async () => {
+  const dir = tmpLockDir();
+  const { relay, toClient } = makeRelay(dir, process.pid, 'acme-shop', {
+    gate: () => Promise.resolve({ run: true, note: '앞' }),
+    onLocalTool: (n) => (n === 'browser_ask_human' ? Promise.resolve({ content: [{ type: 'text', text: '다 했어' }] }) : null),
+  });
+  relay.onClientLine(callA(3, 'browser_ask_human', { reason: 'r' }));
+  await flush(); await flush(); await flush();
+  const r = JSON.parse(toClient[0]);
+  assert.deepStrictEqual(r.result.content.map((c) => c.text), ['앞', '다 했어']);
+});
+
+// ── 비밀번호 칸 가리기(afterCall·transform) ─────────────────────
+const { createSecrets } = require('../src/secrets');
+const res = (id, text) => JSON.stringify({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } });
+
+function secretRelay(extra = {}) {
+  const dir = tmpLockDir();
+  const sec = createSecrets();
+  const timers = [];
+  const r = makeRelay(dir, process.pid, 'acme-shop', {
+    afterCall: (n) => (n === 'browser_close' ? null : sec.captureCall()),
+    transform: (n, result) => sec.redactResult(result),
+    setTimer: (f) => { timers.push(f); return timers.length; }, clearTimer: () => {},
+    ...extra,
+  });
+  return { ...r, sec, timers };
+}
+const lastInternal = (toChild) => JSON.parse(toChild[toChild.length - 1]);
+
+test('비밀번호 칸 값은 어떤 도구 결과에도 안 나온다 — 넘기기 전에 읽어 가린다(snapshot·evaluate·console·network)', () => {
+  const { relay, toChild, toClient } = secretRelay();
+  const PW = 'PW-secret-123';
+  const tools = [
+    ['browser_snapshot', `- textbox "Password" [ref=e3]: ${PW}`],
+    ['browser_evaluate', `### Result\n"${PW}"`],
+    ['browser_console_messages', `[LOG] typed ${PW}`],
+    ['browser_network_requests', `POST /login body=user%3Dme%26password%3D${encodeURIComponent(PW)} password=${encodeURIComponent(PW)}`],
+  ];
+  let id = 10;
+  for (const [name, text] of tools) {
+    id += 1;
+    relay.onClientLine(call(id, name));
+    relay.onChildLine(res(id, text));
+    assert.ok(!toClient.some((l) => l.includes(`"id":${id}`)), `${name}: 읽기 전엔 안 넘긴다`);
+    const ev = lastInternal(toChild);
+    assert.strictEqual(ev.params.name, 'browser_evaluate');
+    relay.onChildLine(res(ev.id, `### Result\n["${PW}"]`));
+    const out = toClient.find((l) => l.includes(`"id":${id}`));
+    assert.ok(out, `${name}: 넘겼다`);
+    assert.ok(!out.includes(PW), `${name}: 값이 그대로 나옴 — ${out}`);
+    assert.ok(!out.includes(encodeURIComponent(PW)) || PW === encodeURIComponent(PW), name);
+  }
+  assert.ok(!toClient.some((l) => l.includes(PW)), '내부 읽기 답은 세션에 안 간다');
+});
+
+test('읽기가 답이 없으면(대화상자에 막힘 등) 기다리다 아는 값만 가리고 넘긴다', () => {
+  const { relay, toChild, toClient, sec, timers } = secretRelay();
+  sec.add(['known-secret']);
+  relay.onClientLine(call(3, 'browser_click'));
+  relay.onChildLine(res(3, 'known-secret here'));
+  assert.strictEqual(toClient.length, 0);
+  timers.forEach((f) => f());
+  const out = toClient.find((l) => l.includes('"id":3'));
+  assert.ok(out && !out.includes('known-secret'));
+  // 늦게 온 읽기 답은 버린다 — 값이 든 답이 세션에 새지 않고, 두 번 안 넘긴다
+  const before = toClient.length;
+  relay.onChildLine(res(lastInternal(toChild).id, '### Result\n["late-secret-value"]'));
+  assert.strictEqual(toClient.length, before);
+  assert.ok(!toClient.some((l) => l.includes('late-secret-value')));
+});
+
+test('닫기·실패한 호출 뒤엔 읽으러 가지 않는다', () => {
+  const { relay, toChild, toClient } = secretRelay();
+  relay.onClientLine(call(1, 'browser_navigate'));
+  relay.onChildLine(res(1, 'ok'));
+  relay.onChildLine(res(lastInternal(toChild).id, '### Result\n[]'));
+  const before = toChild.length;
+  relay.onClientLine(call(2, 'browser_close'));
+  relay.onChildLine(ok(2));
+  assert.strictEqual(toChild.length, before + 1, '닫기 뒤 내부 읽기 없음');
+  assert.ok(toClient.some((l) => l.includes('"id":2')));
+});

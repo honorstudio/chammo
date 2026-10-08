@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { FILE_KIND_LABEL, GATE_LABEL } from './review';
+import { FILE_KIND_LABEL, GATE_LABEL, REVIEW_SPLIT_MIN, reviewPanes, splitPath } from './review';
 import { ciState, fileKind, gates, groupFiles, parseChecks, type OpenPr } from './review';
 
 // 2026-09-27 실제 PR 을 줄인 것 (acme-shop-platform #388·#389·#392, ops-hub #462)
@@ -107,4 +107,24 @@ describe('영어 모드', () => {
     const g = gates(pr({ files: [f('supabase/migrations/1.sql', 10), f('src/a.ts', 600)] }));
     expect(g.map((x) => [x.kind, x.why])).toEqual([['db', '1 migration']]);
   });
+});
+
+describe('reviewPanes — 리뷰 칸이 실제로 받은 폭으로 두 칸/한 칸', () => {
+  it('넉넉하면 목록·상세 나란히', () => {
+    expect(reviewPanes(REVIEW_SPLIT_MIN, false)).toBe('split');
+    expect(reviewPanes(1400, true)).toBe('split');
+  });
+  it('모자라면 한 칸씩 — 고른 PR 이 열려 있으면 상세, 아니면 목록(채팅 패널 열린 리뷰 ≈ 860px)', () => {
+    expect(reviewPanes(860, false)).toBe('list');
+    expect(reviewPanes(860, true)).toBe('detail');
+    expect(reviewPanes(REVIEW_SPLIT_MIN - 1, true)).toBe('detail');
+  });
+  it('아직 못 쟀으면(0) 나란히 — 첫 그림을 흔들지 않게', () => expect(reviewPanes(0, true)).toBe('split'));
+});
+
+describe('splitPath — 바뀐 파일·diff 줄은 파일 이름을 지키고 폴더만 줄인다', () => {
+  it('폴더와 이름', () => {
+    expect(splitPath('apps/mobile/src/presentation/screens/consult/ForeignGuestCardScreen.tsx')).toEqual({ dir: 'apps/mobile/src/presentation/screens/consult/', name: 'ForeignGuestCardScreen.tsx' });
+  });
+  it('맨 위 파일은 폴더가 빈칸', () => expect(splitPath('README.md')).toEqual({ dir: '', name: 'README.md' }));
 });

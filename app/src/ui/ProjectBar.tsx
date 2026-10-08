@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { harnessProject, newSession } from '../data/tauri';
 import { tr } from '../i18n';
+import { BrowserAttachButton } from './BrowserAttach';
 
 type Props = {
   project: string;
@@ -46,6 +47,7 @@ export function ProjectBar({ project, cwd, count, onDone, needsHarness }: Props)
       <b>{project}</b>
       <span className="dim">{tr('창', 'Panes')} {count}</span>
       <span className="sp" />
+      <BrowserAttachButton dir={cwd} running={count} className="btn" onDone={onDone} />
       {needsHarness && (
         <button className="btn pri" disabled={busy} onClick={() => void harness()} title={tr('CLAUDE.md·docs/starter.md·docs/roadmap.md 를 깐다 — 있는 파일은 안 덮는다', 'Adds CLAUDE.md, docs/starter.md, docs/roadmap.md — never overwrites existing files')}>
           {tr('하네스 깔기', 'Set up harness')}

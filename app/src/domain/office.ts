@@ -11,7 +11,8 @@ export function officeState(s: ActivityStatus): OfficeState {
   switch (s) {
     case 'working': return 'working';
     case 'asks':
-    case 'blocked': return 'asks';
+    case 'blocked':
+    case 'login': return 'asks';
     case 'done': return 'done';
     case 'stale': return 'sleep';
     default: return 'wait';
@@ -174,7 +175,7 @@ export function firstWords(text: string): string {
 
 export function bossReaction(x: { status: ActivityStatus; reply: { text: string; ts: number } | null; voice: boolean; cheerAt: number | null; now: number }): BossReact | null {
   if (x.cheerAt != null && x.now - x.cheerAt >= 0 && x.now - x.cheerAt < CHEER_MS) return { mode: 'cheer' };
-  if (x.status === 'asks' || x.status === 'blocked') return { mode: 'ask' };
+  if (x.status === 'asks' || x.status === 'blocked' || x.status === 'login') return { mode: 'ask' };
   if (x.reply) {
     const age = x.now - x.reply.ts;
     const talkMs = Math.min(12_000, x.reply.text.length * 110 + 800); // 참모세이가 읽는 시간 어림

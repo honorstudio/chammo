@@ -18,11 +18,33 @@ export function setAvatarSource(s: Partial<Source>) {
 const subs = new Set<() => void>();
 const emit = (next: Snap) => { snap = next; subs.forEach((f) => f()); };
 
-function start() {
+// 읽기가 실패하면 빈 값으로 굳히지 않고 아는 값을 둔 채 잠시 뒤 다시(3초부터 두 배, 1분까지). 한 번 실패로 굳었더니
+// 폰이 맥 재시작 동안 켜진 뒤로 내내 순서 색(참모-2 주황)으로 그렸다(2026-10-05)
+const RETRY_MAX_MS = 60_000;
+let retryMs = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let loading: Promise<void> | null = null;
+
+/** 다시 읽기 — 폰이 돌아오거나 다시 붙을 때(데스크톱에서 바꾼 것도 따라온다). 읽는 중이면 그 읽기를 같이 기다린다 */
+export function refreshAvatars(): Promise<void> {
+  loading ??= Promise.all([
+    source.read().then(parseEntries, () => null),
+    snap.dataDir ? Promise.resolve(snap.dataDir) : source.dataDir().catch(() => ''),
+  ]).then(([saved, dataDir]) => {
+    loading = null;
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    if (saved) { retryMs = 0; emit({ ...snap, saved, dataDir }); return; }
+    if (dataDir !== snap.dataDir) emit({ ...snap, dataDir });
+    retryMs = Math.min(retryMs ? retryMs * 2 : 3_000, RETRY_MAX_MS);
+    retryTimer = setTimeout(() => { retryTimer = null; void refreshAvatars(); }, retryMs);
+  });
+  return loading;
+}
+
+export function loadAvatars() {
   if (started) return;
   started = true;
-  void Promise.all([source.read().then(parseEntries).catch(() => new Map<string, AvatarEntry>()), source.dataDir().catch(() => '')])
-    .then(([saved, dataDir]) => emit({ ...snap, saved, dataDir }));
+  void refreshAvatars();
 }
 
 /** 지금 값 — 훅 밖(앱이 참모 답을 읽을 때)에서 */
@@ -33,7 +55,7 @@ export function setAvatarTts(ttsCommand: string) {
 }
 
 export function useAvatars(): Snap {
-  start();
+  loadAvatars();
   return useSyncExternalStore((f) => { subs.add(f); return () => subs.delete(f); }, () => snap);
 }
 

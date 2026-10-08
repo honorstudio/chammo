@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { composeSend, mdDiff } from './space';
+import { chatViewOf, composeSend, mdDiff } from './space';
 
 describe('mdDiff — 고치기 전·후 마크다운에서 더한 줄·뺀 줄', () => {
   it('더한 줄과 뺀 줄을 순서대로(빈 줄은 무시)', () => {
@@ -73,5 +73,20 @@ describe('mdDiff — 띄어쓰기만 다른 줄은 같은 줄(편집기가 인�
   });
   it('글자가 바뀌면 그대로 잡는다', () => {
     expect(mdDiff('끝났다.', '끝났다')).toEqual({ added: ['끝났다'], removed: ['끝났다.'] });
+  });
+});
+
+describe('chatViewOf — 채팅 패널 보기 방식 기본값', () => {
+  it('저장값이 없으면 하나로 보기(tabs)', () => {
+    expect(chatViewOf(null)).toBe('tabs');
+    expect(chatViewOf(undefined)).toBe('tabs');
+  });
+  it('저장된 값(쌓기·탭)은 그대로 둔다', () => {
+    expect(chatViewOf('stack')).toBe('stack');
+    expect(chatViewOf('tabs')).toBe('tabs');
+  });
+  it('알 수 없는 값이 저장돼 있으면 기본값으로', () => {
+    expect(chatViewOf('grid')).toBe('tabs');
+    expect(chatViewOf(3)).toBe('tabs');
   });
 });

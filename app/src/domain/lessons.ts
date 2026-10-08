@@ -2,7 +2,21 @@
 // `task send` 가 그 프로젝트 지시마다 붙인다(_common.md 는 모든 프로젝트). 메모 창 '교훈' 탭에서 보고 지우고 공통으로 올린다.
 // 쌓이기만 하면 지시가 무거워진다 — 끝난 할 일·중복을 사람이 걸러 낼 자리(2026-09-29)
 
+import { tr } from '../i18n';
+
 export const COMMON = '_common';
+/** scripts/task 의 LESSON_MAX — 넘으면 지시마다 통째로 붙어 무겁다 */
+export const LESSON_MAX = 12;
+
+/** 메모 창 [스킬로 묶기] 를 보일까 — 프로젝트 교훈이 많을 때만. 공통 칸 스킬은 2단계(전역 스킬은 사람 확인 뒤에만) */
+export const shouldGroup = (project: string, n: number): boolean => project !== COMMON && n > LESSON_MAX;
+
+/** 참모에게 보낼 부탁 — 참모가 묶음을 짜서 결정 대기함 카드로 묻고, 사람이 고른 것만 스킬로 옮긴다(docs/plans/2026-10-06-self-learning.md) */
+export const groupRequest = (project: string, n: number): string =>
+  tr(
+    `${project} 교훈이 ${n}줄이야 — scripts/task lesson-review ${project} 로 보고 같은 주제끼리 묶어서 lesson-propose 로 카드를 올려 줘. 내가 카드에서 고른 것만 스킬로 옮겨.`,
+    `${project} has ${n} lessons — look at them with scripts/task lesson-review ${project}, group lines on one topic and put each group up as a card with lesson-propose. Only move the ones I pick on the cards into skills.`,
+  );
 
 export const parseLessons = (file: string): string[] =>
   file.split('\n').filter((l) => l.startsWith('- ')).map((l) => l.slice(2).trim());

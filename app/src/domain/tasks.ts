@@ -25,6 +25,8 @@ export type TaskEvent = {
   to?: string;
   /** send 에만: 검증 강도 — scripts/task 가 지시 내용으로 정한다(2026-09-29~, 옛 기록엔 없음) */
   effort?: Effort;
+  /** answer 에만: 어디서 답했나 — phone = 폰 결정 카드(/api/task-answer, 2026-10-06~). 데스크톱 답엔 없음 */
+  by?: 'phone';
   /** note 에만: task retry 로 되돌려 보낸 몇 번째인지 */
   retry?: number;
 };

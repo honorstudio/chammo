@@ -36,6 +36,9 @@ describe('intentOf — scripts/app 한 줄 → 앱이 할 일', () => {
     expect(intentOf({ action: 'open', arg: 'tools' })).toEqual({ kind: 'open', what: 'tools' });
     expect(intentOf({ action: 'close', arg: 'tools' })).toEqual({ kind: 'close', what: 'tools' });
     expect(openShortcut('tools')).toBeNull();
+    // 리뷰도 위 막대 아이콘으로 옮겨서 닫기가 생겼다(2026-10-06) — 열기는 예전처럼 ⌘3 과 같은 길(꺼 둔 기능 막기)
+    expect(intentOf({ action: 'close', arg: 'review' })).toEqual({ kind: 'close', what: 'review' });
+    expect(openShortcut('review')).toEqual({ type: 'goto', to: 'review' });
   });
 
   it('모르는 동작·인자·깨진 줄은 무시', () => {

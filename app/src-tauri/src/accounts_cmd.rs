@@ -51,6 +51,117 @@ pub fn view(pool: &Pool, live_oauth: Option<&Value>) -> View {
     }
 }
 
+// ── 폰(모바일 서버 /api/accounts) ─────────────────────────
+// 폰엔 이름·요금제·사용량·쉬는 때만. 이메일·계정 번호(uuid)·oauth 원본·토큰은 안 나간다 — 이름이 이메일이면 앞부분만.
+// 폰은 맥 앞에 없으니 키체인 창을 띄우지 않는다(quiet) — 허용이 필요하면 창 대신 locked 로 끝나고 폰이 '맥에서 한 번' 이라고 알린다
+
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PhoneRow {
+    pub id: String,
+    pub name: String,
+    pub plan: String,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PhoneView {
+    pub accounts: Vec<PhoneRow>,
+    pub active: Option<String>,
+    pub live_plan: Option<String>,
+    /// 칸에 없는 로그인일 때만 — 이메일 앞부분
+    pub live_name: Option<String>,
+    /// 바꿔 끼우는 도중(또는 도중에 꺼진 채)
+    pub switching: bool,
+    /// 자동 상태 중 화면이 쓰는 것만(on·pinned·allOutUntil·switchedAt·칸별 사용량·막힘) — 세션 id(nudged)·배우기(learn)는 뺀다
+    pub auto: Value,
+}
+
+const PHONE_NAME_MAX: usize = 40;
+
+/// 폰에 보일 이름 — 비었으면 이메일 앞부분, '@' 가 들어 있으면 '@' 앞까지(이메일을 이름으로 적었어도)
+pub fn phone_name(name: &str, email: &str) -> String {
+    let n = name.trim();
+    let base = if n.is_empty() { email.trim() } else { n };
+    let cut = base.split('@').next().unwrap_or("");
+    // '@' 앞이 "일 계정 boss" 처럼 띄어쓴 이메일이면 그대로 둔다 — 도메인만 안 나가면 된다
+    cut.trim().chars().take(PHONE_NAME_MAX).collect()
+}
+
+fn phone_auto(auto: &Value, ids: &[String]) -> Value {
+    let mut out = serde_json::Map::new();
+    for k in ["on", "pinned", "allOutUntil", "switchedAt", "v"] {
+        if let Some(v) = auto.get(k).filter(|v| v.is_boolean() || v.is_number() || v.is_string()) {
+            out.insert(k.into(), v.clone());
+        }
+    }
+    let mut slots = serde_json::Map::new();
+    for id in ids {
+        let Some(s) = auto.get("slots").and_then(|x| x.get(id)).and_then(Value::as_object) else { continue };
+        let mut o = serde_json::Map::new();
+        for k in ["fp", "seenAt", "blockedUntil", "blockFp", "openedAt"] {
+            if let Some(v) = s.get(k).filter(|v| v.is_number()) {
+                o.insert(k.into(), v.clone());
+            }
+        }
+        for k in ["five", "week"] {
+            if let Some(w) = s.get(k) {
+                if let (Some(u), Some(r)) = (w.get("used").filter(|v| v.is_number()), w.get("resetsAt").filter(|v| v.is_number())) {
+                    o.insert(k.into(), serde_json::json!({ "used": u, "resetsAt": r }));
+                }
+            }
+        }
+        if let Some(w) = s.get("why").and_then(Value::as_str).filter(|w| matches!(*w, "five" | "week" | "limit")) {
+            o.insert("why".into(), w.into());
+        }
+        slots.insert(id.clone(), Value::Object(o));
+    }
+    out.insert("slots".into(), Value::Object(slots));
+    Value::Object(out)
+}
+
+pub fn phone_view(pool: &Pool, live_oauth: Option<&Value>) -> PhoneView {
+    let v = view(pool, live_oauth);
+    let ids: Vec<String> = pool.accounts.iter().map(|a| a.id.clone()).collect();
+    PhoneView {
+        accounts: pool.accounts.iter().map(|a| PhoneRow { id: a.id.clone(), name: phone_name(&a.name, &a.email), plan: a.plan.clone() }).collect(),
+        live_name: if v.active.is_none() { v.live_email.as_deref().map(|e| phone_name("", e)).filter(|n| !n.is_empty()) } else { None },
+        active: v.active,
+        live_plan: v.live_plan,
+        switching: pool.switching.is_some(),
+        auto: phone_auto(&pool.auto, &ids),
+    }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+/// 폰 보기 — 키체인은 안 읽는다(accounts_view 와 같다)
+pub fn phone_accounts() -> Result<PhoneView, String> {
+    let (_, claude_json) = paths()?;
+    let pool = accounts::load(&crate::config::data_file("accounts.json")).map_err(|e| e.code())?;
+    Ok(phone_view(&pool, accounts::read_oauth(&claude_json).as_ref()))
+}
+
+/// 폰에서 바꾸기 — 데스크톱 '이 계정으로'와 같은 길(accounts::switch → 고정). 한 잠금 안에서 둘 다 — 사이에 자동 전환이 못 끼게
+pub fn phone_switch(id: &str) -> Result<PhoneView, String> {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (kc, live, list) = setup_quiet(true)?;
+    let pool = accounts::switch_pinned(&kc, &live, &list, id, now_ms()).map_err(|e| e.code())?;
+    Ok(phone_view(&pool, accounts::read_oauth(&live.claude_json).as_ref()))
+}
+
+/// 폰에서 자동 전환 켜기·끄기 — 바꿔 끼우기와 같은 줄에서
+pub fn phone_auto_on(on: bool) -> Result<PhoneView, String> {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (_, claude_json) = paths()?;
+    let list = crate::config::data_file("accounts.json");
+    accounts::patch_auto(&list, &serde_json::json!({ "on": on })).map_err(|e| e.code())?;
+    let pool = accounts::load(&list).map_err(|e| e.code())?;
+    Ok(phone_view(&pool, accounts::read_oauth(&claude_json).as_ref()))
+}
+
 /// 로그인 칸 자리. CLAUDE_CONFIG_DIR 를 쓰면 Claude Code 의 키체인 이름이 달라지는데 그 규칙은 아직 안 봤다 — 막는다
 pub fn live_paths(home: &Path, config_dir: Option<&str>, json_env: Option<&str>, service_env: Option<&str>) -> Result<(String, PathBuf), String> {
     let service = service_env.filter(|s| !s.is_empty());
@@ -73,12 +184,17 @@ fn paths() -> Result<(String, PathBuf), String> {
 }
 
 fn setup() -> Result<(Keychain, Live, PathBuf), String> {
+    setup_quiet(false)
+}
+
+/// always_quiet = 폰에서 — 사람이 맥 앞에 없으니 창 대신 오류로
+fn setup_quiet(always_quiet: bool) -> Result<(Keychain, Live, PathBuf), String> {
     let (service, claude_json) = paths()?;
     let keychain = env("CHAMMO_ACCOUNT_KEYCHAIN").filter(|s| !s.is_empty());
     // 시험 키체인 비밀번호 — 명령마다 잠금을 풀어 비밀번호 창이 안 뜨게(시험 키체인일 때만 쓴다)
     let unlock = keychain.as_ref().and(env("CHAMMO_ACCOUNT_KEYCHAIN_PASSWORD"));
     // 시험 키체인이면 macOS 창을 아예 못 띄우게(잠김·허용 필요는 오류로)
-    let quiet = keychain.is_some();
+    let quiet = always_quiet || keychain.is_some();
     // 로그인 칸은 security 명령으로만 — 프레임워크로 건드리면 허용 창이 연달아 떴다(accounts_store 머리말)
     let kc = Keychain { path: keychain, unlock, quiet, cli_service: Some(service.clone()) };
     // 키체인 계정 이름은 지금 칸에 붙은 것 그대로(값은 안 읽는다). 칸이 없으면 맥 사용자 이름 — Claude Code 와 같은 규칙
@@ -188,6 +304,65 @@ mod tests {
         assert_eq!(live_paths(h, None, Some("/tmp/c.json"), Some("Chammo test live")).unwrap(), ("Chammo test live".to_string(), PathBuf::from("/tmp/c.json")));
         assert_eq!(live_paths(h, Some("/x"), None, None).unwrap_err(), "configDir");
         assert!(live_paths(h, Some("/x"), None, Some("S")).is_ok());
+    }
+
+    #[test]
+    fn 폰_보기엔_이름만_이메일이면_앞부분만() {
+        assert_eq!(phone_name("작은 것", "a@x.com"), "작은 것");
+        assert_eq!(phone_name("", "kim.dev@x.com"), "kim.dev");
+        assert_eq!(phone_name("  ", ""), "");
+        // 사람이 이름 칸에 이메일을 적었어도 앞부분만
+        assert_eq!(phone_name("me@corp.io", "me@corp.io"), "me");
+        assert_eq!(phone_name("일 계정 boss@corp.io", "x@y.z"), "일 계정 boss");
+        // 아주 긴 이름은 자른다(글자 단위 — 한글 가운데서 안 깨짐)
+        assert_eq!(phone_name(&"가".repeat(80), "").chars().count(), 40);
+    }
+
+    #[test]
+    fn 폰_보기엔_비밀이_안_나간다() {
+        let o1 = json!({ "accountUuid": "u1", "organizationUuid": "o1", "emailAddress": "big.boss@corp.io", "organizationRateLimitTier": "default_claude_max_20x" });
+        let o2 = json!({ "accountUuid": "u2", "organizationUuid": "o2", "emailAddress": "side@mail.com" });
+        let auto = json!({
+            "on": true, "pinned": "a2", "switchedAt": 5, "allOutUntil": 9, "v": 2,
+            "slots": { "a1": { "five": { "used": 40.0, "resetsAt": 100 }, "week": { "used": 96.0, "resetsAt": 200 }, "seenAt": 7, "blockedUntil": 300, "why": "week", "fp": 1, "blockFp": 1, "openedAt": 2, "secret": "x" }, "gone": { "seenAt": 1 } },
+            "nudged": { "f00d-session": 1 }, "learn": { "for": "a1", "fp": 1, "first": 1, "n": 1, "lastAt": 1 }
+        });
+        let pool = Pool {
+            accounts: vec![
+                Account { id: "a1".into(), name: "big.boss@corp.io".into(), email: "big.boss@corp.io".into(), plan: "Max 20x".into(), order: 0, oauth: o1.clone() },
+                Account { id: "a2".into(), name: "보조".into(), email: "side@mail.com".into(), plan: "Pro".into(), order: 1, oauth: o2 },
+            ],
+            current: Some("a1".into()),
+            switching: None,
+            auto,
+        };
+        let v = phone_view(&pool, Some(&o1));
+        assert_eq!(v.active.as_deref(), Some("a1"));
+        assert_eq!(v.accounts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["big.boss", "보조"]);
+        let text = serde_json::to_string(&v).unwrap();
+        for bad in ["@", "corp.io", "mail.com", "accountUuid", "organizationUuid", "u1", "o1", "nudged", "f00d", "learn", "secret", "gone", "oauth"] {
+            assert!(!text.contains(bad), "{bad} 가 폰 보기에 나갔다: {text}");
+        }
+        // 사용량·쉬는 때·자동 켜짐·고정은 그대로(화면 domain/accountAuto 가 읽는다)
+        assert_eq!(v.auto["on"], json!(true));
+        assert_eq!(v.auto["pinned"], json!("a2"));
+        assert_eq!(v.auto["allOutUntil"], json!(9));
+        assert_eq!(v.auto["slots"]["a1"]["week"]["used"], json!(96.0));
+        assert_eq!(v.auto["slots"]["a1"]["blockedUntil"], json!(300));
+        assert_eq!(v.auto["slots"]["a1"]["why"], json!("week"));
+        assert!(!v.switching);
+        // 칸에 없는 로그인 — 이메일 앞부분만
+        let other = json!({ "accountUuid": "u9", "emailAddress": "who.else@x.org" });
+        let v = phone_view(&pool, Some(&other));
+        assert_eq!((v.active.as_deref(), v.live_name.as_deref()), (None, Some("who.else")));
+        assert!(!serde_json::to_string(&v).unwrap().contains("x.org"));
+        // 칸에 있는 로그인이면 이름을 따로 안 낸다 · 로그인 없으면 없음
+        assert_eq!(phone_view(&pool, Some(&o1)).live_name, None);
+        assert_eq!(phone_view(&pool, None).live_name, None);
+        // 자동 상태가 비었거나 깨졌어도 객체로
+        let bare = Pool { auto: Value::Null, switching: Some(crate::accounts::Switching { from: None, to: "a2".into() }), ..pool };
+        let v = phone_view(&bare, None);
+        assert!(v.auto.is_object() && v.switching);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { parseDiff, parseHits, parseMerged, parseRepoMap, parseView } from './reviewSource';
+import type { Check, OpenPr } from './review';
+import { needsView, parseDiff, parseHits, parseMerged, parseRepoMap, parseView, type Hit } from './reviewSource';
 
 const map = { 'acme/acme-shop-platform': 'acme-shop-platform', 'acme/cookbook': 'Cookbook' };
 
@@ -80,5 +81,21 @@ describe('parseDiff — 파일별로 @@ 부터, 너무 길면 자른다', () => 
   });
   it('파일당 줄 수 상한 — 남은 줄 수를 cut 에', () => {
     expect(parseDiff(raw, 2)[1]).toEqual({ path: 'db/1.sql', lines: ['@@ -0,0 +1,3 @@', '+a'], cut: 2 });
+  });
+});
+
+describe('needsView — 상세를 다시 읽을 PR', () => {
+  const hit: Hit = { key: 'acme/acme-shop-platform#483', repo: 'acme/acme-shop-platform', folder: 'acme-shop-platform', number: 483, updatedAt: '2026-10-06T08:45:05Z' };
+  const pr = (checks: Check[], updatedAt = hit.updatedAt) => ({ updatedAt, checks }) as Pick<OpenPr, 'updatedAt' | 'checks'> as OpenPr;
+  it('처음 보는 PR·updatedAt 이 바뀐 PR 은 읽는다', () => {
+    expect(needsView(undefined, hit)).toBe(true);
+    expect(needsView(pr([{ name: 'ci', state: 'pass' }], '2026-10-06T08:00:00Z'), hit)).toBe(true);
+  });
+  it('CI 가 끝나도 PR updatedAt 은 안 바뀐다 — 도는 중인 검사가 있으면 같은 updatedAt 이어도 다시 읽는다(#483 실측: updatedAt 08:45:05, CI 끝 08:47:37)', () => {
+    expect(needsView(pr([{ name: 'overflow', state: 'skip' }, { name: 'apps/mobile', state: 'running' }]), hit)).toBe(true);
+  });
+  it('검사가 다 끝났으면(건너뜀 포함) 안 읽는다', () => {
+    expect(needsView(pr([{ name: 'overflow', state: 'skip' }, { name: 'apps/mobile', state: 'pass' }, { name: 'sql', state: 'fail' }]), hit)).toBe(false);
+    expect(needsView(pr([]), hit)).toBe(false);
   });
 });

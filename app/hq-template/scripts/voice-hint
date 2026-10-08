@@ -14,6 +14,9 @@ fi
 # Assistant roster — who the other assistants are and what each handles (scripts/orch-roster; <data>/orch-roles.json + last 7 days)
 # 참모 이름표 — 다른 참모가 누구고 각자 무슨 일을 맡는지, 자기 몫이 아니면 넘기라고(2026-10-04)
 printf '%s' "$inp" | "$(dirname "$0")/orch-roster" 2>/dev/null
+# Skill nudge — situational guides live in HQ skills (.claude/skills/hq-*); name the one this prompt needs (scripts/skill-hint)
+# 스킬 환기 — 상황별 안내는 HQ 스킬에 있다. 이 지시에 맞는 스킬 이름을 한 줄로(scripts/skill-hint, 2026-10-06)
+printf '%s' "$inp" | "$(dirname "$0")/skill-hint" 2>/dev/null
 # Screen now — the app writes <data>/view.txt (line 1 = app pid, line 2 = screen); added only while that app is alive
 # 지금 보는 화면 — 앱이 <데이터>/view.txt 에 적는다(첫 줄 = 앱 pid, 둘째 줄 = 화면). 앱이 살아 있을 때만 붙인다
 if [ -f "$d/view.txt" ]; then

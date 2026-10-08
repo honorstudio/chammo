@@ -4,10 +4,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MobileEnv } from '../../data/web';
 import type { Ctx } from '../../domain/ctx';
-import { closeOnRelease, lineSlot, phoneName, waitAnswer, type Waiting } from '../../domain/mobile';
+import { answerFail, closeOnRelease, dupAnswer, lineSlot, phoneName, waitAnswer, waitKey, type WaitSent, type Waiting } from '../../domain/mobile';
 import type { Session } from '../../domain/session';
-import { IconEnter, IconPin, IconPinOff, IconPlus } from '../Icons';
-import { readPins, readRoles, removeOrch, renameOrch, setPin, setRole, stopOrch } from '../../data/web';
+import { IconEnter, IconPin, IconPinOff, IconPlus, IconPower, IconTrash } from '../Icons';
+import { readPins, readRoles, removeOrch, setPin, setRole, stopOrch, taskAnswer } from '../../data/web';
+import { markWaitSent, peekWaitSent } from './waitSent';
+import { renamePending, usePendingNicks } from './pendingNicks';
 import { inferRoles, parseRoles, roleLine, type RoleMap } from '../../domain/orchRoles';
 import type { TaskEvent } from '../../domain/tasks';
 import { splitOrchName } from '../../domain/orchLabel';
@@ -19,38 +21,59 @@ import { SwipeRow } from './SwipeRow';
 import { josa } from '../../i18n';
 import { useOutbox } from './outbox';
 import { MAvatar } from './MAvatar';
-import { NewOrchForm, OffOrchList, useOffOrchs, type Wake } from './OrchWake';
+import { NewOrchForm, OffOrchList, useOffOrchs, WakeNotice, type Wake } from './OrchWake';
 import { HomeAppLink } from './HomeAppLink';
 
 export const stateTag = (s: Session) => (s.state === 'working' ? { cls: 't-work', text: '일함' } : s.state === 'blocked' ? { cls: 't-wait', text: '물음' } : { cls: 't-done', text: '쉼' });
 
-type Props = { title: string; env: MobileEnv; wake: Wake; onStopped: (id: string) => void; orchs: Session[]; current: string | undefined; ctx: Record<string, Ctx>; waiting: Waiting[]; lines: Record<string, string>; onPick: (id: string) => void; onClose: () => void;
+type Props = { title: string; env: MobileEnv; wake: Wake; onStopped: (id: string) => void; orchs: Session[]; current: string | undefined; ctx: Record<string, Ctx>; waiting: Waiting[]; sent: WaitSent; lines: Record<string, string>; onPick: (id: string) => void; onClose: () => void;
   /** 맡은 일 자동 추론("주로 a·b")용 — 작업 기록·세션 목록 */
   events?: TaskEvent[]; sessions?: Session[] };
 
-/** 답 기다림 카드에서 바로 답하기 — 그 참모 보낼 함으로(참모를 안 바꿔도 된다). 결정 대기함 물음은 무엇에 대한 답인지 붙는다 */
-function WaitReply({ w, name }: { w: Waiting; name: string }) {
+/** 답 기다림 카드에서 바로 답하기 — 그 참모 보낼 함으로(참모를 안 바꿔도 된다). 결정 대기함 물음은 무엇에 대한 답인지 붙고,
+ *  맥 작업 기록에 answer 를 먼저 남긴 뒤 보낸다 — 카드는 누르자마자 숨고(기록이 실패하면 답을 채운 채 되돌림), 이미 답한 물음이면 안 보낸다.
+ *  보낸 표시는 waitSent(앱 전체) — 시트를 다시 열어도 남는다 */
+function WaitReply({ w, name, sent }: { w: Waiting; name: string; sent: WaitSent }) {
   const out = useOutbox(w.orch, NO_ITEMS);
-  const [v, setV] = useState('');
-  const [sent, setSent] = useState(false);
+  const key = waitKey(w);
+  const mine = sent[key];
+  const [v, setV] = useState(mine?.fail ? mine.a : '');
   if (w.kind === 'blocked') return null;
-  if (sent) return <div className="m-muted m-sm">{name}에게 보냈어요</div>;
-  const send = () => { const t = waitAnswer(w, v); if (t) { out.send(t); setSent(true); } };
+  if (mine && !mine.fail) return <div className="m-muted m-sm">{name}에게 보냈어요</div>;
+  const send = () => {
+    const t = waitAnswer(w, v);
+    if (!t || dupAnswer(peekWaitSent(), key, v, Date.now())) return;
+    const a = v.trim();
+    markWaitSent(key, a);
+    if (w.kind !== 'decide' || !w.taskId) { out.send(t); return; }
+    withLimit(taskAnswer(w.taskId, a), ANSWER_LIMIT_MS).then(() => out.send(t), (e: Error) => {
+      if (answerFail(e.message) === 'retry') markWaitSent(key, a, true);
+    });
+  };
   return (
-    <form className="m-wait-reply" onSubmit={(e) => { e.preventDefault(); send(); }}>
-      <input value={v} onChange={(e) => setV(e.target.value)} placeholder="여기서 바로 답하기" enterKeyHint="send" aria-label={`${name}에게 답하기`} />
-      <button type="submit" className="m-in-btn" disabled={!v.trim()} aria-label="보내기" title="보내기"><span className="m-key"><IconEnter /></span></button>
-    </form>
+    <>
+      {mine?.fail && <div className="m-error">못 보냈어요 — 다시 눌러 주세요</div>}
+      <form className="m-wait-reply" onSubmit={(e) => { e.preventDefault(); send(); }}>
+        <input value={v} onChange={(e) => setV(e.target.value)} placeholder="여기서 바로 답하기" enterKeyHint="send" aria-label={`${name}에게 답하기`} />
+        <button type="submit" className="m-in-btn" disabled={!v.trim()} aria-label="보내기" title="보내기"><span className="m-key"><IconEnter /></span></button>
+      </form>
+    </>
   );
 }
+/** 결정 기록 기다리는 한도 — 홈 화면 앱은 백그라운드에서 요청이 매달린다(맥이 받았으면 다시 누를 때 서버가 again 으로 받아 준다) */
+const ANSWER_LIMIT_MS = 15_000;
+const withLimit = <T,>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<T>((_, no) => setTimeout(() => no(new Error('timeout')), ms))]);
 const NO_ITEMS: never[] = [];
 const NO_EVENTS: TaskEvent[] = [];
 
 const hm = (ts: string) => { const d = new Date(ts); return Number.isNaN(d.getTime()) ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 const SLOP = 5;
 
-export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, waiting, lines, onPick, onClose, events = NO_EVENTS, sessions = orchs }: Props) {
+export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, waiting, sent, lines, onPick, onClose, events = NO_EVENTS, sessions = orchs }: Props) {
   const off = useOffOrchs(env, orchs);
+  // 시트를 열 때 지난 켜기 결과는 지운다 — 시트를 닫아도 깨우기 상태는 앱에 남아서 옛 글이 다시 떴다
+  const { clearNote } = wake;
+  useEffect(() => { clearNote(); }, [clearNote]);
   // 맡은 일 — 맥 orch-roles.json(데스크톱과 같은 파일), 사람이 안 적었으면 최근 7일 기록으로 "주로 a·b". 이름 줄 오른쪽 회색(둘째 줄은 마지막 답 자리)
   const [rolesText] = useMemoPoll('roles', readRoles, 5000, '{}');
   const [rolesNow, setRolesNow] = useState<RoleMap | null>(null);
@@ -60,7 +83,7 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const inferred = useMemo(() => inferRoles(events, [...orchs, ...off.map((r) => r.off!)].map((x) => ({ id: x.id, name: x.name })), sessions, Date.now(), { roles, hq: env.hqDir }), [events, orchs, offKey, sessions, rolesText, rolesNow, env.hqDir]);
   const roleOf = (name: string) => roleLine(name, roles, inferred);
-  // 줄을 오른쪽→왼쪽으로 밀면 뒤 버튼(재우기·제거 / 깨우기·제거), 왼쪽→오른쪽이면 고정 — 한 번에 한 줄만, 바깥을 누르면 닫힘
+  // 줄을 오른쪽→왼쪽으로 밀면 뒤 버튼(재우기·제거 / 깨우기·제거 — 아이콘, 제거는 글자 확인 카드), 왼쪽→오른쪽이면 고정 — 한 번에 한 줄만, 바깥을 누르면 닫힘
   const [openId, setOpenId] = useState<string | null>(null);
   // 고정 — 맥 orch-pins.json(데스크톱과 같은 파일), 누르면 바로 바꿔 보이고 맥 답으로 맞춘다
   const [pinsText] = useMemoPoll('pins', readPins, 5000, '[]');
@@ -74,12 +97,8 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
   const sorted = pinFirst(orchs, pins, (s) => s.sessionId);
   // 길게 누르기 메뉴(이름 바꾸기 + 밀기 동작 모두) — 켜진 참모·꺼진 참모
   const [menu, setMenu] = useState<{ kind: 'live'; s: Session } | { kind: 'off'; r: HomeRow } | null>(null);
-  // 바꾼 이름 — 맥이 쉬는 때 /rename 을 보내 진짜 이름에 실릴 때까지 폰엔 바로 새 이름(빈 글 = 처음 이름)
-  const [nicks, setNicks] = useState<Record<string, string>>({});
-  useEffect(() => {
-    setNicks((m) => { const n = { ...m }; let ch = false; for (const o of orchs) if (o.id in n && (splitOrchName(o.name).nick ?? '') === n[o.id]) { delete n[o.id]; ch = true; } return ch ? n : m; });
-  }, [orchs]);
-  const nameOf = (s: Session) => (s.id in nicks ? (nicks[s.id] || phoneName(splitOrchName(s.name).base, orchs)) : phoneName(s.name, orchs));
+  // 바꾼 이름 — 맥이 쉬는 때 /rename 을 보내 진짜 이름에 실릴 때까지 폰엔 바로 새 이름(대시보드 프로필 창과 같이 본다)
+  const { nickOf, nameOf } = usePendingNicks(orchs);
   // 제거 — claude rm 은 목록에서만 빼고 대화 기록 파일은 맥에 남는다(실측). 다시 깨울 수는 없어서 빨강 확인
   const [removing, setRemoving] = useState<{ id: string; name: string; live: boolean; working: boolean } | null>(null);
   const [removeErr, setRemoveErr] = useState<string | null>(null);
@@ -220,17 +239,17 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
             </div>
           )}
           {naming && <NewOrchForm title={title} taken={taken} wake={wake} onDone={() => setNaming(false)} />}
-          {wake.error && <div className="m-error">{wake.error}</div>}
+          <WakeNotice wake={wake} />
           {wake.making && <div className="m-orch m-off" aria-busy="true"><span className="m-orch-text"><span className="m-orch-top"><span className="m-orch-name">{phoneName(wake.making, orchs)}</span><span className="m-muted m-sm">만드는 중…</span></span></span></div>}
           {waiting.length > 0 && (
             <>
               <div className="m-sect">답을 기다림 {waiting.length}</div>
-              {waiting.map((w, i) => (
-                <div key={`${w.orch}-${w.kind}-${i}`} className="m-wait-card">
+              {waiting.map((w) => (
+                <div key={waitKey(w)} className="m-wait-card">
                   <div className="m-wait-top">{(() => { const o = orchs.find((x) => x.id === w.orch); return o ? <MAvatar orch={o} orchs={orchs} size={28} asking /> : null; })()}<b>{phoneName(w.name, orchs)}</b><span className="m-muted m-sm">{hm(w.ts)}</span></div>
                   {w.lead && <div className="m-muted m-sm">{w.lead}</div>}
                   <div className="m-ask-q">{w.q}</div>
-                  <WaitReply w={w} name={phoneName(w.name, orchs)} />
+                  <WaitReply w={w} name={phoneName(w.name, orchs)} sent={sent} />
                   <button type="button" className="m-btn" onClick={() => onPick(w.orch)}>그 {title}로 가서 보기</button>
                 </div>
               ))}
@@ -245,8 +264,8 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
             const slot = lineSlot(lines[s.id]);
             return (
               <SwipeRow key={s.id} id={s.id} openId={openId} setOpenId={setOpenId} onMenu={() => setMenu({ kind: 'live', s })} menuLabel={`${nameOf(s)} 메뉴`} actions={[
-                { label: '재우기', onPress: () => { setSleepErr(null); setSleeping(s); } },
-                { label: '제거', danger: true, onPress: () => { setRemoveErr(null); setRemoving({ id: s.id, name: nameOf(s), live: true, working: s.state === 'working' }); } },
+                { label: '재우기', icon: <IconPower />, onPress: () => { setSleepErr(null); setSleeping(s); } },
+                { label: '제거', icon: <IconTrash />, danger: true, onPress: () => { setRemoveErr(null); setRemoving({ id: s.id, name: nameOf(s), live: true, working: s.state === 'working' }); } },
               ]} start={s.sessionId ? [pinned
                 ? { label: '고정 풀기', icon: <IconPinOff />, tone: 'pin', onPress: () => togglePin(s.sessionId!, false) }
                 : { label: '고정', icon: <IconPin />, tone: 'pin', onPress: () => togglePin(s.sessionId!, true) }] : []}>
@@ -279,11 +298,11 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
         const sid = live ? menu.s.sessionId : menu.r.off!.sessionId;
         const title = live ? nameOf(menu.s) : phoneName(menu.r.off!.name, orchs);
         return (
-          <OrchMenu title={title} live={live} pinned={!!sid && pins.includes(sid)} canPin={!!sid} nick={live ? (nicks[menu.s.id] ?? splitOrchName(menu.s.name).nick ?? '') : ''}
+          <OrchMenu title={title} live={live} pinned={!!sid && pins.includes(sid)} canPin={!!sid} nick={live ? (nickOf(menu.s) ?? splitOrchName(menu.s.name).nick ?? '') : ''}
             role={live ? roles[splitOrchName(menu.s.name).base]?.role ?? '' : ''}
             onRole={async (role) => { if (!live) return; setRolesNow(parseRoles(JSON.stringify(await setRole(menu.s.id, role)))); }}
             onClose={() => setMenu(null)}
-            onRename={async (nick) => { if (!live) return; await renameOrch(menu.s.id, nick); setNicks((m) => ({ ...m, [menu.s.id]: nick })); }}
+            onRename={async (nick) => { if (live) await renamePending(menu.s.id, nick); }}
             onPick={(k) => {
               if (k === 'pin' || k === 'unpin') { if (sid) togglePin(sid, k === 'pin'); return; }
               if (k === 'sleep' && live) { setSleepErr(null); setSleeping(menu.s); return; }

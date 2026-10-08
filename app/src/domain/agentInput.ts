@@ -104,3 +104,28 @@ export const escCancelsDialog = (e: { key: string }, dialogUp: boolean) => dialo
 
 /** Esc — 한 번은 페이지로(페이지 팝업 닫기 등), 0.5초 안에 또 누르면 모달 닫기 */
 export const escClose = (prevAt: number, now: number) => prevAt > 0 && now - prevAt <= 500;
+
+/** 손가락을 이만큼(px) 넘게 움직이면 누르기가 아니라 밀기(스크롤) */
+export const TAP_SLOP = 10;
+
+/**
+ * 폰 개입(2026-10-06 사용자 ⑥) — 그림 위 손가락 한 번 → 브라우저 입력. 거의 안 움직였으면 그 자리 누르기,
+ * 움직였으면 그 자리에서 스크롤(손가락 반대 방향, scale = 페이지 px / 화면 px)
+ */
+export function phoneGesture(p: { x: number; y: number }, dx: number, dy: number, scale: number): InputEv[] {
+  if (Math.hypot(dx, dy) < TAP_SLOP) {
+    return [
+      { kind: 'mouse', type: 'mouseMoved', x: p.x, y: p.y, button: 'none', modifiers: 0 },
+      { kind: 'mouse', type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1, modifiers: 0 },
+      { kind: 'mouse', type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1, modifiers: 0 },
+    ];
+  }
+  const k = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  return [{ kind: 'mouse', type: 'mouseWheel', x: p.x, y: p.y, deltaX: Math.round(-dx * k) || 0, deltaY: Math.round(-dy * k) || 0, modifiers: 0 }];
+}
+
+/** 폰 키 버튼(Enter·지우기) — 데스크톱 키와 같은 모양 */
+export function phoneKey(key: 'Enter' | 'Backspace'): InputEv[] {
+  const code = { Enter: 13, Backspace: 8 }[key];
+  return keyEvents({ key, code: key, keyCode: code, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false }) ?? [];
+}

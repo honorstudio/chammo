@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ctxFromAgents, foldSummary, heldIds, orchAsk, orchTasks, releaseSnap, routineOrch, rubberTop, sheetTop, closeOnRelease, dropLabel, keyboardOpen, frameAt, driftBias, isTyping, liveWork, phoneBubble, usageText, waitingList, withAttachments, phoneName, offOrchRows, wokeOrch, waitAnswer, sessionBoard, nearBottom, stickBottom, shrinkPlan, withEarlier, wantEarlier, nextAfterStop, lineSlot, orchMenu } from './mobile';
+import { ctxFromAgents, foldSummary, heldIds, orchAsk, orchTasks, releaseSnap, routineOrch, rubberTop, sheetTop, closeOnRelease, dropLabel, keyboardOpen, frameAt, driftBias, isTyping, liveWork, phoneBubble, usageText, waitingList, withAttachments, phoneName, offOrchRows, wokeOrch, waitAnswer, waitKey, shownWaiting, pruneWaitSent, dupAnswer, answerFail, sessionBoard, nearBottom, stickBottom, shrinkPlan, withEarlier, wantEarlier, nextAfterStop, lineSlot, orchMenu, pendingName, prunePendingNicks } from './mobile';
 import type { Session } from './session';
 import type { ChatItem } from './chat';
 import type { TaskEvent } from './tasks';
@@ -107,6 +107,7 @@ describe('참모 물음 — 사용자 답을 기다리는 것', () => {
     const w = waitingList([o1, o2, o3], { o1: { ts: '2026-10-02T10:00:00Z', lead: '', q: '배포할까?' } }, ev);
     expect(w.map((x) => [x.orch, x.kind])).toEqual([['o1', 'ask'], ['o3', 'decide'], ['o2', 'blocked']]);
     expect(w.find((x) => x.kind === 'decide')!.q).toBe('실결제 테스트 해도 돼?');
+    expect(w.find((x) => x.kind === 'decide')!.taskId).toBe('k');
     expect(new Set(w.map((x) => x.orch)).size).toBe(3);
   });
 });
@@ -374,6 +375,15 @@ describe('sessionBoard — 폰 세션 화면(참모 말고 하위 세션)', () =
   });
 });
 
+describe('sessionBoard — 윈도우 HQ 경로 모양이 달라도 참모는 빼고 도우미는 도우미로(2026-10-05)', () => {
+  const s = (id: string, name: string, cwd: string) => ({ id, name, cwd, state: 'idle', kind: 'background', project: cwd.split('/').pop(), workspace: null, startedAt: 1 }) as unknown as Session;
+  it('hqDir 가 C:\\Users\\Me/.chammo/hq 로 와도', () => {
+    const hq = 'C:/Users/Me/.chammo/hq';
+    const b = sessionBoard([s('o1', '참모', hq), s('h1', 'sns-post', hq), s('a1', 'shop', 'C:/Users/Me/dev/shop')], 'C:\\Users\\Me/.chammo/hq');
+    expect(b.map((g) => [g.name, g.sessions.map((x) => x.id)])).toEqual([['shop', ['a1']], ['도우미', ['h1']]]);
+  });
+});
+
 describe('stickBottom — 대화 목록 바닥 붙이기(키보드·새 말풍선·보내기)', () => {
   it('바닥 근처(80px 안)를 보던 중이면 붙인다', () => {
     expect(nearBottom(1000, 600, 380)).toBe(true); // 20px 남음
@@ -455,5 +465,84 @@ describe('orchMenu — 참모 줄 길게 누르기 메뉴(밀기 동작 + 이름
   it('꺼진 참모: 깨우기·제거만(이름은 켜진 세션에만 /rename), 대화 id 없으면 고정 없음', () => {
     expect(orchMenu({ live: false, pinned: false, canPin: true }).map((m) => m.key)).toEqual(['wake', 'pin', 'remove']);
     expect(orchMenu({ live: true, pinned: false, canPin: false }).map((m) => m.key)).toEqual(['rename', 'role', 'sleep', 'remove']);
+  });
+});
+
+describe('폰에서 바꾼 이름 — 맥이 /rename 으로 진짜 이름에 실을 때까지 메뉴·대시보드·프로필 창이 같이 새 이름', () => {
+  const o = (id: string, name: string) => ({ id, name }) as Session;
+  const orchs = [o('a', '참모-2 · 참모 업데이트'), o('b', '참모-5 · 개발 담당')];
+
+  it('바꾼 이름이 있으면 그 이름, 비우면 처음 이름(번호 뺀 기본 이름), 없으면 지금 이름', () => {
+    expect(pendingName(orchs[0]!, { a: '참모 고치기' }, orchs)).toBe('참모 고치기');
+    expect(pendingName(orchs[0]!, { a: '' }, orchs)).toBe(phoneName('참모-2', orchs));
+    expect(pendingName(orchs[1]!, { a: '참모 고치기' }, orchs)).toBe('개발 담당');
+  });
+
+  it('진짜 이름에 실리면 뺀다 — 그대로면 같은 객체(다시 그리지 않게)', () => {
+    const n = { a: '참모 업데이트', b: '새 이름' };
+    expect(prunePendingNicks(n, orchs)).toEqual({ b: '새 이름' });
+    const keep = { b: '새 이름' };
+    expect(prunePendingNicks(keep, orchs)).toBe(keep);
+    expect(prunePendingNicks({ a: '' }, [o('a', '참모-2')])).toEqual({});
+  });
+});
+
+import { wakeFailText } from './mobile';
+
+describe('참모 켜기·만들기 실패 글', () => {
+  it('꺼진 목록에 없던 참모(이미 켜졌거나 지워짐)는 오류가 아니라 목록 새로 고침', () => {
+    const r = wakeFailText('no such stopped assistant', 'wake');
+    expect(r.refresh).toBe(true);
+    expect(r.text).not.toMatch(/[a-z]{3}/i); // 서버 영어 원문을 그대로 안 보인다
+    expect(r.text).toContain('목록');
+  });
+  it('서버 낱말마다 사람 말로 — 영어 원문은 안 보인다', () => {
+    for (const m of ['too soon', 'mac side took too long', 'name taken', 'bad name', 'Load failed', 'Failed to fetch', 'claude: something exploded', 'HTTP 502', '']) {
+      const r = wakeFailText(m, m.includes('name') ? 'make' : 'wake');
+      expect(r.text, m).not.toMatch(/[a-z]{3}/i);
+      expect(r.text.length, m).toBeGreaterThan(0);
+    }
+    expect(wakeFailText('name taken', 'make').text).toBe('이미 있는 이름이에요');
+    expect(wakeFailText('too soon', 'wake').refresh).toBe(false);
+  });
+  it('켜기와 만들기는 모르는 실패에서 글이 갈린다', () => {
+    expect(wakeFailText('boom', 'wake').text).not.toBe(wakeFailText('boom', 'make').text);
+  });
+});
+
+describe('결정 카드 답 — 한 번만(2026-10-06 사용자 폰에서 ㄱㄱ 세 번)', () => {
+  const ask = { orch: 'o1', name: '참모-1', kind: 'ask' as const, ts: '2026-10-06T07:00:00Z', q: '배포할까?' };
+  const decide = { orch: 'o1', name: '참모-1', kind: 'decide' as const, ts: '2026-10-06T07:01:00Z', q: '머지할까?', taskId: '1006-1615-5e02' };
+  it('카드 열쇠 — 결정은 일 id, 참모 물음은 참모·시각(시트를 다시 열어도 같은 카드)', () => {
+    expect(waitKey(decide)).toBe('task:1006-1615-5e02');
+    expect(waitKey({ ...decide, ts: 'other' })).toBe('task:1006-1615-5e02');
+    expect(waitKey(ask)).toBe('ask:o1:2026-10-06T07:00:00Z');
+    expect(waitKey(ask)).not.toBe(waitKey({ ...ask, ts: '2026-10-06T08:00:00Z' }));
+  });
+  it('답한 결정 카드는 기록이 따라올 때까지 숨긴다 — 참모 물음 카드는 남겨 "보냈어요"', () => {
+    const sent = { [waitKey(decide)]: { a: 'ㄱㄱ', at: 1 }, [waitKey(ask)]: { a: '응', at: 1 } };
+    expect(shownWaiting([ask, decide], sent)).toEqual([ask]);
+    expect(shownWaiting([ask, decide], {})).toEqual([ask, decide]);
+    // 기록이 실패해 되돌린 카드는 다시 보인다
+    expect(shownWaiting([ask, decide], { [waitKey(decide)]: { a: 'ㄱㄱ', at: 1, fail: true } })).toEqual([ask, decide]);
+  });
+  it('목록에서 빠진 카드의 보낸 표시는 지운다(같은 객체면 그대로)', () => {
+    const sent = { [waitKey(decide)]: { a: 'ㄱㄱ', at: 1 }, [waitKey(ask)]: { a: '응', at: 1 } };
+    expect(pruneWaitSent(sent, [ask, decide])).toBe(sent);
+    expect(pruneWaitSent(sent, [ask])).toEqual({ [waitKey(ask)]: { a: '응', at: 1 } });
+  });
+  it('같은 카드에 같은 답을 2분 안에 또 — 막는다. 다른 답·다른 카드·2분 뒤는 된다', () => {
+    const sent = { [waitKey(decide)]: { a: 'ㄱㄱ', at: 1_000 } };
+    expect(dupAnswer(sent, waitKey(decide), ' ㄱㄱ ', 1_000 + 30_000)).toBe(true);
+    expect(dupAnswer(sent, waitKey(decide), '아니', 1_000 + 30_000)).toBe(false);
+    expect(dupAnswer(sent, waitKey(ask), 'ㄱㄱ', 1_000 + 30_000)).toBe(false);
+    expect(dupAnswer(sent, waitKey(decide), 'ㄱㄱ', 1_000 + 120_001)).toBe(false);
+    expect(dupAnswer({ [waitKey(decide)]: { a: 'ㄱㄱ', at: 1_000, fail: true } }, waitKey(decide), 'ㄱㄱ', 2_000)).toBe(false); // 실패한 것은 다시 보낼 수 있다
+  });
+  it('기록 실패 — 이미 답함(409)·방금 보냄(429)은 숨긴 채 글을 안 보낸다, 나머지는 되돌려 다시', () => {
+    expect(answerFail('not waiting')).toBe('gone');
+    expect(answerFail('too soon')).toBe('soon');
+    expect(answerFail('Failed to fetch')).toBe('retry');
+    expect(answerFail('HTTP 502')).toBe('retry');
   });
 });

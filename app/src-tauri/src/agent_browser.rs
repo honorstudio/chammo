@@ -52,6 +52,15 @@ pub struct Live {
     /// 세션이 사람을 부름(browser_ask_human) {reason, at} — 앱이 그 브라우저를 크게 띄우고 알린다
     #[serde(default)]
     pub ask: Option<serde_json::Value>,
+    /// 래퍼가 '개입' 때 세션 도구를 붙잡을 수 있다(tools/chammo-browser src/takeover.js) — 없으면(스크립트 크롬·옛 래퍼) 멈추지 못한다
+    #[serde(default)]
+    pub gate: bool,
+    /// 세션 도구가 사람이 돌려주길 기다리기 시작한 때(ms, 0 = 안 기다림)
+    #[serde(default)]
+    pub held: u64,
+    /// 사람이 개입 중 {by, at} — 래퍼가 아니라 앱이 채운다(takeover.rs)
+    #[serde(default)]
+    pub takeover: Option<serde_json::Value>,
 }
 
 /// 상태 파일 글 → Live. 포트·경로·프로필 모양이 이상하면 None(남이 심은 파일로 엉뚱한 곳에 붙지 않게)
@@ -145,7 +154,7 @@ pub fn agent_lives() -> Vec<Live> {
         }
         let Some(l) = std::fs::read_to_string(&p).ok().as_deref().and_then(parse_live) else { continue };
         match live_kind(&l, crate::platform::pid_alive, port_open) {
-            LiveKind::Show => out.push(l),
+            LiveKind::Show => out.push(with_takeover(l)),
             LiveKind::Remove => {
                 let _ = std::fs::remove_file(&p);
             }
@@ -154,6 +163,64 @@ pub fn agent_lives() -> Vec<Live> {
     }
     out.sort_by(|a, b| a.profile.cmp(&b.profile));
     out
+}
+
+/// 사람 개입 상태를 채운다 — 세션이 바뀐 개입은 치우고, 개입 중이면 앱이 살아 있다는 표시(래퍼가 3분 안 고쳐지면 푼다).
+/// 세션이 사람을 부르는 동안은 기록을 모은다. 쥐고 있으면 보는 칸이 없어도 일꾼을 붙여 둔다(주소·탭 바뀜 기록)
+fn with_takeover(mut l: Live) -> Live {
+    let dir = live_dir();
+    crate::takeover::drop_foreign(&dir, &l.profile, l.pid);
+    if let Some((_, at, by)) = crate::takeover::current(&dir, &l.profile) {
+        crate::takeover::heartbeat(&dir, &l.profile);
+        l.takeover = Some(serde_json::json!({ "by": by, "at": at }));
+    }
+    match &l.ask {
+        Some(a) => crate::takeover::start_ask(&l.profile, l.pid, a["at"].as_u64().unwrap_or(0)),
+        None => crate::takeover::drop_ask(&dir, &l.profile),
+    }
+    if crate::takeover::holding(&l.profile) {
+        wake(&l.profile);
+    }
+    l
+}
+
+/// 사람이 조작해도 되나 — 그 래퍼에 개입 중이거나 그 래퍼가 사람을 부르는 중. 아니면 보기만(2026-10-06 사용자 ①)
+fn human_ok(profile: &str, pid: i32) -> bool {
+    let live = read_live(profile);
+    for_wrapper(live.as_ref(), pid) && crate::takeover::allows(&live_dir(), profile, pid, live.as_ref().is_some_and(|l| l.ask.is_some()))
+}
+
+/// 사람 개입 시작 — 그 래퍼(pid)에. 그때부터 화면 조작이 되고 래퍼는 세션의 다음 브라우저 도구를 붙잡는다
+#[tauri::command]
+pub fn agent_takeover(profile: String, pid: i32, by: Option<String>) -> Result<(), String> {
+    if !for_wrapper(read_live(&profile).as_ref(), pid) {
+        return Err("browser changed".into());
+    }
+    crate::takeover::start(&live_dir(), &profile, pid, by.as_deref().unwrap_or("desktop"))?;
+    #[cfg(not(test))]
+    crate::claude::log_out("browser", &format!("사람 개입 시작 ({profile})"));
+    wake(&profile);
+    Ok(())
+}
+
+/// 돌려주기 — 사람이 한 일 기록(.handback)을 먼저 쓰고 개입을 푼다. 래퍼가 붙잡은 세션 도구가 꼬리표와 함께 이어진다
+#[tauri::command]
+pub fn agent_handback(profile: String, pid: i32) -> Result<(), String> {
+    if profile.is_empty() || profile.starts_with('.') || profile.contains(['/', '\\', '\0']) {
+        return Err("bad profile".into());
+    }
+    crate::takeover::hand_back(&live_dir(), &profile, pid)?;
+    #[cfg(not(test))]
+    crate::claude::log_out("browser", &format!("사람 개입 돌려줌 ({profile})"));
+    Ok(())
+}
+
+/// 일꾼이 없거나 끝났으면 띄운다(보는 칸이 없어도 — 개입 중 기록용)
+fn wake(profile: &str) {
+    let running = with_workers(|ws| ws.get(profile).is_some_and(|w| w.view.lock().is_ok_and(|v| !v.done)));
+    if !running {
+        touch(profile);
+    }
 }
 
 /// CDP 로 본 탭 하나
@@ -228,11 +295,15 @@ struct View {
     human_at: Option<Instant>,
     /// 사람이 연 파일 고르기 {mode, backendNodeId} — 앱이 맥 파일 창을 띄워 넣는다(agent_choose_files)
     chooser: Option<serde_json::Value>,
+    /// 크롬이 페이지 밖에 창을 띄웠다(패스키·Touch ID·폰 QR 등) — 이 그림엔 안 찍혀 모달이 '크롬에서 보기'로 꺼내게 한다(chrome_popup)
+    popup: bool,
     seq: u64,
     jpeg: Vec<u8>,
     pages: Vec<Page>,
     current: Option<String>,
     pinned: Option<String>,
+    /// 일꾼이 크롬에 붙어 탭 목록을 읽었다 — 이때 pages 가 비었으면 '탭 0개'(맥 크롬은 마지막 창을 닫아도 포트가 산다), 아니면 아직 붙는 중
+    attached: bool,
     /// 일꾼이 끝났다(크롬 닫힘·연결 끊김) — 다음 물음에 새로 띄운다
     done: bool,
     /// 마지막 실패 이유 — 다시 붙는 동안에도 남기고, 붙으면 지운다(모달이 이유를 보여 준다)
@@ -270,9 +341,9 @@ pub fn reuse_worker(done: bool, failed_at: Option<Instant>, now: Instant) -> boo
     !done || failed_at.is_some_and(|t| now.duration_since(t) < RETRY)
 }
 
-/// 일꾼을 계속 둘까 — 보는 칸이 있거나, 이 일꾼만 답할 수 있는 대화상자가 떠 있으면
-pub fn keep_running(idle: Duration, has_dialog: bool) -> bool {
-    idle <= IDLE || (has_dialog && idle <= DIALOG_HOLD)
+/// 일꾼을 계속 둘까 — 보는 칸이 있거나, 이 일꾼만 답할 수 있는 대화상자가 떠 있거나, 사람이 쥐고 있으면(개입·부름 — 주소·탭 바뀜을 기록)
+pub fn keep_running(idle: Duration, has_dialog: bool, holding: bool) -> bool {
+    idle <= IDLE || (has_dialog && idle <= DIALOG_HOLD) || holding
 }
 
 /// 그 프로필 일꾼을 깨우고(없거나 끝났으면 새로) 보는 중이라고 알린다
@@ -297,6 +368,7 @@ fn touch(profile: &str) -> Arc<Mutex<View>> {
             let err = run(&p, &view, &seen, &stop).err().unwrap_or_default();
             if let Ok(mut v) = view.lock() {
                 v.done = true;
+                v.attached = false;
                 v.failed_at = (!err.is_empty()).then(Instant::now);
                 v.error = err;
             }
@@ -322,12 +394,45 @@ pub fn frame_bytes(profile: &str, since: u64) -> Vec<u8> {
     if v.seq > since && !v.jpeg.is_empty() { pack_frame(v.seq, &v.jpeg) } else { vec![] }
 }
 
-/// 폰에 보낼 세션 브라우저 목록 — 보기에 필요한 것만(포트·devtools 경로·래퍼 pid 는 맥 안에서만)
+/// 폰에 보낼 세션 브라우저 목록 — 보기에 필요한 것만(포트·devtools 경로·래퍼 pid 는 맥 안에서만).
+/// 개입·부름 상태도(부름은 이유 한 줄만) — 폰에서도 개입·돌려주기·다 했어를 한다(2026-10-06 사용자 ⑥)
 pub fn lives_for_phone() -> serde_json::Value {
     serde_json::Value::Array(agent_lives().into_iter().map(|l| serde_json::json!({
         "profile": l.profile, "sessionPid": l.session_pid, "url": l.url, "title": l.title, "tabs": l.tabs,
         "tool": l.tool, "toolAt": l.tool_at, "busy": l.busy, "ts": l.ts,
+        "ask": l.ask.as_ref().map(|a| serde_json::json!({ "reason": a["reason"], "at": a["at"] })), "gate": l.gate, "held": l.held, "takeover": l.takeover,
     })).collect())
+}
+
+/// 폰이 본 그 세션(sessionPid)의 지금 래퍼 pid — 세션이 바뀌었으면 None
+fn phone_pid(profile: &str, session_pid: i32) -> Option<Live> {
+    read_live(profile).filter(|l| l.session_pid == session_pid)
+}
+
+/// 폰에서 개입·돌려주기. 세션이 부르는 중이면 돌려주기 = '다 했어'
+pub fn phone_takeover(profile: &str, session_pid: i32, on: bool) -> Result<(), String> {
+    let l = phone_pid(profile, session_pid).ok_or("browser changed")?;
+    match (on, l.ask.is_some()) {
+        (true, true) => Ok(()), // 부르는 중엔 이미 조작할 수 있다
+        (true, false) => agent_takeover(profile.to_string(), l.pid, Some("phone".into())),
+        (false, true) => agent_ask_done(profile.to_string(), l.pid),
+        (false, false) => agent_handback(profile.to_string(), l.pid),
+    }
+}
+
+/// 폰에서 누르기·글자·스크롤 — 데스크톱 모달과 같은 길(agent_input). 폰은 탭 목록을 안 받으니 지금 보여 주는 탭으로 맞춰 본다
+pub fn phone_input(profile: &str, session_pid: i32, events: Vec<crate::agent_input::InputEv>) -> Result<(), String> {
+    let l = phone_pid(profile, session_pid).ok_or("browser changed")?;
+    if !human_ok(profile, l.pid) {
+        return Err("not in control".into());
+    }
+    let expect = {
+        let view = touch(profile);
+        let v = view.lock().unwrap_or_else(|e| e.into_inner());
+        v.current.as_ref().and_then(|c| v.pages.iter().find(|p| &p.id == c)).map(|p| Expect { target: p.id.clone(), url: p.url.clone() })
+    };
+    agent_input(profile.to_string(), l.pid, expect, events);
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -337,6 +442,8 @@ pub struct Tabs {
     current: Option<String>,
     pinned: bool,
     error: String,
+    /// 일꾼이 붙어 탭 목록을 읽었다 — 모달이 '탭 0개'(닫힘)와 '붙는 중'을 가른다
+    attached: bool,
     /// 지금 탭에 열린 JS 대화상자 {type, message, defaultPrompt}
     dialog: Option<serde_json::Value>,
     /// 대화상자가 떠 있는 탭들(탭 띠 표시)
@@ -351,6 +458,8 @@ pub struct Tabs {
     reopened: bool,
     /// 탭·주소가 바뀌어 안 보낸 사람 입력 수
     dropped: u64,
+    /// 크롬이 이 그림 밖에 창을 띄웠다(패스키 등) — 모달이 '크롬에서 보기' 줄을 띄운다
+    popup: bool,
 }
 
 /// 탭 띠 — CDP 로 본 탭들과 지금 보여 주는 탭
@@ -365,17 +474,28 @@ pub fn agent_tabs(profile: String) -> Tabs {
     let dialog = v.current.as_ref().and_then(|c| v.dialogs.get(c)).cloned();
     let dialog_tabs = v.pages.iter().filter(|p| v.dialogs.contains_key(&p.id)).map(|p| p.id.clone()).collect();
     let stuck = v.current.is_some() && v.stuck == v.current && dialog.is_none();
-    Tabs { pages: v.pages.clone(), current: v.current.clone(), pinned: v.pinned.is_some(), error: v.error.clone(), dialog, dialog_tabs, stuck, shown, chooser, reopened, dropped: v.dropped }
+    Tabs { pages: v.pages.clone(), current: v.current.clone(), pinned: v.pinned.is_some(), error: v.error.clone(), attached: v.attached, dialog, dialog_tabs, stuck, shown, chooser, reopened, dropped: v.dropped, popup: v.popup }
 }
 
-/// 화면 다시 받기 — 실패해 쉬는 일꾼의 기다림(RETRY)을 풀어 다음 물음에 바로 다시 붙는다(도는 일꾼은 그대로)
+/// 화면 다시 받기 — 실패해 쉬는 일꾼의 기다림(RETRY)을 풀어 다음 물음에 바로 다시 붙는다. 도는 일꾼(탭 0개로 '닫혔어'인 때 등)도
+/// 끊어 새로 붙인다 — 눌러도 아무 일이 없었다(리뷰). 대화상자가 떠 있으면 그대로(그 대화상자는 이 일꾼 세션으로만 답할 수 있다, QA B6)
 #[tauri::command]
 pub fn agent_retry(profile: String) {
     with_workers(|ws| {
-        if let Some(mut v) = ws.get(&profile).and_then(|w| w.view.lock().ok()) {
-            v.failed_at = None;
+        if let Some(w) = ws.get(&profile) {
+            if let Ok(mut v) = w.view.lock() {
+                v.failed_at = None;
+                if retry_restarts(v.done, !v.dialogs.is_empty()) {
+                    w.stop.store(true, Ordering::Relaxed);
+                }
+            }
         }
     });
+}
+
+/// 다시 시도가 도는 일꾼을 끊을까 — 대화상자를 쥐고 있지 않을 때만
+pub fn retry_restarts(done: bool, has_dialog: bool) -> bool {
+    !done && !has_dialog
 }
 
 /// 띠에서 탭을 골라 보기(에이전트 조작엔 안 끼어든다). None = 다시 알아서 따라가기
@@ -388,7 +508,7 @@ pub fn agent_pin(profile: String, target: Option<String>) {
 /// 모달에서 직접 조작 — 클릭·스크롤·키·글을 그 크롬 지금 탭에(CDP Input). 모양이 이상한 건 조용히 버린다
 #[tauri::command]
 pub fn agent_input(profile: String, pid: i32, expect: Option<Expect>, events: Vec<crate::agent_input::InputEv>) {
-    if !for_wrapper(read_live(&profile).as_ref(), pid) {
+    if !human_ok(&profile, pid) {
         return;
     }
     let view = touch(&profile);
@@ -410,11 +530,13 @@ pub fn agent_input(profile: String, pid: i32, expect: Option<Expect>, events: Ve
 /// JS 대화상자 답(확인·취소, prompt 글) — 모달이 띄운 그 탭(target, 없으면 지금 탭)의 대화상자에. 그 탭에 대화상자가 없으면 버린다
 #[tauri::command]
 pub fn agent_dialog(profile: String, pid: i32, target: Option<String>, accept: bool, prompt: Option<String>) {
-    if !for_wrapper(read_live(&profile).as_ref(), pid) {
+    if !human_ok(&profile, pid) {
         return;
     }
     let view = touch(&profile);
-    queue_answer(&mut view.lock().unwrap_or_else(|e| e.into_inner()), target, accept, prompt);
+    if queue_answer(&mut view.lock().unwrap_or_else(|e| e.into_inner()), target, accept, prompt) {
+        crate::takeover::record(&profile, crate::takeover_note::dialog(accept));
+    }
 }
 
 /// 답을 줄에 — 그 탭에 아는 대화상자가 있을 때만(지금 탭에 없는데 앞 탭 것으로 가거나, 같은 대화상자에 두 번 가지 않게)
@@ -434,13 +556,16 @@ fn queue_answer(v: &mut View, target: Option<String>, accept: bool, prompt: Opti
 /// 모달 위로 끌어다 놓은 파일 — 그 자리에 drag 로 놓는다(파일 칸·올리기 칸). 경로는 크롬에만, 어디에도 안 남긴다
 #[tauri::command]
 pub fn agent_drop_files(profile: String, pid: i32, expect: Expect, paths: Vec<String>, x: f64, y: f64) -> usize {
-    if !for_wrapper(read_live(&profile).as_ref(), pid) {
+    if !human_ok(&profile, pid) {
         return 0;
     }
     let view = touch(&profile);
     let mut v = view.lock().unwrap_or_else(|e| e.into_inner());
     let evs = crate::agent_input::drop_events(&paths, x, y, v.meta);
     let n = evs.len();
+    if n > 0 {
+        crate::takeover::record(&profile, crate::takeover_note::files(paths.len()));
+    }
     v.human_at = Some(Instant::now());
     v.outbox.extend(evs.into_iter().map(|(m, p)| (m, p, Some(expect.clone()))));
     n
@@ -449,7 +574,7 @@ pub fn agent_drop_files(profile: String, pid: i32, expect: Expect, paths: Vec<St
 /// 사람이 연 파일 고르기 — 앱의 파일 창(NSOpenPanel)으로 고른 파일을 그 칸에(DOM.setFileInputFiles). 취소면 false
 #[tauri::command]
 pub async fn agent_choose_files(app: tauri::AppHandle, profile: String, pid: i32) -> Result<bool, String> {
-    if !for_wrapper(read_live(&profile).as_ref(), pid) {
+    if !human_ok(&profile, pid) {
         return Ok(false);
     }
     let view = touch(&profile);
@@ -463,6 +588,7 @@ pub async fn agent_choose_files(app: tauri::AppHandle, profile: String, pid: i32
     if !for_wrapper(read_live(&profile).as_ref(), pid) {
         return Ok(false);
     }
+    crate::takeover::record(&profile, crate::takeover_note::files(files.len()));
     let mut v = view.lock().unwrap_or_else(|e| e.into_inner());
     v.outbox.push(("DOM.setFileInputFiles", serde_json::json!({ "files": files, "backendNodeId": ch["backendNodeId"] }), None)); // 그 페이지 칸 번호에 묶여 있어 다른 탭엔 안 들어간다
     Ok(true)
@@ -542,6 +668,8 @@ pub fn agent_ask_done(profile: String, pid: i32) -> Result<(), String> {
     if !for_wrapper(read_live(&profile).as_ref(), pid) {
         return Err("browser changed".into());
     }
+    // 사람이 한 일 기록을 먼저(래퍼는 .done 을 보자마자 읽는다)
+    crate::takeover::ask_done(&live_dir(), &profile, pid)?;
     let f = live_dir().join(format!("{profile}.done"));
     std::fs::write(&f, b"").map_err(|e| e.to_string())?;
     #[cfg(unix)]
@@ -632,6 +760,8 @@ struct St {
     probes: Vec<(u64, String, Instant)>,
     /// 지금 탭 화면을 받는 중 — 아무도 안 보는데 대화상자 때문에 붙어 있는 동안은 끈다
     casting: bool,
+    /// 사람 개입 기록용으로 물은 요소 설명(요청 번호, 누름이면 true·글자면 false) — 답은 on_event 가 기록한다
+    describes: Vec<(u64, bool)>,
 }
 
 fn screencast_params() -> serde_json::Value {
@@ -647,6 +777,18 @@ impl St {
 
 /// 사건 처리 — 탭 목록·바뀐 탭·대화상자·프레임(받은 프레임 번호는 acks 에 모아 확인을 돌려준다 — 안 돌려주면 크롬이 다음 프레임을 안 보낸다)
 fn on_event(m: &serde_json::Value, view: &Arc<Mutex<View>>, st: &mut St) {
+    if let Some(id) = m["id"].as_u64() {
+        // 사람 개입 기록 — 누른 곳·글자 넣은 칸의 이름(값 없음, takeover::describe_js)
+        if let Some(i) = st.describes.iter().position(|d| d.0 == id) {
+            let (_, click) = st.describes.remove(i);
+            let raw = m["result"]["result"]["value"].as_str().unwrap_or_default();
+            let ev = if click { crate::takeover_note::click(raw) } else { Some(crate::takeover_note::typed(raw)) };
+            if let Some(ev) = ev {
+                crate::takeover::record(&st.profile, ev);
+            }
+            return;
+        }
+    }
     // '살아 있나'의 답 — 그 탭은 대화상자에 막혀 있지 않다
     if let Some(id) = m["id"].as_u64() {
         if let Some(i) = st.probes.iter().position(|p| p.0 == id) {
@@ -672,9 +814,17 @@ fn on_event(m: &serde_json::Value, view: &Arc<Mutex<View>>, st: &mut St) {
                 }
             }
             if let Some(p) = page_of(info) {
+                let known = st.pages.iter().any(|x| x.id == p.id);
                 let changed = st.pages.iter().find(|x| x.id == p.id).is_none_or(|x| x.url != p.url);
                 if changed {
                     st.last_changed = Some(p.id.clone());
+                    // 사람이 쥔 동안 간 주소·연 탭(쥐지 않았으면 record 가 버린다). 처음 붙을 때 본 탭은 known 이라 '연 탭'이 아니다
+                    if let Some(ev) = crate::takeover_note::nav(&p.url) {
+                        crate::takeover::record(&st.profile, ev);
+                    }
+                }
+                if !known && m["method"] == "Target.targetCreated" && !st.profile.is_empty() {
+                    crate::takeover::record(&st.profile, crate::takeover_note::tab_opened(&p.url));
                 }
                 st.pages.retain(|x| x.id != p.id);
                 st.pages.push(p);
@@ -682,6 +832,9 @@ fn on_event(m: &serde_json::Value, view: &Arc<Mutex<View>>, st: &mut St) {
         }
         "Target.targetDestroyed" => {
             let gone = m["params"]["targetId"].as_str().unwrap_or_default().to_string();
+            if let Some(p) = st.pages.iter().find(|x| x.id == gone) {
+                crate::takeover::record(&st.profile, crate::takeover_note::tab_closed(&p.url));
+            }
             st.pages.retain(|x| x.id != gone);
             st.popups.retain(|p| *p != gone);
             st.sessions.remove(&gone);
@@ -744,6 +897,15 @@ fn on_event(m: &serde_json::Value, view: &Arc<Mutex<View>>, st: &mut St) {
     }
 }
 
+/// 사람 입력 하나에 붙일 요소 설명 JS — 누르기(그 자리)·글자 넣기(포커스 칸). 나머지는 None
+fn human_note(method: &str, p: &serde_json::Value) -> Option<(String, bool)> {
+    match method {
+        "Input.dispatchMouseEvent" if p["type"] == "mousePressed" => Some((crate::takeover_note::describe_js(Some((p["x"].as_f64()?, p["y"].as_f64()?))), true)),
+        "Input.insertText" => Some((crate::takeover_note::describe_js(None), false)),
+        _ => None,
+    }
+}
+
 /// 수 파일 하나 늘리기(600, 통째로 바꿔 씀 — 래퍼가 반쯤 쓴 걸 안 읽게). 모양이 이상하면 0 부터
 fn bump_count(f: &std::path::Path) {
     let n = std::fs::read_to_string(f).ok().and_then(|t| t.trim().parse::<u64>().ok()).unwrap_or(0);
@@ -786,6 +948,27 @@ fn snap(cdp: &mut Cdp, s: &str, view: &Arc<Mutex<View>>, st: &mut St) {
     }
 }
 
+/// 브라우저 창 자리들(탭마다 물어 같은 창은 한 번) — chrome_popup 이 그 안쪽에 뜬 크롬 자체 창을 가린다
+fn browser_rects(cdp: &mut Cdp, st: &mut St, view: &Arc<Mutex<View>>) -> Vec<crate::vdisplay::Rect> {
+    let ids: Vec<String> = st.pages.iter().take(10).map(|p| p.id.clone()).collect();
+    let (mut seen, mut out, mut buf) = (vec![], vec![], vec![]);
+    for id in ids {
+        // 짧게 — 화면 받기·입력 보내기와 같은 루프라 오래 붙잡지 않는다(브라우저 쪽 물음이라 페이지 대화상자에 안 막힌다)
+        let Ok(w) = cdp.call_for("Browser.getWindowForTarget", serde_json::json!({ "targetId": id }), None, Duration::from_millis(800), |m| buf.push(m.clone())) else { continue };
+        if seen.contains(&w["windowId"]) {
+            continue;
+        }
+        seen.push(w["windowId"].clone());
+        let b = &w["bounds"];
+        let f = |k: &str| b[k].as_f64().unwrap_or(0.0);
+        out.push(crate::vdisplay::Rect { x: f("left"), y: f("top"), w: f("width"), h: f("height") });
+    }
+    for m in buf {
+        on_event(&m, view, st);
+    }
+    out
+}
+
 /// 일꾼 — 보는 칸이 있는 동안 지금 탭 화면을 받는다
 fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop: &Arc<AtomicBool>) -> Result<(), String> {
     let mut live = read_live(profile).ok_or("no live browser")?;
@@ -800,13 +983,17 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
     }
     if let Ok(mut v) = view.lock() {
         v.error.clear(); // 붙었다 — 지난 실패 이유를 지운다
+        v.pages = st.pages.clone();
+        v.attached = true;
     }
     let mut checked = Instant::now() - Duration::from_secs(1);
     let mut listed = Instant::now();
+    let mut popped = Instant::now();
+    let mut beat = Instant::now() - Duration::from_secs(60);
     loop {
         let idle = seen.lock().map(|s| s.elapsed()).unwrap_or(Duration::MAX);
         let has_dialog = view.lock().is_ok_and(|v| !v.dialogs.is_empty());
-        if stop.load(Ordering::Relaxed) || !keep_running(idle, has_dialog) {
+        if stop.load(Ordering::Relaxed) || !keep_running(idle, has_dialog, crate::takeover::holding(profile)) {
             break;
         }
         let watching = idle <= IDLE;
@@ -816,6 +1003,11 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
             match read_live(profile) {
                 Some(l) if same_wrapper(&live, &l) => live = l,
                 _ => break, // 브라우저 닫힘·다시 뜸 — 다음 물음에 새로 붙는다
+            }
+            // 사람이 쥔 동안 앱이 살아 있다는 표시 — 창이 가려져 화면 쪽 물음(agent_lives)이 느려져도 래퍼가 개입을 풀지 않게
+            if beat.elapsed() >= Duration::from_secs(20) && crate::takeover::holding(profile) {
+                beat = Instant::now();
+                crate::takeover::heartbeat(&live_dir(), profile);
             }
             // 2초마다 탭 목록을 다시 읽는다 — 제목이 바뀐 걸 targetInfoChanged 가 늘 알려 주진 않아 탭 이름이 주소로 남았다(2026-10-03 실측)
             if listed.elapsed() >= Duration::from_secs(2) {
@@ -894,6 +1086,18 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
                 }
             }
         }
+        // 크롬 자체 창(패스키·Touch ID·폰 QR) — 페이지 그림엔 안 찍히고 크롬은 가려져 있어 사람이 못 본다(2026-10-06). 보는 동안 1초마다
+        // 맥만(창 목록·가리기가 맥 것) — 다른 OS 에서 chrome_pid 가 매초 lsof 를 부르지 않게
+        if cfg!(target_os = "macos") && watching && popped.elapsed() >= Duration::from_secs(1) {
+            popped = Instant::now();
+            let popup = chrome_pid(live.port).is_some_and(|pid| {
+                let wins = crate::chrome_popup::windows(pid);
+                crate::chrome_popup::worth_asking(&wins) && crate::chrome_popup::popup_open(&wins, pid, &browser_rects(&mut cdp, &mut st, view))
+            });
+            if let Ok(mut v) = view.lock() {
+                v.popup = popup;
+            }
+        }
         if let Some(m) = cdp.recv()? {
             on_event(&m, view, &mut st);
         }
@@ -927,9 +1131,22 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
         let outbox: Vec<(&'static str, serde_json::Value, Option<Expect>)> = view.lock().map(|mut v| std::mem::take(&mut v.outbox)).unwrap_or_default();
         let mut dropped = 0;
         for (m, p, ex) in outbox {
-            match st.session.as_deref() {
+            match st.session.clone() {
                 Some(s) if ex.as_ref().is_none_or(|ex| expect_ok(ex, st.target.as_deref(), &st.pages)) => {
-                    let _ = cdp.send(m, p, Some(s));
+                    // 사람 개입 기록 — 누르기 직전 그 자리 요소, 글자를 넣기 직전 포커스 칸(이름만). 쥐고 있을 때만
+                    if ex.is_some() && crate::takeover::holding(profile) {
+                        if let Some((js, click)) = human_note(m, &p) {
+                            if let Ok(id) = cdp.send("Runtime.evaluate", serde_json::json!({ "expression": js, "returnByValue": true }), Some(&s)) {
+                                if st.describes.len() < 50 {
+                                    st.describes.push((id, click));
+                                }
+                            }
+                        }
+                        if m == "Input.dispatchKeyEvent" && matches!(p["type"].as_str(), Some("keyDown" | "rawKeyDown")) && matches!(p["key"].as_str(), Some("Enter" | "Escape" | "Tab")) {
+                            crate::takeover::record(profile, crate::takeover_note::key(p["key"].as_str().unwrap_or_default()));
+                        }
+                    }
+                    let _ = cdp.send(m, p, Some(&s));
                 }
                 _ => dropped += u64::from(ex.is_some()),
             }
@@ -957,6 +1174,11 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
 pub async fn agent_focus(profile: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let live = read_live(&profile).ok_or("no live browser")?;
+        // 진짜 크롬 창을 꺼내면 사람이 직접 만질 수 있다 — 개입이 아니었으면 개입부터(세션 도구가 섞이지 않게), 기록엔 '크롬 창 꺼냄'
+        if !crate::takeover::allows(&live_dir(), &profile, live.pid, live.ask.is_some()) {
+            crate::takeover::start(&live_dir(), &profile, live.pid, "desktop")?;
+        }
+        crate::takeover::mark_chrome(&profile);
         let target = with_workers(|ws| ws.get(&profile).and_then(|w| w.view.lock().ok().and_then(|v| v.current.clone())));
         let mut cdp = Cdp { ws: connect(&live)?, next: 0 };
         let target = match target {
@@ -1374,10 +1596,12 @@ mod tests {
 
     #[test]
     fn 대화상자가_떠_있으면_보는_칸이_없어도_일꾼을_둔다() {
-        assert!(keep_running(Duration::from_secs(1), false));
-        assert!(!keep_running(IDLE + Duration::from_millis(1), false));
-        assert!(keep_running(Duration::from_secs(60), true));
-        assert!(!keep_running(DIALOG_HOLD + Duration::from_secs(1), true));
+        assert!(keep_running(Duration::from_secs(1), false, false));
+        assert!(!keep_running(IDLE + Duration::from_millis(1), false, false));
+        assert!(keep_running(Duration::from_secs(60), true, false));
+        assert!(!keep_running(DIALOG_HOLD + Duration::from_secs(1), true, false));
+        // 사람이 쥐고 있으면(개입·부름) 아무도 안 봐도 붙어 있는다 — 주소·탭 바뀜을 기록
+        assert!(keep_running(DIALOG_HOLD + Duration::from_secs(1), false, true));
     }
 
     #[test]
@@ -1461,6 +1685,24 @@ mod tests {
     }
 
     #[test]
+    fn 다시_시도는_대화상자를_쥔_일꾼은_안_끊는다() {
+        assert!(retry_restarts(false, false), "도는 일꾼(탭 0개 등)은 끊어 새로 붙는다");
+        assert!(!retry_restarts(false, true), "대화상자는 이 일꾼 세션으로만 답할 수 있다");
+        assert!(!retry_restarts(true, false), "끝난 일꾼은 다음 물음이 새로 띄운다");
+    }
+
+    #[test]
+    fn 사람_입력_설명은_누르기와_글자에만() {
+        let (js, click) = human_note("Input.dispatchMouseEvent", &serde_json::json!({ "type": "mousePressed", "x": 10.0, "y": 20.0 })).unwrap();
+        assert!(click && js.contains("elementFromPoint(10,20)"));
+        assert!(human_note("Input.dispatchMouseEvent", &serde_json::json!({ "type": "mouseMoved", "x": 1.0, "y": 2.0 })).is_none());
+        let (js, click) = human_note("Input.insertText", &serde_json::json!({ "text": "비밀" })).unwrap();
+        assert!(!click && js.contains("activeElement"));
+        assert!(!js.contains("비밀"), "친 글은 JS 에 안 들어간다");
+        assert!(human_note("Input.dispatchKeyEvent", &serde_json::json!({ "type": "keyDown", "key": "a" })).is_none());
+    }
+
+    #[test]
     fn 프레임_포장() {
         let v = pack_frame(258, &[0xff, 0xd8]);
         assert_eq!(&v[..8], &258u64.to_le_bytes());
@@ -1501,3 +1743,7 @@ mod tests {
 #[cfg(test)]
 #[path = "agent_browser_e2e.rs"]
 mod e2e;
+
+#[cfg(test)]
+#[path = "chrome_popup_e2e.rs"]
+mod popup_e2e;

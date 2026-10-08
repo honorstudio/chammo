@@ -4,7 +4,8 @@ import { tr } from '../i18n';
 import type { Activity } from './activity';
 import type { SessionState } from './session';
 
-export type ActivityStatus = 'working' | 'asks' | 'blocked' | 'done' | 'idle' | 'stale';
+/** login = 로그인이 풀려 멈춤(대화 기록 마지막 줄이 로그인 오류, domain/activity isAuthError) */
+export type ActivityStatus = 'working' | 'asks' | 'blocked' | 'login' | 'done' | 'idle' | 'stale';
 
 const STALE_MS = 24 * 3600_000;
 
@@ -28,6 +29,7 @@ export function asksUser(reply: string): boolean {
 export function activityStatus(state: SessionState, a: Activity, now: number): ActivityStatus {
   if (state === 'working') return 'working';
   if (state === 'blocked') return 'blocked';
+  if (a.auth && !a.auth.retry) return 'login'; // 오래돼도 — 로그인은 저절로 안 풀린다
   const last = a.reply?.ts ?? a.prompt?.ts;
   if (!last) return 'idle';
   if (now - Date.parse(last) > STALE_MS) return 'stale';
@@ -45,6 +47,7 @@ export function statusWord(st: ActivityStatus): string {
     case 'working': return tr('일하는 중', 'Working');
     case 'asks': return tr('물어봄', 'Asking');
     case 'blocked': return tr('기다림', 'Waiting');
+    case 'login': return tr('로그인 필요', 'Sign-in needed');
     case 'done': return tr('답함', 'Replied'); // 살아서 다음 지시를 기다림 — '끝남'은 꺼진 세션 줄(StoppedStrip)에만(2026-10-04 QA N4)
     case 'stale': return tr('잠듦', 'Asleep');
     default: return tr('쉼', 'Idle');
@@ -52,7 +55,7 @@ export function statusWord(st: ActivityStatus): string {
 }
 
 /** 표시 갈래 — run = 도는 고리, ask = 노란 점, idle = 표시 없음 */
-export const statusTone = (st: ActivityStatus): 'run' | 'ask' | 'idle' => (st === 'working' ? 'run' : st === 'asks' || st === 'blocked' ? 'ask' : 'idle');
+export const statusTone = (st: ActivityStatus): 'run' | 'ask' | 'idle' => (st === 'working' ? 'run' : st === 'asks' || st === 'blocked' || st === 'login' ? 'ask' : 'idle');
 
 const NOTIFY: ActivityStatus[] = ['done', 'asks', 'blocked'];
 

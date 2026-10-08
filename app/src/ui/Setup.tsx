@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { TtsField } from './TtsField';
-import { browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, notifyOpenSettings, notifyRequest, notifyStatus, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
-import { addExtraProject, canNext, parseClaudeVersion, setupCommand, setupReady, tildify, notifyRow, browserRow, browserChecklist, versionFit, WIZARD, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
+import { browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, projectAccess, notifyOpenSettings, notifyRequest, notifyStatus, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
+import { addExtraProject, canNext, parseClaudeVersion, setupCommand, setupReady, tildify, notifyRow, browserRow, browserChecklist, ghRow, versionFit, WIZARD, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
 import type { Features } from '../domain/config';
-import { tr, type Lang } from '../i18n';
+import { josa, machine, tr, type Lang } from '../i18n';
 import { TerminalPane } from './TerminalPane';
+import { FULL_DISK_URL, wizardAccess, type Access } from '../domain/access';
 import { AccountsSection } from './AccountsSection';
 import { MobileSection } from './MobileSection';
 import './setup.css';
@@ -81,10 +82,10 @@ const features = (): [keyof Features, string, string][] => [
   ['gacha', tr('뽑기', 'Gacha'), tr('머지·커밋으로 모은 코인으로 사무실 꾸미기', 'Decorate the office with coins earned from merges and commits')],
   ['review', tr('PR 리뷰', 'PR review'), tr('열린 PR 과 머지 전에 볼 것을 모아 보여 줘요 (gh 필요)', 'Collects open PRs and what to check before merging (needs gh)')],
   ['voice', tr('음성 모드', 'Voice mode'), tr('비서의 답을 소리로 읽어 줘요', "Reads the assistant's replies aloud")],
-  ['agentView', tr('세션 브라우저 앱에서 보기', 'Watch session browsers in the app'), tr('세션이 브라우저를 쓰면 그 화면을 대시보드에 띄워요. 그동안 이 맥의 다른 프로그램도 그 크롬을 조종할 수 있는 틈이 생겨요 — 켜고 끈 건 세션을 새로 켜야 적용돼요', 'Shows what a session\'s browser is doing on its dashboard. While on, other programs on this Mac could also control that Chrome — changes apply to sessions started afterwards')],
+  ['agentView', tr('세션 브라우저 앱에서 보기', 'Watch session browsers in the app'), tr(`세션이 브라우저를 쓰면 그 화면을 대시보드에 띄워요. 그동안 이 ${machine()}의 다른 프로그램도 그 크롬을 조종할 수 있는 틈이 생겨요 — 켜고 끈 건 세션을 새로 켜야 적용돼요`, `Shows what a session's browser is doing on its dashboard. While on, other programs on this ${machine()} could also control that Chrome — changes apply to sessions started afterwards`)],
   // 맥만 — Claude Code 내장 화면 조종(computer-use)은 맥에서만 준다
   ...(IS_WIN ? [] : [['computerUse', tr('화면 조종 모든 프로젝트', 'Screen control in all projects'), tr('세션이 이 맥 화면을 보고 클릭·입력할 수 있게(Claude Code computer-use) 모든 프로젝트에서 켜요. 쓸 때마다 앱별로 허락을 묻지만, 켜 두면 세션이 내 화면을 움직일 수 있어요 — 끄면 모든 프로젝트에서 빠져요', 'Lets sessions see and click on this Mac\'s screen (Claude Code computer-use) in every project. It still asks per app, but while on, sessions can move your screen — turning it off removes it from every project')] as [keyof Features, string, string]]),
-  ['autoRevive', tr('자동으로 다시 켜기', 'Auto-resume'), tr('맥이 재시작돼 꺼진 세션 중 일이 남은 것을 혼자 이어서 켜요 — 사람이 앞에 없는 맥용', 'Resumes sessions a restart stopped mid-work, on its own — for unattended Macs')],
+  ['autoRevive', tr('자동으로 다시 켜기', 'Auto-resume'), tr(`${josa(machine(), '이', '가')} 재시작돼 꺼진 세션 중 일이 남은 것을 혼자 이어서 켜요 — 사람이 앞에 없는 ${machine()}용`, `Resumes sessions a restart stopped mid-work, on its own — for unattended ${machine()}s`)],
 ];
 
 export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
@@ -186,6 +187,22 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
     const t = setTimeout(() => void folderStatus(draft.hqDir).then(setHq).catch(() => setHq(null)), 250);
     return () => clearTimeout(t);
   }, [draft.hqDir]);
+  // 고른 프로젝트 폴더를 실제로 읽어 본다 — 맥이 막으면 세션이 'Unexpected' 로만 실패했다(이슈 #1). 권한 창 답을 기다리는 동안은 2초마다
+  const [devAccess, setDevAccess] = useState<Access | null>(null);
+  useEffect(() => {
+    let stop = false;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const read = () => void projectAccess(draft.devRoot).then((a) => {
+      if (stop) return;
+      setDevAccess(a);
+      if (a.state === 'pending') t = setTimeout(read, 2000);
+    }, () => { if (!stop) setDevAccess(null); });
+    t = setTimeout(read, 300);
+    const onFocus = () => { clearTimeout(t); read(); }; // 시스템 설정에서 켜고 돌아오면
+    window.addEventListener('focus', onFocus);
+    return () => { stop = true; clearTimeout(t); window.removeEventListener('focus', onFocus); };
+  }, [draft.devRoot]);
+  const devBlock = wizardAccess(devAccess).kind;
   const refreshTrust = useCallback(async () => {
     const [d, h] = await Promise.all([claudeTrusted(draft.devRoot).catch(() => false), claudeTrusted(draft.hqDir).catch(() => false)]);
     setTrust({ dev: d, hq: h });
@@ -312,7 +329,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
   const checkSec = (
         <section className="su-sec">
           <div className="su-sec-head">
-            <h2>{num(2)}{IS_WIN ? tr('이 PC 점검', 'Check this PC') : tr('이 맥 점검', 'Check this Mac')}</h2>
+            <h2>{num(2)}{tr(`이 ${machine()} 점검`, `Check this ${machine()}`)}</h2>
             <button className="btn" disabled={checking} onClick={() => void recheck()}>{checking ? tr('확인하는 중…', 'Checking…') : tr('다시 확인', 'Check again')}</button>
           </div>
           {!check ? <div className="su-hint">{tr('필요한 도구가 있는지 보고 있어요…', 'Looking for the tools Chammo needs…')}</div> : (
@@ -328,11 +345,11 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
                 : <Row state="need" title={IS_WIN ? 'git' : tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={IS_WIN ? tr('git 이 필요해요. 누르면 winget 으로 설치해요 — 몇 분 걸려요.', 'git is required. The button installs it with winget — it takes a few minutes.') : tr('git 이 들어 있는 Apple 도구예요. 누르면 macOS 설치 창이 떠요 — 설치에 몇 분 걸려요.', "Apple's tools that include git. The button opens the macOS installer — it takes a few minutes.")}>
                     <button className="btn pri" onClick={() => run('clt')}>{tr('설치하기', 'Install')}</button>
                   </Row>}
-              {check.ghUser
+              {ghRow(check) === 'ok'
                 ? <Row state="ok" title={tr('GitHub CLI (선택)', 'GitHub CLI (optional)')} text={tr(`${check.ghUser} 로 로그인돼 있어요.`, `Signed in as ${check.ghUser}.`)} />
-                : check.ghPath
-                  ? <Row state="opt" title={tr('GitHub CLI (선택)', 'GitHub CLI (optional)')} text={tr('설치돼 있지만 로그인 전이에요. PR 리뷰에만 필요해요.', 'Installed but not signed in. Only needed for PR review.')}>
-                      <button className="btn" onClick={() => run('ghLogin')}>{tr('로그인하기', 'Sign in')}</button>
+                : ghRow(check) !== 'install'
+                  ? <Row state="opt" title={tr('GitHub CLI (선택)', 'GitHub CLI (optional)')} text={ghRow(check) === 'relogin' ? tr('로그인이 풀렸어요(토큰 만료·취소) — 다시 로그인해 주세요. PR 리뷰에만 필요해요.', 'The sign-in expired (token invalid) — sign in again. Only needed for PR review.') : tr('설치돼 있지만 로그인 전이에요. PR 리뷰에만 필요해요.', 'Installed but not signed in. Only needed for PR review.')}>
+                      <button className="btn" onClick={() => run('ghLogin')}>{ghRow(check) === 'relogin' ? tr('다시 로그인', 'Sign in again') : tr('로그인하기', 'Sign in')}</button>
                     </Row>
                   : <Row state="opt" title={tr('GitHub CLI (선택)', 'GitHub CLI (optional)')} text={tr('선택 — PR 리뷰에만 필요해요. 없어도 나머지는 다 돼요.', 'Optional — only needed for PR review. Everything else works without it.')}>
                       <button className="btn" onClick={() => void openTarget('url', 'https://cli.github.com').catch(() => {})}>{tr('설치 안내 열기', 'Open install guide')}</button>
@@ -359,7 +376,13 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
           <Field label={tr('비서 이름', 'Assistant name')} hint={tr('세션 목록·알림에 이 이름으로 보여요.', 'Shown in the session list and notifications.')}>
             <input value={draft.assistantName} placeholder={defaultName} onChange={(e) => set('assistantName', e.target.value)} />
           </Field>
-          <Field label={tr('프로젝트 폴더', 'Projects folder')} hint={dev && !dev.exists
+          <Field label={tr('프로젝트 폴더', 'Projects folder')} hint={devBlock
+            ? devBlock === 'mac'
+              ? <>{tr('맥이 이 폴더 접근을 막고 있어요. 전체 디스크 접근 권한에서 Chammo 를 켠 뒤 앱을 다시 켜 주세요.', 'macOS is blocking this folder. Turn on Chammo in Full Disk Access, then reopen the app.')} <button type="button" className="btn su-mini" onClick={() => void openTarget('url', FULL_DISK_URL).catch(() => {})}>{tr('설정 열기', 'Open Settings')}</button></>
+              : devBlock === 'perm'
+                ? tr('이 폴더를 읽을 권한이 없어요. 다른 폴더를 고르거나 폴더 권한을 고쳐 주세요.', 'No permission to read this folder. Pick another folder or fix its permissions.')
+                : tr('맥이 이 폴더에 들어가도 되는지 묻고 있어요. 뜬 창에서 허용을 눌러 주세요.', 'macOS is asking whether Chammo may open this folder. Click Allow in that window.')
+            : dev && !dev.exists
             ? <>{tr('아직 없는 폴더예요.', 'This folder does not exist yet.')} <button type="button" className="btn su-mini" onClick={() => void createDev()}>{tr(`${draft.devRoot} 만들기`, `Create ${draft.devRoot}`)}</button></>
             : tr('프로젝트(git 저장소)들이 들어 있는 폴더. 그 안의 폴더 하나가 프로젝트 하나예요.', 'The folder that holds your projects (git repos). Each folder inside is one project.')}>
             {pick('devRoot', tr('프로젝트들이 들어 있는 폴더를 골라 주세요', 'Choose the folder that holds your projects'))}
@@ -531,7 +554,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
           </ol>
         )}
 
-        {firstRun ? sectionOf[step] : <>{langSec}{checkSec}{basicsSec}{featSec}{!IS_WIN && <AccountsSection title={`5. ${tr('계정', 'Accounts')}`} claude={check?.claudePath} fontSize={fontSize} />}{!IS_WIN && <MobileSection title={`6. ${tr('모바일', 'Mobile')}`} />}</>}
+        {firstRun ? sectionOf[step] : <>{langSec}{checkSec}{basicsSec}{featSec}{!IS_WIN && <AccountsSection title={`5. ${tr('계정', 'Accounts')}`} claude={check?.claudePath} fontSize={fontSize} />}<MobileSection title={`${IS_WIN ? 5 : 6}. ${tr('모바일', 'Mobile')}`} /></>}
 
         <footer className="su-foot">
           {note && <div className="su-note">{note}</div>}
@@ -543,7 +566,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
               <span className="grow" />
               {step === 'ready'
                 ? <button className="btn pri su-go" disabled={busy || !ready} onClick={() => void finish()}>{busy ? tr('준비하는 중…', 'Getting ready…') : tr('시작하기', 'Get started')}</button>
-                : <button className="btn pri su-go" disabled={!canNext(step, check, trust)} onClick={() => setStep(WIZARD[at + 1]!)}>{tr('다음', 'Next')}</button>}
+                : <button className="btn pri su-go" disabled={!canNext(step, check, trust, devAccess)} onClick={() => setStep(WIZARD[at + 1]!)}>{tr('다음', 'Next')}</button>}
             </div>
           ) : (
             <button className="btn pri su-go" disabled={busy} onClick={() => void finish()}>{busy ? tr('준비하는 중…', 'Getting ready…') : tr('저장', 'Save')}</button>

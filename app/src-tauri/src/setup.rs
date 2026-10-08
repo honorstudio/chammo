@@ -42,19 +42,43 @@ pub fn parse_auth_status(out: &str) -> bool {
     !t.contains("not logged in") && (t.contains("logged in") || t.contains("login method"))
 }
 
-/// `gh auth status` 출력(stdout+stderr) → 로그인한 아이디. 없으면 None
-pub fn parse_gh_user(out: &str) -> Option<String> {
+/// `gh auth status` 출력(stdout+stderr) → gh 로그인 상태 — user = gh 가 실제로 쓰는(활성) 계정이 멀쩡할 때만, stale = 그 계정 토큰이 깨짐(다시 로그인 필요)
+#[derive(Debug, Default, PartialEq)]
+pub struct GhAuth {
+    pub user: Option<String>,
+    pub stale: bool,
+}
+
+/// 계정 머리줄 하나 아래 '- …' 줄들이 한 덩어리. 새 gh: "✓ Logged in to github.com account X (keyring)" / "X Failed to log in to github.com account X (default)" + "- The token in default is invalid.",
+/// 옛 gh: "Logged in to github.com as X (...)". 활성 계정("Active account: true")을 보고, 그런 줄이 없으면(옛 gh) 첫 덩어리
+pub fn parse_gh(out: &str) -> GhAuth {
+    struct Block { ok: bool, failed: bool, user: Option<String>, active: Option<bool> }
+    let mut blocks: Vec<Block> = Vec::new();
     for line in out.lines() {
-        // 새 gh: "✓ Logged in to github.com account honorstudio (keyring)", 옛 gh: "Logged in to github.com as honorstudio (...)"
-        let Some(i) = line.find("Logged in to") else { continue };
-        let rest = &line[i..];
-        let after = rest.split_once(" account ").or_else(|| rest.split_once(" as ")).map(|(_, a)| a)?;
-        let user = after.split_whitespace().next()?.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
-        if !user.is_empty() {
-            return Some(user.to_string());
+        // 계정 줄: 됨 · 실패(토큰 무효) · 시간 초과(망 문제 — 깨진 게 아니라 계정은 보여 준다) · 옛 gh 의 'github.com: authentication failed'
+        let ok = line.find("Logged in to").or_else(|| line.find("Timeout trying to log in to"));
+        let failed = line.find("Failed to log in to").or_else(|| line.find(": authentication failed").map(|_| 0));
+        if let Some(i) = ok.or(failed) {
+            let rest = &line[i..];
+            let user = rest.split_once(" account ").or_else(|| rest.split_once(" as ")).and_then(|(_, a)| a.split_whitespace().next())
+                .map(|u| u.trim_matches(|c: char| !c.is_alphanumeric() && c != '-').to_string()).filter(|u| !u.is_empty());
+            blocks.push(Block { ok: ok.is_some(), failed: failed.is_some(), user, active: None });
+            continue;
+        }
+        let Some(b) = blocks.last_mut() else { continue };
+        let l = line.to_lowercase();
+        if let Some(v) = l.split_once("active account:").map(|(_, v)| v.trim()) {
+            b.active = Some(v.starts_with("true"));
+        } else if l.contains("is invalid") || l.contains("no longer valid") {
+            b.failed = true;
         }
     }
-    None
+    let Some(b) = blocks.iter().find(|b| b.active == Some(true)).or_else(|| blocks.iter().find(|b| b.active.is_none())) else { return GhAuth::default() };
+    if b.failed {
+        GhAuth { user: None, stale: true }
+    } else {
+        GhAuth { user: b.ok.then(|| b.user.clone()).flatten(), stale: false }
+    }
 }
 
 /// 명령을 돌리되 secs 안에 안 끝나면 None(프로세스는 버린다)
@@ -84,11 +108,18 @@ pub struct EnvCheck {
     pub gh_path: Option<String>,
     /// gh 로그인 아이디(로그인 안 했으면 None)
     pub gh_user: Option<String>,
+    /// gh 는 있는데 쓰는 계정 토큰이 깨짐(만료·취소) — 다시 로그인 필요
+    pub gh_stale: bool,
 }
 
 pub fn find(name: &str) -> Option<String> {
     let path = std::env::var("PATH").unwrap_or_default();
     pick_bin(name, &crate::config::home(), &path, |p| std::path::Path::new(p).is_file())
+}
+
+/// `claude auth status` — 모르면 None(못 돌림·10초 넘음). 로그인 풀림 감시(login.rs)가 부른다
+pub fn auth_status(bin: &str) -> Option<bool> {
+    run_for(bin, &["auth", "status"], 10).map(|o| parse_auth_status(&text(&o)))
 }
 
 pub fn check() -> EnvCheck {
@@ -101,7 +132,8 @@ pub fn check() -> EnvCheck {
     }
     c.clt = crate::claude::clt_ready();
     if let Some(gh) = c.gh_path.clone() {
-        c.gh_user = run_for(&gh, &["auth", "status"], 8).and_then(|o| parse_gh_user(&text(&o)));
+        let gh = run_for(&gh, &["auth", "status", "--hostname", "github.com"], 8).map(|o| parse_gh(&text(&o))).unwrap_or_default();
+        (c.gh_user, c.gh_stale) = (gh.user, gh.stale);
     }
     c
 }
@@ -274,10 +306,41 @@ mod tests {
     #[test]
     fn gh_아이디() {
         let new = "github.com\n  ✓ Logged in to github.com account octo-cat (keyring)\n  - Active account: true";
-        assert_eq!(parse_gh_user(new).as_deref(), Some("octo-cat"));
+        assert_eq!(parse_gh(new).user.as_deref(), Some("octo-cat"));
         let old = "github.com\n  ✓ Logged in to github.com as octocat (oauth_token)";
-        assert_eq!(parse_gh_user(old).as_deref(), Some("octocat"));
-        assert_eq!(parse_gh_user("You are not logged into any GitHub hosts. To log in, run: gh auth login"), None);
+        assert_eq!(parse_gh(old).user.as_deref(), Some("octocat"));
+        assert_eq!(parse_gh("You are not logged into any GitHub hosts. To log in, run: gh auth login").user, None);
+    }
+
+    #[test]
+    fn gh_깨진_토큰은_로그인이_아니라_다시_로그인() {
+        // 윈도우 QA 2026-10-05: 토큰이 깨졌는데 점검이 'octocat 로 로그인돼 있어요' 라고 했다
+        let broken = "github.com\n  X Failed to log in to github.com account octocat (default)\n  - Active account: true\n  - The token in default is invalid.\n  - To re-authenticate, run: gh auth login -h github.com\n  - To forget about this account, run: gh auth logout -h github.com -u octocat";
+        assert_eq!(parse_gh(broken), GhAuth { user: None, stale: true });
+        // 활성 계정은 깨졌고 안 쓰는 계정만 멀쩡 — gh 는 활성 계정을 쓰니 다시 로그인
+        let mixed = "github.com\n  X Failed to log in to github.com account octocat (default)\n  - Active account: true\n  - The token in default is invalid.\n\n  ✓ Logged in to github.com account other (keyring)\n  - Active account: false";
+        assert_eq!(parse_gh(mixed), GhAuth { user: None, stale: true });
+        // 활성 계정이 멀쩡하면 안 쓰는 계정이 깨져 있어도 로그인
+        let ok2 = "github.com\n  ✓ Logged in to github.com account octocat (keyring)\n  - Active account: true\n  - Token: gho_****\n\n  X Failed to log in to github.com account old (default)\n  - Active account: false\n  - The token in default is invalid.";
+        assert_eq!(parse_gh(ok2), GhAuth { user: Some("octocat".into()), stale: false });
+        // '로그인됨' 줄 아래에 무효 표시가 붙은 옛 모양도 깨진 것
+        let old_bad = "github.com\n  ✓ Logged in to github.com as octocat (oauth_token)\n  X The token in /home/u/.config/gh/hosts.yml is no longer valid.";
+        assert_eq!(parse_gh(old_bad), GhAuth { user: None, stale: true });
+        // 로그인 안 함 = 다시 로그인이 아니라 그냥 로그인 전
+        assert_eq!(parse_gh("You are not logged into any GitHub hosts. To log in, run: gh auth login"), GhAuth { user: None, stale: false });
+        assert_eq!(parse_gh(""), GhAuth { user: None, stale: false });
+        // 멀쩡한 것들은 그대로
+        let new = "github.com\n  ✓ Logged in to github.com account octo-cat (keyring)\n  - Active account: true";
+        assert_eq!(parse_gh(new), GhAuth { user: Some("octo-cat".into()), stale: false });
+        // 안 쓰는 계정이 timeout 이어도 그 줄이 새 계정 시작 — 'Active account: false' 가 앞 계정에 붙으면 안 된다
+        let to = "github.com\n  ✓ Logged in to github.com account octocat (keyring)\n  - Active account: true\n\n  X Timeout trying to log in to github.com account old (default)\n  - Active account: false";
+        assert_eq!(parse_gh(to), GhAuth { user: Some("octocat".into()), stale: false });
+        // 쓰는 계정이 timeout(망 문제) = 토큰이 깨진 게 아니다 — 계정은 그대로 보여 준다
+        let to1 = "github.com\n  X Timeout trying to log in to github.com account octocat (keyring)\n  - Active account: true";
+        assert_eq!(parse_gh(to1), GhAuth { user: Some("octocat".into()), stale: false });
+        // 옛 gh 의 인증 실패 줄
+        let old_fail = "github.com\n  X github.com: authentication failed\n  - The github.com token in GH_TOKEN is no longer valid.";
+        assert_eq!(parse_gh(old_fail), GhAuth { user: None, stale: true });
     }
 
     #[test]

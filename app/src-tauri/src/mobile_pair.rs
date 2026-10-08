@@ -21,6 +21,8 @@ const HOME_SUFFIX: &str = " 홈 화면 앱";
 /// 마지막 접속을 파일에 적는 간격(요청마다 쓰지 않게)
 const SEEN_FLUSH: Duration = Duration::from_secs(60);
 const FILE: &str = "mobile-devices.json";
+/// 코드 하나에 틀린 코드를 낼 수 있는 횟수 — 넘으면 그 코드는 죽고 새 코드를 만들어야 한다
+pub const MAX_FAILS: u32 = 5;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +43,9 @@ pub(crate) struct Device {
     /// 열쇠를 마지막으로 내준 때(바꿔 끼우면 갱신) — 없으면 created
     #[serde(default, skip_serializing_if = "Option::is_none")]
     paired: Option<u64>,
+    /// 다른 기기의 참모(손님 앱)가 붙은 줄 — 폰이 아니다(설정에 '참모'로)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    peer: bool,
 }
 
 impl Device {
@@ -63,6 +68,7 @@ pub struct DeviceView {
     pub home: bool,
     pub group: String,
     pub paired: u64,
+    pub peer: bool,
 }
 
 /// 짝짓기 요청 — prev = 이 저장 공간에 남아 있던 옛 열쇠(있으면)
@@ -70,6 +76,8 @@ pub struct Pairing<'a> {
     pub name: &'a str,
     pub home: bool,
     pub prev: Option<&'a str>,
+    /// 다른 기기 참모 — 이름은 그 앱이 보낸 것(제어 글자 빼고), 폰 묶기·바꿔 끼우기는 안 한다
+    pub peer: bool,
 }
 
 /// 정리로 빠진 줄 — notify.log 에 이유와 함께 남긴다
@@ -141,6 +149,8 @@ struct Inner {
     mtime: Option<SystemTime>,
     /// (sha256(코드), 만료 시각, 낸 기기 id) — 지금 살아 있는 짝짓기 코드 하나. 맥 QR 은 낸 기기가 없다
     code: Option<(String, SystemTime, Option<String>)>,
+    /// 지금 코드에 틀린 코드를 낸 횟수 — MAX_FAILS 면 그 코드를 죽인다(연타 막기)
+    fails: u32,
     flushed: Instant,
 }
 
@@ -201,14 +211,14 @@ impl Devices {
     /// 시험용 — 파일 없이
     #[cfg(test)]
     pub fn memory() -> Devices {
-        Devices { path: None, inner: Mutex::new(Inner { list: Vec::new(), mtime: None, code: None, flushed: Instant::now() }) }
+        Devices { path: None, inner: Mutex::new(Inner { list: Vec::new(), mtime: None, code: None, fails: 0, flushed: Instant::now() }) }
     }
 
     /// 시험용 — 이미 짝지은 기기 하나(토큰을 알고 있는)
     #[cfg(test)]
     pub fn with_token(token: &str, name: &str) -> Devices {
         let d = Devices::memory();
-        d.inner.lock().unwrap().list.push(Device { id: "test0001".into(), name: name.into(), hash: sha(token), created: ms(SystemTime::now()), last_seen: None, home: false, group: None, paired: None });
+        d.inner.lock().unwrap().list.push(Device { id: "test0001".into(), name: name.into(), hash: sha(token), created: ms(SystemTime::now()), last_seen: None, home: false, group: None, paired: None, peer: false });
         d
     }
 
@@ -222,7 +232,7 @@ impl Devices {
     pub fn open(dir: &Path) -> Devices {
         let path = dir.join(FILE);
         let (list, mtime) = read_list(&path);
-        let d = Devices { path: Some(path), inner: Mutex::new(Inner { list, mtime, code: None, flushed: Instant::now() }) };
+        let d = Devices { path: Some(path), inner: Mutex::new(Inner { list, mtime, code: None, fails: 0, flushed: Instant::now() }) };
         // 켤 때 한 번 정리 — 지울 게 있을 때만 쓴다
         let now = ms(SystemTime::now());
         let mut g = d.inner.lock().unwrap();
@@ -274,14 +284,16 @@ impl Devices {
 
     fn issue(&self, issuer: Option<String>, now: SystemTime) -> std::io::Result<String> {
         let code = random_hex(16)?;
-        self.inner.lock().unwrap().code = Some((sha(&code), now + PAIR_TTL, issuer));
+        let mut g = self.inner.lock().unwrap();
+        g.code = Some((sha(&code), now + PAIR_TTL, issuer));
+        g.fails = 0;
         Ok(code)
     }
 
     /// 시험용 — 옛 모양(새 브라우저 줄)
     #[cfg(test)]
     pub fn pair(&self, code: &str, name: &str, now: SystemTime) -> Option<String> {
-        self.pair_with(code, &Pairing { name, home: false, prev: None }, now)
+        self.pair_with(code, &Pairing { name, home: false, prev: None, peer: false }, now)
     }
 
     /// 코드가 살아 있으면 쓰고(한 번만) 기기 토큰(16진 64자)을 준다.
@@ -293,13 +305,18 @@ impl Devices {
         let mut g = self.inner.lock().unwrap();
         let (h, until, issuer) = g.code.clone()?;
         if !ct_eq(sha(code).as_bytes(), h.as_bytes()) || now > until {
+            g.fails += 1;
+            if g.fails >= MAX_FAILS {
+                g.code = None;
+                log_device(&format!("짝짓기 코드 죽임 — 틀린 코드 {MAX_FAILS}번"));
+            }
             return None;
         }
         g.code = None;
         let token = random_hex(32).ok()?;
         let new_id = random_hex(8).ok()?;
         let at = ms(now);
-        let name: String = p.name.chars().take(40).collect();
+        let name: String = p.name.chars().filter(|c| !c.is_control()).take(40).collect();
         let hash = sha(&token);
         let prev_hash = p.prev.filter(|t| t.len() == 64).map(sha);
         let mut swapped = None;
@@ -308,7 +325,7 @@ impl Devices {
             // ① 같은 저장 공간의 옛 열쇠 — 같은 칸이면 그 줄, 다른 칸(베껴 온 저장 공간)이면 같은 폰으로 묶기만
             let mut target = None;
             let mut group = None;
-            if let Some(i) = prev_hash.as_deref().and_then(|ph| find_hash(l, ph)) {
+            if let Some(i) = prev_hash.as_deref().and_then(|ph| find_hash(l, ph)).filter(|&i| l[i].peer == p.peer) {
                 if l[i].home == p.home {
                     target = Some(i);
                 } else {
@@ -316,7 +333,7 @@ impl Devices {
                 }
             }
             // ①' 홈 화면 앱 — 코드를 낸 브라우저와 이름(기종)이 같으면 그 폰. 홈 화면 앱이 낸 코드면 묶지 않는다(낸 앱 자신을 바꿔 끼우게 된다)
-            if target.is_none() && group.is_none() && p.home {
+            if target.is_none() && group.is_none() && p.home && !p.peer {
                 group = issuer.as_deref().and_then(|iid| l.iter().find(|d| d.id == iid && !d.home && d.name == name)).map(|d| d.group_id().to_string());
             }
             // 한 폰의 홈 화면 앱 칸은 하나 — 있으면 바꿔 끼운다(브라우저는 사파리·크롬 여럿일 수 있어 안 한다)
@@ -334,7 +351,7 @@ impl Devices {
                     d.id.clone()
                 }
                 None => {
-                    l.push(Device { id: new_id.clone(), name: name.clone(), hash: hash.clone(), created: at, last_seen: Some(at), home: p.home, group, paired: None });
+                    l.push(Device { id: new_id.clone(), name: name.clone(), hash: hash.clone(), created: at, last_seen: Some(at), home: p.home && !p.peer, group, paired: None, peer: p.peer });
                     new_id.clone()
                 }
             };
@@ -382,7 +399,7 @@ impl Devices {
     pub fn list(&self) -> Vec<DeviceView> {
         let mut g = self.inner.lock().unwrap();
         self.reload_if_changed(&mut g);
-        g.list.iter().map(|d| DeviceView { id: d.id.clone(), name: d.name.clone(), created: d.created, last_seen: d.last_seen, home: d.home, group: d.group.clone().unwrap_or_else(|| d.id.clone()), paired: d.paired.unwrap_or(d.created) }).collect()
+        g.list.iter().map(|d| DeviceView { id: d.id.clone(), name: d.name.clone(), created: d.created, last_seen: d.last_seen, home: d.home, group: d.group.clone().unwrap_or_else(|| d.id.clone()), paired: d.paired.unwrap_or(d.created), peer: d.peer }).collect()
     }
 
     /// 기기 끊기 — 묶음째(사파리·홈 화면 앱 둘 다). 묶음 id 는 그 묶음 첫 줄의 id 라 줄 id 로 불러도 된다

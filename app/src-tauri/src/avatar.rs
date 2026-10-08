@@ -45,7 +45,7 @@ pub fn safe_key(k: &str) -> Result<String, String> {
     let reserved = ["CON", "PRN", "AUX", "NUL"].contains(&upper.as_str())
         || ((upper.starts_with("COM") || upper.starts_with("LPT")) && upper.len() == 4 && upper.as_bytes()[3].is_ascii_digit());
     let ok = !reserved && !k.is_empty() && k.chars().count() <= 64 && k.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ');
-    if ok { Ok(k.to_string()) } else { Err(format!("{}: {k:?}", bad("프사 이름이 이상해", "Invalid avatar name"))) }
+    if ok { Ok(k.to_string()) } else { Err(format!("{}: {k:?}", bad("프로필 이름이 이상해", "Invalid avatar name"))) }
 }
 
 /// 첫 바이트로 그림 종류를 가린다 — 확장자·MIME 는 믿지 않는다. SVG 는 받지 않는다(스크립트가 들어갈 수 있다)
@@ -175,7 +175,7 @@ pub fn save_in(dir: &Path, key: &str, mut avatar: Avatar, image: Option<&[u8]>) 
     }
     let json = serde_json::to_vec_pretty(&avatar).map_err(|e| e.to_string())?;
     write_atomic(&dir.join(format!("{key}.json")), &json)?;
-    read_one(dir, &key).ok_or_else(|| bad("저장한 프사를 다시 못 읽었어", "Could not read the saved avatar"))
+    read_one(dir, &key).ok_or_else(|| bad("저장한 프로필을 다시 못 읽었어", "Could not read the saved avatar"))
 }
 
 pub fn delete_in(dir: &Path, key: &str) -> Result<(), String> {

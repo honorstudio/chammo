@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cloudUrl, groupRoutines, isCloud, parseRoutines, routineItem, routineLine, routineState, routineStateLabel, routineRef, routineStatus, scheduleText, routineSummary, type Routine } from './routine';
+import { cloudUrl, groupRoutines, isCloud, parseRoutines, routineItem, routineLine, routineState, routineStateLabel, routineRef, routineStatus, scheduleText, routineSummary, runEventText, type Routine } from './routine';
 
 const r = (over: Partial<Routine> = {}): Routine => ({
   name: 'blog-daily', schedule: 'daily 09:00', cwd: '/d', enabled: true, instructions: '/d/ROUTINE.md', next: '2026-09-29T09:00',
@@ -156,5 +156,25 @@ describe('routineSummary — 폰 예약 판 요약 한 줄(2026-10-03 사용자 
   });
   it('하나도 없으면', () => {
     expect(routineSummary([], now)).toBe('예약 없음');
+  });
+});
+
+describe('실행 기록 한 줄', () => {
+  it('다시 시도 줄은 성공으로 안 보인다', () => {
+    const t = runEventText({ event: 'retry', ts: '2026-10-05T05:04:41', reason: 'workspace not trusted — re-wrote trust, retrying once' });
+    expect(t).toMatch(/다시 시도|Retried/);
+    expect(t).not.toMatch(/성공|OK/);
+  });
+  it('다시 시도 이유가 갈린다 — 믿음 풀림 / 시작 일시 오류', () => {
+    expect(runEventText({ event: 'retry', ts: 't', reason: 'workspace not trusted — re-wrote trust, retrying once' })).toMatch(/믿음|trust/);
+    const t = runEventText({ event: 'retry', ts: 't', reason: 'start failed (error: An unknown error occurred (Unexpected)) — waiting 5s, retrying once' });
+    expect(t).toMatch(/시작이 실패|failed to start/);
+    expect(t).toMatch(/Unexpected/);
+    expect(t).not.toMatch(/믿음|trust/);
+  });
+  it('시작 실패·건너뜀·결과', () => {
+    expect(runEventText({ event: 'start', ts: 't', error: 'Workspace not trusted' })).toMatch(/Workspace not trusted/);
+    expect(runEventText({ event: 'skip', ts: 't' })).toMatch(/건너뜀|Skipped/);
+    expect(runEventText({ event: 'end', ts: 't', result: 'fail', note: 'x' })).toMatch(/실패 — x|Failed — x/);
   });
 });

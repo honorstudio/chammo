@@ -74,6 +74,10 @@ export const makeDir = (dir: string) => invoke<void>('make_dir', { dir });
 export const checkEnv = () => invoke<import('../domain/setup').EnvCheck>('check_env');
 /** Claude Code 가 이 폴더(또는 위 폴더)를 믿나 — ~/.claude.json */
 export const claudeTrusted = (dir: string) => invoke<boolean>('claude_trusted', { dir });
+/** 프로젝트 폴더를 실제로 읽어 본다(dir 를 안 주면 저장된 devRoot — 잘 읽히면 그 아래 믿음도 챙긴다). 판단은 domain/access.ts */
+export const projectAccess = (dir?: string) => invoke<import('../domain/access').Access>('project_access', { dir: dir ?? null });
+/** 같은 앱이 여러 벌 깔렸나·떠 있나(맥, .app 일 때만) */
+export const appCopies = () => invoke<import('../domain/access').Copies>('app_copies');
 /** 저장 전의 음성 명령으로 한 번 읽어 보기 */
 export const ttsTest = (command: string, text: string) => invoke<void>('tts_test', { command, text });
 /** Supertonic — 설정에 적힐 실행기 경로와 받기가 끝났나 */
@@ -164,6 +168,8 @@ export const speakPreviewState = () => invoke<{ id: number; phase: PreviewPhase 
 export const speakPreviewStop = (id: number) => invoke<void>('speak_preview_stop', { id });
 /** target = 알림을 누르면 갈 곳(domain/notify noteTarget) — 눌리면 window.__notifyClick(target) 으로 돌아온다 */
 export const notify = (title: string, body: string, target: string) => invoke<void>('notify', { title, body, target });
+/** 메인 창을 보고 있나(보임·최소화 아님·앞) — 윈도우 알림 판단용 */
+export const mainWatched = () => invoke<boolean>('main_watched');
 
 /** 꺼진 세션까지 포함한 `agents --json --all` 원문 */
 export const listSessionsAllRaw = () => invoke<string>('list_sessions_all');
@@ -244,6 +250,8 @@ export const writeClipboard = (text: string) => invoke<void>('clipboard_write', 
 /** 이 앱 버전 — 새 버전 알림용 */
 /** 모델 칩이 실패했을 때 그때 터미널 화면을 로컬 로그(<데이터>/pick-debug.log)에 */
 export const pickLog = (text: string) => invoke<void>('pick_log', { text });
+/** 채팅 뷰 스페이스가 바뀐 한 줄(종류만) — <데이터>/space-trace.log. 또 튀면 어느 길인지 보려고(2026-10-06) */
+export const spaceTrace = (line: string) => invoke<void>('space_trace', { line });
 /** Claude 기본값 칸(model·effortLevel·modelSettings) 떠 두기·되돌리기 — 모델 칩이 /model·/effort 를 친 뒤 "이 세션만"으로 돌린다 */
 export const claudeDefaults = {
   snapshot: () => invoke<string>('claude_defaults_snapshot'),
@@ -285,6 +293,9 @@ export const pickFolder = (prompt: string, start?: string) => invoke<string | nu
 export const notifyStatus = () => invoke<'granted' | 'denied' | 'notDetermined' | 'unavailable'>('notify_status');
 export const notifyRequest = () => invoke<boolean>('notify_request');
 export const notifyOpenSettings = () => invoke<void>('notify_open_settings');
+/** 이 프로젝트 브라우저(chammo-browser)가 붙었나 / 붙이기 — 저장소 .mcp.json 은 안 건드린다(GitHub #2) */
+export const projectBrowser = (dir: string) => invoke<import('../domain/browserNeed').BrowserLink>('project_browser', { dir });
+export const projectBrowserAttach = (dir: string) => invoke<import('../domain/browserNeed').BrowserLink>('project_browser_attach', { dir });
 export const harnessProject = (dir: string) => invoke<{ written: string[]; kept: string[] }>('harness_project', { dir });
 export const browserStatus = () => invoke<import('../domain/setup').BrowserStatus>('browser_status');
 export const browserSetupStart = () => invoke<void>('browser_setup_start');
@@ -298,6 +309,9 @@ export const loadEnv = (pids: number[]) => invoke<string>('load_env', { pids });
 /** 주인 없는 프로세스 끄기 — Claude 가 띄운 것만(Rust 가 확인). 끈 프로세스 수 */
 export const loadKill = (pid: number) => invoke<number>('load_kill', { pid });
 export const loadSave = (json: string) => invoke<void>('load_save', { json });
+/** 로그인 풀림(login.rs) — 맥 로그인 상태(auth status + 로그인 칸 고친 시각) · 화면 판단을 폰에(<데이터>/login.json) */
+export const loginProbe = () => invoke<unknown>('login_probe');
+export const loginSave = (json: string) => invoke<void>('login_save', { json });
 
 /** 채팅 보기용 대화 기록 이어 읽기 — from 을 안 주면 끝 1MB 부터. reset 이면 처음부터 다시 그린다 */
 /** start = text 첫 줄의 파일 자리(폰이 그 앞을 거슬러 읽는다) */

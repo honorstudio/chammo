@@ -234,6 +234,7 @@ body > .dash-preview .bar { height: 44px; box-sizing: border-box; padding: 0 10p
 .space-mode .bubble.md pre code { border: 0; background: none; }
 .space-mode .bubble.me { max-width: 86%; padding: 9px 14px; border-radius: 18px 18px 6px 18px; background: color-mix(in srgb, var(--orch, var(--accent)) 11%, var(--surface)); color: var(--text); }
 .space-mode .bubble.me.pending { opacity: .55; }
+.space-mode .bubble.me.pending:not(.st-sending) { opacity: 1; }
 .space-mode .chat-tools { font-size: 12px; color: var(--text-3); }
 .space-mode .chat-tools summary { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); list-style: none; }
 .space-mode .chat-tools summary::-webkit-details-marker { display: none; }
@@ -336,6 +337,10 @@ body > .dash-preview .box > .content { border-radius: 0 0 14px 14px; overflow: h
 .cv-switch { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; gap: 10px; background: color-mix(in srgb, var(--surface) 55%, transparent); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); font-size: 13px; color: var(--text-2); animation: cv-switch .45s ease-out forwards; }
 .cv-switch .cv-spin { width: 16px; height: 16px; flex-basis: 16px; border-width: 2px; }
 @keyframes cv-switch { 0% { opacity: 0; } 20% { opacity: 1; } 75% { opacity: 1; } 100% { opacity: 0; } }
+/* 다른 참모가 띄운 것 알림 — 보던 화면은 그대로 두고 아래 가운데 한 줄(2026-10-06 사용자 "사람이 바꾸기 전엔 안 바뀐다") */
+.cv-notice { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 7; display: flex; align-items: center; gap: 10px; max-width: calc(100% - 32px); padding: 6px 6px 6px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 4px 16px rgba(0, 0, 0, .12); font-size: 13px; color: var(--text-2); }
+.cv-notice > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cv-notice b { color: var(--text); font-weight: 600; }
 /* 세션 칸 → 진짜 터미널 */
 .cv-pane { cursor: default; }
 .cv-pane-body { all: unset; box-sizing: border-box; flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; padding: 6px 12px 8px; overflow: hidden; font: 11.5px/1.55 "MesloLGS NF", ui-monospace, Menlo, "Cascadia Mono", Consolas, monospace; color: #c9c9d1; cursor: pointer; }
@@ -734,7 +739,6 @@ html.cv-dragging, html.cv-dragging * { cursor: grabbing !important; user-select:
 .cv-head-act { margin-left: auto; flex: 0 0 auto; }
 
 /* 리뷰 줄 — 볼 것이 있으면 글자만 강조색(왼쪽 띠 없이) */
-.cv-row .cv-count.hot { color: var(--blocked); font-weight: 600; }
 
 /* 보내기 동그라미에 올리면 그 동그라미가 오른쪽 아래를 붙든 채 커져서 '같이 보낼 말' 판이 된다 — 한 덩어리라 판 위로 옮겨도 안 닫힌다(2026-10-01 사용자 "동그라미 자체가 확장, 멋있게") */
 .cur-send-wrap { position: absolute; right: 28px; bottom: 26px; z-index: 5; width: 76px; height: 76px; border-radius: 38px; isolation: isolate;

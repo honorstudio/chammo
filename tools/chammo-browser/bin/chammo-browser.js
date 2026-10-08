@@ -79,6 +79,42 @@ switch (cmd) {
     });
     break;
   }
+  case 'launch': {
+    // 스크립트용 크롬 — 한 줄 JSON {ok, wsEndpoint, shared, holder, …}. 종료 코드 0 성공 · 1 오류 · 2 바빠서 못 받음(src/script.js)
+    const script = require('../src/script');
+    const fail = (error, code = 1) => { console.log(JSON.stringify({ ok: false, code, error })); process.exit(code); };
+    let o;
+    try { o = script.parseArgs(process.argv.slice(3)); } catch (e) { fail(e.message); }
+    const bad = paths.checkProfile(o.profile);
+    if (bad) fail(bad);
+    if (o.owner == null) o.owner = process.ppid;
+    if (!lock.isAlive(o.owner)) fail(`--owner ${o.owner} 프로세스가 없어요`);
+    o.session = script.sessionPid({ start: o.owner });
+    script.launchClient(o, script.realDeps(o)).then((r) => {
+      console.log(JSON.stringify(r));
+      process.exit(r.ok ? 0 : r.code || 1);
+    }, (e) => fail(e.message));
+    break;
+  }
+  case 'release': {
+    // 그 스크립트가 다 썼다 — 명부에서 빼면 마지막 사용자일 때 지킴이가 1초 안에 크롬을 닫고 락을 돌려준다
+    const p = profileArg('chammo-browser release <프로필> [--owner <pid>]');
+    const i = process.argv.indexOf('--owner');
+    const owner = i > 0 ? Number(process.argv[i + 1]) : process.ppid;
+    if (!Number.isInteger(owner) || owner <= 0) { console.error('--owner 는 pid 숫자'); process.exit(1); }
+    const removed = require('../src/users').remove(paths.locksDir, p, owner);
+    console.log(JSON.stringify({ ok: true, profile: p, owner, removed }));
+    break;
+  }
+  case '_hold': {
+    // launch 가 따로 띄우는 지킴이 — 직접 부르지 않는다
+    const script = require('../src/script');
+    const o = script.parseArgs(process.argv.slice(3));
+    const bad = paths.checkProfile(o.profile);
+    if (bad || !o.owner) { console.log(JSON.stringify({ ok: false, error: bad || '--owner 가 필요해요' })); process.exit(1); }
+    script.hold(o);
+    break;
+  }
   default:
     console.log(`chammo-browser — 프로젝트별 격리 브라우저 프로필 + 락 매니저
 사용법:
@@ -88,6 +124,10 @@ switch (cmd) {
   chammo-browser profiles              등록된 프로필 목록
   chammo-browser setup <프로필> [폴더]   폴더의 .mcp.json 에 playwright 등록(다른 서버는 유지)
   chammo-browser check                 세션이 쓸 크롬을 헤드리스로 한 번 띄워 본다(한 줄 JSON)
+  chammo-browser launch <프로필> [--owner <pid>] [--channel chrome|chrome-beta] [--headless] [--no-view] [--wait <초>]
+                                       스크립트용 크롬 — 락·앱 화면 연결까지 하고 CDP 주소를 한 줄 JSON 으로.
+                                       주인(--owner, 기본 부른 프로세스)이 끝나면 저절로 닫고 락을 돌려준다
+  chammo-browser release <프로필> [--owner <pid>]   다 썼다(마지막이면 크롬을 닫는다)
 
 저장 위치: ${paths.ROOT}
   (CHAMMO_BROWSER_HOME > $CHAMMO_HOME/browser > ~/.chammo/browser)`);

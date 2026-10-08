@@ -58,7 +58,7 @@ export function CsvTable({ text, tab }: { text: string; tab: boolean }) {
   );
 }
 
-/** md — 속 그림(상대 경로)은 그 문서 덕에 서버가 열어 준다(doc). 다 쓰면 blob 주소를 놓는다 */
+/** md — 문서 보기(.m-page = 데스크톱 문서 페이지 톤, 채팅 말풍선 .m-md 와 따로). 속 그림(상대 경로)은 그 문서 덕에 서버가 열어 준다(doc). 다 쓰면 blob 주소를 놓는다 */
 export function MdDoc({ path, text, at }: { path: string; text: string; at?: ShowAt }) {
   const html = useMemo(() => mdDocToHtml(text), [text]);
   const box = useRef<HTMLDivElement>(null);
@@ -82,5 +82,5 @@ export function MdDoc({ path, text, at }: { path: string; text: string; at?: Sho
     return () => { alive = false; urls.forEach((u) => URL.revokeObjectURL(u)); };
   }, [html, path]);
   useLineFlash(box, at, text, false);
-  return <div ref={box} className="m-doc m-md" dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div ref={box} className="m-doc m-md m-page" dangerouslySetInnerHTML={{ __html: html }} />;
 }

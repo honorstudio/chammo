@@ -71,6 +71,8 @@ export function useAccountAuto(accounts: AccountsView | null, acts: SessionActiv
           }
           switched = true;
           asked.current.live = 0; // 다음 차례(화면 갱신 신호로 바로 온다)에 새 계정 사용량을 바로 묻는다
+          // 고정한 계정이 진짜 다 차서 고정이 풀렸다 — 사람이 일부러 고른 거라 한 줄 알린다
+          if (plan.unpinned) notifyOnce({ kind: 'accounts', session: 'accounts-unpinned', orch: false, title: tr('고정 계정이 다 차서 넘겼어', 'Pinned account used up'), body: tr(`${name(v.active)} → ${name(plan.switchTo)} · 고정은 풀렸어`, `${name(v.active)} → ${name(plan.switchTo)} · unpinned`) });
           if (voiceRef.current && plan.why !== 'back') void speak(tr(`${name(v.active)} 계정이 다 차서 ${name(plan.switchTo)} 계정으로 넘겼어`, `${name(v.active)} is used up — switched to ${name(plan.switchTo)}`)).catch(() => {});
         }
         // 키체인을 바꾼 다음에 깨운다. 못 보낸 세션은 표시하지 않아 다음 차례에 다시

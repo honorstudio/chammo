@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { assistant, tr } from '../../i18n';
+import { nickChange } from '../../domain/orchLabel';
 import { avatarKey, baseVoice, defaultVoice, type Voice, checkSize, checkUpload, EYES, EYES_LABEL, ORCH_COLORS, resolveAvatar, SHAPE_LABEL, SHAPES, type Avatar, type Crop, type Eyes, type Preset, type Shape } from '../../domain/avatar';
 import { OrchAvatar, cropTransform } from './OrchAvatar';
 import { imageUrl, resetAvatar, saveAvatar, useAvatars } from './store';
@@ -10,7 +11,10 @@ import { VoiceDial } from './VoiceDial';
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 
-export function AvatarPicker({ name, label, color, onClose }: { name: string; label: string; color: string; onClose: () => void }) {
+/** nick = 이름(별명) 칸 — 켜진 참모 프로필에서만(새 참모 만들기 창은 이름을 자기 칸에서 받는다). 번호(참모-N)는 그대로라 색·모양·목소리 배정이 안 바뀐다 */
+type Nick = { current: string; fallback: string; onSave: (nick: string) => void };
+
+export function AvatarPicker({ name, label, color, nick, onClose }: { name: string; label: string; color: string; nick?: Nick; onClose: () => void }) {
   const { saved, dataDir, ttsCommand } = useAvatars();
   const key = avatarKey(name);
   const start = resolveAvatar(saved, name);
@@ -19,6 +23,7 @@ export function AvatarPicker({ name, label, color, onClose }: { name: string; la
   const [preset, setPreset] = useState<Preset>(startPreset);
   // 목소리 — null = 번호 순 기본 배정. 설정이 앱의 Supertonic 이 아니면 base 가 없어 고를 수만 있고 들어 보기는 못 한다
   const [voice, setVoice] = useState<Voice | null>(start.voice ?? null);
+  const [nickV, setNickV] = useState(nick?.current ?? '');
   const base = baseVoice(ttsCommand);
   const [crop, setCrop] = useState<Crop>(start.kind === 'image' ? start.crop : { zoom: 1, x: 0, y: 0 });
   const [file, setFile] = useState<{ bytes: Uint8Array; url: string } | null>(null);
@@ -71,8 +76,14 @@ export function AvatarPicker({ name, label, color, onClose }: { name: string; la
   const save = async () => {
     setBusy(true); setErr('');
     try {
-      if (tab === 'preset') await saveAvatar(key, { ...preset, voice }, null);
-      else await saveAvatar(key, { kind: 'image', file: '', crop, voice }, file?.bytes ?? null);
+      // 이름만 바꾸고 모양은 손 안 댔으면 처음 모양 파일을 새로 만들지 않는다('처음대로'가 생기지 않게)
+      const untouched = !saved.has(key) && tab === 'preset' && JSON.stringify(preset) === JSON.stringify(startPreset) && voice === (start.voice ?? null);
+      if (!untouched) {
+        if (tab === 'preset') await saveAvatar(key, { ...preset, voice }, null);
+        else await saveAvatar(key, { kind: 'image', file: '', crop, voice }, file?.bytes ?? null);
+      }
+      const to = nick ? nickChange(nick.current, nickV) : null;
+      if (nick && to !== null) nick.onSave(to);
       onClose();
     } catch (e) { setErr(String(e)); } finally { setBusy(false); }
   };
@@ -81,12 +92,19 @@ export function AvatarPicker({ name, label, color, onClose }: { name: string; la
   const av = (p: Avatar, size: number, src?: string | null) => <OrchAvatar name={name} size={size} state="rest" color={color} label={label} preview={p} previewSrc={src ?? undefined} />;
   return createPortal(
     <div className="od-back" onMouseDown={onClose}>
-      <div className="od-box oa-picker" role="dialog" aria-modal="true" aria-label={tr(`${label} 프사 바꾸기`, `Change ${label}'s avatar`)} onMouseDown={(e) => e.stopPropagation()}>
-        <b>{tr(`${label} 프사`, `${label}'s avatar`)}</b>
+      <div className="od-box oa-picker" role="dialog" aria-modal="true" aria-label={tr(`${label} 프로필 바꾸기`, `Change ${label}'s avatar`)} onMouseDown={(e) => e.stopPropagation()}>
+        <b>{tr(`${label} 프로필`, `${label}'s avatar`)}</b>
         <div className="oa-pk-prev">
           {av(preview, 72, imgSrc)}
           <div className="oa-pk-sizes">{av(preview, 44, imgSrc)}{av(preview, 22, imgSrc)}{av(preview, 16, imgSrc)}</div>
         </div>
+        {nick && (
+          <>
+            <div className="oa-lbl" id="oa-name">{tr('이름', 'Name')}</div>
+            <input className="oa-name" value={nickV} onChange={(e) => setNickV(e.target.value)} maxLength={24} placeholder={nick.fallback} aria-labelledby="oa-name"
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && !busy && canSave) void save(); }} />
+          </>
+        )}
         <div className="oa-seg" role="tablist">
           <button role="tab" aria-selected={tab === 'preset'} className={tab === 'preset' ? 'oa-on' : ''} onClick={() => setTab('preset')}>{tr('기본형', 'Character')}</button>
           <button role="tab" aria-selected={tab === 'image'} className={tab === 'image' ? 'oa-on' : ''} onClick={() => setTab('image')}>{tr('그림 올리기', 'Upload image')}</button>

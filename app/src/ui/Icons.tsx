@@ -38,6 +38,10 @@ export const IconBell = () => (
 export const IconEnter = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M12.6 3.2v4.4a2.1 2.1 0 0 1-2.1 2.1H3.6M6.6 6.6 3.5 9.7l3.1 3.1" /></svg>
 );
+/** 지우기(Backspace) — 왼쪽이 뾰족한 칸 안 × */
+export const IconBackspace = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M5.5 3.5h8a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-8L1.5 8z" /><path d="m7.5 6 4 4m0-4-4 4" /></svg>
+);
 export const IconSend = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M14 2 7 9M14 2 9.5 14 7 9 2 6.5z" /></svg>
 );
@@ -111,6 +115,10 @@ export const IconHarness = () => (
 /** 도구: 입 벌린 스패너 하나(MCP·플러그인·스킬) */
 export const IconTools = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M11.73 2.47A3.4 3.4 0 0 0 7.34 7.09L2.82 11.62a1.1 1.1 0 0 0 1.56 1.56L8.91 8.66A3.4 3.4 0 0 0 13.53 4.27L12.26 5.54 10.46 3.74Z" /></svg>
+);
+/** 리뷰: 풀 리퀘스트 — 가지(위·아래 점)와 본줄로 꺾여 들어가는 화살표 */
+export const IconReview = () => (
+  <svg viewBox="0 0 16 16" {...P}><circle cx="4.5" cy="3.5" r="1.6" /><circle cx="4.5" cy="12.5" r="1.6" /><circle cx="11.5" cy="12.5" r="1.6" /><path d="M4.5 5.1v5.8M11.5 10.9V6.5a2 2 0 0 0-2-2H7.4M9 2.9 7.4 4.5 9 6.1" /></svg>
 );
 /** 사무실: 아이소메트릭 책상 하나 */
 export const IconOffice = () => (

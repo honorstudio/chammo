@@ -207,7 +207,8 @@ fn 소켓으로_401_403_200() {
     let port = probe.local_addr().unwrap().port();
     drop(probe);
     let h = format!("127.0.0.1:{port}");
-    let (stop, addr) = serve(format!("127.0.0.1:{port}").parse().unwrap(), Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![format!("http://{h}")], stops: Default::default(), sends: Default::default(), tickets: Default::default() }, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
+    let (stop, addrs) = serve(&[format!("127.0.0.1:{port}").parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![format!("http://{h}")], stops: Default::default(), sends: Default::default(), tickets: Default::default() }, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
+    let addr = addrs[0];
     assert!(ask(addr, &format!("GET /api/sessions HTTP/1.1\r\nHost: {h}\r\n\r\n")).starts_with("HTTP/1.1 401"));
     assert!(ask(addr, &format!("GET /api/sessions HTTP/1.1\r\nHost: evil.com\r\nAuthorization: Bearer {key}\r\n\r\n")).starts_with("HTTP/1.1 403"));
     let ok = ask(addr, &format!("GET /api/sessions HTTP/1.1\r\nHost: {h}\r\nAuthorization: Bearer {key}\r\n\r\n"));
@@ -278,7 +279,8 @@ fn s1_처리_중_패닉이_20번_나도_서버는_계속_답한다() {
     let port = probe.local_addr().unwrap().port();
     drop(probe);
     let h = format!("127.0.0.1:{port}");
-    let (stop, addr) = serve(h.parse().unwrap(), Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default() }, Arc::new(Panicky), Arc::new(Peers::new(vec![], || None))).unwrap();
+    let (stop, addrs) = serve(&[h.parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default() }, Arc::new(Panicky), Arc::new(Peers::new(vec![], || None))).unwrap();
+    let addr = addrs[0];
     for _ in 0..(MAX_CONNS + 4) {
         let _ = ask(addr, &format!("GET /api/sessions HTTP/1.1\r\nHost: {h}\r\nAuthorization: Bearer {key}\r\n\r\n"));
     }
@@ -328,10 +330,10 @@ fn r2_내_self_ip_도_맞은편으로_받는다() {
 fn r5_꺼진_채로_뜨면_남은_우리_serve_만_내린다() {
     let ours = r#"{"Web":{"mac.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:47124"}}}}}"#;
     let t = "http://127.0.0.1:47124";
-    assert!(stale_serve(false, ours, "mac.ts.net", t), "강제 종료 뒤 남은 우리 것");
-    assert!(!stale_serve(true, ours, "mac.ts.net", t), "켜 둔 상태면 start 가 다시 쓴다");
-    assert!(!stale_serve(false, &ours.replace("47124", "47123"), "mac.ts.net", t), "본판 것은 안 건드린다");
-    assert!(!stale_serve(false, "{}", "mac.ts.net", t));
+    assert!(stale_state(false, &serve_state(ours, "mac.ts.net", t)), "강제 종료 뒤 남은 우리 것");
+    assert!(!stale_state(true, &serve_state(ours, "mac.ts.net", t)), "켜 둔 상태면 start 가 다시 쓴다");
+    assert!(!stale_state(false, &serve_state(&ours.replace("47124", "47123"), "mac.ts.net", t)), "본판 것은 안 건드린다");
+    assert!(!stale_state(false, &serve_state("{}", "mac.ts.net", t)));
 }
 
 #[test]
@@ -341,4 +343,169 @@ fn r6_tcp_funnel_도_잡고_켜진_동안_걸리면_내린다() {
     assert!(funnel_open(tcp, "mac.ts.net"));
     assert!(funnel_guard(tcp, "mac.ts.net").is_some_and(|m| m.contains("funnel")));
     assert_eq!(funnel_guard(r#"{"Web":{}}"#, "mac.ts.net"), None);
+}
+
+#[test]
+fn 윈도우_테일스케일_주소가_이_pc_것이면_목록에_넣는다() {
+    // 윈도우엔 getifaddrs 가 없다 — 테일스케일이 말한 내 주소에 실제로 묶일 수 있으면(Wintun 'Tailscale' 어댑터) 그 하나만
+    let local = |x: Ipv4Addr| x == ip("100.64.0.10");
+    let v = ts_self_iface(Some(ip("100.64.0.10")), local);
+    assert_eq!(v, vec![("tailscale".to_string(), ip("100.64.0.10"))]);
+    // 그 목록이면 plan 이 그 주소에 묶는다(0.0.0.0·LAN 아님)
+    let t = plan(&v, || Some(st("100.64.0.10")), || None).unwrap();
+    assert_eq!(t.bind, IpAddr::V4(ip("100.64.0.10")));
+}
+
+#[test]
+fn 윈도우_묶을_수_없거나_100x_가_아니면_빈_목록() {
+    // 테일스케일 꺼짐 · 주소는 말하는데 이 PC 에 없음(어댑터 내려감) · 100.64/10 밖
+    assert!(ts_self_iface(None, |_| true).is_empty());
+    assert!(ts_self_iface(Some(ip("100.64.0.10")), |_| false).is_empty());
+    assert!(ts_self_iface(Some(ip("192.168.0.5")), |_| true).is_empty());
+}
+
+#[test]
+fn 테일스케일_cli_자리() {
+    // 맥은 brew·앱 번들, 윈도우는 Program Files 아래 — 둘 다 후보에
+    let mac = tailscale_candidates(false, None);
+    assert!(mac.iter().any(|p| p == "/Applications/Tailscale.app/Contents/MacOS/Tailscale"));
+    let win = tailscale_candidates(true, Some(r"C:\Program Files"));
+    assert_eq!(win, vec![r"C:\Program Files\Tailscale\tailscale.exe".to_string()]);
+    // ProgramFiles 를 못 읽으면 기본 자리
+    assert_eq!(tailscale_candidates(true, None), vec![r"C:\Program Files\Tailscale\tailscale.exe".to_string()]);
+}
+
+fn iface_tailnet() -> Tailnet {
+    Tailnet { bind: IpAddr::V4(ip("100.64.0.20")), ip: ip("100.64.0.20"), dns: Some("pc.ts.net".into()), socket: String::new(), peers: vec![] }
+}
+
+#[test]
+fn w1_윈도우_serve_대상은_127_0_0_1_맥은_묶은_곳_그대로() {
+    // 윈도우 tailscaled(서비스·Wintun)는 serve 백엔드로 자기 100.x 에 못 붙어 21초 뒤 502(윈도우 QA 실측) → 127.0.0.1
+    let t = iface_tailnet();
+    assert_eq!(serve_host(&t, true), IpAddr::V4(Ipv4Addr::LOCALHOST));
+    assert_eq!(serve_target_for(&t, 47123, true), "http://127.0.0.1:47123");
+    // 맥 인터페이스 모드(utun)는 지금처럼 100.x — 바뀌면 안 된다
+    assert_eq!(serve_host(&t, false), IpAddr::V4(ip("100.64.0.20")));
+    assert_eq!(serve_target_for(&t, 47123, false), "http://100.64.0.20:47123");
+    // 맥 userspace 는 원래 127.0.0.1
+    let u = Tailnet { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), ..iface_tailnet() };
+    assert_eq!(serve_target_for(&u, 47124, false), "http://127.0.0.1:47124");
+}
+
+#[test]
+fn w2_윈도우는_100x_와_127_0_0_1_둘_다_묶고_맥은_하나() {
+    let t = iface_tailnet();
+    let lo = IpAddr::V4(Ipv4Addr::LOCALHOST);
+    assert_eq!(binds(&t, true), vec![t.bind, lo]);
+    assert_eq!(binds(&t, false), vec![t.bind], "맥 인터페이스 모드는 100.x 하나 그대로");
+    // 이미 127.0.0.1 이면 겹쳐 묶지 않는다
+    let u = Tailnet { bind: lo, ..iface_tailnet() };
+    assert_eq!(binds(&u, true), vec![lo]);
+    assert_eq!(binds(&u, false), vec![lo]);
+    // 어떤 경우에도 0.0.0.0·LAN 은 없다
+    for b in binds(&t, true).into_iter().chain(binds(&t, false)) {
+        assert!(b.is_loopback() || matches!(b, IpAddr::V4(v) if is_cgnat(v)), "{b}");
+    }
+}
+
+#[test]
+fn w3_윈도우_0_2_4_가_걸어_둔_100x_serve_는_우리_것으로_보고_갈아_끼운다() {
+    let t = iface_tailnet();
+    let old = r#"{"TCP":{"443":{"HTTPS":true}},"Web":{"pc.ts.net:443":{"Handlers":{"/":{"Proxy":"http://100.64.0.20:47123"}}}}}"#;
+    let new = old.replace("100.64.0.20", "127.0.0.1");
+    let st = |json: &str, win: bool| serve_state_for(json, "pc.ts.net", &t, 47123, win);
+    assert_eq!(st(old, true), ServeState::Legacy, "옛 대상 = 우리 것(갈아 끼울 것)");
+    assert_eq!(st(&new, true), ServeState::Ours);
+    assert_eq!(st("{}", true), ServeState::Free);
+    // 맥은 100.x 가 지금 대상이라 그대로 Ours, 127.0.0.1 은 남의 것(맥 동작 불변)
+    assert_eq!(st(old, false), ServeState::Ours);
+    assert!(matches!(st(&new, false), ServeState::Other(_)));
+    // 포트가 다르면(개발판↔본판) 옛 것이어도 남의 것
+    assert!(matches!(serve_state_for(old, "pc.ts.net", &t, 47124, true), ServeState::Other(_)));
+    // 남의 100.x(다른 기기 주소)·경로가 더 있음 = 남의 것
+    assert!(matches!(st(&old.replace("100.64.0.20", "100.64.0.21"), true), ServeState::Other(_)));
+    let more = r#"{"Web":{"pc.ts.net:443":{"Handlers":{"/":{"Proxy":"http://100.64.0.20:47123"},"/x":{"Path":"C:\\tmp"}}}}}"#;
+    assert!(matches!(st(more, true), ServeState::Other(_)));
+    // funnel 이 먼저
+    let f = r#"{"Web":{"pc.ts.net:443":{"Handlers":{"/":{"Proxy":"http://100.64.0.20:47123"}}}},"AllowFunnel":{"pc.ts.net:443":true}}"#;
+    assert_eq!(st(f, true), ServeState::Funnel);
+    // 꺼진 채로 뜨면 옛 것도 정리 대상, 켜 둔 상태면 start 가 갈아 끼운다
+    assert!(stale_state(false, &st(old, true)));
+    assert!(stale_state(false, &st(&new, true)));
+    assert!(!stale_state(true, &st(old, true)));
+    assert!(!stale_state(false, &st("{}", true)));
+}
+
+#[test]
+fn w4_여러_주소에_묶고_하나라도_못_묶으면_다_푼다() {
+    let key = "b".repeat(64);
+    let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+    let gate = |h: &str| Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.to_string(), format!("[::1]:{port}")], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default() };
+    let h = format!("127.0.0.1:{port}");
+    let v6: SocketAddr = format!("[::1]:{port}").parse().unwrap();
+    let (stop, addrs) = serve(&[h.parse().unwrap(), v6], gate(&h), Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
+    assert_eq!(addrs.len(), 2);
+    for a in &addrs {
+        let ok = ask(*a, &format!("GET /api/sessions HTTP/1.1\r\nHost: {h}\r\nAuthorization: Bearer {key}\r\n\r\n"));
+        assert!(ok.starts_with("HTTP/1.1 200"), "{a}: {ok}");
+    }
+    stop.store(true, Ordering::Relaxed);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(TcpListener::bind(&h).is_ok() && TcpListener::bind(v6).is_ok(), "멈추면 둘 다 풀린다");
+    // 둘째 주소가 이미 잡혀 있으면 실패하고 첫째도 풀어 둔다(반만 열린 서버 금지)
+    let hold = TcpListener::bind(v6).unwrap();
+    assert!(serve(&[h.parse().unwrap(), v6], gate(&h), Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).is_err());
+    assert!(TcpListener::bind(&h).is_ok(), "첫째 주소가 남아 있으면 안 된다");
+    drop(hold);
+}
+
+#[test]
+fn w5_https_자기_확인_판정() {
+    // 껍데기(/)는 열쇠 없이 200 — 2xx·3xx 면 열림
+    assert_eq!(https_check_reason(Some(0), "200"), None);
+    assert_eq!(https_check_reason(Some(0), "302"), None);
+    // 윈도우 QA 실측: 21초 뒤 502 — serve 는 걸렸는데 백엔드에 못 붙음
+    let r = https_check_reason(Some(0), "502").unwrap();
+    assert!(r.contains("502"), "{r}");
+    // curl 이 못 붙음·시간 초과·인증서 = 000 + 종료 코드
+    assert!(https_check_reason(Some(28), "000").unwrap().contains("28"));
+    assert!(https_check_reason(Some(60), "000").is_some());
+    // curl 을 못 띄움·이상한 출력도 '열림'으로 보지 않는다
+    assert!(https_check_reason(None, "").is_some());
+    assert!(https_check_reason(Some(0), "엉터리").is_some());
+    assert!(https_check_reason(Some(0), " 200\n").is_none(), "앞뒤 공백은 지운다");
+}
+
+#[test]
+fn w6_https_자기_확인_인자() {
+    let a = https_check_args_for("pc.ts.net", ip("100.64.0.20"), true);
+    assert_eq!(a.last().map(String::as_str), Some("https://pc.ts.net/"));
+    assert!(a.windows(2).any(|w| w == ["-o", "NUL"]), "윈도우는 NUL");
+    assert!(https_check_args_for("pc.ts.net", ip("100.64.0.20"), false).windows(2).any(|w| w == ["-o", "/dev/null"]));
+    assert!(a.windows(2).any(|w| w[0] == "--proto" && w[1] == "=https"), "https 만");
+    assert!(a.iter().any(|x| x == "--max-time"), "매달리지 않게");
+}
+
+#[test]
+fn w7_https_자기_확인은_dns·프록시·폐기_확인에_안_흔들린다() {
+    // 이 PC 가 MagicDNS 를 안 쓰거나·HTTPS_PROXY 가 있거나·사내망이 인증서 폐기 확인을 막으면 폰에선 열리는 https 를 거짓으로 내렸다(리뷰)
+    let a = https_check_args_for("pc.ts.net", ip("100.64.0.20"), true);
+    assert!(a.windows(2).any(|w| w == ["--resolve", "pc.ts.net:443:100.64.0.20"]));
+    assert!(a.windows(2).any(|w| w == ["--noproxy", "*"]));
+    assert!(a.iter().any(|x| x == "--ssl-no-revoke"), "윈도우 Schannel 만");
+    assert!(!https_check_args_for("pc.ts.net", ip("100.64.0.20"), false).iter().any(|x| x == "--ssl-no-revoke"), "맥 curl 엔 없는 옵션");
+    assert_eq!(a.last().map(String::as_str), Some("https://pc.ts.net/"));
+}
+
+#[test]
+fn w8_127_0_0_1_을_못_묶으면_100x_만_다시() {
+    // 다른 프로그램이 127.0.0.1:포트를 쥐고 있으면 예전처럼 100.x http 라도 — https 는 끈다
+    let t = iface_tailnet();
+    assert_eq!(fallback_binds(&t, true), Some(vec![t.bind]));
+    assert_eq!(fallback_binds(&t, false), None, "맥은 하나만 묶으니 대피로 없음");
+    let u = Tailnet { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), ..iface_tailnet() };
+    assert_eq!(fallback_binds(&u, true), None);
 }

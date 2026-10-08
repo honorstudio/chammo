@@ -24,6 +24,12 @@ struct Fake {
     send_fail: bool,
     /// 예약 목록 스크립트가 실패한다
     routines_fail: bool,
+    /// 계정 바꾸기가 이 오류 이름으로 실패한다(키체인 잠김 등)
+    account_fail: Option<&'static str>,
+    /// 꺼져 있던 '참모-3 · 나스'(OFF)가 그사이 다른 길(데스크톱 ▷ 등)로 이미 켜졌다
+    revived: bool,
+    /// 작업 기록(tasks.jsonl) 원문 — 비우면 "{}"
+    task_log: String,
 }
 
 impl Fake {
@@ -56,6 +62,7 @@ impl Backend for Fake {
             self.hq.unwrap_or(("working", "busy")).0,
             self.hq.unwrap_or(("working", "busy")).1
         ))
+        .map(|j| if self.revived { j.replacen('[', &format!(r#"[{{"id":"aaaa0002","sessionId":"{OFF}","cwd":"{HQ}","name":"참모-3 · 나스","state":"working","status":"busy"}},"#), 1) } else { j })
     }
     fn hq_dir(&self) -> String {
         HQ.into()
@@ -69,7 +76,11 @@ impl Backend for Fake {
         serde_json::json!({ "text": "", "start": 0 })
     }
     fn tasks(&self) -> String {
-        if self.big > 0 { "x".repeat(self.big) } else { "{}\n".into() }
+        if self.big > 0 { "x".repeat(self.big) } else if !self.task_log.is_empty() { self.task_log.clone() } else { "{}\n".into() }
+    }
+    fn append_task(&self, line: &str) -> Result<(), String> {
+        self.log(format!("append_task {line}"));
+        Ok(())
     }
     fn routines(&self) -> Result<String, String> {
         if self.routines_fail { Err("python3: No such file or directory".into()) } else { Ok(r#"[{"name":"daily-check"}]"#.into()) }
@@ -154,9 +165,10 @@ impl Backend for Fake {
         Some(b"\xFF\xD8\xFFjpeg".to_vec())
     }
     fn sessions_all(&self) -> Result<String, String> {
+        let off = if self.revived { "working" } else { "stopped" };
         Ok(format!(
             r#"[{{"id":"aaaa0001","cwd":"{HQ}","name":"참모-1","state":"working"}},
-               {{"id":"aaaa0002","sessionId":"{OFF}","cwd":"{HQ}","name":"참모-3 · 나스","state":"stopped"}},
+               {{"id":"aaaa0002","sessionId":"{OFF}","cwd":"{HQ}","name":"참모-3 · 나스","state":"{off}"}},
                {{"id":"bbbb0003","sessionId":"{SID}","cwd":"/Users/me/dev/shop","name":"shop","state":"stopped"}}]"#
         ))
     }
@@ -178,6 +190,14 @@ impl Backend for Fake {
     fn push_key(&self) -> Result<String, String> {
         Ok("BPUB".into())
     }
+    fn browser_takeover(&self, profile: &str, session_pid: i32, on: bool) -> Result<(), String> {
+        self.log(format!("take {profile} {session_pid} {on}"));
+        Ok(())
+    }
+    fn browser_input(&self, profile: &str, session_pid: i32, events: Vec<crate::agent_input::InputEv>) -> Result<(), String> {
+        self.log(format!("input {profile} {session_pid} {}", events.len()));
+        Ok(())
+    }
     fn push_subscribe(&self, device: &str, endpoint: &str, p256dh: &str, auth: &str) -> Result<(), String> {
         self.log(format!("sub {device} {endpoint} {p256dh} {auth}"));
         Ok(())
@@ -185,6 +205,37 @@ impl Backend for Fake {
     fn push_unsubscribe(&self, device: &str, endpoint: &str) -> Result<(), String> {
         self.log(format!("unsub {device} {endpoint}"));
         Ok(())
+    }
+    fn accounts(&self) -> Result<serde_json::Value, String> {
+        self.log("accounts".into());
+        Ok(serde_json::json!({ "accounts": [{ "id": "a1", "name": "큰 것", "plan": "Max 20x" }], "active": "a1", "auto": { "on": true, "slots": {} } }))
+    }
+    fn account_switch(&self, id: &str) -> Result<serde_json::Value, String> {
+        self.log(format!("account_switch {id}"));
+        match self.account_fail {
+            Some(e) => Err(e.into()),
+            None => Ok(serde_json::json!({ "active": id })),
+        }
+    }
+    fn account_auto(&self, on: bool) -> Result<serde_json::Value, String> {
+        self.log(format!("account_auto {on}"));
+        Ok(serde_json::json!({ "auto": { "on": on } }))
+    }
+    fn login_view(&self) -> serde_json::Value {
+        self.log("login_view".into());
+        serde_json::json!({ "need": { "since": 1, "sessions": ["imac"], "machine": false }, "flow": { "state": "idle" } })
+    }
+    fn login_start(&self) -> Result<serde_json::Value, String> {
+        self.log("login_start".into());
+        Ok(serde_json::json!({ "state": "waiting", "url": "https://claude.com/cai/oauth/authorize?code=true" }))
+    }
+    fn login_code(&self, code: &str) -> Result<serde_json::Value, String> {
+        // 코드 값은 기록하지 않는다 — 길이만
+        self.log(format!("login_code {}", code.len()));
+        Ok(serde_json::json!({ "state": "checking" }))
+    }
+    fn login_cancel(&self) {
+        self.log("login_cancel".into());
     }
     fn browser_frame(&self, profile: &str, since: u64) -> Vec<u8> {
         self.log(format!("frame {profile} {since}"));
@@ -972,6 +1023,20 @@ fn 되살리기는_hq_의_꺼진_참모만() {
 }
 
 #[test]
+fn 이미_켜진_참모_되살리기는_다시_켜지_않고_켜져_있다고_답한다() {
+    // 2026-10-05 21:21 폰: 맥에서 이미 켜진 참모-4 를 낡은 목록에서 눌러 404 "no such stopped assistant" 가 시트에 남았다.
+    // 켜져 있으면 오류가 아니다 — 켜기(respawn = 재시작)는 부르지 않고 already 로 답해 폰이 그 참모로 옮긴다
+    let f = Fake { revived: true, ..Fake::default() };
+    let (code, f, r) = run_with(post("/api/respawn", &format!(r#"{{"sessionId":"{OFF}"}}"#)), f);
+    assert_eq!(code, 200);
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    assert_eq!(v["already"], true);
+    assert!(f.calls().iter().all(|c| !c.starts_with("resume")), "켜진 세션을 respawn 하면 하던 일이 끊긴다: {:?}", f.calls());
+    // 목록 어디에도 없는 대화(지워짐)는 그대로 404 — 폰이 목록을 새로 고친다
+    assert_eq!(run(post("/api/respawn", r#"{"sessionId":"33333333-3333-4333-8333-333333333333"}"#)).0, 404);
+}
+
+#[test]
 fn 되살리기_연타는_한_번만() {
     let g = gate();
     let f = Fake::default();
@@ -1681,4 +1746,283 @@ fn 폰_html_시안_앞에_글자_키움_막기를_head_맨_앞에_넣는다() {
     let out = inject_shim(&big);
     assert_eq!(out.len(), big.len() + HTML_HEAD.len() + HTML_SHIM.len());
     assert!(out.ends_with(&big["<html><head>".len()..]));
+}
+
+#[test]
+fn 계정_보기는_열쇠가_있어야_하고_쓰기는_같은_출처_json_만() {
+    // 보기
+    assert_eq!(run(get("/api/accounts")).0, 401);
+    let (st, f, r) = run(with_cookie(get("/api/accounts")));
+    assert_eq!((st, f.calls()), (200, vec!["accounts".to_string()]));
+    assert!(String::from_utf8_lossy(&r.body).contains("큰 것"));
+    // 바꾸기·자동 — 열쇠·출처·JSON·방법
+    for (path, body) in [("/api/account-switch", r#"{"id":"a2"}"#), ("/api/account-auto", r#"{"on":false}"#)] {
+        assert_eq!(run(set(post(path, body), "authorization", None)).0, 401, "{path}");
+        assert_eq!(run(set(post(path, body), "origin", None)).0, 403, "{path}");
+        assert_eq!(run(set(post(path, body), "origin", Some("http://evil.example"))).0, 403, "{path}");
+        assert_eq!(run(set(post(path, body), "content-type", Some("text/plain"))).0, 403, "{path}");
+        assert_eq!(run(with_cookie(get(path))).0, 405, "{path}");
+        // 머리 문지기에도 길이 있다(없으면 실제 서버만 404)
+        let g = gate();
+        assert!(head_check(&post(path, body), &g).is_none(), "{path}");
+        assert_eq!(head_check(&set(post(path, body), "authorization", None), &g).map(|r| r.status), Some(401), "{path}");
+        assert_eq!(head_check(&set(post(path, body), "origin", Some("http://evil.example")), &g).map(|r| r.status), Some(403), "{path}");
+        // 거절된 요청은 맥 쪽 일을 안 부른다
+        let (_, f, _) = run(set(post(path, body), "origin", None));
+        assert!(f.calls().is_empty(), "{path}");
+    }
+    assert_eq!(run(with_cookie(set(get("/api/accounts"), "host", Some("evil.example:47123")))).0, 403);
+    assert_eq!(run(post("/api/accounts", "{}")).0, 405);
+}
+
+#[test]
+fn 계정_바꾸기는_칸_id_모양만_받고_연타는_막는다() {
+    let g = gate();
+    let f = Fake::default();
+    let sw = |id: &str| handle(&post("/api/account-switch", &serde_json::json!({ "id": id }).to_string()), &g, &f).status;
+    for bad in ["", "../x", "a b", "a\nb", &"a".repeat(65), "backup-first", "backup-last"] {
+        assert_eq!(sw(bad), 400, "{bad:?}");
+    }
+    assert_eq!(handle(&post("/api/account-switch", r#"{"id":"a1","x":1}"#), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/account-switch", r#"{"id":5}"#), &g, &f).status, 400);
+    assert!(f.calls().is_empty());
+    assert_eq!(sw("a1700000000000"), 200);
+    // 바꾸는 중 또 누름(다른 탭·두 번 탭) — 같은 문지기 안에서 몇 초에 한 번. 다른 칸이어도
+    assert_eq!(sw("a2"), 429);
+    assert_eq!(f.calls(), vec!["account_switch a1700000000000".to_string()]);
+}
+
+#[test]
+fn 계정_바꾸기_실패는_이유_이름을_그대로_돌려준다() {
+    let (st, _, r) = run_with(post("/api/account-switch", r#"{"id":"a2"}"#), Fake { account_fail: Some("locked"), ..Default::default() });
+    assert_eq!((st, String::from_utf8_lossy(&r.body).to_string()), (502, "locked".to_string()));
+}
+
+#[test]
+fn 자동_전환_토글은_불리언만() {
+    let g = gate();
+    let f = Fake::default();
+    assert_eq!(handle(&post("/api/account-auto", r#"{"on":"yes"}"#), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/account-auto", r#"{}"#), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/account-auto", r#"{"on":false}"#), &g, &f).status, 200);
+    assert_eq!(handle(&post("/api/account-auto", r#"{"on":true}"#), &g, &f).status, 200);
+    assert_eq!(f.calls(), vec!["account_auto false".to_string(), "account_auto true".to_string()]);
+}
+
+#[test]
+fn 맥_부하는_읽기만_load_json_과_자리() {
+    // 사용자 "모바일에서 PC 부하도 볼 수 있어야 할 듯"(2026-10-05) — 앱이 적는 load.json + scripts/slot 자리 파일, 쓰기 길 아님
+    let d = tmp("load");
+    std::fs::create_dir_all(d.join("slots")).unwrap();
+    std::fs::write(d.join("load.json"), r#"{"at":"2026-10-05T14:20:32.538Z","cores":10,"load1":138.32,"level":"high","sessions":[{"name":"헬로노트","project":"hello-docs","cpu":87,"mem":"2.2GB","top":[]}]}"#).unwrap();
+    std::fs::write(d.join("slots/build.json"), r#"{"owner":"hello-docs","ts":1791209233.7,"extra":"x"}"#).unwrap();
+    std::fs::write(d.join("slots/ios.json"), "{깨짐").unwrap();
+    let g = gate();
+    let f = Fake { data: d.clone(), ..Default::default() };
+    let r = handle(&with_cookie(get("/api/load")), &g, &f);
+    assert_eq!(r.status, 200);
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    assert_eq!(v["load"]["load1"], serde_json::json!(138.32));
+    assert_eq!(v["load"]["sessions"][0]["project"], "hello-docs");
+    assert_eq!(v["slots"]["build"], serde_json::json!({ "owner": "hello-docs", "ts": 1791209233.7 }), "자리 파일은 주인·시각만");
+    assert_eq!(v["slots"]["ios"], serde_json::Value::Null, "깨진 자리 파일은 비어 있음으로");
+    assert_eq!(v["slots"]["galaxy"], serde_json::Value::Null);
+    assert_eq!(v["ttl"], serde_json::json!({ "build": 2700, "ios": 3600, "galaxy": 1800 }));
+    assert!(v["now"].as_u64().unwrap() > 1_700_000_000);
+    // load.json 이 없으면 load 는 null(앱이 아직 안 잼)
+    std::fs::remove_file(d.join("load.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&handle(&with_cookie(get("/api/load")), &g, &f).body).unwrap();
+    assert_eq!(v["load"], serde_json::Value::Null);
+    // 열쇠 없음·쓰기 시도·몸통 달린 요청
+    assert_eq!(handle(&get("/api/load"), &g, &f).status, 401);
+    assert_eq!(handle(&with_cookie(post("/api/load", "{}")), &g, &f).status, 405);
+    assert_eq!(head_check(&post("/api/load", "{}"), &g).map(|r| r.status), Some(404), "쓰기 길 목록에 없다");
+}
+
+#[test]
+fn 로그인_보기는_열쇠가_있어야_하고_쓰기는_같은_출처_json_만() {
+    assert_eq!(run(get("/api/login")).0, 401);
+    let (st, f, r) = run(with_cookie(get("/api/login")));
+    assert_eq!((st, f.calls()), (200, vec!["login_view".to_string()]));
+    assert!(String::from_utf8_lossy(&r.body).contains("imac"));
+    assert_eq!(run(post("/api/login", "{}")).0, 405);
+    for (path, body) in [("/api/login-start", "{}"), ("/api/login-code", r#"{"code":"abc#def"}"#), ("/api/login-cancel", "{}")] {
+        assert_eq!(run(set(post(path, body), "authorization", None)).0, 401, "{path}");
+        assert_eq!(run(set(post(path, body), "origin", None)).0, 403, "{path}");
+        assert_eq!(run(set(post(path, body), "origin", Some("http://evil.example"))).0, 403, "{path}");
+        assert_eq!(run(set(post(path, body), "content-type", Some("text/plain"))).0, 403, "{path}");
+        assert_eq!(run(with_cookie(get(path))).0, 405, "{path}");
+        let g = gate();
+        assert!(head_check(&post(path, body), &g).is_none(), "{path}");
+        assert_eq!(head_check(&set(post(path, body), "authorization", None), &g).map(|r| r.status), Some(401), "{path}");
+        let (_, f, _) = run(set(post(path, body), "origin", None));
+        assert!(f.calls().is_empty(), "{path}");
+        assert_eq!(run(post(path, body)).0, 200, "{path}");
+    }
+}
+
+#[test]
+fn 로그인_코드는_한_줄_코드_모양만_받고_기록엔_값이_없다() {
+    let g = gate();
+    let f = Fake::default();
+    let code = |c: &str| handle(&post("/api/login-code", &serde_json::json!({ "code": c }).to_string()), &g, &f).status;
+    for bad in ["", "a\rb", "a\nb", "a b", "a;b", &"a".repeat(513)] {
+        assert_eq!(code(bad), 400, "{bad:?}");
+    }
+    assert_eq!(handle(&post("/api/login-code", r#"{"code":"abc","x":1}"#), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/login-code", r#"{"code":5}"#), &g, &f).status, 400);
+    assert!(f.calls().is_empty());
+    assert_eq!(code("Ab-9_x#st"), 200);
+    assert_eq!(f.calls(), vec!["login_code 9".to_string()]);
+}
+
+#[test]
+fn 로그인_시작은_연타를_막는다() {
+    let g = gate();
+    let f = Fake::default();
+    assert_eq!(handle(&post("/api/login-start", "{}"), &g, &f).status, 200);
+    assert_eq!(handle(&post("/api/login-start", "{}"), &g, &f).status, 429);
+    assert_eq!(f.calls(), vec!["login_start".to_string()]);
+}
+
+#[test]
+fn 세션_브라우저_개입은_떠_있는_브라우저에만_같은_출처로() {
+    let ok = r#"{"profile":"shop-m","sessionPid":4242,"on":true}"#;
+    let (code, f, _) = run(post("/api/browser-takeover", ok));
+    assert_eq!(code, 200);
+    assert_eq!(f.calls(), vec!["take shop-m 4242 true"]);
+    let (_, f, _) = run(post("/api/browser-takeover", r#"{"profile":"shop-m","sessionPid":4242,"on":false}"#));
+    assert_eq!(f.calls(), vec!["take shop-m 4242 false"]);
+    assert_eq!(run(post("/api/browser-takeover", r#"{"profile":"other","sessionPid":4242,"on":true}"#)).0, 404);
+    assert_eq!(run(post("/api/browser-takeover", r#"{"profile":"shop-m","sessionPid":1,"on":true}"#)).0, 404, "다른 세션 브라우저");
+    assert_eq!(run(post("/api/browser-takeover", r#"{"profile":"../x","sessionPid":4242,"on":true}"#)).0, 400);
+    assert_eq!(run(set(post("/api/browser-takeover", ok), "origin", Some("http://evil.com"))).0, 403);
+    assert_eq!(run(set(post("/api/browser-takeover", ok), "authorization", None)).0, 401);
+    assert_eq!(run(with_cookie(get("/api/browser-takeover"))).0, 405);
+    assert!(head_check(&post("/api/browser-takeover", ok), &gate()).is_none(), "몸통 받는 길 목록에");
+}
+
+#[test]
+fn 세션_브라우저_입력은_모양을_거르고_수를_막는다() {
+    let ev = r#"{"kind":"mouse","type":"mousePressed","x":0.5,"y":0.5,"button":"left"}"#;
+    let body = format!(r#"{{"profile":"shop-m","sessionPid":4242,"events":[{ev},{{"kind":"text","text":"안녕"}}]}}"#);
+    let (code, f, _) = run(post("/api/browser-input", &body));
+    assert_eq!(code, 200);
+    assert_eq!(f.calls(), vec!["input shop-m 4242 2"]);
+    let many = format!(r#"{{"profile":"shop-m","sessionPid":4242,"events":[{}]}}"#, vec![ev; 51].join(","));
+    assert_eq!(run(post("/api/browser-input", &many)).0, 400, "한 번에 50개까지");
+    assert_eq!(run(post("/api/browser-input", r#"{"profile":"shop-m","sessionPid":4242,"events":[{"kind":"evil"}]}"#)).0, 400);
+    assert_eq!(run(post("/api/browser-input", r#"{"profile":"shop-m","sessionPid":9,"events":[]}"#)).0, 404);
+    assert_eq!(run(set(post("/api/browser-input", &body), "origin", Some("http://evil.com"))).0, 403);
+    assert!(head_check(&post("/api/browser-input", &body), &gate()).is_none());
+}
+
+#[test]
+fn md1_hello_는_열쇠_없이_앱_표시만_준다() {
+    // 다른 기기 참모가 '여기 참모가 있나·버전이 맞나'를 묻는다 — 이름·경로·세션 같은 건 하나도 안 준다
+    let (st, f, r) = run(set(get("/api/hello"), "authorization", None));
+    assert_eq!(st, 200);
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    assert_eq!(v["app"], "chammo");
+    assert_eq!(v["proto"], PROTO);
+    assert!(v["version"].as_str().is_some_and(|s| !s.is_empty()));
+    assert!(v["os"].as_str().is_some());
+    let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
+    assert_eq!(keys.len(), 4, "{keys:?}");
+    assert!(f.calls().is_empty(), "맥 쪽 일은 안 부른다");
+    // 문지기(Host·funnel)는 그대로, POST 는 안 받는다
+    assert_eq!(run(set(get("/api/hello"), "host", Some("evil.com:47123"))).0, 403);
+    assert_eq!(run(set(get("/api/hello"), "tailscale-funnel-request", Some("?1"))).0, 403);
+    assert_eq!(run(post("/api/hello", "{}")).0, 405);
+}
+
+#[test]
+fn md1_다른_참모_짝짓기는_peer_줄로_이름은_몸통에서() {
+    let g = gate();
+    let f = Fake::default();
+    let code = g.devices.new_code(std::time::SystemTime::now()).unwrap();
+    let mut r = set(pair_post(&code), "user-agent", Some("Chammo/0.2.6 (peer)"));
+    r.body = format!(r#"{{"code":"{code}","peer":true,"name":"참모 · my-mac"}}"#).into_bytes();
+    let resp = handle(&r, &g, &f);
+    assert_eq!(resp.status, 200);
+    let tok = serde_json::from_slice::<serde_json::Value>(&resp.body).unwrap()["token"].as_str().unwrap().to_string();
+    let id = g.devices.check(&tok, std::time::SystemTime::now()).unwrap();
+    let d = g.devices.list().into_iter().find(|d| d.id == id).unwrap();
+    assert!(d.peer);
+    assert_eq!(d.name, "참모 · my-mac");
+    // 폰은 몸통 이름을 못 쓴다(이름은 UA 에서) — peer 가 아니면 name 은 무시
+    let c2 = g.devices.new_code(std::time::SystemTime::now()).unwrap();
+    let mut r2 = set(pair_post(&c2), "user-agent", Some("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)"));
+    r2.body = format!(r#"{{"code":"{c2}","name":"가짜 이름"}}"#).into_bytes();
+    let t2 = serde_json::from_slice::<serde_json::Value>(&handle(&r2, &g, &f).body).unwrap()["token"].as_str().unwrap().to_string();
+    let id2 = g.devices.check(&t2, std::time::SystemTime::now()).unwrap();
+    assert_eq!(g.devices.list().into_iter().find(|d| d.id == id2).unwrap().name, "iPhone");
+}
+
+#[test]
+fn 결정_답은_물음이_마지막일_때만_한_줄() {
+    // 2026-10-06 사용자 폰: 결정 대기함 카드에 ㄱㄱ 를 보냈는데 폰이 answer 를 안 남겨 카드가 안 빠졌고 같은 답을 세 번 보냈다
+    let log = [
+        r#"{"ts":"2026-10-06T07:00:00Z","type":"send","task":"1006-1600-ab12","target":"shop"}"#,
+        r#"{"ts":"2026-10-06T07:01:00Z","type":"ask","task":"1006-1600-ab12","note":"배포할까?","to":"aaaa0001"}"#,
+        r#"{"ts":"2026-10-06T07:02:00Z","type":"send","task":"1006-1600-cd34","target":"shop"}"#,
+        r#"{"ts":"2026-10-06T07:03:00Z","type":"ask","task":"1006-1600-cd34","note":"머지?"}"#,
+        r#"{"ts":"2026-10-06T07:04:00Z","type":"answer","task":"1006-1600-cd34","note":"해"}"#,
+        r#"{"ts":"2026-10-06T07:05:00Z","type":"ask","task":"report-fix","note":"보낼까?"}"#,
+        r#"{"ts":"2026-10-06T07:06:00Z","type":"send","task":"report-fix","target":"ops"}"#,
+        "깨진 줄",
+    ]
+    .join("\n");
+    let g = gate();
+    let f = Fake { task_log: log, ..Default::default() };
+    let ans = |body: &str| handle(&post("/api/task-answer", body), &g, &f).status;
+    let rows = |f: &Fake| f.calls().iter().filter_map(|c| c.strip_prefix("append_task ").map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())).collect::<Vec<_>>();
+    // 몸통 받는 길(head_check)에도 있어야 진짜 서버에서 404 가 안 난다
+    assert!(head_check(&post("/api/task-answer", "{}"), &g).is_none());
+    // 이상한 id·빈 답·너무 긴 답은 거절 — 기록 안 함
+    assert_eq!(ans(r#"{"task":"../x","note":"응"}"#), 400);
+    assert_eq!(ans(r#"{"task":"a b","note":"응"}"#), 400);
+    assert_eq!(ans(&serde_json::json!({ "task": "x".repeat(41), "note": "응" }).to_string()), 400);
+    assert_eq!(ans(r#"{"task":"1006-1600-ab12","note":"  "}"#), 400);
+    assert_eq!(ans(&serde_json::json!({ "task": "1006-1600-ab12", "note": "가".repeat(8_001) }).to_string()), 400);
+    assert!(rows(&f).is_empty());
+    // 물음이 마지막(send 는 건너뜀)이면 answer 한 줄 — 답 글은 다듬고 제어 문자는 뺀다, by 폰
+    assert_eq!(ans(r#"{"task":"1006-1600-ab12","note":" ㄱ\u001bㄱ "}"#), 200);
+    let r = rows(&f);
+    assert_eq!(r.len(), 1);
+    assert_eq!((r[0]["type"].as_str(), r[0]["task"].as_str(), r[0]["note"].as_str(), r[0]["by"].as_str()), (Some("answer"), Some("1006-1600-ab12"), Some("ㄱㄱ"), Some("phone")));
+    assert!(r[0]["ts"].as_str().is_some_and(|t| t.len() == 20 && t.ends_with('Z')), "{}", r[0]["ts"]);
+    // 같은 일에 곧바로 또 — 429(맥 기록이 아직 안 바뀐 사이 두 번 붙지 않게)
+    assert_eq!(ans(r#"{"task":"1006-1600-ab12","note":"ㄱㄱ"}"#), 429);
+    // 이미 답한 일·없는 일 — 409, 안 붙임
+    assert_eq!(ans(r#"{"task":"1006-1600-cd34","note":"해"}"#), 409);
+    assert_eq!(ans(r#"{"task":"1006-1600-ffff","note":"해"}"#), 409);
+    // 옛 모양 id 도 물음이 마지막이면 된다(send 뒤에 와도 마지막 '물음'으로 본다 — 앱 waitingList 와 같이)
+    assert_eq!(ans(r#"{"task":"report-fix","note":"보내"}"#), 200);
+    assert_eq!(rows(&f).len(), 2);
+    // 응답이 끊겨 폰이 다시 누름 — 2분 안에 폰이 같은 답을 남겼으면 새 줄 없이 200(폰이 그때 글을 보낸다). 다른 답·데스크톱 답·오래된 답은 409
+    let now = crate::direct::chrono_now();
+    let replay = [
+        format!(r#"{{"ts":"{now}","type":"ask","task":"1006-1700-aa01","note":"배포?"}}"#),
+        format!(r#"{{"ts":"{now}","type":"answer","task":"1006-1700-aa01","note":"ㄱㄱ","by":"phone"}}"#),
+        format!(r#"{{"ts":"{now}","type":"ask","task":"1006-1700-aa02","note":"배포?"}}"#),
+        format!(r#"{{"ts":"{now}","type":"answer","task":"1006-1700-aa02","note":"ㄱㄱ"}}"#),
+        r#"{"ts":"2026-10-06T07:00:00Z","type":"ask","task":"1006-1700-aa03","note":"배포?"}"#.to_string(),
+        r#"{"ts":"2026-10-06T07:00:01Z","type":"answer","task":"1006-1700-aa03","note":"ㄱㄱ","by":"phone"}"#.to_string(),
+    ]
+    .join("\n");
+    let f2 = Fake { task_log: replay, ..Default::default() };
+    let g2 = gate();
+    let ans2 = |body: &str| handle(&post("/api/task-answer", body), &g2, &f2);
+    let r = ans2(r#"{"task":"1006-1700-aa01","note":"ㄱㄱ"}"#);
+    assert_eq!((r.status, String::from_utf8_lossy(&r.body).contains(r#""again":true"#)), (200, true));
+    assert_eq!(ans2(r#"{"task":"1006-1700-aa01","note":"아니"}"#).status, 429, "같은 일 5초 문지기가 먼저");
+    assert_eq!(ans2(r#"{"task":"1006-1700-aa02","note":"ㄱㄱ"}"#).status, 409, "데스크톱이 답한 것");
+    assert_eq!(ans2(r#"{"task":"1006-1700-aa03","note":"ㄱㄱ"}"#).status, 409, "오래된 폰 답");
+    assert!(rows(&f2).is_empty());
+    // 남의 출처·열쇠 없음·GET
+    assert_eq!(handle(&set(post("/api/task-answer", r#"{"task":"1006-1600-ab12","note":"x"}"#), "origin", Some("http://evil.com")), &g, &f).status, 403);
+    assert_eq!(handle(&set(post("/api/task-answer", r#"{"task":"1006-1600-ab12","note":"x"}"#), "authorization", None), &g, &f).status, 401);
+    assert_eq!(handle(&with_cookie(get("/api/task-answer")), &g, &f).status, 405);
+    assert_eq!(rows(&f).len(), 2);
 }

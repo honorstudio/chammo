@@ -147,3 +147,19 @@ export function ciState(checks: Check[]): CiState {
   if (checks.some((c) => c.state === 'pass')) return 'pass';
   return 'none';
 }
+
+// ── 화면 배치 ──
+
+/** 목록(340) + 상세가 읽히는 최소 폭(560). 이보다 좁으면 한 칸씩 — 채팅 패널을 연 리뷰(≈860px)에서 상세가 패널 밑으로 잘리던 것(2026-10-06) */
+export const REVIEW_SPLIT_MIN = 900;
+export type ReviewPanes = 'split' | 'list' | 'detail';
+
+/** 창 폭이 아니라 리뷰 칸이 실제로 받은 폭으로. 0 = 아직 못 잼 → 나란히 */
+export const reviewPanes = (width: number, detailOpen: boolean): ReviewPanes =>
+  width === 0 || width >= REVIEW_SPLIT_MIN ? 'split' : detailOpen ? 'detail' : 'list';
+
+/** 경로 → 폴더(줄여도 되는 쪽)·파일 이름(지킬 쪽) */
+export function splitPath(path: string): { dir: string; name: string } {
+  const i = path.lastIndexOf('/');
+  return { dir: path.slice(0, i + 1), name: path.slice(i + 1) };
+}

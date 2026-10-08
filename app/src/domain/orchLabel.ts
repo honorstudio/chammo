@@ -8,6 +8,12 @@ export function cleanLabel(raw: string): string | null {
   return t ? t : null;
 }
 
+/** 프로필 창 이름 칸 — 정리한 뒤 지금 별명과 다를 때만 바꿀 별명(빈 글 = 처음 이름으로), 같으면 null */
+export function nickChange(current: string, typed: string): string | null {
+  const next = cleanLabel(typed) ?? '';
+  return next === (cleanLabel(current) ?? '') ? null : next;
+}
+
 /** 진짜 세션 이름 = "기본 이름 · 별명" — 별명이 앱(localStorage)에만 있으면 세션끼리 주고받는 메시지·claude agents 엔
  *  참모-3 만 찍혀 서로 헷갈렸다(2026-10-02 사용자). /rename 으로 진짜 이름에 싣고, 참모인지는 앞의 기본 이름으로 가른다 */
 export const NICK_SEP = ' · ';

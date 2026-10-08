@@ -11,6 +11,7 @@ export type SessionActivity = { session: Session; activity: Activity; status: Ac
 const STATE: Record<ActivityStatus, { readonly label: string; cls: string }> = {
   asks: { get label() { return tr('답 필요', 'Needs reply'); }, cls: 'needsInput' },
   blocked: { get label() { return tr('확인창', 'Prompt'); }, cls: 'needsInput' },
+  login: { get label() { return tr('로그인 필요', 'Sign-in needed'); }, cls: 'needsInput' },
   working: { get label() { return tr('작업 중', 'Working'); }, cls: 'working' },
   done: { get label() { return tr('끝남', 'Done'); }, cls: 'replied' },
   idle: { get label() { return tr('대기', 'Idle'); }, cls: 'done' },

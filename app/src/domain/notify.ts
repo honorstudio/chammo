@@ -50,3 +50,10 @@ export function readNoteTarget(s: string): NoteTarget | null {
   const id = s.startsWith('session:') ? s.slice('session:'.length) : '';
   return id ? { to: 'session', id } : null;
 }
+
+/** 참모 창을 보고 있나 — 맥은 웹 값(문서 포커스·안 숨김) 그대로. 윈도우 WebView2 는 최소화·다른 창 앞이어도 hasFocus()=true·hidden=false 라
+ *  Rust 창 상태(main_watched: 보임·최소화 아님·앞)만 본다. 못 물었으면(null) 안 보는 것으로 — 알림을 놓치느니 한 번 더 */
+export function watching(win: boolean, doc: { focus: boolean; hidden: boolean }, main?: boolean | null): boolean {
+  if (!win) return doc.focus && !doc.hidden;
+  return main === true;
+}

@@ -164,6 +164,52 @@ pub fn load_save(json: String) -> Result<(), String> {
     std::fs::write(&tmp, json).and_then(|_| std::fs::rename(&tmp, &path)).map_err(|e| e.to_string())
 }
 
+/// scripts/slot 의 자리와 TTL(초) — 넘으면 다음 사람이 넘겨받는다. 바꾸면 scripts/slot TTL 도
+pub const SLOT_TTL: [(&str, u64); 3] = [("build", 45 * 60), ("ios", 60 * 60), ("galaxy", 30 * 60)];
+
+/// 폰 /api/load — 앱이 적는 load.json 그대로 + 자리 파일(<데이터>/slots/<자리>.json)의 주인·시각·처음 잡은 때 + 쥔 세션 이름·바쁜지(live.json). 읽기만(폰은 보기만, 끄기는 데스크톱).
+/// 나이는 폰 시계 말고 맥 시각(now)으로 잰다. 없거나 깨진 파일·너무 큰 파일은 null
+pub fn phone_load(dir: &std::path::Path, now: u64) -> serde_json::Value {
+    use serde_json::{json, Value};
+    let read = |p: std::path::PathBuf| -> Option<Value> {
+        if std::fs::metadata(&p).ok()?.len() > 512 * 1024 {
+            return None;
+        }
+        serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
+    };
+    // 쥔 세션이 바쁜지 — 앱이 적는 live.json(sessionId·name·busy). 이 함수는 앱 안에서 도니 앱은 떠 있다
+    let live = read(dir.join("live.json")).and_then(|v| v["sessions"].as_array().cloned());
+    let slot = |name: &str| {
+        read(dir.join("slots").join(format!("{name}.json")))
+            .filter(|h| h["owner"].is_string() && h["ts"].is_number())
+            .map(|h| {
+                let mut o = json!({ "owner": h["owner"], "ts": h["ts"] });
+                if h["since"].is_number() {
+                    o["since"] = h["since"].clone();
+                }
+                if let (Some(sid), Some(live)) = (h["session"].as_str().filter(|s| !s.is_empty()), &live) {
+                    match live.iter().find(|s| s["sessionId"].as_str() == Some(sid)) {
+                        Some(s) => {
+                            o["state"] = json!(if s["busy"].as_bool() == Some(true) { "busy" } else { "idle" });
+                            if s["name"].is_string() {
+                                o["who"] = s["name"].clone();
+                            }
+                        }
+                        None => o["state"] = json!("gone"),
+                    }
+                }
+                o
+            })
+            .unwrap_or(Value::Null)
+    };
+    json!({
+        "now": now,
+        "load": read(dir.join("load.json")).unwrap_or(Value::Null),
+        "slots": SLOT_TTL.iter().map(|(n, _)| (n.to_string(), slot(n))).collect::<serde_json::Map<_, _>>(),
+        "ttl": SLOT_TTL.iter().map(|(n, t)| (n.to_string(), json!(t))).collect::<serde_json::Map<_, _>>(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,6 +236,34 @@ mod tests {
         assert_eq!(ps_line(1, 0, 0.0, 1, 3700, "x"), "1 0 0.0 1 01:01:40 x");
         let t = sys_lines(8, 50.0, 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 16 * 1024 * 1024 * 1024);
         assert_eq!(t, "8\n{ 4.00 4.00 4.00 }\ntotal = 4096.00M  used = 1024.00M  free = 3072.00M\n17179869184");
+    }
+
+    #[test]
+    fn 자리_ttl_은_scripts_slot_과_같다() {
+        // 공개본엔 scripts/slot 이 없을 수 있다 — 있을 때만 대조
+        let Ok(py) = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/slot")) else { return };
+        assert!(py.contains("TTL = {'build': 45 * 60, 'ios': 60 * 60, 'galaxy': 30 * 60}"), "scripts/slot TTL 이 바뀌면 SLOT_TTL 도");
+        assert_eq!(SLOT_TTL.map(|(n, t)| (n, t)), [("build", 2700), ("ios", 3600), ("galaxy", 1800)]);
+    }
+
+    #[test]
+    fn 자리는_쥔_세션_이름과_바쁜지까지() {
+        // 2026-10-05 — 폰에서 '누가 자리를 쥐고 멈춰 있나'가 안 보였다. 세션은 앱이 적는 live.json 으로
+        let d = std::env::temp_dir().join(format!("slot-load-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("slots")).unwrap();
+        std::fs::write(d.join("slots/build.json"), r#"{"owner":"hello-docs","ts":2000.5,"since":1000,"session":"aaaa1111-x","pid":42,"child":43}"#).unwrap();
+        std::fs::write(d.join("slots/ios.json"), r#"{"owner":"project-x-app","ts":1500,"session":"bbbb2222-x"}"#).unwrap();
+        std::fs::write(d.join("slots/galaxy.json"), r#"{"owner":"project-b-platform","ts":1500}"#).unwrap();
+        std::fs::write(d.join("live.json"), r#"{"daemon":1,"sessions":[{"sessionId":"aaaa1111-x","name":"앱 기기 점검","busy":true}],"lost":[]}"#).unwrap();
+        let v = phone_load(&d, 3000);
+        assert_eq!(v["slots"]["build"], serde_json::json!({ "owner": "hello-docs", "ts": 2000.5, "since": 1000, "state": "busy", "who": "앱 기기 점검" }));
+        assert_eq!(v["slots"]["ios"]["state"], "gone", "목록에 없는 세션");
+        assert_eq!(v["slots"]["galaxy"], serde_json::json!({ "owner": "project-b-platform", "ts": 1500 }), "세션을 모르면 주인·시각만(예전 자리 파일)");
+        // live.json 이 없으면 상태를 모른다 — 없음으로 단정하지 않는다
+        std::fs::remove_file(d.join("live.json")).unwrap();
+        assert_eq!(phone_load(&d, 3000)["slots"]["build"].get("state"), None);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

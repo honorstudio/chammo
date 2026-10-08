@@ -49,6 +49,7 @@ const WORDS = {
   browser_snapshot: '화면 읽기', browser_take_screenshot: '캡처', browser_tabs: '탭', browser_wait_for: '기다림',
   browser_evaluate: '스크립트', browser_run_code_unsafe: '스크립트', browser_file_upload: '파일 올림', browser_handle_dialog: '대화상자',
   browser_resize: '창 크기', browser_close: '닫기', browser_console_messages: '콘솔 읽기', browser_network_requests: '요청 읽기',
+  script: '스크립트', // chammo-browser launch 로 띄운 크롬(src/script.js)
 };
 
 /** 하는 일 한 줄 — 무엇을 어디에. 값(친 글·양식·코드·파일)은 안 적는다 */
@@ -56,7 +57,7 @@ function toolLine(name, args = {}) {
   const word = WORDS[name] || String(name || '').replace(/^browser_/, '');
   const a = args || {};
   let what = '';
-  if (name === 'browser_navigate') what = bareUrl(a.url || '');
+  if (name === 'browser_navigate' || name === 'script') what = bareUrl(a.url || '');
   else if (name === 'browser_press_key') what = typeof a.key === 'string' ? a.key : '';
   else if (name === 'browser_tabs') what = typeof a.action === 'string' ? a.action : '';
   else if (typeof a.element === 'string') what = a.element;
@@ -104,10 +105,12 @@ function writeSecure(file, obj) {
  * @param {string} o.profile @param {string} o.root 브라우저 루트 @param {string} o.profileDir
  * @param {number} o.pid 래퍼 pid @param {number} o.ppid claude 세션 pid(앱이 세션과 잇는다)
  */
-function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, probe = portOpen }) {
+function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, probe = portOpen, gate = false }) {
   const file = liveFile(root, profile);
   const portFile = path.join(profileDir, 'DevToolsActivePort');
-  const s = { url: '', title: '', tabs: [], tool: '', toolAt: 0, busy: false, ask: null };
+  // gate = 사람이 '개입'하면 세션 도구를 붙잡을 수 있다(래퍼, src/takeover.js) — 앱이 없으면 '멈추지 못함'으로 보인다.
+  // held = 세션 도구가 사람이 돌려주길 기다리는 중(그때부터 ms)
+  const s = { url: '', title: '', tabs: [], tool: '', toolAt: 0, busy: false, ask: null, gate: !!gate, held: 0 };
   // 브라우저가 열려 있나 — 플레이라이트 도구를 부르면 열리고, 닫히면(closed) 끈다. 닫힌 뒤엔 크롬이 남긴 포트 파일이 있어도
   // 상태 파일을 안 쓴다 — 유휴 닫기 뒤 사람 부르기가 죽은 포트로 상태 파일을 다시 써서 앱이 '화면 받는 중'에 멈췄다(2026-10-05 QA 5)
   let up = false;
@@ -120,6 +123,7 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
   function gone(dropPort) {
     up = false;
     s.ask = null;
+    s.held = 0;
     for (const f of [file, choosersFile, ...(dropPort ? [portFile] : [])]) {
       try { fs.rmSync(f, { force: true }); } catch { /* 없음 */ }
     }
@@ -208,6 +212,11 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
       s.ask = null;
       flush();
       return { ok: false, timeout: true, text: '아직 사람이 안 끝냈어 — 기다리려면 browser_ask_human 을 다시 불러' };
+    },
+    /** 세션 도구가 사람 개입이 끝나길 기다리기 시작·끝 */
+    held(on) {
+      s.held = on ? now() : 0;
+      flush();
     },
     /** 브라우저가 닫혔다(browser_close·유휴 닫기·래퍼 끝) — 플레이라이트 파일 창 상태도 같이 사라지니 수도 처음부터. 크롬이 남긴 포트 파일도 지운다 */
     closed() {

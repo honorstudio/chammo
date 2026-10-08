@@ -75,6 +75,7 @@ class NoPersonalNames(unittest.TestCase):
         for p in root.rglob('*'):
             if p.is_file() and '__pycache__' not in p.parts:
                 text = p.read_text(encoding='utf-8').lower()
+                # 공개본 가림(redact)이 이 목록 글자까지 바꾸면 '사용자'·'참모' 를 찾다가 템플릿 본문에 걸린다 — 조각으로 이어 붙여 가림을 피한다
                 for bad in ['honorstudio', 'desktop/dev', '/users/']:
                     self.assertNotIn(bad, text, f'{p.name}: {bad}')
 
@@ -140,7 +141,8 @@ class Windows(unittest.TestCase):
 class Launcher(unittest.TestCase):
     """윈도우의 python3 는 마이크로소프트 스토어 대리 실행기라(종료 코드 49) #!/usr/bin/env python3 로는 도구가 전부 죽었다.
     맨 위를 sh 머리로 — 맥은 python3, 윈도우는 py -3 → python 중 실제로 도는 것. 파이썬에선 그냥 글자라 그대로 돈다"""
-    PY = [p for p in SCRIPTS.iterdir() if p.is_file() and p.name != 'voice-hint']
+    # *.py 는 도구가 import 하는 모듈(lesson_skill.py) — 직접 실행하지 않아 머리가 필요 없다
+    PY = [p for p in SCRIPTS.iterdir() if p.is_file() and p.name != 'voice-hint' and p.suffix != '.py']
 
     def test_모든_파이썬_도구가_같은_머리(self):
         for p in self.PY:
@@ -173,7 +175,7 @@ class ChoiceOnWindows(unittest.TestCase):
     def test_앱에_키_넣기를_부탁한다(self):
         choice = load('choice')
         with tempfile.TemporaryDirectory() as d:
-            choice.ask_app_keys('9b9042fe', ['\x1b[B', '\r'], d)
+            choice.ask_app_keys('c0ffee12', ['\x1b[B', '\r'], d)
             line = json.loads(open(os.path.join(d, 'app.jsonl'), encoding='utf-8').read().strip())
             self.assertEqual(line['action'], 'keys')
-            self.assertEqual(line['arg'], {'id': '9b9042fe', 'keys': '\x1b[B\r'})
+            self.assertEqual(line['arg'], {'id': 'c0ffee12', 'keys': '\x1b[B\r'})

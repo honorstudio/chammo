@@ -248,7 +248,13 @@ pub fn run(data: &Path) -> Result<(), String> {
         // '시험으로 한 번 열어 보는 중'에서 안 끝났다(2026-10-05 아이맥 QA). 설치는 끝난 것 — 정리는 뒤에서 잇고 이유를 한 줄
         let d = data.to_path_buf();
         if !within(std::time::Duration::from_secs(5), move || { crate::browser_fix::fix_all(&d); }) {
-            set(|s| s.note = Some(crate::i18n::tr("프로젝트 폴더 정리는 맥 권한 창 답을 기다리며 뒤에서 이어서 해요", "Tidying project folders continues in the background while macOS waits for your permission answer").into()));
+            // 윈도우엔 폴더 권한 창이 없다 — 그냥 느린 것
+            let note = if cfg!(windows) {
+                crate::i18n::tr("프로젝트 폴더 정리는 뒤에서 이어서 해요", "Tidying project folders continues in the background")
+            } else {
+                crate::i18n::tr("프로젝트 폴더 정리는 맥 권한 창 답을 기다리며 뒤에서 이어서 해요", "Tidying project folders continues in the background while macOS waits for your permission answer")
+            };
+            set(|s| s.note = Some(note.into()));
         }
     }
     result

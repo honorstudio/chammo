@@ -360,6 +360,11 @@ describe('pendingLeft — 보내는 중 말풍선은 보낸 뒤에 들어온 기
     const sent = { text: '다음 거', at: Date.parse('2026-09-30T11:00:05Z') };
     expect(pendingLeft([sent], [u('c', '2026-09-30T11:00:02Z', '다음 거')])).toEqual([]);
   });
+  it('since 가 있으면 그 뒤 기록만 — 끊겨서 입력칸에 되돌아온 말은 방금 전 기록이 있어도 안 간 말이다(2026-10-06)', () => {
+    const back = { text: '다음 거', at: Date.parse('2026-09-30T11:00:05Z'), since: Date.parse('2026-09-30T11:00:05Z') };
+    expect(pendingLeft([back], [u('c', '2026-09-30T11:00:02Z', '다음 거')])).toEqual([back]);
+    expect(pendingLeft([back], [u('d', '2026-09-30T11:00:09Z', '다음 거')])).toEqual([]);
+  });
 });
 
 describe('clickFocusesInput — 채팅 창 아무 데나 눌러도 입력칸으로(쌓기 보기에서 입력칸 찾기 어려웠다, 2026-09-30 사용자)', () => {
@@ -409,5 +414,22 @@ describe('sendControls — 입력칸 오른쪽 버튼(2026-10-02 보내기 버�
   it('터미널 입력칸에 쓰던 글만 있어도 보낼 수 있다', () => {
     expect(sendControls(false, '', '/model')).toEqual({ canSend: true, stop: false });
     expect(sendControls(true, '', '/model')).toEqual({ canSend: true, stop: true });
+  });
+});
+
+describe('사람 개입 꼬리표 — 도구 결과에 [사람 개입] 이 오면 채팅에 한 줄', () => {
+  const rec = (text: string) => JSON.stringify({ type: 'user', uuid: 'u1', timestamp: '2026-10-06T03:00:00Z', message: { content: [{ type: 'tool_result', tool_use_id: 't', content: [{ type: 'text', text }] }] } });
+  it('돌려준 꼬리표는 첫 줄을 알림 줄로', () => {
+    const items = parseChat(rec('[사람 개입] 사람이 브라우저를 3분 조작하고 돌려줬어.\n- 누른 곳: 버튼 \'Submit\'\n화면이 바뀌었을 수 있어'));
+    expect(items).toEqual([{ kind: 'note', id: 'u1', ts: '2026-10-06T03:00:00Z', text: '사람이 브라우저를 3분 조작하고 돌려줬어' }]);
+  });
+  it('120초 넘게 붙잡혀 배경으로 간 호출 — 끝 알림(task-notification)에 온 꼬리표도 한 줄', () => {
+    const prompt = '<task-notification>\n<task-id>k1</task-id>\n<status>failed</status>\n<result>\nTask failed: [사람 개입] 사람이 폰에서 브라우저를 3분 조작하고 돌려줬어.\n- 누른 곳: x\n</result>\n</task-notification>';
+    const line = JSON.stringify({ type: 'attachment', uuid: 'a1', timestamp: '2026-10-06T03:30:00Z', attachment: { type: 'queued_command', prompt, origin: { kind: 'task-notification' } } });
+    expect(parseChat(line)).toEqual([{ kind: 'note', id: 'a1', ts: '2026-10-06T03:30:00Z', text: '사람이 폰에서 브라우저를 3분 조작하고 돌려줬어' }]);
+  });
+  it('아직 조작 중(시간 다 됨)·평범한 결과는 줄을 안 만든다', () => {
+    expect(parseChat(rec('[사람 개입] 아직 사람이 브라우저를 조작 중이야 — 이 호출은 실행하지 않았어'))).toEqual([]);
+    expect(parseChat(rec('### Page\n- Page URL: https://a.com'))).toEqual([]);
   });
 });

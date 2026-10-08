@@ -7,6 +7,7 @@ import { IconBack } from '../Icons';
 import type { Session } from '../../domain/session';
 import { FileView } from './FileView';
 import { remember, remembered } from './memo';
+import { Notice, type NoticeMsg } from './Notice';
 
 const dot = (s: string) => (s === 'running' ? 'st-work' : s === 'failed' || s === 'noReport' ? 'st-wait' : s === 'paused' || s === 'done' ? 'st-off' : 'st-done');
 
@@ -29,7 +30,7 @@ export function RoutineBoard({ sessions, onBack }: { sessions: Session[]; onBack
   const [openName, setOpenName] = useState<string | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<NoticeMsg | null>(null);
   const [doc, setDoc] = useState<Routine | null>(null);
   const now = new Date();
   const items = routines.map((r) => ({ r, ...routineItem(r, sessions, now) }));
@@ -46,10 +47,10 @@ export function RoutineBoard({ sessions, onBack }: { sessions: Session[]; onBack
     setMsg(null);
     try {
       await routineDo(r.name, action);
-      setMsg(action === 'run' ? `${r.name} 시작했어요` : action === 'pause' ? `${r.name} 일시정지` : `${r.name} 다시 켬`);
+      setMsg({ text: action === 'run' ? `${r.name} 시작했어요` : action === 'pause' ? `${r.name} 일시정지` : `${r.name} 다시 켬`, error: false });
       setTick((t) => t + 1);
     } catch (e) {
-      setMsg(`못 했어요: ${(e as Error).message}`);
+      setMsg({ text: `못 했어요: ${(e as Error).message}`, error: true });
     } finally {
       setBusy(null);
     }
@@ -65,7 +66,7 @@ export function RoutineBoard({ sessions, onBack }: { sessions: Session[]; onBack
         <div className="m-sm m-rt-sum">{raw === null ? (err ? '예약 목록을 못 읽었어요' : '불러오는 중…') : routineSummary(routines, now)}</div>
       </header>
       {err && <div className="m-error" role="status">{err}</div>}
-      {msg && <div className="m-note-line">{msg}</div>}
+      {msg && <Notice text={msg.text} error={msg.error} onClose={() => setMsg(null)} />}
       <div className="m-rt-list">
         {active.map(({ r, state, status, line }) => (
           <div key={r.name} className="m-rt">

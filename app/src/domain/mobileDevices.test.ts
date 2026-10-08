@@ -38,3 +38,11 @@ describe('QR 거두기 — 줄이 안 늘어도 열쇠를 새로 내줬으면 �
     expect(lastPaired([row({ id: 'a', paired: 5 }), row({ id: 'b', paired: 9 })])).toBe(9);
   });
 });
+
+describe('다른 기기 참모 줄 — 폰과 묶지 않고 칸 이름은 참모', () => {
+  it('peer 줄은 자기 묶음 하나에 칸은 peer', () => {
+    const g = phoneGroups([row({ id: 'a', name: '참모 · my-mac', peer: true, lastSeen: 9 }), row({ id: 'b' })]);
+    expect(g[0]).toMatchObject({ group: 'a', name: '참모 · my-mac', kinds: ['peer'] });
+    expect(kindLabels(g[0]!.name, g[0]!.kinds)).toEqual(['다른 기기 참모']);
+  });
+});

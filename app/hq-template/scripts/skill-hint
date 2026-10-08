@@ -1,0 +1,63 @@
+#!/bin/sh
+''':'
+# sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+exit 0
+':'''
+__doc__ = """Skill nudge — the voice-hint hook runs it on every prompt (and on messages from other sessions). Situational guides were moved
+out of the always-loaded CHAMMO.md into HQ skills (.claude/skills/hq-*); when the words of one of those jobs show up, print one line
+telling the assistant to open that skill first. Nothing matched -> no output.
+스킬 환기 — 훅(voice-hint)이 매 지시(다른 세션 메시지 포함)마다 부른다. 상황별 안내를 늘 실리는 CHAMMO.md 에서 HQ 스킬(.claude/skills/hq-*)로 뺐다 —
+그 일의 낱말이 보이면 '먼저 ○○ 스킬을 열어' 한 줄. 안 걸리면 아무것도 안 낸다(2026-10-06). stdin = 훅 입력({"prompt": …})"""
+import json, os, re, select, sys
+
+MAX = 3
+# (스킬, 낱말, 한국어 이름, 영어 이름) — 좁게: 한 낱말로 거의 매번 걸리면 소음이다(harness-placement)
+RULES = [
+    ('hq-login', r'login expired|not logged in|please run /login|auth login|로그인이? ?(풀|만료)|sign-?in (expired|needed)', '로그인 풀림', 'sign-in expired'),
+    ('hq-browser', r'브라우저|browser|playwright|크롬|chrome|(사이트|페이지|웹)[^\n]{0,8}(열|들어가|눌러|확인)|open the (site|page)', '브라우저 일', 'browser work'),
+    ('hq-routine', r'매일|매주|평일 ?\d|\d+ ?(분|시간) ?마다|예약|정기적|한 번만|routine|every (day|week|morning|night|\d)|daily|weekly|\d{1,2}/\d{1,2} \d{1,2}:\d{2}|\d+월 ?\d+일', '예약', 'scheduled jobs'),
+    ('hq-folders', r'operation not permitted|workspace not trusted|unknown error occurred|전체 디스크|full disk|devroot|폴더[^\n]{0,6}(추가|더해)|project add', '폴더 문제', 'folder trouble'),
+    ('hq-app', r'음성 모드|voice mode|설정[^\n]{0,4}(열|켜|꺼)|켜져 있어|하니터|harnitor|스킬 뭐|mcp[^\n]{0,10}(왜|안 ?떠)|느려|느리|cpu|부하|어떻게 써|사무실|다마고치|단축키|is \w+ on\?|open settings|slow', '앱 조작·하니터·부하·앱 안내', 'operating the app / Harnitor / load / app tour'),
+]
+
+
+def data_dir():
+    env = os.environ.get('CHAMMO_HOME', '').strip()
+    if env:
+        return os.path.expanduser(env)
+    home = os.path.expanduser('~')
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not os.path.isdir(new) and os.path.isdir(old) else new
+
+
+def lang():
+    try:
+        with open(os.path.join(data_dir(), 'config.json'), encoding='utf-8') as f:
+            return 'en' if json.load(f).get('language') == 'en' else 'ko'
+    except (OSError, ValueError, AttributeError):
+        return 'ko'
+
+
+def hints(prompt, language='ko'):
+    out = []
+    for skill, pat, ko, en in RULES:
+        if re.search(pat, prompt, re.I):
+            out.append(f'{en} -> open the `{skill}` skill first (Skill tool)' if language == 'en' else f'{ko} → 먼저 `{skill}` 스킬을 열어(Skill 도구)')
+    return out[:MAX]
+
+
+def main():
+    r, _, _ = select.select([sys.stdin], [], [], 1) if hasattr(select, 'select') and os.name != 'nt' else ([sys.stdin], [], [])
+    raw = sys.stdin.read() if r else ''
+    try:
+        prompt = json.loads(raw).get('prompt') or ''
+    except (ValueError, AttributeError):
+        prompt = ''
+    for line in hints(prompt, lang()):
+        print(line)
+
+
+if __name__ == '__main__':
+    main()

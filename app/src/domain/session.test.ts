@@ -328,6 +328,30 @@ describe('윈도우 — agents 의 C:\\… cwd 도 HQ·프로젝트로 알아본
   });
 });
 
+describe('groupByProject — 윈도우 HQ 가 섞인 구분자·대소문자로 와도 참모를 알아본다(폰 "떠 있는 참모가 없어요", 2026-10-05)', () => {
+  const raw = [
+    { id: 'a', name: assistant(), cwd: 'C:\\Users\\Me\\.chammo\\hq', kind: 'background', status: 'idle', state: 'working' },
+    { id: 'b', name: `${assistant()}-2`, cwd: 'c:\\users\\me\\.chammo\\hq\\', kind: 'background', status: 'busy', state: 'working' },
+    { id: 'c', name: 'shop', cwd: 'C:\\Users\\Me\\dev\\shop', kind: 'background', status: 'busy' },
+  ];
+  const s = parseAgents(JSON.stringify(raw), 'C:\\Users\\Me/dev');
+  it.each([
+    ['config::expand 모양(섞인 구분자)', 'C:\\Users\\Me/.chammo/hq'],
+    ['역슬래시만', 'C:\\Users\\Me\\.chammo\\hq'],
+    ['끝 / 붙음', 'C:/Users/Me/.chammo/hq/'],
+    ['대소문자 다름', 'c:/users/me/.CHAMMO/hq'],
+  ])('%s', (_, hq) => {
+    const g = groupByProject(s, hq);
+    expect(g.orchestrators.map((x) => x.id)).toEqual(['a', 'b']);
+    expect(g.projects.map((p) => p.name)).toEqual(['shop']);
+  });
+  it('맥 HQ 는 대소문자를 그대로 가린다(지금 동작)', () => {
+    const mac = parseAgents(JSON.stringify([{ id: 'm', name: assistant(), cwd: '/Users/me/hq', kind: 'background', status: 'idle' }]), '/Users/me/dev');
+    expect(groupByProject(mac, '/Users/me/hq/').orchestrators.map((x) => x.id)).toEqual(['m']);
+    expect(groupByProject(mac, '/Users/me/HQ').orchestrators).toEqual([]);
+  });
+});
+
 describe('classifyWorkspace — 윈도우 경로(대소문자·역슬래시 섞임, 2026-10-01 윈도우 PC)', () => {
   const W = 'C:/Users/me/Desktop/dev';
   it('대소문자가 달라도(윈도우는 같은 폴더) 그 아래 프로젝트·작업공간으로', () => {

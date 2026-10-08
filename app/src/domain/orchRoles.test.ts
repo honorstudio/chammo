@@ -90,6 +90,12 @@ describe('inferRoles — 최근 7일 기록으로 참모마다 주로 맡긴 프
     expect(inferRoles(ev, orchs, [...sessions, helper], NOW, { hq: '/dev/hq/' })['참모']).toEqual(['alpha-shop']);
   });
 
+  it('윈도우 HQ 가 섞인 구분자·대소문자로 와도 HQ 도우미에게 보낸 일은 뺀다', () => {
+    const ev = [send('t1', 'alpha-shop', 'aa11', 3), send('t2', 'sns-post', 'aa11', 2)];
+    const helper = s('h1', { name: 'sns-post', cwd: 'C:/Users/Me/.chammo/hq', project: 'hq' });
+    expect(inferRoles(ev, orchs, [...sessions, helper], NOW, { hq: 'c:\\Users\\Me/.chammo/hq' })['참모']).toEqual(['alpha-shop']);
+  });
+
   it('꺼진 참모도 id 로 맞춘다(known 에 있으면)', () => {
     const ev = [send('t1', 'alpha-shop', 'off77', 5)];
     expect(inferRoles(ev, [...orchs, { id: 'off77', name: '참모-9 · 두부' }], sessions, NOW)['참모-9']).toEqual(['alpha-shop']);

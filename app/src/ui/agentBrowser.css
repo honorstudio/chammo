@@ -18,7 +18,6 @@
 .ab-screen img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
 .ab-screen .ab-wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 .ab-wait { color: #75757f; font-size: 12px; }
-.ab-wait.ab-fail { gap: 6px; padding: 0 16px; text-align: center; color: #b4b4bd; }
 .ab-doing { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font: 11.5px/1.5 "MesloLGS NF", ui-monospace, Menlo, Consolas, monospace; color: #c9c9d1; background: #18181c; white-space: nowrap; overflow: hidden; }
 .ab-doing span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .ab-doing.ab-busy { color: #fff; }
@@ -83,3 +82,21 @@
 .abm-queue button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 /* 작게 접힌 띠에도 사람 필요(QA B2) */
 .ab-strip .ab-ask-tag { flex: none; font-style: normal; padding: 2px 8px; border-radius: 6px; background: #f0a020; color: #1a1205; font-size: 11px; font-weight: 700; }
+/* 진짜 화면이 아닐 때(닫힘·못 받음·오래 주소 모름) — 마지막 그림은 흐리게, 그 위에 왜인지·다시 시도. 사진을 진짜 화면으로 안 보게(2026-10-05 사용자 실사용) */
+.ab-screen img.ab-stale, .abm-screen img.ab-stale, .ab-strip img.ab-stale { opacity: .3; filter: grayscale(1) blur(2px); }
+.ab-cover { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 0 16px; background: rgba(13, 13, 16, .5); cursor: default; }
+.ab-cover-box { display: inline-flex; align-items: center; gap: 10px; max-width: 100%; padding: 8px 8px 8px 16px; border-radius: 10px; background: #1c1c21; color: #e6e6ec; font-size: 13px; text-align: left; box-shadow: 0 8px 28px rgba(0, 0, 0, .45); }
+.ab-cover .ab-ic { color: #e6e6ec; background: rgba(255, 255, 255, .08); }
+/* 보내 봐야 버려지는 동안 — 누를 수 없다는 게 보이게 */
+.abm-screen.abm-blocked, .abm-screen.abm-blocked .ab-cover { cursor: not-allowed; }
+.abm-screen.abm-blocked .ab-cover .ab-ic { cursor: pointer; }
+.abm-done:disabled { cursor: not-allowed; opacity: .45; }
+/* 사람 개입(2026-10-06 사용자) — 평소 보기만, '개입'을 눌러야 조작. 개입 중엔 파란 줄·돌려주기(주황 '사람 필요'와 가른다) */
+.abm-takeover { all: unset; cursor: pointer; flex: none; min-height: 30px; padding: 0 14px; box-sizing: border-box; display: inline-flex; align-items: center; border-radius: 8px; background: #6b8cff; color: #fff; font-size: 13px; font-weight: 700; white-space: nowrap; }
+.abm-takeover:hover { background: #7d9aff; }
+.abm-takeover:focus-visible, .abm-give:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.abm-take { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: color-mix(in srgb, #6b8cff 20%, #1c1c21); color: #dfe6ff; font-size: 13px; }
+.abm-take span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.abm-give { all: unset; cursor: pointer; padding: 7px 14px; min-height: 30px; box-sizing: border-box; border-radius: 8px; background: #6b8cff; color: #fff; font-weight: 700; font-size: 13px; white-space: nowrap; }
+.ab-doing.ab-taking { color: #dfe6ff; background: color-mix(in srgb, #6b8cff 18%, #18181c); }
+.ab-strip .ab-take-tag { flex: none; font-style: normal; padding: 2px 8px; border-radius: 6px; background: #6b8cff; color: #fff; font-size: 11px; font-weight: 700; }

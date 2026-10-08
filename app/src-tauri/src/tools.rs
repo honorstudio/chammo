@@ -277,7 +277,12 @@ pub async fn tools_mcp_remove(root: Option<String>, name: String, scope: String)
             parked.remove(&name);
             return write_parked(&parked);
         }
-        claude(root.as_deref(), &["mcp".into(), "remove".into(), name, "-s".into(), scope], 30).map(|_| ())
+        claude(root.as_deref(), &["mcp".into(), "remove".into(), name.clone(), "-s".into(), scope.clone()], 30)?;
+        // 앱이 붙인 참모 브라우저를 사람이 지웠다 — 다시 넣지 않게(browser_attach::reassert)
+        if let (Some(r), "local") = (root.as_deref(), scope.as_str()) {
+            crate::browser_attach::forget(r, &name);
+        }
+        Ok(())
     })
     .await
 }

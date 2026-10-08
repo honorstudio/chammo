@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
 import { filterAvailable, filterSkills, mcpRows, removeScope, respawnTargets, shortMcpName, type Available, type Market, type McpDot, type McpRow, type McpStatus, type PluginRow, type ToolSkill, type ToolsConf } from '../../domain/tools';
-import { tr } from '../../i18n';
+import { machine, tr } from '../../i18n';
 import { IconClose, IconOpen, IconPlus, IconRefresh, IconSend, IconTrash } from '../Icons';
 import { useOrchActions } from '../orchActions';
 import './tools.css';
@@ -23,7 +23,7 @@ const sourceWord = (r: McpRow) =>
   : r.source === 'user' ? tr('모든 프로젝트', 'All projects')
   : r.source === 'connector' ? tr('claude.ai 커넥터', 'claude.ai connector')
   : r.source === 'plugin' ? tr('플러그인', 'Plugin')
-  : r.source === 'builtin' ? tr('Claude Code 내장 · 이 맥 화면 보고 클릭·입력', 'Built into Claude Code · sees and clicks on this Mac\'s screen') : '';
+  : r.source === 'builtin' ? tr(`Claude Code 내장 · 이 ${machine()} 화면 보고 클릭·입력`, `Built into Claude Code · sees and clicks on this ${machine()}'s screen`) : '';
 
 const skillWhere = (s: ToolSkill) => (s.source === 'project' ? tr('프로젝트', 'Project') : s.source === 'plugin' ? tr('플러그인', 'Plugin') : tr('내 스킬', 'Mine'));
 

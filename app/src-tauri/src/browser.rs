@@ -22,6 +22,14 @@ pub const FILES: &[(&str, &str)] = &[
     ("src/guard.js", include_str!("../../../tools/chammo-browser/src/guard.js")),
     ("src/check.js", include_str!("../../../tools/chammo-browser/src/check.js")),
     ("src/features.js", include_str!("../../../tools/chammo-browser/src/features.js")),
+    ("src/appcopy.js", include_str!("../../../tools/chammo-browser/src/appcopy.js")),
+    ("assets/browser-icon.svg", include_str!("../../../tools/chammo-browser/assets/browser-icon.svg")),
+    ("src/takeover.js", include_str!("../../../tools/chammo-browser/src/takeover.js")),
+    ("src/secrets.js", include_str!("../../../tools/chammo-browser/src/secrets.js")),
+    ("src/channel.js", include_str!("../../../tools/chammo-browser/src/channel.js")),
+    ("src/users.js", include_str!("../../../tools/chammo-browser/src/users.js")),
+    ("src/script.js", include_str!("../../../tools/chammo-browser/src/script.js")),
+    ("src/connect.js", include_str!("../../../tools/chammo-browser/src/connect.js")),
 ];
 
 pub const MIN_NODE: u32 = 20;
@@ -161,7 +169,7 @@ mod tests {
     fn 실행에_필요한_파일이_다_들어있다() {
         // 도구의 bin·src 에 파일을 더했는데 여기 목록에 안 넣으면 설치본이 깨진다
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/chammo-browser");
-        for sub in ["bin", "src"] {
+        for sub in ["bin", "src", "assets"] {
             for e in std::fs::read_dir(root.join(sub)).unwrap() {
                 let name = format!("{sub}/{}", e.unwrap().file_name().to_string_lossy());
                 assert!(FILES.iter().any(|(p, _)| *p == name), "목록에 없음: {name}");
