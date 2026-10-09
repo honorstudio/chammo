@@ -13,7 +13,8 @@ import { orchRoleSet, saveOrchRole } from './orchRoleStore';
 type MenuItem = { label: string; danger?: boolean; run: () => void };
 type Ctx = {
   /** label: 창에 보일 이름(프로젝트 세션은 프로젝트·작업공간 이름) — 없으면 별명·설정 이름 */
-  askStop: (s: Session, label?: string) => void;
+  /** why = 누른 길(actions.log) — 메뉴·카드·⌘W 확인 창 */
+  askStop: (s: Session, label?: string, why?: string) => void;
   askRename: (s: Session) => void;
   /** 프사 바꾸기 창 — color = 저장한 색이 없을 때 쓰는 참모 순서 색 */
   askAvatar: (s: Session, color: string) => void;
@@ -22,7 +23,8 @@ type Ctx = {
   /** 아무 항목으로나 오른쪽 클릭 메뉴(꺼진 참모 등) */
   openMenu: (e: React.MouseEvent, items: MenuItem[]) => void;
   /** 확인 받고 지우기(꺼진 세션 등) — 제목·본문·실행 */
-  confirm: (c: { title: string; body: string; ok: string; run: () => void }) => void;
+  /** danger = 빨간 위험 버튼(기본). 추가·설치처럼 되돌리기 쉬운 건 false */
+  confirm: (c: { title: string; body: string; ok: string; run: () => void; danger?: boolean }) => void;
   /** 보일 이름 — 별명, 없으면 설정 이름 */
   nameOf: (s: Session) => string;
 };
@@ -39,17 +41,17 @@ export function syncRealName(s: Session, label: string | undefined) {
 
 /** pins·onPin = 참모 고정(폰과 같은 orch-pins.json) — 참모 줄 메뉴 맨 위 '고정'·'고정 풀기' */
 /** onNick = 별명을 바꿨을 때 진짜 이름(/rename)은 App 이 쉬는 때 보낸다(일하는 중·첫 턴에 보내면 턴 끝에 되돌아갔다). 없으면 바로 보낸다 */
-export function OrchActionsProvider({ pins = [], onPin, onNick, onStop, onRemove, children }: { pins?: string[]; onPin?: (s: Session, on: boolean) => void; onNick?: (s: Session, nick: string) => void; onStop: (s: Session) => void; onRemove: (id: string) => void; children: React.ReactNode }) {
+export function OrchActionsProvider({ pins = [], onPin, onNick, onStop, onRemove, children }: { pins?: string[]; onPin?: (s: Session, on: boolean) => void; onNick?: (s: Session, nick: string) => void; onStop: (s: Session, why: string) => void; onRemove: (id: string) => void; children: React.ReactNode }) {
   useOrchLabels(); // 별명이 바뀌면 다시 그린다
-  const [ask, setAsk] = useState<{ title: string; body: string; ok: string; run: () => void } | null>(null);
+  const [ask, setAsk] = useState<{ title: string; body: string; ok: string; run: () => void; danger?: boolean } | null>(null);
   const [rename, setRename] = useState<Session | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [avatar, setAvatar] = useState<{ s: Session; color: string } | null>(null);
   const nameOf = useCallback((s: Session) => orchDisplay(s) || assistant(), []);
-  const askStop = (s: Session, label?: string) => setAsk({
+  const askStop = (s: Session, label?: string, why = 'confirm') => setAsk({
     title: tr(`${label ?? nameOf(s)} 끌까?`, `Stop ${label ?? nameOf(s)}?`),
     body: tr('대화는 남아서 나중에 "꺼진 세션"에서 이어서 켤 수 있어. 하던 일은 멈춰.', 'The conversation is kept — you can resume it later. Work in progress stops.'),
-    ok: tr('끄기', 'Stop'), run: () => onStop(s),
+    ok: tr('끄기', 'Stop'), run: () => onStop(s, why),
   });
   const askRemove = (s: Session) => setAsk({
     title: tr(`${nameOf(s)} 지울까?`, `Remove ${nameOf(s)}?`),
@@ -71,7 +73,7 @@ export function OrchActionsProvider({ pins = [], onPin, onNick, onStop, onRemove
         : { label: tr('맨 위에 고정', 'Pin to top'), run: () => onPin(s, true) }] : []),
       { label: color ? tr('이름·맡은 일', 'Name & role') : tr('이름 바꾸기', 'Rename'), run: () => setRename(s) },
       ...(color ? [{ label: tr('프로필 바꾸기', 'Change avatar'), run: () => setAvatar({ s, color }) }] : []), // 참모만(도우미 줄은 색을 안 넘긴다)
-      { label: tr('세션 끄기', 'Stop session'), danger: true, run: () => askStop(s) },
+      { label: tr('세션 끄기', 'Stop session'), danger: true, run: () => askStop(s, undefined, 'menu') },
       { label: tr('세션 지우기(끄고 목록에서 빼기)', 'Remove session (stop and delist)'), danger: true, run: () => askRemove(s) },
     ]),
     openMenu,
@@ -82,7 +84,7 @@ export function OrchActionsProvider({ pins = [], onPin, onNick, onStop, onRemove
     <C.Provider value={ctx}>
       {children}
       {menu && <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} items={menu.items} />}
-      {ask && <Confirm title={ask.title} body={ask.body} ok={ask.ok} danger onCancel={() => setAsk(null)} onOk={() => { ask.run(); setAsk(null); }} />}
+      {ask && <Confirm title={ask.title} body={ask.body} ok={ask.ok} danger={ask.danger !== false} onCancel={() => setAsk(null)} onOk={() => { ask.run(); setAsk(null); }} />}
       {avatar && <AvatarPicker name={avatar.s.name || ''} label={nameOf(avatar.s)} color={avatar.color} nick={{ ...nickProps(avatar.s), onSave: (v) => saveNick(avatar.s, v) }} onClose={() => setAvatar(null)} />}
       {rename && <Rename {...nickProps(rename)}
         role={orchestratorLike(rename.name) ? orchRoleSet(rename.name) : undefined /* 맡은 일은 참모만(이름과 따로, 2026-10-04) */}

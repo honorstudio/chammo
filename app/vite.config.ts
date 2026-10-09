@@ -12,7 +12,7 @@ export default defineConfig({
   test: {
     include: ['src/**/*.test.ts'],
     environment: 'node',
-    // CSS 는 기본으로 빈 글이 된다 — 폰 화면 배치(foldLayout)·프사 멈춤(avatarCss) 규칙을 ?raw 로 읽는 테스트가 있어서 이 파일들만 그대로
-    css: { include: [/mobile\.css/, /avatar\.css/] },
+    // CSS 는 기본으로 빈 글이 된다 — 폰 화면 배치(foldLayout)·프사 멈춤(avatarCss)·채팅 탭 줄(chatTabsCss) 규칙을 ?raw 로 읽는 테스트가 있어서 이 파일들만 그대로
+    css: { include: [/mobile\.css/, /avatar\.css/, /chat\.css/, /space\.css/] },
   },
 });

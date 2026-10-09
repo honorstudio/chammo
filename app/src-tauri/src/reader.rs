@@ -163,6 +163,14 @@ pub fn safe_path(url_path: &str, home: &Path) -> Option<PathBuf> {
     real.starts_with(crate::platform::clean_path(home.canonicalize().ok()?)).then_some(real)
 }
 
+/// hodoc 이 내줄 파일 — 홈 안 파일, 그리고 데이터 폴더가 홈 밖이어도 avatars/ 안 그림(프사)
+pub fn served_path(url_path: &str, home: &Path, avatars: &Path) -> Option<PathBuf> {
+    safe_path(url_path, home).or_else(|| {
+        let p = safe_path(url_path, avatars)?; // 링크·../ 를 푼 진짜 자리가 avatars 안
+        mime_of(&p).starts_with("image/").then_some(p)
+    })
+}
+
 pub fn mime_of(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
         Some("html" | "htm") => "text/html; charset=utf-8",
@@ -198,28 +206,9 @@ pub fn mime_of(path: &Path) -> &'static str {
     }
 }
 
-/// Range 머리("bytes=a-b", "bytes=a-", "bytes=-n") → 포함 구간 (시작, 끝). 파일 밖이거나 모양이 다르면 None
-pub fn range_of(header: &str, len: usize) -> Option<(usize, usize)> {
-    let (a, b) = header.trim().strip_prefix("bytes=")?.split(',').next()?.split_once('-')?;
-    let last = len.checked_sub(1)?;
-    let (start, end) = match (a.trim(), b.trim()) {
-        ("", n) => (len.saturating_sub(n.parse().ok()?), last),
-        (a, "") => (a.parse().ok()?, last),
-        (a, b) => (a.parse().ok()?, b.parse::<usize>().ok()?.min(last)),
-    };
-    (start <= end && start <= last).then_some((start, end))
-}
-
-/// 파일 내용 → 응답. 영상은 WebKit 이 Range 로 조각씩 달라고 해서 206 으로 그 조각만 준다(2026-09-29 리더 영상 재생)
-pub fn respond(body: &[u8], mime: &str, range: Option<&str>) -> Response<Vec<u8>> {
-    let base = || Response::builder().header("Content-Type", mime).header("Cache-Control", "no-store").header("Accept-Ranges", "bytes");
-    match range {
-        None => base().body(body.to_vec()).unwrap(),
-        Some(h) => match range_of(h, body.len()) {
-            Some((a, b)) => base().status(206).header("Content-Range", format!("bytes {a}-{b}/{}", body.len())).body(body[a..=b].to_vec()).unwrap(),
-            None => base().status(416).header("Content-Range", format!("bytes */{}", body.len())).body(Vec::new()).unwrap(),
-        },
-    }
+/// 파일 내용 → 응답(통째). 조각 요청(Range)은 part_response 가 파일에서 그 조각만 읽는다
+pub fn respond(body: &[u8], mime: &str) -> Response<Vec<u8>> {
+    Response::builder().header("Content-Type", mime).header("Cache-Control", "no-store").header("Accept-Ranges", "bytes").body(body.to_vec()).unwrap()
 }
 
 /// HTML 끝에 한 줄 — 프레임 안에서 누른 Esc 를 앱(부모 창)에 넘긴다. 프레임은 다른 출처라 앱이 키를 못 듣는다
@@ -273,11 +262,14 @@ fn with_doc_shims(body: &[u8]) -> Vec<u8> {
 }
 
 /// hodoc 응답 — HTML 은 샌드박스·끼움, 글꼴은 불투명 출처 시안이 읽게 CORS 를 연다(글·JSON 같은 건 안 연다)
-pub fn doc_response(body: Vec<u8>, mime: &str, range: Option<&str>) -> Response<Vec<u8>> {
-    let html = mime.starts_with("text/html");
-    let mut r = if html && range.is_none() { respond(&with_doc_shims(&body), mime, None) } else { respond(&body, mime, range) };
+pub fn doc_response(body: Vec<u8>, mime: &str) -> Response<Vec<u8>> {
+    let r = if mime.starts_with("text/html") { respond(&with_doc_shims(&body), mime) } else { respond(&body, mime) };
+    doc_headers(r, mime)
+}
+
+fn doc_headers(mut r: Response<Vec<u8>>, mime: &str) -> Response<Vec<u8>> {
     let h = r.headers_mut();
-    if html {
+    if mime.starts_with("text/html") {
         h.insert("Content-Security-Policy", tauri::http::HeaderValue::from_static(DOC_CSP));
     } else if mime.starts_with("font/") {
         h.insert("Access-Control-Allow-Origin", tauri::http::HeaderValue::from_static("*"));
@@ -285,13 +277,37 @@ pub fn doc_response(body: Vec<u8>, mime: &str, range: Option<&str>) -> Response<
     r
 }
 
+/// 조각 요청 한 번에 읽는 상한 — bytes=0- 처럼 끝이 열린 요청도 이만큼만(WebKit 은 이어서 다시 묻는다). 맥 안이라 폰(1MB)보다 크게
+const READER_CHUNK: u64 = 8 * 1024 * 1024;
+
+/// Range 요청 — 파일 전체를 읽지 않고 seek 로 그 조각만(1GB 넘는 녹화도 조각마다 통째로 읽던 것, 2026-09-29 검증 에이전트)
+fn part_response(path: &Path, mime: &str, range: &str) -> std::io::Result<Response<Vec<u8>>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path)?;
+    let total = f.metadata()?.len();
+    let base = || Response::builder().header("Content-Type", mime).header("Cache-Control", "no-store").header("Accept-Ranges", "bytes");
+    let Some((a, b)) = crate::mobile_files::parse_range(Some(range), total, READER_CHUNK) else {
+        return Ok(doc_headers(base().status(416).header("Content-Range", format!("bytes */{total}")).body(Vec::new()).unwrap(), mime));
+    };
+    f.seek(SeekFrom::Start(a))?;
+    let mut buf = Vec::with_capacity((b - a + 1) as usize);
+    f.take(b - a + 1).read_to_end(&mut buf)?;
+    if buf.is_empty() {
+        return Ok(doc_headers(base().status(416).header("Content-Range", format!("bytes */{total}")).body(Vec::new()).unwrap(), mime));
+    }
+    let b = a + buf.len() as u64 - 1; // 그사이 파일이 줄었으면 읽은 만큼만
+    Ok(doc_headers(base().status(206).header("Content-Range", format!("bytes {a}-{b}/{total}")).body(buf).unwrap(), mime))
+}
+
 /// hodoc:// 요청 처리
 pub fn serve<R: Runtime>(_ctx: tauri::UriSchemeContext<'_, R>, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     let not_found = || Response::builder().status(404).header("Content-Type", "text/plain; charset=utf-8").body(tr("없는 파일이거나 홈 폴더 밖이야", "File not found or outside the home folder").as_bytes().to_vec()).unwrap();
-    let Some(path) = safe_path(req.uri().path(), &home()) else { return not_found() };
-    let range = req.headers().get("range").and_then(|v| v.to_str().ok());
+    let Some(path) = served_path(req.uri().path(), &home(), &crate::config::data_file("avatars")) else { return not_found() };
+    if let Some(range) = req.headers().get("range").and_then(|v| v.to_str().ok()) {
+        return part_response(&path, mime_of(&path), range).unwrap_or_else(|_| not_found());
+    }
     match std::fs::read(&path) {
-        Ok(body) => doc_response(body, mime_of(&path), range),
+        Ok(body) => doc_response(body, mime_of(&path)),
         Err(_) => not_found(),
     }
 }
@@ -884,7 +900,7 @@ pub fn trash_page(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// scripts/show 기록 꼬리(최근 64KB) — 채팅 뷰 스페이스가 세션마다 보여 준 파일을 모은다. 파싱은 domain/spaceNav.
+/// scripts/show 기록 꼬리(최근 1MB 를 세션별로 공평하게 64KB — fair_tail) — 채팅 뷰 스페이스가 세션마다 보여 준 파일을 모은다. 파싱은 domain/spaceNav.
 /// 닫힌 워크트리 안 경로는 본 폴더 자리로 풀고, 못 찾은 줄엔 gone 을 단다(mobile_files::resolve_show_log — 폰도 이 함수로 읽는다)
 #[tauri::command]
 pub fn read_show_log() -> String {
@@ -892,14 +908,68 @@ pub fn read_show_log() -> String {
     crate::mobile_files::resolve_show_log(&read_show_tail(), &std::fs::canonicalize(&h).unwrap_or(h))
 }
 
+/// 기록에서 넘길 양 — 폰은 바뀌었을 때만 통째로 받는다(/api/shows?since=, 2026-10-09), 늘리면 그때 LTE 로 그만큼 더 받는다
+const SHOW_KEEP: usize = 64 * 1024;
+/// 공평 나누기로 훑는 양 — 조용한 참모의 옛 줄을 여기까지 거슬러 찾는다
+const SHOW_SCAN: u64 = 1024 * 1024;
+
+/// 기록 꼬리를 보여 준 세션(from)별로 공평하게 keep 바이트 안에 — 적게 보여 준 세션은 다 남기고, 많이 띄운 세션만 옛것부터 깎는다(가장 작은 몫을 가장 크게).
+/// 그냥 끝 64KB 만 읽었더니 하위 세션이 그림을 잔뜩 띄우면 참모의 옛 카드가 밀려 사라졌다(2026-10-08 채팅 파일 카드 남은 것 ①). 줄 순서는 그대로, from 없는 옛 줄은 한 묶음
+pub fn fair_tail(log: &str, keep: usize) -> String {
+    if log.len() <= keep {
+        return log.to_string();
+    }
+    let lines: Vec<&str> = log.split_inclusive('\n').collect();
+    let from_of = |l: &str| serde_json::from_str::<serde_json::Value>(l).ok().and_then(|v| v["from"].as_str().map(str::to_string)).unwrap_or_default();
+    let froms: Vec<String> = lines.iter().map(|l| from_of(l)).collect();
+    let mut size: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (l, f) in lines.iter().zip(&froms) {
+        *size.entry(f.as_str()).or_default() += l.len();
+    }
+    // 몫 — 작은 묶음부터 다 주고, 남은 양을 큰 묶음들이 똑같이 나눈다
+    let mut sizes: Vec<usize> = size.values().copied().collect();
+    sizes.sort_unstable();
+    let (mut left, mut cap) = (keep, usize::MAX);
+    for (i, s) in sizes.iter().enumerate() {
+        let share = left / (sizes.len() - i);
+        if *s > share {
+            cap = share;
+            break;
+        }
+        left -= s;
+    }
+    // 묶음마다 끝에서부터 몫만큼 — 줄 하나라도 몫을 넘으면 거기서 멈춘다(이어진 꼬리만)
+    let mut used: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut full: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut take = vec![false; lines.len()];
+    for i in (0..lines.len()).rev() {
+        let f = froms[i].as_str();
+        if full.contains(f) {
+            continue;
+        }
+        let u = used.entry(f).or_default();
+        if *u + lines[i].len() > cap {
+            full.insert(f);
+            continue;
+        }
+        *u += lines[i].len();
+        take[i] = true;
+    }
+    lines.iter().zip(take).filter(|(_, t)| *t).map(|(l, _)| *l).collect()
+}
+
 fn read_show_tail() -> String {
     use std::io::{Read, Seek, SeekFrom};
     let Ok(mut f) = std::fs::File::open(crate::config::data_file("show.jsonl")) else { return String::new() };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-    let _ = f.seek(SeekFrom::Start(len.saturating_sub(64 * 1024)));
+    let from = len.saturating_sub(SHOW_SCAN);
+    let _ = f.seek(SeekFrom::Start(from));
     let mut buf = Vec::new();
     let _ = f.read_to_end(&mut buf);
-    String::from_utf8_lossy(&buf).into_owned()
+    let text = String::from_utf8_lossy(&buf);
+    // 중간부터 읽었으면 잘린 첫 줄은 버린다
+    let text = if from > 0 { text.split_once('\n').map(|(_, r)| r).unwrap_or("") } else { &text };
+    fair_tail(text, SHOW_KEEP)
 }
 
 /// 스페이스 편집기에 넣은 그림 — 문서 옆 assets/ 에 저장하고 문서 기준 상대 경로를 돌려준다(md 에 그대로 적힌다)
@@ -1029,6 +1099,99 @@ mod ql_dir_tests {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn 데이터_폴더가_홈_밖이어도_프사_그림만은_hodoc_으로_준다() {
+        // $CHAMMO_HOME 이 홈 밖이면 그림 프사가 기본 도형으로 떨어졌다(2026-10-02 남은 것 ①). 연 건 avatars/ 안 그림뿐
+        let root = std::env::temp_dir().join(format!("hodoc-avatar-{}", std::process::id()));
+        let (home, data) = (root.join("home"), root.join("data"));
+        let av = data.join("avatars");
+        std::fs::create_dir_all(&av).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        for (f, b) in [(av.join("참모.png"), "png"), (av.join("참모.json"), "{}"), (data.join("config.json"), "{}"), (home.join("a.md"), "# a")] {
+            std::fs::write(f, b).unwrap();
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(data.join("config.json"), av.join("몰래.png")).unwrap();
+        let url = |p: &std::path::Path| p.to_string_lossy().into_owned();
+        let got = |p: &std::path::Path| super::served_path(&url(p), &home, &av).is_some();
+        assert!(got(&av.join("참모.png")), "홈 밖 데이터 폴더의 프사 그림");
+        assert!(got(&home.join("a.md")), "홈 안 파일은 그대로");
+        assert!(!got(&av.join("참모.json")), "avatars 안이라도 그림만");
+        assert!(!got(&data.join("config.json")), "데이터 폴더 나머지는 막는다");
+        assert!(!got(&av.join("../config.json")), "../ 로 빠져나가기");
+        #[cfg(unix)]
+        assert!(!got(&av.join("몰래.png")), "그림 이름의 링크로 빠져나가기");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn show_line(from: &str, n: usize) -> String {
+        format!("{{\"ts\": \"2026-10-0{}T01:00:00+00:00\", \"path\": \"/Users/me/p/{from}-{n:04}.png\", \"from\": \"{from}\"}}\n", 1 + n % 8)
+    }
+
+    #[test]
+    fn 기록_꼬리는_참모별로_공평하게_나눠_조용한_참모_카드가_안_밀려난다() {
+        // 참모 a 가 일찍 보여 준 파일 3개 → 뒤에 하위 세션 b 가 그림을 잔뜩(꼬리 크기의 몇 배) 띄웠다.
+        // 예전엔 꼬리 64KB 만 읽어 a 의 카드가 밀려 사라졌다(2026-10-08 남은 것 ①)
+        let mut log = String::new();
+        for n in 0..3 { log += &show_line("aaaa0002", n); }
+        for n in 0..2000 { log += &show_line("bbbb0009", n); }
+        log += &show_line("aaaa0002", 3);
+        let keep = 16 * 1024;
+        let out = super::fair_tail(&log, keep);
+        assert!(out.len() <= keep, "{}", out.len());
+        for n in 0..4 { assert!(out.contains(&format!("aaaa0002-{n:04}")), "a 의 {n} 번째가 빠졌다"); }
+        // 많이 띄운 쪽은 최근 것을 남기고 옛것부터 깎는다, 순서는 그대로
+        assert!(out.contains("bbbb0009-1999") && !out.contains("bbbb0009-0000"));
+        let b: Vec<usize> = out.lines().filter_map(|l| l.split("bbbb0009-").nth(1)).map(|t| t[..4].parse().unwrap()).collect();
+        assert!(b.windows(2).all(|w| w[0] + 1 == w[1]), "b 는 뒤쪽 이어진 꼬리만");
+        assert!(out.find("aaaa0002-0002").unwrap() < out.find("bbbb0009-1999").unwrap() && out.ends_with(&show_line("aaaa0002", 3)));
+    }
+
+    /// 실측 — 1MB 기록(세션 40개) 공평 나누기 시간(폰 /api/file 마다 허용 목록을 다시 읽는다). cargo test … -- --ignored --exact reader::tests::실측_공평_나누기_시간 --nocapture
+    #[test]
+    #[ignore]
+    fn 실측_공평_나누기_시간() {
+        let mut log = String::new();
+        let mut n = 0;
+        while log.len() < 1024 * 1024 { log += &show_line(&format!("cafe{:04}", n % 40), n); n += 1; }
+        let t = std::time::Instant::now();
+        let out = super::fair_tail(&log, 64 * 1024);
+        eprintln!("fair_tail {} 줄 {} 바이트 → {} 바이트 in {:?}", n, log.len(), out.len(), t.elapsed());
+        // SHOW_PROBE=<show.jsonl 복사본> — 세션별로 남는 줄 수: 끝 64KB 와 비교
+        let Ok(p) = std::env::var("SHOW_PROBE") else { return };
+        let real = std::fs::read_to_string(p).unwrap();
+        let count = |t: &str| {
+            let mut m = std::collections::BTreeMap::<String, usize>::new();
+            for l in t.lines() {
+                let f = serde_json::from_str::<serde_json::Value>(l).ok().and_then(|v| v["from"].as_str().map(str::to_string)).unwrap_or("-".into());
+                *m.entry(f).or_default() += 1;
+            }
+            m
+        };
+        let cut = real.len().saturating_sub(64 * 1024);
+        let plain = real[cut..].split_once('\n').map(|(_, r)| r).unwrap_or("");
+        let (all, a, b) = (count(&real), count(plain), count(&super::fair_tail(&real, 64 * 1024)));
+        for (k, v) in &all {
+            eprintln!("{k}: 전체 {v} · 끝 64KB {} · 공평 {}", a.get(k).unwrap_or(&0), b.get(k).unwrap_or(&0));
+        }
+    }
+
+    #[test]
+    fn 기록이_꼬리보다_작으면_그대로_큰_쪽끼리는_고르게() {
+        let small: String = (0..5).map(|n| show_line("aaaa0002", n)).collect();
+        assert_eq!(super::fair_tail(&small, 64 * 1024), small);
+        // 둘 다 크면 반씩쯤 — 한쪽이 다 차지하지 않는다
+        let mut log = String::new();
+        for n in 0..500 { log += &show_line("aaaa0002", n); log += &show_line("bbbb0009", n); }
+        let out = super::fair_tail(&log, 8 * 1024);
+        let (a, b) = (out.matches("aaaa0002-").count(), out.matches("bbbb0009-").count());
+        assert!(a > 0 && b > 0 && a.abs_diff(b) <= 1, "{a} {b}");
+        // from 없는 옛 줄도 한 묶음으로
+        let mut old = show_line("aaaa0002", 1);
+        for n in 0..300 { old += &format!("{{\"ts\": \"2026-09-27T16:13:24+00:00\", \"path\": \"/x/{n}.md\"}}\n"); }
+        assert!(super::fair_tail(&old, 2048).contains("aaaa0002-0001"));
+    }
+
+    #[test]
     fn tree_skips_hidden_and_heavy() {
         assert!(super::skip_entry(".git") && super::skip_entry("node_modules") && super::skip_entry("target"));
         assert!(!super::skip_entry("docs") && !super::skip_entry("src"));
@@ -1041,7 +1204,7 @@ mod tests {
     }
     #[test]
     fn 시안_html_은_불투명_출처_샌드박스로_낸다() {
-        let r = super::doc_response(b"<!doctype html><html><head><title>t</title><script>localStorage.x=1</script></head><body>hi</body></html>".to_vec(), "text/html; charset=utf-8", None);
+        let r = super::doc_response(b"<!doctype html><html><head><title>t</title><script>localStorage.x=1</script></head><body>hi</body></html>".to_vec(), "text/html; charset=utf-8");
         let csp = r.headers()["Content-Security-Policy"].to_str().unwrap();
         // 같은 출처를 주지 않는다 — 앱 출처·hodoc 의 홈 파일 읽기(fetch)에 못 닿게, 밖으로 보내기도 막는다
         assert!(csp.starts_with("sandbox allow-scripts allow-modals;"), "{csp}");
@@ -1057,22 +1220,19 @@ mod tests {
     }
     #[test]
     fn head_없는_html_도_맨_앞쪽에_끼운다() {
-        let r = super::doc_response(b"<p>bare</p><script>1</script>".to_vec(), "text/html; charset=utf-8", None);
+        let r = super::doc_response(b"<p>bare</p><script>1</script>".to_vec(), "text/html; charset=utf-8");
         let body = String::from_utf8(r.body().clone()).unwrap();
         assert!(body.starts_with("<script>") && body.find("__chammoMem").unwrap() < body.find("<p>bare").unwrap());
     }
     #[test]
     fn html_아닌_파일은_그대로_글꼴만_다른_출처에_연다() {
-        let png = super::doc_response(vec![1, 2, 3], "image/png", None);
+        let png = super::doc_response(vec![1, 2, 3], "image/png");
         assert!(png.headers().get("Content-Security-Policy").is_none() && png.headers().get("Access-Control-Allow-Origin").is_none());
         assert_eq!(png.body().as_slice(), &[1, 2, 3]);
         // 불투명 출처 시안이 옆 글꼴(@font-face)을 읽으려면 CORS 가 필요하다 — 글꼴만(글·JSON 은 안 연다)
-        assert_eq!(super::doc_response(vec![0], "font/woff2", None).headers()["Access-Control-Allow-Origin"], "*");
-        assert!(super::doc_response(vec![0], "text/plain; charset=utf-8", None).headers().get("Access-Control-Allow-Origin").is_none());
-        assert!(super::doc_response(vec![0], "application/json; charset=utf-8", None).headers().get("Access-Control-Allow-Origin").is_none());
-        // html 조각 요청(Range)도 샌드박스를 단다
-        let part = super::doc_response(b"<html><script>1</script></html>".to_vec(), "text/html; charset=utf-8", Some("bytes=0-5"));
-        assert!(part.headers()["Content-Security-Policy"].to_str().unwrap().starts_with("sandbox allow-scripts"));
+        assert_eq!(super::doc_response(vec![0], "font/woff2").headers()["Access-Control-Allow-Origin"], "*");
+        assert!(super::doc_response(vec![0], "text/plain; charset=utf-8").headers().get("Access-Control-Allow-Origin").is_none());
+        assert!(super::doc_response(vec![0], "application/json; charset=utf-8").headers().get("Access-Control-Allow-Origin").is_none());
     }
     #[test]
     fn 메모리_저장소는_window_name_에_이어_쓴다() {
@@ -1152,19 +1312,6 @@ mod tests {
         assert_eq!(mime_of(Path::new("/a/v1.webm")), "video/webm");
     }
 
-    // 영상은 WebKit 이 Range 로 조각씩 달라고 한다 — 206 으로 그 조각만 줘야 재생·탐색이 된다
-    #[test]
-    fn byte_range() {
-        assert_eq!(range_of("bytes=0-1", 100), Some((0, 1)));
-        assert_eq!(range_of("bytes=10-", 100), Some((10, 99)));
-        assert_eq!(range_of("bytes=90-200", 100), Some((90, 99)));
-        assert_eq!(range_of("bytes=-10", 100), Some((90, 99)));
-        assert_eq!(range_of("bytes=100-", 100), None);
-        assert_eq!(range_of("bytes=5-2", 100), None);
-        assert_eq!(range_of("items=0-1", 100), None);
-        assert_eq!(range_of("bytes=0-1", 0), None);
-    }
-
     #[test]
     fn trash_names_dont_overwrite() {
         // 휴지통에 같은 이름이 있으면 번호를 붙인다(덮어쓰지 않는다)
@@ -1195,16 +1342,55 @@ mod tests {
     }
 
     #[test]
-    fn serve_range_206() {
-        let body: Vec<u8> = (0..100u8).collect();
-        let r = respond(&body, "video/mp4", Some("bytes=10-19"));
-        assert_eq!(r.status(), 206);
-        assert_eq!(r.headers()["Content-Range"], "bytes 10-19/100");
-        assert_eq!(r.body().as_slice(), &body[10..20]);
-        let full = respond(&body, "video/mp4", None);
-        assert_eq!((full.status().as_u16(), full.body().len()), (200, 100));
+    fn 조각_요청은_파일에서_그_조각만_읽는다() {
+        // 1GB 넘는 녹화도 조각마다 통째로 읽지 않게(2026-09-29 검증 에이전트) — bytes=0- 도 한 번에 READER_CHUNK 까지만
+        let d = std::env::temp_dir().join(format!("chammo-reader-part-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("v.mp4");
+        let total = super::READER_CHUNK as usize + 10;
+        let body: Vec<u8> = (0..total).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&f, &body).unwrap();
+        let r = super::part_response(&f, "video/mp4", "bytes=10-19").unwrap();
+        assert_eq!((r.status().as_u16(), r.body().as_slice()), (206, &body[10..20]));
+        assert_eq!(r.headers()["Content-Range"], format!("bytes 10-19/{total}"));
+        let open = super::part_response(&f, "video/mp4", "bytes=0-").unwrap();
+        assert_eq!((open.status().as_u16(), open.body().len()), (206, super::READER_CHUNK as usize));
+        assert_eq!(open.headers()["Content-Range"], format!("bytes 0-{}/{total}", super::READER_CHUNK - 1));
+        let tail = super::part_response(&f, "video/mp4", "bytes=-4").unwrap();
+        assert_eq!(tail.body().as_slice(), &body[total - 4..]);
+        let bad = super::part_response(&f, "video/mp4", "bytes=999999999-").unwrap();
+        assert_eq!((bad.status().as_u16(), bad.headers()["Content-Range"].to_str().unwrap().to_string()), (416, format!("bytes */{total}")));
+        // html 조각도 샌드박스
+        std::fs::write(d.join("a.html"), "<html><script>1</script></html>").unwrap();
+        let h = super::part_response(&d.join("a.html"), "text/html; charset=utf-8", "bytes=0-5").unwrap();
+        assert!(h.headers()["Content-Security-Policy"].to_str().unwrap().starts_with("sandbox allow-scripts"));
+        assert!(super::part_response(&d.join("없음.mp4"), "video/mp4", "bytes=0-1").is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// 실측: READER_BIG=<큰 파일> cargo test reader::tests::range_measure -- --exact --ignored --nocapture
+    /// 가운데 1MB 조각 한 번 — 옛 길(파일 통째 읽고 자르기)과 새 길(seek)
+    #[test]
+    #[ignore]
+    fn range_measure() {
+        let p = std::path::PathBuf::from(std::env::var("READER_BIG").expect("READER_BIG"));
+        let total = std::fs::metadata(&p).unwrap().len();
+        let (a, b) = (total / 2, total / 2 + 1024 * 1024 - 1);
+        let t = std::time::Instant::now();
+        let old = std::fs::read(&p).unwrap()[a as usize..=b as usize].to_vec();
+        let old_ms = t.elapsed().as_millis();
+        let t = std::time::Instant::now();
+        let new = super::part_response(&p, "video/mp4", &format!("bytes={a}-{b}")).unwrap();
+        let new_ms = t.elapsed().as_millis();
+        assert_eq!(new.body(), &old);
+        println!("MEASURE total={total} old_read_all={old_ms}ms new_seek={new_ms}ms chunk={}", new.body().len());
+    }
+
+    #[test]
+    fn 통째_응답은_조각을_받는다고_알린다() {
+        let full = respond(&[1, 2, 3], "video/mp4");
+        assert_eq!((full.status().as_u16(), full.body().len()), (200, 3));
         assert_eq!(full.headers()["Accept-Ranges"], "bytes");
-        assert_eq!(respond(&body, "video/mp4", Some("bytes=200-")).status(), 416);
     }
 
     fn st(tabs: &[&str], active: &str) -> Store {

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { advance, fullness, hatch, type TamaEvent } from './pet';
 
 // 2026-09-28 = 월요일. 로컬 시간
-const at = (d: number, h: number, m = 0) => new Date(2026, 8, d, h, m).getTime();
+// 날짜 숫자는 9월 기준으로 쓰고 5주(35일) 뒤로 옮긴다 — 같은 요일, 2026 추석 주(9/24~26)를 피해 공휴일 없는 10/26~11/6 에서
+const at = (d: number, h: number, m = 0) => new Date(2026, 8, d + 35, h, m).getTime();
 const H = 3_600_000;
 const commit = (t: number, lines = 20, hasTest = false): TamaEvent => ({ t, type: 'commit', lines, hasTest });
 
@@ -71,7 +72,7 @@ describe('진화 변수 — 과식·훈련·배틀', () => {
   it('과식 기준은 내 평소 — 지난주 바쁜 시간이 시간당 30개였으면 10개로는 과식 아님', () => {
     // 21~25일(지난주) 20시간 동안 시간당 30개 — 알 고르기 전 기록이라 먹이로는 안 들어가고 기준에만 쓰인다
     const history = Array.from({ length: 20 }, (_, h) =>
-      Array.from({ length: 30 }, (_, i) => commit(new Date(2026, 8, 21 + (h % 5), 10 + Math.floor(h / 5), i).getTime()))).flat();
+      Array.from({ length: 30 }, (_, i) => commit(new Date(2026, 8, 21 + 35 + (h % 5), 10 + Math.floor(h / 5), i).getTime()))).flat();
     const p = hatch('fire', at(28, 9), 0.3);
     const ten = Array.from({ length: 10 }, (_, i) => commit(at(28, 10, i * 5)));
     const thirty = Array.from({ length: 30 }, (_, i) => commit(at(28, 10, i * 2)));

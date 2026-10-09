@@ -92,3 +92,23 @@ export function keepAfterRemove(texts: string[], target: string): string[] {
   const i = texts.indexOf(target);
   return i < 0 ? texts : [...texts.slice(0, i), ...texts.slice(i + 1)];
 }
+
+/** 세션별 앱 치기 줄 — 앞 것이 다 들어간(Enter 까지) 뒤에 다음 것. 실제 치기는 Rust pty_type 이 TYPE_LOCK 을 잡고 해서
+ *  스페이스·카드 답장·폰이 치는 글과 한 입력칸에 섞이지 않는다(2026-10-06 fix/chat-ghost 남은 것).
+ *  busyUntil = escPlan 의 typingUntil — 치는 중이면 무한, 끝났으면 끝난 때 + 100 */
+export function typeQueue(now: () => number = Date.now) {
+  const qs = new Map<string, { tail: Promise<void>; left: number; doneAt: number }>();
+  return {
+    push(id: string, run: () => Promise<void>): Promise<void> {
+      const q = qs.get(id) ?? { tail: Promise.resolve(), left: 0, doneAt: 0 };
+      q.left += 1;
+      q.tail = q.tail.then(run).catch(() => { /* 창이 닫혔다 — 다음 것은 친다 */ }).then(() => { q.left -= 1; q.doneAt = now(); });
+      qs.set(id, q);
+      return q.tail;
+    },
+    busyUntil(id: string): number {
+      const q = qs.get(id);
+      return !q ? 0 : q.left > 0 ? Infinity : q.doneAt + 100;
+    },
+  };
+}

@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 const { parseResult, toolLine, readPort, enabled, createLive, liveFile } = require('../src/live');
 const { chromeArgs } = require('../src/window');
-const { portOpen } = require('../src/live');
+const { portOpen, pageCount } = require('../src/live');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'chammo-live-'));
 
@@ -112,7 +112,7 @@ test('사람 부르기 — 상태 파일에 ask 를 적고, 앱이 .done 을 만
   await new Promise((r) => setTimeout(r, 20));
   const s = JSON.parse(fs.readFileSync(liveFile(root, 'acme'), 'utf8'));
   assert.ok(s.ask && s.ask.reason.length <= 200 && s.ask.at === 7);
-  fs.writeFileSync(done, '');
+  fs.writeFileSync(done, '1:7'); // 앱이 본 그 부름(래퍼 pid:ask.at)
   const r = await p;
   assert.strictEqual(r.ok, true);
   assert.ok(!fs.existsSync(done));
@@ -249,4 +249,65 @@ test('개입 문지기 — gate 를 켜고 만든 래퍼는 상태에 gate:true,
   assert.strictEqual(read().held, 5000);
   live.held(false);
   assert.strictEqual(read().held, 0);
+});
+
+test('사람 부르기 — .done 의 표(래퍼 pid:ask.at)가 지금 부름과 다르면 지우고 계속 기다린다(검사·쓰기 사이 틈에 새 부름을 대신 끝내지 않게)', async () => {
+  const root = tmp();
+  const prof = path.join(root, 'profiles', 'acme');
+  fs.mkdirSync(prof, { recursive: true });
+  fs.writeFileSync(path.join(prof, 'DevToolsActivePort'), PORT_FILE);
+  let t = 7;
+  const live = createLive({ profile: 'acme', root, profileDir: prof, pid: 1, ppid: 2, now: () => t, probe: async () => true });
+  live.onCall('browser_navigate', {});
+  const done = path.join(root, 'live', 'acme.done');
+  const p = live.askHuman('로그인', { pollMs: 5, timeoutMs: 2000 });
+  await new Promise((r) => setTimeout(r, 15));
+  for (const stale of ['1:6', '9:7', '', 'x']) { // 지난 부름·다른 래퍼·빈 파일(옛 앱)·이상한 모양
+    fs.writeFileSync(done, stale);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.ok(!fs.existsSync(done), `낡은 표 '${stale}' 는 지운다`);
+  }
+  fs.writeFileSync(done, '1:7');
+  assert.strictEqual((await p).ok, true);
+});
+
+test('사람 부르기 — 크롬은 살았는데 탭이 0개면(맥 크롬은 마지막 창을 닫아도 포트가 산다) 바로·기다리는 중에도 다시 열라고', async () => {
+  const root = tmp();
+  const prof = path.join(root, 'profiles', 'acme');
+  fs.mkdirSync(prof, { recursive: true });
+  fs.writeFileSync(path.join(prof, 'DevToolsActivePort'), PORT_FILE);
+  let pages = 0;
+  const live = createLive({ profile: 'acme', root, profileDir: prof, pid: 1, ppid: 2, probe: async () => pages });
+  live.onCall('browser_navigate', {});
+  const r = await live.askHuman('로그인', { pollMs: 5, timeoutMs: 50 });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.text, /탭.*browser_navigate/);
+  assert.strictEqual(JSON.parse(fs.readFileSync(liveFile(root, 'acme'), 'utf8')).ask, null, '앱에 부름을 안 띄운다');
+
+  pages = 2;
+  const p = live.askHuman('로그인', { pollMs: 5, timeoutMs: 5000, probeMs: 20 });
+  await new Promise((r) => setTimeout(r, 15));
+  pages = 0; // 사람이 크롬 창을 닫았다
+  const t = Date.now();
+  const r2 = await p;
+  assert.strictEqual(r2.ok, false);
+  assert.match(r2.text, /탭/);
+  assert.ok(Date.now() - t < 1000, '10분을 다 기다리지 않는다');
+  assert.strictEqual(JSON.parse(fs.readFileSync(liveFile(root, 'acme'), 'utf8')).ask, null);
+});
+
+test('탭 수 — /json/list 의 page 만 센다, 포트가 닫혔으면 false, 크롬이 아니면 true(모름)', async () => {
+  const http = require('http');
+  let body = JSON.stringify([{ type: 'page' }, { type: 'service_worker' }, { type: 'page' }]);
+  const srv = http.createServer((req, res) => { res.end(req.url === '/json/list' ? body : 'nope'); }).listen(0, '127.0.0.1');
+  await new Promise((r) => srv.once('listening', r));
+  const { port } = srv.address();
+  assert.strictEqual(await pageCount(port), 2);
+  body = '[]';
+  assert.strictEqual(await pageCount(port), 0);
+  body = 'not json';
+  assert.strictEqual(await pageCount(port), true);
+  srv.close();
+  await new Promise((r) => srv.once('close', r));
+  assert.strictEqual(await pageCount(port), false);
 });

@@ -1,4 +1,4 @@
-"""교훈 → 프로젝트 스킬 승격(scripts/task lesson-review|lesson-propose|lesson-promote|lesson-restore) 테스트 (공개판)
+"""교훈 → 프로젝트 스킬 승격(scripts/task lesson-review|lesson-group|lesson-drop|lesson-propose|lesson-promote|lesson-restore) 테스트 (공개판)
 python3 -m unittest discover -s app/hq-tests — 공개판 task 와, 원본 저장소면 주인 HQ 판(scripts/task)도 같이 본다"""
 import sys
 sys.dont_write_bytecode = True  # 템플릿 폴더에 __pycache__ 가 생기지 않게
@@ -125,7 +125,7 @@ class Flow:
         self.assertEqual(code, 0, err)
         self.assertIn('1. ' + LESSONS[0], out)
         self.assertIn('5. ' + LESSONS[4], out)
-        self.assertIn('lesson-propose', out)
+        self.assertIn('lesson-group', out)
         self.assertIn(str(len(LESSONS)), out)
         self.assertEqual(read(os.path.join(self.task.LESSONS, 'proj.md')), before)
         self.assertFalse(os.path.exists(self.task.LOG))
@@ -282,6 +282,18 @@ class Flow:
         self.assertEqual(subprocess.run(['git', '-C', self.root, 'check-ignore', '-q', skill]).returncode, 0)
         self.assertFalse(os.path.exists(os.path.join(self.root, '.gitignore')))
 
+    def test_gitignore_가_스킬을_다시_추적하게_하면_그_줄과_넣을_줄을_알려_준다(self):
+        # 2026-10-09 project-a: .gitignore 가 '!.claude/skills/' 로 직원 공유 스킬을 추적 — info/exclude 보다 이겨서 막지 못했다
+        with open(os.path.join(self.root, '.gitignore'), 'w') as f:
+            f.write('.claude/*\n!.claude/skills/\n.claude/skills/*\n!.claude/skills/*/\n')
+        tid = self.propose()
+        self.answer(tid, '묶어')
+        code, _, err = self.run_task('lesson-promote', tid)
+        self.assertEqual(code, 2)
+        self.assertIn('.gitignore:4', err)
+        self.assertIn('/.claude/skills/lesson-*/', err)
+        self.assertEqual(self.lessons(), LESSONS)
+
     def test_git_이_추적하는_스킬_폴더면_거절(self):
         d = os.path.join(self.root, '.claude', 'skills', 'lesson-tauri-dev')
         tid = self.propose()
@@ -325,6 +337,148 @@ class Flow:
         self.assertEqual(code, 2)
         self.assertEqual(self.lessons(), LESSONS)
 
+    # ── group — 카드 없이 참모가 알아서 묶는다(2026-10-08 사용자 "추천대로 진행") ──
+    def group(self, name='tauri-dev', lines='1-3', desc='tauri dev·vite 1420·개발판 켜고 끌 때'):
+        args = ['lesson-group', 'proj', name, '--lines', lines] + (['--desc', desc] if desc else [])
+        return self.run_task(*args)
+
+    def test_group_은_카드_없이_바로_스킬로_묶고_한_줄로_보고한다(self):
+        code, out, err = self.group()
+        self.assertEqual(code, 0, err)
+        skill = os.path.join(self.root, '.claude', 'skills', 'lesson-tauri-dev', 'SKILL.md')
+        body = read(skill)
+        self.assertTrue(body.startswith('---\nname: lesson-tauri-dev\ndescription: "tauri dev·vite 1420·개발판 켜고 끌 때"\n---\n'), body[:120])
+        for l in LESSONS[:3]:
+            self.assertIn(f'- {l}\n', body)
+        self.assertEqual(self.lessons(), LESSONS[3:])
+        # 사람에게 묻지 않는다 — 결정 대기함 기록이 없다
+        self.assertFalse(os.path.exists(self.task.LOG))
+        # 되돌릴 길은 그대로: archive 와 기록
+        self.assertIn(f'- {LESSONS[0]}\n', read(os.path.join(self.task.LESSONS, '_archive', 'proj.md')))
+        rec = [json.loads(l) for l in read(os.path.join(self.task.LESSONS, 'skills.jsonl')).splitlines()]
+        self.assertEqual((rec[-1]['action'], rec[-1]['skill'], rec[-1]['project']), ('promote', 'lesson-tauri-dev', 'proj'))
+        # 커밋되지 않는 자리 + CLAUDE.local.md 교훈 칸에서만 빠짐
+        self.assertEqual(subprocess.run(['git', '-C', self.root, 'check-ignore', '-q', skill]).returncode, 0)
+        local = read(os.path.join(self.root, 'CLAUDE.local.md'))
+        self.assertNotIn(f'- {LESSONS[0]}\n', local)
+        self.assertIn('- 아이디 x', local)
+        # 사람에게 전할 한 줄
+        report = out.strip().splitlines()[-1]
+        self.assertIn('proj', report)
+        self.assertIn('3줄', report)
+        self.assertIn('lesson-tauri-dev', report)
+        self.assertIn('되돌리려면', report)
+        _, _, serr = self.run_task('send', 'proj', '버튼 색 바꾸기')
+        self.assertNotIn(LESSONS[0], serr)
+        self.assertIn('lesson-tauri-dev', serr)
+
+    def test_group__되돌리기는_restore_그대로(self):
+        self.group()
+        code, _, err = self.run_task('lesson-restore', 'proj', 'tauri-dev')
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sorted(self.lessons()), sorted(LESSONS))
+
+    def test_group__새_스킬은_3줄_미만이면_거절(self):
+        code, _, err = self.group(lines='1-2')
+        self.assertEqual(code, 2)
+        self.assertTrue(err)
+        self.assertEqual(self.lessons(), LESSONS)
+        self.assertFalse(os.path.exists(os.path.join(self.root, '.claude', 'skills')))
+
+    def test_group__이상한_입력은_거절하고_아무것도_안_바꾼다(self):
+        for args in (['lesson-group', 'proj', 'x', '--lines', '1-3'],                       # --desc 없음
+                     ['lesson-group', 'proj', 'x', '--lines', '1-9', '--desc', 'd'],         # 번호 밖
+                     ['lesson-group', 'proj', 'Bad Name', '--lines', '1-3', '--desc', 'd'],  # 이름
+                     ['lesson-group', '_common', 'x', '--lines', '1-3', '--desc', 'd'],      # 공통 칸
+                     ['lesson-group', 'proj', 'x', '--desc', 'd']):                          # --lines 없음
+            self.assertEqual(self.run_task(*args)[0], 2, args)
+        self.assertEqual(self.lessons(), LESSONS)
+        self.assertFalse(os.path.exists(os.path.join(self.root, '.claude', 'skills')))
+
+    def test_group__이미_있는_스킬엔_1줄도_desc_없이_덧붙는다(self):
+        self.group(lines='1-3')
+        # 남은 줄 2개(원래 4·5번) 중 첫 줄 하나만, --desc 없이
+        code, out, err = self.group(lines='1', desc=None)
+        self.assertEqual(code, 0, err)
+        body = read(os.path.join(self.root, '.claude', 'skills', 'lesson-tauri-dev', 'SKILL.md'))
+        for l in LESSONS[:4]:
+            self.assertIn(f'- {l}\n', body)
+        self.assertNotIn(LESSONS[4], body)
+        self.assertIn('description: "tauri dev·vite 1420·개발판 켜고 끌 때"', body)  # 설명은 그대로
+        self.assertEqual(self.lessons(), LESSONS[4:])
+        self.assertIn('덧붙', out.strip().splitlines()[-1])
+        # 되돌리면 합친 줄 전부가 돌아온다
+        self.run_task('lesson-restore', 'proj', 'tauri-dev')
+        self.assertEqual(sorted(self.lessons()), sorted(LESSONS))
+
+    def test_group__desc_를_주면_덧붙일_때_설명을_바꾼다(self):
+        self.group(lines='1-3')
+        self.group(lines='1', desc='새 설명')
+        body = read(os.path.join(self.root, '.claude', 'skills', 'lesson-tauri-dev', 'SKILL.md'))
+        self.assertIn('description: "새 설명"', body)
+
+    def test_group__git_이_추적하는_스킬_폴더면_거절(self):
+        d = os.path.join(self.root, '.claude', 'skills', 'lesson-tauri-dev')
+        os.makedirs(d)
+        with open(os.path.join(d, 'SKILL.md'), 'w') as f:
+            f.write('x')
+        git(self.root, 'add', '-f', '.claude/skills/lesson-tauri-dev/SKILL.md')
+        code, _, err = self.group()
+        self.assertEqual(code, 2)
+        self.assertEqual(self.lessons(), LESSONS)
+
+    def test_group__없는_글만_고르면_거절하고_옮긴_뒤_같은_번호는_글로_찾는다(self):
+        self.group(lines='1-3')
+        self.assertEqual(self.group(name='phone', lines='1-3')[0], 2)  # 남은 줄은 2개뿐
+        self.assertEqual(self.lessons(), LESSONS[3:])
+
+    def test_review_는_group_길과_이미_있는_스킬_설명을_알려_준다(self):
+        self.group()
+        _, out, _ = self.run_task('lesson-review', 'proj')
+        self.assertIn('lesson-group', out)
+        self.assertIn('lesson-tauri-dev', out)
+        self.assertIn('tauri dev·vite 1420', out)   # 설명을 보고 같은 주제를 가려 덧붙이게
+        self.assertIn('lesson-drop', out)
+        self.assertNotIn('lesson-propose', out)
+
+    # ── drop — 버리기만 사람에게 카드로 묻는다 ──
+    def test_drop_은_버릴까_카드를_올리고_답_전엔_안_버린다(self):
+        code, out, err = self.run_task('lesson-drop', 'proj', '--lines', '5', '--why', '끝난 할 일')
+        self.assertEqual(code, 0, err)
+        tid = out.strip()
+        ev = self.events()
+        ask = next(e for e in ev if e['type'] == 'ask')
+        self.assertEqual(ask['task'], tid)
+        self.assertIn('버릴까', ask['note'])
+        self.assertIn('끝난 할 일', ask['note'])
+        self.assertIn(LESSONS[4][:20], ask['note'])
+        self.assertNotEqual(next(e for e in ev if e['type'] == 'send')['target'], 'proj')
+        self.assertEqual(self.lessons(), LESSONS)
+        code, _, err = self.run_task('lesson-promote', tid)
+        self.assertEqual(code, 2)          # 사람 답이 아직 없다
+        self.assertEqual(self.lessons(), LESSONS)
+
+    def test_drop_카드에_버려_답이_오면_promote_가_버린다(self):
+        tid = self.run_task('lesson-drop', 'proj', '--lines', '5')[1].strip()
+        self.answer(tid, '응 버려')
+        code, _, err = self.run_task('lesson-promote', tid)   # --drop 플래그 없이도 drop 카드라서 버린다
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.lessons(), LESSONS[:4])
+        self.assertIn(LESSONS[4], read(os.path.join(self.task.LESSONS, '_archive', 'proj.md')))
+        self.assertFalse(os.path.exists(os.path.join(self.root, '.claude', 'skills')))
+
+    def test_drop_카드에_그대로_답이면_안_버린다(self):
+        for note in ['그대로 둬', '처리함', '아니']:
+            tid = self.run_task('lesson-drop', 'proj', '--lines', '5')[1].strip()
+            self.answer(tid, note)
+            self.assertEqual(self.run_task('lesson-promote', tid)[0], 2, note)
+        self.assertEqual(self.lessons(), LESSONS)
+
+    def test_drop_은_이상한_번호를_거절한다(self):
+        self.assertEqual(self.run_task('lesson-drop', 'proj', '--lines', '9')[0], 2)
+        self.assertEqual(self.run_task('lesson-drop', 'proj')[0], 2)
+        self.assertFalse(os.path.exists(self.task.LOG))
+
     # ── restore ──
     def test_되돌리면_줄이_다시_붙고_스킬은_archive_로(self):
         tid = self.propose()
@@ -348,11 +502,14 @@ class Flow:
         self.assertTrue(os.path.isdir(os.path.join(self.root, '.claude', 'skills', 'lesson-x')))
 
     # ── 경고 ──
-    def test_교훈이_많으면_lesson_review_길을_알려_준다(self):
+    def test_교훈이_많으면_알아서_묶으라고_알려_준다(self):
         for i in range(15):
             self.run_task('lesson', 'proj', f'교훈 {i}')
         _, _, err = self.run_task('lesson', 'proj', '교훈 하나 더')
         self.assertIn('lesson-review', err)
+        self.assertIn('lesson-group', err)
+        self.assertIn('한 줄', err)             # 사람에겐 결과 한 줄만
+        self.assertNotIn('lesson-propose', err)  # 묻는 길은 이제 안내하지 않는다
 
 
 @unittest.skipIf(PRIVATE is None, '주인 HQ 판 scripts/task 없음(공개본)')

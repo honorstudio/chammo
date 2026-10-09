@@ -220,6 +220,28 @@ fn 소켓으로_401_403_200() {
     assert!(TcpListener::bind(format!("127.0.0.1:{port}")).is_ok());
 }
 
+// 2026-10-04 폰 첫 켜기 ③: 받는 고리가 연결이 없으면 50ms 씩 자서 요청마다 평균 25ms 를 더 기다렸다 — 들어오면 바로 받는다
+#[test]
+fn 쉬던_서버도_요청을_바로_받는다() {
+    let key = "c".repeat(64);
+    let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+    let h = format!("127.0.0.1:{port}");
+    let (stop, addrs) = serve(&[h.parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default() }, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
+    let req = format!("GET /api/sessions HTTP/1.1\r\nHost: {h}\r\nAuthorization: Bearer {key}\r\n\r\n");
+    let mut total = Duration::ZERO;
+    for i in 0..20u64 {
+        std::thread::sleep(Duration::from_millis(17 + i % 7)); // 받는 고리가 쉬는 사이에 들어오게
+        let t = std::time::Instant::now();
+        assert!(ask(addrs[0], &req).starts_with("HTTP/1.1 200"));
+        total += t.elapsed();
+    }
+    stop.store(true, Ordering::Relaxed);
+    let avg = total / 20;
+    assert!(avg < Duration::from_millis(10), "요청 평균 {avg:?} — 받는 고리가 자느라 늦다");
+}
+
 #[test]
 fn s1_작업_기록_자르기는_한글_글자_중간에서_패닉하지_않는다() {
     // "가"는 3바이트 — 자를 자리가 글자 가운데에 오게

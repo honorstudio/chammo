@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fwd, samePath } from './paths';
+import fixture from './paths.fixture.json';
 
 describe('윈도우 경로를 한 모양으로 — 앱은 C:\\Users\\me/.chammo/hq, claude agents 는 C:\\Users\\me\\.chammo\\hq 라 참모 세션을 못 알아봤다(윈도우 5단계)', () => {
   it('역슬래시를 / 로, 드라이브 글자는 대문자로', () => {
@@ -30,5 +31,12 @@ describe('samePath — 경로 같은가(윈도우 폰 "떠 있는 참모가 없�
   it('빈 값끼리는 지금처럼 같다(설정 전 HQ 빈 문자열) · 한쪽만 비면 다르다', () => {
     expect(samePath('', '')).toBe(true);
     expect(samePath('', '/Users/a/hq')).toBe(false);
+  });
+});
+
+describe('경로 같은가 판단은 한 벌 — 공용 표(paths.fixture.json, Rust platform::same_dir 도 같은 표)', () => {
+  it.each(fixture.cases as [string, string, boolean][])('%s ~ %s → %s', (a, b, same) => {
+    expect(samePath(a, b)).toBe(same);
+    expect(samePath(b, a)).toBe(same);
   });
 });

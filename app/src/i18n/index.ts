@@ -29,8 +29,11 @@ export function pickLang(saved: string | null, system: string): Lang {
 export const setAssistant = (name: string | null) => { assistantName = name?.trim() || null; };
 export const assistant = (): string => assistantName ?? tr('참모', 'Chammo');
 
+/** 이 컴퓨터가 윈도우인가 — 데스크톱은 제 브라우저(IS_WIN), 폰은 붙은 컴퓨터가 /api/env os 로 알려 준 것(setHostWin) */
+let hostWin = IS_WIN;
+export const setHostWin = (w: boolean) => { hostWin = w; };
 /** 이 컴퓨터를 부르는 말 — 윈도우는 PC, 맥은 맥/Mac. 조사는 josa(machine(), '이', '가') */
-export const machine = (win = IS_WIN): string => (win ? 'PC' : tr('맥', 'Mac'));
+export const machine = (win = hostWin): string => (win ? 'PC' : tr('맥', 'Mac'));
 
 /** 이름 + 조사 — 받침이 있으면 앞의 것(두목이), 없으면 뒤의 것(참모가). 비서 이름을 사용자가 정하니까 */
 export const josa = (w: string, withBatchim: string, without: string): string => {

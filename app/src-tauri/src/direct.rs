@@ -59,8 +59,15 @@ pub fn check(log: &str, id: &str) -> Result<Value, Refuse> {
 
 /// 세션 입력칸에 칠 한 줄과 기록에 남길 고른 것(자유 글은 길이만 — 친 글은 세션에만 간다)
 pub fn compose(ask: &Value, pick: &Pick) -> Result<(String, Value), Refuse> {
+    compose_by(ask, pick, "desktop")
+}
+
+/// by = 누른 곳(desktop·phone·telegram:<id>) — 텔레그램이면 세션에 '텔레그램 카드에서'로 알린다
+pub fn compose_by(ask: &Value, pick: &Pick, by: &str) -> Result<(String, Value), Refuse> {
     let id = ask["id"].as_str().unwrap_or_default();
-    let tail = |how: &str| crate::i18n::tr(&format!(" — 직접 답(카드 {id}) · 사람이 앱 카드에서 {how}"), &format!(" — direct answer (card {id}) · the person {how} on the app card")).to_string();
+    let tg = by.starts_with("telegram:");
+    let (ko_at, en_at) = if tg { ("텔레그램 카드에서", "on the Telegram card") } else { ("앱 카드에서", "on the app card") };
+    let tail = |how: &str| crate::i18n::tr(&format!(" — 직접 답(카드 {id}) · 사람이 {ko_at} {how}"), &format!(" — direct answer (card {id}) · the person {how} {en_at}")).to_string();
     let pressed = crate::i18n::tr("눌렀어", "pressed it");
     let label = |k: &str| ask[k].as_str().unwrap_or_default().to_string();
     match pick {
@@ -99,7 +106,7 @@ fn append(row: &Value) -> Result<(), String> {
     writeln!(f, "{row}").map_err(|e| e.to_string())
 }
 
-fn refuse_text(r: Refuse) -> String {
+pub(crate) fn refuse_text(r: Refuse) -> String {
     match r {
         Refuse::NotFound => crate::i18n::tr("없는 카드", "No such card").into(),
         Refuse::Answered => crate::i18n::tr("이미 답했어요", "Already answered").into(),
@@ -114,7 +121,7 @@ pub fn answer(id: &str, pick: &Pick, by: &str) -> Result<(), String> {
     let _one = ANSWER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let log = std::fs::read_to_string(log_path()).unwrap_or_default();
     let ask = check(&log, id).map_err(refuse_text)?;
-    let (typed, picked) = compose(&ask, pick).map_err(refuse_text)?;
+    let (typed, picked) = compose_by(&ask, pick, by).map_err(refuse_text)?;
     let sid = ask["from"].as_str().unwrap_or_default().to_string();
     if !crate::claude::listed_alive(&sid) {
         return Err(crate::i18n::tr("세션이 꺼져서 못 보냈어요", "The session is gone").into());
@@ -171,6 +178,16 @@ pub fn shown_row(log: &str, id: &str, place: &str, ts: &str) -> Result<Option<Va
         return Ok(None);
     }
     Ok(Some(json!({ "ts": ts, "type": "shown", "id": id, "where": place })))
+}
+
+/// 앱 밖 자리(메신저)에 카드를 보냈다는 줄 — 답과 같은 자물쇠 안에서
+pub(crate) fn mark_shown(id: &str, place: &str) -> Result<(), String> {
+    let _one = ANSWER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let log = std::fs::read_to_string(log_path()).unwrap_or_default();
+    match shown_row(&log, id, place, &chrono_now()).map_err(refuse_text)? {
+        Some(row) => append(&row),
+        None => Ok(()),
+    }
 }
 
 /// 데스크톱 카드가 화면에 보였다 — 메인 창에서만. 기록 쓰기는 답과 같은 자물쇠 안에서(맞춰 보고 쓰는 사이 겹치지 않게)
@@ -239,6 +256,14 @@ mod tests {
         assert_eq!(p["pick"], "yes");
         assert!(compose(&ask, &Pick::Option { option: 1 }).unwrap().0.starts_with("법인"));
         assert!(compose(&ask, &Pick::Option { option: 9 }).is_err());
+    }
+
+    #[test]
+    fn 텔레그램_버튼_답은_텔레그램_카드라고_알린다() {
+        let ask: Value = serde_json::from_str(ASK).unwrap();
+        let (t, _) = compose_by(&ask, &Pick::Option { option: 0 }, "telegram:7001").unwrap();
+        assert!(t.contains("직접 답(카드 ab12cd34)") && t.contains("텔레그램 카드에서 눌렀어"), "{t}");
+        assert!(compose(&ask, &Pick::Yes).unwrap().0.contains("앱 카드에서"));
     }
 
     #[test]

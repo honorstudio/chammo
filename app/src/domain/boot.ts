@@ -25,7 +25,10 @@ export function splashDone(o: { base: BootBase; preloaded: boolean; now: number;
 }
 
 /** 기억해 둔 맥 정보 — 다음 켜기에 이걸로 먼저 그리고 새로 받아 바꾼다. 모양이 다르면 버린다(받을 때까지 기다림) */
-export type BootEnv = { assistantName: string; language: string; devRoot: string; extraProjects: string[]; hqDir: string };
+export type BootEnv = { assistantName: string; language: string; devRoot: string; extraProjects: string[]; hqDir: string; os?: string };
+
+/** 붙은 컴퓨터가 윈도우인가 — 폰 서버 /api/env os(std::env::consts::OS). 없으면(옛 서버) 맥 */
+export const envIsWin = (e: { os?: string }): boolean => e.os === 'windows';
 export const ENV_KEY = 'm.env';
 export function envFromCache(raw: string | null): BootEnv | null {
   if (!raw) return null;
@@ -36,7 +39,7 @@ export function envFromCache(raw: string | null): BootEnv | null {
     if (!str(v.assistantName) || !str(v.language) || !str(v.devRoot) || !str(v.hqDir) || !v.hqDir) return null;
     if (!Array.isArray(v.extraProjects) || !v.extraProjects.every(str)) return null;
     // 고치기 전 윈도우 폰이 기억한 섞인 경로(C:\Users\me/.chammo/hq)도 맞춘다
-    return fwdEnv({ assistantName: v.assistantName, language: v.language, devRoot: v.devRoot, extraProjects: v.extraProjects, hqDir: v.hqDir });
+    return fwdEnv({ assistantName: v.assistantName, language: v.language, devRoot: v.devRoot, extraProjects: v.extraProjects, hqDir: v.hqDir, ...(str(v.os) ? { os: v.os } : {}) });
   } catch {
     return null;
   }

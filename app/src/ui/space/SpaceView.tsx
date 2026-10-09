@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { appendTaskEvent, readSessionTasks, readShowLog, readTranscriptTails, sendTextToSession, spaceTrace, spawnLines } from '../../data/tauri';
+import { appendTaskEvent, readSessionTasks, readTranscriptTails, sendTextToSession, spaceTrace, spawnLines } from '../../data/tauri';
 import { queueShow, showPlace, traceLine } from '../../domain/spaceJump';
 import { dashFiles, paneState, type DashFile } from '../../domain/dashboard';
 import { findTarget } from '../../domain/inbox';
@@ -8,7 +8,7 @@ import { kindOf } from '../../domain/reader';
 import type { Session } from '../../domain/session';
 import { sameOrchSlot, stoppedOrchs } from '../../domain/stopped';
 import { foldAgents, pruneAgents, type SubAgent } from '../../domain/subAgents';
-import { addSpawned, focusPick, harnitorPick, holderMap, reviewPick, toolsPick, newShows, orphanSends, shownFiles, showOwner, transcriptTargets } from '../../domain/spaceNav';
+import { addSpawned, focusPick, focusTab, harnitorPick, holderMap, reviewPick, toolsPick, newShows, orphanSends, shownFiles, showOwner, transcriptTargets } from '../../domain/spaceNav';
 import { orchDocs, projectGroups } from '../../domain/spaceTree';
 import { termTail } from '../../domain/termTail';
 import { starterLists } from '../../domain/starterLists';
@@ -34,6 +34,9 @@ import { reportView } from '../viewReport';
 import { OPEN_PAGE, PAGE_TITLE } from './PageBlock';
 import { Preview } from './Preview';
 import { CHAT_INSERT, dragPath } from './dragPath';
+import { useShowLog } from './useShowLog';
+import { CHAT_FILE_OPEN } from '../chat/ChatFileCard';
+import { cardMoves } from '../../domain/chatFiles';
 import { attachToChat } from '../fileDrop';
 import { SpaceNav, StateMark } from './SpaceNav';
 import { sessionStatus, statusWord, type ActivityStatus } from '../../domain/status';
@@ -335,27 +338,24 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
   const heldBy = (o?: Session) => (o ? [...projectSessions, ...helpers, ...loose].filter((s) => holders.get(s.id)?.includes(o.id)) : []);
   const groups = useMemo(() => projectGroups(projectSessions), [projectSessions]);
   const orphans = orphanSends(events, Date.now());
-  // scripts/app focus — 채팅 뷰에선 그 대시보드를 스페이스에(터미널로 넘어가지 않는다, 2026-10-02 사용자)
+  // scripts/app focus — 채팅 뷰에선 그 대시보드를 스페이스에(터미널로 넘어가지 않는다, 2026-10-02 사용자). 참모면 채팅 탭도 그 참모로(focusTab)
   useEffect(() => {
     const on = (e: Event) => {
       const plan = (e as CustomEvent<{ session: string } | { project: string }>).detail;
       const k = plan && focusPick(plan, sessions, groups, idle, orchs.map((o) => o.id));
-      if (k) { setModal(null); setPick(k, 'focus'); }
+      if (!k) return;
+      setModal(null);
+      const t = focusTab(k);
+      if (t) { switchTo(t, 'focus'); if (t !== nav.chat) onChatTab?.(t); }
+      setPick(k, 'focus');
     };
     window.addEventListener('space-focus', on);
     return () => window.removeEventListener('space-focus', on);
   });
 
 
-  // scripts/show 기록 — 3초마다 꼬리. 대시보드 파일·참모 문서가 여기서 나온다
-  const [log, setLog] = useState('');
-  useEffect(() => {
-    let alive = true;
-    const tick = () => void readShowLog().then((l) => { if (alive) setLog((p) => (p === l ? p : l)); }).catch(() => {});
-    tick();
-    const id = window.setInterval(tick, 3000);
-    return () => { alive = false; window.clearInterval(id); };
-  }, []);
+  // scripts/show 기록 — 3초마다 꼬리(채팅 안 파일 카드와 같이 읽는다). 대시보드 파일·참모 문서가 여기서 나온다
+  const log = useShowLog();
 
   // 참모 문서 고정
   const [pins, setPins] = useState(loadPins);
@@ -455,6 +455,30 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
     void spaceTrace(traceLine({ ts: new Date().toISOString(), why: why.current, from: p?.pick ?? '', to: pick, viewFrom: p ? p.view : undefined, viewTo: followed.view, chat: nav.chat })).catch(() => {});
     why.current = '?';
   }, [pick, followed.view]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 띄운 파일을 지금 탭 화면에 — 사무실이면 사무실을 떠나지 않는다: md 는 사무실 위 창, 그림·시안은 사무실 위 미리보기(예전엔 대시보드로 튕겼다, 오피스 A 1단계)
+  const present = (f: DashFile) => {
+    const md = kindOf(f.path) === 'md';
+    const r = showPick(now.current.pick, f.path, md);
+    if (md) {
+      setModal(null); // 떠 있던 미리보기 창에 문서가 가려지지 않게
+      if (r.sheet) openSheet(r.sheet); else setPick(r.pick, 'show');
+      setFocus(f.at ? { path: f.path, at: f.at, key: f.ts } : null);
+    } else if (r.pick === OFFICE) showOver(f);
+    else setModal(f);
+  };
+  // 채팅 안 파일 카드를 누르면 — 그 참모 탭으로 가서 show 와 같은 길로 다시 연다(짚은 곳도 다시 반짝)
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ path: string; at?: ShowAt; by: string }>).detail;
+      if (!d?.path) return;
+      const m = cardMoves(d.by, { view: now.current.view ?? '', chat: nav.chat ?? '' }); // 쌓아 보기 다른 참모 카드면 채팅 탭도 그 참모로
+      if (m.space) switchTo(m.space, 'chatfile');
+      if (m.tab) onChatTab?.(m.tab);
+      present({ path: d.path, ts: new Date().toISOString(), by: d.by, ...(d.at ? { at: d.at } : {}) });
+    };
+    window.addEventListener(CHAT_FILE_OPEN, on);
+    return () => window.removeEventListener(CHAT_FILE_OPEN, on);
+  });
   // 다른 참모가 띄운 것 — 보던 화면은 그대로, 알림 한 줄(보기 = 그 참모 탭으로). 12초 뒤 저절로 닫힘
   const [notice, setNotice] = useState<{ id: string; path: string; n: number } | null>(null);
   useEffect(() => {
@@ -481,14 +505,7 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
       return;
     }
     if (place === 'chat' && owner) switchTo(owner, 'show');
-    // 사무실이면 사무실을 떠나지 않는다 — md 는 사무실 위 창, 그림·시안은 사무실 위 미리보기(예전엔 대시보드로 튕겼다, 오피스 A 1단계)
-    const r = showPick(now.current.pick, last.path, md);
-    if (md) {
-      setModal(null); // 떠 있던 미리보기 창에 문서가 가려지지 않게
-      if (r.sheet) openSheet(r.sheet); else setPick(r.pick, 'show');
-      setFocus(last.at ? { path: last.path, at: last.at, key: last.ts } : null);
-    } else if (r.pick === OFFICE) showOver(last);
-    else setModal(last);
+    present(last);
   }, [log]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 참모 대시보드 파일 — 참모·맡긴 세션이 띄운 것 + 사용자가 채팅에 붙인 그림
@@ -728,15 +745,15 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
       <DashboardView key={o.id} browser={(() => { const b = liveOf(o, lives); return b ? { live: b, tail: o.sessionId ? tails[o.sessionId] : undefined } : undefined; })()} pet={pet ? { on: petFor === o.id, node: pet((id) => { const x = orchs.find((y) => y.id === id); return x ? { name: x.name || '', color: colorOf(x.name || '') } : null; }) } : undefined}
         title={oname(o)} titleNode={<OrchName s={o} />} avatar={act ? (
         <button className="oa-btn" onClick={() => act.askAvatar(o, colorOf(o.name || ''))} aria-label={tr(`${oname(o)} 프로필 바꾸기`, `Change ${oname(o)}'s avatar`)}>
-          <OrchAvatar name={o.name || ''} size={44} state={avatarState(o)} color={colorOf(o.name || '')} label={oname(o)} /><span className="oa-change" aria-hidden="true">{tr('바꾸기', 'Change')}</span>
+          <OrchAvatar name={o.name || ''} size={44} state={avatarState(o, statusOf(o))} color={colorOf(o.name || '')} label={oname(o)} /><span className="oa-change" aria-hidden="true">{tr('바꾸기', 'Change')}</span>
         </button>
-      ) : <OrchAvatar name={o.name || ''} size={44} state={avatarState(o)} color={colorOf(o.name || '')} label={oname(o)} />} onTitleEdit={act ? () => act.askRename(o) : undefined}
+      ) : <OrchAvatar name={o.name || ''} size={44} state={avatarState(o, statusOf(o))} color={colorOf(o.name || '')} label={oname(o)} />} onTitleEdit={act ? () => act.askRename(o) : undefined}
         under={<AgentList key={o.id} sid={o.sessionId} agents={agentsOf.current.get(o.id) ?? []} />}
         aside={<NotePanel base={note} storeKey={`noteEdits:${o.name || o.id}`} sendTo={oname(o)} onOpenStarter={hasStarter ? () => setPick(`d:${projectRoot(o.cwd)}/docs/starter.md`) : undefined}
           send={async (text) => { window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id: o.id, text } })); await sendTextToSession(o.id, text); }} />}
         meta={[orchRoleOf(o.name || '')?.text, tr(`${stateWord(o)} · 맡긴 세션 ${held.length}`, `${stateWord(o)} · ${held.length} delegated`)].filter(Boolean).join(' · ') /* 맡은 일이 맨 앞(이름 밑 회색 줄, 2026-10-04) */} 
         files={files} lines={held.map((s) => lineOf(s, cardName(s)))}
-        onStop={act ? (id) => { const s = held.find((x) => x.id === id); if (s) act.askStop(s, cardName(s)); } : undefined}
+        onStop={act ? (id) => { const s = held.find((x) => x.id === id); if (s) act.askStop(s, cardName(s), 'card'); } : undefined}
         hint={<>
           <div className="cv-hints">
             {tasks && <UnclosedTasks cards={unclosedOf(tasks.orphaned, events, o.id, tasks.known)} nameOf={(t) => targetLabel(t, tasks.known)} canResume={tasks.canResume} onResume={tasks.onResume} onFinish={tasks.onFinish} />}
@@ -764,7 +781,7 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
     main = g ? (
       <DashboardView key={g.root} work title={g.name} meta={tr(`세션 ${g.sessions.length} · ${g.root}`, `${g.sessions.length} sessions · ${g.root}`)}
         headAction={<>{toolsBtn(g.root)}{browserBtn(g.root, g.sessions.length)}{onNewSession && <button className="cv-btn" onClick={() => onNewSession(g.root, g.name)}>{tr('새 세션', 'New session')}</button>}</>}
-        onStop={act ? (id) => { const s = g.sessions.find((x) => x.id === id); if (s) act.askStop(s, s.workspace ? `${g.name} / ${s.workspace}` : tr(`${g.name} 본체`, `${g.name} (main)`)); } /* 세션이 여럿이면 어느 것인지 보이게 */ : undefined}
+        onStop={act ? (id) => { const s = g.sessions.find((x) => x.id === id); if (s) act.askStop(s, s.workspace ? `${g.name} / ${s.workspace}` : tr(`${g.name} 본체`, `${g.name} (main)`), 'card'); } /* 세션이 여럿이면 어느 것인지 보이게 */ : undefined}
         files={files} lines={g.sessions.map((s) => lineOf(s, s.workspace ?? tr('본체', 'main')))}
         lists={plists ?? undefined} onOpenSession={(id) => setPick(`s:${id}`)} onOpenDoc={(p) => setPick(`d:${p}`)} onAttach={attach} onSendText={send} onCuration={toCuration} term={termOf} emptyText={tr('이 프로젝트 세션이 보여 준 파일이 여기 모여요', "Files this project's sessions show gather here")} />
     ) : (() => {

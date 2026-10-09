@@ -18,9 +18,11 @@ import type { HomeRow } from '../../domain/orchHome';
 import { parsePins, pinFirst } from '../../domain/orchPins';
 import { useMemoPoll } from './usePoll';
 import { SwipeRow } from './SwipeRow';
-import { josa } from '../../i18n';
+import { josa, machine } from '../../i18n';
 import { useOutbox } from './outbox';
 import { MAvatar } from './MAvatar';
+import { WaitNote } from './WaitNote';
+import { askNote } from '../../domain/askNote';
 import { NewOrchForm, OffOrchList, useOffOrchs, WakeNotice, type Wake } from './OrchWake';
 import { HomeAppLink } from './HomeAppLink';
 
@@ -32,7 +34,7 @@ type Props = { title: string; env: MobileEnv; wake: Wake; onStopped: (id: string
 
 /** 답 기다림 카드에서 바로 답하기 — 그 참모 보낼 함으로(참모를 안 바꿔도 된다). 결정 대기함 물음은 무엇에 대한 답인지 붙고,
  *  맥 작업 기록에 answer 를 먼저 남긴 뒤 보낸다 — 카드는 누르자마자 숨고(기록이 실패하면 답을 채운 채 되돌림), 이미 답한 물음이면 안 보낸다.
- *  보낸 표시는 waitSent(앱 전체) — 시트를 다시 열어도 남는다 */
+ *  보낸 표시는 waitSent(앱 전체) — 시트를 다시 열어도 남는다. 물음 끝 '답: A / B' 줄은 빠른 답 알약 — 누르면 친 답과 같은 길로 */
 function WaitReply({ w, name, sent }: { w: Waiting; name: string; sent: WaitSent }) {
   const out = useOutbox(w.orch, NO_ITEMS);
   const key = waitKey(w);
@@ -40,10 +42,11 @@ function WaitReply({ w, name, sent }: { w: Waiting; name: string; sent: WaitSent
   const [v, setV] = useState(mine?.fail ? mine.a : '');
   if (w.kind === 'blocked') return null;
   if (mine && !mine.fail) return <div className="m-muted m-sm">{name}에게 보냈어요</div>;
-  const send = () => {
-    const t = waitAnswer(w, v);
-    if (!t || dupAnswer(peekWaitSent(), key, v, Date.now())) return;
-    const a = v.trim();
+  const answers = askNote(w.q).answers;
+  const send = (raw: string) => {
+    const t = waitAnswer(w, raw);
+    if (!t || dupAnswer(peekWaitSent(), key, raw, Date.now())) return;
+    const a = raw.trim();
     markWaitSent(key, a);
     if (w.kind !== 'decide' || !w.taskId) { out.send(t); return; }
     withLimit(taskAnswer(w.taskId, a), ANSWER_LIMIT_MS).then(() => out.send(t), (e: Error) => {
@@ -53,7 +56,8 @@ function WaitReply({ w, name, sent }: { w: Waiting; name: string; sent: WaitSent
   return (
     <>
       {mine?.fail && <div className="m-error">못 보냈어요 — 다시 눌러 주세요</div>}
-      <form className="m-wait-reply" onSubmit={(e) => { e.preventDefault(); send(); }}>
+      {answers.length > 0 && <div className="m-quick">{answers.map((a) => <button key={a} type="button" onClick={() => send(a)}>{a}</button>)}</div>}
+      <form className="m-wait-reply" onSubmit={(e) => { e.preventDefault(); send(v); }}>
         <input value={v} onChange={(e) => setV(e.target.value)} placeholder="여기서 바로 답하기" enterKeyHint="send" aria-label={`${name}에게 답하기`} />
         <button type="submit" className="m-in-btn" disabled={!v.trim()} aria-label="보내기" title="보내기"><span className="m-key"><IconEnter /></span></button>
       </form>
@@ -218,7 +222,7 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
         <div ref={list} className="m-picker-list" onTouchStart={(e) => { if (openId && !(e.target as Element).closest(`[data-swipe="${openId}"]`)) setOpenId(null); }}>
           {removing && (
             <div className="m-sleep-card" role="alertdialog" aria-label="제거 확인">
-              <div>{josa(removing.name, '을', '를')} 목록에서 제거할까요? 대화 기록 파일은 맥에 남지만, 여기서 다시 깨울 수는 없어요.</div>
+              <div>{josa(removing.name, '을', '를')} 목록에서 제거할까요? 대화 기록 파일은 {machine()}에 남지만, 여기서 다시 깨울 수는 없어요.</div>
               {removing.working && <div className="m-sleep-warn">지금 일하는 중이라 하던 게 끊겨요.</div>}
               {removeErr && <div className="m-error">{removeErr}</div>}
               <div className="m-new-row">
@@ -248,7 +252,7 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
                 <div key={waitKey(w)} className="m-wait-card">
                   <div className="m-wait-top">{(() => { const o = orchs.find((x) => x.id === w.orch); return o ? <MAvatar orch={o} orchs={orchs} size={28} asking /> : null; })()}<b>{phoneName(w.name, orchs)}</b><span className="m-muted m-sm">{hm(w.ts)}</span></div>
                   {w.lead && <div className="m-muted m-sm">{w.lead}</div>}
-                  <div className="m-ask-q">{w.q}</div>
+                  <WaitNote q={w.q} />
                   <WaitReply w={w} name={phoneName(w.name, orchs)} sent={sent} />
                   <button type="button" className="m-btn" onClick={() => onPick(w.orch)}>그 {title}로 가서 보기</button>
                 </div>

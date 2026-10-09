@@ -89,15 +89,19 @@ function lockedMessage(profile, r) {
  * @param {(name:string) => ({name:string, arguments:object, onResult:(r:object)=>void}|null)} [o.afterCall]  세션 호출의 답을 넘기기 직전에 보낼 내부 호출
  *   (비밀번호 칸 값 읽기, src/secrets.js) — 답이 오거나 afterMs 가 지나면 넘긴다
  * @param {(name:string, result:object) => object} [o.transform]  세션에 넘기는 결과를 고친다(비밀번호 가리기)
+ * @param {() => boolean} [o.stillShared]  acquire 가 {ok, shared} 로 남(스크립트 지킴이)의 크롬을 같이 쓰게 된 동안 매 호출 앞에 묻는다 —
+ *   false 면 놓고(release) 다시 잡는다. 같이 쓰는 동안 browser_close·유휴 닫기는 그 크롬을 안 닫고 놓기만 한다(src/share.js)
  */
 function createRelay({
   profile, acquire, release, sendToChild, sendToClient,
   idleMs = 0, setTimer = setTimeout, clearTimer = clearTimeout, log = () => {},
   onCallStart = () => {}, onCallEnd = () => {}, extraTools = [], onLocalTool = () => null, beforeCall = () => [],
   canClose = () => true, gate = () => null, afterCall = () => null, transform = (_n, r) => r, afterMs = 1500,
+  stillShared = () => true,
 }) {
   const lists = new Set(); // tools/list 요청 id — 응답에 래퍼 도구를 더한다
   let held = false;
+  let shared = false; // held 가 남의 크롬을 같이 쓰는 것인가(내 락 아님)
   const pending = new Map(); // 진행 중인 tools/call: id → 도구 이름
   const internal = new Set(); // 래퍼가 직접 보낸 요청 id — 응답을 Claude 로 흘리지 않는다
   let idleTimer = null;
@@ -111,6 +115,8 @@ function createRelay({
   const cleared = new Set(); // gate 를 이미 지난 요청 id — 선행 호출 뒤 다시 처리될 때 또 묻지 않게
   const afterWait = new Map(); // 답을 기다리는 뒤따름 내부 호출 id → {onResult, go}
   let afterSeq = 0;
+  const intWait = new Map(); // 래퍼가 스스로 보낸 내부 호출(callInternal) id → resolve
+  let intSeq = 0;
 
   function disarm() {
     if (idleTimer != null) clearTimer(idleTimer);
@@ -128,6 +134,11 @@ function createRelay({
     idleTimer = null;
     // 콜백이 대기 중일 때 호출이 먼저 들어왔을 수 있다 → 그땐 닫지 않는다
     if (!held || pending.size > 0 || localRunning > 0) return;
+    // 같이 쓰는 남의 크롬은 닫지 않는다 — 놓기만(명부에서 빠지면 지킴이가 알아서 닫는다)
+    if (shared) {
+      log(`[chammo-browser-mcp] ${+(idleMs / 60000).toFixed(2)}분 동안 도구 호출이 없어 같이 쓰던 '${profile}' 스크립트 크롬을 놓습니다.`);
+      return unshare();
+    }
     // 사람이 개입 중이거나 스크립트가 이 크롬을 같이 쓰는 중이면(chammo-browser launch, src/users.js) 닫지 않고 다시 잰다
     if (!canClose()) return arm();
     const id = `chammo-idle-${++idleSeq}`;
@@ -135,6 +146,12 @@ function createRelay({
     internal.add(id);
     pending.set(id, CLOSE_TOOL);
     sendToChild(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: CLOSE_TOOL, arguments: {} } }));
+  }
+
+  function unshare() {
+    release();
+    held = false;
+    shared = false;
   }
 
   function onClientLine(line) {
@@ -188,6 +205,17 @@ function createRelay({
       return;
     }
     disarm();
+    // 같이 쓰던 스크립트 크롬이 끝났으면 놓고 이번엔 내 것으로 다시 잡는다
+    if (shared && held && pending.size === 0 && !stillShared()) unshare();
+    // 같이 쓰는 남의 크롬은 닫지 않는다 — 놓기만 하고 세션엔 닫힌 것처럼 답한다
+    if (shared && held && name === CLOSE_TOOL && pending.size === 0) {
+      cleared.delete(msg.id);
+      const note = notes.get(msg.id);
+      notes.delete(msg.id);
+      unshare();
+      sendToClient(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: withNote({ content: [{ type: 'text', text: `스크립트가 같이 쓰는 '${profile}' 크롬이라 닫지 않고 연결만 놓았어요. 다음 브라우저 도구 때 다시 붙습니다.` }] }, note) }));
+      return arm();
+    }
     // 락이 없으면 브라우저도 없다 → browser_close 는 락 없이 그대로 통과(no-op)
     if (!held && name !== CLOSE_TOOL) {
       const r = acquire();
@@ -201,6 +229,7 @@ function createRelay({
         }));
       }
       held = true;
+      shared = !!r.shared;
     }
     // 브라우저가 떠 있으면 먼저 치울 것(사람이 앱에서 연 파일 창 등) — 그게 끝난 뒤 이 줄을 다시 처리한다
     const pre = held && name !== CLOSE_TOOL ? beforeCall(name) || [] : [];
@@ -240,9 +269,15 @@ function createRelay({
       if (name === CLOSE_TOOL && held && succeeded && pending.size === 0) {
         release();
         held = false;
+        shared = false;
       }
       arm();
       if (internal.delete(msg.id)) {
+        const iw = intWait.get(msg.id);
+        if (iw) {
+          intWait.delete(msg.id);
+          iw(msg.result || { content: [{ type: 'text', text: String((msg.error && msg.error.message) || 'error') }], isError: true });
+        }
         const aw = afterWait.get(msg.id);
         if (aw) {
           try { if (msg.result) aw.onResult(msg.result); } catch { /* 읽기 실패 — 아는 값으로 가린다 */ }
@@ -286,7 +321,23 @@ function createRelay({
     sendToClient(line);
   }
 
-  return { onClientLine, onChildLine, holdsLock: () => held };
+  /**
+   * 래퍼가 스스로 보내는 도구 호출(앱이 부탁한 대화상자 답 등) — 브라우저가 떠 있을 때만(락 없이 크롬을 띄우지 않게). 답은 세션에 안 보인다
+   * @returns {Promise<object>} 결과(MCP result). 브라우저가 없으면 isError
+   */
+  function callInternal(name, args = {}) {
+    if (!held) return Promise.resolve({ content: [{ type: 'text', text: '브라우저가 떠 있지 않아요' }], isError: true });
+    const id = `chammo-int-${++intSeq}`;
+    internal.add(id);
+    pending.set(id, name);
+    disarm();
+    return new Promise((resolve) => {
+      intWait.set(id, resolve);
+      sendToChild(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }));
+    });
+  }
+
+  return { onClientLine, onChildLine, callInternal, holdsLock: () => held, sharing: () => shared };
 }
 
 // 스트림 청크 → 완성된 줄 단위 콜백. 빈 줄은 버리고 CRLF 도 처리한다.

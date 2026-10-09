@@ -2,6 +2,7 @@
 import { tr } from '../i18n';
 import type { SessionState } from './session';
 import { splitOrchName } from './orchLabel';
+import { sessionStatus, statusTone, type ActivityStatus } from './status';
 
 /** 참모 색 — 프사 몸 색·채팅 칸 색이 같은 출처(SpaceView 가 다시 내보낸다). 첫 칸 = 대표 캐릭터 색(BRAND) */
 export const ORCH_COLORS = ['#2f74e0', '#d9622b', '#1f9a62', '#9b51e0', '#c98a00', '#d23f6b'];
@@ -105,12 +106,12 @@ export function resolveAvatar(saved: Map<string, AvatarEntry>, name: string): Av
   return saved.get(key)?.avatar ?? defaultAvatar(key);
 }
 
-/** 앱이 아는 세션 상태 → 프사 상태. 세션이 없으면 꺼짐 */
-export function avatarState(s: { state: SessionState; awaiting?: boolean } | undefined): AvatarState {
+/** 앱이 아는 세션 상태 → 프사 상태. 세션이 없으면 꺼짐. 얼굴도 상태 말·점과 같은 한 표(statusTone) — st 를 주면 그걸로,
+ *  없으면 세션만으로(sessionStatus). CLI awaiting(턴 끝남)은 묻는 게 아니라 안 본다(2026-10-04 오피스 A 남은 것 ①) */
+export function avatarState(s: { state: SessionState } | undefined, st?: ActivityStatus): AvatarState {
   if (!s) return 'off';
-  if (s.state === 'working') return 'work';
-  if (s.state === 'blocked' || s.awaiting) return 'ask';
-  return 'rest';
+  const tone = statusTone(st ?? sessionStatus(s));
+  return tone === 'run' ? 'work' : tone === 'ask' ? 'ask' : 'rest';
 }
 
 /** 상태가 바뀔 때 한 번 하는 동작 — 일하다 쉬면 = 일 끝남(웃는 눈) */

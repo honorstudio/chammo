@@ -172,11 +172,11 @@ export function SpaceNav({ statusOf = sessionStatus, orchPins = [], stoppingIds 
                 onDoubleClick={(e) => { e.stopPropagation(); act?.askRename(o); }} onContextMenu={act && !stopping ? (e) => act.menu(e, o, colorOf(o.name || '')) : undefined}
                 {...dragProps({ kind: 'text', text: `[참모 ${label(o)} · 세션 ${o.id}]` }, label(o))}>
                 <button className={`cv-fold ${isOpen(k) ? 'open' : ''}`} onClick={(e) => { e.stopPropagation(); toggle(k); }} aria-label={isOpen(k) ? tr('접기', 'Collapse') : tr('펼치기', 'Expand')}><IconChevron /></button>
-                <OrchAvatar name={o.name || ''} size={22} state={stopping ? 'off' : avatarState(o)} color={colorOf(o.name || '')} label={label(o)} />
+                <OrchAvatar name={o.name || ''} size={22} state={stopping ? 'off' : avatarState(o, statusOf(o))} color={colorOf(o.name || '')} label={label(o)} />
                 <span className="cv-namecol"><OrchName s={o} className="cv-label strong" /><OrchRole name={o.name || ''} /></span>
                 {o.sessionId && orchPins.includes(o.sessionId) && <span className="cv-pin" role="img" aria-label={tr('고정됨', 'Pinned')} title={tr('고정됨 — 오른쪽 클릭으로 풀기', 'Pinned — right-click to unpin')}><IconPin /></span>}
                 {stopping ? <span className="cv-transit">{tr('끄는 중…', 'Stopping…')}</span> : <><StateMark st={statusOf(o)} /><Ctx v={ctxOf?.(o)} /></>}
-                {act && o.kind === 'background' && !stopping && <button className="cv-act" onClick={(e) => { e.stopPropagation(); act.askStop(o); }} title={tr('세션 끄기', 'Stop session')} aria-label={tr('세션 끄기', 'Stop session')}><IconClose /></button>}
+                {act && o.kind === 'background' && !stopping && <button className="cv-act" onClick={(e) => { e.stopPropagation(); act.askStop(o, undefined, 'nav-x'); }} title={tr('세션 끄기', 'Stop session')} aria-label={tr('세션 끄기', 'Stop session')}><IconClose /></button>}
               </div>
               {isOpen(k) && (
                 <div className="cv-kids">
@@ -264,7 +264,7 @@ export function SpaceNav({ statusOf = sessionStatus, orchPins = [], stoppingIds 
               <button className={`cv-fold ${isOpen(k) ? 'open' : ''}`} onClick={(e) => { e.stopPropagation(); toggle(k); }} aria-label={isOpen(k) ? tr('접기', 'Collapse') : tr('펼치기', 'Expand')}><IconChevron /></button>
               <span className="cv-ic"><IconFolder /></span>
               <span className="cv-label">{g.name}</span>
-              {held.length > 0 && <span className="cv-holders oa-stack" title={tr(`잡고 있는 ${assistant()}`, 'Held by')}>{held.map((o) => { const x = orchs.find((y) => y.id === o); return <OrchAvatar key={o} name={x?.name || ''} size={16} state={avatarState(x)} color={colorOf(x?.name || '')} label={x ? label(x) : o} />; })}</span>}
+              {held.length > 0 && <span className="cv-holders oa-stack" title={tr(`잡고 있는 ${assistant()}`, 'Held by')}>{held.map((o) => { const x = orchs.find((y) => y.id === o); return <OrchAvatar key={o} name={x?.name || ''} size={16} state={avatarState(x, x && statusOf(x))} color={colorOf(x?.name || '')} label={x ? label(x) : o} />; })}</span>}
               {busy && <StateMark st={statusOf(busy)} />}
               <Ctx v={g.sessions.map((x) => ctxOf?.(x)).filter((x): x is number => x !== undefined).reduce<number | undefined>((m, x) => (m === undefined || x > m ? x : m), undefined)} />
             </div>

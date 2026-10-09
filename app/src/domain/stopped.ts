@@ -1,7 +1,7 @@
 // 꺼진 세션(이어갈 수 있는 것)과, 참모 화면 아래 띄울 "지금 시킨 일" 세션 고르기.
 
 import { classifyWorkspace, orchestratorLike, type Session } from './session';
-import { fwd } from './paths';
+import { fwd, samePath } from './paths';
 import { splitOrchName } from './orchLabel';
 import type { TaskCard } from './tasks';
 
@@ -83,9 +83,8 @@ export function orphanSession(target: string, stopped: StoppedSession[]): Stoppe
 /** 오케스트레이터 패널에 보일 꺼진 참모 — HQ 폴더의 비서 이름 꼴(참모·참모-2·옛 참모-N), 지금 같은 이름으로 떠 있지 않은 것, 이름마다 가장 최근 하나.
  *  예전엔 이름이 딱 '참모'일 때만 통과해서 번호 붙은 참모는 끄는 순간 사라졌다(2026-10-01 사용자) */
 export function stoppedOrchs(stopped: StoppedSession[], orchCwd: string, live: { name: string }[]): StoppedSession[] {
-  const hq = fwd(orchCwd).replace(/\/+$/, '').toLowerCase();
   const shadow = orchShadow(live);
-  return stopped.filter((x) => fwd(x.cwd).replace(/\/+$/, '').toLowerCase() === hq && orchestratorLike(x.name) && shadow(x.name));
+  return stopped.filter((x) => samePath(x.cwd, orchCwd) && orchestratorLike(x.name) && shadow(x.name));
 }
 
 /**
@@ -110,12 +109,11 @@ const NICK = '\u0000';
 
 /** 꺼진 참모 하나를 지울 때 같이 지울 것 — 같은 HQ·같은 참모 이름으로 쌓인 꺼진 세션 전부(패널엔 최근 하나만 보여서, 하나만 지우면 다음 옛것이 올라왔다). 참모가 아니면 그것 하나 */
 export function sameOrchSlot(stopped: StoppedSession[], x: StoppedSession, orchCwd: string): StoppedSession[] {
-  const norm = (p: string) => fwd(p).replace(/\/+$/, '').toLowerCase();
-  if (norm(x.cwd) !== norm(orchCwd) || !orchestratorLike(x.name)) return [x];
+  if (!samePath(x.cwd, orchCwd) || !orchestratorLike(x.name)) return [x];
   // 같은 번호 + 같은 별명, 그리고 별명 없는 옛 복사본만 — 번호가 같아도 별명이 다르면 다른 참모라 남긴다(2026-10-02 참모-3 둘)
   const { base: b, nick: n } = splitOrchName(x.name);
   return stopped.filter((y) => {
     const { base, nick } = splitOrchName(y.name);
-    return base === b && norm(y.cwd) === norm(orchCwd) && (!nick || nick === n);
+    return base === b && samePath(y.cwd, orchCwd) && (!nick || nick === n);
   });
 }

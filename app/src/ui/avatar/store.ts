@@ -25,6 +25,9 @@ let retryMs = 0;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let loading: Promise<void> | null = null;
 
+const sameEntries = (a: Map<string, AvatarEntry>, b: Map<string, AvatarEntry>) =>
+  a.size === b.size && [...a].every(([k, e]) => JSON.stringify(e) === JSON.stringify(b.get(k)));
+
 /** 다시 읽기 — 폰이 돌아오거나 다시 붙을 때(데스크톱에서 바꾼 것도 따라온다). 읽는 중이면 그 읽기를 같이 기다린다 */
 export function refreshAvatars(): Promise<void> {
   loading ??= Promise.all([
@@ -33,7 +36,8 @@ export function refreshAvatars(): Promise<void> {
   ]).then(([saved, dataDir]) => {
     loading = null;
     if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-    if (saved) { retryMs = 0; emit({ ...snap, saved, dataDir }); return; }
+    // 안 바뀌었으면 새 값을 안 낸다 — 데스크톱은 폰에서 바꾼 것을 따라오려고 10초마다 다시 읽는다(App)
+    if (saved) { retryMs = 0; if (!sameEntries(saved, snap.saved) || dataDir !== snap.dataDir) emit({ ...snap, saved, dataDir }); return; }
     if (dataDir !== snap.dataDir) emit({ ...snap, dataDir });
     retryMs = Math.min(retryMs ? retryMs * 2 : 3_000, RETRY_MAX_MS);
     retryTimer = setTimeout(() => { retryTimer = null; void refreshAvatars(); }, retryMs);
@@ -66,19 +70,30 @@ export function imageUrl(dataDir: string, e: AvatarEntry | undefined): string | 
   return `${docUrl(`${dataDir}/avatars/${e.avatar.file}`)}?v=${e.v}`;
 }
 
-/** 저장 — Rust 가 다시 검사하고 돌려준 값으로 지도를 고친다 */
-export async function saveAvatar(key: string, avatar: Avatar, image: Uint8Array | null): Promise<void> {
-  const body = avatar.kind === 'preset' ? { ...avatar, voice: avatar.voice ?? null } : { kind: 'image', file: '', crop: avatar.crop, voice: avatar.voice ?? null };
-  const got = parseEntries([await saveAvatarFile(key, body, image)]).get(key);
+/** 저장할 몸 — Rust Avatar 모양(그림 이름은 Rust 가 정한다) */
+export const avatarBody = (avatar: Avatar) =>
+  avatar.kind === 'preset' ? { ...avatar, voice: avatar.voice ?? null } : { kind: 'image', file: '', crop: avatar.crop, voice: avatar.voice ?? null };
+
+/** 저장한 뒤 — Rust(데스크톱 명령·폰 /api/avatar)가 다시 검사하고 돌려준 값을 한 번 더 걸러 지도에 넣는다 */
+export function applySaved(key: string, raw: unknown) {
+  const got = parseEntries([raw]).get(key);
   if (!got) throw new Error('saved avatar did not validate');
   const saved = new Map(snap.saved);
   saved.set(key, got);
   emit({ ...snap, saved });
 }
 
-export async function resetAvatar(key: string): Promise<void> {
-  await deleteAvatarFile(key);
+export function applyRemoved(key: string) {
   const saved = new Map(snap.saved);
   saved.delete(key);
   emit({ ...snap, saved });
+}
+
+export async function saveAvatar(key: string, avatar: Avatar, image: Uint8Array | null): Promise<void> {
+  applySaved(key, await saveAvatarFile(key, avatarBody(avatar), image));
+}
+
+export async function resetAvatar(key: string): Promise<void> {
+  await deleteAvatarFile(key);
+  applyRemoved(key);
 }

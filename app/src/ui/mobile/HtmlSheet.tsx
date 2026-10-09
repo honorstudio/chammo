@@ -9,9 +9,10 @@ import { sendPreview } from '../../domain/sendPreview';
 import { IconClose, IconSend } from '../Icons';
 import { HTML_SANDBOX } from './htmlFrame';
 import { fileError } from '../../domain/phoneFile';
+import { machine } from '../../i18n';
 
 type Cur = { title: string; total: number; done: number; text: string };
-const WHY: Record<string, string> = { 'secret inside': '시안 속에 키가 보여서 폰엔 안 보여 줘요 — 맥에서 열어 주세요', 'not allowed': '폰에서 열 수 없는 시안이에요' };
+const why = (): Record<string, string> => ({ 'secret inside': `시안 속에 키가 보여서 폰엔 안 보여 줘요 — ${machine()}에서 열어 주세요`, 'not allowed': '폰에서 열 수 없는 시안이에요', 'file too large': `시안이 10MB 를 넘어 폰에선 못 열어요 — ${machine()}에서` });
 
 export default function HtmlSheet({ path, title, orch, onClose }: { path: string; title: string; orch?: string; onClose: () => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
@@ -28,7 +29,7 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
   const [ask, setAsk] = useState<string | null>(null);
 
   useEffect(() => {
-    htmlTicket(path).then((r) => setUrl(r.url), (e: unknown) => { const m = (e as Error).message; setErr(fileError(m, WHY)); });
+    htmlTicket(path).then((r) => setUrl(r.url), (e: unknown) => { const m = (e as Error).message; setErr(fileError(m, why())); });
   }, [path]);
   useLayoutEffect(() => {
     const el = wrap.current;

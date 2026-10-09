@@ -42,3 +42,5 @@ starts a session `routine-<name>` that follows ROUTINE.md once and reports back.
 (ads, payments, sends to real users): don't test-run those, check `scripts/routine list` instead. Pause/resume/remove the same way.
 They show up in the app sidebar under "Scheduled": name and state on the first line (running N min, done hh:mm, failed…),
 when on the second (next run, or the date and how many are left); finished one-offs fold away.
+If `new`/`list` print a line on stderr that runs use **the app's copy** (it differs from this script) or are **woken by python**, tell the
+user in one line: the fix only takes effect after the app is updated and reopened (don't copy the script over the app's copy yourself).

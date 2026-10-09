@@ -124,6 +124,14 @@ pub fn with_voice(home: &str, cmd: &str, voice: &str) -> Option<String> {
     Some(out.join(" "))
 }
 
+/// 설정 목소리 — Supertonic 실행기일 때만(-v 값, 없거나 이상하면 M1). 아니면 None = 참모마다 목소리를 못 바꾼다(화면 domain/avatar baseVoice 와 같은 판단)
+pub fn base_voice(home: &str, cmd: &str) -> Option<&'static str> {
+    with_voice(home, cmd, "M1")?;
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    let v = parts.iter().position(|p| *p == "-v").and_then(|i| parts.get(i + 1)).copied().unwrap_or("M1");
+    Some(VOICES.iter().copied().find(|x| *x == v).unwrap_or("M1"))
+}
+
 /// 설정 화면이 열리거나 목소리를 바꿀 때 — 기다리지 않는다
 #[tauri::command]
 pub fn tts_warm(command: String) {
@@ -157,6 +165,17 @@ mod tests {
         assert_eq!(with_voice(h, "~/.chammo/tts/supertonic/speak -v M1", "X9"), None);
         assert_eq!(with_voice(h, "~/.chammo/tts/supertonic/speak -v M1", "M1; rm -rf ~"), None);
         assert_eq!(with_voice(h, "", "M1"), None);
+    }
+
+    #[test]
+    fn 기본_목소리는_supertonic_일_때만_폰에_알린다() {
+        // 폰 프로필 창의 '기본' 목소리 — 화면 domain/avatar baseVoice 와 같은 판단, 명령 원문은 폰에 안 낸다
+        let h = "/Users/me";
+        assert_eq!(base_voice(h, "~/.chammo/tts/supertonic/speak -v F3"), Some("F3"));
+        assert_eq!(base_voice(h, "~/.chammo/tts/supertonic/speak"), Some("M1"));
+        assert_eq!(base_voice(h, "~/.chammo/tts/supertonic/speak -v X9"), Some("M1"));
+        assert_eq!(base_voice(h, "say -v Yuna"), None);
+        assert_eq!(base_voice(h, "~/bin/local-say -v alloy"), None);
     }
 
     #[test]

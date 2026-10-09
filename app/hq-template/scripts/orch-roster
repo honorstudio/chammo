@@ -48,8 +48,25 @@ def read_events(path):
     return out
 
 
-def norm_dir(p):
-    return os.path.expanduser(p or '').replace('\\', '/').rstrip('/')
+DRIVE = re.compile(r'^[A-Za-z]:[\\/]')
+# 홈·루트 — 여기서 위로는 저장소 꼭대기로 안 친다(앱 domain/session HOME_LIKE 와 같다)
+HOME_LIKE = re.compile(r'^(|/|/Users/[^/]+|/home/[^/]+|/root|[A-Za-z]:|[A-Za-z]:/Users/[^/]+)$', re.I)
+
+
+def fwd(p):
+    """윈도우 경로(C:\\… · C:/…)만 / 로, 드라이브 글자는 대문자로 — 맥 경로는 그대로(앱 domain/paths fwd 와 같다)"""
+    p = os.path.expanduser(p or '')
+    return p[0].upper() + p[1:].replace('\\', '/') if DRIVE.match(p) else p
+
+
+def path_key(p):
+    """경로 비교 열쇠 — 끝 / 빼고, 윈도우 드라이브 경로만 소문자(앱 domain/paths pathKey 와 같은 표 paths.fixture.json)"""
+    f = fwd(p).rstrip('/')
+    return f.lower() if re.match(r'^[A-Za-z]:(/|$)', f) else f
+
+
+def same_dir(a, b):
+    return path_key(a) == path_key(b)
 
 
 def bases_of(cfg):
@@ -62,12 +79,49 @@ def orch_base(name, bases):
     return b if any(b == x or re.fullmatch(re.escape(x) + r'-\d+', b) for x in bases) else None
 
 
-def project_of(cwd, dev):
-    """dev 루트 아래 첫 폴더(워크트리여도 본체) — 밖이거나 dev 자체면 None"""
-    c, d = norm_dir(cwd), norm_dir(dev)
-    if not d or not c.startswith(d + '/'):
+def base_name(p):
+    return ([x for x in p.split('/') if x] or [p])[-1]
+
+
+def extra_worktree(path, extras, within):
+    """추가 폴더가 든 저장소의 워크트리 안이면 그 추가 폴더 이름 — 워크트리 안 자리(…/worktrees/w/eta-bot)가 든 추가 폴더가 먼저, 꼭대기면 처음 것"""
+    hits = []
+    for x in extras:
+        parts = x.split('/')
+        for i in range(len(parts) - 1, 0, -1):
+            top = '/'.join(parts[:i])
+            if HOME_LIKE.match(top):
+                break
+            root = top + '/.claude/worktrees'
+            if within(root) and len(path) > len(root) + 1:
+                hits.append((root, top, x))
+    if not hits:
         return None
-    return c[len(d) + 1:].split('/')[0] or None
+
+    def in_extra(w):
+        inner = (w[1] + '/' + '/'.join(path[len(w[0]) + 1:].split('/')[1:])).rstrip('/').lower()
+        return inner == w[2].lower() or inner.startswith(w[2].lower() + '/')
+    return base_name(next((w for w in hits if w[0] == hits[0][0] and in_extra(w)), hits[0])[2])
+
+
+def project_of(cwd, dev, extras=()):
+    """세션 폴더 → 프로젝트(앱 domain/session classifyWorkspace 와 같은 규칙): 따로 추가한 폴더 → dev 폴더 바로 아래(워크트리여도 본체)
+    → 추가 폴더가 든 저장소의 워크트리 → 그 밖은 폴더 이름. dev 폴더 자체는 None(프로젝트 밖). 윈도우는 대소문자를 안 가리고 이름은 적힌 대로"""
+    path = fwd(cwd).rstrip('/')
+    key = (lambda q: q.lower()) if re.match(r'^[A-Za-z]:/', path) else (lambda q: q)
+
+    def within(root):
+        return key(path) == key(root) or key(path).startswith(key(root) + '/')
+    xs = [x for x in (fwd(e).rstrip('/') for e in extras if isinstance(e, str)) if x]
+    for x in xs:
+        if within(x):
+            return base_name(x)
+    root = fwd(dev).rstrip('/')
+    if key(path) == key(root):
+        return None
+    if not within(root):
+        return extra_worktree(path, xs, within) or base_name(path) or None
+    return path[len(root) + 1:].split('/')[0] or None
 
 
 def parse_ts(v):
@@ -88,7 +142,7 @@ def born_of(roles, base):
     return b if isinstance(b, (int, float)) else None
 
 
-def infer(events, agents, orchs, bases, dev, now, roles=None, hq=''):
+def infer(events, agents, orchs, bases, dev, now, roles=None, hq='', extras=()):
     """참모(기본 이름)마다 최근 7일 주로 맡긴 프로젝트 — 많은 순 → 최근 순, 3개(앱 domain/orchRoles inferRoles 와 같은 규칙).
     이상한 줄은 건너뛴다(훅이 죽으면 이름표가 통째로 빠진다)"""
     events = [e for e in events if isinstance(e, dict)]
@@ -115,16 +169,28 @@ def infer(events, agents, orchs, bases, dev, now, roles=None, hq=''):
         tgt = next((a for a in agents if t in (a.get('id'), a.get('name'), a.get('sessionId'))), None)
         if orch_base(t, bases) or (tgt and orch_base(tgt.get('name'), bases) and tgt in orchs):
             continue  # 참모끼리 넘긴 일
-        if tgt and hq and norm_dir(tgt.get('cwd')) == hq:
+        if tgt and hq and same_dir(tgt.get('cwd'), hq):
             continue  # HQ 도우미에게 보낸 일 — 프로젝트 일이 아니다
         proj = e.get('project') if isinstance(e.get('project'), str) else None
-        proj = proj or (project_of(tgt.get('cwd'), dev) if tgt else None)
+        proj = proj or (project_of(tgt.get('cwd'), dev, extras) if tgt else None)
         if not proj:
             continue
         per = tally.setdefault(who, {})
         n, last = per.get(proj, (0, at))
         per[proj] = (n + 1, max(last, at))
     return {w: [p for p, _ in sorted(per.items(), key=lambda kv: (-kv[1][0], -kv[1][1].timestamp()))[:TOP]] for w, per in tally.items()}
+
+
+def hq_orchs(agents, cfg):
+    """HQ 폴더의 참모 이름 꼴 세션"""
+    bases, hq = bases_of(cfg), cfg.get('hqDir') or ''
+    return [a for a in agents if orch_base(a.get('name'), bases) and (not hq or same_dir(a.get('cwd'), hq))]
+
+
+def guess(agents, roles, events, cfg, now):
+    """설정·세션 목록·기록 → 참모(기본 이름)마다 주로 맡긴 프로젝트. 앱과 같은 표(src/domain/orchRoles.fixture.json)로 시험한다"""
+    extras = cfg.get('extraProjects') if isinstance(cfg.get('extraProjects'), list) else []
+    return infer(events, agents, hq_orchs(agents, cfg), bases_of(cfg), cfg.get('devRoot') or '', now, roles if isinstance(roles, dict) else {}, cfg.get('hqDir') or '', extras)
 
 
 def ga(word):
@@ -137,12 +203,11 @@ def build(me_sid, agents, roles, events, cfg, now):
     """훅에 찍을 글 — 참모가 나 하나뿐이고 맡은 일도 짐작도 없으면 빈 글"""
     en = cfg.get('language') == 'en'
     bases = bases_of(cfg)
-    hq = norm_dir(cfg.get('hqDir'))
-    orchs = [a for a in agents if orch_base(a.get('name'), bases) and (not hq or norm_dir(a.get('cwd')) == hq)]
+    orchs = hq_orchs(agents, cfg)
     if not orchs:
         return ''
     roles = roles if isinstance(roles, dict) else {}
-    guessed = infer(events, agents, orchs, bases, cfg.get('devRoot') or '', now, roles, hq)
+    guessed = guess(agents, roles, events, cfg, now)
     sep = ', ' if en else '·'
 
     def what(name):

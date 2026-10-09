@@ -160,3 +160,49 @@ fn 진짜_로그인_상태() {
     eprintln!("credAt {at:?} · loggedIn {logged:?}");
     assert!(at.is_some());
 }
+
+// ── 로그인 시각 — MCP 로그인(같은 칸의 mcpOAuth)은 로그인으로 안 친다(roadmap login-expired ①) ──
+
+#[test]
+fn 계정_로그인_지문은_계정_로그인_칸만_본다() {
+    let a = oauth_fp(r#"{"claudeAiOauth":{"accessToken":"t1","refreshToken":"r1"},"mcpOAuth":{"x":{"token":"m1"}}}"#);
+    let b = oauth_fp(r#"{"claudeAiOauth":{"accessToken":"t1","refreshToken":"r1"},"mcpOAuth":{"x":{"token":"m2"},"y":{}}}"#);
+    let c = oauth_fp(r#"{"claudeAiOauth":{"accessToken":"t2","refreshToken":"r1"},"mcpOAuth":{"x":{"token":"m1"}}}"#);
+    assert!(a.is_some());
+    assert_eq!(a, b, "MCP 로그인만 바뀌면 지문이 같다");
+    assert_ne!(a, c, "계정 로그인이 바뀌면 다르다");
+    assert_eq!(oauth_fp(r#"{"mcpOAuth":{}}"#), None);
+    assert_eq!(oauth_fp("깨진 값"), None);
+}
+
+#[test]
+fn 고친_시각이_그대로면_값을_안_읽는다() {
+    let prev = CredSeen { mdat: 100, fp: Some(7), login_at: 50 };
+    let (seen, at) = login_at_step(Some(prev), Some(100), || panic!("읽으면 안 된다"));
+    assert_eq!((seen, at), (Some(prev), Some(50)));
+}
+
+#[test]
+fn mcp_로그인만_바뀌면_로그인_시각은_그대로() {
+    // 재현: 멈춘 뒤(ts 80) MCP 로그인으로 칸만 고쳐졌다(mdat 200) — 예전엔 loginAt 200 > 80 이라 '고쳐짐'으로 이어서를 보냈다
+    let prev = CredSeen { mdat: 100, fp: Some(7), login_at: 50 };
+    let (seen, at) = login_at_step(Some(prev), Some(200), || Some(7));
+    assert_eq!(at, Some(50));
+    assert_eq!(seen, Some(CredSeen { mdat: 200, fp: Some(7), login_at: 50 }));
+}
+
+#[test]
+fn 계정_로그인이_바뀌면_고친_시각이_로그인_시각() {
+    let prev = CredSeen { mdat: 100, fp: Some(7), login_at: 50 };
+    let (seen, at) = login_at_step(Some(prev), Some(200), || Some(8));
+    assert_eq!(at, Some(200));
+    assert_eq!(seen, Some(CredSeen { mdat: 200, fp: Some(8), login_at: 200 }));
+}
+
+#[test]
+fn 처음이거나_값을_못_읽으면_고친_시각_그대로_예전처럼() {
+    assert_eq!(login_at_step(None, Some(100), || Some(7)), (Some(CredSeen { mdat: 100, fp: Some(7), login_at: 100 }), Some(100)));
+    let prev = CredSeen { mdat: 100, fp: Some(7), login_at: 50 };
+    assert_eq!(login_at_step(Some(prev), Some(200), || None).1, Some(200), "못 읽으면 예전 판단(고친 시각)");
+    assert_eq!(login_at_step(Some(prev), None, || Some(7)), (Some(prev), None), "칸을 못 보면 모름, 기억은 둔다");
+}

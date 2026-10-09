@@ -11,11 +11,11 @@ export const LESSON_MAX = 12;
 /** 메모 창 [스킬로 묶기] 를 보일까 — 프로젝트 교훈이 많을 때만. 공통 칸 스킬은 2단계(전역 스킬은 사람 확인 뒤에만) */
 export const shouldGroup = (project: string, n: number): boolean => project !== COMMON && n > LESSON_MAX;
 
-/** 참모에게 보낼 부탁 — 참모가 묶음을 짜서 결정 대기함 카드로 묻고, 사람이 고른 것만 스킬로 옮긴다(docs/plans/2026-10-06-self-learning.md) */
+/** 참모에게 보낼 부탁 — 참모가 묶음을 짜서 사람에게 안 묻고 바로 스킬로 묶고 결과 한 줄만 보고한다. 버리기만 카드(2026-10-08, docs/plans/2026-10-06-self-learning.md) */
 export const groupRequest = (project: string, n: number): string =>
   tr(
-    `${project} 교훈이 ${n}줄이야 — scripts/task lesson-review ${project} 로 보고 같은 주제끼리 묶어서 lesson-propose 로 카드를 올려 줘. 내가 카드에서 고른 것만 스킬로 옮겨.`,
-    `${project} has ${n} lessons — look at them with scripts/task lesson-review ${project}, group lines on one topic and put each group up as a card with lesson-propose. Only move the ones I pick on the cards into skills.`,
+    `${project} 교훈이 ${n}줄이야 — scripts/task lesson-review ${project} 로 보고 같은 주제끼리 lesson-group 으로 알아서 스킬로 묶어 줘. 나한텐 결과 한 줄만 말해. 버릴 것만 lesson-drop 카드로 물어.`,
+    `${project} has ${n} lessons — look at them with scripts/task lesson-review ${project} and group lines on one topic into skills yourself with lesson-group. Tell me just one line about the result. Only ask me, with a lesson-drop card, about what to discard.`,
   );
 
 export const parseLessons = (file: string): string[] =>

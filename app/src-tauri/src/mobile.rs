@@ -526,6 +526,22 @@ pub fn serve(binds: &[SocketAddr], gate: impl Into<Arc<Gate>>, be: Arc<dyn Backe
     Ok((stop, locals))
 }
 
+/// 연결이 들어올 때까지(최대 ms) 기다린다 — 그냥 자면 그사이 온 요청이 깨어날 때까지 기다렸다(요청마다 평균 25ms, 2026-10-04 폰 첫 켜기 ③).
+/// 멈춤 깃발은 ms 마다 다시 본다
+#[cfg(unix)]
+fn wait_incoming(listener: &TcpListener, ms: i32) {
+    use std::os::fd::AsRawFd;
+    let mut p = libc::pollfd { fd: listener.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+    // SAFETY: pollfd 하나짜리 배열, 듣는 소켓은 이 고리가 쥐고 있어 살아 있다
+    if unsafe { libc::poll(&mut p, 1, ms) } < 0 {
+        std::thread::sleep(Duration::from_millis(ms as u64));
+    }
+}
+#[cfg(windows)]
+fn wait_incoming(_listener: &TcpListener, _ms: i32) {
+    std::thread::sleep(Duration::from_millis(5));
+}
+
 fn accept_loop(listener: TcpListener, stop2: Arc<AtomicBool>, gate: Arc<Gate>, be: Arc<dyn Backend>, peers: Arc<Peers>, active: Arc<AtomicUsize>) {
     while !stop2.load(Ordering::Relaxed) {
         match listener.accept() {
@@ -544,7 +560,7 @@ fn accept_loop(listener: TcpListener, stop2: Arc<AtomicBool>, gate: Arc<Gate>, b
                 // 자리(slot)는 처리가 끝날 때 놓인다 — 504 로 먼저 끊어도 맥 쪽 일이 돌고 있으면 계속 센다
                 std::thread::spawn(move || mobile_http::serve_conn_guarded(s, g, b, mobile_http::REQ_DEADLINE, slot));
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => wait_incoming(&listener, 50),
             Err(_) => std::thread::sleep(Duration::from_millis(200)),
         }
     }
@@ -690,7 +706,7 @@ pub struct PairQr {
     pub expires: u64,
 }
 
-fn qr_svg(text: &str) -> Option<String> {
+pub(crate) fn qr_svg(text: &str) -> Option<String> {
     let code = qrcode::QrCode::new(text.as_bytes()).ok()?;
     Some(code.render::<qrcode::render::svg::Color>().min_dimensions(220, 220).quiet_zone(true).build())
 }
@@ -807,6 +823,10 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
             "devRoot": crate::config::fwd(&crate::config::expand(&home, &c.dev_root)),
             "extraProjects": c.extra_projects.iter().map(|p| crate::config::fwd(crate::config::expand(&home, p).trim_end_matches('/'))).collect::<Vec<_>>(),
             "hqDir": crate::config::fwd(&self.hq_dir()),
+            // 붙은 컴퓨터 — 폰 글이 '맥'/'PC'를 고른다(윈도우 PC 에 붙은 폰에도 '맥에서 열어 주세요'가 떴다, 2026-10-05)
+            "os": std::env::consts::OS,
+            // 폰 프로필 창의 '기본' 목소리 — 설정이 Supertonic 이 아니면 null(참모마다 목소리를 못 바꾼다). 명령 원문은 안 낸다
+            "voiceBase": crate::tts::base_voice(&home, &c.tts_command),
         })
     }
     fn sessions(&self) -> Result<String, String> {
@@ -847,6 +867,9 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     }
     fn browser_input(&self, profile: &str, session_pid: i32, events: Vec<crate::agent_input::InputEv>) -> Result<(), String> {
         crate::agent_browser::phone_input(profile, session_pid, events)
+    }
+    fn browser_retry(&self, profile: &str) {
+        crate::agent_browser::agent_retry(profile.to_string())
     }
     fn tails(&self, ids: &[String]) -> serde_json::Value {
         // 하던 일 한 줄이면 된다 — 꼬리 48KB 씩(폰으로 보내는 크기)
@@ -892,6 +915,9 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     fn doc_html(&self, path: &Path) -> Option<String> {
         crate::mobile_files::doc_html(path)
     }
+    fn diag(&self, line: &str) {
+        crate::claude::log_out("phone-diag", line);
+    }
     fn open_on_mac(&self, path: &str) -> Result<(), String> {
         let o = crate::platform::command("/usr/bin/open").arg(path).output().map_err(|e| e.to_string())?;
         if o.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&o.stderr).trim().to_string()) }
@@ -904,10 +930,10 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         w.eval(format!("window.__appctl && window.__appctl({line})")).map_err(|e| e.to_string())
     }
     fn remove(&self, id: &str) -> Result<String, String> {
-        crate::claude::remove_blocking(id)
+        crate::claude::remove_blocking(id, "phone-remove")
     }
     fn stop(&self, id: &str) -> Result<String, String> {
-        crate::claude::stop_blocking(id)
+        crate::claude::stop_blocking(id, "phone-stop")
     }
     fn direct_log(&self) -> String {
         crate::direct::direct_log()

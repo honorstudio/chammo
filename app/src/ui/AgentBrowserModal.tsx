@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ASK_EMPTY, askClose, askOpen, askShown, askStep, askWaiting, type AskState } from '../domain/agentAsk';
-import { controlOf, currentSite, tabStrip, takeoverLine, type Live } from '../domain/agentBrowser';
+import { controlOf, currentSite, permLine, stuckLine, tabStrip, takeoverLine, type Live } from '../domain/agentBrowser';
 import { approach, escCancelsDialog, escClose, keyEvents, keyTarget, menuRoute, modsOf, pointIn, unfocusedKey, type InputEv } from '../domain/agentInput';
 import { tr } from '../i18n';
 import { FrameView, useAgentFrame, useAgentTabs, useBrowserScreen } from './AgentBrowser';
@@ -64,7 +64,7 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
 }) {
   const { src } = useAgentFrame(live.profile, 66); // 크게 보는 동안 ~15fps
   const tabsNow = useAgentTabs(live.profile, 400); // 주소가 바뀌면 머리 도메인이 빨리 따라오게
-  const { pages, current, pinned, shown, setShown, dialog, dialogTabs, stuck, chooser, dropped, error, popup } = tabsNow;
+  const { pages, current, pinned, shown, setShown, dialog, dialogTabs, stuck, chooser, dropped, error, popup, wrapperDialog, permission } = tabsNow;
   // 화면이 진짜인가 — 아니면(닫힘·못 받음·오래 주소 모름) 입력을 막는다. 보내 봐야 Rust 가 버린다(예전엔 사진 위를 눌러도 아무 일이 없었다)
   const scr = useBrowserScreen(tabsNow, gone);
   // 평소엔 보기만 — 개입(mine)·세션이 부름(ask) 동안만 화면 조작. 누르면 목록(1.5초)을 기다리지 않고 바로 바뀐 것으로 본다(want)
@@ -96,6 +96,19 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
   // 대화상자 답도 브라우저를 건드리는 것 — 보기만이었으면 개입부터
   const answer = (accept: boolean) => {
     const go = () => invoke('agent_dialog', { profile: live.profile, pid, target: current, accept, prompt: accept && prompt != null ? prompt : null });
+    void (canCtl ? go() : takeOver(live.profile, pid).then(() => { setWant(true); return go(); })).catch(() => {});
+  };
+  // 멈춘 탭(앱이 붙기 전에 뜬 대화상자) — 앱은 못 답하니 처음부터 붙은 래퍼 playwright 에 부탁한다(세션 도구를 붙잡는 래퍼만, gate)
+  const [askedAt, setAskedAt] = useState<number | null>(null);
+  useEffect(() => { if (!stuck) setAskedAt(null); }, [stuck]);
+  const answerStuck = (accept: boolean) => {
+    const at = Date.now() - 1000; // 래퍼 시계와 어긋남 여유
+    const go = () => invoke('agent_dialog_wrapper', { profile: live.profile, pid, accept }).then(() => setAskedAt(at));
+    void (canCtl ? go() : takeOver(live.profile, pid).then(() => { setWant(true); return go(); })).catch(() => {});
+  };
+  // 사이트가 물은 위치·알림 권한 — 사람 조작이라 보기만이었으면 개입부터
+  const answerPerm = (allow: boolean) => {
+    const go = () => invoke('agent_permission', { profile: live.profile, pid, target: current, allow });
     void (canCtl ? go() : takeOver(live.profile, pid).then(() => { setWant(true); return go(); })).catch(() => {});
   };
   const dialogKey = useRef<((accept: boolean) => void) | null>(null);
@@ -181,7 +194,8 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
     sendIf(blocked, live.profile, pid, expect.current, [...lead, { kind: 'mouse', type, x: p.x, y: p.y, button: type === 'mouseMoved' ? 'none' : button, clickCount: type === 'mouseMoved' ? 0 : Math.max(1, e.detail || 1), modifiers: modsOf(e) }]);
   };
   const pick = (id: string) => void invoke('agent_pin', { profile: live.profile, target: pinned && id === current ? null : id }).catch(() => {});
-  const done = () => void invoke('agent_ask_done', { profile: live.profile, pid }).then(onClose, () => {});
+  // at = 보던 부름 — 그새 새 부름이 왔으면 그건 안 끝낸다(래퍼가 .done 표를 맞춰 본다)
+  const done = () => void invoke('agent_ask_done', { profile: live.profile, pid, at: live.ask?.at ?? null }).then(onClose, () => {});
   const tabs = tabStrip(pages, current, dialogTabs);
   // 진짜 크롬 창을 꺼내면 직접 만질 수 있다 — Rust 가 개입부터 켠다(agent_focus)
   const showChrome = () => void invoke('agent_focus', { profile: live.profile }).then(() => { setShown(true); if (ctl === 'view') setWant(true); }, () => {});
@@ -251,9 +265,18 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
             <button onClick={showChrome}>{tr('크롬에서 보기', 'Show in Chrome')}</button>
           </div>
         )}
+        {permission && !shown && (
+          <div className="abm-stuck" role="status">
+            <span>{permLine(permission)}</span>
+            <button onClick={() => answerPerm(false)}>{tr('거부', 'Block')}</button>
+            <button onClick={() => answerPerm(true)}>{tr('허용', 'Allow')}</button>
+          </div>
+        )}
         {stuck && !shown && (
           <div className="abm-stuck" role="status">
-            <span>{tr('페이지가 멈춰 있어 — 대화상자가 떠 있을 수 있어', 'The page is stuck — a dialog may be open')}</span>
+            <span>{stuckLine(askedAt, wrapperDialog)}</span>
+            {live.gate && askedAt == null && <button onClick={() => answerStuck(false)}>{tr('취소', 'Cancel')}</button>}
+            {live.gate && askedAt == null && <button onClick={() => answerStuck(true)}>{tr('확인', 'OK')}</button>}
             <button onClick={showChrome}>{tr('크롬에서 보기', 'Show in Chrome')}</button>
           </div>
         )}

@@ -94,6 +94,10 @@ context = browser.contexts[0]
   gets the same Chrome (`"shared": true`); the session's idle auto-close waits while scripts use it. If it cannot attach
   (the owner has no debugging port) it waits up to `--wait` seconds (default 120), then exits with code 2.
 - `browser.close()` / `context.close()` on a CDP connection only disconnect; Chrome stays for the others.
+- **The other way round:** while a script's holder owns the profile, the session's browser tools do not fail with "in use" —
+  the wrapper starts a second `@playwright/mcp --cdp-endpoint` on that Chrome, joins the holder's user list and opens its own
+  tab (the script's tabs are left alone). `browser_close` and idle auto-close then only disconnect; when the holder is gone the
+  next call takes the lock as usual. Logic in `src/share.js`.
 - `--no-view` keeps the lock but does not show the browser in the app; `--headless` for no window at all.
 
 **Channel per profile.** A profile remembers which Chrome made it (`<profile>/ChammoChannel`). Opening a stable-Chrome
@@ -169,6 +173,7 @@ node scripts/verify-lazy-lock.js    # two real wrappers on one profile, real JSO
 node scripts/verify-idle-close.js   # idle auto-close + cookies/localStorage survive a restart
 node scripts/verify-profile.js      # raw Playwright spike: persistence, isolation, duplicate open
 node scripts/verify-launch.js       # launch: live file, two scripts at once, channel memory, kill -9, sharing with the MCP
+node scripts/verify-share.js        # session browser tools on a script holder's Chrome (own tab, close only disconnects)
                                     # (VD=x,y,w,h VD_PID=<pid> puts windows on a virtual display, else headless)
 ```
 
@@ -194,5 +199,6 @@ Playwright 는 크로미움의 `SingletonLock` 을 무시해서 같은 프로필
 - Chammo 앱은 **프로젝트 폴더 이름을 프로필 이름으로** 쓴다. 앱이 무엇을 부르는지는 `INTEGRATION.md`
 - **스크립트**(node·python Playwright·puppeteer)는 크롬을 직접 띄우지 말고 `launch <프로필>` 로 받아 CDP 로 붙는다 — node 는
   `require('<데이터>/tools/chammo-browser').launch('<프로필>')` 한 줄. 락·앱 화면 연결·채널 기억을 같이 하고, 스크립트가 끝나거나 죽으면
-  1초 안에 닫고 락을 돌려준다. 그 프로필 크롬이 이미 떠 있으면 같이 쓴다
+  1초 안에 닫고 락을 돌려준다. 그 프로필 크롬이 이미 떠 있으면 같이 쓴다. 거꾸로 스크립트가 쥔 동안 세션 브라우저 도구도
+  '사용 중' 오류 없이 그 크롬에 새 탭으로 붙는다(src/share.js — close·유휴는 연결만 놓는다)
 - 프로필마다 크롬 채널(정품·베타)을 `ChammoChannel` 에 기억한다 — 정품으로 만든 프로필을 베타로 열면 판이 올라가 정품으로 다시 못 연다

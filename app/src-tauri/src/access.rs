@@ -126,6 +126,13 @@ pub async fn project_access(dir: Option<String>) -> Access {
         let a = probe(&d, &home);
         if saved && a.state == State::Ok {
             crate::trust::sweep(&d);
+            // 화면 조종 '모든 프로젝트' — 그사이 생긴 폴더(scripts/routine new·직접 만든 폴더)도 1분 안에 넣는다. 새 칸이 없으면 읽기만
+            crate::computer_use::sweep_logged();
+            // 상태줄 — 그사이 생긴 프로젝트·워크트리에도(이미 맞으면 읽기만)
+            let n = crate::hq::attach_statusline_all(crate::config::data_dir());
+            if n > 0 {
+                crate::claude::log_out("statusline", &format!("attached to {n} folder(s)"));
+            }
         }
         a
     })

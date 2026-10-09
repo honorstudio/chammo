@@ -112,6 +112,9 @@ impl Backend for Fake {
         self.log(format!("open {path}"));
         Ok(())
     }
+    fn diag(&self, line: &str) {
+        self.log(format!("diag {line}"));
+    }
     fn remove(&self, id: &str) -> Result<String, String> {
         self.log(format!("remove {id}"));
         Ok(String::new())
@@ -197,6 +200,9 @@ impl Backend for Fake {
     fn browser_input(&self, profile: &str, session_pid: i32, events: Vec<crate::agent_input::InputEv>) -> Result<(), String> {
         self.log(format!("input {profile} {session_pid} {}", events.len()));
         Ok(())
+    }
+    fn browser_retry(&self, profile: &str) {
+        self.log(format!("retry {profile}"));
     }
     fn push_subscribe(&self, device: &str, endpoint: &str, p256dh: &str, auth: &str) -> Result<(), String> {
         self.log(format!("sub {device} {endpoint} {p256dh} {auth}"));
@@ -866,6 +872,32 @@ fn r3_느리게_읽는_클라이언트는_쓰기_마감에_끊긴다() {
 }
 
 #[test]
+fn r3_느려도_계속_읽는_클라이언트는_큰_응답을_끝까지_받는다() {
+    // 느린 LTE 로 큰 시안을 받는 폰 — 진척이 있으면 읽기 마감의 두 배(여기 2초)를 넘어도 끊지 않는다
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let client = std::thread::spawn(move || {
+        let mut c = std::net::TcpStream::connect(addr).unwrap();
+        c.write_all(format!("GET /api/tasks HTTP/1.1\r\nHost: {HOST}\r\nAuthorization: Bearer {KEY}\r\n\r\n").as_bytes()).unwrap();
+        let (mut got, mut buf) = (0usize, vec![0u8; 64 * 1024]);
+        loop {
+            match c.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => got += n,
+            }
+            std::thread::sleep(Duration::from_millis(60)); // 초당 1MB 쯤
+        }
+        got
+    });
+    let (s, _) = l.accept().unwrap();
+    let t0 = std::time::Instant::now();
+    serve_conn_within(s, Arc::new(gate()), Arc::new(Fake { big: 4 * 1024 * 1024, ..Default::default() }), Duration::from_secs(1));
+    let got = client.join().unwrap();
+    assert!(t0.elapsed() > Duration::from_secs(2), "시험이 느리게 읽지 않았다: {:?}", t0.elapsed());
+    assert!(got > 4 * 1024 * 1024, "중간에 끊겼다: {got} 바이트, {:?}", t0.elapsed());
+}
+
+#[test]
 fn r3_오래_걸리는_맥_쪽_일은_504_로_끊는다() {
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = l.local_addr().unwrap();
@@ -1442,6 +1474,87 @@ fn 폰_html_시안은_표_주소로_스크립트만_허용() {
 }
 
 #[test]
+fn 그림_박힌_큰_html_시안도_표_주소로_연다() {
+    // 1MB 넘는 시안(그림을 data: 로 박은 것 — dev 에 2~8MB 가 20개 넘음)이 '폰에서 열 수 없는 시안'으로 막혔다(2026-10-04)
+    let d = tmp("htmlbig");
+    let page = d.join("big.html");
+    let pic = "A".repeat(3 * 1024 * 1024);
+    std::fs::write(&page, format!("<!doctype html><html><head><title>큰 시안</title></head><body><img src=\"data:image/png;base64,{pic}\"></body></html>")).unwrap();
+    let huge = d.join("huge.html");
+    std::fs::write(&huge, vec![b'a'; (MAX_HTML_FILE + 1) as usize]).unwrap();
+    let show: String = [&page, &huge].iter().map(|p| format!("{{\"path\":\"{}\"}}\n", p.display())).collect();
+    let g = gate();
+    let f = Fake { show, data: d.join("data"), ..Default::default() };
+    let ticket = |p: &Path| handle(&post("/api/html-ticket", &serde_json::json!({ "path": p.to_string_lossy() }).to_string()), &g, &f);
+    let r = ticket(&page);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let url = serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["url"].as_str().unwrap().to_string();
+    let h = handle(&get(&url), &g, &f);
+    assert_eq!(h.status, 200, "{}", String::from_utf8_lossy(&h.body));
+    assert!(h.body.len() > 3 * 1024 * 1024 && String::from_utf8_lossy(&h.body).contains("html-size"));
+    // 상한(10MB)을 넘으면 '못 열어요'가 아니라 크다고
+    let r = ticket(&huge);
+    assert_eq!((r.status, String::from_utf8_lossy(&r.body).to_string()), (413, "file too large".to_string()));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// 실측 — 진짜 큰 시안을 표 주소로, 느린 LTE 처럼(초당 HTML_PROBE_KBPS, 기본 128KB) 읽어 끝까지 오나·비밀 검사 시간.
+/// HTML_SECRET_PROBE=<html 경로> cargo test … -- --ignored --exact mobile_http::tests::실측_큰_시안_느린_lte로_끝까지 --nocapture
+#[test]
+#[ignore]
+fn 실측_큰_시안_느린_lte로_끝까지() {
+    let p = std::env::var("HTML_SECRET_PROBE").unwrap();
+    let kbps: u64 = std::env::var("HTML_PROBE_KBPS").ok().and_then(|v| v.parse().ok()).unwrap_or(128);
+    let b = std::fs::read(&p).unwrap();
+    let t = std::time::Instant::now();
+    let hit = mobile_files::secret_in(&b);
+    eprintln!("secret_in {} bytes → {hit} in {:?}", b.len(), t.elapsed());
+    let g = Arc::new(gate());
+    let f = Arc::new(Fake { show: format!("{{\"path\":\"{p}\"}}\n"), data: tmp("probe").join("data"), ..Default::default() });
+    let r = handle(&post("/api/html-ticket", &serde_json::json!({ "path": p }).to_string()), &g, &*f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let url = serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["url"].as_str().unwrap().to_string();
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let client = std::thread::spawn(move || {
+        let mut c = std::net::TcpStream::connect(addr).unwrap();
+        c.write_all(format!("GET {url} HTTP/1.1\r\nHost: {HOST}\r\n\r\n").as_bytes()).unwrap();
+        let (mut out, mut buf) = (Vec::new(), vec![0u8; 16 * 1024]);
+        let t0 = std::time::Instant::now();
+        loop {
+            match c.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => out.extend_from_slice(&buf[..n]),
+            }
+            // 받은 양이 속도를 앞서면 쉰다
+            let due = Duration::from_millis(out.len() as u64 * 1000 / (kbps * 1024));
+            if let Some(w) = due.checked_sub(t0.elapsed()) { std::thread::sleep(w) }
+        }
+        (out, t0.elapsed())
+    });
+    let (s, _) = l.accept().unwrap();
+    serve_conn_within(s, g, f, REQ_DEADLINE);
+    let (out, took) = client.join().unwrap();
+    let head_end = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+    let head = String::from_utf8_lossy(&out[..head_end]).to_string();
+    let want: usize = head.lines().find_map(|l| l.strip_prefix("Content-Length: ")).unwrap().trim().parse().unwrap();
+    eprintln!("{} · 몸 {}/{} 바이트 · {:?} (초당 {kbps}KB, 옛 마감 {:?})", head.lines().next().unwrap(), out.len() - head_end, want, took, REQ_DEADLINE * 2);
+    assert!(head.starts_with("HTTP/1.1 200") && out.len() - head_end == want);
+}
+
+#[test]
+fn 큰_응답은_쓰기_마감을_크기만큼_늘린다() {
+    let t = std::time::Instant::now();
+    let lim = Duration::from_secs(15);
+    // 작은 응답은 그대로(읽기 마감의 두 배) — 조금씩 읽는 손님이 오래 못 잡게
+    assert_eq!(write_deadline(t, lim, 0), t + lim * 2);
+    assert_eq!(write_deadline(t, lim, 1024 * 1024), t + lim * 2);
+    // 8MB 시안 — 느린 LTE(초당 64KB)로 131초, 상한 3분
+    assert_eq!(write_deadline(t, lim, 8 * 1024 * 1024), t + Duration::from_secs(132));
+    assert_eq!(write_deadline(t, lim, 100 * 1024 * 1024), t + Duration::from_secs(180));
+}
+
+#[test]
 fn 폰_큐레이션_표시는_맥_curation_에_남긴다() {
     let d = tmp("cur");
     let page = d.join("v1.html");
@@ -1903,6 +2016,21 @@ fn 세션_브라우저_개입은_떠_있는_브라우저에만_같은_출처로(
 }
 
 #[test]
+fn 세션_브라우저_다시_시도는_떠_있는_브라우저에만_같은_출처로() {
+    // 폰 브라우저 보기에서 화면을 못 받을 때 다시 시도(2026-10-09, 맥 모달의 다시 시도와 같은 agent_retry)
+    let ok = r#"{"profile":"shop-m","sessionPid":4242}"#;
+    let (code, f, _) = run(post("/api/browser-retry", ok));
+    assert_eq!(code, 200);
+    assert_eq!(f.calls(), vec!["retry shop-m"]);
+    assert_eq!(run(post("/api/browser-retry", r#"{"profile":"shop-m","sessionPid":1}"#)).0, 404, "다른 세션 브라우저");
+    assert_eq!(run(post("/api/browser-retry", r#"{"profile":"../x","sessionPid":4242}"#)).0, 400);
+    assert_eq!(run(set(post("/api/browser-retry", ok), "origin", Some("http://evil.com"))).0, 403);
+    assert_eq!(run(set(post("/api/browser-retry", ok), "authorization", None)).0, 401);
+    assert_eq!(run(with_cookie(get("/api/browser-retry"))).0, 405);
+    assert!(head_check(&post("/api/browser-retry", ok), &gate()).is_none(), "몸통 받는 길 목록에");
+}
+
+#[test]
 fn 세션_브라우저_입력은_모양을_거르고_수를_막는다() {
     let ev = r#"{"kind":"mouse","type":"mousePressed","x":0.5,"y":0.5,"button":"left"}"#;
     let body = format!(r#"{{"profile":"shop-m","sessionPid":4242,"events":[{ev},{{"kind":"text","text":"안녕"}}]}}"#);
@@ -2025,4 +2153,234 @@ fn 결정_답은_물음이_마지막일_때만_한_줄() {
     assert_eq!(handle(&set(post("/api/task-answer", r#"{"task":"1006-1600-ab12","note":"x"}"#), "authorization", None), &g, &f).status, 401);
     assert_eq!(handle(&with_cookie(get("/api/task-answer")), &g, &f).status, 405);
     assert_eq!(rows(&f).len(), 2);
+}
+
+#[test]
+fn 폰_진단_한줄은_키값_낱말만_10초에_한번() {
+    let g = gate();
+    let f = Fake::default();
+    let ok = r#"{"kind":"vp-ghost","line":"ev=focusout vvH=590 innerH=590 tallH=932 typing=0 ios=26.0.1"}"#;
+    assert!(head_check(&post("/api/diag", ok), &g).is_none(), "head_check 몸통 받는 길 목록에 있어야 진짜 서버도 받는다");
+    assert_eq!(handle(&post("/api/diag", ok), &g, &f).status, 200);
+    assert_eq!(handle(&post("/api/diag", ok), &g, &f).status, 429, "연타는 10초에 한 번");
+    assert_eq!(f.calls(), vec!["diag vp-ghost ev=focusout vvH=590 innerH=590 tallH=932 typing=0 ios=26.0.1 dev=test"], "어느 폰인지 기기 id 앞 4자");
+    // 글 내용·띄어쓰기 낀 값·이상한 종류는 통째로 거절(기록에 아무것도 안 남는다)
+    let g = gate();
+    let f = Fake::default();
+    for bad in [
+        r#"{"kind":"vp-ghost","line":"ev=비밀 글"}"#,
+        r#"{"kind":"vp-ghost","line":"note=hello world"}"#,
+        r#"{"kind":"vp-ghost","line":"just text"}"#,
+        r#"{"kind":"vp ghost","line":"ev=x"}"#,
+        r#"{"kind":"vp-ghost","line":""}"#,
+        r#"{"kind":"vp-ghost","line":"ev=x","extra":1}"#,
+    ] {
+        assert_eq!(handle(&post("/api/diag", bad), &g, &f).status, 400, "{bad}");
+    }
+    let long = (0..40).map(|i| format!("k{}=1", "a".repeat(i % 5 + 1))).collect::<Vec<_>>().join(" ");
+    assert_eq!(handle(&post("/api/diag", &serde_json::json!({ "kind": "vp-ghost", "line": long }).to_string()), &g, &f).status, 400, "30칸 넘으면 거절");
+    assert!(f.calls().is_empty());
+    // 문지기 — 다른 출처·열쇠 없음·GET
+    assert_eq!(handle(&set(post("/api/diag", ok), "origin", Some("http://evil.com")), &g, &f).status, 403);
+    assert_eq!(handle(&set(post("/api/diag", ok), "authorization", None), &g, &f).status, 401);
+    assert_eq!(handle(&with_cookie(get("/api/diag")), &g, &f).status, 405);
+    assert!(f.calls().is_empty());
+}
+
+/// 작업 기록 이어 받기 — 폰이 5초마다 꼬리 512KB 를 통째로 다시 받던 것(2026-10-08 fix/debt-perf). from = 지난번 next
+fn tasks_get(f: &Fake, q: &str) -> (u16, serde_json::Value) {
+    let r = handle(&with_cookie(get(&format!("/api/tasks?{q}"))), &gate(), f);
+    let body = String::from_utf8_lossy(&r.body).into_owned();
+    let Some((meta, text)) = body.split_once('\n') else { return (r.status, serde_json::Value::Null) };
+    let mut v: serde_json::Value = serde_json::from_str(meta).unwrap_or_default();
+    v["text"] = text.into();
+    (r.status, v)
+}
+
+#[test]
+fn t1_작업_기록은_바뀐_줄만_이어_받는다() {
+    let d = tmp("tasks-tail");
+    let log = d.join("tasks.jsonl");
+    std::fs::write(&log, "{\"a\":1}\n{\"b\":2}\n").unwrap();
+    let f = Fake { data: d.clone(), ..Default::default() };
+    let (s, v) = tasks_get(&f, "from=0");
+    assert_eq!((s, v["text"].as_str(), v["next"].as_u64(), v["reset"].as_bool()), (200, Some("{\"a\":1}\n{\"b\":2}\n"), Some(16), Some(false)));
+    // 안 바뀌었으면 빈 글
+    let (_, v) = tasks_get(&f, "from=16");
+    assert_eq!((v["text"].as_str(), v["next"].as_u64()), (Some(""), Some(16)));
+    // 새 줄 + 쓰는 중인 줄 — 온전한 줄만, 다음 자리는 그 줄 끝
+    std::fs::OpenOptions::new().append(true).open(&log).unwrap().write_all(b"{\"c\":3}\n{\"d\"").unwrap();
+    let (_, v) = tasks_get(&f, "from=16");
+    assert_eq!((v["text"].as_str(), v["next"].as_u64(), v["reset"].as_bool()), (Some("{\"c\":3}\n"), Some(24), Some(false)));
+    // 파일이 줄었으면(자리가 안 맞음) 처음부터 다시
+    let (_, v) = tasks_get(&f, "from=9999");
+    assert_eq!((v["reset"].as_bool(), v["next"].as_u64()), (Some(true), Some(24)));
+    assert!(v["text"].as_str().unwrap().starts_with("{\"a\":1}\n"));
+    assert_eq!(tasks_get(&f, "from=x").0, 400);
+    // 옛 폰 화면(캐시된 페이지)은 from 없이 — 예전처럼 글 그대로
+    let r = handle(&with_cookie(get("/api/tasks")), &gate(), &f);
+    assert_eq!((r.status, String::from_utf8_lossy(&r.body).into_owned()), (200, "{}\n".to_string()));
+}
+
+#[test]
+fn t2_큰_작업_기록은_꼬리_512kb_만_그리고_파일이_없으면_빈_것() {
+    let d = tmp("tasks-big");
+    let line = format!("{{\"x\":\"{}\"}}\n", "가".repeat(100));
+    let n = 600 * 1024 / line.len() + 1;
+    std::fs::write(d.join("tasks.jsonl"), line.repeat(n)).unwrap();
+    let f = Fake { data: d.clone(), ..Default::default() };
+    // from=0 이라도 512KB 넘게 뒤처졌으면 꼬리만(처음 받기와 같다)
+    let (_, v) = tasks_get(&f, "from=0");
+    let t = v["text"].as_str().unwrap();
+    assert!(t.len() <= 512 * 1024 && t.len() > 500 * 1024, "{}", t.len());
+    assert!(t.starts_with("{\"x\"") && v["reset"] == true);
+    assert_eq!(v["next"].as_u64(), Some((line.len() * n) as u64));
+    let f = Fake { data: tmp("tasks-none"), ..Default::default() };
+    let (s, v) = tasks_get(&f, "from=0");
+    assert_eq!((s, v["text"].as_str(), v["next"].as_u64()), (200, Some(""), Some(0)));
+}
+
+/// 실측(읽기만): TASKS_SRC=<tasks.jsonl 복사본> cargo test tasks_bytes_measure -- --ignored --nocapture
+/// 진짜 TCP 로 응답 전체(머리+몸통) 바이트 — 처음 받기·안 바뀐 5초·한 줄(332B) 붙은 5초
+#[test]
+#[ignore]
+fn tasks_bytes_measure() {
+    let src = std::env::var("TASKS_SRC").expect("TASKS_SRC");
+    let d = tmp("tasks-measure");
+    std::fs::copy(&src, d.join("tasks.jsonl")).unwrap();
+    let be: Arc<dyn Backend> = Arc::new(Fake { data: d.clone(), task_log: std::fs::read_to_string(&src).unwrap(), ..Default::default() });
+    let g = Arc::new(gate());
+    let fetch = |path: &str| -> (usize, Vec<u8>) {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        let p = path.to_string();
+        let c = std::thread::spawn(move || {
+            let mut c = std::net::TcpStream::connect(addr).unwrap();
+            c.write_all(format!("GET {p} HTTP/1.1\r\nHost: {HOST}\r\nAuthorization: Bearer {KEY}\r\n\r\n").as_bytes()).unwrap();
+            let mut all = Vec::new();
+            c.read_to_end(&mut all).unwrap();
+            all
+        });
+        let (s, _) = l.accept().unwrap();
+        serve_conn_within(s, g.clone(), be.clone(), Duration::from_secs(5));
+        let all = c.join().unwrap();
+        let body = all.windows(4).position(|w| w == b"\r\n\r\n").map(|i| all[i + 4..].to_vec()).unwrap_or_default();
+        (all.len(), body)
+    };
+    let next = |b: &[u8]| b.split(|&c| c == b'\n').next().and_then(|m| serde_json::from_slice::<serde_json::Value>(m).ok()).and_then(|v| v["next"].as_u64());
+    let (old, _) = fetch("/api/tasks");
+    let (first, b) = fetch("/api/tasks?from=0");
+    let n = next(&b).unwrap_or(0);
+    let (same, _) = fetch(&format!("/api/tasks?from={n}"));
+    let line = format!("{{\"ts\": \"2026-10-08T10:48:43+00:00\", \"type\": \"send\", \"task\": \"0101-0000-abcd\", \"title\": \"{}\"}}\n", "가".repeat(90));
+    std::fs::OpenOptions::new().append(true).open(d.join("tasks.jsonl")).unwrap().write_all(line.as_bytes()).unwrap();
+    let (one, _) = fetch(&format!("/api/tasks?from={n}"));
+    println!("MEASURE old_full={old} first={first} unchanged={same} one_line({})={one}", line.len());
+}
+
+fn shows_get(f: &Fake, q: &str) -> (u16, serde_json::Value) {
+    let r = handle(&with_cookie(get(&format!("/api/shows?{q}"))), &gate(), f);
+    let body = String::from_utf8_lossy(&r.body).into_owned();
+    let Some((meta, text)) = body.split_once('\n') else { return (r.status, serde_json::Value::Null) };
+    let mut v: serde_json::Value = serde_json::from_str(meta).unwrap_or_default();
+    v["text"] = text.into();
+    (r.status, v)
+}
+
+#[test]
+fn t2_보여_준_기록은_안_바뀌면_글_없이() {
+    let show = |s: &str| Fake { show: s.into(), data: "/nonexistent-data".into(), ..Default::default() };
+    let one = "{\"path\":\"https://example.com/a\",\"from\":\"aaaa0001\"}\n";
+    // 처음(빈 since) — 꼬리표 + 거른 기록 통째
+    let (s, v) = shows_get(&show(one), "since=");
+    assert_eq!((s, v["same"].as_bool(), v["text"].as_str()), (200, Some(false), Some(one)));
+    let tag = v["tag"].as_str().unwrap().to_string();
+    assert!(!tag.is_empty());
+    // 그대로면 글 없이 같은 꼬리표
+    let (s, v) = shows_get(&show(one), &format!("since={tag}"));
+    assert_eq!((s, v["same"].as_bool(), v["text"].as_str(), v["tag"].as_str()), (200, Some(true), Some(""), Some(tag.as_str())));
+    // 한 줄 늘면 새 꼬리표 + 통째
+    let two = format!("{one}{{\"path\":\"https://example.com/b\",\"from\":\"aaaa0001\"}}\n");
+    let (_, v) = shows_get(&show(&two), &format!("since={tag}"));
+    assert_eq!((v["same"].as_bool(), v["text"].as_str()), (Some(false), Some(two.as_str())));
+    assert_ne!(v["tag"].as_str(), Some(tag.as_str()));
+    // 폰에 못 내는 줄만 늘었으면 거른 글이 같아서 그대로
+    let (_, v) = shows_get(&show(&format!("{one}{{\"path\":\"/u/.mcp.json\"}}\n")), &format!("since={tag}"));
+    assert_eq!(v["same"].as_bool(), Some(true));
+    // since 없이(옛 폰 화면) — 예전처럼 기록 글만
+    let (s, _, r) = run_with(with_cookie(get("/api/shows")), show(one));
+    assert_eq!((s, String::from_utf8_lossy(&r.body).into_owned()), (200, one.to_string()));
+}
+
+/// 실측(읽기만): SHOWS_SRC=<show.jsonl 복사본> cargo test shows_bytes_measure -- --ignored --nocapture
+/// 몸통 바이트 — 옛 길(통째)·처음 받기·안 바뀐 5초
+#[test]
+#[ignore]
+fn shows_bytes_measure() {
+    let src = std::fs::read_to_string(std::env::var("SHOWS_SRC").expect("SHOWS_SRC")).unwrap();
+    let h = std::path::PathBuf::from(crate::platform::home());
+    let show = crate::mobile_files::resolve_show_log(&crate::reader::fair_tail(&src, 64 * 1024), &std::fs::canonicalize(&h).unwrap_or(h));
+    let f = Fake { show, data: tmp("shows-measure"), ..Default::default() };
+    let body = |q: &str| handle(&with_cookie(get(&format!("/api/shows{q}"))), &gate(), &f).body;
+    let old = body("");
+    let first = body("?since=");
+    let (_, v) = shows_get(&f, "since=");
+    let same = body(&format!("?since={}", v["tag"].as_str().unwrap()));
+    println!("MEASURE old_full={} first={} unchanged={}", old.len(), first.len(), same.len());
+}
+
+#[test]
+fn t3_세션_목록도_안_바뀌면_글_없이() {
+    let get_q = |q: &str| {
+        let r = handle(&with_cookie(get(&format!("/api/sessions{q}"))), &gate(), &Fake::default());
+        (r.status, String::from_utf8_lossy(&r.body).into_owned())
+    };
+    // since 없이 — 옛 화면·다른 기기 참모(remote)는 JSON 그대로
+    let (s, raw) = get_q("");
+    assert_eq!(s, 200);
+    assert!(raw.starts_with('['), "{raw}");
+    let (_, first) = get_q("?since=");
+    let (meta, text) = first.split_once('\n').unwrap();
+    let m: serde_json::Value = serde_json::from_str(meta).unwrap();
+    assert_eq!((m["same"].as_bool(), text), (Some(false), raw.as_str()));
+    let (_, again) = get_q(&format!("?since={}", m["tag"].as_str().unwrap()));
+    assert_eq!(again, format!("{}\n", serde_json::json!({ "tag": m["tag"], "same": true })));
+}
+
+#[test]
+fn p1_폰_프로필_쓰기는_켜진_참모만_데스크톱과_같은_검사로() {
+    // 2026-10-05 폰 프로필 창은 이름만 — 모양·색·목소리도 폰에서(2026-10-09). 열쇠는 폰이 주는 게 아니라 그 세션의 기본 이름
+    let d = tmp("avatar-write");
+    let g = gate();
+    let f = Fake { data: d.clone(), ..Default::default() };
+    let put = |body: &str| handle(&post("/api/avatar", body), &g, &f);
+    let r = put(r##"{"id":"aaaa0001","avatar":{"kind":"preset","shape":"star","eyes":"dark","color":"#1f9a62","voice":"F2"}}"##);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    assert_eq!((v["key"].as_str(), v["avatar"]["shape"].as_str(), v["avatar"]["voice"].as_str()), (Some("참모-1"), Some("star"), Some("F2")));
+    let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join("avatars/참모-1.json")).unwrap()).unwrap();
+    assert_eq!((saved["color"].as_str(), saved["eyes"].as_str()), (Some("#1f9a62"), Some("dark")));
+    // 데스크톱(avatar::check)과 같은 검사 — 없는 목소리·이상한 색은 400, 그림은 폰에서 못 올린다(있던 그림이 없으면 400)
+    assert_eq!(put(r#"{"id":"aaaa0001","avatar":{"kind":"preset","shape":"star","eyes":"dark","color":null,"voice":"X9"}}"#).status, 400);
+    assert_eq!(put(r#"{"id":"aaaa0001","avatar":{"kind":"preset","shape":"star","eyes":"dark","color":"red"}}"#).status, 400);
+    assert_eq!(put(r#"{"id":"aaaa0001","avatar":{"kind":"image","crop":{"zoom":1,"x":0,"y":0}}}"#).status, 400);
+    // 그림 프사면 목소리·자르기만 바꾼다(있던 그림 그대로)
+    std::fs::write(d.join("avatars/참모-1.png"), b"\x89PNG\r\n\x1a\nxx").unwrap();
+    let r = put(r#"{"id":"aaaa0001","avatar":{"kind":"image","file":"../../x","crop":{"zoom":1.5,"x":0,"y":0},"voice":"M3"}}"#);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    assert_eq!((v["avatar"]["file"].as_str(), v["avatar"]["voice"].as_str()), (Some("참모-1.png"), Some("M3")));
+    // 처음대로 — avatar null 이면 지운다
+    assert_eq!(put(r#"{"id":"aaaa0001","avatar":null}"#).status, 200);
+    assert!(!d.join("avatars/참모-1.json").exists() && !d.join("avatars/참모-1.png").exists());
+    // 하위 세션·없는 세션 404, 이상한 id·모르는 칸 400, 남의 출처 403, 열쇠 없음 401, GET 405, 머리 문지기 통과
+    let ok = r#"{"id":"aaaa0001","avatar":{"kind":"preset","shape":"star","eyes":"dark"}}"#;
+    assert_eq!(put(r#"{"id":"bbbb0002","avatar":{"kind":"preset","shape":"star","eyes":"dark"}}"#).status, 404);
+    assert_eq!(put(r#"{"id":"cccc0009","avatar":{"kind":"preset","shape":"star","eyes":"dark"}}"#).status, 404);
+    assert_eq!(put(r#"{"id":"../x","avatar":null}"#).status, 400);
+    assert_eq!(put(r#"{"id":"aaaa0001","avatar":null,"key":"남의-키"}"#).status, 400);
+    assert_eq!(handle(&set(post("/api/avatar", ok), "origin", Some("http://evil.com")), &g, &f).status, 403);
+    assert_eq!(handle(&set(post("/api/avatar", ok), "authorization", None), &g, &f).status, 401);
+    assert_eq!(handle(&with_cookie(get("/api/avatar")), &g, &f).status, 405);
+    assert!(head_check(&post("/api/avatar", ok), &g).is_none());
 }

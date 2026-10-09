@@ -11,7 +11,7 @@ import type { TaskEvent } from '../domain/tasks';
 import { tr } from '../i18n';
 import { DirectCardView, DirectLine, useDirectTidy } from './chat/DirectCard';
 
-export type ChatExtra = { ts: string; key: string; pin?: boolean; node: ReactNode };
+export type ChatExtra = { ts: string; key: string; pin?: boolean; clip?: boolean; node: ReactNode };
 
 /**
  * everyone = 폴더로 거르기 전 전체 세션 목록(agents --json) — 워크트리로 들어가 사이드바에서 빠진 세션도 살아 있다.

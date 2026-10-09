@@ -3,6 +3,7 @@
 // 인증 = 이 기기 토큰을 localStorage 에 두고 Authorization: Bearer 로만(쿠키는 포트를 안 가려 같은 호스트 다른 포트 서버로 샌다 — 2026-10-02 재검토).
 // localStorage 는 출처(스킴+호스트+포트)마다 따로라 다른 포트·홈 화면 앱과 안 섞인다
 import { makeApi } from './peerApi';
+import { makeTagTail, parseTagChunk } from '../domain/tagTail';
 export type { MobileEnv } from './peerApi';
 
 /** 열쇠가 없거나 바뀌었다 — 맥 앱 설정의 QR(열쇠 든 주소)로 다시 열어야 한다 */
@@ -85,9 +86,12 @@ const post = <T>(path: string, body: object) =>
 /** 보기·채팅·대기함 길 — 다른 기기 참모(data/remote)와 같은 판을 fetch 로 */
 const api = makeApi({ text: getText, json: getJson, post, bytes: (path) => call(path).then((r) => r.arrayBuffer()) });
 export const {
-  getEnv, listSessionsRaw, readTranscript, readTranscriptBefore, readTasks, routinesList, readUsage, readLoad, readDirect, directAnswer, taskAnswer,
+  getEnv, readTranscript, readTranscriptBefore, readTasksSince, routinesList, readUsage, readLoad, readDirect, directAnswer, taskAnswer,
   sendTextToSession, sendStatus, interruptSession, listStoppedOrchs, readTails, listBrowsers, browserFrame, readPins, readRoles,
 } = api;
+/** `claude agents --json` 원문(+컨텍스트) — 3초마다 받는다. 안 바뀌었으면 맥이 글 없이 꼬리표만 준다(domain/tagTail).
+ *  다른 기기 참모(remote)는 판이 다를 수 있어 since 없이 그대로(peerApi) — 폰은 화면과 서버가 늘 같은 판 */
+export const listSessionsRaw = makeTagTail((since, signal) => getText(`/api/sessions?since=${encodeURIComponent(since)}`, signal).then(parseTagChunk));
 
 /** 계정 칸 — 이름·요금제·사용량·쉬는 때만(맥이 이메일·토큰을 안 낸다). 읽기는 domain/phoneAccounts readPhoneAccounts */
 export const readAccounts = (signal?: AbortSignal) => getText('/api/accounts', signal);
@@ -100,8 +104,8 @@ export const readLogin = (signal?: AbortSignal) => getText('/api/login', signal)
 export const loginStart = () => post<unknown>('/api/login-start', {});
 export const loginCode = (code: string) => post<unknown>('/api/login-code', { code });
 export const loginCancel = () => post<unknown>('/api/login-cancel', {});
-/** scripts/show 기록 꼬리 — 대시보드 파일 카드(domain/dashboard dashFiles) */
-export const readShowLog = () => getText('/api/shows');
+/** scripts/show 기록 꼬리 — 대시보드 파일 카드(domain/dashboard dashFiles). 안 바뀌었으면 맥이 글 없이 꼬리표만 준다(domain/tagTail) */
+export const readShowLog = makeTagTail((since) => getText(`/api/shows?since=${encodeURIComponent(since)}`).then(parseTagChunk));
 /** 허용 집합 안의 파일 주소(서버가 고른 것만 열린다 — 보여 준 파일·예약 지침서·HQ starter). thumb = 그림 긴 변 480px JPEG */
 /** 썸네일 긴 변 — 작은 카드 360·큰 카드 720·오피스 첫 장 크게 1600 */
 export type ThumbSize = 360 | 720 | 1600;
@@ -121,6 +125,8 @@ export const readFileText = (path: string) => getText(fileUrl(path));
 export const mediaTicket = (path: string) => post<{ url: string; size: number }>('/api/media-ticket', { path });
 /** 워드 → html(맥 textutil) — 폰이 거른 뒤 그린다 */
 export const wordHtml = (path: string) => getText(`/api/file?path=${encodeURIComponent(path)}&as=html`);
+/** 폰 진단 한 줄 — 맥 notify.log 'phone-diag'(서버가 키=값 낱말만 받는다, 10초에 한 번). 실패는 버린다 */
+export const phoneDiag = (kind: string, line: string) => post<{ ok: true }>('/api/diag', { kind, line }).then(() => undefined, () => undefined);
 /** 맥에서 열기 — 맥 기본 앱으로(보여 준 것만) */
 export const openOnMac = (path: string) => post<{ ok: true }>('/api/open-mac', { path }).then(() => undefined);
 export const htmlTicket = (path: string) => post<{ url: string }>('/api/html-ticket', { path });
@@ -159,6 +165,8 @@ export async function readAvatarsForPhone(): Promise<unknown> {
   return list;
 }
 export const avatarBlobUrl = (key: string) => avatarBlobs.get(key) ?? null;
+/** 참모 프로필 저장(모양·색·목소리) — 켜진 HQ 참모만, 열쇠는 맥이 그 세션 이름에서 뽑는다. null = 처음대로. 답 = 저장한 값(store applySaved 가 다시 거른다) */
+export const saveOrchAvatar = (id: string, avatar: import('../domain/avatar').Avatar | null) => post<unknown>('/api/avatar', { id, avatar });
 
 /** 꺼진 참모를 그 대화 그대로 다시 켠다(HQ 폴더 것만 — 서버가 다시 본다). already = 이미 켜져 있어서 아무것도 안 했다(낡은 목록에서 누름) */
 export const respawnOrch = (sessionId: string) => post<{ ok: true; already?: boolean }>('/api/respawn', { sessionId }).then((r) => ({ already: !!r.already }));
@@ -166,6 +174,8 @@ export const respawnOrch = (sessionId: string) => post<{ ok: true; already?: boo
 export const spawnOrch = (nick: string, role = '') => post<{ ok: true; name: string }>('/api/spawn', { nick, role }).then((r) => r.name);
 
 /** 사람 개입 켜기·돌려주기(세션이 부르는 중이면 돌려주기 = '다 했어') — 그 세션(sessionPid)의 브라우저일 때만 */
+/** 세션 브라우저 화면 다시 받기 — 맥 모달의 다시 시도(agent_retry)와 같다 */
+export const browserRetry = (profile: string, sessionPid: number) => post<{ ok: true }>('/api/browser-retry', { profile, sessionPid }).then(() => undefined);
 export const browserTakeover = (profile: string, sessionPid: number, on: boolean) => post<{ ok: true }>('/api/browser-takeover', { profile, sessionPid, on }).then(() => undefined);
 /** 개입 중 누르기·글자·스크롤 — 맥이 개입·부름이 아니면 버린다 */
 export const browserInput = (profile: string, sessionPid: number, events: import('../domain/agentInput').InputEv[]) => post<{ ok: true }>('/api/browser-input', { profile, sessionPid, events }).then(() => undefined);

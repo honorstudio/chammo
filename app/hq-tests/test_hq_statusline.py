@@ -67,7 +67,31 @@ class Chain(unittest.TestCase):
             self.assertIsNone(sl.user_command(home))
 
     def test_사용자_것이_없으면_짧은_한_줄(self):
-        self.assertEqual(sl.fallback(INPUT), 'Opus · 42%')
+        # 저장소가 아니면 가지 없이 모델 · 노력 · 대화 %(60 아래는 흐리게)
+        self.assertEqual(sl.plain(sl.fallback(INPUT, branch_of=lambda d: '')), 'Opus · high · 42%')
+
+    def test_가지와_색(self):
+        # 가지(고친 것 *, 올린 것 +)·쓴 % 60 노랑·80 빨강(2026-10-09 앱으로 옮김)
+        hot = dict(INPUT, workspace={'current_dir': '/repo'}, context_window={'used_percentage': 81})
+        seen = []
+        line = sl.fallback(hot, branch_of=lambda d: seen.append(d) or 'main*')
+        self.assertEqual(seen, ['/repo'])
+        self.assertEqual(sl.plain(line), 'main* · Opus · high · 81%')
+        self.assertIn('\x1b[31m81%', line)
+        self.assertIn('\x1b[33m60%', sl.fallback(dict(INPUT, context_window={'used_percentage': 60}), branch_of=lambda d: ''))
+        self.assertEqual(sl.plain(sl.fallback({'model': {'display_name': 'Haiku'}}, branch_of=lambda d: '')), 'Haiku')
+
+    def test_가지_읽기(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(sl.branch(d), '')  # 저장소 아님
+            git = lambda *a: __import__('subprocess').run(['git', '-C', d, *a], capture_output=True, check=True)
+            git('init', '-q', '-b', 'feat'); git('config', 'user.email', 'a@b'); git('config', 'user.name', 'a')
+            pathlib.Path(d, 'f').write_text('1'); git('add', 'f'); git('commit', '-qm', 'x')
+            self.assertEqual(sl.branch(d), 'feat')
+            pathlib.Path(d, 'f').write_text('2')
+            self.assertEqual(sl.branch(d), 'feat*')
+            git('add', 'f')
+            self.assertEqual(sl.branch(d), 'feat+')
 
 
 if __name__ == '__main__':

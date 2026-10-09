@@ -1,5 +1,5 @@
 // 리뷰 화면의 요약 3줄 · 세션 찾기 · 작업 패널 나누기. 요약은 PR 본문·커밋에서 뽑기만 한다(AI 호출 없음) — 없으면 빈칸
-import { GATE_LABEL, type Gate, type OpenPr } from './review';
+import { fileKind, GATE_LABEL, type Gate, type OpenPr } from './review';
 import type { TaskEvent } from './tasks';
 
 export type Summary = { what: string; ops: string; unverified: string };
@@ -40,6 +40,7 @@ const WHAT = /^(무엇|what|summary|요약|변경|바뀐|개요)/i;
 // '운영' 은 뺀다 — "운영 DB 확인"(#390) 같은 검증 칸이 걸렸다
 const DEPLOY = /배포|deploy|출시|release/i;
 const LEFT = /남은|todo|할 일|후속/i;
+const WARN_HEAD = /^\s*([-*+>]|\d+[.)])?\s*(\*\*)?⚠/;
 const NOT_YET = /아직|못\s?(했|함|눌러|봤|봄|해|본)|미확인|확인 (못|필요|전)|안 해 ?봄/;
 
 export function summarize(pr: OpenPr, gates: Gate[]): Summary {
@@ -48,8 +49,13 @@ export function summarize(pr: OpenPr, gates: Gate[]): Summary {
   const what =
     sectionLine(secs, WHAT) || firstLine(secs[0]!.lines) || (pr.commits[0] ? clean(pr.commits[0]) : '') || firstLine(secs.slice(1).flatMap((s) => s.lines));
   const ops = [gates.map((g) => `${GATE_LABEL[g.kind]}(${g.why})`).join(' · '), sectionLine(secs, DEPLOY)].filter(Boolean).join(' · ');
-  // ⚠️ 줄이 제일 뚜렷하다 — "아직" 은 "아직 라이트 전용" 처럼 딴 뜻으로도 나와서 그다음
-  const unverified = firstLine(all.filter((l) => l.includes('⚠'))) || firstLine(all.filter((l) => NOT_YET.test(l))) || sectionLine(secs, LEFT);
+  // ⚠️ 줄이 제일 뚜렷하다 — "아직" 은 "아직 라이트 전용" 처럼 딴 뜻으로도 나와서 그다음.
+  // 문서만 바꾼 PR 은 본문이 문서 내용을 옮긴 것이라 줄 가운데 ⚠️·"아직" 은 문서 속 할 일이다 — 상태표 줄의 "⚠️ 9/11 재촬영"(#410).
+  // 그래서 줄 머리 ⚠️ 와 남은 것 칸만. 코드 PR 의 줄 가운데 ⚠️ 는 진짜 경고가 많아(실측 859개 중 #487·#288 등) 그대로 본다
+  const docsOnly = pr.files.length > 0 && pr.files.every((x) => fileKind(x.path) === 'docs');
+  const unverified = docsOnly
+    ? firstLine(all.filter((l) => WARN_HEAD.test(l))) || sectionLine(secs, LEFT)
+    : firstLine(all.filter((l) => l.includes('⚠'))) || firstLine(all.filter((l) => NOT_YET.test(l))) || sectionLine(secs, LEFT);
   return { what, ops, unverified };
 }
 

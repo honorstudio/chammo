@@ -226,6 +226,20 @@ button { font: inherit; color: inherit; }
 .m-wait-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 14px; background: var(--warn-bg); }
 .m-wait-top { display: flex; justify-content: space-between; gap: 8px; }
 .m-wait-card .m-btn { align-self: flex-start; background: var(--surface); }
+/* 카드 물음(WaitNote) — 첫 줄만 굵게, 본문은 줄 그대로 흐리게. 접히면 물음 4줄·본문 줄마다 한 줄(…) */
+.m-wnote { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.m-wnote .m-ask-q { overflow-wrap: anywhere; }
+.m-wnote:not(.open) .m-ask-q { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.m-wnote-body { font-size: 13.5px; line-height: 1.5; color: var(--text-2); min-width: 0; }
+.m-wnote-body > div { overflow-wrap: anywhere; }
+.m-wnote:not(.open) .m-wnote-body > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-ask-more { align-self: center; width: 64px; min-height: 44px; margin: -10px 0 -6px; display: grid; place-items: center; border: 0; background: none; color: var(--text-3); }
+.m-ask-more svg { width: 18px; height: 18px; transform: rotate(90deg); transition: transform .15s; }
+.m-wnote.open .m-ask-more svg { transform: rotate(-90deg); }
+/* 빠른 답 알약 — '답: A / B' 낱말, 누르면 친 답과 같은 길 */
+.m-quick { display: flex; flex-wrap: wrap; gap: 6px; }
+.m-quick button { min-height: 44px; padding: 0 16px; border-radius: 22px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; font-size: 14.5px; font-weight: 600; }
+.m-quick button:active { background: var(--panel); }
 
 /* 참모 방 색 — 지금 참모의 --orch 세트(domain/orchTheme)를 공간에 깐다. 없으면 강조색 */
 .m-space { display: contents; }
@@ -241,6 +255,19 @@ button { font: inherit; color: inherit; }
 .m-dash-av { flex: none; display: grid; place-items: center; width: 44px; height: 44px; margin-right: 2px; padding: 0; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; }
 .m-dash-av .oa { margin-right: 0; }
 .m-prof-av { display: flex; justify-content: center; padding: 4px 0 12px; }
+.m-prof { max-height: calc(100dvh - 24px - env(safe-area-inset-top)); }
+.m-prof-form { overflow-y: auto; min-height: 0; }
+/* 모양·눈·색·목소리 — 한 줄에 가로로 밀기(칸마다 44px 누름 자리) */
+.m-prof-lbl { padding: 6px 2px 0; font-size: 13px; color: var(--text-3); }
+.m-prof-row { display: flex; gap: 6px; overflow-x: auto; padding: 2px 2px 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.m-prof-row::-webkit-scrollbar { display: none; }
+.m-prof-opt, .m-prof-sw { flex: none; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 12px; background: var(--surface-2); }
+.m-prof-opt.m-on, .m-prof-chip.m-on { box-shadow: inset 0 0 0 2px var(--text); }
+.m-prof-sw { background: transparent; border-radius: 50%; }
+.m-prof-sw i { width: 30px; height: 30px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .08); }
+.m-prof-sw.m-on i { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--text); }
+.m-prof-chip { flex: none; box-sizing: border-box; height: 44px; min-width: 44px; padding: 0 14px; border: 0; border-radius: 12px; background: var(--surface-2); color: var(--text); font: inherit; font-size: 15px; white-space: nowrap; }
+.m-prof-reset { margin-right: auto; }
 
 /* 마크다운(답 말풍선·md 파일) — 목록·코드·표·인용. 인용은 옅은 면(왼쪽 띠 없음) */
 .m-md { white-space: normal; }
@@ -610,9 +637,21 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-br-status { flex: none; padding: 10px 16px; font-size: 14px; background: color-mix(in srgb, #6b8cff 16%, var(--panel)); color: var(--text); }
 .m-br-status.m-br-ask { background: color-mix(in srgb, #f0a020 18%, var(--panel)); }
 .m-br-status.m-br-inline { margin: 6px 12px 8px; padding: 8px 10px; border-radius: 10px; font-size: 13px; }
+.m-br-trouble { flex: none; display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 12px; font-size: 13px; color: var(--text-2); background: color-mix(in srgb, #e5534b 10%, var(--panel)); }
+.m-br-trouble > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.m-br-trouble .m-plain { flex: none; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+.m-br-trouble .m-plain svg { width: 20px; height: 20px; }
+.m-br-stale { opacity: .45; }
 .m-br-err { flex: none; padding: 8px 16px; font-size: 13px; color: #e5534b; }
 .m-br-ctl { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 8px; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
 .m-br-ctl img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; -webkit-user-drag: none; }
 .m-br-type { flex: none; display: flex; align-items: center; gap: 4px; padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
 .m-br-type input { flex: 1; min-width: 0; min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font-size: 16px; }
 .m-br-type .m-plain svg { width: 20px; height: 20px; }
+
+/* 채팅 안 파일 카드(ChatFileCard) — 참모 말풍선처럼 왼쪽에, 대시보드 파일 카드와 같은 썸네일. 카드 전체가 누르는 곳 */
+.m-chatfile { flex: none; align-self: flex-start; width: min(240px, 72%); min-height: 44px; display: flex; flex-direction: column; gap: 3px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; text-decoration: none; font: inherit; cursor: pointer; }
+.m-chatfile .m-thumb { flex: none; height: 132px; }
+.m-chatfile:active .m-thumb { box-shadow: 0 0 0 2px var(--working); }
+.m-chatfile-name { padding: 0 2px; font-size: 13.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-chatfile-at { padding: 0 2px; font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

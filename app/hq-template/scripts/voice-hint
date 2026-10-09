@@ -3,10 +3,19 @@
 # UserPromptSubmit 훅 — ① 앱이 켜져 있으면 사용자가 지금 보는 화면 한 줄 ② 음성 모드면 "들려줄 말을 따로 넘겨라".
 # Data folder — same rule as the app: $CHAMMO_HOME -> ~/.chammo (-> ~/.honor-orchestrator for old installs)
 d="${CHAMMO_HOME:-}"
-# 훅 입력(JSON) — 닫히지 않은 stdin 을 끝없이 기다리면 시험·도구가 멈춘다(2026-10-03 새벽 hq 테스트가 30분 멈춤) — 1초까지만
-inp=$(python3 -c 'import sys,select
-r,_,_=select.select([sys.stdin],[],[],1)
-sys.stdout.write(sys.stdin.read() if r else "")' 2>/dev/null)
+# Python — on Windows python3 is the Store stub (exit 49): py -3, then python (same rule as the other HQ scripts)
+# 파이썬 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것(다른 HQ 스크립트 머리와 같은 규칙, 2026-10-09 윈도우 실기기)
+PY=python3
+if [ "$OS" = Windows_NT ]; then
+  for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && { PY=$p; break; }; done
+fi
+# 훅 입력(JSON) — 닫히지 않은 stdin 을 끝없이 기다리면 시험·도구가 멈춘다(2026-10-03 새벽 hq 테스트가 30분 멈춤) — 1초까지만.
+# select 는 윈도우 파이프에서 안 돼서(소켓만) 읽기 스레드를 1초 기다린다
+inp=$($PY -c 'import sys,threading
+b=[]
+t=threading.Thread(target=lambda:b.append(sys.stdin.read()),daemon=True)
+t.start();t.join(1)
+sys.stdout.write(b[0] if b else "")' 2>/dev/null)
 if [ -z "$d" ]; then
   d="$HOME/.chammo"
   if [ ! -d "$d" ] && [ -d "$HOME/.honor-orchestrator" ]; then d="$HOME/.honor-orchestrator"; fi
@@ -19,10 +28,15 @@ printf '%s' "$inp" | "$(dirname "$0")/orch-roster" 2>/dev/null
 printf '%s' "$inp" | "$(dirname "$0")/skill-hint" 2>/dev/null
 # Screen now — the app writes <data>/view.txt (line 1 = app pid, line 2 = screen); added only while that app is alive
 # 지금 보는 화면 — 앱이 <데이터>/view.txt 에 적는다(첫 줄 = 앱 pid, 둘째 줄 = 화면). 앱이 살아 있을 때만 붙인다
+# 윈도우 Git Bash 의 kill -0 은 윈도우 pid 를 못 본다(No such process) — 그땐 tasklist 로
+alive() {
+  kill -0 "$1" 2>/dev/null && return 0
+  [ "$OS" = Windows_NT ] && tasklist //NH //FI "PID eq $1" 2>/dev/null | grep -qw "$1"
+}
 if [ -f "$d/view.txt" ]; then
-  pid=$(head -n 1 "$d/view.txt")
-  v=$(sed -n 2p "$d/view.txt")
-  if [ -n "$v" ] && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+  pid=$(head -n 1 "$d/view.txt" | tr -d '\r')
+  v=$(sed -n 2p "$d/view.txt" | tr -d '\r')
+  if [ -n "$v" ] && [ -n "$pid" ] && alive "$pid"; then
     if grep -q '"language": *"en"' "$d/config.json" 2>/dev/null; then
       echo "On the user's screen in the app right now: $v — read \"here / this / this screen\" against it"
     else
@@ -32,9 +46,9 @@ if [ -f "$d/view.txt" ]; then
 fi
 # Sent from the phone — the app's phone server writes <data>/mobile-sent.json {id, at} right before sending; tell the assistant when it is this session and under a minute old
 # 폰에서 보낸 지시 — 이 세션 것이고 1분 안이면 알린다
-sid=$(printf '%s' "$inp" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("session_id",""))' 2>/dev/null)
+sid=$(printf '%s' "$inp" | $PY -c 'import sys,json;print(json.load(sys.stdin).get("session_id",""))' 2>/dev/null)
 if [ -n "$sid" ] && [ -f "$d/mobile-sent.json" ]; then
-  if python3 - "$d/mobile-sent.json" "$sid" <<'PY' 2>/dev/null
+  if $PY - "$d/mobile-sent.json" "$sid" <<'PY' 2>/dev/null
 import json, sys, time
 m = json.load(open(sys.argv[1], encoding="utf-8"))
 ok = sys.argv[2].startswith(m.get("id") or "-") and time.time() * 1000 - m.get("at", 0) < 60_000
@@ -42,6 +56,19 @@ sys.exit(0 if ok else 1)
 PY
   then
     if grep -q '"language": *"en"' "$d/config.json" 2>/dev/null; then echo "The user sent this from the phone (mobile app), not at the Mac — keep replies short for a phone screen, do not ask for things that need the Mac (show in Chrome, take a screenshot), and warn before anything that drops the phone connection (app restart). The "screen in the app" line above is what the Mac shows, not necessarily what the user sees now"; else echo "사용자는 지금 폰(모바일 앱)에서 보냈다 — 맥 앞이 아니다. 답은 폰 화면에 맞게 짧게, 맥 앞에서만 되는 부탁(크롬에서 보기·화면 캡처)은 하지 말고, 앱 재시작처럼 폰 연결이 끊기는 일은 미리 말한다"; fi
+  fi
+fi
+# Sent from Telegram — the app's messenger bridge writes <data>/messenger-sent.json {id, at, channel} right before typing; same rule as the phone
+# 텔레그램에서 보낸 지시 — 앱 메신저 브리지가 치기 직전 <데이터>/messenger-sent.json 을 남긴다(폰과 같은 규칙, 2026-10-08)
+if [ -n "$sid" ] && [ -f "$d/messenger-sent.json" ]; then
+  if $PY - "$d/messenger-sent.json" "$sid" <<'PY' 2>/dev/null
+import json, sys, time
+m = json.load(open(sys.argv[1], encoding="utf-8"))
+ok = sys.argv[2].startswith(m.get("id") or "-") and time.time() * 1000 - m.get("at", 0) < 60_000
+sys.exit(0 if ok else 1)
+PY
+  then
+    if grep -q '"language": *"en"' "$d/config.json" 2>/dev/null; then echo "The user sent this from Telegram (a [Telegram] line), not at the Mac — your final reply is forwarded there: keep it short and plain (no tables), do not ask for things that need the Mac, and never ask them to type passwords, keys or codes in Telegram (it stays on Telegram servers). Payment, send, delete and production approvals happen only on the app or phone card"; else echo "사용자는 지금 텔레그램에서 보냈다([텔레그램] 줄) — 맥 앞이 아니다. 턴 끝 답이 텔레그램으로 간다: 짧게, 표 없이, 맥 앞에서만 되는 부탁은 하지 말고, 비밀번호·키·인증 코드를 텔레그램에 치라고 절대 하지 않는다(텔레그램 서버에 남는다). 결제·보내기·삭제·운영 승인은 앱·폰 카드에서만"; fi
   fi
 fi
 grep -q '"on":true' "$d/voice.json" 2>/dev/null || exit 0

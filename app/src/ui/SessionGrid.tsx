@@ -5,7 +5,7 @@ import { paneToFocus, visiblePanes, type LayoutAction, type PaneLayout } from '.
 import type { Session } from '../domain/session';
 import { pasteSequence } from '../domain/memo';
 import { enterDelay, typedChunks } from '../domain/chat';
-import { escPlan } from '../domain/chatQueue';
+import { escPlan, typeQueue } from '../domain/chatQueue';
 import { AdoptCard } from './AdoptCard';
 import { statusKind } from '../domain/statusMark';
 import { IconChat, IconClose, IconExpand, IconMaximize, IconPlus, IconTerminal } from './Icons';
@@ -23,6 +23,7 @@ import { claudeDefaults, pickLog } from '../data/tauri';
 import { OrchAvatar, avatarState, orchColor, useAvatars } from './avatar';
 import { bodyColor } from '../domain/avatar';
 import { useSpeaking } from './speakGlow';
+import { ChatTabStrip } from './ChatTabStrip';
 import { orchVars } from '../domain/orchTheme';
 
 type Props = {
@@ -45,13 +46,14 @@ type Props = {
   /** 격자 이름(App 의 레이아웃 키) — ⌘₩ 가 지금 보이는 창을 DOM 에서 찾는다 */
   gridId?: string;
   /** 끄기 — App 이 화면에서 먼저 치우고 뒤에서 끈다 */
-  onStop: (s: Session) => void;
+  /** why = 누른 길(actions.log) */
+  onStop: (s: Session, why: string) => void;
   /** 창 제목. 기본은 프로젝트(/ worktree), 비서 화면은 세션 이름 */
   titleOf?: (s: Session) => string;
   /** 칸 머리 이름 옆 회색 한 줄(참모 맡은 일) — 없으면 진짜 이름(titleOf 를 안 줄 때만) */
   subOf?: (s: Session) => string | undefined;
   /** 채팅 대화 사이에 끼울 것(직접 답하기 카드) — 참모 채팅만 */
-  extraOf?: (s: Session) => { ts: string; key: string; pin?: boolean; node: ReactNode }[];
+  extraOf?: (s: Session) => { ts: string; key: string; pin?: boolean; clip?: boolean; node: ReactNode }[];
   memo?: MemoHooks;
   /** 채팅 탭 줄 끝의 + — 참모 하나 더(⌘T) */
   onAdd?: () => void;
@@ -77,37 +79,31 @@ export const paneTitle = (s: Session) => (s.workspace ? `${s.project} / ${s.work
 
 const DRAG_MIME = 'text/x-orch-pane';
 
-/** 세션별 '앱이 글을 치는 중' 끝 시각과 마지막 Esc 시각 — 치는 중엔 다음 글·Esc 가 끼어들지 않게(2026-10-06 보내는 중 유령) */
-const typingTill = new Map<string, number>();
+/** 세션별 앱 치기 줄(domain/chatQueue typeQueue)과 마지막 Esc 시각 — 치는 중엔 다음 글·Esc 가 끼어들지 않게(2026-10-06 보내는 중 유령).
+ *  실제 치기는 Rust pty_type 이 TYPE_LOCK 을 잡고 한다 — 스페이스·카드 답장·폰이 같은 순간 쳐도 한 입력칸에 안 섞인다 */
+const typing = typeQueue();
 const escAt = new Map<string, number>();
 
 /** 채팅 보내기 — 사람이 치듯 조각으로 넣고 0.4초 쉬었다가 Enter(붙여넣기로 감싸면 긴 글이 "붙여넣은 글"로 간다, domain/chat typedChunks).
  *  앞 글을 아직 치는 중이면 그 Enter 뒤에 친다 — 0.4초 안에 두 번 보내면 두 글이 한 입력칸에 붙어 한 말로 갔다.
  *  enter=false 면 입력칸에 넣기만(빼고 남은 말 되돌려 놓기) */
-function typeAndSend(id: string, api: PaneApi | undefined, text: string, delay = 0, enter = true) {
+function typeAndSend(id: string, api: PaneApi | undefined, text: string, enter = true) {
   if (!api) return;
-  const now = Date.now();
-  let t = Math.max(delay, (typingTill.get(id) ?? 0) - now + 100);
-  for (const c of typedChunks(text)) { const at = t; setTimeout(() => api.raw(c), at); t += 6; }
-  if (enter) { t += enterDelay(text.length, IS_WIN); const at = t; setTimeout(() => api.raw('\r'), at); }
-  typingTill.set(id, now + t + 50);
+  void typing.push(id, () => api.type(typedChunks(text), enter ? enterDelay(text.length, IS_WIN) : undefined));
 }
 
 /** 입력칸 지우기(백스페이스 n개) — 앞 글을 치는 중이면 그 뒤에. 지운 뒤 칠 글은 typeAndSend 가 다시 이 뒤에 줄 선다 */
 function clearInput(id: string, api: PaneApi | undefined, n: number) {
   if (!api) return;
-  const wait = Math.max(0, (typingTill.get(id) ?? 0) - Date.now() + 100);
-  if (!wait) { api.raw('\x7f'.repeat(n)); return; }
-  setTimeout(() => api.raw('\x7f'.repeat(n)), wait);
-  typingTill.set(id, Date.now() + wait + 50);
+  void typing.push(id, () => api.type(['\x7f'.repeat(n)]));
 }
 
 /** 세션에 Esc 한 번 — Claude 는 쉴 때 Esc 두 번을 '입력칸 지우기'로 받아 걸린 말이 흔적 없이 지워졌다. 거른 건 false(domain/chatQueue escPlan) */
 function escOnce(id: string, api: PaneApi | undefined): boolean {
   const now = Date.now();
-  if (!api || !escPlan(now, escAt.get(id) ?? 0, typingTill.get(id) ?? 0)) return false;
+  if (!api || !escPlan(now, escAt.get(id) ?? 0, typing.busyUntil(id))) return false;
   escAt.set(id, now);
-  api.raw('\x1b');
+  void typing.push(id, () => api.type(['\x1b']));
   return true;
 }
 const cumulative = (fr: number[]) => {
@@ -208,7 +204,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
 
   const stop = async (s: Session) => {
     dispatch({ type: 'forget', id: s.id });
-    onStop(s);
+    onStop(s, 'pane-button');
   };
 
   // 경계선 끌기: 시작 비율을 들고 있다가 움직인 거리(전체 대비)만큼 두 칸이 주고받는다
@@ -267,25 +263,24 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
   const body = (
     <>
       {chat === 'tabs' && vis.shown.length > 0 && ( /* 하나여도 늘 — 둘이 되는 순간 생기며 화면을 밀었다 */
-        <div className="chat-tabs" role="tablist">
+        <ChatTabStrip active={active} count={vis.shown.length} add={onAdd && (
+          <button className="tab-add" onClick={onAdd} title={tr(`${assistant()} 하나 더 (⌘T)`, `One more ${assistant()} (⌘T)`)} aria-label={tr(`${assistant()} 하나 더`, `One more ${assistant()}`)}><IconPlus /></button>
+        )}>
           {vis.shown.map((id, i) => {
             const s = byId.get(id)!;
             return (
               <button key={id} role="tab" aria-selected={id === active} className={`${id === active ? 'on' : ''}${speaking === id ? ' st-speak' : ''}`} style={orch ? orchVars(colorOfOrch(s)) as React.CSSProperties : undefined} title={[subOf?.(s), i < 9 ? `${keyLabel(`⌘${i + 1}`, IS_WIN)} · ${tr('두 번 눌러 이름 바꾸기', 'double-click to rename')}` : undefined].filter(Boolean).join('\n') || undefined}
                 onClick={() => { setTab(id); last.current = id; onFocusSession?.(id); window.dispatchEvent(new CustomEvent('chat-tab-pick', { detail: id })); requestAnimationFrame(() => focusPane(id)); window.setTimeout(() => focusPane(id), 180); /* 스페이스가 바뀌며 포커스를 뺏을 수 있어 한 번 더 — 탭을 바꾸면 입력칸에 바로(2026-09-30 사용자) */ }}
                 onDoubleClick={() => orch?.askRename(s)} onContextMenu={orch ? (e) => orch.menu(e, s, orchColor(s.name || '')) : undefined}>
-                {orch ? <OrchAvatar name={s.name || ''} size={18} state={avatarState(s)} color={orchColor(s.name || '')} label={orch.nameOf(s)} /> : <StatusMark kind={statusKind(s.state)} />}{orch ? <OrchName s={s} /> : titleOf(s)}
+                {orch ? <OrchAvatar name={s.name || ''} size={18} state={avatarState(s)} color={orchColor(s.name || '')} label={orch.nameOf(s)} /> : <StatusMark kind={statusKind(s.state)} />}{orch ? <OrchName s={s} className="ct-nm" /> : <span className="ct-nm">{titleOf(s)}</span>}
                 {orch && s.kind === 'background' && (
                   <span className="tab-x" role="button" aria-label={tr('세션 끄기', 'Stop session')} title={tr('세션 끄기(⌘W)', 'Stop session (⌘W)')}
-                    onClick={(e) => { e.stopPropagation(); orch.askStop(s); }}><IconClose /></span>
+                    onClick={(e) => { e.stopPropagation(); orch.askStop(s, undefined, 'pane-x'); }}><IconClose /></span>
                 )}
               </button>
             );
           })}
-          {onAdd && (
-            <button className="tab-add" onClick={onAdd} title={tr(`${assistant()} 하나 더 (⌘T)`, `One more ${assistant()} (⌘T)`)} aria-label={tr(`${assistant()} 하나 더`, `One more ${assistant()}`)}><IconPlus /></button>
-          )}
-        </div>
+        </ChatTabStrip>
       )}
       {shown.length > 0 ? (
         <div className="gridbox" ref={box} data-grid={gridId}>
@@ -374,7 +369,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           paneId={id}
                           clearTerminal={(n) => clearInput(id, panes.current.get(id), n)}
                           sendQueuedNow={() => escOnce(id, panes.current.get(id))} // 멈추면 Claude 가 줄 선 말을 곧바로 보낸다(2026-09-30 시험 세션 실측)
-                          typeOnly={(text) => typeAndSend(id, panes.current.get(id), text, 0, false)}
+                          typeOnly={(text) => typeAndSend(id, panes.current.get(id), text, false)}
                           focusRef={(fn) => { if (fn) chatFocus.current.set(id, fn); else chatFocus.current.delete(id); }}
                         />
                       ) : null}{memo?.openId === id && memo.panel(s, (text) => panes.current.get(id)?.write(pasteSequence(text)))}</>}

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { orphanSession, parseStopped, recentDelegated, resumable, sameOrchSlot, stoppedOrchs, type StoppedSession } from './stopped';
 import type { TaskCard } from './tasks';
 import type { Session } from './session';
+import fixture from './paths.fixture.json';
 
 const DEV = '/U/dev';
 const ALL = JSON.stringify([
@@ -160,5 +161,13 @@ describe('sameOrchSlot — 지울 때 번호가 같아도 별명이 다른 참�
   it('별명 없는 걸 지우면 별명 없는 같은 번호만', () => {
     const all = [st('a', '참모-3'), st('l', '참모-3 · 쇼핑몰'), st('b', '참모-3')];
     expect(sameOrchSlot(all, all[0]!, '/hq').map((x) => x.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('꺼진 참모 HQ 판단은 samePath 한 벌(fix/win-phone-path 세 벌 정리) — 공용 표 그대로', () => {
+  const st = (cwd: string): StoppedSession => ({ id: 'a', sessionId: 'a-sid', name: '참모-2', cwd, project: 'hq', workspace: null, reason: 'stopped', startedAt: 0 });
+  it.each(fixture.cases as [string, string, boolean][])('%s ~ %s → %s', (cwd, hq, same) => {
+    expect(stoppedOrchs([st(cwd)], hq, []).length === 1).toBe(same);
+    expect(sameOrchSlot([st(cwd), { ...st(cwd), id: 'b' }], st(cwd), hq).length === 2).toBe(same);
   });
 });

@@ -41,10 +41,10 @@ export function PairHelp() {
         <ol className="m-steps">
           <li>사파리에서 이미 연결된 참모를 열고, 프로필(참모 바꾸기)을 눌러 맨 아래 '홈 화면 앱 연결'을 눌러요 — 연결 코드가 복사돼요</li>
           <li>여기로 돌아와 '붙여넣기로 연결'을 눌러요</li>
-          <li>맥 앞이라면 설정 &gt; 모바일에서 '폰 연결 QR 만들기' 아래 코드를 복사해 보내도 돼요</li>
+          <li>컴퓨터 앞이라면 Chammo 설정 &gt; 모바일에서 '폰 연결 QR 만들기' 아래 코드를 복사해 보내도 돼요</li>
         </ol>
       ) : (
-        <p>맥 앱 설정 &gt; 모바일에서 '폰 연결 QR 만들기'를 눌러 카메라로 찍어 주세요. QR 은 10분 안에 한 번만 쓸 수 있어요. 코드를 받았다면 아래에 붙여 넣어도 돼요.</p>
+        <p>컴퓨터의 Chammo 앱 설정 &gt; 모바일에서 '폰 연결 QR 만들기'를 눌러 카메라로 찍어 주세요. QR 은 10분 안에 한 번만 쓸 수 있어요. 코드를 받았다면 아래에 붙여 넣어도 돼요.</p>
       )}
       <button type="button" className="m-send" disabled={busy} onClick={() => void paste()}>붙여넣기로 연결</button>
       <form className="m-pair-form" onSubmit={(e) => { e.preventDefault(); void go(v); }}>

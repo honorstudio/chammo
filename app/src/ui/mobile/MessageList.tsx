@@ -7,6 +7,9 @@ import type { EarlierApi } from './useEarlier';
 import { IconClose, IconRefresh } from '../Icons';
 import { mdToHtmlNewTab } from '../md';
 import { useBlobUrl } from './useBlobUrl';
+import { interleave } from '../../domain/chatExtras';
+import type { ChatFile } from '../../domain/chatFiles';
+import { ChatFileCard } from './ChatFileCard';
 
 // 마크다운 → HTML 은 한 번 바꾼 걸 기억한다(폴링마다 말풍선 수백 개를 다시 바꾸지 않게)
 const mdCache = new Map<string, string>();
@@ -85,7 +88,10 @@ type LiveState = { busy: boolean; line: string; tools: number; secs: number };
 /** 처음엔 끝 말 이만큼만 그리고, 위로 올리면 더(그다음엔 서버에서 앞 대화를 거슬러) */
 const SHOW_STEP = 200;
 
-export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earlier, loading, stale }: { items: ChatItem[]; out: OutMsg[]; onRetry: (id: string) => void; onDrop: (id: string) => void; live?: LiveState; ask?: { lead: string; q: string } | null; who?: ReactNode;
+export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earlier, loading, stale, files, onOpenFile }: { items: ChatItem[]; out: OutMsg[]; onRetry: (id: string) => void; onDrop: (id: string) => void; live?: LiveState; ask?: { lead: string; q: string } | null; who?: ReactNode;
+  /** 참모가 보여 준 파일(domain/chatFiles) — 그 시각 자리 말풍선 사이에 카드로. 그려진 첫 말보다 앞선 건 안 그린다(clip) */
+  files?: ChatFile[];
+  onOpenFile?: (f: ChatFile) => void;
   /** 옛 기억을 그리는 중(돌아온 뒤 첫 답 전) — 흐리게 + 도는 표시, 물음 카드는 접는다 */
   stale?: boolean;
   /** 앞 대화 거슬러 읽기(useEarlier) — 없으면 받은 것만 */
@@ -142,14 +148,16 @@ export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earli
     const sent = out.length > mine.current;
     mine.current = out.length;
     if (stickBottom({ wasNear: near.current, sentMine: sent })) { toBottom(); near.current = true; }
-  }, [items.length, out.length, !!ask, !!live?.busy, live?.line]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [items.length, out.length, !!ask, !!live?.busy, live?.line, files?.length]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div ref={log} className={stale ? 'm-log m-stale' : 'm-log'}>
       {earlier && (items.length <= shown) && (earlier.loading
         ? <div className="m-older-spin" role="status" aria-label="앞 대화 불러오는 중"><span className="m-live-dots" aria-hidden><i /><i /><i /></span></div>
         : earlier.done && <div className="m-note m-older">대화 처음이에요</div>)}
-      {earlier?.items.map((it, i) => <Bubble key={`o-${it.id}-${i}`} it={it} />)}
-      {items.slice(-shown).map((it, i) => <Bubble key={`${it.id}-${i}`} it={it} />)}
+      {interleave([...(earlier?.items ?? []).map((it, i) => ({ it, ts: it.ts, k: `o-${it.id}-${i}` })), ...items.slice(-shown).map((it, i) => ({ it, ts: it.ts, k: `${it.id}-${i}` }))],
+        (files ?? []).map((f) => ({ ...f, clip: true }))).map((x) => ('item' in x
+        ? <Bubble key={x.item.k} it={x.item.it} />
+        : <ChatFileCard key={x.extra.key} f={x.extra} onOpen={(f) => onOpenFile?.(f)} />))}
       {loading && !items.length && <div className="m-note m-older">대화 불러오는 중…</div>}
       {out.map((m) => <Outgoing key={m.id} m={m} onRetry={onRetry} onDrop={onDrop} />)}
       {live?.busy && <LiveRow live={live} />}

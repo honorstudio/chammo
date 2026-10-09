@@ -145,8 +145,8 @@ export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen
   return (
     <div className={`office ${edit ? 'editing' : ''}`} ref={wrap} style={{ background: sk.bg, paddingBottom: bottom }}>
       {onGacha && (
-        <button className={`office-coin ${gain && Date.now() - gain.at < 4000 ? 'gain' : ''}`} onClick={onGacha} title={tr('뽑기 — 머지·시킨 일·커밋으로 코인이 쌓인다', 'Gacha — merges, finished tasks and commits earn coins')}>
-          <i />{(coins ?? 0).toLocaleString()}<span>{tr('뽑기', 'Gacha')}</span>
+        <button className={`office-coin ${gain && Date.now() - gain.at < 4000 ? 'gain' : ''}`} onClick={onGacha} aria-label={tr(`뽑기 — 코인 ${(coins ?? 0).toLocaleString()}`, `Gacha — ${(coins ?? 0).toLocaleString()} coins`)} title={tr('뽑기 — 머지·시킨 일·커밋으로 코인이 쌓인다', 'Gacha — merges, finished tasks and commits earn coins')}>
+          <i />{(coins ?? 0).toLocaleString()}
           {gain && Date.now() - gain.at < 4000 && <em>+{gain.n}</em>}
         </button>
       )}

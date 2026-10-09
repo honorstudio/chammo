@@ -29,10 +29,11 @@ function withMutex(lockDir, profile, fn, { pid = process.pid, waitMs = 2000 } = 
   }
 }
 
-function add(lockDir, profile, pid) {
+/** meta.by = 'session' — 세션 브라우저 도구가 같이 쓰는 칸(src/share.js). 앱은 개입 줄의 '스크립트 수'에서 뺀다 */
+function add(lockDir, profile, pid, meta = {}) {
   const d = usersDir(lockDir, profile);
   fs.mkdirSync(d, { recursive: true });
-  fs.writeFileSync(path.join(d, String(pid)), JSON.stringify({ pid, at: new Date().toISOString() }));
+  fs.writeFileSync(path.join(d, String(pid)), JSON.stringify({ pid, at: new Date().toISOString(), ...meta }));
 }
 
 function remove(lockDir, profile, pid) {
@@ -64,11 +65,11 @@ function closing(lockDir, profile, isAlive = lock.isAlive) {
 }
 
 /** 크롬을 같이 쓰겠다 — 잠금 주인이 holder 그대로 살아 있고 닫는 중이 아닐 때만 owner 를 올린다 */
-function join(lockDir, profile, owner, holder) {
+function join(lockDir, profile, owner, holder, meta = {}) {
   return withMutex(lockDir, profile, () => {
     const l = lock.list({ lockDir }).find((x) => x.profile === profile);
     if (!l || l.pid !== holder || !l.alive || closing(lockDir, profile)) return false;
-    add(lockDir, profile, owner);
+    add(lockDir, profile, owner, meta);
     return true;
   });
 }

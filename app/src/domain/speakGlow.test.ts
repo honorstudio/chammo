@@ -29,9 +29,16 @@ describe('foldSay — 늦게 온 옛 상태가 빛을 다시 켜지 않게(2026-
 
 describe('speakingFrom — 빛낼 참모는 재생 중일 때만', () => {
   it('기다림(만드는 중)·끝·멈춤이면 아무도 아님', () => {
-    expect(speakingFrom(foldSay(null, now({})))).toBe('f00d0007');
-    for (const phase of ['waiting', 'done', 'stopped'] as const) expect(speakingFrom(foldSay(null, now({ phase })))).toBeNull();
-    expect(speakingFrom(null)).toBeNull();
+    expect(speakingFrom(foldSay(null, now({})), 1_000)).toBe('f00d0007');
+    for (const phase of ['waiting', 'done', 'stopped'] as const) expect(speakingFrom(foldSay(null, now({ phase })), 1_000)).toBeNull();
+    expect(speakingFrom(null, 1_000)).toBeNull();
+  });
+  // 2026-10-10 사용자 QA "소리와 박자가 안 맞는다" — Rust 가 주는 시작 시각은 소리가 귀에 닿는 때(블루투스면 0.4초쯤 뒤)라
+  // 그 전엔 테두리도 안 켠다. 전엔 afplay 를 띄운 때부터 켜져 빛이 소리보다 0.42~0.56초 먼저 났다
+  it('소리가 닿기 전(시작 시각 전)엔 아직 아무도 아님', () => {
+    const g = foldSay(null, now({ startedMs: 1_400 }));
+    expect(speakingFrom(g, 1_399)).toBeNull();
+    expect(speakingFrom(g, 1_400)).toBe('f00d0007');
   });
 });
 

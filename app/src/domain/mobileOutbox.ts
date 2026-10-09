@@ -1,5 +1,6 @@
 // 폰 보낼 함·쓰던 글 — 참모를 바꾸면 채팅 화면이 새로 그려져(OrchSpace key) 컴포넌트 안에 두던 보내는 중 말풍선·쓰던 글이 날아갔다(2026-10-03 사용자).
 // 그래서 저장소(localStorage)에 둔다. 화면·통신 없음 — 저장소는 받아서 쓰고, 막혀 있으면(개인 정보 보호 모드) 조용히 빈 값
+import { josa, machine } from '../i18n';
 import { pendingLeft, type ChatItem } from './chat';
 
 export type Store = { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem(k: string): void };
@@ -90,6 +91,6 @@ export const dueForCheck = (m: OutMsg, now: number) =>
 
 /** 맥 답(send-status) — 쳤거나 치는 중이면 계속 기다리고, 실패·모름(맥이 안 받음·다시 켜짐)이면 다시 보내기로 */
 export function applyStatus(list: OutMsg[], id: string, state: string, error: string | undefined, now: number): OutMsg[] {
-  if (state === 'failed' || state === 'unknown') return markOut(list, id, 'failed', state === 'failed' ? error || '못 쳤어요' : '맥이 이 말을 못 받았어요');
+  if (state === 'failed' || state === 'unknown') return markOut(list, id, 'failed', state === 'failed' ? error || '못 쳤어요' : `${josa(machine(), '이', '가')} 이 말을 못 받았어요`);
   return list.map((m) => (m.id === id ? { ...m, checked: now } : m));
 }

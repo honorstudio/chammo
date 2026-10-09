@@ -9,6 +9,12 @@ pub fn node_link(data: &Path) -> PathBuf {
     data.join("tools/bin/node")
 }
 
+/// 임시 파일 꼬리 — pid 만으론 앱 켤 때·설치 끝의 정리가 동시에 돌면 같은 이름을 서로 지웠다(2026-10-05 부채 ⑧). 부를 때마다 다르게
+fn tmp_tag() -> String {
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    format!("{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
 /// 링크를 target 으로(맥·리눅스). 임시 링크를 만든 뒤 바꿔치기 — 도중에 죽어도 반쪽 링크가 안 남는다
 #[cfg(unix)]
 pub fn point_link(link: &Path, target: &Path) -> std::io::Result<()> {
@@ -17,7 +23,7 @@ pub fn point_link(link: &Path, target: &Path) -> std::io::Result<()> {
     }
     let dir = link.parent().ok_or_else(|| std::io::Error::other("no parent"))?;
     std::fs::create_dir_all(dir)?;
-    let tmp = dir.join(format!(".node-link-{}", std::process::id()));
+    let tmp = dir.join(format!(".node-link-{}", tmp_tag()));
     let _ = std::fs::remove_file(&tmp);
     std::os::unix::fs::symlink(target, &tmp)?;
     std::fs::rename(&tmp, link)
@@ -139,7 +145,7 @@ pub fn fix_in(folders: &[PathBuf], wrapper: &str, desired: &str, home: &str, bac
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&bk, std::fs::Permissions::from_mode(0o600));
         }
-        let tmp = f.join(format!(".mcp.json.{}.tmp", std::process::id()));
+        let tmp = f.join(format!(".mcp.json.{}.tmp", tmp_tag()));
         if std::fs::write(&tmp, new).is_ok() && std::fs::rename(&tmp, &p).is_ok() {
             n += 1;
         } else {
@@ -152,6 +158,29 @@ pub fn fix_in(folders: &[PathBuf], wrapper: &str, desired: &str, home: &str, bac
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 2026-10-05 부채 ⑧: 앱 켤 때와 설치 끝의 ensure_link 가 동시에 돌면 같은 pid 임시 이름을 서로 지워 한쪽 rename 이 실패했다
+    #[cfg(unix)]
+    #[test]
+    fn 링크_바꾸기를_여럿이_동시에_해도_다_된다() {
+        let d = std::env::temp_dir().join(format!("chammo-link-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let link = d.join("bin/node");
+        let fails: usize = std::thread::scope(|s| {
+            let hs: Vec<_> = (0..8)
+                .map(|t| {
+                    let link = &link;
+                    s.spawn(move || (0..200).filter(|i| point_link(link, Path::new(&format!("../node{}/bin/node", (t + i) % 3))).is_err()).count())
+                })
+                .collect();
+            hs.into_iter().map(|h| h.join().unwrap()).sum()
+        });
+        assert_eq!(fails, 0, "동시에 바꾸다 실패한 수");
+        assert!(std::fs::read_link(&link).is_ok());
+        let left: Vec<_> = std::fs::read_dir(d.join("bin")).unwrap().flatten().map(|e| e.file_name()).filter(|n| n != "node").collect();
+        assert!(left.is_empty(), "임시 링크가 남음: {left:?}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     fn cfg(dev: &str, done: bool) -> crate::config::Config {
         let mut c = crate::config::default_config("/h", Path::new("/h/.chammo"), "ko", |_| false);

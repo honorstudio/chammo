@@ -362,6 +362,22 @@ mod tests {
     }
 
     #[test]
+    fn 화면은_늘_실리는_양과_고치는_길을_그린다() {
+        // 엔진·글 보고(scripts/app harness)엔 있고 화면은 진단 목록만이었다(2026-10-02 부채) — 같은 값(H.budgets·d.fix)을 화면도 읽는다
+        assert!(UI.contains("id=\"bud\""), "진단 칸 위 늘 실리는 양 자리");
+        assert!(UI.contains("function buildBudget()"));
+        assert!(UI.contains("H.budgets"), "엔진 budgets 를 읽어야 한다");
+        assert!(UI.contains("x.fix"), "진단마다 엔진 fix 를 읽어야 한다");
+        for k in ["toggle", "edit_file", "ask"] {
+            assert!(UI.contains(&format!("{k}:")), "고치는 길 {k} 문구가 없다");
+        }
+        // 하니터 원본의 .fx(15px 접기 버튼)와 이름이 겹쳐 글이 한 칸에 뭉개졌다(헤드리스 실측) — 새 이름은 원본에 없던 것
+        assert!(UI.contains("el('div','dfix'") && UI.matches(".fx{").count() == 1);
+        // 영문 화면도 같은 말
+        assert!(UI.contains("\"늘 실리는 양\":") && UI.contains("\"고치는 길\":"));
+    }
+
+    #[test]
     fn 다리는_tauri_를_읽기_전에_끼운다() {
         let p = page("ko", false);
         assert!(!p.contains(SLOT));

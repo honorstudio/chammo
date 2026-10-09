@@ -59,12 +59,13 @@ scripts/task ask   $id "<사용자가 정할 것>"                       # 사�
 scripts/task retry $id "<무엇이 실패했나>"                        # 조각 하나 되돌려 보낼 때
 scripts/task handoff <세션> <다른 비서>                            # 세션을 다른 비서에게 넘길 때 — 앱 대시보드가 새 주인 밑으로 옮긴다
 scripts/task lesson <프로젝트|--all> "<확인된 교훈>"              # 다음 지시에 따라붙는다
-scripts/task lesson-review <프로젝트>                              # 교훈이 쌓이면 — 주제로 묶어 lesson-propose 로 카드, 답이 오면 lesson-promote <id>
+scripts/task lesson-review <프로젝트>                              # 교훈이 쌓이면 — 보고 주제로 묶어 lesson-group (카드 없이, 되돌릴 수 있다)
+scripts/task lesson-drop <프로젝트> --lines 5,9 --why "<이유>"      # 버리기만 카드로 묻는다 — 답이 오면 lesson-promote <id>
 ```
 
 "했다"는 증거가 아니다 — 확인한 것을 적는다. 같은 조각이 **세 번째** 돌아오면 또 보내지 말고 나누기·가정을 다시 본다.
 교훈은 그 프로젝트의 gitignore 된 `CLAUDE.local.md` 에도 남아 사용자가 직접 켠 세션도 읽는다. 한 번 하면 끝나는 할 일은 교훈이 아니다.
-교훈은 지시마다 통째로 붙는다 — 쌓이면(`lesson` 이 알린다) 같은 주제끼리 프로젝트 스킬로 묶자고 카드로 묻고, 사용자가 고른 것만 옮긴다(원본은 archive, 되돌리기 `lesson-restore`).
+교훈은 지시마다 통째로 붙는다 — 쌓이면(`lesson` 이 알린다) 같은 주제끼리 `lesson-group` 으로 알아서 프로젝트 스킬에 묶고 사용자에겐 결과 한 줄만("윈도우 교훈 12줄을 lesson-windows 스킬로 묶었어 — 되돌리려면 말해"). 먼저 묻지 않는다 — 원본은 archive 에 남고 `lesson-restore` 로 되돌린다. 이미 스킬이 있는 주제의 새 교훈은 그 스킬에(같은 이름이면 덧붙는다). 사용자에게 카드로 묻는 건 **버리기**(`lesson-drop`)뿐이다.
 
 `send` 가 stderr 로 주는 줄은 **세션에 보내는 메시지 끝에 전부 붙인다** — 머지 규칙("PR 은 올리고 머지하지 마 —
 머지는 내가 한다"), 검증 강도, 프로젝트 교훈. 세션은 이 파일을 안 읽어서, 머지 규칙을 안 붙이면 자기 PR 을 스스로 머지한다.

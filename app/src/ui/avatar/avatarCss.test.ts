@@ -16,4 +16,8 @@ describe('avatar.css — 프사 움직임 규칙', () => {
     expect(rule).toMatch(/html\.oa-paused \.oa::before/); // 올린 그림의 도는 고리도
     expect(css).toMatch(/html\.oa-paused \.oa-st-ask \.oa-eyes \{ transform: scale\(1\.14\); \}/);
   });
+  it('프사마다 자기 합성 층 — 움직이는 SVG 가 둘레 칸(사이드바 줄·탭 알약)까지 매 프레임 다시 칠하지 않게(2026-10-09 GPU 27%→12%)', () => {
+    const base = css.split('\n').find((l) => l.startsWith('.oa { position: relative;'));
+    expect(base).toMatch(/will-change: transform/);
+  });
 });

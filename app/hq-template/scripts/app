@@ -27,8 +27,8 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
   scripts/app project list                             project folders: devRoot's folders + ones added separately
   scripts/app project add <folder>                     add a folder outside devRoot as a project (it stays where it is)
   scripts/app project remove <folder|name>             stop treating it as a project (the folder is not touched)
-  scripts/app trust <folder>                           let Claude Code start sessions in a folder you just cloned or made
-                                                       (fixes "Workspace not trusted"). Only inside the projects folder the
+  scripts/app trust <folder>                           when starting a session fails with "Workspace not trusted" (folders
+                                                       inside a trusted devRoot don't need it). Only inside the projects folder the
                                                        user trusted; exit 3 = not covered → ask the user to trust it once
   scripts/app browser status|connect <project|folder>  this project's own logged-in browser (chammo-browser): connect
                                                        registers it for this folder only (~/.claude.json local scope) —

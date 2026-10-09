@@ -72,7 +72,7 @@ fn chrome_popup_e2e() {
         let mut l = t.lines();
         Some((l.next()?.trim().parse::<u16>().ok()?, l.next()?.trim().to_string()))
     });
-    let live = Live { profile: profile.clone(), pid: chrome.child.id() as i32, session_pid: 1, port, ws_path: ws, url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None };
+    let live = Live { profile: profile.clone(), pid: chrome.child.id() as i32, session_pid: 1, port, ws_path: ws, url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None, scripts: 0 };
     std::fs::create_dir_all(live_dir()).unwrap();
     std::fs::write(live_dir().join(format!("{profile}.json")), serde_json::to_string(&live).unwrap()).unwrap();
     let pid = wait_for("크롬 pid", 10, || chrome_pid(port));

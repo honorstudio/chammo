@@ -77,3 +77,8 @@
 .tl-head .tl-seg { margin-left: auto; }
 .tl-head .tl-seg ~ :last-child { margin-left: 4px; }
 .tl-form select { line-height: 30px; }
+
+/* 떠 있는 도구 창(터미널 뷰 adopt — 스페이스가 없을 때) — 하니터 float 자리, 닫기는 오른쪽 위 아이콘 */
+.tl-float { overflow: hidden; }
+.tl-float-close { position: absolute; top: 12px; right: 14px; z-index: 1; width: 32px; height: 32px; }
+.tl-float-close:hover { color: var(--text); background: var(--surface); }

@@ -12,18 +12,41 @@ export type Live = { profile: string; pid: number; sessionPid: number; url: stri
   /** 세션 도구가 사람이 돌려주길 기다리기 시작한 때(ms, 0 = 안 기다림) */
   held?: number;
   /** 사람이 개입 중(앱 takeover.rs 가 채움) */
-  takeover?: { by: 'desktop' | 'phone'; at: number } | null };
+  takeover?: { by: 'desktop' | 'phone'; at: number } | null;
+  /** 이 크롬을 같이 쓰는 산 스크립트 수(chammo-browser launch) — 앱이 채움. 스크립트는 개입해도 못 멈춘다 */
+  scripts?: number;
+  /** 폰 목록에만 — 화면 받기 상태(맥 일꾼이 있을 때, agent_browser phone_screen). 이유는 주소를 뺀 한 줄 */
+  screen?: PhoneScreen | null };
+export type PhoneScreen = { error: string; attached: boolean; pages: number };
 
 /** 사람이 조작해도 되나(2026-10-06 사용자) — 평소엔 보기만(view), 개입 중(mine)·세션이 부르는 중(ask)만 조작 */
 export type Control = 'view' | 'mine' | 'ask';
 export const controlOf = (l: Live | undefined): Control => (!l ? 'view' : l.ask ? 'ask' : l.takeover ? 'mine' : 'view');
 
-/** 개입 중 한 줄 — 누가 쥐었나·세션이 기다리나. 멈추지 못하는 브라우저(gate 없음)면 섞일 수 있다고. 개입 아니면 null */
+/** 개입 중 한 줄 — 누가 쥐었나·세션이 기다리나. 멈추지 못하는 브라우저(gate 없음)면 섞일 수 있다고, 같이 쓰는 스크립트가 있으면 그건 못 멈춘다고. 개입 아니면 null */
 export function takeoverLine(l: Live): string | null {
   if (!l.takeover) return null;
   const who = l.takeover.by === 'phone' ? tr('폰에서 조작 중', 'Being controlled from the phone') : tr('사람이 조작 중', 'You are in control');
-  if (!l.gate) return `${who} — ${tr('이 브라우저는 세션을 멈추지 못해 (조작이 섞일 수 있어)', 'this browser cannot pause the session (actions may mix)')}`;
-  return `${who} — ${l.held ? tr('세션은 기다리는 중', 'the session is waiting') : tr('세션이 브라우저를 쓰려 하면 기다려', 'the session will wait if it needs the browser')}`;
+  const n = l.scripts ?? 0;
+  const scripts = n > 0 ? ` · ${tr(`같이 쓰는 스크립트 ${n}개는 멈추지 못해`, `${n} script${n > 1 ? 's' : ''} sharing it can't be paused`)}` : '';
+  if (!l.gate) return `${who} — ${tr('이 브라우저는 세션을 멈추지 못해 (조작이 섞일 수 있어)', 'this browser cannot pause the session (actions may mix)')}${scripts}`;
+  return `${who} — ${l.held ? tr('세션은 기다리는 중', 'the session is waiting') : tr('세션이 브라우저를 쓰려 하면 기다려', 'the session will wait if it needs the browser')}${scripts}`;
+}
+/** 사이트가 물은 권한(agent_tabs permission) — 숨긴 크롬 말풍선 대신 모달에서 허용·거부 */
+export type PagePermission = { kind: 'geolocation' | 'notifications'; origin: string };
+export function permLine(p: PagePermission): string {
+  const host = p.origin.replace(/^[a-z]+:\/\//, '');
+  return p.kind === 'geolocation' ? tr(`${host} 이(가) 위치를 쓰려고 해`, `${host} wants to use your location`) : tr(`${host} 이(가) 알림을 보내려고 해`, `${host} wants to send notifications`);
+}
+
+/** 래퍼에 부탁한 대화상자 답 결과(agent_tabs wrapperDialog) */
+export type WrapperDialog = { at: number; ok: boolean; error: string };
+
+/** 멈춘 탭 안내 한 줄 — 앱이 붙기 전에 뜬 대화상자는 앱이 못 답해 래퍼(처음부터 붙은 playwright)에 부탁한다. askedAt = 부탁한 때(ms) */
+export function stuckLine(askedAt: number | null, done: WrapperDialog | null): string {
+  if (askedAt == null) return tr('페이지가 멈춰 있어 — 대화상자가 떠 있을 수 있어', 'The page is stuck — a dialog may be open');
+  if (!done || done.at < askedAt) return tr('세션 브라우저로 답하는 중…', 'Answering through the session browser…');
+  return done.ok ? tr('대화상자에 답했어', 'Answered the dialog') : tr('세션 브라우저도 못 풀었어 (다른 탭 것일 수 있어)', 'The session browser couldn’t close it either (it may be on another tab)');
 }
 export type CdpPage = { id: string; url: string; title: string };
 export type Tab = { id: string; label: string; url: string; active: boolean; dialog: boolean };
@@ -100,6 +123,20 @@ export const UNSURE_MS = 3000;
 export const GONE_MS = 2500;
 /** 탭 0개가 이만큼 이어져야 닫힘 — 세션이 탭을 바꾸며 닫고 열기·꺼낸 창을 닫은 뒤 빈 탭 다시 열기(keep_loop 400ms)가 겹치는 틈(리뷰) */
 export const EMPTY_MS = 1500;
+
+/**
+ * 폰 브라우저 보기가 화면을 못 받는 이유 한 줄 — 괜찮으면 null. 맥 모달과 같은 판단(browserScreen)에 폰이 프레임을 못 받은 이유(pullErr)를 더한다.
+ * 예전엔 실패를 조용히 삼켜 '화면 받는 중'에 이유 없이 멈췄다(2026-10-05 남은 것 ①). emptyMs = 붙었는데 탭 0개가 이어진 시간
+ */
+export function phoneTrouble(screen: PhoneScreen | null | undefined, pullErr: string, emptyMs: number): { kind: 'closed' | 'fail'; text: string } | null {
+  const closed = { kind: 'closed' as const, text: tr('브라우저가 닫혔어요 — 세션이 다시 열면 이어져', 'The browser is closed — it resumes when the session opens it again') };
+  const fail = (why: string) => ({ kind: 'fail' as const, text: why ? `${tr('화면을 못 받았어', 'Could not get the screen')} — ${why}` : tr('화면을 못 받았어', 'Could not get the screen') });
+  if (pullErr === 'no such browser') return closed;
+  if (pullErr) return fail(pullErr);
+  if (!screen) return null;
+  const s = browserScreen({ goneMs: 0, error: screen.error, attached: screen.attached, pages: screen.pages, emptyMs, current: true, unsureMs: 0 });
+  return s.kind === 'closed' ? closed : s.kind === 'fail' ? fail(screen.error) : null;
+}
 
 export type ScreenKind = 'ok' | 'checking' | 'closed' | 'fail';
 /**

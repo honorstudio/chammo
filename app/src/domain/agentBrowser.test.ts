@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { askName, controlOf, takeoverLine, browserBig, browserScreen, currentSite, EMPTY_MS, frameTrouble, GONE_MS, UNSURE_MS, liveOf, paneStatus, siteOf, tabStrip, unpackFrame, type Live } from './agentBrowser';
+import { askName, controlOf, takeoverLine, browserBig, browserScreen, currentSite, EMPTY_MS, frameTrouble, GONE_MS, UNSURE_MS, liveOf, paneStatus, phoneTrouble, siteOf, tabStrip, unpackFrame, type Live, stuckLine, permLine } from './agentBrowser';
 
 const live = (o: Partial<Live> = {}): Live => ({ profile: 'acme', pid: 11, sessionPid: 22, url: 'https://a.com/', title: 'A', tabs: [], tool: '이동 https://a.com/', toolAt: 1000, busy: false, ts: 1000, ...o });
 
@@ -192,5 +192,60 @@ describe('사람 개입(2026-10-06 사용자) — 평소 보기만, 개입·부�
     expect(takeoverLine({ ...t, held: 5 })).toMatch(/세션은 기다리는 중/);
     expect(takeoverLine({ ...t, takeover: { by: 'phone', at: 1 } })).toMatch(/폰에서/);
     expect(takeoverLine({ ...t, gate: false })).toMatch(/멈추지 못/);
+  });
+  it('takeoverLine — 같이 쓰는 스크립트(chammo-browser launch)는 래퍼를 안 거쳐 못 멈춘다고 알린다(roadmap 부채 browser-takeover ①)', () => {
+    const t = { ...base, gate: true, takeover: { by: 'desktop' as const, at: 1 } };
+    expect(takeoverLine({ ...t, scripts: 0 })).not.toMatch(/스크립트/);
+    const two = takeoverLine({ ...t, held: 5, scripts: 2 })!;
+    expect(two).toMatch(/세션은 기다리는 중/);
+    expect(two).toMatch(/스크립트 2개.*멈추지 못/);
+    // 스크립트 크롬(지킴이 상태 파일, gate 없음)도 같이 쓰는 수를
+    expect(takeoverLine({ ...t, gate: false, scripts: 1 })).toMatch(/스크립트 1개/);
+  });
+});
+
+describe('phoneTrouble — 폰 브라우저 보기가 화면을 못 받는 이유 한 줄(2026-10-09, 이유 없이 \'화면 받는 중\'에 멈춤)', () => {
+  it('괜찮으면 null — 일꾼이 아직 없거나 붙어서 탭이 있으면', () => {
+    expect(phoneTrouble(undefined, '', 0)).toBeNull();
+    expect(phoneTrouble({ error: '', attached: false, pages: 0 }, '', 0)).toBeNull(); // 붙는 중
+    expect(phoneTrouble({ error: '', attached: true, pages: 2 }, '', 0)).toBeNull();
+  });
+  it('크롬이 꺼졌으면(포트 거절·끊김) 닫혔다고', () => {
+    const t = phoneTrouble({ error: 'WebSocket connect …: Connection refused (os error 61)', attached: false, pages: 0 }, '', 0)!;
+    expect(t.kind).toBe('closed');
+    expect(t.text).toMatch(/닫혔/);
+  });
+  it('붙었는데 탭 0개가 이어지면 닫힘, 잠깐이면 아직 아니다', () => {
+    expect(phoneTrouble({ error: '', attached: true, pages: 0 }, '', EMPTY_MS - 1)).toBeNull();
+    expect(phoneTrouble({ error: '', attached: true, pages: 0 }, '', EMPTY_MS)!.kind).toBe('closed');
+  });
+  it('그 밖의 실패는 못 받았다 + 맥이 준 이유', () => {
+    const t = phoneTrouble({ error: 'Page.startScreencast: no answer', attached: true, pages: 1 }, '', 0)!;
+    expect(t.kind).toBe('fail');
+    expect(t.text).toMatch(/못 받았/);
+    expect(t.text).toContain('Page.startScreencast: no answer');
+  });
+  it('폰이 프레임을 못 받은 것 — 목록에서 빠졌으면 닫힘, 그 밖은 그 이유로', () => {
+    expect(phoneTrouble(undefined, 'no such browser', 0)!.kind).toBe('closed');
+    const t = phoneTrouble({ error: '', attached: true, pages: 1 }, 'Load failed', 0)!;
+    expect(t.kind).toBe('fail');
+    expect(t.text).toContain('Load failed');
+  });
+});
+
+describe('stuckLine — 앱이 붙기 전에 뜬 대화상자는 래퍼에 답을 부탁한다(roadmap 부채 browser-dialog ①)', () => {
+  it('부탁 전엔 원래 안내, 부탁 뒤엔 답하는 중, 래퍼가 못 풀면 그렇다고', () => {
+    expect(stuckLine(null, null)).toMatch(/멈춰 있어/);
+    expect(stuckLine(100, null)).toMatch(/답하는 중/);
+    expect(stuckLine(100, { at: 50, ok: false, error: 'x' })).toMatch(/답하는 중/); // 지난 결과는 안 본다
+    expect(stuckLine(100, { at: 150, ok: false, error: 'No dialog visible' })).toMatch(/못 풀었어/);
+    expect(stuckLine(100, { at: 150, ok: true, error: '' })).toMatch(/답했어/);
+  });
+});
+
+describe('permLine — 숨긴 크롬의 위치·알림 말풍선 대신 모달에서 묻는다(roadmap 부채 agent-browser-modal ②)', () => {
+  it('사이트 호스트와 무엇을 묻는지', () => {
+    expect(permLine({ kind: 'geolocation', origin: 'https://map.example.com:8443' })).toBe('map.example.com:8443 이(가) 위치를 쓰려고 해');
+    expect(permLine({ kind: 'notifications', origin: 'https://a.com' })).toBe('a.com 이(가) 알림을 보내려고 해');
   });
 });

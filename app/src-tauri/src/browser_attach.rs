@@ -1,7 +1,7 @@
 //! 있던 프로젝트(gh repo clone 한 저장소 등)에 참모 브라우저 붙이기 — GitHub #2(2026-10-06).
 //! 저장소 .mcp.json 은 안 건드리고 ~/.claude.json 의 그 프로젝트 local scope(projects.<git 루트>.mcpServers)에 등록한다 —
 //! 공유 저장소에 diff 가 안 남고, local 은 .mcp.json 보다 위라 승인 창도 없다(2.1.290 실측: 같은 이름이 아니면 둘 다 뜬다).
-//! 이름은 'playwright', 그 이름을 다른 서버(저장소 .mcp.json 의 local-browser-mcp 등)가 쓰면 'chammo-browser' — 둘이 같이 떠
+//! 이름은 'playwright', 그 이름을 다른 서버(저장소 .mcp.json 의 남의 헤드리스 래퍼 등)가 쓰면 'chammo-browser' — 둘이 같이 떠
 //! 우리 쪽 browser_ask_human 이 늘 있다. 떠 있던 claude 가 projects 칸을 기본값 모양으로 다시 써서 지울 수 있어(교훈),
 //! 붙인 칸은 <데이터>/browser-attached.json 에 남기고 앱 켤 때·세션 띄우기 직전에 다시 본다(reassert)
 use serde::Serialize;
@@ -11,9 +11,39 @@ use std::path::{Path, PathBuf};
 pub const NAMES: [&str; 2] = ["playwright", "chammo-browser"];
 const WRAPPER: &str = "chammo-browser-mcp.js";
 
-/// 이 서버가 우리 래퍼를 띄우나 — args 중 하나가 …/chammo-browser-mcp.js(윈도우 역슬래시도)
+/// 옛 이름 껍데기 — 참모 브라우저 시절 .mcp.json 이 git 으로 여러 기계에 퍼져서 명령 이름만 남겼다(~/bin/local-browser-mcp → exec node …/chammo-browser-mcp.js)
+const SHIM: &str = "local-browser-mcp";
+
+/// 이 서버가 우리 래퍼를 띄우나 — args 중 하나가 …/chammo-browser-mcp.js(윈도우 역슬래시도),
+/// 또는 명령이 옛 이름 껍데기이고 이 기계의 그 껍데기가 우리 래퍼를 부를 때(공개판처럼 껍데기가 없으면 남의 것)
 pub fn is_ours(server: &Value) -> bool {
-    server["args"].as_array().is_some_and(|a| a.iter().filter_map(|x| x.as_str()).any(|s| s.replace('\\', "/").rsplit('/').next() == Some(WRAPPER)))
+    is_ours_by(server, shim_text)
+}
+
+/// shim = 명령(그대로) → 이 기계에서 그 명령 파일의 글. 시험은 가짜로
+pub fn is_ours_by(server: &Value, shim: impl Fn(&str) -> Option<String>) -> bool {
+    let base = |s: &str| s.replace('\\', "/").rsplit('/').next().map(str::to_string);
+    if server["args"].as_array().is_some_and(|a| a.iter().filter_map(|x| x.as_str()).any(|s| base(s).as_deref() == Some(WRAPPER))) {
+        return true;
+    }
+    let Some(cmd) = server["command"].as_str() else { return false };
+    let name = base(cmd).unwrap_or_default();
+    let stem = [".cmd", ".bat", ".exe", ".sh"].iter().find_map(|x| name.strip_suffix(x)).unwrap_or(&name);
+    stem == SHIM && shim(cmd).is_some_and(|t| t.contains(WRAPPER))
+}
+
+/// 명령 파일 글 — 경로면 그대로, 이름이면 앱 PATH(adopt_user_path 로 터미널과 같다 → 세션도 같은 걸 띄운다)에서 찾는다. 껍데기라 앞 16KB 만
+fn shim_text(cmd: &str) -> Option<String> {
+    use std::io::Read;
+    let path = if cmd.contains(['/', '\\']) {
+        PathBuf::from(cmd)
+    } else {
+        let exts: &[&str] = if cfg!(windows) { &["", ".cmd", ".bat"] } else { &[""] };
+        std::env::split_paths(&std::env::var_os("PATH")?).flat_map(|d| exts.iter().map(move |x| d.join(format!("{cmd}{x}")))).find(|p| p.is_file())?
+    };
+    let mut buf = Vec::new();
+    std::fs::File::open(path).ok()?.take(16 * 1024).read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
 fn servers<'a>(v: Option<&'a Value>) -> Option<&'a serde_json::Map<String, Value>> {
@@ -22,11 +52,15 @@ fn servers<'a>(v: Option<&'a Value>) -> Option<&'a serde_json::Map<String, Value
 
 /// 지금 붙어 있는 우리 서버 — (이름, "local"|"project"). 저장소 .mcp.json 의 우리 것은 같은 이름의 남의 local 서버가 가리면 없는 것
 pub fn link_of(cj: &Value, mcp_json: Option<&Value>, key: &str) -> Option<(String, &'static str)> {
+    link_of_by(cj, mcp_json, key, shim_text)
+}
+
+pub fn link_of_by(cj: &Value, mcp_json: Option<&Value>, key: &str, shim: impl Fn(&str) -> Option<String> + Copy) -> Option<(String, &'static str)> {
     let local = servers(cj.get("projects").and_then(|p| p.get(key)));
-    if let Some((n, _)) = local.and_then(|m| m.iter().find(|(_, s)| is_ours(s))) {
+    if let Some((n, _)) = local.and_then(|m| m.iter().find(|(_, s)| is_ours_by(s, shim))) {
         return Some((n.clone(), "local"));
     }
-    let (n, _) = servers(mcp_json)?.iter().find(|(_, s)| is_ours(s))?;
+    let (n, _) = servers(mcp_json)?.iter().find(|(_, s)| is_ours_by(s, shim))?;
     if local.is_some_and(|m| m.contains_key(n)) {
         return None;
     }
@@ -56,8 +90,12 @@ pub fn pick_name(cj: &Value, mcp_json: Option<&Value>, key: &str) -> Option<&'st
 
 /// 남이 쓰는 'playwright'(우리 것 아님) — 화면·결과가 "저장소 것과 같이 뜬다"고 알리게
 pub fn other_playwright(cj: &Value, mcp_json: Option<&Value>, key: &str) -> bool {
+    other_playwright_by(cj, mcp_json, key, shim_text)
+}
+
+pub fn other_playwright_by(cj: &Value, mcp_json: Option<&Value>, key: &str, shim: impl Fn(&str) -> Option<String> + Copy) -> bool {
     let local = servers(cj.get("projects").and_then(|p| p.get(key)));
-    [local, servers(mcp_json)].into_iter().flatten().any(|m| m.get("playwright").is_some_and(|s| !is_ours(s)))
+    [local, servers(mcp_json)].into_iter().flatten().any(|m| m.get("playwright").is_some_and(|s| !is_ours_by(s, shim)))
 }
 
 /// 프로필 이름 = 폴더 이름(새 프로젝트와 같은 규칙). 앞 점은 떼고, 경로 글자가 있거나 비면 None — paths.js checkProfile 과 같다
@@ -339,9 +377,9 @@ mod tests {
     fn ours() -> Value {
         entry("/Users/u/.chammo/tools/bin/node", W, "shop", None)
     }
-    // 저장소에 커밋된 남의 playwright(헤드리스 local-browser-mcp 같은 것) — 이슈 #2 의 project-a
+    // 저장소에 커밋된 남의 playwright(헤드리스 래퍼 같은 것) — 이슈 #2 의 project-a. 옛 이름 껍데기는 기계마다 달라 여기선 안 쓴다(옛_이름_… 시험)
     fn repo_other() -> Value {
-        json!({"mcpServers": {"playwright": {"type": "stdio", "command": "local-browser-mcp", "args": ["shop"]}, "supabase": {"type": "http", "url": "https://x"}}})
+        json!({"mcpServers": {"playwright": {"type": "stdio", "command": "someone-browser-mcp", "args": ["shop"]}, "supabase": {"type": "http", "url": "https://x"}}})
     }
 
     #[test]
@@ -349,10 +387,36 @@ mod tests {
         assert!(is_ours(&ours()));
         assert!(is_ours(&json!({"command": "node", "args": ["${HOME}/.chammo/tools/chammo-browser/bin/chammo-browser-mcp.js", "p"]})));
         assert!(is_ours(&json!({"command": "node.exe", "args": [r"C:\Users\Me\.chammo\tools\chammo-browser\bin\chammo-browser-mcp.js", "p"]})));
-        assert!(!is_ours(&json!({"command": "local-browser-mcp", "args": ["shop"]})));
+        assert!(!is_ours_by(&json!({"command": "local-browser-mcp", "args": ["shop"]}), |_| None));
         assert!(!is_ours(&json!({"command": "npx", "args": ["@playwright/mcp", "--extension"]})));
         assert!(!is_ours(&json!({"command": "node", "args": ["/x/not-chammo-browser-mcp.js.bak"]})));
         assert!(!is_ours(&json!({"type": "http", "url": "https://x/chammo-browser-mcp.js"})));
+    }
+
+    #[test]
+    fn 옛_이름_껍데기는_우리_래퍼를_부를_때만_우리_것() {
+        // 아이맥 .mcp.json 5곳의 local-browser-mcp — ~/bin 껍데기가 exec node …/chammo-browser-mcp.js 한다(2026-10-09 qa/office-imac)
+        let shim = "#!/bin/bash\nexec node \"$D/tools/chammo-browser/bin/chammo-browser-mcp.js\" \"$@\"\n";
+        let old = json!({"command": "local-browser-mcp", "args": ["shop"]});
+        assert!(is_ours_by(&old, |c| (c == "local-browser-mcp").then(|| shim.to_string())));
+        // 절대 경로·윈도우 .cmd 도 이름으로
+        assert!(is_ours_by(&json!({"command": "/Users/u/bin/local-browser-mcp", "args": ["p"]}), |_| Some(shim.into())));
+        assert!(is_ours_by(&json!({"command": r"C:\Users\Me\bin\local-browser-mcp.cmd", "args": ["p"]}), |_| Some(shim.into())));
+        // 이 기계에 껍데기가 없거나(공개판이 project-a 를 clone) 옛 참모 브라우저 코드를 부르면 남의 것
+        assert!(!is_ours_by(&old, |_| None));
+        assert!(!is_ours_by(&old, |_| Some("exec node ~/Desktop/dev/browser/bin/local-browser-mcp.js \"$@\"".into())));
+        // 이름이 다르면 껍데기 안을 안 본다
+        assert!(!is_ours_by(&json!({"command": "my-mcp", "args": []}), |_| Some(shim.into())));
+    }
+
+    #[test]
+    fn 옛_이름이_저장소에_있으면_붙은_것으로_보고_하나_더_안_붙인다() {
+        let shim = |_: &str| Some("exec node \"$D/tools/chammo-browser/bin/chammo-browser-mcp.js\"".to_string());
+        let mj = json!({"mcpServers": {"playwright": {"command": "local-browser-mcp", "args": ["shop"]}}});
+        let all = [json!({"enableAllProjectMcpServers": true})];
+        let ap = approved_mcp(Some(&mj), &v("{}"), "/d/shop", &all);
+        assert_eq!(link_of_by(&v("{}"), ap.as_ref(), "/d/shop", shim), Some(("playwright".into(), "project")));
+        assert!(!other_playwright_by(&v("{}"), Some(&mj), "/d/shop", shim));
     }
 
     #[test]

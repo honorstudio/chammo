@@ -1,0 +1,16 @@
+{
+  "_": "경로 같은가 — TS samePath(domain/paths.ts)·stoppedOrchs·sameOrchSlot·isHqOrch 와 Rust platform::same_dir 이 같은 표로 시험한다. 윈도우 드라이브 경로만 구분자·대소문자를 가리지 않고, 맥은 끝 / 만 무시",
+  "cases": [
+    ["C:\\Users\\Me/.chammo/hq", "C:/Users/Me/.chammo/hq", true],
+    ["C:\\Users\\Me\\.chammo\\hq\\", "C:/Users/Me/.chammo/hq", true],
+    ["c:/users/me/.chammo/HQ", "C:\\Users\\Me/.chammo/hq", true],
+    ["C:/Users/Me/Chammo/hq", "c:\\Users\\me\\chammo\\hq\\", true],
+    ["C:/Users/Me/.chammo/hq2", "C:/Users/Me/.chammo/hq", false],
+    ["D:/Users/Me/.chammo/hq", "C:/Users/Me/.chammo/hq", false],
+    ["/Users/a/hq/", "/Users/a/hq", true],
+    ["/Users/a/hq", "/Users/a/hq", true],
+    ["/Users/a/HQ", "/Users/a/hq", false],
+    ["/Users/a/odd\\name", "/Users/a/odd/name", false],
+    ["/Users/a/hq", "/Users/a/hq2", false]
+  ]
+}

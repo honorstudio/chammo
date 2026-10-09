@@ -10,7 +10,7 @@ import { IconZoomIn, IconZoomOut } from '../Icons';
 import { selectAllHere } from '../selectAll';
 import { assistant, tr } from '../../i18n';
 import { getAppEnv, projectScan } from '../../data/tauri';
-import { cleanPathText, pathCandidates, projectOrder } from '../../domain/links';
+import { pathCandidates, projectRelCandidates } from '../../domain/links';
 import { followLink } from '../followLink';
 import { addComment, setBaseline } from '../space/pending';
 import { SendFab } from '../space/SendFab';
@@ -25,11 +25,11 @@ const SpaceEditor = lazy(() => import('../space/SpaceEditor'));
 const editors = new Map<string, BlockNoteEditor>();
 const blockText = (content: unknown): string =>
   Array.isArray(content) ? content.map((c: { text?: string; content?: unknown }) => c.text ?? blockText(c.content)).join('') : '';
-let envP: Promise<{ home: string; devRoot: string; projects: string[] }> | null = null;
-/** 홈·프로젝트 폴더·프로젝트 이름들 — 한 번 읽어 둔다 */
+let envP: Promise<{ home: string; devRoot: string; projects: string[]; extras: string[] }> | null = null;
+/** 홈·프로젝트 폴더·프로젝트 이름들·따로 추가한 폴더 — 한 번 읽어 둔다 */
 const env = () => (envP ??= getAppEnv().then(
-  async (e) => ({ home: e.home, devRoot: e.devRoot, projects: (await projectScan(e.devRoot).catch(() => [])).map((p) => p.name) }),
-  () => ({ home: '', devRoot: '', projects: [] }),
+  async (e) => ({ home: e.home, devRoot: e.devRoot, extras: e.extraProjects, projects: (await projectScan(e.devRoot).catch(() => [])).map((p) => p.name) }),
+  () => ({ home: '', devRoot: '', projects: [], extras: [] }),
 ));
 
 /** 두 칸 사이(공백)까지를 한 덩어리로 — ⌘클릭한 자리의 경로 글자 */
@@ -67,10 +67,8 @@ function onDocClick(ev: React.MouseEvent<HTMLElement>, path: string) {
   // 같은 문단에 나온 프로젝트 이름 — 경로가 다른 프로젝트 기준일 때 그 프로젝트부터 본다
   const context = target?.closest?.('p, li, td, blockquote, h1, h2, h3, h4')?.textContent ?? '';
   void env().then(async (e) => {
-    const rel = cleanPathText(text);
-    // 문서 폴더부터 위로 → 그래도 없으면 프로젝트 폴더 안 프로젝트들(같은 문단에 나온 것 먼저)
-    const cands = pathCandidates(text, dir, e.home);
-    if (rel && !rel.startsWith('/') && !rel.startsWith('~') && e.devRoot) cands.push(...projectOrder(e.projects, context).map((p) => `${e.devRoot}/${p}/${rel}`));
+    // 문서 폴더부터 위로 → 그래도 없으면 프로젝트들(devRoot 아래 + 따로 추가한 폴더, 같은 문단에 나온 것 먼저)
+    const cands = [...pathCandidates(text, dir, e.home), ...projectRelCandidates(text, e.projects, e.extras, e.devRoot, context)];
     if (!cands.length) return;
     const f = await invoke<string | null>('first_existing', { paths: cands });
     if (f) followLink({ kind: 'file', target: f });

@@ -75,6 +75,22 @@ pub fn start(dir: &Path, profile: &str, pid: i32, by: &str) -> Result<(), String
     Ok(())
 }
 
+/// 앱이 붙기 전에 뜬 대화상자 — 앱 CDP 는 못 답해서('No dialog is showing') 래퍼에 답을 부탁한다(<프로필>.dialog {pid, accept, at}).
+/// 래퍼(tools/chammo-browser src/dialogs.js)가 처음부터 붙은 playwright 로 답하고 <프로필>.dialog-done 에 결과를 남긴다. 지난 결과는 지운다
+pub fn ask_dialog(dir: &Path, profile: &str, pid: i32, accept: bool) -> Result<u64, String> {
+    let at = now_ms();
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(dir.join(format!("{profile}.dialog-done")));
+    write_secure(&dir.join(format!("{profile}.dialog")), json!({ "pid": pid, "accept": accept, "at": at }).to_string().as_bytes())?;
+    Ok(at)
+}
+
+/// 래퍼가 남긴 대화상자 답 결과 {at, ok, error} — 그 래퍼(pid) 것만
+pub fn dialog_done(dir: &Path, profile: &str, pid: i32) -> Option<Value> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(dir.join(format!("{profile}.dialog-done"))).ok()?).ok()?;
+    (v["pid"].as_i64() == Some(i64::from(pid))).then(|| json!({ "at": v["at"].as_u64().unwrap_or(0), "ok": v["ok"] == true, "error": v["error"].as_str().unwrap_or_default() }))
+}
+
 /// 세션이 사람을 부르는 동안 기록 시작(파일 없음 — 래퍼가 이미 askHuman 에서 기다린다)
 pub fn start_ask(profile: &str, pid: i32, at: u64) {
     with(|m| {
@@ -239,6 +255,25 @@ mod tests {
             assert_eq!(std::fs::metadata(d.join(format!("{p}.handback"))).unwrap().permissions().mode() & 0o777, 0o600);
         }
         assert!(!holding(p));
+    }
+
+    #[test]
+    fn 붙기_전에_뜬_대화상자는_래퍼에_답을_부탁하고_그_래퍼_결과만_읽는다() {
+        let d = dir();
+        let p = "dlg";
+        std::fs::write(d.join(format!("{p}.dialog-done")), r#"{"pid":77,"at":1,"ok":false}"#).unwrap();
+        let at = ask_dialog(&d, p, 77, false).unwrap();
+        assert!(dialog_done(&d, p, 77).is_none(), "지난 결과는 지운다");
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(d.join(format!("{p}.dialog"))).unwrap()).unwrap();
+        assert_eq!(v, json!({ "pid": 77, "accept": false, "at": at }));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(d.join(format!("{p}.dialog"))).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        std::fs::write(d.join(format!("{p}.dialog-done")), r#"{"pid":77,"at":9,"ok":false,"error":"No dialog visible"}"#).unwrap();
+        assert_eq!(dialog_done(&d, p, 77), Some(json!({ "at": 9, "ok": false, "error": "No dialog visible" })));
+        assert!(dialog_done(&d, p, 78).is_none(), "남의 래퍼 결과는 안 읽는다");
     }
 
     #[test]

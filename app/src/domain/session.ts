@@ -66,6 +66,26 @@ const stripSlash = (p: string) => p.replace(/\/+$/, '');
 
 const baseName = (p: string) => p.split('/').filter(Boolean).pop() ?? p;
 
+/** 홈·루트 — 여기서 위로는 저장소 꼭대기로 안 친다(홈 아래 추가 폴더가 ~/.claude/worktrees 같은 남의 세션을 끌어오지 않게) */
+const HOME_LIKE = /^(|\/|\/Users\/[^/]+|\/home\/[^/]+|\/root|[A-Za-z]:|[A-Za-z]:\/Users\/[^/]+)$/i;
+
+/**
+ * 따로 추가한 폴더가 저장소 하위 폴더(~/automation/project-x)면 세션은 그 저장소 워크트리(~/automation/.claude/worktrees/…)에서도 돈다.
+ * 꼭대기를 몰라 홈 아래 윗폴더마다 워크트리 자리를 낸다 — 가까운 윗폴더가 먼저(2026-10-05 아이맥, 세션이 앱에서 사라졌다)
+ */
+export function extraWorktreeRoots(extras: string[]): { root: string; top: string; extra: string }[] {
+  const out: { root: string; top: string; extra: string }[] = [];
+  for (const x of extras.map((e) => stripSlash(fwd(e))).filter(Boolean)) {
+    const parts = x.split('/');
+    for (let i = parts.length - 1; i > 0; i--) {
+      const top = parts.slice(0, i).join('/');
+      if (HOME_LIKE.test(top)) break;
+      out.push({ root: `${top}/.claude/worktrees`, top, extra: x });
+    }
+  }
+  return out;
+}
+
 /**
  * cwd → 프로젝트 / 작업공간(worktree). 프로젝트 = devRoot 바로 아래 폴더, 또는 설정에서 따로 추가한 폴더(extras, 푼 경로)
  * — 아이맥 ~/automation/… 처럼 devRoot 로 못 옮기는 폴더(2026-09-28 사용자)
@@ -83,10 +103,30 @@ export function classifyWorkspace(cwd: string, devRoot: string, extras: string[]
   const root = stripSlash(fwd(devRoot));
   // dev 폴더 자체에서 연 세션은 어느 프로젝트도 아니다 — '프로젝트 밖'(2026-10-01 사용자: dev 가 통째로 프로젝트로 잡혔다)
   if (key(path) === key(root)) return { project: baseName(path), workspace: null, loose: true };
-  if (!within(root)) return { project: baseName(path), workspace: null };
+  if (!within(root)) return extraWorktree(path, extras, within) ?? { project: baseName(path), workspace: null };
   const rel = path.slice(root.length + 1).split('/');
   return { project: rel[0] ?? path, workspace: worktreeOf(rel.slice(1)) };
 }
+
+/** 추가 폴더가 든 저장소의 워크트리 안이면 그 추가 폴더 프로젝트 — 워크트리 안 자리(…/worktrees/w/eta-bot)가 든 추가 폴더가 먼저, 꼭대기면 처음 것 */
+function extraWorktree(path: string, extras: string[], within: (root: string) => boolean): { project: string; workspace: string } | null {
+  const hits = extraWorktreeRoots(extras).filter((w) => within(w.root) && path.length > w.root.length + 1);
+  const first = hits[0];
+  if (!first) return null;
+  const rest = (w: typeof first) => path.slice(w.root.length + 1).split('/');
+  // 워크트리 안 자리를 저장소 자리로 옮겨(…/worktrees/fix/eta-bot → ~/automation/eta-bot) 추가 폴더 안인지
+  const inExtra = (w: typeof first) => {
+    const inner = stripSlash(`${w.top}/${rest(w).slice(1).join('/')}`).toLowerCase();
+    const x = w.extra.toLowerCase();
+    return inner === x || inner.startsWith(`${x}/`);
+  };
+  const pick = hits.find((w) => w.root === first.root && inExtra(w)) ?? first;
+  return { project: baseName(pick.extra), workspace: rest(pick)[0]! };
+}
+
+/** Chammo 가 다루는 폴더 — devRoot·HQ·따로 추가한 폴더와 그 저장소 워크트리. withinRoots·sessionsToStop 에 넘긴다 */
+export const appRoots = (devRoot: string, hq: string, extras: string[]): string[] =>
+  [...new Set([devRoot, hq, ...extras, ...extraWorktreeRoots(extras).map((w) => w.root)])];
 
 /** 프로젝트 이름 → 폴더. 따로 추가한 폴더가 먼저(이름이 같으면 그쪽), 아니면 devRoot 아래 */
 export const projectDir = (name: string, devRoot: string, extras: string[] = []): string =>
@@ -185,14 +225,22 @@ export function orchView(orchestrators: Session[]): 'grid' | 'adopt' | 'empty' {
   return orchestrators.length === 1 && orchestrators[0]!.kind !== 'background' ? 'adopt' : 'grid';
 }
 
+/** 위 막대 도구 아이콘 — 스페이스가 떠 있으면 그 탭에, 없으면 채팅 뷰로 넘어가 연다.
+ *  터미널 뷰 'adopt'(붙인 세션 하나)는 채팅 뷰에도 스페이스가 없어 떠 있는 창으로(하니터와 같게) */
+export function toolsWay(view: ReturnType<typeof orchView>, spaceShown: boolean): 'space' | 'switch' | 'float' {
+  if (spaceShown) return 'space';
+  return view === 'adopt' ? 'float' : 'switch';
+}
+
 /**
  * 내 프로젝트 폴더(devRoot)·HQ 안에서 도는 세션만 — 이 맥의 다른 데서 띄운 Claude 세션까지 앱에 섞이지 않게
  * (공개판·데모에서 남의 세션이 뜨면 안 된다, 2026-09-28). 하위 폴더·worktree 는 포함, 이름만 비슷한 옆 폴더는 제외
  */
 export function withinRoots<T extends { cwd: string }>(sessions: T[], roots: string[]): T[] {
-  const rs = roots.filter(Boolean).map((r) => r.replace(/\/+$/, ''));
+  // 윈도우 드라이브 경로는 대소문자·구분자를 안 가린다(pathKey) — 대소문자만 다른 HQ 세션이 통째로 빠졌다(2026-10-09 윈도우 실기기). 맥은 그대로
+  const rs = roots.filter(Boolean).map(pathKey);
   if (!rs.length) return sessions;
-  return sessions.filter((s) => rs.some((r) => s.cwd === r || s.cwd.startsWith(`${r}/`)));
+  return sessions.filter((s) => { const k = pathKey(s.cwd); return rs.some((r) => k === r || k.startsWith(`${r}/`)); });
 }
 
 /** 앱을 끄며 같이 끌 세션 — Chammo 가 다루는 폴더(프로젝트 폴더·HQ) 안만. 폴더를 모르면 빈 목록(withinRoots 와 달리 전부로 넘어가지 않는다) */

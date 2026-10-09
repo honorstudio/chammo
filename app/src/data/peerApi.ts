@@ -3,8 +3,11 @@
 // 이름·모양을 한 곳에 둬서 두 쪽이 어긋나지 않게 한다(domain/* 은 이 모양을 그대로 쓴다)
 import { fwdEnv } from '../domain/paths';
 import type { TranscriptChunk } from './tauri';
+import { parseTaskChunk } from '../domain/taskTail';
 
-export type MobileEnv = { assistantName: string; language: string; devRoot: string; extraProjects: string[]; hqDir: string };
+/** os = 붙은 컴퓨터(macos·windows·linux) — 폰 글이 '맥'/'PC'를 고른다. 0.2.5 이하 서버엔 없다 */
+/** voiceBase = 설정 목소리(Supertonic 일 때만, 아니면 null — 참모마다 목소리를 못 바꾼다). 0.2.5 이하 서버엔 없다 */
+export type MobileEnv = { assistantName: string; language: string; devRoot: string; extraProjects: string[]; hqDir: string; os?: string; voiceBase?: string | null };
 
 /** 운반 — 2xx 가 아니면 서버 글(없으면 HTTP 번호)을 메시지로 던진다(폰 서버의 'not working'·'too soon' 같은 글을 그대로 읽는다) */
 export type Io = {
@@ -39,7 +42,8 @@ export function makeApi(io: Io) {
     /** 앞 대화 — before(첫 줄 자리) 앞의 온전한 줄들. start = 그 첫 줄 자리(0 이면 대화 처음) */
     readTranscriptBefore: (sessionId: string, before: number) =>
       io.json<{ text: string; start: number }>(`/api/transcript?id=${encodeURIComponent(sessionId)}&before=${before}`),
-    readTasks: () => io.text('/api/tasks'),
+    /** 작업 기록 이어 받기 — from = 지난번 next(처음 0). 이어 붙이기는 domain/taskTail makeTaskTail */
+    readTasksSince: (from: number) => io.text(`/api/tasks?from=${from}`).then(parseTaskChunk),
     routinesList: () => io.text('/api/routines'),
     readUsage: () => io.text('/api/usage'),
     /** 맥 부하 — 앱이 적는 load.json + 빌드·시뮬레이터·갤럭시 자리(읽기만). 해석은 domain/phoneLoad */

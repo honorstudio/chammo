@@ -61,16 +61,18 @@ fn claude_json() -> String {
     std::fs::read_to_string(crate::tools::cfg().json).unwrap_or_default()
 }
 
-/// 이 폴더를 띄우기 전에 믿음을 챙길 칸들 — 동의한 폴더 아래이고 아직 안 믿으면 [동의 폴더, 그 폴더]
+/// 이 폴더를 띄우기 전에 믿음을 챙길 칸들 — 동의한 폴더 아래면 [동의 폴더, 그 폴더] 중 그 칸 자체가 아직 안 믿는 것.
+/// 물려받은 믿음은 안 친다 — 윈도우 claude(2.1.286)는 부모만 믿으면 'Workspace not trusted' 였다(2026-10-09 윈도우 실기기)
 pub fn needed(text: &str, consent: Option<&str>, dir_real: &str) -> Vec<String> {
     let Some(root) = consent else { return Vec::new() };
-    if !covers(root, dir_real) || crate::setup::trusted_in(text, dir_real) {
+    if !covers(root, dir_real) {
         return Vec::new();
     }
     let mut keys = vec![root.to_string()];
     if dir_real != root {
         keys.push(dir_real.to_string());
     }
+    keys.retain(|k| !crate::setup::trusted_exact(text, k));
     keys
 }
 
@@ -182,9 +184,15 @@ mod tests {
         assert_eq!(needed(none, Some("/u/dev"), "/u/dev/shop"), vec!["/u/dev".to_string(), "/u/dev/shop".to_string()]);
         // 동의 폴더 자체
         assert_eq!(needed(none, Some("/u/dev"), "/u/dev"), vec!["/u/dev".to_string()]);
-        // 이미 믿으면(물려받음 포함) 안 적는다
+        // 둘 다 이미 믿으면 안 적는다
+        let both = r#"{"projects":{"/u/dev":{"hasTrustDialogAccepted":true},"/u/dev/shop":{"hasTrustDialogAccepted":true}}}"#;
+        assert!(needed(both, Some("/u/dev"), "/u/dev/shop").is_empty());
+        // 부모만 믿으면 그 폴더 칸만 — 윈도우 claude(2.1.286)는 부모 믿음을 안 물려줘 'Workspace not trusted' 였다(2026-10-09 윈도우 실기기)
         let ok = r#"{"projects":{"/u/dev":{"hasTrustDialogAccepted":true}}}"#;
-        assert!(needed(ok, Some("/u/dev"), "/u/dev/shop").is_empty());
+        assert_eq!(needed(ok, Some("/u/dev"), "/u/dev/shop"), vec!["/u/dev/shop".to_string()]);
+        // 윈도우 칸은 구분자·대소문자가 달라도 같은 칸
+        let win = r#"{"projects":{"C:/Users/Me/Desktop/dev":{"hasTrustDialogAccepted":true},"C:\\Users\\Me\\Desktop\\dev\\Shop":{"hasTrustDialogAccepted":true}}}"#;
+        assert!(needed(win, Some("C:/Users/Me/Desktop/dev"), "C:/Users/Me/Desktop/dev/shop").is_empty());
         // claude 가 덮어 false 가 된 경우 — 다시 적는다
         let reset = r#"{"projects":{"/u/dev":{"hasTrustDialogAccepted":false}}}"#;
         assert_eq!(needed(reset, Some("/u/dev"), "/u/dev/shop").len(), 2);

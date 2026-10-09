@@ -77,9 +77,21 @@ describe('avatarState — 앱이 아는 세션 상태 → 프사 상태', () => 
   it('일함·물음·쉼·꺼짐', () => {
     expect(avatarState({ state: 'working' })).toBe('work');
     expect(avatarState({ state: 'blocked' })).toBe('ask');
-    expect(avatarState({ state: 'idle', awaiting: true })).toBe('ask');
     expect(avatarState({ state: 'idle' })).toBe('rest');
     expect(avatarState(undefined)).toBe('off');
+  });
+  it('CLI awaiting(턴 끝남)은 묻는 얼굴이 아니다 — 상태 말(statusWord)과 같은 판단(2026-10-04 오피스 A 남은 것 ①)', () => {
+    const ended = { state: 'idle' as const, awaiting: true }; // 앱 Session 모양 그대로(awaiting 은 넘어와도 안 본다)
+    expect(avatarState(ended)).toBe('rest');
+  });
+  it('상태(ActivityStatus)를 주면 그 한 표로 — 묻는 답·기다림·로그인은 묻는 얼굴, 답함·잠듦은 쉼', () => {
+    expect(avatarState({ state: 'idle' }, 'asks')).toBe('ask');
+    expect(avatarState({ state: 'idle' }, 'login')).toBe('ask');
+    expect(avatarState({ state: 'blocked' }, 'blocked')).toBe('ask');
+    expect(avatarState({ state: 'idle' }, 'done')).toBe('rest');
+    expect(avatarState({ state: 'idle' }, 'stale')).toBe('rest');
+    expect(avatarState({ state: 'working' }, 'working')).toBe('work');
+    expect(avatarState(undefined, 'asks')).toBe('off');
   });
 });
 

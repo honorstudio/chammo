@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
-import { browserBig, browserScreen, tabStrip, takeoverLine, unpackFrame, type CdpPage, type Live } from '../domain/agentBrowser';
+import { browserBig, browserScreen, tabStrip, takeoverLine, unpackFrame, type CdpPage, type Live, type PagePermission, type WrapperDialog } from '../domain/agentBrowser';
 import { tr } from '../i18n';
 import { IconCollapse, IconExpand, IconHide, IconMaximize, IconRefresh } from './Icons';
 import { handBack, openAgentModal, takeOver } from './AgentBrowserModal';
@@ -105,13 +105,13 @@ export function useAgentTabs(profile: string, every = 1000) {
   // dialog = 지금 탭 대화상자, dialogTabs = 대화상자가 떠 있는 탭들, stuck = 지금 탭이 멈춤(답이 안 들어감·앱이 모르는 대화상자 — 크롬에서 보기로 푼다)
   // error = 화면 받기 실패 이유(Rust 일꾼) — 다시 붙으면 지워진다. attached = 일꾼이 붙어 탭 목록을 읽음(그런데 탭 0개면 닫힘)
   // popup = 크롬이 이 그림 밖에 자기 창을 띄움(패스키·Touch ID·폰 QR) — 크롬에서 보기로 꺼내야 보인다
-  const [t, setT] = useState<{ pages: CdpPage[]; current: string | null; pinned: boolean; shown: boolean; dialog: AgentDialog | null; dialogTabs: string[]; stuck: boolean; chooser: string | null; reopened: boolean; dropped: number; error: string; attached: boolean; popup: boolean }>({ pages: [], current: null, pinned: false, shown: false, dialog: null, dialogTabs: [], stuck: false, chooser: null, reopened: false, dropped: 0, error: '', attached: false, popup: false });
+  const [t, setT] = useState<{ pages: CdpPage[]; current: string | null; pinned: boolean; shown: boolean; dialog: AgentDialog | null; dialogTabs: string[]; stuck: boolean; chooser: string | null; reopened: boolean; dropped: number; error: string; attached: boolean; popup: boolean; wrapperDialog: WrapperDialog | null; permission: PagePermission | null }>({ pages: [], current: null, pinned: false, shown: false, dialog: null, dialogTabs: [], stuck: false, chooser: null, reopened: false, dropped: 0, error: '', attached: false, popup: false, wrapperDialog: null, permission: null });
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     let alive = true;
     const tick = () => {
       setNow(Date.now());
-      void invoke<typeof t>('agent_tabs', { profile }).then((x) => { if (alive) setT({ ...x, dialog: x.dialog ?? null, dialogTabs: x.dialogTabs ?? [], chooser: x.chooser ?? null, error: x.error ?? '', attached: !!x.attached, popup: !!x.popup }); }, () => {});
+      void invoke<typeof t>('agent_tabs', { profile }).then((x) => { if (alive) setT({ ...x, dialog: x.dialog ?? null, dialogTabs: x.dialogTabs ?? [], chooser: x.chooser ?? null, error: x.error ?? '', attached: !!x.attached, popup: !!x.popup, wrapperDialog: x.wrapperDialog ?? null, permission: x.permission ?? null }); }, () => {});
     };
     tick();
     const id = window.setInterval(tick, every);

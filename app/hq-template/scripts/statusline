@@ -11,7 +11,7 @@ Chammo 세션의 상태줄 — 앱이 읽을 사용량을 데이터 폴더에 �
 Writes <data>/statusline.json (5-hour / weekly usage for the top bar) and <data>/ctx/<session_id>.json
 (conversation fill per session for the sidebar). Then, if the user has their own statusLine in
 ~/.claude/settings.json, it runs that with the same input and prints its output — so nothing changes on
-screen. Otherwise it prints a short "model · 42%".
+screen. Otherwise it prints "branch · model · effort · 42%".
 """
 import json, os, subprocess, sys, time
 
@@ -67,10 +67,49 @@ def user_command(home=None):
     return cmd
 
 
-def fallback(d):
-    model = (d.get('model') or {}).get('display_name') or ''
+E = '\x1b['
+RESET, DIM, CYAN, YELLOW, RED = E + '0m', E + '2m', E + '36m', E + '33m', E + '31m'
+
+
+def plain(line):
+    """색 없는 글(시험용)"""
+    import re
+    return re.sub(r'\x1b\[[0-9;]*m', '', line)
+
+
+def branch(cwd):
+    """git 가지 — 고친 게 있으면 *, 올려 둔 게 있으면 +. 저장소가 아니거나 git 이 없으면 ''"""
+    def git(*a):
+        return subprocess.run(['git', '-C', cwd, '--no-optional-locks', *a], capture_output=True, text=True, timeout=2)
+    try:
+        if git('rev-parse', '--is-inside-work-tree').returncode != 0:
+            return ''
+        b = git('branch', '--show-current').stdout.strip() or git('rev-parse', '--short', 'HEAD').stdout.strip()
+        if git('diff', '--quiet').returncode != 0:
+            b += '*'
+        if git('diff', '--cached', '--quiet').returncode != 0:
+            b += '+'
+        return b
+    except (OSError, subprocess.SubprocessError):
+        return ''
+
+
+def fallback(d, branch_of=branch):
+    """사용자 상태줄이 없을 때 — 가지 · 모델 · 노력 · 쓴 대화 %(앱 사이드바와 같은 기준: 60 노랑 · 80 빨강). 기본 16색만(터미널 테마가 맞춰 준다)"""
+    parts = []
+    cwd = (d.get('workspace') or {}).get('current_dir') or d.get('cwd')
+    b = branch_of(cwd) if cwd else ''
+    if b:
+        parts.append(f'{CYAN}{b}{RESET}')
+    parts.append((d.get('model') or {}).get('display_name') or '')
+    effort = (d.get('effort') or {}).get('level')
+    if effort:
+        parts.append(f'{DIM}{effort}{RESET}')
     used = (d.get('context_window') or {}).get('used_percentage')
-    return f'{model} · {round(used)}%' if used is not None else model
+    if used is not None:
+        u = round(used)
+        parts.append(f'{RED if u >= 80 else YELLOW if u >= 60 else DIM}{u}%{RESET}')
+    return f'{DIM} · {RESET}'.join(parts)
 
 
 def main():

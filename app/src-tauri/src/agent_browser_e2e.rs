@@ -49,7 +49,7 @@ fn start(profile: &str) -> (Chrome, Live) {
         let mut l = t.lines();
         Some((l.next()?.trim().parse::<u16>().ok()?, l.next()?.trim().to_string()))
     });
-    let live = Live { profile: profile.into(), pid, session_pid: 1, port, ws_path: ws, url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None };
+    let live = Live { profile: profile.into(), pid, session_pid: 1, port, ws_path: ws, url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None, scripts: 0 };
     std::fs::create_dir_all(live_dir()).unwrap();
     std::fs::write(live_dir().join(format!("{profile}.json")), serde_json::to_string(&live).unwrap()).unwrap();
     (c, live)
@@ -124,6 +124,8 @@ fn agent_dialog_e2e() {
     let mut owner = Owner::new(&live);
     let (a, sa) = owner.tab("data:text/html,<title>A</title><p>A");
     let (b, _sb) = owner.tab("data:text/html,<title>B</title><p>B");
+    // 대화상자 답은 사람 조작 — 개입 중에만 받는다(2026-10-06 98bd15ce). 안 켜면 agent_dialog 가 조용히 버려 '① 풀림'이 늘 시간 초과였다
+    agent_takeover(profile.clone(), live.pid, None).unwrap();
 
     // ① 탭을 바꿨다 돌아와 취소 — 그 대화상자를 받은 세션으로 답해야 풀린다. 다른 탭을 보는 동안엔 모달에 안 뜬다
     let w = Watch::on(&profile);
@@ -186,6 +188,7 @@ fn agent_dialog_e2e() {
     drop(w);
 
     let _ = owner.eval(&sa, "1");
+    let _ = agent_handback(profile.clone(), live.pid);
     let _ = std::fs::remove_file(live_dir().join(format!("{profile}.json")));
 }
 
@@ -286,4 +289,58 @@ fn agent_script_e2e() {
     wait_for("주인이 끝나면 목록에서 빠짐", 15, || (!agent_lives().iter().any(|l| l.profile == profile) && !crate::platform::pid_alive(holder)).then_some(()));
     assert!(!crate::config::data_file("browser").join("locks").join(format!("{profile}.lock")).exists(), "락 반납");
     drop(w);
+}
+
+/// 숨긴 크롬의 위치·알림 말풍선 대신 모달에서 허용·거부(roadmap 부채 agent-browser-modal ②) — 진짜 크롬(헤드리스)·작은 http 서버로.
+/// 일꾼이 붙을 때 넣은 감시 스크립트가 '물어봄'을 알리고, 모달 답(Browser.setPermission)으로 페이지가 이어 가는지.
+/// `CHAMMO_HOME=<빈 시험 폴더> cargo test agent_perm_e2e -- --ignored --nocapture --test-threads=1`
+#[test]
+#[ignore]
+fn agent_perm_e2e() {
+    let profile = format!("e2e-perm-{}", std::process::id());
+    let (_chrome, live) = start(&profile);
+    // 보안 출처(127.0.0.1)여야 위치·알림 권한을 묻는다 — data: 는 안 된다
+    let srv = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = srv.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for s in srv.incoming().flatten() {
+            let mut s = s;
+            let mut buf = [0u8; 2048];
+            let _ = std::io::Read::read(&mut s, &mut buf);
+            let body = "<title>perm</title><script>window.log=[]</script>";
+            let _ = std::io::Write::write_all(&mut s, format!("HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).as_bytes());
+        }
+    });
+    let mut owner = Owner::new(&live);
+    let (a, sa) = owner.tab(&format!("http://127.0.0.1:{port}/"));
+    owner.cdp.call("Emulation.setGeolocationOverride", serde_json::json!({ "latitude": 37.5, "longitude": 127.0, "accuracy": 10 }), Some(&sa), |_| {}).unwrap();
+    let w = Watch::on(&profile);
+    show(&profile, &a);
+    std::thread::sleep(Duration::from_millis(500)); // 감시 스크립트가 지금 문서에 들어갈 틈
+    agent_takeover(profile.clone(), live.pid, None).unwrap(); // 권한 답은 사람 조작 — 개입 중에만
+
+    // ① 위치 — 모달에 뜨고, 허용하면 페이지가 위치를 받는다
+    owner.eval(&sa, "navigator.geolocation.getCurrentPosition(p => log.push('geo-ok ' + p.coords.latitude), e => log.push('geo-err ' + e.code)); 1").unwrap();
+    let p = wait_for("위치 요청이 모달에", 10, || agent_tabs(profile.clone()).permission);
+    assert_eq!(p, serde_json::json!({ "kind": "geolocation", "origin": format!("http://127.0.0.1:{port}") }));
+    agent_permission(profile.clone(), live.pid, Some(a.clone()), true);
+    let log = wait_for("위치 허용 뒤 페이지", 10, || owner.eval(&sa, "log.join(',')").ok().filter(|v| v.as_str().is_some_and(|s| !s.is_empty())));
+    assert_eq!(log, "geo-ok 37.5");
+    assert!(agent_tabs(profile.clone()).permission.is_none());
+
+    // ② 알림 — 거부하면 페이지가 denied 를 받는다
+    owner.eval(&sa, "Notification.requestPermission().then(r => log.push('notif ' + r)); 1").unwrap();
+    let p = wait_for("알림 요청이 모달에", 10, || agent_tabs(profile.clone()).permission);
+    assert_eq!(p["kind"], "notifications");
+    agent_permission(profile.clone(), live.pid, None, false);
+    let log = wait_for("알림 거부 뒤 페이지", 10, || owner.eval(&sa, "log.join(',')").ok().filter(|v| v.as_str().is_some_and(|s| s.contains("notif"))));
+    assert_eq!(log, "geo-ok 37.5,notif denied");
+
+    // ③ 이미 정해진 권한은 다시 안 묻는다(감시 스크립트가 바로 원래대로)
+    owner.eval(&sa, "navigator.geolocation.getCurrentPosition(p => log.push('again'), e => log.push('again-err')); 1").unwrap();
+    wait_for("다시 물으면 바로", 10, || owner.eval(&sa, "log.join(',')").ok().filter(|v| v.as_str().is_some_and(|s| s.contains("again"))));
+    assert!(agent_tabs(profile.clone()).permission.is_none());
+    drop(w);
+    let _ = agent_handback(profile.clone(), live.pid);
+    let _ = std::fs::remove_file(live_dir().join(format!("{profile}.json")));
 }

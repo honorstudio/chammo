@@ -1,5 +1,5 @@
 // 폰 화면 판단 — 예약 담당 참모, 세션 목록에 붙은 컨텍스트, 그림 붙여 보내기 글. 화면·통신 없음
-import { tr } from '../i18n';
+import { josa, machine, tr } from '../i18n';
 import { askView, summarizeTranscript } from './activity';
 import { chatBusy, splitPaths, type ChatItem } from './chat';
 import { parseCtx, type Ctx } from './ctx';
@@ -111,7 +111,7 @@ export function waitingList(orchs: Session[], asks: Record<string, { ts: string;
   for (const o of orchs) {
     const a = asks[o.id];
     if (a) out.push({ orch: o.id, name: o.name, kind: 'ask', ts: a.ts, q: a.q, ...(a.lead ? { lead: a.lead } : {}) });
-    if (o.state === 'blocked') out.push({ orch: o.id, name: o.name, kind: 'blocked', ts: '', q: '확인창·선택지에서 멈춰 있어요 — 맥에서 열어 골라 주세요' });
+    if (o.state === 'blocked') out.push({ orch: o.id, name: o.name, kind: 'blocked', ts: '', q: `확인창·선택지에서 멈춰 있어요 — ${machine()}에서 열어 골라 주세요` });
   }
   const last = new Map<string, TaskEvent>();
   for (const e of events) if (e.type !== 'send') last.set(e.task, e);
@@ -164,10 +164,64 @@ export function keyboardOpen(tallest: { w: number; h: number }, w: number, h: nu
 /** 화면 틀(.m-app) 자리 — 글을 쓰는 중(키보드·입력칸 포커스)이면 iOS 가 문서를 올린 만큼(visualViewport.offsetTop) 따라가 입력줄을 키보드 위에 두고,
  *  아니면 맨 위(0)에 붙이고 밀린 문서를 되돌린다(scroll). 키보드가 닫힌 뒤에도 offsetTop 을 그대로 따라가서
  *  화면 틀이 상태 막대 높이(61pt)만큼 내려가 위가 비고 입력칸이 잘렸다(2026-10-04 사용자 실기기, 내비 라이브 액티비티 떠 있을 때). h = 화면 틀 높이 */
-export function frameAt(o: { vvTop: number; vvH: number; layoutH: number; scrollY: number; kb: boolean; editing: boolean }): { top: number; h: number; scroll: boolean } {
+export function frameAt(o: { vvTop: number; vvH: number; layoutH: number; scrollY: number; kb: boolean; editing: boolean; fullH?: number }): { top: number; h: number; scroll: boolean } {
   if (o.kb || o.editing) return { top: o.vvTop, h: o.vvH, scroll: false };
   // 높이도 레이아웃 높이(documentElement.clientHeight = height:100%) — 키보드를 연 채 돌리고 닫으면 보이는 높이가 4px 모자란 채 남았다(2026-10-04 시뮬레이터)
-  return { top: 0, h: o.layoutH || o.vvH, scroll: o.vvTop !== 0 || o.scrollY !== 0 };
+  // fullH = 유령 키보드(ghostKeyboard)일 때 같은 폭에서 본 가장 큰 높이 — 레이아웃 높이까지 키보드만큼 줄어 남는다(iOS 26)
+  return { top: 0, h: Math.max(o.layoutH || o.vvH, o.fullH ?? 0), scroll: o.vvTop !== 0 || o.scrollY !== 0 };
+}
+
+/** 유령 키보드를 볼 때까지 기다리는 시간 — 키보드가 내려가는 동안(0.3초쯤)은 진짜로 높이가 작다 */
+export const GHOST_MS = 700;
+/** 유령 키보드 — 키보드를 닫았는데 iOS 홈 화면 앱이 innerHeight·visualViewport.height 를 키보드 높이만큼 작은 채 둔다(WebKit 297779).
+ *  우리 판정(keyboardOpen)은 그걸 '키보드가 떠 있다'로 읽어 화면 틀을 작은 높이에 두고 시트를 전체로 붙인 채 멈췄다
+ *  (2026-10-08 사용자 실기기 — 입력칸이 화면 가운데, 그 아래 빈 검은 바닥). 키보드는 글 쓰는 칸에 포커스가 있어야만 뜨니,
+ *  포커스 없이 GHOST_MS 넘게 '키보드 높이'면 유령으로 보고 키보드 없음으로 그린다. quietMs = 마지막으로 쓰는 중이었거나 포커스가 빠진 뒤 지난 시간.
+ *  터치 없는 화면(데스크톱 창을 줄인 것)은 작은 높이가 진짜라 손대지 않는다 */
+export function ghostKeyboard(o: { kb: boolean; typing: boolean; quietMs: number; touch: boolean }): boolean {
+  return o.kb && !o.typing && o.touch && o.quietMs >= GHOST_MS;
+}
+
+/** 보이는 높이 고르기 — 보통은 visualViewport.height. iOS 26 홈 화면 앱은 한 번 꼬이면 그 값이 엉터리로 남는다(2026-10-09 사용자 실기기 진단:
+ *  쉴 때 innerHeight - 874 = -62, 키보드를 열면 innerHeight 가 이미 키보드만큼 준 데서 또 빠져 145px — 화면 틀이 쪼그라들어 입력칸이 손잡이 밑에 붙고 아래가 비었다).
+ *  0 이하이거나 innerHeight 보다 크면(보이는 화면이 레이아웃보다 클 수는 없다) innerHeight, innerHeight 가 벌써 키보드를 따라갔는데(fullH 보다 150px 넘게 작음)
+ *  vvH 가 그보다 더 작으면 innerHeight. innerHeight 가 키보드를 안 따라가는 브라우저(iOS 18 이하)는 vvH 가 맞아서 그대로. fullH = 레이아웃 높이와 같은 폭에서 본 가장 큰 높이 중 큰 쪽 */
+export function visibleHeight(o: { vvH: number | null; innerH: number; fullH: number }): number {
+  if (o.vvH === null || !(o.vvH > 0) || o.vvH > o.innerH + 1) return o.innerH;
+  if (o.vvH < o.innerH - 1 && o.innerH < o.fullH - 150) return o.innerH;
+  return o.vvH;
+}
+
+/** 보이는 화면 한 번 읽기(useViewport read 의 계산 몫) — 높이·폭을 고르고, 키보드·유령 판정, 화면 틀 자리까지.
+ *  vvH·vvW = visualViewport 높이·폭(없으면 null), innerH·innerW = window.innerHeight·innerWidth, layoutH = documentElement.clientHeight */
+export function readViewport(o: {
+  vvH: number | null; vvW: number | null; vvTop: number; innerH: number; innerW: number; layoutH: number; scrollY: number;
+  tallest: { w: number; h: number }; editing: boolean; quietMs: number; touch: boolean;
+}): { h: number; top: number; kb: boolean; scroll: boolean; ghost: boolean; tallest: { w: number; h: number }; fixed: boolean } {
+  // 폭 0(가려진 채 읽힘)을 그대로 쓰면 같은 폭 기준(tallest)이 0 으로 새로 잡혀 키보드 판정이 엇나간다
+  const w = o.vvW !== null && o.vvW > 0 ? o.vvW : o.innerW;
+  const h = visibleHeight({ vvH: o.vvH, innerH: o.innerH, fullH: Math.max(o.layoutH, w === o.tallest.w ? o.tallest.h : 0) });
+  const k = keyboardOpen(o.tallest, w, h, o.innerH);
+  const ghost = ghostKeyboard({ kb: k.kb, typing: o.editing, quietMs: o.quietMs, touch: o.touch });
+  const kb = k.kb && !ghost;
+  const f = frameAt({ vvTop: o.vvTop, vvH: h, layoutH: o.layoutH, scrollY: o.scrollY, kb, editing: o.editing, fullH: ghost ? k.tallest.h : undefined });
+  // fixed = 엉터리 vvH 를 innerHeight 로 바꿨나(진단 줄)
+  return { h: f.h, top: f.top, kb, scroll: f.scroll, ghost, tallest: k.tallest, fixed: o.vvH !== null && h !== o.vvH };
+}
+
+/** 폰 진단 한 줄 — 키=값을 띄어 쓴다. 값은 숫자(반올림)·참거짓(1·0)·짧은 영문 낱말(판 번호·태그 이름)만, 나머지는 버린다 —
+ *  입력칸 글 같은 게 실수로 실려도 맥 기록으로 안 나가게(서버도 같은 모양만 받는다) */
+export function diagLine(f: Record<string, number | boolean | string>): string {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(f)) {
+    if (!/^[A-Za-z]{1,12}$/.test(k)) continue;
+    let val: string | null = null;
+    if (typeof v === 'boolean') val = v ? '1' : '0';
+    else if (typeof v === 'number') val = Number.isFinite(v) ? String(Math.round(v)) : null;
+    else if (/^[A-Za-z0-9._-]{1,24}$/.test(v)) val = v;
+    if (val !== null) out.push(`${k}=${val}`);
+  }
+  return out.join(' ');
 }
 
 /** 그려진 자리 검사 — 키보드 없이 화면 틀의 실제 위(rectTop, getBoundingClientRect)가 두 번 연달아 같은 만큼(1px 안) 어긋나 있으면
@@ -292,7 +346,7 @@ export function wakeFailText(message: string, mode: 'wake' | 'make'): { text: st
     case 'too soon':
       return { text: tr('방금 눌렀어요 — 잠깐 뒤에 다시 해 주세요', 'Just tried — give it a moment'), refresh: false };
     case 'mac side took too long':
-      return { text: tr('맥이 바빠서 답이 늦어요 — 잠시 뒤 목록을 봐 주세요', 'The Mac is busy — check the list in a moment'), refresh: true };
+      return { text: tr(`${josa(machine(), '이', '가')} 바빠서 답이 늦어요 — 잠시 뒤 목록을 봐 주세요`, `The ${machine()} is busy — check the list in a moment`), refresh: true };
     case 'name taken':
       return { text: tr('이미 있는 이름이에요', 'That name is taken'), refresh: false };
     case 'bad name':
@@ -300,11 +354,11 @@ export function wakeFailText(message: string, mode: 'wake' | 'make'): { text: st
     case 'Load failed':
     case 'Failed to fetch':
     case 'NetworkError when attempting to fetch resource.':
-      return { text: tr('맥에 닿지 않아요 — 연결을 확인해 주세요', "Can't reach the Mac — check the connection"), refresh: false };
+      return { text: tr(`${machine()}에 닿지 않아요 — 연결을 확인해 주세요`, `Can't reach the ${machine()} — check the connection`), refresh: false };
   }
   return mode === 'wake'
-    ? { text: tr('못 켰어요 — 맥에서 확인해 주세요', "Couldn't start it — check on the Mac"), refresh: true }
-    : { text: tr('못 만들었어요 — 맥에서 확인해 주세요', "Couldn't create it — check on the Mac"), refresh: false };
+    ? { text: tr(`못 켰어요 — ${machine()}에서 확인해 주세요`, `Couldn't start it — check on the ${machine()}`), refresh: true }
+    : { text: tr(`못 만들었어요 — ${machine()}에서 확인해 주세요`, `Couldn't create it — check on the ${machine()}`), refresh: false };
 }
 
 const RANK: Record<string, number> = { blocked: 0, working: 1 };

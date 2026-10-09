@@ -483,6 +483,58 @@ fn real_world_false_positives_stay_quiet() {
     assert!(ev.is_empty(), "오탐: {ev:#?}");
 }
 
+/// 진단 v2 남은 헛경고(2026-10-02) — 다른 기계 경로·돌려야 생기는 파일·예시 이름·다른 저장소 경로·"없는 게 정상"인 자리.
+/// 같은 파일의 진짜 낡은 경로는 그대로 잡혀야 한다.
+#[test]
+fn v2_false_positives_stay_quiet_but_real_ones_stay() {
+    let mut h = H::new();
+    h.project("dev/app");
+    h.project("dev/shopapp");
+    h.put("dev/shopapp/src/di/container.ts", "x");
+    h.project("dev/third"); // devRoot 처럼 프로젝트가 셋 이상 든 폴더만 저장소 자리
+    h.project("Desktop/solo"); // 하나뿐 — `~/Desktop/…` 는 저장소가 아니다
+    h.put("vol/로그/x", "x");
+    h.project("vol/a");
+    h.project("vol/b");
+    h.project("vol/c"); // 한글 폴더 이름은 저장소 이름이 아니다(줄의 '로그' 낱말)
+    h.put(
+        "dev/app/CLAUDE.md",
+        &[
+            "다른 기계: 설정은 `~/Library/LaunchAgents/disabled/` 로, 앱은 `~/Applications/Shot.app`",
+            "생기는 것: 오래된 메모를 `docs/starter-archive.md`로 이관",
+            "생기는 것: 결과는 `out/report.md` 에 저장한다",
+            "이름 바꾸기: `assets/node_modules` → `assets/modules`",
+            "예: `news/병원/2026-06-08_주제.md`",
+            "다른 저장소: SHOPAPP의 `di/container.ts` 와 ACME `docs/audits/a.md` (원본 `~/Desktop/dev/acme`)",
+            "없앤 자리: `docs/plans/` 는 폐지됐다 — 다시 만들지 말 것",
+            "없는 게 정상: `CLAUDE.local.md` 처럼 `docs/local.md` 가 없으면 만든다",
+            "규약 자리: 사용자 에이전트는 `~/.claude/agents/`",
+            "진짜 낡음: `docs/gone.md` 를 읽는다",
+            // 실측(사용자 맥): 긴 줄 먼 곳의 '없으면', 한글 폴더 이름(로그)이 진짜를 지웠다 · 프로젝트 하나뿐인 폴더(Desktop)는 저장소 자리가 아니다
+            "진짜 낡음 둘: 보안은 `docs/gone2.md` 가이드를 따른다 — 아주 긴 설명이 이어지고 또 이어져서 한참 뒤에야 나오는 말, 스테이징 키가 없으면 우회가 걸린다",
+            "진짜 낡음 셋: 키는 평문이다(실측: `docs/gone3.md`에 키). 로그·에러리포트에도 남기지 않는다",
+            "진짜 낡음 넷: `~/Desktop/gone4.pdf`",
+        ]
+        .join("\n"),
+    );
+    h.skill(
+        "dev/app/.claude/skills",
+        "design-engineer",
+        "디자인",
+        "If yes, write to `.design-engineer/system.md`.\nRead `.design-engineer/system.md` and apply.\n",
+    );
+    let s = h.scan();
+    let ev: Vec<_> = s
+        .diagnoses
+        .iter()
+        .filter(|d| d.rule.starts_with("stale."))
+        .flat_map(|d| d.evidence.clone())
+        .collect();
+    let mut got: Vec<&str> = ev.iter().map(|e| e.rsplit(" → ").next().unwrap()).collect();
+    got.sort();
+    assert_eq!(got, vec!["docs/gone.md", "docs/gone2.md", "docs/gone3.md", "~/Desktop/gone4.pdf"], "헛경고·놓친 것: {ev:#?}");
+}
+
 // ───────────────────────────── 4. 충돌
 
 const GLOBAL_BANS: &str = "# 전역\n\

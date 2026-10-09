@@ -21,7 +21,7 @@ describe('교훈 파일', () => {
   });
 });
 
-// 교훈이 쌓이면 스킬로 묶자고 참모에게 부탁한다 — 참모가 lesson-review 로 묶음을 짜서 결정 대기함 카드로 묻는다(2026-10-08, docs/plans/2026-10-06-self-learning.md)
+// 교훈이 쌓이면 스킬로 묶자고 참모에게 부탁한다 — 참모가 lesson-review 로 묶음을 짜서 카드 없이 lesson-group 으로 묶고 한 줄만 보고한다(2026-10-08, docs/plans/2026-10-06-self-learning.md)
 describe('스킬로 묶기', () => {
   it('scripts/task 의 LESSON_MAX 와 같은 기준 — 넘을 때만, 공통 칸은 아직 아님', () => {
     expect(LESSON_MAX).toBe(12);
@@ -30,11 +30,13 @@ describe('스킬로 묶기', () => {
     expect(shouldGroup('_common', 40)).toBe(false);
   });
 
-  it('부탁 글은 lesson-review 명령과 사람에게 카드로 물으라는 말을 담는다', () => {
+  it('부탁 글은 lesson-review·lesson-group 명령과 결과 한 줄만, 버리기만 카드라는 말을 담는다', () => {
     const t = groupRequest('honor-orchestrator', 188);
     expect(t).toContain('scripts/task lesson-review honor-orchestrator');
     expect(t).toContain('188');
-    expect(t).toContain('lesson-propose');
+    expect(t).toContain('lesson-group');
+    expect(t).toContain('lesson-drop');
+    expect(t).not.toContain('lesson-propose');
     expect(t).not.toContain('\n');
   });
 });

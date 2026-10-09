@@ -9,15 +9,16 @@ __doc__ = """Read and answer a session's choice prompt (AskUserQuestion) for it.
 하위 세션이 띄운 선택지 창(AskUserQuestion)을 비서가 읽고 대신 답한다.
 
   scripts/choice show   <session id>            -> the pending questions with numbered options
-  scripts/choice answer <session id> <n> ...    -> one option number per question (e.g. answer c0ffee01 1 1)
+  scripts/choice answer <session id> <pick> ... -> one pick per question (e.g. answer c0ffee01 1 2,3 "t:my words")
+      pick = 2 (one option) · 1,3 (multi-select) · t:<text> (type your own) · 1,t:<text> (multi-select + own text)
 
 Session id = the 8-char id in `claude agents --json`; the app hands it to you when it says a session is stuck.
 Questions come from the transcript (jsonl) — `claude logs` is raw escape codes. Answers are keys typed into
 `claude attach` — SendMessage does not answer a choice prompt.
 Answer easy-to-undo ones (wording, color, layout) with the recommended option; ask the user first when it's theirs.
-Multi-select and free-text answers are not supported — ask the user to open that session's screen.
+On a Mac it reads the session's screen before every key and checks the review screen before submitting.
 """
-import glob, json, os, shutil, signal, subprocess, sys, time
+import glob, json, os, re, shutil, signal, subprocess, sys, time, unicodedata
 
 
 def data_dir(home=None, env=None, exists=os.path.isdir):
@@ -43,7 +44,7 @@ LANG = 'en' if load_config(data_dir()).get('language') == 'en' else 'ko'
 def T(ko, en):
     return en if LANG == 'en' else ko
 
-DOWN, ENTER = '\x1b[B', '\r'
+DOWN, UP, RIGHT, LEFT, ENTER, CTRL_U = '\x1b[B', '\x1b[A', '\x1b[C', '\x1b[D', '\r', '\x15'
 
 
 def claude_bin():
@@ -83,27 +84,148 @@ def pending(lines):
 def render(questions):
     out = []
     for i, q in enumerate(questions, 1):
-        out.append(f'{i}) {q.get("question", "")}' + (T('  [여러 개 고르기 — 못 넣음]', '  [multi-select — not supported]') if q.get('multiSelect') else ''))
+        out.append(f'{i}) {q.get("question", "")}' + (T('  [여러 개 — 1,3 처럼]', '  [multi-select — like 1,3]') if q.get('multiSelect') else ''))
         for n, o in enumerate(q.get('options') or [], 1):
             desc = f' — {o["description"]}' if o.get('description') else ''
             out.append(f'   {n}. {o.get("label", "")}{desc}')
+    out.append(T('직접 입력은 "t:<글>" (여러 개면 "1,t:<글>")', 'Your own words: "t:<text>" (multi-select: "1,t:<text>")'))
     return '\n'.join(out)
 
 
+def parse_pick(arg):
+    """'2' / '1,3' / 't:글' / '1,t:글' -> ([번호], 글 또는 None). 글은 t: 뒤 전부(쉼표 포함)"""
+    head, sep, text = arg.partition('t:')
+    nums = [x.strip() for x in head.split(',') if x.strip()] if head.strip(' ,') else []
+    if (sep and not text.strip()) or not (nums or sep) or not all(x.isdigit() for x in nums) or head.count(',') > len(nums):
+        raise ValueError(T(f'"{arg}" 은 못 읽어 — 2 · 1,3 · t:<글> 중 하나로', f'can\'t read "{arg}" — use 2, 1,3 or t:<text>'))
+    return [int(x) for x in nums], (' '.join(text.split()) if sep else None)
+
+
+def parse_picks(questions, args):
+    if len(args) != len(questions):
+        raise ValueError(T(f'질문이 {len(questions)}개야 — 답도 {len(questions)}개 줘', f'{len(questions)} questions — give {len(questions)} picks'))
+    picks = []
+    for q, a in zip(questions, args):
+        nums, text = parse_pick(a)
+        size = len(q.get('options') or [])
+        if not q.get('multiSelect') and len(nums) + (text is not None) != 1:
+            raise ValueError(T(f'"{q.get("question", "")}" 은 하나만 골라', f'"{q.get("question", "")}" takes one pick'))
+        bad = [n for n in nums if not 1 <= n <= size]
+        if bad:
+            raise ValueError(T(f'"{q.get("question", "")}" 에는 {bad[0]}번이 없어', f'"{q.get("question", "")}" has no option {bad[0]}'))
+        picks.append((sorted(set(nums)), text))
+    return picks
+
+
 def keys_for(questions, picks):
-    """질문마다 커서가 맨 위에서 시작 → 번호-1 만큼 내리고 Enter. 질문이 여럿이면 마지막 확인 화면에서 Enter(제출)"""
-    if len(picks) != len(questions):
-        raise ValueError(T(f'질문이 {len(questions)}개야 — 번호도 {len(questions)}개 줘', f'{len(questions)} questions — give {len(questions)} numbers'))
+    """화면을 못 읽을 때(윈도우 — 앱이 대신 누름)의 키. 새 창이라고 본다: 질문마다 커서 1번·체크 없음.
+    숫자 = 단일은 고르고 다음, 다중은 토글. 다중의 1번 위 = 입력칸. 질문이 여럿이면 끝에 검토 화면 '1'(제출)"""
     keys = []
-    for q, n in zip(questions, picks):
-        if q.get('multiSelect'):
-            raise ValueError(T('여러 개 고르는 질문은 못 넣어 — 그 세션 화면에서 직접 골라야 해', "Can't answer a multi-select question — pick it on that session's screen"))
-        if not 1 <= n <= len(q.get('options') or []):
-            raise ValueError(T(f'"{q.get("question", "")}" 에는 {n}번이 없어', f'"{q.get("question", "")}" has no option {n}'))
-        keys += [DOWN] * (n - 1) + [ENTER]
+    for q, (nums, text) in zip(questions, picks):
+        size = len(q.get('options') or [])
+        if not q.get('multiSelect'):
+            keys += [str(nums[0])] if text is None else [str(size + 1), CTRL_U, text, ENTER]
+            continue
+        keys += [str(n) for n in nums]
+        if text is not None:
+            keys += [UP, CTRL_U, text, UP]
+        keys.append(RIGHT)
     if len(questions) > 1:
-        keys.append(ENTER)
+        keys.append('1')
     return keys
+
+
+class Screen:
+    """claude attach 출력을 글자 칸으로 — 선택지 창은 줄을 칸 이동(CSI G·A·B)으로 그려서 글만 뽑으면 칸이 사라진다"""
+    TOKEN = re.compile(r'\x1b\[([0-9;?<>=!]*)[ -/]*([@-~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][0-9A-Za-z]|\x1b.|[\x00-\x1f]|[^\x00-\x1f\x1b]', re.S)
+
+    def __init__(self):
+        self.rows, self.r, self.c = {}, 0, 0
+
+    def feed(self, text):
+        for m in self.TOKEN.finditer(text):
+            tok, final = m.group(0), m.group(2)
+            if final:
+                ps = [int(x) if x.isdigit() else 0 for x in m.group(1).lstrip('?<>=!').split(';')] if m.group(1) else []
+                n = ps[0] if ps and ps[0] else 1
+                if final == 'A': self.r = max(0, self.r - n)
+                elif final == 'B': self.r += n
+                elif final == 'C': self.c += n
+                elif final == 'D': self.c = max(0, self.c - n)
+                elif final in 'EF': self.r, self.c = (self.r + n if final == 'E' else max(0, self.r - n)), 0
+                elif final == 'G': self.c = n - 1
+                elif final == 'd': self.r = n - 1
+                elif final in 'Hf': self.r, self.c = n - 1, (ps[1] if len(ps) > 1 and ps[1] else 1) - 1
+                elif final == 'J':
+                    k = ps[0] if ps else 0
+                    self.rows = {} if k in (2, 3) else {r: v for r, v in self.rows.items() if r < self.r} if k == 0 else self.rows
+                elif final == 'K':
+                    k, row = (ps[0] if ps else 0), self.rows.get(self.r, {})
+                    for c in [c for c in row if k == 2 or (k == 0 and c >= self.c) or (k == 1 and c <= self.c)]:
+                        del row[c]
+            elif tok == '\r': self.c = 0
+            elif tok == '\n': self.r += 1
+            elif tok == '\b': self.c = max(0, self.c - 1)
+            elif tok[0] != '\x1b' and ord(tok[0]) >= 32:
+                row = self.rows.setdefault(self.r, {})
+                row[self.c] = tok
+                if unicodedata.east_asian_width(tok) in 'WF':
+                    self.c += 1
+                    row[self.c] = ''
+                self.c += 1
+
+    def lines(self):
+        out = []
+        for r in range(max(self.rows, default=-1) + 1):
+            row = self.rows.get(r, {})
+            out.append(''.join(row.get(c, ' ') for c in range(max(row, default=-1) + 1)).rstrip())
+        return out
+
+
+OPTION = re.compile(r'^(❯)?\s*(\d+)\.\s(?:\[(.)\]\s?)?(.*)$')
+
+
+def parse_view(lines, questions):
+    """지금 화면: 검토 화면이면 답 줄들, 질문 화면이면 몇 번째 질문·커서(번호/'next')·칸마다 체크와 글"""
+    review = [i for i, l in enumerate(lines) if l.strip() == 'Review your answers']
+    if review:
+        return {'mode': 'review', 'answers': [l.strip()[1:].strip() for l in lines[review[-1]:] if l.strip().startswith('→')]}
+    title, qi = None, None
+    for i, l in enumerate(lines):
+        t = l.strip()
+        for n, q in enumerate(questions):
+            text = q.get('question', '').strip()
+            if t and (t == text or (len(t) >= 20 and text.startswith(t))):
+                title, qi = i, n
+    if title is None:
+        return {'mode': None}
+    opts, cursor = {}, None
+    for l in lines[title + 1:]:
+        if l.startswith('─'):
+            break
+        m = OPTION.match(l)
+        if m:
+            opts[int(m.group(2))] = {'checked': m.group(3) not in (None, ' '), 'label': m.group(4).strip()}
+            cursor = int(m.group(2)) if m.group(1) else cursor
+        elif l.startswith('❯') and l.strip(' ❯') == 'Next':
+            cursor = 'next'
+    return {'mode': 'question', 'q': qi, 'cursor': cursor, 'opts': opts}
+
+
+def expected_answer(q, pick):
+    labels = [(q.get('options') or [])[n - 1].get('label', '') for n in pick[0]]
+    return labels + ([pick[1]] if pick[1] is not None else [])
+
+
+def review_ok(questions, picks, answers):
+    """검토 화면 답이 넣으려던 것과 같나 — 다중은 순서 상관없이"""
+    if len(answers) != len(questions):
+        return False
+    for q, pick, got in zip(questions, picks, answers):
+        want = expected_answer(q, pick)
+        if (sorted(got.split(', ')) != sorted(want)) and got != ', '.join(want):
+            return False
+    return True
 
 
 def ask_app_keys(sid, keys, data=None):
@@ -113,30 +235,110 @@ def ask_app_keys(sid, keys, data=None):
         f.write(json.dumps(line, ensure_ascii=False) + '\n')
 
 
-def send_keys(sid, keys):
-    """claude attach 를 가짜 터미널로 띄워 키를 하나씩 — 한꺼번에 넣으면 TUI 가 놓친다. attach 를 죽여도 세션은 산다"""
-    if os.name == 'nt':  # 가짜 터미널(pty)은 유닉스에만 — 윈도우는 앱이 붙어서 대신 누른다
-        ask_app_keys(sid, keys)
-        return
-    import pty, select
-    pid, fd = pty.fork()
-    if pid == 0:
-        os.environ['TERM'] = 'xterm-256color'
-        os.execvp(claude_bin(), ['claude', 'attach', sid])
+class Tui:
+    """claude attach 를 가짜 터미널로 — 키는 하나씩(한꺼번에 넣으면 TUI 가 놓친다), 넣을 때마다 화면을 다시 읽는다.
+    attach 를 죽여도 세션은 산다"""
+    def __init__(self, sid, questions):
+        import pty
+        self.questions, self.screen = questions, Screen()
+        self.pid, self.fd = pty.fork()
+        if self.pid == 0:
+            os.environ['TERM'] = 'xterm-256color'
+            os.execvp(claude_bin(), ['claude', 'attach', sid])
+        self.drain(2.5)
 
-    def drain(sec):
+    def drain(self, sec):
+        import select
         end = time.time() + sec
         while time.time() < end:
-            if select.select([fd], [], [], 0.1)[0]:
+            if select.select([self.fd], [], [], 0.1)[0]:
                 try:
-                    os.read(fd, 65536)
+                    self.screen.feed(os.read(self.fd, 65536).decode('utf-8', 'replace'))
                 except OSError:
                     return
-    drain(2.0)
-    for k in keys:
-        os.write(fd, k.encode())
-        drain(1.0)
-    os.kill(pid, signal.SIGKILL)
+
+    def key(self, k):
+        os.write(self.fd, k.encode())
+        self.drain(0.8)
+        if os.environ.get('CHOICE_DEBUG'):
+            print(f'--- {k!r}', *[l for l in self.screen.lines() if l.strip()][-14:], self.view(), sep='\n', file=sys.stderr)
+        return self.view()
+
+    def view(self):
+        return parse_view(self.screen.lines(), self.questions)
+
+    def close(self):
+        os.kill(self.pid, signal.SIGKILL)
+
+
+class Stuck(Exception):
+    pass
+
+
+def answer_tui(tui, questions, picks):
+    """닫힌 고리 — 커서·질문 위치를 가정하지 않고 화면을 보고 움직인다. 키마다 아직 그 질문 화면인지 보고,
+    아니면 바로 멈춘다(엉뚱한 화면에 Enter 가 가면 그대로 제출된다). 제출은 검토 화면 답이 맞을 때만"""
+    def on(v, i):
+        if v['mode'] != 'question' or v['q'] != i:
+            raise Stuck(T(f'{i + 1}번째 질문 화면이 아니야', f'not on question {i + 1}'))
+        return v
+
+    def to_text(v, i, size):
+        # 입력칸까지 ↑ — 감싸서 커서가 어디든 닿는다. 숫자는 안 된다: 입력칸에 글이 있으면 그 글을 바로 고른다
+        for _ in range(size + 3):
+            if on(v, i)['cursor'] == size + 1:
+                return v
+            v = tui.key(UP)
+        raise Stuck(T('입력칸으로 못 갔어', "couldn't reach the text field"))
+
+    def off_text(v):
+        # 입력칸에 커서가 있으면 숫자·←→ 가 글로 들어간다 — 한 칸 위로(입력칸 위는 보통 칸)
+        size = len(questions[v['q']].get('options') or [])
+        return tui.key(UP) if v['cursor'] == size + 1 else v
+
+    v = tui.view()
+    for _ in range(len(questions) + 2):  # 첫 질문으로 — ← 는 안 감싼다
+        if v['mode'] == 'question' and v['q'] == 0:
+            break
+        if v['mode'] == 'question':
+            v = off_text(v)
+        elif v['mode'] != 'review':
+            break
+        v = tui.key(LEFT)
+    for i, (q, (nums, text)) in enumerate(zip(questions, picks)):
+        size = len(q.get('options') or [])
+        v = off_text(on(v, i))
+        if not q.get('multiSelect'):
+            if text is None:
+                v = tui.key(str(nums[0]))
+            else:
+                v = to_text(v, i, size)
+                v = tui.key(CTRL_U)
+                v = tui.key(text)
+                on(v, i)
+                v = tui.key(ENTER)
+            continue
+        for n in range(1, size + 1):
+            if on(v, i)['opts'].get(n, {}).get('checked') != (n in nums):
+                v = tui.key(str(n))
+        if text is None and on(v, i)['opts'].get(size + 1, {}).get('checked'):
+            v = tui.key(str(size + 1))
+        if text is not None:
+            v = to_text(v, i, size)
+            v = tui.key(CTRL_U)
+            v = tui.key(text)
+            v = tui.key(UP)
+        want = {n: n in nums for n in range(1, size + 2)}
+        want[size + 1] = text is not None
+        if {n: on(v, i)['opts'].get(n, {}).get('checked', False) for n in want} != want:
+            raise Stuck(T(f'"{q.get("question", "")}" 체크가 안 맞아', f'checks on "{q.get("question", "")}" do not match'))
+        v = off_text(v)
+        v = tui.key(RIGHT)
+    if v['mode'] == 'review':
+        if not review_ok(questions, picks, v['answers']):
+            raise Stuck(T(f'검토 화면 답이 달라 — {v["answers"]} (제출 안 함)', f'review screen differs — {v["answers"]} (not submitted)'))
+        v = tui.key('1')
+    return v
 
 
 def load(sid):
@@ -163,11 +365,21 @@ def main(argv):
         print(render(qs))
         return 0
     try:
-        keys = keys_for(qs, [int(x) for x in argv[2:]])
+        picks = parse_picks(qs, argv[2:])
     except ValueError as e:
         print(e, file=sys.stderr)
         return 2
-    send_keys(sid, keys)
+    if os.name == 'nt':  # 가짜 터미널(pty)은 유닉스에만 — 윈도우는 앱이 붙어서 대신 누른다(화면은 못 읽음)
+        ask_app_keys(sid, keys_for(qs, picks))
+    else:
+        tui = Tui(sid, qs)
+        try:
+            answer_tui(tui, qs, picks)
+        except Stuck as e:
+            print(T(f'{sid}: {e} — 멈추고 손 뗐어. 사용자에게 물어', f'{sid}: {e} — stopped. Ask the user'), file=sys.stderr)
+            return 1
+        finally:
+            tui.close()
     # 윈도우는 앱이 대신 누른다 — 열린 터미널이 없으면 새로 붙는 데 10~20초 걸려 30초까지 기다린다(맥은 1.5초)
     end = time.time() + (30 if os.name == 'nt' else 1.5)
     after = agent(sid) or {}

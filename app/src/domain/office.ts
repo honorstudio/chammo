@@ -131,6 +131,24 @@ export function delivery(events: { ts: string; type: string; task?: string; targ
 }
 
 /**
+ * delivery 가 보는 건 마지막 보낸 일·회신 하나(회신에 대상이 없으면 그 일의 send)뿐이다. 기록이 바뀔 때 한 번 뽑아 두고
+ * 프레임마다 이것만 stampSeen·delivery 에 넘긴다 — 기록 전체(수천 줄)를 매 프레임 훑지 않게
+ */
+export function deliveryTail<E extends { type: string; task?: string; target?: string }>(events: E[]): E[] {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]!;
+    if (e.type !== 'send' && e.type !== 'reply') continue;
+    if (e.type === 'send' || e.target) return [e];
+    for (let j = i - 1; j >= 0; j--) {
+      const x = events[j]!;
+      if (x.type === 'send' && x.task === e.task) return [x, e];
+    }
+    return [e];
+  }
+  return [];
+}
+
+/**
  * 작업 기록은 3초마다 읽혀서 기록 시각(ts)으로 걸으면 늦게 본 만큼 반쯤 걸어간 데서 시작한다.
  * 앱이 처음 본 시각으로 바꿔 준다. seen 은 부르는 쪽이 들고 있는 기억 — 처음 부를 땐 옛 기록을 그대로 둔다
  */

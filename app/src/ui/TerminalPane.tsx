@@ -11,7 +11,8 @@ import { IS_WIN } from '../domain/reader';
 import { modKey } from '../domain/keys';
 import { resizeAfterOpen } from '../domain/ptySize';
 import { followLink } from './followLink';
-import { closePty, openPty, openTarget, pttTarget, pttWatch, resizePty, writeClipboard, writePty } from '../data/tauri';
+import { closePty, openPty, openTarget, pttTarget, pttWatch, resizePty, typePty, writeClipboard, writePty } from '../data/tauri';
+import { usePttLive } from './pttLive';
 import { pendingWrites } from '../domain/ptyWrites';
 import { imeNoSwallow, imeTrace } from './imeTrace';
 import { seqShape, traceOf } from '../domain/imeGuard';
@@ -49,7 +50,8 @@ export const TERM_FONT =
 /** write = 입력칸에 넣고 터미널에 포커스, raw = 포커스는 그대로 두고 넣기(채팅 입력칸이 보낼 때),
  *  claimPtt = 지구본 키 말하기를 이 창으로(채팅 입력칸에 포커스가 가면 터미널이 포커스를 안 받아서),
  *  screen = 지금 보이는 줄들 + 커서(칸, 줄) — 채팅 판이 입력칸 글을 읽는다 */
-export type PaneApi = { write: (data: string) => void; raw: (data: string) => void; focus: () => void; claimPtt: () => void; screen: () => { lines: string[]; cursor: [number, number] } };
+/** type = 앱이 치는 글(채팅 보내기·Esc·지우기) — 다른 치기 길과 같은 자물쇠로(Rust pty_type). raw 는 사람이 친 키처럼 바로 */
+export type PaneApi = { write: (data: string) => void; raw: (data: string) => void; type: (keys: string[], enterMs?: number) => Promise<void>; focus: () => void; claimPtt: () => void; screen: () => { lines: string[]; cursor: [number, number] } };
 
 type Props = {
   /** pty 에서 돌릴 셸 명령. `exec '<claude>' attach <id>` 처럼 절대 경로로 */
@@ -93,6 +95,9 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
   // 채팅 판 등이 덮여 있으면 끌어 놓은 파일을 넣고도 포커스는 그쪽 입력칸에 둔다(숨은 터미널로 타자가 새지 않게)
   const covered = useRef(false);
   covered.current = !!overlay;
+  // 말하기 키를 누르는 동안 이 창이 받으면 빛난다(채팅 입력칸·터미널 둘레, 2026-10-10 사용자)
+  const [ptyId, setPtyId] = useState<number | null>(null);
+  const talking = usePttLive(ptyId);
   const host = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
   // 글자 크기만 바꿀 때 터미널을 다시 만들지 않도록 인스턴스를 들고 있는다
@@ -195,7 +200,14 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
     const pending = pendingWrites((n, d) => void writePty(n, d));
     const write = (d: string) => pending.write(d);
     term.onData((d) => { imeTrace?.('xterm', { d: seqShape(d) }); write(d); });
-    injectRef.current?.({ write: (d) => { write(d); term.focus(); }, raw: write, focus: () => term.focus(), claimPtt: () => { if (!readOnly && id != null) void pttTarget(id); },
+    injectRef.current?.({ write: (d) => { write(d); term.focus(); }, raw: write,
+      // 번호를 받기 전(창이 막 열림)엔 자물쇠 길이 없다 — 모아 둔 쓰기로 넣고 Enter 시간만큼 기다린다
+      type: (keys, enterMs) => (id != null ? typePty(id, keys, enterMs) : new Promise<void>((done) => {
+        keys.forEach(write);
+        if (enterMs === undefined) { done(); return; }
+        setTimeout(() => { write('\r'); done(); }, enterMs);
+      })),
+      focus: () => term.focus(), claimPtt: () => { if (!readOnly && id != null) void pttTarget(id); },
       screen: () => {
         const b = term.buffer.active;
         const lines: string[] = [];
@@ -255,6 +267,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
     void openPty(command, cwd, cols, rows, (bytes) => term.write(bytes)).then((n) => {
       if (disposed) { void closePty(n); return; }
       id = n;
+      setPtyId(n);
       pending.open(n);
       if (!readOnly && document.activeElement === term.textarea) void pttTarget(n);
       // 여는 사이 레이아웃이 자리 잡으며 크기가 바뀌었으면(앱을 막 켰을 때) 그 크기를 지금 알린다 — 안 그러면 버려진다
@@ -317,7 +330,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
   }, [fontSize]);
 
   return (
-    <div ref={root} className={`pane ${readOnly ? 'readonly' : ''}`} data-drop={readOnly ? undefined : ''}>
+    <div ref={root} className={`pane ${readOnly ? 'readonly' : ''}${talking ? ' pt-live' : ''}`} data-drop={readOnly ? undefined : ''}>
       <div className="pane-head" onClick={onHeadClick} title={onHeadClick ? tr('눌러서 이 세션으로', 'Click to go to this session') : headDrag ? tr('끌어서 자리 바꾸기', 'Drag to reorder') : undefined} {...headDrag}>
         <b>{title}</b>
         <span className={subPlain ? 'sub plain' : 'sub'} title={subPlain ? subtitle : undefined}>{subtitle}</span>

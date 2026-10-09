@@ -19,6 +19,8 @@ const { createTakeover } = require('../src/takeover');
 const { createSecrets } = require('../src/secrets');
 const channelMod = require('../src/channel');
 const users = require('../src/users');
+const { createShare, scriptHolder } = require('../src/share');
+const { createDialogAnswer } = require('../src/dialogs');
 
 const profile = process.argv[2];
 if (!profile) {
@@ -136,10 +138,37 @@ if (offPos && live) {
   tick.unref();
 }
 
-const relay = createRelay({
+// 스크립트 지킴이(chammo-browser launch)가 프로필을 쥐고 있으면 '사용 중' 오류 대신 그 크롬에 CDP 로 붙는 playwright 를 하나 더 띄워 같이 쓴다(src/share.js).
+// 앱 화면 상태 파일은 지킴이가 쓴다 — 같이 쓰는 동안 래퍼는 안 쓴다
+let relay = null;
+const share = createShare({
+  readPort: () => liveMod.readPort(userDataDir),
+  holderAlive: (pid) => lock.list({ lockDir: paths.locksDir }).some((l) => l.profile === profile && l.pid === pid && l.alive),
+  join: (holder) => { try { return users.join(paths.locksDir, profile, process.pid, holder, { by: 'session' }); } catch { return false; } },
+  leave: () => users.remove(paths.locksDir, profile, process.pid),
+  spawnChild: (args) => {
+    const c = spawn(process.execPath, [cli, ...args, ...extra], { stdio: ['pipe', 'pipe', 'inherit'] });
+    c.stdin.on('error', () => { /* 먼저 죽은 child — share.still() 이 잡는다 */ });
+    c.on('error', (e) => console.error(`[chammo-browser-mcp] 같이 쓰기 playwright 기동 실패: ${e.message}`));
+    return c;
+  },
+  onLine: (line) => relay.onChildLine(line),
+});
+const mine = () => !share.active(); // 지금 크롬이 내 것(래퍼가 띄운 것)인가
+
+relay = createRelay({
   profile,
-  acquire: () => lock.acquire(profile, { lockDir: paths.locksDir }),
-  release: () => { lock.release(profile, { lockDir: paths.locksDir }); users.clear(paths.locksDir, profile); if (live) live.closed(); if (take) take.reset(); secrets.reset(); }, // browser_close·유휴 닫기
+  acquire: () => {
+    const r = lock.acquire(profile, { lockDir: paths.locksDir });
+    if (r.ok || !scriptHolder(r) || !share.start(r.holder)) return r;
+    console.error(`[chammo-browser-mcp] '${profile}' 를 스크립트(pid ${r.holder.pid})가 쓰고 있어 그 크롬을 같이 씁니다.`);
+    return { ok: true, shared: true };
+  },
+  stillShared: () => share.still(),
+  release: () => {
+    if (share.active()) { share.stop(); secrets.reset(); return; } // 같이 쓰던 스크립트 크롬 — 놓기만(락·명부·상태 파일은 지킴이 것)
+    lock.release(profile, { lockDir: paths.locksDir }); users.clear(paths.locksDir, profile); if (live) live.closed(); if (take) take.reset(); secrets.reset();
+  }, // browser_close·유휴 닫기
   // 결과를 넘기기 직전 그 페이지 비밀번호 칸 값을 읽어 가린다(플레이라이트 snapshot 이 값을 그대로 보여 준다)
   afterCall: () => secrets.captureCall(),
   transform: (_n, r) => {
@@ -160,7 +189,7 @@ const relay = createRelay({
     live.held(true);
     return g.finally(() => live.held(false));
   },
-  sendToChild: (line) => child.stdin.write(line + '\n'),
+  sendToChild: (line) => (share.active() ? share.send(line) : child.stdin.write(line + '\n')),
   // 사람 부르기 — 로그인·2FA·캡차처럼 사람이 해야 할 때. 앱(세션 브라우저 앱에서 보기)이 크게 띄우고 알린다
   extraTools: live ? [ASK_TOOL] : [],
   onLocalTool: (name, args) => {
@@ -174,19 +203,25 @@ const relay = createRelay({
   sendToClient: (line) => process.stdout.write(line + '\n'),
   // 사람이 앱 모달에서 연 파일 창(앱이 맥 파일 창으로 처리)이 플레이라이트에도 '[File chooser]' 로 쌓여 세션 도구를 막았다(QA N3) —
   // 그만큼 파일 없는 browser_file_upload(= 그 상태만 치움, 페이지엔 아무것도 안 함)를 먼저 보낸다
-  beforeCall: () => (live ? Array.from({ length: live.takeHumanChoosers() }, () => ({ name: 'browser_file_upload', arguments: {} })) : []),
+  beforeCall: () => (live && mine() ? Array.from({ length: live.takeHumanChoosers() }, () => ({ name: 'browser_file_upload', arguments: {} })) : []),
   idleMs,
   log: (msg) => console.error(msg),
   // 브라우저가 뜨며 크롬이 맨 앞 앱이 되면 원래 앞 앱으로 되돌린다(macOS) + 세션 브라우저 상태 파일
   ...(() => {
     const g = mac ? createFocusGuard() : null;
     return {
-      onCallStart: (n, a) => { if (g) g.start(n); if (live) live.onCall(n, a); },
-      onCallEnd: (n, r) => { if (g) g.end(n); if (live && n !== 'browser_close') live.onResult(n, r); },
+      onCallStart: (n, a) => { if (g) g.start(n); if (live && mine()) live.onCall(n, a); },
+      onCallEnd: (n, r) => { if (g) g.end(n); if (live && mine() && n !== 'browser_close') live.onResult(n, r); },
     };
   })(),
 });
-process.stdin.on('data', createLineSplitter(relay.onClientLine));
+// 앱이 붙기 전에 뜬 대화상자 — 앱이 답을 부탁하면(<live>/<프로필>.dialog) 처음부터 붙은 playwright 로 대신 답한다(src/dialogs.js)
+if (live) {
+  const dlg = createDialogAnswer({ liveDir: require('path').join(paths.ROOT, 'live'), profile, pid: process.pid, call: relay.callInternal, log: (m) => console.error(m) });
+  setInterval(() => { dlg.tick().catch(() => {}); }, 700).unref();
+}
+
+process.stdin.on('data', createLineSplitter((line) => { share.remember(line); relay.onClientLine(line); }));
 process.stdin.on('end', () => child.stdin.end()); // Claude 가 끊으면 playwright 도 종료 흐름으로
 child.stdout.on('data', createLineSplitter(relay.onChildLine));
 child.stdin.on('error', () => { /* child 가 먼저 죽은 경우 — exit 핸들러가 정리 */ });
@@ -196,6 +231,7 @@ let released = false;
 function cleanup() {
   if (released) return;
   released = true;
+  share.stop(); // 같이 쓰던 스크립트 크롬 — 명부에서만 빠진다
   // 내 락이었을 때만 치운다 — 브라우저를 안 쓴 세션이 꺼지며 남(스크립트 지킴이·다른 세션)의 상태 파일·포트 파일·명부를 지우면
   // 앱 화면과 같이 쓰기가 끊긴다
   const r = lock.release(profile, { lockDir: paths.locksDir });

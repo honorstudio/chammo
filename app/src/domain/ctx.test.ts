@@ -5,11 +5,11 @@ const f = (sessionId: string, used: number, ts = 100) => JSON.stringify({ sessio
 
 describe('parseCtx — 상태줄이 세션마다 남긴 파일들', () => {
   it('session_id → 사용 %', () => {
-    expect(parseCtx([f('a', 56), f('b', 81)])).toEqual({ a: { used: 56, ts: 100, model: 'Opus 5.5' }, b: { used: 81, ts: 100, model: 'Opus 5.5' } });
+    expect(parseCtx([f('a', 56), f('b', 81)])).toEqual({ a: { used: 56, ts: 100, model: 'Opus 5.5', size: 1_000_000 }, b: { used: 81, ts: 100, model: 'Opus 5.5', size: 1_000_000 } });
   });
 
   it('깨진 파일·숫자 아닌 값은 건너뛴다', () => {
-    expect(parseCtx(['{깨짐', JSON.stringify({ sessionId: 'c', used: null }), f('d', 12)])).toEqual({ d: { used: 12, ts: 100, model: 'Opus 5.5' } });
+    expect(parseCtx(['{깨짐', JSON.stringify({ sessionId: 'c', used: null }), f('d', 12)])).toEqual({ d: { used: 12, ts: 100, model: 'Opus 5.5', size: 1_000_000 } });
   });
 });
 

@@ -127,3 +127,14 @@
 @keyframes su-flow { from { background-position: -40% 0; } to { background-position: 140% 0; } }
 .su-err { margin-left: 36px; color: var(--danger-ink); }
 @media (prefers-reduced-motion: reduce) { .su-checks .st-now .su-dot, .su-bar.flow i { animation: none; } }
+/* 설정 > 텔레그램(MessengerSection) — 앱 전역 짧은 클래스와 안 겹치게 tg- 접두 */
+.tg-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; color: var(--text-2); }
+.tg-steps li > span { margin-right: 6px; }
+.tg-steps li > .su-inline { margin-top: 6px; }
+.tg-token { flex: 1; min-width: 0; max-width: 380px; height: 32px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; }
+
+.tg-confirm { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel); }
+.tg-confirm .su-row { border-top: 0; padding: 4px 0 0; }
+.tg-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: var(--text-3); }
+.tg-dot-ok { background: var(--idle); }
+.tg-dot-err { background: var(--danger-ink); }

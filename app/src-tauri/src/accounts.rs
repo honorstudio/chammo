@@ -70,6 +70,8 @@ pub enum Error {
     /// 지금 로그인이 다른 칸의 것과 똑같다 — 로그인이 바뀌는 도중일 수 있어 보관하지 않는다
     Mismatch,
     Locked,
+    /// 자동 전환이 본 지금 칸이 그새 바뀌었다(폰·사람이 먼저 바꿈) — 이번엔 안 바꾼다
+    Moved,
     /// macOS 허용 창에서 거절·닫음
     Denied,
     Store(String),
@@ -86,6 +88,7 @@ impl Error {
             Error::NoSlot => "noSlot".into(),
             Error::Mismatch => "mismatch".into(),
             Error::Locked => "locked".into(),
+            Error::Moved => "moved".into(),
             Error::Denied => "denied".into(),
             Error::Store(m) => format!("store:{m}"),
             Error::Io(m) => format!("io:{m}"),
@@ -323,8 +326,16 @@ pub fn capture(store: &dyn Store, live: &Live, list: &Path, name: Option<&str>, 
 
 /// 고른 칸으로 바꿔 끼운다
 pub fn switch(store: &dyn Store, live: &Live, list: &Path, id: &str) -> Result<Pool, Error> {
+    switch_if(store, live, list, id, None)
+}
+
+/// expect = 부른 쪽이 본 지금 칸 — 그새 바뀌었으면 Moved(자동 전환이 폰·사람 선택을 덮지 않게). None 이면 늘 바꾼다
+pub fn switch_if(store: &dyn Store, live: &Live, list: &Path, id: &str, expect: Option<&str>) -> Result<Pool, Error> {
     let mut pool = load(list)?;
     reconcile(store, live, list, &mut pool)?;
+    if expect.is_some_and(|x| pool.current.as_deref() != Some(x)) {
+        return Err(Error::Moved);
+    }
     let target = slot(&pool, id).cloned().ok_or(Error::Unknown)?;
     if pool.current.as_deref() == Some(id) {
         return Ok(pool);

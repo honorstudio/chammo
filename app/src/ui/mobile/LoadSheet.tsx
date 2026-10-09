@@ -5,6 +5,7 @@ import { readLoad } from '../../data/web';
 import { fmtDur } from '../../domain/load';
 import { readPhoneLoad, slotLine } from '../../domain/phoneLoad';
 import { IconClose } from '../Icons';
+import { machine } from '../../i18n';
 
 const SLOT_NAME: Record<string, string> = { build: '빌드', ios: 'iOS 시뮬레이터', galaxy: '갤럭시' };
 
@@ -24,12 +25,12 @@ export function LoadSheet({ text, onChanged, onClose }: Props) {
   const close = () => { setShown(false); window.setTimeout(onClose, 220); };
 
   return (
-    <div className="m-pick-wrap" role="dialog" aria-modal="true" aria-label="맥 부하">
+    <div className="m-pick-wrap" role="dialog" aria-modal="true" aria-label={`${machine()} 부하`}>
       <button type="button" className={shown ? 'm-pick-back m-on' : 'm-pick-back'} aria-label="닫기" onClick={close} />
       <div className="m-pick" style={{ transform: shown ? 'translateY(0)' : 'translateY(100%)' }}>
         <div className="m-pick-grab"><div className="m-handle" /></div>
         <div className="m-picker-head">
-          <b>맥 부하</b>
+          <b>{machine()} 부하</b>
           <button type="button" className="m-icon" onClick={close} aria-label="닫기" title="닫기"><IconClose /></button>
         </div>
         <div className="m-picker-list">
@@ -43,7 +44,7 @@ export function LoadSheet({ text, onChanged, onClose }: Props) {
                 {v.swapGb > 0 && <span className="m-load-num">스왑 {v.swapGb}G</span>}
               </div>
               <div className="m-load-why">{v.why}</div>
-              {v.stale && v.ageSec !== null && <div className="m-muted m-sm">{fmtDur(v.ageSec)} 전 값 — 맥 앱이 안 재고 있어요</div>}
+              {v.stale && v.ageSec !== null && <div className="m-muted m-sm">{fmtDur(v.ageSec)} 전 값 — {machine()} 앱이 안 재고 있어요</div>}
             </div>
           )}
           {v && v.level === 'unknown' && <p className="m-muted m-sm">{v.why}</p>}

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { mediaTicket, openOnMac, wordHtml } from '../../data/web';
 import { askBeforePlay, fileError, sizeLabel, wordDoc } from '../../domain/phoneFile';
+import { machine } from '../../i18n';
 import { IconClose } from '../Icons';
 import { wordDocToHtml } from '../md';
 import { useBlobUrl } from './useBlobUrl';
@@ -13,7 +14,7 @@ function OpenOnMac({ path }: { path: string }) {
   const go = () => { setSt('busy'); openOnMac(path).then(() => setSt('done'), () => setSt('fail')); };
   return (
     <button type="button" className="m-btn m-open-mac" disabled={st === 'busy'} onClick={go}>
-      {st === 'done' ? '맥에서 열었어요' : st === 'fail' ? '못 열었어요 — 다시' : '맥에서 열기'}
+      {st === 'done' ? `${machine()}에서 열었어요` : st === 'fail' ? '못 열었어요 — 다시' : `${machine()}에서 열기`}
     </button>
   );
 }

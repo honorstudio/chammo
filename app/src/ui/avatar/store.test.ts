@@ -52,3 +52,26 @@ describe('프로필 저장소 — 한 번 읽다 실패해도 굳지 않는다(�
     expect(colorOf(m.avatarSnapshot())).toBe('#2f74e0');
   });
 });
+
+describe('프로필 저장소 — 폰에서 바꾼 프로필(2026-10-09)', () => {
+  it('다시 읽어도 안 바뀌었으면 새 값을 안 낸다(데스크톱이 10초마다 다시 읽어도 화면이 다시 안 그린다)', async () => {
+    const read = vi.fn().mockResolvedValue(BLUE);
+    const m = await fresh(read);
+    await m.refreshAvatars();
+    const a = m.avatarSnapshot();
+    await m.refreshAvatars();
+    expect(m.avatarSnapshot()).toBe(a);
+    read.mockResolvedValue([{ ...BLUE[0], avatar: { ...BLUE[0]!.avatar, color: '#1f9a62' }, v: 2 }]);
+    await m.refreshAvatars();
+    expect(colorOf(m.avatarSnapshot())).toBe('#1f9a62');
+  });
+
+  it('applySaved — 서버가 돌려준 값을 다시 검사해 지도에 넣고, 이상하면 던진다', async () => {
+    const m = await fresh(vi.fn().mockResolvedValue([]));
+    m.applySaved('참모-2', BLUE[0]);
+    expect(colorOf(m.avatarSnapshot())).toBe('#2f74e0');
+    expect(() => m.applySaved('참모-2', { key: '참모-2', avatar: { kind: 'preset', shape: '<x>', eyes: 'pill', color: null }, v: 1 })).toThrow();
+    m.applyRemoved('참모-2');
+    expect(m.avatarSnapshot().saved.has('참모-2')).toBe(false);
+  });
+});

@@ -76,8 +76,18 @@ class NoPersonalNames(unittest.TestCase):
             if p.is_file() and '__pycache__' not in p.parts:
                 text = p.read_text(encoding='utf-8').lower()
                 # 공개본 가림(redact)이 이 목록 글자까지 바꾸면 '사용자'·'참모' 를 찾다가 템플릿 본문에 걸린다 — 조각으로 이어 붙여 가림을 피한다
-                for bad in ['honorstudio', 'desktop/dev', '/users/']:
+                for bad in ['honorstudio', 'desktop/dev', '/users/honor']:
                     self.assertNotIn(bad, text, f'{p.name}: {bad}')
+
+
+class FolderTrustSkill(unittest.TestCase):
+    # 믿은 devRoot 안 새 폴더(클론 포함)는 따로 안 믿어도 세션이 뜬다(2026-10-09 아이맥 실측, 바이패스·기본 모드 둘 다).
+    # 참모가 띄워 보지도 않고 사용자에게 손 믿기를 부탁하지 않게 — 두 언어 모두 '먼저 띄워 본다'
+    def test_미리_부탁하지_않는다(self):
+        text = (SCRIPTS.parent / '.claude' / 'skills' / 'hq-folders' / 'SKILL.md').read_text(encoding='utf-8')
+        ko, en = text.split('# English')
+        self.assertIn('미리 사용자에게 믿기를 부탁하지 않는다', ko)
+        self.assertIn("don't ask the user to trust it in advance", en)
 
 
 if __name__ == '__main__':

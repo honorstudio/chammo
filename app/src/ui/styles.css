@@ -299,10 +299,19 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .inbox { display: flex; flex-direction: column; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
 .inbox-head { color: var(--danger-ink); }
 .inbox-head span { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--danger-ink); color: #fff; text-align: center; font-size: 10.5px; }
-.inbox-item { background: var(--surface); border: 1px solid var(--danger-ink); border-left-width: 3px; border-radius: 10px; padding: 9px 11px; display: flex; flex-direction: column; gap: 7px; }
+.inbox-item { background: var(--surface); border: 1px solid var(--danger-ink); border-radius: 10px; padding: 9px 11px; display: flex; flex-direction: column; gap: 7px; }
 .inbox-item .card-top { display: flex; gap: 6px; align-items: center; font-size: 12px; }
 .inbox-item .card-top b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inbox-text { font-size: 12.5px; line-height: 1.55; color: var(--text); word-break: break-word; }
+.inbox-text { font-size: 12.5px; line-height: 1.55; color: var(--text); word-break: break-word; display: flex; flex-direction: column; min-width: 0; }
+/* 물음 첫 줄만 굵게, 나머지 줄은 흐리게 — 접히면 물음 4줄·줄마다 한 줄(…) */
+.inbox-q { font-weight: 600; }
+.inbox-text:not(.open) .inbox-q { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.inbox-line { color: var(--text-2); }
+.inbox-text:not(.open) .inbox-line:not(.inbox-answers) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inbox-answers { margin-top: 4px; color: var(--text-3); }
+.inbox-more { align-self: center; height: 20px; color: var(--text-3); }
+.inbox-more svg { transform: rotate(90deg); transition: transform .15s; }
+.inbox-text.open .inbox-more svg { transform: rotate(-90deg); }
 .inbox-reply { display: flex; gap: 6px; }
 .inbox-reply .inp { flex: 1; min-width: 0; }
 .inbox-acts { display: flex; gap: 2px; justify-content: flex-end; }
@@ -598,7 +607,6 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 /* 사무실 코인 칸 (오른쪽 위) — 누르면 뽑기 페이지 */
 .office-coin { all: unset; position: absolute; top: 10px; right: 10px; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; background: rgba(42, 28, 20, .85); color: #fff6e6; font-size: 12.5px; font-weight: 800; cursor: pointer; }
 .office-coin i { width: 12px; height: 12px; border-radius: 50%; background: #e0b94f; box-shadow: inset -2px -2px 0 #b3871f; }
-.office-coin span { font-weight: 700; opacity: .8; margin-left: 2px; }
 .office-coin em { font-style: normal; color: #ffc93c; margin-left: 2px; }
 .office-coin.gain { animation: coinpop .5s ease-out 2; }
 @keyframes coinpop { 50% { transform: scale(1.12); } }
@@ -611,10 +619,12 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .gacha-back { all: unset; cursor: pointer; font-weight: 700; padding: 4px 8px; border-radius: 6px; }
 .gacha-back:hover { background: #2a2145; }
 .gacha-body { flex: 1; display: flex; min-height: 0; }
-.gacha-stage { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.gacha-stage { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; overflow: hidden; }
 .gacha-canvas { position: relative; border-radius: 14px; overflow: hidden; box-shadow: 0 12px 40px rgba(0, 0, 0, .4); }
 .gacha-canvas canvas { display: block; image-rendering: pixelated; }
-.gacha-card { position: absolute; left: 50%; bottom: 18px; transform: translate(-50%, 20px) scale(.9); opacity: 0; transition: .35s cubic-bezier(.2, 1.4, .4, 1); background: #fff; color: #2a1c14; border: 3px solid #2a1c14; border-radius: 12px; padding: 10px 18px; text-align: center; min-width: 240px; box-shadow: 0 6px 0 #2a1c14; }
+/* 결과 카드는 그림 밑 자리에 — 그림 안 아래쪽에 두니 배출구·튀어나온 캡슐을 덮었다(상점 QA 8). 높이 + 틈 = GachaPage CARD_ROOM */
+.gacha-card-slot { position: relative; flex: 0 0 92px; width: 100%; }
+.gacha-card { position: absolute; left: 50%; top: 0; transform: translate(-50%, 20px) scale(.9); opacity: 0; transition: .35s cubic-bezier(.2, 1.4, .4, 1); background: #fff; color: #2a1c14; border: 3px solid #2a1c14; border-radius: 12px; padding: 10px 18px; text-align: center; min-width: 240px; box-shadow: 0 6px 0 #2a1c14; }
 .gacha-card.on { opacity: 1; transform: translate(-50%, 0) scale(1); }
 .gacha-r { font-size: 11px; font-weight: 800; color: #fff; padding: 2px 8px; border-radius: 999px; background: #8a8a8a; }
 .gacha-name { display: block; font-size: 16px; font-weight: 800; margin-top: 6px; }
@@ -685,7 +695,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .office-sub.gacha { container-type: inline-size; }
 @container (max-width: 620px) {
   .gacha-body { flex-direction: column; overflow-y: auto; }
-  .gacha-stage { flex: 0 0 auto; height: 300px; }
+  .gacha-stage { flex: 0 0 auto; height: 404px; } /* 300 + 카드 자리 104 */
   .office-sub .gacha-side { width: auto; flex: 0 0 auto; overflow: visible; }
 }
 
@@ -751,8 +761,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 
 /* 사무실 아이콘 줄 — 왼쪽 위에 늘어선 도트 아이콘(사용자 2026-09-28: 드롭다운 대신 나열) */
 .office-tools { display: flex; gap: 6px; }
-.office-tool { all: unset; width: 44px; height: 44px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; border-radius: 10px; background: rgba(42, 28, 20, .82); color: #fff6e6; cursor: pointer; box-shadow: 0 2px 0 rgba(0, 0, 0, .2); }
-.office-tool span { font-size: 9.5px; font-weight: 700; line-height: 1; opacity: .85; }
+.office-tool { all: unset; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: rgba(42, 28, 20, .82); color: #fff6e6; cursor: pointer; box-shadow: 0 2px 0 rgba(0, 0, 0, .2); }
 .office-tool:hover { background: rgba(42, 28, 20, .95); transform: translateY(-1px); }
 .office-tool.on { background: #e8743a; color: #fff; }
 /* 뽑기·도감·스킨 모달 — 사무실 칸 위에만 뜬다 */

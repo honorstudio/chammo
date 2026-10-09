@@ -59,6 +59,7 @@ describe('accountError — 오류 이름을 글로', () => {
   it('아는 이름', () => {
     expect(accountError('locked')).toContain('키체인');
     expect(accountError('noSlot')).toContain('보관');
+    expect(accountError('moved')).toContain('다른 곳');
     expect(accountError('denied')).toContain('항상 허용');
     setLang('en');
     expect(accountError('notLoggedIn')).toContain('signed in');

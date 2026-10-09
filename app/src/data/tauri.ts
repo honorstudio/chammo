@@ -6,6 +6,7 @@ import type { PreviewPhase } from '../domain/voiceDial';
 import type { SayNow } from '../domain/speakGlow';
 import type { ApiGot } from '../domain/accountAuto';
 import type { DeviceRow } from '../domain/mobileDevices';
+import type { MessengerView } from '../domain/messenger';
 import { fwd } from '../domain/paths';
 
 export type AppEnv = {
@@ -111,6 +112,8 @@ export function openPty(
 }
 
 export const writePty = (id: number, data: string) => invoke<void>('pty_write', { id, data });
+/** 앱이 세션에 글 치기 — 조각마다 6ms, enterMs 면 쉬고 Enter. Rust 가 TYPE_LOCK 을 잡아 다른 치기 길과 안 섞인다(끝나면 풀린다) */
+export const typePty = (id: number, keys: string[], enterMs?: number) => invoke<void>('pty_type', { id, keys, enterMs: enterMs ?? null });
 export const resizePty = (id: number, cols: number, rows: number) => invoke<void>('pty_resize', { id, cols, rows });
 export const closePty = (id: number) => invoke<void>('pty_close', { id });
 /** 지구본(fn) 키 말하기가 스페이스를 흘릴 pty — 마지막으로 포커스를 받은 입력 창 */
@@ -120,6 +123,13 @@ export const pttWatch = (cb: (ptyId: number) => void) => {
   const ch = new Channel<number>();
   ch.onmessage = cb;
   return invoke<void>('ptt_watch', { onStop: ch });
+};
+
+/** 말하기 키를 누르는 동안 받는 pty(뗐으면 null) — 한 번만 등록(ui/pttLive 가 나눠 준다) */
+export const pttLive = (cb: (ptyId: number | null) => void) => {
+  const ch = new Channel<number | null>();
+  ch.onmessage = cb;
+  return invoke<void>('ptt_live', { onLive: ch });
 };
 
 /** 터미널 대화형 세션을 끝내고 같은 대화를 백그라운드로 이어간다. 돌려주는 건 `claude --bg` 출력 */
@@ -138,9 +148,10 @@ export const setOrchPin = (sessionId: string, on: boolean) => invoke<string[]>('
 export const readOrchRoles = () => invoke<Record<string, { role: string; at: number }>>('read_orch_roles');
 /** fresh = 새 참모를 띄울 때 — 옛 번호의 맡은 일을 덮고 태어난 때(born)를 적는다(그 전 기록은 안 센다) */
 export const setOrchRole = (name: string, role: string, fresh = false) => invoke<Record<string, { role: string; at: number; born?: number }>>('set_orch_role', { name, role, fresh });
-export const stopSession = (id: string) => invoke<string>('stop_session', { id });
+/** why = 누른 길 + 이름(<데이터>/actions.log 한 줄) — 누가 껐는지 나중에 가리려고 */
+export const stopSession = (id: string, why: string) => invoke<string>('stop_session', { id, why });
 /** 세션을 끄고 목록에서도 지운다(claude stop + rm). 대화 기록 파일은 남는다 */
-export const removeSession = (id: string) => invoke<string>('remove_session', { id });
+export const removeSession = (id: string, why: string) => invoke<string>('remove_session', { id, why });
 
 /** 참모 작업 기록(tasks.jsonl) 원문 */
 export const readTasks = () => invoke<string>('read_tasks');
@@ -261,7 +272,8 @@ export const claudeDefaults = {
 export const accountsApi = {
   view: () => invoke<AccountsView>('accounts_view'),
   capture: (name?: string) => invoke<AccountsView>('accounts_capture', { name: name ?? null }),
-  switchTo: (id: string) => invoke<AccountsView>('accounts_switch', { id }),
+  /** expect = 자동 전환이 본 지금 칸 — 그새 바뀌었으면 'moved' 로 거절(폰·사람 선택을 덮지 않게) */
+  switchTo: (id: string, expect?: string | null) => invoke<AccountsView>('accounts_switch', { id, expect: expect ?? null }),
   rename: (id: string, name: string) => invoke<AccountsView>('accounts_rename', { id, name }),
   reorder: (ids: string[]) => invoke<AccountsView>('accounts_reorder', { ids }),
   remove: (id: string) => invoke<AccountsView>('accounts_remove', { id }),
@@ -345,6 +357,22 @@ export type MobileDevice = DeviceRow;
 export type MobileStatus = { on: boolean; running: boolean; bind: string | null; error: string | null; https: boolean; httpsNote: string | null; devices: MobileDevice[] };
 /** 짝짓기 QR — 10분 지나거나 한 번 쓰면 죽는다 */
 export type PairQr = { url: string; qrSvg: string | null; expires: number };
+/** 텔레그램(Rust messenger_cmd.rs) — 토큰은 키체인(윈도우는 600 파일), 짝짓기는 10분 한 번짜리 딥링크. 보안 판단은 Rust 에 */
+export type { MessengerView };
+export type MessengerLink = { link: string; qrSvg: string | null; expires: number };
+export const messengerApi = {
+  status: () => invoke<MessengerView>('messenger_status'),
+  setToken: (token: string) => invoke<MessengerView>('messenger_set_token', { token }),
+  pairNew: () => invoke<MessengerLink>('messenger_pair_new'),
+  pairCancel: () => invoke<void>('messenger_pair_cancel'),
+  unpair: () => invoke<MessengerView>('messenger_unpair'),
+  /** 링크를 누른 계정이 내 것 — 맥에서만 확정 */
+  confirm: () => invoke<MessengerView>('messenger_confirm'),
+  reject: () => invoke<MessengerView>('messenger_reject'),
+  set: (on: boolean) => invoke<MessengerView>('messenger_set_on', { on }),
+  forget: () => invoke<MessengerView>('messenger_forget'),
+};
+
 export const mobileApi = {
   status: () => invoke<MobileStatus>('mobile_status'),
   set: (on: boolean) => invoke<MobileStatus>('mobile_set', { on }),

@@ -8,6 +8,7 @@ import { TerminalPane } from './TerminalPane';
 import { FULL_DISK_URL, wizardAccess, type Access } from '../domain/access';
 import { AccountsSection } from './AccountsSection';
 import { MobileSection } from './MobileSection';
+import { MessengerSection } from './MessengerSection';
 import './setup.css';
 import { IS_WIN } from '../domain/reader';
 import { BrandMark } from './avatar';
@@ -554,7 +555,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
           </ol>
         )}
 
-        {firstRun ? sectionOf[step] : <>{langSec}{checkSec}{basicsSec}{featSec}{!IS_WIN && <AccountsSection title={`5. ${tr('계정', 'Accounts')}`} claude={check?.claudePath} fontSize={fontSize} />}<MobileSection title={`${IS_WIN ? 5 : 6}. ${tr('모바일', 'Mobile')}`} /></>}
+        {firstRun ? sectionOf[step] : <>{langSec}{checkSec}{basicsSec}{featSec}{!IS_WIN && <AccountsSection title={`5. ${tr('계정', 'Accounts')}`} claude={check?.claudePath} fontSize={fontSize} />}<MobileSection title={`${IS_WIN ? 5 : 6}. ${tr('모바일', 'Mobile')}`} /><MessengerSection title={`${IS_WIN ? 6 : 7}. ${tr('텔레그램', 'Telegram')}`} /></>}
 
         <footer className="su-foot">
           {note && <div className="su-note">{note}</div>}

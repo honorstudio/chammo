@@ -7,6 +7,7 @@ import { readAuto } from '../../domain/accountAuto';
 import { confirmText, phoneAccountError, phoneAccountRows, phoneAllOut, readPhoneAccounts, type PhoneAccountRow, type PhoneAccounts } from '../../domain/phoneAccounts';
 import { usageLevel } from '../../domain/usage';
 import { IconClose } from '../Icons';
+import { machine } from '../../i18n';
 
 function Bar({ label, left }: { label: string; left: number | null }) {
   return (
@@ -62,12 +63,12 @@ export function AccountSheet({ text, onChanged, onClose }: Props) {
         </div>
         <div className="m-picker-list">
           {!v && !error && <p className="m-muted m-sm">{text ? '계정 칸을 못 읽었어요' : '불러오는 중…'}</p>}
-          {v && !rows.length && <p className="m-muted m-sm">계정 칸이 없어요 — 맥 설정 &gt; 계정에서 지금 로그인을 보관하면 여기서 바꿀 수 있어요</p>}
+          {v && !rows.length && <p className="m-muted m-sm">계정 칸이 없어요 — {machine()} 설정 &gt; 계정에서 지금 로그인을 보관하면 여기서 바꿀 수 있어요</p>}
           {ask ? (
             <div className="m-sleep-card" role="alertdialog" aria-label="계정 바꾸기 확인">
               <b>{confirmText(ask, auto.on).title}</b>
               {confirmText(ask, auto.on).lines.map((l) => <div key={l} className="m-muted m-sm">{l}</div>)}
-              {busy === 'switch' && <div className="m-sm" role="status">맥에서 바꾸는 중…</div>}
+              {busy === 'switch' && <div className="m-sm" role="status">{machine()}에서 바꾸는 중…</div>}
               {error && <div className="m-error m-flush" role="alert">{error}</div>}
               <div className="m-new-row">
                 <button type="button" className="m-btn" disabled={busy === 'switch'} onClick={() => { setAsk(null); setError(null); }}>취소</button>
@@ -88,9 +89,9 @@ export function AccountSheet({ text, onChanged, onClose }: Props) {
                   {(r.rest || r.note) && <span className={r.rest ? 'm-acct-note m-rest' : 'm-acct-note'}>{r.rest ?? r.note}</span>}
                 </button>
               ))}
-              {rows.length === 1 && <p className="m-muted m-sm">다른 계정이 없어요 — 맥 설정 &gt; 계정에서 추가해요</p>}
+              {rows.length === 1 && <p className="m-muted m-sm">다른 계정이 없어요 — {machine()} 설정 &gt; 계정에서 추가해요</p>}
               {v && !v.active && rows.length > 0 && <p className="m-muted m-sm">지금 로그인({v.liveName ?? '없음'})은 칸에 없어요</p>}
-              {v?.switching && !busy && <p className="m-sm" role="status">맥에서 계정을 바꾸는 중이에요 — 오래 이러면 계정을 한 번 눌러 마무리해요</p>}
+              {v?.switching && !busy && <p className="m-sm" role="status">{machine()}에서 계정을 바꾸는 중이에요 — 오래 이러면 계정을 한 번 눌러 마무리해요</p>}
               {out && <p className="m-sm m-rest">{out}</p>}
               {error && <div className="m-error m-flush" role="alert">{error}</div>}
               {rows.length > 1 && (

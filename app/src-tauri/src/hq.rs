@@ -174,6 +174,90 @@ pub fn export_statusline(data: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// 우리 상태줄인가 — 어느 데이터 폴더든 `<데이터>/tools/statusline`(시험 폴더에서 붙은 옛 것도 지금 것으로 바꾼다)
+fn ours(cmd: &str) -> bool {
+    cmd.replace('\\', "/").ends_with("/tools/statusline")
+}
+
+/// 이 프로젝트에 settings.local.json 을 새로 만들어도 되나 — git 저장소가 아니거나 git 이 그 파일을 무시할 때만.
+/// 안 그러면 사용자 저장소에 추적 안 된 파일(내 맥 경로가 든)이 생긴다. .gitignore 는 대신 안 고친다(사용자 저장소)
+pub fn may_create_local(dir: &Path) -> bool {
+    match crate::platform::command("git").arg("-C").arg(dir).args(["check-ignore", "-q", ".claude/settings.local.json"]).output() {
+        Ok(o) => o.status.code() != Some(1), // 0 = 무시함, 1 = 안 무시함, 128 = 저장소 아님
+        Err(_) => true,                       // git 이 없으면 저장소도 아니다
+    }
+}
+
+/// 기존 프로젝트에도 앱 상태줄을 붙인다(2026-09-28 부채 — new-project 로 만든 폴더만 붙어 기존 프로젝트 세션은 대화 %·사용량을 못 남겼다).
+/// <프로젝트>/.claude/settings.local.json 의 statusLine 만 — 사용자 것(local·프로젝트 settings.json)이 있으면 안 덮고,
+/// 깨진 파일·링크는 안 건드리고, 파일이 없으면 may_create 일 때만 만든다. 바꾼 폴더 수
+pub fn attach_statusline_in(folders: &[std::path::PathBuf], cmd: &str, may_create: impl Fn(&Path) -> bool) -> usize {
+    let mut n = 0;
+    for f in folders.iter().filter(|f| f.is_dir()) {
+        let local = f.join(".claude/settings.local.json");
+        if std::fs::symlink_metadata(&local).is_ok_and(|m| m.file_type().is_symlink()) {
+            continue;
+        }
+        let shared_has = || {
+            std::fs::read_to_string(f.join(".claude/settings.json")).ok().and_then(|r| serde_json::from_str::<serde_json::Value>(&r).ok()).is_some_and(|s| !s["statusLine"].is_null())
+        };
+        let mut v: serde_json::Value = match std::fs::read_to_string(&local) {
+            Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+                Ok(v) if v.is_object() => v,
+                _ => continue,
+            },
+            Err(_) if may_create(f) => serde_json::json!({}),
+            Err(_) => continue,
+        };
+        match v["statusLine"]["command"].as_str() {
+            Some(c) if c == cmd || !ours(c) => continue,
+            Some(_) => {} // 옛 데이터 폴더의 우리 것 → 지금 것으로
+            None if !v["statusLine"].is_null() || shared_has() => continue,
+            None => {}
+        }
+        v["statusLine"] = serde_json::json!({ "type": "command", "command": cmd });
+        let tmp = local.with_extension(format!("json.{}.tmp", std::process::id()));
+        if std::fs::create_dir_all(local.parent().unwrap_or(f)).is_err() || std::fs::write(&tmp, serde_json::to_string_pretty(&v).unwrap_or_default() + "\n").is_err() {
+            continue;
+        }
+        if std::fs::rename(&tmp, &local).is_ok() {
+            n += 1;
+        } else {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
+    n
+}
+
+/// 프로젝트 + 그 아래 워크트리(<프로젝트>/.claude/worktrees/*) — 워크트리엔 settings.local.json 이 안 따라와(git 밖)
+/// 워크트리 세션의 대화 % 가 사용자 개인 상태줄에만 기댔다(2026-10-09)
+pub fn with_worktrees(folders: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::with_capacity(folders.len());
+    for f in folders {
+        if let Ok(rd) = std::fs::read_dir(f.join(".claude/worktrees")) {
+            out.extend(rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+        }
+        out.push(f);
+    }
+    out
+}
+
+/// 앱을 켤 때·1분마다(폴더 점검 옆, 새 워크트리) — 진짜 데이터 폴더일 때만(시험 폴더 앱이 진짜 프로젝트 상태줄을 제 폴더로 돌리면 안 된다).
+/// Claude 는 상태줄 설정을 세션 켤 때만 읽어서, 붙기 전에 켠 세션은 다음에 켤 때부터
+pub fn attach_statusline_all(data: &Path) -> usize {
+    let home = crate::config::home();
+    if !crate::config::is_real_data(&home, data) || !statusline_path(data).is_file() {
+        return 0;
+    }
+    let c = crate::config::current();
+    if !c.setup_done {
+        return 0;
+    }
+    let folders = with_worktrees(crate::project::dirs(&home, &c.dev_root, &c.extra_projects).into_iter().map(|(_, p)| p).collect());
+    let cmd = statusline_path(data).to_string_lossy().replace('\\', "/");
+    attach_statusline_in(&folders, &cmd, may_create_local)
+}
+
 #[derive(Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FolderStatus {
@@ -374,5 +458,83 @@ mod tests {
         let mut listed: Vec<String> = TEMPLATE.iter().map(|f| f.path.to_string()).collect();
         listed.sort();
         assert_eq!(on_disk, listed);
+    }
+
+    fn read_json(p: &Path) -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn 기존_프로젝트에도_상태줄을_붙인다() {
+        // 2026-09-28 부채: new-project 로 만든 폴더만 settings.local.json 에 상태줄이 들어가 기존 프로젝트 세션은 대화 %·사용량을 못 남겼다
+        let d = temp("sl-attach");
+        let cmd = "/Users/me/.chammo/tools/statusline";
+        let fresh = d.join("fresh"); // 설정 없음 — 만들어도 되는 폴더
+        let keep = d.join("keep"); // 다른 키가 있는 local
+        let mine = d.join("mine"); // 사용자 자기 상태줄
+        let old = d.join("old"); // 옛(시험) 데이터 폴더의 우리 상태줄
+        let shared = d.join("shared"); // 프로젝트 settings.json 이 상태줄을 정함
+        let broken = d.join("broken"); // 깨진 local — 덮지 않는다
+        let tracked = d.join("tracked"); // 설정 없음 + git 이 안 무시 — 만들면 추적 안 된 파일이 생긴다
+        for f in [&fresh, &keep, &mine, &old, &shared, &broken, &tracked] {
+            std::fs::create_dir_all(f.join(".claude")).unwrap();
+        }
+        std::fs::write(keep.join(".claude/settings.local.json"), r#"{"enabledMcpjsonServers":["a"]}"#).unwrap();
+        std::fs::write(mine.join(".claude/settings.local.json"), r#"{"statusLine":{"type":"command","command":"~/my-line.sh"}}"#).unwrap();
+        std::fs::write(old.join(".claude/settings.local.json"), r#"{"statusLine":{"type":"command","command":"/Users/me/.chammo-qa/tools/statusline"}}"#).unwrap();
+        std::fs::write(shared.join(".claude/settings.json"), r#"{"statusLine":{"type":"command","command":"./team-line.sh"}}"#).unwrap();
+        std::fs::write(broken.join(".claude/settings.local.json"), "{ not json").unwrap();
+        let folders = vec![fresh.clone(), keep.clone(), mine.clone(), old.clone(), shared.clone(), broken.clone(), tracked.clone(), d.join("없는폴더")];
+        let n = attach_statusline_in(&folders, cmd, |f| f != tracked.as_path());
+        assert_eq!(n, 3, "fresh·keep·old 만");
+        let sl = |f: &Path| f.join(".claude/settings.local.json");
+        assert_eq!(read_json(&sl(&fresh))["statusLine"]["command"], cmd);
+        assert_eq!(read_json(&sl(&keep))["statusLine"]["command"], cmd);
+        assert_eq!(read_json(&sl(&keep))["enabledMcpjsonServers"][0], "a", "있던 키는 그대로");
+        assert_eq!(read_json(&sl(&mine))["statusLine"]["command"], "~/my-line.sh", "사용자 상태줄은 안 덮는다");
+        assert_eq!(read_json(&sl(&old))["statusLine"]["command"], cmd, "옛 데이터 폴더의 우리 상태줄은 지금 것으로");
+        assert!(!sl(&shared).exists(), "프로젝트가 정한 상태줄 위에 덮지 않는다");
+        assert_eq!(std::fs::read_to_string(sl(&broken)).unwrap(), "{ not json");
+        assert!(!sl(&tracked).exists(), "git 이 안 무시하는 자리엔 새 파일을 안 만든다");
+        assert_eq!(attach_statusline_in(&folders, cmd, |_| true) , 1, "두 번째엔 tracked 만(만들어도 되면) — 나머지는 이미 맞다");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 새_설정_파일은_git_이_무시할_때만() {
+        let d = temp("sl-git");
+        let plain = d.join("plain"); // git 저장소 아님 — 만들어도 된다
+        let ign = d.join("ign");
+        let not = d.join("not");
+        for f in [&plain, &ign, &not] {
+            std::fs::create_dir_all(f).unwrap();
+        }
+        for (f, gi) in [(&ign, ".claude/settings.local.json\n"), (&not, "!.claude/settings.local.json\n")] {
+            assert!(crate::platform::command("git").arg("init").arg("-q").current_dir(f).status().unwrap().success());
+            std::fs::write(f.join(".gitignore"), gi).unwrap(); // not: 전역 무시 목록(이 맥엔 있다)을 저장소가 되돌린다
+        }
+        assert!(may_create_local(&plain));
+        assert!(may_create_local(&ign));
+        assert!(!may_create_local(&not));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 워크트리_폴더도_상태줄_대상() {
+        // 2026-10-09: 워크트리엔 settings.local.json 이 없어(git 밖) 워크트리 세션의 대화 % 가 사용자 개인 상태줄에만 기댔다
+        let d = temp("sl-wt");
+        let p = d.join("shop");
+        for w in ["a", "b"] {
+            std::fs::create_dir_all(p.join(".claude/worktrees").join(w)).unwrap();
+        }
+        std::fs::write(p.join(".claude/worktrees/note.txt"), "x").unwrap(); // 파일은 빼고 폴더만
+        let plain = d.join("plain"); // 워크트리 없는 프로젝트
+        std::fs::create_dir_all(&plain).unwrap();
+        let mut got = with_worktrees(vec![p.clone(), plain.clone()]);
+        got.sort();
+        let mut want = vec![p.clone(), p.join(".claude/worktrees/a"), p.join(".claude/worktrees/b"), plain.clone()];
+        want.sort();
+        assert_eq!(got, want);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

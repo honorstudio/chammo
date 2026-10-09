@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findPaths, findPathsWrapped, pathCandidates, projectOrder, resolveLink, routeOf } from './links';
+import { findPaths, findPathsWrapped, pathCandidates, projectOrder, projectRelCandidates, resolveLink, routeOf } from './links';
 
 const BASE = '/U/dev/todo-api';
 const HOME = '/U';
@@ -155,6 +155,25 @@ describe('projectOrder — 문서 속 경로가 다른 프로젝트 기준일 �
   it('이름이 둘이면 먼저 나온 순서', () =>
     expect(projectOrder(projects, 'project-a 와 hello-docs')).toEqual(['project-a', 'hello-docs', 'acme-shop', 'todo-api']));
   it('이름이 없으면 원래 순서', () => expect(projectOrder(projects, '그냥 문장')).toEqual(projects));
+});
+
+describe('projectRelCandidates — 문서 속 상대 경로를 프로젝트 폴더에서 찾기(따로 추가한 폴더 포함, 2026-09-28 부채)', () => {
+  const devRoot = '/U/dev';
+  it('따로 추가한 폴더 프로젝트는 그 폴더 기준 — devRoot 아래로 짐작하지 않는다', () =>
+    expect(projectRelCandidates('docs/starter.md', ['acme-shop'], ['/Volumes/work/client-x'], devRoot, ''))
+      .toEqual(['/U/dev/acme-shop/docs/starter.md', '/Volumes/work/client-x/docs/starter.md']));
+  it('같은 문단에 나온 이름이 먼저 — 추가 폴더 프로젝트도', () =>
+    expect(projectRelCandidates('docs/a.md', ['acme-shop', 'todo-api'], ['/V/client-x'], devRoot, 'client-x 상태: docs/a.md'))
+      .toEqual(['/V/client-x/docs/a.md', '/U/dev/acme-shop/docs/a.md', '/U/dev/todo-api/docs/a.md']));
+  it('이름이 겹치면 추가 폴더 쪽 한 번만', () =>
+    expect(projectRelCandidates('a.md', ['dup'], ['/V/dup/'], devRoot, '')).toEqual(['/V/dup/a.md']));
+  it('절대·~ 경로나 빈 글자는 후보 없음', () => {
+    expect(projectRelCandidates('/x/a.md', ['p'], [], devRoot, '')).toEqual([]);
+    expect(projectRelCandidates('~/a.md', ['p'], [], devRoot, '')).toEqual([]);
+    expect(projectRelCandidates('', ['p'], [], devRoot, '')).toEqual([]);
+  });
+  it('devRoot 가 비어도 추가 폴더는 본다', () =>
+    expect(projectRelCandidates('a.md', [], ['/V/x'], '', '')).toEqual(['/V/x/a.md']));
 });
 
 describe('윈도우 경로(C:\\… · C:/…)도 링크로 — 터미널 Ctrl+클릭이 아무것도 안 했다(윈도우판)', () => {

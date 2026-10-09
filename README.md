@@ -157,12 +157,13 @@ To talk back, hold space in the chief of staff's terminal — that's Claude Code
 
 ## Privacy
 
-Chammo runs entirely on your Mac. It has no server, no account and no telemetry. It never sends your conversations or code anywhere — all model traffic is Claude Code's, and all GitHub traffic is `gh`'s, with your own logins. Chammo itself reaches the internet only for the things below — apart from the version check, only when you use that feature:
+Chammo runs entirely on your Mac. It has no server, no account and no telemetry. It never sends your conversations or code anywhere unless you turn on a feature below that does (Telegram) — all model traffic is Claude Code's, and all GitHub traffic is `gh`'s, with your own logins. Chammo itself reaches the internet only for the things below — apart from the version check, only when you use that feature:
 
 - **Version check** — at launch and every few hours it reads the latest Claude Code version from the npm registry and the latest Chammo release from GitHub. No login; nothing about you is sent.
 - **Browser automation install** (when you press Install) — downloads Node.js from nodejs.org, Chrome Beta from dl.google.com and the browser tool parts from the npm registry. Plain downloads; nothing about you is sent.
 - **Account usage** (only if you saved accounts in Settings > Accounts) — asks api.anthropic.com for each account's 5-hour and weekly usage with that account's own sign-in token, the same request Claude Code's `/usage` makes. Only the percentages and reset times are kept.
 - **Phone notifications** (only if you paired a phone and turned notifications on) — the notification's title and one line go to your phone's push service (Apple, Google or Mozilla), end-to-end encrypted so the push service can't read them.
+- **Telegram** (only if you connect your own bot in Settings) — your messages to the bot and the chief of staff's replies (keys and passwords masked) plus decision cards (question, amount, project name) go through api.telegram.org, so Telegram's servers keep them. Payments, sends, deletions and production steps are only notified there — you answer them in the app.
 - **Harnitor fonts** — opening the Harnitor screen loads its fonts from Google Fonts.
 - **Installers you start** — the setup wizard's install buttons (Claude Code from claude.ai, the GitHub CLI, …) and the Supertonic voice's **Download** (a Python package from PyPI and the Supertone model) fetch from their official sources.
 

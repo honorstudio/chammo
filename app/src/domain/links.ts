@@ -148,3 +148,20 @@ export function projectOrder(projects: string[], context: string): string[] {
   const named = projects.filter((p) => context.includes(p)).sort((a, b) => context.indexOf(a) - context.indexOf(b));
   return [...named, ...projects.filter((p) => !named.includes(p))];
 }
+
+/**
+ * 문서 속 상대 경로를 프로젝트 폴더들 안에서 찾을 후보 — devRoot 아래 프로젝트 + 따로 추가한 폴더(extras, 그 폴더 그대로).
+ * 같은 문단에 나온 이름 먼저. 이름이 겹치면 추가 폴더 쪽 하나만(projectDir 와 같은 규칙)
+ */
+export function projectRelCandidates(raw: string, devProjects: string[], extras: string[], devRoot: string, context: string): string[] {
+  const rel = cleanPathText(raw);
+  if (!rel || rel.startsWith('/') || rel.startsWith('~')) return [];
+  const dirs = new Map<string, string>();
+  if (devRoot) for (const p of devProjects) dirs.set(p, `${devRoot.replace(/\/+$/, '')}/${p}`);
+  for (const x of extras) {
+    const dir = x.replace(/\/+$/, '');
+    const name = dir.replace(/^.*\//, '');
+    if (name) { dirs.delete(name); dirs.set(name, dir); }
+  }
+  return projectOrder([...dirs.keys()], context).map((p) => normalize(`${dirs.get(p)!}/${rel}`));
+}

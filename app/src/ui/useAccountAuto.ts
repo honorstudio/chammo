@@ -63,8 +63,9 @@ export function useAccountAuto(accounts: AccountsView | null, acts: SessionActiv
           await accountsApi.autoPatch(changedKeys(before, state));
           before = state;
           try {
-            await accountsApi.switchTo(plan.switchTo);
+            await accountsApi.switchTo(plan.switchTo, v.active);
           } catch (e: unknown) {
+            if (String(e) === 'moved') return; // 다시 읽은 뒤 그 몇 ms 사이에 폰·사람이 먼저 바꿨다 — 그 선택을 둔다
             restUntil.current = Date.now() + BACKOFF_MS;
             notifyOnce({ kind: 'accounts', session: 'accounts', orch: false, title: tr('계정 자동 전환 실패', 'Account auto-switch failed'), body: accountError(String(e)) });
             return;

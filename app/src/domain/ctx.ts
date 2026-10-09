@@ -1,20 +1,21 @@
 // 세션별 컨텍스트(대화 메모리) 사용량. 상태줄 스크립트가 세션마다 ~/.honor-orchestrator/ctx/<session_id>.json 을 남긴다
 // (Claude Code 가 상태줄에 주는 context_window.used_percentage 그대로라 모델별 창 크기를 따로 셀 필요가 없다)
 
-export type Ctx = { used: number; ts: number; model?: string; modelId?: string; effort?: string };
+export type Ctx = { used: number; ts: number; model?: string; modelId?: string; effort?: string; /** 창 크기(토큰) — 상태줄 파일 없는 대화의 % 를 같은 모델 크기로 잰다 */ size?: number };
 export const CTX_ALERT = 80;
 
 export function parseCtx(files: string[]): Record<string, Ctx> {
   const out: Record<string, Ctx> = {};
   for (const text of files) {
     try {
-      const j = JSON.parse(text) as { sessionId?: string; used?: unknown; ts?: unknown; model?: unknown; modelId?: unknown; effort?: unknown };
+      const j = JSON.parse(text) as { sessionId?: string; used?: unknown; ts?: unknown; model?: unknown; modelId?: unknown; effort?: unknown; size?: unknown };
       if (j.sessionId && typeof j.used === 'number') {
         const c: Ctx = { used: j.used, ts: typeof j.ts === 'number' ? j.ts : 0 };
         // 채팅 머리줄 칩용 — 상태줄이 같이 남긴 모델·에포트(옛 파일엔 없다)
         if (typeof j.model === 'string' && j.model) c.model = j.model;
         if (typeof j.modelId === 'string' && j.modelId) c.modelId = j.modelId;
         if (typeof j.effort === 'string' && j.effort) c.effort = j.effort;
+        if (typeof j.size === 'number' && j.size > 0) c.size = j.size;
         out[j.sessionId] = c;
       }
     } catch {

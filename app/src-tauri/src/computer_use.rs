@@ -155,7 +155,7 @@ pub fn set_here(key: &str, on: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// 기능이 켜져 있으면 아직 안 본 프로젝트에 넣는다 — 앱 켤 때·설정 저장 때
+/// 기능이 켜져 있으면 아직 안 본 프로젝트에 넣는다 — 앱 켤 때·설정 저장 때·1분마다(폴더 점검 옆)·앱이 세션 띄우기 직전
 pub fn sweep() -> Result<usize, String> {
     if !crate::config::current().features.computer_use {
         return Ok(0);
@@ -169,6 +169,13 @@ pub fn sweep() -> Result<usize, String> {
     edit(|t| enable_new(t, &keys, &seen).map(|(n, _)| n), |v| fresh.iter().all(|k| enabled_in(v, k)))?;
     write_seen(&[seen, fresh.clone()].concat())?;
     Ok(fresh.len())
+}
+
+/// sweep 하고 실패는 기록만 — 앱이 세션을 띄우기 직전(막 만든 폴더의 첫 세션도 화면 조종을 갖고 시작하게, Claude 는 켤 때 한 번 읽는다)·1분마다
+pub fn sweep_logged() {
+    if let Err(e) = sweep() {
+        crate::claude::log_out("computer-use", &e);
+    }
 }
 
 /// 기능을 바꿨다(설정 화면·도구 화면 '모든 프로젝트'·scripts/app feature) — 켜면 처음부터 다 넣고, 끄면 모든 프로젝트에서 뺀다

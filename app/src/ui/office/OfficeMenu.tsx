@@ -44,14 +44,13 @@ export function PixelIcon({ rows, size = 22 }: { rows: string[]; size?: number }
 
 const TOOLS: [Exclude<OfficeTab, 'office'>, string][] = [['gacha', tr('뽑기', 'Gacha')], ['dex', tr('도감', 'Collection')], ['skins', tr('스킨', 'Skins')], ['furniture', tr('가구', 'Furniture')]];
 
-/** 왼쪽 위 아이콘 줄 — 누르면 그 모달(가구는 방 위 편집). 켜진 걸 다시 누르면 닫힌다 */
+/** 왼쪽 위 아이콘 줄 — 누르면 그 모달(가구는 방 위 편집). 켜진 걸 다시 누르면 닫힌다. 아이콘만(이름은 aria-label·title — 아이콘+글자 같이 금지, 상점 QA 11) */
 export function OfficeTools({ tab, onTab }: { tab: OfficeTab; onTab: (t: OfficeTab) => void }) {
   return (
     <div className="office-tools" role="toolbar" aria-label={tr('사무실 메뉴', 'Office menu')}>
       {TOOLS.map(([id, name]) => (
-        <button key={id} className={`office-tool ${tab === id ? 'on' : ''}`} aria-pressed={tab === id} title={name} onClick={() => onTab(tab === id ? 'office' : id)}>
+        <button key={id} className={`office-tool ${tab === id ? 'on' : ''}`} aria-pressed={tab === id} aria-label={name} title={name} onClick={() => onTab(tab === id ? 'office' : id)}>
           <PixelIcon rows={ICON[id]} />
-          <span>{name}</span>
         </button>
       ))}
     </div>

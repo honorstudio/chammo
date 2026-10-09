@@ -202,6 +202,12 @@ fn setup_quiet(always_quiet: bool) -> Result<(Keychain, Live, PathBuf), String> 
     Ok((kc, Live { service, account, claude_json }, crate::config::data_file("accounts.json")))
 }
 
+/// 지금 로그인 칸 값 — 로그인 시각 재기(login::login_at)가 칸 고친 시각이 바뀌었을 때만 부른다. 창 없이(quiet), 못 읽으면 None
+pub fn live_secret_quiet() -> Option<crate::accounts_store::Secret> {
+    let (kc, live, _) = setup_quiet(true).ok()?;
+    crate::accounts_store::Store::get(&kc, &live.service, &live.account).ok().flatten()
+}
+
 /// 무거운 일(키체인)은 뒤에서, 한 번에 하나만
 async fn run<F>(f: F) -> Result<View, String>
 where
@@ -233,8 +239,9 @@ pub async fn accounts_capture(name: Option<String>) -> Result<View, String> {
 }
 
 #[tauri::command]
-pub async fn accounts_switch(id: String) -> Result<View, String> {
-    run(move |kc, live, list| accounts::switch(kc, live, list, &id).map(|_| ())).await
+/// expect = 자동 전환이 본 지금 칸 — 그새 바뀌었으면 'moved' 로 안 바꾼다(폰 선택을 덮지 않게). 손으로 바꾸기는 안 준다
+pub async fn accounts_switch(id: String, expect: Option<String>) -> Result<View, String> {
+    run(move |kc, live, list| accounts::switch_if(kc, live, list, &id, expect.as_deref()).map(|_| ())).await
 }
 
 #[tauri::command]

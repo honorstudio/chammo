@@ -6,6 +6,8 @@ import { groupRoutines, type RoutineItem, type RoutineState } from '../domain/ro
 import { IconDb } from './Icons';
 import { StatusMark } from './StatusMark';
 import { assistant, josa, tr } from '../i18n';
+import { keyLabel } from '../domain/keys';
+import { IS_WIN } from '../domain/reader';
 import type { ProjectGroup, Session, SessionState } from '../domain/session';
 
 export type Selection = { kind: 'orchestrator' } | { kind: 'orchHome' } | { kind: 'all' } | { kind: 'tama' } | { kind: 'replay' } | { kind: 'load' } | { kind: 'helpers' } | { kind: 'loose' } | { kind: 'review'; key?: string } | { kind: 'project'; name: string } | { kind: 'routine'; name: string } | { kind: 'external'; id: string };
@@ -92,7 +94,7 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
   const first = liveNames[0] ?? idleProjects[0];
   return (
     <aside className="side">
-      <div className="panel-head">{tr('세션', 'Sessions')} <span className="dim">⌘B</span></div>
+      <div className="panel-head">{tr('세션', 'Sessions')} <span className="dim">{keyLabel('⌘B', IS_WIN)}</span></div>
       <div className="search">
         <input
           ref={searchRef}

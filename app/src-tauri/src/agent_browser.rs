@@ -61,6 +61,23 @@ pub struct Live {
     /// 사람이 개입 중 {by, at} — 래퍼가 아니라 앱이 채운다(takeover.rs)
     #[serde(default)]
     pub takeover: Option<serde_json::Value>,
+    /// 이 크롬을 같이 쓰는 산 스크립트 수(chammo-browser launch, <browser>/locks/<프로필>.users) — 앱이 채운다.
+    /// 스크립트는 래퍼를 안 거쳐 개입해도 못 멈춘다 — 개입 줄에 알린다
+    #[serde(default)]
+    pub scripts: u32,
+}
+
+/// 같이 쓰는 산 스크립트 수 — 명부 <locks>/<프로필>.users/<pid>(src/users.js). 세션 브라우저 도구가 같이 쓰는 칸(by=session, src/share.js)·
+/// 크롬 주인(상태 파일 pid)은 뺀다
+pub fn script_users(locks: &std::path::Path, profile: &str, owner: i32, alive: impl Fn(i32) -> bool) -> u32 {
+    let Ok(rd) = std::fs::read_dir(locks.join(format!("{profile}.users"))) else { return 0 };
+    rd.flatten()
+        .filter_map(|e| {
+            let pid: i32 = e.file_name().to_str()?.parse().ok()?;
+            let v: serde_json::Value = std::fs::read_to_string(e.path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+            (pid > 0 && pid != owner && v["by"] != "session" && alive(pid)).then_some(())
+        })
+        .count() as u32
 }
 
 /// 상태 파일 글 → Live. 포트·경로·프로필 모양이 이상하면 None(남이 심은 파일로 엉뚱한 곳에 붙지 않게)
@@ -181,6 +198,7 @@ fn with_takeover(mut l: Live) -> Live {
     if crate::takeover::holding(&l.profile) {
         wake(&l.profile);
     }
+    l.scripts = script_users(&crate::config::data_file("browser").join("locks"), &l.profile, l.pid, crate::platform::pid_alive);
     l
 }
 
@@ -275,6 +293,20 @@ pub fn pack_frame(seq: u64, jpeg: &[u8]) -> Vec<u8> {
     v
 }
 
+/// 권한 감시 스크립트(agent_perm.js)가 부르는 바인딩 — 일꾼이 붙은 탭에만 넣는다
+const PERM_BINDING: &str = "__chammoPerm";
+const PERM_JS: &str = include_str!("agent_perm.js");
+/// 모달에 띄울 권한 — 감시 스크립트가 이만큼 기다린 뒤 크롬에 넘긴다(그 뒤 버튼은 소용없다)
+const PERM_TTL: Duration = Duration::from_secs(60);
+
+/// 사이트가 물은 권한(위치·알림) — 숨긴 크롬의 말풍선 대신 모달에서 허용·거부한다(roadmap 부채 agent-browser-modal ②)
+#[derive(Clone, Debug)]
+struct Perm {
+    kind: String,
+    origin: String,
+    at: Instant,
+}
+
 #[derive(Default)]
 struct View {
     /// 지금 프레임의 페이지 크기 — 모달 입력 좌표 환산(agent_input)
@@ -297,6 +329,10 @@ struct View {
     chooser: Option<serde_json::Value>,
     /// 크롬이 페이지 밖에 창을 띄웠다(패스키·Touch ID·폰 QR 등) — 이 그림엔 안 찍혀 모달이 '크롬에서 보기'로 꺼내게 한다(chrome_popup)
     popup: bool,
+    /// 탭별 권한 요청(위치·알림) — 감시 스크립트가 알린 것
+    perms: HashMap<String, Perm>,
+    /// 사람이 고른 권한 답 — 일꾼이 Browser.setPermission 으로(브라우저 단위, 세션 없음)
+    perm_answers: Vec<serde_json::Value>,
     seq: u64,
     jpeg: Vec<u8>,
     pages: Vec<Page>,
@@ -394,13 +430,37 @@ pub fn frame_bytes(profile: &str, since: u64) -> Vec<u8> {
     if v.seq > since && !v.jpeg.is_empty() { pack_frame(v.seq, &v.jpeg) } else { vec![] }
 }
 
+/// 폰 브라우저 보기의 화면 받기 상태 — 이유(주소 뺀 한 줄, 120자)·붙음·탭 수. 폰이 맥 모달과 같은 판단(browserScreen)으로 이유를 보인다.
+/// 포트·devtools 경로는 맥 안에서만(lives_for_phone 과 같은 선) — 주소·절대 경로 낱말은 '…'로, 끝의 구두점은 남긴다
+pub fn phone_screen(error: &str, attached: bool, pages: usize) -> serde_json::Value {
+    let words: Vec<String> = error
+        .split(' ')
+        .map(|w| {
+            if w.contains("://") || w.starts_with('/') {
+                let tail = w.len() - w.trim_end_matches([':', ',', ';', ')']).len();
+                format!("…{}", &w[w.len() - tail..])
+            } else {
+                w.to_string()
+            }
+        })
+        .collect();
+    let why: String = words.join(" ").chars().take(120).collect();
+    serde_json::json!({ "error": why, "attached": attached, "pages": pages })
+}
+
+/// 일꾼이 있으면 그 화면 받기 상태 — 새로 띄우지 않는다(목록 읽기가 크롬에 붙으면 안 된다)
+fn screen_of(profile: &str) -> Option<serde_json::Value> {
+    with_workers(|ws| ws.get(profile).and_then(|w| w.view.lock().ok().map(|v| phone_screen(&v.error, v.attached, v.pages.len()))))
+}
+
 /// 폰에 보낼 세션 브라우저 목록 — 보기에 필요한 것만(포트·devtools 경로·래퍼 pid 는 맥 안에서만).
 /// 개입·부름 상태도(부름은 이유 한 줄만) — 폰에서도 개입·돌려주기·다 했어를 한다(2026-10-06 사용자 ⑥)
 pub fn lives_for_phone() -> serde_json::Value {
     serde_json::Value::Array(agent_lives().into_iter().map(|l| serde_json::json!({
         "profile": l.profile, "sessionPid": l.session_pid, "url": l.url, "title": l.title, "tabs": l.tabs,
         "tool": l.tool, "toolAt": l.tool_at, "busy": l.busy, "ts": l.ts,
-        "ask": l.ask.as_ref().map(|a| serde_json::json!({ "reason": a["reason"], "at": a["at"] })), "gate": l.gate, "held": l.held, "takeover": l.takeover,
+        "ask": l.ask.as_ref().map(|a| serde_json::json!({ "reason": a["reason"], "at": a["at"] })), "gate": l.gate, "held": l.held, "takeover": l.takeover, "scripts": l.scripts,
+        "screen": screen_of(&l.profile),
     })).collect())
 }
 
@@ -415,7 +475,7 @@ pub fn phone_takeover(profile: &str, session_pid: i32, on: bool) -> Result<(), S
     match (on, l.ask.is_some()) {
         (true, true) => Ok(()), // 부르는 중엔 이미 조작할 수 있다
         (true, false) => agent_takeover(profile.to_string(), l.pid, Some("phone".into())),
-        (false, true) => agent_ask_done(profile.to_string(), l.pid),
+        (false, true) => agent_ask_done(profile.to_string(), l.pid, None),
         (false, false) => agent_handback(profile.to_string(), l.pid),
     }
 }
@@ -460,6 +520,10 @@ pub struct Tabs {
     dropped: u64,
     /// 크롬이 이 그림 밖에 창을 띄웠다(패스키 등) — 모달이 '크롬에서 보기' 줄을 띄운다
     popup: bool,
+    /// 지금 탭이 물은 권한 {kind, origin} — 모달이 허용·거부를 띄운다
+    permission: Option<serde_json::Value>,
+    /// 멈춘 탭 대화상자를 래퍼에 부탁한 결과 {at, ok, error}(takeover::dialog_done) — 못 풀었으면 모달이 알린다
+    wrapper_dialog: Option<serde_json::Value>,
 }
 
 /// 탭 띠 — CDP 로 본 탭들과 지금 보여 주는 탭
@@ -467,14 +531,27 @@ pub struct Tabs {
 pub fn agent_tabs(profile: String) -> Tabs {
     let view = touch(&profile);
     let v = view.lock().unwrap_or_else(|e| e.into_inner());
-    let shown = read_live(&profile).and_then(|l| chrome_pid(l.port)).is_some_and(|p| self::shown().contains(&p));
+    let live = read_live(&profile);
+    let shown = live.as_ref().and_then(|l| chrome_pid(l.port)).is_some_and(|p| self::shown().contains(&p));
+    let wrapper_dialog = live.as_ref().and_then(|l| crate::takeover::dialog_done(&live_dir(), &profile, l.pid));
     let chooser = v.chooser.as_ref().map(|c| if c["mode"] == "selectMultiple" { "multiple".to_string() } else { "single".to_string() });
     let blank = v.current.as_ref().and_then(|c| v.pages.iter().find(|p| &p.id == c)).is_some_and(|p| p.url == "about:blank");
     let reopened = blank && REOPENED.lock().is_ok_and(|r| r.contains(&profile));
     let dialog = v.current.as_ref().and_then(|c| v.dialogs.get(c)).cloned();
     let dialog_tabs = v.pages.iter().filter(|p| v.dialogs.contains_key(&p.id)).map(|p| p.id.clone()).collect();
     let stuck = v.current.is_some() && v.stuck == v.current && dialog.is_none();
-    Tabs { pages: v.pages.clone(), current: v.current.clone(), pinned: v.pinned.is_some(), error: v.error.clone(), attached: v.attached, dialog, dialog_tabs, stuck, shown, chooser, reopened, dropped: v.dropped, popup: v.popup }
+    Tabs { pages: v.pages.clone(), current: v.current.clone(), pinned: v.pinned.is_some(), error: v.error.clone(), attached: v.attached, dialog, dialog_tabs, stuck, shown, chooser, reopened, dropped: v.dropped, popup: v.popup, permission: perm_of(&v), wrapper_dialog }
+}
+
+/// 멈춘 탭(앱이 붙기 전에 뜬 대화상자) 답을 래퍼에 부탁 — 그 래퍼가 세션 도구를 붙잡는 래퍼(gate)일 때만. 사람 조작으로 센다
+#[tauri::command]
+pub fn agent_dialog_wrapper(profile: String, pid: i32, accept: bool) -> Result<(), String> {
+    if !human_ok(&profile, pid) || !read_live(&profile).is_some_and(|l| l.gate) {
+        return Err("not allowed".into());
+    }
+    crate::takeover::ask_dialog(&live_dir(), &profile, pid, accept)?;
+    crate::takeover::record(&profile, crate::takeover_note::dialog(accept));
+    Ok(())
 }
 
 /// 화면 다시 받기 — 실패해 쉬는 일꾼의 기다림(RETRY)을 풀어 다음 물음에 바로 다시 붙는다. 도는 일꾼(탭 0개로 '닫혔어'인 때 등)도
@@ -551,6 +628,30 @@ fn queue_answer(v: &mut View, target: Option<String>, accept: bool, prompt: Opti
     }
     v.answers.push((t, p));
     true
+}
+
+/// 권한 답을 줄에 — 그 탭(없으면 지금 탭)에 요청이 있을 때만, 한 번
+fn queue_permission(v: &mut View, target: Option<String>, allow: bool) -> bool {
+    let Some(t) = target.or_else(|| v.current.clone()) else { return false };
+    let Some(p) = v.perms.remove(&t) else { return false };
+    v.perm_answers.push(serde_json::json!({ "permission": { "name": p.kind }, "setting": if allow { "granted" } else { "denied" }, "origin": p.origin }));
+    true
+}
+
+/// 지금 탭의 권한 요청 {kind, origin} — 감시 스크립트가 아직 기다리는 것만
+fn perm_of(v: &View) -> Option<serde_json::Value> {
+    let p = v.perms.get(v.current.as_ref()?)?;
+    (p.at.elapsed() < PERM_TTL).then(|| serde_json::json!({ "kind": p.kind, "origin": p.origin }))
+}
+
+/// 사이트가 물은 위치·알림 권한에 답 — 사람 조작(개입 중·세션이 부르는 중)일 때만
+#[tauri::command]
+pub fn agent_permission(profile: String, pid: i32, target: Option<String>, allow: bool) {
+    if !human_ok(&profile, pid) {
+        return;
+    }
+    let view = touch(&profile);
+    queue_permission(&mut view.lock().unwrap_or_else(|e| e.into_inner()), target, allow);
 }
 
 /// 모달 위로 끌어다 놓은 파일 — 그 자리에 drag 로 놓는다(파일 칸·올리기 칸). 경로는 크롬에만, 어디에도 안 남긴다
@@ -658,20 +759,30 @@ fn panel_paths(panel: &objc2::runtime::AnyObject) -> Vec<String> {
     }
 }
 
-/// 사람이 다 했다(browser_ask_human 에 답) — 래퍼가 기다리는 <live>/<프로필>.done
+/// .done 에 적을 표 — 그 래퍼(pid)의 지금 부름(ask.at). 모달이 보던 부름(at)이 있으면 같을 때만.
+/// 래퍼는 표가 지금 부름과 같을 때만 끝낸다 — 검사·쓰기 사이 틈에 새 부름을 대신 끝내지 않게(2026-10-04 ①)
+fn done_mark(live: Option<&Live>, pid: i32, at: Option<u64>) -> Option<String> {
+    let l = live.filter(|l| for_wrapper(Some(l), pid))?;
+    let now = l.ask.as_ref()?.get("at")?.as_u64()?;
+    (at.is_none() || at == Some(now)).then(|| format!("{pid}:{now}"))
+}
+
+/// 사람이 다 했다(browser_ask_human 에 답) — 래퍼가 기다리는 <live>/<프로필>.done. at = 모달이 보던 부름(ask.at, 폰은 없음)
 #[tauri::command]
-pub fn agent_ask_done(profile: String, pid: i32) -> Result<(), String> {
+pub fn agent_ask_done(profile: String, pid: i32, at: Option<u64>) -> Result<(), String> {
     if profile.is_empty() || profile.starts_with('.') || profile.contains(['/', '\\', '\0']) {
         return Err("bad profile".into());
     }
     // 다른 세션 브라우저가 같은 프로필을 잡았으면 그 세션의 부름을 대신 끝내지 않는다
-    if !for_wrapper(read_live(&profile).as_ref(), pid) {
+    let live = read_live(&profile);
+    if !for_wrapper(live.as_ref(), pid) {
         return Err("browser changed".into());
     }
     // 사람이 한 일 기록을 먼저(래퍼는 .done 을 보자마자 읽는다)
     crate::takeover::ask_done(&live_dir(), &profile, pid)?;
+    let Some(mark) = done_mark(live.as_ref(), pid, at) else { return Err("ask changed".into()) };
     let f = live_dir().join(format!("{profile}.done"));
-    std::fs::write(&f, b"").map_err(|e| e.to_string())?;
+    std::fs::write(&f, mark.as_bytes()).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -841,9 +952,19 @@ fn on_event(m: &serde_json::Value, view: &Arc<Mutex<View>>, st: &mut St) {
             st.probes.retain(|p| p.1 != gone);
             if let Ok(mut v) = view.lock() {
                 v.dialogs.remove(&gone);
+                v.perms.remove(&gone);
                 if v.stuck.as_ref() == Some(&gone) {
                     v.stuck = None;
                 }
+            }
+        }
+        "Runtime.bindingCalled" if m["params"]["name"] == PERM_BINDING => {
+            let Some(t) = st.target_of(m["sessionId"].as_str()) else { return };
+            let kind = serde_json::from_str::<serde_json::Value>(m["params"]["payload"].as_str().unwrap_or_default()).ok().and_then(|p| p["kind"].as_str().map(str::to_string));
+            let Some(kind) = kind.filter(|k| ["geolocation", "notifications"].contains(&k.as_str())) else { return };
+            let Some(url) = st.pages.iter().find(|p| p.id == t).map(|p| p.url.clone()) else { return };
+            if let Ok(mut v) = view.lock() {
+                v.perms.insert(t, Perm { kind, origin: origin_of(&url), at: Instant::now() });
             }
         }
         "Page.javascriptDialogOpening" => {
@@ -1046,6 +1167,11 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
                             let _ = cdp.send("Page.enable", serde_json::json!({}), Some(&s));
                             // 파일 고르기 창은 가로챈다 — 숨긴 크롬의 맥 창 대신 앱이 파일 창을 띄운다(사람이 누른 것만, on_event)
                             let _ = cdp.send("Page.setInterceptFileChooserDialog", serde_json::json!({ "enabled": true }), Some(&s));
+                            // 위치·알림 권한 감시 — 숨긴 크롬 말풍선 대신 모달에서(agent_perm.js). 바인딩은 Runtime 을 켜야 페이지에 보인다(2026-10-09 실측)
+                            let _ = cdp.send("Runtime.enable", serde_json::json!({}), Some(&s));
+                            let _ = cdp.send("Runtime.addBinding", serde_json::json!({ "name": PERM_BINDING }), Some(&s));
+                            let _ = cdp.send("Page.addScriptToEvaluateOnNewDocument", serde_json::json!({ "source": PERM_JS }), Some(&s));
+                            let _ = cdp.send("Runtime.evaluate", serde_json::json!({ "expression": PERM_JS }), Some(&s));
                             st.sessions.insert(t.clone(), s.clone());
                             s
                         }
@@ -1125,6 +1251,11 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
             for m in buf {
                 on_event(&m, view, &mut st);
             }
+        }
+        // 권한 답 — 브라우저 단위(세션 없이). 감시 스크립트가 바뀐 상태를 보고 원래 함수를 부른다
+        let perms = view.lock().map(|mut v| std::mem::take(&mut v.perm_answers)).unwrap_or_default();
+        for p in perms {
+            let _ = cdp.send("Browser.setPermission", p, None);
         }
         // 모달에서 온 입력 — 지금 탭 세션으로. 글자가 들어 있으니 오류에도 안 싣는다
         // 사람 입력은 보내기 직전에 본 탭·출처와 맞춰 본다(일꾼의 탭 목록이 가장 새것) — 다르면 버리고 센다
@@ -1489,6 +1620,34 @@ fn front_chrome(port: u16) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn 같이_쓰는_스크립트_수는_산_것만_세션_칸과_주인은_빼고() {
+        // 개입해도 스크립트는 못 멈춘다 — 개입 줄에 수를 알린다(roadmap 부채 browser-takeover ①)
+        let d = std::env::temp_dir().join(format!("chammo-script-users-{}", std::process::id()));
+        let u = d.join("shop.users");
+        std::fs::create_dir_all(&u).unwrap();
+        std::fs::write(u.join("101"), r#"{"pid":101,"at":"x"}"#).unwrap(); // 산 스크립트
+        std::fs::write(u.join("102"), r#"{"pid":102,"at":"x"}"#).unwrap(); // 죽은 스크립트
+        std::fs::write(u.join("103"), r#"{"pid":103,"at":"x","by":"session"}"#).unwrap(); // 같이 쓰는 세션 래퍼
+        std::fs::write(u.join("104"), r#"{"pid":104}"#).unwrap(); // 크롬 주인(지킴이 자신은 안 올라가지만 혹시)
+        std::fs::write(u.join("note"), "x").unwrap();
+        let alive = |p: i32| p != 102;
+        assert_eq!(script_users(&d, "shop", 104, alive), 1);
+        assert_eq!(script_users(&d, "none", 104, alive), 0);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 폰에_보내는_화면_상태는_이유를_짧게_주소_없이() {
+        // 폰 브라우저 보기가 '화면 받는 중'에 이유 없이 멈췄다(2026-10-05 남은 것 ①) — 이유는 보내되 포트·devtools 주소는 맥 안에만
+        let s = phone_screen("WebSocket connect ws://127.0.0.1:9333/devtools/page/AB12: Connection refused (os error 61)", false, 0);
+        assert_eq!(s["error"], "WebSocket connect …: Connection refused (os error 61)");
+        assert_eq!((s["attached"].as_bool(), s["pages"].as_u64()), (Some(false), Some(0)));
+        let long = "x ".repeat(200);
+        assert!(phone_screen(&long, true, 2)["error"].as_str().unwrap().chars().count() <= 120);
+        assert_eq!(phone_screen("", true, 3), serde_json::json!({ "error": "", "attached": true, "pages": 3 }));
+    }
+
     fn page(id: &str, url: &str) -> Page {
         Page { id: id.into(), url: url.into(), title: String::new() }
     }
@@ -1508,6 +1667,20 @@ mod tests {
         assert!(!expect_ok(&ex("pop", "about:blank"), Some("pop"), &ps), "본 건 빈 팝업인데 그새 다른 사이트로 갔으면 버린다");
         assert!(!expect_ok(&ex("main", "https://shop.com/"), None, &ps), "지금 탭을 모르면 버린다");
         assert!(!expect_ok(&ex("gone", "https://shop.com/"), Some("gone"), &ps), "탭이 닫혔으면 버린다");
+    }
+
+    #[test]
+    fn 다_했어는_보던_그_부름의_표만() {
+        // 2026-10-04 ①: .done 이 프로필 이름뿐이라 검사와 쓰기 사이 틈에 새 래퍼 부름을 대신 끝낼 수 있었다 — 래퍼 pid:ask.at 을 적는다
+        let asking = r#"{"profile":"acme","pid":11,"sessionPid":22,"port":5000,"wsPath":"/devtools/browser/ab-12","ts":2,"ask":{"reason":"로그인","at":700}}"#;
+        let l = parse_live(asking).unwrap();
+        assert_eq!(done_mark(Some(&l), 11, Some(700)), Some("11:700".to_string()));
+        assert_eq!(done_mark(Some(&l), 11, None), Some("11:700".to_string()), "폰은 지금 부름 그대로");
+        assert_eq!(done_mark(Some(&l), 11, Some(600)), None, "모달이 보던 부름이 끝나고 새 부름이 왔으면 안 끝낸다");
+        assert_eq!(done_mark(Some(&l), 33, Some(700)), None, "다른 래퍼");
+        let idle = parse_live(&asking.replace(r#","ask":{"reason":"로그인","at":700}"#, "")).unwrap();
+        assert_eq!(done_mark(Some(&idle), 11, None), None, "부름이 없으면 쓸 게 없다");
+        assert_eq!(done_mark(None, 11, None), None);
     }
 
     #[test]
@@ -1649,6 +1822,47 @@ mod tests {
         on_event(&serde_json::json!({ "method": "Target.targetDestroyed", "params": { "targetId": "A" } }), &view, &mut st);
         let v = view.lock().unwrap();
         assert!(v.dialogs.is_empty() && v.stuck.is_none() && st.sessions.get("A").is_none());
+    }
+
+    #[test]
+    fn 위치_알림_권한_요청은_감시_스크립트_신호로_그_탭에_묶는다() {
+        // 숨긴 크롬의 권한 말풍선은 모달 그림에 안 찍힌다(roadmap 부채 agent-browser-modal ②) — 붙을 때 넣은 감시 스크립트가 알린다
+        let view = Arc::new(Mutex::new(View::default()));
+        let mut st = St::default();
+        st.sessions.insert("A".into(), "s1".into());
+        st.pages.push(Page { id: "A".into(), url: "https://Map.example.com:8443/x?y=1".into(), title: String::new() });
+        let ask = |kind: &str| serde_json::json!({ "method": "Runtime.bindingCalled", "sessionId": "s1", "params": { "name": PERM_BINDING, "payload": format!("{{\"kind\":\"{kind}\"}}") } });
+        on_event(&ask("geolocation"), &view, &mut st);
+        let v = view.lock().unwrap().perms.get("A").cloned().unwrap();
+        assert_eq!((v.kind.as_str(), v.origin.as_str()), ("geolocation", "https://map.example.com:8443"));
+        // 모르는 권한·남의 바인딩·모르는 세션은 안 받는다
+        view.lock().unwrap().perms.clear();
+        on_event(&ask("camera"), &view, &mut st);
+        on_event(&serde_json::json!({ "method": "Runtime.bindingCalled", "sessionId": "s1", "params": { "name": "other", "payload": "{\"kind\":\"geolocation\"}" } }), &view, &mut st);
+        on_event(&serde_json::json!({ "method": "Runtime.bindingCalled", "sessionId": "zz", "params": { "name": PERM_BINDING, "payload": "{\"kind\":\"geolocation\"}" } }), &view, &mut st);
+        assert!(view.lock().unwrap().perms.is_empty());
+        on_event(&ask("notifications"), &view, &mut st);
+        // 닫힌 탭이면 지운다
+        on_event(&serde_json::json!({ "method": "Target.targetDestroyed", "params": { "targetId": "A" } }), &view, &mut st);
+        assert!(view.lock().unwrap().perms.is_empty());
+    }
+
+    #[test]
+    fn 권한_답은_그_탭_요청이_있을_때만_한_번_setPermission_으로() {
+        let mut v = View { current: Some("A".into()), ..View::default() };
+        v.perms.insert("A".into(), Perm { kind: "notifications".into(), origin: "https://a.com".into(), at: Instant::now() });
+        assert!(!queue_permission(&mut v, Some("B".into()), true));
+        assert!(queue_permission(&mut v, None, false));
+        assert_eq!(v.perm_answers, vec![serde_json::json!({ "permission": { "name": "notifications" }, "setting": "denied", "origin": "https://a.com" })]);
+        assert!(!queue_permission(&mut v, None, true), "두 번 누름");
+        // 오래된 요청(감시 스크립트가 60초 뒤 크롬에 넘김)은 안 보인다
+        v.perms.insert("A".into(), Perm { kind: "geolocation".into(), origin: "https://a.com".into(), at: Instant::now() - Duration::from_secs(61) });
+        assert!(perm_of(&v).is_none());
+    }
+
+    #[test]
+    fn 감시_스크립트는_같은_바인딩_이름을_부른다() {
+        assert!(PERM_JS.contains(&format!("'{PERM_BINDING}'")));
     }
 
     #[test]

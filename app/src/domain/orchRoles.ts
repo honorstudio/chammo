@@ -1,6 +1,6 @@
 // 참모 맡은 일 — 이름(사람이 부르는 말)과 따로 적는 한 줄(2026-10-04 사용자 "업무 담당으로 할 수도, 그냥 이름 짓는 사람도").
 // 저장은 맥 <데이터>/orch-roles.json — 열쇠 = 참모 기본 이름(참모-3). 대화 id 는 /clear 때, 짧은 id 는 되살리기 복사본에서 바뀌어서.
-// 사람이 적은 게 없으면 최근 7일 작업 기록으로 "주로 a·b". 이름표 훅(scripts/orch-roster)도 같은 규칙. 화면·통신 없음
+// 사람이 적은 게 없으면 최근 7일 작업 기록으로 "주로 a·b". 이름표 훅(scripts/orch-roster infer)도 같은 규칙 — 같은 표 orchRoles.fixture.json 으로 양쪽을 시험한다(고치면 둘 다). 화면·통신 없음
 import { tr } from '../i18n';
 import { findTarget } from './inbox';
 import { splitOrchName } from './orchLabel';

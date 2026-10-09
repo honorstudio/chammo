@@ -6,7 +6,7 @@ import { tr } from '../i18n';
 import type { Activity } from './activity';
 import { forwardTo } from './forwardQuestion';
 import type { LiveSnap, SnapSession } from './revive';
-import { fwd } from './paths';
+import { samePath } from './paths';
 import { classifyWorkspace, orchestratorLike, type Session } from './session';
 import type { TaskEvent } from './tasks';
 
@@ -30,7 +30,7 @@ export function sendsTo(s: SnapSession, events: TaskEvent[]): TaskEvent[] {
   });
 }
 
-/** 보고처럼 끝났지만 무언가를 기다리던 말 — 그 기다림(CI 감시·백그라운드 작업)은 재시작으로 죽었다(2026-10-04 리뷰: "CI 를 기다리는 중이야. 끝나면 결과를 붙여…") */
+/** 보고처럼 끝났지만 무언가를 기다리던 말 — 구조 신호(Activity.waitingOn: 띄운 백그라운드 일이 끝 알림 없이 남음)가 먼저고 이 낱말은 덧그물(기록 꼬리에 띄운 줄이 잘려 나간 때) — 그 기다림(CI 감시·백그라운드 작업)은 재시작으로 죽었다(2026-10-04 리뷰: "CI 를 기다리는 중이야. 끝나면 결과를 붙여…") */
 const WAITING = /기다리는 중|기다리고 있|기다릴게|끝나면|끝나는 대로|대기 중|돌아가는 중|도는 중|진행 중이|\bwaiting\b|\bonce (?:it|the)\b.*\b(?:finish|done|complete)/i;
 
 /**
@@ -52,7 +52,8 @@ export function lostVerdict(s: SnapSession, o: { events: TaskEvent[]; activity?:
   const turnDone = !!r?.turnEnd && !r.midTurn && !(a.prompt && a.prompt.ts > r.ts) && !(a.lastAt && a.lastAt > r.ts) && !a.limit;
   if (!turnDone) return 'open';
   if (allDone) return 'finished';
-  return !r!.asks && !WAITING.test(`${r!.text} ${r!.tail ?? ''}`) ? 'finished' : 'open';
+  // 안 닫힌 일이 남았으면 — 묻는 말·백그라운드를 기다리던 중(구조)·기다리는 말이면 안 끝남
+  return !r!.asks && !a.waitingOn && !WAITING.test(`${r!.text} ${r!.tail ?? ''}`) ? 'finished' : 'open';
 }
 
 /**
@@ -76,10 +77,9 @@ export function triageLost(
   return { drop, open };
 }
 
-/** 꺼진 참모인가 — HQ 폴더의 비서 이름 꼴(이름 없는 것 포함). 윈도우 경로는 빗금·대소문자를 맞춰 본다(stopped.stoppedOrchs 와 같은 꼴) */
+/** 꺼진 참모인가 — HQ 폴더의 비서 이름 꼴(이름 없는 것 포함). 경로는 samePath(윈도우만 빗금·대소문자를 맞춰 본다) */
 export function isHqOrch(s: SnapSession, hqDir: string): boolean {
-  const norm = (p: string) => fwd(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-  return !!hqDir && norm(s.cwd) === norm(hqDir) && (!s.name || orchestratorLike(s.name));
+  return !!hqDir && samePath(s.cwd, hqDir) && (!s.name || orchestratorLike(s.name));
 }
 
 /** 꺼진 세션을 세션 모양으로 — 주인 찾기(forwardTo·roleHeir)가 살아 있는 세션처럼 다루게 */

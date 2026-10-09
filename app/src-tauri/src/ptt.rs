@@ -146,6 +146,32 @@ fn announce_stop(id: u32) {
     }
 }
 
+/// 말하기 키를 누르는 동안 받는 창을 화면에 알린다 — Some(pty) = 누르는 중(그 창 입력칸이 빛난다), None = 뗐다·취소·멈춤.
+/// 전엔 끝만 알려서 눌렀는지·뗐는지 화면에 표시가 없었다(2026-10-10 사용자)
+static LIVE: Mutex<Option<tauri::ipc::Channel<Option<u32>>>> = Mutex::new(None);
+
+#[tauri::command]
+pub fn ptt_live(on_live: tauri::ipc::Channel<Option<u32>>) {
+    *LIVE.lock().unwrap_or_else(|e| e.into_inner()) = Some(on_live);
+}
+
+/// 판정 하나가 화면 표시를 어떻게 바꾸나 — Some(바꿀 값), None = 그대로. 받을 창이 없으면 켜지 않는다
+pub(crate) fn live_change(act: &Act, to: Option<u32>) -> Option<Option<u32>> {
+    match act {
+        Act::Start => to.map(Some),
+        Act::Stop(_) => Some(None),
+        _ => None,
+    }
+}
+
+fn announce_live(act: &Act, to: Option<u32>) {
+    if let Some(v) = live_change(act, to) {
+        if let Some(ch) = LIVE.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            let _ = ch.send(v);
+        }
+    }
+}
+
 fn target() -> Option<u32> {
     *TARGET.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -180,6 +206,7 @@ pub fn start(write: impl Fn(u32, &str) + Send + 'static, hush: impl Fn() + Send 
             match rx.recv_timeout(Duration::from_millis(wait)) {
                 Ok(msg) => {
                     let act = match msg { Some(down) => p.key(down, ms()), None => p.other_key() };
+                    announce_live(&act, to); // 떼면 그 자리에서 끈다 — 스페이스 지우기보다 먼저
                     if let Act::Stop(n) = act {
                         let id = to.take();
                         erase(&write, id, n);
@@ -191,10 +218,14 @@ pub fn start(write: impl Fn(u32, &str) + Send + 'static, hush: impl Fn() + Send 
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
-            match p.tick(ms()) {
+            let act = p.tick(ms());
+            if act == Act::Start {
+                to = target();
+            }
+            announce_live(&act, to);
+            match act {
                 Act::Start => {
                     hush();
-                    to = target();
                     if let Some(id) = to {
                         write(id, " ");
                     }
@@ -220,6 +251,17 @@ fn erase(write: &impl Fn(u32, &str), to: Option<u32>, n: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 2026-10-10 사용자 "눌렀는지·뗐는지 표시가 없다" — 시작에 받는 창을 켜고, 어떤 멈춤(뗌·취소·2분)이든 끈다
+    #[test]
+    fn 누르면_받는_창을_켜고_멈추면_끈다() {
+        assert_eq!(live_change(&Act::Start, Some(7)), Some(Some(7)));
+        assert_eq!(live_change(&Act::Start, None), None, "받을 창이 없으면 안 켠다");
+        assert_eq!(live_change(&Act::Stop(0), Some(7)), Some(None));
+        assert_eq!(live_change(&Act::Stop(3), None), Some(None));
+        assert_eq!(live_change(&Act::Space, Some(7)), None);
+        assert_eq!(live_change(&Act::None, Some(7)), None);
+    }
 
     #[test]
     fn 누르는_중에_다른_키면_취소하고_보낸_스페이스를_지운다() {

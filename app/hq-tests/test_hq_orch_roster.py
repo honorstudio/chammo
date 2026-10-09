@@ -1,5 +1,5 @@
 """HQ 템플릿 scripts/orch-roster(참모 이름표 훅) 테스트: python3 -m unittest discover -s app/hq-tests"""
-import datetime, importlib.machinery, importlib.util, pathlib, sys, unittest
+import datetime, importlib.machinery, importlib.util, json, pathlib, sys, unittest
 
 sys.dont_write_bytecode = True
 
@@ -133,6 +133,50 @@ class LiveFallback(unittest.TestCase):
                 self.assertEqual(roster.live_agents(d), [])
             finally:
                 roster.subprocess.run = old
+
+
+DOMAIN = pathlib.Path(__file__).resolve().parent.parent / 'src' / 'domain'
+
+
+class SameRulesAsApp(unittest.TestCase):
+    """앱(TS)과 같은 표 — 맡은 일 추론(orchRoles.fixture.json)·경로 같은가(paths.fixture.json). 한쪽만 고치면 여기서 깨진다"""
+
+    def test_맡은_일_추론은_앱_inferRoles_와_같은_표(self):
+        fx = json.loads((DOMAIN / 'orchRoles.fixture.json').read_text(encoding='utf-8'))
+        now = datetime.datetime.fromisoformat(fx['now'].replace('Z', '+00:00'))
+        for c in fx['cases']:
+            with self.subTest(c['name']):
+                cfg = {'assistantName': '참모', **c['config']}
+                self.assertEqual(roster.guess(c['agents'], c.get('roles', {}), c['events'], cfg, now), c['want'])
+
+    def test_작업_기록_프로젝트는_같은_규칙(self):
+        """scripts/task project_of(기록의 project 칸) — 공개판·참모판 둘 다 orch-roster(=앱 classifyWorkspace) 규칙과 같게.
+        예전엔 realpath·relpath 로 따로 해서 추가 폴더 저장소의 워크트리·devRoot 밖·윈도우 대소문자에서 어긋났다(2026-10-04 orch-roles ①)"""
+        fx = json.loads((DOMAIN / 'orchRoles.fixture.json').read_text(encoding='utf-8'))
+        extra = [
+            {'id': 'w1', 'name': 'wt', 'cwd': '/u/automation/.claude/worktrees/fix-a/project-x/src'},
+            {'id': 'w2', 'name': 'win', 'cwd': 'C:/Users/me/DEV/shop/.claude/worktrees/x'},
+            {'id': 'w3', 'name': 'out', 'cwd': '/u/other/tool'},
+        ]
+        cases = [(c['config']['devRoot'], c['config'].get('extraProjects', []), c['agents']) for c in fx['cases']]
+        cases += [('/u/dev', ['/u/automation/project-x'], extra), ('C:/Users/me/dev', [], extra)]
+        for path in (SCRIPTS / 'task', SCRIPTS.parent.parent.parent / 'scripts' / 'task'):
+            if not path.exists():
+                continue  # 공개본엔 주인판 scripts/task 가 없다
+            ld = importlib.machinery.SourceFileLoader(f'task_{path.parent.parent.name}', str(path))
+            mod = importlib.util.module_from_spec(importlib.util.spec_from_loader(ld.name, ld))
+            ld.exec_module(mod)
+            for dev, extras, agents in cases:
+                for a in agents:
+                    with self.subTest(f'{path} {a["cwd"]}'):
+                        self.assertEqual(mod.project_of(a['id'], agents, dev, extras), roster.project_of(a['cwd'], dev, extras))
+
+    def test_경로_같은가는_앱_samePath_와_같은_표(self):
+        fx = json.loads((DOMAIN / 'paths.fixture.json').read_text(encoding='utf-8'))
+        for a, b, same in fx['cases']:
+            with self.subTest(f'{a} ~ {b}'):
+                self.assertEqual(roster.same_dir(a, b), same)
+                self.assertEqual(roster.same_dir(b, a), same)
 
 
 if __name__ == '__main__':

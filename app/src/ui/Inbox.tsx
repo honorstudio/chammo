@@ -1,8 +1,9 @@
 // 결정 대기함 — 상단 바 종을 누르면 아래로 펼쳐지는 드롭다운. 작업 패널과 따로 논다.
-// 여기서 바로 답장(그 세션 입력칸에 들어감)·열기·처리함
+// 여기서 바로 답장(그 세션 입력칸에 들어감)·열기·처리함. 물음은 줄 그대로 — 첫 줄만 굵게, 길면 앞 3줄 + 펼침(domain/askNote, 폰 카드와 같은 판단)
 import { useState, type ReactNode } from 'react';
 import type { InboxItem } from '../domain/inbox';
-import { IconCheck, IconClose, IconOpen, IconSend } from './Icons';
+import { IconCheck, IconChevron, IconClose, IconOpen, IconSend } from './Icons';
+import { askNote, foldNote } from '../domain/askNote';
 import { tr } from '../i18n';
 
 const KIND = (): Record<InboxItem['kind'], string> => ({
@@ -34,6 +35,9 @@ type Props = {
 function Row({ item, onReply, onOpen, onDismiss, blockedWhy }: { item: InboxItem } & Omit<Props, 'items' | 'direct' | 'login' | 'browser'>) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const note = askNote(item.text);
+  const fold = foldNote(note, open);
   const why = item.kind === 'blocked' ? null : item.target ? blockedWhy(item) : null;
   const canReply = item.kind !== 'blocked' && !!item.target && !why;
   const send = async () => {
@@ -54,7 +58,14 @@ function Row({ item, onReply, onOpen, onDismiss, blockedWhy }: { item: InboxItem
         <span className="dim">{time(item.ts)}</span>
       </div>
       {item.lead && <div className="inbox-lead">{item.lead}</div>}
-      <div className="inbox-text">{item.text}</div>
+      <div className={`inbox-text${open ? ' open' : ''}`}>
+        <div className="inbox-q">{note.head}</div>
+        {fold.body.map((l, i) => <div key={i} className="inbox-line">{l}</div>)}
+        {fold.more && (
+          <button className="ib inbox-more" aria-expanded={open} title={open ? tr('접기', 'Show less') : tr('더 보기', 'Show more')} aria-label={open ? tr('접기', 'Show less') : tr('더 보기', 'Show more')} onClick={() => setOpen(!open)}><IconChevron /></button>
+        )}
+        {note.answerLine && <div className="inbox-line inbox-answers">{note.answerLine}</div>}
+      </div>
       {canReply && (
         <div className="inbox-reply">
           <input

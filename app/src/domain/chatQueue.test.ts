@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { applyQueueOps, autoEnterTarget, emptyQueue, ESC_GAP, escPlan, inputLeftover, keepAfterRemove, pendingState, type QueueState } from './chatQueue';
+import { applyQueueOps, autoEnterTarget, emptyQueue, ESC_GAP, escPlan, inputLeftover, keepAfterRemove, pendingState, typeQueue, type QueueState } from './chatQueue';
+import grid from '../ui/SessionGrid.tsx?raw';
+import pane from '../ui/TerminalPane.tsx?raw';
+import tauriTs from '../data/tauri.ts?raw';
 
 // 실제 기록 모양(2026-10-06 시험 세션 실측, Claude Code 2.1.291)
 const op = (operation: string, ts: string, content?: string, extra: object = {}) =>
@@ -139,5 +142,58 @@ describe('keepAfterRemove — 줄 선 말 하나를 빼면 나머지는 다시 �
 
   it('같은 말이 두 번이면 하나만 뺀다', () => {
     expect(keepAfterRemove(['A', 'A'], 'A')).toEqual(['A']);
+  });
+});
+
+// fix/chat-ghost 남은 것 ①: 채팅 치기가 JS setTimeout 으로 창에 바로 써서 Rust TYPE_LOCK(스페이스·카드 답장·폰)과 섞일 수 있었다.
+// 이제 실제 치기는 Rust pty_type 이 자물쇠를 잡고, JS 는 세션별로 줄만 세운다(typeQueue)
+describe('typeQueue — 세션별 앱 치기 줄', () => {
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  it('앞 것이 다 끝난 뒤에 다음 것 — 앞 것이 느려도 순서 그대로', async () => {
+    const q = typeQueue(() => 0);
+    const log: string[] = [];
+    let release!: () => void;
+    void q.push('s', () => new Promise<void>((r) => { log.push('a-start'); release = () => { log.push('a-end'); r(); }; }));
+    void q.push('s', async () => { log.push('b'); });
+    await tick();
+    expect(log).toEqual(['a-start']);
+    release();
+    await tick(); await tick();
+    expect(log).toEqual(['a-start', 'a-end', 'b']);
+  });
+  it('세션이 다르면 따로 줄', async () => {
+    const q = typeQueue(() => 0);
+    const log: string[] = [];
+    void q.push('s', () => new Promise<void>(() => { log.push('s'); }));
+    void q.push('t', async () => { log.push('t'); });
+    await tick();
+    expect(log).toEqual(['s', 't']);
+  });
+  it('치는 중엔 busyUntil 이 무한(Esc 를 버린다), 끝나면 끝난 때 + 100', async () => {
+    let now = 1000;
+    const q = typeQueue(() => now);
+    expect(q.busyUntil('s')).toBe(0);
+    let done!: () => void;
+    const p = q.push('s', () => new Promise<void>((r) => { done = r; }));
+    expect(q.busyUntil('s')).toBe(Infinity);
+    expect(escPlan(now, 0, q.busyUntil('s'))).toBe(false);
+    now = 2000;
+    await tick();
+    done();
+    await p;
+    expect(q.busyUntil('s')).toBe(2100);
+  });
+  it('하나가 실패해도 다음 것은 친다', async () => {
+    const q = typeQueue(() => 0);
+    const log: string[] = [];
+    void q.push('s', async () => { throw new Error('pty gone'); });
+    await q.push('s', async () => { log.push('b'); });
+    expect(log).toEqual(['b']);
+  });
+  it('채팅 치기·Esc·지우기는 창에 바로 쓰지 않고 잠그는 길(pty_type)로', () => {
+    expect(grid).not.toMatch(/api\.raw\(/);
+    expect(grid).toMatch(/api\.type\(/);
+    expect(pane).toMatch(/type: \(keys, enterMs\)/);
+    expect(tauriTs).toMatch(/invoke<void>\('pty_type'/);
   });
 });

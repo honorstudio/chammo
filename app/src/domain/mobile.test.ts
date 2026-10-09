@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ctxFromAgents, foldSummary, heldIds, orchAsk, orchTasks, releaseSnap, routineOrch, rubberTop, sheetTop, closeOnRelease, dropLabel, keyboardOpen, frameAt, driftBias, isTyping, liveWork, phoneBubble, usageText, waitingList, withAttachments, phoneName, offOrchRows, wokeOrch, waitAnswer, waitKey, shownWaiting, pruneWaitSent, dupAnswer, answerFail, sessionBoard, nearBottom, stickBottom, shrinkPlan, withEarlier, wantEarlier, nextAfterStop, lineSlot, orchMenu, pendingName, prunePendingNicks } from './mobile';
+import { ctxFromAgents, foldSummary, heldIds, orchAsk, orchTasks, releaseSnap, routineOrch, rubberTop, sheetTop, closeOnRelease, dropLabel, keyboardOpen, frameAt, driftBias, ghostKeyboard, readViewport, diagLine, isTyping, liveWork, phoneBubble, usageText, waitingList, withAttachments, phoneName, offOrchRows, wokeOrch, waitAnswer, waitKey, shownWaiting, pruneWaitSent, dupAnswer, answerFail, sessionBoard, nearBottom, stickBottom, shrinkPlan, withEarlier, wantEarlier, nextAfterStop, lineSlot, orchMenu, pendingName, prunePendingNicks } from './mobile';
 import type { Session } from './session';
 import type { ChatItem } from './chat';
 import type { TaskEvent } from './tasks';
@@ -219,6 +219,80 @@ describe('frameAt — 화면 틀(.m-app) 자리: 글 쓰는 중만 보이는 화
   });
   it('키보드로 보이는데 포커스가 없으면(닫히는 중) 따라간다 — 다음 사건에서 맨 위로', () => {
     expect(frameAt({ vvTop: 403, vvH: 394, layoutH: 797, scrollY: 403, kb: true, editing: false })).toEqual({ top: 403, h: 394, scroll: false });
+  });
+});
+
+describe('ghostKeyboard — 키보드가 닫혔는데 iOS 가 보이는 높이를 안 돌려준 상태(2026-10-08 사용자 실기기 홈 화면 앱)', () => {
+  it('글 쓰는 칸에 포커스 없이 0.7초 넘게 키보드 높이면 유령 — 키보드는 포커스가 있어야만 뜬다', () => {
+    expect(ghostKeyboard({ kb: true, typing: false, quietMs: 700, touch: true })).toBe(true);
+    expect(ghostKeyboard({ kb: true, typing: false, quietMs: 30000, touch: true })).toBe(true);
+  });
+  it('포커스가 빠진 직후(키보드가 내려가는 중)는 기다린다 — 입력줄이 내려가는 키보드 뒤로 먼저 숨지 않게', () => {
+    expect(ghostKeyboard({ kb: true, typing: false, quietMs: 300, touch: true })).toBe(false);
+  });
+  it('쓰는 중이면 진짜 키보드', () => {
+    expect(ghostKeyboard({ kb: true, typing: true, quietMs: 5000, touch: true })).toBe(false);
+  });
+  it('키보드 높이가 아니면 고칠 것 없음', () => {
+    expect(ghostKeyboard({ kb: false, typing: false, quietMs: 5000, touch: true })).toBe(false);
+  });
+  it('터치 없는 화면(데스크톱 창을 줄인 것)은 손대지 않는다 — 거기선 작은 높이가 진짜', () => {
+    expect(ghostKeyboard({ kb: true, typing: false, quietMs: 5000, touch: false })).toBe(false);
+  });
+});
+
+describe('readViewport — visualViewport 가 엉터리 높이를 줄 때(2026-10-09 사용자 실기기 홈 화면 앱, iOS 26)', () => {
+  // 402×874 폰, 홈 화면 앱 웹 화면 812. 실기기 진단: 쉴 때 vvH = innerHeight - 874(-62), 키보드를 열면 innerHeight 는 키보드만큼 줄었는데 vvH 는 거기서 또 빠진 작은 값
+  const full = { w: 402, h: 812 };
+  const base = { vvW: 402, innerW: 402, layoutH: 812, tallest: full, touch: true };
+  it('키보드가 떠 있고 innerHeight 가 이미 키보드를 따라갔으면 그쪽을 믿는다 — 화면 틀이 145px 로 줄어 입력칸이 손잡이 밑에 붙고 아래가 비었다', () => {
+    const r = readViewport({ ...base, vvH: 149, vvTop: 403, innerH: 409, scrollY: 403, editing: true, quietMs: 0 });
+    expect(r).toMatchObject({ h: 409, top: 403, kb: true });
+  });
+  it('쉴 때 vvH 가 0 이하면 innerHeight — 키보드를 닫은 직후(유령 판정 0.7초 전)에도 음수 높이로 그리지 않는다', () => {
+    const r = readViewport({ ...base, vvH: -62, vvTop: 0, innerH: 812, scrollY: 0, editing: false, quietMs: 0 });
+    expect(r).toMatchObject({ h: 812, kb: false, ghost: false });
+  });
+  it('vvW 가 0(앱이 가려진 채 읽힘)이어도 같은 폭 기준(tallest)을 버리지 않는다', () => {
+    const r = readViewport({ ...base, vvH: 0, vvW: 0, vvTop: 0, innerH: 812, scrollY: 0, editing: false, quietMs: 0 });
+    expect(r.tallest).toEqual(full);
+  });
+  it('vvH 가 innerHeight 보다 크면(어느 브라우저에서도 안 되는 값) innerHeight — 키보드를 열었는데 vvH 가 812 로 남아 입력줄이 키보드 뒤로 숨지 않게', () => {
+    expect(readViewport({ ...base, vvH: 812, vvTop: 403, innerH: 409, scrollY: 403, editing: true, quietMs: 0 })).toMatchObject({ h: 409, kb: true, fixed: true });
+  });
+  it('정상 iOS 26 — vvH 와 innerHeight 가 같이 줄면 그대로', () => {
+    expect(readViewport({ ...base, vvH: 409, vvTop: 403, innerH: 409, scrollY: 403, editing: true, quietMs: 0 })).toMatchObject({ h: 409, top: 403, kb: true });
+  });
+  it('innerHeight 가 키보드를 안 따라가는 브라우저(iOS 18 이하)는 vvH 가 맞다', () => {
+    expect(readViewport({ ...base, vvH: 394, vvTop: 403, innerH: 812, scrollY: 403, editing: true, quietMs: 0 })).toMatchObject({ h: 394, kb: true });
+  });
+  it('유령 키보드(키보드를 닫았는데 innerHeight·레이아웃 높이까지 작은 채)는 그대로 가장 큰 높이로', () => {
+    const r = readViewport({ ...base, vvH: 409, vvTop: 0, innerH: 409, layoutH: 409, scrollY: 0, editing: false, quietMs: 800 });
+    expect(r).toMatchObject({ h: 812, kb: false, ghost: true });
+  });
+});
+
+describe('frameAt fullH — 유령 키보드면 같은 폭에서 본 가장 큰 높이로', () => {
+  it('innerHeight·보이는 높이가 둘 다 키보드만큼 줄어 남아도(iOS 26) 화면 높이 932 로 되돌린다', () => {
+    expect(frameAt({ vvTop: 0, vvH: 590, layoutH: 590, scrollY: 0, kb: false, editing: false, fullH: 932 })).toEqual({ top: 0, h: 932, scroll: false });
+  });
+  it('레이아웃 높이가 더 크면 그대로', () => {
+    expect(frameAt({ vvTop: 0, vvH: 590, layoutH: 932, scrollY: 0, kb: false, editing: false, fullH: 900 })).toEqual({ top: 0, h: 932, scroll: false });
+  });
+});
+
+describe('diagLine — 폰 진단 한 줄(숫자·짧은 낱말만, 글 내용은 못 들어간다)', () => {
+  it('키=값을 띄어 쓴다, 숫자는 반올림, 참거짓은 1·0', () => {
+    expect(diagLine({ ev: 'focusout', vvH: 590.4, typing: false, sa: true })).toBe('ev=focusout vvH=590 typing=0 sa=1');
+  });
+  it('낱말이 아닌 값(띄어쓰기·한글·기호·긴 글)은 버린다 — 입력칸 글이 실수로 실려도 안 나간다', () => {
+    expect(diagLine({ ev: '안녕 비밀번호', tag: 'TEXTAREA', x: 'a b', y: 'x'.repeat(40), z: 'a=b' })).toBe('tag=TEXTAREA');
+  });
+  it('이상한 키·숫자 아닌 수는 버린다', () => {
+    expect(diagLine({ 'bad key': 1, n: NaN, i: Infinity, ok: 3 })).toBe('ok=3');
+  });
+  it('점 들어간 판 번호는 된다', () => {
+    expect(diagLine({ ios: '26.0.1' })).toBe('ios=26.0.1');
   });
 });
 

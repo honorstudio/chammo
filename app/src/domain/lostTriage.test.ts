@@ -5,6 +5,7 @@ import type { Session } from './session';
 import type { Activity } from './activity';
 import type { SnapSession } from './revive';
 import type { TaskEvent } from './tasks';
+import fixture from './paths.fixture.json';
 
 const lost = (name: string, sid: string, over: Partial<SnapSession> = {}): SnapSession => ({ sessionId: sid, name, cwd: `/dev/${name}`, id: sid.slice(0, 8), ...over });
 const send = (task: string, target: string, from: string, ts: string, title = '일'): TaskEvent => ({ ts, type: 'send', task, target, from, title });
@@ -82,6 +83,15 @@ describe('lostVerdict — 꺼진 세션이 끝났나(애매하면 안 끝남)', 
     const ev = [send('t1', 'todo-api', 'o1', T0)];
     for (const text of ['PR #12의 CI(lint·test)를 기다리는 중이야. 끝나면 결과를 붙여 보고할게', '빌드 돌려 뒀어 — 끝나는 대로 알려줄게', 'Waiting for the deploy to finish.'])
       expect(lostVerdict(a, { events: ev, activity: report(T1, { text, tail: text }), listed: true }), text).toBe('open');
+  });
+  it('띄운 백그라운드 일이 안 끝난 채 꺼졌으면 안 끝남 — 말투가 낱말 목록에 없어도("돌려 뒀어", 구조로 본다)', () => {
+    const ev = [send('t1', 'todo-api', 'o1', T0)];
+    expect(lostVerdict(a, { events: ev, activity: report(T1, { text: '빌드 돌려 뒀어', tail: '빌드 돌려 뒀어' }), listed: true })).toBe('finished'); // 구조 신호 없이 낱말만으론 못 잡는다
+    expect(lostVerdict(a, { events: ev, activity: { ...report(T1, { text: '빌드 돌려 뒀어', tail: '빌드 돌려 뒀어' }), waitingOn: 1 }, listed: true })).toBe('open');
+  });
+  it('맡긴 일을 참모가 다 done 으로 닫았으면 백그라운드가 남아도 끝 — 띄워 둔 개발 서버 같은 것까지 알리면 시끄럽다', () => {
+    const ev = [send('t1', 'todo-api', 'o1', T0), done('t1', T1)];
+    expect(lostVerdict(a, { events: ev, activity: { ...report(T1), waitingOn: 1 }, listed: true })).toBe('finished');
   });
   it('답 뒤에 도구만 부른 새 턴(참모 메시지·작업 알림으로 깨어남)이 있으면 안 끝남 — 마지막 줄이 답보다 뒤(리뷰 3)', () => {
     expect(lostVerdict(a, { events: [], activity: { ...report(T1), lastAt: T2 }, listed: true })).toBe('open');
@@ -235,5 +245,11 @@ describe('isHqOrch — 꺼진 참모인가(HQ 폴더의 비서 이름 꼴)', () 
   });
   it('윈도우 경로는 빗금·대소문자를 맞춰 본다(리뷰 6)', () => {
     expect(isHqOrch(lost('참모', 'x', { cwd: 'C:/Users/Me/Chammo/hq' }), 'c:\\Users\\me\\chammo\\hq\\')).toBe(true);
+  });
+});
+
+describe('isHqOrch HQ 판단은 samePath 한 벌(fix/win-phone-path 세 벌 정리) — 공용 표 그대로', () => {
+  it.each(fixture.cases as [string, string, boolean][])('%s ~ %s → %s', (cwd, hq, same) => {
+    expect(isHqOrch(lost('참모', 'x', { cwd }), hq)).toBe(same);
   });
 });

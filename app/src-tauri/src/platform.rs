@@ -145,6 +145,19 @@ pub fn url_to_fs(p: &str) -> String {
     if b.len() >= 3 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':' { p[1..].to_string() } else { p.to_string() }
 }
 
+/// 경로 비교 열쇠 — TS domain/paths pathKey 와 같은 규칙(같은 표 paths.fixture.json 으로 시험):
+/// 윈도우 드라이브 경로(C:\… · C:/…)만 / 로 바꾸고 소문자(윈도우는 대소문자를 안 가린다), 맥 경로는 끝 / 만 뗀다
+fn path_key(p: &str) -> String {
+    let b = p.as_bytes();
+    let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'/' || b[2] == b'\\');
+    if drive { p.replace('\\', "/").trim_end_matches('/').to_lowercase() } else { p.trim_end_matches('/').to_string() }
+}
+
+/// 같은 폴더인가(서버 쪽 HQ 판단 — mobile_http 문지기·mobile_wake). 빈 경로는 늘 아니다
+pub fn same_dir(a: &str, b: &str) -> bool {
+    !a.is_empty() && path_key(a) == path_key(b)
+}
+
 /// 윈도우 canonicalize 가 붙이는 \\?\ 를 뗀다(드라이브 경로만) — 화면·기록에 깨끗한 경로가 가게
 pub fn clean_path(p: std::path::PathBuf) -> std::path::PathBuf {
     let s = p.to_string_lossy();
@@ -520,6 +533,18 @@ pub fn git_ready() -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    // 경로 같은가 — TS samePath(domain/paths.ts)와 같은 표(fix/win-phone-path 세 벌 정리, 2026-10-09)
+    #[test]
+    fn 같은_폴더_판단은_ts_와_같은_표() {
+        let v: serde_json::Value = serde_json::from_str(include_str!("../../src/domain/paths.fixture.json")).unwrap();
+        for c in v["cases"].as_array().unwrap() {
+            let (a, b, same) = (c[0].as_str().unwrap(), c[1].as_str().unwrap(), c[2].as_bool().unwrap());
+            assert_eq!(super::same_dir(a, b), same, "{a} ~ {b}");
+            assert_eq!(super::same_dir(b, a), same, "{b} ~ {a}");
+        }
+        assert!(!super::same_dir("", ""), "빈 경로는 HQ 가 아니다(서버 문지기)");
+    }
 
     // 2026-10-05 아이맥 QA: 마법사 '믿기' pty 의 claude 가 좀비로 남았는데 kill -0 은 성공해서 '앱으로 가져오기'가 10초 기다리다 실패했다
     #[cfg(unix)]

@@ -46,6 +46,9 @@ scripts/app load                                      # 이 맥 부하, 세션�
 기다리기, 안 쓰는 세션 끄기, 남은 프로세스 끄기(사용자가 부하 화면에서: 상단 바 "부하", `scripts/app open load`).
 프로세스를 네가 직접 죽이지 않는다.
 
+"○○ 세션 누가 껐어?" → `<데이터 폴더>/actions.log` 한 줄씩(밀리초·stop|rm|kill·세션 번호·누른 길: cmd-w·pane-button·pane-x·menu·nav-x·card·quit-all·stopped-list·phone-stop·phone-remove·load-page).
+줄이 없으면 앱 버튼이 아니다(CLI `claude stop`·재시작·daemon).
+
 ## 앱 안내하기
 
 사용자는 처음일 수 있다. "어떻게 써?", "이게 뭐야?" 하거나 헤매면 아래 지도로 설명한다 —
@@ -114,6 +117,9 @@ heavy and what runs inside it (a Rust build, a headless browser, a dev server, a
 ended left processes behind. Suggest the fix in one line — wait for a build to finish, stop a session you no longer need,
 or stop the left-behind processes (the user does that on the Load screen: top bar, "Load"; `scripts/app open load`).
 Don't kill processes yourself.
+
+"Who stopped that session?" → `<data folder>/actions.log`, one line each (ms · stop|rm|kill · session id · the path: cmd-w, pane-button,
+pane-x, menu, nav-x, card, quit-all, stopped-list, phone-stop, phone-remove, load-page). No line means it wasn't an app button (CLI `claude stop`, a restart, the daemon).
 
 ## Guiding the user around the app
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { readFileText } from '../../data/web';
 import { fileError, fileKind } from '../../domain/phoneFile';
+import { machine } from '../../i18n';
 import type { ShowAt } from '../../domain/showAt';
 import { useBlobUrl } from './useBlobUrl';
 import { ImageViewer } from './ImageViewer';
@@ -12,7 +13,8 @@ import { OfficeSheet, VideoSheet } from './OfficeSheet';
 import { CodeText, CsvTable, MdDoc } from './FileText';
 import { IconClose } from '../Icons';
 
-const WHY: Record<string, string> = { 'secret inside': '글 속에 키가 보여서 폰엔 안 보여 줘요 — 맥에서 열어 주세요', 'not allowed': '폰에서 열 수 없는 파일이에요', 'file too large': '너무 커서 폰에선 못 열어요 — 맥에서' };
+// 붙은 컴퓨터(맥·PC)는 env 를 받은 뒤에 정해져서 모듈 상수가 아니라 부를 때 만든다
+const why = (): Record<string, string> => ({ 'secret inside': `글 속에 키가 보여서 폰엔 안 보여 줘요 — ${machine()}에서 열어 주세요`, 'not allowed': '폰에서 열 수 없는 파일이에요', 'file too large': `너무 커서 폰에선 못 열어요 — ${machine()}에서` });
 
 export function FileView({ path, title, at, orch, onClose }: { path: string; title: string; at?: ShowAt; orch?: string; onClose: () => void }) {
   const data = path.startsWith('data:image/');
@@ -32,7 +34,7 @@ function TextView({ path, data, kind, title, at, onClose }: { path: string; data
   const [err, setErr] = useState<{ text: string; gone: boolean } | null>(null);
   useEffect(() => {
     if (data) return;
-    readFileText(path).then(setText, (e: unknown) => { const m = (e as Error).message; setErr(fileError(m, WHY)); });
+    readFileText(path).then(setText, (e: unknown) => { const m = (e as Error).message; setErr(fileError(m, why())); });
   }, [path, data]);
   return (
     <div className="m-view" role="dialog" aria-label={title}>

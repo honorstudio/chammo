@@ -20,17 +20,26 @@ const oneLine = (s: string | undefined) => (s ?? '').replace(/\s+/g, ' ').trim()
 /** 사람이 건 지시가 아닌 줄 — Claude Code 가 끊김을 user 줄로 남긴다 */
 const notAsk = (t: string) => /^\[Request interrupted/.test(t);
 
-function rowOf(key: string, sid: string | undefined, startedAt: number, activity: Record<string, Activity>, ctx: Record<string, { used: number }>): Omit<HomeRow, 'live' | 'off'> {
+type CtxFile = { used: number; ts?: number; modelId?: string; size?: number };
+/** 모델 → 창 크기 — 상태줄 파일들에서(기록엔 [1m] 같은 창 크기가 안 남는다). 모르는 모델은 짐작하지 않는다 */
+const windowSizes = (ctx: Record<string, CtxFile>) => new Map(Object.values(ctx).filter((c) => c.modelId && c.size).map((c) => [c.modelId!, c.size!]));
+
+function rowOf(key: string, sid: string | undefined, startedAt: number, activity: Record<string, Activity>, ctx: Record<string, CtxFile>, sizes: Map<string, number>): Omit<HomeRow, 'live' | 'off'> {
   const a = sid ? activity[sid] : undefined;
-  const last = Math.max(at(a?.prompt?.ts), at(a?.reply?.ts), at(a?.tool?.ts));
-  return { key, lastAt: last || startedAt, doing: [oneLine(a?.prompt?.text)].find((t) => t && !notAsk(t)) || oneLine(a?.reply?.text), ctx: sid ? ctx[sid]?.used : undefined };
+  // 이어 켜기만 하고 일을 안 시켰으면 기록이 옛 시각 그대로 — 마지막으로 켠 때(세션 시작)도 같이 본다
+  const last = Math.max(at(a?.prompt?.ts), at(a?.reply?.ts), at(a?.tool?.ts), startedAt);
+  // 상태줄 파일이 없는 대화(상태줄이 안 돈 옛 대화)는 기록의 마지막 토큰 ÷ 같은 모델 창 크기
+  const size = a?.model ? sizes.get(a.model) : undefined;
+  const est = a?.tokens && size ? Math.min(100, Math.round((a.tokens / size) * 100)) : undefined;
+  return { key, lastAt: last, doing: [oneLine(a?.prompt?.text)].find((t) => t && !notAsk(t)) || oneLine(a?.reply?.text), ctx: (sid ? ctx[sid]?.used : undefined) ?? est };
 }
 
 /** 켜진 참모 = 받은 순서 그대로, 꺼진 참모 = 마지막으로 일한 때 최근 순 */
-export function homeRows(o: { live: Session[]; off: StoppedSession[]; activity: Record<string, Activity>; ctx: Record<string, { used: number }> }): { live: HomeRow[]; off: HomeRow[] } {
+export function homeRows(o: { live: Session[]; off: StoppedSession[]; activity: Record<string, Activity>; ctx: Record<string, CtxFile> }): { live: HomeRow[]; off: HomeRow[] } {
+  const sizes = windowSizes(o.ctx);
   return {
-    live: o.live.map((s) => ({ ...rowOf(s.sessionId ?? s.id, s.sessionId, s.startedAt, o.activity, o.ctx), live: s })),
-    off: o.off.map((s) => ({ ...rowOf(s.sessionId, s.sessionId, s.startedAt, o.activity, o.ctx), off: s })).sort((a, b) => b.lastAt - a.lastAt),
+    live: o.live.map((s) => ({ ...rowOf(s.sessionId ?? s.id, s.sessionId, s.startedAt, o.activity, o.ctx, sizes), live: s })),
+    off: o.off.map((s) => ({ ...rowOf(s.sessionId, s.sessionId, s.startedAt, o.activity, o.ctx, sizes), off: s })).sort((a, b) => b.lastAt - a.lastAt),
   };
 }
 

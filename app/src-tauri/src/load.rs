@@ -147,6 +147,7 @@ pub async fn load_kill(pid: u32) -> Result<u32, String> {
         if tree.iter().any(|p| is_claude(args(*p).trim())) {
             return Err(crate::i18n::tr("안에 Claude 세션이 있어서 끄지 않아요", "A Claude session runs inside it — left alone").into());
         }
+        crate::claude::log_action("kill", &pid.to_string(), &format!("load-page {} processes", tree.len()));
         for p in &tree {
             let _ = crate::platform::command("/bin/kill").args(["-TERM", &p.to_string()]).status();
         }

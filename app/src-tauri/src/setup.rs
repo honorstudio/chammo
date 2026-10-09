@@ -159,21 +159,8 @@ pub async fn tts_test(command: String, text: String) -> Result<(), String> {
 /// Claude Code 가 이 폴더(또는 그 위 폴더)를 믿는다고 기록했나 — `~/.claude.json` 의 projects[경로].hasTrustDialogAccepted.
 /// 새 폴더에서 `claude --bg` 는 "Workspace not trusted" 로 멈춘다(2026-09-28 새 사용자 실측). 믿음은 아래 폴더로 물려 내려간다
 pub fn trusted_in(claude_json: &str, dir: &str) -> bool {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(claude_json) else { return false };
-    let Some(projects) = v.get("projects").and_then(|p| p.as_object()) else { return false };
-    // 윈도우는 키가 C:/… 나 C:\… 로 적히고 대소문자를 안 가린다 → 슬래시·소문자로 맞춰 비교
-    let drive = |s: &str| s.as_bytes().get(1) == Some(&b':');
-    let norm = |s: &str| {
-        let t = s.replace('\\', "/");
-        let t = t.trim_end_matches('/').to_string();
-        if drive(&t) { t.to_lowercase() } else { t }
-    };
-    let accepted: Vec<String> = projects
-        .iter()
-        .filter(|(_, e)| e.get("hasTrustDialogAccepted").and_then(|t| t.as_bool()) == Some(true))
-        .map(|(k, _)| norm(k))
-        .collect();
-    let mut cur = norm(dir);
+    let accepted = accepted_keys(claude_json);
+    let mut cur = trust_key(dir);
     loop {
         if !cur.is_empty() && accepted.iter().any(|k| *k == cur) {
             return true;
@@ -183,6 +170,30 @@ pub fn trusted_in(claude_json: &str, dir: &str) -> bool {
             _ => return false,
         }
     }
+}
+
+/// 이 폴더 칸 자체를 믿나(위 폴더에서 물려받은 건 안 친다) — 윈도우 claude(2.1.286)는 부모 믿음을 안 물려줬다(2026-10-09 윈도우 실기기)
+pub fn trusted_exact(claude_json: &str, dir: &str) -> bool {
+    let k = trust_key(dir);
+    !k.is_empty() && accepted_keys(claude_json).contains(&k)
+}
+
+/// 윈도우는 키가 C:/… 나 C:\… 로 적히고 대소문자를 안 가린다 → 슬래시·소문자로 맞춰 비교
+fn trust_key(s: &str) -> String {
+    let t = s.replace('\\', "/");
+    let t = t.trim_end_matches('/').to_string();
+    if t.as_bytes().get(1) == Some(&b':') { t.to_lowercase() } else { t }
+}
+
+/// 믿음을 받은 칸들(trust_key 모양)
+fn accepted_keys(claude_json: &str) -> Vec<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(claude_json) else { return Vec::new() };
+    let Some(projects) = v.get("projects").and_then(|p| p.as_object()) else { return Vec::new() };
+    projects
+        .iter()
+        .filter(|(_, e)| e.get("hasTrustDialogAccepted").and_then(|t| t.as_bool()) == Some(true))
+        .map(|(k, _)| trust_key(k))
+        .collect()
 }
 
 #[tauri::command]

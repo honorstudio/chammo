@@ -46,6 +46,12 @@
 .chat-input { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 6px; padding: 8px; border-top: 1px solid var(--line); background: var(--panel); }
 .chat-input textarea { flex: 1; resize: none; font: inherit; font-size: 13px; line-height: 1.45; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); overflow-y: auto; }
 .chat-input textarea:focus { outline: none; border-color: var(--orch, var(--accent)); }
+/* 말하기 키(지구본 fn·오른쪽 ⌥) 누르는 중 — 받는 창(TerminalPane .pt-live) 입력칸을 참모 색으로 감싸고 숨쉬듯 번진다. 떼면 그 자리에서 꺼진다(전환 없음, 2026-10-10 사용자) */
+.pane.pt-live .chat-input { box-shadow: 0 0 0 2px var(--orch, var(--accent)), 0 0 0 6px color-mix(in srgb, var(--orch, var(--accent)) 22%, transparent); animation: pt-breathe 1.2s ease-in-out infinite; }
+@keyframes pt-breathe { 50% { box-shadow: 0 0 0 2px var(--orch, var(--accent)), 0 0 0 9px color-mix(in srgb, var(--orch, var(--accent)) 10%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .pane.pt-live .chat-input { animation: none; } }
+/* 터미널 화면(채팅 판 없음)은 창 둘레 — 내용 위에 덮는 층이라 옆 칸에 잘리지 않는다 */
+.pane.pt-live:not(:has(.chat))::after { content: ""; position: absolute; inset: 0; border: 2px solid var(--orch, var(--accent)); border-radius: inherit; pointer-events: none; z-index: 9; }
 
 /* 스페이스 모드 틀 — 왼쪽 리더가 칸을 채우고, 오른쪽 채팅 열 머리에 쌓기/탭 */
 .reader-panel.fill { flex: 1; min-width: 0; border-left: 0; }
@@ -54,7 +60,21 @@
 .seg button { all: unset; cursor: pointer; font-size: 11.5px; font-weight: 600; padding: 3px 10px; color: var(--text-2); }
 .seg button + button { border-left: 1px solid var(--line-strong); }
 .seg button.on { background: var(--surface); color: var(--orch-text, var(--accent)); }
-.chat-tabs { display: flex; gap: 4px; padding: 6px 8px 0; overflow-x: auto; }
+/* 탭 줄 = 넘기는 칸(.ct-strip) + 밖의 + — + 는 탭이 넘쳐도 안 밀린다. 탭은 크롬처럼 줄어들고(이름 줄임표) 최소 폭 밑에서만 넘긴다(2026-10-10 사용자) */
+.chat-tabs { display: flex; align-items: center; gap: 4px; padding: 6px 8px 0; }
+/* 탭 줄 여백만큼 칸을 넓혀 둔다 — 넘기는 칸은 위아래로도 잘라서, 말하는 빛(st-speak)이 여백 없이 잘린다. 아래로는 안 넓힌다(창 머리줄을 덮어 클릭을 먹는다) */
+.ct-strip { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: inherit; overflow-x: auto; scrollbar-width: none; padding: 6px 4px 0; margin: -6px 0 0 -4px; --ct-fl: 0px; --ct-fr: 0px;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--ct-fl), #000 calc(100% - var(--ct-fr)), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 var(--ct-fl), #000 calc(100% - var(--ct-fr)), transparent); }
+.ct-strip::-webkit-scrollbar { display: none; }
+/* 넘쳐서 끝 너머에 탭이 더 있으면 그쪽 끝을 흐린다 — 폭은 domain/tabScroll TAB_FADE 와 같이 */
+.ct-strip[data-more-l] { --ct-fl: 28px; }
+.ct-strip[data-more-r] { --ct-fr: 28px; }
+.chat-tabs [role="tab"] { flex: 0 1 auto; min-width: 108px; max-width: 180px; box-sizing: border-box; }
+/* 고른 탭은 안 줄어든다 — 이름이 다 보이게, 아주 긴 이름만 상한에서 줄임표 */
+.chat-tabs [role="tab"].on { flex-shrink: 0; max-width: 240px; }
+.chat-tabs .ct-nm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-tabs [role="tab"] > :not(.ct-nm) { flex: none; }
 .chat-tabs button { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 7px 7px 0 0; font-size: 12px; font-weight: 600; color: var(--text-3); white-space: nowrap; }
 .chat-tabs button.on { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
 .space-left { min-width: 0; }
@@ -181,7 +201,7 @@
 @keyframes cv-tab-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 /* 참모 탭 끄기 X — 올리면 그 탭에만 */
 .chat-tabs button { position: relative; }
-.chat-tabs .tab-x { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin: 0 -4px 0 2px; border-radius: 50%; opacity: 0; transition: opacity .12s, background .12s; }
+.chat-tabs .tab-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin: 0 -4px 0 2px; border-radius: 50%; opacity: 0; transition: opacity .12s, background .12s; }
 .chat-tabs .tab-x svg { width: 10px; height: 10px; }
 .chat-tabs button:hover .tab-x { opacity: .7; }
 .chat-tabs .tab-x:hover { opacity: 1 !important; background: rgba(127, 127, 127, .25); }
@@ -196,7 +216,7 @@
 [draggable="true"] { -webkit-user-drag: element; }
 
 /* 탭 줄 끝의 + — 참모 하나 더(⌘T). 탭처럼 보이지 않게 작은 네모 */
-.chat-tabs .tab-add { width: 28px; padding: 0; justify-content: center; border-radius: 7px; color: var(--text-3); position: sticky; right: 0; flex: 0 0 auto; background: var(--surface); } /* 탭이 넘쳐도 + 는 오른쪽 끝에 보이게 */
+.chat-tabs .tab-add { width: 28px; padding: 0; justify-content: center; border-radius: 7px; color: var(--text-3); flex: 0 0 auto; background: var(--surface); } /* 넘기는 칸 밖이라 탭이 넘쳐도 오른쪽 끝에 그대로 */
 .chat-tabs .tab-add:hover { background: var(--hover); color: var(--text); }
 .chat-tabs .tab-add svg { width: 13px; height: 13px; }
 /* / 자동완성 — @ 이름표 목록 모양 그대로, 줄마다 이름 + 짧은 설명 */
@@ -235,3 +255,13 @@
 .chat-tabs button.st-speak { transition: none !important;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--orch, var(--text-3)) 70%, transparent), 0 0 calc(4px + 14px * var(--speak-level, 0)) calc(1px * var(--speak-level, 0)) var(--orch, var(--text-3)) !important; }
 
+
+/* 채팅 안 파일 카드(ChatFileCard) — 답 말풍선처럼 왼쪽, 썸네일 + 이름 + 짚은 곳 한 줄. 카드 전체가 누르는 곳 */
+.chat-filecard { all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; width: min(260px, 88%); border-radius: 12px; overflow: hidden; background: var(--surface); box-shadow: 0 0 0 1px var(--line); transition: box-shadow .15s; }
+.chat-filecard:hover { box-shadow: 0 0 0 1px var(--line), 0 4px 14px rgba(0, 0, 0, .1); }
+.chat-filecard:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.chat-filecard-th { position: relative; height: 140px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--panel); border-bottom: 1px solid var(--line); }
+.chat-filecard-th img { width: 100%; height: 100%; object-fit: cover; object-position: top center; }
+.chat-filecard-name { padding: 8px 12px 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-filecard-name:last-child { padding-bottom: 9px; }
+.chat-filecard-at { padding: 1px 12px 9px; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

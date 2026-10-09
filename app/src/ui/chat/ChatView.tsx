@@ -56,8 +56,8 @@ const drafts = draftStore((() => { try { return window.localStorage; } catch { r
  * 읽기 = 대화 기록 이어 읽기, 쓰기 = 그 터미널 입력칸에 붙여넣고 Enter(send). 멈추기 = Esc
  */
 export function ChatView({ extra = [], fontSize, sessionId, state, send, interrupt, rawKeys, onTerminal, onInputFocus, focusRef, screen, submitTerminal, pasteImage, voiceStop = 0, sendQueuedNow, typeOnly, clearTerminal, paneId, ctx, modelInfo, pickModel, cwd }: {
-  /** 대화 사이에 시각 순으로 끼울 것 — 직접 답하기 카드(useDirectCards) */
-  extra?: { ts: string; key: string; pin?: boolean; node: React.ReactNode }[];
+  /** 대화 사이에 시각 순으로 끼울 것 — 직접 답하기 카드(useDirectCards)·보여 준 파일 카드(clip = 그려진 첫 말보다 앞이면 안 그림) */
+  extra?: { ts: string; key: string; pin?: boolean; clip?: boolean; node: React.ReactNode }[];
   /** 글자 크기(⌘+/⌘−) — 바뀌면 입력칸 높이를 다시 잰다(채팅 글자가 이걸 따라 커진다, space.css --chat-k) */
   fontSize?: number;
   sessionId?: string;

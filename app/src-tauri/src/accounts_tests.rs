@@ -142,6 +142,23 @@ fn 바꾸기_지금_것_다시_저장_고른_칸_쓰기_oauth_병합_백업() {
     assert_eq!(e.slot(BACKUP_LAST).as_deref(), Some("tokA"));
 }
 
+// 2026-10-05 폰 계정 ①: 자동 전환이 다시 읽은(view) 뒤 바꾸기(switchTo) 전 몇 ms 에 폰이 바꾸면 폰 선택을 덮었다 —
+// 자동 전환은 '지금 칸이 내가 본 것일 때만' 바꾼다(같은 잠금 안에서 확인)
+#[test]
+fn 본_칸이_그새_바뀌었으면_자동_바꾸기는_안_한다() {
+    let e = Env::two("switch-if");
+    // 지금은 a2(B). 자동 전환은 a1 을 지금 칸으로 알고 있었다 → 안 바꾼다
+    assert_eq!(switch_if(&e.store, &e.live, &e.list, "a1", Some("a1")).unwrap_err(), Error::Moved);
+    assert_eq!(e.pool().current.as_deref(), Some("a2"));
+    assert_eq!(e.live_tok().as_deref(), Some("tokB"));
+    // 본 칸이 맞으면 바꾼다
+    assert_eq!(switch_if(&e.store, &e.live, &e.list, "a1", Some("a2")).unwrap().current.as_deref(), Some("a1"));
+    assert_eq!(e.live_tok().as_deref(), Some("tokA"));
+    // 조건 없으면(손으로 바꾸기) 예전처럼
+    assert_eq!(switch_if(&e.store, &e.live, &e.list, "a2", None).unwrap().current.as_deref(), Some("a2"));
+    assert_eq!(Error::Moved.code(), "moved");
+}
+
 #[test]
 fn 칸_없음_모르는_id_는_아무것도_안_바꾼다() {
     let e = Env::two("noslot");

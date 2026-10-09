@@ -1,7 +1,7 @@
 // 폰 참모 깨우기 — 데스크톱 오케스트레이터 홈(ui/space/OrchHome)을 폰에. 꺼진 참모 줄(프사·별명·마지막 때·하던 일)을 누르면
 // 그 대화만 다시 켜고(/api/respawn), 새 참모는 별명만 지어 보낸다(/api/spawn — 번호는 서버가). 켜진 참모가 목록에 뜨면 그리로 옮긴다
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { tr } from '../../i18n';
+import { machine, tr } from '../../i18n';
 import { roleChips } from '../../domain/orchRoles';
 import { listStoppedOrchs, readTails, respawnOrch, spawnOrch, type MobileEnv } from '../../data/web';
 import { offOrchRows, phoneName, wakeAlreadyText, wakeFailText, wokeOrch } from '../../domain/mobile';
@@ -61,7 +61,7 @@ export function useWake(live: Session[], onArrive: (id: string) => void) {
   useEffect(() => {
     const id = wokeOrch(woke, live);
     if (id) { setWoke(null); arrive.current(id); return; }
-    if (woke && Date.now() - woke.at > ARRIVE_MS) { setWoke(null); setNote({ text: tr('켜는 데 너무 오래 걸려요 — 맥에서 확인해 주세요', 'Taking too long — check on the Mac'), error: true }); }
+    if (woke && Date.now() - woke.at > ARRIVE_MS) { setWoke(null); setNote({ text: tr(`켜는 데 너무 오래 걸려요 — ${machine()}에서 확인해 주세요`, `Taking too long — check on the ${machine()}`), error: true }); }
   }, [woke, live]);
   const fail = (e: unknown, mode: 'wake' | 'make') => {
     const f = wakeFailText((e as Error).message ?? '', mode);

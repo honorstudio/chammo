@@ -18,7 +18,7 @@ type Props = {
   lessons?: { mine: string[]; common: string[] };
   onRemoveLesson?: (name: string, lesson: string) => void;
   onPromoteLesson?: (lesson: string) => void;
-  /** 교훈이 많을 때 [스킬로 묶기] — 참모에게 묶음 제안을 부탁한다(사람은 결정 대기함 카드로 고른다) */
+  /** 교훈이 많을 때 [스킬로 묶기] — 참모에게 알아서 묶어 달라 부탁한다(결과는 한 줄, 버리기만 카드) */
   onGroupLessons?: () => void;
 };
 
@@ -170,7 +170,7 @@ function LessonList({ project, lessons, onRemove, onPromote, onGroup }: {
       <div className="lesson-note dim">{tr(`${josa(assistant(), '이', '가')} 이 프로젝트에 일을 시킬 때 지시 끝에 붙는 것. 끝난 할 일·중복은 지워 줘`, 'Attached to the end of every instruction sent to this project. Delete finished to-dos and duplicates')}</div>
       {onGroup && shouldGroup(project, lessons.mine.length) && (
         <div className="lesson-group">
-          <button className="mini" title={tr(`주제별로 묶어 필요할 때만 열리는 스킬로 — ${josa(assistant(), '이', '가')} 묶음을 카드로 물어`, `Group by topic into skills that open only when needed — ${assistant()} asks you with cards`)} onClick={onGroup}>
+          <button className="mini" title={tr(`주제별로 묶어 필요할 때만 열리는 스킬로 — ${josa(assistant(), '이', '가')} 알아서 묶고 한 줄로 알려`, `Group by topic into skills that open only when needed — ${assistant()} does it and tells you in one line`)} onClick={onGroup}>
             {tr('스킬로 묶기', 'Group into skills')}
           </button>
         </div>

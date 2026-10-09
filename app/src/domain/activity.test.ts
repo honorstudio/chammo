@@ -82,6 +82,13 @@ acme-shop 바로 시작할까?`;
   it('질문이 목록 끝 줄이어도 기호 없이', () => {
     expect(askView('이렇게 할게.\n\n- **A**랑 `B` 중에 뭐로 할까?').q).toBe('A랑 B 중에 뭐로 할까?');
   });
+  it('질문 뒤 줄에 "참고로 …"가 붙어도 질문을 띄운다 — 물어봄 감지가 끝 몇 줄까지 보니까(2026-10-09)', () => {
+    const r = '빌드 끝났어.\n\n입력 진단 기록, 이제 꺼도 될까?\n\n참고로 예전 시험 개발판은 껐어. 네 앱이랑 세션은 안 건드렸어.';
+    expect(askView(r).q).toBe('입력 진단 기록, 이제 꺼도 될까?');
+  });
+  it('질문이 없으면(부탁·답 기다림) 마지막 문장 그대로', () => {
+    expect(askView('시안 만들었어.\n\n확대 크기를 종류별로 기억할지 정해 줘.').q).toBe('확대 크기를 종류별로 기억할지 정해 줘.');
+  });
   it('한 문장짜리면 lead 없이 질문만', () => {
     expect(askView('교체해도 될까?')).toEqual({ lead: '', q: '교체해도 될까?' });
   });
@@ -220,5 +227,59 @@ describe('summarizeTranscript lastAt — 마지막 대화 줄 시각(꺼진 세�
   it('큐에 쌓인 입력(attachment)도 센다', () => {
     const a = summarizeTranscript([asst('2026-10-04T01:00:00Z', '다 했어'), line({ type: 'attachment', timestamp: '2026-10-04T01:02:00Z', attachment: { type: 'queued_command' } })].join('\n'));
     expect(a.lastAt).toBe('2026-10-04T01:02:00Z');
+  });
+});
+
+describe('summarizeTranscript waitingOn — 띄우고 아직 안 끝난 백그라운드 일(꺼진 세션이 무언가를 기다리던 중이었나)', () => {
+  const T = (n: number) => `2026-10-09T01:00:0${n}Z`;
+  const launch = (ts: string, id: string, input: object = { command: 'gh pr checks 12 --watch', run_in_background: true }) =>
+    [
+      line({ type: 'assistant', timestamp: ts, message: { role: 'assistant', content: [{ type: 'tool_use', id: `tu-${id}`, name: 'Bash', input }], stop_reason: 'tool_use' } }),
+      user(ts, [{ type: 'tool_result', tool_use_id: `tu-${id}`, content: `Command running in background with ID: ${id}` }], { toolUseResult: { stdout: '', backgroundTaskId: id } }),
+    ].join('\n');
+  const notif = (ts: string, id: string, status?: string) =>
+    line({ type: 'queue-operation', operation: 'enqueue', timestamp: ts, content: `<task-notification>\n<task-id>${id}</task-id>\n${status ? `<status>${status}</status>\n` : ''}<summary>…</summary>\n</task-notification>` });
+  const end = (ts: string, text: string) => line({ type: 'assistant', timestamp: ts, message: { role: 'assistant', content: [{ type: 'text', text }], stop_reason: 'end_turn' } });
+
+  it('백그라운드 Bash 를 띄우고 완료 알림 없이 끝난 턴이면 1 — 말투와 상관없이("돌려 뒀어")', () => {
+    expect(summarizeTranscript([launch(T(1), 'b1'), end(T(2), '빌드 돌려 뒀어')].join('\n')).waitingOn).toBe(1);
+  });
+  it('완료·실패·중단 알림(<status>)이 오면 0 — 상태 없는 Monitor 사건 알림은 끝이 아니다', () => {
+    for (const st of ['completed', 'failed', 'killed', 'stopped'])
+      expect(summarizeTranscript([launch(T(1), 'b1'), notif(T(2), 'b1', st), end(T(3), '빌드 끝났어')].join('\n')).waitingOn, st).toBeUndefined();
+    expect(summarizeTranscript([launch(T(1), 'b1'), notif(T(2), 'b1'), end(T(3), '보는 중')].join('\n')).waitingOn).toBe(1);
+  });
+  it('다른 일의 알림은 이 일을 닫지 않는다', () => {
+    expect(summarizeTranscript([launch(T(1), 'b1'), launch(T(2), 'b2'), notif(T(3), 'b2', 'completed'), end(T(4), '하나 끝')].join('\n')).waitingOn).toBe(1);
+  });
+  it('백그라운드 에이전트(isAsync)·Monitor(taskId)도 센다 — 알림 task-id 는 agentId·taskId', () => {
+    const agent = user(T(1), [{ type: 'tool_result', content: 'launched' }], { toolUseResult: { isAsync: true, status: 'async_launched', agentId: 'a9f' } });
+    const mon = user(T(2), [{ type: 'tool_result', content: 'armed' }], { toolUseResult: { taskId: 'm1', timeoutMs: 600000, persistent: false } });
+    expect(summarizeTranscript([agent, mon, end(T(3), '맡겨 뒀어')].join('\n')).waitingOn).toBe(2);
+    expect(summarizeTranscript([agent, mon, notif(T(4), 'a9f', 'completed'), notif(T(5), 'm1', 'completed'), end(T(6), '다 왔어')].join('\n')).waitingOn).toBeUndefined();
+  });
+  it('알림이 사용자 줄(user content)로 들어와도 닫힌다', () => {
+    const u = user(T(2), '<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>');
+    expect(summarizeTranscript([launch(T(1), 'b1'), u, end(T(3), '끝')].join('\n')).waitingOn).toBeUndefined();
+  });
+  it('깨우기 예약(ScheduleWakeup)을 걸고 턴을 끝냈으면 1 — 다음 사람 지시·깨우기 프롬프트가 오면 0, stop 은 안 센다', () => {
+    const wake = (ts: string, input: object) => line({ type: 'assistant', timestamp: ts, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'tw', name: 'ScheduleWakeup', input }], stop_reason: 'tool_use' } });
+    expect(summarizeTranscript([wake(T(1), { delaySeconds: 600, prompt: '/loop CI' }), end(T(2), '10분 뒤 다시 볼게')].join('\n')).waitingOn).toBe(1);
+    expect(summarizeTranscript([wake(T(1), { delaySeconds: 600, prompt: '/loop CI' }), end(T(2), '…'), user(T(3), '/loop CI'), end(T(4), 'CI 초록')].join('\n')).waitingOn).toBeUndefined();
+    expect(summarizeTranscript([wake(T(1), { stop: true }), end(T(2), '감시 끝')].join('\n')).waitingOn).toBeUndefined();
+  });
+});
+
+describe('summarizeTranscript — 마지막 답의 컨텍스트 토큰(상태줄 파일이 없는 대화의 컨텍스트 %, 2026-10-03 부채)', () => {
+  const a = (model: string, u: Record<string, number>, ts = '2026-10-02T10:00:00Z') =>
+    JSON.stringify({ type: 'assistant', timestamp: ts, message: { model, content: [{ type: 'text', text: '응' }], usage: u } });
+  it('입력 + 캐시 읽기 + 캐시 만들기 = 그 턴에 실린 컨텍스트, 마지막 답 기준', () => {
+    const t = [a('claude-opus-5-5', { input_tokens: 10, cache_read_input_tokens: 100, cache_creation_input_tokens: 5, output_tokens: 9 }),
+      a('claude-opus-5-5', { input_tokens: 3, cache_read_input_tokens: 746_000, cache_creation_input_tokens: 365, output_tokens: 50 })].join('\n');
+    expect(summarizeTranscript(t)).toMatchObject({ tokens: 746_368, model: 'claude-opus-5-5' });
+  });
+  it('합성 답(<synthetic>, 오류 줄)은 건너뛴다', () => {
+    const t = [a('claude-opus-5-5', { input_tokens: 1, cache_read_input_tokens: 2000 }), a('<synthetic>', { input_tokens: 0 })].join('\n');
+    expect(summarizeTranscript(t)).toMatchObject({ tokens: 2001, model: 'claude-opus-5-5' });
   });
 });

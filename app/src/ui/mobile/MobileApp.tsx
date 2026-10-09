@@ -2,13 +2,17 @@
 // 상태는 이것만 위에 둔다(a-build-notes): orch(기억) · view(대시보드|예약) · snap. picker·taskFold 는 그 아래
 // 예약 판을 열면 시트는 예약 담당 참모로(domain/mobile routineOrch)
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { getEnv, listBrowsers, listSessionsRaw, NoKeyError, readTasks, routinesList, type MobileEnv } from '../../data/web';
+import { getEnv, listBrowsers, listSessionsRaw, NoKeyError, readShowLog, readTasksSince, routinesList, type MobileEnv } from '../../data/web';
+import { chatFiles, type ChatFile } from '../../domain/chatFiles';
+import { titleOf } from '../../domain/reader';
+import { FileView } from './FileView';
 import type { Live } from '../../domain/agentBrowser';
 import type { Ctx } from '../../domain/ctx';
-import { josa, setAssistant } from '../../i18n';
+import { josa, machine, setAssistant, setHostWin } from '../../i18n';
 import { ctxFromAgents, nextAfterStop, phoneName, routineOrch, shownWaiting, waitingList, type Snap, type WaitSent, type Waiting } from '../../domain/mobile';
 import { useWaitSent } from './waitSent';
 import { parseTaskLog, type TaskEvent } from '../../domain/tasks';
+import { makeTaskTail } from '../../domain/taskTail';
 import { parseRoutines, routineState } from '../../domain/routine';
 import { groupByProject, parseAgents, type Session } from '../../domain/session';
 import { ChatSheet } from './ChatSheet';
@@ -34,7 +38,7 @@ import { useOrchAsks } from './useOrchAsks';
 import { useMemoPoll, usePoll } from './usePoll';
 import { useViewport, type Viewport } from './useViewport';
 import { BrandMark } from '../avatar';
-import { BOOT_LIMIT_MS, envFromCache, ENV_KEY, splashDeadline, splashDone, type BootBase } from '../../domain/boot';
+import { BOOT_LIMIT_MS, envFromCache, envIsWin, ENV_KEY, splashDeadline, splashDone, type BootBase } from '../../domain/boot';
 import { hideBootSplash } from './bootSplash';
 import { IconRefresh } from '../Icons';
 import { makePoller, RESUME_EVENT } from '../../domain/poller';
@@ -46,6 +50,8 @@ import { preloadFirstScreen } from './bootPreload';
 
 const ORCH_KEY = 'm.orch';
 const NO_LIVES: Live[] = [];
+/** 작업 기록 — 5초마다 바뀐 줄만(예전엔 꼬리 512KB 통째로, 2026-10-08) */
+const readTaskLog = makeTaskTail(readTasksSince);
 const saved = () => { try { return localStorage.getItem(ORCH_KEY); } catch { return null; } };
 const remember = (id: string) => { try { localStorage.setItem(ORCH_KEY, id); } catch { /* 사파리 개인 정보 보호 모드 */ } };
 // 지난번 맥 정보(비서 이름·dev 폴더·HQ 폴더) — 다음 켜기에 이걸로 바로 세션을 받고, 새 맥 정보는 뒤에서 받아 바뀌었으면 다시 그린다
@@ -76,6 +82,10 @@ function OrchSpace({ orch, orchs, sessions, events, waiting, waitSent, ask, ctx,
     if (askingN > prevAsk.current && snap === 'peek') setSnap('half');
     prevAsk.current = askingN;
   }, [askingN]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 채팅 안 파일 카드 — 이 참모가 보여 준 것만. /api/shows 는 서버가 폰에 내보낼 수 있는 줄만 남긴 기록(대시보드 '주고받은 파일'도 이걸 받는다)
+  const [showLog, showLoaded] = useMemoPoll('shows', readShowLog, 5000, '');
+  const files = useMemo(() => chatFiles(showLog, orch.id), [showLog, orch.id]);
+  const [fileOpen, setFileOpen] = useState<ChatFile | null>(null);
   const askName = asking[0] ? sessions.find((s) => s.id === asking[0]!.from)?.name || asking[0].from : '';
   return (
     <div className="m-space" style={orchVars(color) as React.CSSProperties}>
@@ -83,7 +93,7 @@ function OrchSpace({ orch, orchs, sessions, events, waiting, waitSent, ask, ctx,
         ? <RoutineBoard sessions={sessions} onBack={() => setView('dash')} />
         : view === 'sessions'
         ? <SessionsBoard sessions={sessions} hqDir={env.hqDir} ctx={ctx} lives={lives} onBack={() => setView('dash')} />
-        : <OrchDash orch={orch} orchs={orchs} asking={waiting.some((w) => w.orch === orch.id)} sessions={sessions} ctx={ctx} items={chat.items} events={events} routinesRunning={running} onRoutines={() => setView('routines')} onSessions={() => setView('sessions')} hqDir={env.hqDir} lives={lives} push={push} />}
+        : <OrchDash orch={orch} orchs={orchs} asking={waiting.some((w) => w.orch === orch.id)} sessions={sessions} ctx={ctx} items={chat.items} events={events} routinesRunning={running} onRoutines={() => setView('routines')} onSessions={() => setView('sessions')} hqDir={env.hqDir} voiceBase={env.voiceBase ?? null} lives={lives} push={push} showLog={showLog} showLoaded={showLoaded} />}
       <ChatSheet
         snap={snap}
         onSnap={setSnap}
@@ -96,10 +106,11 @@ function OrchSpace({ orch, orchs, sessions, events, waiting, waitSent, ask, ctx,
         }
       >
         {chat.error && <Notice text={chat.error} error onClose={() => chat.setError(null)} />}
-        <MessageList items={chat.items} earlier={chat.earlier} loading={chat.loading} stale={chat.stale} out={chat.out} onRetry={chat.retry} onDrop={chat.drop} live={chat.live} ask={ask} who={<MAvatar orch={orch} orchs={orchs} size={28} asking />} />
+        <MessageList files={files} onOpenFile={setFileOpen} items={chat.items} earlier={chat.earlier} loading={chat.loading} stale={chat.stale} out={chat.out} onRetry={chat.retry} onDrop={chat.drop} live={chat.live} ask={ask} who={<MAvatar orch={orch} orchs={orchs} size={28} asking />} />
         {/* 직접 답하기 카드 — 맡긴 세션이 본인 승인을 기다릴 때(채팅 끝, 입력칸 바로 위) */}
         <DirectCards mine={direct} sessions={sessions} />
       </ChatSheet>
+      {fileOpen && <FileView path={fileOpen.path} title={titleOf(fileOpen.path)} at={fileOpen.at} orch={orch.id} onClose={() => setFileOpen(null)} />}
       {picker && (
         <OrchPicker title={env.assistantName} env={env} wake={wake} onStopped={onStopped} orchs={orchs} current={orch.id} ctx={ctx} waiting={waiting} sent={waitSent} lines={lines} events={events} sessions={sessions}
           onClose={() => setPicker(false)}
@@ -143,7 +154,7 @@ export function MobileApp() {
   const [pick, setPick] = useState<string | null>(saved);
   const [snap, setSnap] = useState<Snap>('peek');
   const [noKey, setNoKey] = useState(false);
-  const taskLog = usePoll(readTasks, 5000, '');
+  const taskLog = usePoll(readTaskLog, 5000, '');
   const events = useMemo(() => parseTaskLog(taskLog), [taskLog]);
   const { asks, lines } = useOrchAsks(orchs);
   // 폰에서 답한 결정 카드는 맥 기록이 따라올 때까지 숨긴다 — 칩 숫자·시트가 같이(waitSent)
@@ -185,10 +196,10 @@ export function MobileApp() {
     // 받기 고리(domain/poller) — 앱이 다시 보이면 바로(세션 상태가 '일하는 중'으로 남아 '생각 중…'이 떠 있었다, 2026-10-04)
     // 첫 켜기: 맥 정보와 세션을 같이 받는다(예전엔 차례로 — LTE 에서 왕복 하나가 더 들었다). 지난번 맥 정보가 있으면 세션만 기다리고 새 맥 정보는 뒤에서
     let e: MobileEnv | null = cachedEnv();
-    if (e) setAssistant(e.assistantName);
+    if (e) { setAssistant(e.assistantName); setHostWin(envIsWin(e)); }
     let got = false; // 한 번이라도 받았나 — 받기 전엔 BOOT_LIMIT_MS 에 끊고 '못 닿음'(맥이 꺼져 매달려도 모찌만 20초 안 보이게)
     let lastRaw: string | null = null;
-    const takeEnv = (v: MobileEnv) => { e = v; setAssistant(v.assistantName); keepEnv(v); };
+    const takeEnv = (v: MobileEnv) => { e = v; setAssistant(v.assistantName); setHostWin(envIsWin(v)); keepEnv(v); };
     const show = (env: MobileEnv, raw: string) => {
       lastRaw = raw;
       const all = parseAgents(raw, env.devRoot, env.extraProjects);
@@ -219,7 +230,7 @@ export function MobileApp() {
           takeEnv(v);
           return { ok: true, env: v, raw };
         } catch (err) {
-          return { ok: false, err: lim.late() ? new Error(`맥이 ${BOOT_LIMIT_MS / 1000}초 넘게 답이 없어요`) : err };
+          return { ok: false, err: lim.late() ? new Error(`${josa(machine(), '이', '가')} ${BOOT_LIMIT_MS / 1000}초 넘게 답이 없어요`) : err };
         }
       },
       apply: (g) => {
@@ -292,7 +303,7 @@ export function MobileApp() {
     return cover(
       <div className="m-center m-unreach">
         <BrandMark size={64} className="m-brand" />
-        <p>{error ? `맥에 못 닿았어요: ${error}` : ''}</p>
+        <p>{error ? `${machine()}에 못 닿았어요: ${error}` : ''}</p>
         <button type="button" className={retrying ? 'm-icon m-retrying' : 'm-icon'} disabled={retrying} onClick={retry} aria-label="다시 시도" title="다시 시도"><IconRefresh /></button>
       </div>,
     );

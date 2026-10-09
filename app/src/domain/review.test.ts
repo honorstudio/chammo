@@ -50,6 +50,20 @@ describe('gates — 되돌리기 어려운 PR (DB·돈·보안). 크기·운영 
     expect(gates(pr({ title: '예약 환불 처리' }))[0]).toEqual({ kind: 'money', why: '"환불"' });
     expect(gates(pr({ files: [f('src/billing/plan.ts', 10)] }))[0]).toEqual({ kind: 'money', why: 'src/billing/plan.ts' });
   });
+  it('매출 화면의 "결제 비중·결제 방식별" 은 돈 아님 — 결제를 보여 줄 뿐 움직이지 않는다 (가게 앱 예시)', () => {
+    const body = '- **집계** `insights.ts` — 매출 합계, 결제 방식별, 받을 돈\n- **화면** 매출 한 줄 요약 → 결제 비중 → CSV 내보내기';
+    expect(gates(pr({ title: '인사이트 — 매출 · 결제 비중 · CSV', body, files: [f('apps/mobile/src/domain/insights.ts', 120)] }))).toEqual([]);
+  });
+  it('결제를 바꾸는 말은 그대로 돈 — "결제 비중" 옆에 "환불" 이 있으면 환불로', () => {
+    expect(gates(pr({ body: '결제 비중 표 + 부분 환불 버튼' }))[0]).toEqual({ kind: 'money', why: '"환불"' });
+  });
+  it('문서만 바꾼 PR 은 글에 결제·RLS·시크릿이 나와도 조건 아님 — 문서는 되돌리기 쉽다 (예시 저장소)', () => {
+    const files = [f('docs/starter.md', 40), f('docs/roadmap.md', 12), f('docs/notes/payments.md', 80)];
+    expect(gates(pr({ title: 'docs: 세션 반영 (starter + roadmap)', body: '정기 결제 메모 정리. 일정 RLS 스펙. `EXAMPLE_SECRET_KEY` 는 대시보드에', files }))).toEqual([]);
+  });
+  it('문서에 코드 한 줄이라도 섞이면 글로 판정한다', () => {
+    expect(gates(pr({ body: '결제 실패 재시도', files: [f('docs/starter.md', 4), f('src/pay.ts', 3)] })).map((x) => x.kind)).toEqual(['money']);
+  });
   it('영어는 낱말로만 — discharge 는 돈 아님', () => {
     expect(gates(pr({ body: 'battery discharge curve' }))).toEqual([]);
   });

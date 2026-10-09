@@ -5,13 +5,27 @@ use tauri::{Manager, Runtime};
 
 /// offset 뒤 새 줄 중 JSON 객체인 것만(원문 그대로) + 다음 offset. 파일이 줄었으면 처음부터
 pub fn new_lines(content: &str, offset: usize) -> (Vec<String>, usize) {
-    let start = if offset > content.len() { 0 } else { offset };
+    let start = if offset > content.len() || !content.is_char_boundary(offset) { 0 } else { offset };
     let lines = content[start..]
         .lines()
         .filter(|l| serde_json::from_str::<serde_json::Value>(l).map(|v| v.is_object()).unwrap_or(false))
         .map(str::to_owned)
         .collect();
     (lines, content.len())
+}
+
+/// 앱이 꺼진 동안 쓴 줄 중 켤 때 다시 칠 것 — 지난번 읽은 자리(app.jsonl.seen) 뒤의 자리표 알림만, 한 시간 안 것만.
+/// 열쇠·화면 조작은 옛것이면 엉뚱한 창에 들어가 다시 안 한다. 읽은 자리를 모르면(처음 켬) 없음
+pub fn replay_on_start(content: &str, seen: Option<usize>, now: u64) -> Vec<String> {
+    let Some(seen) = seen else { return Vec::new() };
+    new_lines(content, seen)
+        .0
+        .into_iter()
+        .filter(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).unwrap_or_default();
+            v["action"] == "slot-notice" && v["at"].as_u64().is_some_and(|at| now.saturating_sub(at) <= 3600)
+        })
+        .collect()
 }
 
 /// 화면을 바꾸는 명령이면 숨어 있던 창도 앞으로(⌘W 로 숨겼을 수 있다). 음성·기능 켜기는 창을 안 띄운다
@@ -118,19 +132,30 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
         let file = crate::config::data_file("app.jsonl");
         // 바이트로 읽어 깨진 글자는 바꿔 넣는다 — read_to_string 은 UTF-8 이 아닌 바이트가 하나라도 있으면 매번 실패해 감시가 영영 멈춘다
         let read = |f: &std::path::Path| std::fs::read(f).map(|b| String::from_utf8_lossy(&b).into_owned());
-        let mut offset = read(&file).map(|s| s.len()).unwrap_or(0);
+        let seen_file = crate::config::data_file("app.jsonl.seen");
+        let seen = std::fs::read_to_string(&seen_file).ok().and_then(|s| s.trim().parse::<usize>().ok());
+        let now = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let start = read(&file).unwrap_or_default();
+        let mut offset = start.len();
+        // 꺼진 동안 쓴 자리표 알림 — 자리를 잃고도 빌드를 계속 돌리는 세션이 없게(2026-10-06 slot 남은 것 ①)
+        let mut pending = replay_on_start(&start, seen, now());
+        let _ = std::fs::write(&seen_file, offset.to_string()); // 새 줄이 한 번도 안 와도 다음 켬이 읽은 자리를 안다
         let mut slot_seen = std::collections::HashMap::new();
         // 윈도우에서 선택지 키가 한 번도 안 들어갔다 — 감시가 어느 파일을 보고 무엇을 받았는지 남긴다
-        crate::claude::log_out("appctl-watch", &format!("{} offset {offset}", file.display()));
+        crate::claude::log_out("appctl-watch", &format!("{} offset {offset} replay {}", file.display(), pending.len()));
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(700));
-            let Ok(content) = read(&file) else { continue };
-            if content.len() == offset {
-                continue;
+            if pending.is_empty() {
+                std::thread::sleep(std::time::Duration::from_millis(700));
+                let Ok(content) = read(&file) else { continue };
+                if content.len() == offset {
+                    continue;
+                }
+                let (lines, next) = new_lines(&content, offset);
+                offset = next;
+                pending = lines;
             }
-            let (lines, next) = new_lines(&content, offset);
-            offset = next;
-            for line in lines {
+            let _ = std::fs::write(&seen_file, offset.to_string());
+            for line in std::mem::take(&mut pending) {
                 crate::claude::log_out("appctl", &line.chars().take(120).collect::<String>());
                 if let Some((id, keys)) = keys_request(&line) {
                     std::thread::spawn(move || {
@@ -149,8 +174,7 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                 if let Some((id, text)) = slot_notice_request(&line, &crate::config::current().language) {
                     let v: serde_json::Value = serde_json::from_str(&line).unwrap_or_default();
                     let key = format!("{id}|{}|{}", v["arg"]["slot"].as_str().unwrap_or(""), v["arg"]["why"].as_str().unwrap_or(""));
-                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-                    if first_in(&mut slot_seen, &key, now) {
+                    if first_in(&mut slot_seen, &key, now()) {
                         std::thread::spawn(move || {
                             let _ = crate::claude::type_text_tagged(&id, &text, "slot-notice");
                         });
@@ -198,6 +222,23 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn 앱이_꺼진_동안_쓴_자리표_알림은_켤_때_다시_본다() {
+        // 2026-10-06 slot 남은 것 ①: 켤 때 파일 끝부터 읽어 꺼진 동안 쓴 slot-notice 가 영영 안 갔다
+        let n = |at: u64| format!(r#"{{"at":{at},"action":"slot-notice","arg":{{"session":"5eed0a01-ff12","slot":"build","why":"ttl","by":"project-x-app"}}}}"#);
+        let before = format!("{}\n", n(100));
+        let keys = r#"{"action":"keys","arg":{"id":"5eed0a01","keys":"1"}}"#;
+        let content = format!("{before}{}\n{keys}\n{}\n", n(5_000), n(10_000));
+        // 지난번 어디까지 읽었는지(seen) 뒤 줄 중 자리표 알림만, 한 시간 안 것만 — 열쇠(keys)는 옛것이면 위험해 다시 안 친다
+        assert_eq!(replay_on_start(&content, Some(before.len()), 10_100), vec![n(10_000)]);
+        assert_eq!(replay_on_start(&content, Some(before.len()), 8_000), vec![n(5_000), n(10_000)]);
+        // 읽은 자리를 모르면(처음 켬) 예전처럼 건너뛴다, 파일이 줄었으면 처음부터
+        assert!(replay_on_start(&content, None, 10_100).is_empty());
+        assert_eq!(replay_on_start(&format!("{}\n", n(10_000)), Some(content.len()), 10_100), vec![n(10_000)]);
+        // at 없는 옛 줄은 시각을 몰라 안 친다
+        let old = r#"{"action":"slot-notice","arg":{"session":"5eed0a01-ff12","slot":"build","why":"ttl","by":"project-x-app"}}"#;
+        assert!(replay_on_start(&format!("{old}\n"), Some(0), 10).is_empty());
+    }
 
     #[test]
     fn 키_넣기_요청은_화살표와_enter_만() {

@@ -46,6 +46,28 @@ describe('homeRows — 홈 줄: 켜진 참모 위, 꺼진 참모는 마지막으
   });
 });
 
+// 2026-10-03 부채(feature/orch-home ①②)
+describe('homeRows — 이어 켜기만 한 참모·상태줄 파일 없는 대화', () => {
+  const old = { 's-f': { prompt: { ts: '2026-10-02T10:00:00Z', text: '옛 일' } } };
+  it('① 이어 켜고 일을 안 시켰으면 마지막으로 켠 때(세션 시작)가 기록보다 늦다 — 그 시각, 그 순서', () => {
+    const r = homeRows({ live: [], off: [off('f', '참모-6', T('2026-10-03T09:00:00Z')), off('g', '참모-7', 0)], activity: { ...old, 's-g': { prompt: { ts: '2026-10-02T12:00:00Z', text: '다른 일' } } }, ctx: {} });
+    expect(r.off.map((x) => [x.off?.id, x.lastAt])).toEqual([['f', T('2026-10-03T09:00:00Z')], ['g', T('2026-10-02T12:00:00Z')]]);
+  });
+  const sized = { 's-other': { used: 10, ts: 0, modelId: 'claude-opus-5-5', size: 1_000_000 } };
+  it('② 상태줄 파일이 없으면 기록의 마지막 토큰 ÷ 같은 모델 창 크기(다른 대화 상태줄에서)', () => {
+    const r = homeRows({ live: [], off: [off('f', '참모-6')], activity: { 's-f': { ...old['s-f'], tokens: 746_368, model: 'claude-opus-5-5' } }, ctx: sized });
+    expect(r.off[0]!.ctx).toBe(75);
+  });
+  it('② 창 크기를 모르는 모델이면 짐작하지 않고 비운다', () => {
+    const r = homeRows({ live: [], off: [off('f', '참모-6')], activity: { 's-f': { tokens: 90_000, model: 'claude-new-9' } }, ctx: sized });
+    expect(r.off[0]!.ctx).toBeUndefined();
+  });
+  it('② 상태줄 파일이 있으면 그 값이 먼저', () => {
+    const r = homeRows({ live: [], off: [off('f', '참모-6')], activity: { 's-f': { tokens: 746_368, model: 'claude-opus-5-5' } }, ctx: { ...sized, 's-f': { used: 12, ts: 0 } } });
+    expect(r.off[0]!.ctx).toBe(12);
+  });
+});
+
 describe('homeRows — 하던 일에서 사람 말이 아닌 줄은 뺀다', () => {
   it('[Request interrupted …] 같은 끊김 표시는 지시가 아니다 — 마지막 답으로', () => {
     const r = homeRows({ live: [], off: [off('b', '참모-2')], activity: { 's-b': { prompt: { ts: '2026-10-02T10:00:00Z', text: '[Request interrupted by user for tool use]' }, reply: { ts: '2026-10-02T09:59:00Z', text: 'PR 올렸어' } } }, ctx: {} });

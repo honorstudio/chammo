@@ -88,8 +88,9 @@ export const GATE_LABEL: Readonly<Record<GateKind, string>> = {
 // DB: 본문은 SQL 낱말만. '마이그레이션' 은 "마이그레이션은 없다"(#462)처럼 부정으로 자주 나와 제목에서만 본다
 const DB_BODY = /\b(GRANT|REVOKE|RLS)\b|create policy|alter table|security definer/i;
 const DB_TITLE = /마이그레이션|migration|\bRLS\b|\bGRANT\b|\bREVOKE\b|security definer|스키마/i;
-// 돈: scripts/task 결제 관문(PAYMENT)과 같은 말. 영어는 낱말로만(discharge·recharge 제외)
-const MONEY_TEXT = /실결제|결제|환불|과금|부트페이|bootpay|카드 결제|\b(payments?|refunds?|billing|charges?)\b/i;
+// 돈: scripts/task 결제 관문(PAYMENT)과 같은 말. 영어는 낱말로만(discharge·recharge 제외).
+// '결제 비중·결제 방식별' 처럼 결제를 세어 보여 주기만 하는 말은 뺀다(#378 매출 화면)
+const MONEY_TEXT = /실결제|결제(?!\s*(비중|방식별|통계|건수|집계))|환불|과금|부트페이|bootpay|\b(payments?|refunds?|billing|charges?)\b/i;
 const MONEY_PATH = /(^|[/_.-])(billing|payments?|refunds?|checkout|bootpay|subscriptions?)([/_.-]|$)/i;
 // 보안: 본문은 키 이름(밑줄 붙은 환경변수 모양 — 게임 용어 "SECRET"(scene #48) 은 아님)·시크릿처럼 뚜렷한 것만.
 // '권한' 은 "computer-use 권한 없음"(#392)처럼 스쳐 지나가서 제목에서만 본다
@@ -102,6 +103,8 @@ const quoted = (m: RegExpMatchArray | null) => (m ? `"${m[0]}"` : '');
 
 export function gates(pr: OpenPr): Gate[] {
   const out: Gate[] = [];
+  // 문서만 바꾼 PR 은 글이 결제·RLS·시크릿을 말해도 되돌리기 쉽다 — 세션 정리 PR 이 '돈'에 걸리던 것(문서 PR #87·#37)
+  if (pr.files.length && pr.files.every((x) => fileKind(x.path) === 'docs')) return out;
   const text = `${pr.title}\n${pr.body}`;
 
   const dbFiles = pr.files.filter((x) => fileKind(x.path) === 'db');

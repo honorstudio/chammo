@@ -104,6 +104,13 @@ const GLOBE = (() => {
   return out.filter((p) => p.x * p.x + p.y * p.y < 30 * 30);
 })();
 
+/** 기다리는 기계(s 없음)의 그림이 now 에 따라 바뀌는 것 — 전구 박자(260ms)·유리 반짝임 자리. 같으면 같은 그림이라 다시 안 그려도 된다
+ *  (상점 QA 19: 열어만 둬도 매 프레임 그려 CPU 초당 50ms). drawMachine 의 시간 쓰는 곳을 바꾸면 여기도 — 테스트가 그림과 대 본다 */
+export function idleKey(now: number): string {
+  const glint = (now / 2400) % 1;
+  return `${Math.floor(now / 260) % 3}:${glint < 0.2 ? `${Math.round(glint * 300)},${Math.round(glint * 40)}` : '-'}`;
+}
+
 /** s 가 없으면 기다리는 기계(전구·반짝임만) */
 export function drawMachine(b: B, W: number, H: number, s: Show | null, now: number) {
   const t = s ? now - s.t0 : -1;

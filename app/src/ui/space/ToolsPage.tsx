@@ -57,7 +57,8 @@ export function ToolsPage({ root, roots, onRoot, sessions, onInvoke, onOpen, com
   const [q, setQ] = useState('');
   // 2단계 — 더하기·지우기·인증·마켓플레이스·설치
   const act = useOrchActions();
-  const ask = (title: string, body: string, ok: string, run: () => void) => (act ? act.confirm({ title, body, ok, run }) : window.confirm(`${title}\n${body}`) && run());
+  // danger = 빨간 버튼 — 지우기만, 설치·추가는 false
+  const ask = (title: string, body: string, ok: string, run: () => void, danger = true) => (act ? act.confirm({ title, body, ok, run, danger }) : window.confirm(`${title}\n${body}`) && run());
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ name: '', target: '', scope: 'local' });
   const [markets, setMarkets] = useState<Market[] | null>(null);
@@ -117,7 +118,7 @@ export function ToolsPage({ root, roots, onRoot, sessions, onInvoke, onOpen, com
   const login = (r: McpRow) => void run(`l:${r.name}`, () => invoke('tools_mcp_login', { root, name: r.name }), () => void loadStatus());
   const market = (action: 'add' | 'update' | 'remove', arg: string) => void run(`k:${action}:${arg}`, () => invoke('tools_market', { action, arg }), () => { setMarketAdd(null); void loadMarkets(); if (action !== 'update') { void loadPlugins(); void loadConf(); } setAvail(null); });
   const install = (a: Available) => ask(tr(`${a.name} 설치할까?`, `Install ${a.name}?`), a.desc || a.market, tr('설치', 'Install'),
-    () => void run(`i:${a.id}`, () => invoke('tools_plugin_install', { id: a.id }), () => { void loadPlugins(); void loadConf(); setAvail((v) => v?.filter((x) => x.id !== a.id) ?? null); }));
+    () => void run(`i:${a.id}`, () => invoke('tools_plugin_install', { id: a.id }), () => { void loadPlugins(); void loadConf(); setAvail((v) => v?.filter((x) => x.id !== a.id) ?? null); }), false);
   const targets = respawnTargets(sessions);
   const respawn = () => void run('respawn', () => invoke<number>('tools_respawn', { ids: targets.ids }).then((n) => {
     setNote(targets.busy ? tr(`세션 ${n}개 다시 연결 · 일하는 중 ${targets.busy}개는 끝나면 다시 켜 줘`, `Reconnected ${n} · ${targets.busy} busy — restart them when done`) : tr(`세션 ${n}개 다시 연결했어`, `Reconnected ${n} sessions`));
@@ -220,7 +221,7 @@ export function ToolsPage({ root, roots, onRoot, sessions, onInvoke, onOpen, com
             <button className="cv-btn" onClick={() => setMarketAdd((v) => (v === null ? '' : null))}>{marketAdd === null ? tr('마켓플레이스 추가', 'Add marketplace') : tr('그만', 'Cancel')}</button>
           </div>
           {marketAdd !== null && (
-            <form className="tl-form" onSubmit={(e) => { e.preventDefault(); const src = marketAdd.trim(); if (src) ask(tr('이 마켓플레이스를 더할까?', 'Add this marketplace?'), tr(`${src} — 여기 있는 플러그인을 깔 수 있게 돼. 믿을 수 있는 곳만 더해 줘.`, `${src} — its plugins become installable. Only add sources you trust.`), tr('추가', 'Add'), () => market('add', src)); }}>
+            <form className="tl-form" onSubmit={(e) => { e.preventDefault(); const src = marketAdd.trim(); if (src) ask(tr('이 마켓플레이스를 더할까?', 'Add this marketplace?'), tr(`${src} — 여기 있는 플러그인을 깔 수 있게 돼. 믿을 수 있는 곳만 더해 줘.`, `${src} — its plugins become installable. Only add sources you trust.`), tr('추가', 'Add'), () => market('add', src), false); }}>
               <input autoFocus className="wide" value={marketAdd} onChange={(e) => setMarketAdd(e.target.value)} placeholder={tr('GitHub 저장소(owner/repo)·git 주소·폴더', 'GitHub owner/repo, git URL or folder')} aria-label={tr('마켓플레이스 주소', 'Marketplace source')} />
               <button className="cv-btn solid" type="submit" disabled={!marketAdd.trim() || busy.some((b) => b.startsWith('k:add'))}>{busy.some((b) => b.startsWith('k:add')) ? tr('받는 중…', 'Fetching…') : tr('추가', 'Add')}</button>
             </form>

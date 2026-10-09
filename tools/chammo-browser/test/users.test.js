@@ -71,3 +71,14 @@ test('pid 모양이 아닌 파일은 사용자로 안 센다', () => {
   fs.writeFileSync(path.join(d, 'p.users', '.DS_Store'), '');
   assert.deepEqual(users.alive(d, 'p', () => true), []);
 });
+
+test('명부 표시 — 세션 브라우저 도구가 같이 쓰면 by=session 으로 올라 앱이 스크립트 수에서 뺀다(src/share.js)', () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'chammo-users-by-'));
+  lock.acquire('p', { lockDir: d, pid: process.pid });
+  assert.equal(users.join(d, 'p', 4242, process.pid, { by: 'session' }), true);
+  users.add(d, 'p', 4343);
+  const read = (pid) => JSON.parse(fs.readFileSync(path.join(users.usersDir(d, 'p'), String(pid)), 'utf8'));
+  assert.equal(read(4242).by, 'session');
+  assert.equal(read(4242).pid, 4242);
+  assert.equal(read(4343).by, undefined);
+});

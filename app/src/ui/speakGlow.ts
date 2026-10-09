@@ -1,5 +1,5 @@
 // 말하는 참모 빛 — 음성 모드일 때 100ms 마다 Rust 에 '지금 읽는 말'을 묻고(speak_now_state), 재생 중이면
-// 프레임마다 지금 시각의 소리 크기를 --speak-level(0~1)로 문서 맨 위에 쓴다. 빛낼 자리는 useSpeaking() 이 주는 세션 id 와 맞춰 st-speak 를 단다
+// 프레임마다 지금 시각(소리가 귀에 닿은 때부터 — Rust 가 장치 지연까지 잰다)의 소리 크기를 --speak-level(0~1)로 문서 맨 위에 쓴다. 빛낼 자리는 useSpeaking() 이 주는 세션 id 와 맞춰 st-speak 를 단다
 import { useEffect, useSyncExternalStore } from 'react';
 import { speakNowState } from '../data/tauri';
 import { foldSay, levelAt, speakingFrom, type Glow } from '../domain/speakGlow';
@@ -17,23 +17,31 @@ const reduced = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').ma
 // 사람이 안 보면(ui/attention) 프레임마다 그리지 않고 가운데 밝기로 멈춘다 — 누가 말하는지는 그대로 보인다
 const STILL = 0.5;
 
-function frame() {
-  if (!isAttended()) { setLevel(speaking ? STILL : 0); raf = 0; return; }
-  const v = levelAt(glow, Date.now(), reduced());
-  setLevel(v);
-  raf = speaking ? requestAnimationFrame(frame) : 0;
-}
-onAttention((on) => { if (on && speaking && !raf) raf = requestAnimationFrame(frame); });
+const playing = () => glow?.phase === 'playing';
 
-function apply(next: Glow | null) {
-  glow = next;
-  const who = speakingFrom(glow);
+/** 빛낼 참모를 지금 시각으로 다시 본다 — 재생 중이어도 소리가 귀에 닿기 전(블루투스 0.3초쯤)엔 아직 아무도 아니다 */
+function refresh(now: number) {
+  const who = speakingFrom(glow, now);
   if (who !== speaking) {
     speaking = who;
     subs.forEach((f) => f());
   }
-  if (speaking && !raf) raf = requestAnimationFrame(frame);
-  if (!speaking) { if (raf) cancelAnimationFrame(raf); raf = 0; setLevel(0); } // 끊기면 그 자리에서 0
+}
+
+function frame() {
+  const now = Date.now();
+  refresh(now);
+  if (!isAttended()) { setLevel(speaking ? STILL : 0); raf = 0; return; }
+  setLevel(levelAt(glow, now, reduced()));
+  raf = playing() ? requestAnimationFrame(frame) : 0;
+}
+onAttention((on) => { if (on && playing() && !raf) raf = requestAnimationFrame(frame); });
+
+function apply(next: Glow | null) {
+  glow = next;
+  refresh(Date.now());
+  if (playing() && !raf) raf = requestAnimationFrame(frame);
+  if (!playing()) { if (raf) cancelAnimationFrame(raf); raf = 0; setLevel(0); } // 끊기면 그 자리에서 0
 }
 
 async function poll() {

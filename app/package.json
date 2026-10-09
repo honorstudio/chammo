@@ -1,7 +1,7 @@
 {
   "name": "honor-orchestrator",
   "private": true,
-  "version": "0.2.5",
+  "version": "0.2.6",
   "license": "AGPL-3.0-only",
   "type": "module",
   "packageManager": "pnpm@11.20.0",

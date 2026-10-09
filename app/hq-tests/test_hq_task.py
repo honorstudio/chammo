@@ -150,13 +150,13 @@ class Project(unittest.TestCase):
     def test_세션_폴더로_프로젝트(self):
         agents = [{'id': 'a1', 'name': 'web', 'cwd': '/dev/web/.claude/worktrees/x'}, {'id': 'a2', 'cwd': '/else/y'}]
         self.assertEqual(task.project_of('web', agents, '/dev'), 'web')
-        self.assertIsNone(task.project_of('a2', agents, '/dev'))
+        self.assertEqual(task.project_of('a2', agents, '/dev'), 'y')  # dev 밖은 폴더 이름 — 앱 classifyWorkspace·훅과 같은 규칙(2026-10-09)
         self.assertIsNone(task.project_of('없음', agents, '/dev'))
 
     def test_따로_추가한_프로젝트_폴더(self):
         agents = [{'id': 'o1', 'name': 'blog-bot', 'cwd': '/u/automation/blog-bot/content'}, {'id': 'o2', 'cwd': '/u/automation/blog-bot-old'}]
         self.assertEqual(task.project_of('o1', agents, '/dev', ['/u/automation/blog-bot/']), 'blog-bot')
-        self.assertIsNone(task.project_of('o2', agents, '/dev', ['/u/automation/blog-bot']))
+        self.assertEqual(task.project_of('o2', agents, '/dev', ['/u/automation/blog-bot']), 'blog-bot-old')  # 이름이 앞만 같은 옆 폴더는 그 추가 폴더가 아니다
 
 
 class OrchRoles(unittest.TestCase):

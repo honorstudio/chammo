@@ -32,6 +32,72 @@ const SKIP_DIRS: &[&str] = &[
 /// 예시로 쓰는 낱말 — 경로 자리에 이게 있으면 실제 경로가 아니라 틀이다.
 const PLACEHOLDERS: &[&str] = &["YYYY", "MM-DD", "xxx", "XXX", "foo", "example"];
 
+/// 경로 가까이(앞뒤 NEAR 글자)에 있으면 경로 주장이 아닌 신호(진단 v2 남은 헛경고, 2026-10-02) — 예시, 없앤 자리, "없으면 만든다" 같은 없는 게 정상인 자리.
+/// 줄 전체로 보면 긴 줄 먼 곳의 '없으면'이 진짜 낡은 경로까지 지웠다(실측: 다른 저장소 416행)
+#[rustfmt::skip]
+const LINE_CUES: &[&str] = &[
+    "예:", "예시", "예를 들어", "e.g.", "for example",
+    "폐지", "없앴", "지웠", "사라졌", "그 전에는", "예전엔", "no longer", "removed", "deprecated",
+    "없으면", "없을 때", "없어도", "필요해지면", "if missing", "if absent",
+];
+const NEAR: usize = 40;
+/// 경로 바로 뒤에 오면 그 경로는 돌려서 생기는 목적지다(`X`로 이관 · `X` 에 저장한다).
+#[rustfmt::skip]
+const DEST_AFTER: &[&str] = &[
+    "로 이관", "으로 이관", "로 옮", "으로 옮", "로 압축", "에 저장", "에 남긴", "에 남겨", "에 만든", "에 만들", "에 적는", "에 생긴", "가 생긴", "이 생긴", "에 떨어",
+];
+/// 경로 바로 앞에 오면 목적지다(write to `X`).
+const DEST_BEFORE: &[&str] = &["write to", "writes to", "written to", "save to", "saved to", "output to"];
+/// 기계마다 다른 자리 — 설치된 앱·OS 상태. 하네스가 장담할 파일이 아니다(아이맥 이야기를 맥북에서 읽으면 늘 없다)
+const MACHINE: &[&str] = &["Library/", "Applications/"];
+/// Claude Code 가 정한 자리 — 쓰지 않으면 없는 게 정상이다
+#[rustfmt::skip]
+const CONVENTION_DIRS: &[&str] = &[
+    "~/.claude/agents", "~/.claude/commands", "~/.claude/output-styles", ".claude/agents", ".claude/commands", ".claude/output-styles",
+];
+
+fn is_repo_name(n: &str) -> bool {
+    n.len() >= 4 && n.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+}
+
+/// `name` 이 줄에 낱말로 나오나 — 대소문자 무시, 경계는 ASCII 낱말 글자만(`project-b의` 도 잡게). 백틱 안은 안 본다(경로 자체가 이름과 겹친다)
+fn names_word(line: &str, name: &str) -> bool {
+    let hay = md::strip_code_spans(line).to_lowercase();
+    let w = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+    let mut from = 0;
+    while let Some(i) = hay[from..].find(name) {
+        let (a, b) = (from + i, from + i + name.len());
+        if hay[..a].chars().next_back().is_none_or(|c| !w(c)) && hay[b..].chars().next().is_none_or(|c| !w(c)) {
+            return true;
+        }
+        from = b;
+    }
+    false
+}
+
+/// 조각 앞뒤 NEAR 글자(소문자) — 신호 낱말을 찾는 창
+fn near(line: &str, span: &str) -> String {
+    let Some(off) = (span.as_ptr() as usize).checked_sub(line.as_ptr() as usize).filter(|o| *o + span.len() <= line.len()) else {
+        return line.to_lowercase();
+    };
+    let before: String = line[..off].chars().rev().take(NEAR).collect::<Vec<_>>().into_iter().rev().collect();
+    let after: String = line[off + span.len()..].chars().take(NEAR).collect();
+    format!("{before} {after}").to_lowercase()
+}
+
+/// 이 조각이 줄 안에서 목적지 자리(돌려야 생기는 파일)에 있나 — 바로 뒤 "로 이관"·"에 저장", 바로 앞 "write to", `a` → `b` 의 b
+fn is_destination(line: &str, span: &str) -> bool {
+    let Some(off) = (span.as_ptr() as usize).checked_sub(line.as_ptr() as usize).filter(|o| *o + span.len() <= line.len()) else {
+        return false;
+    };
+    let before = line[..off].trim_end_matches([' ', '`']);
+    let after = line[off + span.len()..].trim_start_matches([' ', '`']);
+    let low = before.to_lowercase();
+    DEST_AFTER.iter().any(|c| after.starts_with(c))
+        || DEST_BEFORE.iter().any(|c| low.ends_with(c))
+        || before.strip_suffix('→').is_some_and(|b| b.trim_end().ends_with('`'))
+}
+
 /// 백틱 조각에서 경로 후보를 다듬는다. 경로가 아니면 `None`.
 fn candidate(span: &str) -> Option<&str> {
     if span
@@ -144,6 +210,12 @@ struct Ctx<'a> {
     index: Option<&'a mut Index>,
     /// 줄에 이름이 나오면 그 폴더도 기준이 되는 스킬들 — "`x` 스킬의 `scripts/a.sh`"
     skills: &'a [(String, PathBuf)],
+    /// 다른 저장소 이름(소문자) — 줄에 나오면 그 경로는 그 저장소 이야기다(`project-b의 `di/container.ts``)
+    repos: &'a [String],
+    /// 프로젝트들이 놓인 폴더(devRoot) — 그 바로 아래 없는 폴더는 이 맥에 안 받은 저장소다
+    repo_roots: &'a [PathBuf],
+    /// 이 파일의 주인 프로젝트 이름(소문자) — 자기 이름은 다른 저장소가 아니다
+    own: Option<String>,
 }
 
 impl Ctx<'_> {
@@ -151,7 +223,18 @@ impl Ctx<'_> {
     fn missing_in(&mut self, text: &str) -> Vec<(usize, String)> {
         let home_s = self.home.to_string_lossy().into_owned();
         let mut out = vec![];
+        // 이 파일이 devRoot 바로 아래 폴더로 부르는 저장소(`~/Desktop/dev/acme`) — 이 맥에 없어도 이름이 다른 줄에서 나온다(ACME `docs/…`)
+        let mut repos: Vec<String> = self.repos.to_vec();
         for l in md::lines(text).iter().filter(|l| !l.in_code) {
+            for span in md::code_spans(l.text) {
+                if let Some(n) = self.repo_dir(span).filter(|n| is_repo_name(n)) {
+                    repos.push(n);
+                }
+            }
+        }
+        repos.retain(|r| Some(r) != self.own.as_ref());
+        for l in md::lines(text).iter().filter(|l| !l.in_code) {
+            let other_repo = repos.iter().any(|r| names_word(l.text, r));
             let named: Vec<&(String, PathBuf)> = self
                 .skills
                 .iter()
@@ -159,6 +242,22 @@ impl Ctx<'_> {
                 .collect();
             for span in md::code_spans(l.text) {
                 let Some(c) = candidate(span) else { continue };
+                let bare = c.trim_end_matches('/');
+                let cue = || {
+                    let w = near(l.text, span);
+                    LINE_CUES.iter().any(|c| w.contains(c))
+                };
+                if is_destination(l.text, span) || cue()
+                    || CONVENTION_DIRS.contains(&bare)
+                    || self.repo_dir(c).is_some()
+                    || first_seg(c).strip_prefix('.').is_some_and(|n| self.skills.iter().any(|(s, _)| s == n))
+                {
+                    continue;
+                }
+                let machine = |rest: &str| MACHINE.iter().any(|m| rest.starts_with(m));
+                if c.strip_prefix("~/").is_some_and(machine) || c.strip_prefix(home_s.as_str()).and_then(|r| r.strip_prefix('/')).is_some_and(machine) {
+                    continue;
+                }
                 let exists = if let Some(r) = c.strip_prefix("~/") {
                     // 홈 최상위가 이 맥에 없으면 다른 기계(서버·다른 맥)의 경로이거나
                     // 프로젝트의 `~/` 별칭이다 — 이 맥에서 낡았다고 말할 수 없다
@@ -211,12 +310,28 @@ impl Ctx<'_> {
                             .any(|b| exists_or_prefix(&b.join(c)))
                         || self.index.as_deref_mut().is_some_and(|i| i.has_tail(c))
                 };
-                if !exists {
+                // 다른 저장소를 이름으로 부른 줄 — 이 프로젝트에 없어도 그 저장소 이야기다
+                if !exists && !other_repo {
                     out.push((l.no, c.to_string()));
                 }
             }
         }
         out
+    }
+}
+
+impl Ctx<'_> {
+    /// `~/Desktop/dev/acme` 처럼 devRoot 바로 아래 폴더를 가리키면 그 이름(소문자)
+    fn repo_dir(&self, span: &str) -> Option<String> {
+        let c = candidate(span)?;
+        let p = match c.strip_prefix("~/") {
+            Some(r) => self.home.join(r),
+            None if c.starts_with('/') => PathBuf::from(c),
+            None => return None,
+        };
+        let p = PathBuf::from(p.to_string_lossy().trim_end_matches('/'));
+        let parent = p.parent()?;
+        self.repo_roots.iter().any(|r| r == parent).then(|| p.file_name().map(|n| n.to_string_lossy().to_lowercase())).flatten()
     }
 }
 
@@ -257,6 +372,27 @@ pub fn diagnose(scan: &Scan, lang: Lang) -> Vec<Diagnosis> {
         .map(|s| (s.name.clone(), s.path.clone()))
         .collect();
     let read = |p: &Path| std::fs::read_to_string(p).ok();
+    // 저장소들이 놓인 폴더(devRoot 처럼 프로젝트가 셋 이상, 홈은 빼고)와 그 안 폴더 이름 — 줄에 다른 저장소 이름이 나오면 그 저장소 이야기다.
+    // 하나뿐인 폴더(~/Desktop)까지 넣으면 `~/Desktop/x.pdf` 가 저장소가 돼 진짜를 놓쳤다(실측)
+    let mut per_parent: BTreeMap<PathBuf, usize> = BTreeMap::new();
+    for p in &scan.projects {
+        if let Some(r) = p.path.parent().filter(|r| *r != home) {
+            *per_parent.entry(r.to_path_buf()).or_default() += 1;
+        }
+    }
+    let repo_roots: Vec<PathBuf> = per_parent.into_iter().filter(|(_, n)| *n >= 3).map(|(r, _)| r).collect();
+    let mut repos: Vec<String> = scan.projects.iter().filter_map(|p| p.path.file_name()).map(|n| n.to_string_lossy().to_lowercase()).collect();
+    for r in &repo_roots {
+        for e in std::fs::read_dir(r).into_iter().flatten().flatten() {
+            if e.file_type().is_ok_and(|t| t.is_dir()) {
+                repos.push(e.file_name().to_string_lossy().to_lowercase());
+            }
+        }
+    }
+    // 저장소 이름은 영문 슬러그만 — 나스 '로그' 같은 한글 폴더 이름이 줄의 낱말과 겹쳐 진짜를 지웠다(실측)
+    repos.retain(|n| is_repo_name(n) && !n.starts_with('.') && !ROOTS.contains(&n.as_str()) && !SKILL_OWN.contains(&n.as_str()));
+    repos.sort();
+    repos.dedup();
 
     for f in budget::instruction_files(home, None) {
         let mut cx = Ctx {
@@ -265,6 +401,9 @@ pub fn diagnose(scan: &Scan, lang: Lang) -> Vec<Diagnosis> {
             own_only: false,
             index: None,
             skills: &skills,
+            repos: &repos,
+            repo_roots: &repo_roots,
+            own: None,
         };
         if let Some(t) = read(&f) {
             push(true, None, &f, cx.missing_in(&t), "CLAUDE.md".into());
@@ -278,12 +417,16 @@ pub fn diagnose(scan: &Scan, lang: Lang) -> Vec<Diagnosis> {
             own_only: true,
             index: None,
             skills: &skills,
+            repos: &repos,
+            repo_roots: &repo_roots,
+            own: None,
         };
         if let Some(t) = read(&file) {
             push(false, None, &file, cx.missing_in(&t), s.name.clone());
         }
     }
     for p in &scan.projects {
+        let own = p.path.file_name().map(|n| n.to_string_lossy().to_lowercase());
         let mut index = Index {
             root: p.path.clone(),
             paths: None,
@@ -305,6 +448,9 @@ pub fn diagnose(scan: &Scan, lang: Lang) -> Vec<Diagnosis> {
                     own_only: false,
                     index: Some(&mut index),
                     skills: &skills,
+                    repos: &repos,
+                    repo_roots: &repo_roots,
+                    own: own.clone(),
                 };
                 push(
                     true,
@@ -326,6 +472,9 @@ pub fn diagnose(scan: &Scan, lang: Lang) -> Vec<Diagnosis> {
                     own_only: false,
                     index: Some(&mut index),
                     skills: &skills,
+                    repos: &repos,
+                    repo_roots: &repo_roots,
+                    own: own.clone(),
                 };
                 push(
                     false,

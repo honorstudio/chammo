@@ -145,6 +145,7 @@ export function accountError(code: string): string {
     case 'noOauth': return tr('로그인 정보에 계정 표시(이메일)가 없어요. API 키로 쓰는 중이면 계정 칸을 쓸 수 없어요.', 'The sign-in has no account details (email). Accounts do not work with an API key.');
     case 'unknown': return tr('그 계정 칸이 없어요. 창을 닫았다 다시 열어 주세요.', 'That account is gone. Close and reopen this window.');
     case 'noSlot': return tr('이 계정의 보관된 로그인이 키체인에 없어요. 빼고 다시 추가해 주세요.', 'The kept sign-in for this account is missing from the keychain. Remove it and add it again.');
+    case 'moved': return tr('그새 다른 곳에서 계정을 바꿔서 이번엔 안 바꿨어요.', 'The account was just changed elsewhere, so this switch was skipped.');
     case 'mismatch': return tr('로그인이 바뀌는 중인 것 같아요. 터미널 로그인이 끝난 뒤 다시 눌러 주세요.', 'The sign-in seems to be changing. Wait for the terminal sign-in to finish, then try again.');
     case 'denied': return tr('맥이 키체인 사용 허용을 물었는데 거절됐거나 창이 닫혔어요. 다시 누르고, 뜨는 창에 맥 로그인 암호를 넣은 뒤 "항상 허용"을 눌러 주세요.', 'macOS asked to allow keychain access and it was denied or closed. Try again, enter your Mac login password in the window, and choose "Always Allow".');
     case 'locked': return tr('키체인이 잠겼거나 허용을 거절했어요. 맥 잠금을 풀고 다시 해 주세요.', 'The keychain is locked or access was denied. Unlock your Mac and try again.');

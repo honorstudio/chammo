@@ -1,6 +1,6 @@
 // 로그인 풀림 판단 — 순수 함수(시계·입력을 받아 다음 기억과 할 일을 돌려준다). 실행은 ui/useLogin. 규칙: docs/plans/2026-10-06-login-expired.md
 //  · '로그인 필요' 하나로 묶는다 — 로그인 오류로 멈춘 세션들(activity.auth) + 맥 전체(auth status false · 지금 로그인으로 물은 사용량 401)
-//  · 멈춘 뒤 로그인이 새로 됐으면(loginAt — 키체인 칸을 고친 시각·앱이 본 로그인 끝) 고쳐졌을 수 있다 → 백그라운드 세션마다 한 번 '이어서'.
+//  · 멈춘 뒤 로그인이 새로 됐으면(loginAt — 계정 로그인 claudeAiOauth 가 바뀐 시각, 같은 칸의 MCP 로그인만 바뀐 건 Rust login_at 이 거른다) 고쳐졌을 수 있다 → 백그라운드 세션마다 한 번 '이어서'.
 //    떠 있는 세션은 같은 맥의 새 로그인을 다음 요청부터 쓴다(실측 2026-09-26 — /login 뒤 SendMessage 한 통으로 hello-docs·oms 재개)
 //  · 이어서 뒤 또 같은 오류: 다른 세션이 그 로그인 뒤 정상 답을 냈으면(자격은 멀쩡) 그 세션만 한 번 다시 띄우고, 아니면 다시 로그인 필요
 //  · 고쳐지기 전엔 '이어서'를 보내지 않는다 — 아이맥 2026-10-06 00:30:31, 보낸 즉시 또 'Login expired'
@@ -29,7 +29,7 @@ export type LoginMem = { nudged: Record<string, Mark>; respawned: Record<string,
 export type LoginInput = {
   now: number;
   stalled: Stalled[];
-  /** 마지막으로 로그인이 새로 된 시각 — 키체인 칸 고친 시각(로그인·토큰 갱신·계정 바꾸기)과 앱이 본 로그인 끝 중 늦은 것. 모르면 null */
+  /** 마지막으로 계정 로그인이 바뀐 시각(로그인·토큰 갱신·계정 바꾸기) — MCP 로그인만 바뀐 건 안 친다(Rust login::login_at). 모르면 null */
   loginAt: number | null;
   /** 앱 문맥(GUI)의 `claude auth status` — 모르면 null. SSH 문맥 값은 키체인을 못 읽어 늘 false 라 쓰지 않는다 */
   loggedIn: boolean | null;

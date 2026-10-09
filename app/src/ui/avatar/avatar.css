@@ -1,11 +1,12 @@
 /* 참모 프사 — 시안 docs/design-drafts/avatar v2 확정. transform·opacity 만 움직인다(사이드바에 여럿 떠도 가볍게).
  * 상태 st-*, 전환 tr-*, 표정 xp-* 는 전역 짧은 클래스와 안 겹치게 전부 oa- 접두 */
-.oa { position: relative; display: inline-block; flex: 0 0 auto; width: var(--oa-s); height: var(--oa-s); line-height: 0; vertical-align: middle; }
+/* will-change = 프사마다 자기 합성 층. 없으면 움직이는 SVG 가 둘레 칸(사이드바 줄·탭 알약·겹친 프사 그림자)까지 매 프레임 다시 칠했다
+ * — 보고 있을 때 웹뷰 GPU 27%→12%, 화면은 0픽셀 차이(2026-10-09 WebKit 하네스, .shots/debt-perf/2-gpu.md) */
+.oa { position: relative; display: inline-block; flex: 0 0 auto; width: var(--oa-s); height: var(--oa-s); line-height: 0; vertical-align: middle; will-change: transform; }
 .oa { --oa-c: var(--oa-body); --oa-eye: #fff; }
 /* 참모 색 면 위 — 몸 = 면 위 글자색(흰색), 눈 = 면 색. 고른 탭 알약(포커스 = 참모 색 면)은 자동 */
 .oa-oncolor { --oa-c: var(--orch-ink, #fff); --oa-eye: var(--orch-solid, var(--oa-body)); }
-/* 고른 탭 알약(포커스 밖 = 앱 글자색 면) — 몸 = 바탕색, 눈 = 테마별로 맞춘 참모 글자색 */
-.space-mode .chat-tabs button.on .oa { --oa-c: var(--surface); --oa-eye: var(--orch-text, var(--oa-body)); }
+/* 고른 탭 알약(포커스 밖 = 참모 색을 옅게 깐 면)은 프사 제 색 그대로 — 바탕색으로 뒤집으면 눈만 빛나 보였다(2026-10-10 사용자) */
 .space-mode .tabbed:focus-within .chat-tabs button.on .oa { --oa-c: var(--orch-ink, #fff); --oa-eye: var(--orch-solid, var(--oa-body)); }
 .oa > svg { width: 100%; height: 100%; display: block; overflow: visible; transition: filter .7s, opacity .7s; }
 .oa svg * { transform-box: fill-box; transform-origin: 50% 50%; }
@@ -18,9 +19,9 @@
 .oa-k { fill: #1d1d20; }
 .oa-gl { fill: #fff; }
 /* 알약 안 — 까만 눈은 눈 색으로, 눈동자는 몸 색으로(눈 종류마다 안 묻히게) */
-:is(.oa-oncolor, .space-mode .chat-tabs button.on .oa) .oa-eyev > .oa-k { fill: var(--oa-eye); }
-:is(.oa-oncolor, .space-mode .chat-tabs button.on .oa) .oa-pup .oa-k { fill: var(--oa-c); }
-:is(.oa-oncolor, .space-mode .chat-tabs button.on .oa) .oa-gl { fill: var(--oa-c); }
+:is(.oa-oncolor, .space-mode .tabbed:focus-within .chat-tabs button.on .oa) .oa-eyev > .oa-k { fill: var(--oa-eye); }
+:is(.oa-oncolor, .space-mode .tabbed:focus-within .chat-tabs button.on .oa) .oa-pup .oa-k { fill: var(--oa-c); }
+:is(.oa-oncolor, .space-mode .tabbed:focus-within .chat-tabs button.on .oa) .oa-gl { fill: var(--oa-c); }
 /* 눈꺼풀 = 몸 색 조각 — 위는 내려오고 아래는 올라와 가운데서 만난다 */
 .oa-lt, .oa-lb { fill: var(--oa-c); }
 .oa .oa-lt { transform-origin: 50% 0; transform: scaleY(var(--oa-lid, 0)); }

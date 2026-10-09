@@ -1,16 +1,12 @@
 //! 폰에서 참모 깨우기 — 꺼진 참모 고르기·새 참모 이름 짓기. 화면·통신 없음(문지기는 mobile_http.rs).
 //! 데스크톱 오케스트레이터 홈(domain/orchHome·stopped)과 같은 셈을 서버 쪽에서 한다 — 폰은 대화 번호와 별명만 보낸다
+use crate::platform::same_dir;
 use serde_json::Value;
 
 /// 이름 나눔표 — "참모-3 · 나스"(domain/orchLabel NICK_SEP)
 const NICK_SEP: &str = " · ";
 const STOPPED: [&str; 3] = ["stopped", "done", "failed"];
 const NICK_MAX: usize = 24;
-
-fn same_dir(a: &str, b: &str) -> bool {
-    let norm = |s: &str| s.replace('\\', "/").trim_end_matches('/').to_string();
-    !a.is_empty() && norm(a) == norm(b)
-}
 
 fn list(json: &str) -> Vec<Value> {
     serde_json::from_str::<Value>(json).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default()

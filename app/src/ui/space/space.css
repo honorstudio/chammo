@@ -215,9 +215,12 @@ body > .dash-preview .bar { height: 44px; box-sizing: border-box; padding: 0 10p
 .space-mode .seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .08), 0 0 0 1px var(--line); }
 /* 탭 — 알약 모양, 고른 탭만 칠한다 */
 .space-mode .chat-tabs, .space-mode .tabbed .chat-tabs { padding: 8px 10px; gap: 4px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.space-mode .ct-strip { padding: 8px 4px; margin: -8px 0 -8px -4px; } /* 위 탭 줄 여백(8px)만큼 — 말하는 빛이 안 잘리게 */
 .space-mode .chat-tabs button, .space-mode .tabbed .chat-tabs button.on, .space-mode .tabbed:focus-within .chat-tabs button.on { height: 28px; padding: 0 12px; margin: 0; border: 0; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: var(--text-3); background: transparent; box-shadow: none; }
 .space-mode .chat-tabs button:hover { background: var(--hover); color: var(--text-2); }
-.space-mode .chat-tabs button.on, .space-mode .tabbed .chat-tabs button.on { background: var(--text); color: var(--surface); }
+/* 포커스가 밖(스페이스·다른 앱 — 창이 비활성이면 WebKit 이 :focus-within 을 푼다)일 때 고른 탭 = 참모 색을 옅게 깐 알약, 프사는 제 색 그대로.
+   전엔 검정 알약 + 흰 프사라 눈만 빛나 무서워 보였다(2026-10-10 사용자) */
+.space-mode .chat-tabs button.on, .space-mode .tabbed .chat-tabs button.on { background: color-mix(in srgb, var(--orch-solid, var(--accent)) 16%, var(--surface)); color: var(--orch-text, var(--text)); }
 .space-mode .tabbed:focus-within .chat-tabs button.on { background: var(--orch-solid, var(--accent)); color: var(--orch-ink, var(--accent-ink)); }
 .space-mode .tabbed .grid, .space-mode .office-chats .grid { padding: 0; }
 .space-mode .office-chats .pane { border: 0; border-radius: 0; box-shadow: none; background: var(--surface); }
@@ -339,7 +342,9 @@ body > .dash-preview .box > .content { border-radius: 0 0 14px 14px; overflow: h
 @keyframes cv-switch { 0% { opacity: 0; } 20% { opacity: 1; } 75% { opacity: 1; } 100% { opacity: 0; } }
 /* 다른 참모가 띄운 것 알림 — 보던 화면은 그대로 두고 아래 가운데 한 줄(2026-10-06 사용자 "사람이 바꾸기 전엔 안 바뀐다") */
 .cv-notice { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 7; display: flex; align-items: center; gap: 10px; max-width: calc(100% - 32px); padding: 6px 6px 6px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 4px 16px rgba(0, 0, 0, .12); font-size: 13px; color: var(--text-2); }
-.cv-notice > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cv-notice > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 긴 파일 이름이 버튼 자리를 먹어 '보기'가 세로로 접히던 것(2026-10-09) — 버튼은 줄지 않게 */
+.cv-notice > button { flex: none; white-space: nowrap; }
 .cv-notice b { color: var(--text); font-weight: 600; }
 /* 세션 칸 → 진짜 터미널 */
 .cv-pane { cursor: default; }
@@ -428,7 +433,7 @@ body > .dash-preview:not(.max) { padding: 20px; }
 .cv-orphan button { all: unset; cursor: pointer; padding: 3px 10px; border-radius: 999px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); font-size: 11.5px; font-weight: 600; color: var(--text-2); white-space: nowrap; }
 .cv-orphan button:hover { color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .cv-titles h1.editable { cursor: text; border-radius: 8px; margin-left: -6px; padding: 0 6px; transition: background .12s; } .cv-titles h1.editable:hover { background: var(--hover); }
-/* 고른 탭(주황·검정 알약) 안의 상태 표시는 흰색 — 파란 고리·초록 점이 주황 위에서 어색했다(2026-09-30 사용자) */
+/* 고른 탭(참모 색 알약) 안의 상태 표시는 글자색 — 파란 고리·초록 점이 주황 위에서 어색했다(2026-09-30 사용자) */
 .space-mode .chat-tabs button.on .sm { color: currentColor !important; opacity: .95; }
 .space-mode .chat-tabs button.on .sm.idle { opacity: .75; }
 /* 채팅 위 할 일 줄은 참모 대시보드로 옮겼다(v11 X) */
@@ -488,6 +493,7 @@ body > .dash-preview:not(.max) { padding: 20px; }
 /* 입력칸 포커스 — 카드 테두리 하나만(안쪽 textarea 의 포커스 테두리·바깥 빛이 겹쳐 이중으로 보였다) */
 .space-mode .chat-input textarea:focus, .space-mode .chat-input textarea:focus-visible { outline: none !important; box-shadow: none !important; border: 0 !important; }
 .space-mode .chat-input:focus-within { box-shadow: 0 1px 2px rgba(0, 0, 0, .04); }
+.space-mode .pane.pt-live .chat-input { border-color: var(--orch, var(--accent)); box-shadow: 0 0 0 2px var(--orch, var(--accent)), 0 0 0 6px color-mix(in srgb, var(--orch, var(--accent)) 22%, transparent); } /* 말하기 키 누르는 중 — 위 포커스 규칙들보다 세게(chat.css pt-breathe 가 번진다) */
 /* 꺼진 참모·쉬는 프로젝트 — 예전 사이드바처럼 흐리게 */
 .cv-row.off { color: var(--text-3); }
 .cv-row.off .cv-label { color: var(--text-3); font-weight: 500; }

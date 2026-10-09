@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bossReaction, canPlace, catWalk, cellAt, dockOrder, furnitureAt, coffeeWalk, delivery, officeState, seatSlots, stampSeen, withLounge, planRoom, speciesFor, type Seat } from './office';
+import { bossReaction, canPlace, catWalk, cellAt, dockOrder, furnitureAt, coffeeWalk, delivery, deliveryTail, officeState, seatSlots, stampSeen, withLounge, planRoom, speciesFor, type Seat } from './office';
 
 const seat = (id: string, project: string, status: Seat['status'] = 'working', extra: Partial<Seat> = {}): Seat => ({ id, label: project, project, status, startedAt: 0, ...extra });
 
@@ -113,6 +113,42 @@ describe('stampSeen — 배달은 앱이 처음 본 순간부터 (기록은 3초
     expect(out[1]?.ts).toBe(new Date(50_000).toISOString());
     const again = stampSeen([ev('a', '2026-09-27T00:00:00Z'), ev('b', '2026-09-27T00:00:05Z')], seen, 53_000);
     expect(again[1]?.ts).toBe(new Date(50_000).toISOString());
+  });
+});
+
+describe('deliveryTail — 배달에 쓰는 기록만(프레임마다 기록 전체를 훑지 않게)', () => {
+  const room = planRoom([seat('b1', '참모')], [seat('w1', 'todo-api'), seat('w2', 'acme-shop')], 'bear');
+  const resolve = (t: string) => ({ 'todo-api': 'w1', 'acme-shop': 'w2' })[t];
+  const at = (ms: number) => new Date(ms).toISOString();
+  const send = (ms: number, task: string, target: string) => ({ ts: at(ms), type: 'send', task, target });
+  const reply = (ms: number, task: string) => ({ ts: at(ms), type: 'reply', task });
+  const done = (ms: number, task: string) => ({ ts: at(ms), type: 'done', task });
+  const old = Array.from({ length: 3000 }, (_, i) => (i % 3 === 0 ? send(i, 'o' + i, 'todo-api') : i % 3 === 1 ? reply(i, 'o' + (i - 1)) : done(i, 'o' + (i - 2))));
+
+  it('마지막 보낸 일·회신 하나(회신이면 그 일의 send 까지)만 — 기록이 수천 줄이어도 두 줄 이하', () => {
+    const evs = [...old, send(10_000, 'a', 'acme-shop'), done(10_500, 'z')];
+    expect(deliveryTail(evs)).toEqual([send(10_000, 'a', 'acme-shop')]);
+    const rep = [...old, send(10_000, 'a', 'acme-shop'), send(11_000, 'b', 'todo-api'), reply(12_000, 'a'), done(12_500, 'b')];
+    expect(deliveryTail(rep)).toEqual([send(10_000, 'a', 'acme-shop'), reply(12_000, 'a')]);
+    expect(deliveryTail([done(1, 'x')])).toEqual([]);
+  });
+
+  it('앱이 켜진 뒤 흐름 그대로 — 전체로 판단한 배달과 꼬리로 판단한 배달이 같다', () => {
+    const full = new Map<string, number>(), tail = new Map<string, number>();
+    const steps: [typeof old, number][] = [
+      [old, 5_000], // 처음 읽음 — 옛 기록은 배달 안 함
+      [[...old, send(20_000, 'a', 'acme-shop')], 60_000], // 기록 시각은 20초지만 60초에 처음 봄 → 60초부터 걷는다
+      [[...old, send(20_000, 'a', 'acme-shop')], 61_500],
+      [[...old, send(20_000, 'a', 'acme-shop'), reply(62_000, 'a')], 62_500],
+      [[...old, send(20_000, 'a', 'acme-shop'), reply(62_000, 'a'), send(63_000, 'b', 'todo-api')], 64_000],
+      [[...old, send(20_000, 'a', 'acme-shop'), reply(62_000, 'a'), send(63_000, 'b', 'todo-api')], 66_000],
+    ];
+    for (const [evs, now] of steps) {
+      const a = delivery(stampSeen(evs, full, now), room, resolve, now);
+      const b = delivery(stampSeen(deliveryTail(evs), tail, now), room, resolve, now);
+      expect(b, `${now}`).toEqual(a);
+    }
+    expect(delivery(stampSeen(deliveryTail(steps[1]![0]), tail, 61_000), room, resolve, 61_000)).not.toBeNull();
   });
 });
 

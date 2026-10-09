@@ -6,6 +6,7 @@ import { csvRows, prettyJson, resolveRel } from '../../domain/phoneFile';
 import type { ShowAt } from '../../domain/showAt';
 import { flashWhenReady } from '../flash';
 import { mdDocToHtml } from '../md';
+import { machine } from '../../i18n';
 
 /** 한 번에 그릴 줄 — 넘으면 앞부분만(폰이 멈추지 않게) */
 const MAX_LINES = 5000;
@@ -39,7 +40,7 @@ export function CodeText({ text, json, at }: { text: string; json?: boolean; at?
       {lines.slice(0, MAX_LINES).map((l, i) => (
         <div key={i} className="m-ln" data-ln={i + 1}><span className="m-ln-no" aria-hidden>{i + 1}</span><span className="m-ln-t">{l || ' '}</span></div>
       ))}
-      {lines.length > MAX_LINES && <p className="m-muted m-sm">앞 {MAX_LINES}줄만 — 나머지는 맥에서</p>}
+      {lines.length > MAX_LINES && <p className="m-muted m-sm">앞 {MAX_LINES}줄만 — 나머지는 {machine()}에서</p>}
     </div>
   );
 }
@@ -53,7 +54,7 @@ export function CsvTable({ text, tab }: { text: string; tab: boolean }) {
         {head && <thead><tr>{head.map((c, i) => <th key={i}>{c}</th>)}</tr></thead>}
         <tbody>{body.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>)}</tbody>
       </table>
-      {rows.length >= 1000 && <p className="m-muted m-sm">앞 1000줄만 — 나머지는 맥에서</p>}
+      {rows.length >= 1000 && <p className="m-muted m-sm">앞 1000줄만 — 나머지는 {machine()}에서</p>}
     </div>
   );
 }

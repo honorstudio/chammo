@@ -67,14 +67,16 @@ scripts/task ask   $id "<what the user must decide>"                    # needs 
 scripts/task retry $id "<what failed>"                                  # sending one piece back
 scripts/task handoff <session> <assistant>                              # handing a session to another assistant — the app moves it to that dashboard
 scripts/task lesson <project|--all> "<a confirmed lesson>"              # attached to future instructions
-scripts/task lesson-review <project>                                    # when lessons pile up — group by topic, lesson-propose a card, lesson-promote <id> after the answer
+scripts/task lesson-review <project>                                    # when lessons pile up — look at them, then group by topic with lesson-group (no card; reversible)
+scripts/task lesson-drop <project> --lines 5,9 --why "<reason>"          # only discarding is asked as a card; lesson-promote <id> after the answer
 ```
 
 "Done" is not proof — write what you checked. If the same piece comes back a **third** time, stop and
 rethink the split or the assumptions instead of sending it again. Lessons also land in the project's
 git-ignored `CLAUDE.local.md`, so sessions the user opens there see them too. One-off to-dos are not lessons.
-Lessons ride on every instruction — when they pile up (`lesson` tells you), ask with cards whether to group same-topic lines into a
-project skill, and move only what the user picks (originals are archived; undo with `lesson-restore`).
+Lessons ride on every instruction — when they pile up (`lesson` tells you), group same-topic lines into a project skill yourself with
+`lesson-group` and tell the user one line ("grouped N lessons into the X skill — say so to undo"). Don't ask first: originals are archived and
+`lesson-restore` undoes it. A new lesson on a topic that already has a skill goes there (same name appends). Only **discarding** is asked, as a card (`lesson-drop`).
 
 `send` prints lines on stderr — **append all of them to the end of your message** to the session:
 the merge rule ("open a PR, don't merge it — I'll merge"), how hard to verify, and project lessons.

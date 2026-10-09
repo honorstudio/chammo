@@ -2,6 +2,7 @@
 //! 하위 세션은 확인 없이 도니 이 서버는 맥을 조종하는 문이다. 여기 없는 길은 없다: 임의 경로·셸·키체인·계정·설정 쓰기 없음.
 //! 실제로 맥에서 일하는 건 Backend(mobile.rs) — 테스트는 가짜 Backend 로 문지기만 잰다.
 use crate::mobile_files::{self, Kind, Pick};
+use crate::platform::same_dir;
 use serde::Deserialize;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -54,6 +55,8 @@ pub trait Backend: Send + Sync {
     fn doc_html(&self, path: &Path) -> Option<String>;
     /// 맥에서 열기(open) — 폰에서 못 보는 오피스·영상을 맥 앱으로
     fn open_on_mac(&self, path: &str) -> Result<(), String>;
+    /// 폰 진단 한 줄 — 걸러진 '종류 키=값…'(diag_line)을 notify.log 에
+    fn diag(&self, _line: &str) {}
     /// 참모 별명 — 맥 앱(데스크톱)에 넘긴다: 앱 별명(setOrchLabel)을 바꾸고, 쉬는 때 /rename '참모-N · 별명'(데스크톱 renamesToSend)
     fn rename(&self, id: &str, nick: &str) -> Result<(), String>;
     /// 참모 제거 — claude stop(켜져 있으면) + rm(데스크톱 remove_session 과 같은 길). 목록에서 빠지고 대화 기록 파일은 맥에 남는다
@@ -102,6 +105,8 @@ pub trait Backend: Send + Sync {
     fn browser_input(&self, _profile: &str, _session_pid: i32, _events: Vec<crate::agent_input::InputEv>) -> Result<(), String> {
         Err("not supported".into())
     }
+    /// 화면 다시 받기(맥 모달의 다시 시도와 같은 agent_retry)
+    fn browser_retry(&self, _profile: &str) {}
     /// 계정 칸 — 이름·요금제·사용량·쉬는 때만(accounts_cmd::PhoneView, 이메일·토큰 없음) · 바꾸기(데스크톱과 같은 길 + 고정) · 자동 전환 켜기
     fn accounts(&self) -> Result<serde_json::Value, String> {
         Err("unsupported".into())
@@ -161,6 +166,14 @@ pub fn body_deadline(base: std::time::Instant, len: usize) -> std::time::Instant
     base + Duration::from_secs((len as u64).div_ceil(64_000).min(180))
 }
 
+/// html 시안 상한 — 그림을 data: 로 박은 시안이 2~8MB(2026-10-09 dev 전체 실측 최대 7.9MB). 글 파일 상한(1MB)과 따로
+pub const MAX_HTML_FILE: u64 = 10 * 1024 * 1024;
+
+/// 쓰기 마감 — 읽기 마감(limit)의 두 배, 큰 응답(html 시안)은 느린 LTE(초당 64KB)로도 끝나게 크기만큼, 상한 3분
+pub fn write_deadline(base: std::time::Instant, limit: Duration, len: usize) -> std::time::Instant {
+    (base + limit * 2).max(body_deadline(base, len))
+}
+
 /// 다른 기기 참모와 말하는 약속 번호 — /api 길을 바꾸면 올린다(손님은 이 번호로 기능을 켜고 끈다)
 pub const PROTO: u32 = 1;
 
@@ -210,6 +223,17 @@ impl Resp {
     fn raw_json(s: String) -> Resp {
         Resp::new(200, "application/json; charset=utf-8", s)
     }
+}
+
+/// 작업 기록 꼬리 — 폰이 5초마다 읽는다. 이만큼 넘게 뒤처졌으면(처음 받기 포함) 끝 이만큼부터 다시(reset)
+const TASKS_TAIL: u64 = 512 * 1024;
+
+/// 작업 기록 이어 받기 — 예전엔 5초마다 꼬리 512KB 를 통째로 보냈다(2026-10-08, 안 바뀐 5초에도 518KB). 파일이 없으면 빈 조각
+fn tasks_chunk(path: &Path, from: u64) -> crate::claude::TranscriptChunk {
+    let len = std::fs::metadata(path).map_or(0, |m| m.len());
+    let from = (len.saturating_sub(from) <= TASKS_TAIL).then_some(from);
+    crate::claude::read_chunk_with(path, from, TASKS_TAIL, 0, TASKS_TAIL)
+        .unwrap_or(crate::claude::TranscriptChunk { text: String::new(), next: 0, reset: true, start: 0 })
 }
 
 /// 길이가 같으면 끝까지 다 비교한다(어디서 틀렸는지 시간으로 새지 않게). 열쇠 길이는 비밀이 아니다(늘 64자)
@@ -342,6 +366,30 @@ fn phone_show_log(be: &dyn Backend) -> String {
         }
     }
     out
+}
+
+/// 꼬리표 — 길이 + FNV-1a. 같은 글이면 같은 값(앱을 다시 켜도), 틀려도 폰이 한 번 통째로 받을 뿐
+fn body_tag(s: &str) -> String {
+    let h = s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
+    format!("{}-{h:x}", s.len())
+}
+
+/// since(지난번 꼬리표)가 있으면 첫 줄 {"tag","same"} + 바뀌었을 때만 원문 — show 기록 5초·세션 목록 3초마다 통째로 받던 것(2026-10-09).
+/// show 기록은 세션별 공평 나누기 꼬리라 바이트 자리 이어 받기(/api/tasks?from=)가 안 맞아 꼬리표 비교로. 화면은 domain/tagTail
+fn tagged(req: &Req, body: String) -> Resp {
+    let tag = body_tag(&body);
+    let same = req.param("since") == Some(tag.as_str());
+    let body = if same { String::new() } else { body };
+    Resp::new(200, "text/plain; charset=utf-8", format!("{}\n{body}", serde_json::json!({ "tag": tag, "same": same })))
+}
+
+/// since 가 없으면 옛 폰 화면용 글 그대로
+fn shows_resp(req: &Req, be: &dyn Backend) -> Resp {
+    let log = phone_show_log(be);
+    if req.param("since").is_none() {
+        return Resp::new(200, "text/plain; charset=utf-8", log);
+    }
+    tagged(req, log)
 }
 
 /// 글로 바꾼 문서(워드 → html) — 글자로 내고, 혹시 문서로 그려져도 스크립트 없이
@@ -543,6 +591,14 @@ struct RoleBody {
     role: String,
 }
 
+/// 폰 프로필 — avatar null = 처음대로(지우기). 그림은 폰에서 못 올린다(그림 프사면 목소리·자르기만, 있던 그림 그대로)
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AvatarBody {
+    id: String,
+    avatar: Option<crate::avatar::Avatar>,
+}
+
 /// 별명 다듬기(앱 domain/orchLabel cleanLabel 과 같게) — 제어 글자·빈칸 덩어리는 빈칸 하나, 앞뒤 빈칸 빼고 24자.
 /// 별명 구분자 '·' 는 빼서 번호 칸('참모-N')을 흉내 내지 못하게
 pub fn clean_nick(raw: &str) -> String {
@@ -644,7 +700,11 @@ fn media_page(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
 fn html_page(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     let Some(path) = ticket_path(req, gate).filter(|p| is_html(p)) else { return Resp::text(403, "bad ticket") };
     let Pick::Ok(_) = pick_shown(be, &path) else { return Resp::text(403, "not allowed") };
-    let Ok(bytes) = mobile_files::read_verified(&path, mobile_files::MAX_TEXT_FILE) else { return Resp::text(403, "not allowed") };
+    let bytes = match mobile_files::read_verified(&path, MAX_HTML_FILE) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => return Resp::text(413, "file too large"),
+        Err(_) => return Resp::text(403, "not allowed"),
+    };
     if mobile_files::secret_in(&bytes) {
         return Resp::text(403, "secret inside");
     }
@@ -702,6 +762,29 @@ fn once_per(gate: &Gate, key: &str, gap: Duration) -> bool {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct DiagBody {
+    kind: String,
+    line: String,
+}
+
+/// 폰 진단 한 줄 거르기 — 종류는 영문 소문자·하이픈, 줄은 '키=값' 30칸까지(키 영문 12자, 값 영문·숫자·.-_ 24자). 하나라도 어긋나면 통째로 버린다
+fn diag_line(kind: &str, line: &str) -> Option<String> {
+    let word = |s: &str, max: usize, ok: fn(char) -> bool| !s.is_empty() && s.len() <= max && s.chars().all(ok);
+    if !word(kind, 24, |c| c.is_ascii_lowercase() || c == '-') {
+        return None;
+    }
+    let parts: Vec<&str> = line.split(' ').collect();
+    if line.is_empty() || parts.len() > 30 {
+        return None;
+    }
+    let good = parts.iter().all(|p| {
+        p.split_once('=').is_some_and(|(k, v)| word(k, 12, |c| c.is_ascii_alphabetic()) && word(v, 24, |c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')))
+    });
+    good.then(|| format!("{kind} {line}"))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RoutineBody {
     name: String,
     action: String,
@@ -725,11 +808,6 @@ fn session_busy(sessions_json: &str, id: &str) -> bool {
     let Some(a) = v.as_array().and_then(|l| l.iter().find(|a| a["id"] == id)) else { return false };
     let state = a["state"].as_str().unwrap_or("");
     state != "done" && a["status"].as_str().map_or(state == "working", |st| st == "busy")
-}
-
-fn same_dir(a: &str, b: &str) -> bool {
-    let norm = |s: &str| s.replace('\\', "/").trim_end_matches('/').to_string();
-    !a.is_empty() && norm(a) == norm(b)
 }
 
 /// 문지기 — 순서: 주소(Host) → 화면 파일·열쇠 주소 → 열쇠 → 길(허용 목록) → 쓰기면 출처
@@ -813,6 +891,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/api/env") => Resp::json(&be.env()),
         ("GET", "/api/sessions") => match be.sessions() {
+            Ok(s) if req.param("since").is_some() => tagged(req, with_ctx(&s, &be.ctx_files())),
             Ok(s) => Resp::raw_json(with_ctx(&s, &be.ctx_files())),
             Err(e) => Resp::text(502, &e),
         },
@@ -832,7 +911,16 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             };
             Resp::json(&be.transcript(id, from))
         }
-        ("GET", "/api/tasks") => Resp::new(200, "text/plain; charset=utf-8", be.tasks()),
+        // from(지난번 next)이 있으면 그 뒤 온전한 줄만 — 없으면 옛 폰 화면(캐시된 페이지)용 꼬리 글 그대로
+        ("GET", "/api/tasks") => match req.param("from").map(str::parse::<u64>) {
+            None => Resp::new(200, "text/plain; charset=utf-8", be.tasks()),
+            Some(Ok(from)) => {
+                // 첫 줄 = {"next","reset"}, 그 뒤 = 줄 원문 — JSON 글로 싸면 따옴표 이스케이프로 첫 받기가 7% 커졌다(518→554KB)
+                let c = tasks_chunk(&be.data_dir().join("tasks.jsonl"), from);
+                Resp::new(200, "text/plain; charset=utf-8", format!("{}\n{}", serde_json::json!({ "next": c.next, "reset": c.reset }), c.text))
+            }
+            Some(Err(_)) => Resp::text(400, "bad from"),
+        },
         ("GET", "/api/routines") => match be.routines() {
             Ok(s) => Resp::raw_json(s),
             Err(e) => Resp::text(502, &format!("예약 목록을 못 읽었어요: {e}")),
@@ -875,7 +963,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             }
             Resp::new(200, "application/json; charset=utf-8", be.read_curation_state(&p).into_bytes())
         }
-        ("GET", "/api/shows") => Resp::new(200, "text/plain; charset=utf-8", phone_show_log(be)),
+        ("GET", "/api/shows") => shows_resp(req, be),
         // 꺼진 참모 — HQ 폴더의 꺼진 대화만(프로젝트 세션은 참모가 다룬다). 파싱은 화면 domain/stopped
         ("GET", "/api/stopped") => {
             let (all, live) = match (be.sessions_all(), be.sessions()) {
@@ -942,7 +1030,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Err(e) => Resp::text(502, &e),
             }
         }
-        ("POST", "/api/send" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/open-mac" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input") if !same_origin_write(req, gate) => Resp::text(403, "bad origin"),
+        ("POST", "/api/send" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/open-mac" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag") if !same_origin_write(req, gate) => Resp::text(403, "bad origin"),
         // html 시안 표 — 보여 준 html 만, 글 속 비밀은 안 낸다
         ("POST", "/api/html-ticket") => {
             let b: PathBody = match body(req) { Ok(b) => b, Err(r) => return r };
@@ -954,9 +1042,10 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Pick::Forbidden => return Resp::text(403, "not allowed"),
                 Pick::NotFound => return Resp::text(404, "not found"),
             }
-            match mobile_files::read_verified(&b.path, mobile_files::MAX_TEXT_FILE) {
+            match mobile_files::read_verified(&b.path, MAX_HTML_FILE) {
                 Ok(bytes) if mobile_files::secret_in(&bytes) => return Resp::text(403, "secret inside"),
                 Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::InvalidData => return Resp::text(413, "file too large"),
                 Err(_) => return Resp::text(403, "not allowed"),
             }
             let Some(t) = new_ticket(gate, &b.path) else { return Resp::text(500, "no random") };
@@ -1001,6 +1090,17 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
                 Err(e) => Resp::text(502, &e),
             }
+        }
+        // 폰 진단 — 화면이 이상한 상태(유령 키보드 등)를 스스로 알아채면 값 한 줄. 글 내용이 못 실리게 키=값 낱말만, 10초에 한 번
+        ("POST", "/api/diag") => {
+            let b: DiagBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            let Some(line) = diag_line(&b.kind, &b.line) else { return Resp::text(400, "bad line") };
+            if !once_per(gate, "diag", Duration::from_secs(10)) {
+                return Resp::text(429, "too soon");
+            }
+            let dev = device_of(req, gate).unwrap_or_default();
+            be.diag(&format!("{line}{}", if dev.is_empty() { String::new() } else { format!(" dev={}", dev.get(..4).unwrap_or(&dev)) }));
+            Resp::json(&serde_json::json!({ "ok": true }))
         }
         // 폰 푸시 — 공개 키 받기, 이 기기 구독 넣기·빼기. 구독 주소는 알려진 푸시 서버 https 만(push::endpoint_ok)
         ("GET", "/api/push-key") => match be.push_key() {
@@ -1069,6 +1169,30 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             match crate::orch_roles::set_role(&be.data_dir(), &name, &b.role, crate::orch_roles::now_ms()) {
                 Ok(m) => Resp::json(&serde_json::json!(m)),
                 Err(e) => Resp::text(502, &e),
+            }
+        }
+        // 참모 프로필(모양·색·목소리) — 켜진 HQ 참모만, 열쇠는 맥이 그 세션 이름에서 뽑는다. 저장·검사는 데스크톱 프로필 창과 같은 함수(avatar::save_in)
+        ("POST", "/api/avatar") => {
+            let b: AvatarBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            if !is_short_id(&b.id) {
+                return Resp::text(400, "bad id");
+            }
+            let sessions = match be.sessions() { Ok(s) => s, Err(e) => return Resp::text(502, &e) };
+            if !session_cwd(&sessions, &b.id).is_some_and(|cwd| same_dir(&cwd, &be.hq_dir())) {
+                return Resp::text(404, "no such assistant");
+            }
+            let Some(name) = session_name(&sessions, &b.id) else { return Resp::text(404, "no such assistant") };
+            let key = crate::orch_roles::base_of(&name);
+            let dir = be.data_dir().join("avatars");
+            match b.avatar {
+                None => match crate::avatar::delete_in(&dir, key) {
+                    Ok(()) => Resp::new(200, "application/json", br#"{"ok":true}"#.to_vec()),
+                    Err(e) => Resp::text(400, &e),
+                },
+                Some(a) => match crate::avatar::save_in(&dir, key, a, None) {
+                    Ok(e) => Resp::json(&serde_json::to_value(e).unwrap_or_default()),
+                    Err(e) => Resp::text(400, &e),
+                },
             }
         }
         ("POST", "/api/remove") => {
@@ -1210,7 +1334,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             Resp::json(&serde_json::json!({ "ok": true }))
         }
         ("GET", "/api/direct") => Resp::new(200, "text/plain; charset=utf-8", be.direct_log()),
-        ("POST", "/api/browser-takeover" | "/api/browser-input") => {
+        ("POST", "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry") => {
             #[derive(serde::Deserialize)]
             #[serde(rename_all = "camelCase")]
             struct B {
@@ -1231,6 +1355,10 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             // 폰이 본 그 세션 브라우저일 때만(세션이 바뀌었으면 남의 브라우저에 안 간다)
             if !be.browser_lives().as_array().is_some_and(|l| l.iter().any(|x| x["profile"] == b.profile.as_str() && x["sessionPid"] == b.session_pid)) {
                 return Resp::text(404, "no such browser");
+            }
+            if req.path == "/api/browser-retry" {
+                be.browser_retry(&b.profile);
+                return Resp::json(&serde_json::json!({ "ok": true }));
             }
             let r = if req.path == "/api/browser-input" { be.browser_input(&b.profile, b.session_pid, b.events) } else { be.browser_takeover(&b.profile, b.session_pid, b.on) };
             match r {
@@ -1369,7 +1497,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Err(e) => Resp::text(400, &e),
             }
         }
-        (_, "/api/env" | "/api/sessions" | "/api/transcript" | "/api/tasks" | "/api/routines" | "/api/usage" | "/api/load" | "/api/file" | "/api/shows" | "/api/avatars" | "/api/avatar-image" | "/api/send" | "/api/attach" | "/api/routine" | "/api/interrupt" | "/api/stopped" | "/api/tails" | "/api/respawn" | "/api/spawn" | "/api/browsers" | "/api/browser-frame" | "/api/push-key" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/send-status" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/curation-state" | "/api/media-ticket" | "/api/open-mac" | "/api/direct" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/pins" | "/api/role" | "/api/roles" | "/api/accounts" | "/api/account-switch" | "/api/account-auto" | "/api/login" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input") => {
+        (_, "/api/env" | "/api/sessions" | "/api/transcript" | "/api/tasks" | "/api/routines" | "/api/usage" | "/api/load" | "/api/file" | "/api/shows" | "/api/avatars" | "/api/avatar" | "/api/avatar-image" | "/api/send" | "/api/attach" | "/api/routine" | "/api/interrupt" | "/api/stopped" | "/api/tails" | "/api/respawn" | "/api/spawn" | "/api/browsers" | "/api/browser-frame" | "/api/push-key" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/send-status" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/curation-state" | "/api/media-ticket" | "/api/open-mac" | "/api/direct" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/pins" | "/api/role" | "/api/roles" | "/api/accounts" | "/api/account-switch" | "/api/account-auto" | "/api/login" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag") => {
             Resp::text(405, "method not allowed")
         }
         _ => Resp::text(404, "not found"),
@@ -1418,7 +1546,7 @@ pub fn head_check(req: &Req, gate: &Gate) -> Option<Resp> {
     if req.method != "POST" && !has_body {
         return None;
     }
-    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input") {
+    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag") {
         return Some(Resp::text(404, "not found"));
     }
     // 짝짓기는 코드가 열쇠 — 출처·JSON 만 본다
@@ -1532,6 +1660,12 @@ impl TimedWrite for Vec<u8> {
 
 /// 응답 쓰기 — 모든 응답에 캐시 금지·끼워 넣기 금지·리퍼러 금지. CORS 헤더는 어떤 경우에도 내지 않는다
 pub fn write_resp(s: &mut impl TimedWrite, r: &Resp, head_only: bool, deadline: std::time::Instant) -> std::io::Result<()> {
+    write_resp_paced(s, r, head_only, deadline, Duration::MAX)
+}
+
+/// stall = 한 바이트도 못 보내고 기다리는 최대 시간 — 큰 응답은 전체 마감이 길어도(write_deadline) 아예 안 읽는 손님은 이만큼에 끊는다.
+/// 조금씩이라도 나가면 다시 잰다(소켓 버퍼가 커지며 찔끔 나가는 동안 두 배가 돼서 서버는 읽기 마감 하나로 건다)
+pub fn write_resp_paced(s: &mut impl TimedWrite, r: &Resp, head_only: bool, deadline: std::time::Instant, stall: Duration) -> std::io::Result<()> {
     let mut out = format!("HTTP/1.1 {} {}\r\n", r.status, reason(r.status));
     for (k, v) in &r.headers {
         out.push_str(&format!("{k}: {v}\r\n"));
@@ -1558,7 +1692,7 @@ pub fn write_resp(s: &mut impl TimedWrite, r: &Resp, head_only: bool, deadline: 
             if left.is_zero() {
                 return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "write deadline"));
             }
-            s.set_wtimeout(left);
+            s.set_wtimeout(left.min(stall));
             match s.write(rest) {
                 Ok(0) => return Err(std::io::Error::new(std::io::ErrorKind::WriteZero, "closed")),
                 Ok(n) => rest = &rest[n..],
@@ -1570,7 +1704,7 @@ pub fn write_resp(s: &mut impl TimedWrite, r: &Resp, head_only: bool, deadline: 
     s.flush()
 }
 
-/// limit = 읽기 마감. 맥 쪽 처리와 쓰기는 각각 그 두 배까지 — 넘으면 504·끊기로 자리를 돌려준다
+/// limit = 읽기 마감. 맥 쪽 처리와 쓰기는 각각 그 두 배까지(큰 응답 쓰기는 write_deadline 이 크기만큼) — 넘으면 504·끊기로 자리를 돌려준다
 #[cfg(test)]
 pub fn serve_conn_within(s: TcpStream, gate: std::sync::Arc<Gate>, be: std::sync::Arc<dyn Backend>, limit: Duration) {
     serve_conn_guarded(s, gate, be, limit, ());
@@ -1596,7 +1730,7 @@ pub fn serve_conn_guarded<G: Send + 'static>(mut s: TcpStream, gate: std::sync::
         }
         Err(r) => (r, false),
     };
-    let _ = write_resp(&mut s, &resp, head, std::time::Instant::now() + limit * 2);
+    let _ = write_resp_paced(&mut s, &resp, head, write_deadline(std::time::Instant::now(), limit, if head { 0 } else { resp.body.len() }), limit);
 }
 
 /// 맥에서 열기는 문서·그림·영상만 — 코드·스크립트·html 은 맥 기본 앱으로 열면 실행되거나 브라우저 스크립트가 돈다

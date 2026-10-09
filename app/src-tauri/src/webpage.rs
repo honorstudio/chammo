@@ -126,6 +126,12 @@ pub fn parent_moved<R: Runtime>(window: &tauri::Window<R>) {
     }
 }
 
+/// 앱을 통째로 숨길 때(⌘Q → to_background) 직접 숨길 창인가 — 미리보기(자식 창)는 아니다. 맥 자식 창을 직접 hide(orderOut)하면
+/// 부모에서 떨어져 다시 열기(메인만 show) 뒤에도 숨은 채 남는다. 부모가 숨으면 같이 숨고 부모가 보이면 붙은 채 돌아온다(2026-10-09 실측)
+pub fn hide_on_background(label: &str) -> bool {
+    label != LABEL
+}
+
 /// 미리보기 창이 닫혔다(⌘W 등) — 상태를 비운다
 pub fn forget() {
     with_slot(|s| {
@@ -317,6 +323,15 @@ pub fn open_in_chrome(url: String) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 앱_통째로_숨길_때_미리보기는_직접_숨기지_않는다() {
+        // 맥 자식 창을 직접 orderOut 하면 부모에서 떨어져, 다시 열기(메인만 show) 뒤에도 숨은 채 남았다(2026-10-09 AppKit 실측,
+        // .shots/fix-debt-h/6-child-window.txt). 부모가 숨으면 자식도 같이 숨고, 부모가 다시 보이면 붙은 채 돌아온다
+        assert!(!hide_on_background(LABEL));
+        assert!(hide_on_background("main"));
+        assert!(hide_on_background("reader-1"));
+    }
 
     #[test]
     fn http_https_주소만_연다() {

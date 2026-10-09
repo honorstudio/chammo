@@ -50,7 +50,7 @@ function useQlThumb(path: string, on: boolean) {
 }
 
 /** 파일 카드 썸네일 — 그림은 그대로, HTML 시안은 첫 화면 그림, md·글은 앞부분 */
-function Thumb({ f }: { f: DashFile }) {
+export function Thumb({ f }: { f: DashFile }) {
   const kind = f.path.startsWith('data:') ? 'image' : kindOf(f.path);
   const text = useExcerpt(f.path, kind === 'md' || kind === 'text');
   const png = useQlThumb(f.path, kind === 'html' || kind === 'other' || kind === 'office');

@@ -57,4 +57,9 @@ node <data>/tools/chammo-browser/bin/chammo-browser.js setup <folder-name> <abso
 - **Scripts:** project scripts get their browser with `chammo-browser launch <profile>` (README → Scripts). The holder writes the
   same `<data>/browser/live/<profile>.json` as the wrapper (pid = holder, `sessionPid` = `CLAUDE_PID`), so the app needs nothing new.
   Script users are listed in `<data>/browser/locks/<profile>.users/<pid>`; a `<profile>.closing` file means the owner is closing.
+  A session wrapper sharing a holder's Chrome (src/share.js) is listed there too with `"by": "session"` — count only the others as scripts.
+- **Dialogs that opened before the app attached:** Chrome does not re-announce them to a new CDP session, so the app cannot answer
+  (`No dialog is showing`). The app writes `<data>/browser/live/<profile>.dialog` `{ pid, accept, at }` (pid = the live file's wrapper pid);
+  the wrapper answers through its own Playwright (`browser_handle_dialog`, current tab only) and writes `<profile>.dialog-done`
+  `{ pid, at, ok, error? }`. Requests older than 60 s are dropped (src/dialogs.js).
 

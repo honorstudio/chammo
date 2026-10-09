@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { assistant, setAssistant, setLang } from '../i18n';
-import { classifyWorkspace, closableByShortcut, groupByProject, projectDir, isOrchestratorName, nextOrchestratorName, orchView, parseAgents, type Session, withinRoots, sessionsToStop } from './session';
+import appSrc from '../App.tsx?raw';
+import { appRoots, classifyWorkspace, closableByShortcut, groupByProject, projectDir, isOrchestratorName, nextOrchestratorName, orchView, parseAgents, type Session, toolsWay, withinRoots, sessionsToStop } from './session';
 
 afterEach(() => { setLang('ko'); setAssistant(null); });
 
@@ -122,6 +123,38 @@ describe('classifyWorkspace — devRoot 밖에 따로 추가한 프로젝트 폴
   });
   it('devRoot 안 폴더는 그대로', () => {
     expect(classifyWorkspace(`${DEV}/todo-api`, DEV, EX)).toEqual({ project: 'todo-api', workspace: null });
+  });
+});
+
+// 아이맥 ~/automation/project-x 을 따로 추가했는데, 그 저장소(~/automation) 워크트리로 들어간 세션이 사이드바·대시보드에서 사라졌다(2026-10-05 fix/direct-visible)
+describe('따로 추가한 폴더가 저장소 하위 폴더일 때 — 그 저장소 워크트리 세션', () => {
+  const EX = ['/Users/acme/automation/project-x'];
+  const WT = '/Users/acme/automation/.claude/worktrees/fix';
+  it('워크트리 꼭대기에서 도는 세션은 추가 폴더 이름의 프로젝트, 작업공간은 워크트리', () => {
+    expect(classifyWorkspace(WT, DEV, EX)).toEqual({ project: 'project-x', workspace: 'fix' });
+  });
+  it('워크트리 안 같은 하위 폴더에서 도는 세션도', () => {
+    expect(classifyWorkspace(`${WT}/project-x/src`, DEV, EX)).toEqual({ project: 'project-x', workspace: 'fix' });
+  });
+  it('같은 저장소에 추가 폴더가 둘이면 워크트리 안 자리로 고른다', () => {
+    const two = ['/Users/acme/automation/project-x', '/Users/acme/automation/eta-bot'];
+    expect(classifyWorkspace(`${WT}/eta-bot`, DEV, two)).toEqual({ project: 'eta-bot', workspace: 'fix' });
+    expect(classifyWorkspace(WT, DEV, two)).toEqual({ project: 'project-x', workspace: 'fix' });
+  });
+  it('홈·루트의 .claude/worktrees 는 저장소로 안 친다(홈 아래 추가 폴더가 남의 세션을 끌어오지 않게)', () => {
+    expect(classifyWorkspace('/Users/acme/.claude/worktrees/x', DEV, ['/Users/acme/blog'])).toEqual({ project: 'x', workspace: null });
+    expect(classifyWorkspace('C:/Users/Me/.claude/worktrees/x', 'C:/Users/Me/dev', ['C:/Users/Me/blog']).project).toBe('x');
+  });
+  it('devRoot 안 저장소의 워크트리는 지금처럼 그 저장소 프로젝트', () => {
+    expect(classifyWorkspace(`${DEV}/shop/.claude/worktrees/w`, DEV, [`${DEV}/shop/web`])).toEqual({ project: 'shop', workspace: 'w' });
+  });
+  it('appRoots 로 거르면 워크트리 세션이 남고, 저장소의 다른 폴더·홈 워크트리는 빠진다', () => {
+    const S = (cwd: string) => ({ cwd }) as unknown as Session;
+    const list = [S(WT), S(`${WT}/project-x`), S('/Users/acme/automation/other'), S('/Users/acme/.claude/worktrees/x'), S('/Users/acme/automation/project-x')];
+    expect(withinRoots(list, appRoots(DEV, '/Users/acme/hq', EX)).map((s) => s.cwd)).toEqual([WT, `${WT}/project-x`, '/Users/acme/automation/project-x']);
+  });
+  it('앱의 세 거름(살아 있는 것·꺼진 것·끌 것)이 appRoots 를 쓴다', () => {
+    expect(appSrc.match(/appRoots\(/g)?.length).toBe(3);
   });
 });
 
@@ -277,6 +310,16 @@ describe('orchView — 참모 화면을 무엇으로 그리나', () => {
   it('터미널에서 연 참모 하나는 가져오기 카드', () => expect(orchView([o('interactive')])).toBe('adopt'));
 });
 
+describe('toolsWay — 위 막대 도구 아이콘을 어디에 띄우나', () => {
+  it('스페이스가 떠 있으면 그 탭에', () => expect(toolsWay('adopt', true)).toBe('space'));
+  it('터미널 뷰 격자·참모 0명이면 채팅 뷰로 넘어가 연다', () => {
+    expect(toolsWay('grid', false)).toBe('switch');
+    expect(toolsWay('empty', false)).toBe('switch');
+  });
+  // 재현(2026-10-05 fix/tools-topbar 부채 ①): 붙인 세션 하나(adopt)는 스페이스가 없어 아이콘이 아무것도 안 했다
+  it('터미널 뷰 adopt 는 떠 있는 창으로(하니터처럼)', () => expect(toolsWay('adopt', false)).toBe('float'));
+});
+
 describe('withinRoots — 내 프로젝트 폴더·HQ 안의 세션만(다른 데서 띄운 세션은 안 보인다)', () => {
   const S = (cwd: string) => ({ cwd }) as unknown as Session;
   it('루트 안(하위 폴더·worktree 포함)만 남긴다, 이름만 비슷한 옆 폴더는 뺀다', () => {
@@ -285,6 +328,13 @@ describe('withinRoots — 내 프로젝트 폴더·HQ 안의 세션만(다른 �
   });
   it('루트가 비면 거르지 않는다', () => {
     expect(withinRoots([S('/a')], [])).toHaveLength(1);
+  });
+  it('윈도우는 대소문자·구분자가 달라도 같은 폴더 — 대소문자만 다른 HQ 세션이 앱에서 통째로 빠졌다(2026-10-09 윈도우 실기기)', () => {
+    const list = [S('C:/USERS/Me/.CHAMMO/HQ'), S('c:/users/me/desktop/dev/shop'), S('C:\\Users\\Me\\Desktop\\dev\\api'), S('C:/Users/Me/other')];
+    expect(withinRoots(list, ['C:/Users/Me/Desktop/dev', 'C:/Users/Me/.chammo/hq']).map((s) => s.cwd)).toEqual(list.slice(0, 3).map((s) => s.cwd));
+  });
+  it('맥은 대소문자를 그대로 본다(맥 동작 그대로)', () => {
+    expect(withinRoots([S('/Users/me/HQ'), S('/Users/me/hq')], ['/Users/me/hq']).map((s) => s.cwd)).toEqual(['/Users/me/hq']);
   });
 });
 

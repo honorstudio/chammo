@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addSpawned, focusPick, followChat, harnitorPick, heldBy, reviewPick, toolsPick, holderMap, newShows, orphanSends, showOwner, shownFiles, transcriptTargets } from './spaceNav';
+import { addSpawned, focusPick, focusTab, followChat, harnitorPick, heldBy, reviewPick, toolsPick, holderMap, newShows, orphanSends, showOwner, shownFiles, transcriptTargets } from './spaceNav';
 import type { TaskEvent } from './tasks';
 
 const T = Date.parse('2026-09-30T04:00:00Z');
@@ -254,6 +254,14 @@ describe('focusPick — 채팅 뷰에서 focus 는 스페이스 대시보드로(
     expect(focusPick({ project: 'project-x-app' }, sessions, groups, idle, [])).toBe('p:/d/project-x-app');
   });
   it('모르면 null', () => expect(focusPick({ project: 'nope' }, sessions, groups, idle, [])).toBeNull());
+});
+
+describe('focusTab — scripts/app focus <참모> 는 채팅 탭도 그 참모로(fix/space-jump ①, 스페이스만 옮기면 ViewSeg 없는 어긋난 모양)', () => {
+  it('참모 대시보드면 그 참모 탭', () => expect(focusTab('o:o1')).toBe('o1'));
+  it('프로젝트·세션 대시보드면 탭은 그대로', () => {
+    expect(focusTab('p:/d/project-b')).toBeUndefined();
+    expect(focusTab('s:s1')).toBeUndefined();
+  });
 });
 
 describe('addSpawned — 대화 기록으로 잡은 세션은 작업 기록 주인이 없을 때만(handoff 가 이긴다, 2026-10-02)', () => {

@@ -6,6 +6,7 @@
 
 mod access;
 mod appctl;
+mod audio_out;
 mod avatar;
 mod claude;
 mod accounts;
@@ -32,6 +33,11 @@ mod lid;
 mod load;
 mod login;
 mod memo;
+mod messenger;
+mod messenger_text;
+mod messenger_tg;
+mod messenger_run;
+mod messenger_cmd;
 mod mobile;
 mod mobile_files;
 mod mobile_http;
@@ -113,6 +119,11 @@ fn about_label(en: bool, name: &str) -> String {
     if en { format!("About {name}") } else { format!("{name} 정보") }
 }
 
+/// 'Chammo 정보' 창에 넣을 이름·버전. 윈도우 muda 는 이게 있어야 창을 띄운다(None 이면 무반응)
+fn about_metadata(name: &str, version: &str) -> tauri::menu::AboutMetadata<'static> {
+    tauri::menu::AboutMetadata { name: Some(name.to_string()), version: Some(version.to_string()), ..Default::default() }
+}
+
 /// 앱 메뉴. 기본 메뉴의 "윈도우 닫기(⌘W)"를 뺐다 — ⌘W 는 앱이 "보고 있는 창의 세션 끄기"로 쓴다.
 /// 편집 메뉴는 남긴다(없으면 웹뷰에서 ⌘C·⌘V 가 안 먹는다). 글자는 설정 언어로, 꺼 둔 기능(사무실·다마고치·리뷰)의 항목은 뺀다.
 /// 설정을 저장하면 rebuild_menu 로 다시 만든다
@@ -121,8 +132,12 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
     let f = config::current().features;
     let name = &app.package_info().name;
     let app_menu = SubmenuBuilder::new(app, name)
-        // 윈도우는 기본 글자가 영어(About·Maximize)라 이름을 붙인다. 맥은 시스템 글자 그대로
-        .item(&PredefinedMenuItem::about(app, (!cfg!(target_os = "macos")).then(|| about_label(i18n::is_en(), name)).as_deref(), None)?)
+        // 윈도우는 기본 글자가 영어(About·Maximize)라 이름을 붙이고, 창에 띄울 이름·버전도 넘긴다. 맥은 시스템 글자·정보 창 그대로
+        .item(&PredefinedMenuItem::about(
+            app,
+            (!cfg!(target_os = "macos")).then(|| about_label(i18n::is_en(), name)).as_deref(),
+            (!cfg!(target_os = "macos")).then(|| about_metadata(name, &app.package_info().version.to_string())),
+        )?)
         .separator()
         // 설정·첫 실행 화면(ui/Setup.tsx) — macOS 관례 ⌘,
         .item(&MenuItem::with_id(app, "settings", tr("설정…", "Settings…"), true, Some(&*platform::accel("CmdOrCtrl+,")))?)
@@ -234,8 +249,10 @@ fn to_background<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     app.exit(0);
     #[cfg(target_os = "macos")]
     {
-        for (_, w) in app.webview_windows() {
-            let _ = w.hide();
+        for (label, w) in app.webview_windows() {
+            if webpage::hide_on_background(&label) {
+                let _ = w.hide();
+            }
         }
         let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
     }
@@ -330,7 +347,7 @@ fn main() {
             // 파일 감시는 맨 먼저 — 아래 템플릿 쓰기가 윈도우에선 11초쯤 걸려 그 사이 들어온 요청(scripts/app·choice)이 건너뛰어졌다
             reader::watch(app.handle());
             // 화면 조종을 모든 프로젝트에 켜 뒀으면 그사이 생긴 프로젝트에 넣는다(~/.claude.json, 바뀔 때만 백업·쓰기)
-            std::thread::spawn(|| if let Err(e) = computer_use::sweep() { claude::log_out("computer-use", &e); });
+            std::thread::spawn(computer_use::sweep_logged);
             // 있던 프로젝트에 붙여 둔 참모 브라우저(local scope)를 떠 있던 claude 가 지웠으면 다시(GitHub #2)
             std::thread::spawn(|| { browser_attach::reassert(); });
             // 세션 크롬 가리기 지킴이(세션 브라우저 앱에서 보기) — 앱이 떠 있을 때만 가려진다
@@ -352,6 +369,13 @@ fn main() {
             let _ = project::export_templates(config::data_dir());
             // 사용량·세션별 대화 % 를 남기는 상태줄 — 새 HQ(주인 옛 폴더 말고)는 켤 때마다 설정에 박아 둔다(이미 깐 HQ 도 따라오게)
             let _ = hq::export_statusline(config::data_dir());
+            // 기존 프로젝트에도 그 상태줄을(사용자 것은 안 덮음, 진짜 데이터 폴더만) — 프로젝트마다 git 을 부르니 뒤에서
+            std::thread::spawn(|| {
+                let n = hq::attach_statusline_all(config::data_dir());
+                if n > 0 {
+                    claude::log_out("statusline", &format!("attached to {n} project(s)"));
+                }
+            });
             // 브라우저 자동화를 깐 사용자면 도구 코드를 이번 앱 것으로(설치 버튼 때만 풀면 앱을 올려도 옛 래퍼가 돈다)
             let _ = browser::refresh(config::data_dir());
             // node 링크를 고른 node 로·낡은 .mcp.json(brew 버전 폴더 등) 고치기 — node --version 을 부르니 뒤에서
@@ -369,6 +393,7 @@ fn main() {
             std::thread::spawn(routines::install);
             // 모바일(폰 → 테일스케일) — 켜 둔 상태면 연다. 기본 꺼짐
             mobile::boot(app.handle());
+            messenger_cmd::boot();
             if !config::data_dir().ends_with(".honor-orchestrator") {
                 let hq_dir = config::hq_dir(&config::home(), &config::current(), |k| std::env::var(k).ok());
                 if Path::new(&hq_dir).join("scripts/task").is_file() {
@@ -431,10 +456,12 @@ fn main() {
             webpage::open_in_chrome,
             pty::pty_open,
             pty::pty_write,
+            pty::pty_type,
             pty::pty_resize,
             pty::pty_close,
             ptt::ptt_target,
             ptt::ptt_watch,
+            ptt::ptt_live,
             claude::app_env,
             config::read_config,
             config::write_config,
@@ -477,6 +504,8 @@ fn main() {
             project::harness_project,
             browser::browser_status,
             browser_setup::browser_setup_start,
+            agent_browser::agent_dialog_wrapper,
+            agent_browser::agent_permission,
             browser_attach::project_browser,
             browser_attach::project_browser_attach,
             browser_setup::browser_setup_state,
@@ -485,6 +514,15 @@ fn main() {
             mobile::mobile_status,
             mobile::mobile_set,
             mobile::mobile_pair_new,
+            messenger_cmd::messenger_status,
+            messenger_cmd::messenger_set_token,
+            messenger_cmd::messenger_pair_new,
+            messenger_cmd::messenger_pair_cancel,
+            messenger_cmd::messenger_unpair,
+            messenger_cmd::messenger_confirm,
+            messenger_cmd::messenger_reject,
+            messenger_cmd::messenger_set_on,
+            messenger_cmd::messenger_forget,
             mobile::mobile_device_remove,
             mobile::mobile_devices_clear,
             reader::first_existing,
@@ -665,6 +703,7 @@ fn main() {
                 claude::stop_speaking();
                 // 모바일 서버·테일스케일 serve 정리
                 mobile::shutdown();
+                messenger_cmd::shutdown();
             }
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
@@ -698,5 +737,13 @@ mod conf_tests {
         assert_eq!(super::quit_label(true, "Chammo"), "Close Chammo (sessions keep running)");
         assert_eq!(super::about_label(false, "Chammo Dev"), "Chammo Dev 정보");
         assert_eq!(super::about_label(true, "Chammo"), "About Chammo");
+    }
+
+    // 윈도우 muda 는 About(Some(메타데이터)) 일 때만 창을 띄운다 — None 이면 'Chammo 정보'가 무반응이었다(0.2.5 윈도우 QA)
+    #[test]
+    fn 정보_메타데이터에_이름과_버전이_있다() {
+        let m = super::about_metadata("Chammo", "0.2.5");
+        assert_eq!(m.name.as_deref(), Some("Chammo"));
+        assert_eq!(m.version.as_deref(), Some("0.2.5"));
     }
 }

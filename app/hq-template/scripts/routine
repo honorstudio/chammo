@@ -655,6 +655,8 @@ def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run
         t = ensure_ticker(data, home, run, uid, python, apps=apps, allow_test=allow_test)
         where, skipped = t['plist'], t.get('skipped')
     out = {'name': name, 'folder': d, 'instructions': md, 'task' if win else 'plist': where, 'next': next_run(schedule, now).isoformat(timespec='minutes')}
+    if not win and not skipped:
+        out['program'] = t.get('program')  # 무엇이 깨우나 — 앱 실행 파일이 아니면 stale_notes 가 알린다
     return {**out, 'skipped': skipped} if skipped else out
 
 
@@ -874,6 +876,30 @@ def list_routines(data=None, now=None):
     return out
 
 
+def stale_notes(out, data, me=None, mac=None):
+    """예약이 이 스크립트와 다르게 돌 때 한 줄씩 — 조용히 어긋나면 '고쳤는데 안 먹는다'가 된다(2026-10-02 한 번짜리 자동 끝남이 옛 사본이라 안 먹던 것).
+    ① launchd 는 앱이 깐 사본(<데이터>/tools/routine)을 돌린다 — 이 스크립트와 내용이 다르면 고친 동작은 앱을 새로 깔고 켜야 먹는다
+    ② 맥에서 깨우는 게 앱이 아니라 파이썬이면 알림·로그인 항목에 python 이름이 뜬다(--routine-tick 을 아는 앱이 없다)"""
+    me = os.path.realpath(me or __file__)
+    mac = sys.platform == 'darwin' if mac is None else mac
+    notes = []
+    tool = os.path.join(data, 'tools', 'routine')
+    if os.path.isfile(tool) and os.path.realpath(tool) != me:
+        try:
+            with open(tool, encoding='utf-8') as a, open(me, encoding='utf-8') as b:
+                differ = a.read() != b.read()
+        except OSError:
+            differ = False
+        if differ:
+            notes.append(f'scheduled runs use the app\'s copy {tool}, which differs from this script — changes take effect after the app is updated and reopened / '
+                         '예약은 앱이 깐 사본으로 돈다 — 이 스크립트와 달라서 고친 동작은 앱을 새로 깔고 켜야 먹는다')
+    prog = (out or {}).get('program') if isinstance(out, dict) else None
+    if mac and prog and not re.search(r'\.app/Contents/MacOS/', prog):
+        notes.append(f'woken by {os.path.basename(prog)}, not the Chammo app — macOS shows that name in notifications and Login Items; '
+                     'open the Chammo app once to switch / 앱이 아니라 python 으로 깨운다 — 맥 알림·로그인 항목에 그 이름이 뜬다. Chammo 앱을 한 번 켜면 앱으로 바꿔 건다')
+    return notes
+
+
 def main(argv):
     if not argv:
         print(__doc__, file=sys.stderr)
@@ -914,6 +940,9 @@ def main(argv):
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2
+    if cmd in ('new', 'list', 'install', 'pause', 'resume'):  # 참모·사람이 부르는 것만 — tick·run·report 는 launchd·세션이 부른다
+        for n in stale_notes(out, data_dir()):
+            print(n, file=sys.stderr)
     if isinstance(out, dict) and out.get('skipped') == SKIP_TEST:
         print(f'{data_dir()} is a test data folder — no launchd wake-up (use --allow-test-tick to hang one) / '
               '시험 데이터 폴더라 깨우기를 안 건다', file=sys.stderr)

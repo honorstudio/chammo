@@ -1223,3 +1223,48 @@ class OpenFileLimit(unittest.TestCase):
         self.assertEqual(r['session'], '1a2b3c4d')
         self.assertTrue(any('--bg' in c for c in calls.calls))
         self.assertEqual(res.limit, (256, 4096))
+
+
+class StaleCopyNotes(Ticker):
+    """예약은 앱이 깐 사본(<데이터>/tools/routine)과 앱 실행 파일로 돈다 — 둘 중 하나가 어긋나도 조용했다(부채 2026-10-02 ①·10-03 ①)"""
+
+    def test_두_날짜_한_번짜리는_마지막_날짜_하루_뒤에_끝난다(self):
+        # ad-revert 와 같은 모양(10/06·10/13 09:00)을 지금 스크립트로 다시 돌려 본다
+        self.new('revert', sched='10/06 09:00, 10/13 09:00', now=datetime.datetime(2026, 10, 2, 12, 0))
+        self.assertEqual(self.cfg('revert')['schedule'], '2026-10-06 09:00, 2026-10-13 09:00')
+        self.assertEqual([r['name'] for r in self.tick(datetime.datetime(2026, 10, 6, 9, 0))], ['revert'])
+        self.tick(datetime.datetime(2026, 10, 7, 9, 1))
+        self.assertTrue(self.cfg('revert')['enabled'], '첫 날짜 뒤엔 아직 남았다')
+        self.assertEqual([r['name'] for r in self.tick(datetime.datetime(2026, 10, 13, 9, 0))], ['revert'])
+        self.tick(datetime.datetime(2026, 10, 14, 9, 1))
+        self.assertFalse(self.cfg('revert')['enabled'])
+        self.assertEqual(self.tick(datetime.datetime(2026, 10, 20, 9, 0)), [])
+
+    def test_앱_사본이_이_스크립트와_다르면_알린다(self):
+        tools = self.data / 'tools'
+        tools.mkdir()
+        me = str(rt.__loader__.path)
+        self.assertEqual(rt.stale_notes({}, str(self.data), me=me), [], '사본이 없으면(앱을 안 켰다) 말 없음')
+        (tools / 'routine').write_text('# old copy\n')
+        notes = rt.stale_notes({}, str(self.data), me=me)
+        self.assertEqual(len(notes), 1)
+        self.assertIn('tools/routine', notes[0])
+        (tools / 'routine').write_text(pathlib.Path(me).read_text(encoding='utf-8'))
+        self.assertEqual(rt.stale_notes({}, str(self.data), me=me), [])
+        self.assertEqual(rt.stale_notes({}, str(self.data), me=str(tools / 'routine')), [], '사본 자신이면 비교 안 함')
+
+    def test_파이썬으로_깨우면_알린다(self):
+        tools = self.data / 'tools'
+        tools.mkdir()
+        me = str(rt.__loader__.path)
+        (tools / 'routine').write_text(pathlib.Path(me).read_text(encoding='utf-8'))
+        py = rt.stale_notes({'program': '/opt/homebrew/bin/python3.14'}, str(self.data), me=me, mac=True)
+        self.assertEqual(len(py), 1)
+        self.assertIn('python', py[0])
+        app = '/Applications/Chammo.app/Contents/MacOS/Chammo'
+        self.assertEqual(rt.stale_notes({'program': app}, str(self.data), me=me, mac=True), [])
+        self.assertEqual(rt.stale_notes({'program': '/usr/bin/python3'}, str(self.data), me=me, mac=False), [], '윈도우는 작업 스케줄러 — 해당 없음')
+
+    def test_만들기_결과에_실행기를_적는다(self):
+        out = self.new('blog')
+        self.assertEqual(out['program'], '/usr/bin/python3')  # 시험엔 앱이 없다 → 파이썬

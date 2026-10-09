@@ -6,13 +6,14 @@ import { loginCancel, loginCode, loginStart, readLogin } from '../../data/web';
 import { flowText, readPhoneLogin, showCard, type PhoneLogin } from '../../domain/phoneLogin';
 import { IconClose, IconSend } from '../Icons';
 import { useMemoPoll } from './usePoll';
+import { machine } from '../../i18n';
 
 export function PhoneLoginCard() {
   const [text, , kick] = useMemoPoll('login', readLogin, 15_000, '');
   const [open, setOpen] = useState(false);
   const v = readPhoneLogin(text);
   if (!showCard(v) && !open) return null;
-  const where = v.need?.sessions.length ? v.need.sessions.join(' · ') : '이 맥';
+  const where = v.need?.sessions.length ? v.need.sessions.join(' · ') : `이 ${machine()}`;
   return (
     <>
       <div className="m-login" role="alert">
@@ -48,7 +49,7 @@ function LoginSheet({ first, onClose }: { first: PhoneLogin; onClose: () => void
       const st = await f();
       setV((p) => readPhoneLogin(JSON.stringify({ need: p.need, flow: st })));
     } catch (e: unknown) {
-      setErr(String(e).includes('429') ? '잠깐 뒤에 다시 눌러 주세요' : '맥에 못 닿았어요. 다시 해 주세요');
+      setErr(String(e).includes('429') ? '잠깐 뒤에 다시 눌러 주세요' : `${machine()}에 못 닿았어요. 다시 해 주세요`);
     } finally {
       setBusy(false);
     }

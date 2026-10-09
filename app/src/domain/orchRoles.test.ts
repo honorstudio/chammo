@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { cleanRole, inferRoles, parseRoles, roleHeir, roleLine, ROLE_MAX, type RoleMap } from './orchRoles';
-import type { Session } from './session';
+import { orchestratorLike, parseAgents, type Session } from './session';
+import { samePath } from './paths';
+import fixture from './orchRoles.fixture.json';
 import type { TaskEvent } from './tasks';
 
 const DAY = 24 * 3600_000;
@@ -146,5 +148,15 @@ describe('roleHeir — 멈춘 세션 물음을 받을 참모(앞 단계로 못 �
   it('역할이 같아도 맡던 그 참모 자신은 빼고, 둘이 같으면 앞의 것', () => {
     const roles: RoleMap = { '참모-2': { role: '개발', at: 1 }, '참모': { role: '개발', at: 2 }, '참모-8': { role: '개발', at: 3 } };
     expect(roleHeir(gamma, ev, live, known, [gamma, ...live], roles)?.id).toBe('aa11');
+  });
+});
+
+describe('inferRoles — 훅(orch-roster infer)과 같은 표(orchRoles.fixture.json, feature/orch-roles ① 두 벌 어긋남 막기)', () => {
+  it.each(fixture.cases.map((c) => [c.name, c] as const))('%s', (_, c) => {
+    const { devRoot, hqDir, extraProjects } = c.config;
+    const sessions = parseAgents(JSON.stringify(c.agents), devRoot, extraProjects);
+    const known = sessions.filter((x) => samePath(x.cwd, hqDir) && orchestratorLike(x.name));
+    const roles = 'roles' in c ? (c.roles as RoleMap) : undefined;
+    expect(inferRoles(c.events as TaskEvent[], known, sessions, Date.parse(fixture.now), { roles, hq: hqDir })).toEqual(c.want);
   });
 });

@@ -90,6 +90,31 @@ function portOpen(port, timeoutMs = 500) {
   });
 }
 
+/**
+ * 크롬 탭(page) 수 — /json/list. 맥 크롬은 마지막 창을 닫아도 포트가 살아서 포트만 보면 '탭 0개'를 모른다(2026-10-05 modal-stale ①).
+ * 포트가 닫혔거나 답이 없으면 false, 크롬 모양이 아니면 true(살아는 있음·수 모름)
+ */
+function pageCount(port, timeoutMs = 500) {
+  return new Promise((resolve) => {
+    const req = require('http').get({ host: '127.0.0.1', port, path: '/json/list', agent: false, timeout: timeoutMs }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        try {
+          const list = JSON.parse(body);
+          resolve(Array.isArray(list) ? list.filter((t) => t && t.type === 'page').length : true);
+        } catch {
+          resolve(true);
+        }
+      });
+      res.on('error', () => resolve(false));
+    });
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.on('error', () => resolve(false));
+  });
+}
+
 /** 600 권한으로 통째로 바꿔 쓴다(반쯤 쓴 파일을 앱이 읽지 않게) */
 function writeSecure(file, obj) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -105,7 +130,7 @@ function writeSecure(file, obj) {
  * @param {string} o.profile @param {string} o.root 브라우저 루트 @param {string} o.profileDir
  * @param {number} o.pid 래퍼 pid @param {number} o.ppid claude 세션 pid(앱이 세션과 잇는다)
  */
-function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, probe = portOpen, gate = false }) {
+function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, probe = pageCount, gate = false }) {
   const file = liveFile(root, profile);
   const portFile = path.join(profileDir, 'DevToolsActivePort');
   // gate = 사람이 '개입'하면 세션 도구를 붙잡을 수 있다(래퍼, src/takeover.js) — 앱이 없으면 '멈추지 못함'으로 보인다.
@@ -174,27 +199,37 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
     },
     /**
      * 사람 부르기(browser_ask_human) — 상태 파일에 ask 를 적으면 앱이 그 세션 브라우저를 크게 띄우고 알린다.
-     * 사람이 '다 했어'를 누르면 앱이 <live>/<프로필>.done 을 만든다 → 지우고 돌아온다. 브라우저가 안 떠 있으면 바로 실패
+     * 사람이 '다 했어'를 누르면 앱이 <live>/<프로필>.done 에 그 부름의 표(래퍼 pid:ask.at)를 적는다 → 지우고 돌아온다.
+     * 표가 다르면(지난 부름·다른 래퍼) 지우고 계속 기다린다 — 앱의 검사·쓰기 사이 틈에 새 부름을 대신 끝내지 않게(2026-10-04 ①).
+     * 브라우저가 안 떠 있거나 탭이 0개면 바로 실패
      */
     async askHuman(reason, { pollMs = 500, timeoutMs = 10 * 60_000, probeMs = 5000 } = {}) {
       const NOT_UP = '브라우저가 안 떠 있어 — 먼저 browser_navigate 로 그 페이지를 열어';
+      const NO_TAB = '크롬은 떠 있는데 탭이 하나도 없어(창이 닫힘) — browser_navigate 로 그 페이지를 다시 열고 불러';
       const port = up ? readPort(profileDir) : null;
       if (!port) return { ok: false, text: NOT_UP };
-      // 바쁜 맥에서 한 번 늦은 걸 죽음으로 보지 않게 한 번 더(2초). 확인 실패면 포트 파일은 남긴다 — 살아 있는 크롬이면 다시 안 써 준다
-      const dead = async () => !(await probe(port.port)) && !(await probe(port.port, 2000));
-      if (await dead()) {
+      // false = 죽음, 0 = 살았는데 탭 없음. 바쁜 맥에서 한 번 늦은 걸 죽음으로 보지 않게 한 번 더(2초).
+      // 확인 실패면 포트 파일은 남긴다 — 살아 있는 크롬이면 다시 안 써 준다
+      const check = async () => { const r = await probe(port.port); return r === false ? probe(port.port, 2000) : r; };
+      const first = await check();
+      if (first === false) {
         gone(false);
         return { ok: false, text: '브라우저가 꺼져 있어 — browser_navigate 로 그 페이지를 다시 열고 불러' };
       }
+      if (first === 0) return { ok: false, text: NO_TAB };
       try { fs.rmSync(doneFile, { force: true }); } catch { /* 없음 */ }
       s.ask = { reason: cut(String(reason || '사람이 해야 할 일').replace(/\s+/g, ' ').trim()).slice(0, 200), at: now() };
+      const token = `${pid}:${s.ask.at}`;
       flush();
       const until = Date.now() + timeoutMs;
       let probeAt = Date.now() + probeMs;
       while (Date.now() < until) {
         await new Promise((r) => setTimeout(r, pollMs));
         if (fs.existsSync(doneFile)) {
+          let mark = '';
+          try { mark = fs.readFileSync(doneFile, 'utf8').trim(); } catch { /* 없음 */ }
           try { fs.rmSync(doneFile, { force: true }); } catch { /* 없음 */ }
+          if (mark !== token) continue;
           s.ask = null;
           flush();
           return { ok: true, text: '사람이 다 했다고 했어 — browser_snapshot 으로 지금 화면을 확인하고 이어서 해' };
@@ -203,9 +238,15 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
         if (!up) return { ok: false, text: '기다리는 동안 브라우저가 닫혔어 — browser_navigate 로 다시 열고 불러' };
         if (Date.now() >= probeAt) {
           probeAt = Date.now() + probeMs;
-          if (await dead()) {
+          const r = await check();
+          if (r === false) {
             gone(false);
             return { ok: false, text: '기다리는 동안 브라우저가 꺼졌어 — browser_navigate 로 다시 열고 불러' };
+          }
+          if (r === 0) {
+            s.ask = null;
+            flush();
+            return { ok: false, text: `기다리는 동안 ${NO_TAB}` };
           }
         }
       }
@@ -225,4 +266,4 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
   };
 }
 
-module.exports = { enabled, parseResult, toolLine, readPort, liveFile, createLive, writeSecure, portOpen };
+module.exports = { enabled, parseResult, toolLine, readPort, liveFile, createLive, writeSecure, portOpen, pageCount };

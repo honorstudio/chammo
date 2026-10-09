@@ -221,3 +221,7 @@ export function focusPick(
   const r = rootOf(plan.project);
   return r ? `p:${r}` : null;
 }
+
+/** focus 로 간 화면이 참모 대시보드면 그 참모 — 채팅 탭도 같이 옮긴다(스페이스만 옮기면 탭은 A·대시보드는 B 로 ViewSeg 가 빠진 어긋난 모양, 2026-10-09).
+ *  프로젝트·세션 대시보드는 지금 탭 아래에서 보는 것이라 탭은 그대로 */
+export const focusTab = (pick: string): string | undefined => (pick.startsWith('o:') ? pick.slice(2) : undefined);

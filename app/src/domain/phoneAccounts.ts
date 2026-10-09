@@ -1,5 +1,6 @@
 // 폰 계정 시트 — 맥 /api/accounts(Rust accounts_cmd::PhoneView: 이름·요금제·사용량·쉬는 때, 이메일·토큰 없음)를 읽어 줄로.
 // 막대·쉬는 판단은 데스크톱 계정 팝오버(domain/accounts popRows)와 같은 것을 쓴다
+import { machine } from '../i18n';
 import { accountError, allOut, popRows, usageOf, type AccountsView } from './accounts';
 import { usageText } from './mobile';
 import { fmtUntil, readAuto, slotStatus } from './accountAuto';
@@ -71,8 +72,8 @@ export function accountHead(v: PhoneAccounts | null): string | null {
 export function phoneAccountError(msg: string): string {
   const m = msg.trim();
   if (m === 'too soon') return '방금 바꾸는 중이었어요 — 잠깐 뒤에 다시 눌러 주세요';
-  if (m === 'locked' || m === 'denied') return '맥 키체인이 잠겼거나 허용이 필요해요 — 맥 앞에서 한 번 바꿔 주세요';
-  if (m === 'unsupported') return '이 맥 앱은 폰 계정 바꾸기를 아직 몰라요 — 맥 앱을 새로 깔아 주세요';
+  if (m === 'locked' || m === 'denied') return machine() === 'PC' ? '자격 증명을 못 읽었어요 — PC 앞에서 한 번 바꿔 주세요' : `${machine()} 키체인이 잠겼거나 허용이 필요해요 — ${machine()} 앞에서 한 번 바꿔 주세요`;
+  if (m === 'unsupported') return `이 ${machine()} 앱은 폰 계정 바꾸기를 아직 몰라요 — ${machine()} 앱을 새로 깔아 주세요`;
   return accountError(m);
 }
 

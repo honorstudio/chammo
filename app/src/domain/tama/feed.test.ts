@@ -5,7 +5,8 @@ import { evolve, ZERO } from './tree';
 import { parseTamaFile } from './store';
 import { balanceFeed } from './sources';
 
-const at = (d: number, h: number, m = 0) => new Date(2026, 8, d, h, m).getTime(); // 2026-09-28 = 월
+// 날짜 숫자는 9월 기준(9/28 = 월)으로 쓰고 5주 뒤로 옮긴다 — 2026 추석 주를 피해 공휴일 없는 10/26~11/6 에서
+const at = (d: number, h: number, m = 0) => new Date(2026, 8, d + 35, h, m).getTime();
 const H = 3_600_000;
 
 describe('개발 안 하는 먹이', () => {

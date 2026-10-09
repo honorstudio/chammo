@@ -1,6 +1,6 @@
 //! 로그인 풀림 — 맥 로그인 상태 재기(probe)와 폰에서 하는 로그인(docs/plans/2026-10-06-login-expired.md).
 //! 판단은 화면 쪽 domain/login.ts. 여기선 재료만: `claude auth status`(앱 GUI 문맥 — SSH 문맥은 키체인을 못 읽어 늘 false)와
-//! 로그인 칸을 고친 시각(맥 키체인 mdat — 값은 안 읽는다, 윈도우·리눅스 .credentials.json 고친 시각).
+//! 계정 로그인이 바뀐 시각(맥 키체인 mdat·윈도우·리눅스 .credentials.json 고친 시각 — 고친 시각이 바뀔 때만 값을 읽어 MCP 로그인만 바뀐 건 거른다).
 //!
 //! 폰 로그인: 맥이 pty 로 `claude auth login` 을 띄우고(BROWSER 를 막아 맥에 브라우저를 안 띄운다) 출력에서 수동 로그인 주소를 뽑아 폰에 준다.
 //! 폰에서 그 주소로 로그인하면 페이지가 코드를 보여 준다 → 폰 입력칸 → pty 로 한 줄. 비밀번호·2FA 는 사람이 폰 브라우저에서.
@@ -22,7 +22,7 @@ const LIVE_SERVICE: &str = "Claude Code-credentials";
 pub struct Probe {
     /// 모르면 None(claude 를 못 찾음·시간 초과)
     pub logged_in: Option<bool>,
-    /// 로그인 칸을 마지막으로 고친 시각(ms) — 로그인·토큰 갱신·계정 바꾸기 때 바뀐다. 모르면 None
+    /// 계정 로그인이 마지막으로 바뀐 시각(ms) — 로그인·토큰 갱신·계정 바꾸기. 같은 칸의 MCP 로그인만 바뀐 건 안 친다(login_at). 모르면 None
     pub cred_at: Option<i64>,
 }
 
@@ -78,10 +78,63 @@ pub fn cred_at() -> Option<i64> {
     Some(t.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as i64)
 }
 
+/// 로그인 시각 기억 — 칸 고친 시각(mdat)·그때 계정 로그인 지문·계정 로그인이 마지막으로 바뀐 시각
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CredSeen {
+    pub mdat: i64,
+    pub fp: Option<u64>,
+    pub login_at: i64,
+}
+
+/// 칸 값에서 계정 로그인(claudeAiOauth)만의 지문 — 같은 칸의 MCP 로그인(mcpOAuth)은 안 본다. 기억은 앱 메모리에만(파일에 안 남긴다)
+pub fn oauth_fp(secret_json: &str) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let v: serde_json::Value = serde_json::from_str(secret_json).ok()?;
+    let p = v.get("claudeAiOauth").filter(|p| p.is_object())?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    p.to_string().hash(&mut h);
+    Some(h.finish())
+}
+
+/// 로그인 시각 한 걸음. 칸 고친 시각이 그대로면 값을 안 읽는다. 바뀌었으면 값을 읽어 계정 로그인이 바뀌었을 때만 그 시각을 로그인으로 —
+/// MCP 로그인도 같은 칸에 써서 고친 시각만 보면 '고쳐짐'으로 이어서가 헛나갔다(roadmap login-expired ①).
+/// 처음 보거나 값을 못 읽으면 예전처럼 고친 시각 그대로(놓치는 것보다 한 번 헛나가는 게 낫다)
+pub fn login_at_step(prev: Option<CredSeen>, mdat: Option<i64>, read: impl FnOnce() -> Option<u64>) -> (Option<CredSeen>, Option<i64>) {
+    let Some(mdat) = mdat else { return (prev, None) };
+    if let Some(p) = prev.filter(|p| p.mdat == mdat) {
+        return (Some(p), Some(p.login_at));
+    }
+    let fp = read();
+    let login_at = match (prev, fp) {
+        (Some(p), Some(f)) if p.fp == Some(f) => p.login_at,
+        _ => mdat,
+    };
+    (Some(CredSeen { mdat, fp, login_at }), Some(login_at))
+}
+
+/// 지금 로그인 칸 값의 계정 로그인 지문. 맥 = 계정 풀과 같은 길(security 명령·창 없이), 윈도우·리눅스 = .credentials.json
+fn live_fp() -> Option<u64> {
+    if cfg!(target_os = "macos") {
+        return crate::accounts_cmd::live_secret_quiet().and_then(|s| oauth_fp(s.expose()));
+    }
+    let dir = env("CLAUDE_CONFIG_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::Path::new(&crate::config::home()).join(".claude"));
+    oauth_fp(&std::fs::read_to_string(dir.join(".credentials.json")).ok()?)
+}
+
+static SEEN: Mutex<Option<CredSeen>> = Mutex::new(None);
+
+/// 계정 로그인이 마지막으로 바뀐 시각(로그인·토큰 갱신·계정 바꾸기). MCP 로그인만 바뀐 건 안 친다. 모르면 None
+pub fn login_at() -> Option<i64> {
+    let mut g = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    let (seen, at) = login_at_step(*g, cred_at(), live_fp);
+    *g = seen;
+    at
+}
+
 /// 맥 로그인 상태 — 화면이 로그인 오류로 멈춘 세션을 볼 때 15초마다, 아니면 드물게 부른다
 #[tauri::command]
 pub async fn login_probe() -> Probe {
-    tauri::async_runtime::spawn_blocking(|| Probe { logged_in: crate::setup::auth_status(&crate::claude::claude_bin()), cred_at: cred_at() })
+    tauri::async_runtime::spawn_blocking(|| Probe { logged_in: crate::setup::auth_status(&crate::claude::claude_bin()), cred_at: login_at() })
         .await
         .unwrap_or_default()
 }

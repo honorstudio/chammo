@@ -42,6 +42,26 @@ describe('summarize — 요약 3줄: 무엇 / 운영에 닿는 것 / 확인 못 
     expect(s.unverified).toBe('iOS 26.5 시뮬레이터: 렌더 확인. 손가락 터치는 못 눌러봄(computer-use 권한 없음)');
     expect(s.ops).toBe('');
   });
+  it('문서만 바꾼 PR 의 줄 가운데 ⚠️·"안 돌렸다" 는 문서 속 할 일이지 확인 못 한 것이 아니다 — 상태표 줄의 "⚠️ 다시 찍기"(예시)', () => {
+    const body = `세션 마무리 문서 갱신. 코드 변경 없음.
+
+## starter
+- **타임라인** — PR #11·#12 머지 반영
+- **상태표** — 주간 보고(통계 복구 + ⚠️ 다시 찍기) · 소식 글(링크 고침)
+
+## roadmap
+- 남은 것 = 추천(3단계) · 옛 기록 채우기(**안 돌렸다** — 몰아치면 막힌다)`;
+    const docs = [{ path: 'docs/starter.md', additions: 9, deletions: 3 }, { path: 'docs/roadmap.md', additions: 6, deletions: 2 }];
+    expect(summarize(pr({ body, files: docs }), []).unverified).toBe('');
+  });
+  it('문서 PR 도 ⚠️ 로 시작하는 줄은 그대로 확인 못 한 것 (인용 > ⚠️ 도)', () => {
+    const body = '## 확인\n- 상태표 — 통계 복구 + ⚠️ 재촬영\n> ⚠️ 한 번 결제만 밖으로 빠진다(원인 미확정, **별건**).';
+    expect(summarize(pr({ body, files: [{ path: 'docs/starter.md', additions: 4, deletions: 0 }] }), []).unverified).toBe('한 번 결제만 밖으로 빠진다(원인 미확정, 별건).');
+  });
+  it('코드 PR 의 줄 가운데 ⚠️ 는 그대로 — "OTA로 나갈 수 있다. ⚠️ 실기기에서 한 번 확인 후 OTA 권장"', () => {
+    const body = 'JS만 바뀜 → OTA로 나갈 수 있다. ⚠️ 실기기(iOS)에서 한 번 확인 후 OTA 권장';
+    expect(summarize(pr({ body, files: [{ path: 'src/a.tsx', additions: 4, deletions: 0 }] }), []).unverified).toBe('JS만 바뀜 → OTA로 나갈 수 있다. 실기기(iOS)에서 한 번 확인 후 OTA 권장');
+  });
   it('#462: 운영 = 걸린 조건 + 배포 칸 첫 줄', () => {
     const s = summarize(pr({ body: BODY_462 }), [{ kind: 'security', why: 'OPENAI_API_KEY' }]);
     expect(s.ops).toBe('보안(OPENAI_API_KEY) · Vercel OPENAI_API_KEY (Production·Preview) — 대시보드로 등록한다');

@@ -5,12 +5,14 @@ import { IconSkip } from '../Icons';
 import { brush } from '../office/draw';
 import { SubHead } from '../office/OfficeMenu';
 import { drawItem, scaled } from './icons';
-import { drawMachine, drawTen, newShow, skipShow, stepParts, type Show } from './machine';
+import { drawMachine, drawTen, idleKey, newShow, skipShow, stepParts, type Show } from './machine';
 import { Stars } from './Stars';
 
 const RARITY: Rarity[] = ['흔함', '보통', '희귀', '전설'];
 const RATE: Record<Rarity, string> = { 흔함: '60%', 보통: '28%', 희귀: '10%', 전설: '2%' };
 const short = (name: string) => name.replace(/^.* — /, '');
+/** 결과 카드 자리(styles.css .gacha-card-slot 높이 + 틈) — 카드가 기계 배출구를 덮지 않게 그림 밑에 비워 둔다(상점 QA 8) */
+const CARD_ROOM = 104;
 
 /** 작은 아이콘(최근·도감·가구 목록). locked = 실루엣 */
 export function ItemIcon({ id, locked, big }: { id: string; locked?: boolean; big?: boolean }) {
@@ -63,7 +65,7 @@ export function GachaPage({ file, draw, onClose, nav }: { file: GachaFile | null
     if (!el) return;
     // 도트가 고르게 — 화면 화소에 딱 맞는 배율만(레티나면 1.5배 같은 반 단계도 된다)
     const dpr = window.devicePixelRatio || 1;
-    const fit = () => setScale(Math.max(1, Math.floor(Math.min((el.clientWidth - 24) / W, (el.clientHeight - 24) / H) * dpr) / dpr));
+    const fit = () => setScale(Math.max(1, Math.floor(Math.min((el.clientWidth - 24) / W, (el.clientHeight - 24 - CARD_ROOM) / H) * dpr) / dpr));
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(el);
@@ -75,14 +77,21 @@ export function GachaPage({ file, draw, onClose, nav }: { file: GachaFile | null
     if (!c || !ctx) return;
     const b = brush(ctx);
     let id = 0;
+    /** 기다리는 기계를 마지막에 그린 박자 — 같으면 건너뛴다(상점 QA 19, 연출 중엔 매 프레임) */
+    let last = '';
     const loop = (now: number) => {
+      id = requestAnimationFrame(loop);
       const s = show.current;
       const w = s?.kind === 'ten' ? 300 : 220, h = s?.kind === 'ten' ? 120 : 184;
-      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; last = ''; }
+      if (!s) {
+        const k = idleKey(now);
+        if (k === last) return;
+        last = k;
+      }
       ctx.clearRect(0, 0, w, h);
       if (s?.kind === 'ten') drawTen(b, w, h, s, now); else drawMachine(b, w, h, s, now);
       if (s) stepParts(b, s.parts);
-      id = requestAnimationFrame(loop);
     };
     id = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(id);
@@ -122,6 +131,8 @@ export function GachaPage({ file, draw, onClose, nav }: { file: GachaFile | null
           <div className="gacha-canvas" style={{ width: W * scale, height: H * scale }}>
             <canvas ref={cv} style={{ width: W * scale, height: H * scale }} />
             {playing && <button className="gacha-skip" onClick={(e) => { e.stopPropagation(); skip(); }} aria-label={tr('건너뛰기', 'Skip')} title={tr('건너뛰기', 'Skip')}><IconSkip /></button>}
+          </div>
+          <div className="gacha-card-slot">
             {card?.kind === 'one' && (
               <div className="gacha-card on">
                 <span className={`gacha-r r-${card.r.rarity}`}>{rarityLabel(card.r.rarity)}</span>

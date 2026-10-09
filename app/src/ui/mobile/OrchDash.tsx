@@ -1,6 +1,6 @@
 // 바닥 — 지금 참모의 대시보드(시안 A1·v3 T): 머리줄(이름·컨텍스트·예약 버튼·사용량) · 시킨 일 접는 한 줄 · 주고받은 파일 카드(화면 대부분)
 import { useEffect, useMemo, useState } from 'react';
-import { readAccounts, readFileText, readLoad, readShowLog, readUsage } from '../../data/web';
+import { readAccounts, readFileText, readLoad, readUsage } from '../../data/web';
 import { accountHead, headUsage, readPhoneAccounts } from '../../domain/phoneAccounts';
 import { AccountSheet } from './AccountSheet';
 import { LoadSheet } from './LoadSheet';
@@ -9,7 +9,7 @@ import { loadChip, readPhoneLoad } from '../../domain/phoneLoad';
 import { starterLists } from '../../domain/starterLists';
 import type { Ctx } from '../../domain/ctx';
 import { dashFiles, type DashFile } from '../../domain/dashboard';
-import { textHead, webParts } from '../../domain/phoneFile';
+import { webParts } from '../../domain/phoneFile';
 import { foldSummary, heldIds, orchTasks, phoneName } from '../../domain/mobile';
 import type { Session } from '../../domain/session';
 import type { TaskCard, TaskEvent } from '../../domain/tasks';
@@ -22,19 +22,18 @@ import { liveOf, type Live } from '../../domain/agentBrowser';
 import { IconBell, IconBellOff, IconClock, IconSessions } from '../Icons';
 import type { Push } from './usePush';
 import { HomeAppLink } from './HomeAppLink';
-import { useBlobUrl } from './useBlobUrl';
+import { FileThumb } from './FileThumb';
 import { MAvatar } from './MAvatar';
 import { ProfileSheet } from './ProfileSheet';
 import { usePendingNicks } from './pendingNicks';
 import { useMemoPoll } from './usePoll';
-import { remember, remembered } from './memo';
 import { Notice } from './Notice';
+import { machine } from '../../i18n';
 
 const FOLD_KEY = 'm.taskFold';
 const loadFold = () => { try { return localStorage.getItem(FOLD_KEY) === 'open'; } catch { return false; } };
 const saveFold = (open: boolean) => { try { localStorage.setItem(FOLD_KEY, open ? 'open' : 'closed'); } catch { /* 개인 정보 보호 모드 */ } };
 
-const isImage = (p: string) => p.startsWith('data:image/') || /\.(png|jpe?g|gif|webp|heic|heif)$/i.test(p);
 const baseName = (p: string) => (p.startsWith('data:') ? '붙인 그림' : p.split('/').pop() ?? p);
 function when(ts: string, now = new Date()): string {
   const d = new Date(ts);
@@ -59,6 +58,11 @@ type Props = {
   onSessions: () => void;
   /** HQ 폴더 — docs/starter.md 의 할 일·최근 결정(데스크톱 대시보드 목록과 같은 것) */
   hqDir: string;
+  /** 설정 목소리(Supertonic 일 때만) — 프로필 창 '기본' 목소리, null 이면 목소리 칸을 안 보인다 */
+  voiceBase: string | null;
+  /** scripts/show 기록(/api/shows) — 채팅 안 파일 카드와 같이 OrchSpace 가 한 번 받아 나눠 준다. loaded = 한 번이라도 받았나 */
+  showLog: string;
+  showLoaded: boolean;
   /** 떠 있는 세션 브라우저 — 이 참모 것이면 대시보드 위에, 하위 세션 것은 그 세션 대화 위에 */
   lives: Live[];
   /** 폰 알림(웹 푸시) 켜기·끄기 */
@@ -73,7 +77,7 @@ const PUSH_HINT: Record<string, string> = {
 const PLAN_KEY = 'm.planFold';
 const FILES_STEP = 30;
 
-export function OrchDash({ orch, orchs, asking, sessions, ctx, items, events, routinesRunning, onRoutines, onSessions, hqDir, lives, push }: Props) {
+export function OrchDash({ orch, orchs, asking, sessions, ctx, items, events, routinesRunning, onRoutines, onSessions, hqDir, voiceBase, lives, push, showLog, showLoaded }: Props) {
   const [pushHint, setPushHint] = useState<string | null>(null);
   // 켜진 종을 누르면 바로 끄지 않고 묻는다 — 상태 표시로 보고 눌렀다가 꺼졌다(2026-10-03 18:54)
   const [askOff, setAskOff] = useState(false);
@@ -89,7 +93,6 @@ export function OrchDash({ orch, orchs, asking, sessions, ctx, items, events, ro
   const [peek, setPeek] = useState<Session | null>(null);
   const busySubs = sessions.filter((s) => s.kind === 'background' && !orchs.some((o) => o.id === s.id) && (s.state === 'working' || s.state === 'blocked')).length;
   // 화면을 오가도 마지막 값을 바로 — 뒤에서 새로 받는다(ui/mobile/memo). 파일 칸은 한 번도 못 받았을 때만 뼈대
-  const [showLog, showLoaded] = useMemoPoll('shows', readShowLog, 5000, '');
   const [usage] = useMemoPoll('usage', readUsage, 30_000, '{}');
   // 계정 칸(이름·사용량) — 머리줄 계정 이름, 누르면 계정 시트. 바꾼 직후엔 맥 답을 먼저 보이고 다음 받기에 맞춘다
   const [acctText] = useMemoPoll('accounts', () => readAccounts(), 30_000, '');
@@ -146,7 +149,7 @@ export function OrchDash({ orch, orchs, asking, sessions, ctx, items, events, ro
         <div className="m-dash-row m-muted m-sm">
           <span className="m-dash-sub">대시보드{c ? ` · 컨텍스트 ${Math.round(c.used)}%` : ''}</span>
           {chip && (
-            <button type="button" className={`m-load-chip ${chip.cls}`} onClick={() => setLoadOpen(true)} aria-label={`${chip.aria} — 부하 보기`} title="맥 부하">
+            <button type="button" className={`m-load-chip ${chip.cls}`} onClick={() => setLoadOpen(true)} aria-label={`${chip.aria} — 부하 보기`} title={`${machine()} 부하`}>
               <span className="m-load-pill"><span className="m-load-dot" aria-hidden="true" />{chip.text}</span>
             </button>
           )}
@@ -233,33 +236,11 @@ export function OrchDash({ orch, orchs, asking, sessions, ctx, items, events, ro
       {allFiles.length > fileMax && <button type="button" className="m-btn m-more" onClick={() => setFileMax(fileMax + FILES_STEP)}>더 보기 · {allFiles.length - fileMax}개 남음</button>}
       {acctOpen && <AccountSheet text={acct} onChanged={setAcctNow} onClose={() => setAcctOpen(false)} />}
       {loadOpen && <LoadSheet text={loadNow ?? loadText} onChanged={setLoadNow} onClose={() => setLoadOpen(false)} />}
-      {profile && <ProfileSheet orch={orch} orchs={orchs} onClose={() => setProfile(false)} />}
+      {profile && <ProfileSheet orch={orch} orchs={orchs} voiceBase={voiceBase} onClose={() => setProfile(false)} />}
       {peek && <SessionPeek s={peek} lives={lives} onClose={() => setPeek(null)} />}
       {view && <FileView path={view.path} title={baseName(view.path)} at={view.at} orch={orch.id} onClose={() => setView(null)} />}
     </div>
   );
-}
-
-/** 썸네일 종류 — 그림은 sips, PDF·HTML 시안·오피스·영상은 맥 QuickLook 첫 장, 글(md·txt)은 앞부분을 글로 */
-const QL = /\.(pdf|html?|pptx?|key|docx?|pages|xlsx?|numbers|mp4|mov|m4v)$/i;
-const TEXT = /\.(md|markdown|txt|log|json|csv|tsv|ya?ml|toml|tsx?|jsx?|mjs|py|rs|sh|swift|kt|css|sql)$/i;
-const CODE = /\.(json|csv|tsv|ya?ml|toml|tsx?|jsx?|mjs|py|rs|sh|swift|kt|css|sql|log)$/i;
-
-/** 글 파일 앞부분 — 한 번 읽은 건 기억(화면을 오가도 다시 안 받게) */
-function useTextHead(path: string | null, code = false): string | null {
-  const key = path ? `head:${code ? 'c' : 't'}:${path}` : '';
-  const [t, setT] = useState<string | null>(() => (key ? remembered<string>(key) ?? null : null));
-  useEffect(() => {
-    if (!path || remembered(key) !== undefined) return;
-    let alive = true;
-    readFileText(path).then((x) => {
-      const head = textHead(x, code);
-      remember(key, head);
-      if (alive) setT(head);
-    }, () => {});
-    return () => { alive = false; };
-  }, [path, key, code]);
-  return t;
 }
 
 function FileCard({ f, big, who, onOpen }: { f: DashFile; big?: boolean; who: string; onOpen: () => void }) {
@@ -280,19 +261,9 @@ function WebCard({ f, big, who, web }: { f: DashFile; big?: boolean; who: string
 }
 
 function DocCard({ f, big, who, onOpen }: { f: DashFile; big?: boolean; who: string; onOpen: () => void }) {
-  const img = isImage(f.path);
-  const ql = !img && QL.test(f.path);
-  const text = !img && !ql && TEXT.test(f.path);
-  // 큰 카드 720·작은 카드 360(2배 화면) — 화면 크기에 맞는 것만 받는다
-  const src = useBlobUrl(img || ql ? f.path : null, true, big ? 720 : 360);
-  const head = useTextHead(text ? f.path : null, CODE.test(f.path));
-  const ext = f.path.split('.').pop()?.toUpperCase() ?? '';
   return (
     <button type="button" className={big ? 'm-file m-file-big' : 'm-file'} onClick={onOpen}>
-      <span className={text ? `m-thumb m-thumb-text${CODE.test(f.path) ? ' m-thumb-code' : ''}` : ql ? 'm-thumb m-thumb-doc' : 'm-thumb'}>
-        {src ? <img src={src} alt="" /> : text && head ? <span className="m-head">{head}</span> : <span className="m-ext">{ext}</span>}
-        {ql && src && <span className="m-ext-tag">{ext}</span>}
-      </span>
+      <FileThumb path={f.path} big={big} />
       <span className="m-file-name">{baseName(f.path)}</span>
       <span className="m-file-meta">{who} · {when(f.ts)}</span>
     </button>

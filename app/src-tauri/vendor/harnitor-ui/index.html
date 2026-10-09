@@ -564,6 +564,17 @@ details.bodybox summary:hover{text-decoration:underline}
 .d.pick .c{display:block}
 .d .ev{font-size:10px;color:var(--ink-3);margin-top:4px;display:none;font-family:'IBM Plex Mono',monospace;word-break:break-all}
 .d.pick .ev{display:block}
+/* 고치는 길 — 짚었을 때만. 엔진 글 보고(scripts/app harness)와 같은 값(d.fix) */
+.d .dfix{font-size:10px;color:var(--ink-2);margin-top:4px;display:none}
+.d.pick .dfix{display:block}
+/* 늘 실리는 양 — 세션이 켜질 때마다 무조건 읽는 것의 합. 진단 칸 위 한 덩어리, 누르면 부를 때만 읽혀도 되는 후보 */
+.bud{margin:8px 10px 0;padding:7px 9px;border:1px solid var(--line);border-radius:5px;background:var(--surface);cursor:pointer}
+.bud .bt{font-size:11.5px;font-weight:500}
+.bud .bt b{font-variant-numeric:tabular-nums}
+.bud .bp{font-size:10px;color:var(--ink-3);margin-top:2px;font-family:'IBM Plex Mono',monospace;word-break:break-all}
+.bud .bh{display:none;margin-top:5px;font-size:10px;color:var(--ink-3)}
+.bud.open .bh{display:block}
+.bud .bh div{font-family:'IBM Plex Mono',monospace;word-break:break-all}
 /* 진단이 짚은 대상.
    선택 표시(구리 실선 + 배경)와 **색만으로** 겨루면 둘 다 흐릿해진다.
    그래서 자리와 형태를 나눈다 — 선택은 칩 안쪽(테두리·배경), 진단은 칩 바깥(점선 외곽선).
@@ -678,7 +689,7 @@ details.bodybox summary:hover{text-decoration:underline}
    <div class="ih"><span class="k" id="iK" data-i18n>선택 없음</span><h2 id="iN" data-i18n>항목을 눌러봐</h2>
     <div class="m" id="iM" data-i18n>칩에 올리면 연결이 곡선으로 뜨고, 누르면 고정된다.</div></div>
    <div class="ib" id="iB"></div>
-   <div class="diag"><div class="h" data-i18n>진단 — 이 프로젝트에 걸리는 것</div><ul id="dl"></ul></div>
+   <div class="diag"><div class="bud" id="bud" hidden></div><div class="h" data-i18n>진단 — 이 프로젝트에 걸리는 것</div><ul id="dl"></ul></div>
   </aside>
  </div>
  <div class="menu" id="ctx" hidden role="menu"></div>
@@ -935,7 +946,14 @@ const EN = {
 "맞는 항목이 없다": "No matches",
 "오르내리기": "move",
 "선택": "select",
-"닫기": "close"
+"닫기": "close",
+"늘 실리는 양": "Always loaded",
+"고치는 길": "Fix",
+"부를 때만 읽혀도 되는 후보": "Could load on demand",
+"하니터 토글로 된다": "a Harnitor toggle does it",
+"파일을 고친다": "edit the file",
+"사람에게 묻는다": "ask the user",
+"고칠 것 없음 — 알아둘 상태": "nothing to fix — a state to know"
 };
 let LANG = (()=>{
   try{ const v=localStorage.getItem('harnitor-lang'); if(v) return v; }catch(e){}
@@ -956,6 +974,8 @@ const F = {
   body:(l,kb)      => LANG==='en' ? `${l} lines · ${kb}KB` : `${l}줄 · ${kb}KB`,
   more:(n)         => LANG==='en' ? `· … and ${n} more` : `· … 외 ${n}건`,
   entries:(n)      => LANG==='en' ? `${n} entries` : `${n}건`,
+  tok:(n)          => LANG==='en' ? `${Number(n).toLocaleString('en-US')} tokens` : `${Number(n).toLocaleString('en-US')}토큰`,
+  promptHooks:(n)  => LANG==='en' ? `${n} per-prompt hook(s)` : `매 지시 훅 ${n}개`,
   fileCount:(n)    => LANG==='en' ? `${n} files` : `파일 ${n}`,
   putIn:(n)        => LANG==='en' ? `added — ${n}` : `담음 — ${n}`,
   tookIn:(n)       => LANG==='en' ? `added ${n} item(s)` : `${n}개 담음`,
@@ -2807,6 +2827,33 @@ function visibleDiagnoses(){
   return H.diagnoses.filter(x => !x.project || (cur && x.project===cur.path));
 }
 
+/// 고치는 길 — 엔진 FixPath(snake_case)와 글 보고 문구 그대로
+const FIX={toggle:'하니터 토글로 된다', edit_file:'파일을 고친다', ask:'사람에게 묻는다', none:'고칠 것 없음 — 알아둘 상태'};
+
+/// 늘 실리는 양 — 지금 보는 프로젝트에서 연 세션이 무조건 읽는 것(엔진 budgets). 프로젝트 것이 없으면 전역만.
+/// 글 보고(scripts/app harness)와 같은 줄: 합 · 큰 셋 · 매 지시 훅, 누르면 부를 때만 읽혀도 되는 후보 셋
+function buildBudget(){
+  const box=$('#bud'); if(!box) return;
+  const all=H.budgets||[];
+  const b=all.find(x=>cur && x.project===cur.path) || all.find(x=>!x.project);
+  box.innerHTML='';
+  if(!b){ box.hidden=true; return }
+  box.hidden=false;
+  const top=el('div','bt'); top.appendChild(document.createTextNode(t('늘 실리는 양')+' · '));
+  top.appendChild(el('b',null,(LANG==='en'?'~':'약 ')+F.tok(b.total_tokens)));
+  if((b.prompt_hooks||[]).length) top.appendChild(document.createTextNode(' · '+F.promptHooks(b.prompt_hooks.length)));
+  box.appendChild(top);
+  box.appendChild(el('div','bp',(b.parts||[]).slice(0,3).map(p=>short(p.label)+' '+F.tok(p.tokens)).join(' · ')));
+  const hs=(b.hints||[]).slice(0,3);
+  if(hs.length){
+    const h=el('div','bh'); h.appendChild(el('span',null,t('부를 때만 읽혀도 되는 후보')));
+    hs.forEach(x=>h.appendChild(el('div',null,'· '+short(x.path)+':'+x.line+' "'+x.heading+'" '+F.tok(x.tokens))));
+    box.appendChild(h);
+    box.title=t('부를 때만 읽혀도 되는 후보');
+    box.onclick=()=>box.classList.toggle('open');
+  } else { box.onclick=null; box.removeAttribute('title') }
+}
+
 function buildDiagnoses(){
 const dl=$('#dl');
 dl.innerHTML='';
@@ -2829,6 +2876,7 @@ list.forEach(x=>{
   const ev=el('div','ev');x.evidence.slice(0,12).forEach(e=>ev.appendChild(el('div',null,'· '+short(e))));
   if(x.evidence.length>12)ev.appendChild(el('div',null,F.more(x.evidence.length-12)));
   li.appendChild(ev);
+  if(x.fix) li.appendChild(el('div','dfix',t('고치는 길')+' — '+t(FIX[x.fix]||FIX.none)));
   li.dataset.rule=x.rule;
   if(x.rule===diagSel) li.classList.add('pick');
   li.onclick=()=>{
@@ -2839,6 +2887,7 @@ list.forEach(x=>{
     paintFocus();
   };
   dl.appendChild(li)});
+buildBudget();
 // 헤더는 하네스 **전체**의 건강 상태다(프로젝트·스킬 수와 같은 기준).
 // 지금 화면에 걸리는 것만 세면 프로젝트를 옮길 때마다 숫자가 널뛴다.
 $('#sDiag').textContent=H.diagnoses.length;
