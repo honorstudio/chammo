@@ -3,7 +3,7 @@
 **Claude Code, as a team.**
 Every project remembers. No mistake twice. — *Built for myself. Free for you.*
 
-[한국어](README.ko.md) · [Watch the 88-second video](https://honorstudio.co.kr/chammo/en)
+[한국어](README.ko.md) · [Video preview](https://honorstudio.co.kr/chammo/en)
 
 ![Chammo in 10 seconds](docs/screenshots/promo-en.gif)
 

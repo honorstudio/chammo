@@ -3,7 +3,7 @@
 **내 클로드 코드를 팀으로.**
 프로젝트마다 기억하고, 같은 실수는 안 한다. — *내가 쓰려고 만들었어요. 그래서 공짜예요.*
 
-[English](README.md) · [88초 영상 보기](https://honorstudio.co.kr/chammo)
+[English](README.md) · [영상 미리보기](https://honorstudio.co.kr/chammo)
 
 ![10초로 보는 Chammo](docs/screenshots/promo-ko.gif)
 
