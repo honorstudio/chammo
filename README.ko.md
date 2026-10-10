@@ -1,9 +1,6 @@
-# Chammo (참모)
+<p align="center"><img src="docs/screenshots/banner-ko.png" alt="Chammo — 내 클로드 코드를 팀으로. 프로젝트마다 기억하고, 같은 실수는 안 한다." width="100%"></p>
 
-**내 클로드 코드를 팀으로.**
-프로젝트마다 기억하고, 같은 실수는 안 한다. — *내가 쓰려고 만들었어요. 그래서 공짜예요.*
-
-[English](README.md) · [영상 미리보기](https://honorstudio.co.kr/chammo)
+<p align="center"><a href="https://github.com/honorstudio/chammo/releases/latest"><b>다운로드</b></a> · <a href="https://honorstudio.co.kr/chammo">소개 페이지·미리보기</a> · <a href="README.md">English</a></p>
 
 ![10초로 보는 Chammo](docs/screenshots/promo-ko.gif)
 

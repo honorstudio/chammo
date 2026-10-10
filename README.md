@@ -1,9 +1,6 @@
-# Chammo
+<p align="center"><img src="docs/screenshots/banner-en.png" alt="Chammo — Claude Code, as a team. Every project remembers. No mistake twice." width="100%"></p>
 
-**Claude Code, as a team.**
-Every project remembers. No mistake twice. — *Built for myself. Free for you.*
-
-[한국어](README.ko.md) · [Video preview](https://honorstudio.co.kr/chammo/en)
+<p align="center"><a href="https://github.com/honorstudio/chammo/releases/latest"><b>Download</b></a> · <a href="https://honorstudio.co.kr/chammo/en">Website &amp; preview</a> · <a href="README.ko.md">한국어</a></p>
 
 ![Chammo in 10 seconds](docs/screenshots/promo-en.gif)
 
