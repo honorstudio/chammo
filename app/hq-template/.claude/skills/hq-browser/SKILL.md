@@ -27,6 +27,11 @@ description: 브라우저 일(사이트 열기·눌러 보기·로그인 유지)
   가 한 줄 JSON 의 `wsEndpoint` 를 준다 → `connect_over_cdp(wsEndpoint)`. 스크립트가 끝나면 저절로 닫히고, 세션 브라우저 도구가 그 프로필을
   이미 열어 뒀으면 그 크롬을 같이 쓴다. 크롬 채널(정품·베타)은 프로필마다 기억한다 — 정품으로 만든 프로필은 정품으로 열린다(바꿀 때만
   `--channel chrome`). 앱에 떴는지: 앱의 그 세션 브라우저 칸이 스크립트 탭을 따라간다(`ls "$D/browser/live/"` 에 `<프로필>.json`).
+- **브라우저는 이 프로젝트 브라우저만**: 크롬 확장(claude-in-chrome·`--extension`)이나 사용자의 평소 크롬, 스크립트가 직접 띄운 크롬은 쓰지 않는다 —
+  앱 화면에 안 보여 사용자가 끼어들 수 없고, 로그인이 프로젝트마다 갈리지 않는다. `scripts/task send` 가 세션마다 브라우저 한 줄을 준다(붙은 세션엔
+  도구 이름·프로필·스크립트 쓰는 법, 안 붙은 세션엔 '필요해지면 멈추고 알려') — 그대로 붙인다. 세션이 "브라우저 연결 필요"라고 하면 위 연결부터.
+  지시를 파일(`지시.md`)로 넘기면 `send` 가 그 본문도 보고 브라우저 일이면 알린다. 안 붙은 프로젝트를 한 번에 보려면 `scripts/app browser missing`.
+  세션이 앱 밖 크롬을 띄우면 앱이 맡긴 참모 입력칸에 `[앱] … 앱 밖 크롬` 한 줄을 넣는다 — 그 세션을 이 스킬대로 돌려놓는다.
 
 # English
 
@@ -56,3 +61,9 @@ description: 브라우저 일(사이트 열기·눌러 보기·로그인 유지)
   tools already have that profile open, the script shares that Chrome. The Chrome channel (stable/beta) is remembered per
   profile — a profile made with stable Chrome stays on stable; force it only with `--channel chrome`. To check it shows:
   the session's browser pane in the app follows the script's tab (`ls "$D/browser/live/"` has `<profile>.json`).
+- **Only this project's browser**: never the Chrome extension (claude-in-chrome, `--extension`), the user's everyday Chrome, or a Chrome a script
+  starts itself — none of them show in the app, so the user can't step in, and logins don't stay per project. `scripts/task send` prints one browser
+  line for every session (attached: tool names, profile, how scripts connect; not attached: "stop and tell me if you come to need one") — append it.
+  When a session says "browser connection needed", connect it as above. If you hand the work over as a file (`plan.md`), `send` reads it too.
+  All projects without one at once: `scripts/app browser missing`. If a session starts Chrome outside the app, the app puts an
+  `[app] … outside the app` line in your input — bring that session back to the rules above.

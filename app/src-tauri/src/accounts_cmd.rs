@@ -292,6 +292,12 @@ pub async fn accounts_usage(ids: Vec<String>, live: bool) -> Result<Vec<crate::a
     .map_err(|e| e.to_string())?
 }
 
+/// 백업 칸으로 로그인 되돌리기 — which = backup-first(처음 바꾸기 전)·backup-last(바로 전 바꾸기 전)·backup-before-restore(되돌리기 전)
+#[tauri::command]
+pub async fn accounts_restore(which: String) -> Result<View, String> {
+    run(move |kc, live, list| accounts::restore(kc, live, list, &which).map(|_| ())).await
+}
+
 #[tauri::command]
 pub async fn accounts_remove(id: String) -> Result<View, String> {
     run(move |kc, _, list| accounts::remove(kc, list, &id).map(|_| ())).await
@@ -342,6 +348,7 @@ mod tests {
             current: Some("a1".into()),
             switching: None,
             auto,
+            backup_oauth: Value::Null,
         };
         let v = phone_view(&pool, Some(&o1));
         assert_eq!(v.active.as_deref(), Some("a1"));
@@ -375,7 +382,7 @@ mod tests {
     #[test]
     fn 보기는_지금_로그인_계정을_칸에서_찾는다() {
         let a = json!({ "accountUuid": "u1", "organizationUuid": "o1", "emailAddress": "a@x.com", "organizationRateLimitTier": "default_claude_max_5x" });
-        let pool = Pool { accounts: vec![Account { id: "a1".into(), name: "작은 것".into(), email: "a@x.com".into(), plan: "Max 5x".into(), order: 0, oauth: a.clone() }], current: None, switching: None, auto: Value::Null };
+        let pool = Pool { accounts: vec![Account { id: "a1".into(), name: "작은 것".into(), email: "a@x.com".into(), plan: "Max 5x".into(), order: 0, oauth: a.clone() }], current: None, switching: None, auto: Value::Null, backup_oauth: Value::Null };
         let v = view(&pool, Some(&a));
         assert_eq!(v.active.as_deref(), Some("a1"));
         assert_eq!(v.live_plan.as_deref(), Some("Max 5x"));

@@ -9,7 +9,7 @@ import type { Session } from '../../domain/session';
 import { sameOrchSlot, stoppedOrchs } from '../../domain/stopped';
 import { foldAgents, pruneAgents, type SubAgent } from '../../domain/subAgents';
 import { addSpawned, focusPick, focusTab, harnitorPick, holderMap, reviewPick, toolsPick, newShows, orphanSends, shownFiles, showOwner, transcriptTargets } from '../../domain/spaceNav';
-import { orchDocs, projectGroups } from '../../domain/spaceTree';
+import { orchDocs, pinPaths, projectGroups, remapPins } from '../../domain/spaceTree';
 import { termTail } from '../../domain/termTail';
 import { starterLists } from '../../domain/starterLists';
 import type { TaskCard, TaskEvent } from '../../domain/tasks';
@@ -44,6 +44,8 @@ import { useChatItems } from './useChatItems';
 import { OrchName, useOrchActions } from '../orchActions';
 import { orchRoleOf, useOrchRoleData } from '../orchRoleStore';
 import { NotePanel } from './NotePanel';
+import { ModeDash, ModeLayer, ModePanel, useModeRows } from '../mode/ModePanel';
+import { setModeChatHere, setModeDashHere } from '../mode/modeBus';
 import type { NoteBase } from '../../domain/noteEdits';
 import { projectRoot } from '../../domain/spaceTree';
 import './space.css';
@@ -51,7 +53,7 @@ import { attachCommand } from '../../domain/termCommand';
 import type { RoutineItem } from '../../domain/routine';
 import { bodyColor, orchColor } from '../../domain/avatar';
 import { OrchAvatar, avatarState, useAvatars } from '../avatar';
-import { EMPTY_NAV, goBack, goForward, visit, type Nav } from '../../domain/navHistory';
+import { EMPTY_NAV, goBack, goForward, keyFallback, visit, type Nav } from '../../domain/navHistory';
 import { SPACE_NAV } from './navSignal';
 import { deskTarget, navPick, OFFICE, officePick, rememberSide, sheetBack, sheetOpen, showPick, spaceView, startPick, type Side, type SpaceSide } from '../../domain/spaceOffice';
 import { OfficeSheet, SheetIcons } from '../office/OfficeSheet';
@@ -102,19 +104,17 @@ function ViewSeg({ side, pet, office, onPick }: { side: SpaceSide; pet: boolean;
  * 채팅 뷰의 스페이스(큰 창 전체) — v10: 왼쪽 메뉴 트리(참모·프로젝트마다 대시보드 + 문서, 내 페이지),
  * 가운데 = 고른 것(대시보드 / 노션식 문서 / 세션 터미널). 참모·맡긴 세션이 띄운 파일은 위에 모달
  */
-export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office, officeReq = null, onOfficeReq, onOfficeShown, harnitorReq = null, onHarnitorReq, onHarnitorShown, onHarnitorClosed, toolsReq = null, onToolsReq, onToolsShown, onToolsClosed, reviewReq = null, onReviewReq, onReviewShown, computerUse, orchs, stoppingIds, startingOrchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, orchHome, send, sendTo, live = {}, menuOpen = true, idle = [], stopped = [], orchCwd = '', onResume, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, reviewPage, ctxOf, onAddProject, onChatTab, helpers = [], loose = [], tasks, onMessage }: {
+export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeReq = null, onOfficeReq, onOfficeShown, harnitorReq = null, onHarnitorReq, onHarnitorShown, onHarnitorClosed, toolsReq = null, onToolsReq, onToolsShown, onToolsClosed, reviewReq = null, onReviewReq, onReviewShown, computerUse, orchs, stoppingIds, startingOrchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, orchHome, send, sendTo, live = {}, menuOpen = true, idle = [], stopped = [], orchCwd = '', onResume, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, reviewPage, ctxOf, onAddProject, onChatTab, helpers = [], loose = [], tasks, onMessage }: {
   /** 고정한 참모(대화 id, 고정한 순서) — 사이드바 줄 순서·압정 표시 */
   orchPins?: string[];
+  /** 참모 순서(대화 id, domain/orchOrder) — 사이드바 오케스트레이터 칸이 채팅 탭과 같은 줄로 */
+  orchOrder?: string[];
   /** 세션이 안 떠 있는 프로젝트(예전 사이드바처럼 흐리게) */
   idle?: { name: string; root: string }[];
   /** 하니터 열기·닫기 요청(탑바·⌘·scripts/app) — 받아 처리하면 onHarnitorReq 로 비운다. 하니터는 탭마다 기억되는 화면('h:')이라
    *  지금 탭에 열리고, 다른 탭으로 가면 그 탭 화면이 보인다(2026-10-02 사용자). 열려 있으면 스페이스 칸을 덮는다(채팅 열은 그대로) */
   /** 참모가 키우는 펫 — 참모 대시보드의 '펫' 탭(다마고치 기능을 끄면 없음) */
   pet?: (who: (id: string) => { name: string; color: string } | null) => React.ReactNode;
-  /** 위젯 '더보기' — 그 참모 대시보드의 펫 탭을 연다(n 이 바뀔 때마다) */
-  petReq?: { id: string; n: number } | null;
-  /** 펫 요청을 처리했으면 비운다 — 안 비우면 스페이스가 다시 그려질 때(리플레이·터미널 뷰 갔다 오기) 옛 요청으로 돌보는 참모 펫에 또 갔다(2026-10-06) */
-  onPetReq?: () => void;
   harnitorReq?: 'open' | 'close' | 'toggle' | null;
   onHarnitorReq?: () => void;
   /** 지금 탭에 하니터가 떠 있나(탑바 버튼 켜짐) */
@@ -247,10 +247,8 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
   }, [orchs.map((o) => o.id).join()]); // eslint-disable-line react-hooks/exhaustive-deps
   // 참모를 바꾸는 순간 — 흐림 + 불러오는 중을 먼저 그려 보여 주고(한 프레임), 무거운 대시보드는 그다음에(2026-09-30 사용자
   // "한참 있다가 스플래시"). 바뀐 걸 그리는 중에 알아채야 첫 화면부터 스플래시다
-  // 펫 탭을 연 참모 대시보드(하나만) — 위젯 '더보기'가 돌보는 참모 id 로 연다
+  // 펫 탭을 연 참모 대시보드(하나만). 위젯 '더보기'는 이제 모달(ui/tama/PetModal)이라 여기로 안 온다
   const [petFor, setPetFor] = useState<string | null>(null);
-  // 사무실로 둔 참모여도 펫 탭이 보이게 그 참모 대시보드로
-  useEffect(() => { if (petReq) { setPetFor(petReq.id); setPick(`o:${petReq.id}`, 'pet'); onPetReq?.(); } }, [petReq]); // eslint-disable-line react-hooks/exhaustive-deps
   const [shownOrch, setShownOrch] = useState(orch?.id);
   const [hold, setHold] = useState(false);
   const [switching, setSwitching] = useState<string | null>(null);
@@ -367,6 +365,28 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
     try { localStorage.setItem(PIN_KEY, JSON.stringify(next)); } catch { /* 이번 실행만 */ }
     return next;
   });
+  // 고정한 문서가 닫힌 워크트리 안이면 본 폴더 새 자리로(show 기록 풀기와 같은 규칙) — 켤 때·1분마다. 예전엔 고정이 없는 파일을 가리켰다
+  const pinsNow = useRef(pins);
+  pinsNow.current = pins;
+  useEffect(() => {
+    let alive = true;
+    const fix = () => {
+      const paths = pinPaths(pinsNow.current);
+      if (!paths.length) return;
+      void invoke<Record<string, string>>('moved_paths', { paths }).then((moved) => {
+        if (!alive || !Object.keys(moved).length) return;
+        setPins((all) => {
+          const next = remapPins(all, moved);
+          if (!next) return all;
+          try { localStorage.setItem(PIN_KEY, JSON.stringify(next)); } catch { /* 이번 실행만 */ }
+          return next;
+        });
+      }, () => {});
+    };
+    fix();
+    const t = window.setInterval(fix, 60_000);
+    return () => { alive = false; window.clearInterval(t); };
+  }, []);
 
   // 내 페이지
   const [pages, setPages] = useState<string[]>([]);
@@ -396,10 +416,11 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
     window.addEventListener(OPEN_PAGE, on);
     return () => window.removeEventListener(OPEN_PAGE, on);
   }, []);
-  // ⌘[ ⌘](App)·마우스 뒤로/앞으로 단추 — 스페이스 화면 기록으로
+  // ⌘[ ⌘](App)·마우스 뒤로/앞으로 단추 — 스페이스 화면 기록으로. 기록이 없으면 문서 '뒤로' 버튼처럼 위 칸으로(예전엔 아무 일도 없었다)
   useEffect(() => {
-    const on = (e: Event) => step((e as CustomEvent<-1 | 1>).detail);
-    const mouse = (e: MouseEvent) => { if (e.button === 3 || e.button === 4) { e.preventDefault(); step(e.button === 3 ? -1 : 1); } };
+    const back = (dir: -1 | 1) => step(dir, keyFallback(dir, now.current.pick, docUp.current));
+    const on = (e: Event) => back((e as CustomEvent<-1 | 1>).detail);
+    const mouse = (e: MouseEvent) => { if (e.button === 3 || e.button === 4) { e.preventDefault(); back(e.button === 3 ? -1 : 1); } };
     window.addEventListener(SPACE_NAV, on);
     window.addEventListener('mouseup', mouse);
     return () => { window.removeEventListener(SPACE_NAV, on); window.removeEventListener('mouseup', mouse); };
@@ -512,7 +533,7 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
   const items = useChatItems(orch?.sessionId);
   const myImages = useMemo(() => items.flatMap((it) => (it.kind === 'user' && it.images ? it.images.map((src) => ({ ts: it.ts, src })) : [])), [items]);
   const who = (id: string) => {
-    if (id === 'me') return tr('사용자', 'You');
+    if (id === 'me') return tr('나', 'You');
     const o = orchs.find((x) => x.id === id);
     if (o) return oname(o);
     const s = sessions.find((x) => x.id === id);
@@ -658,17 +679,27 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
     const top = pick === OFFICE ? sheet[sheet.length - 1] : undefined;
     reportView({ tab: orchs.find((o) => o.id === nav.chat)?.name ?? chatOrch?.name, space: spaceWord(pick, names), preview: modal ? spaceWord(`d:${modal.path}`, names).replace(/^\S+ /, '') : top ? spaceWord(top, names) : undefined });
   });
+  // 참모 모드 — 켠 모드 목록(패널·대시보드 칸·미리보기·꽉 채우기가 같이 본다), 메뉴 '지금 대시보드 칸으로'가 쓸 지금 대시보드
+  const modeRows = useModeRows();
+  useEffect(() => {
+    const o = pick.startsWith('o:') ? orchs.find((x) => x.id === pick.slice(2)) : undefined;
+    setModeDashHere(o?.name || (pick.startsWith('p:') ? pick.slice(2) : '') || orch?.name || chatOrch?.name || null);
+    setModeChatHere(chatOrch?.id ?? null);
+  });
   // 검토 결과는 시안을 띄운 참모에게 — 지금 채팅 탭 참모에게 보내니 개발 참모가 띄운 시안 결과가 다른 참모에게 갔다(2026-09-30 사용자 "버그네")
   const curBy = useRef(new Map<string, string>());
   const toCuration = (p: string, by?: string) => { setModal(null); if (by) curBy.current.set(p, by); if (!pick.startsWith('c:')) beforeCur.current = pick; setPick(`c:${p}`); };
   const curOwner = (p: string) => { const by = curBy.current.get(p) ?? ''; const id = orchs.some((o) => o.id === by) ? by : holders.get(by)?.[0]; return orchs.find((o) => o.id === id); };
   /** 문서 화면 — 스페이스 가운데(d:)와 사무실 위 창이 같은 것을 쓴다. onBack = 뒤로(upKey = 위 칸), tail = 머리 끝(창의 크게·닫기) */
+  /** 가운데 문서의 위 칸 — ⌘[ 가 기록이 없을 때 문서 뒤로 버튼과 같은 곳으로 */
+  const docUp = useRef('');
   const docPage = (path: string, opt: { onBack?: (upKey: string) => void; tail?: React.ReactNode }) => {
     const owner = orchs.find((o) => isPinned(o, path) || orchDocs(log, o.id, []).recent.includes(path));
     const g = groups.find((x) => path.startsWith(`${x.root}/`));
     // 뒤로 = 상위(노션처럼): 하위 페이지면 부모 페이지, 내 페이지면 내 페이지 첫 화면, 그 밖은 주인 대시보드(2026-09-30 사용자)
     const parentPage = pages.includes(path) ? `${path.replace(/\/[^/]+$/, '')}.md` : '';
     const upKey = parentPage && pages.includes(parentPage) ? `d:${parentPage}` : pages.includes(path) ? 'm:' : owner ? `o:${owner.id}` : g ? `p:${g.root}` : chatOrch ? `o:${chatOrch.id}` : '';
+    if (opt.onBack) docUp.current = upKey; // 가운데 문서만(사무실 위 창 문서는 뒤로가 없다)
     const upName = parentPage && pages.includes(parentPage) ? pageName(parentPage) : pages.includes(path) ? tr('내 페이지', 'My pages') : owner ? oname(owner) : g ? g.name : path.split('/').slice(-2, -1)[0] ?? '';
     // 문서를 볼 땐 대시보드·사무실 토글을 안 띄운다 — 돌아가기는 왼쪽 '참모 이름' 알약(2026-10-03 사용자)
     return <DocPage key={path} path={path} at={focus?.path === path ? focus.at : undefined} atKey={focus?.path === path ? focus.key : undefined} title={pages.includes(path) ? pageName(path) : undefined} owner={upName} send={send} sendTo={sendTo} onBack={opt.onBack ? () => opt.onBack!(upKey) : undefined} tail={opt.tail}
@@ -743,6 +774,7 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
     const files = o ? dashFiles(log, o.id, held.map((s) => s.id), o.id === orch?.id ? myImages : []).slice(0, 40).map((f) => ({ ...f, byName: who(f.by) })) : [];
     main = o ? (
       <DashboardView key={o.id} browser={(() => { const b = liveOf(o, lives); return b ? { live: b, tail: o.sessionId ? tails[o.sessionId] : undefined } : undefined; })()} pet={pet ? { on: petFor === o.id, node: pet((id) => { const x = orchs.find((y) => y.id === id); return x ? { name: x.name || '', color: colorOf(x.name || '') } : null; }) } : undefined}
+        modes={<ModeDash rows={modeRows} keys={[o.name || '', o.id, o.sessionId || '']} />}
         title={oname(o)} titleNode={<OrchName s={o} />} avatar={act ? (
         <button className="oa-btn" onClick={() => act.askAvatar(o, colorOf(o.name || ''))} aria-label={tr(`${oname(o)} 프로필 바꾸기`, `Change ${oname(o)}'s avatar`)}>
           <OrchAvatar name={o.name || ''} size={44} state={avatarState(o, statusOf(o))} color={colorOf(o.name || '')} label={oname(o)} /><span className="oa-change" aria-hidden="true">{tr('바꾸기', 'Change')}</span>
@@ -766,7 +798,7 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
               <div key={x.task} className="cv-orphan">
                 <b>{x.target}</b><span>{x.title ?? ''}</span><em>{new Date(x.ts).toTimeString().slice(0, 5)}</em>
                 <button onClick={() => void appendTaskEvent({ ts: new Date().toISOString(), type: 'own', task: x.task, from: o.id }).catch(() => {})}>{tr(`${o.name || '참모'} 일로`, `Claim for ${o.name || 'assistant'}`)}</button>
-                <button onClick={() => void appendTaskEvent({ ts: new Date().toISOString(), type: 'done', task: x.task, note: tr('사용자가 대시보드에서 정리', 'Tidied from dashboard') }).catch(() => {})}>{tr('끝난 걸로', 'Mark done')}</button>
+                <button onClick={() => void appendTaskEvent({ ts: new Date().toISOString(), type: 'done', task: x.task, note: tr('대시보드에서 정리', 'Tidied from dashboard') }).catch(() => {})}>{tr('끝난 걸로', 'Mark done')}</button>
               </div>
             ))}
           </div>
@@ -779,7 +811,7 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
     const g = groups.find((x) => x.root === pick.slice(2));
     const files = g ? g.sessions.flatMap((s) => shownFiles(log, s.id).map((f) => ({ ...f, by: s.id, byName: s.workspace ?? s.project }))).sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, 40) : [];
     main = g ? (
-      <DashboardView key={g.root} work title={g.name} meta={tr(`세션 ${g.sessions.length} · ${g.root}`, `${g.sessions.length} sessions · ${g.root}`)}
+      <DashboardView key={g.root} work modes={<ModeDash rows={modeRows} keys={[g.name, g.root]} />} title={g.name} meta={tr(`세션 ${g.sessions.length} · ${g.root}`, `${g.sessions.length} sessions · ${g.root}`)}
         headAction={<>{toolsBtn(g.root)}{browserBtn(g.root, g.sessions.length)}{onNewSession && <button className="cv-btn" onClick={() => onNewSession(g.root, g.name)}>{tr('새 세션', 'New session')}</button>}</>}
         onStop={act ? (id) => { const s = g.sessions.find((x) => x.id === id); if (s) act.askStop(s, s.workspace ? `${g.name} / ${s.workspace}` : tr(`${g.name} 본체`, `${g.name} (main)`), 'card'); } /* 세션이 여럿이면 어느 것인지 보이게 */ : undefined}
         files={files} lines={g.sessions.map((s) => lineOf(s, s.workspace ?? tr('본체', 'main')))}
@@ -790,7 +822,7 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
       const name = idle.find((x) => x.root === root)?.name ?? root.split('/').pop() ?? root;
       const off = stopped.filter((x) => projectRoot(x.cwd) === root);
       return (
-        <DashboardView key={root} work title={name} meta={tr(`쉬는 중 · ${root}`, `Idle · ${root}`)} headAction={<>{toolsBtn(root)}{browserBtn(root, 0)}</>} files={[]} lines={[]} lists={plists ?? undefined}
+        <DashboardView key={root} work modes={<ModeDash rows={modeRows} keys={[name, root]} />} title={name} meta={tr(`쉬는 중 · ${root}`, `Idle · ${root}`)} headAction={<>{toolsBtn(root)}{browserBtn(root, 0)}</>} files={[]} lines={[]} lists={plists ?? undefined}
           onOpenSession={() => {}} onOpenDoc={(p) => setPick(`d:${p}`)} emptyText=""
           hint={
             <div className="cv-idle">
@@ -839,7 +871,7 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
   return (
     <div className="space cv">
       {menuOpen && (
-        <SpaceNav statusOf={statusOf} orchPins={orchPins} onNewOrch={onNewOrch} routines={routines} onTrashPage={(p) => void invoke('trash_page', { path: p }).then(() => { if (pick === `d:${p}` || pick.startsWith(`d:${p.replace(/\.md$/, '')}/`)) setPick('m:'); loadPages(); }).catch(() => {})} idle={idle} offOrchs={stoppedOrchs(stopped, orchCwd, orchs)} stoppingIds={stoppingIds} startingOrchs={startingOrchs} helpers={helpers} loose={loose} onChatTab={onChatTab} ctxOf={ctxOf} onAddProject={onAddProject} onResume={onResume} onRemoveStopped={onRemoveStopped ? (x) => sameOrchSlot(stopped, x, orchCwd).forEach((y) => onRemoveStopped(y)) : undefined} orchs={orchs} viewId={orch?.id} colorOf={colorOf} projects={groups} holders={holders} pick={pick}
+        <SpaceNav statusOf={statusOf} orchPins={orchPins} orchOrder={orchOrder} onNewOrch={onNewOrch} routines={routines} onTrashPage={(p) => void invoke('trash_page', { path: p }).then(() => { if (pick === `d:${p}` || pick.startsWith(`d:${p.replace(/\.md$/, '')}/`)) setPick('m:'); loadPages(); }).catch(() => {})} idle={idle} offOrchs={stoppedOrchs(stopped, orchCwd, orchs)} stoppingIds={stoppingIds} startingOrchs={startingOrchs} helpers={helpers} loose={loose} onChatTab={onChatTab} ctxOf={ctxOf} onAddProject={onAddProject} onResume={onResume} onRemoveStopped={onRemoveStopped ? (x) => sameOrchSlot(stopped, x, orchCwd).forEach((y) => onRemoveStopped(y)) : undefined} orchs={orchs} viewId={orch?.id} colorOf={colorOf} projects={groups} holders={holders} pick={pick}
           onPick={(k, orchId) => { const o = orchId ? orchs.find((x) => x.id === orchId) : undefined; setPick(navPick(k, orchId, orch?.id, o ? homeOf(o) : k)); if (orchId) setNav((n) => ({ ...n, view: orchId })); }}
           orchDocsOf={(o) => orchDocs(log, o.id, pins[pinKey(o)] ?? [])} isPinned={isPinned} onTogglePin={togglePin}
           pagesRoot={pagesRoot} pages={pages} pageTitle={pageName} onNewPage={newPage}
@@ -861,6 +893,9 @@ export function SpaceView({ orchPins = [], pet, petReq = null, onPetReq, office,
         })()}
         {switching && <div className="cv-switch" aria-live="polite"><span className="cv-spin" /><b>{tr(`${oname(orchs.find((x) => x.id === switching) ?? orch!)} 불러오는 중`, `Loading ${switching}`)}</b></div>}
       </main>
+      {/* 참모 모드 — '스페이스 패널로' 켠 것은 오른쪽에, 미리보기·꽉 채우기는 스페이스 위에(따로 창이 기본) */}
+      <ModePanel rows={modeRows} />
+      <ModeLayer rows={modeRows} />
       {modal && <Preview f={modal} onClose={() => setModal(null)} onAttach={() => attach(modal.path)} onSendText={send} onCuration={toCuration} />}
       {pick.startsWith('c:') && (() => { const own = curOwner(pick.slice(2)); const to = own ?? chatOrch; return <CurationMode key={pick} path={pick.slice(2)} sendTo={own ? oname(own) : sendTo ?? assistant()} color={to ? bodyColor(avatars, to.name || '', colorOf(to.name || '')) : undefined}
         onSend={own ? async (text) => { window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id: own.id, text } })); await sendTextToSession(own.id, text); } : send} onClose={() => setPick(beforeCur.current || (orch ? `o:${orch.id}` : ''))} />; })()}

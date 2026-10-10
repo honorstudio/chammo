@@ -16,6 +16,7 @@ mod accounts_usage;
 mod claude_defaults;
 mod computer_use;
 mod browser_attach;
+mod browser_foreign;
 mod config;
 mod harnitor;
 mod hq;
@@ -85,6 +86,8 @@ mod tools_plugins;
 mod theme;
 mod origin;
 mod tts;
+mod modes;
+mod modes_host;
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder};
 use tauri::Manager;
@@ -238,8 +241,22 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
             .build()?;
         menu.append(&tama_menu)?;
     }
+    // 모드 — 리더(·다마고치) 뒤, 윈도우 앞(참모 모드, docs/research/2026-10-05-chammo-mod.md)
+    if let Some(m) = modes_host::menu(app)? {
+        menu.append(&m)?;
+    }
     menu.append(&window)?;
     Ok(menu)
+}
+
+/// 메뉴를 다시 만든다(모드 켜고 끔 → ✓·자리). 메뉴는 메인 스레드에서
+pub fn refresh_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let h = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Ok(m) = build_menu(&h) {
+            let _ = h.set_menu(m);
+        }
+    });
 }
 
 /// ⌘Q — 창을 다 숨기고 독에서 뺀다. 앱은 뒤에서 살아 있어 세션 알림·음성은 그대로, 다시 열면 Reopen 이 되살린다
@@ -330,6 +347,9 @@ fn main() {
                 to_background(app);
                 return;
             }
+            if id.starts_with("mode_") && modes_host::on_menu(app, &id) {
+                return;
+            }
             // 기본 항목(가리기·종료 등)은 macOS 가 알아서 한다 — 우리 항목만 넘긴다(안 그러면 '가리기' 뒤에 창이 다시 뜬다)
             const OURS: &[&str] = &["goto_orch", "goto_all", "goto_review", "goto_office", "reader_toggle", "reader_full", "reader_next", "reader_prev", "reader_close", "goto_tama", "open_dex", "sidebar", "tasks", "search", "font_up", "font_down", "font_reset", "new_session", "close_pane", "pane_max", "widget_toggle", "memo", "settings", "harnitor", "tour", "app_quit_all", "select_all"];
             if !OURS.contains(&id.as_str()) {
@@ -352,10 +372,13 @@ fn main() {
             std::thread::spawn(|| { browser_attach::reassert(); });
             // 세션 크롬 가리기 지킴이(세션 브라우저 앱에서 보기) — 앱이 떠 있을 때만 가려진다
             agent_browser::watch_hidden();
+            agent_browser::watch_popups();
             // 가상 모니터 — 세션 크롬을 눈에 안 보이는 화면에(안 되는 맥이면 조용히 안 함)
             vdisplay::start();
             // 참모 scripts/app — 앱을 대신 조작(음성·기능·화면)
             appctl::watch(app.handle());
+            // 켜 두었던 참모 모드를 다시(호스트는 뒤에서)
+            modes_host::boot(app.handle());
             // 덮개 닫힘 → 바로 프사·말하는 빛·오피스 멈춤(ui/attention). 3초마다 읽고 바뀔 때만 알림, 맥만
             lid::start(app.handle());
             // 창 제목도 앱 이름으로 — 설정 파일 제목(Chammo)은 공개판 것이라 개인 빌드(Chammo Dev)와 섞여 보였다
@@ -374,6 +397,10 @@ fn main() {
                 let n = hq::attach_statusline_all(config::data_dir());
                 if n > 0 {
                     claude::log_out("statusline", &format!("attached to {n} project(s)"));
+                }
+                let n = browser_attach::follow_worktrees_all(config::data_dir());
+                if n > 0 {
+                    claude::log_out("browser-attach", &format!("worktree approval to {n} folder(s)"));
                 }
             });
             // 브라우저 자동화를 깐 사용자면 도구 코드를 이번 앱 것으로(설치 버튼 때만 풀면 앱을 올려도 옛 래퍼가 돈다)
@@ -428,6 +455,8 @@ fn main() {
         .register_uri_scheme_protocol("hodoc", |ctx, req| if webpage::blocked(ctx.webview_label()) { forbidden() } else { reader::serve(ctx, req) })
         // 하니터 화면(다리 끼운 것) — iframe 이 연다
         .register_uri_scheme_protocol("harnitor", |ctx, req| if webpage::blocked(ctx.webview_label()) { forbidden() } else { harnitor::serve(ctx, req) })
+        // 참모 모드 Client 방(모드 화면 모듈만 도는 빈 페이지) — 별도 출처 + CSP sandbox(modes.rs FRAME_CSP)
+        .register_uri_scheme_protocol("modeframe", |ctx, req| if webpage::blocked(ctx.webview_label()) { forbidden() } else { modes::frame_response(req.uri().path()) })
         .manage(pty::Ptys::default())
         .invoke_handler(no_web_preview(tauri::generate_handler![
             remote::remote_devices,
@@ -440,6 +469,7 @@ fn main() {
             agent_browser::agent_tabs,
             agent_browser::agent_pin,
             agent_browser::agent_focus,
+            agent_browser::agent_peek,
             agent_browser::agent_hide,
             agent_browser::agent_input,
             agent_browser::agent_takeover,
@@ -506,6 +536,8 @@ fn main() {
             browser_setup::browser_setup_start,
             agent_browser::agent_dialog_wrapper,
             agent_browser::agent_permission,
+            agent_browser::agent_fedcm,
+            browser_foreign::foreign_browsers,
             browser_attach::project_browser,
             browser_attach::project_browser_attach,
             browser_setup::browser_setup_state,
@@ -568,6 +600,8 @@ fn main() {
             reader::save_curation_state,
             orch_pins::read_orch_pins,
             orch_pins::set_orch_pin,
+            orch_pins::read_orch_order,
+            orch_pins::set_orch_order,
             orch_roles::read_orch_roles,
             orch_roles::set_orch_role,
             reader::read_curation_state,
@@ -632,6 +666,7 @@ fn main() {
             accounts_cmd::accounts_rename,
             accounts_cmd::accounts_reorder,
             accounts_cmd::accounts_remove,
+            accounts_cmd::accounts_restore,
             accounts_cmd::accounts_auto_patch,
             accounts_cmd::accounts_usage,
             claude::read_usage_at,
@@ -666,11 +701,27 @@ fn main() {
             reader::reader_drop,
             reader::reader_open,
             reader::read_doc_text,
+            reader::moved_paths,
+            modes_host::mode_list,
+            modes_host::mode_open,
+            modes_host::mode_close,
+            modes_host::mode_restart,
+            modes_host::mode_state,
+            modes_host::mode_render,
+            modes_host::mode_act,
+            modes_host::mode_seen,
+            modes_host::mode_top,
+            modes_host::mode_client_module,
+            modes_host::mode_client_act,
+            modes_host::mode_client_message,
+            modes_host::mode_client_fault,
         ]))
         // ⌘W(창 닫기)로 앱이 통째로 꺼지지 않게 — 창만 숨기고, Dock 아이콘을 누르면 다시 보인다. 완전히 끄는 건 ⌘Q
         .on_window_event(|window, event| match event {
             // 떼어 낸 리더 창은 진짜로 닫는다(탭도 같이 — 크롬처럼)
             tauri::WindowEvent::CloseRequested { .. } if window.label().starts_with("reader-") => reader::forget(window.label()),
+            // 모드 따로 창을 닫으면 그 모드를 끈다(호스트도)
+            tauri::WindowEvent::CloseRequested { .. } if modes_host::is_mode_window(window.label()) => modes_host::window_closed(window.app_handle(), window.label()),
             // 주소 미리보기 창(⌘W 등)은 진짜로 닫고 상태를 비운다
             tauri::WindowEvent::CloseRequested { .. } if window.label() == webpage::LABEL => webpage::forget(),
             // 미리보기 창이 붙은 창이 움직이면 따라간다(맥은 자식 창이 저절로 따라오지만 윈도우는 아니다)
@@ -701,6 +752,8 @@ fn main() {
                 agent_browser::hide_all();
                 vdisplay::stop();
                 claude::stop_speaking();
+                // 모드 호스트를 남기지 않는다
+                modes_host::shutdown();
                 // 모바일 서버·테일스케일 serve 정리
                 mobile::shutdown();
                 messenger_cmd::shutdown();

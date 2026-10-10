@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accountLine, dotOf, stageOf, tokenLooksRight, type MessengerView } from './messenger';
+import { accountLine, dotOf, stageOf, tokenFrom, tokenLooksRight, type MessengerView } from './messenger';
 
 const base: MessengerView = { hasToken: false, bot: null, on: false, user: null, pending: null, running: false, error: null, waiting: false, tokenFile: false };
 const gd = { name: '길동', username: 'gildong', id: 7001 };
@@ -33,5 +33,20 @@ describe('설정 > 텔레그램 단계', () => {
     for (const bad of ['', '123:abc', 'abc:AAH4kq9_sZx-Qw3eRtYuIoP1aSdFgHjKlZx', '123456789:AAH4kq9 sZx-Qw3eRtYuIoP1aSdFgHjKlZx', '123456789:AAH4kq9_sZx-Qw3eRtYuIoP1aSdFgHjKl"x']) {
       expect(tokenLooksRight(bad)).toBe(false);
     }
+  });
+});
+
+describe('tokenFrom — 붙여 넣은 글에서 토큰만', () => {
+  const T = '123456789:AAH4kq9_sZx-Qw3eRtYuIoP1aSdFgHjKlZx';
+  it('폰에서 복사하면 줄바꿈된 자리에 줄바꿈·공백이 끼어도 붙인다(2026-10-10 연결 버튼이 안 켜졌다)', () => {
+    expect(tokenFrom('123456789:AAH4kq9_sZx-Qw3eRtYu\nIoP1aSdFgHjKlZx')).toBe(T);
+    expect(tokenFrom(' 123456789:AAH4kq9_sZx-Qw3eRtYu IoP1aSdFgHjKlZx ')).toBe(T);
+  });
+  it('BotFather 메시지를 통째로 붙여도 토큰만 꺼낸다', () => {
+    expect(tokenFrom(`Done! Congratulations on your new bot. Use this token to access the HTTP API:\n${T}\nKeep your token secure`)).toBe(T);
+  });
+  it('토큰이 없으면 붙인 글 그대로(버튼은 꺼진 채)', () => {
+    expect(tokenFrom('hello')).toBe('hello');
+    expect(tokenLooksRight(tokenFrom('hello'))).toBe(false);
   });
 });

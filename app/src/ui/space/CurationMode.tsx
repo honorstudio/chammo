@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
+import { fromFrame } from '../../domain/curation';
 import { orchVars } from '../../domain/orchTheme';
 import { docUrl } from '../../domain/reader';
 import { tr } from '../../i18n';
@@ -47,7 +48,7 @@ export function CurationMode({ path, onClose, onSend, sendTo, color }: { path: s
   useEffect(() => {
     const on = (e: MessageEvent) => {
       const d = e.data as ({ hodoc?: string } & Partial<CurState>) | null;
-      if (d?.hodoc !== 'cur-state' || typeof d.text !== 'string') return;
+      if (d?.hodoc !== 'cur-state' || typeof d.text !== 'string' || !fromFrame(e, frame())) return;
       setSt({ title: d.title ?? '', kind: d.kind, total: d.total ?? 0, done: d.done ?? 0, counts: d.counts ?? {}, labels: d.labels ?? [], decks: d.decks ?? [], text: d.text, blocks: d.blocks ?? [], sel: d.sel ?? '', zoom: d.zoom });
       if (d.sel) { const b = (d.blocks ?? []).find((x) => x.k === d.sel); if (b && b.deck >= 0) setDeckAt(b.deck); }
       setSent((x) => (x === 'sent' ? 'idle' : x));
@@ -59,6 +60,7 @@ export function CurationMode({ path, onClose, onSend, sendTo, color }: { path: s
     const key = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('.od-back')) onClose(); };
     const esc = (e: MessageEvent) => {
       const d = e.data as { hodoc?: string; k?: string } | null;
+      if (!fromFrame(e, frame())) return;
       if (d?.hodoc === 'esc') onClose();
       if (d?.hodoc === 'cur-note' && d.k != null) { setOpenK(d.k); window.setTimeout(() => notes.current.get(d.k!)?.focus(), 60); }
     };
@@ -96,7 +98,7 @@ export function CurationMode({ path, onClose, onSend, sendTo, color }: { path: s
     if (!st || !onSend) return;
     setSent('sending');
     const more = extra.trim();
-    try { await onSend(more ? `${st.text}\n\n${tr('덧붙이는 말', 'Additional note')}: ${more}` : st.text); setSent('sent'); setExtra(''); void invoke('space_log_append', { line: JSON.stringify({ ts: new Date().toISOString(), who: '사용자', kind: 'review', path }) }).catch(() => {}); } catch { setSent('fail'); }
+    try { await onSend(more ? `${st.text}\n\n${tr('덧붙이는 말', 'Additional note')}: ${more}` : st.text); setSent('sent'); setExtra(''); void invoke('space_log_append', { line: JSON.stringify({ ts: new Date().toISOString(), who: 'user', kind: 'review', path }) }).catch(() => {}); } catch { setSent('fail'); }
   };
   const goto = (i: number) => { setDeckAt(i); cmd({ cmd: 'goto', deck: i }); };
   // 펼친 카드 — 시안에서 고른 블록을 따라간다(J·K·블록 누르기). 펼친 카드를 다시 누르면 접는다

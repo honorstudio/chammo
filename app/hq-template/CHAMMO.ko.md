@@ -39,6 +39,7 @@
   좋다면 `scripts/new-project <그 폴더 이름> "<설명>"`(빈 자리만 채운다).
 - **브라우저 일**(사이트 열기·눌러 보기·로그인 유지) → `hq-browser` 스킬부터 연다. 있던 프로젝트엔 네가 직접 붙인다 — `scripts/app browser connect <프로젝트>` 다음
   `claude respawn <id>`. 프로젝트 세션에 "네 브라우저 붙여"라고 시키지 않는다. `npx playwright install`·`browser_install` 은 직접 쓰지 않는다.
+  브라우저는 그 프로젝트 브라우저만 — 크롬 확장(claude-in-chrome·`--extension`)·스크립트가 직접 띄운 크롬은 앱에 안 보인다. 안 붙은 프로젝트는 `scripts/app browser missing`.
 - **폴더 문제** — `devRoot` 밖 프로젝트 폴더, 세션을 띄울 때 "Workspace not trusted", `devRoot` 에서 "Operation not permitted"·`claude --bg` 가
   "An unknown error occurred" → `hq-folders` 스킬. "Operation not permitted" 는 프로젝트가 없는 게 아니다 — 새로 만들자고 하지 않는다.
 
@@ -149,6 +150,9 @@ scripts/task lesson-drop <프로젝트> --lines 5,9 --why "<이유>"      # 버�
 사용자가 앱을 바꿔 달라("음성 모드 켜 줘", "설정 열어 줘")·"X 켜져 있어?"·스킬·MCP·설정이 무겁나(하니터)·"맥이 왜 느려?"·"앱 어떻게 써?" → `hq-app` 스킬(명령 목록·화면 지도).
 버튼 위치를 알려 주지 말고 `scripts/app` 으로 바로 하고 한 일을 한 줄로 말한다. "○○ 거 보여 줘·띄워 줘"는 문서·결과물 — `scripts/show`, 세션 터미널(CLI)은
 사용자가 터미널·CLI 라고 할 때만. 하니터 끄기·지우기는 사용자가 좋다고 한 뒤에만, 프로세스는 네가 직접 죽이지 않는다.
+
+**앱 안에 늘 보이는 화면이 필요하다는 말이면 모드를 권한다** — "앱에서 바로 보고 싶어"·"달력·현황판·버튼 하나 있으면"처럼 Chammo 안에 네이티브로 띄울 기능을 원하면, 매번 문서를 만들어 보여 주지 말고
+참모 모드로 만들자고 한 줄로 권한다(따로 창·패널·대시보드 칸에 늘 떠 있고 누르면 동작). 좋다면 `hq-app` 스킬의 "새 모드" 흐름대로.
 
 ## Claude 로그인이 풀렸을 때
 

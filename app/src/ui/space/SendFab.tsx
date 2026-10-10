@@ -29,7 +29,7 @@ export function SendFab({ send, sendTo }: { send: (text: string) => Promise<void
     setSending(true); setErr('');
     try {
       await send(preview);
-      void invoke('space_log_append', { line: JSON.stringify({ ts: new Date().toISOString(), who: '사용자', kind: 'send', to, docs: docs.map((d) => d.path), comments: comments.length, memo: memo.trim() }) }).catch(() => {});
+      void invoke('space_log_append', { line: JSON.stringify({ ts: new Date().toISOString(), who: 'user', kind: 'send', to, docs: docs.map((d) => d.path), comments: comments.length, memo: memo.trim() }) }).catch(() => {});
       markSent();
       setMemo(''); setPinned(false); setHover(false);
       setFlown(true);

@@ -196,3 +196,12 @@ fn 안_보이는_글자는_입력칸·이름에서_뺀다() {
         i => panic!("{i:?}"),
     }
 }
+
+#[test]
+fn 텔레그램에_보이는_이름은_별명_먼저() {
+    // 2026-10-10 사용자: 답 머리에 '참모-2:' 로 나왔다 — 별명이 있으면 별명
+    let a = Orch { id: "aaaaaaaa".into(), session: "s1".into(), name: "참모".into() };
+    let b = Orch { id: "bbbbbbbb".into(), session: "s2".into(), name: "참모-2 · 참모 업데이트".into() };
+    assert_eq!(a.label(), "참모");
+    assert_eq!(b.label(), "참모 업데이트");
+}

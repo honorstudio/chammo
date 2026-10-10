@@ -526,7 +526,14 @@ pub fn forget(label: &str) {
 #[tauri::command]
 pub fn read_doc_text(path: String) -> Result<String, String> {
     let p = safe_path(&path, &home()).ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
-    std::fs::read_to_string(p).map_err(|e| e.to_string())
+    read_utf8(&p)
+}
+
+/// 글이 UTF-8 이 아니다(밖에서 EUC-KR 등으로 저장) — 앞쪽(docSync)이 이 글로 알아보고 '못 읽음' 띠를 띄운다
+pub const NOT_UTF8: &str = "NOT_UTF8";
+
+fn read_utf8(p: &Path) -> Result<String, String> {
+    std::fs::read_to_string(p).map_err(|e| if e.kind() == std::io::ErrorKind::InvalidData { NOT_UTF8.into() } else { e.to_string() })
 }
 
 /// 편집기가 알던 판과 지금 파일이 달라 저장하지 않았다 — 앞쪽(SpaceEditor)이 이 글로 알아보고 바깥 판을 합친다
@@ -906,6 +913,13 @@ pub fn trash_page(path: String) -> Result<(), String> {
 pub fn read_show_log() -> String {
     let h = home();
     crate::mobile_files::resolve_show_log(&read_show_tail(), &std::fs::canonicalize(&h).unwrap_or(h))
+}
+
+/// 스페이스 고정 문서 중 닫힌 워크트리에서 옮겨 간 것 (옛 경로 → 새 경로) — show 기록과 같은 풀기(mobile_files::moved_from_worktree)
+#[tauri::command]
+pub fn moved_paths(paths: Vec<String>) -> std::collections::BTreeMap<String, String> {
+    let h = home();
+    crate::mobile_files::moved_map(&paths, &std::fs::canonicalize(&h).unwrap_or(h))
 }
 
 /// 기록에서 넘길 양 — 폰은 바뀌었을 때만 통째로 받는다(/api/shows?since=, 2026-10-09), 늘리면 그때 LTE 로 그만큼 더 받는다
@@ -1486,6 +1500,19 @@ mod tests {
         assert!(!d.join("a.chammo-tmp").exists());
         // 알던 판을 안 주면(옛 부르는 쪽) 예전처럼 쓴다
         assert!(super::write_checked(&p, "또\n", None, |_| {}).is_ok());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 재현_utf8_이_아닌_글은_not_utf8_로_알려_띠를_띄운다() {
+        // 밖에서 EUC-KR 로 저장하면 읽기가 그냥 실패해 편집기가 띠 없이 저장만 멈췄다
+        let d = doc_dir("enc");
+        let p = d.join("메모.md");
+        std::fs::write(&p, [0xb8u8, 0xde, 0xb8, 0xf0, b'\n']).unwrap(); // '메모' EUC-KR
+        assert_eq!(super::read_utf8(&p), Err(super::NOT_UTF8.to_string()));
+        std::fs::write(&p, "메모\n").unwrap();
+        assert_eq!(super::read_utf8(&p).as_deref(), Ok("메모\n"));
+        assert!(super::read_utf8(&d.join("없음.md")).is_err_and(|e| e != super::NOT_UTF8));
         let _ = std::fs::remove_dir_all(&d);
     }
 

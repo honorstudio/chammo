@@ -42,3 +42,20 @@ describe('ctxAlerts — 80% 를 넘는 순간만 알림 (켜자마자 쏟아지�
     expect(ctxAlerts({ a: 20 }, { a: 81 })).toEqual(['a']);
   });
 });
+
+describe('ctxRing — 사이드바 프사 고리(대화 %), 2026-10-10 B안', () => {
+  it('채운 길이 = 둘레 × %, 0~100 밖은 자른다', async () => {
+    const { ctxRing } = await import('./ctx');
+    const c = 2 * Math.PI * 10;
+    expect(ctxRing(50, 10).dash).toBeCloseTo(c / 2, 3);
+    expect(ctxRing(50, 10).circ).toBeCloseTo(c, 3);
+    expect(ctxRing(-5, 10).dash).toBe(0);
+    expect(ctxRing(140, 10).dash).toBeCloseTo(c, 3);
+  });
+  it('색 단계는 숫자 칸과 같다(60 노랑·80 빨강)', async () => {
+    const { ctxRing } = await import('./ctx');
+    expect(ctxRing(59, 10).level).toBe('ok');
+    expect(ctxRing(60, 10).level).toBe('mid');
+    expect(ctxRing(80, 10).level).toBe('high');
+  });
+});

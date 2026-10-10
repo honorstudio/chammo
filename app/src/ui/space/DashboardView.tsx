@@ -98,7 +98,9 @@ function Pane({ l, term, live, onToggle, onStop }: { l: DashLine; term?: React.R
  */
 export type DashLists = { todo: { text: string; doing?: boolean; by?: string }[]; decisions: string[]; source?: string };
 
-export function DashboardView({ browser, pet, under, onStop, headAction, onCuration, title, titleNode, avatar, meta, files, lines, onOpenSession, emptyText, work = false, onOpenDoc, onAttach, term, lists, hint, onSendText, onTitleEdit, aside }: {
+export function DashboardView({ modes, browser, pet, under, onStop, headAction, onCuration, title, titleNode, avatar, meta, files, lines, onOpenSession, emptyText, work = false, onOpenDoc, onAttach, term, lists, hint, onSendText, onTitleEdit, aside }: {
+  /** 이 대시보드 칸에 켠 참모 모드(ui/mode/ModePanel ModeDash) — 알림 칸 아래 */
+  modes?: React.ReactNode;
   /** 이 참모가 쓰는 브라우저(참모 대시보드) — 있으면 파일 위에 브라우저 화면 + 하는 일 */
   browser?: { live: Live; tail?: string[] };
   /** 참모가 키우는 펫 탭(참모 대시보드만) — on 이면 파일·세션 대신 펫 화면. 고르는 세 칸(대시보드·펫·사무실)은 SpaceView 가 한 자리에 */
@@ -173,6 +175,7 @@ export function DashboardView({ browser, pet, under, onStop, headAction, onCurat
       </header>
       {pet?.on ? <div className="cv-pet">{pet.node}</div> : <>
       {hint}
+      {modes}
       {work ? (
         <>
           {lists && (lists.todo.length > 0 || lists.decisions.length > 0) && (

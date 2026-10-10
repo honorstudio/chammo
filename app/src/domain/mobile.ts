@@ -9,7 +9,7 @@ import type { Session } from './session';
 import { displayName, shownName, splitOrchName, withNick } from './orchLabel';
 import { groupByProject, orchestratorLike } from './session';
 import { homeRows, resumedOrch, type HomeRow } from './orchHome';
-import { heldBy } from './spaceNav';
+import { heldBy, holderMap } from './spaceNav';
 import { parseStopped, resumable, stoppedOrchs } from './stopped';
 import { foldTasks, splitCards, type TaskCard, type TaskEvent } from './tasks';
 import { asksUser } from './status';
@@ -84,7 +84,12 @@ export function foldSummary(g: { ask: TaskCard[]; doing: TaskCard[]; done: TaskC
 
 /** 그 참모가 잡고 있는 세션 id(마지막으로 일을 보낸 참모가 잡는다) — 파일 카드에 그 세션들이 보여 준 파일도 모은다 */
 export function heldIds(events: TaskEvent[], sessions: Session[], orchId: string, now: number): string[] {
-  return [...new Set(heldBy(events, orchId, now).map((t) => findTarget(sessions, t)?.id).filter((x): x is string => !!x && x !== orchId))];
+  // 세션 id 로 모아 마지막 참모만 — 이름·번호로 따로 보낸 세션이 넘겨준 참모에게도 남지 않게(holderMap). 다른 참모 목록을 모르니 보낸 사람 전부를 후보로
+  const orchs = [...new Set(events.filter((e) => e.type === 'send' && e.from).map((e) => e.from!))];
+  if (!orchs.includes(orchId)) orchs.push(orchId);
+  const m = holderMap(events, orchs, (t) => findTarget(sessions, t)?.id, now);
+  const order = heldBy(events, orchId, now).map((t) => findTarget(sessions, t)?.id);
+  return [...new Set(order.filter((x): x is string => !!x && x !== orchId && !!m.get(x)?.includes(orchId)))];
 }
 
 /** 사용량 칩 — "5시간 62% · 주 40%"(남은 %) */

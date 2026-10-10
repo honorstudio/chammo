@@ -29,6 +29,10 @@ export function setBase(s: DocSession, text: string, stamp: string | null) {
 }
 
 const OUTSIDE = 'CHANGED_OUTSIDE';
+
+/** 바깥 판 읽기 — 글이 UTF-8 이 아니면(Rust NOT_UTF8) unreadable: 띠를 띄운다(예전엔 띠 없이 저장만 멈췄다). 다른 실패는 null(다음 감시에서 다시) */
+export const readOutside = (path: string): Promise<{ text: string } | { unreadable: true } | null> =>
+  invoke<string>('read_doc_text', { path }).then((text) => ({ text }), (e) => (String(e).includes('NOT_UTF8') ? { unreadable: true as const } : null));
 const saveTimers = new Map<DocSession, ReturnType<typeof setTimeout>>();
 
 export function saveSoon(s: DocSession, md: string) {
@@ -55,7 +59,7 @@ async function flush(s: DocSession, md: string) {
     setBase(s, md, stamp);
     lastSaved.set(s.path, md);
     const diff = mdDiff(before, md);
-    if (diff.added.length || diff.removed.length) void invoke('space_log_append', { line: JSON.stringify({ ts: new Date().toISOString(), who: '사용자', kind: 'edit', path: s.path, ...diff }) }).catch(() => {});
+    if (diff.added.length || diff.removed.length) void invoke('space_log_append', { line: JSON.stringify({ ts: new Date().toISOString(), who: 'user', kind: 'edit', path: s.path, ...diff }) }).catch(() => {});
   } catch (e) {
     const outside = String(e).includes(OUTSIDE);
     // 못 쓴 내 판은 history 에 — 파일이 없어졌거나, 편집기가 닫힌 뒤(문서를 떠난 직후) 늦게 거절돼 합칠 편집기가 없을 때(잃지 않게)

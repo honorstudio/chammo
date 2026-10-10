@@ -119,29 +119,10 @@ fn write_seen(v: &[String]) -> Result<(), String> {
     std::fs::rename(&tmp, &f).map_err(|e| e.to_string())
 }
 
-/// ~/.claude.json 고치기 — 백업 → 임시 파일 → 바꿔 끼우기 → 다시 읽어 확인. 다른 세션이 수시로 쓰니
-/// 확인이 틀리면(사이에 덮였다) 새로 읽어 다시, 세 번까지. 안 바뀔 거면 아무것도 안 쓴다
-pub(crate) fn edit(mut f: impl FnMut(&str) -> Result<Option<String>, String>, ok: impl Fn(&Value) -> bool) -> Result<bool, String> {
+/// ~/.claude.json 고치기 — 처음 쓰기 전 백업, 나머지(다시 읽기·확인·세 번까지·앱 안 줄)는 tools::edit_json
+pub(crate) fn edit(f: impl FnMut(&str) -> Result<Option<String>, String>, ok: impl Fn(&Value) -> bool) -> Result<bool, String> {
     let c = crate::tools::cfg();
-    let mut backed = false;
-    for _ in 0..3 {
-        let text = std::fs::read_to_string(&c.json).map_err(|e| e.to_string())?;
-        let Some(next) = f(&text)? else { return Ok(false) };
-        if !backed {
-            crate::tools::backup(&c, None)?;
-            backed = true;
-        }
-        let tmp = c.json.with_extension("json.chammo-tmp");
-        std::fs::write(&tmp, next).map_err(|e| e.to_string())?;
-        if let Ok(m) = std::fs::metadata(&c.json) {
-            let _ = std::fs::set_permissions(&tmp, m.permissions()); // 원래 권한 그대로(0600 이면 0600)
-        }
-        std::fs::rename(&tmp, &c.json).map_err(|e| e.to_string())?;
-        if ok(&crate::tools::read_json(&c.json)) {
-            return Ok(true);
-        }
-    }
-    Err(crate::i18n::tr("~/.claude.json 을 다른 쪽이 계속 덮어써서 못 고쳤어 — 잠시 뒤 다시", "~/.claude.json kept being overwritten — try again shortly").into())
+    crate::tools::edit_json(&c.json, f, || crate::tools::backup(&c, None), ok)
 }
 
 /// 한 프로젝트에서 켜기·끄기(도구 화면 '이 프로젝트') — 본 칸으로 남겨 모든 프로젝트 켜기가 다시 켜지 않게

@@ -10,6 +10,26 @@ const k = (key: string, mods: { meta?: boolean; shift?: boolean; alt?: boolean; 
 });
 
 describe('shortcutFor — 앱 단축키', () => {
+  // 2026-10-10 사용자: 고른 채팅 탭을 왼쪽·오른쪽으로 한 칸 — 크롬과 같은 ⌃⇧PageUp/PageDown + 맥 손에 맞는 ⌥⌘⇧←/→. 윈도우는 Ctrl+Shift+PageUp/Down · Ctrl+Alt+Shift+←/→
+  it('탭 옮기기 — ⌃⇧PageUp/PageDown · ⌥⌘⇧←/→', () => {
+    expect(shortcutFor(k('PageUp', { ctrl: true, shift: true }), false)).toEqual({ type: 'moveTab', dir: -1 });
+    expect(shortcutFor(k('PageDown', { ctrl: true, shift: true }), false)).toEqual({ type: 'moveTab', dir: 1 });
+    expect(shortcutFor(k('ArrowLeft', { meta: true, alt: true, shift: true }), false)).toEqual({ type: 'moveTab', dir: -1 });
+    expect(shortcutFor(k('ArrowRight', { meta: true, alt: true, shift: true }), false)).toEqual({ type: 'moveTab', dir: 1 });
+    // 빠진 수정키는 아니다 — ⌘← 는 입력칸 줄 처음, ⌃PageUp 은 터미널 몫
+    expect(shortcutFor(k('ArrowLeft', { meta: true }), false)).toBeNull();
+    expect(shortcutFor(k('ArrowLeft', { meta: true, alt: true }), false)).toBeNull();
+    expect(shortcutFor(k('PageUp', { ctrl: true }), false)).toBeNull();
+  });
+
+  it('탭 옮기기 — 윈도우는 Ctrl 로', () => {
+    expect(shortcutFor(k('PageUp', { ctrl: true, shift: true }), true)).toEqual({ type: 'moveTab', dir: -1 });
+    expect(shortcutFor(k('ArrowRight', { ctrl: true, alt: true, shift: true }), true)).toEqual({ type: 'moveTab', dir: 1 });
+    expect(shortcutFor(k('ArrowRight', { ctrl: true, alt: true }), true)).toBeNull(); // Ctrl+Alt+화살표는 화면 돌리기(인텔 그래픽)
+    expect(shortcutFor(k('ArrowRight', { meta: true, alt: true, shift: true }), true)).toBeNull();
+    expect(dedupeMs({ type: 'moveTab', dir: 1 })).toBe(0); // 빠르게 여러 번 눌러 여러 칸
+  });
+
   // 2026-09-30 사용자: 스페이스가 기본이 되며 ⌘1~9 = 채팅 탭. 화면 이동은 ⌥⌘1~4(스페이스를 끄면 ⌘1~4 도 예전처럼 — App 이 가른다)
   it('⌘1~9 는 숫자 칸(채팅 탭 N번)', () => {
     expect(shortcutFor(k('1', { meta: true }))).toEqual({ type: 'num', n: 1 });

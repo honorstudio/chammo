@@ -248,3 +248,7 @@ export const IconBack = () => (
 export const IconBellOff = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M4 11.5V7.2a4 4 0 0 1 6.2-3.3M12 7v4.5l1.2 1.3H2.8M6.5 14a1.6 1.6 0 0 0 3 0M2.5 2.5l11 11" /></svg>
 );
+/** 설정: 조절 막대 셋(손잡이가 엇갈림) — 16px 에서 톱니보다 덜 뭉개진다(2026-10-10 계정 팝오버 시안 C) */
+export const IconSettings = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M2.5 4.5h4.2M9.8 4.5h3.7M2.5 8h1.7M7.3 8h6.2M2.5 11.5h6.2M11.8 11.5h1.7" /><circle cx="8.2" cy="4.5" r="1.5" /><circle cx="5.8" cy="8" r="1.5" /><circle cx="10.2" cy="11.5" r="1.5" /></svg>
+);

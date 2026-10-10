@@ -184,6 +184,14 @@ pub fn moved_from_worktree(p: &Path, home: &Path) -> Option<PathBuf> {
     cand.into_iter().find(|c| plain_path(c) == Plain::Ok && c.is_file())
 }
 
+/// 여러 경로 중 닫힌 워크트리에서 옮겨 간 것만 (옛 경로 → 새 경로) — 스페이스 고정 문서(앱 기억에 있어 show 기록 풀기를 안 거친다)
+pub fn moved_map(paths: &[String], home: &Path) -> std::collections::BTreeMap<String, String> {
+    paths
+        .iter()
+        .filter_map(|p| Some((p.clone(), moved_from_worktree(Path::new(p), home)?.to_string_lossy().into_owned())))
+        .collect()
+}
+
 /// show 기록을 읽을 때 사라진 경로 손보기 — 워크트리에서 옮겨 간 파일은 path 를 새 자리로, 어디서도 못 찾으면 "gone": true(목록이 뺀다).
 /// 있는 줄·웹 주소·깨진 줄은 글자 그대로. 폰(/api/shows·허용 집합)과 데스크톱 스페이스가 다 이걸 거친 기록을 읽는다
 pub fn resolve_show_log(log: &str, home: &Path) -> String {

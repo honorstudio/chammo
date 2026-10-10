@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { docTitle, orchDocs, projectGroups, projectRoot } from './spaceTree';
+import { docTitle, orchDocs, pinPaths, projectGroups, projectRoot, remapPins } from './spaceTree';
 
 const show = (from: string, path: string, ts: string) => JSON.stringify({ ts, path, from });
 
@@ -41,5 +41,22 @@ describe('docTitle — 메뉴에 보일 문서 이름', () => {
     expect(docTitle('/p/docs/starter.md')).toBe('starter');
     expect(docTitle('/p/docs/decisions/0003-tauri-app.md')).toBe('tauri-app');
     expect(docTitle('/x/이번 주 생각.md')).toBe('이번 주 생각');
+  });
+});
+
+// 고정한 문서가 닫힌 워크트리 안이면 Rust(moved_paths)가 알려 준 새 자리로 바꿔 끼운다 — 예전엔 고정이 없는 파일을 가리켰다
+describe('remapPins — 옮겨 간 고정 문서', () => {
+  const wt = '/h/proj/.claude/worktrees/x/docs/a.md';
+  it('재현: 옮긴 경로만 새 자리로, 참모마다·순서 그대로', () => {
+    const pins = { '참모-2': ['/h/b.md', wt], '참모-3': [wt] };
+    expect(pinPaths(pins)).toEqual(['/h/b.md', wt]);
+    expect(remapPins(pins, { [wt]: '/h/proj/docs/a.md' })).toEqual({ '참모-2': ['/h/b.md', '/h/proj/docs/a.md'], '참모-3': ['/h/proj/docs/a.md'] });
+  });
+  it('새 자리를 이미 고정했으면 하나만', () => {
+    expect(remapPins({ o: ['/h/proj/docs/a.md', wt] }, { [wt]: '/h/proj/docs/a.md' })).toEqual({ o: ['/h/proj/docs/a.md'] });
+  });
+  it('바뀐 게 없으면 null(다시 저장하지 않게)', () => {
+    expect(remapPins({ o: ['/h/b.md'] }, {})).toBeNull();
+    expect(remapPins({ o: ['/h/b.md'] }, { [wt]: '/h/x.md' })).toBeNull();
   });
 });

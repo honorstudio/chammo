@@ -13,6 +13,16 @@ describe('채팅 탭 줄 — 줄어들기·넘기기', () => {
     expect(tab).toMatch(/min-width: \d+px/);
     expect(rules(chat, /^\.ct-strip\s*$/).join(' ')).toMatch(/overflow-x: auto/);
   });
+  // 2026-10-10 사용자: 5개인데도 다 안 보였다 — 이름이 거의 안 보이고 프사까지 눌릴 때까지 버틴 뒤에야 넘기기
+  it('안 고른 탭은 프사만 남을 만큼(40px 이하)까지 줄어든다', () => {
+    const min = Number(/min-width: (\d+)px/.exec(rules(chat, /^\.chat-tabs \[role="tab"\]\s*$/).join(' '))?.[1]);
+    expect(min).toBeLessThanOrEqual(40);
+  });
+  it('고른 탭도 줄어들 수 있다(최소 폭은 안 고른 탭보다 넓게)', () => {
+    const on = rules(chat, /^\.chat-tabs \[role="tab"\]\.on\s*$/).join(' ');
+    expect(on).not.toMatch(/flex-shrink: 0;/);
+    expect(Number(/min-width: (\d+)px/.exec(on)?.[1])).toBeLessThanOrEqual(90);
+  });
   it('이름은 줄임표, 프사·닫기 ×는 안 눌린다', () => {
     expect(rules(chat, /\.ct-nm\s*$/).join(' ')).toMatch(/text-overflow: ellipsis/);
     expect(rules(chat, /^\.chat-tabs \.tab-x\s*$/).join(' ')).toMatch(/flex: none/);
@@ -22,9 +32,8 @@ describe('채팅 탭 줄 — 줄어들기·넘기기', () => {
     expect(chat).toMatch(/\.ct-strip\[data-more-r\]/);
     expect(chat).toMatch(/mask-image: linear-gradient/);
   });
-  it('고른 탭은 안 줄어든다 — 이름이 다 보이게(너무 길면 상한에서만 줄임표)', () => {
+  it('고른 탭은 덜 줄어든다 — 넉넉하면 이름이 다 보이고(너무 길면 상한에서만 줄임표) 좁으면 다른 탭보다 늦게', () => {
     const on = rules(chat, /^\.chat-tabs \[role="tab"\]\.on\s*$/).join(' ');
-    expect(on).toMatch(/flex-shrink: 0/);
     expect(on).toMatch(/max-width: \d+px/);
   });
 });

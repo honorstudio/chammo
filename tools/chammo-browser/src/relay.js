@@ -102,6 +102,7 @@ function createRelay({
   const lists = new Set(); // tools/list 요청 id — 응답에 래퍼 도구를 더한다
   let held = false;
   let shared = false; // held 가 남의 크롬을 같이 쓰는 것인가(내 락 아님)
+  let unshareAfter = false; // 같이 쓰는 중 browser_close 가 도는 호출 사이에 왔다 — 다 끝나면 놓는다
   const pending = new Map(); // 진행 중인 tools/call: id → 도구 이름
   const internal = new Set(); // 래퍼가 직접 보낸 요청 id — 응답을 Claude 로 흘리지 않는다
   let idleTimer = null;
@@ -152,6 +153,7 @@ function createRelay({
     release();
     held = false;
     shared = false;
+    unshareAfter = false;
   }
 
   function onClientLine(line) {
@@ -208,11 +210,12 @@ function createRelay({
     // 같이 쓰던 스크립트 크롬이 끝났으면 놓고 이번엔 내 것으로 다시 잡는다
     if (shared && held && pending.size === 0 && !stillShared()) unshare();
     // 같이 쓰는 남의 크롬은 닫지 않는다 — 놓기만 하고 세션엔 닫힌 것처럼 답한다
-    if (shared && held && name === CLOSE_TOOL && pending.size === 0) {
+    if (shared && held && name === CLOSE_TOOL) {
       cleared.delete(msg.id);
       const note = notes.get(msg.id);
       notes.delete(msg.id);
-      unshare();
+      // 도는 호출이 있으면 그게 끝난 뒤에 놓는다 — close 를 child 로 보내면 스크립트 크롬 연결이 끊긴다
+      if (pending.size === 0) unshare(); else unshareAfter = true;
       sendToClient(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: withNote({ content: [{ type: 'text', text: `스크립트가 같이 쓰는 '${profile}' 크롬이라 닫지 않고 연결만 놓았어요. 다음 브라우저 도구 때 다시 붙습니다.` }] }, note) }));
       return arm();
     }
@@ -271,6 +274,7 @@ function createRelay({
         held = false;
         shared = false;
       }
+      if (unshareAfter && shared && held && pending.size === 0) unshare();
       arm();
       if (internal.delete(msg.id)) {
         const iw = intWait.get(msg.id);

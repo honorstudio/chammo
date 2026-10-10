@@ -73,23 +73,39 @@ pub fn aside_spot(monitors: &[(i32, i32, u32, u32, bool)], scale: f64) -> ((i32,
     }
 }
 
-pub fn place_dev_window<R: Runtime>(app: &tauri::AppHandle<R>) {
+/// 개발판에서 새로 여는 앱 창(모드 따로 창 등)도 메인 창이 가는 옆 화면에 — 사용자 눈앞에 시험 창이 튀지 않게.
+/// 메인 창 자리를 읽지 않는다: 앱을 켤 때 다시 여는 모드 창은 메인 창 옮기기가 반영되기 전이라 옛 자리(주 화면)가 나왔다(2026-10-10)
+pub fn place_near_main<R: Runtime>(_app: &tauri::AppHandle<R>, w: &tauri::WebviewWindow<R>) {
     if !cfg!(debug_assertions) || std::env::var("CHAMMO_DEV_WINDOW").as_deref() == Ok("main") {
         return;
     }
-    let Some(w) = app.get_webview_window("main") else { return };
-    let Ok(ms) = w.available_monitors() else { return };
+    if let Some(((x, y), _)) = aside_of(w) {
+        let _ = w.set_position(tauri::LogicalPosition::new(x + 60, y + 60));
+    }
+}
+
+/// 옆 화면 자리(논리 좌표)와 그 화면 크기 — 화면 밖이면 크기 None
+fn aside_of<R: Runtime>(w: &tauri::WebviewWindow<R>) -> Option<((i32, i32), Option<(u32, u32)>)> {
+    let ms = w.available_monitors().ok()?;
     // 화면마다 배율이 달라(맥북 2배·가짜 화면 1배) 물리 픽셀을 섞으면 자리·크기가 반쪽이 됐다(2026-10-03 실측) — 논리 좌표로 고른다
     let lg = |m: &tauri::Monitor| {
         let s = m.scale_factor();
         ((m.position().x as f64 / s) as i32, (m.position().y as f64 / s) as i32, (m.size().width as f64 / s) as u32, (m.size().height as f64 / s) as u32)
     };
     let list: Vec<_> = ms.iter().map(|m| { let (x, y, w, h) = lg(m); (x, y, w, h, m.name().is_some_and(|n| n == crate::vdisplay::NAME)) }).collect();
-    let ((x, y), at) = aside_spot(&list, 1.0);
+    let (spot, at) = aside_spot(&list, 1.0);
+    Some((spot, at.map(|i| (list[i].2, list[i].3))))
+}
+
+pub fn place_dev_window<R: Runtime>(app: &tauri::AppHandle<R>) {
+    if !cfg!(debug_assertions) || std::env::var("CHAMMO_DEV_WINDOW").as_deref() == Ok("main") {
+        return;
+    }
+    let Some(w) = app.get_webview_window("main") else { return };
+    let Some(((x, y), screen)) = aside_of(&w) else { return };
     let _ = w.set_position(tauri::LogicalPosition::new(x, y));
-    if let Some(i) = at {
+    if let Some((mw, mh)) = screen {
         // 그 화면에 들어가게 — 화면보다 크면 줄인다(논리 크기)
-        let (_, _, mw, mh, _) = list[i];
         if let (Ok(sz), Ok(s)) = (w.outer_size(), w.scale_factor()) {
             let (cw, ch) = ((sz.width as f64 / s) as u32, (sz.height as f64 / s) as u32);
             let (fw, fh) = (cw.min(mw.saturating_sub(40)), ch.min(mh.saturating_sub(80)));

@@ -27,7 +27,9 @@ export type Shortcut =
   | { type: 'quitAsk' }
   | { type: 'selectAll' }
   /** ⌘[ ⌘] — 스페이스 뒤로(왔던 곳)·앞으로(2026-10-04 QA D2) */
-  | { type: 'nav'; dir: -1 | 1 };
+  | { type: 'nav'; dir: -1 | 1 }
+  /** 고른 채팅 탭(참모)을 왼쪽·오른쪽으로 한 칸 — 순서는 domain/orchOrder(2026-10-10 사용자) */
+  | { type: 'moveTab'; dir: -1 | 1 };
 
 type KeyLike = { key: string; code?: string; metaKey: boolean; shiftKey: boolean; altKey: boolean; ctrlKey: boolean };
 
@@ -38,7 +40,22 @@ export const gotoOfNum = (n: number): Shortcut | null => GOTO[n] ?? null;
 // 한글 입력 상태에선 같은 자리 키가 자모로 들어온다 — 영문 키로 바꿔 읽는다
 const HANGUL_KEY: Record<string, string> = { ㅁ: 'a', ㅠ: 'b', ㅓ: 'j', ㅏ: 'k', ㅈ: 'w', ㅅ: 't', ㅡ: 'm', ㄷ: 'e', ㄸ: 'E', ㄹ: 'f' };
 
+/**
+ * 탭 옮기기 — 크롬과 같은 ⌃⇧PageUp/PageDown(맥 자판은 fn+↑↓) + 맥 손에 맞는 ⌥⌘⇧←/→, 윈도우는 Ctrl+Alt+Shift+←/→.
+ * Ctrl 조합이지만 터미널·Claude 입력칸이 안 쓰는 키라 앱이 가져간다. 한 수정키라도 빠지면 아니다(⌘← 는 입력칸 줄 처음)
+ */
+function tabMoveOf(e: KeyLike, win: boolean): Shortcut | null {
+  const page = e.key === 'PageUp' ? -1 : e.key === 'PageDown' ? 1 : 0;
+  if (page && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey) return { type: 'moveTab', dir: page };
+  const arrow = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+  const mod = win ? e.ctrlKey && !e.metaKey : e.metaKey && !e.ctrlKey;
+  if (arrow && mod && e.altKey && e.shiftKey) return { type: 'moveTab', dir: arrow };
+  return null;
+}
+
 export function shortcutFor(input: KeyLike, win = IS_WIN): Shortcut | null {
+  const move = tabMoveOf(input, win);
+  if (move) return move;
   // 윈도우는 Ctrl(+Shift) 조합을 맥 ⌘ 조합으로 바꿔 읽는다(domain/keys)
   const e = win ? winToMac(input) : input;
   if (!e) return null;
@@ -129,7 +146,7 @@ export const menuAction = (id: string): Shortcut | null => MENU[id] ?? null;
 
 /** 같은 동작으로 칠 시간. 토글은 두 갈래(메뉴·키 입력)가 150ms 넘게 벌어져 와도 열었다 바로 닫히면 안 된다(⌘M 실측).
  *  글자 크기만 연달아 누를 수 있게 짧게. 리더 Ctrl+Tab 은 한 길(keys_mac)로만 와서 거르지 않는다(빠르게 누르면 씹혔다, 2026-09-28) */
-export const dedupeMs = (sc: Shortcut) => (sc.type === 'readerTab' || sc.type === 'nav' ? 0 : sc.type === 'font' ? 150 : 400);
+export const dedupeMs = (sc: Shortcut) => (sc.type === 'readerTab' || sc.type === 'nav' || sc.type === 'moveTab' ? 0 : sc.type === 'font' ? 150 : 400);
 
 /**
  * ⌘A 용 — 같은 누름이 메뉴·키 입력 두 갈래로 오면 한 번만, 같은 갈래로 연달아 온 건 다 산다.

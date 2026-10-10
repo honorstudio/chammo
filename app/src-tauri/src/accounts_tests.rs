@@ -435,3 +435,50 @@ fn 폰_바꾸기_지금_칸으로_또_누르면_고정만_새로() {
     assert_eq!((pool.current.as_deref(), pool.auto["pinned"].clone()), (Some("a2"), json!("a2")));
     assert_eq!(e.live_tok().as_deref(), Some("tokB"));
 }
+
+// 2026-10-10 계정 풀 '남은 위험': 백업 칸(backup-first·backup-last)은 있는데 되돌리는 명령이 없었다(손으로 security 를 써야 했다)
+#[test]
+fn 백업_되돌리기는_키체인과_oauth_를_같이_돌려놓고_mcp_로그인은_지금_것() {
+    let e = Env::two("restore");
+    switch(&e.store, &e.live, &e.list, "a1").unwrap(); // 처음 백업 = B
+    // 깨짐: 키체인엔 모르는 토큰, 표시는 A
+    e.store.put(LIVE, "me", &blob("tokX", "m2"));
+    let pool = restore(&e.store, &e.live, &e.list, BACKUP_FIRST).unwrap();
+    assert_eq!(e.live_tok().as_deref(), Some("tokB"));
+    assert_eq!(e.live_email(), "b@x.com");
+    assert_eq!(pool.current.as_deref(), Some("a2")); // 같은 계정 칸을 다시 맡는다
+    assert_eq!(pool.switching, None);
+    assert_eq!(e.store.val(LIVE, "me").map(|v| read(&v).1), Some(Some("m2".into()))); // MCP 로그인은 지금 것
+    assert_eq!(e.slot(BACKUP_UNDO).as_deref(), Some("tokX")); // 되돌리기 전 것도 남긴다
+    assert_eq!(e.slot(BACKUP_FIRST).as_deref(), Some("tokB")); // 백업 칸은 그대로
+}
+
+#[test]
+fn 마지막_백업으로도_되돌린다() {
+    let e = Env::two("restore-last");
+    switch(&e.store, &e.live, &e.list, "a1").unwrap();
+    switch(&e.store, &e.live, &e.list, "a2").unwrap(); // 마지막 백업 = A
+    e.store.put(LIVE, "me", &blob("tokX", "m1"));
+    let pool = restore(&e.store, &e.live, &e.list, BACKUP_LAST).unwrap();
+    assert_eq!((e.live_tok().as_deref(), e.live_email().as_str(), pool.current.as_deref()), (Some("tokA"), "a@x.com", Some("a1")));
+}
+
+#[test]
+fn 표시를_안_적은_옛_백업은_같은_토큰_칸의_표시로() {
+    let e = Env::two("restore-old");
+    switch(&e.store, &e.live, &e.list, "a1").unwrap();
+    let mut p = e.pool();
+    p.backup_oauth = Value::Null; // 이 기능 전에 만든 백업
+    save(&e.list, &p).unwrap();
+    e.store.put(LIVE, "me", &blob("tokX", "m1"));
+    restore(&e.store, &e.live, &e.list, BACKUP_FIRST).unwrap();
+    assert_eq!((e.live_tok().as_deref(), e.live_email().as_str()), (Some("tokB"), "b@x.com"));
+}
+
+#[test]
+fn 백업이_없거나_이름이_틀리면_안_건드린다() {
+    let e = Env::two("restore-none");
+    assert_eq!(restore(&e.store, &e.live, &e.list, BACKUP_FIRST).unwrap_err(), Error::NoBackup);
+    assert_eq!(restore(&e.store, &e.live, &e.list, "a1").unwrap_err(), Error::Unknown); // 칸 id 는 바꾸기로
+    assert_eq!(e.live_tok().as_deref(), Some("tokB"));
+}

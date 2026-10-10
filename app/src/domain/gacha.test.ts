@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setLang } from '../i18n';
-import { CATALOG, COIN_RULES, dayStartAt, earn, EMPTY_GACHA, starOf, starTotal, nextStar, softPay, ownedOf, ownedSkins, parseGacha, place, pull, rarityLabel, rollRarity, toggleEquip, type GachaFile } from './gacha';
+import { CATALOG, COIN_RULES, dayStartAt, earn, EMPTY_GACHA, starOf, starTotal, nextStar, softPay, ownedOf, ownedSkins, parseGacha, place, pull, rarityLabel, rollRarity, seeItem, setSkin, skinOfFile, toggleEquip, type GachaFile } from './gacha';
 
 const rngOf = (...xs: number[]) => { let i = 0; return () => xs[i++ % xs.length]!; };
 const withCoins = (coins: number, extra: Partial<GachaFile> = {}): GachaFile => ({ ...EMPTY_GACHA, coins, ...extra });
@@ -214,6 +214,71 @@ describe('toggleEquip — 모자·창밖·이펙트·반장 액션은 종류마�
   });
 });
 
+describe('스킨도 장착 한 곳(equip.skin) — 도감·스킨 화면이 같은 상태를 본다(2026-10-10 사용자: 따로 따로 먹는다)', () => {
+  const f = { ...EMPTY_GACHA, owned: { 'skin.neon': 1, 'skin.mint': 2 } };
+  it('스킨 화면에서 고르면 equip.skin, 나무는 기본이라 비운다', () => {
+    const a = setSkin(f, 'neon');
+    expect(a.equip).toEqual({ skin: 'skin.neon' });
+    expect(skinOfFile(a)).toBe('neon');
+    expect(setSkin(a, 'wood').equip).toEqual({});
+    expect(skinOfFile(setSkin(a, 'wood'))).toBe('wood');
+  });
+  it('도감에서 누르면 같은 칸 — 입은 걸 또 누르면 나무로', () => {
+    const a = toggleEquip(f, 'skin.mint');
+    expect(skinOfFile(a)).toBe('mint');
+    expect(skinOfFile(toggleEquip(a, 'skin.mint'))).toBe('wood');
+  });
+  it('안 가진 스킨은 못 입고, 장착 칸에 안 가진 게 있어도 나무로 보인다', () => {
+    expect(setSkin(f, 'space')).toBe(f);
+    expect(skinOfFile({ ...f, equip: { skin: 'skin.space' } })).toBe('wood');
+  });
+});
+
+describe('NEW — 처음 얻고 아직 안 눌러 본 것(gacha.json fresh — 폰·PC 같은 파일)', () => {
+  const rich = { ...EMPTY_GACHA, coins: 1000, owned: { 'skin.mint': 1 } };
+  const rng = (xs: number[]) => { let i = 0; return () => xs[i++ % xs.length]!; };
+  it('뽑아서 처음 얻은 것만 NEW — 중복(별)은 안 붙는다', () => {
+    const r = pull(rich, 1, rng([0.0, 0.0]))!; // 흔함 첫 번째
+    expect(r.results[0]!.dup).toBe(false);
+    expect(r.file.fresh).toEqual([r.results[0]!.id]);
+    const again = pull(r.file, 1, rng([0.0, 0.0]))!;
+    expect(again.results[0]!.dup).toBe(true);
+    expect(again.file.fresh).toEqual([r.results[0]!.id]);
+  });
+  it('눌러 보면 꺼진다 — 없는 걸 누르면 그대로', () => {
+    const f = { ...rich, fresh: ['hat.crown', 'skin.neon'] };
+    expect(seeItem(f, 'hat.crown').fresh).toEqual(['skin.neon']);
+    expect(seeItem(f, 'furn.sofa')).toBe(f);
+  });
+  it('옛 파일(fresh 없음)은 가진 게 많아도 NEW 가 쏟아지지 않는다', () => {
+    expect(parseGacha(JSON.stringify({ ...rich, since: 1 }), 0).fresh ?? []).toEqual([]);
+  });
+});
+
+describe('새 종류 — 책상 소품·칭호·조명(2026-10-10 사용자: 뽑기 종류 더)', () => {
+  const kinds = ['desk', 'title', 'light'] as const;
+  it('종류마다 넷 이상, 등급이 섞여 있다(흔함만 있으면 금방 다 모은다)', () => {
+    for (const k of kinds) {
+      const list = CATALOG.filter((c) => c.kind === k);
+      expect(list.length, k).toBeGreaterThanOrEqual(4);
+      expect(new Set(list.map((c) => c.rarity)).size, k).toBeGreaterThanOrEqual(3);
+    }
+  });
+  it('종류마다 하나씩 장착 — 같은 종류는 바꿔 낀다', () => {
+    const ids = kinds.map((k) => CATALOG.find((c) => c.kind === k)!.id);
+    const f = { ...EMPTY_GACHA, owned: Object.fromEntries(CATALOG.filter((c) => (kinds as readonly string[]).includes(c.kind)).map((c) => [c.id, 1])) };
+    const a = ids.reduce((g, id) => toggleEquip(g, id), f as GachaFile);
+    expect(Object.keys(a.equip).sort()).toEqual(['desk', 'light', 'title']);
+    const other = CATALOG.filter((c) => c.kind === 'desk')[1]!.id;
+    expect(toggleEquip(a, other).equip.desk).toBe(other);
+  });
+  it('확률표는 그대로 — 스킨이 여전히 풀의 대부분(새 종류가 스킨 뽑을 맛을 빼앗지 않게)', () => {
+    const share = CATALOG.filter((c) => (kinds as readonly string[]).includes(c.kind)).length / CATALOG.length;
+    expect(share).toBeLessThan(0.2);
+    expect(rollRarity(0.59)).toBe('흔함');
+  });
+});
+
 describe('place — 가구 놓기', () => {
   const f = { ...EMPTY_GACHA, owned: { 'furn.sofa': 1, 'furn.lamp': 1 } };
   it('가진 가구를 칸에 놓고, null 이면 창고로', () => {
@@ -313,6 +378,7 @@ describe('코인 버는 법 표 — 화면 글과 실제 계산이 같다', () =
     expect(one({ t: 1, type: 'task' })).toBe(val[3]);
     expect([one({ t: 1, type: 'ci', pass: true }), one({ t: 1, type: 'review' }), one({ t: 1, type: 'routine', pass: true }), one({ t: 1, type: 'commit', lines: 900, hasTest: true })]).toEqual([2, 2, 2, 2]);
     expect([one({ t: 1, type: 'commit', lines: 300, hasTest: false }), one({ t: 1, type: 'talk' }), one({ t: 1, type: 'doc' })]).toEqual([1, 1, 1]);
-    expect(COIN_RULES.map(([n]) => n)).toEqual([10, 3, 2, 1]);
+    expect(one({ t: 1, type: 'slay', kind: 'slime', lv: 1 })).toBe(val[5]);
+    expect(COIN_RULES.map(([n]) => n)).toEqual([10, 5, 3, 2, 1]);
   });
 });

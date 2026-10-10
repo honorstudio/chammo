@@ -11,7 +11,8 @@ export type Line = { ts: string; text: string; /** 답 끝 200자 — 넘길 때
 /** tool = 마지막으로 부른 도구(사무실 행동·머리 위 한 줄) */
 export type Tool = { name: string; target: string; ts: string };
 /** messaged = 마지막으로 SendMessage 를 부른 시각 — 이미 참모에게 보고했는지(참모 기록이 커서 거기선 못 찾았다, 2026-09-30) */
-export type Activity = { prompt?: Line; reply?: Line; tool?: Tool; messaged?: string; /** 사용 한도 오류로 멈춤 — 그 오류 줄이 마지막(뒤에 새 줄이 없음)일 때만 */ limit?: { ts: string; text: string }; /** 로그인이 풀려 멈춤 — 그 오류 줄이 마지막일 때만(limit 과 같은 규칙). retry = 갱신 겹침(로그인 풀림 아님 — 잠깐 뒤 다시) */ auth?: { ts: string; text: string; retry?: true }; /** 마지막 대화 줄(user·assistant·attachment) 시각 — 글 없는 도구 줄·다른 세션 메시지·작업 알림까지. 답보다 늦으면 그 뒤 턴이 돌던 중(lostTriage) */ lastAt?: string; /** 띄우고 끝 알림을 아직 못 받은 백그라운드 일 수(Bash·에이전트·Monitor·깨우기 예약) — 꺼진 세션이 무언가를 기다리던 중이었나(lostTriage). 0 이면 없음 */ waitingOn?: number; /** 마지막 답 턴에 실린 컨텍스트 토큰(입력+캐시 읽기+캐시 만들기)과 모델 — 상태줄 파일이 없는 대화의 컨텍스트 %(domain/orchHome) */ tokens?: number; model?: string };
+/** peer = 다른 세션이 SendMessage 로 건 마지막 말(본문만) — meta 줄이라 prompt(사람 지시)엔 안 든다. 참모 홈 '하던 일'(domain/orchHome) */
+export type Activity = { prompt?: Line; peer?: Line; reply?: Line; tool?: Tool; messaged?: string; /** 사용 한도 오류로 멈춤 — 그 오류 줄이 마지막(뒤에 새 줄이 없음)일 때만 */ limit?: { ts: string; text: string }; /** 로그인이 풀려 멈춤 — 그 오류 줄이 마지막일 때만(limit 과 같은 규칙). retry = 갱신 겹침(로그인 풀림 아님 — 잠깐 뒤 다시) */ auth?: { ts: string; text: string; retry?: true }; /** 마지막 대화 줄(user·assistant·attachment) 시각 — 글 없는 도구 줄·다른 세션 메시지·작업 알림까지. 답보다 늦으면 그 뒤 턴이 돌던 중(lostTriage) */ lastAt?: string; /** 띄우고 끝 알림을 아직 못 받은 백그라운드 일 수(Bash·에이전트·Monitor·깨우기 예약) — 꺼진 세션이 무언가를 기다리던 중이었나(lostTriage). 0 이면 없음 */ waitingOn?: number; /** 마지막 답 턴에 실린 컨텍스트 토큰(입력+캐시 읽기+캐시 만들기)과 모델 — 상태줄 파일이 없는 대화의 컨텍스트 %(domain/orchHome) */ tokens?: number; model?: string };
 
 /** 사용 한도 오류 줄인가 — API 오류 줄(isApiErrorMessage)이면서 오류 종류가 rate_limit 류이거나 글에 "hit your … limit".
  *  문구가 바뀐 적이 있어 둘 중 하나만 맞아도 잡는다. 일시적 429·529·과부하는 Claude Code 가 다시 시도하니 아니다(2026-10-02) */
@@ -70,6 +71,9 @@ function launchedId(r: unknown): string | undefined {
   return undefined;
 }
 
+/** 다른 세션 메시지 user 줄에서 본문만 — 'Another Claude session sent a message:' 머리말·<cross-session-message> 태그·꼬리 안내를 뺀다 */
+const peerBody = (t: string) => /<cross-session-message[^>]*>\n?([\s\S]*?)\n?<\/cross-session-message>/.exec(t)?.[1]?.trim() || t;
+
 const onlyToolResults = (c: unknown) => Array.isArray(c) && c.length > 0 && c.every((b) => (b as { type?: string }).type === 'tool_result');
 
 export function summarizeTranscript(tail: string): Activity {
@@ -78,7 +82,7 @@ export function summarizeTranscript(tail: string): Activity {
   let wake = false; // 깨우기 예약을 걸고 아직 안 깨어남
   for (const raw of tail.split('\n')) {
     if (!raw.trim()) continue;
-    let d: { type?: string; timestamp?: string; isMeta?: boolean; isApiErrorMessage?: boolean; error?: string; content?: unknown; toolUseResult?: unknown; message?: { content?: unknown; stop_reason?: string; model?: string; usage?: Record<string, unknown> } };
+    let d: { type?: string; timestamp?: string; isMeta?: boolean; origin?: { kind?: string }; isApiErrorMessage?: boolean; error?: string; content?: unknown; toolUseResult?: unknown; message?: { content?: unknown; stop_reason?: string; model?: string; usage?: Record<string, unknown> } };
     try {
       d = JSON.parse(raw);
     } catch {
@@ -116,6 +120,7 @@ export function summarizeTranscript(tail: string): Activity {
     else if (d.type === 'assistant' && isAuthError(d, text)) out.auth = { ts, text: text.slice(0, MAX) };
     else if (d.type === 'assistant' && isRefreshStall(d, text)) out.auth = { ts, text: text.slice(0, MAX), retry: true };
     if (d.type === 'user' && !d.isMeta && !isInjected(text)) out.prompt = { ts, text: squash(text) };
+    else if (d.type === 'user' && d.origin?.kind === 'peer') out.peer = { ts, text: squash(peerBody(text)) };
     else if (d.type === 'assistant') {
       const asks = asksUser(text);
       const flat = text.replace(/\s+/g, ' ').trim();

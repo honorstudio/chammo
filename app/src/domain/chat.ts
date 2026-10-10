@@ -190,9 +190,19 @@ export const stripMarks = (t: string) => t.replace(MARKS, '');
  *  표시 글자(▬ 등)도 빼고(음성으로 받아 적은 글을 입력칸에서 읽으면 끝에 붙어 와 영영 안 맞았다, 2026-10-01 사용자) */
 export const chatNorm = (t: string) => stripMarks(t).replace(IMAGE_TOKEN, '').replace(/\\/g, '').replace(/\s+/g, ' ').trim();
 
+/** 내가 보낸 말 — 사람 말 + 앱이 이 세션 입력칸에 친 줄([앱] …, 기록엔 relay 로 잡힌다). 앱 줄은 머리말을 붙여 친 글 그대로.
+ *  사람 말만 보니 실제로 간 앱 줄이 '안 갔어요'로 남아 다시 보내기로 같은 줄이 다섯 번 갔다(2026-10-10 사용자) */
+export function sentByMe(items: ChatItem[]): { text: string; ts: string }[] {
+  return items.flatMap((i) => (i.kind === 'user' ? [{ text: i.text, ts: i.ts }] : i.kind === 'relay' && i.from === '앱' ? [{ text: `[앱] ${i.text}`, ts: i.ts }] : []));
+}
+
+/** 이 글이 since 뒤 기록에 벌써 들어갔나(내 말로) */
+export const alreadySent = (text: string, items: ChatItem[], since: number): boolean =>
+  !!chatNorm(text) && stillPending([text], items.filter((i) => Date.parse(i.ts) >= since)).length === 0;
+
 export function stillPending(pending: string[], items: ChatItem[]): string[] {
   const norm = chatNorm;
-  const seen = items.filter((i) => i.kind === 'user').map((i) => norm((i as { text: string }).text));
+  const seen = sentByMe(items).map((i) => norm(i.text));
   // 그림을 같이 보내면 기록엔 [Image #n] 이 붙는다 — 그 표시는 빼고 비교(2026-09-30: 보내는 중이 안 사라졌다)
   return pending.filter((p) => { const n = norm(p); return !!n && !seen.some((t) => t === n || t.includes(n)); });
 }
@@ -204,7 +214,7 @@ export function pendingLeft<T extends { text: string; at: number; since?: number
     // / 명령(/rc·/model 등)은 보통 말처럼 기록에 안 남을 때가 있다 — 4초 지나면 보낸 걸로 친다(2026-10-01 사용자)
     if (p.text.trimStart().startsWith('/') && now - p.at > SLASH_PENDING_MS) return false;
     // since = 이 시각 뒤 기록만 — 끊겨서 입력칸에 되돌아온 말은 방금 전 기록이 있어도 안 간 말이다(2026-10-06)
-    return stillPending([p.text], items.filter((i) => i.kind === 'user' && Date.parse(i.ts) >= (p.since ?? p.at - 10_000))).length > 0;
+    return stillPending([p.text], items.filter((i) => Date.parse(i.ts) >= (p.since ?? p.at - 10_000))).length > 0;
   });
 }
 const SLASH_PENDING_MS = 4000;

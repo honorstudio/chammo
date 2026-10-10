@@ -3,10 +3,11 @@
 
 import { tr } from '../i18n';
 import type { TamaEvent } from './tama/pet';
+import { coinsOf } from './tama/monsters';
 import { DAY_EXTRA, SHOW_PER_DAY } from './tama/sources';
 
 export type Rarity = '흔함' | '보통' | '희귀' | '전설';
-export type ItemKind = 'skin' | 'furn' | 'hat' | 'window' | 'friend' | 'fx' | 'action';
+export type ItemKind = 'skin' | 'furn' | 'hat' | 'window' | 'friend' | 'fx' | 'action' | 'desk' | 'title' | 'light';
 /** 등급은 키(색·확률·비교)로 쓰니 한국어 그대로 두고, 화면에 보일 때만 이걸로 */
 export const rarityLabel = (r: Rarity): string =>
   ({ 흔함: tr('흔함', 'Common'), 보통: tr('보통', 'Uncommon'), 희귀: tr('희귀', 'Rare'), 전설: tr('전설', 'Legendary') })[r];
@@ -21,6 +22,9 @@ const view = named('창밖', 'Window view');
 const fx = named('펑 대신', 'Pop effect');
 const move = named('반장 액션', 'Boss move');
 const pal = named('펫 친구', 'Pet pal');
+const desk = named('책상 소품', 'Desk item');
+const title = named('칭호', 'Title');
+const light = named('조명', 'Lighting');
 
 /** 뽑기 풀. 스킨 id 는 `skin.<ui/office/skins 이름>` — 뽑으면 사무실 스킨 버튼에 생긴다 */
 export const CATALOG: Item[] = [
@@ -131,6 +135,23 @@ export const CATALOG: Item[] = [
   { id: 'action.coffee', kind: 'action', rarity: '흔함', name: move('커피 타러 감', 'Coffee Run') },
   { id: 'action.dance', kind: 'action', rarity: '보통', name: move('춤', 'Dance') },
   { id: 'friend.cat', kind: 'friend', rarity: '전설', name: pal('사무실 고양이', 'Office Cat') },
+  // 2026-10-10 새 종류 셋 — 책상 소품은 모든 책상 위, 칭호는 반장 이름표 위, 조명은 방 전체(ui/gacha/icons deskProp·titleText·lightScene)
+  { id: 'desk.duck', kind: 'desk', rarity: '흔함', name: desk('고무 오리', 'Rubber Duck') },
+  { id: 'desk.cactus', kind: 'desk', rarity: '흔함', name: desk('선인장', 'Cactus') },
+  { id: 'desk.ramen', kind: 'desk', rarity: '보통', name: desk('컵라면', 'Cup Noodles') },
+  { id: 'desk.keeb', kind: 'desk', rarity: '보통', name: desk('무지개 키보드', 'RGB Keyboard') },
+  { id: 'desk.lava', kind: 'desk', rarity: '희귀', name: desk('용암 램프', 'Lava Lamp') },
+  { id: 'title.commit', kind: 'title', rarity: '흔함', name: title('커밋 장인', 'Commit Crafter') },
+  { id: 'title.night', kind: 'title', rarity: '흔함', name: title('새벽 코더', 'Night Coder') },
+  { id: 'title.bug', kind: 'title', rarity: '보통', name: title('버그 사냥꾼', 'Bug Hunter') },
+  { id: 'title.review', kind: 'title', rarity: '보통', name: title('리뷰 귀신', 'Review Ghost') },
+  { id: 'title.merge', kind: 'title', rarity: '희귀', name: title('머지왕', 'Merge King') },
+  { id: 'title.ten', kind: 'title', rarity: '전설', name: title('10배 개발자', '10x Developer') },
+  { id: 'light.fairy', kind: 'light', rarity: '흔함', name: light('꼬마전구', 'Fairy Lights') },
+  { id: 'light.warm', kind: 'light', rarity: '흔함', name: light('무드등', 'Mood Light') },
+  { id: 'light.neon', kind: 'light', rarity: '보통', name: light('네온사인', 'Neon Sign') },
+  { id: 'light.spot', kind: 'light', rarity: '보통', name: light('스포트라이트', 'Spotlight') },
+  { id: 'light.disco', kind: 'light', rarity: '희귀', name: light('디스코볼', 'Disco Ball') },
 ];
 export const itemOf = (id: string) => CATALOG.find((c) => c.id === id);
 
@@ -171,13 +192,15 @@ export type GachaFile = {
   pity: number;
   shards: number;
   history: Pulled[];
-  /** 장착한 것 — 모자(반장)·창밖·펑 대신·반장 액션. 가구·펫 친구는 가지면 늘 나온다 */
+  /** 장착한 것 — 방 스킨·모자(반장)·창밖·펑 대신·반장 액션. 가구·펫 친구는 가지면 늘 나온다. 스킨이 없으면 나무 */
   equip: Partial<Record<EquipKind, string>>;
+  /** NEW — 처음 얻고 도감·스킨에서 아직 안 눌러 본 것. 파일에 두니 폰·PC 가 같다. 옛 파일은 없음(가진 게 한꺼번에 NEW 가 되지 않게) */
+  fresh?: string[];
   /** 가구 놓기 — 칸 [gx, gy], null = 창고. 없으면 휴게실 자동 자리 */
   placed?: Record<string, [number, number] | null>;
 };
-export type EquipKind = 'hat' | 'window' | 'fx' | 'action';
-const EQUIPPABLE: ItemKind[] = ['hat', 'window', 'fx', 'action'];
+export type EquipKind = 'skin' | 'hat' | 'window' | 'fx' | 'action' | 'desk' | 'title' | 'light';
+const EQUIPPABLE: ItemKind[] = ['skin', 'hat', 'window', 'fx', 'action', 'desk', 'title', 'light'];
 export const EMPTY_GACHA: GachaFile = { coins: 0, since: 0, owned: {}, pity: 0, shards: 0, history: [], equip: {} };
 
 /** 파일 글자 → 상태. 없거나 깨졌으면 빈 상태에 since 만 채운다(처음 켠 날 새벽 5시부터 세려고) */
@@ -187,7 +210,8 @@ export function parseGacha(text: string, since: number): GachaFile {
     if (typeof v.coins !== 'number' || typeof v.since !== 'number') return { ...EMPTY_GACHA, since };
     const l = v.late;
     const late = l && typeof l.floor === 'number' && typeof l.at === 'number' && Array.isArray(l.keys) ? l : undefined;
-    return { ...EMPTY_GACHA, ...v, owned: v.owned ?? {}, history: v.history ?? [], equip: v.equip ?? {}, late } as GachaFile;
+    const fresh = Array.isArray(v.fresh) ? v.fresh.filter((x): x is string => typeof x === 'string') : undefined;
+    return { ...EMPTY_GACHA, ...v, owned: v.owned ?? {}, history: v.history ?? [], equip: v.equip ?? {}, late, fresh } as GachaFile;
   } catch {
     return { ...EMPTY_GACHA, since };
   }
@@ -196,6 +220,7 @@ export function parseGacha(text: string, since: number): GachaFile {
 /** 코인 버는 법(뽑기 화면 표) — coinsFor 와 같은 값이어야 한다(테스트가 맞춘다). 끝낸 일 상한은 tama/sources.balanceFeed */
 export const COIN_RULES: [number, string][] = [
   [10, tr('머지 · 결과물', 'Merge · result')],
+  [5, tr('장애 몬스터 처치(레벨 따라 15까지)', 'Beating a trouble monster (up to 15 by level)')],
   [3, tr('시킨 일 끝남', 'Task done')],
   [2, tr('CI 통과 · 검토 · 예약 · 테스트 든 커밋', 'CI pass · review · schedule · commit with tests')],
   [1, tr('300줄 이하 커밋 · 대화 · 문서', 'Commit ≤300 lines · talk · doc')],
@@ -220,13 +245,14 @@ function coinsFor(e: TamaEvent): number {
     case 'task': return 3;
     case 'ci': return e.pass ? 2 : 0;
     case 'commit': return (e.hasTest ? 2 : 0) + (e.lines <= 300 ? 1 : 0);
+    case 'slay': return coinsOf(e.lv);
     default: return 0;
   }
 }
 
 /** 늦게 온 사건을 얼마나 기다리나 — 그보다 늦으면 안 센다(키를 무한히 쌓지 않게) */
 export const LATE_MS = 86_400_000;
-const KIND: Record<TamaEvent['type'], string> = { commit: 'c', ci: 'i', pr: 'p', task: 't', show: 's', talk: 'k', routine: 'r', doc: 'd', review: 'v', work: 'w' };
+const KIND: Record<TamaEvent['type'], string> = { commit: 'c', ci: 'i', pr: 'p', task: 't', show: 's', talk: 'k', routine: 'r', doc: 'd', review: 'v', work: 'w', slay: 'm' };
 const keyT = (k: string) => parseInt(k.slice(1), 36);
 
 /** 하루 소프트 상한 — 200 까지 그대로, 600 까지 절반, 그 위 1/5. 끝수가 새지 않게 '누적 지급액'의 차로 준다 */
@@ -312,7 +338,9 @@ export function pull(f: GachaFile, n: 1 | 10, rng: () => number, now = Date.now(
     return { id: item.id, rarity: r, name: item.name, dup, refund: back, star, up: dup && star > starOf(had) };
   });
   const history = [...f.history, ...results.map((x) => ({ t: now, id: x.id, dup: x.dup }))].slice(-HISTORY);
-  return { file: { ...f, coins: f.coins - cost + refund, owned, pity, shards, history }, results };
+  const got = results.filter((x) => !x.dup).map((x) => x.id);
+  const fresh = got.length ? [...new Set([...(f.fresh ?? []), ...got])] : f.fresh;
+  return { file: { ...f, coins: f.coins - cost + refund, owned, pity, shards, history, ...(fresh ? { fresh } : {}) }, results };
 }
 
 /** 사무실에서 고를 수 있는 스킨 — 나무는 처음부터 */
@@ -327,7 +355,7 @@ export function dayStartAt(now: number): number {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 5).getTime();
 }
 
-/** 도감에서 누르기 — 가진 모자·창밖·이펙트·반장 액션을 장착(같은 종류는 바꿔 낌), 같은 걸 또 누르면 해제 */
+/** 도감에서 누르기 — 가진 스킨·모자·창밖·이펙트·반장 액션을 장착(같은 종류는 바꿔 낌), 같은 걸 또 누르면 해제(스킨은 나무로) */
 export function toggleEquip(f: GachaFile, id: string): GachaFile {
   const it = itemOf(id);
   if (!it || !EQUIPPABLE.includes(it.kind) || !(f.owned[id] ?? 0)) return f;
@@ -336,6 +364,21 @@ export function toggleEquip(f: GachaFile, id: string): GachaFile {
   if (equip[kind] === id) delete equip[kind]; else equip[kind] = id;
   return { ...f, equip };
 }
+
+/** NEW 끄기 — 도감·스킨에서 눌러 봤다 */
+export function seeItem(f: GachaFile, id: string): GachaFile {
+  return f.fresh?.includes(id) ? { ...f, fresh: f.fresh.filter((x) => x !== id) } : f;
+}
+
+/** 스킨 화면에서 고르기 — 이름(ui/office/skins), 나무 = 기본이라 칸을 비운다. 안 가진 건 그대로 */
+export function setSkin(f: GachaFile, name: string): GachaFile {
+  if (name === 'wood') { if (!f.equip.skin) return f; const equip = { ...f.equip }; delete equip.skin; return { ...f, equip }; }
+  const id = `skin.${name}`;
+  return (f.owned[id] ?? 0) > 0 ? { ...f, equip: { ...f.equip, skin: id } } : f;
+}
+
+/** 지금 입은 방 스킨 이름 — 장착 칸이 비었거나 안 가진 거면 나무 */
+export const skinOfFile = (f: GachaFile): string => (f.equip.skin && (f.owned[f.equip.skin] ?? 0) > 0 ? f.equip.skin.slice(5) : 'wood');
 
 /** 가진 것(여러 개여도 하나씩), 도감 순서 */
 export const ownedOf = (f: GachaFile, kind: ItemKind) => CATALOG.filter((c) => c.kind === kind && (f.owned[c.id] ?? 0) > 0).map((c) => c.id);

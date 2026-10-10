@@ -18,6 +18,21 @@ export function orchDocs(showLog: string, orchId: string, pinned: string[]): { p
   return { pinned, recent };
 }
 
+/** 고정한 문서 경로 전부(한 번씩) — Rust moved_paths 에 물어볼 것 */
+export const pinPaths = (pins: Record<string, string[]>) => [...new Set(Object.values(pins).flat())];
+
+/** 닫힌 워크트리에서 옮겨 간 고정 문서를 새 자리로(moved = 옛 경로 → 새 경로). 바뀐 게 없으면 null */
+export function remapPins(pins: Record<string, string[]>, moved: Record<string, string>): Record<string, string[]> | null {
+  let changed = false;
+  const out: Record<string, string[]> = {};
+  for (const [k, list] of Object.entries(pins)) {
+    const next = [...new Set(list.map((p) => moved[p] ?? p))];
+    if (next.length !== list.length || next.some((p, i) => p !== list[i])) changed = true;
+    out[k] = next;
+  }
+  return changed ? out : null;
+}
+
 /** 워크트리(.claude/worktrees/x) 세션은 프로젝트 본체 폴더로 */
 export const projectRoot = (cwd: string) => cwd.replace(/\/\.claude\/worktrees\/[^/]+\/?$/, '');
 

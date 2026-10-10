@@ -33,6 +33,12 @@ describe('earnedBadges — 지금 채운 업적', () => {
     expect(earnedBadges(file(), day.map((e, i) => (i === 0 ? { ...e, hasTest: false } : e)), at(28, 20))).not.toContain('testHalf');
   });
 
+  it('첫 은퇴 — 혈통에 한 대라도 있으면', () => {
+    const anc = { egg: 'fire' as const, slot: 'm1' as const, bornAt: at(1, 9), retiredAt: at(9, 9), quirk: 'tester' as const, inherited: [] };
+    expect(earnedBadges(file({ lineage: [anc] }), [], at(28, 10))).toContain('retire');
+    expect(earnedBadges(file(), [], at(28, 10))).not.toContain('retire');
+  });
+
   it('CI 연속 20 초록 · 시킨 일 50개 끝 (평생 기록)', () => {
     const p = { ...hatch('fire', at(28, 9), 0.3) };
     p.life = { ...p.life, bestStreak: 20, tasksDone: 50 };

@@ -7,7 +7,7 @@ import { keepTables } from '../../domain/mdTables';
 import { readableLinks, writeLinks } from '../../domain/mdLinks';
 import { dropBreakSpace, keepBreaks, keepItemLines } from '../../domain/mdBreaks';
 import { keepMarkers, keepNumbers } from '../../domain/mdMarkers';
-import { codeLinkText, keepCodeLinks, keepFences, keepSpanBreaks, mergeAroundCode } from '../../domain/mdInline';
+import { codeLinkText, keepCodeLinks, keepFences, keepLinkTitles, keepMarkedCode, keepSpanBreaks, mergeAroundCode, mergeInStrike, mergeSplitLinks, mergeSplitMarks } from '../../domain/mdInline';
 import { toPageBlocks } from './PageBlock';
 
 type Ed = BlockNoteEditor;
@@ -18,10 +18,10 @@ type Blocks = Ed['document'];
 export const parseMd = async (editor: Ed, md: string) =>
   toPageBlocks(dropBreakSpace(await editor.tryParseMarkdownToBlocks(codeLinkText(readableLinks(md.replace(/\r\n/g, '\n')))))) as Blocks;
 
-/** BlockNote 가 쓴 md(고친 블록)를 원래 글(base) 모양에 맞춘다 — 꾸밈 안 코드, 띄어쓰기 든 링크 주소는 꺾쇠로, 목록 기호·번호·구분선,
+/** BlockNote 가 쓴 md(고친 블록)를 원래 글(base) 모양에 맞춘다 — 꾸밈 안 코드, 취소선 안 굵게, 기울임·굵게 안 꾸밈, 꾸밈으로 감싼 코드, 갈라진 링크, 링크 툴팁, 띄어쓰기 든 링크 주소는 꺾쇠로, 목록 기호·번호·구분선,
  *  목록 항목에 붙어 있던 이어진 줄, 그냥 줄바꿈·이어진 줄 들여쓰기, 줄을 넘던 굵게, 표, 코드 글자 링크, 언어 없는 펜스 */
 export const fixWritten = (base: string, md: string) =>
-  keepFences(base, keepCodeLinks(base, keepTables(base, keepSpanBreaks(base, keepItemLines(base, keepBreaks(base, keepMarkers(base, writeLinks(mergeAroundCode(md)))))))));
+  keepLinkTitles(base, keepMarkedCode(base, keepFences(base, keepCodeLinks(base, keepTables(base, keepSpanBreaks(base, keepItemLines(base, keepBreaks(base, keepMarkers(base, writeLinks(mergeSplitLinks(mergeSplitMarks(mergeInStrike(mergeAroundCode(md))))))))))))));
 
 type Mapping = { chunks: Chunk[]; complete: boolean };
 /** 편집기마다 — 블록 하나를 md 로 쓴 글(블록 내용이 같으면 다시 안 쓴다) · 문서 글마다 조각 지도(최근 몇 개) */

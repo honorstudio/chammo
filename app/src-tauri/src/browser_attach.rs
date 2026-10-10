@@ -104,6 +104,12 @@ pub fn profile_of(dir: &Path) -> Option<String> {
     (!n.is_empty() && !n.contains(['/', '\\', '\0'])).then_some(n)
 }
 
+/// 붙일 프로필 이름 — 칸(git 루트)의 폴더 이름. 워크트리에서 붙여도 본 저장소 이름이라 본 폴더 세션과 로그인을 같이 쓴다
+/// (2026-10-10 워크트리 경로로 붙여 그 워크트리 이름 프로필이 따로 생겼다)
+pub fn profile_for(dir: &Path) -> Option<String> {
+    profile_of(Path::new(&key_of(dir)))
+}
+
 /// local 칸에 넣을 항목 — 기계마다라서 절대 경로 그대로. 시험 데이터 폴더면 래퍼가 같은 곳을 쓰게 env 로 적는다(setup.js 와 같은 판단)
 pub fn entry(node: &str, wrapper: &str, profile: &str, browser_home: Option<&str>) -> Value {
     let mut e = json!({"type": "stdio", "command": node, "args": [wrapper, profile]});
@@ -272,7 +278,7 @@ pub fn attach_at(dir: &Path) -> Result<BrowserLink, String> {
     if !crate::browser::installed(data) {
         return Err(tr("브라우저 자동화가 아직 안 깔렸어 — 설정 → 기능 → 브라우저 자동화의 '설치'부터", "Browser automation is not installed yet — press Install in Settings → Features → Browser automation").into());
     }
-    let profile = profile_of(dir).ok_or_else(|| tr("이 폴더 이름으로는 프로필을 못 만들어", "Can't make a profile name from this folder").to_string())?;
+    let profile = profile_for(dir).ok_or_else(|| tr("이 폴더 이름으로는 프로필을 못 만들어", "Can't make a profile name from this folder").to_string())?;
     let node = node_cmd(data).ok_or_else(|| tr("쓸 Node 가 없어 — 설정의 브라우저 자동화 '설치'를 다시", "No Node to run it — press Install in browser automation again").to_string())?;
     let wrapper = crate::browser::tool_dir(data).join("bin").join(WRAPPER).to_string_lossy().into_owned();
     let home = crate::config::home();
@@ -341,6 +347,89 @@ pub fn reassert_for(cwd: &str) {
     }
 }
 
+// ───────── 워크트리 따라가기 ─────────
+
+fn read_obj(p: &Path) -> Option<Value> {
+    serde_json::from_str::<Value>(&std::fs::read_to_string(p).ok()?).ok().filter(Value::is_object)
+}
+
+fn listed(v: &Value, field: &str, n: &str) -> bool {
+    v[field].as_array().is_some_and(|a| a.iter().any(|x| x.as_str() == Some(n)))
+}
+
+/// 워크트리 따라가기 — 본 폴더가 저장소 .mcp.json 의 우리 서버를 승인해 뒀으면(.claude/settings.local.json, git 밖) 그 저장소 워크트리
+/// (<본 폴더>/.claude/worktrees/*)에도 같은 승인을. 앱이 붙인 local 칸은 ~/.claude.json 의 git 루트 칸이라 워크트리 세션도 원래 같이 쓴다 —
+/// 저장소 .mcp.json 길만 승인이 안 따라와 세션이 워크트리로 옮기면 브라우저가 없었다(2026-10-10). 사람이 끈 것(disabled)·깨진 파일·링크는 안 건드리고,
+/// 파일이 없으면 may_create 일 때만 만든다(상태줄과 같은 규칙). 바꾼 워크트리 수
+pub fn follow_worktrees_in(mains: &[PathBuf], may_create: impl Fn(&Path) -> bool) -> usize {
+    let mut n = 0;
+    for main in mains {
+        let Some(mj) = read_mcp_json(main) else { continue };
+        let Some(m) = servers(Some(&mj)) else { continue };
+        let set = read_obj(&main.join(".claude/settings.local.json")).unwrap_or(Value::Null);
+        let all = set["enableAllProjectMcpServers"] == json!(true);
+        let names: Vec<&String> = m.iter().filter(|(k, s)| is_ours(s) && !listed(&set, "disabledMcpjsonServers", k) && (all || listed(&set, "enabledMcpjsonServers", k))).map(|(k, _)| k).collect();
+        if names.is_empty() {
+            continue;
+        }
+        let Ok(rd) = std::fs::read_dir(main.join(".claude/worktrees")) else { continue };
+        for w in rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()) {
+            let Some(wm) = read_mcp_json(&w) else { continue };
+            let local = w.join(".claude/settings.local.json");
+            if std::fs::symlink_metadata(&local).is_ok_and(|m| m.file_type().is_symlink()) {
+                continue;
+            }
+            let mut v = match std::fs::read_to_string(&local) {
+                Ok(raw) => match serde_json::from_str::<Value>(&raw) {
+                    Ok(v) if v.is_object() => v,
+                    _ => continue,
+                },
+                Err(_) if may_create(&w) => json!({}),
+                Err(_) => continue,
+            };
+            let add: Vec<&String> = names
+                .iter()
+                .copied()
+                .filter(|k| servers(Some(&wm)).and_then(|x| x.get(k.as_str())).is_some_and(is_ours))
+                .filter(|k| !listed(&v, "enabledMcpjsonServers", k) && !listed(&v, "disabledMcpjsonServers", k) && v["enableAllProjectMcpServers"] != json!(true))
+                .collect();
+            if add.is_empty() {
+                continue;
+            }
+            if !v["enabledMcpjsonServers"].is_array() {
+                v["enabledMcpjsonServers"] = json!([]);
+            }
+            if let Some(a) = v["enabledMcpjsonServers"].as_array_mut() {
+                a.extend(add.into_iter().map(|k| json!(k)));
+            }
+            let tmp = local.with_extension(format!("json.{}.tmp", std::process::id()));
+            if std::fs::create_dir_all(local.parent().unwrap_or(&w)).is_err() || std::fs::write(&tmp, serde_json::to_string_pretty(&v).unwrap_or_default() + "\n").is_err() {
+                continue;
+            }
+            if std::fs::rename(&tmp, &local).is_ok() {
+                n += 1;
+            } else {
+                let _ = std::fs::remove_file(&tmp);
+            }
+        }
+    }
+    n
+}
+
+/// 앱 켤 때·1분마다(상태줄 붙이기 옆) — 진짜 데이터 폴더일 때만, devRoot·추가 프로젝트의 워크트리
+pub fn follow_worktrees_all(data: &Path) -> usize {
+    let home = crate::config::home();
+    if !crate::config::is_real_data(&home, data) {
+        return 0;
+    }
+    let c = crate::config::current();
+    if !c.setup_done {
+        return 0;
+    }
+    let mains: Vec<PathBuf> = crate::project::dirs(&home, &c.dev_root, &c.extra_projects).into_iter().map(|(_, p)| p).collect();
+    follow_worktrees_in(&mains, crate::hq::may_create_local)
+}
+
 #[tauri::command]
 pub async fn project_browser(dir: String) -> BrowserLink {
     let d = PathBuf::from(crate::config::expand(&crate::config::home(), &dir));
@@ -353,8 +442,30 @@ pub async fn project_browser_attach(dir: String) -> Result<BrowserLink, String> 
     tauri::async_runtime::spawn_blocking(move || attach_at(&d)).await.map_err(|e| e.to_string())?
 }
 
+/// 브라우저 안 붙은 프로젝트 이름(이름순) — git 저장소만(그냥 폴더는 프로젝트 일이 안 간다). linked = 그 폴더에 붙었나
+pub fn missing_in(dirs: &[(String, PathBuf)], linked: impl Fn(&Path) -> bool) -> Vec<String> {
+    let mut out: Vec<String> = dirs.iter().filter(|(_, p)| p.join(".git").exists() && !linked(p)).map(|(n, _)| n.clone()).collect();
+    out.sort();
+    out
+}
+
+/// devRoot·추가 프로젝트 중 안 붙은 것 — ~/.claude.json 은 한 번만 읽는다(되살리기는 status 때처럼 먼저 한 번)
+pub fn missing_now() -> Vec<String> {
+    reassert();
+    let cj = crate::tools::read_json(&crate::tools::cfg().json);
+    let c = crate::config::current();
+    missing_in(&crate::project::dirs_now(&c.dev_root), |d| {
+        let (mj, set) = repo_of(d);
+        let key = key_of(d);
+        link_of(&cj, approved_mcp(mj.as_ref(), &cj, &key, &set).as_ref(), &key).is_some()
+    })
+}
+
 /// scripts/app browser status|connect <폴더> → 답 줄(JSON). 엔진은 앱 안에만(HQ 는 데스크탑 권한이 막혀 있을 수 있다 — #1)
 pub fn answer(verb: &str, dir: &str) -> Value {
+    if verb == "missing" {
+        return json!({"ok": true, "missing": missing_now()});
+    }
     let d = PathBuf::from(crate::config::expand(&crate::config::home(), dir));
     let r = match verb {
         "connect" => attach_at(&d),
@@ -565,6 +676,90 @@ mod tests {
         // git 이 아닌 폴더는 그 폴더(진짜 경로)
         std::fs::create_dir_all(d.join("plain")).unwrap();
         assert_eq!(key_of(&d.join("plain")), std::fs::canonicalize(d.join("plain")).unwrap().to_string_lossy());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn 워크트리에서_붙여도_프로필은_본_저장소_이름() {
+        // 2026-10-10 film: 세션이 옮겨 간 워크트리 경로로 붙여 프로필이 'cut-a' 로 따로 생겼다 — 본 폴더 로그인이 안 이어진다
+        let d = std::env::temp_dir().join(format!("chammo-attach-prof-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("film")).unwrap();
+        let g = |args: &[&str]| assert!(crate::platform::command("git").current_dir(d.join("film")).args(args).output().unwrap().status.success(), "{args:?}");
+        g(&["init", "-q"]);
+        g(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "i"]);
+        g(&["worktree", "add", "-q", ".claude/worktrees/cut-a"]);
+        assert_eq!(profile_for(&d.join("film/.claude/worktrees/cut-a")).as_deref(), Some("film"));
+        assert_eq!(profile_for(&d.join("film")).as_deref(), Some("film"));
+        std::fs::create_dir_all(d.join("plain")).unwrap();
+        assert_eq!(profile_for(&d.join("plain")).as_deref(), Some("plain"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 안_붙은_프로젝트는_git_저장소만_이름순() {
+        let d = std::env::temp_dir().join(format!("chammo-attach-miss-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        for n in ["shop", "blog", "notes", "ops"] {
+            std::fs::create_dir_all(d.join(n)).unwrap();
+        }
+        for n in ["shop", "blog", "ops"] {
+            std::fs::create_dir_all(d.join(n).join(".git")).unwrap(); // notes 는 저장소가 아닌 폴더
+        }
+        let dirs: Vec<(String, PathBuf)> = ["shop", "notes", "ops", "blog"].iter().map(|n| (n.to_string(), d.join(n))).collect();
+        assert_eq!(missing_in(&dirs, |p| p.ends_with("ops")), vec!["blog".to_string(), "shop".to_string()]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    fn write(p: &Path, v: &Value) {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, serde_json::to_string_pretty(v).unwrap()).unwrap();
+    }
+
+    fn read(p: &Path) -> Value {
+        serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn 본_폴더_승인을_워크트리에도() {
+        // 저장소 .mcp.json(new-project) 길은 승인이 settings.local.json(git 밖)이라 워크트리 세션엔 브라우저가 안 떴다
+        let d = std::env::temp_dir().join(format!("chammo-attach-wt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let main = d.join("shop");
+        let mj = json!({"mcpServers": {"playwright": {"type": "stdio", "command": "node", "args": ["/x/chammo-browser-mcp.js", "shop"]}, "db": {"command": "db-mcp"}}});
+        write(&main.join(".mcp.json"), &mj);
+        write(&main.join(".claude/settings.local.json"), &json!({"enabledMcpjsonServers": ["playwright", "db"], "statusLine": {"type": "command", "command": "/s"}}));
+        let wt = main.join(".claude/worktrees");
+        // a: 승인 없음 → 우리 것만 더함(남의 db 는 사람이 따로 승인) · b: 파일 없음, 만들어도 됨 · c: 사람이 끈 것 · d: 파일 없고 만들면 안 됨 · e: .mcp.json 에 우리 것 없음 · f: 깨진 파일
+        let none = json!({"mcpServers": {}});
+        for w in ["a", "b", "c", "d", "e", "f"] {
+            write(&wt.join(w).join(".mcp.json"), if w == "e" { &none } else { &mj });
+        }
+        write(&wt.join("a/.claude/settings.local.json"), &json!({"statusLine": {"command": "/s"}}));
+        write(&wt.join("c/.claude/settings.local.json"), &json!({"disabledMcpjsonServers": ["playwright"]}));
+        std::fs::create_dir_all(wt.join("f/.claude")).unwrap();
+        std::fs::write(wt.join("f/.claude/settings.local.json"), "{ broken").unwrap();
+        let no_d = |p: &Path| !p.ends_with("d");
+        let n = follow_worktrees_in(&[main.clone()], no_d);
+        assert_eq!(n, 2);
+        assert_eq!(read(&wt.join("a/.claude/settings.local.json")), json!({"statusLine": {"command": "/s"}, "enabledMcpjsonServers": ["playwright"]}));
+        assert_eq!(read(&wt.join("b/.claude/settings.local.json")), json!({"enabledMcpjsonServers": ["playwright"]}));
+        assert_eq!(read(&wt.join("c/.claude/settings.local.json")), json!({"disabledMcpjsonServers": ["playwright"]}));
+        assert!(!wt.join("d/.claude/settings.local.json").exists());
+        assert!(!wt.join("e/.claude/settings.local.json").exists());
+        assert_eq!(std::fs::read_to_string(wt.join("f/.claude/settings.local.json")).unwrap(), "{ broken");
+        // 두 번째는 할 일 없음
+        assert_eq!(follow_worktrees_in(&[main.clone()], no_d), 0);
+        // 본 폴더가 승인 안 했으면 워크트리도 안 건드린다
+        let other = d.join("cloned");
+        write(&other.join(".mcp.json"), &mj);
+        write(&other.join(".claude/worktrees/x/.mcp.json"), &mj);
+        assert_eq!(follow_worktrees_in(&[other.clone()], |_| true), 0);
+        // 본 폴더가 enableAllProjectMcpServers 면 우리 것은 승인된 것
+        write(&other.join(".claude/settings.local.json"), &json!({"enableAllProjectMcpServers": true}));
+        assert_eq!(follow_worktrees_in(&[other.clone()], |_| true), 1);
+        assert_eq!(read(&other.join(".claude/worktrees/x/.claude/settings.local.json")), json!({"enabledMcpjsonServers": ["playwright"]}));
         let _ = std::fs::remove_dir_all(&d);
     }
 }

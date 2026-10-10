@@ -101,6 +101,21 @@ describe('keepBreaks — 이어진 줄 들여쓰기', () => {
 
 // 목록 항목의 들여 쓴 이어진 줄 — 편집기는 항목 + 하위 문단으로 읽는다. 쓸 땐 하위 문단을 빈 줄 + 항목 글자 폭 들여쓰기로 쓰고(nestChildren),
 // 원래 빈 줄 없이 붙어 있던 이어진 줄이면 빈 줄을 뺀다(2026-10-04 실측)
+describe('keepItemLines — 체크 항목에 붙어 있던 이어진 줄(roadmap 문서 저장 ①)', () => {
+  // 진짜 BlockNote 0.51: '- [ ] 항목\n  이어진 줄' 의 항목을 고치면 '* [ ] 항목\n\n이어진 줄' — 이어진 줄이 들여쓰기 없는 형제 문단으로 나왔다
+  it('재현: 원래 글에서 체크 항목에 붙어 있던 줄이면 빈 줄을 빼고 원래 들여쓰기로', () => {
+    expect(keepItemLines('- [ ] 항목\n  이어진 줄\n', '- [ ] 항목 고침\n\n이어진 줄\n')).toBe('- [ ] 항목 고침\n  이어진 줄\n');
+    expect(keepItemLines('- [x] 끝남\n  설명\n', '- [x] 끝남!\n\n설명\n')).toBe('- [x] 끝남!\n  설명\n');
+  });
+  it('보통 항목도 형제 문단으로 나오면 같이(하네스 실측)', () => {
+    expect(keepItemLines('- 항목\n  이어진 줄\n', '- 항목 고침\n\n이어진 줄\n')).toBe('- 항목 고침\n  이어진 줄\n');
+  });
+  it('원래 따로 있던 문단은 그대로', () => {
+    expect(keepItemLines('- [ ] 항목\n\n문단\n', '- [ ] 항목 고침\n\n문단\n')).toBe('- [ ] 항목 고침\n\n문단\n');
+    expect(keepItemLines('- [ ] 항목\n  이어진 줄\n\n문단\n', '- [ ] 항목 고침\n\n이어진 줄\n\n문단\n')).toBe('- [ ] 항목 고침\n  이어진 줄\n\n문단\n');
+  });
+});
+
 describe('keepItemLines — 목록 항목에 붙어 있던 이어진 줄', () => {
   const o = '3. **Google Auth Platform**: pick **External** as the\n   audience. The single page\n   into two.';
   it('재현: 항목을 고치면 이어진 줄 앞에 빈 줄이 생긴다 → 원래처럼 붙인다', () => {

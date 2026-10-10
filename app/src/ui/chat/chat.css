@@ -70,11 +70,12 @@
 /* 넘쳐서 끝 너머에 탭이 더 있으면 그쪽 끝을 흐린다 — 폭은 domain/tabScroll TAB_FADE 와 같이 */
 .ct-strip[data-more-l] { --ct-fl: 28px; }
 .ct-strip[data-more-r] { --ct-fr: 28px; }
-.chat-tabs [role="tab"] { flex: 0 1 auto; min-width: 108px; max-width: 180px; box-sizing: border-box; }
+.chat-tabs [role="tab"] { flex: 0 1 auto; min-width: 34px; max-width: 180px; box-sizing: border-box; overflow: hidden; } /* 프사만 남을 때까지 줄어든 뒤에야 넘긴다(2026-10-10 사용자: 5개인데도 다 안 보였다) */
 /* 고른 탭은 안 줄어든다 — 이름이 다 보이게, 아주 긴 이름만 상한에서 줄임표 */
-.chat-tabs [role="tab"].on { flex-shrink: 0; max-width: 240px; }
+.chat-tabs [role="tab"].on { flex-shrink: 0.3; min-width: 72px; max-width: 240px; } /* 고른 탭은 덜·늦게 줄어든다 */
 .chat-tabs .ct-nm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-tabs [role="tab"] > :not(.ct-nm) { flex: none; }
+.ct-strip[data-tight] [role="tab"]:not(.on) { padding: 0 8px; gap: 4px; } /* 좁을 땐 안쪽 여백도 줄여 프사가 먼저 잘리지 않게 */
 .chat-tabs button { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 7px 7px 0 0; font-size: 12px; font-weight: 600; color: var(--text-3); white-space: nowrap; }
 .chat-tabs button.on { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
 .space-left { min-width: 0; }
@@ -205,6 +206,11 @@
 .chat-tabs .tab-x svg { width: 10px; height: 10px; }
 .chat-tabs button:hover .tab-x { opacity: .7; }
 .chat-tabs .tab-x:hover { opacity: 1 !important; background: rgba(127, 127, 127, .25); }
+/* 줄이 좁으면(ChatTabStrip data-tight) 안 고른 탭의 × 는 자리를 비우고(이름이 그 자리를 씀) 올렸을 때만 이름 끝 위에 뜬다 — 떠 있어 탭 폭이 안 바뀐다.
+   고른 탭은 늘 보임. 넓을 땐 그대로(2026-10-10 사용자 PC: 최소 폭에서 × 가 글자 자리를 먹어 이름이 두 글자만 보였다) */
+.ct-strip[data-tight] [role="tab"]:not(.on) .tab-x { position: absolute; right: 5px; top: 50%; margin: 0; transform: translateY(-50%); opacity: 0; }
+.ct-strip[data-tight] [role="tab"]:not(.on):hover .tab-x { opacity: .7; }
+.ct-strip[data-tight] [role="tab"]:not(.on):hover .ct-nm { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent calc(100% - 6px)); mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent calc(100% - 6px)); }
 /* 맨 아래로 — 위로 많이 올려 읽을 때만, 입력칸 위 가운데에 떠 있다 */
 .chat { position: absolute; }
 .chat-bottom { all: unset; position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 6; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 14px 0 10px; border-radius: 999px; background: var(--surface); color: var(--text-2); font-size: 12px; font-weight: 600; box-shadow: 0 6px 18px rgba(0, 0, 0, .14), 0 0 0 1px var(--line); animation: cv-rise .18s ease-out; }
@@ -216,6 +222,10 @@
 [draggable="true"] { -webkit-user-drag: element; }
 
 /* 탭 줄 끝의 + — 참모 하나 더(⌘T). 탭처럼 보이지 않게 작은 네모 */
+/* 탭 끌어 옮기기(SessionGrid) — 끄는 탭은 손을 바로 따라가고 위에, 옆 탭은 부드럽게 비켜 준다. 끄는 동안 글자 고르기 막기 */
+.chat-tabs [role="tab"] { -webkit-user-select: none; user-select: none; }
+.ct-strip[data-dragging] [role="tab"] { transition: transform .15s ease; }
+.ct-strip[data-dragging] [role="tab"].ct-drag { transition: none; z-index: 3; cursor: grabbing; }
 .chat-tabs .tab-add { width: 28px; padding: 0; justify-content: center; border-radius: 7px; color: var(--text-3); flex: 0 0 auto; background: var(--surface); } /* 넘기는 칸 밖이라 탭이 넘쳐도 오른쪽 끝에 그대로 */
 .chat-tabs .tab-add:hover { background: var(--hover); color: var(--text); }
 .chat-tabs .tab-add svg { width: 13px; height: 13px; }

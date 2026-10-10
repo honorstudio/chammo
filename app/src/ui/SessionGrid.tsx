@@ -25,10 +25,13 @@ import { bodyColor } from '../domain/avatar';
 import { useSpeaking } from './speakGlow';
 import { ChatTabStrip } from './ChatTabStrip';
 import { orchVars } from '../domain/orchTheme';
+import { dragStarted, dropIndex, tabShift } from '../domain/tabDrag';
 
 type Props = {
   /** 고정한 참모 창 id(고정 순서) — 채팅 탭이 끌어 둔 순서보다 앞 */
   pinnedIds?: string[];
+  /** 순서를 밖에서 들고 있는 격자(참모 — domain/orchOrder) — 끌어 옮기면 격자 order 대신 이걸 부른다. ids = 지금 순서(sessions 순서) */
+  onReorder?: (ids: string[], from: string, to: string) => void;
   sessions: Session[];
   claudeBin: string;
   layout: PaneLayout;
@@ -116,7 +119,7 @@ const cumulative = (fr: number[]) => {
  * 세션 여러 개를 격자로 + 접은 창은 아래 띠. 띠의 창은 attach 를 떼어 둔다(메모리).
  * 경계선을 끌면 열·줄 비율이 바뀌고, 머리줄을 끌어 다른 창에 놓으면 자리가 바뀐다
  */
-export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, onMessage, fontSize, home, onFocusSession, initialFocus, focusRequest, onFocusRequestDone, gridId, onStop, titleOf = paneTitle, subOf, memo, column, chat, ctxOf, modelOf, onAdd, pinnedIds = [] }: Props) {
+export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, onMessage, fontSize, home, onFocusSession, initialFocus, focusRequest, onFocusRequestDone, gridId, onStop, titleOf = paneTitle, subOf, memo, column, chat, ctxOf, modelOf, onAdd, pinnedIds = [], onReorder }: Props) {
   const speaking = useSpeaking(); // 음성 모드에서 지금 소리 내는 참모 — 그 채팅 탭 둘레만 빛난다(칸·프사·왼쪽 목록은 뺐다, 2026-10-03 사용자)
   const panes = useRef(new Map<string, PaneApi>());
   // 모델 칩 — 바꾸는 동안 지금 모델·에포트(상태줄)를 새로 읽게(일하는 중엔 화면 글로는 끝을 못 알아본다)
@@ -202,6 +205,56 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
 
+  // 채팅 탭 끌어 옮기기 — 크롬처럼 끄는 탭이 손을 따라가고 옆 탭이 비켜 준다, 놓으면 그 자리(2026-10-10 사용자).
+  // 조금(DRAG_SLOP) 움직여야 시작 — 그 전엔 그냥 클릭(탭 고르기·×). 고정한 탭과 안 고정한 탭은 서로 못 넘는다(domain/orchOrder)
+  const tabGrab = useRef<{ id: string; from: number; x: number; y: number; rects: { left: number; width: number }[]; lo: number; hi: number; ids: string[]; on: boolean; to: number } | null>(null);
+  const [tabDrag, setTabDrag] = useState<{ id: string; dx: number; from: number; to: number; step: number } | null>(null);
+  const dragged = useRef(false); // 끌기로 끝난 누름 — 뒤따르는 click 은 버린다
+  const pickTab = (id: string) => {
+    setTab(id); last.current = id; onFocusSession?.(id); window.dispatchEvent(new CustomEvent('chat-tab-pick', { detail: id }));
+    requestAnimationFrame(() => focusPane(id)); window.setTimeout(() => focusPane(id), 180); // 스페이스가 바뀌며 포커스를 뺏을 수 있어 한 번 더 — 탭을 바꾸면 입력칸에 바로(2026-09-30 사용자)
+  };
+  const tabDown = (id: string, i: number) => (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.button !== 0 || !onReorder || (e.target as HTMLElement).closest('.tab-x')) return;
+    const tabs = [...(e.currentTarget.parentElement?.querySelectorAll<HTMLElement>(':scope > [role="tab"]') ?? [])];
+    const rects = tabs.map((t) => { const r = t.getBoundingClientRect(); return { left: r.left, width: r.width }; });
+    if (rects.length < 2 || rects.length !== vis.shown.length) return;
+    const nPinned = vis.shown.filter((x) => pinnedIds.includes(x)).length;
+    const [lo, hi] = pinnedIds.includes(id) ? [0, nPinned - 1] : [nPinned, vis.shown.length - 1];
+    if (lo >= hi) return; // 같은 칸끼리 옮길 곳이 없다
+    tabGrab.current = { id, from: i, x: e.clientX, y: e.clientY, rects, lo, hi, ids: vis.shown, on: false, to: i };
+    const move = (ev: PointerEvent) => {
+      const g = tabGrab.current;
+      if (!g) return;
+      const dx = ev.clientX - g.x;
+      if (!g.on && !dragStarted(dx, ev.clientY - g.y)) return;
+      g.on = true;
+      const me = g.rects[g.from]!;
+      const min = g.rects[g.lo]!.left - me.left;
+      const max = g.rects[g.hi]!.left + g.rects[g.hi]!.width - (me.left + me.width);
+      const cdx = Math.max(min, Math.min(max, dx));
+      g.to = dropIndex(g.rects, g.from, cdx, g.lo, g.hi);
+      const gap = g.rects[1]!.left - (g.rects[0]!.left + g.rects[0]!.width); // 탭 사이 틈(CSS gap, 다 같다)
+      setTabDrag({ id: g.id, dx: cdx, from: g.from, to: g.to, step: me.width + gap });
+    };
+    const up = () => {
+      removeEventListener('pointermove', move);
+      removeEventListener('pointerup', up);
+      removeEventListener('pointercancel', up);
+      const g = tabGrab.current;
+      tabGrab.current = null;
+      setTabDrag(null);
+      if (!g?.on) return;
+      dragged.current = true;
+      window.setTimeout(() => { dragged.current = false; }, 0);
+      if (g.to !== g.from) onReorder(sessions.map((s) => s.id), g.id, g.ids[g.to]!);
+      pickTab(g.id); // 크롬처럼 끈 탭이 고른 탭
+    };
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', up);
+    addEventListener('pointercancel', up);
+  };
+
   const stop = async (s: Session) => {
     dispatch({ type: 'forget', id: s.id });
     onStop(s, 'pane-button');
@@ -254,7 +307,10 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
     onDrop: (e: React.DragEvent) => {
       e.preventDefault();
       const from = e.dataTransfer.getData(DRAG_MIME) || dragging;
-      if (from && from !== id) dispatch({ type: 'reorder', ids: sessions.map((s) => s.id), from, to: id });
+      if (from && from !== id) {
+        if (onReorder) onReorder(sessions.map((s) => s.id), from, id);
+        else dispatch({ type: 'reorder', ids: sessions.map((s) => s.id), from, to: id });
+      }
       setDragging(null);
       setOver(null);
     },
@@ -263,14 +319,17 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
   const body = (
     <>
       {chat === 'tabs' && vis.shown.length > 0 && ( /* 하나여도 늘 — 둘이 되는 순간 생기며 화면을 밀었다 */
-        <ChatTabStrip active={active} count={vis.shown.length} add={onAdd && (
+        <ChatTabStrip active={active} count={vis.shown.length} order={vis.shown.join()} dragging={!!tabDrag} add={onAdd && (
           <button className="tab-add" onClick={onAdd} title={tr(`${assistant()} 하나 더 (⌘T)`, `One more ${assistant()} (⌘T)`)} aria-label={tr(`${assistant()} 하나 더`, `One more ${assistant()}`)}><IconPlus /></button>
         )}>
           {vis.shown.map((id, i) => {
             const s = byId.get(id)!;
+            const shift = !tabDrag ? 0 : id === tabDrag.id ? tabDrag.dx : tabShift(i, tabDrag.from, tabDrag.to, tabDrag.step);
             return (
-              <button key={id} role="tab" aria-selected={id === active} className={`${id === active ? 'on' : ''}${speaking === id ? ' st-speak' : ''}`} style={orch ? orchVars(colorOfOrch(s)) as React.CSSProperties : undefined} title={[subOf?.(s), i < 9 ? `${keyLabel(`⌘${i + 1}`, IS_WIN)} · ${tr('두 번 눌러 이름 바꾸기', 'double-click to rename')}` : undefined].filter(Boolean).join('\n') || undefined}
-                onClick={() => { setTab(id); last.current = id; onFocusSession?.(id); window.dispatchEvent(new CustomEvent('chat-tab-pick', { detail: id })); requestAnimationFrame(() => focusPane(id)); window.setTimeout(() => focusPane(id), 180); /* 스페이스가 바뀌며 포커스를 뺏을 수 있어 한 번 더 — 탭을 바꾸면 입력칸에 바로(2026-09-30 사용자) */ }}
+              <button key={id} role="tab" aria-selected={id === active} className={`${id === active ? 'on' : ''}${speaking === id ? ' st-speak' : ''}${tabDrag?.id === id ? ' ct-drag' : ''}`}
+                style={{ ...(orch ? orchVars(colorOfOrch(s)) : {}), ...(shift ? { transform: `translateX(${shift}px)` } : {}) } as React.CSSProperties}
+                onPointerDown={tabDown(id, i)} title={[subOf?.(s), i < 9 ? `${keyLabel(`⌘${i + 1}`, IS_WIN)} · ${tr('두 번 눌러 이름 바꾸기', 'double-click to rename')}` : undefined, onReorder ? tr(`끌거나 ${keyLabel('⌥⌘⇧←/→', IS_WIN)} 로 옮기기`, `Drag or ${keyLabel('⌥⌘⇧←/→', IS_WIN)} to move`) : undefined].filter(Boolean).join('\n') || undefined}
+                onClick={() => { if (!dragged.current) pickTab(id); }}
                 onDoubleClick={() => orch?.askRename(s)} onContextMenu={orch ? (e) => orch.menu(e, s, orchColor(s.name || '')) : undefined}>
                 {orch ? <OrchAvatar name={s.name || ''} size={18} state={avatarState(s)} color={orchColor(s.name || '')} label={orch.nameOf(s)} /> : <StatusMark kind={statusKind(s.state)} />}{orch ? <OrchName s={s} className="ct-nm" /> : <span className="ct-nm">{titleOf(s)}</span>}
                 {orch && s.kind === 'background' && (

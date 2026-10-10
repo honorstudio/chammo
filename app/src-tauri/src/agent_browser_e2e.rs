@@ -49,7 +49,7 @@ fn start(profile: &str) -> (Chrome, Live) {
         let mut l = t.lines();
         Some((l.next()?.trim().parse::<u16>().ok()?, l.next()?.trim().to_string()))
     });
-    let live = Live { profile: profile.into(), pid, session_pid: 1, port, ws_path: ws, url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None, scripts: 0 };
+    let live = Live { profile: profile.into(), pid, session_pid: 1, port, ws_path: ws, url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None, scripts: 0, popup: false };
     std::fs::create_dir_all(live_dir()).unwrap();
     std::fs::write(live_dir().join(format!("{profile}.json")), serde_json::to_string(&live).unwrap()).unwrap();
     (c, live)
@@ -342,5 +342,137 @@ fn agent_perm_e2e() {
     assert!(agent_tabs(profile.clone()).permission.is_none());
     drop(w);
     let _ = agent_handback(profile.clone(), live.pid);
+    let _ = std::fs::remove_file(live_dir().join(format!("{profile}.json")));
+}
+
+/// 가짜 FedCM 신원 제공자 + 로그인 페이지 — 한 서버가 둘 다(RP = localhost, IdP = 127.0.0.1, 출처가 다르다)
+fn fedcm_server() -> u16 {
+    let srv = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = srv.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for s in srv.incoming().flatten() {
+            let mut s = s;
+            let mut buf = vec![0u8; 16 * 1024];
+            let n = std::io::Read::read(&mut s, &mut buf).unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let path = req.split_whitespace().nth(1).unwrap_or("/").split('?').next().unwrap_or("/").to_string();
+            let origin = req.lines().find_map(|l| l.strip_prefix("Origin: ").or_else(|| l.strip_prefix("origin: "))).unwrap_or("").trim().to_string();
+            let idp = format!("http://127.0.0.1:{port}");
+            let (ctype, body, extra) = match path.as_str() {
+                "/rp" => ("text/html", "<title>rp</title><button id=b>Continue with IdP</button>".to_string(), String::new()),
+                "/.well-known/web-identity" => ("application/json", format!(r#"{{"provider_urls":["{idp}/config.json"]}}"#), String::new()),
+                "/config.json" => ("application/json", r#"{"accounts_endpoint":"/accounts","client_metadata_endpoint":"/meta","id_assertion_endpoint":"/assert","login_url":"/login"}"#.to_string(), String::new()),
+                "/accounts" => ("application/json", r#"{"accounts":[{"id":"1","email":"tester@idp.test","name":"Tester","given_name":"T"},{"id":"2","email":"other@idp.test","name":"Other","given_name":"O"}]}"#.to_string(), String::new()),
+                "/meta" => ("application/json", "{}".to_string(), String::new()),
+                "/assert" => {
+                    let id = req.split("account_id=").nth(1).and_then(|r| r.split('&').next()).unwrap_or("?").to_string();
+                    ("application/json", format!(r#"{{"token":"tok-{id}"}}"#), format!("access-control-allow-origin: {origin}\r\naccess-control-allow-credentials: true\r\n"))
+                }
+                _ => ("text/html", "<title>login</title>".to_string(), String::new()),
+            };
+            let _ = std::io::Write::write_all(&mut s, format!("HTTP/1.1 200 OK\r\ncontent-type: {ctype}\r\n{extra}content-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).as_bytes());
+        }
+    });
+    port
+}
+
+/// 구글 '…로 계속'(FedCM) — 크롬 자체 계정 고르기 창은 그림에 안 찍힌다. 일꾼이 FedCm 을 켜 두고 계정 목록을 모달로 넘기고, 고른 계정으로 로그인이 끝나나(2026-10-10)
+#[test]
+#[ignore]
+fn agent_fedcm_e2e() {
+    let profile = format!("e2e-fedcm-{}", std::process::id());
+    let (_chrome, live) = start(&profile);
+    let port = fedcm_server();
+    let mut owner = Owner::new(&live);
+    let (a, sa) = owner.tab(&format!("http://localhost:{port}/rp"));
+    wait_for("RP 페이지", 10, || owner.eval(&sa, "document.title").ok().filter(|t| t == "rp"));
+    let w = Watch::on(&profile);
+    show(&profile, &a);
+    agent_takeover(profile.clone(), live.pid, None).unwrap(); // 계정 고르기는 사람 조작 — 개입 중에만
+    let get = format!("window.tok = undefined; window.err = undefined; navigator.credentials.get({{ identity: {{ providers: [{{ configURL: 'http://127.0.0.1:{port}/config.json', clientId: 'c1' }}] }} }}).then(c => window.tok = c.token, e => window.err = String(e)); 1");
+
+    // ① 계정 목록이 모달로 오고, 고른 계정(두 번째)으로 토큰이 나온다
+    owner.eval(&sa, &get).unwrap();
+    let f = wait_for("FedCM 창이 모달에", 15, || agent_tabs(profile.clone()).fedcm);
+    eprintln!("fedcm = {f}");
+    assert_eq!(f["type"], "AccountChooser");
+    assert_eq!(f["accounts"], serde_json::json!([{ "email": "tester@idp.test", "name": "Tester" }, { "email": "other@idp.test", "name": "Other" }]));
+    agent_fedcm(profile.clone(), live.pid, f["dialogId"].as_str().unwrap().to_string(), Some(1));
+    let tok = wait_for("고른 계정으로 토큰", 15, || owner.eval(&sa, "window.tok || window.err || ''").ok().filter(|v| v.as_str().is_some_and(|s| !s.is_empty())));
+    assert_eq!(tok, "tok-2");
+    assert!(agent_tabs(profile.clone()).fedcm.is_none());
+
+    // ② 닫기 — 페이지는 거절(에러)을 받는다. 한 번 고른 뒤라 크롬이 저절로 다시 로그인하지 않게 mediation: 'required'
+    owner.eval(&sa, &get.replace("identity:", "mediation: 'required', identity:")).unwrap();
+    let f = wait_for("두 번째 FedCM 창", 15, || agent_tabs(profile.clone()).fedcm);
+    agent_fedcm(profile.clone(), live.pid, f["dialogId"].as_str().unwrap().to_string(), None);
+    let err = wait_for("닫으면 거절", 15, || owner.eval(&sa, "window.err || window.tok || ''").ok().filter(|v| v.as_str().is_some_and(|s| !s.is_empty())));
+    assert!(err.as_str().unwrap().contains("Error"), "{err}");
+    drop(w);
+    let _ = agent_handback(profile.clone(), live.pid);
+    let _ = std::fs::remove_file(live_dir().join(format!("{profile}.json")));
+}
+
+/// 그 크롬의 창들 — (창 번호, 자리, 상태)
+fn windows_of(live: &Live) -> Vec<Win> {
+    let mut c = Cdp { ws: connect(live).unwrap(), next: 0 };
+    let out = chrome_windows(&mut c).unwrap();
+    let _ = c.ws.close(None);
+    out
+}
+
+/// '크롬에서 보기'가 창을 안 꺼냈다(2026-10-10 네이버 로그인 팝업) — 로그인 팝업처럼 창이 둘이면 둘 다, 그리고 크롬이 활성화되며
+/// 스스로 보이는 순간 지킴이(watch_hidden → rehome_pid)가 '꺼낸 크롬'(SHOWN)인 줄 모르고 가짜 화면으로 되돌리지 않아야 한다
+#[test]
+#[ignore]
+fn agent_focus_e2e() {
+    let profile = format!("e2e-focus-{}", std::process::id());
+    let (_chrome, live) = start(&profile);
+    let mut owner = Owner::new(&live);
+    let _ = owner.tab("data:text/html,<title>Main</title><p>main");
+    owner.cdp.call("Target.createTarget", serde_json::json!({ "url": "data:text/html,<title>Popup</title><p>popup", "newWindow": true }), None, |_| {}).unwrap();
+    let pid = wait_for("크롬 pid", 10, || chrome_pid(live.port));
+    // 가짜 화면 대신 어느 화면도 아닌 먼 자리 — 세션 크롬은 평소 거기 숨어 있다
+    let vd = crate::vdisplay::Rect { x: -30000.0, y: -30000.0, w: 1440.0, h: 900.0 };
+    rehome_into(&live, vd).unwrap();
+    let before = windows_of(&live);
+    assert!(before.len() >= 2, "창이 둘(본 창 + 팝업): {before:?}");
+    assert!(before.iter().all(|w| crate::vdisplay::inside(w.1, vd)), "{before:?}");
+    // 지킴이 흉내 — 크롬이 보이면(활성화) 꺼낸 크롬이 아닌 한 가짜 화면으로 되돌린다
+    let stop = Arc::new(AtomicBool::new(false));
+    let watcher = {
+        let (stop, live) = (stop.clone(), live.clone());
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                if should_hide(true, &shown(), pid) {
+                    let _ = rehome_into(&live, vd);
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        })
+    };
+    let r = tauri::async_runtime::block_on(agent_focus(profile.clone()));
+    std::thread::sleep(Duration::from_millis(1000));
+    stop.store(true, Ordering::Relaxed);
+    watcher.join().unwrap();
+    assert_eq!(r, Ok(()));
+    let rects: Vec<crate::vdisplay::Rect> = crate::vdisplay::visible_displays().iter().map(|d| d.0).collect();
+    let after = windows_of(&live);
+    eprintln!("after = {after:?}");
+    for w in &after {
+        assert!(crate::vdisplay::on_visible(w.1, &rects), "창 {} 이 보이는 화면에 없다: {:?}", w.0, w.1);
+    }
+    // 꺼낸 창을 사람이 다 닫아도(창 X) 세션 브라우저는 산다 — 지킴이(keep_loop)가 빈 탭을 다시 연다
+    let mut c = Cdp { ws: connect(&live).unwrap(), next: 0 };
+    let got = c.call("Target.getTargets", serde_json::json!({}), None, |_| {}).unwrap();
+    for t in got["targetInfos"].as_array().unwrap().iter().filter(|t| t["type"] == "page") {
+        let _ = c.call("Target.closeTarget", serde_json::json!({ "targetId": t["targetId"] }), None, |_| {});
+    }
+    let _ = c.ws.close(None);
+    wait_for("빈 탭 다시 열림", 10, || (!windows_of(&live).is_empty()).then_some(()));
+    let _ = agent_handback(profile.clone(), live.pid);
+    if let Ok(mut v) = SHOWN.lock() {
+        v.retain(|p| *p != pid);
+    }
     let _ = std::fs::remove_file(live_dir().join(format!("{profile}.json")));
 }

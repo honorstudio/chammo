@@ -176,9 +176,21 @@ def browser_work(title):
     return bool(BROWSER_WORK.search(title.lower()))
 
 
+def _base(x):
+    return x.replace('\\', '/').rsplit('/', 1)[-1]
+
+
 def _chammo(server):
     args = server.get('args') if isinstance(server, dict) else None
-    return isinstance(args, list) and any(isinstance(a, str) and a.replace('\\', '/').rsplit('/', 1)[-1] == CHAMMO_WRAPPER for a in args)
+    return isinstance(args, list) and any(isinstance(a, str) and _base(a) == CHAMMO_WRAPPER for a in args)
+
+
+def _profile(server):
+    """우리 서버의 프로필 — 래퍼 다음 인자(껍데기면 첫 인자)"""
+    args = [a for a in (server.get('args') or []) if isinstance(a, str)]
+    i = next((k for k, a in enumerate(args) if _base(a) == CHAMMO_WRAPPER), -1)
+    rest = [a for a in args[i + 1:] if not a.startswith('-')]
+    return rest[0] if rest else None
 
 
 def _servers(v):
@@ -198,6 +210,12 @@ def browser_root(cwd):
 
 def browser_linked(cwd, claude_json=None):
     """그 폴더 세션에 참모 브라우저가 붙나 — True/False, 폴더·설정을 못 읽으면 None(모르면 안 알린다)"""
+    r = browser_link(cwd, claude_json)
+    return r if r is None or r is False else True
+
+
+def browser_link(cwd, claude_json=None):
+    """붙은 우리 서버 (이름, 프로필) — 안 붙었으면 False, 폴더·설정을 못 읽으면 None"""
     if not cwd or not os.path.isdir(cwd):
         return None
     try:
@@ -208,8 +226,9 @@ def browser_linked(cwd, claude_json=None):
     root = browser_root(cwd)
     p = (cj.get('projects') or {}).get(root) if isinstance(cj, dict) else None
     local = _servers(p)
-    if any(_chammo(s) for s in local.values()):
-        return True
+    for n, sv in local.items():
+        if _chammo(sv):
+            return n, _profile(sv)
     try:
         with open(os.path.join(cwd, '.mcp.json'), encoding='utf-8') as f:
             mj = json.load(f)
@@ -230,17 +249,58 @@ def browser_linked(cwd, claude_json=None):
             pass
     listed = lambda k, n: any(isinstance(v.get(k), list) and n in v[k] for v in places)
     allow = any(v.get('enableAllProjectMcpServers') is True for v in places)
-    return any(_chammo(s) and n not in local and not listed('disabledMcpjsonServers', n) and (allow or listed('enabledMcpjsonServers', n))
-               for n, s in _servers(mj).items())
+    for n, sv in _servers(mj).items():
+        if _chammo(sv) and n not in local and not listed('disabledMcpjsonServers', n) and (allow or listed('enabledMcpjsonServers', n)):
+            return n, _profile(sv)
+    return False
+
+
+# 지시 글 속 파일(지시.md·docs/plans/x.md) — 제목은 한 줄이고 브라우저 일은 파일 본문에 있었다(2026-10-10)
+DOC_PATH = re.compile(r'(?:~|/|\.{1,2}/)?[\w가-힣][\w가-힣.\-/]*\.(?:md|txt)\b')
+
+
+def doc_bodies(title, cwd):
+    """지시 글에 적힌 .md·.txt 파일들의 앞부분 — 절대·~ 경로는 그대로, 아니면 대상 세션 폴더·지금 폴더 기준"""
+    out = []
+    for m in DOC_PATH.findall(title or ''):
+        p = os.path.expanduser(m)
+        for c in ([p] if os.path.isabs(p) else [os.path.join(d, p) for d in (cwd, os.getcwd()) if d]):
+            try:
+                with open(c, encoding='utf-8', errors='replace') as f:
+                    out.append(f.read(256 * 1024))
+                break
+            except OSError:
+                continue
+    return out
 
 
 def browser_gap(title, tgt):
     """브라우저 일인데 대상 세션 폴더에 참모 브라우저가 없으면 (폴더, 세션 짧은 번호), 아니면 None"""
-    if not browser_work(title) or not tgt.get('cwd'):
+    if not tgt.get('cwd') or not (browser_work(title) or any(browser_work(b) for b in doc_bodies(title, tgt['cwd']))):
         return None
     if browser_linked(tgt['cwd']) is not False:
         return None
     return browser_root(tgt['cwd']), tgt.get('id') or ''
+
+
+def browser_rule(link):
+    """세션에 늘 붙이는 브라우저 한 줄 — 붙었으면 쓰는 법(프로필까지), 안 붙었으면 멈추고 알리기. link = browser_link 결과"""
+    stop = T('브라우저 도구가 안 보이면 직접 띄우지 말고 멈추고 이 지시를 보낸 세션에 "브라우저 연결 필요" 한 줄.',
+             'If you see no browser tools, do not start one yourself — stop and tell the session that sent this "browser connection needed".')
+    if link is False:
+        return T('이 세션엔 이 프로젝트 브라우저가 안 붙어 있어 — 일하다 브라우저(사이트 열기·로그인·화면 확인)가 필요해지면 chromium.launch·launchPersistentContext·channel:\'chrome\' 로 '
+                 '크롬을 직접 띄우거나 크롬 확장(claude-in-chrome·--extension)을 쓰지 말고 멈추고 이 지시를 보낸 세션에 "브라우저 연결 필요" 한 줄.',
+                 'This session has no project browser attached — if the work comes to need a browser (open a site, sign in, check a page), do not start Chrome with '
+                 'chromium.launch / launchPersistentContext / channel:\'chrome\' and do not use the Chrome extension (claude-in-chrome, --extension): stop and tell the session that sent this "browser connection needed".')
+    d = DATA.replace('\\', '/')
+    tools = f'mcp__{link[0]}__*' if link else T('browser_ask_human 이 있는 브라우저 도구', 'the browser tools that include browser_ask_human')
+    prof = (link[1] if link else None) or T('<프로필>', '<profile>')
+    return T(f'브라우저는 이 프로젝트 브라우저만 — 세션 도구는 {tools}. 스크립트(node·python)는 크롬을 직접 띄우지 말고 require(\'{d}/tools/chammo-browser\').launch(\'{prof}\') 로 받거나 '
+             f'"{d}/tools/bin/node" "{d}/tools/chammo-browser/bin/chammo-browser.js" launch {prof} --owner <pid> 의 wsEndpoint 로 connectOverCDP. '
+             f'chromium.launch·launchPersistentContext·channel:\'chrome\' 직접 띄우기와 크롬 확장(claude-in-chrome·--extension) 금지 — 앱 화면에 안 보이고 프로필이 꼬인다. ' + stop,
+             f'Browser = this project\'s browser only — session tools {tools}. Scripts (node/python) must not start Chrome: get it with require(\'{d}/tools/chammo-browser\').launch(\'{prof}\') or '
+             f'connectOverCDP to the wsEndpoint from "{d}/tools/bin/node" "{d}/tools/chammo-browser/bin/chammo-browser.js" launch {prof} --owner <pid>. '
+             f'No chromium.launch / launchPersistentContext / channel:\'chrome\' and no Chrome extension (claude-in-chrome, --extension) — it does not show in the app and corrupts profiles. ' + stop)
 
 
 def browser_card(root, sid, why):
@@ -382,17 +442,33 @@ def project_of(target, agents, dev=None, extras=None):
     dev = dev or DEV
     extras = EXTRAS if extras is None else extras
     rule = _project_rule()
+    a = find_agent(target, agents)
+    if a:
+        if rule:
+            return rule(a.get('cwd', ''), dev, extras)
+        cwd = os.path.normpath(a.get('cwd', ''))
+        for x in extras:
+            x = os.path.normpath(x)
+            if cwd == x or cwd.startswith(x + os.sep):
+                return os.path.basename(x)
+        rel = os.path.relpath(a.get('cwd', ''), dev)
+        return None if rel.startswith('..') or rel == '.' else rel.split(os.sep)[0]
+    return None
+
+
+def find_agent(target, agents):
+    """The target session — same id, name or conversation id; otherwise the "name [id prefix]" form send sometimes records"""
     for a in agents:
         if target in (a.get('id'), a.get('name'), a.get('sessionId')):
-            if rule:
-                return rule(a.get('cwd', ''), dev, extras)
-            cwd = os.path.normpath(a.get('cwd', ''))
-            for x in extras:
-                x = os.path.normpath(x)
-                if cwd == x or cwd.startswith(x + os.sep):
-                    return os.path.basename(x)
-            rel = os.path.relpath(a.get('cwd', ''), dev)
-            return None if rel.startswith('..') or rel == '.' else rel.split(os.sep)[0]
+            return a
+    m = re.fullmatch(r'(.*) \[([0-9a-f]{4,})\]', target or '')
+    if m:
+        for a in agents:
+            if (a.get('id') or '').startswith(m.group(2)) or (a.get('sessionId') or '').startswith(m.group(2)):
+                return a
+        for a in agents:
+            if a.get('name') == m.group(1):
+                return a
     return None
 
 
@@ -405,6 +481,40 @@ def load_agents():
         return json.loads(subprocess.run([claude_bin(), 'agents', '--json'], capture_output=True, text=True, timeout=10).stdout or '[]')
     except Exception:
         return []
+
+
+def live_agents():
+    """Running sessions — when `claude agents` is slow or fails, the list the app keeps in <data>/live.json (same fallback as orch-roster)"""
+    v = load_agents()
+    if isinstance(v, list) and v:
+        return v
+    try:
+        with open(os.path.join(DATA, 'live.json'), encoding='utf-8') as f:
+            rows = (json.load(f) or {}).get('sessions')
+        return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def sent_project(tid):
+    """The project the task's send recorded (last one) — present when the session was already running at send time"""
+    p = None
+    for e in read_events():
+        if isinstance(e, dict) and e.get('task') == tid and e.get('type') == 'send' and isinstance(e.get('project'), str):
+            p = e['project']
+    return p
+
+
+def reply_project(tid, target):
+    """Where reply lessons go — the project send recorded → the session's folder now → the target name if it is a project folder. None if unknown.
+    Sends recorded before the session started had no project, and an unknown session's name (or "name [id]") became the lesson file name"""
+    p = sent_project(tid) or project_of(target, live_agents())
+    if p:
+        return p
+    t = target_key(target)
+    if t and os.sep not in t and '/' not in t and (os.path.isdir(os.path.join(DEV, t)) or t in [os.path.basename(os.path.normpath(x)) for x in EXTRAS]):
+        return t
+    return None
 
 
 def now():
@@ -581,7 +691,7 @@ def main(a):
         me_base = orch_base(next((x.get('name') for x in agents if who and x.get('id') == who), ''))
         if me_base:
             ev['fromName'] = me_base
-        tgt = next((x for x in agents if a[1] in (x.get('id'), x.get('name'), x.get('sessionId'))), {})
+        tgt = find_agent(a[1], agents) or {}
         # 참모끼리 넘긴 일·HQ 도우미에게 보낸 일은 프로젝트가 아니다(HQ 가 dev 안에 있으면 HQ 폴더 이름이 프로젝트로 잡혔다)
         proj = None if orch_base(a[1]) or orch_base(tgt.get('name')) or (tgt.get('cwd') and os.path.realpath(tgt['cwd']) == HQ) else project_of(a[1], agents)
         if proj:
@@ -621,6 +731,8 @@ def main(a):
         print(T(f'메시지 끝에 붙여: {ASK_RULE}', f'append to the end of your message: {ASK_RULE}'), file=sys.stderr)
         print(T(f'메시지 끝에 붙여: {LOAD_RULE}', f'append to the end of your message: {LOAD_RULE}'), file=sys.stderr)
         print(T(f'메시지 끝에 붙여: {MERGE_RULE}', f'append to the end of your message: {MERGE_RULE}'), file=sys.stderr)
+        if tgt.get('cwd'):
+            print(T(f'메시지 끝에 붙여: {browser_rule(browser_link(tgt["cwd"]))}', f'append to the end of your message: {browser_rule(browser_link(tgt["cwd"]))}'), file=sys.stderr)
         gap = browser_gap(a[2], tgt)
         if gap:
             print(T(f'주의: 브라우저 일인데 이 세션엔 이 프로젝트 브라우저(browser_ask_human)가 안 붙어 있어 — 보내기 전에 scripts/app browser connect {gap[0]} → '
@@ -668,11 +780,15 @@ def main(a):
     if cmd == 'reply' and len(a) >= 3:
         found = lessons_in(a[2])
         target = target_of(a[1]) if found else None
-        if target:
-            project = project_of(target, load_agents()) or target
+        project = reply_project(a[1], target) if target else None
+        if project:
             added = [l for l in found if add_lesson(project, l)]
             if added:
                 print(T(f'{project} 교훈 {len(added)}줄 적음: ', f'{project}: recorded {len(added)} lesson(s): ') + ' / '.join(added), file=sys.stderr)
+        elif found:
+            print(T(f'교훈 {len(found)}줄을 어느 프로젝트에 적을지 몰라(세션 {target or "?"} 을 목록에서 못 찾음) — scripts/task lesson <프로젝트> "<교훈>" 으로 직접 적어: ',
+                    f"Don't know which project gets these {len(found)} lesson(s) (session {target or '?'} not in the list) — record them with scripts/task lesson <project> \"<lesson>\": ")
+                  + ' / '.join(found), file=sys.stderr)
     if cmd == 'done' and len(a) >= 3 and not PROOF.search(a[2]):
         print(T('done 에 증거가 없어 — "했다"만으론 몰라. PR 번호·주소·응답 코드·로그 중 하나를 확인해 적어 줘(이번 기록은 남김)',
                 'No proof in this done note — "did it" alone does not tell. Check and add one of: PR number, URL, status code, log (this entry is kept)'), file=sys.stderr)

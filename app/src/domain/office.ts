@@ -45,11 +45,23 @@ const FRONT_X = [0.5, 3.2, 5.9];
 const ROW0 = 3.2;
 const ROW_GAP = 2.1;
 
+/** 뒷줄 책상 자리(반장·옆자리 둘) — 참모가 아직 없어도 가구는 못 놓는다(나중에 앉으면 덮이니까) */
+const BACK_SEATS: [number, number][] = [[2.8, 2.4], [0.6, 1.6], [5.6, 1.6]];
+const DESK_D = 1.2;
+const covers = (x: number, y: number, w: number, [cx, cy]: [number, number]) => cx < x + w && cx + 1 > x && cy < y + DESK_D && cy + 1 > y;
+
+/** 놓인 가구 칸(창고·안 놓은 건 빼고) — planRoom 의 furniture 로 넘겨 책상이 피하게 */
+export function placedCells(ids: string[], placed: Record<string, [number, number] | null> = {}): [number, number][] {
+  return ids.flatMap((id) => (placed[id] ? [placed[id]!] : []));
+}
+
 /**
  * orchestrators = 참모들(처음이 반장), workers = 하위 세션. boss = 반장 자리 캐릭터(지금 키우는 다마고치).
- * 옆자리는 둘까지, 그 뒤 참모는 하위 세션 줄에 섞는다. slots = 앞줄 자리표(seatSlots) — 주면 그 자리에, null 은 빈 책상
+ * 옆자리는 둘까지, 그 뒤 참모는 하위 세션 줄에 섞는다. slots = 앞줄 자리표(seatSlots) — 주면 그 자리에, null 은 빈 책상.
+ * furniture = 놓인 가구 칸 — 가구가 먼저다: 앞줄 책상은 가구 칸을 건너뛰고 다음 빈 자리에 앉는다.
+ * 세션이 늘면 책상이 가구 칸을 덮어 가구를 휴게실로 밀어냈다 — 다시 켜면 옮긴 자리에 없었다(2026-10-10 사용자)
  */
-export function planRoom(orchestrators: Seat[], workers: Seat[], boss: string, slots?: (string | null)[]): Room {
+export function planRoom(orchestrators: Seat[], workers: Seat[], boss: string, slots?: (string | null)[], furniture: [number, number][] = []): Room {
   const desks: Desk[] = [];
   const mk = (s: Seat, gx: number, gy: number, spr: string, w = 1.6, isBoss = false): Desk => ({
     id: s.id, label: s.label, gx, gy, w, spr, st: officeState(s.status), status: s.status, color: colorFor(s.project + s.label), ...(isBoss ? { boss: true } : {}),
@@ -64,11 +76,14 @@ export function planRoom(orchestrators: Seat[], workers: Seat[], boss: string, s
   if (slots) for (const s of pool) if (!slots.includes(s.id)) front.push(s); // 자리표에 아직 없는 세션(방금 뜸)
   const EMPTY: Seat = { id: '', label: '', project: '', status: 'idle', startedAt: 0 };
   const r1 = (x: number) => Math.round(x * 10) / 10; // 3.2 + 2.1 = 5.300…01 방지
-  front.forEach((s, i) => {
-    const d = mk(s ?? EMPTY, FRONT_X[i % 3]!, r1(ROW0 + ROW_GAP * Math.floor(i / 3)), s ? speciesFor(s.project) : '');
+  let k = 0; // 앞줄 자리 번호 — 가구가 덮은 자리는 건너뛴다
+  front.forEach((s) => {
+    let gx = 0, gy = 0;
+    do { gx = FRONT_X[k % 3]!; gy = r1(ROW0 + ROW_GAP * Math.floor(k / 3)); k++; } while (furniture.some((c) => covers(gx, gy, 1.6, c)));
+    const d = mk(s ?? EMPTY, gx, gy, s ? speciesFor(s.project) : '');
     desks.push(s ? d : { ...d, empty: true });
   });
-  const lines = Math.max(2, Math.ceil(front.length / 3));
+  const lines = Math.max(2, Math.ceil(k / 3));
   return { cols: COLS, rows: Math.ceil(ROW0 + ROW_GAP * (lines - 1) + 1.8), desks };
 }
 
@@ -209,12 +224,20 @@ export function withLounge(room: Room, ids: string[], placed: Record<string, [nu
   if (!ids.length) return { ...room, furniture: [] };
   let auto = 0;
   const furniture: Placed[] = [];
+  const covered = (p: [number, number]) => room.desks.some((d) => p[0] < d.gx + d.w && p[0] + 1 > d.gx && p[1] < d.gy + 1.2 && p[1] + 1 > d.gy);
+  // 놓인 가구 칸 — 자동 자리가 그 위에 겹쳐 그려지지 않게 먼저 모은다
+  const taken = ids.flatMap((id) => { const p = placed[id]; return p && !covered(p) ? [p] : []; });
+  const spot = (k: number): [number, number] => [room.cols + 0.2 + (k % 2), Math.round((0.5 + Math.floor(k / 2) * 1.6) * 10) / 10];
+  const free = ([x, y]: [number, number]) => !taken.some(([px, py]) => Math.abs(px - x) < 1 && Math.abs(py - y) < 1);
   for (const id of ids) {
     const p = placed[id];
     if (p === null) continue; // 창고
-    const covered = p && room.desks.some((d) => p[0] < d.gx + d.w && p[0] + 1 > d.gx && p[1] < d.gy + 1.2 && p[1] + 1 > d.gy);
-    if (p && !covered) { furniture.push({ id, gx: p[0], gy: p[1] }); continue; }
-    furniture.push({ id, gx: room.cols + 0.2 + (auto % 2), gy: Math.round((0.5 + Math.floor(auto / 2) * 1.6) * 10) / 10, ...(covered ? { pushed: true } : {}) });
+    // 옛 자리가 책상(뒷줄 옆자리)과 겹치면 휴게실로 비켜 있다 — 앞줄 책상은 planRoom 이 가구를 피한다
+    const pushed = !!p && covered(p);
+    if (p && !pushed) { furniture.push({ id, gx: p[0], gy: p[1] }); continue; }
+    while (!free(spot(auto))) auto++;
+    const [gx, gy] = spot(auto);
+    furniture.push({ id, gx, gy, ...(pushed ? { pushed: true } : {}) });
     auto++;
   }
   // 방 크기는 놓은 자리와 무관하게 — 가진 가구가 다 휴게실에 있을 때의 깊이로 정한다.
@@ -233,8 +256,13 @@ export function cellAt(room: Room, ox: number, oy: number, x: number, y: number)
   return gx >= 0 && gy >= 0 && gx < room.cols && gy < room.rows ? [gx, gy] : null;
 }
 
-/** 캔버스 점(논리 좌표) → 그 자리에 놓인 가구 id. 바닥 가운데부터 위로 34 까지(키 큰 가구 몸통)를 잡고, 겹치면 앞(gx+gy 큰 것) */
+/** 캔버스 점(논리 좌표) → 그 자리에 놓인 가구 id. 바닥 칸 안을 누르면 그 가구가 먼저(앞 가구 몸통이 뒤 바닥을 덮어도),
+ *  아니면 바닥 가운데부터 위로 34 까지(키 큰 가구 몸통)를 잡고, 겹치면 앞(gx+gy 큰 것) */
 export function furnitureAt(room: Room, ox: number, oy: number, x: number, y: number): string | null {
+  const a = (x - ox) / HALF_W, b = (y - oy) / HALF_H;
+  const fx = (a + b) / 2, fy = (b - a) / 2;
+  const floor = (room.furniture ?? []).filter((f) => fx >= f.gx && fx < f.gx + 1 && fy >= f.gy && fy < f.gy + 1);
+  if (floor.length) return floor.reduce((p, f) => (f.gx + f.gy > p.gx + p.gy ? f : p)).id;
   let best: Placed | null = null;
   for (const f of room.furniture ?? []) {
     const ax = ox + (f.gx - f.gy) * HALF_W, ay = oy + (f.gx + f.gy + 0.9) * HALF_H;
@@ -244,11 +272,12 @@ export function furnitureAt(room: Room, ox: number, oy: number, x: number, y: nu
   return best?.id ?? null;
 }
 
-/** 그 칸에 가구를 놓을 수 있나 — 방 안이고 책상·책장·정수기와 안 겹칠 때 */
+/** 그 칸에 가구를 놓을 수 있나 — 방 안이고 책상(뒷줄은 빈 자리까지)·책장과 안 겹칠 때 */
 export function canPlace(room: Room, [cx, cy]: [number, number]): boolean {
   if (cx < 0 || cy < 0 || cx >= room.cols || cy >= room.rows) return false;
   const hit = (x0: number, y0: number, x1: number, y1: number) => cx < x1 && cx + 1 > x0 && cy < y1 && cy + 1 > y0;
   if (room.desks.some((d) => hit(d.gx, d.gy, d.gx + d.w, d.gy + 1.2))) return false;
+  if (BACK_SEATS.some(([x, w]) => covers(x, BACK_Y, w, [cx, cy]))) return false;
   if (hit(4.9, 0, 7.3, 0.45)) return false; // 책장
   return true;
 }

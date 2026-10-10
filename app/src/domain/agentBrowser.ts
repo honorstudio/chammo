@@ -15,6 +15,8 @@ export type Live = { profile: string; pid: number; sessionPid: number; url: stri
   takeover?: { by: 'desktop' | 'phone'; at: number } | null;
   /** 이 크롬을 같이 쓰는 산 스크립트 수(chammo-browser launch) — 앱이 채움. 스크립트는 개입해도 못 멈춘다 */
   scripts?: number;
+  /** 크롬이 그림 밖에 자기 창(패스키·Touch ID·폰 QR)을 띄워 둠 — 앱이 1초마다 채운다(모달을 안 봐도, agent_browser watch_popups) */
+  popup?: boolean;
   /** 폰 목록에만 — 화면 받기 상태(맥 일꾼이 있을 때, agent_browser phone_screen). 이유는 주소를 뺀 한 줄 */
   screen?: PhoneScreen | null };
 export type PhoneScreen = { error: string; attached: boolean; pages: number };
@@ -37,6 +39,19 @@ export type PagePermission = { kind: 'geolocation' | 'notifications'; origin: st
 export function permLine(p: PagePermission): string {
   const host = p.origin.replace(/^[a-z]+:\/\//, '');
   return p.kind === 'geolocation' ? tr(`${host} 이(가) 위치를 쓰려고 해`, `${host} wants to use your location`) : tr(`${host} 이(가) 알림을 보내려고 해`, `${host} wants to send notifications`);
+}
+
+/** 구글 등 '…로 계속'(FedCM) 계정 고르기(agent_tabs fedcm) — 크롬 자체 창이라 그림에 안 찍혀 모달 단추로 받는다(2026-10-10) */
+export type FedcmDialog = { dialogId: string; type: string; title: string; accounts: { email: string; name: string }[] };
+export function fedcmLine(f: FedcmDialog): string {
+  return f.title || tr('사이트가 계정으로 로그인하려고 해', 'The site wants to sign you in with an account');
+}
+/** 단추들 — account = 고른 계정 번호(확인 창은 '계속' = 0), null = 닫기 */
+export function fedcmChoices(f: FedcmDialog): { label: string; account: number | null }[] {
+  const close = { label: tr('닫기', 'Close'), account: null };
+  if (f.type === 'AccountChooser') return [...f.accounts.map((a, i) => ({ label: a.email || a.name, account: i })), close];
+  if (f.type === 'ConfirmIdpLogin') return [{ label: tr('계속', 'Continue'), account: 0 }, close];
+  return [close];
 }
 
 /** 래퍼에 부탁한 대화상자 답 결과(agent_tabs wrapperDialog) */
@@ -117,6 +132,9 @@ export function frameTrouble(error: string | null | undefined): 'off' | 'fail' |
   return /no live|refused|reset|closed|broken pipe|os error (32|54|61)/i.test(error) ? 'off' : 'fail';
 }
 
+/** 닫힘 덮개 한 줄 — 맥 모달(FrameView)·폰이 같이 쓴다. 옆 줄 '화면을 못 받았어'와 같은 반말로 */
+export const closedText = () => tr('브라우저가 닫혔어 — 세션이 다시 열면 이어져', 'The browser is closed — it resumes when the session opens it again');
+
 /** 지금 탭을 이만큼 넘게 모르면(주소 확인 중) 이유를 보이고 입력을 막는다 — 탭 이동·팝업 닫힘 같은 잠깐은 그 안에 끝난다 */
 export const UNSURE_MS = 3000;
 /** 목록에서 이만큼 넘게 빠져야 닫힘 — 바쁜 맥에서 포트 확인(300ms)이 한 번 늦으면 한 틱(1.5초) 빠진다(리뷰). 그동안 입력은 Rust 가 상태 파일로 보낸다 */
@@ -129,7 +147,7 @@ export const EMPTY_MS = 1500;
  * 예전엔 실패를 조용히 삼켜 '화면 받는 중'에 이유 없이 멈췄다(2026-10-05 남은 것 ①). emptyMs = 붙었는데 탭 0개가 이어진 시간
  */
 export function phoneTrouble(screen: PhoneScreen | null | undefined, pullErr: string, emptyMs: number): { kind: 'closed' | 'fail'; text: string } | null {
-  const closed = { kind: 'closed' as const, text: tr('브라우저가 닫혔어요 — 세션이 다시 열면 이어져', 'The browser is closed — it resumes when the session opens it again') };
+  const closed = { kind: 'closed' as const, text: closedText() };
   const fail = (why: string) => ({ kind: 'fail' as const, text: why ? `${tr('화면을 못 받았어', 'Could not get the screen')} — ${why}` : tr('화면을 못 받았어', 'Could not get the screen') });
   if (pullErr === 'no such browser') return closed;
   if (pullErr) return fail(pullErr);
@@ -152,4 +170,30 @@ export function browserScreen(x: { goneMs: number; error: string; attached: bool
   if (x.current) return { kind: 'ok', why: '', blocked: false };
   if (x.unsureMs < UNSURE_MS) return { kind: 'checking', why: '', blocked: false };
   return { kind: 'checking', why: x.attached ? tr('지금 탭을 못 찾음', 'No current tab') : tr('브라우저에 붙는 중', 'Connecting to the browser'), blocked: true };
+}
+
+/**
+ * '크롬에서 보기'가 실패한 이유 한 줄(Rust agent_focus 의 Err) — 예전엔 실패를 삼켜 눌러도 아무 일 없이 조용했다(2026-10-10 네이버 로그인).
+ * 주소·포트는 빼고 짧게
+ */
+export function focusFailLine(err: unknown): string {
+  const e = String(err instanceof Error ? err.message : err);
+  if (/no live browser|chrome not found/.test(e)) return tr('브라우저가 꺼져 있어서 크롬 창을 못 꺼냈어', 'The browser is closed, so the Chrome window could not be shown');
+  if (/still off screen/.test(e)) return tr('크롬 창을 화면으로 못 옮겼어 — 한 번 더 눌러 줘', 'Could not move the Chrome window on screen — try again');
+  const why = e.replace(/\b(?:ws|https?):\/\/\S+/g, '…').replace(/\s+/g, ' ').trim().slice(0, 70);
+  return `${tr('크롬 창을 못 꺼냈어', 'Could not show the Chrome window')} — ${why}`;
+}
+
+/** 사람이 그 브라우저를 쓰는 중으로 볼 시간 — 모달을 눌러 열었거나 화면·글칸을 만진 뒤 이만큼 */
+export const ACTIVE_MS = 30_000;
+
+/**
+ * 패스키·Touch ID·폰 QR 처럼 크롬이 그림 밖에 자기 창을 띄웠을 때 모달이 할 일(2026-10-10 사용자 — 사람은 '크롬에서 보기'를 찾아가지 않는다).
+ * 'peek' = 크롬을 작게 꺼낸다(사람이 쓰는 중일 때만 — 세션 혼자 돌다 뜬 건 알림·카드), 'unpeek' = 꺼냈던 걸 되돌린다(창이 사라졌거나 페이지가 넘어감).
+ * peeked = 자동으로 꺼냈을 때의 주소(사람이 '크롬에서 보기'로 연 건 null — 저절로 안 숨긴다), failed = 이번 창에서 꺼내기 실패(다시 안 부른다)
+ */
+export function peekStep(x: { popup: boolean; shown: boolean; peeked: { url: string | undefined } | null; failed: boolean; active: boolean; url: string | undefined }): 'peek' | 'unpeek' | null {
+  if (x.peeked) return !x.popup || x.url !== x.peeked.url ? 'unpeek' : null;
+  // 주소를 모르면 기다린다 — 모른 채 꺼내면 주소가 오는 순간 '넘어갔다'로 보고 숨겼다
+  return x.popup && !x.shown && !x.failed && x.active && x.url !== undefined ? 'peek' : null;
 }

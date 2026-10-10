@@ -8,7 +8,9 @@ export type SysLoad = { cores: number; load1: number; load5: number; load15: num
 export type SessionLoad = { id: string; name: string; project: string; cpu: number; rssKb: number; top: Proc[] };
 export type Orphan = Proc & { count: number; claudePid: number };
 export type Bucket = { cpu: number; rssKb: number; top: Proc[] };
-export type LoadReport = { sessions: SessionLoad[]; orphans: Orphan[]; outside: Bucket; rest: Bucket };
+/** 참모 모드 호스트 하나(모드당 claude 프로세스 하나) */
+export type ModeLoad = { name: string; cpu: number; rssKb: number };
+export type LoadReport = { sessions: SessionLoad[]; orphans: Orphan[]; outside: Bucket; rest: Bucket; modes: ModeLoad[] };
 
 /** `ps -axo pid=,ppid=,pcpu=,rss=,etime=,args=` → 프로세스들. 명령은 빈칸째로 */
 export function parsePs(text: string): Proc[] {
@@ -136,7 +138,7 @@ const topOf = (ps: Proc[], n = 6) => [...ps].sort((a, b) => b.cpu - a.cpu || b.r
  * 세션별로 가른다. env = pid → CLAUDE_PID(envCandidates 로 추린 것만), otherClaude = Chammo 밖 Claude 세션 pid
  * (claude agents 에 있지만 내 프로젝트 폴더 밖). 떨어져 나온 프로세스의 나무도 같이 따라간다
  */
-export function attribute(procs: Proc[], sessions: { id: string; name: string; project: string; pid: number }[], env: Map<number, number>, otherClaude: number[] = []): LoadReport {
+export function attribute(procs: Proc[], sessions: { id: string; name: string; project: string; pid: number }[], env: Map<number, number>, otherClaude: number[] = [], modeHosts: { name: string; pid: number }[] = []): LoadReport {
   const byPid = new Map(procs.map((p) => [p.pid, p]));
   const kids = childrenOf(procs);
   const taken = new Set<number>();
@@ -144,6 +146,8 @@ export function attribute(procs: Proc[], sessions: { id: string; name: string; p
 
   const bySession = new Map(sessions.map((s) => [s.pid, [] as Proc[]]));
   for (const s of sessions) bySession.get(s.pid)!.push(...claim(s.pid));
+  // 참모 모드 호스트 — 앱이 띄운 claude -p 라 세션도 남의 것도 아니다. 앱이 준 pid 로 따로 센다(끝난 pid 는 버린다)
+  const modes = modeHosts.filter((m) => byPid.has(m.pid)).map((m) => { const t = claim(m.pid); return { name: m.name, ...sum(t) }; });
   const outside: Proc[] = [];
   // Chammo 밖 Claude 세션 나무를 먼저 떼어 둔다 — 안 그러면 daemon 나무를 따라가다 주인 없는 것으로 샌다
   for (const pid of otherClaude) outside.push(...claim(pid));
@@ -171,6 +175,7 @@ export function attribute(procs: Proc[], sessions: { id: string; name: string; p
     orphans: orphans.sort((a, b) => b.rssKb - a.rssKb),
     outside: { ...sum(outside), top: topOf(outside) },
     rest: { ...sum(rest), top: topOf(rest) },
+    modes,
   };
 }
 
@@ -193,6 +198,8 @@ export type LoadSummary = {
   orphans: { pid: number; what: string; mem: string; cpu: number; age: string }[];
   outside: { cpu: number; mem: string };
   rest: { cpu: number; mem: string; top: string[] };
+  /** 켜진 참모 모드 — 하나당 claude 프로세스 하나 */
+  modes: { count: number; mem: string };
 };
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -211,5 +218,6 @@ export function summarize(sys: SysLoad, r: LoadReport, at: Date): LoadSummary {
     orphans: r.orphans.map((o) => ({ pid: o.pid, what: procLabel(o.cmd), mem: fmtMem(o.rssKb), cpu: Math.round(o.cpu), age: fmtDur(parseEtime(o.etime)) })),
     outside: { cpu: Math.round(r.outside.cpu), mem: fmtMem(r.outside.rssKb) },
     rest: { cpu: Math.round(r.rest.cpu), mem: fmtMem(r.rest.rssKb), top: r.rest.top.slice(0, 3).map(line) },
+    modes: { count: r.modes.length, mem: fmtMem(r.modes.reduce((n, m) => n + m.rssKb, 0)) },
   };
 }

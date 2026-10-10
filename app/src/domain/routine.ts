@@ -2,7 +2,8 @@
 // 화면 이름은 '예약'(2026-10-02), 코드·파일·명령은 옛 이름 routine 그대로
 import { tr } from '../i18n';
 
-export type RoutineEvent = { event: 'start' | 'end' | 'skip' | 'retry'; ts: string; result?: 'ok' | 'fail'; note?: string; session?: string | null; reason?: string; error?: string | null };
+/** stall = scripts/routine tick 이 본 '보고 없이 멈춘 실행'(refresh 로그인 갱신 겹침이 다시 돌려도 또 · blocked 그 밖에 오래 조용함). retry 에 stall: 'refresh' 면 갱신 겹침으로 한 번 다시 돌린 것 */
+export type RoutineEvent = { event: 'start' | 'end' | 'skip' | 'retry' | 'stall' | 'told'; ts: string; result?: 'ok' | 'fail'; note?: string; session?: string | null; reason?: string; error?: string | null; stall?: 'refresh' | 'blocked' };
 export type Routine = {
   name: string;
   /** local = 이 맥 launchd · cloud = claude.ai 클라우드 루틴(<데이터>/cloud-routines.json, 목록에만). 옛 스크립트는 안 줘서 없으면 local */
@@ -59,7 +60,14 @@ export function routineState(r: Routine, sessions: { name: string; state: string
 export function runEventText(e: RoutineEvent): string {
   if (e.event === 'start') return e.error ? tr(`시작 실패 — ${e.error}`, `Could not start — ${e.error}`) : tr('시작', 'Started');
   if (e.event === 'skip') return e.reason === 'still running' || !e.reason ? tr('건너뜀 — 지난 실행이 아직 도는 중', 'Skipped — the last run is still going') : tr(`건너뜀 — ${e.reason}`, `Skipped — ${e.reason}`);
+  if (e.event === 'stall') {
+    return e.stall === 'refresh'
+      ? tr('멈춤 — 로그인 갱신이 겹쳐 다시 돌렸는데 또 멈췄어', 'Stuck — a sign-in refresh overlapped again after one rerun')
+      : tr('멈춤 — 보고 없이 오래 조용해', 'Stuck — quiet for hours without a report');
+  }
+  if (e.event === 'told') return tr('멈춤을 참모에게 알림', 'Told the assistant it was stuck');
   if (e.event === 'retry') {
+    if (e.stall === 'refresh') return tr('다시 돌림 — 로그인 갱신이 겹쳐 첫 요청에서 멈췄어', 'Ran again — a sign-in refresh overlapped and stopped the first request');
     if (e.reason?.startsWith('workspace not trusted') || !e.reason) return tr('다시 시도 — 폴더 믿음이 풀려 있어 다시 적음', 'Retried — workspace trust was reset');
     const why = /^start failed \((.*)\) — /.exec(e.reason)?.[1] ?? e.reason;
     return tr(`다시 시도 — 시작이 실패해 잠깐 쉬고 한 번 더 (${why})`, `Retried — failed to start, waited and tried once more (${why})`);
@@ -202,4 +210,27 @@ export function routineSummary(rs: Routine[], now: Date = new Date()): string {
   const soon = rs.filter((r) => r.enabled && !isCloud(r) && r.next).sort((a, b) => (a.next! < b.next! ? -1 : 1))[0];
   const head = tr(`예약 ${rs.length}개`, `${rs.length} routines`);
   return soon ? `${head} · ${tr(`다음 ${relWhen(soon.next!, now)} ${soon.name}`, `next ${relWhen(soon.next!, now)} ${soon.name}`)}` : `${head} · ${tr('다음 실행 없음', 'nothing scheduled')}`;
+}
+
+/** 이보다 오래된 stall 은 참모에게 안 넘긴다 — 앱을 새로 깔거나 오래 껐다 켰을 때 옛 일로 부르지 않게 */
+const STALL_KEEP_MS = 48 * 3600_000;
+
+/** 참모 입력칸에 넘길 멈춘 예약 한 줄 — 아직 안 알린(told 에도 없고 기록에 told 줄도 없는) 이틀 안 stall 중 그 뒤로 다시 시작하지 않은 것. key = 이름@시각 */
+export function stallNotices(rs: Routine[], told: ReadonlySet<string>, now: Date = new Date()): { key: string; name: string; text: string }[] {
+  return rs.flatMap((r) => {
+    if (isCloud(r)) return [];
+    const runs = r.runs ?? [];
+    const i = runs.map((e) => e.event).lastIndexOf('stall');
+    const e = runs[i];
+    if (!e || runs.slice(i + 1).some((x) => x.event === 'start' || x.event === 'told')) return []; // 다시 돌렸거나 이미 알렸다(scripts/routine told)
+    const key = `${r.name}@${e.ts}`;
+    if (told.has(key) || now.getTime() - Date.parse(e.ts) > STALL_KEEP_MS) return [];
+    const sid = e.session ?? '?';
+    const text = e.stall === 'refresh'
+      ? tr(`[앱] 예약 ${r.name} 세션(${sid})이 로그인 갱신이 겹쳐 멈췄어 — 한 번 다시 돌렸는데 또 멈춰서 그대로 뒀어. 로그인이 멀쩡하면 scripts/routine run ${r.name} 로 다시 돌리고, 멈춘 세션은 claude rm ${sid}`,
+        `[app] Routine ${r.name} session (${sid}) stopped on an overlapping sign-in refresh — it was run once more and stopped again, so it was left as is. If sign-in is fine, run scripts/routine run ${r.name} again and remove the stuck session with claude rm ${sid}`)
+      : tr(`[앱] 예약 ${r.name} 세션(${sid})이 보고 없이 몇 시간째 멈춰 있어(${e.reason ?? ''}) — 그 세션 마지막 말을 보고 이어서 시킬지(SendMessage), scripts/routine run ${r.name} 로 다시 돌릴지, claude rm 으로 치울지 정해`,
+        `[app] Routine ${r.name} session (${sid}) has been stuck for hours without a report (${e.reason ?? ''}) — read its last message and decide: continue it (SendMessage), run it again (scripts/routine run ${r.name}) or remove it (claude rm)`);
+    return [{ key, name: r.name, text }];
+  });
 }

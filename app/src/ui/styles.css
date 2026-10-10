@@ -248,20 +248,41 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .acct-chip b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acct-chip.unknown b { color: var(--text-3); font-weight: 600; }
 /* 계정 칩 팝오버 — 위 막대(overflow: hidden)에 안 잘리게 fixed */
+/* 계정 팝오버 — 한 줄 목록 + 다가오는 초기화(2026-10-10 시안 C, docs/design-drafts/account-pop). 접두 acct-pop- */
 .acct-pop { position: fixed; z-index: 60; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18); padding: 6px; font-size: 12px; outline: none; }
-.acct-pop-row { padding: 6px 8px; border-radius: 8px; }
-.acct-pop-row + .acct-pop-row { margin-top: 2px; }
-.acct-pop-cur { background: var(--surface); }
-.acct-pop-main { display: flex; align-items: center; gap: 12px; min-height: 44px; }
-.acct-pop-name { flex: 1 1 100px; min-width: 90px; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; }
-.acct-pop-name b { overflow: hidden; text-overflow: ellipsis; }
-.acct-pop-tag { flex: 0 0 auto; font-size: 11px; color: var(--text-3); }
-.acct-pop-bar .m-track { width: 44px; }
-.acct-pop-btn { min-height: 44px; padding: 0 12px; font-size: 12px; flex: 0 0 auto; }
-.acct-pop-btn-gap { flex: 0 0 88px; }
-.acct-pop-note { font-size: 11px; color: var(--text-3); padding: 0 0 2px; }
-.acct-pop-out { color: var(--danger-ink); padding: 4px 8px; }
-.acct-pop-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--line); margin-top: 6px; padding: 4px 8px 0; min-height: 48px; }
+.acct-pop-head { display: flex; align-items: center; gap: 6px; min-height: 44px; padding-left: 10px; }
+.acct-pop-next { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.acct-pop-next b { font-size: 12.5px; font-weight: 600; }
+.acct-pop-next span { font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-pop-warn { color: var(--danger-ink); }
+.acct-pop-icon { flex: 0 0 auto; width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); padding: 0; cursor: pointer; }
+.acct-pop-icon:hover { background: var(--hover); color: var(--text); }
+.acct-pop-icon svg { width: 16px; height: 16px; }
+.acct-pop-list { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 4px; }
+.acct-pop-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 0 12px 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--text); font: inherit; text-align: left; }
+button.acct-pop-row { cursor: pointer; }
+button.acct-pop-row:hover:not(:disabled) { background: var(--hover); }
+button.acct-pop-row:disabled { cursor: default; opacity: .6; }
+.acct-pop-chk { flex: 0 0 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; }
+.acct-pop-chk svg { width: 15px; height: 15px; }
+.acct-pop-name { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-pop-cur .acct-pop-name { font-weight: 700; }
+.acct-pop-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); }
+.acct-pop-dot.ok { background: var(--idle); }
+.acct-pop-dot.mid { background: var(--blocked); }
+.acct-pop-dot.low { background: var(--danger-ink); }
+.acct-pop-val { flex: 0 0 auto; min-width: 38px; text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.acct-pop-stop { font-size: 11.5px; font-weight: 500; color: var(--text-3); }
+.acct-pop-err { font-size: 11px; color: var(--danger-ink); padding: 4px 10px; }
+.acct-pop-foot { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--line); margin-top: 4px; padding-left: 10px; min-height: 48px; }
+.acct-pop-foot-label { font-size: 12px; color: var(--text-2); }
+.acct-pop-switch { flex: 0 0 auto; width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; padding: 0; cursor: pointer; border-radius: 8px; }
+.acct-pop-switch i { position: relative; width: 30px; height: 18px; border-radius: 999px; background: var(--line-strong); transition: background .15s; }
+.acct-pop-switch i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left .15s; }
+.acct-pop-switch[aria-checked="true"] i { background: var(--accent); }
+.acct-pop-switch[aria-checked="true"] i::after { left: 14px; background: var(--accent-ink); }
+.acct-pop-switch:disabled { cursor: default; opacity: .6; }
+.acct-pop-switch:focus-visible, .acct-pop-icon:focus-visible, button.acct-pop-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .m-label { color: var(--text-3); font-weight: 600; }
 .m-track { width: 72px; height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
 .m-fill { display: block; height: 100%; border-radius: 999px; }
@@ -595,7 +616,9 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .office-tag.hot { outline: 2px solid var(--accent); }
 .office-tag:hover { filter: brightness(.95); }
 .office-tag.st-dim { opacity: .45; } /* 채팅 뷰: 지금 채팅 탭 참모가 시킨 세션만 진하게 */
-.office-tag.human { background: #d9462f; color: #fff; } /* 사람 필요 — 세션 브라우저가 사람을 부름(빨간 ! 와 같은 색) */
+.office-tag.human { background: #d9462f; color: #fff; }
+.office-title { font-size: 9.5px; font-weight: 800; color: #c9921f; margin-right: 4px; letter-spacing: -.01em; } /* 반장 칭호(뽑기) — 이름 앞 금빛 글자 */
+.office-tag.dark .office-title, .office-tag.lcd .office-title { color: #ffd27a; } /* 사람 필요 — 세션 브라우저가 사람을 부름(빨간 ! 와 같은 색) */
 .office-chats { position: relative; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); }
 .office-skins { position: absolute; top: 10px; left: 10px; display: flex; gap: 2px; padding: 2px; border-radius: 8px; z-index: 2; }
 .office-skins button { all: unset; font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 6px; cursor: pointer; opacity: .7; }
@@ -713,6 +736,9 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .dex-name { font-size: 12px; font-weight: 700; color: #fff; }
 .dex-rare { font-size: 10.5px; font-weight: 700; }
 .dex-on { position: absolute; top: 6px; right: 6px; font-size: 10px; font-weight: 800; color: #fff; background: #e8743a; padding: 1px 6px; border-radius: 999px; }
+/* NEW — 처음 얻고 안 눌러 본 것(도감·스킨 칸), 그게 든 탭·메뉴엔 작은 점 */
+.dex-new { position: absolute; top: 6px; left: 6px; font-size: 10px; font-weight: 800; color: #2a1d05; background: #ffd34d; padding: 1px 6px; border-radius: 999px; }
+
 .gacha-icon.big { width: 84px; height: 72px; }
 
 /* 스킨 (ui/office/SkinsView) */
@@ -936,3 +962,8 @@ button.ld-row:hover { background: var(--panel); }
 .login-card-where { font-size: 12px; color: var(--warn-ink); overflow-wrap: anywhere; }
 .login-card-term { height: 240px; display: flex; margin-top: 4px; }
 .login-card-term > .pane { flex: 1; }
+
+/* NEW 자리 — 버튼마다 all: unset 이 position 을 지워서 파일 끝에 둔다 */
+.skins-grid .skin-cell { position: relative; }
+button.has-new { position: relative; }
+button.has-new::after { content: ''; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: #ffd34d; }

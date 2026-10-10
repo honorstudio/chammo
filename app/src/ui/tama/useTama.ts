@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { ciRuns, commitLog, humanTurns, readShowLog, readSpaceLog, readTama, tamaRequest, tamaWidget, writeTama, type AppEnv } from '../../data/tauri';
 import type { Routine } from '../../domain/routine';
+import type { Reviewed } from '../../domain/reviewSummary';
+import { EMPTY_MONSTERS, slayEvents, watch, type Watch } from '../../domain/tama/monsters';
 import { keeperOf, routineFeed, showFeed, spaceFeed, talkFeed } from '../../domain/tama/signals';
 import { orchColor } from '../../domain/avatar';
 import { earnedBadges, unlockBadges } from '../../domain/tama/badges';
@@ -10,7 +12,8 @@ import type { Session } from '../../domain/session';
 import type { TaskEvent } from '../../domain/tasks';
 import type { TamaEvent } from '../../domain/tama/pet';
 import { balanceFeed, parseCiRuns, parseCommitLog, taskEvents } from '../../domain/tama/sources';
-import { addWork, parseTamaFile, step, workMinutes, type TamaFile } from '../../domain/tama/store';
+import { addDiary } from '../../domain/tama/diary';
+import { addWork, autoRetire, parseTamaFile, step, workMinutes, type TamaFile } from '../../domain/tama/store';
 
 const STEP_MS = 60_000;
 const COMMITS_MS = 5 * 60_000;   // git log 는 저장소 40개를 도니 5분에 한 번
@@ -19,8 +22,8 @@ const DAY = 86_400_000;
 
 type Cache = { at: number; key: string; events: TamaEvent[] };
 
-/** onRequest: 위젯이 부탁한 것("dex" = 다마고치 페이지) */
-export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEvent[], routines: Routine[], orchs: Session[], onRequest: (kind: string) => void) {
+/** onRequest: 위젯이 부탁한 것("dex" = 다마고치 페이지). prs = 리뷰 화면이 읽은 열린 PR(아직 못 읽었거나 꺼졌으면 null) — 서류 골렘 재료 */
+export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEvent[], routines: Routine[], orchs: Session[], onRequest: (kind: string) => void, prs: Reviewed[] | null = null) {
   const [file, setFile] = useState<TamaFile | null>(null);
   // 먹이 사건(커밋·PR·CI·시킨 일) — 머지 가챠 코인도 같은 사건으로 센다(useGacha)
   const [feed, setFeed] = useState<TamaEvent[]>([]);
@@ -28,8 +31,8 @@ export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEven
   const pending = useRef(0);
   const lastPoll = useRef(Date.now());
   const busy = sessions.filter((s) => s.state === 'working').length;
-  const latest = useRef({ busy, tasks, routines, sessions, orchs, onRequest });
-  latest.current = { busy, tasks, routines, sessions, orchs, onRequest };
+  const latest = useRef({ busy, tasks, routines, sessions, orchs, onRequest, prs });
+  latest.current = { busy, tasks, routines, sessions, orchs, onRequest, prs };
   const commits = useRef<Cache>({ at: 0, key: '', events: [] });
   const ci = useRef<Cache>({ at: 0, key: '', events: [] });
 
@@ -43,6 +46,7 @@ export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEven
   useEffect(() => {
     if (!env) return;
     let alive = true;
+    let runs = 0;
     const run = async () => {
       const now = Date.now();
       let f = parseTamaFile(await readTama());
@@ -66,9 +70,24 @@ export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEven
         ...taskEvents(latest.current.tasks), ...showFeed(shows), ...spaceFeed(space), ...routineFeed(latest.current.routines),
         ...talkFeed(talks).map((e) => ({ ...e, by: e.by && bySid.get(e.by) })),
       ];
-      const events = balanceFeed([...commits.current.events, ...ci.current.events, ...extra]);
+      // 장애 몬스터(2026-10-10) — 앱이 이미 아는 것만. 세션 목록이 비면(켜자마자) 유령은 판단하지 않는다(멈춘 세션이 도망친 걸로 안 보이게)
+      const all = latest.current.sessions;
+      const w: Watch = {
+        ci: env.githubUser ? ci.current.events : null,
+        stuck: all.length ? all.filter((s) => s.state === 'blocked' && s.waitingFor === 'input needed').map((s) => ({ id: s.id, name: s.name || s.project })) : null,
+        alive: all.length ? all.map((s) => s.id) : null,
+        prs: latest.current.prs?.map((p) => ({ key: p.key, where: `${p.folder} #${p.number}`, createdAt: Date.parse(p.createdAt), draft: p.draft })) ?? null,
+      };
+      const mon = watch(f.monsters ?? EMPTY_MONSTERS, w, now);
+      f = { ...f, monsters: mon.state };
+      // 방치 벌은 약하게 — 나온 지 6시간 된 몬스터가 간식 하나를 훔쳐 먹는다(배 한 칸)
+      if (mon.stolen && f.pet && !f.pet.dead) f = { ...f, pet: { ...f.pet, fedFull: Math.max(0, f.pet.fedFull - mon.stolen) } };
+      const events = balanceFeed([...commits.current.events, ...ci.current.events, ...extra, ...slayEvents(mon.state)]);
       if (alive) setFeed(events);
-      if (f.pet && !f.pet.dead) f = step(f, events, now);
+      if (f.pet && !f.pet.dead) f = autoRetire(step(f, events, now), now); // 끝 모습이 된 지 하루면 은퇴(세대 잇기)
+      // 펫 일기 — 새벽 5시가 지나면 어제 한 장(먹인 참모는 이름으로). 켜자마자 첫 계산은 건너뛴다 —
+      // 시킨 일·예약 기록이 아직 안 읽혀 빈 채로 어제 장이 박히면 다시 안 쓴다
+      if (++runs > 1) f = addDiary(f, events, now, (id) => latest.current.orchs.find((o) => o.id === id)?.name ?? null);
       // 업적: 딴 것은 다마고치 화면에만 — macOS 알림은 안 보낸다(사용자 2026-09-27, domain/notify)
       f = unlockBadges(f, earnedBadges(f, commits.current.events, now), now).file;
       const ids = latest.current.orchs.map((o) => o.id);

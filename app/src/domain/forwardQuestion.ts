@@ -6,7 +6,7 @@ import type { Activity } from './activity';
 import type { Session } from './session';
 import type { TaskEvent } from './tasks';
 import { findTarget } from './inbox';
-import { owners } from './spaceNav';
+import { splitOrchName } from './orchLabel';
 
 export const GRACE_MS = 30_000;
 
@@ -15,8 +15,12 @@ export const GRACE_MS = 30_000;
  * 꺼진 참모는 건너뛴다. 맨 앞 참모에게만 보내서 개발 담당 세션 알림이 참모 업데이트에게 갔다(2026-10-03)
  */
 export function forwardTo(sub: Session, events: TaskEvent[], orchs: Session[], sessions: Session[], front?: Session, heir?: (sub: Session) => Session | undefined): Session | undefined {
-  const own = owners(events);
-  const alive = (id?: string) => orchs.find((o) => o.id === id);
+  // 일마다 주인(handoff 면 새 주인) — 번호가 먼저, 참모가 --resume 으로 번호가 바뀌어 없으면 기록의 이름(fromName)과 같은 기본 이름의 참모
+  const own = new Map<string, { id: string; name?: string }>();
+  for (const e of events) if ((e.type === 'send' || e.type === 'own') && e.from) own.set(e.task, { id: e.from, name: e.fromName });
+  const base = (n: string) => splitOrchName(n).base;
+  const alive = (o?: { id: string; name?: string }) =>
+    o && (orchs.find((x) => x.id === o.id) ?? (o.name ? orchs.find((x) => base(x.name) === base(o.name!)) : undefined));
   const sends = events.filter((e) => e.type === 'send' && e.target).reverse(); // 기록은 덧붙이는 순서 = 최근이 뒤
   const last = sends.find((e) => findTarget(sessions, e.target)?.id === sub.id);
   const mine = last && alive(own.get(last.task));
@@ -89,6 +93,13 @@ const ASK_MAX_AGE = 24 * 3600_000;
 export type AskCand = { session: Session; activity: Activity };
 /** 같은 답은 한 번만 — 세션 + 답 시각 */
 export const askKeyOf = (c: AskCand) => `${c.session.id}:${c.activity.reply?.ts ?? ''}`;
+/** 같은 끝말도 한 번만 — 진행 보고를 턴마다 같은 끝말로 맺는 세션이 2분마다 다시 넘어왔다(2026-10-10 한 세션이 5번) */
+export const askTextKeyOf = (c: AskCand) => `${c.session.id}:t:${lastWords(c.activity)}`;
+const lastWords = (a: Activity) => {
+  const r = a.reply;
+  const said = (r?.ask?.q || r?.tail || r?.text || '').replace(/\s+/g, ' ').trim();
+  return said.length > 140 ? '…' + said.slice(-140) : said;
+};
 
 export function nextAskForward(
   cands: AskCand[],
@@ -110,7 +121,7 @@ export function nextAskForward(
     const at = Date.parse(r.ts);
     if (!(at > s.startedAt)) return false; // 이어서 켜기 전의 옛 답 — 가져온 세션은 쉬어도 blocked 로 나온다
     if (now - at < ASK_GRACE_MS || now - at > ASK_MAX_AGE) return false;
-    return !done.has(askKeyOf(c)) && !watching(s);
+    return !done.has(askKeyOf(c)) && !done.has(askTextKeyOf(c)) && !watching(s);
   });
 }
 
@@ -134,8 +145,7 @@ export function toldOrch(tail: string, name: string, since: string): boolean {
 export function askForwardText(s: Session, a: Activity, now: number): string {
   const r = a.reply!;
   const mins = Math.max(1, Math.round((now - Date.parse(r.ts)) / 60_000));
-  const said = (r.ask?.q || r.tail || r.text).replace(/\s+/g, ' ').trim();
-  const q = said.length > 140 ? '…' + said.slice(-140) : said;
+  const q = lastWords(a);
   return tr(
     `[앱] ${whereOf(s)} 세션(${s.id})이 ${mins}분째 답을 기다려 — 마지막 말: "${q}" — 되돌리기 쉬운 건 네가 답하고(SendMessage), 사용자가 정할 거면 물어봐`,
     `[app] ${whereOf(s)} session (${s.id}) has been waiting for an answer for ${mins} min — last words: "${q}" — answer easy-to-undo ones yourself (SendMessage), ask the user when it's theirs to decide`,

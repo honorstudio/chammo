@@ -50,7 +50,7 @@ export function summarize(pr: OpenPr, gates: Gate[]): Summary {
     sectionLine(secs, WHAT) || firstLine(secs[0]!.lines) || (pr.commits[0] ? clean(pr.commits[0]) : '') || firstLine(secs.slice(1).flatMap((s) => s.lines));
   const ops = [gates.map((g) => `${GATE_LABEL[g.kind]}(${g.why})`).join(' · '), sectionLine(secs, DEPLOY)].filter(Boolean).join(' · ');
   // ⚠️ 줄이 제일 뚜렷하다 — "아직" 은 "아직 라이트 전용" 처럼 딴 뜻으로도 나와서 그다음.
-  // 문서만 바꾼 PR 은 본문이 문서 내용을 옮긴 것이라 줄 가운데 ⚠️·"아직" 은 문서 속 할 일이다 — 상태표 줄의 "⚠️ 9/11 재촬영"(#410).
+  // 문서만 바꾼 PR 은 본문이 문서 내용을 옮긴 것이라 줄 가운데 ⚠️·"아직" 은 문서 속 할 일이다 — 상태표 줄의 "⚠️ 다음 주 다시 찍기".
   // 그래서 줄 머리 ⚠️ 와 남은 것 칸만. 코드 PR 의 줄 가운데 ⚠️ 는 진짜 경고가 많아(실측 859개 중 #487·#288 등) 그대로 본다
   const docsOnly = pr.files.length > 0 && pr.files.every((x) => fileKind(x.path) === 'docs');
   const unverified = docsOnly

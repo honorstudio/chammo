@@ -19,6 +19,8 @@ export function AccountsSection({ title, claude, fontSize }: { title: string; cl
   const [adding, setAdding] = useState<{ start: string | null } | null>(null);
   const [newName, setNewName] = useState('');
   const [removing, setRemoving] = useState<string | null>(null);
+  /** 백업으로 되돌리기 — 빼기처럼 그 자리에서 한 번 더 묻는다 */
+  const [restoring, setRestoring] = useState<'backup-first' | 'backup-last' | null>(null);
   const names = useRef<Record<string, string>>({});
 
   const show = (v: AccountsView) => {
@@ -129,6 +131,20 @@ export function AccountsSection({ title, claude, fontSize }: { title: string; cl
           <input type="checkbox" checked={auto.on} disabled={busy} onChange={(e) => void act(() => accountsApi.autoPatch({ on: e.target.checked }))} />
           {tr('자동 전환 — 쓸 수 있는 계정 중 위에 있는 것부터 쓰고, 5시간·주간이 95% 차면 다음 계정으로, 다시 열리면 돌아와요', 'Auto-switch — use the top available account first, move on at 95% of the 5-hour or weekly limit, and come back when it reopens')}
         </label>
+        <div className="su-row acct-restore">
+          <div className="su-row-text"><span>{tr('로그인이 꼬였을 때 — 바꾸기 전에 남겨 둔 로그인으로 되돌려요', 'If sign-in got tangled — go back to the sign-in kept before a switch')}</span></div>
+          <div className="su-row-act">
+            {restoring
+              ? <>
+                  <button className="btn su-mini" disabled={busy} onClick={() => { const w = restoring; setRestoring(null); void act(() => accountsApi.restore(w)); }}>{tr('정말 되돌리기', 'Restore now')}</button>
+                  <button className="btn su-mini" onClick={() => setRestoring(null)}>{tr('취소', 'Cancel')}</button>
+                </>
+              : <>
+                  <button className="btn su-mini" disabled={busy} onClick={() => setRestoring('backup-last')}>{tr('바로 전 로그인', 'Previous sign-in')}</button>
+                  <button className="btn su-mini" disabled={busy} onClick={() => setRestoring('backup-first')}>{tr('처음 로그인', 'First sign-in')}</button>
+                </>}
+          </div>
+        </div>
         <p className="su-hint">{tr('"이 계정으로"를 누르면 그 계정에 머물러요(고정). 그 계정이 다 차면 다시 자동으로 넘어가요. 이미 돌고 있는 세션도 다음 요청부터 새 계정을 써요.', 'Choosing "Use this" pins that account until it fills up, then auto-switch resumes. Running sessions use the new account from their next request.')}</p>
       </>}
       {!adding

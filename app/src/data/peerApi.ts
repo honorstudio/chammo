@@ -70,6 +70,8 @@ export function makeApi(io: Io) {
     browserFrame: (profile: string, since: number) => io.bytes(`/api/browser-frame?profile=${encodeURIComponent(profile)}&since=${since}`),
     /** 참모 고정·맡은 일 — 그 기기 <데이터> 파일 글 그대로(domain/orchPins·orchRoles) */
     readPins: () => io.text('/api/pins'),
+    /** 참모 순서 — 데스크톱 채팅 탭에서 끌어 둔 순서(domain/orchOrder), 폰은 읽기만 */
+    readOrder: () => io.text('/api/order'),
     readRoles: () => io.text('/api/roles'),
   };
 }

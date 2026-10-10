@@ -7,6 +7,7 @@ sys.path.insert(0, str(ROOT / 'docs/design-drafts/tamagotchi/body'))
 import sprites as V1, hires as H
 from fire16 import FIRE
 from others16 import WAVE, LEAF, STAR, HIDDEN, FUSED
+from monsters16 import MONSTERS
 
 # 알 고르기·무덤 공용 그림 + 계열별 16종(키 = 계열_자리) — 시안 v4·v5
 S = {k: V1.S[k] for k in ['egg', 'grave']}
@@ -14,6 +15,7 @@ for egg, d in (('fire', FIRE), ('wave', WAVE), ('leaf', LEAF), ('star', STAR)):
     S.update({f'{egg}_{k}': v for k, v in d.items() if (egg, k) != ('fire', 'r1')})
     S[f'{egg}_cX'] = HIDDEN[egg]          # 숨은 성숙기
 S.update({f'fuse_{k}': v for k, v in FUSED.items()})  # 합체 궁극체 — 계열 없음
+S.update({f'mon_{k}': v for k, v in MONSTERS.items()})  # 장애 몬스터(tama-next D)
 S.update(bear=H.BEAR16, bear_blink=H.BEAR16_BLINK, bear_eat=H.BEAR16_EAT, bear_happy=H.BEAR16_HAPPY, bear_sick=H.BEAR16_SICK, **H.PROPS)
 body = ',\n'.join(f'  {k}: {json.dumps(v, ensure_ascii=False)}' for k, v in S.items())
 out = ROOT / 'app/src/ui/tama/sprites.ts'

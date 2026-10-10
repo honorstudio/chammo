@@ -45,11 +45,11 @@ export function PixelIcon({ rows, size = 22 }: { rows: string[]; size?: number }
 const TOOLS: [Exclude<OfficeTab, 'office'>, string][] = [['gacha', tr('뽑기', 'Gacha')], ['dex', tr('도감', 'Collection')], ['skins', tr('스킨', 'Skins')], ['furniture', tr('가구', 'Furniture')]];
 
 /** 왼쪽 위 아이콘 줄 — 누르면 그 모달(가구는 방 위 편집). 켜진 걸 다시 누르면 닫힌다. 아이콘만(이름은 aria-label·title — 아이콘+글자 같이 금지, 상점 QA 11) */
-export function OfficeTools({ tab, onTab }: { tab: OfficeTab; onTab: (t: OfficeTab) => void }) {
+export function OfficeTools({ tab, onTab, dot }: { tab: OfficeTab; onTab: (t: OfficeTab) => void; /** 작은 점 — 도감에 NEW 가 있을 때 */ dot?: Partial<Record<OfficeTab, boolean>> }) {
   return (
     <div className="office-tools" role="toolbar" aria-label={tr('사무실 메뉴', 'Office menu')}>
       {TOOLS.map(([id, name]) => (
-        <button key={id} className={`office-tool ${tab === id ? 'on' : ''}`} aria-pressed={tab === id} aria-label={name} title={name} onClick={() => onTab(tab === id ? 'office' : id)}>
+        <button key={id} className={`office-tool ${tab === id ? 'on' : ''} ${dot?.[id] ? 'has-new' : ''}`} aria-pressed={tab === id} aria-label={name} title={name} onClick={() => onTab(tab === id ? 'office' : id)}>
           <PixelIcon rows={ICON[id]} />
         </button>
       ))}
@@ -74,11 +74,11 @@ export function OfficeModal({ onClose, children }: { onClose: () => void; childr
 const SHOP: [ShopView, string][] = [['gacha', tr('뽑기', 'Gacha')], ['dex', tr('도감', 'Collection')], ['skins', tr('스킨', 'Skins')]];
 
 /** 상점 창 안에서 뽑기·도감·스킨을 오가는 아이콘 — 펫 탭에서 뽑아도 뽑은 걸 바로 본다(2026-10-04 QA 3번) */
-export function ShopNav({ view, onView }: { view: ShopView; onView: (v: ShopView) => void }) {
+export function ShopNav({ view, onView, dot }: { view: ShopView; onView: (v: ShopView) => void; dot?: Partial<Record<ShopView, boolean>> }) {
   return (
     <div className="shop-nav" role="tablist" aria-label={tr('상점', 'Shop')}>
       {SHOP.map(([id, name]) => (
-        <button key={id} role="tab" aria-selected={view === id} aria-label={name} title={name} className={view === id ? 'on' : ''} onClick={() => onView(id)}>
+        <button key={id} role="tab" aria-selected={view === id} aria-label={name} title={name} className={`${view === id ? 'on' : ''} ${dot?.[id] ? 'has-new' : ''}`} onClick={() => onView(id)}>
           <PixelIcon rows={ICON[id]} size={18} />
         </button>
       ))}

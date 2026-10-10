@@ -66,7 +66,7 @@ export const spriteOf = (egg: Egg, slot: Slot): string =>
 const face = (who: string, kind: 'blink' | 'eat' | 'happy' | 'sick') =>
   who === 'bear' ? `bear_${kind}` : kind === 'blink' ? eyesShut(who) : who;
 
-export type Stage = { scene: SceneName; lit: Lamp[]; who: string; prev?: string; petAt?: number };
+export type Stage = { scene: SceneName; lit: Lamp[]; who: string; prev?: string; petAt?: number; /** 마주 선 장애 몬스터 그림(mon_*) */ foe?: string };
 
 const ICONS: [Lamp, string][] = [['food', 'i_food'], ['light', 'i_light'], ['play', 'i_play'], ['med', 'i_med'], ['clean', 'i_clean'], ['stat', 'i_stat'], ['train', 'i_train'], ['call', 'i_call']];
 
@@ -89,6 +89,12 @@ function paint(st: Stage, t: number) {
     case 'dead': put('grave', 12, floor); put('ghost', 30, Math.max(0, 12 - (t % 14))); break;
     case 'evolve': put(t % 2 && st.prev ? st.prev : who, 12, floor); if (t % 3 === 0) f.invert(); break;
     case 'sick': put(face(who, 'sick'), 10 + (t % 2), floor); if (t % 2) put('skull', 31, 1); break;
+    case 'monster': {
+      // 펫은 왼쪽에서 통통, 몬스터는 오른쪽에서 꿈틀 — 겁주지 않게 가끔 펫이 깜빡
+      put(t % 7 === 0 ? face(who, 'blink') : who, 1 + (t % 2), floor - (t % 2));
+      put(st.foe ?? 'mon_slime', 23 - (t % 3 === 0 ? 1 : 0), floor - (t % 4 === 1 ? 1 : 0));
+      break;
+    }
     case 'eat': {
       put(t % 2 ? face(who, 'eat') : who, 6, floor);
       put(['rice', 'rice2', 'rice3'][Math.floor((t % 6) / 2)]!, 26, AREA_H - 6);

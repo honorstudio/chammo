@@ -1,5 +1,6 @@
 """HQ 템플릿 scripts/new-project 테스트 (공개판): python3 -m unittest discover -s app/hq-tests"""
 import importlib.machinery, importlib.util, json, os, pathlib, sys, tempfile, unittest
+import unittest.mock
 
 sys.dont_write_bytecode = True
 
@@ -15,6 +16,14 @@ def load(name):
 
 
 np = load('new-project')
+
+
+def setUpModule():
+    # 시험을 돌리는 셸에 CLAUDE_CONFIG_DIR 가 있으면 믿음 쓰기가 그 진짜 설정으로 간다 — 시험마다 홈(임시 폴더)만 보게
+    p = unittest.mock.patch.dict(os.environ)
+    p.start()
+    os.environ.pop('CLAUDE_CONFIG_DIR', None)
+    unittest.addModuleCleanup(p.stop)
 
 
 def fake_data(root, lang='ko'):
@@ -104,6 +113,21 @@ class Trust(unittest.TestCase):
             out = np.create('old', '설명', data=str(data), home=root, today='2026-09-28')
             self.assertNotIn(out['path'], json.loads(cj.read_text())['projects'])
             self.assertFalse(out['trusted'])
+
+    def test_CLAUDE_CONFIG_DIR_면_그_폴더의_claude_json_에_적는다(self):
+        # Claude Code 는 CLAUDE_CONFIG_DIR 가 있으면 그 안 .claude.json 을 읽는다 — 홈 것에 적으면 시험 설정으로 돌려도 진짜 설정에 칸이 생겼다
+        with tempfile.TemporaryDirectory() as root:
+            data, dev = fake_data(root)
+            home_cj = pathlib.Path(root) / '.claude.json'
+            home_cj.write_text(json.dumps({'projects': {}}))
+            cfg = pathlib.Path(root) / 'cfg'
+            cfg.mkdir()
+            (cfg / '.claude.json').write_text(json.dumps({'projects': {}}))
+            with unittest.mock.patch.dict(os.environ, {'CLAUDE_CONFIG_DIR': str(cfg)}):
+                out = np.create('cfg-app', '설명', data=str(data), home=root, today='2026-09-28')
+            self.assertTrue(json.loads((cfg / '.claude.json').read_text())['projects'][out['path']]['hasTrustDialogAccepted'])
+            self.assertEqual(json.loads(home_cj.read_text()), {'projects': {}})
+            self.assertTrue(out['trusted'])
 
     def test_claude_json_이_없거나_깨졌으면_건드리지_않는다(self):
         with tempfile.TemporaryDirectory() as root:

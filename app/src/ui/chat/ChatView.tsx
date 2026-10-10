@@ -10,8 +10,8 @@ import { modelCommand } from '../../domain/modelPick';
 import { screenDialog, type ScreenDialog } from '../../domain/screenDialog';
 import type { PickResult, PickWant } from './modelPickRun';
 import { builtinSlash, completeSlash, isMemoryCmd, matchSlash, slashQuery, type SlashItem } from '../../domain/slash';
-import { appendChat, chatBusy, chatNorm, enterDelay, parseChat, pendingLeft, clickFocusesInput, promptInput, sendControls, splitPaths, splitRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
-import { applyQueueOps, autoEnterTarget, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, pendingState, type PendingState, type QueueState } from '../../domain/chatQueue';
+import { appendChat, chatBusy, chatNorm, enterDelay, parseChat, pendingLeft, clickFocusesInput, sentByMe, promptInput, sendControls, splitPaths, splitRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
+import { againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, mineForLeftover, pendingState, resent, type PendingState, type QueueState } from '../../domain/chatQueue';
 import { mdToHtml } from '../md';
 import { openTarget, readSessionTasks, readTranscript, type SessionTask } from '../../data/tauri';
 import { modKey } from '../../domain/keys';
@@ -29,8 +29,6 @@ const POLL_MS = 1000;
 const PAGE = 150;
 /** 보낸 글 말풍선을 들고 있는 최대 시간 — 줄 선 말은 긴 일이 끝날 때까지 기다린다. 안 간 말은 사람이 빼거나 다시 보낼 때까지 남긴다 */
 const PENDING_MS = 3_600_000;
-/** 입력칸에 남은 글이 '방금 내가 보낸 말'로 볼 만큼 최근인가 — 막 보낸 말을 Esc 로 끊으면 Claude 가 입력칸에 되돌려 놓는다(2026-10-06 실측) */
-const RESTORED_MS = 600_000;
 
 // 답 마크다운 → HTML 은 한 번 바꾼 걸 기억한다 — 탭 창을 다 붙여 두니 앱이 다시 그릴 때마다 채팅 넷이 말풍선 수백 개를
 // 다시 바꿔서 탭 전환이 한참 걸렸다(2026-09-30 사용자)
@@ -379,17 +377,26 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   }, [stuckTarget, tryN]);
 
   // 입력칸에 남은 게 내가 보낸 말뿐인가 — 걸린 말·막 보내고 Esc 로 끊겨 되돌아온 말. 새 말을 치기 전에 비워 한 말로 붙어 가지 않게
-  const recentMine = useMemo(() => {
-    const since = Date.now() - RESTORED_MS;
-    return items.filter((i): i is Extract<ChatItem, { kind: 'user' }> => i.kind === 'user' && Date.parse(i.ts) >= since).map((i) => i.text);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, clock]);
+  const recentMine = useMemo(() => mineForLeftover(sentByMe(items)), [items]);
   const knownRef = useRef<string[]>([]);
   knownRef.current = [...waiting.map((p) => p.text), ...recentMine];
   const leftover = termText ? inputLeftover(termText, knownRef.current) : null;
   const dropPending = (at: number) => setPending((ps) => ps.filter((x) => x.at !== at));
+  // 방금 간 글을 또 보내려 하면 한 번 막는다 — 간 줄이 화면에 남아 보여 보내기를 계속 눌렀다(2026-10-10 사용자). 곧 한 번 더 누르면 보낸다
+  const [dupWarn, setDupWarn] = useState<{ text: string; at: number } | null>(null);
+  useEffect(() => {
+    if (!dupWarn) return;
+    const t = window.setTimeout(() => setDupWarn(null), DUP_CONFIRM);
+    return () => window.clearTimeout(t);
+  }, [dupWarn]);
+  const dupBlocked = (text: string) => {
+    const now = Date.now();
+    if (againPlan(text, items, now, dupWarn) === 'send') { setDupWarn(null); return false; }
+    setDupWarn({ text, at: now });
+    return true;
+  };
   /** 다시 보낸 말은 보낸 시각을 새로 — 안 그러면 입력칸이 잠깐 비어 보이는 사이 '안 갔어요'가 떠 두 번 누르게 된다 */
-  const repend = (p: { text: string; at: number }, since?: number) => setPending((ps) => [...ps.filter((x) => x.at !== p.at), { text: p.text, at: Date.now(), ...(since ? { since } : {}) }]);
+  const repend = (p: { text: string; at: number; since?: number }) => setPending((ps) => [...ps.filter((x) => x.at !== p.at), resent(p, Date.now())]);
   /** 손으로 넣는 Enter 도 선택 창이 떠 있으면 안 넣는다 — 창에서 골라 버린다 */
   const enterOk = () => !dialogRef.current && state !== 'blocked';
   /** 입력칸을 비우고 → (first 가 있으면 그 말을 보내고) → 남길 말만 다시 넣는다(Enter 없이). 세션 쪽이 차례대로 친다 */
@@ -434,7 +441,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   }, [queue, termText, clock]);
   const act = (p: { text: string; at: number }, what: 'now' | 'drop' | 'again') => {
     const st = stateOf.get(p.at);
-    if (what === 'again') { flushLeftover(); send(p.text); repend(p); return; }
+    if (what === 'again') { if (dupBlocked(p.text)) return; flushLeftover(); send(p.text); repend(p); return; }
     if (st === 'queued') {
       if (what === 'now') { if (busy) sendQueuedNow(); return; } // 쉬고 있으면 Claude 가 곧 꺼내 보낸다
       // ↑ 는 대기열이 비면 지난 말을 불러온다 — 일하는 중이고 그 말이 아직 줄에 있을 때만
@@ -481,6 +488,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
 
   const submit = (now = false) => {
     const text = withRefs(draft.trim(), refs);
+    if (!text && termText && dupBlocked(termText)) return;
     quietUntil.current = Date.now() + 1500;
     if (!text && termText) { submitTerminal(); setPending((p) => [...p, { text: termText, at: Date.now() }]); stick.current = true; return; }
     if (!text) return;
@@ -635,8 +643,13 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
             const rest = attached.length ? termRest(termText, attached.map((a) => a.path).filter((p): p is string => !!p)) : termText;
             return rest ? <span className="chat-term-text">{rest}</span> : <span className="chat-term-text" />;
           })()}
-          {leftover?.length === 1 && <button className="mini" onClick={() => { if (!enterOk()) return; const t = leftover[0]!; const now = Date.now(); submitTerminal(); quietUntil.current = now + 1500; setTermText(''); setPending((p) => [...p, { text: t, at: now, since: now }]); }}>{tr('다시 보내기', 'Send again')}</button>}
+          {leftover?.length === 1 && <button className="mini" onClick={() => { if (!enterOk()) return; const t = leftover[0]!; if (dupBlocked(t)) return; const now = Date.now(); submitTerminal(); quietUntil.current = now + 1500; setTermText(''); setPending((p) => [...p, { text: t, at: now, since: now }]); }}>{tr('다시 보내기', 'Send again')}</button>}
           <button className="mini" onClick={clearAttached} title={tr('터미널 입력칸에 붙인 것 전부 빼기', 'Remove everything attached in the terminal input')}>{tr('빼기', 'Remove')}</button>
+        </div>
+      )}
+      {dupWarn && (
+        <div className="chat-hint chat-dup" role="status">
+          <span>{tr('방금 이미 간 말이에요 — 또 보내려면 한 번 더 눌러 주세요', 'This was just sent — press again to send it once more')}</span>
         </div>
       )}
       {busy && (!!draft.trim() || waiting.length > 0) && hints && (

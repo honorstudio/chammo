@@ -582,6 +582,18 @@ fn 닫힌_워크트리_경로는_본_폴더_같은_자리로_풀린다() {
 }
 
 #[test]
+fn 재현_고정한_문서가_닫힌_워크트리_경로면_새_자리를_알려_준다() {
+    // 고정(spacePins)은 show 기록이 아니라 앱 기억에 있어서 기록 풀기(resolve_show_log)를 안 거쳤다
+    let (home, repo) = closed_wt("wt-pins");
+    let wt = repo.join(".claude/worktrees/mobile/docs/drafts/v1.html").to_string_lossy().into_owned();
+    let live = repo.join("docs/drafts/v1.html").to_string_lossy().into_owned();
+    let none = repo.join(".claude/worktrees/mobile/docs/none.md").to_string_lossy().into_owned();
+    let m = crate::mobile_files::moved_map(&[wt.clone(), live.clone(), none, "rel/x.md".into()], &home);
+    assert_eq!(m.len(), 1, "옮겨 간 것만 — 있는 경로·못 찾은 경로·상대 경로는 빠진다");
+    assert_eq!(m.get(&wt), Some(&live));
+}
+
+#[test]
 fn 풀리지_않는_경로() {
     let (home, repo) = closed_wt("wt-nope");
     // 본 폴더에도 없음

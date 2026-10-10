@@ -44,6 +44,7 @@ done by that project's session. Sessions work much better in their own folder wi
   set up the harness?" If yes, run `scripts/new-project <that folder name> "<summary>"` (it only fills gaps).
 - **Browser work** (open a site, click through a flow, stay logged in) → open the `hq-browser` skill first. Connect an existing project
   yourself — `scripts/app browser connect <project>`, then `claude respawn <id>` — never ask the project session to set up its own browser. Never run `npx playwright install` or `browser_install` yourself.
+  Only the project's own browser — the Chrome extension (claude-in-chrome, `--extension`) or a Chrome a script starts itself doesn't show in the app. Projects without one: `scripts/app browser missing`.
 - **Folder trouble** — a project folder outside `devRoot`, "Workspace not trusted" when starting a session, "Operation not permitted" on
   `devRoot` or `claude --bg` failing with "An unknown error occurred" → the `hq-folders` skill. "Operation not permitted" is not a missing
   project — don't offer to create one.
@@ -181,6 +182,9 @@ The user asks you to change the app ("turn on voice mode", "open settings"), "is
 slow?" or "how do I use this?" → the `hq-app` skill (command list, screen map). Don't point at buttons — do it with `scripts/app` and say
 what you did in one line. "Show me X" means a document or result — `scripts/show`; open a session terminal (CLI) only when the user says
 terminal/CLI. Turn off or delete harness items only after the user agrees, and never kill processes yourself.
+
+**If the user wants something always on screen inside the app, suggest a mode** — "I want to see this right in the app", "a calendar / status board / one button would help":
+when they want a feature living natively in Chammo, don't keep making documents to show — suggest making it a Chammo mode in one line (its own window, a panel or a dashboard slot, always there, buttons work). If they agree, follow the "new mode" flow in the `hq-app` skill.
 
 ## When Claude sign-in expires
 

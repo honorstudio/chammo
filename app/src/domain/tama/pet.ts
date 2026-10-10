@@ -3,11 +3,13 @@
 import { overfeedLine } from './baseline';
 import { careMs, DEFAULT_CAL, inactiveWorkdays, type Calendar } from './clock';
 import { isFullMoonNight } from './moon';
+import type { Quirk } from './lineage';
+import type { MonsterKind } from './monsters';
 import { evolve, stageOf, ZERO, type Counters, type Egg, type Slot } from './tree';
 
 /** by = 먹여 준 참모(세션 이름), label = 무슨 일이었나 — '오늘 먹은 것' 줄에 쓴다. 계산엔 안 쓴다.
  *  echo = 같은 일을 다른 갈래로 또 센 것·하루 상한 넘은 것(sources.balanceFeed) — 먹이지 않고 살아 있다는 표시만 */
-type Tag = { by?: string; label?: string; echo?: boolean };
+type Tag = { by?: string; label?: string; echo?: boolean; /** 어느 프로젝트 일인가(시킨 일) — 일기가 자주 본 프로젝트를 센다 */ proj?: string };
 export type TamaEvent = Tag & (
   | { t: number; type: 'commit'; lines: number; hasTest: boolean }
   | { t: number; type: 'pr' }                        // PR 머지 = 특식
@@ -18,7 +20,8 @@ export type TamaEvent = Tag & (
   | { t: number; type: 'talk' }                      // 참모와 대화 = 간식 (한 시간에 1번)
   | { t: number; type: 'routine'; pass: boolean }    // 예약 보고 = 끼니 + 배틀
   | { t: number; type: 'doc' }                       // 문서 고침 = 목욕
-  | { t: number; type: 'review' });                  // 시안 검토 = 놀아주기
+  | { t: number; type: 'review' }                    // 시안 검토 = 놀아주기
+  | { t: number; type: 'slay'; kind: MonsterKind; lv: number }); // 장애 몬스터 처치(monsters) = 간식 + 코인
 
 export type Pet = {
   egg: Egg;
@@ -48,6 +51,10 @@ export type Pet = {
   lastActive: number;
   dead: null | { at: number; slot: Slot };
   updatedAt: number;
+  /** 물려받은 버릇(lineage) — 먹이 계산에 조금씩. 옛 파일은 없음 */
+  quirks?: Quirk[];
+  /** 끝 모습(궁극체 등)에 닿은 시각 — 하루 뒤 저절로 은퇴(store.autoRetire) */
+  peakAt?: number;
 };
 
 const MIN = 60_000;
@@ -55,22 +62,25 @@ const HOUR = 60 * MIN;
 /** 알을 고른 뒤 누적으로 다음 단계가 되는 시각 (시간표 A) — 인덱스 = 도착 단계 */
 export const STAGE_AT = [0, 5 * MIN, HOUR, 6 * HOUR, 24 * HOUR, 72 * HOUR, 168 * HOUR];
 const HUNGER_MS = 12 * HOUR;
+const MELLOW_HUNGER_MS = 14 * HOUR;
 const POOP_MS = 6 * HOUR;
 const SICK_MS = 12 * HOUR;
 const DIGEST_MS = 3 * HOUR;
 const MAX_FULL = 4;
 
-export function hatch(egg: Egg, now: number, luck: number): Pet {
+export function hatch(egg: Egg, now: number, luck: number, quirks: Quirk[] = []): Pet {
   return {
     egg, slot: 'egg', bornAt: now, c: { ...ZERO, luck }, life: { ...ZERO, luck },
     fedFull: 0, fedCare: 0, hungerMistakes: 0, poops: 0, poopCare: 0, cleanCredit: 0,
     sick: false, sickCare: 0, medicine: 0, workCarry: 0, streak: 0, recent: [], lastOverfeed: -Infinity,
-    lastActive: now, dead: null, updatedAt: now,
+    lastActive: now, dead: null, updatedAt: now, quirks,
   };
 }
 
 /** 지금 배부름 0~4 — 깨어 있는 3시간마다 하나씩 준다 */
 export const fullness = (p: Pet) => Math.max(0, p.fedFull - Math.floor(p.fedCare / DIGEST_MS));
+
+const has = (p: Pet, q: Quirk) => !!p.quirks?.includes(q);
 
 const bump = (p: Pet, k: keyof Counters, n = 1) => {
   p.c = { ...p.c, [k]: (p.c[k] ?? 0) + n };
@@ -82,7 +92,7 @@ function passTime(p: Pet, from: number, to: number, cal: Calendar) {
   const d = careMs(from, to, cal);
   if (!d) return;
   p.fedCare += d;
-  const hungry = Math.floor(p.fedCare / HUNGER_MS);
+  const hungry = Math.floor(p.fedCare / (has(p, 'mellow') ? MELLOW_HUNGER_MS : HUNGER_MS));
   if (hungry > p.hungerMistakes) { bump(p, 'mistakes', hungry - p.hungerMistakes); p.hungerMistakes = hungry; }
   if (p.poops > 0) {
     p.poopCare += d;
@@ -120,6 +130,7 @@ function battle(p: Pet, pass: boolean) {
   bump(p, 'battles');
   if (!pass) { p.streak = 0; return; }
   bump(p, 'wins');
+  if (has(p, 'fighter')) bump(p, 'training');
   p.streak = (p.streak ?? 0) + 1;
   p.c = { ...p.c, bestStreak: Math.max(p.c.bestStreak ?? 0, p.streak) };
   p.life = { ...p.life, bestStreak: Math.max(p.life.bestStreak ?? 0, p.streak) };
@@ -142,6 +153,12 @@ function apply(p: Pet, e: TamaEvent, line: (t: number) => number) {
   p.lastActive = e.t;
   const at = new Date(e.t), h = at.getHours();
   if (isFullMoonNight(e.t)) bump(p, 'moon');
+  const night = h >= 22 || h < 2;
+  /** 먹이 — 새벽형은 밤에 한 칸 더 */
+  const eat = (n: number) => {
+    if (night) bump(p, 'nightFeeds');
+    feed(p, n + (night && has(p, 'night') ? 1 : 0));
+  };
   if (e.echo) {
     // 시킨 일 횟수는 위임 기록이라 메아리여도 센다(물결 궁극체·위임왕)
     if (e.type === 'task') { bump(p, 'tasksDone'); if (h >= 1 && h < 5) bump(p, 'dawnTasks'); }
@@ -151,13 +168,13 @@ function apply(p: Pet, e: TamaEvent, line: (t: number) => number) {
     case 'commit': {
       bump(p, 'commits');
       if (e.hasTest) bump(p, 'testCommits');
-      feed(p, 1);
+      eat(e.hasTest && has(p, 'tester') ? 2 : 1);
       p.recent = [...p.recent.filter((x) => e.t - x < HOUR), e.t];
       if (p.recent.length >= line(e.t) && e.t - p.lastOverfeed >= HOUR) { bump(p, 'overfeed'); p.lastOverfeed = e.t; }
       if (e.lines > 300) {
         if (p.poops === 0) p.poopCare = 0;
         p.poops++;
-      } else if (p.poops > 0 && ++p.cleanCredit >= 3) {
+      } else if (p.poops > 0 && ++p.cleanCredit >= (has(p, 'tidy') ? 2 : 3)) {
         p.poops--; p.cleanCredit = 0;
         if (p.poops === 0) p.poopCare = 0;
       }
@@ -166,28 +183,28 @@ function apply(p: Pet, e: TamaEvent, line: (t: number) => number) {
     case 'pr':
       bump(p, 'prMerges');
       if (at.getDay() === 5 && h >= 18) bump(p, 'friPr');
-      feed(p, 2);
+      eat(has(p, 'merger') ? 3 : 2);
       return;
     case 'task':
       bump(p, 'tasksDone');
       if (h >= 1 && h < 5) bump(p, 'dawnTasks');
-      feed(p, 1);
+      eat(has(p, 'delegate') ? 2 : 1);
       return;
     case 'ci':
       battle(p, e.pass);
       return;
     case 'show':
       bump(p, 'shows');
-      feed(p, 2);
+      eat(has(p, 'merger') ? 3 : 2);
       return;
     case 'talk':
       bump(p, 'talks');
-      feed(p, 1);
+      eat(1);
       return;
     case 'routine':
       bump(p, 'routines');
       if (e.pass) bump(p, 'routineWins');
-      feed(p, 1);
+      eat(1);
       battle(p, e.pass);
       return;
     case 'doc':
@@ -196,6 +213,9 @@ function apply(p: Pet, e: TamaEvent, line: (t: number) => number) {
       return;
     case 'review':
       bump(p, 'plays');
+      return;
+    case 'slay':
+      eat(1);
       return;
     case 'work': {
       p.workCarry += e.minutes;

@@ -7,7 +7,7 @@ import type { Ctx } from '../../domain/ctx';
 import { answerFail, closeOnRelease, dupAnswer, lineSlot, phoneName, waitAnswer, waitKey, type WaitSent, type Waiting } from '../../domain/mobile';
 import type { Session } from '../../domain/session';
 import { IconEnter, IconPin, IconPinOff, IconPlus, IconPower, IconTrash } from '../Icons';
-import { readPins, readRoles, removeOrch, setPin, setRole, stopOrch, taskAnswer } from '../../data/web';
+import { readOrder, readPins, readRoles, removeOrch, setPin, setRole, stopOrch, taskAnswer } from '../../data/web';
 import { markWaitSent, peekWaitSent } from './waitSent';
 import { renamePending, usePendingNicks } from './pendingNicks';
 import { inferRoles, parseRoles, roleLine, type RoleMap } from '../../domain/orchRoles';
@@ -15,7 +15,8 @@ import type { TaskEvent } from '../../domain/tasks';
 import { splitOrchName } from '../../domain/orchLabel';
 import { OrchMenu } from './OrchMenu';
 import type { HomeRow } from '../../domain/orchHome';
-import { parsePins, pinFirst } from '../../domain/orchPins';
+import { parsePins } from '../../domain/orchPins';
+import { orchSort } from '../../domain/orchOrder';
 import { useMemoPoll } from './usePoll';
 import { SwipeRow } from './SwipeRow';
 import { josa, machine } from '../../i18n';
@@ -98,7 +99,9 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
     setPinsNow(on ? [...pins.filter((p) => p !== sid), sid] : pins.filter((p) => p !== sid));
     setPin(sid, on).then((v) => setPinsNow(v), () => setPinsNow(null));
   };
-  const sorted = pinFirst(orchs, pins, (s) => s.sessionId);
+  // 순서 — 데스크톱 채팅 탭에서 끌어 둔 것(orch-order.json, 고정은 그 위). 사이드바·⌘1~9 와 같은 줄
+  const [orderText] = useMemoPoll('order', readOrder, 5000, '[]');
+  const sorted = orchSort(orchs, parsePins(orderText), pins, (s) => s.sessionId);
   // 길게 누르기 메뉴(이름 바꾸기 + 밀기 동작 모두) — 켜진 참모·꺼진 참모
   const [menu, setMenu] = useState<{ kind: 'live'; s: Session } | { kind: 'off'; r: HomeRow } | null>(null);
   // 바꾼 이름 — 맥이 쉬는 때 /rename 을 보내 진짜 이름에 실릴 때까지 폰엔 바로 새 이름(대시보드 프로필 창과 같이 본다)

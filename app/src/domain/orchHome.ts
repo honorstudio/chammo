@@ -27,11 +27,13 @@ const windowSizes = (ctx: Record<string, CtxFile>) => new Map(Object.values(ctx)
 function rowOf(key: string, sid: string | undefined, startedAt: number, activity: Record<string, Activity>, ctx: Record<string, CtxFile>, sizes: Map<string, number>): Omit<HomeRow, 'live' | 'off'> {
   const a = sid ? activity[sid] : undefined;
   // 이어 켜기만 하고 일을 안 시켰으면 기록이 옛 시각 그대로 — 마지막으로 켠 때(세션 시작)도 같이 본다
-  const last = Math.max(at(a?.prompt?.ts), at(a?.reply?.ts), at(a?.tool?.ts), startedAt);
+  const last = Math.max(at(a?.prompt?.ts), at(a?.peer?.ts), at(a?.reply?.ts), at(a?.tool?.ts), startedAt);
+  // 하던 일 = 사람 지시와 다른 세션이 SendMessage 로 건 말 중 늦은 것(끊김 표시는 거름) — 없으면 마지막 답
+  const asked = [a?.prompt, a?.peer].filter((l): l is NonNullable<typeof l> => !!l && !!oneLine(l.text) && !notAsk(oneLine(l.text))).sort((x, y) => at(y.ts) - at(x.ts))[0];
   // 상태줄 파일이 없는 대화(상태줄이 안 돈 옛 대화)는 기록의 마지막 토큰 ÷ 같은 모델 창 크기
   const size = a?.model ? sizes.get(a.model) : undefined;
   const est = a?.tokens && size ? Math.min(100, Math.round((a.tokens / size) * 100)) : undefined;
-  return { key, lastAt: last, doing: [oneLine(a?.prompt?.text)].find((t) => t && !notAsk(t)) || oneLine(a?.reply?.text), ctx: (sid ? ctx[sid]?.used : undefined) ?? est };
+  return { key, lastAt: last, doing: oneLine(asked?.text) || oneLine(a?.reply?.text), ctx: (sid ? ctx[sid]?.used : undefined) ?? est };
 }
 
 /** 켜진 참모 = 받은 순서 그대로, 꺼진 참모 = 마지막으로 일한 때 최근 순 */

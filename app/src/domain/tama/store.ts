@@ -1,4 +1,7 @@
 // 다마고치 저장 파일(~/.honor-orchestrator/tama.json). 메인 창이 계산해서 쓰고, 위젯 창은 읽기만 한다
+import type { DiaryDay } from './diary';
+import type { Monsters } from './monsters';
+import { earnQuirk, heirOf, isFinal, RETIRE_AFTER, type Ancestor, type Quirk } from './lineage';
 import { advance, hatch, STAGE_AT, type Pet, type TamaEvent } from './pet';
 import { fuseTarget, ZERO, type Egg, type Slot } from './tree';
 
@@ -24,6 +27,14 @@ export type TamaFile = {
   busy?: boolean;
   /** 돌보는 참모(마지막으로 먹인 참모) — 메인 창이 쓰고 위젯 막대가 그 프사를 그린다 */
   keeper?: { name: string; color: string };
+  /** 은퇴한 세대 — 혈통 줄(lineage). 지금 키우는 애는 lineage.length + 1 대 */
+  lineage?: Ancestor[];
+  /** 다음 알이 물려받을 버릇 — 은퇴할 때 정해지고, 죽거나 처음부터여도 이어진다 */
+  heir?: Quirk[];
+  /** 장애 몬스터 — 나온 것·끝난 기록(monsters.watch 가 1분마다) */
+  monsters?: Monsters;
+  /** 펫 일기 — 새벽 5시마다 어제 한 장의 재료(diary.addDiary), 글은 볼 때 그린다 */
+  diary?: DiaryDay[];
 };
 
 export const EMPTY_FILE: TamaFile = { pet: null, work: [], dex: [], graves: [], box: [] };
@@ -32,7 +43,7 @@ const BIN = 10 * 60_000;
 const KEEP = 30 * 24 * 3_600_000;
 
 /** 예전 파일에 없던 기록 칸(숨은 진화 숫자 등)은 0 으로 채운다 */
-const upgrade = <P extends Pet>(p: P): P => ({ ...p, streak: p.streak ?? 0, c: { ...ZERO, ...p.c }, life: { ...ZERO, ...p.life } });
+const upgrade = <P extends Pet>(p: P): P => ({ ...p, streak: p.streak ?? 0, quirks: p.quirks ?? [], c: { ...ZERO, ...p.c }, life: { ...ZERO, ...p.life } });
 
 export function parseTamaFile(text: string): TamaFile {
   try {
@@ -66,7 +77,7 @@ const buried = (f: TamaFile): Grave[] => {
 
 /** 새 알 고르기. 죽은 펫이 있으면 무덤으로 */
 export function pickEgg(f: TamaFile, egg: Egg, now: number, luck: number): TamaFile {
-  const pet = hatch(egg, now, luck);
+  const pet = hatch(egg, now, luck, f.heir ?? []);
   return { ...f, pet, graves: buried(f), dex: seen(f.dex, pet), rev: bumped(f) };
 }
 
@@ -80,7 +91,7 @@ export function archive(f: TamaFile, now: number): TamaFile | null {
 function thaw(b: BoxedPet, now: number): Pet {
   const { boxedAt, ...p } = b;
   const d = now - boxedAt;
-  return { ...p, bornAt: p.bornAt + d, lastActive: p.lastActive + d, recent: p.recent.map((t) => t + d), lastOverfeed: p.lastOverfeed + d, updatedAt: now };
+  return { ...p, bornAt: p.bornAt + d, lastActive: p.lastActive + d, ...(p.peakAt !== undefined ? { peakAt: p.peakAt + d } : {}), recent: p.recent.map((t) => t + d), lastOverfeed: p.lastOverfeed + d, updatedAt: now };
 }
 
 /** 보관함에서 꺼내기. 키우던 펫이 살아 있으면 그 자리에 대신 넣는다(자리 바꾸기) */
@@ -99,8 +110,27 @@ export function fuse(f: TamaFile, index: number, now: number): TamaFile | null {
   if (!b || !f.pet || f.pet.dead) return null;
   const slot = fuseTarget(f.pet, b);
   if (!slot) return null;
-  const pet: Pet = { ...f.pet, slot, c: { ...ZERO, luck: f.pet.c.luck }, lastActive: now, updatedAt: Math.max(f.pet.updatedAt, now) };
+  const pet: Pet = { ...f.pet, slot, c: { ...ZERO, luck: f.pet.c.luck }, peakAt: now, lastActive: now, updatedAt: Math.max(f.pet.updatedAt, now) };
   return { ...f, pet, box: f.box.filter((_, i) => i !== index), dex: seen(f.dex, pet), rev: bumped(f) };
+}
+
+function retireAt(f: TamaFile, at: number, rev: number | undefined): TamaFile | null {
+  const p = f.pet;
+  if (!p || p.dead || !isFinal(p.slot)) return null;
+  const inherited = p.quirks ?? [];
+  const quirk = earnQuirk(p.life, inherited);
+  const lineage = [...(f.lineage ?? []), { egg: p.egg, slot: p.slot, bornAt: p.bornAt, retiredAt: at, quirk, inherited }];
+  return { ...f, pet: null, lineage, heir: heirOf(inherited, quirk), rev };
+}
+
+/** 은퇴 — 끝 모습(궁극체 등)인 펫만. 혈통에 남기고 다음 알이 물려받을 버릇을 정한다. 아니면 null */
+export const retire = (f: TamaFile, now: number) => retireAt(f, now, bumped(f));
+
+/** 끝 모습이 된 지 하루면 저절로 은퇴 — 1분 계산이 부르니 rev 는 안 올린다(올리면 그 계산이 버려진다) */
+export function autoRetire(f: TamaFile, now: number): TamaFile {
+  const at = f.pet?.peakAt;
+  if (at === undefined || now - at < RETIRE_AFTER) return f;
+  return retireAt(f, at + RETIRE_AFTER, f.rev) ?? f;
 }
 
 /** 처음부터 다시 — 키우던 펫은 떠나보내고(무덤에 남김) 알 고르기로 */
@@ -109,6 +139,9 @@ export function restart(f: TamaFile, now: number): TamaFile {
   const graves = p && !p.dead ? [...f.graves, { egg: p.egg, slot: p.slot, bornAt: p.bornAt, diedAt: now, left: true }] : buried(f);
   return { ...f, pet: null, graves, rev: bumped(f) };
 }
+
+/** 끝 모습에 처음 닿은 시각을 적는다(은퇴 시계) */
+const peak = (p: Pet, t: number): Pet => (isFinal(p.slot) && p.peakAt === undefined && !p.dead ? { ...p, peakAt: t } : p);
 
 /**
  * 기록을 먹여 지금으로. 앱이 오래 꺼져 있었어도 거쳐 간 모습을 도감에 남기려고 매 정시·진화 시각마다 끊어서 돌린다
@@ -123,9 +156,9 @@ export function step(f: TamaFile, events: TamaEvent[], now: number): TamaFile {
   for (let t = Math.ceil(pet.updatedAt / 3_600_000) * 3_600_000; t < now; t += 3_600_000) stops.add(t);
   let dex = seen(f.dex, pet);
   for (const t of [...stops].filter((x) => x > pet.updatedAt && x <= now).sort((a, b) => a - b)) {
-    pet = advance(pet, all, t);
+    pet = peak(advance(pet, all, t), t);
     dex = seen(dex, pet);
     if (pet.dead) break;
   }
-  return { ...f, pet: pet.updatedAt === now ? pet : advance(pet, all, now), dex };
+  return { ...f, pet: pet.updatedAt === now ? pet : peak(advance(pet, all, now), now), dex };
 }

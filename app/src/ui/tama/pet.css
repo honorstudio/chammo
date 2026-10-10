@@ -55,6 +55,34 @@
 .pv-foot { display: flex; justify-content: flex-end; }
 .pv-restart { all: unset; cursor: pointer; font-size: 12px; color: var(--text-3); padding: 4px 8px; border-radius: 6px; }
 .pv-restart:hover, .pv-restart.sure { color: var(--danger-ink); background: var(--hover); }
+/* 세대 잇기 — 버릇 알약·은퇴 줄·혈통 탭 */
+.pv-quirks { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.pv-quirk { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--text-2); cursor: default; white-space: nowrap; }
+.pv-retire { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-3); }
+.pv-lineage { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.pv-lineage li { display: grid; grid-template-columns: 36px 1fr auto; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.pv-lineage li:last-child { border-bottom: 0; }
+.pv-lineage .pv-name { flex-direction: column; gap: 0; }
+.pv-lineage .pv-now-gen { background: var(--hover); border-radius: 10px; padding: 6px 8px; margin: 0 -8px; }
+.pv-gave { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-3); }
+/* 장애 몬스터 — 지금 나온 것·몬스터 탭 */
+.pv-mon ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pv-mon li { display: grid; grid-template-columns: 36px 1fr auto; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--hover); }
+.pv-mon .pv-name { flex-direction: column; gap: 0; }
+.pv-mon-how { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+.pv-mons { display: flex; flex-direction: column; gap: 12px; }
+.pv-mon-dex { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.pv-mon-kind { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 8px; border: 1px solid var(--line); border-radius: 12px; font-size: 12.5px; }
+.pv-mon-kind span { color: var(--text-3); font-size: 12px; }
+.pv-mon-kind.off { border-style: dashed; color: var(--text-3); }
+.pv-mon-kind .pv-cell.off { width: 48px; height: 48px; }
+/* 펫 일기 — 한 장씩 넘겨 보기 */
+.pv-diary { display: flex; flex-direction: column; gap: 8px; max-width: 560px; }
+.pv-diary-nav { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.pv-page { padding: 16px 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.pv-page header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.pv-page header .pv-name { flex-direction: column; gap: 0; }
+.pv-page p { margin: 0; font-size: 13.5px; line-height: 1.75; }
 /* 대시보드 머리의 대시보드·펫 갈래 */
 .cv-seg { display: flex; gap: 2px; padding: 3px; background: var(--hover); border-radius: 9px; }
 .cv-seg button { all: unset; cursor: pointer; padding: 3px 11px; border-radius: 7px; font-size: 12px; color: var(--text-2); }
@@ -64,3 +92,10 @@
 /* 대시보드 안 펫 탭 — 주고받은 파일 칸과 같은 여백·스크롤 */
 .cv-pet { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 36px 28px; }
 @container (max-width: 760px) { .cv-pet { padding: 6px 18px 20px; } }
+/* 위젯 '더보기' 모달(ui/tama/PetModal) — 화면을 옮기지 않고 위에 */
+.pet-modal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 32px; background: color-mix(in srgb, #000 30%, transparent); animation: modalin .16s ease-out; }
+.pet-modal-card { position: relative; width: min(920px, 100%); max-height: 100%; display: flex; flex-direction: column; overflow: hidden; border-radius: 14px; background: var(--surface); color: var(--text); box-shadow: 0 24px 60px rgba(0, 0, 0, .35); }
+.pet-modal-body { flex: 1; min-height: 0; overflow-y: auto; padding: 48px 28px 12px; }
+.pet-modal-x { all: unset; position: absolute; top: 12px; right: 12px; z-index: 2; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; color: var(--text-2); cursor: pointer; }
+.pet-modal-x:hover { background: var(--hover); color: var(--text); }
+.pet-modal-x svg { width: 16px; height: 16px; }

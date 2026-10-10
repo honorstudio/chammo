@@ -20,6 +20,8 @@ pub const SLOT_SERVICE: &str = "Chammo account";
 pub const BACKUP_FIRST: &str = "backup-first";
 /// 바꿔 끼우기 직전 로그인 — 매번 덮는다
 pub const BACKUP_LAST: &str = "backup-last";
+/// 백업으로 되돌리기 직전 로그인 — 되돌리기를 되돌릴 수 있게
+pub const BACKUP_UNDO: &str = "backup-before-restore";
 
 /// Claude Code 로그인 칸(키체인 서비스·계정 이름)과 oauthAccount 가 든 파일
 pub struct Live {
@@ -59,6 +61,9 @@ pub struct Pool {
     /// 자동 전환 상태(켜짐·고정·칸별 마지막 사용량·다시 열리는 시각) — 판단은 화면 쪽 domain/accountAuto.ts, 여기선 보관만
     #[serde(skip_serializing_if = "Value::is_null")]
     pub auto: Value,
+    /// 백업 칸마다 그때의 oauthAccount(토큰 아님) — 되돌릴 때 키체인과 표시를 같이 돌려놓는다
+    #[serde(skip_serializing_if = "Value::is_null")]
+    pub backup_oauth: Value,
 }
 
 #[derive(Debug, PartialEq)]
@@ -67,6 +72,8 @@ pub enum Error {
     NoOauth,
     Unknown,
     NoSlot,
+    /// 되돌릴 백업 칸이 없다
+    NoBackup,
     /// 지금 로그인이 다른 칸의 것과 똑같다 — 로그인이 바뀌는 도중일 수 있어 보관하지 않는다
     Mismatch,
     Locked,
@@ -86,6 +93,7 @@ impl Error {
             Error::NoOauth => "noOauth".into(),
             Error::Unknown => "unknown".into(),
             Error::NoSlot => "noSlot".into(),
+            Error::NoBackup => "noBackup".into(),
             Error::Mismatch => "mismatch".into(),
             Error::Locked => "locked".into(),
             Error::Moved => "moved".into(),
@@ -148,7 +156,7 @@ pub fn write_atomic(file: &Path, content: &str) -> Result<(), Error> {
         std::fs::create_dir_all(d).map_err(io)?;
     }
     let mut name = target.file_name().unwrap_or_default().to_os_string();
-    name.push(".chammo-tmp");
+    name.push(format!(".chammo-{}", crate::tools::tmp_tag())); // 부를 때마다 다른 이름 — 같은 이름이면 다른 쓰기 길과 서로 지웠다
     let tmp = target.with_file_name(name);
     std::fs::write(&tmp, content).map_err(io)?;
     #[cfg(unix)]
@@ -169,23 +177,25 @@ pub fn read_oauth(claude_json: &Path) -> Option<Value> {
     v.get("oauthAccount").filter(|o| o.is_object()).cloned()
 }
 
-/// oauthAccount 만 바꾸고 다른 키·순서는 그대로. Claude Code 도 이 파일을 수시로 쓰니 —
-/// 다 만든 뒤 다시 읽어 그새 바뀌었으면 처음부터(세 번까지), 같으면 바꿔 끼운다
+/// oauthAccount 만 바꾸고 다른 키·순서는 그대로. Claude Code 도 이 파일을 수시로 쓰니 — 쓰기 직전에 다시 읽어 그새 바뀌었으면 처음부터,
+/// 쓴 뒤 다시 읽어 oauthAccount 가 덮였으면 또(세 번까지). 앱 안 다른 쓰기 길(믿음·화면 조종·브라우저 붙이기)과는 한 줄에 선다(tools::edit_json)
 pub fn merge_oauth(claude_json: &Path, oauth: &Value) -> Result<(), Error> {
-    for _ in 0..3 {
-        let before = std::fs::read_to_string(claude_json).map_err(io)?;
-        let mut v: Value = serde_json::from_str(&before).map_err(io)?;
-        let obj = v.as_object_mut().ok_or_else(|| io("~/.claude.json 이 객체가 아니에요"))?;
-        if obj.get("oauthAccount") == Some(oauth) {
-            return Ok(());
-        }
-        obj.insert("oauthAccount".into(), oauth.clone());
-        let text = serde_json::to_string_pretty(&v).map_err(io)?;
-        if std::fs::read_to_string(claude_json).map_err(io)? == before {
-            return write_atomic(claude_json, &text);
-        }
-    }
-    Err(io("~/.claude.json 이 계속 바뀌어 쓰지 못했어요"))
+    crate::tools::edit_json(
+        claude_json,
+        |before| {
+            let mut v: Value = serde_json::from_str(before).map_err(|e| e.to_string())?;
+            let obj = v.as_object_mut().ok_or("~/.claude.json 이 객체가 아니에요")?;
+            if obj.get("oauthAccount") == Some(oauth) {
+                return Ok(None);
+            }
+            obj.insert("oauthAccount".into(), oauth.clone());
+            serde_json::to_string_pretty(&v).map(Some).map_err(|e| e.to_string())
+        },
+        || Ok(()),
+        |v| v.get("oauthAccount") == Some(oauth),
+    )
+    .map(|_| ())
+    .map_err(Error::Io)
 }
 
 // ── 로그인 덩어리 ─────────────────────────────────────
@@ -344,10 +354,13 @@ pub fn switch_if(store: &dyn Store, live: &Live, list: &Path, id: &str, expect: 
     let now = store.get(&live.service, &live.account)?;
     let from = pool.current.clone();
     if let Some(n) = &now {
+        let shown = read_oauth(&live.claude_json);
         if store.get(SLOT_SERVICE, BACKUP_FIRST)?.is_none() {
             store.set(SLOT_SERVICE, BACKUP_FIRST, n)?;
+            note_backup(&mut pool, BACKUP_FIRST, shown.as_ref());
         }
         store.set(SLOT_SERVICE, BACKUP_LAST, n)?;
+        note_backup(&mut pool, BACKUP_LAST, shown.as_ref());
         if let (Some(c), Some(p)) = (&from, part(n)) {
             store.set(SLOT_SERVICE, c, &slot_secret(&p))?; // reconcile 이 지금 칸 = 실제 로그인 계정임을 확인했다
         }
@@ -376,6 +389,55 @@ pub fn switch_if(store: &dyn Store, live: &Live, list: &Path, id: &str, expect: 
     pool.switching = None;
     pool.current = Some(id.to_string());
     save(list, &pool)?;
+    Ok(pool)
+}
+
+fn note_backup(pool: &mut Pool, which: &str, oauth: Option<&Value>) {
+    if !pool.backup_oauth.is_object() {
+        pool.backup_oauth = Value::Object(Default::default());
+    }
+    pool.backup_oauth[which] = oauth.cloned().unwrap_or(Value::Null);
+}
+
+/// 백업 칸(backup-first·backup-last·backup-before-restore)으로 로그인을 되돌린다 — 바꿔 끼우기가 꼬였을 때(계획서 '남은 위험').
+/// 계정 로그인만 갈아 끼우고(MCP 로그인은 지금 것), 표시(oauthAccount)는 그 백업 때 적어 둔 것 → 없으면 같은 토큰을 가진 칸의 것.
+/// 되돌리기 직전 로그인은 backup-before-restore 에 남긴다. 지금 칸은 다시 맞대 정한다(reconcile)
+pub fn restore(store: &dyn Store, live: &Live, list: &Path, which: &str) -> Result<Pool, Error> {
+    if ![BACKUP_FIRST, BACKUP_LAST, BACKUP_UNDO].contains(&which) {
+        return Err(Error::Unknown);
+    }
+    let mut pool = load(list)?;
+    let want = store.get(SLOT_SERVICE, which)?.as_ref().and_then(part).ok_or(Error::NoBackup)?;
+    let shown = pool.backup_oauth.get(which).filter(|v| v.is_object()).cloned();
+    let shown = match shown {
+        Some(o) => Some(o),
+        None => {
+            let mut found = None;
+            for a in &pool.accounts {
+                if slot_part(store, &a.id)?.as_ref() == Some(&want) {
+                    found = Some(a.oauth.clone());
+                    break;
+                }
+            }
+            found
+        }
+    };
+    let now = store.get(&live.service, &live.account)?;
+    if let Some(n) = &now {
+        if which != BACKUP_UNDO {
+            store.set(SLOT_SERVICE, BACKUP_UNDO, n)?;
+            note_backup(&mut pool, BACKUP_UNDO, read_oauth(&live.claude_json).as_ref());
+        }
+    }
+    // 되돌리는 동안 지금 칸은 모른다 — 도중에 꺼져도 남의 토큰을 이름 붙은 칸에 안 쓴다
+    pool.current = None;
+    pool.switching = None;
+    save(list, &pool)?;
+    store.set(&live.service, &live.account, &with_part(now.as_ref(), &want))?;
+    if let Some(o) = &shown {
+        merge_oauth(&live.claude_json, o)?;
+    }
+    reconcile(store, live, list, &mut pool)?;
     Ok(pool)
 }
 

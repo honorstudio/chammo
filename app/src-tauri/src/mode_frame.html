@@ -1,0 +1,89 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' blob:; connect-src 'none'; img-src 'none'; style-src 'none'; font-src 'none'; media-src 'none'; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'">
+<script>
+// 참모 모드 Client 칸 — 모드의 화면 모듈(surface module)만 도는 빈 방. 앱(Rust modes.rs)이 별도 주소 + CSP sandbox 로 낸다.
+// 그리기는 여기서 안 한다: 모드가 만든 트리를 JSON 글로만 부모(앱)에 보내고, 앱 렌더러가 거른 뒤 그린다. 누름은 앱이 규약(ui_client_press)에 묻고
+// 답(reached)을 여기 돌려주면 그 닫힌 함수를 돌린다. 바깥으로 보내기·앱 출처·홈 파일엔 못 닿는다(불투명 출처, connect-src 'none')
+(function () {
+  'use strict';
+  var ID = 'c', started = false, lastHeld = [];
+  function send(m) { parent.postMessage(m, '*'); }
+  function reason(e) { var s = e && typeof e === 'object' && 'message' in e ? e.message : e; return String(s).replace(/[\u0000-\u001f\u2028\u2029]/g, ' ').slice(0, 200); }
+  function fail(phase, e) { send({ mf: 'fault', phase: phase, reason: reason(e) }); }
+  function heldOf(node, out) {
+    if (!node || typeof node !== 'object') return out;
+    if (typeof node.held === 'number') out.push(node.held);
+    if (Array.isArray(node.children)) for (var i = 0; i < node.children.length; i++) heldOf(node.children[i], out);
+    return out;
+  }
+  // 그린다 — 지난 그림의 누름 손잡이 중 이번에 없는 것은 런타임에서 지운다(쌓이지 않게)
+  function render() {
+    var d = window.__mf;
+    d.scheduled = false;
+    try {
+      d.driver.stage(ID, 'render');
+      var text = __surface__.run();
+      var now = heldOf(JSON.parse(text), []);
+      var gone = lastHeld.filter(function (h) { return now.indexOf(h) < 0; });
+      if (gone.length) d.driver.dropHeld(ID, gone);
+      lastHeld = now;
+      send({ mf: 'tree', text: text });
+    } catch (e) { fail('render', e); }
+  }
+  function run(fn) { try { fn(); } catch (e) { fail('run', e); } }
+  window.__mfBoot = { send: send, fail: fail, render: render, run: run, ID: ID };
+  addEventListener('message', function (e) {
+    if (e.source !== parent) return;
+    var m = e.data;
+    if (!m || typeof m !== 'object') return;
+    if (m.mf === 'load') { if (!started) { started = true; load(m); } return; }
+    var d = window.__mf;
+    if (!d) return;
+    if (m.mf === 'held') run(function () { d.driver.stage(ID, 'held', { handle: m.handle, event: m.event }); __surface__.run(); });
+    else if (m.mf === 'props') run(function () { d.driver.setProps(ID, m.props); render(); });
+    else if (m.mf === 'resize') run(function () { d.driver.resize(ID, m.columns, m.rows); render(); });
+  });
+  // 받은 파일을 이 방 안 blob 주소로 — 모드 파일끼리의 import 는 규약이 이미 열쇠(surface:///…·claude:surface-runtime)로 바꿔 두었다
+  function load(m) {
+    var map = { imports: {} };
+    try {
+      for (var i = 0; i < m.files.length; i++) {
+        var f = m.files[i];
+        map.imports[f.key] = URL.createObjectURL(new Blob([f.source], { type: 'text/javascript' }));
+      }
+    } catch (e) { return fail('load', e); }
+    window.__mfLoad = m;
+    var im = document.createElement('script');
+    im.type = 'importmap';
+    im.textContent = JSON.stringify(map);
+    document.head.appendChild(im);
+    var s = document.createElement('script');
+    s.type = 'module';
+    s.textContent = [
+      'const b = window.__mfBoot, m = window.__mfLoad;',
+      'try {',
+      '  const rt = await import(m.runtime);',
+      '  globalThis.h = rt.h; globalThis.Fragment = rt.Fragment;',
+      '  const d = { scheduled: false };',
+      '  const host = {',
+      '    schedule: () => { if (!d.scheduled) { d.scheduled = true; setTimeout(b.render, 0); } },',
+      '    startTimer: (id, ms) => { const t = setInterval(() => b.run(() => { d.driver.stage(id, "tick", t); __surface__.run(); }), Math.max(ms, 50)); return t; },',
+      '    stopTimer: (id, t) => clearInterval(t),',
+      '    post: (id, text) => b.send({ mf: "post", text: text }),',
+      '    fault: (id, why) => b.fail("run", why),',
+      '  };',
+      '  d.driver = rt.install(host, m.limits);',
+      '  window.__mf = d;',
+      '  const mod = await import(m.entry);',
+      '  d.driver.mount(b.ID, m.export === "default" ? mod.default : mod[m.export], m.props);',
+      '  d.driver.resize(b.ID, m.columns, m.rows);',
+      '  b.render();',
+      '} catch (e) { b.fail("load", e); }',
+    ].join('\n');
+    document.head.appendChild(s);
+  }
+  send({ mf: 'ready' });
+})();
+</script>
+</head><body></body></html>

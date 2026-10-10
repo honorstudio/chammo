@@ -89,6 +89,17 @@ export function LoadPage({ sys, report, onOpen, onKilled }: Props) {
             </div>
           )}
         </section>
+        {report.modes.length > 0 && (
+          <section className="ld-sec">
+            <h3>{tr(`켜진 모드 · ${report.modes.length}`, `Modes on · ${report.modes.length}`)}</h3>
+            <p className="ld-dim">{tr('모드 하나당 Claude 프로세스 하나 — 안 쓰는 모드는 메뉴바 모드에서 끄면 메모리가 돌아와요.', 'Each mode runs one Claude process — turn off modes you are not using (Modes menu) to free the memory.')}</p>
+            <div className="ld-rows">
+              {report.modes.map((m) => (
+                <div key={m.name} className="ld-row ld-static"><span className="ld-name">{m.name}</span><span className="ld-num">{pct(m.cpu)}</span><span className="ld-num">{fmtMem(m.rssKb)}</span><span /></div>
+              ))}
+            </div>
+          </section>
+        )}
         <section className="ld-sec">
           <h3>{tr('그 밖', 'Everything else')}</h3>
           <div className="ld-rows">

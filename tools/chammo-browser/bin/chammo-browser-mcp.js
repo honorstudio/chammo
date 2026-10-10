@@ -197,7 +197,7 @@ relay = createRelay({
     if (blocked) return Promise.resolve(blocked);
     // 사람이 '다 했어'를 누르면 앱이 적은 사람이 한 일 꼬리표를 대신 준다(없으면 원래 글) — snapshot 전까지 누르기는 막힌다
     return live && name === ASK_TOOL.name
-      ? live.askHuman(args && args.reason).then((r) => ({ content: [{ type: 'text', text: (r.ok && take && take.takeNote()) || r.text }], isError: !r.ok }))
+      ? live.askHuman(args && args.reason).then((r) => ({ content: [{ type: 'text', text: liveMod.askText(r, r.ok && take ? take.takeNote() : '') }], isError: !r.ok }))
       : null;
   },
   sendToClient: (line) => process.stdout.write(line + '\n'),

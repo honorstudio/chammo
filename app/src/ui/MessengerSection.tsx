@@ -2,7 +2,7 @@
 // 짝지은 계정의 1:1 대화만 받고, 결제·보내기·삭제·운영 카드는 텔레그램에선 알림만(docs/plans/2026-10-06-messenger.md)
 import { useEffect, useState } from 'react';
 import { messengerApi, openTarget, writeClipboard, type MessengerLink, type MessengerView } from '../data/tauri';
-import { accountLine, BOTFATHER, dotOf, stageOf, tokenLooksRight } from '../domain/messenger';
+import { accountLine, BOTFATHER, dotOf, stageOf, tokenFrom, tokenLooksRight } from '../domain/messenger';
 import { IconClose, IconCopy, IconOpen, IconUnlink } from './Icons';
 import { tr } from '../i18n';
 
@@ -71,7 +71,7 @@ export function MessengerSection({ title }: { title: string }) {
             <span>{tr('받은 토큰을 붙여 넣어요', 'Paste the token you get')}</span>
             <div className="su-inline">
               <input className="tg-token" type="password" autoComplete="off" spellCheck={false} placeholder="123456789:AA…" aria-label={tr('봇 토큰', 'Bot token')}
-                value={token} onChange={(e) => setToken(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && tokenLooksRight(token)) act(() => messengerApi.setToken(token), () => setToken('')); }} />
+                value={token} onChange={(e) => setToken(tokenFrom(e.target.value))} onKeyDown={(e) => { if (e.key === 'Enter' && tokenLooksRight(token)) act(() => messengerApi.setToken(token), () => setToken('')); }} />
               <button className="btn pri" disabled={busy || !tokenLooksRight(token)} onClick={() => act(() => messengerApi.setToken(token), () => setToken(''))}>{tr('연결', 'Connect')}</button>
             </div>
           </li>

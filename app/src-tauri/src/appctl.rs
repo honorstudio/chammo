@@ -75,7 +75,7 @@ pub fn browser_request(line: &str) -> Option<(String, String, String)> {
     }
     let verb = v["arg"]["verb"].as_str()?;
     let dir = v["arg"]["dir"].as_str()?.trim();
-    (matches!(verb, "status" | "connect") && !dir.is_empty()).then(|| (id.to_string(), verb.to_string(), dir.to_string()))
+    (matches!(verb, "status" | "connect" | "missing") && !dir.is_empty()).then(|| (id.to_string(), verb.to_string(), dir.to_string()))
 }
 
 /// 폰 푸시(scripts/app push) → (제목, 한 줄). 문구 자르기는 push::payload 가 한다(제목 80자·한 줄 60자)
@@ -124,6 +124,56 @@ pub fn first_in(seen: &mut std::collections::HashMap<String, u64>, key: &str, no
     }
     seen.insert(key.to_string(), now);
     true
+}
+
+/// 참모 모드 요청 한 줄(scripts/app mode …) — 답은 <데이터>/mode.txt("#id <id>" 다음 줄부터)
+#[derive(Debug, PartialEq, Default)]
+pub struct ModeReq {
+    pub id: String,
+    pub verb: String,
+    pub name: String,
+    pub place: Option<String>,
+    /// --where dash <대상> 의 대상(참모·프로젝트 이름)
+    pub dash: Option<String>,
+    /// mode add <폴더> 의 절대 경로(scripts/app 이 풀어서 보낸다)
+    pub dir: Option<String>,
+    /// mode top <이름> on|off — 따로 창 '항상 위'
+    pub on: Option<bool>,
+}
+
+pub fn mode_request(line: &str) -> Option<ModeReq> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v.get("action")?.as_str()? != "mode" {
+        return None;
+    }
+    let id = v.get("id")?.as_str()?;
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return None;
+    }
+    let verb = v["arg"]["verb"].as_str()?;
+    let name = v["arg"]["name"].as_str().unwrap_or("").trim();
+    let place = match v["arg"]["where"].as_str() {
+        Some(w) => Some(crate::modes::safe_where(w)?.to_string()),
+        None => None,
+    };
+    // 대시보드 칸은 대상이 있어야 하고, 다른 자리엔 대상이 없다
+    let dash = match (place.as_deref(), v["arg"]["dash"].as_str()) {
+        (Some("dash"), Some(t)) => Some(crate::modes::safe_dash(t)?),
+        (Some("dash"), None) => return None,
+        (_, Some(_)) => return None,
+        _ => None,
+    };
+    let dir = v["arg"]["dir"].as_str().filter(|d| d.starts_with('/') || d.get(1..3) == Some(":\\")).filter(|d| d.chars().count() <= 4096 && !d.chars().any(char::is_control));
+    let on = v["arg"]["on"].as_bool();
+    let ok = match verb {
+        "list" => true,
+        "open" | "close" => crate::modes::safe_name(name),
+        "add" => dir.is_some() && place.is_none(),
+        "top" => crate::modes::safe_name(name) && on.is_some() && place.is_none(),
+        _ => false,
+    };
+    let on = if verb == "top" { on } else { None };
+    ok.then(|| ModeReq { id: id.into(), verb: verb.into(), name: name.into(), place, dash, dir: if verb == "add" { dir.map(Into::into) } else { None }, on })
 }
 
 pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
@@ -207,6 +257,20 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                     });
                     continue;
                 }
+                // 참모 모드 — 켜기·끄기·목록은 Rust 가 한다(호스트가 여기 있다). 답은 <데이터>/mode.txt
+                if let Some(req) = mode_request(&line) {
+                    let app = app.clone();
+                    std::thread::spawn(move || {
+                        let ans = crate::modes_host::answer(&app, &req);
+                        let id = req.id;
+                        let file = crate::config::data_file("mode.txt");
+                        let tmp = file.with_extension("txt.tmp");
+                        if std::fs::write(&tmp, format!("#id {id}\n{ans}\n")).is_ok() {
+                            let _ = std::fs::rename(&tmp, &file);
+                        }
+                    });
+                    continue;
+                }
                 let Some(w) = app.get_webview_window("main") else { continue };
                 if wants_window(&line) {
                     let _ = w.show();
@@ -267,6 +331,7 @@ mod tests {
         assert_eq!(browser_request(l), Some(("ab-1".into(), "connect".into(), "~/dev/shop".into())));
         assert!(browser_request(r#"{"action":"browser","id":"x","arg":{"verb":"status","dir":"/d"}}"#).is_some());
         assert_eq!(browser_request(r#"{"action":"browser","id":"x","arg":{"verb":"rm","dir":"/d"}}"#), None); // 모르는 동사
+        assert!(browser_request(r#"{"action":"browser","id":"x","arg":{"verb":"missing","dir":"-"}}"#).is_some()); // 안 붙은 목록
         assert_eq!(browser_request(r#"{"action":"browser","id":"x/../y","arg":{"verb":"status","dir":"/d"}}"#), None); // 답 파일에 쓰는 id
         assert_eq!(browser_request(r#"{"action":"browser","id":"x","arg":{"verb":"status","dir":"  "}}"#), None);
         assert_eq!(browser_request(r#"{"action":"browser-need","id":"x","arg":{"dir":"/d"}}"#), None); // 카드는 화면으로
@@ -336,5 +401,37 @@ mod tests {
         assert!(!first_in(&mut seen, "a|build|wait", 1200), "여럿이 기다려도 한 번");
         assert!(first_in(&mut seen, "a|build|ttl", 1200), "까닭이 다르면 따로");
         assert!(first_in(&mut seen, "a|build|wait", 1301));
+    }
+
+    #[test]
+    fn 모드_요청은_동사_이름_자리를_거른다() {
+        let l = |arg: &str| format!(r#"{{"action":"mode","id":"ab12","arg":{arg}}}"#);
+        let r = |verb: &str, name: &str, place: Option<&str>, dash: Option<&str>| Some(ModeReq { id: "ab12".into(), verb: verb.into(), name: name.into(), place: place.map(Into::into), dash: dash.map(Into::into), dir: None, on: None });
+        assert_eq!(mode_request(&l(r#"{"verb":"list"}"#)), r("list", "", None, None));
+        assert_eq!(mode_request(&l(r#"{"verb":"open","name":"counter","where":"panel"}"#)), r("open", "counter", Some("panel"), None));
+        assert_eq!(mode_request(&l(r#"{"verb":"open","name":"counter","where":"modal"}"#)), r("open", "counter", Some("modal"), None));
+        assert_eq!(mode_request(&l(r#"{"verb":"open","name":"counter","where":"full"}"#)), r("open", "counter", Some("full"), None));
+        assert_eq!(mode_request(&l(r#"{"verb":"open","name":"counter","where":"dash","dash":"shop-app"}"#)), r("open", "counter", Some("dash"), Some("shop-app")));
+        assert_eq!(mode_request(&l(r#"{"verb":"close","name":"counter"}"#)), r("close", "counter", None, None));
+        assert_eq!(mode_request(&l(r#"{"verb":"open","name":"../x"}"#)), None, "이름은 모드 이름 꼴만");
+        assert_eq!(mode_request(&l(r#"{"verb":"open","name":"counter","where":"sidebar"}"#)), None, "없는 자리");
+        assert_eq!(mode_request(&l(r#"{"verb":"open","name":"counter","where":"dash"}"#)), None, "대시보드 칸은 대상이 있어야");
+        assert_eq!(mode_request(&l(r#"{"verb":"open","name":"counter","where":"panel","dash":"x"}"#)), None, "대상은 대시보드 칸에만");
+        assert_eq!(mode_request(&l(r#"{"verb":"open"}"#)), None);
+        let top = mode_request(&l(r#"{"verb":"top","name":"counter","on":true}"#)).unwrap();
+        assert_eq!((top.verb.as_str(), top.name.as_str(), top.on), ("top", "counter", Some(true)));
+        assert_eq!(mode_request(&l(r#"{"verb":"top","name":"counter","on":false}"#)).unwrap().on, Some(false));
+        assert_eq!(mode_request(&l(r#"{"verb":"top","name":"counter"}"#)), None, "켜고 끄기를 말해야");
+        assert_eq!(mode_request(&l(r#"{"verb":"top","name":"counter","on":"on"}"#)), None, "참·거짓만");
+        assert_eq!(mode_request(&l(r#"{"verb":"top","name":"../x","on":true}"#)), None);
+        assert_eq!(mode_request(&l(r#"{"verb":"open","name":"counter","on":true}"#)).unwrap().on, None, "on 은 top 에만");
+        let add = mode_request(&l(r#"{"verb":"add","dir":"/Users/a/dev/shop-mode"}"#)).unwrap();
+        assert_eq!((add.verb.as_str(), add.dir.as_deref()), ("add", Some("/Users/a/dev/shop-mode")));
+        assert_eq!(mode_request(&l(r#"{"verb":"add","dir":"C:\\dev\\shop-mode"}"#)).unwrap().dir.as_deref(), Some("C:\\dev\\shop-mode"), "윈도우 경로");
+        assert_eq!(mode_request(&l(r#"{"verb":"add","dir":"dev/shop"}"#)), None, "절대 경로만");
+        assert_eq!(mode_request(&l(r#"{"verb":"add"}"#)), None);
+        assert_eq!(mode_request(&l(r#"{"verb":"open","name":"counter","dir":"/x"}"#)).unwrap().dir, None, "폴더는 add 에만");
+        assert_eq!(mode_request(&l(r#"{"verb":"rm","name":"counter"}"#)), None);
+        assert_eq!(mode_request(r#"{"action":"mode","id":"a b","arg":{"verb":"list"}}"#), None, "id 는 답 파일 첫 줄에 쓴다");
     }
 }

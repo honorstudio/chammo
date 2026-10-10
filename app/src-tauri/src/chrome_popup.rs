@@ -21,14 +21,28 @@ const SLACK: f64 = 2.0;
 
 /// 그 크롬(pid)이 브라우저 창 말고 대화상자 크기 창을 브라우저 창 안쪽에 띄워 두었나. browsers = CDP 로 읽은 브라우저 창 자리들
 pub fn popup_open(wins: &[Win], pid: i32, browsers: &[Rect]) -> bool {
-    wins.iter().any(|w| {
-        w.pid == pid
-            && w.layer == 0
-            && w.rect.w >= MIN_W
-            && w.rect.h >= MIN_H
-            && !browsers.iter().any(|b| same(*b, w.rect))
-            && browsers.iter().any(|b| within(w.rect, *b))
-    })
+    !popup_hosts(wins, pid, browsers).is_empty()
+}
+
+/// 대화상자를 품은 브라우저 창들 — 패스키 창이 뜨면 이 창만 작게 꺼낸다(agent_peek). 같은 자리 창이 둘이면 둘 다
+pub fn popup_hosts(wins: &[Win], pid: i32, browsers: &[Rect]) -> Vec<Rect> {
+    let dialogs: Vec<Rect> = wins
+        .iter()
+        .filter(|w| w.pid == pid && w.layer == 0 && w.rect.w >= MIN_W && w.rect.h >= MIN_H && !browsers.iter().any(|b| same(*b, w.rect)))
+        .map(|w| w.rect)
+        .collect();
+    browsers.iter().filter(|b| dialogs.iter().any(|d| within(*d, **b) && !omnibox_list(*d, **b))).copied().collect()
+}
+
+/// 주소창 목록 창인가 — 브라우저 창 위 가장자리(탭·주소창 줄 안)에 붙고 폭이 브라우저의 70% 넘는 창. 치는 동안 1238x458 까지 펼쳐져
+/// 대화상자 크기를 넘는다(2026-10-10 크롬 154, 프로젝트P 세션 '패스키 창' 오탐). 패스키·QR 창은 폭이 브라우저의 절반도 안 된다(448·486 / 1200)
+fn omnibox_list(d: Rect, b: Rect) -> bool {
+    d.y - b.y <= 60.0 && d.w >= b.w * 0.7
+}
+
+/// 같은 창 자리인가(여유 2px)
+pub fn same_rect(a: Rect, b: Rect) -> bool {
+    same(a, b)
 }
 
 /// 브라우저 창을 물어볼 만한가 — 큰 창 안에 또 다른 큰 창이 들어 있을 때만(대화상자는 브라우저 창 안쪽에 뜬다).
@@ -166,6 +180,30 @@ mod tests {
         let popup_win = Rect { x: -2700.0, y: 1100.0, w: 500.0, h: 600.0 };
         let ws = vec![w(-2850.0, 1000.0, 1200.0, 800.0), w(popup_win.x, popup_win.y, popup_win.w, popup_win.h + 1.0)];
         assert!(!popup_open(&ws, P, &[MAIN, popup_win]), "window.open 팝업(이것도 브라우저 창 — CDP 가 안다, 1px 차이는 같은 창)");
+    }
+
+    #[test]
+    fn 대화상자를_품은_브라우저_창만_고른다() {
+        // 패스키 창이 뜨면 그 창을 품은 브라우저 창만 작게 꺼낸다(2026-10-10 참모-2) — 로그인 팝업과 본 창이 같은 자리면 둘 다
+        let mut ws = idle();
+        ws.push(w(-2474.0, 1083.0, 448.0, 387.0));
+        let other = Rect { x: 500.0, y: 500.0, w: 1200.0, h: 800.0 };
+        assert_eq!(popup_hosts(&ws, P, &[MAIN, other]), vec![MAIN]);
+        assert_eq!(popup_hosts(&ws, P, &[MAIN, MAIN]), vec![MAIN, MAIN], "같은 자리 창 둘이면 둘 다");
+        assert!(popup_hosts(&idle(), P, &[MAIN]).is_empty());
+        assert!(same_rect(MAIN, Rect { x: MAIN.x + 1.0, ..MAIN }), "1px 차이는 같은 창");
+    }
+
+    #[test]
+    fn 주소창_목록이_길게_펼쳐져도_패스키가_아니다() {
+        // 2026-10-10 실측(크롬 154, 프로젝트P 세션) — 주소창에 치면 목록 창이 1238x458 로 펼쳐져 '패스키 창이 떴어요' 카드가 잘못 떴다.
+        // 브라우저 창(1400x880) 위 가장자리에 붙고 폭이 거의 같은 창 = 주소창 목록. 패스키 창은 폭이 브라우저의 절반도 안 된다
+        let main = Rect { x: -1446.0, y: 48.0, w: 1400.0, h: 880.0 };
+        let ws = vec![w(-1446.0, 48.0, 1400.0, 880.0), w(-1347.0, 73.0, 1238.0, 458.0), w(-1347.0, 73.0, 1238.0, 139.0), w(0.0, 580.0, 500.0, 500.0)];
+        assert!(!popup_open(&ws, P, &[main]));
+        let mut ws = ws;
+        ws.push(w(-972.0, 200.0, 448.0, 387.0));
+        assert!(popup_open(&ws, P, &[main]), "같이 떠 있어도 진짜 패스키 창은 잡는다");
     }
 
     #[test]

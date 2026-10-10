@@ -60,15 +60,19 @@ export function shownFiles(log: string, sessionId: string): { path: string; ts: 
 
 /** 프로젝트 세션마다 잡고 있는 참모들(참모 순서대로) — 메뉴에서 세션 옆 참모 색 점. resolve = 대상 이름 → 살아 있는 세션 id(없으면 뺀다) */
 export function holderMap(events: TaskEvent[], orchIds: string[], resolve: (target: string) => string | undefined, now: number): Map<string, string[]> {
-  const m = new Map<string, string[]>();
-  for (const o of orchIds) {
-    for (const t of heldBy(events, o, now)) {
-      const id = resolve(t);
-      if (!id || orchIds.includes(id)) continue;
-      const list = m.get(id) ?? [];
-      if (!list.includes(o)) m.set(id, [...list, o]);
-    }
+  // 세션마다 마지막으로 보낸 참모 하나 — 대상 글자가 아니라 살아 있는 세션 id 로 모은다. 같은 세션을 이름("shop-site")·번호("a1b2c3d4")로
+  // 따로 보내면 글자별로 따로 잡혀 넘겨준 참모에게도 남았다(2026-10-10 사용자 "왜 개발 담당이랑 너랑 둘 다 잡고 있어")
+  const own = owners(events);
+  const last = new Map<string, TaskEvent>();
+  for (const e of events) {
+    if (e.type !== 'send' || !e.target || !own.has(e.task) || !orchIds.includes(own.get(e.task)!) || now - Date.parse(e.ts) > HOLD) continue;
+    const id = resolve(targetKey(e.target)) ?? resolve(e.target);
+    if (!id || orchIds.includes(id)) continue;
+    const prev = last.get(id);
+    if (!prev || Date.parse(e.ts) >= Date.parse(prev.ts)) last.set(id, e);
   }
+  const m = new Map<string, string[]>();
+  for (const o of orchIds) for (const [id, e] of last) if (own.get(e.task) === o) m.set(id, [o]);
   return m;
 }
 

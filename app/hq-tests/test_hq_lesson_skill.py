@@ -64,8 +64,8 @@ def git(root, *args):
     subprocess.run(['git', '-C', root, *args], check=True, capture_output=True)
 
 
-class Flow:
-    """두 task 판에 같은 시험을 돌린다 — 공통 흐름"""
+class Harness:
+    """두 task 판에 같은 시험을 돌리는 틀 — 시험 없음(test_hq_lesson_skill_git.py 도 빌려 쓴다)"""
     task = None
 
     def setUp(self):
@@ -119,6 +119,15 @@ class Flow:
         self.task.append({'ts': self.task.now(), 'type': 'answer', 'task': tid, 'note': note})
 
     # ── review ──
+
+    def group(self, name='tauri-dev', lines='1-3', desc='tauri dev·vite 1420·개발판 켜고 끌 때'):
+        args = ['lesson-group', 'proj', name, '--lines', lines] + (['--desc', desc] if desc else [])
+        return self.run_task(*args)
+
+
+class Flow(Harness):
+    """review·propose·group·drop·restore 흐름"""
+
     def test_review_는_번호와_크기를_보여_주고_아무것도_안_바꾼다(self):
         before = read(os.path.join(self.task.LESSONS, 'proj.md'))
         code, out, err = self.run_task('lesson-review', 'proj')
@@ -136,6 +145,7 @@ class Flow:
         self.assertTrue(err)
 
     # ── propose ──
+
     def test_propose_는_결정_대기함_카드를_올린다(self):
         tid = self.propose()
         ev = self.events()
@@ -168,6 +178,7 @@ class Flow:
         self.assertIn('lesson-tauri-dev', err)
 
     # ── promote ──
+
     def test_사람_답_없이는_승격하지_않는다(self):
         tid = self.propose()
         code, _, err = self.run_task('lesson-promote', tid)
@@ -237,31 +248,6 @@ class Flow:
         self.assertIn('lesson-tauri-dev', err)
         self.assertIn('SKILL.md', err)
 
-    def test_CLAUDE_local_교훈_칸에_스킬_목록_한_줄(self):
-        # 워크트리 세션은 gitignore 된 스킬을 목록에 못 본다(2026-10-08 실측) — 부모 폴더 CLAUDE.local.md 는 읽으니 거기 길을 남긴다
-        local = lambda: read(os.path.join(self.root, 'CLAUDE.local.md'))
-        for name, lines in (('tauri-dev', '1'), ('phone', '1')):
-            tid = self.propose(name=name, lines=lines)
-            self.answer(tid, '묶어')
-            self.assertEqual(self.run_task('lesson-promote', tid)[0], 0)
-        ptr = [l for l in local().splitlines() if 'lesson-tauri-dev' in l]
-        self.assertEqual(len(ptr), 1)
-        self.assertIn('lesson-phone', ptr[0])
-        self.assertIn(os.path.join(self.root, '.claude', 'skills'), ptr[0])
-        # 교훈 칸 안, 머리 바로 아래 — 칸 밖은 그대로
-        body = local()
-        self.assertLess(body.index('## 교훈'), body.index(ptr[0]))
-        self.assertLess(body.index(ptr[0]), body.index('## 미룬 할 일'))
-        self.assertIn('- 아이디 x', body)
-        # 교훈 파일 쪽엔 안 생긴다(지시엔 send 가 따로 붙인다)
-        self.assertFalse(any('lesson-' in l for l in self.lessons()))
-        # 다 되돌리면 그 줄도 빠진다
-        self.run_task('lesson-restore', 'proj', 'tauri-dev')
-        self.assertNotIn('lesson-tauri-dev', local())
-        self.assertIn('lesson-phone', local())
-        self.run_task('lesson-restore', 'proj', 'phone')
-        self.assertNotIn('lesson-', local())
-
     def test_승격_사이에_교훈이_바뀌어도_글로_찾는다(self):
         tid = self.propose(lines='2')
         # 사람이 메모 창에서 첫 줄을 지웠다 — 번호가 밀렸다
@@ -271,40 +257,6 @@ class Flow:
         code, _, err = self.run_task('lesson-promote', tid)
         self.assertEqual(code, 0, err)
         self.assertEqual(self.lessons(), LESSONS[2:])
-
-    def test_커밋되는_자리면_git_info_exclude_로_막는다(self):
-        os.remove(os.path.join(self.root, '.gitignore'))
-        tid = self.propose()
-        self.answer(tid, '묶어')
-        code, _, err = self.run_task('lesson-promote', tid)
-        self.assertEqual(code, 0, err)
-        skill = os.path.join(self.root, '.claude', 'skills', 'lesson-tauri-dev', 'SKILL.md')
-        self.assertEqual(subprocess.run(['git', '-C', self.root, 'check-ignore', '-q', skill]).returncode, 0)
-        self.assertFalse(os.path.exists(os.path.join(self.root, '.gitignore')))
-
-    def test_gitignore_가_스킬을_다시_추적하게_하면_그_줄과_넣을_줄을_알려_준다(self):
-        # 2026-10-09 project-a: .gitignore 가 '!.claude/skills/' 로 직원 공유 스킬을 추적 — info/exclude 보다 이겨서 막지 못했다
-        with open(os.path.join(self.root, '.gitignore'), 'w') as f:
-            f.write('.claude/*\n!.claude/skills/\n.claude/skills/*\n!.claude/skills/*/\n')
-        tid = self.propose()
-        self.answer(tid, '묶어')
-        code, _, err = self.run_task('lesson-promote', tid)
-        self.assertEqual(code, 2)
-        self.assertIn('.gitignore:4', err)
-        self.assertIn('/.claude/skills/lesson-*/', err)
-        self.assertEqual(self.lessons(), LESSONS)
-
-    def test_git_이_추적하는_스킬_폴더면_거절(self):
-        d = os.path.join(self.root, '.claude', 'skills', 'lesson-tauri-dev')
-        tid = self.propose()
-        os.makedirs(d)
-        with open(os.path.join(d, 'SKILL.md'), 'w') as f:
-            f.write('x')
-        git(self.root, 'add', '-f', '.claude/skills/lesson-tauri-dev/SKILL.md')
-        self.answer(tid, '묶어')
-        code, _, err = self.run_task('lesson-promote', tid)
-        self.assertEqual(code, 2)
-        self.assertEqual(self.lessons(), LESSONS)
 
     def test_같은_스킬에_더_묶으면_합친다(self):
         a = self.propose(lines='1')
@@ -338,9 +290,6 @@ class Flow:
         self.assertEqual(self.lessons(), LESSONS)
 
     # ── group — 카드 없이 참모가 알아서 묶는다(2026-10-08 사용자 "추천대로 진행") ──
-    def group(self, name='tauri-dev', lines='1-3', desc='tauri dev·vite 1420·개발판 켜고 끌 때'):
-        args = ['lesson-group', 'proj', name, '--lines', lines] + (['--desc', desc] if desc else [])
-        return self.run_task(*args)
 
     def test_group_은_카드_없이_바로_스킬로_묶고_한_줄로_보고한다(self):
         code, out, err = self.group()
@@ -417,16 +366,6 @@ class Flow:
         body = read(os.path.join(self.root, '.claude', 'skills', 'lesson-tauri-dev', 'SKILL.md'))
         self.assertIn('description: "새 설명"', body)
 
-    def test_group__git_이_추적하는_스킬_폴더면_거절(self):
-        d = os.path.join(self.root, '.claude', 'skills', 'lesson-tauri-dev')
-        os.makedirs(d)
-        with open(os.path.join(d, 'SKILL.md'), 'w') as f:
-            f.write('x')
-        git(self.root, 'add', '-f', '.claude/skills/lesson-tauri-dev/SKILL.md')
-        code, _, err = self.group()
-        self.assertEqual(code, 2)
-        self.assertEqual(self.lessons(), LESSONS)
-
     def test_group__없는_글만_고르면_거절하고_옮긴_뒤_같은_번호는_글로_찾는다(self):
         self.group(lines='1-3')
         self.assertEqual(self.group(name='phone', lines='1-3')[0], 2)  # 남은 줄은 2개뿐
@@ -442,6 +381,7 @@ class Flow:
         self.assertNotIn('lesson-propose', out)
 
     # ── drop — 버리기만 사람에게 카드로 묻는다 ──
+
     def test_drop_은_버릴까_카드를_올리고_답_전엔_안_버린다(self):
         code, out, err = self.run_task('lesson-drop', 'proj', '--lines', '5', '--why', '끝난 할 일')
         self.assertEqual(code, 0, err)
@@ -480,6 +420,7 @@ class Flow:
         self.assertFalse(os.path.exists(self.task.LOG))
 
     # ── restore ──
+
     def test_되돌리면_줄이_다시_붙고_스킬은_archive_로(self):
         tid = self.propose()
         self.answer(tid, '묶어')
@@ -502,6 +443,7 @@ class Flow:
         self.assertTrue(os.path.isdir(os.path.join(self.root, '.claude', 'skills', 'lesson-x')))
 
     # ── 경고 ──
+
     def test_교훈이_많으면_알아서_묶으라고_알려_준다(self):
         for i in range(15):
             self.run_task('lesson', 'proj', f'교훈 {i}')

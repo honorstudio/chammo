@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Session } from './session';
 import type { StoppedSession } from './stopped';
-import { arrivedOrch, creatingRow, orchRows, type OrchRow } from './orchRows';
+import { arrivedOrch, creatingRow, foldOff, orchRows, type OrchRow } from './orchRows';
 
 const live = (id: string, name: string): Session => ({ id, name, cwd: '/hq', kind: 'background', state: 'idle', project: 'hq', workspace: null, startedAt: 0, sessionId: `s-${id}` });
 const off = (id: string, name: string): StoppedSession => ({ id, sessionId: `s-${id}`, name, cwd: '/hq', project: 'hq', workspace: null, reason: 'done', startedAt: 0 });
@@ -108,4 +108,22 @@ describe('orchRows 고정 — 고정한 참모(대화 id)는 지난 자리보다
     expect(keys(pinned)).toEqual(['참모-3:off', '참모-2:live', '참모-1:live']);
     expect(keys(orchRows({ live: [a, b], off: [c], stopping: none, starting: none, prev: pinned, pins: [] }))).toEqual(['참모-3:off', '참모-2:live', '참모-1:live']);
   });
+
+  it('저장한 참모 순서(채팅 탭 끌기)를 따른다 — 꺼진 참모도 그 자리, 지난 자리 기억보다 먼저(2026-10-10)', () => {
+    const a = live('a', '참모-1'), b = live('b', '참모-2'), c = off('c', '참모-3');
+    const prev = orchRows({ live: [a, b], off: [c], stopping: none, starting: none, prev: [] });
+    expect(keys(orchRows({ live: [a, b], off: [c], stopping: none, starting: none, prev, order: ['s-b', 's-c', 's-a'] }))).toEqual(['참모-2:live', '참모-3:off', '참모-1:live']);
+    // 고정은 여전히 맨 위
+    expect(keys(orchRows({ live: [a, b], off: [c], stopping: none, starting: none, prev, order: ['s-b', 's-c', 's-a'], pins: ['s-a'] }))).toEqual(['참모-1:live', '참모-2:live', '참모-3:off']);
+  });
 });
+
+describe('foldOff — 사이드바 B안: 꺼진 참모는 \'쉬는 참모 N\' 접힌 줄로(2026-10-10)', () => {
+  it('자리를 잡은 꺼진 줄만 뺀다 — 켜는 중·끄는 중은 위에 남는다(바뀌는 동안 안 튀게)', () => {
+    const rows = orchRows({ live: [live('a', '참모'), live('b', '참모-2')], off: [off('c', '참모-3'), off('d', '참모-4')], stopping: new Set(['b']), starting: new Set(['s-d']), prev: [] });
+    const f = foldOff(rows);
+    expect(keys(f.main)).toEqual(['참모:live', '참모-2:stopping', '참모-4:starting']);
+    expect(keys(f.off)).toEqual(['참모-3:off']);
+  });
+});
+

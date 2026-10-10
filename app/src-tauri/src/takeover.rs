@@ -36,7 +36,7 @@ pub fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-fn write_secure(f: &Path, body: &[u8]) -> Result<(), String> {
+pub(crate) fn write_secure(f: &Path, body: &[u8]) -> Result<(), String> {
     let tmp = f.with_extension("tmp-takeover");
     std::fs::write(&tmp, body).map_err(|e| e.to_string())?;
     #[cfg(unix)]

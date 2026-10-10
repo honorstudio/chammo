@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY_NAV, goBack, goForward, visit } from './navHistory';
+import { EMPTY_NAV, goBack, goForward, visit, keyFallback } from './navHistory';
 
 describe('navHistory — 뒤로 = 왔던 곳(브라우저처럼), 2026-10-04 QA D2', () => {
   it('재현: 문서 → 링크로 다른 문서 → 뒤로 = 처음 문서(위 칸·오케스트레이터 홈이 아니라)', () => {
@@ -39,5 +39,16 @@ describe('navHistory — 뒤로 = 왔던 곳(브라우저처럼), 2026-10-04 QA 
     let n = visit(EMPTY_NAV, 'a', 'b');
     n = visit(n, 'b', 'a'); // back = [a, b]
     expect(goBack(n, 'b')!.to).toBe('a');
+  });
+});
+
+describe('keyFallback — ⌘[·마우스 뒤로가 기록이 없을 때(roadmap 문서 ⑥)', () => {
+  it('가운데가 문서면 문서 뒤로 버튼과 같은 위 칸 — 예전엔 아무 일도 없었다', () => {
+    expect(keyFallback(-1, 'd:/a/b.md', 'd:/a.md')).toBe('d:/a.md');
+  });
+  it('문서가 아니거나 앞으로·위 칸 모름이면 없음', () => {
+    expect(keyFallback(-1, 'o:x', 'd:/a.md')).toBeUndefined();
+    expect(keyFallback(1, 'd:/a/b.md', 'd:/a.md')).toBeUndefined();
+    expect(keyFallback(-1, 'd:/a/b.md', '')).toBeUndefined();
   });
 });

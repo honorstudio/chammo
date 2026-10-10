@@ -83,9 +83,14 @@ describe('taskEvents — 참모가 시킨 일이 끝난 시각', () => {
       { ts: 'garbage', type: 'done', task: '2' },
     ])).toEqual([{ t: Date.parse(t), type: 'task', label: 'x' }]);
   });
+
+  it('시킬 때 적힌 프로젝트(dev 아래 폴더)를 proj 로 — 펫 일기가 자주 본 프로젝트를 센다', () => {
+    const t = '2026-09-28T01:00:00.000Z';
+    expect(taskEvents([{ ts: t, type: 'send', task: '1', target: 's-9', title: 'x', project: 'todo-api' }, { ts: t, type: 'done', task: '1' }])[0]?.proj).toBe('todo-api');
+  });
 });
 
-describe('parseCiRuns — GitHub Actions 실행 = 배틀', () => {
+describe('parseCiRuns — GitHub Actions 실행 = 배틀(label = 저장소 폴더, 장애 몬스터가 저장소별로 센다)', () => {
   // Rust ci_runs 원문: 저장소마다 `이름\t<gh run list JSON>` 한 줄
   const runs = (xs: object[]) => JSON.stringify(xs);
   it('끝난 것만: 성공 = 승, 실패·시간 초과 = 패. 취소·건너뜀·진행 중은 안 셈', () => {
@@ -99,9 +104,9 @@ describe('parseCiRuns — GitHub Actions 실행 = 배틀', () => {
       'todo-api\t' + runs([{ conclusion: 'timed_out', status: 'completed', createdAt: '2026-09-28T05:00:00Z' }, { conclusion: 'skipped', status: 'completed', createdAt: '2026-09-28T06:00:00Z' }]),
     ].join('\n');
     expect(parseCiRuns(raw)).toEqual([
-      { t: Date.parse('2026-09-28T01:00:00Z'), type: 'ci', pass: true },
-      { t: Date.parse('2026-09-28T02:00:00Z'), type: 'ci', pass: false },
-      { t: Date.parse('2026-09-28T05:00:00Z'), type: 'ci', pass: false },
+      { t: Date.parse('2026-09-28T01:00:00Z'), type: 'ci', pass: true, label: 'ops-hub' },
+      { t: Date.parse('2026-09-28T02:00:00Z'), type: 'ci', pass: false, label: 'ops-hub' },
+      { t: Date.parse('2026-09-28T05:00:00Z'), type: 'ci', pass: false, label: 'todo-api' },
     ]);
   });
 

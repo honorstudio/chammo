@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { loadEnv, loadSample, loadSave } from '../data/tauri';
+import type { ModeRow } from '../domain/modeTree';
 import { attribute, envCandidates, parseClaudePids, parsePs, parseSys, summarize, type LoadReport, type SysLoad } from '../domain/load';
 import type { Session } from '../domain/session';
 
@@ -22,7 +24,9 @@ export function useLoad(mine: Session[], others: Session[], fast: boolean) {
       const procs = parsePs(raw.ps);
       const sessions = ref.current.mine.filter((x) => x.procPid).map((x) => ({ id: x.id, name: x.name, project: x.project, pid: x.procPid! }));
       const env = parseClaudePids(await loadEnv(envCandidates(procs, sessions.map((x) => x.pid))));
-      const r = attribute(procs, sessions, env, ref.current.others.map((x) => x.procPid ?? 0).filter(Boolean));
+      // 켜진 참모 모드 호스트 — 모드 하나당 claude 프로세스 하나라 부하 화면에 따로 보인다
+      const modes = (await invoke<ModeRow[]>('mode_list').catch(() => [] as ModeRow[])).filter((m) => m.pid > 0).map((m) => ({ name: m.title || m.name, pid: m.pid }));
+      const r = attribute(procs, sessions, env, ref.current.others.map((x) => x.procPid ?? 0).filter(Boolean), modes);
       setSys(s);
       setReport(r);
       if (s) void loadSave(JSON.stringify(summarize(s, r, new Date()), null, 2)).catch(() => {});

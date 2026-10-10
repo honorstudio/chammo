@@ -34,7 +34,21 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
                                                        registers it for this folder only (~/.claude.json local scope) —
                                                        the repo's .mcp.json is never touched. Restart that folder's
                                                        running sessions afterwards (claude respawn <id>). Chammo must be open
+  scripts/app browser missing                          projects in devRoot (git repos) with no browser attached — connect before handing browser work
   scripts/app browser need <project|folder> [<why>]    put a "Connect browser" card in the decision inbox for the user
+  scripts/app mode list                                Chammo modes (Claude Code mods drawn natively by the app): name, title,
+                                                       where it came from (folder = <data folder>/modes, plugin, example), on/off
+  scripts/app mode open <name> [--where window|panel|modal|full|dash <who>]
+                                                       turn a mode on — default its own window (draggable); panel = right side of
+                                                       the space; modal = a preview box over the space; full = fills the space;
+                                                       dash <who> = a box in that assistant's or project's dashboard (name or
+                                                       folder). The app remembers the place. Each mode is one claude process
+                                                       (about 240MB) — Chammo must be open
+  scripts/app mode close <name>                        turn it off (the process ends)
+  scripts/app mode top <name> on|off                   keep its own window above other windows (remembered; ignored in the
+                                                       panel, dashboard, preview or full)
+  scripts/app mode add <folder>                        register a mode the user made elsewhere (a project folder made with
+                                                       /plugin-authoring) — the folder name becomes the mode name
   scripts/app push "<title>" ["<one line>"]            push a notification to the user's phone (home-screen web app
                                                        with the bell on). Sent even while the user looks at the Mac.
                                                        Title + 60 chars only — no secrets. Exit 4 = no subscribed
@@ -165,6 +179,9 @@ def load(data, as_json=False):
     for o in orphans:
         out.append(f"  pid {o.get('pid')} {o.get('what')}: {o.get('cpu')}% · {o.get('mem')} · up {o.get('age')}")
     o, r = s.get('outside') or {}, s.get('rest') or {}
+    m = s.get('modes') or {}
+    if m.get('count'):
+        out.append(f"modes on: {m.get('count')} · {m.get('mem')} (one claude process each — scripts/app mode close <name>)")
     out.append(f"Claude outside Chammo: {o.get('cpu')}% · {o.get('mem')}")
     out.append(f"other apps & system: {r.get('cpu')}% · {r.get('mem')} — {', '.join(r.get('top') or [])}")
     return 0, '\n'.join(out), warn
@@ -205,12 +222,12 @@ def trust(data, home, folder):
     if not root or not (key == root or key.startswith(root + '/')):
         return 3, (f'not inside a projects folder the user trusted — ask them to run `! cd "{full}" && claude` once, pick '
                    f'"Yes, I trust this folder", then /exit / 사용자가 믿은 프로젝트 폴더 밖이야 — 사용자에게 한 번 믿어 달라고 해')
-    cj = os.path.join(home, '.claude.json')
+    np = _new_project()
+    cj = np.claude_json(home)
     projects = read_json(cj).get('projects')
     projects = projects if isinstance(projects, dict) else {}
     if _trusted(projects, key) and _trusted(projects, root):
         return 0, f'already trusted / 이미 믿음: {full}'
-    np = _new_project()
     for k in ([root] if not _trusted(projects, root) else []) + ([full] if full != root else []):
         if not np.trust(k, home):
             return 1, f'could not write {cj} / 못 적었어'
@@ -307,6 +324,24 @@ def project_dir(data, home, arg):
     return os.path.join(dev, a) if a not in ('.', '..') else None
 
 
+def browser_missing(data, wait):
+    """브라우저 안 붙은 프로젝트(devRoot·추가 프로젝트의 git 저장소) — 앱이 ~/.claude.json·저장소를 읽는다"""
+    code, body = ask_app(data, 'browser', {'verb': 'missing', 'dir': '-'}, 'browser-attach.txt', wait)
+    if code:
+        return code, body
+    try:
+        r = json.loads(body)
+    except ValueError:
+        return 1, body
+    if not r.get('ok'):
+        return 1, str(r.get('error'))
+    m = r.get('missing') or []
+    if not m:
+        return 0, 'every project has its browser / 모든 프로젝트에 브라우저가 붙어 있어'
+    return 0, (f'no browser / 브라우저 안 붙음 ({len(m)}): {", ".join(m)}\n'
+               f'  before handing browser work: scripts/app browser connect <project> / 브라우저 일을 맡기기 전에 scripts/app browser connect <프로젝트>')
+
+
 def browser(data, home, verb, arg, wait):
     """참모 브라우저 연결 — 앱이 폴더를 읽고 ~/.claude.json 에 적는다(HQ 는 데스크탑 권한이 막혀 있을 수 있다 — GitHub #1·#2)"""
     d = project_dir(data, home, arg)
@@ -337,6 +372,34 @@ def browser(data, home, verb, arg, wait):
     if l.get('added'):
         msg += '\n  running sessions in that folder must restart to get it: claude respawn <id> / 그 폴더에 떠 있는 세션은 다시 켜야 붙어'
     return 0, msg
+
+
+MODE_WHERE = ('window', 'panel', 'dash', 'modal', 'full')
+
+
+def mode_args(argv):
+    """mode list | open <이름> [--where …] | close <이름> | add <폴더> | top <이름> on|off → 앱에 넘길 arg. 틀리면 None"""
+    verb, rest = (argv[0] if argv else ''), argv[1:]
+    ok_name = lambda n: bool(n) and len(n) <= 64 and not n.startswith('.') and all(c.isascii() and (c.isalnum() or c in '._-') for c in n)
+    if verb == 'list' and not rest:
+        return {'verb': 'list'}
+    if verb == 'close' and len(rest) == 1 and ok_name(rest[0]):
+        return {'verb': 'close', 'name': rest[0]}
+    if verb == 'top' and len(rest) == 2 and ok_name(rest[0]) and rest[1] in ('on', 'off'):
+        return {'verb': 'top', 'name': rest[0], 'on': rest[1] == 'on'}
+    if verb == 'add' and len(rest) == 1 and os.path.isdir(os.path.expanduser(rest[0])):
+        # 앱은 절대 경로만 받는다 — 여기서 풀어 보낸다(~·상대 경로·심볼릭 링크)
+        return {'verb': 'add', 'dir': os.path.realpath(os.path.expanduser(rest[0]))}
+    if verb == 'open' and rest and ok_name(rest[0]):
+        if len(rest) == 1:
+            return {'verb': 'open', 'name': rest[0]}
+        if len(rest) == 3 and rest[1] == '--where' and rest[2] in MODE_WHERE and rest[2] != 'dash':
+            return {'verb': 'open', 'name': rest[0], 'where': rest[2]}
+        # 대시보드 칸은 어느 대시보드인지(참모·프로젝트 이름) 같이 — 앱이 이름 맞추기에만 쓴다
+        who = rest[3].strip() if len(rest) == 4 else ''
+        if rest[1:3] == ['--where', 'dash'] and who and len(who) <= 200 and who.isprintable():
+            return {'verb': 'open', 'name': rest[0], 'where': 'dash', 'dash': who}
+    return None
 
 
 def push_subs(data):
@@ -380,13 +443,17 @@ def main(argv):
         return code
     if argv[:1] == ['browser']:
         verb, rest = (argv[1] if len(argv) > 1 else ''), argv[2:]
-        if not ((verb in ('status', 'connect') and len(rest) == 1) or (verb == 'need' and 1 <= len(rest) <= 2)):
+        if not ((verb in ('status', 'connect') and len(rest) == 1) or (verb == 'need' and 1 <= len(rest) <= 2) or (verb == 'missing' and not rest)):
             print(__doc__, file=sys.stderr); return 2
         data, home = data_dir(), os.path.expanduser('~')
         try:
             wait = float(os.environ.get('CHAMMO_APP_WAIT', '') or 20)
         except ValueError:
             wait = 20
+        if verb == 'missing':
+            code, msg = browser_missing(data, wait)
+            print(msg, file=sys.stdout if code == 0 else sys.stderr)
+            return code
         code, msg = browser(data, home, verb, rest[0], wait)
         if verb == 'need' and code == 0:
             # 카드는 화면이 그린다 — 앱이 지금 상태를 다시 보고 붙어 있으면 안 띄운다
@@ -396,6 +463,21 @@ def main(argv):
                 f.write(json.dumps(line, ensure_ascii=False) + '\n')
             msg = f'sent to the app / 앱에 넘김: browser card for {tilde(arg["dir"], home)}'
         print(msg, file=sys.stdout if code == 0 else sys.stderr)
+        return code
+    if argv[:1] == ['mode']:
+        arg = mode_args(argv[1:])
+        if not arg and argv[1:2] == ['add'] and len(argv) == 3:
+            print(f'error: no such folder: {argv[2]}', file=sys.stderr); return 2
+        if not arg:
+            print(__doc__, file=sys.stderr); return 2
+        try:
+            wait = float(os.environ.get('CHAMMO_APP_WAIT', '') or 20)
+        except ValueError:
+            wait = 20
+        code, body = ask_app(data_dir(), 'mode', arg, 'mode.txt', wait)
+        if code == 0 and body.startswith('error:'):
+            code = 1
+        print(body, file=sys.stdout if code == 0 else sys.stderr)
         return code
     if argv[:1] == ['load']:
         if argv[1:] not in ([], ['--json']):

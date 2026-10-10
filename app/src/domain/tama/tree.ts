@@ -31,10 +31,11 @@ export type Counters = {
   routineWins: number;
   docs: number;       // 문서 고침 — 목욕
   plays: number;      // 시안 검토 — 놀아주기
+  nightFeeds: number; // 밤 10시~새벽 2시에 먹음 — 새벽형 버릇(lineage)
   luck: number;       // 0~1, 알을 고를 때 한 번 정한다 — 별알 궁극체가 매시간 다시 굴려 결국 통과하는 걸 막는다
 };
 
-export const ZERO: Counters = { mistakes: 0, training: 0, overfeed: 0, battles: 0, wins: 0, prMerges: 0, tasksDone: 0, commits: 0, testCommits: 0, friPr: 0, dawnTasks: 0, bestStreak: 0, moon: 0, shows: 0, talks: 0, routines: 0, routineWins: 0, docs: 0, plays: 0, luck: 0 };
+export const ZERO: Counters = { mistakes: 0, training: 0, overfeed: 0, battles: 0, wins: 0, prMerges: 0, tasksDone: 0, commits: 0, testCommits: 0, friPr: 0, dawnTasks: 0, bestStreak: 0, moon: 0, shows: 0, talks: 0, routines: 0, routineWins: 0, docs: 0, plays: 0, nightFeeds: 0, luck: 0 };
 
 const STAGE: Record<Slot, number> = { egg: 0, i1: 1, i2: 2, r1: 3, r2: 3, cG: 4, cD: 4, cA: 4, cT: 4, cM: 4, cS: 4, cN: 4, cX: 4, p1: 5, p2: 5, p3: 5, m1: 6, m2: 6, jA: 6, jB: 6 };
 export const stageOf = (s: Slot) => STAGE[s];

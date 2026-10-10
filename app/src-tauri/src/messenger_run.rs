@@ -316,7 +316,7 @@ impl<E: Env> Bridge<E> {
             Act::Choose(key) => match self.env.orchs().ok().and_then(|l| m::find_orch(&l, &key).cloned()) {
                 Some(o) => {
                     self.sh.update(|s| s.last_orch = Some(o.base().to_string()));
-                    self.say(&format!("{}{}", crate::i18n::tr("이제 여기로 보내요: ", "Now sending to: "), o.name));
+                    self.say(&format!("{}{}", crate::i18n::tr("이제 여기로 보내요: ", "Now sending to: "), o.label()));
                 }
                 None => self.say(&unknown(&key)),
             },
@@ -460,7 +460,7 @@ impl<E: Env> Bridge<E> {
             // 한 줄이 상한보다 길면(큰 도구 결과) 줄바꿈이 안 보여 영영 멈춘다 — 그 덩어리는 건너뛴다
             w.offset += if s.consumed == 0 && chunk.len() as u64 >= READ_MAX { READ_MAX } else { s.consumed as u64 };
             for r in s.replies {
-                out.push(format!("{}:\n{r}", w.orch.base()));
+                out.push(format!("{}:\n{r}", w.orch.label()));
             }
             !s.mac_prompt
         });

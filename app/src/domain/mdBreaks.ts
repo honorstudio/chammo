@@ -120,7 +120,9 @@ export function keepItemLines(original: string, next: string): string {
   const drop = new Set<number>();
   eachProse(n, (i) => {
     const t = n[i + 2];
-    if (!LIST.test(n[i]!) || n[i + 1] !== '' || t === undefined || !/^\s/.test(t) || !t.trim() || LIST.test(t) || FENCE.test(t)) return;
+    if (!LIST.test(n[i]!) || n[i + 1] !== '' || t === undefined || !t.trim() || LIST.test(t) || FENCE.test(t)) return;
+    // 체크 항목(그리고 블록 하나로 쓴 항목)의 이어진 줄은 편집기가 들여쓰기 없는 형제 문단으로 쓴다 — 원래 글에서 그 줄이 이어진 줄이었을 때만(BlockNote 0.51 실측)
+    if (!/^\s/.test(t) && !cont.has(key(t))) return;
     const ind = cont.get(key(t)) ?? items.get(itemKey(n[i]!));
     if (!ind) return;
     drop.add(i + 1);

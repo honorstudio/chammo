@@ -4,9 +4,13 @@ import { filterAvailable, filterSkills, mcpRows, removeScope, respawnTargets, sh
 import { machine, tr } from '../../i18n';
 import { IconClose, IconOpen, IconPlus, IconRefresh, IconSend, IconTrash } from '../Icons';
 import { useOrchActions } from '../orchActions';
+import { runPool } from '../../domain/runPool';
 import './tools.css';
 
 /** 켜기·끄기 — 글자 없이 손잡이만, 이름은 aria-label */
+/** 플러그인 토큰 비용 — 앱이 켜진 동안 기억(화면을 다시 열 때마다 claude 를 또 부르지 않게) */
+const costMemo = new Map<string, string>();
+
 export function Switch({ on, disabled, label, onChange }: { on: boolean; disabled?: boolean; label: string; onChange: (on: boolean) => void }) {
   return <button role="switch" aria-checked={on} aria-label={label} title={label} disabled={disabled} className={`tl-sw ${on ? 'on' : ''}`} onClick={() => onChange(!on)}><i /></button>;
 }
@@ -77,17 +81,18 @@ export function ToolsPage({ root, roots, onRoot, sessions, onInvoke, onOpen, com
   const reload = () => { setErr(''); void loadConf(); void loadStatus(); void loadPlugins(); void loadMarkets(); if (avail) void loadAvail(); };
   useEffect(() => { setStatus(null); setPlugins(null); reload(); }, [root]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 토큰 비용 — 플러그인마다 claude 를 한 번씩 부르니 하나씩 차례로(한꺼번에 띄우지 않게)
+  // 토큰 비용 — 플러그인마다 claude 를 한 번씩 부른다. 셋까지만 같이(10개 차례로면 10초쯤 걸렸다), 한 번 물은 건 앱이 켜진 동안 기억
   useEffect(() => {
     if (!plugins) return;
     let stop = false;
-    void (async () => {
-      for (const p of plugins) {
-        if (stop || costs[p.id] !== undefined) continue;
-        const c = await invoke<string | null>('tools_plugin_cost', { id: p.id }).catch(() => null);
-        if (!stop && alive.current) setCosts((m) => ({ ...m, [p.id]: c ?? '' }));
-      }
-    })();
+    const known = Object.fromEntries(plugins.filter((p) => costMemo.has(p.id)).map((p) => [p.id, costMemo.get(p.id)!]));
+    if (Object.keys(known).length) setCosts((m) => ({ ...known, ...m }));
+    const ask = plugins.filter((p) => costs[p.id] === undefined && !costMemo.has(p.id));
+    void runPool(ask, 3, async (p) => {
+      const c = await invoke<string | null>('tools_plugin_cost', { id: p.id }).catch(() => null);
+      costMemo.set(p.id, c ?? '');
+      if (!stop && alive.current) setCosts((m) => ({ ...m, [p.id]: c ?? '' }));
+    }, () => stop);
     return () => { stop = true; };
   }, [plugins]); // eslint-disable-line react-hooks/exhaustive-deps
 

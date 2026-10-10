@@ -1,11 +1,14 @@
 """Chammo 의 Supertonic 목소리 — say.py <출력.wav> <목소리 M1…F5> <할 말>
 모델(supertonic-3, 약 385MB)은 이 폴더 model/ 에 받는다. 한글이 있으면 한국어, 없으면 영어로 읽는다."""
-import os, re, sys, wave
+import fcntl, os, re, sys, wave
 import numpy as np
 from supertonic import TTS
 
 out, voice, text = sys.argv[1], sys.argv[2], " ".join(sys.argv[3:])
 here = os.path.dirname(os.path.abspath(__file__))
+# 한 번에 하나만 만든다(앱 밖에서 부른 것도 줄 세움). 스레드는 묶지 않는다 — 2개로 묶었더니 부하 높을 때 짧은 말도 68초 걸려(기본 25초) 음성이 한참 늦었다(2026-10-10)
+lock = open(os.path.join(here, ".say.lock"), "w")
+fcntl.flock(lock, fcntl.LOCK_EX)
 tts = TTS(model="supertonic-3", model_dir=os.path.join(here, "model"), auto_download=True)
 lang = "ko" if re.search(r"[가-힣]", text) else "en"
 wav, _ = tts.synthesize(text, voice_style=tts.get_voice_style(voice_name=voice), lang=lang)

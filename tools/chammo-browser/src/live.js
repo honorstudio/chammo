@@ -140,6 +140,16 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
   // 상태 파일을 안 쓴다 — 유휴 닫기 뒤 사람 부르기가 죽은 포트로 상태 파일을 다시 써서 앱이 '화면 받는 중'에 멈췄다(2026-10-05 QA 5)
   let up = false;
   const doneFile = path.join(path.dirname(file), `${profile}.done`);
+  // 사람이 '다 했어'와 같이 적은 한마디 — 첫 줄은 그 부름 표, 나머지가 말(앱 agent_ask_done 이 .done 보다 먼저 쓴다)
+  const sayFile = path.join(path.dirname(file), `${profile}.say`);
+  const readSay = (token) => {
+    let raw = '';
+    try { raw = fs.readFileSync(sayFile, 'utf8'); } catch { return undefined; }
+    try { fs.rmSync(sayFile, { force: true }); } catch { /* 없음 */ }
+    const nl = raw.indexOf('\n');
+    const said = nl < 0 ? '' : raw.slice(nl + 1).trim();
+    return nl >= 0 && raw.slice(0, nl).trim() === token && said ? said.slice(0, 500) : undefined;
+  };
   // 사람이 앱 모달에서 연 파일 창 수 — 앱(agent_browser.rs)이 늘려 적는다. 플레이라이트도 같은 창을 '[File chooser]' 상태로 쌓아
   // 세션의 브라우저 도구가 'does not handle the modal state' 로 막혔다(QA N3) — 그만큼 다음 호출 앞에서 치운다
   const choosersFile = path.join(path.dirname(file), `${profile}.choosers`);
@@ -218,6 +228,7 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
       }
       if (first === 0) return { ok: false, text: NO_TAB };
       try { fs.rmSync(doneFile, { force: true }); } catch { /* 없음 */ }
+      try { fs.rmSync(sayFile, { force: true }); } catch { /* 없음 */ }
       s.ask = { reason: cut(String(reason || '사람이 해야 할 일').replace(/\s+/g, ' ').trim()).slice(0, 200), at: now() };
       const token = `${pid}:${s.ask.at}`;
       flush();
@@ -232,6 +243,8 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
           if (mark !== token) continue;
           s.ask = null;
           flush();
+          const said = readSay(token);
+          if (said) return { ok: true, said, text: `사람이 이렇게 말하고 넘겼어: "${said}" — browser_snapshot 으로 지금 화면을 확인하고 그 말대로 이어서 해` };
           return { ok: true, text: '사람이 다 했다고 했어 — browser_snapshot 으로 지금 화면을 확인하고 이어서 해' };
         }
         // 기다리는 동안 크롬이 닫히거나(browser_close) 죽으면 그만 — 앱은 죽은 브라우저를 못 보여 준다
@@ -266,4 +279,14 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
   };
 }
 
-module.exports = { enabled, parseResult, toolLine, readPort, liveFile, createLive, writeSecure, portOpen, pageCount };
+/**
+ * browser_ask_human 이 세션에 돌려줄 글 — 사람이 한 일 꼬리표(note)가 있으면 그것을, 사람이 적은 한마디(said)는 늘 앞에.
+ * 꼬리표가 원래 글을 갈아 끼워 한마디가 사라지지 않게
+ */
+function askText(r, note) {
+  if (!r.ok) return r.text;
+  if (!note) return r.text;
+  return r.said ? `사람이 이렇게 말하고 넘겼어: "${r.said}"\n${note}` : note;
+}
+
+module.exports = { askText, enabled, parseResult, toolLine, readPort, liveFile, createLive, writeSecure, portOpen, pageCount };

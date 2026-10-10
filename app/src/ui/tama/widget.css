@@ -31,3 +31,4 @@ body { font: 12px/1.45 -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo',
 .tw-bar button svg { width: 15px; height: 15px; }
 .tw-bar button:hover { background: rgba(0, 0, 0, .08); color: var(--tw-ink); }
 .tw-keeper { display: inline-flex; margin-left: -2px; }
+.tw-bar .dim { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

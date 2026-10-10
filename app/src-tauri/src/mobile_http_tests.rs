@@ -1748,6 +1748,27 @@ fn 참모_고정은_데이터_폴더에_기기_상관없이() {
 }
 
 #[test]
+fn 참모_순서는_데이터_폴더_하나_폰은_읽기만() {
+    // 사용자 "탭 끌어 옮기기 — 순서 출처 하나로"(2026-10-10) — 데스크톱이 쓴 orch-order.json 을 폰 참모 바꾸기도 그대로
+    let d = tmp("order");
+    let g = gate();
+    let f = Fake { data: d.clone(), ..Default::default() };
+    let a = "11111111-2222-4333-8444-555555555555";
+    let b = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    let order = |f: &Fake| String::from_utf8(handle(&with_cookie(get("/api/order")), &g, f).body).unwrap();
+    assert_eq!(order(&f), "[]");
+    assert_eq!(crate::orch_pins::write_order(&d, &[b.into(), a.into(), b.into()]).unwrap(), vec![b.to_string(), a.to_string()], "겹치면 앞 것만");
+    assert_eq!(order(&f), format!(r#"["{b}","{a}"]"#));
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(std::fs::metadata(d.join("orch-order.json")).unwrap().permissions().mode() & 0o777, 0o600);
+    // 이상한 id 는 통째로 거절(파일 그대로), 열쇠 없음은 401
+    assert!(crate::orch_pins::write_order(&d, &["../x".into()]).is_err());
+    assert_eq!(order(&f), format!(r#"["{b}","{a}"]"#));
+    assert_eq!(handle(&get("/api/order"), &g, &f).status, 401);
+    assert!(crate::remote::allowed("GET", "/api/order"));
+}
+
+#[test]
 fn 참모_이름_바꾸기는_hq_참모만_별명만() {
     // 사용자 "폰에서도 이름 바꾸기"(2026-10-04) — 앞의 참모-N 은 못 바꾼다(SendMessage 주소·색이 이름 번호), 별명만 맥 앱에 넘긴다
     let g = gate();

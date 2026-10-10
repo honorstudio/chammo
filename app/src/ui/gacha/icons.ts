@@ -78,6 +78,78 @@ function action(b: R, name: string) {
   else { b.rect(19, 12, 4, 4, '#ffffff'); b.rect(23, 13, 1, 2, '#ffffff'); b.rect(20, 9, 1, 2, '#ffffff'); b.rect(22, 8, 1, 2, '#ffffff'); }
 }
 
+// ── 책상 소품(desk.*) — 도감 아이콘은 크게, 사무실은 책상 위에 작게(deskProp) ──
+const YEL = '#ffd84d', ORG = '#ff9a3c', GRN = '#4d9a57', RAIN = ['#e5484d', '#ff9a3c', '#ffd27a', '#7cc48a', '#5aa0e6', '#a77be0'];
+const DESK_ICON: Record<string, (b: R) => void> = {
+  duck: (b) => { b.rect(3, 16, 18, 2, '#8fd0ff'); b.rect(5, 9, 13, 7, YEL); b.rect(11, 3, 7, 7, YEL); b.rect(18, 6, 4, 2, ORG); b.rect(15, 5, 1, 1, O); b.rect(7, 11, 5, 3, '#f0c030'); b.rect(4, 10, 1, 3, YEL); },
+  cactus: (b) => { b.rect(7, 13, 10, 6, '#c9673e'); b.rect(7, 13, 10, 1, '#e08a5a'); b.rect(10, 2, 4, 11, GRN); b.rect(6, 5, 2, 5, GRN); b.rect(6, 9, 4, 1, GRN); b.rect(16, 4, 2, 4, GRN); b.rect(14, 7, 4, 1, GRN); b.rect(11, 3, 1, 1, '#9ad08a'); b.rect(12, 7, 1, 1, '#9ad08a'); b.rect(12, 0, 1, 2, '#f49ab8'); },
+  ramen: (b) => { b.rect(6, 7, 12, 11, '#ffffff'); b.rect(6, 10, 12, 3, '#e5484d'); b.rect(7, 18, 10, 1, '#d8d8d8'); b.rect(5, 6, 14, 2, '#f2e6c8'); b.rect(14, 1, 1, 7, '#c99e70'); b.rect(16, 0, 1, 8, '#c99e70'); b.rect(8, 2, 1, 2, '#dbe6f2'); b.rect(10, 0, 1, 3, '#dbe6f2'); },
+  keeb: (b) => { b.rect(1, 9, 22, 8, '#2c254c'); b.rect(1, 9, 22, 1, '#4a3f78'); for (let r = 0; r < 3; r++) for (let q = 0; q < 9; q++) b.rect(2 + q * 2.3, 11 + r * 2, 2, 1, RAIN[(q + r) % RAIN.length]!); },
+  lava: (b) => { b.rect(9, 17, 6, 3, '#555555'); b.rect(8, 2, 8, 15, '#4a1e6a'); b.rect(9, 1, 6, 1, '#555555'); b.rect(10, 12, 4, 3, ORG); b.rect(11, 7, 3, 3, '#ff6b4a'); b.rect(10, 4, 2, 2, ORG); b.rect(9, 3, 1, 12, 'rgba(255,255,255,.18)'); },
+};
+/** 책상 위 소품 — (x, y) = 책상 윗면 위 소품 바닥 가운데. typing = 지금 고치는 중(키보드가 반짝인다) */
+export function deskProp(b: R, id: string, x: number, y: number, t: number, typing = false) {
+  const name = id.slice(5);
+  if (name === 'duck') { b.rect(x - 3, y - 4, 6, 4, YEL); b.rect(x, y - 7, 3, 3, YEL); b.rect(x + 3, y - 6, 2, 1, ORG); b.rect(x + 1, y - 6, 1, 1, O); b.rect(x - 2, y - 3, 2, 1, '#f0c030'); }
+  if (name === 'cactus') { b.rect(x - 2, y - 3, 5, 3, '#c9673e'); b.rect(x - 1, y - 9, 3, 6, GRN); b.rect(x - 3, y - 7, 1, 3, GRN); b.rect(x + 2, y - 8, 1, 3, GRN); if (t % 16 < 12) b.rect(x, y - 10, 1, 1, '#f49ab8'); }
+  if (name === 'ramen') { b.rect(x - 3, y - 6, 6, 6, '#ffffff'); b.rect(x - 3, y - 4, 6, 2, '#e5484d'); b.rect(x - 3, y - 7, 6, 1, '#f2e6c8'); b.rect(x + 1, y - 10, 1, 4, '#c99e70'); const s = t % 6 < 3; b.rect(x - 2 + (s ? 0 : 1), y - 10, 1, 2, '#dbe6f2'); b.rect(x - 1 + (s ? 1 : 0), y - 12, 1, 2, '#dbe6f2'); }
+  if (name === 'keeb') { b.rect(x - 5, y - 2, 10, 2, '#2c254c'); for (let q = 0; q < 4; q++) b.rect(x - 4 + q * 2, y - 2, 1, 1, typing ? RAIN[(q + t) % RAIN.length]! : RAIN[q * 2 % RAIN.length]!); }
+  if (name === 'lava') { b.rect(x - 2, y - 2, 4, 2, '#555555'); b.rect(x - 2, y - 10, 4, 8, '#4a1e6a'); b.rect(x - 1, y - 4 - (Math.floor(t / 2) % 5), 2, 2, ORG); b.rect(x, y - 8 + (Math.floor(t / 3) % 4), 1, 1, '#ff6b4a'); }
+}
+
+// ── 칭호(title.*) — 반장 이름표 위 글자. 도감 아이콘은 띠 하나(등급마다 색) ──
+const TITLE_COLOR: Record<string, string> = { commit: '#7cc48a', night: '#5a6ad6', bug: '#e5484d', review: '#a77be0', merge: '#e0b94f', ten: '#ff6bd6' };
+export const titleText = (id: string) => (itemOf(id)?.name ?? '').replace(/^.* — /, '');
+function titleIcon(b: R, name: string) {
+  const c = TITLE_COLOR[name] ?? '#e0b94f';
+  b.rect(1, 6, 4, 8, c); b.rect(0, 5, 2, 1, c); b.rect(0, 14, 2, 1, c); b.rect(19, 6, 4, 8, c); b.rect(22, 5, 2, 1, c); b.rect(22, 14, 2, 1, c);
+  b.rect(4, 4, 16, 10, c); b.rect(4, 4, 16, 1, 'rgba(255,255,255,.35)'); b.rect(4, 13, 16, 1, 'rgba(0,0,0,.25)');
+  for (let k = 0; k < 4; k++) b.rect(6 + k * 3.4, 8, 2, 2, '#ffffff');
+  b.rect(11, 0, 2, 2, '#fff1a6'); b.rect(10, 1, 4, 1, '#fff1a6');
+}
+
+// ── 조명(light.*) — 방 전체 위에. P = 방 칸(gx, gy, 높이 z) → 캔버스 점 ──
+type Pz = (gx: number, gy: number, z?: number) => [number, number];
+function lightIcon(b: R, name: string) {
+  if (name === 'fairy') { for (let x = 1; x < 23; x++) b.rect(x, 4 + Math.round(Math.abs(Math.sin(x / 3.5)) * 4), 1, 1, '#555555'); for (let k = 0; k < 6; k++) { const x = 2 + k * 4; b.rect(x, 6 + Math.round(Math.abs(Math.sin(x / 3.5)) * 4), 2, 3, RAIN[k]!); } }
+  if (name === 'warm') { b.rect(4, 3, 16, 14, 'rgba(255,170,80,.25)'); b.rect(8, 5, 8, 8, '#ffd08a'); b.rect(10, 7, 4, 4, '#fff1c8'); b.rect(10, 13, 4, 4, '#8a6a4a'); b.rect(7, 17, 10, 2, O); }
+  if (name === 'neon') { b.rect(1, 1, 22, 18, '#1b1430'); const H = [[1, 0, 2], [4, 0, 2], [0, 1, 7], [0, 2, 7], [1, 3, 5], [2, 4, 3], [3, 5, 1]] as const; for (const [dx, dy, w] of H) b.rect(5 + dx * 2, 4 + dy * 2, w * 2, 2, '#ff6bd6'); b.rect(3, 15, 18, 1, '#39f3ff'); }
+  if (name === 'spot') { b.rect(10, 0, 4, 3, '#3b3742'); for (let k = 0; k < 6; k++) b.rect(11 - k * 1.5, 3 + k * 2.6, 2 + k * 3, 3, `rgba(255,248,200,${0.55 - k * 0.06})`); b.rect(4, 17, 16, 2, 'rgba(255,248,200,.6)'); }
+  if (name === 'disco') { b.rect(11, 0, 2, 4, '#888888'); for (let r = 0; r < 4; r++) for (let q = 0; q < 4; q++) b.rect(8 + q * 2, 4 + r * 2, 2, 2, (q + r) % 2 ? '#d8d8e8' : '#9aa0b8'); for (const [x, y, c] of [[2, 14, '#ff6bd6'], [19, 13, '#39f3ff'], [5, 18, '#ffd27a'], [16, 18, '#7cf0b0']] as const) b.rect(x, y, 2, 1, c); }
+}
+/** 조명 — W·H = 캔버스, cols·rows = 방, focus = 스포트라이트가 비출 칸(반장 책상) */
+export function lightScene(b: R, id: string, W: number, H: number, t: number, P: Pz, cols = 10, rows = 8, focus: [number, number] = [4, 1.8]) {
+  const name = id.slice(6);
+  if (name === 'warm') b.rect(0, 0, W, H, 'rgba(255,165,70,.10)');
+  if (name === 'fairy') {
+    const bulbs: [number, number][] = [];
+    for (let g = 0.3; g < cols; g += 0.6) bulbs.push([g, 0]);
+    for (let g = 0.3; g < rows; g += 0.6) bulbs.push([0, g]);
+    bulbs.forEach(([gx, gy], k) => { const [x, y] = P(gx, gy, 42 - Math.abs(Math.sin(k * 0.9)) * 3); b.rect(x, y, 1, 1, '#555555'); if ((k + Math.floor(t / 3)) % 4) b.rect(x, y + 1, 2, 2, RAIN[k % RAIN.length]!); });
+  }
+  if (name === 'neon') {
+    const on = t % 40 !== 7 && t % 40 !== 9; // 가끔 지직
+    const [x, y] = P(cols - 2.2, 0, 34);
+    const H = [[1, 0, 2], [4, 0, 2], [0, 1, 7], [0, 2, 7], [1, 3, 5], [2, 4, 3], [3, 5, 1]] as const;
+    for (const [dx, dy, w] of H) b.rect(x + dx, y + dy, w, 1, on ? '#ff6bd6' : '#6a3a5a');
+    if (on) b.rect(x - 2, y + 7, 11, 1, '#39f3ff');
+  }
+  if (name === 'spot') {
+    const [fx, fy] = focus, [x, y] = P(fx, fy), [lx, ly] = P(fx, fy, 70);
+    // 천장 등에서 바닥까지 퍼지는 빛줄기 + 바닥에 겹친 타원(바닥이 2:1 이라 납작하게)
+    for (let yy = ly + 3; yy < y; yy++) { const half = 2 + ((yy - ly) / (y - ly)) * 16; b.rect(Math.round(x - half), yy, Math.round(half * 2), 1, 'rgba(255,248,200,.06)'); }
+    for (const r of [22, 15, 9]) for (let dy = -r / 2; dy <= r / 2; dy++) { const half = Math.round(r * Math.sqrt(Math.max(0, 1 - (2 * dy / r) ** 2))); b.rect(x - half, Math.round(y + dy), half * 2, 1, 'rgba(255,248,200,.10)'); }
+    b.rect(lx - 2, ly, 5, 3, '#3b3742');
+  }
+  if (name === 'disco') {
+    const [bx, by] = P(cols * 0.45, rows * 0.3, 78);
+    b.rect(bx, by - 8, 1, 8, '#888888');
+    for (let r = 0; r < 3; r++) for (let q = 0; q < 3; q++) b.rect(bx - 3 + q * 2, by + r * 2, 2, 2, (q + r + t) % 2 ? '#d8d8e8' : '#9aa0b8');
+    const C = ['#ff6bd6', '#39f3ff', '#ffd27a', '#7cf0b0', '#a77be0'];
+    for (let k = 0; k < 16; k++) { const [x, y] = P((k * 1.7 + t * 0.12) % cols, (k * 2.3 + t * 0.07) % rows); b.rect(x, y, 2, 1, C[k % C.length]!); }
+  }
+}
+
 export function drawItem(b: R, id: string) {
   const it = itemOf(id);
   if (!it) return;
@@ -90,6 +162,9 @@ export function drawItem(b: R, id: string) {
     case 'friend': return cat(b);
     case 'fx': return fx(b, name);
     case 'action': return action(b, name);
+    case 'desk': return DESK_ICON[name]?.(b);
+    case 'title': return titleIcon(b, name);
+    case 'light': return lightIcon(b, name);
   }
 }
 

@@ -1,8 +1,11 @@
 // 재시작으로 꺼진 세션을 사람 대신 처리한다 — 판단은 domain/lostTriage.
 // 끝난 건 꺼진 목록에서 조용히 빼고, 안 끝난 건 주인 참모 입력칸에 한 줄. 참모가 하나도 없으면 hold 를 돌려줘 홈에 짧게 보인다.
-// 같은 알림을 두 번 안 보내게 기록(live.json)에서 먼저 지우고 보낸다 — 못 보내면 꺼진 목록에 되돌리고 30초·60초 뒤 다시, 세 번 실패하면 이번 실행에선 그만(목록엔 남아 다음 실행·참모 없을 때 홈에 보인다)
+// 같은 알림을 두 번 안 보내게 기록(live.json)에서 먼저 지우고 보낸다 — 못 보내면 꺼진 목록에 되돌리고 30초·60초 뒤 다시, 세 번 실패하면 이번 실행에선 그만두고
+// 사람에게 맥 알림 한 번(참모가 있으면 홈이 안 보여 아무도 몰랐다). 목록엔 남아 다음 실행에 다시
 import { useEffect, useRef, useState } from 'react';
 import { listSessionsAllRaw, readTranscriptTails, sendToSession } from '../data/tauri';
+import { tr } from '../i18n';
+import { notifyOnce } from './notifier';
 import { summarizeTranscript } from '../domain/activity';
 import { forgetLost, lastDoing, planNotices, restartNotice, triageLost } from '../domain/lostTriage';
 import type { LiveSnap, SnapSession } from '../domain/revive';
@@ -77,6 +80,8 @@ export function useLostTriage(o: {
             for (const id of ids) { fails.current.set(id, k); notBefore.current.set(id, now + RETRY_MS * k); }
             await c.update((s) => ({ ...s, lost: [...s.lost, ...go.filter((x) => !s.lost.some((y) => y.sessionId === x.sessionId))] }));
             if (k < MAX_FAILS) window.setTimeout(() => setTick((v) => v + 1), RETRY_MS * k + 500);
+            else notifyOnce({ kind: 'lost', session: n.to.id, orch: false, title: tr('재시작으로 꺼진 세션을 참모에게 못 알렸어요', 'Could not tell your assistant about stopped sessions'),
+              body: tr(`${go.map((x) => x.name || x.sessionId.slice(0, 8)).join(', ')} — 이어서 할지 직접 봐 주세요`, `${go.map((x) => x.name || x.sessionId.slice(0, 8)).join(', ')} — check whether to continue`) });
           }
         }
       } finally {

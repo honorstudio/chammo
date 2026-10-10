@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { curStep, DOC_SANDBOX, emptyStore, isCurationHtml } from './curation';
+import { curStep, DOC_SANDBOX, emptyStore, fromFrame, isCurationHtml } from './curation';
+import previewSrc from '../ui/space/Preview.tsx?raw';
+import curModeSrc from '../ui/space/CurationMode.tsx?raw';
 
 describe('isCurationHtml — 검토용 시안(큐레이션 껍데기)인가, 열기 전에 글로 안다', () => {
   it('껍데기가 앱에 진행을 알리는 코드가 있으면 시안', () => {
@@ -54,5 +56,23 @@ describe('curStep — 시안이 알려 온 표시를 파일에 적거나 되돌�
   it('저장분이 객체가 아니면 빈 것으로 본다', () => {
     expect(curStep(true, { hodoc: 'cur-state', text: 'x', store: 'nope' })).toEqual({ do: 'restore' });
     expect(curStep(false, { hodoc: 'cur-state', text: 'x', store: [1] })).toEqual({ do: 'save', text: 'x', json: '{}' });
+  });
+});
+
+// 시안 칸 message 는 그 칸이 보낸 것만 — 다른 칸(다른 시안·떼어 낸 창)이 cur-state·curation(참모에게 보낼 글)·esc 를 흉내 내지 못하게(리더·폰 시트와 같은 규칙)
+describe('fromFrame — 시안 칸이 보낸 message 인가', () => {
+  const a = {} as Window, b = {} as Window;
+  it('그 칸 창일 때만', () => {
+    expect(fromFrame({ source: a } as MessageEvent, a)).toBe(true);
+    expect(fromFrame({ source: b } as MessageEvent, a)).toBe(false);
+    expect(fromFrame({ source: null } as MessageEvent, a)).toBe(false);
+    expect(fromFrame({ source: null } as MessageEvent, undefined)).toBe(false); // 칸이 없으면 아무것도
+  });
+  it('재현: 미리보기·검토 모드의 message 듣기마다 fromFrame 으로 거른다(소스 검사)', () => {
+    for (const src of [previewSrc, curModeSrc]) {
+      const listeners = src.match(/\(e: MessageEvent\) =>/g)?.length ?? 0;
+      expect(listeners).toBeGreaterThan(0);
+      expect(src.match(/fromFrame\(e, /g)?.length ?? 0).toBe(listeners);
+    }
   });
 });

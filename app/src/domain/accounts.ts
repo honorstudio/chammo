@@ -1,4 +1,4 @@
-import { tr } from '../i18n';
+import { josa, tr } from '../i18n';
 import { fmtUntil, readAuto, slotStatus, type SlotAuto } from './accountAuto';
 import type { Usage } from './usage';
 
@@ -103,8 +103,9 @@ export function weekText(t: number): string {
 }
 
 /** 계정 칩 팝오버 한 줄 — 이름·5시간·주간 '남은 %'(위 막대와 같은 기준, 값 없으면 null)·작은 한 줄(리셋 시각·몇 분 전, 막혔으면 그 상태)·마우스 올림(이메일·요금제) */
-/** pinHint = 고정이고 자동 전환이 켜져 있다 — '고정 — 다 쓰면 넘어감' 을 보인다 */
-export type PopRow = { id: string; name: string; on: boolean; pinned: boolean; pinHint: boolean; five: number | null; week: number | null; note: string; title: string };
+/** pinHint = 고정이고 자동 전환이 켜져 있다 — '고정 — 다 쓰면 넘어감' 을 보인다(폰 시트·설정) */
+/** left = 둘 중 적은 쪽(먼저 막히는 한도) · stop = 막혔으면 짧은 글(~22:20·로그인 필요) · tip = 데스크톱 팝오버 마우스 올림(두 한도·몇 분 전·이메일) */
+export type PopRow = { id: string; name: string; on: boolean; pinned: boolean; pinHint: boolean; five: number | null; week: number | null; left: number | null; stop: string | null; note: string; title: string; tip: string };
 export function popRows(v: AccountsView | null, now: number): PopRow[] {
   if (!v) return [];
   const auto = readAuto(v.auto);
@@ -117,18 +118,57 @@ export function popRows(v: AccountsView | null, now: number): PopRow[] {
     const note = st.kind !== 'ok'
       ? slotText(st, now)
       : [resets && tr(`${resets} 초기화`, `resets ${resets}`), sl?.seenAt && (five || week) ? ageText(now - sl.seenAt) : ''].filter(Boolean).join(' · ');
+    const fiveLeft = five ? 100 - Math.round(five.used) : null;
+    const weekLeft = week ? 100 - Math.round(week.used) : null;
+    const nums = [fiveLeft, weekLeft].filter((x): x is number => x != null);
+    const title = [a.email, a.plan].filter(Boolean).join(' · ');
+    const tip = [
+      st.kind !== 'ok' && slotText(st, now),
+      five && tr(`5시간 ${fiveLeft}% 남음 · ${fmtUntil(five.resetsAt, now)} 초기화`, `5h ${fiveLeft}% left · resets ${fmtUntil(five.resetsAt, now)}`),
+      week && tr(`주간 ${weekLeft}% 남음 · ${weekText(week.resetsAt)} 초기화`, `Week ${weekLeft}% left · resets ${weekText(week.resetsAt)}`),
+      [sl?.seenAt && (five || week) ? ageText(now - sl.seenAt) : '', title].filter(Boolean).join(' · '),
+    ].filter(Boolean).join('\n');
     return {
       id: a.id,
       name: a.name || a.email,
       on: a.id === v.active,
       pinned: auto.pinned === a.id,
       pinHint: auto.pinned === a.id && auto.on,
-      five: five ? 100 - Math.round(five.used) : null,
-      week: week ? 100 - Math.round(week.used) : null,
+      five: fiveLeft,
+      week: weekLeft,
+      left: nums.length ? Math.min(...nums) : null,
+      stop: st.kind === 'ok' ? null : st.kind === 'auth' ? tr('로그인 필요', 'Sign-in needed') : `~${fmtUntil(st.until, now)}`,
       note,
-      title: [a.email, a.plan].filter(Boolean).join(' · '),
+      title,
+      tip,
     };
   });
+}
+
+/** 계정 팝오버 머리 — 지금 계정의 가장 가까운 초기화(막혔으면 그 상태, 다 소진이면 풀리는 때 = warn)와
+ *  자동 전환이 켜져 있으면 다 쓰면 넘어갈 곳(순서상 쓸 수 있는 첫 칸 — 자동 전환 규칙과 같은 순서) */
+export type PopHead = { next: string | null; after: string | null; warn: boolean };
+export function popHead(v: AccountsView | null, now: number): PopHead {
+  const none: PopHead = { next: null, after: null, warn: false };
+  if (!v || !v.accounts.length) return none;
+  const auto = readAuto(v.auto);
+  const cur = v.accounts.find((a) => a.id === v.active);
+  const after = !auto.on || !cur ? null : (() => {
+    const to = v.accounts.find((a) => a.id !== cur.id && slotStatus(auto.slots[a.id], now).kind === 'ok');
+    return to ? tr(`다 쓰면 ${josa(to.name || to.email, '으로', '로')}`, `Then ${to.name || to.email}`) : tr('다 쓰면 넘어갈 계정 없음', 'Nowhere to switch when used up');
+  })();
+  const out = allOut(v, now);
+  if (out) return { next: out, after: null, warn: true };
+  if (!cur) return none;
+  const sl = auto.slots[cur.id];
+  const st = slotStatus(sl, now, auto.pinned === cur.id);
+  if (st.kind !== 'ok') return { next: slotText(st, now), after, warn: true };
+  const five = sl?.five && sl.five.resetsAt > now ? sl.five : null;
+  const week = sl?.week && sl.week.resetsAt > now ? sl.week : null;
+  const next = five && (!week || five.resetsAt <= week.resetsAt)
+    ? tr(`${fmtUntil(five.resetsAt, now)}에 5시간 초기화`, `5h resets at ${fmtUntil(five.resetsAt, now)}`)
+    : week ? tr(`${weekText(week.resetsAt)}에 주간 초기화`, `Week resets ${weekText(week.resetsAt)}`) : null;
+  return { next, after, warn: false };
 }
 
 /** 고정 표시 글 — 자동 전환이 켜져 있으면 '다 쓰면 넘어감'까지 */
@@ -145,6 +185,7 @@ export function accountError(code: string): string {
     case 'noOauth': return tr('로그인 정보에 계정 표시(이메일)가 없어요. API 키로 쓰는 중이면 계정 칸을 쓸 수 없어요.', 'The sign-in has no account details (email). Accounts do not work with an API key.');
     case 'unknown': return tr('그 계정 칸이 없어요. 창을 닫았다 다시 열어 주세요.', 'That account is gone. Close and reopen this window.');
     case 'noSlot': return tr('이 계정의 보관된 로그인이 키체인에 없어요. 빼고 다시 추가해 주세요.', 'The kept sign-in for this account is missing from the keychain. Remove it and add it again.');
+    case 'noBackup': return tr('그 백업이 아직 없어요. 계정을 한 번이라도 바꿔야 생겨요.', 'That backup does not exist yet. It is made the first time you switch accounts.');
     case 'moved': return tr('그새 다른 곳에서 계정을 바꿔서 이번엔 안 바꿨어요.', 'The account was just changed elsewhere, so this switch was skipped.');
     case 'mismatch': return tr('로그인이 바뀌는 중인 것 같아요. 터미널 로그인이 끝난 뒤 다시 눌러 주세요.', 'The sign-in seems to be changing. Wait for the terminal sign-in to finish, then try again.');
     case 'denied': return tr('맥이 키체인 사용 허용을 물었는데 거절됐거나 창이 닫혔어요. 다시 누르고, 뜨는 창에 맥 로그인 암호를 넣은 뒤 "항상 허용"을 눌러 주세요.', 'macOS asked to allow keychain access and it was denied or closed. Try again, enter your Mac login password in the window, and choose "Always Allow".');

@@ -25,7 +25,11 @@ scripts/app focus --terminal <세션|프로젝트>         # 그 터미널(CLI) 
 scripts/app pet show|hide                             # 다마고치 창
 scripts/app project list|add <폴더>|remove <이름>      # devRoot 밖 프로젝트 폴더
 scripts/app browser status|connect <프로젝트|폴더>   # 있던(clone) 프로젝트에 전용 브라우저 붙이기 — 저장소 파일은 그대로
+scripts/app browser missing                           # 브라우저 안 붙은 프로젝트(git 저장소) 목록
 scripts/app load                                      # 이 맥 부하, 세션별
+scripts/app mode list|open <이름> [--where window|panel|modal|full|dash <참모·프로젝트>]|close <이름>  # 참모 모드(사용자가 만든 Claude 모드를 앱이 그림) — 기본 따로 창, 켤 때 "따로 창으로 띄웠어 — 패널·대시보드 칸·미리보기·꽉 채우기로도 바꿀 수 있어" 한 줄
+scripts/app mode top <이름> on|off  # 따로 창 '항상 위'("이 모드 창 늘 위에 둬") — 앱이 기억해 다시 열어도 그대로, 창이 아닌 자리(패널·대시보드 칸·미리보기·꽉 채우기)에선 안 쓴다. 사용자는 창 머리 압정이나 메뉴 '모드 → 그 모드 → 항상 위'로도 켠다
+scripts/app mode add <폴더>  # 사용자가 만든 모드 등록 — "새 모드 만들어 줘"·메뉴 '새 모드 만들기…' 면: scripts/new-project <이름>-mode 로 프로젝트를 만들고 그 세션에 /plugin-authoring(표면 desktop, 띠 AbovePrompt·큰 칸 Pane) → claude plugin validate 통과 → mode add <그 폴더> → mode open <이름>. Claude Code 2.1.287 전이면 모드를 못 그린다(claude update)
 ```
 
 "X 켜져 있어?"는 기억 말고 `scripts/app status` 로 답한다. 기능이 꺼져 있다고 경고가 나오면 먼저 켠다
@@ -68,7 +72,7 @@ scripts/app load                                      # 이 맥 부하, 세션�
   사용자의 일(커밋·머지한 PR·끝낸 일)을 먹고 자란다. 알은 일한 시간이 쌓이면 부화한다.
 - **뽑기·가구** — 사무실 모드에서 사무실 왼쪽 위 아이콘들: 뽑기(일해서 모은 코인), 도감, 스킨, 가구(방으로 끌어 놓기).
 - **리뷰** — 위 막대 아이콘(⌥⌘3). 열린 PR 과 관문(DB·돈·보안). 관문에 걸린 건 사용자 확인이 필요하다.
-- **단축키** — ⌘1~⌘9 채팅 탭 · ⌥⌘1 참모 · ⌥⌘2 전체 세션 · ⌥⌘3 리뷰 · ⌥⌘4 사무실 · ⌘₩ 보고 있는 창 크게/되돌리기 ·
+- **단축키** — ⌘1~⌘9 채팅 탭 · ⌃⇧PageUp/PageDown 또는 ⌥⌘⇧←/→ 고른 채팅 탭을 왼쪽·오른쪽으로(끌어서도 옮긴다, 순서는 저장) · ⌥⌘1 참모 · ⌥⌘2 전체 세션 · ⌥⌘3 리뷰 · ⌥⌘4 사무실 · ⌘₩ 보고 있는 창 크게/되돌리기 ·
   채팅에서 ⌘Enter = 하던 일 끊고 바로 보내기 · ⌘T 새 세션 · ⌘W 보고 있는 세션 끄기(대화는 남음) · ⌘K 검색 ·
   ⌘B 사이드바 · ⌘J 작업 패널 · ⌘E 리더 · ⌘M 프로젝트 메모 · ⌘, 설정. ⌘/ (또는 Chammo 메뉴 > 둘러보기)로 첫 안내를 다시 본다.
 
@@ -95,7 +99,11 @@ scripts/app focus --terminal <session|project>        # its terminal (CLI) — o
 scripts/app pet show|hide                             # the Tamagotchi window
 scripts/app project list|add <folder>|remove <name>   # project folders outside devRoot
 scripts/app browser status|connect <project|folder>   # this project's own browser (existing/cloned repos) — repo files untouched
+scripts/app browser missing                           # projects (git repos) with no browser attached
 scripts/app load                                      # what's loading this Mac, per session
+scripts/app mode list|open <name> [--where window|panel|modal|full|dash <assistant|project>]|close <name>  # Chammo modes (the user's Claude Code mods, drawn by the app) — default its own window; say "opened in its own window — it can also go in the panel, a dashboard, a preview or full"
+scripts/app mode top <name> on|off  # keep a mode's own window above other windows ("keep it on top") — remembered across reopen, ignored in the panel, dashboard, preview or full. The user can also use the pin in the window's header or the menu Modes → <mode> → Always on Top
+scripts/app mode add <folder>  # register a mode the user made — for "make me a mode" or the menu's "New Mode…": scripts/new-project <name>-mode, have its session build it with /plugin-authoring (desktop surface, AbovePrompt band, Pane view) → claude plugin validate passes → mode add <that folder> → mode open <name>. Claude Code before 2.1.287 can't draw modes (claude update)
 ```
 
 Answer "is X on?" from `scripts/app status`, not from memory. If it warns a feature is off, turn it on first

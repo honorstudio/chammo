@@ -140,11 +140,58 @@ class Harness(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             task.LOG, task.LESSONS, task.DEV = os.path.join(d, 't.jsonl'), os.path.join(d, 'l'), d
             task.load_agents = lambda: []
+            os.makedirs(os.path.join(d, 'p'))  # a session named after its project folder — found by folder name even when not listed
             with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()):
                 task.main(['send', 'p', 'add a button'])
             with contextlib.redirect_stderr(io.StringIO()):
                 task.main(['reply', out.getvalue().strip(), 'done PR #1\nLesson: run the linter before commit\n교훈: 포트 3000 은 이미 쓰는 중'])
             self.assertEqual(task.lessons_of('p'), ['run the linter before commit', '포트 3000 은 이미 쓰는 중'])
+
+class ReplyProject(unittest.TestCase):
+    # reply lessons leaked into lessons/<session name>.md — send was recorded before the session started (no project),
+    # and an unlisted session's name (or "name [id]") became the project
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.saved = (task.LOG, task.LESSONS, task.DEV, task.DATA, task.EXTRAS, task.load_agents)
+        task.LOG, task.LESSONS, task.DEV, task.DATA, task.EXTRAS = os.path.join(self.d, 't.jsonl'), os.path.join(self.d, 'l'), self.d, self.d, []
+
+    def tearDown(self):
+        task.LOG, task.LESSONS, task.DEV, task.DATA, task.EXTRAS, task.load_agents = self.saved
+
+    def flow(self, target, at_send, at_reply):
+        task.load_agents = lambda: at_send
+        with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()):
+            task.main(['send', target, 'debt batch'])
+        task.load_agents = lambda: at_reply
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            task.main(['reply', out.getvalue().strip(), 'done\nLesson: use a temp folder'])
+        return err.getvalue(), sorted(os.listdir(task.LESSONS)) if os.path.isdir(task.LESSONS) else []
+
+    def test_worktree_session_started_after_send(self):
+        wt = {'id': 'b1', 'name': 'debt-q', 'cwd': os.path.join(self.d, 'web', '.claude', 'worktrees', 'debt-q')}
+        _, files = self.flow('debt-q', [], [wt])
+        self.assertEqual(files, ['web.md'])
+
+    def test_project_recorded_at_send_wins(self):
+        _, files = self.flow('debt-q', [{'id': 'b1', 'name': 'debt-q', 'cwd': os.path.join(self.d, 'web')}], [])
+        self.assertEqual(files, ['web.md'])
+
+    def test_live_json_when_agents_fail(self):
+        with open(os.path.join(self.d, 'live.json'), 'w', encoding='utf-8') as f:
+            json.dump({'sessions': [{'id': 'b1', 'name': 'debt-q', 'cwd': os.path.join(self.d, 'web')}]}, f)
+        _, files = self.flow('debt-q', [], [])
+        self.assertEqual(files, ['web.md'])
+
+    def test_name_with_id_form(self):
+        _, files = self.flow('film-cut [7c3e9d]', [], [{'id': '7c3e9dff', 'name': 'film-cut', 'cwd': os.path.join(self.d, 'film')}])
+        self.assertEqual(files, ['film.md'])
+
+    def test_unknown_session_is_not_a_lesson_file(self):
+        err, files = self.flow('debt-q', [], [])
+        self.assertEqual(files, [])
+        self.assertIn('scripts/task lesson', err)
+
 
 class Project(unittest.TestCase):
     def test_세션_폴더로_프로젝트(self):

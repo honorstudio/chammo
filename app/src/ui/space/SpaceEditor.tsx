@@ -187,6 +187,11 @@ export default function SpaceEditor({ md, docPath, onReady, onChange, onEditor, 
           <span>{tr('이 파일이 지워졌거나 이름이 바뀌었어요 — 여기서 고친 건 저장되지 않아요(마지막 판은 기록에 남겨요).', 'This file was deleted or renamed — edits here are not saved (the last version is kept in history).')}</span>
         </div>
       )}
+      {sync.state === 'unreadable' && (
+        <div className="cv-doc-sync" role="alert">
+          <span>{tr('밖에서 이 파일을 UTF-8 이 아닌 글(EUC-KR 등)로 저장해 못 읽어요 — UTF-8 로 다시 저장될 때까지 여기서 고친 건 저장되지 않아요.', 'This file was saved outside in a non-UTF-8 encoding and cannot be read — edits here are not saved until it is saved as UTF-8 again.')}</span>
+        </div>
+      )}
       {line !== null && <div className="sp-drop-line" style={{ top: line }} />}
       <BlockNoteView
         editor={editor}

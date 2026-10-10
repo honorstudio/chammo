@@ -1,17 +1,17 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ASK_EMPTY, askClose, askOpen, askShown, askStep, askWaiting, type AskState } from '../domain/agentAsk';
-import { controlOf, currentSite, permLine, stuckLine, tabStrip, takeoverLine, type Live } from '../domain/agentBrowser';
+import { ASK_EMPTY, askClose, askOpen, askShown, askStep, askWaiting, pickLive, popupStep, type AskState } from '../domain/agentAsk';
+import { controlOf, currentSite, ACTIVE_MS, fedcmChoices, fedcmLine, focusFailLine, peekStep, permLine, stuckLine, tabStrip, takeoverLine, type Live } from '../domain/agentBrowser';
 import { approach, escCancelsDialog, escClose, keyEvents, keyTarget, menuRoute, modsOf, pointIn, unfocusedKey, type InputEv } from '../domain/agentInput';
 import { tr } from '../i18n';
 import { FrameView, useAgentFrame, useAgentTabs, useBrowserScreen } from './AgentBrowser';
 import { AGENT_DROP_EVENT } from './fileDrop';
-import { IconClose, IconMore } from './Icons';
+import { IconClose, IconMore, IconSend } from './Icons';
 
 const OPEN_EVENT = 'agent-browser-open';
-/** 그 세션 브라우저를 크게 보기(앱 맨 위 AgentAskHost 가 띄운다) */
-export const openAgentModal = (profile: string) => window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: profile }));
+/** 그 세션 브라우저를 크게 보기(앱 맨 위 AgentAskHost 가 띄운다) — pid = 그 칸의 래퍼(같은 프로필을 둘이 쥘 수 있다) */
+export const openAgentModal = (profile: string, pid?: number) => window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: { profile, pid } }));
 
 const CLOSE_EVENT = 'agent-browser-close';
 /** 마지막으로 브라우저가 키를 가져간 때 — 같은 누름이 메뉴바로 늦게 와도(⌘W 로 모달이 닫힌 뒤) 앱이 세션을 끄지 않게 */
@@ -64,7 +64,7 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
 }) {
   const { src } = useAgentFrame(live.profile, 66); // 크게 보는 동안 ~15fps
   const tabsNow = useAgentTabs(live.profile, 400); // 주소가 바뀌면 머리 도메인이 빨리 따라오게
-  const { pages, current, pinned, shown, setShown, dialog, dialogTabs, stuck, chooser, dropped, error, popup, wrapperDialog, permission } = tabsNow;
+  const { pages, current, pinned, shown, setShown, dialog, dialogTabs, stuck, chooser, dropped, error, popup, wrapperDialog, permission, fedcm } = tabsNow;
   // 화면이 진짜인가 — 아니면(닫힘·못 받음·오래 주소 모름) 입력을 막는다. 보내 봐야 Rust 가 버린다(예전엔 사진 위를 눌러도 아무 일이 없었다)
   const scr = useBrowserScreen(tabsNow, gone);
   // 평소엔 보기만 — 개입(mine)·세션이 부름(ask) 동안만 화면 조작. 누르면 목록(1.5초)을 기다리지 않고 바로 바뀐 것으로 본다(want)
@@ -87,6 +87,8 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
   const pid = live.pid; // 모달은 브라우저(프로필:래퍼)마다 새로 그린다(AgentAskHost key) — 한 모달 안에선 안 바뀐다
   const img = useRef<HTMLImageElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
+  /** 사람이 이 모달을 마지막으로 만진 때 — 눌러 열었으면 연 때부터(패스키 자동 꺼내기는 사람이 쓰는 중일 때만) */
+  const humanAt = useRef(focus ? Date.now() : 0);
   const [prompt, setPrompt] = useState<string | null>(null);
   const lastMove = useRef(0);
   const lastPt = useRef<{ x: number; y: number } | null>(null);
@@ -109,6 +111,11 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
   // 사이트가 물은 위치·알림 권한 — 사람 조작이라 보기만이었으면 개입부터
   const answerPerm = (allow: boolean) => {
     const go = () => invoke('agent_permission', { profile: live.profile, pid, target: current, allow });
+    void (canCtl ? go() : takeOver(live.profile, pid).then(() => { setWant(true); return go(); })).catch(() => {});
+  };
+  // 구글 등 FedCM 계정 고르기 — 권한과 같이 보기만이었으면 개입부터
+  const answerFedcm = (dialogId: string, account: number | null) => {
+    const go = () => invoke('agent_fedcm', { profile: live.profile, pid, dialogId, account });
     void (canCtl ? go() : takeOver(live.profile, pid).then(() => { setWant(true); return go(); })).catch(() => {});
   };
   const dialogKey = useRef<((accept: boolean) => void) | null>(null);
@@ -195,10 +202,36 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
   };
   const pick = (id: string) => void invoke('agent_pin', { profile: live.profile, target: pinned && id === current ? null : id }).catch(() => {});
   // at = 보던 부름 — 그새 새 부름이 왔으면 그건 안 끝낸다(래퍼가 .done 표를 맞춰 본다)
-  const done = () => void invoke('agent_ask_done', { profile: live.profile, pid, at: live.ask?.at ?? null }).then(onClose, () => {});
+  // say = 같이 넘길 한마디 — 세션은 부름 도구 안에서 기다려서 채팅은 그 도구가 끝나야 닿는다. 부름의 답으로 바로 간다(2026-10-10 사용자 "그냥 알아서 로그인해")
+  const [say, setSay] = useState('');
+  const done = () => void invoke('agent_ask_done', { profile: live.profile, pid, at: live.ask?.at ?? null, say: say.trim() || null })
+    .then(onClose, () => setNote(tr('세션이 그새 다른 걸 부르고 있어 — 위 줄 보고 다시', 'The session is asking something else now — check and retry')));
   const tabs = tabStrip(pages, current, dialogTabs);
   // 진짜 크롬 창을 꺼내면 직접 만질 수 있다 — Rust 가 개입부터 켠다(agent_focus)
-  const showChrome = () => void invoke('agent_focus', { profile: live.profile }).then(() => { setShown(true); if (ctl === 'view') setWant(true); }, () => {});
+  // 실패는 한 줄로 — 예전엔 삼켜서 눌러도 아무 일 없이 조용했다(2026-10-10). 사람이 직접 꺼냈으면 패스키가 끝나도 저절로 안 숨긴다(peeked 비움)
+  const showChrome = () => void invoke('agent_focus', { profile: live.profile }).then(() => { setNote(''); setPeeked(null); setShown(true); if (ctl === 'view') setWant(true); }, (e) => setNote(focusFailLine(e)));
+  // 패스키·QR 창 — 사람이 이 브라우저를 쓰는 중이면(눌러 열었거나 30초 안에 만짐) 크롬을 작게 꺼내고, 창이 사라지거나 페이지가 넘어가면 되돌린다.
+  // 세션 혼자 돌다 뜬 건 꺼내지 않는다(알림·결정 대기함 카드 — AgentAskHost)
+  const [peeked, setPeeked] = useState<{ url: string | undefined } | null>(null);
+  const [peekFailed, setPeekFailed] = useState(false);
+  const peekBusy = useRef(false);
+  const popupNow = popup || !!live.popup;
+  useEffect(() => { if (!popupNow) setPeekFailed(false); }, [popupNow]);
+  const [tick, setTick] = useState(0);
+  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 1000); return () => clearInterval(t); }, []);
+  useEffect(() => {
+    if (peekBusy.current) return;
+    const step = peekStep({ popup: popupNow, shown, peeked, failed: peekFailed, active: Date.now() - humanAt.current < ACTIVE_MS, url: curUrl });
+    if (step === 'peek') {
+      peekBusy.current = true;
+      void invoke('agent_peek', { profile: live.profile })
+        .then(() => { setNote(''); setPeeked({ url: curUrl }); setShown(true); if (ctl === 'view') setWant(true); }, (e) => { setPeekFailed(true); if (!String(e).includes('no popup')) setNote(focusFailLine(e)); })
+        .finally(() => { peekBusy.current = false; });
+    } else if (step === 'unpeek') {
+      peekBusy.current = true;
+      void invoke('agent_hide', { profile: live.profile }).finally(() => { peekBusy.current = false; setPeeked(null); setShown(false); });
+    }
+  }, [popupNow, shown, peeked, peekFailed, curUrl, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const take = () => void takeOver(live.profile, pid).then(() => { setWant(true); field.current?.focus(); }, () => setNote(tr('개입을 못 켰어 — 브라우저가 바뀌었을 수 있어', 'Could not take over — the browser may have changed')));
   const give = () => void handBack(live.profile, pid).then(() => setWant(false), () => setWant(false));
   const ask = live.ask;
@@ -206,7 +239,7 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
 
   return createPortal(
     <div className="abm-back" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="abm" ref={box} tabIndex={-1} role="dialog" aria-modal="true" aria-label={tr(`세션 브라우저 크게 보기 — ${name}`, `Session browser — ${name}`)}>
+      <div className="abm" ref={box} tabIndex={-1} onPointerDownCapture={() => { humanAt.current = Date.now(); }} onKeyDownCapture={() => { humanAt.current = Date.now(); }} role="dialog" aria-modal="true" aria-label={tr(`세션 브라우저 크게 보기 — ${name}`, `Session browser — ${name}`)}>
         <div className="abm-who">
           <b title={name}>{name}</b>
           {/* 주소가 바뀌면 key 가 바뀌어 한 번 반짝인다 — 치기 전에 사이트가 바뀐 걸 놓치지 않게.
@@ -236,9 +269,9 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
             <button className="ab-ic" onClick={() => setMore((m) => !m)} aria-expanded={more} title={tr('더보기', 'More')} aria-label={tr('더보기', 'More')}><IconMore /></button>
             {more && (
               <div className="abm-menu" role="menu">
-                {shown
-                  ? <button role="menuitem" onClick={() => { setMore(false); void invoke('agent_hide', { profile: live.profile }).then(() => setShown(false), () => {}); }}>{tr('크롬 창 숨기기', 'Hide the Chrome window')}</button>
-                  : <button role="menuitem" onClick={() => { setMore(false); showChrome(); }}>{tr('크롬에서 보기', 'Show in Chrome')}</button>}
+                {/* 크롬에서 보기는 늘 — 꺼낸 창이 다른 화면·뒤에 있을 수 있다(2026-10-10 사용자 '숨기기만 보이는데 창은 안 보였다') */}
+                <button role="menuitem" onClick={() => { setMore(false); showChrome(); }}>{tr('크롬에서 보기', 'Show in Chrome')}</button>
+                {shown && <button role="menuitem" onClick={() => { setMore(false); void invoke('agent_hide', { profile: live.profile }).then(() => setShown(false), () => {}); }}>{tr('크롬 창 숨기기', 'Hide the Chrome window')}</button>}
               </div>
             )}
           </div>
@@ -246,9 +279,17 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
         </div>
         {ask && (
           <div className="abm-ask">
-            <span>{tr('세션이 불러요', 'The session needs you')} — {ask.reason}</span>
+            <span title={ask.reason}>{tr('세션이 불러요', 'The session needs you')} — {ask.reason}</span>
+            {/* 한마디 적어 넘기기("알아서 로그인해") — 적으면 '다 했어' 자리가 보내기 아이콘이 된다(같은 일: 부름을 끝내며 그 말을 세션에) */}
+            <input className="abm-say" value={say} onChange={(e) => setSay(e.target.value)} maxLength={500}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && say.trim()) { e.preventDefault(); done(); } }}
+              placeholder={tr('세션에 한마디', 'Tell the session')} aria-label={tr('세션에 한마디 하고 넘기기', 'Tell the session and hand back')} disabled={gone && scr.kind === 'closed'} />
             {/* 크롬이 꺼져 목록에서 빠졌으면(앱은 바로, 래퍼는 몇 초 안에 알아채 세션에 '꺼졌어'를 준다) 다 했다고 해도 볼 화면이 없다 — 막아 보인다 */}
-            <button className="abm-done" onClick={done} disabled={gone && scr.kind === 'closed'} title={gone && scr.kind === 'closed' ? tr('브라우저가 닫혀서 세션이 다시 열어야 해', 'The browser is closed — the session has to open it again') : undefined}>{tr('다 했어', 'Done')}</button>
+            <button className={`abm-done ${say.trim() ? 'abm-send' : ''}`} onClick={done} disabled={gone && scr.kind === 'closed'}
+              aria-label={say.trim() ? tr('보내고 넘기기', 'Send and hand back') : undefined}
+              title={gone && scr.kind === 'closed' ? tr('브라우저가 닫혀서 세션이 다시 열어야 해', 'The browser is closed — the session has to open it again') : say.trim() ? tr('보내고 넘기기 (Enter)', 'Send and hand back (Enter)') : undefined}>
+              {say.trim() ? <IconSend /> : tr('다 했어', 'Done')}
+            </button>
           </div>
         )}
         {ctl === 'mine' && (
@@ -263,6 +304,15 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
           <div className="abm-stuck" role="status">
             <span>{tr('크롬이 여기 안 보이는 창을 띄웠어 (패스키 등)', 'Chrome opened a window this view can’t show (passkey etc.)')}</span>
             <button onClick={showChrome}>{tr('크롬에서 보기', 'Show in Chrome')}</button>
+          </div>
+        )}
+        {/* 구글 등 '…로 계속'(FedCM) 계정 고르기 — 크롬 자체 창이라 그림에 안 찍혀 '아무 일 없음'으로 보였다(2026-10-10). 계정은 읽을 글이라 글자 단추 */}
+        {fedcm && (
+          <div className="abm-stuck" role="status">
+            <span>{fedcmLine(fedcm)}</span>
+            {fedcmChoices(fedcm).map((c) => (
+              <button key={c.account ?? 'close'} onClick={() => answerFedcm(fedcm.dialogId, c.account)}>{c.label}</button>
+            ))}
           </div>
         )}
         {permission && !shown && (
@@ -319,7 +369,15 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
  * 모달이 이미 열려 있으면 바꾸지 않고 줄에만(머리에 'OO도 불러요') — 바꾸는 건 사람이 눌러서, 닫으면 줄 선 다음 부름(domain/agentAsk).
  * 닫은 부름은 다시 안 띄운다(브라우저 칸의 '사람 필요'로 다시 연다). 앱 어디서든 뜨게 맨 위에 하나
  */
-export function AgentAskHost({ lives, nameOf, notify }: { lives: Live[]; nameOf: (l: Live) => string; notify: (profile: string, reason: string) => void }) {
+export function AgentAskHost({ lives, nameOf, notify, notifyPopup, onPopupCards }: {
+  lives: Live[];
+  nameOf: (l: Live) => string;
+  notify: (profile: string, reason: string, name: string) => void;
+  /** 모달로 안 보는 브라우저에 패스키·QR 창이 새로 떴다 — 알림 한 번 */
+  notifyPopup?: (profile: string, name: string) => void;
+  /** 모달로 안 보는 브라우저의 패스키 창들 — 결정 대기함 카드(PopupCards) */
+  onPopupCards?: (cards: Live[]) => void;
+}) {
   // 상태는 ref 로 고쳐 쓴다 — 틱(askStep)과 클릭(askOpen·askClose)이 한 렌더 안에 겹쳐도 서로 덮지 않게, 알림은 한 번만
   const stRef = useRef<AskState>(ASK_EMPTY);
   const [st, setSt] = useState<AskState>(ASK_EMPTY);
@@ -329,7 +387,8 @@ export function AgentAskHost({ lives, nameOf, notify }: { lives: Live[]; nameOf:
   // 브라우저 칸의 '크게 보기'·'사람 필요' — 모달은 여기 하나만(칸마다 띄우면 같은 세션 칸이 둘일 때 겹쳤다, 2026-10-03 실측)
   useEffect(() => {
     const on = (e: Event) => {
-      const l = livesRef.current.find((x) => x.profile === (e as CustomEvent<string>).detail);
+      const d = (e as CustomEvent<{ profile: string; pid?: number }>).detail;
+      const l = pickLive(livesRef.current, d.profile, d.pid);
       if (l) update((s) => askOpen(s, l));
     };
     window.addEventListener(OPEN_EVENT, on);
@@ -338,8 +397,19 @@ export function AgentAskHost({ lives, nameOf, notify }: { lives: Live[]; nameOf:
   useEffect(() => {
     const r = askStep(stRef.current, lives);
     update(() => r.state);
-    for (const l of r.notify) notify(l.profile, l.ask?.reason ?? '');
+    for (const l of r.notify) notify(l.profile, l.ask?.reason ?? '', nameOf(l));
   }, [lives]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 패스키·QR 창 — 모달로 보는 브라우저는 모달이 맡고, 나머지는 알림 한 번 + 결정 대기함 카드
+  const popKeys = useRef<string[]>([]);
+  const cardKeys = useRef('');
+  useEffect(() => {
+    const r = popupStep(popKeys.current, lives, st.open);
+    popKeys.current = r.keys;
+    for (const l of r.notify) notifyPopup?.(l.profile, nameOf(l));
+    // 바뀔 때만 올린다 — 목록은 1초마다 새로 와서 매번 앱 전체를 다시 그리지 않게
+    const k = r.cards.map((l) => `${l.profile}:${l.pid}`).join('|');
+    if (k !== cardKeys.current) { cardKeys.current = k; onPopupCards?.(r.cards); }
+  }, [lives, st.open]); // eslint-disable-line react-hooks/exhaustive-deps
   // 목록에서 빠진 동안은 마지막 것을 붙든다 — 모달은 저절로 안 닫고 gone 으로 '닫혔어' 덮개를 그린다(입력은 막는다)
   const last = useRef<Live | undefined>(undefined);
   const { live, gone } = askShown(st, lives, last.current);
@@ -349,4 +419,23 @@ export function AgentAskHost({ lives, nameOf, notify }: { lives: Live[]; nameOf:
   return <AgentBrowserModal key={`${live.profile}:${live.pid}`} live={live} gone={gone} name={nameOf(live)} focus={st.open.byHuman}
     waiting={askWaiting(st, lives).map((l) => ({ live: l, name: nameOf(l) }))}
     onSwitch={(l) => update((s) => askOpen(s, l))} onClose={() => update((s) => askClose(s, livesRef.current, live))} />;
+}
+
+/**
+ * 결정 대기함 카드 — 모달을 안 보는 동안 세션 크롬에 패스키·Touch ID·QR 창이 떴다. 누르면 모달을 사람이 연 것으로 띄우고(그러면 모달이
+ * 바로 크롬을 작게 꺼낸다, peekStep), 창이 사라지면 카드도 내려간다. 세션 혼자 돌다 뜬 걸 사용자 화면에 저절로 띄우지 않으려고 카드로
+ */
+export function PopupCards({ lives, nameOf }: { lives: Live[]; nameOf: (l: Live) => string }) {
+  return (
+    <>
+      {lives.map((l) => (
+        <div key={`${l.profile}:${l.pid}`} className="login-card browser-card" role="alert">
+          <div className="login-card-top">
+            <b>{tr(`${nameOf(l)} — 패스키 창이 떴어요`, `${nameOf(l)} — passkey window`)}</b>
+            <button className="btn pri login-card-btn" onClick={() => openAgentModal(l.profile, l.pid)}>{tr('크롬에서 보기', 'Show in Chrome')}</button>
+          </div>
+        </div>
+      ))}
+    </>
+  );
 }

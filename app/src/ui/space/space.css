@@ -891,3 +891,40 @@ html.cv-dragging, html.cv-dragging * { cursor: grabbing !important; user-select:
 /* 고정한 참모 — 이름 옆 작은 압정(폰과 같은 orch-pins.json) */
 .cv-pin { display: inline-flex; flex: none; color: var(--text-3); }
 .cv-pin svg { width: 12px; height: 12px; }
+
+/* 사이드바 B안 — 상태는 프사가 든다(2026-10-10 사용자 "추천대로", docs/design-drafts/sidebar). 고리 = 대화 %, 귀퉁이 점 = 일함·물음.
+   오른쪽 숫자(40px 고정)·끄기 버튼(visibility:hidden 이 22px 자리 차지)을 비워 이름 칸이 약 61px → 150px 넘게 */
+.cv-avw { position: relative; flex: 0 0 30px; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; }
+.cv-ring { position: absolute; inset: 0; width: 30px; height: 30px; pointer-events: none; }
+.cv-ring .rb { fill: none; stroke: var(--line); stroke-width: 2; }
+.cv-ring .rf { fill: none; stroke: var(--text-3); stroke-width: 2; stroke-linecap: round; transition: stroke-dasharray .4s ease; }
+.cv-ring.mid .rf { stroke: var(--blocked); }
+.cv-ring.high .rf { stroke: var(--danger-ink); }
+.cv-avb { position: absolute; right: 0; top: 0; width: 9px; height: 9px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--panel); }
+.cv-avb.run { background: var(--working); animation: cv-breath 1.6s ease-in-out infinite; }
+.cv-avb.ask { background: var(--blocked); }
+.cv-row.on .cv-avb { border-color: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+@keyframes cv-breath { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .cv-avb.run { animation: none; } }
+.cv-nameline { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.cv-nameline .cv-label { flex: 0 1 auto; }
+/* 올렸을 때만 뜨는 버튼 — 자리를 안 잡고 줄 오른쪽 위에 뜬다(이름 끝은 흐려 덮는다) */
+.cv-float { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: none; align-items: center; gap: 2px; padding-left: 18px;
+  background: linear-gradient(to right, transparent, var(--hover) 18px), linear-gradient(to right, transparent, var(--panel) 18px); }
+.cv-row.on > .cv-float { background: linear-gradient(to right, transparent, color-mix(in srgb, var(--accent) 12%, var(--panel)) 18px); }
+.cv-row:hover > .cv-float, .cv-row:focus-within > .cv-float { display: inline-flex; }
+.cv-float .cv-act { visibility: visible; }
+/* 아래 칸 대화 % — 숫자 대신 짧은 막대 */
+.cv-bar { flex: 0 0 24px; width: 24px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; display: inline-block; }
+.cv-bar i { display: block; height: 100%; border-radius: 2px; background: var(--text-3); }
+.cv-bar.mid i { background: var(--blocked); }
+.cv-bar.high i { background: var(--danger-ink); }
+/* 쉬는 참모 — 접힌 한 줄 + 작은 프사 겹쳐 쌓기. 펼치면 프사가 깨우기 버튼(올리면 재생 아이콘) */
+.cv-offgrp .cv-label { color: var(--text-3); font-weight: 500; font-size: 12.5px; }
+.cv-offgrp .cv-stack { flex: none; }
+.cv-offkids .cv-row.top.off { padding-left: 4px; }
+.cv-wake { all: unset; position: relative; flex: 0 0 30px; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; cursor: pointer; }
+.cv-wake-ic { position: absolute; inset: 4px; display: none; align-items: center; justify-content: center; border-radius: 50%; background: var(--surface); box-shadow: 0 0 0 1px var(--line); color: var(--idle); }
+.cv-wake-ic svg { width: 10px; height: 10px; }
+.cv-row:hover .cv-wake-ic, .cv-wake:focus-visible .cv-wake-ic { display: inline-flex; }
+.cv-wake:focus-visible { box-shadow: 0 0 0 2px var(--accent); }

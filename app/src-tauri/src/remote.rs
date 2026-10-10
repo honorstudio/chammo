@@ -158,7 +158,7 @@ pub fn merge(peers: &[TsPeer], saved: &[Saved], probe: impl Fn(&str) -> Probe) -
 /// 손님이 대신 보내도 되는 길 — 1단계 보기 + 채팅 + 대기함 답하기. 파일·깨우기·지우기·계정·로그인·짝짓기 코드는 없다
 const GETS: &[&str] = &[
     "/api/hello", "/api/env", "/api/sessions", "/api/stopped", "/api/transcript", "/api/tails", "/api/send-status", "/api/direct", "/api/tasks",
-    "/api/browsers", "/api/browser-frame", "/api/avatars", "/api/usage", "/api/load", "/api/roles", "/api/pins", "/api/routines",
+    "/api/browsers", "/api/browser-frame", "/api/avatars", "/api/usage", "/api/load", "/api/roles", "/api/pins", "/api/order", "/api/routines",
 ];
 const POSTS: &[&str] = &["/api/send", "/api/interrupt", "/api/direct-answer"];
 

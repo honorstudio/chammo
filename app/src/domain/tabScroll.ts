@@ -15,3 +15,17 @@ export function tabScrollLeft(box: { left: number; width: number; scrollLeft: nu
 export function tabEdges(el: { scrollLeft: number; scrollWidth: number; clientWidth: number }): { left: boolean; right: boolean } {
   return { left: el.scrollLeft > 1, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 1 };
 }
+
+/** 탭 최소 폭(chat.css [role=tab] min-width 와 같은 값) — 프사만 남는 폭 */
+export const TAB_MIN = 34;
+/** × 를 올렸을 때만 띄우는 문턱 — 안 고른 탭 몫이 이보다 좁으면(이름이 몇 글자뿐) */
+export const TAB_TIGHT = 136;
+
+/** 탭 줄이 좁나 — 안 고른 탭 하나에 돌아갈 몫이 최소 폭 + 28px 아래면 좁다. 좁으면 안 고른 탭의 × 는 올렸을 때만 이름 위에 뜬다
+ *  (최소 폭에서 × 가 글자 자리를 먹어 이름이 두 글자만 보였다, 2026-10-10 사용자 PC). 탭 폭이 아니라 줄 폭으로 재서
+ *  × 를 빼고 넣어도 값이 안 바뀐다 — 롤오버·전환에 탭이 출렁이지 않는다. row = 탭 줄 안쪽 폭, add = + 버튼, active = 고른 탭 */
+export function tabsTight(m: { row: number; add: number; active: number; gap: number; n: number }): boolean {
+  if (m.n < 2) return false;
+  const room = (m.row - m.add - m.gap - m.active) / (m.n - 1) - m.gap;
+  return room < TAB_TIGHT;
+}

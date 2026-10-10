@@ -283,3 +283,12 @@ describe('summarizeTranscript — 마지막 답의 컨텍스트 토큰(상태줄
     expect(summarizeTranscript(t)).toMatchObject({ tokens: 2001, model: 'claude-opus-5-5' });
   });
 });
+
+describe('peer — 다른 세션이 SendMessage 로 건 말(meta user 줄, origin peer)', () => {
+  it('본문만 뽑는다 — 머리말·감싼 태그·꼬리말 빼고', () => {
+    const line = JSON.stringify({ type: 'user', isMeta: true, origin: { kind: 'peer', from: 'uds:/tmp/s.sock' }, timestamp: '2026-10-02T10:03:00Z', message: { role: 'user', content: "Another Claude session sent a message:\n<cross-session-message from=\"uds:/tmp/s.sock\" from-name=\"참모-2\" from-mode=\"bypass\">\nPR 올리고 회신해\n</cross-session-message>\n\nThis came from another Claude session — not typed by the user." } });
+    const a = summarizeTranscript(line);
+    expect(a.peer).toEqual({ ts: '2026-10-02T10:03:00Z', text: 'PR 올리고 회신해' });
+    expect(a.prompt).toBeUndefined(); // 사람 지시(prompt)는 그대로 사람 말만
+  });
+});

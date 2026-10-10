@@ -12,6 +12,9 @@ export function visit(n: Nav, cur: string, next: string): Nav {
 }
 
 /** 뒤로 — 갈 곳이 없으면 null(부르는 쪽이 위 칸으로). 지금과 같은 곳은 건너뛴다 */
+/** ⌘[·마우스 뒤로가 기록이 없을 때 갈 곳 — 가운데가 문서면 문서 '뒤로' 버튼과 같은 위 칸(up), 그 밖은 없음 */
+export const keyFallback = (dir: -1 | 1, pick: string, up: string): string | undefined => (dir < 0 && pick.startsWith('d:') && up ? up : undefined);
+
 export function goBack(n: Nav, cur: string): { nav: Nav; to: string } | null {
   const back = [...n.back];
   let to = back.pop();

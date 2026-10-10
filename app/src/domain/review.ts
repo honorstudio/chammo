@@ -89,7 +89,7 @@ export const GATE_LABEL: Readonly<Record<GateKind, string>> = {
 const DB_BODY = /\b(GRANT|REVOKE|RLS)\b|create policy|alter table|security definer/i;
 const DB_TITLE = /마이그레이션|migration|\bRLS\b|\bGRANT\b|\bREVOKE\b|security definer|스키마/i;
 // 돈: scripts/task 결제 관문(PAYMENT)과 같은 말. 영어는 낱말로만(discharge·recharge 제외).
-// '결제 비중·결제 방식별' 처럼 결제를 세어 보여 주기만 하는 말은 뺀다(#378 매출 화면)
+// '결제 비중·결제 방식별' 처럼 결제를 세어 보여 주기만 하는 말은 뺀다(매출 화면 PR)
 const MONEY_TEXT = /실결제|결제(?!\s*(비중|방식별|통계|건수|집계))|환불|과금|부트페이|bootpay|\b(payments?|refunds?|billing|charges?)\b/i;
 const MONEY_PATH = /(^|[/_.-])(billing|payments?|refunds?|checkout|bootpay|subscriptions?)([/_.-]|$)/i;
 // 보안: 본문은 키 이름(밑줄 붙은 환경변수 모양 — 게임 용어 "SECRET"(scene #48) 은 아님)·시크릿처럼 뚜렷한 것만.

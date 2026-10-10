@@ -144,6 +144,9 @@ export const newSession = (cwd: string, name: string, worktree?: string) =>
 /** 참모 고정 — <데이터>/orch-pins.json(폰과 같은 파일), 대화 id 를 고정한 순서대로 */
 export const readOrchPins = () => invoke<string[]>('read_orch_pins');
 export const setOrchPin = (sessionId: string, on: boolean) => invoke<string[]>('set_orch_pin', { sessionId, on });
+/** 참모 순서 — <데이터>/orch-order.json(폰도 읽는다), 대화 id 를 보이는 순서대로(domain/orchOrder) */
+export const readOrchOrder = () => invoke<string[]>('read_orch_order');
+export const setOrchOrder = (ids: string[]) => invoke<string[]>('set_orch_order', { ids });
 /** 참모 맡은 일 — <데이터>/orch-roles.json(폰·이름표 훅과 같은 파일), 기본 이름(참모-3)별. name 에 별명이 붙어 있어도 된다 */
 export const readOrchRoles = () => invoke<Record<string, { role: string; at: number }>>('read_orch_roles');
 /** fresh = 새 참모를 띄울 때 — 옛 번호의 맡은 일을 덮고 태어난 때(born)를 적는다(그 전 기록은 안 센다) */
@@ -227,8 +230,13 @@ export const tamaRequest = (kind?: string) => invoke<string | null>('tama_reques
 /** 세션별 컨텍스트 사용량 파일 원문들 (파싱은 domain/ctx.ts) */
 export const readCtx = () => invoke<string[]>('read_ctx');
 
-/** 결정 대기함 답장 — 세션에 잠깐 attach 해서 글자 + Enter */
-export const sendToSession = (id: string, text: string) => invoke<void>('send_to_session', { id, text });
+/** 결정 대기함 답장·앱이 넘기는 줄([앱] …) — 세션에 잠깐 attach 해서 글자 + Enter.
+ *  다 친 뒤 그 세션 채팅에 '보낸 말'로 알린다 — 모르는 글로 입력칸에 걸려 보이면 Enter 를 다시 넣지도, 간 뒤 지우지도 못했다(2026-10-10:
+ *  참모 입력칸에 친 줄의 Enter 가 줄바꿈으로 먹혀 10분 걸려 있었다). 줄바꿈은 Rust 처럼 띄어쓰기로 */
+export const sendToSession = (id: string, text: string) =>
+  invoke<void>('send_to_session', { id, text }).then(() => {
+    window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id, text: text.replace(/[\r\n]/g, ' ') } }));
+  });
 /** 작업 기록에 이벤트 한 줄 (answer 등) */
 export const appendTaskEvent = (ev: object) => invoke<void>('append_task_event', { line: JSON.stringify(ev) });
 
@@ -277,6 +285,8 @@ export const accountsApi = {
   rename: (id: string, name: string) => invoke<AccountsView>('accounts_rename', { id, name }),
   reorder: (ids: string[]) => invoke<AccountsView>('accounts_reorder', { ids }),
   remove: (id: string) => invoke<AccountsView>('accounts_remove', { id }),
+  /** 백업 칸으로 로그인 되돌리기 — 바꿔 끼우기가 꼬였을 때. 계정 로그인과 표시를 같이, MCP 로그인은 지금 것 */
+  restore: (which: 'backup-first' | 'backup-last' | 'backup-before-restore') => invoke<AccountsView>('accounts_restore', { which }),
   /** 자동 전환 상태 윗단 키 합치기(null = 지움) */
   autoPatch: (patch: Record<string, unknown>) => invoke<AccountsView>('accounts_auto_patch', { patch }),
   /** 상태줄 사용량 + 파일 고친 시각(ms) */
@@ -313,7 +323,7 @@ export const browserStatus = () => invoke<import('../domain/setup').BrowserStatu
 export const browserSetupStart = () => invoke<void>('browser_setup_start');
 export const browserSetupState = () => invoke<import('../domain/setup').BrowserSetupState>('browser_setup_state');
 export const routinesList = () => invoke<string>('routines_list');
-export const routineDo = (name: string, action: 'run' | 'pause' | 'resume' | 'remove') => invoke<string>('routine_do', { name, action });
+export const routineDo = (name: string, action: 'run' | 'pause' | 'resume' | 'remove' | 'told') => invoke<string>('routine_do', { name, action });
 
 // ── 부하 모니터(Rust load.rs). 세션별로 가르는 건 domain/load ──
 export const loadSample = () => invoke<{ ps: string; sys: string }>('load_sample');

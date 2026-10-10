@@ -38,6 +38,55 @@ pub fn project_key(root: &str) -> String {
     root.replace('\\', "/").trim_end_matches('/').to_string()
 }
 
+/// ~/.claude.json 고치기 — 앱 안의 모든 길(계정 oauthAccount·믿음·화면 조종·브라우저 붙이기·MCP 끄기)이 이 하나로.
+/// f = 지금 글 → 고친 글(안 바뀌면 None, 아무것도 안 쓴다) · first = 처음 쓰기 직전 한 번(백업) · ok = 쓴 뒤 다시 읽어 확인.
+/// 쓰기 직전에 다시 읽어 그새 바뀌었으면(떠 있는 claude 가 썼다) 새로 읽어 다시, 확인이 틀려도(쓴 뒤에 덮였다) 다시 — 세 번까지.
+/// 링크면 가리키는 파일을, 권한은 원래 것 그대로(0600). 앱 안 길끼리는 JSON_LOCK 한 줄에 선다 — 떠 있는 claude 와의 틈만 남는다
+pub fn edit_json(path: &Path, mut f: impl FnMut(&str) -> Result<Option<String>, String>, mut first: impl FnMut() -> Result<(), String>, ok: impl Fn(&serde_json::Value) -> bool) -> Result<bool, String> {
+    let _g = JSON_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let target = if path.is_symlink() { std::fs::canonicalize(path).map_err(|e| e.to_string())? } else { path.to_path_buf() };
+    let mut wrote = false;
+    for _ in 0..3 {
+        let text = std::fs::read_to_string(&target).map_err(|e| e.to_string())?;
+        let Some(next) = f(&text)? else { return Ok(wrote) };
+        if !wrote {
+            first()?;
+        }
+        let mut name = target.file_name().unwrap_or_default().to_os_string();
+        name.push(format!(".chammo-{}", tmp_tag()));
+        let tmp = target.with_file_name(name);
+        std::fs::write(&tmp, &next).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perm = std::fs::metadata(&target).map(|m| m.permissions()).unwrap_or_else(|_| std::fs::Permissions::from_mode(0o600));
+            let _ = std::fs::set_permissions(&tmp, perm);
+        }
+        if std::fs::read_to_string(&target).map_err(|e| e.to_string())? != text {
+            let _ = std::fs::remove_file(&tmp);
+            continue;
+        }
+        if let Err(e) = std::fs::rename(&tmp, &target) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.to_string());
+        }
+        wrote = true;
+        if ok(&read_json(&target)) {
+            return Ok(true);
+        }
+    }
+    Err(crate::i18n::tr("~/.claude.json 을 다른 쪽이 계속 덮어써서 못 고쳤어 — 잠시 뒤 다시", "~/.claude.json kept being overwritten — try again shortly").into())
+}
+
+/// 앱 안에서 ~/.claude.json 을 고치는 길들의 줄 — 읽고-고치고-쓰는 사이에 다른 길이 끼면 먼저 쓴 것이 사라졌다
+static JSON_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 임시 파일 꼬리 — 부를 때마다 다르게(같은 이름을 쓰던 쓰기 길끼리 서로 지웠다)
+pub(crate) fn tmp_tag() -> String {
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    format!("{}-{}.tmp", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
 // ───────── 백업 ─────────
 
 /// 고치기 전 설정 파일을 to_root/<stamp>/ 에 — 있는 것만
@@ -201,13 +250,8 @@ pub async fn tools_mcp_set(root: Option<String>, name: String, on: bool, all: bo
         backup(&c, None)?;
         if !all {
             let key = project_key(&root.ok_or("root")?.to_string_lossy());
-            let text = std::fs::read_to_string(&c.json).map_err(|e| e.to_string())?;
-            let next = set_disabled(&text, &key, &name, !on)?;
-            if next != text {
-                let tmp = c.json.with_extension("json.chammo-tmp");
-                std::fs::write(&tmp, next).map_err(|e| e.to_string())?;
-                std::fs::rename(&tmp, &c.json).map_err(|e| e.to_string())?;
-            }
+            let ok = |v: &serde_json::Value| v["projects"][&key]["disabledMcpServers"].as_array().is_some_and(|a| a.iter().any(|x| x == name.as_str())) == !on;
+            edit_json(&c.json, |text| set_disabled(text, &key, &name, !on).map(|n| (n != text).then_some(n)), || Ok(()), ok)?;
             return Ok(());
         }
         let mut parked = read_parked();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyQueueOps, autoEnterTarget, emptyQueue, ESC_GAP, escPlan, inputLeftover, keepAfterRemove, pendingState, typeQueue, type QueueState } from './chatQueue';
+import { applyQueueOps, LOST_AFTER, autoEnterTarget, emptyQueue, ESC_GAP, escPlan, inputLeftover, keepAfterRemove, MINE_KEEP, mineForLeftover, pendingState, typeQueue, type QueueState } from './chatQueue';
 import grid from '../ui/SessionGrid.tsx?raw';
 import pane from '../ui/TerminalPane.tsx?raw';
 import tauriTs from '../data/tauri.ts?raw';
@@ -9,11 +9,47 @@ const op = (operation: string, ts: string, content?: string, extra: object = {})
   JSON.stringify({ type: 'queue-operation', operation, timestamp: ts, sessionId: 's', ...(content === undefined ? {} : { content }), ...extra });
 const T = (s: number) => `2026-10-06T05:00:${String(s).padStart(2, '0')}.000Z`;
 const at = (s: number) => Date.parse(T(s));
+const user = (content: string) => JSON.stringify({ type: 'user', message: { role: 'user', content } });
 
 describe('applyQueueOps — 기록의 줄 서기(queue-operation)로 Claude 대기열을 따라간다', () => {
-  it('enqueue 는 뒤에, dequeue 는 맨 앞을 뺀다(dequeue 엔 글이 없다)', () => {
-    const q = applyQueueOps(emptyQueue, [op('enqueue', T(1), 'A'), op('enqueue', T(2), 'B'), op('dequeue', T(3))].join('\n'));
+  it('enqueue 는 뒤에, dequeue 는 그다음 user 줄의 글과 같은 것을 뺀다(dequeue 엔 글이 없다)', () => {
+    const q = applyQueueOps(emptyQueue, [op('enqueue', T(1), 'A'), op('enqueue', T(2), 'B'), op('dequeue', T(3)), user('A')].join('\n'));
     expect(q.waiting.map((x) => x.text)).toEqual(['B']);
+  });
+
+  // 2026-10-10 실측(최근 기록 400개, 2.1.296): 맨 앞을 빼는 모델은 dequeue 2,320번 중 1,305번 엉뚱한 것을 뺐다 —
+  // 앞에 낡은 줄(1MB 창 밖 enqueue·흔적 없이 사라진 것)이 쌓이고 교차 세션 메시지가 사람 말보다 먼저 빠지기도 해서.
+  // enqueue 엔 id 가 없어(content 만) 짝을 id 로는 못 맞춘다 — dequeue 바로 뒤 user 줄(교차 세션은 감싼 꼴)의 글로 맞추면 2,264번 맞음
+  it('재현: 맨 앞이 아니라 실제로 빠진 것을 뺀다 — 사람 말 앞에 줄 선 교차 세션 메시지가 먼저 빠져도 사람 말은 대기 중', () => {
+    const x = '<cross-session-message from="uds:/tmp/s.sock" hop-chain="ab12" from-name="참모">\n놓았어\n</cross-session-message>';
+    const q = applyQueueOps(emptyQueue, [op('enqueue', T(1), '사람 말'), op('enqueue', T(2), x), op('dequeue', T(3)),
+      user('Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/s.sock" from-name="참모">\n놓았어\n</cross-session-message>\n\nThis came from another Claude session — not typed by the user.')].join('\n'));
+    expect(q.waiting.map((w) => w.text)).toEqual(['사람 말']);
+  });
+
+  it('dequeue 와 user 줄이 다른 조각으로 와도 짝짓는다', () => {
+    let q = applyQueueOps(emptyQueue, [op('enqueue', T(1), 'A'), op('enqueue', T(2), 'B'), op('dequeue', T(3))].join('\n'));
+    expect(q.waiting.map((w) => w.text)).toEqual(['A', 'B']);
+    q = applyQueueOps(q, user('B'));
+    expect(q.waiting.map((w) => w.text)).toEqual(['A']);
+  });
+
+  it('작업 알림은 queued_command 줄로 들어온다', () => {
+    const n = '<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>';
+    const q = applyQueueOps(emptyQueue, [op('enqueue', T(1), 'A'), op('enqueue', T(2), n), op('dequeue', T(3)),
+      JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt: n } })].join('\n'));
+    expect(q.waiting.map((w) => w.text)).toEqual(['A']);
+  });
+
+  it('재현: 1MB 창 밖에서 줄 선 것의 dequeue — 짝이 없으면 아무것도 안 뺀다(예전엔 맨 앞 사람 말을 빼서 \'안 갔어요\'로 보였다)', () => {
+    const q = applyQueueOps(emptyQueue, [op('enqueue', T(2), '사람 말'), op('dequeue', T(3)), user('창 밖에서 줄 선 옛 말')].join('\n'));
+    expect(q.waiting.map((w) => w.text)).toEqual(['사람 말']);
+  });
+
+  it('도구 결과 user 줄은 짝이 아니다', () => {
+    const q = applyQueueOps(emptyQueue, [op('enqueue', T(1), 'A'), op('dequeue', T(2)),
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content: 'A' }] } }), user('A')].join('\n'));
+    expect(q.waiting).toEqual([]);
   });
 
   it('remove(일하는 도중 흡수)는 그 글을 뺀다 — 이미 간 것', () => {
@@ -50,7 +86,7 @@ describe('pendingState — 보낸 말이 지금 어디 있나', () => {
 
   it('보내기 전 예전에 줄 섰던 같은 글은 대기 중으로 안 친다', () => {
     const queue = { waiting: [{ text: '응', ts: at(0) - 60_000 }], popped: [] };
-    expect(pendingState({ text: '응', at: at(1) }, { ...base, queue })).toBe('lost');
+    expect(pendingState({ text: '응', at: at(1) }, { ...base, queue, now: at(1) + LOST_AFTER + 1000 })).toBe('lost');
   });
 
   it('터미널 입력칸에 남아 있으면 입력칸에 걸림 — 입력칸은 좁아 줄이 접혀 온다', () => {
@@ -67,7 +103,7 @@ describe('pendingState — 보낸 말이 지금 어디 있나', () => {
 
   it('기록·대기열·입력칸 어디에도 없으면 잠깐은 보내는 중, 그 뒤엔 안 갔음', () => {
     expect(pendingState({ text: '안녕', at: at(25) }, base)).toBe('sending');
-    expect(pendingState({ text: '안녕', at: at(1) }, base)).toBe('lost');
+    expect(pendingState({ text: '안녕', at: at(1) }, { ...base, now: at(1) + LOST_AFTER + 1000 })).toBe('lost');
   });
 });
 
@@ -132,6 +168,23 @@ describe('inputLeftover — 입력칸에 남은 게 내가 보낸 말뿐인가(�
 
   it('짧은 말이 긴 말 속에 들어 있어도 긴 말부터 맞춘다', () => {
     expect(inputLeftover('응 그래', ['응', '응 그래'])).toEqual(['응 그래']);
+  });
+});
+
+describe('mineForLeftover — 입력칸에 되돌아온 말을 \'내가 보낸 말\'로 알아볼 목록', () => {
+  // roadmap 채팅 유령 ⑤ — 10분 넘은 옛 말이 ↑·Esc 로 입력칸에 되돌아오면 '모르는 글'로 보고 새 말과 한 말로 붙어 갔다
+  it('재현: 두 시간 전 말도 최근 보낸 말 안이면 안다 → 새 말 치기 전에 비운다', () => {
+    const now = Date.parse('2026-10-10T12:00:00Z');
+    const mine = mineForLeftover([{ text: '두 시간 전 말', ts: '2026-10-10T10:00:00Z' }, { text: '방금 말', ts: '2026-10-10T11:59:00Z' }]);
+    expect(mine).toEqual(['두 시간 전 말', '방금 말']);
+    expect(inputLeftover('두 시간 전 말', mine)).toEqual(['두 시간 전 말']);
+    void now;
+  });
+  it('최근 것만 — 끝없이 늘지 않게', () => {
+    const many = Array.from({ length: MINE_KEEP + 5 }, (_, i) => ({ text: `말${i}`, ts: '' }));
+    const mine = mineForLeftover(many);
+    expect(mine.length).toBe(MINE_KEEP);
+    expect(mine[0]).toBe('말5');
   });
 });
 

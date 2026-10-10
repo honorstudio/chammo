@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { orchRows, type OrchRow } from '../../domain/orchRows';
+import { foldOff, orchRows, type OrchRow } from '../../domain/orchRows';
+import { ctxLevel, ctxRing } from '../../domain/ctx';
 import { HOME_PICK } from '../../domain/orchHome';
 import type { Session } from '../../domain/session';
 import { sessionStatus, statusTone, statusWord, type ActivityStatus } from '../../domain/status';
 import type { StoppedSession } from '../../domain/stopped';
 import { docTitle } from '../../domain/spaceTree';
 import { assistant, josa, tr } from '../../i18n';
-import { IconChevron, IconTerminal, IconFolder, IconPage, IconPerson, IconPin, IconPlus } from '../Icons';
+import { IconChevron, IconTerminal, IconFolder, IconPage, IconPerson, IconPin, IconPlus, IconResume } from '../Icons';
 import { FileTree } from './FileTree';
-import { Ctx } from '../Sidebar';
 import { dragPath, dragProps } from './dragPath';
 import { OrchName, useOrchActions } from '../orchActions';
 import { IconClose } from '../Icons';
@@ -44,14 +44,42 @@ export function StateMark({ st }: { st: ActivityStatus }) {
   return c === 'run' ? <span className="cv-spin" title={statusWord(st)} /> : c === 'ask' ? <span className="cv-ask" title={statusWord(st)} /> : null;
 }
 
+/** 사이드바 B안(2026-10-10 사용자 "추천대로") — 상태는 프사가 든다: 고리 = 대화 %, 귀퉁이 점 = 일함(숨쉬는 파랑)·물음(노랑).
+ *  오른쪽 숫자·버튼 자리를 비워 이름 칸이 넓다. 숫자는 올리면(title) */
+function AvatarRing({ v, st, children }: { v?: number; st?: ActivityStatus; children: React.ReactNode }) {
+  const tone = st ? statusTone(st) : 'idle';
+  const r = v === undefined ? null : ctxRing(v, 13.2);
+  const tip = [v !== undefined ? tr(`대화 ${v}%`, `Context ${v}%`) : '', st ? statusWord(st) : ''].filter(Boolean).join(' · ');
+  return (
+    <span className="cv-avw" title={tip || undefined}>
+      {r && (
+        <svg className={`cv-ring ${r.level}`} viewBox="0 0 30 30" aria-hidden>
+          <circle cx="15" cy="15" r="13.2" className="rb" />
+          <circle cx="15" cy="15" r="13.2" className="rf" strokeDasharray={`${r.dash.toFixed(1)} ${r.circ.toFixed(1)}`} transform="rotate(-90 15 15)" />
+        </svg>
+      )}
+      {children}
+      {tone !== 'idle' && <i className={`cv-avb ${tone}`} />}
+    </span>
+  );
+}
+
+/** 아래 칸(도우미·프로젝트) 대화 % — 숫자 대신 폭 24px 짧은 막대(숫자는 올리면). 숫자 칸이 40px 를 먹어 이름이 잘렸다 */
+function CtxBar({ v }: { v?: number }) {
+  if (v === undefined) return null;
+  return <span className={`cv-bar ${ctxLevel(v)}`} title={tr(`대화 ${v}% — 80% 넘으면 곧 요약된다`, `Context ${v}% — over 80% means it will be compacted soon`)}><i style={{ width: `${Math.max(0, Math.min(100, v))}%` }} /></span>;
+}
+
 /**
  * 채팅 뷰 메뉴(⌘B) — v10: 오케스트레이터(참모마다 대시보드 + 문서) → 내 페이지 → 프로젝트(대시보드 + 문서).
  * 참모 문서 = 고정한 것 + 이번에 띄운 md(최근 먼저). 펼치고 접기는 기억한다
  */
-export function SpaceNav({ statusOf = sessionStatus, orchPins = [], stoppingIds = [], startingOrchs = [], onNewOrch, routines = [], helpers = [], loose = [], pagesRoot = '', onChatTab, ctxOf, onAddProject, idle = [], offOrchs = [], onResume, onRemoveStopped, orchs, viewId, colorOf, projects, holders, pick, onPick, orchDocsOf, isPinned, onTogglePin, pages, pageTitle, onNewPage, onOpenFile, selectedFile, onTrashPage }: {
+export function SpaceNav({ statusOf = sessionStatus, orchPins = [], orchOrder = [], stoppingIds = [], startingOrchs = [], onNewOrch, routines = [], helpers = [], loose = [], pagesRoot = '', onChatTab, ctxOf, onAddProject, idle = [], offOrchs = [], onResume, onRemoveStopped, orchs, viewId, colorOf, projects, holders, pick, onPick, orchDocsOf, isPinned, onTogglePin, pages, pageTitle, onNewPage, onOpenFile, selectedFile, onTrashPage }: {
   /** 세션 상태(메뉴·대시보드·사무실 같은 판단) — 없으면 세션만으로 */
   statusOf?: (s: Session) => ActivityStatus;
   orchPins?: string[];
+  /** 참모 순서(대화 id) — 채팅 탭을 끌어 둔 줄. 지난 자리 기억보다 먼저(domain/orchRows) */
+  orchOrder?: string[];
   /** 내 페이지 지우기 — 휴지통으로(하위 페이지 같이) */
   onTrashPage?: (path: string) => void;
   /** 세션이 안 떠 있는 프로젝트 — 흐리게, 누르면 그 프로젝트 대시보드 */
@@ -101,8 +129,33 @@ export function SpaceNav({ statusOf = sessionStatus, orchPins = [], stoppingIds 
   const label = (o: Session) => act?.nameOf(o) ?? (o.name || assistant());
   // 오케스트레이터 칸 — 살아 있는·꺼진 참모를 한 목록으로, 지난번 자리를 기억해서(끄기·켜기 사이 줄이 안 사라지고 안 튀게)
   const prevRows = useRef<OrchRow[]>([]);
-  const rows = orchRows({ live: orchs, off: [...offOrchs.slice(0, 6), ...startingOrchs], stopping: new Set(stoppingIds), starting: new Set(startingOrchs.map((x) => x.sessionId)), prev: prevRows.current, pins: orchPins });
+  const rows = orchRows({ live: orchs, off: [...offOrchs.slice(0, 6), ...startingOrchs], stopping: new Set(stoppingIds), starting: new Set(startingOrchs.map((x) => x.sessionId)), prev: prevRows.current, pins: orchPins, order: orchOrder });
   useEffect(() => { prevRows.current = rows; });
+  const fold = foldOff(rows);
+  // 꺼진 참모 줄 — 켜는 중이면 위 목록 자리 그대로(foldOff), 쉬면 '쉬는 참모' 아래. 프사가 깨우기 버튼(올리면 재생 아이콘)
+  const offRow = (r: OrchRow) => {
+    const x = r.off!;
+    const nm = orchDisplay(x) || x.name;
+    const starting = r.phase === 'starting';
+    const av = <OrchAvatar name={x.name} size={22} state={starting ? 'rest' : 'off'} color={colorOf(x.name)} label={nm} />;
+    return (
+      <div key={r.key} className="cv-group">
+        <div className="cv-row top off" title={`${nm} — ${starting ? tr('켜는 중', 'Starting') : tr('꺼짐 · 프사를 누르면 깨운다 · 오른쪽 클릭: 켜기·지우기', 'stopped · click the avatar to resume · right-click: resume·remove')}`}
+          onContextMenu={act && !starting ? (e) => act.openMenu(e, [
+            ...(onResume ? [{ label: tr('이어서 켜기', 'Resume'), run: () => onResume(x) }] : []),
+            { label: tr('목록에서 지우기', 'Remove from list'), danger: true, run: () => act.confirm({ title: tr(`${nm} 지울까?`, `Remove ${nm}?`), body: tr('꺼진 세션 목록에서 빼 — 같은 이름으로 쌓인 옛 기록도 같이(대화 기록 파일은 남아).', 'Removes it from stopped sessions, with older ones under the same name (transcript files stay).'), ok: tr('지우기', 'Remove'), run: () => onRemoveStopped?.(x) }) },
+          ]) : undefined}>
+          {r.phase === 'off' ? null : <span className="cv-fold small blank" />}
+          {!starting && onResume
+            ? <button className="cv-wake" onClick={() => onResume(x)} title={tr('이어서 켜기', 'Resume')} aria-label={tr(`${nm} 이어서 켜기`, `Resume ${nm}`)}>{av}<span className="cv-wake-ic"><IconResume /></span></button>
+            : <span className="cv-avw">{av}</span>}
+          <span className="cv-namecol"><span className="cv-label">{nm}</span><OrchRole name={x.name} /></span>
+          {starting && <span className="cv-transit">{tr('켜는 중…', 'Starting…')}</span>}
+        </div>
+      </div>
+    );
+  };
+
   const [open, setOpenState] = useState<string[]>(() => loadOpen() ?? (viewId ? [`o:${viewId}`] : []));
   const isOpen = (k: string) => open.includes(k);
   // 카테고리 접기(오케스트레이터·내 페이지·프로젝트·쉬는 프로젝트) — 기억, 쉬는 프로젝트는 처음엔 접힘(2026-09-30 사용자)
@@ -140,17 +193,22 @@ export function SpaceNav({ statusOf = sessionStatus, orchPins = [], stoppingIds 
     body: tr('휴지통으로 옮겨. 하위 페이지가 있으면 같이 옮기고, 휴지통에서 되살릴 수 있어.', 'Moves it to the Trash along with its subpages. You can restore it from the Trash.'),
     ok: tr('휴지통으로', 'Move to Trash'), run: () => onTrashPage?.(path),
   });
+  const pinBtn = (owner: Session, path: string) => (
+    <button className={`cv-act ${isPinned(owner, path) ? 'keep' : ''}`} onClick={(e) => { e.stopPropagation(); onTogglePin(owner, path); }}
+      title={isPinned(owner, path) ? tr('고정 풀기', 'Unpin') : tr('고정 — 새 세션에서도 보인다', 'Pin — stays for new sessions')} aria-label={tr('고정', 'Pin')}><IconPin /></button>
+  );
   const doc = (path: string, label: string, owner?: Session, pinnable?: boolean, removable?: boolean) => (
     <div {...rowKeys} key={path} {...dragPath(path)} className={`cv-row child ${pick === `d:${path}` ? 'on' : ''}`} onClick={() => onPick(`d:${path}`, owner?.id)} title={path}
       onContextMenu={removable && act && onTrashPage ? (e) => act.openMenu(e, [{ label: tr('페이지 지우기(휴지통으로)', 'Remove page (to Trash)'), danger: true, run: () => askTrash(path, label) }]) : undefined}>
       <span className="cv-ic"><IconPage /></span>
       <span className="cv-label">{label}</span>
-      {pinnable && owner && (
-        <button className={`cv-act ${isPinned(owner, path) ? 'keep' : ''}`} onClick={(e) => { e.stopPropagation(); onTogglePin(owner, path); }}
-          title={isPinned(owner, path) ? tr('고정 풀기', 'Unpin') : tr('고정 — 새 세션에서도 보인다', 'Pin — stays for new sessions')} aria-label={tr('고정', 'Pin')}><IconPin /></button>
-      )}
-      {removable && act && onTrashPage && (
-        <button className="cv-act" onClick={(e) => { e.stopPropagation(); askTrash(path, label); }} title={tr('페이지 지우기(휴지통으로)', 'Remove page (to Trash)')} aria-label={tr('페이지 지우기', 'Remove page')}><IconClose /></button>
+      {pinnable && owner && isPinned(owner, path) && pinBtn(owner, path)}
+      {/* 올렸을 때만 뜨는 버튼은 자리를 안 잡고 위에 뜬다(cv-float) — visibility:hidden 이 22px 씩 이름 칸을 먹었다(2026-10-10) */}
+      {((pinnable && owner && !isPinned(owner, path)) || (removable && act && onTrashPage)) && (
+        <span className="cv-float">
+          {pinnable && owner && !isPinned(owner, path) && pinBtn(owner, path)}
+          {removable && act && onTrashPage && <button className="cv-act" onClick={(e) => { e.stopPropagation(); askTrash(path, label); }} title={tr('페이지 지우기(휴지통으로)', 'Remove page (to Trash)')} aria-label={tr('페이지 지우기', 'Remove page')}><IconClose /></button>}
+        </span>
       )}
     </div>
   );
@@ -160,7 +218,7 @@ export function SpaceNav({ statusOf = sessionStatus, orchPins = [], stoppingIds 
       <div className={`cv-sec click ${pick === HOME_PICK ? 'here' : ''}`} onClick={() => onPick(HOME_PICK)} title={tr(`오케스트레이터 홈 — 어떤 ${josa(assistant(), '을', '를')} 켤지, 화살표로 접기`, 'Orchestrator home — pick who to run, arrow to fold')}><span className="with-ic"><span onClick={(e) => { e.stopPropagation(); flipSec('orch'); }}>{secFold('orch')}</span>{tr('오케스트레이터', 'Orchestrators')}</span>
         <span className="with-ic"><kbd>{keyLabel('⌘B', IS_WIN)}</kbd>
           {onNewOrch && <button className="cv-act show" onClick={(e) => { e.stopPropagation(); onNewOrch(); }} title={tr(`${assistant()} 하나 더 (⌘T)`, `One more ${assistant()} (⌘T)`)} aria-label={tr(`${assistant()} 하나 더`, `One more ${assistant()}`)}><IconPlus /></button>}</span></div>
-      {secOpen('orch') && rows.map((r) => {
+      {secOpen('orch') && fold.main.map((r) => {
         if (r.live) {
           const o = r.live;
           const k = `o:${o.id}`;
@@ -172,11 +230,14 @@ export function SpaceNav({ statusOf = sessionStatus, orchPins = [], stoppingIds 
                 onDoubleClick={(e) => { e.stopPropagation(); act?.askRename(o); }} onContextMenu={act && !stopping ? (e) => act.menu(e, o, colorOf(o.name || '')) : undefined}
                 {...dragProps({ kind: 'text', text: `[참모 ${label(o)} · 세션 ${o.id}]` }, label(o))}>
                 <button className={`cv-fold ${isOpen(k) ? 'open' : ''}`} onClick={(e) => { e.stopPropagation(); toggle(k); }} aria-label={isOpen(k) ? tr('접기', 'Collapse') : tr('펼치기', 'Expand')}><IconChevron /></button>
-                <OrchAvatar name={o.name || ''} size={22} state={stopping ? 'off' : avatarState(o, statusOf(o))} color={colorOf(o.name || '')} label={label(o)} />
-                <span className="cv-namecol"><OrchName s={o} className="cv-label strong" /><OrchRole name={o.name || ''} /></span>
-                {o.sessionId && orchPins.includes(o.sessionId) && <span className="cv-pin" role="img" aria-label={tr('고정됨', 'Pinned')} title={tr('고정됨 — 오른쪽 클릭으로 풀기', 'Pinned — right-click to unpin')}><IconPin /></span>}
-                {stopping ? <span className="cv-transit">{tr('끄는 중…', 'Stopping…')}</span> : <><StateMark st={statusOf(o)} /><Ctx v={ctxOf?.(o)} /></>}
-                {act && o.kind === 'background' && !stopping && <button className="cv-act" onClick={(e) => { e.stopPropagation(); act.askStop(o, undefined, 'nav-x'); }} title={tr('세션 끄기', 'Stop session')} aria-label={tr('세션 끄기', 'Stop session')}><IconClose /></button>}
+                <AvatarRing v={stopping ? undefined : ctxOf?.(o)} st={stopping ? undefined : statusOf(o)}>
+                  <OrchAvatar name={o.name || ''} size={22} state={stopping ? 'off' : avatarState(o, statusOf(o))} color={colorOf(o.name || '')} label={label(o)} />
+                </AvatarRing>
+                <span className="cv-namecol"><span className="cv-nameline"><OrchName s={o} className="cv-label strong" />
+                  {o.sessionId && orchPins.includes(o.sessionId) && <span className="cv-pin" role="img" aria-label={tr('고정됨', 'Pinned')} title={tr('고정됨 — 오른쪽 클릭으로 풀기', 'Pinned — right-click to unpin')}><IconPin /></span>}</span>
+                  <OrchRole name={o.name || ''} /></span>
+                {stopping && <span className="cv-transit">{tr('끄는 중…', 'Stopping…')}</span>}
+                {act && o.kind === 'background' && !stopping && <span className="cv-float"><button className="cv-act" onClick={(e) => { e.stopPropagation(); act.askStop(o, undefined, 'nav-x'); }} title={tr('세션 끄기', 'Stop session')} aria-label={tr('세션 끄기', 'Stop session')}><IconClose /></button></span>}
               </div>
               {isOpen(k) && (
                 <div className="cv-kids">
@@ -189,25 +250,19 @@ export function SpaceNav({ statusOf = sessionStatus, orchPins = [], stoppingIds 
             </div>
           );
         }
-        const x = r.off!;
-        const nm = orchDisplay(x) || x.name;
-        const starting = r.phase === 'starting';
-        // 꺼진 줄도 cv-group 으로 감싼다 — 살아 있는 줄과 같은 자리·같은 프사(잠들기·깨어나기 전환이 이어진다)
-        return (
-          <div key={r.key} className="cv-group">
-            <div className="cv-row top off" title={`${nm} — ${starting ? tr('켜는 중', 'Starting') : tr('꺼짐 · 오른쪽 클릭: 켜기·지우기', 'stopped · right-click: resume·remove')}`}
-              onContextMenu={act && !starting ? (e) => act.openMenu(e, [
-                ...(onResume ? [{ label: tr('이어서 켜기', 'Resume'), run: () => onResume(x) }] : []),
-                { label: tr('목록에서 지우기', 'Remove from list'), danger: true, run: () => act.confirm({ title: tr(`${nm} 지울까?`, `Remove ${nm}?`), body: tr('꺼진 세션 목록에서 빼 — 같은 이름으로 쌓인 옛 기록도 같이(대화 기록 파일은 남아).', 'Removes it from stopped sessions, with older ones under the same name (transcript files stay).'), ok: tr('지우기', 'Remove'), run: () => onRemoveStopped?.(x) }) },
-              ]) : undefined}>
-              <span className="cv-fold small blank" />
-              <OrchAvatar name={x.name} size={22} state={starting ? 'rest' : 'off'} color={colorOf(x.name)} label={nm} />
-              <span className="cv-namecol"><span className="cv-label">{nm}</span><OrchRole name={x.name} /></span>
-              {starting ? <span className="cv-transit">{tr('켜는 중…', 'Starting…')}</span> : onResume && <button className="cv-act show" onClick={() => onResume(x)} title={tr('이어서 켜기', 'Resume')}>{tr('켜기', 'On')}</button>}
-            </div>
-          </div>
-        );
+        return offRow(r);
       })}
+      {/* 쉬는 참모 — 접힌 한 줄(작은 프사 겹쳐 쌓기), 펼치면 줄마다 프사를 눌러 깨운다(B안) */}
+      {secOpen('orch') && fold.off.length > 0 && (
+        <div className="cv-group">
+          <div {...rowKeys} className="cv-row top cv-offgrp" onClick={() => toggle('orch-off')} title={isOpen('orch-off') ? tr('접기', 'Collapse') : tr('펼치기 — 프사를 누르면 깨운다', 'Expand — click an avatar to resume')}>
+            <span className={`cv-fold small ${isOpen('orch-off') ? 'open' : ''}`} aria-hidden><IconChevron /></span>
+            <span className="cv-label">{tr(`쉬는 ${assistant()} ${fold.off.length}`, `Resting ${fold.off.length}`)}</span>
+            {!isOpen('orch-off') && <span className="cv-stack oa-stack" aria-hidden>{fold.off.slice(0, 5).map((r) => <OrchAvatar key={r.key} name={r.off!.name} size={18} state="off" color={colorOf(r.off!.name)} label={orchDisplay(r.off!) || r.off!.name} />)}</span>}
+          </div>
+          {isOpen('orch-off') && <div className="cv-kids cv-offkids">{fold.off.map(offRow)}</div>}
+        </div>
+      )}
 
       {helpers.length > 0 && <div className="cv-sec click" onClick={() => flipSec('helpers')}><span className="with-ic">{secFold('helpers')}{tr('도우미', 'Helpers')}</span><span className="cv-count">{helpers.length}</span></div>}
       {secOpen('helpers') && helpers.map((h) => (
@@ -217,7 +272,7 @@ export function SpaceNav({ statusOf = sessionStatus, orchPins = [], stoppingIds 
           <span className="cv-ic"><IconTerminal /></span>
           <span className="cv-label">{h.name}</span>
           <StateMark st={statusOf(h)} />
-          <Ctx v={ctxOf?.(h)} />
+          <CtxBar v={ctxOf?.(h)} />
         </div>
       ))}
 
@@ -229,7 +284,7 @@ export function SpaceNav({ statusOf = sessionStatus, orchPins = [], stoppingIds 
           <span className="cv-ic"><IconTerminal /></span>
           <span className="cv-label">{h.name || h.id}</span>
           <StateMark st={statusOf(h)} />
-          <Ctx v={ctxOf?.(h)} />
+          <CtxBar v={ctxOf?.(h)} />
         </div>
       ))}
 
@@ -266,7 +321,7 @@ export function SpaceNav({ statusOf = sessionStatus, orchPins = [], stoppingIds 
               <span className="cv-label">{g.name}</span>
               {held.length > 0 && <span className="cv-holders oa-stack" title={tr(`잡고 있는 ${assistant()}`, 'Held by')}>{held.map((o) => { const x = orchs.find((y) => y.id === o); return <OrchAvatar key={o} name={x?.name || ''} size={16} state={avatarState(x, x && statusOf(x))} color={colorOf(x?.name || '')} label={x ? label(x) : o} />; })}</span>}
               {busy && <StateMark st={statusOf(busy)} />}
-              <Ctx v={g.sessions.map((x) => ctxOf?.(x)).filter((x): x is number => x !== undefined).reduce<number | undefined>((m, x) => (m === undefined || x > m ? x : m), undefined)} />
+              <CtxBar v={g.sessions.map((x) => ctxOf?.(x)).filter((x): x is number => x !== undefined).reduce<number | undefined>((m, x) => (m === undefined || x > m ? x : m), undefined)} />
             </div>
             {isOpen(k) && (
               <div className="cv-kids">

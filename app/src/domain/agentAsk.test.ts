@@ -1,10 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { ASK_EMPTY, askClose, askOpen, askShown, askStep, askWaiting, openLive, type AskState } from './agentAsk';
+import { ASK_EMPTY, askClose, askNotice, askOpen, askShown, askStep, askWaiting, openLive, pickLive, popupNotice, popupStep, type AskState } from './agentAsk';
 import type { Live } from './agentBrowser';
 
 const live = (profile: string, o: Partial<Live> = {}): Live => ({ profile, pid: 10, sessionPid: 20, url: 'https://a.com/', title: 'A', tabs: [], tool: '', toolAt: 0, busy: false, ts: 0, ...o });
 const asking = (profile: string, at: number, o: Partial<Live> = {}) => live(profile, { ask: { reason: '로그인', at }, ...o });
 const step = (s: AskState, lives: Live[]) => askStep(s, lives).state;
+
+describe('pickLive — 크게 보기 열기는 프로필 + 래퍼 번호로(roadmap 사람 필요 모달 ②)', () => {
+  it('같은 프로필을 두 래퍼가 쥐면 누른 칸의 래퍼 — 예전엔 프로필만 넘겨 목록 첫 것이 열렸다', () => {
+    const lives = [live('web', { pid: 10 }), live('web', { pid: 11, sessionPid: 21 })];
+    expect(pickLive(lives, 'web', 11)?.pid).toBe(11);
+  });
+  it('번호가 없거나(카드) 그 래퍼가 막 바뀌었으면 프로필로', () => {
+    const lives = [live('web', { pid: 10 })];
+    expect(pickLive(lives, 'web')?.pid).toBe(10);
+    expect(pickLive(lives, 'web', 99)?.pid).toBe(10);
+    expect(pickLive(lives, 'other', 10)).toBeUndefined();
+  });
+});
 
 describe('B1 — 다른 세션이 사람을 불러도 쓰던 모달을 가로채지 않는다(2026-10-04 QA 실측: 치던 글이 엉뚱한 브라우저로)', () => {
   it('사람이 연 모달(web-2) 위로 web-1 이 부르면 모달은 web-2 그대로, web-1 은 줄에', () => {
@@ -153,5 +166,50 @@ describe('2026-10-05 사용자 실사용 — 세션 브라우저가 닫혔는데
   });
   it('모달이 닫혀 있으면 없음', () => {
     expect(askShown(ASK_EMPTY, [asking('web-1', 5)], asking('web-1', 5)).live).toBeUndefined();
+  });
+});
+
+// 알림 본문에 세션 이름이 없어 어느 세션이 불렀는지 몰랐다 — 이름을 제목에
+describe('askNotice — 사람 부름 알림 글', () => {
+  it('재현: 제목에 부른 세션 이름, 본문은 이유(없으면 기본 글)', () => {
+    const n = askNotice('shop-web', '로그인 2단계 인증');
+    expect(n.title).toContain('shop-web');
+    expect(n.body).toBe('로그인 2단계 인증');
+    expect(askNotice('shop-web', '').body.length).toBeGreaterThan(0);
+  });
+  it('이름을 모르면 예전 제목', () => {
+    expect(askNotice('', 'x').title).toBe(askNotice(' ', 'x').title);
+    expect(askNotice('', 'x').title).not.toContain('undefined');
+  });
+});
+
+describe('popupStep — 모달을 안 보는 동안 뜬 패스키 창은 알림 한 번 + 결정 대기함 카드(2026-10-10 사용자)', () => {
+  const a = live('shop', { popup: true });
+  const b = live('blog', { pid: 11, popup: true });
+  it('패스키 창이 뜬 브라우저마다 카드, 새로 뜬 것만 알린다', () => {
+    const r = popupStep([], [a, b, live('quiet')], null);
+    expect(r.cards.map((l) => l.profile)).toEqual(['shop', 'blog']);
+    expect(r.notify.map((l) => l.profile)).toEqual(['shop', 'blog']);
+    const r2 = popupStep(r.keys, [a, b], null);
+    expect(r2.notify).toEqual([]);
+    expect(r2.cards.length).toBe(2);
+  });
+  it('모달로 보고 있는 브라우저는 카드 없음(모달이 맡는다) — 닫아도 같은 창이면 다시 안 알린다', () => {
+    const open = { profile: 'shop', pid: 10, sessionPid: 20, byHuman: true };
+    const r = popupStep([], [a], open);
+    expect(r.cards).toEqual([]);
+    expect(r.notify).toEqual([]);
+    const r2 = popupStep(r.keys, [a], null);
+    expect(r2.cards.length).toBe(1);
+    expect(r2.notify).toEqual([]);
+  });
+  it('창이 사라졌다 다시 뜨면 다시 알린다', () => {
+    const r = popupStep(['shop:10'], [live('shop')], null);
+    expect(r.keys).toEqual([]);
+    expect(popupStep(r.keys, [a], null).notify.length).toBe(1);
+  });
+  it('알림 글 — 세션 이름이 있으면 붙인다', () => {
+    expect(popupNotice('shop-app · login').title).toBe('shop-app · login 세션에 패스키 창이 떴어요');
+    expect(popupNotice('').title).toBe('세션 브라우저에 패스키 창이 떴어요');
   });
 });

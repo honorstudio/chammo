@@ -46,7 +46,7 @@ describe('idleKey — 기다리는 기계는 그림이 바뀔 때만 다시 그�
       if (seen.has(k)) expect(seen.get(k), `now=${now}`).toBe(img);
       else seen.set(k, img);
     }
-  });
+  }, 60_000); // 그림 1,700장 — 부하 높을 때 기본 5초를 넘겨 헛실패(2026-10-10)
   it('반짝임이 지나가지 않는 동안엔 전등 박자(260ms)에만 바뀐다', () => {
     const keys = new Set<string>();
     for (let now = 1_000; now < 2_000; now += 4) keys.add(idleKey(now)); // 1.0~2.0초 = 반짝임(2.4초마다 앞 0.48초) 밖

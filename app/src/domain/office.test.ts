@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bossReaction, canPlace, catWalk, cellAt, dockOrder, furnitureAt, coffeeWalk, delivery, deliveryTail, officeState, seatSlots, stampSeen, withLounge, planRoom, speciesFor, type Seat } from './office';
+import { bossReaction, canPlace, catWalk, cellAt, dockOrder, furnitureAt, coffeeWalk, delivery, deliveryTail, officeState, placedCells, seatSlots, stampSeen, withLounge, planRoom, speciesFor, type Desk, type Seat } from './office';
 
 const seat = (id: string, project: string, status: Seat['status'] = 'working', extra: Partial<Seat> = {}): Seat => ({ id, label: project, project, status, startedAt: 0, ...extra });
 
@@ -316,6 +316,54 @@ describe('withLounge — 세션이 늘어 책상이 가구 칸을 덮으면', ()
   });
 });
 
+describe('가구가 먼저 — 놓은 가구는 세션이 늘어도 그 칸(2026-10-10 사용자: 옮겨도 저장이 안 된다)', () => {
+  // 저장은 됐는데(gacha.json placed) 세션이 늘면 책상이 그 칸을 덮어 가구를 휴게실로 밀어냈다 — 다시 켜면 딴 데 가 있었다
+  const hits = (d: Desk, [cx, cy]: [number, number]) => cx < d.gx + d.w && cx + 1 > d.gx && cy < d.gy + 1.2 && cy + 1 > d.gy;
+  const many = ['a', 'b', 'c', 'd', 'e'].map((x) => seat(x, x));
+  it('앞줄 책상이 놓인 가구 칸을 건너뛰고 다음 빈 자리에 앉는다 — 가구는 그 칸 그대로', () => {
+    const placed: Record<string, [number, number]> = { 'furn.sofa': [3, 5] };
+    const r = withLounge(planRoom([seat('b1', '참모')], many, 'bear', undefined, placedCells(['furn.sofa'], placed)), ['furn.sofa'], placed);
+    expect(r.furniture).toEqual([{ id: 'furn.sofa', gx: 3, gy: 5 }]);
+    expect(r.desks.filter((d) => hits(d, [3, 5]))).toEqual([]);
+    expect(r.desks.filter((d) => !d.boss).map((d) => d.id)).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+  it('자리표 순서는 그대로 — 가구 칸만 빼고 다음 자리로 민다', () => {
+    const r = planRoom([], [seat('a', 'p'), seat('b', 'q')], 'bear', ['a', 'b'], [[0, 3]]);
+    expect(r.desks.map((d) => [d.id, d.gx, d.gy])).toEqual([['a', 3.2, 3.2], ['b', 5.9, 3.2]]);
+  });
+  it('창고(null)·안 가진 가구는 막지 않는다', () => {
+    expect(placedCells(['furn.sofa'], { 'furn.sofa': null, 'furn.lamp': [1, 4] })).toEqual([]);
+  });
+  it('뒷줄 옆자리(참모-2·3)는 지금 비어 있어도 못 놓는다 — 나중에 참모가 앉으면 덮이니까', () => {
+    const room = withLounge(planRoom([seat('b1', '참모')], [], 'bear'), ['furn.board']);
+    expect(canPlace(room, [6, 1])).toBe(false);
+    expect(canPlace(room, [1, 1])).toBe(false);
+    expect(canPlace(room, [0, 0])).toBe(true);
+  });
+});
+
+describe('휴게실 자동 자리는 놓인 가구를 피한다(방 크기가 바뀌어도 가구가 겹쳐 틀어지지 않게)', () => {
+  const overlap = (a: { gx: number; gy: number }, b: { gx: number; gy: number }) => Math.abs(a.gx - b.gx) < 1 && Math.abs(a.gy - b.gy) < 1;
+  it('휴게실 칸에 놓은 가구가 있으면 안 놓은 가구는 다음 빈 자동 자리로', () => {
+    const room = planRoom([seat('b1', '참모')], [seat('w1', 'todo-api')], 'bear');
+    const placed: Record<string, [number, number]> = { 'furn.sofa': [8, 0], 'furn.vending': [8, 2] };
+    const ids = ['furn.sofa', 'furn.vending', 'furn.lamp', 'furn.tank', 'furn.board'];
+    const r = withLounge(room, ids, placed);
+    const set = r.furniture.filter((f) => placed[f.id]);
+    const auto = r.furniture.filter((f) => !placed[f.id]);
+    expect(set.map((f) => [f.id, f.gx, f.gy])).toEqual([['furn.sofa', 8, 0], ['furn.vending', 8, 2]]);
+    for (const a of auto) for (const p of set) expect(overlap(a, p), `${a.id} ${p.id}`).toBe(false);
+    for (const a of auto) for (const b of auto) if (a !== b) expect(overlap(a, b)).toBe(false);
+    expect(r.rows).toBeGreaterThanOrEqual(Math.max(...auto.map((f) => Math.ceil(f.gy + 1.2))));
+  });
+  it('세션이 줄어 방이 얕아져도 놓은 가구는 그 칸 — 방이 가구까지는 남는다', () => {
+    const placed: Record<string, [number, number]> = { 'furn.sofa': [1, 9] };
+    const few = withLounge(planRoom([seat('b1', '참모')], [seat('w1', 'a')], 'bear', undefined, [[1, 9]]), ['furn.sofa'], placed);
+    expect(few.furniture).toEqual([{ id: 'furn.sofa', gx: 1, gy: 9 }]);
+    expect(few.rows).toBeGreaterThanOrEqual(10);
+  });
+});
+
 describe('planRoom — 지금 하는 행동이 책상에 실린다', () => {
   it('act·doing 을 그대로', () => {
     const r = planRoom([], [{ ...seat('a', 'todo-api'), act: 'type', doing: 'Edit ambassador.ts' }], 'bear');
@@ -337,6 +385,11 @@ describe('furnitureAt — 가구 놓기에서 놓인 가구를 집는다(심즈�
     expect(furnitureAt(room, ox, oy, x, y)).toBe('furn.lamp');
   });
   it('빈 곳이면 null', () => { expect(furnitureAt(room, ox, oy, 0, 0)).toBeNull(); });
+  it('뒤 가구의 바닥을 누르면 그 가구 — 앞 가구 몸통 판정이 뒤 바닥까지 덮어 소파를 집으면 어항이 왔다', () => {
+    const lounge = withLounge(planRoom([seat('b1', '참모')], [seat('w1', 'todo-api')], 'bear'), ['furn.sofa', 'furn.board', 'furn.lamp', 'furn.tank']);
+    const sofa = lounge.furniture.find((f) => f.id === 'furn.sofa')!;
+    expect(furnitureAt(lounge, ox, oy, ...foot(sofa.gx, sofa.gy))).toBe('furn.sofa');
+  });
 });
 
 describe('사람 필요·상태 원본이 책상까지(오피스 A 1단계)', () => {

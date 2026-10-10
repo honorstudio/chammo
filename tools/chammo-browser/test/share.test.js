@@ -55,6 +55,22 @@ test('같이 쓰는 중 browser_close 는 스크립트 크롬을 안 닫고 연�
   assert.strictEqual(relay.sharing(), false);
 });
 
+test('같이 쓰는 중 다른 호출이 도는 사이 browser_close 가 와도 child 로 안 보내고, 그 호출이 끝나면 놓는다', () => {
+  // roadmap browser-scripts ② — 도는 호출이 있으면(pending) 위 길을 비켜 close 가 child playwright 로 가 스크립트 크롬 연결을 끊었다
+  const { relay, toChild, toClient, log } = sharedRelay();
+  relay.onClientLine(call(1, 'browser_navigate'));
+  relay.onClientLine(call(2, 'browser_close'));
+  assert.strictEqual(toChild.length, 1, 'close 는 child 로 안 보낸다');
+  const r = JSON.parse(toClient.at(-1));
+  assert.strictEqual(r.id, 2);
+  assert.match(r.result.content[0].text, /스크립트/);
+  assert.strictEqual(log.release, 0, '도는 호출이 끝나기 전엔 안 놓는다');
+  relay.onChildLine(ok(1));
+  assert.strictEqual(log.release, 1);
+  assert.strictEqual(relay.sharing(), false);
+  assert.strictEqual(relay.holdsLock(), false);
+});
+
 test('같이 쓰는 중 유휴면 close 를 안 보내고 놓기만(명부 닫기 판단 canClose 도 안 부른다)', () => {
   const s = sharedRelay({ idleMs: 1000 });
   s.relay.onClientLine(call(1, 'browser_navigate'));

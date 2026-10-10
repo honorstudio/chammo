@@ -182,3 +182,14 @@ describe('윈도우 — load.rs 가 sysinfo 값을 맥 모양 글로 만든다(p
     expect(s).toEqual({ cores: 8, load1: 4, load5: 4, load15: 4, swapUsedMb: 1024, swapTotalMb: 4096, memTotalMb: 16384 });
   });
 });
+
+describe('참모 모드 호스트 — 모드 하나당 claude 프로세스 하나(≈240MB), 부하 화면에 따로 센다', () => {
+  it('켜진 모드 호스트는 "다른 앱·시스템"이 아니라 모드 칸으로', () => {
+    const ps = [PS, '  700     1   0.3 246000        05:00 /Users/me/.local/bin/claude -p --input-format stream-json --plugin-dir /d/modes/counter'].join('\n');
+    const r = attribute(parsePs(ps), [], new Map(), [], [{ name: 'counter', pid: 700 }, { name: 'gone', pid: 999 }]);
+    expect(r.modes).toEqual([{ name: 'counter', cpu: 0.3, rssKb: 246000 }]);
+    expect(r.rest.top.some((p) => p.pid === 700)).toBe(false);
+    const sys = parseSys('10\n{ 1.0 1.0 1.0 }\ntotal = 0.00M  used = 0.00M  free = 0.00M\n25769803776')!;
+    expect(summarize(sys, r, new Date(0)).modes).toEqual({ count: 1, mem: fmtMem(246000) });
+  });
+});

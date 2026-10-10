@@ -1,7 +1,7 @@
 // 픽셀 사무실 그리기 — 아이소메트릭 도트. 시안 엔진(docs/design-drafts/pixel-office/body/office_engine.js)을 옮긴 것.
 // 한 프레임 = 벽 → 바닥 → (깊이 순) 책상·캐릭터·가구. 캐릭터는 다마고치 도트(ui/tama/sprites)에 스킨 색을 입힌다
 import type { BossReact, Delivery, Desk, Room } from '../../domain/office';
-import { drawHat, windowScene, WINDOW_SKY } from '../gacha/icons';
+import { deskProp, drawHat, lightScene, windowScene, WINDOW_SKY } from '../gacha/icons';
 import { SPR } from '../tama/sprites';
 import type { Skin } from './skins';
 
@@ -124,7 +124,7 @@ export type Poof = { id: string; gx: number; gy: number; age: number };
 export const POOF_MS = 1100;
 
 /** 뽑기로 얻어 장착한 것들(domain/gacha equip) + 펫 친구 위치 */
-export type Deco = { hat?: string; window?: string; fx?: string; dance?: boolean; cat?: { at: [number, number]; flip: boolean } | null };
+export type Deco = { hat?: string; window?: string; fx?: string; dance?: boolean; cat?: { at: [number, number]; flip: boolean } | null; /** 모든 책상 위 소품 */ desk?: string; /** 방 조명 */ light?: string };
 /** edit = 가구 놓기 — 바닥 칸 선을 보이고, 마우스가 올라간 칸을 칠한다(놓을 수 있으면 초록, 없으면 빨강) */
 /** ghost = 끄는 중인 가구 — 원래 자리에선 빼고 hover 칸에 반투명으로(못 놓는 칸이면 더 흐리게) */
 export type DrawOpts = { walker?: Delivery | null; poofs?: Poof[]; boss?: BossReact | null; deco?: Deco; edit?: { hover: [number, number] | null; ok: boolean; ghost?: string | null } };
@@ -207,6 +207,8 @@ export function drawRoom(ctx: CanvasRenderingContext2D, room: Room, sk: Skin, t:
         const [pt, pl, pr] = sk.plate ?? ['#e0b94f', '#c99a2e', '#b3871f'];
         box(d.gx + 0.9, d.gy + 0.95, 0.6, 0.12, 9, 2, pt, pl, pr);
       }
+      // 책상 소품(뽑기) — 모니터 오른쪽 책상 위. 빈 책상엔 안 둔다
+      if (deco.desk && !d.empty) { const [sx, sy] = P(d.gx + 0.5, d.gy + 0.9, 9); deskProp(b, deco.desk, Math.round(sx), Math.round(sy), t, act === 'type'); }
       // 모니터(왼쪽 끝, 화면은 캐릭터 쪽)
       const mx = d.gx + 0.12, my = d.gy + 0.66;
       box(mx, my, 0.14, 0.42, 9, 11, sk.mon, sk.mon, sk.monR);
@@ -359,6 +361,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, room: Room, sk: Skin, t:
   }
 
   items.sort((a, c) => a.k - c.k).forEach((it) => it.f());
+  if (deco.light) { const bd = room.desks.find((d) => d.boss); lightScene(b, deco.light, W, H, t, P, cols, rows, bd ? [bd.gx + bd.w / 2, bd.gy + 0.9] : undefined); }
   if (sk.weather) weather(b, W, H, sk.weather, t);
   if (deco.fx) for (const p of poofs) fxBurst(b, P, sk, deco.fx, p.gx, p.gy, Math.min(1, p.age / POOF_MS));
   return spots;

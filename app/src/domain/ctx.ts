@@ -27,6 +27,12 @@ export function parseCtx(files: string[]): Record<string, Ctx> {
 
 export const ctxLevel = (used: number) => (used >= CTX_ALERT ? 'high' : used >= 60 ? 'mid' : 'ok');
 
+/** 사이드바 프사 고리(SVG stroke-dasharray) — 반지름 r 원 둘레에서 대화 % 만큼. 색 단계는 숫자 칸(ctxLevel)과 같다(2026-10-10 B안) */
+export function ctxRing(used: number, r: number): { dash: number; circ: number; level: ReturnType<typeof ctxLevel> } {
+  const circ = 2 * Math.PI * r;
+  return { dash: (circ * Math.max(0, Math.min(100, used))) / 100, circ, level: ctxLevel(used) };
+}
+
 /** 80% 를 넘어선 세션. 이전 값을 모르는 세션(앱을 막 켰을 때)은 알리지 않는다 */
 export function ctxAlerts(prev: Record<string, number>, next: Record<string, number>): string[] {
   return Object.keys(next).filter((id) => prev[id] !== undefined && prev[id]! < CTX_ALERT && next[id]! >= CTX_ALERT);

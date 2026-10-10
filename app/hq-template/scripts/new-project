@@ -74,11 +74,16 @@ def computer_use_on(cfg):
     return f.get('computerUse') is True
 
 
+def claude_json(home):
+    """Claude Code 가 읽는 .claude.json — CLAUDE_CONFIG_DIR 가 있으면 그 안(시험 설정 폴더로 돌리면 거기)"""
+    return os.path.join(os.environ.get('CLAUDE_CONFIG_DIR') or home, '.claude.json')
+
+
 def trust(path, home, win=None, computer_use=False):
-    """claude --bg 가 새 폴더에서 뜨게 ~/.claude.json 에 '믿음'을 적는다 — 이 스크립트가 방금 만든 빈 폴더에만.
+    """claude --bg 가 새 폴더에서 뜨게 ~/.claude.json(CLAUDE_CONFIG_DIR 면 그 안)에 '믿음'을 적는다 — 이 스크립트가 방금 만든 빈 폴더에만.
     (부모 폴더를 믿어도 새 하위 폴더는 "Workspace not trusted" 로 거부됐다, 2026-09-28 실측) 파일이 없거나 깨졌으면 손대지 않는다.
     computer_use 면 내장 화면 조종도 켠다 — Claude Code 는 projects.<경로>.enabledMcpServers 에 있어야 켠다(앱 computer_use.rs 와 같은 자리)"""
-    cj = os.path.join(home, '.claude.json')
+    cj = claude_json(home)
     try:
         with open(cj, encoding='utf-8') as f:
             d = json.load(f)

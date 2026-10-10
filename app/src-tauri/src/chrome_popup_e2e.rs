@@ -1,7 +1,7 @@
 //! 크롬 자체 창(패스키) 알아보기를 진짜 크롬 베타로 끝에서 끝까지 — 평소엔 안 돈다(창이 뜨는 맥 화면이 있어야 한다).
 //! `CHAMMO_HOME=<빈 시험 폴더> cargo test chrome_popup_e2e -- --ignored --nocapture --test-threads=1`
 //! 창 자리는 CHAMMO_TEST_WIN_POS=x,y(기본 -2850,1000 = 이 맥의 가짜 화면 'Chammo agents') — 사용자 화면에 안 띄운다.
-//! 세션 크롬처럼 앱을 가린(⌘H) 채로 localhost 페이지가 패스키를 부르면 → 앱 일꾼이 popup 을 내고, 요청을 끊으면 내린다
+//! 세션 크롬처럼 앱을 가린(⌘H) 채로 localhost 페이지가 패스키를 부르면 → 앱 감시(watch_popups)가 popup 을 내고, 요청을 끊으면 내린다
 use super::*;
 use std::io::{Read, Write};
 
@@ -72,7 +72,7 @@ fn chrome_popup_e2e() {
         let mut l = t.lines();
         Some((l.next()?.trim().parse::<u16>().ok()?, l.next()?.trim().to_string()))
     });
-    let live = Live { profile: profile.clone(), pid: chrome.child.id() as i32, session_pid: 1, port, ws_path: ws, url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None, scripts: 0 };
+    let live = Live { profile: profile.clone(), pid: chrome.child.id() as i32, session_pid: 1, port, ws_path: ws, url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None, scripts: 0, popup: false };
     std::fs::create_dir_all(live_dir()).unwrap();
     std::fs::write(live_dir().join(format!("{profile}.json")), serde_json::to_string(&live).unwrap()).unwrap();
     let pid = wait_for("크롬 pid", 10, || chrome_pid(port));
@@ -86,18 +86,11 @@ fn chrome_popup_e2e() {
     let eval = |c: &mut Cdp, e: &str| c.call("Runtime.evaluate", serde_json::json!({ "expression": e, "returnByValue": true }), Some(&s), |_| {}).map(|r| r["result"]["value"].clone());
     wait_for("페이지", 10, || (eval(&mut owner, "!!document.getElementById('b')").ok()? == serde_json::json!(true)).then_some(()));
 
-    // 칸이 보고 있다 — frame_bytes 를 계속 물어 일꾼을 살려 둔다(보는 칸 흉내)
-    let on = Arc::new(AtomicBool::new(true));
-    let (o, p) = (on.clone(), profile.clone());
-    std::thread::spawn(move || {
-        while o.load(Ordering::Relaxed) {
-            let _ = frame_bytes(&p, 0);
-            std::thread::sleep(Duration::from_millis(300));
-        }
-    });
-    wait_for("일꾼이 붙음", 10, || agent_tabs(profile.clone()).attached.then_some(()));
+    // 아무 칸도 안 보고 있다(일꾼 없음) — 2026-10-10 네이버 때처럼. 앱의 1초 감시만으로 알아야 한다
+    watch_popups();
+    let popup = |p: &str| agent_lives().iter().any(|l| l.profile == p && l.popup);
     std::thread::sleep(Duration::from_millis(2500));
-    assert!(!agent_tabs(profile.clone()).popup, "패스키 부르기 전엔 popup 이 없어야(평소 창으로 헛 알림 금지)");
+    assert!(!popup(&profile), "패스키 부르기 전엔 popup 이 없어야(평소 창으로 헛 알림 금지)");
 
     // 앱처럼 가린다(창이 다 뜬 뒤에 — 띄우자마자 가리면 안 먹을 때가 있다) — 가린 크롬은 패스키 창도 가린 채 띄우고 스스로 안 보인다(실측)
     app_window::hide(pid);
@@ -108,7 +101,7 @@ fn chrome_popup_e2e() {
     }
     wait_for("패스키 요청이 걸림", 10, || (eval(&mut owner, "window.r").ok()? == serde_json::json!("pending")).then_some(()));
     let t0 = Instant::now();
-    wait_for("앱이 크롬 자체 창을 알아봄", 15, || agent_tabs(profile.clone()).popup.then_some(()));
+    wait_for("앱이 크롬 자체 창을 알아봄", 15, || popup(&profile).then_some(()));
     println!("popup 알아봄 {:?}", t0.elapsed());
     assert_eq!(app_window::hidden(pid), Some(true), "크롬은 여전히 가려져 있다 — 사람 눈엔 안 보이는 상태(그래서 줄이 필요)");
 
@@ -118,8 +111,7 @@ fn chrome_popup_e2e() {
     owner.call("Page.navigate", serde_json::json!({ "url": "about:blank" }), Some(&s), |_| {}).unwrap();
     let gone = wait_for("창이 목록에서 빠짐", 40, || (!crate::chrome_popup::windows(pid).iter().any(|w| w.rect.w == 448.0 && w.rect.h == 387.0)).then(|| t1.elapsed()));
     println!("닫힌 창이 목록에서 빠지기까지 {gone:?}");
-    wait_for("창이 닫히면 popup 도 내림", 10, || (!agent_tabs(profile.clone()).popup).then_some(()));
+    wait_for("창이 닫히면 popup 도 내림", 10, || (!popup(&profile)).then_some(()));
     println!("popup 내림 {:?}", t1.elapsed());
-    on.store(false, Ordering::Relaxed);
     let _ = std::fs::remove_file(live_dir().join(format!("{profile}.json")));
 }

@@ -1,44 +1,40 @@
 // 참모 대시보드의 '펫' 탭 — 참모가 키우는 펫(시안 docs/design-drafts/tama-v2 v1 B, 2026-10-03 사용자 확정).
 // 둘레는 앱 무채색, 초록은 LCD 화면 안에만. 지금 애 · 오늘 먹은 것(= 오늘 끝낸 일) · 도감/업적/보관함/무덤 탭
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BADGES } from '../../domain/tama/badges';
 import { fullness, type TamaEvent } from '../../domain/tama/pet';
 import { todayFed } from '../../domain/tama/signals';
-import { archive, BOX_SIZE, fuse, restart, retrieve, type TamaFile } from '../../domain/tama/store';
+import { isFinal, RETIRE_AFTER } from '../../domain/tama/lineage';
+import { archive, BOX_SIZE, fuse, restart, retire, retrieve, type TamaFile } from '../../domain/tama/store';
 import { fuseTarget, nameOf, stageOf, type Egg, type Slot } from '../../domain/tama/tree';
 import { getLang, tr } from '../../i18n';
 import { OrchAvatar } from '../avatar/OrchAvatar';
 import { IconBox } from '../Icons';
 import { OfficeModal, type ShopView } from '../office/OfficeMenu';
 import { EGGS, eggName, STAGES } from './labels';
-import { drawSprite, spriteOf } from './lcd';
+import { DiaryTab } from './DiaryTab';
+import { LineageTab, QuirkChips } from './LineageTab';
+import { MonsterNow, MonsterTab } from './MonsterTab';
+import { spriteOf } from './lcd';
+import { Sprite as Lcd } from './Sprite';
 import './pet.css';
 
 const SLOTS: Slot[] = ['egg', 'i1', 'i2', 'r1', 'r2', 'cG', 'cD', 'cA', 'cT', 'cM', 'cS', 'cN', 'cX', 'p1', 'p2', 'p3', 'm1', 'm2'];
 const FUSED: [Slot, Egg][] = [['jA', 'fire'], ['jB', 'leaf']];
 const TOTAL = EGGS.length * SLOTS.length + FUSED.length;
-const theme = () => (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 const day = (t: number) => new Date(t).toLocaleDateString(getLang() === 'en' ? 'en-US' : 'ko-KR', { month: 'numeric', day: 'numeric' });
 const hhmm = (t: number) => new Date(t).toTimeString().slice(0, 5);
+const when = (t: number) => `${day(t)} ${hhmm(t)}`;
 
 /** 먹이 종류 이름 — 오늘 먹은 것 줄의 작은 알약 */
 const KIND: Record<TamaEvent['type'], () => string> = {
   commit: () => tr('커밋', 'Commit'), pr: () => tr('PR 머지', 'PR merge'), task: () => tr('시킨 일', 'Task'), ci: () => 'CI',
   work: () => tr('일한 시간', 'Work'), show: () => tr('결과물', 'Result'), talk: () => tr('대화', 'Talk'),
-  routine: () => tr('예약', 'Schedule'), doc: () => tr('문서', 'Doc'), review: () => tr('시안 검토', 'Review'),
+  routine: () => tr('예약', 'Schedule'), doc: () => tr('문서', 'Doc'), review: () => tr('시안 검토', 'Review'), slay: () => tr('몬스터 처치', 'Monster beaten'),
 };
 const MAX_ROWS = 12;
 
-function Sprite({ egg, slot, size }: { egg: Egg; slot: Slot; size: number }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const c = ref.current;
-    if (!c) return;
-    c.width = c.height = Math.round(size * (window.devicePixelRatio || 1));
-    drawSprite(c, spriteOf(egg, slot), theme());
-  }, [egg, slot, size]);
-  return <canvas ref={ref} className="pv-lcd" style={{ width: size, height: size }} />;
-}
+const Sprite = ({ egg, slot, size }: { egg: Egg; slot: Slot; size: number }) => <Lcd name={spriteOf(egg, slot)} size={size} />;
 
 function Stat({ name, value, max, text }: { name: string; value: number; max: number; text: string }) {
   return (
@@ -46,7 +42,7 @@ function Stat({ name, value, max, text }: { name: string; value: number; max: nu
   );
 }
 
-type Tab = 'dex' | 'badges' | 'box' | 'graves';
+type Tab = 'diary' | 'dex' | 'lineage' | 'monsters' | 'badges' | 'box' | 'graves';
 type Props = {
   file: TamaFile | null;
   apply: (op: (f: TamaFile, now: number) => TamaFile | null) => Promise<boolean>;
@@ -59,7 +55,7 @@ type Props = {
 };
 
 export function PetView({ file, apply, feed, who, coins, shop }: Props) {
-  const [tab, setTab] = useState<Tab>('dex');
+  const [picked, setTab] = useState<Tab | null>(null); // 처음엔 일기가 있으면 일기, 없으면 진화
   const [shopView, setShopView] = useState<ShopView | null>(null);
   const [sure, setSure] = useState(false); // 처음부터: 두 번 눌러야
   const [msg, setMsg] = useState<string | null>(null);
@@ -70,9 +66,16 @@ export function PetView({ file, apply, feed, who, coins, shop }: Props) {
   const act = async (op: (f: TamaFile, now: number) => TamaFile | null, fail: string) => setMsg((await apply(op)) ? null : fail);
   const today = todayFed(feed, Date.now());
   const badges = file.badges ?? {};
+  const lineage = file.lineage ?? [];
+  const diary = file.diary ?? [];
+  const tab: Tab = picked ?? (diary.length ? 'diary' : 'dex');
+  const slain = (file.monsters?.log ?? []).filter((l) => !l.fled).length;
   const seenCount = new Set(file.dex.map((d) => (d.endsWith('.jA') || d.endsWith('.jB') ? d.slice(-2) : d))).size;
   const tabs: [Tab, string][] = [
+    ['diary', tr(`일기 ${diary.length}`, `Diary ${diary.length}`)],
     ['dex', tr(`진화 ${seenCount}/${TOTAL}`, `Evolutions ${seenCount}/${TOTAL}`)], // 뽑기 '도감'과 이름이 겹치지 않게(2026-10-04 QA 3번)
+    ['lineage', tr(`혈통 ${lineage.length + 1}대`, `Lineage · Gen ${lineage.length + 1}`)],
+    ['monsters', tr(`몬스터 ${slain}`, `Monsters ${slain}`)],
     ['badges', tr(`업적 ${Object.keys(badges).length}/${BADGES.length}`, `Badges ${Object.keys(badges).length}/${BADGES.length}`)],
     ['box', tr(`보관함 ${file.box.length}/${BOX_SIZE}`, `Storage ${file.box.length}/${BOX_SIZE}`)],
     ['graves', tr(`무덤 ${file.graves.length}`, `Graves ${file.graves.length}`)],
@@ -85,11 +88,18 @@ export function PetView({ file, apply, feed, who, coins, shop }: Props) {
         <div className="pv-info">
           {pet ? (
             <>
-              <div className="pv-name"><b>{nameOf(pet.egg, pet.slot)}</b><span>{STAGES[stageOf(pet.slot)]} · {tr(`${Math.floor((Date.now() - pet.bornAt) / 86_400_000) + 1}일째`, `Day ${Math.floor((Date.now() - pet.bornAt) / 86_400_000) + 1}`)}</span></div>
+              <div className="pv-name"><b>{nameOf(pet.egg, pet.slot)}</b><span>{tr(`${lineage.length + 1}대`, `Gen ${lineage.length + 1}`)} · {STAGES[stageOf(pet.slot)]} · {tr(`${Math.floor((Date.now() - pet.bornAt) / 86_400_000) + 1}일째`, `Day ${Math.floor((Date.now() - pet.bornAt) / 86_400_000) + 1}`)}</span></div>
+              <QuirkChips quirks={pet.quirks ?? []} />
               <Stat name={tr('배', 'Belly')} value={fullness(pet)} max={4} text={`${fullness(pet)}/4`} />
               <Stat name={tr('훈련', 'Training')} value={pet.c.training} max={16} text={String(pet.c.training)} />
               <Stat name={tr('배틀', 'Battles')} value={pet.c.wins} max={Math.max(15, pet.c.battles)} text={`${pet.c.wins}/${pet.c.battles}`} />
               <Stat name={tr('실수', 'Mistakes')} value={pet.c.mistakes} max={5} text={String(pet.c.mistakes)} />
+              {isFinal(pet.slot) && (
+                <div className="pv-retire">
+                  <button className="btn" onClick={() => void act(retire, tr('은퇴시키지 못했어', 'Could not retire'))}>{tr('은퇴', 'Retire')}</button>
+                  <span>{pet.peakAt !== undefined ? tr(`${when(pet.peakAt + RETIRE_AFTER)} 저절로 은퇴 — 다음 알이 버릇을 물려받아`, `Retires on its own ${when(pet.peakAt + RETIRE_AFTER)} — the next egg inherits a habit`) : tr('은퇴하면 다음 알이 버릇을 물려받아', 'Retire it and the next egg inherits a habit')}</span>
+                </div>
+              )}
               {pet.sick && <span className="pv-warn">{tr('아파 — 먹이 세 번이 약', 'Sick — three feedings cure it')}</span>}
             </>
           ) : (
@@ -104,6 +114,7 @@ export function PetView({ file, apply, feed, who, coins, shop }: Props) {
         </div>
       </section>
       {msg && <div className="banner">{msg}</div>}
+      <MonsterNow monsters={file.monsters} now={Date.now()} />
 
       <section className="pv-fed">
         <div className="pv-h">{tr('오늘 먹은 것', 'Fed today')}<span>{today.length}</span></div>
@@ -129,6 +140,8 @@ export function PetView({ file, apply, feed, who, coins, shop }: Props) {
         {tabs.map(([k, label]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{label}</button>)}
       </div>
 
+      {tab === 'diary' && <DiaryTab diary={diary} />}
+
       {tab === 'dex' && (
         <div className="pv-dex">
           {EGGS.map(([egg, name]) => (
@@ -151,6 +164,10 @@ export function PetView({ file, apply, feed, who, coins, shop }: Props) {
           </div>
         </div>
       )}
+
+      {tab === 'lineage' && <LineageTab lineage={lineage} pet={pet} heir={file.heir ?? []} />}
+
+      {tab === 'monsters' && <MonsterTab monsters={file.monsters} />}
 
       {tab === 'badges' && (
         <div className="pv-badges">

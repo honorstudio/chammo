@@ -2,12 +2,12 @@
 import { DEFAULT_CAL, type Calendar } from './clock';
 import { fullness, type Pet } from './pet';
 
-export type SceneName = 'pick' | 'dead' | 'evolve' | 'sick' | 'eat' | 'sleep' | 'poop' | 'walk';
+export type SceneName = 'pick' | 'dead' | 'evolve' | 'sick' | 'monster' | 'eat' | 'sleep' | 'poop' | 'walk';
 export type Lamp = 'food' | 'light' | 'play' | 'med' | 'clean' | 'stat' | 'train' | 'call';
 
 const EAT_MS = 90_000;
 
-export function sceneFor(pet: Pet | null, now: number, o: { busy: boolean; justEvolved: boolean }, cal: Calendar = DEFAULT_CAL) {
+export function sceneFor(pet: Pet | null, now: number, o: { busy: boolean; justEvolved: boolean; /** 장애 몬스터가 나와 있다(monsters) */ monster?: boolean }, cal: Calendar = DEFAULT_CAL) {
   if (!pet) return { scene: 'pick' as SceneName, lit: [] as Lamp[] };
   if (pet.dead) return { scene: 'dead' as SceneName, lit: [] as Lamp[] };
   const h = new Date(now).getHours();
@@ -21,8 +21,9 @@ export function sceneFor(pet: Pet | null, now: number, o: { busy: boolean; justE
   if (pet.sick) lit.push('med');
   if (pet.poops > 0) lit.push('clean');
   if (o.busy) lit.push('train');
-  if (pet.sick || pet.poops > 0 || fullness(pet) === 0) lit.push('call');
+  const facing = !!o.monster && !asleep;
+  if (pet.sick || pet.poops > 0 || fullness(pet) === 0 || facing) lit.push('call');
 
-  const scene: SceneName = o.justEvolved ? 'evolve' : pet.sick ? 'sick' : eating ? 'eat' : asleep ? 'sleep' : pet.poops > 0 ? 'poop' : 'walk';
+  const scene: SceneName = o.justEvolved ? 'evolve' : pet.sick ? 'sick' : facing ? 'monster' : eating ? 'eat' : asleep ? 'sleep' : pet.poops > 0 ? 'poop' : 'walk';
   return { scene, lit };
 }

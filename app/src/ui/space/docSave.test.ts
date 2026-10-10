@@ -5,7 +5,7 @@ let reply: (cmd: string, args: Record<string, unknown>) => unknown = () => undef
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: async (cmd: string, args: Record<string, unknown>) => { calls.push({ cmd, args }); return reply(cmd, args); },
 }));
-const { lastSaved, newSession, saveNow, saveSoon, setBase } = await import('./docSave');
+const { lastSaved, newSession, readOutside, saveNow, saveSoon, setBase } = await import('./docSave');
 
 const P = '/h/pages/메모.md';
 const writes = () => calls.filter((c) => c.cmd === 'write_doc_text');
@@ -74,5 +74,20 @@ describe('docSave — 알던 판일 때만 쓴다(밖에서 고친 줄을 덮지
     const s = newSession(P, 'a');
     setBase(s, 'b', '2:2');
     expect(s.base.ver).toBe(2);
+  });
+});
+
+describe('readOutside — 바깥 판 읽기', () => {
+  beforeEach(() => { calls.length = 0; });
+  it('읽히면 글', async () => {
+    reply = () => '# 새\n';
+    expect(await readOutside(P)).toEqual({ text: '# 새\n' });
+  });
+  // 밖에서 UTF-8 아닌 글로 저장하면 읽기가 실패해 띠 없이 저장만 멈췄다 — 못 읽음은 따로 알린다
+  it('UTF-8 아닌 글이면 unreadable, 그 밖의 실패는 null(다음 감시에서 다시)', async () => {
+    reply = () => { throw 'NOT_UTF8'; };
+    expect(await readOutside(P)).toEqual({ unreadable: true });
+    reply = () => { throw 'No such file'; };
+    expect(await readOutside(P)).toBeNull();
   });
 });

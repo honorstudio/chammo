@@ -4,7 +4,7 @@ import { blockedBody, nativeWhenFocused, NOTIFY_GAP_MS, noteKey, noteTarget, rea
 
 describe('wants — 어떤 알림을 보내나 (사용자 2026-09-27 "필요한 것만")', () => {
   it('결정 대기(task ask·로그인 오류)·권한 창 자동 허용 실패는 늘 보낸다', () => {
-    for (const k of ['decide', 'login', 'allowFail'] as const) {
+    for (const k of ['decide', 'login', 'allowFail', 'lost'] as const) { // lost = 재시작으로 꺼진 세션을 참모에게 세 번 못 알림
       expect(wants(k, false)).toBe(true);
       expect(wants(k, true)).toBe(true);
     }

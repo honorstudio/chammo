@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { parseResult, toolLine, readPort, enabled, createLive, liveFile } = require('../src/live');
+const { parseResult, toolLine, readPort, enabled, createLive, liveFile, askText } = require('../src/live');
 const { chromeArgs } = require('../src/window');
 const { portOpen, pageCount } = require('../src/live');
 
@@ -117,6 +117,38 @@ test('사람 부르기 — 상태 파일에 ask 를 적고, 앱이 .done 을 만
   assert.strictEqual(r.ok, true);
   assert.ok(!fs.existsSync(done));
   assert.strictEqual(JSON.parse(fs.readFileSync(liveFile(root, 'acme'), 'utf8')).ask, null);
+});
+
+test('사람 부르기 — 사람이 모달에서 한마디 적어 끝내면(.say) 그 말을 같이 돌려준다(2026-10-10 사용자 "그냥 알아서 로그인해")', async () => {
+  const root = tmp();
+  const prof = path.join(root, 'profiles', 'acme');
+  fs.mkdirSync(prof, { recursive: true });
+  fs.writeFileSync(path.join(prof, 'DevToolsActivePort'), '5000\n/devtools/browser/abc\n');
+  const live = createLive({ profile: 'acme', root, profileDir: prof, pid: 1, ppid: 2, now: () => 7, probe: async () => true });
+  live.onCall('browser_navigate', { url: 'https://a.com/' });
+  const say = path.join(root, 'live', 'acme.say');
+  const p = live.askHuman('로그인', { pollMs: 5, timeoutMs: 2000 });
+  await new Promise((r) => setTimeout(r, 20));
+  fs.writeFileSync(say, '1:7\n알아서 로그인해'); // 그 부름 표 + 한 말
+  fs.writeFileSync(path.join(root, 'live', 'acme.done'), '1:7');
+  const r = await p;
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.said, '알아서 로그인해');
+  assert.ok(r.text.includes('알아서 로그인해'), r.text);
+  assert.ok(!fs.existsSync(say), '읽으면 지운다');
+  // 지난 부름에 적힌 말은 안 붙인다
+  const p2 = live.askHuman('또', { pollMs: 5, timeoutMs: 2000 });
+  await new Promise((r) => setTimeout(r, 20));
+  fs.writeFileSync(say, '1:6\n옛 말');
+  fs.writeFileSync(path.join(root, 'live', 'acme.done'), '1:7');
+  const r2 = await p2;
+  assert.strictEqual(r2.said, undefined);
+  assert.ok(!r2.text.includes('옛 말'));
+  // 사람이 한 일 꼬리표가 원래 글을 갈아 끼워도 한마디는 남는다
+  assert.ok(askText(r, '사람이 한 일: 주소 이동').includes('알아서 로그인해'));
+  assert.strictEqual(askText(r2, '사람이 한 일'), '사람이 한 일');
+  assert.strictEqual(askText(r, ''), r.text);
+  assert.strictEqual(askText({ ok: false, text: '꺼짐' }, 'x'), '꺼짐');
 });
 
 test('사람 부르기 — 브라우저가 안 떠 있으면 바로 실패, 시간이 다 되면 아직이라고', async () => {

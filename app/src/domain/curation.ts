@@ -7,6 +7,9 @@ export const isCurationHtml = (html: string) => /hodoc\s*:\s*['"]cur-state['"]/.
 export const emptyStore = (d?: Record<string, unknown> | null) =>
   !d || Object.values(d).every((v) => !v || typeof v !== 'object' || !Object.keys(v as object).length);
 
+/** 시안 칸이 보낸 message 인가 — 그 칸 창(contentWindow)일 때만. 다른 칸이 cur-state·curation·esc 를 흉내 내지 못하게(리더 Reader·폰 HtmlSheet 와 같은 규칙) */
+export const fromFrame = (e: MessageEvent, win: Window | null | undefined) => !!win && e.source === win;
+
 /** 시안(HTML) 칸 샌드박스 — 폰처럼 앱과 다른 불투명 출처로 돈다. allow-same-origin 을 주면 시안 스크립트가 hodoc 으로 홈 폴더 아무 파일이나
  *  읽었다(2026-10-06 실측). 스크립트·확인 창(검토 틀 초기화·빈 결과 보내기 confirm)만. hodoc 응답 머리글(reader.rs DOC_CSP)도 같은 sandbox 를 건다 */
 export const DOC_SANDBOX = 'allow-scripts allow-modals';

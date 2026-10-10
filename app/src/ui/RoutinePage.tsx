@@ -109,7 +109,7 @@ function LocalRoutinePage({ routine: r, state, liveSession, claudeBin, fontSize,
           <ol className="routine-runs">
             {runs.length === 0 && <li className="dim">{tr('아직 한 번도 안 돌았어요. "지금 실행"으로 시험해 보세요.', 'Never run yet. Try "Run now".')}</li>}
             {runs.map((e, i) => (
-              <li key={i} className={e.event === 'end' ? (e.result === 'fail' ? 'fail' : 'ok') : e.event === 'retry' ? 'skip' : e.event}>
+              <li key={i} className={e.event === 'end' ? (e.result === 'fail' ? 'fail' : 'ok') : e.event === 'stall' ? 'fail' : e.event === 'retry' ? 'skip' : e.event}>
                 <span className="t">{when(e.ts)}</span>
                 <span>{runEventText(e)}</span>
               </li>

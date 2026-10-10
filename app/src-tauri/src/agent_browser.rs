@@ -65,6 +65,9 @@ pub struct Live {
     /// 스크립트는 래퍼를 안 거쳐 개입해도 못 멈춘다 — 개입 줄에 알린다
     #[serde(default)]
     pub scripts: u32,
+    /// 크롬이 페이지 밖에 자기 창(패스키·Touch ID·폰 QR)을 띄워 둠 — 앱이 채운다(watch_popups). 모달을 안 보고 있어도 알게
+    #[serde(default)]
+    pub popup: bool,
 }
 
 /// 같이 쓰는 산 스크립트 수 — 명부 <locks>/<프로필>.users/<pid>(src/users.js). 세션 브라우저 도구가 같이 쓰는 칸(by=session, src/share.js)·
@@ -171,7 +174,11 @@ pub fn agent_lives() -> Vec<Live> {
         }
         let Some(l) = std::fs::read_to_string(&p).ok().as_deref().and_then(parse_live) else { continue };
         match live_kind(&l, crate::platform::pid_alive, port_open) {
-            LiveKind::Show => out.push(with_takeover(l)),
+            LiveKind::Show => {
+                let mut l = with_takeover(l);
+                l.popup = popup_now(&l.profile);
+                out.push(l);
+            }
             LiveKind::Remove => {
                 let _ = std::fs::remove_file(&p);
             }
@@ -327,12 +334,14 @@ struct View {
     human_at: Option<Instant>,
     /// 사람이 연 파일 고르기 {mode, backendNodeId} — 앱이 맥 파일 창을 띄워 넣는다(agent_choose_files)
     chooser: Option<serde_json::Value>,
-    /// 크롬이 페이지 밖에 창을 띄웠다(패스키·Touch ID·폰 QR 등) — 이 그림엔 안 찍혀 모달이 '크롬에서 보기'로 꺼내게 한다(chrome_popup)
-    popup: bool,
     /// 탭별 권한 요청(위치·알림) — 감시 스크립트가 알린 것
     perms: HashMap<String, Perm>,
     /// 사람이 고른 권한 답 — 일꾼이 Browser.setPermission 으로(브라우저 단위, 세션 없음)
     perm_answers: Vec<serde_json::Value>,
+    /// 탭별 FedCM 창(구글 등 '…로 계속' 계정 고르기) {dialogId, type, title, accounts:[{email,name}]} — 크롬 자체 창이라 그림에 안 찍힌다(2026-10-10)
+    fedcm: HashMap<String, serde_json::Value>,
+    /// 사람이 고른 FedCM 답(탭, 메서드, 인자) — 일꾼이 FedCm 을 켠 그 탭 세션으로 보낸다
+    fedcm_answers: Vec<(String, &'static str, serde_json::Value)>,
     seq: u64,
     jpeg: Vec<u8>,
     pages: Vec<Page>,
@@ -475,7 +484,7 @@ pub fn phone_takeover(profile: &str, session_pid: i32, on: bool) -> Result<(), S
     match (on, l.ask.is_some()) {
         (true, true) => Ok(()), // 부르는 중엔 이미 조작할 수 있다
         (true, false) => agent_takeover(profile.to_string(), l.pid, Some("phone".into())),
-        (false, true) => agent_ask_done(profile.to_string(), l.pid, None),
+        (false, true) => agent_ask_done(profile.to_string(), l.pid, None, None),
         (false, false) => agent_handback(profile.to_string(), l.pid),
     }
 }
@@ -522,6 +531,8 @@ pub struct Tabs {
     popup: bool,
     /// 지금 탭이 물은 권한 {kind, origin} — 모달이 허용·거부를 띄운다
     permission: Option<serde_json::Value>,
+    /// 지금 탭의 FedCM 계정 고르기 {dialogId, type, title, accounts} — 모달이 계정 단추를 띄운다
+    fedcm: Option<serde_json::Value>,
     /// 멈춘 탭 대화상자를 래퍼에 부탁한 결과 {at, ok, error}(takeover::dialog_done) — 못 풀었으면 모달이 알린다
     wrapper_dialog: Option<serde_json::Value>,
 }
@@ -532,7 +543,7 @@ pub fn agent_tabs(profile: String) -> Tabs {
     let view = touch(&profile);
     let v = view.lock().unwrap_or_else(|e| e.into_inner());
     let live = read_live(&profile);
-    let shown = live.as_ref().and_then(|l| chrome_pid(l.port)).is_some_and(|p| self::shown().contains(&p));
+    let shown = live.as_ref().and_then(|l| chrome_pid(l.port)).is_some_and(|p| still_shown(self::shown().contains(&p), app_window::hidden(p)));
     let wrapper_dialog = live.as_ref().and_then(|l| crate::takeover::dialog_done(&live_dir(), &profile, l.pid));
     let chooser = v.chooser.as_ref().map(|c| if c["mode"] == "selectMultiple" { "multiple".to_string() } else { "single".to_string() });
     let blank = v.current.as_ref().and_then(|c| v.pages.iter().find(|p| &p.id == c)).is_some_and(|p| p.url == "about:blank");
@@ -540,7 +551,7 @@ pub fn agent_tabs(profile: String) -> Tabs {
     let dialog = v.current.as_ref().and_then(|c| v.dialogs.get(c)).cloned();
     let dialog_tabs = v.pages.iter().filter(|p| v.dialogs.contains_key(&p.id)).map(|p| p.id.clone()).collect();
     let stuck = v.current.is_some() && v.stuck == v.current && dialog.is_none();
-    Tabs { pages: v.pages.clone(), current: v.current.clone(), pinned: v.pinned.is_some(), error: v.error.clone(), attached: v.attached, dialog, dialog_tabs, stuck, shown, chooser, reopened, dropped: v.dropped, popup: v.popup, permission: perm_of(&v), wrapper_dialog }
+    Tabs { pages: v.pages.clone(), current: v.current.clone(), pinned: v.pinned.is_some(), error: v.error.clone(), attached: v.attached, dialog, dialog_tabs, stuck, shown, chooser, reopened, dropped: v.dropped, popup: popup_now(&profile), permission: perm_of(&v), fedcm: fedcm_of(&v), wrapper_dialog }
 }
 
 /// 멈춘 탭(앱이 붙기 전에 뜬 대화상자) 답을 래퍼에 부탁 — 그 래퍼가 세션 도구를 붙잡는 래퍼(gate)일 때만. 사람 조작으로 센다
@@ -642,6 +653,36 @@ fn queue_permission(v: &mut View, target: Option<String>, allow: bool) -> bool {
 fn perm_of(v: &View) -> Option<serde_json::Value> {
     let p = v.perms.get(v.current.as_ref()?)?;
     (p.at.elapsed() < PERM_TTL).then(|| serde_json::json!({ "kind": p.kind, "origin": p.origin }))
+}
+
+/// 지금 탭의 FedCM 창
+fn fedcm_of(v: &View) -> Option<serde_json::Value> {
+    v.fedcm.get(v.current.as_ref()?).cloned()
+}
+
+/// FedCM 답을 줄에 — 지금 탭에 그 창(dialogId)이 떠 있을 때만, 한 번. account = 고른 계정(확인 창이면 '계속'), None = 닫기
+fn queue_fedcm(v: &mut View, dialog_id: &str, account: Option<usize>) -> bool {
+    let Some(t) = v.current.clone() else { return false };
+    let Some(d) = v.fedcm.get(&t).filter(|d| d["dialogId"] == dialog_id) else { return false };
+    let (m, p) = match (account, d["type"].as_str()) {
+        (None, _) => ("FedCm.dismissDialog", serde_json::json!({ "dialogId": dialog_id })),
+        (Some(_), Some("ConfirmIdpLogin")) => ("FedCm.clickDialogButton", serde_json::json!({ "dialogId": dialog_id, "dialogButton": "ConfirmIdpLoginContinue" })),
+        (Some(i), _) if d["accounts"].as_array().is_some_and(|a| i < a.len()) => ("FedCm.selectAccount", serde_json::json!({ "dialogId": dialog_id, "accountIndex": i })),
+        _ => return false,
+    };
+    v.fedcm.remove(&t);
+    v.fedcm_answers.push((t, m, p));
+    true
+}
+
+/// 구글 등 '…로 계속' 계정 고르기에 답 — 사람 조작(개입 중·세션이 부르는 중)일 때만
+#[tauri::command]
+pub fn agent_fedcm(profile: String, pid: i32, dialog_id: String, account: Option<usize>) {
+    if !human_ok(&profile, pid) {
+        return;
+    }
+    let view = touch(&profile);
+    queue_fedcm(&mut view.lock().unwrap_or_else(|e| e.into_inner()), &dialog_id, account);
 }
 
 /// 사이트가 물은 위치·알림 권한에 답 — 사람 조작(개입 중·세션이 부르는 중)일 때만
@@ -767,9 +808,16 @@ fn done_mark(live: Option<&Live>, pid: i32, at: Option<u64>) -> Option<String> {
     (at.is_none() || at == Some(now)).then(|| format!("{pid}:{now}"))
 }
 
-/// 사람이 다 했다(browser_ask_human 에 답) — 래퍼가 기다리는 <live>/<프로필>.done. at = 모달이 보던 부름(ask.at, 폰은 없음)
+/// .say 에 적을 것 — 첫 줄 부름 표, 다음 줄부터 사람이 한 말(500자까지). 빈 말이면 None
+fn say_body(mark: &str, say: Option<&str>) -> Option<String> {
+    let t = say?.trim();
+    (!t.is_empty()).then(|| format!("{mark}\n{}", t.chars().take(500).collect::<String>()))
+}
+
+/// 사람이 다 했다(browser_ask_human 에 답) — 래퍼가 기다리는 <live>/<프로필>.done. at = 모달이 보던 부름(ask.at, 폰은 없음).
+/// say = 같이 넘길 한마디("알아서 로그인해") — 세션은 부름 도구 안에서 기다리는 중이라 채팅은 도구가 끝나야 닿는다. 그래서 부름의 답으로(.say)
 #[tauri::command]
-pub fn agent_ask_done(profile: String, pid: i32, at: Option<u64>) -> Result<(), String> {
+pub fn agent_ask_done(profile: String, pid: i32, at: Option<u64>, say: Option<String>) -> Result<(), String> {
     if profile.is_empty() || profile.starts_with('.') || profile.contains(['/', '\\', '\0']) {
         return Err("bad profile".into());
     }
@@ -781,6 +829,10 @@ pub fn agent_ask_done(profile: String, pid: i32, at: Option<u64>) -> Result<(), 
     // 사람이 한 일 기록을 먼저(래퍼는 .done 을 보자마자 읽는다)
     crate::takeover::ask_done(&live_dir(), &profile, pid)?;
     let Some(mark) = done_mark(live.as_ref(), pid, at) else { return Err("ask changed".into()) };
+    // 한마디 먼저(래퍼는 .done 을 보자마자 .say 를 읽는다)
+    if let Some(body) = say_body(&mark, say.as_deref()) {
+        crate::takeover::write_secure(&live_dir().join(format!("{profile}.say")), body.as_bytes())?;
+    }
     let f = live_dir().join(format!("{profile}.done"));
     std::fs::write(&f, mark.as_bytes()).map_err(|e| e.to_string())?;
     #[cfg(unix)]
@@ -953,6 +1005,7 @@ fn on_event(m: &serde_json::Value, view: &Arc<Mutex<View>>, st: &mut St) {
             if let Ok(mut v) = view.lock() {
                 v.dialogs.remove(&gone);
                 v.perms.remove(&gone);
+                v.fedcm.remove(&gone);
                 if v.stuck.as_ref() == Some(&gone) {
                     v.stuck = None;
                 }
@@ -965,6 +1018,23 @@ fn on_event(m: &serde_json::Value, view: &Arc<Mutex<View>>, st: &mut St) {
             let Some(url) = st.pages.iter().find(|p| p.id == t).map(|p| p.url.clone()) else { return };
             if let Ok(mut v) = view.lock() {
                 v.perms.insert(t, Perm { kind, origin: origin_of(&url), at: Instant::now() });
+            }
+        }
+        // 구글 등 FedCM 계정 고르기 — 크롬 자체 창이라 그림에 안 찍혀 모달이 계정 단추로 대신 받는다(붙을 때 FedCm.enable)
+        "FedCm.dialogShown" => {
+            let Some(t) = st.target_of(m["sessionId"].as_str()) else { return };
+            let p = &m["params"];
+            let accounts: Vec<serde_json::Value> = p["accounts"].as_array().map(|a| a.iter().map(|x| serde_json::json!({ "email": x["email"], "name": x["name"] })).collect()).unwrap_or_default();
+            if let Ok(mut v) = view.lock() {
+                v.fedcm.insert(t, serde_json::json!({ "dialogId": p["dialogId"], "type": p["dialogType"], "title": p["title"], "accounts": accounts }));
+            }
+        }
+        "FedCm.dialogClosed" => {
+            let Some(t) = st.target_of(m["sessionId"].as_str()) else { return };
+            if let Ok(mut v) = view.lock() {
+                if v.fedcm.get(&t).is_some_and(|d| d["dialogId"] == m["params"]["dialogId"]) {
+                    v.fedcm.remove(&t);
+                }
             }
         }
         "Page.javascriptDialogOpening" => {
@@ -1069,27 +1139,6 @@ fn snap(cdp: &mut Cdp, s: &str, view: &Arc<Mutex<View>>, st: &mut St) {
     }
 }
 
-/// 브라우저 창 자리들(탭마다 물어 같은 창은 한 번) — chrome_popup 이 그 안쪽에 뜬 크롬 자체 창을 가린다
-fn browser_rects(cdp: &mut Cdp, st: &mut St, view: &Arc<Mutex<View>>) -> Vec<crate::vdisplay::Rect> {
-    let ids: Vec<String> = st.pages.iter().take(10).map(|p| p.id.clone()).collect();
-    let (mut seen, mut out, mut buf) = (vec![], vec![], vec![]);
-    for id in ids {
-        // 짧게 — 화면 받기·입력 보내기와 같은 루프라 오래 붙잡지 않는다(브라우저 쪽 물음이라 페이지 대화상자에 안 막힌다)
-        let Ok(w) = cdp.call_for("Browser.getWindowForTarget", serde_json::json!({ "targetId": id }), None, Duration::from_millis(800), |m| buf.push(m.clone())) else { continue };
-        if seen.contains(&w["windowId"]) {
-            continue;
-        }
-        seen.push(w["windowId"].clone());
-        let b = &w["bounds"];
-        let f = |k: &str| b[k].as_f64().unwrap_or(0.0);
-        out.push(crate::vdisplay::Rect { x: f("left"), y: f("top"), w: f("width"), h: f("height") });
-    }
-    for m in buf {
-        on_event(&m, view, st);
-    }
-    out
-}
-
 /// 일꾼 — 보는 칸이 있는 동안 지금 탭 화면을 받는다
 fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop: &Arc<AtomicBool>) -> Result<(), String> {
     let mut live = read_live(profile).ok_or("no live browser")?;
@@ -1109,7 +1158,6 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
     }
     let mut checked = Instant::now() - Duration::from_secs(1);
     let mut listed = Instant::now();
-    let mut popped = Instant::now();
     let mut beat = Instant::now() - Duration::from_secs(60);
     loop {
         let idle = seen.lock().map(|s| s.elapsed()).unwrap_or(Duration::MAX);
@@ -1172,6 +1220,8 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
                             let _ = cdp.send("Runtime.addBinding", serde_json::json!({ "name": PERM_BINDING }), Some(&s));
                             let _ = cdp.send("Page.addScriptToEvaluateOnNewDocument", serde_json::json!({ "source": PERM_JS }), Some(&s));
                             let _ = cdp.send("Runtime.evaluate", serde_json::json!({ "expression": PERM_JS }), Some(&s));
+                            // 구글 등 '…로 계속'(FedCM) 계정 고르기 — 크롬 자체 창이라 그림에 안 찍힌다. 켜 두면 dialogShown 으로 계정 목록이 온다(2026-10-10)
+                            let _ = cdp.send("FedCm.enable", serde_json::json!({ "disableRejectionDelay": true }), Some(&s));
                             st.sessions.insert(t.clone(), s.clone());
                             s
                         }
@@ -1212,18 +1262,6 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
                 }
             }
         }
-        // 크롬 자체 창(패스키·Touch ID·폰 QR) — 페이지 그림엔 안 찍히고 크롬은 가려져 있어 사람이 못 본다(2026-10-06). 보는 동안 1초마다
-        // 맥만(창 목록·가리기가 맥 것) — 다른 OS 에서 chrome_pid 가 매초 lsof 를 부르지 않게
-        if cfg!(target_os = "macos") && watching && popped.elapsed() >= Duration::from_secs(1) {
-            popped = Instant::now();
-            let popup = chrome_pid(live.port).is_some_and(|pid| {
-                let wins = crate::chrome_popup::windows(pid);
-                crate::chrome_popup::worth_asking(&wins) && crate::chrome_popup::popup_open(&wins, pid, &browser_rects(&mut cdp, &mut st, view))
-            });
-            if let Ok(mut v) = view.lock() {
-                v.popup = popup;
-            }
-        }
         if let Some(m) = cdp.recv()? {
             on_event(&m, view, &mut st);
         }
@@ -1256,6 +1294,13 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
         let perms = view.lock().map(|mut v| std::mem::take(&mut v.perm_answers)).unwrap_or_default();
         for p in perms {
             let _ = cdp.send("Browser.setPermission", p, None);
+        }
+        // FedCM 답 — FedCm 을 켠 그 탭 세션으로(다른 세션은 그 창을 모른다)
+        let fedcm = view.lock().map(|mut v| std::mem::take(&mut v.fedcm_answers)).unwrap_or_default();
+        for (t, m, p) in fedcm {
+            if let Some(s) = st.sessions.get(&t) {
+                let _ = cdp.send(m, p, Some(s));
+            }
         }
         // 모달에서 온 입력 — 지금 탭 세션으로. 글자가 들어 있으니 오류에도 안 싣는다
         // 사람 입력은 보내기 직전에 본 탭·출처와 맞춰 본다(일꾼의 탭 목록이 가장 새것) — 다르면 버리고 센다
@@ -1300,48 +1345,103 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
     Ok(())
 }
 
-/// 크롬에서 보기 — 지금 보여 주는 탭을 앞 탭으로, 창을 펴고(최소화였으면), 그 크롬(에이전트 것 — 사용자 크롬 말고)을 앞으로
+/// 크롬 창 하나 — (창 번호, 자리, 상태 normal·minimized·…)
+type Win = (i64, crate::vdisplay::Rect, String);
+
+/// 그 크롬의 창 전부(탭마다 창을 물어 겹치는 건 한 번) — 로그인 팝업은 따로 창이다
+fn chrome_windows(cdp: &mut Cdp) -> Result<Vec<Win>, String> {
+    let got = cdp.call("Target.getTargets", serde_json::json!({}), None, |_| {})?;
+    let mut out: Vec<Win> = vec![];
+    for t in got["targetInfos"].as_array().cloned().unwrap_or_default().iter().filter(|t| t["type"] == "page") {
+        let Ok(w) = cdp.call("Browser.getWindowForTarget", serde_json::json!({ "targetId": t["targetId"] }), None, |_| {}) else { continue };
+        let id = w["windowId"].as_i64().unwrap_or(-1);
+        if out.iter().any(|x| x.0 == id) {
+            continue;
+        }
+        let b = &w["bounds"];
+        let r = crate::vdisplay::Rect { x: b["left"].as_f64().unwrap_or(0.0), y: b["top"].as_f64().unwrap_or(0.0), w: b["width"].as_f64().unwrap_or(0.0), h: b["height"].as_f64().unwrap_or(0.0) };
+        out.push((id, r, b["windowState"].as_str().unwrap_or("").to_string()));
+    }
+    Ok(out)
+}
+
+/// '크롬에서 보기'로 옮길 창과 자리 — 보이는 화면에 없거나 보통 상태가 아닌 창 전부(지금 탭 창만 옮기면 로그인 팝업이 가짜 화면에 남았다,
+/// 2026-10-10 네이버). 둘째부터는 조금씩 비켜 놓아 겹쳐도 가장자리가 보이게
+pub fn show_moves(wins: &[Win], visible: &[(crate::vdisplay::Rect, bool)]) -> Vec<(i64, crate::vdisplay::Rect)> {
+    let Some(d) = crate::vdisplay::show_display(visible) else { return vec![] };
+    let rects: Vec<crate::vdisplay::Rect> = visible.iter().map(|v| v.0).collect();
+    let base = crate::vdisplay::place_in(d);
+    wins.iter()
+        .filter(|w| w.2 != "normal" || !crate::vdisplay::on_visible(w.1, &rects))
+        .enumerate()
+        .map(|(i, w)| {
+            let k = (i as f64) * 32.0;
+            (w.0, crate::vdisplay::Rect { x: base.x + k, y: base.y + k, w: (base.w - k).max(400.0), h: (base.h - k).max(300.0) })
+        })
+        .collect()
+}
+
+fn set_bounds(cdp: &mut Cdp, id: i64, r: crate::vdisplay::Rect) {
+    let _ = cdp.call("Browser.setWindowBounds", serde_json::json!({ "windowId": id, "bounds": { "windowState": "normal" } }), None, |_| {});
+    let _ = cdp.call("Browser.setWindowBounds", serde_json::json!({ "windowId": id, "bounds": { "left": r.x as i64, "top": r.y as i64, "width": r.w as i64, "height": r.h as i64 } }), None, |_| {});
+}
+
+/// 크롬에서 보기 — 그 크롬(에이전트 것 — 사용자 크롬 말고)의 창을 전부 보이는 화면으로, 지금 보여 주는 탭을 맨 앞으로.
+/// '꺼낸 크롬'(SHOWN) 표를 맨 먼저 단다 — 탭을 앞으로 부르면 크롬이 스스로 보이는데, 그 틈에 지킴이가 꺼낸 줄 모르고
+/// 가리고 창을 가짜 화면으로 되돌렸다(2026-10-10 '크롬에서 보기'를 눌러도 안 나옴). 실패는 Err 로 — 모달이 한 줄로 보인다
 #[tauri::command]
 pub async fn agent_focus(profile: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let live = read_live(&profile).ok_or("no live browser")?;
-        // 진짜 크롬 창을 꺼내면 사람이 직접 만질 수 있다 — 개입이 아니었으면 개입부터(세션 도구가 섞이지 않게), 기록엔 '크롬 창 꺼냄'
-        if !crate::takeover::allows(&live_dir(), &profile, live.pid, live.ask.is_some()) {
-            crate::takeover::start(&live_dir(), &profile, live.pid, "desktop")?;
+        let pid = chrome_pid(live.port).ok_or("chrome not found")?;
+        let fresh = mark_shown(pid);
+        let r = focus_windows(&profile, &live);
+        if r.is_err() && fresh {
+            unmark_shown(pid); // 못 꺼냈으면 다시 지킴이 몫(보이는 채 남지 않게)
         }
-        crate::takeover::mark_chrome(&profile);
-        let target = with_workers(|ws| ws.get(&profile).and_then(|w| w.view.lock().ok().and_then(|v| v.current.clone())));
-        let mut cdp = Cdp { ws: connect(&live)?, next: 0 };
-        let target = match target {
-            Some(t) => t,
-            None => {
-                let got = cdp.call("Target.getTargets", serde_json::json!({}), None, |_| {})?;
-                let pages: Vec<Page> = got["targetInfos"].as_array().cloned().unwrap_or_default().iter().filter_map(page_of).collect();
-                pick_target(&pages, &live.url, None, None, None, None).ok_or("no tab")?
-            }
-        };
-        cdp.call("Target.activateTarget", serde_json::json!({ "targetId": target }), None, |_| {})?;
-        keep_alive(&profile);
-        if let Ok(w) = cdp.call("Browser.getWindowForTarget", serde_json::json!({ "targetId": target }), None, |_| {}) {
-            let _ = cdp.call("Browser.setWindowBounds", serde_json::json!({ "windowId": w["windowId"], "bounds": { "windowState": "normal" } }), None, |_| {});
-            // 가상 모니터 위거나 어느 화면도 아닌 좌표(가상 모니터가 지워진 뒤)면 맥북 화면 안으로 옮겨 온다
-            let b = &w["bounds"];
-            let win = crate::vdisplay::Rect { x: b["left"].as_f64().unwrap_or(0.0), y: b["top"].as_f64().unwrap_or(0.0), w: b["width"].as_f64().unwrap_or(0.0), h: b["height"].as_f64().unwrap_or(0.0) };
-            let visible = crate::vdisplay::visible_displays();
-            let rects: Vec<crate::vdisplay::Rect> = visible.iter().map(|d| d.0).collect();
-            if !crate::vdisplay::on_visible(win, &rects) {
-                if let Some(d) = crate::vdisplay::show_display(&visible) {
-                    let p = crate::vdisplay::place_in(d);
-                    let _ = cdp.call("Browser.setWindowBounds", serde_json::json!({ "windowId": w["windowId"], "bounds": { "left": p.x as i64, "top": p.y as i64, "width": p.w as i64, "height": p.h as i64 } }), None, |_| {});
-                }
-            }
-        }
-        let _ = cdp.ws.close(None);
-        front_chrome(live.port);
-        Ok(())
+        r
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 진짜 크롬 창을 꺼내면 사람이 직접 만질 수 있다 — 개입이 아니었으면 개입부터(세션 도구가 섞이지 않게), 기록엔 '크롬 창 꺼냄'
+fn human_touch(profile: &str, live: &Live) -> Result<(), String> {
+    if !crate::takeover::allows(&live_dir(), profile, live.pid, live.ask.is_some()) {
+        crate::takeover::start(&live_dir(), profile, live.pid, "desktop")?;
+    }
+    crate::takeover::mark_chrome(profile);
+    Ok(())
+}
+
+fn focus_windows(profile: &str, live: &Live) -> Result<(), String> {
+    human_touch(profile, live)?;
+    let target = with_workers(|ws| ws.get(profile).and_then(|w| w.view.lock().ok().and_then(|v| v.current.clone())));
+    let mut cdp = Cdp { ws: connect(live)?, next: 0 };
+    let got = cdp.call("Target.getTargets", serde_json::json!({}), None, |_| {})?;
+    let pages: Vec<Page> = got["targetInfos"].as_array().cloned().unwrap_or_default().iter().filter_map(page_of).collect();
+    // 일꾼이 보던 탭이 그새 닫혔으면(팝업) 남은 탭에서 고른다
+    let target = target.filter(|t| pages.iter().any(|p| &p.id == t)).or_else(|| pick_target(&pages, &live.url, None, None, None, None)).ok_or("no tab")?;
+    keep_alive(profile);
+    for _ in 0..2 {
+        let wins = chrome_windows(&mut cdp)?;
+        let moves = show_moves(&wins, &crate::vdisplay::visible_displays());
+        if moves.is_empty() {
+            break;
+        }
+        for (id, r) in moves {
+            set_bounds(&mut cdp, id, r);
+        }
+        std::thread::sleep(Duration::from_millis(300)); // 그새 다른 손이 되돌렸나 한 번 더 본다
+    }
+    cdp.call("Target.activateTarget", serde_json::json!({ "targetId": target }), None, |_| {})?;
+    let left = show_moves(&chrome_windows(&mut cdp)?, &crate::vdisplay::visible_displays()).len();
+    let _ = cdp.ws.close(None);
+    front_chrome(live.port);
+    if left > 0 {
+        return Err(format!("{left} window(s) still off screen"));
+    }
+    Ok(())
 }
 
 // ── 크롬 창 숨기기(2026-10-03 사용자 "숨겨져야 의미가 있다… 숨겨져도 그려져야 한다") ──────────────────
@@ -1358,6 +1458,11 @@ static PIDS: Mutex<Option<HashMap<u16, i32>>> = Mutex::new(None);
 /// `lsof -t` 출력 첫 줄 → pid
 pub fn parse_lsof_pid(out: &str) -> Option<i32> {
     out.lines().next()?.trim().parse::<i32>().ok().filter(|p| *p > 0)
+}
+
+/// 꺼내 둔 크롬인가 — 목록에 있고 그 앱이 가려지지 않았을 때(사람이 ⌘H 로 가리면 꺼낸 게 아니다 — 메뉴가 '숨기기'만 보였다, 2026-10-10)
+pub fn still_shown(in_list: bool, hidden: Option<bool>) -> bool {
+    in_list && hidden != Some(true)
 }
 
 /// 가릴지 — 기능이 켜져 있고 '크롬에서 보기'로 연 크롬이 아니면
@@ -1379,6 +1484,22 @@ fn chrome_pid(port: u16) -> Option<i32> {
 
 fn shown() -> Vec<i32> {
     SHOWN.lock().map(|v| v.clone()).unwrap_or_default()
+}
+
+/// 꺼낸 크롬 표 달기 — 새로 달았으면 참
+fn mark_shown(pid: i32) -> bool {
+    let Ok(mut v) = SHOWN.lock() else { return false };
+    if v.contains(&pid) {
+        return false;
+    }
+    v.push(pid);
+    true
+}
+
+fn unmark_shown(pid: i32) {
+    if let Ok(mut v) = SHOWN.lock() {
+        v.retain(|p| *p != pid);
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1454,41 +1575,34 @@ fn rehome_pid(pid: i32) {
 /// 그 크롬의 창(탭마다 창을 물어 겹치는 건 한 번)을 가상 모니터 안으로 — 이미 안에 있으면 그대로
 fn rehome(live: &Live) -> Result<(), String> {
     let Some((_, vd)) = crate::vdisplay::bounds() else { return Ok(()) };
+    rehome_into(live, vd)
+}
+
+fn rehome_into(live: &Live, vd: crate::vdisplay::Rect) -> Result<(), String> {
+    let pid = chrome_pid(live.port);
     let mut cdp = Cdp { ws: connect(live)?, next: 0 };
-    let got = cdp.call("Target.getTargets", serde_json::json!({}), None, |_| {})?;
-    let mut done: Vec<i64> = vec![];
-    for t in got["targetInfos"].as_array().cloned().unwrap_or_default().iter().filter(|t| t["type"] == "page") {
-        let Ok(w) = cdp.call("Browser.getWindowForTarget", serde_json::json!({ "targetId": t["targetId"] }), None, |_| {}) else { continue };
-        let id = w["windowId"].as_i64().unwrap_or(-1);
-        if done.contains(&id) {
+    for (id, win, state) in chrome_windows(&mut cdp)? {
+        if state == "normal" && crate::vdisplay::inside(win, vd) {
             continue;
         }
-        done.push(id);
-        let b = &w["bounds"];
-        let win = crate::vdisplay::Rect { x: b["left"].as_f64().unwrap_or(0.0), y: b["top"].as_f64().unwrap_or(0.0), w: b["width"].as_f64().unwrap_or(0.0), h: b["height"].as_f64().unwrap_or(0.0) };
-        if b["windowState"] == "normal" && crate::vdisplay::inside(win, vd) {
-            continue;
+        // 옮기기 직전에 다시 본다 — 그새 '크롬에서 보기'로 꺼냈으면 되돌리지 않는다(지킴이가 꺼내기 전에 시작한 이 일이 꺼낸 창을 끌고 갔다)
+        if pid.is_some_and(|p| shown().contains(&p)) {
+            break;
         }
-        let p = crate::vdisplay::place_in(vd);
-        let _ = cdp.call("Browser.setWindowBounds", serde_json::json!({ "windowId": id, "bounds": { "windowState": "normal" } }), None, |_| {});
-        let _ = cdp.call("Browser.setWindowBounds", serde_json::json!({ "windowId": id, "bounds": { "left": p.x as i64, "top": p.y as i64, "width": p.w as i64, "height": p.h as i64 } }), None, |_| {});
+        set_bounds(&mut cdp, id, crate::vdisplay::place_in(vd));
     }
     let _ = cdp.ws.close(None);
     Ok(())
 }
 
-/// 크롬 다시 숨기기(앱 칸 아이콘) — 가상 모니터가 있으면 창을 그리로 돌려보내고 가린다
+/// 크롬 다시 숨기기(앱 칸 아이콘) — 가상 모니터가 있으면 창을 전부 그리로 돌려보내고 가린다
 #[tauri::command]
 pub async fn agent_hide(profile: String) {
     let _ = tauri::async_runtime::spawn_blocking(move || {
         let Some(live) = read_live(&profile) else { return };
         let Some(pid) = chrome_pid(live.port) else { return };
-        if let Ok(mut v) = SHOWN.lock() {
-            v.retain(|p| *p != pid);
-        }
-        if let Some((_, vd)) = crate::vdisplay::bounds() {
-            let _ = move_window(&profile, &live, crate::vdisplay::place_in(vd));
-        }
+        unmark_shown(pid);
+        let _ = rehome(&live); // 창 전부(팝업까지) 가짜 화면으로
         app_window::hide(pid);
     })
     .await;
@@ -1504,26 +1618,6 @@ pub fn hide_all() {
     if let Ok(mut v) = SHOWN.lock() {
         v.clear();
     }
-}
-
-/// 그 크롬의 지금 탭 창을 네모 자리로(CDP) — 최소화·전체화면이면 먼저 보통으로
-fn move_window(profile: &str, live: &Live, r: crate::vdisplay::Rect) -> Result<(), String> {
-    let target = with_workers(|ws| ws.get(profile).and_then(|w| w.view.lock().ok().and_then(|v| v.current.clone())));
-    let mut cdp = Cdp { ws: connect(live)?, next: 0 };
-    let target = match target {
-        Some(t) => t,
-        None => {
-            let got = cdp.call("Target.getTargets", serde_json::json!({}), None, |_| {})?;
-            let pages: Vec<Page> = got["targetInfos"].as_array().cloned().unwrap_or_default().iter().filter_map(page_of).collect();
-            pick_target(&pages, &live.url, None, None, None, None).ok_or("no tab")?
-        }
-    };
-    let w = cdp.call("Browser.getWindowForTarget", serde_json::json!({ "targetId": target }), None, |_| {})?;
-    let _ = cdp.call("Browser.setWindowBounds", serde_json::json!({ "windowId": w["windowId"], "bounds": { "windowState": "normal" } }), None, |_| {});
-    let b = serde_json::json!({ "left": r.x as i64, "top": r.y as i64, "width": r.w as i64, "height": r.h as i64 });
-    cdp.call("Browser.setWindowBounds", serde_json::json!({ "windowId": w["windowId"], "bounds": b }), None, |_| {})?;
-    let _ = cdp.ws.close(None);
-    Ok(())
 }
 
 /// 꺼낸 창을 사람이 닫아 빈 탭을 다시 열어 둔 세션 브라우저들 — 앱 칸이 '창이 닫혔어'를 보인다
@@ -1605,20 +1699,146 @@ fn keep_loop(profile: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ── 크롬 자체 창(패스키·Touch ID·폰 QR) ────────────────────────────────
+// 페이지 그림엔 안 찍히고 크롬은 가려져 있어 사람이 못 본다(2026-10-06). 예전엔 모달·칸이 그 브라우저를 보는 동안만 일꾼이 찾고
+// 줄만 띄워 사람이 '크롬에서 보기'를 찾아 눌러야 했다(2026-10-10 네이버 패스키). 이제 앱이 모든 세션 크롬을 1초마다 보고(Live.popup),
+// 사람이 그 브라우저를 쓰는 중이면 모달이 창을 작게 꺼내고(agent_peek), 아니면 알림·결정 대기함 카드
+
+/// 크롬 자체 창이 떠 있는 프로필들
+static POPUPS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn popup_now(profile: &str) -> bool {
+    POPUPS.lock().is_ok_and(|v| v.iter().any(|p| p == profile))
+}
+
+/// 그 크롬의 대화상자를 품은 브라우저 창들 — 평소엔 맥 창 목록만 보고, 큰 창 안에 큰 창이 있을 때만 CDP 로 브라우저 창을 묻는다
+fn popup_hosts_of(live: &Live, cdp: Option<&mut Cdp>) -> Vec<Win> {
+    let Some(pid) = chrome_pid(live.port) else { return vec![] };
+    let wins = crate::chrome_popup::windows(pid);
+    if !crate::chrome_popup::worth_asking(&wins) {
+        return vec![];
+    }
+    let mut own;
+    let cdp = match cdp {
+        Some(c) => c,
+        None => {
+            let Ok(ws) = connect(live) else { return vec![] };
+            own = Cdp { ws, next: 0 };
+            &mut own
+        }
+    };
+    let browsers = chrome_windows(cdp).unwrap_or_default();
+    let rects: Vec<crate::vdisplay::Rect> = browsers.iter().map(|w| w.1).collect();
+    let hosts = crate::chrome_popup::popup_hosts(&wins, pid, &rects);
+    browsers.into_iter().filter(|w| hosts.iter().any(|h| crate::chrome_popup::same_rect(*h, w.1))).collect()
+}
+
+/// 1초마다 세션 크롬들의 자체 창을 본다(맥만 — 창 목록이 맥 것)
+pub fn watch_popups() {
+    static ON: std::sync::Once = std::sync::Once::new();
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    ON.call_once(|| {
+        std::thread::spawn(|| loop {
+            let now: Vec<String> = agent_lives().iter().filter(|l| !popup_hosts_of(l, None).is_empty()).map(|l| l.profile.clone()).collect();
+            if let Ok(mut v) = POPUPS.lock() {
+                *v = now;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        });
+    });
+}
+
+/// 패스키 창 크기로 꺼낼 창 크기 — 패스키·QR 창(448x387·448x545·486x321, 2026-10-06 실측)이 들어가고 페이지는 조금 보이게
+const PEEK_W: f64 = 520.0;
+const PEEK_H: f64 = 640.0;
+
+/// 패스키 창만 잠깐 — 그 창을 품은 브라우저 창을 사람이 보는 화면(커서 자리) 가운데에 작게, 맨 앞으로. 끝나면 모달이 agent_hide 로 되돌린다.
+/// '크롬에서 보기'와 같이 꺼낸 표를 먼저 달고, 개입부터(사람이 크롬을 직접 만진다)
+#[tauri::command]
+pub async fn agent_peek(profile: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let live = read_live(&profile).ok_or("no live browser")?;
+        let pid = chrome_pid(live.port).ok_or("chrome not found")?;
+        let fresh = mark_shown(pid);
+        let r = peek_windows(&profile, &live);
+        if r.is_err() && fresh {
+            unmark_shown(pid);
+        }
+        r
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn peek_windows(profile: &str, live: &Live) -> Result<(), String> {
+    let mut cdp = Cdp { ws: connect(live)?, next: 0 };
+    let hosts = popup_hosts_of(live, Some(&mut cdp));
+    if hosts.is_empty() {
+        return Err("no popup".into());
+    }
+    human_touch(profile, live)?;
+    let ds = crate::vdisplay::visible_displays();
+    let (cx, cy) = crate::vdisplay::cursor().unwrap_or((f64::MIN, f64::MIN));
+    let d = crate::vdisplay::display_at(&ds, cx, cy).ok_or("no display")?;
+    let r = crate::vdisplay::center_in(d, PEEK_W, PEEK_H);
+    for w in hosts {
+        set_bounds(&mut cdp, w.0, r);
+    }
+    keep_alive(profile); // 꺼낸 창을 사람이 닫아도 세션 브라우저가 산다(빈 탭 다시 열기)
+    let _ = cdp.ws.close(None);
+    front_chrome(live.port);
+    Ok(())
+}
+
 /// '크롬에서 보기' — 이 크롬은 지킴이가 안 가리게 하고 보이게·맨 앞으로
 fn front_chrome(port: u16) {
     let Some(pid) = chrome_pid(port) else { return };
-    if let Ok(mut v) = SHOWN.lock() {
-        if !v.contains(&pid) {
-            v.push(pid);
-        }
+    mark_shown(pid);
+    // 시험(헤드리스 크롬)에선 맥 앱 활성화를 안 한다 — 사람이 치던 앱에서 포커스를 뺏지 않게
+    if !cfg!(test) {
+        app_window::show(pid);
     }
-    app_window::show(pid);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 다_했어에_붙인_한마디는_그_부름_표와_같이_적는다() {
+        // 세션이 browser_ask_human 에서 기다리는 동안 채팅으로 보낸 말은 그 도구가 끝날 때까지 묶인다 — 부름의 답으로 넘긴다(2026-10-10)
+        assert_eq!(say_body("11:700", Some("  알아서 로그인해\n")), Some("11:700\n알아서 로그인해".to_string()));
+        assert_eq!(say_body("11:700", Some("   ")), None, "빈 말은 안 적는다");
+        assert_eq!(say_body("11:700", None), None);
+        let long = "가".repeat(900);
+        assert_eq!(say_body("1:2", Some(&long)).unwrap().chars().count(), "1:2\n".len() + 500, "500자까지");
+    }
+
+    #[test]
+    fn 크롬에서_보기는_가짜_화면에_있는_창을_팝업까지_전부_옮긴다() {
+        // 2026-10-10 네이버 로그인 — 지금 탭 창만 옮겨 로그인 팝업 창이 가짜 화면에 남았다
+        use crate::vdisplay::Rect;
+        let book = Rect { x: 0.0, y: 0.0, w: 1470.0, h: 956.0 };
+        let lg = Rect { x: 1470.0, y: 0.0, w: 2560.0, h: 1440.0 };
+        let visible = [(lg, false), (book, true)];
+        let fake = Rect { x: -2886.0, y: 986.0, w: 1400.0, h: 852.0 };
+        let wins: Vec<Win> = vec![
+            (1, fake, "normal".into()),
+            (2, fake, "normal".into()),
+            (3, Rect { x: 1600.0, y: 100.0, w: 800.0, h: 600.0 }, "normal".into()), // 이미 보이는 창은 그대로
+            (4, Rect { x: 100.0, y: 100.0, w: 800.0, h: 600.0 }, "minimized".into()), // 접힌 창은 펴서
+        ];
+        let m = show_moves(&wins, &visible);
+        assert_eq!(m.iter().map(|x| x.0).collect::<Vec<_>>(), vec![1, 2, 4]);
+        let rects = [lg, book];
+        assert!(m.iter().all(|x| crate::vdisplay::on_visible(x.1, &rects)), "다 보이는 화면에: {m:?}");
+        assert!(m.iter().all(|x| book.contains(x.1.x, x.1.y)), "맥북 화면으로");
+        assert_ne!(m[0].1, m[1].1, "겹치지 않게 비켜 놓는다");
+        assert!(show_moves(&wins[2..3], &visible).is_empty());
+        assert!(show_moves(&wins, &[]).is_empty(), "보이는 화면이 없으면 안 옮긴다");
+    }
 
     #[test]
     fn 같이_쓰는_스크립트_수는_산_것만_세션_칸과_주인은_빼고() {
@@ -1858,6 +2078,61 @@ mod tests {
         // 오래된 요청(감시 스크립트가 60초 뒤 크롬에 넘김)은 안 보인다
         v.perms.insert("A".into(), Perm { kind: "geolocation".into(), origin: "https://a.com".into(), at: Instant::now() - Duration::from_secs(61) });
         assert!(perm_of(&v).is_none());
+    }
+
+    #[test]
+    fn 구글_로그인_FedCM_창은_그_탭에_묶어_모달로() {
+        // 2026-10-10 어느 사이트의 'Continue with Google' — 크롬 자체 계정 고르기 창은 그림에 안 찍히고 새 탭도 안 열려 '아무 일 없음'으로 보였다
+        let view = Arc::new(Mutex::new(View::default()));
+        let mut st = St::default();
+        st.sessions.insert("A".into(), "s1".into());
+        let shown = serde_json::json!({ "method": "FedCm.dialogShown", "sessionId": "s1", "params": {
+            "dialogId": "d7", "dialogType": "AccountChooser", "title": "Sign in to shop.example with idp.example",
+            "accounts": [{ "accountId": "1", "email": "a@idp.example", "name": "A", "givenName": "A", "pictureUrl": "", "idpConfigUrl": "", "idpLoginUrl": "", "loginState": "SignIn" }, { "accountId": "2", "email": "b@idp.example", "name": "B" }] } });
+        on_event(&shown, &view, &mut st);
+        view.lock().unwrap().current = Some("A".into());
+        let f = fedcm_of(&view.lock().unwrap()).unwrap();
+        assert_eq!(f, serde_json::json!({ "dialogId": "d7", "type": "AccountChooser", "title": "Sign in to shop.example with idp.example", "accounts": [{ "email": "a@idp.example", "name": "A" }, { "email": "b@idp.example", "name": "B" }] }));
+        // 다른 탭을 보는 중이면 안 보인다 · 모르는 세션 것은 안 받는다
+        view.lock().unwrap().current = Some("B".into());
+        assert!(fedcm_of(&view.lock().unwrap()).is_none());
+        on_event(&serde_json::json!({ "method": "FedCm.dialogShown", "sessionId": "zz", "params": { "dialogId": "x" } }), &view, &mut st);
+        assert_eq!(view.lock().unwrap().fedcm.len(), 1);
+        // 닫힘은 같은 dialogId 일 때만 · 탭이 닫혀도 지운다
+        on_event(&serde_json::json!({ "method": "FedCm.dialogClosed", "sessionId": "s1", "params": { "dialogId": "old" } }), &view, &mut st);
+        assert_eq!(view.lock().unwrap().fedcm.len(), 1);
+        on_event(&serde_json::json!({ "method": "FedCm.dialogClosed", "sessionId": "s1", "params": { "dialogId": "d7" } }), &view, &mut st);
+        assert!(view.lock().unwrap().fedcm.is_empty());
+        on_event(&shown, &view, &mut st);
+        on_event(&serde_json::json!({ "method": "Target.targetDestroyed", "params": { "targetId": "A" } }), &view, &mut st);
+        assert!(view.lock().unwrap().fedcm.is_empty());
+    }
+
+    #[test]
+    fn FedCM_답은_지금_창일_때만_한_번() {
+        let mut v = View { current: Some("A".into()), ..View::default() };
+        v.fedcm.insert("A".into(), serde_json::json!({ "dialogId": "d7", "type": "AccountChooser", "accounts": [{ "email": "a@x" }, { "email": "b@x" }] }));
+        assert!(!queue_fedcm(&mut v, "old", Some(0)), "지나간 창");
+        assert!(!queue_fedcm(&mut v, "d7", Some(5)), "없는 계정");
+        assert!(queue_fedcm(&mut v, "d7", Some(1)));
+        assert_eq!(v.fedcm_answers, vec![("A".to_string(), "FedCm.selectAccount", serde_json::json!({ "dialogId": "d7", "accountIndex": 1 }))]);
+        assert!(!queue_fedcm(&mut v, "d7", Some(0)), "두 번 누름");
+        // 구글 로그인 확인 창은 '계속' 단추, 닫기는 dismissDialog
+        v.fedcm.insert("A".into(), serde_json::json!({ "dialogId": "d8", "type": "ConfirmIdpLogin", "accounts": [] }));
+        assert!(queue_fedcm(&mut v, "d8", Some(0)));
+        assert_eq!(v.fedcm_answers[1], ("A".to_string(), "FedCm.clickDialogButton", serde_json::json!({ "dialogId": "d8", "dialogButton": "ConfirmIdpLoginContinue" })));
+        v.fedcm.insert("A".into(), serde_json::json!({ "dialogId": "d9", "type": "AccountChooser", "accounts": [{ "email": "a@x" }] }));
+        assert!(queue_fedcm(&mut v, "d9", None));
+        assert_eq!(v.fedcm_answers[2], ("A".to_string(), "FedCm.dismissDialog", serde_json::json!({ "dialogId": "d9" })));
+    }
+
+    #[test]
+    fn 꺼낸_크롬이_가려지면_꺼낸_것이_아니다() {
+        // 2026-10-10 사용자 '더보기에 크롬 창 보이기가 없었다' — 한 번 꺼낸 pid 가 목록에 남아 창이 가려진 뒤에도 '숨기기'만 보였다
+        assert!(still_shown(true, Some(false)));
+        assert!(!still_shown(true, Some(true)), "사람이 ⌘H 로 가렸다");
+        assert!(!still_shown(false, Some(false)));
+        assert!(still_shown(true, None), "맥이 아닌 곳은 모른다 — 목록 그대로");
     }
 
     #[test]

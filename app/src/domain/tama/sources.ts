@@ -56,7 +56,7 @@ export function taskEvents(events: TaskEvent[]): TamaEvent[] {
     const t = Date.parse(e.ts);
     if (e.type !== 'done' || !Number.isFinite(t)) return [];
     const s = sent.get(e.task);
-    return [{ t, type: 'task' as const, ...(s?.title ? { label: s.title } : {}), ...(s?.from ? { by: s.from } : {}) }];
+    return [{ t, type: 'task' as const, ...(s?.title ? { label: s.title } : {}), ...(s?.from ? { by: s.from } : {}), ...(s?.project ? { proj: s.project } : {}) }];
   });
 }
 
@@ -68,6 +68,7 @@ const LOSE = new Set(['failure', 'timed_out', 'startup_failure']);
 export function parseCiRuns(raw: string): TamaEvent[] {
   const out: TamaEvent[] = [];
   for (const line of raw.split('\n')) {
+    const repo = line.slice(0, line.indexOf('\t'));
     const json = line.slice(line.indexOf('\t') + 1);
     if (!line.includes('\t') || !json.startsWith('[')) continue;
     let runs: GhRun[];
@@ -76,7 +77,7 @@ export function parseCiRuns(raw: string): TamaEvent[] {
       const t = Date.parse(r.createdAt ?? '');
       const c = r.conclusion ?? '';
       if (r.status !== 'completed' || !Number.isFinite(t) || !(WIN.has(c) || LOSE.has(c))) continue;
-      out.push({ t, type: 'ci', pass: WIN.has(c) });
+      out.push({ t, type: 'ci', pass: WIN.has(c), label: repo });
     }
   }
   return out;

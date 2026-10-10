@@ -23,6 +23,12 @@ describe('sceneFor — 위젯이 지금 보여줄 장면과 켜질 표시등', (
     expect(sceneFor(pet({ sick: true }), at(28, 14), { ...base, justEvolved: true }).scene).toBe('evolve');
   });
 
+  it('장애 몬스터가 나와 있으면 마주 선 장면 + 부르기 표시등 — 아플 땐 아픔이 먼저, 자는 밤엔 그냥 잔다', () => {
+    expect(sceneFor(pet(), at(28, 14), { ...base, monster: true })).toEqual({ scene: 'monster', lit: ['call'] });
+    expect(sceneFor(pet({ sick: true }), at(28, 14), { ...base, monster: true }).scene).toBe('sick');
+    expect(sceneFor(pet(), at(28, 3), { ...base, monster: true }).scene).toBe('sleep');
+  });
+
   it('90초 안에 커밋이 들어왔으면 밥 먹기 + 밥 표시등', () => {
     expect(sceneFor(pet({ recent: [at(28, 13, 59)] }), at(28, 14), base)).toEqual({ scene: 'eat', lit: ['food'] });
     expect(sceneFor(pet({ recent: [at(28, 13, 58)] }), at(28, 14), base).scene).toBe('walk');

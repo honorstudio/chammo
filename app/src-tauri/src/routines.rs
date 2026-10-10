@@ -65,9 +65,9 @@ pub fn install() {
     }
 }
 
-/// 버튼으로 할 수 있는 것만 — 이름은 스크립트가 다시 검사한다(클라우드 루틴 이름이면 스크립트가 거절)
+/// 버튼으로 할 수 있는 것만 + told(멈춤을 참모에게 넘겼다고 기록) — 이름은 스크립트가 다시 검사한다(클라우드 루틴 이름이면 스크립트가 거절)
 pub fn allowed(action: &str) -> bool {
-    matches!(action, "run" | "pause" | "resume" | "remove")
+    matches!(action, "run" | "pause" | "resume" | "remove" | "told")
 }
 
 fn script(args: &[&str]) -> Result<String, String> {
@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn 버튼_동작만_허용() {
-        for a in ["run", "pause", "resume", "remove"] {
+        for a in ["run", "pause", "resume", "remove", "told"] {
             assert!(allowed(a));
         }
         assert!(!allowed("new"));

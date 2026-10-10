@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ASK_GRACE_MS, askForwardText, askKeyOf, forwardText, GRACE_MS, nextAskForward, nextForward, retryAfterFail, toldOrch, type AskCand } from './forwardQuestion';
+import { ASK_GRACE_MS, askForwardText, askKeyOf, askTextKeyOf, forwardText, GRACE_MS, nextAskForward, nextForward, retryAfterFail, toldOrch, type AskCand } from './forwardQuestion';
 import type { Activity } from './activity';
 import type { Session } from './session';
 
@@ -110,6 +110,15 @@ describe('nextAskForward — 질문으로 턴을 끝내고 기다리는 하위 �
     expect(nextAskForward([c], orch, new Set(), T0 + 25 * 3600_000, never)).toBeUndefined();
   });
 
+  it('같은 마지막 말로 끝난 새 턴은 다시 안 넘긴다(2026-10-10 한 세션: 진행 보고 턴마다 같은 끝말로 5번 넘어왔다)', () => {
+    const first = cand('tone');
+    const again = cand('tone', act({ prompt: { ts: iso(T0 + 1000), text: '계속' }, reply: { ts: iso(T0 + 2000), text: '어느 쪽으로 할까?', asks: true, turnEnd: true } }));
+    expect(askKeyOf(again)).not.toBe(askKeyOf(first));
+    expect(nextAskForward([again], orch, new Set([askKeyOf(first), askTextKeyOf(first)]), later + 2000, never)).toBeUndefined();
+    const other = cand('tone', act({ prompt: { ts: iso(T0 + 1000), text: '계속' }, reply: { ts: iso(T0 + 2000), text: '이번엔 A 로 갈까?', asks: true, turnEnd: true } }));
+    expect(nextAskForward([other], orch, new Set([askKeyOf(first), askTextKeyOf(first)]), later + 2000, never)?.session.id).toBe('tone');
+  });
+
   it('사용자가 그 세션을 보고 있거나 참모가 확인창에 걸려 있으면 기다린다', () => {
     expect(nextAskForward([cand('project-x')], orch, new Set(), later, () => true)).toBeUndefined();
     expect(nextAskForward([cand('project-x')], s('local', { state: 'blocked' }), new Set(), later, never)).toBeUndefined();
@@ -188,6 +197,15 @@ describe('forwardTo — 멈춘 하위 세션을 맡긴 참모에게(2026-10-03: 
     expect(forwardTo(sub, [send('t1', 'project-b-fix', 'o-gone')], orchs, all, front, heir)?.id).toBe('o-dev');
     expect(forwardTo(sub, [send('t1', 'project-b-fix', 'o-gone')], orchs, all, front, () => undefined)?.id).toBe('o-front');
     expect(forwardTo(sub, [send('t1', 'project-b-fix', 'o-front')], orchs, all, front, heir)?.id).toBe('o-front');
+  });
+  it('맡긴 참모가 --resume 으로 번호가 바뀌었으면 기록의 이름(fromName)으로 찾는다', () => {
+    const named = (task: string, target: string, from: string, fromName: string): TaskEvent => ({ ...send(task, target, from), fromName });
+    expect(forwardTo(sub, [named('t1', 'project-b-fix', 'o-old', '참모-5')], orchs, all, front)?.id).toBe('o-dev');
+    expect(forwardTo(sub, [named('t3', 'project-b-ui', 'o-old', '참모-5 · 개발 담당')], orchs, all, front)?.id).toBe('o-dev'); // 프로젝트 단계도
+    // 번호가 살아 있으면 번호가 먼저 — 이름은 못 찾을 때만
+    expect(forwardTo(sub, [named('t1', 'project-b-fix', 'o-front', '참모-5')], orchs, all, front)?.id).toBe('o-front');
+    // 같은 기본 이름이 없으면 예전처럼 맨 앞
+    expect(forwardTo(sub, [named('t1', 'project-b-fix', 'o-old', '참모-9')], orchs, all, front)?.id).toBe('o-front');
   });
 });
 

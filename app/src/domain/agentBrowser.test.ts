@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { askName, controlOf, takeoverLine, browserBig, browserScreen, currentSite, EMPTY_MS, frameTrouble, GONE_MS, UNSURE_MS, liveOf, paneStatus, phoneTrouble, siteOf, tabStrip, unpackFrame, type Live, stuckLine, permLine } from './agentBrowser';
+import { askName, closedText, controlOf, takeoverLine, browserBig, browserScreen, currentSite, EMPTY_MS, frameTrouble, GONE_MS, UNSURE_MS, liveOf, paneStatus, phoneTrouble, siteOf, tabStrip, unpackFrame, type Live, stuckLine, permLine, fedcmChoices, fedcmLine, focusFailLine, peekStep } from './agentBrowser';
 
 const live = (o: Partial<Live> = {}): Live => ({ profile: 'acme', pid: 11, sessionPid: 22, url: 'https://a.com/', title: 'A', tabs: [], tool: '이동 https://a.com/', toolAt: 1000, busy: false, ts: 1000, ...o });
 
@@ -204,6 +204,13 @@ describe('사람 개입(2026-10-06 사용자) — 평소 보기만, 개입·부�
   });
 });
 
+describe('closedText — 닫힘 덮개 한 줄(맥 모달·폰 같은 글)', () => {
+  it('옆 줄(화면을 못 받았어)과 같은 반말 — 예전엔 \'닫혔어요 … 이어져\' 로 섞였다', () => {
+    expect(closedText()).toBe('브라우저가 닫혔어 — 세션이 다시 열면 이어져');
+    expect(phoneTrouble(undefined, 'no such browser', 0)?.text).toBe(closedText());
+  });
+});
+
 describe('phoneTrouble — 폰 브라우저 보기가 화면을 못 받는 이유 한 줄(2026-10-09, 이유 없이 \'화면 받는 중\'에 멈춤)', () => {
   it('괜찮으면 null — 일꾼이 아직 없거나 붙어서 탭이 있으면', () => {
     expect(phoneTrouble(undefined, '', 0)).toBeNull();
@@ -247,5 +254,62 @@ describe('permLine — 숨긴 크롬의 위치·알림 말풍선 대신 모달�
   it('사이트 호스트와 무엇을 묻는지', () => {
     expect(permLine({ kind: 'geolocation', origin: 'https://map.example.com:8443' })).toBe('map.example.com:8443 이(가) 위치를 쓰려고 해');
     expect(permLine({ kind: 'notifications', origin: 'https://a.com' })).toBe('a.com 이(가) 알림을 보내려고 해');
+  });
+});
+
+describe('fedcmChoices — 구글 등 \'…로 계속\' 계정 고르기는 크롬 자체 창이라 그림에 안 찍혀 모달 단추로(2026-10-10)', () => {
+  it('계정 고르기는 계정마다 이메일 단추 + 닫기', () => {
+    const f = { dialogId: 'd1', type: 'AccountChooser', title: 'idp.example 계정으로 shop.example 에 로그인', accounts: [{ email: 'a@x.com', name: 'A' }, { email: 'b@x.com', name: 'B' }] };
+    expect(fedcmChoices(f)).toEqual([{ label: 'a@x.com', account: 0 }, { label: 'b@x.com', account: 1 }, { label: '닫기', account: null }]);
+    expect(fedcmLine(f)).toBe('idp.example 계정으로 shop.example 에 로그인');
+  });
+  it('이메일이 없으면 이름, 확인 창은 계속, 모르는 창은 닫기만', () => {
+    expect(fedcmChoices({ dialogId: 'd', type: 'AccountChooser', title: '', accounts: [{ email: '', name: 'Kim' }] })[0]).toEqual({ label: 'Kim', account: 0 });
+    expect(fedcmChoices({ dialogId: 'd', type: 'ConfirmIdpLogin', title: '', accounts: [] })).toEqual([{ label: '계속', account: 0 }, { label: '닫기', account: null }]);
+    expect(fedcmChoices({ dialogId: 'd', type: 'Error', title: '', accounts: [] })).toEqual([{ label: '닫기', account: null }]);
+    expect(fedcmLine({ dialogId: 'd', type: 'AccountChooser', title: '', accounts: [] })).toBe('사이트가 계정으로 로그인하려고 해');
+  });
+});
+
+describe('focusFailLine — 크롬에서 보기가 실패하면 모달에 한 줄(2026-10-10 눌러도 아무 일 없이 조용했다)', () => {
+  it('브라우저가 없으면 꺼졌다고', () => {
+    expect(focusFailLine('no live browser')).toBe('브라우저가 꺼져 있어서 크롬 창을 못 꺼냈어');
+    expect(focusFailLine('chrome not found')).toBe('브라우저가 꺼져 있어서 크롬 창을 못 꺼냈어');
+  });
+  it('창이 화면에 안 나왔으면 다시 눌러 보라고', () => {
+    expect(focusFailLine('1 window(s) still off screen')).toBe('크롬 창을 화면으로 못 옮겼어 — 한 번 더 눌러 줘');
+  });
+  it('그 밖은 이유를 짧게 붙인다(주소는 빼고)', () => {
+    const l = focusFailLine(new Error('WebSocket connect ws://127.0.0.1:9333/devtools/browser/AB: Connection refused'));
+    expect(l.startsWith('크롬 창을 못 꺼냈어 — ')).toBe(true);
+    expect(l).not.toContain('127.0.0.1');
+    expect(focusFailLine('x'.repeat(300)).length).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('peekStep — 패스키 창이 뜨면 사람이 쓰는 중일 때만 크롬을 작게 꺼내고, 끝나면 되돌린다(2026-10-10 사용자)', () => {
+  const base = { popup: true, shown: false, peeked: null, failed: false, active: true, url: 'https://login.example.com/' };
+  it('사람이 쓰는 중이고 패스키 창이 뜨면 꺼낸다', () => {
+    expect(peekStep(base)).toBe('peek');
+  });
+  it('사람이 안 쓰는 중이면(세션 혼자 돌다 뜸) 안 꺼낸다 — 알림·카드 몫', () => {
+    expect(peekStep({ ...base, active: false })).toBeNull();
+  });
+  it('이미 꺼내 뒀거나(크롬에서 보기) 한 번 실패했으면 다시 안 부른다', () => {
+    expect(peekStep({ ...base, shown: true })).toBeNull();
+    expect(peekStep({ ...base, failed: true })).toBeNull();
+  });
+  it('꺼낸 뒤 창이 사라지거나 페이지가 넘어가면 되돌린다', () => {
+    const peeked = { url: base.url };
+    expect(peekStep({ ...base, shown: true, peeked })).toBeNull();
+    expect(peekStep({ ...base, shown: true, peeked, popup: false })).toBe('unpeek');
+    expect(peekStep({ ...base, shown: true, peeked, url: 'https://console.example.com/' })).toBe('unpeek');
+    expect(peekStep({ ...base, shown: true, peeked, active: false })).toBeNull();
+  });
+  it('모달이 막 열려 지금 탭 주소를 아직 모르면 기다린다 — 모른 채 꺼냈다가 주소가 오자 넘어간 줄 알고 숨겼다(하네스 실측)', () => {
+    expect(peekStep({ ...base, url: undefined })).toBeNull();
+  });
+  it('사람이 그 창을 직접 숨겼으면(shown 꺼짐) 더 할 일 없다', () => {
+    expect(peekStep({ ...base, shown: false, peeked: { url: base.url }, popup: false })).toBe('unpeek');
   });
 });

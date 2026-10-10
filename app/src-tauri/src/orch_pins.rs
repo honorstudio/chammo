@@ -36,6 +36,50 @@ pub fn set_pin(dir: &Path, sid: &str, on: bool) -> Result<Vec<String>, String> {
 }
 
 
+// 참모 순서 — <데이터>/orch-order.json(0600)에 대화 id 를 보이는 순서대로. 데스크톱이 채팅 탭을 끌어 옮기면 쓰고,
+// 사이드바·⌘1~9·폰 참모 바꾸기가 같이 읽는다(2026-10-10 사용자 "순서 출처 하나로", app/src/domain/orchOrder.ts)
+const MAX_ORDER: usize = 100;
+
+pub fn read_order(dir: &Path) -> Result<Vec<String>, String> {
+    match std::fs::read_to_string(dir.join("orch-order.json")) {
+        Ok(t) => serde_json::from_str(&t).map_err(|e| format!("orch-order.json 을 못 읽어요: {e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// 통째로 바꾼다 — 대화 id 가 아닌 게 하나라도 있으면 거절(파일 그대로). 겹치면 앞 것만, 100개까지
+pub fn write_order(dir: &Path, ids: &[String]) -> Result<Vec<String>, String> {
+    if !ids.iter().all(|x| crate::mobile_http::is_session_uuid(x)) {
+        return Err("bad session id".into());
+    }
+    let mut v: Vec<String> = Vec::new();
+    for x in ids {
+        if !v.contains(x) && v.len() < MAX_ORDER {
+            v.push(x.clone());
+        }
+    }
+    let _g = PIN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let tmp = dir.join(format!(".orch-order.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    crate::mobile_files::write_private_tmp(&tmp, serde_json::to_string(&v).unwrap_or_default().as_bytes()).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, dir.join("orch-order.json")).map_err(|e| e.to_string())?;
+    Ok(v)
+}
+
+/// 데스크톱 — 참모 순서(대화 id). 없거나 못 읽으면 빈 목록
+#[tauri::command]
+pub fn read_orch_order() -> Vec<String> {
+    read_order(crate::config::data_dir()).unwrap_or_default()
+}
+
+/// 데스크톱 — 채팅 탭을 끌어 옮기거나 단축키로 옮긴 뒤 새 순서를 통째로. 돌려주는 건 저장한 목록
+#[tauri::command]
+pub fn set_orch_order(ids: Vec<String>) -> Result<Vec<String>, String> {
+    write_order(crate::config::data_dir(), &ids)
+}
+
 /// 데스크톱 — 고정 목록(대화 id, 고정한 순서). 없거나 못 읽으면 빈 목록
 #[tauri::command]
 pub fn read_orch_pins() -> Vec<String> {

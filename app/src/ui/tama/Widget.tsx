@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { readTama, tamaDrag, tamaRequest, tamaWidget, writeTama } from '../../data/tauri';
 import { fullness } from '../../domain/tama/pet';
+import { MONSTER_NAME, MONSTER_SHORT, monsterWhy, shownMonsters } from '../../domain/tama/monsters';
 import { sceneFor } from '../../domain/tama/scene';
 import { EMPTY_FILE, parseTamaFile, pickEgg, type TamaFile } from '../../domain/tama/store';
 import { nameOf, stageOf, type Egg } from '../../domain/tama/tree';
@@ -60,14 +61,15 @@ export function Widget() {
     lastSlot.current = who;
   }
   const justEvolved = !!evolved.current && tick < evolved.current.until;
-  const { scene, lit } = sceneFor(pet, Date.now(), { busy: !!file.busy, justEvolved });
+  const foe = shownMonsters(file.monsters)[0];
+  const { scene, lit } = sceneFor(pet, Date.now(), { busy: !!file.busy, justEvolved, monster: !!foe });
 
   useEffect(() => {
     const c = canvas.current;
     if (!c) return;
     const dpr = window.devicePixelRatio || 1;
     if (c.width !== W * DOT * dpr) { c.width = W * DOT * dpr; c.height = H * DOT * dpr; }
-    draw(c, { scene, lit, who, prev: evolved.current?.from, petAt }, tick, theme);
+    draw(c, { scene, lit, who, prev: evolved.current?.from, petAt, foe: foe && `mon_${foe.kind}` }, tick, theme);
   });
 
   const onScreen = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -88,6 +90,9 @@ export function Widget() {
 
   const days = pet ? Math.floor((Date.now() - pet.bornAt) / 86_400_000) + 1 : 0;
   const needEgg = !pet || !!pet.dead;
+  // 은퇴한 뒤 빈자리 — 다음 세대 알(버릇을 물려받는다)
+  const gen = (file.lineage?.length ?? 0) + 1;
+  const retired = !pet ? file.lineage?.[file.lineage.length - 1] : undefined;
 
   return (
     <div className={`tw ${theme}`} onMouseDown={onDown} onMouseMove={onMove}>
@@ -95,7 +100,7 @@ export function Widget() {
         <canvas ref={canvas} style={{ width: W * DOT, height: H * DOT }} onClick={onScreen} />
         {needEgg && (
           <div className="tw-over">
-            <b>{pet?.dead ? tr(`${nameOf(pet.egg, pet.dead.slot)} — 떠났어. 새 알을 골라줘`, `${nameOf(pet.egg, pet.dead.slot)} has left. Pick a new egg`) : tr('알을 골라줘', 'Pick an egg')}</b>
+            <b>{pet?.dead ? tr(`${nameOf(pet.egg, pet.dead.slot)} — 떠났어. 새 알을 골라줘`, `${nameOf(pet.egg, pet.dead.slot)} has left. Pick a new egg`) : retired ? tr(`${nameOf(retired.egg, retired.slot)} 은퇴 — ${gen}대 알을 골라줘`, `${nameOf(retired.egg, retired.slot)} retired — pick the Gen ${gen} egg`) : tr('알을 골라줘', 'Pick an egg')}</b>
             {EGGS.map(([egg, name, like]) => (
               <button key={egg} onClick={() => void choose(egg)}><b>{name}</b><span>{tr('좋아하는 것', 'Likes')}: {like}</span></button>
             ))}
@@ -116,9 +121,11 @@ export function Widget() {
       <div className="tw-bar">
         {file.keeper && <span className="tw-keeper" title={tr(`돌보는 ${assistant()} — ${file.keeper.name}`, `Caretaker — ${file.keeper.name}`)}><OrchAvatar name={file.keeper.name} size={18} state={file.busy ? 'work' : 'rest'} color={file.keeper.color} /></span>}
         <b>{pet && !pet.dead ? nameOf(pet.egg, pet.slot) : tr('다마고치', 'Pet')}</b>
-        <span className="dim">{pet && !pet.dead ? STAGES[stageOf(pet.slot)] : ''}</span>
+        {foe && pet && !pet.dead
+          ? <span className="dim" title={`${MONSTER_NAME[foe.kind]()} — ${monsterWhy(foe)}`}>{MONSTER_SHORT[foe.kind]()} Lv.{foe.lv}</span>
+          : <span className="dim">{pet && !pet.dead ? STAGES[stageOf(pet.slot)] : ''}</span>}
         <span className="sp" />
-        <button className="tw-ic" onClick={() => void tamaRequest('pet')} aria-label={tr(`더보기 — ${assistant()} 대시보드의 펫`, 'More — pet in the dashboard')} title={tr(`더보기 — ${assistant()} 대시보드의 펫`, 'More — pet in the dashboard')}><IconMore /></button>
+        <button className="tw-ic" onClick={() => void tamaRequest('pet')} aria-label={tr('더보기 — 도감·보관함', 'More — collection & storage')} title={tr('더보기 — 도감·보관함', 'More — collection & storage')}><IconMore /></button>
         <button className="tw-ic" onClick={() => void tamaWidget(false)} aria-label={tr('숨기기 — 상단 바로', 'Hide — to the top bar')} title={tr('숨기기 — 상단 바로', 'Hide — to the top bar')}><IconMinimize /></button>
       </div>
     </div>

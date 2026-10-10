@@ -55,6 +55,22 @@ pub fn show_display(displays: &[(Rect, bool)]) -> Option<Rect> {
     displays.iter().find(|d| d.1).or(displays.first()).map(|d| d.0)
 }
 
+/// 그 점이 든 화면 — 없으면 보여 줄 화면(맥북). 패스키 창을 사람이 보는 화면(커서 자리)에 띄울 때
+pub fn display_at(displays: &[(Rect, bool)], x: f64, y: f64) -> Option<Rect> {
+    displays.iter().find(|d| d.0.contains(x, y)).map(|d| d.0).or_else(|| show_display(displays))
+}
+
+/// 화면 가운데 w×h — 화면이 작으면 화면 안(여백 16px)으로 줄인다
+pub fn center_in(d: Rect, w: f64, h: f64) -> Rect {
+    let (w, h) = (w.min(d.w - 32.0).max(100.0), h.min(d.h - 32.0).max(100.0));
+    Rect { x: (d.x + (d.w - w) / 2.0).round(), y: (d.y + (d.h - h) / 2.0).round(), w, h }
+}
+
+/// 지금 마우스 커서 자리(전역 좌표) — 맥이 아니거나 못 읽으면 None
+pub fn cursor() -> Option<(f64, f64)> {
+    cg::cursor()
+}
+
 /// 그 화면 안에 창을 놓을 자리 — 왼쪽 위에서 조금 비켜, 오른쪽·아래 16px 남기고 최대 1400x880(래퍼 windowSize 와 같은 규칙)
 pub fn place_in(d: Rect) -> Rect {
     let (x, y) = (d.x + 24.0, d.y + 48.0);
@@ -246,6 +262,26 @@ mod cg {
         fn CGDisplayBounds(display: u32) -> CGRect;
         fn CGDisplayIsBuiltin(display: u32) -> u32;
     }
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventCreate(source: *const std::ffi::c_void) -> *const std::ffi::c_void;
+        fn CGEventGetLocation(event: *const std::ffi::c_void) -> CGPoint;
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFRelease(cf: *const std::ffi::c_void);
+    }
+    pub fn cursor() -> Option<(f64, f64)> {
+        unsafe {
+            let e = CGEventCreate(std::ptr::null());
+            if e.is_null() {
+                return None;
+            }
+            let p = CGEventGetLocation(e);
+            CFRelease(e);
+            Some((p.x, p.y))
+        }
+    }
     /// (화면 번호, 네모, 내장인가)
     pub fn displays() -> Vec<(u32, super::Rect, bool)> {
         let mut ids = [0u32; 16];
@@ -267,6 +303,9 @@ mod cg {
     pub fn displays() -> Vec<(u32, super::Rect, bool)> {
         vec![]
     }
+    pub fn cursor() -> Option<(f64, f64)> {
+        None
+    }
 }
 
 /// 보이는 화면들(가짜 화면 빼고) — (네모, 내장인가)
@@ -287,6 +326,20 @@ mod tests {
     }
 
     use super::*;
+    #[test]
+    fn 패스키_창은_커서가_있는_화면_가운데에_작게() {
+        let lg = Rect { x: 0.0, y: 0.0, w: 2560.0, h: 1440.0 };
+        let book = Rect { x: -1470.0, y: 500.0, w: 1470.0, h: 956.0 };
+        let ds = [(lg, false), (book, true)];
+        assert_eq!(display_at(&ds, 100.0, 100.0), Some(lg), "커서가 LG 위");
+        assert_eq!(display_at(&ds, -700.0, 900.0), Some(book));
+        assert_eq!(display_at(&ds, -9000.0, -9000.0), Some(book), "어느 화면도 아니면 맥북");
+        assert_eq!(center_in(lg, 520.0, 640.0), Rect { x: 1020.0, y: 400.0, w: 520.0, h: 640.0 });
+        let tiny = Rect { x: 0.0, y: 0.0, w: 500.0, h: 400.0 };
+        let c = center_in(tiny, 520.0, 640.0);
+        assert!(c.w <= 500.0 && c.h <= 400.0 && c.x >= 0.0 && c.y >= 0.0, "작은 화면이면 화면 안으로 줄인다: {c:?}");
+    }
+
     const BOOK: Rect = Rect { x: -1470.0, y: 0.0, w: 1470.0, h: 956.0 };
     const MAIN: Rect = Rect { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0 };
 

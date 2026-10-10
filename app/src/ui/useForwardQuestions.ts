@@ -3,7 +3,7 @@
 // 2026-09-30: 질문으로 턴을 끝내고 기다리는 하위 세션도(선택지 창이 아닌 것) — 그 턴에 참모에게 말을 안 했을 때만
 import { useEffect, useRef } from 'react';
 import { readTranscriptTails, sendToSession } from '../data/tauri';
-import { askForwardText, askKeyOf, forwardText, forwardTo, inputWaitText, nextAskForward, nextForward, retryAfterFail, toldOrch, type AskCand, type AskTrack } from '../domain/forwardQuestion';
+import { askForwardText, askKeyOf, askTextKeyOf, forwardText, forwardTo, inputWaitText, nextAskForward, nextForward, retryAfterFail, toldOrch, type AskCand, type AskTrack } from '../domain/forwardQuestion';
 import type { TaskEvent } from '../domain/tasks';
 import type { Session } from '../domain/session';
 
@@ -50,6 +50,8 @@ export function useForwardQuestions(subs: Session[], orch: Session | undefined, 
     if (!c || !to) return;
     const key = askKeyOf(c);
     done.current.add(key); // 확인하는 동안 다시 안 잡게 — 못 넣으면 뺀다
+    const tkey = askTextKeyOf(c);
+    done.current.add(tkey);
     saveDone(done.current);
     busy.current = true;
     const since = c.activity.prompt?.ts ?? c.activity.reply!.ts;
@@ -58,7 +60,7 @@ export function useForwardQuestions(subs: Session[], orch: Session | undefined, 
         if (toldOrch(Object.values(tails).join('\n'), c.session.name, since)) return; // 그 턴에 참모에게 이미 말했다
         return sendToSession(to.id, askForwardText(c.session, c.activity, Date.now()));
       })
-      .catch(() => { if (retryAfterFail(fails.current, key)) { done.current?.delete(key); saveDone(done.current!); } })
+      .catch(() => { if (retryAfterFail(fails.current, key)) { done.current?.delete(key); done.current?.delete(tkey); saveDone(done.current!); } })
       .finally(() => { busy.current = false; });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subs, orch, events, orchs]);

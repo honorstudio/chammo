@@ -1,0 +1,65 @@
+/* 참모 모드 칸 — 따로 창(body.mode-win)과 스페이스 패널이 같이 쓴다. 접두 mdv-(앱 전역의 짧은 클래스와 안 겹치게) */
+.mdv { position: relative; display: flex; flex-direction: column; gap: 10px; min-height: 0; height: 100%; padding: 14px 16px; box-sizing: border-box; color: var(--text); }
+.mdv.compact { padding: 10px 12px; gap: 8px; }
+.mdv-body { flex: 1; min-height: 0; overflow: auto; }
+.mdv-band { flex: none; padding-top: 8px; border-top: 1px solid var(--line); }
+.mdv-box { min-width: 0; }
+.mdv-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.mdv-md { line-height: 1.55; overflow-wrap: anywhere; }
+.mdv-md.dim { color: var(--text-3); }
+.mdv-md > :first-child { margin-top: 0; }
+.mdv-md > :last-child { margin-bottom: 0; }
+.mdv-md ul, .mdv-md ol { padding-left: 20px; }
+.mdv-md code, .mdv-code { font-family: "MesloLGSDZ Nerd Font Mono", ui-monospace, Menlo, monospace; font-size: 12px; }
+.mdv-md code { background: var(--surface-2); padding: 1px 4px; border-radius: 4px; }
+.mdv-code { margin: 0; padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; overflow: auto; white-space: pre; }
+.mdv-link, .mdv-md a { color: var(--working); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.mdv .btn { height: 30px; padding: 0 12px; }
+.mdv-plain { border: 0; background: none; padding: 2px 4px; cursor: pointer; border-radius: 4px; text-align: left; }
+.mdv-plain:hover { background: var(--hover); }
+.mdv-field { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mdv-label { color: var(--text-2); flex: none; }
+.mdv-field input, .mdv-field select { min-width: 0; flex: 1; height: 30px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
+.mdv-client { position: relative; display: flex; flex-direction: column; min-width: 0; }
+/* 방(iframe)은 그리지 않는다 — 모드 코드만 돌고 그림은 앱이 */
+.mdv-client-frame { position: absolute; width: 0; height: 0; border: 0; visibility: hidden; pointer-events: none; }
+.mdv-svg { display: block; flex: none; align-self: flex-start; max-width: 100%; height: auto; }
+.mdv-cant { display: inline-flex; flex: none; align-self: flex-start; padding: 2px 8px; border: 1px dashed var(--line-strong); border-radius: 6px; color: var(--text-3); font-size: 12px; }
+.mdv-note { display: flex; align-items: center; gap: 10px; color: var(--text-2); }
+.mdv-note.quiet { color: var(--text-3); font-size: 12px; }
+.mdv-log { color: var(--text-3); font-size: 12px; }
+.mdv-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.mdv-tabs button { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 3px 10px; cursor: pointer; color: var(--text-2); }
+.mdv-tabs button.on { background: var(--text); color: var(--surface); border-color: var(--text); }
+.mdv-status { flex: none; color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mdv-toasts { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; z-index: 2; }
+.mdv-toast { background: var(--text); color: var(--surface); padding: 6px 10px; border-radius: 8px; font-size: 12px; max-width: 260px; box-shadow: 0 4px 14px rgba(0, 0, 0, .18); }
+
+/* 따로 창 — 머리는 오른쪽 압정(항상 위) 하나. 켜지면 옅은 면 */
+body.mode-win #root { height: 100vh; }
+.mdv-win { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.mdv-win > .mdv { flex: 1; min-height: 0; padding-top: 2px; }
+.mdv-win-head { flex: none; display: flex; justify-content: flex-end; padding: 6px 8px 0; }
+.mdv-pin.on { background: var(--surface-2); color: var(--text); }
+
+/* 스페이스 패널 — 스페이스 오른쪽 칸(나누는 선은 사방 같은 색 한 줄, 강조 띠 아님) */
+.mdv-panel { flex: none; width: 340px; display: flex; flex-direction: column; min-height: 0; overflow: auto; background: var(--surface); border-left: 1px solid var(--line); }
+.mdv-panel-item { display: flex; flex-direction: column; min-height: 220px; flex: 1; }
+.mdv-panel-item + .mdv-panel-item { border-top: 1px solid var(--line); }
+.mdv-panel-head { display: flex; align-items: center; gap: 4px; height: 40px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--line); flex: none; }
+.mdv-sp { flex: 1; }
+
+/* 대시보드 칸 — 알림 칸 아래, 사방 같은 선 한 줄의 카드(강조 띠 아님). 여럿이면 옆으로 */
+.mdv-dash { display: flex; gap: 12px; flex-wrap: wrap; padding: 0 36px; margin: 0 0 18px; }
+.mdv-dash-item { flex: 1 1 320px; min-width: 0; height: 300px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+
+/* 꽉 채우기 — 스페이스 전체(시안 검토 화면과 같은 자리) */
+.mdv-full { position: absolute; inset: 0; z-index: 35; display: flex; flex-direction: column; background: var(--surface); }
+.mdv-full > .mdv-panel-head { height: 44px; padding: 0 10px 0 16px; }
+
+/* 미리보기 — 스페이스 위 상자, 바깥을 누르거나 Esc = 끄기 */
+.mdv-modal { position: absolute; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 28px; background: color-mix(in srgb, #000 38%, transparent); }
+.mdv-modal-box { width: min(720px, 100%); height: min(560px, 100%); display: flex; border-radius: 14px; overflow: hidden; background: var(--surface); box-shadow: 0 24px 64px rgba(0, 0, 0, .35); }
+.mdv-modal-item { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.mdv-modal-item > .mdv-panel-head { height: 44px; padding: 0 10px 0 16px; }
+.mdv-dash-item > .mdv, .mdv-full > .mdv, .mdv-modal-item > .mdv { flex: 1; min-height: 0; }

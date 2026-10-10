@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
-import { browserBig, browserScreen, tabStrip, takeoverLine, unpackFrame, type CdpPage, type Live, type PagePermission, type WrapperDialog } from '../domain/agentBrowser';
+import { browserBig, browserScreen, closedText, tabStrip, takeoverLine, unpackFrame, type CdpPage, type Live, type FedcmDialog, type PagePermission, type WrapperDialog } from '../domain/agentBrowser';
 import { tr } from '../i18n';
 import { IconCollapse, IconExpand, IconHide, IconMaximize, IconRefresh } from './Icons';
 import { handBack, openAgentModal, takeOver } from './AgentBrowserModal';
@@ -81,7 +81,7 @@ export function useBrowserScreen(t: { error: string; attached: boolean; pages: C
  * 이유 없이 '화면 받는 중'에 멈춰 사람이 기다리기만 한 것도(2026-10-05 QA 5)
  */
 export function FrameView({ profile, src, scr, error, alt, imgRef }: { profile: string; src: string; scr: ReturnType<typeof browserScreen>; error: string; alt: string; imgRef?: React.Ref<HTMLImageElement> }) {
-  const msg = scr.kind === 'closed' ? tr('브라우저가 닫혔어요 — 세션이 다시 열면 이어져', 'The browser is closed — it resumes when the session opens it again')
+  const msg = scr.kind === 'closed' ? closedText()
     : scr.kind === 'fail' ? tr('화면을 못 받았어', 'Could not get the screen') : scr.why;
   return (
     <>
@@ -105,13 +105,13 @@ export function useAgentTabs(profile: string, every = 1000) {
   // dialog = 지금 탭 대화상자, dialogTabs = 대화상자가 떠 있는 탭들, stuck = 지금 탭이 멈춤(답이 안 들어감·앱이 모르는 대화상자 — 크롬에서 보기로 푼다)
   // error = 화면 받기 실패 이유(Rust 일꾼) — 다시 붙으면 지워진다. attached = 일꾼이 붙어 탭 목록을 읽음(그런데 탭 0개면 닫힘)
   // popup = 크롬이 이 그림 밖에 자기 창을 띄움(패스키·Touch ID·폰 QR) — 크롬에서 보기로 꺼내야 보인다
-  const [t, setT] = useState<{ pages: CdpPage[]; current: string | null; pinned: boolean; shown: boolean; dialog: AgentDialog | null; dialogTabs: string[]; stuck: boolean; chooser: string | null; reopened: boolean; dropped: number; error: string; attached: boolean; popup: boolean; wrapperDialog: WrapperDialog | null; permission: PagePermission | null }>({ pages: [], current: null, pinned: false, shown: false, dialog: null, dialogTabs: [], stuck: false, chooser: null, reopened: false, dropped: 0, error: '', attached: false, popup: false, wrapperDialog: null, permission: null });
+  const [t, setT] = useState<{ pages: CdpPage[]; current: string | null; pinned: boolean; shown: boolean; dialog: AgentDialog | null; dialogTabs: string[]; stuck: boolean; chooser: string | null; reopened: boolean; dropped: number; error: string; attached: boolean; popup: boolean; wrapperDialog: WrapperDialog | null; permission: PagePermission | null; fedcm: FedcmDialog | null }>({ pages: [], current: null, pinned: false, shown: false, dialog: null, dialogTabs: [], stuck: false, chooser: null, reopened: false, dropped: 0, error: '', attached: false, popup: false, wrapperDialog: null, permission: null, fedcm: null });
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     let alive = true;
     const tick = () => {
       setNow(Date.now());
-      void invoke<typeof t>('agent_tabs', { profile }).then((x) => { if (alive) setT({ ...x, dialog: x.dialog ?? null, dialogTabs: x.dialogTabs ?? [], chooser: x.chooser ?? null, error: x.error ?? '', attached: !!x.attached, popup: !!x.popup, wrapperDialog: x.wrapperDialog ?? null, permission: x.permission ?? null }); }, () => {});
+      void invoke<typeof t>('agent_tabs', { profile }).then((x) => { if (alive) setT({ ...x, dialog: x.dialog ?? null, dialogTabs: x.dialogTabs ?? [], chooser: x.chooser ?? null, error: x.error ?? '', attached: !!x.attached, popup: !!x.popup, wrapperDialog: x.wrapperDialog ?? null, permission: x.permission ?? null, fedcm: x.fedcm ?? null }); }, () => {});
     };
     tick();
     const id = window.setInterval(tick, every);
@@ -145,7 +145,7 @@ export function AgentBrowser({ live, children, className = '' }: { live: Live; c
   const hide = () => void invoke('agent_hide', { profile: live.profile }).then(() => setShown(false), () => {});
   const flip = () => setManual({ big: !big, at: live.toolAt });
   // 사람 개입(2026-10-06 사용자) — 칸은 보기만, '개입'을 누르면 개입을 켜고 크게 보기에서 조작. 개입 중이면 칸에도 표시·돌려주기
-  const take = () => void takeOver(live.profile, live.pid).then(() => openAgentModal(live.profile), () => {});
+  const take = () => void takeOver(live.profile, live.pid).then(() => openAgentModal(live.profile, live.pid), () => {});
   const give = () => void handBack(live.profile, live.pid).catch(() => {});
   const taking = takeoverLine(live);
   const held = live.held ? tr('세션은 사람이 돌려주길 기다리는 중', 'The session is waiting for you to hand back') : '';
@@ -164,12 +164,12 @@ export function AgentBrowser({ live, children, className = '' }: { live: Live; c
             {pinned && <button className="ab-follow" onClick={() => void invoke('agent_pin', { profile: live.profile, target: null })}>{tr('따라가기', 'Follow')}</button>}
             {/* 크롬에서 보기는 크게 보기 모달의 더보기 안에(2026-10-03 사용자) — 꺼내 둔 동안만 여기 숨기기 */}
             {shown && <button className="ab-ic" onClick={hide} title={tr('크롬 창 숨기기', 'Hide the Chrome window')} aria-label={tr('크롬 창 숨기기', 'Hide the Chrome window')}><IconHide /></button>}
-            {live.ask && <button className="ab-ask" onClick={() => openAgentModal(live.profile)}>{tr('사람 필요', 'Needs you')}</button>}
+            {live.ask && <button className="ab-ask" onClick={() => openAgentModal(live.profile, live.pid)}>{tr('사람 필요', 'Needs you')}</button>}
             {!live.ask && scr.kind !== 'closed' && (live.takeover
               ? <button className="ab-follow" onClick={give} title={taking ?? undefined}>{tr('돌려주기', 'Hand back')}</button>
               : <button className="ab-follow" onClick={take} title={tr('직접 조작 — 그동안 세션은 브라우저 일을 멈춰요', 'Take control — the session pauses its browser work')}>{tr('개입', 'Take over')}</button>)}
-            {!live.ask && waitTag && <button className="ab-ask" onClick={() => openAgentModal(live.profile)}>{waitTag}</button>}
-            <button className="ab-ic" onClick={() => openAgentModal(live.profile)} title={tr('크게 보기 — 직접 조작', 'Open large — control it')} aria-label={tr('크게 보기', 'Open large')}><IconMaximize /></button>
+            {!live.ask && waitTag && <button className="ab-ask" onClick={() => openAgentModal(live.profile, live.pid)}>{waitTag}</button>}
+            <button className="ab-ic" onClick={() => openAgentModal(live.profile, live.pid)} title={tr('크게 보기 — 직접 조작', 'Open large — control it')} aria-label={tr('크게 보기', 'Open large')}><IconMaximize /></button>
             <button className="ab-ic" onClick={flip} title={tr('터미널 크게', 'Terminal larger')} aria-label={tr('터미널 크게', 'Terminal larger')}><IconCollapse /></button>
           </div>
           <div className="ab-screen"><FrameView profile={live.profile} src={src} scr={scr} error={error} alt={live.title || live.url} /></div>

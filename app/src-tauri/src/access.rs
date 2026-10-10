@@ -133,6 +133,11 @@ pub async fn project_access(dir: Option<String>) -> Access {
             if n > 0 {
                 crate::claude::log_out("statusline", &format!("attached to {n} folder(s)"));
             }
+            // 브라우저 승인 — 본 폴더의 저장소 .mcp.json 승인을 그사이 생긴 워크트리에도
+            let n = crate::browser_attach::follow_worktrees_all(crate::config::data_dir());
+            if n > 0 {
+                crate::claude::log_out("browser-attach", &format!("worktree approval to {n} folder(s)"));
+            }
         }
         a
     })

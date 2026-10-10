@@ -22,6 +22,7 @@ def setUpModule():
     global _HOME
     _HOME = tempfile.TemporaryDirectory()
     unittest.mock.patch.dict(os.environ, {'HOME': _HOME.name}).start()
+    os.environ.pop('CLAUDE_CONFIG_DIR', None)  # 셸에 있으면 믿음 쓰기가 그 진짜 설정으로 간다(patch.dict 가 끝에 되돌린다)
 
 
 def tearDownModule():
@@ -198,6 +199,18 @@ class SpawnTrust(unittest.TestCase):
         cfg = json.loads(self.cj.read_text())
         self.assertEqual((cfg['userID'], cfg['projects'][self.d]['allowedTools']), ('keep-me', []))  # 한 키만 바꾼다
         self.assertFalse(any(n.startswith('.claude.json.') for n in os.listdir(self.home)))  # 임시 파일이 안 남는다
+
+    def test_CLAUDE_CONFIG_DIR_면_그_폴더의_claude_json_에_적는다(self):
+        # Claude Code 는 CLAUDE_CONFIG_DIR 의 .claude.json 을 읽는다 — 홈 것에 적으면 믿음이 안 먹고 진짜 설정만 바뀐다
+        cfg = self.home / 'cfg'
+        cfg.mkdir()
+        (cfg / '.claude.json').write_text(json.dumps({'projects': {}}))
+        self.clobber()
+        home_before = self.cj.read_text()
+        with unittest.mock.patch.dict(os.environ, {'CLAUDE_CONFIG_DIR': str(cfg)}):
+            rt.run_now('k-check', data=str(self.data), run=Calls(), home=str(self.home))
+        self.assertIs(json.loads((cfg / '.claude.json').read_text())['projects'][self.d]['hasTrustDialogAccepted'], True)
+        self.assertEqual(self.cj.read_text(), home_before)
 
     def test_키가_없어도_적는다(self):
         self.cj.write_text(json.dumps({'projects': {}}))
@@ -435,6 +448,299 @@ class SpawnStagger(unittest.TestCase):
         self.assertEqual(self.slept, [rt.RETRY_WAIT, rt.SPAWN_GAP])
 
 
+class StallWatch(unittest.TestCase):
+    """예약 세션이 보고 없이 멈춘 채 남았나 — tick 이 본다(2026-10-09 07:30 docs-sync: 첫 요청이 'Could not refresh your login because
+    another Claude Code process is refreshing it' 로 멈춘 채 하루 가까이 아무도 몰랐다. 앱의 갱신 겹침 이어서는 예약 폴더 세션을 못 본다)"""
+    NOW = datetime.datetime(2026, 10, 6, 7, 30)
+    REFRESH = 'Could not refresh your login because another Claude Code process is refreshing it (or exited mid-refresh) · Try again in a minute; if it keeps happening, close other Claude Code windows or sign in again with /login'
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(self.tmp.name)
+        self.home, self.data = root, root / 'data'
+        self.data.mkdir()
+        (root / '.claude.json').write_text(json.dumps({'projects': {}}))
+        self.slept = []
+        rt.new('nightly-sync', 'daily 07:30', 'x', data=str(self.data), home=str(self.home), run=Calls(), claude='/bin/claude',
+               python='/usr/bin/python3', uid=501, now=self.NOW - datetime.timedelta(days=1), apps=[], allow_test=True)
+        rt._tick_mark('nightly-sync', str(self.data), self.NOW)  # 오늘 칸은 이미 돌았다 — tick 이 새로 띄우는 건 멈춤 처리뿐
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def started(self, short, at):
+        rt._log('nightly-sync', str(self.data), now=at, event='start', session=short, scheduled=True, error=None)
+
+    def transcript(self, short, lines):
+        """대화 기록 — 진짜처럼 ~/.claude/projects/<폴더>/<대화 id>.jsonl, 시각은 UTC 'Z'"""
+        d = self.home / '.claude' / 'projects' / '-tmp-routines-nightly-sync'
+        d.mkdir(parents=True, exist_ok=True)
+        z = lambda t: t.astimezone(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        rows = []
+        for kind, at, text in lines:
+            if kind == 'user':
+                rows.append({'type': 'user', 'timestamp': z(at), 'message': {'role': 'user', 'content': text}})
+            elif kind == 'error':
+                rows.append({'type': 'assistant', 'timestamp': z(at), 'isApiErrorMessage': True, 'error': 'server_error',
+                             'message': {'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}})
+            elif kind == 'auth':
+                rows.append({'type': 'assistant', 'timestamp': z(at), 'isApiErrorMessage': True, 'error': 'authentication_failed',
+                             'message': {'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}})
+            else:
+                rows.append({'type': 'assistant', 'timestamp': z(at), 'message': {'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}})
+            rows.append({'type': 'system', 'subtype': 'turn_duration', 'timestamp': z(at)})  # 진짜 기록처럼 끝에 메타 줄
+        (d / f'{short}-0000-4000-8000-000000000000.jsonl').write_text('\n'.join(json.dumps(r) for r in rows) + '\n')
+
+    def agent(self, short, status='idle', state='blocked'):
+        return {'id': short, 'name': 'routine-nightly-sync', 'status': status, 'state': state,
+                'sessionId': f'{short}-0000-4000-8000-000000000000', 'cwd': str(self.data / 'routines/nightly-sync')}
+
+    def tick(self, calls, now):
+        return rt.tick(data=str(self.data), now=now, run=calls, home=str(self.home), uid=501, sleep=self.slept.append)
+
+    def runs(self):
+        return [json.loads(l) for l in (self.data / 'routines/nightly-sync/runs.jsonl').read_text().splitlines()]
+
+    @staticmethod
+    def spawns(calls):
+        return [c for c in calls.calls if '--bg' in c]
+
+    def test_told_는_기록에_한_줄_남기고_없는_예약은_거절(self):
+        # 앱이 멈춤을 참모에게 넘긴 뒤 — 앱 저장(localStorage)이 지워져도 같은 멈춤을 다시 안 넘기게(roadmap 멈춘 예약 감시 ④)
+        ev = rt.told('nightly-sync', data=str(self.data), now=self.NOW)
+        self.assertEqual(ev['event'], 'told')
+        self.assertEqual(self.runs()[-1]['event'], 'told')
+        with self.assertRaises(ValueError):
+            rt.told('없는-예약', data=str(self.data))
+
+    def stalled_on_refresh(self, short='aaaa1111'):
+        t0 = self.NOW + datetime.timedelta(seconds=54)
+        self.started(short, t0)
+        self.transcript(short, [('user', t0, 'You are the routine "nightly-sync". Do ONE run now'), ('error', t0 + datetime.timedelta(seconds=8), self.REFRESH)])
+        return t0
+
+    def test_갱신_겹침으로_멈춘_세션은_잠깐_뒤_한_번_다시_돌린다(self):
+        t0 = self.stalled_on_refresh()
+        calls = Calls(agents=json.dumps([self.agent('aaaa1111')]))
+        out = self.tick(calls, t0 + datetime.timedelta(minutes=rt.STALL_RETRY_MIN, seconds=30))
+        self.assertIn(['/bin/claude', 'rm', 'aaaa1111'], calls.calls)
+        self.assertEqual(len(self.spawns(calls)), 1)
+        self.assertEqual(out[-1]['stall'], 'refresh')
+        events = self.runs()
+        self.assertEqual([e['event'] for e in events][-2:], ['retry', 'start'])
+        self.assertEqual(events[-2]['stall'], 'refresh')
+        self.assertEqual(events[-1]['session'], '1a2b3c4d')
+
+    def test_갱신_겹침이_막_났으면_아직_안_건드린다(self):
+        # Claude Code 메시지가 '1분 뒤 다시' — 앱의 이어서(1분 뒤)가 먼저 할 틈을 준다
+        t0 = self.stalled_on_refresh()
+        calls = Calls(agents=json.dumps([self.agent('aaaa1111')]))
+        self.assertEqual(self.tick(calls, t0 + datetime.timedelta(minutes=1)), [])
+        self.assertEqual(self.spawns(calls), [])
+
+    def test_다시_돌린_것도_갱신_겹침이면_세_번째는_없고_한_번만_알린다(self):
+        t0 = self.stalled_on_refresh()
+        self.tick(Calls(agents=json.dumps([self.agent('aaaa1111')])), t0 + datetime.timedelta(minutes=5))
+        t1 = t0 + datetime.timedelta(minutes=5, seconds=10)
+        self.transcript('1a2b3c4d', [('user', t1, 'You are the routine'), ('error', t1 + datetime.timedelta(seconds=5), self.REFRESH)])
+        calls = Calls(agents=json.dumps([self.agent('1a2b3c4d')]))
+        out = self.tick(calls, t1 + datetime.timedelta(minutes=5))
+        self.assertEqual(self.spawns(calls), [])
+        self.assertNotIn(['/bin/claude', 'rm', '1a2b3c4d'], calls.calls)
+        last = self.runs()[-1]
+        self.assertEqual((last['event'], last['stall'], last['session']), ('stall', 'refresh', '1a2b3c4d'))
+        self.assertEqual(out[-1]['stall'], 'refresh')
+        n = len(self.runs())
+        self.assertEqual(self.tick(calls, t1 + datetime.timedelta(minutes=30)), [])  # 같은 멈춤은 한 번만
+        self.assertEqual(len(self.runs()), n)
+
+    def test_진짜_로그인_풀림은_건드리지_않는다(self):
+        # 로그인 카드(hq-login) 몫 — 다시 돌려도 또 막히고, 알림이 카드와 겹친다
+        t0 = self.NOW + datetime.timedelta(seconds=54)
+        self.started('aaaa1111', t0)
+        self.transcript('aaaa1111', [('user', t0, 'go'), ('auth', t0 + datetime.timedelta(seconds=5), 'Login expired · Please run /login')])
+        calls = Calls(agents=json.dumps([self.agent('aaaa1111')]))
+        self.assertEqual(self.tick(calls, t0 + datetime.timedelta(hours=10)), [])
+        self.assertEqual(self.spawns(calls), [])
+        self.assertEqual([e['event'] for e in self.runs()], ['start'])
+
+    def test_보고_없이_오래_멈춘_세션은_알린다(self):
+        t0 = self.NOW + datetime.timedelta(seconds=54)
+        self.started('aaaa1111', t0)
+        self.transcript('aaaa1111', [('user', t0, 'go'), ('reply', t0 + datetime.timedelta(minutes=3), '어느 저장소부터 할까?')])
+        calls = Calls(agents=json.dumps([self.agent('aaaa1111')]))
+        self.assertEqual(self.tick(calls, t0 + datetime.timedelta(hours=rt.STALL_ALERT_H) - datetime.timedelta(minutes=1)), [])
+        out = self.tick(calls, t0 + datetime.timedelta(hours=rt.STALL_ALERT_H, minutes=5))
+        self.assertEqual(self.spawns(calls), [])
+        last = self.runs()[-1]
+        self.assertEqual((last['event'], last['stall'], last['session']), ('stall', 'blocked', 'aaaa1111'))
+        self.assertEqual(out[-1]['stall'], 'blocked')
+        self.assertEqual(self.tick(calls, t0 + datetime.timedelta(hours=9)), [])  # 한 번만
+
+    def test_보고하고_멈춘_세션은_알리지_않는다(self):
+        # 2026-10-05 점검 예약 류: 보고(ok)는 올렸고 마지막 말 때문에 state 만 blocked
+        t0 = self.NOW + datetime.timedelta(seconds=54)
+        self.started('aaaa1111', t0)
+        rt.report('nightly-sync', 'ok', 'done', data=str(self.data), now=t0 + datetime.timedelta(minutes=2))
+        self.transcript('aaaa1111', [('user', t0, 'go'), ('reply', t0 + datetime.timedelta(minutes=3), '하나는 멈췄어')])
+        calls = Calls(agents=json.dumps([self.agent('aaaa1111')]))
+        self.assertEqual(self.tick(calls, t0 + datetime.timedelta(hours=20)), [])
+        self.assertNotIn(['/bin/claude', 'agents', '--json'], calls.calls)  # 열린 실행이 없으면 agents 도 안 부른다
+
+    def test_일하는_중이면_건드리지_않는다(self):
+        t0 = self.stalled_on_refresh()
+        calls = Calls(agents=json.dumps([self.agent('aaaa1111', status='busy', state='working')]))
+        self.assertEqual(self.tick(calls, t0 + datetime.timedelta(hours=8)), [])
+        self.assertEqual(self.spawns(calls), [])
+
+    def test_한_번짜리_예약도_다시_돌린다(self):
+        # 날짜 칸은 이미 예약 시작으로 돌아 run_now 가 '때 아님'으로 거르면 다시 돌리기가 헛나간다
+        rt.new('once-sync', '10/06 07:30', 'x', data=str(self.data), home=str(self.home), run=Calls(), claude='/bin/claude',
+               python='/usr/bin/python3', uid=501, now=self.NOW - datetime.timedelta(days=1), apps=[], allow_test=True)
+        rt._tick_mark('once-sync', str(self.data), self.NOW)
+        rt.remove('nightly-sync', data=str(self.data), home=str(self.home), run=Calls(), uid=501)
+        t0 = self.NOW + datetime.timedelta(seconds=54)
+        rt._log('once-sync', str(self.data), now=t0, event='start', session='aaaa1111', scheduled=True, error=None)
+        self.transcript('aaaa1111', [('user', t0, 'go'), ('error', t0 + datetime.timedelta(seconds=8), self.REFRESH)])
+        row = {**self.agent('aaaa1111'), 'name': 'routine-once-sync'}
+        calls = Calls(agents=json.dumps([row]))
+        self.tick(calls, t0 + datetime.timedelta(minutes=5))
+        self.assertEqual(len(self.spawns(calls)), 1)
+
+    def test_꺼둔_예약은_건드리지_않는다(self):
+        t0 = self.stalled_on_refresh()
+        rt.set_enabled('nightly-sync', False, data=str(self.data), home=str(self.home), run=Calls(), uid=501)
+        calls = Calls(agents=json.dumps([self.agent('aaaa1111')]))
+        out = self.tick(calls, t0 + datetime.timedelta(minutes=5))
+        self.assertEqual(out, [])
+        self.assertEqual(self.spawns(calls), [])
+
+
+class Killed(BaseException):
+    """앱 실행기가 10분 넘은 tick 을 SIGKILL 로 죽인 것 흉내 — except Exception 에도 안 잡힌다"""
+
+
+class CatchUp(unittest.TestCase):
+    """예약 칸을 tick.json 에 먼저 적고 띄우다 tick 이 죽으면, 그 칸은 '돌았다'로 남고 runs.jsonl 엔 아무 줄도 없었다
+    (2026-10-07 08:30·09:10 — Claude Code 자동 업데이트 뒤 claude --bg 가 답 없이 멈춰 앱 실행기가 10분 만에 tick 을 죽였다.
+    routine-tick.log 에 'routine tick: command timed out' 두 줄만, 그날 두 예약은 따라잡지도 않았다)"""
+    NOW = datetime.datetime(2026, 10, 7, 8, 30, 5)
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(self.tmp.name)
+        self.home, self.data = root, root / 'data'
+        self.data.mkdir()
+        (root / '.claude.json').write_text(json.dumps({'projects': {}}))
+        self.slept = []
+        rt.new('mail-brief', 'daily 08:30', 'x', data=str(self.data), home=str(self.home), run=Calls(), claude='/bin/claude',
+               python='/usr/bin/python3', uid=501, now=self.NOW - datetime.timedelta(days=1), apps=[], allow_test=True)
+        rt._tick_mark('mail-brief', str(self.data), self.NOW - datetime.timedelta(days=1))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def tick(self, now, calls):
+        return rt.tick(data=str(self.data), now=now, run=calls, home=str(self.home), uid=501, sleep=self.slept.append)
+
+    def runs(self):
+        p = self.data / 'routines/mail-brief/runs.jsonl'
+        return [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+
+    @staticmethod
+    def spawns(calls):
+        return [c for c in calls.calls if '--bg' in c]
+
+    class Hang(Calls):
+        """--bg 에서 멈춘다 — timeout 을 받으면 시간 초과, 안 받으면 앱 실행기가 죽인다"""
+        def __call__(self, argv, **kw):
+            if '--bg' in argv:
+                self.calls.append(argv)
+                if kw.get('timeout'):
+                    import subprocess
+                    raise subprocess.TimeoutExpired(argv, kw['timeout'])
+                raise Killed()
+            return super().__call__(argv, **kw)
+
+    class Dies(Calls):
+        """--bg 에서 프로세스째 죽는다(파이썬 쪽 시간 제한보다 먼저 — 폴더 허용 창에 걸린 chdir 처럼 시간 제한이 안 닿는 곳)"""
+        def __call__(self, argv, **kw):
+            if '--bg' in argv:
+                self.calls.append(argv)
+                raise Killed()
+            return super().__call__(argv, **kw)
+
+    def test_띄우다_죽은_tick_은_다음_tick_이_기록하고_조금_뒤_한_번_따라잡는다(self):
+        with self.assertRaises(Killed):
+            self.tick(self.NOW, self.Dies())
+        self.assertEqual(self.runs(), [])  # 죽은 tick 은 아무것도 못 남긴다
+        calls = Calls()
+        self.tick(datetime.datetime(2026, 10, 7, 8, 41), calls)  # 앱이 죽인 뒤 첫 tick
+        self.assertEqual(self.spawns(calls), [])  # 바로 또 띄우지 않는다(같은 데서 또 멈출 수 있다)
+        r = self.runs()
+        self.assertEqual([(e['event'], e['session'], e['scheduled']) for e in r], [('start', None, True)])
+        self.assertEqual(r[0]['ts'], '2026-10-07T08:30:00')  # 띄우려던 칸 시각
+        self.assertIn('killed', r[0]['error'])
+        out = self.tick(datetime.datetime(2026, 10, 7, 8, 30) + datetime.timedelta(minutes=rt.CATCHUP_MIN), calls)
+        self.assertEqual([o['name'] for o in out], ['mail-brief'])
+        self.assertEqual(len(self.spawns(calls)), 1)
+        last = self.runs()[-1]
+        self.assertEqual((last['event'], last['session'], last['scheduled'], last.get('catchup')), ('start', '1a2b3c4d', True, True))
+        self.assertEqual(self.tick(datetime.datetime(2026, 10, 7, 9, 30), calls), [])  # 따라잡은 뒤엔 다음 칸(내일 08:30)까지 조용
+        self.assertEqual(len(self.spawns(calls)), 1)
+
+    def test_따라잡기도_죽으면_한_번으로_끝(self):
+        with self.assertRaises(Killed):
+            self.tick(self.NOW, self.Dies())
+        self.tick(datetime.datetime(2026, 10, 7, 8, 41), Calls())
+        with self.assertRaises(Killed):
+            self.tick(datetime.datetime(2026, 10, 7, 8, 30) + datetime.timedelta(minutes=rt.CATCHUP_MIN), self.Dies())
+        calls = Calls()
+        self.tick(datetime.datetime(2026, 10, 7, 9, 10), calls)
+        self.tick(datetime.datetime(2026, 10, 7, 11, 0), calls)
+        self.assertEqual(self.spawns(calls), [])
+        self.assertEqual([(e['event'], e['session'], e.get('catchup')) for e in self.runs()],
+                         [('start', None, None), ('start', None, True)])
+        self.assertEqual([o['name'] for o in self.tick(datetime.datetime(2026, 10, 8, 8, 30), calls)], ['mail-brief'])  # 다음 칸은 그대로
+
+    def test_claude_bg_가_답이_없으면_시간_제한으로_끊고_실패를_남긴다(self):
+        calls = self.Hang()
+        out = self.tick(self.NOW, calls)
+        self.assertEqual(out[0]['session'], None)
+        self.assertEqual(len(self.spawns(calls)), 1)  # 멈춘 건 다시 해도 또 멈춘다 — 그 자리 재시도 없이
+        r = self.runs()
+        self.assertEqual([(e['event'], e['session']) for e in r], [('start', None)])
+        self.assertIn('did not answer', r[0]['error'])
+        self.assertLess(rt.SPAWN_TIMEOUT + rt.CLAUDE_TIMEOUT * 2, 600)  # 앱 실행기가 죽이기(600초) 전에 끊긴다
+
+    def test_시작_실패도_조금_뒤_한_번_따라잡는다(self):
+        """2026-10-06 09:00 nightly-check: 두 번 다 'unknown error (Unexpected)' 로 시작 실패 — 26분 뒤 손으로 돌리니 됐다"""
+        bad = SpawnStagger.Flaky([SpawnStagger.UNEXPECTED, SpawnStagger.UNEXPECTED])
+        self.tick(self.NOW, bad)
+        self.assertEqual([(e['event'], e.get('session')) for e in self.runs()], [('retry', None), ('start', None)])
+        calls = Calls()
+        self.tick(self.NOW + datetime.timedelta(minutes=rt.CATCHUP_MIN - 1), calls)
+        self.assertEqual(self.spawns(calls), [])
+        self.tick(self.NOW + datetime.timedelta(minutes=rt.CATCHUP_MIN), calls)
+        self.assertEqual(len(self.spawns(calls)), 1)
+        self.assertEqual(self.runs()[-1].get('catchup'), True)
+
+    def test_손으로_돌린_실행이_실패하면_따라잡지_않는다(self):
+        rt._tick_mark('mail-brief', str(self.data), self.NOW)  # 오늘 칸은 이미 돌았다
+        bad = SpawnStagger.Flaky([SpawnStagger.UNEXPECTED, SpawnStagger.UNEXPECTED])
+        rt.run_now('mail-brief', data=str(self.data), run=bad, home=str(self.home), sleep=self.slept.append, now=self.NOW)
+        calls = Calls()
+        self.tick(self.NOW + datetime.timedelta(minutes=rt.CATCHUP_MIN + 1), calls)
+        self.assertEqual(self.spawns(calls), [])
+
+    def test_실패가_오래됐으면_따라잡지_않는다(self):
+        bad = SpawnStagger.Flaky([SpawnStagger.UNEXPECTED, SpawnStagger.UNEXPECTED])
+        self.tick(self.NOW, bad)
+        calls = Calls()
+        self.tick(self.NOW + datetime.timedelta(hours=rt.CATCHUP_WINDOW_H, minutes=1), calls)
+        self.assertEqual(self.spawns(calls), [])
+
+
 class FakeClaudeE2E(unittest.TestCase):
     """진짜 프로세스로 — 가짜 claude 는 $HOME/.claude.json 에서 cwd 믿음이 True 가 아니면 진짜처럼 'Workspace not trusted' 로 죽는다"""
     FAKE = ('''#!/usr/bin/env python3
@@ -508,6 +814,7 @@ print('backgrounded \\u00b7 %08x \\u00b7 %s' % (int(now * 1000) & 0xffffffff, na
             env = dict(os.environ, HOME=str(root), CHAMMO_HOME=str(data), FAKE_STATE=str(st))
             p = subprocess.run([sys.executable, str(SCRIPTS / 'routine'), 'tick'], env=env, capture_output=True, text=True, timeout=60)
             self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertRegex(p.stderr, r'^# tick \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d')  # tick 기록(routine-tick.log)에 시각
             out = json.loads(p.stdout)
             self.assertEqual([r['name'] for r in out], ['nightly-check', 'weekly-cleanup'])
             self.assertTrue(all(r['session'] for r in out), out)
@@ -519,6 +826,48 @@ print('backgrounded \\u00b7 %08x \\u00b7 %s' % (int(now * 1000) & 0xffffffff, na
             runs = [json.loads(l) for l in (data / 'routines/nightly-check/runs.jsonl').read_text().splitlines()]
             self.assertEqual([e['event'] for e in runs], ['retry', 'start'])
             self.assertIn('Unexpected', runs[0]['reason'])
+
+
+class FakeClaudeKilledTickE2E(unittest.TestCase):
+    """진짜 프로세스로 — 가짜 claude 가 --bg 에서 멈추고, 앱 실행기처럼 tick 을 프로세스 그룹째 SIGKILL 한다.
+    다음 tick 이 '띄우다 죽음' 시작 줄을 남겨야 한다(2026-10-07 엔 아무 줄도 없이 칸만 사라졌다)"""
+    FAKE = ('''#!/usr/bin/env python3
+import os, sys, time
+if sys.argv[1:3] == ['agents', '--json']:
+    print('[]'); sys.exit(0)
+open(os.environ['FAKE_STATE'], 'w').close()
+time.sleep(60)
+''')
+
+    def test_죽은_tick_뒤_다음_tick_이_실패한_시작을_남긴다(self):
+        import signal, subprocess, time
+        with tempfile.TemporaryDirectory() as t:
+            root = pathlib.Path(os.path.realpath(t))
+            data, claude, st = root / 'data', root / 'claude', root / 'state'
+            claude.write_text(self.FAKE)
+            claude.chmod(0o755)
+            (root / '.claude.json').write_text(json.dumps({'projects': {}}))
+            earlier = datetime.datetime.now() - datetime.timedelta(hours=2)
+            rt.new('mail-brief', 'every 30m', 'x', data=str(data), home=str(root), run=Calls(), claude=str(claude),
+                   python='/usr/bin/python3', uid=501, now=earlier, apps=[], allow_test=True)
+            rt._tick_mark('mail-brief', str(data), earlier)
+            env = dict(os.environ, HOME=str(root), CHAMMO_HOME=str(data), FAKE_STATE=str(st))
+            p = subprocess.Popen([sys.executable, str(SCRIPTS / 'routine'), 'tick'], env=env, start_new_session=True,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            until = time.time() + 20
+            while not st.exists() and time.time() < until:
+                time.sleep(0.1)
+            self.assertTrue(st.exists(), 'fake claude --bg never ran')
+            os.killpg(p.pid, signal.SIGKILL)
+            p.wait()
+            runs = data / 'routines/mail-brief/runs.jsonl'
+            self.assertFalse(runs.exists())
+            q = subprocess.run([sys.executable, str(SCRIPTS / 'routine'), 'tick'], env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(q.returncode, 0, q.stderr)
+            got = [json.loads(l) for l in runs.read_text().splitlines()]
+            self.assertEqual([(e['event'], e['session'], e['scheduled']) for e in got], [('start', None, True)])
+            self.assertIn('killed', got[0]['error'])
+            self.assertNotIn('launching', json.loads((data / 'routines/mail-brief/tick.json').read_text()))
 
 
 class Cloud(unittest.TestCase):

@@ -19,6 +19,7 @@ __doc__ = """Routines — recurring jobs that wake up on a schedule, do one run 
    gets none unless --allow-test-tick or CHAMMO_ALLOW_TEST_TICK=1)
   scripts/routine pause <name> | resume <name> | remove <name>
   scripts/routine report <name> ok|fail "<one line>"    the routine's session calls this when it finishes
+  scripts/routine told <name>                           the app calls this after passing a stuck routine to the assistant (not shown again)
   scripts/routine cloud add <name> "<schedule>" <https url> ["<note>"]   list a claude.ai cloud routine (runs there, not here)
   scripts/routine cloud remove <name>                                    drop it from the list (the cloud routine itself stays)
 
@@ -53,6 +54,21 @@ SPAWN_GAP = 3
 # 시작이 일시 오류로 죽으면 이만큼 쉬고 한 번만 더(2026-10-06 09:00 둘 다 'An unknown error occurred (Unexpected)',
 # daemon 엔 요청이 닿지도 않았고 그 몇 초 전 claude 업데이트가 ~/.local/bin/claude 링크를 다시 걸었다 — 26분 뒤 손으로는 됐다)
 RETRY_WAIT = 5
+# 예약 세션이 보고 없이 멈춘 채 남았나 — tick 이 본다. 2026-10-09 07:30 docs-sync 가 첫 요청부터 'Could not refresh your login because
+# another Claude Code process is refreshing it' 로 멈춘 채 하루 가까이 남았다(그 아침 새로 뜬 세션 넷이 같은 줄). 앱의 갱신 겹침 이어서
+# (domain/login)는 Chammo 폴더 안 세션만 봐서 예약 폴더(<데이터>/routines/…)에서 뜬 세션은 못 봤다
+STALL_RETRY_MIN = 3  # 갱신 겹침 줄이 이만큼 묵어도 마지막이면 같은 예약을 한 번 다시 — Claude Code 말이 '1분 뒤 다시', 앱 이어서(1분 뒤)가 먼저
+STALL_ALERT_H = 3  # 보고 없이 이만큼 조용하면 'stall' 한 줄 — 앱이 참모에게 넘긴다
+STALL_LOOK_H = 48  # 이보다 오래된 시작은 안 본다 — 지워진 옛 세션 때문에 1분마다 agents 를 부르지 않게
+REFRESH_STALL = re.compile(r'could not refresh your login', re.I)
+# 진짜 로그인 풀림 — 앱 로그인 카드(hq-login) 몫이라 건드리지 않는다(앱 domain/activity isAuthError 와 같은 말)
+AUTH_STALL = re.compile(r'please run /login|login expired|not logged in|oauth token has expired|invalid api key', re.I)
+# 예약으로 띄우다 실패한 칸은 조금 뒤 한 번 따라잡는다. 2026-10-07 08:30·09:10 은 Claude Code 자동 업데이트 뒤 claude --bg 가 답 없이 멈춰
+# 앱 실행기가 10분 만에 tick 을 죽였는데, 칸은 tick.json 에 먼저 적혀 '돌았다'가 되고 runs.jsonl 엔 줄 하나 없이 그날을 통째로 걸렀다
+CATCHUP_MIN = 15  # 실패한 칸 시각에서 이만큼 뒤 — 바로 또 띄우면 같은 데서 또 멈춘다(10/6 은 26분 뒤 손으로 됐다)
+CATCHUP_WINDOW_H = 12  # 이보다 오래된 실패는 안 따라잡는다 — 다음 칸이 곧 온다
+SPAWN_TIMEOUT = 180  # claude --bg 가 이만큼 답이 없으면 끊고 실패로 남긴다 — 앱 실행기가 tick 을 죽이는 600초보다 한참 먼저
+CLAUDE_TIMEOUT = 60  # agents --json·rm
 BASE_PATH = ['.local/bin', '/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin']
 
 
@@ -327,8 +343,9 @@ def swap_in(tmp, cj):
 
 def _trust(path, home, win=None):
     """claude --bg 가 이 폴더에서 뜨게 ~/.claude.json 에 믿음을 적는다(루틴이 만든 폴더에만 — 믿음은 아래 폴더로 번진다).
-    이미 믿으면 안 쓴다. 다른 claude 가 같이 쓰는 파일이라 읽자마자 이 키 하나만 바꿔 임시 파일+rename 으로 끼운다"""
-    cj = os.path.join(home, '.claude.json')
+    이미 믿으면 안 쓴다. 다른 claude 가 같이 쓰는 파일이라 읽자마자 이 키 하나만 바꿔 임시 파일+rename 으로 끼운다.
+    CLAUDE_CONFIG_DIR 면 그 안 .claude.json — Claude Code 가 읽는 자리(new-project claude_json 과 같다)"""
+    cj = os.path.join(os.environ.get('CLAUDE_CONFIG_DIR') or home, '.claude.json')
     try:
         with open(cj, encoding='utf-8') as f:
             d = json.load(f)
@@ -372,21 +389,56 @@ def _tick_plist(data, home):
     return os.path.join(home, 'Library/LaunchAgents', tick_label(data) + '.plist')
 
 
+def _tick_state(name, data):
+    try:
+        with open(os.path.join(_paths(name, data)[0], 'tick.json'), encoding='utf-8') as f:
+            st = json.load(f)
+        return st if isinstance(st, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def _tick_last(name, data):
     """예약별 '지난번에 tick 이 처리한 시각' — 없으면 None"""
     try:
-        with open(os.path.join(_paths(name, data)[0], 'tick.json'), encoding='utf-8') as f:
-            return datetime.datetime.fromisoformat(json.load(f)['last'])
-    except (OSError, ValueError, KeyError, TypeError):
+        return datetime.datetime.fromisoformat(_tick_state(name, data)['last'])
+    except (ValueError, KeyError, TypeError):
         return None
 
 
-def _tick_mark(name, data, at):
+def _tick_mark(name, data, at, launching=None, catchup=False):
+    """launching: 지금 띄우는 칸 — 띄우기가 끝나면 지운다. 남아 있으면 그 tick 이 띄우다 죽은 것(다음 tick 이 기록하고 따라잡는다)"""
     d = _paths(name, data)[0]
+    st = {'last': _minute(at).isoformat(timespec='minutes')}
+    if launching:
+        st['launching'] = _minute(launching).isoformat(timespec='minutes')
+        if catchup:
+            st['catchup'] = True
     tmp = os.path.join(d, 'tick.json.tmp')
     with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump({'last': _minute(at).isoformat(timespec='minutes')}, f)
+        json.dump(st, f)
     os.replace(tmp, os.path.join(d, 'tick.json'))
+
+
+def _died(name, data, last):
+    """지난 tick 이 이 예약을 띄우다 죽었으면(앱 실행기가 10분 넘은 tick 을 죽였다) 실패한 시작 한 줄을 남기고 표시를 지운다"""
+    st = _tick_state(name, data)
+    if not st.get('launching'):
+        return
+    at = datetime.datetime.fromisoformat(st['launching'])
+    _log(name, data, now=at, event='start', session=None, scheduled=True, **({'catchup': True} if st.get('catchup') else {}),
+         error='the tick was killed while starting this run (claude did not answer — e.g. a macOS permission prompt after a Claude Code update)')
+    _tick_mark(name, data, last)
+
+
+def _missed(name, data, now):
+    """예약으로 띄우다 실패한 마지막 칸 — 아직 한 번도 안 따라잡았고, CATCHUP_MIN 지났고, CATCHUP_WINDOW_H 안이면 그 시작 줄"""
+    runs = _runs(name, data)
+    start = next((r for r in reversed(runs) if r.get('event') in ('start', 'end')), None)
+    if not start or start['event'] != 'start' or start.get('session', '') is not None or not start.get('scheduled') or start.get('catchup'):
+        return None
+    age = now - datetime.datetime.fromisoformat(start['ts'])
+    return start if datetime.timedelta(minutes=CATCHUP_MIN) <= age < datetime.timedelta(hours=CATCHUP_WINDOW_H) else None
 
 
 def _local_names(data):
@@ -563,21 +615,139 @@ def tick(data=None, now=None, run=subprocess.run, home=None, uid=None, sleep=tim
             if last is None:  # 처음 보는 예약 — 지금부터 센다
                 _tick_mark(name, data, now)
                 continue
+            _died(name, data, last)
             created = datetime.date.fromisoformat(cfg['created']) if cfg.get('created') else None
+            catchup = False
             if not due(cfg['schedule'], last, now, created):
                 if is_dated(cfg['schedule']) and not _pending(cfg, data, now) and \
                         all(s < now - datetime.timedelta(days=1) for s in dated_slots(cfg['schedule'], created or now.date())):
                     cfg['finished'] = now.isoformat(timespec='seconds')  # 마지막 날짜가 돌았는데 하루가 지나도 보고가 없다 — 이제 끈다
                     _finish(cfg, data, home, run, uid, False)
-                continue
-            _tick_mark(name, data, now)  # 기록 먼저 — 띄우다 죽어도 다음 tick 이 같은 칸을 또 돌리지 않게
-            r = run_now(name, data=data, run=run, scheduled=True, now=now, home=home, uid=uid, win=False,
-                        sleep=sleep, stagger=SPAWN_GAP if launched else 0)
+                    continue
+                if not _missed(name, data, now):
+                    continue
+                catchup = True  # 띄우다 실패한 칸 — 한 번만 더
+            # 기록 먼저 — 띄우다 죽어도 다음 tick 이 같은 칸을 또 돌리지 않게. 띄우는 중 표시는 끝나면 지운다(남으면 죽은 것)
+            _tick_mark(name, data, now if not catchup else last, launching=now, catchup=catchup)
+            try:
+                r = run_now(name, data=data, run=run, scheduled=True, now=now, home=home, uid=uid, win=False,
+                            sleep=sleep, stagger=SPAWN_GAP if launched else 0, again=catchup, catchup=catchup)
+            except Exception as e:  # 띄우다 깨졌다 — 실패한 시작으로 남겨 따라잡기가 보게
+                _tick_mark(name, data, now if not catchup else last)
+                _log(name, data, now=now, event='start', session=None, scheduled=True, **({'catchup': True} if catchup else {}),
+                     error=f'{type(e).__name__}: {e}'[:300])
+                raise
+            _tick_mark(name, data, now if not catchup else last)
             launched = launched or 'session' in r  # 띄워 봤다(성공·실패 다) — 건너뛴 예약은 안 센다
             out.append({'name': name, **r})
         except Exception as e:  # 한 예약이 깨져도 나머지는 돈다
             out.append({'name': name, 'error': f'{type(e).__name__}: {e}'})
+    agents = {}  # claude 경로 → agents --json 한 번
+    for name in _local_names(data):
+        if any(o['name'] == name for o in out):
+            continue  # 이번 tick 에 띄웠거나 건너뛴 예약
+        try:
+            cfg = _load(name, data)
+            if not cfg.get('enabled', True) or _open_start(_runs(name, data), now) is None:
+                continue
+            if cfg['claude'] not in agents:
+                agents[cfg['claude']] = _agents(cfg['claude'], run)
+            r = watch(name, data, now, agents[cfg['claude']], home, run, sleep, stagger=SPAWN_GAP if launched else 0)
+            if r:
+                launched = launched or 'session' in r
+                out.append({'name': name, **r})
+        except Exception as e:
+            out.append({'name': name, 'error': f'{type(e).__name__}: {e}'})
     return out
+
+
+def _open_start(runs, now):
+    """보고(end)도 멈춤 알림(stall)도 아직 없는 마지막 시작의 자리 — 세션이 안 떴거나 STALL_LOOK_H 보다 오래됐으면 None"""
+    for i in range(len(runs) - 1, -1, -1):
+        e = runs[i].get('event')
+        if e in ('end', 'stall'):
+            return None
+        if e == 'start':
+            ok = runs[i].get('session') and now - datetime.datetime.fromisoformat(runs[i]['ts']) < datetime.timedelta(hours=STALL_LOOK_H)
+            return i if ok else None
+    return None
+
+
+def _transcript(session_id, home):
+    """대화 기록 ~/.claude/projects/<폴더>/<대화 id>.jsonl — 폴더 이름 규칙에 기대지 않고 대화 id 로 찾는다"""
+    root = os.path.join(home, '.claude', 'projects')
+    try:
+        for d in os.listdir(root):
+            p = os.path.join(root, d, f'{session_id}.jsonl')
+            if os.path.isfile(p):
+                return p
+    except OSError:
+        pass
+    return None
+
+
+def _last_turn(path):
+    """대화 기록의 마지막 user·assistant 줄 → (멈춤 종류, 그 시각을 이 맥 시각으로). refresh = 로그인 갱신 겹침, login = 로그인 풀림, None = 그 밖.
+    뒤에 붙는 메타 줄(turn_duration·last-prompt …)은 안 센다"""
+    with open(path, 'rb') as f:
+        f.seek(max(0, os.path.getsize(path) - 256_000))
+        tail = f.read().decode('utf-8', 'replace')
+    last = None
+    for raw in tail.splitlines():
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(d, dict) and d.get('type') in ('user', 'assistant') and d.get('timestamp'):
+            last = d
+    if not last:
+        return None, None
+    at = datetime.datetime.fromisoformat(last['timestamp'].replace('Z', '+00:00')).astimezone().replace(tzinfo=None)
+    if last['type'] != 'assistant' or last.get('isApiErrorMessage') is not True:
+        return None, at
+    c = (last.get('message') or {}).get('content')
+    text = c if isinstance(c, str) else ' '.join(b.get('text', '') for b in c or [] if isinstance(b, dict))
+    if REFRESH_STALL.search(text):
+        return 'refresh', at
+    if last.get('error') == 'authentication_failed' or AUTH_STALL.search(text):
+        return 'login', at
+    return None, at
+
+
+def watch(name, data, now, agents, home, run=subprocess.run, sleep=time.sleep, stagger=0):
+    """마지막 실행이 보고 없이 멈췄나. 로그인 갱신 겹침이면 같은 예약을 한 번만 다시 돌리고, 다시 돌린 것도 겹침이거나
+    다른 이유로 STALL_ALERT_H 넘게 조용하면 'stall' 한 줄(앱이 참모 입력칸에 넘긴다). 진짜 로그인 풀림은 앱 로그인 카드 몫"""
+    runs = _runs(name, data)
+    i = _open_start(runs, now)
+    if i is None:
+        return None
+    start = runs[i]
+    row = next((a for a in agents if a.get('id') == start['session']), None)
+    if not row or row.get('status') == 'busy' or row.get('state') == 'working':
+        return None  # 목록에 없으면(지워짐) 모른다 · 일하는 중이면 멈춘 게 아니다
+    path = _transcript(row['sessionId'], home) if row.get('sessionId') else None
+    kind, at = _last_turn(path) if path else (None, None)
+    if kind == 'login':
+        return None
+    if kind == 'refresh':
+        if now - at < datetime.timedelta(minutes=STALL_RETRY_MIN):
+            return None
+        prev = max((j for j in range(i) if runs[j].get('event') == 'start'), default=-1)
+        if any(r.get('event') == 'retry' and r.get('stall') == 'refresh' for r in runs[prev + 1:i]):  # 이미 한 번 다시 돌렸다
+            _log(name, data, now=now, event='stall', stall='refresh', session=start['session'],
+                 reason='login refresh overlapped again after one rerun')
+            return {'stall': 'refresh', 'session': start['session'], 'alert': True}
+        _log(name, data, now=now, event='retry', stall='refresh',
+             reason='login refresh overlapped (another Claude Code process was refreshing) — running once more')
+        r = run_now(name, data=data, run=run, scheduled=bool(start.get('scheduled')), now=now, home=home, win=False,
+                    sleep=sleep, stagger=stagger, again=True)
+        return {'stall': 'refresh', **r}
+    since = at or datetime.datetime.fromisoformat(start['ts'])
+    if now - since < datetime.timedelta(hours=STALL_ALERT_H):
+        return None
+    _log(name, data, now=now, event='stall', stall='blocked', session=start['session'], state=row.get('state'),
+         reason=f'no report, quiet since {since.isoformat(timespec="minutes")}')
+    return {'stall': 'blocked', 'session': start['session'], 'alert': True}
 
 
 TASK = 'Chammo\\'
@@ -661,10 +831,10 @@ def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run
 
 
 def _agents(claude, run):
-    r = run([claude, 'agents', '--json'], capture_output=True, text=True)
     try:
+        r = run([claude, 'agents', '--json'], capture_output=True, text=True, timeout=CLAUDE_TIMEOUT)
         return json.loads(r.stdout or '[]')
-    except ValueError:
+    except (ValueError, subprocess.TimeoutExpired):
         return []
 
 
@@ -729,16 +899,17 @@ def _transient(said):
     return None
 
 
-def run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, home=None, uid=None, win=None, sleep=time.sleep, stagger=0):
+def run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, home=None, uid=None, win=None, sleep=time.sleep, stagger=0, again=False, catchup=False):
     """한 번 실행 — 지난 실행이 아직 돌면 건너뛰고, 끝난 지난 세션은 치우고 새 세션을 띄운다.
     날짜 일정은 launchd 가 해마다(윈도우는 날마다) 깨우니, 예약으로 깨면 아직 안 돈 날짜가 왔을 때만 돈다.
-    stagger: 띄우기 직전에 쉴 초(tick 이 바로 앞 예약을 띄웠을 때)"""
+    stagger: 띄우기 직전에 쉴 초(tick 이 바로 앞 예약을 띄웠을 때). again: 멈춘 실행을 다시 돌림(watch) — 날짜 칸은 이미 돌았다.
+    catchup: 띄우다 실패한 칸을 따라잡는 것 — 시작 줄에 표시(한 번만 따라잡게)"""
     data = data or data_dir()
     now = now or datetime.datetime.now()
     cfg = _load(name, data)
     if scheduled and not cfg.get('enabled', True):
         return {'skipped': 'paused'}
-    if scheduled and is_dated(cfg['schedule']):
+    if scheduled and is_dated(cfg['schedule']) and not again:
         pending = _pending(cfg, data, now)
         if not any(s <= now + datetime.timedelta(minutes=1) for s in pending):
             if not pending:  # 마지막 날짜가 돌았는데 보고 없이 해가 바뀌었다 — 이제 끈다
@@ -751,7 +922,10 @@ def run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, home
         _log(name, data, event='skip', reason='still running')
         return {'skipped': 'still running'}
     for a in mine:
-        run([cfg['claude'], 'rm', a['id']], capture_output=True, text=True)
+        try:
+            run([cfg['claude'], 'rm', a['id']], capture_output=True, text=True, timeout=CLAUDE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            pass  # 못 치웠다 — 아래 old 로 '이번에 뜬 세션'과 가른다
     old = {a.get('id') for a in mine}  # 치운 지난 세션 — rm 이 실패해 남아 있어도 '이번에 뜬 세션'으로 세지 않는다
     _, _, md, _ = _paths(name, data)
     tool = os.path.join(data, 'tools', 'routine')
@@ -770,8 +944,13 @@ def run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, home
                 _trust(cfg['cwd'], home, win)
             except OSError:
                 pass  # 못 적어도 띄워는 본다 — 실패하면 아래서 이유가 남는다
-        r = run([cfg['claude'], '--bg', '--dangerously-skip-permissions', '-n', session, prompt], cwd=cfg['cwd'],
-                capture_output=True, text=True, env=dict(os.environ, CHAMMO_HOME=data), **NOWIN)
+        try:
+            r = run([cfg['claude'], '--bg', '--dangerously-skip-permissions', '-n', session, prompt], cwd=cfg['cwd'],
+                    capture_output=True, text=True, env=dict(os.environ, CHAMMO_HOME=data), timeout=SPAWN_TIMEOUT, **NOWIN)
+        except subprocess.TimeoutExpired:  # 멈춘 건 다시 해도 또 멈춘다 — 실패로 남기고 따라잡기(CATCHUP_MIN 뒤)에 맡긴다
+            r = type('R', (), {'returncode': None, 'stdout': '', 'stderr': f'claude --bg did not answer in {SPAWN_TIMEOUT}s'})()
+            sid = None
+            break
         m = re.search(r'backgrounded\s*·\s*([0-9a-f]{6,})', re.sub(r'\x1b\[[0-9;]*m', '', r.stdout or ''))
         sid = m.group(1) if m else None
         said = f'{r.stdout or ""}\n{r.stderr or ""}'
@@ -785,7 +964,8 @@ def run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, home
             break  # 다시 해도 같은 오류거나, 답만 못 읽었고 세션은 떴다 — 또 띄우면 같은 이름이 둘
         _log(name, data, now=now, event='retry', reason=f'start failed ({why}) — waiting {RETRY_WAIT}s, retrying once')
         sleep(RETRY_WAIT)
-    _log(name, data, now=now, event='start', session=sid, scheduled=scheduled, error=None if sid else (r.stderr or r.stdout or '').strip()[:300])
+    _log(name, data, now=now, event='start', session=sid, scheduled=scheduled, **({'catchup': True} if catchup else {}),
+         error=None if sid else (r.stderr or r.stdout or '').strip()[:300])
     return {'session': sid}
 
 
@@ -801,6 +981,13 @@ def report(name, result, note, data=None, home=None, run=subprocess.run, uid=Non
         cfg['finished'] = now.isoformat(timespec='seconds')
         _finish(cfg, data, home or os.path.expanduser('~'), run, uid, os.name == 'nt' if win is None else win)
     return event
+
+
+def told(name, data=None, now=None):
+    """앱이 멈춘 예약(stall)을 참모에게 넘긴 뒤 부른다 — 기록에 'told' 줄, 앱은 그 뒤론 같은 멈춤을 다시 안 넘긴다(앱 저장이 지워져도)"""
+    data = data or data_dir()
+    _load(name, data)  # 없는 예약이면 여기서 멈춘다
+    return _log(name, data, now=now, event='told')
 
 
 def set_enabled(name, on, data=None, home=None, run=subprocess.run, uid=None, python=None, win=None, now=None, apps=None, allow_test=None):
@@ -920,6 +1107,7 @@ def main(argv):
             out = tick()
             if not out:
                 return 0  # 돌린 게 없으면 기록도 안 남긴다
+            print(f'# tick {datetime.datetime.now().isoformat(timespec="seconds")}', file=sys.stderr)  # 기록에 시각이 없어 어느 날 줄인지 몰랐다(2026-10-07)
         elif cmd == 'install':
             out = install(launcher=rest[rest.index('--launcher') + 1] if '--launcher' in rest[:-1] else None, allow_test=allow)
         elif cmd == 'run' and rest:
@@ -928,6 +1116,8 @@ def main(argv):
             out = set_enabled(rest[0], cmd == 'resume', allow_test=allow)
         elif cmd == 'remove' and rest:
             out = remove(rest[0])
+        elif cmd == 'told' and rest:
+            out = told(rest[0])
         elif cmd == 'report' and len(rest) >= 3:
             out = report(rest[0], rest[1], ' '.join(rest[2:]))
         elif cmd == 'cloud' and rest[:1] == ['add'] and len(rest) >= 4:

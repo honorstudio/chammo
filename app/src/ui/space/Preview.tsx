@@ -11,7 +11,7 @@ import { IconClose, IconMaximize, IconRestore, IconSend, IconZoomIn, IconZoomOut
 import { Confirm } from '../OrchDialogs';
 import { ExtraDoc, frameStyle, HtmlFrame, loadZoom, MdDoc, ZOOM_KEY } from '../reader/Reader';
 import { flashWhenReady } from '../flash';
-import { isCurationHtml } from '../../domain/curation';
+import { fromFrame, isCurationHtml } from '../../domain/curation';
 import { webTitle } from '../../domain/webUrl';
 import { WebPage } from '../WebPage';
 
@@ -46,10 +46,12 @@ export function Preview({ f, onClose, onAttach, onSendText, onCuration }: { f: D
     void invoke<string>('read_doc_text', { path: f.path }).then((t) => { if (isCurationHtml(t) && onCurationRef.current) onCurationRef.current(f.path, f.by); else setGate('open'); }, () => setGate('open'));
   }, [f.path]); // eslint-disable-line react-hooks/exhaustive-deps
   const [askReset, setAskReset] = useState(false);
+  // 이 미리보기의 시안 칸 — message 는 이 칸이 보낸 것만 받는다(domain/curation fromFrame)
+  const curFrame = () => document.querySelector<HTMLIFrameElement>('body > .dash-preview iframe')?.contentWindow;
   useEffect(() => {
     const on = (e: MessageEvent) => {
       const d = e.data as ({ hodoc?: string } & Partial<Cur>) | null;
-      if (d?.hodoc !== 'cur-state' || typeof d.text !== 'string') return;
+      if (d?.hodoc !== 'cur-state' || typeof d.text !== 'string' || !fromFrame(e, curFrame())) return;
       if (onCurationRef.current) { onCurationRef.current(f.path, f.by); return; }
       setCur({ total: d.total ?? 0, done: d.done ?? 0, counts: d.counts ?? {}, labels: d.labels ?? [], text: d.text });
       setCurSent((x) => (x === 'sent' ? 'idle' : x));
@@ -58,7 +60,6 @@ export function Preview({ f, onClose, onAttach, onSendText, onCuration }: { f: D
     window.addEventListener('message', on);
     return () => window.removeEventListener('message', on);
   }, [f.path]);
-  const curFrame = () => document.querySelector<HTMLIFrameElement>('body > .dash-preview iframe')?.contentWindow;
   const sendCur = async () => {
     if (!cur || !onSendText) return;
     setCurSent('sending');
@@ -73,7 +74,7 @@ export function Preview({ f, onClose, onAttach, onSendText, onCuration }: { f: D
   useEffect(() => {
     const on = (e: MessageEvent) => {
       const d = e.data as { hodoc?: string; text?: string } | null;
-      if (d?.hodoc !== 'curation' || typeof d.text !== 'string') return;
+      if (d?.hodoc !== 'curation' || typeof d.text !== 'string' || !fromFrame(e, curFrame())) return;
       const reply = (ok: boolean, error?: string) => (e.source as Window | null)?.postMessage({ hodoc: 'curation-sent', ok, error }, '*');
       if (!sendText.current) { reply(false, tr('여기선 못 보내 — 결과 복사로', "Can't send from here — copy instead")); return; }
       setAskSend({ text: d.text, reply });
@@ -83,7 +84,7 @@ export function Preview({ f, onClose, onAttach, onSendText, onCuration }: { f: D
   }, []);
   useEffect(() => {
     const key = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.isComposing && !document.querySelector('.od-back') && !(e.target as HTMLElement | null)?.classList?.contains('wp-addr')) { e.preventDefault(); e.stopPropagation(); close.current(); } };
-    const msg = (e: MessageEvent) => { if ((e.data as { hodoc?: string } | null)?.hodoc === 'esc') close.current(); };
+    const msg = (e: MessageEvent) => { if ((e.data as { hodoc?: string } | null)?.hodoc === 'esc' && fromFrame(e, curFrame())) close.current(); };
     window.addEventListener('keydown', key, true);
     window.addEventListener('message', msg);
     return () => { window.removeEventListener('keydown', key, true); window.removeEventListener('message', msg); };

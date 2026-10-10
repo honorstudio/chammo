@@ -6,11 +6,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
 import type { BlockNoteEditor, PartialBlock } from '@blocknote/core';
 import { diffBlocks, merge3 } from '../../domain/docMerge';
-import { lastSaved, newSession, saveNow, saveSoon, setBase, type DocSession } from './docSave';
+import { lastSaved, newSession, readOutside, saveNow, saveSoon, setBase, type DocSession } from './docSave';
 import { absorbOutside } from './pending';
 import { parseMd, writeMd } from './mdPipeline';
 
-export type SyncState = 'ok' | 'conflict' | 'gone';
+export type SyncState = 'ok' | 'conflict' | 'gone' | 'unreadable';
 const EVERY = 1500;
 
 type Ed = BlockNoteEditor;
@@ -93,8 +93,12 @@ export function useDocSync(editor: Ed, path: string, md: string) {
         if (lastSaved.get(path) !== out) { saveSoon(ses, out); return; }
       }
       if (ses.blocked ? stamp === theirs.current?.stamp : stamp === ses.base.stamp) return;
-      const text = await invoke<string>('read_doc_text', { path }).catch(() => null);
-      if (text == null || ses.base.ver !== ver || ses.writing) return;
+      const got = await readOutside(path);
+      if (got && 'unreadable' in got) { setState((x) => (x === 'conflict' ? x : 'unreadable')); return; } // 저장은 바깥 판이 달라 계속 멈춘다 — 띠로 알린다
+      const text = got?.text;
+      if (text == null) return; // 다른 실패 — 다음 감시에서 다시(띠는 그대로)
+      setState((x) => (x === 'unreadable' ? 'ok' : x)); // 다시 읽힌다(UTF-8 로 되돌림)
+      if (ses.base.ver !== ver || ses.writing) return;
       if (ses.blocked) { theirs.current = { text, stamp }; return; } // 충돌 중 — 고를 때 최신 바깥 판으로
       if (text === ses.base.text) { setBase(ses, text, stamp); return; }
       await absorb(text, stamp);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cloudUrl, groupRoutines, isCloud, parseRoutines, routineItem, routineLine, routineState, routineStateLabel, routineRef, routineStatus, scheduleText, routineSummary, runEventText, type Routine } from './routine';
+import { cloudUrl, groupRoutines, isCloud, parseRoutines, routineItem, routineLine, routineState, routineStateLabel, routineRef, routineStatus, scheduleText, routineSummary, runEventText, stallNotices, type Routine, type RoutineEvent } from './routine';
 
 const r = (over: Partial<Routine> = {}): Routine => ({
   name: 'blog-daily', schedule: 'daily 09:00', cwd: '/d', enabled: true, instructions: '/d/ROUTINE.md', next: '2026-09-29T09:00',
@@ -176,5 +176,46 @@ describe('실행 기록 한 줄', () => {
     expect(runEventText({ event: 'start', ts: 't', error: 'Workspace not trusted' })).toMatch(/Workspace not trusted/);
     expect(runEventText({ event: 'skip', ts: 't' })).toMatch(/건너뜀|Skipped/);
     expect(runEventText({ event: 'end', ts: 't', result: 'fail', note: 'x' })).toMatch(/실패 — x|Failed — x/);
+  });
+});
+
+describe('멈춘 예약 알림(scripts/routine tick 의 stall)', () => {
+  const NOW = new Date('2026-10-06T12:00:00');
+  const stall = (over: Partial<RoutineEvent> = {}): RoutineEvent => ({ event: 'stall', ts: '2026-10-06T10:31:00', stall: 'blocked', session: 'aaaa1111', reason: 'no report, quiet since 2026-10-06T07:31', ...over });
+
+  it('갱신 겹침 다시 돌리기·멈춤 기록을 사람 말로', () => {
+    expect(runEventText({ event: 'retry', ts: 't', stall: 'refresh', reason: 'login refresh overlapped (another Claude Code process was refreshing) — running once more' })).toMatch(/로그인 갱신|sign-in refresh/);
+    expect(runEventText(stall({ stall: 'refresh' }))).toMatch(/로그인 갱신|sign-in refresh/);
+    expect(runEventText(stall())).toMatch(/보고 없이|without a report/);
+  });
+
+  it('아직 안 알린 stall 만 참모에게 한 줄 — 갱신 겹침과 그 밖을 다르게 말한다', () => {
+    const rs = [r({ name: 'nightly-sync', runs: [{ event: 'start', ts: '2026-10-06T07:30:54', session: 'aaaa1111' }, stall()] }),
+      r({ name: 'weekly-audit', runs: [stall({ stall: 'refresh', session: 'bbbb2222', ts: '2026-10-06T11:40:00' })] })];
+    const out = stallNotices(rs, new Set(), NOW);
+    expect(out.map((n) => n.key)).toEqual(['nightly-sync@2026-10-06T10:31:00', 'weekly-audit@2026-10-06T11:40:00']);
+    expect(out[0]!.text).toMatch(/^\[앱\] 예약 nightly-sync 세션\(aaaa1111\)/);
+    expect(out[0]!.text).toMatch(/보고 없이/);
+    expect(out[1]!.text).toMatch(/로그인 갱신/);
+    expect(out[1]!.text).toMatch(/scripts\/routine run weekly-audit/);
+    expect(stallNotices(rs, new Set(out.map((n) => n.key)), NOW)).toEqual([]);
+  });
+
+  it('오래된 stall(이틀 넘음)·클라우드 예약은 안 넘긴다 — 앱을 새로 깔았을 때 옛 일로 부르지 않게', () => {
+    const rs = [r({ name: 'old-one', runs: [stall({ ts: '2026-10-03T10:00:00' })] }), r({ kind: 'cloud', name: 'c', runs: [stall()] })];
+    expect(stallNotices(rs, new Set(), NOW)).toEqual([]);
+  });
+
+  // roadmap 멈춘 예약 감시 ④ — 알린 것은 localStorage 에만 있어 지워지면(새로 깔기·시험 폴더) 이틀 안 stall 을 또 넘겼다.
+  // 앱이 참모에게 넘긴 뒤 scripts/routine told 로 예약 기록(runs.jsonl)에도 남긴다
+  it('stall 뒤에 told(참모에게 넘김)가 기록돼 있으면 안 넘긴다 — 앱 저장이 지워져도', () => {
+    const rs = [r({ name: 'nightly-sync', runs: [stall(), { event: 'told', ts: '2026-10-06T10:31:05' }] })];
+    expect(stallNotices(rs, new Set(), NOW)).toEqual([]);
+    expect(runEventText({ event: 'told', ts: 't' })).toMatch(/참모|assistant/);
+  });
+
+  it('stall 뒤에 다시 시작했으면(사람이 다시 돌림) 안 넘긴다', () => {
+    const rs = [r({ name: 'nightly-sync', runs: [stall(), { event: 'start', ts: '2026-10-06T11:00:00', session: 'cccc3333' }] })];
+    expect(stallNotices(rs, new Set(), NOW)).toEqual([]);
   });
 });

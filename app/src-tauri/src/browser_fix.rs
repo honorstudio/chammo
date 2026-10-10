@@ -114,16 +114,28 @@ fn folders_of(home: &str, c: &crate::config::Config, env: impl Fn(&str) -> Optio
     v
 }
 
-/// 고친 파일 수. 앱을 켤 때(도구를 깐 사용자만)·설치 끝에
+/// 고친 파일 수. 앱을 켤 때(도구를 깐 사용자만)·설치 끝에. 고쳤으면 앱 기록(notify.log)에 폴더 이름과 원본 자리 한 줄 —
+/// 예전엔 조용히 고쳐 git 저장소에 수정 표시만 남고 이유를 몰랐다(roadmap 브라우저 '딸깍' 설치 ⑨)
 pub fn fix_all(data: &Path) -> usize {
     let home = crate::config::home();
     let Some(desired) = desired_command(data, &home) else { return 0 };
     let wrapper = crate::browser::tool_dir(data).join("bin").join("chammo-browser-mcp.js").to_string_lossy().into_owned();
-    fix_in(&folders(), &wrapper, &desired, &home, &data.join("backups/mcp-json"))
+    let backups = data.join("backups/mcp-json");
+    let fixed = fix_in(&folders(), &wrapper, &desired, &home, &backups);
+    if let Some(line) = fixed_line(&fixed, &backups) {
+        crate::claude::log_out("mcp-fix", &line);
+    }
+    fixed.len()
 }
 
-pub fn fix_in(folders: &[PathBuf], wrapper: &str, desired: &str, home: &str, backups: &Path) -> usize {
-    let mut n = 0;
+/// 기록 한 줄 — 고친 게 없으면 None
+pub fn fixed_line(fixed: &[String], backups: &Path) -> Option<String> {
+    (!fixed.is_empty()).then(|| format!("fixed chammo-browser node path in {} .mcp.json ({}) — originals in {}", fixed.len(), fixed.join(", "), backups.display()))
+}
+
+/// 고친 폴더 이름들
+pub fn fix_in(folders: &[PathBuf], wrapper: &str, desired: &str, home: &str, backups: &Path) -> Vec<String> {
+    let mut n = Vec::new();
     for f in folders {
         let p = f.join(".mcp.json");
         // 링크 파일이면 건드리지 않는다(바꿔치기가 링크를 보통 파일로 덮는다)
@@ -147,7 +159,7 @@ pub fn fix_in(folders: &[PathBuf], wrapper: &str, desired: &str, home: &str, bac
         }
         let tmp = f.join(format!(".mcp.json.{}.tmp", tmp_tag()));
         if std::fs::write(&tmp, new).is_ok() && std::fs::rename(&tmp, &p).is_ok() {
-            n += 1;
+            n.push(name);
         } else {
             let _ = std::fs::remove_file(&tmp);
         }
@@ -280,7 +292,12 @@ mod tests {
         std::fs::write(a.join(".mcp.json"), &raw).unwrap();
         std::fs::write(b.join(".mcp.json"), entry("/opt/homebrew/opt/node/bin/node", "/other.js")).unwrap();
         let bk = d.join("backups");
-        assert_eq!(fix_in(&[a.clone(), b.clone(), d.join("missing")], W, LINK, "/Users/u", &bk), 1);
+        let fixed = fix_in(&[a.clone(), b.clone(), d.join("missing")], W, LINK, "/Users/u", &bk);
+        assert_eq!(fixed, vec!["proj-a".to_string()]);
+        // 고친 것은 앱 기록 한 줄로(폴더 이름·원본 자리), 안 고쳤으면 안 남긴다
+        let line = fixed_line(&fixed, &bk).unwrap();
+        assert!(line.contains("1 .mcp.json (proj-a)") && line.contains("backups"), "{line}");
+        assert_eq!(fixed_line(&[], &bk), None);
         assert!(std::fs::read_to_string(a.join(".mcp.json")).unwrap().contains(LINK));
         let saved: Vec<_> = std::fs::read_dir(&bk).unwrap().flatten().collect();
         assert_eq!(saved.len(), 1);
@@ -289,7 +306,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(saved[0].path()).unwrap(), raw);
         assert_eq!(std::fs::read_dir(&a).unwrap().count(), 1); // .mcp.json 하나만(임시·백업 없음)
         // 두 번째는 고칠 게 없다
-        assert_eq!(fix_in(&[a.clone(), b], W, LINK, "/Users/u", &bk), 0);
+        assert!(fix_in(&[a.clone(), b], W, LINK, "/Users/u", &bk).is_empty());
         // .mcp.json 이 링크 파일이면 건너뛴다(덮으면 링크가 끊긴다)
         #[cfg(unix)]
         {
@@ -297,7 +314,7 @@ mod tests {
             std::fs::create_dir_all(&c).unwrap();
             std::fs::write(d.join("shared.json"), &raw).unwrap();
             std::os::unix::fs::symlink(d.join("shared.json"), c.join(".mcp.json")).unwrap();
-            assert_eq!(fix_in(&[c.clone()], W, LINK, "/Users/u", &bk), 0);
+            assert!(fix_in(&[c.clone()], W, LINK, "/Users/u", &bk).is_empty());
             assert!(std::fs::symlink_metadata(c.join(".mcp.json")).unwrap().file_type().is_symlink());
         }
         let _ = std::fs::remove_dir_all(&d);

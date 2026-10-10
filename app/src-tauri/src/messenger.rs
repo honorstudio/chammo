@@ -408,6 +408,10 @@ impl Orch {
     pub fn base(&self) -> &str {
         crate::orch_roles::base_of(&self.name)
     }
+    /// 사람에게 보일 이름 — 별명(" · " 뒤)이 있으면 별명, 없으면 기본 이름(2026-10-10 답 머리가 '참모-2:' 로 나왔다)
+    pub fn label(&self) -> &str {
+        self.name.split(" · ").nth(1).map(str::trim).filter(|n| !n.is_empty()).unwrap_or_else(|| self.base())
+    }
 }
 
 /// /이름 → 참모(기본 이름이나 별명, 대소문자 무시)

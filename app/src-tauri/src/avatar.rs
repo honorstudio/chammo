@@ -63,6 +63,45 @@ pub fn sniff(b: &[u8]) -> Option<&'static str> {
     }
 }
 
+/// 가로·세로 상한 — 고르기 창(domain/avatar MAX_SIDE)과 같다. 큰 그림은 그릴 때마다 디코딩이 무겁다
+pub const MAX_SIDE: u32 = 4096;
+
+/// 그림 머리에서 (가로, 세로) — 그림 처리 crate 없이 sniff 가 받는 네 형식만. 못 읽으면 None
+pub fn dims(b: &[u8]) -> Option<(u32, u32)> {
+    let be32 = |i: usize| Some(u32::from_be_bytes(b.get(i..i + 4)?.try_into().ok()?));
+    let be16 = |i: usize| Some(u16::from_be_bytes(b.get(i..i + 2)?.try_into().ok()?) as u32);
+    let le16 = |i: usize| Some(u16::from_le_bytes(b.get(i..i + 2)?.try_into().ok()?) as u32);
+    let le24 = |i: usize| { let x = b.get(i..i + 3)?; Some(x[0] as u32 | (x[1] as u32) << 8 | (x[2] as u32) << 16) };
+    match sniff(b)? {
+        "png" => if b.get(12..16)? == b"IHDR" { Some((be32(16)?, be32(20)?)) } else { None },
+        "gif" => Some((le16(6)?, le16(8)?)),
+        "webp" => match b.get(12..16)? {
+            b"VP8X" => Some((le24(24)? + 1, le24(27)? + 1)),
+            b"VP8 " => if b.get(23..26)? == [0x9d, 0x01, 0x2a] { Some((le16(26)? & 0x3fff, le16(28)? & 0x3fff)) } else { None },
+            b"VP8L" => {
+                if *b.get(20)? != 0x2f { return None; }
+                let v = u32::from_le_bytes(b.get(21..25)?.try_into().ok()?);
+                Some(((v & 0x3fff) + 1, ((v >> 14) & 0x3fff) + 1))
+            }
+            _ => None,
+        },
+        _ => {
+            // JPEG — 표식을 따라가 SOF(C0~CF, C4·C8·CC 빼고)의 세로·가로
+            let mut i = 2;
+            while i + 4 <= b.len() {
+                if b[i] != 0xFF { return None; }
+                let m = b[i + 1];
+                if m == 0xFF { i += 1; continue; }
+                if (0xC0..=0xCF).contains(&m) && !matches!(m, 0xC4 | 0xC8 | 0xCC) {
+                    return Some((be16(i + 7)?, be16(i + 5)?));
+                }
+                i += 2 + be16(i + 2)? as usize;
+            }
+            None
+        }
+    }
+}
+
 fn valid_name(s: &str) -> bool {
     !s.is_empty() && s.len() <= 16 && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
@@ -160,6 +199,11 @@ pub fn save_in(dir: &Path, key: &str, mut avatar: Avatar, image: Option<&[u8]>) 
                 return Err(bad("그림은 5MB 까지야", "Images must be 5 MB or smaller"));
             }
             let ext = sniff(bytes).ok_or_else(|| bad("PNG·JPG·GIF·WebP 그림만 돼", "Only PNG, JPG, GIF or WebP images"))?;
+            // 가로·세로 상한은 고르기 창만 봤다 — 다른 길로 들어와도 여기서 막는다(못 읽는 머리도)
+            match dims(bytes) {
+                Some((w, h)) if w > 0 && h > 0 && w <= MAX_SIDE && h <= MAX_SIDE => {}
+                _ => return Err(bad("가로·세로 4096px 까지 올릴 수 있어", "Up to 4096px on each side")),
+            }
             let name = format!("{key}.{ext}");
             write_atomic(&dir.join(&name), bytes)?;
             for p in image_paths(dir, &key) {
@@ -215,7 +259,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         d
     }
-    const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13];
+    // 1×1 PNG 머리(서명 + IHDR 길이·이름·가로·세로)
+    const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0, 0, 1, 0, 0, 0, 1];
     const GIF: &[u8] = b"GIF89a\x01\x00\x01\x00";
     fn img(zoom: f64) -> Avatar {
         Avatar::Image { file: String::new(), crop: Crop { zoom, x: 0.0, y: 0.0 }, voice: None }
@@ -243,6 +288,49 @@ mod tests {
         assert_eq!(sniff(b"<html>"), None);
         assert_eq!(sniff(b"RIFF\0\0\0\0WAVE"), None);
         assert_eq!(sniff(&[]), None);
+    }
+
+    fn png(w: u32, h: u32) -> Vec<u8> {
+        let mut v = PNG[..16].to_vec();
+        v.extend(w.to_be_bytes());
+        v.extend(h.to_be_bytes());
+        v
+    }
+
+    #[test]
+    fn 그림_크기는_머리에서_읽는다() {
+        assert_eq!(dims(&png(640, 480)), Some((640, 480)));
+        assert_eq!(dims(b"GIF89a\x00\x10\x01\x00"), Some((4096, 1)));
+        // JPEG: SOI, APP0(길이 4), SOF0(길이 8: 정밀도·세로·가로)
+        assert_eq!(dims(&[0xFF, 0xD8, 0xFF, 0xE0, 0, 4, 0, 0, 0xFF, 0xC0, 0, 8, 8, 0x01, 0xE0, 0x02, 0x80, 3]), Some((640, 480)));
+        assert_eq!(dims(&[0xFF, 0xD8, 0xFF, 0xC2, 0, 8, 8, 0x13, 0x88, 0x00, 0x10]), Some((16, 5000)), "progressive SOF2");
+        // WebP VP8X: 캔버스 (가로-1, 세로-1) 24비트
+        let mut x = b"RIFF\0\0\0\0WEBPVP8X\0\0\0\0\0\0\0\0".to_vec();
+        x.extend([0x7F, 0x02, 0x00, 0xDF, 0x01, 0x00]);
+        assert_eq!(dims(&x), Some((640, 480)));
+        // WebP VP8 (손실): 시작 코드 뒤 14비트 가로·세로
+        let mut l = b"RIFF\0\0\0\0WEBPVP8 \0\0\0\0\0\0\0\x9d\x01\x2a".to_vec();
+        l.extend([0x80, 0x02, 0xE0, 0x01]);
+        assert_eq!(dims(&l), Some((640, 480)));
+        // WebP VP8L (무손실): 0x2f 뒤 14비트씩 (값-1)
+        let (w, h) = (640u32 - 1, 480u32 - 1);
+        let bits = w | (h << 14);
+        let mut n = b"RIFF\0\0\0\0WEBPVP8L\0\0\0\0\x2f".to_vec();
+        n.extend(bits.to_le_bytes());
+        assert_eq!(dims(&n), Some((640, 480)));
+        assert_eq!(dims(&PNG[..20]), None, "잘린 머리");
+        assert_eq!(dims(b"<svg/>"), None);
+    }
+
+    #[test]
+    fn 재현_가로세로_4096_넘는_그림은_rust_도_거절() {
+        // 상한은 고르기 창(프론트)만 봐서 다른 길로 들어온 큰 그림은 그대로 저장됐다
+        let d = tmp("side");
+        assert!(save_in(&d, "참모", img(1.0), Some(&png(4097, 10))).is_err());
+        assert!(save_in(&d, "참모", img(1.0), Some(&png(10, 5000))).is_err());
+        assert!(save_in(&d, "참모", img(1.0), Some(&png(4096, 4096))).is_ok(), "딱 4096 은 된다");
+        assert!(save_in(&d, "참모", img(1.0), Some(&PNG[..12])).is_err(), "크기를 못 읽으면 안 받는다");
+        let _ = std::fs::remove_dir_all(d);
     }
 
     #[test]

@@ -16,8 +16,8 @@ type Props = {
 };
 
 export function Shop({ view, onView, file, draw, equip, skins, onClose }: Props) {
-  const nav = <ShopNav view={view} onView={onView} />;
+  const nav = <ShopNav view={view} onView={onView} dot={{ dex: !!file?.fresh?.length }} />;
   if (view === 'dex') return <DexView file={file} equip={equip} onClose={onClose} nav={nav} />;
-  if (view === 'skins') return <SkinsView {...skins} coins={file?.coins} counts={file?.owned} onClose={onClose} nav={nav} />;
+  if (view === 'skins') return <SkinsView {...skins} coins={file?.coins} counts={file?.owned} fresh={file?.fresh} onClose={onClose} nav={nav} />;
   return <GachaPage file={file} draw={draw} onClose={onClose} nav={nav} />;
 }

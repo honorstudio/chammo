@@ -84,6 +84,14 @@ describe('holderMap — 프로젝트 세션마다 잡고 있는 참모들(메뉴
     expect(m.get('s-project-b')).toEqual(['b2']); // 나중에 보낸 참모가 잡는다
     expect(m.get('s-shop')).toEqual(['b2']);
   });
+  it('같은 세션을 이름으로·번호로 따로 보내도 한 세션 — 나중에 보낸 참모만 잡는다(2026-10-10 사이트 세션이 두 참모 대시보드에 다 떴다)', () => {
+    const res = (t: string) => ({ 'shop-site': 's-site', a1b2c3d4: 's-site' } as Record<string, string>)[t];
+    const evs = [
+      ev({ type: 'send', task: 'a', target: 'shop-site', from: 'b1', ts: '2026-09-30T01:00:00Z' }),
+      ev({ type: 'send', task: 'b', target: 'a1b2c3d4', from: 'b2', ts: '2026-09-30T02:00:00Z' }),
+    ];
+    expect(holderMap(evs, ['b1', 'b2'], res, T2).get('s-site')).toEqual(['b2']);
+  });
   it('못 찾는 대상(꺼진 세션)은 빼고, 누가 시켰는지 안 남은 옛 기록은 아무 참모에도', () => {
     const evs = [ev({ type: 'send', task: 'a', target: 'gone', from: 'b1' }), ev({ type: 'send', task: 'b', target: 'oms' })];
     expect([...holderMap(evs, ['b1', 'b2'], resolve, T2).keys()]).toEqual([]);

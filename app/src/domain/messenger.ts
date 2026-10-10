@@ -37,6 +37,16 @@ export function tokenLooksRight(t: string): boolean {
   return /^[0-9]{5,15}:[A-Za-z0-9_-]{30,60}$/.test(t.trim());
 }
 
+/** 붙여 넣은 글에서 토큰만 — 폰에서 복사하면 줄바꿈·공백·보이지 않는 글자가 끼거나 BotFather 메시지가 통째로 온다(2026-10-10 연결 버튼이 안 켜졌다).
+ *  BotFather 토큰 뒤쪽은 35자라 그 길이를 먼저 찾고, 없으면 공백을 뺀 글에서 다시 찾는다. 못 찾으면 붙인 글 그대로 */
+export function tokenFrom(text: string): string {
+  const exact = /[0-9]{5,15}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/;
+  const clean = text.replace(/[\u200B-\u200D\u2060\uFEFF]/g, '');
+  const hit = clean.match(exact) ?? clean.replace(/\s+/g, '').match(/[0-9]{5,15}:[A-Za-z0-9_-]{35}/);
+  if (hit) return hit[0];
+  return tokenLooksRight(clean) ? clean.trim() : text;
+}
+
 /** 계정 한 줄 — "@gildong · 12345" (이름은 따로 굵게) */
 export function accountLine(a: Account): string {
   return [a.username ? `@${a.username}` : null, String(a.id)].filter(Boolean).join(' · ');

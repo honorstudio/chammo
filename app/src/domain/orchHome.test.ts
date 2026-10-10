@@ -39,6 +39,14 @@ describe('homeRows — 홈 줄: 켜진 참모 위, 꺼진 참모는 마지막으
     expect(r.off[0]).toMatchObject({ lastAt: T('2026-10-02T10:05:00Z'), doing: 'todo-api PR 머지해', ctx: 42 });
   });
 
+  // roadmap 오케스트레이터 홈 ③ — 다른 세션이 SendMessage 로 건 말은 meta 줄이라 안 잡혀 마지막 답이 나왔다
+  it('사람 지시보다 늦게 온 다른 세션 메시지(SendMessage)면 그게 하던 일 — 감싼 글 말고 본문', () => {
+    const a: Record<string, Activity> = { 's-b': { prompt: { ts: '2026-10-02T10:00:00Z', text: '옛 지시' }, peer: { ts: '2026-10-02T10:03:00Z', text: 'PR 올리고 회신해' }, reply: { ts: '2026-10-02T10:04:00Z', text: '알았어' } } };
+    expect(homeRows({ live: [], off: [off('b', '참모-2')], activity: a, ctx: {} }).off[0]!.doing).toBe('PR 올리고 회신해');
+    a['s-b']!.prompt = { ts: '2026-10-02T10:05:00Z', text: '새 지시' };
+    expect(homeRows({ live: [], off: [off('b', '참모-2')], activity: a, ctx: {} }).off[0]!.doing).toBe('새 지시');
+  });
+
   it('지시가 없으면 마지막 답, 기록이 아예 없으면 하던 일은 비우고 시각은 세션 시작 때', () => {
     const r = homeRows({ live: [], off: [off('d', '참모-4', 1000), off('e', '참모-5', 500)], activity: { 's-d': { reply: { ts: '', text: '준비됐어' } } }, ctx: {} });
     expect(r.off.find((x) => x.off?.id === 'd')).toMatchObject({ doing: '준비됐어', lastAt: 1000 });

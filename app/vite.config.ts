@@ -7,8 +7,8 @@ export default defineConfig({
   clearScreen: false,
   server: { port: 1420, strictPort: true },
   // 창 셋: 메인(index.html) + 항상 위에 떠 있는 다마고치 위젯(widget.html) + 문서 리더(reader.html)
-  // + 폰 화면(mobile.html) — 창이 아니라 모바일 서버(src-tauri/src/mobile.rs)가 테일스케일로 내보낸다
-  build: { outDir: 'dist', target: 'safari17', rollupOptions: { input: { main: 'index.html', widget: 'widget.html', reader: 'reader.html', mobile: 'mobile.html' } } },
+  // + 참모 모드 따로 창(mode.html) + 폰 화면(mobile.html) — 창이 아니라 모바일 서버(src-tauri/src/mobile.rs)가 테일스케일로 내보낸다
+  build: { outDir: 'dist', target: 'safari17', rollupOptions: { input: { main: 'index.html', widget: 'widget.html', reader: 'reader.html', mobile: 'mobile.html', mode: 'mode.html' } } },
   test: {
     include: ['src/**/*.test.ts'],
     environment: 'node',
