@@ -1,0 +1,39 @@
+name: 버그 / Bug
+description: 안 되거나 이상하게 동작해요 — Something doesn't work
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: 무슨 일이 있었나요? / What happened?
+      description: 어떻게 될 줄 알았는데 실제로는 어땠는지 — 스크린샷을 끌어다 놓아도 돼요(다른 프로젝트 이름·개인 정보는 가려 주세요)
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 다시 해 보는 순서 / Steps to reproduce
+      placeholder: |
+        1. 
+        2. 
+        3. 
+  - type: dropdown
+    id: os
+    attributes:
+      label: 운영체제 / OS
+      options: [macOS, Windows]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Chammo 버전 / Version
+      description: 메뉴 Chammo > Chammo에 관하여 (예 0.2.7)
+      placeholder: "0.2.7"
+    validations:
+      required: true
+  - type: input
+    id: claude
+    attributes:
+      label: Claude Code 버전 (알면) / Claude Code version
+      description: 터미널에서 claude --version

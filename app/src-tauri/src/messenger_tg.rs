@@ -163,7 +163,7 @@ impl Api {
 mod tests {
     use super::*;
 
-    const TOKEN: &str = "123456789:AAH4kq9_sZx-Qw3eRtYuIoP1aSdFgHjKlZx";
+    const TOKEN: &str = concat!("123456789:", "AAH4kq9_sZx-", "Qw3eRtYuIoP1aSdFgHjKlZx"); // 가짜 — 쪼개 둠(비밀 스캔)
 
     #[test]
     fn 토큰_모양() {

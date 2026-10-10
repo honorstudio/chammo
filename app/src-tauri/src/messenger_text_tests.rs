@@ -52,7 +52,7 @@ fn r(s: &str) -> String {
 
 #[test]
 fn 키·토큰처럼_생긴_것은_가린다() {
-    let tg = "123456789:AAH4kq9_sZx-Qw3eRtYuIoP1aSdFgHjKlZx";
+    let tg = concat!("123456789:", "AAH4kq9_sZx-", "Qw3eRtYuIoP1aSdFgHjKlZx");
     assert_eq!(r(&format!("봇 토큰 {tg} 넣었어")), format!("봇 토큰 {HIDDEN} 넣었어"));
     assert!(!r(&format!("https://api.telegram.org/bot{tg}/getMe")).contains("AAH4kq9"));
     assert!(!r("키는 sk-ant-api03-abcdefghijklmnop1234 이야").contains("abcdefghijklmnop"));

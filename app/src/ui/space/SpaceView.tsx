@@ -853,7 +853,8 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
   } else if (pick === 'm:') {
     main = <PagesHome pages={pages} titleOf={pageName} onOpen={(p) => setPick(`d:${p}`)} onNew={newPage} />;
   } else if (pick.startsWith('d:')) {
-    main = docPage(pick.slice(2), { onBack: (upKey) => step(-1, upKey) });
+    // 알약은 적힌 이름(주인 대시보드·부모 페이지)으로 간다 — 기록 뒤로(step)였더니 직전 시안 화면으로 돌아갔다(2026-10-10 사용자). 기록 뒤로는 ⌘[
+    main = docPage(pick.slice(2), { onBack: (upKey) => (upKey ? setPick(upKey, 'up') : step(-1)) });
   } else if (cur) {
     main = (
       <div className="cv-session">

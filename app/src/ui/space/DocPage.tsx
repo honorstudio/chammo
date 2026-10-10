@@ -66,7 +66,7 @@ export function DocPage({ lead, tail, path, title, owner, pinned, onPin, send, s
     <div className="cv-doc">
       <div className="cv-doc-bar">
         {lead}
-        <span className="cv-crumb">{onBack ? <button className="cv-back" onClick={onBack} title={tr('뒤로', 'Back')}><IconChevron />{owner}</button> : <span>{owner}</span>}<i>/</i><b>{title ?? docTitle(path)}</b></span>
+        <span className="cv-crumb">{onBack ? <button className="cv-back" onClick={onBack} title={owner}><IconChevron />{owner}</button> : <span>{owner}</span>}<i>/</i><b>{title ?? docTitle(path)}</b></span>
         <span className="cv-sp" />
         {onAttach && <button className="cv-btn ghost" onClick={onAttach} title={tr('채팅 입력칸에 이 문서를 붙인다', 'Attach this document to the chat input')}>{tr('채팅에 붙이기', 'Attach to chat')}</button>}
         {onPin && (

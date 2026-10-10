@@ -1,8 +1,11 @@
 # Chammo (참모)
 
-**Claude Code 를 위한 AI 참모. 결정은 당신이, 팀 운영은 참모가.**
+**내 클로드 코드를 팀으로.**
+프로젝트마다 기억하고, 같은 실수는 안 한다. — *내가 쓰려고 만들었어요. 그래서 공짜예요.*
 
-[English](README.md)
+[English](README.md) · [88초 영상 보기](https://honorstudio.co.kr/chammo)
+
+![10초로 보는 Chammo](docs/screenshots/promo-ko.gif)
 
 ![Chammo: 오른쪽은 채팅, 왼쪽은 팀이 쓴 문서](docs/screenshots/hero.png)
 
