@@ -457,7 +457,7 @@ impl Peers {
 // ── 짝지은 기기 ──────────────────────────────────────────────
 
 /// 앱 전체에 하나 — 서버를 다시 띄워도(테일스케일 주소가 바뀌어도) 같은 기기 목록
-fn devices() -> Arc<crate::mobile_pair::Devices> {
+pub(crate) fn devices() -> Arc<crate::mobile_pair::Devices> {
     static D: std::sync::OnceLock<Arc<crate::mobile_pair::Devices>> = std::sync::OnceLock::new();
     D.get_or_init(|| {
         let dir = crate::config::data_dir();
@@ -711,6 +711,11 @@ pub(crate) fn qr_svg(text: &str) -> Option<String> {
     Some(code.render::<qrcode::render::svg::Color>().min_dimensions(220, 220).quiet_zone(true).build())
 }
 
+/// 이 기기 폰 서버가 떠 있나 — 다른 기기 연결은 되묻기·답 받기가 이 서버로 온다
+pub(crate) fn server_running() -> bool {
+    RUNNING.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+}
+
 fn status() -> MobileStatus {
     let on = saved_on(crate::config::data_dir());
     let r = RUNNING.lock().unwrap();
@@ -926,6 +931,9 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     }
     fn diag(&self, line: &str) {
         crate::claude::log_out("phone-diag", line);
+    }
+    fn link_env(&self) -> &dyn crate::peer_ask::LinkEnv {
+        &crate::remote::RealLink
     }
     fn layout_log(&self, line: &str) {
         let dir = self.data_dir();

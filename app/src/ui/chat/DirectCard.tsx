@@ -19,14 +19,17 @@ const hhmm = (ts?: string) => (ts ? new Date(ts).toLocaleTimeString([], { hour: 
  * 누르면 앱이 그 세션 입력칸에 사람 말로 친다(Rust direct_answer — 진짜 클릭에서만 부른다). 직접 답은 접어 둔다
  */
 export type DirectPick = Pick;
+/** 기기 연결 요청 카드는 세션이 아니라 앱이 묻는다 */
+const linkName = (c: DirectCard) => (c.kind === 'link' ? tr('참모 앱', 'Chammo') : null);
 const desktopAnswer = (id: string, pick: Pick) => invoke<void>('direct_answer', { id, pick });
 
-export function DirectCardView({ c, name, project, profile, compact, onOpen, onAnswer = desktopAnswer, place, onRespawn, onDismiss }: {
+export function DirectCardView({ c, name: given, project, profile, compact, onOpen, onAnswer = desktopAnswer, place, onRespawn, onDismiss }: {
   c: DirectCard; name: string; project?: string; profile?: string; compact?: boolean; onOpen?: () => void;
   /** 폰은 폰 서버 길(/api/direct-answer) */ onAnswer?: (id: string, pick: Pick) => Promise<void>;
   /** 데스크톱: 이 카드가 실제로 화면에 보이면 기록에 '보임' 한 줄(어느 화면) — scripts/direct status 가 읽는다 */ place?: string;
   /** 주인 세션이 꺼진 카드 — 같은 번호로 다시 띄우기 / 닫기 */ onRespawn?: () => Promise<void>; onDismiss?: () => void;
 }) {
+  const name = linkName(c) ?? given;
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [free, setFree] = useState<string | null>(null);
@@ -75,7 +78,9 @@ export function DirectCardView({ c, name, project, profile, compact, onOpen, onA
         <div className={c.amount ? 'dc-muted' : 'dc-q'}>{c.amount ? [c.q, c.detail].filter(Boolean).join(' · ') : c.q}</div>
         {!c.amount && c.detail && <div className="dc-muted">{c.detail}</div>}
       </div>
-      {c.kind === 'login' ? (
+      {c.kind === 'link' ? (
+        <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('두 기기 참모가 서로 말을 주고받아요 — 끊기는 설정 > 폰과 메신저', 'The assistants on both devices can talk — unlink in Settings > Phone & messenger')}</dd><dt>{c.no}</dt><dd>{tr('아무것도 안 생겨요', 'Nothing is created')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('5분 뒤 없던 일이 돼요', 'It lapses after 5 minutes')}</dd></dl>
+      ) : c.kind === 'login' ? (
         <dl className="dc-if"><dt>{tr('하는 법', 'How')}</dt><dd>{tr('크게 보기에서 직접 로그인하고, 끝나면 다 했어', 'Sign in yourself in the big view, then press Done')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('세션은 여기서 기다려요', 'The session waits here')}</dd></dl>
       ) : (
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('누르면 이 세션에 네 답으로 바로 전해요 — 세션이 이어서 해요', 'Sends your answer to this session — it carries on')}</dd><dt>{c.no}</dt><dd>{tr('하지 말라고 전해요', 'Tells it not to')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('세션은 여기서 기다려요 — 다른 일은 그대로 돌아요', 'The session waits — other work goes on')}</dd></dl>
@@ -84,7 +89,7 @@ export function DirectCardView({ c, name, project, profile, compact, onOpen, onA
         <div className="dc-opts">{c.options.map((o, i) => <button key={i} className="dc-btn dc-no" disabled={busy} onClick={(e) => answer(e, { pick: 'option', option: i })}>{o}</button>)}</div>
       )}
       <div className="dc-acts">
-        {free === null && <button className="dc-link dc-free" onClick={() => setFree('')}>{tr('직접 답 쓰기', 'Write an answer')}</button>}
+        {free === null && c.kind !== 'link' && <button className="dc-link dc-free" onClick={() => setFree('')}>{tr('직접 답 쓰기', 'Write an answer')}</button>}
         {c.kind === 'login' && profile && <IconButton size="l" tone="line" className="dc-ib" label={tr('크게 보기로 하기', 'Open big view')} onClick={() => openAgentModal(profile)}><IconMaximize /></IconButton>}
         {c.kind === 'login' && !profile && <span className="dc-muted">{tr(`로그인은 ${machine()} 앱 크게 보기에서`, `Sign in from the ${machine()} app big view`)}</span>}
         <button className="dc-btn dc-no" disabled={busy} onClick={(e) => answer(e, { pick: 'no' })}>{c.no}</button>
@@ -148,7 +153,8 @@ export function useDirectTidy(cards: DirectCard[]) {
 }
 
 /** 답·처리가 끝난 카드 — 한 줄(무엇 · 결과 · 시각). 누르면 펼치고, X·옆으로 밀기로 바로 치운다 */
-export function DirectLine({ c, name, onDismiss }: { c: DirectCard; name: string; onDismiss: () => void }) {
+export function DirectLine({ c, name: given, onDismiss }: { c: DirectCard; name: string; onDismiss: () => void }) {
+  const name = linkName(c) ?? given;
   const [open, setOpen] = useState(false);
   const [dx, setDx] = useState(0);
   const drag = useRef<{ x: number; y: number; dx: number; on: boolean } | null>(null);
@@ -190,7 +196,7 @@ export function DirectLine({ c, name, onDismiss }: { c: DirectCard; name: string
         <div className="dc-more">
           <div className="dc-muted">{c.q}</div>
           {c.answer && <div>{c.answer.label ?? tr('직접 답', 'Answered')} · {hhmm(c.answer.ts)}</div>}
-          {n > 0 && c.answer && <div className="dc-steps">{step(n >= 1, tr('보냄', 'Sent'))}<em>—</em>{step(n >= 2, tr('세션이 받았음', 'Received'))}<em>—</em>{step(n >= 3, tr('처리됨', 'Done'))}</div>}
+          {n > 0 && c.answer && c.kind !== 'link' && <div className="dc-steps">{step(n >= 1, tr('보냄', 'Sent'))}<em>—</em>{step(n >= 2, tr('세션이 받았음', 'Received'))}<em>—</em>{step(n >= 3, tr('처리됨', 'Done'))}</div>}
           {c.note && <div>{c.note}</div>}
         </div>
       )}

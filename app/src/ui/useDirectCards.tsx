@@ -49,11 +49,11 @@ export function useDirectCards(everyone: Session[], acts: { session: Session; ac
     for (const c of cards) {
       if (!needsAnswer(c) || told.current.has(c.id)) continue;
       told.current.add(c.id);
-      notify(c, everyone.find((s) => s.id === c.from)?.name || c.from);
+      notify(c, nameOf(c));
     }
   }, [cards]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const nameOf = (c: DirectCard) => everyone.find((x) => x.id === c.from)?.name || c.from;
+  const nameOf = (c: DirectCard) => (c.kind === 'link' ? tr('참모 앱', 'Chammo') : everyone.find((x) => x.id === c.from)?.name || c.from);
   const card = (c: DirectCard, place: string, compact: boolean, onOpen: () => void) => {
     const s = everyone.find((x) => x.id === c.from);
     return <DirectCardView c={c} name={nameOf(c)} project={s?.project ?? undefined} profile={s ? liveOf(s, lives)?.profile : undefined} compact={compact} onOpen={onOpen}

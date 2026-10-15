@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionState } from './session';
-import { loggedOutSeen, emptyLogin, loginStep, readProbe, routineSessions, routineStalls, stalledOf, type LoginInput } from './login';
+import { loggedOutSeen, emptyLogin, loginStep, needText, readKeep, readProbe, routineSessions, routineStalls, stalledOf, type LoginInput } from './login';
 
 const T0 = Date.parse('2026-10-06T00:30:22Z');
 const s = (session: string, ts: number, kind: 'background' | 'interactive' = 'background') => ({ session, name: session, ts, kind });
@@ -204,5 +204,47 @@ describe('routineSessions·routineStalls — 예약 세션의 로그인 풀림�
     const acts = routineStalls(routineSessions(all, '/Users/me/.chammo'), { 'sid-r1': { auth }, 'sid-r2': { auth: { ...auth, retry: true } } });
     expect(acts.map((a) => a.session.id)).toEqual(['r1']);
     expect(stalledOf(acts).map((x) => x.session)).toEqual(['r1']);
+  });
+});
+
+describe('loginStep — 지금 로그인 미리 갱신(Rust login_keep)이 못 받았을 때만 카드', () => {
+  it('갱신이 잘 되면(keep null) 카드 없음', () => {
+    expect(loginStep(emptyLogin(), inp({ loggedIn: true, keep: null })).need).toBeNull();
+  });
+  it('만료 15분 안인데 못 받았거나 갱신 토큰이 죽었으면 맥 카드 하나 — 세션은 아직 안 멈췄다', () => {
+    const late = loginStep(emptyLogin(), inp({ loggedIn: true, keep: 'late' }));
+    expect(late.need).toEqual({ since: T0 + 60_000, sessions: [], machine: true, keep: 'late' });
+    expect(late.nudge).toEqual([]);
+    const dead = loginStep(late.mem, inp({ now: T0 + 120_000, loggedIn: true, keep: 'dead' }));
+    expect(dead.need).toEqual({ since: T0 + 60_000, sessions: [], machine: true, keep: 'dead' });
+  });
+  it('멈춘 세션이 같이 있으면 한 카드에 둘 다', () => {
+    const p = loginStep(emptyLogin(), inp({ stalled: [s('imac', T0)], loginAt: T0 - 3600_000, keep: 'dead' }));
+    expect(p.need).toEqual({ since: T0, sessions: ['imac'], machine: true, keep: 'dead' });
+  });
+  it('갱신이 다시 되면 카드가 내려간다', () => {
+    const a = loginStep(emptyLogin(), inp({ keep: 'late' }));
+    expect(loginStep(a.mem, inp({ now: T0 + 120_000, keep: null })).need).toBeNull();
+  });
+});
+
+describe('readKeep — Rust login_keep_state 답', () => {
+  it('dead·late 만, 나머지는 없음', () => {
+    expect(readKeep('dead')).toBe('dead');
+    expect(readKeep('late')).toBe('late');
+    expect(readKeep(null)).toBeNull();
+    expect(readKeep('ok')).toBeNull();
+    expect(readKeep(3)).toBeNull();
+  });
+});
+
+describe('needText — 카드 글(짧게)', () => {
+  it('곧 끝남 · 풀림 · 멈춘 곳', () => {
+    expect(needText({ since: 1, sessions: [], machine: true, keep: 'late' })).toEqual({ title: 'Claude 로그인이 곧 끝나요', where: '자동 갱신이 막혔어요' });
+    expect(needText({ since: 1, sessions: [], machine: true, keep: 'dead' })).toEqual({ title: 'Claude 로그인이 풀렸어요', where: '다시 로그인해야 해요' });
+    expect(needText({ since: 1, sessions: ['imac', 'project-x'], machine: false })).toEqual({ title: 'Claude 로그인이 풀렸어요', where: '멈춘 곳: imac · project-x' });
+    expect(needText({ since: 1, sessions: [], machine: true })).toEqual({ title: 'Claude 로그인이 풀렸어요', where: '멈춘 곳: 이 맥' });
+    // 멈춘 세션이 있으면 그게 먼저
+    expect(needText({ since: 1, sessions: ['imac'], machine: true, keep: 'late' }).where).toBe('멈춘 곳: imac');
   });
 });

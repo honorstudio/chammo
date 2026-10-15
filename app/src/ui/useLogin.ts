@@ -2,17 +2,19 @@
 // 재기(Rust login_probe = auth status + 로그인 칸 고친 시각)는 멈춘 세션이 있으면 15초마다, 없으면 10분마다(claude 를 띄우는 일이라 아낀다).
 // 할 일: 이어서(고쳐진 걸 본 뒤만)·갱신 겹침 뒤 이어서·다시 띄우기(멈춰 있는지 그 자리에서 다시 보고) → '로그인 필요'가 새로 생기면 알림·음성 한 번
 // → 폰이 읽게 <데이터>/login.json. 카드는 ui/LoginCard
+// 지금 로그인 미리 갱신(Rust login_keep) 상태는 1분마다 따로 읽는다(파일 하나 — claude 를 안 띄운다). late·dead 면 세션이 멈추기 전에 같은 카드
 import { useEffect, useRef, useState } from 'react';
-import { listSessionsRaw, loginProbe, loginSave, resumeSession, sendToSession, speak } from '../data/tauri';
+import { listSessionsRaw, loginKeepState, loginProbe, loginSave, resumeSession, sendToSession, speak } from '../data/tauri';
 import { readAuto } from '../domain/accountAuto';
 import type { AccountsView } from '../domain/accounts';
-import { emptyLogin, loggedOutSeen, loginStep, okAtOf, readProbe, resumedMsg, retryMsg, stalledOf, type LoginNeed } from '../domain/login';
+import { emptyLogin, loggedOutSeen, loginStep, needText, okAtOf, readKeep, readProbe, resumedMsg, retryMsg, stalledOf, type Keep, type LoginNeed } from '../domain/login';
 import { tr } from '../i18n';
 import { notifyOnce } from './notifier';
 import type { SessionActivity } from './TaskPanel';
 
 const FAST_MS = 15_000;
 const SLOW_MS = 10 * 60_000;
+const KEEP_MS = 60_000;
 
 /** agents --json 한 줄 — 다시 띄우기 직전 '정말 멈춰 있나'만 본다(낡은 목록으로 respawn 하면 도는 턴이 끊긴다) */
 async function stillStopped(id: string): Promise<boolean> {
@@ -30,6 +32,7 @@ export function useLogin(acts: SessionActivity[], accounts: AccountsView | null,
   const probe = useRef<{ loggedIn: boolean | null; credAt: number | null; at: number; falses: number }>({ loggedIn: null, credAt: null, at: 0, falses: 0 });
   const [need, setNeed] = useState<LoginNeed | null>(null);
   const [tick, setTick] = useState(0);
+  const [keep, setKeep] = useState<Keep | null>(null);
   const saved = useRef<string | null>(null);
   const shownSince = useRef<number | null>(null);
   const busy = useRef(false);
@@ -57,10 +60,19 @@ export function useLogin(acts: SessionActivity[], accounts: AccountsView | null,
     return () => { alive = false; clearInterval(t); };
   }, [hot]);
 
+  // 미리 갱신 상태 — 1분마다(Rust 도 1분마다 고친다)
+  useEffect(() => {
+    let alive = true;
+    const once = () => { void loginKeepState().then((v) => { if (alive) setKeep(readKeep(v)); }, () => {}); };
+    once();
+    const t = setInterval(once, KEEP_MS);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
   const auto = readAuto(accounts?.auto);
   const slot = accounts?.active ? auto.slots[accounts.active] : undefined;
   const liveAuthAt = slot?.authAt ?? null;
-  const key = `${stalled.map((x) => `${x.session}:${x.ts}`).join('|')}#${probe.current.at}#${liveAuthAt}#${okAtOf(acts)}#${tick}`;
+  const key = `${stalled.map((x) => `${x.session}:${x.ts}`).join('|')}#${probe.current.at}#${liveAuthAt}#${okAtOf(acts)}#${tick}#${keep}`;
 
   useEffect(() => {
     if (busy.current) return;
@@ -72,14 +84,16 @@ export function useLogin(acts: SessionActivity[], accounts: AccountsView | null,
       loggedIn: probe.current.loggedIn,
       liveAuthAt,
       okAt: okAtOf(actsRef.current),
+      keep,
     });
     mem.current = plan.mem;
     setNeed((prev) => (JSON.stringify(prev) === JSON.stringify(plan.need) ? prev : plan.need));
     // 새로 생긴 '로그인 필요'만 알린다 — 세션이 늘어도 같은 카드
     if (plan.need && shownSince.current === null) {
-      const who = plan.need.sessions.length ? plan.need.sessions.join(', ') : tr('이 맥', 'this Mac');
-      notifyOnce({ kind: 'login', session: 'login', orch: false, title: tr('Claude 로그인이 풀렸어요', 'Claude sign-in expired'), body: tr(`멈춘 곳: ${who} — 결정 대기함에서 로그인`, `Stopped: ${who} — sign in from Decisions`) });
-      if (voiceRef.current) void speak(tr('Claude 로그인이 풀렸어. 결정 대기함이나 폰에서 로그인해 줘', 'Claude sign-in expired. Sign in from Decisions or your phone')).catch(() => {});
+      const t = needText(plan.need);
+      const soon = plan.need.keep === 'late' && !plan.need.sessions.length;
+      notifyOnce({ kind: 'login', session: 'login', orch: false, title: t.title, body: tr(`${t.where} — 결정 대기함에서 로그인`, `${t.where} — sign in from Decisions`) });
+      if (voiceRef.current) void speak(soon ? tr('Claude 로그인이 곧 끝나. 결정 대기함이나 폰에서 한 번 로그인해 줘', 'Claude sign-in ends soon. Sign in once from Decisions or your phone') : tr('Claude 로그인이 풀렸어. 결정 대기함이나 폰에서 로그인해 줘', 'Claude sign-in expired. Sign in from Decisions or your phone')).catch(() => {});
     }
     shownSince.current = plan.need ? plan.need.since : null;
     const file = JSON.stringify(plan.need ? { ...plan.need, at: now } : null);

@@ -1,6 +1,6 @@
 // 폰 로그인 카드·시트 — 맥 /api/login 답(login.rs phone_view: 화면이 적은 판단 login.json + 폰 로그인 흐름) 해석.
 // 흐름: [로그인] → 맥이 pty 로 claude auth login → 주소를 폰에서 열어 로그인 → 페이지가 보여 준 코드를 입력칸에 → 맥이 pty 에 한 줄
-import type { LoginNeed } from './login';
+import { readKeep, type LoginNeed } from './login';
 
 export type FlowState = 'idle' | 'starting' | 'waiting' | 'checking' | 'done' | 'failed';
 export type Flow = { state: FlowState; url: string | null; error: string | null };
@@ -16,9 +16,10 @@ export function readPhoneLogin(text: string): PhoneLogin {
   } catch {
     return { need: null, flow: IDLE };
   }
-  const n = (o?.need ?? null) as { since?: unknown; sessions?: unknown; machine?: unknown } | null;
-  const need = n && typeof n.since === 'number' && Array.isArray(n.sessions)
-    ? { since: n.since, sessions: n.sessions.filter((x): x is string => typeof x === 'string'), machine: n.machine === true }
+  const n = (o?.need ?? null) as { since?: unknown; sessions?: unknown; machine?: unknown; keep?: unknown } | null;
+  const keep = readKeep(n?.keep);
+  const need: LoginNeed | null = n && typeof n.since === 'number' && Array.isArray(n.sessions)
+    ? { since: n.since, sessions: n.sessions.filter((x): x is string => typeof x === 'string'), machine: n.machine === true, ...(keep ? { keep } : {}) }
     : null;
   const f = (o?.flow ?? {}) as { state?: unknown; url?: unknown; error?: unknown };
   const state = STATES.find((x) => x === f.state);

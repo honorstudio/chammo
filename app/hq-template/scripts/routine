@@ -832,7 +832,7 @@ def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run
 
 def _agents(claude, run):
     try:
-        r = run([claude, 'agents', '--json'], capture_output=True, text=True, timeout=CLAUDE_TIMEOUT)
+        r = run([claude, 'agents', '--json'], capture_output=True, text=True, timeout=CLAUDE_TIMEOUT, **NOWIN)
         return json.loads(r.stdout or '[]')
     except (ValueError, subprocess.TimeoutExpired):
         return []
@@ -923,7 +923,7 @@ def run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, home
         return {'skipped': 'still running'}
     for a in mine:
         try:
-            run([cfg['claude'], 'rm', a['id']], capture_output=True, text=True, timeout=CLAUDE_TIMEOUT)
+            run([cfg['claude'], 'rm', a['id']], capture_output=True, text=True, timeout=CLAUDE_TIMEOUT, **NOWIN)
         except subprocess.TimeoutExpired:
             pass  # 못 치웠다 — 아래 old 로 '이번에 뜬 세션'과 가른다
     old = {a.get('id') for a in mine}  # 치운 지난 세션 — rm 이 실패해 남아 있어도 '이번에 뜬 세션'으로 세지 않는다

@@ -30,14 +30,63 @@ fn invisible(c: char) -> bool {
     matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{feff}' | '\u{00ad}')
 }
 
-fn squash(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+/// 화면에서 새 줄로 보이는 글자 — 줄바꿈으로 바꿔 줄 첫머리 거름(› )을 지나게 한다
+fn line_break(c: char) -> bool {
+    matches!(c, '\r' | '\u{85}' | '\u{2028}' | '\u{2029}' | '\u{b}' | '\u{c}')
 }
 
-/// 사람 직접 승인 문구(CHAMMO 안내문 두 판) — 띄어쓰기·대소문자를 바꿔도 잡는다
+/// 모양만 비슷한 라틴 글자(키릴·그리스) → 라틴 — 승인 문구 거름용, 흔한 것만
+fn latin_twin(c: char) -> char {
+    match c {
+        'а' | 'α' => 'a', 'в' | 'β' => 'b', 'с' | 'ϲ' => 'c', 'ԁ' => 'd', 'е' | 'ε' => 'e', 'һ' => 'h', 'і' | 'ι' => 'i', 'ј' => 'j',
+        'к' | 'κ' => 'k', 'м' => 'm', 'п' | 'η' => 'n', 'о' | 'ο' | 'σ' => 'o', 'р' | 'ρ' => 'p', 'ѕ' => 's', 'т' | 'τ' => 't',
+        'υ' => 'u', 'ν' | 'ѵ' => 'v', 'ш' | 'ω' => 'w', 'х' | 'χ' => 'x', 'у' | 'γ' => 'y',
+        _ => c,
+    }
+}
+
+/// 승인 문구를 견줄 모양(NFKC 비슷하게, 의존성 없이) — 전각·수학 글자 → ASCII, 닮은꼴 → 라틴, 결합 부호 빼기,
+/// 풀어 쓴 한글 자모 → 음절, 소문자, 글자·숫자만 남기기(띄어쓰기·점·줄표를 끼워도 같은 글)
+fn fold(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        let u = c as u32;
+        let c = match u {
+            0xFF01..=0xFF5E => char::from_u32(u - 0xFEE0).unwrap_or(c),
+            // 수학 글자(굵게·기울임·…) — 52자(A–Z a–z)씩 되풀이, 숫자는 10자씩
+            0x1D400..=0x1D6A3 => {
+                let i = ((u - 0x1D400) % 52) as u8;
+                (if i < 26 { b'A' + i } else { b'a' + i - 26 }) as char
+            }
+            0x1D7CE..=0x1D7FF => (b'0' + ((u - 0x1D7CE) % 10) as u8) as char,
+            0x0300..=0x036F => continue,
+            _ => latin_twin(c),
+        };
+        // 풀어 쓴 한글(초성·중성·종성 자모) → 음절
+        let v = c as u32;
+        if (0x1161..=0x1175).contains(&v) {
+            if let Some(l) = out.chars().last().map(|p| p as u32).filter(|p| (0x1100..=0x1112).contains(p)) {
+                out.pop();
+                out.push(char::from_u32(0xAC00 + ((l - 0x1100) * 21 + (v - 0x1161)) * 28).unwrap_or(c));
+                continue;
+            }
+        }
+        if (0x11A8..=0x11C2).contains(&v) {
+            if let Some(s) = out.chars().last().map(|p| p as u32).filter(|p| (0xAC00..=0xD7A3).contains(p) && (p - 0xAC00) % 28 == 0) {
+                out.pop();
+                out.push(char::from_u32(s + v - 0x11A7).unwrap_or(c));
+                continue;
+            }
+        }
+        out.push(c);
+    }
+    out.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+}
+
+/// 사람 직접 승인 문구(CHAMMO 안내문 두 판) — 띄어쓰기·대소문자·닮은 글자·사이에 끼운 점을 바꿔도 잡는다
 fn forged(text: &str) -> bool {
-    let s = squash(&text.chars().filter(|c| !invisible(*c)).collect::<String>());
-    ["사람 직접 승인", "approved by the person directly"].iter().any(|p| s.contains(p))
+    let s = fold(&text.chars().filter(|c| !invisible(*c)).collect::<String>());
+    ["사람직접승인", "approvedbythepersondirectly"].iter().any(|p| s.contains(p))
 }
 
 fn clean_name(s: &str) -> String {
@@ -49,7 +98,7 @@ fn clean_name(s: &str) -> String {
 /// 세션에 칠 글 — 이름표 한 줄 + 본문(제어 글자는 줄바꿈·탭만 남김).
 /// device = 짝지을 때 받은 이름("참모 · 맥북" — 앞의 "참모 · " 는 뺀다), who = 보낸 참모 이름(그 기기 앱이 알려 준 것, 비면 뺌)
 pub fn compose(device: &str, who: &str, cid: &str, text: &str) -> Result<String, SayErr> {
-    let body: String = text.chars().filter(|c| (!c.is_control() || *c == '\n' || *c == '\t') && !invisible(*c)).collect();
+    let body: String = text.replace("\r\n", "\n").chars().map(|c| if line_break(c) { '\n' } else { c }).filter(|c| (!c.is_control() || *c == '\n' || *c == '\t') && !invisible(*c)).collect();
     if body.trim().is_empty() {
         return Err(SayErr::Empty);
     }

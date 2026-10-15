@@ -1,4 +1,5 @@
-// 설정 > 폰과 메신저 > 다른 기기 참모 — 같은 테일스케일 계정 기기 줄(Rust remote_devices)의 작은 글·할 일(ADR 0007)
+// 설정 > 폰과 메신저 > 다른 기기 참모 — 같은 테일스케일 계정 기기 줄(Rust remote_devices)의 작은 글·할 일(ADR 0007).
+// 0.3.2: 코드 없이 '연결' → 그 기기 사람이 카드에서 허용하면 양쪽이 이어진다. 코드는 대피로(옛 판·되묻기가 안 닿을 때)
 import type { RemoteDevice } from '../data/remote';
 import { tr } from '../i18n';
 
@@ -8,19 +9,35 @@ const stamp = (ms: number) => {
   return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 
-/** 줄 아래 작은 글 — 상태 · 판(또는 마지막으로 닿은 때) */
-export function peerSub(d: RemoteDevice): string {
-  const word = d.status === 'connected' ? tr('연결됨', 'Connected') : d.status === 'pair' ? tr('짝짓기 필요', 'Needs pairing') : tr('연결 끊김', 'Offline');
-  const extra =
-    d.status === 'offline' ? (d.lastOk ? tr(`마지막 ${stamp(d.lastOk)}`, `last ${stamp(d.lastOk)}`) : null)
-    : d.old ? tr('그 기기 업데이트 필요', 'update that device')
-    : d.status === 'connected' ? d.version
-    : null;
-  return extra ? `${word} · ${extra}` : word;
-}
+export type PeerView = {
+  /** 연결됨 / 연결 안 됨 — 둘뿐 */
+  word: string;
+  /** 왜·판·마지막으로 닿은 때 */
+  extra: string | null;
+  /** '연결'(그 기기에 허용 카드) */
+  connect: boolean;
+  /** 끊기(이 기기 열쇠 + 그 기기가 쓰던 줄) */
+  unlink: boolean;
+  /** 코드로 잇기(대피로) */
+  code: boolean;
+};
 
-/** pair = 코드로 처음 짝짓기 · repair = 열쇠가 끊겨 다시(끊기도) · unpair = 끊기만 */
-export function peerAction(d: RemoteDevice): 'pair' | 'repair' | 'unpair' {
-  if (d.status === 'pair') return d.paired ? 'repair' : 'pair';
-  return 'unpair';
+/** waiting = 이 기기가 그 기기에 연결을 요청하고 허용을 기다리는 중 */
+export function peerView(d: RemoteDevice, waiting: boolean): PeerView {
+  const on = d.status === 'connected';
+  const win = d.os.toLowerCase() === 'windows';
+  const extra = on ? d.version
+    : waiting ? tr('그 기기에서 허용을 기다려요', 'Waiting for that device to allow')
+    : d.status === 'offline' ? [tr('꺼져 있음', 'Offline'), d.lastOk ? tr(`마지막 ${stamp(d.lastOk)}`, `last ${stamp(d.lastOk)}`) : null].filter(Boolean).join(' · ')
+    : win ? tr('지금은 맥끼리만', 'Macs only for now')
+    : d.old ? tr('그 기기 업데이트 필요', 'Update that device')
+    : null;
+  const reachable = d.status === 'pair' && !win;
+  return {
+    word: on ? tr('연결됨', 'Connected') : tr('연결 안 됨', 'Not connected'),
+    extra: extra || null,
+    connect: reachable && !d.old && !waiting,
+    unlink: d.paired,
+    code: reachable && !waiting,
+  };
 }

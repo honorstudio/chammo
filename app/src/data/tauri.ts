@@ -345,6 +345,8 @@ export const loadSave = (json: string) => invoke<void>('load_save', { json });
 /** 로그인 풀림(login.rs) — 맥 로그인 상태(auth status + 로그인 칸 고친 시각) · 화면 판단을 폰에(<데이터>/login.json) */
 export const loginProbe = () => invoke<unknown>('login_probe');
 export const loginSave = (json: string) => invoke<void>('login_save', { json });
+/** 지금 로그인 미리 갱신(login_keep) — 'dead'·'late'·null. 해석은 domain/login.readKeep */
+export const loginKeepState = () => invoke<unknown>('login_keep_state');
 
 /** 채팅 보기용 대화 기록 이어 읽기 — from 을 안 주면 끝 1MB 부터. reset 이면 처음부터 다시 그린다 */
 /** start = text 첫 줄의 파일 자리(폰이 그 앞을 거슬러 읽는다) */

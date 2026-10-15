@@ -312,6 +312,9 @@ pub mod fake {
         /// 쓰기 직전에 부른다(서비스 이름) — 쓰는 순간의 바깥 상태(잠금 등)를 보려고
         #[allow(clippy::type_complexity)]
         pub on_set: RefCell<Option<Box<dyn Fn(&str)>>>,
+        /// 읽기 직전에 부른다(자기 자신·서비스 이름) — 읽는 사이에 바깥(세션)이 값을 바꾸는 순간을 만들려고
+        #[allow(clippy::type_complexity)]
+        pub on_get: RefCell<Option<Box<dyn Fn(&Fake, &str)>>>,
     }
 
     impl Fake {
@@ -327,6 +330,9 @@ pub mod fake {
         fn get(&self, service: &str, account: &str) -> Result<Option<Secret>, StoreError> {
             if *self.locked.borrow() {
                 return Err(StoreError::Locked);
+            }
+            if let Some(f) = self.on_get.borrow().as_ref() {
+                f(self, service);
             }
             Ok(self.items.borrow().get(&(service.into(), account.into())).cloned())
         }

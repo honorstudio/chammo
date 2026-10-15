@@ -121,6 +121,13 @@ pub fn answer(id: &str, pick: &Pick, by: &str) -> Result<(), String> {
     let _one = ANSWER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let log = std::fs::read_to_string(log_path()).unwrap_or_default();
     let ask = check(&log, id).map_err(refuse_text)?;
+    // 다른 기기 연결 요청 카드(peer_ask) — 세션에 치지 않고 앱이 그 자리에서 허용·거절을 적는다
+    if ask["kind"] == LINK_KIND {
+        let yes = link_pick(pick, by).map_err(refuse_text)?;
+        crate::peer_ask::asks().decide(id, yes, crate::messenger_cmd::now_ms())?;
+        let label = ask[if yes { "yes" } else { "no" }].as_str().unwrap_or_default();
+        return append(&json!({ "ts": chrono_now(), "type": "answer", "id": id, "by": by, "pick": if yes { "yes" } else { "no" }, "label": label }));
+    }
     let (typed, picked) = compose_by(&ask, pick, by).map_err(refuse_text)?;
     let sid = ask["from"].as_str().unwrap_or_default().to_string();
     if !crate::claude::listed_alive(&sid) {
@@ -138,6 +145,51 @@ pub fn answer(id: &str, pick: &Pick, by: &str) -> Result<(), String> {
         return Err(e.clone());
     }
     Ok(())
+}
+
+/// 다른 기기 연결 요청 카드 — from 은 세션이 아니라 앱(@link)
+pub const LINK_KIND: &str = "link";
+pub const LINK_FROM: &str = "@link";
+
+/// 연결 요청 카드 답 — 허용·거절 두 단추만, 사람 길 중에서도 이 앱 화면(데스크톱 메인 창)과 짝지은 폰만.
+/// 텔레그램(밖의 중계)·참모(appctl 엔 길 자체가 없다)·다른 기기 참모 열쇠(/api/direct-answer 403)로는 못 누른다
+pub fn link_pick(pick: &Pick, by: &str) -> Result<bool, Refuse> {
+    if by != "desktop" && by != "phone" {
+        return Err(Refuse::Bad(crate::i18n::tr("기기 연결은 앱이나 짝지은 폰 카드에서만 허용해요", "Device links are approved only in the app or a paired phone").into()));
+    }
+    match pick {
+        Pick::Yes => Ok(true),
+        Pick::No => Ok(false),
+        _ => Err(Refuse::Bad("allow or decline only".into())),
+    }
+}
+
+/// 연결 요청 카드 줄 — 이름·테일넷·OS 는 이 기기 tailscale 이 말한 것(요청이 보낸 글이 아니다). until 이 지나면 화면이 '시간 지남'으로
+pub fn link_row(id: &str, p: &crate::peer_ask::LinkPeer, until_ms: u64, ts: &str) -> Value {
+    let name: String = p.name.chars().filter(|c| !c.is_control()).take(64).collect();
+    let tn: String = p.tailnet.chars().filter(|c| !c.is_control()).take(64).collect();
+    json!({
+        "ts": ts, "type": "ask", "id": id, "from": LINK_FROM, "cwd": "", "kind": LINK_KIND,
+        "q": crate::i18n::tr(&format!("{name} 기기와 연결할까요? 이 기기 참모와 말을 주고받게 돼요"), &format!("Link with {name}? The assistants on both devices will be able to talk")),
+        "detail": crate::i18n::tr(&format!("테일넷 {tn} · {}", p.os), &format!("Tailnet {tn} · {}", p.os)),
+        "what": crate::i18n::tr("다른 기기 연결 요청", "Link request from another device"),
+        "yes": crate::i18n::tr("허용", "Allow"), "no": crate::i18n::tr("거절", "Decline"), "options": [],
+        "until": iso_of_ms(until_ms),
+    })
+}
+
+/// 연결 요청 카드 남기기 → 카드 id(8자, 다른 카드와 같은 모양)
+pub(crate) fn ask_link(p: &crate::peer_ask::LinkPeer, until_ms: u64) -> Result<String, String> {
+    // ANSWER_LOCK 은 안 잡는다 — 답(answer)이 그 자물쇠 안에서 peer_ask 자물쇠를 잡으니 거꾸로 잡으면 서로 기다린다.
+    // 줄 하나 덧붙이기(O_APPEND)라 겹쳐도 안 깨지고, 두 번 답하기는 peer_ask::decide 가 막는다
+    let id = crate::mobile_pair::random_hex(4).map_err(|e| e.to_string())?;
+    append(&link_row(&id, p, until_ms, &chrono_now()))?;
+    Ok(id)
+}
+
+/// 연결 요청 카드 끝 — 연결됨·시간 지남·실패를 한 줄로
+pub(crate) fn close_link(id: &str, note: &str) {
+    let _ = append(&json!({ "ts": chrono_now(), "type": "done", "id": id, "note": note }));
 }
 
 pub(crate) fn chrono_now() -> String {
@@ -309,6 +361,33 @@ mod tests {
     fn 보임_줄은_답할_수_있나에_영향_없다() {
         let shown = format!("{ASK}\n{}", r#"{"type":"shown","id":"ab12cd34","where":"inbox"}"#);
         assert!(check(&shown, "ab12cd34").is_ok());
+    }
+
+    #[test]
+    fn pe_연결_요청_카드는_허용_거절만_앱과_폰에서만() {
+        assert_eq!(link_pick(&Pick::Yes, "desktop"), Ok(true));
+        assert_eq!(link_pick(&Pick::No, "phone"), Ok(false));
+        assert!(link_pick(&Pick::Yes, "telegram:7001").is_err(), "밖의 중계로는 못 누른다");
+        assert!(link_pick(&Pick::Yes, "peer").is_err());
+        assert!(link_pick(&Pick::Yes, "").is_err());
+        assert!(link_pick(&Pick::Option { option: 0 }, "desktop").is_err());
+        assert!(link_pick(&Pick::Text { text: "허용".into() }, "desktop").is_err(), "글로는 허용 못 한다");
+    }
+
+    #[test]
+    fn pe_연결_요청_카드_줄은_기기_이름과_테일넷() {
+        let p = crate::peer_ask::LinkPeer { id: "nA".into(), name: "office-mac\u{1b}".into(), os: "macOS".into(), ip: "100.64.0.2".parse().unwrap(), tailnet: "me@example.com".into() };
+        let r = link_row("ab12cd34", &p, 1_800_000_300_000, "2027-01-15T08:00:00Z");
+        assert_eq!((r["from"].as_str(), r["kind"].as_str(), r["yes"].as_str(), r["no"].as_str()), (Some(LINK_FROM), Some(LINK_KIND), Some("허용"), Some("거절")));
+        let q = r["q"].as_str().unwrap();
+        assert!(q.contains("office-mac 기기와 연결할까요") && !q.contains('\u{1b}'), "{q}");
+        assert_eq!(r["detail"], "테일넷 me@example.com · macOS");
+        assert_eq!(r["until"], "2027-01-15T08:05:00Z");
+        // 기록 모양은 보통 카드와 같아 check 를 지난다(이미 답함·끝남 거르기)
+        let log = format!("{r}");
+        assert!(check(&log, "ab12cd34").is_ok());
+        let done = format!("{r}\n{}", json!({ "type": "done", "id": "ab12cd34", "note": "연결됨" }));
+        assert_eq!(check(&done, "ab12cd34").unwrap_err(), Refuse::Closed);
     }
 
     #[test]

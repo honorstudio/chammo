@@ -46,6 +46,9 @@ pub(crate) struct Device {
     /// 다른 기기의 참모(손님 앱)가 붙은 줄 — 폰이 아니다(설정에 '참모'로)
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     peer: bool,
+    /// 코드 없이 연결한 다른 기기 참모 줄 — 그 기기의 테일스케일 노드 ID(다시 허용하면 이 줄을 바꿔 끼우고, 끊으면 노드로 지운다)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    node: Option<String>,
 }
 
 impl Device {
@@ -218,14 +221,14 @@ impl Devices {
     #[cfg(test)]
     pub fn with_token(token: &str, name: &str) -> Devices {
         let d = Devices::memory();
-        d.inner.lock().unwrap().list.push(Device { id: "test0001".into(), name: name.into(), hash: sha(token), created: ms(SystemTime::now()), last_seen: None, home: false, group: None, paired: None, peer: false });
+        d.inner.lock().unwrap().list.push(Device { id: "test0001".into(), name: name.into(), hash: sha(token), created: ms(SystemTime::now()), last_seen: None, home: false, group: None, paired: None, peer: false, node: None });
         d
     }
 
     /// 시험용 — 줄 하나 더(다른 기기 참모 peer 줄 등)
     #[cfg(test)]
     pub fn add_test(&self, id: &str, token: &str, name: &str, peer: bool) {
-        self.inner.lock().unwrap().list.push(Device { id: id.into(), name: name.into(), hash: sha(token), created: ms(SystemTime::now()), last_seen: None, home: false, group: None, paired: None, peer });
+        self.inner.lock().unwrap().list.push(Device { id: id.into(), name: name.into(), hash: sha(token), created: ms(SystemTime::now()), last_seen: None, home: false, group: None, paired: None, peer, node: None });
     }
 
     /// 시험용 — 다음 check 가 마지막 접속을 파일에 적게
@@ -357,7 +360,7 @@ impl Devices {
                     d.id.clone()
                 }
                 None => {
-                    l.push(Device { id: new_id.clone(), name: name.clone(), hash: hash.clone(), created: at, last_seen: Some(at), home: p.home && !p.peer, group, paired: None, peer: p.peer });
+                    l.push(Device { id: new_id.clone(), name: name.clone(), hash: hash.clone(), created: at, last_seen: Some(at), home: p.home && !p.peer, group, paired: None, peer: p.peer, node: None });
                     new_id.clone()
                 }
             };
@@ -406,6 +409,33 @@ impl Devices {
         let mut g = self.inner.lock().unwrap();
         self.reload_if_changed(&mut g);
         g.list.iter().map(|d| DeviceView { id: d.id.clone(), name: d.name.clone(), created: d.created, last_seen: d.last_seen, home: d.home, group: d.group.clone().unwrap_or_else(|| d.id.clone()), paired: d.paired.unwrap_or(d.created), peer: d.peer }).collect()
+    }
+
+    /// 다른 기기 참모 줄 — 연결 요청을 사람이 허용했을 때(코드 없이, peer_ask). 같은 노드의 옛 peer 줄은 바꿔 끼운다(옛 열쇠는 그 순간 죽는다)
+    pub fn add_peer(&self, token: &str, name: &str, node: &str, now: SystemTime) -> std::io::Result<()> {
+        if token.len() != 64 || !token.chars().all(|c| c.is_ascii_hexdigit()) || node.is_empty() {
+            return Err(std::io::Error::other("bad peer key"));
+        }
+        let at = ms(now);
+        let name: String = name.chars().filter(|c| !c.is_control()).take(40).collect();
+        let (hash, id) = (sha(token), random_hex(8)?);
+        let mut g = self.inner.lock().unwrap();
+        let mut gone = Vec::new();
+        self.mutate(&mut g, |l| {
+            l.retain(|d| !(d.peer && d.node.as_deref() == Some(node)));
+            l.push(Device { id: id.clone(), name: name.clone(), hash, created: at, last_seen: Some(at), home: false, group: None, paired: None, peer: true, node: Some(node.to_string()) });
+            gone = prune(l, at, Some(&id));
+        })?;
+        drop(g);
+        log_device(&format!("다른 기기 참모 연결 {} {name}", short(&id)));
+        log_removed(&gone);
+        Ok(())
+    }
+
+    /// 그 노드의 다른 기기 참모 줄 끊기(폰 줄은 안 건드린다)
+    pub fn remove_node(&self, node: &str) -> std::io::Result<()> {
+        let mut g = self.inner.lock().unwrap();
+        self.mutate(&mut g, |l| l.retain(|d| !(d.peer && d.node.as_deref() == Some(node))))
     }
 
     /// 기기 끊기 — 묶음째(사파리·홈 화면 앱 둘 다). 묶음 id 는 그 묶음 첫 줄의 id 라 줄 id 로 불러도 된다

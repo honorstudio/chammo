@@ -348,3 +348,179 @@ fn 다른_기기_포트는_본판_47123_고정_개발판만_바꿀_수_있다() 
     assert_eq!(peer_port_from(Some("x"), true), 47123);
     assert_eq!(peer_port_from(None, true), 47123);
 }
+
+// ── 코드 없이 연결(0.3.2) ──
+
+const TAILNET: &str = r#"{
+  "BackendState": "Running",
+  "Self": { "ID": "nSELF", "HostName": "mac-studio", "OS": "macOS", "UserID": 7, "TailscaleIPs": ["100.64.0.10"] },
+  "CurrentTailnet": { "Name": "me@example.com", "MagicDNSSuffix": "tail1234.ts.net" },
+  "Peer": {
+    "k1": { "ID": "nBOX", "HostName": "BOX-PC\u001b[31m", "OS": "macOS", "UserID": 7, "Online": true, "TailscaleIPs": ["100.64.0.11"] },
+    "k3": { "ID": "nSHARED", "HostName": "friend-pc", "OS": "macOS", "UserID": 9, "Online": true, "TailscaleIPs": ["100.64.0.5"] },
+    "k4": { "ID": "nTAG", "HostName": "server", "OS": "linux", "UserID": 7, "Online": true, "Tags": ["tag:server"], "TailscaleIPs": ["100.64.0.6"] }
+  }
+}"#;
+
+#[test]
+fn pe_받는_쪽은_자기_테일넷의_같은_계정_기기만_이름과_테일넷째로_안다() {
+    let p = link_peer(TAILNET, "nBOX").unwrap();
+    assert_eq!((p.id.as_str(), p.name.as_str(), p.tailnet.as_str()), ("nBOX", "BOX-PC[31m", "me@example.com"));
+    assert_eq!(p.ip, "100.64.0.11".parse::<Ipv4Addr>().unwrap());
+    assert!(link_peer(TAILNET, "nSHARED").is_none(), "공유받은 남의 노드");
+    assert!(link_peer(TAILNET, "nTAG").is_none(), "태그 노드");
+    assert!(link_peer(TAILNET, "nSELF").is_none(), "나 자신");
+    assert!(link_peer(TAILNET, "nNONE").is_none());
+    assert_eq!(self_id(TAILNET).as_deref(), Some("nSELF"));
+    // CurrentTailnet 이 없는 옛 tailscale 은 MagicDNS 이름으로
+    let old = TAILNET.replace(r#""CurrentTailnet": { "Name": "me@example.com", "MagicDNSSuffix": "tail1234.ts.net" },"#, r#""MagicDNSSuffix": "tail1234.ts.net","#);
+    assert_eq!(link_peer(&old, "nBOX").unwrap().tailnet, "tail1234.ts.net");
+}
+
+fn lp(id: &str) -> crate::peer_ask::LinkPeer {
+    crate::peer_ask::LinkPeer { id: id.into(), name: format!("{id}-host"), os: "macOS".into(), ip: "100.64.0.9".parse().unwrap(), tailnet: "me@example.com".into() }
+}
+
+#[test]
+fn pe_허용해서_받아_갈_때_받는_쪽은_양쪽_열쇠를_건다() {
+    let dir = tmp("accept");
+    let kc = Fake::default();
+    let lines = crate::mobile_pair::Devices::memory();
+    let (token, back) = accept(&kc, &dir, &lines, &lp("nA")).unwrap();
+    assert_ne!(token, back);
+    assert!(token.len() == 64 && back.len() == 64);
+    // 그 기기가 이 기기에 쓸 열쇠 → 기기 줄(해시만), 이 기기가 그 기기에 쓸 열쇠 → 키체인
+    let id = lines.check(&token, std::time::SystemTime::now()).expect("peer 줄");
+    let v = lines.list().into_iter().find(|d| d.id == id).unwrap();
+    assert!(v.peer);
+    assert_eq!(v.name, "참모 · nA-host");
+    assert_eq!(kc.val(SERVICE, "nA").as_deref(), Some(back.as_str()));
+    assert_eq!(load(&dir)[0].id, "nA");
+    assert!(!std::fs::read_to_string(dir.join(FILE)).unwrap().contains(&back));
+}
+
+#[test]
+fn pe_받는_쪽_키체인이_안_되면_기기_줄도_되돌린다() {
+    let dir = tmp("accept-fail");
+    let kc = Fake::default();
+    *kc.fail_set.borrow_mut() = Some(SERVICE.into());
+    let lines = crate::mobile_pair::Devices::memory();
+    assert!(accept(&kc, &dir, &lines, &lp("nA")).is_err());
+    assert!(lines.list().is_empty(), "반쪽 연결은 남기지 않는다");
+    assert!(load(&dir).is_empty());
+}
+
+struct Wire<'a> {
+    asks: &'a crate::peer_ask::Asks,
+    statuses: RefCell<Vec<(u16, String)>>,
+    request: (u16, String),
+    seen: RefCell<Vec<(String, String, String)>>,
+}
+
+impl Wire<'_> {
+    fn send(&self, _: &Target, r: &Request, _: Duration, _: usize) -> Result<Response, NetErr> {
+        self.seen.borrow_mut().push((r.method.into(), r.path.into(), String::from_utf8_lossy(r.body.unwrap_or(&[])).into_owned()));
+        assert!(r.token.is_none(), "연결 요청엔 열쇠가 없다");
+        if r.path == "/api/link-request" {
+            // 받는 쪽이 되묻는 것처럼 — 요청하는 쪽 Asks 가 그 요청을 아나
+            let b: serde_json::Value = serde_json::from_slice(r.body.unwrap()).unwrap();
+            assert!(self.asks.waiting(b["req"].as_str().unwrap(), 0), "보내기 전에 요청을 적어 둔다");
+            return ok(self.request.0, &self.request.1);
+        }
+        let mut s = self.statuses.borrow_mut();
+        let (c, b) = if s.len() > 1 { s.remove(0) } else { s[0].clone() };
+        ok(c, &b)
+    }
+}
+
+fn wire<'a>(asks: &'a crate::peer_ask::Asks, statuses: &[(u16, &str)]) -> Wire<'a> {
+    Wire { asks, statuses: RefCell::new(statuses.iter().map(|(c, b)| (*c, b.to_string())).collect()), request: (202, r#"{"state":"asked"}"#.into()), seen: RefCell::new(Vec::new()) }
+}
+
+fn run(w: &Wire, kc: &Fake, dir: &std::path::Path, lines: &crate::mobile_pair::Devices) -> Result<(), String> {
+    let t = std::cell::Cell::new(0u64);
+    let l = Link { kc, dir, lines, asks: w.asks };
+    connect(&l, "nSELF", &peer("nBOX", true), &|a: &Target, r: &Request, d, m| w.send(a, r, d, m), &|| t.set(t.get() + 2000), &|| t.get())
+}
+
+#[test]
+fn pe_연결을_누르면_허용될_때까지_기다렸다가_양쪽_열쇠를_건다() {
+    let dir = tmp("connect");
+    let (kc, lines, asks) = (Fake::default(), crate::mobile_pair::Devices::memory(), crate::peer_ask::Asks::default());
+    let back = "b".repeat(64);
+    let w = wire(&asks, &[(200, r#"{"state":"wait"}"#), (200, r#"{"state":"wait"}"#), (200, &format!(r#"{{"state":"yes","token":"{TOK}","back":"{back}"}}"#))]);
+    run(&w, &kc, &dir, &lines).unwrap();
+    let seen = w.seen.borrow();
+    assert_eq!((seen[0].0.as_str(), seen[0].1.as_str()), ("POST", "/api/link-request"));
+    let b: serde_json::Value = serde_json::from_str(&seen[0].2).unwrap();
+    assert_eq!(b["node"], "nSELF");
+    assert!(seen[1].1.starts_with("/api/link-status?req="), "{}", seen[1].1);
+    assert_eq!(kc.val(SERVICE, "nBOX").as_deref(), Some(TOK), "이 기기 → 그 기기 열쇠는 키체인");
+    assert!(lines.check(&back, std::time::SystemTime::now()).is_some(), "그 기기 → 이 기기 열쇠는 기기 줄(해시)");
+    assert_eq!(load(&dir)[0].id, "nBOX");
+    let req = b["req"].as_str().unwrap();
+    assert!(!asks.waiting(req, 0), "끝나면 요청을 거둔다(더는 되묻기에 안 맞다고 함)");
+}
+
+#[test]
+fn pe_거절_시간_끝_옛_판_다른_계정은_이유만_남기고_아무것도_안_생긴다() {
+    for (st, want) in [
+        ((200, r#"{"state":"no"}"#), "거절"),
+        ((200, r#"{"state":"expired"}"#), "5분"),
+        ((404, "no such request"), "잊었"),
+        ((200, r#"{"state":"yes","token":"짧음","back":"x"}"#), "열쇠 모양"),
+    ] {
+        let dir = tmp("connect-no");
+        let (kc, lines, asks) = (Fake::default(), crate::mobile_pair::Devices::memory(), crate::peer_ask::Asks::default());
+        let w = wire(&asks, &[st]);
+        let e = run(&w, &kc, &dir, &lines).unwrap_err();
+        assert!(e.contains(want), "{want}: {e}");
+        assert!(kc.val(SERVICE, "nBOX").is_none() && lines.list().is_empty() && load(&dir).is_empty());
+    }
+    for (code, body, want) in [(404, "not found", "옛 판"), (403, "not your device", "같은 테일스케일 계정"), (403, "unconfirmed", "확인"), (429, "too many", "잦"), (501, "unsupported", "맥")] {
+        let dir = tmp("connect-req");
+        let (kc, lines, asks) = (Fake::default(), crate::mobile_pair::Devices::memory(), crate::peer_ask::Asks::default());
+        let mut w = wire(&asks, &[(200, r#"{"state":"wait"}"#)]);
+        w.request = (code, body.into());
+        let e = run(&w, &kc, &dir, &lines).unwrap_err();
+        assert!(e.contains(want), "{code} {body}: {e}");
+        assert_eq!(w.seen.borrow().len(), 1, "요청이 안 받아들여지면 기다리지 않는다");
+    }
+}
+
+#[test]
+fn pe_기다리다_취소하거나_시간이_다_가면_멈춘다() {
+    let dir = tmp("connect-cancel");
+    let (kc, lines, asks) = (Fake::default(), crate::mobile_pair::Devices::memory(), crate::peer_ask::Asks::default());
+    let w = wire(&asks, &[(200, r#"{"state":"wait"}"#)]);
+    let e = run(&w, &kc, &dir, &lines).unwrap_err();
+    assert!(e.contains("5분"), "{e}");
+    let n = w.seen.borrow().len();
+    assert!(n < 400, "끝없이 묻지 않는다: {n}");
+    // 취소 — 다른 곳에서 cancel_node 하면 다음 바퀴에 멈춘다
+    let w2 = wire(&asks, &[(200, r#"{"state":"wait"}"#)]);
+    let t = std::cell::Cell::new(0u64);
+    let l = Link { kc: &kc, dir: &dir, lines: &lines, asks: &asks };
+    let e = connect(&l, "nSELF", &peer("nBOX", true), &|a: &Target, r: &Request, d, m| w2.send(a, r, d, m), &|| { asks.cancel_node("nBOX"); t.set(t.get() + 2000) }, &|| t.get()).unwrap_err();
+    assert!(e.contains("취소"), "{e}");
+}
+
+#[test]
+fn pe_끊으면_그_기기가_이_기기에_쓰던_줄도_지운다() {
+    let dir = tmp("unpair-node");
+    let (kc, lines) = (Fake::default(), crate::mobile_pair::Devices::memory());
+    let back = "c".repeat(64);
+    lines.add_peer(&back, "참모 · BOX", "nBOX", std::time::SystemTime::now()).unwrap();
+    kc.put(SERVICE, "nBOX", TOK);
+    unpair_with(&kc, &dir, &lines, "nBOX").unwrap();
+    assert!(kc.val(SERVICE, "nBOX").is_none());
+    assert!(lines.check(&back, std::time::SystemTime::now()).is_none(), "양방향이니 끊기도 양쪽");
+}
+
+#[test]
+fn pe_키체인_칸_이름은_본판_고정_개발판만_바꿀_수_있다() {
+    assert_eq!(service_from(Some("Chammo remote peer test"), false), SERVICE, "본판은 환경 변수를 안 본다");
+    assert_eq!(service_from(Some("Chammo remote peer test"), true), "Chammo remote peer test");
+    assert_eq!(service_from(Some("  "), true), SERVICE);
+    assert_eq!(service_from(None, true), SERVICE);
+}

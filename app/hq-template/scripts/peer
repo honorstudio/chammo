@@ -8,10 +8,12 @@ echo "python not found — install Python 3 (winget install Python.Python.3.12)"
 __doc__ = """Talk to the assistant on another device of the same Tailscale account, through the Chammo app.
 같은 테일스케일 계정의 다른 기기 참모에게 앱을 거쳐 말을 넣고 답을 받는다.
 
-  scripts/peer list                                    devices with Chammo on your tailnet: connected / needs pairing /
-                                                       offline, and the assistants on each connected device
-  scripts/peer pair <device> <code>                    first time only — the code comes from that device's Settings > Mobile
-                                                       (or from a phone already paired with it). The user reads it to you
+  scripts/peer list                                    devices with Chammo on your tailnet: connected / not connected,
+                                                       and the assistants on each connected device
+  scripts/peer connect <device>                        first time only — a card pops up on that device; once the person there
+                                                       presses Allow, both sides can talk (waits up to 6 min). No code needed
+  scripts/peer pair <device> <code>                    fallback for an old version — the code comes from that device's
+                                                       Settings > Phone (or a phone already paired with it). The user reads it to you
   scripts/peer unpair <device>                         forget the key on this Mac (the other device can also cut it there)
   scripts/peer say <device> <text|-> [--to <assistant>] [--wait <s>]
                                                        put one message in front of that device's assistant and wait for its
@@ -40,7 +42,7 @@ def data_dir(home=None, env=None, exists=os.path.isdir):
     return old if not exists(new) and exists(old) else new
 
 
-USAGE = 'usage: scripts/peer list | pair <device> <code> | unpair <device> | say <device> <text|-> [--to <assistant>] [--wait <s>] | reply <device> <cid> [--wait <s>]'
+USAGE = 'usage: scripts/peer list | connect <device> | pair <device> <code> | unpair <device> | say <device> <text|-> [--to <assistant>] [--wait <s>] | reply <device> <cid> [--wait <s>]'
 
 
 def parse(argv):
@@ -65,6 +67,8 @@ def parse(argv):
         return None, '--wait takes seconds / --wait 는 초'
     if verb == 'list' and not args:
         return {'verb': 'list'}, None
+    if verb == 'connect' and len(args) == 1:
+        return {'verb': 'connect', 'device': args[0]}, None
     if verb == 'pair' and len(args) >= 2:
         return {'verb': 'pair', 'device': args[0], 'code': ' '.join(args[1:])}, None
     if verb == 'unpair' and len(args) == 1:
@@ -120,7 +124,7 @@ def show_list(ans):
     devs = ans.get('devices') or []
     if not devs:
         print('no other device with Chammo on this Tailscale account / 같은 테일스케일 계정에 참모가 있는 다른 기기가 없어')
-    word = {'connected': 'connected / 연결됨', 'pair': 'needs pairing / 짝짓기 필요', 'offline': 'offline / 연결 끊김'}
+    word = {'connected': 'connected / 연결됨', 'pair': 'not connected / 연결 안 됨 — scripts/peer connect', 'offline': 'not connected (offline) / 연결 안 됨(꺼져 있음)'}
     for d in devs:
         print(f'- {d.get("name")} — {word.get(d.get("status"), d.get("status"))}' + (' (old version / 옛 판)' if d.get('old') else ''))
         for a in d.get('assistants') or []:
@@ -168,6 +172,16 @@ def main(argv, env=os.environ):
         arg['by'] = who(env)
     if arg['verb'] == 'reply':
         return wait_reply(data, arg['device'], arg['cid'], arg['wait'])
+    if arg['verb'] == 'connect':
+        # 그 기기 사람이 카드에서 허용할 때까지 앱이 붙잡는다(5분 + 받아 가기 1분)
+        print('asking that device — the person there presses Allow on the card / 그 기기에 카드를 띄웠어 — 그쪽 사람이 허용하면 이어져', file=sys.stderr)
+        code, ans = ask(data, arg, 400)
+        if code or not isinstance(ans, dict) or not ans.get('ok'):
+            err = ans.get('error') if isinstance(ans, dict) else ans
+            print(f'failed / 못 했어: {err or "failed"}', file=sys.stderr)
+            return 1
+        print(f'connected / 이어졌어: {ans.get("device")}' + (' (already / 이미)' if ans.get('already') else ''))
+        return 0
     ans, err = call(data, arg)
     if err:
         print(f'failed / 못 했어: {err}', file=sys.stderr)

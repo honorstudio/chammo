@@ -27,6 +27,10 @@ impl PeerOps for Ops {
         self.calls.borrow_mut().push(format!("unpair {id}"));
         Ok(())
     }
+    fn connect(&self, id: &str) -> Result<(), String> {
+        self.calls.borrow_mut().push(format!("connect {id}"));
+        if id == "nC" { Err("그 기기에서 거절했어요".into()) } else { Ok(()) }
+    }
     fn call(&self, id: &str, method: &str, path: &str, body: Option<&str>) -> Result<CallOut, String> {
         self.calls.borrow_mut().push(format!("{id} {method} {path} {}", body.unwrap_or("")));
         if let Some(e) = self.fail {
@@ -139,4 +143,27 @@ fn cid_는_깨끗한_글자만() {
     let v = answer(&request(&line(serde_json::json!({ "verb": "reply", "device": "office-imac", "cid": "a&b=c" }))).unwrap(), &ops);
     assert_eq!(v["ok"], false);
     assert!(ops.calls.borrow().is_empty());
+}
+
+#[test]
+fn pe_연결은_그_기기에_허용을_묻고_이미_연결됐으면_안_묻는다() {
+    let ops = Ops::default();
+    let ask = |dev: &str| PeerReq { id: "r1".into(), verb: "connect".into(), arg: serde_json::json!({ "verb": "connect", "device": dev }) };
+    let a = answer(&ask("office-pc"), &ops);
+    assert_eq!((a["ok"].as_bool(), a["device"].as_str()), (Some(true), Some("office-pc")));
+    let a = answer(&ask("office-imac"), &ops);
+    assert_eq!((a["ok"].as_bool(), a["already"].as_bool()), (Some(true), Some(true)));
+    let a = answer(&ask("office-mini"), &ops);
+    assert_eq!(a["ok"], false);
+    assert!(a["error"].as_str().unwrap().contains("거절"));
+    assert_eq!(*ops.calls.borrow(), ["connect nB", "connect nC"]);
+    assert!(request(&line(serde_json::json!({ "verb": "connect", "device": "x" }))).is_some());
+}
+
+#[test]
+fn pe_열쇠가_없으면_코드_말고_연결로_안내() {
+    let ops = Ops::default();
+    let r = PeerReq { id: "r1".into(), verb: "say".into(), arg: serde_json::json!({ "verb": "say", "device": "office-pc", "text": "x", "cid": "c1" }) };
+    let e = answer(&r, &ops)["error"].as_str().unwrap().to_string();
+    assert!(e.contains("scripts/peer connect office-pc") && e.contains("허용"), "{e}");
 }

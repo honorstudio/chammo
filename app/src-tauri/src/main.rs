@@ -35,6 +35,7 @@ mod lessons;
 mod lid;
 mod load;
 mod login;
+mod login_keep;
 mod memo;
 mod messenger;
 mod messenger_text;
@@ -51,6 +52,7 @@ mod mobile_http;
 mod mobile_pair;
 mod mobile_sends;
 mod mobile_wake;
+mod peer_ask;
 mod peer_cmd;
 mod peer_link;
 mod phone_voice;
@@ -466,6 +468,8 @@ fn main() {
             messenger_cmd::boot();
             // 쉬는 계정 칸 토큰을 만료 전에 하나씩 새로 받아 둔다 — 바꾸는 순간 토큰 주소를 안 부르게(2026-10-15 429 로 바꾸기가 막힘)
             accounts_cmd::warm_start();
+            // 지금 로그인을 만료 전에 미리·끈질기게 갱신한다(ADR 0008) — 토큰 주소가 막혀도 세션이 안 멈추게. 계정 풀과 상관없이 돈다
+            accounts_cmd::keep_start();
             if !config::data_dir().ends_with(".honor-orchestrator") {
                 let hq_dir = config::hq_dir(&config::home(), &config::current(), |k| std::env::var(k).ok());
                 if Path::new(&hq_dir).join("scripts/task").is_file() {
@@ -507,6 +511,8 @@ fn main() {
             remote::remote_devices,
             remote::remote_pair,
             remote::remote_unpair,
+            remote::remote_connect,
+            remote::remote_connect_cancel,
             remote::remote_call,
             agent_browser::agent_lives,
             agent_browser::agent_retry,
@@ -546,6 +552,7 @@ fn main() {
             load::load_kill,
             load::load_save,
             login::login_probe,
+            accounts_cmd::login_keep_state,
             login::login_save,
             hq::create_hq,
             hq::folder_status,

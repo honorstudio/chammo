@@ -479,7 +479,7 @@ impl<E: Env> Bridge<E> {
         let seen = self.sh.state().cards;
         let (data, home) = self.env.dirs();
         for row in text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()) {
-            let Some(id) = row["id"].as_str().filter(|_| row["type"] == "ask").filter(|i| m::is_card_id(i)) else { continue };
+            let Some(id) = row["id"].as_str().filter(|_| row["type"] == "ask" && row["kind"] != crate::direct::LINK_KIND).filter(|i| m::is_card_id(i)) else { continue };
             // 싼 거름부터 — check 는 기록 전체를 읽는다
             if seen.iter().any(|c| c == id) || row["ts"].as_str().and_then(iso_ms).is_none_or(|t| now.saturating_sub(t) > CARD_MAX_AGE_MS) {
                 continue;

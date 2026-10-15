@@ -18,6 +18,7 @@ description: 세션이 "Login expired"·"Not logged in"·"Please run /login" 으
   판단하지 않는다 — SSH 에선 키체인을 못 읽어 늘 false 다.
 - 로그인하면 앱이 새 로그인을 보고 멈춘 세션마다 한 번 이어서를 보낸다. 그 뒤에도 멈춰 있는 세션만 들여다본다.
 - 계정이 여럿이면 앱이 다음 계정으로 알아서 넘긴다. 설정 → 계정에서 '로그인 필요'로 보이는 계정은 거기서 다시 로그인해야 한다.
+- 앱은 지금 로그인을 만료 1시간 전부터 미리 갱신한다. 그래도 못 받으면 세션이 멈추기 전에 "Claude 로그인이 곧 끝나요" 카드가 먼저 뜬다 — 같은 카드, 같은 한 줄로 안내한다.
 
 # English
 
@@ -34,3 +35,5 @@ phone home with a Sign in button (the phone works away from the Mac: open the si
   is still stopped after that.
 - With several accounts the app moves to the next account by itself. An account marked "Sign-in needed" in Settings →
   Accounts has to be signed in again there.
+- The app renews the current sign-in from an hour before it expires. If that keeps failing, a "Claude sign-in ends soon" card
+  shows before any session stops — same card, same one-line note.

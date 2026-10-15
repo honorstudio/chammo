@@ -5,7 +5,8 @@ import { forwardTo } from './forwardQuestion';
 import type { Session } from './session';
 import type { TaskEvent } from './tasks';
 
-export type DirectKind = 'pay' | 'send' | 'delete' | 'ops' | 'login' | 'other';
+/** link = 다른 기기 연결 요청(세션이 아니라 앱이 묻는다, from '@link') */
+export type DirectKind = 'pay' | 'send' | 'delete' | 'ops' | 'login' | 'link' | 'other';
 /** wait 기다림 · sent 보냄 · got 세션이 받았음 · done 처리됨 · failed 치다 실패(다시 누를 수 있음) · gone 세션 꺼짐(다시 띄우기/닫기) · closed 세션이 거둠 · old 지난 질문 */
 export type DirectState = 'wait' | 'sent' | 'got' | 'done' | 'failed' | 'gone' | 'closed' | 'old';
 export type DirectCard = {
@@ -16,6 +17,8 @@ export type DirectCard = {
   note?: string;
   /** 이 카드의 마지막 소식(물음·답·처리됨·거둠·새 질문) 시각 — 한 줄로 남는 시간을 여기서 잰다 */
   lastTs: string;
+  /** 이때가 지나면 끝(연결 요청 카드 — 5분) */
+  until?: string;
 };
 type Env = {
   alive: (sid: string) => boolean;
@@ -23,9 +26,12 @@ type Env = {
   prompt: (sid: string) => { ts: string; text: string } | undefined;
   /** 그 세션 마지막 답(턴 끝이면 turnEnd) */
   reply: (sid: string) => { ts: string; turnEnd?: boolean } | undefined;
+  /** 지금(ms) — 연결 요청 카드의 5분을 잰다. 없으면 Date.now() */
+  now?: number;
 };
 
-const KINDS: DirectKind[] = ['pay', 'send', 'delete', 'ops', 'login', 'other'];
+const KINDS: DirectKind[] = ['pay', 'send', 'delete', 'ops', 'login', 'link', 'other'];
+export const LINK_FROM = '@link';
 type Row = Record<string, unknown> & { type?: string; id?: string; ts?: string; from?: string };
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
 
@@ -48,8 +54,9 @@ export function directCards(log: string, env: Env): DirectCard[] {
       amount: str(r.amount), detail: str(r.detail), what: str(r.what),
       yes: str(r.yes) ?? tr('승인', 'Approve'), no: str(r.no) ?? tr('거절', 'Decline'),
       options: Array.isArray(r.options) ? r.options.filter((o): o is string => typeof o === 'string') : [],
-      state: 'wait', lastTs: r.ts ?? '',
+      state: 'wait', lastTs: r.ts ?? '', until: str(r.until),
     };
+    const isLink = kind === 'link' && c.from === LINK_FROM;
     let failed = false;
     let ended: DirectState | null = null;
     for (const x of rows.slice(i + 1)) {
@@ -58,11 +65,14 @@ export function directCards(log: string, env: Env): DirectCard[] {
       else if (x.id === c.id && x.type === 'answer-failed') { c.answer = undefined; failed = true; }
       else if (x.id === c.id && x.type === 'done') { ended = 'done'; c.note = str(x.note); }
       else if (x.id === c.id && x.type === 'cancel') ended = 'closed';
-      else if (x.type === 'ask' && x.from === c.from && !c.answer && !ended) ended = 'old';
+      else if (x.type === 'ask' && x.from === c.from && !c.answer && !ended && !isLink) ended = 'old';
       else continue;
       if ((x.id === c.id || ended !== before) && x.ts && x.ts > c.lastTs) c.lastTs = x.ts;
     }
-    c.state = ended ?? (c.answer ? answeredState(c, env) : failed ? 'failed' : env.alive(c.from) ? 'wait' : 'gone');
+    c.state = isLink
+      // 연결 요청 — 세션이 없다: 답하면 바로 처리됨, 5분 지나면 끝
+      ? ended ?? (c.answer ? 'done' : failed ? 'failed' : c.until && (env.now ?? Date.now()) > Date.parse(c.until) ? 'closed' : 'wait')
+      : ended ?? (c.answer ? answeredState(c, env) : failed ? 'failed' : env.alive(c.from) ? 'wait' : 'gone');
     out.push(c);
   });
   return out.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
@@ -87,6 +97,7 @@ export function kindView(kind: DirectKind): { word: string; tone: 'danger' | 'wa
     case 'send': return { word: tr('발송', 'Send'), tone: 'warn' };
     case 'ops': return { word: tr('운영', 'Production'), tone: 'warn' };
     case 'login': return { word: tr('로그인', 'Sign-in'), tone: 'plain' };
+    case 'link': return { word: tr('기기 연결', 'Device link'), tone: 'warn' };
     default: return { word: tr('확인', 'Confirm'), tone: 'plain' };
   }
 }
@@ -128,7 +139,7 @@ export function placeDirect(log: string, o: {
   prompt: Env['prompt']; reply: Env['reply'];
   events: TaskEvent[]; orchs: Session[]; front?: Session; heir?: (s: Session) => Session | undefined;
 }): Placed[] {
-  const cards = directCards(log, { alive: o.unknown ? () => true : aliveIn(o.seen, o.now), prompt: o.prompt, reply: o.reply })
+  const cards = directCards(log, { alive: o.unknown ? () => true : aliveIn(o.seen, o.now), prompt: o.prompt, reply: o.reply, now: o.now })
     .filter((c) => needsAnswer(c) || o.now - Date.parse(c.ts) < DAY);
   return cards.map((card) => {
     const s = o.everyone.find((x) => x.id === card.from) ?? ({ id: card.from, name: '', project: card.cwd.split('/').pop() ?? '' } as Session);
@@ -165,7 +176,7 @@ export function cardLine(c: DirectCard): { what: string; result: string; at: str
   const result = c.state === 'done' ? c.note || tr('처리됨', 'Done')
     : c.answer ? `${label} · ${c.state === 'got' ? tr('받음', 'Received') : tr('보냄', 'Sent')}`
     : c.state === 'gone' ? tr('세션이 꺼졌어요', 'Session ended')
-    : c.state === 'closed' ? tr('세션이 거둬들였어요', 'Withdrawn')
+    : c.state === 'closed' ? (c.kind === 'link' ? tr('시간이 지났어요', 'Timed out') : tr('세션이 거둬들였어요', 'Withdrawn'))
     : tr('지난 질문', 'Replaced');
   return { what: c.amount ? `${k.word} ${c.amount}` : k.word, result, at: c.lastTs };
 }

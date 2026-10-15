@@ -133,6 +133,21 @@ class Lifecycle(unittest.TestCase):
         rt.run_now('blog-daily', data=str(self.data), run=calls)
         self.assertIn(['/bin/claude', 'rm', 'old1'], calls.calls)
 
+    def test_윈도우는_claude_를_부를_때마다_창_없이(self):
+        # 예약은 pythonw(콘솔 없음)로 돈다 — 창 숨김 없이 띄운 claude agents·rm 은 부를 때마다 검은 창이 번쩍였다(2026-10-15)
+        self.new(Calls())
+        idle = json.dumps([{'id': 'old1', 'name': 'routine-blog-daily', 'status': 'idle'}])
+        flags = {'creationflags': 0x08000000}
+        seen = []
+        calls = Calls(agents=idle)
+        record = lambda argv, **kw: (seen.append((argv, kw)), calls(argv, **kw))[1]
+        with unittest.mock.patch.object(rt, 'NOWIN', flags):
+            rt.run_now('blog-daily', data=str(self.data), run=record)
+        claude = [(a, kw) for a, kw in seen if a[0] == '/bin/claude']
+        self.assertEqual({a[1] for a, _ in claude} >= {'agents', 'rm', '--bg'}, True)
+        for a, kw in claude:
+            self.assertEqual(kw.get('creationflags'), 0x08000000, a[:2])
+
     def test_꺼둔_루틴은_실행_안_함(self):
         self.new(Calls())
         rt.set_enabled('blog-daily', False, data=str(self.data), home=str(self.home), run=Calls(), uid=501)

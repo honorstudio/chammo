@@ -4,7 +4,8 @@
 //    떠 있는 세션은 같은 맥의 새 로그인을 다음 요청부터 쓴다(실측 2026-09-26 — /login 뒤 SendMessage 한 통으로 hello-docs·oms 재개)
 //  · 이어서 뒤 또 같은 오류: 다른 세션이 그 로그인 뒤 정상 답을 냈으면(자격은 멀쩡) 그 세션만 한 번 다시 띄우고, 아니면 다시 로그인 필요
 //  · 고쳐지기 전엔 '이어서'를 보내지 않는다 — 아이맥 2026-10-06 00:30:31, 보낸 즉시 또 'Login expired'
-import { tr } from '../i18n';
+//  · 지금 로그인 미리 갱신(Rust login_keep, ADR 0008)이 만료 15분 전까지 못 받았거나(late) 갱신 토큰이 죽었으면(dead) 세션이 멈추기 전에 같은 카드
+import { machine, tr } from '../i18n';
 import type { Activity } from './activity';
 import { fwd } from './paths';
 import { withinRoots, type Session } from './session';
@@ -38,8 +39,11 @@ export type LoginInput = {
   liveAuthAt: number | null;
   /** 어느 세션이든 로그인 오류 아닌 정상 답을 낸 가장 늦은 시각 — 자격이 멀쩡하다는 증거 */
   okAt: number | null;
+  /** 지금 로그인 미리 갱신(Rust login_keep_state) — late = 만료 15분 안인데 못 받음, dead = 갱신 토큰이 죽음. 없으면 잘 되는 중 */
+  keep?: Keep | null;
 };
-export type LoginNeed = { since: number; sessions: string[]; machine: boolean };
+export type Keep = 'dead' | 'late';
+export type LoginNeed = { since: number; sessions: string[]; machine: boolean; keep?: Keep };
 /** nudge = 로그인 뒤 이어서, retry = 갱신 겹침 뒤 이어서(말이 다르다), respawn = 다시 띄우기 */
 export type LoginPlan = { mem: LoginMem; need: LoginNeed | null; nudge: string[]; retry: string[]; respawn: string[] };
 
@@ -92,10 +96,11 @@ export function loginStep(prev: LoginMem, inp: LoginInput): LoginPlan {
     waiting.push(s);
   }
 
-  const machine = inp.loggedIn === false || (inp.liveAuthAt !== null && (loginAt === null || inp.liveAuthAt > loginAt));
+  const ks = inp.keep ?? null;
+  const machine = inp.loggedIn === false || (inp.liveAuthAt !== null && (loginAt === null || inp.liveAuthAt > loginAt)) || ks !== null;
   mem.machineSince = machine ? (mem.machineSince ?? now) : null;
-  const need = waiting.length || machine
-    ? { since: Math.min(...waiting.map((x) => x.ts), mem.machineSince ?? Infinity), sessions: waiting.map((x) => x.name), machine }
+  const need: LoginNeed | null = waiting.length || machine
+    ? { since: Math.min(...waiting.map((x) => x.ts), mem.machineSince ?? Infinity), sessions: waiting.map((x) => x.name), machine, ...(ks ? { keep: ks } : {}) }
     : null;
   return { mem, need, nudge, retry, respawn };
 }
@@ -147,6 +152,20 @@ export function readProbe(v: unknown): { loggedIn: boolean | null; credAt: numbe
     loggedIn: typeof o.loggedIn === 'boolean' ? o.loggedIn : null,
     credAt: typeof o.credAt === 'number' && Number.isFinite(o.credAt) ? o.credAt : null,
   };
+}
+
+/** Rust login_keep_state 답 — dead·late 만 */
+export const readKeep = (v: unknown): Keep | null => (v === 'dead' || v === 'late' ? v : null);
+
+/** 카드 글 — 멈춘 세션이 있으면 그곳, 없으면 미리 갱신 상태, 그 밖엔 이 맥. 짧게 */
+export function needText(n: LoginNeed): { title: string; where: string } {
+  const late = n.keep === 'late' && !n.sessions.length;
+  const title = late ? tr('Claude 로그인이 곧 끝나요', 'Claude sign-in ends soon') : tr('Claude 로그인이 풀렸어요', 'Claude sign-in expired');
+  const where = n.sessions.length ? tr(`멈춘 곳: ${n.sessions.join(' · ')}`, `Stopped: ${n.sessions.join(' · ')}`)
+    : n.keep === 'late' ? tr('자동 갱신이 막혔어요', 'Auto-renew is blocked')
+    : n.keep === 'dead' ? tr('다시 로그인해야 해요', 'Sign in again')
+    : tr(`멈춘 곳: 이 ${machine()}`, `Stopped: this ${machine()}`);
+  return { title, where };
 }
 
 /** 이어서 보낼 말 — 고쳐진 걸 본 뒤에만 보낸다(옛 RESUME_MSG 는 안 보고 "다시 로그인함"이라 했다) */

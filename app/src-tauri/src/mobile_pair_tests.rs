@@ -280,7 +280,7 @@ fn 상한을_넘으면_가장_오래_안_쓴_줄부터_뺀다() {
 }
 
 fn dev(id: &str, created: u64, last: Option<u64>) -> Device {
-    Device { id: id.into(), name: "iPhone".into(), hash: sha(id), created, last_seen: last, home: false, group: None, paired: None, peer: false }
+    Device { id: id.into(), name: "iPhone".into(), hash: sha(id), created, last_seen: last, home: false, group: None, paired: None, peer: false, node: None }
 }
 
 #[test]
@@ -418,4 +418,32 @@ fn md1_다른_참모_짝짓기는_peer_줄로_남고_이름은_거른다() {
     let t2 = st.pair(&c2, "iPhone", now).unwrap();
     let id2 = st.check(&t2, now).unwrap();
     assert!(!st.list().into_iter().find(|d| d.id == id2).unwrap().peer);
+}
+
+#[test]
+fn pe_허용한_연결은_노드별_peer_줄_하나_다시_허용하면_바꿔_끼운다() {
+    let dir = tmp("link");
+    let st = Devices::open(&dir);
+    let now = SystemTime::now();
+    let (t1, t2) = ("a".repeat(64), "b".repeat(64));
+    st.add_peer(&t1, "참모 · office-mac\n", "nOFFICE", now).unwrap();
+    let id1 = st.check(&t1, now).unwrap();
+    let v = st.list().into_iter().find(|d| d.id == id1).unwrap();
+    assert!(v.peer && !v.home);
+    assert_eq!(v.name, "참모 · office-mac", "제어 글자는 빠진다");
+    // 같은 기기를 다시 허용 — 옛 열쇠는 죽고 줄은 하나
+    st.add_peer(&t2, "참모 · office-mac", "nOFFICE", now).unwrap();
+    assert!(st.check(&t1, now).is_none(), "옛 열쇠는 죽는다");
+    assert!(st.check(&t2, now).is_some());
+    assert_eq!(st.list().iter().filter(|d| d.peer).count(), 1);
+    // 파일에도 노드가 남아 다시 읽어도 같다
+    let again = Devices::open(&dir);
+    assert!(again.check(&t2, now).is_some());
+    // 폰 줄은 노드로 안 지워진다
+    let c = st.new_code(now).unwrap();
+    let phone = st.pair(&c, "iPhone", now).unwrap();
+    st.remove_node("nOFFICE").unwrap();
+    assert!(st.check(&t2, now).is_none(), "그 기기 줄은 끊긴다");
+    assert!(st.check(&phone, now).is_some(), "폰은 그대로");
+    assert!(st.add_peer("짧음", "x", "nX", now).is_err(), "열쇠는 16진 64자만");
 }

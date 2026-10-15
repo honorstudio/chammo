@@ -207,13 +207,13 @@ function defaults() {
       if (!v || !fs.existsSync(ks)) return false;
       const args = ['-U', '--register', '-P', productId, '-x', app, '-a', path.join(app, 'Contents', 'Info.plist'), '-e', 'KSVersion', '-v', v];
       if (tag) args.push('-g', tag);
-      return spawnSync(ks, args, { timeout: 30_000, stdio: 'ignore' }).status === 0;
+      return spawnSync(ks, args, { timeout: 30_000, stdio: 'ignore', windowsHide: true }).status === 0;
     },
     // -c = APFS clonefile. 복제가 안 되는 자리면 cp 가 통째 복사로 넘어가니 먼저 cloneable 로 거른다
     clone: (src, dest) => cloneable(src, path.dirname(dest)) && spawnSync('/bin/cp', ['-cR', src, dest], { timeout: 120_000 }).status === 0,
     setIcon: (app) => (spawnSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', SET_ICON, ICON, app], { encoding: 'utf8', timeout: 20_000 }).stdout || '').trim() === 'ok',
     // 맥의 첫 실행 검사(13초)를 세션이 브라우저를 처음 쓰기 전에 끝내 둔다 — 기다리지 않는다
-    warm: (exe) => { try { spawn(exe, ['--version'], { detached: true, stdio: 'ignore' }).unref(); } catch { /* 첫 실행이 늦을 뿐 */ } },
+    warm: (exe) => { try { spawn(exe, ['--version'], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); } catch { /* 첫 실행이 늦을 뿐 */ } },
     running: () => (spawnSync('/bin/ps', ['-axww', '-o', 'command='], { encoding: 'utf8', timeout: 5000 }).stdout || '').split('\n'),
     alive: pidAlive,
     say: (m) => process.stderr.write(`[chammo-browser] ${m}\n`),

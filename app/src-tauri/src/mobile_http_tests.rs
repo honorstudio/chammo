@@ -3180,3 +3180,93 @@ fn peer_말_넣기_길은_몸통을_받는다() {
     let g = peer_gate("peer0013");
     assert!(head_check(&as_peer(post("/api/peer-say", "{}")), &g).is_none());
 }
+
+// ── 다른 기기 참모 연결 요청(코드 없이, peer_ask) ─────────────────────
+
+/// 받는 쪽 가짜 바깥 — 되묻기는 요청한 기기(a)의 Asks 에 묻는다
+struct LinkFake<'a> {
+    a: &'a crate::peer_ask::Asks,
+    cards: std::sync::Mutex<Vec<String>>,
+}
+
+impl crate::peer_ask::LinkEnv for LinkFake<'_> {
+    fn supported(&self) -> bool {
+        true
+    }
+    fn lookup(&self, node: &str) -> Option<crate::peer_ask::LinkPeer> {
+        (node == "nA").then(|| crate::peer_ask::LinkPeer { id: "nA".into(), name: "office-mac".into(), os: "macOS".into(), ip: "100.64.0.2".parse().unwrap(), tailnet: "me@example.com".into() })
+    }
+    fn confirm(&self, _: &crate::peer_ask::LinkPeer, hash: &str) -> bool {
+        self.a.asking(hash, 1)
+    }
+    fn card(&self, _: &crate::peer_ask::LinkPeer, _: u64) -> Result<String, String> {
+        let mut c = self.cards.lock().unwrap();
+        let id = format!("card{}", c.len());
+        c.push(id);
+        Ok(c.last().unwrap().clone())
+    }
+    fn close_card(&self, _: &str, _: bool, _: &str) {}
+    fn commit(&self, _: &crate::peer_ask::LinkPeer) -> Result<(String, String), String> {
+        Ok(("a".repeat(64), "b".repeat(64)))
+    }
+}
+
+fn no_key(r: Req) -> Req {
+    set(r, "authorization", None)
+}
+
+#[test]
+fn pe_연결_요청은_열쇠_없이_받고_되묻기와_사람_허용을_지나야_열쇠가_나온다() {
+    let (a, b) = (crate::peer_ask::Asks::default(), crate::peer_ask::Asks::default());
+    let env = LinkFake { a: &a, cards: Default::default() };
+    let g = gate();
+    let req = a.start("nB", 1).unwrap();
+    let body = format!(r#"{{"req":"{req}","node":"nA"}}"#);
+    let r = link_route(&no_key(post("/api/link-request", &body)), &g, &b, &env, 1);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let st = |t: u64| link_route(&get(&format!("/api/link-status?req={req}")), &g, &b, &env, t);
+    assert_eq!(json_of(&st(2))["state"], "wait");
+    b.decide("card0", true, 3).unwrap();
+    let yes = json_of(&st(4));
+    assert_eq!((yes["state"].as_str(), yes["token"].as_str().map(str::len), yes["back"].as_str().map(str::len)), (Some("yes"), Some(64), Some(64)));
+    assert_eq!(st(5).status, 404, "열쇠는 한 번만");
+    // 되묻기 — 요청한 쪽만 자기 해시에 200
+    let h = crate::peer_ask::hex_sha(&req);
+    let req2 = a.start("nB", 6).unwrap();
+    let h2 = crate::peer_ask::hex_sha(&req2);
+    assert_eq!(link_route(&get(&format!("/api/link-check?h={h2}")), &g, &a, &env, 6).status, 200);
+    assert_eq!(link_route(&get(&format!("/api/link-check?h={h}")), &g, &a, &env, 6).status, 404, "새 요청에 밀린 옛 해시");
+    assert_eq!(link_route(&get("/api/link-check?h=zz"), &g, &a, &env, 6).status, 404);
+}
+
+#[test]
+fn pe_연결_요청_거절_갈래() {
+    let (a, b) = (crate::peer_ask::Asks::default(), crate::peer_ask::Asks::default());
+    let env = LinkFake { a: &a, cards: Default::default() };
+    let g = gate();
+    let req = a.start("nB", 1).unwrap();
+    let rq = |body: &str| link_route(&no_key(post("/api/link-request", body)), &g, &b, &env, 1).status;
+    assert_eq!(rq(&format!(r#"{{"req":"{req}","node":"nOTHER"}}"#)), 403, "같은 계정 기기가 아님");
+    assert_eq!(rq(&format!(r#"{{"req":"{}","node":"nA"}}"#, "0".repeat(32))), 403, "요청한 적 없다고 되물음에 답함");
+    assert_eq!(rq(r#"{"req":"x","node":"nA"}"#), 400);
+    assert_eq!(rq(&format!(r#"{{"req":"{req}","node":"nA","name":"사용자 폰"}}"#)), 400, "이름은 요청이 정하지 않는다");
+    let evil = set(no_key(post("/api/link-request", &format!(r#"{{"req":"{req}","node":"nA"}}"#))), "origin", Some("http://evil.com"));
+    assert_eq!(link_route(&evil, &g, &b, &env, 1).status, 403);
+    assert!(env.cards.lock().unwrap().is_empty(), "거절된 요청은 카드가 안 뜬다");
+}
+
+#[test]
+fn pe_연결_길은_문지기_순서를_지나고_못_받는_기기는_501() {
+    let f = Fake::default();
+    let g = gate();
+    let body = format!(r#"{{"req":"{}","node":"nA"}}"#, "0".repeat(32));
+    // 기본 바깥(윈도우·시험) = 못 받음
+    assert_eq!(handle(&no_key(post("/api/link-request", &body)), &g, &f).status, 501);
+    assert_eq!(handle(&no_key(get("/api/link-status?req=abc")), &g, &f).status, 404);
+    assert_eq!(handle(&no_key(get("/api/link-request")), &g, &f).status, 405);
+    assert_eq!(handle(&set(no_key(post("/api/link-request", &body)), "host", Some("evil.com")), &g, &f).status, 403, "Host 거름이 먼저");
+    assert_eq!(handle(&set(no_key(post("/api/link-request", &body)), "tailscale-funnel-request", Some("1")), &g, &f).status, 403, "인터넷(funnel)에선 안 받는다");
+    // 실제 서버의 몸통 받는 길 목록(교훈) — 열쇠 없이 출처·JSON 만
+    assert!(head_check(&no_key(post("/api/link-request", &body)), &g).is_none());
+    assert_eq!(head_check(&set(no_key(post("/api/link-request", &body)), "origin", None), &g).unwrap().status, 403);
+}

@@ -123,6 +123,7 @@ const SURVIVE = ['--require', require('path').join(__dirname, '..', 'src', 'surv
 
 const child = spawn(process.execPath, [...SURVIVE, cli, '--user-data-dir', userDataDir, ...configArgs, ...extra], {
   stdio: ['pipe', 'pipe', 'inherit'], // stdin/stdout 은 중계, stderr 는 그대로
+  windowsHide: true, // 윈도우: 콘솔 없는 부모 밑에서 검은 창이 안 뜨게(test/windows-hide.test.js)
 });
 
 // 화면 밖에 띄운 크롬을 크롬·맥이 화면 안으로 끌어오면 최소화 — 포트가 생기면 몇 번(처음 창·곧 뜨는 창). 앱이 나중에 켜지면 가짜 화면으로 옮긴다
@@ -150,7 +151,7 @@ const share = createShare({
   join: (holder) => { try { return users.join(paths.locksDir, profile, process.pid, holder, { by: 'session' }); } catch { return false; } },
   leave: () => users.remove(paths.locksDir, profile, process.pid),
   spawnChild: (args) => {
-    const c = spawn(process.execPath, [...SURVIVE, cli, ...args, ...extra], { stdio: ['pipe', 'pipe', 'inherit'] });
+    const c = spawn(process.execPath, [...SURVIVE, cli, ...args, ...extra], { stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true });
     c.stdin.on('error', () => { /* 먼저 죽은 child — share.still() 이 잡는다 */ });
     c.on('error', (e) => console.error(`[chammo-browser-mcp] 같이 쓰기 playwright 기동 실패: ${e.message}`));
     return c;

@@ -480,3 +480,17 @@ fn 쌓여_있던_묶음의_글과_버튼은_한_줄로_같이_센다() {
     let t = s[0]["text"].as_str().unwrap();
     assert!(t.contains("글 1개") && t.contains("버튼 1개"), "{t}");
 }
+
+#[test]
+fn pe_기기_연결_요청_카드는_텔레그램에_안_보낸다() {
+    let (mut b, tg, _) = bridge("card-link");
+    let now = iso_ms("2026-10-08T01:00:00Z").unwrap();
+    b.started = now - 60_000;
+    let code = b.sh.gate.lock().unwrap().issue(now).unwrap();
+    b.handle_batch(&[msg(1, ME, &format!("/start {code}"), now)], now);
+    confirm(&b.sh, &b.api).unwrap();
+    let before = sent(&tg).len();
+    *b.env.log.lock().unwrap() = format!("{}\n", json!({ "ts": "2026-10-08T00:59:00Z", "type": "ask", "id": "aaaa0009", "from": "@link", "cwd": "", "kind": "link", "q": "office-mac 기기와 연결할까요?", "yes": "허용", "no": "거절", "options": [] }));
+    b.tick(now);
+    assert_eq!(sent(&tg).len(), before, "밖의 중계에 기기 연결 허용 단추를 두지 않는다");
+}

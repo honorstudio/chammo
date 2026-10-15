@@ -13,7 +13,7 @@ const { CLI, playwrightCore } = require('./script');
 
 function run(args) {
   return new Promise((resolve) => {
-    execFile(process.execPath, [CLI, ...args], { env: process.env, maxBuffer: 1 << 20 }, (err, stdout) => {
+    execFile(process.execPath, [CLI, ...args], { env: process.env, maxBuffer: 1 << 20, windowsHide: true }, (err, stdout) => {
       const line = String(stdout || '').trim().split('\n').pop();
       try { resolve(JSON.parse(line)); } catch { resolve({ ok: false, error: (err && err.message) || line || 'chammo-browser 가 답하지 않았어요' }); }
     });

@@ -203,3 +203,7 @@
 .peer-row { flex-wrap: wrap; }
 .peer-code { flex: 1 0 100%; margin-left: 0; }
 .peer-code input { flex: 1; min-width: 0; max-width: 380px; height: 32px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; font-family: var(--mono, ui-monospace, monospace); }
+/* 코드로 잇기(대피로) — 연결 단추 옆 작은 글 단추 */
+.peer-alt { background: none; border: 0; padding: 0 4px; min-height: 32px; color: var(--text-2); font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; }
+.peer-alt:disabled { opacity: .5; cursor: default; }
+.peer-on { color: var(--tag-done-ink); }

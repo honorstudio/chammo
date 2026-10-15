@@ -263,6 +263,38 @@ pub fn warm_start() {
     });
 }
 
+/// 지금 로그인 미리 갱신(login_keep, ADR 0008) 한 차례 — 바꿔 끼우기·데우기와 같은 줄에 선다(같은 지금 칸·보관 칸을 쓴다).
+/// CLAUDE_CONFIG_DIR(키체인 칸 이름이 다름)·API 키 로그인이면 안 돈다. 창은 안 띄운다(quiet)
+fn keep_tick() {
+    if env("ANTHROPIC_API_KEY").is_some_and(|k| !k.is_empty()) {
+        return;
+    }
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok((kc, live, list)) = setup_quiet(true) else { return };
+    let state = crate::config::data_file("login-keep.json");
+    let _ = crate::login_keep::tick(&kc, &live, &list, &state, now_ms(), crate::accounts_refresh::refresh, &mut |l| crate::claude::log_out("login-keep", l));
+}
+
+/// 앱이 떠 있는 동안 1분마다(처음은 켜고 30초 뒤). 볼 때가 아니면 파일 하나만 읽고 끝난다 — 서버는 만료 60분 전부터, 막히면 10분마다
+pub fn keep_start() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        loop {
+            keep_tick();
+            std::thread::sleep(std::time::Duration::from_secs(60));
+        }
+    });
+}
+
+/// 화면이 1분마다 읽는 미리 갱신 상태 — "dead"·"late"·null(잘 되는 중). 파일 하나만 읽는다(키체인·claude 안 띄움)
+#[tauri::command]
+pub fn login_keep_state() -> Option<&'static str> {
+    crate::login_keep::need(&crate::login_keep::load_keep(&crate::config::data_file("login-keep.json")), now_ms())
+}
+
 /// 무거운 일(키체인)은 뒤에서, 한 번에 하나만
 async fn run<F>(f: F) -> Result<View, String>
 where

@@ -3,6 +3,7 @@
 // 비밀번호·2FA 는 사람이 브라우저에서. 코드 값은 화면 상태에만 잠깐 있고 저장하지 않는다. 해석은 domain/phoneLogin
 import { useEffect, useState } from 'react';
 import { loginCancel, loginCode, loginStart, readLogin } from '../../data/web';
+import { needText } from '../../domain/login';
 import { flowText, readPhoneLogin, showCard, type PhoneLogin } from '../../domain/phoneLogin';
 import { IconClose, IconSend } from '../Icons';
 import { BottomSheet, useSheet } from './kit';
@@ -14,13 +15,13 @@ export function PhoneLoginCard() {
   const [open, setOpen] = useState(false);
   const v = readPhoneLogin(text);
   if (!showCard(v) && !open) return null;
-  const where = v.need?.sessions.length ? v.need.sessions.join(' · ') : `이 ${machine()}`;
+  const t = v.need ? needText(v.need) : null;
   return (
     <>
       <div className="m-login" role="alert">
         <div className="m-login-mid">
-          <b>Claude 로그인이 풀렸어요</b>
-          <span>{v.need ? `멈춘 곳: ${where}` : '로그인하는 중'}</span>
+          <b>{t?.title ?? 'Claude 로그인이 풀렸어요'}</b>
+          <span>{t?.where ?? '로그인하는 중'}</span>
         </div>
         <button type="button" className="m-btn m-login-btn" onClick={() => setOpen(true)}>로그인</button>
       </div>

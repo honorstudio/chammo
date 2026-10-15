@@ -99,3 +99,23 @@ describe('cardShow — 답·처리가 끝난 카드는 한 줄, 5분 뒤 사라�
     expect(cardLine(a!).what).toBe('결제 US$25');
   });
 });
+
+describe('기기 연결 요청 카드(@link, 0.3.2) — 세션이 아니라 앱이 묻는다', () => {
+  const link = (more: object = {}) => ask('l1', '@link', T0, { kind: 'link', cwd: '', q: 'office-mac 기기와 연결할까요?', yes: '허용', no: '거절', until: '2026-10-03T06:05:00Z', ...more });
+  const at = (iso: string) => ({ ...env(), now: Date.parse(iso) });
+  it('세션 목록과 상관없이 5분 동안 기다림, 지나면 끝남', () => {
+    expect(directCards(link(), at('2026-10-03T06:04:59Z'))[0]).toMatchObject({ state: 'wait', kind: 'link' });
+    expect(directCards(link(), at('2026-10-03T06:05:01Z'))[0]!.state).toBe('closed');
+  });
+  it('답하면 처리됨(세션 입력을 기다리지 않는다), 앱이 남긴 결과 한 줄', () => {
+    const log = [link(), row({ ts: '2026-10-03T06:01:00Z', type: 'answer', id: 'l1', pick: 'yes', label: '허용', by: 'desktop' })].join('\n');
+    expect(directCards(log, at('2026-10-03T06:01:01Z'))[0]).toMatchObject({ state: 'done', answer: { label: '허용' } });
+    const done = [log, row({ ts: '2026-10-03T06:01:03Z', type: 'done', id: 'l1', note: '연결됨' })].join('\n');
+    expect(directCards(done, at('2026-10-03T06:10:00Z'))[0]).toMatchObject({ state: 'done', note: '연결됨' });
+  });
+  it('다른 연결 요청이 와도 지난 질문이 되지 않는다(세션 카드 규칙과 따로)', () => {
+    const two = [link(), ask('l2', '@link', '2026-10-03T06:00:30Z', { kind: 'link', until: '2026-10-03T06:05:30Z' })].join('\n');
+    expect(directCards(two, at('2026-10-03T06:01:00Z')).map((c) => c.state)).toEqual(['wait', 'wait']);
+  });
+  it('위험 말은 기기 연결(노랑)', () => expect(kindView('link')).toEqual({ word: '기기 연결', tone: 'warn' }));
+});

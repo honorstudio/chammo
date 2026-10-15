@@ -27,10 +27,35 @@ fn zombie(pid: i32) -> bool {
     // /proc/<pid>/stat 의 세 번째 칸(이름 괄호 뒤)이 Z
     std::fs::read_to_string(format!("/proc/{pid}/stat")).ok().and_then(|s| s.rsplit_once(')').map(|(_, r)| r.trim_start().starts_with('Z'))).unwrap_or(false)
 }
+/// 윈도우: 프로세스를 띄우지 않고 커널에 묻는다. tasklist 를 띄웠을 땐 창 없는 앱이라 부를 때마다 검은 콘솔 창이 번쩍였고,
+/// 세션 브라우저가 떠 있으면 지킴이(0.3초)가 2~3번씩 불러 PC 를 못 쓸 정도였다(2026-10-15, 60초에 135개)
 #[cfg(windows)]
 pub fn pid_alive(pid: i32) -> bool {
-    Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"]).output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains(&format!("\"{pid}\""))).unwrap_or(false)
+    type Handle = *mut std::ffi::c_void;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> Handle;
+        fn GetExitCodeProcess(process: Handle, code: *mut u32) -> i32;
+        fn CloseHandle(handle: Handle) -> i32;
+        fn GetLastError() -> u32;
+    }
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const STILL_ACTIVE: u32 = 259;
+    const ERROR_ACCESS_DENIED: u32 = 5;
+    if pid <= 0 {
+        return false;
+    }
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid as u32);
+        if h.is_null() {
+            // 있는데 못 여는 것(다른 사용자·보호 프로세스)은 살아 있다. 없는 번호는 ERROR_INVALID_PARAMETER
+            return GetLastError() == ERROR_ACCESS_DENIED;
+        }
+        let mut code = 0u32;
+        let ok = GetExitCodeProcess(h, &mut code) != 0;
+        CloseHandle(h);
+        ok && code == STILL_ACTIVE
+    }
 }
 
 /// 띄우고 기다리지 않는다 — 끝나면 뒤에서 거둬 좀비(<defunct>)가 안 남게. pid 를 돌려준다
@@ -50,7 +75,7 @@ pub fn terminate(pid: i32) {
 }
 #[cfg(windows)]
 pub fn terminate(pid: i32) {
-    let _ = Command::new("taskkill").args(["/PID", &pid.to_string()]).status();
+    let _ = command("taskkill").args(["/PID", &pid.to_string()]).status();
 }
 
 /// 자식까지 한 묶음으로 띄운다 — 나중에 묶음째 멈추려고(음성 읽기)
@@ -96,29 +121,23 @@ pub fn decode_ps(b64: &str) -> String {
 /// 설치된 목소리를 `say -v ?` 모양으로("이름 ko_KR # "). 윈도우 이름의 빈칸은 _ 로 — say -v 한 칸에 들어가게
 #[cfg(target_os = "macos")]
 pub fn native_voices() -> String {
-    Command::new("say").args(["-v", "?"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+    command("say").args(["-v", "?"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
 }
 #[cfg(not(target_os = "macos"))]
 pub fn native_voices() -> String {
     let script = "$ProgressPreference = 'SilentlyContinue'; Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).GetInstalledVoices() | ForEach-Object { $v = $_.VoiceInfo; ($v.Name -replace ' ', '_') + '  ' + ($v.Culture.Name -replace '-', '_') + '  # ' }";
-    let mut c = Command::new("powershell");
-    c.args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encode_ps(script)]);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000);
-    }
-    c.output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+    command("powershell").args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encode_ps(script)])
+        .output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
 }
 
 /// spawn_group 으로 띄운 묶음을 멈춘다
 #[cfg(unix)]
 pub fn stop_group(pid: u32) {
-    let _ = Command::new("/bin/kill").args(["-TERM", &format!("-{pid}")]).status();
+    let _ = command("/bin/kill").args(["-TERM", &format!("-{pid}")]).status();
 }
 #[cfg(windows)]
 pub fn stop_group(pid: u32) {
-    let _ = Command::new("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).status();
+    let _ = command("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).status();
 }
 
 /// 실행 권한 붙이기(윈도우는 권한 비트가 없어 할 일 없음)
@@ -170,14 +189,12 @@ pub fn clean_path(p: std::path::PathBuf) -> std::path::PathBuf {
 /// 시스템 언어(ko_KR·ko-KR·en-US 모양) — 맥 AppleLocale, 윈도우 표시 언어(UICulture). 윈도우에선 맥 방법이 없어 늘 영어로 떴다(윈도우판 첫 실행)
 #[cfg(target_os = "macos")]
 pub fn system_locale() -> String {
-    Command::new("defaults").args(["read", "-g", "AppleLocale"]).output()
+    command("defaults").args(["read", "-g", "AppleLocale"]).output()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
 }
 #[cfg(windows)]
 pub fn system_locale() -> String {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000; // 콘솔 창이 번쩍 뜨지 않게
-    Command::new("powershell").args(["-NoProfile", "-Command", "(Get-UICulture).Name"]).creation_flags(CREATE_NO_WINDOW).output()
+    command("powershell").args(["-NoProfile", "-Command", "(Get-UICulture).Name"]).output()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
 }
 #[cfg(not(any(target_os = "macos", windows)))]
@@ -260,15 +277,10 @@ pub fn win_accel_label(mac: &str) -> String {
 pub fn clipboard_write(text: &str) -> Result<(), String> {
     use std::io::Write;
     #[cfg(windows)]
-    let (mut cmd, bytes) = {
-        use std::os::windows::process::CommandExt;
-        let mut c = Command::new("clip.exe");
-        c.creation_flags(0x0800_0000);
-        (c, clip_bytes(text))
-    };
+    let (mut cmd, bytes) = (command("clip.exe"), clip_bytes(text));
     #[cfg(not(windows))]
     let (mut cmd, bytes) = {
-        let mut c = Command::new("pbcopy");
+        let mut c = command("pbcopy");
         c.env("LANG", "en_US.UTF-8").env("LC_CTYPE", "UTF-8");
         (c, text.as_bytes().to_vec())
     };
@@ -286,13 +298,13 @@ fn clip_bytes(text: &str) -> Vec<u8> {
 pub fn open_path(target: &str) -> std::io::Result<()> {
     #[cfg(windows)]
     let mut c = {
-        let mut c = Command::new("rundll32.exe");
+        let mut c = command("rundll32.exe");
         c.args(["url.dll,FileProtocolHandler", target]);
         c
     };
     #[cfg(not(windows))]
     let mut c = {
-        let mut c = Command::new("open");
+        let mut c = command("open");
         c.arg(target);
         c
     };
@@ -342,12 +354,9 @@ pub fn folder_dialog_script(prompt: &str, start: Option<&str>) -> String {
 /// 오늘 날짜(YYYY-MM-DD, 이 컴퓨터 시간대) — 윈도우엔 date 명령이 없다(cmd 안의 date 는 입력을 기다린다)
 pub fn today() -> String {
     #[cfg(windows)]
-    let out = {
-        use std::os::windows::process::CommandExt;
-        Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", "Get-Date -Format yyyy-MM-dd"]).creation_flags(0x0800_0000).output()
-    };
+    let out = command("powershell").args(["-NoProfile", "-NonInteractive", "-Command", "Get-Date -Format yyyy-MM-dd"]).output();
     #[cfg(not(windows))]
-    let out = Command::new("date").arg("+%Y-%m-%d").output();
+    let out = command("date").arg("+%Y-%m-%d").output();
     out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
 }
 
@@ -471,20 +480,19 @@ pub fn run_capped(cmd: &mut Command, limit: std::time::Duration) -> std::io::Res
 pub fn python() -> Command {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         static PY: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
         let argv = PY.get_or_init(|| {
             let works = |a: &[&str]| {
-                Command::new(a[0]).args(&a[1..]).args(["-c", ""]).creation_flags(0x0800_0000).status().is_ok_and(|s| s.success())
+                command(a[0]).args(&a[1..]).args(["-c", ""]).status().is_ok_and(|s| s.success())
             };
             if works(&["py", "-3"]) { vec!["py", "-3"] } else { vec!["python"] }
         });
-        let mut c = Command::new(argv[0]);
-        c.args(&argv[1..]).env("PYTHONUTF8", "1").creation_flags(0x0800_0000);
+        let mut c = command(argv[0]);
+        c.args(&argv[1..]).env("PYTHONUTF8", "1");
         c
     }
     #[cfg(not(windows))]
-    Command::new("/usr/bin/python3")
+    command("/usr/bin/python3")
 }
 
 /// 외부 프로그램 — 윈도우는 콘솔 창 없이(CREATE_NO_WINDOW). 릴리스판(창 없는 앱)에서 claude agents 를 부를 때마다
@@ -518,18 +526,11 @@ pub fn batch_script(command: &str) -> String {
 /// git 이 준비됐나 — 맥은 Xcode 명령줄 도구(git 이 거기 들어 있다), 윈도우는 git --version 이 되나(윈도우 설정 2단계에서 막혔다)
 #[cfg(target_os = "macos")]
 pub fn git_ready() -> bool {
-    Command::new("/usr/bin/xcode-select").arg("-p").output().is_ok_and(|o| o.status.success())
+    command("/usr/bin/xcode-select").arg("-p").output().is_ok_and(|o| o.status.success())
 }
 #[cfg(not(target_os = "macos"))]
 pub fn git_ready() -> bool {
-    let mut c = Command::new("git");
-    c.arg("--version");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000); // 콘솔 안 번쩍임
-    }
-    c.output().is_ok_and(|o| o.status.success())
+    command("git").arg("--version").output().is_ok_and(|o| o.status.success())
 }
 
 /// 파일 한도(soft)를 올릴 값 — launchd 기본 256 을 앱과 앱이 띄우는 claude·예약 tick 이 물려받아
@@ -617,17 +618,36 @@ mod tests {
     #[test]
     fn 외부_프로그램은_platform_command_로만() {
         // 윈도우 릴리스판에서 claude agents 를 부를 때마다 검은 콘솔 창이 1~2초마다 번쩍였다 — 창 없이 띄우는 command() 로만 부른다
+        // platform.rs 도 — 여기만 빼 뒀더니 pid_alive 의 tasklist 가 창을 띄운 채 남아, 세션 브라우저 지킴이(0.3초)가 부를 때마다
+        // 콘솔 창이 번쩍였다(2026-10-15 윈도우 60초 135개). Command::new 는 command() 안의 한 줄뿐
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         for e in std::fs::read_dir(dir).unwrap().flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name == "platform.rs" || !name.ends_with(".rs") {
+            if !name.ends_with(".rs") {
                 continue;
             }
             let text = std::fs::read_to_string(e.path()).unwrap();
+            let mut allowed = usize::from(name == "platform.rs");
+            let needle = concat!("Command", "::new("); // 이 시험 글이 제 검사에 안 걸리게
             for (i, line) in text.lines().enumerate() {
-                assert!(!line.contains("Command::new("), "{name}:{} — crate::platform::command() 를 쓴다", i + 1);
+                if line.contains(needle) {
+                    let inside_command = name == "platform.rs" && line.trim() == format!("let mut c = {needle}program);");
+                    assert!(inside_command && allowed > 0, "{name}:{} — crate::platform::command() 를 쓴다", i + 1);
+                    allowed -= 1;
+                }
             }
         }
+    }
+
+    #[test]
+    fn 프로세스_살아_있나() {
+        // 윈도우는 tasklist 를 띄우지 않고 커널에 묻는다 — 맥·윈도우 같은 답이어야 한다
+        assert!(pid_alive(std::process::id() as i32), "나 자신은 살아 있다");
+        let mut child = command(if cfg!(windows) { "cmd" } else { "/bin/sh" }).args(if cfg!(windows) { ["/C", "exit 0"] } else { ["-c", "exit 0"] }).spawn().unwrap();
+        let pid = child.id() as i32;
+        child.wait().unwrap();
+        assert!(!pid_alive(pid), "끝나고 거둔 자식은 죽었다");
+        assert!(!pid_alive(0x7fff_fff0), "없는 번호");
     }
 
     #[test]

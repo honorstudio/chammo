@@ -57,6 +57,10 @@ pub trait Backend: Send + Sync {
     fn open_on_mac(&self, path: &str) -> Result<(), String>;
     /// 폰 진단 한 줄 — 걸러진 '종류 키=값…'(diag_line)을 notify.log 에
     fn diag(&self, _line: &str) {}
+    /// 다른 기기 참모 연결 요청을 받는 바깥(테일넷·되묻기·카드·열쇠) — 기본은 '못 받음'(시험·윈도우)
+    fn link_env(&self) -> &dyn crate::peer_ask::LinkEnv {
+        &crate::peer_ask::NoLink
+    }
     /// 폰 화면 박힘 진단(layout-*) — <데이터>/phone-layout.jsonl 에 한 줄(크기 상한 PHONE_LAYOUT_CAP, 글 내용 없음)
     fn layout_log(&self, line: &str) {
         self.diag(line);
@@ -707,6 +711,52 @@ fn body<'a, T: Deserialize<'a>>(req: &'a Req) -> Result<T, Resp> {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct LinkBody {
+    req: String,
+    node: String,
+}
+
+/// /api/link-request(POST, 같은 출처 JSON) · /api/link-status?req(GET, 요청한 기기가 기다림) · /api/link-check?h(GET, 받는 쪽의 되묻기)
+pub fn link_route(req: &Req, gate: &Gate, asks: &crate::peer_ask::Asks, env: &dyn crate::peer_ask::LinkEnv, now: u64) -> Resp {
+    use crate::peer_ask::{AskErr, Status};
+    match (req.method.as_str(), req.path.as_str()) {
+        ("POST", "/api/link-request") => {
+            if !same_origin_write(req, gate) {
+                return Resp::text(403, "bad origin");
+            }
+            let b: LinkBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            match asks.request(env, &b.req, &b.node, now) {
+                Ok(()) => Resp::json(&serde_json::json!({ "state": "asked" })),
+                Err(AskErr::Bad) => Resp::text(400, "bad request"),
+                Err(AskErr::TooMany) => Resp::text(429, "too many link requests"),
+                Err(AskErr::NotMine) => Resp::text(403, "not your device"),
+                Err(AskErr::Unconfirmed) => Resp::text(403, "unconfirmed"),
+                Err(AskErr::Unsupported) => Resp::text(501, "unsupported"),
+                Err(AskErr::Card(_)) => Resp::text(500, "could not show the card"),
+            }
+        }
+        ("GET", "/api/link-status") => match asks.status(env, req.param("req").unwrap_or(""), now) {
+            Status::Unknown => Resp::text(404, "no such request"),
+            Status::Wait => Resp::json(&serde_json::json!({ "state": "wait" })),
+            Status::No => Resp::json(&serde_json::json!({ "state": "no" })),
+            Status::Expired => Resp::json(&serde_json::json!({ "state": "expired" })),
+            Status::Failed(_) => Resp::json(&serde_json::json!({ "state": "failed" })),
+            Status::Yes { token, back } => Resp::json(&serde_json::json!({ "state": "yes", "token": token, "back": back })),
+        },
+        ("GET", "/api/link-check") => {
+            let h = req.param("h").unwrap_or("");
+            if h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()) && asks.asking(h, now) {
+                Resp::json(&serde_json::json!({ "ok": true }))
+            } else {
+                Resp::text(404, "no")
+            }
+        }
+        _ => Resp::text(405, "method not allowed"),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PairBody {
     code: String,
     /// 홈 화면에 붙인 앱에서 짝짓기 — 설정 기기 목록에 '홈 화면 앱'으로(사파리와 저장 칸이 따로라 기기가 둘이 된다)
@@ -1287,8 +1337,12 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         let p = crate::mobile_pair::Pairing { name: &name, home: b.home && !b.peer, prev: b.prev.as_deref(), peer: b.peer };
         return match gate.devices.pair_with(&b.code, &p, std::time::SystemTime::now()) {
             Some(token) => Resp::json(&serde_json::json!({ "token": token })),
-            None => Resp::text(401, "짝짓기 코드가 틀렸거나 10분이 지났어요 — 맥 설정 > 모바일에서 QR 을 새로 만들어 주세요"),
+            None => Resp::text(401, "짝짓기 코드가 틀렸거나 10분이 지났어요 — 맥 설정 > 폰에서 QR 을 새로 만들어 주세요"),
         };
+    }
+    // 다른 기기 참모 연결(코드 없이, peer_ask) — 열쇠 없이 받지만 열쇠는 되묻기 + 이 기기 사람의 카드 허용을 지나야 생긴다
+    if matches!(req.path.as_str(), "/api/link-request" | "/api/link-status" | "/api/link-check") {
+        return link_route(req, gate, crate::peer_ask::asks(), be.link_env(), crate::messenger_cmd::now_ms());
     }
     // html 시안 — 표가 열쇠(iframe 은 Bearer 를 못 싣는다)
     if req.path == "/api/html" {
@@ -2155,11 +2209,11 @@ pub fn head_check(req: &Req, gate: &Gate) -> Option<Resp> {
     if req.method != "POST" && !has_body {
         return None;
     }
-    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/voice-mode" | "/api/voice-beat" | "/api/model" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker-add" | "/api/peer-say") && !PHONE_POSTS.contains(&req.path.as_str()) {
+    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/voice-mode" | "/api/voice-beat" | "/api/model" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker-add" | "/api/peer-say" | "/api/link-request") && !PHONE_POSTS.contains(&req.path.as_str()) {
         return Some(Resp::text(404, "not found"));
     }
-    // 짝짓기는 코드가 열쇠 — 출처·JSON 만 본다
-    if req.path == "/api/pair" {
+    // 짝짓기는 코드가 열쇠, 연결 요청은 되묻기와 사람 카드가 문 — 출처·JSON 만 본다
+    if req.path == "/api/pair" || req.path == "/api/link-request" {
         return (!same_origin_write(req, gate)).then(|| Resp::text(403, "bad origin"));
     }
     if !authed(req, gate) {

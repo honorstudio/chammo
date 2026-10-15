@@ -8,6 +8,8 @@ pub trait PeerOps {
     fn devices(&self) -> Result<DevicesOut, String>;
     fn pair(&self, id: &str, code: &str) -> Result<(), String>;
     fn unpair(&self, id: &str) -> Result<(), String>;
+    /// 코드 없이 잇기 — 그 기기 사람이 카드에서 허용할 때까지 붙잡는다(최대 6분)
+    fn connect(&self, id: &str) -> Result<(), String>;
     fn call(&self, id: &str, method: &str, path: &str, body: Option<&str>) -> Result<CallOut, String>;
     /// 부른 세션 id → 그 참모 이름(live.json) — 이름표에 실린다
     fn who(&self, by: &str) -> String;
@@ -29,7 +31,7 @@ pub fn request(line: &str) -> Option<PeerReq> {
         return None;
     }
     let verb = v["arg"]["verb"].as_str()?;
-    matches!(verb, "list" | "pair" | "unpair" | "say" | "reply").then(|| PeerReq { id: id.to_string(), verb: verb.to_string(), arg: v["arg"].clone() })
+    matches!(verb, "list" | "connect" | "pair" | "unpair" | "say" | "reply").then(|| PeerReq { id: id.to_string(), verb: verb.to_string(), arg: v["arg"].clone() })
 }
 
 /// 기기 찾기 — id, 이름(대소문자 무시), 하나뿐인 앞부분
@@ -64,7 +66,7 @@ fn fail(e: impl Into<String>) -> Value {
 }
 
 fn need_pair(name: &str) -> Value {
-    json!({ "ok": false, "needPair": true, "error": format!("{name} 와 짝지어야 해 — 그 기기 설정 > 폰(또는 그 기기와 짝지은 폰)의 연결 코드로 scripts/peer pair {name} <코드>") })
+    json!({ "ok": false, "needPair": true, "error": format!("{name} 와 아직 안 이어졌어 — scripts/peer connect {name} 하면 그 기기에 카드가 뜨고, 그쪽 사람이 허용하면 이어져(옛 판이면 그 기기 설정 > 폰의 연결 코드로 scripts/peer pair {name} <코드>)") })
 }
 
 fn call_err(name: &str, e: String) -> Value {
@@ -127,6 +129,11 @@ pub fn answer(req: &PeerReq, ops: &dyn PeerOps) -> Value {
         Err(e) => return fail(e),
     };
     match req.verb.as_str() {
+        "connect" if d.status == "connected" => json!({ "ok": true, "device": d.name, "already": true }),
+        "connect" => match ops.connect(&d.id) {
+            Ok(()) => json!({ "ok": true, "device": d.name }),
+            Err(e) => fail(e),
+        },
         "pair" => match ops.pair(&d.id, &s("code")) {
             Ok(()) => json!({ "ok": true, "device": d.name }),
             Err(e) => fail(e),
@@ -185,6 +192,9 @@ impl PeerOps for RealOps {
     }
     fn unpair(&self, id: &str) -> Result<(), String> {
         crate::remote::unpair_now(id)
+    }
+    fn connect(&self, id: &str) -> Result<(), String> {
+        crate::remote::connect_now(id)
     }
     fn call(&self, id: &str, method: &str, path: &str, body: Option<&str>) -> Result<CallOut, String> {
         crate::remote::call_now(id, method, path, body)

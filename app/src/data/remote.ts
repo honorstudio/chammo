@@ -66,7 +66,11 @@ export function remoteApi(id: string): PeerApi {
 
 /** 기기 칸 — 같은 테일스케일 계정 기기 중 참모가 있는 것(짝지은 기기는 꺼져 있어도) */
 export const remoteDevices = () => invoke<{ me: string; devices: RemoteDevice[] }>('remote_devices');
-/** 처음 한 번 — 그 기기 설정 > 모바일의 연결 코드(16진 32자, QR 주소째 붙여도 됨) */
+/** 처음 한 번 — 그 기기 설정 > 폰의 연결 코드(16진 32자, QR 주소째 붙여도 됨) */
 export const remotePair = (id: string, code: string) => invoke<void>('remote_pair', { id, code });
 /** 이 맥에서 그 기기 열쇠 지우기(그 기기 설정의 '다른 기기 참모' 줄은 거기서 끊는다) */
 export const remoteUnpair = (id: string) => invoke<void>('remote_unpair', { id });
+/** 코드 없이 잇기 — 그 기기에 허용 카드를 띄우고 사람이 허용할 때까지 기다린다(최대 6분). 거절·5분·취소면 오류 글 */
+export const remoteConnect = (id: string) => invoke<void>('remote_connect', { id });
+/** 기다리던 연결 거두기 */
+export const remoteConnectCancel = (id: string) => invoke<void>('remote_connect_cancel', { id });

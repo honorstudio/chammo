@@ -6,6 +6,13 @@ describe('readPhoneLogin — 맥 /api/login 답', () => {
     const v = readPhoneLogin(JSON.stringify({ need: { since: 5, sessions: ['아이맥 · 자동화'], machine: false, at: 9 }, flow: { state: 'waiting', url: 'https://claude.com/cai/oauth/authorize?code=true', error: null } }));
     expect(v).toEqual({ need: { since: 5, sessions: ['아이맥 · 자동화'], machine: false }, flow: { state: 'waiting', url: 'https://claude.com/cai/oauth/authorize?code=true', error: null } });
   });
+  it('미리 갱신 상태(keep)는 dead·late 만 옮긴다', () => {
+    const v = readPhoneLogin(JSON.stringify({ need: { since: 5, sessions: [], machine: true, keep: 'late' }, flow: { state: 'idle' } }));
+    expect(v.need).toEqual({ since: 5, sessions: [], machine: true, keep: 'late' });
+    const w = readPhoneLogin(JSON.stringify({ need: { since: 5, sessions: [], machine: true, keep: '<b>' }, flow: { state: 'idle' } }));
+    expect(w.need).toEqual({ since: 5, sessions: [], machine: true });
+    expect('keep' in w.need!).toBe(false);
+  });
   it('깨졌거나 모르는 값은 버린다 — 주소는 https 로그인 주소만', () => {
     expect(readPhoneLogin('x')).toEqual({ need: null, flow: { state: 'idle', url: null, error: null } });
     const v = readPhoneLogin(JSON.stringify({ need: { since: 'x', sessions: [1] }, flow: { state: 'boom', url: 'javascript:alert(1)' } }));
