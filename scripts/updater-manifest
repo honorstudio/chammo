@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""자동 업데이트(ADR 0005)의 latest.json — 앱이 GitHub 최신 릴리스에서 이걸 읽고 받을 파일·서명을 안다.
+  scripts/updater-manifest make <버전> --mac <Chammo_<버전>_aarch64.app.tar.gz> --win <Chammo_<버전>_x64-setup.exe> [--notes "…"] [--out latest.json]
+  scripts/updater-manifest check <폴더> <버전>     → latest.json·업데이트 파일·.sig 가 그 폴더에 있고 맞는지(틀리면 줄마다 찍고 종료 1)
+서명(.sig)은 릴리스 스크립트(release-mac.sh·win-build)가 키체인 키로 만든 것. 이 스크립트는 키를 읽지 않는다.
+릴리스에 올릴 것: latest.json + 두 업데이트 파일(.sig 내용은 latest.json 안에 들어간다)
+"""
+import argparse, datetime, json, pathlib, sys
+
+BASE = 'https://github.com/honorstudio/chammo/releases/download/v{ver}/'
+PLATFORMS = {'darwin-aarch64': '_aarch64.app.tar.gz', 'windows-x86_64': '_x64-setup.exe'}
+
+
+def _sig(f):
+    s = pathlib.Path(f'{f}.sig')
+    if not s.is_file():
+        sys.exit(f'서명 없음: {s.name} — 릴리스 스크립트가 키체인 키로 만든다')
+    return s.read_text().strip()
+
+
+def make(ver, notes, mac, win, pub_date=None):
+    ver = ver.removeprefix('v')
+    plats = {}
+    for plat, f in (('darwin-aarch64', pathlib.Path(mac)), ('windows-x86_64', pathlib.Path(win))):
+        if f.name != f'Chammo_{ver}{PLATFORMS[plat]}':
+            sys.exit(f'{plat} 파일 이름이 버전 {ver} 과 다름: {f.name}')
+        plats[plat] = {'url': BASE.format(ver=ver) + f.name, 'signature': _sig(f)}
+    return {
+        'version': ver,
+        'notes': notes,
+        'pub_date': pub_date or datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'platforms': plats,
+    }
+
+
+def check(d, ver):
+    """문제 줄 목록(비면 통과)"""
+    p = d / 'latest.json'
+    if not p.is_file():
+        return [f'latest.json 없음 ({d})']
+    try:
+        m = json.loads(p.read_text())
+    except ValueError as e:
+        return [f'latest.json 을 못 읽음: {e}']
+    out = []
+    if m.get('version') != ver:
+        out.append(f"버전이 {m.get('version')} — {ver} 이어야")
+    for plat, tail in PLATFORMS.items():
+        e = (m.get('platforms') or {}).get(plat)
+        name = f'Chammo_{ver}{tail}'
+        if not e:
+            out.append(f'{plat} 없음')
+            continue
+        if e.get('url') != BASE.format(ver=ver) + name:
+            out.append(f"{plat} 주소가 {e.get('url')}")
+        f = d / name
+        if not f.is_file():
+            out.append(f'{plat} 업데이트 파일 없음: {name}')
+        s = pathlib.Path(f'{f}.sig')
+        if not s.is_file():
+            out.append(f'{plat} 서명 파일 없음: {s.name}')
+        elif s.read_text().strip() != e.get('signature'):
+            out.append(f'{plat} 서명이 {s.name} 과 다름')
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    sub = ap.add_subparsers(dest='cmd', required=True)
+    mk = sub.add_parser('make')
+    mk.add_argument('version')
+    mk.add_argument('--mac', required=True)
+    mk.add_argument('--win', required=True)
+    mk.add_argument('--notes', default='')
+    mk.add_argument('--out', default='latest.json')
+    ck = sub.add_parser('check')
+    ck.add_argument('dir')
+    ck.add_argument('version')
+    a = ap.parse_args()
+    if a.cmd == 'make':
+        pathlib.Path(a.out).write_text(json.dumps(make(a.version, a.notes, a.mac, a.win), ensure_ascii=False, indent=2) + '\n')
+        print(a.out)
+        return 0
+    probs = check(pathlib.Path(a.dir), a.version.removeprefix('v'))
+    for x in probs:
+        print(x)
+    return 1 if probs else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

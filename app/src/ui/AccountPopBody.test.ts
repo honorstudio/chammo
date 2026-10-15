@@ -99,6 +99,23 @@ describe('AccountPopBody — 한 줄 목록 + 다가오는 초기화', () => {
   it('머리 경고(다 소진·지금 칸 막힘)와 오류는 위험 색 글', () => {
     const w = renderToStaticMarkup(createElement(AccountPopBody, props({ head: { next: '다 소진 · 22:20 풀림', after: null, warn: true }, error: '안 됐어요' })));
     expect(w).toContain('<b class="acct-pop-warn">다 소진 · 22:20 풀림</b>');
-    expect(w).toContain('<div class="acct-pop-err">안 됐어요</div>');
+    expect(w).toContain('<div class="acct-pop-err"><span>안 됐어요</span></div>');
+  });
+
+  it('바꾸기가 로그인으로 풀리는 실패면 오류 줄 옆에 글자 버튼 하나(낯선 동작이라 글) → onFix', () => {
+    const onFix = vi.fn();
+    const p = props({ error: '막혔어요', fix: true, onFix });
+    const h = renderToStaticMarkup(createElement(AccountPopBody, p));
+    expect(h).toContain('로그인해서 바꾸기');
+    const b = find(tree(p), (e) => e.type === 'button' && cls(e).includes('acct-pop-fix'));
+    expect(b).toHaveLength(1);
+    (b[0]!.props.onClick as () => void)();
+    expect(onFix).toHaveBeenCalledTimes(1);
+    // 다른 실패·오류 없음엔 없다
+    expect(renderToStaticMarkup(createElement(AccountPopBody, props({ error: '막혔어요' })))).not.toContain('로그인해서 바꾸기');
+    expect(renderToStaticMarkup(createElement(AccountPopBody, props({ fix: true, onFix })))).not.toContain('로그인해서 바꾸기');
+    // 바쁠 땐 막힌다
+    const busy = find(tree(props({ error: 'x', fix: true, onFix, busy: true })), (e) => e.type === 'button' && cls(e).includes('acct-pop-fix'));
+    expect(busy[0]!.props.disabled).toBe(true);
   });
 });

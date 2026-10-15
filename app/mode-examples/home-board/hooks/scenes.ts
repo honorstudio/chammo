@@ -96,6 +96,6 @@ export function cover(b: Board, c: Clock, W: number): Layer {
   body += BigNum(m - 4, 150, String(left), { size: 120, font: 'serif', spacing: -5 }) + BigNum(m + textW(String(left), 120) * 0.62 + 10, 140, b.sent ? 'left' : 'quiet', { size: 28, font: 'serif', italic: true, cls: 'k-red', spacing: 0 })
   body += list(m, 172, W - 2 * m, 4, 15)
   const h = 172 + Math.max(1, Math.min(4, b.open.length)) * 31.5 + 40
-  body += Label(m, h - 8, `맡긴 ${b.sent} · 끝 ${b.done} · 정할 것 ${b.asks}`, { size: 10, cls: 'k-cap' })
+  body += Label(m, h - 8, `맡긴 ${b.sent} · 끝 ${b.done} · 정할 것 ${b.asks}`, { size: 11, cls: 'k-cap' })
   return { skin: 'cover', w: W, h, body }
 }

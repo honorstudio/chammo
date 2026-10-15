@@ -14,6 +14,7 @@ mod accounts_cmd;
 mod accounts_refresh;
 mod accounts_store;
 mod accounts_usage;
+mod accounts_warm;
 mod claude_defaults;
 mod computer_use;
 mod browser_attach;
@@ -50,6 +51,8 @@ mod mobile_http;
 mod mobile_pair;
 mod mobile_sends;
 mod mobile_wake;
+mod peer_cmd;
+mod peer_link;
 mod phone_voice;
 mod remote;
 mod remote_net;
@@ -107,6 +110,8 @@ mod origin;
 mod tts;
 mod modes;
 mod modes_host;
+mod modes_light;
+mod updater;
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder};
 use tauri::Manager;
@@ -367,7 +372,9 @@ fn main() {
     keyrepeat::disable_press_and_hold();
     // 스레드가 생기기 전에 — 세션(→ MCP)이 터미널과 같은 PATH 를 물려받게
     claude::adopt_user_path();
-    tauri::Builder::default()
+    let ctx = tauri::generate_context!();
+    // 자동 업데이트 — 공개판만(개인 앱은 엔드포인트를 비워 둠, updater.rs)
+    updater::attach(tauri::Builder::default(), &ctx)
         .menu(|app| build_menu(app))
         // 앱 기능 메뉴를 누르면 메인 창 웹뷰의 window.__menu('<id>') 로 넘긴다 (권한 파일 없이 되는 eval)
         .on_menu_event(|app, e| {
@@ -457,6 +464,8 @@ fn main() {
             // 모바일(폰 → 테일스케일) — 켜 둔 상태면 연다. 기본 꺼짐
             mobile::boot(app.handle());
             messenger_cmd::boot();
+            // 쉬는 계정 칸 토큰을 만료 전에 하나씩 새로 받아 둔다 — 바꾸는 순간 토큰 주소를 안 부르게(2026-10-15 429 로 바꾸기가 막힘)
+            accounts_cmd::warm_start();
             if !config::data_dir().ends_with(".honor-orchestrator") {
                 let hq_dir = config::hq_dir(&config::home(), &config::current(), |k| std::env::var(k).ok());
                 if Path::new(&hq_dir).join("scripts/task").is_file() {
@@ -543,6 +552,7 @@ fn main() {
             hq::make_dir,
             setup::check_env,
             setup::app_version,
+            updater::app_update_install,
             debug::pick_log,
             debug::space_trace,
             slash::slash_commands,
@@ -583,6 +593,7 @@ fn main() {
             mobile::mobile_set,
             mobile::mobile_pair_new,
             messenger_cmd::messenger_status,
+            messenger::set_orch_legacy,
             messenger_cmd::messenger_set_token,
             messenger_cmd::messenger_pair_new,
             messenger_cmd::messenger_pair_cancel,
@@ -815,7 +826,7 @@ fn main() {
             }
             _ => {}
         })
-        .build(tauri::generate_context!())
+        .build(ctx)
         .expect("tauri 실행 실패")
         .run(|app, event| {
             // 앱이 꺼질 때 말하던 음성도 같이 끈다 — 앱을 바꿔 넣어도 옛 앱이 띄운 음성이 계속 돌았다(2026-09-28)

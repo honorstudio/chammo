@@ -18,6 +18,16 @@
 .mdv-code { margin: 0; padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; overflow: auto; white-space: pre; }
 .mdv-link, .mdv-md a { color: var(--working); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .mdv .btn { height: 30px; padding: 0 12px; }
+/* 뒤로(키트 BackBar) — 모든 모드에서 같은 모양: ← 아이콘 + 돌아갈 곳, 테두리 없는 옅은 면 */
+.mdv .btn.mdv-back { display: inline-flex; align-items: center; gap: 6px; padding: 0 12px 0 8px; border-color: transparent; background: var(--surface-2); }
+.mdv .btn.mdv-back svg { width: 15px; height: 15px; }
+.mdv .btn.mdv-back:hover { background: var(--hover); }
+/* 칸 머리 ⋯ 메뉴 — 늘 머리 맨 오른쪽, 끄기는 그 안 글자(2026-10-15 사용자 B) */
+.mdv-more { position: relative; display: inline-flex; }
+.mdv-menu { position: absolute; right: 0; top: 36px; z-index: calc(var(--z-panel) + 6); min-width: 168px; padding: 4px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 10px 28px rgba(0, 0, 0, .14); display: flex; flex-direction: column; }
+.mdv-menu button { all: unset; box-sizing: border-box; display: flex; align-items: center; min-height: 34px; padding: 0 10px; border-radius: 7px; font-size: 13px; color: var(--text); cursor: pointer; white-space: nowrap; }
+.mdv-menu button:hover, .mdv-menu button:focus-visible { background: var(--hover); }
+.mdv-menu button.warn { color: var(--danger-ink); }
 .mdv-plain { border: 0; background: none; padding: 2px 4px; cursor: pointer; border-radius: 4px; text-align: left; }
 .mdv-plain:hover { background: var(--hover); }
 .mdv-field { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -64,7 +74,7 @@ body.mode-win #root { height: 100vh; }
 .mdv-panel { flex: none; width: 340px; display: flex; flex-direction: column; min-height: 0; overflow: auto; background: var(--surface); border-left: 1px solid var(--line); }
 .mdv-panel-item { display: flex; flex-direction: column; min-height: 220px; flex: 1; }
 .mdv-panel-item + .mdv-panel-item { border-top: 1px solid var(--line); }
-.mdv-panel-head { display: flex; align-items: center; gap: 4px; height: 40px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--line); flex: none; }
+.mdv-panel-head { position: relative; z-index: calc(var(--z-base) + 1); display: flex; align-items: center; gap: 4px; height: 40px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--line); flex: none; }
 .mdv-sp { flex: 1; }
 
 /* 대시보드 칸 — 알림 칸 아래, 사방 같은 선 한 줄의 카드(강조 띠 아님). 여럿이면 옆으로 */

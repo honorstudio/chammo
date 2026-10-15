@@ -10,6 +10,7 @@ import { TerminalPane } from './TerminalPane';
 import { FULL_DISK_URL, wizardAccess, type Access } from '../domain/access';
 import { AccountsSection } from './AccountsSection';
 import { MobileSection } from './MobileSection';
+import { PeerSection } from './PeerSection';
 import { MessengerSection } from './MessengerSection';
 import './setup.css';
 import { IS_WIN } from '../domain/reader';
@@ -631,7 +632,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
     agent: <>{nameField}{hqField}{devField}{extrasField}{trustBlock}{switches(['autoRevive'])}</>,
     features: <>{switches(['office', 'tama', 'gacha', 'review'])}{animField}</>,
     voice: <>{notifyBlock}{switches(['voice'])}{ttsField}{talkField}</>,
-    phone: <><MobileSection title={tr('폰', 'Phone')} /><MessengerSection title={tr('텔레그램', 'Telegram')} /></>,
+    phone: <><MobileSection title={tr('폰', 'Phone')} /><PeerSection title={tr('다른 기기 참모', 'Chammo on other devices')} /><MessengerSection title={tr('텔레그램', 'Telegram')} /></>,
     accounts: <AccountsSection title={tr('Claude 계정', 'Claude accounts')} claude={check?.claudePath} fontSize={fontSize} />,
     browser: <>{browserBlock}{switches(['agentView', 'computerUse'])}</>,
     tools: <><div className="cfg-tools-head"><span className="su-hint">{tr(`Chammo 가 쓰는 도구가 이 ${machine()}에 있는지`, `Whether the tools Chammo uses are on this ${machine()}`)}</span>{recheckBtn}</div>{checkBody}</>,

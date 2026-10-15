@@ -298,6 +298,10 @@ export const IconShare = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M8 10V2.2M5.2 4.8 8 2l2.8 2.8M5.5 7H4a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1h-1.5" /></svg>
 );
 /** 내려받기: 받침 위로 내려오는 화살표 — IconShare(상자에서 위로 나감)와 짝 */
+/** 업데이트 — 동그라미 안 위 화살표(받아서 깔고 다시 켜기) */
+export const IconUpdate = () => (
+  <svg viewBox="0 0 16 16" {...P}><circle cx="8" cy="8" r="5.8" /><path d="M8 10.8V5.4M5.6 7.6 8 5.2l2.4 2.4" /></svg>
+);
 export const IconDownload = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M8 2.2V10M5.2 7.2 8 10l2.8-2.8M2.8 11v1.3A1.2 1.2 0 0 0 4 13.5h8a1.2 1.2 0 0 0 1.2-1.2V11" /></svg>
 );

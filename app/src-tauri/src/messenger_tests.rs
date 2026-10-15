@@ -153,21 +153,28 @@ fn 버튼_데이터는_엄격하게() {
 
 #[test]
 fn 참모_이름_가리기() {
-    assert!(is_orch_name("참모", "참모"));
-    assert!(is_orch_name("참모-2 · 참모 업데이트", "참모"));
-    assert!(!is_orch_name("참모-x", "참모"));
-    assert!(!is_orch_name("sns-posting", "참모"));
-    assert!(!is_orch_name("참모", ""));
+    let none: [String; 0] = [];
+    assert!(is_orch_name_in("아틀라스", "아틀라스", &none));
+    assert!(is_orch_name_in("아틀라스-2 · 참모 업데이트", "아틀라스", &none));
+    assert!(!is_orch_name_in("아틀라스-x", "아틀라스", &none));
+    assert!(!is_orch_name_in("sns-posting", "아틀라스", &none));
+    // 앱 domain/session assistantBases 와 같다 — 설정 이름이 참모여도 옛 이름-N(받은 값)과 두 언어 기본 이름은 참모
+    let legacy = ["아틀라스".to_string()];
+    assert!(is_orch_name_in("아틀라스-7 · 쇼핑몰", "참모", &legacy));
+    assert!(is_orch_name_in("참모-2", "아틀라스", &none) && is_orch_name_in("Chammo", "아틀라스", &none));
+    assert!(!is_orch_name_in("아틀라스구-5", "참모", &legacy) && !is_orch_name_in("sns-posting", "", &legacy));
+    // 옛 이름은 원본에 박지 않는다 — 안 받으면(공개판) 그냥 세션 이름(10/15 0.3.1 2차)
+    assert!(!is_orch_name_in("아틀라스-7 · 쇼핑몰", "참모", &none));
     let list = vec![
-        Orch { id: "aaaaaaaa".into(), session: "s1".into(), name: "참모".into() },
-        Orch { id: "bbbbbbbb".into(), session: "s2".into(), name: "참모-2 · 참모 업데이트".into() },
+        Orch { id: "aaaaaaaa".into(), session: "s1".into(), name: "아틀라스".into() },
+        Orch { id: "bbbbbbbb".into(), session: "s2".into(), name: "아틀라스-2 · 참모 업데이트".into() },
     ];
-    assert_eq!(find_orch(&list, "참모-2").unwrap().id, "bbbbbbbb");
+    assert_eq!(find_orch(&list, "아틀라스-2").unwrap().id, "bbbbbbbb");
     assert_eq!(find_orch(&list, "참모 업데이트").unwrap().id, "bbbbbbbb");
-    assert!(find_orch(&list, "참모-9").is_none());
-    assert_eq!(default_orch(&list, Some("참모-2"), "참모").unwrap().id, "bbbbbbbb");
-    assert_eq!(default_orch(&list, Some("참모-7"), "참모").unwrap().id, "aaaaaaaa", "꺼진 참모면 기본 이름");
-    assert!(list_text(&list, list.get(1)).contains("참모-2 · 참모 업데이트 — 지금 받는 참모"));
+    assert!(find_orch(&list, "아틀라스-9").is_none());
+    assert_eq!(default_orch(&list, Some("아틀라스-2"), "아틀라스").unwrap().id, "bbbbbbbb");
+    assert_eq!(default_orch(&list, Some("아틀라스-7"), "아틀라스").unwrap().id, "aaaaaaaa", "꺼진 참모면 기본 이름");
+    assert!(list_text(&list, list.get(1)).contains("아틀라스-2 · 참모 업데이트 — 지금 받는 참모"));
 }
 
 #[test]
@@ -204,4 +211,24 @@ fn 텔레그램에_보이는_이름은_별명_먼저() {
     let b = Orch { id: "bbbbbbbb".into(), session: "s2".into(), name: "참모-2 · 참모 업데이트".into() };
     assert_eq!(a.label(), "참모");
     assert_eq!(b.label(), "참모 업데이트");
+}
+
+#[test]
+fn 옛_이름은_환경변수와_앱이_준_값에서() {
+    // 템플릿 orch-roster 와 같은 CHAMMO_ORCH_LEGACY(쉼표) — 빈칸·공백은 버린다
+    assert_eq!(legacy_from(Some(" 아틀라스 , 참모,,"), &[]), vec!["아틀라스".to_string(), "참모".to_string()]);
+    assert_eq!(legacy_from(None, &[]), Vec::<String>::new());
+    // 앱(화면)이 넘긴 값도 — 겹치면 한 번
+    assert_eq!(legacy_from(Some("아틀라스"), &["아틀라스".to_string(), "베가".to_string()]), vec!["아틀라스".to_string(), "베가".to_string()]);
+    set_orch_legacy_names(vec![" 베가 ".into(), String::new()]);
+    assert!(legacy_names().contains(&"베가".to_string()));
+    set_orch_legacy_names(Vec::new());
+}
+
+#[test]
+fn 원본에_옛_이름이_박혀_있지_않다() {
+    // 옛 이름은 설정·환경변수(CHAMMO_ORCH_LEGACY)로만 — 코드에 박는 기본 이름은 두 언어 기본값뿐이다.
+    // 금지 이름을 시험에 적으면 그 시험이 공개본에 이름을 내보낸다(0.3.1 2차) — 그래서 '기본값 말고 없다'로 잰다
+    assert_eq!(ORCH_BASES_FALLBACK, ["참모", "Chammo"]);
+    assert!(legacy_from(None, &[]).is_empty(), "설정·환경변수가 없으면 옛 이름도 없다");
 }

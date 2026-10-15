@@ -852,7 +852,13 @@ a.m-file { color: inherit; text-decoration: none; }
 /* 폰 홈 모드 카드(폰 홈·보관함 v1 1) — 세션 줄 아래 카드 한 칸, 알약 = 여럿일 때 고르기, 오른쪽 위 = 꽉 채워 보기 */
 .m-ring-dot.st-done, .m-ring-dot.st-off { background: var(--surface); }
 .m-mode { flex: none; display: flex; flex-direction: column; background: var(--surface); border-radius: 14px; box-shadow: 0 0 0 1px var(--line); padding: 2px 2px 4px 12px; }
-.m-mode-head { display: flex; align-items: center; min-height: 44px; }
+.m-mode-head { position: relative; z-index: calc(var(--z-base) + 1); display: flex; align-items: center; min-height: 44px; } /* ⋯ 메뉴가 아래 모드 몸통 위로 */
+.m-mode-more { position: relative; flex: none; display: inline-flex; }
+.m-mode-menu { position: absolute; right: 0; top: 46px; z-index: calc(var(--z-base) + 4); min-width: 180px; padding: 6px; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 12px 32px rgba(0, 0, 0, .16); display: flex; flex-direction: column; }
+.m-mode-menu button { min-height: 44px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; text-align: left; font-size: 15px; font-weight: 600; color: var(--text); }
+.m-mode-menu button:active { background: var(--surface-2); }
+.m-mode-menu button.warn { color: var(--danger-ink); }
+.m-mode-body .btn.mdv-back { min-height: 44px; padding: 0 14px 0 10px; border-color: transparent; background: var(--surface-2); }
 .m-mode-pills { flex: 1; min-width: 0; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
 .m-mode-pills b { font-size: 14px; }
 .m-mode-pills button { flex: none; min-height: 44px; padding: 0 12px; border: 0; border-radius: 18px; background: transparent; font-size: 13.5px; font-weight: 600; color: var(--text-3); }

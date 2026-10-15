@@ -1,7 +1,8 @@
-//! 참모 모드 호스트 — 모드 하나당 claude 프로세스 하나(≈240MB). 켜기·끄기·죽음 알림, 화면에 밀기(eval), 따로 창·메뉴·참모 명령.
-//! 규약·찾기·기억은 modes.rs. 앱 전체(홈) 소속이라 어느 참모·프로젝트에도 안 딸린다
+//! 참모 모드 호스트 — 모드 하나당 claude 프로세스 하나(≈240MB), 단 "light" 선언한 가벼운 모드끼리는 하나를 같이 쓴다(ADR 0006, 판단은 modes_light.rs).
+//! 켜기·끄기·죽음 알림, 화면에 밀기(eval), 따로 창·메뉴·참모 명령. 규약·찾기·기억은 modes.rs. 앱 전체(홈) 소속이라 어느 참모·프로젝트에도 안 딸린다
 use crate::i18n::tr;
 use crate::modes::{self, Line, ModeInfo, Saved};
+use crate::modes_light::{self, Plan};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
@@ -26,9 +27,36 @@ pub struct HostState {
     pub error: Option<String>,
     pub log: String,
     pub pid: u32,
+    /// 같이 쓰는 호스트 — 플러그인이 붙어 온 상태줄(플러그인 → 글). 화면엔 view_of 가 그 모드 것만 status 로 준다
+    #[serde(skip)]
+    pub status_of: HashMap<String, Option<String>>,
+}
+
+/// 모드 하나가 볼 상태 — 자기 호스트(members 빈 것)면 그대로, 같이 쓰는 호스트면 그 모드 칸·보일 칸·상태줄만
+fn view_of(st: &HostState, members: &[(String, String)], name: &str) -> HostState {
+    let Some((_, plugin)) = members.iter().find(|(n, _)| n == name) else { return st.clone() };
+    let panes = modes_light::panes_of(&st.panes, plugin);
+    let shown = modes_light::shown_of(&panes, st.shown.as_deref());
+    let status = match st.status_of.get(plugin) {
+        Some(s) => s.clone(),
+        None if st.status_of.is_empty() => st.status.clone(),
+        None => None,
+    };
+    HostState { panes, shown, status, status_of: HashMap::new(), ..st.clone() }
+}
+
+/// 밀림 하나를 받을 모드 — 자기 호스트면 그 이름(= 키), 같이 쓰는 호스트면 modes_light::targets
+fn push_targets(key: &str, members: &[(String, String)], push: &Value, panes: &[Value]) -> Vec<String> {
+    if members.is_empty() {
+        vec![key.to_string()]
+    } else {
+        modes_light::targets(push, members, panes)
+    }
 }
 
 struct Host {
+    /// 같이 쓰는 호스트에 올라간 (모드, 플러그인) — 자기 호스트면 비었다
+    members: Vec<(String, String)>,
     child: Mutex<Option<Child>>,
     stdin: Mutex<Option<ChildStdin>>,
     pending: Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>,
@@ -71,12 +99,30 @@ impl Host {
     fn absorb(&self, push: &Value) {
         let mut st = self.st.lock().unwrap();
         match push.get("subtype").and_then(|s| s.as_str()) {
-            Some("ui_status") => st.status = push.get("text").and_then(|t| t.as_str()).map(str::to_owned),
+            Some("ui_status") => {
+                let text = push.get("text").and_then(|t| t.as_str()).map(str::to_owned);
+                if let Some(p) = push.get("plugin").and_then(Value::as_str) {
+                    st.status_of.insert(p.to_string(), text.clone());
+                }
+                st.status = text;
+            }
             Some("ui_panes") => {
                 st.panes = push.get("panes").and_then(|p| p.as_array()).cloned().unwrap_or_default();
                 st.shown = push.get("shown_id").and_then(|s| s.as_str()).map(str::to_owned);
             }
             _ => {}
+        }
+    }
+
+    fn view(&self, name: &str) -> HostState {
+        view_of(&self.st.lock().unwrap(), &self.members, name)
+    }
+
+    fn names(&self, key: &str) -> Vec<String> {
+        if self.members.is_empty() {
+            vec![key.to_string()]
+        } else {
+            self.members.iter().map(|(n, _)| n.clone()).collect()
         }
     }
 }
@@ -93,14 +139,16 @@ fn host_note(log: &Path, what: &str) {
     }
 }
 
-fn start(info: &ModeInfo, plugin_dir: &Path, run: &Path, notify: Notify) -> Arc<Host> {
+/// key = 호스트 키(모드 이름 또는 modes_light::KEY), members = 같이 쓰는 호스트면 (모드, 플러그인) 목록
+fn start(key: &str, plugin_dirs: &[std::path::PathBuf], members: Vec<(String, String)>, run: &Path, notify: Notify) -> Arc<Host> {
     let _ = std::fs::create_dir_all(run);
     let log = run.join("host.log");
-    host_note(&log, &format!("start {} — {}", info.name, plugin_dir.display()));
+    let dirs: Vec<String> = plugin_dirs.iter().map(|d| d.display().to_string()).collect();
+    host_note(&log, &format!("start {key} — {}", dirs.join(", ")));
     // 이어 쓴다(예전엔 File::create 로 켤 때마다 비워 늘 0바이트였다) — claude 가 stderr 에 쓰는 것도 같은 파일 뒤에
     let err = std::fs::OpenOptions::new().create(true).append(true).open(&log).map(Stdio::from).unwrap_or_else(|_| Stdio::null());
     let spawned = crate::platform::command(crate::claude::claude_bin())
-        .args(modes::host_args(plugin_dir))
+        .args(modes::host_args(plugin_dirs))
         .envs(modes::host_env(crate::config::data_dir()))
         .current_dir(run)
         .stdin(Stdio::piped())
@@ -113,20 +161,21 @@ fn start(info: &ModeInfo, plugin_dir: &Path, run: &Path, notify: Notify) -> Arc<
             host_note(&log, &format!("spawn failed: {e}"));
             // 프로세스가 없다(claude 없음 등) — 죽은 호스트로 남겨 화면이 '멈췄어 · 다시 켜기'를 보이게
             let st = HostState { error: Some(e.to_string()), log: log.to_string_lossy().into_owned(), ..Default::default() };
-            return Arc::new(Host { child: Mutex::new(None), stdin: Mutex::new(None), pending: Default::default(), st: Mutex::new(st), seq: AtomicU64::new(0) });
+            return Arc::new(Host { members, child: Mutex::new(None), stdin: Mutex::new(None), pending: Default::default(), st: Mutex::new(st), seq: AtomicU64::new(0) });
         }
     };
     let out = child.stdout.take();
     let pid = child.id();
     host_note(&log, &format!("pid {pid}"));
     let host = Arc::new(Host {
+        members,
         stdin: Mutex::new(child.stdin.take()),
         child: Mutex::new(Some(child)),
         pending: Default::default(),
         st: Mutex::new(HostState { alive: true, log: log.to_string_lossy().into_owned(), pid, ..Default::default() }),
         seq: AtomicU64::new(1),
     });
-    let name = info.name.clone();
+    let name = key.to_string();
     let h = host.clone();
     let n2 = notify.clone();
     let log2 = log.clone();
@@ -141,7 +190,10 @@ fn start(info: &ModeInfo, plugin_dir: &Path, run: &Path, notify: Notify) -> Arc<
                     }
                     Line::Push(v) => {
                         h.absorb(&v);
-                        n2(&name, v);
+                        let panes = h.st.lock().unwrap().panes.clone();
+                        for t in push_targets(&name, &h.members, &v, &panes) {
+                            n2(&t, v.clone());
+                        }
                     }
                     Line::Other => {}
                 }
@@ -161,7 +213,9 @@ fn start(info: &ModeInfo, plugin_dir: &Path, run: &Path, notify: Notify) -> Arc<
                 st.error = Some(format!("exit {}", code.map(|c| c.to_string()).unwrap_or_else(|| "signal".into())));
             }
         }
-        n2(&name, json!({"subtype": "exit"}));
+        for t in h.names(&name) {
+            n2(&t, json!({"subtype": "exit"}));
+        }
     });
     // 붙기 — 첫 켬은 1초 안팎(실측 0.6~0.8초), 넉넉히
     let init = host.call(json!({"subtype": "initialize"}), Duration::from_secs(30));
@@ -202,8 +256,39 @@ fn stop_host(h: &Host, why: &str) {
     }
 }
 
+/// 모드의 호스트 — 표(key_of)를 거친다. 같이 쓰는 호스트에 아직 안 올라간 모드(다시 띄우기 전)는 없는 것으로
 fn host(name: &str) -> Option<Arc<Host>> {
-    hosts().lock().unwrap().get(name).cloned()
+    let key = key_of(name);
+    let h = hosts().lock().unwrap().get(&key).cloned()?;
+    (key != modes_light::KEY || h.members.iter().any(|(n, _)| n == name)).then_some(h)
+}
+
+// ── 호스트 키 표 — 모드 → 키(같이 쓰는 호스트면 modes_light::KEY). 켜기·깨우기 때마다 새로 판단, 따로 띄운 까닭은 바뀔 때만 그 모드 host.log 에 ──
+
+struct Keyed {
+    key: String,
+    plugin: String,
+    why: Option<String>,
+}
+
+fn key_table() -> &'static Mutex<HashMap<String, Keyed>> {
+    static K: OnceLock<Mutex<HashMap<String, Keyed>>> = OnceLock::new();
+    K.get_or_init(Default::default)
+}
+
+fn key_of(name: &str) -> String {
+    key_table().lock().unwrap().get(name).map(|k| k.key.clone()).unwrap_or_else(|| name.to_string())
+}
+
+fn refresh_keys(all: &[ModeInfo]) {
+    let cands: Vec<modes_light::Cand> = all.iter().map(|m| if m.light { modes_light::cand(m) } else { modes_light::Cand { name: m.name.clone(), plugin: m.name.clone(), light: false, veto: None, ids: Ok(vec![]) } }).collect();
+    let mut t = key_table().lock().unwrap();
+    for ((name, key, why), c) in modes_light::keys(&cands).into_iter().zip(cands) {
+        if why.is_some() && t.get(&name).map(|k| &k.why) != Some(&why) {
+            host_note(&modes::run_dir(crate::config::data_dir(), &name).join("host.log"), &format!("light: own host — {}", why.as_deref().unwrap_or("")));
+        }
+        t.insert(name, Keyed { key, plugin: c.plugin, why });
+    }
 }
 
 // ── 기억 ──
@@ -309,6 +394,8 @@ pub struct ModeRow {
     pub top: bool,
     /// 숨긴 기본 모드(modes-hidden.json) — 고르기·메뉴엔 안 내고 관리 화면 '숨긴 기본 모드'에만
     pub hidden: bool,
+    /// 다른 가벼운 모드와 호스트 하나를 같이 쓰는 중(ADR 0006) — pid 가 같은 줄끼리 한 프로세스다
+    pub shared: bool,
 }
 
 pub fn rows() -> Vec<ModeRow> {
@@ -319,14 +406,16 @@ pub fn rows() -> Vec<ModeRow> {
         .map(|info| {
             let sv = s.get(&info.name);
             let place = modes::pick_where(None, sv, &info.where_default).to_string();
-            let (alive, pid) = host(&info.name).map(|h| { let st = h.st.lock().unwrap(); (st.alive, if st.alive { st.pid } else { 0 }) }).unwrap_or((false, 0));
+            let h = host(&info.name);
+            let (alive, pid) = h.as_ref().map(|h| { let st = h.st.lock().unwrap(); (st.alive, if st.alive { st.pid } else { 0 }) }).unwrap_or((false, 0));
+            let shared = alive && h.is_some_and(|h| !h.members.is_empty());
             let dash = if place == "dash" { sv.and_then(|x| x.dash.clone()) } else { None };
-            ModeRow { on: sv.is_some_and(|x| x.on), place, alive, pid, dash, top: sv.is_some_and(|x| x.top), hidden: hidden.contains(&info.name), info }
+            ModeRow { on: sv.is_some_and(|x| x.on), place, alive, pid, dash, top: sv.is_some_and(|x| x.top), hidden: hidden.contains(&info.name), shared, info }
         })
         .collect()
 }
 
-/// 지금 켜진 모드 호스트 (이름, pid) — 부하 화면이 센다
+/// 지금 켜진 모드 호스트 (호스트 키, pid) — 같이 쓰는 호스트는 하나로 센다
 pub fn running() -> Vec<(String, u32)> {
     hosts().lock().unwrap().iter().filter_map(|(n, h)| { let st = h.st.lock().unwrap(); st.alive.then(|| (n.clone(), st.pid)) }).collect()
 }
@@ -446,16 +535,20 @@ pub fn set_top<R: Runtime>(app: &tauri::AppHandle<R>, name: &str, on: bool) -> R
     Ok(place.to_string())
 }
 
-/// 호스트가 없으면 뒤에서 띄운다(켜기·깨우기). 두 번 불러도 프로세스는 하나
+/// 호스트가 없으면 뒤에서 띄운다(켜기·깨우기). 두 번 불러도 프로세스는 하나. 가벼운 모드는 같이 쓰는 호스트 목록을 다시 맞춘다
 fn ensure_host<R: Runtime>(app: &tauri::AppHandle<R>, info: ModeInfo) {
+    refresh_keys(&list_all());
+    if key_of(&info.name) == modes_light::KEY {
+        schedule_light(app);
+        return;
+    }
     let name = info.name.clone();
     let alive = host(&name).is_some_and(|h| h.st.lock().unwrap().alive);
     if !alive && starting().lock().unwrap().insert(name.clone()) {
         let app2 = app.clone();
         let n = name;
         std::thread::spawn(move || {
-            let dir = if info.source == "example" { modes::write_example(crate::config::data_dir(), &info.name).unwrap_or_else(|_| info.dir.clone().into()) } else { info.dir.clone().into() };
-            let h = start(&info, &dir, &modes::run_dir(crate::config::data_dir(), &n), notifier(&app2));
+            let h = start(&n, &[plugin_dir(&info)], vec![], &modes::run_dir(crate::config::data_dir(), &n), notifier(&app2));
             // 띄우는 사이에 껐으면 남기지 않는다
             if !saved().get(&n).is_some_and(|x| x.on) {
                 starting().lock().unwrap().remove(&n);
@@ -469,6 +562,75 @@ fn ensure_host<R: Runtime>(app: &tauri::AppHandle<R>, info: ModeInfo) {
             crate::refresh_menu(&app2);
         });
     }
+}
+
+/// 모드 폴더 — 예시는 쓸 때 풀어 둔다
+fn plugin_dir(info: &ModeInfo) -> std::path::PathBuf {
+    if info.source == "example" {
+        modes::write_example(crate::config::data_dir(), &info.name).unwrap_or_else(|_| info.dir.clone().into())
+    } else {
+        info.dir.clone().into()
+    }
+}
+
+// ── 같이 쓰는 호스트(ADR 0006) — 켜기·끄기·깨우기를 1초 모아 한 번에 다시 맞춘다 ──
+
+static LIGHT_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 1초 뒤 다시 맞추기. 그동안 아직 안 올라간 모드는 '켜는 중'(starting 에 키)
+fn schedule_light<R: Runtime>(app: &tauri::AppHandle<R>) {
+    starting().lock().unwrap().insert(modes_light::KEY.into());
+    if LIGHT_PENDING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(1));
+        LIGHT_PENDING.store(false, Ordering::SeqCst);
+        relaunch_light(&app, false);
+    });
+}
+
+/// 켜져 있고 안 잠든 가벼운 모드 목록으로 호스트를 맞춘다 — 새 호스트가 붙은 뒤에 옛 것을 꺼서 같이 쓰던 칸이 안 깜빡인다.
+/// wait_old = 옛 호스트가 내려갈 때까지 기다린다(제거 — 그 모드 저장을 옮기기 전에)
+fn relaunch_light<R: Runtime>(app: &tauri::AppHandle<R>, wait_old: bool) {
+    static ONE: Mutex<()> = Mutex::new(());
+    let _g = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    let key = modes_light::KEY;
+    let all = list_all();
+    refresh_keys(&all);
+    let s = saved();
+    let zz = asleep().lock().unwrap().clone();
+    let wanted: Vec<&ModeInfo> = all.iter().filter(|m| key_of(&m.name) == key && s.get(&m.name).is_some_and(|x| x.on) && !zz.contains(&m.name)).collect();
+    let names: Vec<String> = wanted.iter().map(|m| m.name.clone()).collect();
+    let cur = hosts().lock().unwrap().get(key).cloned().filter(|h| h.st.lock().unwrap().alive);
+    let running = cur.as_ref().map(|h| h.names(key));
+    let old = match modes_light::plan(running.as_deref(), &names) {
+        Plan::Keep => None,
+        Plan::Stop => hosts().lock().unwrap().remove(key),
+        Plan::Start(list) => {
+            let dirs: Vec<std::path::PathBuf> = wanted.iter().map(|m| plugin_dir(m)).collect();
+            let plugins = { let t = key_table().lock().unwrap(); list.iter().map(|n| (n.clone(), t.get(n).map(|k| k.plugin.clone()).unwrap_or_else(|| n.clone()))).collect() };
+            let h = start(key, &dirs, plugins, &modes::run_dir(crate::config::data_dir(), key), notifier(app));
+            let old = hosts().lock().unwrap().insert(key.to_string(), h);
+            for n in &list {
+                push_to(app, n, json!({"subtype": "ready"}));
+            }
+            old
+        }
+    };
+    if !LIGHT_PENDING.load(Ordering::SeqCst) {
+        starting().lock().unwrap().remove(key);
+    }
+    if let Some(old) = old {
+        let why = format!("light host list changed → {}", if names.is_empty() { "none".to_string() } else { names.join(", ") });
+        if wait_old {
+            stop_host(&old, &why);
+        } else {
+            drop(std::thread::spawn(move || stop_host(&old, &why)));
+        }
+    }
+    crate::refresh_menu(app);
 }
 
 // ── 재우기(chammo.json keepAlive:false) — 칸이 보이면 화면이 mode_seen(true), 가려지거나 닫히면 false ──
@@ -524,19 +686,23 @@ pub fn mode_seen(app: tauri::AppHandle, name: String, on: bool) {
 }
 
 /// 30초마다 — 재워도 되는 모드 중 안 보인 지 오래된 것의 호스트를 끈다(켜짐 기억은 그대로)
+/// 호스트 단위 — 같이 쓰는 호스트는 올라간 모드가 모두 재워도 될 때만(하나라도 보이면 깨어 있다)
 fn sweep<R: Runtime>(app: &tauri::AppHandle<R>) {
     let now = std::time::Instant::now();
-    let names: Vec<String> = {
+    let live: Vec<(String, Vec<String>)> = hosts().lock().unwrap().iter().filter(|(_, h)| h.st.lock().unwrap().alive).map(|(k, h)| (k.clone(), h.names(k))).collect();
+    let sleepy: Vec<(String, Vec<String>)> = {
         let m = seen().lock().unwrap();
-        running().into_iter().map(|(n, _)| n).filter(|n| m.get(n).is_some_and(|e| modes::should_sleep(e.keep_alive, true, e.viewers, now - e.since))).collect()
+        live.into_iter().filter(|(_, ns)| ns.iter().all(|n| m.get(n).is_some_and(|e| modes::should_sleep(e.keep_alive, true, e.viewers, now - e.since)))).collect()
     };
-    for n in names {
-        let h = hosts().lock().unwrap().remove(&n);
-        asleep().lock().unwrap().insert(n.clone());
+    for (key, names) in sleepy {
+        let h = hosts().lock().unwrap().remove(&key);
+        asleep().lock().unwrap().extend(names.iter().cloned());
         if let Some(h) = h {
             stop_host(&h, "asleep (not shown for 5 min, keepAlive false)");
         }
-        push_to(app, &n, json!({"subtype": "asleep"}));
+        for n in &names {
+            push_to(app, n, json!({"subtype": "asleep"}));
+        }
     }
 }
 
@@ -571,7 +737,7 @@ fn phone_touch<R: Runtime>(app: &tauri::AppHandle<R>, name: &str) {
 pub fn phone_view<R: Runtime>(app: &tauri::AppHandle<R>, name: &str, columns: u32, lines: u32) -> Result<Value, String> {
     phone_touch(app, name);
     let Some(h) = host(name) else { return Ok(json!({"state": phone_state(&HostState::default())})) };
-    let st = h.st.lock().unwrap().clone();
+    let st = h.view(name);
     let mut out = json!({"state": phone_state(&st)});
     let id = st.shown.clone().or_else(|| st.panes.first().and_then(|p| p.get("id")).and_then(Value::as_str).map(str::to_string));
     if let (true, Some(id)) = (st.ready, id) {
@@ -630,8 +796,19 @@ fn turn_off_with<R: Runtime>(app: &tauri::AppHandle<R>, name: &str, wait: bool, 
             x.on = false;
         }
     });
-    let h = hosts().lock().unwrap().remove(name);
     asleep().lock().unwrap().remove(name);
+    if key_of(name) == modes_light::KEY {
+        // 같이 쓰는 호스트 — 나머지 모드로 다시 맞춘다(나머지는 새 호스트가 붙을 때까지 옛 호스트로 그대로 보인다)
+        push_to(app, name, json!({"subtype": "closed"}));
+        if wait {
+            relaunch_light(app, true);
+        } else {
+            schedule_light(app);
+        }
+        crate::refresh_menu(app);
+        return;
+    }
+    let h = hosts().lock().unwrap().remove(name);
     push_to(app, name, json!({"subtype": "closed"}));
     match h {
         Some(h) if wait => stop_host(&h, &format!("turned off by {by}")),
@@ -653,7 +830,12 @@ pub fn window_closed<R: Runtime>(app: &tauri::AppHandle<R>, label: &str) {
 
 /// 멈춘 모드 다시 켜기 — 죽은 호스트를 치우고 같은 자리로
 pub fn restart<R: Runtime>(app: &tauri::AppHandle<R>, name: &str) -> Result<String, String> {
-    hosts().lock().unwrap().remove(name);
+    let key = key_of(name);
+    // 같이 쓰는 호스트가 살아 있으면 남(같이 쓰는 모드)의 호스트다 — 치우지 않고 목록만 다시 맞춘다
+    let keep = key == modes_light::KEY && hosts().lock().unwrap().get(&key).is_some_and(|h| h.st.lock().unwrap().alive);
+    if !keep {
+        hosts().lock().unwrap().remove(&key);
+    }
     open(app, name, None, None, "restart")
 }
 
@@ -906,12 +1088,28 @@ pub fn boot<R: Runtime>(app: &tauri::AppHandle<R>) {
     });
     std::thread::spawn(move || {
         check_version(&app);
+        let all = list_all();
         for (n, s) in saved() {
-            if s.on {
+            if s.on && !boot_sleep(&n, &s, &all) {
                 let _ = open(&app, &n, None, None, "boot");
             }
         }
     });
+}
+
+/// 켤 때 안 보이는 재워도 되는 모드 → 호스트 없이 잠든 채로(보이면 mode_seen 이 깨운다). 예전엔 일단 띄우고 5분 뒤에야 재웠다.
+/// 보는 칸 수 확인과 잠듦 표시를 seen 잠금 안에서 — mode_seen(seen → asleep 순서)이 그 사이에 오면 못 깨우고 잠든 채 남는다
+fn boot_sleep(name: &str, s: &Saved, all: &[ModeInfo]) -> bool {
+    let Some(info) = all.iter().find(|m| m.name == name) else { return false };
+    let mut m = seen().lock().unwrap();
+    let e = m.entry(name.to_string()).or_insert(Seen { viewers: 0, since: std::time::Instant::now(), keep_alive: info.keep_alive });
+    e.keep_alive = info.keep_alive;
+    let sleep = modes::boot_asleep(info.keep_alive, modes::pick_where(None, Some(s), &info.where_default), e.viewers);
+    if sleep {
+        asleep().lock().unwrap().insert(name.to_string());
+        crate::claude::log_out("modes", &format!("{name}: asleep at boot (not shown, keepAlive false)"));
+    }
+    sleep
 }
 
 /// 앱이 꺼질 때 — 호스트를 남기지 않는다
@@ -980,13 +1178,15 @@ pub async fn mode_top(app: tauri::AppHandle, name: String, on: bool) -> Result<S
 #[tauri::command]
 pub fn mode_state(app: tauri::AppHandle, name: String) -> HostState {
     if let Some(h) = host(&name) {
-        return h.st.lock().unwrap().clone();
+        return h.view(&name);
     }
     let on = saved().get(&name).is_some_and(|x| x.on);
-    let is_starting = starting().lock().unwrap().contains(&name);
+    let is_starting = starting().lock().unwrap().contains(&key_of(&name));
     let is_asleep = asleep().lock().unwrap().contains(&name);
     match modes::missing(is_starting, is_asleep, on) {
         modes::Missing::Starting => HostState::default(),
+        // 보는 칸이 있을 때만 깨운다 — 숨은 창(로그인 때 뒤에서 켜진 앱)이 상태만 읽어도 깨우면 켤 때 재운 게 소용없다. 보이면 mode_seen 이 깨운다
+        modes::Missing::Wake if !seen().lock().unwrap().get(&name).is_some_and(|e| e.viewers > 0) => HostState::default(),
         modes::Missing::Wake => {
             asleep().lock().unwrap().remove(&name);
             if let Some(info) = list_all().into_iter().find(|m| m.name == name) {
@@ -1214,7 +1414,7 @@ pub fn answer<R: Runtime>(app: &tauri::AppHandle<R>, req: &crate::appctl::ModeRe
                 .map(|r| {
                     let at = r.dash.as_deref().map(|d| format!(" {d}")).unwrap_or_default();
                     let zz = asleep().lock().unwrap().contains(&r.info.name);
-                    let st = if r.on { format!("on · {}{at}{}{}", r.place, if r.top && r.place == "window" { " · on top" } else { "" }, if r.alive { "" } else if zz { " · asleep (wakes when shown)" } else { " · not running" }) } else { "off".into() };
+                    let st = if r.on { format!("on · {}{at}{}{}", r.place, if r.top && r.place == "window" { " · on top" } else { "" }, if r.alive { if r.shared { " · shared light host" } else { "" } } else if zz { " · asleep (wakes when shown)" } else { " · not running" }) } else { "off".into() };
                     format!("{}\t{}\t{}\t{}{}", r.info.name, r.info.title, r.info.source, st, if r.hidden { " · hidden (restore-builtin)" } else { "" })
                 })
                 .collect();
@@ -1294,6 +1494,37 @@ mod tests {
     }
 
     #[test]
+    fn 같이_쓰는_호스트는_모드마다_제_칸만_보인다() {
+        let st = HostState {
+            alive: true,
+            ready: true,
+            status: Some("마지막 것".into()),
+            panes: vec![json!({"id": "calendar", "plugin": "home-calendar"}), json!({"id": "todo", "plugin": "home-todo"})],
+            shown: Some("todo".into()),
+            ..Default::default()
+        };
+        let m = vec![("cal".to_string(), "home-calendar".to_string()), ("td".to_string(), "home-todo".to_string())];
+        let v = view_of(&st, &m, "cal");
+        assert_eq!((v.panes.len(), v.shown.as_deref(), v.ready), (1, Some("calendar"), true));
+        assert_eq!(view_of(&st, &m, "td").shown.as_deref(), Some("todo"));
+        assert_eq!(v.status.as_deref(), Some("마지막 것"), "플러그인 모르는 상태줄은 모두에게");
+        let mut st2 = st.clone();
+        st2.status_of.insert("home-todo".into(), Some("할 일 3".into()));
+        assert_eq!(view_of(&st2, &m, "td").status.as_deref(), Some("할 일 3"));
+        assert_eq!(view_of(&st2, &m, "cal").status, None, "남의 상태줄은 안 보인다");
+        assert_eq!(view_of(&st, &[], "x").panes.len(), 2, "자기 호스트는 그대로(회귀)");
+    }
+
+    #[test]
+    fn 밀림은_자기_호스트면_그_모드_같이_쓰면_주인에게() {
+        let m = vec![("cal".to_string(), "home-calendar".to_string()), ("td".to_string(), "home-todo".to_string())];
+        let panes = vec![json!({"id": "todo", "plugin": "home-todo"})];
+        assert_eq!(push_targets("solo", &[], &json!({"subtype": "ui_toast"}), &panes), ["solo"]);
+        assert_eq!(push_targets(modes_light::KEY, &m, &json!({"subtype": "ui_invalidate", "instances": ["todo"]}), &panes), ["td"]);
+        assert_eq!(push_targets(modes_light::KEY, &m, &json!({"subtype": "exit"}), &panes), ["cal", "td"], "호스트가 죽으면 같이 쓰는 모드 모두");
+    }
+
+    #[test]
     fn 카드_그림은_모드마다_30초에_한_번_막힌_건_뒤늦게() {
         let t0 = std::time::Instant::now();
         assert_eq!(modes::card_wait(None, t0, CARD_EVERY), None, "처음은 바로");
@@ -1322,7 +1553,7 @@ mod tests {
 
     #[test]
     fn 메뉴는_내가_만든_것과_참모_모드를_나눈다() {
-        let row = |name: &str, source: &'static str| ModeRow { info: ModeInfo { name: name.into(), title: name.into(), source, dir: "/x".into(), where_default: "window".into(), keep_alive: true }, on: false, place: "window".into(), alive: false, pid: 0, dash: None, top: false, hidden: false };
+        let row = |name: &str, source: &'static str| ModeRow { info: ModeInfo { name: name.into(), title: name.into(), source, dir: "/x".into(), where_default: "window".into(), keep_alive: true, light: false }, on: false, place: "window".into(), alive: false, pid: 0, dash: None, top: false, hidden: false, shared: false };
         let gone = |name: &str, source: &'static str| ModeRow { hidden: true, ..row(name, source) };
         let (own, ours) = menu_groups(vec![row("home-calendar", "example"), row("sales", "added"), row("home-todo", "example"), row("memo", "folder"), row("plug", "plugin"), gone("home-board", "example"), gone("plug2", "plugin")]);
         assert_eq!(own.iter().map(|r| r.info.name.as_str()).collect::<Vec<_>>(), ["sales", "memo", "plug"]);
@@ -1350,8 +1581,8 @@ mod tests {
 
     #[test]
     fn 항상_위_메뉴는_따로_창_자리에서만_누를_수_있고_기억대로_체크된다() {
-        let info = ModeInfo { name: "clock".into(), title: "Clock".into(), source: "folder", dir: "/x".into(), where_default: "window".into(), keep_alive: true };
-        let row = |on: bool, place: &str, top: bool| ModeRow { info: info.clone(), on, place: place.into(), alive: on, pid: 0, dash: None, top, hidden: false };
+        let info = ModeInfo { name: "clock".into(), title: "Clock".into(), source: "folder", dir: "/x".into(), where_default: "window".into(), keep_alive: true, light: false };
+        let row = |on: bool, place: &str, top: bool| ModeRow { info: info.clone(), on, place: place.into(), alive: on, pid: 0, dash: None, top, hidden: false, shared: false };
         assert_eq!(top_item(&row(true, "window", true)), (true, true));
         assert_eq!(top_item(&row(true, "window", false)), (false, true));
         assert_eq!(top_item(&row(false, "window", true)), (true, true), "꺼져 있어도 다음에 창으로 켤 때 쓴다");
@@ -1377,7 +1608,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         let dir = modes::write_example(&d, "home-calendar").unwrap();
         let info = modes::discover(&d, &Value::Null).into_iter().find(|m| m.name == "home-calendar").unwrap();
-        let h = start(&info, &dir, &modes::run_dir(&d, "home-calendar"), Arc::new(|_: &str, _: Value| {}));
+        let h = start(&info.name, &[dir], vec![], &modes::run_dir(&d, "home-calendar"), Arc::new(|_: &str, _: Value| {}));
         let st = h.st.lock().unwrap().clone();
         assert!(st.ready && !st.unsupported, "{st:?}");
         assert_eq!(st.panes[0]["id"], "calendar");
@@ -1386,6 +1617,65 @@ mod tests {
         stop_host(&h, "test");
         std::thread::sleep(Duration::from_millis(500));
         assert!(!h.st.lock().unwrap().alive, "끄면 프로세스가 끝난다");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    // 같이 쓰는 호스트 실측(ADR 0006) — 맛보기 넷을 한 호스트에 올려 모드마다 제 칸만 보이고 그려지는지, 하나를 빼고 다시 띄우면 나머지가 사는지,
+    // 호스트가 죽으면 넷 다 알림을 받고 다시 띄우면 넷 다 사는지. 누르기는 안 한다($.store 는 진짜 Claude 설정 폴더)
+    // cargo test --bin honor-orchestrator modes_host::tests::진짜_claude_로_맛보기_넷이_한_호스트를 -- --ignored --exact 로
+    #[test]
+    #[ignore]
+    fn 진짜_claude_로_맛보기_넷이_한_호스트를_같이_쓴다() {
+        let d = std::env::temp_dir().join(format!("chammo-modelight-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let all = modes::discover(&d, &Value::Null);
+        let four: Vec<&ModeInfo> = all.iter().filter(|m| modes::HOME_TRY.contains(&m.name.as_str())).collect();
+        let cands: Vec<modes_light::Cand> = four.iter().map(|m| modes_light::cand(m)).collect();
+        assert!(modes_light::keys(&cands).iter().all(|(_, k, _)| k == modes_light::KEY));
+        let members = |ms: &[&ModeInfo]| ms.iter().map(|m| (m.name.clone(), m.name.clone())).collect::<Vec<_>>();
+        let dirs = |ms: &[&ModeInfo]| ms.iter().map(|m| modes::write_example(&d, &m.name).unwrap()).collect::<Vec<_>>();
+        let got = Arc::new(Mutex::new(Vec::<(String, String)>::new()));
+        let g2 = got.clone();
+        let note: Notify = Arc::new(move |n: &str, v: Value| g2.lock().unwrap().push((n.to_string(), v["subtype"].as_str().unwrap_or("").to_string())));
+        let run = modes::run_dir(&d, modes_light::KEY);
+        let t0 = std::time::Instant::now();
+        let h = start(modes_light::KEY, &dirs(&four), members(&four), &run, note.clone());
+        println!("붙기 {:?}", t0.elapsed());
+        assert!(h.st.lock().unwrap().ready, "{:?}", h.st.lock().unwrap());
+        std::thread::sleep(Duration::from_secs(2)); // 칸 목록 밀림
+        for m in &four {
+            let v = h.view(&m.name);
+            assert_eq!(v.panes.len(), 1, "{} 칸: {:?}", m.name, v.panes);
+            let id = v.shown.clone().unwrap();
+            let r = h.call(modes::render_req("Pane", &id, 60, 20), Duration::from_secs(10)).unwrap();
+            assert_eq!(r["tree"]["type"], "Box", "{} 가 그려진다: {r}", m.name);
+        }
+        // 하나(할 일) 끄기 = 나머지 셋으로 새 호스트 → 붙은 뒤 옛 것을 끈다
+        let three: Vec<&ModeInfo> = four.iter().copied().filter(|m| m.name != "home-todo").collect();
+        let h3 = start(modes_light::KEY, &dirs(&three), members(&three), &run, note.clone());
+        stop_host(&h, "test: list changed");
+        std::thread::sleep(Duration::from_secs(2));
+        assert!(!h.st.lock().unwrap().alive && h3.st.lock().unwrap().alive);
+        for m in &three {
+            let id = h3.view(&m.name).shown.expect("남은 모드 칸");
+            assert_eq!(h3.call(modes::render_req("Pane", &id, 60, 20), Duration::from_secs(10)).unwrap()["tree"]["type"], "Box");
+        }
+        assert!(h3.members.iter().all(|(n, _)| n != "home-todo"), "끈 모드는 목록에 없다");
+        assert!(modes_light::panes_of(&h3.st.lock().unwrap().panes, "home-todo").is_empty(), "끈 모드 칸도 없다");
+        // 호스트가 죽으면 같이 쓰던 셋 다 'exit' 를 받는다
+        got.lock().unwrap().clear();
+        if let Some(c) = h3.child.lock().unwrap().as_mut() {
+            let _ = c.kill();
+        }
+        std::thread::sleep(Duration::from_secs(1));
+        let exits: Vec<String> = got.lock().unwrap().iter().filter(|(_, k)| k == "exit").map(|(n, _)| n.clone()).collect();
+        assert_eq!(exits, three.iter().map(|m| m.name.clone()).collect::<Vec<_>>());
+        // 다시 켜기 = 켜진 것 다 같이
+        let h4 = start(modes_light::KEY, &dirs(&four), members(&four), &run, note);
+        assert!(h4.st.lock().unwrap().ready);
+        std::thread::sleep(Duration::from_secs(2));
+        assert!(four.iter().all(|m| h4.view(&m.name).shown.is_some()));
+        stop_host(&h4, "test");
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -1409,8 +1699,8 @@ mod tests {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, body).unwrap();
         }
-        let info = ModeInfo { name: "kitp".into(), title: "K".into(), source: "folder", dir: dir.to_string_lossy().into_owned(), where_default: "window".into(), keep_alive: true };
-        let h = start(&info, &dir, &modes::run_dir(&d, "kitp"), Arc::new(|_: &str, _: Value| {}));
+        let info = ModeInfo { name: "kitp".into(), title: "K".into(), source: "folder", dir: dir.to_string_lossy().into_owned(), where_default: "window".into(), keep_alive: true, light: false };
+        let h = start(&info.name, &[dir.clone()], vec![], &modes::run_dir(&d, "kitp"), Arc::new(|_: &str, _: Value| {}));
         assert!(h.st.lock().unwrap().ready, "{:?}", h.st.lock().unwrap());
         let r = h.call(modes::render_req("Pane", "ok", 80, 20), Duration::from_secs(10)).unwrap();
         let kids = &r["tree"]["children"];
@@ -1444,8 +1734,8 @@ mod tests {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, body).unwrap();
         }
-        let info = ModeInfo { name: "kprobe".into(), title: "P".into(), source: "folder", dir: dir.to_string_lossy().into_owned(), where_default: "window".into(), keep_alive: true };
-        let h = start(&info, &dir, &modes::run_dir(&d, "kprobe"), Arc::new(|_: &str, _: Value| {}));
+        let info = ModeInfo { name: "kprobe".into(), title: "P".into(), source: "folder", dir: dir.to_string_lossy().into_owned(), where_default: "window".into(), keep_alive: true, light: false };
+        let h = start(&info.name, &[dir.clone()], vec![], &modes::run_dir(&d, "kprobe"), Arc::new(|_: &str, _: Value| {}));
         for (i, j) in jsxs.iter().enumerate() {
             let r = h.call(modes::render_req("Pane", &format!("p{i}"), 80, 20), Duration::from_secs(10));
             println!("PROBE {j}\n  => {}", r.map(|v| v["tree"].to_string()).unwrap_or_else(|e| format!("ERR {e}")));
@@ -1472,10 +1762,10 @@ mod tests {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, body).unwrap();
         }
-        let info = ModeInfo { name: "tick".into(), title: "Tick".into(), source: "folder", dir: dir.to_string_lossy().into_owned(), where_default: "window".into(), keep_alive: true };
+        let info = ModeInfo { name: "tick".into(), title: "Tick".into(), source: "folder", dir: dir.to_string_lossy().into_owned(), where_default: "window".into(), keep_alive: true, light: false };
         let pushes = Arc::new(Mutex::new(Vec::<Value>::new()));
         let p2 = pushes.clone();
-        let h = start(&info, &dir, &modes::run_dir(&d, "tick"), Arc::new(move |_: &str, v: Value| p2.lock().unwrap().push(v)));
+        let h = start(&info.name, &[dir.clone()], vec![], &modes::run_dir(&d, "tick"), Arc::new(move |_: &str, v: Value| p2.lock().unwrap().push(v)));
         assert!(h.st.lock().unwrap().ready, "{:?}", h.st.lock().unwrap());
         let r = h.call(modes::render_req("Pane", "board", 80, 20), Duration::from_secs(10)).unwrap();
         let node = &r["tree"]["children"][0];

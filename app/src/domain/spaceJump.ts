@@ -18,18 +18,23 @@ export function showPlace(owner: string | null, viewing: string | undefined, cha
   return owner === chat ? 'chat' : 'queue';
 }
 
-/** 한 번에 읽은 띄운 파일 여럿(show 기록은 3초마다 읽는다) — 다른 참모 것은 하나하나 그 탭에(queue), 지금 화면에 띄울 건 마지막 하나(here).
- *  마지막 줄만 보니 두 참모가 같이 띄우면 앞 참모 문서가 그 탭에 안 들어갔다(2026-10-11) */
-export function showBatch<T extends { by: string }>(fresh: T[], ownerOf: (by: string) => string | null, viewing: string | undefined, chat?: string): { queue: { owner: string; show: T }[]; here: { show: T; place: 'here' | 'chat'; owner: string | null } | null } {
+/** 한 번에 읽은 띄운 파일 여럿(show 기록은 3초마다 읽는다) — 다른 참모 것은 하나하나 그 탭에(queue), 지금 화면에 띄울 건 차례로 다(here, 마지막 것이 보인다).
+ *  채팅 탭 참모 것이 있으면 그 참모로 옮겨(go) 띄우고, 보던 참모 것은 그 참모 탭 줄에 넣어 둔다. 주인 모르는 것은 옮겨 간 화면에.
+ *  마지막 줄만 보니 두 참모가 같이 띄우면 앞 참모 문서가 그 탭에 안 들어갔고(2026-10-11), 보는 참모 것과 채팅 탭 참모 것이 같이 오면 앞 것이 버려졌다(bug-hunt L12).
+ *  부르는 쪽 차례: go 로 옮기기 → queue 넣기(떠난 참모 탭 줄이 저장된 뒤라야 거기 쌓인다) → here 띄우기 */
+export function showBatch<T extends { by: string }>(fresh: T[], ownerOf: (by: string) => string | null, viewing: string | undefined, chat?: string): { queue: { owner: string; show: T }[]; go: string | null; here: { show: T; owner: string | null }[] } {
   const queue: { owner: string; show: T }[] = [];
-  let here: { show: T; place: 'here' | 'chat'; owner: string | null } | null = null;
+  const mine: { show: T; owner: string | null }[] = [];
+  let go: string | null = null;
   for (const show of fresh) {
     const owner = ownerOf(show.by);
     const place = showPlace(owner, viewing, chat);
     if (place === 'queue' && owner) queue.push({ owner, show });
-    else here = { show, place: place === 'chat' ? 'chat' : 'here', owner };
+    else { if (place === 'chat') go = owner; mine.push({ show, owner }); }
   }
-  return { queue, here };
+  if (!go) return { queue, go, here: mine };
+  for (const m of mine) if (m.owner && m.owner !== go) queue.push({ owner: m.owner, show: m.show });
+  return { queue, go, here: mine.filter((m) => !m.owner || m.owner === go) };
 }
 
 /** 다른 참모가 띄운 파일 — 그 참모 탭 줄 끝에 새 탭으로 넣어 두고 그 탭을 연 화면으로(그 참모로 가면 그 탭이 떠 있다).

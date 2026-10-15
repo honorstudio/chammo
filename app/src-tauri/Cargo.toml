@@ -1,6 +1,6 @@
 [package]
 name = "honor-orchestrator"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 license = "AGPL-3.0-only"
 
@@ -46,6 +46,8 @@ zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate
 # zip 의 deflate-flate2 는 압축 백엔드를 안 켠다 — 맥은 png(tauri 매크로)가 켠 기본 백엔드와 합쳐져 통과하지만 윈도우 교차 빌드는
 # 타깃용 flate2 를 따로 지어 'choose a zlib backend' 로 깨진다(0.3.0). 맥이 이미 쓰던 miniz_oxide 그대로(src/cargoFeatures.test.ts)
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+# 앱 자동 업데이트(ADR 0005, updater.rs) — Rust 명령에서만 부른다(JS 플러그인·권한 파일 없음). 2.12+ 는 tauri ^2.12 를 요구해서 앱의 tauri 2.11 에 맞춘 판으로 고정
+tauri-plugin-updater = "=2.11.0"
 
 # 알림을 앱 이름·아이콘으로(UNUserNotificationCenter). osascript 로 보내면 "스크립트 편집기" 로 묶이고 눌러도 앱이 안 열린다
 # 윈도우 알림(토스트) — Tauri 알림 플러그인이 윈도우에서 쓰는 것과 같은 크레이트

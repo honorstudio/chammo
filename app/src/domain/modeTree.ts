@@ -256,7 +256,7 @@ export function modeNote(s: Pick<HostState, 'alive' | 'ready' | 'unsupported' | 
 }
 
 /** mode_list 한 줄(Rust modes_host::ModeRow). dash = 대시보드 칸이면 어느 대시보드(참모·프로젝트 이름) */
-export type ModeRow = { name: string; title: string; source: 'folder' | 'added' | 'plugin' | 'example'; dir: string; whereDefault: string; keepAlive?: boolean; on: boolean; where: string; alive: boolean; pid: number; dash?: string | null; top?: boolean; hidden?: boolean };
+export type ModeRow = { name: string; title: string; source: 'folder' | 'added' | 'plugin' | 'example'; dir: string; whereDefault: string; keepAlive?: boolean; /** chammo.json light — 다른 가벼운 모드와 호스트 하나를 같이 쓴다(ADR 0006) */ light?: boolean; on: boolean; where: string; alive: boolean; pid: number; dash?: string | null; top?: boolean; hidden?: boolean; /** 다른 가벼운 모드와 호스트 하나를 같이 쓰는 중 — pid 가 같은 줄끼리 한 프로세스 */ shared?: boolean };
 
 /** 따로 창 '항상 위' — 처음엔 mode_list 의 기억(rows), 그 뒤엔 지금 값(boolean)에 Rust 밀림 {subtype:'top', on} 을 얹는다 */
 export function modeTop(cur: ModeRow[] | boolean, name: string, msg?: { name: string; ev: { subtype?: string; on?: boolean } }): boolean {

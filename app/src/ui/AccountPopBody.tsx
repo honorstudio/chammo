@@ -10,6 +10,9 @@ export type PopBodyProps = {
   auto: boolean;
   busy: boolean;
   error: string | null;
+  /** 그 오류가 그 계정으로 로그인하면 풀리는 것(갱신 막힘·죽은 갱신 토큰) — 오류 줄 옆에 '로그인해서 바꾸기' */
+  fix?: boolean;
+  onFix?: () => void;
   /** 다른 계정 줄을 눌렀다 — 그 칸으로 바꾸고 고정 */
   onUse: (id: string) => void;
   onAuto: (on: boolean) => void;
@@ -21,7 +24,7 @@ export type PopBodyProps = {
  * 머리 = 지금 계정의 다가오는 초기화·다 쓰면 어디로 + 설정 아이콘, 줄 = 체크·이름·점·숫자 하나(둘 중 적은 쪽, 상세는 마우스 올림),
  * 아래 = 자동 전환 토글. 다른 계정 줄을 누르면 바꾼다(글자 버튼 없음)
  */
-export function AccountPopBody({ rows, head, auto, busy, error, onUse, onAuto, onSettings }: PopBodyProps) {
+export function AccountPopBody({ rows, head, auto, busy, error, fix, onFix, onUse, onAuto, onSettings }: PopBodyProps) {
   return (
     <>
       <div className="acct-pop-head">
@@ -46,7 +49,12 @@ export function AccountPopBody({ rows, head, auto, busy, error, onUse, onAuto, o
             : <button key={r.id} type="button" className="acct-pop-row" disabled={busy} title={r.tip} aria-label={tr(`${r.name} 계정으로 바꾸기`, `Switch to ${r.name}`)} onClick={() => onUse(r.id)}>{inner}</button>;
         })}
       </div>
-      {error && <div className="acct-pop-err">{error}</div>}
+      {error && (
+        <div className="acct-pop-err">
+          <span>{error}</span>
+          {fix && onFix && <button type="button" className="btn acct-pop-fix" disabled={busy} onClick={onFix}>{tr('로그인해서 바꾸기', 'Sign in to switch')}</button>}
+        </div>
+      )}
       <div className="acct-pop-foot">
         <span className="acct-pop-foot-label">{tr('자동 전환', 'Auto-switch')}</span>
         <button type="button" role="switch" aria-checked={auto} aria-label={tr('자동 전환', 'Auto-switch')} className="acct-pop-switch" disabled={busy} onClick={() => onAuto(!auto)}><i /></button>

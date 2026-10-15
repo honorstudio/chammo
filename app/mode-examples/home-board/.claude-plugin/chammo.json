@@ -1,1 +1,1 @@
-{ "title": "현황판", "where": "dash", "size": { "w": 420, "h": 320 } }
+{ "title": "현황판", "where": "dash", "size": { "w": 420, "h": 320 }, "light": true }

@@ -139,3 +139,100 @@ describe('pending — 고친 것 모아 두기는 키 하나에 가볍게', () =
     expect(p.pendingNow().docs).toEqual([{ path: doc(1), diff: { added: ['b2'], removed: ['b'] } }]);
   });
 });
+
+// fix/md-lag 남은 것(2026-10-11) — 메인 창과 리더 창이 '보낼 것' 기억을 따로 들고 통째로 덮어써서, 리더에서 코멘트를 달면
+// 메인 창의 고친 것이 기억에서 빠졌다. 쓸 때는 이 창이 바꾼 것만 얹고, 다른 창이 쓰면(storage 사건) 받아 합친다
+describe('pending — 두 창(메인·리더)이 같은 기억을 나눠 쓴다', () => {
+  type P = Awaited<ReturnType<typeof load>>;
+  let wins: { p: P; on: Record<string, (e: { key: string | null }) => void> }[];
+  const open = async () => {
+    const on: Record<string, (e: { key: string | null }) => void> = {};
+    vi.stubGlobal('window', { addEventListener: (n: string, f: (e: { key: string | null }) => void) => { on[n] = f; } });
+    const p = await load();
+    wins.push({ p, on });
+    return wins.length - 1;
+  };
+  /** 한 창이 기억에 쓰면 다른 창들에 storage 사건이 간다(같은 창엔 안 간다 — 브라우저 규칙) */
+  const flush = (from: number) => {
+    wins[from]!.on.pagehide?.({ key: null });
+    for (const [i, w] of wins.entries()) if (i !== from) for (const key of ['spacePending', 'spaceComments', 'spacePendingSheets']) w.on.storage?.({ key });
+  };
+  beforeEach(() => {
+    store = new Map(); sets = []; wins = [];
+    vi.useFakeTimers();
+    vi.stubGlobal('localStorage', fakeStorage());
+  });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  it('재현: 메인이 고친 것(아직 안 씀) + 리더가 코멘트 — 리더 쓰기가 메인 고친 것을 지우지 않는다', async () => {
+    const main = await open();
+    const reader = await open();
+    const m = wins[main]!.p, r = wins[reader]!.p;
+    m.setBaseline(doc(1), body(1));
+    m.setCurrent(doc(1), body(1) + '\n첫');
+    flush(main);
+    m.setCurrent(doc(1), body(1) + '\n첫\n둘'); // 1초 모으는 중 — 아직 기억에 안 씀
+    r.addComment({ path: doc(2), quote: '줄', text: '리더 코멘트' }); // 리더는 바로 쓴다
+    for (const key of ['spaceComments']) wins[main]!.on.storage?.({ key });
+    vi.advanceTimersByTime(2000); // 메인이 모은 것을 쓴다
+    expect(saved()[doc(1)]!.current).toBe(body(1) + '\n첫\n둘');
+    expect(JSON.parse(store.get('spaceComments')!).map((c: { text: string }) => c.text)).toEqual(['리더 코멘트']);
+  });
+
+  it('리더가 쓴 것을 메인이 바로 받는다 — 코멘트·고친 문서', async () => {
+    const main = await open();
+    const reader = await open();
+    const m = wins[main]!.p, r = wins[reader]!.p;
+    r.setBaseline(doc(3), 'a');
+    r.setCurrent(doc(3), 'a\n리더');
+    r.addComment({ path: doc(3), quote: 'a', text: '여기' });
+    flush(reader);
+    expect(m.pendingNow().docs).toEqual([{ path: doc(3), diff: { added: ['리더'], removed: [] } }]);
+    expect(m.pendingNow().comments.map((c) => c.text)).toEqual(['여기']);
+  });
+
+  it('메인이 보내면(markSent) 리더에서도 사라지고, 리더가 다시 써도 되살아나지 않는다', async () => {
+    const main = await open();
+    const reader = await open();
+    const m = wins[main]!.p, r = wins[reader]!.p;
+    r.setBaseline(doc(4), 'a');
+    r.setCurrent(doc(4), 'a\n리더');
+    r.addComment({ path: doc(4), quote: 'a', text: '여기' });
+    flush(reader);
+    m.markSent();
+    flush(main);
+    expect(r.pendingNow().docs).toEqual([]);
+    expect(r.pendingNow().comments).toEqual([]);
+    r.addComment({ path: doc(5), quote: 'b', text: '새 코멘트' });
+    flush(reader);
+    expect(saved()).toEqual({});
+    expect(m.pendingNow().comments.map((c) => c.text)).toEqual(['새 코멘트']);
+  });
+
+  it('두 창이 다른 문서를 고치면 둘 다 남는다', async () => {
+    const main = await open();
+    const reader = await open();
+    const m = wins[main]!.p, r = wins[reader]!.p;
+    m.setBaseline(doc(6), 'x'); m.setCurrent(doc(6), 'x\n메인');
+    r.setBaseline(doc(7), 'y'); r.setCurrent(doc(7), 'y\n리더');
+    flush(main); flush(reader);
+    expect(Object.keys(saved()).sort()).toEqual([doc(6), doc(7)].sort());
+    expect(m.pendingNow().docs.map((d) => d.path).sort()).toEqual([doc(6), doc(7)].sort());
+    expect(r.pendingNow().docs.map((d) => d.path).sort()).toEqual([doc(6), doc(7)].sort());
+  });
+
+  it('지운 코멘트는 다른 창이 써도 되살아나지 않는다', async () => {
+    const main = await open();
+    const reader = await open();
+    const m = wins[main]!.p, r = wins[reader]!.p;
+    m.addComment({ path: doc(8), quote: 'q', text: '지울 것' });
+    flush(main);
+    const id = r.pendingNow().comments[0]!.id;
+    r.removeComment(id);
+    flush(reader);
+    m.addComment({ path: doc(8), quote: 'q', text: '남길 것' });
+    flush(main);
+    expect(JSON.parse(store.get('spaceComments')!).map((c: { text: string }) => c.text)).toEqual(['남길 것']);
+    expect(r.pendingNow().comments.map((c) => c.text)).toEqual(['남길 것']);
+  });
+});

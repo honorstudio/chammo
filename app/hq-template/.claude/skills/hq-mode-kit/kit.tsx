@@ -73,3 +73,14 @@ export const SkinBar = (ui: UI, skins: { id: string; name: string }[], current: 
     {skins.map((s) => <ui.Button key={`skin-${s.id}`} label={s.name} variant={s.id === current ? 'primary' : undefined} onPress={() => onPick(s.id)} />)}
   </ui.Box>
 )
+
+/**
+ * 뒤로 — 안쪽 화면(날짜 보기·상세처럼 눌러 들어간 화면)에서 나오는 단추. 늘 트리 맨 앞(왼쪽 위)에, 돌아갈 곳 이름을 단다('10월').
+ * 칸 머리엔 X 가 없다(칸 끄기는 ⋯ 메뉴) — 안쪽 화면을 만들면 이 단추가 유일한 뒤로 길이다.
+ * Chammo 데스크톱·폰은 key mode-back 을 보고 같은 모양(‹ + 이름, 폰 44px)으로 그리고, 폰은 칸 왼쪽 끝에서 밀어도 이 단추를 누른다
+ */
+export const BackBar = (ui: UI, to: string, onBack: () => void, key = 'mode-back-bar') => (
+  <ui.Box key={key} flexDirection="row">
+    <ui.Button key="mode-back" label={`뒤로 — ${to}`} onPress={onBack}>{`‹ ${to}`}</ui.Button>
+  </ui.Box>
+)

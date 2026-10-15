@@ -9,6 +9,7 @@ import { dragStarted, dropIndex, railOut, tabShift } from '../../domain/tabDrag'
 import { dragGhost, insertToChat } from './dragPath';
 import { lostRelease } from './dragEnd';
 import { railMoved } from '../../domain/railRows';
+import { wakeOnce } from '../../domain/railWake';
 import { orchVars } from '../../domain/orchTheme';
 import { assistant, tr } from '../../i18n';
 import { IconCalendarClock, IconChevron, IconPeople, IconPlus } from '../Icons';
@@ -244,6 +245,14 @@ export function OrchRail({ avatars, onPick, onMenu, onRename, onMove, onNew, onE
       document.removeEventListener('visibilitychange', vis);
     };
   }, [tipOpen]);
+  // 쉬는 참모 깨우기 — click 하나에만 기대지 않는다(윈도우에서 호버 카드가 막 뜬 첫 누름은 click 이 안 왔다, 2026-10-15). 눌렀다 뗌(pointerup)도 깨우고 둘이 겹치면 한 번만
+  const pressed = useRef<string | null>(null);
+  const woke = useRef<{ key: string; at: number }>({ key: '', at: 0 });
+  const wake = (r: RailResting) => {
+    const w = wakeOnce(woke.current.key === r.key ? woke.current.at : 0, Date.now()); // 다른 칸은 따로 — 연달아 둘을 깨울 수 있게
+    woke.current = { key: r.key, at: w.at };
+    if (w.wake) r.onWake();
+  };
   const schedBtn = sched && (
     <button className={`rail-fn ${sched.on ? 'on' : ''}`} aria-pressed={sched.on} onClick={sched.onToggle} aria-label={tr('예약', 'Scheduled')} data-tip={sched.on ? tr('예약 닫기', 'Close scheduled') : tr('예약', 'Scheduled')}><IconCalendarClock /></button>
   );
@@ -281,7 +290,9 @@ export function OrchRail({ avatars, onPick, onMenu, onRename, onMove, onNew, onE
       {wide && resting.length > 0 && <span className="lk-cap">{tr(`쉬는 ${assistant()} ${resting.length}`, `Resting ${resting.length}`)}</span>}
       <div className="lk-rests">
         {resting.map((r) => (
-          <button key={r.key} data-flip={r.key} className="lk-av rest" onClick={r.onWake} onContextMenu={r.onMenu} aria-label={tr(`${r.label} 깨우기`, `Resume ${r.label}`)}
+          <button key={r.key} data-flip={r.key} className="lk-av rest" onPointerDown={(e) => { if (e.button === 0) pressed.current = r.key; }}
+            onPointerUp={(e) => { if (e.button === 0 && !e.ctrlKey && pressed.current === r.key) wake(r); pressed.current = null; }}
+            onClick={() => wake(r)} onContextMenu={r.onMenu} aria-label={tr(`${r.label} 깨우기`, `Resume ${r.label}`)}
             data-tip={r.label} data-tip-sub={tr('쉬는 중 — 누르면 깨움', 'Resting — click to resume')} data-tip-dot="off">{r.node}</button>
         ))}
       </div>

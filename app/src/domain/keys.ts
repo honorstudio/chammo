@@ -60,5 +60,11 @@ export function keyLabel(text: string, win: boolean): string {
   });
 }
 
+/** 화면 글 속 파인더·Finder → 윈도우 탐색기·File Explorer. 맥이면 그대로(조사는 둘 다 받침 없어 안 바뀐다) */
+export function fileManagerLabel(text: string, win: boolean): string {
+  if (!win) return text;
+  return text.replace(/파인더/g, '탐색기').replace(/\bFinder\b/g, 'File Explorer');
+}
+
 /** 맥 ⌘ 자리 수정키(⌘Enter 끊고 보내기·⌘클릭 링크)가 눌렸나 — 윈도우는 Ctrl */
 export const modKey = (e: { metaKey: boolean; ctrlKey: boolean }, win: boolean): boolean => (win ? e.ctrlKey : e.metaKey);

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { accountError, switchFailure, addState, allOut, moved, popHead, popRows, slotText, slotUsageText, topLabel, usageOf, weekText, type AccountsView } from './accounts';
+import { accountError, accountLoginCommand, loginFixes, reloginDone, switchFailure, addState, allOut, moved, popHead, popRows, slotText, slotUsageText, topLabel, usageOf, weekText, type AccountsView } from './accounts';
 
 const view = (p: Partial<AccountsView> = {}): AccountsView => ({
   accounts: [
@@ -72,9 +72,23 @@ describe('accountError — 오류 이름을 글로', () => {
     expect(accountError('refresh:http500')).toContain('http500');
   });
   it('자동 전환: busy 는 알림 없이 잠깐 뒤 다시, 나머지는 알리고 오래 쉰다', () => {
-    expect(switchFailure('busy')).toEqual({ notify: false, restMs: 30_000 });
-    expect(switchFailure('refresh:dead')).toEqual({ notify: true, restMs: 5 * 60_000 });
-    expect(switchFailure('locked')).toEqual({ notify: true, restMs: 5 * 60_000 });
+    expect(switchFailure('busy')).toEqual({ notify: false, restMs: 30_000, rate: false });
+    expect(switchFailure('refresh:dead')).toEqual({ notify: true, restMs: 5 * 60_000, rate: false });
+    expect(switchFailure('locked')).toEqual({ notify: true, restMs: 5 * 60_000, rate: false });
+  });
+  // 2026-10-15 17:0x 실제 — 갱신 주소가 이 맥 IP 를 잠깐 막아(429) '새로 받지 못했어요(http429)'가 떴다. 계정 문제가 아니다
+  it('갱신 429(rate) — 계정 문제가 아니라고, 몇 분 뒤에 다시', () => {
+    expect(accountError('refresh:rate:600')).toBe('Anthropic 쪽이 잠깐 요청을 막았어요(이 맥에서 요청이 많음) — 계정 문제는 아니에요. 10분 뒤 다시 해 주세요.');
+    expect(accountError('refresh:rate:90')).toContain('2분 뒤');
+    expect(accountError('refresh:rate')).toContain('몇 분 뒤');
+    expect(accountError('refresh:rate')).not.toContain('http429');
+  });
+  it('자동 전환: rate 는 Retry-After 만큼(없으면 15분) 쉬고 알림은 이어지는 동안 한 번만 — 5분마다 다시 때려 제한을 늘리지 않게', () => {
+    expect(switchFailure('refresh:rate:600')).toEqual({ notify: true, restMs: 600_000, rate: true });
+    expect(switchFailure('refresh:rate')).toEqual({ notify: true, restMs: 15 * 60_000, rate: true });
+    expect(switchFailure('refresh:rate:5')).toEqual({ notify: true, restMs: 60_000, rate: true }); // 너무 짧게는 다시 안 때린다
+    expect(switchFailure('refresh:rate', true)).toEqual({ notify: false, restMs: 15 * 60_000, rate: true });
+    expect(switchFailure('refresh:dead', true)).toEqual({ notify: true, restMs: 5 * 60_000, rate: false });
   });
   it('모르는 것은 원문을 붙인다', () => {
     expect(accountError('io:디스크 가득')).toContain('디스크 가득');
@@ -195,5 +209,25 @@ describe('weekText — 주간 리셋 시각은 요일 시:분', () => {
     expect(weekText(new Date(2026, 9, 8, 16, 0).getTime())).toBe('목 16:00');
     setLang('en');
     expect(weekText(new Date(2026, 9, 8, 16, 0).getTime())).toBe('Thu 16:00');
+  });
+});
+
+describe('로그인해서 바꾸기 — 바꾸기가 갱신 막힘·죽은 갱신 토큰으로 실패했을 때(2026-10-15 429)', () => {
+  it('브라우저 로그인으로 풀리는 실패만', () => {
+    expect(loginFixes('refresh:rate')).toBe(true);
+    expect(loginFixes('refresh:rate:600')).toBe(true);
+    expect(loginFixes('refresh:dead')).toBe(true);
+    for (const c of ['refresh:network', 'refresh:http503', 'busy', 'locked', 'moved', 'noSlot', 'refresh:rate:x', 'refresh:ratex']) expect(loginFixes(c)).toBe(false);
+  });
+  it('그 계정 이메일을 채운 claude auth login — 따옴표로 감싼다', () => {
+    expect(accountLoginCommand('/opt/c/claude', 'kim@x.com', '끝')).toBe("'/opt/c/claude' auth login --email 'kim@x.com'; echo; echo '끝'");
+    expect(accountLoginCommand(null, "o'neil@x.com", 'done')).toBe("'claude' auth login --email 'o'\\''neil@x.com'; echo; echo 'done'");
+    // 이메일을 모르면 이메일 없이
+    expect(accountLoginCommand(null, '', 'd')).toBe("'claude' auth login; echo; echo 'd'");
+  });
+  it('끝남 = 로그인 표시가 그 칸 계정이 됨', () => {
+    expect(reloginDone(view({ active: 'a1' }), 'a1')).toBe(true);
+    expect(reloginDone(view(), 'a1')).toBe(false);
+    expect(reloginDone(view({ active: null, liveEmail: 'other@x.com' }), 'a1')).toBe(false);
   });
 });

@@ -30,7 +30,7 @@ function Meter({ label, l, age }: { label: string; l?: Limit; age?: number | nul
 /** 앱 맨 위: Claude 사용 한도 · 오늘 커밋 · (오른쪽) 다마고치 자리 */
 type TamaProps = { file: TamaFile | null; widgetShown: boolean; onToggle: () => void };
 
-export function TopBar({ features, usage, usageAge, account, accounts, onSettings, today, tama, inboxCount, onInbox, harnitor, onHarnitor, tools, onTools, review, onReview, voice, onVoice, replayOn, onReplay, office, onOffice, space, onView, reader, onReader, load, onLoad, loadOn }: { load?: { level: 'ok' | 'warn' | 'high'; load1: number; cores: number; swapGb: number }; onLoad: () => void; loadOn: boolean; features: Features; usage: Usage; usageAge?: number | null; account: { name: string; title: string; known: boolean } | null; accounts: AccountsView | null; onSettings: () => void; today: RepoToday[]; tama: TamaProps; inboxCount: number; onInbox: () => void; harnitor: boolean; onHarnitor: () => void; /** 도구 화면이 지금 탭에 떠 있나 */ tools: boolean; onTools: () => void; /** 리뷰 — on = 리뷰 화면이 떠 있나, confirm = 머지 전에 사람이 볼 PR 수 */ review: { on: boolean; confirm: number }; onReview: () => void; voice: boolean; onVoice: () => void; replayOn: boolean; onReplay: () => void; office: boolean; onOffice: () => void; /** 지금 뷰가 채팅 뷰인가 */ space: boolean; onView: (chat: boolean) => void; reader: boolean; onReader: () => void }) {
+export function TopBar({ features, usage, usageAge, account, accounts, onSettings, today, tama, inboxCount, onInbox, harnitor, onHarnitor, tools, onTools, review, onReview, voice, onVoice, replayOn, onReplay, office, onOffice, space, onView, reader, onReader, load, onLoad, loadOn, claude, fontSize }: { /** 계정 팝오버 '로그인해서 바꾸기' 터미널 — claude 경로·글자 크기 */ claude?: string | null; fontSize: number; load?: { level: 'ok' | 'warn' | 'high'; load1: number; cores: number; swapGb: number }; onLoad: () => void; loadOn: boolean; features: Features; usage: Usage; usageAge?: number | null; account: { name: string; title: string; known: boolean } | null; accounts: AccountsView | null; onSettings: () => void; today: RepoToday[]; tama: TamaProps; inboxCount: number; onInbox: () => void; harnitor: boolean; onHarnitor: () => void; /** 도구 화면이 지금 탭에 떠 있나 */ tools: boolean; onTools: () => void; /** 리뷰 — on = 리뷰 화면이 떠 있나, confirm = 머지 전에 사람이 볼 PR 수 */ review: { on: boolean; confirm: number }; onReview: () => void; voice: boolean; onVoice: () => void; replayOn: boolean; onReplay: () => void; office: boolean; onOffice: () => void; /** 지금 뷰가 채팅 뷰인가 */ space: boolean; onView: (chat: boolean) => void; reader: boolean; onReader: () => void }) {
   const commits = today.reduce((n, r) => n + r.commits, 0);
   const added = today.reduce((n, r) => n + r.added, 0);
   const deleted = today.reduce((n, r) => n + r.deleted, 0);
@@ -47,7 +47,7 @@ export function TopBar({ features, usage, usageAge, account, accounts, onSetting
         <b>{account.name}</b>
         {out && <span className="dim">{tr('다 소진', 'All used')}</span>}
       </button>}
-      {pop && accounts && <AccountPopover view={accounts} anchor={pop} chip={chip} onClose={() => setPop(null)} onSettings={() => { setPop(null); onSettings(); }} />}
+      {pop && accounts && <AccountPopover view={accounts} anchor={pop} chip={chip} claude={claude} fontSize={fontSize} onClose={() => setPop(null)} onSettings={() => { setPop(null); onSettings(); }} />}
       <span className="sep" />
       <span className="today" title={detail || tr('오늘(새벽 5시부터) 커밋 없음', 'No commits today (since 5 AM)')}>
         <span className="m-label">{tr('오늘 커밋', 'Commits today')}</span>

@@ -294,6 +294,18 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                     });
                     continue;
                 }
+                // 다른 기기 참모(scripts/peer) — 찾기·짝짓기·말 넣기·답 읽기. 열쇠는 키체인에만, 답은 <데이터>/peer.txt
+                if let Some(req) = crate::peer_cmd::request(&line) {
+                    std::thread::spawn(move || {
+                        let ans = crate::peer_cmd::answer(&req, &crate::peer_cmd::RealOps);
+                        let file = crate::config::data_file("peer.txt");
+                        let tmp = file.with_extension("txt.tmp");
+                        if std::fs::write(&tmp, format!("#id {}\n{ans}\n", req.id)).is_ok() {
+                            let _ = std::fs::rename(&tmp, &file);
+                        }
+                    });
+                    continue;
+                }
                 // 참모 칸 읽기·쓰기(scripts/sheet) — 열린 표가 있으면 표로 보여 주며 넣고, 없으면 원본 패치. 답은 <데이터>/sheet.txt
                 if let Some(req) = crate::sheet_cmd::request(&line) {
                     let app = app.clone();

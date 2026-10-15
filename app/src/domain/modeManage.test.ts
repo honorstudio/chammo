@@ -52,8 +52,10 @@ describe('phoneRemove — 폰 지우기 단추', () => {
 
 describe('hostState — 깨어 있음/잠듦·메모리', () => {
   it('깨어 있으면 메모리, 재웠으면 잠듦, 꺼졌으면 없음', () => {
-    expect(hostState({ alive: true, memKb: 246000 })).toEqual({ kind: 'awake', mem: '240 MB' });
-    expect(hostState({ alive: true, memKb: 0 })).toEqual({ kind: 'awake', mem: null });
+    expect(hostState({ alive: true, memKb: 246000 })).toEqual({ kind: 'awake', mem: '240 MB', shared: false });
+    expect(hostState({ alive: true, memKb: 0 })).toEqual({ kind: 'awake', mem: null, shared: false });
+    // 가벼운 모드끼리 같이 쓰는 호스트(ADR 0006) — 메모리는 그 호스트 하나의 것
+    expect(hostState({ alive: true, memKb: 246000, shared: true })).toEqual({ kind: 'awake', mem: '240 MB', shared: true });
     expect(hostState({ alive: false, asleep: true })).toEqual({ kind: 'asleep' });
     expect(hostState({ alive: false })).toBeNull();
   });

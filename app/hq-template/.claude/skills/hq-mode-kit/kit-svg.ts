@@ -149,7 +149,7 @@ export function Ring(cx: number, cy: number, r: number, o: { value: number; skin
   return out.join('')
 }
 /** 고리 위 한 점 글(해 뜸 시각 등) — t 는 0~1 */
-export const RingNote = (cx: number, cy: number, r: number, t: number, s: string) => { const [x, y] = polar(cx, cy, r, t); return Label(x, y + 4, s, { size: 10, cls: 'k-dim', anchor: 'middle' }) }
+export const RingNote = (cx: number, cy: number, r: number, t: number, s: string) => { const [x, y] = polar(cx, cy, r, t); return Label(x, y + 4, s, { size: 11, cls: 'k-dim', anchor: 'middle' }) }
 
 // ── 막대·선·점 ──
 /**
@@ -169,7 +169,7 @@ export function Flow(x: number, y: number, o: { values: number[]; now?: number; 
         + `<rect class="k-shine" x="${fix(bx)}" y="${fix(y + o.h - 40)}" width="${bw}" height="40" fill="${paint(s, 'shine')}"/></g>`)
     } else if (fh > 0) out.push(`<rect class="k-fill" x="${fix(bx)}" y="${fix(y + o.h - fh)}" width="${bw}" height="${fix(fh)}" rx="${bw / 2}"/>`)
     if (o.labels?.[i] !== undefined) out.push(Label(bx + bw / 2, y + o.h + 22, o.labels[i]!, { size: 13, anchor: 'middle', weight: i === o.now ? 800 : 500, cls: i === o.now ? undefined : (o.cls?.[i] ?? 'k-dim') }))
-    if (o.subs?.[i] !== undefined) out.push(Label(bx + bw / 2, y + o.h + 38, o.subs[i]!, { size: 10, anchor: 'middle', cls: 'k-dim' }))
+    if (o.subs?.[i] !== undefined) out.push(Label(bx + bw / 2, y + o.h + 38, o.subs[i]!, { size: 11, anchor: 'middle', cls: 'k-dim' }))
   })
   return out.join('')
 }
@@ -192,7 +192,7 @@ export function Dots(x: number, y: number, w: number, o: { total: number; offset
   const cols = Math.ceil((o.total + off) / 7), step = Math.min(19, w / cols), r = Math.max(2.2, step * 0.3)
   const at = (i: number) => [x + Math.floor((i + off) / 7) * step + step / 2, y + ((i + off) % 7) * step + step / 2] as const
   const out: string[] = []
-  for (const [i, t] of o.heads ?? []) out.push(Label(at(i)[0] - r, y - 8, t, { size: 10, cls: 'k-dim' }))
+  for (const [i, t] of o.heads ?? []) out.push(Label(at(i)[0] - r, y - 8, t, { size: 11, cls: 'k-dim' }))
   for (let i = 0; i < o.total; i++) {
     const [cx, cy] = at(i)
     out.push(`<circle class="k-dot${i < (o.filled ?? 0) ? ' p' : ''}" cx="${fix(cx)}" cy="${fix(cy)}" r="${fix(r)}"/>`)

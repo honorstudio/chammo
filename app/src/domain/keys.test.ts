@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { keyLabel, modKey, winToMac } from './keys';
+import { fileManagerLabel, keyLabel, modKey, winToMac } from './keys';
 import { shortcutFor } from './shortcuts';
 
 const k = (key: string, code: string, m: { ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean } = {}) => ({
@@ -95,4 +95,27 @@ describe('윈도우 뒤로·앞으로 — Ctrl+[ 는 터미널 Esc 라 뺏지 �
     expect(shortcutFor(k('[', 'BracketLeft', { ctrl: true }), true)).toBeNull();
   });
   it('화면 표기도 Ctrl+Shift+[', () => expect(keyLabel('⌘[', true)).toBe('Ctrl+Shift+['));
+});
+
+describe('화면 표기 — 파인더·Finder 를 윈도우 탐색기로', () => {
+  it('윈도우는 파인더 → 탐색기, Finder → File Explorer', () => {
+    expect(fileManagerLabel('아직 주고받은 파일이 없어요 — 파인더에서 끌어놓거나 + 로 골라 넣어요', true)).toBe('아직 주고받은 파일이 없어요 — 탐색기에서 끌어놓거나 + 로 골라 넣어요');
+    expect(fileManagerLabel('Nothing yet — drop files from Finder or press +', true)).toBe('Nothing yet — drop files from File Explorer or press +');
+    expect(fileManagerLabel('Show in Finder', true)).toBe('Show in File Explorer');
+    expect(fileManagerLabel('파인더와 같은 모양', true)).toBe('탐색기와 같은 모양');
+  });
+  it('맥은 그대로', () => {
+    expect(fileManagerLabel('파인더에서 보기', false)).toBe('파인더에서 보기');
+    expect(fileManagerLabel('Show in Finder', false)).toBe('Show in Finder');
+  });
+  it('tr 가 윈도우 설정이면 파인더 문구를 바꾼다', async () => {
+    const i18n = await import('../i18n');
+    i18n.setWinKeys(true);
+    expect(i18n.tr('파인더에서 보기', 'Show in Finder')).toBe('탐색기에서 보기');
+    i18n.setLang('en');
+    expect(i18n.tr('파인더에서 보기', 'Show in Finder')).toBe('Show in File Explorer');
+    i18n.setLang('ko');
+    i18n.setWinKeys(false);
+    expect(i18n.tr('파인더에서 보기', 'Show in Finder')).toBe('파인더에서 보기');
+  });
 });

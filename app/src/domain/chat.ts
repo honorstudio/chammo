@@ -60,6 +60,9 @@ function takeoverNote(content: unknown): string | null {
 /** 다른 세션이 보낸 말(<cross-session-message from-name=…>)·앱이 넘긴 줄([앱] …) → 보낸 쪽과 본문 */
 function relayOf(t: string): { from: string; text: string } | null {
   if (t.startsWith('[앱] ')) return { from: '앱', text: t.replace(/^\[앱\]\s*/, '').trim() };
+  // 다른 기기 참모(ADR 0007) — 받는 폰 서버가 붙인 이름표. 꼬리표(peer#cid)는 답 찾기용이라 안 보인다
+  const p = t.match(/^\[((?:다른 기기 참모|Assistant on another device) · [^\]\n]+?) · peer#[A-Za-z0-9_-]+\]\n?([\s\S]*)$/);
+  if (p) return { from: p[1]!, text: p[2]!.trim() };
   const m = t.match(/<cross-session-message\b[^>]*?from-name="([^"]*)"[^>]*>([\s\S]*?)<\/cross-session-message>/);
   return m ? { from: m[1]!, text: m[2]!.trim() } : null;
 }

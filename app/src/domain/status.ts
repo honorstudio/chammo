@@ -82,7 +82,8 @@ export function activityStatus(state: SessionState, a: Activity | undefined, now
   if (!r) return 'idle';
   if (a.prompt && a.prompt.ts > r.ts) return 'idle'; // 지시를 받고 답 없이 멈춤
   if (asks(r)) return 'asks';
-  return ended && a.waitingOn ? 'bgwait' : 'done';
+  // 쉬는 세션은 백그라운드 일이 없다 — 살아 있으면 agents 가 working 을 준다(실측). 끝 알림 없이 남은 건 죽인 일이라 답함, 깨우기 예약만 기다림(bug-hunt L11)
+  return ended && a.wake ? 'bgwait' : 'done';
 }
 
 /** 대화 기록 없이 세션만으로 — 기록을 아직 못 읽었을 때 메뉴 표시. 쉬는 세션은 묻는지 끝났는지 모른다(awaiting 은 안 본다, 위 activityStatus) */

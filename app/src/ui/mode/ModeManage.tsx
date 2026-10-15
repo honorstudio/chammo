@@ -63,7 +63,8 @@ export function ModeManage() {
         {g.list.map((r) => {
           const choice = trashChoice(r.source);
           const hs = hostState(r);
-          const host = !hs ? null : hs.kind === 'asleep' ? tr('잠듦', 'Asleep') : hs.mem ? tr(`깨어 있음 ${hs.mem}`, `Awake ${hs.mem}`) : tr('깨어 있음', 'Awake');
+          const awake = !hs || hs.kind === 'asleep' ? null : hs.mem ? tr(`깨어 있음 ${hs.mem}`, `Awake ${hs.mem}`) : tr('깨어 있음', 'Awake');
+          const host = !hs ? null : hs.kind === 'asleep' ? tr('잠듦', 'Asleep') : hs.shared ? `${awake} · ${tr('같이 쓰는 호스트', 'shared host')}` : awake;
           const meta = [sourceText(r.source), placeText(r), sizeText(r.size), host].filter(Boolean).join(' · ');
           return (
             <li key={r.name} className="mdv-mg-row">

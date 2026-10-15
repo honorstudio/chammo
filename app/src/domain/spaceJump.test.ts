@@ -124,25 +124,47 @@ describe('keepScroll·scrollKey — 문서 스크롤 자리는 참모 탭 + 화�
 // 3초마다 읽는 show 기록에 두 참모 줄이 같이 오면 마지막 것만 봐서 앞 참모 문서가 그 탭에 안 들어갔다(2026-10-11 하네스, 불편 순위 4번 '문서가 엉뚱한 탭')
 describe('showBatch — 한 번에 읽은 띄운 파일 여럿', () => {
   const own = (by: string) => (by.startsWith('orch-') ? by : by === 'sub-1' ? 'orch-a' : null);
+  const paths = (xs: { show: { path: string } }[]) => xs.map((x) => x.show.path);
   it('재현: 다른 참모 둘이 같이 띄우면 둘 다 각자 탭에 넣는다', () => {
     const r = showBatch([{ by: 'orch-a', path: 'A.md' }, { by: 'orch-b', path: 'B.md' }], own, 'orch-c', 'orch-c');
     expect(r.queue.map((q) => [q.owner, q.show.path])).toEqual([['orch-a', 'A.md'], ['orch-b', 'B.md']]);
-    expect(r.here).toBeNull();
+    expect(r.here).toEqual([]);
+    expect(r.go).toBeNull();
   });
   it('지금 보는 참모 것과 다른 참모 것이 섞이면 — 내 것은 지금 화면에, 남의 것은 그 탭에', () => {
     const r = showBatch([{ by: 'orch-a', path: 'A.md' }, { by: 'orch-c', path: 'C.md' }], own, 'orch-c', 'orch-c');
     expect(r.queue.map((q) => q.show.path)).toEqual(['A.md']);
-    expect(r.here?.show.path).toBe('C.md');
-    expect(r.here?.place).toBe('here');
+    expect(paths(r.here)).toEqual(['C.md']);
+    expect(r.go).toBeNull();
   });
-  it('지금 화면에 띄울 게 여럿이면 마지막 것 — 하위 세션 것은 잡은 참모 것으로', () => {
+  it('지금 화면에 띄울 게 여럿이면 차례로 다 — 마지막 것이 보이고 앞 것도 탭으로 남는다. 하위 세션 것은 잡은 참모 것으로', () => {
     const r = showBatch([{ by: 'orch-c', path: 'C1.md' }, { by: '', path: 'X.md' }, { by: 'sub-1', path: 'S.md' }], own, 'orch-c', 'orch-c');
     expect(r.queue.map((q) => q.show.path)).toEqual(['S.md']);
-    expect(r.here?.show.path).toBe('X.md');
+    expect(paths(r.here)).toEqual(['C1.md', 'X.md']);
   });
-  it('채팅 탭 참모 것은 그 탭으로 옮겨 띄운다(chat)', () => {
+  it('채팅 탭 참모 것은 그 탭으로 옮겨 띄운다(go)', () => {
     const r = showBatch([{ by: 'orch-a', path: 'A.md' }], own, 'orch-c', 'orch-a');
-    expect(r.here).toEqual({ show: { by: 'orch-a', path: 'A.md' }, place: 'chat', owner: 'orch-a' });
+    expect(r.go).toBe('orch-a');
+    expect(r.here).toEqual([{ show: { by: 'orch-a', path: 'A.md' }, owner: 'orch-a' }]);
+  });
+  // L12(2026-10-11 bug-hunt) — 보는 참모 것('here')과 채팅 탭 참모 것('chat')이 한 묶음(3초)에 오면 앞의 것이 버려졌다
+  it('재현: 보는 참모 것 + 채팅 탭 참모 것 — 채팅 탭으로 옮기고, 보던 참모 것은 그 참모 탭 줄에 넣어 둔다', () => {
+    const r = showBatch([{ by: 'orch-b', path: 'B.md' }, { by: 'orch-a', path: 'A.md' }], own, 'orch-b', 'orch-a');
+    expect(r.go).toBe('orch-a');
+    expect(paths(r.here)).toEqual(['A.md']);
+    expect(r.queue.map((q) => [q.owner, q.show.path])).toEqual([['orch-b', 'B.md']]);
+  });
+  it('순서가 거꾸로여도 같다 — 채팅 탭 것이 먼저 와도 버리지 않는다', () => {
+    const r = showBatch([{ by: 'orch-a', path: 'A.md' }, { by: 'orch-b', path: 'B.md' }], own, 'orch-b', 'orch-a');
+    expect(r.go).toBe('orch-a');
+    expect(paths(r.here)).toEqual(['A.md']);
+    expect(r.queue.map((q) => [q.owner, q.show.path])).toEqual([['orch-b', 'B.md']]);
+  });
+  it('주인 모르는 것은 옮겨 간 화면에 같이 띄운다', () => {
+    const r = showBatch([{ by: '', path: 'X.md' }, { by: 'orch-a', path: 'A.md' }], own, 'orch-b', 'orch-a');
+    expect(r.go).toBe('orch-a');
+    expect(paths(r.here)).toEqual(['X.md', 'A.md']);
+    expect(r.queue).toEqual([]);
   });
 });
 

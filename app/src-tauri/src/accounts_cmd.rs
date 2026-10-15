@@ -241,6 +241,28 @@ pub fn live_secret_quiet() -> Option<crate::accounts_store::Secret> {
     crate::accounts_store::Store::get(&kc, &live.service, &live.account).ok().flatten()
 }
 
+/// 쉬는 칸 미리 데우기(accounts_warm) 한 차례 — 바꿔 끼우기와 같은 줄에 선다: 데우는 동안 그 칸으로 바꾸면 같은 갱신 토큰을 두 번 쓴다.
+/// 뒤에서 도니 키체인 창은 안 띄운다(quiet — 잠겼거나 허용이 필요하면 이번엔 넘어간다)
+fn warm_tick() {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok((kc, live, list)) = setup_quiet(true) else { return };
+    let _ = crate::accounts_warm::run(&kc, &live, &list, now_ms(), crate::accounts_refresh::refresh, &mut |l| crate::claude::log_out("account-warm", l));
+}
+
+/// 앱이 떠 있는 동안 5분마다(처음은 켜고 2분 뒤 — 켜는 일이 몰릴 때를 피해). 보낼지는 accounts_warm 이 정한다(칸 사이 20분·막히면 1시간)
+pub fn warm_start() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_secs(120));
+        loop {
+            warm_tick();
+            std::thread::sleep(std::time::Duration::from_secs(300));
+        }
+    });
+}
+
 /// 무거운 일(키체인)은 뒤에서, 한 번에 하나만
 async fn run<F>(f: F) -> Result<View, String>
 where
@@ -417,6 +439,7 @@ mod tests {
             switching: None,
             auto,
             backup_oauth: Value::Null,
+            warm: Default::default(),
         };
         let v = phone_view(&pool, Some(&o1));
         assert_eq!(v.active.as_deref(), Some("a1"));
@@ -450,7 +473,7 @@ mod tests {
     #[test]
     fn 보기는_지금_로그인_계정을_칸에서_찾는다() {
         let a = json!({ "accountUuid": "u1", "organizationUuid": "o1", "emailAddress": "a@x.com", "organizationRateLimitTier": "default_claude_max_5x" });
-        let pool = Pool { accounts: vec![Account { id: "a1".into(), name: "작은 것".into(), email: "a@x.com".into(), plan: "Max 5x".into(), order: 0, oauth: a.clone() }], current: None, switching: None, auto: Value::Null, backup_oauth: Value::Null };
+        let pool = Pool { accounts: vec![Account { id: "a1".into(), name: "작은 것".into(), email: "a@x.com".into(), plan: "Max 5x".into(), order: 0, oauth: a.clone() }], current: None, switching: None, auto: Value::Null, backup_oauth: Value::Null, warm: Default::default() };
         let v = view(&pool, Some(&a));
         assert_eq!(v.active.as_deref(), Some("a1"));
         assert_eq!(v.live_plan.as_deref(), Some("Max 5x"));

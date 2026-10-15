@@ -147,7 +147,10 @@ export function attribute(procs: Proc[], sessions: { id: string; name: string; p
   const bySession = new Map(sessions.map((s) => [s.pid, [] as Proc[]]));
   for (const s of sessions) bySession.get(s.pid)!.push(...claim(s.pid));
   // 참모 모드 호스트 — 앱이 띄운 claude -p 라 세션도 남의 것도 아니다. 앱이 준 pid 로 따로 센다(끝난 pid 는 버린다)
-  const modes = modeHosts.filter((m) => byPid.has(m.pid)).map((m) => { const t = claim(m.pid); return { name: m.name, ...sum(t) }; });
+  // 가벼운 모드끼리 같이 쓰는 호스트(ADR 0006)는 pid 하나 — 이름을 이어 한 줄로(안 그러면 둘째부터 0 으로 센다)
+  const hosts = new Map<number, string[]>();
+  for (const m of modeHosts) hosts.set(m.pid, [...(hosts.get(m.pid) ?? []), m.name]);
+  const modes = [...hosts].filter(([pid]) => byPid.has(pid)).map(([pid, names]) => { const t = claim(pid); return { name: names.join(' · '), ...sum(t) }; });
   const outside: Proc[] = [];
   // Chammo 밖 Claude 세션 나무를 먼저 떼어 둔다 — 안 그러면 daemon 나무를 따라가다 주인 없는 것으로 샌다
   for (const pid of otherClaude) outside.push(...claim(pid));

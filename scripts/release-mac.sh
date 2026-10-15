@@ -26,10 +26,20 @@ export RUSTFLAGS="--remap-path-prefix=$HOME=~ ${RUSTFLAGS:-}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUNDLE="$ROOT/app/src-tauri/target.noindex/release/bundle"  # .cargo/config.toml 의 target-dir
+VER="$(python3 -c "import json;print(json.load(open('$ROOT/app/src-tauri/tauri.conf.json'))['version'])")"
 
-# 1) 빌드 — Tauri 가 .app 을 서명하고(hardened runtime) 공증·스테이플한 뒤 DMG 를 만든다
+# 0) 자동 업데이트 서명 키 — 맥 키체인에서 꺼내 환경변수로만 넘긴다(파일·로그에 안 남게, ADR 0005)
+#    security add-generic-password -s chammo-updater-key -a chammo -w   (-w 뒤에 값을 안 쓰면 입력을 물어 셸 기록에 안 남는다, + -s chammo-updater-key-password)
+if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+  TAURI_SIGNING_PRIVATE_KEY="$(security find-generic-password -s chammo-updater-key -w)" \
+    || { echo "업데이트 서명 키가 키체인에 없어요 (chammo-updater-key)" >&2; exit 1; }
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(security find-generic-password -s chammo-updater-key-password -w 2>/dev/null || true)"
+fi
+export TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+
+# 1) 빌드 — Tauri 가 .app 을 서명하고(hardened runtime) 공증·스테이플한 뒤 DMG 를 만든다. 업데이트 파일(.app.tar.gz)도 같이
 cd "$ROOT/app"
-pnpm tauri build
+pnpm tauri build --config '{"bundle":{"createUpdaterArtifacts":true}}'
 
 APP="$BUNDLE/macos/Chammo.app"
 DMG="$(ls -t "$BUNDLE"/dmg/Chammo_*.dmg | head -1)"
@@ -45,8 +55,16 @@ else
 fi
 xcrun stapler staple "$DMG"
 
+# 2.5) 자동 업데이트 파일 — 스테이플까지 끝난 .app 으로 다시 묶고 다시 서명한다(Tauri 가 만든 건 스테이플 전 것)
+UPD="$BUNDLE/macos/Chammo_${VER}_aarch64.app.tar.gz"
+rm -f "$BUNDLE/macos/Chammo.app.tar.gz" "$BUNDLE/macos/Chammo.app.tar.gz.sig" "$UPD" "$UPD.sig"
+COPYFILE_DISABLE=1 tar -czf "$UPD" -C "$BUNDLE/macos" Chammo.app
+pnpm tauri signer sign "$UPD" > /dev/null
+[ -s "$UPD.sig" ] || { echo "업데이트 파일 서명 실패: $UPD.sig" >&2; exit 1; }
+
 # 3) 확인 — Gatekeeper 가 받아 주는지
 spctl -a -vv "$APP"
 spctl -a -vv -t open --context context:primary-signature "$DMG"
 echo
 echo "완료 / Done: $DMG"
+echo "업데이트 / Updater: $UPD (+ .sig)"

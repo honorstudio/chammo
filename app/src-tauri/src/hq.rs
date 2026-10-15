@@ -33,6 +33,8 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "scripts/choice", body: include_str!("../../hq-template/scripts/choice"), exec: true },
     TemplateFile { path: "scripts/skill-hint", body: include_str!("../../hq-template/scripts/skill-hint"), exec: true },
     TemplateFile { path: "scripts/locker", body: include_str!("../../hq-template/scripts/locker"), exec: true },
+    // 다른 기기 참모에게 말 넣고 답 받기 — 앱(app.jsonl)을 거친다, 열쇠는 앱 키체인에만(ADR 0007)
+    TemplateFile { path: "scripts/peer", body: include_str!("../../hq-template/scripts/peer"), exec: true },
     // scripts/task 가 import 하는 모듈(교훈 → 프로젝트 스킬) — 직접 실행하지 않는다
     TemplateFile { path: "scripts/lesson_skill.py", body: include_str!("../../hq-template/scripts/lesson_skill.py"), exec: false },
     TemplateFile { path: ".claude/skills/hq-browser/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-browser/SKILL.md"), exec: false },
@@ -43,6 +45,7 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: ".claude/skills/hq-mode-kit/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-mode-kit/kit.tsx", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/kit.tsx"), exec: false },
     TemplateFile { path: ".claude/skills/hq-mode-kit/kit-svg.ts", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/kit-svg.ts"), exec: false },
+    TemplateFile { path: ".claude/skills/hq-mode-kit/kit-phone.ts", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/kit-phone.ts"), exec: false },
 ];
 
 #[derive(Serialize, Debug, Default, PartialEq)]

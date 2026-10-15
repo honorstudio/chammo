@@ -1,5 +1,6 @@
 // Rust 커맨드 호출을 한 곳에 모은다. UI 는 이 파일만 알고, invoke 이름은 여기서만 쓴다.
 import { Channel, invoke } from '@tauri-apps/api/core';
+import type { Step as AppInstallStep } from '../domain/appInstall';
 import type { Features } from '../domain/config';
 import type { AccountsView } from '../domain/accounts';
 import type { PreviewPhase } from '../domain/voiceDial';
@@ -26,6 +27,8 @@ export type AppEnv = {
 };
 
 /** 경로는 fwd 로 — 윈도우는 C:\Users\me/.chammo/hq 처럼 섞여 와 claude agents 의 cwd 와 안 맞았다 */
+/** 옛 비서 이름을 Rust 에 — 화면과 Rust 가 같은 이름을 참모로 친다(messenger set_orch_legacy) */
+export const setOrchLegacy = (names: string[]) => invoke<void>('set_orch_legacy', { names });
 export const getAppEnv = () => invoke<AppEnv>('app_env').then((e) => ({
   ...e,
   home: fwd(e.home),
@@ -297,6 +300,12 @@ export const accountsApi = {
   usage: (ids: string[], live: boolean) => invoke<ApiGot[]>('accounts_usage', { ids, live }),
 };
 export const appVersion = () => invoke<string>('app_version');
+/** 자동 업데이트(ADR 0005) — 받기·서명 확인·설치 뒤 Rust 가 앱을 다시 켠다. 안 되면 거절 글('off'·'none'·오류) */
+export const appUpdateInstall = (onStep: (s: AppInstallStep) => void) => {
+  const ch = new Channel<AppInstallStep>();
+  ch.onmessage = onStep;
+  return invoke<void>('app_update_install', { onStep: ch });
+};
 export const openTarget = (kind: 'url' | 'file', target: string) => invoke<void>('open_target', { kind, target });
 
 // ── 리뷰·머지 (Rust review.rs, 파싱은 domain/reviewSource.ts) ──

@@ -18,6 +18,12 @@ describe('참모 바꾸기 시트', () => {
     expect(picker).toMatch(/AvatarRing/);
     expect(picker).toMatch(/orchDot/);
   });
+  // L10(2026-10-11 bug-hunt) — 날 state 만 보던 옛 판정 사본이라 감시를 띄운 참모가 폰에선 '일함', 데스크톱은 '백그라운드 기다림'
+  it('상태 점은 세션판과 같은 판단(대화 꼬리 → subStatus)', () => {
+    expect(picker).toMatch(/useSubTails\(/);
+    expect(picker).toMatch(/orchDot\(subStatus\(/);
+    expect(picker).not.toMatch(/orchDot\(s\.state/);
+  });
   it('꺼진 참모는 ▶ 없이 줄을 누르면 깨우기 확인', () => {
     expect(wake).not.toMatch(/m-off-go/);
     expect(wake).toMatch(/깨울까요/);

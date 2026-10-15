@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { appRoots, closableByShortcut, groupByProject, isOrchestratorName, nextOrchestratorName, orchView, parseAgents, projectDir, sessionsToStop, toolsWay, withinRoots, type Session } from './domain/session';
+import { appRoots, closableByShortcut, groupByProject, isOrchestratorName, legacyAssistants, nextOrchestratorName, orchView, parseAgents, projectDir, sessionsToStop, toolsWay, withinRoots, type Session } from './domain/session';
 import { moveInOrder, orchSort, stepTarget } from './domain/orchOrder';
 import { askNotice, popupNotice } from './domain/agentAsk';
 import { samePath } from './domain/paths';
 import { EMPTY_LAYOUT, gridKeyOf, layoutReducer, maxTarget, revealPane, type LayoutAction, type PaneLayout } from './domain/paneLayout';
-import { accountsApi, readUsage, todayCommits, type RepoToday, sendTextToSession } from './data/tauri';
+import { accountsApi, readUsage, setOrchLegacy, todayCommits, type RepoToday, sendTextToSession } from './data/tauri';
 import { ACCOUNTS_CHANGED, topLabel, usageOf, type AccountsView } from './domain/accounts';
 import { useAccountAuto } from './ui/useAccountAuto';
 import { useLogin } from './ui/useLogin';
@@ -43,7 +43,8 @@ import { useAccessWatch } from './ui/useAccessWatch';
 import { AccessBanners } from './ui/AccessBanners';
 import { SPACE_NAV, spaceCmd } from './ui/space/navSignal';
 import { picking } from './ui/chat/modelPickRun';
-import { openTarget as openLink } from './data/tauri';
+import { appUpdateInstall, openTarget as openLink } from './data/tauri';
+import { installNote, runInstall, type Phase as InstallPhase } from './domain/appInstall';
 import { assistant, getLang, josa, tr } from './i18n';
 import { getAppEnv, listSessionsAllRaw, listSessionsRaw, readSay, writeVoiceMode, speak, projectScan, readTasksSince, readTranscriptTails, spawnSession, type AppEnv } from './data/tauri';
 import { freshReplies, parseSay, pickSay, type ReplySeen } from './domain/voice';
@@ -124,7 +125,7 @@ import { workAct } from './domain/activity';
 import { canPlace, delivery, deliveryTail, placedCells, planRoom, seatSlots, stampSeen, withLounge, type Seat } from './domain/office';
 import { spriteOf } from './ui/tama/lcd';
 import { Grip } from './ui/TaskPanel';
-import { IconClose, IconDownload, IconStack, IconTabs } from './ui/Icons';
+import { IconClose, IconDownload, IconStack, IconTabs, IconUpdate } from './ui/Icons';
 import { IconButton } from './ui/kit/IconButton';
 import type { TaskCard } from './domain/tasks';
 import { sessionOrigins } from './data/tauri';
@@ -309,6 +310,8 @@ export default function App() {
   // Claude Code 버전이 확인된 범위(2.1.28x) 밖이면 경고 한 줄 — 막지는 않는다. 닫으면 그 버전은 다시 안 띄운다
   const [verDismissed, setVerDismissed] = useState<string | null>(() => load('claudeVersionDismissed', null));
   const [updDismissed, setUpdDismissed] = useState<string | null>(() => load('updateDismissed', null));
+  // 앱 자동 업데이트 단계(ADR 0005) — 받는 중·설치 중엔 띠를 못 닫는다
+  const [appInstall, setAppInstall] = useState<InstallPhase>({ kind: 'idle' });
   useEffect(() => save('updateDismissed', updDismissed), [updDismissed]);
   useEffect(() => save('claudeVersionDismissed', verDismissed), [verDismissed]);
   // 프로젝트 폴더 읽기·같은 앱 여러 벌(이슈 #1) — 폴더 띠는 닫아도 다음에 켜면 다시(고쳐질 때까지), 여러 벌은 같은 상태면 안 띄운다
@@ -533,6 +536,7 @@ export default function App() {
 
   // 따로 추가한 프로젝트 폴더가 바뀌면(설정 화면·참모 scripts/app project) 환경을 다시 읽는다 — 세션 판별·스캔이 새 폴더를 보게
   const extrasKey = JSON.stringify(config?.extraProjects ?? []);
+  useEffect(() => { void setOrchLegacy(legacyAssistants()).catch(() => {}); }, []); // Rust 참모 이름 판정(텔레그램·모드)도 옛 이름을 알게
   useEffect(() => {
     getAppEnv().then(setEnv).catch((e: unknown) => setError(tr(`앱 환경 읽기 실패: ${String(e)}`, `Could not read the app environment: ${String(e)}`)));
   }, [extrasKey]);
@@ -1660,7 +1664,7 @@ export default function App() {
         }} />
       );
     })()}
-    <TopBar load={loadMon.sys ? { level: level(loadMon.sys), load1: loadMon.sys.load1, cores: loadMon.sys.cores, swapGb: loadMon.sys.swapUsedMb / 1024 } : undefined} loadOn={selected.kind === 'load'} onLoad={() => setSelected({ kind: 'load' })} features={features} usage={barUsage} usageAge={acctUsage?.age ?? null} account={topLabel(accounts)} accounts={accounts} onSettings={() => setSettingsOpen(true)} today={today} tama={{ file: tama.file, widgetShown: tama.widgetShown, onToggle: () => widgetToggleRef.current() }} replayOn={spaceShown ? replayOpen : selected.kind === 'replay'} onReplay={() => replayRef.current('toggle')} reader={readerOpen} onReader={() => setReaderOpen((o) => !o)} office={space ? spaceOffice : office} onOffice={() => { if (space) { setSelected({ kind: 'orchestrator' }); setOfficeReq(spaceShown ? 'toggle' : 'open'); return; } setOffice(!office); setSelected({ kind: 'orchestrator' }); }} space={space} onView={(chat) => { setSpace(chat); setSelected({ kind: 'orchestrator' }); }} inboxCount={inbox.length + direct.inboxCards.length + (login.need ? 1 : 0) + browserCount} onInbox={() => setInboxOpen((o) => !o)} harnitor={harnitorFloat || (spaceShown && harnitorOpen)} onHarnitor={() => harnitorRef.current('toggle')} tools={spaceShown ? toolsOpen : toolsFloat} onTools={() => toolsRef.current('toggle')} review={{ on: spaceShown ? reviewOpen : selected.kind === 'review', confirm: reviewConfirm }} onReview={() => reviewRef.current('toggle')} voice={voice} onVoice={() => turnVoice(!voice)} />
+    <TopBar claude={bin} fontSize={fontSize} load={loadMon.sys ? { level: level(loadMon.sys), load1: loadMon.sys.load1, cores: loadMon.sys.cores, swapGb: loadMon.sys.swapUsedMb / 1024 } : undefined} loadOn={selected.kind === 'load'} onLoad={() => setSelected({ kind: 'load' })} features={features} usage={barUsage} usageAge={acctUsage?.age ?? null} account={topLabel(accounts)} accounts={accounts} onSettings={() => setSettingsOpen(true)} today={today} tama={{ file: tama.file, widgetShown: tama.widgetShown, onToggle: () => widgetToggleRef.current() }} replayOn={spaceShown ? replayOpen : selected.kind === 'replay'} onReplay={() => replayRef.current('toggle')} reader={readerOpen} onReader={() => setReaderOpen((o) => !o)} office={space ? spaceOffice : office} onOffice={() => { if (space) { setSelected({ kind: 'orchestrator' }); setOfficeReq(spaceShown ? 'toggle' : 'open'); return; } setOffice(!office); setSelected({ kind: 'orchestrator' }); }} space={space} onView={(chat) => { setSpace(chat); setSelected({ kind: 'orchestrator' }); }} inboxCount={inbox.length + direct.inboxCards.length + (login.need ? 1 : 0) + browserCount} onInbox={() => setInboxOpen((o) => !o)} harnitor={harnitorFloat || (spaceShown && harnitorOpen)} onHarnitor={() => harnitorRef.current('toggle')} tools={spaceShown ? toolsOpen : toolsFloat} onTools={() => toolsRef.current('toggle')} review={{ on: spaceShown ? reviewOpen : selected.kind === 'review', confirm: reviewConfirm }} onReview={() => reviewRef.current('toggle')} voice={voice} onVoice={() => turnVoice(!voice)} />
     <div className="app">
       {/* 채팅 뷰에선 세션 사이드바 대신 스페이스 메뉴(오케스트레이터·프로젝트 세션)가 ⌘B 자리 — 2026-09-30 사용자 */}
       {sidebarOpen && !spaceShown && <Sidebar
@@ -1694,11 +1698,25 @@ export default function App() {
           </div>
         )}
         {/* 새 버전 — 켜자마자·6시간마다 보고, 있으면 늘 띄운다(닫으면 그 버전만 안 띄움). 2026-10-01 사용자 */}
+        {/* 업데이트 버튼 하나가 받기 → 설치 → 다시 켜기(ADR 0005). 안 되면(서명 불일치·업데이터 없는 판) 지금처럼 내려받기 링크 */}
         {updates.app && updDismissed !== `app:${updates.app.version}` && (
           <div className="banner warn">
-            <span>{tr(`Chammo ${updates.app.version} 이 나왔어요 (지금 ${updates.appNow}). 받아서 설치하면 새 기능·고침이 들어가요.`, `Chammo ${updates.app.version} is out (you have ${updates.appNow}). Download and install it to get the new features and fixes.`)}</span>
-            <IconButton size="l" tone="pri" label={tr('받기', 'Download')} title={tr(`받기 — Chammo ${updates.app.version} 내려받는 곳 열기`, `Download Chammo ${updates.app.version}`)} onClick={() => void openLink('url', updates.app!.url).catch(() => {})}><IconDownload /></IconButton>
-            <IconButton label={tr('나중에', 'Later')} title={tr('나중에 — 이 버전은 다시 안 띄움', 'Later — skip this version')} onClick={() => setUpdDismissed(`app:${updates.app!.version}`)}><IconClose /></IconButton>
+            {appInstall.kind === 'get' || appInstall.kind === 'install' ? (
+              <><span className="spin" /> <span>{tr(...installNote(appInstall, updates.app.version))}</span></>
+            ) : appInstall.kind === 'failed' ? (
+              <>
+                <span>{tr(`자동 업데이트가 안 돼서 내려받는 곳을 열었어요. 받아서 설치해 주세요.`, `The automatic update didn't work, so the download page is open. Download and install it there.`)}</span>
+                <IconButton size="l" tone="pri" label={tr('받기', 'Download')} title={tr(`받기 — Chammo ${updates.app.version} 내려받는 곳 열기`, `Download Chammo ${updates.app.version}`)} onClick={() => void openLink('url', updates.app!.url).catch(() => {})}><IconDownload /></IconButton>
+              </>
+            ) : (
+              <>
+                <span>{tr(`Chammo ${updates.app.version} 이 나왔어요 (지금 ${updates.appNow}). 업데이트하면 새 기능·고침이 들어가요.`, `Chammo ${updates.app.version} is out (you have ${updates.appNow}). Update to get the new features and fixes.`)}</span>
+                <IconButton size="l" tone="pri" label={tr('업데이트', 'Update')} title={tr(`업데이트 — Chammo ${updates.app.version} 받아서 설치하고 다시 켜기`, `Update — download Chammo ${updates.app.version}, install and restart`)} onClick={() => { const url = updates.app!.url; void runInstall(appUpdateInstall, setAppInstall, () => openLink('url', url)); }}><IconUpdate /></IconButton>
+              </>
+            )}
+            {appInstall.kind !== 'get' && appInstall.kind !== 'install' && (
+              <IconButton label={tr('나중에', 'Later')} title={tr('나중에 — 이 버전은 다시 안 띄움', 'Later — skip this version')} onClick={() => setUpdDismissed(`app:${updates.app!.version}`)}><IconClose /></IconButton>
+            )}
           </div>
         )}
         {updates.claude && updDismissed !== `claude:${updates.claude}` && (

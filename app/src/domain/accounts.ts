@@ -1,6 +1,7 @@
 import { josa, tr } from '../i18n';
 import { fmtUntil, readAuto, slotStatus, type SlotAuto } from './accountAuto';
 import type { Usage } from './usage';
+import { shq } from './setup';
 
 /** 계정 칸 — 토큰은 화면에 안 온다(키체인에만). Rust accounts_cmd::View */
 export type AccountRow = { id: string; name: string; email: string; plan: string };
@@ -176,9 +177,36 @@ export function pinText(hint: boolean): string {
   return hint ? tr('고정 — 다 쓰면 넘어감', 'Pinned — switches when used up') : tr('고정', 'Pinned');
 }
 
-/** 자동 전환이 실패했을 때 — busy(세션이 로그인 갱신 중)는 몇 초면 풀리니 알리지 않고 잠깐 뒤 다시, 나머지는 알리고 5분 쉰다 */
-export function switchFailure(code: string): { notify: boolean; restMs: number } {
-  return code === 'busy' ? { notify: false, restMs: 30_000 } : { notify: true, restMs: 5 * 60_000 };
+/** 갱신 429(refresh:rate[:초])면 쉴 초(Retry-After 가 없으면 secs null), 아니면 null */
+const rateOf = (code: string): { secs: number | null } | null => {
+  const m = /^refresh:rate(?::(\d+))?$/.exec(code);
+  return m ? { secs: m[1] ? Number(m[1]) : null } : null;
+};
+
+/** 자동 전환이 실패했을 때 — busy(세션이 로그인 갱신 중)는 몇 초면 풀리니 알리지 않고 잠깐 뒤 다시, 나머지는 알리고 5분 쉰다.
+ *  rate(갱신 주소 429 — 이 맥 요청이 많아 잠깐 막힘)는 Retry-After 만큼(없으면 15분, 1분 아래로는 안 줄임) 쉬고, 알림은 이어지는 동안 한 번만(rateNoted) —
+ *  5분마다 다시 때리면 제한이 늘었다(2026-10-15) */
+export function switchFailure(code: string, rateNoted = false): { notify: boolean; restMs: number; rate: boolean } {
+  if (code === 'busy') return { notify: false, restMs: 30_000, rate: false };
+  const r = rateOf(code);
+  if (r) return { notify: !rateNoted, restMs: r.secs === null ? 15 * 60_000 : Math.max(60, r.secs) * 1000, rate: true };
+  return { notify: true, restMs: 5 * 60_000, rate: false };
+}
+
+/** 바꾸기 실패가 그 계정으로 브라우저 로그인하면 풀리는 것인가 — 칸 토큰 갱신이 막힘(rate, 2026-10-15 이 맥 IP 429)·갱신 토큰이 죽음(dead).
+ *  브라우저 로그인(authorization_code)은 같은 때 됐다 — 새 로그인이 들어오면 Rust reconcile 이 그 칸에 담는다 */
+export function loginFixes(code: string): boolean {
+  return /^refresh:(rate(:\d+)?|dead)$/.test(code);
+}
+
+/** 앱 안 터미널에서 그 계정으로 로그인 — 이메일을 로그인 화면에 미리 채운다(claude auth login --email) */
+export function accountLoginCommand(claude: string | null | undefined, email: string, done: string): string {
+  return `${shq(claude || 'claude')} auth login${email ? ` --email ${shq(email)}` : ''}; echo; echo ${shq(done)}`;
+}
+
+/** 로그인해서 바꾸기가 끝났나 — 로그인 표시(oauthAccount)가 그 칸 계정이 됨 */
+export function reloginDone(v: AccountsView, id: string): boolean {
+  return v.active === id;
 }
 
 /** Rust 오류 이름 → 사람 글 */
@@ -196,7 +224,13 @@ export function accountError(code: string): string {
     case 'denied': return tr('맥이 키체인 사용 허용을 물었는데 거절됐거나 창이 닫혔어요. 다시 누르고, 뜨는 창에 맥 로그인 암호를 넣은 뒤 "항상 허용"을 눌러 주세요.', 'macOS asked to allow keychain access and it was denied or closed. Try again, enter your Mac login password in the window, and choose "Always Allow".');
     case 'locked': return tr('키체인이 잠겼거나 허용을 거절했어요. 맥 잠금을 풀고 다시 해 주세요.', 'The keychain is locked or access was denied. Unlock your Mac and try again.');
     case 'busy': return tr('Claude Code 세션이 로그인을 갱신하는 중이라 이번엔 안 바꿨어요. 잠시 뒤 다시 해 주세요.', 'A Claude Code session is refreshing its sign-in, so the switch was skipped. Try again in a moment.');
-    case 'refresh': return detail === 'dead'
+    case 'refresh': if (detail === 'rate' || detail.startsWith('rate:')) {
+      const sec = Number(detail.slice(5));
+      const ko = sec > 0 ? `${Math.ceil(sec / 60)}분` : '몇 분';
+      const en = sec > 0 ? `${Math.ceil(sec / 60)} min` : 'a few minutes';
+      return tr(`Anthropic 쪽이 잠깐 요청을 막았어요(이 맥에서 요청이 많음) — 계정 문제는 아니에요. ${ko} 뒤 다시 해 주세요.`, `Anthropic is briefly limiting requests from this Mac — not a problem with the account. Try again in ${en}.`);
+    }
+    return detail === 'dead'
       ? tr('바꿀 계정의 로그인이 풀려 있어요(다른 곳에서 로그아웃했거나 다시 로그인함). 그 계정으로 로그인한 뒤 칸을 빼고 다시 추가해 주세요.', 'The sign-in kept for that account has expired (signed out or signed in again elsewhere). Sign in to it, then remove and add it again.')
       : detail === 'network'
         ? tr('바꿀 계정의 로그인을 새로 받으려는데 인터넷이 안 돼요. 연결을 확인하고 다시 해 주세요.', 'Could not renew the sign-in for that account — no internet. Check the connection and try again.')

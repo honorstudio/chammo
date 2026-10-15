@@ -19,6 +19,7 @@ const SLOTS_EVERY_MS = 5 * 60_000;
 export function useAccountAuto(accounts: AccountsView | null, acts: SessionActivity[], voice: boolean) {
   const busy = useRef(false);
   const restUntil = useRef(0);
+  const rateNoted = useRef(false); // 갱신 429 를 이미 알렸나 — 바꾸기가 되면 푼다
   const asked = useRef({ live: 0, slots: 0, restUntil: 0 });
   const lastActive = useRef<string | null>(null);
   const actsRef = useRef(acts);
@@ -66,12 +67,14 @@ export function useAccountAuto(accounts: AccountsView | null, acts: SessionActiv
             await accountsApi.switchTo(plan.switchTo, v.active);
           } catch (e: unknown) {
             if (String(e) === 'moved') return; // 다시 읽은 뒤 그 몇 ms 사이에 폰·사람이 먼저 바꿨다 — 그 선택을 둔다
-            const f = switchFailure(String(e));
+            const f = switchFailure(String(e), rateNoted.current);
             restUntil.current = Date.now() + f.restMs;
+            rateNoted.current = f.rate; // 429 가 이어지는 동안 알림은 한 번
             if (f.notify) notifyOnce({ kind: 'accounts', session: 'accounts', orch: false, title: tr('계정 자동 전환 실패', 'Account auto-switch failed'), body: accountError(String(e)) });
             return;
           }
           switched = true;
+          rateNoted.current = false;
           asked.current.live = 0; // 다음 차례(화면 갱신 신호로 바로 온다)에 새 계정 사용량을 바로 묻는다
           // 고정한 계정이 진짜 다 차서 고정이 풀렸다 — 사람이 일부러 고른 거라 한 줄 알린다
           if (plan.unpinned) notifyOnce({ kind: 'accounts', session: 'accounts-unpinned', orch: false, title: tr('고정 계정이 다 차서 넘겼어', 'Pinned account used up'), body: tr(`${name(v.active)} → ${name(plan.switchTo)} · 고정은 풀렸어`, `${name(v.active)} → ${name(plan.switchTo)} · unpinned`) });

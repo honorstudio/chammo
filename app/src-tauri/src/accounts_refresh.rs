@@ -83,7 +83,8 @@ pub fn refresh(o: &Value) -> Result<Value, String> {
     let b = body(o).ok_or("noRefreshToken")?;
     let url = std::env::var("CHAMMO_ACCOUNT_TOKEN_URL").ok().filter(|u| !u.is_empty()).unwrap_or_else(|| TOKEN_URL.into());
     let mut c = crate::platform::command("/usr/bin/curl");
-    c.args(["-sS", "--max-time", "20", "-X", "POST", "-H", "Content-Type: application/json", "--data-binary", "@-", "-w", "\n%{http_code}", &url])
+    // 끝 줄 = 상태 코드 + 탭 + Retry-After 머리(curl 7.84+ %header, 맥 기본 8.x) — 429 면 언제 다시 할지
+    c.args(["-sS", "--max-time", "20", "-X", "POST", "-H", "Content-Type: application/json", "--data-binary", "@-", "-w", "\n%{http_code}\t%header{retry-after}", &url])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -93,11 +94,20 @@ pub fn refresh(o: &Value) -> Result<Value, String> {
     }
     let out = child.wait_with_output().map_err(|_| "curl".to_string())?;
     let text = String::from_utf8_lossy(&out.stdout);
-    let (resp, code) = text.rsplit_once('\n').unwrap_or(("", ""));
+    let (resp, tail) = text.rsplit_once('\n').unwrap_or(("", ""));
+    let (code, retry) = tail.split_once('\t').unwrap_or((tail, ""));
+    outcome(code, retry)?;
+    serde_json::from_str::<Value>(resp).ok().and_then(|r| apply(o, &r, now_ms())).ok_or_else(|| "badReply".into())
+}
+
+/// 상태 코드 → 오류 이름(200 은 Ok). 429 는 rate — Anthropic 쪽이 이 맥 요청을 잠깐 막은 것(가짜 갱신 토큰으로도 429, 2026-10-15)이라
+/// 계정 문제가 아니다. Retry-After 가 초면 rate:<초>(날짜 꼴은 버린다)
+pub fn outcome(code: &str, retry: &str) -> Result<(), String> {
     match code.trim() {
-        "200" => serde_json::from_str::<Value>(resp).ok().and_then(|r| apply(o, &r, now_ms())).ok_or_else(|| "badReply".into()),
+        "200" => Ok(()),
         // 갱신 토큰이 죽었다(로그아웃·다른 곳에서 다시 로그인) — 다시 담아야 한다
         "400" | "401" | "403" => Err("dead".into()),
+        "429" => Err(retry.trim().parse::<u64>().map(|s| format!("rate:{s}")).unwrap_or_else(|_| "rate".into())),
         "" | "000" => Err("network".into()),
         c => Err(format!("http{c}")),
     }
@@ -302,5 +312,45 @@ mod tests {
         drop(h);
         assert!(!legacy.exists());
         let _ = std::fs::remove_dir_all(d.parent().unwrap());
+    }
+
+    /// 가짜 토큰 주소 — 받은 요청 수만큼 정해 둔 답(상태 줄·머리)을 하나씩. 실제 토큰 주소는 부르지 않는다
+    fn fake_token_server(replies: Vec<&'static str>) -> String {
+        use std::io::{Read, Write as _};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://127.0.0.1:{}/v1/oauth/token", l.local_addr().unwrap().port());
+        std::thread::spawn(move || {
+            for (mut s, head) in l.incoming().flatten().zip(replies) {
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf);
+                let body = r#"{"type":"error","error":{"type":"rate_limit_error","message":"Rate limited"}}"#;
+                let _ = write!(s, "{head}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn 갱신이_429면_rate_와_쉴_초() {
+        // 2026-10-15 17:0x 실제 — platform.claude.com 이 이 맥 IP 를 잠깐 막아(rate_limit_error) 'http429' 로 떴다. 계정 문제가 아니다
+        let url = fake_token_server(vec!["HTTP/1.1 429 Too Many Requests\r\nRetry-After: 600", "HTTP/1.1 429 Too Many Requests", "HTTP/1.1 429 Too Many Requests\r\nRetry-After: Wed, 21 Oct 2026 07:28:00 GMT", "HTTP/1.1 503 Service Unavailable"]);
+        std::env::set_var("CHAMMO_ACCOUNT_TOKEN_URL", &url);
+        let o = json!({ "accessToken": "a", "refreshToken": "r-가짜", "expiresAt": 0 });
+        assert_eq!(refresh(&o), Err("rate:600".to_string()), "Retry-After 초를 같이");
+        assert_eq!(refresh(&o), Err("rate".to_string()), "머리가 없으면 rate 만");
+        assert_eq!(refresh(&o), Err("rate".to_string()), "날짜 꼴 Retry-After 는 버린다");
+        assert_eq!(refresh(&o), Err("http503".to_string()), "다른 실패는 그대로");
+        std::env::remove_var("CHAMMO_ACCOUNT_TOKEN_URL");
+    }
+
+    #[test]
+    fn 갱신_답_꼬리_읽기() {
+        assert_eq!(outcome("429", "600"), Err("rate:600".to_string()));
+        assert_eq!(outcome("429", " 30 "), Err("rate:30".to_string()));
+        assert_eq!(outcome("429", ""), Err("rate".to_string()));
+        assert_eq!(outcome("429", "-5"), Err("rate".to_string()));
+        assert_eq!(outcome("401", ""), Err("dead".to_string()));
+        assert_eq!(outcome("000", ""), Err("network".to_string()));
+        assert_eq!(outcome("502", ""), Err("http502".to_string()));
     }
 }

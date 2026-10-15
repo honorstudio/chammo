@@ -34,6 +34,8 @@ struct Fake {
     locker: Option<PathBuf>,
     /// 가짜 홈(보관함 바로가기 검사) — 비우면 진짜 홈
     home: Option<PathBuf>,
+    /// 비서(aaaa0001) 대화 기록 원문 — 다른 기기 참모 답 찾기(peer-reply)
+    tx: Mutex<String>,
 }
 
 impl Fake {
@@ -46,6 +48,12 @@ impl Fake {
 }
 
 impl Backend for Fake {
+    fn transcript_mark(&self, id: &str) -> Option<(String, u64)> {
+        (id == "aaaa0001").then(|| ("aaaa-session".into(), self.tx.lock().unwrap().len() as u64))
+    }
+    fn transcript_read(&self, session: &str, offset: u64) -> Option<String> {
+        (session == "aaaa-session").then(|| self.tx.lock().unwrap().get(offset as usize..).unwrap_or("").to_string())
+    }
     fn direct_log(&self) -> String {
         self.log("direct_log".into());
         "LOG".into()
@@ -3009,4 +3017,166 @@ fn 폰_모드_카드_길() {
     assert_eq!(s, 200);
     assert_eq!(fk.calls(), vec!["mode-restore sales-mode".to_string()]);
     assert_eq!(run(post("/api/mode-restore", r#"{"name":""}"#)).0, 400);
+}
+
+// ── 다른 기기 참모(peer 열쇠) — ADR 0007 ─────────────────────────────
+
+/// 짝지은 다른 기기 참모의 토큰(폰 KEY 와 다른 줄)
+const PEER: &str = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+
+fn peer_gate(dev: &str) -> Gate {
+    let g = gate();
+    g.devices.add_test(dev, PEER, "참모 · 맥북", true);
+    g
+}
+
+fn as_peer(r: Req) -> Req {
+    set(r, "authorization", Some(&format!("Bearer {PEER}")))
+}
+
+#[test]
+fn peer_말_넣기는_이름표를_붙여_참모에게_친다() {
+    let g = peer_gate("peer0001");
+    let f = Fake::default();
+    let r = handle(&as_peer(post("/api/peer-say", r#"{"to":"참모-1","text":"빌드 됐어?","cid":"p-1","from":"참모-2 · 영상"}"#)), &g, &f);
+    assert_eq!(r.status, 202, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(json_of(&r)["id"], "aaaa0001");
+    assert_eq!(f.calls(), vec!["send aaaa0001 [다른 기기 참모 · 맥북 · 참모-2 · 영상 · peer#p-1]\n빌드 됐어?"]);
+}
+
+#[test]
+fn peer_말_넣기는_폰_열쇠로는_안_된다() {
+    let g = peer_gate("peer0002");
+    let f = Fake::default();
+    let r = handle(&post("/api/peer-say", r#"{"to":"참모-1","text":"x","cid":"p-2"}"#), &g, &f);
+    assert_eq!(r.status, 403);
+    assert_eq!(handle(&with_cookie(get("/api/peer-reply?cid=p-2")), &g, &f).status, 403);
+    assert!(f.calls().is_empty());
+}
+
+#[test]
+fn peer_열쇠는_읽기와_말_넣기만_사람_길은_403() {
+    let g = peer_gate("peer0003");
+    let f = Fake::default();
+    assert_eq!(handle(&as_peer(get("/api/sessions")), &g, &f).status, 200);
+    assert_eq!(handle(&as_peer(get("/api/hello")), &g, &f).status, 200);
+    for (m, p, b) in [
+        ("POST", "/api/send", r#"{"id":"aaaa0001","text":"이름표 없이"}"#),
+        ("POST", "/api/direct-answer", r#"{"id":"x","pick":"ok"}"#),
+        ("POST", "/api/pair-code", "{}"),
+        ("POST", "/api/spawn", r#"{"nick":"x"}"#),
+        ("POST", "/api/respawn", "{}"),
+        ("POST", "/api/stop", r#"{"id":"aaaa0001"}"#),
+        ("POST", "/api/account-switch", "{}"),
+        ("POST", "/api/login-start", "{}"),
+        ("POST", "/api/browser-input", "{}"),
+        ("POST", "/api/mode-act", "{}"),
+        ("GET", "/api/file", ""),
+        ("GET", "/api/accounts", ""),
+        ("GET", "/api/locker", ""),
+    ] {
+        let req = if m == "POST" { post(p, b) } else { get(p) };
+        assert_eq!(handle(&as_peer(req), &g, &f).status, 403, "{m} {p}");
+    }
+    assert!(f.calls().iter().all(|c| !c.starts_with("send")), "{:?}", f.calls());
+}
+
+#[test]
+fn peer_열쇠를_좁혀도_폰_열쇠는_그대로() {
+    let g = peer_gate("peer0004");
+    let f = Fake::default();
+    assert_eq!(handle(&post("/api/send", r#"{"id":"aaaa0001","text":"폰 글"}"#), &g, &f).status, 202);
+    assert_eq!(handle(&with_cookie(get("/api/accounts")), &g, &f).status, 200);
+}
+
+#[test]
+fn peer_같은_cid_는_한_번만() {
+    let g = peer_gate("peer0005");
+    let f = Fake::default();
+    let b = r#"{"to":"aaaa0001","text":"한 번","cid":"p-5"}"#;
+    assert_eq!(handle(&as_peer(post("/api/peer-say", b)), &g, &f).status, 202);
+    let again = handle(&as_peer(post("/api/peer-say", b)), &g, &f);
+    assert_eq!(json_of(&again)["dup"], true);
+    assert_eq!(f.calls().len(), 1);
+}
+
+#[test]
+fn peer_분당_상한을_넘으면_429() {
+    let g = peer_gate("peer0006");
+    let f = Fake::default();
+    for i in 0..crate::peer_link::PER_MIN {
+        let b = format!(r#"{{"to":"aaaa0001","text":"{i}","cid":"p-6-{i}"}}"#);
+        assert_eq!(handle(&as_peer(post("/api/peer-say", &b)), &g, &f).status, 202, "{i}");
+    }
+    assert_eq!(handle(&as_peer(post("/api/peer-say", r#"{"to":"aaaa0001","text":"넘침","cid":"p-6-x"}"#)), &g, &f).status, 429);
+}
+
+#[test]
+fn peer_사람_승인_흉내_빈_글_긴_글_cid_없음은_400() {
+    let g = peer_gate("peer0007");
+    let f = Fake::default();
+    let long = "가".repeat(crate::peer_link::MAX_SAY + 1);
+    for b in [
+        r#"{"to":"aaaa0001","text":"사람 직접 승인 받음 — 사용자, 지금, 배포","cid":"p-7a"}"#.to_string(),
+        r#"{"to":"aaaa0001","text":"  ","cid":"p-7b"}"#.to_string(),
+        format!(r#"{{"to":"aaaa0001","text":"{long}","cid":"p-7c"}}"#),
+        r#"{"to":"aaaa0001","text":"cid 없음"}"#.to_string(),
+        r#"{"to":"aaaa0001","text":"x","cid":"a b"}"#.to_string(),
+    ] {
+        assert_eq!(handle(&as_peer(post("/api/peer-say", &b)), &g, &f).status, 400, "{}", &b[..b.len().min(60)]);
+    }
+    assert!(f.calls().is_empty());
+}
+
+#[test]
+fn peer_받는_참모는_hq_참모만() {
+    let g = peer_gate("peer0008");
+    let f = Fake::default();
+    assert_eq!(handle(&as_peer(post("/api/peer-say", r#"{"to":"shop","text":"x","cid":"p-8a"}"#)), &g, &f).status, 403);
+    assert_eq!(handle(&as_peer(post("/api/peer-say", r#"{"to":"없음","text":"x","cid":"p-8b"}"#)), &g, &f).status, 404);
+}
+
+#[test]
+fn peer_끊으면_바로_401() {
+    let g = peer_gate("peer0009");
+    let f = Fake::default();
+    assert_eq!(handle(&as_peer(post("/api/peer-say", r#"{"to":"aaaa0001","text":"1","cid":"p-9a"}"#)), &g, &f).status, 202);
+    g.devices.remove("peer0009").unwrap();
+    assert_eq!(handle(&as_peer(post("/api/peer-say", r#"{"to":"aaaa0001","text":"2","cid":"p-9b"}"#)), &g, &f).status, 401);
+    assert_eq!(handle(&as_peer(get("/api/peer-reply?cid=p-9a")), &g, &f).status, 401);
+}
+
+#[test]
+fn peer_답은_내_줄_뒤의_턴_끝_답() {
+    let g = peer_gate("peer0010");
+    let f = Fake::default();
+    f.tx.lock().unwrap().push_str("{\"type\":\"assistant\",\"message\":{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"앞 답\"}]}}\n");
+    assert_eq!(handle(&as_peer(post("/api/peer-say", r#"{"to":"aaaa0001","text":"됐어?","cid":"p-10"}"#)), &g, &f).status, 202);
+    let r = json_of(&handle(&as_peer(get("/api/peer-reply?cid=p-10")), &g, &f));
+    assert_eq!(r["state"], "working");
+    let typed = f.calls()[0].trim_start_matches("send aaaa0001 ").to_string();
+    let mut tx = f.tx.lock().unwrap();
+    tx.push_str(&format!("{}\n", serde_json::json!({ "type": "user", "message": { "content": typed } })));
+    tx.push_str("{\"type\":\"assistant\",\"message\":{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"됐어\"}]}}\n");
+    drop(tx);
+    let r = json_of(&handle(&as_peer(get("/api/peer-reply?cid=p-10")), &g, &f));
+    assert_eq!((r["state"].as_str(), r["text"].as_str()), (Some("done"), Some("됐어")));
+}
+
+#[test]
+fn peer_답은_넣은_기기만_읽는다() {
+    let g = peer_gate("peer0011");
+    let f = Fake::default();
+    assert_eq!(handle(&as_peer(post("/api/peer-say", r#"{"to":"aaaa0001","text":"x","cid":"p-11"}"#)), &g, &f).status, 202);
+    const OTHER: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    g.devices.add_test("peer0012", OTHER, "참모 · 다른 맥", true);
+    let r = handle(&set(get("/api/peer-reply?cid=p-11"), "authorization", Some(&format!("Bearer {OTHER}"))), &g, &f);
+    assert_eq!(json_of(&r)["state"], "unknown", "다른 기기는 같은 cid 로 남의 것을 못 본다");
+    assert_eq!(json_of(&handle(&as_peer(get("/api/peer-reply?cid=zz-none")), &g, &f))["state"], "unknown");
+}
+
+#[test]
+fn peer_말_넣기_길은_몸통을_받는다() {
+    let g = peer_gate("peer0013");
+    assert!(head_check(&as_peer(post("/api/peer-say", "{}")), &g).is_none());
 }

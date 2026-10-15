@@ -70,8 +70,15 @@ def same_dir(a, b):
 
 
 def bases_of(cfg):
-    """참모로 치는 기본 이름 — 설정 이름과 두 언어 기본 이름(앱 domain/session assistantBases 와 같다)"""
-    return [b for b in [(cfg.get('assistantName') or '').strip(), '참모', 'Chammo'] if b]
+    """참모로 치는 기본 이름 — 설정 이름·옛 이름·두 언어 기본 이름, 같은 순서(앱 domain/session assistantBases 와 같다).
+    옛 이름은 환경변수 CHAMMO_ORCH_LEGACY(쉼표) 로 받는다 — 공개 템플릿엔 개인 이름을 못 박는다(개인판 voice-hint 가 넘긴다).
+    옛 이름을 빼면 설정 이름이 다른 HQ 에서 옛 이름-N 이 서로 안 보여 일 넘기기가 한쪽으로 쏠린다(2026-10-15)"""
+    legacy = (os.environ.get('CHAMMO_ORCH_LEGACY') or '').split(',')
+    out = []
+    for b in [(cfg.get('assistantName') or '').strip(), *(x.strip() for x in legacy), '참모', 'Chammo']:
+        if b and b not in out:
+            out.append(b)
+    return out
 
 
 def orch_base(name, bases):

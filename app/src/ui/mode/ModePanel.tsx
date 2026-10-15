@@ -1,12 +1,14 @@
 // 메인 창 안 모드 자리 — 스페이스 패널(오른쪽 칸)·대시보드 칸·미리보기(모달)·꽉 채우기(스페이스 전체).
-// 따로 창이 기본이고 이건 고른 사람만(docs/research/2026-10-05-chammo-mod.md '띄울 자리'). 머리줄은 넷이 같다: 이름 · 따로 창으로 · 끄기
+// 따로 창이 기본이고 이건 고른 사람만(docs/research/2026-10-05-chammo-mod.md '띄울 자리'). 머리줄은 넷이 같다: 이름 · 따로 창으로 · ⋯(끄기는 그 안 글자)
+// X 를 머리에 두지 않는다 — 모드 안 날짜 보기에서 뒤로 가려고 X 를 눌러 칸이 꺼졌다(2026-10-15 사용자 B, docs/design-drafts/mode-nav-v1). 뒤로는 모드가 그린 키트 BackBar
 import { invoke } from '@tauri-apps/api/core';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 
 export { HOME_TRY } from './ModePick';
 import { tr } from '../../i18n';
-import { IconClose, IconDashboard, IconMaximize, IconOpen } from '../Icons';
+import { IconDashboard, IconMaximize, IconMore, IconOpen } from '../Icons';
+import { closeOnOutside } from '../outsideClose';
 import { modeLayout } from '../../domain/homeModes';
 import { IconButton } from '../kit/IconButton';
 import { ModeSheet, ModeTry, TryFail } from './ModePick';
@@ -44,10 +46,34 @@ function ModeBox({ m, className, roomy, extra, offLabel }: { m: ModeRow; classNa
         <span className="mdv-sp" />
         {extra}
         <button className="ib" onClick={() => toWindow(m.name)} aria-label={tr('따로 창으로', 'Open in a window')} title={tr('따로 창으로', 'Open in a window')}><IconOpen /></button>
-        <button className="ib" onClick={() => turnOff(m.name)} aria-label={off} title={off}><IconClose /></button>
+        <ModeMore items={[{ label: tr('따로 창으로', 'Open in a window'), run: () => toWindow(m.name) }, { label: off, run: () => turnOff(m.name), warn: true }]} />
       </header>
       <ModeView name={m.name} compact={!roomy} />
     </section>
+  );
+}
+
+/** 칸 머리 ⋯ — 늘 머리 맨 오른쪽. 끄기 같은 드문 일은 이 안 글자로(바깥 누름·Esc 닫기) */
+function ModeMore({ items }: { items: { label: string; run: () => void; warn?: boolean }[] }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
+    window.addEventListener('keydown', esc, true);
+    const off = closeOnOutside(window, (t) => !!box.current && t instanceof Node && box.current.contains(t), () => setOpen(false));
+    return () => { window.removeEventListener('keydown', esc, true); off(); };
+  }, [open]);
+  const more = tr('더보기', 'More');
+  return (
+    <span className="mdv-more" ref={box}>
+      <button className="ib" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open} aria-label={more} title={more}><IconMore /></button>
+      {open && (
+        <div className="mdv-menu" role="menu">
+          {items.map((it) => <button key={it.label} role="menuitem" className={it.warn ? 'warn' : undefined} onClick={() => { setOpen(false); it.run(); }}>{it.label}</button>)}
+        </div>
+      )}
+    </span>
   );
 }
 

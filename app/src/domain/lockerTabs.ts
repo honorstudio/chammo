@@ -66,6 +66,14 @@ export function swapHold(saved: Map<string, LkHold>, leaving: LkHold | null, to:
   return saved.get(to) ?? null;
 }
 
+/** 지금 보는 참모 프사를 또 누를 때 — 남의 보관함 자리(옛 화면이 눌려 박힌 것)·탭 줄에 없는 화면이면 이 참모 홈(home), 이 참모 보관함·홈이나
+ *  이 참모 탭 줄의 문서·세션·검토 탭이면 그대로(null). 문서 탭에서 프사를 또 누르면 홈으로 튀었다(2026-10-12 anim-calm 관찰) */
+export function reclickPick(h: LkHold | null, orch: string, pick: string, home: string): string | null {
+  if (parseLkPick(pick)?.orch === orch) return null;
+  if (h && h.orch === orch && h.tabs.some((p) => tabPick(p) === pick)) return null;
+  return home;
+}
+
 /** ⌘T 새 문서가 놓일 보관함 폴더 — 보관함 폴더를 보고 있으면 그 폴더(rel), 그 밖(보관함 맨 위·칩·홈·문서 탭·세션 탭…)이면 보관함 맨 위('') */
 export function newDocFolder(pick: string): string {
   const p = parseLkPick(pick)?.place;

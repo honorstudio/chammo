@@ -551,7 +551,7 @@ fn unknown(key: &str) -> String {
     }
 }
 
-fn read_from(p: &Path, from: u64, max: u64) -> String {
+pub(crate) fn read_from(p: &Path, from: u64, max: u64) -> String {
     use std::io::{Read, Seek, SeekFrom};
     let Ok(mut f) = std::fs::File::open(p) else { return String::new() };
     if f.seek(SeekFrom::Start(from)).is_err() {

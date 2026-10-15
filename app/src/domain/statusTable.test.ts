@@ -50,6 +50,10 @@ const TABLE: Row[] = [
   // 백그라운드 일을 기다린다 — 멈춤도 일함도 아니다
   { name: '백그라운드 일 기다림(실측 working·busy, 턴은 끝남)', agent: { state: 'working', status: 'busy' }, tx: [user(0, '시험'), launch(1, 'b1'), end(2, '아직 sleep 150 이 돌고 있어요. 끝나면 알림이 오고, 그때 답할게요.')], want: 'bgwait' },
   { name: '깨우기 예약 걸고 쉼', agent: { state: 'done', status: 'idle' }, tx: [user(0, '시험'), tool(1, 'ScheduleWakeup', { delaySeconds: 600, prompt: '/loop CI' }), end(2, '10분 뒤 다시 볼게')], want: 'bgwait' },
+  // L11(2026-10-11 bug-hunt) — 백그라운드 일이 살아 있으면 agents 는 working 을 준다(실측). 쉬는데 끝 알림 없는 일이 남았으면 죽인 일 — 기다림이 아니라 답함
+  { name: '띄운 일이 끝 알림 없이 사라짐(죽임) — 쉬는 세션은 답함', agent: { state: 'done', status: 'idle' }, tx: [user(0, '시험'), launch(1, 'b1'), end(2, '돌려 뒀어')], want: 'done' },
+  { name: '죽인 일이 남았어도 질문으로 끝냈으면 물어봄', agent: { state: 'blocked', status: 'idle' }, tx: [user(0, '시험'), launch(1, 'b1'), end(2, '돌려 뒀어. 머지할까?')], want: 'asks' },
+  { name: '죽인 일 + 깨우기 예약 — 깨우기가 있으면 기다림', agent: { state: 'done', status: 'idle' }, tx: [user(0, '시험'), launch(1, 'b1'), tool(2, 'ScheduleWakeup', { delaySeconds: 600, prompt: '/loop CI' }), end(3, '10분 뒤 다시 볼게')], want: 'bgwait' },
   // 끝났다·쉰다
   { name: '답하고 끝(실측 done·idle)', agent: { state: 'done', status: 'idle' }, tx: [user(0, '시험'), end(2, '끝났어.')], want: 'done' },
   { name: '실패를 알리고 끝 — Claude 는 blocked 로 보지만 묻지 않음(실측)', agent: { state: 'blocked', status: 'idle' }, tx: [user(0, '시험'), tool(1, 'Bash', { command: 'sleep 150' }), end(2, '시험은 실패했어. Bash가 sleep 150을 차단했어.')], want: 'done' },

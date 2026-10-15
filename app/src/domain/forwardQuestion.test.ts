@@ -273,11 +273,15 @@ describe('nextQuietForward — 안 닫은 일 + 말없이 쉬는 세션', () => 
     no(cand(), null);
     no(cand(act({ reply: { ts: iso(T0), text: '어느 쪽으로 할까?', asks: true, turnEnd: true } })));
     no(cand(act(), { awaiting: true }));
-    no(cand(act({ waitingOn: 1 })));
+    no(cand(act({ waitingOn: 1, wake: true }))); // 깨우기 예약 — 아직 안 끝남
     no(cand(act({ prompt: { ts: iso(T0 + 1000), text: '다음 거' } })));
     no(cand(act()), task({ sentAt: iso(T0 + 1000) }));
     no(cand(), task(), new Set([quietKeyOf(cand(), task())]));
     no(cand(), task(), new Set(), () => true);
+  });
+  // L11(2026-10-11 bug-hunt) — 쉬는 세션에 끝 알림 없이 남은 백그라운드 일은 죽인 일(살아 있으면 agents 가 working) — 말없이 쉼을 막지 않는다
+  it('쉬는 세션의 죽인 백그라운드 일(waitingOn 만, 깨우기 없음)은 넘긴다', () => {
+    expect(nextQuietForward([cand(act({ waitingOn: 1 }))], open(task()), orch, new Set(), later, never)).toMatchObject({ task: { id: '1011-0950-ab12' } });
   });
   it('두 번째 일부터 — 참모가 SendMessage 로 준 일(peer)이 턴의 시작. 앞 일 보고(messaged)로 막지 않는다(2026-10-11 bug-hunt)', () => {
     // 처음 띄울 때 지시(prompt) → 일1 보고(messaged) → 일2 는 SendMessage(peer, prompt 아님) → 말없이 끝냄

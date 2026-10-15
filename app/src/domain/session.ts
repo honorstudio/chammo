@@ -164,6 +164,8 @@ export type ProjectGroup = { name: string; sessions: Session[] };
 
 /** 예전부터 쓰던 비서 이름 — 설정 이름이 달라도 이 이름의 세션(참모·참모-2)은 계속 비서로 친다 */
 const LEGACY_ASSISTANT = '참모';
+/** 옛 이름 — 앱이 켤 때 Rust(messenger is_orch_name)에도 넘긴다(set_orch_legacy). Rust 원본엔 개인 이름을 안 박는다 */
+export const legacyAssistants = () => [LEGACY_ASSISTANT];
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 

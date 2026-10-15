@@ -1,7 +1,8 @@
 // 폰 홈 모드 카드(폰 홈·보관함 v1 1 — 세션 줄 아래 카드 한 칸, 여럿이면 칸 안 알약, 오른쪽 위 = 꽉 채워 보기).
 // 데스크톱 홈과 같은 모드(이 참모 대시보드 칸 자리 dash)를 같은 트리 그리기(ui/mode/ModeTree)로. 데스크톱 앱이 밀어 줄 길이 없어 보는 동안 10초마다 다시 받는다.
-// 하나도 없으면 빈 칸에 고르기 목록(내가 만든 것·참모 모드, 골라 켜기)·말로 만들기(참모에게). 머리 = 이 홈에서 끄기 · 꽉 채워 보기 · 모드 고르기(시트, 10/12)
-import { useEffect, useRef, useState } from 'react';
+// 하나도 없으면 빈 칸에 고르기 목록(내가 만든 것·참모 모드, 골라 켜기)·말로 만들기(참모에게). 머리 = 꽉 채워 보기 · ⋯(모드 고르기·이 홈에서 끄기 — X 를 머리에 두지 않는다, 10/15 사용자 B)
+// 모드 안 뒤로는 모드가 그린 키트 BackBar, 칸 왼쪽 끝에서 오른쪽으로 밀어도 그 단추를 누른다(domain/modeNav)
+import { useEffect, useRef, useState, type TouchEvent } from 'react';
 import { modeAct, modeCard, modeClose, modeOpen, modeRemove, modeRestore, readModeView, readModes, type PhoneModeRow } from '../../data/web';
 import { phoneRemove } from '../../domain/modeManage';
 import { ModeCardArt, useModeCard } from '../mode/ModeCardArt';
@@ -9,7 +10,9 @@ import { openInTurn, pickDiff, pickGroups, type PickItem } from '../../domain/ho
 import { dashModes, phoneCells, hrefOk, normalize, type Act, type TNode } from '../../domain/modeTree';
 import { ModeEnvCtx, Node, type Drafts, type ModeEnv } from '../mode/ModeTree';
 import '../mode/mode.css';
-import { IconCheck, IconClose, IconDashboard, IconHide, IconMaximize, IconSend, IconTrash } from '../Icons';
+import { IconCheck, IconHide, IconMaximize, IconMore, IconSend, IconTrash } from '../Icons';
+import { edgeSwipe } from '../../domain/modeNav';
+import { closeOnOutside } from '../outsideClose';
 import { BottomSheet, IconBtn } from './kit';
 import { useMemoPoll } from './usePoll';
 import { machine } from '../../i18n';
@@ -64,11 +67,38 @@ function ModeBody({ name, full = false }: { name: string; full?: boolean }) {
   }, [name, full]);
   // 누름 — 모드가 다시 그리라고 하면 바로 다시 받는다(데스크톱 밀림이 폰엔 안 오니 늘)
   const act = (a: Act) => void modeAct(name, a).finally(() => kick.current());
+  // 칸 왼쪽 끝에서 오른쪽으로 밀기 = 모드가 그린 뒤로 단추 누르기(없으면 아무것도 안 함)
+  const from = useRef<{ x: number; y: number } | null>(null);
+  const swipeStart = (e: TouchEvent) => { const t = e.touches[0]; from.current = e.touches.length === 1 && t ? { x: t.clientX, y: t.clientY } : null; };
+  const swipeEnd = (e: TouchEvent) => {
+    const t = e.changedTouches[0], f = from.current, el = box.current;
+    from.current = null;
+    if (!t || !f || !el) return;
+    const r = el.getBoundingClientRect();
+    if (edgeSwipe({ left: r.left, width: r.width }, f, { x: t.clientX, y: t.clientY })) el.querySelector<HTMLButtonElement>('[data-mode-back]:not(:disabled)')?.click();
+  };
   return (
-    <div className="mdv compact m-mode-body" ref={box}>
+    <div className="mdv compact m-mode-body" ref={box} onTouchStart={swipeStart} onTouchEnd={swipeEnd} onTouchCancel={() => { from.current = null; }}>
       {v.note && <div className="mdv-note quiet">{v.note}</div>}
       {v.tree && <ModeEnvCtx.Provider value={ENV}><Node n={v.tree} onAct={act} drafts={drafts} /></ModeEnvCtx.Provider>}
     </div>
+  );
+}
+
+/** 칸 머리 ⋯ — 늘 머리 맨 오른쪽, 드문 일(고르기·끄기)은 이 안 44px 글 줄로 */
+function PhoneMore({ items }: { items: { label: string; run: () => void; warn?: boolean }[] }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLSpanElement>(null);
+  useEffect(() => (open ? closeOnOutside(window, (t) => !!box.current && t instanceof window.Node && box.current.contains(t), () => setOpen(false)) : undefined), [open]);
+  return (
+    <span className="m-mode-more" ref={box}>
+      <IconBtn label="더보기" onClick={() => setOpen((o) => !o)}><IconMore /></IconBtn>
+      {open && (
+        <div className="m-mode-menu" role="menu">
+          {items.map((it) => <button key={it.label} type="button" role="menuitem" className={it.warn ? 'warn' : undefined} onClick={() => { setOpen(false); it.run(); }}>{it.label}</button>)}
+        </div>
+      )}
+    </span>
   );
 }
 
@@ -182,9 +212,8 @@ export function PhoneModes({ keys, dash, onAsk }: { keys: string[]; dash: string
             <button key={m.name} type="button" role="tab" aria-selected={m.name === cur.name} className={m.name === cur.name ? 'm-on' : ''} onClick={() => setPick(m.name)}>{m.title}</button>
           )) : <b>{cur.title}</b>}
         </div>
-        <IconBtn label="이 홈에서 끄기" onClick={off}><IconClose /></IconBtn>
         <IconBtn label="꽉 채워 보기" onClick={() => setFull(true)}><IconMaximize /></IconBtn>
-        <IconBtn label="모드 고르기" onClick={() => setSheet(true)}><IconDashboard /></IconBtn>
+        <PhoneMore items={[{ label: '모드 고르기', run: () => setSheet(true) }, { label: '이 홈에서 끄기', run: off, warn: true }]} />
       </div>
       {offErr && <p className="m-mode-err" role="alert">못 껐어 — {offErr}</p>}
       <ModeBody key={cur.name} name={cur.name} />

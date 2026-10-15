@@ -393,7 +393,7 @@ export function subTag(st: ActivityStatus): { cls: 't-work' | 't-wait' | 't-done
     case 'asks':
     case 'blocked': return { cls: 't-wait', text: '물음' };
     case 'login': return { cls: 't-wait', text: '로그인' };
-    case 'bgwait': return { cls: 't-done', text: '기다림' };
+    case 'bgwait': return { cls: 't-done', text: '배경 일' }; // 안 급함 — 데스크톱 '기다림'은 확인창(blocked)이라 같은 말이면 뜻이 반대(L9)
     case 'done': return { cls: 't-done', text: '답함' };
     case 'unknown': return { cls: 't-done', text: '모름' };
     default: return { cls: 't-done', text: '쉼' };

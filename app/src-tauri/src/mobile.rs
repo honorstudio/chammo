@@ -881,6 +881,16 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         // 폰은 처음을 가볍게 읽는다(끝 256KB~2MB) — 앞은 위로 올리면 transcript_before
         serde_json::to_value(crate::claude::read_transcript_phone(session_id, from)).unwrap_or_default()
     }
+    fn transcript_mark(&self, id: &str) -> Option<(String, u64)> {
+        let sid = crate::messenger_run::session_in_live(&std::fs::read_to_string(crate::config::data_file("live.json")).ok()?, id)?;
+        let len = crate::claude::transcript_path(&sid).and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len());
+        Some((sid, len))
+    }
+    fn transcript_read(&self, session: &str, offset: u64) -> Option<String> {
+        // 답은 넣은 자리 바로 뒤라 4MB 면 넉넉하다(큰 도구 결과가 끼면 그 뒤는 못 봄 — working 으로 남는다)
+        let p = crate::claude::transcript_path(session)?;
+        Some(crate::messenger_run::read_from(&p, offset, 4 * 1024 * 1024))
+    }
     fn transcript_before(&self, session_id: &str, before: u64) -> serde_json::Value {
         serde_json::to_value(crate::claude::read_transcript_before(session_id, before)).unwrap_or_default()
     }

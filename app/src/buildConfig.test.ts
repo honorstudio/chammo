@@ -6,7 +6,7 @@ import widgetHtml from '../widget.html?raw';
 import win from '../src-tauri/tauri.windows.conf.json';
 import nsisHooks from '../src-tauri/windows/hooks.nsh?raw';
 
-type Conf = { productName: string; mainBinaryName?: string; identifier: string; app?: { windows: { title: string }[] }; bundle: { targets?: string[]; macOS?: { signingIdentity?: string } } };
+type Conf = { productName: string; mainBinaryName?: string; identifier: string; app?: { windows: { title: string }[] }; bundle: { targets?: string[]; createUpdaterArtifacts?: boolean; macOS?: { signingIdentity?: string } }; plugins?: { updater?: { pubkey?: string; endpoints?: string[] } } };
 
 describe('빌드 설정', () => {
   it('공개판은 Chammo, 인증서 없이 ad-hoc(-) 서명, .app 과 .dmg', () => {
@@ -18,6 +18,15 @@ describe('빌드 설정', () => {
     // 서명을 아예 안 하면 링커 서명만 남아 받은 맥에서 "손상되었기 때문에 열 수 없습니다"(그래도 열기도 없음) — 아이맥 실측 2026-09-28
     expect(c.bundle.macOS?.signingIdentity).toBe('-');
     expect(c.bundle.targets).toEqual(['app', 'dmg']);
+  });
+
+  it('자동 업데이트: GitHub 최신 릴리스의 latest.json, 공개 키가 박혀 있고 업데이트 파일은 릴리스 스크립트만 만든다(ADR 0005)', () => {
+    const c = pub as Conf;
+    expect(c.plugins?.updater?.endpoints).toEqual(['https://github.com/honorstudio/chammo/releases/latest/download/latest.json']);
+    // minisign 공개 키(base64) — 비밀 키는 키체인에만
+    expect(atob(c.plugins?.updater?.pubkey ?? '')).toMatch(/^untrusted comment: minisign public key/);
+    // 켜 두면 서명 키 없는 사람의 pnpm tauri build 가 깨진다 — release-mac.sh·win-build 가 --config 로 켠다
+    expect(c.bundle.createUpdaterArtifacts).toBe(false);
   });
 
 });

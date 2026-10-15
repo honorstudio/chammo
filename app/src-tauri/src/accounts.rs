@@ -68,6 +68,9 @@ pub struct Pool {
     /// 백업 칸마다 그때의 oauthAccount(토큰 아님) — 되돌릴 때 키체인과 표시를 같이 돌려놓는다
     #[serde(skip_serializing_if = "Value::is_null")]
     pub backup_oauth: Value,
+    /// 쉬는 칸 미리 데우기 기록(accounts_warm) — 토큰 없음
+    #[serde(skip_serializing_if = "crate::accounts_warm::Warm::is_empty")]
+    pub warm: crate::accounts_warm::Warm,
 }
 
 #[derive(Debug, PartialEq)]
@@ -143,7 +146,7 @@ pub fn plan_of(oauth: &Value) -> (String, u32) {
 }
 
 /// 같은 계정인가 — 사람 하나가 조직 여럿에 있을 수 있어 둘 다 본다
-fn key(oauth: &Value) -> Option<(String, String)> {
+pub(crate) fn key(oauth: &Value) -> Option<(String, String)> {
     let a = oauth.get("accountUuid")?.as_str()?.to_string();
     let o = oauth.get("organizationUuid").and_then(Value::as_str).unwrap_or("").to_string();
     Some((a, o))
@@ -216,11 +219,11 @@ pub fn part(s: &Secret) -> Option<Value> {
 }
 
 /// 칸에 보관하는 모양 — 계정 로그인만
-fn slot_secret(p: &Value) -> Secret {
+pub(crate) fn slot_secret(p: &Value) -> Secret {
     Secret::new(serde_json::json!({ "claudeAiOauth": p }).to_string())
 }
 
-fn slot_part(store: &dyn Store, id: &str) -> Result<Option<Value>, Error> {
+pub(crate) fn slot_part(store: &dyn Store, id: &str) -> Result<Option<Value>, Error> {
     Ok(store.get(SLOT_SERVICE, id)?.as_ref().and_then(part))
 }
 

@@ -198,3 +198,8 @@
   .cfg-body .su-field label, .cfg-body .su-line { grid-template-columns: 1fr; }
   .cfg-body .su-field > .su-hint { padding-left: 0; }
 }
+
+/* 다른 기기 참모(PeerSection) — 코드 넣는 칸은 그 줄 아래로 */
+.peer-row { flex-wrap: wrap; }
+.peer-code { flex: 1 0 100%; margin-left: 0; }
+.peer-code input { flex: 1; min-width: 0; max-width: 380px; height: 32px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; font-family: var(--mono, ui-monospace, monospace); }

@@ -4,6 +4,8 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { tr } from '../../i18n';
 import { actOf, hrefOk, type Act, type Kid, type TNode } from '../../domain/modeTree';
+import { BACK_KEY, backText } from '../../domain/modeNav';
+import { IconBack } from '../Icons';
 import { mdToHtml } from '../md';
 import { ModeSvg } from './ModeSvg';
 
@@ -12,6 +14,9 @@ export type Drafts = Map<string, string>;
 /** 그리는 쪽이 넣는 것 — 링크 열기(hrefOk 를 지난 것만 온다) · Client 칸(없으면 '못 그림') */
 export type ModeEnv = { open: (href: string) => void; client: ((n: Extract<TNode, { type: 'Client' }>) => ReactNode) | null };
 export const ModeEnvCtx = createContext<ModeEnv>({ open: () => {}, client: null });
+
+/** 글만 이어 붙이기(뒤로 단추 글) */
+const kidText = (kids: Kid[]): string => kids.map((k) => (typeof k === 'string' ? k : 'kids' in k ? kidText(k.kids) : '')).join('');
 
 function Kids({ kids, onAct, drafts }: { kids: Kid[]; onAct: (a: Act) => void; drafts: Drafts }) {
   return <>{kids.map((k, i) => (typeof k === 'string' ? k : <Node key={i} n={k} onAct={onAct} drafts={drafts} />))}</>;
@@ -58,6 +63,15 @@ export function Node({ n, onAct, drafts }: { n: TNode; onAct: (a: Act) => void; 
       return <span className={['mdv-text', n.look && `mdv-look-${n.look}`, n.trunc && 'mdv-trunc'].filter(Boolean).join(' ')} style={n.style}><Kids kids={n.kids} onAct={onAct} drafts={drafts} /></span>;
     case 'Button': {
       const a = actOf(n);
+      // 키트 BackBar — 모든 모드에서 같은 모양(‹ + 돌아갈 곳). 칸 머리엔 X 가 없어 이게 뒤로 길이다, 폰 밀기도 이걸 누른다(domain/modeNav)
+      if (n.key === BACK_KEY) {
+        const to = backText(kidText(n.kids), n.label);
+        return (
+          <button className="btn mdv-back" data-mode-back disabled={!a} aria-label={n.label || to} title={n.label || to} onClick={() => a && onAct(a)}>
+            <IconBack />{to}
+          </button>
+        );
+      }
       const body = n.kids.length ? <Kids kids={n.kids} onAct={onAct} drafts={drafts} /> : n.label;
       return (
         <button className={n.plain ? 'mdv-plain' : `btn ${n.primary ? 'pri' : ''}`} disabled={!a} style={n.dim ? { opacity: 0.6 } : undefined} onClick={() => a && onAct(a)}>

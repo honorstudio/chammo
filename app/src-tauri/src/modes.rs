@@ -103,6 +103,8 @@ pub struct ModeInfo {
     pub where_default: String,
     /// false 면 안 보인 지 오래되면 재운다(호스트를 끄고 다시 보이면 띄운다 — 모드 안 메모리 상태는 잃는다). 기본 false(10/12) — 뒤에서 계속 돌아야 하는 모드만 chammo.json 에 keepAlive:true
     pub keep_alive: bool,
+    /// chammo.json "light": true — AI 를 안 부르는 모드라 다른 가벼운 모드와 클로드 호스트 하나를 같이 써도 된다(ADR 0006, 글 검사가 거부할 수 있다)
+    pub light: bool,
 }
 
 /// 메뉴·명령·창 이름에 그대로 쓰니 글자·숫자·. _ - 만, 점으로 시작하지 않게
@@ -147,7 +149,8 @@ fn info(name: &str, dir: &Path, source: &'static str) -> ModeInfo {
     let title = hint.get("title").and_then(|t| t.as_str()).map(str::trim).filter(|t| !t.is_empty()).unwrap_or(name);
     let w = hint.get("where").and_then(|w| w.as_str()).and_then(safe_where).unwrap_or("window");
     let keep_alive = hint.get("keepAlive").and_then(|k| k.as_bool()).unwrap_or(false);
-    ModeInfo { name: name.into(), title: title.chars().take(60).collect(), source, dir: dir.to_string_lossy().into_owned(), where_default: w.into(), keep_alive }
+    let light = hint.get("light").and_then(|k| k.as_bool()).unwrap_or(false);
+    ModeInfo { name: name.into(), title: title.chars().take(60).collect(), source, dir: dir.to_string_lossy().into_owned(), where_default: w.into(), keep_alive, light }
 }
 
 /// 모드 목록 — <데이터>/modes/* 폴더 → 설치된 플러그인(사용자 범위) 중 function hooks 가진 것 → 앱 예시. 같은 이름은 앞의 것(앱은 더한 폴더까지 discover_with)
@@ -214,10 +217,12 @@ pub fn run_dir(data: &Path, name: &str) -> PathBuf {
     data.join("modes").join(name).join("run")
 }
 
-/// 호스트 실행 인자 — 사용자 settings 훅·MCP 를 빼고(533MB → 241MB, 2026-10-10 실측) 세션 기록도 안 남긴다
-pub fn host_args(plugin_dir: &Path) -> Vec<String> {
+/// 호스트 실행 인자(플러그인 하나, 같이 쓰는 호스트면 여럿) — 사용자 settings 훅·MCP 를 빼고(533MB → 241MB, 2026-10-10 실측) 세션 기록도 안 남긴다
+pub fn host_args(plugin_dirs: &[PathBuf]) -> Vec<String> {
     let mut a: Vec<String> = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--model", "haiku"].iter().map(|s| s.to_string()).collect();
-    a.extend(["--plugin-dir".into(), plugin_dir.to_string_lossy().into_owned()]);
+    for d in plugin_dirs {
+        a.extend(["--plugin-dir".into(), d.to_string_lossy().into_owned()]);
+    }
     a.extend(["--setting-sources", "project", "--strict-mcp-config", "--no-session-persistence"].iter().map(|s| s.to_string()));
     a
 }
@@ -485,6 +490,11 @@ pub const SLEEP_AFTER: std::time::Duration = std::time::Duration::from_secs(300)
 /// 재울까 — 살아 있고, 재워도 된다고 했고, 보는 칸이 없고, 안 보인 지 오래
 pub fn should_sleep(keep_alive: bool, alive: bool, viewers: usize, unseen_for: std::time::Duration) -> bool {
     !keep_alive && alive && viewers == 0 && unseen_for >= sleep_after()
+}
+
+/// 앱을 켤 때 잠든 채로 둘까 — 재워도 되고, 아직 보는 칸이 없고, 따로 창(켜자마자 보인다)이 아니면. 보이면 mode_seen 이 깨운다
+pub fn boot_asleep(keep_alive: bool, place: &str, viewers: usize) -> bool {
+    !keep_alive && place != "window" && viewers == 0
 }
 
 /// 개발판 시험용으로만 짧게(CHAMMO_MODE_SLEEP_SECS) — 배포판은 늘 5분
@@ -853,6 +863,20 @@ mod tests {
         }
     }
 
+    /// 폰 칸 점검(kit-phone.ts)은 맛보기 시험(phone.test.tsx)만 쓴다 — 싣지는 않고 스킬 것과 같기만
+    #[test]
+    fn 예시_폰_점검은_스킬_것과_같다() {
+        let kit = include_str!("../../hq-template/.claude/skills/hq-mode-kit/kit-phone.ts");
+        for (name, body) in [
+            ("home-calendar", include_str!("../../mode-examples/home-calendar/hooks/kit-phone.ts")),
+            ("home-board", include_str!("../../mode-examples/home-board/hooks/kit-phone.ts")),
+            ("home-todo", include_str!("../../mode-examples/home-todo/hooks/kit-phone.ts")),
+            ("team-status", include_str!("../../mode-examples/team-status/hooks/kit-phone.ts")),
+        ] {
+            assert_eq!(body, kit, "{name}/hooks/kit-phone.ts 가 스킬 것과 다르다 — cp app/hq-template/.claude/skills/hq-mode-kit/kit-phone.ts app/mode-examples/{name}/hooks/");
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -1191,6 +1215,16 @@ mod tests {
     }
 
     #[test]
+    fn 앱을_켤_때_안_보이는_재워도_되는_모드는_호스트를_안_띄운다() {
+        // 10/10 실측: keepAlive:false 모드도 앱을 켤 때는 일단 호스트를 띄우고 5분 뒤에야 재웠다 — 켤 때 안 보이면 바로 잠든 채로
+        assert!(boot_asleep(false, "dash", 0), "안 보이는 대시보드 칸 — 바로 잠");
+        assert!(boot_asleep(false, "panel", 0));
+        assert!(!boot_asleep(false, "dash", 1), "이미 보는 칸이 있다 — 띄운다");
+        assert!(!boot_asleep(true, "dash", 0), "keepAlive:true 는 뒤에서 계속 돈다");
+        assert!(!boot_asleep(false, "window", 0), "따로 창은 켜자마자 보인다");
+    }
+
+    #[test]
     fn keep_alive_를_안_적은_모드도_안_보인_지_5분이면_재운다() {
         // 10/12 사용자: 기본이 true 라 맛보기처럼 안 적은 모드가 한 번 보면 앱을 끌 때까지 호스트(≈240MB)를 쥐고 있었다
         use std::time::Duration as D;
@@ -1208,6 +1242,20 @@ mod tests {
         for m in got.iter().filter(|m| HOME_TRY.contains(&m.name.as_str())) {
             assert!(!m.keep_alive, "{} — 맛보기도 안 보이면 잔다", m.name);
             assert!(should_sleep(m.keep_alive, true, 0, D::from_secs(300)));
+        }
+    }
+
+    #[test]
+    fn 가벼운_모드는_선언한_것만() {
+        // ADR 0006 — 선언(opt-in)이 먼저. 안 적거나 참/거짓이 아니면 지금처럼 자기 호스트
+        let d = tmp("light");
+        mode(&d.join("modes/a"), true, Some(r#"{"light":true}"#));
+        mode(&d.join("modes/b"), true, Some(r#"{"light":"yes"}"#));
+        mode(&d.join("modes/c"), true, None);
+        let got = discover(&d, &Value::Null);
+        assert_eq!(got.iter().map(|m| (m.name.as_str(), m.light)).take(3).collect::<Vec<_>>(), vec![("a", true), ("b", false), ("c", false)]);
+        for m in got.iter().filter(|m| HOME_TRY.contains(&m.name.as_str())) {
+            assert!(m.light, "{} — 맛보기 넷은 모델을 안 불러 같이 쓴다", m.name);
         }
     }
 
@@ -1410,11 +1458,14 @@ mod tests {
 
     #[test]
     fn 호스트는_사용자_설정_훅_mcp_없이_뜬다() {
-        let a = host_args(Path::new("/m/counter"));
+        let a = host_args(&[PathBuf::from("/m/counter")]);
         let s = a.join(" ");
         assert!(s.starts_with("-p --input-format stream-json --output-format stream-json"));
         assert!(s.contains("--plugin-dir /m/counter"));
         assert!(s.contains("--setting-sources project") && s.contains("--strict-mcp-config") && s.contains("--no-session-persistence"));
+        // 같이 쓰는 호스트(ADR 0006) — 플러그인마다 --plugin-dir 하나씩
+        let s = host_args(&[PathBuf::from("/m/a"), PathBuf::from("/m/b")]).join(" ");
+        assert!(s.contains("--plugin-dir /m/a --plugin-dir /m/b"), "{s}");
     }
 
     #[test]

@@ -183,7 +183,7 @@ export function nextQuietForward(
   for (const c of cands) {
     const { session: s, activity: a } = c;
     const r = a.reply;
-    if (s.kind !== 'background' || s.state !== 'idle' || !r?.turnEnd || r.asks || s.awaiting || a.waitingOn) continue; // 묻는 턴은 nextAskForward, 백그라운드 기다림은 아직 안 끝남
+    if (s.kind !== 'background' || s.state !== 'idle' || !r?.turnEnd || r.asks || s.awaiting || a.wake) continue; // 묻는 턴은 nextAskForward, 깨우기 예약은 아직 안 끝남(쉬는 세션에 남은 백그라운드 일은 죽인 일 — L11)
     // 턴의 시작 = 사람 지시(prompt)와 참모가 SendMessage 로 준 일(peer) 중 늦은 것 — prompt 만 보면 두 번째 일부터 앞 일 보고로 막혔다(2026-10-11 bug-hunt)
     const turn = turnStart(a);
     if (turn && turn > r.ts) continue;

@@ -1689,7 +1689,23 @@ pub fn popup_due(last: Option<Instant>, now: Instant) -> bool {
     last.is_none_or(|t| now.duration_since(t) >= Duration::from_secs(1))
 }
 
-/// 지킴이 — 세션 크롬이 보이면 가리고(0.3초), 크롬 자체 창을 본다(1초, 맥만). 예전엔 두 루프가 각자 agent_lives 를 불렀다(2026-10-11 perf 6번)
+/// 느린 일을 따로 띄운다 — busy 가 서 있으면(앞 일이 도는 중) 안 띄우고 false. 지킴이가 팝업 검사(CDP, 한 번 최대 5초)를 기다리느라
+/// 크롬 가리기가 늦지 않게(bug-hunt L14)
+pub fn kick_once(busy: &'static AtomicBool, f: impl FnOnce() + Send + 'static) -> bool {
+    if busy.swap(true, Ordering::SeqCst) {
+        return false;
+    }
+    std::thread::spawn(move || {
+        f();
+        busy.store(false, Ordering::SeqCst);
+    });
+    true
+}
+
+/// 팝업 검사가 도는 중
+static POPUP_BUSY: AtomicBool = AtomicBool::new(false);
+
+/// 지킴이 — 세션 크롬이 보이면 가리고(0.3초), 크롬 자체 창을 본다(1초, 맥만, 따로 띄워 가리기를 붙잡지 않는다). 예전엔 두 루프가 각자 agent_lives 를 불렀다(2026-10-11 perf 6번)
 pub fn watch_hidden() {
     std::thread::spawn(|| {
         // 꺼낸 표가 있는데 가려진 크롬 — 처음 본 때
@@ -1702,8 +1718,10 @@ pub fn watch_hidden() {
             has = !lives.is_empty();
             hide_tick(&lives, &mut seen);
             if cfg!(target_os = "macos") && popup_due(popup_at, Instant::now()) {
-                popup_at = Some(Instant::now());
-                popup_tick(&lives);
+                let l = lives.clone();
+                if kick_once(&POPUP_BUSY, move || popup_tick(&l)) {
+                    popup_at = Some(Instant::now());
+                }
             }
         }
     });
@@ -2102,6 +2120,27 @@ mod tests {
         assert!(popup_due(None, t0), "처음엔 바로");
         assert!(!popup_due(Some(t0), t0 + Duration::from_millis(900)));
         assert!(popup_due(Some(t0), t0 + Duration::from_millis(1000)));
+    }
+
+    #[test]
+    fn 팝업_검사는_가리기를_붙잡지_않는다() {
+        // bug-hunt L14 — 팝업 검사(CDP, 한 번 최대 5초)를 지킴이 한 루프 안에서 돌려, 느리면 크롬 가리기도 그만큼 늦었다
+        static BUSY: AtomicBool = AtomicBool::new(false);
+        let done = Arc::new(AtomicBool::new(false));
+        let d = done.clone();
+        let t0 = Instant::now();
+        assert!(kick_once(&BUSY, move || {
+            std::thread::sleep(Duration::from_millis(300));
+            d.store(true, Ordering::SeqCst);
+        }));
+        assert!(t0.elapsed() < Duration::from_millis(100), "느린 검사를 기다리지 않고 바로 돌아온다");
+        assert!(!kick_once(&BUSY, || {}), "앞 검사가 도는 동안엔 겹쳐 띄우지 않는다");
+        let t1 = Instant::now();
+        while BUSY.load(Ordering::SeqCst) && t1.elapsed() < Duration::from_secs(3) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(done.load(Ordering::SeqCst), "검사는 끝까지 돈다");
+        assert!(kick_once(&BUSY, || {}), "끝나면 다음 검사");
     }
 
     #[test]

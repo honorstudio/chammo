@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import type { MobileEnv } from '../../data/web';
 import type { Ctx } from '../../domain/ctx';
-import { answerFail, dupAnswer, lineSlot, phoneName, waitAnswer, waitKey, type WaitSent, type Waiting } from '../../domain/mobile';
+import { answerFail, dupAnswer, lineSlot, phoneName, subStatus, waitAnswer, waitKey, type WaitSent, type Waiting } from '../../domain/mobile';
 import type { Session } from '../../domain/session';
 import { IconArrowUp, IconChevron, IconPin, IconPinOff, IconPlus, IconPower, IconTrash } from '../Icons';
 import { orchVars } from '../../domain/orchTheme';
@@ -29,6 +29,7 @@ import { HomeAppLink } from './HomeAppLink';
 import { AvatarRing, BottomSheet, IconBtn } from './kit';
 import { bodyColor, orchColor, useAvatars } from '../avatar';
 import { orchDot } from '../../domain/orchDot';
+import { useSubTails } from './useSubTails';
 
 type Props = { title: string; env: MobileEnv; wake: Wake; onStopped: (id: string) => void; orchs: Session[]; current: string | undefined; ctx: Record<string, Ctx>; waiting: Waiting[]; sent: WaitSent; lines: Record<string, string>; onPick: (id: string) => void; onClose: () => void };
 
@@ -96,6 +97,8 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
   // 순서 — 데스크톱 채팅 탭에서 끌어 둔 것(orch-order.json, 고정은 그 위). 사이드바·⌘1~9 와 같은 줄
   const [orderText] = useMemoPoll('order', readOrder, 5000, '[]');
   const sorted = orchSort(orchs, parsePins(orderText), pins, (s) => s.sessionId);
+  // 상태 점은 세션판과 같은 판단(대화 꼬리) — 날 state 만 보면 감시를 띄운 참모가 '일함'이었다(bug-hunt L10). 시트가 열린 동안만 15초마다
+  const tails = useSubTails(orchs);
   // 길게 누르기 메뉴(이름 바꾸기 + 밀기 동작 모두) — 켜진 참모·꺼진 참모
   const [menu, setMenu] = useState<{ kind: 'live'; s: Session } | { kind: 'off'; r: HomeRow } | null>(null);
   // 바꾼 이름 — 맥이 쉬는 때 /rename 을 보내 진짜 이름에 실릴 때까지 폰엔 바로 새 이름(대시보드 프로필 창과 같이 본다)
@@ -195,7 +198,7 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
       {sorted.map((s) => {
         const pinned = !!s.sessionId && pins.includes(s.sessionId);
         const asking = waiting.some((w) => w.orch === s.id);
-        const dot = orchDot(s.state, asking);
+        const dot = orchDot(subStatus(s, tails, Date.now()), asking);
         const used = s.sessionId ? ctx[s.sessionId]?.used : undefined;
         const slot = lineSlot(lines[s.id]);
         return (

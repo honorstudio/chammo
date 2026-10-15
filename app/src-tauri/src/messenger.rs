@@ -388,10 +388,49 @@ pub fn parse_button(data: &str) -> Option<(String, Pick)> {
 
 // ── 참모 ────────────────────────────────────────────────────
 
-/// 참모 세션 이름인가 — 기본 이름(" · " 앞)이 비서 이름 또는 비서 이름-숫자
+/// 두 언어 기본 이름 — 설정 이름·옛 이름과 같이 참모로 친다(앱 domain/session assistantBases 와 같다)
+const ORCH_BASES_FALLBACK: [&str; 2] = ["참모", "Chammo"];
+
+/// 앱(화면)이 넘긴 옛 이름 — 개인판만 있다(set_orch_legacy). 원본엔 개인 이름을 박지 않는다(공개 템플릿 orch-roster 와 같은 규칙)
+static ORCH_LEGACY: std::sync::RwLock<Vec<String>> = std::sync::RwLock::new(Vec::new());
+
+/// 옛 이름 — 환경변수 CHAMMO_ORCH_LEGACY(쉼표, 템플릿 orch-roster 와 같다) + 앱이 넘긴 값. 빈칸은 버리고 겹치면 한 번
+pub fn legacy_from(env: Option<&str>, given: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for n in env.unwrap_or("").split(',').map(str::trim).chain(given.iter().map(|x| x.trim())) {
+        if !n.is_empty() && !out.iter().any(|x| x == n) {
+            out.push(n.to_string());
+        }
+    }
+    out
+}
+
+pub fn set_orch_legacy_names(names: Vec<String>) {
+    if let Ok(mut v) = ORCH_LEGACY.write() {
+        *v = legacy_from(None, &names);
+    }
+}
+
+pub fn legacy_names() -> Vec<String> {
+    let given = ORCH_LEGACY.read().map(|v| v.clone()).unwrap_or_default();
+    legacy_from(std::env::var("CHAMMO_ORCH_LEGACY").ok().as_deref(), &given)
+}
+
+/// 앱이 켤 때 옛 이름을 넘긴다(domain/session LEGACY_ASSISTANT) — 화면과 Rust 가 같은 이름을 참모로 친다
+#[tauri::command]
+pub fn set_orch_legacy(names: Vec<String>) {
+    set_orch_legacy_names(names);
+}
+
+/// 참모 세션 이름인가 — 기본 이름(" · " 앞)이 [설정 이름, 옛 이름, 기본 이름들] 중 하나 또는 그 이름-숫자
 pub fn is_orch_name(name: &str, assistant: &str) -> bool {
+    is_orch_name_in(name, assistant, &legacy_names())
+}
+
+pub fn is_orch_name_in(name: &str, assistant: &str, legacy: &[String]) -> bool {
     let base = crate::orch_roles::base_of(name);
-    !assistant.is_empty() && (base == assistant || base.strip_prefix(assistant).and_then(|r| r.strip_prefix('-')).is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())))
+    let is = |a: &str| !a.is_empty() && (base == a || base.strip_prefix(a).and_then(|r| r.strip_prefix('-')).is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())));
+    is(assistant) || ORCH_BASES_FALLBACK.iter().any(|a| is(a)) || legacy.iter().any(|a| is(a))
 }
 
 /// 살아 있는 참모 하나
@@ -408,7 +447,7 @@ impl Orch {
     pub fn base(&self) -> &str {
         crate::orch_roles::base_of(&self.name)
     }
-    /// 사람에게 보일 이름 — 별명(" · " 뒤)이 있으면 별명, 없으면 기본 이름(2026-10-10 답 머리가 '참모-2:' 로 나왔다)
+    /// 사람에게 보일 이름 — 별명(" · " 뒤)이 있으면 별명, 없으면 기본 이름(2026-10-10 답 머리가 '<옛 이름>-2:' 로 나왔다)
     pub fn label(&self) -> &str {
         self.name.split(" · ").nth(1).map(str::trim).filter(|n| !n.is_empty()).unwrap_or_else(|| self.base())
     }

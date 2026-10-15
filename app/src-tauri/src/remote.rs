@@ -1,8 +1,8 @@
-//! 다른 기기의 참모를 이 앱에서 조종하기 — 1단계(보기 + 채팅)의 아래층.
+//! 다른 기기의 참모와 잇기 — 같은 테일스케일 계정 기기의 폰 서버에 '참모 손님'으로(ADR 0007).
 //! 원격 기기는 자기 폰 서버(mobile_http.rs, 47123)를 그대로 쓰고, 이 앱은 그 서버의 '손님'이 된다(docs/research/2026-10-06-multi-device.md).
 //! - 기기 찾기: 이 맥 `tailscale status --json` 의 같은 계정 피어(태그·공유 노드 빼고) × `/api/hello`
 //! - 신원: 처음 한 번 그 기기 설정의 연결 코드로 짝짓기(peer 줄) → 기기 열쇠는 키체인에만, 목록 파일엔 열쇠 없이
-//! - 대신 보내기: 허용한 길만(보기·채팅·대기함 답하기), 응답은 상한·JSON 확인 뒤 화면으로. 원격이 보낸 것은 남의 글이다 —
+//! - 대신 보내기: 허용한 길만(보기·이름표 붙는 말 넣기·답 읽기), 응답은 상한·JSON 확인 뒤 화면으로. 원격이 보낸 것은 남의 글이다 —
 //!   이 맥 파일·명령 길(파일 열기·셸)로 절대 흘려보내지 않는다(그런 길은 허용 목록에 없다)
 use crate::accounts_store::{Secret, Store};
 use crate::remote_net::{NetErr, Request, Response, Route, Target};
@@ -15,6 +15,18 @@ use std::time::Duration;
 pub const SERVICE: &str = "Chammo remote peer";
 pub const FILE: &str = "remote-peers.json";
 const PORT: u16 = 47123;
+
+/// 다른 기기 폰 서버 포트 — 본판은 늘 47123. 개발판만 CHAMMO_PEER_PORT 로 바꿀 수 있다(같은 기기에 본판이 47123 을 쥔 채 시험 앱을 붙일 때)
+pub fn peer_port_from(env: Option<&str>, debug: bool) -> u16 {
+    if !debug {
+        return PORT;
+    }
+    env.and_then(|p| p.parse().ok()).unwrap_or(PORT)
+}
+
+fn peer_port() -> u16 {
+    peer_port_from(std::env::var("CHAMMO_PEER_PORT").ok().as_deref(), cfg!(debug_assertions))
+}
 const HELLO_WAIT: Duration = Duration::from_secs(3);
 const CALL_WAIT: Duration = Duration::from_secs(10);
 const MAX_BODY: usize = 8 * 1024 * 1024;
@@ -155,12 +167,14 @@ pub fn merge(peers: &[TsPeer], saved: &[Saved], probe: impl Fn(&str) -> Probe) -
     out
 }
 
-/// 손님이 대신 보내도 되는 길 — 1단계 보기 + 채팅 + 대기함 답하기. 파일·깨우기·지우기·계정·로그인·짝짓기 코드는 없다
-const GETS: &[&str] = &[
+/// 손님(다른 기기 참모 열쇠)이 쓰는 길 — 보기 + 이름표 붙는 말 넣기·답 읽기(ADR 0007). 받는 폰 서버도 peer 열쇠엔 이 목록만 연다.
+/// 사람 길(이름표 없이 치기 /api/send·카드 답 /api/direct-answer·멈춤)과 파일·깨우기·지우기·계정·로그인·짝짓기 코드는 없다
+pub(crate) const GETS: &[&str] = &[
     "/api/hello", "/api/env", "/api/sessions", "/api/stopped", "/api/transcript", "/api/tails", "/api/send-status", "/api/direct", "/api/tasks",
     "/api/browsers", "/api/browser-frame", "/api/avatars", "/api/usage", "/api/load", "/api/roles", "/api/pins", "/api/order", "/api/routines",
+    "/api/peer-reply",
 ];
-const POSTS: &[&str] = &["/api/send", "/api/interrupt", "/api/direct-answer"];
+pub(crate) const POSTS: &[&str] = &["/api/peer-say"];
 
 pub fn allowed(method: &str, path_q: &str) -> bool {
     // 머리 끼워 넣기(CR·LF)·공백·비ASCII 는 길째 거절 — 쿼리는 부르는 쪽이 encodeURIComponent 한다
@@ -207,10 +221,10 @@ fn net_word(e: &NetErr) -> String {
 
 /// 짝짓기 — 원격 /api/pair 에 코드를 내고 받은 열쇠를 키체인에, 기기를 목록에
 pub fn pair(kc: &dyn Store, dir: &Path, peer: &TsPeer, code: &str, my_name: &str, send: &SendFn) -> Result<(), String> {
-    let code = norm_code(code).ok_or("연결 코드는 16진 32자예요 — 그 기기 설정 > 모바일의 코드를 그대로 붙여 넣어 주세요")?;
+    let code = norm_code(code).ok_or("연결 코드는 16진 32자예요 — 그 기기 설정 > 폰의 코드를 그대로 붙여 넣어 주세요")?;
     let name = format!("참모 · {}", if my_name.is_empty() { "이 기기" } else { my_name });
     let body = serde_json::json!({ "code": code, "peer": true, "name": name }).to_string();
-    let t = Target { ip: peer.ip, port: PORT };
+    let t = Target { ip: peer.ip, port: peer_port() };
     let post = |b: &str| send(&t, &Request { method: "POST", path: "/api/pair", body: Some(b.as_bytes()), token: None }, CALL_WAIT, 4096).map_err(|e| net_word(&e));
     let mut r = post(&body)?;
     // 0.2.5 까지의 폰 서버는 모르는 칸(peer·name)을 400 으로 거절한다(deny_unknown_fields) — 코드는 안 닳으니 코드만 다시. 그 기기엔 '기기' 줄로 남는다
@@ -228,7 +242,7 @@ pub fn pair(kc: &dyn Store, dir: &Path, peer: &TsPeer, code: &str, my_name: &str
     kc.set(SERVICE, &peer.id, &Secret::new(token)).map_err(|e| format!("열쇠를 키체인에 못 넣었어요({e:?})"))?;
     let mut list = load(dir);
     list.retain(|s| s.id != peer.id);
-    list.push(Saved { id: peer.id.clone(), name: peer.name.clone(), ip: peer.ip, port: PORT, paired_at: now_ms(), last_ok: Some(now_ms()) });
+    list.push(Saved { id: peer.id.clone(), name: peer.name.clone(), ip: peer.ip, port: peer_port(), paired_at: now_ms(), last_ok: Some(now_ms()) });
     save(dir, &list).map_err(|e| e.to_string())
 }
 
@@ -345,7 +359,7 @@ pub fn devices_now() -> Result<DevicesOut, String> {
                 .map(|p| {
                     let (send, saved, kc) = (&send, &saved, &kc);
                     sc.spawn(move || {
-                        let t = Target { ip: p.ip, port: PORT };
+                        let t = Target { ip: p.ip, port: peer_port() };
                         let hello = presence(&send(&t, &Request { method: "GET", path: "/api/hello", body: None, token: None }, HELLO_WAIT, 4096));
                         let auth = (saved.iter().any(|s| s.id == p.id) && hello != Presence::Absent).then(|| {
                             let tok = kc.get(SERVICE, &p.id).ok().flatten();
@@ -362,21 +376,26 @@ pub fn devices_now() -> Result<DevicesOut, String> {
     }
 }
 
+/// 짝짓기(실제 테일넷·키체인) — 앱 화면과 scripts/peer(appctl) 가 같이 쓴다
+pub fn pair_now(id: &str, code: &str) -> Result<(), String> {
+    let (route, json) = tailnet()?;
+    let (me, peers) = same_user_peers(&json).ok_or("테일스케일이 꺼져 있거나 로그인 전이에요")?;
+    let peer = peers.into_iter().find(|p| p.id == id).ok_or("테일넷에 그 기기가 없어요(같은 계정 기기만)")?;
+    pair(&keychain(), &data_dir(), &peer, code, &me, &real_send(route))
+}
+
+pub fn unpair_now(id: &str) -> Result<(), String> {
+    unpair(&keychain(), &data_dir(), id)
+}
+
 #[tauri::command]
 pub async fn remote_pair(id: String, code: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let (route, json) = tailnet()?;
-        let (me, peers) = same_user_peers(&json).ok_or("테일스케일이 꺼져 있거나 로그인 전이에요")?;
-        let peer = peers.into_iter().find(|p| p.id == id).ok_or("테일넷에 그 기기가 없어요(같은 계정 기기만)")?;
-        pair(&keychain(), &data_dir(), &peer, &code, &me, &real_send(route))
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || pair_now(&id, &code)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn remote_unpair(id: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || unpair(&keychain(), &data_dir(), &id)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || unpair_now(&id)).await.map_err(|e| e.to_string())?
 }
 
 /// 테일넷 피어 목록 — 대신 보내기는 폴링(3초)마다 불리니 10초 묵힌다(tailscale status 를 매번 안 부르게)
@@ -396,15 +415,15 @@ fn route_and_peers() -> Result<(Route, Vec<TsPeer>), String> {
     Ok((route, peers))
 }
 
+pub fn call_now(id: &str, method: &str, path: &str, body: Option<&str>) -> Result<CallOut, String> {
+    let (route, peers) = route_and_peers()?;
+    let here = peers.iter().find(|p| p.id == id).map(|p| p.ip);
+    call(&keychain(), &data_dir(), id, here, method, path, body, &real_send(route))
+}
+
 #[tauri::command]
 pub async fn remote_call(id: String, method: String, path: String, body: Option<String>) -> Result<CallOut, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let (route, peers) = route_and_peers()?;
-        let here = peers.iter().find(|p| p.id == id).map(|p| p.ip);
-        call(&keychain(), &data_dir(), &id, here, &method, &path, body.as_deref(), &real_send(route))
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || call_now(&id, &method, &path, body.as_deref())).await.map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]

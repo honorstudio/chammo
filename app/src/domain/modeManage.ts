@@ -3,7 +3,7 @@
 import type { ModeRow } from './modeTree';
 
 /** mode_manage 한 줄(Rust modes_host::ManageRow) — way: hide(기본·플러그인) | remove(사용자 모드), size: 앱 쪽 데이터 바이트 */
-export type ManageRow = Pick<ModeRow, 'name' | 'title' | 'source' | 'dir' | 'on' | 'where' | 'alive' | 'pid' | 'dash'> & { hidden: boolean; way: 'hide' | 'remove'; size: number;
+export type ManageRow = Pick<ModeRow, 'name' | 'title' | 'source' | 'dir' | 'on' | 'where' | 'alive' | 'pid' | 'dash' | 'shared'> & { hidden: boolean; way: 'hide' | 'remove'; size: number;
   /** 안 보여서 재웠다(보이면 깨어난다) */ asleep?: boolean; /** 깨어 있는 호스트 메모리 KB(못 읽으면 0) */ memKb?: number };
 
 /** mode_remove 답 — trashed = 원본을 보낸 휴지통 자리 */
@@ -38,7 +38,8 @@ export function phoneRemove(source: string): 'hide' | 'remove' | null {
 }
 
 /** 호스트 상태 — 깨어 있음(+메모리) · 잠듦 · 꺼짐(null). keepAlive 를 안 적은 모드는 안 보인 지 5분이면 잔다(10/12) */
-export function hostState(r: Pick<ManageRow, 'alive' | 'asleep' | 'memKb'>): { kind: 'awake'; mem: string | null } | { kind: 'asleep' } | null {
-  if (r.alive) return { kind: 'awake', mem: r.memKb ? sizeText(r.memKb * 1024) : null };
+export function hostState(r: Pick<ManageRow, 'alive' | 'asleep' | 'memKb' | 'shared'>): { kind: 'awake'; mem: string | null; shared: boolean } | { kind: 'asleep' } | null {
+  // shared = 가벼운 모드끼리 같이 쓰는 호스트(ADR 0006) — 메모리는 그 호스트 하나 것이라 같이 쓰는 줄마다 같은 값
+  if (r.alive) return { kind: 'awake', mem: r.memKb ? sizeText(r.memKb * 1024) : null, shared: !!r.shared };
   return r.asleep ? { kind: 'asleep' } : null;
 }

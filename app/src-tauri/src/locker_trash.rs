@@ -152,7 +152,8 @@ pub fn refuse(ctx: &Ctx, keep: &[PathBuf], p: &Path) -> Result<(), String> {
             return Err("저장소(.git)가 든 폴더는 못 지워".into());
         }
         if s.more {
-            return Err(format!("항목이 {SCAN_CAP}개 넘는 큰 폴더는 앱에서 안 지워 — 파인더에서"));
+            let fm = if cfg!(windows) { "탐색기" } else { "파인더" };
+            return Err(format!("항목이 {SCAN_CAP}개 넘는 큰 폴더는 앱에서 안 지워 — {fm}에서"));
         }
     }
     Ok(())

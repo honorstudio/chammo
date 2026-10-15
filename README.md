@@ -66,6 +66,7 @@ Each session is a pixel character at a desk — typing when it edits, reading wh
 
 - **Voice** — replies are spoken (a macOS voice, or Supertonic, a natural on-device voice); the tab that is speaking lights up. Hold the talk key (Globe or right ⌥) to dictate.
 - **Phone** (optional, Tailscale) — pair with a QR code and chat, answer decisions and get notifications from a home-screen web app.
+- **Other devices' assistants** (optional, Tailscale, Macs only for now) — pair once with Chammo on another Mac of the same account (Settings > Phone & messenger) and the chief of staff can put a line in front of that device's assistant with `scripts/peer say <device> "<one line>"` and get its reply. Received messages carry an "Assistant on another device" label and never count as the user's words or approval — payment and production cards are pressed by the person on that device.
 - **Several Claude accounts** — keep more than one login; Chammo switches to the next one when the current one nears its limit.
 - **Projects with a harness** — new work gets its own project folder with `CLAUDE.md`, `docs/starter.md` and `docs/roadmap.md` that each session reads first and updates when it finishes.
 - **Lessons** — sessions end replies with `Lesson:` lines; they ride along with the next instructions to that project.
@@ -91,6 +92,8 @@ curl -fsSL https://raw.githubusercontent.com/honorstudio/chammo/main/scripts/ins
 ```
 
 **Windows (preview)** — run `Chammo_x.y.z_x64-setup.exe` from [Releases](https://github.com/honorstudio/chammo/releases). It installs for your user only and fetches WebView2 if needed. The installer is not code-signed yet, so SmartScreen may warn — click **More info > Run anyway**. The chief of staff's helper scripts need **Python 3** (`winget install Python.Python.3.12`). See the note under [Shortcuts](#shortcuts) for the Windows keys.
+
+**Updates** — from 0.3.1 on, when a new version is out, one Update button in the top banner downloads, installs and restarts Chammo (your sessions keep running). Coming from 0.3.0 or earlier, install by hand once. An app you built from source also turns into the official build when you press Update.
 
 **From source** — needs Rust (stable), Node.js 22+, pnpm and Xcode Command Line Tools.
 
@@ -164,8 +167,10 @@ Chammo runs entirely on your computer. It has no server, no account and no telem
 - **Version check** — the latest Claude Code version from the npm registry and the latest Chammo release from GitHub. Nothing about you is sent.
 - **Browser install** (when you press Install) — Node.js, Chrome Beta and the browser tool parts from their official sources, used only after the checksum or Google signature checks out.
 - **Account usage** (only if you saved accounts) — each account's 5-hour and weekly usage from api.anthropic.com with that account's own token, the same request as Claude Code's `/usage`.
-- **Account token refresh** (only if you use automatic account switching) — a saved account's token that is about to expire is refreshed at platform.claude.com with that account's refresh token before switching to it, the same request Claude Code makes to keep you logged in.
+- **Account token refresh** (only if you saved two or more accounts) — tokens of saved accounts that are not in use are refreshed ahead of expiry at platform.claude.com with that account's refresh token (when automatic switching is on: one account within two hours of expiry at a time, no more than once every 20 minutes). The account in use is never touched, and an account that could not be refreshed ahead is refreshed right before switching to it. It is the same request Claude Code makes to keep you logged in.
+- **App update** (only when you press Update in the new-version banner) — downloads `latest.json` and the new version from GitHub Releases, installs it only if its signature matches the public key built into the app, and restarts. Nothing about you is sent.
 - **Phone notifications** (only if you paired a phone) — a title and one line, end-to-end encrypted, through your phone's push service.
+- **Other devices' assistants** (only if you paired a device of the same Tailscale account) — messages between assistants and their replies (peer-say/reply) travel only between the paired devices over your tailnet, and a paired device can also read what its own phone pairing can read here (sessions, conversations, pending cards — narrower than a phone; it cannot type as you or press cards). There is no relay server.
 - **Telegram** (only if you connect your own bot) — your messages to the bot, the chief of staff's replies (keys and passwords masked) and decision cards go through api.telegram.org. Payments, sends, deletions and production steps are only notified there; you answer them in the app.
 - **Harnitor fonts** — loaded from Google Fonts when you open Harnitor.
 - **Installers you start** — the setup's install buttons and the Supertonic voice's **Download** fetch from their official sources.

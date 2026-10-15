@@ -102,7 +102,7 @@ export function cover(view: Day, n: Now, W: number, Hmax: number): Layer {
       const cx = x + cw * c + cw / 2, cy = y + 22 + rh * r + fs * 0.8
       const note = notes.find((x) => x.day === d), past = dayMs({ ...view, day: d }) < dayMs(n)
       out.push(BigNum(cx, cy, String(d), { size: fs, font: 'serif', anchor: 'middle', spacing: 0, cls: `${c === 0 || note ? 'k-red' : ''}${past ? ' k-past' : ''}`.trim() || undefined }))
-      if (note) out.push(Label(cx, cy + fs * 0.62, note.name, { size: Math.max(9, fs * 0.36), anchor: 'middle', cls: `k-myeong k-red${past ? ' k-past' : ''}` }))
+      if (note) out.push(Label(cx, cy + fs * 0.62, note.name, { size: Math.max(11, fs * 0.36), anchor: 'middle', cls: `k-myeong k-red${past ? ' k-past' : ''}` }))
       if (here && d === n.day) out.push(InkCircle(cx, cy - fs * 0.32, fs * 0.78))
     }))
     return out.join('')

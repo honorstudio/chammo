@@ -192,4 +192,9 @@ describe('참모 모드 호스트 — 모드 하나당 claude 프로세스 하�
     const sys = parseSys('10\n{ 1.0 1.0 1.0 }\ntotal = 0.00M  used = 0.00M  free = 0.00M\n25769803776')!;
     expect(summarize(sys, r, new Date(0)).modes).toEqual({ count: 1, mem: fmtMem(246000) });
   });
+  it('가벼운 모드끼리 같이 쓰는 호스트는 pid 하나 — 한 줄로 이름을 이어 센다(ADR 0006)', () => {
+    const ps = [PS, '  700     1   0.3 246000        05:00 /Users/me/.local/bin/claude -p --input-format stream-json --plugin-dir /d/a --plugin-dir /d/b'].join('\n');
+    const r = attribute(parsePs(ps), [], new Map(), [], [{ name: '달력', pid: 700 }, { name: '할 일', pid: 700 }]);
+    expect(r.modes).toEqual([{ name: '달력 · 할 일', cpu: 0.3, rssKb: 246000 }]);
+  });
 });

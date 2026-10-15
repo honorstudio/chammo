@@ -272,7 +272,10 @@ button.acct-pop-row:disabled { cursor: default; opacity: .6; }
 .acct-pop-dot.low { background: var(--danger-ink); }
 .acct-pop-val { flex: 0 0 auto; min-width: 38px; text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .acct-pop-stop { font-size: 11.5px; font-weight: 500; color: var(--text-3); }
-.acct-pop-err { font-size: 11px; color: var(--danger-ink); padding: 4px 10px; }
+.acct-pop-err { font-size: 11px; color: var(--danger-ink); padding: 4px 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.acct-pop-fix { height: 32px; padding: 0 12px; font-size: 12px; color: var(--text); }
+.acct-pop-term { height: 260px; display: flex; margin-top: 4px; border-top: 1px solid var(--line); padding-top: 4px; }
+.acct-pop-term > .pane { flex: 1; min-width: 0; }
 .acct-pop-foot { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--line); margin-top: 4px; padding-left: 10px; min-height: 48px; }
 .acct-pop-foot-label { font-size: 12px; color: var(--text-2); }
 .acct-pop-switch { flex: 0 0 auto; width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; padding: 0; cursor: pointer; border-radius: 8px; }
@@ -299,6 +302,8 @@ button.acct-pop-row:disabled { cursor: default; opacity: .6; }
 .banner.quiet { background: var(--panel); color: var(--text-2); display: flex; align-items: center; gap: 8px; }
 .banner.warn { display: flex; align-items: center; gap: 12px; }
 .banner.warn > span { flex: 1; }
+/* 자동 업데이트 받는 중 띠의 빙글이는 늘리지 않는다(위 줄이 span 을 다 늘려서 대각선으로 그려졌다) */
+.banner.warn > .spin { flex: none; }
 /* flex: none — 상태 줄처럼 글이 넘치는 가로 줄에서 동그라미가 눌려 찌그러졌다(2026-10-05 사용자) */
 .spin { flex: none; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--line-strong); border-top-color: var(--working); animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

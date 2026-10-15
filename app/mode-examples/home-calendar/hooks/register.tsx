@@ -1,5 +1,5 @@
 import type { EngineInterface, Register } from 'claude-code'
-import { Divider, SkinBar } from './kit'
+import { BackBar, Divider, SkinBar } from './kit'
 import { SKINS, skinOf, skinSwap, svgDoc, type Skin } from './kit-svg'
 import { cover, gauge, notesOf, seoul, sky, upcoming, weekOf, WEEK as WK, type Day as SDay } from './scenes'
 import { Tag } from './kit'
@@ -91,7 +91,7 @@ async function desktop($: EngineInterface, e: Ev) {
   if (timer) clearTimeout(timer)
   timer = setTimeout(() => { timer = null; void $.ui.invalidate('ui.render') }, REDRAW)
   const W = columns * 8, maxH = Math.max(160, lines * 18 - 112) // 위 스킨 단추 줄 + 아래 단추 줄
-  let layer, below
+  let layer, below, back = null
   if (skin === 'gauge') {
     const list = upcoming(n)
     const chosen = list.find((x) => keyOf(x.day) === picked) ?? list[0]!
@@ -110,11 +110,13 @@ async function desktop($: EngineInterface, e: Ev) {
     const show = skyDay ?? n, week = weekOf(skyWeek ?? show)
     const isToday = (d: SDay) => d.year === n.year && d.month === n.month && d.day === n.day
     layer = sky(n, W, maxH, show, week)
+    // 다른 날 하늘 = 안쪽 화면 — 칸 머리엔 X 가 없으니 맨 앞 뒤로(kit BackBar)가 오늘로 돌아가는 길
+    if (skyDay) back = BackBar(ui, '오늘', () => redraw($, () => { skyDay = null; skyWeek = null }))
     below = [
       <Button key="prev" label="이전 주" onPress={() => redraw($, () => { skyWeek = dayOfMs(Date.UTC(week[0]!.year, week[0]!.month - 1, week[0]!.day - 7)) })}>‹</Button>,
       ...week.map((d, i) => <Button key={`d-${d.day}`} label={`${WK[i]} ${d.day}`} variant={show.year === d.year && show.month === d.month && show.day === d.day ? 'primary' : undefined} onPress={() => redraw($, () => { skyDay = isToday(d) ? null : d })} />),
       <Button key="next" label="다음 주" onPress={() => redraw($, () => { skyWeek = dayOfMs(Date.UTC(week[0]!.year, week[0]!.month - 1, week[0]!.day + 7)) })}>›</Button>,
-      ...(!week.some(isToday) || skyDay ? [<Button key="today" label="오늘" onPress={() => redraw($, () => { skyDay = null; skyWeek = null })} />] : []),
+      ...(!week.some(isToday) ? [<Button key="today" label="오늘" onPress={() => redraw($, () => { skyDay = null; skyWeek = null })} />] : []),
     ]
   } else {
     const view = coverMonth ?? n, here = view.year === n.year && view.month === n.month
@@ -130,7 +132,7 @@ async function desktop($: EngineInterface, e: Ev) {
   const { svg } = svgDoc({ layers: swap.layers(layer), maxH })
   return (
     <Box key={`cal-${skin}`} flexDirection="column" gap={2}>
-      <Box key="top" flexDirection="row" justifyContent="flex-end">{SkinBar(ui, SKINS, skin, (id) => void pickSkin($, id))}</Box>
+      <Box key="top" flexDirection="row" justifyContent={back ? 'space-between' : 'flex-end'}>{back}{SkinBar(ui, SKINS, skin, (id) => void pickSkin($, id))}</Box>
       <Svg source={svg} alt={`${n.month}월 ${n.day}일 ${WK[n.weekday]}요일 달력 — ${SKINS.find((x) => x.id === skin)!.name}`} />
       <Box key="below" flexDirection="row" flexWrap="wrap" gap={1} alignItems="center">{below}</Box>
     </Box>

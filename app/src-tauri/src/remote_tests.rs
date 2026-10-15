@@ -80,11 +80,15 @@ fn md3_기기가_꺼지면_offline_짝지은_적_없으면_안_보인다() {
 
 #[test]
 fn md3_허용한_길만_대신_보낸다() {
-    for (m, p) in [("GET", "/api/sessions"), ("GET", "/api/transcript?id=f00d&from=3"), ("GET", "/api/tails?ids=a,b"), ("POST", "/api/send"), ("POST", "/api/direct-answer"), ("GET", "/api/browser-frame?profile=p1&since=0")] {
+    for (m, p) in [("GET", "/api/sessions"), ("GET", "/api/transcript?id=f00d&from=3"), ("GET", "/api/tails?ids=a,b"), ("POST", "/api/peer-say"), ("GET", "/api/peer-reply?cid=c-1"), ("GET", "/api/browser-frame?profile=p1&since=0")] {
         assert!(allowed(m, p), "{m} {p}");
     }
     for (m, p) in [
         ("GET", "/api/file?path=/etc/passwd"),
+        // 사람 길 — 이름표 없이 치기·카드 대신 승인은 다른 기기 참모가 못 한다(ADR 0007)
+        ("POST", "/api/send"),
+        ("POST", "/api/direct-answer"),
+        ("POST", "/api/interrupt"),
         ("POST", "/api/spawn"),
         ("POST", "/api/remove"),
         ("POST", "/api/pair-code"),
@@ -335,4 +339,12 @@ fn md3_실측_짝짓기_한_바퀴() {
         }
     }
     eprintln!("⑦ 답 받음={} (끝 200자: {:?})", !said.is_empty(), said.chars().rev().take(200).collect::<String>().chars().rev().collect::<String>());
+}
+
+#[test]
+fn 다른_기기_포트는_본판_47123_고정_개발판만_바꿀_수_있다() {
+    assert_eq!(peer_port_from(Some("47125"), false), 47123);
+    assert_eq!(peer_port_from(Some("47125"), true), 47125);
+    assert_eq!(peer_port_from(Some("x"), true), 47123);
+    assert_eq!(peer_port_from(None, true), 47123);
 }

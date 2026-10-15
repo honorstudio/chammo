@@ -46,9 +46,8 @@ import { sessionStatus, statusWord, type ActivityStatus } from '../../domain/sta
 import { useOrchActions } from '../orchActions';
 import { orchRoleOf, useOrchRoleData } from '../orchRoleStore';
 import { NotePanel } from './NotePanel';
-import { ModeHome, ModeLayer, ModePanel, useModeRows, HOME_TRY } from '../mode/ModePanel';
+import { ModeHome, ModeLayer, ModePanel, useModeRows } from '../mode/ModePanel';
 import { HomeView } from './HomeView';
-import { dashModes } from '../../domain/modeTree';
 import { setModeChatHere, setModeDashHere } from '../mode/modeBus';
 import type { NoteBase } from '../../domain/noteEdits';
 import { projectRoot } from '../../domain/spaceTree';
@@ -74,7 +73,7 @@ import { every } from '../poll';
 import { editedAfterOpen } from '../../domain/locker';
 import { lkPick, isLockerOpen, parseLkPick, userFolders, type LkPlace } from '../../domain/lockerTree';
 import { lockerLog } from '../../domain/lockerLog';
-import { closeCurrentTab, closeTab, leaveFolder, newDocFolder, openReview, openTab, reviewKey, swapHold, pathLine, showInTab, tabPick, tabRow, type LkHold } from '../../domain/lockerTabs';
+import { closeCurrentTab, closeTab, leaveFolder, newDocFolder, openReview, openTab, reclickPick, reviewKey, swapHold, pathLine, showInTab, tabPick, tabRow, type LkHold } from '../../domain/lockerTabs';
 import { isCurationHtml } from '../../domain/curation';
 import { projectOf } from '../../domain/lockerLog';
 import { FileTab } from './FileTab';
@@ -616,10 +615,9 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
     // 다른 참모가 띄운 건 보던 스페이스를 옮기지 않고 그 참모 탭 화면에 넣어 두고 알림만 — 예전엔 채팅 탭·스페이스를 통째로 그 참모로
     // 옮겨서 화면이 저절로 튀었다(2026-10-06 사용자 "사람이 바꾸기 전엔 안 바뀐다"). 한 번에 여럿 오면 하나하나(domain/spaceJump showBatch)
     const b = showBatch(fresh, (by) => showOwner(by, orchIds, holders), now.current.view, nav.chat);
+    if (b.go) switchTo(b.go, 'show'); // 먼저 옮긴다 — 떠난 참모 탭 줄이 저장된 뒤라야 그 참모 몫(queue)이 거기 쌓인다
     for (const { owner, show } of b.queue) queueTo(owner, show);
-    if (!b.here) return;
-    if (b.here.place === 'chat' && b.here.owner) switchTo(b.here.owner, 'show');
-    present(b.here.show);
+    for (const h of b.here) present(h.show);
   }, [log]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const who = (id: string) => {
@@ -761,18 +759,7 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
   });
   // 참모 모드 — 켠 모드 목록(패널·대시보드 칸·미리보기·꽉 채우기가 같이 본다), 메뉴 '지금 대시보드 칸으로'가 쓸 지금 대시보드
   const modeRows = useModeRows();
-  // 참모 첫날 맛보기 권유(홈·모드 v1 5) — 그 참모 홈을 열었는데 모드가 하나도 없고 참모가 쉬는 중이면, 참모마다 한 번만 [앱] 줄로 참모에게.
-  // 참모가 사람에게 말로 권한다(앱이 사람에게 직접 띄우지 않는다). 목록을 읽기 전(빈 목록)엔 판단하지 않는다 — 예시 셋이 늘 목록에 있다
-  useEffect(() => {
-    const l = parseLkPick(pick);
-    if (l?.place.kind !== 'home' || !modeRows.length) return;
-    const o = orchs.find((x) => x.id === l.orch);
-    if (!o || dashModes(modeRows, [o.name || '', o.id, o.sessionId || '']).length || statusOf(o) !== 'idle') return;
-    const key = `homeTry:${o.name || o.id}`;
-    try { if (localStorage.getItem(key)) return; localStorage.setItem(key, new Date().toISOString()); } catch { return; }
-    void sendTextToSession(o.id, tr(`[앱] 이 참모 홈에 모드가 아직 없어 — 사용자에게 한 번만 맛보기를 권해: 홈 빈 칸에서 ${HOME_TRY.map((x) => x.title()).join('·')} 를 골라 켜면 빌드 없이 바로 켜지고, 고치고 싶은 건 너에게 말하면 된다고(그땐 <이름>-mode 프로젝트로 복사해 고쳐 — hq-app 스킬 '새 모드')`,
-      `[app] This assistant's home has no mode yet — suggest a try once: on the home's empty box, picking ${HOME_TRY.map((x) => x.title()).join(', ')} opens them without building; to change one, the user just asks you (copy it into a <name>-mode project — hq-app skill 'new mode')`)).catch(() => {});
-  }, [pick, modeRows.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 참모 첫날 맛보기 권유는 뺐다(2026-10-15 사용자) — 앱이 참모 입력칸에 [앱] 줄을 넣어 참모가 대화와 상관없이 갑자기 권했다. 권유는 홈 빈 칸(모드 고르기)만 조용히
   useEffect(() => {
     const o = pick.startsWith('o:') ? orchs.find((x) => x.id === pick.slice(2)) : undefined;
     setModeDashHere(o?.name || (pick.startsWith('p:') ? pick.slice(2) : '') || orch?.name || chatOrch?.name || null);
@@ -1055,8 +1042,8 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
       onPick={(id) => {
         const o = orchs.find((x) => x.id === id);
         if (!o) return;
-        // 지금 참모를 또 누르면 그 참모 첫 화면 — 남의 보관함 자리가 박혀 있어도(옛 화면이 눌렸다) 이 참모 홈으로 돌아온다
-        if (id === now.current.view) { if (parseLkPick(pick)?.orch !== id) setPick(homeOf(o)); }
+        // 지금 참모를 또 누르면 — 남의 보관함 자리가 박혀 있으면(옛 화면이 눌렸다) 이 참모 홈으로, 이 참모 탭 줄 문서·세션은 그대로(domain/lockerTabs reclickPick)
+        if (id === now.current.view) { const to = reclickPick(lkHold, id, pick, homeOf(o)); if (to) setPick(to); }
         else switchTo(id, 'rail');
         if (id !== nav.chat) onChatTab?.(id);
       }}

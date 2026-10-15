@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { closeTab, leaveFolder, openReview, openTab, pathLine, reviewKey, showInTab, tabPick, tabRow } from './lockerTabs';
+import { closeTab, leaveFolder, openReview, openTab, pathLine, reclickPick, reviewKey, showInTab, tabPick, tabRow } from './lockerTabs';
 
 // 보관함 탭 줄(2026-10-11 사용자) — 맨 왼쪽 폴더 탭(=보관함)은 늘 고정, 파일은 종류 상관없이 탭으로
 describe('openTab — 보관함에서 파일을 열면 탭', () => {
@@ -174,5 +174,34 @@ describe('시안 검토 탭(c:<경로>)', () => {
     const h = { orch: 'a', back: 'l:a#d:자료', tabs: ['/L/x.md', 'c:/L/v1.html'] };
     expect(closeTab(h, 'c:/L/v1.html', 'c:/L/v1.html').pick).toBe('d:/L/x.md');
     expect(closeTab(h, 'c:/L/v1.html', 'd:/L/x.md').pick).toBeNull();
+  });
+});
+
+// 지금 보는 참모 프사를 또 누를 때(2026-10-12 anim-calm 관찰 '문서 탭을 연 참모를 오가면 홈으로') — 남의 보관함 자리만 홈으로, 이 참모 탭 줄 화면은 그대로
+describe('reclickPick — 지금 참모를 또 누르면', () => {
+  const h = openTab(openTab(null, 'a', 'l:a', '/L/x.md'), 'a', 'd:/L/x.md', 's:s1');
+  it('이 참모 탭 줄의 문서 탭이면 그대로(null)', () => {
+    expect(reclickPick(h, 'a', 'd:/L/x.md', 'l:a#h')).toBeNull();
+  });
+  it('이 참모 탭 줄의 세션 탭이면 그대로', () => {
+    expect(reclickPick(h, 'a', 's:s1', 'l:a#h')).toBeNull();
+  });
+  it('이 참모 탭 줄의 시안 검토 탭이면 그대로', () => {
+    const r = openReview(h, 'a', 'l:a', '/L/v.html');
+    expect(reclickPick(r, 'a', 'c:/L/v.html', 'l:a#h')).toBeNull();
+  });
+  it('이 참모 보관함·홈 자리면 그대로', () => {
+    expect(reclickPick(h, 'a', 'l:a#d:10월', 'l:a#h')).toBeNull();
+    expect(reclickPick(h, 'a', 'l:a#h', 'l:a#h')).toBeNull();
+  });
+  it('남의 보관함 자리가 박혀 있으면 이 참모 홈으로', () => {
+    expect(reclickPick(h, 'a', 'l:b#d:10월', 'l:a#h')).toBe('l:a#h');
+  });
+  it('탭 줄이 다른 참모 것이면 같은 문서 화면이어도 홈으로', () => {
+    expect(reclickPick(openTab(null, 'b', 'l:b', '/L/x.md'), 'a', 'd:/L/x.md', 'l:a#h')).toBe('l:a#h');
+  });
+  it('탭 줄에 없는 화면(닫힌 문서·기능 화면)은 예전처럼 홈으로', () => {
+    expect(reclickPick(h, 'a', 'd:/L/gone.md', 'l:a#h')).toBe('l:a#h');
+    expect(reclickPick(null, 'a', 't:/H/dev', 'l:a#h')).toBe('l:a#h');
   });
 });

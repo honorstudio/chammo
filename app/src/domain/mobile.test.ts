@@ -4,7 +4,7 @@ import type { Session } from './session';
 import { dashList } from './dashList';
 import type { ChatItem } from './chat';
 import type { TaskEvent } from './tasks';
-import type { ActivityStatus } from './status';
+import { statusWord, type ActivityStatus } from './status';
 
 const o = (id: string, name: string) => ({ id, name });
 
@@ -646,11 +646,16 @@ describe('subTag — 폰 세션판 칩', () => {
     expect(subTag('blocked')).toEqual({ cls: 't-wait', text: '물음' });
     expect(subTag('login')).toEqual({ cls: 't-wait', text: '로그인' });
     expect(subTag('working')).toEqual({ cls: 't-work', text: '일함' });
-    expect(subTag('bgwait')).toEqual({ cls: 't-done', text: '기다림' });
+    expect(subTag('bgwait')).toEqual({ cls: 't-done', text: '배경 일' });
     expect(subTag('done')).toEqual({ cls: 't-done', text: '답함' });
     expect(subTag('idle')).toEqual({ cls: 't-done', text: '쉼' });
     expect(subTag('stale')).toEqual({ cls: 't-done', text: '쉼' });
     expect(subTag('unknown')).toEqual({ cls: 't-done', text: '모름' });
+  });
+  // L9(2026-10-11 bug-hunt) — 데스크톱 '기다림'은 확인창(blocked, 급함)이라 폰이 안 급한 bgwait 에 같은 말을 쓰면 뜻이 반대
+  it('안 급한 칩 말이 데스크톱 급한 말(statusWord)과 겹치지 않는다', () => {
+    const urgent = (['asks', 'blocked', 'login'] as const).map((x) => statusWord(x));
+    for (const st of ['bgwait', 'done', 'idle', 'stale', 'unknown'] as const) expect(urgent).not.toContain(subTag(st).text);
   });
   it('꼬리를 받은 세션은 기록으로, 못 받은 세션은 목록만으로(쉬면 모름)', () => {
     const s = (id: string, state: 'working' | 'idle', sessionId?: string) => ({ id, name: id, cwd: '/d/' + id, kind: 'background', state, project: id, workspace: null, startedAt: 0, ...(sessionId ? { sessionId } : {}) }) as const;

@@ -47,7 +47,8 @@ describe('띠 — 도우미 묶음 · 쉬는 참모 · 예약', () => {
   });
   it('쉬는 참모는 빈 자리 아래 흐린 프사 — 누르면 깨움, 오른쪽 메뉴', () => {
     expect(strip.indexOf('resting.map(')).toBeGreaterThan(strip.indexOf('<span className="lk-sp" />'));
-    expect(strip).toMatch(/className="lk-av rest"[^>]*onClick=\{r\.onWake\}/);
+    expect(strip).toMatch(/className="lk-av rest"[\s\S]*onClick=\{\(\) => wake\(r\)\}/); // wake = pointerup·click 중복 한 번(domain/railWake)
+    expect(rail).toMatch(/if \(w\.wake\) r\.onWake\(\)/);
   });
   it('예약은 기능 줄 시계 — 이름은 aria-label·title, 켜짐 표시', () => {
     expect(rail).toMatch(/aria-label=\{tr\('예약', 'Scheduled'\)\}[^>]*><IconCalendarClock \/>/); // 기록(되감기 시계)과 덜 닮게 달력+시계(207.png)

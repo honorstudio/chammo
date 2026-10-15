@@ -68,6 +68,14 @@ pub trait Backend: Send + Sync {
     /// 참모 재우기 — claude stop(데스크톱 끄기와 같은 길). 대화는 남아 다시 깨울 수 있다
     fn stop(&self, id: &str) -> Result<String, String>;
     fn routine(&self, name: &str, action: &str) -> Result<String, String>;
+    /// 비서 세션(짧은 id)의 대화 기록 (대화 id, 지금 길이) — 다른 기기 참모가 넣은 말의 답을 그 자리부터 찾는다
+    fn transcript_mark(&self, _id: &str) -> Option<(String, u64)> {
+        None
+    }
+    /// 대화 기록 offset 뒤(상한까지) — 다른 기기 참모 답 찾기
+    fn transcript_read(&self, _session: &str, _offset: u64) -> Option<String> {
+        None
+    }
     /// 화면 파일 — 이름은 문지기가 이미 걸렀다("mobile.html" 또는 "assets/<안전한 이름>")
     fn asset(&self, path: &str) -> Option<(Vec<u8>, String)>;
     /// scripts/show 기록 꼬리 — 파일 길의 허용 집합 출처
@@ -376,6 +384,86 @@ fn device_of(req: &Req, gate: &Gate) -> Option<String> {
     req.header("authorization").and_then(|v| v.strip_prefix("Bearer ")).and_then(|t| gate.devices.check(t, now))
 }
 
+/// 열쇠가 다른 기기 참모(peer 줄)면 (기기 id, 짝지을 때 받은 이름)
+fn peer_of(req: &Req, gate: &Gate) -> Option<(String, String)> {
+    let dev = device_of(req, gate)?;
+    gate.devices.list().into_iter().find(|d| d.id == dev && d.peer).map(|d| (d.id, d.name))
+}
+
+fn peer_allowed(method: &str, path: &str) -> bool {
+    match method {
+        "GET" | "HEAD" => crate::remote::GETS.contains(&path),
+        "POST" => crate::remote::POSTS.contains(&path),
+        _ => false,
+    }
+}
+
+/// 다른 기기 참모의 말을 이 기기 참모에게 — 이름표는 여기서 붙인다. cid 는 기기마다 따로 센다(남의 cid 를 못 덮게)
+fn peer_say(req: &Req, gate: &Gate, be: &dyn Backend, dev: &str, name: &str) -> Resp {
+    if req.method != "POST" {
+        return Resp::text(405, "method not allowed");
+    }
+    if !same_origin_write(req, gate) {
+        return Resp::text(403, "bad origin");
+    }
+    let b: PeerSayBody = match body(req) { Ok(b) => b, Err(r) => return r };
+    if !cid_ok(&b.cid) {
+        return Resp::text(400, "bad cid");
+    }
+    let text = match crate::peer_link::compose(name, &b.from, &b.cid, &b.text) {
+        Ok(t) => t,
+        Err(crate::peer_link::SayErr::Forged) => return Resp::text(400, "forged approval — a peer cannot pass on a human approval"),
+        Err(crate::peer_link::SayErr::TooLong) => return Resp::text(400, "text too long"),
+        Err(crate::peer_link::SayErr::Empty) => return Resp::text(400, "empty text"),
+    };
+    let sessions = match be.sessions() { Ok(s) => s, Err(e) => return Resp::text(502, &e) };
+    let id = match crate::peer_link::target(&sessions, &be.hq_dir(), &b.to) {
+        Ok(id) => id,
+        Err(crate::peer_link::TargetErr::Missing) => return Resp::text(404, "no such assistant"),
+        Err(crate::peer_link::TargetErr::NotAssistant) => return Resp::text(403, "not an assistant session"),
+        Err(crate::peer_link::TargetErr::Ambiguous) => return Resp::text(409, "which assistant? (to)"),
+    };
+    let key = format!("peer-{dev}-{}", b.cid);
+    // 다시 보내기(응답을 못 받은 손님)는 상한을 안 먹는다
+    if gate.sends.state(&key).is_none() && !crate::peer_link::allow(dev) {
+        return Resp::text(429, "too many — wait a minute");
+    }
+    if !gate.sends.begin(&key) {
+        return Resp::json(&serde_json::json!({ "ok": true, "dup": true, "id": id }));
+    }
+    if let Some((session, offset)) = be.transcript_mark(&id) {
+        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+        crate::peer_link::marks().put(&key, crate::peer_link::Mark { device: dev.into(), session, offset, at });
+    }
+    let sends = gate.sends.clone();
+    be.send_later(&id, &text, Box::new(move |r| sends.finish(&key, match r { Ok(()) => SendState::Done, Err(e) => SendState::Failed(e) })));
+    Resp::new(202, "application/json", serde_json::json!({ "ok": true, "queued": true, "id": id }).to_string())
+}
+
+/// 넣은 말의 답 — state: typing(치는 중)·failed·working(턴이 안 끝남)·done(text)·interrupted(사람이 끼어듦)·sent(쳤지만 기록을 못 읽음)·unknown
+fn peer_reply(req: &Req, gate: &Gate, be: &dyn Backend, dev: &str) -> Resp {
+    if req.method != "GET" {
+        return Resp::text(405, "method not allowed");
+    }
+    let Some(cid) = req.param("cid").filter(|c| cid_ok(c)) else { return Resp::text(400, "bad cid") };
+    let key = format!("peer-{dev}-{cid}");
+    let j = |state: &str| Resp::json(&serde_json::json!({ "state": state }));
+    match gate.sends.state(&key) {
+        None | Some(SendState::Lost) => j("unknown"),
+        Some(SendState::Typing) => j("typing"),
+        Some(SendState::Failed(e)) => Resp::json(&serde_json::json!({ "state": "failed", "error": e })),
+        Some(SendState::Done) => {
+            let Some(m) = crate::peer_link::marks().get(&key, dev) else { return j("sent") };
+            let Some(chunk) = be.transcript_read(&m.session, m.offset) else { return j("sent") };
+            match crate::peer_link::reply_from(&chunk, cid) {
+                crate::peer_link::Reply::Waiting => j("working"),
+                crate::peer_link::Reply::Interrupted => j("interrupted"),
+                crate::peer_link::Reply::Done(text) => Resp::json(&serde_json::json!({ "state": "done", "text": text })),
+            }
+        }
+    }
+}
+
 /// 쓰기 요청 — 출처가 같은 주소 목록이어야(없으면 거절), JSON 이어야(남의 페이지 form 은 JSON 을 못 보낸다)
 fn same_origin_write(req: &Req, gate: &Gate) -> bool {
     let origin_ok = req.header("origin").is_some_and(|o| gate.origins.iter().any(|a| a == o));
@@ -646,6 +734,19 @@ struct SendBody {
 
 fn cid_ok(c: &str) -> bool {
     !c.is_empty() && c.len() <= 64 && c.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// 다른 기기 참모가 넣는 말 — to = 받을 참모(짧은 id·이름·별명, 비우면 참모가 하나일 때만)
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PeerSayBody {
+    #[serde(default)]
+    to: String,
+    text: String,
+    cid: String,
+    /// 보낸 참모 이름 — 이름표에 기기 이름 다음으로(괄호·제어 글자는 걸러진다)
+    #[serde(default)]
+    from: String,
 }
 
 #[derive(Deserialize)]
@@ -1201,6 +1302,22 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     }
     if !authed(req, gate) {
         return Resp::text(401, "no key");
+    }
+    // 다른 기기 참모 열쇠(peer 줄)는 보기 + 이름표 붙는 말 넣기만 — 사람 길(이름표 없이 치기·카드 답)과 파일·계정·짝짓기 코드는 못 쓴다(ADR 0007)
+    let peer = peer_of(req, gate);
+    let peer_path = matches!(req.path.as_str(), "/api/peer-say" | "/api/peer-reply");
+    match &peer {
+        Some(_) if !peer_allowed(&req.method, &req.path) => return Resp::text(403, "not for a peer key"),
+        None if peer_path => return Resp::text(403, "peer key only"),
+        _ => {}
+    }
+    if let Some((dev, name)) = &peer {
+        if req.path == "/api/peer-say" {
+            return peer_say(req, gate, be, dev, name);
+        }
+        if req.path == "/api/peer-reply" {
+            return peer_reply(req, gate, be, dev);
+        }
     }
     // 홈 화면 앱 연결 코드 — 이미 연결된 기기(열쇠)가 새 일회용 코드를 받는다. 홈 화면 앱은 QR(카메라 → 사파리)로 못 열려서
     // 사파리에서 코드를 복사해 앱에 붙여 넣는다(2026-10-03 사용자 "PWA 하려면 어떻게 해?"). 코드 규칙은 QR 과 같다(10분·한 번·새 코드면 옛 코드 죽음)
@@ -2038,7 +2155,7 @@ pub fn head_check(req: &Req, gate: &Gate) -> Option<Resp> {
     if req.method != "POST" && !has_body {
         return None;
     }
-    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/voice-mode" | "/api/voice-beat" | "/api/model" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker-add") && !PHONE_POSTS.contains(&req.path.as_str()) {
+    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/voice-mode" | "/api/voice-beat" | "/api/model" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker-add" | "/api/peer-say") && !PHONE_POSTS.contains(&req.path.as_str()) {
         return Some(Resp::text(404, "not found"));
     }
     // 짝짓기는 코드가 열쇠 — 출처·JSON 만 본다

@@ -1,1 +1,1 @@
-{ "title": "참모 상태", "where": "dash", "size": { "w": 480, "h": 240 }, "keepAlive": false }
+{ "title": "참모 상태", "where": "dash", "size": { "w": 480, "h": 240 }, "keepAlive": false, "light": true }

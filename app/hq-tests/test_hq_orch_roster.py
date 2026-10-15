@@ -1,5 +1,6 @@
 """HQ 템플릿 scripts/orch-roster(참모 이름표 훅) 테스트: python3 -m unittest discover -s app/hq-tests"""
-import datetime, importlib.machinery, importlib.util, json, pathlib, sys, unittest
+import datetime, importlib.machinery, importlib.util, json, os, pathlib, sys, unittest
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -111,6 +112,30 @@ class Roster(unittest.TestCase):
         agents = [{'id': 'a1', 'sessionId': 's1', 'name': '비서-2 · 개발', 'cwd': '/d/hq'}, {'id': 'a2', 'sessionId': 's2', 'name': '비서-5', 'cwd': '/d/hq'}]
         out = self.build(me='s1', agents=agents, cfg=cfg, roles={'비서-5': {'role': '예약', 'at': 1}})
         self.assertIn('비서-5 — 맡은 일: 예약', out)
+
+    def test_옛_이름을_환경변수로_받으면_설정_이름이_참모여도_참모로_친다(self):
+        # 앱 domain/session assistantBases 는 [설정 이름, 옛 이름, 참모, Chammo] — 공개 템플릿엔 개인 이름을 못 박으니
+        # 개인판 voice-hint 가 CHAMMO_ORCH_LEGACY 로 넘긴다. 안 넘기면(공개판) 옛 이름은 그냥 프로젝트 이름
+        agents = [{'id': 'a1', 'sessionId': 's1', 'name': '참모 · 비서', 'cwd': '/d/hq'},
+                  {'id': 'a2', 'sessionId': 's2', 'name': '아틀라스-7 · 쇼핑몰', 'cwd': '/d/hq'},
+                  {'id': 'a3', 'sessionId': 's3', 'name': '아틀라스-2', 'cwd': '/d/hq'},
+                  {'id': 'a4', 'sessionId': 's4', 'name': '아틀라스-9', 'cwd': '/elsewhere'}]  # HQ 밖 — 참모 아님
+        roles = {'아틀라스-7': {'role': '앱 개발', 'at': 1}}
+        self.assertEqual(self.build(me='s1', agents=agents, roles=roles), '', '환경변수 없으면 옛 이름은 참모가 아니다')
+        with mock.patch.dict(os.environ, {'CHAMMO_ORCH_LEGACY': '아틀라스'}):
+            out = self.build(me='s1', agents=agents, roles=roles)
+            self.assertIn('아틀라스-7 · 쇼핑몰 — 맡은 일: 앱 개발', out)
+            self.assertIn('아틀라스-2', out)
+            self.assertNotIn('아틀라스-9', out)
+            mine = self.build(me='s2', agents=agents)
+            self.assertIn('너 = 아틀라스-7 · 쇼핑몰', mine)
+            self.assertIn('참모 · 비서', mine)
+            bases = roster.bases_of(CFG)
+            self.assertEqual(bases, ['참모', '아틀라스', 'Chammo'])
+            self.assertEqual(roster.orch_base('아틀라스-7 · 쇼핑몰', bases), '아틀라스-7')
+            self.assertIsNone(roster.orch_base('아틀라스구-5', bases))
+        with mock.patch.dict(os.environ, {'CHAMMO_ORCH_LEGACY': ' 아틀라스 , 참모,,'}):
+            self.assertEqual(roster.bases_of(CFG), ['참모', '아틀라스', 'Chammo'], '공백·빈 칸·겹침은 거른다')
 
 
 class LiveFallback(unittest.TestCase):

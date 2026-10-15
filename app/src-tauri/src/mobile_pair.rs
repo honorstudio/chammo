@@ -222,6 +222,12 @@ impl Devices {
         d
     }
 
+    /// 시험용 — 줄 하나 더(다른 기기 참모 peer 줄 등)
+    #[cfg(test)]
+    pub fn add_test(&self, id: &str, token: &str, name: &str, peer: bool) {
+        self.inner.lock().unwrap().list.push(Device { id: id.into(), name: name.into(), hash: sha(token), created: ms(SystemTime::now()), last_seen: None, home: false, group: None, paired: None, peer });
+    }
+
     /// 시험용 — 다음 check 가 마지막 접속을 파일에 적게
     #[cfg(test)]
     pub fn backdate_flush(&self) {
