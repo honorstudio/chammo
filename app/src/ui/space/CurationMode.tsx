@@ -1,10 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
-import { fromFrame } from '../../domain/curation';
+import { fromFrame, reviewEscCloses } from '../../domain/curation';
 import { orchVars } from '../../domain/orchTheme';
 import { docUrl } from '../../domain/reader';
 import { tr } from '../../i18n';
-import { IconClose, IconSend, IconZoomIn, IconZoomOut } from '../Icons';
+import { IconCheck, IconClose, IconMaximize, IconRestore, IconSend, IconZoomIn, IconZoomOut } from '../Icons';
+import { IconButton } from '../kit/IconButton';
 import { stepZoom, zoomLabel } from '../../domain/readerZoom';
 import { HtmlFrame } from '../reader/Reader';
 
@@ -33,11 +34,12 @@ const CUR_ZOOM_KEY = 'curZoom';
 const KIND = (): Record<string, string> => ({ design: tr('디자인', 'Design'), flow: tr('흐름', 'Flow'), copy: tr('문구', 'Copy'), media: tr('영상·이미지', 'Media') });
 
 /**
- * 시안 검토 모드 — 스페이스 전체(왼쪽 메뉴 자리까지, 채팅 열은 그대로)를 검토에 쓴다(2026-09-30 사용자 v12).
+ * 시안 검토 — 띄운 참모 탭 줄의 검토 탭 안에 뜬다(채팅 칸은 그대로, fix/curation-space). big = 머리 '크게'를 눌러 창 전체로 키운 것(2026-09-30 사용자 v12 의 옛 모양).
+ * by = 띄운 참모(또는 세션) — 머리에 작은 프사와 이름.
  * 위: 제목·종류·진행 게이지·닫기 / 왼쪽: 시안 목차(덱마다 진행 칸) / 가운데: 시안(블록 오른쪽 칸에서 ○△✕·메모, J·K·1·2·3·M) /
  * 오른쪽 아래: 참모에게 보내기(우리 핵심 — 꾸물거리고, 다 표시하면 살아난다). 표시는 시안이 기억하고, 결과는 앱이 curation/ 에 적어 둔다(HtmlFrame record)
  */
-export function CurationMode({ path, onClose, onSend, sendTo, color }: { path: string; onClose: () => void; onSend?: (text: string) => Promise<void>; sendTo: string; color?: string }) {
+export function CurationMode({ path, onClose, onSend, sendTo, color, big = false, onBig, by }: { path: string; onClose: () => void; onSend?: (text: string) => Promise<void>; sendTo: string; color?: string; big?: boolean; onBig?: () => void; by?: { name: string; avatar: React.ReactNode } }) {
   const [st, setSt] = useState<CurState | null>(null);
   const [sent, setSent] = useState<'idle' | 'sending' | 'sent' | 'fail'>('idle');
   const [deckAt, setDeckAt] = useState(0);
@@ -56,8 +58,12 @@ export function CurationMode({ path, onClose, onSend, sendTo, color }: { path: s
     };
     window.addEventListener('message', on);
     const ping = window.setTimeout(() => frame()?.postMessage({ hodoc: 'cur-cmd', cmd: 'ping' }, '*'), 800);
-    // Esc 로 닫기(시안 안에서 누른 Esc 도 hodoc 이 넘겨 준다)
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('.od-back')) onClose(); };
+    // Esc 로 닫기(시안 안에서 누른 Esc 도 hodoc 이 넘겨 준다) — 채팅 입력칸에서 누른 Esc·위에 뜬 창이 있을 땐 안 닫는다(domain/curation reviewEscCloses)
+    const key = (e: KeyboardEvent) => {
+      const t = e.target instanceof HTMLElement ? e.target : null;
+      const editable = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+      if (reviewEscCloses({ key: e.key, composing: e.isComposing, inReview: !!t?.closest('.cur-mode'), editable, overlay: !!document.querySelector('.od-back, .dash-preview') })) onClose();
+    };
     const esc = (e: MessageEvent) => {
       const d = e.data as { hodoc?: string; k?: string } | null;
       if (!fromFrame(e, frame())) return;
@@ -109,24 +115,26 @@ export function CurationMode({ path, onClose, onSend, sendTo, color }: { path: s
   const seg = (v: string) => (total ? `${((st?.counts[v] ?? 0) / total) * 100}%` : '0%');
 
   return (
-    <div className="cur-mode">
+    <div className={`cur-mode ${big ? 'big' : 'in-tab'}`}>
       <header className="cur-mode-top">
         <b className="cur-mode-title">{st?.title || path.split('/').pop()}</b>
         <span className="cur-mode-kind">{KIND()[st?.kind ?? 'design'] ?? tr('시안', 'Draft')}</span>
+        {by && <span className="cur-mode-by" title={tr(`${by.name} — 띄운 이`, `Opened by ${by.name}`)}>{by.avatar}<span>{by.name}</span></span>}
         <span className="cur-mode-gauge" title={tr(`${done} / ${total} 표시`, `${done} / ${total} marked`)}>
           <i className="pick" style={{ width: seg('pick') }} /><i className="maybe" style={{ width: seg('maybe') }} /><i className="drop" style={{ width: seg('drop') }} />
         </span>
         <span className="cur-mode-n">{tr(`${done} / ${total} 표시`, `${done} / ${total}`)}</span>
         {st?.labels.map((l) => <span key={l.v} className={`cur-mode-chip ${l.v}`}><i />{l.title} {st.counts[l.v] ?? 0}</span>)}
         <span className="cur-mode-sp" />
-        {st && st.total > st.done && <button className="cur-mode-close" onClick={() => cmd({ cmd: 'next' })} title={tr('다음 안 고른 블록으로', 'Next unmarked block')}>{tr(`남은 ${st.total - st.done} · 다음`, `${st.total - st.done} left · Next`)}</button>}
+        {st && st.total > st.done && <button className="cur-mode-next" onClick={() => cmd({ cmd: 'next' })} title={tr('다음 안 고른 블록으로', 'Next unmarked block')}>{tr(`남은 ${st.total - st.done} · 다음`, `${st.total - st.done} left · Next`)}</button>}
         <span className="rd-zoom cur-mode-zoom">
           <button onClick={() => zoomBy.current(-1)} title={tr('축소 (⌘-)', 'Zoom out (⌘-)')} aria-label={tr('축소', 'Zoom out')}><IconZoomOut /></button>
           <button className="rd-zoom-pct" onClick={() => zoomBy.current(0)} title={tr('원래 크기 (⌘0)', 'Actual size (⌘0)')}>{zoomLabel(zoom)}</button>
           <button onClick={() => zoomBy.current(1)} title={tr('확대 (⌘+)', 'Zoom in (⌘+)')} aria-label={tr('확대', 'Zoom in')}><IconZoomIn /></button>
         </span>
         <span className="cur-mode-saved">{tr('자동 저장', 'Autosaved')}</span>
-        <button className="cur-mode-close" onClick={onClose} title={tr('닫기 (Esc) — 표시는 그대로 남아', 'Close (Esc) — marks are kept')}><IconClose />{tr('닫기', 'Close')}</button>
+        {onBig && <IconButton className="cur-mode-close" label={big ? tr('원래 크기', 'Restore') : tr('크게', 'Large')} title={big ? tr('탭 안으로 되돌리기', 'Back into the tab') : tr('크게 — 창 전체로', 'Large — fill the window')} onClick={onBig}>{big ? <IconRestore /> : <IconMaximize />}</IconButton>}
+        <IconButton className="cur-mode-close" label={tr('닫기', 'Close')} title={tr('닫기 (Esc) — 표시는 그대로 남아', 'Close (Esc) — marks are kept')} onClick={onClose}><IconClose /></IconButton>
       </header>
       <div className="cur-mode-body">
         {/* 왼쪽 시안 목차는 뺐다 — 오른쪽 카드 목록이 시안별로 묶여 겹쳤고, 가운데 시안이 좁아졌다(2026-09-30 사용자) */}
@@ -148,7 +156,7 @@ export function CurationMode({ path, onClose, onSend, sendTo, color }: { path: s
           title={sent === 'sent' ? tr('보냈어', 'Sent') : sent === 'fail' ? tr('못 보냄 — 다시 누르기', 'Failed — press again') : tr(`${sendTo}에게 보내기 · ${done}/${total} 표시 — 다 안 봐도 보낼 수 있어`, `Send to ${sendTo} · ${done}/${total} marked`)}>
           {/* 글자 없이: 고리가 표시한 만큼 차고, 가운데 종이비행기, 개수는 작은 배지(2026-09-30 사용자 "텍스트 말고 아이콘") */}
           <span className="cur-send-ring" style={{ ['--p' as string]: `${pct}%` }}><span className="cur-send-plane"><IconSend /></span></span>
-          <span className="cur-send-n">{sent === 'sent' ? '✓' : `${done}/${total}`}</span>
+          <span className="cur-send-n">{sent === 'sent' ? <IconCheck /> : `${done}/${total}`}</span>
         </button>
         </div>
       )}

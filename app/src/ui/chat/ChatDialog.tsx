@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { tr } from '../../i18n';
 import { stepToward, type ScreenDialog } from '../../domain/screenDialog';
 import { claudeDefaults } from '../../data/tauri';
+import { IconTerminal } from '../Icons';
+import { IconButton } from '../kit/IconButton';
 
 const FREE = /^(type something|other|직접 입력)/i;
 const DOWN = '\x1b[B';
@@ -72,7 +74,7 @@ export function ChatDialog({ d, keys, read, onTerminal }: { d: ScreenDialog; key
       <div className="cd-foot">
         {d.partial && <span>{tr('목록 일부만 보여요', 'Only part of the list is shown')}</span>}
         <button className="chat-more" disabled={sent} onClick={() => void press(['\x1b'])}>{tr('취소', 'Cancel')}</button>
-        <button className="chat-more" onClick={onTerminal}>{tr('터미널로 보기', 'Show terminal')}</button>
+        <IconButton className="chat-ic-pill" label={tr('터미널로 보기', 'Show terminal')} onClick={onTerminal}><IconTerminal /></IconButton>
       </div>
     </div>
   );

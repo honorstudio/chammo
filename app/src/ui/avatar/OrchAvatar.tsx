@@ -1,16 +1,19 @@
 // 참모 프사 하나 — 번호 칩 자리 전부(사이드바 22·겹침 16·대시보드 44·채팅 탭 18). 모바일도 이걸 가져다 쓴다(ui/avatar/index.ts)
 import { useEffect, useRef, useState } from 'react';
 import { tr } from '../../i18n';
-import { avatarClasses, avatarKey, type AvatarTone, defaultAvatar, jitter, resolveAvatar, transitionOf, type Avatar, type AvatarState, type Crop, type Transition } from '../../domain/avatar';
+import { avatarClasses, avatarKey, type AvatarPhase, type AvatarTone, defaultAvatar, jitter, resolveAvatar, transitionOf, type Avatar, type AvatarState, type Crop, type Transition } from '../../domain/avatar';
 import { PresetSvg } from './shapes';
 import { imageUrl, useAvatars } from './store';
 import { blinkWatch } from './blink';
 import { bindAttention } from '../attention';
 import './avatar.css';
+import { motionOn } from '../calm';
 
 const STATE_WORD: Record<AvatarState, () => string> = {
   work: () => tr('일하는 중', 'Working'), rest: () => tr('쉼', 'Idle'), ask: () => tr('물어봄', 'Asking'), off: () => tr('꺼짐', 'Stopped'),
 };
+
+const PHASE_WORD: Record<AvatarPhase, () => string> = { starting: () => tr('켜는 중', 'Starting'), stopping: () => tr('끄는 중', 'Stopping') };
 
 // 화면 밖이면 멈춘다 — 관찰자 하나를 모두가 나눠 쓴다(사이드바에 여럿 떠도 타이머 0)
 let io: IntersectionObserver | null = null;
@@ -20,12 +23,17 @@ function watch(el: Element): () => void {
   io.observe(el);
   return () => io?.unobserve(el);
 }
-const reduced = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+const reduced = () => !motionOn(); // 애니메이션 줄이기·끄기·OS 동작 줄이기(ui/calm)
 
 /** 상태가 바뀌면 전환 동작을 잠깐(1초, 웃는 눈은 1.9초) */
-function useTransition(state: AvatarState): Transition | null {
+function useTransition(state: AvatarState, enter: Transition | null = null): Transition | null {
   const prev = useRef(state);
-  const [t, setT] = useState<Transition | null>(null);
+  const [t, setT] = useState<Transition | null>(enter);
+  useEffect(() => {
+    if (!enter) return;
+    const id = window.setTimeout(() => setT((x) => (x === enter ? null : x)), 1000);
+    return () => window.clearTimeout(id);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const next = transitionOf(prev.current, state);
     prev.current = state;
@@ -54,7 +62,7 @@ function Picture({ src, crop, onError }: { src: string; crop: Crop; onError: () 
   return still ? <canvas ref={cv} style={style} /> : <img src={src} alt="" draggable={false} style={style} onError={onError} />;
 }
 
-export function OrchAvatar({ name, size, state, color, label, preview, previewSrc, className, tone }: {
+export function OrchAvatar({ name, size, state, color, label, preview, previewSrc, className, tone, phase, woke = false }: {
   /** 세션 이름 그대로 — 별명은 떼고 기본 이름으로 찾는다 */
   name: string;
   size: number;
@@ -69,11 +77,21 @@ export function OrchAvatar({ name, size, state, color, label, preview, previewSr
   className?: string;
   /** 참모 색 면 위에 놓일 때 — 몸 흰색·눈 면 색(고른 탭 알약은 CSS 가 알아서 한다) */
   tone?: AvatarTone;
+  /** 띠에서 켜는 중(잠에서 깨어남 → 숨쉬며 기다림)·끄는 중(잠듦 → 작아지며 흐려짐). 켜는 중엔 state 를 'off' 로 주면 살아날 때 wake 가 마무리한다 */
+  phase?: AvatarPhase;
+  /** 켜는 중 칸 대신 새로 그려진 프사(새로 만든 참모가 막 떴을 때) — 처음 그릴 때 깨어남 마무리 한 번 */
+  woke?: boolean;
 }) {
   const { saved, dataDir } = useAvatars();
   const key = avatarKey(name);
   const av = preview ?? resolveAvatar(saved, name);
-  const t = useTransition(state);
+  const t = useTransition(state, woke ? 'wake' : null);
+  // 켜는 중에서 살아난 순간 — 반쯤 뜬 눈에서 마저 뜬다(감았다 다시 뜨는 깜빡임 없이). 그 wake 한 번 동안만
+  const wasStarting = useRef(false);
+  const fromStart = useRef(woke);
+  if (phase === 'starting') { wasStarting.current = true; fromStart.current = false; }
+  else if (wasStarting.current && t === 'wake') { fromStart.current = true; wasStarting.current = false; }
+  else if (!t) fromStart.current = false;
   const root = useRef<HTMLSpanElement>(null);
   const [broken, setBroken] = useState(false);
   // 사람이 안 보면(창 숨김·다른 앱이 앞·입력 2분 없음) 전부 멈춘 그림 — ui/attention 이 문서 맨 위에 oa-paused
@@ -90,9 +108,9 @@ export function OrchAvatar({ name, size, state, color, label, preview, previewSr
   const j = jitter(key);
   const fill = av.kind === 'preset' && av.color ? av.color : color;
   const showImage = av.kind === 'image' && src && !broken;
-  const cls = avatarClasses({ image: !!showImage, state, transition: t, size, tone }) + (className ? ` ${className}` : '');
+  const cls = avatarClasses({ image: !!showImage, state, transition: t, size, tone, phase }) + (fromStart.current ? ' oa-from-start' : '') + (className ? ` ${className}` : '');
   const style = { '--oa-s': `${size}px`, '--oa-body': fill, '--oa-d': `${j.delay.toFixed(2)}s`, '--oa-k': j.k.toFixed(3) } as React.CSSProperties;
-  const aria = `${label ?? key} · ${STATE_WORD[state]()}`;
+  const aria = `${label ?? key} · ${phase ? PHASE_WORD[phase]() : STATE_WORD[state]()}`;
   return (
     <span ref={root} className={cls} style={style} role="img" aria-label={aria}>
       {showImage && av.kind === 'image'

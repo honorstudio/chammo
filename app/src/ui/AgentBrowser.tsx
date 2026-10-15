@@ -1,20 +1,21 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
-import { browserBig, browserScreen, closedText, tabStrip, takeoverLine, unpackFrame, type CdpPage, type Live, type FedcmDialog, type PagePermission, type WrapperDialog } from '../domain/agentBrowser';
+import { browserBig, browserScreen, closedText, tabStrip, takeoverLine, unpackFrame, type CdpPage, type Live, type FedcmDialog, type PagePermission, type PopupKind, type WrapperDialog } from '../domain/agentBrowser';
+import { sharedPoll } from '../domain/sharedPoll';
 import { tr } from '../i18n';
 import { IconCollapse, IconExpand, IconHide, IconMaximize, IconRefresh } from './Icons';
 import { handBack, openAgentModal, takeOver } from './AgentBrowserModal';
 import './agentBrowser.css';
 
-/** 지금 떠 있는 세션 브라우저들(참모 브라우저 래퍼 상태) — 1.5초마다 */
+/** 세션 브라우저 목록 물음 하나 — App·SpaceView 가 각자 1.5초마다 묻던 것(2026-10-11 perf 4번) */
+const livesPoll = sharedPoll(() => invoke<Live[]>('agent_lives'), 1500, [] as Live[]);
+
+/** 지금 떠 있는 세션 브라우저들(참모 브라우저 래퍼 상태) — 1.5초마다, 쓰는 곳이 여럿이어도 한 번 */
 export function useAgentLives(): Live[] {
-  const [lives, setLives] = useState<Live[]>([]);
+  const [lives, setLives] = useState<Live[]>(livesPoll.current);
   useEffect(() => {
-    let alive = true;
-    const tick = () => void invoke<Live[]>('agent_lives').then((l) => { if (alive) setLives((p) => (JSON.stringify(p) === JSON.stringify(l) ? p : l)); }, () => {});
-    tick();
-    const id = window.setInterval(tick, 1500);
-    return () => { alive = false; window.clearInterval(id); };
+    setLives(livesPoll.current());
+    return livesPoll.subscribe(setLives);
   }, []);
   return lives;
 }
@@ -104,14 +105,14 @@ export type AgentDialog = { type: string; message: string; defaultPrompt?: strin
 export function useAgentTabs(profile: string, every = 1000) {
   // dialog = 지금 탭 대화상자, dialogTabs = 대화상자가 떠 있는 탭들, stuck = 지금 탭이 멈춤(답이 안 들어감·앱이 모르는 대화상자 — 크롬에서 보기로 푼다)
   // error = 화면 받기 실패 이유(Rust 일꾼) — 다시 붙으면 지워진다. attached = 일꾼이 붙어 탭 목록을 읽음(그런데 탭 0개면 닫힘)
-  // popup = 크롬이 이 그림 밖에 자기 창을 띄움(패스키·Touch ID·폰 QR) — 크롬에서 보기로 꺼내야 보인다
-  const [t, setT] = useState<{ pages: CdpPage[]; current: string | null; pinned: boolean; shown: boolean; dialog: AgentDialog | null; dialogTabs: string[]; stuck: boolean; chooser: string | null; reopened: boolean; dropped: number; error: string; attached: boolean; popup: boolean; wrapperDialog: WrapperDialog | null; permission: PagePermission | null; fedcm: FedcmDialog | null }>({ pages: [], current: null, pinned: false, shown: false, dialog: null, dialogTabs: [], stuck: false, chooser: null, reopened: false, dropped: 0, error: '', attached: false, popup: false, wrapperDialog: null, permission: null, fedcm: null });
+  // popup = 크롬이 이 그림 밖에 사람을 부를 자기 창을 띄움(패스키·Touch ID·폰 QR·권한) — 크롬에서 보기로 꺼내야 보인다. popupKind = 패스키인지
+  const [t, setT] = useState<{ pages: CdpPage[]; current: string | null; pinned: boolean; shown: boolean; dialog: AgentDialog | null; dialogTabs: string[]; stuck: boolean; chooser: string | null; reopened: boolean; dropped: number; error: string; attached: boolean; popup: boolean; popupKind?: PopupKind; wrapperDialog: WrapperDialog | null; permission: PagePermission | null; fedcm: FedcmDialog | null }>({ pages: [], current: null, pinned: false, shown: false, dialog: null, dialogTabs: [], stuck: false, chooser: null, reopened: false, dropped: 0, error: '', attached: false, popup: false, wrapperDialog: null, permission: null, fedcm: null });
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     let alive = true;
     const tick = () => {
       setNow(Date.now());
-      void invoke<typeof t>('agent_tabs', { profile }).then((x) => { if (alive) setT({ ...x, dialog: x.dialog ?? null, dialogTabs: x.dialogTabs ?? [], chooser: x.chooser ?? null, error: x.error ?? '', attached: !!x.attached, popup: !!x.popup, wrapperDialog: x.wrapperDialog ?? null, permission: x.permission ?? null, fedcm: x.fedcm ?? null }); }, () => {});
+      void invoke<typeof t>('agent_tabs', { profile }).then((x) => { if (alive) setT({ ...x, dialog: x.dialog ?? null, dialogTabs: x.dialogTabs ?? [], chooser: x.chooser ?? null, error: x.error ?? '', attached: !!x.attached, popup: !!x.popup, popupKind: x.popupKind || undefined, wrapperDialog: x.wrapperDialog ?? null, permission: x.permission ?? null, fedcm: x.fedcm ?? null }); }, () => {});
     };
     tick();
     const id = window.setInterval(tick, every);
@@ -130,7 +131,7 @@ export function AgentBrowser({ live, children, className = '' }: { live: Live; c
   // 손으로 크게·작게 — 다음 도구 호출이 오면 다시 알아서
   const [manual, setManual] = useState<{ big: boolean; at: number } | null>(null);
   const tabsNow = useAgentTabs(live.profile);
-  const { pages, current, pinned, shown, setShown, now, reopened, dialogTabs, stuck, error, popup } = tabsNow;
+  const { pages, current, pinned, shown, setShown, now, reopened, dialogTabs, stuck, error, popup, popupKind } = tabsNow;
   const scr = useBrowserScreen(tabsNow);
   const [bigNow, setBigNow] = useState(true);
   const { src, lastFrameAt } = useAgentFrame(live.profile, bigNow ? 100 : 700); // 크게 10fps, 작게 띠 썸네일
@@ -140,7 +141,7 @@ export function AgentBrowser({ live, children, className = '' }: { live: Live; c
 
   const tabs = tabStrip(pages, current, dialogTabs);
   // 페이지가 대화상자에서 기다린다 — 칸엔 멈춘 그림만 보여 사람은 그냥 멈춘 줄 알았다(QA B6). 누르면 크게 보기에서 답한다
-  const waitTag = dialogTabs.length ? tr('대화상자', 'Dialog') : stuck ? tr('멈춤', 'Stuck') : popup && !shown ? tr('크롬 창', 'Chrome window') : '';
+  const waitTag = dialogTabs.length ? tr('대화상자', 'Dialog') : stuck ? tr('멈춤', 'Stuck') : popup && !shown ? ((popupKind ?? live.popupKind) === 'passkey' ? tr('패스키', 'Passkey') : tr('크롬 창', 'Chrome window')) : '';
   const pick = (id: string) => void invoke('agent_pin', { profile: live.profile, target: pinned && id === current ? null : id }).catch(() => {});
   const hide = () => void invoke('agent_hide', { profile: live.profile }).then(() => setShown(false), () => {});
   const flip = () => setManual({ big: !big, at: live.toolAt });

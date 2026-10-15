@@ -127,3 +127,14 @@ describe("intentOf orch-label — 폰에서 바꾼 참모 별명을 맥 앱 별�
     expect(intentOf({ action: 'orch-label', arg: 'aaaa0001 x' })).toBeNull();
   });
 });
+
+describe('intentOf model-pick — 폰 입력창 모델 칩(2026-10-11), 데스크톱 칩과 같은 runModelPick 으로', () => {
+  it('별칭·단계 목록 안 값만, 하나는 있어야', () => {
+    expect(intentOf({ action: 'model-pick', arg: { id: 'aaaa0001', model: 'sonnet', effort: null } })).toEqual({ kind: 'modelPick', id: 'aaaa0001', want: { model: 'sonnet' } });
+    expect(intentOf({ action: 'model-pick', arg: { id: 'aaaa0001', effort: 'xhigh' } })).toEqual({ kind: 'modelPick', id: 'aaaa0001', want: { effort: 'xhigh' } });
+    expect(intentOf({ action: 'model-pick', arg: { id: 'aaaa0001' } })).toBeNull();
+    expect(intentOf({ action: 'model-pick', arg: { id: 'aaaa0001', model: 'opus\r/clear' } })).toBeNull();
+    expect(intentOf({ action: 'model-pick', arg: { id: 'aaaa0001', effort: 'ultra' } })).toBeNull();
+    expect(intentOf({ action: 'model-pick', arg: { model: 'opus' } })).toBeNull();
+  });
+});

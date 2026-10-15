@@ -16,6 +16,11 @@ fn read(v: &str) -> (Option<String>, Option<String>) {
     (j["claudeAiOauth"]["accessToken"].as_str().map(str::to_string), j["mcpOAuth"]["tag"].as_str().map(str::to_string))
 }
 
+/// 갱신이 불리면 안 되는 시험의 갱신 길
+fn no_refresh(_: &Value) -> Result<Value, String> {
+    panic!("이 시험에선 칸 토큰을 갱신하면 안 된다")
+}
+
 struct Env {
     dir: PathBuf,
     list: PathBuf,
@@ -41,7 +46,8 @@ fn env(tag: &str) -> Env {
     }
     let store = Fake::default();
     store.put(LIVE, "me", &blob("tokA", "m1"));
-    Env { list: dir.join("accounts.json"), live: Live { service: LIVE.into(), account: "me".into(), claude_json }, dir, store }
+    let claude_dir = Some(dir.join(".claude"));
+    Env { list: dir.join("accounts.json"), live: Live { service: LIVE.into(), account: "me".into(), claude_json, claude_dir, refresh: no_refresh }, dir, store }
 }
 
 impl Env {
@@ -481,4 +487,95 @@ fn 백업이_없거나_이름이_틀리면_안_건드린다() {
     assert_eq!(restore(&e.store, &e.live, &e.list, BACKUP_FIRST).unwrap_err(), Error::NoBackup);
     assert_eq!(restore(&e.store, &e.live, &e.list, "a1").unwrap_err(), Error::Unknown); // 칸 id 는 바꾸기로
     assert_eq!(e.live_tok().as_deref(), Some("tokB"));
+}
+
+// ── 2026-10-13 19:14 자동 전환 때 세션들이 "another Claude Code process is refreshing it" 으로 멈춘 것 ──
+
+const HOUR: i64 = 3600_000;
+
+/// 만료 시각이 있는 칸 값(계정 로그인만)
+fn slot_blob(tok: &str, exp: i64) -> String {
+    json!({ "claudeAiOauth": { "accessToken": tok, "refreshToken": format!("r-{tok}"), "expiresAt": exp, "scopes": ["user:inference"], "subscriptionType": "max" } }).to_string()
+}
+
+fn live_exp(e: &Env) -> Option<i64> {
+    let v: Value = serde_json::from_str(&e.store.val(LIVE, "me")?).ok()?;
+    v["claudeAiOauth"]["expiresAt"].as_i64()
+}
+
+/// 가짜 갱신 — 새 토큰 = "fresh-" + 옛 토큰, 8시간
+fn fresh(o: &Value) -> Result<Value, String> {
+    let mut n = o.clone();
+    n["accessToken"] = format!("fresh-{}", o["accessToken"].as_str().unwrap()).into();
+    n["refreshToken"] = format!("r2-{}", o["accessToken"].as_str().unwrap()).into();
+    n["expiresAt"] = (crate::accounts_refresh::now_ms() + 8 * HOUR).into();
+    Ok(n)
+}
+
+fn dead(_: &Value) -> Result<Value, String> {
+    Err("dead".into())
+}
+
+#[test]
+fn 만료된_칸으로_바꿀_땐_끼우기_전에_갱신해서_끼운다() {
+    // 칸 토큰은 보관한 뒤 몇 시간이 지나 대개 만료돼 있다 — 그대로 끼우면 돌던 세션이 다 같이 갱신하러 몰려 잠금에서 멈췄다
+    let mut e = Env::two("refresh-expired");
+    e.store.put(SLOT_SERVICE, "a1", &slot_blob("tokA", crate::accounts_refresh::now_ms() - HOUR));
+    e.live.refresh = fresh;
+    switch(&e.store, &e.live, &e.list, "a1").unwrap();
+    assert_eq!(e.live_tok().as_deref(), Some("fresh-tokA"));
+    assert!(live_exp(&e).unwrap() > crate::accounts_refresh::now_ms() + 7 * HOUR, "끼운 토큰이 만료 전이어야 세션이 갱신하러 안 간다");
+    // 새 갱신 토큰은 칸에도 — 옛 갱신 토큰은 이미 써 버렸다
+    assert_eq!(e.slot("a1").as_deref(), Some("fresh-tokA"));
+    // MCP 로그인은 지금 것 그대로
+    assert_eq!(read(&e.store.val(LIVE, "me").unwrap()).1.as_deref(), Some("m1"));
+}
+
+#[test]
+fn 넉넉한_칸_토큰은_갱신하지_않는다() {
+    let e = Env::two("refresh-fresh");
+    e.store.put(SLOT_SERVICE, "a1", &slot_blob("tokA", crate::accounts_refresh::now_ms() + 5 * HOUR));
+    switch(&e.store, &e.live, &e.list, "a1").unwrap(); // no_refresh — 불리면 실패
+    assert_eq!(e.live_tok().as_deref(), Some("tokA"));
+}
+
+#[test]
+fn 칸_토큰을_갱신하지_못하면_바꾸지_않는다() {
+    // 만료된 토큰을 끼우면 세션이 갱신에 실패해 멈춘다 — 지금 계정 그대로 두고 알린다
+    let mut e = Env::two("refresh-dead");
+    e.store.put(SLOT_SERVICE, "a1", &slot_blob("tokA", crate::accounts_refresh::now_ms() - HOUR));
+    e.live.refresh = dead;
+    assert_eq!(switch(&e.store, &e.live, &e.list, "a1").unwrap_err(), Error::Refresh("dead".into()));
+    let p = e.pool();
+    assert_eq!((e.live_tok().as_deref(), e.live_email().as_str(), p.current.as_deref(), p.switching), (Some("tokB"), "b@x.com", Some("a2"), None));
+    assert_eq!(e.slot("a1").as_deref(), Some("tokA"));
+}
+
+#[test]
+fn Claude_Code_세션이_갱신_잠금을_쥐고_있으면_바꾸지_않는다() {
+    // 세션이 지금 계정을 갱신하는 도중에 바꾸면, 그 세션이 받은 새 토큰은 버려지고 칸엔 이미 써 버린 갱신 토큰이 남는다
+    let e = Env::two("lock-busy");
+    let dir = e.live.claude_dir.clone().unwrap();
+    std::fs::create_dir_all(dir.join(".oauth_refresh.lock")).unwrap();
+    assert_eq!(switch(&e.store, &e.live, &e.list, "a1").unwrap_err(), Error::Busy);
+    let p = e.pool();
+    assert_eq!((e.live_tok().as_deref(), p.current.as_deref(), p.switching), (Some("tokB"), Some("a2"), None));
+    assert!(dir.join(".oauth_refresh.lock").is_dir(), "남의 잠금은 안 지운다");
+}
+
+#[test]
+fn 바꿔_끼우는_동안_Claude_Code_갱신_잠금을_쥔다() {
+    let e = Env::two("lock-held");
+    let dir = e.live.claude_dir.clone().unwrap();
+    let (new, legacy) = crate::accounts_refresh::lock_paths(&dir);
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let (s2, n2, l2) = (seen.clone(), new.clone(), legacy.clone());
+    *e.store.on_set.borrow_mut() = Some(Box::new(move |svc| {
+        if svc == LIVE {
+            s2.borrow_mut().push(n2.is_dir() && l2.is_dir());
+        }
+    }));
+    switch(&e.store, &e.live, &e.list, "a1").unwrap();
+    assert_eq!(*seen.borrow(), vec![true], "로그인 칸에 쓰는 순간 두 잠금을 다 쥐고 있어야 한다");
+    assert!(!new.exists() && !legacy.exists(), "끝나면 놓는다");
 }

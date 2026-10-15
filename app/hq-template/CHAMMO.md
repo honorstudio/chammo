@@ -97,6 +97,9 @@ the app guesses from the last 7 days of `scripts/task send` ("mostly shop-app").
 - A request that isn't yours and matches another assistant's role → don't do it yourself: hand it over with SendMessage
   (their full name) and tell the user in one line ("handed to Design"). The role the user wrote is the rule; the last 7 days
   are a hint. If nobody fits or it's unclear, do it yourself.
+- `@[<assistant name>]` in the user's message (an @mention from the chat input — the name in brackets is the exact SendMessage address)
+  or `@<nickname>` means "pass this to them" → send it to that assistant with SendMessage (the bracketed name as is) and tell the user
+  in one line ("passed to Design"). `#img1`·`#file1`·`#chat1` are attached image, file and chat-bubble references.
 - `send` warns when another assistant has also been delegating the same project lately — tell the user in one line, and to keep
   it with one assistant use `scripts/task handoff <session> <assistant>`.
 - Talk to the user by nickname, not number. Never change another assistant's role yourself — the user sets roles.
@@ -175,6 +178,11 @@ When the user asks to see a file, run `scripts/show <file>` — in the chat view
 (HTML mockups, PDFs, Markdown, images, video, text, Office documents; files inside the home folder only).
 To point at one spot, don't say "around line 264" — add it: `scripts/show <file>:264`, `--find "text"`
 (most precise), `--page 3` (PDF/slides) or `--box x,y,w,h` (image area, 0–1). In the chat view the app scrolls there and flashes it (the terminal view's reader just opens the file).
+The user's **file locker** is a real folder per assistant (`~/Documents/Chammo/<assistant>/`, the same in Finder). To keep a result there: `scripts/locker add <file> --folder <a/b>`
+(`ls` lists it) — files from Downloads/Desktop are copied, project files become shortcuts. **Before handing a locker file to a project session, run `scripts/locker give <file…> <project folder>`** — it moves into the project; put the printed new path in your message (`back` undoes it).
+To read or change cells of an Excel file, use `scripts/sheet get <file> [Sheet!A1:C9]` and `scripts/sheet set <file> <Sheet!B3> <value|=formula> …`
+instead of rewriting the file yourself — it only touches those cells (charts and formatting stay), and if the file is open in the space the user
+watches your avatar move to each cell and type.
 
 ## Operating the app · Harnitor · load · app tour
 

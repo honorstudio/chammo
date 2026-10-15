@@ -3,7 +3,7 @@
 // 예약 판을 열면 시트는 예약 담당 참모로(domain/mobile routineOrch)
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getEnv, listBrowsers, listSessionsRaw, NoKeyError, readShowLog, readTasksSince, routinesList, type MobileEnv } from '../../data/web';
-import { chatFiles, type ChatFile } from '../../domain/chatFiles';
+import { chatFiles, showOwnerOf, type ChatFile } from '../../domain/chatFiles';
 import { titleOf } from '../../domain/reader';
 import { FileView } from './FileView';
 import type { Live } from '../../domain/agentBrowser';
@@ -16,7 +16,10 @@ import { makeTaskTail } from '../../domain/taskTail';
 import { parseRoutines, routineState } from '../../domain/routine';
 import { groupByProject, parseAgents, type Session } from '../../domain/session';
 import { ChatSheet } from './ChatSheet';
+import { SheetHostProvider } from './kit';
 import { Composer } from './Composer';
+import { ModelChipRow, VoiceMode } from './ComposerExtras';
+import { usePhoneVoice } from './usePhoneVoice';
 import { MessageList } from './MessageList';
 import { DirectCards, usePhoneDirect } from './DirectCards';
 import { needsAnswer } from '../../domain/directAsk';
@@ -32,6 +35,8 @@ import { PairHelp } from './PairHelp';
 import { NewOrchForm, OffOrchList, useOffOrchs, useWake, WakeNotice, type Wake } from './OrchWake';
 import { MAvatar, useOrchColor } from './MAvatar';
 import { usePendingNicks } from './pendingNicks';
+import { usePhoneSpeaker } from './usePhoneSpeaker';
+import { speakerTap } from '../../domain/phoneVoice';
 import { orchVars } from '../../domain/orchTheme';
 import { useMobileChat } from './useMobileChat';
 import { useOrchAsks } from './useOrchAsks';
@@ -72,7 +77,12 @@ function OrchSpace({ orch, orchs, sessions, events, waiting, waitSent, ask, ctx,
   const [routinesRaw] = useMemoPoll('routines', routinesList, 30_000, '[]');
   const running = parseRoutines(routinesRaw).filter((r) => routineState(r, sessions) === 'running').length;
   const color = useOrchColor(orch, orchs);
-  const nm = usePendingNicks(orchs).nameOf(orch); // 폰에서 바꾼 이름이 맥 진짜 이름에 실리기 전에도 새 이름
+  // 지금 말하는 참모(음성이 폰에서 나오는 동안) — 입력칸 참모 단추가 그 참모로. 다르면 누르면 그 참모 채팅으로
+  const speakerId = usePhoneSpeaker();
+  const spk = speakerId ? orchs.find((o) => o.id === speakerId) : undefined;
+  const spkColor = useOrchColor(spk ?? orch, orchs);
+  const nicks = usePendingNicks(orchs);
+  const nm = nicks.nameOf(orch); // 폰에서 바꾼 이름이 맥 진짜 이름에 실리기 전에도 새 이름
   // 직접 답하기 카드 — 기다리는 게 새로 생기면 시트를 반쯤 열고, 접힌 줄에도 알린다(시트 안에만 두면 접혀서 안 보였다, 2026-10-03 QA)
   const direct = usePhoneDirect(orch, orchs, sessions, events);
   const asking = direct.filter(needsAnswer);
@@ -84,16 +94,23 @@ function OrchSpace({ orch, orchs, sessions, events, waiting, waitSent, ask, ctx,
   }, [askingN]); // eslint-disable-line react-hooks/exhaustive-deps
   // 채팅 안 파일 카드 — 이 참모가 보여 준 것만. /api/shows 는 서버가 폰에 내보낼 수 있는 줄만 남긴 기록(대시보드 '주고받은 파일'도 이걸 받는다)
   const [showLog, showLoaded] = useMemoPoll('shows', readShowLog, 5000, '');
-  const files = useMemo(() => chatFiles(showLog, orch.id), [showLog, orch.id]);
+  // 이 참모가 맡긴 하위 세션이 띄운 것도(데스크톱과 같은 판단 — chatFiles showOwnerOf), 카드에 그 세션 이름
+  const files = useMemo(() => {
+    const own = showOwnerOf(events, sessions, orchs.map((o) => o.id), Date.now());
+    return chatFiles(showLog, orch.id, own).map((f) => (f.from ? { ...f, who: sessions.find((x) => x.id === f.from)?.name ?? f.from } : f));
+  }, [showLog, orch.id, events, sessions, orchs]);
   const [fileOpen, setFileOpen] = useState<ChatFile | null>(null);
   const askName = asking[0] ? sessions.find((s) => s.id === asking[0]!.from)?.name || asking[0].from : '';
   return (
     <div className="m-space" style={orchVars(color) as React.CSSProperties}>
+      {/* 시트 자리 — 이 아래 시트(BottomSheet)는 전부 틀 안 끝에 그려진다(키보드 위·참모 색) */}
+      <SheetHostProvider kb={vp.kb}>
       {view === 'routines'
         ? <RoutineBoard sessions={sessions} onBack={() => setView('dash')} />
         : view === 'sessions'
         ? <SessionsBoard sessions={sessions} hqDir={env.hqDir} ctx={ctx} lives={lives} onBack={() => setView('dash')} />
-        : <OrchDash orch={orch} orchs={orchs} asking={waiting.some((w) => w.orch === orch.id)} sessions={sessions} ctx={ctx} items={chat.items} events={events} routinesRunning={running} onRoutines={() => setView('routines')} onSessions={() => setView('sessions')} hqDir={env.hqDir} voiceBase={env.voiceBase ?? null} lives={lives} push={push} showLog={showLog} showLoaded={showLoaded} />}
+        : <OrchDash orch={orch} orchs={orchs} asking={waiting.some((w) => w.orch === orch.id)} sessions={sessions} ctx={ctx} items={chat.items} events={events} routinesRunning={running} onRoutines={() => setView('routines')} onSessions={() => setView('sessions')} hqDir={env.hqDir} voiceBase={env.voiceBase ?? null} lives={lives} push={push} showLog={showLog} showLoaded={showLoaded}
+            waiting={waiting} direct={direct} onPicker={() => setPicker(true)} onChat={() => setSnap('half')} onAsk={(t) => { chat.send(t); setSnap('half'); }} />}
       <ChatSheet
         snap={snap}
         onSnap={setSnap}
@@ -101,8 +118,10 @@ function OrchSpace({ orch, orchs, sessions, events, waiting, waitSent, ask, ctx,
         kb={vp.kb}
         peekLine={askingN ? `${josa(askName, '이', '가')} 네 답을 기다려${askingN > 1 ? ` 외 ${askingN - 1}개` : ''}` : chat.live.busy ? `일하는 중 · ${chat.live.line || '생각 중…'}` : lastLine(chat.items)}
         composer={
-          <Composer avatar={<MAvatar orch={orch} orchs={orchs} size={28} asking={waiting.some((w) => w.orch === orch.id)} />} orchName={nm} waiting={new Set(waiting.map((w) => w.orch)).size} placeholder={`${nm}에게`} maxInputH={inputMax(vp.h)} busy={chat.live.busy} stopping={chat.stopping} onStop={() => void chat.stop()}
-            draftKey={orch.id} onChip={() => setPicker(true)} onFocus={() => snap === 'peek' && setSnap('half')} send={chat.send} />
+          <Composer avatar={<MAvatar orch={orch} orchs={orchs} size={28} asking={waiting.some((w) => w.orch === orch.id)} />} orchName={nm} waiting={new Set(waiting.map((w) => w.orch)).size} placeholder={`${nm}에게`} maxInputH={inputMax(vp.h)} ctxPct={orch.sessionId ? ctx[orch.sessionId]?.used : undefined} busy={chat.live.busy} stopping={chat.stopping} onStop={() => void chat.stop()}
+            draftKey={orch.id} onChip={() => setPicker(true)} onFocus={() => snap === 'peek' && setSnap('half')} send={chat.send}
+            chip={<ModelChipRow orchId={orch.id} info={orch.sessionId ? ctx[orch.sessionId] : undefined} />} voice={<VoiceMode />}
+            speaker={spk ? { id: spk.id, avatar: <MAvatar orch={spk} orchs={orchs} size={28} />, name: nicks.nameOf(spk), style: orchVars(spkColor) as React.CSSProperties, onGo: speakerTap(orch.id, spk.id) === 'go' ? () => onPick(spk.id) : undefined } : undefined} />
         }
       >
         {chat.error && <Notice text={chat.error} error onClose={() => chat.setError(null)} />}
@@ -112,10 +131,11 @@ function OrchSpace({ orch, orchs, sessions, events, waiting, waitSent, ask, ctx,
       </ChatSheet>
       {fileOpen && <FileView path={fileOpen.path} title={titleOf(fileOpen.path)} at={fileOpen.at} orch={orch.id} onClose={() => setFileOpen(null)} />}
       {picker && (
-        <OrchPicker title={env.assistantName} env={env} wake={wake} onStopped={onStopped} orchs={orchs} current={orch.id} ctx={ctx} waiting={waiting} sent={waitSent} lines={lines} events={events} sessions={sessions}
+        <OrchPicker title={env.assistantName} env={env} wake={wake} onStopped={onStopped} orchs={orchs} current={orch.id} ctx={ctx} waiting={waiting} sent={waitSent} lines={lines}
           onClose={() => setPicker(false)}
           onPick={(id) => { setPicker(false); onPick(id); }} />
       )}
+      </SheetHostProvider>
     </div>
   );
 }
@@ -135,7 +155,7 @@ function WakeHome({ env, orchs, wake }: { env: MobileEnv; orchs: Session[]; wake
       {naming
         ? <NewOrchForm title={env.assistantName} taken={taken} wake={wake} onDone={() => setNaming(false)} />
         : <button type="button" className="m-send" disabled={!!wake.making || !!wake.starting} onClick={() => setNaming(true)}>{wake.making ? `${phoneName(wake.making, orchs)} 만드는 중…` : `새 ${env.assistantName} 만들기`}</button>}
-      <OffOrchList rows={off} tailsFor={off.tailsFor} orchs={orchs} wake={wake} />
+      <OffOrchList rows={off} orchs={orchs} wake={wake} />
     </div>
   );
 }
@@ -176,6 +196,7 @@ export function MobileApp() {
   // 세션 브라우저 — 3초마다(화면은 보는 칸이 따로 묻는다)
   const lives = usePoll(listBrowsers, 3000, NO_LIVES);
   const push = usePush();
+  usePhoneVoice(); // 음성 모드가 켜져 있고 폰을 보고 있으면 소리는 폰에서(맥에 하트비트)
   // 알림을 눌러 열렸으면(?go=) 그 참모로 — 열려 있던 화면이면 서비스 워커가 알려 준다
   const [goTo, setGoTo] = useState<NoteTarget | null>(() => goFrom(location.search));
   useEffect(() => {

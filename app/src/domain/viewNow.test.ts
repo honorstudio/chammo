@@ -32,12 +32,27 @@ describe('spaceWord — 스페이스 화면 키를 말로', () => {
     ['c:/Users/me/d/v2.html', '시안 검토(큐레이션) ~/d/v2.html'],
     ['h:', '하니터'],
     ['f:', '사무실'],
-    ['m:', '페이지 목록'],
     ['rv:', '리뷰'],
+    ['rp:', '하루 리플레이'],
     ['r:daily', '예약(루틴) daily'],
     ['t:', '도구'],
     ['t:/Users/me/Desktop/dev/project-b', '도구 project-b'],
+    ['l:a', '참모 보관함'],
+    ['l:a#u:10월 보고', '참모 보관함 10월 보고'],
+    ['l:a#p:sheet-demo', '참모 보관함 sheet-demo'],
   ])('%s → %s', (k, want) => expect(spaceWord(k, names)).toBe(want));
+
+  // 보관함 탭(2026-10-11) — 그림·영상·html·pdf 도 가운데 탭(d:)으로 열린다. 종류를 말해야 "이거" 가 문서인지 그림인지 안다
+  it.each([
+    ['d:/Users/me/Documents/Chammo/참모/받은 것/로고.png', '그림 ~/Documents/Chammo/참모/받은 것/로고.png'],
+    ['d:/Users/me/Documents/Chammo/참모/소개.mp4', '영상 ~/Documents/Chammo/참모/소개.mp4'],
+    ['d:/Users/me/Desktop/dev/x/docs/design-drafts/v1.html', 'html 시안 ~/Desktop/dev/x/docs/design-drafts/v1.html'],
+    ['d:/Users/me/Downloads/견적서.pdf', 'PDF ~/Downloads/견적서.pdf'],
+    ['d:/Users/me/Desktop/매출.xlsx', '엑셀 ~/Desktop/매출.xlsx'],
+    ['d:/Users/me/Desktop/보고.pptx', '파일 ~/Desktop/보고.pptx'],
+    ['l:a#d:10월 보고/세부', '참모 보관함 10월 보고/세부'],
+    ['l:a#p:/Users/me/Desktop/dev/sheet-demo', '참모 보관함 sheet-demo'],
+  ])('보관함 탭 %s → %s', (k, want) => expect(spaceWord(k, names)).toBe(want));
 });
 
 describe('selectionWord — 터미널 뷰에서 고른 칸', () => {

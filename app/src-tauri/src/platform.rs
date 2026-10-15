@@ -237,7 +237,8 @@ pub fn win_accel(mac: &str) -> String {
     let shift = mods.contains(&"Shift");
     let letter = key.len() == 1 && key.chars().all(|c| c.is_ascii_alphabetic());
     match () {
-        _ if letter && shift && key.eq_ignore_ascii_case("e") => "Ctrl+Alt+E".into(),
+        // ⌘⇧글자(E 리더 크게·W 세션 끄기·T 새 세션·H 홈·L 보관함) — Ctrl+Shift+글자는 ⇧ 없는 ⌘글자 몫이라 Ctrl+Alt+글자 (domain/keys SHIFT_LETTERS 와 같게)
+        _ if letter && shift && "EWTHL".contains(key.to_ascii_uppercase().as_str()) => format!("Ctrl+Alt+{}", key.to_ascii_uppercase()),
         _ if letter && alt => format!("Ctrl+Alt+Shift+{}", key.to_ascii_uppercase()),
         _ if letter => format!("Ctrl+Shift+{}", key.to_ascii_uppercase()),
         _ if key == "/" => "Ctrl+Shift+/".into(),
@@ -531,8 +532,38 @@ pub fn git_ready() -> bool {
     c.output().is_ok_and(|o| o.status.success())
 }
 
+/// 파일 한도(soft)를 올릴 값 — launchd 기본 256 을 앱과 앱이 띄우는 claude·예약 tick 이 물려받아
+/// 'Too many open files'(10-04 notify.log 19줄)·claude 의 'low max file descriptors … 256' 이 났다. 맥은 OPEN_MAX(10240) 넘게 못 올린다
+pub fn nofile_target(soft: u64, hard: u64) -> Option<u64> {
+    const WANT: u64 = 10_240;
+    let to = WANT.min(hard);
+    (soft < to).then_some(to)
+}
+
+/// 앱 시작 때 한 번 — 스레드·자식보다 먼저
+#[cfg(unix)]
+pub fn raise_nofile() {
+    let mut r = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut r) } != 0 {
+        return;
+    }
+    if let Some(to) = nofile_target(r.rlim_cur as u64, r.rlim_max as u64) {
+        let n = libc::rlimit { rlim_cur: to as libc::rlim_t, rlim_max: r.rlim_max };
+        let _ = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &n) };
+    }
+}
+#[cfg(not(unix))]
+pub fn raise_nofile() {}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn 파일_한도는_256_이면_10240_까지_hard_는_넘지_않고_이미_높으면_그대로() {
+        assert_eq!(super::nofile_target(256, u64::MAX), Some(10_240));
+        assert_eq!(super::nofile_target(256, 4096), Some(4096));
+        assert_eq!(super::nofile_target(20_000, u64::MAX), None);
+        assert_eq!(super::nofile_target(10_240, u64::MAX), None);
+    }
 
     // 경로 같은가 — TS samePath(domain/paths.ts)와 같은 표(fix/win-phone-path 세 벌 정리, 2026-10-09)
     #[test]
@@ -639,6 +670,11 @@ mod tests {
         assert_eq!(win_accel("CmdOrCtrl+W"), "Ctrl+Shift+W");
         assert_eq!(win_accel("CmdOrCtrl+A"), "Ctrl+Shift+A");
         assert_eq!(win_accel("CmdOrCtrl+Shift+E"), "Ctrl+Alt+E");
+        assert_eq!(win_accel("CmdOrCtrl+Shift+W"), "Ctrl+Alt+W"); // 세션 끄기
+        assert_eq!(win_accel("CmdOrCtrl+Shift+T"), "Ctrl+Alt+T"); // 새 세션
+        assert_eq!(win_accel("CmdOrCtrl+Shift+H"), "Ctrl+Alt+H"); // 홈 고정 탭
+        assert_eq!(win_accel("CmdOrCtrl+Shift+L"), "Ctrl+Alt+L"); // 보관함 고정 탭
+        assert_eq!(win_accel("CmdOrCtrl+Shift+B"), "Ctrl+Shift+B"); // 그 밖의 ⇧ 글자는 그대로
         assert_eq!(win_accel("CmdOrCtrl+Q"), "Ctrl+Shift+Q");
         assert_eq!(win_accel("CmdOrCtrl+Alt+Q"), "Ctrl+Alt+Shift+Q");
         assert_eq!(win_accel("Alt+CmdOrCtrl+2"), "Ctrl+Alt+2");

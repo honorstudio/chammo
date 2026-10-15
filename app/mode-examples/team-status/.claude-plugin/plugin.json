@@ -1,0 +1,7 @@
+{
+  "name": "team-status",
+  "displayName": "참모 상태",
+  "version": "0.1.0",
+  "author": { "name": "honorstudio" },
+  "description": "참모 상태 — Chammo mode: each 참모 (참모-N) as a cute character showing working, waiting, asking or resting — read-only"
+}

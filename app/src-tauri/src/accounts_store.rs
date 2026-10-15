@@ -309,6 +309,9 @@ pub mod fake {
         pub fail_set: RefCell<Option<String>>,
         /// 실패할 때 반쯤 쓴 값을 남긴다(실제 security -i 가 잘린 값으로 칸을 만들고 실패했다)
         pub partial: RefCell<bool>,
+        /// 쓰기 직전에 부른다(서비스 이름) — 쓰는 순간의 바깥 상태(잠금 등)를 보려고
+        #[allow(clippy::type_complexity)]
+        pub on_set: RefCell<Option<Box<dyn Fn(&str)>>>,
     }
 
     impl Fake {
@@ -330,6 +333,9 @@ pub mod fake {
         fn set(&self, service: &str, account: &str, secret: &Secret) -> Result<(), StoreError> {
             if *self.locked.borrow() {
                 return Err(StoreError::Locked);
+            }
+            if let Some(f) = self.on_set.borrow().as_ref() {
+                f(service);
             }
             if self.fail_set.borrow().as_deref() == Some(service) {
                 if *self.partial.borrow() {

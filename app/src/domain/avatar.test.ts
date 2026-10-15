@@ -233,3 +233,20 @@ describe('helloLine — 들어 보기 문장', () => {
     expect(helloLine('참모-2')).toBe('안녕, 나는 참모-2야'); // 이
   });
 });
+
+// 2026-10-12 사용자 "켜지고 꺼질 때 캐릭터에 맞게 애니메이션" — 켜는 중 = 잠에서 깨어남(감은 눈 → 깜빡이며 뜨기 → 기다리면 숨쉬기), 끄는 중 = 잠듦(작아지며 흐려짐)
+describe('avatarClasses — 켜는 중·끄는 중 단계', () => {
+  it('단계 클래스는 oa-ph- 접두(전역 짧은 클래스와 안 겹치게)', () => {
+    expect(avatarClasses({ image: false, state: 'off', transition: null, size: 32, phase: 'starting' })).toContain('oa-ph-starting');
+    expect(avatarClasses({ image: false, state: 'off', transition: 'sleep', size: 32, phase: 'stopping' })).toContain('oa-ph-stopping');
+    expect(avatarClasses({ image: false, state: 'rest', transition: null, size: 32 })).not.toMatch(/oa-ph-/);
+  });
+});
+
+describe('transitionOf — 켜는 중 다음 살아나는 순간', () => {
+  it('꺼짐(켜는 중) → 쉼·일함 = 깨어남 마무리(wake)', () => {
+    expect(transitionOf('off', 'rest')).toBe('wake');
+    expect(transitionOf('off', 'work')).toBe('wake');
+    expect(transitionOf('rest', 'off')).toBe('sleep');
+  });
+});

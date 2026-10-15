@@ -5,15 +5,16 @@ import type { DashFile } from '../../domain/dashboard';
 import { keepCenter, parseBox, resizeBox, type Box, type Edge } from '../../domain/previewBox';
 import { docUrl, kindOf, pageDoc } from '../../domain/reader';
 import { FIT, IMAGE_STEPS, stepZoom, withZoom, zoomable, zoomLabel, zoomOf, type ZoomMap } from '../../domain/readerZoom';
-import { assistant, josa, tr } from '../../i18n';
+import { assistant, tr } from '../../i18n';
 import { sendPreview } from '../../domain/sendPreview';
-import { IconClose, IconMaximize, IconRestore, IconSend, IconZoomIn, IconZoomOut } from '../Icons';
+import { IconCheck, IconClose, IconMaximize, IconRefresh, IconRestore, IconSend, IconZoomIn, IconZoomOut } from '../Icons';
 import { Confirm } from '../OrchDialogs';
 import { ExtraDoc, frameStyle, HtmlFrame, loadZoom, MdDoc, ZOOM_KEY } from '../reader/Reader';
 import { flashWhenReady } from '../flash';
 import { fromFrame, isCurationHtml } from '../../domain/curation';
 import { webTitle } from '../../domain/webUrl';
 import { WebPage } from '../WebPage';
+import { SendToOrch, type OrchTo } from './SendToOrch';
 
 const fileName = (p: string) => (p.startsWith('data:') ? tr('붙인 그림', 'Attached image') : kindOf(p) === 'web' ? webTitle(p) : p.split('/').pop() ?? p);
 const BOX_KEY = 'previewBox';
@@ -24,7 +25,7 @@ const EDGES: Edge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
  * 스페이스 위 미리보기 — 페이지를 안 넘어간다. Esc·닫기·바깥 누르면 닫힘.
  * 가장자리를 끌어 크기 조절(기억, 제목 줄 두 번 누르면 꽉 채움), ⌘+ ⌘- ⌘0 은 리더처럼 확대(종류별 확대를 리더와 나눈다) — 2026-09-30 사용자
  */
-export function Preview({ f, onClose, onAttach, onSendText, onCuration }: { f: DashFile; onClose: () => void; /** 채팅에 붙이기 — 참모가 경로로 받아 읽는다 */ onAttach?: () => void; /** 시안 속 "참모에게 보내기"(큐레이션 결과) — 지금 채팅 탭 참모에게 */ onSendText?: (text: string) => Promise<void>;
+export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration }: { f: DashFile; onClose: () => void; /** 채팅에 붙이기 — 참모가 경로로 받아 읽는다 */ onAttach?: () => void; /** 붙일 참모(이름·색) */ attachTo?: OrchTo | null; /** 시안 속 "참모에게 보내기"(큐레이션 결과) — 지금 채팅 탭 참모에게 */ onSendText?: (text: string) => Promise<void>;
   /** 검토용 시안이면 모달 대신 스페이스 전체 검토 모드로 */ onCuration?: (path: string, by?: string) => void }) {
   const kind = f.path.startsWith('data:') ? 'image' : kindOf(f.path);
   const [md, setMd] = useState<string | null>(null);
@@ -214,7 +215,7 @@ export function Preview({ f, onClose, onAttach, onSendText, onCuration }: { f: D
               <button onClick={() => zoomBy.current(1)} title={tr('확대 (⌘+)', 'Zoom in (⌘+)')} aria-label={tr('확대', 'Zoom in')}><IconZoomIn /></button>
             </div>
           )}
-          {onAttach && <button className="pv-attach" onClick={() => { onAttach(); onClose(); }} title={tr(`지금 채팅 입력칸에 이 파일을 붙인다 — 보낼 때 ${josa(assistant(), '이', '가')} 경로로 받아 본다`, 'Attach to the chat input — the assistant gets the path')}>{tr('채팅에 붙이기', 'Attach to chat')}</button>}
+          {onAttach && <SendToOrch to={attachTo} className="pv-attach" onClick={() => { onAttach(); onClose(); }} />}
           <button className="pv-ic" onClick={() => setMax((m) => !m)} title={max ? tr('원래 크기 (⌘`)', 'Restore (⌘`)') : tr('가득 채우기 (⌘`)', 'Fill (⌘`)')} aria-label={max ? tr('원래 크기', 'Restore') : tr('가득 채우기', 'Fill')}>{max ? <IconRestore /> : <IconMaximize />}</button>
           <button className="pv-ic" onClick={onClose} title={tr('닫기 (Esc)', 'Close (Esc)')} aria-label={tr('닫기', 'Close')}><IconClose /></button>
         </div>
@@ -235,8 +236,8 @@ export function Preview({ f, onClose, onAttach, onSendText, onCuration }: { f: D
             <span className="sp" />
             <span className="pv-cur-hint">{tr('블록에 올리고 1·2·3', 'Hover a block, press 1·2·3')}</span>
             <button className="pv-cur-reset" onClick={() => setAskReset(true)}>{tr('처음부터', 'Reset')}</button>
-            {onSendText && <button className={`pv-cur-send ${curSent}`} disabled={curSent === 'sending'} onClick={() => void sendCur()}>
-              <IconSend />{curSent === 'sending' ? tr('보내는 중', 'Sending') : curSent === 'sent' ? tr('보냈어 — 다시 보내기', 'Sent — send again') : curSent === 'fail' ? tr('못 보냄 — 다시', 'Failed — retry') : tr(`${assistant()}에게 보내기`, 'Send to assistant')}</button>}
+            {onSendText && <button className={`pv-cur-send ${curSent}`} disabled={curSent === 'sending'} onClick={() => void sendCur()} aria-label={(curSent === 'sending' ? tr('보내는 중', 'Sending') : curSent === 'sent' ? tr('보냈어 — 다시 보내기', 'Sent — send again') : curSent === 'fail' ? tr('못 보냄 — 다시', 'Failed — retry') : tr(`${assistant()}에게 보내기`, 'Send to assistant'))} title={(curSent === 'sending' ? tr('보내는 중', 'Sending') : curSent === 'sent' ? tr('보냈어 — 다시 보내기', 'Sent — send again') : curSent === 'fail' ? tr('못 보냄 — 다시', 'Failed — retry') : tr(`${assistant()}에게 보내기`, 'Send to assistant'))}>
+              {curSent === 'sent' ? <IconCheck /> : curSent === 'fail' ? <IconRefresh /> : <IconSend />}</button>}
           </div>
         )}
         <div className="content" ref={content}>
@@ -263,7 +264,7 @@ export function Preview({ f, onClose, onAttach, onSendText, onCuration }: { f: D
 const PdfView = lazy(() => import('../reader/PdfView'));
 
 /** 파워포인트·워드·엑셀·키노트 — macOS QuickLook 미리보기(슬라이드마다 나뉜 HTML)로 그려 슬라이드 번호·글로 짚어 보여 준다. 못 만들면 예전 미리보기 */
-function OfficeDoc({ f, zoom, fallback }: { f: DashFile; zoom: number; fallback: 'office' | 'other' }) {
+export function OfficeDoc({ f, zoom, fallback }: { f: DashFile; zoom: number; fallback: 'office' | 'other' }) {
   const [main, setMain] = useState<string | null | false>(null);
   useEffect(() => { setMain(null); void invoke<string>('page_doc', { path: f.path }).then(setMain, () => setMain(false)); }, [f.path]);
   if (main === null) return <div className="dim">{tr('미리보기 만드는 중', 'Making a preview')}</div>;

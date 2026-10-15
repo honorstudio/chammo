@@ -2,7 +2,7 @@
 // 일하는 중 보낸 말이 '보내는 중'으로 10분 남고 실제론 안 갔다(2026-10-06 사용자). Claude Code 2.1.291 실측:
 // · 일하는 중 Enter = 줄 서기, 기록에 queue-operation enqueue(글) → dequeue(맨 앞, 글 없음)·remove(도중 흡수)·popAll(↑로 입력칸에 되돌림)
 // · 쉴 때 입력칸에 글이 있는데 Esc 두 번 = 입력칸 지우기(기록 0) · 막 보낸 말을 Esc 로 끊으면 그 말이 입력칸으로 되돌아온다
-import { alreadySent, chatNorm, type ChatItem } from './chat';
+import { alreadySent, chatNorm, pendingLeft, sentByMe, type ChatItem } from './chat';
 
 export type QItem = { text: string; ts: number };
 /** waiting = Claude 대기열, popped = ↑로 입력칸에 되돌아간 것(안 간 것), deq = 짝(뒤따르는 user 줄)을 아직 못 본 dequeue 수 */
@@ -80,6 +80,15 @@ const after = (items: QItem[], p: PendingMsg) => items.some((q) => q.ts >= p.at 
  *  입력칸에 되돌아온 말(since)은 since 그대로 */
 export const resent = (p: PendingMsg & { since?: number }, now: number) => ({ text: p.text, at: now, since: p.since ?? p.at - 10_000 });
 
+/** 새로 보낸 말 — 맞출 기록은 보낸 때(10초 여유) 뒤, 그 사이 이미 들어온 같은 글 뒤부터. 방금 간 같은 말을 몇 초 뒤 또 보내면
+ *  앞 말 기록에 짝지어져 이번 말이 안 가도 '보내는 중'도 '안 갔어요'도 없이 사라졌다(2026-10-11 bug-hunt 하네스) */
+export function newPending(text: string, items: ChatItem[], now: number): PendingMsg & { since: number } {
+  const from = now - 10_000;
+  const n = chatNorm(text);
+  const last = n ? Math.max(-Infinity, ...sentByMe(items).filter((i) => { const t = chatNorm(i.text); return (t === n || t.includes(n)) && Date.parse(i.ts) >= from; }).map((i) => Date.parse(i.ts))) : -Infinity;
+  return { text, at: now, since: Math.max(from, last + 1) };
+}
+
 export function pendingState(p: PendingMsg, c: { queue: QueueState; termText: string; now: number; enterWait: number }): PendingState {
   const typed = p.at + c.enterWait;
   if (c.now < typed + SETTLE) return 'sending';
@@ -88,6 +97,14 @@ export function pendingState(p: PendingMsg, c: { queue: QueueState; termText: st
   if (after(c.queue.waiting, p)) return 'queued';
   return c.now < typed + LOST_AFTER ? 'sending' : 'lost';
 }
+
+/** 보낸 글 말풍선을 들고 있는 최대 시간 — 줄 선 말은 긴 일이 끝날 때까지 기다린다. 안 간 말은 사람이 빼거나 다시 보낼 때까지 남긴다 */
+export const PENDING_MS = 3_600_000;
+/** 채팅에 남길 보낸 말 — 아직 기록에 안 들어온 것 중 한 시간 안. ChatView 와 보내기 흐름 시험(chatSendFlow.test)이 같이 쓴다 */
+export const waitingOf = <T extends PendingMsg & { since?: number }>(pending: T[], items: ChatItem[], now: number): T[] =>
+  pendingLeft(pending, items, now).filter((p) => now - p.at < PENDING_MS);
+/** 말풍선 단추 — 보내는 중엔 없음, 안 갔어요면 다시 보내기, 대기 중·입력칸이면 지금 보내기(빼기는 대기열·입력칸 모양을 더 봐서 따로) */
+export const pendAct = (st: PendingState): 'again' | 'now' | null => (st === 'sending' ? null : st === 'lost' ? 'again' : 'now');
 
 /** Enter 를 다시 넣을 말(tries 는 보낸 시각별 누른 횟수 — 같은 말을 나중에 또 보내도 새로 센다) — 입력칸이 그 말 하나뿐이고, 사람이 ↑로 되돌린 게 아니고, / 명령이 아니고, 덜 눌렀고, 친 지 2초 넘었을 때.
  *  일하는 중이어도 고른다 — 일하는 중 Enter 는 줄 서기라 안전하다(예전엔 쉴 때 한 번만 눌러서 일하는 중 걸린 말이 남았다) */

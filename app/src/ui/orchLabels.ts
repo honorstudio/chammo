@@ -21,14 +21,17 @@ export function useOrchLabels(): Record<string, string> {
 }
 
 // 같이 보이는 참모들 — 화면 이름이 겹칠 때만 꼬리를 붙이려고(App 이 세션 목록이 바뀔 때마다 넣는다)
-let roster: { id: string; name: string }[] = [];
-export function setOrchRoster(list: { id: string; name: string }[]) {
-  const key = (l: typeof list) => l.map((x) => `${x.id}=${x.name}`).join('|');
+// off = 쉬는(꺼진) 참모 — 채팅 입력칸 @ 목록이 흐리게 뒤에 둔다
+let roster: { id: string; name: string; off?: boolean }[] = [];
+export function setOrchRoster(list: { id: string; name: string; off?: boolean }[]) {
+  const key = (l: typeof list) => l.map((x) => `${x.id}=${x.name}${x.off ? '~' : ''}`).join('|');
   if (key(list) === key(roster)) return;
   roster = list;
   labels = { ...labels }; // useOrchLabels 구독자가 다시 그리게
   subs.forEach((f) => f());
 }
+/** 같이 보이는 참모들(띠 순서 — 살아 있는 것 먼저) — useOrchLabels 로 구독하면 바뀔 때 다시 그린다 */
+export const orchRoster = () => roster;
 /** 화면에 보일 참모 이름 — 번호 없이(domain/orchLabel displayName). 진짜 이름은 SendMessage 주소라 안에서만 */
 export const orchDisplay = (s: { id: string; name: string }): string =>
   displayName(s.name, labels[s.id], roster.map((r) => ({ name: r.name, label: labels[r.id] })));

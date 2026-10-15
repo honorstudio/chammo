@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dropText, paneAt, shellEscape, docDropBlocks, dropSlot } from './drop';
+import { dropText, paneAt, shellEscape, docDropBlocks, dropSlot, chatCellAt } from './drop';
 
 describe('shellEscape — iTerm 처럼 경로를 백슬래시로 이스케이프', () => {
   it('평범한 경로는 그대로', () => {
@@ -102,4 +102,20 @@ describe('dropSlot — 문서에 놓을 자리(가장 가까운 블록의 위/�
   it('블록이 없으면 null', () => {
     expect(dropSlot([], 10)).toBeNull();
   });
+});
+
+// 2026-10-12 사용자: 입력창까지 옮겨야만 들어갔다 → 채팅 칸(머리·대화 기록·입력칸·여백) 어디든 놓으면 그 칸 세션 입력칸에
+describe('chatCellAt — 채팅 칸 안 어디에 놓아도 받을 세션', () => {
+  const one = [{ id: 's1', left: 0, top: 60, right: 400, bottom: 800 }];
+  const two = [{ id: 'a', left: 0, top: 60, right: 400, bottom: 400 }, { id: 'b', left: 0, top: 400, right: 400, bottom: 800 }];
+  it('세션 칸 위면 그 칸', () => expect(chatCellAt(two, 100, 500)).toBe('b'));
+  it('칸 밖(채팅 머리·카드 여백)이면 가장 가까운 칸 — 하나면 그 칸', () => {
+    expect(chatCellAt(one, 100, 20)).toBe('s1');
+    expect(chatCellAt(one, 403, 300)).toBe('s1');
+  });
+  it('쌓기에 여럿이면 머리 위는 맨 위 칸, 맨 아래 여백은 맨 아래 칸', () => {
+    expect(chatCellAt(two, 100, 20)).toBe('a');
+    expect(chatCellAt(two, 100, 805)).toBe('b');
+  });
+  it('받을 칸이 없으면 null', () => expect(chatCellAt([], 1, 1)).toBeNull());
 });

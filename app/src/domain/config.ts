@@ -2,12 +2,20 @@
 import type { Lang } from '../i18n';
 import type { Shortcut } from './shortcuts';
 
-export type Features = { office: boolean; tama: boolean; gacha: boolean; review: boolean; voice: boolean; autoRevive: boolean; agentView: boolean; computerUse: boolean };
+/** 애니메이션 — auto 는 OS '동작 줄이기'·맥 부하가 높을 때 저절로 줄인다(domain/animCalm), reduce 는 늘 줄이기, off 는 전환까지 0 */
+export type Animation = 'auto' | 'reduce' | 'off';
+export type Features = { office: boolean; tama: boolean; gacha: boolean; review: boolean; voice: boolean; autoRevive: boolean; agentView: boolean; computerUse: boolean; animation: Animation };
+/** 켬·끔 칸만(애니메이션은 세 갈래라 빠진다) — 설정 화면 체크 줄·scripts/app feature 가 다루는 것 */
+export type FeatureSwitch = Exclude<keyof Features, 'animation'>;
 /** 입구 기능은 다 켬. autoRevive(재시작 뒤 스스로 되살리기)는 무인 기계에서만 켜는 것이라 기본 꺼짐. agentView(세션 브라우저 앱에서 보기)는 켬. computerUse(화면 조종 모든 프로젝트)는 사용자 화면을 움직여서 끔 */
-export const ALL_ON: Features = { office: true, tama: true, gacha: true, review: true, voice: true, autoRevive: false, agentView: true, computerUse: false };
+export const ALL_ON: Features = { office: true, tama: true, gacha: true, review: true, voice: true, autoRevive: false, agentView: true, computerUse: false, animation: "auto" };
+const ANIMATIONS: readonly Animation[] = ['auto', 'reduce', 'off'];
 
 /** 설정을 아직 못 읽었으면 입구는 다 켠 것으로 — 옛 설치가 잠깐이라도 입구를 잃지 않게 */
-export const featuresOf = (c: { features?: Partial<Features> } | null | undefined): Features => ({ ...ALL_ON, ...(c?.features ?? {}) });
+export const featuresOf = (c: { features?: Partial<Features> } | null | undefined): Features => {
+  const f = { ...ALL_ON, ...(c?.features ?? {}) };
+  return ANIMATIONS.includes(f.animation) ? f : { ...f, animation: 'auto' }; // 손으로 고친 설정 파일의 모르는 값
+};
 
 type Stored = { lang: string | null; assistantName: string | null };
 export type MirrorPlan = {

@@ -43,3 +43,16 @@ export function svgSrc(source: unknown): string | null {
   const s = safeSvg(source);
   return s === null ? null : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(s)}`;
 }
+
+/** 정지판 — 거른 SVG 의 여는 <svg …> 바로 뒤에 움직임·전환을 끄는 <style> 을 끼운다. <img> 안 SVG 엔 바깥 CSS(oa-paused·oa-calm)가 안 닿아서
+ *  줄이기·끄기·안 볼 때·칸이 안 보일 때 이 주소로 바꿔 그린다(2026-10-12 mode-showcase 실측 렌더러 CPU 10~12% → 2.5~2.9%). 걸러지면 null */
+export function svgStillSrc(source: unknown): string | null {
+  const s = safeSvg(source);
+  if (s === null) return null;
+  const open = s.search(/<svg[\s>/]/i);
+  const end = s.indexOf('>', open);
+  if (open < 0 || end < 0) return null;
+  const at = s[end - 1] === '/' ? -1 : end + 1; // <svg/> 처럼 빈 그림이면 끼울 자리가 없다 — 움직일 것도 없다
+  const still = at < 0 ? s : `${s.slice(0, at)}<style>*{animation:none!important;transition:none!important}</style>${s.slice(at)}`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(still)}`;
+}

@@ -196,11 +196,16 @@ fn accepted_keys(claude_json: &str) -> Vec<String> {
         .collect()
 }
 
+/// async — 수백 KB .claude.json 을 읽고 링크를 푼다. 설정이 폴더마다 부른다
 #[tauri::command]
-pub fn claude_trusted(dir: String) -> bool {
+pub async fn claude_trusted(dir: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || claude_trusted_now(&dir)).await.unwrap_or(false)
+}
+
+fn claude_trusted_now(dir: &str) -> bool {
     let home = crate::platform::home();
     let text = std::fs::read_to_string(format!("{home}/.claude.json")).unwrap_or_default();
-    trusted_at(&text, &crate::config::expand(&home, &dir))
+    trusted_at(&text, &crate::config::expand(&home, dir))
 }
 
 /// 그대로 못 찾으면 진짜 경로로 한 번 더 — claude 는 링크를 풀어 적는다(/tmp → /private/tmp, 링크 건 프로젝트 폴더)

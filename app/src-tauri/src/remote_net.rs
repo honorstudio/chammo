@@ -188,7 +188,8 @@ fn read_resp(s: &mut TcpStream, deadline: Instant, max_body: usize) -> Result<Re
     let mut parsed: Option<(u16, String, usize, usize)> = None; // status, ctype, 머리 끝, 몸 길이
     loop {
         if let Some((status, ctype, start, len)) = &parsed {
-            if buf.len() >= start + len {
+            // 길이를 모르면(usize::MAX) 닫힐 때까지 — start + MAX 는 넘친다(개발판 패닉, 배포판은 돌아 늘 참이 돼 슬라이스 패닉)
+            if *len != usize::MAX && buf.len() - start >= *len {
                 return Ok(Response { status: *status, ctype: ctype.clone(), body: buf[*start..start + len].to_vec() });
             }
         }

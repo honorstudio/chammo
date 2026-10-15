@@ -10,7 +10,7 @@ describe('윈도우 키 → 맥 단축키로 읽기 — Ctrl+글자는 터미널
   it('Ctrl+Shift+글자 = ⌘글자 (한글 입력 상태여도 키 자리로)', () => {
     expect(shortcutFor(k('B', 'KeyB', { ctrl: true, shift: true }), true)).toEqual({ type: 'toggleSidebar' });
     expect(shortcutFor(k('ㅠ', 'KeyB', { ctrl: true, shift: true }), true)).toEqual({ type: 'toggleSidebar' });
-    expect(shortcutFor(k('W', 'KeyW', { ctrl: true, shift: true }), true)).toEqual({ type: 'closePane' });
+    expect(shortcutFor(k('W', 'KeyW', { ctrl: true, shift: true }), true)).toEqual({ type: 'closeTab' });
     expect(shortcutFor(k('M', 'KeyM', { ctrl: true, shift: true }), true)).toEqual({ type: 'memo' });
   });
   it('Ctrl+글자만 누르면 앱은 가만히 — 터미널로 간다', () => {
@@ -33,6 +33,14 @@ describe('윈도우 키 → 맥 단축키로 읽기 — Ctrl+글자는 터미널
     expect(shortcutFor(k('?', 'Slash', { ctrl: true, shift: true }), true)).toEqual({ type: 'tour' });
     expect(shortcutFor(k('/', 'Slash', { ctrl: true }), true)).toBeNull(); // Ctrl+/ 는 터미널 되돌리기
   });
+  it('윈도우: ⌘⇧글자(세션 끄기·새 세션·홈·보관함)는 Ctrl+Alt+글자 — Ctrl+Shift+글자는 ⇧ 없는 ⌘글자 몫', () => {
+    expect(shortcutFor(k('w', 'KeyW', { ctrl: true, alt: true }), true)).toEqual({ type: 'closePane' });
+    expect(shortcutFor(k('t', 'KeyT', { ctrl: true, alt: true }), true)).toEqual({ type: 'newSession' });
+    expect(shortcutFor(k('h', 'KeyH', { ctrl: true, alt: true }), true)).toEqual({ type: 'goHome' });
+    expect(shortcutFor(k('l', 'KeyL', { ctrl: true, alt: true }), true)).toEqual({ type: 'goLocker' });
+    expect(shortcutFor(k('T', 'KeyT', { ctrl: true, shift: true }), true)).toEqual({ type: 'newDoc' });
+    expect(shortcutFor(k('q', 'KeyQ', { ctrl: true, alt: true }), true)).toBeNull();
+  });
   it('윈도우 키(meta)는 앱이 안 쓴다, 맥은 그대로', () => {
     expect(shortcutFor(k('b', 'KeyB', { meta: true }), true)).toBeNull();
     expect(winToMac(k('a', 'KeyA'))).toBeNull();
@@ -51,6 +59,8 @@ describe('화면 표기 — ⌘ 를 윈도우 키 이름으로', () => {
   it('⌥⌘숫자·⌘⇧E·⌘Enter·⌘클릭·⌘/·⌥⌘Q', () => {
     expect(keyLabel('전체 보기(⌥⌘2)', true)).toBe('전체 보기(Ctrl+Alt+2)');
     expect(keyLabel('⌘⇧E', true)).toBe('Ctrl+Alt+E');
+    expect(keyLabel('⌘⇧W · ⌘⇧T · ⌘⇧H · ⌘⇧L', true)).toBe('Ctrl+Alt+W · Ctrl+Alt+T · Ctrl+Alt+H · Ctrl+Alt+L');
+    expect(keyLabel('⌘W · ⌘T', true)).toBe('Ctrl+Shift+W · Ctrl+Shift+T');
     expect(keyLabel('⌘Enter 끊고 보내기', true)).toBe('Ctrl+Enter 끊고 보내기');
     expect(keyLabel('⌘클릭', true)).toBe('Ctrl+클릭');
     expect(keyLabel('⌘/', true)).toBe('Ctrl+Shift+/');

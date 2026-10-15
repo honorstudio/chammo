@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DRAG_SLOP, dragStarted, dropIndex, tabShift } from './tabDrag';
+import { DRAG_SLOP, dragStarted, dropIndex, tabShift, railOut } from './tabDrag';
 
 // 폭 100 탭 넷, 틈 4 — 0·104·208·312
 const rects = [0, 104, 208, 312].map((left) => ({ left, width: 100 }));
@@ -32,5 +32,18 @@ describe('채팅 탭 끌기 — 크롬처럼(2026-10-10 사용자)', () => {
     // 3 번을 1 번 자리로: 1·2 번이 오른쪽으로
     expect([0, 1, 2, 3].map((i) => tabShift(i, 3, 1, 104))).toEqual([0, 104, 104, 0]);
     expect([0, 1, 2, 3].map((i) => tabShift(i, 2, 2, 104))).toEqual([0, 0, 0, 0]);
+  });
+});
+
+describe('railOut — 띠 프사를 띠 밖으로 끌면 순서 바꾸기 대신 입력칸에 넣기(2026-10-12 사용자)', () => {
+  const nav = { left: 0, right: 64, top: 80, bottom: 860 };
+  it('띠 안이나 살짝 넘긴 건 순서 바꾸기', () => {
+    expect(railOut(30, 300, nav)).toBe(false);
+    expect(railOut(70, 300, nav)).toBe(false);
+  });
+  it('오른쪽으로 손잡이 폭(12px)보다 더 나가면 넣기, 왼쪽·위아래로 나가도 넣기', () => {
+    expect(railOut(80, 300, nav)).toBe(true);
+    expect(railOut(-20, 300, nav)).toBe(true);
+    expect(railOut(30, 900, nav)).toBe(true);
   });
 });

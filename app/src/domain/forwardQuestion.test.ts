@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ASK_GRACE_MS, askForwardText, askKeyOf, askTextKeyOf, forwardText, GRACE_MS, nextAskForward, nextForward, retryAfterFail, toldOrch, type AskCand } from './forwardQuestion';
+import { ASK_GRACE_MS, askForwardText, askKeyOf, askTextKeyOf, forwardText, GRACE_MS, nextAskForward, nextForward, nextQuietForward, openTaskOf, QUIET_GRACE_MS, quietForwardText, quietKeyOf, retryAfterFail, toldOrch, type AskCand } from './forwardQuestion';
+import type { TaskCard } from './tasks';
 import type { Activity } from './activity';
 import type { Session } from './session';
 
@@ -90,6 +91,13 @@ describe('nextAskForward — 질문으로 턴을 끝내고 기다리는 하위 �
     const a = act({ reply: { ts: iso(T0), text: '사용자 답이 오면 참모가 전해 주기로 했어.', asks: false, turnEnd: true } });
     expect(nextAskForward([cand('scene', a)], orch, new Set(), later, never)).toBeUndefined();
     expect(nextAskForward([cand('scene', a, { awaiting: true })], orch, new Set(), later, never)?.session.id).toBe('scene');
+  });
+
+  it('두 번째 일부터 — 참모 SendMessage 로 받은 일(peer)에서 질문으로 멈추면 넘긴다. 앞 일 보고(messaged)로 막지 않는다(2026-10-11 bug-hunt)', () => {
+    const a = act({ prompt: { ts: iso(T0 - 3 * 3600_000), text: '처음 지시' }, messaged: iso(T0 - 2 * 3600_000), peer: { ts: iso(T0 - 60_000), text: '다음 일' } });
+    expect(nextAskForward([cand('project-x', a)], orch, new Set(), later, never)?.session.id).toBe('project-x');
+    expect(nextAskForward([cand('project-x', { ...a, messaged: iso(T0 - 1000) })], orch, new Set(), later, never)).toBeUndefined(); // 이번 턴에 이미 물었다
+    expect(nextAskForward([cand('project-x', { ...a, peer: { ts: iso(T0 + 1000), text: '답' } })], orch, new Set(), later, never)).toBeUndefined(); // 답이 왔다
   });
 
   it('이어서 켜기 전의 옛 답은 안 넘긴다(가져온 세션은 쉬어도 blocked 로 나온다)', () => {
@@ -236,5 +244,66 @@ describe('inputWaitText — input needed 인데 선택지 창(AskUserQuestion)�
     expect(t).toContain('입력 기다림');
     expect(t).not.toContain('choice');
     expect(t).toContain('a1b2c3d4');
+  });
+});
+
+// 2026-09-30 조사 2번 — 맡긴 일이 안 닫혔는데 세션이 보고 없이(SendMessage 없이) 턴을 끝내고 쉬면 참모는 끝난 줄 모른다
+describe('nextQuietForward — 안 닫은 일 + 말없이 쉬는 세션', () => {
+  const T0 = Date.parse('2026-10-11T01:00:00Z');
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const task = (over: Partial<TaskCard> = {}): TaskCard => ({ id: '1011-0950-ab12', target: 'acme', title: '로그인 버튼 고치기', status: 'sent', sentAt: iso(T0 - 30 * 60_000), updatedAt: iso(T0 - 30 * 60_000), ...over });
+  const act = (over: Partial<Activity> = {}): Activity => ({
+    prompt: { ts: iso(T0 - 30 * 60_000), text: '로그인 버튼 고쳐' },
+    reply: { ts: iso(T0), text: '고쳤어. 커밋 a1b2c3d.', asks: false, turnEnd: true },
+    ...over,
+  });
+  const cand = (a: Activity = act(), over: Partial<Session> = {}): AskCand => ({ session: s('acme', { state: 'idle', startedAt: T0 - 3600_000, ...over }), activity: a });
+  const open = (t?: TaskCard) => () => (t?.status === 'sent' ? t : undefined); // openTaskOf 처럼 답 기록 없는 일만
+  const later = T0 + QUIET_GRACE_MS;
+
+  it('보고 없이 10분 쉬면 그 일과 함께 넘긴다', () => {
+    expect(nextQuietForward([cand()], open(task()), orch, new Set(), T0 + 60_000, never)).toBeUndefined();
+    expect(nextQuietForward([cand()], open(task()), orch, new Set(), later, never)).toMatchObject({ cand: { session: { id: 'acme' } }, task: { id: '1011-0950-ab12' } });
+  });
+  it('넘기지 않는 것 — 보고함·답 기록됨·일 없음·묻는 턴·백그라운드 기다림·새 지시·일보다 옛 답·이미 넘김·보는 중', () => {
+    let n = 0;
+    const no = (c: AskCand, t: TaskCard | null = task(), done = new Set<string>(), watching = never) => expect(nextQuietForward([c], open(t ?? undefined), orch, done, later, watching), `경우 ${++n}`).toBeUndefined();
+    no(cand(act({ messaged: iso(T0 - 1000) })));
+    no(cand(), task({ status: 'replied' }));
+    no(cand(), null);
+    no(cand(act({ reply: { ts: iso(T0), text: '어느 쪽으로 할까?', asks: true, turnEnd: true } })));
+    no(cand(act(), { awaiting: true }));
+    no(cand(act({ waitingOn: 1 })));
+    no(cand(act({ prompt: { ts: iso(T0 + 1000), text: '다음 거' } })));
+    no(cand(act()), task({ sentAt: iso(T0 + 1000) }));
+    no(cand(), task(), new Set([quietKeyOf(cand(), task())]));
+    no(cand(), task(), new Set(), () => true);
+  });
+  it('두 번째 일부터 — 참모가 SendMessage 로 준 일(peer)이 턴의 시작. 앞 일 보고(messaged)로 막지 않는다(2026-10-11 bug-hunt)', () => {
+    // 처음 띄울 때 지시(prompt) → 일1 보고(messaged) → 일2 는 SendMessage(peer, prompt 아님) → 말없이 끝냄
+    const a = act({ prompt: { ts: iso(T0 - 3 * 3600_000), text: '처음 지시' }, messaged: iso(T0 - 2 * 3600_000), peer: { ts: iso(T0 - 30 * 60_000), text: '로그인 버튼 고쳐' } });
+    expect(nextQuietForward([cand(a)], open(task()), orch, new Set(), later, never)).toMatchObject({ task: { id: '1011-0950-ab12' } });
+    // 일2 턴에 보고했으면 안 넘긴다
+    expect(nextQuietForward([cand({ ...a, messaged: iso(T0 - 1000) })], open(task()), orch, new Set(), later, never)).toBeUndefined();
+    // 답 뒤에 새 SendMessage 가 왔으면(새 턴) 안 넘긴다
+    expect(nextQuietForward([cand({ ...a, peer: { ts: iso(T0 + 1000), text: '다음 거' } })], open(task()), orch, new Set(), later, never)).toBeUndefined();
+  });
+  it('참모에게 보낼 한 줄 — 일 제목·몇 분째·마지막 말', () => {
+    const t = quietForwardText(cand().session, act(), task(), later);
+    expect(t).toContain('10분째');
+    expect(t).toContain('로그인 버튼 고치기');
+    expect(t).toContain('고쳤어. 커밋 a1b2c3d.');
+    expect(t).toContain('scripts/task');
+  });
+});
+
+describe('openTaskOf — 세션에 걸린 안 닫힌 일(가장 최근 보낸 것)', () => {
+  it('그 세션을 대상으로 한 sent 일 중 최근 것', () => {
+    const iso = (m: number) => new Date(Date.parse('2026-10-11T00:00:00Z') + m * 60_000).toISOString();
+    const card = (id: string, target: string, status: TaskCard['status'], m: number): TaskCard => ({ id, target, title: id, status, sentAt: iso(m), updatedAt: iso(m) });
+    const sessions = [s('acme', { state: 'idle' }), s('beta', { state: 'idle' })];
+    const of = openTaskOf([card('t1', 'acme', 'sent', 1), card('t2', 'acme', 'sent', 5), card('t3', 'acme', 'done', 9), card('t4', 'beta', 'replied', 2)], sessions);
+    expect(of(sessions[0]!)?.id).toBe('t2');
+    expect(of(sessions[1]!)).toBeUndefined();
   });
 });

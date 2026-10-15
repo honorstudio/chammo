@@ -9,7 +9,7 @@ describe('Client 마디', () => {
   it('플러그인·모듈·열쇠·props 를 담고, 크기는 Box 처럼', () => {
     expect(normalize(CLIENT)).toEqual({ type: 'Client', plugin: 'tick', module: 'hooks/board.tsx', key: 'b1', props: { start: 5 }, style: {} });
     const sized = normalize({ ...CLIENT, props: { ...CLIENT.props, width: 20, height: 6, flexGrow: 1 } });
-    expect(sized.type === 'Client' && sized.style).toEqual({ width: '160px', height: '48px', flexGrow: 1 });
+    expect(sized.type === 'Client' && sized.style).toEqual({ width: '160px', height: '108px', flexGrow: 1 }); // 세로는 줄 단위 18px(10/12)
   });
 
   it('플러그인·모듈·열쇠가 없으면 못 그림', () => {

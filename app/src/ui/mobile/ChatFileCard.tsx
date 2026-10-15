@@ -9,7 +9,7 @@ export function ChatFileCard({ f, onOpen }: { f: ChatFile; onOpen: (f: ChatFile)
     <>
       <FileThumb path={f.path} />
       <span className="m-chatfile-name">{titleOf(f.path)}</span>
-      {where && <span className="m-chatfile-at">{where}</span>}
+      {(where || f.who) && <span className="m-chatfile-at">{[f.who, where].filter(Boolean).join(' · ')}</span>}
     </>
   );
   if (/^https?:\/\//i.test(f.path)) return <a className="m-chatfile" href={f.path} target="_blank" rel="noopener noreferrer" title={f.path}>{body}</a>;

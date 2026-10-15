@@ -99,6 +99,12 @@ describe('spaceView — 머리 오른쪽 끝 세 칸(대시보드 · 펫 · 사�
     expect(spaceView('o:o1', null, 'o1')).toBe('dash');
     expect(spaceView('o:o1', 'o2', 'o1')).toBe('dash');
   });
+  // 2026-10-12 패널 하나로 — 옛 대시보드가 없어져 '대시보드' 칸 = 그 참모 홈. 홈에서도 세 칸(홈 · 펫 · 사무실)
+  it('그 참모 홈이면 dash(홈)', () => {
+    expect(spaceView('l:o1#h', null, 'o1')).toBe('dash');
+    expect(spaceView('l:o1', null, 'o1')).toBeNull();
+    expect(spaceView('l:o2#h', null, 'o1')).toBeNull();
+  });
   it('세 칸은 그 참모 대시보드·사무실에서만 — 문서·세션 화면엔 없음', () => {
     expect(spaceView('d:/a.md', null, 'o1')).toBeNull();
     expect(spaceView('s:x', null, 'o1')).toBeNull();

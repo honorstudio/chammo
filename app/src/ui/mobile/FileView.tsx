@@ -11,7 +11,8 @@ import PdfSheet from './PdfSheet';
 import HtmlSheet from './HtmlSheet';
 import { OfficeSheet, VideoSheet } from './OfficeSheet';
 import { CodeText, CsvTable, MdDoc } from './FileText';
-import { IconClose } from '../Icons';
+import { ShareButton } from './ShareButton';
+import { BottomSheet } from './kit';
 
 // 붙은 컴퓨터(맥·PC)는 env 를 받은 뒤에 정해져서 모듈 상수가 아니라 부를 때 만든다
 const why = (): Record<string, string> => ({ 'secret inside': `글 속에 키가 보여서 폰엔 안 보여 줘요 — ${machine()}에서 열어 주세요`, 'not allowed': '폰에서 열 수 없는 파일이에요', 'file too large': `너무 커서 폰에선 못 열어요 — ${machine()}에서` });
@@ -37,11 +38,7 @@ function TextView({ path, data, kind, title, at, onClose }: { path: string; data
     readFileText(path).then(setText, (e: unknown) => { const m = (e as Error).message; setErr(fileError(m, why())); });
   }, [path, data]);
   return (
-    <div className="m-view" role="dialog" aria-label={title}>
-      <div className="m-picker-head">
-        <b className="m-view-title m-view-file">{title}</b>
-        <button type="button" className="m-rt-btn m-ico" onClick={onClose} aria-label="닫기" title="닫기"><IconClose /></button>
-      </div>
+    <BottomSheet kind="full" label={title} title={title} titleClass="m-view-title m-view-file" onClose={onClose} actions={<ShareButton path={path} />}>
       <div className="m-view-body">
         {data && blob && <img src={blob} alt={title} />}
         {text !== null && (kind === 'md' ? <MdDoc path={path} text={text} at={at} />
@@ -50,6 +47,6 @@ function TextView({ path, data, kind, title, at, onClose }: { path: string; data
         {text === null && !err && !data && <p className="m-muted">여는 중…</p>}
         {err && <p className={err.gone ? 'm-muted' : 'm-error'}>{err.text}</p>}
       </div>
-    </div>
+    </BottomSheet>
   );
 }

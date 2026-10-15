@@ -125,11 +125,15 @@ export const readFileText = (path: string) => getText(fileUrl(path));
 export const mediaTicket = (path: string) => post<{ url: string; size: number }>('/api/media-ticket', { path });
 /** 워드 → html(맥 textutil) — 폰이 거른 뒤 그린다 */
 export const wordHtml = (path: string) => getText(`/api/file?path=${encodeURIComponent(path)}&as=html`);
+/** 엑셀 표(읽기만) — 맥 스페이스와 같은 Rust 읽기, 시트마다 앞 2000행(cut = 잘린 행 수) */
+export const sheetBook = (path: string) => getJson<import('../domain/sheetBook').SheetBook & { sheets: { cut?: number }[] }>(`/api/file?path=${encodeURIComponent(path)}&as=sheet`);
 /** 폰 진단 한 줄 — 맥 notify.log 'phone-diag'(서버가 키=값 낱말만 받는다, 10초에 한 번). 실패는 버린다 */
 export const phoneDiag = (kind: string, line: string) => post<{ ok: true }>('/api/diag', { kind, line }).then(() => undefined, () => undefined);
 /** 맥에서 열기 — 맥 기본 앱으로(보여 준 것만) */
 export const openOnMac = (path: string) => post<{ ok: true }>('/api/open-mac', { path }).then(() => undefined);
 export const htmlTicket = (path: string) => post<{ url: string }>('/api/html-ticket', { path });
+/** 받기 표 — 보여 준 파일 원본(진짜 MIME·attachment·Range). 표 주소라 열쇠 없이 링크로도 받는다 */
+export const dlTicket = (path: string) => post<{ url: string; size: number; name: string; mime: string }>('/api/dl-ticket', { path });
 /** 시안 검토 표시 — 맥 curation/ 에(데스크톱과 같은 파일) */
 export const curationSave = (path: string, text: string, store: unknown) => post<{ ok: true }>('/api/curation', { path, text, store });
 export const curationState = (path: string) => getText(`/api/curation-state?path=${encodeURIComponent(path)}`);
@@ -143,6 +147,30 @@ export const docImageUrl = (path: string, doc: string) =>
 export const attachFile = (file: File) =>
   call(`/api/attach?name=${encodeURIComponent(file.name)}`, { method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file })
     .then((r) => r.json() as Promise<{ path: string }>);
+/** 파일 보관함 — 폰이 열 수 있는 것만(맥이 거름). 모양은 데스크톱 locker_read 와 같다 */
+export const readLocker = () => getJson<import('../domain/locker').LockerView>('/api/locker');
+/** 폰이 올린 첨부(attachFile 경로)를 그 참모 보관함에 — 맥이 보관함 복사본으로 옮겨 둔다 */
+export const lockerAdd = (owner: string, path: string) => post<{ path: string }>('/api/locker-add', { owner, path });
+/** 폰 홈·보관함 v1 — 그 참모 보관함 안에만(맥이 다시 거른다). 바로가기(폰이 보는 파일만)·되돌리기(바로가기만 뺌)·새 문서(md)·새 폴더·md 저장 */
+export const lockerAlias = (owner: string, path: string, folder: string) => post<{ path: string }>('/api/locker-alias', { owner, path, folder });
+export const lockerUnalias = (owner: string, rel: string) => post<{ ok: true }>('/api/locker-unalias', { owner, rel });
+export const lockerNewDoc = (owner: string, folder: string, title: string) => post<{ path: string }>('/api/locker-new', { owner, folder, title });
+export const lockerMkdir = (owner: string, parent: string, name: string) => post<{ rel: string }>('/api/locker-mkdir', { owner, parent, name });
+export const lockerWrite = (owner: string, path: string, text: string) => post<{ ok: true }>('/api/locker-write', { owner, path, text });
+/** 폰 홈 모드 카드 — 목록 · 한 칸(상태 + 보이는 칸 트리, 크기는 글자 칸) · 누름 · 맛보기 예시 켜기(그 참모 홈에) */
+export type PhoneModeRow = { name: string; title: string; source: string; on: boolean; where: string; dash: string | null; alive: boolean; hidden?: boolean };
+export const readModes = () => getJson<PhoneModeRow[]>('/api/modes');
+export const readModeView = (name: string, columns: number, rows: number, signal?: AbortSignal) =>
+  getJson<{ state: { alive: boolean; ready: boolean; unsupported: boolean; status: string | null; error: string | null }; tree?: unknown }>(`/api/mode-view?name=${encodeURIComponent(name)}&columns=${columns}&rows=${rows}`, signal);
+export const modeAct = (name: string, act: object) => post<{ handled?: boolean }>('/api/mode-act', { name, act });
+export const modeOpen = (name: string, dash: string) => post<{ ok: true }>('/api/mode-open', { name, dash });
+/** 이 홈에서 끄기 — dash = 그 모드가 켜진 홈(목록의 dash 그대로), 맥이 그 홈에 켜진 것만 끈다 */
+export const modeClose = (name: string, dash: string) => post<{ ok: true }>('/api/mode-close', { name, dash });
+/** 지우기(기본 = 숨기기, 내 모드 = 제거 — 원본 휴지통은 데스크톱에서만)·되돌리기 */
+export const modeRemove = (name: string) => post<{ kind: 'hidden' | 'removed'; trashed: string | null; undo: boolean }>('/api/mode-remove', { name });
+export const modeRestore = (name: string) => post<{ ok: true }>('/api/mode-restore', { name });
+/** 고르기 카드 그림(거름은 화면 domain/modeCard) */
+export const modeCard = (name: string) => getJson<unknown>(`/api/mode-card?name=${encodeURIComponent(name)}`);
 export const routineDo = (name: string, action: 'run' | 'pause' | 'resume') => post<{ ok: true; out: string }>('/api/routine', { name, action });
 
 /** 참모 프사 — 데스크톱에서 바꾼 모양·그림을 폰에도. 그림은 토큰을 실어 받아 blob 주소로(키로만 찾는다) */
@@ -195,3 +223,12 @@ export const renameOrch = (id: string, nick: string) => post<{ ok: true }>('/api
 export const setRole = (id: string, role: string) => post<Record<string, { role: string; at: number }>>('/api/role', { id, role });
 export const removeOrch = (id: string) => post<{ ok: true }>('/api/remove', { id }).then(() => undefined);
 export const stopOrch = (id: string) => post<{ ok: true }>('/api/stop', { id }).then(() => undefined);
+/** 맥 앱 음성 모드(폰 입력창 마이크) — 읽기·켜고 끄기(scripts/app voice 와 같은 통로) */
+export const readVoice = () => getText('/api/voice').then((t) => (JSON.parse(t) as { on?: boolean }).on === true);
+export const setVoiceMode = (on: boolean) => post<{ on: boolean }>('/api/voice-mode', { on }).then((r) => r.on);
+/** 폰 음성(맥이 만든 소리를 폰에서) — 하트비트(보고 있음·소리 소식) → 가져갈 소리·멈춤 번호 / 내놓은 소리 파일(wav). 시간 제한은 부르는 쪽(data/phoneVoice)이 신호로 */
+export const voiceBeat = (body: object, signal?: AbortSignal, keepalive = false) =>
+  call('/api/voice-beat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal, keepalive }).then((r) => r.json() as Promise<import('../domain/phoneVoice').BeatReply>);
+export const voiceAudioBlob = (id: number, signal?: AbortSignal) => call(`/api/voice-audio?id=${id}`, { signal }).then((r) => r.blob());
+/** 참모 모델·에포트 바꾸기 — 맥 앱이 데스크톱 칩과 같은 길로 친다(새 세션 기본값은 되돌림). 새 값은 상태줄(ctx)로 */
+export const pickOrchModel = (id: string, want: { model?: 'opus' | 'sonnet' | 'haiku'; effort?: string }) => post<{ ok: true }>('/api/model', { id, ...want }).then(() => undefined);

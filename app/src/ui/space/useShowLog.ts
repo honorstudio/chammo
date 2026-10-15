@@ -2,18 +2,19 @@
 // (앱 IPC 폴링이 이미 무겁다 — docs/research/2026-10-04-mac-perf.md)
 import { useSyncExternalStore } from 'react';
 import { readShowLog } from '../../data/tauri';
+import { every } from '../poll';
 
 let log = '';
-let timer: number | undefined;
+let stop: (() => void) | undefined;
 const subs = new Set<() => void>();
 const tick = () => void readShowLog().then((l) => { if (l !== log) { log = l; subs.forEach((f) => f()); } }).catch(() => {});
 
 function subscribe(f: () => void) {
   subs.add(f);
-  if (timer === undefined) { tick(); timer = window.setInterval(tick, 3000); }
+  if (stop === undefined) { tick(); stop = every(tick, 3000); }
   return () => {
     subs.delete(f);
-    if (!subs.size && timer !== undefined) { window.clearInterval(timer); timer = undefined; }
+    if (!subs.size && stop !== undefined) { stop(); stop = undefined; }
   };
 }
 

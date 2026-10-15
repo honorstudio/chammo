@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { safeSvg, svgSrc } from './modeSvg';
+import { safeSvg, svgSrc, svgStillSrc } from './modeSvg';
 
 const OK = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#2f74e0"/></svg>';
 
@@ -78,5 +78,23 @@ describe('svgSrc — <img> 주소', () => {
     expect(decodeURIComponent(s.slice('data:image/svg+xml;charset=utf-8,'.length))).toBe(OK);
     expect(s).not.toMatch(/[<>"#\s]/);
     expect(svgSrc('<svg onload="x"/>')).toBeNull();
+  });
+});
+
+// 2026-10-12 mode-showcase 실측: <img> SVG 는 점 하나만 숨쉬어도 그림 전체를 매 프레임 다시 그려 렌더러 CPU 10~12%·GPU 12~14%.
+// 움직임을 끈 정지판으로 바꾸면 2.5~2.9%·1.3~2.3%. 바깥 CSS(oa-paused·oa-calm)는 <img> 안에 안 닿아서 src 를 바꾼다
+describe('svgStillSrc — 움직임 끈 정지판', () => {
+  const MOVING = '<svg class="mode-anim" viewBox="0 0 10 10"><style>@keyframes b{50%{opacity:.3}}.d{animation:b 2s infinite}</style><circle class="d" cx="5" cy="5" r="2"/></svg>';
+  const dec = (u: string | null) => decodeURIComponent((u ?? '').replace(/^data:image\/svg\+xml;charset=utf-8,/, ''));
+  it('여는 <svg …> 바로 뒤에 움직임·전환을 끄는 <style> 을 끼운다(그림은 그대로)', () => {
+    const still = dec(svgStillSrc(MOVING));
+    expect(still).toMatch(/^<svg class="mode-anim" viewBox="0 0 10 10"><style>\*\{animation:none!important;transition:none!important\}<\/style><style>@keyframes b/);
+    expect(still).toContain('<circle class="d" cx="5" cy="5" r="2"/>');
+  });
+  it('<?xml·주석 머리가 있어도 <svg 여는 꼬리 뒤에', () => {
+    expect(dec(svgStillSrc(`<?xml version="1.0"?><!-- x --><svg\nviewBox="0 0 1 1"><rect/></svg>`))).toMatch(/<svg\nviewBox="0 0 1 1"><style>\*\{animation:none!important/);
+  });
+  it('걸러지는 SVG 는 정지판도 없다', () => {
+    expect(svgStillSrc('<svg onload="alert(1)"/>')).toBeNull();
   });
 });

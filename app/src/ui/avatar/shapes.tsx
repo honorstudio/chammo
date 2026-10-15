@@ -30,46 +30,65 @@ export const SHAPE_SVG: Record<Shape, { body: ReactNode; eye: [number, number, n
 
 const f = (n: number) => Number(n.toFixed(2));
 
-/** 눈 하나 — 보이는 눈 + 위아래 눈꺼풀(몸 색) + 감은 눈 선 + 웃는 눈 */
-function Eye({ x, ey, r, kind }: { x: number; ey: number; r: number; kind: Eyes }) {
-  const a = kind === 'pupil' ? r * 0.52 : r * 0.44;
-  const b = kind === 'pupil' ? r * 0.72 : r * 0.64;
+type EyeProps = { x: number; ey: number; r: number; kind: Eyes };
+const eyeSize = (r: number, kind: Eyes) => ({ a: kind === 'pupil' ? r * 0.52 : r * 0.44, b: kind === 'pupil' ? r * 0.72 : r * 0.64 });
+/** 눈 하나의 묶음 — 작은 프사(oa-s16)에서 눈마다 키우는 기준점을 눈 가운데로(층마다 같은 점이라 겹친 장이 안 어긋난다) */
+const EyeG = ({ x, ey, children }: { x: number; ey: number; children: ReactNode }) => <g className="oa-eye" style={{ transformOrigin: `${f(x)}px ${f(ey)}px` }}>{children}</g>;
+
+/** 흰자(검은 눈이면 검은 눈+반짝) */
+function EyeWhite({ x, ey, r, kind }: EyeProps) {
+  const { a, b } = eyeSize(r, kind);
+  return (
+    <EyeG x={x} ey={ey}><g className="oa-eyev">
+      {kind === 'dark' ? (
+        <>
+          <ellipse className="oa-k" cx={f(x)} cy={f(ey)} rx={f(a)} ry={f(b)} />
+          <circle className="oa-gl" cx={f(x + a * 0.28)} cy={f(ey - b * 0.36)} r={f(r * 0.21)} />
+        </>
+      ) : <ellipse className="oa-w" cx={f(x)} cy={f(ey)} rx={f(a)} ry={f(b)} />}
+    </g></EyeG>
+  );
+}
+
+/** 눈동자(pupil 눈만) */
+function EyePupil({ x, ey, r }: EyeProps) {
+  return <EyeG x={x} ey={ey}><circle className="oa-k" cx={f(x)} cy={f(ey + r * 0.16)} r={f(r * 0.3)} /><circle className="oa-gl" cx={f(x + r * 0.1)} cy={f(ey + r * 0.04)} r={f(r * 0.1)} /></EyeG>;
+}
+
+/** 위아래 눈꺼풀(몸 색) + 감은 눈 선 + 웃는 눈 — 눈동자 층 위에 덮인다 */
+function EyeLids({ x, ey, r, kind }: EyeProps) {
+  const { a, b } = eyeSize(r, kind);
   const la = a + 0.55;
   const lb = b + 0.45;
   return (
-    <g className="oa-eye">
-      <g className="oa-eyev">
-        {kind === 'pupil' ? (
-          <>
-            <ellipse className="oa-w" cx={f(x)} cy={f(ey)} rx={f(a)} ry={f(b)} />
-            <g className="oa-pup"><circle className="oa-k" cx={f(x)} cy={f(ey + r * 0.16)} r={f(r * 0.3)} /><circle className="oa-gl" cx={f(x + r * 0.1)} cy={f(ey + r * 0.04)} r={f(r * 0.1)} /></g>
-          </>
-        ) : kind === 'dark' ? (
-          <>
-            <ellipse className="oa-k" cx={f(x)} cy={f(ey)} rx={f(a)} ry={f(b)} />
-            <circle className="oa-gl" cx={f(x + a * 0.28)} cy={f(ey - b * 0.36)} r={f(r * 0.21)} />
-          </>
-        ) : (
-          <ellipse className="oa-w" cx={f(x)} cy={f(ey)} rx={f(a)} ry={f(b)} />
-        )}
-      </g>
+    <EyeG x={x} ey={ey}>
       <rect className="oa-lt" x={f(x - la)} y={f(ey - lb)} width={f(2 * la)} height={f(lb + 0.25)} />
       <rect className="oa-lb" x={f(x - la)} y={f(ey - 0.25)} width={f(2 * la)} height={f(lb + 0.25)} />
       <path className="oa-shut" d={`M${f(x - a * 1.05)} ${f(ey)}Q${f(x)} ${f(ey + b * 0.62)} ${f(x + a * 1.05)} ${f(ey)}`} />
       <path className="oa-smile" d={`M${f(x - a * 1.1)} ${f(ey + b * 0.3)}Q${f(x)} ${f(ey - b)} ${f(x + a * 1.1)} ${f(ey + b * 0.3)}`} />
-    </g>
+    </EyeG>
   );
 }
 
-/** 몸 + 얼굴 — 움직임은 전부 CSS(avatar.css) */
+const Sv = ({ children }: { children: ReactNode }) => <svg viewBox="0 0 40 40" aria-hidden="true" focusable="false">{children}</svg>;
+
+/**
+ * 몸 + 얼굴 — 움직임은 전부 CSS(avatar.css). 움직이는 묶음(전환 oa-tr·몸 oa-all·얼굴 oa-face·눈 oa-eyes·눈동자 oa-pup)은
+ * SVG 안 <g> 가 아니라 겹친 HTML 층이다 — SVG 안쪽을 움직이면 WebKit 이 합성기로 못 돌려 매 프레임 다시 칠했다
+ * (2026-10-12 사용자 '가만히 있어도 무겁다': 띠 프사 5개 GPU 50% → 층 나누기 1.2~1.4%, WebKit 하네스).
+ * 장 순서 = 몸 / 흰자 / 눈동자 / 눈꺼풀 — 감으면 눈꺼풀이 눈동자를 덮는다
+ */
 export function PresetSvg({ shape, eyes }: { shape: Shape; eyes: Eyes }) {
   const { body, eye: [ey, dx, r] } = SHAPE_SVG[shape];
+  const both = (E: (p: EyeProps) => ReactNode) => <>{E({ x: 20 - dx, ey, r, kind: eyes })}{E({ x: 20 + dx, ey, r, kind: eyes })}</>;
   return (
-    <svg viewBox="0 0 40 40" aria-hidden="true" focusable="false">
-      <g className="oa-tr"><g className="oa-all">
-        {body}
-        <g className="oa-face"><g className="oa-eyes"><Eye x={20 - dx} ey={ey} r={r} kind={eyes} /><Eye x={20 + dx} ey={ey} r={r} kind={eyes} /></g></g>
-      </g></g>
-    </svg>
+    <span className="oa-l oa-tr" aria-hidden="true"><span className="oa-l oa-all">
+      <Sv>{body}</Sv>
+      <span className="oa-l oa-face"><span className="oa-l oa-eyes" style={{ '--oa-ey': `${f((ey / 40) * 100)}%` } as React.CSSProperties}>
+        <Sv>{both(EyeWhite)}</Sv>
+        {eyes === 'pupil' && <span className="oa-l oa-pup"><Sv>{both(EyePupil)}</Sv></span>}
+        <Sv>{both(EyeLids)}</Sv>
+      </span></span>
+    </span></span>
   );
 }

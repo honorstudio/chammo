@@ -15,7 +15,7 @@ const visible = () => typeof document === 'undefined' || !document.hidden;
 export function useMobileChat(session: Session, everyMs: number, stateAt: number) {
   const [fast, setFast] = useState(false);
   const items = useChatItems(session.sessionId, fast ? LIVE_MS : everyMs, readTranscript);
-  const out = useOutbox(session.id, items);
+  const out = useOutbox(session.id, items, session.sessionId);
   const earlier = useEarlier(session.sessionId);
   const loading = !!session.sessionId && !chatLoaded(session.sessionId);
   const [now, setNow] = useState(() => Date.now());

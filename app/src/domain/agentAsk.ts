@@ -2,7 +2,7 @@
 // 2026-10-04 QA: 다른 세션이 부르면 쓰던 모달이 말없이 그 브라우저로 바뀌어 치던 글(비밀번호일 수도)이 엉뚱한 데로 갔다 →
 // 열린 모달은 안 바꾸고 새 부름은 줄에만(모달 머리에 표시), 바꾸는 건 사람이 눌러서. 줄 선 부름은 모달을 닫으면 띄운다
 import { tr } from '../i18n';
-import type { Live } from './agentBrowser';
+import type { Live, PopupKind } from './agentBrowser';
 
 /** 사람 부름 알림 글 — 제목에 부른 세션 이름(예전엔 '세션이 사람을 불러요'뿐이라 어느 세션인지 몰랐다), 본문은 이유 */
 export function askNotice(name: string, reason: string): { title: string; body: string } {
@@ -79,7 +79,7 @@ export function askShown(s: AskState, lives: Live[], last: Live | undefined): { 
 }
 
 /**
- * 패스키·Touch ID·QR 창(Live.popup) — 모달로 보고 있는 브라우저는 모달이 맡고(사람이 쓰는 중이면 작게 꺼냄), 나머지는 결정 대기함 카드.
+ * 크롬 자체 창(Live.popup — 패스키·권한·기본 인증 등. 비밀번호 저장 같은 주소창 풍선은 앱이 안 켠다) — 모달로 보고 있는 브라우저는 모달이 맡고(사람이 쓰는 중이면 작게 꺼냄), 나머지는 결정 대기함 카드.
  * 알림은 창이 새로 뜰 때 한 번(prev = 지난번 창이 떠 있던 브라우저들 — 모달을 열었다 닫아도 같은 창이면 다시 안 알린다)
  */
 export function popupStep(prev: string[], lives: Live[], open: AskOpen | null): { keys: string[]; cards: Live[]; notify: Live[] } {
@@ -89,11 +89,22 @@ export function popupStep(prev: string[], lives: Live[], open: AskOpen | null): 
   return { keys: up.map(key), cards, notify: cards.filter((l) => !prev.includes(key(l))) };
 }
 
-/** 패스키 창 알림 글 */
-export function popupNotice(name: string): { title: string; body: string } {
+/** 창 이름 — 패스키라고 확신할 때만 '패스키 창', 모르면 중립 '크롬 창'(2026-10-11 사용자 — 비밀번호 저장 풍선까지 '패스키 창'으로 불렀다) */
+export function popupLabel(kind: PopupKind | undefined): string {
+  return kind === 'passkey' ? tr('패스키 창', 'passkey window') : tr('크롬 창', 'Chrome window');
+}
+
+/** 크롬 창 알림 글 */
+export function popupNotice(name: string, kind: PopupKind | undefined): { title: string; body: string } {
   const n = name.trim();
+  const w = popupLabel(kind);
   return {
-    title: n ? tr(`${n} 세션에 패스키 창이 떴어요`, `${n} is showing a passkey window`) : tr('세션 브라우저에 패스키 창이 떴어요', 'A session browser is showing a passkey window'),
+    title: n ? tr(`${n} 세션에 ${w}이 떴어요`, `${n} is showing a ${w}`) : tr(`세션 브라우저에 ${w}이 떴어요`, `A session browser is showing a ${w}`),
     body: tr('결정 대기함에서 크롬에서 보기를 누르면 그 창이 앞으로 나와요', 'Open it from Decisions to bring the Chrome window forward'),
   };
+}
+
+/** 모달 줄 — 크롬이 그림 밖에 띄운 창 */
+export function popupLine(kind: PopupKind | undefined): string {
+  return kind === 'passkey' ? tr('크롬이 패스키 창을 띄웠어 — 여기엔 안 보여', 'Chrome opened a passkey window this view can’t show') : tr('크롬이 여기 안 보이는 창을 띄웠어', 'Chrome opened a window this view can’t show');
 }

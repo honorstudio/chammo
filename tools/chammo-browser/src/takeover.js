@@ -65,7 +65,11 @@ function formatHandback(h) {
   const closed = pick('tab-', (e) => bare(e.url) || '탭');
   const dialogs = pick('dialog', (e) => (e.accept ? '확인' : '취소'));
   const files = pick('files', (e) => (Number.isFinite(Number(e.n)) ? Number(e.n) : 0)).reduce((a, b) => a + b, 0);
-  const lines = [`[사람 개입] 사람이 ${where}브라우저를 ${mins}분 조작하고 돌려줬어.`];
+  // 앱이 저절로 돌려줌(why) — 조작 없이 오래 둠(idle) · 크롬 자체 창(패스키·권한 등) 꺼내기가 켠 개입을 창을 숨기며(hidden) — 패스키인지는 래퍼가 몰라 중립. 사람이 돌려준 것처럼 말하지 않는다
+  const first = h.why === 'idle' ? `[사람 개입] 사람이 ${where}개입한 뒤 ${mins}분 동안 아무것도 안 해서 앱이 저절로 돌려줬어.`
+    : h.why === 'hidden' ? '[사람 개입] 크롬이 띄운 창 때문에 잠깐 꺼냈던 크롬을 다시 숨기며 돌려줬어.'
+    : `[사람 개입] 사람이 ${where}브라우저를 ${mins}분 조작하고 돌려줬어.`;
+  const lines = [first];
   if (navs.length) lines.push(`- 간 주소: ${list(navs)}`);
   if (clicks.length) lines.push(`- 누른 곳: ${list(clicks)}`);
   if (typed.length) lines.push(`- 글자를 넣은 칸(값은 안 남김): ${list(typed)}`);
@@ -74,7 +78,7 @@ function formatHandback(h) {
   if (closed.length) lines.push(`- 닫은 탭: ${list(closed)}`);
   if (dialogs.length) lines.push(`- 페이지 대화상자에 답함: ${list(dialogs)}`);
   if (files) lines.push(`- 파일 ${files}개를 올림`);
-  if (lines.length === 1) lines.push('- 한 일은 못 봤어(아무것도 안 했거나 앱이 못 본 곳에서 함)');
+  if (lines.length === 1 && !h.why) lines.push('- 한 일은 못 봤어(아무것도 안 했거나 앱이 못 본 곳에서 함)');
   if (h.chromeShown) lines.push('- 크롬 창을 꺼내 직접 만진 동안의 클릭·입력은 못 셌을 수 있어');
   if (h.lost) lines.push('- 앱이 응답이 없어 개입을 풀었어(사람이 돌려준 게 아님)');
   lines.push(`화면이 바뀌었을 수 있어 — ${SNAP}.`);

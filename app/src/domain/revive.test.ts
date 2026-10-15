@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { autoRestore, parseSnap, stepSnapshot, type LiveSnap } from './revive';
+import { autoRestore, liveState, parseSnap, stepSnapshot, type LiveSnap } from './revive';
+import { statusTone } from './status';
 import type { Session } from './session';
 
 const bg = (name: string, sessionId: string): Session => ({
@@ -110,5 +111,35 @@ describe('autoRestore — 무인 기계에서 재시작 뒤 스스로 되살리�
   // 2026-10-03 사용자: 앱이 스스로 참모를 새로 만들지 않는다 — 참모가 없으면 오케스트레이터 홈에서 사람이 고른다
   it('되살릴 게 없으면 참모가 0개여도 아무것도 안 한다(새로 띄우지 않는다)', () => {
     expect(autoRestore({ ...base })).toEqual({ kind: 'none' });
+  });
+});
+
+// 2026-10-12 기본 모드 '참모 상태' — 모드는 대화 기록을 못 읽으니(공개판 사용자 기록) 앱이 사이드바와 같은 판정을 live.json 세션마다 state 로 같이 쓴다
+describe('stepSnapshot — 세션 상태(state)', () => {
+  it('사이드바 판정(ActivityStatus)을 다섯 갈래로 — 일함·기다림·물음·쉼·모름', () => {
+    expect(liveState('working')).toBe('work');
+    expect(liveState('bgwait')).toBe('wait');
+    for (const st of ['asks', 'blocked', 'login'] as const) expect(liveState(st)).toBe('ask');
+    for (const st of ['done', 'idle', 'stale'] as const) expect(liveState(st)).toBe('idle');
+    expect(liveState('unknown')).toBe('unknown');
+    expect(liveState(undefined)).toBe('unknown');
+  });
+  it('물음·일함은 사이드바 색(statusTone)과 같은 편', () => {
+    const all = ['working', 'asks', 'blocked', 'login', 'bgwait', 'done', 'idle', 'stale', 'unknown'] as const;
+    for (const st of all) {
+      if (statusTone(st) === 'run') expect(liveState(st)).toBe('work');
+      if (statusTone(st) === 'ask') expect(liveState(st)).toBe('ask');
+    }
+  });
+  it('세션마다 state 를 붙이고, 판정을 못 받은 세션은 unknown', () => {
+    const next = stepSnapshot(null, OLD, [bg('참모-2', 'b2'), bg('acme-shop', 't1')], 0, { b2: 'asks' });
+    expect(next?.sessions.map((x) => [x.name, x.state])).toEqual([['참모-2', 'ask'], ['acme-shop', 'unknown']]);
+  });
+  it('판정이 그대로면 기록도 그대로(앱은 글이 같으면 안 쓴다), 바뀌면 달라진다', () => {
+    const a = stepSnapshot(null, OLD, [bg('참모-2', 'b2')], 0, { b2: 'working' });
+    const b = stepSnapshot(a, OLD, [bg('참모-2', 'b2')], 3000, { b2: 'working' });
+    expect(JSON.stringify(b)).toBe(JSON.stringify(a));
+    const c = stepSnapshot(b, OLD, [bg('참모-2', 'b2')], 6000, { b2: 'done' });
+    expect(c?.sessions[0]?.state).toBe('idle');
   });
 });

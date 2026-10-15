@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { actOf, boxStyle, cellsOf, colorOf, dashModes, hrefOk, modeNote, modeTop, newModeAsk, normalize, panelModes, placedModes, staleParts, textOf, type ModeRow } from './modeTree';
+import modeCss from '../ui/mode/mode.css?raw';
+import { actOf, boxStyle, cellsOf, colorOf, dashModes, START_SLOW_MS, hrefOk, modeNote, modeTop, newModeAsk, normalize, panelModes, placedModes, staleParts, textOf, type ModeRow } from './modeTree';
 
 // 2.1.296 실측 트리(.shots/feature-chammo-mode/probe-2.1.296.txt) 그대로
 const BAND = { type: 'Box', props: { gap: 1 }, children: [
@@ -22,6 +23,7 @@ describe('normalize', () => {
     const ok = normalize({ type: 'Svg', props: { source: '<svg viewBox="0 0 4 4"><rect width="4" height="4"/></svg>', alt: '상자' } });
     expect(ok).toMatchObject({ type: 'Svg', alt: '상자' });
     expect(ok.type === 'Svg' && ok.src.startsWith('data:image/svg+xml;')).toBe(true);
+    expect(ok.type === 'Svg' && decodeURIComponent(ok.still).includes('*{animation:none!important')).toBe(true); // 정지판은 미리 한 번(줄이기·안 볼 때 꺼내 쓴다)
     expect(normalize({ type: 'Svg', props: { source: '<svg onload="alert(1)"/>', alt: '상자' } })).toEqual({ type: 'Cant', what: 'Svg', alt: '상자' });
     expect(normalize({ type: 'Svg', props: {} })).toEqual({ type: 'Cant', what: 'Svg', alt: '' });
   });
@@ -83,6 +85,71 @@ describe('그리기 모양', () => {
     expect(hrefOk('file:///Users/a/b.md')).toBe(true);
     expect(hrefOk('javascript:alert(1)')).toBe(false);
     expect(hrefOk('data:text/html,x')).toBe(false);
+  });
+
+  // 10/12 달력 모드 글줄 겹침 — height 7 이 가로 칸 폭(8px)으로 56px 이 돼 줄이 포개졌다. 세로는 줄 높이(cellsOf 와 같은 18px)
+  it('세로 크기(height·minHeight)는 줄 단위, 가로(width·minWidth)는 글자 칸 단위', () => {
+    const s = boxStyle({ width: 10, height: 7, minWidth: 4, minHeight: 2 });
+    expect(s).toMatchObject({ width: '80px', height: '126px', minWidth: '32px', minHeight: '36px' });
+    expect(cellsOf(100, 126).rows).toBe(7);
+    expect(boxStyle({ height: '50%' }).height).toBe('50%');
+  });
+  it('높이를 정한 Box 는 넘치는 줄을 제 경계에서 자른다(옆 칸 위에 겹쳐 그리지 않게)', () => {
+    expect(boxStyle({ height: 3 }).overflow).toBe('hidden');
+    expect(boxStyle({ flexDirection: 'column' }).overflow).toBeUndefined();
+  });
+  it('Client 칸 높이도 줄 단위', () => {
+    const n = normalize({ type: 'Client', client: { plugin: 'p' }, props: { module: 'm', key: 'k', width: 10, height: 4 } });
+    expect(n.type === 'Client' && n.style).toMatchObject({ width: '80px', height: '72px' });
+  });
+
+  // 10/12 실측: 모드 호스트는 모르는 속성이 하나라도 있으면 트리를 통째로 버리고(engine), 모르는 값은 그 속성만 뺀다.
+  // 그래서 앱 모양(알약·카드·구분선·막대)은 호스트가 받는 속성의 조합을 보고 렌더러가 고른다(모드 쪽은 hq-mode-kit 의 kit.tsx 함수)
+  describe('받는 속성 조합 → 앱 모양(look)', () => {
+    const box = (props: Record<string, unknown>, children: unknown[] = []) => { const n = normalize({ type: 'Box', props, children }); if (n.type !== 'Box') throw new Error(n.type); return n; };
+    const text = (props: Record<string, unknown>, s: string) => { const n = normalize({ type: 'Text', props, children: [s] }); if (n.type !== 'Text') throw new Error(n.type); return n; };
+    it('round + borderDimColor = 카드(흐린 선, 10px 모서리)', () => {
+      const n = box({ borderStyle: 'round', borderDimColor: true, paddingX: 1 }, [{ type: 'Text', children: ['머리'] }, { type: 'Text', children: ['본문'] }]);
+      expect(n.look).toBe('card');
+      expect(n.style).toMatchObject({ border: '1px solid var(--line)', borderRadius: '10px' });
+    });
+    it('round 상자 안에 Text 하나 = 알약(tag)', () => {
+      expect(box({ borderStyle: 'round', borderColor: 'success' }, [{ type: 'Text', children: ['끝'] }]).look).toBe('tag');
+      expect(box({ borderStyle: 'round' }, [{ type: 'Text', children: ['a'] }, { type: 'Text', children: ['b'] }]).look).toBeUndefined();
+      expect(box({ borderStyle: 'single' }, [{ type: 'Text', children: ['a'] }]).look).toBeUndefined();
+    });
+    it('borderDimColor 만 = 흐린 선', () => {
+      expect(box({ borderStyle: 'single', borderDimColor: true }, [{ type: 'Text', children: ['a'] }, { type: 'Text', children: ['b'] }]).style.border).toBe('1px solid var(--line)');
+    });
+    it('backgroundColor 가 있는 Text = 칩(꽉 찬 알약)', () => {
+      expect(text({ backgroundColor: 'success', color: 'inverseText' }, ' 끝 5 ').look).toBe('chip');
+      expect(text({ color: 'success' }, '끝 5').look).toBeUndefined();
+    });
+    it('─ 만 있는 Text(3자 이상) = 구분선', () => {
+      expect(text({ dimColor: true }, '────────').look).toBe('divider');
+      expect(text({}, '──').look).toBeUndefined();
+      expect(text({}, '── 제목 ──').look).toBeUndefined();
+    });
+    // 10/12 schedule-mode: 14% 칸 카드 안 알약이 칸 밖으로 넘치고(알약이 글 폭 그대로), 겹 Text 말줄임이 두 줄로 감겼다
+    it('truncate Text 는 trunc 표시 — 안쪽 Text 가 줄바꿈을 다시 걸지 않게(.mdv-trunc .mdv-text)', () => {
+      const n = normalize({ type: 'Text', props: { wrap: 'truncate-end' }, children: [{ type: 'Text', props: { dimColor: true }, children: ['11:00'] }, ' ', { type: 'Text', children: ['카드뉴스 시안 검토'] }] });
+      expect(n.type === 'Text' && n.trunc).toBe(true);
+      expect(text({}, '그냥 글').trunc).toBeUndefined();
+      expect(text({ wrap: 'wrap' }, '그냥 글').trunc).toBeUndefined();
+    });
+    it('카드 안 알약은 칸 폭까지만 — 알약 max-width 100%·min-width 0, 카드는 넘침 자름, 말줄임 안쪽 글은 white-space inherit', () => {
+      const rule = (sel: string) => (modeCss.match(new RegExp(`${sel.replace(/[.]/g, '\\.')}\\s*\\{([^}]*)\\}`)) ?? [])[1] ?? '';
+      expect(rule('.mdv-box.mdv-look-tag')).toMatch(/max-width:\s*100%/);
+      expect(rule('.mdv-box.mdv-look-tag')).toMatch(/min-width:\s*0/);
+      expect(rule('.mdv-box.mdv-look-card')).toMatch(/overflow:\s*hidden/);
+      expect(rule('.mdv-trunc .mdv-text')).toMatch(/white-space:\s*inherit/);
+    });
+    it('█·░ 만 있는 Text = 진행 막대, 채운 비율을 --mdv-pct 로', () => {
+      const n = text({ color: 'success' }, '██████░░░░');
+      expect(n.look).toBe('bar');
+      expect(n.style).toMatchObject({ '--mdv-pct': '60%' });
+      expect(text({}, '░░░░').style).toMatchObject({ '--mdv-pct': '0%' });
+    });
   });
 
   it('칸 크기 px → 글자 칸', () => {
@@ -178,3 +245,27 @@ describe('staleParts — 밀림 하나에 무엇을 다시 그릴까', () => {
     expect(staleParts({ subtype: 'ui_invalidate', instances: 'x' }, on)).toEqual({ band: true, pane: true });
   });
 });
+
+// 10/13 사용자: 호스트가 없는데 까닭도 없으면 '모드 켜는 중'이 영원히 돌았다 — 오래 걸리면 다시 켜기를 보인다
+describe('모드 켜는 중이 오래 걸리면', () => {
+  const s = { alive: false, ready: false, unsupported: false, error: null };
+  it('정한 시간이 지나면 slow — 다시 켜기 단추와 까닭 한 줄', () => {
+    expect(modeNote(s, false)).toBe('starting');
+    expect(modeNote(s, true)).toBe('slow');
+    expect(modeNote({ ...s, alive: true, ready: true }, true)).toBe('ok');
+    expect(START_SLOW_MS).toBeGreaterThanOrEqual(30_000);
+    expect(START_SLOW_MS).toBeLessThanOrEqual(90_000);
+  });
+});
+
+// 10/13 참모-7: scripts/app mode open x --where dash 참모-7 이 짧은 이름으로 저장돼 칸이 안 떴다(이젠 Rust 가 전체 이름으로 맞추지만, 이미 저장된 것도 보이게)
+describe('대시보드 칸 — 짧은 이름으로 저장된 것도 그 참모 칸에', () => {
+  const r = (dash: string): ModeRow => ({ name: 'm', title: 'M', source: 'added', dir: '/H/m', whereDefault: 'dash', on: true, where: 'dash', alive: true, pid: 0, dash });
+  it('기본 이름(" · " 앞)이 같으면 같은 참모', () => {
+    expect(dashModes([r('참모-7')], ['참모-7 · 가나 담당', 'a1'])).toHaveLength(1);
+    expect(dashModes([r('참모-7 · 옛 역할')], ['참모-7 · 가나 담당'])).toHaveLength(1);
+    expect(dashModes([r('참모-70')], ['참모-7 · 가나 담당'])).toHaveLength(0);
+    expect(dashModes([r('참모-7')], ['참모-8 · 다라 담당'])).toHaveLength(0);
+  });
+});
+

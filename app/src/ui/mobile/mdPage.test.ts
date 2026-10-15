@@ -53,7 +53,8 @@ describe('폰 md 문서 보기', () => {
     expect(all).not.toMatch(/border-left|inset\s+\d+px\s+0/);
   });
   it('닫기는 직접 그린 아이콘 + 이름(aria-label)', () => {
-    expect(fileView).toMatch(/aria-label="닫기"[^>]*>\s*<IconClose \/>/);
+    // 공용 시트 머리(kit SheetHead) — 닫기 = IconBtn(aria-label·title) + IconClose
+    expect(fileView).toMatch(/<SheetHead [^>]*onClose=\{onClose\}|<BottomSheet [^>]*\stitle=[^>]*onClose=\{onClose\}/); // 공용 시트 title → SheetHead(X)
     expect(fileView).not.toMatch(/>닫기<\/button>/);
   });
 });

@@ -24,12 +24,10 @@ pub struct MacEnv;
 
 impl Env for MacEnv {
     fn orchs(&self) -> Result<Vec<Orch>, String> {
-        let out = crate::platform::run_capped(crate::platform::command(crate::claude::claude_bin()).args(["agents", "--json"]), Duration::from_secs(10)).map_err(|e| e.to_string())?;
-        if !out.status.success() {
-            return Err("claude agents".into());
-        }
+        // 데스크톱·폰과 같은 목록을 같이 쓴다(2.5초 안이면 그 결과)
+        let json = crate::claude::agents_json().map_err(|_| "claude agents".to_string())?;
         let hq = crate::config::hq_dir(&crate::config::home(), &crate::config::current(), |k| std::env::var(k).ok());
-        Ok(run::orchs_from(&String::from_utf8_lossy(&out.stdout), &hq, &crate::config::assistant_name()))
+        Ok(run::orchs_from(&json, &hq, &crate::config::assistant_name()))
     }
     fn type_to(&self, o: &Orch, text: &str) -> Result<(), String> {
         // 메신저에서 보냈다는 표시 — 훅(scripts/voice-hint)이 읽어 참모에게 '사용자는 지금 텔레그램'을 알린다. 글 내용은 안 남긴다

@@ -1,6 +1,6 @@
 // 윈도우 단축키 규칙 — 맥은 ⌘ 조합을 앱이, Ctrl 조합을 터미널(Claude 입력칸)이 쓴다. 윈도우엔 ⌘ 가 없다.
 // Ctrl+글자(C·D·K·W·T·B·E·A…)는 Claude·셸이 쓰니 앱은 Ctrl+Shift+글자(윈도우 터미널과 같은 관례),
-// 숫자·기호는 Ctrl 하나. 예외: ⌘⇧E(리더 크게) → Ctrl+Alt+E, ⌘/(둘러보기) → Ctrl+Shift+/(Ctrl+/ 는 되돌리기), ⌘[ ⌘](뒤로·앞으로) → Ctrl+Shift+[ ](Ctrl+[ 는 Esc)
+// 숫자·기호는 Ctrl 하나. 예외: ⌘⇧글자(⌘⇧E 리더 크게·⌘⇧W 세션 끄기·⌘⇧T 새 세션·⌘⇧H 홈·⌘⇧L 보관함)는 Ctrl+Alt+글자 — Ctrl+Shift+글자는 ⇧ 없는 ⌘글자 자리라서, ⌘/(둘러보기) → Ctrl+Shift+/(Ctrl+/ 는 되돌리기), ⌘[ ⌘](뒤로·앞으로) → Ctrl+Shift+[ ](Ctrl+[ 는 Esc)
 // 메뉴 단축키(Rust main.rs accel)도 같은 규칙이다 — 하나를 바꾸면 둘 다
 
 type KeyLike = { key: string; code?: string; metaKey: boolean; shiftKey: boolean; altKey: boolean; ctrlKey: boolean };
@@ -16,6 +16,9 @@ export function codeOf(key: string): string {
 }
 
 /** 윈도우 키 입력 → 같은 뜻의 맥 키(⌘…). 앱 단축키가 아니면 null — 그 키는 터미널·입력칸 몫 */
+/** ⌘⇧글자로 쓰는 키 — 윈도우에선 Ctrl+Alt+글자 (Ctrl+Shift+글자는 ⇧ 없는 ⌘글자가 이미 차지) */
+export const SHIFT_LETTERS = 'EWTHL';
+
 export function winToMac(e: KeyLike): KeyLike | null {
   if (!e.ctrlKey || e.metaKey) return null;
   const code = e.code || codeOf(e.key);
@@ -24,7 +27,7 @@ export function winToMac(e: KeyLike): KeyLike | null {
   if (e.altKey) {
     if (e.shiftKey) return null;
     if (digit) return { ...mac(digit, { alt: true }), code };
-    if (letter === 'E') return mac('E', { shift: true });
+    if (letter && SHIFT_LETTERS.includes(letter)) return mac(letter, { shift: true });
     return null;
   }
   if (e.shiftKey) {
@@ -46,7 +49,7 @@ export function keyLabel(text: string, win: boolean): string {
   if (!win || !text.includes('⌘')) return text;
   return text.replace(/(⌥?)⌘(⇧?)(Enter|\+?클릭|[Cc]lick|.)?/g, (all, alt: string, shift: string, k: string | undefined) => {
     if (k === undefined) return 'Ctrl';
-    if (shift && k === 'E') return 'Ctrl+Alt+E';
+    if (shift && k.length === 1 && SHIFT_LETTERS.includes(k)) return `Ctrl+Alt+${k}`;
     if (k === 'Enter') return 'Ctrl+Enter';
     if (/클릭|[Cc]lick/.test(k)) return `Ctrl+${k.replace(/^\+/, '')}`;
     if (/^\s$/.test(k)) return `Ctrl${k}`;

@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { loginCancel, loginCode, loginStart, readLogin } from '../../data/web';
 import { flowText, readPhoneLogin, showCard, type PhoneLogin } from '../../domain/phoneLogin';
 import { IconClose, IconSend } from '../Icons';
+import { BottomSheet, useSheet } from './kit';
 import { useMemoPoll } from './usePoll';
 import { machine } from '../../i18n';
 
@@ -33,15 +34,12 @@ function LoginSheet({ first, onClose }: { first: PhoneLogin; onClose: () => void
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [shown, setShown] = useState(false);
-  useEffect(() => { const id = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(id); }, []);
   // 열어 둔 동안 2초마다 — 주소가 나오고·코드 확인이 끝나는 걸 바로 보게
   useEffect(() => {
     const get = () => { readLogin().then((t) => setV(readPhoneLogin(t)), () => {}); };
     const t = setInterval(get, 2000);
     return () => clearInterval(t);
   }, []);
-  const close = () => { setShown(false); window.setTimeout(onClose, 220); };
   const act = async (f: () => Promise<unknown>) => {
     setBusy(true);
     setErr(null);
@@ -59,34 +57,30 @@ function LoginSheet({ first, onClose }: { first: PhoneLogin; onClose: () => void
   const clean = code.trim();
   const send = () => { if (clean) void act(() => loginCode(clean)).then(() => setCode('')); };
   return (
-    <div className="m-pick-wrap" role="dialog" aria-modal="true" aria-label="Claude 로그인">
-      <button type="button" className={shown ? 'm-pick-back m-on' : 'm-pick-back'} aria-label="닫기" onClick={close} />
-      <div className="m-pick" style={{ transform: shown ? 'translateY(0)' : 'translateY(100%)' }}>
-        <div className="m-pick-grab"><div className="m-handle" /></div>
-        <div className="m-picker-head">
-          <b>Claude 로그인</b>
-          <button type="button" className="m-icon" onClick={close} aria-label="닫기" title="닫기"><IconClose /></button>
-        </div>
-        <div className="m-picker-list m-login-steps">
-          {f.state !== 'idle' && <p className="m-sm">{flowText(f)}</p>}
-          {fresh && f.state !== 'done' && (
-            <button type="button" className="m-send m-login-go" disabled={busy} onClick={() => void act(loginStart)}>{f.state === 'failed' ? '다시 시작' : '로그인 시작'}</button>
-          )}
-          {f.state === 'starting' && <p className="m-muted m-sm">몇 초 걸려요</p>}
-          {f.state === 'waiting' && f.url && (
-            <>
-              <a className="m-send m-login-go" href={f.url} target="_blank" rel="noopener noreferrer">로그인 페이지 열기</a>
-              <div className="m-login-code">
-                <input className="m-new-input" value={code} autoComplete="one-time-code" autoCapitalize="off" autoCorrect="off" spellCheck={false} enterKeyHint="send"
-                  aria-label="로그인 코드" placeholder="코드 붙여 넣기" maxLength={512} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) send(); }} />
-                <button type="button" className="m-icon m-login-send" disabled={busy || !clean} onClick={send} aria-label="코드 보내기" title="보내기"><IconSend /></button>
-              </div>
-            </>
-          )}
-          {err && <p className="m-error">{err}</p>}
-          {!fresh && <button type="button" className="m-btn m-login-stop" disabled={busy} onClick={() => void act(loginCancel).then(close)}>그만</button>}
-        </div>
-      </div>
-    </div>
+    <BottomSheet label="Claude 로그인" title="Claude 로그인" onClose={onClose} bodyClass="m-picker-list m-login-steps">
+      {f.state !== 'idle' && <p className="m-sm">{flowText(f)}</p>}
+      {fresh && f.state !== 'done' && (
+        <button type="button" className="m-send m-login-go" disabled={busy} onClick={() => void act(loginStart)}>{f.state === 'failed' ? '다시 시작' : '로그인 시작'}</button>
+      )}
+      {f.state === 'starting' && <p className="m-muted m-sm">몇 초 걸려요</p>}
+      {f.state === 'waiting' && f.url && (
+        <>
+          <a className="m-send m-login-go" href={f.url} target="_blank" rel="noopener noreferrer">로그인 페이지 열기</a>
+          <div className="m-login-code">
+            <input className="m-new-input" value={code} autoComplete="one-time-code" autoCapitalize="off" autoCorrect="off" spellCheck={false} enterKeyHint="send"
+              aria-label="로그인 코드" placeholder="코드 붙여 넣기" maxLength={512} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) send(); }} />
+            <button type="button" className="m-icon m-login-send" disabled={busy || !clean} onClick={send} aria-label="코드 보내기" title="보내기"><IconSend /></button>
+          </div>
+        </>
+      )}
+      {err && <p className="m-error">{err}</p>}
+      {!fresh && <StopLogin disabled={busy} onStop={() => act(loginCancel)} />}
+    </BottomSheet>
   );
+}
+
+/** 로그인 그만 — 멈춘 뒤 시트를 내려 닫는다(공용 시트의 닫기) */
+function StopLogin({ disabled, onStop }: { disabled: boolean; onStop: () => Promise<void> }) {
+  const { close } = useSheet();
+  return <button type="button" className="m-icon m-login-stop" disabled={disabled} onClick={() => void onStop().then(close)} aria-label="로그인 그만" title="그만"><IconClose /></button>;
 }

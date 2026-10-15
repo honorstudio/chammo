@@ -2,15 +2,22 @@
  * 상태 st-*, 전환 tr-*, 표정 xp-* 는 전역 짧은 클래스와 안 겹치게 전부 oa- 접두 */
 /* will-change = 프사마다 자기 합성 층. 없으면 움직이는 SVG 가 둘레 칸(사이드바 줄·탭 알약·겹친 프사 그림자)까지 매 프레임 다시 칠했다
  * — 보고 있을 때 웹뷰 GPU 27%→12%, 화면은 0픽셀 차이(2026-10-09 WebKit 하네스, .shots/debt-perf/2-gpu.md) */
-.oa { position: relative; display: inline-block; flex: 0 0 auto; width: var(--oa-s); height: var(--oa-s); line-height: 0; vertical-align: middle; will-change: transform; }
+.oa { position: relative; display: inline-block; flex: 0 0 auto; width: var(--oa-s); height: var(--oa-s); line-height: 0; vertical-align: middle; will-change: transform; isolation: isolate; }
+/* 프사 위 표시(띠 상태 점·켜는 중 점·대시보드 뱃지·폰 고리 점)는 늘 프사 층들보다 위 — 프사는 제 안에서만 쌓인다(isolation) */
+:is(.lk-pip, .lk-ph-dot, .cv-avb, .m-ring-dot) { z-index: calc(var(--z-base) + 1); }
 .oa { --oa-c: var(--oa-body); --oa-eye: #fff; }
 /* 참모 색 면 위 — 몸 = 면 위 글자색(흰색), 눈 = 면 색. 고른 탭 알약(포커스 = 참모 색 면)은 자동 */
 .oa-oncolor { --oa-c: var(--orch-ink, #fff); --oa-eye: var(--orch-solid, var(--oa-body)); }
-/* 고른 탭 알약(포커스 밖 = 참모 색을 옅게 깐 면)은 프사 제 색 그대로 — 바탕색으로 뒤집으면 눈만 빛나 보였다(2026-10-10 사용자) */
-.space-mode .tabbed:focus-within .chat-tabs button.on .oa { --oa-c: var(--orch-ink, #fff); --oa-eye: var(--orch-solid, var(--oa-body)); }
-.oa > svg { width: 100%; height: 100%; display: block; overflow: visible; transition: filter .7s, opacity .7s; }
+.oa > .oa-tr { transition: filter .7s, opacity .7s; }
+/* 층 — 움직이는 묶음(전환·몸·얼굴·눈·눈동자)은 겹친 HTML 층이고 SVG 는 그림만(ui/avatar/shapes PresetSvg).
+ * SVG 안쪽 <g> 를 움직이면 WebKit 이 합성기로 못 돌려 다시 칠했다 — 띠 프사 5개 GPU 50% → 층 나누기 1.2~1.4%(2026-10-12 하네스) */
+.oa-l { position: absolute; inset: 0; display: block; }
+.oa-l > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible; }
 .oa svg * { transform-box: fill-box; transform-origin: 50% 50%; }
-.oa .oa-tr, .oa .oa-all { transform-origin: 50% 100%; }
+.oa .oa-tr, .oa .oa-all { transform-origin: 50% 85%; }
+.oa .oa-eyes { transform-origin: 50% var(--oa-ey, 55%); }
+/* 눈 하나 키우기(작은 프사)는 그 눈 가운데 — 흰자·눈동자·눈꺼풀 장마다 같은 점(shapes EyeG 의 기준점) */
+.oa .oa-eye { transform-box: view-box; }
 .oa-body { fill: var(--oa-c); }
 .oa-body.oa-round { stroke: var(--oa-c); stroke-width: 5; stroke-linejoin: round; }
 .oa-body.oa-hexa { stroke: var(--oa-c); stroke-width: 3.4; stroke-linejoin: round; }
@@ -19,9 +26,9 @@
 .oa-k { fill: #1d1d20; }
 .oa-gl { fill: #fff; }
 /* 알약 안 — 까만 눈은 눈 색으로, 눈동자는 몸 색으로(눈 종류마다 안 묻히게) */
-:is(.oa-oncolor, .space-mode .tabbed:focus-within .chat-tabs button.on .oa) .oa-eyev > .oa-k { fill: var(--oa-eye); }
-:is(.oa-oncolor, .space-mode .tabbed:focus-within .chat-tabs button.on .oa) .oa-pup .oa-k { fill: var(--oa-c); }
-:is(.oa-oncolor, .space-mode .tabbed:focus-within .chat-tabs button.on .oa) .oa-gl { fill: var(--oa-c); }
+.oa-oncolor .oa-eyev > .oa-k { fill: var(--oa-eye); }
+.oa-oncolor .oa-pup .oa-k { fill: var(--oa-c); }
+.oa-oncolor .oa-gl { fill: var(--oa-c); }
 /* 눈꺼풀 = 몸 색 조각 — 위는 내려오고 아래는 올라와 가운데서 만난다 */
 .oa-lt, .oa-lb { fill: var(--oa-c); }
 .oa .oa-lt { transform-origin: 50% 0; transform: scaleY(var(--oa-lid, 0)); }
@@ -39,16 +46,16 @@
 .oa-st-work .oa-all { animation: oa-w-body calc(2.9s * var(--oa-k)) infinite var(--oa-d); }
 @keyframes oa-w-face {
   0%, 6% { transform: translate(0, 0); animation-timing-function: cubic-bezier(.2, 1.6, .4, 1); }
-  13%, 38% { transform: translate(-2.8px, 0); animation-timing-function: cubic-bezier(.2, 1.6, .4, 1); }
-  45%, 64% { transform: translate(2.8px, -.4px); animation-timing-function: cubic-bezier(.3, 1.2, .5, 1); }
-  71%, 88% { transform: translate(.6px, 1.6px); animation-timing-function: cubic-bezier(.4, 0, .2, 1); }
+  13%, 38% { transform: translate(calc(var(--oa-s) * -0.07), 0); animation-timing-function: cubic-bezier(.2, 1.6, .4, 1); }
+  45%, 64% { transform: translate(calc(var(--oa-s) * 0.07), calc(var(--oa-s) * -0.01)); animation-timing-function: cubic-bezier(.3, 1.2, .5, 1); }
+  71%, 88% { transform: translate(calc(var(--oa-s) * 0.015), calc(var(--oa-s) * 0.04)); animation-timing-function: cubic-bezier(.4, 0, .2, 1); }
   100% { transform: translate(0, 0); }
 }
 @keyframes oa-w-pup {
   0%, 6% { transform: translate(0, 0); animation-timing-function: cubic-bezier(.2, 1.6, .4, 1); }
-  12%, 38% { transform: translate(-1.1px, 0); animation-timing-function: cubic-bezier(.2, 1.6, .4, 1); }
-  44%, 64% { transform: translate(1.1px, 0); }
-  70%, 88% { transform: translate(0, .7px); }
+  12%, 38% { transform: translate(calc(var(--oa-s) * -0.0275), 0); animation-timing-function: cubic-bezier(.2, 1.6, .4, 1); }
+  44%, 64% { transform: translate(calc(var(--oa-s) * 0.0275), 0); }
+  70%, 88% { transform: translate(0, calc(var(--oa-s) * 0.0175)); }
   100% { transform: translate(0, 0); }
 }
 @keyframes oa-w-body {
@@ -82,8 +89,8 @@
 @keyframes oa-a-body {
   0% { transform: translateY(0) rotate(0) scale(1); animation-timing-function: ease-out; }
   9% { transform: translateY(0) scale(1.13, .85); animation-timing-function: cubic-bezier(.2, .9, .3, 1); }
-  20% { transform: translateY(-7px) scale(.9, 1.13); animation-timing-function: ease-out; }
-  28% { transform: translateY(-8.5px) scale(1); animation-timing-function: ease-in; }
+  20% { transform: translateY(calc(var(--oa-s) * -0.175)) scale(.9, 1.13); animation-timing-function: ease-out; }
+  28% { transform: translateY(calc(var(--oa-s) * -0.2125)) scale(1); animation-timing-function: ease-in; }
   37% { transform: translateY(0) scale(1.16, .83); animation-timing-function: cubic-bezier(.3, 1.7, .5, 1); }
   47% { transform: translateY(0) scale(.96, 1.04); }
   55% { transform: translateY(0) scale(1.02, .98); }
@@ -97,7 +104,7 @@
 .oa-st-off .oa-tr { transform: scale(1.05, .92); }
 .oa.oa-st-off .oa-lt, .oa.oa-st-off .oa-lb { transform: scaleY(1); }
 .oa-st-off .oa-shut { opacity: 1; transition-delay: .5s; }
-.oa-st-off > svg { filter: saturate(.12); opacity: .6; }
+.oa-st-off > .oa-tr { filter: saturate(.12); opacity: .6; }
 
 /* 전환 — 상태가 바뀔 때 한 번 */
 .oa.oa-tr-wake .oa-tr { animation: oa-t-wake .9s both; }
@@ -116,14 +123,44 @@
 @keyframes oa-t-wake { 0% { transform: scale(1.05, .92); } 28% { transform: scale(.9, 1.14); animation-timing-function: cubic-bezier(.3, 1.5, .5, 1); } 55% { transform: scale(1.06, .95); } 76% { transform: scale(.98, 1.02); } 100% { transform: scale(1); } }
 @keyframes oa-t-open-t { 0% { transform: scaleY(1); } 55% { transform: scaleY(0); } 100% { transform: scaleY(var(--oa-lid, 0)); } }
 @keyframes oa-t-open-b { 0% { transform: scaleY(1); } 55%, 100% { transform: scaleY(0); } }
-@keyframes oa-t-alert { 0% { transform: translateY(0) scale(1); } 35% { transform: translateY(-3.5px) scale(.93, 1.09); } 70% { transform: translateY(0) scale(1.05, .95); } 100% { transform: translateY(0) scale(1); } }
+@keyframes oa-t-alert { 0% { transform: translateY(0) scale(1); } 35% { transform: translateY(calc(var(--oa-s) * -0.0875)) scale(.93, 1.09); } 70% { transform: translateY(0) scale(1.05, .95); } 100% { transform: translateY(0) scale(1); } }
 @keyframes oa-t-pop { 0% { transform: scale(.6); } 100% { transform: scale(1); } }
 @keyframes oa-t-sleep { 0% { transform: scale(1); } 35% { transform: scale(.97, 1.04); } 100% { transform: scale(1.05, .92); } }
 @keyframes oa-t-close-t { 0% { transform: scaleY(var(--oa-lid, 0)); } 100% { transform: scaleY(1); } }
 @keyframes oa-t-close-b { 0% { transform: scaleY(0); } 100% { transform: scaleY(1); } }
 @keyframes oa-t-calm { 0% { transform: scale(1); } 35% { transform: scale(1.05, .94); } 70% { transform: scale(.99, 1.01); } 100% { transform: scale(1); } }
 @keyframes oa-t-half-t { 0%, 100% { transform: scaleY(var(--oa-lid, 0)); } 40%, 62% { transform: scaleY(.6); } }
-@keyframes oa-t-joy { 0% { transform: translateY(0) scale(1); } 15% { transform: scale(1.1, .88); } 38% { transform: translateY(-6px) scale(.92, 1.1); } 60% { transform: translateY(0) scale(1.1, .9); } 80% { transform: scale(.98, 1.02); } 100% { transform: scale(1); } }
+@keyframes oa-t-joy { 0% { transform: translateY(0) scale(1); } 15% { transform: scale(1.1, .88); } 38% { transform: translateY(calc(var(--oa-s) * -0.15)) scale(.92, 1.1); } 60% { transform: translateY(0) scale(1.1, .9); } 80% { transform: scale(.98, 1.02); } 100% { transform: scale(1); } }
+
+/* 띠 켜는 중·끄는 중(2026-10-12 사용자 "뿅 나왔다 뿅 사라진다") — 상태(st-off)는 그대로 두고 단계(ph-)가 덮는다.
+ * 켜는 중 = 잠에서 깨어남: 감은 눈이 두 번 깜빡이며 반쯤 뜨고(1.3초), 그 사이 몸이 펴지며 통 튀어 오른다 → 오래 걸리면 숨쉬며 기다림.
+ * 살아나면(st-off → 쉼·일함) 반쯤 뜬 눈에서 마저 뜨며 톡(oa-from-start). 끄는 중 = 잠듦(sleep 전환) + 작아지며 흐려져 쉬는 참모 크기(26/32)로 */
+.oa-ph-starting > svg { filter: saturate(.75); opacity: .9; }
+.oa.oa-ph-starting .oa-lt { transform: scaleY(.38); animation: oa-ph-open-t 1.3s both; }
+.oa.oa-ph-starting .oa-lb { transform: scaleY(0); animation: oa-ph-open-b 1.3s both; }
+.oa-ph-starting .oa-shut { opacity: 0; transition: none; animation: oa-ph-shut 1.3s both; }
+.oa.oa-ph-starting .oa-tr { animation: oa-ph-rise 1.3s both; }
+.oa-ph-starting .oa-all { animation: oa-ph-breathe 1.9s ease-in-out 1.3s infinite; }
+.oa-ph-starting.oa-blink .oa-lt { animation: oa-ph-open-t 1.3s both, oa-ph-doze-t .75s ease-in-out; }
+.oa-ph-starting.oa-blink .oa-lb { animation: oa-ph-open-b 1.3s both, oa-ph-doze-b .75s ease-in-out; }
+@keyframes oa-ph-open-t { 0%, 22% { transform: scaleY(1); } 34% { transform: scaleY(.5); } 42% { transform: scaleY(1); } 56% { transform: scaleY(.22); } 63% { transform: scaleY(.85); } 74%, 100% { transform: scaleY(.38); } }
+@keyframes oa-ph-open-b { 0%, 22% { transform: scaleY(1); } 34% { transform: scaleY(.55); } 42% { transform: scaleY(1); } 56% { transform: scaleY(0); } 63% { transform: scaleY(.7); } 74%, 100% { transform: scaleY(0); } }
+@keyframes oa-ph-shut { 0%, 24% { opacity: 1; } 28%, 38% { opacity: 0; } 42% { opacity: 1; } 48%, 100% { opacity: 0; } }
+@keyframes oa-ph-rise { 0%, 40% { transform: scale(1.05, .92); } 58% { transform: translateY(calc(var(--oa-s) * -0.0625)) scale(.92, 1.1); animation-timing-function: ease-in; } 72% { transform: scale(1.05, .95); animation-timing-function: cubic-bezier(.3, 1.5, .5, 1); } 86% { transform: scale(.99, 1.01); } 100% { transform: scale(1); } }
+@keyframes oa-ph-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(.965, 1.045); } }
+@keyframes oa-ph-doze-t { 0%, 100% { transform: scaleY(.38); } 35%, 60% { transform: scaleY(1); } }
+@keyframes oa-ph-doze-b { 0%, 100% { transform: scaleY(0); } 35%, 60% { transform: scaleY(1); } }
+.oa.oa-tr-wake.oa-from-start .oa-tr { animation: oa-ph-ready .6s both; }
+.oa.oa-tr-wake.oa-from-start .oa-lt { animation: oa-ph-ready-t .5s both; }
+.oa.oa-tr-wake.oa-from-start .oa-lb { animation: none; }
+@keyframes oa-ph-ready { 0% { transform: scale(1); } 35% { transform: translateY(calc(var(--oa-s) * -0.05)) scale(.94, 1.08); } 70% { transform: scale(1.03, .97); } 100% { transform: scale(1); } }
+@keyframes oa-ph-ready-t { 0% { transform: scaleY(.38); } 55% { transform: scaleY(0); } 100% { transform: scaleY(var(--oa-lid, 0)); } }
+.oa.oa-ph-stopping { transform: scale(.8); transition: transform .9s cubic-bezier(.4, 0, .2, 1) .25s; }
+/* 올린 그림 — 눈이 없으니 켜는 중은 고리가 숨쉬고 색이 돌아오며, 끄는 중은 흑백으로 작아진다 */
+.oa-img.oa-ph-starting { animation: oa-ph-breathe 1.9s ease-in-out infinite; }
+.oa-img.oa-ph-starting .oa-pic { filter: grayscale(.3); opacity: .85; transition: filter .7s, opacity .7s; }
+.oa-img.oa-ph-starting::before { box-shadow: 0 0 0 2px var(--oa-c); animation: oa-ph-ring 1.9s ease-in-out infinite; }
+@keyframes oa-ph-ring { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
 
 /* 올린 그림 — 동그랗게 잘림, 눈이 없으니 상태는 고리로(일함 도는 고리·물음 통통+고리·꺼짐 흑백) */
 .oa-img { border-radius: 50%; }
@@ -138,13 +175,16 @@
 @keyframes oa-spin { to { transform: rotate(360deg); } }
 
 /* 화면 밖이면 멈춘다(그리는 값 그대로 멈춤 — 다시 보이면 이어서) */
-.oa.oa-hidden svg *, .oa.oa-hidden, .oa.oa-hidden::before { animation-play-state: paused !important; }
+.oa.oa-hidden *, .oa.oa-hidden, .oa.oa-hidden::before { animation-play-state: paused !important; }
 /* 사람이 안 보면(ui/attention — 창 숨김·다른 앱이 앞·입력 2분 없음) 멈춘 그림. 그 자리에서 얼리면 감은 눈·뛰는 중으로 굳어
  * 상태를 틀리게 보여서 기본 자세로 돌린다 — 일함·쉼은 눈꺼풀 높이, 물음은 큰 눈, 꺼짐은 감은 눈, 올린 그림은 고리 그대로 */
-html.oa-paused .oa svg *, html.oa-paused .oa, html.oa-paused .oa::before { animation: none !important; }
+html.oa-paused .oa *, html.oa-paused .oa, html.oa-paused .oa::before { animation: none !important; }
 html.oa-paused .oa-st-ask .oa-eyes { transform: scale(1.14); }
+/* 애니메이션 줄이기·끄기(ui/calm)도 같은 기본 자세 */
+html.oa-calm .oa *, html.oa-calm .oa, html.oa-calm .oa::before, html.oa-still .oa *, html.oa-still .oa, html.oa-still .oa::before { animation: none !important; }
+:is(html.oa-calm, html.oa-still) .oa-st-ask .oa-eyes { transform: scale(1.14); }
 @media (prefers-reduced-motion: reduce) {
-  .oa svg, .oa svg *, .oa, .oa::before { animation: none !important; transition: none !important; }
+  .oa *, .oa, .oa::before { animation: none !important; transition: none !important; }
 }
 
 /* 누를 수 있는 프사(대시보드 머리) — 올리면 "바꾸기" */

@@ -4,6 +4,8 @@ import { nativeVoicesList, supertonicInstall, supertonicStatus, ttsTest, ttsWarm
 import { nativeVoices, readTts, SUPERTONIC_VOICES, ttsCommand, type TtsChoice, type TtsEngine } from '../domain/tts';
 import { getLang, tr } from '../i18n';
 import { IS_WIN } from '../domain/reader';
+import { IconPlay } from './Icons';
+import { IconButton } from './kit/IconButton';
 
 type Props = { value: string; onChange: (command: string) => void; name: string; onError: (e: string) => void };
 
@@ -95,7 +97,7 @@ export function TtsField({ value, onChange, name, onError }: Props) {
             )}
           </div>
           <div className="su-tts-row">
-            <button type="button" className="btn" disabled={testing} onClick={() => void test()}>{testing ? tr('읽는 중…', 'Speaking…') : tr('들어보기', 'Test')}</button>
+            <IconButton size="l" tone="line" label={tr('들어보기', 'Test')} busy={testing} busyLabel={tr('읽는 중…', 'Speaking…')} onClick={() => void test()}><IconPlay /></IconButton>
           </div>
           {!IS_WIN && <div className="su-hint">{tr(
             'Supertonic 은 이 맥에서 바로 읽어요(인터넷 필요 없음, 한 문장 1~2초). 받기를 누르면 파이썬 패키지와 목소리 모델(Supertone, OpenRAIL-M 라이선스)을 이 맥에 내려받아요.',

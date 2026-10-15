@@ -1,10 +1,10 @@
 // 하위 세션 선택지 창 → 참모에게 넘긴다 — 2026-09-28 사용자 "세션이 감지해서 나한테 되묻거나 자기가 판단해야".
-// 앱은 하위 세션 질문을 사용자에게 직접 안 띄운다(참모 몫). 그런데 참모는 그 창을 못 봐서, 사용자가 손바닥을 눌러 봐야 알았다.
+// 앱은 하위 세션 질문을 사용자에게 직접 안 띄운다(참모 몫). 그런데 참모는 그 창을 못 봐서, 사용자가 말풍선을 눌러 봐야 알았다.
 // 선택지 창에서 GRACE_MS 넘게 멈춘 하위 세션을 참모 입력칸에 한 줄로 알린다 → 참모가 scripts/choice 로 읽고 답하거나 사용자에게 묻는다
 import { tr } from '../i18n';
 import type { Activity } from './activity';
 import type { Session } from './session';
-import type { TaskEvent } from './tasks';
+import type { TaskCard, TaskEvent } from './tasks';
 import { findTarget } from './inbox';
 import { splitOrchName } from './orchLabel';
 
@@ -101,6 +101,9 @@ const lastWords = (a: Activity) => {
   return said.length > 140 ? '…' + said.slice(-140) : said;
 };
 
+/** 하위 세션의 지금 턴이 시작된 때 — 사람 지시와 다른 세션(참모) SendMessage 중 늦은 것 */
+export const turnStart = (a: Activity): string | undefined => [a.prompt?.ts, a.peer?.ts].filter((x): x is string => !!x).sort().at(-1);
+
 export function nextAskForward(
   cands: AskCand[],
   orch: Session | undefined | ((s: Session) => Session | undefined),
@@ -115,8 +118,9 @@ export function nextAskForward(
     const { session: s, activity: a } = c;
     const r = a.reply;
     if (s.kind !== 'background' || s.state !== 'idle' || !r?.turnEnd) return false;
-    if (a.prompt && a.prompt.ts > r.ts) return false; // 새 지시를 받았다
-    if (a.messaged && (!a.prompt || a.messaged >= a.prompt.ts)) return false; // 이번 턴에 SendMessage 로 이미 보고했다
+    const turn = turnStart(a); // 사람 지시·참모 SendMessage 중 늦은 것 — prompt 만 보면 두 번째 일부터 앞 일 보고로 막혔다(2026-10-11 bug-hunt)
+    if (turn && turn > r.ts) return false; // 새 지시를 받았다
+    if (a.messaged && (!turn || a.messaged >= turn)) return false; // 이번 턴에 SendMessage 로 이미 보고했다
     if (!r.asks && !s.awaiting) return false;
     const at = Date.parse(r.ts);
     if (!(at > s.startedAt)) return false; // 이어서 켜기 전의 옛 답 — 가져온 세션은 쉬어도 blocked 로 나온다
@@ -149,6 +153,59 @@ export function askForwardText(s: Session, a: Activity, now: number): string {
   return tr(
     `[앱] ${whereOf(s)} 세션(${s.id})이 ${mins}분째 답을 기다려 — 마지막 말: "${q}" — 되돌리기 쉬운 건 네가 답하고(SendMessage), 사용자가 정할 거면 물어봐`,
     `[app] ${whereOf(s)} session (${s.id}) has been waiting for an answer for ${mins} min — last words: "${q}" — answer easy-to-undo ones yourself (SendMessage), ask the user when it's theirs to decide`,
+  );
+}
+
+// ── 맡긴 일이 안 닫혔는데 말없이 쉬는 하위 세션(2026-09-30 조사 2번 '참모가 다음 지시를 빠뜨림') ──
+// 묻지 않고(asks 아님) 턴을 끝냈고 그 턴에 참모에게 SendMessage 가 없으면 참모는 끝난 줄 모른다 → QUIET_GRACE_MS 뒤 맡긴 참모 입력칸에 한 줄
+
+export const QUIET_GRACE_MS = 10 * 60_000;
+/** 같은 일은 한 번만 */
+export const quietKeyOf = (c: AskCand, t: TaskCard) => `${c.session.id}:q:${t.id}`;
+
+/** 세션에 걸린 안 닫힌 일 — 그 세션을 대상으로 보낸 일 중 답 기록도 끝도 없는(sent) 가장 최근 것 */
+export function openTaskOf(cards: TaskCard[], sessions: Session[]): (s: Session) => TaskCard | undefined {
+  return (s) =>
+    cards
+      .filter((c) => c.status === 'sent' && findTarget(sessions, c.target)?.id === s.id)
+      .sort((a, b) => (a.sentAt < b.sentAt ? 1 : a.sentAt > b.sentAt ? -1 : 0))[0];
+}
+
+export function nextQuietForward(
+  cands: AskCand[],
+  openTask: (s: Session) => TaskCard | undefined,
+  orch: Session | undefined | ((s: Session) => Session | undefined),
+  done: ReadonlySet<string>,
+  now: number,
+  watching: (s: Session) => boolean,
+): { cand: AskCand; task: TaskCard } | undefined {
+  const toOf = typeof orch === 'function' ? orch : () => orch;
+  for (const c of cands) {
+    const { session: s, activity: a } = c;
+    const r = a.reply;
+    if (s.kind !== 'background' || s.state !== 'idle' || !r?.turnEnd || r.asks || s.awaiting || a.waitingOn) continue; // 묻는 턴은 nextAskForward, 백그라운드 기다림은 아직 안 끝남
+    // 턴의 시작 = 사람 지시(prompt)와 참모가 SendMessage 로 준 일(peer) 중 늦은 것 — prompt 만 보면 두 번째 일부터 앞 일 보고로 막혔다(2026-10-11 bug-hunt)
+    const turn = turnStart(a);
+    if (turn && turn > r.ts) continue;
+    if (a.messaged && (!turn || a.messaged >= turn)) continue; // 그 턴에 참모에게 보고했다
+    const at = Date.parse(r.ts);
+    if (!(at > s.startedAt) || now - at < QUIET_GRACE_MS || now - at > ASK_MAX_AGE) continue;
+    const t = openTask(s);
+    if (!t || r.ts < t.sentAt) continue; // 일을 보내기 전의 답
+    const to = toOf(s);
+    if (!to || to.state === 'blocked' || done.has(quietKeyOf(c, t)) || watching(s)) continue;
+    return { cand: c, task: t };
+  }
+  return undefined;
+}
+
+/** 참모 입력칸에 들어갈 한 줄 */
+export function quietForwardText(s: Session, a: Activity, t: TaskCard, now: number): string {
+  const mins = Math.max(1, Math.round((now - Date.parse(a.reply!.ts)) / 60_000));
+  const q = lastWords(a);
+  return tr(
+    `[앱] ${whereOf(s)} 세션(${s.id})이 ${mins}분째 보고 없이 쉬어 — 맡긴 일 "${t.title}"(${t.id})이 안 닫혔어. 마지막 말: "${q}" — 끝났으면 scripts/task reply·done, 이어서 할 게 있으면 다음 지시를`,
+    `[app] ${whereOf(s)} session (${s.id}) has been idle for ${mins} min without reporting — task "${t.title}" (${t.id}) is still open. Last words: "${q}" — if it's finished, scripts/task reply/done; otherwise send the next instruction`,
   );
 }
 

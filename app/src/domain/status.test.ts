@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { activityStatus, asksUser, docBadges, needsHarness, sessionStatus, statusTone, statusWord, transitions, type ActivityStatus, type ProjectDoc } from './status';
+import { activityStatus, asksUser, docBadges, needsHarness, sessionStatus, settled, statusTone, statusWord, transitions, type ActivityStatus, type ProjectDoc } from './status';
 
 const NOW = Date.parse('2026-09-27T12:00:00Z');
 /** 사무실 현황판이 말을 고르는 길(dock) — 책상 status 를 그대로 statusWord 에 */
@@ -152,6 +152,15 @@ describe('transitions — 알림 보낼 변화만 고른다', () => {
     expect(transitions({}, { a: 'done' })).toEqual([]);
   });
 
+  // 모름(기록 못 읽음·세션 목록 끊김)은 바뀜이 아니다 — 목록이 잠깐 끊겼다 돌아오면 '답함' 알림이 다시 떴다(2026-10-11)
+  it('모름을 거친 건 바뀜이 아니다 — 모르기 전 상태와 비교한다', () => {
+    expect(transitions({ a: 'done' }, { a: 'unknown' })).toEqual([]);
+    const held = settled({ a: 'done', b: 'working' }, { a: 'unknown', b: 'unknown' });
+    expect(held).toEqual({ a: 'done', b: 'working' });
+    expect(transitions(held, { a: 'done', b: 'asks' })).toEqual([{ id: 'b', to: 'asks' }]);
+    expect(transitions({ a: 'unknown' }, { a: 'done' })).toEqual([]); // 처음부터 몰랐으면 처음 보는 것과 같다
+  });
+
   it('같은 상태 유지·작업 시작·쉼으로 가는 건 안 알린다', () => {
     expect(transitions({ a: 'done', b: 'idle', c: 'done' }, { a: 'done', b: 'working', c: 'stale' })).toEqual([]);
   });
@@ -197,9 +206,10 @@ describe('상태 말 하나로 — 메뉴·대시보드·사무실이 같은 판
   });
   it('대화 기록 없이 세션만으로 — 메뉴가 기록을 아직 못 읽었을 때', () => {
     expect(sessionStatus({ state: 'working' })).toBe('working');
-    expect(sessionStatus({ state: 'idle', awaiting: true } as never)).toBe('idle'); // awaiting = 턴 끝난 대부분 — 묻는다는 뜻 아님
+    // 쉬는 세션은 묻는지 끝났는지 기록을 봐야 안다 — '쉼'으로 짐작하지 않고 '모름'(2026-10-11). awaiting 은 턴 끝난 대부분이라 묻는다는 뜻 아님
+    expect(sessionStatus({ state: 'idle', awaiting: true } as never)).toBe('unknown');
     expect(sessionStatus({ state: 'blocked' })).toBe('blocked');
-    expect(sessionStatus({ state: 'idle' })).toBe('idle');
+    expect(sessionStatus({ state: 'idle' })).toBe('unknown');
   });
   it('말은 한 표 — 같은 상태면 어디서나 같은 말', () => {
     expect(['working', 'asks', 'blocked', 'done', 'idle', 'stale'].map((x) => statusWord(x as never))).toEqual(['일하는 중', '물어봄', '기다림', '답함', '쉼', '잠듦']);

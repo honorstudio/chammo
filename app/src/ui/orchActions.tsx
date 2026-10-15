@@ -2,15 +2,15 @@
 import { createContext, useCallback, useContext, useState } from 'react';
 import type { Session } from '../domain/session';
 import { assistant, tr } from '../i18n';
-import { ContextMenu, Confirm, Rename } from './OrchDialogs';
+import { ContextMenu, Confirm, Rename, type MenuItem } from './OrchDialogs';
 import { orchDisplay, orchLabel, setOrchLabel, useOrchLabels } from './orchLabels';
 import { displayName, splitOrchName, withNick, renameTo } from '../domain/orchLabel';
 import { sendTextToSession } from '../data/tauri';
 import { AvatarPicker } from './avatar/AvatarPicker';
 import { orchestratorLike } from '../domain/session';
 import { orchRoleSet, saveOrchRole } from './orchRoleStore';
+import { trailingClick } from '../domain/ctxMenu';
 
-type MenuItem = { label: string; danger?: boolean; run: () => void };
 type Ctx = {
   /** label: 창에 보일 이름(프로젝트 세션은 프로젝트·작업공간 이름) — 없으면 별명·설정 이름 */
   /** why = 누른 길(actions.log) — 메뉴·카드·⌘W 확인 창 */
@@ -30,6 +30,18 @@ type Ctx = {
 };
 const C = createContext<Ctx | null>(null);
 export const useOrchActions = () => useContext(C);
+
+/** 우클릭 뒤따라오는 click 삼키기 — 맥 웹뷰는 우클릭(두 손가락·ctrl+클릭) 뒤에 click 을 하나 더 보내, 보관함 카드가 먼저 열리고
+ *  메뉴가 그 위에 떴다(2026-10-12 191.png). 메뉴 밖으로 오는 것만(메뉴 고르기는 그대로), 1초 동안 */
+function swallowTrailingClick() {
+  const at = Date.now();
+  const eat = (ev: MouseEvent) => {
+    if ((ev.target as Element | null)?.closest?.('.od-menu')) return;
+    if (trailingClick(ev, Date.now() - at)) { ev.stopPropagation(); ev.preventDefault(); }
+  };
+  window.addEventListener('click', eat, true);
+  window.setTimeout(() => window.removeEventListener('click', eat, true), 1000);
+}
 
 /** 앱 별명을 진짜 세션 이름에도 — /rename "참모-3 · 별명". 별명이 앱에만 있으면 세션끼리 주고받는 메시지엔 참모-3 만 찍혀
  *  서로 누가 누군지 몰랐다(2026-10-02 사용자). 세션 기록에 이름이 바뀐 줄이 남아 그 세션도 자기 이름을 안다 */
@@ -61,7 +73,13 @@ export function OrchActionsProvider({ pins = [], onPin, onNick, onStop, onRemove
   // 이름 바꾸기 — 이름 창·프로필 창이 같은 길(앱 별명 + 쉬는 때 /rename)
   const saveNick = (s: Session, v: string) => { setOrchLabel(s.id, v); if (onNick) onNick(s, v); else syncRealName(s, v); };
   const nickProps = (s: Session) => ({ current: orchLabel(s.id) ?? splitOrchName(s.name).nick ?? '', fallback: displayName(splitOrchName(s.name).base) || assistant() });
-  const openMenu = (e: React.MouseEvent, items: MenuItem[]) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY, items }); };
+  // 키보드로 누른 단추(Enter·Space)는 clientX·Y 가 0 — 그 단추 아래에 연다
+  const openMenu = (e: React.MouseEvent, items: MenuItem[]) => {
+    e.preventDefault(); e.stopPropagation();
+    if (e.type === 'contextmenu') swallowTrailingClick();
+    const r = !e.clientX && !e.clientY ? (e.currentTarget as Element | null)?.getBoundingClientRect?.() : undefined;
+    setMenu({ x: r ? r.left : e.clientX, y: r ? r.bottom + 4 : e.clientY, items });
+  };
   const ctx: Ctx = {
     askStop,
     askRename: setRename,

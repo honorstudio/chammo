@@ -5,6 +5,7 @@ import type { TamaFile } from '../../domain/tama/store';
 import { nameOf } from '../../domain/tama/tree';
 import { AREA_H, draw, spriteOf, W } from './lcd';
 import { tr } from '../../i18n';
+import { every } from '../poll';
 
 const DOT = 1.6;
 
@@ -12,8 +13,8 @@ export function TamaMini({ file, onOpen, on = false }: { file: TamaFile | null; 
   const ref = useRef<HTMLCanvasElement>(null);
   const [tick, setTick] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => setTick((n) => n + 1), 480);
-    return () => clearInterval(t);
+    // 앱 창이 안 보이면 5배 느리게 — 아무도 안 보는 그림(그림이 같으면 lcd draw 가 칠하지도 않는다)
+    return every(() => setTick((n) => n + 1), 480);
   }, []);
   const pet = file?.pet ?? null;
   useEffect(() => {

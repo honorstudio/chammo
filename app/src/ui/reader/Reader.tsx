@@ -6,7 +6,8 @@ import { modKey } from '../../domain/keys';
 import { curStep, DOC_SANDBOX, emptyStore } from '../../domain/curation';
 import { docUrl, IS_WIN, isDocUrl, dropIndex, inStrip, kindOf, titleOf, type DocKind, type Surface, docFileUrl } from '../../domain/reader';
 import { FIT, IMAGE_STEPS, parseZoom, stepZoom, withZoom, zoomable, zoomLabel, zoomOf, type ZoomMap } from '../../domain/readerZoom';
-import { IconZoomIn, IconZoomOut } from '../Icons';
+import { IconCheck, IconClose, IconNote, IconOpen, IconPencil, IconRefresh, IconZoomIn, IconZoomOut } from '../Icons';
+import { IconButton } from '../kit/IconButton';
 import { selectAllHere } from '../selectAll';
 import { assistant, tr } from '../../i18n';
 import { getAppEnv, projectScan } from '../../data/tauri';
@@ -173,7 +174,7 @@ export function ExtraDoc({ path, kind }: { path: string; kind: 'audio' | 'office
     if (kind === 'office') invoke<string>('office_html', { path }).then(setHtml, (e) => setErr(String(e)));
     if (kind === 'other') invoke<string>('ql_thumb', { path }).then(setThumb, (e) => setErr(String(e) || tr('미리보기를 못 만들었어', "Couldn't make a preview")));
   }, [path, kind]);
-  const open = <button className="mini" onClick={() => void invoke('open_target', { kind: 'file', target: path }).catch(() => {})}>{tr('기본 앱으로 열기', 'Open in default app')}</button>;
+  const open = <IconButton size="s" tone="line" label={tr('기본 앱으로 열기', 'Open in default app')} onClick={() => void invoke('open_target', { kind: 'file', target: path }).catch(() => {})}><IconOpen /></IconButton>;
   return (
     <div className="rd-extra">
       {kind === 'audio' ? <audio src={docUrl(path)} controls autoPlay />
@@ -190,8 +191,11 @@ function Doc({ path, nonce, zoom, editing }: { path: string; nonce: number; zoom
   const [text, setText] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
+    // 늦게 온 앞 문서 답은 버린다 — 탭을 빨리 넘기면 A 글이 B 자리에 들어가 편집 모드에선 B 가 A 내용으로 저장될 수 있었다(2026-10-11 bug-hunt)
+    let alive = true;
     setText(null); setErr(null);
-    if (kind === 'md' || kind === 'text') invoke<string>('read_doc_text', { path }).then(setText, (e) => setErr(String(e)));
+    if (kind === 'md' || kind === 'text') invoke<string>('read_doc_text', { path }).then((t) => alive && setText(t), (e) => alive && setErr(String(e)));
+    return () => { alive = false; };
   }, [path, kind, nonce]);
   if (err) return <div className="rd-empty">{tr('못 읽었어', "Couldn't read it")} — {err}</div>;
   if (kind === 'web') return <WebPage key={nonce} url={path} />;
@@ -272,7 +276,7 @@ function TabStrip({ surface, s }: { surface: string; s: Surface }) {
           }}
           onPointerCancel={() => { drag.current = null; setGhost(null); }}>
           <span>{titleOf(p)}</span>
-          <button aria-label={tr('탭 닫기', 'Close tab')} onPointerDown={(e) => e.stopPropagation()} onClick={() => void invoke('reader_close', { surface, path: p })}>✕</button>
+          <button aria-label={tr('탭 닫기', 'Close tab')} title={tr('탭 닫기', 'Close tab')} onPointerDown={(e) => e.stopPropagation()} onClick={() => void invoke('reader_close', { surface, path: p })}><IconClose /></button>
         </div>
       ))}
       <div className={`rd-tabs-end ${ghost?.index === s.tabs.length ? 'drop-before' : ''}`} />
@@ -357,16 +361,17 @@ export function ReaderView({ surface, actions, send, sendTo }: { surface: string
           )}
           {kind === 'md' && s.active && (
             <button className={editing[s.active] ? 'on' : ''} onClick={() => { const p = s.active!; setEditing((e) => ({ ...e, [p]: !e[p] })); if (editing[p]) setNonce((n) => n + 1); }}
-              title={editing[s.active] ? tr('보기로 — 고친 건 저장돼 있어', 'Back to view — edits are saved') : tr(`노션처럼 고치기 — 저장은 저절로, 고친 건 모아서 ${assistant()}에게`, 'Edit like Notion — saves automatically; send edits to the assistant together')}>
-              {editing[s.active] ? tr('다 고침', 'Done') : tr('고치기', 'Edit')}
+              aria-label={editing[s.active] ? tr('다 고침', 'Done') : tr('고치기', 'Edit')} aria-pressed={!!editing[s.active]}
+              title={editing[s.active] ? tr('다 고침 — 보기로, 고친 건 저장돼 있어', 'Done — back to view, edits are saved') : tr(`고치기 — 노션처럼, 저장은 저절로, 고친 건 모아서 ${assistant()}에게`, 'Edit like Notion — saves automatically; send edits to the assistant together')}>
+              {editing[s.active] ? <IconCheck /> : <IconPencil />}
             </button>
           )}
           {kind === 'md' && s.active && editing[s.active] && (
-            <button onMouseDown={(e) => e.preventDefault()} onClick={startComment} title={tr('커서 있는 줄에 코멘트 — 보낼 때 같이 가요', 'Comment on the line under the cursor — sent together')}>{tr('이 줄에 코멘트', 'Comment line')}</button>
+            <button onMouseDown={(e) => e.preventDefault()} onClick={startComment} aria-label={tr('이 줄에 코멘트', 'Comment line')} title={tr('이 줄에 코멘트 — 커서 있는 줄, 보낼 때 같이 가요', 'Comment on the line under the cursor — sent together')}><IconNote /></button>
           )}
           {/* 스페이스(보내기가 있는 리더 패널)에선 다시 읽기·기본 앱으로 열기를 뺀다 — 고치는 곳이 됐다(2026-09-30 사용자) */}
-          {!send && <button onClick={() => setNonce((n) => n + 1)}>{tr('다시 읽기', 'Reload')}</button>}
-          {!send && <button onClick={() => void invoke('open_target', { kind: 'file', target: s.active })}>{tr('기본 앱으로 열기', 'Open in default app')}</button>}
+          {!send && <button onClick={() => setNonce((n) => n + 1)} aria-label={tr('다시 읽기', 'Reload')} title={tr('다시 읽기', 'Reload')}><IconRefresh /></button>}
+          {!send && <button onClick={() => void invoke('open_target', { kind: 'file', target: s.active })} aria-label={tr('기본 앱으로 열기', 'Open in default app')} title={tr('기본 앱으로 열기', 'Open in default app')}><IconOpen /></button>}
         </div>
       )}
       {cdraft && (

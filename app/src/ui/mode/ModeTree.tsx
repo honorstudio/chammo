@@ -1,19 +1,17 @@
 // 참모 모드 트리 그리기 — domain/modeTree 가 고른 마디만, 앱 CSS 토큰으로(참모 화면처럼 보이게 = '네이티브').
 // HTML 은 안 받는다: 글은 글로, Markdown 만 앱 md 거름(DOMPurify)
-import { useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+// 앱(Tauri)·폰(웹)이 같이 쓴다 — 링크 열기·Client 방은 그리는 쪽이 ModeEnv 로 넣는다(폰 번들에 Tauri 코드가 안 들어가게)
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { tr } from '../../i18n';
 import { actOf, hrefOk, type Act, type Kid, type TNode } from '../../domain/modeTree';
 import { mdToHtml } from '../md';
-import { openTarget } from '../../data/tauri';
-import { ClientNode, ModeCtx } from './ModeClient';
+import { ModeSvg } from './ModeSvg';
 
 export type Drafts = Map<string, string>;
 
-const open = (href: string) => {
-  if (!hrefOk(href)) return;
-  const file = href.startsWith('file:');
-  void openTarget(file ? 'file' : 'url', file ? decodeURI(href.replace(/^file:\/\//, '')) : href).catch(() => {});
-};
+/** 그리는 쪽이 넣는 것 — 링크 열기(hrefOk 를 지난 것만 온다) · Client 칸(없으면 '못 그림') */
+export type ModeEnv = { open: (href: string) => void; client: ((n: Extract<TNode, { type: 'Client' }>) => ReactNode) | null };
+export const ModeEnvCtx = createContext<ModeEnv>({ open: () => {}, client: null });
 
 function Kids({ kids, onAct, drafts }: { kids: Kid[]; onAct: (a: Act) => void; drafts: Drafts }) {
   return <>{kids.map((k, i) => (typeof k === 'string' ? k : <Node key={i} n={k} onAct={onAct} drafts={drafts} />))}</>;
@@ -51,11 +49,13 @@ function InputNode({ n, onAct, drafts }: { n: Extract<TNode, { type: 'Input' }>;
 }
 
 export function Node({ n, onAct, drafts }: { n: TNode; onAct: (a: Act) => void; drafts: Drafts }): ReactNode {
+  const env = useContext(ModeEnvCtx);
+  const open = (href: string) => { if (hrefOk(href)) env.open(href); };
   switch (n.type) {
     case 'Box':
-      return <div className="mdv-box" style={n.style}>{n.children.map((c, i) => <Node key={i} n={c} onAct={onAct} drafts={drafts} />)}</div>;
+      return <div className={n.look ? `mdv-box mdv-look-${n.look}` : 'mdv-box'} style={n.style}>{n.children.map((c, i) => <Node key={i} n={c} onAct={onAct} drafts={drafts} />)}</div>;
     case 'Text':
-      return <span className="mdv-text" style={n.style}><Kids kids={n.kids} onAct={onAct} drafts={drafts} /></span>;
+      return <span className={['mdv-text', n.look && `mdv-look-${n.look}`, n.trunc && 'mdv-trunc'].filter(Boolean).join(' ')} style={n.style}><Kids kids={n.kids} onAct={onAct} drafts={drafts} /></span>;
     case 'Button': {
       const a = actOf(n);
       const body = n.kids.length ? <Kids kids={n.kids} onAct={onAct} drafts={drafts} /> : n.label;
@@ -98,18 +98,11 @@ export function Node({ n, onAct, drafts }: { n: TNode; onAct: (a: Act) => void; 
       );
     }
     case 'Client':
-      return <ClientSlot n={n} />;
+      return env.client ? env.client(n) : <span className="mdv-cant">{tr('못 그림', "Can't draw")} · Client</span>;
     case 'Svg':
-      // 거른 SVG 를 그림으로만 — <img> 안 SVG 는 스크립트·바깥 불러오기가 안 돈다
-      return <img className="mdv-svg" src={n.src} alt={n.alt} draggable={false} />;
+      // 거른 SVG 를 그림으로만 — <img> 안 SVG 는 스크립트·바깥 불러오기가 안 돈다. 줄이기·안 볼 때·안 보이는 칸은 정지판(ModeSvg)
+      return <ModeSvg src={n.src} still={n.still} alt={n.alt} />;
     case 'Cant':
       return <span className="mdv-cant" title={n.what}>{tr('못 그림', "Can't draw")} · {n.alt || n.what}</span>;
   }
-}
-
-// Client 는 모드 칸 안(ModeView 가 자리를 알려 줄 때)에서만 — 해시가 바뀌면(모드를 고쳤다) 방을 새로
-function ClientSlot({ n }: { n: Extract<TNode, { type: 'Client' }> }) {
-  const ctx = useContext(ModeCtx);
-  if (!ctx) return <span className="mdv-cant">{tr('못 그림', "Can't draw")} · Client</span>;
-  return <ClientNode key={`${n.plugin}:${n.module}:${n.key}:${ctx.hashes[n.plugin] ?? ''}`} n={n} />;
 }

@@ -7,6 +7,7 @@ import { fileImage } from '../../data/web';
 import { fileError } from '../../domain/phoneFile';
 import { clampIn, fitContain, longFit, maxZoom, needOriginal, realScale, zoomAt } from '../../domain/zoom';
 import { IconClose } from '../Icons';
+import { ShareButton } from './ShareButton';
 
 type View = { s: number; x: number; y: number };
 type Pt = { x: number; y: number };
@@ -118,6 +119,7 @@ export function ImageViewer({ path, title, onClose }: { path: string; title: str
     <div className="m-iv" role="dialog" aria-label={title} style={{ background: `rgba(0, 0, 0, ${1 - Math.min(0.6, drop / 400)})` }}>
       <div className="m-iv-head">
         <b className="m-iv-title">{title}</b>
+        <ShareButton path={path} cls="m-icon m-iv-x" />
         <button type="button" className="m-icon m-iv-x" onClick={onClose} aria-label="닫기" title="닫기"><IconClose /></button>
       </div>
       <div ref={stage} data-zoom className="m-iv-stage" onTouchStart={start} onTouchMove={move} onTouchEnd={end} onTouchCancel={end}>

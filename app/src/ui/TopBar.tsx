@@ -5,11 +5,13 @@ import type { RepoToday } from '../data/tauri';
 import type { TamaFile } from '../domain/tama/store';
 import { TamaMini } from './tama/TamaMini';
 import type { Features } from '../domain/config';
-import { IconBell, IconHarness, IconOffice, IconReader, IconReplay, IconReview, IconSpace, IconSpeaker, IconTerminal, IconTools } from './Icons';
+import { IconBell, IconOffice, IconReader, IconSpace, IconTerminal } from './Icons';
+import { featureButton, type FeatureProps } from './FeatureButtons';
 import { barItems, type BarItem } from '../domain/topbarMenu';
 import { assistant, tr } from '../i18n';
 import { ageText, allOut, type AccountsView } from '../domain/accounts';
 import { AccountPopover } from './AccountPopover';
+import { Badge } from './kit/Badge';
 
 
 /** 남은 % 막대 — 남은 시간·몇 분 전 값인지는 마우스를 올리면(글자가 많다, 2026-10-02 사용자). 자세한 건 계정 칩 팝오버 */
@@ -68,6 +70,7 @@ export function TopBar({ features, usage, usageAge, account, accounts, onSetting
       <span className="grow" />
       {(() => {
         // 뷰마다 쓰는 아이콘만 — 순서는 domain/topbarMenu 표(그 뷰에서만 쓰는 것은 토글 왼쪽, 공통은 오른쪽)
+        const fp: FeatureProps = { voice, onVoice, replayOn, onReplay, tools, onTools, harnitor, onHarnitor, review, onReview };
         const item: Record<BarItem, React.ReactNode> = {
           tama: <TamaMini key="tama" file={tama.file} onOpen={tama.onToggle} on={tama.widgetShown} />,
           office: <button key="office" className={`voice ${office ? 'on' : ''}`} title={space
@@ -75,23 +78,13 @@ export function TopBar({ features, usage, usageAge, account, accounts, onSetting
             : (office ? tr(`사무실 모드 켜짐 — ${assistant()} 화면이 픽셀 사무실로 (눌러서 끄기)`, `Office mode on — ${assistant()}'s screen is a pixel office (click to turn off)`) : tr(`사무실 모드 — ${assistant()} 화면을 픽셀 사무실로 (⌘4)`, `Office mode — show ${assistant()}'s screen as a pixel office (⌘4)`))}
             aria-label={tr('사무실', 'Office')} aria-pressed={office} onClick={onOffice}><IconOffice /></button>,
           reader: <button key="reader" className={`voice ${reader ? 'on' : ''}`} title={reader ? tr('리더 패널 닫기 (⌘E)', 'Close reader panel (⌘E)') : tr('리더 패널 — 시안·PDF·문서 (⌘E)', 'Reader panel — designs, PDFs, docs (⌘E)')} aria-label={tr('리더 패널', 'Reader panel')} aria-pressed={reader} onClick={onReader}><IconReader /></button>,
-          replay: <button key="replay" className={`voice ${replayOn ? 'on' : ''}`} title={tr('하루 리플레이 — 오늘 한 일 돌려보기', "Day replay — replay today's work")} aria-label={tr('하루 리플레이', 'Day replay')} aria-pressed={replayOn} onClick={onReplay}><IconReplay /></button>,
-          voice: <button key="voice" className={`voice ${voice ? 'on' : ''}`} title={voice
-            ? tr(`음성 모드 켜짐 — ${assistant()}가 답하면 소리로 읽어줘 (눌러서 끄기)`, `Voice mode on — ${assistant()}'s replies are read aloud (click to turn off)`)
-            : tr(`음성 모드 — ${assistant()} 답을 소리로 (눌러서 켜기)`, `Voice mode — read ${assistant()}'s replies aloud (click to turn on)`)} aria-label={tr('음성 모드', 'Voice mode')} aria-pressed={voice} onClick={onVoice}><IconSpeaker /></button>,
-          tools: <button key="tools" className={`voice ${tools ? 'on' : ''}`} title={tools ? tr('도구 닫기', 'Close tools') : tr('도구 — MCP·플러그인·스킬 보고 끄고 켜기', 'Tools — see and toggle MCP, plugins and skills')} aria-label={tr('도구', 'Tools')} aria-pressed={tools} onClick={onTools}><IconTools /></button>,
-          // 하니터: 설정 버튼 자리 — 설정은 메뉴 Chammo > 설정…(⌘,)으로만(2026-10-01 사용자)
-          harnitor: <button key="harnitor" className={`voice ${harnitor ? 'on' : ''}`} title={harnitor ? tr('하니터 닫기', 'Close Harnitor') : tr('하니터 — 스킬·훅·MCP·플러그인 보기·끄고 켜기', 'Harnitor — view and toggle skills, hooks, MCP, plugins')} aria-label={tr('하니터', 'Harnitor')} aria-pressed={harnitor} onClick={onHarnitor}><IconHarness /></button>,
-          // 리뷰(PR) — 사이드바 줄에서 옮김(2026-10-06 사용자). 숫자는 머지 전에 볼 것이 있을 때만
-          review: <button key="review" className={`voice rv-btn ${review.on ? 'on' : ''}`} title={review.on ? tr('리뷰 닫기', 'Close review') : review.confirm ? tr(`리뷰 — 머지 전에 볼 것 ${review.confirm}개`, `Review — ${review.confirm} to check before merging`) : tr('리뷰', 'Review')}
-            aria-label={review.confirm ? tr(`리뷰, 볼 것 ${review.confirm}개`, `Review, ${review.confirm} to check`) : tr('리뷰', 'Review')} aria-pressed={review.on} onClick={onReview}>
-            <IconReview />
-            {review.confirm > 0 && <span className="rv-n">{review.confirm}</span>}
-          </button>,
+          // 기록·음성·도구·하니터·리뷰 — 터미널 뷰만(채팅 뷰는 왼쪽 참모 패널, domain/topbarMenu rail)
+          replay: featureButton('replay', fp, 'voice'), voice: featureButton('voice', fp, 'voice'), tools: featureButton('tools', fp, 'voice'),
+          harnitor: featureButton('harnitor', fp, 'voice'), review: featureButton('review', fp, 'voice'),
           // 맨 끝: 결정 대기 드롭다운이 바로 아래(오른쪽 위)에 펼쳐진다
           inbox: <button key="inbox" className={`bell ${inboxCount ? 'on' : ''}`} title={inboxCount ? tr(`결정 대기 ${inboxCount}개 — 눌러서 보기`, `${inboxCount} decisions waiting — click to view`) : tr('결정 대기 없음', 'No decisions waiting')} onClick={onInbox}>
             <IconBell />
-            {inboxCount > 0 && <span className="bell-n">{inboxCount}</span>}
+            <Badge n={inboxCount} className="bell-n" />
           </button>,
         };
         const { before, after } = barItems(space ? 'chat' : 'terminal', features);

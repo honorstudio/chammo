@@ -1,0 +1,25 @@
+{
+  "_": "보관함 넣기 규칙 표 — 앱(locker_fs.rs decide·safe_name)과 scripts/locker(파이썬)가 같은 표로 시험한다. 경로는 가짜 홈 기준, @attach 는 <데이터>/attach",
+  "settled": ["Desktop/dev"],
+  "big": 524288000,
+  "decide": [
+    ["Downloads/a.pdf", 10, "copy"],
+    ["Desktop/a.png", 10, "copy"],
+    ["Pictures/Screenshots/s.png", 10, "copy"],
+    ["@attach/1-x.png", 10, "copy"],
+    ["Documents/계약/a.pdf", 10, "link"],
+    ["Desktop/dev/shop-video/cut.png", 10, "link"],
+    ["Downloads/촬영본.mov", 524288001, "link"],
+    ["@attach/1-big.mov", 524288001, "copy"],
+    ["Desktop/작업/old.key", 10, "copy"],
+    ["Music/a.mp3", 10, "link"]
+  ],
+  "names": [
+    ["../위험", "id", "-위험"],
+    ["a/b", "id", "a-b"],
+    [".숨김", "id", "숨김"],
+    ["   ", "s-9", "s-9"],
+    ["..", "s-9", "s-9"],
+    ["견적:최종", "id", "견적-최종"]
+  ]
+}

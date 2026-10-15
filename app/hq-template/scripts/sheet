@@ -1,0 +1,114 @@
+#!/bin/sh
+''':'
+# sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
+':'''
+__doc__ = """Read and write cells of an Excel file (.xlsx) through the Chammo app.
+엑셀(.xlsx) 칸을 앱을 거쳐 읽고 쓴다.
+
+  scripts/sheet get <file> [<range>]                  cells as lines "Sheet!B3<TAB>value[<TAB>=formula]"
+                                                       range: "Sheet!A1:C9", "Sheet", "A1:C9" (first sheet) or nothing (first sheet)
+  scripts/sheet set <file> <Sheet!B3> <value> [<cell> <value> ...]
+                                                       value "=SUM(B2:B9)" is a formula, a number is a number, "" clears.
+                                                       If the file is open in the app's space, the sheet shows you moving
+                                                       to each cell and typing (then saves); otherwise only those cells
+                                                       are patched in the file (charts and formatting stay as they are)
+
+The app must be running (it owns the reader/writer). Answers come back in <data folder>/sheet.txt.
+Exit: 0 ok · 1 failed/no answer · 2 usage.
+"""
+import datetime, json, os, sys, time, uuid
+
+
+def data_dir(home=None, env=None, exists=os.path.isdir):
+    """Data folder — same rule as the app: $CHAMMO_HOME -> ~/.chammo (-> ~/.honor-orchestrator for old installs)"""
+    home = home or os.path.expanduser('~')
+    env = os.environ.get('CHAMMO_HOME', '') if env is None else env
+    if env.strip():
+        return os.path.expanduser(env.strip())
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not exists(new) and exists(old) else new
+
+
+def parse(argv):
+    """인자 → (verb, 파일, 나머지) 또는 오류 글"""
+    if len(argv) < 2 or argv[0] not in ('get', 'set'):
+        return None, 'usage: scripts/sheet get <file> [<range>] | set <file> <Sheet!B3> <value> [...]'
+    verb, path, rest = argv[0], os.path.realpath(os.path.expanduser(argv[1])), argv[2:]
+    if not path.lower().endswith(('.xlsx', '.xlsm')):
+        return None, f'not an Excel file (.xlsx): {argv[1]} / 엑셀(.xlsx) 파일이 아니야'
+    if verb == 'get':
+        if len(rest) > 1:
+            return None, 'get takes one range / 범위는 하나만'
+        return {'verb': 'get', 'path': path, 'range': rest[0] if rest else ''}, None
+    if not rest or len(rest) % 2:
+        return None, 'set takes <cell> <value> pairs / 칸과 값을 짝으로'
+    cells = [{'at': rest[i], 'value': rest[i + 1]} for i in range(0, len(rest), 2)]
+    return {'verb': 'set', 'path': path, 'cells': cells}, None
+
+
+def who(env):
+    """누가 쓰나 — 백그라운드 세션이면 CLAUDE_JOB_DIR 끝 = 세션 id(앱이 그 참모 프사·색으로 보여 준다, scripts/show 와 같은 규칙)"""
+    return os.path.basename((env.get('CLAUDE_JOB_DIR') or '').rstrip('/'))
+
+
+def ask(data, arg, wait):
+    """app.jsonl 에 한 줄 쓰고 <데이터>/sheet.txt 의 답을 기다린다 — (종료 코드, 답 dict 또는 오류 글)"""
+    rid = uuid.uuid4().hex[:12]
+    os.makedirs(data, exist_ok=True)
+    line = {'ts': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), 'action': 'sheet', 'arg': arg, 'id': rid}
+    with open(os.path.join(data, 'app.jsonl'), 'a', encoding='utf-8') as f:
+        f.write(json.dumps(line, ensure_ascii=False) + '\n')
+    out = os.path.join(data, 'sheet.txt')
+    end = time.time() + wait
+    while time.time() < end:
+        try:
+            with open(out, encoding='utf-8') as f:
+                head, _, body = f.read().partition('\n')
+            if head == f'#id {rid}':
+                try:
+                    return 0, json.loads(body)
+                except ValueError:
+                    return 1, body.strip()
+        except OSError:
+            pass
+        time.sleep(0.2)
+    return 1, f'Chammo did not answer in {wait:g}s — is the app open? / 앱이 답하지 않았어 — Chammo 가 켜져 있어야 해'
+
+
+def main(argv, env=os.environ):
+    arg, err = parse(argv)
+    if err:
+        print(err, file=sys.stderr)
+        return 2
+    if not os.path.isfile(arg['path']):
+        print(f'no such file: {arg["path"]} / 파일이 없어', file=sys.stderr)
+        return 1
+    if arg['verb'] == 'set':
+        arg['by'] = who(env)
+        wait = min(15 + 0.8 * len(arg['cells']), 300)  # 열린 표는 칸마다 보여 주며 넣는다
+    else:
+        wait = 20
+    code, ans = ask(data_dir(), arg, float(env.get('CHAMMO_SHEET_WAIT') or wait))
+    if code or not isinstance(ans, dict):
+        print(ans, file=sys.stderr)
+        return 1
+    if not ans.get('ok'):
+        print(f'failed: {ans.get("error")} / 못 했어', file=sys.stderr)
+        return 1
+    if arg['verb'] == 'get':
+        print(ans.get('text', ''))
+        return 0
+    n = ans.get('written', 0)
+    skipped = ans.get('skipped') or []
+    where = 'shown in the open sheet / 열린 표에 보여 주며' if ans.get('shown') else 'patched in the file / 파일에 바로'
+    print(f'wrote {n} cell(s) — {where}')
+    if skipped:
+        print(f'skipped (the user is editing them) / 사용자가 고치는 중이라 안 건드림: {", ".join(skipped)}')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

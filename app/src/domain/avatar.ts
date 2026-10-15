@@ -127,8 +127,10 @@ export function transitionOf(from: AvatarState, to: AvatarState): Transition | n
 /** 프사 뿌리 클래스 — 결(그림/도형)·상태·전환·작은 크기. 전역 짧은 클래스와 안 겹치게 전부 oa- 접두 */
 /** onColor = 참모 색 면 위(고른 탭 알약) — 몸을 흰색으로, 눈을 면 색으로 뒤집는다 */
 export type AvatarTone = 'onColor';
-export function avatarClasses(o: { image: boolean; state: AvatarState; transition: Transition | null; size: number; tone?: AvatarTone }): string {
-  return ['oa', o.image ? 'oa-img' : '', `oa-st-${o.state}`, o.transition ? `oa-tr-${o.transition}` : '', o.size <= 18 ? 'oa-s16' : '', o.tone === 'onColor' ? 'oa-oncolor' : ''].filter(Boolean).join(' ');
+/** phase = 켜는 중(잠에서 깨어남 → 기다리면 숨쉬기)·끄는 중(잠듦 → 작아지며 흐려짐) — 띠가 바뀌는 동안(2026-10-12 사용자) */
+export type AvatarPhase = 'starting' | 'stopping';
+export function avatarClasses(o: { image: boolean; state: AvatarState; transition: Transition | null; size: number; tone?: AvatarTone; phase?: AvatarPhase }): string {
+  return ['oa', o.image ? 'oa-img' : '', `oa-st-${o.state}`, o.transition ? `oa-tr-${o.transition}` : '', o.size <= 18 ? 'oa-s16' : '', o.tone === 'onColor' ? 'oa-oncolor' : '', o.phase ? `oa-ph-${o.phase}` : ''].filter(Boolean).join(' ');
 }
 
 /** 참모마다 다른 시작 시점(음수 지연, 초)·박자(0.88~1.12) — 여럿이 같이 놓여도 군무처럼 안 맞게 */

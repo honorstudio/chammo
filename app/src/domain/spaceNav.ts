@@ -1,3 +1,4 @@
+import { parseLkPick } from './lockerTree';
 // 채팅 뷰 스페이스 왼쪽 목록 — 지금 채팅 탭 참모가 잡고 있는 세션, 그 세션이 보여 준 파일(2026-09-30 사용자)
 import { parseAt, type ShowAt } from './showAt';
 import type { TaskEvent } from './tasks';
@@ -182,28 +183,33 @@ export function showOwner(by: string, orchIds: string[], holders: Map<string, st
   return holders.get(by)?.find((o) => orchIds.includes(o)) ?? null;
 }
 
-/** 하니터 열기·닫기 → 다음 화면. 하니터도 탭마다 기억되는 스페이스 화면 하나('h:')다 — 큐레이션처럼.
- * 앱 전체에 고정이면 다른 탭으로 가도 남아 있고 다른 참모가 띄운 게 가려졌다(2026-10-02 사용자).
- * before = 그 탭에서 열기 전에 보던 화면(닫으면 거기로), home = 그 참모 대시보드 */
-export function harnitorPick(pick: string, req: 'open' | 'close' | 'toggle', before: string, home: string): { pick: string; before: string } {
-  return screenPick('h:', pick, req, before, home);
+/** 스페이스 기능 화면 — 하니터(h:)·도구(t:, 프로젝트 도구 t:<폴더>)·리뷰(rv:, PR 하나 rv:<키>)·하루 리플레이(rp:).
+ *  프사 띠·펼친 메뉴의 기능 아이콘이 켜고 끈다. 한 자리라 하나만 뜬다 */
+/** r: = 예약 목록·예약 하나(r:<이름>) — 기능 줄 시계(2026-10-12 패널 하나로 P4). rv:·rp: 가 먼저 걸리게 맨 뒤 */
+export type FeatureKey = 'h:' | 't:' | 'rv:' | 'rp:' | 'r:';
+const FEATURES: FeatureKey[] = ['h:', 't:', 'rv:', 'rp:', 'r:'];
+
+/** 지금 화면이 어느 기능 화면인가(아니면 null) */
+export function featureOf(pick: string): FeatureKey | null {
+  return FEATURES.find((k) => pick.startsWith(k)) ?? null;
 }
 
-/** 도구(t:, 프로젝트 도구는 t:<폴더>) — 위 막대 아이콘으로 여닫는다(2026-10-05 사용자). 열면 참모 HQ 기준 't:' */
-export function toolsPick(pick: string, req: 'open' | 'close' | 'toggle', before: string, home: string): { pick: string; before: string } {
-  return screenPick('t:', pick, req, before, home);
-}
-
-/** 리뷰(rv:, PR 하나는 rv:<키>) — 위 막대 아이콘으로 여닫는다(2026-10-06 사용자, 사이드바 줄에서 옮김) */
-export function reviewPick(pick: string, req: 'open' | 'close' | 'toggle', before: string, home: string): { pick: string; before: string } {
-  return screenPick('rv:', pick, req, before, home);
-}
-
-function screenPick(key: string, pick: string, req: 'open' | 'close' | 'toggle', before: string, home: string): { pick: string; before: string } {
-  const open = pick.startsWith(key);
+/** 기능 열기·닫기 → 다음 화면. 켜고 끄는 토글 — 다시 누르면 닫고 열기 전 화면으로(2026-10-11 사용자 "갈아엎지 말고 열고 닫히게").
+ *  before = 그 탭에서 기능 화면을 열기 전에 보던 화면 — 기능끼리 바꿔도 처음 것 그대로(리뷰를 닫으면 도구가 아니라 보관함으로).
+ *  home = 기억이 없을 때 갈 그 참모 첫 화면. 하니터가 앱 전체에 고정이면 다른 탭으로 가도 남아 있어서 탭마다 기억한다(2026-10-02) */
+export function featurePick(key: FeatureKey, pick: string, req: 'open' | 'close' | 'toggle', before: string, home: string): { pick: string; before: string } {
+  const now = featureOf(pick);
+  const open = now === key;
   const want = req === 'toggle' ? !open : req === 'open';
   if (want === open) return { pick, before };
-  return want ? { pick: key, before: pick } : { pick: before || home, before: '' };
+  if (!want) return { pick: before || home, before: '' };
+  return { pick: key, before: now ? before : pick };
+}
+
+/** 왼쪽(프사 띠·보관함 칸·메뉴)이 따를 화면 — 기능 화면이 떠 있는 동안은 열기 전 화면 그대로.
+ *  안 그러면 보관함에서 도구를 누를 때 왼쪽이 펼친 메뉴로 바뀌어 누른 단추가 다른 데로 옮겨 갔다(2026-10-11 182.png) */
+export function sidePick(pick: string, before: string, home: string): string {
+  return featureOf(pick) ? before || home : pick;
 }
 
 /** 채팅 뷰의 focus — 터미널 뷰로 넘어가지 않고 스페이스에 그 대시보드를 띄운다(2026-10-02 사용자 "보여 달라기 전엔 CLI 안 보여 줘도").
@@ -229,3 +235,25 @@ export function focusPick(
 /** focus 로 간 화면이 참모 대시보드면 그 참모 — 채팅 탭도 같이 옮긴다(스페이스만 옮기면 탭은 A·대시보드는 B 로 ViewSeg 가 빠진 어긋난 모양, 2026-10-09).
  *  프로젝트·세션 대시보드는 지금 탭 아래에서 보는 것이라 탭은 그대로 */
 export const focusTab = (pick: string): string | undefined => (pick.startsWith('o:') ? pick.slice(2) : undefined);
+
+/** 옛 대시보드 키를 새 자리로(2026-10-12 패널 하나로 — o:/p: 대시보드를 지웠다). scripts/app focus·옛 기억·남은 길이 아직 이 키를 준다.
+ *  o:<참모> → 그 참모 홈(펫 탭을 연 참모면 o: 그대로 — 펫 자리), p:<뿌리> → 떠 있는 세션 탭(sessionOf), 없으면 지금 참모 보관함의 그 프로젝트 기록 */
+export function legacyPick(k: string, ctx: { petFor: string | null; view?: string; sessionOf: (root: string) => string | undefined }): string {
+  if (k.startsWith('o:')) { const id = k.slice(2); return id && ctx.petFor === id ? k : `l:${id}#h`; }
+  if (k.startsWith('p:')) {
+    const root = k.slice(2);
+    const s = ctx.sessionOf(root);
+    if (s) return `s:${s}`;
+    return ctx.view ? `l:${ctx.view}#p:${root}` : k;
+  }
+  return k;
+}
+
+/** 참모 화면 되살리기 — 기억한 자리가 다른 참모 보관함(l:<남>…)이면 이 참모 홈으로. 옛 화면이 눌려 남의 보관함 자리가 한 참모 기억에 박히면
+ *  그 참모로 가도 남의 홈이 떴고, 다른 참모를 떠날 때마다 그 기억으로 옮아 갔다(2026-10-13) */
+export function ownPick(saved: string | undefined, id: string, home: string): string {
+  if (!saved) return home;
+  const l = parseLkPick(saved);
+  return l && l.orch !== id ? home : saved;
+}
+

@@ -50,6 +50,24 @@ def voice_on(d=None):
         return False
 
 
+# Over 1MB, drop the older half — it grew without a cap and was read whole on every voice-mode reply
+CAP = 1024 * 1024
+
+
+def cap(path, limit=CAP):
+    try:
+        if os.path.getsize(path) <= limit:
+            return
+        data = open(path, 'rb').read()
+    except OSError:
+        return
+    cut = data.find(b'\n', len(data) // 2)
+    tmp = path + '.tmp'
+    with open(tmp, 'wb') as f:
+        f.write(data[cut + 1:] if cut >= 0 else b'')
+    os.replace(tmp, path)
+
+
 def line(text, session, now=None):
     now = now or datetime.datetime.now(datetime.timezone.utc)
     return json.dumps({'ts': now.isoformat(timespec='milliseconds').replace('+00:00', 'Z'), 'session': session, 'text': text}, ensure_ascii=False)
@@ -62,6 +80,7 @@ def main(argv):
     if not voice_on():
         print(T('음성 모드 꺼짐 — 기록 안 함', 'voice mode is off — not recorded')); return 0
     os.makedirs(DIR, exist_ok=True)
+    cap(os.path.join(DIR, 'say.jsonl'))
     with open(os.path.join(DIR, 'say.jsonl'), 'a', encoding='utf-8') as f:
         f.write(line(text, os.environ.get('CLAUDE_CODE_SESSION_ID', '')) + '\n')
     print(T('넘김 — 답이 끝나면 앱이 읽어', 'handed over — the app reads it when your answer ends')); return 0

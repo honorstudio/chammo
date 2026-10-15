@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { effortChoices, effortMoves, familyOf, MODEL_CHOICES, modelChip, modelMoves, parsePicker, switchConfirm, commandResult, modelCommand } from './modelPick';
+import { effortChoices, effortMoves, familyOf, MODEL_CHOICES, modelChip, modelChipShort, modelMoves, parsePicker, switchConfirm, commandResult, modelCommand } from './modelPick';
 
 describe('familyOf — 모델 이름·id 에서 계열', () => {
   it('id·표시 이름 어느 쪽이든', () => {
@@ -45,6 +45,26 @@ describe('modelChip — 칩에 쓸 글', () => {
     expect(modelChip({ model: 'Haiku 4.5' })).toBe('Haiku 4.5');
     expect(modelChip({})).toBeNull();
     expect(modelChip(undefined)).toBeNull();
+  });
+});
+
+describe('modelChipShort — 폰 입력창 칩(2026-10-11 사용자 "이렇게 클 필요 없어"): 판 번호 없이, 판은 시트에서만', () => {
+  it('계열 이름 · 에포트', () => {
+    expect(modelChipShort({ model: 'Opus 5.5', effort: 'high' })).toBe('Opus · high');
+    expect(modelChipShort({ model: 'Opus 5.5 (1M context)', modelId: 'claude-opus-5-5', effort: 'xhigh' })).toBe('Opus · xhigh');
+    expect(modelChipShort({ model: 'Haiku 4.5' })).toBe('Haiku');
+  });
+  it('모르는 모델은 첫 낱말, 값이 없으면 null', () => {
+    expect(modelChipShort({ model: 'Mystery 9 big', effort: 'low' })).toBe('Mystery · low');
+    expect(modelChipShort({})).toBeNull();
+  });
+});
+
+describe('모델·에포트 말은 영어(시트 고르기 목록·칩)', () => {
+  it('모델 이름·에포트 단계에 한글이 없다', () => {
+    for (const m of MODEL_CHOICES) expect(m.label).toMatch(/^[A-Z][a-z]+$/);
+    for (const e of effortChoices('opus')) expect(e.level).toMatch(/^[a-z]+$/);
+    expect(effortChoices('opus').map((e) => e.level)).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
   });
 });
 

@@ -101,45 +101,51 @@ export function WakeNotice({ wake }: { wake: Wake }) {
 export type Wake = ReturnType<typeof useWake>;
 
 /** 꺼진 참모 줄 하나 — 줄 전체가 '이어서 켜기' */
-function OffRow({ r, orchs, busy, disabled, ready = true, onWake, role }: { r: HomeRow; orchs: Session[]; busy: boolean; disabled: boolean; ready?: boolean; onWake: () => void; role?: RoleText }) {
+function OffRow({ r, orchs, busy, disabled, onPress }: { r: HomeRow; orchs: Session[]; busy: boolean; disabled: boolean; onPress: () => void }) {
   const { saved } = useAvatars();
   const s = r.off!;
   const nm = phoneName(s.name, orchs);
+  // 작은 한 줄(시안 phone-dash O1) — 프사·이름·마지막 때. 누르면 깨우기 확인(▶ 글자 없이), 하던 일은 길게 눌러 메뉴
   return (
-    <button type="button" className="m-orch m-off" disabled={disabled} onClick={onWake} aria-label={`${nm} 이어서 켜기`}>
-      <OrchAvatar name={s.name} label={nm} size={36} state={busy ? 'rest' : 'off'} color={bodyColor(saved, s.name, orchColor(s.name))} />
-      <span className="m-orch-text">
-        <span className="m-orch-top">
-          <span className="m-orch-name">{nm}</span>
-          {role && <span className={role.auto ? 'm-orch-role m-auto' : 'm-orch-role'}>{role.text}</span>}
-          <span className="m-muted m-sm">{busy ? '켜는 중…' : whenLabel(r.lastAt, Date.now())}</span>
-        </span>
-        <span className="m-orch-sub"><span className={ready ? 'm-orch-line' : 'm-orch-line m-skel-line'}>{ready ? r.doing || ' ' : ''}</span></span>
-      </span>
-      {!busy && <span className="m-off-go" aria-hidden><IconResume /></span>}
+    <button type="button" className="m-offrow" disabled={disabled} onClick={onPress} aria-label={`${nm} — 꺼져 있음, 깨우기`}>
+      <OrchAvatar name={s.name} label={nm} size={28} state={busy ? 'rest' : 'off'} color={bodyColor(saved, s.name, orchColor(s.name))} />
+      <span className="m-offrow-name">{nm}</span>
+      <span className="m-offrow-when">{busy ? '켜는 중…' : whenLabel(r.lastAt, Date.now())}</span>
     </button>
   );
 }
 
-/** 꺼진 참모 목록 — 참모 바꾸기 시트 아래·참모가 하나도 없을 때 */
+/** 꺼진 참모 목록 — 참모 바꾸기 시트 아래·참모가 하나도 없을 때. 줄을 누르면 '깨울까요?' 한 번 */
 /** swipe = 참모 바꾸기 시트에서 줄을 밀면 '깨우기'·'제거'(참모 없음 화면엔 없음) */
-type RoleText = { text: string; auto: boolean } | null;
-/** roleOf = 맡은 일 한 줄(꺼진 참모도 무엇을 맡았는지 보고 깨울 걸 고르게) */
-export function OffOrchList({ rows, orchs, wake, swipe, tailsFor, roleOf }: { rows: HomeRow[]; orchs: Session[]; wake: Wake; tailsFor?: Set<string>; roleOf?: (name: string) => RoleText; swipe?: { openId: string | null; setOpenId: (id: string | null) => void; onRemove: (r: HomeRow) => void; onMenu?: (r: HomeRow) => void } }) {
+export function OffOrchList({ rows, orchs, wake, swipe }: { rows: HomeRow[]; orchs: Session[]; wake: Wake; swipe?: { openId: string | null; setOpenId: (id: string | null) => void; onRemove: (r: HomeRow) => void; onMenu?: (r: HomeRow) => void } }) {
+  const [ask, setAsk] = useState<HomeRow | null>(null);
   if (!rows.length) return null;
+  const nmOf = (r: HomeRow) => phoneName(r.off!.name, orchs);
   return (
     <>
       <div className="m-sect">꺼져 있음 {rows.length}</div>
-      {rows.map((r) => {
-        const row = <OffRow key={r.key} r={r} orchs={orchs} ready={!tailsFor || tailsFor.has(r.off!.sessionId)} busy={wake.starting === r.off!.sessionId} disabled={!!wake.starting || !!wake.making} onWake={() => void wake.wake(r)} role={roleOf?.(r.off!.name)} />;
-        if (!swipe) return row;
-        return (
-          <SwipeRow key={r.key} id={`off:${r.off!.id}`} openId={swipe.openId} setOpenId={swipe.setOpenId} onMenu={swipe.onMenu ? () => swipe.onMenu!(r) : undefined} menuLabel={`${phoneName(r.off!.name, orchs)} 메뉴`} actions={[
-            { label: '깨우기', icon: <IconResume />, onPress: () => void wake.wake(r) },
-            { label: '제거', icon: <IconTrash />, danger: true, onPress: () => swipe.onRemove(r) },
-          ]}>{row}</SwipeRow>
-        );
-      })}
+      {ask && (
+        <div className="m-sleep-card" role="alertdialog" aria-label="깨우기 확인">
+          <div>{nmOf(ask)} 깨울까요? 하던 대화 그대로 이어서 켜요.</div>
+          {ask.doing && <div className="m-muted m-sm">{ask.doing}</div>}
+          <div className="m-new-row">
+            <button type="button" className="m-btn" onClick={() => setAsk(null)}>취소</button>
+            <button type="button" className="m-send" disabled={!!wake.starting || !!wake.making} onClick={() => { const r = ask; setAsk(null); void wake.wake(r); }}>깨우기</button>
+          </div>
+        </div>
+      )}
+      <div className="m-offlist">
+        {rows.map((r) => {
+          const row = <OffRow key={r.key} r={r} orchs={orchs} busy={wake.starting === r.off!.sessionId} disabled={!!wake.starting || !!wake.making} onPress={() => setAsk(r)} />;
+          if (!swipe) return row;
+          return (
+            <SwipeRow key={r.key} id={`off:${r.off!.id}`} openId={swipe.openId} setOpenId={swipe.setOpenId} onMenu={swipe.onMenu ? () => swipe.onMenu!(r) : undefined} menuLabel={`${nmOf(r)} 메뉴`} actions={[
+              { label: '깨우기', icon: <IconResume />, onPress: () => void wake.wake(r) },
+              { label: '제거', icon: <IconTrash />, danger: true, onPress: () => swipe.onRemove(r) },
+            ]}>{row}</SwipeRow>
+          );
+        })}
+      </div>
     </>
   );
 }

@@ -98,11 +98,14 @@ pub struct Features {
     /// 화면 조종(Claude Code 내장 MCP computer-use)을 앱이 아는 모든 프로젝트에서 켜기 — 켜면 빠진 프로젝트에 넣어 준다(computer_use.rs).
     /// 사용자 화면을 조종하는 기능이라 기본 끔, 마법사·설정에서 고른다(2026-10-05)
     pub computer_use: bool,
+    /// 애니메이션 "auto"(OS 동작 줄이기·맥 부하가 높으면 저절로 줄이기) | "reduce" | "off" — 앱(TS)만 읽는다(domain/animCalm).
+    /// 여기 없으면 저장 때 사라진다(2026-10-12 사용자 "부하 심하면 애니메이션 때문에 끊긴다")
+    pub animation: String,
 }
 
 impl Default for Features {
     fn default() -> Self {
-        Features { office: true, tama: true, gacha: true, review: true, voice: true, auto_revive: false, agent_view: true, computer_use: false }
+        Features { office: true, tama: true, gacha: true, review: true, voice: true, auto_revive: false, agent_view: true, computer_use: false, animation: "auto".into() }
     }
 }
 
@@ -381,6 +384,11 @@ mod tests {
         let back = serde_json::to_value(&c).unwrap();
         assert_eq!(back["features"]["autoRevive"], serde_json::json!(true), "자동으로 다시 켜기가 저장에서 사라짐");
         assert_eq!(back["features"]["agentView"], serde_json::json!(false));
+        // 애니메이션(자동·줄이기·끄기)도 — 앱(TS)만 읽지만 여기 없으면 저장 때 사라진다
+        let c: Config = serde_json::from_str(r#"{"features":{"animation":"off"}}"#).unwrap();
+        assert_eq!(serde_json::to_value(&c).unwrap()["features"]["animation"], serde_json::json!("off"), "애니메이션 설정이 저장에서 사라짐");
+        let old: Config = serde_json::from_str(r#"{"features":{"office":true}}"#).unwrap();
+        assert_eq!(old.features.animation, "auto", "옛 설정은 자동");
     }
 
     /// TS 소스에서 `{ 이름: 값, … }` / `이름?: 타입;` 줄의 칸 이름만 뽑는다(정규식 크레이트 없이)

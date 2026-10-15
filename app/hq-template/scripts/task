@@ -41,6 +41,7 @@ sessions open PRs but leave merging to you. It also prints ASK_RULE — sessions
 import datetime, json, os, re, secrets, shutil, subprocess, sys
 sys.dont_write_bytecode = True  # keep scripts/ free of __pycache__
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+TASK_ID = re.compile(r'[A-Za-z0-9_-]{1,40}\Z')
 import lesson_skill  # lessons -> project skills (lesson-review / -group / -drop / -promote / -restore / -propose)
 
 
@@ -310,6 +311,19 @@ def browser_card(root, sid, why):
             f.write(json.dumps(line, ensure_ascii=False) + '\n')
     except OSError:
         pass
+
+
+def locker_hint(title, home=None, data=None, env_root=None):
+    """보낼 일에 보관함 파일 경로가 보이면 — 넘기기 전에 이사(scripts/locker give)하라는 한 줄. 이사는 명시 명령으로만(send 는 기록만)"""
+    home = home or os.path.expanduser('~')
+    data = data or DATA
+    env_root = os.environ.get('CHAMMO_LOCKER_ROOT', '') if env_root is None else env_root
+    real = os.path.normpath(data) in (os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator'))
+    root = env_root.strip() or (os.path.join(home, 'Documents', 'Chammo') if real else os.path.join(data, 'Documents-Chammo'))
+    if not (root in title or 'Documents/Chammo/' in title or 'Documents-Chammo/' in title):
+        return None
+    return T('보관함 파일이야 — 프로젝트 세션에 넘기기 전에 scripts/locker give <파일…> <프로젝트 폴더> 로 이사하고, 찍힌 새 경로를 메시지에 써',
+             "that's a locker file — before handing it to a project session, run scripts/locker give <file…> <project folder> and put the printed new path in your message")
 
 def needs_confirm(text):
     return bool(PAYMENT.search(text.lower()))
@@ -731,6 +745,9 @@ def main(a):
         print(T(f'메시지 끝에 붙여: {ASK_RULE}', f'append to the end of your message: {ASK_RULE}'), file=sys.stderr)
         print(T(f'메시지 끝에 붙여: {LOAD_RULE}', f'append to the end of your message: {LOAD_RULE}'), file=sys.stderr)
         print(T(f'메시지 끝에 붙여: {MERGE_RULE}', f'append to the end of your message: {MERGE_RULE}'), file=sys.stderr)
+        hint = locker_hint(a[2])
+        if hint:
+            print(hint, file=sys.stderr)
         if tgt.get('cwd'):
             print(T(f'메시지 끝에 붙여: {browser_rule(browser_link(tgt["cwd"]))}', f'append to the end of your message: {browser_rule(browser_link(tgt["cwd"]))}'), file=sys.stderr)
         gap = browser_gap(a[2], tgt)
@@ -770,6 +787,11 @@ def main(a):
         with open(OPS_FREE, 'w', encoding='utf-8') as f:
             json.dump(cur, f, ensure_ascii=False, indent=2)
         return 0
+    # 일 번호 자리에 엉뚱한 글(JSON 조각 등)이 오면 적지 않는다 — 폰 답하기가 그 번호를 거절해 결정 카드가 영영 안 닫혔다(2026-10-10).
+    # 꼴은 앱 Rust is_task_id·domain/tasks isTaskId 와 같다(영숫자·-·_ 40자)
+    if cmd in ('reply', 'done', 'note', 'ask', 'answer', 'retry') and len(a) >= 3 and not TASK_ID.match(a[1]):
+        print(T(f'일 번호가 아니야: {a[1]!r} — scripts/task send 가 준 번호(예 1010-2120-ab12)를 그대로 넘겨', f'not a task id: {a[1]!r} — pass the id scripts/task send printed (e.g. 1010-2120-ab12)'), file=sys.stderr)
+        return 2
     if cmd == 'retry' and len(a) >= 3:
         n = retries(a[1]) + 1
         append({'ts': now(), 'type': 'note', 'task': a[1], 'retry': n, 'note': T(f'되돌림 {n} — {a[2]}', f'sent back {n} — {a[2]}')})

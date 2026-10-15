@@ -5,6 +5,8 @@ import { selectAllTerminalAt } from './TerminalPane';
 
 /** 스페이스 문서 편집기마다 ⌘A 동작 — 편집기 상자(.space-editor) → 한 단계 넓히기. SpaceEditor 가 등록한다 */
 export const docSelectAll = new WeakMap<Element, () => void>();
+/** 글이 아닌 것을 고르는 자리(보관함 카드·줄, 2026-10-12)마다 ⌘A 동작 — 포커스가 그 자리 안이고 칠 수 있는 칸이 아니면 이걸 부른다. 자리가 등록한다 */
+export const areaSelectAll = new WeakMap<Element, () => void>();
 
 /** 글을 칠 수 있는 칸인가 — xterm 의 숨은 입력칸은 빼고(그건 터미널로 친다) */
 function editable(el: Element | null): el is HTMLInputElement | HTMLTextAreaElement | HTMLElement {
@@ -24,6 +26,8 @@ export function selectAllHere(reader: boolean, root: ParentNode | null) {
   const body = root?.querySelector<HTMLElement>('.rd-body[data-path]');
   const kind = body ? kindOf(body.dataset.path!) : null;
   const target = selectAllTarget({ editable: editable(active), terminal: !!active?.closest('.xterm'), reader, kind });
+  const area = target === 'none' ? active?.closest('[data-select-all]') : null;
+  if (area && areaSelectAll.has(area)) { areaSelectAll.get(area)!(); return; }
   if (target === 'input') {
     // 문서 편집기(BlockNote) — execCommand 전체 선택은 ProseMirror 가 받지 않아 0자로 남았다(2026-10-02 실측). 편집기가 칸 → 문서로 넓힌다
     // 편집 영역 자체일 때만 — 편집기 상자 안의 다른 입력칸(링크 주소 칸 등)은 그 칸 전체 선택

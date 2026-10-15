@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { sessionMarks, statusKind, statusLabel, urgentKind } from './statusMark';
+import { projectLine, sessionMarks, statusKind, statusLabel, urgentKind } from './statusMark';
 
 afterEach(() => setLang('ko'));
 
@@ -9,7 +9,7 @@ describe('statusKind — 세션 상태 → 사이드바 표시 모양', () => {
     expect(statusKind('working')).toBe('working');
   });
 
-  it('권한 창·선택지로 막혔으면 손바닥(사람 차례)', () => {
+  it('권한 창·선택지로 막혔으면 말풍선(사람 차례)', () => {
     expect(statusKind('blocked')).toBe('waiting');
   });
 
@@ -40,7 +40,7 @@ describe('statusLabel — 마우스 올렸을 때·읽어 주기용 이름', () 
 });
 
 describe('urgentKind — 프로젝트 줄 왼쪽 표시는 가장 급한 세션 것', () => {
-  it('손바닥 > 작업 중 > 대기', () => {
+  it('말풍선 > 작업 중 > 대기', () => {
     expect(urgentKind(['idle', 'working', 'blocked'])).toBe('waiting');
     expect(urgentKind(['idle', 'working'])).toBe('working');
     expect(urgentKind(['idle'])).toBe('idle');
@@ -61,9 +61,29 @@ describe('sessionMarks — 세션 여럿인 프로젝트: 세션마다 표시 �
     expect(sessionMarks(['idle', 'idle', 'working', 'idle', 'idle'])).toEqual({ marks: ['working', 'idle', 'idle'], more: 2 });
   });
 
-  it('손바닥은 수 뒤로 숨지 않는다 — 맨 끝에 있어도 앞으로', () => {
+  it('말풍선은 수 뒤로 숨지 않는다 — 맨 끝에 있어도 앞으로', () => {
     const r = sessionMarks(['idle', 'idle', 'idle', 'idle', 'idle', 'blocked']);
     expect(r.marks[0]).toBe('waiting');
     expect(r.more).toBe(3);
+  });
+});
+
+// 터미널 뷰 사이드바도 채팅 사이드바·대시보드와 같은 판단(domain/status activityStatus)으로 — 질문으로 턴을 끝낸 세션이 '대기'로 보였다(2026-09-30 조사 1위)
+describe('사이드바 표시는 세션 판단(ActivityStatus)으로', () => {
+  it('물어봄·로그인 필요는 말풍선, 백그라운드 기다림·모름·답함은 멈춘 표시', () => {
+    expect(statusKind('asks')).toBe('waiting');
+    expect(statusKind('login')).toBe('waiting');
+    expect(statusKind('bgwait')).toBe('idle');
+    expect(statusKind('unknown')).toBe('idle');
+    expect(statusKind('done')).toBe('idle');
+    expect(urgentKind(['done', 'asks'])).toBe('waiting');
+  });
+  it('프로젝트 줄 글 — 세션 하나면 그 상태 말, 여럿이면 창 수·일하는 수·묻는 수', () => {
+    const s = (state: 'working' | 'idle', name: string) => ({ state, name, workspace: null }) as never;
+    expect(projectLine([s('idle', 'acme')], () => 'asks')).toBe('물어봄 · acme');
+    expect(projectLine([s('idle', 'acme')], () => 'unknown')).toBe('모름 · acme');
+    const st = ['working', 'asks', 'done'] as const;
+    let i = 0;
+    expect(projectLine([s('working', 'a'), s('idle', 'b'), s('idle', 'c')], () => st[i++]!)).toBe('창 3 · 작업 중 1 · 물어봄 1');
   });
 });

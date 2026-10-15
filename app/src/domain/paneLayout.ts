@@ -64,6 +64,13 @@ export function paneToFocus(p: { maximized: string | null; wasMaximized: string 
   return p.maximized ?? p.wasMaximized ?? p.last;
 }
 
+/** 채팅 칸 머리에 이름·단추를 올릴 창 — 한 창만 보이면(탭 보기·쌓기에 하나) 그 창이고 칸 머리 줄은 숨긴다(같은 글 두 번, 2026-10-12 사용자).
+ *  여럿 쌓였으면 칸마다 머리가 이름표라 위 머리엔 안 올린다(올리면 또 두 번) */
+export function chatHeadPane(p: { tabbed: boolean; active: string | null; shown: string[] }): string | null {
+  if (p.tabbed) return p.active;
+  return p.shown.length === 1 ? p.shown[0]! : null;
+}
+
 /** "그 세션으로 가기"(알림·작업 패널·결정 대기함) 때 그 창이 가려져 있으면 드러내는 동작들 */
 export function revealPane(s: Pick<PaneLayout, 'maximized' | 'collapsed'>, id: string): LayoutAction[] {
   const out: LayoutAction[] = [];
@@ -84,9 +91,9 @@ export function maxTarget(remembered: string | undefined, active: string | null,
  * 스페이스 모드에서 'orch'(화면에 없는 격자)로 보내 아무 데도 안 갔다(2026-09-30 사용자)
  */
 export function gridKeyOf(
-  s: { kind: 'orch' } | { kind: 'helper' } | { kind: 'project'; project: string },
-  mode: { space: boolean; office: boolean },
+  s: { kind: 'orch' } | { kind: 'helper' } | { kind: 'loose' } | { kind: 'project'; project: string },
+  mode: { space: boolean; office: boolean; /** 사무실 기능 — 꺼져 있으면 사무실 설정이 켜져 있어도 참모 격자(orch)에 그린다(App) */ officeFeature?: boolean },
 ): string {
-  if (s.kind === 'orch') return mode.space || mode.office ? 'orch-col' : 'orch';
-  return s.kind === 'helper' ? 'helpers' : `p:${s.project}`;
+  if (s.kind === 'orch') return mode.space || (mode.office && mode.officeFeature !== false) ? 'orch-col' : 'orch';
+  return s.kind === 'helper' ? 'helpers' : s.kind === 'loose' ? 'loose' : `p:${s.project}`;
 }

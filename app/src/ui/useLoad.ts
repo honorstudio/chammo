@@ -4,6 +4,8 @@ import { loadEnv, loadSample, loadSave } from '../data/tauri';
 import type { ModeRow } from '../domain/modeTree';
 import { attribute, envCandidates, parseClaudePids, parsePs, parseSys, summarize, type LoadReport, type SysLoad } from '../domain/load';
 import type { Session } from '../domain/session';
+import { every } from './poll';
+import { feedLoad } from './calm';
 
 /**
  * 부하 모니터 — mine = Chammo 세션(프로젝트·HQ·루틴), others = 이 맥의 나머지 Claude 세션.
@@ -29,6 +31,7 @@ export function useLoad(mine: Session[], others: Session[], fast: boolean) {
       const r = attribute(procs, sessions, env, ref.current.others.map((x) => x.procPid ?? 0).filter(Boolean), modes);
       setSys(s);
       setReport(r);
+      feedLoad(s); // 애니메이션 자동 줄이기 — 이 부하 주기를 그대로 쓴다(새로 재지 않는다, ui/calm)
       if (s) void loadSave(JSON.stringify(summarize(s, r, new Date()), null, 2)).catch(() => {});
     } catch {
       // 다음 주기에 다시 — 부하 칸이 잠깐 비는 것뿐
@@ -38,8 +41,7 @@ export function useLoad(mine: Session[], others: Session[], fast: boolean) {
   }, []);
   useEffect(() => {
     void sample();
-    const t = setInterval(() => void sample(), fast ? 3000 : 10_000);
-    return () => clearInterval(t);
+    return every(() => void sample(), fast ? 3000 : 10_000);
   }, [fast, sample]);
   return { sys, report, refresh: sample };
 }

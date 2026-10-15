@@ -113,6 +113,16 @@ describe('gridKeyOf — 알림·결정 대기함에서 "그 세션으로" 갈 �
     expect(gridKeyOf({ kind: 'helper' }, { space: true, office: false })).toBe('helpers');
     expect(gridKeyOf({ kind: 'project', project: 'project-x-app' }, { space: true, office: false })).toBe('p:project-x-app');
   });
+  // 알림을 눌러도 창이 안 드러나고 입력이 안 갔다 — 그리는 격자 이름과 어긋나서(2026-10-11 불편 순위 4번 '알림 눌러 이동해도 활성 안 됨')
+  it('재현: 프로젝트 밖 세션은 loose 격자 — 프로젝트 이름 격자로 보내면 아무 데도 안 간다', () => {
+    expect(gridKeyOf({ kind: 'loose' }, { space: false, office: false })).toBe('loose');
+    expect(gridKeyOf({ kind: 'loose' }, { space: true, office: false })).toBe('loose');
+  });
+  it('재현: 사무실 설정이 켜져 있어도 사무실 기능을 끄면 참모는 참모 격자(orch)에 그려진다', () => {
+    expect(gridKeyOf({ kind: 'orch' }, { space: false, office: true, officeFeature: false })).toBe('orch');
+    expect(gridKeyOf({ kind: 'orch' }, { space: false, office: true, officeFeature: true })).toBe('orch-col');
+    expect(gridKeyOf({ kind: 'orch' }, { space: true, office: true, officeFeature: false })).toBe('orch-col');
+  });
 });
 
 describe('visiblePanes 고정 — 고정한 참모 탭은 끌어 둔 순서보다 앞(2026-10-03 사용자 "PC 에도")', () => {

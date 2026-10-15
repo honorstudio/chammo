@@ -1,0 +1,372 @@
+/* 파일 보관함(시안 v2 L② + C) — 왼쪽 프사 띠 56 + 폴더 나무 200 = 사이드바 256 자리, 가운데 경로 칩 + 파일 카드.
+   클래스는 lk- 접두(전역에 .on·.nm 같은 짧은 클래스가 있다). 색은 앱 토큰만 — 다크에서도 그대로 */
+
+/* 왼쪽 띠 — 참모 프사(누르면 그 참모, 사이드바가 다시 펼쳐짐) */
+.lk-strip { flex: 0 0 56px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 0; background: var(--panel); border-right: 1px solid var(--line); --pip-ring: var(--panel); }
+.lk-av { all: unset; box-sizing: border-box; width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.lk-av:hover { background: var(--hover); }
+.lk-av.on { box-shadow: inset 0 0 0 2px var(--orch-solid, var(--accent)); } /* 고른 참모 = 그 참모 색 테두리(채팅 칸과 같은 색) */
+.lk-av { -webkit-user-select: none; user-select: none; touch-action: none; }
+/* 끌어 순서 바꾸기 — 옆 프사가 비켜 준다(채팅 탭 끌기를 옮겨 옴) */
+.lk-strip[data-dragging] .lk-av { transition: transform .15s ease; }
+.lk-strip[data-dragging] .lk-av.rail-drag { transition: none; z-index: calc(var(--z-base) + 3); cursor: grabbing; background: var(--surface); }
+/* 말하는 참모 빛 — 전체 둘레(왼쪽 띠 금지), 소리 크기(--speak-level)대로, 전환 없이 */
+.lk-av.st-speak { transition: none !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--orch, var(--text-3)) 70%, transparent), 0 0 calc(4px + 14px * var(--speak-level, 0)) calc(1px * var(--speak-level, 0)) var(--orch, var(--text-3)) !important; }
+.lk-av:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.lk-sp { flex: 1; }
+/* 새 참모 + — 프사(44)와 같은 크기의 옅은 테두리 판, 프사 바로 아래(179.png) */
+.lk-strip .rail-new { width: 44px; height: 44px; border-radius: 12px; color: var(--text-3); box-shadow: inset 0 0 0 1px var(--line); }
+.lk-strip .rail-new:hover:not(:disabled) { color: var(--text); background: var(--hover); }
+
+/* 프사 칸 — 점(pip)은 프사 칸 모서리에 붙는다(넓은 띠에서도) */
+.lk-av-pic { position: relative; flex: none; display: flex; align-items: center; justify-content: center; }
+.lk-rests { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.rail-fold { flex: none; }
+/* 접기·펼치기 — 띠 맨 위 따로(207.png). 접힘은 가운데, 펼침은 오른쪽 끝. 맨 아래 창 둥근 모서리와 멀다(206.png) */
+.rail-top { flex: none; display: flex; justify-content: center; }
+.lk-strip.wide .rail-top { justify-content: flex-end; margin-top: -4px; }
+/* 펼친 패널 A(⌘B, 패널 하나로 P1) — 같은 띠를 넓게: 프사 + 이름 + 맡은 일, 도우미 한 줄, 아래 쉬는 참모, 맨 아래 기능 줄 가로 */
+.lk-strip.wide { position: relative; flex-grow: 0; flex-shrink: 0; min-width: 0; overflow: hidden; align-items: stretch; gap: 2px; padding: 10px 8px 8px; } /* 폭은 style(width) — 맡은 일 글로 안 늘어난다(191.png) */
+.lk-strip.wide .lk-av { min-width: 0; max-width: 100%; }
+.lk-strip.wide > .tasks-grip { right: 0; }
+.lk-strip.wide .lk-av { width: auto; height: 48px; justify-content: flex-start; gap: 10px; padding: 0 8px; border-radius: 10px; }
+.lk-strip.wide .lk-av.on { box-shadow: none; background: var(--surface-2, var(--hover)); }
+.lk-strip.wide .lk-av.on .lk-av-pic { border-radius: 10px; box-shadow: 0 0 0 2px var(--orch-solid, var(--accent)); }
+.lk-av-tx { display: flex; flex-direction: column; min-width: 0; text-align: left; line-height: 1.3; }
+.lk-av-tx b { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lk-av-tx span { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lk-strip.wide .lk-av.grp { background: none; }
+.lk-strip.wide .lk-av.grp .lk-av-pic { width: 32px; height: 32px; border-radius: 10px; background: var(--surface-2, var(--hover)); }
+.lk-strip.wide .lk-av.grp:hover { background: var(--hover); }
+.lk-strip.wide .rail-new { align-self: flex-start; width: 32px; height: 32px; border-radius: 10px; margin: 4px 8px; }
+.lk-cap { font-size: 11px; font-weight: 700; color: var(--text-3); padding: 8px 8px 4px; }
+.lk-strip.wide .lk-rests { flex-direction: row; flex-wrap: wrap; padding: 0 6px 6px; }
+/* 펼친 띠 기능 줄 — 예약 + 기능을 같은 칸 크기로 고르게(207.png 들쭉날쭉). 기능 묶음(.rail-fns)은 풀어서 칸마다 하나 */
+.lk-foot { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; justify-items: center; align-items: center; border-top: 1px solid var(--line); padding-top: 8px; }
+.lk-foot > .rail-fns { display: contents; }
+.lk-strip.wide .rail-fold svg { transform: rotate(180deg); }
+
+/* 도우미 묶음(P3) — 프사 하나에 숫자 · 쉬는 참모(P2) — 빈 자리 아래 작고 흐린 프사, 올리면 또렷 */
+.lk-av.grp { position: relative; color: var(--text-2); background: var(--surface-2, var(--hover)); }
+.lk-av.grp svg { width: 18px; height: 18px; }
+/* 숫자 배지 — 상태 점과 같은 기준(2026-10-12 사용자 197.png): 작게, 아이콘 위가 아니라 묶음 칸 바깥 모서리, 둘레는 띠 바탕색 1.5px */
+.lk-grp-n { position: absolute; right: -4px; bottom: -4px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: var(--surface); box-shadow: 0 0 0 1.5px var(--pip-ring), inset 0 0 0 1px var(--line); font-size: 11px; font-weight: 700; line-height: 1; display: flex; align-items: center; justify-content: center; color: var(--text-2); }
+.lk-strip:not(.wide) .lk-av.grp .lk-av-pic { position: static; }
+.lk-av.rest { width: 36px; height: 36px; opacity: .45; filter: grayscale(.6); transition: opacity .15s, filter .15s; }
+.lk-av.rest:hover, .lk-av.rest:focus-visible { opacity: 1; filter: none; }
+
+/* 폴더 나무 */
+.lk-tree { flex: 0 0 200px; display: flex; flex-direction: column; gap: 1px; padding: 10px 8px 24px; overflow-y: auto; background: var(--panel); border-right: 1px solid var(--line); user-select: none; }
+.lk-tree-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 8px 8px; font-size: 13px; }
+.lk-sec { padding: 14px 8px 4px; font-size: 11px; font-weight: 700; color: var(--text-3); }
+.lk-row { position: relative; display: flex; align-items: center; border-radius: 7px; }
+.lk-row:hover { background: var(--hover); }
+.lk-row.on { background: var(--surface-2, var(--hover)); }
+.lk-row.on .lk-row-nm { font-weight: 700; }
+.lk-row.here { background: var(--hover); } /* 문서 탭이 켜졌을 때 그 파일이 든 자리(옅게) */
+.lk-row-btn { all: unset; box-sizing: border-box; cursor: pointer; flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 8px; font-size: 13px; color: var(--text); }
+.lk-row-ic { display: inline-flex; width: 16px; height: 16px; color: var(--text-3); flex: none; }
+.lk-row-ic svg { width: 16px; height: 16px; }
+.lk-row-nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lk-row-n { font-size: 11px; color: var(--text-3); }
+.lk-row-x { position: absolute; right: 2px; opacity: 0; }
+.lk-row:hover .lk-row-x, .lk-row-x:focus-visible { opacity: 1; }
+.lk-row:hover .lk-row-n { visibility: hidden; }
+/* 단추 둘(새 폴더·휴지통)이 뜰 땐 그만큼 이름 칸 오른쪽을 비운다 — 긴 이름이 단추 밑에 깔렸다(189.png) */
+.lk-row:hover .lk-row-btn, .lk-row:focus-within .lk-row-btn { padding-right: 54px; }
+.lk-row.drop-over, .lk-row.drop-hot { box-shadow: inset 0 0 0 1.5px var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.lk-new { margin: 2px 4px; height: 30px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; }
+
+/* 가운데 칸 */
+.lk-page-wrap { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding: 16px 32px 20px; gap: 14px; }
+.lk-page-wrap.drop-over { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
+.lk-head { display: flex; align-items: center; gap: 8px; }
+.lk-crumb { display: flex; align-items: center; gap: 4px; font-size: 14px; color: var(--text-3); min-width: 0; }
+.lk-crumb button { all: unset; cursor: pointer; padding: 4px 6px; border-radius: 6px; white-space: nowrap; }
+.lk-crumb button:hover { background: var(--hover); }
+.lk-crumb button.cur { color: var(--text); font-weight: 700; cursor: default; }
+.lk-crumb button.cur:hover { background: none; }
+.lk-count { font-size: 12px; color: var(--text-3); margin-left: 2px; }
+
+.lk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 16px; align-content: start; }
+.lk-card { position: relative; display: flex; flex-direction: column; min-width: 0; }
+.lk-open { all: unset; box-sizing: border-box; cursor: pointer; display: block; border-radius: var(--cv-r, 10px); }
+.lk-open:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.lk-card.gone .lk-open { cursor: default; opacity: .45; }
+.lk-thumb { position: relative; display: flex; align-items: center; justify-content: center; aspect-ratio: 4 / 3; border-radius: var(--cv-r, 10px); overflow: hidden; background: var(--panel); box-shadow: 0 0 0 1px var(--line); transition: transform .15s, box-shadow .15s; }
+.lk-open:hover .lk-thumb { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(0, 0, 0, .10), 0 0 0 1px var(--line-strong); }
+.lk-thumb img { width: 100%; height: 100%; object-fit: cover; -webkit-user-drag: none; } /* 웹뷰 그림 끌기가 우리 끌기(pointer)를 가로채지 않게 */
+.lk-thumb img.lk-shot { object-fit: contain; background: #fff; }
+/* 문서 모양 — 종이 한 장 + 첫 줄 + 흐린 줄 */
+.lk-doc { align-items: flex-start; padding-top: 14px; }
+.lk-page { position: relative; width: 64%; height: 110%; padding: 12px 11px; border-radius: 3px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), 0 2px 6px rgba(0, 0, 0, .05); display: flex; flex-direction: column; gap: 6px; }
+.lk-page::after { content: ""; position: absolute; right: 0; top: 0; width: 12px; height: 12px; background: linear-gradient(225deg, var(--panel) 50%, var(--line-strong) 50%); }
+.lk-page b { font-size: 11px; line-height: 1.35; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; padding-right: 8px; }
+.lk-page i { display: block; height: 3px; border-radius: 2px; background: var(--line); }
+.lk-page i:nth-of-type(2) { width: 80%; }
+.lk-page i:nth-of-type(3) { width: 62%; }
+.lk-tag { position: absolute; left: 8px; bottom: 8px; padding: 2px 5px; border-radius: 4px; font-size: 11px; font-style: normal; font-weight: 800; letter-spacing: .02em; color: #fff; background: #6b6862; }
+.lk-tag.t-xlsx, .lk-tag.t-xls, .lk-tag.t-csv, .lk-tag.t-numbers { background: #2f8f5b; }
+.lk-tag.t-hwpx, .lk-tag.t-hwp { background: #3a6fc4; }
+.lk-tag.t-docx, .lk-tag.t-doc, .lk-tag.t-pages { background: #2d5fa8; }
+.lk-tag.t-md, .lk-tag.t-txt { background: #8a857f; }
+.lk-thumb > .lk-tag:not([class*=" t-"]) { background: rgba(0, 0, 0, .55); }
+
+.lk-body { display: flex; flex-direction: column; gap: 2px; padding: 8px 2px 0; min-width: 0; }
+.lk-body b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lk-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-3); min-width: 0; }
+.lk-me { color: var(--accent); font-weight: 600; }
+.lk-badge { font-style: normal; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 99px; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.lk-badge.warn { color: var(--text-2); background: var(--hover); }
+.lk-rename { height: 26px; padding: 0 6px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; }
+
+/* 카드 위 동작 — 올리면 보인다(키보드로 오면 그대로 보임) */
+.lk-acts { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; opacity: 0; transition: opacity .12s; }
+.lk-card:hover .lk-acts, .lk-acts:focus-within { opacity: 1; }
+.lk-acts .kit-ib:not(.send-orch) { background: var(--surface); }
+/* 올림·눌림도 불투명 — 기본 --hover 는 반투명이라 썸네일(영상·그림) 위에서 버튼이 비쳐 안 보였다(2026-10-11). 참모 색 보내기 단추는 제 색 그대로 */
+.lk-acts .kit-ib:not(.send-orch):hover:not(:disabled), .lk-acts .kit-ib.on:not(.send-orch) { background: color-mix(in srgb, var(--text) 8%, var(--surface)); color: var(--text); }
+.lk-menu { position: absolute; top: 40px; right: 6px; z-index: var(--z-popover); min-width: 190px; padding: 4px; border-radius: 10px; background: var(--surface); box-shadow: var(--cv-shadow-hi, 0 10px 28px rgba(0, 0, 0, .14)); display: flex; flex-direction: column; }
+.lk-menu button { all: unset; cursor: pointer; padding: 8px 10px; min-height: 20px; border-radius: 7px; font-size: 13px; color: var(--text); }
+.lk-menu button:hover, .lk-menu button:focus-visible { background: var(--hover); }
+.lk-menu button.danger { color: var(--danger-ink, #b42318); }
+
+.lk-drop { margin-top: auto; padding: 12px 14px; border: 1.5px dashed var(--line-strong); border-radius: 10px; font-size: 12.5px; color: var(--text-3); text-align: center; }
+.lk-drop.drop-over { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .lk-thumb, .lk-acts { transition: none; }
+  .lk-open:hover .lk-thumb { transform: none; }
+}
+
+/* ── v4: 띠 점·나무 프로젝트 줄·여러 층 ── */
+.lk-av { position: relative; }
+/* 점은 그림 안쪽이 아니라 프사 칸(32) 바깥 모서리에 걸친다 — 안쪽 위에 있으면 캐릭터 얼굴·머리를 가려 '안 귀엽다'(2026-10-12 사용자 197.png).
+   둘레 고리 = 그 자리 바탕색(--pip-ring: 띠·고른 줄·펼친 띠 고른 줄)이라 그림과 떨어져 보인다 */
+.lk-pip { position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--pip-ring); }
+.lk-strip.wide .lk-av.on { --pip-ring: var(--surface-2, var(--hover)); }
+.lk-strip.joined .lk-av.on { --pip-ring: var(--surface); }
+/* 띠 프사 점 — 일함 파랑 · 기다림 노랑 · 새 것(다른 참모가 보여 줌) 짙은 점. 쉼·꺼짐은 점 없음 */
+.lk-pip.p-ask { background: var(--blocked); }
+.lk-pip.p-new { background: var(--text); }
+.lk-pip.p-run { background: var(--working); }
+.lk-pip.p-rest { background: var(--pip-ring); box-shadow: 0 0 0 1.5px var(--pip-ring), inset 0 0 0 1.6px var(--text-3); }
+/* 상태 점 — 색만 말고 모양으로(홈·모드 v1 9): 일함 = 채운 점 + 숨쉬는 고리 · 기다림 = 노랑 채운 점 + 굵은 고리(멈춤) · 쉼 = 빈 고리 · 꺼짐 = 점선 */
+.lk-dot { position: relative; flex: none; box-sizing: border-box; width: 9px; height: 9px; border-radius: 50%; background: var(--line-strong); }
+.lk-dot.d-run { background: var(--working); }
+.lk-dot.d-run::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--working); animation: lk-breathe 1.8s ease-out infinite; pointer-events: none; }
+.lk-dot.d-ask { background: var(--blocked); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blocked) 30%, transparent); }
+.lk-dot.d-rest { background: transparent; border: 1.6px solid var(--text-3); }
+.lk-dot.d-off { background: transparent; border: 1.6px dashed var(--line-strong); }
+@keyframes lk-breathe { 0% { transform: scale(.55); opacity: .8; } 100% { transform: scale(1.25); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .lk-dot.d-run::after { animation: none; opacity: .35; } }
+.lk-row-btn > .lk-dot { margin: 0 4px; }
+.lk-row.rest .lk-row-nm { color: var(--text-3); }
+.lk-newdot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--working); }
+.lk-chev { display: inline-flex; width: 16px; height: 16px; flex: none; color: var(--text-3); transition: transform .12s; }
+.lk-chev svg { width: 14px; height: 14px; }
+.lk-chev.open { transform: rotate(90deg); }
+.lk-sec .lk-chev { width: 12px; height: 12px; }
+.lk-chev-btn { flex: none; }
+.lk-chev-btn svg { transition: transform .12s; }
+.lk-chev-btn.open svg { transform: rotate(90deg); }
+.lk-row-x2 { position: absolute; right: 26px; opacity: 0; }
+.lk-row:hover .lk-row-x2, .lk-row-x2:focus-visible { opacity: 1; }
+
+/* 가운데 — 하위 폴더 카드·프로젝트 머리 */
+.lk-crumb-i { display: inline-flex; align-items: center; gap: 4px; }
+.lk-fgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; }
+.lk-fcard { border-radius: var(--cv-r, 10px); }
+.lk-fcard.drop-hot, .lk-fcard.drop-over { box-shadow: inset 0 0 0 1.5px var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.lk-fbtn { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 0 12px; border-radius: var(--cv-r, 10px); background: var(--panel); box-shadow: 0 0 0 1px var(--line); font-size: 13px; }
+.lk-fbtn:hover { box-shadow: 0 0 0 1px var(--line-strong); }
+.lk-fbtn b { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lk-fcard.gone .lk-fbtn { opacity: .6; }
+.lk-relink { display: block; border: 0; color: inherit; font-family: inherit; margin: 12px auto 0; min-height: 44px; padding: 0 16px; border-radius: var(--cv-r, 10px); background: var(--panel); box-shadow: 0 0 0 1px var(--line); font-size: 13px; cursor: pointer; }
+.lk-relink:hover { box-shadow: 0 0 0 1px var(--line-strong); }
+.lk-fic { display: inline-flex; width: 16px; height: 16px; color: var(--text-3); }
+.lk-fic svg { width: 16px; height: 16px; }
+.lk-title { margin: 0; font-size: 18px; }
+.lk-what { margin: -6px 0 0 16px; font-size: 13px; color: var(--text-2); }
+.lk-ftree { min-height: 0; }
+.lk-sub { font-size: 11px; font-weight: 700; color: var(--text-3); margin-bottom: -4px; }
+.lk-menu-note { padding: 8px 10px; font-size: 12.5px; color: var(--text-3); }
+
+/* 보관함 자리 전체 — 가운데(+ 문서 탭) 위, 활동 줄 아래 */
+.lk-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.lk-center { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.lk-tabs { flex: none; height: 38px; display: flex; align-items: flex-end; gap: 2px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; }
+.lk-tab { all: unset; box-sizing: border-box; cursor: pointer; height: 31px; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 12px; border-radius: 8px 8px 0 0; font-size: 12.5px; color: var(--text-2); white-space: nowrap; max-width: 220px; }
+.lk-tab.home, .lk-tab.folder { position: relative; flex: none; padding: 0 11px; }
+.lk-tab.home.on svg, .lk-tab.folder.on svg { color: var(--text); }
+.lk-tab .lk-newdot { position: absolute; top: 6px; right: 6px; }
+.lk-tab.folder.drop-over, .lk-tab.folder.drop-hot { box-shadow: inset 0 0 0 1.5px var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.lk-tab > span { overflow: hidden; text-overflow: ellipsis; }
+.lk-tab.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--line); clip-path: inset(-1px -1px 0 -1px); }
+.lk-tab svg { width: 14px; height: 14px; color: var(--text-3); }
+.lk-tab .kit-ib { width: 22px; height: 22px; }
+/* 탭 끝 프로젝트 이름표·방금 보여 줘서 열린 탭 잠깐 테두리(홈·모드 v2 A) */
+.lk-tab-pj { flex: none; font-style: normal; font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 999px; background: var(--surface-2); color: var(--text-3); }
+.lk-tab.on .lk-tab-pj { background: color-mix(in srgb, var(--working) 12%, transparent); color: var(--working); }
+/* 시안 검토 탭 표 — 프로젝트 이름표와 같은 알약, 글자만 '검토' */
+.lk-tab-rv { flex: none; font-style: normal; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--surface-2); color: var(--text-2); }
+.lk-tab.on .lk-tab-rv { background: color-mix(in srgb, var(--working) 12%, transparent); color: var(--working); }
+.lk-tab.fresh { box-shadow: 0 0 0 1px var(--line), 0 0 0 3px color-mix(in srgb, var(--working) 28%, transparent); transition: box-shadow .4s; }
+.lk-doc-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+/* 활동 줄 — 34px, 펼치면 위로 세션 칸 */
+.lk-act { position: relative; flex: none; display: flex; flex-direction: column; border-top: 1px solid var(--line); background: var(--panel); }
+.lk-act-bar { height: 34px; display: flex; align-items: center; gap: 2px; padding: 0 6px 0 8px; font-size: 12px; overflow: hidden; }
+.lk-act-list { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.lk-act-list::-webkit-scrollbar { display: none; }
+.lk-act-s { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px; border-radius: 7px; flex: none; max-width: 300px; }
+.lk-act-s:hover { background: var(--hover); }
+.lk-act-s b { flex: 0 1 auto; min-width: 0; max-width: 200px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lk-act-s span:not(.lk-dot) { flex: 0 1 auto; min-width: 0; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lk-act-s span.mono { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; }
+.lk-act-s.ask { background: color-mix(in srgb, var(--blocked) 12%, transparent); }
+.lk-act-s.ask span { color: var(--text-2); }
+.lk-act-q { color: var(--text-3); font-size: 11.5px; white-space: nowrap; padding: 0 6px; }
+.lk-act-tog svg { transform: rotate(-90deg); transition: transform .12s; }
+.lk-act-tog.open svg { transform: rotate(90deg); }
+.lk-act-panes { height: 240px; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(300px, 1fr); gap: 10px; padding: 0 12px; overflow-x: auto; }
+/* 펼침 위 손잡이 — 끌어서 높이(앱 전체 한 값) */
+.lk-act-grip { flex: none; height: 12px; display: flex; align-items: center; justify-content: center; cursor: ns-resize; touch-action: none; }
+.lk-act-grip i { width: 36px; height: 4px; border-radius: 2px; background: var(--line-strong); }
+.lk-act-grip:hover i { background: var(--text-3); }
+.lk-act-s.on { background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.lk-act-panes .cv-pane { min-width: 0; }
+
+/* 보관함 탭 안 미리보기(FileTab) — 그림·영상·html·pdf. 머리는 작은 경로 한 줄 + 보내기·크게 보기 */
+.cv-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-3); }
+.ft-body { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+.ft-body > .pv-video { max-height: none; height: 100%; }
+.ft-body > .rd-zoombox, .ft-body > .pv-image { flex: 1; }
+.ft-text { flex: 1; margin: 0; padding: 16px 22px; overflow: auto; font-size: 12.5px; white-space: pre-wrap; }
+
+/* 참모 패널 — 접힌 패널 = 세로 두 줄(프사 띠 + 기능 줄), 펼친 패널(SpaceNav)은 맨 아래 가로 기능 줄(2026-10-11 사용자 180.png) */
+.rail-fns { display: flex; gap: 6px; }
+.rail-fns.col { flex-direction: column; align-items: center; } /* 프사 띠 안 맨 아래 — 띠 칸·배경을 같이 쓴다(183.png) */
+.rail-fns.row { flex-direction: row; align-items: center; justify-content: space-between; }
+.rail-fn { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 9px; color: var(--text-3); cursor: pointer; }
+.rail-fn svg { width: 17px; height: 17px; }
+.rail-fn.rv-btn { position: relative; } /* 리뷰 숫자 배지(.rv-n)가 이 단추 모서리에 */
+.rail-fn:hover { background: var(--hover); color: var(--text); }
+.rail-fn.on { background: var(--accent); color: var(--accent-ink); } /* 켜짐 — 위 막대(.voice.on)와 같은 검은 면 */
+.rail-fn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cv-nav-foot { position: sticky; bottom: -24px; margin: auto -8px -24px; padding: 8px 12px 12px; background: var(--panel); border-top: 1px solid var(--line); }
+
+/* ── 홈·모드 ④⑤⑨: 진행 중 칩 · 모든 프로젝트 덮개 · 기록 목록 · 카드/목록 바꾸기 ── */
+.lk-view button { display: inline-flex; align-items: center; justify-content: center; padding: 4px 8px; }
+.lk-view svg { width: 15px; height: 15px; }
+.lk-chips { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.lk-chip { all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line); font-size: 12.5px; font-weight: 600; color: var(--text-2); background: var(--surface); white-space: nowrap; }
+.lk-chip:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.lk-chip.on { background: var(--text); color: var(--surface); box-shadow: none; }
+.lk-chip.more { font-weight: 500; color: var(--text-3); padding: 0 8px 0 12px; }
+.lk-chip.more.open { box-shadow: inset 0 0 0 1.5px var(--text-2); }
+.lk-pop { position: absolute; top: 36px; right: 0; z-index: var(--z-popover); width: 280px; max-height: 360px; display: flex; flex-direction: column; padding: 6px; border-radius: 12px; background: var(--surface); box-shadow: 0 12px 32px rgba(0, 0, 0, .16), 0 0 0 1px var(--line); }
+.lk-pop-find { flex: none; height: 32px; margin: 2px 2px 6px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; }
+.lk-pop-list { overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.lk-pop-cap { padding: 6px 10px 2px; font-size: 11px; font-weight: 700; color: var(--text-3); }
+.lk-pop-it { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 0 10px; border-radius: 8px; font-size: 13px; }
+.lk-pop-it:hover, .lk-pop-it.on { background: var(--surface-2); }
+.lk-pop-nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lk-phd { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: var(--cv-r, 10px); background: var(--panel); font-size: 13px; }
+.lk-phd b { font-size: 14px; }
+.lk-phd span:not(.lk-dot) { color: var(--text-2); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lk-day { display: flex; flex-direction: column; gap: 10px; }
+.lk-list { display: flex; flex-direction: column; }
+.lk-lrow { all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: 52px 40px minmax(0, 1fr) minmax(0, 200px) minmax(0, 110px); align-items: center; gap: 10px; height: 36px; padding: 0 8px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.lk-lrow:hover { background: var(--hover); }
+.lk-lrow.gone { cursor: default; opacity: .5; }
+.lk-lrow > b { font-weight: 600; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lk-lrow .lk-tag { position: static; justify-self: start; }
+.lk-ltime { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.lk-lwho, .lk-lwhat { color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lk-lwhat { color: var(--text-2); }
+.lk-add { position: relative; }
+.lk-add-menu { right: 0; left: auto; top: 40px; min-width: 150px; }
+
+/* ── 홈(홈·모드 ①) — 위 모드 칸(남는 높이 전부), 아래 세션 접힌 줄 ── */
+.hm { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; overflow: hidden; }
+.hm-modes { flex: 1; min-width: 0; min-height: 160px; display: flex; flex-direction: column; overflow-y: auto; }
+/* 곁 줄 — 참모 할 일·결정(NotePanel, 접을 수 있다)·분신, 옛 참모 대시보드 머리 오른쪽에 있던 것 */
+.hm-side { flex: none; max-height: 40%; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.hm .cv-hints, .hm .cv-orphans { margin: 0; }
+/* 세션 탭 — 점 + 이름, 꺼졌으면 흐리게 */
+.lk-tab.sess .lk-dot { flex: none; }
+.lk-tab.sess.gone { opacity: .55; }
+/* '모든 프로젝트' 펼침 맨 아래 — 프로젝트 폴더 더하기(옛 왼쪽 메뉴에서 옮김) */
+.lk-pop-add { all: unset; box-sizing: border-box; cursor: pointer; display: block; width: 100%; margin-top: 4px; padding: 8px 10px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--text-2); }
+.lk-pop-add:hover { color: var(--text); background: var(--hover); }
+/* 띠 호버 카드(2026-10-12 사용자 — 기본 title 은 1초+) — 띠 오른쪽 옆, 바로 뜬다. 처음엔 옆에서 살짝 밀려 나오며 페이드,
+   다른 항목으로 옮기면 위아래로 미끄러진다(top 전환), 띠를 벗어나면 짧게 사라진다. 앱 토큰만 — 다크도 그대로 */
+.rail-tip { position: fixed; z-index: calc(var(--z-popover) + 4); pointer-events: none; /* 세로 가운데는 JS 정수 top — 퍼센트 transform 은 반 픽셀에 놓여 글자가 흐렸다(195.png) */ background: var(--surface); color: var(--text); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .16), 0 0 0 1px var(--line); padding: 7px 11px; max-width: 280px; transition: top .14s ease-out, opacity .14s ease-out; }
+.rail-tip.jump { transition: opacity .14s ease-out; }
+.rail-tip-in { display: flex; flex-direction: column; gap: 2px; animation: rail-tip-in .14s ease-out; }
+/* 끝나면 뗀다 — 합성층이 남지 않게 */
+.rail-tip-in.done { animation: none; }
+@keyframes rail-tip-in { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+.rail-tip-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.rail-tip-head b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail-tip-head kbd { margin-left: auto; padding-left: 10px; font: inherit; font-size: 11px; color: var(--text-3); }
+.rail-tip-sub { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (prefers-reduced-motion: reduce) { .rail-tip, .rail-tip-in { transition: none; animation: none; } }
+/* 폴더 카드 안 이름 칸(새 폴더·이름 바꾸기) — 카드 폭 안에서 */
+.lk-fbtn .lk-rename { flex: 1; min-width: 0; width: auto; box-sizing: border-box; }
+/* 띠 | 채팅 | 스페이스(2026-10-12 사용자) — 고른 프사 줄이 채팅 칸 바탕과 이어진 면(고른 탭이 아래 내용과 붙듯). 띠 경계선은 안쪽 그림자로 그려
+   이음 면(자식)이 그 높이만큼 덮는다 — 띠에서 채팅으로 면이 흘러 들어가 보인다. 왼쪽 색 띠 없음, 토큰만(다크 그대로) */
+.lk-strip { position: relative; }
+.lk-strip.joined { border-right: 0; box-shadow: inset -1px 0 0 var(--line); }
+.lk-join { position: absolute; left: 6px; right: 0; z-index: var(--z-base); border-radius: 12px 0 0 12px; background: var(--surface); transition: top .14s ease-out, height .14s ease-out; pointer-events: none; }
+.lk-strip.wide .lk-join { left: 8px; border-radius: 10px 0 0 10px; }
+.lk-strip > .lk-av, .lk-strip > .kit-ib, .lk-strip > .rail-fns, .lk-strip > .lk-rests, .lk-strip > .lk-foot, .lk-strip > .rail-top { position: relative; z-index: calc(var(--z-base) + 1); }
+.lk-strip.joined .lk-av.on { box-shadow: none; background: none; }
+.lk-strip.joined.wide .lk-av.on .lk-av-pic { box-shadow: none; }
+/* 고른 프사가 말할 때 — 칸 네모 빛 대신 캐릭터 모양을 따라가는 빛(2026-10-12 사용자 '네모 칸 모양이라 별로'). 고른 표시는 윤곽선이 맡고,
+   빛은 그림에만 drop-shadow — 소리 크기(--speak-level)대로, 동작 줄이기면 levelAt 이 0.7 고정이라 은은히 켜진 채 */
+.lk-strip.joined .lk-av.on.st-speak { box-shadow: none !important; }
+.lk-strip.joined .lk-av.on.st-speak .lk-av-pic > :first-child { filter: drop-shadow(0 0 calc(1.5px + 6px * var(--speak-level, 0)) var(--orch, var(--text-3))) drop-shadow(0 0 1px color-mix(in srgb, var(--orch, var(--text-3)) 60%, transparent)); }
+@media (prefers-reduced-motion: reduce) { .lk-join { transition: none; } }
+/* 이음 윤곽(ChatLink) — 고른 프사 탭과 채팅 카드를 참모 색 선 하나로(맞닿는 변만 열림, 2026-10-12 사용자 201.png). 한쪽 변만 굵은 띠가 아니라 전체 둘레.
+   .space 위 SVG 한 장 — 누르기는 아래로 통과. 색은 참모를 바꾸면 140ms 에 바뀌고(자리는 JS 가 같은 140ms 로), 동작 줄이기면 바로 */
+.chat-link { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: calc(var(--z-base) + 4); }
+.chat-link .cl-line { fill: none; stroke: var(--orch-solid, var(--accent)); stroke-width: 2; stroke-linejoin: round; transition: stroke .14s ease-out; }
+.chat-link .cl-fill { fill: var(--surface); stroke: none; }
+@media (prefers-reduced-motion: reduce) { .chat-link .cl-line { transition: none; } }
+
+/* 켜는 중·끄는 중 단계 점(2026-10-12 rail-wake) — 평소엔 프사 움직임이 알려 주고, 동작 줄이기면 움직임 대신 점(.lk-pip 은 그대로 둔다).
+ * 끄는 중 칸은 흐려지며 쉬는 참모 모양으로, 켜는 중 칸은 누르는 손가락 모양이 아니다 */
+.lk-ph-dot { display: none; position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 2px var(--panel); }
+.lk-ph-dot.ph-starting { background: var(--working); }
+.lk-ph-dot.ph-stopping { background: var(--panel); box-shadow: 0 0 0 2px var(--panel), inset 0 0 0 1.6px var(--text-3); }
+.lk-av.lk-ph { cursor: default; }
+.lk-av.lk-ph:hover { background: none; }
+.lk-av.ph-stopping .lk-av-pic { opacity: .55; filter: grayscale(.6); transition: opacity .9s .25s, filter .9s .25s; }
+.lk-ph-tx { font-weight: 600; }
+/* 애니메이션 줄이기·끄기(ui/calm)도 움직임 대신 점 */
+:is(html.oa-calm, html.oa-still) .lk-ph-dot { display: block; }
+@media (prefers-reduced-motion: reduce) {
+  .lk-ph-dot { display: block; }
+  .lk-av.ph-stopping .lk-av-pic { transition: none; }
+}
+
+/* 여러 개 고르기(2026-10-12, 파인더식) — 고른 것은 옅은 면 + 테두리(왼쪽 띠 없이) · 빈 곳 끌기 네모 · 아래 동작 줄 */
+.lk-page-wrap { position: relative; }
+.lk-page-wrap:focus { outline: none; }
+.lk-card { isolation: isolate; }
+.lk-card.picked::before { content: ""; position: absolute; inset: -6px; z-index: calc(var(--z-base) - 1); border-radius: 13px; background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent); }
+.lk-fcard.picked .lk-fbtn { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent); background: color-mix(in srgb, var(--accent) 9%, var(--panel)); }
+.lk-lrow.picked, .lk-lrow.picked:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 6px; }
+.lk-band { position: absolute; z-index: calc(var(--z-base) + 3); pointer-events: none; border: 1px solid color-mix(in srgb, var(--accent) 80%, transparent); border-radius: 3px; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.lk-selbar { position: sticky; bottom: 0; z-index: calc(var(--z-base) + 4); margin-top: auto; display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 6px 8px 6px 14px; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 6px 20px rgba(0, 0, 0, .10); }
+.lk-selcount { font-size: 13px; font-weight: 700; white-space: nowrap; }
+/* 휴지통 확인(실제 규모 + 고를 단추) · 휴지통 직후 되돌리기 — 단추가 많으면 줄을 바꾼다 */
+.lk-selbar.asking { flex-wrap: wrap; row-gap: 6px; }
+.lk-ask { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; }
+.lk-ask b { font-weight: 700; overflow-wrap: anywhere; }
+.lk-blocked { color: var(--muted); font-size: 12px; }
+.lk-sure { color: var(--danger-ink); background: var(--danger-bg); border-color: transparent; font-weight: 700; }
+.lk-sure:hover { background: color-mix(in srgb, var(--danger-ink) 16%, var(--danger-bg)); }

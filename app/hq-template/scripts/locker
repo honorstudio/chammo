@@ -1,0 +1,451 @@
+#!/bin/sh
+''':'
+# sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
+':'''
+__doc__ = """File locker — the user's locker is a real folder per assistant (~/Documents/Chammo/<assistant>/), the same in Finder and the app.
+파일 보관함 — 참모마다 진짜 폴더(~/Documents/Chammo/<참모>/). 파인더와 앱이 같은 모양이다.
+
+  scripts/locker add <file> [<file> ...] [--folder <a/b>] [--to <assistant>]
+  scripts/locker ls [--folder <a/b>] [--to <assistant>]
+  scripts/locker folder <a/b> [--to <assistant>]
+  scripts/locker give <locker file> [<locker file> ...] <project folder>
+  scripts/locker back <locker file> [...]
+
+Each file has one home; everything else is a shortcut (symlink). add decides by where the file came from — Downloads, Desktop,
+screenshots and chat attachments are copied (the locker becomes home, the original is untouched); anything already settled
+(project folders, Documents …) or over 500MB gets a shortcut. No folder → the top of the locker (a new assistant folder starts with one folder, '자료').
+give hands locker files to a project session: the file moves to <project>/assets/보관함/ and a shortcut stays in the locker
+(a file that already lives elsewhere is copied). Prints the new path — send THAT path in your message. back undoes a give.
+Files you only show go through `scripts/show`. The locker belongs to the assistant running this; --to picks another by name.
+파일마다 집은 하나, 나머지는 바로가기. add 는 어디서 왔나로 정한다(다운로드·데스크톱·스크린샷·채팅 첨부는 복사, 자리 잡은 곳·500MB 넘는 건 바로가기).
+give 는 프로젝트 세션에 넘기기 전에 — 파일이 <프로젝트>/assets/보관함/ 으로 이사하고 보관함엔 바로가기. 찍힌 새 경로를 메시지에 쓴다."""
+import json, os, shutil, sys
+
+BASE_FOLDER = '자료'  # 새 참모 폴더에 처음 한 번(앱 locker_fs::BASE_FOLDER 와 같은 이름)
+ID_FILE = '.chammo'
+PART = '.chammo-part'
+BIG = 500 * 1024 * 1024
+GIVE_DIR = os.path.join('assets', '보관함')
+TRANSIENT = ('Downloads', 'Desktop', os.path.join('Pictures', 'Screenshots'))
+
+
+def data_dir(home=None, env=None, exists=os.path.isdir):
+    """데이터 폴더 — 앱(config.rs)과 같은 규칙: $CHAMMO_HOME → ~/.chammo → 단 ~/.chammo 가 없고 ~/.honor-orchestrator 가 있으면 그것"""
+    home = home or os.path.expanduser('~')
+    env = os.environ.get('CHAMMO_HOME', '') if env is None else env
+    if env.strip():
+        return os.path.expanduser(env.strip())
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not exists(new) and exists(old) else new
+
+
+def root_of(home, data, env_root=''):
+    """보관함 뿌리 — 앱 locker_fs::root_of 와 같다: $CHAMMO_LOCKER_ROOT > 시험 데이터 폴더면 그 안 > ~/Documents/Chammo"""
+    if (env_root or '').strip():
+        return env_root.strip()
+    d = os.path.normpath(data)
+    if d not in (os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')):
+        return os.path.join(data, 'Documents-Chammo')
+    return os.path.join(home, 'Documents', 'Chammo')
+
+
+def settled_of(home, data):
+    """자리 잡은 곳 — config.json 의 devRoot·hqDir·extraProjects(빈 칸·홈 자체는 뺀다)"""
+    try:
+        with open(os.path.join(data, 'config.json'), encoding='utf-8') as f:
+            c = json.load(f)
+    except (OSError, ValueError):
+        c = {}
+    dirs = [c.get('devRoot') or '', c.get('hqDir') or ''] + list(c.get('extraProjects') or [])
+    out = []
+    for d in dirs:
+        d = d.strip() if isinstance(d, str) else ''
+        d = home if d == '~' else os.path.join(home, d[2:]) if d.startswith('~/') else d
+        if d and os.path.isabs(d) and os.path.normpath(d) != os.path.normpath(home):
+            out.append(d)
+    return out
+
+
+def safe_name(name, fallback):
+    s = ''.join('-' if c in '/\\:' else c for c in name if ord(c) >= 32 and c != '\x7f')
+    s = s.strip().lstrip('.').strip()[:120]
+    return s or fallback
+
+
+def exists_any(p):
+    return os.path.lexists(p)
+
+
+def unique(d, name, split_ext=True):
+    p = os.path.join(d, name)
+    if not exists_any(p):
+        return p
+    stem, ext = name, ''
+    if split_ext and '.' in name:
+        s, e = name.rsplit('.', 1)
+        if s and e and len(e) <= 10:
+            stem, ext = s, '.' + e
+    n = 2
+    while exists_any(os.path.join(d, f'{stem} {n}{ext}')):
+        n += 1
+    return os.path.join(d, f'{stem} {n}{ext}')
+
+
+def id_of(d):
+    try:
+        with open(os.path.join(d, ID_FILE), encoding='utf-8') as f:
+            return (f.readline() or '').strip() or None
+    except OSError:
+        return None
+
+
+def owner_dir(root, oid, name):
+    """참모 폴더 — 앱과 같다: .chammo 에 id 가 적힌 폴더, 이름이 바뀌었으면 폴더도(그 자리에 다른 게 있으면 그대로), 없으면 만든다"""
+    os.makedirs(root, exist_ok=True)
+    want = safe_name(name, oid)
+    found = None
+    for n in sorted(os.listdir(root)):
+        p = os.path.join(root, n)
+        if not n.startswith('.') and os.path.isdir(p) and not os.path.islink(p) and id_of(p) == oid:
+            found = p
+            break
+    if found:
+        target = os.path.join(root, want)
+        if os.path.basename(found) != want and not exists_any(target):
+            try:
+                os.rename(found, target)
+                found = target
+            except OSError:
+                pass
+        d = found
+    else:
+        d = unique(root, want, False)
+        os.makedirs(d)
+        with open(os.path.join(d, ID_FILE), 'w', encoding='utf-8') as f:
+            f.write(oid + '\n')
+        os.makedirs(os.path.join(d, BASE_FOLDER), exist_ok=True)
+    return d
+
+
+def within(p, base):
+    p, base = os.path.realpath(p), os.path.realpath(base)
+    return p == base or p.startswith(base + os.sep)
+
+
+def check_add(p, home, data, root):
+    """넣어도 되는 진짜 경로, 아니면 (None, 이유) — 앱 locker_fs::check_add 와 같은 규칙"""
+    if not os.path.isabs(p) or os.path.normpath(p) != p.rstrip(os.sep):
+        return None, f'not a plain absolute path: {p}'
+    if not os.path.exists(p):
+        return None, f'no such file: {p}'
+    real = os.path.realpath(p)
+    if not within(real, home) or real == os.path.realpath(home):
+        return None, f'outside the home folder: {p}'
+    if not os.path.isfile(real):
+        return None, f"folders can't be added — files only: {p}"
+    if within(real, data) and os.path.dirname(real) != os.path.join(os.path.realpath(data), 'attach'):
+        return None, f"app data-folder files can't be added: {p}"
+    if within(real, root):
+        return None, f'already in the locker — move it there instead: {p}'
+    return real, None
+
+
+def decide(real, size, home, data, settled):
+    """copy | link — 앱 locker_fs::decide 와 같은 표(src-tauri/src/locker_rules.fixture.json)로 시험한다"""
+    if os.path.dirname(real) in (os.path.join(data, 'attach'), os.path.join(os.path.realpath(data), 'attach')):
+        return 'copy'
+    if size > BIG:
+        return 'link'
+    if any(within(real, s) for s in settled):
+        return 'link'
+    if any(within(real, os.path.join(home, t)) for t in TRANSIENT):
+        return 'copy'
+    return 'link'
+
+
+def place_new(part, dest):
+    """덮어쓰지 않고 놓기 — 하드 링크는 그 자리에 무엇이 있으면 실패한다(rename 은 덮어쓴다). 안 되는 디스크면 확인 뒤 이름 바꾸기"""
+    try:
+        os.link(part, dest)
+        os.remove(part)
+    except FileExistsError:
+        raise OSError(f'already there: {dest}')
+    except OSError:
+        if exists_any(dest):
+            raise OSError(f'already there: {dest}')
+        os.rename(part, dest)
+
+
+def copy_verified(src, dest):
+    """복사 → 크기 확인 → 진짜 이름으로(앱 locker_fs::copy_verified 와 같다). 조각은 새로 만들 때만 열어 심어 둔 링크를 안 따라간다"""
+    part = os.path.join(os.path.dirname(dest), '.' + os.path.basename(dest) + PART)
+    if os.path.lexists(part):
+        os.remove(part)
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_BINARY', 0)
+        fd = os.open(part, flags, 0o644)
+        with open(src, 'rb') as fi, os.fdopen(fd, 'wb') as fo:
+            shutil.copyfileobj(fi, fo)
+        shutil.copymode(src, part)
+        if os.path.getsize(part) != os.path.getsize(src):
+            raise OSError(f'copied size differs: {src}')
+        place_new(part, dest)
+    except OSError:
+        if os.path.lexists(part):
+            os.remove(part)
+        raise
+
+
+def link(target, at):
+    """바로가기(심볼릭 링크) — 안 되는 곳(윈도우 권한)은 복사로. 링크면 True"""
+    try:
+        os.symlink(target, at)
+        return True
+    except (OSError, NotImplementedError):
+        copy_verified(target, at)
+        return False
+
+
+def sub_dir(owner, rel, make=False):
+    rel = (rel or '').strip('/')
+    if not rel:
+        if os.path.islink(owner) or not os.path.isdir(owner):
+            raise ValueError(f'odd locker folder: {owner}')
+        return owner
+    parts = rel.split('/')
+    if any(not s.strip() or s.startswith('.') or '\\' in s for s in parts):
+        raise ValueError(f'odd folder name: {rel}')
+    p = os.path.join(owner, *[safe_name(s, '폴더') for s in parts])
+    # 중간 어느 단계가 링크면(보관함 밖을 가리킬 수 있다) 만들기 전에 거절
+    cur = owner
+    for part in [safe_name(s, '폴더') for s in parts]:
+        cur = os.path.join(cur, part)
+        if os.path.islink(cur):
+            raise ValueError(f'a folder on the way is a shortcut: {rel}')
+    if make:
+        os.makedirs(p, exist_ok=True)
+    if not os.path.isdir(p) or not within(p, owner):
+        raise ValueError(f'no such folder in the locker: {rel}')
+    return p
+
+
+def add(src, owner, rel, home, data, root, settled):
+    real, why = check_add(src, home, data, root)
+    if not real:
+        raise ValueError(why)
+    folder = sub_dir(owner, rel, make=True)
+    dest = unique(folder, safe_name(os.path.basename(src), 'file'))
+    if decide(real, os.path.getsize(real), home, data, settled) == 'copy':
+        copy_verified(real, dest)
+        return dest, None
+    return dest, real if link(real, dest) else None
+
+
+def give(f, project, home, data, root):
+    """보관함이 집인 파일을 프로젝트로 이사 — 앱 locker_fs::give 와 같다. 새 경로"""
+    if not os.path.isabs(project) or not os.path.isdir(project):
+        raise ValueError(f'no such project folder: {project}')
+    proj = os.path.realpath(project)
+    if not within(proj, home) or proj == os.path.realpath(home) or within(proj, root) or within(proj, data):
+        raise ValueError(f"can't use this as a project: {project}")
+    if not os.path.isabs(f) or not exists_any(f) or not within(os.path.dirname(f), root):
+        raise ValueError(f'only files in the locker can be given: {f}')
+    d = os.path.join(proj, GIVE_DIR)
+    # 받아 온 저장소의 assets·보관함 자리가 링크면 그걸 따라 밖에 쓰게 된다 — 거절
+    for x in (os.path.join(proj, 'assets'), d):
+        if os.path.islink(x):
+            raise ValueError(f"the project's {x} is a shortcut — can't move files there")
+    if os.path.islink(f):
+        target = os.path.realpath(f)
+        if not os.path.isfile(target):
+            raise ValueError(f'broken shortcut: {f}')
+        if within(target, proj):
+            return target
+        os.makedirs(d, exist_ok=True)
+        if not within(d, proj):
+            raise ValueError(f'outside the project: {d}')
+        to = unique(d, os.path.basename(f))
+        copy_verified(target, to)
+        return to
+    if not os.path.isfile(f):
+        raise ValueError(f'files only: {f}')
+    os.makedirs(d, exist_ok=True)
+    to = unique(d, os.path.basename(f))
+    copy_verified(f, to)
+    hold = os.path.join(os.path.dirname(f), '.' + os.path.basename(f) + PART)
+    os.rename(f, hold)
+    try:
+        link(to, f)
+    except OSError:
+        os.rename(hold, f)
+        os.remove(to)
+        raise
+    os.remove(hold)
+    return to
+
+
+def link_target(at):
+    """바로가기가 가리키는 곳 — 상대 링크는 링크 폴더 기준"""
+    t = os.readlink(at)
+    return os.path.realpath(t if os.path.isabs(t) else os.path.join(os.path.dirname(at), t))
+
+
+def take_back(at, root, home=None):
+    """'보관함으로 되돌리기' — 이사 간 파일만(홈 안·보관함 밖·<프로젝트>/assets/보관함/). 다른 보관함이 아직 가리키면 프로젝트 쪽은 안 지운다"""
+    home = home or os.path.expanduser('~')
+    if not os.path.islink(at) or not within(os.path.dirname(at), root):
+        raise ValueError(f'not a given file in the locker: {at}')
+    target = link_target(at)
+    given = os.path.dirname(target).replace(os.sep, '/').split('/')[-2:] == GIVE_DIR.replace(os.sep, '/').split('/')
+    if not given or not os.path.isfile(target) or not within(target, home) or within(target, root):
+        raise ValueError(f"only files that were given can come back (the project's own files stay): {at}")
+    part = os.path.join(os.path.dirname(at), '.' + os.path.basename(at) + '.back' + PART)
+    if os.path.lexists(part):
+        os.remove(part)
+    copy_verified(target, part)
+    os.replace(part, at)
+    others = False
+    for cur, dirs, files in os.walk(root):
+        dirs[:] = [x for x in dirs if not x.startswith('.')]
+        for n in files + [x for x in dirs]:
+            q = os.path.join(cur, n)
+            if os.path.islink(q) and link_target(q) == target:
+                others = True
+    if not others:
+        os.remove(target)
+
+
+def listing(owner, rel=''):
+    base = owner if not rel else sub_dir(owner, rel)
+    out = []
+    for cur, dirs, files in os.walk(base):
+        dirs[:] = sorted(d for d in dirs if not d.startswith('.') and not os.path.islink(os.path.join(cur, d)))
+        for n in sorted(dirs):
+            out.append((os.path.relpath(os.path.join(cur, n), owner) + '/', ''))
+        for n in sorted(files + [d for d in os.listdir(cur) if os.path.islink(os.path.join(cur, d)) and os.path.isdir(os.path.join(cur, d))]):
+            if n.startswith('.'):
+                continue
+            p = os.path.join(cur, n)
+            note = ''
+            if os.path.islink(p):
+                note = '  → ' + os.readlink(p) + ('' if os.path.exists(p) else '  (missing)')
+            out.append((os.path.relpath(p, owner), note))
+    return out
+
+
+def live_rows(d):
+    try:
+        with open(os.path.join(d, 'live.json'), encoding='utf-8') as f:
+            rows = json.load(f).get('sessions') or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [r for r in rows if isinstance(r, dict)]
+
+
+def find_owner(env, d, root, to):
+    """(id, 이름) — 이 세션(CLAUDE_JOB_DIR 끝 = 세션 id) 또는 --to 이름. 못 찾으면 None"""
+    rows = live_rows(d)
+    if to:
+        for r in rows:
+            if r.get('name') == to:
+                return r.get('id') or to, to
+        p = os.path.join(root, safe_name(to, 'x'))
+        if os.path.isdir(p) and id_of(p):
+            return id_of(p), to
+        return 'name-' + safe_name(to, 'x').replace(' ', '-'), to
+    sid = os.path.basename((env.get('CLAUDE_JOB_DIR') or '').rstrip('/'))
+    for r in rows:
+        if sid and (r.get('id') == sid or str(r.get('sessionId', '')).startswith(sid)):
+            return r.get('id') or sid, r.get('name') or sid
+    return None
+
+
+def parse(argv):
+    """(명령, 인자들, 옵션) — --folder·--to 는 값 하나"""
+    if not argv:
+        return None, [], {}
+    cmd, rest, opts, args, i = argv[0], argv[1:], {}, [], 0
+    while i < len(rest):
+        a = rest[i]
+        if a in ('--folder', '--to') and i + 1 < len(rest):
+            opts[a[2:]] = rest[i + 1]
+            i += 2
+            continue
+        args.append(a)
+        i += 1
+    return cmd, args, opts
+
+
+def main(argv, env=os.environ, cwd=None):
+    cmd, args, opts = parse(argv)
+    if cmd not in ('add', 'ls', 'folder', 'give', 'back'):
+        print(__doc__)
+        return 0 if cmd in (None, '-h', '--help') else 2
+    home = os.path.expanduser('~')
+    d = data_dir()
+    root = root_of(home, d, env.get('CHAMMO_LOCKER_ROOT', ''))
+    here = lambda a: os.path.normpath(os.path.join(cwd or os.getcwd(), os.path.expanduser(a)))
+    if cmd in ('give', 'back'):
+        if len(args) < (2 if cmd == 'give' else 1):
+            print(f'locker: {cmd} <locker file> [...]' + (' <project folder>' if cmd == 'give' else ''), file=sys.stderr)
+            return 2
+        files, project = (args[:-1], here(args[-1])) if cmd == 'give' else (args, None)
+        bad = 0
+        for a in files:
+            try:
+                if cmd == 'give':
+                    print(give(here(a), project, home, d, root))
+                else:
+                    take_back(here(a), root, home)
+                    print(f'back {here(a)}')
+            except (ValueError, OSError) as e:
+                print(f'locker: {e}', file=sys.stderr)
+                bad += 1
+        return 1 if bad else 0
+    who = find_owner(env, d, root, opts.get('to'))
+    if not who:
+        print('locker: whose locker? run inside an assistant session or pass --to <assistant name>', file=sys.stderr)
+        return 2
+    owner = owner_dir(root, *who)
+    folder = (opts.get('folder') or '').strip().strip('/')
+    try:
+        if folder:
+            sub_dir(owner, folder, make=cmd != 'ls')
+    except ValueError as e:
+        print(f'locker: {e}', file=sys.stderr)
+        return 2
+    if cmd == 'folder':
+        name = (args[0] if args else '').strip().strip('/')
+        try:
+            p = sub_dir(owner, name, make=True) if name else None
+        except ValueError as e:
+            p = None
+            print(f'locker: {e}', file=sys.stderr)
+        if not p:
+            print('locker: folder <a/b>', file=sys.stderr) if not name else None
+            return 2
+        print(f'folder {os.path.relpath(p, owner)}')
+        return 0
+    if cmd == 'ls':
+        for rel, note in listing(owner, folder):
+            print(rel + note)
+        return 0
+    if not args:
+        print('locker: add <file> [...]', file=sys.stderr)
+        return 2
+    settled, bad = settled_of(home, d), 0
+    for a in args:
+        try:
+            dest, target = add(here(a), owner, folder, home, d, root, settled)
+            print(f'kept {dest}' + (f'  (shortcut → {target})' if target else ''))
+        except (ValueError, OSError) as e:
+            print(f'locker: {e}', file=sys.stderr)
+            bad += 1
+    return 1 if bad else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

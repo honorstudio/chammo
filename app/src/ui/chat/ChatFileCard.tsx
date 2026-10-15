@@ -15,7 +15,7 @@ export function ChatFileCard({ f, by }: { f: ChatFile; by: string }) {
       <button type="button" className="chat-filecard" onClick={open} title={f.path}>
         <span className="chat-filecard-th"><Thumb f={{ path: f.path, ts: f.ts, by }} /></span>
         <span className="chat-filecard-name">{titleOf(f.path)}</span>
-        {where && <span className="chat-filecard-at">{where}</span>}
+        {(where || f.who) && <span className="chat-filecard-at">{[f.who, where].filter(Boolean).join(' · ')}</span>}
       </button>
     </div>
   );

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { curStep, DOC_SANDBOX, emptyStore, fromFrame, isCurationHtml } from './curation';
+import { canCurSend, curSendState, curStep, DOC_SANDBOX, emptyStore, fromFrame, isCurationHtml, readCurSent, reviewEscCloses, writeCurSent } from './curation';
+import htmlSheetSrc from '../ui/mobile/HtmlSheet.tsx?raw';
 import previewSrc from '../ui/space/Preview.tsx?raw';
 import curModeSrc from '../ui/space/CurationMode.tsx?raw';
 
@@ -74,5 +75,60 @@ describe('fromFrame — 시안 칸이 보낸 message 인가', () => {
       expect(listeners).toBeGreaterThan(0);
       expect(src.match(/fromFrame\(e, /g)?.length ?? 0).toBe(listeners);
     }
+  });
+});
+
+describe('폰 시안 보내기 — 두 번 눌러도 한 번, 보낸 건 보냄으로(2026-10-11 같은 결과가 두 번 들어감)', () => {
+  it('마지막으로 보낸 글과 같으면 보냄 — 다시 안 보낸다', () => {
+    expect(curSendState('idle', '## 시안 결과\n- a — 쓴다', '## 시안 결과\n- a — 쓴다')).toBe('sent');
+    expect(canCurSend(curSendState('idle', '## 시안 결과\n- a — 쓴다', '## 시안 결과\n- a — 쓴다'))).toBe(false);
+  });
+  it('표시를 바꿔 글이 달라지면 다시 보낼 수 있다', () => {
+    expect(curSendState('idle', '## 시안 결과\n- a — 쓴다', '## 시안 결과\n- a — 뺀다')).toBe('idle');
+    expect(curSendState('idle', null, '## 시안 결과')).toBe('idle');
+  });
+  it('보내는 중엔 또 못 누르고, 실패면 그 자리에서 다시', () => {
+    expect(canCurSend(curSendState('sending', null, 'x'))).toBe(false);
+    expect(curSendState('fail', null, 'x')).toBe('fail');
+    expect(canCurSend('fail')).toBe(true);
+  });
+  it('보낸 글은 시안마다 저장소에 — 창을 닫았다 다시 열어도 기억', () => {
+    const m = new Map<string, string>();
+    const s = { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) };
+    expect(readCurSent(s, '/tmp/v1.html')).toBeNull();
+    writeCurSent(s, '/tmp/v1.html', '결과 글');
+    writeCurSent(s, '/tmp/v2.html', '다른 글');
+    expect(readCurSent(s, '/tmp/v1.html')).toBe('결과 글');
+    expect(readCurSent(s, '/tmp/v2.html')).toBe('다른 글');
+    expect(readCurSent(null, '/tmp/v1.html')).toBeNull();
+  });
+  it('폰 시안 창은 보낼 함으로 보낸다 — 채팅에 말풍선이 바로 뜨고, 보낸 뒤 창을 닫는다', () => {
+    expect(htmlSheetSrc).not.toMatch(/sendTextToSession/);
+    expect(htmlSheetSrc).toMatch(/sendOut\(/);
+    expect(htmlSheetSrc).toMatch(/setTimeout\(onClose/);
+  });
+});
+
+describe('폰 블록 메모 — 시안 안 작은 칸 말고 폰 아래 시트(2026-10-11 폰에서 거의 못 씀)', () => {
+  it('시안이 메모를 넘기면(cur-note) 아래 시트에 큰 칸으로 받고, 저장은 cur-cmd note 로 되돌린다', () => {
+    expect(htmlSheetSrc).toMatch(/hodoc === 'cur-note'/);
+    expect(htmlSheetSrc).toMatch(/<textarea/);
+    expect(htmlSheetSrc).toMatch(/cmd: 'note'/);
+  });
+});
+
+// 시안 검토가 스페이스 탭이 되며 채팅 칸이 같이 보인다(fix/curation-space) — Esc 는 검토를 닫되, 채팅 입력칸에서 누른 Esc 까지 검토를 닫진 않는다
+describe('reviewEscCloses — Esc 로 검토 닫기', () => {
+  const base = { key: 'Escape', inReview: false, editable: false, overlay: false };
+  it('검토 화면·빈 자리에서 누르면 닫힌다', () => {
+    expect(reviewEscCloses(base)).toBe(true);
+    expect(reviewEscCloses({ ...base, inReview: true })).toBe(true);
+    expect(reviewEscCloses({ ...base, inReview: true, editable: true })).toBe(true); // 보낼 말 칸
+  });
+  it('채팅 입력칸(검토 밖 글 칸)·한글 조합 중·위에 뜬 창이 있으면 안 닫는다', () => {
+    expect(reviewEscCloses({ ...base, editable: true })).toBe(false);
+    expect(reviewEscCloses({ ...base, composing: true })).toBe(false);
+    expect(reviewEscCloses({ ...base, overlay: true })).toBe(false);
+    expect(reviewEscCloses({ ...base, key: 'Enter' })).toBe(false);
   });
 });

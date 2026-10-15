@@ -4,7 +4,10 @@
 .mdv-body { flex: 1; min-height: 0; overflow: auto; }
 .mdv-band { flex: none; padding-top: 8px; border-top: 1px solid var(--line); }
 .mdv-box { min-width: 0; }
-.mdv-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+/* 글 한 줄 = 18px(domain/modeTree LH·cellsOf 와 같다). 말줄임 글(overflow hidden)도 한 줄 아래로 안 눌리게 min-height — 눌리면 줄끼리 포갰다(10/12) */
+.mdv-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 18px; min-height: 18px; }
+/* 말줄임 글(wrap truncate*) 안의 겹 Text 는 바깥 nowrap 을 따른다 — .mdv-text 의 pre-wrap 을 다시 걸어 두 줄로 감겼다(10/12) */
+.mdv-trunc .mdv-text { white-space: inherit; }
 .mdv-md { line-height: 1.55; overflow-wrap: anywhere; }
 .mdv-md.dim { color: var(--text-3); }
 .mdv-md > :first-child { margin-top: 0; }
@@ -20,6 +23,9 @@
 .mdv-field { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .mdv-label { color: var(--text-2); flex: none; }
 .mdv-field input, .mdv-field select { min-width: 0; flex: 1; height: 30px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
+/* 포커스 — 브라우저 기본 고리(바깥으로 띄운 파란 줄)가 칸 테두리와 두 겹으로 보였다(10/12). 앱 입력칸처럼 테두리 자체가 강조색 + 바로 붙은 1px 로 한 몸 */
+.mdv-field input:focus, .mdv-field select:focus, .mdv .btn:focus-visible, .mdv-tabs button:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.mdv-plain:focus-visible, .mdv-link:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
 .mdv-client { position: relative; display: flex; flex-direction: column; min-width: 0; }
 /* 방(iframe)은 그리지 않는다 — 모드 코드만 돌고 그림은 앱이 */
 .mdv-client-frame { position: absolute; width: 0; height: 0; border: 0; visibility: hidden; pointer-events: none; }
@@ -32,8 +38,20 @@
 .mdv-tabs button { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 3px 10px; cursor: pointer; color: var(--text-2); }
 .mdv-tabs button.on { background: var(--text); color: var(--surface); border-color: var(--text); }
 .mdv-status { flex: none; color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mdv-toasts { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; z-index: 2; }
+.mdv-toasts { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; z-index: var(--z-toast); }
 .mdv-toast { background: var(--text); color: var(--surface); padding: 6px 10px; border-radius: 8px; font-size: 12px; max-width: 260px; box-shadow: 0 4px 14px rgba(0, 0, 0, .18); }
+
+/* 앱 모양(10/12) — 호스트가 받는 속성 조합에서 렌더러가 고른다(domain/modeTree boxLook·textLook). 앱 토큰만 써서 다크 모드를 따른다.
+   왼쪽 색 띠 없음 — 강조는 옅은 면·알약·사방 테두리 */
+.mdv-box.mdv-look-card { background: var(--surface); overflow: hidden; }
+/* 알약은 칸 폭까지만 — flex:none 이면 글 폭(max-content)이 돼 좁은 카드 밖으로 넘쳤다(10/12, 14% 칸). 안쪽 말줄임(truncate)이 여기서 생긴다 */
+.mdv-box.mdv-look-tag { flex: none; align-self: flex-start; align-items: center; max-width: 100%; min-width: 0; }
+.mdv-look-tag > .mdv-text { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.mdv-text.mdv-look-chip { flex: none; align-self: flex-start; display: inline-block; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+/* ─ 줄 = 1px 구분선(글자는 숨기고 선만) */
+.mdv-text.mdv-look-divider { flex: none; align-self: stretch; min-height: 0; height: 0; margin: 6px 0; overflow: hidden; font-size: 0; line-height: 0; border-top: 1px solid var(--line); }
+/* █░ 막대 = 둥근 진행 막대 — 채운 색은 글색(모드의 color) */
+.mdv-text.mdv-look-bar { flex: none; align-self: stretch; min-height: 6px; height: 6px; margin: 6px 0; overflow: hidden; font-size: 0; line-height: 0; color: var(--working); border-radius: 999px; background: linear-gradient(90deg, currentColor var(--mdv-pct, 0%), var(--surface-2) var(--mdv-pct, 0%)); }
 
 /* 따로 창 — 머리는 오른쪽 압정(항상 위) 하나. 켜지면 옅은 면 */
 body.mode-win #root { height: 100vh; }
@@ -54,12 +72,103 @@ body.mode-win #root { height: 100vh; }
 .mdv-dash-item { flex: 1 1 320px; min-width: 0; height: 300px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
 
 /* 꽉 채우기 — 스페이스 전체(시안 검토 화면과 같은 자리) */
-.mdv-full { position: absolute; inset: 0; z-index: 35; display: flex; flex-direction: column; background: var(--surface); }
+.mdv-full { position: absolute; inset: 0; z-index: calc(var(--z-panel) + 6); display: flex; flex-direction: column; background: var(--surface); }
 .mdv-full > .mdv-panel-head { height: 44px; padding: 0 10px 0 16px; }
 
 /* 미리보기 — 스페이스 위 상자, 바깥을 누르거나 Esc = 끄기 */
-.mdv-modal { position: absolute; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 28px; background: color-mix(in srgb, #000 38%, transparent); }
+.mdv-modal { position: absolute; inset: 0; z-index: calc(var(--z-panel) + 4); display: flex; align-items: center; justify-content: center; padding: 28px; background: color-mix(in srgb, #000 38%, transparent); }
 .mdv-modal-box { width: min(720px, 100%); height: min(560px, 100%); display: flex; border-radius: 14px; overflow: hidden; background: var(--surface); box-shadow: 0 24px 64px rgba(0, 0, 0, .35); }
 .mdv-modal-item { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .mdv-modal-item > .mdv-panel-head { height: 44px; padding: 0 10px 0 16px; }
 .mdv-dash-item > .mdv, .mdv-full > .mdv, .mdv-modal-item > .mdv { flex: 1; min-height: 0; }
+
+/* 홈 모드 칸(홈·모드 ①) — 1 넓게 · 2 반반 · 3+ 하나 크게 + 옆 쌓기. 사방 같은 선 한 줄(강조 띠 아님) */
+.mdv-home { flex: 1; min-height: 0; display: grid; gap: 12px; }
+.mdv-home.one { grid-template-columns: 1fr; }
+.mdv-home.two { grid-template-columns: 1fr 1fr; }
+.mdv-home.big { grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr); }
+.mdv-home-item { min-width: 0; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.mdv-home-item > .mdv { flex: 1; min-height: 0; }
+.mdv-home-side { min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.mdv-home-side > .mdv-home-item { flex: 1; }
+.mdv-home-more { flex: none; display: flex; flex-wrap: wrap; gap: 6px; }
+.mdv-pill { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 12px; color: var(--text-2); cursor: pointer; }
+.mdv-pill:hover { border-color: var(--line-strong); }
+
+/* 모드 0개 — 맛보기 빈 칸(홈·모드 ②) */
+.mdv-try { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; border: 1.5px dashed var(--line-strong); border-radius: 12px; text-align: center; }
+.mdv-try h3 { margin: 0; font-size: 18px; display: flex; align-items: center; gap: 4px; }
+.mdv-try p { margin: -8px 0 0; font-size: 13px; color: var(--text-3); }
+.mdv-try-cards { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+.mdv-try-card { all: unset; box-sizing: border-box; cursor: pointer; width: 168px; display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 13px; }
+.mdv-try-card b { font-weight: 700; }
+.mdv-try-pv { position: relative; width: 168px; height: 104px; box-sizing: border-box; padding: 12px; border-radius: 10px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 2px 8px rgba(0, 0, 0, .05); display: grid; gap: 4px; transition: box-shadow .15s, transform .15s; }
+.mdv-try-card:hover .mdv-try-pv { box-shadow: 0 0 0 1px var(--line-strong), 0 6px 16px rgba(0, 0, 0, .08); transform: translateY(-1px); }
+.mdv-try-pv i { display: block; border-radius: 3px; background: var(--surface-2); }
+.t-home-calendar .mdv-try-pv { grid-template-columns: repeat(3, 1fr); }
+.t-home-calendar .mdv-try-pv i:nth-child(5) { background: var(--text); }
+.t-home-board .mdv-try-pv { grid-template-columns: repeat(3, 1fr); grid-template-rows: 2fr 1fr; }
+.t-home-board .mdv-try-pv i:nth-child(-n+3) { background: color-mix(in srgb, var(--working) 18%, var(--surface)); }
+.t-home-todo .mdv-try-pv { grid-template-columns: 1fr; }
+.t-home-todo .mdv-try-pv i { height: 8px; align-self: center; }
+.t-home-todo .mdv-try-pv i:nth-child(3) { background: var(--line-strong); }
+.mdv-try-say { width: min(460px, 100%); display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 6px 0 14px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line-strong); background: var(--surface); }
+.mdv-try-say input { flex: 1; min-width: 0; border: 0; outline: none; background: none; font: inherit; font-size: 13px; color: var(--text); }
+.mdv-try-card:disabled { cursor: progress; opacity: .55; }
+.mdv-try-err { flex: none; margin: 0; display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--danger-ink); }
+.mdv-try-err:not(.mdv-try > *) { padding: 0 2px 8px; }
+.mdv-try .mdv-try-err { max-width: min(460px, 100%); }
+.mdv-try-err > span { min-width: 0; }
+
+/* 모드 고르기(10/12) — 빈 칸·시트 같은 목록. 카드 = 미리보기 + 이름(+ 지금 다른 자리), 누르면 체크(사방 고리 + 오른쪽 위 점) */
+.mdv-pick { display: flex; flex-direction: column; align-items: center; gap: 16px; width: 100%; }
+.mdv-pick > section { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.mdv-pick h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--text-3); }
+.mdv-try-card:focus-visible { outline: none; }
+.mdv-try-card:focus-visible .mdv-try-pv { box-shadow: 0 0 0 2px var(--accent); }
+.mdv-try-card.on .mdv-try-pv, .mdv-try-card.on:hover .mdv-try-pv { box-shadow: 0 0 0 2px var(--text); }
+.mdv-pick-mark { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 999px; display: flex; align-items: center; justify-content: center; background: var(--text); color: var(--surface); }
+.mdv-pick-mark svg { width: 12px; height: 12px; stroke-width: 2.2; }
+.mdv-try-card small { margin-top: -4px; font-size: 11.5px; color: var(--text-3); }
+.t-own .mdv-try-pv { grid-template-columns: 1fr 1fr; grid-template-rows: 12px 1fr 1fr; }
+.t-own .mdv-try-pv i:first-child { grid-column: 1 / -1; background: var(--line-strong); }
+/* 카드 그림(chammo.json card · 마지막 화면) — 비율·모서리는 자리표시 그대로, 그림은 cover */
+.mdv-try-pv.has-art, .mdv-pick.sheet .mdv-try-pv.has-art { display: block; padding: 0; overflow: hidden; }
+.mdv-card-img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+.mdv-card-shot { display: block; width: 100%; height: 100%; overflow: hidden; border-radius: inherit; pointer-events: none; }
+.mdv-card-tree { display: block; transform-origin: top left; padding: 10px; box-sizing: border-box; }
+.t-own .mdv-try-pv i:nth-child(6) { display: none; }
+.mdv-pick-go { min-width: 96px; }
+.mdv-pick .mdv-try-err { max-width: min(460px, 100%); }
+
+/* 홈 머리줄 — 못 바꾼 줄 + 오른쪽 '모드' */
+.mdv-home-bar { flex: none; display: flex; align-items: center; gap: 8px; min-height: 28px; margin: 0 0 8px; }
+.mdv-home-bar .mdv-try-err { padding: 0; }
+
+/* 고르기 시트 — 창 위 덮개(바깥·Esc = 닫기) */
+.mdv-sheet { position: fixed; inset: 0; z-index: var(--z-modal); display: flex; align-items: center; justify-content: center; padding: 32px 16px; background: color-mix(in srgb, #000 38%, transparent); }
+.mdv-sheet-box { width: min(640px, 100%); max-height: 100%; display: flex; flex-direction: column; border-radius: 14px; overflow: hidden; background: var(--surface); box-shadow: 0 24px 64px rgba(0, 0, 0, .35); }
+.mdv-sheet-box > .mdv-panel-head { height: 44px; padding: 0 10px 0 16px; }
+.mdv-sheet-box > .mdv-pick { min-height: 0; overflow-y: auto; padding: 20px 20px 24px; box-sizing: border-box; }
+.mdv-pick.sheet .mdv-try-card, .mdv-pick.sheet .mdv-try-pv { width: 136px; }
+.mdv-pick.sheet .mdv-try-pv { height: 86px; padding: 10px; }
+/* 모드 관리(시트 '관리') — 줄마다 이름·한 줄 정보·단추, 줄 사이 1px 선. 숨긴 기본 모드는 맨 아래 접기 */
+.mdv-sheet-box > .mdv-mg { min-height: 0; overflow-y: auto; padding: 4px 20px 20px; box-sizing: border-box; }
+.mdv-mg { display: flex; flex-direction: column; gap: 4px; }
+.mdv-mg ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.mdv-mg-row { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.mdv-mg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.mdv-mg-main b { font-size: 13.5px; }
+.mdv-mg-main > small { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mdv-mg-row > .btn { flex: none; height: 32px; padding: 0 12px; font-size: 12.5px; }
+.mdv-mg-trash { display: flex; align-items: center; gap: 6px; min-height: 28px; font-size: 12px; color: var(--text-2); cursor: pointer; width: fit-content; }
+.mdv-mg-trash input { margin: 0; }
+.mdv-mg-ask { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; padding: 10px 12px; border-radius: 10px; background: var(--danger-bg); font-size: 12.5px; color: var(--danger-ink); }
+.mdv-mg-ask > span { flex: 1 1 220px; display: flex; flex-direction: column; gap: 2px; }
+.mdv-mg-ask small { color: var(--text-2); word-break: break-all; }
+.mdv-mg-ask .btn { height: 30px; padding: 0 12px; font-size: 12.5px; }
+.mdv-mg-more { display: flex; align-items: center; gap: 4px; min-height: 44px; padding: 0; border: 0; background: none; font: inherit; font-size: 12.5px; color: var(--text-3); cursor: pointer; }
+.mdv-mg-more svg { width: 14px; height: 14px; }
+.mdv-mg-note { margin: 16px 0; font-size: 12.5px; color: var(--text-3); }
+.mdv-mg-toast { position: sticky; bottom: 0; margin-top: 8px; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 6px 0 14px; border-radius: 10px; background: var(--text); color: var(--surface); font-size: 13px; box-shadow: 0 8px 24px rgba(0, 0, 0, .2); }
+.mdv-mg-toast button { margin-left: auto; min-height: 36px; padding: 0 12px; border: 0; background: transparent; color: var(--tag-working); font: inherit; font-weight: 700; cursor: pointer; }

@@ -42,6 +42,14 @@ export function modelChip(c?: { model?: string; effort?: string }): string | nul
   return c.effort ? `${c.model} · ${c.effort}` : c.model;
 }
 
+/** 폰 입력창 칩 — "Opus · high". 판 번호는 빼고(시트 머리에서만), 모르는 모델은 첫 낱말. 값이 없으면 null */
+export function modelChipShort(c?: { model?: string; modelId?: string; effort?: string }): string | null {
+  if (!c?.model) return null;
+  const f = familyOf(c.modelId ?? c.model);
+  const name = MODEL_CHOICES.find((m) => m.alias === f)?.label ?? c.model.split(/\s+/)[0]!;
+  return c.effort ? `${name} · ${c.effort}` : name;
+}
+
 export type PickerRow = { n: number; name: string };
 export type PickerView = { rows: PickerRow[]; cursor: number; effort?: string; effortOk: boolean };
 

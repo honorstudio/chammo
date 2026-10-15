@@ -3,6 +3,7 @@
  * 참모가 scripts/show 로 넘기거나 창에 끌어다 놓으면 열린다. 파일은 hodoc:// 로 읽는다(Rust reader.rs, 홈 폴더 안만)
  */
 import { isWebUrl, webTitle } from './webUrl';
+import editableExt from './editableExt.json';
 
 export type DocKind = 'web' | 'html' | 'pdf' | 'md' | 'image' | 'video' | 'audio' | 'office' | 'text' | 'other';
 
@@ -20,6 +21,14 @@ const TEXT = ['txt', 'log', 'json', 'jsonl', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'j
 /** macOS QuickLook 이 슬라이드·페이지로 나눠 보여 주는 문서 — 번호·글로 짚어 보여 줄 수 있다(2026-09-30) */
 const PAGE_DOC = [...OFFICE, 'ppt', 'pptx', 'pps', 'ppsx', 'odp', 'key', 'xls', 'xlsx', 'ods', 'numbers', 'pages'];
 export const pageDoc = (path: string) => PAGE_DOC.includes(path.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '');
+
+/** 스페이스가 바로 고치는 엑셀(ADR 0004) */
+export const isSheet = (path: string) => /\.(xlsx|xlsm)$/i.test(path);
+/** 탭 안에서 글 그대로 고치는 파일(.txt) — 고칠 수 있는 확장자는 Rust reader.rs editable() 과 같은 표(editableExt.json) 하나를 읽는다.
+ *  md 는 노션식 편집기(DocPage)가 따로 맡아서 여기 안 든다 */
+export const isPlainDoc = (path: string) => editableExt.plain.includes(path.toLowerCase().split('/').pop()?.match(/\.([a-z0-9]+)$/)?.[1] ?? '');
+/** 스페이스 가운데 페이지(d:)로 여는 파일 — md 문서·글 파일(.txt)·엑셀. 그 밖은 미리보기 창 */
+export const spacePage = (path: string) => kindOf(path) === 'md' || isPlainDoc(path) || isSheet(path);
 
 export function kindOf(path: string): DocKind {
   if (isWebUrl(path)) return 'web'; // scripts/show http(s) 주소 — 앱 안 주소 미리보기

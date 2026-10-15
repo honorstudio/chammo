@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { TtsField } from './TtsField';
-import { browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, projectAccess, notifyOpenSettings, notifyRequest, notifyStatus, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
+import { appVersion, browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, projectAccess, notifyOpenSettings, notifyRequest, notifyStatus, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
 import { addExtraProject, canNext, parseClaudeVersion, setupCommand, setupReady, tildify, notifyRow, browserRow, browserChecklist, ghRow, versionFit, WIZARD, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
-import type { Features } from '../domain/config';
+import type { Animation, FeatureSwitch } from '../domain/config';
+import { firstTab, settingsEscCloses, settingsTabs, type SettingsTab } from '../domain/settingsTabs';
+import { BRAND } from '../domain/avatar';
 import { josa, machine, tr, type Lang } from '../i18n';
 import { TerminalPane } from './TerminalPane';
 import { FULL_DISK_URL, wizardAccess, type Access } from '../domain/access';
@@ -12,6 +14,8 @@ import { MessengerSection } from './MessengerSection';
 import './setup.css';
 import { IS_WIN } from '../domain/reader';
 import { BrandMark } from './avatar';
+import { IconBack, IconClose, IconNext, IconPlus, IconRefresh, IconSettings } from './Icons';
+import { IconButton } from './kit/IconButton';
 
 /**
  * 설정 화면 = 첫 실행 안내 겸용. 아무것도 안 깔린 맥에서도 여기서 차례로 끝낼 수 있게:
@@ -77,7 +81,7 @@ function Field({ label, hint, children }: { label: string; hint?: ReactNode; chi
   );
 }
 
-const features = (): [keyof Features, string, string][] => [
+const features = (): [FeatureSwitch, string, string][] => [
   ['office', tr('사무실', 'Office'), tr('비서 화면을 픽셀 사무실로 보여 줘요', 'Shows the assistant view as a pixel office')],
   ['tama', tr('다마고치', 'Tamagotchi'), tr('커밋·머지를 먹고 자라는 작은 펫 위젯', 'A small pet widget that grows on your commits and merges')],
   ['gacha', tr('뽑기', 'Gacha'), tr('머지·커밋으로 모은 코인으로 사무실 꾸미기', 'Decorate the office with coins earned from merges and commits')],
@@ -85,9 +89,16 @@ const features = (): [keyof Features, string, string][] => [
   ['voice', tr('음성 모드', 'Voice mode'), tr('비서의 답을 소리로 읽어 줘요', "Reads the assistant's replies aloud")],
   ['agentView', tr('세션 브라우저 앱에서 보기', 'Watch session browsers in the app'), tr(`세션이 브라우저를 쓰면 그 화면을 대시보드에 띄워요. 그동안 이 ${machine()}의 다른 프로그램도 그 크롬을 조종할 수 있는 틈이 생겨요 — 켜고 끈 건 세션을 새로 켜야 적용돼요`, `Shows what a session's browser is doing on its dashboard. While on, other programs on this ${machine()} could also control that Chrome — changes apply to sessions started afterwards`)],
   // 맥만 — Claude Code 내장 화면 조종(computer-use)은 맥에서만 준다
-  ...(IS_WIN ? [] : [['computerUse', tr('화면 조종 모든 프로젝트', 'Screen control in all projects'), tr('세션이 이 맥 화면을 보고 클릭·입력할 수 있게(Claude Code computer-use) 모든 프로젝트에서 켜요. 쓸 때마다 앱별로 허락을 묻지만, 켜 두면 세션이 내 화면을 움직일 수 있어요 — 끄면 모든 프로젝트에서 빠져요', 'Lets sessions see and click on this Mac\'s screen (Claude Code computer-use) in every project. It still asks per app, but while on, sessions can move your screen — turning it off removes it from every project')] as [keyof Features, string, string]]),
+  ...(IS_WIN ? [] : [['computerUse', tr('화면 조종 모든 프로젝트', 'Screen control in all projects'), tr('세션이 이 맥 화면을 보고 클릭·입력할 수 있게(Claude Code computer-use) 모든 프로젝트에서 켜요. 쓸 때마다 앱별로 허락을 묻지만, 켜 두면 세션이 내 화면을 움직일 수 있어요 — 끄면 모든 프로젝트에서 빠져요', 'Lets sessions see and click on this Mac\'s screen (Claude Code computer-use) in every project. It still asks per app, but while on, sessions can move your screen — turning it off removes it from every project')] as [FeatureSwitch, string, string]]),
   ['autoRevive', tr('자동으로 다시 켜기', 'Auto-resume'), tr(`${josa(machine(), '이', '가')} 재시작돼 꺼진 세션 중 일이 남은 것을 혼자 이어서 켜요 — 사람이 앞에 없는 ${machine()}용`, `Resumes sessions a restart stopped mid-work, on its own — for unattended ${machine()}s`)],
 ];
+
+const ANIM_CHOICES = (): [Animation, string][] => [['auto', tr('자동', 'Auto')], ['reduce', tr('줄이기', 'Reduce')], ['off', tr('끄기', 'Off')]];
+const ANIM_HINT = (): Record<Animation, string> => ({
+  auto: tr(`${josa(machine(), "이", "가")} 바쁘면 저절로 줄여요`, `Reduces on its own when this ${machine()} is busy`),
+  reduce: tr('도는 움직임은 멈추고 전환만 짧게', 'Stops looping motion, keeps transitions short'),
+  off: tr('움직임 없이 바로 바뀌어요', 'Changes instantly, no motion'),
+});
 
 export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
   const [draft, setDraft] = useState<Config>(config);
@@ -314,10 +325,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
     </Row>
   );
 
-  const num = (n: number) => (firstRun ? '' : `${n}. `);
-  const langSec = (
-        <section className="su-sec">
-          <h2>{num(1)}{tr('언어', 'Language')}</h2>
+  const langSeg = (
           <div className="su-seg" role="radiogroup" aria-label={tr('언어', 'Language')}>
             {(['ko', 'en'] as Lang[]).map((l) => (
               <button key={l} role="radio" aria-checked={draft.language === l} className={draft.language === l ? 'on' : ''} onClick={() => void pickLanguage(l)}>
@@ -325,14 +333,16 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
               </button>
             ))}
           </div>
+  );
+  const langSec = (
+        <section className="su-sec">
+          <h2>{tr('언어', 'Language')}</h2>
+          {langSeg}
         </section>
   );
-  const checkSec = (
-        <section className="su-sec">
-          <div className="su-sec-head">
-            <h2>{num(2)}{tr(`이 ${machine()} 점검`, `Check this ${machine()}`)}</h2>
-            <button className="btn" disabled={checking} onClick={() => void recheck()}>{checking ? tr('확인하는 중…', 'Checking…') : tr('다시 확인', 'Check again')}</button>
-          </div>
+  const recheckBtn = <button className="btn" disabled={checking} onClick={() => void recheck()}>{checking ? tr('확인하는 중…', 'Checking…') : tr('다시 확인', 'Check again')}</button>;
+  const checkBody = (
+        <>
           {!check ? <div className="su-hint">{tr('필요한 도구가 있는지 보고 있어요…', 'Looking for the tools Chammo needs…')}</div> : (
             <div className="su-rows">
               {claudeRow}
@@ -365,21 +375,31 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
                 title={task === 'install' ? tr('Claude Code 설치', 'Installing Claude Code') : task === 'update' ? tr('Claude Code 업데이트', 'Updating Claude Code') : task === 'login' ? tr('Claude 로그인', 'Claude sign-in') : task === 'clt' ? tr('명령줄 도구 설치', 'Installing Command Line Tools') : tr('GitHub 로그인', 'GitHub sign-in')}
                 subtitle={tr('이 창에 바로 입력할 수 있어요', 'You can type in this window')}
                 fontSize={fontSize}
-                controls={<button className="btn su-mini" onClick={() => { setTask(null); void recheck(); }}>{tr('닫기', 'Close')}</button>}
+                controls={<IconButton label={tr('닫기', 'Close')} onClick={() => { setTask(null); void recheck(); }}><IconClose /></IconButton>}
               />
             </div>
           )}
+        </>
+  );
+  const checkSec = (
+        <section className="su-sec">
+          <div className="su-sec-head">
+            <h2>{tr(`이 ${machine()} 점검`, `Check this ${machine()}`)}</h2>
+            {recheckBtn}
+          </div>
+          {checkBody}
         </section>
   );
-  const basicsSec = (
-        <section className="su-sec">
-          <h2>{num(3)}{tr('기본 설정', 'Basics')}</h2>
+  // 아래 조각들을 첫 실행 안내(단계)와 설정 모달(탭)이 따로 묶는다 — 안내 순서는 예전 그대로
+  const nameField = (
           <Field label={tr('비서 이름', 'Assistant name')} hint={tr('세션 목록·알림에 이 이름으로 보여요.', 'Shown in the session list and notifications.')}>
             <input value={draft.assistantName} placeholder={defaultName} onChange={(e) => set('assistantName', e.target.value)} />
           </Field>
+  );
+  const devField = (
           <Field label={tr('프로젝트 폴더', 'Projects folder')} hint={devBlock
             ? devBlock === 'mac'
-              ? <>{tr('맥이 이 폴더 접근을 막고 있어요. 전체 디스크 접근 권한에서 Chammo 를 켠 뒤 앱을 다시 켜 주세요.', 'macOS is blocking this folder. Turn on Chammo in Full Disk Access, then reopen the app.')} <button type="button" className="btn su-mini" onClick={() => void openTarget('url', FULL_DISK_URL).catch(() => {})}>{tr('설정 열기', 'Open Settings')}</button></>
+              ? <>{tr('맥이 이 폴더 접근을 막고 있어요. 전체 디스크 접근 권한에서 Chammo 를 켠 뒤 앱을 다시 켜 주세요.', 'macOS is blocking this folder. Turn on Chammo in Full Disk Access, then reopen the app.')} <IconButton tone="line" className="su-inline" label={tr('설정 열기', 'Open Settings')} title={tr('맥 설정 열기 — 전체 디스크 접근', 'Open macOS Settings — Full Disk Access')} onClick={() => void openTarget('url', FULL_DISK_URL).catch(() => {})}><IconSettings /></IconButton></>
               : devBlock === 'perm'
                 ? tr('이 폴더를 읽을 권한이 없어요. 다른 폴더를 고르거나 폴더 권한을 고쳐 주세요.', 'No permission to read this folder. Pick another folder or fix its permissions.')
                 : tr('맥이 이 폴더에 들어가도 되는지 묻고 있어요. 뜬 창에서 허용을 눌러 주세요.', 'macOS is asking whether Chammo may open this folder. Click Allow in that window.')
@@ -388,7 +408,9 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
             : tr('프로젝트(git 저장소)들이 들어 있는 폴더. 그 안의 폴더 하나가 프로젝트 하나예요.', 'The folder that holds your projects (git repos). Each folder inside is one project.')}>
             {pick('devRoot', tr('프로젝트들이 들어 있는 폴더를 골라 주세요', 'Choose the folder that holds your projects'))}
           </Field>
-          {/* label 로 감싸지 않는다 — 라벨 글자를 누르면 안의 첫 버튼(첫 폴더 빼기)이 눌린다 */}
+  );
+  const extrasField = (
+          /* label 로 감싸지 않는다 — 라벨 글자를 누르면 안의 첫 버튼(첫 폴더 빼기)이 눌린다 */
           <div className="su-field su-field-list">
             <div className="su-list-row">
               <span className="su-label">{tr('따로 둔 프로젝트', 'Other projects')}</span>
@@ -396,27 +418,33 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
                 {extras.map((p) => (
                   <span className="su-extra" key={p}>
                     <code>{p}</code>
-                    <button type="button" className="btn su-mini" onClick={() => set('extraProjects', extras.filter((x) => x !== p))}>{tr('빼기', 'Remove')}</button>
+                    <IconButton tone="line" label={tr('빼기', 'Remove')} onClick={() => set('extraProjects', extras.filter((x) => x !== p))}><IconClose /></IconButton>
                   </span>
                 ))}
-                <button type="button" className="btn su-add" onClick={() => void addExtra()}>{tr('폴더 추가', 'Add folder')}</button>
+                <IconButton size="l" tone="line" label={tr('폴더 추가', 'Add folder')} onClick={() => void addExtra()}><IconPlus /></IconButton>
               </span>
             </div>
             <div className="su-hint">{tr('프로젝트 폴더 밖에 있는 폴더도 하나씩 추가할 수 있어요. 옮기지 않고 그 자리에서 프로젝트로 보여요.', 'Add folders that live outside the projects folder, one by one. They stay where they are and show up as projects.')}</div>
           </div>
+  );
+  const hqField = (
           <Field label={tr('HQ 폴더', 'HQ folder')} hint={hq?.hqReady
             ? tr(`준비됐어요. ${name}가 여기서 일해요.`, `Ready. ${name} works from here.`)
             : <>{tr(`${name}가 일하는 폴더예요. 안내문(CLAUDE.md)과 도구(scripts)를 넣어 만들어요.`, `The folder ${name} works from. It gets a guide (CLAUDE.md) and tools (scripts).`)} <button type="button" className="btn su-mini" onClick={() => void makeHq()}>{tr('HQ 만들기', 'Create HQ')}</button></>}>
             {pick('hqDir', tr('HQ 로 쓸 폴더를 골라 주세요 — 새 폴더를 만들어 골라도 돼요', 'Choose a folder for HQ — you can make a new one here'))}
           </Field>
+  );
+  const githubField = (
           <Field label={tr('GitHub 아이디', 'GitHub username')} hint={tr('다마고치 CI 배틀과 PR 리뷰에 써요. 비워 둬도 돼요.', 'Used for the Tamagotchi CI battle and PR review. You can leave it empty.')}>
             <input value={draft.githubUser} onChange={(e) => set('githubUser', e.target.value)} spellCheck={false} />
           </Field>
-          <TtsField value={draft.ttsCommand} onChange={(c) => set('ttsCommand', c)} name={name} onError={setError} />
-          {/* 말하기 키는 맥 전용(ptt.rs 가 macOS 이벤트 탭) — 윈도우판은 아직 없다 */}
-          {!IS_WIN && <Field label={tr('말하기 키', 'Talk key')}
+  );
+  const ttsField = <TtsField value={draft.ttsCommand} onChange={(c) => set('ttsCommand', c)} name={name} onError={setError} />;
+  const talkField = (
+          /* 말하기 키는 맥 전용(ptt.rs 가 macOS 이벤트 탭) — 윈도우판은 아직 없다 */
+          !IS_WIN && <Field label={tr('말하기 키', 'Talk key')}
             hint={draft.talkKey === 'fn'
-              ? <>{tr('누르고 말하면 세션 입력칸에 받아 적어요. 다른 키와 같이 누르면(fn+화살표 등) 말하기로 안 봐요. 맥 설정의 "🌐 키를 누르면"을 "아무것도 안 함"으로 두세요 — 안 그러면 한/영 전환·받아쓰기와 겹쳐요.', 'Hold and speak to dictate into the session input. Pressing it with another key (fn+arrows, etc.) doesn\'t count. Set macOS "Press 🌐 key to" to "Do Nothing" — otherwise it clashes with input switching and dictation.')} <button type="button" className="btn su-mini" onClick={() => void openTarget('url', 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension').catch(() => {})}>{tr('키보드 설정 열기', 'Open Keyboard settings')}</button></>
+              ? <>{tr('누르고 말하면 세션 입력칸에 받아 적어요. 다른 키와 같이 누르면(fn+화살표 등) 말하기로 안 봐요. 맥 설정의 "🌐 키를 누르면"을 "아무것도 안 함"으로 두세요 — 안 그러면 한/영 전환·받아쓰기와 겹쳐요.', 'Hold and speak to dictate into the session input. Pressing it with another key (fn+arrows, etc.) doesn\'t count. Set macOS "Press 🌐 key to" to "Do Nothing" — otherwise it clashes with input switching and dictation.')} <IconButton tone="line" className="su-inline" label={tr('키보드 설정 열기', 'Open Keyboard settings')} onClick={() => void openTarget('url', 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension').catch(() => {})}><IconSettings /></IconButton></>
               : draft.talkKey === 'right-option'
                 ? tr('오른쪽 ⌥ 를 누르고 말하면 세션 입력칸에 받아 적어요. 다른 키와 같이 누르면 말하기로 안 봐요.', 'Hold right ⌥ and speak to dictate into the session input. Pressing it with another key doesn\'t count.')
                 : tr('키를 누르고 말하면 세션 입력칸에 받아 적는 기능이에요. 꺼 두면 아무 키도 가로채지 않아요.', 'Hold a key and speak to dictate into the session input. Off means no key is watched.')}>
@@ -429,10 +457,14 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
               <label className="su-check"><input type="checkbox" checked={!!draft.talkAnywhere} onChange={(e) => set('talkAnywhere', e.target.checked)} />
                 {tr('다른 앱을 보고 있을 때도(손쉬운 사용 권한을 한 번 물어요)', 'Also while using other apps (asks for Accessibility permission once)')}</label>
             ) : null}
-          </Field>}
+          </Field>
+  );
+  const memoField = (
           <Field label={tr('메모 폴더', 'Notes folder')} hint={tr('프로젝트별 메모(⌘M)가 저장되는 곳.', 'Where per-project notes (⌘M) are saved.')}>
             {pick('memoDir', tr('메모를 저장할 폴더를 골라 주세요', 'Choose where notes are saved'))}
           </Field>
+  );
+  const trustBlock = (
           <div className="su-rows su-trust">
             <div className="su-hint">{tr('Claude Code 는 처음 보는 폴더에서 일하기 전에 "이 폴더를 믿나요?"를 한 번 물어요. 두 폴더를 한 번씩 믿어 주세요 — 프로젝트 폴더를 믿으면 그 안의 프로젝트는 따로 안 물어요.', 'Before working in a new folder, Claude Code asks once whether you trust it. Trust these two folders once — trusting the projects folder covers every project inside it.')}</div>
             {(['dev', 'hq'] as const).map((w) => (
@@ -449,18 +481,19 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
                   title={tr('폴더 믿기', 'Trust folder')}
                   subtitle={tr('↓ 로 Yes 고르고 Enter', '↓ to Yes, then Enter')}
                   fontSize={fontSize}
-                  controls={<button className="btn su-mini" onClick={() => { setTrusting(null); void refreshTrust(); }}>{tr('닫기', 'Close')}</button>}
+                  controls={<IconButton label={tr('닫기', 'Close')} onClick={() => { setTrusting(null); void refreshTrust(); }}><IconClose /></IconButton>}
                 />
               </div>
             )}
           </div>
+  );
+  const basicsSec = (
+        <section className="su-sec">
+          <h2>{tr('기본 설정', 'Basics')}</h2>
+          {nameField}{devField}{extrasField}{hqField}{githubField}{ttsField}{talkField}{memoField}{trustBlock}
         </section>
   );
-  const featSec = (
-        <section className="su-sec">
-          <h2>{num(4)}{tr('기능', 'Features')}</h2>
-          <p className="su-hint">{tr('꺼 두면 그 버튼과 메뉴가 숨어요. 언제든 여기서 다시 켤 수 있어요.', 'Turned-off features hide their buttons and menus. You can turn them back on here any time.')}</p>
-          {(() => {
+  const notifyBlock = (() => {
             const n = notifyRow(notify);
             return (
               <div className="su-rows">
@@ -472,12 +505,12 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
                     : n.action === 'request' ? tr('결정이 필요하거나 답을 기다릴 때 알려 드려요. 버튼을 누르면 macOS 가 한 번 물어봐요.', 'Get told when a decision or an answer is needed. The button makes macOS ask once.')
                     : tr('이 빌드에서는 확인할 수 없어요.', 'Cannot be checked in this build.')}>
                   {n.action === 'request' && <button className="btn pri" onClick={() => void notifyRequest().then(() => notifyStatus()).then(setNotify, () => {})}>{tr('알림 허용', 'Allow')}</button>}
-                  {n.action === 'settings' && <button className="btn" onClick={() => void notifyOpenSettings()}>{tr('설정 열기', 'Open Settings')}</button>}
+                  {n.action === 'settings' && <IconButton size="l" tone="line" label={tr('설정 열기', 'Open Settings')} title={tr('맥 알림 설정 열기', 'Open macOS notification settings')} onClick={() => void notifyOpenSettings()}><IconSettings /></IconButton>}
                 </Row>
               </div>
             );
-          })()}
-          {(() => {
+          })();
+  const browserBlock = (() => {
             const b = browserRow(browser, browserRun);
             const label: Record<string, string> = { node: 'Node.js', chrome: tr('크롬 베타', 'Chrome Beta'), parts: tr('도구 부품', 'Tool parts'), check: tr('시험 열기', 'Test open') };
             return (
@@ -486,7 +519,9 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
                   text={b.state === 'ok' ? tr('준비됐어요. 프로젝트마다 로그인이 유지되는 브라우저를 따로 줘요.', 'Ready. Each project gets its own browser that stays logged in.')
                     : browser ? tr('세션이 웹사이트를 열고 확인하게 해요. 없는 것만 받아요 — 관리자 암호는 안 물어요.', 'Lets sessions open and check websites. Only what is missing is downloaded — no admin password.')
                     : tr('확인하는 중…', 'Checking…')}>
-                  {b.action && <button className="btn pri" onClick={startBrowser}>{b.action === 'retry' ? tr('다시 시도', 'Try again') : tr('설치', 'Install')}</button>}
+                  {b.action && (b.action === 'retry'
+                    ? <IconButton size="l" tone="pri" label={tr('다시 시도', 'Try again')} onClick={startBrowser}><IconRefresh /></IconButton>
+                    : <button className="btn pri" onClick={startBrowser}>{tr('설치', 'Install')}</button>)}
                 </Row>
                 {browser && (
                   <ul className="su-checks">
@@ -508,7 +543,8 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
                 {!b.busy && browserRun?.done && browserRun.note && <div className="su-hint">{browserRun.note}</div>}
               </div>
             );
-          })()}
+          })();
+  const featGrid = (
           <div className="su-feats">
             {features().map(([k, label, text]) => (
               <label key={k} className="su-feat">
@@ -517,6 +553,23 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
               </label>
             ))}
           </div>
+  );
+  const animField = (
+          /* 2026-10-12 사용자 "부하 심하면 애니메이션 때문에 끊긴다" — 자동은 OS 동작 줄이기·맥 부하가 높을 때 저절로 줄인다(domain/animCalm) */
+          <Field label={tr('애니메이션', 'Animation')} hint={ANIM_HINT()[draft.features.animation ?? 'auto']}>
+            <span className="su-seg" role="radiogroup" aria-label={tr('애니메이션', 'Animation')}>
+              {ANIM_CHOICES().map(([v, label]) => {
+                const on = (draft.features.animation ?? 'auto') === v;
+                return <button key={v} type="button" role="radio" aria-checked={on} className={on ? 'on' : ''} onClick={() => set('features', { ...draft.features, animation: v })}>{label}</button>;
+              })}
+            </span>
+          </Field>
+  );
+  const featSec = (
+        <section className="su-sec">
+          <h2>{tr('기능', 'Features')}</h2>
+          <p className="su-hint">{tr('꺼 두면 그 버튼과 메뉴가 숨어요. 언제든 여기서 다시 켤 수 있어요.', 'Turned-off features hide their buttons and menus. You can turn them back on here any time.')}</p>
+          {notifyBlock}{browserBlock}{featGrid}{animField}
         </section>
   );
   // 마지막 단계 — 고른 것 한눈에
@@ -536,42 +589,110 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
   const at = WIZARD.indexOf(step);
   const sectionOf: Record<WizardStep, ReactNode> = { welcome: langSec, check: checkSec, basics: basicsSec, features: featSec, ready: readySec };
 
+  // ---- 설정(첫 실행 아님) = 앱 창 안 모달 + 왼쪽 탭. 지금 탭만 그린다 — 안 보는 탭의 읽기(목소리 목록 등)가 열 때 안 돈다 ----
+  const [tab, setTab] = useState<SettingsTab>(firstTab(start));
+  const [ver0, setVer0] = useState('');
+  useEffect(() => { if (!firstRun) void appVersion().then(setVer0, () => {}); }, [firstRun]);
+  const modal = useRef<HTMLDivElement>(null);
+  useEffect(() => { modal.current?.focus(); }, []); // 뒤 채팅 입력칸에 글이 안 가게
+  useEffect(() => {
+    if (firstRun) return;
+    // capture — 채팅 칸의 'Esc = 참모 멈추기'보다 먼저 받아 거기로 안 새게
+    const key = (e: KeyboardEvent) => {
+      const inTerminal = e.target instanceof Element && !!e.target.closest('.xterm');
+      if (!settingsEscCloses({ key: e.key, composing: e.isComposing, inTerminal })) return;
+      e.preventDefault(); e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener('keydown', key, true);
+    return () => window.removeEventListener('keydown', key, true);
+  }, [firstRun, onClose]);
+  const langField = (
+    <div className="su-field">
+      <div className="su-line"><span className="su-label">{tr('언어', 'Language')}</span><span className="su-control">{langSeg}</span></div>
+    </div>
+  );
+  const switches = (keys: FeatureSwitch[]) => (
+    <div className="cfg-rows">
+      {features().filter(([k]) => keys.includes(k)).map(([k, label, text]) => (
+        <label key={k} className="cfg-row">
+          <span className="cfg-rt"><b>{label}</b><span>{text}</span></span>
+          <input type="checkbox" role="switch" className="cfg-sw" checked={draft.features[k]} onChange={(e) => set('features', { ...draft.features, [k]: e.target.checked })} />
+        </label>
+      ))}
+    </div>
+  );
+  const TAB_LABEL: Record<SettingsTab, string> = {
+    general: tr('일반', 'General'), agent: name, features: tr('기능', 'Features'), voice: tr('알림과 음성', 'Alerts & voice'),
+    phone: tr('폰과 메신저', 'Phone & messenger'), accounts: tr('계정', 'Accounts'), browser: tr('브라우저', 'Browser'), tools: tr('도구 점검', 'Tools'),
+  };
+  const tabBody: Record<SettingsTab, ReactNode> = {
+    general: <>{langField}{memoField}{githubField}</>,
+    agent: <>{nameField}{hqField}{devField}{extrasField}{trustBlock}{switches(['autoRevive'])}</>,
+    features: <>{switches(['office', 'tama', 'gacha', 'review'])}{animField}</>,
+    voice: <>{notifyBlock}{switches(['voice'])}{ttsField}{talkField}</>,
+    phone: <><MobileSection title={tr('폰', 'Phone')} /><MessengerSection title={tr('텔레그램', 'Telegram')} /></>,
+    accounts: <AccountsSection title={tr('Claude 계정', 'Claude accounts')} claude={check?.claudePath} fontSize={fontSize} />,
+    browser: <>{browserBlock}{switches(['agentView', 'computerUse'])}</>,
+    tools: <><div className="cfg-tools-head"><span className="su-hint">{tr(`Chammo 가 쓰는 도구가 이 ${machine()}에 있는지`, `Whether the tools Chammo uses are on this ${machine()}`)}</span>{recheckBtn}</div>{checkBody}</>,
+  };
+  if (!firstRun) return (
+    <div className="setup cfg-back" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="cfg-modal" role="dialog" aria-modal="true" aria-label={tr('설정', 'Settings')} ref={modal} tabIndex={-1} style={{ '--cfg-tint': BRAND.color } as CSSProperties}>
+        <nav className="cfg-side" role="tablist" aria-orientation="vertical" aria-label={tr('설정 메뉴', 'Settings menu')}>
+          <div className="cfg-me"><BrandMark size={34} /><div><b>{tr('설정', 'Settings')}</b><span>Chammo{ver0 ? ` · v${ver0}` : ''}</span></div></div>
+          {settingsTabs(IS_WIN).map((t) => (
+            <button key={t} role="tab" aria-selected={tab === t} className={`cfg-tab${tab === t ? ' on' : ''}`} onClick={() => setTab(t)}>{TAB_LABEL[t]}</button>
+          ))}
+        </nav>
+        <div className="cfg-card" role="tabpanel" aria-label={TAB_LABEL[tab]}>
+          <header className="cfg-head">
+            <h2>{TAB_LABEL[tab]}</h2>
+            <IconButton size="l" label={tr('닫기', 'Close')} title={tr('닫기 (Esc)', 'Close (Esc)')} onClick={onClose}><IconClose /></IconButton>
+          </header>
+          <div className="cfg-body" key={tab}>{tabBody[tab]}</div>
+          <footer className="cfg-foot">
+            {note && <div className="su-note">{note}</div>}
+            {error && <div className="su-error">{error}</div>}
+            <div className="cfg-foot-row">
+              <span>{tr('언어와 비서 이름은 저장하면 창을 다시 열며 바뀌어요', 'Language and assistant name apply as the window reopens')}</span>
+              <button className="btn" disabled={busy} onClick={onClose}>{tr('취소', 'Cancel')}</button>
+              <button className="btn pri su-go" disabled={busy} onClick={() => void finish()}>{busy ? tr('저장하는 중…', 'Saving…') : tr('저장', 'Save')}</button>
+            </div>
+          </footer>
+        </div>
+      </div>
+    </div>
+  );
+
+  // 첫 실행 안내 — 창 전체 한 장, 다섯 단계
   return (
     <div className="setup" role="dialog" aria-modal="true" aria-label={tr('설정', 'Settings')}>
       <div className="setup-page">
         <header className="su-head">
           <div>
-            {firstRun && <BrandMark size={64} className="su-brand" />}
-            <h1>{firstRun ? tr('Chammo 에 오신 걸 환영해요', 'Welcome to Chammo') : tr('설정', 'Settings')}</h1>
-            <p>{firstRun
-              ? (step === 'welcome' ? tr('Chammo 는 Claude Code 세션들을 굴리는 참모예요. 결정은 당신이, 일은 참모가. 다섯 단계면 끝나요.', 'Chammo is a chief of staff that runs your Claude Code sessions. You make the calls; it runs the team. Five short steps and you are in.') : tr(`${at + 1} / ${WIZARD.length} 단계`, `Step ${at + 1} of ${WIZARD.length}`))
-              : tr('바꾼 값은 저장하면 바로 적용돼요. 언어와 비서 이름은 창을 다시 열면서 바뀌어요.', 'Changes apply when you save. Language and assistant name take effect as the window reopens.')}</p>
+            <BrandMark size={64} className="su-brand" />
+            <h1>{tr('Chammo 에 오신 걸 환영해요', 'Welcome to Chammo')}</h1>
+            <p>{step === 'welcome' ? tr('Chammo 는 Claude Code 세션들을 굴리는 참모예요. 결정은 당신이, 일은 참모가. 다섯 단계면 끝나요.', 'Chammo is a chief of staff that runs your Claude Code sessions. You make the calls; it runs the team. Five short steps and you are in.') : tr(`${at + 1} / ${WIZARD.length} 단계`, `Step ${at + 1} of ${WIZARD.length}`)}</p>
           </div>
-          {!firstRun && <button className="btn" onClick={onClose}>{tr('닫기', 'Close')}</button>}
         </header>
-        {firstRun && (
-          <ol className="su-steps" aria-label={tr('진행', 'Progress')}>
-            {WIZARD.map((w, i) => <li key={w} className={i < at ? 'done' : i === at ? 'on' : ''} />)}
-          </ol>
-        )}
+        <ol className="su-steps" aria-label={tr('진행', 'Progress')}>
+          {WIZARD.map((w, i) => <li key={w} className={i < at ? 'done' : i === at ? 'on' : ''} />)}
+        </ol>
 
-        {firstRun ? sectionOf[step] : <>{langSec}{checkSec}{basicsSec}{featSec}{!IS_WIN && <AccountsSection title={`5. ${tr('계정', 'Accounts')}`} claude={check?.claudePath} fontSize={fontSize} />}<MobileSection title={`${IS_WIN ? 5 : 6}. ${tr('모바일', 'Mobile')}`} /><MessengerSection title={`${IS_WIN ? 6 : 7}. ${tr('텔레그램', 'Telegram')}`} /></>}
+        {sectionOf[step]}
 
         <footer className="su-foot">
           {note && <div className="su-note">{note}</div>}
           {error && <div className="su-error">{error}</div>}
-          {firstRun && step === 'check' && !canNext('check', check) && check && <div className="su-hint">{tr('위의 Claude Code 설치·로그인과 명령줄 도구가 끝나면 다음으로 갈 수 있어요.', 'Finish installing and signing in to Claude Code, and the Command Line Tools, to continue.')}</div>}
-          {firstRun ? (
-            <div className="su-nav">
-              {at > 0 && <button className="btn" disabled={busy} onClick={() => setStep(WIZARD[at - 1]!)}>{tr('뒤로', 'Back')}</button>}
-              <span className="grow" />
-              {step === 'ready'
-                ? <button className="btn pri su-go" disabled={busy || !ready} onClick={() => void finish()}>{busy ? tr('준비하는 중…', 'Getting ready…') : tr('시작하기', 'Get started')}</button>
-                : <button className="btn pri su-go" disabled={!canNext(step, check, trust, devAccess)} onClick={() => setStep(WIZARD[at + 1]!)}>{tr('다음', 'Next')}</button>}
-            </div>
-          ) : (
-            <button className="btn pri su-go" disabled={busy} onClick={() => void finish()}>{busy ? tr('준비하는 중…', 'Getting ready…') : tr('저장', 'Save')}</button>
-          )}
+          {step === 'check' && !canNext('check', check) && check && <div className="su-hint">{tr('위의 Claude Code 설치·로그인과 명령줄 도구가 끝나면 다음으로 갈 수 있어요.', 'Finish installing and signing in to Claude Code, and the Command Line Tools, to continue.')}</div>}
+          <div className="su-nav">
+            {at > 0 && <IconButton size="l" tone="line" className="su-nav-ib" label={tr('뒤로', 'Back')} disabled={busy} onClick={() => setStep(WIZARD[at - 1]!)}><IconBack /></IconButton>}
+            <span className="grow" />
+            {step === 'ready'
+              ? <button className="btn pri su-go" disabled={busy || !ready} onClick={() => void finish()}>{busy ? tr('준비하는 중…', 'Getting ready…') : tr('시작하기', 'Get started')}</button>
+              : <IconButton size="l" tone="pri" className="su-nav-ib" label={tr('다음', 'Next')} disabled={!canNext(step, check, trust, devAccess)} onClick={() => setStep(WIZARD[at + 1]!)}><IconNext /></IconButton>}
+          </div>
         </footer>
       </div>
     </div>

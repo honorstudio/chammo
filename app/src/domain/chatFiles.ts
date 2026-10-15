@@ -1,30 +1,45 @@
 // 채팅 안 파일 카드 — 참모가 scripts/show 로 보여 준 파일을 그 참모 채팅의 그 시각 자리에(2026-10-08 사용자 "ㄱㄱ 해보자").
 // 폰·PC 둘 다 show.jsonl 꼬리를 읽는다(폰은 /api/shows — 서버가 폰에 내보낼 수 있는 줄만 남긴 것). 꼬리는 세션별 공평 나누기(reader::fair_tail)라
 // 하위 세션이 그림을 잔뜩 띄워도 참모의 옛 카드가 안 밀려난다(2026-10-09)
+import { findTarget } from './inbox';
+import type { Session } from './session';
 import { parseAt, type ShowAt } from './showAt';
+import { holderMap, showOwner } from './spaceNav';
+import type { TaskEvent } from './tasks';
 
-export type ChatFile = { key: string; ts: string; path: string; at?: ShowAt };
+/** from = 띄운 하위 세션 id(참모 자기 줄이면 없음), who = 화면에 쓸 그 세션 이름(부르는 쪽이 채운다) */
+export type ChatFile = { key: string; ts: string; path: string; at?: ShowAt; from?: string; who?: string };
 
 /** 같은 파일·같은 곳을 이 안에 또 보여 주면 한 장으로 — 고치고 다시 띄우는 일(고친 문서는 다시 띄우기)이 잦아 카드가 줄줄이 쌓였다 */
 export const MERGE_MS = 10 * 60_000;
 
-/** show.jsonl → 이 참모(orchId = 띄운 세션 id)가 보여 준 파일 카드, 오래된 순. 다른 참모·하위 세션 줄과 못 찾은 파일(gone)은 뺀다.
+/** show.jsonl → 이 참모(orchId = 띄운 세션 id)가 보여 준 파일 카드, 오래된 순. 다른 참모 줄과 못 찾은 파일(gone)은 뺀다.
+ *  ownerOf(띄운 세션 → 그 세션을 맡긴 참모, spaceNav showOwner)를 주면 이 참모가 맡긴 하위 세션이 띄운 것도 카드(from 붙임) —
+ *  하위 세션이 띄운 시안이 참모 채팅에 안 떠서 참모가 다시 띄워야 했다(2026-10-11 사용자).
  *  묶은 카드는 마지막으로 보여 준 자리로 옮기고 key 는 처음 시각 그대로 */
-export function chatFiles(log: string, orchId: string): ChatFile[] {
+export function chatFiles(log: string, orchId: string, ownerOf?: (from: string) => string | null): ChatFile[] {
   const out: (ChatFile & { ms: number; same: string })[] = [];
   for (const line of log.split('\n')) {
     let r: { path?: unknown; ts?: unknown; from?: unknown; at?: unknown; gone?: unknown };
     try { r = JSON.parse(line); } catch { continue; }
-    if (!r || r.from !== orchId || typeof r.path !== 'string' || !r.path || r.gone || typeof r.ts !== 'string') continue;
+    if (!r || typeof r.path !== 'string' || !r.path || r.gone || typeof r.ts !== 'string' || typeof r.from !== 'string') continue;
+    const sub = r.from !== orchId ? r.from : undefined;
+    if (sub && ownerOf?.(sub) !== orchId) continue;
     const ms = Date.parse(r.ts);
     if (Number.isNaN(ms)) continue;
     const at = parseAt(r.at);
     const same = `${r.path}\n${JSON.stringify(at ?? null)}`;
     const prev = [...out].reverse().find((c) => c.same === same);
-    if (prev && ms - prev.ms <= MERGE_MS) { prev.ms = ms; prev.ts = r.ts; continue; }
-    out.push({ key: `show:${r.path}:${r.ts}`, ts: r.ts, path: r.path, ...(at ? { at } : {}), ms, same });
+    if (prev && ms - prev.ms <= MERGE_MS) { prev.ms = ms; prev.ts = r.ts; if (sub) prev.from = sub; else delete prev.from; continue; }
+    out.push({ key: `show:${r.path}:${r.ts}`, ts: r.ts, path: r.path, ...(at ? { at } : {}), ...(sub ? { from: sub } : {}), ms, same });
   }
   return out.sort((a, b) => a.ms - b.ms).map(({ ms: _ms, same: _same, ...c }) => c);
+}
+
+/** 띄운 세션 → 그 세션을 맡긴 참모(chatFiles ownerOf). 스페이스가 띄운 문서를 둘 참모와 같은 판단(holderMap·showOwner) — 데스크톱·폰 채팅이 같이 쓴다 */
+export function showOwnerOf(events: TaskEvent[], sessions: Session[], orchIds: string[], now: number): (from: string) => string | null {
+  const holders = holderMap(events, orchIds, (t) => findTarget(sessions, t)?.id, now);
+  return (from) => showOwner(from, orchIds, holders);
 }
 
 /** 카드 아래 짚은 곳 한 줄 — 없으면 빈 글 */

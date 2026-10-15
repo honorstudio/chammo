@@ -30,6 +30,10 @@ struct Fake {
     revived: bool,
     /// 작업 기록(tasks.jsonl) 원문 — 비우면 "{}"
     task_log: String,
+    /// 파일 보관함 뿌리(진짜 폴더)
+    locker: Option<PathBuf>,
+    /// 가짜 홈(보관함 바로가기 검사) — 비우면 진짜 홈
+    home: Option<PathBuf>,
 }
 
 impl Fake {
@@ -138,6 +142,47 @@ impl Backend for Fake {
     fn show_log(&self) -> String {
         self.show.clone()
     }
+    fn locker_root(&self) -> Option<PathBuf> {
+        self.locker.clone()
+    }
+    fn home(&self) -> PathBuf {
+        self.home.clone().unwrap_or_else(|| PathBuf::from(crate::platform::home()))
+    }
+    fn modes(&self) -> serde_json::Value {
+        serde_json::json!([{ "name": "home-calendar", "title": "달력", "on": true, "where": "dash", "dash": "운영", "alive": true }])
+    }
+    fn mode_view(&self, name: &str, columns: u32, rows: u32) -> Result<serde_json::Value, String> {
+        self.log(format!("mode-view {name} {columns}x{rows}"));
+        Ok(serde_json::json!({ "state": { "alive": true, "ready": true }, "tree": { "type": "Text", "children": ["10월"] } }))
+    }
+    fn mode_act(&self, name: &str, act: &serde_json::Value) -> Result<serde_json::Value, String> {
+        self.log(format!("mode-act {name} {act}"));
+        Ok(serde_json::json!({ "handled": true }))
+    }
+    fn mode_open(&self, name: &str, dash: &str) -> Result<(), String> {
+        self.log(format!("mode-open {name} {dash}"));
+        Ok(())
+    }
+    fn mode_close(&self, name: &str, dash: &str) -> Result<(), String> {
+        self.log(format!("mode-close {name} {dash}"));
+        Ok(())
+    }
+    fn mode_card(&self, name: &str) -> serde_json::Value {
+        self.log(format!("mode-card {name}"));
+        serde_json::json!({ "kind": "svg", "svg": "<svg/>" })
+    }
+    fn mode_remove(&self, name: &str) -> Result<serde_json::Value, String> {
+        self.log(format!("mode-remove {name}"));
+        Ok(serde_json::json!({ "kind": "removed", "trashed": null, "undo": true }))
+    }
+    fn mode_restore(&self, name: &str) -> Result<(), String> {
+        self.log(format!("mode-restore {name}"));
+        Ok(())
+    }
+    fn locker_add(&self, owner: &str, path: &str) -> Result<String, String> {
+        self.log(format!("locker-add {owner} {path}"));
+        Ok(format!("/data/locker/files/1-{}", path.rsplit('/').next().unwrap_or("")))
+    }
     fn data_dir(&self) -> PathBuf {
         // 안 정했으면 임시 폴더 — 빈 경로면 쓰는 길(새 참모 맡은 일 등)이 cargo test 폴더에 파일을 남긴다
         if self.data.as_os_str().is_empty() {
@@ -226,6 +271,28 @@ impl Backend for Fake {
     fn account_auto(&self, on: bool) -> Result<serde_json::Value, String> {
         self.log(format!("account_auto {on}"));
         Ok(serde_json::json!({ "auto": { "on": on } }))
+    }
+    fn voice_on(&self) -> bool {
+        true
+    }
+    fn layout_log(&self, line: &str) {
+        self.log(format!("layout {line}"));
+    }
+    fn voice_beat(&self, b: crate::phone_voice::Beat) -> serde_json::Value {
+        self.log(format!("voice_beat ready={} hidden={} ack={:?}", b.ready, b.hidden, b.ack));
+        serde_json::json!({ "item": { "id": 7, "ms": 2500 }, "cancel": 3 })
+    }
+    fn voice_audio(&self, id: u64) -> Option<Vec<u8>> {
+        self.log(format!("voice_audio {id}"));
+        (id == 7).then(|| b"RIFFxxxxWAVE".to_vec())
+    }
+    fn set_voice(&self, on: bool) -> Result<(), String> {
+        self.log(format!("set_voice {on}"));
+        Ok(())
+    }
+    fn pick_model(&self, id: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+        self.log(format!("pick_model {id} {model:?} {effort:?}"));
+        Ok(())
     }
     fn login_view(&self) -> serde_json::Value {
         self.log("login_view".into());
@@ -1627,6 +1694,70 @@ fn 폰_영상은_표_주소로_range_206() {
 }
 
 #[test]
+fn 폰_파일_받기는_표_주소로_진짜_mime_attachment_range() {
+    // 폰 '받기'(공유 시트·내려받기) — 보여 준 파일이면 확장자 무엇이든 원본 그대로, 진짜 MIME·attachment·Range(2026-10-11 사용자)
+    let d = tmp("dl");
+    let v = d.join("clip.mov");
+    std::fs::write(&v, (0..3000u32).map(|i| (i % 256) as u8).collect::<Vec<_>>()).unwrap();
+    let pdf = d.join("보고서 최종.pdf");
+    std::fs::write(&pdf, b"%PDF-1.7\n").unwrap();
+    let zip = d.join("묶음.zip");
+    std::fs::write(&zip, b"PK\x03\x04").unwrap();
+    let sheet = d.join("정산.numbers");
+    std::fs::write(&sheet, b"PK").unwrap();
+    let csv = d.join("목록.csv");
+    std::fs::write(&csv, b"a,b\n").unwrap();
+    let deck = d.join("발표.pptx");
+    std::fs::write(&deck, b"PK").unwrap();
+    let key = d.join("설정.txt");
+    std::fs::write(&key, format!("-----BEGIN RSA {}-----\nabc\n", "PRIVATE KEY")).unwrap();
+    let hidden = d.join("안보여줌.pdf");
+    std::fs::write(&hidden, b"%PDF").unwrap();
+    let show: String = [&v, &pdf, &zip, &sheet, &csv, &deck, &key].iter().map(|p| format!("{{\"path\":\"{}\"}}\n", p.display())).collect();
+    let g = gate();
+    let f = Fake { show, data: d.join("data"), ..Default::default() };
+    let hv = |r: &Resp, k: &str| r.headers.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone()).unwrap_or_default();
+    let ticket = |p: &std::path::Path| {
+        let r = handle(&post("/api/dl-ticket", &serde_json::json!({ "path": p.to_string_lossy() }).to_string()), &g, &f);
+        (r.status, serde_json::from_slice::<serde_json::Value>(&r.body).unwrap_or_default())
+    };
+    let (st, j) = ticket(&pdf);
+    assert_eq!(st, 200);
+    assert_eq!((j["size"].as_u64(), j["name"].as_str(), j["mime"].as_str()), (Some(9), Some("보고서 최종.pdf"), Some("application/pdf")));
+    let url = j["url"].as_str().unwrap().to_string();
+    assert!(url.starts_with("/api/dl?t="), "{url}");
+    // 표만 있으면 열쇠 없이 — 링크 내려받기(사파리)는 Bearer 를 못 싣는다
+    let r = handle(&get(&url), &g, &f);
+    assert_eq!((r.status, r.body.as_slice()), (200, &b"%PDF-1.7\n"[..]));
+    assert_eq!(ctype(&r), "application/pdf");
+    let cd = hv(&r, "Content-Disposition");
+    assert!(cd.starts_with("attachment;") && cd.contains("filename*=UTF-8''%EB%B3%B4%EA%B3%A0%EC%84%9C%20%EC%B5%9C%EC%A2%85.pdf"), "{cd}");
+    assert!(cd.contains("filename=\"file.pdf\""), "아스키 아닌 이름은 옛 칸에 대신 이름: {cd}");
+    assert_eq!(hv(&r, "Accept-Ranges"), "bytes");
+    // nosniff 는 write_resp 공통 머리가 붙인다
+    assert!(hv(&r, "Content-Security-Policy").starts_with("sandbox"));
+    // 확장자별 MIME — 영상·글 표·표 원본(모르는 형식은 octet-stream)·오피스 원본도
+    let mime = |p: &std::path::Path| { let (st, j) = ticket(p); assert_eq!(st, 200, "{}", p.display()); ctype(&handle(&get(j["url"].as_str().unwrap()), &g, &f)) };
+    assert_eq!(mime(&v), "video/quicktime");
+    assert_eq!(mime(&csv), "text/csv; charset=utf-8");
+    assert_eq!(mime(&sheet), "application/octet-stream");
+    assert_eq!(mime(&deck), "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+    // 영상 Range
+    let (_, j) = ticket(&v);
+    let vu = j["url"].as_str().unwrap().to_string();
+    let r = handle(&set(get(&vu), "range", Some("bytes=10-19")), &g, &f);
+    assert_eq!((r.status, r.body.len(), hv(&r, "Content-Range").as_str()), (206, 10, "bytes 10-19/3000"));
+    assert_eq!(handle(&set(get(&vu), "range", Some("bytes=9000-")), &g, &f).status, 416);
+    // 거름은 그대로 — 안 보여 준 파일·내보내는 확장자 밖(zip)·글 속 키·틀린 표
+    assert_eq!(ticket(&hidden).0, 403);
+    assert_eq!(ticket(&zip).0, 403);
+    let (_, j) = ticket(&key);
+    assert_eq!(handle(&get(j["url"].as_str().unwrap()), &g, &f).status, 403);
+    assert_eq!(handle(&get("/api/dl?t=00112233445566778899aabbccddeeff"), &g, &f).status, 403);
+    assert!(head_check(&post("/api/dl-ticket", "{}"), &g).is_none());
+}
+
+#[test]
 fn 폰_오피스_docx_는_글로_나머지는_맥에서_열기() {
     let d = tmp("office");
     let doc = d.join("기획.docx");
@@ -1652,6 +1783,39 @@ fn 폰_오피스_docx_는_글로_나머지는_맥에서_열기() {
     assert_eq!(f.calls(), vec![format!("open {}", deck.display())]);
     assert_eq!(handle(&post("/api/open-mac", &serde_json::json!({ "path": d.join("x.pptx").to_string_lossy() }).to_string()), &g, &f).status, 403);
     assert!(head_check(&post("/api/open-mac", "{}"), &g).is_none());
+}
+
+#[test]
+fn 폰_엑셀은_표로_읽기만_키가_보이면_안_낸다() {
+    let d = tmp("sheet");
+    let book = d.join("가계부.xlsx");
+    std::fs::write(&book, crate::sheet::tests::book(&[])).unwrap();
+    let leak = d.join("키.xlsx");
+    let sst = crate::sheet::tests::SST.replace("<t>품목</t>", &format!("<t>sk-{}</t>", "ant-api03-".to_string() + &"x".repeat(40)));
+    std::fs::write(&leak, crate::sheet::tests::book(&[("xl/sharedStrings.xml", &sst)])).unwrap();
+    let deck = d.join("발표.pptx");
+    std::fs::write(&deck, b"PK").unwrap();
+    let show: String = [&book, &leak, &deck].iter().map(|p| format!("{{\"path\":\"{}\"}}\n", p.display())).collect();
+    let fake = || Fake { show: show.clone(), data: d.join("data"), ..Default::default() };
+    let file = |p: &Path, extra: &str| with_cookie(get(&format!("/api/file?path={}{extra}", enc(&p.to_string_lossy()))));
+    let (s, _, r) = run_with(file(&book, "&as=sheet"), fake());
+    assert_eq!(s, 200);
+    let j: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    assert_eq!((j["sheets"][0]["name"].as_str(), j["sheets"][0]["cut"].as_u64()), (Some("매출"), Some(0)));
+    assert_eq!(j["sheets"][0]["cells"][0]["v"], "품목");
+    assert_eq!(run_with(file(&leak, "&as=sheet"), fake()).0, 403, "칸에 키가 보이면 안 낸다");
+    assert_eq!(run_with(file(&deck, "&as=sheet"), fake()).0, 403, "엑셀만");
+    // 원본은 여전히 안 낸다
+    assert_eq!(run_with(file(&book, ""), fake()).0, 403);
+}
+
+#[test]
+fn 폰_엑셀_표는_시트마다_앞_2000행까지() {
+    let rows: String = (1..=2005).map(|r| format!("<row r=\"{r}\"><c r=\"A{r}\"><v>{r}</v></c></row>")).collect();
+    let sheet = format!("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>{rows}</sheetData></worksheet>");
+    let b = crate::sheet_book::read_book(&crate::sheet::tests::book(&[("xl/worksheets/sheet1.xml", &sheet)])).unwrap();
+    let j: serde_json::Value = serde_json::from_slice(&phone_sheet(&b)).unwrap();
+    assert_eq!((j["sheets"][0]["cells"].as_array().unwrap().len(), j["sheets"][0]["cut"].as_u64()), (2000, Some(5)));
 }
 
 #[test]
@@ -1857,6 +2021,11 @@ fn 폰_html_시안_앞에_글자_키움_막기를_head_맨_앞에_넣는다() {
     // 옛 검토 시안: 안쪽 가로 스크롤 덱(.decks) 폭까지 알린다(상한 4000)
     assert!(HTML_SHIM.contains("querySelectorAll('.decks')") && HTML_SHIM.contains("Math.min(4000,"));
     assert!(out.find("html-size") < out.find("<meta charset"), "저장소 대체가 시안 스크립트보다 먼저");
+    // 폰에서 검토 틀 고르기 창의 작은 메모 칸은 키보드가 뜨며 창이 스크롤로 닫혀 못 썼다(2026-10-11) — 손가락이면 칸을 누르는 순간
+    // 키보드를 안 띄우고 폰에 넘긴다(cur-note, 고른 블록 k·쓰던 글), 고르기 창은 닫는다. 폰이 아래 시트로 받아 cur-cmd note 로 되돌린다
+    assert!(HTML_SHIM.contains("closest('.cur-pick')") && HTML_SHIM.contains("hodoc:'cur-note'") && HTML_SHIM.contains(".cur-sel"));
+    // 손가락 판정 — 누른 것(touchend)은 그대로 손가락, 포커스만 온 것은 터치 화면일 때만(틀 안 칸은 pointer:coarse 가 안 따라올 수 있다)
+    assert!(HTML_SHIM.contains("e.type!=='touchend'&&!(navigator.maxTouchPoints>0||matchMedia('(pointer:coarse)').matches)") && HTML_SHIM.contains("addEventListener('touchend'") && HTML_SHIM.contains("addEventListener('focusin'"));
     // 시안이 직접 정한 값이 있으면 그게 이긴다(같은 세기, 뒤에 온 것)
     let own = "<html><head><style>html{-webkit-text-size-adjust:none}</style></head></html>";
     assert!(at(own, "text-size-adjust:100%") < at(own, "text-size-adjust:none"));
@@ -1941,6 +2110,59 @@ fn 자동_전환_토글은_불리언만() {
     assert_eq!(handle(&post("/api/account-auto", r#"{"on":false}"#), &g, &f).status, 200);
     assert_eq!(handle(&post("/api/account-auto", r#"{"on":true}"#), &g, &f).status, 200);
     assert_eq!(f.calls(), vec!["account_auto false".to_string(), "account_auto true".to_string()]);
+}
+
+#[test]
+fn 음성_모드_모델_칩_쓰기는_진짜_서버_문지기도_통과한다() {
+    // 2026-10-11 머지 때 발견 — head_check 몸통 받는 길 목록에 없으면 진짜 서버는 handle 전에 404 로 끊는다(가짜 폰 서버 하네스로는 못 잡았다)
+    let g = gate();
+    assert!(head_check(&post("/api/voice-mode", r#"{"on":true}"#), &g).is_none(), "voice-mode");
+    assert!(head_check(&post("/api/model", r#"{"id":"aaaa0001","model":"opus"}"#), &g).is_none(), "model");
+    let f = Fake::default();
+    assert_eq!(handle(&with_cookie(get("/api/voice-mode")), &g, &f).status, 405);
+    assert_eq!(handle(&with_cookie(get("/api/model")), &g, &f).status, 405);
+}
+
+#[test]
+fn 음성_모드는_읽기와_켜고_끄기만_불리언으로() {
+    // 폰 입력창 마이크 = 맥 앱 음성 모드(2026-10-11 시안 phone-dash K) — scripts/app voice 와 같은 통로
+    let g = gate();
+    let f = Fake::default();
+    let r = handle(&with_cookie(get("/api/voice")), &g, &f);
+    assert_eq!((r.status, String::from_utf8_lossy(&r.body).to_string()), (200, r#"{"on":true}"#.to_string()));
+    assert_eq!(handle(&post("/api/voice-mode", r#"{"on":"yes"}"#), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/voice-mode", r#"{}"#), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/voice-mode", r#"{"on":false}"#), &g, &f).status, 200);
+    assert_eq!(handle(&post("/api/voice-mode", r#"{"on":true}"#), &g, &f).status, 200);
+    assert_eq!(f.calls(), vec!["set_voice false".to_string(), "set_voice true".to_string()]);
+}
+
+#[test]
+fn 음성_모드_쓰기도_같은_출처만() {
+    assert_eq!(run(set(post("/api/voice-mode", r#"{"on":true}"#), "origin", Some("http://evil.example"))).0, 403);
+}
+
+#[test]
+fn 모델_칩은_비서_세션에_정해진_값만() {
+    // 폰 입력창 모델·에포트 칩(2026-10-11) — 데스크톱 칩과 같은 길(앱 runModelPick: /model·/effort 치고 ~/.claude/settings.json 기본값은 되돌림)로 넘긴다.
+    // 맥은 값을 다시 거르고 글로 붙여 치지 않는다 — 별칭·단계 목록 밖은 400
+    let g = gate();
+    let f = Fake::default();
+    let pick = |b: &str| handle(&post("/api/model", b), &g, &f).status;
+    assert_eq!(pick(r#"{"id":"aaaa0001","model":"sonnet"}"#), 202);
+    assert_eq!(pick(r#"{"id":"bbbb0002","model":"sonnet"}"#), 403, "하위 세션은 참모가 조종한다");
+    assert_eq!(pick(r#"{"id":"cccc9999","model":"sonnet"}"#), 404);
+    assert_eq!(pick(r#"{"id":"aaaa0001"}"#), 400, "바꿀 게 없다");
+    assert_eq!(pick(r#"{"id":"aaaa0001","model":"opus\r/clear"}"#), 400);
+    assert_eq!(pick(r#"{"id":"aaaa0001","model":"claude-opus-5-5"}"#), 400);
+    assert_eq!(pick(r#"{"id":"aaaa0001","effort":"ultra"}"#), 400);
+    assert_eq!(pick(r#"{"id":"aaaa0001","effort":"xhigh"}"#), 429, "연달아 누르면 한 번만(앞 것이 기본값을 되돌리는 동안)");
+    assert_eq!(f.calls().iter().filter(|c| c.starts_with("pick_model")).cloned().collect::<Vec<_>>(), vec![r#"pick_model aaaa0001 Some("sonnet") None"#.to_string()]);
+}
+
+#[test]
+fn 모델_칩_쓰기도_같은_출처만() {
+    assert_eq!(run(set(post("/api/model", r#"{"id":"aaaa0001","model":"opus"}"#), "origin", Some("http://evil.example"))).0, 403);
 }
 
 #[test]
@@ -2177,6 +2399,31 @@ fn 결정_답은_물음이_마지막일_때만_한_줄() {
 }
 
 #[test]
+fn 폰_화면_박힘_진단은_따로_phone_layout_기록에() {
+    // 2026-10-11 시트 박힘 — layout-* 는 notify.log 가 아니라 <데이터>/phone-layout.jsonl, 유령 키보드 진단(10초)과 막이를 안 나눠 쓴다
+    let g = gate();
+    let f = Fake::default();
+    let lay = r#"{"kind":"layout-drag","line":"why=hide at=393 vh=844 from=peek to=half"}"#;
+    let vp = r#"{"kind":"vp-ghost","line":"ev=fo vvH=590"}"#;
+    assert_eq!(handle(&post("/api/diag", lay), &g, &f).status, 200);
+    assert_eq!(handle(&post("/api/diag", vp), &g, &f).status, 200, "화면 박힘 한 줄 뒤에도 유령 키보드 진단은 받는다");
+    assert_eq!(handle(&post("/api/diag", lay), &g, &f).status, 429, "같은 종류 연타는 막는다");
+    assert_eq!(f.calls(), vec!["layout layout-drag why=hide at=393 vh=844 from=peek to=half dev=test".to_string(), "diag vp-ghost ev=fo vvH=590 dev=test".to_string()]);
+}
+
+#[test]
+fn 화면_박힘_기록은_크기_상한에서_앞을_버린다() {
+    let line = "x".repeat(100);
+    let mut text = String::new();
+    for _ in 0..50 {
+        text = crate::mobile_http::capped_append(&text, &line, 1000);
+    }
+    assert!(text.len() <= 1000, "{}", text.len());
+    assert!(text.ends_with(&format!("{line}\n")));
+    assert!(text.lines().all(|l| l == line), "줄 가운데서 자르지 않는다");
+}
+
+#[test]
 fn 폰_진단_한줄은_키값_낱말만_10초에_한번() {
     let g = gate();
     let f = Fake::default();
@@ -2404,4 +2651,362 @@ fn p1_폰_프로필_쓰기는_켜진_참모만_데스크톱과_같은_검사로(
     assert_eq!(handle(&set(post("/api/avatar", ok), "authorization", None), &g, &f).status, 401);
     assert_eq!(handle(&with_cookie(get("/api/avatar")), &g, &f).status, 405);
     assert!(head_check(&post("/api/avatar", ok), &g).is_none());
+}
+
+/// 보낸 글 기록을 데이터 폴더 파일에 두는 문지기 — 앱 재시작 = 같은 파일로 새 문지기
+fn gate_sends(file: &Path) -> Gate {
+    Gate { sends: std::sync::Arc::new(crate::mobile_sends::Sends::load(file.to_path_buf())), ..gate() }
+}
+
+#[test]
+fn 앱이_다시_켜져도_같은_cid_는_다시_안_친다() {
+    // 2026-10-10 사용자 '다시보내기 누르다 무한증식' — 맥 앱이 다시 켜지면 보낸 말 기억(메모리)이 날아가 같은 말을 또 쳤다
+    let d = tmp("sends-restart");
+    let file = d.join("mobile-sends.json");
+    let f = Fake::default();
+    let b = r#"{"id":"aaaa0001","text":"한 번만 가야 할 말","cid":"m-7"}"#;
+    assert_eq!(handle(&post("/api/send", b), &gate_sends(&file), &f).status, 202);
+    let again = gate_sends(&file); // 앱 재시작
+    let r = handle(&post("/api/send", b), &again, &f);
+    assert_eq!(r.status, 200);
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["dup"], true);
+    assert_eq!(f.calls().len(), 1);
+    let s: serde_json::Value = serde_json::from_slice(&handle(&with_cookie(get("/api/send-status?cid=m-7")), &again, &f).body).unwrap();
+    assert_eq!(s["state"], "done");
+    // 기록 파일엔 말 id 만 — 글 내용은 안 남긴다
+    let saved = std::fs::read_to_string(&file).unwrap();
+    assert!(saved.contains("m-7") && !saved.contains("한 번만"), "{saved}");
+}
+
+#[test]
+fn 십분이_지나도_같은_cid_는_다시_안_친다_하루_지나면_잊는다() {
+    let d = tmp("sends-keep");
+    let file = d.join("mobile-sends.json");
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    let rec = serde_json::json!({ "m-8": { "at": now - 11 * 60_000, "state": "done" }, "m-9": { "at": now - 25 * 3_600_000, "state": "done" } });
+    std::fs::write(&file, rec.to_string()).unwrap();
+    let g = gate_sends(&file);
+    let f = Fake::default();
+    assert_eq!(handle(&post("/api/send", r#"{"id":"aaaa0001","text":"11분 전에 친 말","cid":"m-8"}"#), &g, &f).status, 200, "10분 넘었어도 다시 안 친다");
+    assert_eq!(handle(&post("/api/send", r#"{"id":"aaaa0001","text":"어제 친 말","cid":"m-9"}"#), &g, &f).status, 202, "하루 지난 기록은 버렸다");
+    assert_eq!(f.calls(), vec!["send aaaa0001 어제 친 말"]);
+}
+
+#[test]
+fn 치다가_앱이_꺼진_말은_모름_다시_보내면_친다() {
+    // 치는 중(typing)에 앱이 꺼지면 쳤는지 모른다 — 폰은 기록을 찾아본 뒤에도 없을 때만 다시 보내기를 띄운다
+    let d = tmp("sends-lost");
+    let file = d.join("mobile-sends.json");
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    std::fs::write(&file, serde_json::json!({ "m-10": { "at": now - 5_000, "state": "typing" } }).to_string()).unwrap();
+    let g = gate_sends(&file);
+    let f = Fake::default();
+    let s: serde_json::Value = serde_json::from_slice(&handle(&with_cookie(get("/api/send-status?cid=m-10")), &g, &f).body).unwrap();
+    assert_eq!(s["state"], "unknown");
+    assert_eq!(handle(&post("/api/send", r#"{"id":"aaaa0001","text":"끊긴 말","cid":"m-10"}"#), &g, &f).status, 202);
+    assert_eq!(f.calls().len(), 1);
+}
+
+#[test]
+fn 보관함에_넣은_파일도_폰에서_열린다() {
+    let d = tmp("locker");
+    let root = d.join("root");
+    let mine = root.join("운영");
+    std::fs::create_dir_all(mine.join("받은 것")).unwrap();
+    std::fs::write(mine.join(".chammo"), "s-1\n").unwrap();
+    let doc = mine.join("받은 것/보고서.pdf");
+    std::fs::write(&doc, b"%PDF-1.4").unwrap();
+    // 별칭 — 폰 목록은 가리키는 진짜 파일 경로를 준다
+    let orig = d.join("원본.png");
+    std::fs::write(&orig, b"\x89PNG\r\n\x1a\n").unwrap();
+    std::os::unix::fs::symlink(&orig, mine.join("받은 것/원본.png")).unwrap();
+    std::os::unix::fs::symlink(d.join("지운.pdf"), mine.join("받은 것/끊김.pdf")).unwrap();
+    let key = d.join("data/accounts.json");
+    std::fs::create_dir_all(key.parent().unwrap()).unwrap();
+    std::fs::write(&key, "{}").unwrap();
+    let fake = || Fake { locker: Some(root.clone()), data: d.join("data"), ..Default::default() };
+    let file = |p: &Path| with_cookie(get(&format!("/api/file?path={}", enc(&p.to_string_lossy()))));
+    assert_eq!(run_with(file(&doc), fake()).0, 200, "보관함 파일");
+    assert_eq!(run_with(file(&orig), fake()).0, 200, "별칭이 가리키는 진짜 파일");
+    assert_eq!(run_with(file(&mine.join("받은 것/원본.png")), fake()).0, 403, "링크 경로 자체는 문지기가 막는다(그대로)");
+    assert_eq!(run_with(file(&key), fake()).0, 403, "데이터 폴더 다른 파일은 벽에 걸린다");
+    assert_eq!(run_with(file(&mine.join("받은 것/끊김.pdf")), fake()).0, 403, "끊긴 별칭");
+    // 휴지통으로 보내면 다시 막힌다
+    std::fs::remove_file(&doc).unwrap();
+    assert_eq!(run_with(file(&doc), fake()).0, 403);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn 폰_보관함은_열_수_있는_것만_줄째() {
+    let d = tmp("locker-list");
+    let root = d.join("root");
+    let mine = root.join("운영");
+    std::fs::create_dir_all(mine.join("받은 것")).unwrap();
+    std::fs::create_dir_all(mine.join("10월")).unwrap();
+    std::fs::write(mine.join(".chammo"), "s-1\n").unwrap();
+    let doc = mine.join("10월/보고서.pdf");
+    std::fs::write(&doc, b"%PDF-1.4").unwrap();
+    std::fs::write(mine.join("10월/api-key.txt"), "x").unwrap();
+    std::os::unix::fs::symlink(d.join("없음.pdf"), mine.join("10월/없음.pdf")).unwrap();
+    let (s, _, r) = run_with(with_cookie(get("/api/locker")), Fake { locker: Some(root.clone()), data: d.join("data"), ..Default::default() });
+    assert_eq!(s, 200);
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    let paths: Vec<&str> = v["items"].as_array().unwrap().iter().map(|i| i["path"].as_str().unwrap()).collect();
+    assert_eq!(paths, vec![doc.to_str().unwrap()], "민감한 이름·끊긴 별칭은 이름째 빠진다");
+    assert_eq!(v["items"][0]["folder"], "10월");
+    assert_eq!(v["items"][0]["owner"], "운영");
+    assert_eq!(run(get("/api/locker")).0, 401);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn 폰_보관함_넣기는_폰_첨부만() {
+    let f = || Fake { data: "/d".into(), ..Default::default() };
+    let (s, fk, r) = run_with(post("/api/locker-add", r#"{"owner":"참모-9","path":"/d/attach/1700000000000-phone.png"}"#), f());
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(fk.calls(), vec!["locker-add 참모-9 /d/attach/1700000000000-phone.png".to_string()]);
+    // 맥의 다른 파일·데스크톱 첨부·빈 주인은 안 받는다
+    for b in [r#"{"owner":"o","path":"/Users/x/.ssh/id_rsa"}"#, r#"{"owner":"o","path":"/d/attach/1700-붙인그림.png"}"#, r#"{"owner":" ","path":"/d/attach/1-phone.png"}"#, r#"{"owner":"o","path":"/d/attach/../accounts.json"}"#] {
+        let (s, fk, _) = run_with(post("/api/locker-add", b), f());
+        assert_eq!(s, 400, "{b}");
+        assert!(fk.calls().is_empty());
+    }
+    // 다른 출처·열쇠 없음
+    assert_eq!(run_with(set(post("/api/locker-add", r#"{"owner":"o","path":"/d/attach/1-phone.png"}"#), "origin", Some("http://evil")), f()).0, 403);
+    assert_eq!(run_with(with_cookie(get("/api/locker-add")), f()).0, 405);
+    // 실제 서버는 head_check 가 먼저 — 몸통 받는 길 목록에 있어야 한다
+    assert!(head_check(&post("/api/locker-add", "{}"), &gate()).is_none());
+}
+
+#[test]
+fn 폰_하트비트와_소리_길은_진짜_서버_문지기도_통과한다() {
+    // lesson-phone-server: 새 POST 길은 handle 만이 아니라 head_check 의 몸통 받는 길 목록에도 — 안 넣으면 실제 서버만 404
+    let g = gate();
+    assert!(head_check(&post("/api/voice-beat", r#"{"ready":true}"#), &g).is_none(), "voice-beat");
+    let f = Fake::default();
+    assert_eq!(handle(&with_cookie(get("/api/voice-beat")), &g, &f).status, 405);
+    assert_eq!(handle(&post("/api/voice-audio", "{}"), &g, &f).status, 405);
+}
+
+#[test]
+fn 하트비트는_보고_있음과_지난_소리_소식만_받는다() {
+    let g = gate();
+    let f = Fake::default();
+    let r = handle(&post("/api/voice-beat", r#"{"ready":true,"ack":{"id":7,"s":"start"}}"#), &g, &f);
+    assert_eq!(r.status, 200);
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    assert_eq!((v["item"]["id"].as_u64(), v["item"]["ms"].as_u64(), v["cancel"].as_u64()), (Some(7), Some(2500), Some(3)));
+    assert_eq!(handle(&post("/api/voice-beat", r#"{"ready":false,"hidden":true}"#), &g, &f).status, 200);
+    assert_eq!(
+        f.calls(),
+        vec![
+            "voice_beat ready=true hidden=false ack=Some(Ack { id: 7, kind: Start })".to_string(),
+            "voice_beat ready=false hidden=true ack=None".to_string()
+        ]
+    );
+    // 모르는 소식 이름·빠진 칸·모르는 칸은 400
+    for bad in [r#"{"ready":true,"ack":{"id":7,"s":"boom"}}"#, r#"{}"#, r#"{"ready":"yes"}"#, r#"{"ready":true,"x":1}"#, r#"{"ready":true,"ack":{"id":-1,"s":"end"}}"#] {
+        assert_eq!(handle(&post("/api/voice-beat", bad), &g, &f).status, 400, "{bad}");
+    }
+}
+
+#[test]
+fn 하트비트도_같은_출처만() {
+    assert_eq!(run(set(post("/api/voice-beat", r#"{"ready":true}"#), "origin", Some("http://evil.example"))).0, 403);
+    assert_eq!(run(set(post("/api/voice-beat", r#"{"ready":true}"#), "authorization", None)).0, 401);
+}
+
+#[test]
+fn 소리_파일은_열쇠가_있어야_하고_내놓은_id_만_wav_로() {
+    let g = gate();
+    let f = Fake::default();
+    assert_eq!(handle(&get("/api/voice-audio?id=7"), &g, &f).status, 401);
+    let r = handle(&with_cookie(get("/api/voice-audio?id=7")), &g, &f);
+    assert_eq!(r.status, 200);
+    assert!(r.headers.iter().any(|(k, v)| *k == "Content-Type" && v == "audio/wav"));
+    assert!(r.headers.iter().any(|(k, v)| *k == "Cache-Control" && v == "no-store"));
+    assert_eq!(r.body, b"RIFFxxxxWAVE");
+    assert_eq!(handle(&with_cookie(get("/api/voice-audio?id=8")), &g, &f).status, 404);
+    for bad in ["/api/voice-audio", "/api/voice-audio?id=abc", "/api/voice-audio?id=-1", "/api/voice-audio?id=../x"] {
+        assert_eq!(handle(&with_cookie(get(bad)), &g, &f).status, 400, "{bad}");
+    }
+}
+
+#[test]
+fn 폰_공통_csp_는_음성_소리용_blob_만_더_열어_준다() {
+    // 2026-10-11 시뮬레이터 사파리 실측 — media-src 가 없으면 default-src 'self' 가 blob: 소리를 막아 play() 가 NotSupportedError
+    let c = PHONE_CSP;
+    assert!(c.contains("media-src 'self' blob:"), "{c}");
+    assert!(c.contains("default-src 'self'") && c.contains("connect-src 'self'"), "나머지는 그대로 {c}");
+    assert!(!c.contains("script-src") && !c.contains("unsafe-eval"), "스크립트는 안 연다 {c}");
+    assert!(!c.contains("media-src *") && !c.contains("media-src http"), "밖으로는 안 연다 {c}");
+}
+
+// ── 폰 홈·보관함 v1 — 폰 쓰기 길(그 참모 보관함 안에만) ──
+
+/// 가짜 홈 d — 보관함 d/root/운영(.chammo, 자료), 남의 보관함 d/root/디자인, 프로젝트 파일 d/dev/x/cut.png(보여 준 것)·secret.png(안 보여 준 것)
+fn locker_home(name: &str) -> (PathBuf, impl Fn() -> Fake) {
+    let d = tmp(name);
+    for (n, id) in [("운영", "s-1"), ("디자인", "s-2")] {
+        let o = d.join("root").join(n);
+        std::fs::create_dir_all(o.join("자료")).unwrap();
+        std::fs::write(o.join(".chammo"), format!("{id}\n")).unwrap();
+    }
+    std::fs::create_dir_all(d.join("dev/x")).unwrap();
+    std::fs::create_dir_all(d.join("data")).unwrap();
+    std::fs::write(d.join("dev/x/cut.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+    std::fs::write(d.join("dev/x/secret.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+    let show = format!("{{\"path\":\"{}\"}}\n", d.join("dev/x/cut.png").display());
+    let dd = d.clone();
+    (d, move || Fake { show: show.clone(), data: dd.join("data"), locker: Some(dd.join("root")), home: Some(dd.clone()), ..Default::default() })
+}
+
+fn json_of(r: &Resp) -> serde_json::Value {
+    serde_json::from_slice(&r.body).unwrap_or_default()
+}
+
+#[test]
+fn 폰_보관함_바로가기는_보이는_파일만_그_참모_폴더에() {
+    let (d, f) = locker_home("lk-alias");
+    let cut = d.join("dev/x/cut.png");
+    let body = |path: &Path, owner: &str, folder: &str| serde_json::json!({ "owner": owner, "path": path, "folder": folder }).to_string();
+    let (s, _, r) = run_with(post("/api/locker-alias", &body(&cut, "운영", "자료")), f());
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&r.body));
+    let at = d.join("root/운영/자료/cut.png");
+    assert_eq!(json_of(&r)["path"], at.to_string_lossy().as_ref());
+    assert_eq!(std::fs::read_link(&at).unwrap(), cut);
+    // 폰이 못 보는 파일(보여 준 적 없음)은 바로가기도 못 만든다 — 바로가기가 생기면 폰 허용 목록이 넓어진다
+    assert_eq!(run_with(post("/api/locker-alias", &body(&d.join("dev/x/secret.png"), "운영", "자료")), f()).0, 403);
+    assert!(!d.join("root/운영/자료/secret.png").exists());
+    // 없는 참모 · 보관함 밖 자리 · 맨 위(폴더 아님)
+    assert_eq!(run_with(post("/api/locker-alias", &body(&cut, "없는 참모", "자료")), f()).0, 404);
+    assert_eq!(run_with(post("/api/locker-alias", &body(&cut, "운영", "../디자인/자료")), f()).0, 400);
+    assert_eq!(run_with(post("/api/locker-alias", &body(&cut, "운영", "")), f()).0, 400);
+    // 되돌리기 — 바로가기만
+    let un = |owner: &str, rel: &str| serde_json::json!({ "owner": owner, "rel": rel }).to_string();
+    std::fs::write(d.join("root/운영/자료/진짜.md"), "# 진짜").unwrap();
+    assert_eq!(run_with(post("/api/locker-unalias", &un("운영", "자료/진짜.md")), f()).0, 400);
+    assert!(d.join("root/운영/자료/진짜.md").is_file());
+    assert_eq!(run_with(post("/api/locker-unalias", &un("디자인", "자료/cut.png")), f()).0, 400, "남의 보관함엔 그 자리가 없다");
+    assert_eq!(run_with(post("/api/locker-unalias", &un("운영", "자료/cut.png")), f()).0, 200);
+    assert!(std::fs::symlink_metadata(&at).is_err());
+    assert!(cut.is_file());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn 폰_보관함_새문서_새폴더_md쓰기는_그_참모_보관함_안만() {
+    let (d, f) = locker_home("lk-doc");
+    let (s, _, r) = run_with(post("/api/locker-new", r#"{"owner":"운영","folder":"자료","title":"회의 메모"}"#), f());
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&r.body));
+    let doc = d.join("root/운영/자료/회의 메모.md");
+    assert_eq!(json_of(&r)["path"], doc.to_string_lossy().as_ref());
+    let w = |owner: &str, path: &Path, text: &str| serde_json::json!({ "owner": owner, "path": path, "text": text }).to_string();
+    assert_eq!(run_with(post("/api/locker-write", &w("운영", &doc, "# 회의 메모\n\n- 둘째 표지\n")), f()).0, 200);
+    assert_eq!(std::fs::read_to_string(&doc).unwrap(), "# 회의 메모\n\n- 둘째 표지\n");
+    // 남의 보관함 파일 · 다른 참모 이름으로 내 파일 · 보관함 밖 md
+    std::fs::write(d.join("root/디자인/자료/남.md"), "x").unwrap();
+    assert_eq!(run_with(post("/api/locker-write", &w("운영", &d.join("root/디자인/자료/남.md"), "y")), f()).0, 400);
+    assert_eq!(run_with(post("/api/locker-write", &w("디자인", &doc, "y")), f()).0, 400);
+    std::fs::write(d.join("dev/x/README.md"), "원본").unwrap();
+    assert_eq!(run_with(post("/api/locker-write", &w("운영", &d.join("dev/x/README.md"), "y")), f()).0, 400);
+    assert_eq!(std::fs::read_to_string(d.join("dev/x/README.md")).unwrap(), "원본");
+    // 새 폴더 · 엑셀은 폰에서 안 만든다
+    let (s, _, r) = run_with(post("/api/locker-mkdir", r#"{"owner":"운영","parent":"","name":"세금"}"#), f());
+    assert_eq!(s, 200);
+    assert_eq!(json_of(&r)["rel"], "세금");
+    assert!(d.join("root/운영/세금").is_dir());
+    assert_eq!(run_with(post("/api/locker-mkdir", r#"{"owner":"운영","parent":"../디자인","name":"x"}"#), f()).0, 400);
+    assert_eq!(run_with(post("/api/locker-new", r#"{"owner":"운영","folder":"자료","title":"표","kind":"xlsx"}"#), f()).0, 400);
+    assert_eq!(run_with(post("/api/locker-new", r#"{"owner":"없는 참모","folder":"","title":"x"}"#), f()).0, 404);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn 폰_맥_폴더_연결은_읽기만() {
+    let (d, f) = locker_home("lk-linked");
+    let shots = d.join("Pictures/찍은것");
+    std::fs::create_dir_all(&shots).unwrap();
+    std::fs::write(shots.join("a.md"), "# 원본").unwrap();
+    let (data, root) = (d.join("data"), d.join("root"));
+    let ctx = crate::locker_fs::Ctx { home: &d, data: &data, root: &root, settled: &[] };
+    crate::locker_link::connect(&ctx, &d.join("root/운영"), "", &shots, None).unwrap();
+    // 연결 풀기·그 안에 새 폴더·새 문서·글 고치기·바로가기 넣기 — 전부 막힌다(연결은 맥에서만 만지고 풀고, 원본은 폰이 안 건드린다)
+    assert_eq!(run_with(post("/api/locker-unalias", r#"{"owner":"운영","rel":"찍은것"}"#), f()).0, 400);
+    assert!(std::fs::symlink_metadata(d.join("root/운영/찍은것")).unwrap().file_type().is_symlink());
+    assert_eq!(run_with(post("/api/locker-mkdir", r#"{"owner":"운영","parent":"찍은것","name":"새"}"#), f()).0, 400);
+    assert_eq!(run_with(post("/api/locker-new", r#"{"owner":"운영","folder":"찍은것","title":"x"}"#), f()).0, 400);
+    let w = serde_json::json!({ "owner": "운영", "path": d.join("root/운영/찍은것/a.md"), "text": "바꿈" }).to_string();
+    assert_eq!(run_with(post("/api/locker-write", &w), f()).0, 400);
+    let w = serde_json::json!({ "owner": "운영", "path": shots.join("a.md"), "text": "바꿈" }).to_string();
+    assert_eq!(run_with(post("/api/locker-write", &w), f()).0, 400, "진짜 경로로도 못 고친다");
+    let al = serde_json::json!({ "owner": "운영", "path": d.join("dev/x/cut.png"), "folder": "찍은것" }).to_string();
+    assert_eq!(run_with(post("/api/locker-alias", &al), f()).0, 400);
+    assert_eq!(std::fs::read_to_string(shots.join("a.md")).unwrap(), "# 원본");
+    assert!(!shots.join("새").exists() && !shots.join("x.md").exists() && !shots.join("cut.png").exists());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn 폰_새_쓰기_길은_같은_출처_몸통_목록() {
+    let (d, f) = locker_home("lk-gate");
+    for p in ["/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"] {
+        assert!(head_check(&post(p, "{}"), &gate()).is_none(), "{p} — 실제 서버는 head_check 몸통 목록에 있어야");
+        assert_eq!(run_with(set(post(p, r#"{"owner":"운영"}"#), "origin", Some("http://evil")), f()).0, 403, "{p}");
+        assert_eq!(run_with(with_cookie(get(p)), f()).0, 405, "{p}");
+    }
+    for p in ["/api/modes", "/api/mode-view", "/api/mode-card"] {
+        assert_eq!(run(with_cookie(post(p, "{}"))).0, 405, "{p}");
+        assert_eq!(run(get(p)).0, 401, "{p}");
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn 폰_모드_카드_길() {
+    let (s, _, r) = run(with_cookie(get("/api/modes")));
+    assert_eq!(s, 200);
+    assert_eq!(json_of(&r)[0]["name"], "home-calendar");
+    let (s, fk, r) = run(with_cookie(get("/api/mode-view?name=home-calendar&columns=44&rows=16")));
+    assert_eq!(s, 200);
+    assert_eq!(json_of(&r)["tree"]["type"], "Text");
+    assert_eq!(fk.calls(), vec!["mode-view home-calendar 44x16".to_string()]);
+    // 이상한 이름·크기는 맥까지 안 간다
+    for q in ["name=../x&columns=44&rows=16", "name=home-calendar&columns=0&rows=16", "name=home-calendar&columns=44", "name=&columns=44&rows=16", "name=a&columns=9999&rows=1"] {
+        let (s, fk, _) = run(with_cookie(get(&format!("/api/mode-view?{q}"))));
+        assert_eq!(s, 400, "{q}");
+        assert!(fk.calls().is_empty());
+    }
+    let (s, fk, _) = run(post("/api/mode-act", r#"{"name":"home-calendar","act":{"kind":"press","plugin":"p","handle":3}}"#));
+    assert_eq!(s, 200);
+    assert_eq!(fk.calls().len(), 1);
+    assert_eq!(run(post("/api/mode-act", r#"{"name":"home-calendar","act":"press"}"#)).0, 400);
+    let (s, fk, _) = run(post("/api/mode-open", r#"{"name":"home-todo","dash":"운영"}"#));
+    assert_eq!(s, 200);
+    assert_eq!(fk.calls(), vec!["mode-open home-todo 운영".to_string()]);
+    assert_eq!(run(post("/api/mode-open", r#"{"name":"home todo","dash":"운영"}"#)).0, 400);
+    assert_eq!(run(post("/api/mode-open", r#"{"name":"home-todo","dash":" "}"#)).0, 400);
+    // 이 홈에서 끄기(10/12) — 그 홈 이름을 같이 보낸다(맥이 그 홈에 켜진 것만 끈다)
+    let (s, fk, _) = run(post("/api/mode-close", r#"{"name":"sales-mode","dash":"운영"}"#));
+    assert_eq!(s, 200);
+    assert_eq!(fk.calls(), vec!["mode-close sales-mode 운영".to_string()]);
+    assert_eq!(run(post("/api/mode-close", r#"{"name":"../x","dash":"운영"}"#)).0, 400);
+    assert_eq!(run(post("/api/mode-close", r#"{"name":"sales-mode","dash":""}"#)).0, 400);
+    // 카드 그림(10/12) — 이름 꼴만 맥까지
+    let (s, fk, r) = run(with_cookie(get("/api/mode-card?name=home-todo")));
+    assert_eq!(s, 200);
+    assert_eq!(json_of(&r)["kind"], "svg");
+    assert_eq!(fk.calls(), vec!["mode-card home-todo".to_string()]);
+    assert_eq!(run(with_cookie(get("/api/mode-card?name=../x"))).0, 400);
+    // 지우기(10/12) — 폰은 제거·숨기기까지, 원본 휴지통은 데스크톱에서만(몸통에 trash 를 실어도 맥에 안 넘긴다)
+    let (s, fk, r) = run(post("/api/mode-remove", r#"{"name":"sales-mode","trashSource":true}"#));
+    assert_eq!(s, 200);
+    assert_eq!(fk.calls(), vec!["mode-remove sales-mode".to_string()]);
+    assert_eq!(json_of(&r)["kind"], "removed");
+    assert_eq!(run(post("/api/mode-remove", r#"{"name":"../x"}"#)).0, 400);
+    let (s, fk, _) = run(post("/api/mode-restore", r#"{"name":"sales-mode"}"#));
+    assert_eq!(s, 200);
+    assert_eq!(fk.calls(), vec!["mode-restore sales-mode".to_string()]);
+    assert_eq!(run(post("/api/mode-restore", r#"{"name":""}"#)).0, 400);
 }

@@ -4,7 +4,7 @@
 
 ![10초로 보는 Chammo](docs/screenshots/promo-ko.gif)
 
-![Chammo: 오른쪽은 채팅, 왼쪽은 팀이 쓴 문서](docs/screenshots/hero.png)
+![Chammo: 왼쪽 띠에 참모들, 가운데 채팅, 오른쪽 스페이스(홈·보관함·열어 본 파일)](docs/screenshots/hero.png)
 
 Chammo 는 혼자서 여러 프로젝트를 동시에 굴리는 사람을 위한 데스크톱 앱입니다(macOS, Windows 는 미리보기판). 당신은 Claude Code 세션 하나 — 참모 — 하고만 채팅합니다. 참모는 프로젝트마다 백그라운드 Claude Code 세션을 띄워 일을 나눠 주고, 결과를 읽고, 머지해도 되는 건 머지하고, 되돌릴 수 없는 결정만 당신에게 가져옵니다. 모든 세션은 진짜 대화형 Claude Code 라서 언제든 열어서 직접 입력할 수 있습니다.
 
@@ -14,7 +14,7 @@ Chammo 는 혼자서 여러 프로젝트를 동시에 굴리는 사람을 위한
 
 ### 한 번 말하면 팀이 움직인다
 
-참모에게 원하는 걸 글이나 말로 전합니다. 참모가 요청을 프로젝트별로 나누고, 도는 세션이 없으면 띄우고, 일이 돌아오면 한두 줄로 알려 줍니다. 참모마다 브라우저처럼 탭이 하나씩 있고, 끌어서 순서를 바꿉니다. 사이드바에선 세션 사진이 상태를 보여 줍니다 — 고리는 대화가 얼마나 찼는지, 점은 일하는 중인지 질문을 기다리는지.
+참모에게 원하는 걸 글이나 말로 전합니다. 참모가 요청을 프로젝트별로 나누고, 도는 세션이 없으면 띄우고, 일이 돌아오면 한두 줄로 알려 줍니다. 화면은 셋입니다 — 왼쪽 띠(참모마다 프사 하나, 끌어서 순서를 바꿈) | 가운데 채팅 | 오른쪽 스페이스. 프사가 상태를 보여 줍니다 — 고리는 대화가 얼마나 찼는지, 점은 일하는 중인지 질문을 기다리는지.
 
 ![참모가 요청 하나를 세 프로젝트에 나눠 준다](docs/screenshots/chat.png)
 
@@ -26,15 +26,23 @@ Chammo 는 혼자서 여러 프로젝트를 동시에 굴리는 사람을 위한
 
 ### 채팅 옆에서 읽고 검토한다
 
-세션이 보여 주는 문서는 채팅 옆에 뜹니다. 마크다운은 고칠 수 있는 노션식 문서로(블록 끌기, `/` 로 넣기, 밖에서 고친 내용은 덮지 않고 합침), HTML 시안 검토·PDF·그림·영상도 같이. 참모와 프로젝트마다 지금 하는 일을 모은 대시보드가 있습니다.
+세션이 보여 주는 문서는 채팅 옆 스페이스에 탭으로 뜹니다. 마크다운은 고칠 수 있는 노션식 문서로(블록 끌기, `/` 로 넣기, 밖에서 고친 내용은 덮지 않고 합침), 엑셀은 칸을 바로 고치고, HTML 시안 검토·PDF·그림·영상도 같이. 탭은 확대·축소되고 배율은 파일마다 기억합니다.
 
 ![채팅 옆 시안 검토: 헤드라인 세 안](docs/screenshots/space.png)
+
+### 파일 보관함 — 진짜 폴더
+
+참모마다 보관함이 있고, 그건 진짜 폴더 `~/Documents/Chammo/<참모>` 입니다(파인더에서도 같은 모양). 파일을 끌어 놓거나 참모가 넣어 두고, 맥 폴더를 연결하면 원본은 그 자리에 둔 채 보관함에서 바로 보입니다. 폴더는 보관함을 처음 열 때 만들고, 그때 스크린샷 폴더(Windows 는 사진\스크린샷이 있을 때)를 '스크린샷'으로 연결하며 한 줄로 알립니다 — 맥이 문서·데스크탑 접근을 물을 수 있고, 연결은 언제든 풉니다(원본은 그대로). 지운 건 맥 휴지통으로 가고 방금 지운 건 되돌릴 수 있습니다.
+
+![참모 보관함](docs/screenshots/locker.png)
 
 ### 내 화면을 만든다 — 참모 모드(미리보기)
 
 모드는 화면이 달린 Claude Code 플러그인입니다 — 출시 체크리스트, 주문 현황판, 예약을 돌리는 버튼 같은 것. Chammo 가 진짜 패널로 그려 줍니다 — 따로 창, 옆 칸, 대시보드 칸, 팝업, 꽉 채우기. 참모에게 부탁하면(**모드 > 새 모드 만들기…**) 프로젝트로 만들어 줍니다. Claude Code 2.1.287 이상이 필요합니다.
 
-![대시보드 칸에 그린 모드](docs/screenshots/mode.png)
+참모마다 홈이 있습니다 — 할 일·최근 결정 줄 아래가 모드 칸입니다. 홈 머리의 격자 단추로 모드를 골라 켜고, 관리에서 숨기거나 지웁니다. 처음엔 맛보기 넷(달력·현황판·할 일·참모 상태)을 바로 켤 수 있고, 각자 스킨 셋 중에 고릅니다. 맛보기는 **한국어 견본**입니다 — 글은 한글이고 달력은 서울 시각·한국 공휴일을 씁니다.
+
+![참모 홈의 모드 고르기](docs/screenshots/home.png)
 
 ### 지켜볼 수 있는 브라우저를 세션에 준다
 
@@ -62,7 +70,8 @@ Chammo 는 혼자서 여러 프로젝트를 동시에 굴리는 사람을 위한
 - **하네스가 있는 프로젝트** — 새 일은 `CLAUDE.md`·`docs/starter.md`·`docs/roadmap.md` 가 깔린 프로젝트 폴더로 시작하고, 세션은 그걸 먼저 읽고 끝날 때 고칩니다.
 - **교훈** — 세션이 답 끝에 남긴 `교훈:` 줄이 그 프로젝트의 다음 지시에 따라붙습니다.
 - **도구** — MCP 서버·플러그인·스킬을 프로젝트별이나 전체로 켜고 끄고(렌치), 하네스가 얼마나 무거운지 봅니다(하니터).
-- **한국어·영어** — 앱 전체.
+- **애니메이션** — 설정에서 자동(맥 '동작 줄이기'를 따르고 맥 부하가 높으면 저절로 줄임)·줄이기·끄기.
+- **한국어·영어** — 앱 전체(맛보기 모드 넷은 한국어 견본).
 
 ## 필요한 것
 
@@ -81,7 +90,7 @@ Chammo 는 혼자서 여러 프로젝트를 동시에 굴리는 사람을 위한
 curl -fsSL https://raw.githubusercontent.com/honorstudio/chammo/main/scripts/install.sh | bash
 ```
 
-**Windows(미리보기판)** — [Releases](https://github.com/honorstudio/chammo/releases)의 `Chammo_x.y.z_x64-setup.exe` 를 실행합니다. 내 사용자에게만 깔리고 WebView2 가 없으면 받아 옵니다. 설치 파일에 아직 코드 서명이 없어 SmartScreen 이 막을 수 있습니다 — **추가 정보 > 실행**. 참모의 도우미 스크립트는 **Python 3** 이 필요합니다(`winget install Python.Python.3.12`). 단축키는 ⌘ 대신 Ctrl 입니다(글자는 Ctrl+Shift, 숫자·기호는 Ctrl 하나).
+**Windows(미리보기판)** — [Releases](https://github.com/honorstudio/chammo/releases)의 `Chammo_x.y.z_x64-setup.exe` 를 실행합니다. 내 사용자에게만 깔리고 WebView2 가 없으면 받아 옵니다. 설치 파일에 아직 코드 서명이 없어 SmartScreen 이 막을 수 있습니다 — **추가 정보 > 실행**. 참모의 도우미 스크립트는 **Python 3** 이 필요합니다(`winget install Python.Python.3.12`). 단축키는 아래 [단축키](#단축키) 표 밑에 있습니다.
 
 **소스에서** — Rust(stable), Node.js 22 이상, pnpm, Xcode 명령줄 도구가 필요합니다.
 
@@ -96,19 +105,25 @@ pnpm tauri build
 
 ## 처음 켤 때
 
-다섯 단계 설정이 열립니다: 언어 → 이 맥 점검(빠진 것 설치) → 참모 이름, **프로젝트 폴더**(안의 폴더 하나가 프로젝트 하나), **HQ 폴더**(참모가 도는 곳) → 켤 기능 → 준비 끝. Chammo 는 따로 로그인하지 않고 맥에 로그인된 `claude` 를 그대로 씁니다. 설정은 **Chammo > 설정…**(⌘,).
+다섯 단계 설정이 열립니다: 언어 → 이 맥 점검(빠진 것 설치) → 참모 이름, **프로젝트 폴더**(안의 폴더 하나가 프로젝트 하나), **HQ 폴더**(참모가 도는 곳) → 켤 기능 → 준비 끝. Chammo 는 따로 로그인하지 않고 맥에 로그인된 `claude` 를 그대로 씁니다. 설정은 **Chammo > 설정…**(⌘,). 보관함 폴더(`~/Documents/Chammo`)는 보관함을 처음 열 때 만듭니다.
 
 ## 단축키
 
 | 키 | 하는 일 |
 |---|---|
-| ⌘1 ~ ⌘9 | 채팅 탭 옮기기 |
-| ⌃⇧PageUp / PageDown | 지금 탭을 왼쪽 / 오른쪽으로 |
+| ⌘1 ~ ⌘9 | N번째 참모로(왼쪽 띠 순서) |
+| ⌃⇧PageUp / PageDown · ⌥⌘⇧← / → | 고른 참모를 띠에서 한 칸 앞 / 뒤로 |
 | ⌘Enter | 하던 일 멈추고 바로 보내기 |
-| ⌘T · ⌘W | 새 세션 · 보고 있는 세션 끄기(대화는 남음) |
+| ⌘W · ⌘T | 열린 탭 닫기(홈·보관함 고정 탭은 그대로) · 보관함에 새 문서 |
+| ⌘⇧H · ⌘⇧L | 홈 · 보관함 탭으로 |
+| ⌘⇧T · ⌘⇧W | 새 세션 · 보고 있는 세션 끄기(확인 뒤, 대화는 남음) |
+| ⌘+ · ⌘- · ⌘0 · ⌘9 | 열린 탭 확대 · 축소 · 100% · 맞춤(⌘/Ctrl+휠·핀치도, 배율은 파일마다 기억). ⌘9 는 탭이 열려 있을 때만 맞춤 — 아니면 9번째 참모 |
+| ⌘[ · ⌘] | 스페이스 뒤로 · 앞으로 |
 | ⌘K · ⌘B · ⌘J | 프로젝트 검색 · 사이드바 · 작업 패널 |
 | ⌘F | 문서 찾기 |
 | ⌘, | 설정 |
+
+Windows 는 ⌘ 가 없어서 이렇게 바뀝니다 — ⌘+글자 → Ctrl+Shift+글자, ⌘⇧+글자(H·L·T·W) → Ctrl+Alt+글자, 숫자·기호·Enter → Ctrl 하나, ⌘[ ⌘] → Ctrl+Shift+[ ], ⌥⌘⇧←/→ → Ctrl+Alt+Shift+←/→. 메뉴에도 Windows 키로 적혀 있습니다.
 
 ## 동작 방식
 
@@ -140,7 +155,7 @@ pnpm tauri build
 | `hqDir` | 참모 세션 폴더 | `<데이터>/hq` |
 | `githubUser` | 리뷰·CI 에 쓰는 계정 | `gh api user` 에서 |
 | `ttsCommand` | 한 줄을 읽어 주는 명령 | macOS `say` |
-| `features` | `office`, `tama`, `gacha`, `review`, `voice`, `agentView`(세션 브라우저를 앱에서 보기), `autoRevive`(꺼진 세션을 알아서 다시 켜기), `computerUse`(세션이 화면을 조종) | `autoRevive`·`computerUse` 빼고 켜짐 |
+| `features` | `office`, `tama`, `gacha`, `review`, `voice`, `agentView`(세션 브라우저를 앱에서 보기), `autoRevive`(꺼진 세션을 알아서 다시 켜기), `computerUse`(세션이 화면을 조종), `animation`(`"auto"`·`"reduce"`·`"off"`) | `autoRevive`·`computerUse` 빼고 켜짐, `animation` 은 `"auto"` |
 
 ## 개인정보
 
@@ -149,6 +164,7 @@ Chammo 는 내 컴퓨터 안에서만 돕니다. 서버도 계정도 사용 통�
 - **버전 확인** — npm 레지스트리에서 최신 Claude Code 버전, GitHub 에서 최신 Chammo 릴리스. 나에 대한 정보는 보내지 않습니다.
 - **브라우저 설치**(설치를 누를 때) — Node.js·Chrome Beta·브라우저 도구를 공식 출처에서 받고, 체크섬이나 구글 서명이 맞을 때만 씁니다.
 - **계정 사용량**(계정을 저장했을 때만) — 각 계정의 5시간·주간 사용량을 그 계정 토큰으로 api.anthropic.com 에 묻습니다. Claude Code `/usage` 와 같은 요청입니다.
+- **계정 토큰 갱신**(계정 자동 전환을 쓸 때만) — 곧 만료되는 저장 계정 토큰은 바꿔 끼우기 전에 그 계정의 refresh token 으로 platform.claude.com 에서 갱신합니다. Claude Code 가 로그인을 이어 갈 때와 같은 요청입니다.
 - **폰 알림**(폰을 짝지었을 때만) — 제목과 한 줄이 종단 암호화되어 폰의 푸시 서비스를 거칩니다.
 - **텔레그램**(내 봇을 연결했을 때만) — 봇에게 보낸 말, 참모 답(키·비밀번호는 가림), 결정 카드가 api.telegram.org 를 거칩니다. 결제·발송·삭제·운영 단계는 거기선 알림만 가고 답은 앱에서 합니다.
 - **하니터 글꼴** — 하니터를 열면 Google Fonts 에서 글꼴을 불러옵니다.
@@ -169,6 +185,6 @@ Chammo 는 내 컴퓨터 안에서만 돕니다. 서버도 계정도 사용 통�
 
 [AGPL-3.0](LICENSE) © 2026 Honor Studio
 
-제3자: 터미널 한글 글꼴 `app/public/fonts/ChammoHangul.woff2` 는 네이버 [D2Coding](https://github.com/naver/d2codingfont)을 한글만 남겨 고친 것으로, SIL Open Font License 1.1 에 따라 이름을 바꿨습니다 — [`app/public/fonts/OFL.txt`](app/public/fonts/OFL.txt) 참고. 선택 기능인 Supertonic 음성은 고를 때만 맥에 받습니다: `supertonic` 패키지(MIT)와 [OpenRAIL-M 라이선스](https://huggingface.co/Supertone/supertonic-3)의 Supertone 모델(사용 제한 있음). 라이브러리(Tauri, React, xterm.js, BlockNote, pdf.js, Playwright MCP 등)는 각자의 라이선스(MIT / Apache-2.0 / MPL-2.0)를 따릅니다.
+제3자: 터미널 한글 글꼴 `app/public/fonts/ChammoHangul.woff2` 는 네이버 [D2Coding](https://github.com/naver/d2codingfont)을 한글만 남겨 고친 것으로, SIL Open Font License 1.1 에 따라 이름을 바꿨습니다 — [`app/public/fonts/OFL.txt`](app/public/fonts/OFL.txt) 참고. 선택 기능인 Supertonic 음성은 고를 때만 맥에 받습니다: `supertonic` 패키지(MIT)와 [OpenRAIL-M 라이선스](https://huggingface.co/Supertone/supertonic-3)의 Supertone 모델(사용 제한 있음). 스페이스의 엑셀 표는 [Univer](https://github.com/dream-num/univer) 오픈소스 판(Apache-2.0)을 씁니다 — 고지는 [`app/public/licenses/THIRD_PARTY_NOTICES.md`](app/public/licenses/THIRD_PARTY_NOTICES.md). 라이브러리(Tauri, React, xterm.js, BlockNote, pdf.js, Playwright MCP 등)는 각자의 라이선스(MIT / Apache-2.0 / MPL-2.0)를 따릅니다.
 
 Chammo 는 독립 프로젝트이며 Anthropic 과 제휴·보증·후원 관계가 없습니다. Claude 와 Claude Code 는 Anthropic 의 상표입니다.

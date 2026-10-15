@@ -6,9 +6,22 @@
 import type { Session } from './session';
 import type { StoppedSession } from './stopped';
 import { splitOrchName } from './orchLabel';
+import type { ActivityStatus } from './status';
 
-export type SnapSession = { sessionId: string; name: string; cwd: string; /** 짧은 번호 — 있으면 같은 번호로 되살린다(respawn) */ id?: string; /** 목록에서 사라진 때 — 멈추는 도중 먼저 빠지는 세션을 잡으려고 잠깐 들고 있는다 */ goneAt?: number; /** 마지막으로 봤을 때 일하는 중(쉬는 게 아님) — 꺼질 때 일하던 세션은 '끝남'으로 안 친다(lostTriage). 옛 기록엔 없음 */ busy?: boolean; /** 세션이 뜬 때(ms) — 이름이 같은 옛 세션 작업 기록을 거른다(lostTriage). 옛 기록엔 없음 */ startedAt?: number };
+export type SnapSession = { sessionId: string; name: string; cwd: string; /** 짧은 번호 — 있으면 같은 번호로 되살린다(respawn) */ id?: string; /** 목록에서 사라진 때 — 멈추는 도중 먼저 빠지는 세션을 잡으려고 잠깐 들고 있는다 */ goneAt?: number; /** 마지막으로 봤을 때 일하는 중(쉬는 게 아님) — 꺼질 때 일하던 세션은 '끝남'으로 안 친다(lostTriage). 옛 기록엔 없음 */ busy?: boolean; /** 세션이 뜬 때(ms) — 이름이 같은 옛 세션 작업 기록을 거른다(lostTriage). 옛 기록엔 없음 */ startedAt?: number; /** 사이드바와 같은 판정(activityStatus)을 다섯 갈래로 — 기본 모드 '참모 상태'가 읽는다(모드는 대화 기록을 못 읽는다). 옛 기록엔 없음 */ state?: LiveState };
 export type LiveSnap = { daemon: number; sessions: SnapSession[]; lost: SnapSession[] };
+
+/** 세션 상태 다섯 갈래 — work 일함 · wait 띄운 일 기다림 · ask 사람 답·확인창·로그인 · idle 끝남·쉼 · unknown 모름 */
+export type LiveState = 'work' | 'wait' | 'ask' | 'idle' | 'unknown';
+export function liveState(st: ActivityStatus | undefined): LiveState {
+  switch (st) {
+    case 'working': return 'work';
+    case 'bgwait': return 'wait';
+    case 'asks': case 'blocked': case 'login': return 'ask';
+    case 'done': case 'idle': case 'stale': return 'idle';
+    default: return 'unknown';
+  }
+}
 
 /** 재시작 직전 이만큼 안에 사라진 세션도 재시작으로 꺼진 걸로 본다 (실측: 멈춤 → 다시 뜸 55초) */
 const WINDOW = 3 * 60_000;
@@ -17,12 +30,13 @@ const KEEP = 10 * 60_000;
 
 const toSnap = (s: Session): SnapSession => ({ sessionId: s.sessionId ?? '', name: s.name, cwd: s.cwd, id: s.id, busy: s.state !== 'idle' || !!s.awaiting, ...(s.startedAt ? { startedAt: s.startedAt } : {}) });
 
-export function stepSnapshot(prev: LiveSnap | null, daemon: number | null, live: Session[], now: number): LiveSnap | null {
+/** states = 세션 id(sessionId) → 사이드바 판정. 주면 세션마다 state 를 붙인다(값이 그대로면 기록 글도 그대로 — 앱은 글이 같으면 안 쓴다) */
+export function stepSnapshot(prev: LiveSnap | null, daemon: number | null, live: Session[], now: number, states?: Readonly<Record<string, ActivityStatus>>): LiveSnap | null {
   if (daemon == null) return prev; // 멈춰 있는 동안 기록을 비우면 재시작 뒤 비교할 게 없어진다
   const bgLive = live.filter((s) => s.kind === 'background' && s.sessionId);
   const aliveIds = new Set(bgLive.map((s) => s.sessionId));
   const aliveNames = new Set(bgLive.map((s) => s.name));
-  const current = bgLive.map(toSnap);
+  const current = bgLive.map((s) => (states ? { ...toSnap(s), state: liveState(states[s.sessionId ?? '']) } : toSnap(s)));
 
   if (!prev) return { daemon, sessions: current, lost: [] };
 

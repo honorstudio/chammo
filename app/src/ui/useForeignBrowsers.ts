@@ -7,6 +7,7 @@ import { forwardTo } from '../domain/forwardQuestion';
 import { foreignText, nextForeign, type Foreign } from '../domain/foreignBrowser';
 import type { TaskEvent } from '../domain/tasks';
 import type { Session } from '../domain/session';
+import { every } from './poll';
 
 const DONE_KEY = 'foreignBrowserTold';
 const EVERY_MS = 30_000;
@@ -48,7 +49,6 @@ export function useForeignBrowsers(subs: Session[], front: Session | undefined, 
         .catch(() => {})
         .finally(() => { busy = false; });
     };
-    const id = window.setInterval(tick, EVERY_MS);
-    return () => window.clearInterval(id);
+    return every(tick, EVERY_MS);
   }, []);
 }

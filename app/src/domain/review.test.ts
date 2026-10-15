@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
 import { FILE_KIND_LABEL, GATE_LABEL, REVIEW_SPLIT_MIN, reviewPanes, splitPath } from './review';
+import styles from '../ui/styles.css?raw';
 import { ciState, fileKind, gates, groupFiles, parseChecks, type OpenPr } from './review';
 
 // 2026-09-27 실제 PR 을 줄인 것 (acme-shop-platform #388·#389·#392, ops-hub #462)
@@ -134,6 +135,14 @@ describe('reviewPanes — 리뷰 칸이 실제로 받은 폭으로 두 칸/한 �
     expect(reviewPanes(REVIEW_SPLIT_MIN - 1, true)).toBe('detail');
   });
   it('아직 못 쟀으면(0) 나란히 — 첫 그림을 흔들지 않게', () => expect(reviewPanes(0, true)).toBe('split'));
+  // 10-06 'PR 쪽 가려짐'(불편 순위 8번) — 리뷰 칸·목록·상세가 min-width auto 면 diff·긴 경로 최소 폭(1172px)만큼 넘쳐 오른쪽 채팅 칸 밑으로 잘렸다(fix/review-layout).
+  // 칸을 한 칸씩으로 바꾸는 계산(reviewPanes)이 맞아도 이 줄이 빠지면 다시 가린다 — 하네스 실측 1100·1400·1900px 겹침 0(.shots/fix-harden-small/3-review.txt)
+  it('리뷰 칸·목록·상세는 받은 폭보다 넓어지지 않는다(min-width 0)', () => {
+    for (const sel of ['.rv', '.rv-list', '.rv-detail']) {
+      const rule = styles.match(new RegExp(`^\\${sel} \\{([^}]*)\\}`, 'm'))?.[1] ?? '';
+      expect(rule, sel).toMatch(/min-width: 0/);
+    }
+  });
 });
 
 describe('splitPath — 바뀐 파일·diff 줄은 파일 이름을 지키고 폴더만 줄인다', () => {

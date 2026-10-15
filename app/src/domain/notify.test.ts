@@ -86,11 +86,11 @@ describe('영어 모드', () => {
 });
 
 describe('nativeWhenFocused — 참모 창을 보고 있으면 앱 안에 뜨는 것은 맥 알림을 안 보낸다(2026-10-03 사용자)', () => {
-  it('참모 물어봄·확인창·결정·로그인 오류는 앱 안에 뜨니까 보고 있으면 안 보냄', () => {
-    for (const k of ['asks', 'blocked', 'decide', 'login'] as const) expect(nativeWhenFocused(k)).toBe(false);
+  it('참모 물어봄·확인창·결정·로그인 오류·컨텍스트는 앱 안에 뜨니까 보고 있으면 안 보냄(컨텍스트는 보관함 활동 줄 끝, 알림 N1)', () => {
+    for (const k of ['asks', 'blocked', 'decide', 'login', 'ctx'] as const) expect(nativeWhenFocused(k)).toBe(false);
   });
-  it('권한 자동 허용 실패·계정·컨텍스트는 앱 안에 따로 안 뜨니 보고 있어도 보냄', () => {
-    for (const k of ['allowFail', 'accounts', 'ctx'] as const) expect(nativeWhenFocused(k)).toBe(true);
+  it('권한 자동 허용 실패·계정은 앱 안에 따로 안 뜨니 보고 있어도 보냄', () => {
+    for (const k of ['allowFail', 'accounts'] as const) expect(nativeWhenFocused(k)).toBe(true);
   });
 });
 

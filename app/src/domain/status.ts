@@ -4,10 +4,14 @@ import { tr } from '../i18n';
 import type { Activity } from './activity';
 import type { SessionState } from './session';
 
-/** login = 로그인이 풀려 멈춤(대화 기록 마지막 줄이 로그인 오류, domain/activity isAuthError) */
-export type ActivityStatus = 'working' | 'asks' | 'blocked' | 'login' | 'done' | 'idle' | 'stale';
+/** login = 로그인이 풀려 멈춤(대화 기록 마지막 줄이 로그인 오류, domain/activity isAuthError).
+ *  bgwait = 턴을 끝내고 띄워 둔 백그라운드 일(Bash·에이전트·Monitor·깨우기)을 기다림 — 멈춤도 일함도 아니다(agents 는 working 으로 준다, 2026-10-11 실측).
+ *  unknown = 모름 — 기록을 아직 못 읽었거나 세션 목록이 한동안 안 왔다. 추측으로 쉼·일함을 칠하지 않는다 */
+export type ActivityStatus = 'working' | 'asks' | 'blocked' | 'login' | 'bgwait' | 'done' | 'idle' | 'stale' | 'unknown';
 
 const STALE_MS = 24 * 3600_000;
+/** 세션 목록(agents --json, 3초마다)이 이만큼 안 오면 옛 상태를 믿지 않는다 — 맥이 바쁘면 한 번에 5초를 넘긴다 */
+export const LIST_STALE_MS = 30_000;
 
 // 답 끝부분이 사용자에게 묻는 말인가. 설명 중간의 "?"(자문자답)는 빼고 끝만 본다
 const ASK_END = /(\?|？)\s*[ㅇㅎㅋ;~.!\s]*$/;
@@ -58,22 +62,31 @@ export function asksUser(reply: string): boolean {
   return ASK_END.test(tail) || ASK_WORDS.test(tail) || asksInTail(text.slice(-TAIL)) || PERMIT.test(near) || WAITING.test(near);
 }
 
-/** 메뉴·대시보드·사무실이 다 이 판단 하나를 쓴다(2026-10-04 오피스 A 1단계). 메뉴는 CLI 의 awaiting(state blocked + status idle)을
- *  '물어봄'으로 써서 사무실 '끝남'과 갈렸는데, awaiting 은 턴을 끝낸 세션 대부분(실측 21개 중 12개)이라 '묻는다'는 뜻이 아니다 — 답 글로 본다 */
-export function activityStatus(state: SessionState, a: Activity, now: number): ActivityStatus {
-  if (state === 'working') return 'working';
+/** 메뉴·대시보드·사무실·작업 패널·폰이 다 이 판단 하나를 쓴다(2026-10-04 오피스 A 1단계, 표 시험 statusTable.test). 메뉴는 CLI 의 awaiting(state blocked + status idle)을
+ *  '물어봄'으로 써서 사무실 '끝남'과 갈렸는데, awaiting 은 턴을 끝낸 세션 대부분(실측 21개 중 12개)이라 '묻는다'는 뜻이 아니다 — 답 글로 본다.
+ *  a = 대화 기록 요약(못 읽었으면 undefined), seenAt = 세션 목록을 마지막으로 받은 때(없으면 지금 것으로 친다) */
+export function activityStatus(state: SessionState, a: Activity | undefined, now: number, seenAt?: number): ActivityStatus {
+  if (seenAt !== undefined && now - seenAt > LIST_STALE_MS) return 'unknown';
   if (state === 'blocked') return 'blocked';
+  if (!a) return state === 'working' ? 'working' : 'unknown';
+  const r = a.reply;
+  // 턴 끝 답이 마지막 말 — 그 뒤 새 지시·끝 알림·도구 줄이 없다
+  const ended = !!r?.turnEnd && !(a.prompt && a.prompt.ts > r.ts) && !(a.lastMsgAt && a.lastMsgAt > r.ts);
+  const asks = (x: NonNullable<Activity['reply']>) => x.asks ?? asksUser(x.text);
+  // agents 는 백그라운드 일을 기다리는 동안 working 으로 준다 — 턴이 끝났고 띄운 일이 남았으면 기다림
+  if (state === 'working') return ended && a.waitingOn ? (asks(r!) ? 'asks' : 'bgwait') : 'working';
   if (a.auth && !a.auth.retry) return 'login'; // 오래돼도 — 로그인은 저절로 안 풀린다
-  const last = a.reply?.ts ?? a.prompt?.ts;
+  const last = r?.ts ?? a.prompt?.ts;
   if (!last) return 'idle';
   if (now - Date.parse(last) > STALE_MS) return 'stale';
-  if (!a.reply) return 'idle';
-  if (a.prompt && a.prompt.ts > a.reply.ts) return 'idle'; // 지시를 받고 답 없이 멈춤
-  return (a.reply.asks ?? asksUser(a.reply.text)) ? 'asks' : 'done';
+  if (!r) return 'idle';
+  if (a.prompt && a.prompt.ts > r.ts) return 'idle'; // 지시를 받고 답 없이 멈춤
+  if (asks(r)) return 'asks';
+  return ended && a.waitingOn ? 'bgwait' : 'done';
 }
 
-/** 대화 기록 없이 세션만으로 — 기록을 아직 못 읽었을 때 메뉴 표시(awaiting 은 안 본다, 위 activityStatus) */
-export const sessionStatus = (s: { state: SessionState }): ActivityStatus => activityStatus(s.state, {}, 0);
+/** 대화 기록 없이 세션만으로 — 기록을 아직 못 읽었을 때 메뉴 표시. 쉬는 세션은 묻는지 끝났는지 모른다(awaiting 은 안 본다, 위 activityStatus) */
+export const sessionStatus = (s: { state: SessionState }): ActivityStatus => activityStatus(s.state, undefined, 0);
 
 /** 상태 말 — 메뉴·대시보드·사무실 현황판이 이 표 하나만 쓴다 */
 export function statusWord(st: ActivityStatus): string {
@@ -82,10 +95,33 @@ export function statusWord(st: ActivityStatus): string {
     case 'asks': return tr('물어봄', 'Asking');
     case 'blocked': return tr('기다림', 'Waiting');
     case 'login': return tr('로그인 필요', 'Sign-in needed');
+    case 'bgwait': return tr('백그라운드 기다림', 'Waiting on background');
+    case 'unknown': return tr('모름', 'Unknown');
     case 'done': return tr('답함', 'Replied'); // 살아서 다음 지시를 기다림 — '끝남'은 꺼진 세션 줄(StoppedStrip)에만(2026-10-04 QA N4)
     case 'stale': return tr('잠듦', 'Asleep');
     default: return tr('쉼', 'Idle');
   }
+}
+
+/** 한 도구에 이만큼 머물면 '몇 분째'를 붙인다 — 오래 도는 명령이 멈춤처럼 보였다(2026-09-30 조사 4번) */
+const LONG_TOOL_MS = 3 * 60_000;
+const mins = (now: number, ts: string) => Math.max(1, Math.floor((now - Date.parse(ts)) / 60_000));
+
+/** 대시보드·참모 홈 '지금 하는 일' 한 줄 — 일하면 마지막 도구(오래 머물면 몇 분째), 물으면 답 끝, 백그라운드 기다림은 몇 분째, 모르면 모름, 나머지는 쉼 */
+export function liveLine(st: ActivityStatus, a: Activity | undefined, now: number): { status: 'run' | 'ask' | 'wait'; line: string } {
+  if (st === 'working') {
+    const t = a?.tool;
+    if (!t) return { status: 'run', line: tr('생각 중', 'Thinking') };
+    const tool = `${t.name.replace(/^mcp__[^_]+(?:_[^_]+)*?__/, '')} ${t.target}`.trim();
+    const stuck = !(a.lastMsgAt && a.lastMsgAt > t.ts) && now - Date.parse(t.ts) >= LONG_TOOL_MS;
+    return { status: 'run', line: stuck ? `${tool} · ${tr(`${mins(now, t.ts)}분째`, `${mins(now, t.ts)} min`)}` : tool };
+  }
+  if (st === 'asks' || st === 'blocked') return { status: 'ask', line: (a?.reply?.tail ?? a?.reply?.text ?? '').replace(/^…/, '').slice(-60) };
+  if (st === 'bgwait') {
+    const since = a?.reply?.ts;
+    return { status: 'wait', line: since ? `${statusWord(st)} · ${tr(`${mins(now, since)}분째`, `${mins(now, since)} min`)}` : statusWord(st) };
+  }
+  return { status: 'wait', line: st === 'unknown' ? statusWord(st) : tr('쉼', 'Idle') };
 }
 
 /** 표시 갈래 — run = 도는 고리, ask = 노란 점, idle = 표시 없음 */
@@ -99,8 +135,13 @@ export function transitions(
   next: Readonly<Record<string, ActivityStatus>>,
 ): { id: string; to: ActivityStatus }[] {
   return Object.entries(next)
-    .filter(([id, to]) => prev[id] !== undefined && prev[id] !== to && NOTIFY.includes(to))
+    .filter(([id, to]) => prev[id] !== undefined && prev[id] !== 'unknown' && prev[id] !== to && NOTIFY.includes(to))
     .map(([id, to]) => ({ id, to }));
+}
+
+/** 다음 비교에 쓸 상태 — 이번에 모름이면 모르기 전 상태를 쥐고 있는다(목록이 잠깐 끊겼다 돌아와도 같은 알림이 다시 안 뜨게) */
+export function settled(prev: Readonly<Record<string, ActivityStatus>>, next: Readonly<Record<string, ActivityStatus>>): Record<string, ActivityStatus> {
+  return Object.fromEntries(Object.entries(next).map(([id, st]) => [id, st === 'unknown' && prev[id] !== undefined ? prev[id]! : st]));
 }
 
 export type ProjectDoc = {

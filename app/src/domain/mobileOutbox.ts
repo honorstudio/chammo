@@ -1,7 +1,8 @@
 // 폰 보낼 함·쓰던 글 — 참모를 바꾸면 채팅 화면이 새로 그려져(OrchSpace key) 컴포넌트 안에 두던 보내는 중 말풍선·쓰던 글이 날아갔다(2026-10-03 사용자).
 // 그래서 저장소(localStorage)에 둔다. 화면·통신 없음 — 저장소는 받아서 쓰고, 막혀 있으면(개인 정보 보호 모드) 조용히 빈 값
 import { josa, machine } from '../i18n';
-import { pendingLeft, type ChatItem } from './chat';
+import { parseChat, pendingLeft, type ChatItem } from './chat';
+import { newPending } from './chatQueue';
 
 export type Store = { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem(k: string): void };
 
@@ -9,7 +10,8 @@ export type Store = { getItem(k: string): string | null; setItem(k: string, v: s
 export type OutStatus = 'sending' | 'sent' | 'failed';
 /** session = 보낸 세션 id(앱 세션 id — /api/send 에 넣는 값) */
 /** checked = 기록에 안 떠서 맥에 마지막으로 물어본 때(send-status) */
-export type OutMsg = { id: string; session: string; text: string; at: number; status: OutStatus; error?: string; checked?: number };
+/** since = 이 시각 뒤 기록하고만 맞춘다(newOut) */
+export type OutMsg = { id: string; session: string; text: string; at: number; since?: number; status: OutStatus; error?: string; checked?: number };
 
 const OUTBOX_KEY = 'm.outbox';
 /** 기록에 끝내 안 뜬 말은 이만큼 지나면 버린다 — 실패한 건 사용자가 지우거나 다시 보낼 때까지 남긴다 */
@@ -38,6 +40,12 @@ export function readOutbox(s: Store | null, now: number): OutMsg[] {
   }
 }
 export const writeOutbox = (s: Store | null, list: OutMsg[]) => safeSet(s, OUTBOX_KEY, list.length ? JSON.stringify(list) : null);
+
+/** 새로 보낸 말 — 그 세션 기록에 방금 들어간 같은 글 뒤부터 맞춘다(데스크톱 newPending 과 같은 기준) */
+export const newOut = (m: { id: string; session: string; text: string }, items: ChatItem[], now: number): Omit<OutMsg, 'status'> => {
+  const { since } = newPending(m.text, items, now);
+  return { ...m, at: now, since };
+};
 
 export const addOut = (list: OutMsg[], m: Omit<OutMsg, 'status'>): OutMsg[] => [...list, { ...m, status: 'sending' }];
 
@@ -89,8 +97,47 @@ const CHECK_GAP = 15_000;
 export const dueForCheck = (m: OutMsg, now: number) =>
   m.status === 'sent' && now - m.at >= CHECK_AFTER && (m.checked === undefined || now - m.checked >= CHECK_GAP);
 
-/** 맥 답(send-status) — 쳤거나 치는 중이면 계속 기다리고, 실패·모름(맥이 안 받음·다시 켜짐)이면 다시 보내기로 */
-export function applyStatus(list: OutMsg[], id: string, state: string, error: string | undefined, now: number): OutMsg[] {
-  if (state === 'failed' || state === 'unknown') return markOut(list, id, 'failed', state === 'failed' ? error || '못 쳤어요' : `${josa(machine(), '이', '가')} 이 말을 못 받았어요`);
+/** 맥 답(send-status) — 쳤거나 치는 중이면 계속 기다리고, 실패면 다시 보내기로.
+ *  모름(맥이 안 받음·치다 꺼짐)은 looked(그 말 보낸 때부터 대화 기록을 다 봤음 — 꼬리가 덮거나 꼬리 앞을 찾아봄)일 때만 실패로 — 아직이면 기다린다.
+ *  기록을 안 보고 바로 실패로 바꾸니 들어간 말이 '못 받았어요'로 남았다(2026-10-11 사용자 폰) */
+export function applyStatus(list: OutMsg[], id: string, state: string, error: string | undefined, now: number, looked: boolean): OutMsg[] {
+  if (state === 'failed' || (state === 'unknown' && looked)) return markOut(list, id, 'failed', state === 'failed' ? error || '못 쳤어요' : `${josa(machine(), '이', '가')} 이 말을 못 받았어요`);
   return list.map((m) => (m.id === id ? { ...m, checked: now } : m));
+}
+
+/** 그 말을 맞출 기록의 시작(pendingLeft 와 같은 기준) */
+const sinceOf = (m: OutMsg) => m.since ?? m.at - 10_000;
+const firstTs = (items: ChatItem[]): number | undefined => {
+  for (const i of items) { const t = Date.parse(i.ts); if (Number.isFinite(t)) return t; }
+  return undefined;
+};
+
+/** 꼬리 밖일 수 있는 말 — 폰은 기록 끝(256KB~)만 읽어서, 밤새 일한 뒤 열면 그 말 기록이 꼬리 앞에 있다(2026-10-11 사용자 폰).
+ *  start = 꼬리 첫 줄의 파일 자리(undefined = 아직 못 읽음, 0 = 처음부터 다 읽음 — 둘 다 거슬러 볼 것 없음) */
+export function beforeTail(mine: OutMsg[], items: ChatItem[], start: number | undefined): OutMsg[] {
+  if (!start || start <= 0) return [];
+  const first = firstTs(items);
+  return mine.filter((m) => first === undefined || first > sinceOf(m));
+}
+
+/** 거슬러 읽는 최대 묶음 — 512KB 씩이라 꼬리 앞 4MB(밤새 일한 기록이 1MB 남짓) */
+export const LOOKBACK_PAGES = 8;
+
+/** 꼬리 앞을 거슬러 읽으며 그 말들이 기록에 들어갔나 본다 — 찾은 말 id. 그 말을 보낸 때보다 앞까지 읽었거나 파일 처음이면 그 말은 그만 찾는다.
+ *  read = 그 자리 앞 묶음(/api/transcript?before) — 맞춤은 settleOut 과 같은 pendingLeft(since 뒤 내 말) */
+export async function findEarlier(msgs: OutMsg[], start: number, read: (before: number) => Promise<{ text: string; start: number }>, now: number): Promise<string[]> {
+  const found: string[] = [];
+  let left = msgs;
+  let from = start;
+  for (let n = 0; n < LOOKBACK_PAGES && from > 0 && left.length; n++) {
+    const page = await read(from);
+    const older = parseChat(page.text);
+    const still = new Set(pendingLeft(left, older, now));
+    found.push(...left.filter((m) => !still.has(m)).map((m) => m.id));
+    const first = firstTs(older);
+    left = left.filter((m) => still.has(m) && (first === undefined || first > sinceOf(m)));
+    if (page.start >= from) break;
+    from = page.start;
+  }
+  return found;
 }

@@ -97,3 +97,10 @@ export function ClientNode({ n }: { n: Extract<TNode, { type: 'Client' }> }) {
     </div>
   );
 }
+
+// Client 는 모드 칸 안(ModeView 가 자리를 알려 줄 때)에서만 — 해시가 바뀌면(모드를 고쳤다) 방을 새로
+export function ClientSlot({ n }: { n: Extract<TNode, { type: 'Client' }> }) {
+  const ctx = useContext(ModeCtx);
+  if (!ctx) return <span className="mdv-cant">{tr('못 그림', "Can't draw")} · Client</span>;
+  return <ClientNode key={`${n.plugin}:${n.module}:${n.key}:${ctx.hashes[n.plugin] ?? ''}`} n={n} />;
+}

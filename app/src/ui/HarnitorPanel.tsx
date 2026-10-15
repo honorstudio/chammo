@@ -4,6 +4,7 @@ import { bridgeCommand, harnitorUrl, harnitorViewWord, readBridgeMsg, themeVars,
 import { reportView } from './viewReport';
 import { tr } from '../i18n';
 import { IconClose } from './Icons';
+import { IconButton } from './kit/IconButton';
 
 /**
  * 하니터 — 하네스(스킬·훅·MCP·플러그인·CLAUDE.md)를 보고 끄고 켜고 되돌리는 화면(2026-10-01 사용자 "하니터 가보자").
@@ -88,7 +89,7 @@ export function HarnitorPanel({ onClose, float = false, restore, onView }: { onC
         <b className="hn-title">{tr('하니터', 'Harnitor')}</b>
         <span className="hn-sub">{tr('하네스 — 스킬·훅·MCP·플러그인 보기·끄고 켜기·되돌리기. 바꾼 건 새로 켜는 세션부터 먹어요', 'Your harness — skills, hooks, MCP, plugins: view, toggle, undo. Changes apply to newly started sessions')}</span>
         <span className="hn-sp" />
-        <button className="hn-close" onClick={onClose} title={tr('닫기 (Esc)', 'Close (Esc)')}><IconClose />{tr('닫기', 'Close')}</button>
+        <IconButton tone="line" className="hn-close" label={tr('닫기', 'Close')} title={tr('닫기 (Esc)', 'Close (Esc)')} onClick={onClose}><IconClose /></IconButton>
       </header>
       <iframe ref={frame} className="hn-frame" src={harnitorUrl()} title={tr('하니터', 'Harnitor')} />
     </div>

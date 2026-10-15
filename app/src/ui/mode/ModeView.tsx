@@ -3,12 +3,25 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { tr } from '../../i18n';
-import { cellsOf, modeNote, normalize, staleParts, type Act, type HostState, type TNode } from '../../domain/modeTree';
+import { cellsOf, modeNote, normalize, START_SLOW_MS, staleParts, type Act, type HostState, type TNode } from '../../domain/modeTree';
 import { openTarget } from '../../data/tauri';
-import { Node, type Drafts } from './ModeTree';
-import { ModeCtx } from './ModeClient';
+import { hrefOk } from '../../domain/modeTree';
+import { ModeEnvCtx, Node, type Drafts, type ModeEnv } from './ModeTree';
+import { ClientSlot, ModeCtx } from './ModeClient';
+
+// 앱에서 — 링크는 맥 기본 앱으로, Client 칸은 별도 주소 방
+const ENV: ModeEnv = {
+  open: (href) => {
+    if (!hrefOk(href)) return;
+    const file = href.startsWith('file:');
+    void openTarget(file ? 'file' : 'url', file ? decodeURI(href.replace(/^file:\/\//, '')) : href).catch(() => {});
+  },
+  client: (n) => <ClientSlot n={n} />,
+};
 import { MODE_EVENT, type ModeMsg } from './modeBus';
 import './mode.css';
+import { IconNote, IconRefresh } from '../Icons';
+import { IconButton } from '../kit/IconButton';
 
 const EMPTY: HostState = { alive: false, ready: false, unsupported: false, error: null };
 type Toast = { id: number; text: string };
@@ -131,20 +144,37 @@ export function ModeView({ name, compact }: { name: string; /** 패널 — 머�
     void invoke<{ handled?: boolean }>('mode_act', { name, act: a }).then((r) => { if (!r?.handled) redraw(); }, (e) => setErr(String(e)));
   };
 
-  const note = modeNote(st);
+  // '켜는 중'이 오래 걸리면 다시 켜기 — 그 순간 상태도 한 번 더 읽는다(밀림을 놓쳤을 수도)
+  const [slow, setSlow] = useState(false);
+  const starting = modeNote(st) === 'starting';
+  useEffect(() => {
+    setSlow(false);
+    if (!starting) return;
+    const t = window.setTimeout(() => { setSlow(true); void readState(); }, START_SLOW_MS);
+    return () => window.clearTimeout(t);
+  }, [starting, readState]);
+  const note = modeNote(st, slow);
   const panes = st.panes ?? [];
   const shown = tab ?? st.shown ?? panes[0]?.id ?? null;
   return (
+    <ModeEnvCtx.Provider value={ENV}>
     <div className={`mdv ${compact ? 'compact' : ''}`} ref={root}>
       {note === 'unsupported' && <div className="mdv-note">{tr('이 Claude Code 판에선 모드를 못 그려요', "This Claude Code version can't draw modes")}</div>}
       {note === 'stopped' && (
         <div className="mdv-note">
-          <span>{tr('모드가 멈췄어', 'The mode stopped')}</span>
-          <button className="btn" onClick={() => void invoke('mode_restart', { name }).catch(() => {})}>{tr('다시 켜기', 'Restart')}</button>
-          {st.log && <button className="mdv-plain mdv-log" onClick={() => void openTarget('file', st.log!).catch(() => {})} title={st.log}>{tr('로그', 'Log')}</button>}
+          <span title={st.error ?? undefined}>{tr('모드가 멈췄어', 'The mode stopped')}{st.error ? ` · ${st.error.slice(0, 80)}` : ''}</span>
+          <IconButton size="l" tone="line" label={tr('다시 켜기', 'Restart')} onClick={() => void invoke('mode_restart', { name }).catch(() => {})}><IconRefresh /></IconButton>
+          {st.log && <IconButton label={tr('로그', 'Log')} title={tr(`로그 — ${st.log}`, `Log — ${st.log}`)} onClick={() => void openTarget('file', st.log!).catch(() => {})}><IconNote /></IconButton>}
         </div>
       )}
       {note === 'starting' && <div className="mdv-note quiet"><span className="spin" /> {tr('모드 켜는 중', 'Starting the mode')}</div>}
+      {note === 'slow' && (
+        <div className="mdv-note">
+          <span>{tr('켜는 데 너무 오래 걸려', 'Taking too long to start')}</span>
+          <IconButton size="l" tone="line" label={tr('다시 켜기', 'Restart')} onClick={() => { setSlow(false); void invoke('mode_restart', { name }).catch(() => {}); }}><IconRefresh /></IconButton>
+          {st.log && <IconButton label={tr('로그', 'Log')} title={tr(`로그 — ${st.log}`, `Log — ${st.log}`)} onClick={() => void openTarget('file', st.log!).catch(() => {})}><IconNote /></IconButton>}
+        </div>
+      )}
       {note === 'ok' && (
         <>
           {panes.length > 1 && (
@@ -163,5 +193,6 @@ export function ModeView({ name, compact }: { name: string; /** 패널 — 머�
       {st.status && <div className="mdv-status">{st.status}</div>}
       {toasts.length > 0 && <div className="mdv-toasts">{toasts.map((t) => <div key={t.id} className="mdv-toast" role="status">{t.text}</div>)}</div>}
     </div>
+    </ModeEnvCtx.Provider>
   );
 }

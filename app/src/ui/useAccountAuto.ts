@@ -4,13 +4,13 @@
 // (순서가 바뀌면 옛 계정으로 다시 부딪힌다) → 상태 저장 → 화면 갱신 신호. 토큰은 여기 안 온다(Rust 가 키체인에서 바로 바꿔 끼운다)
 import { useEffect, useRef } from 'react';
 import { accountsApi, sendToSession, speak } from '../data/tauri';
-import { accountError, ACCOUNTS_CHANGED, type AccountsView } from '../domain/accounts';
+import { accountError, ACCOUNTS_CHANGED, switchFailure, type AccountsView } from '../domain/accounts';
 import { afterSwitch, applyApi, changedKeys, fmtUntil, markNudged, migrate, readAuto, step, stuckOf } from '../domain/accountAuto';
 import type { SessionActivity } from './TaskPanel';
 import { tr } from '../i18n';
 import { notifyOnce } from './notifier';
 
-/** 자동 바꾸기가 실패하면(키체인 잠김 등) 이만큼 쉰다 */
+/** 사용량 주소가 429·실패면 이만큼 쉰다(바꾸기 실패 때 쉬는 시간은 domain/accounts switchFailure) */
 const BACKOFF_MS = 5 * 60_000;
 /** 사용량 주소 묻는 간격 — 남의 서버라 지금 로그인은 1분, 보관 칸은 5분보다 촘촘하게 안 묻는다. 429·실패면 5분 쉰다 */
 const LIVE_EVERY_MS = 60_000;
@@ -66,8 +66,9 @@ export function useAccountAuto(accounts: AccountsView | null, acts: SessionActiv
             await accountsApi.switchTo(plan.switchTo, v.active);
           } catch (e: unknown) {
             if (String(e) === 'moved') return; // 다시 읽은 뒤 그 몇 ms 사이에 폰·사람이 먼저 바꿨다 — 그 선택을 둔다
-            restUntil.current = Date.now() + BACKOFF_MS;
-            notifyOnce({ kind: 'accounts', session: 'accounts', orch: false, title: tr('계정 자동 전환 실패', 'Account auto-switch failed'), body: accountError(String(e)) });
+            const f = switchFailure(String(e));
+            restUntil.current = Date.now() + f.restMs;
+            if (f.notify) notifyOnce({ kind: 'accounts', session: 'accounts', orch: false, title: tr('계정 자동 전환 실패', 'Account auto-switch failed'), body: accountError(String(e)) });
             return;
           }
           switched = true;

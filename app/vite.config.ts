@@ -12,7 +12,8 @@ export default defineConfig({
   test: {
     include: ['src/**/*.test.ts'],
     environment: 'node',
-    // CSS 는 기본으로 빈 글이 된다 — 폰 화면 배치(foldLayout)·프사 멈춤(avatarCss)·채팅 탭 줄(chatTabsCss) 규칙을 ?raw 로 읽는 테스트가 있어서 이 파일들만 그대로
-    css: { include: [/mobile\.css/, /avatar\.css/, /chat\.css/, /space\.css/] },
+    // CSS 는 기본으로 빈 글이 된다 — 폰 화면 배치(foldLayout)·프사 멈춤(avatarCss)·리뷰 칸(review.test) 규칙을 ?raw 로 읽는 테스트가 있고,
+    // 안 볼 때 멈춤(paused.test)이 src 의 CSS 를 전부 읽어서 src/ui 아래는 다 그대로
+    css: { include: [/\/src\/ui\/.*\.css/] },
   },
 });

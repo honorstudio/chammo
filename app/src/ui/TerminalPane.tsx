@@ -81,11 +81,13 @@ type Props = {
   overlay?: ReactNode;
   /** 이 창에서 지구본 키 말하기가 끝났을 때(녹음이 켜졌던 경우만) */
   onVoiceStop?: () => void;
+  /** 머리줄을 안 그린다 — 채팅 칸에 한 창만 보이면 이름·단추가 칸 머리(space-chat-head)로 올라가서(같은 글 두 번, 2026-10-12 사용자) */
+  headless?: boolean;
   /** 이 창을 밖에서 다루는 손잡이 — 입력칸에 글자 넣기(메모 → 세션에 보내기)·포커스 되돌리기(메모판 닫을 때). 창이 닫히면 null */
   inject?: (api: PaneApi | null) => void;
 };
 
-export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls, fontSize, readOnly, onHeadClick, headDrag, linkBase, home, onFocus, note, onNoteClick, overlay, inject, onVoiceStop }: Props) {
+export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls, fontSize, readOnly, onHeadClick, headDrag, linkBase, home, onFocus, note, onNoteClick, overlay, inject, onVoiceStop, headless }: Props) {
   const voiceRef = useRef(onVoiceStop);
   voiceRef.current = onVoiceStop;
   const focusRef = useRef(onFocus);
@@ -274,6 +276,9 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
       fit.fit();
       const next = resizeAfterOpen({ cols, rows }, { cols: term.cols, rows: term.rows });
       if (next) { cols = next.cols; rows = next.rows; void resizePty(n, cols, rows); }
+    }, (e: unknown) => {
+      // 못 열면 칸에 한 줄 — 아무 안내 없이 검은 칸으로 남았다(2026-10-11 bug-hunt)
+      if (!disposed) term.write(`\r\n\x1b[31m${tr('터미널을 못 열었어요', 'Could not open the terminal')}: ${String(e)}\x1b[0m\r\n`);
     });
 
     const refit = () => {
@@ -330,21 +335,28 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
   }, [fontSize]);
 
   return (
-    <div ref={root} className={`pane ${readOnly ? 'readonly' : ''}${talking ? ' pt-live' : ''}`} data-drop={readOnly ? undefined : ''}>
-      <div className="pane-head" onClick={onHeadClick} title={onHeadClick ? tr('눌러서 이 세션으로', 'Click to go to this session') : headDrag ? tr('끌어서 자리 바꾸기', 'Drag to reorder') : undefined} {...headDrag}>
-        <b>{title}</b>
-        <span className={subPlain ? 'sub plain' : 'sub'} title={subPlain ? subtitle : undefined}>{subtitle}</span>
-        {onNoteClick && (
-          <span className={`note ${note ? '' : 'empty'}`} role="button" aria-label={tr('메모', 'Notes')} title={note ? tr(`${note}\n\n눌러서 메모 (⌘M)`, `${note}\n\nClick for notes (⌘M)`) : tr('메모 열기 (⌘M)', 'Open notes (⌘M)')} onClick={(e) => { e.stopPropagation(); onNoteClick(); }}>
-            <IconNote />
-            {note && <span className="note-text">{note.split('\n')[0]}</span>}
-          </span>
-        )}
-        {controls && <span className="ctl">{controls}</span>}
-      </div>
+    <div ref={root} className={`pane ${readOnly ? 'readonly' : ''}${talking ? ' pt-live' : ''}${headless ? ' headless' : ''}`} data-drop={readOnly ? undefined : ''}>
+      {!headless && (
+        <div className="pane-head" onClick={onHeadClick} title={onHeadClick ? tr('눌러서 이 세션으로', 'Click to go to this session') : headDrag ? tr('끌어서 자리 바꾸기', 'Drag to reorder') : undefined} {...headDrag}>
+          <b>{title}</b>
+          <span className={subPlain ? 'sub plain' : 'sub'} title={subPlain ? subtitle : undefined}>{subtitle}</span>
+          {onNoteClick && <NoteButton note={note} onClick={onNoteClick} />}
+          {controls && <span className="ctl">{controls}</span>}
+        </div>
+      )}
       <div className="pane-body" ref={host} />
       {overlay}
     </div>
+  );
+}
+
+/** 머리줄 메모 단추 — 메모가 있으면 첫 줄이 흐리게 붙는다. 칸 머리(SessionGrid)에서도 같은 단추를 쓴다 */
+export function NoteButton({ note, onClick, text = true }: { note?: string; onClick: () => void; text?: boolean }) {
+  return (
+    <span className={`note ${note ? '' : 'empty'}`} role="button" aria-label={tr('메모', 'Notes')} title={note ? tr(`${note}\n\n눌러서 메모 (⌘M)`, `${note}\n\nClick for notes (⌘M)`) : tr('메모 열기 (⌘M)', 'Open notes (⌘M)')} onClick={(e) => { e.stopPropagation(); onClick(); }}>
+      <IconNote />
+      {text && note && <span className="note-text">{note.split('\n')[0]}</span>}
+    </span>
   );
 }
 

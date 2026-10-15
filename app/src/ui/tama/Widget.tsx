@@ -10,7 +10,7 @@ import { nameOf, stageOf, type Egg } from '../../domain/tama/tree';
 import { EGGS, STAGES } from './labels';
 import { draw, H, iconRect, spriteOf, W } from './lcd';
 import { assistant, tr } from '../../i18n';
-import { IconMinimize, IconMore } from '../Icons';
+import { IconBox, IconMinimize, IconMore } from '../Icons';
 import { pressDown, pressMove, type Press } from './press';
 import { OrchAvatar } from '../avatar/OrchAvatar';
 
@@ -113,7 +113,7 @@ export function Widget() {
             <span>{tr('돌봄 실수', 'Care mistakes')} {pet.c.mistakes} · {tr('훈련', 'Training')} {pet.c.training} · {tr('과식', 'Overfed')} {pet.c.overfeed}</span>
             <span>{tr(`배틀 ${pet.c.wins}승 / ${pet.c.battles}판`, `Battles ${pet.c.wins}W / ${pet.c.battles}`)} · PR {pet.c.prMerges} · {tr('시킨 일', 'Tasks')} {pet.c.tasksDone}</span>
             <span>{tr('평생 커밋', 'Lifetime commits')} {pet.life.commits} · {tr('진화', 'Evolutions')} {file.dex.length}</span>
-            <button onClick={(e) => { e.stopPropagation(); setStats(false); void tamaRequest('pet'); }}>{tr('진화 · 보관함 열기', 'Open evolutions and storage')}</button>
+            <button className="tw-ib" onClick={(e) => { e.stopPropagation(); setStats(false); void tamaRequest('pet'); }} aria-label={tr('진화 · 보관함 열기', 'Open evolutions and storage')} title={tr('진화 · 보관함 열기', 'Open evolutions and storage')}><IconBox /></button>
             <span className="dim">{tr('빈 곳을 누르면 닫힘', 'Click anywhere to close')}</span>
           </div>
         )}

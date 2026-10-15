@@ -575,6 +575,7 @@ pub fn write_doc_text(path: String, text: String, expected: Option<String>) -> R
     if !editable(&p) {
         return Err(tr("마크다운·글 파일만 고칠 수 있어", "Only Markdown and text files can be edited").into());
     }
+    crate::locker_fs::keep_before_write(&p); // 보관함 안 파일이면 고치기 직전 판(보관함 '이전 판')
     write_checked(&p, &text, expected.as_deref(), keep_history)
 }
 
@@ -629,9 +630,14 @@ fn history_dir(p: &Path) -> Option<PathBuf> {
 /// 고치기 전 판을 앱 데이터 폴더/history/<파일>/ 에 남긴다(파일마다 최근 50개) — 편집기에서 한 번에 지워진 게 저장돼
 /// 페이지가 날아간 적이 있다(2026-09-30 사용자). 같은 분 안에서는 한 번만(타자마다 쌓이지 않게)
 fn keep_history(p: &Path) {
+    keep_history_as(p, "md")
+}
+
+/// keep_history 를 확장자만 바꿔서 — 스페이스 엑셀 저장 전 원본(sheet_patch)
+pub fn keep_history_as(p: &Path, ext: &str) {
     let Ok(old) = std::fs::read(p) else { return };
     let Some(dir) = history_dir(p) else { return };
-    let file = dir.join(format!("{}.md", now_minute()));
+    let file = dir.join(format!("{}.{ext}", now_minute()));
     if !file.exists() { let _ = std::fs::write(&file, old); }
     trim_history(&dir);
 }
@@ -835,78 +841,6 @@ pub fn list_md_deep(dir: String) -> Vec<String> {
     out
 }
 
-/// 내 페이지 폴더(앱 데이터 폴더/pages) — 없으면 만든다
-#[tauri::command]
-pub fn pages_dir() -> String {
-    let d = crate::config::data_file("pages");
-    let _ = std::fs::create_dir_all(&d);
-    d.to_string_lossy().into_owned()
-}
-
-/// 새 페이지 파일 이름 — 제목에서 파일에 못 쓰는 글자를 빼고, 겹치면 " 2", " 3"
-pub fn page_file_name(title: &str, exists: impl Fn(&str) -> bool) -> String {
-    let clean: String = title.trim().chars().map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '-' } else { c }).collect();
-    let base = if clean.trim().is_empty() { tr("새 페이지", "Untitled").to_string() } else { clean.trim().to_string() };
-    let mut name = format!("{base}.md");
-    let mut n = 2;
-    while exists(&name) {
-        name = format!("{base} {n}.md");
-        n += 1;
-    }
-    name
-}
-
-/// 내 페이지에 새 md — "# 제목" 한 줄로 만들고 경로를 돌려준다. parent 를 주면 그 페이지의 하위 페이지
-/// (노션처럼 — 부모 파일 옆 같은 이름 폴더 안, 2026-09-30 사용자)
-#[tauri::command]
-pub fn new_page(title: String, parent: Option<String>) -> Result<String, String> {
-    let d = match parent.as_deref().and_then(|p| safe_path(p, &home())) {
-        Some(pp) => pp.with_extension(""),
-        None => std::path::PathBuf::from(pages_dir()),
-    };
-    std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
-    let name = page_file_name(&title, |n| d.join(n).exists());
-    let p = d.join(name);
-    let head = if title.trim().is_empty() { tr("새 페이지", "Untitled").to_string() } else { title.trim().to_string() };
-    std::fs::write(&p, format!("# {head}\n\n")).map_err(|e| e.to_string())?;
-    Ok(p.to_string_lossy().into_owned())
-}
-
-/// 휴지통 자리 — 같은 이름이 있으면 "이름 2.md"·"이름 3" 처럼 번호를 붙인다(덮어쓰지 않는다)
-fn trash_dest(trash: &Path, name: &str, exists: impl Fn(&Path) -> bool) -> PathBuf {
-    let first = trash.join(name);
-    if !exists(&first) {
-        return first;
-    }
-    let (stem, ext) = match name.rsplit_once('.') {
-        Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
-        _ => (name.to_string(), String::new()),
-    };
-    (2..).map(|n| trash.join(format!("{stem} {n}{ext}"))).find(|p| !exists(p)).unwrap()
-}
-
-/// 내 페이지 지우기 — 영구 삭제가 아니라 맥 휴지통(~/.Trash)으로 옮긴다. 하위 페이지 폴더(같은 이름)도 같이.
-/// 내 페이지 폴더 안만(2026-09-30 사용자 "페이지 삭제가 안 되네")
-#[tauri::command]
-pub fn trash_page(path: String) -> Result<(), String> {
-    let p = safe_path(&path, &home()).ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
-    let pages = std::fs::canonicalize(pages_dir()).map_err(|e| e.to_string())?;
-    if !p.starts_with(&pages) || p == pages {
-        return Err(tr("내 페이지만 지울 수 있어", "Only pages can be removed here").into());
-    }
-    let trash = home().join(".Trash");
-    let mv = |from: &Path| -> Result<(), String> {
-        let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        std::fs::rename(from, trash_dest(&trash, &name, |x| x.exists())).map_err(|e| e.to_string())
-    };
-    let sub = p.with_extension("");
-    mv(&p)?;
-    if sub.is_dir() {
-        mv(&sub)?;
-    }
-    Ok(())
-}
-
 /// scripts/show 기록 꼬리(최근 1MB 를 세션별로 공평하게 64KB — fair_tail) — 채팅 뷰 스페이스가 세션마다 보여 준 파일을 모은다. 파싱은 domain/spaceNav.
 /// 닫힌 워크트리 안 경로는 본 폴더 자리로 풀고, 못 찾은 줄엔 gone 을 단다(mobile_files::resolve_show_log — 폰도 이 함수로 읽는다)
 #[tauri::command]
@@ -1035,8 +969,20 @@ pub fn asset_name(name: &str, ms: u128) -> String {
     format!("{ms}-{}", if base.trim_matches('.').is_empty() { "image.png".into() } else { base })
 }
 
+/// 고칠 수 있는 확장자 표 — 화면(src/domain/reader.ts isPlainDoc·kindOf)이 같은 파일을 읽는다. 어느 쪽만 늘리면 화면은 미리보기로 열고
+/// Rust 는 저장을 거절하거나(또는 그 반대) 어긋난다(2026-10-12 보관함 .txt 가 읽기 전용으로만 열린 버그)
+const EDITABLE_EXT: &str = include_str!("../../src/domain/editableExt.json");
+
+fn editable_exts() -> &'static Vec<String> {
+    static EXTS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    EXTS.get_or_init(|| {
+        let v: serde_json::Value = serde_json::from_str(EDITABLE_EXT).unwrap_or_default();
+        v.as_object().into_iter().flat_map(|o| o.values()).filter_map(|x| x.as_array()).flatten().filter_map(|e| e.as_str().map(str::to_owned)).collect()
+    })
+}
+
 pub fn editable(p: &Path) -> bool {
-    matches!(p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(), Some("md" | "markdown" | "txt"))
+    p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).is_some_and(|e| editable_exts().contains(&e))
 }
 
 /// 스페이스 고친 기록 — <데이터 폴더>/space-log.jsonl 에 한 줄(참모가 읽는다). 줄은 프론트가 만든 JSON
@@ -1047,15 +993,15 @@ pub fn space_log_append(line: String) -> Result<(), String> {
     writeln!(f, "{}", line.replace('\n', " ")).map_err(|e| e.to_string())
 }
 
-/// show.jsonl 새 줄 → 경로들. offset 부터 끝까지 읽고 다음 offset 을 돌려준다(파일이 줄었으면 처음부터)
+/// show.jsonl 새 줄 → 경로들 + 다음 offset. 다 쓴 줄만(appctl::complete_span — 반쯤 쓴 줄·글자 가운데 offset)
 pub fn new_paths(content: &str, offset: usize) -> (Vec<String>, usize) {
-    let start = if offset > content.len() { 0 } else { offset };
-    let paths = content[start..]
+    let (start, end) = crate::appctl::complete_span(content, offset);
+    let paths = content[start..end]
         .lines()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
         .filter_map(|v| v.get("path").and_then(|p| p.as_str()).map(str::to_owned))
         .collect();
-    (paths, content.len())
+    (paths, end)
 }
 
 /// 지금 채팅 뷰인가 — 채팅 뷰면 scripts/show 를 리더로 안 열고 스페이스(프론트)가 모달·문서로 띄운다.
@@ -1068,17 +1014,29 @@ pub fn set_view_mode(chat: bool) {
     let _ = std::fs::write(crate::config::data_file("view.json"), format!("{{\"view\":\"{}\"}}", if chat { "chat" } else { "terminal" }));
 }
 
-/// scripts/show 감시 — 0.7초마다 show.jsonl 끝을 본다. 앱이 켜지기 전 줄은 건너뛴다
+/// 파일 크기·수정 시각 — 같으면 안 읽는다(감시 루프가 0.7초마다 통째로 읽던 것, 2026-10-11 perf 6번). 없으면 None
+pub fn stamp(path: &std::path::Path) -> Option<(u64, std::time::SystemTime)> {
+    let m = std::fs::metadata(path).ok()?;
+    Some((m.len(), m.modified().ok()?))
+}
+
+/// scripts/show 감시 — 0.7초마다 show.jsonl 을 보고 크기·수정 시각이 바뀌었을 때만 읽는다. 앱이 켜지기 전 줄은 건너뛴다
 pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
     let app = app.clone();
     std::thread::spawn(move || {
         let file = crate::config::data_file("show.jsonl");
         // 바이트로 읽어 깨진 글자는 바꿔 넣는다 — read_to_string 은 UTF-8 이 아닌 바이트가 하나라도 있으면 매번 실패해 감시가 영영 멈춘다
         let read = |f: &std::path::Path| std::fs::read(f).map(|b| String::from_utf8_lossy(&b).into_owned());
+        let mut last = stamp(&file);
         let mut offset = read(&file).map(|s| s.len()).unwrap_or(0);
         loop {
             std::thread::sleep(std::time::Duration::from_millis(700));
+            let now = stamp(&file);
+            if now == last {
+                continue;
+            }
             let Ok(content) = read(&file) else { continue };
+            last = now;
             if content.len() == offset {
                 continue;
             }
@@ -1095,6 +1053,24 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod stamp_tests {
+    use std::io::Write;
+    #[test]
+    fn 크기나_수정_시각이_바뀌어야_다시_읽는다() {
+        // 0.7초마다 show.jsonl·app.jsonl 을 통째로 읽던 것(2026-10-11 perf 6번)
+        let p = std::env::temp_dir().join(format!("chammo-stamp-test-{}", std::process::id()));
+        std::fs::write(&p, b"{\"a\":1}\n").unwrap();
+        let a = super::stamp(&p);
+        assert!(a.is_some());
+        assert_eq!(super::stamp(&p), a, "안 건드렸으면 같다");
+        std::fs::OpenOptions::new().append(true).open(&p).unwrap().write_all(b"{\"b\":2}\n").unwrap();
+        assert_ne!(super::stamp(&p), a, "붙으면 다르다");
+        std::fs::remove_file(&p).unwrap();
+        assert_eq!(super::stamp(&p), None, "없으면 None");
+    }
 }
 
 #[cfg(test)]
@@ -1211,12 +1187,6 @@ mod tests {
         assert!(!super::skip_entry("docs") && !super::skip_entry("src"));
     }
     #[test]
-    fn page_names_are_safe_and_unique() {
-        assert_eq!(super::page_file_name("이번 주 생각", |_| false), "이번 주 생각.md");
-        assert_eq!(super::page_file_name("a/b:c", |_| false), "a-b-c.md");
-        assert_eq!(super::page_file_name("메모", |n| n == "메모.md" || n == "메모 2.md"), "메모 3.md");
-    }
-    #[test]
     fn 시안_html_은_불투명_출처_샌드박스로_낸다() {
         let r = super::doc_response(b"<!doctype html><html><head><title>t</title><script>localStorage.x=1</script></head><body>hi</body></html>".to_vec(), "text/html; charset=utf-8");
         let csp = r.headers()["Content-Security-Policy"].to_str().unwrap();
@@ -1288,6 +1258,22 @@ mod tests {
     }
 
     #[test]
+    fn 고칠_수_있는_확장자_표는_화면과_같은_파일이고_비지_않는다() {
+        // 표를 못 읽으면 editable() 이 전부 false 가 돼 저장이 조용히 다 거절된다 — 표가 깨지면 여기서 바로 잡는다
+        let v: serde_json::Value = serde_json::from_str(super::EDITABLE_EXT).unwrap();
+        for key in ["md", "plain"] {
+            let list = v[key].as_array().unwrap_or_else(|| panic!("표에 {key} 칸이 없다"));
+            assert!(!list.is_empty());
+            for e in list {
+                let name = format!("/h/a.{}", e.as_str().unwrap());
+                assert!(super::editable(std::path::Path::new(&name)), "{name}");
+                assert!(super::editable(std::path::Path::new(&name.to_uppercase())), "{name} 대문자");
+            }
+        }
+        assert_eq!(super::editable_exts().len(), v["md"].as_array().unwrap().len() + v["plain"].as_array().unwrap().len());
+    }
+
+    #[test]
     fn 고칠_수_있는_건_md_txt_만() {
         assert!(super::editable(std::path::Path::new("/h/a.md")));
         assert!(super::editable(std::path::Path::new("/h/a.TXT")));
@@ -1324,15 +1310,6 @@ mod tests {
         assert_eq!(mime_of(Path::new("/a/v1.MP4")), "video/mp4");
         assert_eq!(mime_of(Path::new("/a/v1.mov")), "video/quicktime");
         assert_eq!(mime_of(Path::new("/a/v1.webm")), "video/webm");
-    }
-
-    #[test]
-    fn trash_names_dont_overwrite() {
-        // 휴지통에 같은 이름이 있으면 번호를 붙인다(덮어쓰지 않는다)
-        let t = Path::new("/T");
-        assert_eq!(trash_dest(t, "새 페이지.md", |_| false), Path::new("/T/새 페이지.md"));
-        assert_eq!(trash_dest(t, "새 페이지.md", |p| p == Path::new("/T/새 페이지.md")), Path::new("/T/새 페이지 2.md"));
-        assert_eq!(trash_dest(t, "새 페이지", |p| p == Path::new("/T/새 페이지") || p == Path::new("/T/새 페이지 2")), Path::new("/T/새 페이지 3"));
     }
 
     #[test]
@@ -1462,6 +1439,14 @@ mod tests {
         let all = format!("{a}깨진 줄\n{{\"ts\":\"2\",\"path\":\"/b.pdf\"}}\n");
         assert_eq!(new_paths(&all, a.len()), (vec!["/b.pdf".to_string()], all.len()));
         assert_eq!(new_paths(a, 999).0, vec!["/a.md".to_string()]); // 파일이 줄었으면 처음부터
+        // 한글 경로를 쓰는 중에 읽혀도(scripts/show 는 ensure_ascii=False) 감시 스레드가 죽지 않고 그 줄을 다음에 연다
+        let whole = format!("{a}{{\"ts\":\"2\",\"path\":\"/문서.md\"}}\n");
+        let half = String::from_utf8_lossy(&whole.as_bytes()[..whole.len() - 8]); // 읽기처럼 — 끊긴 글자는 U+FFFD
+        let (got, next) = new_paths(&half, a.len());
+        assert!(got.is_empty());
+        assert_eq!(new_paths(&whole, next).0, vec!["/문서.md".to_string()]);
+        let mid = a.len() + whole[a.len()..].find('문').unwrap() + 1;
+        assert_eq!(new_paths(&whole, mid), (vec![], whole.len()));
     }
 
     // 열어 둔 문서를 밖(참모·세션)이 고친 뒤 편집기가 저장하면 밖에서 고친 줄이 말없이 사라졌다(2026-10-04 QA D1)

@@ -42,7 +42,7 @@ describe('윈도우 PC 에 붙은 폰 문구', () => {
     expect(wakeFailText('mac side took too long', 'wake').text).toBe('PC가 바빠서 답이 늦어요 — 잠시 뒤 목록을 봐 주세요');
     expect(wakeFailText('?', 'wake').text).toBe('못 켰어요 — PC에서 확인해 주세요');
     expect(waitingList([orch], {}, [])[0]?.q).toBe('확인창·선택지에서 멈춰 있어요 — PC에서 열어 골라 주세요');
-    const out = applyStatus([{ id: 'm1', status: 'sent' } as never], 'm1', 'unknown', undefined, 0);
+    const out = applyStatus([{ id: 'm1', status: 'sent' } as never], 'm1', 'unknown', undefined, 0, true);
     expect((out[0] as { error?: string }).error).toBe('PC가 이 말을 못 받았어요');
     expect(phoneAccountError('unsupported')).toBe('이 PC 앱은 폰 계정 바꾸기를 아직 몰라요 — PC 앱을 새로 깔아 주세요');
     expect(phoneAccountError('locked')).not.toMatch(/맥/);

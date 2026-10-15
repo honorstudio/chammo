@@ -29,7 +29,7 @@ export function dashRequests(items: ChatItem[], events: TaskEvent[], orchId: str
   return out.reverse().slice(0, max);
 }
 
-export type DashFile = { path: string; ts: string; by: string; /** 화면에 보일 누가(세션 이름) */ byName?: string; /** 짚어 보여 줄 곳(scripts/show --line 등) */ at?: ShowAt };
+export type DashFile = { path: string; ts: string; by: string; /** 화면에 보일 누가(세션 이름) */ byName?: string; /** 짚어 보여 줄 곳(scripts/show --line 등) */ at?: ShowAt; /** 보관함 안 이름(바꾼 이름·복사본은 앞 시각 뗀 것) */ name?: string };
 
 /** 이 참모·맡긴 세션이 보여 준 파일(scripts/show) + 사용자가 채팅에 붙인 그림 — 최근 순. by = 세션 id, 사용자가면 'me' */
 export function dashFiles(showLog: string, orchId: string, heldIds: string[], myImages: { ts: string; src: string }[]): DashFile[] {

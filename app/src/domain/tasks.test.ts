@@ -12,6 +12,15 @@ describe('parseTaskLog — tasks.jsonl 한 줄에 한 이벤트', () => {
     const log = '{"ts":"t1","type":"send","task":"k1","target":"todo-api","title":"환불 버그"}\n{"ts":"t2","type":"do\n\n';
     expect(parseTaskLog(log)).toHaveLength(1);
   });
+  // 2026-10-10 참모가 일 번호 자리에 JSON 조각을 넘긴 ask — 폰은 그 번호로 답할 수 없어(Rust is_task_id) 결정 카드가 영영 남고 그 참모가 '물음'으로 보였다
+  it('일 번호 꼴이 아닌 줄은 버린다 — 답할 수 없는 결정 카드가 남지 않게', () => {
+    const log = [
+      String.raw`{"ts": "2026-10-10T12:20:26+00:00", "type": "ask", "task": "{\"ts\":", "note": "규칙 문구 8줄 고치기 — 해도 돼?", "to": "0000aaaa-1111-2222-3333-444455556666"}`,
+      '{"ts":"t2","type":"ask","task":"1010-2120-ab12","note":"해도 돼?"}',
+      '{"ts":"t3","type":"note","task":"","note":"빈 번호"}',
+    ].join('\n');
+    expect(parseTaskLog(log).map((e) => e.task)).toEqual(['1010-2120-ab12']);
+  });
 });
 
 describe('foldTasks — 이벤트를 카드로', () => {

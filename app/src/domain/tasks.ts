@@ -49,13 +49,17 @@ export type TaskCard = {
 };
 
 /** 깨진 줄은 건너뛴다 — 참모가 쓰는 도중에 앱이 읽을 수 있다 */
+/** 일 번호 꼴 — scripts/task(TASK_ID)·Rust mobile_http is_task_id 와 같다(영숫자·-·_ 40자) */
+export const isTaskId = (s: string) => /^[A-Za-z0-9_-]{1,40}$/.test(s);
+
+/** 일 번호 꼴이 아닌 줄은 버린다 — 참모가 JSON 조각을 번호로 넘긴 ask 가 답할 수 없는 결정 카드로 영영 남았다(2026-10-10) */
 export function parseTaskLog(text: string): TaskEvent[] {
   const out: TaskEvent[] = [];
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try {
       const e = JSON.parse(line) as TaskEvent;
-      if (e && typeof e.task === 'string' && typeof e.type === 'string') out.push(e);
+      if (e && typeof e.task === 'string' && isTaskId(e.task) && typeof e.type === 'string') out.push(e);
     } catch {
       // 쓰는 중인 마지막 줄 — 다음 폴링에서 다시 읽힌다
     }

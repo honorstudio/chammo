@@ -1,6 +1,7 @@
 // 지금 사용자가 보는 화면을 한 줄로 — 앱이 <데이터>/view.txt 에 적고, 참모 훅(scripts/voice-hint)이 지시마다 붙인다.
 // 화면을 보며 "여기 왜 이래?" 하면 참모가 "여기"를 몰랐다(2026-10-02 사용자 "내가 보는 화면을 니가 감지하느냐")
 import { tr } from '../i18n';
+import { isSheet, kindOf } from './reader';
 
 export type ViewParts = {
   /** 채팅 뷰 / 터미널 뷰 — 고른 칸 */
@@ -33,22 +34,44 @@ export function viewLine(p: ViewParts): string {
 const tilde = (p: string, home: string) => (home && (p === home || p.startsWith(`${home}/`)) ? `~${p.slice(home.length)}` : p);
 const base = (p: string) => p.replace(/\/+$/, '').split('/').pop() ?? p;
 
-/** 스페이스 화면 키(o:·p:·s:·d:·c:·h:·m:·rv:·r:·t:)를 말로 */
+/** 미리보기 창·탭에 뜬 파일 경로를 말로(~ 로 줄임) */
+export const pathWord = (p: string, home: string) => tilde(p, home);
+
+/** 가운데 탭(d:)에 뜬 파일 종류 — 보관함 탭은 md·엑셀만이 아니라 그림·영상·html·pdf 도 연다(2026-10-11) */
+function fileWord(p: string): string {
+  if (isSheet(p)) return tr('엑셀', 'spreadsheet');
+  switch (kindOf(p)) {
+    case 'md': case 'text': return tr('문서', 'document');
+    case 'image': return tr('그림', 'image');
+    case 'video': return tr('영상', 'video');
+    case 'html': return tr('html 시안', 'html draft');
+    case 'pdf': return 'PDF';
+    default: return tr('파일', 'file');
+  }
+}
+
+/** 스페이스 화면 키(o:·p:·s:·d:·c:·h:·m:·rv:·rp:·r:·t:·l:)를 말로 */
 export function spaceWord(key: string, n: { orch: (id: string) => string | undefined; session: (id: string) => string | undefined; home: string }): string {
   const [k, rest] = [key.slice(0, key.indexOf(':') + 1), key.slice(key.indexOf(':') + 1)];
   switch (k) {
     case 'o:': return tr(`${n.orch(rest) ?? rest} 대시보드`, `${n.orch(rest) ?? rest} dashboard`);
     case 'p:': return tr(`프로젝트 ${base(rest)} 대시보드`, `project ${base(rest)} dashboard`);
     case 's:': return tr(`세션 ${n.session(rest) ?? rest} 화면`, `session ${n.session(rest) ?? rest}`);
-    case 'd:': return tr(`문서 ${tilde(rest, n.home)}`, `document ${tilde(rest, n.home)}`);
+    case 'd:': return `${fileWord(rest)} ${tilde(rest, n.home)}`;
     case 'c:': return tr(`시안 검토(큐레이션) ${tilde(rest, n.home)}`, `design review (curation) ${tilde(rest, n.home)}`);
     case 'h:': return tr('하니터', 'Harnitor');
     case 'f:': return tr('사무실', 'office');
-    case 'm:': return tr('페이지 목록', 'pages');
     case 'oh:': return tr('오케스트레이터 홈', 'orchestrator home');
+    case 'rp:': return tr('하루 리플레이', 'day replay');
     case 'rv:': return rest ? tr(`리뷰 ${rest}`, `review ${rest}`) : tr('리뷰', 'review');
     case 'r:': return tr(`예약(루틴) ${rest}`, `scheduled (routine) ${rest}`);
     case 't:': return rest ? tr(`도구 ${base(rest)}`, `tools ${base(rest)}`) : tr('도구', 'tools');
+    case 'l:': {
+      // 보관함 — l:<참모 id>#<폴더 열쇠>(u:내 폴더·p:프로젝트·etc)
+      const [id, f] = [rest.split('#')[0] ?? rest, rest.split('#')[1] ?? ''];
+      const folder = f === 'etc' ? tr(' 기타', ' other') : f.startsWith('p:') ? ` ${base(f.slice(2))}` : f ? ` ${f.slice(2)}` : '';
+      return tr(`${n.orch(id) ?? id} 보관함${folder}`, `${n.orch(id) ?? id} locker${folder}`);
+    }
     default: return key;
   }
 }

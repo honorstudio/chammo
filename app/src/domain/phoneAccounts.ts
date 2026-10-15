@@ -1,8 +1,9 @@
 // 폰 계정 시트 — 맥 /api/accounts(Rust accounts_cmd::PhoneView: 이름·요금제·사용량·쉬는 때, 이메일·토큰 없음)를 읽어 줄로.
 // 막대·쉬는 판단은 데스크톱 계정 팝오버(domain/accounts popRows)와 같은 것을 쓴다
 import { machine } from '../i18n';
-import { accountError, allOut, popRows, usageOf, type AccountsView } from './accounts';
+import { accountError, allOut, popRows, usageOf, weekText, type AccountsView } from './accounts';
 import { usageText } from './mobile';
+import { parseUsage } from './usage';
 import { fmtUntil, readAuto, slotStatus } from './accountAuto';
 
 export type PhoneAccounts = {
@@ -35,7 +36,8 @@ export function readPhoneAccounts(text: string): PhoneAccounts | null {
   return { accounts, active: str(o.active), livePlan: str(o.livePlan), liveName: str(o.liveName), switching: o.switching === true, auto: o.auto && typeof o.auto === 'object' ? o.auto : {} };
 }
 
-export type PhoneAccountRow = { id: string; name: string; plan: string; on: boolean; pinned: boolean; pinHint: boolean; five: number | null; week: number | null; note: string; rest: string | null };
+/** left = 5시간·주 중 적은 쪽, soon = 그 칸이 다시 차는 때(시안 phone-dash S3 두 칸 고르기) */
+export type PhoneAccountRow = { id: string; name: string; plan: string; on: boolean; pinned: boolean; pinHint: boolean; five: number | null; week: number | null; left: number | null; soon: string | null; note: string; rest: string | null };
 
 /** 데스크톱 계정 보기 모양으로 — 이메일은 폰에 안 오니 빈 글 */
 const asView = (v: PhoneAccounts): AccountsView => ({ accounts: v.accounts.map((a) => ({ ...a, email: '' })), active: v.active, liveEmail: null, livePlan: v.livePlan, auto: v.auto });
@@ -47,8 +49,12 @@ export const phoneAllOut = (v: PhoneAccounts, now: number) => allOut(asView(v), 
 export function phoneAccountRows(v: PhoneAccounts, now: number): PhoneAccountRow[] {
   const slots = readAuto(v.auto).slots;
   return popRows(asView(v), now).map((r, i) => {
-    const st = slotStatus(slots[r.id], now, r.pinned);
-    return { ...r, plan: v.accounts[i]!.plan, rest: st.kind === 'ok' ? null : st.kind === 'auth' ? '로그인 필요' : `${fmtUntil(st.until, now)}까지 쉬는 중` };
+    const sl = slots[r.id];
+    const st = slotStatus(sl, now, r.pinned);
+    const five = sl?.five && sl.five.resetsAt > now ? sl.five : null;
+    const week = sl?.week && sl.week.resetsAt > now ? sl.week : null;
+    const soon = r.left == null ? null : five && r.five === r.left ? fmtUntil(five.resetsAt, now) : week ? weekText(week.resetsAt) : null;
+    return { id: r.id, name: r.name, on: r.on, pinned: r.pinned, pinHint: r.pinHint, five: r.five, week: r.week, left: r.left, soon, note: r.note, plan: v.accounts[i]!.plan, rest: st.kind === 'ok' ? null : st.kind === 'auth' ? '로그인 필요' : `${fmtUntil(st.until, now)}까지 쉬는 중` };
   });
 }
 
@@ -83,4 +89,11 @@ export function headUsage(v: PhoneAccounts | null, statusJson: string, now: numb
   const u = v ? usageOf(asView(v), now)?.usage : undefined;
   if (!u) return usageText(statusJson, now);
   return [u.five ? `5시간 ${u.five.left}%` : '', u.week ? `주 ${u.week.left}%` : ''].filter(Boolean).join(' · ');
+}
+
+/** 머리줄 계정 고리 숫자(시안 phone-dash H2) — 5시간·주 남은 % 중 적은 쪽 하나. 값을 고르는 곳은 headUsage 와 같다(지금 칸 계정 값, 없으면 상태줄) */
+export function headLeft(v: PhoneAccounts | null, statusJson: string, now: number): number | null {
+  const u = (v ? usageOf(asView(v), now)?.usage : undefined) ?? parseUsage(statusJson, now);
+  const left = [u.five?.left, u.week?.left].filter((x): x is number => typeof x === 'number');
+  return left.length ? Math.min(...left) : null;
 }

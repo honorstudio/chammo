@@ -2,7 +2,7 @@
 // 앱이 맨 앞인지는 맥 앱에선 Rust 가 창 포커스가 바뀔 때마다 window.__appFocus(앱 창 중 하나라도 앞) 로 알려 준다 —
 // 메인 웹뷰의 blur 만 보면 앱 안 리더 창으로 옮겨도 '맨 앞 아님'이 된다. 폰·브라우저는 창 focus/blur 그대로.
 // 덮개 닫힘도 Rust(lid.rs)가 바뀔 때 window.__lidClosed 로 알린다 — 붙기 전에 온 값은 __lidClosedNow 에 남아 있다
-import { attended, idleLeft } from '../domain/attention';
+import { attended, idleLeft, shown } from '../domain/attention';
 
 let bound = false;
 let tauri = false;
@@ -10,11 +10,18 @@ let focused = true;
 let lidClosed = false;
 let lastInput = Date.now();
 let on = true;
+let vis = true;
 let timer = 0;
 const subs = new Set<(on: boolean) => void>();
+const visSubs = new Set<(shown: boolean) => void>();
 
 function update() {
   const now = Date.now();
+  const v = shown({ hidden: document.hidden, focused, lidClosed });
+  if (v !== vis) {
+    vis = v;
+    visSubs.forEach((f) => f(vis));
+  }
   const next = attended({ hidden: document.hidden, focused, lidClosed, lastInput, now });
   window.clearTimeout(timer);
   // 보는 동안은 2분이 차는 때 한 번만 깬다 — 그 사이 입력이 있었으면 남은 만큼 다시 건다
@@ -59,4 +66,14 @@ export function onAttention(f: (on: boolean) => void): () => void {
   bindAttention();
   subs.add(f);
   return () => subs.delete(f);
+}
+
+/** 앱 창이 보이나(앞에 있고 안 가려짐·덮개 열림) — 폴링을 늦추는 기준. 2분 입력 없음은 안 본다 */
+export const isShown = () => { bindAttention(); return vis; };
+
+/** 보임이 바뀔 때마다 */
+export function onShown(f: (shown: boolean) => void): () => void {
+  bindAttention();
+  visSubs.add(f);
+  return () => visSubs.delete(f);
 }

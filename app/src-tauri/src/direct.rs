@@ -149,6 +149,14 @@ pub(crate) fn chrono_now() -> String {
     format!("{y:04}-{m:02}-{dd:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
 }
 
+/// 밀리초 → 같은 RFC3339 UTC 모양(보관함 폰 목록의 ts)
+pub(crate) fn iso_of_ms(ms: u64) -> String {
+    let secs = (ms / 1000) as i64;
+    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    let (y, m, dd) = civil(days);
+    format!("{y:04}-{m:02}-{dd:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
+}
+
 /// 1970-01-01 부터 날 수 → 연·월·일(Howard Hinnant civil_from_days)
 fn civil(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;

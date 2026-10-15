@@ -184,3 +184,14 @@ fn md2_실측_테일넷_기기() {
         eprintln!("{route:?} {p} → {:?} {:?}", r.as_ref().map(|r| (r.status, String::from_utf8_lossy(&r.body).chars().take(80).collect::<String>())), t0.elapsed());
     }
 }
+
+#[test]
+fn content_length_없이_닫히는_응답은_받은_만큼이_몸_패닉_없이() {
+    // 프록시 오류 페이지·다른 HTTP 서버가 Content-Length 없이 Connection: close 로 답하면 start + usize::MAX 가 넘쳐 패닉했다(2026-10-11 bug-hunt)
+    let (at, h) = one_shot(b"HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nupstream down");
+    let target = Target { ip: Ipv4Addr::LOCALHOST, port: at.port() };
+    let r = send(&Route::Direct, &target, &get("/api/hello"), T, 1024).unwrap();
+    assert_eq!(r.status, 502);
+    assert_eq!(r.body, b"upstream down");
+    h.join().unwrap();
+}

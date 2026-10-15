@@ -143,9 +143,10 @@ pub fn tts_warm(command: String) {
 }
 
 /// `say -v ?` 목록 그대로 — 언어별로 거르는 건 프론트(domain/tts nativeVoices)
+/// async — `say -v ?` 가 400ms 걸려 동기 명령이면 설정을 열 때 앱 전체가 굳었다(2026-10-15 실측)
 #[tauri::command]
-pub fn native_voices() -> String {
-    crate::platform::native_voices()
+pub async fn native_voices() -> String {
+    tauri::async_runtime::spawn_blocking(crate::platform::native_voices).await.unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -230,5 +231,64 @@ mod runner_tests {
         let i = SPEAK.find("echo \"PLAYING $BASE.wav\"").expect("PLAYING <wav> 줄 — 곡선을 뽑게 경로를 단다");
         assert!(SPEAK.contains("trap 'rm -f"), "멈춤으로 끊겨도 임시 wav 를 지운다");
         assert!(i < SPEAK.rfind("afplay").unwrap());
+    }
+
+    /// 실행기를 진짜로 돌려 본다 — python·afplay 는 가짜(기록만)
+    #[cfg(unix)]
+    fn run_script(tag: &str, env: &[(&str, &std::path::Path)]) -> (String, String, std::path::PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("chammo-speak-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("venv/bin")).unwrap();
+        std::fs::create_dir_all(d.join("bin")).unwrap();
+        let log = d.join("log.txt");
+        let mk = |p: std::path::PathBuf, body: String| {
+            std::fs::write(&p, body).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        mk(d.join("venv/bin/python"), format!("#!/bin/sh\nprintf WAV > \"$2\"; echo \"python $2 $3 $4\" >> '{}'\n", log.display()));
+        mk(d.join("bin/afplay"), format!("#!/bin/sh\necho \"afplay $1\" >> '{}'\n", log.display()));
+        mk(d.join("speak"), SPEAK.to_string());
+        let mut cmd = crate::platform::command(d.join("speak"));
+        cmd.args(["-v", "F2", "안녕"]).env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display()));
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().unwrap();
+        (String::from_utf8_lossy(&out.stdout).to_string(), std::fs::read_to_string(&log).unwrap_or_default(), d)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hold_길은_소리_파일만_만들고_안_튼다() {
+        let out = std::env::temp_dir().join(format!("chammo-hold-{}.wav", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        let (stdout, log, d) = run_script("hold", &[("CHAMMO_TTS_HOLD", &out)]);
+        assert_eq!(stdout, "", "PLAYING 을 안 찍는다 — 앱이 폰·맥을 정한다");
+        assert_eq!(log, format!("python {} F2 안녕\n", out.display()), "그 자리에 그 목소리·말로 만든다, afplay 는 안 부른다");
+        assert!(out.is_file(), "파일은 남긴다(앱이 지운다)");
+        let _ = std::fs::remove_file(&out);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn play_길은_이미_만든_파일을_틀고_지운다() {
+        let f = std::env::temp_dir().join(format!("chammo-play-{}.wav", std::process::id()));
+        std::fs::write(&f, "WAV").unwrap();
+        let (stdout, log, d) = run_script("play", &[("CHAMMO_TTS_PLAY", &f)]);
+        assert_eq!(stdout, format!("PLAYING {}\n", f.display()));
+        assert_eq!(log, format!("afplay {}\n", f.display()), "다시 만들지 않는다");
+        assert!(!f.exists(), "다 틀면 지운다");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn 환경변수가_없으면_예전과_똑같이_만들고_튼다() {
+        let (stdout, log, d) = run_script("plain", &[]);
+        assert!(stdout.starts_with("PLAYING ") && stdout.trim_end().ends_with(".wav"), "{stdout}");
+        assert!(log.contains("python ") && log.contains("afplay "), "{log}");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

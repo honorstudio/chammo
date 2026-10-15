@@ -34,6 +34,10 @@ export const IconBell = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M4 11.5V7.2a4 4 0 0 1 8 0v4.3l1.2 1.3H2.8zM6.5 14a1.6 1.6 0 0 0 3 0" /></svg>
 );
 /** 세션에 보내기: 종이비행기 */
+/** 보내기: 위 화살표 — 폰 입력창 오른쪽 아래 동그라미(시안 phone-dash K) */
+export const IconArrowUp = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M8 13V3.2M3.8 7.4 8 3.2l4.2 4.2" /></svg>
+);
 /** 보내기: 꺾인 화살표(↵) — Enter 와 같은 일(2026-10-02 보내기 버튼 시안 방향 2) */
 export const IconEnter = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M12.6 3.2v4.4a2.1 2.1 0 0 1-2.1 2.1H3.6M6.6 6.6 3.5 9.7l3.1 3.1" /></svg>
@@ -132,6 +136,10 @@ export const IconSpace = () => (
 export const IconChat = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M3 3h10a1.2 1.2 0 0 1 1.2 1.2v5.6A1.2 1.2 0 0 1 13 11H7l-3 2.5V11H3a1.2 1.2 0 0 1-1.2-1.2V4.2A1.2 1.2 0 0 1 3 3Z" /></svg>
 );
+/** 참모에게 보내기: 말풍선 안 점 셋(그 참모 색 면 위에 — ui/space/SendToOrch). 채팅 화면 보기(IconChat)와 모양을 가른다 */
+export const IconChatSend = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M3 3h10a1.2 1.2 0 0 1 1.2 1.2v5.6A1.2 1.2 0 0 1 13 11H7l-3 2.5V11H3a1.2 1.2 0 0 1-1.2-1.2V4.2A1.2 1.2 0 0 1 3 3Z" /><circle cx="5.3" cy="7" r=".55" fill="currentColor" /><circle cx="8" cy="7" r=".55" fill="currentColor" /><circle cx="10.7" cy="7" r=".55" fill="currentColor" /></svg>
+);
 /** 터미널 보기: 네모 안 >_ */
 export const IconTerminal = () => (
   <svg viewBox="0 0 16 16" {...P}><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6" /><path d="M4.5 6.3 6.6 8.2 4.5 10.1 M8.2 10.2h3.3" /></svg>
@@ -159,6 +167,14 @@ export const IconZoomOut = () => (
 /** 확대: 돋보기 안에 더하기 */
 export const IconZoomIn = () => (
   <svg viewBox="0 0 16 16" {...P}><circle cx="7" cy="7" r="4.5" /><path d="M10.4 10.4L14 14M5 7h4M7 5v4" /></svg>
+);
+/** 맞춤: 양쪽 벽 사이를 채우는 가로 화살표 */
+export const IconZoomFit = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M2.5 3v10M13.5 3v10M5.5 8h5M7.4 6.1L5.5 8l1.9 1.9M8.6 6.1L10.5 8 8.6 9.9" /></svg>
+);
+/** 목록 보기: 점 + 줄 셋 */
+export const IconList = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.6 4h.1M2.6 8h.1M2.6 12h.1" /></svg>
 );
 /** 대시보드: 네 칸 */
 export const IconDashboard = () => (
@@ -192,6 +208,26 @@ export const IconPinOff = () => (
 export const IconFolder = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M1.8 4.2a1 1 0 0 1 1-1h3.4l1.4 1.6h5.6a1 1 0 0 1 1 1v6.9a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1Z" /></svg>
 );
+/** 홈: 집(지붕 + 몸 + 문) */
+export const IconHome = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M2.2 7.4 8 2.6l5.8 4.8M3.8 6.2v7.2h8.4V6.2M6.6 13.4V10h2.8v3.4" /></svg>
+);
+/** 새 폴더: 폴더 안에 + */
+export const IconFolderPlus = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M1.8 4.2a1 1 0 0 1 1-1h3.4l1.4 1.6h5.6a1 1 0 0 1 1 1v6.9a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1ZM8 7.3v4.2M5.9 9.4h4.2" /></svg>
+);
+/** 맥 폴더 연결: 폴더 안에 바깥으로 나가는 화살표 */
+export const IconFolderLink = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M1.8 4.2a1 1 0 0 1 1-1h3.4l1.4 1.6h5.6a1 1 0 0 1 1 1v6.9a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1ZM6.4 10.6l3.2-3.2M7.4 7.4h2.2v2.2" /></svg>
+);
+/** 폴더로 옮기기: 폴더 안 오른쪽 화살표 */
+export const IconFolderMove = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M1.8 4.2a1 1 0 0 1 1-1h3.4l1.4 1.6h5.6a1 1 0 0 1 1 1v6.9a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1ZM5.4 9.3h5M8.6 7.5l1.8 1.8-1.8 1.8" /></svg>
+);
+/** 폴더에 바로가기: 폴더 안 굽은 화살표(맥 별칭 표시) */
+export const IconFolderAlias = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M1.8 4.2a1 1 0 0 1 1-1h3.4l1.4 1.6h5.6a1 1 0 0 1 1 1v6.9a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1ZM6 11.4V9.8a1.6 1.6 0 0 1 1.6-1.6h2.6M8.8 6.8l1.4 1.4-1.4 1.4" /></svg>
+);
 /** 내 페이지: 사람 */
 export const IconPerson = () => (
   <svg viewBox="0 0 16 16" {...P}><circle cx="8" cy="5.4" r="2.6" /><path d="M3 13.8c.6-2.6 2.6-4 5-4s4.4 1.4 5 4" /></svg>
@@ -203,10 +239,6 @@ export const IconSearch = () => (
 /** 고치기: 연필 */
 export const IconPencil = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M10.6 2.8l2.6 2.6-7.6 7.6-3.3.7.7-3.3zM9.2 4.2l2.6 2.6" /></svg>
-);
-/** 붙이기: 클립 — 그림·파일 둘 다 */
-export const IconClip = () => (
-  <svg viewBox="0 0 16 16" {...P}><path d="M13 7.4 7.9 12.5a3.1 3.1 0 0 1-4.4-4.4l5.6-5.6a2.1 2.1 0 0 1 3 3L6.6 11a1.05 1.05 0 0 1-1.5-1.5L10.2 4.4" /></svg>
 );
 /** 누르고 말하기: 마이크 */
 export const IconMic = () => (
@@ -237,8 +269,17 @@ export const IconSessions = () => (
   <svg viewBox="0 0 16 16" {...P}><rect x="2" y="5.5" width="9" height="8" rx="1.4" /><path d="M5 5.5V3.9A1.4 1.4 0 0 1 6.4 2.5h6.2A1.4 1.4 0 0 1 14 3.9v5.2a1.4 1.4 0 0 1-1.4 1.4H11" /></svg>
 );
 /** 예약: 시계 */
-export const IconClock = () => (
-  <svg viewBox="0 0 16 16" {...P}><circle cx="8" cy="8" r="5.6" /><path d="M8 4.8V8l2.2 1.4" /></svg>
+/** 받은 것: 받은편지함 트레이 */
+export const IconInbox = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M2 9.2 3.8 3.5h8.4L14 9.2v3.3a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1ZM2 9.2h3.4l.9 1.6h3.4l.9-1.6H14" /></svg>
+);
+/** 도우미 묶음: 두 사람 */
+export const IconPeople = () => (
+  <svg viewBox="0 0 16 16" {...P}><circle cx="6" cy="5.6" r="2.2" /><path d="M2.2 12.8c.4-2 1.9-3.2 3.8-3.2s3.4 1.2 3.8 3.2M10.6 3.6a2.1 2.1 0 0 1 0 4.1M11.6 9.8c1.2.4 2 1.4 2.2 3" /></svg>
+);
+/** 예약: 달력 + 오른쪽 아래 작은 시계 — 기록(되감기 시계)과 덜 닮게(207.png) */
+export const IconCalendarClock = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M7.4 12.6H3.4a1.6 1.6 0 0 1-1.6-1.6V4.6A1.6 1.6 0 0 1 3.4 3h7.2a1.6 1.6 0 0 1 1.6 1.6v2.6M1.8 6.3h10.4M5 1.7v2.6M9 1.7v2.6" /><circle cx="11.5" cy="11.5" r="3.1" /><path d="M11.5 10.1v1.5l1 .7" /></svg>
 );
 /** 뒤로: 왼쪽 화살표 */
 export const IconBack = () => (
@@ -251,4 +292,19 @@ export const IconBellOff = () => (
 /** 설정: 조절 막대 셋(손잡이가 엇갈림) — 16px 에서 톱니보다 덜 뭉개진다(2026-10-10 계정 팝오버 시안 C) */
 export const IconSettings = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M2.5 4.5h4.2M9.8 4.5h3.7M2.5 8h1.7M7.3 8h6.2M2.5 11.5h6.2M11.8 11.5h1.7" /><circle cx="8.2" cy="4.5" r="1.5" /><circle cx="5.8" cy="8" r="1.5" /><circle cx="10.2" cy="11.5" r="1.5" /></svg>
+);
+/** 받기·공유: 상자에서 위로 나가는 화살표 */
+export const IconShare = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M8 10V2.2M5.2 4.8 8 2l2.8 2.8M5.5 7H4a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1h-1.5" /></svg>
+);
+/** 내려받기: 받침 위로 내려오는 화살표 — IconShare(상자에서 위로 나감)와 짝 */
+export const IconDownload = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M8 2.2V10M5.2 7.2 8 10l2.8-2.8M2.8 11v1.3A1.2 1.2 0 0 0 4 13.5h8a1.2 1.2 0 0 0 1.2-1.2V11" /></svg>
+);
+/** 위아래 화살표 — IconChevron(오른쪽)을 돌린 것. 접기·위로 = up, 펼치기·아래로 = down */
+export const IconChevronUp = () => (
+  <svg viewBox="0 0 16 16" {...P} style={{ transform: 'rotate(-90deg)' }}><path d="M6 3.8 10.2 8 6 12.2" /></svg>
+);
+export const IconChevronDown = () => (
+  <svg viewBox="0 0 16 16" {...P} style={{ transform: 'rotate(90deg)' }}><path d="M6 3.8 10.2 8 6 12.2" /></svg>
 );

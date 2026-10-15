@@ -292,3 +292,14 @@ describe('peer — 다른 세션이 SendMessage 로 건 말(meta user 줄, origi
     expect(a.prompt).toBeUndefined(); // 사람 지시(prompt)는 그대로 사람 말만
   });
 });
+
+describe('이상한 기록 줄에도 요약이 버틴다(2026-10-11 bug-hunt — 한 세션의 null 줄 하나로 데스크톱 전체 상태 갱신이 멈추고 폰은 렌더 중 터졌다)', () => {
+  it('객체가 아닌 줄·글이 문자열이 아닌 블록은 건너뛰고 나머지로 요약', () => {
+    const tail = ['null', '123', '"x"', '[]',
+      JSON.stringify({ type: 'assistant', timestamp: '2026-10-11T00:00:01Z', message: { content: [{ type: 'text', text: 5 }] } }),
+      JSON.stringify({ type: 'user', timestamp: '2026-10-11T00:00:02Z', message: { role: 'user', content: '이어서 해' } }),
+    ].join('\n');
+    expect(() => summarizeTranscript(tail)).not.toThrow();
+    expect(summarizeTranscript(tail).prompt?.text).toBe('이어서 해');
+  });
+});

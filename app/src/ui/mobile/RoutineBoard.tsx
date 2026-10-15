@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { routineDo, routinesList } from '../../data/web';
 import { groupRoutines, isCloud, parseRoutines, routineItem, routineSummary, type Routine } from '../../domain/routine';
-import { IconBack } from '../Icons';
+import { IconBack, IconNote } from '../Icons';
 import type { Session } from '../../domain/session';
 import { FileView } from './FileView';
 import { remember, remembered } from './memo';
@@ -91,7 +91,7 @@ export function RoutineBoard({ sessions, onBack }: { sessions: Session[]; onBack
                     <button type="button" className="m-btn" disabled={busy === r.name} onClick={() => void act(r, r.enabled ? 'pause' : 'resume')}>
                       {r.enabled ? '일시정지' : '다시 켜기'}
                     </button>
-                    <button type="button" className="m-btn" onClick={() => setDoc(r)}>지침서</button>
+                    <button type="button" className="m-icon" onClick={() => setDoc(r)} aria-label={`${r.name} 지침서`} title="지침서"><IconNote /></button>
                   </>
                 )}
               </div>

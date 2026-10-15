@@ -1,5 +1,6 @@
 // 채팅 입력칸 위 머리줄의 모델·에포트 칩 — 지금 값을 보여 주고, 눌러서 바로 바꾼다(2026-10-01 사용자).
 // 바꾸기 = 그 세션에 /model·/effort 를 치고 기본값은 되돌린다(modelPickRun). 새 값은 상태줄 파일이 다음 갱신 때 알려 준다
+import { closeOnOutside } from '../outsideClose';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { tr } from '../../i18n';
@@ -25,11 +26,10 @@ export function ModelChip({ info, pick, locked, lockedWhy, openSignal = 0 }: { i
   useEffect(() => { if (!fail) return; const t = window.setTimeout(() => setFail(null), 7000); return () => window.clearTimeout(t); }, [fail]);
   useEffect(() => {
     if (!open) return;
-    const off = (e: Event) => { if (!(e.target as HTMLElement).closest?.('.mc-pop, .mc-chip')) setOpen(false); };
+    const stopOutside = closeOnOutside(window, (t) => !!(t as HTMLElement).closest?.('.mc-pop, .mc-chip'), () => setOpen(false));
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    window.addEventListener('mousedown', off);
     window.addEventListener('keydown', esc);
-    return () => { window.removeEventListener('mousedown', off); window.removeEventListener('keydown', esc); };
+    return () => { stopOutside(); window.removeEventListener('keydown', esc); };
   }, [open]);
 
   useEffect(() => { if (openSignal > 0 && !locked && !open) toggle(); }, [openSignal]); // eslint-disable-line react-hooks/exhaustive-deps

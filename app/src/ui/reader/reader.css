@@ -10,12 +10,15 @@ body.reader-win { background: var(--bg); color: var(--text); font: 13px -apple-s
 .rd-tab { display: flex; align-items: center; gap: 6px; max-width: 240px; padding: 7px 8px 7px 12px; border-radius: 8px 8px 0 0; color: var(--text-2); cursor: pointer; white-space: nowrap; }
 .rd-tab span { overflow: hidden; text-overflow: ellipsis; }
 .rd-tab:hover { background: var(--hover); }
-.rd-tab button { all: unset; width: 18px; height: 18px; border-radius: 4px; text-align: center; line-height: 18px; font-size: 10px; color: var(--text-3); }
+.rd-tab button { all: unset; width: 18px; height: 18px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-3); }
+.rd-tab button svg { width: 11px; height: 11px; }
 .rd-tab button:hover { background: var(--hover); color: var(--text); }
 .rd-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .rd-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font: 12px ui-monospace, "Cascadia Mono", Consolas, monospace; direction: rtl; text-align: left; }
 .rd-bar button { all: unset; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--line); color: var(--text-2); font-size: 12px; cursor: pointer; }
 .rd-bar button:hover { background: var(--hover); color: var(--text); }
+.rd-bar > button:has(> svg) { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; padding: 0; box-sizing: border-box; }
+.rd-bar > button > svg { width: 15px; height: 15px; }
 .rd-body { flex: 1; min-height: 0; display: flex; background: var(--surface); }
 .rd-frame { flex: 1; border: 0; width: 100%; height: 100%; background: #fff; }
 .rd-image { flex: 1; overflow: auto; display: flex; align-items: flex-start; padding: 24px; background: repeating-conic-gradient(var(--panel) 0 25%, var(--surface) 0 50%) 0 0 / 16px 16px; }
@@ -29,7 +32,7 @@ body.reader-win { background: var(--bg); color: var(--text); font: 13px -apple-s
 .rd-tab.lifted { opacity: .35; }
 .rd-tab.drop-before::before, .rd-tabs-end.drop-before::before { content: ''; position: absolute; left: -2px; top: 6px; bottom: 6px; width: 3px; border-radius: 2px; background: var(--accent); }
 .rd-tabs-end { position: relative; flex: 1; min-width: 24px; }
-.rd-ghost { position: fixed; z-index: 100; pointer-events: none; transform: translate(-30%, -50%); padding: 7px 12px; border-radius: 8px; background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 8px 24px rgba(0, 0, 0, .3); border: 1px solid var(--line); white-space: nowrap; }
+.rd-ghost { position: fixed; z-index: var(--z-drag); pointer-events: none; transform: translate(-30%, -50%); padding: 7px 12px; border-radius: 8px; background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 8px 24px rgba(0, 0, 0, .3); border: 1px solid var(--line); white-space: nowrap; }
 .rd-ghost small { display: block; font-weight: 500; font-size: 11px; color: var(--accent); margin-top: 2px; }
 .rd-ghost.out { border-color: var(--accent); }
 /* 메인 창 리더 패널 — 작업 패널 왼쪽 */
@@ -38,7 +41,7 @@ body.reader-win { background: var(--bg); color: var(--text); font: 13px -apple-s
 .reader-panel.drop-over { box-shadow: inset 0 0 0 3px var(--accent); }
 /* 참모 화면 + 리더 패널을 한 칸에 — 크게면 리더가 참모 화면 자리를 덮는다(터미널은 그대로 두고 위에 얹어 크기가 안 바뀌게) */
 .work { flex: 1; min-width: 0; min-height: 0; display: flex; position: relative; }
-.reader-panel.full { position: absolute; inset: 0; z-index: 30; border-left: 0; }
+.reader-panel.full { position: absolute; inset: 0; z-index: calc(var(--z-panel) + 4); border-left: 0; }
 .rd-head { display: flex; align-items: stretch; background: var(--panel); border-bottom: 1px solid var(--line); }
 .rd-head .rd-tabs { flex: 1; min-width: 0; border-bottom: 0; }
 .rd-actions { display: flex; align-items: center; gap: 4px; padding: 0 8px; flex: 0 0 auto; }
@@ -51,7 +54,7 @@ body.reader-win { background: var(--bg); color: var(--text); font: 13px -apple-s
 .rd-tab.on { background: var(--surface); color: var(--text); font-weight: 700; border-color: var(--line); box-shadow: inset 0 2px 0 var(--accent); }
 /* 리더를 보고 있을 때(마지막으로 만진 게 리더 — ReaderPanel markReader) = 세션 칸처럼 주황 테두리 + 머리줄 물듦. ⌘W·Ctrl+Tab 이 탭으로 간다는 표시 */
 /* 테두리는 맨 위 층(::after)에 — outline 으로 그리면 문서 프레임(iframe)·도구 줄이 위에 그려져 가장자리가 잘려 보였다(사용자 2026-09-28) */
-.reader-panel.active::after { content: ''; position: absolute; inset: 0; border: 2px solid var(--accent); pointer-events: none; z-index: 50; }
+.reader-panel.active::after { content: ''; position: absolute; inset: 0; border: 2px solid var(--accent); pointer-events: none; z-index: calc(var(--z-base) + 9); }
 .reader-panel.active .rd-head { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
 .reader-panel.active .rd-tab.on { color: var(--accent); }
 
@@ -89,7 +92,7 @@ body.reader-win { background: var(--bg); color: var(--text); font: 13px -apple-s
 .space-editor .bn-editor { font-family: inherit; }
 /* 스페이스 — 오른쪽 아래 "보낼 것" 칩(숨 쉬듯), 올리면 미리보기 */
 .rd-body { position: relative; }
-.sp-fab-wrap { position: absolute; right: 16px; bottom: 16px; z-index: 20; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.sp-fab-wrap { position: absolute; right: 16px; bottom: 16px; z-index: var(--z-panel); display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .sp-fab { all: unset; cursor: pointer; height: 34px; padding: 0 14px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 12.5px; font-weight: 700; box-shadow: 0 6px 18px rgba(0, 0, 0, .18); display: inline-flex; align-items: center; }
 .sp-fab.live { animation: sp-breathe 2.4s ease-in-out infinite; }
 @keyframes sp-breathe { 0%, 100% { box-shadow: 0 6px 18px rgba(0, 0, 0, .18), 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); } 50% { box-shadow: 0 6px 18px rgba(0, 0, 0, .18), 0 0 0 8px color-mix(in srgb, var(--accent) 0%, transparent); transform: translateY(-1px); } }

@@ -24,6 +24,8 @@ body { font: 12px/1.45 -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo',
 .tw-over > b { font-size: 12.5px; margin-bottom: 2px; }
 .tw-over button { all: unset; cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--tw-dim); min-height: 30px; white-space: nowrap; }
 .tw-over button:hover { background: rgba(0, 0, 0, .06); }
+.tw-over button.tw-ib { align-self: flex-start; justify-content: center; width: 30px; padding: 0; }
+.tw-over button.tw-ib svg { width: 15px; height: 15px; }
 .tw-over button span, .dim { color: var(--tw-dim); font-size: 11px; }
 .tw-bar { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 4px 0 8px; border-radius: 8px; background: var(--tw-bar); white-space: nowrap; overflow: hidden; }
 .tw-bar .sp { flex: 1; }

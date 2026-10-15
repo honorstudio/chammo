@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { appendMemo, readMemos, writeMemo } from '../data/tauri';
 import { formatEntry, memoTime, parseMemo, removeEntry, serializeMemo, validMemoName, type MemoItem } from '../domain/memo';
+import { every } from './poll';
 
 export function useMemos(projects: string[]) {
   const [files, setFiles] = useState<Record<string, string>>({});
@@ -12,8 +13,7 @@ export function useMemos(projects: string[]) {
   }, [key]);
   useEffect(() => {
     load();
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
+    return every(load, 5000);
   }, [load]);
   const items = (project: string): MemoItem[] => parseMemo(files[project] ?? '');
   const add = async (project: string, text: string) => {

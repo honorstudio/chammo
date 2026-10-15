@@ -100,11 +100,49 @@ pub fn app_env() -> AppEnv {
     }
 }
 
+/// 같은 목록을 같이 쓰는 시간 — 데스크톱(3초 폴링)은 늘 새로 받고, 그사이 폰·메신저가 물으면 그 결과를 같이 쓴다
+pub const AGENTS_TTL: std::time::Duration = std::time::Duration::from_millis(2500);
+static AGENTS: std::sync::Mutex<Option<(std::time::Instant, String)>> = std::sync::Mutex::new(None);
+
+/// cell 에 ttl 안의 결과가 있으면 그것, 아니면 fetch(잠근 채 — 동시에 물은 쪽은 기다렸다 같은 결과를 받는다). 실패는 안 담는다.
+/// 시각은 묻기 시작한 때로 적는다
+pub fn shared_fetch(cell: &std::sync::Mutex<Option<(std::time::Instant, String)>>, ttl: std::time::Duration, now: std::time::Instant, fetch: impl FnOnce() -> Result<String, String>) -> Result<String, String> {
+    let mut c = cell.lock().map_err(|e| e.to_string())?;
+    if let Some((at, v)) = c.as_ref() {
+        if now.saturating_duration_since(*at) < ttl {
+            return Ok(v.clone());
+        }
+    }
+    let v = fetch()?;
+    *c = Some((now, v.clone()));
+    Ok(v)
+}
+
+/// `claude agents --json` — 데스크톱·폰·메신저가 같이 쓴다(분당 20개 띄우던 것, 2026-10-11 perf 5번). 멈추면 10초 뒤 죽인다.
+/// 띄움·끔·되살림 직후의 확인(still_listed 등)은 이걸 안 쓰고 새로 묻는다
+pub fn agents_json() -> Result<String, String> {
+    shared_fetch(&AGENTS, AGENTS_TTL, std::time::Instant::now(), || {
+        let out = crate::platform::run_capped(crate::platform::command(claude_bin()).args(["agents", "--json"]), std::time::Duration::from_secs(10)).map_err(|e| e.to_string())?;
+        if out.status.success() { Ok(String::from_utf8_lossy(&out.stdout).into_owned()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_string()) }
+    })
+}
+
+/// 세션 목록이 바뀌는 일(띄움·끔·지움·되살림) 뒤 — 같이 쓰던 목록을 버린다
+pub fn forget_agents() {
+    if let Ok(mut c) = AGENTS.lock() {
+        *c = None;
+    }
+}
+
 /// `claude agents --json` 원문 그대로. 파싱은 프론트 domain/session.ts — 테스트가 거기 있다
 #[tauri::command]
-pub async fn list_sessions() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
-        run(&["agents", "--json"])
+pub async fn list_sessions(fresh: Option<bool>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        // fresh = 누른 뒤 확인(자동 허용) — 같이 쓰던 목록은 누르기 전 모습일 수 있다
+        if fresh == Some(true) {
+            forget_agents();
+        }
+        agents_json()
     })
     .await
     .map_err(|e| e.to_string())?
@@ -127,6 +165,7 @@ pub fn spawn_blocking(cwd: &str, name: &str, prompt: &str) -> Result<String, Str
         .args(["--bg", "--dangerously-skip-permissions", "-n", name, prompt])
         .output()
         .map_err(|e| e.to_string())?;
+    forget_agents();
     if !out.status.success() {
         return Err(crate::access::explain_spawn_error(String::from_utf8_lossy(&out.stderr).trim(), cwd));
     }
@@ -190,6 +229,7 @@ pub async fn adopt_session(pid: i32, session_id: String, cwd: String, name: Stri
             .args(["--bg", "--dangerously-skip-permissions", "-n", &name, "--resume", &session_id])
             .output()
             .map_err(|e| e.to_string())?;
+        forget_agents(); // 넘겨받은 세션이 다음 목록에 바로 보이게
         let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
         if !out.status.success() {
             return Err(text.trim().to_string());
@@ -213,6 +253,7 @@ pub async fn new_session(cwd: String, name: String, worktree: Option<String>) ->
         crate::trust::before_spawn(&cwd);
         crate::computer_use::sweep_logged();
         let out = crate::platform::command(claude_bin()).current_dir(&cwd).args(&args).output().map_err(|e| e.to_string())?;
+        forget_agents(); // 새 세션이 바로 다음 목록에 — 2.5초 같이 쓰던 목록이면 띄움 자리표시가 사라진 뒤 3초쯤 비었다
         let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
         if !out.status.success() {
             return Err(crate::access::explain_spawn_error(text.trim(), &cwd));
@@ -257,14 +298,18 @@ pub async fn stop_session(id: String, why: Option<String>) -> Result<String, Str
 /// stop_session 의 몸통 — 폰 서버(참모 재우기)도 같은 길로
 pub fn stop_blocking(id: &str, why: &str) -> Result<String, String> {
     log_action("stop", id, why);
-    run(&["stop", id]).map(|s| s.trim().to_string())
+    let r = run(&["stop", id]).map(|s| s.trim().to_string());
+    forget_agents();
+    r
 }
 
 /// remove_session 의 몸통 — 폰 서버(참모 제거)도 같은 길로. 꺼진 세션이면 stop 은 실패해도 넘어간다
 pub fn remove_blocking(id: &str, why: &str) -> Result<String, String> {
     log_action("rm", id, why);
     let _ = run(&["stop", id]);
-    run(&["rm", id]).map(|s| s.trim().to_string())
+    let r = run(&["rm", id]).map(|s| s.trim().to_string());
+    forget_agents();
+    r
 }
 
 /// 세션을 끄고 목록에서도 지운다(`claude stop` + `claude rm`) — 꺼진 참모가 "꺼진 세션"에 계속 남지 않게(2026-09-30 사용자).
@@ -276,10 +321,61 @@ pub async fn remove_session(id: String, why: Option<String>) -> Result<String, S
         .map_err(|e| e.to_string())?
 }
 
-/// 참모가 `scripts/task` 로 쌓는 작업 기록. 없으면 빈 문자열. 파싱은 프론트 domain/tasks.ts
-#[tauri::command]
+/// 참모가 `scripts/task` 로 쌓는 작업 기록. 없으면 빈 문자열(폰 옛 길이 꼬리를 자를 때)
 pub fn read_tasks() -> String {
     std::fs::read_to_string(crate::config::data_file("tasks.jsonl")).unwrap_or_default()
+}
+
+/// 작업 기록 이어 읽기 결과. id = 파일 신원(갈아 끼웠는지 알아보는 표) — 다음에 그대로 돌려준다
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TasksChunk {
+    pub text: String,
+    pub next: u64,
+    pub reset: bool,
+    pub id: String,
+}
+
+#[cfg(unix)]
+fn file_id(m: &std::fs::Metadata) -> String {
+    use std::os::unix::fs::MetadataExt;
+    format!("{}:{}", m.dev(), m.ino())
+}
+#[cfg(not(unix))]
+fn file_id(_: &std::fs::Metadata) -> String {
+    String::new()
+}
+
+/// from 뒤에 붙은 온전한 줄만(쓰는 중인 끝 줄은 다음에). 처음(from 없음)·파일이 줄었음·자리가 줄 처음이 아님·다른 파일로 바뀜이면
+/// 처음부터 통째로(reset). 기록은 append-only 라 보통은 늘어난 몇 줄만 읽는다 — 3초마다 686KB 통째 읽던 것(2026-10-11 perf 4번)
+pub fn tasks_since(path: &std::path::Path, from: Option<u64>, id: Option<&str>) -> TasksChunk {
+    use std::io::{Read, Seek, SeekFrom};
+    let empty = TasksChunk { text: String::new(), next: 0, reset: true, id: String::new() };
+    let Ok(mut f) = std::fs::File::open(path) else { return empty };
+    let Ok(meta) = f.metadata() else { return empty };
+    let (len, fid) = (meta.len(), file_id(&meta));
+    let at_line_start = |f: &mut std::fs::File, n: u64| -> bool {
+        if n == 0 { return true }
+        let mut b = [0u8; 1];
+        f.seek(SeekFrom::Start(n - 1)).is_ok() && f.read_exact(&mut b).is_ok() && b[0] == b'\n'
+    };
+    let ok = from.filter(|&n| n <= len && id == Some(fid.as_str()) && at_line_start(&mut f, n));
+    let start = ok.unwrap_or(0);
+    let mut buf = Vec::new();
+    if f.seek(SeekFrom::Start(start)).is_err() || f.read_to_end(&mut buf).is_err() {
+        return empty;
+    }
+    let end = buf.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+    buf.truncate(end);
+    TasksChunk { text: String::from_utf8_lossy(&buf).into_owned(), next: start + end as u64, reset: ok.is_none(), id: fid }
+}
+
+/// 데스크톱 작업 기록 — 지난번 next·id 를 넘기면 늘어난 줄만. 파싱·이어 붙이기는 프론트 domain/tasks.ts makeTaskLog
+#[tauri::command]
+pub async fn read_tasks_since(from: Option<u64>, id: Option<String>) -> TasksChunk {
+    tauri::async_runtime::spawn_blocking(move || tasks_since(&crate::config::data_file("tasks.jsonl"), from, id.as_deref()))
+        .await
+        .unwrap_or(TasksChunk { text: String::new(), next: 0, reset: true, id: String::new() })
 }
 
 /// 세션 대화 기록의 꼬리(마지막 256KB). 기록은 `~/.claude/projects/<폴더>/<sessionId>.jsonl`.
@@ -506,6 +602,65 @@ mod reply_tests {
 }
 
 #[cfg(test)]
+mod agents_cache_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn 여러_스레드가_같이_써도_줄이_섞이지_않는다() {
+        let p = std::env::temp_dir().join(format!("append-line-{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&p);
+        let hs: Vec<_> = (0..8).map(|t| { let p = p.clone(); std::thread::spawn(move || for i in 0..300 { append_line(&p, &format!("{i}\tkind{t}\t{}", "가".repeat(40))); }) }).collect();
+        hs.into_iter().for_each(|h| h.join().unwrap());
+        let body = std::fs::read_to_string(&p).unwrap();
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(lines.len(), 2400);
+        assert!(lines.iter().all(|l| l.split('\t').count() == 3 && l.ends_with('가')), "섞인 줄이 있다");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn 세션을_띄우는_명령은_모두_같이_쓰던_목록을_버린다() {
+        // 새 세션(⌘T·프로젝트 머리줄)·터미널 세션 넘겨받기가 안 버려서 띄움 자리표시가 사라진 뒤 새 세션이 최대 3초 늦게 떴다(2026-10-11 bug-hunt)
+        let src = include_str!("claude.rs");
+        let src = &src[..src.find("#[cfg(test)]").unwrap()];
+        for chunk in src.split("pub async fn ").skip(1) {
+            let body = &chunk[..chunk.find("\n}\n").unwrap_or(chunk.len())];
+            if body.contains("\"--bg\"") {
+                let name = body.split('(').next().unwrap();
+                assert!(body.contains("forget_agents()"), "{name} 은 세션을 띄우는데 같이 쓰던 세션 목록을 안 버린다");
+            }
+        }
+    }
+
+    #[test]
+    fn 짧은_사이에_또_물으면_같은_결과를_같이_쓴다() {
+        // 데스크톱 3초·폰 3초·메신저가 각자 claude agents 를 띄우던 것(분당 20개, 2026-10-11 perf 5번)
+        let cell = std::sync::Mutex::new(None);
+        let runs = std::cell::Cell::new(0);
+        let t0 = Instant::now();
+        let fetch = |v: &str| { runs.set(runs.get() + 1); Ok::<String, String>(v.to_string()) };
+        assert_eq!(shared_fetch(&cell, AGENTS_TTL, t0, || fetch("a")), Ok("a".into()));
+        assert_eq!(shared_fetch(&cell, AGENTS_TTL, t0 + Duration::from_millis(2000), || fetch("b")), Ok("a".into()));
+        assert_eq!(runs.get(), 1);
+        // 2.5초가 지나면 새로 — 데스크톱 3초 폴링은 늘 새로 받는다(신선도 그대로)
+        assert_eq!(shared_fetch(&cell, AGENTS_TTL, t0 + Duration::from_millis(2600), || fetch("c")), Ok("c".into()));
+        assert_eq!(runs.get(), 2);
+    }
+
+    #[test]
+    fn 실패는_담지_않고_비우면_바로_새로_묻는다() {
+        let cell = std::sync::Mutex::new(None);
+        let t0 = Instant::now();
+        assert!(shared_fetch(&cell, AGENTS_TTL, t0, || Err::<String, String>("x".into())).is_err());
+        assert_eq!(shared_fetch(&cell, AGENTS_TTL, t0, || Ok::<String, String>("ok".into())), Ok("ok".into()));
+        // 세션을 띄우거나 끈 뒤엔 비운다 — 옛 목록을 안 내게
+        if let Ok(mut c) = cell.lock() { *c = None; }
+        assert_eq!(shared_fetch(&cell, AGENTS_TTL, t0, || Ok::<String, String>("new".into())), Ok("new".into()));
+    }
+}
+
+#[cfg(test)]
 mod chat_tests {
     use super::*;
     use std::io::Write;
@@ -581,6 +736,61 @@ mod chat_tests {
         let c = read_chunk_with(&p, None, PHONE_HEAD, PHONE_MIN_LINES, PHONE_MAX).unwrap();
         assert!(c.text.len() as u64 <= PHONE_HEAD, "{}", c.text.len());
         assert!(c.text.lines().count() >= PHONE_MIN_LINES);
+    }
+
+    #[test]
+    fn 작업_기록은_처음엔_통째로_다음엔_늘어난_줄만() {
+        let p = file("tasks-grow", b"{\"a\":1}\n{\"b\":2}\n");
+        let c = tasks_since(&p, None, None);
+        assert_eq!((c.text.as_str(), c.next, c.reset), ("{\"a\":1}\n{\"b\":2}\n", 16, true));
+        assert!(!c.id.is_empty() || cfg!(not(unix)));
+        // 안 바뀌었으면 빈 글
+        let same = tasks_since(&p, Some(16), Some(&c.id));
+        assert_eq!((same.text.as_str(), same.next, same.reset), ("", 16, false));
+        // 붙은 줄만, 쓰는 중인 끝 줄은 다음에
+        std::fs::OpenOptions::new().append(true).open(&p).unwrap().write_all(b"{\"c\":3}\n{\"d\":").unwrap();
+        let more = tasks_since(&p, Some(16), Some(&c.id));
+        assert_eq!((more.text.as_str(), more.next, more.reset), ("{\"c\":3}\n", 24, false));
+        std::fs::OpenOptions::new().append(true).open(&p).unwrap().write_all(b"4}\n").unwrap();
+        assert_eq!(tasks_since(&p, Some(24), Some(&c.id)).text, "{\"d\":4}\n");
+    }
+
+    #[test]
+    fn 작업_기록이_줄었거나_바뀌었으면_처음부터() {
+        let p = file("tasks-shrunk", b"{\"a\":1}\n");
+        let c = tasks_since(&p, Some(999), None);
+        assert_eq!((c.text.as_str(), c.reset), ("{\"a\":1}\n", true));
+        // 자리가 줄 가운데면(같은 크기 이상으로 다시 쓴 파일) 처음부터
+        let mid = tasks_since(&p, Some(3), Some(&c.id));
+        assert_eq!((mid.text.as_str(), mid.next, mid.reset), ("{\"a\":1}\n", 8, true));
+        // 다른 파일로 갈아 끼웠으면(이름 바꿔 덮기) 처음부터
+        let q = file("tasks-swap", b"{\"x\":1}\n{\"y\":2}\n");
+        std::fs::rename(&q, &p).unwrap();
+        let sw = tasks_since(&p, Some(8), Some(&c.id));
+        if cfg!(unix) {
+            assert_eq!((sw.text.as_str(), sw.reset), ("{\"x\":1}\n{\"y\":2}\n", true));
+        }
+        // 파일이 없어졌으면 빈 글 + 다시 처음부터
+        std::fs::remove_file(&p).unwrap();
+        let gone = tasks_since(&p, Some(16), Some(&sw.id));
+        assert_eq!((gone.text.as_str(), gone.next, gone.reset), ("", 0, true));
+        assert_eq!(tasks_since(&p, None, None).text, "");
+    }
+
+    #[test]
+    fn 기록이_상한을_넘으면_앞_절반을_줄_단위로_버린다() {
+        let body: String = (0..100).map(|i| format!("{{\"n\":{i}}}\n")).collect();
+        let p = file("cap", body.as_bytes());
+        let size = body.len() as u64;
+        cap_half(&p, size - 1);
+        let left = std::fs::read_to_string(&p).unwrap();
+        assert!((left.len() as u64) < size / 2 + 20, "{}", left.len());
+        assert!(left.ends_with("{\"n\":99}\n"));
+        assert!(left.lines().all(|l| l.starts_with("{\"n\":") && l.ends_with('}')));
+        // 안 넘으면 그대로, 없으면 조용히
+        cap_half(&p, size);
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), left);
+        cap_half(&std::env::temp_dir().join("chammo-chat-test-none-xyz"), 1);
     }
 
     #[test]
@@ -705,16 +915,22 @@ pub async fn project_scan(dev_root: String) -> Vec<ProjectDoc> {
 }
 
 /// 보낸 알림·읽은 음성을 한 줄씩 남긴다(<데이터 폴더>/notify.log) — "두 번 나왔다"·"이상한 알림"을 나중에 기록으로 가리려고.
-/// 1MB 를 넘으면 비우고 새로 쓴다
+/// 1MB 를 넘으면 앞 절반을 버린다(예전엔 통째로 지웠다)
 pub(crate) fn log_out(kind: &str, text: &str) {
-    use std::io::Write;
     let path = crate::config::data_file("notify.log");
-    if std::fs::metadata(&path).map(|m| m.len() > 1_000_000).unwrap_or(false) {
-        let _ = std::fs::remove_file(&path);
-    }
+    cap_half(&path, 1_000_000);
     let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    append_line(&path, &format!("{ts}\t{kind}\t{text}"));
+}
+
+/// 한 줄을 한 번의 write 로 덧붙인다 — writeln! 은 조각마다 write 해서 여러 스레드가 같이 쓰면 줄이 섞였다
+/// (notify.log 에 시각 두 개 붙은 줄·시각 없는 줄, 2026-10-04 실측). 줄 안 줄바꿈은 빈칸으로
+pub(crate) fn append_line(path: &std::path::Path, line: &str) {
+    use std::io::Write;
+    let mut s = line.replace('\n', " ");
+    s.push('\n');
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, "{ts}\t{kind}\t{}", text.replace('\n', " "));
+        let _ = f.write_all(s.as_bytes());
     }
 }
 
@@ -775,16 +991,32 @@ pub(crate) fn speak_gen() -> u64 {
 
 /// 차례가 오면 읽는다 — 그사이 멈췄으면(gen 이 바뀌면) 안 읽는다. started 는 시작한 pid 를 받는다(테스트용)
 /// who = 읽는 말의 주인(참모 세션 짧은 id) — 화면이 그 참모 탭·프사를 소리 크기대로 빛낸다(speak_now, 2026-10-03 사용자)
-pub(crate) fn run_speech(argv: Vec<String>, gen: u64, who: Option<String>, mut started: impl FnMut(u32)) {
+pub(crate) fn run_speech(argv: Vec<String>, gen: u64, who: Option<String>, started: impl FnMut(u32)) {
+    run_speech_in(argv, gen, who, started, &crate::config::data_file("phone-voice"))
+}
+
+/// 폰에서 틀 소리 파일을 두는 폴더를 받는 판(시험은 임시 폴더)
+pub(crate) fn run_speech_in(argv: Vec<String>, gen: u64, who: Option<String>, mut started: impl FnMut(u32), phone_dir: &std::path::Path) {
     let _turn = SPEAKING.lock().unwrap_or_else(|e| e.into_inner());
     if speak_gen() != gen || argv.is_empty() {
         return;
+    }
+    // 폰이 앞에 떠 있으면(하트비트) 소리 파일만 만들어 폰으로 — 못 틀면 같은 파일을 맥에서(아래 PLAY 길)
+    let mut play_file: Option<std::path::PathBuf> = None;
+    if is_hold_runner(&argv[0]) && crate::phone_voice::watching_now() {
+        match run_on_phone(&argv, gen, who.clone(), phone_dir) {
+            Phoned::Done => return,
+            Phoned::Local(f) => play_file = f,
+        }
     }
     // Supertonic 은 wav 를 만든 뒤 PLAYING 을 찍고 튼다 — 그 전엔 '기다림'(빛 없음). 다른 명령은 곧바로 소리
     let prepared = is_supertonic_runner(&argv[0]);
     let id = say_begin(who, prepared);
     let mut cmd = crate::platform::command(&argv[0]);
     cmd.args(&argv[1..]).stdout(std::process::Stdio::piped());
+    if let Some(f) = &play_file {
+        cmd.env("CHAMMO_TTS_PLAY", f);
+    }
     let Ok(mut child) = crate::platform::spawn_group(&mut cmd) else { say_end(id); return };
     *SPEAKING_PID.lock().unwrap_or_else(|e| e.into_inner()) = Some(child.id());
     started(child.id());
@@ -820,6 +1052,104 @@ pub(crate) fn run_speech(argv: Vec<String>, gen: u64, who: Option<String>, mut s
             std::thread::sleep(std::time::Duration::from_millis(linger));
             say_end(id);
         });
+    }
+}
+
+/// 소리 파일만 만들 줄 아는(CHAMMO_TTS_HOLD·PLAY) 실행기 — 앱의 맥용 Supertonic 실행기만(윈도우 .cmd 는 아직)
+pub(crate) fn is_hold_runner(prog: &str) -> bool {
+    prog.replace('\\', "/").ends_with("/tts/supertonic/speak")
+}
+
+enum Phoned {
+    /// 폰에서 틀었거나 멈춰서 끝 — 더 할 일 없다
+    Done,
+    /// 맥에서 튼다 — Some(파일) 이면 이미 만든 소리를 그대로, None 이면 평소처럼 처음부터
+    Local(Option<std::path::PathBuf>),
+}
+
+/// 소리 파일만 만들고(실행기 HOLD 길) 폰에 내놓아 끝까지 기다린다. 폰이 못 틀면 파일을 돌려줘 맥이 튼다.
+/// 빛(say_begin·say_playing)은 맥이 틀 때와 같게 — 폰이 시작했다고 알린 때부터
+fn run_on_phone(argv: &[String], gen: u64, who: Option<String>, dir: &std::path::Path) -> Phoned {
+    let id = say_begin(who.clone(), true);
+    let _ = std::fs::create_dir_all(dir);
+    sweep_old(dir);
+    let wav = dir.join(format!("{id}.wav"));
+    let mut cmd = crate::platform::command(&argv[0]);
+    cmd.args(&argv[1..]).env("CHAMMO_TTS_HOLD", &wav).stdout(std::process::Stdio::null());
+    let Ok(mut child) = crate::platform::spawn_group(&mut cmd) else { say_end(id); return Phoned::Local(None) };
+    *SPEAKING_PID.lock().unwrap_or_else(|e| e.into_inner()) = Some(child.id());
+    let made = child.wait().is_ok_and(|s| s.success());
+    *SPEAKING_PID.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    let cleanup = |wav: &std::path::Path| {
+        let _ = std::fs::remove_file(wav);
+        say_end(id);
+    };
+    if speak_gen() != gen {
+        cleanup(&wav);
+        return Phoned::Done;
+    }
+    let bytes = if made { std::fs::read(&wav).ok() } else { None };
+    let Some(bytes) = bytes else {
+        // 만들기가 안 됐다 — 평소 길이 처음부터 다시 만든다
+        phone_log("파일 만들기 실패 — 맥에서 처음부터");
+        cleanup(&wav);
+        return Phoned::Local(None);
+    };
+    let env = wav_envelope(&bytes, HOP_MS);
+    let dur = std::time::Duration::from_millis(env.as_ref().map_or(0, |e| e.len() as u64 * HOP_MS as u64));
+    if !crate::phone_voice::watching_now() {
+        phone_log("만드는 사이 폰이 화면을 떠남 — 맥에서");
+        say_end(id);
+        return Phoned::Local(Some(wav));
+    }
+    crate::phone_voice::offer(id, wav.clone(), dur, who, env.clone());
+    let mut playing = false;
+    loop {
+        if speak_gen() != gen {
+            crate::phone_voice::withdraw(id);
+            cleanup(&wav);
+            return Phoned::Done;
+        }
+        match crate::phone_voice::poll(id) {
+            crate::phone_voice::Poll::Waiting => {}
+            crate::phone_voice::Poll::Playing => {
+                if !playing {
+                    playing = true;
+                    say_playing(id, env.clone(), now_ms());
+                }
+            }
+            crate::phone_voice::Poll::Done => {
+                crate::phone_voice::withdraw(id);
+                cleanup(&wav);
+                return Phoned::Done;
+            }
+            crate::phone_voice::Poll::Fallback(why) => {
+                crate::phone_voice::withdraw(id);
+                phone_log(&format!("{why} — 맥에서"));
+                say_end(id);
+                return Phoned::Local(Some(wav));
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// 폰으로 돌리다 맥으로 되돌린 까닭 — notify.log (시험은 진짜 기록을 안 건드린다)
+fn phone_log(why: &str) {
+    #[cfg(not(test))]
+    log_out("phone-voice", why);
+    #[cfg(test)]
+    let _ = why;
+}
+
+/// 10분 넘은 소리 파일 — 앱이 죽어 못 지운 것
+fn sweep_old(dir: &std::path::Path) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|d| d > std::time::Duration::from_secs(600));
+        if old {
+            let _ = std::fs::remove_file(e.path());
+        }
     }
 }
 
@@ -947,6 +1277,7 @@ pub fn stop_speaking() {
         if matches!(s.phase, SayPhase::Waiting | SayPhase::Playing) { s.phase = SayPhase::Stopped; }
     }
     SPEAK_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    crate::phone_voice::cancel(); // 폰이 틀던 소리도 멈춘다
     if let Some(pid) = *SPEAKING_PID.lock().unwrap_or_else(|e| e.into_inner()) {
         crate::platform::stop_group(pid);
     }
@@ -1138,8 +1469,14 @@ pub async fn resume_session(cwd: String, session_id: String, id: Option<String>)
     .map_err(|e| e.to_string())?
 }
 
-/// resume_session 의 몸통 — 폰 서버(mobile.rs)도 같은 길로 되살린다
+/// resume_session 의 몸통 — 폰 서버(mobile.rs)도 같은 길로 되살린다. 끝나면 같이 쓰던 세션 목록을 버린다
 pub fn resume_blocking(cwd: &str, session_id: &str, id: Option<&str>) -> Result<String, String> {
+    let r = resume_inner(cwd, session_id, id);
+    forget_agents();
+    r
+}
+
+fn resume_inner(cwd: &str, session_id: &str, id: Option<&str>) -> Result<String, String> {
     crate::trust::before_spawn(cwd);
     crate::browser_attach::reassert_for(cwd);
     let first = revive_args(id);
@@ -1593,12 +1930,31 @@ pub async fn send_keys(id: String, keys: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
-/// 자동 허용 기록 한 줄 (<데이터 폴더>/auto-allow.jsonl) — 작업 패널이 최근 것을 보여준다
+/// 쌓이기만 하는 기록의 상한 — 넘으면 앞 절반을 버린다(2026-10-11 perf 8번, auto-allow 는 상한 없이 통째로 읽혔다)
+pub const LOG_CAP: u64 = 1024 * 1024;
+
+/// path 가 max 를 넘으면 앞 절반을 줄 단위로 버린다(임시 파일에 쓰고 바꿔 끼움). 없거나 못 읽으면 그냥 둔다
+pub fn cap_half(path: &std::path::Path, max: u64) {
+    if std::fs::metadata(path).map_or(true, |m| m.len() <= max) {
+        return;
+    }
+    let Ok(data) = std::fs::read(path) else { return };
+    let half = data.len() / 2;
+    let keep = data[half..].iter().position(|&b| b == b'\n').map_or(&[][..], |i| &data[half + i + 1..]);
+    let tmp = path.with_extension("jsonl.tmp");
+    if std::fs::write(&tmp, keep).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
+}
+
+/// 자동 허용 기록 한 줄 (<데이터 폴더>/auto-allow.jsonl) — 작업 패널이 최근 것을 보여준다. 1MB 넘으면 앞 절반을 버린다
 #[tauri::command]
 pub fn log_auto_allow(line: String) -> Result<(), String> {
     use std::io::Write;
     serde_json::from_str::<serde_json::Value>(&line).map_err(|e| format!("JSON 아님: {e}"))?;
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(crate::config::data_file("auto-allow.jsonl")).map_err(|e| e.to_string())?;
+    let path = crate::config::data_file("auto-allow.jsonl");
+    cap_half(&path, LOG_CAP);
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| e.to_string())?;
     writeln!(f, "{}", line.trim()).map_err(|e| e.to_string())
 }
 
@@ -2150,5 +2506,143 @@ mod par_tests {
     fn par_map_empty_and_one_worker() {
         assert!(par_map(&Vec::<u8>::new(), 4, |x| *x).is_empty());
         assert_eq!(par_map(&[1, 2, 3], 1, |x| x + 1), vec![2, 3, 4]);
+    }
+}
+
+// 폰에서 음성 소리 틀기(2026-10-11 사용자) — 폰이 보고 있으면 소리 파일만 만들어 폰으로, 못 틀면 같은 파일을 맥에서
+#[cfg(test)]
+mod phone_route_tests {
+    use super::{run_speech_in, speak_gen, stop_speaking, SPEAK_TEST_LOCK};
+    use crate::phone_voice::{self, Ack, AckKind, Beat};
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    /// …/tts/supertonic/speak 흉내 — 환경변수 길(HOLD·PLAY)을 따라 log 에 한 줄씩 적는다
+    fn fake_runner(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("chammo-phone-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("tts/supertonic");
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = root.join("log.txt");
+        let runner = dir.join("speak");
+        let body = format!(
+            "#!/bin/sh\nif [ -n \"$CHAMMO_TTS_PLAY\" ]; then echo \"PLAYING $CHAMMO_TTS_PLAY\"; echo local >> '{log}'; rm -f \"$CHAMMO_TTS_PLAY\"; exit; fi\nif [ -n \"$CHAMMO_TTS_HOLD\" ]; then printf RIFFxxxxWAVE > \"$CHAMMO_TTS_HOLD\"; echo held >> '{log}'; exit; fi\necho \"PLAYING x\"; echo normal >> '{log}'\n",
+            log = log.display()
+        );
+        std::fs::write(&runner, body).unwrap();
+        crate::platform::make_executable(&runner);
+        (runner, log, root.join("phone-voice"))
+    }
+    fn read(p: &Path) -> String {
+        std::fs::read_to_string(p).unwrap_or_default()
+    }
+    fn watching() {
+        phone_voice::beat(Beat { ready: true, hidden: false, ack: None });
+    }
+    fn away() {
+        phone_voice::beat(Beat { ready: false, hidden: true, ack: None });
+    }
+    /// 가짜 폰 — 소리가 내놓아지면 가져가(audio_path) 시작 소식을 보내고, 끝 소식 또는 실패 소식을 보낸다
+    fn fake_phone(kind: AckKind) -> std::thread::JoinHandle<Option<u64>> {
+        std::thread::spawn(move || {
+            for _ in 0..300 {
+                let r = phone_voice::beat(Beat { ready: true, hidden: false, ack: None });
+                if let Some((id, _)) = r.item {
+                    assert!(phone_voice::audio_path(id).is_some_and(|p| p.is_file()), "내놓은 소리 파일이 있어야");
+                    if kind == AckKind::Fail {
+                        phone_voice::beat(Beat { ready: true, hidden: false, ack: Some(Ack { id, kind: AckKind::Fail }) });
+                    } else {
+                        phone_voice::beat(Beat { ready: true, hidden: false, ack: Some(Ack { id, kind: AckKind::Start }) });
+                        std::thread::sleep(Duration::from_millis(200));
+                        phone_voice::beat(Beat { ready: true, hidden: false, ack: Some(Ack { id, kind: AckKind::End }) });
+                    }
+                    return Some(id);
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            None
+        })
+    }
+    fn run(runner: &Path, dir: &Path) {
+        let argv = vec![runner.to_string_lossy().to_string(), "-v".into(), "M1".into(), "안녕".into()];
+        run_speech_in(argv, speak_gen(), Some("f00d0002".into()), |_| {}, dir);
+    }
+
+    #[test]
+    fn 폰이_보고_있고_틀면_맥은_소리를_안_튼다() {
+        let _g = SPEAK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (runner, log, dir) = fake_runner("ok");
+        watching();
+        let phone = fake_phone(AckKind::Start);
+        run(&runner, &dir);
+        assert!(phone.join().unwrap().is_some(), "폰이 소리를 받았다");
+        assert_eq!(read(&log), "held\n", "맥은 파일만 만들고 틀지 않는다");
+        assert_eq!(std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0), 0, "다 틀면 소리 파일을 지운다");
+        away();
+    }
+
+    #[test]
+    fn 폰이_못_틀면_같은_파일을_맥에서_튼다() {
+        let _g = SPEAK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (runner, log, dir) = fake_runner("fail");
+        watching();
+        let phone = fake_phone(AckKind::Fail);
+        run(&runner, &dir);
+        phone.join().unwrap();
+        assert_eq!(read(&log), "held\nlocal\n", "만든 파일을 다시 만들지 않고 그대로 맥에서");
+        assert_eq!(std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0), 0);
+        away();
+    }
+
+    #[test]
+    fn 폰이_답이_없으면_6초_안에_맥으로() {
+        let _g = SPEAK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (runner, log, dir) = fake_runner("silent");
+        watching();
+        let t = std::time::Instant::now();
+        let keep = std::thread::spawn(|| {
+            // 하트비트는 오는데 소리는 안 가져간다(오디오가 막혔다)
+            for _ in 0..80 {
+                phone_voice::beat(Beat { ready: true, hidden: false, ack: None });
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+        run(&runner, &dir);
+        assert!(t.elapsed() < Duration::from_secs(8), "{:?}", t.elapsed());
+        assert_eq!(read(&log), "held\nlocal\n");
+        keep.join().unwrap();
+        away();
+    }
+
+    #[test]
+    fn 폰을_안_보면_예전처럼_맥에서_바로() {
+        let _g = SPEAK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (runner, log, dir) = fake_runner("away");
+        away();
+        run(&runner, &dir);
+        assert_eq!(read(&log), "normal\n", "소리 파일 길을 안 탄다");
+        assert!(!dir.exists(), "폰 폴더도 안 만든다");
+    }
+
+    #[test]
+    fn 폰이_기다리는_중_멈추면_맥에서도_안_튼다() {
+        let _g = SPEAK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (runner, log, dir) = fake_runner("stop");
+        watching();
+        let g = speak_gen();
+        let (r2, d2) = (runner.clone(), dir.clone());
+        let h = std::thread::spawn(move || {
+            let argv = vec![r2.to_string_lossy().to_string(), "안녕".into()];
+            run_speech_in(argv, g, None, |_| {}, &d2);
+        });
+        for _ in 0..100 {
+            if phone_voice::beat(Beat { ready: true, hidden: false, ack: None }).item.is_some() { break; }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        stop_speaking();
+        h.join().unwrap();
+        assert_eq!(read(&log), "held\n", "멈췄으면 맥이 이어서 틀지 않는다");
+        assert_eq!(std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0), 0);
+        away();
     }
 }

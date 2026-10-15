@@ -25,9 +25,9 @@
 /* 블록 끌기(blockDrag.ts) — 놓일 자리는 가로줄(잡은 블록 흐리게는 blockDrag 가 번호로 건다) */
 html.cv-block-dragging, html.cv-block-dragging * { cursor: grabbing !important; user-select: none; }
 .space-editor { position: relative; }
-.sp-drop-line { position: absolute; left: 0; right: 0; height: 3px; margin-top: -1.5px; border-radius: 2px; background: var(--accent); pointer-events: none; z-index: 5; }
+.sp-drop-line { position: absolute; left: 0; right: 0; height: 3px; margin-top: -1.5px; border-radius: 2px; background: var(--accent); pointer-events: none; z-index: calc(var(--z-base) + 5); }
 /* 밖에서도 고쳐 저장을 멈췄을 때·파일이 없어졌을 때 — 문서 맨 위에 붙는 알림(docSync.ts). 강조는 옅은 면 + 둘레 */
-.cv-doc-sync { position: sticky; top: 0; z-index: 6; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--text) 6%, var(--surface, var(--bg, #fff))); box-shadow: inset 0 0 0 1px var(--line); font-size: 13px; line-height: 1.5; color: var(--text); }
+.cv-doc-sync { position: sticky; top: 0; z-index: calc(var(--z-base) + 6); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--text) 6%, var(--surface, var(--bg, #fff))); box-shadow: inset 0 0 0 1px var(--line); font-size: 13px; line-height: 1.5; color: var(--text); }
 .cv-doc-sync span { flex: 1 1 260px; }
 .cv-doc-sync button { all: unset; box-sizing: border-box; cursor: pointer; min-height: 30px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: 8px; font-size: 12.5px; font-weight: 600; color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong, var(--line)); }
 .cv-doc-sync button:hover { background: var(--hover); }

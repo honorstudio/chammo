@@ -190,6 +190,17 @@ test('꼬리표 — 크롬 창을 꺼냈으면 클릭·입력을 못 셌을 수 
   assert.match(formatHandback({ startedAt: 0, endedAt: 1, chromeShown: true, events: [{ k: 'nav', url: 'https://a.com' }] }), /크롬 창/);
 });
 
+test('꼬리표 — 앱이 저절로 돌려줬으면 왜인지(조작 없음·꺼낸 창 숨김), 사람이 돌려준 것처럼 말하지 않는다', () => {
+  const idle = formatHandback({ startedAt: 0, endedAt: 200_000, events: [], why: 'idle' });
+  assert.match(idle, /아무것도 안 해서 앱이 저절로 돌려줬어/);
+  assert.doesNotMatch(idle, /조작하고 돌려줬어/);
+  assert.match(idle, /browser_snapshot/);
+  const hidden = formatHandback({ startedAt: 0, endedAt: 5_000, events: [], why: 'hidden' });
+  assert.match(hidden, /크롬이 띄운 창 때문에 잠깐 꺼냈던 크롬을 다시 숨기며 돌려줬어/);
+  assert.doesNotMatch(hidden, /패스키/, '패스키인지 모르는 창(권한·기본 인증 등)도 이 길로 온다 — 중립(2026-10-11)');
+  assert.doesNotMatch(hidden, /못 봤/, '저절로 돌려준 건 \'한 일 못 봤다\'를 안 붙인다');
+});
+
 test('같은 칸 연속 입력·같은 주소 연속은 한 번만', () => {
   const s = formatHandback({ startedAt: 0, endedAt: 1, events: [{ k: 'type', what: "칸 'A'" }, { k: 'type', what: "칸 'A'" }, { k: 'nav', url: 'https://a.com/' }, { k: 'nav', url: 'https://a.com/' }] });
   assert.strictEqual(s.match(/칸 'A'/g).length, 1);

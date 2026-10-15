@@ -61,9 +61,13 @@ export function makeApi(io: Io) {
     interruptSession,
     /** 꺼진 참모 — HQ 폴더의 꺼진 대화 원문(파싱은 domain/stopped) */
     listStoppedOrchs: () => io.text('/api/stopped'),
-    /** 대화 기록 꼬리(세션 번호 → 꼬리 글) — 한 번에 12개까지 */
-    readTails: (sessionIds: string[]) =>
-      sessionIds.length ? io.json<Record<string, string>>(`/api/tails?ids=${sessionIds.slice(0, 12).map(encodeURIComponent).join(',')}`) : Promise.resolve({} as Record<string, string>),
+    /** 대화 기록 꼬리(세션 번호 → 꼬리 글) — 서버는 한 번에 12개까지라 12개씩 나눠 묻고 합친다(13번째부터 늘 '모름'이던 것, 2026-10-11) */
+    readTails: async (sessionIds: string[]) => {
+      const parts: string[][] = [];
+      for (let i = 0; i < sessionIds.length; i += 12) parts.push(sessionIds.slice(i, i + 12));
+      const got = await Promise.all(parts.map((p) => io.json<Record<string, string>>(`/api/tails?ids=${p.map(encodeURIComponent).join(',')}`)));
+      return Object.assign({}, ...got) as Record<string, string>;
+    },
     /** 떠 있는 세션 브라우저(보기에 필요한 것만) */
     listBrowsers: () => io.json<import('../domain/agentBrowser').Live[]>('/api/browsers'),
     /** 세션 브라우저 화면 한 장 — since 보다 새 것이 있으면 [순번 8바이트][jpeg](domain/agentBrowser unpackFrame), 없으면 빈 것 */

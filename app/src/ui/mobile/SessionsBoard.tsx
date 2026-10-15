@@ -2,16 +2,19 @@
 import { useState } from 'react';
 import { liveOf, type Live } from '../../domain/agentBrowser';
 import type { Ctx } from '../../domain/ctx';
-import { sessionBoard } from '../../domain/mobile';
+import { sessionBoard, subStatus, subTag } from '../../domain/mobile';
 import { shownName } from '../../domain/orchLabel';
 import type { Session } from '../../domain/session';
-import { stateTag } from './OrchPicker';
+import { useSubTails } from './useSubTails';
 import { SessionPeek } from './SessionPeek';
 import { IconBack } from '../Icons';
 
 export function SessionsBoard({ sessions, hqDir, ctx, lives, onBack }: { sessions: Session[]; hqDir: string; ctx: Record<string, Ctx>; lives: Live[]; onBack: () => void }) {
   const [peek, setPeek] = useState<string | null>(null);
   const groups = sessionBoard(sessions, hqDir);
+  const tails = useSubTails(sessions);
+  const now = Date.now();
+  const tagOf = (s: Session) => subTag(subStatus(s, tails, now));
   const open = sessions.find((s) => s.id === peek);
   return (
     <div className="m-dash">
@@ -27,7 +30,7 @@ export function SessionsBoard({ sessions, hqDir, ctx, lives, onBack }: { session
         <section key={g.name}>
           <div className="m-sect">{g.name}</div>
           {g.sessions.map((s) => {
-            const tag = stateTag(s);
+            const tag = tagOf(s);
             const used = s.sessionId ? ctx[s.sessionId]?.used : undefined;
             return (
               <button key={s.id} type="button" className="m-task m-task-btn" onClick={() => setPeek(s.id)}>
@@ -40,7 +43,7 @@ export function SessionsBoard({ sessions, hqDir, ctx, lives, onBack }: { session
           })}
         </section>
       ))}
-      {open && <SessionPeek s={open} lives={lives} onClose={() => setPeek(null)} />}
+      {open && <SessionPeek s={open} tag={tagOf(open)} lives={lives} onClose={() => setPeek(null)} />}
     </div>
   );
 }

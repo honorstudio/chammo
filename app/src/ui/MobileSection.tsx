@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import { mobileApi, writeClipboard, type MobileStatus, type PairQr } from '../data/tauri';
 import { groupCode, pairCodeFrom } from '../domain/mobileAuth';
 import { kindLabels, lastPaired, phoneGroups } from '../domain/mobileDevices';
-import { IconUnlink } from './Icons';
+import { IconClose, IconPower, IconUnlink } from './Icons';
+import { IconButton } from './kit/IconButton';
 import { tr } from '../i18n';
 
 const day = (ms: number) => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
@@ -53,9 +54,7 @@ export function MobileSection({ title }: { title: string }) {
       <div className="su-sec-head">
         <h2>{title}</h2>
         {st && (
-          <button className={st.on ? 'btn' : 'btn pri'} disabled={busy} onClick={() => { setQr(null); act(() => mobileApi.set(!st.on)); }}>
-            {st.on ? tr('끄기', 'Turn off') : tr('켜기', 'Turn on')}
-          </button>
+          <IconButton size="l" tone={st.on ? 'line' : 'pri'} pressed={st.on} label={st.on ? tr('끄기', 'Turn off') : tr('켜기', 'Turn on')} disabled={busy} onClick={() => { setQr(null); act(() => mobileApi.set(!st.on)); }}><IconPower /></IconButton>
         )}
       </div>
       <p className="su-hint">
@@ -78,7 +77,7 @@ export function MobileSection({ title }: { title: string }) {
                   {code && <button className="btn" onClick={() => void writeClipboard(code).then(() => { setCodeCopied(true); window.setTimeout(() => setCodeCopied(false), 1500); })}>
                     {codeCopied ? tr('복사했어요', 'Copied') : tr('코드 복사', 'Copy code')}
                   </button>}
-                  <button className="btn" onClick={() => setQr(null)}>{tr('닫기', 'Close')}</button>
+                  <IconButton size="l" tone="line" label={tr('닫기', 'Close')} onClick={() => setQr(null)}><IconClose /></IconButton>
                 </div>
               </div>
             </div>

@@ -47,6 +47,12 @@ class Send(unittest.TestCase):
         self.assertIn(task.MERGE_RULE, err)
         self.assertEqual([e['type'] for e in events], ['send'])
 
+    def test_보관함_파일이면_이사_안내(self):
+        _, _, err, _ = self.run_send('컷 정리 — ~/Documents/Chammo/운영/받은 것/컷_01.png 로 영상')
+        self.assertIn('scripts/locker give', err)
+        _, _, err, _ = self.run_send('button color')
+        self.assertNotIn('scripts/locker give', err)
+
     def test_시킨_참모를_from_으로_남긴다(self):
         # 채팅 뷰 대시보드가 참모마다 잡은 세션을 가른다 — 없으면 공개판에서 맡긴 일이 전부 '누가 시켰는지 모르는 일'(0.2.0 검증)
         old = os.environ.get('CLAUDE_JOB_DIR')

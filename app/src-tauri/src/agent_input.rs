@@ -119,6 +119,16 @@ pub fn chooser_by_human(human_at: Option<std::time::Instant>, now: std::time::In
     human_at.is_some_and(|t| now.saturating_duration_since(t) < std::time::Duration::from_secs(2))
 }
 
+/// 사람이 실제로 손을 댔나 — 누르기·키·글·이동. 마우스를 얹어 움직이거나 굴리기(보기만)는 아니다.
+/// 패스키 꺼내기가 저절로 켠 개입을 사람 것으로 넘기는 기준(agent_input → set_manual) — 안 그러면 패스키를 취소하고 모달에서 비밀번호를 치는 중에
+/// 패스키 창이 사라지자마자 개입이 풀려 사람 입력은 버려지고 세션 도구가 다시 돌았다(2026-10-11 bug-hunt)
+pub fn acts(evs: &[InputEv]) -> bool {
+    evs.iter().any(|e| match e {
+        InputEv::Mouse { ty, .. } => ty == "mousePressed" || ty == "mouseReleased",
+        InputEv::Key { .. } | InputEv::Text { .. } | InputEv::Nav { .. } => true,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,6 +136,15 @@ mod tests {
 
     fn ev(s: &str) -> InputEv {
         serde_json::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn 사람이_손댄_것만_acts() {
+        assert!(!acts(&[ev(r#"{"kind":"mouse","type":"mouseMoved","x":0.1,"y":0.1}"#), ev(r#"{"kind":"mouse","type":"mouseWheel","x":0.1,"y":0.1,"deltaY":40}"#)]));
+        assert!(!acts(&[]));
+        assert!(acts(&[ev(r#"{"kind":"mouse","type":"mouseMoved","x":0.1,"y":0.1}"#), ev(r#"{"kind":"mouse","type":"mousePressed","x":0.1,"y":0.1,"button":"left"}"#)]));
+        assert!(acts(&[ev(r#"{"kind":"key","type":"keyDown","key":"a"}"#)]));
+        assert!(acts(&[ev(r#"{"kind":"text","text":"가"}"#)]));
     }
 
     #[test]

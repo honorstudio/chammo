@@ -10,8 +10,11 @@ import { useAccountAuto } from './ui/useAccountAuto';
 import { useLogin } from './ui/useLogin';
 import { LoginCard } from './ui/LoginCard';
 import { useBrowserNeeds } from './ui/BrowserAttach';
-import { dayStart, parseUsage, type Usage } from './domain/usage';
+import { dayStart, parseUsage, TODAY_COMMITS_MS, type Usage } from './domain/usage';
+import { FeatureRow, type FeatureProps } from './ui/FeatureButtons';
+import { railItems } from './domain/topbarMenu';
 import { TopBar } from './ui/TopBar';
+import { ChatVoice } from './ui/chat/chatVoice';
 import { HarnitorPanel } from './ui/HarnitorPanel';
 import { ToolsFloat } from './ui/ToolsFloat';
 import { reportView } from './ui/viewReport';
@@ -31,17 +34,18 @@ import { LoadPage } from './ui/LoadPage';
 import { useLoad } from './ui/useLoad';
 import { level } from './domain/load';
 import { pickFolder, readConfig, reloadConfig, routineDo, routinesList, type Config } from './data/tauri';
-import { allowed, featuresOf, mirrorPlan } from './domain/config';
+import { allowed, featuresOf, mirrorPlan, type FeatureSwitch } from './domain/config';
+import { setAnimation } from './ui/calm';
 import { addExtraProject, versionWarning } from './domain/setup';
 import { claudeUpdateNote, verLabel } from './domain/updates';
 import { useUpdates } from './ui/useUpdates';
 import { useAccessWatch } from './ui/useAccessWatch';
 import { AccessBanners } from './ui/AccessBanners';
-import { SPACE_NAV } from './ui/space/navSignal';
+import { SPACE_NAV, spaceCmd } from './ui/space/navSignal';
 import { picking } from './ui/chat/modelPickRun';
 import { openTarget as openLink } from './data/tauri';
 import { assistant, getLang, josa, tr } from './i18n';
-import { getAppEnv, listSessionsAllRaw, listSessionsRaw, readSay, writeVoiceMode, speak, projectScan, readTasks, readTranscriptTails, spawnSession, type AppEnv } from './data/tauri';
+import { getAppEnv, listSessionsAllRaw, listSessionsRaw, readSay, writeVoiceMode, speak, projectScan, readTasksSince, readTranscriptTails, spawnSession, type AppEnv } from './data/tauri';
 import { freshReplies, parseSay, pickSay, type ReplySeen } from './domain/voice';
 import { baseVoice, voiceFor } from './domain/avatar';
 import { avatarSnapshot, refreshAvatars, setAvatarTts } from './ui/avatar';
@@ -50,15 +54,18 @@ import { notifyOnce } from './ui/notifier';
 import { AgentAskHost, browserMenu, browserOwnsKey, openAgentModal, PopupCards } from './ui/AgentBrowserModal';
 import { useDirectCards } from './ui/useDirectCards';
 import { useShowLog } from './ui/space/useShowLog';
-import { chatFiles, type ChatFile } from './domain/chatFiles';
+import { chatFiles, showOwnerOf, type ChatFile } from './domain/chatFiles';
 import { ChatFileCard } from './ui/chat/ChatFileCard';
 import { kindView, needsAnswer } from './domain/directAsk';
 import { useAgentLives } from './ui/AgentBrowser';
+import { every } from './ui/poll';
 import { askName, liveOf, takeoverLine, type Live } from './domain/agentBrowser';
-import { activityStatus, docBadges, needsHarness, transitions, type ActivityStatus, type ProjectDoc } from './domain/status';
+import { activityStatus, docBadges, liveLine, needsHarness, sessionStatus, settled, transitions, type ActivityStatus, type ProjectDoc } from './domain/status';
 import { summarizeTranscript, type Activity } from './domain/activity';
 import { clampFont, DEFAULT_FONT, dedupeMs, gotoOfNum, menuAction, onceAcross, onceWithin, shortcutFor, type Shortcut } from './domain/shortcuts';
-import { foldTasks, parseTaskLog, splitCards, type TaskEvent } from './domain/tasks';
+import { foldTasks, splitCards, type TaskEvent } from './domain/tasks';
+import { makeTaskLog } from './domain/taskTail';
+import { routineSessions, routineStalls } from './domain/login';
 import { TaskPanel, type SessionActivity } from './ui/TaskPanel';
 import { invoke } from '@tauri-apps/api/core';
 import { OrchActionsProvider, useOrchActions } from './ui/orchActions';
@@ -67,12 +74,15 @@ import { NameNew } from './ui/OrchDialogs';
 import { dupRenames, labelRenames, nickProblem, renamesToSend, withNick, type RenameSent } from './domain/orchLabel';
 import { markReader, ReaderPanel, readerFocused } from './ui/reader/ReaderPanel';
 import { selectAllHere } from './ui/selectAll';
-import type { Surface } from './domain/reader';
+import { IS_WIN, type Surface } from './domain/reader';
+import { keyLabel } from './domain/keys';
 import './ui/reader/reader.css';
 
 /** 리더 패널에서 보던 탭 닫기 */
 const previewMaxFn = () => (window as unknown as { __previewMax?: () => void }).__previewMax;
 const previewZoomFn = () => (window as unknown as { __previewZoom?: (d: 1 | -1 | 0) => void }).__previewZoom;
+/** 스페이스 탭 확대(SpaceView 가 건다, 2026-10-12) — 확대할 탭이 떠 있으면 처리하고 true, 아니면 false(터미널·채팅 글자 크기로) */
+const tabZoomFn = () => (window as unknown as { __tabZoom?: (c: 1 | -1 | 0 | 'fit') => boolean }).__tabZoom;
 const readerZoom = (dir: 1 | -1 | 0) => (window as unknown as { __readerZoom?: (d: 1 | -1 | 0) => void }).__readerZoom?.(dir);
 const readerCloseActive = async () => { const st = await invoke<Surface>('reader_state', { surface: 'dock' }); if (st.active) await invoke('reader_close', { surface: 'dock', path: st.active }); };
 import { Sidebar, type Selection } from './ui/Sidebar';
@@ -89,6 +99,7 @@ import { isRemoteTarget } from './domain/orphans';
 import { allDue, singleFlight } from './domain/pollGate';
 import { orphanSession, parseStopped, recentDelegated, resumable, stoppedOrchs, type StoppedSession } from './domain/stopped';
 import { arrivedOrch, creatingRow } from './domain/orchRows';
+import { WakeNotice } from './ui/chat/WakeNotice';
 import { inferRoles, parseRoles, roleHeir, type RoleMap } from './domain/orchRoles';
 import { setOrchRoleData, saveOrchRole, orchRoleOf, onOrchRolesSaved } from './ui/orchRoleStore';
 import { autoRestore, parseSnap, stepSnapshot, type LiveSnap, type SnapSession } from './domain/revive';
@@ -113,7 +124,8 @@ import { workAct } from './domain/activity';
 import { canPlace, delivery, deliveryTail, placedCells, planRoom, seatSlots, stampSeen, withLounge, type Seat } from './domain/office';
 import { spriteOf } from './ui/tama/lcd';
 import { Grip } from './ui/TaskPanel';
-import { IconClose, IconStack, IconTabs } from './ui/Icons';
+import { IconClose, IconDownload, IconStack, IconTabs } from './ui/Icons';
+import { IconButton } from './ui/kit/IconButton';
 import type { TaskCard } from './domain/tasks';
 import { sessionOrigins } from './data/tauri';
 import { appendTaskEvent, removeSession, daemonStartedAt, readOrchPins, setOrchPin, readOrchOrder, setOrchOrder, readOrchRoles, readLiveSnap, resumeSession, writeLiveSnap, newSession, readAutoAllow, readCtx, sendToSession, setBadge, stopSession, tamaWidget, writeClipboard } from './data/tauri';
@@ -186,9 +198,11 @@ export default function App() {
   // 참모 목소리 — 설정 음성 명령을 프사 저장소에 알린다(고르기 창·참모 답 읽기가 쓴다)
   useEffect(() => { if (config) setAvatarTts(config.ttsCommand); }, [config]);
   // 프로필은 폰에서도 바꾼다(/api/avatar) — 10초마다 다시 읽어 따라온다(안 바뀌면 저장소가 새 값을 안 내 다시 안 그린다)
-  useEffect(() => { const t = window.setInterval(() => void refreshAvatars(), 10_000); return () => window.clearInterval(t); }, []);
+  useEffect(() => every(() => void refreshAvatars(), 10_000), []);
   const features = featuresOf(config);
   const featuresRef = useRef(features);
+  // 설정 > 기능 > 애니메이션(자동·줄이기·끄기) — 문서 맨 위 class 로(ui/calm)
+  useEffect(() => { setAnimation(features.animation); }, [features.animation]);
   // 첫 실행(설정 파일에 setupDone 없음)이면 설정 화면이 안내를 겸한다. 메뉴 설정…(⌘,)으로 언제든 연다
   const firstRun = config?.setupDone === false;
   // 둘러보기 — 마법사를 끝낸 뒤 한 번, 그다음은 ⌘/ · Chammo 메뉴 > 둘러보기
@@ -228,6 +242,11 @@ export default function App() {
   const [reviewReq, setReviewReq] = useState<'open' | 'close' | 'toggle' | null>(null);
   const reviewBefore = useRef<Selection | null>(null);
   const reviewRef = useRef<(req: 'open' | 'close' | 'toggle') => void>(() => {});
+  // 하루 리플레이 — 리뷰와 같은 길: 채팅 뷰는 스페이스 기능 화면(rp:)을 켜고 끄고, 터미널 뷰는 원래 화면(selected replay)을 켜고 끈다(2026-10-11 사용자)
+  const [replayOpen, setReplayOpen] = useState(false);
+  const [replayReq, setReplayReq] = useState<'open' | 'close' | 'toggle' | null>(null);
+  const replayBefore = useRef<Selection | null>(null);
+  const replayRef = useRef<(req: 'open' | 'close' | 'toggle') => void>(() => {});
   const [settingsStart, setSettingsStart] = useState<'update' | undefined>();
   featuresRef.current = features;
   useEffect(() => {
@@ -240,12 +259,13 @@ export default function App() {
   const pullRoutines = useCallback(() => void routinesList().then((t) => setRoutines(parseRoutines(t))).catch(() => {}), []);
   useEffect(() => {
     pullRoutines();
-    const t = setInterval(pullRoutines, 5000);
-    return () => clearInterval(t);
+    return every(pullRoutines, 5000);
   }, [pullRoutines]);
   const [error, setError] = useState<string | null>(null);
   // 목록 읽기가 낸 오류만 목록 읽기가 지운다 — 예전엔 폴링이 성공할 때마다 지워서 참모 띄우기 실패 같은 오류가 몇 초 만에 사라졌다(2026-10-03 QA 2번)
   const listFailed = useRef(false);
+  // 세션 목록을 마지막으로 받은 때 — 한동안 안 오면 옛 상태를 믿지 않고 '모름'(domain/status LIST_STALE_MS)
+  const listAt = useRef<number | undefined>(undefined);
   const [selected, setSelected] = useState<Selection>({ kind: 'orchestrator' });
   const [spawning, setSpawning] = useState(false);
   const [fontSize, setFontSize] = useState<number>(() => load('fontSize', DEFAULT_FONT));
@@ -280,6 +300,8 @@ export default function App() {
   const labelMap = useOrchLabels(); // 참모 별명이 바뀌면 탭·메뉴 이름을 다시 그린다
   useEffect(() => save('spaceMode', space), [space]);
   const [chatView, setChatView] = useState<ChatView>(() => chatViewOf(load<unknown>('spaceChatView', null)));
+  // 채팅 칸 머리 자리 — 격자(SessionGrid)가 보이는 창 이름·단추를 여기 올린다
+  const [chatHeadSlot, setChatHeadSlot] = useState<HTMLElement | null>(null);
   useEffect(() => save('spaceChatView', chatView), [chatView]);
   const [chatWidth, setChatWidth] = useState<number>(() => load('officeChatWidth', 420));
   useEffect(() => save('officeChatWidth', chatWidth), [chatWidth]);
@@ -305,6 +327,8 @@ export default function App() {
   const [memoOpen, setMemoOpen] = useState<string | null>(null); // 메모판을 띄운 창(세션 id)
   const prevInbox = useRef<Set<string> | null>(null);
   const [taskEvents, setTaskEvents] = useState<TaskEvent[]>([]);
+  // 작업 기록은 늘어난 줄만 읽는다(3초마다 통째 686KB 읽던 것) — 앱이 켜져 있는 동안 하나
+  const [taskLog] = useState(() => makeTaskLog(readTasksSince));
   const sendTail = useMemo(() => deliveryTail(taskEvents), [taskEvents]); // 사무실 배달은 프레임마다 — 기록 전체 말고 이것만
   const [activity, setActivity] = useState<Record<string, Activity>>({});
   const [docs, setDocs] = useState<ProjectDoc[]>([]);
@@ -313,6 +337,8 @@ export default function App() {
   const [stoppedReady, setStoppedReady] = useState(false);
   // 살아 있는 세션 기록(live.json) — undefined = 아직 파일을 안 읽음. 관리 프로그램 재시작으로 꺼진 세션을 찾는다(domain/revive)
   const snapRef = useRef<LiveSnap | null | undefined>(undefined);
+  // 세션마다 사이드바 판정 — live.json state 로 같이 쓴다(기본 모드 '참모 상태'가 읽는다, domain/revive liveState). 그릴 때마다 최신으로
+  const statesRef = useRef<Record<string, ActivityStatus>>({});
   const [lost, setLost] = useState<SnapSession[]>([]);
   // 꺼진 세션 계산을 한 번이라도 마쳤나 — 자동 되살리기가 뜨자마자 빈 목록으로 판단하지 않게
   const [snapReady, setSnapReady] = useState(false);
@@ -385,6 +411,7 @@ export default function App() {
   runRef.current = (sc: Shortcut) => {
     // ⌘1~9: 스페이스면 채팅 탭 N번(참모 화면으로 가서), 아니면 예전 화면 이동(⌘1~4) — 2026-09-30 사용자
     if (sc.type === 'num') {
+      if (sc.n === 9 && tabZoomFn()?.('fit')) return; // 확대할 탭이 떠 있으면 ⌘9 = 맞춤(없으면 채팅 탭 9번) — 크롬 ⌘9 와 겹치지 않게 탭이 있을 때만
       if (!space) { const g = gotoOfNum(sc.n); if (g) runRef.current(g); return; }
       const o = groups.orchestrators[sc.n - 1];
       if (!o) return;
@@ -416,6 +443,8 @@ export default function App() {
     else if ((sc.type === 'font' || sc.type === 'fontReset') && previewZoomFn()) previewZoomFn()!(sc.type === 'fontReset' ? 0 : sc.delta);
     // 리더를 보고 있으면 ⌘+ ⌘- ⌘0 은 리더만 — 터미널 글자는 그대로(사용자 2026-09-29)
     else if ((sc.type === 'font' || sc.type === 'fontReset') && readerOpen && readerFocused()) readerZoom(sc.type === 'fontReset' ? 0 : sc.delta);
+    // 스페이스에 확대할 탭(md·txt·엑셀·pdf·그림·html)이 떠 있으면 ⌘+ ⌘- ⌘0 은 그 탭만 — 파일마다 기억(2026-10-12 사용자)
+    else if ((sc.type === 'font' || sc.type === 'fontReset') && tabZoomFn()?.(sc.type === 'fontReset' ? 0 : sc.delta)) { /* 탭이 받았다 */ }
     else if (sc.type === 'font') setFontSize((f) => clampFont(f + sc.delta));
     else if (sc.type === 'fontReset') setFontSize(DEFAULT_FONT);
     else if (sc.type === 'selectAll') selectAllHere(readerOpen && readerFocused(), document.querySelector('.reader-panel'));
@@ -425,10 +454,11 @@ export default function App() {
     else if (sc.type === 'search') {
       setSidebarOpen(true);
       setTimeout(() => searchRef.current?.focus(), 0);
-    } else if (sc.type === 'closePane') {
-      // 리더를 보고 있으면 ⌘W 는 탭 닫기(세션 끄기 아님)
+    } else if (sc.type === 'closeTab') {
+      // ⌘W = 닫는 건 탭뿐 — 리더를 보고 있으면 리더 탭, 채팅 뷰면 스페이스 탭(고정 탭·탭 없음은 아무 일 없음). 터미널 뷰의 그 밖엔 아무것도 안 한다.
+      // 세션 끄기는 ⌘⇧W (2026-10-12 사용자)
       if (readerFocused()) void readerCloseActive();
-      else closePaneRef.current();
+      else if (spaceShownRef.current) spaceCmd('closeTab');
     }
     else if (sc.type === 'toggleReader') setReaderOpen((o) => !o);
     else if (sc.type === 'readerFull') { setReaderOpen(true); setReaderFull((f) => !f); }
@@ -439,7 +469,7 @@ export default function App() {
     else if (sc.type === 'nav') window.dispatchEvent(new CustomEvent(SPACE_NAV, { detail: sc.dir })); // 스페이스 뒤로·앞으로(SpaceView 가 받는다)
     else if (sc.type === 'tour') setTourOpen(true);
     else if (sc.type === 'harnitor') harnitorRef.current('toggle');
-    else if (sc.type === 'quitAsk') setQuitOpen(true);
+    else if (sc.type === 'quitAsk') { setQuitOpen(true); void invoke('app_quit_shown').catch(() => {}); } // 들었다고 Rust 에 — 못 들으면(웹 굳음) Rust 가 4초 뒤 앱만 끈다(quit.rs). 이미 떠 있어도 매번
     // 미리보기 모달이 떠 있으면 ⌘` 는 모달을 스페이스 가득으로(2026-09-30 사용자)
     else if (sc.type === 'maximizePane' && previewMaxFn()) previewMaxFn()!();
     else if (sc.type === 'maximizePane' && readerOpen && readerFocused()) setReaderFull((f) => !f); // 리더를 보고 있으면 리더를 크게·작게(사용자: 보고 있는 곳 기준)
@@ -455,7 +485,15 @@ export default function App() {
       const id = maxTarget(focusedBy.current.get(key), active, shown);
       if (id) { focusedBy.current.set(key, id); dispatchFor(key)({ type: 'maximize', id }); }
     }
+    else if (sc.type === 'closePane') closePaneRef.current(); // ⌘⇧W — 세션 끄기(확인 창을 거친다)
     else if (sc.type === 'newSession') newSessionRef.current();
+    else if (sc.type === 'newDoc') {
+      // ⌘T = 보관함에 빈 문서(보관함 '+ → 새 문서'와 같은 길). 스페이스가 없는 터미널 뷰에선 놓을 자리가 없다
+      if (spaceShownRef.current) spaceCmd('newDoc');
+      else setError(tr(`새 문서는 채팅 뷰에서 — 새 세션은 ${keyLabel('⌘⇧T', IS_WIN)}`, `New document works in the chat view — new session is ${keyLabel('⌘⇧T', IS_WIN)}`));
+    }
+    else if (sc.type === 'goHome') spaceCmd('home'); // ⌘⇧H — 고른 참모의 홈 고정 탭
+    else if (sc.type === 'goLocker') spaceCmd('locker'); // ⌘⇧L — 보관함 고정 탭
     else if (sc.type === 'widget') widgetToggleRef.current();
     else if (sc.type === 'memo') {
       const id = focused.current;
@@ -515,12 +553,13 @@ export default function App() {
       setAllSessions(everyone);
       const live = withinRoots(everyone, appRoots(env.devRoot, env.orchestratorCwd, env.extraProjects));
       setSessions(live);
+      listAt.current = Date.now();
       // 재시작 감지가 실패해도 세션 목록은 살린다 — 따로 잡는다
       try {
         if (snapRef.current === undefined) snapRef.current = parseSnap(await readLiveSnap());
         // 시작 시각을 먼저 받고 기록을 읽는다 — 기다리는 사이 꺼진 세션 처리(useLostTriage)가 지운 걸 옛 기록으로 되살리지 않게
         const daemon = await daemonStartedAt();
-        const snap = stepSnapshot(snapRef.current, daemon, live, Date.now());
+        const snap = stepSnapshot(snapRef.current, daemon, live, Date.now(), statesRef.current);
         if (snap && JSON.stringify(snap) !== JSON.stringify(snapRef.current)) void writeLiveSnap(JSON.stringify(snap)).catch(() => {});
         snapRef.current = snap;
         setLost(snap?.lost ?? []);
@@ -528,7 +567,7 @@ export default function App() {
       } catch {
         // 다음 폴링에서 다시
       }
-      setTaskEvents(parseTaskLog(await readTasks()));
+      setTaskEvents(await taskLog());
       const liveIds = live.map((x) => x.sessionId ?? x.id);
       if (allDue({ lastAt: allAt.current, now: Date.now(), force, prevLive: prevLive.current, live: liveIds })) {
         setStopped(withinRoots(parseStopped(await listSessionsAllRaw(), env.devRoot, env.extraProjects), appRoots(env.devRoot, env.orchestratorCwd, env.extraProjects)));
@@ -565,9 +604,11 @@ export default function App() {
 
   // 세션 현황: 대화 기록 꼬리는 무거우니 세션 목록(3초)보다 느리게 10초마다.
   // 패널을 닫아도 읽는다 — 결정 대기·알림이 이걸로 판단하는데, 닫으면 안 읽어서 결정을 놓쳤다(2026-09-27 사용자). 명령은 뒤에서 돌아 화면은 안 막는다
+  // 예약 폴더에서 뜬 세션 — 앱 목록 밖이지만 진짜 로그인 풀림이면 로그인 카드에 넣으려고 기록은 같이 읽는다(roadmap 137행 ①)
+  const routineSess = useMemo(() => routineSessions(allSessions, env?.dataDir ?? ''), [allSessions, env?.dataDir]);
   useEffect(() => {
     const tick = async () => {
-      const ids = sessions.map((s) => s.sessionId).filter((x): x is string => !!x);
+      const ids = [...sessions, ...routineSess].map((s) => s.sessionId).filter((x): x is string => !!x);
       if (!ids.length) return;
       try {
         const tails = await readTranscriptTails(ids);
@@ -581,18 +622,17 @@ export default function App() {
     return () => clearInterval(t);
     // 세션 id 구성이 바뀔 때만 다시 건다
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions.map((s) => s.sessionId).join(',')]);
+  }, [[...sessions, ...routineSess].map((s) => s.sessionId).join(',')]);
 
   // 프로젝트 문서 상태: git 을 30번 넘게 부르니 5분마다
   useEffect(() => {
     if (!env) return;
     const scan = () => projectScan(env.devRoot).then(setDocs).catch(() => {});
     void scan();
-    const t = setInterval(scan, 5 * 60_000);
-    return () => clearInterval(t);
+    return every(scan, 5 * 60_000);
   }, [env]);
 
-  // 상단 바: 사용 한도는 상태줄이 갱신할 때마다 바뀌니 15초, 오늘 커밋은 git 을 저장소마다 부르니 1분
+  // 상단 바: 사용 한도는 상태줄이 갱신할 때마다 바뀌니 15초, 오늘 커밋은 git 을 저장소마다 부르니 5분(TODAY_COMMITS_MS)
   useEffect(() => {
     if (!env) return;
     // 지금 계정은 ~/.claude.json 만 읽어서 싸다 — 사용량과 같이, 설정에서 바꾸면 바로
@@ -601,12 +641,12 @@ export default function App() {
     const c = () => todayCommits(env.devRoot, env.gitEmail, dayStart(new Date())).then(setToday).catch(() => {});
     void u();
     void c();
-    const t1 = setInterval(u, 15_000);
-    const t2 = setInterval(c, 60_000);
+    const stopU = every(u, 15_000);
+    const stopC = every(c, TODAY_COMMITS_MS);
     window.addEventListener(ACCOUNTS_CHANGED, a);
     return () => {
-      clearInterval(t1);
-      clearInterval(t2);
+      stopU();
+      stopC();
       window.removeEventListener(ACCOUNTS_CHANGED, a);
     };
   }, [env]);
@@ -618,8 +658,8 @@ export default function App() {
     let alive = true;
     const load = () => void readOrchPins().then((v) => { if (alive) setOrchPins((o) => (o.join() === v.join() ? o : v)); }, () => {});
     load();
-    const t = window.setInterval(load, 5000);
-    return () => { alive = false; window.clearInterval(t); };
+    const stop = every(load, 5000);
+    return () => { alive = false; stop(); };
   }, []);
   // 참모 순서 — 채팅 탭을 끌어 옮기거나 ⌃⇧PageUp 으로 옮긴 것(<데이터>/orch-order.json, 폰도 읽는다). 채팅 탭·⌘1~9·사이드바·홈이 같은 줄(domain/orchOrder)
   const [orchOrder, setOrchOrderState] = useState<string[]>([]);
@@ -650,7 +690,7 @@ export default function App() {
   // 화면 이름이 겹칠 때만 꼬리 — 같이 보이는 참모(살아 있는 + 꺼진)를 알린다(ui/orchLabels orchDisplay)
   useEffect(() => {
     const off = stoppedOrchs(resumable(stopped, sessions), env?.orchestratorCwd ?? '', navOrchs);
-    setOrchRoster([...navOrchs, ...off].map((x) => ({ id: x.id, name: x.name })));
+    setOrchRoster([...navOrchs.map((x) => ({ id: x.id, name: x.name })), ...off.map((x) => ({ id: x.id, name: x.name, off: true }))]);
   }, [navOrchs, stopped, sessions, env]);
   const startingOrchs = useMemo(
     () => stoppedOrchs(resumable(stopped, sessions).filter((x) => resuming.has(x.sessionId)), env?.orchestratorCwd ?? '', navOrchs),
@@ -668,9 +708,9 @@ export default function App() {
     let alive = true;
     const load = () => void readOrchRoles().then((v) => { if (alive) setOrchRoles((o) => { const n = parseRoles(JSON.stringify(v)); return JSON.stringify(o) === JSON.stringify(n) ? o : n; }); }, () => {});
     load();
-    const t = window.setInterval(load, 5000);
+    const stop = every(load, 5000);
     const off = onOrchRolesSaved((m) => setOrchRoles(m));
-    return () => { alive = false; window.clearInterval(t); off(); };
+    return () => { alive = false; stop(); off(); };
   }, []);
   const knownOrchs = useMemo(() => [...navOrchs, ...offOrchList].map((x) => ({ id: x.id, name: x.name })), [navOrchs, offOrchList]);
   const inferredRoles = useMemo(() => inferRoles(taskEvents, knownOrchs, sessions, Date.now(), { roles: orchRoles, hq: env?.orchestratorCwd }), [taskEvents, knownOrchs, sessions, orchRoles, env]);
@@ -747,13 +787,13 @@ export default function App() {
   const knownSessions = useMemo(() => [...allSessions, ...sessions, ...stopped].map((x) => ({ id: x.id, name: x.name, sessionId: x.sessionId })), [allSessions, sessions, stopped]);
   const localCards = useMemo(() => cards.filter((c) => c.status !== 'gone' || !isRemoteTarget(c.target, knownSessions)), [cards, knownSessions]);
   // 정렬: 나를 기다리는 것(답 필요·확인창) → 작업 중 → 끝남 → 대기·쉼, 같은 칸 안에선 최근 순
-  const RANK: Record<ActivityStatus, number> = { asks: 0, blocked: 0, login: 0, working: 1, done: 2, idle: 3, stale: 4 };
+  const RANK: Record<ActivityStatus, number> = { asks: 0, blocked: 0, login: 0, working: 1, bgwait: 1, done: 2, idle: 3, unknown: 3, stale: 4 };
   const now = Date.now();
   const activities: SessionActivity[] = groups.projects
     .flatMap((p) => p.sessions)
     .map((s) => {
-      const a = (s.sessionId && activity[s.sessionId]) || {};
-      return { session: s, activity: a, status: activityStatus(s.state, a, now) };
+      const a = s.sessionId ? activity[s.sessionId] : undefined;
+      return { session: s, activity: a ?? {}, status: activityStatus(s.state, a, now, listAt.current) };
     })
     .sort((a, b) => {
       if (RANK[a.status] !== RANK[b.status]) return RANK[a.status] - RANK[b.status];
@@ -763,22 +803,24 @@ export default function App() {
     });
   // 참모 세션까지 — 결정 대기·알림·인계는 참모도 본다(작업 패널 목록은 하위 세션만)
   const orchActs: SessionActivity[] = groups.orchestrators.map((s) => {
-    const a = (s.sessionId && activity[s.sessionId]) || {};
-    return { session: s, activity: a, status: activityStatus(s.state, a, now) };
+    const a = s.sessionId ? activity[s.sessionId] : undefined;
+    return { session: s, activity: a ?? {}, status: activityStatus(s.state, a, now, listAt.current) };
   });
   const allActs = [...orchActs, ...activities];
   // 도우미·프로젝트 밖 세션 — 대시보드 '지금 하는 일' 줄에만(결정 대기함·알림 범위는 그대로). 빠져 있어서 일하는 도우미가 '쉼'으로 보였다(2026-10-02 사용자)
   const sideActs: SessionActivity[] = [...groups.helpers, ...groups.loose].map((s) => {
-    const a = (s.sessionId && activity[s.sessionId]) || {};
-    return { session: s, activity: a, status: activityStatus(s.state, a, now) };
+    const a = s.sessionId ? activity[s.sessionId] : undefined;
+    return { session: s, activity: a ?? {}, status: activityStatus(s.state, a, now, listAt.current) };
   });
+  statesRef.current = Object.fromEntries([...allActs, ...sideActs].filter((x) => x.session.sessionId).map((x) => [x.session.sessionId!, x.status]));
   // 계정 자동 전환 — 계정 보기가 15초마다 새로 올 때 한 번씩(한도로 멈춘 세션은 참모·하위·도우미 다)
   useAccountAuto(accounts, [...allActs, ...sideActs], voice && features.voice);
   // 로그인 풀림 — 멈춘 세션들 + 맥 로그인을 '로그인 필요' 하나로, 고쳐진 걸 본 뒤 이어서(domain/login). 카드는 결정 대기함 맨 위
-  const login = useLogin([...allActs, ...sideActs], accounts, voice && features.voice);
+  const routineActs: SessionActivity[] = routineStalls(routineSess, activity).map(({ session: s, activity: a }) => ({ session: s, activity: a, status: activityStatus(s.state, a, now) }));
+  const login = useLogin([...allActs, ...sideActs, ...routineActs], accounts, voice && features.voice);
   // 이 프로젝트 브라우저가 없는데 브라우저 일을 받았다 — 결정 대기함 [연결] 카드(task send·scripts/app browser need, GitHub #2)
   const browserNeeds = useBrowserNeeds((dir) => sessions.filter((x) => x.cwd === dir || x.cwd.startsWith(`${dir}/`)).length);
-  // 모달을 안 보는 동안 세션 크롬에 뜬 패스키·QR 창 — 결정 대기함 카드(누르면 모달 + 작게 꺼내기, AgentAskHost 가 채운다)
+  // 모달을 안 보는 동안 세션 크롬에 뜬 크롬 자체 창(패스키·권한 등) — 결정 대기함 카드(누르면 모달 + 작게 꺼내기, AgentAskHost 가 채운다)
   const [popupCards, setPopupCards] = useState<Live[]>([]);
   const browserKeys = [browserNeeds.keys, ...popupCards.map((l) => `popup:${l.profile}:${l.pid}`)].filter(Boolean).join('|');
   const browserCount = browserNeeds.count + popupCards.length;
@@ -803,7 +845,7 @@ export default function App() {
       if (voiceRef.current) void speak(`${name} ${body}`, undefined, x.session.id).catch(() => {});
       notifyOnce({ kind: 'blocked', session: x.session.id, orch: true, title: tr(`${name} 확인창`, `${name} needs an OK`), body });
     }
-    prevStatus.current = next;
+    prevStatus.current = settled(prevStatus.current, next);
     // 참모가 새로 마친 답 — 답 ts 로 한 번만(상태 바뀜으로 보면 10초 늦은 대화 기록 탓에 옛 답을 또 읽었다, domain/voice)
     const r = freshReplies(seenReplies.current, orchActs.map((x) => ({ id: x.session.id, state: x.session.state, activity: x.activity })));
     seenReplies.current = r.seen;
@@ -846,24 +888,24 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx]);
 
-  // ⌘W: 보고 있는 창의 세션을 끈다(대화는 남아 "꺼진 세션"에서 이어갈 수 있다). 참모 자신은 안 끈다
+  // ⌘⇧W: 보고 있는 창의 세션을 끈다(대화는 남아 "꺼진 세션"에서 이어갈 수 있다) — 어느 세션이든 확인 창을 한 번 거친다(2026-10-12 사용자: ⌘W 는 탭 닫기로 넘어갔고 세션 끄기는 되돌리기 어렵다).
+  // 비서(참모·참모-2…)는 채팅 뷰에서만 — 터미널 뷰에선 안 끈다(리더 탭 닫으려던 ⌘W 에 참모-2 가 꺼졌다, 2026-09-28)
   const spaceShownRef = useRef(false);
   const askStopRef = useRef<((s: Session) => void) | null>(null);
   const closePaneRef = useRef<() => void>(() => {});
   closePaneRef.current = () => {
     const id = focused.current;
     const s = sessions.find((x) => x.id === id);
-    // 채팅 뷰: 참모 탭도 ⌘W 로 끈다 — 대신 확인 창(2026-09-30 사용자). 터미널 뷰는 예전대로(리더 ⌘W 에 참모가 꺼진 적이 있다)
     if (s && spaceShownRef.current && groups.orchestrators.some((o) => o.id === s.id)) { askStopRef.current?.(s); return; }
-    if (!s || !closableByShortcut(s, groups.orchestrators)) { // 비서(참모·참모-2…)는 ⌘W 로 안 끈다 — 리더 탭 닫으려던 ⌘W 에 참모-2 가 꺼졌다(2026-09-28)
-      setError(s ? tr(`${assistant()}는 ⌘W로 안 꺼져 — 창 버튼의 끄기를 써줘`, `⌘W does not stop ${assistant()} — use the pane's stop button`) : tr('끌 창을 먼저 한 번 클릭해줘', 'Click the pane you want to stop first'));
+    if (!s || !closableByShortcut(s, groups.orchestrators)) {
+      setError(s ? tr(`${assistant()}는 ${keyLabel('⌘⇧W', IS_WIN)}로 안 꺼져 — 창 버튼의 끄기를 써줘`, `${keyLabel('⌘⇧W', IS_WIN)} does not stop ${assistant()} — use the pane's stop button`) : tr('끌 창을 먼저 한 번 클릭해줘', 'Click the pane you want to stop first'));
       return;
     }
     if (s.kind !== 'background') return;
-    closeSession(s, 'cmd-w');
+    askStopRef.current?.(s);
   };
 
-  // ⌘T: 보고 있는 프로젝트에 세션 하나 더. 참모 화면이면 참모를 하나 더(참모-2 …) — 한 참모가 바쁠 때 다른 참모로 위임하려고.
+  // ⌘⇧T: 보고 있는 프로젝트에 세션 하나 더. 참모 화면이면 참모를 하나 더(참모-2 …) — 한 참모가 바쁠 때 다른 참모로 위임하려고.
   // 전체 보기에선 마지막으로 클릭한 창의 프로젝트. 같은 폴더를 여럿이 만지는 충돌은 사용자가 피한다(worktree 는 프로젝트 머리줄에서)
   const newSessionRef = useRef<() => void>(() => {});
   newSessionRef.current = () => {
@@ -876,7 +918,7 @@ export default function App() {
     } else {
       const project = selected.kind === 'project' ? selected.name : sessions.find((x) => x.id === focused.current)?.project;
       if (!project) {
-        setError(tr(`⌘T 는 프로젝트나 ${assistant()} 화면에서 — 전체 보기에선 창을 먼저 한 번 클릭해줘`, `Use ⌘T on a project or the ${assistant()} view — in All sessions, click a pane first`));
+        setError(tr(`${keyLabel('⌘⇧T', IS_WIN)} 는 프로젝트나 ${assistant()} 화면에서 — 전체 보기에선 창을 먼저 한 번 클릭해줘`, `Use ${keyLabel('⌘⇧T', IS_WIN)} on a project or the ${assistant()} view — in All sessions, click a pane first`));
         return;
       }
       cwd = projectDir(project, env.devRoot, env.extraProjects);
@@ -930,7 +972,7 @@ export default function App() {
   useForwardQuestions(subSessions, groups.orchestrator, (s) =>
     document.hasFocus() && (selected.kind === 'project' ? selected.name === s.project : selected.kind === 'helpers' ? groups.helpers.includes(s) : selected.kind === 'loose' && groups.loose.includes(s)),
     allActs.filter(({ session: s }) => !orchIds.has(s.id)),
-    groups.orchestrators.map((o) => o.sessionId).filter((x): x is string => !!x), taskEvents, groups.orchestrators, sessions, heirOf);
+    groups.orchestrators.map((o) => o.sessionId).filter((x): x is string => !!x), taskEvents, groups.orchestrators, sessions, heirOf, cards);
   // 앱 밖 크롬(직접 띄운 크롬·확장 중계)을 쓰는 세션 — 맡긴 참모에게 한 줄(2026-10-10 사용자 '참모 브라우저만')
   useForeignBrowsers(subSessions, groups.orchestrator, taskEvents, groups.orchestrators, sessions, heirOf);
   // 직접 답하기 카드 — 하위 세션이 본인 승인을 원하면 맡긴 참모 채팅에 카드(사람이 누르면 그 세션에 사람 말로)
@@ -1055,6 +1097,10 @@ export default function App() {
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [homeResume, groups.orchestrators]);
+  // 깨우는·새로 켜는 동안 참모 채팅 입력칸 위 한 줄(2026-10-12 rail-wake) — 채팅은 뜰 때까지 앞 참모에 남아서, 그사이 친 말이 엉뚱한 참모로 가지 않게
+  const wakeX = homeResume ? stopped.find((x) => x.sessionId === homeResume) : undefined;
+  const wakeName = wakeX?.name ?? (creating && !arrivedOrch(creating, navOrchs) ? creating : undefined);
+  const wakeNote = wakeName ? <WakeNotice name={wakeName} label={wakeX ? orchDisplay(wakeX) || wakeName : wakeName.split(' · ').pop() ?? wakeName} waking={!!wakeX} /> : undefined;
   // 위젯 '더보기'·단축키 — 화면을 옮기지 않고 지금 화면 위 모달로(같은 PetView). 전엔 채팅 뷰면 스페이스 펫 탭으로 넘어갔다(2026-10-10 사용자)
   openPetRef.current = () => setPetModal(true);
   useEffect(() => {
@@ -1107,7 +1153,7 @@ export default function App() {
     const loose = groups.loose.some((h) => h.id === s.id);
     setSelected(orch ? { kind: 'orchestrator' } : helper ? { kind: 'helpers' } : loose ? { kind: 'loose' } : { kind: 'project', name: s.project });
     // 가서 바로 칠 수 있게 — 가려져 있으면 드러내고 그 창에 포커스(사용자 2026-09-28: 알림 눌러 가도 다시 클릭해야 했다)
-    const key = gridKeyOf(orch ? { kind: 'orch' } : helper ? { kind: 'helper' } : { kind: 'project', project: s.project }, { space, office });
+    const key = gridKeyOf(orch ? { kind: 'orch' } : helper ? { kind: 'helper' } : loose ? { kind: 'loose' } : { kind: 'project', project: s.project }, { space, office, officeFeature: features.office });
     for (const a of revealPane(layoutOf(key), s.id)) dispatchFor(key)(a);
     focusedBy.current.set(key, s.id);
     focused.current = s.id;
@@ -1128,7 +1174,7 @@ export default function App() {
   // 참모 scripts/app — Rust(appctl.rs)가 app.jsonl 새 줄을 window.__appctl 로 넘긴다. 무엇을 할지는 domain/appctl
   const configRef = useRef(config);
   configRef.current = config;
-  const saveFeature = (name: keyof typeof features, on: boolean) => {
+  const saveFeature = (name: FeatureSwitch, on: boolean) => {
     const c = configRef.current;
     if (!c) return;
     const next = withFeature(c, name, on);
@@ -1158,6 +1204,10 @@ export default function App() {
       if (it.on && !featuresRef.current.voice) saveFeature('voice', true);
       turnVoice(it.on);
     } else if (it.kind === 'feature') saveFeature(it.name, it.on);
+    else if (it.kind === 'modelPick') {
+      // 폰 입력창 모델 칩 — 그 세션 창(SessionGrid)이 데스크톱 칩과 같은 pickFor 로
+      window.dispatchEvent(new CustomEvent('phone-model-pick', { detail: { id: it.id, want: it.want } }));
+    }
     else if (it.kind === 'browserNeed') browserNeeds.add({ dir: it.dir, session: it.session, why: it.why });
     else if (it.kind === 'label') {
       // 폰에서 바꾼 별명 — 앱 별명에 넣고, 진짜 이름은 쉬는 때(위 renamesToSend)
@@ -1171,7 +1221,7 @@ export default function App() {
       else if (it.what === 'reader') setReaderOpen(true);
       else if (it.what === 'tasks') setTasksOpen(true);
       else if (it.what === 'inbox') setInboxOpen(true);
-      else if (it.what === 'replay') setSelected({ kind: 'replay' });
+      else if (it.what === 'replay') replayRef.current('open');
       else if (it.what === 'load') setSelected({ kind: 'load' });
       else if (it.what === 'harnitor') harnitorRef.current('open');
       else if (it.what === 'tools') toolsRef.current('open');
@@ -1264,8 +1314,12 @@ export default function App() {
   };
   // 채팅 안 파일 카드 — 그 참모가 scripts/show 로 보여 준 그 시각 자리에(첫 말보다 앞선 건 ChatView 가 자른다, domain/chatExtras clip)
   const showLog = useShowLog(space);
-  const filesBy = useMemo(() => new Map<string, ChatFile[]>(), [showLog]); // 기록이 바뀔 때만 다시 읽는다(앱은 자주 다시 그린다)
-  const fileExtra = (s: Session) => (filesBy.get(s.id) ?? filesBy.set(s.id, chatFiles(showLog, s.id)).get(s.id)!).map((f) => ({ ts: f.ts, key: f.key, clip: true, node: <ChatFileCard f={f} by={s.id} /> }));
+  // 하위 세션이 띄운 것도 그 세션을 맡긴 참모 채팅에(스페이스가 문서를 둘 참모와 같은 판단, 2026-10-11 사용자 "왜 여기 채팅창에 안 뜸?")
+  const navIds = navOrchs.map((o) => o.id).join();
+  const fileOwner = useMemo(() => showOwnerOf(taskEvents, sessions, navOrchs.map((o) => o.id), Date.now()), [taskEvents, sessions, navIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  const filesBy = useMemo(() => new Map<string, ChatFile[]>(), [showLog, fileOwner]); // 기록이 바뀔 때만 다시 읽는다(앱은 자주 다시 그린다)
+  const subName = (id: string) => sessions.find((x) => x.id === id)?.name ?? id;
+  const fileExtra = (s: Session) => (filesBy.get(s.id) ?? filesBy.set(s.id, chatFiles(showLog, s.id, fileOwner)).get(s.id)!).map((f) => ({ ts: f.ts, key: f.key, clip: true, node: <ChatFileCard f={f.from ? { ...f, who: subName(f.from) } : f} by={s.id} /> }));
   const officeCol = (open: (id: string) => void, dim?: (id: string) => boolean) => {
     // 사람 필요 책상·카드를 누르면 그 세션 브라우저 모달(지금 것) — 나머지는 부르는 쪽 길(채팅 뷰 = 사무실 위 창)
     const onOpen = (id: string) => {
@@ -1341,12 +1395,9 @@ export default function App() {
   let main;
   let spaceShown = false; // 스페이스 모드면 리더가 왼쪽 칸이라 오른쪽 리더 패널은 안 띄운다
   // 대시보드·오케스트레이터 홈 "지금 하는 일" 한 줄 — 일하면 마지막 도구, 물으면 답 끝, 쉬면 쉼
-  const liveLines = Object.fromEntries([...allActs, ...sideActs].map(({ session: x, activity: a, status }) => {
-    const tool = a.tool ? `${a.tool.name.replace(/^mcp__[^_]+(?:_[^_]+)*?__/, '')} ${a.tool.target}`.trim() : '';
-    const st: 'run' | 'ask' | 'wait' = status === 'working' ? 'run' : status === 'asks' || status === 'blocked' ? 'ask' : 'wait';
-    const line = st === 'run' ? tool || tr('생각 중', 'Thinking') : st === 'ask' ? (a.reply?.tail ?? a.reply?.text ?? '').replace(/^…/, '').slice(-60) : tr('쉼', 'Idle');
-    return [x.id, { status: st, line, st: status }];
-  }));
+  const liveLines = Object.fromEntries([...allActs, ...sideActs].map(({ session: x, activity: a, status }) => [x.id, { ...liveLine(status, a, now), st: status }]));
+  // 사이드바·칸 머리 표시 — 대시보드와 같은 판단(liveLines.st), 기록을 아직 못 읽은 세션은 목록만으로
+  const statusOf = (x: Session): ActivityStatus => liveLines[x.id]?.st ?? sessionStatus(x);
   // 오케스트레이터 홈 — 어떤 참모를 켤지(앱은 스스로 켜지 않는다, 2026-10-03 사용자). 채팅 뷰 스페이스·터미널 뷰 같은 화면
   const homeNode = (onGo: (id: string) => void) => (
     <OrchHome live={navOrchs} off={offOrchList} ctx={ctx} lines={liveLines} starting={resuming} ready={stoppedReady} creating={creating} waiting={lostHold}
@@ -1364,20 +1415,45 @@ export default function App() {
       // 스페이스에서 보내기 받는 참모 = 지금 채팅 칸에서 마지막으로 누른 탭(없으면 첫 참모)
       const lastOrch = focusedBy.current.get('orch-col');
       const spaceOrch = groups.orchestrators.find((x) => x.id === lastOrch) ?? groups.orchestrators[0];
+      // 채팅 칸 — 띠 바로 옆(띠 | 채팅 | 스페이스, 2026-10-12 사용자 시안 v2 Q1 A): 머리 = 보이는 참모 이름·맡은 일 + 그 창 단추(칸 머리 줄과 한 줄로), 폭 손잡이는 오른쪽 가장자리
+      const chatCol = groups.orchestrators.length > 0 && <div className="office-chats left" style={{ flex: `0 0 ${chatWidth}px`, width: chatWidth, ['--chat-k' as string]: fontSize / DEFAULT_FONT }}>
+            <Grip side="right" width={chatWidth} onWidth={setChatWidth} min={280} max={900} />
+            {/* 채팅 카드 — 띠의 고른 프사와 참모 색 윤곽 하나로 잇는다(SpaceView ChatLink, 2026-10-12 사용자 201.png). 손잡이는 카드 밖(가장자리) */}
+            <div className="och-card">
+            <div className="space-chat-head">
+              {/* 이름·맡은 일(글만 — 프사는 띠에 있다)과 메모·터미널·크게 단추는 격자가 지금 보이는 창 것으로 여기 올린다(headSlot, 2026-10-12 사용자) */}
+              <span className="sch-who" ref={setChatHeadSlot} />
+              <span className="seg" role="group" aria-label={tr('보기', 'View')}>
+                <button className={chatView === 'stack' ? 'on' : ''} aria-pressed={chatView === 'stack'} aria-label={tr('쌓기', 'Stack')} title={tr('쌓기 — 세션을 위아래로', 'Stack — sessions top to bottom')} onClick={() => setChatView('stack')}><IconStack /></button>
+                <button className={chatView === 'tabs' ? 'on' : ''} aria-pressed={chatView === 'tabs'} aria-label={tr('탭', 'Tabs')} title={tr('탭 — 한 번에 한 세션', 'Tabs — one session at a time')} onClick={() => setChatView('tabs')}><IconTabs /></button>
+              </span>
+            </div>
+            <ChatVoice.Provider value={features.voice ? { on: voice, toggle: () => turnVoice(!voice) } : null}>
+            <SessionGrid column chat={chatView} extraOf={(s) => [...direct.extraOf(s), ...takeoverExtra(s), ...fileExtra(s)]} ctxOf={ctxOf} modelOf={modelOf} sessions={groups.orchestrators} onReorder={reorderOrchPanes} pinnedIds={groups.orchestrators.filter((o) => o.sessionId && orchPins.includes(o.sessionId)).map((o) => o.id)} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => orchDisplay(s) || assistant()} subOf={(s) => orchRoleOf(s.name)?.text} {...gridFocus('orch-col')} onStop={(s, why) => closeSession(s, why)} layout={layoutOf('orch-col')} dispatch={dispatchFor('orch-col')} onMessage={onMessage} memo={memo} headSlot={chatHeadSlot} chatNotice={wakeNote} />
+            </ChatVoice.Provider>
+            </div>
+          </div>;
       main = (
         <div className="office-mode space-mode">
           {/* 왼쪽 = 스페이스: 문서 + 지금 채팅 탭 참모가 잡고 있는 세션(터미널·보여 준 파일) — 2026-09-30 사용자, 리더는 터미널 뷰의 레거시 */}
-          <SpaceView pet={features.tama ? petNode : undefined} office={features.office ? officeCol : undefined} officeReq={officeReq} onOfficeReq={() => setOfficeReq(null)} onOfficeShown={setSpaceOffice}
+          <SpaceView chat={chatCol} pet={features.tama ? petNode : undefined} office={features.office ? officeCol : undefined} officeReq={officeReq} onOfficeReq={() => setOfficeReq(null)} onOfficeShown={setSpaceOffice}
             harnitorReq={harnitorReq} onHarnitorReq={() => setHarnitorReq(null)} onHarnitorShown={setHarnitorOpen}
             onHarnitorClosed={() => { if (harnitorSwitched.current) { harnitorSwitched.current = false; setSpace(false); } }}
             toolsReq={toolsReq} onToolsReq={() => setToolsReq(null)} onToolsShown={setToolsOpen}
-            reviewReq={reviewReq} onReviewReq={() => setReviewReq(null)} onReviewShown={setReviewOpen} computerUse={{ all: features.computerUse, setAll: (on) => saveFeature('computerUse', on) }}
-            onToolsClosed={() => { if (toolsSwitched.current) { toolsSwitched.current = false; setSpace(false); } }} orch={spaceOrch} orchs={navOrchs} orchPins={orchPins} orchOrder={orchOrder} stoppingIds={[...closing.keys()]} startingOrchs={creating && !arrivedOrch(creating, navOrchs) ? [...startingOrchs, creatingRow(creating, env?.orchestratorCwd ?? '')] : startingOrchs} projectSessions={groups.projects.flatMap((p) => p.sessions)} menuOpen={sidebarOpen}
+            reviewReq={reviewReq} onReviewReq={() => setReviewReq(null)} onReviewShown={setReviewOpen}
+            replayReq={replayReq} onReplayReq={() => setReplayReq(null)} onReplayShown={setReplayOpen} replayPage={env ? () => <ReplayPage devRoot={env.devRoot} author={env.gitEmail} tasks={taskEvents} tama={tama.file} /> : undefined} computerUse={{ all: features.computerUse, setAll: (on) => saveFeature('computerUse', on) }}
+            onToolsClosed={() => { if (toolsSwitched.current) { toolsSwitched.current = false; setSpace(false); } }} orch={spaceOrch} orchs={navOrchs} orchPins={orchPins} onReorderOrch={reorderOrchPanes} fns={(() => {
+              // 기록·음성·도구·하니터·리뷰 — 채팅 뷰는 위 막대 대신 왼쪽 참모 패널(2026-10-11 사용자 180.png). 켜짐 판단은 위 막대와 같다(스페이스가 떠 있을 때 값)
+              const fp: FeatureProps = { voice, onVoice: () => turnVoice(!voice), replayOn: replayOpen, onReplay: () => replayRef.current('toggle'), tools: toolsOpen, onTools: () => toolsRef.current('toggle'),
+                harnitor: harnitorFloat || harnitorOpen, onHarnitor: () => harnitorRef.current('toggle'), review: { on: reviewOpen, confirm: reviewConfirm }, onReview: () => reviewRef.current('toggle') };
+              const items = railItems(features);
+              return { col: <FeatureRow items={items} p={fp} dir="col" />, row: <FeatureRow items={items} p={fp} dir="row" /> };
+            })()} onMenuToggle={() => setSidebarOpen((o) => !o)} orchOrder={orchOrder} stoppingIds={[...closing.keys()]} startingOrchs={creating && !arrivedOrch(creating, navOrchs) ? [...startingOrchs, creatingRow(creating, env?.orchestratorCwd ?? '')] : startingOrchs} projectSessions={groups.projects.flatMap((p) => p.sessions)} menuOpen={sidebarOpen}
             orchHome={homeNode}
             idle={idleProjects.map((n) => ({ name: n, root: projectDir(n, env?.devRoot ?? '', env?.extraProjects ?? []) }))}
             stopped={resumable(stopped, sessions, pending)} orchCwd={env?.orchestratorCwd ?? ''}
             tasks={{ orphaned: splitCards(localCards, Date.now()).orphaned, known: knownSessions, canResume: (c) => !!orphanSession(c.target, stopped), onResume: resumeOrphan, onFinish: finishOrphan }}
-            onResume={(x) => { markPending(x.sessionId); markResuming(x.sessionId); void resumeSession(x.cwd, x.sessionId, x.id).then(() => onMessage(null), (e: unknown) => onMessage(tr(`이어서 띄우기 실패: ${String(e)}`, `Resume failed: ${String(e)}`))); }}
+            onResume={(x) => { markPending(x.sessionId); markResuming(x.sessionId); void resumeSession(x.cwd, x.sessionId, x.id).then(() => onMessage(null), (e: unknown) => onMessage(tr(`이어서 띄우기 실패: ${String(e)}`, `Resume failed: ${String(e)}`))); }} onWakeOrch={resumeFromHome}
             onChatTab={(id) => { focusedBy.current.set('orch-col', id); setChatTab(id); setFocusReq((r) => ({ key: 'orch-col', id, n: (r?.n ?? 0) + 1 })); }}
             helpers={groups.helpers}
             loose={groups.loose}
@@ -1396,17 +1472,6 @@ export default function App() {
               window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id: spaceOrch.id, text } }));
               await sendTextToSession(spaceOrch.id, text);
             }} />
-          {groups.orchestrators.length > 0 && <div className="office-chats" style={{ flex: `0 0 ${chatWidth}px`, width: chatWidth, ['--chat-k' as string]: fontSize / DEFAULT_FONT }}>
-            <Grip width={chatWidth} onWidth={setChatWidth} min={280} max={900} />
-            <div className="space-chat-head">
-              <b>{tr('채팅', 'Chat')}</b>
-              <span className="seg" role="group" aria-label={tr('보기', 'View')}>
-                <button className={chatView === 'stack' ? 'on' : ''} aria-pressed={chatView === 'stack'} aria-label={tr('쌓기', 'Stack')} title={tr('쌓기 — 세션을 위아래로', 'Stack — sessions top to bottom')} onClick={() => setChatView('stack')}><IconStack /></button>
-                <button className={chatView === 'tabs' ? 'on' : ''} aria-pressed={chatView === 'tabs'} aria-label={tr('탭', 'Tabs')} title={tr('탭 — 한 번에 한 세션', 'Tabs — one session at a time')} onClick={() => setChatView('tabs')}><IconTabs /></button>
-              </span>
-            </div>
-            <SessionGrid column chat={chatView} extraOf={(s) => [...direct.extraOf(s), ...takeoverExtra(s), ...fileExtra(s)]} ctxOf={ctxOf} modelOf={modelOf} onAdd={env ? () => setNaming(true) : undefined} sessions={groups.orchestrators} onReorder={reorderOrchPanes} pinnedIds={groups.orchestrators.filter((o) => o.sessionId && orchPins.includes(o.sessionId)).map((o) => o.id)} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => orchDisplay(s) || assistant()} subOf={(s) => orchRoleOf(s.name)?.text} {...gridFocus('orch-col')} onStop={(s, why) => closeSession(s, why)} layout={layoutOf('orch-col')} dispatch={dispatchFor('orch-col')} onMessage={onMessage} memo={memo} />
-          </div>}
         </div>
       );
     } else if (view === 'grid' && office && features.office) {
@@ -1442,13 +1507,13 @@ export default function App() {
     main = <ReviewPage data={review} sessions={sessions} stopped={stopped} taskEvents={taskEvents} selectedKey={selected.key} onSelectKey={(key) => setSelected({ kind: 'review', key })} onOpenSession={openTarget} />;
   } else if (selected.kind === 'helpers') {
     main = groups.helpers.length ? (
-      <SessionGrid sessions={groups.helpers} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => s.name} {...gridFocus('helpers')} onStop={(s, why) => closeSession(s, why)} layout={layoutOf('helpers')} dispatch={dispatchFor('helpers')} onMessage={onMessage} memo={memo} />
+      <SessionGrid statusOf={statusOf} sessions={groups.helpers} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => s.name} {...gridFocus('helpers')} onStop={(s, why) => closeSession(s, why)} layout={layoutOf('helpers')} dispatch={dispatchFor('helpers')} onMessage={onMessage} memo={memo} />
     ) : (
       <div className="empty"><b>{tr('도우미 세션이 없어요', 'No helper sessions')}</b></div>
     );
   } else if (selected.kind === 'loose') {
     main = groups.loose.length ? (
-      <SessionGrid sessions={groups.loose} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => s.name || s.id} {...gridFocus('loose')} onStop={(s, why) => closeSession(s, why)} layout={layoutOf('loose')} dispatch={dispatchFor('loose')} onMessage={onMessage} memo={memo} />
+      <SessionGrid statusOf={statusOf} sessions={groups.loose} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => s.name || s.id} {...gridFocus('loose')} onStop={(s, why) => closeSession(s, why)} layout={layoutOf('loose')} dispatch={dispatchFor('loose')} onMessage={onMessage} memo={memo} />
     ) : (
       <div className="empty"><b>{tr('프로젝트 밖 세션이 없어요', 'No sessions outside projects')}</b></div>
     );
@@ -1473,7 +1538,7 @@ export default function App() {
   } else if (selected.kind === 'all') {
     const all = groups.projects.flatMap((p) => p.sessions);
     main = all.length ? (
-      <SessionGrid sessions={all} claudeBin={bin} fontSize={fontSize} home={env?.home} {...gridFocus('all')} onStop={(s, why) => closeSession(s, why)} layout={layoutOf('all')} dispatch={dispatchFor('all')} onMessage={onMessage} memo={memo} />
+      <SessionGrid statusOf={statusOf} sessions={all} claudeBin={bin} fontSize={fontSize} home={env?.home} {...gridFocus('all')} onStop={(s, why) => closeSession(s, why)} layout={layoutOf('all')} dispatch={dispatchFor('all')} onMessage={onMessage} memo={memo} />
     ) : (
       <div className="empty"><b>{tr('돌고 있는 세션이 없어요', 'No running sessions')}</b></div>
     );
@@ -1485,7 +1550,7 @@ export default function App() {
       <>
         <ProjectBar project={selected.name} cwd={cwd} count={list.length} onDone={onMessage} needsHarness={needsHarness(docs.find((d) => d.name === selected.name))} />
         {list.length ? (
-          <SessionGrid sessions={list} claudeBin={bin} fontSize={fontSize} home={env?.home} {...gridFocus(`p:${selected.name}`)} onStop={(s, why) => closeSession(s, why)} layout={layoutOf(`p:${selected.name}`)} dispatch={dispatchFor(`p:${selected.name}`)} onMessage={onMessage} memo={memo} />
+          <SessionGrid statusOf={statusOf} sessions={list} claudeBin={bin} fontSize={fontSize} home={env?.home} {...gridFocus(`p:${selected.name}`)} onStop={(s, why) => closeSession(s, why)} layout={layoutOf(`p:${selected.name}`)} dispatch={dispatchFor(`p:${selected.name}`)} onMessage={onMessage} memo={memo} />
         ) : (
           <div className="empty"><b>{tr('이 프로젝트엔 세션이 없어요', 'No sessions in this project')}</b></div>
         )}
@@ -1548,6 +1613,16 @@ export default function App() {
     toolsSwitched.current = true; setSpace(true); setSelected({ kind: 'orchestrator' }); setToolsReq('open');
   };
 
+  replayRef.current = (req) => {
+    if (spaceShown) { setReplayReq(req); return; }
+    // 채팅 뷰인데 스페이스 밖 화면(부하 등)이면 스페이스로 돌아가 연다 — 'adopt'(붙인 세션 하나)만 스페이스가 없어 터미널식 화면으로
+    if (space && req !== 'close' && orchView(groups.orchestrators) !== 'adopt') { setSelected({ kind: 'orchestrator' }); setReplayReq('open'); return; }
+    const on = selected.kind === 'replay';
+    const want = req === 'toggle' ? !on : req === 'open';
+    if (want === on) return;
+    if (want) { replayBefore.current = selected; setSelected({ kind: 'replay' }); }
+    else { setSelected(replayBefore.current ?? { kind: 'orchestrator' }); replayBefore.current = null; }
+  };
   reviewRef.current = (req) => {
     if (spaceShown) { setReviewReq(req); return; }
     // 채팅 뷰인데 스페이스 밖 화면(리플레이·부하 등)이면 스페이스로 돌아가 연다 — 'adopt'(붙인 세션 하나)만 스페이스가 없어 터미널식 화면으로
@@ -1574,20 +1649,22 @@ export default function App() {
     {petModal && features.tama && <PetModal onClose={() => setPetModal(false)}>{petNode(petWho)}</PetModal>}
     {/* 세션 브라우저가 사람을 부르면(browser_ask_human) 어느 화면에서든 크게 띄우고 알린다 */}
     <AgentAskHost lives={agentLives} nameOf={(l) => askName(l, sessions)} notify={(profile, reason, name) => notifyOnce({ kind: 'human', session: profile, orch: false, ...askNotice(name, reason) })}
-      notifyPopup={(profile, name) => notifyOnce({ kind: 'human', session: profile, orch: false, ...popupNotice(name) })} onPopupCards={setPopupCards} />
+      notifyPopup={(profile, name, kind) => notifyOnce({ kind: 'human', session: profile, orch: false, ...popupNotice(name, kind) })} onPopupCards={setPopupCards} />
     {quitOpen && (() => {
       const mine = sessionsToStop(sessions, appRoots(env?.devRoot ?? '', env?.orchestratorCwd ?? '', env?.extraProjects ?? []));
       return (
         <QuitDialog running={mine.length} onCancel={() => setQuitOpen(false)} onQuit={async (all) => {
-          if (all) await Promise.allSettled(mine.map((x) => stopSession(x.id, `quit-all ${x.name}`)));
+          // 세션 끄기가 걸려도(claude stop 이 안 돌아옴) 15초 뒤엔 종료로 간다
+          if (all) await Promise.race([Promise.allSettled(mine.map((x) => stopSession(x.id, `quit-all ${x.name}`))), new Promise((r) => setTimeout(r, 15_000))]);
           await invoke('app_exit');
         }} />
       );
     })()}
-    <TopBar load={loadMon.sys ? { level: level(loadMon.sys), load1: loadMon.sys.load1, cores: loadMon.sys.cores, swapGb: loadMon.sys.swapUsedMb / 1024 } : undefined} loadOn={selected.kind === 'load'} onLoad={() => setSelected({ kind: 'load' })} features={features} usage={barUsage} usageAge={acctUsage?.age ?? null} account={topLabel(accounts)} accounts={accounts} onSettings={() => setSettingsOpen(true)} today={today} tama={{ file: tama.file, widgetShown: tama.widgetShown, onToggle: () => widgetToggleRef.current() }} replayOn={selected.kind === 'replay'} onReplay={() => setSelected({ kind: 'replay' })} reader={readerOpen} onReader={() => setReaderOpen((o) => !o)} office={space ? spaceOffice : office} onOffice={() => { if (space) { setSelected({ kind: 'orchestrator' }); setOfficeReq(spaceShown ? 'toggle' : 'open'); return; } setOffice(!office); setSelected({ kind: 'orchestrator' }); }} space={space} onView={(chat) => { setSpace(chat); setSelected({ kind: 'orchestrator' }); }} inboxCount={inbox.length + direct.inboxCards.length + (login.need ? 1 : 0) + browserCount} onInbox={() => setInboxOpen((o) => !o)} harnitor={harnitorFloat || (spaceShown && harnitorOpen)} onHarnitor={() => harnitorRef.current('toggle')} tools={spaceShown ? toolsOpen : toolsFloat} onTools={() => toolsRef.current('toggle')} review={{ on: spaceShown ? reviewOpen : selected.kind === 'review', confirm: reviewConfirm }} onReview={() => reviewRef.current('toggle')} voice={voice} onVoice={() => turnVoice(!voice)} />
+    <TopBar load={loadMon.sys ? { level: level(loadMon.sys), load1: loadMon.sys.load1, cores: loadMon.sys.cores, swapGb: loadMon.sys.swapUsedMb / 1024 } : undefined} loadOn={selected.kind === 'load'} onLoad={() => setSelected({ kind: 'load' })} features={features} usage={barUsage} usageAge={acctUsage?.age ?? null} account={topLabel(accounts)} accounts={accounts} onSettings={() => setSettingsOpen(true)} today={today} tama={{ file: tama.file, widgetShown: tama.widgetShown, onToggle: () => widgetToggleRef.current() }} replayOn={spaceShown ? replayOpen : selected.kind === 'replay'} onReplay={() => replayRef.current('toggle')} reader={readerOpen} onReader={() => setReaderOpen((o) => !o)} office={space ? spaceOffice : office} onOffice={() => { if (space) { setSelected({ kind: 'orchestrator' }); setOfficeReq(spaceShown ? 'toggle' : 'open'); return; } setOffice(!office); setSelected({ kind: 'orchestrator' }); }} space={space} onView={(chat) => { setSpace(chat); setSelected({ kind: 'orchestrator' }); }} inboxCount={inbox.length + direct.inboxCards.length + (login.need ? 1 : 0) + browserCount} onInbox={() => setInboxOpen((o) => !o)} harnitor={harnitorFloat || (spaceShown && harnitorOpen)} onHarnitor={() => harnitorRef.current('toggle')} tools={spaceShown ? toolsOpen : toolsFloat} onTools={() => toolsRef.current('toggle')} review={{ on: spaceShown ? reviewOpen : selected.kind === 'review', confirm: reviewConfirm }} onReview={() => reviewRef.current('toggle')} voice={voice} onVoice={() => turnVoice(!voice)} />
     <div className="app">
       {/* 채팅 뷰에선 세션 사이드바 대신 스페이스 메뉴(오케스트레이터·프로젝트 세션)가 ⌘B 자리 — 2026-09-30 사용자 */}
       {sidebarOpen && !spaceShown && <Sidebar
+        statusOf={statusOf}
         routines={routineItems}
         orchestrator={groups.orchestrator}
         projects={groups.projects}
@@ -1620,15 +1697,15 @@ export default function App() {
         {updates.app && updDismissed !== `app:${updates.app.version}` && (
           <div className="banner warn">
             <span>{tr(`Chammo ${updates.app.version} 이 나왔어요 (지금 ${updates.appNow}). 받아서 설치하면 새 기능·고침이 들어가요.`, `Chammo ${updates.app.version} is out (you have ${updates.appNow}). Download and install it to get the new features and fixes.`)}</span>
-            <button className="btn pri" onClick={() => void openLink('url', updates.app!.url).catch(() => {})}>{tr('받기', 'Download')}</button>
-            <button className="btn" onClick={() => setUpdDismissed(`app:${updates.app!.version}`)}>{tr('나중에', 'Later')}</button>
+            <IconButton size="l" tone="pri" label={tr('받기', 'Download')} title={tr(`받기 — Chammo ${updates.app.version} 내려받는 곳 열기`, `Download Chammo ${updates.app.version}`)} onClick={() => void openLink('url', updates.app!.url).catch(() => {})}><IconDownload /></IconButton>
+            <IconButton label={tr('나중에', 'Later')} title={tr('나중에 — 이 버전은 다시 안 띄움', 'Later — skip this version')} onClick={() => setUpdDismissed(`app:${updates.app!.version}`)}><IconClose /></IconButton>
           </div>
         )}
         {updates.claude && updDismissed !== `claude:${updates.claude}` && (
           <div className="banner warn">
             <span>{tr(...claudeUpdateNote(updates.claude, env?.claudeVersion ?? ''))}</span>
             <button className="btn pri" onClick={() => { setSettingsStart('update'); setSettingsOpen(true); }}>{tr('업데이트', 'Update')}</button>
-            <button className="btn" onClick={() => setUpdDismissed(`claude:${updates.claude}`)}>{tr('나중에', 'Later')}</button>
+            <IconButton label={tr('나중에', 'Later')} title={tr('나중에 — 이 버전은 다시 안 띄움', 'Later — skip this version')} onClick={() => setUpdDismissed(`claude:${updates.claude}`)}><IconClose /></IconButton>
           </div>
         )}
         {env && !updates.claude && (() => {
@@ -1641,7 +1718,7 @@ export default function App() {
               <span>{w === 'old'
                 ? tr(`Claude Code ${verShown} 은 Chammo 가 기대는 기능보다 옛 버전이에요. 터미널에서 claude update 로 올려 주세요.`, `Claude Code ${verShown} is older than the features Chammo relies on. Please run claude update in a terminal.`)
                 : tr(`Claude Code ${verShown} 은 아직 Chammo 에서 확인하지 않은 새 버전이에요. 대부분 잘 되지만, 이상하면 알려 주세요.`, `Claude Code ${verShown} is newer than what Chammo was tested with. It usually works — if something looks off, please let us know.`)}</span>
-              <button className="btn" onClick={() => setVerDismissed(v)}>{tr('닫기', 'Dismiss')}</button>
+              <IconButton label={tr('닫기', 'Dismiss')} onClick={() => setVerDismissed(v)}><IconClose /></IconButton>
             </div>
           );
         })()}

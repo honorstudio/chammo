@@ -1,6 +1,6 @@
 [package]
 name = "honor-orchestrator"
-version = "0.2.7"
+version = "0.3.0"
 edition = "2021"
 license = "AGPL-3.0-only"
 
@@ -39,6 +39,13 @@ base64 = "0.22"
 p256 = { version = "0.13", default-features = false, features = ["ecdh", "ecdsa", "std"] }
 hkdf = "0.12"
 aes-gcm = "0.10"
+# 스페이스 엑셀(sheet.rs, ADR 0004) — xlsx 는 zip. 압축은 이미 락에 있던 flate2 로만(기본 기능의 암호·bzip2·zstd 등은 뺀다)
+# xlsx 부품 XML 읽기 — 이미 락에 있던 것(plist 가 씀)
+quick-xml = "0.42"
+zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2"] }
+# zip 의 deflate-flate2 는 압축 백엔드를 안 켠다 — 맥은 png(tauri 매크로)가 켠 기본 백엔드와 합쳐져 통과하지만 윈도우 교차 빌드는
+# 타깃용 flate2 를 따로 지어 'choose a zlib backend' 로 깨진다(0.3.0). 맥이 이미 쓰던 miniz_oxide 그대로(src/cargoFeatures.test.ts)
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 
 # 알림을 앱 이름·아이콘으로(UNUserNotificationCenter). osascript 로 보내면 "스크립트 편집기" 로 묶이고 눌러도 앱이 안 열린다
 # 윈도우 알림(토스트) — Tauri 알림 플러그인이 윈도우에서 쓰는 것과 같은 크레이트

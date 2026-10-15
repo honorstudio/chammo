@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { menuPos, menuStep } from '../domain/ctxMenu';
 import { createPortal } from 'react-dom';
+import { closeOnOutside } from './outsideClose';
 import { assistant, tr } from '../i18n';
 import { cleanLabel, withNick } from '../domain/orchLabel';
 import { OrchAvatar } from './avatar';
@@ -91,19 +93,61 @@ export function Rename({ current, fallback, role: role0, onSave, onCancel }: { c
   );
 }
 
-/** 오른쪽 클릭 메뉴 — 누른 자리에, 바깥을 누르거나 Esc 면 닫힘 */
-export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: { label: string; danger?: boolean; run: () => void }[]; onClose: () => void }) {
+/** 메뉴 한 줄 — sub 가 있으면 누를 때 그 자리에서 다음 목록으로 바뀐다(폴더 고르기·이전 판 같은 것, empty = 비었을 때 한 줄).
+ *  sep = 위에 가는 줄(묶음 나누기) */
+export type MenuItem = { label: string; danger?: boolean; run?: () => void; sub?: () => MenuItem[] | Promise<MenuItem[]>; empty?: string; sep?: boolean; title?: string };
+
+/** 오른쪽 클릭 메뉴(앱 공용) — 누른 자리에, 창 밖으로 넘치면 왼쪽·위로 펼친다. 바깥을 누르거나 Esc 면 닫힘.
+ *  ↑↓·Home·End 로 오르내리고 Enter 로 고른다, 다음 목록에선 ← 로 돌아간다 */
+export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuItem[]; onClose: () => void }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [stack, setStack] = useState<{ items: MenuItem[]; empty?: string; title?: string }[]>([{ items }]);
+  const [pos, setPos] = useState<{ left: number; top: number; maxHeight?: number }>({ left: x, top: y });
+  const cur = stack[stack.length - 1] ?? { items: [] };
+  const buttons = () => [...(box.current?.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]') ?? [])];
+  const open = async (it: MenuItem) => {
+    if (!it.sub) { onClose(); it.run?.(); return; }
+    let next: MenuItem[] = [];
+    try { next = await it.sub(); } catch { next = []; }
+    setStack((s) => [...s, { items: next, empty: it.empty, title: it.label }]);
+  };
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.style.maxHeight = '';
+    const r = el.getBoundingClientRect();
+    setPos(menuPos(x, y, r.width, r.height, window.innerWidth, window.innerHeight));
+    el.focus({ preventScroll: true });
+  }, [x, y, stack.length]);
   useEffect(() => {
     const off = () => onClose();
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('mousedown', off);
-    window.addEventListener('keydown', key);
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return; }
+      if (e.key === 'Tab' || e.metaKey || e.ctrlKey) { onClose(); return; } // ⌘B·⌘W 같은 앱 단축키(띠 접기 등)도 메뉴는 닫고 지나간다
+      const bs = buttons();
+      const i = bs.indexOf(document.activeElement as HTMLButtonElement);
+      if (e.key === 'ArrowLeft' && stack.length > 1) { e.preventDefault(); setStack((s) => s.slice(0, -1)); return; }
+      if (e.key === 'ArrowRight' && i >= 0 && cur.items[i]?.sub) { e.preventDefault(); void open(cur.items[i]); return; }
+      const j = menuStep(bs.length, i, e.key);
+      if (j !== i) { e.preventDefault(); e.stopPropagation(); bs[j]?.focus(); }
+    };
+    const stopOutside = closeOnOutside(window, (t) => !!box.current?.contains(t as Node), onClose); // 바깥 누름(채팅 칸이 mousedown 을 삼켜도)
+    window.addEventListener('keydown', key, true);
     window.addEventListener('blur', off);
-    return () => { window.removeEventListener('mousedown', off); window.removeEventListener('keydown', key); window.removeEventListener('blur', off); };
-  }, [onClose]);
+    window.addEventListener('resize', off);
+    return () => { stopOutside(); window.removeEventListener('keydown', key, true); window.removeEventListener('blur', off); window.removeEventListener('resize', off); };
+  }, [onClose, stack]); // eslint-disable-line react-hooks/exhaustive-deps
   return createPortal(
-    <div className="od-menu" style={{ left: Math.min(x, window.innerWidth - 200), top: Math.min(y, window.innerHeight - 120) }} onMouseDown={(e) => e.stopPropagation()} role="menu">
-      {items.map((it) => <button key={it.label} role="menuitem" className={it.danger ? 'danger' : ''} onClick={() => { onClose(); it.run(); }}>{it.label}</button>)}
+    <div ref={box} className="od-menu" tabIndex={-1} style={pos} onMouseDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.preventDefault()} role="menu">
+      {cur.title && <span className="od-menu-cap">{cur.title}</span>}
+      {cur.items.length === 0 && <span className="od-menu-note">{cur.empty ?? tr('없어요', 'Nothing')}</span>}
+      {cur.items.map((it, i) => (
+        <Fragment key={`${i}:${it.label}`}>
+          {it.sep && i > 0 && <i className="od-sep" role="separator" />}
+          <button role="menuitem" className={[it.danger ? 'danger' : '', it.sub ? 'more' : ''].filter(Boolean).join(' ')} title={it.title} aria-haspopup={it.sub ? 'menu' : undefined}
+            onMouseEnter={(e) => e.currentTarget.focus({ preventScroll: true })} onClick={() => void open(it)}>{it.label}</button>
+        </Fragment>
+      ))}
     </div>,
     document.body,
   );

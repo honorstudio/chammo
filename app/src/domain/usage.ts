@@ -43,6 +43,9 @@ export function fmtResetIn(sec: number): string {
 const DAY_START_HOUR = 5;
 const pad = (n: number) => String(n).padStart(2, '0');
 
+/** 상단 바 '오늘 커밋' 다시 세는 주기 — git 을 저장소마다 부르니 5분(2026-10-11 사용자 승인, 예전 1분) */
+export const TODAY_COMMITS_MS = 5 * 60_000;
+
 /** "오늘"의 시작 시각(로컬). git --since 에 그대로 넘긴다. 자정을 넘겨 일해도 새벽 5시 전까진 같은 날 */
 export function dayStart(now: Date): string {
   const d = new Date(now);

@@ -1,15 +1,20 @@
-// 입력칸 줄 — [참모 프사(물음 숫자 점)] [붙이기(클립)] [입력칸 (안 오른쪽에 보내기 ↵ | 멈춤 ■)]. 프사를 누르면 참모 바꾸기(OrchPicker)
-// 누르고 말하기는 뺐다 — 사용자은 아이폰 받아쓰기를 쓴다(2026-10-03 "입력창이 비좁아"). 보내기·멈춤은 입력칸 안에 둬서 글을 쓰기 시작해도 폭이 안 흔들린다
-// 붙인 것은 입력칸 위 가로로 넘기는 썸네일 칩 + 입력칸에 @img1·@file1 이름표(데스크톱 채팅과 같은 셈, 칩을 빼면 이름표도)
-// 버튼은 누르는 자리 44px·아이콘은 작게. 입력칸은 6~7줄(또는 화면 26%)까지 늘고 그 뒤로는 안에서 스크롤
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+// 입력창 = 두 줄 카드(시안 docs/design-drafts/phone-dash K, 2026-10-11 사용자 — Claude 아이폰 앱 결): 위 = 글, 아래 = [붙이기 +] [칩 자리] … [스피커] [한 자리].
+// 참모 프사(누르면 참모 바꾸기, 물음 숫자 점)는 늘 보인다 — 비었으면 오른쪽 아래, 글이 있으면 보내기(↑) 왼쪽 스피커 자리. 멈춤(■)은 일하는 중일 때만
+// 칩 옆 따로 한 칸(domain/phoneComposer composerSlots). 프사 둘레 = 그 참모 컨텍스트 고리(80% 넘으면 빨강, 시안 phone-dash v2 A), 일하는 중이면 파란 점
+// 붙인 것은 카드 안 맨 위 가로로 넘기는 썸네일 칩 + 글에 #img1·#file1 이름표(데스크톱 채팅과 같은 셈, 칩을 빼면 이름표도)
+// 버튼은 누르는 자리 44px·아이콘은 작게. 글 칸은 6줄(화면이 작으면 그보다 작게)까지 늘고 그 뒤로는 안에서 스크롤
+// 음성이 나오는 동안 참모 프사는 말하는 참모 프사·색으로 바뀌고 소리 크기대로 빛난다(speaker, ui/mobile/usePhoneSpeaker) — 다른 참모면 누르면 그 참모로
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { attachFile } from '../../data/web';
-import { IconClip, IconEnter, IconStop } from '../Icons';
+import { IconArrowUp, IconClose, IconPlus, IconStop } from '../Icons';
+import { composerSlots, textMaxH } from '../../domain/phoneComposer';
 import { dropLabel } from '../../domain/mobile';
 import { labelCounts, readDraft, writeDraft } from '../../domain/mobileOutbox';
 import { storage } from './outbox';
 import { shrinkImage } from './shrink';
 import { useBlobUrl } from './useBlobUrl';
+import { AvatarRing } from './kit';
+import { useSpeakLevel } from './usePhoneSpeaker';
 
 type Props = {
   /** 참모 프사(OrchAvatar 자리) */
@@ -22,14 +27,22 @@ type Props = {
   draftKey: string;
   /** 입력칸 최대 높이(px) — 보이는 화면 높이로 정한다 */
   maxInputH: number;
-  /** 참모가 일하는 중 — 입력칸 옆에 멈춤(■) */
+  /** 그 참모 컨텍스트 %(프사 둘레 고리) — 상태줄 값이 없으면 빈 고리 */
+  ctxPct?: number;
+  /** 참모가 일하는 중 — 칩 옆에 멈춤(■) 한 칸, 프사에 파란 점 */
   busy: boolean;
   stopping: boolean;
   onStop: () => void;
   onChip: () => void;
   onFocus: () => void;
+  /** 아래 줄 가운데 칩 자리(모델·에포트 칩·일하는 중) */
+  chip?: ReactNode;
+  /** 아래 줄 오른쪽 한 자리 앞 — 스피커(음성 모드) */
+  voice?: ReactNode;
   /** 보낼 함에 넣으면 true — 입력칸을 비운다 */
   send: (text: string, paths: string[]) => boolean;
+  /** 지금 말하는 참모(음성이 나오는 동안 + 끝난 뒤 잠깐) — 프사·참모 색·말하는 빛. onGo 가 있으면(다른 참모) 누르면 그 참모로 */
+  speaker?: { id: string; avatar: ReactNode; name: string; style: CSSProperties; onGo?: () => void };
 };
 
 type Att = { path: string; name: string; image: boolean; label: string; url?: string };
@@ -41,7 +54,7 @@ function AttPic({ a }: { a: Att }) {
   return src ? <img src={src} alt="" /> : <span className="m-att-file" />;
 }
 
-export function Composer({ avatar, orchName, waiting, placeholder, draftKey, maxInputH, busy, stopping, onStop, onChip, onFocus, send }: Props) {
+export function Composer({ avatar, orchName, waiting, placeholder, draftKey, maxInputH, ctxPct, busy, stopping, onStop, onChip, onFocus, chip, voice, send, speaker }: Props) {
   const [saved] = useState(() => readDraft(storage(), draftKey));
   const [draft, setDraft] = useState(saved.text);
   const [files, setFiles] = useState<Att[]>(saved.files);
@@ -67,8 +80,9 @@ export function Composer({ avatar, orchName, waiting, placeholder, draftKey, max
     const el = box.current;
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, maxInputH)}px`;
-    el.style.overflowY = el.scrollHeight > maxInputH ? 'auto' : 'hidden';
+    const cap = textMaxH(maxInputH);
+    el.style.height = `${Math.min(el.scrollHeight, cap)}px`;
+    el.style.overflowY = el.scrollHeight > cap ? 'auto' : 'hidden';
   }, [draft, maxInputH]);
 
   const pick = async (list: FileList | null) => {
@@ -86,7 +100,7 @@ export function Composer({ avatar, orchName, waiting, placeholder, draftKey, max
         const image = f.type.startsWith('image/');
         const url = image ? URL.createObjectURL(f) : undefined;
         if (url) urls.current.add(url);
-        return { path: g.path, name: f.name, image, url, label: image ? `@img${++count.current.img}` : `@file${++count.current.file}` };
+        return { path: g.path, name: f.name, image, url, label: image ? `#img${++count.current.img}` : `#file${++count.current.file}` };
       });
       setFiles((p) => [...p, ...added]);
       setDraft((d) => `${d}${d && !/\s$/.test(d) ? ' ' : ''}${added.map((a) => a.label).join(' ')} `);
@@ -108,40 +122,62 @@ export function Composer({ avatar, orchName, waiting, placeholder, draftKey, max
   };
 
   const canSend = !!draft.trim() || files.length > 0;
+  const slots = composerSlots({ canSend, busy });
+  // 단추 자리가 한 번이라도 바뀐 뒤부터 새로 놓인 단추에 m-cin(나타나기) — 처음 그릴 땐 안 움직인다. 자리마다 key 라 바뀔 때 새로 붙어 다시 돈다
+  const slotKey = `${slots.left}/${slots.corner}`;
+  const firstSlots = useRef(slotKey);
+  const moved = useRef(false);
+  if (slotKey !== firstSlots.current) moved.current = true;
+  const cin = moved.current ? ' m-cin' : '';
+  // 말하는 참모로 바뀌고 돌아올 때 — 프사 칸을 새로 붙여 m-cin(짧게 나타나기)을 다시 돌린다. 처음 그릴 땐 안 움직인다
+  const swapped = useRef(false);
+  if (speaker) swapped.current = true;
+  const [btn, setBtn] = useState<HTMLButtonElement | null>(null);
+  useSpeakLevel(btn, !!speaker);
+  // 다른 참모가 말하는 중 — 고리(컨텍스트)·파란 점은 지금 참모 것이라 그동안 뺀다
+  const other = !!speaker?.onGo;
+  const orchBtn = (key: string) => (
+    <button key={key} ref={setBtn} type="button" className={`m-cbtn m-corch${cin}${speaker ? ' m-speak' : ''}`} style={speaker?.style} onClick={speaker?.onGo ?? onChip}
+      aria-label={other && speaker ? `${speaker.name} 말하는 중 — ${speaker.name}에게 가기` : `${orchName}${speaker ? ' 말하는 중' : ''}${busy ? ' 일하는 중' : ''}${ctxPct !== undefined ? `, 컨텍스트 ${Math.round(ctxPct)}%` : ''} — 비서 바꾸기${waiting > 0 ? `, 답을 기다리는 비서 ${waiting}` : ''}`}
+      title={other && speaker ? `${speaker.name}에게 가기` : '참모 바꾸기'}>
+      <AvatarRing pct={other ? undefined : ctxPct} dot={busy && !other ? 'st-work' : undefined} size={40}><span key={speaker?.id ?? 'own'} className={`m-cdot${swapped.current ? ' m-cin' : ''}`}>{speaker?.avatar ?? avatar}</span></AvatarRing>
+      {waiting > 0 && <span className="m-wait-n">{waiting}</span>}
+    </button>
+  );
   return (
     <div className="m-composer">
-      {files.length > 0 && (
-        <div className="m-attached">
-          {files.map((f) => (
-            <span key={f.path} className="m-att">
-              {f.image ? <AttPic a={f} /> : <span className="m-att-file">{f.name.split('.').pop()?.toUpperCase().slice(0, 4) || '파일'}</span>}
-              <span className="m-att-label">{f.label}</span>
-              <button type="button" className="m-att-x" onClick={() => remove(f)} aria-label={`${f.label} ${f.name} 빼기`}>✕</button>
-            </span>
-          ))}
-        </div>
-      )}
       {err && <div className="m-error">{err}</div>}
       <form className="m-input" onSubmit={(e) => { e.preventDefault(); if (send(draft, paths)) { setDraft(''); clear(); } }}>
-        <button type="button" className="m-orchchip" onClick={onChip} aria-label={`${orchName} — 비서 바꾸기${waiting > 0 ? `, 답을 기다리는 비서 ${waiting}` : ''}`}>
-          {avatar}
-          {waiting > 0 && <span className="m-wait-n">{waiting}</span>}
-        </button>
-        <button type="button" className="m-icon" disabled={uploading} onClick={() => file.current?.click()} aria-label={uploading ? '올리는 중' : '그림·파일 붙이기'}>
-          <IconClip />
-        </button>
-        <input ref={file} type="file" accept="image/*,.pdf,.txt,.md,.csv,.json,.zip,application/pdf,text/plain,text/markdown,text/csv,application/json,application/zip" multiple hidden onChange={(e) => void pick(e.target.files)} />
-        <div className={canSend || busy ? 'm-field m-has-btn' : 'm-field'}>
-          <textarea ref={box} value={draft} rows={1} placeholder={placeholder} onFocus={onFocus} onChange={(e) => setDraft(e.target.value)} />
-          {canSend ? (
-            <button type="submit" className="m-in-btn" disabled={uploading} aria-label="보내기" title="보내기">
-              <span className="m-key"><IconEnter /></span>
+        {files.length > 0 && (
+          <div className="m-attached">
+            {files.map((f) => (
+              <span key={f.path} className="m-att">
+                {f.image ? <AttPic a={f} /> : <span className="m-att-file">{f.name.split('.').pop()?.toUpperCase().slice(0, 4) || '파일'}</span>}
+                <span className="m-att-label">{f.label}</span>
+                <button type="button" className="m-att-x" onClick={() => remove(f)} aria-label={`${f.label} ${f.name} 빼기`} title="빼기"><IconClose /></button>
+              </span>
+            ))}
+          </div>
+        )}
+        <textarea ref={box} value={draft} rows={1} placeholder={placeholder} onFocus={onFocus} onChange={(e) => setDraft(e.target.value)} />
+        <div className="m-crow">
+          <button type="button" className="m-cbtn" disabled={uploading} onClick={() => file.current?.click()} aria-label={uploading ? '올리는 중' : '그림·파일 붙이기'} title="붙이기">
+            <span className="m-cdot"><IconPlus /></span>
+          </button>
+          <input ref={file} type="file" accept="image/*,.pdf,.txt,.md,.csv,.json,.zip,application/pdf,text/plain,text/markdown,text/csv,application/json,application/zip" multiple hidden onChange={(e) => void pick(e.target.files)} />
+          {chip}
+          {slots.stop && (
+            <button type="button" className="m-cbtn m-cstop-sm" disabled={stopping} onClick={onStop} aria-label={`${orchName} 하던 일 멈추기`} title="멈춤">
+              <span className="m-cdot"><IconStop /></span>
             </button>
-          ) : busy ? (
-            <button type="button" className="m-in-btn m-stop" disabled={stopping} onClick={onStop} aria-label={`${orchName} 하던 일 멈추기`} title="멈춤">
-              <span className="m-stop-key"><IconStop /></span>
+          )}
+          <span className="m-crow-sp" />
+          {slots.left === 'voice' ? <span key="voice" className={`m-cslot${cin}`}>{voice}</span> : orchBtn('orch-l')}
+          {slots.corner === 'send' ? (
+            <button key="go" type="submit" className={`m-cbtn m-cgo${cin}`} disabled={uploading} aria-label="보내기" title="보내기">
+              <span className="m-cdot"><IconArrowUp /></span>
             </button>
-          ) : null}
+          ) : orchBtn('orch-c')}
         </div>
       </form>
     </div>

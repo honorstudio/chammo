@@ -32,6 +32,7 @@ pub const FILES: &[(&str, &str)] = &[
     ("src/connect.js", include_str!("../../../tools/chammo-browser/src/connect.js")),
     ("src/share.js", include_str!("../../../tools/chammo-browser/src/share.js")),
     ("src/dialogs.js", include_str!("../../../tools/chammo-browser/src/dialogs.js")),
+    ("src/survive.js", include_str!("../../../tools/chammo-browser/src/survive.js")),
 ];
 
 pub const MIN_NODE: u32 = 20;
@@ -120,8 +121,13 @@ pub fn chrome_paths(win: bool, env: impl Fn(&str) -> Option<String>) -> Vec<Stri
 }
 
 /// 설정 "브라우저 자동화" 줄 — 확인 목록(Node · 크롬 베타 · 도구 부품 · 시험 열기)
+/// async — node --version 을 여러 번 띄워서 동기면 설정을 열 때·창이 앞으로 올 때마다 메인 스레드가 굳는다
 #[tauri::command]
-pub fn browser_status() -> BrowserStatus {
+pub async fn browser_status() -> Result<BrowserStatus, String> {
+    tauri::async_runtime::spawn_blocking(browser_status_now).await.map_err(|e| e.to_string())
+}
+
+fn browser_status_now() -> BrowserStatus {
     let data = crate::config::data_dir();
     let node = crate::browser_setup::chosen_node(data);
     let h = crate::browser_setup::have(data);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { attended, IDLE_MS, idleLeft, nextBlinkMs } from './attention';
+import { attended, dueOnShow, IDLE_MS, idleLeft, nextBlinkMs, pollDelay, shown } from './attention';
 
 describe('attended — 사람이 앱을 보고 있나(아바타를 움직일까, 2026-10-04 mac-perf)', () => {
   const base = { hidden: false, focused: true, lidClosed: false, lastInput: 1_000, now: 1_000 };
@@ -42,5 +42,29 @@ describe('nextBlinkMs — 깜빡임은 6~8초에 한 번(사용자 2026-10-04, �
       expect(v).toBeGreaterThanOrEqual(6_000);
       expect(v).toBeLessThanOrEqual(8_000);
     }
+  });
+});
+
+describe('shown — 앱 창이 보이나(폴링 늦추기 기준, 2026-10-11 사용자 승인). 2분 입력 없음은 안 본다 — 음성 모드로 듣기만 해도 보는 중', () => {
+  const base = { hidden: false, focused: true, lidClosed: false };
+  it('앞에 있고 안 가려졌으면 보인다', () => expect(shown(base)).toBe(true));
+  it('창이 뒤·가려짐(hidden)·덮개 닫힘이면 안 보인다', () => {
+    expect(shown({ ...base, focused: false })).toBe(false);
+    expect(shown({ ...base, hidden: true })).toBe(false);
+    expect(shown({ ...base, lidClosed: true })).toBe(false);
+  });
+});
+
+describe('pollDelay — 안 보이면 5배 느리게', () => {
+  it('보이면 그대로, 안 보이면 5배', () => {
+    expect(pollDelay(3000, true)).toBe(3000);
+    expect(pollDelay(3000, false)).toBe(15_000);
+  });
+});
+
+describe('dueOnShow — 다시 보이면 바로 한 번(지난번에서 원래 주기가 지났으면)', () => {
+  it('원래 주기가 지났으면 0(바로), 아니면 남은 만큼', () => {
+    expect(dueOnShow(3000, 1000, 5000)).toBe(0);
+    expect(dueOnShow(3000, 1000, 2500)).toBe(1500);
   });
 });

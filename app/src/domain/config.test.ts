@@ -36,12 +36,25 @@ describe('기능 켜기', () => {
   });
 
   it('꺼 둔 기능의 단축키는 막는다', () => {
-    const off = { office: false, tama: false, gacha: false, review: false, voice: false, autoRevive: false, agentView: false, computerUse: false };
+    const off = { office: false, tama: false, gacha: false, review: false, voice: false, autoRevive: false, agentView: false, computerUse: false, animation: 'auto' as const };
     expect(allowed({ type: 'goto', to: 'office' }, off)).toBe(false);
     expect(allowed({ type: 'goto', to: 'tama' }, off)).toBe(false);
     expect(allowed({ type: 'goto', to: 'review' }, off)).toBe(false);
     expect(allowed({ type: 'widget' }, off)).toBe(false);
     expect(allowed({ type: 'goto', to: 'all' }, off)).toBe(true);
     expect(allowed({ type: 'goto', to: 'review' }, ALL_ON)).toBe(true);
+  });
+});
+
+// 2026-10-12 사용자 "부하 심하면 애니메이션 때문에 끊긴다 — 자동으로 줄이고, 설정에서 없애기" — 세 갈래: 자동(기본)·줄이기·끄기
+describe('애니메이션 설정', () => {
+  it('기본은 자동, 옛 설정(칸 없음)도 자동', () => {
+    expect(ALL_ON.animation).toBe('auto');
+    expect(featuresOf({ features: { tama: false } }).animation).toBe('auto');
+  });
+  it('고른 값은 그대로, 모르는 값은 자동으로', () => {
+    expect(featuresOf({ features: { animation: 'reduce' } }).animation).toBe('reduce');
+    expect(featuresOf({ features: { animation: 'off' } }).animation).toBe('off');
+    expect(featuresOf({ features: { animation: 'zoom' as never } }).animation).toBe('auto');
   });
 });

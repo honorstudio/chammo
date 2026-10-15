@@ -11,8 +11,17 @@ export type Shortcut =
   | { type: 'toggleSidebar' }
   | { type: 'toggleTasks' }
   | { type: 'search' }
+  /** ⌘⇧W — 보고 있는 창의 세션 끄기(확인을 한 번 거친다) */
   | { type: 'closePane' }
+  /** ⌘⇧T — 보고 있는 프로젝트에 새 세션(참모 화면이면 새 참모) */
   | { type: 'newSession' }
+  /** ⌘W — 스페이스에서 열려 있는 탭(파일·문서·세션) 닫기, 고정 탭(홈·보관함)은 안 닫힘 (2026-10-12 사용자) */
+  | { type: 'closeTab' }
+  /** ⌘T — 보고 있는 보관함 폴더에 빈 문서 새로 */
+  | { type: 'newDoc' }
+  /** ⌘⇧H·⌘⇧L — 고른 참모의 홈·보관함 고정 탭으로 */
+  | { type: 'goHome' }
+  | { type: 'goLocker' }
   | { type: 'widget' }
   | { type: 'memo' }
   | { type: 'toggleReader' }
@@ -38,7 +47,8 @@ const GOTO: Record<number, Shortcut> = { 1: { type: 'goto', to: 'orchestrator' }
 export const gotoOfNum = (n: number): Shortcut | null => GOTO[n] ?? null;
 
 // 한글 입력 상태에선 같은 자리 키가 자모로 들어온다 — 영문 키로 바꿔 읽는다
-const HANGUL_KEY: Record<string, string> = { ㅁ: 'a', ㅠ: 'b', ㅓ: 'j', ㅏ: 'k', ㅈ: 'w', ㅅ: 't', ㅡ: 'm', ㄷ: 'e', ㄸ: 'E', ㄹ: 'f' };
+// ⌘⇧ 일 땐 쌍자음으로 온다(ㅆ=⇧ㅅ, ㅉ=⇧ㅈ, ㄸ=⇧ㄷ). ㅗ·ㅣ 는 ⇧ 를 눌러도 같은 글자라 아래에서 ⇧ 로 가른다
+const HANGUL_KEY: Record<string, string> = { ㅁ: 'a', ㅠ: 'b', ㅓ: 'j', ㅏ: 'k', ㅈ: 'w', ㅅ: 't', ㅡ: 'm', ㄷ: 'e', ㄸ: 'E', ㄹ: 'f', ㅆ: 'T', ㅉ: 'W', ㅗ: 'h', ㅣ: 'l' };
 
 /**
  * 탭 옮기기 — 크롬과 같은 ⌃⇧PageUp/PageDown(맥 자판은 fn+↑↓) + 맥 손에 맞는 ⌥⌘⇧←/→, 윈도우는 Ctrl+Alt+Shift+←/→.
@@ -70,7 +80,11 @@ export function shortcutFor(input: KeyLike, win = IS_WIN): Shortcut | null {
   if (!e.shiftKey && (e.code === 'BracketLeft' || e.code === 'BracketRight' || e.key === '[' || e.key === ']')) {
     return { type: 'nav', dir: e.code === 'BracketRight' || e.key === ']' ? 1 : -1 };
   }
-  switch (HANGUL_KEY[e.key] ?? e.key) {
+  const raw = HANGUL_KEY[e.key] ?? e.key;
+  // ⌘⇧W·T·H·L — 글자가 소문자로 와도(한글 ㅗ·ㅣ) ⇧ 가 눌렸으면 대문자 칸, ⇧ 없는 ⌘H·⌘L 은 앱이 안 쓴다(⌘H 는 macOS 숨기기)
+  // CapsLock 으로 대문자가 와도 ⇧ 가 없으면 ⇧ 없는 쪽 — 세션 끄기(⌘⇧W)가 CapsLock ⌘W 로 눌리면 안 된다
+  const key = raw.length === 1 && 'wthl'.includes(raw.toLowerCase()) ? (e.shiftKey ? raw.toUpperCase() : raw.toLowerCase()) : raw;
+  switch (key) {
     case '=':
     case '+':
       return { type: 'font', delta: 1 };
@@ -88,9 +102,17 @@ export function shortcutFor(input: KeyLike, win = IS_WIN): Shortcut | null {
     case 'f': // ⌘F — 문서가 열려 있으면 문서 찾기, 아니면 ⌘K 와 같은 검색(App 'search')
       return { type: 'search' };
     case 'w':
-      return { type: 'closePane' }; // 보고 있는 창의 세션을 끈다 (대화는 남는다)
+      return { type: 'closeTab' }; // 스페이스에서 열려 있는 탭 닫기
     case 't':
+      return { type: 'newDoc' }; // 보관함에 빈 문서 새로
+    case 'W':
+      return { type: 'closePane' }; // 보고 있는 창의 세션을 끈다 (대화는 남는다) — 확인 창을 거친다
+    case 'T':
       return { type: 'newSession' }; // 보고 있는 프로젝트(또는 참모)에 세션 하나 더
+    case 'H':
+      return { type: 'goHome' };
+    case 'L':
+      return { type: 'goLocker' };
     case 'm':
       return { type: 'memo' }; // 보고 있는 창 위에 그 프로젝트 메모
     case 'e':
@@ -128,6 +150,10 @@ const MENU: Record<string, Shortcut> = {
   font_reset: { type: 'fontReset' },
   new_session: { type: 'newSession' },
   close_pane: { type: 'closePane' },
+  close_tab: { type: 'closeTab' },
+  new_doc: { type: 'newDoc' },
+  go_home: { type: 'goHome' },
+  go_locker: { type: 'goLocker' },
   widget_toggle: { type: 'widget' },
   memo: { type: 'memo' },
   reader_toggle: { type: 'toggleReader' },

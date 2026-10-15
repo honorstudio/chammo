@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatItem } from './chat';
-import { enterDelay, sendControls } from './chat';
+import { chatEscStops, enterDelay, sendControls } from './chat';
 import { appendChat, chatBusy, mdSafe, parseChat, promptInput, splitPaths, splitRefs, stillPending, pendingLeft, clickFocusesInput, stuckInInput, taskCounts, termRest, typedChunks, withRefs } from './chat';
 
 const line = (o: object) => JSON.stringify(o);
@@ -127,8 +127,11 @@ describe('parseChat — 대화 기록을 말풍선 항목으로', () => {
     expect(parseChat(t)[0]).toMatchObject({ kind: 'user', text: '첫 줄\n둘째 줄' });
   });
 
-  it('[Request interrupted by user] 같은 끊김 표시는 숨긴다', () => {
-    expect(parseChat([user('x1', '[Request interrupted by user]'), user('x2', [text('[Request interrupted by user for tool use]')])].join('\n'))).toEqual([]);
+  it('[Request interrupted by user] 같은 끊김 표시는 말풍선 대신 \'멈췄어\' 한 줄(2026-10-15 사용자 — 채팅 Esc 로 멈춘 게 보이게)', () => {
+    expect(parseChat([user('x1', '[Request interrupted by user]'), user('x2', [text('[Request interrupted by user for tool use]')])].join('\n'))).toEqual([
+      { kind: 'note', id: 'x1', ts: 't-x1', text: '멈췄어' },
+      { kind: 'note', id: 'x2', ts: 't-x2', text: '멈췄어' },
+    ]);
   });
 
   it('붙여넣은 글은 사람 지시다', () => {
@@ -273,26 +276,29 @@ describe('termRest — 첨부 줄에 남길 글(붙인 것 표시·경로는 빼
   });
 });
 
-describe('말풍선 참조 @chat1 — 앞 말풍선을 입력칸에 끌어와 그 얘기라고 짚기(2026-09-30 사용자)', () => {
-  const r1 = { label: '@chat1', who: '참모 답', text: '첫 줄\n둘째 줄' };
+describe('말풍선 참조 #chat1 — 앞 말풍선을 입력칸에 끌어와 그 얘기라고 짚기(2026-09-30 사용자)', () => {
+  const r1 = { label: '#chat1', who: '참모 답', text: '첫 줄\n둘째 줄' };
   it('보낼 때 글 뒤에 인용 블록으로 붙는다', () => {
-    expect(withRefs('@chat1 이거 다시 해줘', [r1])).toBe('@chat1 이거 다시 해줘\n\n[참조 @chat1 · 참모 답]\n> 첫 줄\n> 둘째 줄');
+    expect(withRefs('#chat1 이거 다시 해줘', [r1])).toBe('#chat1 이거 다시 해줘\n\n[참조 #chat1 · 참모 답]\n> 첫 줄\n> 둘째 줄');
   });
   it('글에서 지운 이름표는 안 붙는다, 참조가 없으면 글 그대로', () => {
     expect(withRefs('그냥 말', [r1])).toBe('그냥 말');
   });
   it('긴 인용은 600자에서 자르고, 인용 속 빈 줄은 뺀다', () => {
-    const t = withRefs('@chat1', [{ ...r1, text: `${'가'.repeat(700)}\n\n끝` }]);
+    const t = withRefs('#chat1', [{ ...r1, text: `${'가'.repeat(700)}\n\n끝` }]);
     expect(t).toContain(`> ${'가'.repeat(600)}…`);
     expect(t).not.toContain('끝');
   });
   it('보낸 말풍선에선 본문과 참조를 갈라 본다', () => {
-    const sent = withRefs('@chat1 @chat2 둘 비교', [r1, { label: '@chat2', who: '내 말', text: '옛 지시' }]);
+    const sent = withRefs('#chat1 #chat2 둘 비교', [r1, { label: '#chat2', who: '내 말', text: '옛 지시' }]);
     expect(splitRefs(sent)).toEqual({
-      body: '@chat1 @chat2 둘 비교',
-      refs: [{ label: '@chat1', who: '참모 답', text: '첫 줄\n둘째 줄' }, { label: '@chat2', who: '내 말', text: '옛 지시' }],
+      body: '#chat1 #chat2 둘 비교',
+      refs: [{ label: '#chat1', who: '참모 답', text: '첫 줄\n둘째 줄' }, { label: '#chat2', who: '내 말', text: '옛 지시' }],
     });
     expect(splitRefs('참조 없는 말')).toEqual({ body: '참조 없는 말', refs: [] });
+  });
+  it('옛 기록(@chat1 으로 보낸 말)도 그대로 가른다 — 지난 대화가 깨지지 않게', () => {
+    expect(splitRefs('@chat1 봐\n\n[참조 @chat1 · 내 말]\n> 옛 지시')).toEqual({ body: '@chat1 봐', refs: [{ label: '@chat1', who: '내 말', text: '옛 지시' }] });
   });
 });
 
@@ -431,5 +437,38 @@ describe('사람 개입 꼬리표 — 도구 결과에 [사람 개입] 이 오�
   it('아직 조작 중(시간 다 됨)·평범한 결과는 줄을 안 만든다', () => {
     expect(parseChat(rec('[사람 개입] 아직 사람이 브라우저를 조작 중이야 — 이 호출은 실행하지 않았어'))).toEqual([]);
     expect(parseChat(rec('### Page\n- Page URL: https://a.com'))).toEqual([]);
+  });
+});
+
+describe('이상한 기록 줄로 채팅이 터지지 않는다(2026-10-11 bug-hunt — 렌더 중 TypeError 면 창 전체가 흰 화면이었다)', () => {
+  it('객체가 아닌 줄(null·숫자·글)과 글이 문자열이 아닌 블록은 건너뛴다', () => {
+    const lines = ['null', '123', '"글"', '[]',
+      JSON.stringify({ type: 'assistant', uuid: 'a1', timestamp: '2026-10-11T00:00:00Z', message: { role: 'assistant', content: [{ type: 'text', text: 5 }, { type: 'text', text: '멀쩡한 말' }] } }),
+    ].join('\n') + '\n';
+    const items = appendChat([], lines);
+    expect(items.map((i) => i.kind === 'assistant' ? i.text : i.kind)).toEqual(['멀쩡한 말']);
+  });
+});
+
+describe('chatEscStops — 채팅 칸에서 누른 Esc 가 참모의 지금 턴을 멈추나(2026-10-15 사용자, CLI Esc 와 같게 한 번)', () => {
+  const base = { key: 'Escape', composing: false, prevented: false, working: true, overlay: false, inInput: true, review: false };
+  it('일하는 중 입력칸·채팅 칸 안(입력칸 밖)에서 Esc 한 번 = 멈춤', () => {
+    expect(chatEscStops(base)).toBe(true);
+    expect(chatEscStops({ ...base, inInput: false })).toBe(true);
+  });
+  it('쉬고 있으면 안 멈춘다 — 쉴 때 Esc 두 번은 Claude 되감기·입력칸 지우기', () => {
+    expect(chatEscStops({ ...base, working: false })).toBe(false);
+    expect(chatEscStops({ ...base, working: false, inInput: false })).toBe(false);
+  });
+  it('한글 조합 중·팝오버/모달/선택지 창·이미 다른 데서 받은 Esc 는 그쪽이 먼저', () => {
+    expect(chatEscStops({ ...base, composing: true })).toBe(false);
+    expect(chatEscStops({ ...base, overlay: true })).toBe(false);
+    expect(chatEscStops({ ...base, overlay: true, inInput: false })).toBe(false);
+    expect(chatEscStops({ ...base, prevented: true })).toBe(false);
+    expect(chatEscStops({ ...base, key: 'Enter' })).toBe(false);
+  });
+  it('시안 검토가 떠 있으면 입력칸 밖 Esc 는 검토 닫기(domain/curation reviewEscCloses) — 입력칸 Esc 는 검토가 안 받으니 멈춤', () => {
+    expect(chatEscStops({ ...base, review: true, inInput: false })).toBe(false);
+    expect(chatEscStops({ ...base, review: true })).toBe(true);
   });
 });

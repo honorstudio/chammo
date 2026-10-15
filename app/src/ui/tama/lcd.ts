@@ -124,10 +124,16 @@ const PAL = {
 };
 
 /** L-4: 화소 틈 0.2 · 꺼진 화소 0.07 · 그림자 0.2. area = 아이콘 줄 없이 가운데 놀이 칸만(상단 바의 작은 화면) */
+/** 캔버스마다 마지막으로 칠한 그림 — 같으면 다시 안 칠한다(480ms 마다 1,440칸을 늘 다시 칠하던 것, 2026-10-11) */
+const LAST = new WeakMap<HTMLCanvasElement, string>();
+
 export function draw(canvas: HTMLCanvasElement, st: Stage, t: number, theme: 'light' | 'dark', area = false) {
+  const buf = paint(st, t);
+  const key = `${theme}|${area}|${canvas.width}x${canvas.height}|${buf.join('')}`;
+  if (LAST.get(canvas) === key) return;
   const g = canvas.getContext('2d');
   if (!g) return;
-  const buf = paint(st, t);
+  LAST.set(canvas, key);
   const pal = PAL[theme];
   const dot = canvas.width / W;
   const y0 = area ? AREA_Y : 0, y1 = area ? AREA_Y + AREA_H : H;

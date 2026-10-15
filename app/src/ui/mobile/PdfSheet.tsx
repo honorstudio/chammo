@@ -3,7 +3,8 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { fileBytes } from '../../data/web';
 import type { ShowAt } from '../../domain/showAt';
-import { IconClose } from '../Icons';
+import { ShareButton } from './ShareButton';
+import { BottomSheet } from './kit';
 
 const PdfView = lazy(() => import('../reader/PdfView'));
 const MIN = 100, MAX = 400;
@@ -71,17 +72,13 @@ export default function PdfSheet({ path, title, at, onClose }: { path: string; t
     return () => { el.removeEventListener('touchstart', down); el.removeEventListener('touchmove', move); el.removeEventListener('touchend', up); el.removeEventListener('touchcancel', up); };
   }, []);
   return (
-    <div className="m-view m-pdf" role="dialog" aria-label={title}>
-      <div className="m-picker-head">
-        <b className="m-view-title">{title}</b>
-        {page.of > 0 && <span className="m-pdf-no">{page.n} / {page.of}</span>}
-        <button type="button" className="m-rt-btn m-ico" onClick={onClose} aria-label="닫기" title="닫기"><IconClose /></button>
-      </div>
+    <BottomSheet kind="full" className="m-pdf" label={title} title={title} titleClass="m-view-title" onClose={onClose}
+      actions={<>{page.of > 0 && <span className="m-pdf-no">{page.n} / {page.of}</span>}<ShareButton path={path} /></>}>
       <div className="m-pdf-body" ref={wrap}>
         <Suspense fallback={<p className="m-muted m-pad">여는 중…</p>}>
           <PdfView path={path} zoom={zoom} at={at} atKey={path} load={fileBytes} />
         </Suspense>
       </div>
-    </div>
+    </BottomSheet>
   );
 }

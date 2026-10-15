@@ -2,7 +2,7 @@
 // 규약(@internal)이 바뀌면 이 파일 한 곳만 고치게 어댑터로 둔다. HTML 은 안 받는다 — 글은 글로, Markdown 만 앱 md 거름(DOMPurify)으로.
 // 그리는 것: Box·Text·Button·Markdown·Code·Link·Input·Select, Svg(거른 뒤 <img>, domain/modeSvg). 모르는 것 = '못 그림' 칸(docs/research/2026-10-05-chammo-mod.md)
 import type { CSSProperties } from 'react';
-import { svgSrc } from './modeSvg';
+import { svgSrc, svgStillSrc } from './modeSvg';
 import { tr } from '../i18n';
 
 /** 누름 손잡이 — 모드 쪽(plugin·handle) 또는 Client 방 쪽(held: 방 런타임이 닫힌 함수를 쥔 번호) */
@@ -10,15 +10,16 @@ export type Press = { plugin: string; handle: number; held?: true };
 export type Kid = string | TNode;
 
 export type TNode =
-  | { type: 'Box'; style: CSSProperties; children: TNode[] }
-  | { type: 'Text'; style: CSSProperties; kids: Kid[] }
+  | { type: 'Box'; style: CSSProperties; children: TNode[]; /** 받는 속성 조합으로 고른 앱 모양 — 화면이 mdv-look-<이름> 으로 그린다 */ look?: BoxLook }
+  | { type: 'Text'; style: CSSProperties; kids: Kid[]; look?: TextLook; trunc?: true }
   | { type: 'Button'; key: string; label: string; primary: boolean; plain: boolean; dim: boolean; kids: Kid[]; press: Press | null }
   | { type: 'Markdown'; text: string; dim: boolean }
   | { type: 'Code'; source: string; language: string }
   | { type: 'Link'; href: string; label: string }
   | { type: 'Input'; key: string; label: string; placeholder: string; value: string; submitLabel: string; press: Press | null }
   | { type: 'Select'; key: string; label: string; value: string; options: { value: string; label: string }[]; press: Press | null }
-  | { type: 'Svg'; src: string; alt: string }
+  /** still = 움직임 끈 정지판(줄이기·끄기·안 볼 때·칸이 안 보일 때) — 한 번만 만들어 둔다 */
+  | { type: 'Svg'; src: string; still: string; alt: string }
   | { type: 'Client'; plugin: string; module: string; key: string; props: unknown; style: CSSProperties }
   | { type: 'Cant'; what: string; alt: string };
 
@@ -47,10 +48,26 @@ export function normalize(raw: unknown, depth = 0, inClient = false): TNode {
   if (depth >= MAX_DEPTH) return { type: 'Cant', what: t, alt: '' };
   const p = (r.props && typeof r.props === 'object' ? r.props : {}) as Record<string, unknown>;
   switch (t) {
-    case 'Box':
-      return { type: 'Box', style: boxStyle(p), children: kidsOf(r.children, depth, inClient).filter((k): k is TNode => typeof k !== 'string') };
-    case 'Text':
-      return { type: 'Text', style: textStyle(p), kids: kidsOf(r.children, depth, inClient) };
+    case 'Box': {
+      const children = kidsOf(r.children, depth, inClient).filter((k): k is TNode => typeof k !== 'string');
+      const look = boxLook(p, children);
+      const style = boxStyle(p);
+      if (look === 'card') Object.assign(style, { border: '1px solid var(--line)', borderRadius: '10px', padding: '10px 12px' });
+      if (look === 'tag') Object.assign(style, { borderRadius: '999px', padding: '0 8px' });
+      return { type: 'Box', style, children, ...(look ? { look } : {}) };
+    }
+    case 'Text': {
+      const kids = kidsOf(r.children, depth, inClient);
+      const look = textLook(p, kids);
+      const style = textStyle(p);
+      if (look === 'bar') {
+        const t = kids.filter((k): k is string => typeof k === 'string').join('');
+        const full = [...t].filter((c) => c === '█').length;
+        (style as Record<string, string>)['--mdv-pct'] = `${Math.round((full / Math.max(1, [...t].length)) * 100)}%`;
+      }
+      const trunc = typeof p.wrap === 'string' && p.wrap.startsWith('truncate');
+      return { type: 'Text', style, kids, ...(look ? { look } : {}), ...(trunc ? { trunc: true as const } : {}) };
+    }
     case 'Button':
       return { type: 'Button', key: str(p.key), label: str(p.label), primary: p.variant === 'primary', plain: p.plain === true, dim: p.dimColor === true, kids: kidsOf(r.children, depth, inClient), press: pressOf(r, inClient) };
     case 'Markdown':
@@ -74,14 +91,14 @@ export function normalize(raw: unknown, depth = 0, inClient = false): TNode {
       if (inClient || !plugin || !str(p.module) || !str(p.key)) return { type: 'Cant', what: 'Client', alt: '' };
       const style: CSSProperties = {};
       if (size(p.width)) style.width = size(p.width);
-      if (size(p.height)) style.height = size(p.height);
+      if (size(p.height, LH)) style.height = size(p.height, LH);
       if (typeof p.flexGrow === 'number') style.flexGrow = p.flexGrow;
       return { type: 'Client', plugin, module: str(p.module), key: str(p.key), props: p.props ?? {}, style };
     }
     case 'Svg': {
       if (inClient) return { type: 'Cant', what: 'Svg', alt: str(p.alt) };
       const src = svgSrc(p.source);
-      return src ? { type: 'Svg', src, alt: str(p.alt) } : { type: 'Cant', what: 'Svg', alt: str(p.alt) };
+      return src ? { type: 'Svg', src, still: svgStillSrc(p.source) ?? src, alt: str(p.alt) } : { type: 'Cant', what: 'Svg', alt: str(p.alt) };
     }
     default:
       // 엔진 몫({type:"engine"})·새 요소
@@ -89,14 +106,38 @@ export function normalize(raw: unknown, depth = 0, inClient = false): TNode {
   }
 }
 
+// ── 앱 모양(10/12) — 모드 호스트는 모르는 속성이 하나라도 있으면 트리를 통째로 버린다(engine). 그래서 새 속성 대신
+// 호스트가 받는 속성의 조합을 보고 렌더러가 앱 모양을 고른다. 모드 쪽 함수는 hq-mode-kit 스킬의 kit.tsx(같은 조합을 만든다).
+// 터미널은 같은 속성을 그대로 그린다 — 테두리 상자·배경 글·─ 줄·█░ 막대
+export type BoxLook = 'card' | 'tag';
+export type TextLook = 'chip' | 'divider' | 'bar';
+
+/** round + borderDimColor = 카드, round 상자 안에 Text 하나 = 알약(tag) */
+function boxLook(p: Record<string, unknown>, children: TNode[]): BoxLook | undefined {
+  if (p.borderStyle !== 'round') return undefined;
+  if (p.borderDimColor === true) return 'card';
+  return children.length === 1 && children[0]!.type === 'Text' ? 'tag' : undefined;
+}
+
+/** backgroundColor 글 = 칩, ─ 만(3자↑) = 구분선, █·░ 만(2자↑) = 진행 막대 */
+function textLook(p: Record<string, unknown>, kids: Kid[]): TextLook | undefined {
+  if (kids.some((k) => typeof k !== 'string')) return undefined;
+  const t = (kids as string[]).join('').trim();
+  if (/^─{3,}$/.test(t)) return 'divider';
+  if (t.length >= 2 && /^[█░]+$/.test(t)) return 'bar';
+  return colorOf(p.backgroundColor) ? 'chip' : undefined;
+}
+
 export const textOf = (n: TNode | Kid): string =>
   typeof n === 'string' ? n : 'kids' in n ? n.kids.map(textOf).join('') : n.type === 'Box' ? n.children.map(textOf).join('') : '';
 
-// ── 모양: 칸 단위(글자 칸) → px. 가로 한 칸 8px, 세로 한 칸은 줄 사이 4px 로 눌러 쓴다(desktop 표면은 글자 칸이 아니라 화면이라) ──
+// ── 모양: 칸 단위(글자 칸) → px. 가로 한 칸 8px. 세로는 둘 — 크기(height·minHeight)는 글 한 줄(LH, cellsOf·.mdv-text 줄 높이와 같다),
+// 여백·줄 사이(padding·margin·rowGap)는 4px 로 눌러 쓴다(desktop 표면은 글자 칸이 아니라 화면이라). 10/12 세로 크기를 8px 로 바꿔 줄이 포개졌다 ──
 const CX = 8;
 const CY = 4;
+export const LH = 18;
 const px = (n: unknown, k: number) => (typeof n === 'number' && Number.isFinite(n) ? `${Math.max(0, n) * k}px` : undefined);
-const size = (v: unknown) => (typeof v === 'number' ? `${v * CX}px` : typeof v === 'string' && /^\d+(\.\d+)?%$/.test(v) ? v : undefined);
+const size = (v: unknown, unit = CX) => (typeof v === 'number' ? `${v * unit}px` : typeof v === 'string' && /^\d+(\.\d+)?%$/.test(v) ? v : undefined);
 
 export function boxStyle(p: Record<string, unknown>): CSSProperties {
   const s: CSSProperties = { display: p.display === 'none' ? 'none' : 'flex' };
@@ -112,9 +153,9 @@ export function boxStyle(p: Record<string, unknown>): CSSProperties {
   s.columnGap = px(p.columnGap, CX);
   s.rowGap = px(p.rowGap, CY);
   s.width = size(p.width);
-  s.height = size(p.height);
+  s.height = size(p.height, LH);
   s.minWidth = size(p.minWidth);
-  s.minHeight = size(p.minHeight);
+  s.minHeight = size(p.minHeight, LH);
   if (typeof p.padding === 'number') s.padding = `${p.padding * CY}px ${p.padding * CX}px`;
   if (typeof p.margin === 'number') s.margin = `${p.margin * CY}px ${p.margin * CX}px`;
   for (const [k, side, unit] of [['paddingX', ['paddingLeft', 'paddingRight'], CX], ['paddingY', ['paddingTop', 'paddingBottom'], CY], ['marginX', ['marginLeft', 'marginRight'], CX], ['marginY', ['marginTop', 'marginBottom'], CY]] as const) {
@@ -124,15 +165,16 @@ export function boxStyle(p: Record<string, unknown>): CSSProperties {
     const v = px(p[k], unit);
     if (v) (s as Record<string, string>)[k] = v;
   }
-  // 테두리는 사방 한 줄로만 — 한쪽 띠는 그리지 않는다(UI 규칙)
+  // 테두리는 사방 한 줄로만 — 한쪽 띠는 그리지 않는다(UI 규칙, 호스트도 borderTop 같은 한 변 속성은 안 받는다). borderDimColor = 흐린 선
   if (typeof p.borderStyle === 'string' && p.borderStyle) {
-    s.border = `1px solid ${colorOf(p.borderColor) ?? 'var(--line-strong)'}`;
+    s.border = `1px solid ${p.borderDimColor === true ? 'var(--line)' : colorOf(p.borderColor) ?? 'var(--line-strong)'}`;
     s.borderRadius = p.borderStyle === 'round' ? '8px' : '3px';
     if (!s.padding) s.padding = `${CY}px ${CX}px`;
   }
   const bg = colorOf(p.backgroundColor);
   if (bg) s.background = bg;
-  if (p.overflow === 'hidden') s.overflow = 'hidden';
+  // 높이를 정한 Box 는 넘친 줄을 제 경계에서 자른다 — 안 자르면 옆·아래 칸 글 위에 겹쳐 그린다
+  if (p.overflow === 'hidden' || s.height) s.overflow = 'hidden';
   for (const k of Object.keys(s) as (keyof CSSProperties)[]) if (s[k] === undefined) delete s[k];
   return s;
 }
@@ -177,7 +219,13 @@ export function colorOf(c: unknown): string | undefined {
 export const hrefOk = (h: string) => /^(https?:|file:)/i.test(h.trim());
 
 /** 칸 px → 글자 칸(viewport). 모드가 크기에 맞춰 그리게 */
-export const cellsOf = (w: number, h: number) => ({ columns: Math.max(1, Math.floor(w / CX)), rows: Math.max(1, Math.floor(h / 18)) });
+export const cellsOf = (w: number, h: number) => ({ columns: Math.max(1, Math.floor(w / CX)), rows: Math.max(1, Math.floor(h / LH)) });
+
+/** 폰 홈 모드 카드가 모드에 주는 줄 수(504px). 카드는 내용만큼 늘어나 홈이 스크롤하니(10/12) 잰 높이를 보내면 다음 받기마다 칸이 바뀐다.
+ *  20줄(360)이면 맛보기 그림이 높이 248 에 맞춰 0.56~0.72배로 줄었다 — 28줄이면 세로 41칸 1.0배·가로 100칸 0.89배 이상 */
+export const PHONE_HOME_ROWS = 28;
+/** 폰 모드 칸 → 글자 칸. height = null 이면 홈 카드(PHONE_HOME_ROWS), 꽉 채워 보기는 잰 높이 */
+export const phoneCells = (w: number, h: number | null) => cellsOf(w, h ?? PHONE_HOME_ROWS * LH);
 
 /** 누름 재료 — Rust mode_act 가 규약 요청으로 바꾼다(받는 칸만 골라 담는다) */
 export type Act =
@@ -196,15 +244,19 @@ export function actOf(n: TNode, o: { value?: string; submit?: boolean; href?: st
 
 export type HostState = { alive: boolean; ready: boolean; unsupported: boolean; error: string | null; status?: string | null; panes?: { id: string; title: string; plugin?: string }[]; shown?: string | null; log?: string; pid?: number };
 
-/** 모드 칸이 무엇을 보일까 — 판이 규약을 모름 / 멈춤(다시 켜기) / 띄우는 중 / 그림 */
-export function modeNote(s: Pick<HostState, 'alive' | 'ready' | 'unsupported' | 'error'>): 'unsupported' | 'stopped' | 'starting' | 'ok' {
+/** '켜는 중'이 이보다 길면 다시 켜기를 보인다(첫 켬 실측 0.6~0.8초, Rust 붙기 기다림 최대 45초) — 10/13 까닭 없이 영원히 돌았다 */
+export const START_SLOW_MS = 60_000;
+
+/** 모드 칸이 무엇을 보일까 — 판이 규약을 모름 / 멈춤(다시 켜기) / 띄우는 중 / 오래 걸림(다시 켜기) / 그림 */
+export function modeNote(s: Pick<HostState, 'alive' | 'ready' | 'unsupported' | 'error'>, slow = false): 'unsupported' | 'stopped' | 'starting' | 'slow' | 'ok' {
   if (s.unsupported) return 'unsupported';
   if (!s.alive && s.error) return 'stopped';
-  return s.alive && s.ready ? 'ok' : 'starting';
+  if (s.alive && s.ready) return 'ok';
+  return slow ? 'slow' : 'starting';
 }
 
 /** mode_list 한 줄(Rust modes_host::ModeRow). dash = 대시보드 칸이면 어느 대시보드(참모·프로젝트 이름) */
-export type ModeRow = { name: string; title: string; source: 'folder' | 'added' | 'plugin' | 'example'; dir: string; whereDefault: string; keepAlive?: boolean; on: boolean; where: string; alive: boolean; pid: number; dash?: string | null; top?: boolean };
+export type ModeRow = { name: string; title: string; source: 'folder' | 'added' | 'plugin' | 'example'; dir: string; whereDefault: string; keepAlive?: boolean; on: boolean; where: string; alive: boolean; pid: number; dash?: string | null; top?: boolean; hidden?: boolean };
 
 /** 따로 창 '항상 위' — 처음엔 mode_list 의 기억(rows), 그 뒤엔 지금 값(boolean)에 Rust 밀림 {subtype:'top', on} 을 얹는다 */
 export function modeTop(cur: ModeRow[] | boolean, name: string, msg?: { name: string; ev: { subtype?: string; on?: boolean } }): boolean {
@@ -219,9 +271,11 @@ export const placedModes = (rows: ModeRow[], where: 'panel' | 'modal' | 'full') 
 export const panelModes = (rows: ModeRow[]) => placedModes(rows, 'panel');
 
 /** 이 대시보드 칸에 붙일 것 — 대상이 이 대시보드를 가리키는 말(참모 이름·id, 프로젝트 이름·폴더) 중 하나와 같을 때만 */
-export const dashModes = (rows: ModeRow[], keys: string[]) => {
-  const ks = new Set(keys.filter(Boolean));
-  return rows.filter((r) => r.on && r.where === 'dash' && !!r.dash && ks.has(r.dash));
+export const dashModes = <T extends Pick<ModeRow, 'on' | 'where' | 'dash'>>(rows: T[], keys: string[]) => {
+  // 참모는 기본 이름(" · " 앞)으로도 — 짧은 이름(참모-7)·옛 역할 이름으로 저장된 칸도 그 참모 칸에(10/13)
+  const base = (k: string) => (k.split(' · ')[0] ?? k).trim();
+  const ks = new Set(keys.filter(Boolean).flatMap((k) => [k, base(k)]));
+  return rows.filter((r) => r.on && r.where === 'dash' && !!r.dash && (ks.has(r.dash) || ks.has(base(r.dash))));
 };
 
 /** 메뉴 '새 모드 만들기…' — 지금 채팅 탭 참모 입력칸에 넣을 한 줄(보내기는 사람이, 끝에 보여 줄 것을 친다).

@@ -1,0 +1,23 @@
+{
+  "_": "옛 보관함 기록 접기 표 — Rust locker::fold 시험이 읽는다(v4 부터 scripts/locker 는 진짜 폴더를 쓰고, 옛 기록은 locker_fs::migrate 가 이 접기로 한 번 옮긴다)",
+  "log": [
+    {"ts": "2026-10-11T01:00:00Z", "op": "add", "owner": "참모-2", "path": "/h/dev/shop/out/a.xlsx", "by": "참모-2"},
+    {"ts": "2026-10-11T01:01:00Z", "op": "add", "owner": "참모-2", "path": "/h/Desktop/b.pdf", "by": "me", "folder": "10월 보고"},
+    {"ts": "2026-10-11T01:02:00Z", "op": "folder", "owner": "참모-2", "name": "10월 보고"},
+    {"ts": "2026-10-11T01:02:30Z", "op": "folder", "owner": "참모-2", "name": "견적"},
+    {"ts": "2026-10-11T01:03:00Z", "op": "move", "owner": "참모-2", "path": "/h/dev/shop/out/a.xlsx", "folder": "견적"},
+    {"ts": "2026-10-11T01:04:00Z", "op": "rename", "owner": "참모-2", "path": "/h/dev/shop/out/a.xlsx", "name": "매출 9월"},
+    {"ts": "2026-10-11T01:05:00Z", "op": "hide", "owner": "참모-2", "path": "/h/Desktop/b.pdf"},
+    "깨진 줄",
+    {"ts": "2026-10-11T01:06:00Z", "op": "add", "owner": "참모-3", "path": "/h/dev/shop/out/a.xlsx", "by": "me"},
+    {"ts": "2026-10-11T01:07:00Z", "op": "add", "owner": "참모-2", "path": "/h/dev/shop/out/a.xlsx", "by": "me", "folder": "10월 보고"},
+    {"ts": "2026-10-11T01:08:00Z", "op": "unfolder", "owner": "참모-2", "name": "10월 보고"},
+    {"ts": "2026-10-11T01:09:00Z", "op": "hide", "owner": "참모-2", "path": "/h/dev/shop/v1.html"}
+  ],
+  "items": [
+    {"owner": "참모-2", "path": "/h/dev/shop/out/a.xlsx", "folder": null, "name": "매출 9월", "ts": "2026-10-11T01:00:00Z"},
+    {"owner": "참모-3", "path": "/h/dev/shop/out/a.xlsx", "folder": null, "name": null, "ts": "2026-10-11T01:06:00Z"}
+  ],
+  "hidden": [["참모-2", "/h/Desktop/b.pdf"], ["참모-2", "/h/dev/shop/v1.html"]],
+  "folders": [["참모-2", "견적"]]
+}

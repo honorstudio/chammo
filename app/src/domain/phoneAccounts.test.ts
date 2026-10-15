@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import macRs from '../../src-tauri/src/mobile.rs?raw';
 import css from '../ui/mobile/mobile.css?raw';
 import { ACCOUNTS_CHANGED } from './accounts';
-import { headUsage, accountHead, confirmText, phoneAccountError, phoneAccountRows, readPhoneAccounts } from './phoneAccounts';
+import { headLeft, headUsage, accountHead, confirmText, phoneAccountError, phoneAccountRows, readPhoneAccounts } from './phoneAccounts';
 
 const NOW = new Date(2026, 9, 5, 14, 0).getTime();
 const H = 3_600_000;
@@ -30,6 +30,14 @@ describe('폰 계정 시트', () => {
     expect(rows.map((r) => [r.id, r.name, r.on, r.five, r.week])).toEqual([['a1', '큰 것', true, 60, 90], ['a2', '보조', false, 3, null]]);
     expect(rows[0]!.rest).toBeNull();
     expect(rows[1]!.rest).toBe('17:00까지 쉬는 중');
+  });
+
+  it('두 칸 고르기(시안 phone-dash S3) — 숫자 하나(적은 쪽)와 그 칸이 다시 차는 때 하나', () => {
+    const rows = phoneAccountRows(readPhoneAccounts(raw())!, NOW);
+    expect(rows.map((r) => [r.left, r.soon])).toEqual([[60, '16:00'], [3, '17:00']]);
+    const week = phoneAccountRows(readPhoneAccounts(raw({ auto: { on: true, slots: { a1: { five: { used: 5, resetsAt: NOW + H }, week: { used: 80, resetsAt: NOW + 50 * H } } } } }))!, NOW);
+    expect(week[0]!.soon).toBe('수 16:00');
+    expect(week[1]!.soon).toBeNull();
   });
 
   it('자동 전환이 막아 둔 칸(한도 오류)도 쉬는 중, 지난 막힘은 아니다', () => {
@@ -95,11 +103,11 @@ describe('폰 계정 시트', () => {
   });
 
   it('누르는 자리는 44px 이상', () => {
-    for (const sel of ['.m-acct-head', '.m-acct-auto']) {
+    for (const sel of ['.m-acct-ring', '.m-acct-auto']) {
       const rule = css.split('\n').find((l) => l.startsWith(`${sel} {`)) ?? '';
-      expect(Number(/min-height: (\d+)px/.exec(rule)?.[1] ?? 0), sel).toBeGreaterThanOrEqual(44);
+      expect(Number(/(?:min-)?height: (\d+)px/.exec(rule)?.[1] ?? 0), sel).toBeGreaterThanOrEqual(44);
     }
-    expect(css).toMatch(/\.m-acct \{[^}]*min-height: 56px/);
+    expect(css).toMatch(/\.m-acct-tile \{[^}]*min-height: 132px/);
   });
 
   it('머리줄 사용량 — 지금 칸의 계정 사용량이 있으면 그것(바꾼 직후 상태줄은 옛 계정 값), 없으면 상태줄', () => {
@@ -109,5 +117,13 @@ describe('폰 계정 시트', () => {
     expect(headUsage(readPhoneAccounts(raw({ auto: {} })), status, NOW)).toBe('5시간 58% · 주 82%');
     expect(headUsage(null, status, NOW)).toBe('5시간 58% · 주 82%');
     expect(headUsage(null, '{}', NOW)).toBe('');
+  });
+
+  it('머리줄 계정 고리(시안 phone-dash H2) — 숫자 하나 = 5시간·주 중 적은 쪽(데스크톱 계정 창과 같은 규칙)', () => {
+    const status = JSON.stringify({ rate_limits: { five_hour: { used_percentage: 42, resets_at: (NOW + H) / 1000 }, seven_day: { used_percentage: 18, resets_at: (NOW + 50 * H) / 1000 } } });
+    expect(headLeft(readPhoneAccounts(raw({ active: 'a2' })), status, NOW)).toBe(3);
+    expect(headLeft(readPhoneAccounts(raw()), status, NOW)).toBe(60);
+    expect(headLeft(null, status, NOW)).toBe(58);
+    expect(headLeft(null, '{}', NOW)).toBeNull();
   });
 });

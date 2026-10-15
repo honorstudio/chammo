@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { askName, closedText, controlOf, takeoverLine, browserBig, browserScreen, currentSite, EMPTY_MS, frameTrouble, GONE_MS, UNSURE_MS, liveOf, paneStatus, phoneTrouble, siteOf, tabStrip, unpackFrame, type Live, stuckLine, permLine, fedcmChoices, fedcmLine, focusFailLine, peekStep } from './agentBrowser';
+import { askName, closedText, controlOf, takeoverLine, browserBig, browserScreen, currentSite, EMPTY_MS, frameTrouble, GONE_MS, UNSURE_MS, liveOf, paneStatus, phoneTrouble, siteOf, tabStrip, unpackFrame, type Live, stuckLine, permLine, fedcmChoices, fedcmLine, focusFailLine, peekStep, afterUnpeek } from './agentBrowser';
 
 const live = (o: Partial<Live> = {}): Live => ({ profile: 'acme', pid: 11, sessionPid: 22, url: 'https://a.com/', title: 'A', tabs: [], tool: '이동 https://a.com/', toolAt: 1000, busy: false, ts: 1000, ...o });
 
@@ -311,5 +311,18 @@ describe('peekStep — 패스키 창이 뜨면 사람이 쓰는 중일 때만 �
   });
   it('사람이 그 창을 직접 숨겼으면(shown 꺼짐) 더 할 일 없다', () => {
     expect(peekStep({ ...base, shown: false, peeked: { url: base.url }, popup: false })).toBe('unpeek');
+  });
+});
+
+describe('afterUnpeek — 저절로 숨기기를 Rust 가 거절하면(크롬 자체 창이 아직 떠 있음) 꺼낸 채 둔다(2026-10-11 네이버 패스키 깜빡임)', () => {
+  const peeked = { url: 'https://login.example.com/' };
+  it('숨겼으면 꺼낸 표를 지운다', () => {
+    expect(afterUnpeek(true, peeked, peeked.url)).toBeNull();
+  });
+  it('거절이면 꺼낸 채 — 같은 주소면 같은 표(다시 그려 곧장 또 부르지 않게)', () => {
+    expect(afterUnpeek(false, peeked, peeked.url)).toBe(peeked);
+  });
+  it('거절인데 주소가 바뀌었으면 새 주소로 — 주소 바뀜만으로 1초마다 다시 숨기려 하지 않게', () => {
+    expect(afterUnpeek(false, peeked, 'https://login.example.com/next')).toEqual({ url: 'https://login.example.com/next' });
   });
 });

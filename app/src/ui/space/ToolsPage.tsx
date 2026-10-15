@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { filterAvailable, filterSkills, mcpRows, removeScope, respawnTargets, shortMcpName, type Available, type Market, type McpDot, type McpRow, type McpStatus, type PluginRow, type ToolSkill, type ToolsConf } from '../../domain/tools';
 import { machine, tr } from '../../i18n';
 import { IconClose, IconOpen, IconPlus, IconRefresh, IconSend, IconTrash } from '../Icons';
+import { IconButton } from '../kit/IconButton';
 import { useOrchActions } from '../orchActions';
 import { runPool } from '../../domain/runPool';
 import './tools.css';
@@ -172,7 +173,7 @@ export function ToolsPage({ root, roots, onRoot, sessions, onInvoke, onOpen, com
                 <option value="project">{tr('이 프로젝트 · .mcp.json', 'This project · .mcp.json')}</option>
                 <option value="user">{tr('모든 프로젝트', 'All projects')}</option>
               </select>
-              <button className="cv-btn solid" type="submit" disabled={!form.name.trim() || !form.target.trim() || busy.includes('m+')}>{tr('추가', 'Add')}</button>
+              <IconButton size="l" tone="pri" type="submit" label={tr('추가', 'Add')} disabled={!form.name.trim() || !form.target.trim()} busy={busy.includes('m+')} busyLabel={tr('더하는 중', 'Adding')}><IconPlus /></IconButton>
             </form>
           )}
           {!conf && <div className="tl-empty">{tr('읽는 중…', 'Loading…')}</div>}
@@ -211,7 +212,7 @@ export function ToolsPage({ root, roots, onRoot, sessions, onInvoke, onOpen, com
             </div>
           ))}
           <div className="tl-sub">
-            <input className="tl-find wide" type="search" value={pq} onFocus={() => { if (!avail) void loadAvail(); }} onChange={(e) => setPq(e.target.value)} placeholder={tr('깔 플러그인 찾기', 'Find plugins to install')} aria-label={tr('깔 플러그인 찾기', 'Find plugins to install')} />
+            <input className="tl-find wide" type="search" value={pq} onFocus={() => { if (!avail) void loadAvail(); }} onChange={(e) => setPq(e.target.value)} placeholder={tr('플러그인 찾아서 깔기', 'Find plugins to install')} aria-label={tr('깔 플러그인 찾기', 'Find plugins to install')} />
           </div>
           {pq.trim() && !avail && <div className="tl-empty">{tr('마켓플레이스 읽는 중…', 'Reading marketplaces…')}</div>}
           {avail && pq.trim() && filterAvailable(avail, pq).length === 0 && <div className="tl-empty">{tr('맞는 플러그인이 없어요', 'No matching plugins')}</div>}
@@ -223,12 +224,12 @@ export function ToolsPage({ root, roots, onRoot, sessions, onInvoke, onOpen, com
           ))}
 
           <div className="tl-head sub"><h3>{tr('마켓플레이스', 'Marketplaces')}</h3>
-            <button className="cv-btn" onClick={() => setMarketAdd((v) => (v === null ? '' : null))}>{marketAdd === null ? tr('마켓플레이스 추가', 'Add marketplace') : tr('그만', 'Cancel')}</button>
+            <button className={`tl-act ${marketAdd !== null ? 'on' : ''}`} onClick={() => setMarketAdd((v) => (v === null ? '' : null))} aria-label={marketAdd === null ? tr('마켓플레이스 추가', 'Add marketplace') : tr('그만', 'Cancel')} title={marketAdd === null ? tr('마켓플레이스 추가', 'Add marketplace') : tr('그만', 'Cancel')}>{marketAdd === null ? <IconPlus /> : <IconClose />}</button>
           </div>
           {marketAdd !== null && (
             <form className="tl-form" onSubmit={(e) => { e.preventDefault(); const src = marketAdd.trim(); if (src) ask(tr('이 마켓플레이스를 더할까?', 'Add this marketplace?'), tr(`${src} — 여기 있는 플러그인을 깔 수 있게 돼. 믿을 수 있는 곳만 더해 줘.`, `${src} — its plugins become installable. Only add sources you trust.`), tr('추가', 'Add'), () => market('add', src), false); }}>
               <input autoFocus className="wide" value={marketAdd} onChange={(e) => setMarketAdd(e.target.value)} placeholder={tr('GitHub 저장소(owner/repo)·git 주소·폴더', 'GitHub owner/repo, git URL or folder')} aria-label={tr('마켓플레이스 주소', 'Marketplace source')} />
-              <button className="cv-btn solid" type="submit" disabled={!marketAdd.trim() || busy.some((b) => b.startsWith('k:add'))}>{busy.some((b) => b.startsWith('k:add')) ? tr('받는 중…', 'Fetching…') : tr('추가', 'Add')}</button>
+              <IconButton size="l" tone="pri" type="submit" label={tr('추가', 'Add')} disabled={!marketAdd.trim()} busy={busy.some((b) => b.startsWith('k:add'))} busyLabel={tr('받는 중…', 'Fetching…')}><IconPlus /></IconButton>
             </form>
           )}
           {markets?.map((m) => (

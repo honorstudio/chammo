@@ -9,6 +9,7 @@ import { diffBlocks, merge3 } from '../../domain/docMerge';
 import { lastSaved, newSession, readOutside, saveNow, saveSoon, setBase, type DocSession } from './docSave';
 import { absorbOutside } from './pending';
 import { parseMd, writeMd } from './mdPipeline';
+import { useShownRef } from './docKeep';
 
 export type SyncState = 'ok' | 'conflict' | 'gone' | 'unreadable';
 const EVERY = 1500;
@@ -77,9 +78,11 @@ export function useDocSync(editor: Ed, path: string, md: string) {
     setState('ok');
   };
 
+  // 살려 둔(숨은) 편집기는 바깥 고침을 안 읽는다 — 다시 보이면 바로 한 번(ui/space/docKeep)
+  const shownRef = useShownRef(() => void tick());
   const tick = async () => {
     const ses = s.current;
-    if (!ready.current || busy.current || ses.writing) return;
+    if (!ready.current || busy.current || ses.writing || !shownRef.current) return;
     busy.current = true;
     try {
       const ver = ses.base.ver;

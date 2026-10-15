@@ -49,6 +49,12 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
                                                        panel, dashboard, preview or full)
   scripts/app mode add <folder>                        register a mode the user made elsewhere (a project folder made with
                                                        /plugin-authoring) — the folder name becomes the mode name
+  scripts/app mode remove <name> [--trash-source]      built-in (example) modes and Claude plugins: hide (comes back with
+                                                       restore-builtin). The user's modes: turn off and remove for good —
+                                                       registration, place, app data and the mode's saved data. Their source
+                                                       folder stays unless --trash-source (macOS Trash, never deleted) — ask the
+                                                       user first. A mode inside the data folder needs --trash-source
+  scripts/app mode restore-builtin [<name>]            show hidden built-in modes again (all of them without a name)
   scripts/app push "<title>" ["<one line>"]            push a notification to the user's phone (home-screen web app
                                                        with the bell on). Sent even while the user looks at the Mac.
                                                        Title + 60 chars only — no secrets. Exit 4 = no subscribed
@@ -198,12 +204,13 @@ def _new_project():
 
 
 def _trusted(projects, path):
-    """Claude Code 처럼 위 폴더 믿음도 물려받는다"""
+    """Claude Code 처럼 위 폴더 믿음도 물려받되, 가장 가까운 칸에 적힌 값이 이긴다 — 그 폴더 칸에 false 가 박혀 있으면
+    위 폴더가 true 여도 'Workspace not trusted' 였다(2026-10-11 project-s)"""
     cur = path
     while True:
         p = projects.get(cur)
-        if isinstance(p, dict) and p.get('hasTrustDialogAccepted') is True:
-            return True
+        if isinstance(p, dict) and 'hasTrustDialogAccepted' in p:
+            return p.get('hasTrustDialogAccepted') is True
         up = os.path.dirname(cur)
         if up == cur:
             return False
@@ -378,13 +385,18 @@ MODE_WHERE = ('window', 'panel', 'dash', 'modal', 'full')
 
 
 def mode_args(argv):
-    """mode list | open <이름> [--where …] | close <이름> | add <폴더> | top <이름> on|off → 앱에 넘길 arg. 틀리면 None"""
+    """mode list | open <이름> [--where …] | close <이름> | add <폴더> | top <이름> on|off | remove <이름> [--trash-source]
+    | restore-builtin [<이름>] → 앱에 넘길 arg. 틀리면 None"""
     verb, rest = (argv[0] if argv else ''), argv[1:]
     ok_name = lambda n: bool(n) and len(n) <= 64 and not n.startswith('.') and all(c.isascii() and (c.isalnum() or c in '._-') for c in n)
     if verb == 'list' and not rest:
         return {'verb': 'list'}
     if verb == 'close' and len(rest) == 1 and ok_name(rest[0]):
         return {'verb': 'close', 'name': rest[0]}
+    if verb == 'remove' and rest and ok_name(rest[0]) and rest[1:] in ([], ['--trash-source']):
+        return {'verb': 'remove', 'name': rest[0], **({'trash': True} if rest[1:] else {})}
+    if verb == 'restore-builtin' and len(rest) <= 1 and all(ok_name(n) for n in rest):
+        return {'verb': 'restore-builtin', **({'name': rest[0]} if rest else {})}
     if verb == 'top' and len(rest) == 2 and ok_name(rest[0]) and rest[1] in ('on', 'off'):
         return {'verb': 'top', 'name': rest[0], 'on': rest[1] == 'on'}
     if verb == 'add' and len(rest) == 1 and os.path.isdir(os.path.expanduser(rest[0])):

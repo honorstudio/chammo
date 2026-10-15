@@ -2,8 +2,11 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MobileApp } from './ui/mobile/MobileApp';
+import { ErrorBoundary } from './ui/ErrorBoundary';
 import { PairHelp } from './ui/mobile/PairHelp';
+import './ui/layers.css';
 import './ui/mobile/mobile.css';
+import './ui/paused.css';
 
 import { avatarBlobUrl, pair, readAvatarsForPhone } from './data/web';
 import { pairCodeFrom } from './domain/mobileAuth';
@@ -21,7 +24,7 @@ setAvatarSource({ read: readAvatarsForPhone, dataDir: () => Promise.resolve('pho
 window.addEventListener(RESUME_EVENT, () => { void refreshAvatars(); });
 
 const root = createRoot(document.getElementById('root')!);
-const show = () => root.render(<StrictMode><MobileApp /></StrictMode>);
+const show = () => root.render(<StrictMode><ErrorBoundary><MobileApp /></ErrorBoundary></StrictMode>);
 
 // QR 로 열었으면 — 일회용 코드를 내고 이 기기 토큰을 받아 저장한 뒤 주소에서 코드를 지운다
 const code = pairCodeFrom(location.search);

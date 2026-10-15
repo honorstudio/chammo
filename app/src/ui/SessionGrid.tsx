@@ -1,33 +1,32 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { gridShape } from '../domain/adopt';
 import { resizeTracks, tracksFor } from '../domain/gridSizing';
-import { paneToFocus, visiblePanes, type LayoutAction, type PaneLayout } from '../domain/paneLayout';
+import { chatHeadPane, paneToFocus, visiblePanes, type LayoutAction, type PaneLayout } from '../domain/paneLayout';
 import type { Session } from '../domain/session';
 import { pasteSequence } from '../domain/memo';
 import { enterDelay, typedChunks } from '../domain/chat';
 import { escPlan, typeQueue } from '../domain/chatQueue';
 import { AdoptCard } from './AdoptCard';
 import { statusKind } from '../domain/statusMark';
-import { IconChat, IconClose, IconExpand, IconMaximize, IconPlus, IconTerminal } from './Icons';
-import { OrchName, useOrchActions } from './orchActions';
+import { sessionStatus, type ActivityStatus } from '../domain/status';
+import { IconChat, IconExpand, IconMaximize, IconTerminal } from './Icons';
 import { StatusMark } from './StatusMark';
 import { PaneControls } from './PaneControls';
-import { TerminalPane, type PaneApi } from './TerminalPane';
+import { NoteButton, TerminalPane, type PaneApi } from './TerminalPane';
 import { ChatView } from './chat/ChatView';
-import { assistant, tr } from '../i18n';
+import { tr } from '../i18n';
 import { attachCommand } from '../domain/termCommand';
-import { keyLabel } from '../domain/keys';
 import { IS_WIN } from '../domain/reader';
-import { runModelPick } from './chat/modelPickRun';
+import { runModelPick, type PickResult, type PickWant } from './chat/modelPickRun';
 import { claudeDefaults, pickLog } from '../data/tauri';
-import { OrchAvatar, avatarState, orchColor, useAvatars } from './avatar';
+import { orchColor, useAvatars } from './avatar';
 import { bodyColor } from '../domain/avatar';
-import { useSpeaking } from './speakGlow';
-import { ChatTabStrip } from './ChatTabStrip';
 import { orchVars } from '../domain/orchTheme';
-import { dragStarted, dropIndex, tabShift } from '../domain/tabDrag';
 
 type Props = {
+  /** 세션 판단(domain/status activityStatus) — 칸 머리 표시. 없으면 세션 목록만으로 */
+  statusOf?: (s: Session) => ActivityStatus;
   /** 고정한 참모 창 id(고정 순서) — 채팅 탭이 끌어 둔 순서보다 앞 */
   pinnedIds?: string[];
   /** 순서를 밖에서 들고 있는 격자(참모 — domain/orchOrder) — 끌어 옮기면 격자 order 대신 이걸 부른다. ids = 지금 순서(sessions 순서) */
@@ -58,8 +57,8 @@ type Props = {
   /** 채팅 대화 사이에 끼울 것(직접 답하기 카드) — 참모 채팅만 */
   extraOf?: (s: Session) => { ts: string; key: string; pin?: boolean; clip?: boolean; node: ReactNode }[];
   memo?: MemoHooks;
-  /** 채팅 탭 줄 끝의 + — 참모 하나 더(⌘T) */
-  onAdd?: () => void;
+  /** 채팅 입력칸 위 한 줄(참모 깨우는 중) — 이 격자의 채팅 모두에 */
+  chatNotice?: ReactNode;
   /** 한 열로 세로 쌓기 — 사무실 모드 오른쪽 대화 세션 열 */
   column?: boolean;
   /** 스페이스 모드 — 창마다 터미널 위에 채팅 판(터미널은 뒤에 붙어 있다). tabs 면 탭 줄 + 한 번에 한 창 */
@@ -68,6 +67,8 @@ type Props = {
   ctxOf?: (s: Session) => number | undefined;
   /** 채팅 머리줄 칩용 모델·에포트 */
   modelOf?: (s: Session) => { model?: string; modelId?: string; effort?: string } | undefined;
+  /** 채팅 칸 머리 자리(App space-chat-head) — 보이는 창 이름·맡은 일을 여기 올리고, 한 창만 보이면 단추도 올리고 칸 머리 줄은 숨긴다(2026-10-12 사용자) */
+  headSlot?: HTMLElement | null;
 };
 
 /** 창마다 메모: 머리줄 최근 한 줄 + 열린 창(openId) 위에 메모판. send 는 그 창 입력칸에 붙여넣기 */
@@ -119,12 +120,32 @@ const cumulative = (fr: number[]) => {
  * 세션 여러 개를 격자로 + 접은 창은 아래 띠. 띠의 창은 attach 를 떼어 둔다(메모리).
  * 경계선을 끌면 열·줄 비율이 바뀌고, 머리줄을 끌어 다른 창에 놓으면 자리가 바뀐다
  */
-export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, onMessage, fontSize, home, onFocusSession, initialFocus, focusRequest, onFocusRequestDone, gridId, onStop, titleOf = paneTitle, subOf, memo, column, chat, ctxOf, modelOf, onAdd, pinnedIds = [], onReorder }: Props) {
-  const speaking = useSpeaking(); // 음성 모드에서 지금 소리 내는 참모 — 그 채팅 탭 둘레만 빛난다(칸·프사·왼쪽 목록은 뺐다, 2026-10-03 사용자)
+export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, onMessage, fontSize, home, onFocusSession, initialFocus, focusRequest, onFocusRequestDone, gridId, onStop, titleOf = paneTitle, subOf, memo, chatNotice, column, chat, ctxOf, modelOf, pinnedIds = [], onReorder, statusOf = sessionStatus, headSlot }: Props) {
   const panes = useRef(new Map<string, PaneApi>());
   // 모델 칩 — 바꾸는 동안 지금 모델·에포트(상태줄)를 새로 읽게(일하는 중엔 화면 글로는 끝을 못 알아본다)
   const modelOfRef = useRef(modelOf);
   modelOfRef.current = modelOf;
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+  // 모델·에포트 바꾸기 — 채팅 칩과 폰 칩(phone-model-pick)이 같은 길: /model·/effort 를 치고 ~/.claude/settings.json 기본값은 되돌린다(runModelPick)
+  const pickFor = async (id: string, s: Session, want: PickWant): Promise<PickResult> => {
+    const api = panes.current.get(id);
+    if (!api) return { ok: false as const, why: tr('터미널이 아직 안 붙었어요', 'Terminal not attached yet') };
+    const r = await runModelPick(api, want, { id, defaults: claudeDefaults, current: () => modelOfRef.current?.(s) });
+    // 못 바꿨으면 그때 화면을 로그로 남기고 칩 옆에 이유만 — 터미널로 넘기지 않는다(2026-10-01 사용자 "완벽하게 UI 로만")
+    if (!r.ok) void pickLog(`--- ${new Date().toISOString()} ${s.name} want=${JSON.stringify(want)} why=${r.why}\n${(r.screen ?? []).join('\n')}`).catch(() => {});
+    return r;
+  };
+  // 폰 입력창 모델 칩(App appctl modelPick) — 이 격자에 그 세션 창이 있을 때만
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ id: string; want: PickWant }>).detail;
+      const s = sessionsRef.current.find((x) => x.id === d?.id);
+      if (s && panes.current.has(s.id)) void pickFor(s.id, s, d.want);
+    };
+    window.addEventListener('phone-model-pick', on);
+    return () => window.removeEventListener('phone-model-pick', on);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // 개발판에서만 — 시험 도구가 창 화면을 읽고 키를 넣게(모델 칩 실측, 2026-10-01)
   if (import.meta.env.DEV) (window as unknown as { __panes?: unknown }).__panes = panes.current;
   // 채팅 판: 터미널로 돌려 본 창들, 창마다 채팅 입력칸 포커스
@@ -174,6 +195,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
     const { id, n } = focusRequest;
     last.current = id;
     setTab(id); // 탭 보기면 그 탭으로(⌘1~9·세션으로 가기)
+    onFocusSession?.(id); // 고른 창을 위에도 — 쌓아 보기에서 ⌘2 로 입력칸은 옮겨 갔는데 스페이스·보낼 곳은 앞 참모에 남았다(2026-10-11 하네스)
     if (chat === 'tabs') window.dispatchEvent(new CustomEvent('chat-tab-pick', { detail: id })); // 스페이스도 그 참모 대시보드로
     focusNow(id);
     window.clearTimeout(again.current);
@@ -181,9 +203,6 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
     onFocusRequestDone?.(n);
   }, [focusRequest?.n]); // eslint-disable-line react-hooks/exhaustive-deps
   const byId = new Map(sessions.map((s) => [s.id, s]));
-  // 채팅 뷰 참모 탭: 끄기·이름 바꾸기(탭 보기일 때만)
-  const actions = useOrchActions();
-  const orch = chat === 'tabs' ? actions : null;
   const { saved: avatars } = useAvatars();
   /** 참모 색 — 프사에서 고른 색, 없으면 순서 색(사이드바와 같은 순서) */
   const colorOfOrch = (x: Session) => bodyColor(avatars, x.name || '', orchColor(x.name || ''));
@@ -198,62 +217,14 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
   useEffect(() => { if (tabbed && active && told.current !== active) { told.current = active; onFocusSession?.(active); } }, [tabbed, active]); // eslint-disable-line react-hooks/exhaustive-deps
   const { shown, strip } = tabbed ? { shown: [active!], strip: vis.strip } : vis;
   const drawn = tabbed ? vis.shown : shown;
+  const headId = chat && headSlot ? chatHeadPane({ tabbed, active, shown }) : null;
+  const headS = headId ? byId.get(headId) : undefined;
   const { cols, rows } = column ? { cols: shown.length ? 1 : 0, rows: shown.length } : gridShape(shown.length);
   const colFr = tracksFor(layout.cols, cols);
   const rowFr = tracksFor(layout.rows, rows);
   const box = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
-
-  // 채팅 탭 끌어 옮기기 — 크롬처럼 끄는 탭이 손을 따라가고 옆 탭이 비켜 준다, 놓으면 그 자리(2026-10-10 사용자).
-  // 조금(DRAG_SLOP) 움직여야 시작 — 그 전엔 그냥 클릭(탭 고르기·×). 고정한 탭과 안 고정한 탭은 서로 못 넘는다(domain/orchOrder)
-  const tabGrab = useRef<{ id: string; from: number; x: number; y: number; rects: { left: number; width: number }[]; lo: number; hi: number; ids: string[]; on: boolean; to: number } | null>(null);
-  const [tabDrag, setTabDrag] = useState<{ id: string; dx: number; from: number; to: number; step: number } | null>(null);
-  const dragged = useRef(false); // 끌기로 끝난 누름 — 뒤따르는 click 은 버린다
-  const pickTab = (id: string) => {
-    setTab(id); last.current = id; onFocusSession?.(id); window.dispatchEvent(new CustomEvent('chat-tab-pick', { detail: id }));
-    requestAnimationFrame(() => focusPane(id)); window.setTimeout(() => focusPane(id), 180); // 스페이스가 바뀌며 포커스를 뺏을 수 있어 한 번 더 — 탭을 바꾸면 입력칸에 바로(2026-09-30 사용자)
-  };
-  const tabDown = (id: string, i: number) => (e: React.PointerEvent<HTMLButtonElement>) => {
-    if (e.button !== 0 || !onReorder || (e.target as HTMLElement).closest('.tab-x')) return;
-    const tabs = [...(e.currentTarget.parentElement?.querySelectorAll<HTMLElement>(':scope > [role="tab"]') ?? [])];
-    const rects = tabs.map((t) => { const r = t.getBoundingClientRect(); return { left: r.left, width: r.width }; });
-    if (rects.length < 2 || rects.length !== vis.shown.length) return;
-    const nPinned = vis.shown.filter((x) => pinnedIds.includes(x)).length;
-    const [lo, hi] = pinnedIds.includes(id) ? [0, nPinned - 1] : [nPinned, vis.shown.length - 1];
-    if (lo >= hi) return; // 같은 칸끼리 옮길 곳이 없다
-    tabGrab.current = { id, from: i, x: e.clientX, y: e.clientY, rects, lo, hi, ids: vis.shown, on: false, to: i };
-    const move = (ev: PointerEvent) => {
-      const g = tabGrab.current;
-      if (!g) return;
-      const dx = ev.clientX - g.x;
-      if (!g.on && !dragStarted(dx, ev.clientY - g.y)) return;
-      g.on = true;
-      const me = g.rects[g.from]!;
-      const min = g.rects[g.lo]!.left - me.left;
-      const max = g.rects[g.hi]!.left + g.rects[g.hi]!.width - (me.left + me.width);
-      const cdx = Math.max(min, Math.min(max, dx));
-      g.to = dropIndex(g.rects, g.from, cdx, g.lo, g.hi);
-      const gap = g.rects[1]!.left - (g.rects[0]!.left + g.rects[0]!.width); // 탭 사이 틈(CSS gap, 다 같다)
-      setTabDrag({ id: g.id, dx: cdx, from: g.from, to: g.to, step: me.width + gap });
-    };
-    const up = () => {
-      removeEventListener('pointermove', move);
-      removeEventListener('pointerup', up);
-      removeEventListener('pointercancel', up);
-      const g = tabGrab.current;
-      tabGrab.current = null;
-      setTabDrag(null);
-      if (!g?.on) return;
-      dragged.current = true;
-      window.setTimeout(() => { dragged.current = false; }, 0);
-      if (g.to !== g.from) onReorder(sessions.map((s) => s.id), g.id, g.ids[g.to]!);
-      pickTab(g.id); // 크롬처럼 끈 탭이 고른 탭
-    };
-    addEventListener('pointermove', move);
-    addEventListener('pointerup', up);
-    addEventListener('pointercancel', up);
-  };
 
   const stop = async (s: Session) => {
     dispatch({ type: 'forget', id: s.id });
@@ -316,31 +287,32 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
     },
   });
 
+  // 창 머리 단추(채팅 판이면 터미널·채팅 바꾸기 + 크게·접기) — 칸 머리 줄 또는 채팅 칸 머리(headSlot)에
+  const buttonsOf = (s: Session) => {
+    const id = s.id;
+    const controls = (
+      <PaneControls
+        maximized={layout.maximized === id}
+        onMaximize={() => dispatch({ type: 'maximize', id })}
+        onRestore={() => dispatch({ type: 'restore' })}
+        onCollapse={() => dispatch({ type: 'collapse', id })}
+        onStop={s.kind === 'background' && !chat ? () => stop(s) : undefined}
+        compact={!!chat}
+      />
+    );
+    return chat && s.kind === 'background' ? (
+      <>
+        <button className="ib" aria-label={chatOn(id) ? tr('터미널 화면으로', 'Show the terminal') : tr('채팅 화면으로', 'Show the chat')} title={chatOn(id) ? tr('터미널 화면으로', 'Show the terminal') : tr('채팅 화면으로', 'Show the chat')}
+          onClick={() => { showTerm(id, chatOn(id)); requestAnimationFrame(() => focusPane(id)); }}>
+          {chatOn(id) ? <IconTerminal /> : <IconChat />}
+        </button>
+        {controls}
+      </>
+    ) : controls;
+  };
+
   const body = (
     <>
-      {chat === 'tabs' && vis.shown.length > 0 && ( /* 하나여도 늘 — 둘이 되는 순간 생기며 화면을 밀었다 */
-        <ChatTabStrip active={active} count={vis.shown.length} order={vis.shown.join()} dragging={!!tabDrag} add={onAdd && (
-          <button className="tab-add" onClick={onAdd} title={tr(`${assistant()} 하나 더 (⌘T)`, `One more ${assistant()} (⌘T)`)} aria-label={tr(`${assistant()} 하나 더`, `One more ${assistant()}`)}><IconPlus /></button>
-        )}>
-          {vis.shown.map((id, i) => {
-            const s = byId.get(id)!;
-            const shift = !tabDrag ? 0 : id === tabDrag.id ? tabDrag.dx : tabShift(i, tabDrag.from, tabDrag.to, tabDrag.step);
-            return (
-              <button key={id} role="tab" aria-selected={id === active} className={`${id === active ? 'on' : ''}${speaking === id ? ' st-speak' : ''}${tabDrag?.id === id ? ' ct-drag' : ''}`}
-                style={{ ...(orch ? orchVars(colorOfOrch(s)) : {}), ...(shift ? { transform: `translateX(${shift}px)` } : {}) } as React.CSSProperties}
-                onPointerDown={tabDown(id, i)} title={[subOf?.(s), i < 9 ? `${keyLabel(`⌘${i + 1}`, IS_WIN)} · ${tr('두 번 눌러 이름 바꾸기', 'double-click to rename')}` : undefined, onReorder ? tr(`끌거나 ${keyLabel('⌥⌘⇧←/→', IS_WIN)} 로 옮기기`, `Drag or ${keyLabel('⌥⌘⇧←/→', IS_WIN)} to move`) : undefined].filter(Boolean).join('\n') || undefined}
-                onClick={() => { if (!dragged.current) pickTab(id); }}
-                onDoubleClick={() => orch?.askRename(s)} onContextMenu={orch ? (e) => orch.menu(e, s, orchColor(s.name || '')) : undefined}>
-                {orch ? <OrchAvatar name={s.name || ''} size={18} state={avatarState(s)} color={orchColor(s.name || '')} label={orch.nameOf(s)} /> : <StatusMark kind={statusKind(s.state)} />}{orch ? <OrchName s={s} className="ct-nm" /> : <span className="ct-nm">{titleOf(s)}</span>}
-                {orch && s.kind === 'background' && (
-                  <span className="tab-x" role="button" aria-label={tr('세션 끄기', 'Stop session')} title={tr('세션 끄기(⌘W)', 'Stop session (⌘W)')}
-                    onClick={(e) => { e.stopPropagation(); orch.askStop(s, undefined, 'pane-x'); }}><IconClose /></span>
-                )}
-              </button>
-            );
-          })}
-        </ChatTabStrip>
-      )}
       {shown.length > 0 ? (
         <div className="gridbox" ref={box} data-grid={gridId}>
           <div
@@ -353,25 +325,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
             {drawn.map((id) => {
               const s = byId.get(id)!;
               const behind = tabbed && id !== active;
-              const controls = (
-                <PaneControls
-                  maximized={layout.maximized === id}
-                  onMaximize={() => dispatch({ type: 'maximize', id })}
-                  onRestore={() => dispatch({ type: 'restore' })}
-                  onCollapse={() => dispatch({ type: 'collapse', id })}
-                  onStop={s.kind === 'background' && !chat ? () => stop(s) : undefined}
-                  compact={!!chat}
-                />
-              );
-              const withChat = chat && s.kind === 'background' ? (
-                <>
-                  <button className="ib" aria-label={chatOn(id) ? tr('터미널 화면으로', 'Show the terminal') : tr('채팅 화면으로', 'Show the chat')} title={chatOn(id) ? tr('터미널 화면으로', 'Show the terminal') : tr('채팅 화면으로', 'Show the chat')}
-                    onClick={() => { showTerm(id, chatOn(id)); requestAnimationFrame(() => focusPane(id)); }}>
-                    {chatOn(id) ? <IconTerminal /> : <IconChat />}
-                  </button>
-                  {controls}
-                </>
-              ) : controls;
+              const withChat = buttonsOf(s);
               return (
                 <div key={id} data-session={id} className={`cell ${over === id ? 'over' : ''} ${dragging === id ? 'dragging' : ''} ${behind ? 'behind' : ''}`} {...cellDrop(id)}
                   style={{ ...(tabbed ? { gridArea: '1 / 1 / 2 / 2' } : {}), ...(chat ? orchVars(colorOfOrch(s)) : {}) } as React.CSSProperties} aria-hidden={behind || undefined}>
@@ -387,6 +341,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                       linkBase={s.cwd}
                       home={home}
                       onFocus={() => { last.current = id; onFocusSession?.(id); }}
+                      headless={!!headS}
                       note={memo?.note(s)}
                       onNoteClick={memo ? () => memo.onToggle(id) : undefined}
                       inject={(api) => {
@@ -403,14 +358,8 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           ctx={ctxOf?.(s)}
                           modelInfo={modelOf?.(s)}
                           cwd={s.cwd}
-                          pickModel={async (want) => {
-                            const api = panes.current.get(id);
-                            if (!api) return { ok: false as const, why: tr('터미널이 아직 안 붙었어요', 'Terminal not attached yet') };
-                            const r = await runModelPick(api, want, { id, defaults: claudeDefaults, current: () => modelOfRef.current?.(s) });
-                            // 못 바꿨으면 그때 화면을 로그로 남기고 칩 옆에 이유만 — 터미널로 넘기지 않는다(2026-10-01 사용자 "완벽하게 UI 로만")
-                            if (!r.ok) void pickLog(`--- ${new Date().toISOString()} ${s.name} want=${JSON.stringify(want)} why=${r.why}\n${(r.screen ?? []).join('\n')}`).catch(() => {});
-                            return r;
-                          }}
+                          notice={chatNotice}
+                          pickModel={(want) => pickFor(id, s, want)}
                           state={s.state}
                           send={(text) => {
                             typeAndSend(id, panes.current.get(id), text);
@@ -426,6 +375,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           pasteImage={() => panes.current.get(id)?.raw('\x16')}
                           voiceStop={voiceStops[id] ?? 0}
                           paneId={id}
+                          locker={chat ? { id, name: s.name || id } : undefined}
                           clearTerminal={(n) => clearInput(id, panes.current.get(id), n)}
                           sendQueuedNow={() => escOnce(id, panes.current.get(id))} // 멈추면 Claude 가 줄 선 말을 곧바로 보낸다(2026-09-30 시험 세션 실측)
                           typeOnly={(text) => typeAndSend(id, panes.current.get(id), text, false)}
@@ -457,7 +407,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
             const s = byId.get(id)!;
             return (
               <span key={id} className="chip">
-                <StatusMark kind={statusKind(s.state)} />
+                <StatusMark kind={statusKind(statusOf(s))} />
                 <b>{titleOf(s)}</b>
                 <button className="ib" title={tr('펼치기', 'Expand')} aria-label={tr('펼치기', 'Expand')} onClick={() => dispatch({ type: 'expand', id })}><IconExpand /></button>
                 <button className="ib" title={tr('크게', 'Maximize')} aria-label={tr('크게', 'Maximize')} onClick={() => dispatch({ type: 'maximize', id })}><IconMaximize /></button>
@@ -465,6 +415,18 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
             );
           })}
         </div>
+      )}
+      {headSlot && headS && createPortal(
+        <>
+          <span className="sch-tx"><b className="sch-name">{titleOf(headS)}</b>{subOf?.(headS) && <span className="sch-role">{subOf(headS)}</span>}</span>
+          {headS.kind === 'background' && (
+            <span className="sch-ctl">
+              {memo && <NoteButton note={memo.note(headS)} onClick={() => memo.onToggle(headS.id)} text={false} />}
+              {buttonsOf(headS)}
+            </span>
+          )}
+        </>,
+        headSlot,
       )}
     </>
   );

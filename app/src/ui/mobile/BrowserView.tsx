@@ -7,8 +7,9 @@ import { useEffect, useRef, useState } from 'react';
 import { browserFrame, browserInput, browserRetry, browserTakeover } from '../../data/web';
 import { controlOf, phoneTrouble, takeoverLine, unpackFrame, type Live } from '../../domain/agentBrowser';
 import { phoneGesture, phoneKey, pointIn, type InputEv } from '../../domain/agentInput';
-import { IconBackspace, IconEnter, IconRefresh, IconSend } from '../Icons';
+import { IconBackspace, IconClose, IconEnter, IconRefresh, IconSend } from '../Icons';
 import { ZoomBox } from './ZoomBox';
+import { BottomSheet, IconBtn } from './kit';
 
 const host = (u: string) => { try { return new URL(u).host; } catch { return u; } };
 
@@ -93,19 +94,19 @@ export function BrowserView({ live }: { live: Live }) {
       </button>
       {troubleLine}
       {big && (
-        <div className="m-view" role="dialog" aria-label="세션 브라우저 화면">
+        <BottomSheet kind="full" label="세션 브라우저 화면" onClose={() => setBig(false)} head={
           <div className="m-picker-head">
             <b className="m-view-title">{live.title || host(live.url)}</b>
             {action}
-            <button type="button" className="m-plain" onClick={() => setBig(false)}>닫기</button>
-          </div>
+            <IconBtn label="닫기" onClick={() => setBig(false)}><IconClose /></IconBtn>
+          </div>}>
           {status && <div className={`m-br-status ${live.ask ? 'm-br-ask' : ''}`} role="status">{status}</div>}
           {err && <div className="m-br-err" role="alert">{err}</div>}
           {troubleLine}
           {ctl === 'view'
             ? <div className="m-view-body">{src && <ZoomBox><img src={src} alt={live.title || '세션 브라우저 화면'} /></ZoomBox>}</div>
             : <Control src={src} alt={live.title || '세션 브라우저 화면'} send={send} />}
-        </div>
+        </BottomSheet>
       )}
       <div className="m-br-line">
         {live.busy && <span className="m-live-dots" aria-hidden><i /><i /><i /></span>}

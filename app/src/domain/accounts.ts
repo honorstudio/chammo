@@ -176,6 +176,11 @@ export function pinText(hint: boolean): string {
   return hint ? tr('고정 — 다 쓰면 넘어감', 'Pinned — switches when used up') : tr('고정', 'Pinned');
 }
 
+/** 자동 전환이 실패했을 때 — busy(세션이 로그인 갱신 중)는 몇 초면 풀리니 알리지 않고 잠깐 뒤 다시, 나머지는 알리고 5분 쉰다 */
+export function switchFailure(code: string): { notify: boolean; restMs: number } {
+  return code === 'busy' ? { notify: false, restMs: 30_000 } : { notify: true, restMs: 5 * 60_000 };
+}
+
 /** Rust 오류 이름 → 사람 글 */
 export function accountError(code: string): string {
   const [k, ...rest] = code.split(':');
@@ -190,6 +195,12 @@ export function accountError(code: string): string {
     case 'mismatch': return tr('로그인이 바뀌는 중인 것 같아요. 터미널 로그인이 끝난 뒤 다시 눌러 주세요.', 'The sign-in seems to be changing. Wait for the terminal sign-in to finish, then try again.');
     case 'denied': return tr('맥이 키체인 사용 허용을 물었는데 거절됐거나 창이 닫혔어요. 다시 누르고, 뜨는 창에 맥 로그인 암호를 넣은 뒤 "항상 허용"을 눌러 주세요.', 'macOS asked to allow keychain access and it was denied or closed. Try again, enter your Mac login password in the window, and choose "Always Allow".');
     case 'locked': return tr('키체인이 잠겼거나 허용을 거절했어요. 맥 잠금을 풀고 다시 해 주세요.', 'The keychain is locked or access was denied. Unlock your Mac and try again.');
+    case 'busy': return tr('Claude Code 세션이 로그인을 갱신하는 중이라 이번엔 안 바꿨어요. 잠시 뒤 다시 해 주세요.', 'A Claude Code session is refreshing its sign-in, so the switch was skipped. Try again in a moment.');
+    case 'refresh': return detail === 'dead'
+      ? tr('바꿀 계정의 로그인이 풀려 있어요(다른 곳에서 로그아웃했거나 다시 로그인함). 그 계정으로 로그인한 뒤 칸을 빼고 다시 추가해 주세요.', 'The sign-in kept for that account has expired (signed out or signed in again elsewhere). Sign in to it, then remove and add it again.')
+      : detail === 'network'
+        ? tr('바꿀 계정의 로그인을 새로 받으려는데 인터넷이 안 돼요. 연결을 확인하고 다시 해 주세요.', 'Could not renew the sign-in for that account — no internet. Check the connection and try again.')
+        : tr(`바꿀 계정의 로그인을 새로 받지 못했어요(${detail}). 잠시 뒤 다시 해 주세요.`, `Could not renew the sign-in for that account (${detail}). Try again in a moment.`);
     case 'configDir': return tr('CLAUDE_CONFIG_DIR 를 쓰는 중이라 계정 칸을 아직 쓸 수 없어요.', 'Accounts are not supported while CLAUDE_CONFIG_DIR is set.');
     case 'macOnly': return tr('계정 칸은 지금은 맥에서만 돼요.', 'Accounts are Mac-only for now.');
     default: return tr(`계정 일을 못 끝냈어요: ${detail || code}`, `Could not finish: ${detail || code}`);

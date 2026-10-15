@@ -6,7 +6,8 @@
 //  · 고쳐지기 전엔 '이어서'를 보내지 않는다 — 아이맥 2026-10-06 00:30:31, 보낸 즉시 또 'Login expired'
 import { tr } from '../i18n';
 import type { Activity } from './activity';
-import type { Session } from './session';
+import { fwd } from './paths';
+import { withinRoots, type Session } from './session';
 
 /** 로그인 직후 이만큼은 기다린다 — `claude auth login` 이 키체인과 oauthAccount 를 다 쓸 때까지 */
 export const SETTLE_MS = 3_000;
@@ -105,6 +106,19 @@ export function stalledOf(acts: { session: Pick<Session, 'id' | 'name' | 'kind' 
     const ts = a.auth ? Date.parse(a.auth.ts) : NaN;
     if (!a.auth || Number.isNaN(ts) || x.state === 'working') return [];
     return [{ session: x.id, name: x.name, ts, kind: x.kind === 'background' ? 'background' : 'interactive', ...(a.auth.retry ? { retry: true } : {}) } as Stalled];
+  });
+}
+
+/** 예약 폴더(<데이터>/routines/<이름>)에서 뜬 세션 — 앱 세션 목록(withinRoots) 밖이라 따로 모은다 */
+export function routineSessions<T extends { cwd: string }>(all: T[], dataDir: string): T[] {
+  return dataDir ? withinRoots(all, [`${fwd(dataDir).replace(/\/+$/, '')}/routines`]) : [];
+}
+
+/** 예약 세션 중 진짜 로그인 풀림으로 멈춘 것만 로그인 판단(stalledOf)에 — 갱신 겹침은 예약 tick 이 같은 예약을 다시 돌리니 앱은 이어서를 안 보낸다 */
+export function routineStalls<S extends { sessionId?: string }, A extends Pick<Activity, 'auth'>>(subs: S[], activity: Readonly<Record<string, A>>): { session: S; activity: A }[] {
+  return subs.flatMap((x) => {
+    const a = x.sessionId ? activity[x.sessionId] : undefined;
+    return a?.auth && !a.auth.retry ? [{ session: x, activity: a }] : [];
   });
 }
 

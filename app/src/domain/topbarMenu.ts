@@ -6,25 +6,35 @@ export type BarItem = 'reader' | 'tama' | 'office' | 'replay' | 'voice' | 'tools
 export type View = 'chat' | 'terminal';
 
 /** 표 = 순서. feature = 설정에서 끌 수 있는 기능(꺼 두면 어느 뷰에서도 숨김) */
-export const BAR_ITEMS: { id: BarItem; views: View[]; feature?: 'tama' | 'office' | 'voice' | 'review' }[] = [
+// rail = 채팅 뷰에선 위 막대 대신 왼쪽 참모 패널(접힌 패널 둘째 세로줄·펼친 패널 맨 아래 줄)에 — 터미널 뷰에선 토글 왼쪽(2026-10-11 사용자 180.png).
+// 토글 오른쪽은 두 뷰가 같아야 해서(다마고치·종) 터미널 뷰에서도 토글 왼쪽으로 뺀다
+export const BAR_ITEMS: { id: BarItem; views: View[]; feature?: 'tama' | 'office' | 'voice' | 'review'; rail?: true }[] = [
   { id: 'reader', views: ['terminal'] },
   { id: 'tama', views: ['chat', 'terminal'], feature: 'tama' },
   // 채팅 뷰 사무실은 스페이스 오른쪽 위 세 칸(대시보드·펫·사무실)에 있어서 위 막대엔 터미널 뷰만(2026-10-03 사용자)
   { id: 'office', views: ['terminal'], feature: 'office' },
-  { id: 'replay', views: ['chat', 'terminal'] },
-  { id: 'voice', views: ['chat', 'terminal'], feature: 'voice' },
+  { id: 'replay', views: ['chat', 'terminal'], rail: true },
+  // 음성 — 채팅 뷰는 입력칸 옆 단추 줄(ChatVoice, 2026-10-11 사용자 "음성 모드만 패널에서 빼서 입력칸 주변으로"), 터미널 뷰는 위 막대
+  { id: 'voice', views: ['terminal'], feature: 'voice' },
   // 도구(MCP·플러그인·스킬) — 스페이스 사이드바 줄에서 옮김(2026-10-05 사용자 "여기 패널은 아니지, 메뉴바에"). 하니터와 이웃
-  { id: 'tools', views: ['chat', 'terminal'] },
-  { id: 'harnitor', views: ['chat', 'terminal'] },
+  { id: 'tools', views: ['chat', 'terminal'], rail: true },
+  { id: 'harnitor', views: ['chat', 'terminal'], rail: true },
   // 리뷰(PR·머지 전에 볼 것) — 사이드바 줄에서 옮김(2026-10-06 사용자 "이 패널은 이제 전체가 다 세션"). 결정 대기 종 옆
-  { id: 'review', views: ['chat', 'terminal'], feature: 'review' },
+  { id: 'review', views: ['chat', 'terminal'], feature: 'review', rail: true },
   { id: 'inbox', views: ['chat', 'terminal'] },
 ];
 
-export function barItems(view: View, f: { tama: boolean; office: boolean; voice: boolean; review: boolean }): { before: BarItem[]; after: BarItem[] } {
-  const shown = BAR_ITEMS.filter((x) => x.views.includes(view) && (!x.feature || f[x.feature]));
+type Feats = { tama: boolean; office: boolean; voice: boolean; review: boolean };
+
+export function barItems(view: View, f: Feats): { before: BarItem[]; after: BarItem[] } {
+  const shown = BAR_ITEMS.filter((x) => x.views.includes(view) && (!x.feature || f[x.feature]) && !(view === 'chat' && x.rail));
   return {
-    before: shown.filter((x) => x.views.length === 1).map((x) => x.id),
-    after: shown.filter((x) => x.views.length > 1).map((x) => x.id),
+    before: shown.filter((x) => x.views.length === 1 || x.rail).map((x) => x.id),
+    after: shown.filter((x) => x.views.length > 1 && !x.rail).map((x) => x.id),
   };
+}
+
+/** 채팅 뷰 참모 패널의 기능 줄 — 기록·도구·하니터·리뷰(꺼 둔 기능 빼고) */
+export function railItems(f: Feats): BarItem[] {
+  return BAR_ITEMS.filter((x) => x.rail && (!x.feature || f[x.feature])).map((x) => x.id);
 }

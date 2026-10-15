@@ -33,3 +33,21 @@ describe('밀기 줄 비침', () => {
     expect(rules('.m-swipe-acts').join(';')).toMatch(/transition\s*:\s*visibility\s+0s\s+\.22s/);
   });
 });
+
+// 2026-10-11 사용자 폰: 꺼진 참모 줄이 반쯤 밀린 채 잡혀 '10시간 전' 글이 버튼 판 위로 비쳤다 — 판은 줄 앞판 위에서 드러난 만큼만,
+// 다른 데 누르거나 스크롤하면 저절로 닫히고, 손 떼는 사건을 잃어도(가려짐·1.5초 멈춤) 가까운 자리로
+describe('밀기 줄 — 반쯤 밀린 채 잡히지 않게', () => {
+  it('뒤 버튼 판은 앞판 위 층, 드러난 만큼만 잘라 보인다(clip-path)', () => {
+    expect(rules('.m-swipe-acts').join(';')).toMatch(/z-index\s*:\s*calc\(var\(--z-base\) \+ 1\)/);
+    expect(swipeSrc).toMatch(/clipPath: `inset\(0 0 0 \$\{width - rv\.end\}px\)`/);
+    expect(swipeSrc).toMatch(/swipeReveal\(/);
+  });
+  it('열린 줄은 다른 데 누르거나 스크롤하면 닫힌다(문서 전체에서 듣는다)', () => {
+    expect(swipeSrc).toMatch(/document\.addEventListener\('touchstart', away/);
+    expect(swipeSrc).toMatch(/document\.addEventListener\('scroll', away/);
+  });
+  it('손 떼는 사건을 잃으면(가려짐·1.5초 멈춤) 가까운 자리로 — 시트 박힘 풀기와 같은 판단(dragStale)', () => {
+    expect(swipeSrc).toMatch(/dragStale\(/);
+    expect(swipeSrc).toMatch(/visibilitychange/);
+  });
+});

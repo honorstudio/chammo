@@ -11,6 +11,7 @@ mod avatar;
 mod claude;
 mod accounts;
 mod accounts_cmd;
+mod accounts_refresh;
 mod accounts_store;
 mod accounts_usage;
 mod claude_defaults;
@@ -40,10 +41,16 @@ mod messenger_tg;
 mod messenger_run;
 mod messenger_cmd;
 mod mobile;
+mod locker;
+mod locker_fs;
+mod locker_link;
+mod locker_trash;
 mod mobile_files;
 mod mobile_http;
 mod mobile_pair;
+mod mobile_sends;
 mod mobile_wake;
+mod phone_voice;
 mod remote;
 mod remote_net;
 mod orch_pins;
@@ -76,8 +83,20 @@ mod browser_parts;
 mod browser_setup;
 mod routines;
 mod pty;
+mod quit;
 mod review;
 mod setup;
+mod sheet;
+mod sheet_book;
+mod sheet_cmd;
+mod sheet_layout_ops;
+mod sheet_patch;
+mod sheet_ref;
+mod sheet_style;
+mod sheet_style_write;
+mod sheet_sheets;
+mod sheet_struct;
+mod sheet_xml;
 mod slash;
 mod tama;
 mod tools;
@@ -93,11 +112,11 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu, Su
 use tauri::Manager;
 use std::path::Path;
 
-/// 앱 메뉴(과 앱 전체 키 감시)의 동작을 창으로 넘긴다. 떼어 낸 리더 창을 보고 있으면 탭 키(⌘W·Ctrl+Tab)는 그 창으로,
+/// 앱 메뉴(과 앱 전체 키 감시)의 동작을 창으로 넘긴다. 떼어 낸 리더 창을 보고 있으면 탭 키(⌘W 탭 닫기·Ctrl+Tab)는 그 창으로,
 /// 나머지는 메인 창 웹뷰의 window.__menu('<id>') 로 (권한 파일 없이 되는 eval)
 pub fn route_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>, id: &str) {
     // ⌘A·⌘+ ⌘- ⌘0 도 — 떼어 낸 리더 창에선 그 문서만(사용자 2026-09-29)
-    if matches!(id, "close_pane" | "reader_next" | "reader_prev" | "reader_close" | "select_all" | "font_up" | "font_down" | "font_reset") {
+    if matches!(id, "close_tab" | "reader_next" | "reader_prev" | "reader_close" | "select_all" | "font_up" | "font_down" | "font_reset") {
         if let Some((_, w)) = app.webview_windows().into_iter().find(|(l, w)| l.starts_with("reader-") && w.is_focused().unwrap_or(false)) {
             let _ = w.eval(format!("window.__readerKey && window.__readerKey({})", serde_json::to_string(id).unwrap_or_default()));
             return;
@@ -127,7 +146,7 @@ fn about_metadata(name: &str, version: &str) -> tauri::menu::AboutMetadata<'stat
     tauri::menu::AboutMetadata { name: Some(name.to_string()), version: Some(version.to_string()), ..Default::default() }
 }
 
-/// 앱 메뉴. 기본 메뉴의 "윈도우 닫기(⌘W)"를 뺐다 — ⌘W 는 앱이 "보고 있는 창의 세션 끄기"로 쓴다.
+/// 앱 메뉴. 기본 메뉴의 "윈도우 닫기(⌘W)"를 뺐다 — ⌘W 는 앱이 "스페이스에서 열린 탭 닫기"로 쓴다(세션 끄기는 ⌘⇧W, 2026-10-12 사용자).
 /// 편집 메뉴는 남긴다(없으면 웹뷰에서 ⌘C·⌘V 가 안 먹는다). 글자는 설정 언어로, 꺼 둔 기능(사무실·다마고치·리뷰)의 항목은 뺀다.
 /// 설정을 저장하면 rebuild_menu 로 다시 만든다
 fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
@@ -212,13 +231,19 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
         format!("새 세션 (보고 있는 프로젝트 · {})", config::assistant_name())
     };
     let session = SubmenuBuilder::new(app, tr("세션", "Session"))
-        .item(&item("new_session", &new_label, Some(&*platform::accel("CmdOrCtrl+T")))?)
-        .item(&item("close_pane", tr("보고 있는 세션 끄기", "Stop Focused Session"), Some(&*platform::accel("CmdOrCtrl+W")))?)
+        .item(&item("new_doc", tr("새 문서 (보고 있는 보관함 폴더)", "New Document (current locker folder)"), Some(&*platform::accel("CmdOrCtrl+T")))?)
+        .item(&item("close_tab", tr("열린 탭 닫기", "Close Tab"), Some(&*platform::accel("CmdOrCtrl+W")))?)
+        .separator()
+        .item(&item("go_home", tr("홈 탭으로", "Go to Home Tab"), Some(&*platform::accel("CmdOrCtrl+Shift+H")))?)
+        .item(&item("go_locker", tr("보관함 탭으로", "Go to Locker Tab"), Some(&*platform::accel("CmdOrCtrl+Shift+L")))?)
+        .separator()
+        .item(&item("new_session", &new_label, Some(&*platform::accel("CmdOrCtrl+Shift+T")))?)
+        .item(&item("close_pane", tr("보고 있는 세션 끄기", "Stop Focused Session"), Some(&*platform::accel("CmdOrCtrl+Shift+W")))?)
         .item(&item("pane_max", tr("보고 있는 창 크게 / 되돌리기", "Maximize / Restore Focused Pane"), Some(&*platform::accel("CmdOrCtrl+`")))?)
         .separator()
         .item(&item("memo", tr("메모 (보고 있는 창의 프로젝트)", "Notes (focused project)"), Some(&*platform::accel("CmdOrCtrl+M")))?)
         .build()?;
-    // 리더 — 탭 닫기는 ⌘W(세션 끄기와 같은 키, 리더를 보고 있으면 탭을 닫는다). 떼어 낸 리더 창에서도 같은 키
+    // 리더 — 탭 닫기는 ⌘W(스페이스 탭 닫기와 같은 키, 리더를 보고 있으면 리더 탭을 닫는다). 떼어 낸 리더 창에서도 같은 키
     let reader_menu = SubmenuBuilder::new(app, tr("리더", "Reader"))
         .item(&item("reader_toggle", tr("리더 패널 보이기·숨기기", "Show/Hide Reader"), Some(&*platform::accel("CmdOrCtrl+E")))?)
         .item(&item("reader_full", tr("리더 크게·작게", "Expand/Shrink Reader"), Some(&*platform::accel("CmdOrCtrl+Shift+E")))?)
@@ -294,10 +319,16 @@ fn app_background(app: tauri::AppHandle) {
     to_background(&app);
 }
 
-/// 종료 창에서 고른 뒤 — 진짜로 끈다
+/// 종료 창에서 고른 뒤 — 진짜로 끈다(정리가 걸려도 quit::EXIT_WAIT 뒤엔 끝난다)
 #[tauri::command]
 fn app_exit(app: tauri::AppHandle) {
-    app.exit(0);
+    quit::exit_now(&app, "quit dialog");
+}
+
+/// 종료 창이 떴다 — Rust 가 기다리던 '웹 굳음' 대비 종료를 거둔다
+#[tauri::command]
+fn app_quit_shown() {
+    quit::shown();
 }
 
 /// 설정을 저장한 뒤 — 언어·비서 이름·기능 켜기가 메뉴에도 보이게
@@ -325,6 +356,8 @@ fn forbidden() -> tauri::http::Response<Vec<u8>> {
 }
 
 fn main() {
+    // 파일 한도 256(launchd 기본)을 올린다 — 앱·예약 tick·띄우는 claude 가 다 물려받는다(10-04 Too many open files)
+    platform::raise_nofile();
     // launchd 의 예약 깨우기 — 창·트레이·단일 실행 잠금보다 먼저 갈라서 끝낸다(안 그러면 1분마다 앱이 뜬다)
     if std::env::args().nth(1).as_deref() == Some(routines::TICK_FLAG) {
         std::process::exit(routines::tick_main());
@@ -347,11 +380,15 @@ fn main() {
                 to_background(app);
                 return;
             }
+            // 완전히 종료 — 웹이 종료 창을 못 띄우면(굳음) 4초 뒤 앱만 끈다(quit.rs). 창은 아래 route_menu 가 부탁한다
+            if id == "app_quit_all" {
+                quit::ask_or_exit(app);
+            }
             if id.starts_with("mode_") && modes_host::on_menu(app, &id) {
                 return;
             }
             // 기본 항목(가리기·종료 등)은 macOS 가 알아서 한다 — 우리 항목만 넘긴다(안 그러면 '가리기' 뒤에 창이 다시 뜬다)
-            const OURS: &[&str] = &["goto_orch", "goto_all", "goto_review", "goto_office", "reader_toggle", "reader_full", "reader_next", "reader_prev", "reader_close", "goto_tama", "open_dex", "sidebar", "tasks", "search", "font_up", "font_down", "font_reset", "new_session", "close_pane", "pane_max", "widget_toggle", "memo", "settings", "harnitor", "tour", "app_quit_all", "select_all"];
+            const OURS: &[&str] = &["goto_orch", "goto_all", "goto_review", "goto_office", "reader_toggle", "reader_full", "reader_next", "reader_prev", "reader_close", "goto_tama", "open_dex", "sidebar", "tasks", "search", "font_up", "font_down", "font_reset", "new_session", "close_pane", "close_tab", "new_doc", "go_home", "go_locker", "pane_max", "widget_toggle", "memo", "settings", "harnitor", "tour", "app_quit_all", "select_all"];
             if !OURS.contains(&id.as_str()) {
                 return;
             }
@@ -370,9 +407,8 @@ fn main() {
             std::thread::spawn(computer_use::sweep_logged);
             // 있던 프로젝트에 붙여 둔 참모 브라우저(local scope)를 떠 있던 claude 가 지웠으면 다시(GitHub #2)
             std::thread::spawn(|| { browser_attach::reassert(); });
-            // 세션 크롬 가리기 지킴이(세션 브라우저 앱에서 보기) — 앱이 떠 있을 때만 가려진다
+            // 세션 크롬 가리기 지킴이(세션 브라우저 앱에서 보기) + 크롬 자체 창(패스키) 보기 — 앱이 떠 있을 때만 가려진다
             agent_browser::watch_hidden();
-            agent_browser::watch_popups();
             // 가상 모니터 — 세션 크롬을 눈에 안 보이는 화면에(안 되는 맥이면 조용히 안 함)
             vdisplay::start();
             // 참모 scripts/app — 앱을 대신 조작(음성·기능·화면)
@@ -576,6 +612,7 @@ fn main() {
             harnitor::harnitor_sessions,
             rebuild_menu,
             app_exit,
+            app_quit_shown,
             app_background,
             claude::list_sessions,
             claude::spawn_session,
@@ -583,12 +620,16 @@ fn main() {
             claude::new_session,
             claude::stop_session,
             claude::remove_session,
-            claude::read_tasks,
+            claude::read_tasks_since,
             claude::read_transcript_tails,
             claude::read_transcript,
             claude::read_session_tasks,
             claude::send_text_to_session,
             reader::write_doc_text,
+            sheet_book::read_sheet_book,
+            sheet_patch::write_sheet,
+            sheet_cmd::sheet_open,
+            sheet_cmd::sheet_play_done,
             reader::doc_stamp,
             reader::keep_doc_version,
             reader::list_md,
@@ -596,7 +637,6 @@ fn main() {
             reader::list_md_deep,
             reader::save_attach,
             reader::save_curation,
-            reader::trash_page,
             reader::save_curation_state,
             orch_pins::read_orch_pins,
             orch_pins::set_orch_pin,
@@ -610,8 +650,35 @@ fn main() {
             reader::page_doc,
             reader::read_doc_bytes,
             reader::ql_thumb,
-            reader::pages_dir,
-            reader::new_page,
+            locker::locker_peek,
+            locker_fs::locker_migrate,
+            locker_fs::locker_tree,
+            locker_fs::locker_put,
+            locker_fs::locker_alias,
+            locker_fs::locker_new_doc,
+            locker_fs::locker_mkdir,
+            locker_fs::locker_rename_at,
+            locker_fs::locker_move_to,
+            locker_trash::locker_trash,
+            locker_trash::locker_trash_many,
+            locker_trash::locker_trash_empty_out,
+            locker_trash::locker_trash_plan,
+            locker_trash::locker_trash_last,
+            locker_trash::locker_trash_undo,
+            locker_fs::locker_versions,
+            locker_fs::locker_restore,
+            locker_fs::locker_give,
+            locker_fs::locker_back,
+            locker_fs::locker_choose,
+            locker_fs::locker_reveal,
+            locker_fs::locker_find,
+            locker_fs::locker_relink,
+            locker_fs::locker_fetch,
+            locker_link::locker_connect,
+            locker_link::locker_connect_choose,
+            locker_link::locker_disconnect,
+            locker_link::locker_reconnect_choose,
+            locker_link::locker_recent_shots,
             reader::space_log_append,
             reader::save_asset,
             reader::copy_asset,
@@ -703,6 +770,11 @@ fn main() {
             reader::read_doc_text,
             reader::moved_paths,
             modes_host::mode_list,
+            modes_host::mode_manage,
+            modes_host::mode_card,
+            modes_host::mode_remove,
+            modes_host::mode_restore,
+            modes_host::mode_restore_builtin,
             modes_host::mode_open,
             modes_host::mode_close,
             modes_host::mode_restart,

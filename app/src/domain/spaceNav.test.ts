@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addSpawned, focusPick, focusTab, followChat, harnitorPick, heldBy, reviewPick, toolsPick, holderMap, newShows, orphanSends, showOwner, shownFiles, transcriptTargets } from './spaceNav';
+import { addSpawned, ownPick, focusPick, focusTab, featureOf, featurePick, followChat, heldBy, holderMap, legacyPick, sidePick, newShows, orphanSends, showOwner, shownFiles, transcriptTargets } from './spaceNav';
 import type { TaskEvent } from './tasks';
 
 const T = Date.parse('2026-09-30T04:00:00Z');
@@ -203,51 +203,47 @@ describe('showOwner — 띄운 문서를 어느 참모 화면에 둘까(2026-10-
   });
 });
 
-describe('harnitorPick — 하니터도 탭마다 기억되는 화면 하나(h:), 큐레이션처럼', () => {
-  // 2026-10-02 사용자: 하니터가 앱 전체에 고정이라 다른 탭으로 가도 남아 있고, 다른 참모가 띄운 게 가려질 것 같았다
-  it('열면 보던 화면을 기억하고 h: 로', () => {
-    expect(harnitorPick('o:a', 'open', '', 'o:a')).toEqual({ pick: 'h:', before: 'o:a' });
-    expect(harnitorPick('d:/x.md', 'toggle', '', 'o:a')).toEqual({ pick: 'h:', before: 'd:/x.md' });
+describe('featurePick — 기록·도구·하니터·리뷰는 스페이스의 기능 화면 한 자리, 켜고 끄는 토글(2026-10-11 사용자 "갈아엎지 말고 열고 닫히게")', () => {
+  it('열면 보던 화면을 기억하고 그 기능 화면으로', () => {
+    expect(featurePick('h:', 'o:a', 'open', '', 'o:a')).toEqual({ pick: 'h:', before: 'o:a' });
+    expect(featurePick('t:', 'l:a', 'toggle', '', 'o:a')).toEqual({ pick: 't:', before: 'l:a' });
+    expect(featurePick('rv:', 'p:/d/x', 'open', '', 'o:a')).toEqual({ pick: 'rv:', before: 'p:/d/x' });
+    expect(featurePick('rp:', 'd:/x.md', 'toggle', '', 'o:a')).toEqual({ pick: 'rp:', before: 'd:/x.md' });
   });
-  it('닫으면 열기 전 화면으로', () => {
-    expect(harnitorPick('h:', 'close', 'd:/x.md', 'o:a')).toEqual({ pick: 'd:/x.md', before: '' });
-    expect(harnitorPick('h:', 'toggle', 's:1', 'o:a')).toEqual({ pick: 's:1', before: '' });
+  it('같은 단추를 다시 누르면 닫고 열기 전 화면으로', () => {
+    expect(featurePick('h:', 'h:', 'toggle', 's:1', 'o:a')).toEqual({ pick: 's:1', before: '' });
+    expect(featurePick('rp:', 'rp:', 'close', 'd:/x.md', 'o:a')).toEqual({ pick: 'd:/x.md', before: '' });
   });
-  it('기억이 없으면 그 참모 대시보드로', () => {
-    expect(harnitorPick('h:', 'close', '', 'o:a').pick).toBe('o:a');
+  it('기능 화면 안에서 다른 기능으로 바꿔도 돌아갈 곳은 처음 보던 화면 — 리뷰를 닫으면 도구가 아니라 보관함으로', () => {
+    const a = featurePick('t:', 'l:a', 'toggle', '', 'o:a');
+    const b = featurePick('rv:', a.pick, 'toggle', a.before, 'o:a');
+    expect(b).toEqual({ pick: 'rv:', before: 'l:a' });
+    expect(featurePick('rv:', b.pick, 'toggle', b.before, 'o:a')).toEqual({ pick: 'l:a', before: '' });
   });
-  it('이미 열려 있으면 열기는 그대로, 안 열려 있으면 닫기는 그대로', () => {
-    expect(harnitorPick('h:', 'open', 'o:a', 'o:a')).toEqual({ pick: 'h:', before: 'o:a' });
-    expect(harnitorPick('o:a', 'close', '', 'o:a')).toEqual({ pick: 'o:a', before: '' });
+  it('프로젝트 도구(t:<폴더>)·PR 하나(rv:<키>)도 열린 것', () => {
+    expect(featurePick('t:', 't:/d/project-b', 'toggle', 'p:/d/project-b', 'o:a')).toEqual({ pick: 'p:/d/project-b', before: '' });
+    expect(featurePick('rv:', 'rv:project-b#12', 'open', 'd:/x.md', 'o:a')).toEqual({ pick: 'rv:project-b#12', before: 'd:/x.md' });
   });
-});
-
-describe('toolsPick — 위 막대 도구 아이콘(2026-10-05 사용자): 하니터처럼 탭마다 열고 닫기, 프로젝트 도구(t:<폴더>)도 열린 걸로', () => {
-  it('열면 참모 HQ 기준 도구(t:)로, 보던 화면은 기억', () => {
-    expect(toolsPick('o:a', 'toggle', '', 'o:a')).toEqual({ pick: 't:', before: 'o:a' });
-    expect(toolsPick('d:/x.md', 'open', '', 'o:a')).toEqual({ pick: 't:', before: 'd:/x.md' });
-  });
-  it('프로젝트 대시보드에서 연 도구(t:/d/project-b)도 열린 것 — 다시 누르면 닫고 그 전 화면으로', () => {
-    expect(toolsPick('t:/d/project-b', 'toggle', 'p:/d/project-b', 'o:a')).toEqual({ pick: 'p:/d/project-b', before: '' });
-    expect(toolsPick('t:/d/project-b', 'open', 'p:/d/project-b', 'o:a')).toEqual({ pick: 't:/d/project-b', before: 'p:/d/project-b' });
-  });
-  it('기억이 없으면 그 참모 대시보드로, 안 열려 있으면 닫기는 그대로', () => {
-    expect(toolsPick('t:', 'close', '', 'o:a').pick).toBe('o:a');
-    expect(toolsPick('h:', 'close', '', 'o:a')).toEqual({ pick: 'h:', before: '' });
+  it('기억이 없으면 그 참모 첫 화면으로, 안 열려 있으면 닫기는 그대로', () => {
+    expect(featurePick('t:', 't:', 'close', '', 'o:a').pick).toBe('o:a');
+    expect(featurePick('t:', 'h:', 'close', 'o:a', 'o:a')).toEqual({ pick: 'h:', before: 'o:a' });
+    expect(featurePick('h:', 'o:a', 'close', '', 'o:a')).toEqual({ pick: 'o:a', before: '' });
   });
 });
 
-describe('reviewPick — 위 막대 리뷰 아이콘(2026-10-06 사용자): 도구처럼 탭마다 열고 닫기, PR 하나 고른 것(rv:<키>)도 열린 걸로', () => {
-  it('열면 리뷰 첫 화면(rv:)으로, 보던 화면은 기억', () => {
-    expect(reviewPick('o:a', 'toggle', '', 'o:a')).toEqual({ pick: 'rv:', before: 'o:a' });
-    expect(reviewPick('p:/d/project-b', 'open', '', 'o:a')).toEqual({ pick: 'rv:', before: 'p:/d/project-b' });
+describe('featureOf·sidePick — 기능 화면이 떠 있는 동안 왼쪽(프사 띠·보관함 칸·메뉴)은 열기 전 화면 그대로', () => {
+  it('어느 기능 화면인가', () => {
+    expect(featureOf('h:')).toBe('h:');
+    expect(featureOf('t:/d/x')).toBe('t:');
+    expect(featureOf('rv:x#1')).toBe('rv:');
+    expect(featureOf('rp:')).toBe('rp:');
+    expect(featureOf('l:a')).toBeNull();
+    expect(featureOf('d:/t:x.md')).toBeNull();
   });
-  it('PR 하나를 보고 있어도(rv:project-b#12) 열린 것 — 다시 누르면 닫고 그 전 화면으로, 열기는 그대로', () => {
-    expect(reviewPick('rv:project-b#12', 'toggle', 'd:/x.md', 'o:a')).toEqual({ pick: 'd:/x.md', before: '' });
-    expect(reviewPick('rv:project-b#12', 'open', 'd:/x.md', 'o:a')).toEqual({ pick: 'rv:project-b#12', before: 'd:/x.md' });
-  });
-  it('기억이 없으면 그 참모 대시보드로', () => {
-    expect(reviewPick('rv:', 'close', '', 'o:a').pick).toBe('o:a');
+  it('기능 화면이면 왼쪽은 열기 전 화면 기준, 아니면 지금 화면', () => {
+    expect(sidePick('t:', 'l:a', 'o:a')).toBe('l:a');
+    expect(sidePick('rv:', '', 'o:a')).toBe('o:a');
+    expect(sidePick('l:a', 'x', 'o:a')).toBe('l:a');
   });
 });
 
@@ -290,3 +286,49 @@ describe('addSpawned — 대화 기록으로 잡은 세션은 작업 기록 주�
     expect(m.size).toBe(0);
   });
 });
+
+// 2026-10-12 패널 하나로 P4 — 예약은 기능 줄 시계 아이콘: 누르면 가운데 예약 목록(r:), 다시 누르면 열기 전 화면으로. 예약 하나(r:<이름>)도 같은 기능 화면
+describe('예약도 기능 화면(r:)', () => {
+  it('r: · r:<이름> 은 예약, rv:·rp: 는 그대로 리뷰·리플레이', () => {
+    expect(featureOf('r:')).toBe('r:');
+    expect(featureOf('r:nightly-check')).toBe('r:');
+    expect(featureOf('rv:12')).toBe('rv:');
+    expect(featureOf('rp:')).toBe('rp:');
+  });
+  it('시계를 누르면 목록, 다시 누르면 열기 전 화면', () => {
+    expect(featurePick('r:', 'l:a#d:자료', 'toggle', '', 'l:a#h')).toEqual({ pick: 'r:', before: 'l:a#d:자료' });
+    expect(featurePick('r:', 'r:nightly-check', 'toggle', 'l:a#d:자료', 'l:a#h')).toEqual({ pick: 'l:a#d:자료', before: '' });
+  });
+});
+
+// 2026-10-12 패널 하나로 — 옛 프로젝트 대시보드(o:/p:)를 지우며 옛 키는 새 자리로: 참모 대시보드 → 그 참모 홈(펫 탭만 o: 그대로),
+// 프로젝트 → 떠 있는 세션이 있으면 그 세션 탭, 없으면 지금 참모 보관함의 그 프로젝트 기록. scripts/app focus·옛 기억이 아직 이 키를 준다
+describe('legacyPick — 옛 대시보드 키를 새 자리로', () => {
+  const ctx = { petFor: null as string | null, view: 'a', sessionOf: (root: string) => (root === '/d/shop' ? 'ses1' : undefined) };
+  it('o:<참모> → 그 참모 홈', () => expect(legacyPick('o:b', ctx)).toBe('l:b#h'));
+  it('펫 탭을 연 참모면 o: 그대로(펫 자리)', () => expect(legacyPick('o:a', { ...ctx, petFor: 'a' })).toBe('o:a'));
+  it('p:<뿌리> → 세션이 있으면 세션 탭, 없으면 보관함 그 프로젝트 기록', () => {
+    expect(legacyPick('p:/d/shop', ctx)).toBe('s:ses1');
+    expect(legacyPick('p:/d/idle', ctx)).toBe('l:a#p:/d/idle');
+  });
+  it('보는 참모가 없으면 p: 는 그대로(갈 데가 없다)', () => expect(legacyPick('p:/d/idle', { ...ctx, view: undefined })).toBe('p:/d/idle'));
+  it('그 밖은 그대로', () => {
+    for (const k of ['l:a', 'l:a#h', 's:x', 'd:/L/x.md', 'r:', 'f:', '']) expect(legacyPick(k, ctx)).toBe(k);
+  });
+});
+
+// 2026-10-13 사용자 — 한 참모 기억(화면)에 다른 참모 보관함 자리가 박혀, 그 참모로 가도 남의 홈이 떴고 띠를 다시 눌러도 안 움직였다
+describe('ownPick — 참모 화면은 그 참모 것만', () => {
+  const home = 'l:b#h';
+  it('기억한 자리가 다른 참모 보관함이면 이 참모 홈으로', () => {
+    expect(ownPick('l:a#h', 'b', home)).toBe(home);
+    expect(ownPick('l:a#d:docs', 'b', home)).toBe(home);
+  });
+  it('이 참모 보관함·보관함 밖 화면(문서·세션)은 그대로, 기억이 없으면 홈', () => {
+    expect(ownPick('l:b#d:docs', 'b', home)).toBe('l:b#d:docs');
+    expect(ownPick('d:/H/x.md', 'b', home)).toBe('d:/H/x.md');
+    expect(ownPick('s:abc', 'b', home)).toBe('s:abc');
+    expect(ownPick(undefined, 'b', home)).toBe(home);
+  });
+});
+

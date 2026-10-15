@@ -139,7 +139,7 @@ export function NotePanel({ base, storeKey, send, sendTo, onOpenStarter }: {
               <input value={memo} onChange={(ev) => setMemo(ev.target.value)} placeholder={tr('한 줄 메모(없어도 돼요)', 'One-line note (optional)')}
                 onKeyDown={(ev) => { if (ev.key === 'Enter' && !ev.nativeEvent.isComposing) void sendAll(); }} />
               <button className="np-undo" onClick={() => { save(emptyEdits()); setMemo(''); }}>{tr('되돌리기', 'Discard')}</button>
-              <button className="np-send" disabled={busy} onClick={() => void sendAll()} title={text}><IconSend />{tr(`보내기 ${changes}`, `Send ${changes}`)}</button>
+              <button className="np-send" disabled={busy} onClick={() => void sendAll()} aria-label={tr(`보내기 — 고친 것 ${changes}`, `Send ${changes} changes`)} title={text}><IconSend /><span className="np-send-n">{changes}</span></button>
             </>
           )}
         </div>

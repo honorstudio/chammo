@@ -7,7 +7,8 @@ import { MdDoc } from './reader/Reader';
 import { TerminalPane } from './TerminalPane';
 import './reader/reader.css';
 import { attachCommand } from '../domain/termCommand';
-import { IconPause, IconPencil, IconPlay, IconPower, IconSend, IconTrash } from './Icons';
+import { IconOpen, IconPause, IconPencil, IconPlay, IconPower, IconSend, IconTrash } from './Icons';
+import { IconButton } from './kit/IconButton';
 import { dragProps } from './space/dragPath';
 
 type Props = {
@@ -40,7 +41,7 @@ function CloudRoutinePage({ routine: r, onToChat }: { routine: Routine; onToChat
         <span className="dim">{scheduleText(r.schedule)} · {tr('claude.ai 에서 돌아요', 'Runs on claude.ai')}</span>
         <span className="sp" />
         {onToChat && <ToChatButton text={routineRef(r)} onToChat={onToChat} />}
-        <button className="btn pri" disabled={!url} onClick={() => url && void openTarget('url', url).catch(() => {})}>{tr('열기', 'Open')}</button>
+        <IconButton size="l" tone="pri" label={tr('열기', 'Open')} disabled={!url} onClick={() => url && void openTarget('url', url).catch(() => {})}><IconOpen /></IconButton>
       </div>
       <div className="routine-body routine-cloud-body">
         <section className="routine-doc">

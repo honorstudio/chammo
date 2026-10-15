@@ -1,0 +1,30 @@
+/* ui/kit — 데스크톱 공용 조각. 색·선은 styles.css 토큰만(위젯처럼 토큰이 없는 창은 뒤의 값으로). 층은 layers.css */
+
+/* 아이콘 버튼 — 누르는 자리는 판 크기 그대로, 아이콘은 한가운데.
+   바탕 규칙은 :where 로 특정도 0 — 놓이는 자리의 클래스(margin-left:auto 등)가 늘 이긴다 */
+:where(.kit-ib) { all: unset; box-sizing: border-box; flex: none; border-radius: 7px; }
+.kit-ib { display: inline-flex; align-items: center; justify-content: center; color: var(--text-2, #4a4a52); cursor: pointer; transition: background-color .12s, color .12s; }
+.kit-ib-s { width: 24px; height: 24px; border-radius: 6px; }
+.kit-ib-m { width: 28px; height: 28px; }
+.kit-ib-l { width: 34px; height: 34px; border-radius: 8px; }
+.kit-ib svg { width: 15px; height: 15px; flex: none; }
+.kit-ib-s svg { width: 13px; height: 13px; }
+.kit-ib-l svg { width: 16px; height: 16px; }
+.kit-ib:hover:not(:disabled) { background: var(--hover, rgba(0, 0, 0, .05)); color: var(--text, #1d1d20); }
+.kit-ib:focus-visible { outline: 2px solid var(--accent, #1d1d20); outline-offset: 1px; }
+.kit-ib:disabled { opacity: .45; cursor: default; }
+.kit-ib.on { color: var(--accent, #1d1d20); background: var(--hover, rgba(0, 0, 0, .05)); }
+
+.kit-ib-line { border: 1px solid var(--line-strong, #c6c6cd); background: var(--surface, #fff); }
+.kit-ib-pri { background: var(--accent, #1d1d20); color: var(--accent-ink, #fff); }
+.kit-ib-pri:hover:not(:disabled) { background: var(--accent, #1d1d20); color: var(--accent-ink, #fff); filter: brightness(1.08); }
+.kit-ib-danger { background: var(--danger-bg, #fbe3e3); color: var(--danger-ink, #b42318); }
+.kit-ib-danger:hover:not(:disabled) { background: var(--danger-bg, #fbe3e3); color: var(--danger-ink, #b42318); filter: brightness(.97); }
+
+/* 하는 중 — 못 누르는 동안 아이콘만 천천히 깜빡(흐려진 판은 그대로) */
+.kit-ib-busy:disabled { opacity: 1; cursor: progress; }
+.kit-ib-busy svg { animation: kit-ib-pulse 1.1s ease-in-out infinite; }
+@keyframes kit-ib-pulse { 50% { opacity: .3; } }
+
+/* 숫자 배지 — 16px 알약, 글자 11px. 색·자리는 놓이는 곳 클래스가 */
+:where(.kit-badge) { box-sizing: border-box; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; background: var(--tag-bg, rgba(0, 0, 0, .06)); color: var(--text-2, #4a4a52); }

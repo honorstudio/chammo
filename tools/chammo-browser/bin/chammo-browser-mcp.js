@@ -118,7 +118,10 @@ const ASK_TOOL = {
   inputSchema: { type: 'object', properties: { reason: { type: 'string', description: '사람에게 보일 한 줄(무엇을 해 달라는지). 비밀번호·개인 정보는 적지 않는다' } }, required: ['reason'] },
 };
 
-const child = spawn(process.execPath, [cli, '--user-data-dir', userDataDir, ...configArgs, ...extra], {
+// 세션 run_code 처리기 예외로 플레이라이트가 통째로 죽지 않게 + 상자에 URL 같은 전역(src/survive.js)
+const SURVIVE = ['--require', require('path').join(__dirname, '..', 'src', 'survive.js')];
+
+const child = spawn(process.execPath, [...SURVIVE, cli, '--user-data-dir', userDataDir, ...configArgs, ...extra], {
   stdio: ['pipe', 'pipe', 'inherit'], // stdin/stdout 은 중계, stderr 는 그대로
 });
 
@@ -147,7 +150,7 @@ const share = createShare({
   join: (holder) => { try { return users.join(paths.locksDir, profile, process.pid, holder, { by: 'session' }); } catch { return false; } },
   leave: () => users.remove(paths.locksDir, profile, process.pid),
   spawnChild: (args) => {
-    const c = spawn(process.execPath, [cli, ...args, ...extra], { stdio: ['pipe', 'pipe', 'inherit'] });
+    const c = spawn(process.execPath, [...SURVIVE, cli, ...args, ...extra], { stdio: ['pipe', 'pipe', 'inherit'] });
     c.stdin.on('error', () => { /* 먼저 죽은 child — share.still() 이 잡는다 */ });
     c.on('error', (e) => console.error(`[chammo-browser-mcp] 같이 쓰기 playwright 기동 실패: ${e.message}`));
     return c;

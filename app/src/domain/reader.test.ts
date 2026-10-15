@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { docUrl, isDocUrl, dropIndex, inStrip, kindOf, titleOf, pageDoc, pathOfDocUrl, docFileUrl } from './reader';
+import { docUrl, isDocUrl, dropIndex, inStrip, kindOf, titleOf, pageDoc, pathOfDocUrl, docFileUrl, isSheet, spacePage, isPlainDoc } from './reader';
+import table from './editableExt.json';
 
 describe('kindOf — 확장자로 어떻게 보여줄지', () => {
   it('html·pdf·md·그림·나머지 글', () => {
@@ -119,5 +120,38 @@ describe('docFileUrl — 문서 속 그림·파일 주소(편집기가 보여 �
   });
   it('윈도우 드라이브 경로(C:/…, C:\\…)도 파일로', () => {
     expect(docFileUrl('C:\\Users\\me\\a.png', 'C:/Users/me/hq', true)).toBe('http://hodoc.localhost/C%3A/Users/me/a.png');
+  });
+});
+
+describe('스페이스 가운데 페이지로 여는 파일 — md 와 엑셀(2026-10-11)', () => {
+  it('xlsx·xlsm 은 표 페이지, 옛 xls·넘버스·csv 는 아니다', () => {
+    expect(isSheet('/a/매출.xlsx')).toBe(true);
+    expect(isSheet('/a/B.XLSM')).toBe(true);
+    expect(isSheet('/a/old.xls')).toBe(false);
+    expect(isSheet('/a/x.numbers')).toBe(false);
+    expect(spacePage('/a/starter.md')).toBe(true);
+    expect(spacePage('/a/매출.xlsx')).toBe(true);
+    expect(spacePage('/a/data.csv')).toBe(false);
+    expect(spacePage('/a/deck.pptx')).toBe(false);
+  });
+});
+
+describe('글 파일(.txt)도 탭 안에서 고친다 — Rust editable() 과 같은 표(editableExt.json)를 읽는다 (2026-10-12)', () => {
+  it('txt 는 글 편집 페이지, md 는 노션식 페이지(글 편집 아님)', () => {
+    expect(isPlainDoc('/a/보낼 것.txt')).toBe(true);
+    expect(isPlainDoc('/a/NOTE.TXT')).toBe(true);
+    expect(isPlainDoc('/a/starter.md')).toBe(false);
+    expect(spacePage('/a/보낼 것.txt')).toBe(true);
+    expect(kindOf('/a/보낼 것.txt')).toBe('text'); // 미리보기 종류는 그대로 — 편집 여부는 isPlainDoc
+  });
+  it('고칠 수 없는 글(log·json·csv)은 지금처럼 미리보기', () => {
+    for (const p of ['/a/x.log', '/a/x.json', '/a/x.csv', '/a/Makefile', '/a/.gitignore']) {
+      expect(isPlainDoc(p)).toBe(false);
+      expect(spacePage(p)).toBe(false);
+    }
+  });
+  it('표의 확장자는 전부 어느 한쪽 페이지로 열린다', () => {
+    for (const e of table.md) expect(kindOf(`/a/x.${e}`)).toBe('md');
+    for (const e of table.plain) { expect(isPlainDoc(`/a/x.${e}`)).toBe(true); expect(isPlainDoc(`/a/x.${e.toUpperCase()}`)).toBe(true); }
   });
 });

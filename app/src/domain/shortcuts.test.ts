@@ -66,12 +66,12 @@ describe('shortcutFor — 앱 단축키', () => {
     expect(shortcutFor(k('j', { meta: true }))).toEqual({ type: 'toggleTasks' });
   });
 
-  it('⌘K 검색, ⌘W 보고 있는 창의 세션 끄기', () => {
+  it('⌘K 검색, ⌘W 스페이스에서 열린 탭 닫기', () => {
     expect(shortcutFor(k('k', { meta: true }))).toEqual({ type: 'search' });
     // ⌘F = 찾기(문서가 열려 있으면 문서 찾기 — README 에 적은 대로, 공개 2차 검증에서 안 붙어 있던 것), 한글 입력이면 ㄹ
     expect(shortcutFor(k('f', { meta: true }))).toEqual({ type: 'search' });
     expect(shortcutFor(k('ㄹ', { meta: true }))).toEqual({ type: 'search' });
-    expect(shortcutFor(k('w', { meta: true }))).toEqual({ type: 'closePane' });
+    expect(shortcutFor(k('w', { meta: true }))).toEqual({ type: 'closeTab' });
   });
 
   it('⌘ 없이는 아무것도 아니다 — 터미널 입력을 뺏으면 안 된다', () => {
@@ -96,8 +96,8 @@ describe('clampFont — 글자 크기 범위', () => {
     expect(clampFont(13)).toBe(13);
   });
 
-  it('⌘T 보고 있는 프로젝트(또는 참모)에 새 세션', () => {
-    expect(shortcutFor(k('t', { meta: true }))).toEqual({ type: 'newSession' });
+  it('⌘⇧T 보고 있는 프로젝트(또는 참모)에 새 세션 (⌘T 는 새 문서로 넘어갔다)', () => {
+    expect(shortcutFor(k('T', { meta: true, shift: true }))).toEqual({ type: 'newSession' });
   });
 
   it('⌘M 보고 있는 창의 프로젝트 메모 (한글 상태 ⌘ㅡ 도)', () => {
@@ -106,9 +106,11 @@ describe('clampFont — 글자 크기 범위', () => {
     expect(menuAction('memo')).toEqual({ type: 'memo' });
   });
 
-  it('한글 입력 상태여도 같은 자리 키로 동작 (⌘ㅅ=⌘T, ⌘ㅈ=⌘W)', () => {
-    expect(shortcutFor(k('ㅅ', { meta: true }))).toEqual({ type: 'newSession' });
-    expect(shortcutFor(k('ㅈ', { meta: true }))).toEqual({ type: 'closePane' });
+  it('한글 입력 상태여도 같은 자리 키로 동작 (⌘ㅅ=⌘T, ⌘ㅈ=⌘W, ⌘⇧ㅅ=ㅆ, ⌘⇧ㅈ=ㅉ)', () => {
+    expect(shortcutFor(k('ㅅ', { meta: true }))).toEqual({ type: 'newDoc' });
+    expect(shortcutFor(k('ㅈ', { meta: true }))).toEqual({ type: 'closeTab' });
+    expect(shortcutFor(k('ㅆ', { meta: true, shift: true }))).toEqual({ type: 'newSession' });
+    expect(shortcutFor(k('ㅉ', { meta: true, shift: true }))).toEqual({ type: 'closePane' });
     expect(shortcutFor(k('ㅏ', { meta: true }))).toEqual({ type: 'search' });
   });
 });
@@ -232,4 +234,48 @@ describe('⌘[ ⌘] — 스페이스 뒤로·앞으로(왔던 곳, 2026-10-04 QA
     expect(shortcutFor({ ...mk('{', 'BracketLeft'), shiftKey: true })).toBeNull();
   });
   it('빠르게 여러 번 = 여러 칸(거르지 않는다)', () => expect(dedupeMs({ type: 'nav', dir: -1 })).toBe(0));
+});
+
+// 2026-10-12 사용자(참모-2 전달): ⌘W = 스페이스에서 열린 탭 닫기(고정 탭 홈·보관함은 안 닫힘), ⌘T = 빈 문서 새로 열기.
+// 원래 ⌘W(세션 끄기)·⌘T(새 참모/세션)는 ⌘⇧W·⌘⇧T 로. 홈·보관함 고정 탭으로 가기는 ⌘⇧H·⌘⇧L
+describe('⌘W 탭 닫기 · ⌘T 새 문서 · ⌘⇧W/⌘⇧T 옛 동작 · ⌘⇧H/⌘⇧L 홈·보관함', () => {
+  it('⌘W → closeTab, ⌘T → newDoc', () => {
+    expect(shortcutFor(k('w', { meta: true }))).toEqual({ type: 'closeTab' });
+    expect(shortcutFor(k('t', { meta: true }))).toEqual({ type: 'newDoc' });
+  });
+  it('⌘⇧W → 세션 끄기(closePane), ⌘⇧T → 새 세션(newSession) — 맥은 shift 면 글자가 대문자로 온다', () => {
+    expect(shortcutFor(k('W', { meta: true, shift: true }))).toEqual({ type: 'closePane' });
+    expect(shortcutFor(k('T', { meta: true, shift: true }))).toEqual({ type: 'newSession' });
+  });
+  it('⌘⇧H → 홈 고정 탭, ⌘⇧L → 보관함 고정 탭 (한글 ⌘⇧ㅗ·⌘⇧ㅣ 도)', () => {
+    expect(shortcutFor(k('H', { meta: true, shift: true }))).toEqual({ type: 'goHome' });
+    expect(shortcutFor(k('L', { meta: true, shift: true }))).toEqual({ type: 'goLocker' });
+    expect(shortcutFor(k('ㅗ', { meta: true, shift: true }))).toEqual({ type: 'goHome' });
+    expect(shortcutFor(k('ㅣ', { meta: true, shift: true }))).toEqual({ type: 'goLocker' });
+  });
+  it('⇧ 없는 ⌘H·⌘L 은 앱이 안 쓴다(⌘H 는 macOS 숨기기)', () => {
+    expect(shortcutFor(k('h', { meta: true }))).toBeNull();
+    expect(shortcutFor(k('l', { meta: true }))).toBeNull();
+  });
+  it('CapsLock 으로 대문자가 와도 ⇧ 없으면 ⇧ 없는 쪽 — 세션 끄기가 실수로 안 눌린다', () => {
+    expect(shortcutFor(k('W', { meta: true }))).toEqual({ type: 'closeTab' });
+    expect(shortcutFor(k('T', { meta: true }))).toEqual({ type: 'newDoc' });
+    expect(shortcutFor(k('H', { meta: true }))).toBeNull();
+  });
+  it('이미 쓰는 ⌘⇧ 조합은 그대로(⌘⇧E 리더 크게) · 다른 ⌘⇧글자는 null', () => {
+    expect(shortcutFor(k('E', { meta: true, shift: true }))).toEqual({ type: 'readerFull' });
+    expect(shortcutFor(k('B', { meta: true, shift: true }))).toBeNull();
+    expect(shortcutFor(k('A', { meta: true, shift: true }))).toBeNull();
+  });
+  it('메뉴 항목도 같은 동작 — close_tab·new_doc·go_home·go_locker, 옛 close_pane·new_session 은 ⇧ 쪽', () => {
+    expect(menuAction('close_tab')).toEqual({ type: 'closeTab' });
+    expect(menuAction('new_doc')).toEqual({ type: 'newDoc' });
+    expect(menuAction('go_home')).toEqual({ type: 'goHome' });
+    expect(menuAction('go_locker')).toEqual({ type: 'goLocker' });
+    expect(menuAction('close_pane')).toEqual({ type: 'closePane' });
+    expect(menuAction('new_session')).toEqual({ type: 'newSession' });
+  });
+  it('같은 누름이 메뉴·키 두 갈래로 와도 한 번(400ms)', () => {
+    for (const t of ['closeTab', 'newDoc', 'goHome', 'goLocker'] as const) expect(dedupeMs({ type: t })).toBe(400);
+  });
 });

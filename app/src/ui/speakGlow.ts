@@ -1,9 +1,11 @@
 // 말하는 참모 빛 — 음성 모드일 때 100ms 마다 Rust 에 '지금 읽는 말'을 묻고(speak_now_state), 재생 중이면
-// 프레임마다 지금 시각(소리가 귀에 닿은 때부터 — Rust 가 장치 지연까지 잰다)의 소리 크기를 --speak-level(0~1)로 문서 맨 위에 쓴다. 빛낼 자리는 useSpeaking() 이 주는 세션 id 와 맞춰 st-speak 를 단다
+// 프레임마다 지금 시각(소리가 귀에 닿은 때부터 — Rust 가 장치 지연까지 잰다)의 소리 크기를 --speak-level(0~1)로 빛나는 자리 하나(speakGlowRef 를 단 요소)에만 쓴다.
+// 빛낼 자리는 useSpeaking() 이 주는 세션 id 와 맞춰 st-speak 를 단다. 문서 맨 위에 쓰면 프레임마다 모든 요소 스타일을 다시 계산했다(2026-10-11 perf 웹 13.8→40.2%)
 import { useEffect, useSyncExternalStore } from 'react';
 import { speakNowState } from '../data/tauri';
 import { foldSay, levelAt, speakingFrom, type Glow } from '../domain/speakGlow';
 import { isAttended, onAttention } from './attention';
+import { motionOn } from './calm';
 
 let glow: Glow | null = null;
 let speaking: string | null = null;
@@ -11,8 +13,17 @@ const subs = new Set<() => void>();
 let timer = 0;
 let raf = 0;
 
-const setLevel = (v: number) => document.documentElement.style.setProperty('--speak-level', v.toFixed(3));
-const reduced = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+let target: HTMLElement | null = null;
+let level = '0.000';
+const setLevel = (v: number) => { level = v.toFixed(3); target?.style.setProperty('--speak-level', level); };
+
+/** 빛나는 자리(말하는 참모의 채팅 탭)에 ref 로 단다 — 자리가 바뀌면 옛 요소에서 지우고 새 요소엔 지금 세기를 바로 */
+export function speakGlowRef(el: HTMLElement | null) {
+  if (target && target !== el) target.style.removeProperty('--speak-level');
+  target = el;
+  el?.style.setProperty('--speak-level', level);
+}
+const reduced = () => !motionOn(); // 애니메이션 줄이기·끄기·OS 동작 줄이기(ui/calm)
 
 // 사람이 안 보면(ui/attention) 프레임마다 그리지 않고 가운데 밝기로 멈춘다 — 누가 말하는지는 그대로 보인다
 const STILL = 0.5;
@@ -51,13 +62,15 @@ async function poll() {
   timer = window.setTimeout(poll, isAttended() ? 100 : 500); // 안 볼 땐 누가 말하나만 알면 된다
 }
 
+/** 묻기 시작 — 돌려준 함수로 멈추면 빛도 0 */
+export function startSpeakGlow(): () => void {
+  void poll();
+  return () => { window.clearTimeout(timer); timer = 0; apply(null); };
+}
+
 /** 음성 모드일 때만 묻는다 — 끄면 빛도 0 */
 export function useSpeakGlowPoll(on: boolean) {
-  useEffect(() => {
-    if (!on) return;
-    void poll();
-    return () => { window.clearTimeout(timer); timer = 0; apply(null); };
-  }, [on]);
+  useEffect(() => (on ? startSpeakGlow() : undefined), [on]);
 }
 
 /** 지금 소리 내는 참모의 세션 id(없으면 null) */

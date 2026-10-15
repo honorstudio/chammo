@@ -1,0 +1,52 @@
+/* 사람이 안 볼 때(창 숨김·다른 앱이 앞·입력 2분 없음 — ui/attention 이 문서 맨 위에 oa-paused)와 애니메이션 줄이기(ui/calm 의 oa-calm — 설정 줄이기·자동이면 OS 동작 줄이기나 맥 부하 높음)
+   무한 애니메이션을 그 자리에서 멈춘다.
+   2026-10-11 perf: 프사(avatar.css)만 멈추고 도는 고리·숨쉬기·보내기 빛은 그대로 돌아 앞+손 안 댐 GPU 39%·웹 26%.
+   멈춘 그림은 그 순간 모양 그대로(일하는 중·물어봄 표시는 색·모양으로 남는다), 다시 보면 이어서 돈다.
+   CSS 어디든 infinite 애니메이션을 새로 만들면 여기 한 줄 — paused.test.ts 가 CSS 를 다 읽어 빠진 걸 잡는다. 프사 기본 자세(avatar.css)는 그쪽 규칙이 이긴다 */
+:is(html.oa-paused, html.oa-calm) .sm.working svg,
+:is(html.oa-paused, html.oa-calm) .sm.waiting svg,
+:is(html.oa-paused, html.oa-calm) .spin,
+:is(html.oa-paused, html.oa-calm) .oa-ph-starting .oa-all,
+:is(html.oa-paused, html.oa-calm) .oa-img.oa-ph-starting,
+:is(html.oa-paused, html.oa-calm) .oa-img.oa-ph-starting::before,
+:is(html.oa-paused, html.oa-calm) .lk-dot.d-run::after,
+:is(html.oa-paused, html.oa-calm) .st-dot.st-work::after,
+:is(html.oa-paused, html.oa-calm) .kit-ib-busy svg,
+:is(html.oa-paused, html.oa-calm) .rp-pet.walking,
+:is(html.oa-paused, html.oa-calm) .rv-refresh.spinning svg,
+:is(html.oa-paused, html.oa-calm) .dock-card.st-working .dock-face,
+:is(html.oa-paused, html.oa-calm) .wp-bar.wp-loading::after,
+:is(html.oa-paused, html.oa-calm) .sp-fab.live,
+:is(html.oa-paused, html.oa-calm) .su-checks .st-now .su-dot,
+:is(html.oa-paused, html.oa-calm) .su-bar.flow i,
+:is(html.oa-paused, html.oa-calm) .pane.pt-live .chat-input,
+:is(html.oa-paused, html.oa-calm) .tl-dot.checking,
+:is(html.oa-paused, html.oa-calm) .oa-st-work .oa-face,
+:is(html.oa-paused, html.oa-calm) .oa-st-work .oa-pup,
+:is(html.oa-paused, html.oa-calm) .oa-st-work .oa-all,
+:is(html.oa-paused, html.oa-calm) .oa-st-rest .oa-all,
+:is(html.oa-paused, html.oa-calm) .oa-st-ask .oa-all,
+:is(html.oa-paused, html.oa-calm) .oa-st-ask .oa-eyes,
+:is(html.oa-paused, html.oa-calm) .oa-img.oa-st-work::before,
+:is(html.oa-paused, html.oa-calm) .oa-img.oa-st-ask,
+:is(html.oa-paused, html.oa-calm) .oa-dial-dots i,
+:is(html.oa-paused, html.oa-calm) .oa-dial-wave i,
+:is(html.oa-paused, html.oa-calm) .m-live-dots i,
+:is(html.oa-paused, html.oa-calm) .m-retrying svg,
+:is(html.oa-paused, html.oa-calm) .m-spin,
+:is(html.oa-paused, html.oa-calm) .cv-spin,
+:is(html.oa-paused, html.oa-calm) .sfab.has .sfab-plane,
+:is(html.oa-paused, html.oa-calm) .sfab.has:not(.open) .sfab-pill,
+:is(html.oa-paused, html.oa-calm) .sfab.has:not(.open),
+:is(html.oa-paused, html.oa-calm) .cur-send,
+:is(html.oa-paused, html.oa-calm) .cur-send::before,
+:is(html.oa-paused, html.oa-calm) .cur-send-plane svg,
+:is(html.oa-paused, html.oa-calm) .cur-send.full,
+:is(html.oa-paused, html.oa-calm) .cur-send-wrap:is(:hover, :focus-within, .has)::before,
+:is(html.oa-paused, html.oa-calm) .cur-send.sending .cur-send-ring,
+:is(html.oa-paused, html.oa-calm) .cur-send.sending .cur-send-plane svg,
+:is(html.oa-paused, html.oa-calm) .cv-avb.run { animation-play-state: paused !important; }
+
+/* 애니메이션 끄기(ui/calm 의 oa-still) — 움직임·전환 0. 키프레임은 끝 모양으로 바로 가서(1ms·한 번) 나타나기 애니메이션이 투명한 채로 남지 않는다.
+   상태는 색·모양으로 남는다(도는 고리는 고리째, 프사는 기본 자세) */
+html.oa-still *, html.oa-still *::before, html.oa-still *::after { animation-duration: 1ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition: none !important; scroll-behavior: auto !important; }

@@ -34,6 +34,18 @@ class Say(unittest.TestCase):
             open(os.path.join(d, 'voice.json'), 'w').write('{"on":true}')
             self.assertTrue(say.voice_on(d))
 
+    def test_1mb_넘으면_앞_절반을_버린다(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, 'say.jsonl')
+            open(p, 'w').write(''.join(f'{{"n":{i}}}\n' for i in range(100)))
+            size = os.path.getsize(p)
+            say.cap(p, size - 1)
+            lines = open(p).read().splitlines()
+            self.assertLess(os.path.getsize(p), size / 2 + 20)
+            self.assertEqual(lines[-1], '{"n":99}')
+            self.assertTrue(all(l.startswith('{"n":') and l.endswith('}') for l in lines))
+            say.cap(os.path.join(d, 'none.jsonl'), 1)
+
     def test_언어(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(say.lang(d), 'ko')

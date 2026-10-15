@@ -1,3 +1,5 @@
+import { keyLabel } from '../../domain/keys';
+import { IS_WIN } from '../../domain/reader';
 import { useEffect, useState } from 'react';
 import { readTranscriptTails } from '../../data/tauri';
 import { summarizeTranscript, type Activity } from '../../domain/activity';
@@ -9,6 +11,7 @@ import { assistant, josa, tr } from '../../i18n';
 import { BrandMark, OrchAvatar, avatarState } from '../avatar';
 import { IconPause, IconPlus, IconResume } from '../Icons';
 import { Ctx } from '../Sidebar';
+import { every } from '../poll';
 import type { LiveLine } from './DashboardView';
 import './orchHome.css';
 
@@ -49,8 +52,8 @@ export function OrchHome({ live, off, ctx, lines, starting, ready, creating, wai
       if (alive) setAct(Object.fromEntries(Object.entries(m).map(([k, v]) => [k, summarizeTranscript(v)])));
     }, () => {});
     tick();
-    const t = window.setInterval(tick, 30_000);
-    return () => { alive = false; window.clearInterval(t); };
+    const stop = every(tick, 30_000);
+    return () => { alive = false; stop(); };
   }, [offKey]);
 
   const rows = homeRows({ live, off, activity: act, ctx });
@@ -67,7 +70,7 @@ export function OrchHome({ live, off, ctx, lines, starting, ready, creating, wai
     return (
       <button key={r.key} className={`oh-row ${on ? 'st-on' : 'st-off'}`} disabled={busy} onClick={() => pick(r)}
         title={on ? tr(`${nm}로 가기`, `Go to ${nm}`) : tr(`${nm} 이어서 켜기`, `Resume ${nm}`)}>
-        <OrchAvatar name={s.name} size={36} state={busy ? 'rest' : r.live ? avatarState(r.live) : 'off'} color={colorOf(s.name)} label={nm} />
+        <OrchAvatar name={s.name} size={36} state={busy ? 'off' : r.live ? avatarState(r.live) : 'off'} phase={busy ? 'starting' : undefined} color={colorOf(s.name)} label={nm} />
         <span className="oh-txt">
           <span className="oh-l1">
             <b>{nm}</b>
@@ -92,7 +95,7 @@ export function OrchHome({ live, off, ctx, lines, starting, ready, creating, wai
   );
   const making = creating && !live.some((x) => x.name === creating) ? (
     <div className="oh-row st-making" aria-busy="true">
-      <OrchAvatar name={creating} size={36} state="rest" color={colorOf(creating)} label={nameOf({ id: '', name: creating })} />
+      <OrchAvatar name={creating} size={36} state="off" phase="starting" color={colorOf(creating)} label={nameOf({ id: '', name: creating })} />
       <span className="oh-txt"><span className="oh-l1"><b>{nameOf({ id: '', name: creating }) || creating}</b><span className="cv-spin" /></span><span className="oh-l2">{tr('만드는 중…', 'Creating…')}</span></span>
     </div>
   ) : null;
@@ -100,7 +103,7 @@ export function OrchHome({ live, off, ctx, lines, starting, ready, creating, wai
     <div className="cv-dash oh">
       <header className="cv-page-head">
         <div className="cv-titles"><h1>{tr('오케스트레이터', 'Orchestrators')}</h1></div>
-        {onNew && !empty && <button className="oh-new" onClick={onNew} aria-label={tr(`새 ${assistant()}`, `New ${assistant()}`)} title={tr(`새 ${assistant()} (⌘T)`, `New ${assistant()} (⌘T)`)}><IconPlus /></button>}
+        {onNew && !empty && <button className="oh-new" onClick={onNew} aria-label={tr(`새 ${assistant()}`, `New ${assistant()}`)} title={tr(`새 ${assistant()} (${keyLabel('⌘⇧T', IS_WIN)})`, `New ${assistant()} (${keyLabel('⌘⇧T', IS_WIN)})`)}><IconPlus /></button>}
       </header>
       {empty ? (
         <div className="oh-empty">

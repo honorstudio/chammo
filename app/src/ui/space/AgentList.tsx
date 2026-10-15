@@ -3,6 +3,9 @@ import { subagentTails } from '../../data/tauri';
 import { agentRows, agentWord, nowDoing, revive, type SubAgent } from '../../domain/subAgents';
 import { termTail } from '../../domain/termTail';
 import { tr } from '../../i18n';
+import { every } from '../poll';
+import { IconChevronUp } from '../Icons';
+import { IconButton } from '../kit/IconButton';
 
 type Tail = { mtime: number; tail: string };
 const clean = (t: string) => t.replace(/^#+\s*/, '').replace(/\*\*/g, '').replace(/`/g, '');
@@ -31,8 +34,8 @@ export function AgentList({ sid, agents }: { sid?: string; agents: SubAgent[] })
       }).catch(() => {});
     };
     tick();
-    const t = window.setInterval(tick, 5000);
-    return () => { alive = false; window.clearInterval(t); };
+    const stop = every(tick, 5000);
+    return () => { alive = false; stop(); };
   }, [sid, want]);
   const shown = [...rows.running, ...rows.recent, ...(showOld ? rows.folded : [])];
   if (shown.length === 0 && rows.folded.length === 0) return null;
@@ -62,9 +65,9 @@ export function AgentList({ sid, agents }: { sid?: string; agents: SubAgent[] })
       <div className="cv-h2">{tr('분신', 'Subagents')}<span>{rows.running.length > 0 ? tr(`일하는 중 ${rows.running.length}`, `${rows.running.length} working`) : shown.length + rows.folded.length}</span></div>
       <ul>{shown.map(row)}</ul>
       {rows.folded.length > 0 && (
-        <button className="cv-link" onClick={() => setShowOld((v) => !v)}>
-          {showOld ? tr('접기', 'Show less') : tr(`끝난 분신 ${rows.folded.length}개`, `${rows.folded.length} finished`)}
-        </button>
+        showOld
+          ? <IconButton size="s" label={tr('접기', 'Show less')} onClick={() => setShowOld(false)}><IconChevronUp /></IconButton>
+          : <button className="cv-link" onClick={() => setShowOld(true)}>{tr(`끝난 분신 ${rows.folded.length}개`, `${rows.folded.length} finished`)}</button>
       )}
     </section>
   );

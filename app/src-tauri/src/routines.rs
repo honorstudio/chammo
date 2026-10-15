@@ -88,8 +88,47 @@ pub async fn routines_list() -> String {
     tauri::async_runtime::spawn_blocking(|| list_result().unwrap_or_else(|_| "[]".into())).await.unwrap_or_else(|_| "[]".into())
 }
 
-/// 예약 목록 — 실패면 이유(폰은 '예약 없음'과 '못 읽음'을 가른다). 실패는 앱 기록(notify.log)에도 남긴다 — 사용자 맥에서만 빈 목록이 났는데 이유가 어디에도 없었다(2026-10-03)
+/// 목록이 기대는 것들의 표 — routines/ 아래(예약 폴더·그 안 파일)의 이름·크기·수정 시각 + 클라우드 목록 + 스크립트 사본 + 지금 분.
+/// 다음 실행·남은 횟수가 지금 시각(분 단위)으로 정해져서 분이 넘어가면 새로 읽는다
+pub fn list_sig(data: &std::path::Path, minute: u64) -> String {
+    use std::fmt::Write;
+    let stamp = |p: &std::path::Path| std::fs::metadata(p).ok().map(|m| (m.len(), m.modified().ok()));
+    let mut sig = format!("{minute}|{:?}|{:?}", stamp(&data.join("cloud-routines.json")), stamp(&tool_path(data)));
+    let mut dirs: Vec<_> = std::fs::read_dir(data.join("routines")).map(|rd| rd.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+    dirs.sort();
+    for d in dirs {
+        let _ = write!(sig, "|{}:{:?}", d.display(), stamp(&d));
+        let mut files: Vec<_> = std::fs::read_dir(&d).map(|rd| rd.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+        files.sort();
+        for f in files {
+            let _ = write!(sig, ",{}:{:?}", f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), stamp(&f));
+        }
+    }
+    sig
+}
+
+/// 마지막으로 읽은 목록과 그때의 표
+static LIST: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
+
+/// 예약 목록 — 실패면 이유(폰은 '예약 없음'과 '못 읽음'을 가른다). 실패는 앱 기록(notify.log)에도 남긴다 — 사용자 맥에서만 빈 목록이 났는데 이유가 어디에도 없었다(2026-10-03).
+/// 예약 폴더가 그대로고 같은 분이면 지난 결과 — 5초마다 python 을 띄우던 것(2026-10-11 perf 5번). 데스크톱·폰이 같이 쓴다
 pub fn list_result() -> Result<String, String> {
+    let data = crate::config::data_dir();
+    let minute = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() / 60);
+    let sig = list_sig(&data, minute);
+    if let Some((s, out)) = LIST.lock().ok().and_then(|g| g.clone()) {
+        if s == sig {
+            return Ok(out);
+        }
+    }
+    let r = list_fresh();
+    if let (Ok(out), Ok(mut g)) = (&r, LIST.lock()) {
+        *g = Some((sig, out.clone()));
+    }
+    r
+}
+
+fn list_fresh() -> Result<String, String> {
     let r = script(&["list"]).map_err(|e| if e.trim().is_empty() { "예약 스크립트가 이유 없이 실패했어요".to_string() } else { e }).and_then(|s| match serde_json::from_str::<serde_json::Value>(&s) {
         Ok(v) if v.is_array() => Ok(s),
         _ => Err(format!("목록 모양이 이상해요: {}", s.chars().take(120).collect::<String>())),
@@ -111,6 +150,27 @@ pub async fn routine_do(name: String, action: String) -> Result<String, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 목록은_예약_폴더가_바뀌거나_분이_넘어갈_때만_다시_읽는다() {
+        // 5초마다 python 을 띄워 목록을 읽던 것(분당 12개, 2026-10-11 perf 5번)
+        let d = std::env::temp_dir().join(format!("chammo-routine-sig-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("routines/alpha")).unwrap();
+        std::fs::write(d.join("routines/alpha/routine.json"), "{}").unwrap();
+        let a = list_sig(&d, 100);
+        assert_eq!(list_sig(&d, 100), a, "그대로면 같다");
+        assert_ne!(list_sig(&d, 101), a, "분이 넘어가면 다르다(다음 실행·남은 횟수가 지금 시각으로 정해진다)");
+        std::fs::write(d.join("routines/alpha/runs.jsonl"), "{\"event\":\"start\"}\n").unwrap();
+        let b = list_sig(&d, 100);
+        assert_ne!(b, a, "실행 기록이 붙으면 다르다");
+        std::fs::create_dir_all(d.join("routines/beta")).unwrap();
+        assert_ne!(list_sig(&d, 100), b, "예약이 늘면 다르다");
+        let c = list_sig(&d, 100);
+        std::fs::write(d.join("cloud-routines.json"), "[]").unwrap();
+        assert_ne!(list_sig(&d, 100), c, "클라우드 목록도 본다");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn 버튼_동작만_허용() {

@@ -57,6 +57,10 @@ pub trait Backend: Send + Sync {
     fn open_on_mac(&self, path: &str) -> Result<(), String>;
     /// 폰 진단 한 줄 — 걸러진 '종류 키=값…'(diag_line)을 notify.log 에
     fn diag(&self, _line: &str) {}
+    /// 폰 화면 박힘 진단(layout-*) — <데이터>/phone-layout.jsonl 에 한 줄(크기 상한 PHONE_LAYOUT_CAP, 글 내용 없음)
+    fn layout_log(&self, line: &str) {
+        self.diag(line);
+    }
     /// 참모 별명 — 맥 앱(데스크톱)에 넘긴다: 앱 별명(setOrchLabel)을 바꾸고, 쉬는 때 /rename '참모-N · 별명'(데스크톱 renamesToSend)
     fn rename(&self, id: &str, nick: &str) -> Result<(), String>;
     /// 참모 제거 — claude stop(켜져 있으면) + rm(데스크톱 remove_session 과 같은 길). 목록에서 빠지고 대화 기록 파일은 맥에 남는다
@@ -68,6 +72,47 @@ pub trait Backend: Send + Sync {
     fn asset(&self, path: &str) -> Option<(Vec<u8>, String)>;
     /// scripts/show 기록 꼬리 — 파일 길의 허용 집합 출처
     fn show_log(&self) -> String;
+    /// 파일 보관함 뿌리(~/Documents/Chammo — 참모마다 진짜 폴더). 보관함 파일도 허용 집합(locker_fs::phone_paths)
+    fn locker_root(&self) -> Option<PathBuf> {
+        None
+    }
+    /// 폰이 올린 첨부(<데이터>/attach/<숫자>-phone.<확장자>)를 그 참모 보관함에 — 보관함 복사본 경로
+    fn locker_add(&self, _owner: &str, _path: &str) -> Result<String, String> {
+        Err("locker unavailable".into())
+    }
+    /// 홈 폴더 — 보관함 바로가기는 홈 안 파일만(locker_fs::alias). 시험은 가짜 홈
+    fn home(&self) -> PathBuf {
+        PathBuf::from(crate::platform::home())
+    }
+    /// 참모 모드(폰 홈 모드 카드) — 목록(mode_list)·한 칸 그리기·누름·켜기. 맥 쪽 모드 호스트가 없으면 오류
+    fn modes(&self) -> serde_json::Value {
+        serde_json::json!([])
+    }
+    fn mode_view(&self, _name: &str, _columns: u32, _rows: u32) -> Result<serde_json::Value, String> {
+        Err("modes unavailable".into())
+    }
+    fn mode_act(&self, _name: &str, _act: &serde_json::Value) -> Result<serde_json::Value, String> {
+        Err("modes unavailable".into())
+    }
+    fn mode_open(&self, _name: &str, _dash: &str) -> Result<(), String> {
+        Err("modes unavailable".into())
+    }
+    /// 이 홈에서 끄기 — 그 홈(dash)에 켜진 모드만 맥이 끈다
+    fn mode_close(&self, _name: &str, _dash: &str) -> Result<(), String> {
+        Err("modes unavailable".into())
+    }
+    /// 고르기 카드 그림 — {kind: svg|img|tree, …} 또는 null(자리표시). Svg 거름은 폰 화면이 한다
+    fn mode_card(&self, _name: &str) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+    /// 지우기 — 기본 모드는 숨기기, 사용자 모드는 제거. 원본 폴더 휴지통은 데스크톱에서만이라 폰 길엔 없다 → {kind, trashed, undo}
+    fn mode_remove(&self, _name: &str) -> Result<serde_json::Value, String> {
+        Err("modes unavailable".into())
+    }
+    /// 되돌리기 — 숨긴 것 다시 보이기·방금 제거한 것 되살리기
+    fn mode_restore(&self, _name: &str) -> Result<(), String> {
+        Err("modes unavailable".into())
+    }
     fn data_dir(&self) -> PathBuf;
     /// 세션별 컨텍스트 파일 원문(<데이터>/ctx/*.json)
     fn ctx_files(&self) -> Vec<String>;
@@ -117,6 +162,24 @@ pub trait Backend: Send + Sync {
     fn account_auto(&self, _on: bool) -> Result<serde_json::Value, String> {
         Err("unsupported".into())
     }
+    /// 맥 앱 음성 모드(<데이터>/voice.json) — 폰 입력창 마이크. 켜기·끄기는 scripts/app voice 와 같은 통로(앱 __appctl)
+    fn voice_on(&self) -> bool {
+        false
+    }
+    fn set_voice(&self, _on: bool) -> Result<(), String> {
+        Err("unsupported".into())
+    }
+    /// 폰에서 음성 소리 틀기(phone_voice) — 하트비트 한 번(보고 있음·소리 소식)을 받고 가져갈 소리·멈춤 번호를 답한다 · 내놓은 소리 파일(wav)
+    fn voice_beat(&self, _b: crate::phone_voice::Beat) -> serde_json::Value {
+        serde_json::json!({ "item": null, "cancel": 0 })
+    }
+    fn voice_audio(&self, _id: u64) -> Option<Vec<u8>> {
+        None
+    }
+    /// 참모 모델·에포트 바꾸기 — 앱(데스크톱) 모델 칩과 같은 runModelPick 으로 넘긴다(새 세션 기본값은 앱이 되돌린다). 값은 문지기가 걸렀다
+    fn pick_model(&self, _id: &str, _model: Option<&str>, _effort: Option<&str>) -> Result<(), String> {
+        Err("unsupported".into())
+    }
     /// 로그인 풀림(login.rs) — 화면이 적은 판단 + 폰 로그인 흐름 · 시작 · 코드 한 줄(값은 어디에도 안 남긴다) · 그만
     fn login_view(&self) -> serde_json::Value {
         serde_json::json!({ "need": null, "flow": { "state": "idle" } })
@@ -141,24 +204,19 @@ pub struct Gate {
     pub origins: Vec<String>,
     /// 세션별 마지막 멈춤 — 연타는 STOP_GAP 에 한 번(Esc 가 두 번 가면 쉬는 세션에 되감기 메뉴가 뜬다)
     pub stops: std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
-    /// 폰이 보낸 글(클라이언트 id) — 같은 id 는 한 번만 치고, 뒤에서 친 결과를 send-status 로 알린다(10분 기억)
-    pub sends: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, SendState)>>>,
+    /// 폰이 보낸 글(클라이언트 id) — 같은 id 는 한 번만 치고, 뒤에서 친 결과를 send-status 로 알린다(데이터 폴더에 하루, mobile_sends)
+    pub sends: std::sync::Arc<crate::mobile_sends::Sends>,
     /// html 시안 표(ticket) → (경로, 낸 때) — iframe 은 열쇠를 못 실어서 짧게 사는 표 주소로 연다(10분)
     pub tickets: std::sync::Mutex<std::collections::HashMap<String, (String, std::time::Instant)>>,
 }
 
+/// 폰 화면(껍데기·api 응답) 공통 CSP — media-src 의 blob: 은 폰이 맥에서 받은 음성 소리를 틀 때만(data/phoneVoice). 그 밖의 곳으로는 안 열린다
+pub const PHONE_CSP: &str = "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+
 /// 시안 표가 사는 시간 — 껍데기 '처음부터'(새로 고침)도 그 안이면 된다
 const TICKET_KEEP: Duration = Duration::from_secs(600);
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum SendState {
-    Typing,
-    Done,
-    Failed(String),
-}
-
-/// 보낸 글 기억 시간
-const SEND_KEEP: Duration = Duration::from_secs(600);
+use crate::mobile_sends::SendState;
 
 /// 큰 몸통(그림)은 읽기 마감을 크기만큼 늘린다 — 느린 LTE(초당 64KB)로도 끝나게, 상한 3분.
 /// 15초 안에 다 읽어야 해서 LTE 로 큰 사진이 'Load failed' 났다(2026-10-03)
@@ -392,6 +450,21 @@ fn shows_resp(req: &Req, be: &dyn Backend) -> Resp {
     tagged(req, log)
 }
 
+/// 폰에 보낼 엑셀 표 — 시트마다 앞 PHONE_ROWS 행까지만(LTE·폰 메모리), 잘린 행 수는 cut 에
+pub const PHONE_ROWS: u32 = 2000;
+fn phone_sheet(b: &crate::sheet_book::Book) -> Vec<u8> {
+    let mut v = serde_json::to_value(b).unwrap_or_default();
+    if let Some(sheets) = v.get_mut("sheets").and_then(|x| x.as_array_mut()) {
+        for sh in sheets {
+            let Some(cells) = sh.get_mut("cells").and_then(|x| x.as_array_mut()) else { continue };
+            let max = cells.iter().filter_map(|c| c["r"].as_u64()).max().map_or(0, |m| m + 1);
+            cells.retain(|c| c["r"].as_u64().is_some_and(|r| r < PHONE_ROWS as u64));
+            sh["cut"] = serde_json::json!(max.saturating_sub(PHONE_ROWS as u64));
+        }
+    }
+    serde_json::to_vec(&v).unwrap_or_default()
+}
+
 /// 글로 바꾼 문서(워드 → html) — 글자로 내고, 혹시 문서로 그려져도 스크립트 없이
 fn text_resp(body: Vec<u8>) -> Resp {
     let mut r = Resp::new(200, "text/plain; charset=utf-8", body);
@@ -399,10 +472,31 @@ fn text_resp(body: Vec<u8>) -> Resp {
     r
 }
 
+/// 폰 보관함 — 진짜 폴더(locker_fs::phone_view)에서 폰이 열 수 있는 것(pick 이 Ok)만 줄째 넘긴다(통째로 넘기면 거름 밖 파일 이름이 샌다)
+fn locker_resp(be: &dyn Backend) -> Resp {
+    let allowed = allowed_of(be);
+    let rules = mobile_files::Rules { data_dir: be.data_dir(), hq_dir: be.hq_dir(), home: PathBuf::from(crate::platform::home()) };
+    let mut v = match be.locker_root() {
+        Some(r) => crate::locker_fs::phone_view(&r, &be.home()),
+        None => serde_json::json!({ "items": [], "hidden": [], "folders": [] }),
+    };
+    if let Some(items) = v.get_mut("items").and_then(|x| x.as_array_mut()) {
+        items.retain(|i| i["path"].as_str().is_some_and(|p| matches!(mobile_files::pick(p, &allowed, &rules), Pick::Ok(_))));
+    }
+    Resp::json(&v)
+}
+
+/// 폰이 읽어도 되는 경로 집합 — 보여 준 파일·지침서·starter(allowed_files) + 보관함에 넣은 파일
+fn allowed_of(be: &dyn Backend) -> Vec<String> {
+    let mut v = mobile_files::allowed_files(&be.show_log(), &be.routines().unwrap_or_default(), &be.data_dir(), &be.hq_dir());
+    v.extend(be.locker_root().map(|r| crate::locker_fs::phone_paths(&r, &be.home())).unwrap_or_default());
+    v
+}
+
 fn file_resp(req: &Req, be: &dyn Backend) -> Resp {
     let Some(raw) = req.param("path") else { return Resp::text(400, "no path") };
     let Ok(path) = percent_encoding::percent_decode_str(raw).decode_utf8() else { return Resp::text(400, "bad path") };
-    let allowed = mobile_files::allowed_files(&be.show_log(), &be.routines().unwrap_or_default(), &be.data_dir(), &be.hq_dir());
+    let allowed = allowed_of(be);
     let rules = mobile_files::Rules { data_dir: be.data_dir(), hq_dir: be.hq_dir(), home: PathBuf::from(crate::platform::home()) };
     // md 속 그림 — doc(보여 준 md)이 가리킨 그림이면 그 그림 하나만 목록에 더한다(링크·점·이름 거름은 pick 이 그대로)
     let allowed = match req.param("doc") {
@@ -443,6 +537,23 @@ fn file_resp(req: &Req, be: &dyn Backend) -> Resp {
             Some(h) if mobile_files::secret_in(h.as_bytes()) => Resp::text(403, "secret inside"),
             Some(h) => text_resp(h.into_bytes()),
             None => Resp::text(502, "convert failed"),
+        };
+    }
+    // 엑셀은 표로(맥 스페이스와 같은 Rust 읽기 — 폰은 읽기만). 칸 글에 키가 보이면 안 낸다
+    if req.param("as") == Some("sheet") {
+        let ext = real.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
+        if !matches!(ext.as_str(), "xlsx" | "xlsm") {
+            return Resp::text(403, "not an excel file");
+        }
+        let Ok(bytes) = mobile_files::read_verified(&path, mobile_files::MAX_BIN_FILE) else { return Resp::text(403, "not allowed") };
+        return match crate::sheet_book::read_book(&bytes).map(|b| phone_sheet(&b)) {
+            Ok(body) if mobile_files::secret_in(&body) => Resp::text(403, "secret inside"),
+            Ok(body) => {
+                let mut r = Resp::new(200, "application/json; charset=utf-8", body);
+                r.headers.push(("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'".into()));
+                r
+            }
+            Err(e) => Resp::text(422, &e),
         };
     }
     // 오피스·영상 원본은 안 낸다 — 오피스는 첫 장(QuickLook)·워드 글, 영상은 표 주소(/api/media, Range)
@@ -549,8 +660,27 @@ struct AccountSwitchBody {
     id: String,
 }
 
+/// 폰 하트비트 — ready = 오디오가 깨어 있다(사람이 한 번 눌렀다) · hidden = 화면을 떠난다 · ack = 지난 소리의 시작·끝·실패
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct BeatBody {
+    ready: bool,
+    #[serde(default)]
+    hidden: bool,
+    #[serde(default)]
+    ack: Option<BeatAck>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BeatAck {
+    id: u64,
+    s: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+/// 켜기·끄기 한 칸(자동 전환·음성 모드)
 struct AccountAutoBody {
     on: bool,
 }
@@ -571,6 +701,120 @@ fn account_id_ok(id: &str) -> bool {
 
 /// 계정 바꾸기는 몇 초에 한 번 — 두 번 탭·다른 탭에서 겹쳐 눌러도 한 번만(칸이 달라도)
 pub const ACCOUNT_GAP: Duration = Duration::from_secs(4);
+/// 모델 칩 — 앱 runModelPick 이 결과를 기다리고 기본값을 되돌리는 동안(최대 20초)은 겹치지 않게, 폰 연타만 막는 짧은 틈
+pub const MODEL_GAP: Duration = Duration::from_secs(3);
+/// 모델 칩이 고를 수 있는 값 — domain/modelPick MODEL_CHOICES·LEVELS 와 같은 목록
+const MODEL_ALIASES: &[&str] = &["opus", "sonnet", "haiku"];
+const EFFORT_LEVELS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelBody {
+    id: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct LockerAddBody {
+    owner: String,
+    path: String,
+}
+
+/// 폰 보관함 쓰기(홈·보관함 v1) — 주인 = 참모 폴더 이름. 나머지 칸은 길마다 쓰는 것만
+#[derive(Deserialize)]
+struct LockerOpBody {
+    owner: String,
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    folder: String,
+    #[serde(default)]
+    rel: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    parent: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    text: String,
+}
+
+#[derive(Deserialize)]
+struct ModeActBody {
+    name: String,
+    act: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+struct ModeOpenBody {
+    name: String,
+    dash: String,
+}
+
+/// 지우기·되돌리기 몸통 — 이름만(다른 칸은 버린다: 폰은 원본 휴지통을 못 고른다)
+#[derive(Deserialize)]
+struct ModeNameBody {
+    name: String,
+}
+
+/// 폰 홈·보관함 v1 에 더한 쓰기 길 — 같은 출처 문지기·head_check 몸통 목록·405 가 이 목록 하나를 본다
+const PHONE_POSTS: &[&str] = &["/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
+const PHONE_GETS: &[&str] = &["/api/modes", "/api/mode-view", "/api/mode-card"];
+/// 폰 md 글 칸 저장만 몸통을 크게(글 512KB + JSON)
+const MAX_WRITE_BODY: usize = crate::locker_fs::MAX_PHONE_MD + 64 * 1024;
+
+/// 모드 이름 — 모드 폴더 이름 꼴만(modes.rs 가 다시 찾는다)
+fn mode_name_ok(n: &str) -> bool {
+    !n.is_empty() && n.len() <= 80 && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// 폰 보관함 쓰기 — 그 참모 보관함 안에서만. 참모 폴더는 이름으로 있는 것만(폰은 새로 안 만든다)
+fn locker_op(req: &Req, be: &dyn Backend) -> Resp {
+    let b: LockerOpBody = match body(req) { Ok(b) => b, Err(r) => return r };
+    let Some(root) = be.locker_root() else { return Resp::text(503, "locker unavailable") };
+    let Some(owner) = crate::locker_fs::phone_owner(&root, b.owner.trim()) else { return Resp::text(404, "no locker") };
+    let bad = |e: String| Resp::text(400, &e);
+    match req.path.as_str() {
+        "/api/locker-alias" => {
+            // 폰이 볼 수 있는 파일만 — 바로가기가 생기면 폰 허용 목록(phone_paths)이 그만큼 넓어진다
+            let rules = mobile_files::Rules { data_dir: be.data_dir(), hq_dir: be.hq_dir(), home: PathBuf::from(crate::platform::home()) };
+            let Pick::Ok(real) = mobile_files::pick(&b.path, &allowed_of(be), &rules) else { return Resp::text(403, "not allowed") };
+            let (home, data) = (be.home(), be.data_dir());
+            let ctx = crate::locker_fs::Ctx { home: &home, data: &data, root: &root, settled: &[] };
+            match crate::locker_fs::alias(&ctx, &owner, &b.folder, &real) {
+                Ok(at) => Resp::json(&serde_json::json!({ "path": at.to_string_lossy() })),
+                Err(e) => bad(e),
+            }
+        }
+        "/api/locker-unalias" => match crate::locker_fs::unalias(&owner, &b.rel) {
+            Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+            Err(e) => bad(e),
+        },
+        "/api/locker-new" => {
+            if b.kind.as_deref().is_some_and(|k| k != "md") {
+                return bad("폰은 새 문서(md)만".into());
+            }
+            match crate::locker_fs::new_doc(&owner, &b.folder, "md", &b.title) {
+                Ok(at) => Resp::json(&serde_json::json!({ "path": at.to_string_lossy() })),
+                Err(e) => bad(e),
+            }
+        }
+        "/api/locker-mkdir" => match crate::locker_fs::mkdir(&owner, &b.parent, &b.name) {
+            Ok(rel) => Resp::json(&serde_json::json!({ "rel": rel })),
+            Err(e) => bad(e),
+        },
+        _ => match crate::locker_fs::write_md(&owner, Path::new(&b.path), &b.text) {
+            Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+            Err(e) => bad(e),
+        },
+    }
+}
 
 #[derive(Deserialize)]
 struct PinBody {
@@ -621,7 +865,7 @@ struct CurationBody {
 
 /// 보여 준 목록·지침서·starter 안이고 내보낼 수 있는 파일인가 — /api/file 과 같은 거름
 fn pick_shown(be: &dyn Backend, path: &str) -> Pick {
-    let allowed = mobile_files::allowed_files(&be.show_log(), &be.routines().unwrap_or_default(), &be.data_dir(), &be.hq_dir());
+    let allowed = allowed_of(be);
     let rules = mobile_files::Rules { data_dir: be.data_dir(), hq_dir: be.hq_dir(), home: PathBuf::from(crate::platform::home()) };
     mobile_files::pick(path, &allowed, &rules)
 }
@@ -634,6 +878,8 @@ fn is_html(p: &str) -> bool {
 /// 시안 앞에 넣는 것 — 불투명 출처라 막힌 localStorage 대신 이 페이지 동안만 쓰는 저장소(표시는 폰이 cur-state 로 받아 맥에 적고
 /// 열 때 restore 로 되돌린다), 폰이 넓은 시안을 맞추게 크기 알림 — 옛 검토 시안은 넓은 덱이 안쪽 가로 스크롤(.decks)이라
 /// 그 폭까지 알려 폰이 시안 전체를 그 폭으로 그리고 화면에 맞춘다, 두 손가락은 폰에 넘긴다(시안 안 핀치는 사파리 확대가 된다)
+/// 검토 틀 고르기 창(.cur-pick)의 메모 칸은 손가락이면 키보드를 안 띄우고 폰에 넘긴다(cur-note: 고른 블록 k·쓰던 글) — 시안 안 작은 칸은
+/// 키보드가 뜨며 화면이 스크롤되면 틀이 고르기 창을 닫아 못 썼다(2026-10-11). 폰이 아래 시트로 받아 cur-cmd note 로 되돌린다. 고르기 창은 닫는다(틀이 스크롤에 닫는다)
 const HTML_SHIM: &str = r#"<script>(function(){try{window.localStorage.length}catch(e){var m={},s={getItem:function(k){return Object.prototype.hasOwnProperty.call(m,k)?m[k]:null},setItem:function(k,v){m[k]=String(v)},removeItem:function(k){delete m[k]},clear:function(){m={}},key:function(i){return Object.keys(m)[i]||null}};Object.defineProperty(s,'length',{get:function(){return Object.keys(m).length}});try{Object.defineProperty(window,'localStorage',{value:s,configurable:true})}catch(_){}}
 function size(){var d=document.documentElement,w=d.scrollWidth;[].forEach.call(document.querySelectorAll('.decks'),function(e){if(e.scrollWidth>e.clientWidth+4)w=Math.max(w,Math.min(4000,e.scrollWidth+d.clientWidth-e.clientWidth))});parent.postMessage({hodoc:'html-size',w:w,h:d.scrollHeight},'*')}
 addEventListener('load',function(){size();setTimeout(size,600)});addEventListener('resize',size);
@@ -641,6 +887,8 @@ var d0=0;function g(t){return Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-
 addEventListener('touchstart',function(e){if(e.touches.length===2)d0=g(e.touches)},{passive:true});
 addEventListener('touchmove',function(e){if(e.touches.length===2&&d0){e.preventDefault();parent.postMessage({hodoc:'html-pinch',k:g(e.touches)/d0},'*')}},{passive:false});
 addEventListener('touchend',function(e){if(d0&&e.touches.length<2){d0=0;parent.postMessage({hodoc:'html-pinch',done:true},'*')}});
+var nt=0;function note(e){var i=e.target;if(!i||i.tagName!=='INPUT'||!i.closest||!i.closest('.cur-pick'))return;if(e.type!=='touchend'&&!(navigator.maxTouchPoints>0||matchMedia('(pointer:coarse)').matches))return;if(e.cancelable)e.preventDefault();e.stopPropagation();i.blur();var n=Date.now();if(n-nt<600)return;nt=n;var m=document.querySelector('[data-k].cur-sel');if(!m)return;parent.postMessage({hodoc:'cur-note',k:m.getAttribute('data-k')||'',text:i.value},'*');document.dispatchEvent(new Event('scroll',{bubbles:true}))}
+addEventListener('touchend',note,true);addEventListener('focusin',note,true);
 })()</script>"#;
 
 /// 시안 맨 앞 모양 — 아이폰은 넓은 페이지를 줄여 보일 때 글자만 멋대로 키워(text autosizing) 줄끼리 겹친다(2026-10-04 폰 겹침).
@@ -694,6 +942,77 @@ fn media_page(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     let mut r = Resp::new(206, ct, bytes);
     r.headers.push(("Content-Range", format!("bytes {start}-{end}/{total}")));
     r.headers.push(("Accept-Ranges", "bytes".into()));
+    r
+}
+
+/// 받기 한 번에 통째로 줄 수 있는 크기 — 응답을 메모리에 올려 보낸다(쓰기 마감도 크기만큼 늘어난다). 넘으면 맥에서
+const MAX_DOWNLOAD: u64 = 200 * 1024 * 1024;
+/// 받기 조각(Range) 상한
+const DL_CHUNK: u64 = 8 * 1024 * 1024;
+
+/// 받기 MIME — 확장자로(내보내는 확장자는 mobile_files::shareable 이 정한다 — 받기라고 새로 열지 않는다). 리더 표(mime_of)는 모르면 글로 주지만 받기는 모르면 octet-stream(사파리가 글로 열어 버리지 않게)
+fn dl_mime(p: &Path) -> &'static str {
+    match p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        Some("pptx") => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        Some("doc") => "application/msword",
+        Some("xls") => "application/vnd.ms-excel",
+        Some("ppt") => "application/vnd.ms-powerpoint",
+        Some("txt" | "log") => "text/plain; charset=utf-8",
+        Some("md") => "text/markdown; charset=utf-8",
+        Some("csv") => "text/csv; charset=utf-8",
+        _ => match crate::reader::mime_of(p) {
+            "text/plain; charset=utf-8" => "application/octet-stream",
+            m => m,
+        },
+    }
+}
+
+/// 내려받기 이름 — 옛 칸(filename)은 아스키만 되니 아니면 file.<확장자>, 진짜 이름은 filename*(RFC 5987)
+fn attachment(name: &str) -> String {
+    const KEEP: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC.remove(b'.').remove(b'-').remove(b'_');
+    let plain = !name.is_empty() && name.bytes().all(|b| (b.is_ascii_graphic() || b == b' ') && b != b'"' && b != b'\\');
+    let ext = Path::new(name).extension().and_then(|e| e.to_str()).filter(|e| e.bytes().all(|b| b.is_ascii_alphanumeric()));
+    let fallback = if plain { name.to_string() } else { ext.map_or_else(|| "file".to_string(), |e| format!("file.{e}")) };
+    format!("attachment; filename=\"{fallback}\"; filename*=UTF-8''{}", percent_encoding::utf8_percent_encode(name, KEEP))
+}
+
+/// 표 주소로 받기 — 열쇠 없이 표만(사파리 내려받기 링크는 Bearer 를 못 싣는다). 보여 준 파일 거름은 /api/file 과 같고, 글 속 키가 보이면 안 준다.
+/// 원본 그대로·attachment·Range(조각 8MB)
+fn dl_page(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
+    let Some(path) = ticket_path(req, gate) else { return Resp::text(403, "bad ticket") };
+    let Pick::Ok(real) = pick_shown(be, &path) else { return Resp::text(403, "not allowed") };
+    let Ok((_, total)) = mobile_files::open_verified(&path) else { return Resp::text(403, "not allowed") };
+    if mobile_files::kind_of(&real) == Kind::Text {
+        match mobile_files::read_verified(&path, MAX_DOWNLOAD) {
+            Ok(b) if mobile_files::secret_in(&b) => return Resp::text(403, "secret inside"),
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => return Resp::text(413, "file too large"),
+            Err(_) => return Resp::text(403, "not allowed"),
+        }
+    }
+    let mut r = if req.header("range").is_some() {
+        let Some((start, end)) = mobile_files::parse_range(req.header("range"), total, DL_CHUNK) else {
+            let mut r = Resp::text(416, "bad range");
+            r.headers.push(("Content-Range", format!("bytes */{total}")));
+            return r;
+        };
+        let Ok((bytes, total)) = mobile_files::read_range_verified(&path, start, end) else { return Resp::text(403, "not allowed") };
+        let mut r = Resp::new(206, dl_mime(&real), bytes);
+        r.headers.push(("Content-Range", format!("bytes {start}-{end}/{total}")));
+        r
+    } else {
+        match mobile_files::read_verified(&path, MAX_DOWNLOAD) {
+            Ok(b) => Resp::new(200, dl_mime(&real), b),
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => return Resp::text(413, "file too large"),
+            Err(_) => return Resp::text(403, "not allowed"),
+        }
+    };
+    let name = real.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    r.headers.push(("Content-Disposition", attachment(&name)));
+    r.headers.push(("Accept-Ranges", "bytes".into()));
+    r.headers.push(("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'".into()));
     r
 }
 
@@ -765,6 +1084,21 @@ fn once_per(gate: &Gate, key: &str, gap: Duration) -> bool {
 struct DiagBody {
     kind: String,
     line: String,
+}
+
+/// 폰 화면 박힘 기록 상한 — 넘으면 앞 절반을 버린다(줄 단위)
+pub const PHONE_LAYOUT_CAP: usize = 256 * 1024;
+
+/// 기록 글에 한 줄 더하기 — cap 을 넘으면 앞에서부터 줄 단위로 버려 절반 아래로
+pub fn capped_append(old: &str, line: &str, cap: usize) -> String {
+    let mut out = format!("{old}{line}\n");
+    if out.len() > cap {
+        let mut cut = out.len() - cap / 2;
+        while !out.is_char_boundary(cut) { cut += 1; }
+        let from = out[cut..].find('\n').map(|i| cut + i + 1).unwrap_or(out.len());
+        out = out[from..].to_string();
+    }
+    out
 }
 
 /// 폰 진단 한 줄 거르기 — 종류는 영문 소문자·하이픈, 줄은 '키=값' 30칸까지(키 영문 12자, 값 영문·숫자·.-_ 24자). 하나라도 어긋나면 통째로 버린다
@@ -858,6 +1192,9 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     // html 시안 — 표가 열쇠(iframe 은 Bearer 를 못 싣는다)
     if req.path == "/api/html" {
         return if is_get { html_page(req, gate, be) } else { Resp::text(405, "method not allowed") };
+    }
+    if req.path == "/api/dl" {
+        return if is_get { dl_page(req, gate, be) } else { Resp::text(405, "method not allowed") };
     }
     if req.path == "/api/media" {
         return if is_get { media_page(req, gate, be) } else { Resp::text(405, "method not allowed") };
@@ -969,6 +1306,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             Resp::new(200, "application/json; charset=utf-8", be.read_curation_state(&p).into_bytes())
         }
         ("GET", "/api/shows") => shows_resp(req, be),
+        ("GET", "/api/locker") => locker_resp(be),
         // 꺼진 참모 — HQ 폴더의 꺼진 대화만(프로젝트 세션은 참모가 다룬다). 파싱은 화면 domain/stopped
         ("GET", "/api/stopped") => {
             let (all, live) = match (be.sessions_all(), be.sessions()) {
@@ -980,12 +1318,12 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         // 폰이 보낸 글을 뒤에서 쳤나 — typing·done·failed(이유)·unknown(모름: 맥이 다시 켜졌거나 안 받음)
         ("GET", "/api/send-status") => {
             let Some(c) = req.param("cid").filter(|c| cid_ok(c)) else { return Resp::text(400, "bad cid") };
-            let m = gate.sends.lock().unwrap_or_else(|e| e.into_inner());
-            Resp::json(&match m.get(c).map(|(_, s)| s) {
+            Resp::json(&match gate.sends.state(c) {
                 Some(SendState::Typing) => serde_json::json!({ "state": "typing" }),
                 Some(SendState::Done) => serde_json::json!({ "state": "done" }),
                 Some(SendState::Failed(e)) => serde_json::json!({ "state": "failed", "error": e }),
-                None => serde_json::json!({ "state": "unknown" }),
+                // 치다가 앱이 꺼졌거나 기록에 없음 — 폰이 대화 기록을 찾아본 뒤 판단한다
+                Some(SendState::Lost) | None => serde_json::json!({ "state": "unknown" }),
             })
         }
         // 세션 브라우저 보기 — 읽기만(누르기·치기 없음). 화면은 지금 떠 있는 프로필만
@@ -1035,7 +1373,73 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Err(e) => Resp::text(502, &e),
             }
         }
-        ("POST", "/api/send" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/open-mac" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag") if !same_origin_write(req, gate) => Resp::text(403, "bad origin"),
+        ("POST", "/api/send" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/voice-mode" | "/api/voice-beat" | "/api/model" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker-add") if !same_origin_write(req, gate) => Resp::text(403, "bad origin"),
+        ("POST", p) if PHONE_POSTS.contains(&p) && !same_origin_write(req, gate) => Resp::text(403, "bad origin"),
+        ("POST", "/api/locker-alias" | "/api/locker-unalias" | "/api/locker-new" | "/api/locker-mkdir" | "/api/locker-write") => locker_op(req, be),
+        // 폰 홈 모드 카드 — 목록 · 한 칸 그리기(글자 칸 크기) · 누름 · 고른 모드 켜기·이 홈에서 끄기(대시보드 칸 자리 = 그 참모)
+        ("GET", "/api/modes") => Resp::json(&be.modes()),
+        ("GET", "/api/mode-card") => {
+            let name = req.param("name").unwrap_or("");
+            if !mode_name_ok(name) {
+                return Resp::text(400, "bad mode");
+            }
+            Resp::json(&be.mode_card(name))
+        }
+        ("GET", "/api/mode-view") => {
+            let name = req.param("name").unwrap_or("");
+            let num = |k: &str| req.param(k).and_then(|v| v.parse::<u32>().ok()).filter(|n| (1..=400).contains(n));
+            let (Some(c), Some(r)) = (num("columns"), num("rows")) else { return Resp::text(400, "bad size") };
+            if !mode_name_ok(name) {
+                return Resp::text(400, "bad name");
+            }
+            match be.mode_view(name, c, r) {
+                Ok(v) => Resp::json(&v),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
+        ("POST", "/api/mode-act") => {
+            let b: ModeActBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            if !mode_name_ok(&b.name) || !b.act.is_object() {
+                return Resp::text(400, "bad act");
+            }
+            match be.mode_act(&b.name, &b.act) {
+                Ok(v) => Resp::json(&v),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
+        ("POST", "/api/mode-open") => {
+            let b: ModeOpenBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            let dash = b.dash.trim();
+            if !mode_name_ok(&b.name) || dash.is_empty() || dash.chars().count() > 80 {
+                return Resp::text(400, "bad open");
+            }
+            match be.mode_open(&b.name, dash) {
+                Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
+        ("POST", "/api/mode-close") => {
+            let b: ModeOpenBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            let dash = b.dash.trim();
+            if !mode_name_ok(&b.name) || dash.is_empty() || dash.chars().count() > 80 {
+                return Resp::text(400, "bad close");
+            }
+            match be.mode_close(&b.name, dash) {
+                Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
+        ("POST", "/api/mode-remove") | ("POST", "/api/mode-restore") => {
+            let b: ModeNameBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            if !mode_name_ok(&b.name) {
+                return Resp::text(400, "bad mode");
+            }
+            let r = if req.path == "/api/mode-remove" { be.mode_remove(&b.name) } else { be.mode_restore(&b.name).map(|()| serde_json::json!({ "ok": true })) };
+            match r {
+                Ok(v) => Resp::json(&v),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
         // html 시안 표 — 보여 준 html 만, 글 속 비밀은 안 낸다
         ("POST", "/api/html-ticket") => {
             let b: PathBody = match body(req) { Ok(b) => b, Err(r) => return r };
@@ -1055,6 +1459,19 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             }
             let Some(t) = new_ticket(gate, &b.path) else { return Resp::text(500, "no random") };
             Resp::json(&serde_json::json!({ "url": format!("/api/html?t={t}") }))
+        }
+        // 받기 표 — 보여 준 파일이면 무엇이든(폰 공유 시트·내려받기). 이름·크기·MIME 도 같이(폰이 50MB 넘으면 공유 대신 내려받기)
+        ("POST", "/api/dl-ticket") => {
+            let b: PathBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            let real = match pick_shown(be, &b.path) {
+                Pick::Ok(p) => p,
+                Pick::Forbidden => return Resp::text(403, "not allowed"),
+                Pick::NotFound => return Resp::text(404, "not found"),
+            };
+            let Ok((_, size)) = mobile_files::open_verified(&b.path) else { return Resp::text(403, "not allowed") };
+            let Some(t) = new_ticket(gate, &b.path) else { return Resp::text(500, "no random") };
+            let name = real.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            Resp::json(&serde_json::json!({ "url": format!("/api/dl?t={t}"), "size": size, "name": name, "mime": dl_mime(&real) }))
         }
         // 영상 표 — 보여 준 영상만, 크기도 같이(폰이 20MB 넘으면 LTE 확인)
         ("POST", "/api/media-ticket") => {
@@ -1100,11 +1517,14 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         ("POST", "/api/diag") => {
             let b: DiagBody = match body(req) { Ok(b) => b, Err(r) => return r };
             let Some(line) = diag_line(&b.kind, &b.line) else { return Resp::text(400, "bad line") };
-            if !once_per(gate, "diag", Duration::from_secs(10)) {
+            // 화면 박힘(layout-*)은 따로 막이·따로 기록 — 유령 키보드 진단과 서로 안 막는다
+            let layout = b.kind.starts_with("layout-");
+            if !once_per(gate, if layout { "diag-layout" } else { "diag" }, Duration::from_secs(if layout { 5 } else { 10 })) {
                 return Resp::text(429, "too soon");
             }
             let dev = device_of(req, gate).unwrap_or_default();
-            be.diag(&format!("{line}{}", if dev.is_empty() { String::new() } else { format!(" dev={}", dev.get(..4).unwrap_or(&dev)) }));
+            let line = format!("{line}{}", if dev.is_empty() { String::new() } else { format!(" dev={}", dev.get(..4).unwrap_or(&dev)) });
+            if layout { be.layout_log(&line) } else { be.diag(&line) }
             Resp::json(&serde_json::json!({ "ok": true }))
         }
         // 폰 푸시 — 공개 키 받기, 이 기기 구독 넣기·빼기. 구독 주소는 알려진 푸시 서버 https 만(push::endpoint_ok)
@@ -1135,6 +1555,18 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         // 참모 재우기 — HQ 폴더 세션(참모)만. 하위 세션은 폰에서 못 끈다(참모가 starter 갱신을 시킨 뒤에 끈다) — 404. 같은 참모는 10초에 한 번
         // 참모 제거 — HQ 폴더 참모만(켜진 것·꺼진 것 다), 하위 세션은 404. 켜져 있으면 끄고 지운다. 같은 참모는 10초에 한 번
         // 참모 고정 — 대화 id 를 고정한 순서대로(같은 출처 문지기 뒤)
+        // 폰이 올린 첨부를 보관함에 — 폰이 맥의 아무 경로나 보관함(=폰 허용 목록)에 넣지 못하게 폰 첨부 꼴만 받는다
+        ("POST", "/api/locker-add") => {
+            let b: LockerAddBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            let owner = b.owner.trim();
+            if owner.is_empty() || owner.chars().count() > 80 || !mobile_files::phone_attach(Path::new(&b.path), &be.data_dir()) {
+                return Resp::text(400, "bad locker add");
+            }
+            match be.locker_add(owner, &b.path) {
+                Ok(path) => Resp::json(&serde_json::json!({ "path": path })),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
         ("POST", "/api/pin") => {
             let b: PinBody = match body(req) { Ok(b) => b, Err(r) => return r };
             if !is_session_uuid(&b.session_id) {
@@ -1313,6 +1745,64 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Err(e) => Resp::text(502, &e),
             }
         }
+        // 모델·에포트 — 비서(HQ) 세션만, 별칭·단계 목록 안 값만, 연달아는 한 번(앞 것이 기본값을 되돌리는 동안 겹치면 둘째가 바뀐 값을 원래 값으로 뜬다)
+        ("POST", "/api/model") => {
+            let b: ModelBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            let model_ok = b.model.as_deref().is_none_or(|m| MODEL_ALIASES.contains(&m));
+            let effort_ok = b.effort.as_deref().is_none_or(|e| EFFORT_LEVELS.contains(&e));
+            if !is_short_id(&b.id) || !model_ok || !effort_ok || (b.model.is_none() && b.effort.is_none()) {
+                return Resp::text(400, "bad pick");
+            }
+            let sessions = match be.sessions() { Ok(s) => s, Err(e) => return Resp::text(502, &e) };
+            match session_cwd(&sessions, &b.id) {
+                Some(cwd) if same_dir(&cwd, &be.hq_dir()) => {}
+                Some(_) => return Resp::text(403, "not an assistant session"),
+                None => return Resp::text(404, "no such session"),
+            }
+            if !once_per(gate, "model", MODEL_GAP) {
+                return Resp::text(429, "too soon");
+            }
+            match be.pick_model(&b.id, b.model.as_deref(), b.effort.as_deref()) {
+                Ok(()) => Resp::new(202, "application/json", serde_json::json!({ "ok": true }).to_string()),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
+        ("GET", "/api/voice") => Resp::json(&serde_json::json!({ "on": be.voice_on() })),
+        // 폰 음성 — 하트비트(보고 있음)·내놓은 소리 파일. 소리 파일은 내놓은 id 하나만(경로를 받지 않는다)
+        ("POST", "/api/voice-beat") => {
+            let b: BeatBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            let ack = match b.ack {
+                None => None,
+                Some(a) => {
+                    let kind = match a.s.as_str() {
+                        "start" => crate::phone_voice::AckKind::Start,
+                        "end" => crate::phone_voice::AckKind::End,
+                        "fail" => crate::phone_voice::AckKind::Fail,
+                        _ => return Resp::text(400, "bad ack"),
+                    };
+                    Some(crate::phone_voice::Ack { id: a.id, kind })
+                }
+            };
+            Resp::json(&be.voice_beat(crate::phone_voice::Beat { ready: b.ready, hidden: b.hidden, ack }))
+        }
+        ("GET", "/api/voice-audio") => {
+            let Some(id) = req.param("id").and_then(|v| v.parse::<u64>().ok()) else { return Resp::text(400, "bad id") };
+            match be.voice_audio(id) {
+                Some(bytes) => {
+                    let mut r = Resp::new(200, "audio/wav", bytes);
+                    r.headers.push(("Cache-Control", "no-store".into()));
+                    r
+                }
+                None => Resp::text(404, "not found"),
+            }
+        }
+        ("POST", "/api/voice-mode") => {
+            let b: AccountAutoBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            match be.set_voice(b.on) {
+                Ok(()) => Resp::json(&serde_json::json!({ "on": b.on })),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
         // 로그인 풀림 — 보기는 열쇠만, 쓰기는 같은 출처 문지기 뒤(위 줄)
         ("GET", "/api/login") => Resp::json(&be.login_view()),
         ("POST", "/api/login-start") => {
@@ -1437,20 +1927,16 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                     let dir = be.data_dir();
                     if dir.is_absolute() { let _ = std::fs::write(dir.join("mobile-sent.json"), serde_json::json!({ "id": b.id, "at": at }).to_string()); }
                     // 같은 말을 다시 보냈으면(응답을 못 받은 폰) 치는 중이거나 쳤으면 무시, 실패했으면 다시
-                    let now = std::time::Instant::now();
+                    // 앱이 다시 켜졌거나 한참 뒤에 다시 보내도(하루 안) 안 친다 — 2026-10-10 '다시보내기 누르다 무한증식'
                     if let Some(c) = &b.cid {
-                        let mut m = gate.sends.lock().unwrap_or_else(|e| e.into_inner());
-                        m.retain(|_, (t, _)| now.duration_since(*t) < SEND_KEEP);
-                        if matches!(m.get(c), Some((_, SendState::Typing | SendState::Done))) {
+                        if !gate.sends.begin(c) {
                             return Resp::json(&serde_json::json!({ "ok": true, "dup": true }));
                         }
-                        m.insert(c.clone(), (now, SendState::Typing));
                     }
                     let (sends, cid) = (gate.sends.clone(), b.cid.clone());
                     be.send_later(&b.id, &b.text, Box::new(move |r| {
                         if let Some(c) = cid {
-                            let st = match r { Ok(()) => SendState::Done, Err(e) => SendState::Failed(e) };
-                            sends.lock().unwrap_or_else(|e| e.into_inner()).insert(c, (std::time::Instant::now(), st));
+                            sends.finish(&c, match r { Ok(()) => SendState::Done, Err(e) => SendState::Failed(e) });
                         }
                     }));
                     Resp::new(202, "application/json", serde_json::json!({ "ok": true, "queued": true }).to_string())
@@ -1502,9 +1988,10 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Err(e) => Resp::text(400, &e),
             }
         }
-        (_, "/api/env" | "/api/sessions" | "/api/transcript" | "/api/tasks" | "/api/routines" | "/api/usage" | "/api/load" | "/api/file" | "/api/shows" | "/api/avatars" | "/api/avatar" | "/api/avatar-image" | "/api/send" | "/api/attach" | "/api/routine" | "/api/interrupt" | "/api/stopped" | "/api/tails" | "/api/respawn" | "/api/spawn" | "/api/browsers" | "/api/browser-frame" | "/api/push-key" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/send-status" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/curation-state" | "/api/media-ticket" | "/api/open-mac" | "/api/direct" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/pins" | "/api/order" | "/api/role" | "/api/roles" | "/api/accounts" | "/api/account-switch" | "/api/account-auto" | "/api/login" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag") => {
+        (_, "/api/env" | "/api/sessions" | "/api/transcript" | "/api/tasks" | "/api/routines" | "/api/usage" | "/api/load" | "/api/file" | "/api/shows" | "/api/avatars" | "/api/avatar" | "/api/avatar-image" | "/api/send" | "/api/attach" | "/api/routine" | "/api/interrupt" | "/api/stopped" | "/api/tails" | "/api/respawn" | "/api/spawn" | "/api/browsers" | "/api/browser-frame" | "/api/push-key" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/send-status" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/curation-state" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/direct" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/pins" | "/api/order" | "/api/role" | "/api/roles" | "/api/accounts" | "/api/account-switch" | "/api/account-auto" | "/api/voice" | "/api/voice-mode" | "/api/voice-beat" | "/api/voice-audio" | "/api/model" | "/api/login" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker" | "/api/locker-add") => {
             Resp::text(405, "method not allowed")
         }
+        (_, p) if PHONE_POSTS.contains(&p) || PHONE_GETS.contains(&p) => Resp::text(405, "method not allowed"),
         _ => Resp::text(404, "not found"),
     }
 }
@@ -1551,7 +2038,7 @@ pub fn head_check(req: &Req, gate: &Gate) -> Option<Resp> {
     if req.method != "POST" && !has_body {
         return None;
     }
-    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag") {
+    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/voice-mode" | "/api/voice-beat" | "/api/model" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker-add") && !PHONE_POSTS.contains(&req.path.as_str()) {
         return Some(Resp::text(404, "not found"));
     }
     // 짝짓기는 코드가 열쇠 — 출처·JSON 만 본다
@@ -1605,7 +2092,11 @@ pub fn read_req_checked(s: &mut impl TimedRead, deadline: std::time::Instant, ch
         Some(v) => v.trim().parse::<usize>().map_err(|_| Resp::text(400, "bad length"))?,
     };
     // 그림 올리기만 10MB, 나머지는 64KB
-    let cap = if req.path == "/api/attach" { mobile_files::MAX_ATTACH } else { MAX_BODY };
+    let cap = match req.path.as_str() {
+        "/api/attach" => mobile_files::MAX_ATTACH,
+        "/api/locker-write" => MAX_WRITE_BODY,
+        _ => MAX_BODY,
+    };
     if len > cap {
         return Err(Resp::text(413, "body too large"));
     }
@@ -1683,7 +2174,7 @@ pub fn write_resp_paced(s: &mut impl TimedWrite, r: &Resp, head_only: bool, dead
         out.push_str("X-Frame-Options: DENY\r\n");
     }
     if !own("Content-Security-Policy") {
-        out.push_str("Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\n");
+        out.push_str(&format!("Content-Security-Policy: {PHONE_CSP}\r\n"));
     }
     out.push_str("Connection: close\r\n\r\n");
     let head = out.into_bytes();

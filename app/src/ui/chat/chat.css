@@ -1,5 +1,8 @@
 /* 스페이스 모드 채팅 — 터미널 창 머리줄(34px) 아래를 덮는다. 색은 앱 토큰만(다크 모드는 토큰이 바꾼다) */
-.chat { position: absolute; left: 0; right: 0; top: 35px; bottom: 0; z-index: 3; display: flex; flex-direction: column; background: var(--surface); }
+.chat { position: absolute; left: 0; right: 0; top: 35px; bottom: 0; z-index: calc(var(--z-base) + 3); display: flex; flex-direction: column; background: var(--surface); }
+.chat:focus { outline: none; } /* Esc 를 받으려고 tabIndex -1 — 칸 테두리는 안 그린다 */
+/* 머리줄 없는 창(채팅 칸에 한 창만 — 이름·단추는 칸 머리로 올라감)은 채팅 판이 맨 위부터 — 안 그러면 빈 35px 로 뒤 터미널이 비친다 */
+.pane.headless > .chat { top: 0; }
 .chat-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 12px 4px; font-size: 13px; line-height: 1.55; }
 .chat-inner { display: flex; flex-direction: column; gap: 8px; }
 .chat-row { display: flex; }
@@ -51,7 +54,7 @@
 @keyframes pt-breathe { 50% { box-shadow: 0 0 0 2px var(--orch, var(--accent)), 0 0 0 9px color-mix(in srgb, var(--orch, var(--accent)) 10%, transparent); } }
 @media (prefers-reduced-motion: reduce) { .pane.pt-live .chat-input { animation: none; } }
 /* 터미널 화면(채팅 판 없음)은 창 둘레 — 내용 위에 덮는 층이라 옆 칸에 잘리지 않는다 */
-.pane.pt-live:not(:has(.chat))::after { content: ""; position: absolute; inset: 0; border: 2px solid var(--orch, var(--accent)); border-radius: inherit; pointer-events: none; z-index: 9; }
+.pane.pt-live:not(:has(.chat))::after { content: ""; position: absolute; inset: 0; border: 2px solid var(--orch, var(--accent)); border-radius: inherit; pointer-events: none; z-index: calc(var(--z-base) + 9); }
 
 /* 스페이스 모드 틀 — 왼쪽 리더가 칸을 채우고, 오른쪽 채팅 열 머리에 쌓기/탭 */
 .reader-panel.fill { flex: 1; min-width: 0; border-left: 0; }
@@ -60,24 +63,6 @@
 .seg button { all: unset; cursor: pointer; font-size: 11.5px; font-weight: 600; padding: 3px 10px; color: var(--text-2); }
 .seg button + button { border-left: 1px solid var(--line-strong); }
 .seg button.on { background: var(--surface); color: var(--orch-text, var(--accent)); }
-/* 탭 줄 = 넘기는 칸(.ct-strip) + 밖의 + — + 는 탭이 넘쳐도 안 밀린다. 탭은 크롬처럼 줄어들고(이름 줄임표) 최소 폭 밑에서만 넘긴다(2026-10-10 사용자) */
-.chat-tabs { display: flex; align-items: center; gap: 4px; padding: 6px 8px 0; }
-/* 탭 줄 여백만큼 칸을 넓혀 둔다 — 넘기는 칸은 위아래로도 잘라서, 말하는 빛(st-speak)이 여백 없이 잘린다. 아래로는 안 넓힌다(창 머리줄을 덮어 클릭을 먹는다) */
-.ct-strip { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: inherit; overflow-x: auto; scrollbar-width: none; padding: 6px 4px 0; margin: -6px 0 0 -4px; --ct-fl: 0px; --ct-fr: 0px;
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--ct-fl), #000 calc(100% - var(--ct-fr)), transparent);
-  mask-image: linear-gradient(to right, transparent, #000 var(--ct-fl), #000 calc(100% - var(--ct-fr)), transparent); }
-.ct-strip::-webkit-scrollbar { display: none; }
-/* 넘쳐서 끝 너머에 탭이 더 있으면 그쪽 끝을 흐린다 — 폭은 domain/tabScroll TAB_FADE 와 같이 */
-.ct-strip[data-more-l] { --ct-fl: 28px; }
-.ct-strip[data-more-r] { --ct-fr: 28px; }
-.chat-tabs [role="tab"] { flex: 0 1 auto; min-width: 34px; max-width: 180px; box-sizing: border-box; overflow: hidden; } /* 프사만 남을 때까지 줄어든 뒤에야 넘긴다(2026-10-10 사용자: 5개인데도 다 안 보였다) */
-/* 고른 탭은 안 줄어든다 — 이름이 다 보이게, 아주 긴 이름만 상한에서 줄임표 */
-.chat-tabs [role="tab"].on { flex-shrink: 0.3; min-width: 72px; max-width: 240px; } /* 고른 탭은 덜·늦게 줄어든다 */
-.chat-tabs .ct-nm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-tabs [role="tab"] > :not(.ct-nm) { flex: none; }
-.ct-strip[data-tight] [role="tab"]:not(.on) { padding: 0 8px; gap: 4px; } /* 좁을 땐 안쪽 여백도 줄여 프사가 먼저 잘리지 않게 */
-.chat-tabs button { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 7px 7px 0 0; font-size: 12px; font-weight: 600; color: var(--text-3); white-space: nowrap; }
-.chat-tabs button.on { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
 .space-left { min-width: 0; }
 /* 터미널 입력칸 글(지구본 키로 받아 적은 말) — 채팅 입력칸 바로 위 */
 .chat-term { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--orch, var(--accent)) 8%, var(--panel)); font-size: 12.5px; }
@@ -97,7 +82,9 @@
 .chat-tasks { border-bottom: 1px solid var(--line); background: var(--panel); font-size: 12px; }
 .chat-tasks-head { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 4px 12px; }
 .chat-tasks-now { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--working); }
-.chat-tasks-fold { margin-left: auto; color: var(--text-3); font-size: 11px; }
+.chat-tasks-fold { margin-left: auto; display: inline-flex; color: var(--text-3); }
+.chat-tasks-fold svg { width: 13px; height: 13px; }
+.chat-ic-pill { align-self: center; border: 1px solid var(--line); border-radius: 999px; color: var(--text-3); }
 .chat-tasks ul { list-style: none; margin: 0; padding: 0 12px 8px; max-height: 30vh; overflow-y: auto; }
 .chat-tasks li { display: flex; align-items: flex-start; gap: 8px; padding: 2px 0; line-height: 1.45; }
 .chat-tasks .mark { flex: 0 0 10px; width: 10px; height: 10px; margin-top: 4px; border-radius: 3px; border: 1.5px solid var(--line-strong); }
@@ -122,6 +109,11 @@
 .chat-input .chat-send:not(:disabled) { background: var(--orch-solid, var(--accent)); border-color: var(--orch-solid, var(--accent)); color: var(--orch-ink, var(--accent-ink)); }
 .chat-input .chat-stop { background: var(--surface); color: var(--text); }
 .chat-input .chat-send svg, .chat-input .chat-stop svg { width: 14px; height: 14px; }
+/* 음성 모드 — 보내기 왼쪽, 같은 크기. 켜짐 = 위 막대(.voice.on)와 같은 검은 면(2026-10-11 사용자) */
+.chat-input .chat-voice { flex: 0 0 auto; width: var(--send-s); height: var(--send-s); min-height: 0; margin-bottom: calc((var(--send-h) - var(--send-s)) / 2); padding: 0; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border-color: transparent; color: var(--text-3); }
+.chat-input .chat-voice:hover { background: var(--hover); color: var(--text); }
+.chat-input .chat-voice.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.chat-input .chat-voice svg { width: 15px; height: 15px; }
 /* 상태 줄(작업 중·선택 기다림) — 입력칸 바로 위, 늘 보인다 */
 .chat-status { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 5px 12px; font-size: 12px; color: var(--text-2); border-top: 1px solid var(--line); background: var(--panel); white-space: nowrap; overflow: hidden; }
 .chat-status span:last-child { overflow: hidden; text-overflow: ellipsis; }
@@ -142,7 +134,7 @@
 .chat-status > .mc-chip + .chat-ctx { margin-left: 4px; }
 .mc-chip:hover:not(:disabled), .mc-chip.on { background: var(--hover); color: var(--text); }
 .mc-chip:disabled { opacity: .5; cursor: not-allowed; }
-.mc-pop { position: fixed; z-index: 1000; box-sizing: border-box; padding: 10px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); box-shadow: 0 8px 28px rgba(0,0,0,.18); display: flex; flex-direction: column; gap: 8px; }
+.mc-pop { position: fixed; z-index: calc(var(--z-popover) + 2); box-sizing: border-box; padding: 10px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); box-shadow: 0 8px 28px rgba(0,0,0,.18); display: flex; flex-direction: column; gap: 8px; }
 .mc-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .mc-h { width: 44px; font-size: 11px; font-weight: 600; color: var(--text-3); }
 .mc-row button { border: 0; background: var(--hover); color: var(--text-2); padding: 4px 10px; min-height: 28px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer; }
@@ -151,20 +143,20 @@
 .mc-row button:disabled { opacity: .4; cursor: not-allowed; }
 .mc-fail { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: #c0392b; }
 .mc-note { font-size: 11px; line-height: 1.4; color: var(--text-3); }
-/* 그림 이름표 @img1 */
+/* 그림 이름표 #img1 */
 .chat-att { position: relative; display: inline-block; }
-.chat-att em { position: absolute; left: 4px; bottom: 4px; font-style: normal; font-size: 10.5px; font-weight: 700; color: #fff; background: rgba(0, 0, 0, .55); border-radius: 4px; padding: 0 4px; }
-/* @ 로 붙인 것 고르기 */
+.chat-att em { position: absolute; left: 4px; bottom: 4px; font-style: normal; font-size: 11.5px; font-weight: 700; color: #fff; background: rgba(0, 0, 0, .55); border-radius: 4px; padding: 0 4px; }
+/* # 고르기·@ 멘션·/ 명령 목록 */
 .chat-mention { flex: 0 0 auto; display: flex; gap: 6px; padding: 6px 10px 0; background: var(--panel); }
 .chat-mention button { all: unset; cursor: pointer; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface); }
 .chat-mention button[aria-selected="true"] { border-color: var(--orch, var(--accent)); color: var(--orch-text, var(--accent)); }
 .bubble .chat-file { display: inline-block; margin: 0 2px; vertical-align: baseline; }
 .chat-file { display: inline-flex; align-items: center; gap: 4px; }
 .chat-file svg { width: 13px; height: 13px; }
-/* @img1·@file1 칩 — 말풍선은 진짜 칩, 입력칸은 뒤판에 칠해 칩처럼(글자 폭은 그대로라 커서가 안 어긋난다) */
+/* #img1·#file1·@참모 칩 — 말풍선은 진짜 칩, 입력칸은 뒤판에 칠해 칩처럼(글자 폭은 그대로라 커서가 안 어긋난다) */
 .at-chip { display: inline-block; padding: 0 5px; margin: 0 1px; border-radius: 5px; font-size: 12px; font-weight: 700; background: color-mix(in srgb, var(--orch, var(--accent)) 16%, var(--surface)); color: var(--orch-text, var(--accent)); }
 .chat-field { position: relative; flex: 1; display: flex; min-width: 0; border-radius: 8px; background: var(--surface); }
-.chat-field textarea { position: relative; z-index: 1; background: transparent !important; }
+.chat-field textarea { position: relative; z-index: calc(var(--z-base) + 1); background: transparent !important; }
 .chat-backdrop { position: absolute; inset: 0; padding: 8px 10px; border: 1px solid transparent; font: inherit; font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; color: transparent; overflow: hidden; pointer-events: none; }
 .chat-backdrop mark.at { color: transparent; background: color-mix(in srgb, var(--orch, var(--accent)) 22%, transparent); border-radius: 4px; }
 /* 다른 세션·앱이 보낸 말 — 가운데 카드(사용자 말풍선과 구분) */
@@ -172,20 +164,26 @@
 .chat-relay .who { font-size: 11px; font-weight: 700; color: var(--text-3); margin-bottom: 3px; }
 .chat-relay .body { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
 .chat-relay.open .body { display: block; }
+/* 앱이 넘긴 줄 — 작은 회색 한 줄(앞 이름표 없이), 누르면 전문 */
+.chat-relay.app { display: flex; gap: 6px; align-items: baseline; padding: 2px 10px; border: 0; background: none; color: var(--text-3); font-size: 11.5px; }
+.chat-relay.app .who { flex: none; margin: 0; font-weight: 600; }
+.chat-relay.app .body { -webkit-line-clamp: 1; }
+.chat-relay.app.open { display: block; padding: 6px 10px; border-radius: 8px; background: var(--panel); }
+.chat-relay.app.open .who { margin-bottom: 3px; }
 /* 탭 보기 — 탭과 창을 붙이고, 고른(포커스 있는) 창 테두리를 탭까지 */
 .tabbed { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .tabbed .grid { padding-top: 0; }
-.tabbed .chat-tabs { padding: 6px 6px 0; gap: 2px; }
-.tabbed .chat-tabs button.on { position: relative; z-index: 2; margin-bottom: -1px; border: 1px solid var(--line); border-bottom-color: transparent; box-shadow: none; background: var(--surface-2); }
-.tabbed:focus-within .chat-tabs button.on { border: 2px solid var(--orch, var(--accent)); border-bottom: 0; margin-bottom: -2px; padding-bottom: 2px; background: color-mix(in srgb, var(--orch, var(--accent)) 10%, var(--surface-2)); color: var(--orch-text, var(--accent)); }
 
 /* 말풍선 참조 @chat1 — 올리면 옆에 "참조", 누르면 입력칸에 이름표(2026-09-30 사용자) */
 .chat-row { align-items: flex-end; gap: 6px; }
 .chat-row.relay { justify-content: center; }
 .chat-row.relay .chat-relay { align-self: auto; }
-.chat-refbtn { flex: none; visibility: hidden; padding: 2px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text-3); font-size: 11px; cursor: pointer; }
+.chat-refbtn { visibility: hidden; border: 1px solid var(--line); background: var(--surface); color: var(--text-3); }
 .chat-row:hover .chat-refbtn { visibility: visible; }
 .chat-refbtn:hover { color: var(--orch-text, var(--accent)); border-color: var(--orch, var(--accent)); }
+/* 참조 = '참모에게 보내기'와 같은 참모 색 말풍선(SendToOrch, 208.png) — 스페이스 채팅의 옅은 판 규칙보다 뒤·더 좁게 */
+.chat-refbtn.send-orch, .space-mode .chat-refbtn.send-orch { border: 0; background: var(--orch-solid, var(--accent)); color: var(--orch-ink, var(--accent-ink)); }
+.chat-refbtn.send-orch:hover, .space-mode .chat-refbtn.send-orch:hover { color: var(--orch-ink, var(--accent-ink)); filter: brightness(1.08); }
 .chat-refs { display: flex; flex-direction: column; gap: 4px; padding: 6px 10px 0; }
 .chat-ref { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
 .chat-ref .q { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); }
@@ -200,35 +198,16 @@
 .cell.behind { visibility: hidden; pointer-events: none; }
 .cell:not(.behind) .chat { animation: cv-tab-in .16s ease-out; }
 @keyframes cv-tab-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-/* 참모 탭 끄기 X — 올리면 그 탭에만 */
-.chat-tabs button { position: relative; }
-.chat-tabs .tab-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin: 0 -4px 0 2px; border-radius: 50%; opacity: 0; transition: opacity .12s, background .12s; }
-.chat-tabs .tab-x svg { width: 10px; height: 10px; }
-.chat-tabs button:hover .tab-x { opacity: .7; }
-.chat-tabs .tab-x:hover { opacity: 1 !important; background: rgba(127, 127, 127, .25); }
-/* 줄이 좁으면(ChatTabStrip data-tight) 안 고른 탭의 × 는 자리를 비우고(이름이 그 자리를 씀) 올렸을 때만 이름 끝 위에 뜬다 — 떠 있어 탭 폭이 안 바뀐다.
-   고른 탭은 늘 보임. 넓을 땐 그대로(2026-10-10 사용자 PC: 최소 폭에서 × 가 글자 자리를 먹어 이름이 두 글자만 보였다) */
-.ct-strip[data-tight] [role="tab"]:not(.on) .tab-x { position: absolute; right: 5px; top: 50%; margin: 0; transform: translateY(-50%); opacity: 0; }
-.ct-strip[data-tight] [role="tab"]:not(.on):hover .tab-x { opacity: .7; }
-.ct-strip[data-tight] [role="tab"]:not(.on):hover .ct-nm { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent calc(100% - 6px)); mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent calc(100% - 6px)); }
 /* 맨 아래로 — 위로 많이 올려 읽을 때만, 입력칸 위 가운데에 떠 있다 */
 .chat { position: absolute; }
-.chat-bottom { all: unset; position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 6; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 14px 0 10px; border-radius: 999px; background: var(--surface); color: var(--text-2); font-size: 12px; font-weight: 600; box-shadow: 0 6px 18px rgba(0, 0, 0, .14), 0 0 0 1px var(--line); animation: cv-rise .18s ease-out; }
-.chat-bottom svg { width: 13px; height: 13px; transform: rotate(90deg); }
+.chat-bottom { all: unset; position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: calc(var(--z-base) + 6); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 999px; background: var(--surface); color: var(--text-2); font-size: 12px; font-weight: 600; box-shadow: 0 6px 18px rgba(0, 0, 0, .14), 0 0 0 1px var(--line); animation: cv-rise .18s ease-out; }
+.chat-bottom svg { width: 15px; height: 15px; }
 .chat-bottom:hover { color: var(--orch-text, var(--accent)); }
 /* 스페이스 파일을 끌고 오는 중 */
-.chat.drop-hot::after { content: ""; position: absolute; inset: 6px; border-radius: 14px; border: 2px dashed var(--orch, var(--accent)); background: color-mix(in srgb, var(--orch, var(--accent)) 6%, transparent); pointer-events: none; z-index: 8; }
+.chat.drop-hot::after { content: ""; position: absolute; inset: 6px; border-radius: 14px; border: 2px dashed var(--orch, var(--accent)); background: color-mix(in srgb, var(--orch, var(--accent)) 6%, transparent); pointer-events: none; z-index: calc(var(--z-base) + 8); }
 .chat.drop-hot .chat-input { border-color: var(--orch, var(--accent)); }
 [draggable="true"] { -webkit-user-drag: element; }
 
-/* 탭 줄 끝의 + — 참모 하나 더(⌘T). 탭처럼 보이지 않게 작은 네모 */
-/* 탭 끌어 옮기기(SessionGrid) — 끄는 탭은 손을 바로 따라가고 위에, 옆 탭은 부드럽게 비켜 준다. 끄는 동안 글자 고르기 막기 */
-.chat-tabs [role="tab"] { -webkit-user-select: none; user-select: none; }
-.ct-strip[data-dragging] [role="tab"] { transition: transform .15s ease; }
-.ct-strip[data-dragging] [role="tab"].ct-drag { transition: none; z-index: 3; cursor: grabbing; }
-.chat-tabs .tab-add { width: 28px; padding: 0; justify-content: center; border-radius: 7px; color: var(--text-3); flex: 0 0 auto; background: var(--surface); } /* 넘기는 칸 밖이라 탭이 넘쳐도 오른쪽 끝에 그대로 */
-.chat-tabs .tab-add:hover { background: var(--hover); color: var(--text); }
-.chat-tabs .tab-add svg { width: 13px; height: 13px; }
 /* / 자동완성 — @ 이름표 목록 모양 그대로, 줄마다 이름 + 짧은 설명 */
 .chat-slash { flex-direction: column; gap: 0; max-height: 260px; overflow-y: auto; padding: 6px 8px 4px; }
 .chat-slash button { display: flex; gap: 10px; align-items: baseline; box-sizing: border-box; width: 100%; text-align: left; border: 0; font-weight: 400; min-height: 28px; padding: 5px 8px; }
@@ -237,6 +216,11 @@
 .chat-slash button .dim { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-slash button .key { margin-left: auto; flex: 0 0 auto; }
 .chat-slash button.on { background: var(--hover); }
+/* # 고르기·@ 멘션 — 한 줄 = (프사) 이름 · 곁글, 쉬는 참모는 흐리게 */
+.chat-pop button { align-items: center; }
+.chat-pop button.off { opacity: .5; }
+.chat-pop .chat-pop-pic { flex: 0 0 auto; display: inline-flex; }
+.chat-pop .chat-pop-shot { width: 44px; height: 30px; object-fit: cover; border-radius: 5px; box-shadow: 0 0 0 1px var(--line); background: var(--hover); }
 
 /* 터미널에 뜬 선택 창을 채팅 안에 — 질문 + 선택지 버튼(2026-10-01 사용자 "cli 안 거치게") */
 .chat-dialog { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--orch, var(--accent)) 6%, var(--panel)); max-height: 45%; overflow: auto; }
@@ -254,16 +238,10 @@
 .chat-dialog .cd-foot span { margin-right: auto; }
 
 /* 참모 방 색 — SessionGrid 가 참모 칸(.cell)·탭에 --orch 세트를 깐다(domain/orchTheme). 없으면 앱 강조색 그대로(2026-10-02 사용자 "옮겨진 티가 나게") */
-.cell, .chat-tabs button { --orch-text: var(--orch-text-light); }
-@media (prefers-color-scheme: dark) { .cell, .chat-tabs button { --orch-text: var(--orch-text-dark); } }
+.cell { --orch-text: var(--orch-text-light); }
+@media (prefers-color-scheme: dark) { .cell { --orch-text: var(--orch-text-dark); } }
 .cell .chat .btn.pri { background: var(--orch-solid, var(--accent)); border-color: var(--orch-solid, var(--accent)); color: var(--orch-ink, var(--accent-ink)); }
-.chat-tabs button.on { color: var(--orch-text, var(--text)); }
 
-/* 말하는 참모 빛 — 채팅 탭(고른·안 고른 둘 다) 둘레를 그 참모 색(--orch)으로, 소리 크기(--speak-level)대로. 프사는 avatar.css.
-   전체 둘레 빛(왼쪽 띠 금지), 전환 없이 — 끊으면 그 프레임에 0. 칸(네모) 둘레 빛은 뺐다(2026-10-03 사용자 "네모 쪽엔 글로우 없어도 될 것 같아") */
-/* 채팅 뷰 탭 규칙(space.css)이 box-shadow: none 을 더 센 선택자로 걸어 둬서, 말하는 동안에만 붙는 이 빛은 !important 로 이긴다 */
-.chat-tabs button.st-speak { transition: none !important;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--orch, var(--text-3)) 70%, transparent), 0 0 calc(4px + 14px * var(--speak-level, 0)) calc(1px * var(--speak-level, 0)) var(--orch, var(--text-3)) !important; }
 
 
 /* 채팅 안 파일 카드(ChatFileCard) — 답 말풍선처럼 왼쪽, 썸네일 + 이름 + 짚은 곳 한 줄. 카드 전체가 누르는 곳 */
@@ -275,3 +253,7 @@
 .chat-filecard-name { padding: 8px 12px 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chat-filecard-name:last-child { padding-bottom: 9px; }
 .chat-filecard-at { padding: 1px 12px 9px; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 참모를 깨우는·켜는 동안 입력칸 바로 위 조용한 한 줄(2026-10-12 rail-wake) — 채팅은 뜰 때까지 앞 참모에 남는다. 깨어나는 프사 + 글 */
+.chat-wake { flex: none; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 12px; border-top: 1px solid var(--line); background: var(--surface-2, var(--hover)); color: var(--text-2); font-size: 12px; }
+.chat-wake > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

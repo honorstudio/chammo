@@ -15,3 +15,17 @@ export function nextBlinkMs(rand: number): number {
   const r = Number.isFinite(rand) ? Math.min(Math.max(rand, 0), 1) : 0.5;
   return Math.round(6_000 + r * 2_000);
 }
+
+/** 앱 창이 보이나 — 폴링을 늦추는 기준(2026-10-11 사용자 승인 '안 보일 때 5배'). attended 와 달리 2분 입력 없음은 안 본다(음성 모드로 듣기만 해도 보는 중) */
+export function shown(o: { hidden: boolean; focused: boolean; lidClosed: boolean }): boolean {
+  return !o.hidden && !o.lidClosed && o.focused;
+}
+
+/** 안 보일 때 늦추는 배수 */
+export const HIDDEN_SLOW = 5;
+
+/** 다음 폴링까지 — 보이면 원래 주기, 안 보이면 5배 */
+export const pollDelay = (ms: number, isShown: boolean) => (isShown ? ms : ms * HIDDEN_SLOW);
+
+/** 다시 보였을 때 다음 폴링까지 — 지난번에서 원래 주기가 지났으면 바로(0), 아니면 남은 만큼 */
+export const dueOnShow = (ms: number, lastAt: number, now: number) => Math.max(0, lastAt + ms - now);

@@ -37,7 +37,7 @@
 /* 아래 칸에 든 요약 줄(cv-pane-body)이 칸을 채우면 줄이 눌려 겹쳤다 — 줄은 안 줄어들게 */
 .ab-below .cv-pane-body span { flex: none; }
 /* 크게 보기 모달 — 앱 창 전체 위(이미지 미리보기와 같은 결). 화면은 contain, 그 위를 눌러 직접 조작 */
-.abm-back { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 28px; background: rgba(0, 0, 0, .55); }
+.abm-back { position: fixed; inset: 0; z-index: calc(var(--z-modal) + 4); display: flex; align-items: center; justify-content: center; padding: 28px; background: rgba(0, 0, 0, .55); }
 .abm:focus { outline: none; }
 .abm { width: min(1400px, 100%); height: min(940px, 100%); display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; background: #141417; box-shadow: 0 20px 60px rgba(0, 0, 0, .45); position: relative; }
 .abm-bar { display: flex; align-items: center; gap: 4px; padding: 8px 10px; background: #1c1c21; }
@@ -68,9 +68,11 @@
 .abm-stuck span { flex: 1; min-width: 0; }
 .abm-stuck button { all: unset; cursor: pointer; min-height: 32px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: 8px; background: #f0a020; color: #1a1205; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .abm-stuck button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.abm-stuck button.abm-ib { width: 32px; padding: 0; justify-content: center; }
+.abm-stuck button.abm-ib svg { width: 15px; height: 15px; }
 .ab-ask { all: unset; cursor: pointer; padding: 4px 10px; border-radius: 6px; background: #f0a020; color: #1a1205; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .abm-more { position: relative; }
-.abm-menu { position: absolute; right: 0; top: 32px; z-index: 2; min-width: 160px; padding: 4px; border-radius: 8px; background: #26262c; border: 1px solid rgba(255, 255, 255, .1); box-shadow: 0 8px 24px rgba(0, 0, 0, .4); }
+.abm-menu { position: absolute; right: 0; top: 32px; z-index: calc(var(--z-base) + 2); min-width: 160px; padding: 4px; border-radius: 8px; background: #26262c; border: 1px solid rgba(255, 255, 255, .1); box-shadow: 0 8px 24px rgba(0, 0, 0, .4); }
 .abm-menu button { all: unset; display: block; width: 100%; box-sizing: border-box; padding: 8px 10px; min-height: 32px; border-radius: 6px; font-size: 13px; color: #e6e6ea; cursor: pointer; }
 .abm-menu button:hover, .abm-menu button:focus-visible { background: rgba(255, 255, 255, .08); }
 .abm-note { font-size: 12px; color: #e8b86a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }

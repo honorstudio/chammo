@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { accountError, addState, allOut, moved, popHead, popRows, slotText, slotUsageText, topLabel, usageOf, weekText, type AccountsView } from './accounts';
+import { accountError, switchFailure, addState, allOut, moved, popHead, popRows, slotText, slotUsageText, topLabel, usageOf, weekText, type AccountsView } from './accounts';
 
 const view = (p: Partial<AccountsView> = {}): AccountsView => ({
   accounts: [
@@ -64,6 +64,17 @@ describe('accountError — 오류 이름을 글로', () => {
     expect(accountError('denied')).toContain('항상 허용');
     setLang('en');
     expect(accountError('notLoggedIn')).toContain('signed in');
+  });
+  it('세션이 로그인 갱신 중(busy)·바꿀 계정 로그인을 새로 못 받음(refresh)', () => {
+    expect(accountError('busy')).toContain('갱신');
+    expect(accountError('refresh:dead')).toContain('다시 추가');
+    expect(accountError('refresh:network')).toContain('인터넷');
+    expect(accountError('refresh:http500')).toContain('http500');
+  });
+  it('자동 전환: busy 는 알림 없이 잠깐 뒤 다시, 나머지는 알리고 오래 쉰다', () => {
+    expect(switchFailure('busy')).toEqual({ notify: false, restMs: 30_000 });
+    expect(switchFailure('refresh:dead')).toEqual({ notify: true, restMs: 5 * 60_000 });
+    expect(switchFailure('locked')).toEqual({ notify: true, restMs: 5 * 60_000 });
   });
   it('모르는 것은 원문을 붙인다', () => {
     expect(accountError('io:디스크 가득')).toContain('디스크 가득');

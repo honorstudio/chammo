@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { dayStart, fmtResetIn, parseUsage } from './usage';
+import { dayStart, fmtResetIn, parseUsage, TODAY_COMMITS_MS } from './usage';
 
 const NOW = 1_790_000_000_000; // ms
 
@@ -46,4 +46,8 @@ describe('영어 모드', () => {
     expect(fmtResetIn(3720)).toBe('1h 2m');
     expect(fmtResetIn(300)).toBe('5m');
   });
+});
+
+describe('오늘 커밋 다시 세기 주기(2026-10-11 사용자 승인 — git 을 저장소마다 1분마다 부르던 것)', () => {
+  it('5분', () => expect(TODAY_COMMITS_MS).toBe(5 * 60_000));
 });

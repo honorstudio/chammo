@@ -72,7 +72,7 @@ fn chrome_popup_e2e() {
         let mut l = t.lines();
         Some((l.next()?.trim().parse::<u16>().ok()?, l.next()?.trim().to_string()))
     });
-    let live = Live { profile: profile.clone(), pid: chrome.child.id() as i32, session_pid: 1, port, ws_path: ws, url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None, scripts: 0, popup: false };
+    let live = Live { profile: profile.clone(), pid: chrome.child.id() as i32, session_pid: 1, port, ws_path: ws, url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None, scripts: 0, popup: false, popup_kind: String::new() };
     std::fs::create_dir_all(live_dir()).unwrap();
     std::fs::write(live_dir().join(format!("{profile}.json")), serde_json::to_string(&live).unwrap()).unwrap();
     let pid = wait_for("크롬 pid", 10, || chrome_pid(port));
@@ -105,13 +105,85 @@ fn chrome_popup_e2e() {
     println!("popup 알아봄 {:?}", t0.elapsed());
     assert_eq!(app_window::hidden(pid), Some(true), "크롬은 여전히 가려져 있다 — 사람 눈엔 안 보이는 상태(그래서 줄이 필요)");
 
-    // 요청을 끊으면(다른 데로 가면) 창이 닫히고 popup 도 내린다 — 가려진 크롬은 닫힌 창을 목록에서 늦게 뺀다(실측 0.8~21초).
+    // 요청을 끊으면(다른 데로 가면) 창이 닫히고 popup 도 내린다 — 가려진 크롬은 닫힌 창을 목록에서 늦게 뺀다(실측 0.8~21초). 크기는 크롬 판마다 다르다(448x387·448x545)
     // 그동안 줄이 남는 건 받아들인다(누르면 크롬이 보일 뿐)
     let t1 = Instant::now();
     owner.call("Page.navigate", serde_json::json!({ "url": "about:blank" }), Some(&s), |_| {}).unwrap();
-    let gone = wait_for("창이 목록에서 빠짐", 40, || (!crate::chrome_popup::windows(pid).iter().any(|w| w.rect.w == 448.0 && w.rect.h == 387.0)).then(|| t1.elapsed()));
+    let gone = wait_for("창이 목록에서 빠짐", 40, || (!crate::chrome_popup::windows(pid).iter().any(|w| w.layer == 0 && w.rect.w == 448.0 && w.rect.h >= 300.0)).then(|| t1.elapsed()));
     println!("닫힌 창이 목록에서 빠지기까지 {gone:?}");
     wait_for("창이 닫히면 popup 도 내림", 10, || (!popup(&profile)).then_some(()));
     println!("popup 내림 {:?}", t1.elapsed());
     let _ = std::fs::remove_file(live_dir().join(format!("{profile}.json")));
+}
+
+/// 꺼냄(agent_peek)처럼 가린 크롬 창을 다른 모니터로 옮겨도 패스키 창을 계속 알아보나(2026-10-11 사용자 네이버 패스키 깜빡임).
+/// 크롬 대화상자는 다른 모니터로 가면 한 박자 늦게 따라와 엇나간 자리에 남았다 → 앱이 '창 없음'으로 보고 꺼낸 크롬을 바로 다시 숨겼다.
+/// 크롬은 가린 채로만 옮긴다(안 그려진다 — 사용자 화면에 안 뜬다). CHAMMO_TEST_XD=x,y,w,h = 옮겨 볼 다른 모니터(예: 0,0,1920,1080)
+/// `CHAMMO_HOME=<빈 시험 폴더> CHAMMO_TEST_XD=0,0,1920,1080 cargo test peek_cross_display_e2e -- --ignored --nocapture --test-threads=1`
+#[test]
+#[ignore]
+fn peek_cross_display_e2e() {
+    let home = std::env::var("HOME").unwrap_or_default();
+    assert!(!crate::config::is_real_data(&home, crate::config::data_dir()), "CHAMMO_HOME 을 시험 폴더로 줘");
+    let xd: Vec<f64> = std::env::var("CHAMMO_TEST_XD").expect("CHAMMO_TEST_XD=x,y,w,h").split(',').map(|v| v.trim().parse().unwrap()).collect();
+    let other = crate::vdisplay::Rect { x: xd[0], y: xd[1], w: xd[2], h: xd[3] };
+    let profile = format!("e2e-xd-{}", std::process::id());
+    let dir = std::env::temp_dir().join(format!("chammo-xd-e2e-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let pos = std::env::var("CHAMMO_TEST_WIN_POS").unwrap_or_else(|_| "-2886,1465".into());
+    let child = crate::platform::command(BETA)
+        .args(["--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check", "--use-mock-keychain", "--password-store=basic", "--test-type", "--window-size=1400,836", "about:blank"])
+        .arg(format!("--window-position={pos}"))
+        .arg(format!("--user-data-dir={}", dir.display()))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("크롬 베타");
+    let chrome = Chrome { child, dir: dir.clone() };
+    let (port, ws) = wait_for("DevToolsActivePort", 20, || {
+        let t = std::fs::read_to_string(dir.join("DevToolsActivePort")).ok()?;
+        let mut l = t.lines();
+        Some((l.next()?.trim().parse::<u16>().ok()?, l.next()?.trim().to_string()))
+    });
+    let live = Live { profile: profile.clone(), pid: chrome.child.id() as i32, session_pid: 1, port, ws_path: ws, url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None, scripts: 0, popup: false, popup_kind: String::new() };
+    std::fs::create_dir_all(live_dir()).unwrap();
+    std::fs::write(live_dir().join(format!("{profile}.json")), serde_json::to_string(&live).unwrap()).unwrap();
+    let pid = wait_for("크롬 pid", 10, || chrome_pid(port));
+
+    let web = serve();
+    let mut owner = Cdp { ws: wait_for("주인 연결", 10, || connect(&live).ok()), next: 0 };
+    let t = owner.call("Target.createTarget", serde_json::json!({ "url": format!("http://localhost:{web}/") }), None, |_| {}).unwrap();
+    let target = t["targetId"].as_str().unwrap().to_string();
+    let s = owner.call("Target.attachToTarget", serde_json::json!({ "targetId": target, "flatten": true }), None, |_| {}).unwrap();
+    let s = s["sessionId"].as_str().unwrap().to_string();
+    let eval = |c: &mut Cdp, e: &str| c.call("Runtime.evaluate", serde_json::json!({ "expression": e, "returnByValue": true }), Some(&s), |_| {}).map(|r| r["result"]["value"].clone());
+    wait_for("페이지", 10, || (eval(&mut owner, "!!document.getElementById('b')").ok()? == serde_json::json!(true)).then_some(()));
+    // 새 탭이 뜨면 크롬이 스스로 보인다 — 탭을 연 뒤에 가린다
+    wait_for("가려짐", 10, || {
+        app_window::hide(pid);
+        std::thread::sleep(Duration::from_millis(300));
+        (app_window::hidden(pid) == Some(true)).then_some(())
+    });
+    for ty in ["mousePressed", "mouseReleased"] {
+        owner.call("Input.dispatchMouseEvent", serde_json::json!({ "type": ty, "x": 50, "y": 40, "button": "left", "clickCount": 1 }), Some(&s), |_| {}).unwrap();
+    }
+    wait_for("패스키 요청이 걸림", 10, || (eval(&mut owner, "window.r").ok()? == serde_json::json!("pending")).then_some(()));
+    let kind = || popup_of(&live, None).1;
+    wait_for("가짜 화면에서 패스키 창을 알아봄", 15, || kind().is_some().then_some(()));
+    let home_rect = chrome_windows(&mut owner).unwrap()[0].1;
+    let win = chrome_windows(&mut owner).unwrap()[0].0;
+
+    // 꺼냄처럼 다른 모니터 가운데로 작게(가린 채) — 패스키 창이 따라와야 앱이 계속 '떠 있다'고 본다
+    set_bounds(&mut owner, win, crate::vdisplay::center_in(other, PEEK_W, PEEK_H));
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(app_window::hidden(pid), Some(true), "시험 크롬은 가린 채(사용자 화면에 안 그려짐)");
+    let after_peek = kind();
+    // 숨김처럼 가짜 화면으로 되돌림 — 패스키 창이 다른 모니터에 남지 않아야
+    set_bounds(&mut owner, win, home_rect);
+    std::thread::sleep(Duration::from_millis(1500));
+    let after_back = kind();
+    let _ = std::fs::remove_file(live_dir().join(format!("{profile}.json")));
+    assert!(after_peek.is_some(), "다른 모니터로 옮긴 뒤에도 패스키 창을 알아봐야(엇나간 자리에 남으면 꺼낸 크롬을 바로 숨긴다)");
+    assert!(after_back.is_some(), "되돌린 뒤에도 패스키 창이 브라우저 창 안에");
 }

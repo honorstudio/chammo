@@ -1,10 +1,13 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { pickLang, setAssistant, setLang } from './i18n';
+import './ui/layers.css';
 import './ui/styles.css';
+import './ui/paused.css';
 import { installFileDrop } from './ui/fileDrop';
 import { installImeGuard } from './ui/imeGuard';
 import { installModeBus } from './ui/mode/modeBus';
+import { ErrorBoundary } from './ui/ErrorBoundary';
 
 // 언어·비서 이름은 App 을 불러오기 **전에** 정한다 — 모듈 맨 위의 표(가챠 이름 등)가 tr() 로 된 채 평가되기 때문.
 // 설정(config.json)의 값을 localStorage 에 비춰 둔 것을 읽는다(동기). 설정에서 바꾸면 창을 다시 연다
@@ -30,7 +33,9 @@ Promise.race([fonts, new Promise((r) => setTimeout(r, 1500))]).finally(async () 
   const { default: App } = await import('./App');
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <App />
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
     </StrictMode>,
   );
 });

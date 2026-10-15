@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionState } from './session';
-import { loggedOutSeen, emptyLogin, loginStep, readProbe, stalledOf, type LoginInput } from './login';
+import { loggedOutSeen, emptyLogin, loginStep, readProbe, routineSessions, routineStalls, stalledOf, type LoginInput } from './login';
 
 const T0 = Date.parse('2026-10-06T00:30:22Z');
 const s = (session: string, ts: number, kind: 'background' | 'interactive' = 'background') => ({ session, name: session, ts, kind });
@@ -181,5 +181,28 @@ describe('readProbe — Rust login_probe 답', () => {
     expect(readProbe(null)).toEqual({ loggedIn: null, credAt: null });
     expect(readProbe({ loggedIn: 'yes', credAt: 'x' })).toEqual({ loggedIn: null, credAt: null });
     expect(readProbe({ loggedIn: true, credAt: 1_790_000_000_000 })).toEqual({ loggedIn: true, credAt: 1_790_000_000_000 });
+  });
+});
+
+// 예약 폴더(<데이터>/routines/<이름>)에서 뜬 세션은 앱 세션 목록 밖이라 진짜 로그인 풀림으로 멈춰도 카드가 안 떴다 — 예약 tick 은 그걸 카드 몫으로 비킨다(roadmap 137행 ①)
+describe('routineSessions·routineStalls — 예약 세션의 로그인 풀림도 카드로', () => {
+  const s = (id: string, cwd: string, sessionId = `sid-${id}`) => ({ id, name: id, cwd, kind: 'background', state: 'idle', project: 'x', workspace: null, startedAt: 0, sessionId }) as const;
+  const all = [
+    s('r1', '/Users/me/.chammo/routines/morning'),
+    s('r2', '/Users/me/.chammo/routines/night'),
+    s('p1', '/Users/me/dev/acme'),
+    s('h1', '/Users/me/.chammo/hq'),
+    s('w1', 'C:/Users/me/.chammo/routines/win'),
+  ];
+  it('예약 폴더 아래 세션만', () => {
+    expect(routineSessions(all, '/Users/me/.chammo').map((x) => x.id)).toEqual(['r1', 'r2']);
+    expect(routineSessions(all, 'C:\\Users\\me\\.chammo').map((x) => x.id)).toEqual(['w1']);
+    expect(routineSessions(all, '')).toEqual([]);
+  });
+  it('진짜 로그인 풀림만 — 갱신 겹침은 tick 이 다시 돌리니 넣지 않는다', () => {
+    const auth = { ts: '2026-10-11T00:00:00Z', text: 'Login expired · Please run /login' };
+    const acts = routineStalls(routineSessions(all, '/Users/me/.chammo'), { 'sid-r1': { auth }, 'sid-r2': { auth: { ...auth, retry: true } } });
+    expect(acts.map((a) => a.session.id)).toEqual(['r1']);
+    expect(stalledOf(acts).map((x) => x.session)).toEqual(['r1']);
   });
 });

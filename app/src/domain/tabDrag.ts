@@ -26,3 +26,9 @@ export function tabShift(i: number, from: number, to: number, step: number): num
   if (to < from && i >= to && i < from) return step;
   return 0;
 }
+
+/** 띠 프사 끌기가 띠 밖으로 나갔나 — 나가면 순서 바꾸기 대신 '입력칸에 넣기'(@멘션, 2026-10-12 사용자). 띠 끝 손잡이 폭만큼은 봐준다 */
+export const RAIL_OUT = 12;
+export function railOut(x: number, y: number, nav: { left: number; right: number; top: number; bottom: number }): boolean {
+  return x > nav.right + RAIL_OUT || x < nav.left - RAIL_OUT || y < nav.top - RAIL_OUT || y > nav.bottom + RAIL_OUT;
+}

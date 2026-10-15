@@ -2,6 +2,8 @@
 // 좌표는 웹뷰 안 좌표(macOS 는 포인트 단위라 clientX/Y 와 같다). 받을 수 있는 칸 = .pane[data-drop]
 import { invoke } from '@tauri-apps/api/core';
 import { dropText, paneAt } from '../domain/drop';
+import { LOCKER_CHAT_ATTACH, LOCKER_DROP } from './space/useLocker';
+import { chatDropAt, lightChat } from './space/chatDrop';
 
 export type DropEvent = { type: 'over' | 'drop' | 'leave'; x?: number; y?: number; paths?: string[] };
 
@@ -41,7 +43,16 @@ export function installFileDrop(): () => void {
     if (e.type === 'leave' || e.x === undefined || e.y === undefined) {
       overDoc?.dispatchEvent(new CustomEvent(DOC_OVER_EVENT, { detail: null }));
       overDoc = null;
+      lightChat(null);
       return light(null);
+    }
+    // 채팅 칸 위면 어디든(머리·대화 기록·입력칸·여백) 칸 전체 강조, 놓으면 그 칸 세션 입력칸에(2026-10-12 사용자 — 입력창까지 옮겨야만 들어갔다)
+    const chat = chatDropAt(e.x, e.y);
+    lightChat(e.type === 'over' ? chat : null);
+    if (chat) {
+      light(null);
+      if (e.type === 'drop' && e.paths?.length) attachToChat(chat.id, e.paths);
+      return;
     }
     // 스페이스 문서 편집기 위면 그림 블록으로(BlockNote 는 창이 가로챈 파일 끌기를 못 받는다 — 2026-10-01 사용자)
     const doc = (document.elementFromPoint(e.x, e.y) as HTMLElement | null)?.closest<HTMLElement>('.space-editor') ?? null;
@@ -61,6 +72,14 @@ export function installFileDrop(): () => void {
       if (e.paths?.length) abm.dispatchEvent(new CustomEvent(AGENT_DROP_EVENT, { detail: { paths: e.paths, x: e.x, y: e.y } }));
       return;
     }
+    // 파일 보관함 칸·폴더 위면 보관함에 넣는다(그 폴더 열쇠는 data-locker-drop)
+    const lk = (document.elementFromPoint(e.x, e.y) as HTMLElement | null)?.closest<HTMLElement>('[data-locker-drop]') ?? null;
+    if (lk) {
+      if (e.type === 'over') return light(lk);
+      light(null);
+      if (e.paths?.length) window.dispatchEvent(new CustomEvent(LOCKER_DROP, { detail: { paths: e.paths, folder: lk.dataset.lockerDrop ?? '' } }));
+      return;
+    }
     // 리더 패널 위면 파일을 탭으로 연다(터미널 붙여넣기 대신)
     const reader = (document.elementFromPoint(e.x, e.y) as HTMLElement | null)?.closest<HTMLElement>('.reader-panel') ?? null;
     if (reader) {
@@ -76,6 +95,7 @@ export function installFileDrop(): () => void {
     if (el && text) {
       el.dispatchEvent(new CustomEvent(DROP_EVENT, { detail: text }));
       el.dispatchEvent(new CustomEvent(DROP_PATHS_EVENT, { detail: e.paths ?? [] }));
+      chatAttached(el, e.paths ?? []);
     }
   };
   return () => {
@@ -84,12 +104,19 @@ export function installFileDrop(): () => void {
   };
 }
 
-/** 파일을 그 세션 채팅에 붙인다 — 끌어다 놓기와 똑같이(터미널 입력칸에 경로, 채팅엔 @img·@file 이름표). 스페이스 미리보기·문서의 "채팅에 붙이기" */
+/** 파일을 그 세션 채팅에 붙인다 — 끌어다 놓기와 똑같이(터미널 입력칸에 경로, 채팅엔 #img·#file 이름표). 스페이스 미리보기·문서의 "채팅에 붙이기" */
 export function attachToChat(sessionId: string, paths: string[]): boolean {
   const el = document.querySelector<HTMLElement>(`.cell[data-session="${CSS.escape(sessionId)}"] .pane[data-drop]`);
   const text = dropText(paths);
   if (!el || !text) return false;
   el.dispatchEvent(new CustomEvent(DROP_EVENT, { detail: text }));
   el.dispatchEvent(new CustomEvent(DROP_PATHS_EVENT, { detail: paths }));
+  chatAttached(el, paths);
   return true;
+}
+
+/** 채팅에 붙인 파일 — 그 칸이 참모면 보관함에도(SpaceView 가 참모인지 보고 넣는다) */
+function chatAttached(pane: HTMLElement, paths: string[]) {
+  const session = pane.closest<HTMLElement>('.cell[data-session]')?.dataset.session;
+  if (session && paths.length) window.dispatchEvent(new CustomEvent(LOCKER_CHAT_ATTACH, { detail: { session, paths } }));
 }

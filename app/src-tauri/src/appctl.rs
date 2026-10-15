@@ -3,15 +3,26 @@
 //! 무엇을 할지는 프론트 domain/appctl.ts 가 정한다. show.jsonl(reader::watch)과 같은 방식 — 앱이 켜지기 전 줄은 건너뛴다
 use tauri::{Manager, Runtime};
 
-/// offset 뒤 새 줄 중 JSON 객체인 것만(원문 그대로) + 다음 offset. 파일이 줄었으면 처음부터
+/// offset 뒤 다 쓴 줄(\n 까지)의 자리 [start, end) — 파일이 줄었으면 처음부터. 쓰는 중이라 \n 이 아직 없는 끝 줄은 다음에 읽는다
+/// (전엔 반쯤 쓴 줄을 읽고 끝으로 넘겨 그 명령이 영영 안 먹었고, 깨진 끝 글자가 U+FFFD 로 바뀌어 길이가 어긋나면 다음 offset 이 글자 가운데에 떨어졌다)
+pub fn complete_span(content: &str, offset: usize) -> (usize, usize) {
+    let mut start = if offset > content.len() { 0 } else { offset };
+    while !content.is_char_boundary(start) {
+        start += 1; // 글자 가운데면 그 글자 뒤로 — 처음부터 다시 읽으면 옛 명령을 또 친다
+    }
+    let end = content[start..].rfind('\n').map_or(start, |i| start + i + 1);
+    (start, end)
+}
+
+/// offset 뒤 새 줄 중 JSON 객체인 것만(원문 그대로) + 다음 offset
 pub fn new_lines(content: &str, offset: usize) -> (Vec<String>, usize) {
-    let start = if offset > content.len() || !content.is_char_boundary(offset) { 0 } else { offset };
-    let lines = content[start..]
+    let (start, end) = complete_span(content, offset);
+    let lines = content[start..end]
         .lines()
         .filter(|l| serde_json::from_str::<serde_json::Value>(l).map(|v| v.is_object()).unwrap_or(false))
         .map(str::to_owned)
         .collect();
-    (lines, content.len())
+    (lines, end)
 }
 
 /// 앱이 꺼진 동안 쓴 줄 중 켤 때 다시 칠 것 — 지난번 읽은 자리(app.jsonl.seen) 뒤의 자리표 알림만, 한 시간 안 것만.
@@ -139,6 +150,8 @@ pub struct ModeReq {
     pub dir: Option<String>,
     /// mode top <이름> on|off — 따로 창 '항상 위'
     pub on: Option<bool>,
+    /// mode remove <이름> --trash-source — 원본 폴더도 맥 휴지통으로
+    pub trash: bool,
 }
 
 pub fn mode_request(line: &str) -> Option<ModeReq> {
@@ -170,10 +183,13 @@ pub fn mode_request(line: &str) -> Option<ModeReq> {
         "open" | "close" => crate::modes::safe_name(name),
         "add" => dir.is_some() && place.is_none(),
         "top" => crate::modes::safe_name(name) && on.is_some() && place.is_none(),
+        "remove" => crate::modes::safe_name(name) && place.is_none(),
+        "restore-builtin" => (name.is_empty() || crate::modes::safe_name(name)) && place.is_none(),
         _ => false,
     };
     let on = if verb == "top" { on } else { None };
-    ok.then(|| ModeReq { id: id.into(), verb: verb.into(), name: name.into(), place, dash, dir: if verb == "add" { dir.map(Into::into) } else { None }, on })
+    let trash = verb == "remove" && v["arg"]["trash"].as_bool() == Some(true);
+    ok.then(|| ModeReq { id: id.into(), verb: verb.into(), name: name.into(), place, dash, dir: if verb == "add" { dir.map(Into::into) } else { None }, on, trash })
 }
 
 pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
@@ -185,6 +201,7 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
         let seen_file = crate::config::data_file("app.jsonl.seen");
         let seen = std::fs::read_to_string(&seen_file).ok().and_then(|s| s.trim().parse::<usize>().ok());
         let now = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let mut last = crate::reader::stamp(&file);
         let start = read(&file).unwrap_or_default();
         let mut offset = start.len();
         // 꺼진 동안 쓴 자리표 알림 — 자리를 잃고도 빌드를 계속 돌리는 세션이 없게(2026-10-06 slot 남은 것 ①)
@@ -196,7 +213,13 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
         loop {
             if pending.is_empty() {
                 std::thread::sleep(std::time::Duration::from_millis(700));
+                // 크기·수정 시각이 같으면 안 읽는다(0.7초마다 통째로 읽던 것, 2026-10-11 perf 6번)
+                let now = crate::reader::stamp(&file);
+                if now == last {
+                    continue;
+                }
                 let Ok(content) = read(&file) else { continue };
+                last = now;
                 if content.len() == offset {
                     continue;
                 }
@@ -269,6 +292,12 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                             let _ = std::fs::rename(&tmp, &file);
                         }
                     });
+                    continue;
+                }
+                // 참모 칸 읽기·쓰기(scripts/sheet) — 열린 표가 있으면 표로 보여 주며 넣고, 없으면 원본 패치. 답은 <데이터>/sheet.txt
+                if let Some(req) = crate::sheet_cmd::request(&line) {
+                    let app = app.clone();
+                    std::thread::spawn(move || crate::sheet_cmd::handle(&app, req));
                     continue;
                 }
                 let Some(w) = app.get_webview_window("main") else { continue };
@@ -357,6 +386,21 @@ mod tests {
     }
 
     #[test]
+    fn 반쯤_쓴_끝_줄은_다음에_글자_가운데_offset_은_죽지_않고_그_글자_뒤로() {
+        let a = "{\"action\":\"voice\",\"arg\":\"on\"}\n";
+        let whole = format!("{a}{{\"action\":\"open\",\"arg\":\"가나\"}}\n");
+        let half = &whole[..whole.len() - 6];
+        let (got, next) = new_lines(half, a.len());
+        assert!(got.is_empty());
+        assert_eq!(next, a.len(), "다 안 쓴 줄은 읽은 걸로 치지 않는다");
+        let (got, next) = new_lines(&whole, next);
+        assert_eq!(got.len(), 1);
+        assert_eq!(next, whole.len());
+        let mid = a.len() + whole[a.len()..].find('가').unwrap() + 1;
+        assert_eq!(new_lines(&whole, mid), (vec![], whole.len()));
+    }
+
+    #[test]
     fn 화면_바꾸는_명령만_창을_띄운다() {
         assert!(wants_window(r#"{"action":"open","arg":"settings"}"#));
         assert!(wants_window(r#"{"action":"focus","arg":"acme"}"#));
@@ -406,7 +450,7 @@ mod tests {
     #[test]
     fn 모드_요청은_동사_이름_자리를_거른다() {
         let l = |arg: &str| format!(r#"{{"action":"mode","id":"ab12","arg":{arg}}}"#);
-        let r = |verb: &str, name: &str, place: Option<&str>, dash: Option<&str>| Some(ModeReq { id: "ab12".into(), verb: verb.into(), name: name.into(), place: place.map(Into::into), dash: dash.map(Into::into), dir: None, on: None });
+        let r = |verb: &str, name: &str, place: Option<&str>, dash: Option<&str>| Some(ModeReq { id: "ab12".into(), verb: verb.into(), name: name.into(), place: place.map(Into::into), dash: dash.map(Into::into), dir: None, on: None, trash: false });
         assert_eq!(mode_request(&l(r#"{"verb":"list"}"#)), r("list", "", None, None));
         assert_eq!(mode_request(&l(r#"{"verb":"open","name":"counter","where":"panel"}"#)), r("open", "counter", Some("panel"), None));
         assert_eq!(mode_request(&l(r#"{"verb":"open","name":"counter","where":"modal"}"#)), r("open", "counter", Some("modal"), None));
@@ -432,6 +476,15 @@ mod tests {
         assert_eq!(mode_request(&l(r#"{"verb":"add"}"#)), None);
         assert_eq!(mode_request(&l(r#"{"verb":"open","name":"counter","dir":"/x"}"#)).unwrap().dir, None, "폴더는 add 에만");
         assert_eq!(mode_request(&l(r#"{"verb":"rm","name":"counter"}"#)), None);
+        let rm = mode_request(&l(r#"{"verb":"remove","name":"shop-mode","trash":true}"#)).unwrap();
+        assert_eq!((rm.verb.as_str(), rm.name.as_str(), rm.trash), ("remove", "shop-mode", true));
+        assert!(!mode_request(&l(r#"{"verb":"remove","name":"shop-mode"}"#)).unwrap().trash, "원본은 말할 때만");
+        assert!(!mode_request(&l(r#"{"verb":"open","name":"counter","trash":true}"#)).unwrap().trash, "휴지통은 remove 에만");
+        assert_eq!(mode_request(&l(r#"{"verb":"remove","name":"../x"}"#)), None);
+        assert_eq!(mode_request(&l(r#"{"verb":"remove"}"#)), None);
+        assert_eq!(mode_request(&l(r#"{"verb":"restore-builtin"}"#)).unwrap().name, "", "이름이 없으면 다");
+        assert_eq!(mode_request(&l(r#"{"verb":"restore-builtin","name":"home-board"}"#)).unwrap().name, "home-board");
+        assert_eq!(mode_request(&l(r#"{"verb":"restore-builtin","name":"../x"}"#)), None);
         assert_eq!(mode_request(r#"{"action":"mode","id":"a b","arg":{"verb":"list"}}"#), None, "id 는 답 파일 첫 줄에 쓴다");
     }
 }

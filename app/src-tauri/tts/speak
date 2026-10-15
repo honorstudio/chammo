@@ -3,6 +3,17 @@
 DIR="$(cd "$(dirname "$0")" && pwd)"
 VOICE=M1
 if [ "$1" = "-v" ]; then VOICE="$2"; shift 2; fi
+# 앱이 소리를 폰으로 돌릴지 맥에서 틀지 정하는 길(phone_voice, 2026-10-11) — 두 환경변수는 앱만 준다
+if [ -n "$CHAMMO_TTS_PLAY" ]; then # 앱이 이미 만든 소리 파일을 맥에서 튼다(폰이 못 틀었을 때) — 다 틀면 지운다
+  trap 'rm -f "$CHAMMO_TTS_PLAY"' EXIT INT TERM
+  echo "PLAYING $CHAMMO_TTS_PLAY" && afplay "$CHAMMO_TTS_PLAY"
+  exit
+fi
+if [ -n "$CHAMMO_TTS_HOLD" ]; then # 소리 파일만 그 자리에 만든다 — 틀기는 앱이(폰 또는 맥). 만들다 끊기면 반쪽 파일을 지운다
+  trap 'rm -f "$CHAMMO_TTS_HOLD"' INT TERM
+  "$DIR/venv/bin/python" "$DIR/say.py" "$CHAMMO_TTS_HOLD" "$VOICE" "$*" || rm -f "$CHAMMO_TTS_HOLD"
+  exit
+fi
 BASE="$(mktemp -t chammo-tts)"
 trap 'rm -f "$BASE" "$BASE.wav"' EXIT INT TERM # 멈춤으로 끊겨도 임시 wav 를 지운다
 # PLAYING <wav> = 이제 소리가 난다 — 앱이 '준비 중 → 재생 중' 을 알고(들어 보기), 틀기 전에 그 wav 에서 소리 크기 곡선을 뽑는다(빛, 2026-10-03)

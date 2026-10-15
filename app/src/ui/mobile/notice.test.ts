@@ -28,7 +28,7 @@ describe('알림 모달 모양', () => {
     expect(notice).toMatch(/<IconClose \/>/);
     expect(notice).toMatch(/aria-label="닫기"/);
     expect(notice).toMatch(/m-notice-back/);
-    expect(notice).toMatch(/createPortal\(/);
+    expect(notice).toMatch(/<SheetPortal>/); // 공용 시트 자리(틀 안) — 시트 transform 에 안 갇힌다
   });
   it('시트·화면 위 결과 줄은 모두 모달로 옮겼다', () => {
     expect(wake).not.toMatch(/className=\{note\.error \? 'm-error' : 'm-wake-note'\}/);

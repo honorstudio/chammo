@@ -148,7 +148,11 @@ pub fn phone_accounts() -> Result<PhoneView, String> {
 pub fn phone_switch(id: &str) -> Result<PhoneView, String> {
     let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (kc, live, list) = setup_quiet(true)?;
-    let pool = accounts::switch_pinned(&kc, &live, &list, id, now_ms()).map_err(|e| e.code())?;
+    let pool = accounts::switch_pinned(&kc, &live, &list, id, now_ms()).map_err(|e| e.code());
+    if let Ok(mut a) = ACCOUNT.lock() {
+        *a = None; // 칸을 바꿨으면 칸 계정 이름을 다시 읽는다
+    }
+    let pool = pool?;
     Ok(phone_view(&pool, accounts::read_oauth(&live.claude_json).as_ref()))
 }
 
@@ -170,6 +174,17 @@ pub fn live_paths(home: &Path, config_dir: Option<&str>, json_env: Option<&str>,
     }
     let json = json_env.filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".claude.json"));
     Ok((service.unwrap_or(LIVE_SERVICE).to_string(), json))
+}
+
+/// Claude Code 설정 폴더(갱신 잠금 자리). 시험 앱(로그인 칸 자리를 바꾼 것)은 CHAMMO_ACCOUNT_CLAUDE_DIR 를 줬을 때만 — 안 줬으면 진짜 ~/.claude 잠금을 안 건드린다
+pub fn claude_dir(home: &Path, config_dir: Option<&str>, dir_env: Option<&str>, service_env: Option<&str>) -> Option<PathBuf> {
+    if let Some(d) = dir_env.filter(|s| !s.is_empty()) {
+        return Some(PathBuf::from(d));
+    }
+    if service_env.is_some_and(|s| !s.is_empty()) {
+        return None;
+    }
+    Some(config_dir.filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".claude")))
 }
 
 fn env(k: &str) -> Option<String> {
@@ -198,8 +213,26 @@ fn setup_quiet(always_quiet: bool) -> Result<(Keychain, Live, PathBuf), String> 
     // 로그인 칸은 security 명령으로만 — 프레임워크로 건드리면 허용 창이 연달아 떴다(accounts_store 머리말)
     let kc = Keychain { path: keychain, unlock, quiet, cli_service: Some(service.clone()) };
     // 키체인 계정 이름은 지금 칸에 붙은 것 그대로(값은 안 읽는다). 칸이 없으면 맥 사용자 이름 — Claude Code 와 같은 규칙
-    let account = kc.account_of(&service).or_else(|| env("USER")).unwrap_or_default();
-    Ok((kc, Live { service, account, claude_json }, crate::config::data_file("accounts.json")))
+    let account = remembered(&ACCOUNT, &service, || kc.account_of(&service)).or_else(|| env("USER")).unwrap_or_default();
+    let claude_dir = claude_dir(Path::new(&crate::config::home()), env("CLAUDE_CONFIG_DIR").as_deref(), env("CHAMMO_ACCOUNT_CLAUDE_DIR").as_deref(), env("CHAMMO_ACCOUNT_LIVE_SERVICE").as_deref());
+    Ok((kc, Live { service, account, claude_json, claude_dir, refresh: crate::accounts_refresh::refresh }, crate::config::data_file("accounts.json")))
+}
+
+/// 로그인 칸의 키체인 계정 이름 기억 — (칸 이름, 계정 이름). 앱 켤 때 한 번 읽고, 계정 칸을 바꾸는 일(run) 뒤에 잊는다.
+/// 1분마다 사용량을 물을 때마다 security 를 띄워 읽던 것(2026-10-11 perf 5번). 값(토큰)은 기억하지 않는다
+static ACCOUNT: Mutex<Option<(String, String)>> = Mutex::new(None);
+
+/// cell 에 같은 칸 이름의 기억이 있으면 그것, 없으면 read(있을 때만 기억 — 칸이 아직 없으면 로그인 뒤 다시 읽는다)
+fn remembered(cell: &Mutex<Option<(String, String)>>, service: &str, read: impl FnOnce() -> Option<String>) -> Option<String> {
+    let mut g = cell.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((s, a)) = g.as_ref() {
+        if s == service {
+            return Some(a.clone());
+        }
+    }
+    let v = read()?;
+    *g = Some((service.to_string(), v.clone()));
+    Some(v)
 }
 
 /// 지금 로그인 칸 값 — 로그인 시각 재기(login::login_at)가 칸 고친 시각이 바뀌었을 때만 부른다. 창 없이(quiet), 못 읽으면 None
@@ -216,7 +249,12 @@ where
     tauri::async_runtime::spawn_blocking(move || {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (kc, live, list) = setup()?;
-        f(&kc, &live, &list).map_err(|e| e.code())?;
+        let r = f(&kc, &live, &list).map_err(|e| e.code());
+        // 칸을 바꾸는 일(담기·바꾸기·되돌리기 등) 뒤엔 칸 계정 이름을 다시 읽는다
+        if let Ok(mut a) = ACCOUNT.lock() {
+            *a = None;
+        }
+        r?;
         let pool = accounts::load(&list).map_err(|e| e.code())?;
         Ok(view(&pool, accounts::read_oauth(&live.claude_json).as_ref()))
     })
@@ -306,6 +344,26 @@ pub async fn accounts_remove(id: String) -> Result<View, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 로그인_칸_계정_이름은_한_번_읽고_바꾸기_뒤에_새로() {
+        // 1분마다 사용량을 물을 때마다 security 로 칸 계정 이름을 읽던 것(2026-10-11 perf 5번)
+        let cell = Mutex::new(None);
+        let reads = std::cell::Cell::new(0);
+        let read = |v: Option<&str>| { reads.set(reads.get() + 1); v.map(str::to_string) };
+        assert_eq!(remembered(&cell, "svc", || read(Some("me"))), Some("me".into()));
+        assert_eq!(remembered(&cell, "svc", || read(Some("other"))), Some("me".into()));
+        assert_eq!(reads.get(), 1);
+        // 다른 칸 이름이면 새로
+        assert_eq!(remembered(&cell, "svc2", || read(Some("you"))), Some("you".into()));
+        // 칸이 없으면(None) 기억 안 함 — 로그인하면 생긴다
+        let empty = Mutex::new(None);
+        assert_eq!(remembered(&empty, "svc", || None), None);
+        assert_eq!(remembered(&empty, "svc", || Some("late".to_string())), Some("late".into()));
+        // 바꾸기·되돌리기 뒤엔 잊는다
+        *cell.lock().unwrap() = None;
+        assert_eq!(remembered(&cell, "svc", || read(Some("new"))), Some("new".into()));
+    }
     use crate::accounts::Account;
     use serde_json::json;
 
@@ -317,6 +375,16 @@ mod tests {
         assert_eq!(live_paths(h, None, Some("/tmp/c.json"), Some("Chammo test live")).unwrap(), ("Chammo test live".to_string(), PathBuf::from("/tmp/c.json")));
         assert_eq!(live_paths(h, Some("/x"), None, None).unwrap_err(), "configDir");
         assert!(live_paths(h, Some("/x"), None, Some("S")).is_ok());
+    }
+
+    #[test]
+    fn 갱신_잠금_자리() {
+        let h = Path::new("/Users/me");
+        assert_eq!(claude_dir(h, None, None, None), Some(PathBuf::from("/Users/me/.claude")));
+        assert_eq!(claude_dir(h, Some("/cfg"), None, None), Some(PathBuf::from("/cfg")));
+        // 시험 앱은 가짜 자리를 줬을 때만 — 안 줬으면 진짜 ~/.claude 잠금을 안 건드린다
+        assert_eq!(claude_dir(h, None, None, Some("Chammo test live")), None);
+        assert_eq!(claude_dir(h, None, Some("/tmp/cc"), Some("Chammo test live")), Some(PathBuf::from("/tmp/cc")));
     }
 
     #[test]

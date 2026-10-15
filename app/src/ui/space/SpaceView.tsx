@@ -1,15 +1,18 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { appendTaskEvent, readSessionTasks, readTranscriptTails, sendTextToSession, spaceTrace, spawnLines } from '../../data/tauri';
-import { queueShow, showPlace, traceLine } from '../../domain/spaceJump';
-import { dashFiles, paneState, type DashFile } from '../../domain/dashboard';
+import { keepScroll, queueShow, restoreTop, SCROLL_PANES, scrollKey, showBatch, traceLine } from '../../domain/spaceJump';
+import { dashFiles, ownBrowserLine, paneState, type DashFile } from '../../domain/dashboard';
 import { findTarget } from '../../domain/inbox';
-import { kindOf } from '../../domain/reader';
+import { isSheet, kindOf, spacePage } from '../../domain/reader';
 import type { Session } from '../../domain/session';
 import { sameOrchSlot, stoppedOrchs } from '../../domain/stopped';
 import { foldAgents, pruneAgents, type SubAgent } from '../../domain/subAgents';
-import { addSpawned, focusPick, focusTab, harnitorPick, holderMap, reviewPick, toolsPick, newShows, orphanSends, shownFiles, showOwner, transcriptTargets } from '../../domain/spaceNav';
+import { addSpawned, ownPick, featureOf, featurePick, focusPick, focusTab, holderMap, legacyPick, newShows, sidePick, type FeatureKey, orphanSends, shownFiles, showOwner, transcriptTargets } from '../../domain/spaceNav';
 import { orchDocs, pinPaths, projectGroups, remapPins } from '../../domain/spaceTree';
+import { holdRelease, spaceSwapDelay } from '../../domain/switchHold';
+import { docKeepLimit } from '../../domain/docKeep';
+import { useDocKeep } from './docKeep';
 import { termTail } from '../../domain/termTail';
 import { starterLists } from '../../domain/starterLists';
 import type { TaskCard, TaskEvent } from '../../domain/tasks';
@@ -20,16 +23,16 @@ import { assistant, josa, tr } from '../../i18n';
 import { TerminalPane } from '../TerminalPane';
 import { AgentBrowser, useAgentLives } from '../AgentBrowser';
 import { liveOf } from '../../domain/agentBrowser';
-import { DashboardView, type DashLine, type DashLists, type LiveLine } from './DashboardView';
+import type { DashLine, DashLists, LiveLine } from './DashboardView';
 import { AgentList } from './AgentList';
 import { DocPage } from './DocPage';
+import { SheetPage } from './SheetPage';
 import type { ShowAt } from '../../domain/showAt';
-import { PagesHome } from './PagesHome';
 import { ToolsPage } from './ToolsPage';
 import { CurationMode } from './CurationMode';
 import { HarnitorPanel } from '../HarnitorPanel';
 import type { HarnitorSel } from '../../domain/harnitor';
-import { spaceWord } from '../../domain/viewNow';
+import { pathWord, spaceWord } from '../../domain/viewNow';
 import { reportView } from '../viewReport';
 import { OPEN_PAGE, PAGE_TITLE } from './PageBlock';
 import { Preview } from './Preview';
@@ -38,13 +41,14 @@ import { useShowLog } from './useShowLog';
 import { CHAT_FILE_OPEN } from '../chat/ChatFileCard';
 import { cardMoves } from '../../domain/chatFiles';
 import { attachToChat } from '../fileDrop';
-import { SpaceNav, StateMark } from './SpaceNav';
+import { StateMark } from './StateMark';
 import { sessionStatus, statusWord, type ActivityStatus } from '../../domain/status';
-import { useChatItems } from './useChatItems';
-import { OrchName, useOrchActions } from '../orchActions';
+import { useOrchActions } from '../orchActions';
 import { orchRoleOf, useOrchRoleData } from '../orchRoleStore';
 import { NotePanel } from './NotePanel';
-import { ModeDash, ModeLayer, ModePanel, useModeRows } from '../mode/ModePanel';
+import { ModeHome, ModeLayer, ModePanel, useModeRows, HOME_TRY } from '../mode/ModePanel';
+import { HomeView } from './HomeView';
+import { dashModes } from '../../domain/modeTree';
 import { setModeChatHere, setModeDashHere } from '../mode/modeBus';
 import type { NoteBase } from '../../domain/noteEdits';
 import { projectRoot } from '../../domain/spaceTree';
@@ -54,12 +58,40 @@ import type { RoutineItem } from '../../domain/routine';
 import { bodyColor, orchColor } from '../../domain/avatar';
 import { OrchAvatar, avatarState, useAvatars } from '../avatar';
 import { EMPTY_NAV, goBack, goForward, keyFallback, visit, type Nav } from '../../domain/navHistory';
-import { SPACE_NAV } from './navSignal';
-import { deskTarget, navPick, OFFICE, officePick, rememberSide, sheetBack, sheetOpen, showPick, spaceView, startPick, type Side, type SpaceSide } from '../../domain/spaceOffice';
+import { SPACE_CMD, SPACE_NAV, type SpaceCmd } from './navSignal';
+import { TabZoomBar } from './TabZoomBar';
+import { FIT } from '../../domain/readerZoom';
+import { fitZoom, makePinchAccum, makeWheelAccum, nextTabZoom, parseTabZooms, tabZoomable, tabZoomOf, TAB_ZOOM_KEY, wheelDir, withTabZoom, type TabZooms, type ZoomCmd } from '../../domain/tabZoom';
+import { keyLabel } from '../../domain/keys';
+import { IS_WIN } from '../../domain/reader';
+import { deskTarget, OFFICE, officePick, rememberSide, sheetBack, sheetOpen, showPick, spaceView, startPick, type Side, type SpaceSide } from '../../domain/spaceOffice';
 import { OfficeSheet, SheetIcons } from '../office/OfficeSheet';
 import { HOME_PICK as HOME } from '../../domain/orchHome';
-import { IconClose, IconDashboard, IconOffice, IconPet } from '../Icons';
+import { IconClose, IconDashboard, IconFolder, IconHome, IconOffice, IconPet } from '../Icons';
+import { IconButton } from '../kit/IconButton';
 import { BrowserAttachButton } from '../BrowserAttach';
+import { every } from '../poll';
+import { editedAfterOpen } from '../../domain/locker';
+import { lkPick, isLockerOpen, parseLkPick, userFolders, type LkPlace } from '../../domain/lockerTree';
+import { lockerLog } from '../../domain/lockerLog';
+import { closeCurrentTab, closeTab, leaveFolder, newDocFolder, openReview, openTab, reviewKey, swapHold, pathLine, showInTab, tabPick, tabRow, type LkHold } from '../../domain/lockerTabs';
+import { isCurationHtml } from '../../domain/curation';
+import { projectOf } from '../../domain/lockerLog';
+import { FileTab } from './FileTab';
+import { ActivityBar } from './ActivityBar';
+import { LockerPage, type CardActs, type ChipProject } from './LockerPage';
+import { lockerMenu } from '../../domain/lockerMenu';
+import { menuItems } from './lockerMenuItems';
+import { dotKind, worstDot, type DotKind } from '../../domain/dot';
+import { OrchRail, type RailAvatar } from './OrchRail';
+import { ChatLink } from './ChatLink';
+import { phaseWord, railRows, type RailRow } from '../../domain/railRows';
+import { orchDisplay } from '../orchLabels';
+import { RoutineList } from './RoutineList';
+import { railWidth } from '../../domain/sessionDock';
+import { SessionPage } from './SessionPage';
+import { lockerApi, LOCKER_CHAT_ATTACH, LOCKER_DROP, LOCKER_MOVE, useLockerTree } from './useLocker';
+import { motionOn } from '../calm';
 
 const nameOf = (s: Session) => (s.workspace ? `${s.project} / ${s.workspace}` : s.project);
 
@@ -67,10 +99,9 @@ const nameOf = (s: Session) => (s.workspace ? `${s.project} / ${s.workspace}` : 
 const PIN_KEY = 'spacePins';
 const loadPins = (): Record<string, string[]> => { try { return JSON.parse(localStorage.getItem(PIN_KEY) ?? '{}') as Record<string, string[]>; } catch { return {}; } };
 // 내 페이지 제목(첫 줄 # 제목) — 파일 이름보다 이게 메뉴에 보인다
-const TITLE_KEY = 'spacePageTitles';
-const loadTitles = (): Record<string, string> => { try { return JSON.parse(localStorage.getItem(TITLE_KEY) ?? '{}') as Record<string, string>; } catch { return {}; } };
 // 참모마다 사무실/스페이스 중 마지막에 고른 쪽 — 참모 이름 기준(앱을 다시 켜도, 2026-10-03 사용자)
 const SIDE_KEY = 'spaceOfficeSide';
+const RAIL_KEY = 'railWidth';
 const loadSides = (): Record<string, Side> => { try { return JSON.parse(localStorage.getItem(SIDE_KEY) ?? '{}') as Record<string, Side>; } catch { return {}; } };
 // 기억 키 = 세션 짧은 번호(이름을 바꿔도·/clear 해도 그대로) — 예전 키(이름)도 읽는다(2026-10-03 QA 8번)
 const sideKey = (o: Session) => o.id;
@@ -104,9 +135,17 @@ function ViewSeg({ side, pet, office, onPick }: { side: SpaceSide; pet: boolean;
  * 채팅 뷰의 스페이스(큰 창 전체) — v10: 왼쪽 메뉴 트리(참모·프로젝트마다 대시보드 + 문서, 내 페이지),
  * 가운데 = 고른 것(대시보드 / 노션식 문서 / 세션 터미널). 참모·맡긴 세션이 띄운 파일은 위에 모달
  */
-export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeReq = null, onOfficeReq, onOfficeShown, harnitorReq = null, onHarnitorReq, onHarnitorShown, onHarnitorClosed, toolsReq = null, onToolsReq, onToolsShown, onToolsClosed, reviewReq = null, onReviewReq, onReviewShown, computerUse, orchs, stoppingIds, startingOrchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, orchHome, send, sendTo, live = {}, menuOpen = true, idle = [], stopped = [], orchCwd = '', onResume, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, reviewPage, ctxOf, onAddProject, onChatTab, helpers = [], loose = [], tasks, onMessage }: {
+export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [], orchOrder = [], pet, office, officeReq = null, onOfficeReq, onOfficeShown, harnitorReq = null, onHarnitorReq, onHarnitorShown, onHarnitorClosed, toolsReq = null, onToolsReq, onToolsShown, onToolsClosed, reviewReq = null, onReviewReq, onReviewShown, replayReq = null, onReplayReq, onReplayShown, replayPage, computerUse, orchs, stoppingIds, startingOrchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, orchHome, send, sendTo, live = {}, menuOpen = true, idle = [], stopped = [], orchCwd = '', onResume, onWakeOrch, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, reviewPage, ctxOf, onAddProject, onChatTab, helpers = [], loose = [], tasks, onMessage }: {
   /** 고정한 참모(대화 id, 고정한 순서) — 사이드바 줄 순서·압정 표시 */
   orchPins?: string[];
+  /** 프사 띠에서 참모를 끌어 옮겼다(ids = 지금 순서, from 을 to 자리로) — 채팅 탭 끌기와 같은 길(App reorderOrchPanes) */
+  onReorderOrch?: (ids: string[], from: string, to: string) => void;
+  /** 채팅 칸(App) — 띠 바로 다음에 그린다(띠 | 채팅 | 스페이스, 2026-10-12 사용자 시안 v2 Q1 A) */
+  chat?: React.ReactNode;
+  /** 띠 맨 아래 펼치기·접기(⌘B 와 같다) — 펼친 패널 = 넓은 띠(2026-10-12 패널 하나로 P1 A) */
+  onMenuToggle?: () => void;
+  /** 기록·음성·도구·하니터·리뷰 — 접힌 패널 둘째 세로줄(col), 펼친 패널 맨 아래 가로줄(row). 위 막대에서 옮겨 옴(2026-10-11 사용자 180.png) */
+  fns?: { col: React.ReactNode; row: React.ReactNode };
   /** 참모 순서(대화 id, domain/orchOrder) — 사이드바 오케스트레이터 칸이 채팅 탭과 같은 줄로 */
   orchOrder?: string[];
   /** 세션이 안 떠 있는 프로젝트(예전 사이드바처럼 흐리게) */
@@ -137,6 +176,8 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
   startingOrchs?: StoppedSession[];
   orchCwd?: string;
   onResume?: (s: StoppedSession) => void;
+  /** 띠의 쉬는 참모 깨우기 — 이어서 켜고 떠오르면 그 참모(채팅 탭까지)로(App resumeFromHome, 오케스트레이터 홈과 같은 길) */
+  onWakeOrch?: (s: StoppedSession) => void;
   onRemoveStopped?: (s: StoppedSession) => void;
   ctxOf?: (s: Session) => number | undefined;
   onAddProject?: () => void;
@@ -158,6 +199,11 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
   onReviewReq?: () => void;
   onReviewShown?: (open: boolean) => void;
   reviewPage?: (key: string | undefined, onKey: (key: string) => void, onOpen: (target: string) => void) => React.ReactNode;
+  /** 하루 리플레이 — 앱 전체 화면이던 것을 스페이스 기능 화면으로(2026-10-11 사용자 "화면 전체가 바뀌어서 돌아갈 수가 없다") */
+  replayReq?: 'open' | 'close' | 'toggle' | null;
+  onReplayReq?: () => void;
+  onReplayShown?: (open: boolean) => void;
+  replayPage?: () => React.ReactNode;
   live?: Record<string, LiveLine>;
   /** 오케스트레이터 홈(어떤 참모를 켤지) — 메뉴 '오케스트레이터' 머리를 누르거나 참모가 하나도 없을 때. onGo = 켜진 참모를 눌렀을 때 */
   orchHome?: (onGo: (id: string) => void) => React.ReactNode;
@@ -187,8 +233,18 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
   // 메뉴에서 보는 참모 — 채팅 탭을 바꾸면 따라오고, 메뉴에서 고르면 채팅 탭은 그대로(2026-09-30 사용자)
   const [nav, setNav] = useState<{ view?: string; chat?: string }>({ view: chatOrch?.id, chat: chatOrch?.id });
   const sides = useRef(loadSides());
-  const homeOf = (o: Session) => (office ? startPick(sides.current, sideKeys(o), `o:${o.id}`) : `o:${o.id}`);
-  const [pick, setPickRaw] = useState<string>(() => (chatOrch ? homeOf(chatOrch) : ''));
+  // 참모를 누르면 첫 화면 = 보관함 받은 것(대시보드는 폴더 첫 화면으로 녹였다 — 띠 맨 아래 펼치기로 간다, 보관함 v4)
+  // 참모 첫 화면 = 홈(홈·모드 v1 1 — 처음 여는 참모는 홈, 그 뒤엔 마지막에 본 줄을 switchTo 가 되살린다)
+  const homeOf = (o: Session) => (office ? startPick(sides.current, sideKeys(o), lkPick(o.id, { kind: 'home' })) : lkPick(o.id, { kind: 'home' }));
+  const [pick, setPickState] = useState<string>(() => (chatOrch ? homeOf(chatOrch) : ''));
+  // 옛 대시보드 키(o:/p:)는 새 자리로(2026-10-12 패널 하나로 — domain/spaceNav legacyPick). 모든 화면 바꾸기가 이 길을 지난다
+  const petRef = useRef<string | null>(null);
+  const fixPick = (k: string) => legacyPick(k, { petFor: petRef.current, view: now.current.view, sessionOf: (root) => {
+    const g = groups.find((x) => x.root === root);
+    const o = orchs.find((x) => x.id === now.current.view);
+    return (g?.sessions.find((x) => heldBy(o).some((h) => h.id === x.id)) ?? g?.sessions[0])?.id;
+  } });
+  const setPickRaw = (k: string) => setPickState(fixPick(k));
   // 지나온 화면 — 참모 탭(채팅 탭)마다 따로. 문서 "뒤로"·⌘[·마우스 뒤로 = 왔던 곳, ⌘] = 앞으로(없으면 위 칸).
   // 예전 문서 뒤로는 '위 칸'이라 링크 타고 간 뒤 누르면 오케스트레이터 홈으로 튕겼다(2026-10-04 QA D2)
   const navs = useRef(new Map<string, Nav>());
@@ -196,10 +252,21 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
   // 기록은 상태 갱신 함수 밖에서 바꾼다 — 개발판(StrictMode)은 갱신 함수를 두 번 돌려 뒤로가 두 칸 갔다
   // 스페이스를 바꾼 길 — 바뀔 때마다 종류만 기록(domain/spaceJump traceLine). 이름 없이 바뀌면 '?' 로 남아 다음에 또 튀면 잡힌다
   const why = useRef('mount');
-  const setPick = (k: string, w = 'click') => { why.current = w; navs.current.set(navKey(), visit(navs.current.get(navKey()) ?? EMPTY_NAV, now.current.pick, k)); setPickRaw(k); };
+  // 문서 스크롤 자리 — 참모 탭 + 화면마다(domain/spaceJump keepScroll). 떠날 때 적고 그 화면에 돌아오면 되살린다
+  const docScroll = useRef(new Map<string, number>());
+  const scrollEl = () => document.querySelector<HTMLElement>(SCROLL_PANES.map((c) => `.space .cv-main ${c}`).join(', '));
+  const leaveScroll = () => { const el = scrollEl(); if (el) keepScroll(docScroll.current, scrollKey(now.current.view, now.current.pick), el.scrollTop); };
+  const setPick = (k0: string, w = 'click') => {
+    const k = fixPick(k0);
+    leaveScroll(); why.current = w; navs.current.set(navKey(), visit(navs.current.get(navKey()) ?? EMPTY_NAV, now.current.pick, k));
+    // 세션으로 가면 그 참모 탭 줄에 세션 탭(패널 하나로 S4 — 크게 = 가운데 탭)
+    if (k.startsWith('s:') && now.current.view) setLkHold((h) => openTab(h, now.current.view!, now.current.pick, k));
+    setPickRaw(k);
+  };
   /** 뒤로(-1)·앞으로(1) — 기록이 없으면 뒤로는 fallback(위 칸) */
   const step = (dir: -1 | 1, fallback?: string) => {
     const cur = now.current.pick;
+    leaveScroll();
     const n = navs.current.get(navKey()) ?? EMPTY_NAV;
     const r = dir < 0 ? goBack(n, cur) : goForward(n, cur);
     why.current = dir < 0 ? 'back' : 'fwd';
@@ -212,32 +279,42 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
   // 다른 참모가 띄운 파일은 그 참모 탭으로 갈 때 보인다(2026-09-30 사용자 "탭별로 화면이 저장")
   const screens = useRef(new Map<string, { pick: string; modal: DashFile | null; focus?: { path: string; at: ShowAt; key: string } | null; scroll?: number; sheet?: string[] }>());
   const now = useRef({ view: followed.view, pick, modal: null as DashFile | null, sheet: [] as string[] });
+  const holds = useRef(new Map<string, LkHold>()); // 참모마다 열어 둔 탭 줄(domain/lockerTabs swapHold)
+  // 탭 확대·축소·맞춤(2026-10-12 사용자) — 배율은 파일(경로)마다 기억(domain/tabZoom). 명령은 단축키·머리 단추·휠·핀치가 같은 길로
+  const [tabZooms, setTabZooms] = useState<TabZooms>(() => { try { return parseTabZooms(localStorage.getItem(TAB_ZOOM_KEY)); } catch { return {}; } });
+  useEffect(() => { try { localStorage.setItem(TAB_ZOOM_KEY, JSON.stringify(tabZooms)); } catch { /* 이번엔 된다 */ } }, [tabZooms]);
   // 탭이 어떻게 바뀌든(누르기·⌘숫자·앱 명령·알림) 떠나는 참모 화면을 적어 두고 가는 참모 화면을 되살린다 — 누를 때만 되살려서
   // 단축키·"그 세션으로 가기"로 바꾸면 대시보드로 갔다(2026-09-30)
   const switchTo = (id: string, w = 'tab') => {
     if (!orchs.some((o) => o.id === id)) return;
     if (id === now.current.view) { setNav((n) => (n.chat === id ? n : { ...n, chat: id })); return; }
     why.current = w;
-    // 보던 문서의 스크롤 자리도 같이 — 탭을 바꿨다 오면 맨 위로 올라갔다(2026-10-01 사용자)
-    const scrollEl = () => document.querySelector<HTMLElement>('.space .cv-main .cv-doc-scroll');
-    if (now.current.view) screens.current.set(now.current.view, { pick: now.current.pick, modal: now.current.modal, scroll: scrollEl()?.scrollTop ?? 0, sheet: now.current.sheet });
+    // 보던 문서의 스크롤 자리도 같이 — 탭을 바꿨다 오면 맨 위로 올라갔다(2026-10-01 사용자). 되살리기는 아래 [pick, view] 효과
+    leaveScroll();
+    if (now.current.view) screens.current.set(now.current.view, { pick: now.current.pick, modal: now.current.modal, sheet: now.current.sheet });
+    setLkHold(swapHold(holds.current, lkRef.current.hold, id)); // 열어 둔 탭·보관함 자리도 참모마다 — 돌아오면 그대로
     const sv = screens.current.get(id);
     setNav({ view: id, chat: id });
     const to = orchs.find((o) => o.id === id)!;
-    const toPick = sv?.pick ?? homeOf(to);
+    const toPick = ownPick(sv?.pick, id, homeOf(to)); // 남의 보관함 자리가 박혀 있었으면 이 참모 홈으로
     setPickRaw(toPick); // 탭 바꾸기는 화면 기록이 아니다(기록은 탭마다 따로)
     setModal(sv?.modal ?? null);
     setSheet(sv?.sheet ?? []); // 사무실 위 창도 탭마다
     now.current = { ...now.current, view: id, pick: toPick, modal: sv?.modal ?? null, sheet: sv?.sheet ?? [] }; // 같은 틱에 뒤따르는 것(띄운 파일)이 새 탭 화면을 보게
     setFocus(sv?.focus ?? null); // 그 탭에 가서야 처음 보는 짚은 곳은 그때 반짝(한 번만 — 떠날 때 기억은 focus 없이)
-    const want = sv?.scroll ?? 0;
-    if (want > 0) {
-      // 문서는 글을 읽어 온 뒤에야 길이가 생긴다 — 될 때까지 잠깐 다시 맞춘다(최대 1.5초)
-      let tries = 0;
-      const put = () => { const el = scrollEl(); if (el && el.scrollHeight - el.clientHeight >= want - 4) { el.scrollTop = want; return; } if (++tries < 15) window.setTimeout(put, 100); };
-      window.setTimeout(put, 50);
-    }
   };
+  // 화면에 돌아오면 그 문서에서 보던 자리로 — 탭 바꾸기·⌘[ 뒤로·⌘] 앞으로·메뉴 다 같은 길(2026-10-11, 예전엔 탭마다 하나라 같은 탭 뒤로는 맨 위)
+  useEffect(() => {
+    const want = restoreTop(docScroll.current.get(scrollKey(nav.view, pick)), !!scrollEl()?.matches('.lk-page-wrap'));
+    if (want === null) return;
+    if (want === 0) { scrollEl()!.scrollTop = 0; return; }
+    // 문서는 글을 읽어 온 뒤에야 길이가 생긴다 — 될 때까지 잠깐 다시 맞춘다(최대 1.5초)
+    let tries = 0;
+    let t = 0;
+    const put = () => { const el = scrollEl(); if (el && el.scrollHeight - el.clientHeight >= want - 4) { el.scrollTop = want; return; } if (++tries < 15) t = window.setTimeout(put, 100); };
+    t = window.setTimeout(put, 50);
+    return () => window.clearTimeout(t);
+  }, [pick, nav.view]); // eslint-disable-line react-hooks/exhaustive-deps
   // 채팅 칸이 스페이스 참모를 바꿨을 때(App focusedBy) — 탭을 누르지 않았는데 오면 'follow' 로 남는다
   useEffect(() => { if (chatOrch?.id && chatOrch.id !== nav.chat) switchTo(chatOrch.id, 'follow'); }, [chatOrch?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -249,20 +326,35 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
   // "한참 있다가 스플래시"). 바뀐 걸 그리는 중에 알아채야 첫 화면부터 스플래시다
   // 펫 탭을 연 참모 대시보드(하나만). 위젯 '더보기'는 이제 모달(ui/tama/PetModal)이라 여기로 안 온다
   const [petFor, setPetFor] = useState<string | null>(null);
+  petRef.current = petFor;
   const [shownOrch, setShownOrch] = useState(orch?.id);
-  const [hold, setHold] = useState(false);
+  // hold = 기다리는 바꾸기 번호(0 = 안 기다림) — 바꿀 때마다 늘 커지는 새 번호라 풀기와 합쳐져도 값이 바뀌어 푸는 타이머가 꼭 다시 걸린다(domain/switchHold holdRelease)
+  const [hold, setHold] = useState(0);
+  const holdSeq = useRef(0);
   const [switching, setSwitching] = useState<string | null>(null);
-  if (orch?.id && orch.id !== shownOrch) {
+  // 바뀐 걸 알아챈 이 렌더는 버려지고 hold 로 다시 그린다 — 이 렌더에서 옛 화면 자리(shownMain)를 새 화면으로 덮으면 안 된다
+  const swapping = !!orch?.id && orch.id !== shownOrch;
+  // 최근 참모 문서 살려 두기(ui/space/docKeep) — 움직이는 동안엔 새 문서를 만들지 않는다
+  const keep = useDocKeep();
+  const held = hold > 0 || swapping;
+  keep.begin(held);
+  if (swapping) {
     setShownOrch(orch.id);
-    setHold(true);
+    holdSeq.current += 1;
+    setHold(holdSeq.current);
     setSwitching(orch.id);
   }
+  // 기다리는 동안은 옛 화면을 덮개 아래 그대로 — 비우면(null) 옛 편집기를 부수는 일(~110ms)이 이음 탭 움직임 첫 프레임에 깔렸다(2026-10-12 사용자 "참모 바꿀 때 렉").
+  // 움직임이 끝난 뒤(domain/switchHold) 한 번에 바꿔 끼운다. 움직임을 줄였으면 예전처럼 두 프레임 뒤
+  const shownMain = useRef<React.ReactNode>(null);
   useEffect(() => {
     if (!hold) return;
+    const mine = hold;
+    const wait = spaceSwapDelay(motionOn());
     let r2 = 0;
-    const r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setHold(false)); });
+    const r1 = wait ? 0 : requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setHold((s) => holdRelease(s, mine))); });
     // 창이 가려져 있거나 앞에 없으면 웹뷰가 그리기 신호(rAF)를 멈춰, 대시보드가 빈 화면으로 남았다(2026-10-01 사용자) — 시계로도 푼다
-    const t = window.setTimeout(() => setHold(false), 200);
+    const t = window.setTimeout(() => setHold((s) => holdRelease(s, mine)), wait || 200);
     return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); window.clearTimeout(t); };
   }, [hold]);
   useEffect(() => {
@@ -325,8 +417,8 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
       } finally { running = false; }
     };
     void tick();
-    const t = window.setInterval(() => void tick(), 15_000);
-    return () => { alive = false; window.clearInterval(t); };
+    const stop = every(() => void tick(), 15_000);
+    return () => { alive = false; stop(); };
   }, [orchSidKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const holders = useMemo(() => {
     const resolve = (t: string) => findTarget(sessions, t)?.id;
@@ -384,32 +476,11 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
       }, () => {});
     };
     fix();
-    const t = window.setInterval(fix, 60_000);
-    return () => { alive = false; window.clearInterval(t); };
+    const stop = every(fix, 60_000);
+    return () => { alive = false; stop(); };
   }, []);
 
-  // 내 페이지
-  const [pages, setPages] = useState<string[]>([]);
-  const [titles, setTitles] = useState(loadTitles);
-  const [pagesRoot, setPagesRoot] = useState('');
-  const loadPages = () => invoke<string>('pages_dir').then((d) => { setPagesRoot(d); return invoke<string[]>('list_md_deep', { dir: d }); }).then(setPages).catch(() => {});
-  useEffect(() => { void loadPages(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const setTitle = (p: string, t: string) => setTitles((all) => {
-    if (all[p] === t) return all;
-    const next = { ...all, [p]: t };
-    try { localStorage.setItem(TITLE_KEY, JSON.stringify(next)); } catch { /* 이번 실행만 */ }
-    return next;
-  });
-  const pageName = (p: string) => titles[p] ?? (p.split('/').pop() ?? p).replace(/\.md$/i, '');
-  // 페이지 이름은 첫 줄 # 제목 — 목록을 읽을 때 한 번씩 읽어 둔다(파일 이름이 아니라 제목이 어디서나 보이게)
-  useEffect(() => {
-    let alive = true;
-    void Promise.all(pages.map(async (p) => [p, (await invoke<string>('read_doc_text', { path: p }).catch(() => '')).match(/^#\s+(.+)$/m)?.[1]?.trim()] as const)).then((rows) => {
-      if (!alive) return;
-      setTitles((all) => { const next = { ...all }; for (const [p, t] of rows) if (t) next[p] = t; try { localStorage.setItem(TITLE_KEY, JSON.stringify(next)); } catch { /* 이번 실행만 */ } return next; });
-    });
-    return () => { alive = false; };
-  }, [pages.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 내 페이지는 보관함으로 흡수(홈·모드 ⑧) — 옛 <데이터>/pages 는 첫 참모 보관함 '페이지' 폴더로 한 번 옮겨진다(Rust migrate_pages)
   // 문서 속 하위 페이지 블록을 누르면
   useEffect(() => {
     const on = (e: Event) => { const p = (e as CustomEvent<string>).detail; if (p) openFileRef.current(p); };
@@ -425,7 +496,6 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
     window.addEventListener('mouseup', mouse);
     return () => { window.removeEventListener(SPACE_NAV, on); window.removeEventListener('mouseup', mouse); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const newPage = () => void invoke<string>('new_page', { title: tr('새 페이지', 'Untitled') }).then((p) => { void loadPages(); setPick(`d:${p}`); }).catch(() => {});
 
 
   // 사무실 켜기·끄기 — 탭(참모)마다 켜기 전 화면을 기억해 거기로 돌아간다
@@ -476,13 +546,34 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
     void spaceTrace(traceLine({ ts: new Date().toISOString(), why: why.current, from: p?.pick ?? '', to: pick, viewFrom: p ? p.view : undefined, viewTo: followed.view, chat: nav.chat })).catch(() => {});
     why.current = '?';
   }, [pick, followed.view]); // eslint-disable-line react-hooks/exhaustive-deps
-  // 띄운 파일을 지금 탭 화면에 — 사무실이면 사무실을 떠나지 않는다: md 는 사무실 위 창, 그림·시안은 사무실 위 미리보기(예전엔 대시보드로 튕겼다, 오피스 A 1단계)
+  // 띄운 파일을 지금 참모 탭 줄 새 탭에 — 홈·기능 화면에서도(10/12). 보는 참모가 없거나 시안 검토 중이면 예전 길: md 는 가운데 페이지, 그림·시안은 미리보기
   const present = (f: DashFile) => {
-    const md = kindOf(f.path) === 'md';
+    // 보여 주기는 화면을 안 옮긴다(홈·모드 v2 A) — 지금 보는 참모 탭 줄에 새 탭(끝에 프로젝트 이름표, 잠깐 테두리), 나무·보던 탭은 그대로.
+    // 시안(큐레이션) html 은 검토 탭(c:<경로>) — html 탭으로 열면 그 탭이 시안을 알아보고 검토 탭으로 바뀐다(domain/lockerTabs openReview)
+    const v = now.current.view ?? null;
+    const tabOrch = v && orchs.some((o) => o.id === v) ? v : null;
+    if (showInTab(now.current.pick, tabOrch) && !f.path.startsWith('data:')) {
+      const toTab = () => {
+        setModal(null);
+        setLkHold((h) => openTab(h, tabOrch!, now.current.pick, f.path));
+        setFreshTab(f.path);
+        setPick(`d:${f.path}`, 'show');
+        docScroll.current.delete(scrollKey(now.current.view, `d:${f.path}`));
+        setFocus(f.at ? { path: f.path, at: f.at, key: f.ts } : null);
+      };
+      if (f.by) curBy.current.set(f.path, f.by); // html 탭으로 먼저 열려 탭이 시안을 알아봐도 띄운 이가 남게
+      if (/\.html?$/i.test(f.path)) void invoke<string>('read_doc_text', { path: f.path }).then((t) => (isCurationHtml(t) ? toCuration(f.path, f.by) : toTab()), toTab);
+      else toTab();
+      return;
+    }
+    // 보는 참모가 없다(꺼진 참모 화면에 남음 등) — 띄운 참모(모르면 채팅 탭 참모)로 옮겨 그 탭 줄에. 미리보기 모달로 덮지 않는다(2026-10-15)
+    const to = !f.path.startsWith('data:') && now.current.pick !== OFFICE ? (orchs.find((o) => o.id === showOwner(f.by, orchIds, holders)) ?? chatOrch ?? orchs[0]) : undefined;
+    if (to) { switchTo(to.id, 'show'); if (now.current.view === to.id) { present(f); return; } }
+    const md = spacePage(f.path); // md 문서·엑셀은 가운데 페이지
     const r = showPick(now.current.pick, f.path, md);
     if (md) {
       setModal(null); // 떠 있던 미리보기 창에 문서가 가려지지 않게
-      if (r.sheet) openSheet(r.sheet); else setPick(r.pick, 'show');
+      if (r.sheet) openSheet(r.sheet); else { setPick(r.pick, 'show'); docScroll.current.delete(scrollKey(now.current.view, r.pick)); } // 새로 띄운 건 맨 위(또는 짚은 곳)부터
       setFocus(f.at ? { path: f.path, at: f.at, key: f.ts } : null);
     } else if (r.pick === OFFICE) showOver(f);
     else setModal(f);
@@ -500,38 +591,37 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
     window.addEventListener(CHAT_FILE_OPEN, on);
     return () => window.removeEventListener(CHAT_FILE_OPEN, on);
   });
-  // 다른 참모가 띄운 것 — 보던 화면은 그대로, 알림 한 줄(보기 = 그 참모 탭으로). 12초 뒤 저절로 닫힘
-  const [notice, setNotice] = useState<{ id: string; path: string; n: number } | null>(null);
-  useEffect(() => {
-    if (!notice) return;
-    const t = window.setTimeout(() => setNotice(null), 12_000);
-    return () => window.clearTimeout(t);
-  }, [notice?.n]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 다른 참모가 띄운 것 — 그 참모 탭 줄 새 탭으로(domain/spaceJump queueShow). 보던 화면은 그대로, 스페이스 아래 한 줄 알림만(시안 검토와 같은 규칙, 2026-10-15)
+  const queueTo = (owner: string, show: DashFile) => {
+    const o = orchs.find((x) => x.id === owner);
+    const home0 = o ? homeOf(o) : lkPick(owner, { kind: 'home' });
+    const sv = screens.current.get(owner);
+    const q = show.path.startsWith('data:') ? { screen: { ...(sv ?? { pick: home0, sheet: [] }), modal: show }, hold: null } : queueShow(sv, holds.current.get(owner) ?? null, owner, home0, show);
+    screens.current.set(owner, q.screen);
+    if (q.hold) holds.current.set(owner, q.hold);
+    const fname = show.path.startsWith('data:') ? '' : ` — ${show.path.split('/').pop()}`;
+    if (o) setCurNote(tr(`${josa(oname(o), '이', '가')} 파일을 띄웠어${fname}`, `${oname(o)} opened a file${fname}`));
+    if (/\.html?$/i.test(show.path)) void invoke<string>('read_doc_text', { path: show.path }).then((t) => { if (isCurationHtml(t)) queueReview(owner, show); }, () => {});
+    docScroll.current.delete(scrollKey(owner, q.screen.pick)); // 새로 띄운 건 맨 위부터
+    setNewFor((x) => (x.has(owner) ? x : new Set(x).add(owner)));
+    void spaceTrace(traceLine({ ts: new Date().toISOString(), why: 'show-queued', from: now.current.pick, to: now.current.pick, viewFrom: now.current.view, viewTo: now.current.view, chat: nav.chat })).catch(() => {});
+  };
+  // 다른 참모가 띄운 것 — 보던 화면은 그대로, 띄움 띠 없이 그 참모 프사에 점만(알림 N1 — 소식은 제자리 점, 2026-10-11). 그 참모 화면에 가면 지운다
+  const [newFor, setNewFor] = useState<Set<string>>(() => new Set());
   useEffect(() => {
     const fresh = newShows(log, null, since.current); // 채팅 뷰는 리더를 안 쓴다 — 누가 띄웠든 여기서
     if (!fresh.length) return;
-    const last = fresh[fresh.length - 1]!;
-    since.current = Date.parse(last.ts) || Date.now();
+    since.current = Date.parse(fresh[fresh.length - 1]!.ts) || Date.now();
     // 띄우면 바로 보이게(2026-09-30 사용자 "띄워주면 바로") — 띄운 참모의 탭에. 하위 세션이 띄웠으면 그 세션을 잡은 참모, 모르면 지금 화면.
     // 다른 참모가 띄운 건 보던 스페이스를 옮기지 않고 그 참모 탭 화면에 넣어 두고 알림만 — 예전엔 채팅 탭·스페이스를 통째로 그 참모로
-    // 옮겨서 화면이 저절로 튀었다(2026-10-06 사용자 "사람이 바꾸기 전엔 안 바뀐다")
-    const owner = showOwner(last.by, orchIds, holders);
-    const md = kindOf(last.path) === 'md';
-    const place = showPlace(owner, now.current.view, nav.chat);
-    if (place === 'queue' && owner) {
-      const o = orchs.find((x) => x.id === owner);
-      screens.current.set(owner, queueShow(screens.current.get(owner), o ? homeOf(o) : `o:${owner}`, last, md));
-      setNotice({ id: owner, path: last.path, n: Date.now() });
-      void spaceTrace(traceLine({ ts: new Date().toISOString(), why: 'show-queued', from: now.current.pick, to: now.current.pick, viewFrom: now.current.view, viewTo: now.current.view, chat: nav.chat })).catch(() => {});
-      return;
-    }
-    if (place === 'chat' && owner) switchTo(owner, 'show');
-    present(last);
+    // 옮겨서 화면이 저절로 튀었다(2026-10-06 사용자 "사람이 바꾸기 전엔 안 바뀐다"). 한 번에 여럿 오면 하나하나(domain/spaceJump showBatch)
+    const b = showBatch(fresh, (by) => showOwner(by, orchIds, holders), now.current.view, nav.chat);
+    for (const { owner, show } of b.queue) queueTo(owner, show);
+    if (!b.here) return;
+    if (b.here.place === 'chat' && b.here.owner) switchTo(b.here.owner, 'show');
+    present(b.here.show);
   }, [log]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 참모 대시보드 파일 — 참모·맡긴 세션이 띄운 것 + 사용자가 채팅에 붙인 그림
-  const items = useChatItems(orch?.sessionId);
-  const myImages = useMemo(() => items.flatMap((it) => (it.kind === 'user' && it.images ? it.images.map((src) => ({ ts: it.ts, src })) : [])), [items]);
   const who = (id: string) => {
     if (id === 'me') return tr('나', 'You');
     const o = orchs.find((x) => x.id === id);
@@ -542,30 +632,28 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
   // 대시보드 세션 칸 — 대화 기록 꼬리를 터미널처럼 몇 줄(보고 있는 대시보드의 세션만 3초마다)
   const [tails, setTails] = useState<Record<string, string[]>>({});
   const tailIds = (() => {
-    if (pick.startsWith('o:')) { const o = orchs.find((x) => x.id === pick.slice(2)) ?? orch; return o ? [o, ...heldBy(o)] : []; }
-    if (pick.startsWith('p:')) return groups.find((x) => x.root === pick.slice(2))?.sessions ?? [];
-    return [];
+    return orch ? [orch, ...heldBy(orch)] : []; // 세션 독 칸 — 지금 참모(자기 브라우저 칸)와 잡은 세션
   })().map((s) => s.sessionId).filter((x): x is string => !!x);
   const tailKey = tailIds.join(',');
   useEffect(() => {
     if (!tailKey) return;
     let alive = true;
-    const big = pick.startsWith('p:');
     const tick = () => void readTranscriptTails(tailKey.split(',')).then((m) => {
       if (!alive) return;
       setTails((prev) => {
         const next = { ...prev };
-        for (const [k, v] of Object.entries(m)) next[k] = termTail(v, big ? 40 : 8);
+        for (const [k, v] of Object.entries(m)) next[k] = termTail(v, 8);
         return next;
       });
     }).catch(() => {});
     tick();
-    const id = window.setInterval(tick, 3000);
-    return () => { alive = false; window.clearInterval(id); };
-  }, [tailKey, pick.slice(0, 2)]); // eslint-disable-line react-hooks/exhaustive-deps
-  // 참모 대시보드 노트 — 참모 할 일 목록(TaskCreate) + HQ starter 최근 결정. 보고 있을 때 5초마다(v11 X)
+    const stop = every(tick, 3000);
+    return () => { alive = false; stop(); };
+  }, [tailKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 참모 노트(홈 곁 줄) — 참모 할 일 목록(TaskCreate) + HQ starter 최근 결정. 홈을 보고 있을 때 5초마다(v11 X)
   const [note, setNote] = useState<NoteBase | null>(null);
-  const noteOrch = pick.startsWith('o:') ? orchs.find((x) => x.id === pick.slice(2)) ?? orch : undefined;
+  const homeLp = parseLkPick(pick);
+  const noteOrch = homeLp?.place.kind === 'home' ? orchs.find((x) => x.id === homeLp.orch) : undefined;
   const [hasStarter, setHasStarter] = useState(false);
   useEffect(() => {
     setNote(null);
@@ -578,13 +666,14 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
       if (alive) setNote({ tasks: tasks.map((t) => ({ id: t.id, text: t.subject, done: t.status === 'completed' })), decisions: starterLists(md).decisions });
     };
     void tick();
-    const id = window.setInterval(() => void tick(), 5000);
-    return () => { alive = false; window.clearInterval(id); };
+    const stop = every(() => void tick(), 5000);
+    return () => { alive = false; stop(); };
   }, [noteOrch?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 프로젝트 대시보드 위 목록 — 세션 할 일(지금 하는 것 먼저) + starter "다음 할 일"·"최근 결정". 보고 있을 때 5초마다
+  // 세션 탭 오른쪽 목록 — 그 프로젝트 세션 할 일(지금 하는 것 먼저) + starter "다음 할 일"·"최근 결정". 보고 있을 때 5초마다
   const [plists, setPlists] = useState<DashLists | null>(null);
-  const proot = pick.startsWith('p:') ? pick.slice(2) : '';
+  // 세션 탭이면 그 세션 프로젝트의 할 일·최근 결정(패널 하나로 S4)
+  const proot = pick.startsWith('s:') ? projectRoot(sessions.find((x) => x.id === pick.slice(2))?.cwd ?? '') : '';
   useEffect(() => {
     setPlists(null);
     if (!proot) return;
@@ -600,8 +689,8 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
       if (alive) setPlists({ todo: [...tasks, ...fromStarter.todo.map((text) => ({ text }))], decisions: fromStarter.decisions, source: md ? src : undefined });
     };
     void tick();
-    const id = window.setInterval(() => void tick(), 5000);
-    return () => { alive = false; window.clearInterval(id); };
+    const stop = every(() => void tick(), 5000);
+    return () => { alive = false; stop(); };
   }, [proot]); // eslint-disable-line react-hooks/exhaustive-deps
   // 도우미·프로젝트 밖 세션은 프로젝트 이름(=HQ 폴더 이름) 대신 세션 이름으로 — 'honor-orchestrator' 로만 떠서 누가 누군지 몰랐다(2026-10-02)
   const sideIds = new Set([...helpers, ...loose].map((x) => x.id));
@@ -621,6 +710,8 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
     const bytes = Array.from(Uint8Array.from(atob(m[2]!), (c) => c.charCodeAt(0)));
     void invoke<string>('save_attach', { name: `pasted.${m[1] === 'jpeg' ? 'jpg' : m[1]}`, bytes }).then((p) => attachToChat(chatOrch.id, [p])).catch(() => {});
   };
+  // 붙이기 받는 참모(지금 채팅 탭) — 보내기 단추가 그 참모 색 말풍선(채팅 칸과 같은 색, 프사에서 고른 색 먼저)
+  const attachTo = chatOrch ? { name: oname(chatOrch), color: bodyColor(avatars, chatOrch.name || '', colorOf(chatOrch.name || '')) } : null;
   // 세션 칸의 진짜 터미널 — 직접 칠 수 있다(대화형 세션은 터미널 뷰에서만)
   const termOf = (id: string) => {
     const s = sessions.find((x) => x.id === id);
@@ -630,57 +721,58 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
   const openFileRef = useRef<(p: string) => void>(() => {});
   const openFile = (path: string, by = '') => {
     const f = { path, ts: new Date().toISOString(), by };
-    if (now.current.pick === OFFICE) { if (kindOf(path) === 'md') openSheet(`d:${path}`); else showOver(f); return; } // 사무실 위 창 안에서 연 것도 사무실 위
-    if (kindOf(path) === 'md') { setPick(`d:${path}`); return; }
+    if (now.current.pick === OFFICE) { if (spacePage(path)) openSheet(`d:${path}`); else showOver(f); return; } // 사무실 위 창 안에서 연 것도 사무실 위
+    if (spacePage(path)) { setPick(`d:${path}`); return; }
     setModal(f);
   };
 
   openFileRef.current = (p) => openFile(p);
-  // 시안 검토 모드 — 검토용 시안(큐레이션)이 열리면 모달 대신 스페이스 전체로, 닫으면 보던 화면으로
-  const beforeCur = useRef('');
-  // 하니터 — 탭(참모)마다 열기 전 화면을 따로 기억한다(한 탭에서 연 기억이 다른 탭 닫기에 섞이지 않게)
-  const beforeH = useRef(new Map<string, string>());
+  // 기능 화면(하니터·도구·리뷰·하루 리플레이) — 스페이스의 한 자리에서 켜고 끈다. 다시 누르면 닫고 열기 전 화면으로(2026-10-11 사용자).
+  // 탭(참모)마다 열기 전 화면을 따로 기억한다(한 탭에서 연 기억이 다른 탭 닫기에 섞이지 않게)
+  const beforeF = useRef(new Map<string, string>());
   // 탭마다 하니터 안에서 고른 것 — 다른 탭 다녀오면 되살린다
   const hSel = useRef(new Map<string, HarnitorSel>());
-  const harnitorTo = (req: 'open' | 'close' | 'toggle') => {
-    const key = orch?.id ?? '';
-    const r = harnitorPick(pick, req, beforeH.current.get(key) ?? '', orch ? `o:${orch.id}` : '');
-    beforeH.current.set(key, r.before);
-    if (r.pick !== pick) setPick(r.pick, 'harnitor');
-    if (pick === 'h:' && r.pick !== 'h:') onHarnitorClosed?.();
+  const fnHome = orch ? `o:${orch.id}` : '';
+  /** at = 열 때 그 기능 안 자리(프로젝트 도구 t:<폴더>) */
+  const featureTo = (key: FeatureKey, req: 'open' | 'close' | 'toggle', at?: string) => {
+    const k = orch?.id ?? '';
+    const r = featurePick(key, pick, req, beforeF.current.get(k) ?? '', fnHome);
+    beforeF.current.set(k, r.before);
+    const to = at && featureOf(r.pick) === key ? at : r.pick;
+    if (to !== pick) setPick(to, 'feature');
+    const was = featureOf(pick);
+    if (was && !featureOf(to)) { if (was === 'h:') onHarnitorClosed?.(); if (was === 't:') onToolsClosed?.(); }
   };
-  useEffect(() => { if (harnitorReq) { harnitorTo(harnitorReq); onHarnitorReq?.(); } }, [harnitorReq]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { onHarnitorShown?.(pick === 'h:'); }, [pick]); // eslint-disable-line react-hooks/exhaustive-deps
-  // 도구 — 위 막대 아이콘으로(2026-10-05 사용자, 사이드바 줄에서 옮김). 프로젝트 대시보드 안 '도구'(t:<폴더>)도 열린 것으로 친다
-  const beforeT = useRef(new Map<string, string>());
-  const toolsTo = (req: 'open' | 'close' | 'toggle') => {
-    const key = orch?.id ?? '';
-    const r = toolsPick(pick, req, beforeT.current.get(key) ?? '', orch ? `o:${orch.id}` : '');
-    beforeT.current.set(key, r.before);
-    if (r.pick !== pick) setPick(r.pick, 'tools');
-    if (pick.startsWith('t:') && !r.pick.startsWith('t:')) onToolsClosed?.();
-  };
-  useEffect(() => { if (toolsReq) { toolsTo(toolsReq); onToolsReq?.(); } }, [toolsReq]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { onToolsShown?.(pick.startsWith('t:')); }, [pick]); // eslint-disable-line react-hooks/exhaustive-deps
-  // 리뷰 — 위 막대 아이콘으로(2026-10-06 사용자, 사이드바 줄에서 옮김). PR 하나를 고른 화면(rv:<키>)도 열린 것
-  const beforeRv = useRef(new Map<string, string>());
-  const reviewTo = (req: 'open' | 'close' | 'toggle') => {
-    const key = orch?.id ?? '';
-    const r = reviewPick(pick, req, beforeRv.current.get(key) ?? '', orch ? `o:${orch.id}` : '');
-    beforeRv.current.set(key, r.before);
-    if (r.pick !== pick) setPick(r.pick, 'review');
-  };
-  useEffect(() => { if (reviewReq) { reviewTo(reviewReq); onReviewReq?.(); } }, [reviewReq]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { onReviewShown?.(pick.startsWith('rv:')); }, [pick]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (harnitorReq) { featureTo('h:', harnitorReq); onHarnitorReq?.(); } }, [harnitorReq]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (toolsReq) { featureTo('t:', toolsReq); onToolsReq?.(); } }, [toolsReq]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (reviewReq) { featureTo('rv:', reviewReq); onReviewReq?.(); } }, [reviewReq]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (replayReq) { featureTo('rp:', replayReq); onReplayReq?.(); } }, [replayReq]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 켜짐(기능 아이콘 검은 면) — 프로젝트 도구(t:<폴더>)·PR 하나(rv:<키>)도 열린 것
+  useEffect(() => {
+    const f = featureOf(pick);
+    onHarnitorShown?.(f === 'h:'); onToolsShown?.(f === 't:'); onReviewShown?.(f === 'rv:'); onReplayShown?.(f === 'rp:');
+  }, [pick]); // eslint-disable-line react-hooks/exhaustive-deps
   // 지금 보는 화면(viewNow) — 왼쪽 스페이스와 그 위 미리보기
   useEffect(() => {
     const names = { orch: (id: string) => orchs.find((o) => o.id === id)?.name, session: (id: string) => sessions.find((x) => x.id === id)?.name, home: home ?? "" };
     // 사무실 위 창도 '위에 뜬 것'으로 — 사용자가 "이거"라고 하면 참모가 창 속 세션·문서를 알아듣게
     const top = pick === OFFICE ? sheet[sheet.length - 1] : undefined;
-    reportView({ tab: orchs.find((o) => o.id === nav.chat)?.name ?? chatOrch?.name, space: spaceWord(pick, names), preview: modal ? spaceWord(`d:${modal.path}`, names).replace(/^\S+ /, '') : top ? spaceWord(top, names) : undefined });
+    reportView({ tab: orchs.find((o) => o.id === nav.chat)?.name ?? chatOrch?.name, space: spaceWord(pick, names), preview: modal ? pathWord(modal.path, home ?? '') : top ? spaceWord(top, names) : undefined });
   });
   // 참모 모드 — 켠 모드 목록(패널·대시보드 칸·미리보기·꽉 채우기가 같이 본다), 메뉴 '지금 대시보드 칸으로'가 쓸 지금 대시보드
   const modeRows = useModeRows();
+  // 참모 첫날 맛보기 권유(홈·모드 v1 5) — 그 참모 홈을 열었는데 모드가 하나도 없고 참모가 쉬는 중이면, 참모마다 한 번만 [앱] 줄로 참모에게.
+  // 참모가 사람에게 말로 권한다(앱이 사람에게 직접 띄우지 않는다). 목록을 읽기 전(빈 목록)엔 판단하지 않는다 — 예시 셋이 늘 목록에 있다
+  useEffect(() => {
+    const l = parseLkPick(pick);
+    if (l?.place.kind !== 'home' || !modeRows.length) return;
+    const o = orchs.find((x) => x.id === l.orch);
+    if (!o || dashModes(modeRows, [o.name || '', o.id, o.sessionId || '']).length || statusOf(o) !== 'idle') return;
+    const key = `homeTry:${o.name || o.id}`;
+    try { if (localStorage.getItem(key)) return; localStorage.setItem(key, new Date().toISOString()); } catch { return; }
+    void sendTextToSession(o.id, tr(`[앱] 이 참모 홈에 모드가 아직 없어 — 사용자에게 한 번만 맛보기를 권해: 홈 빈 칸에서 ${HOME_TRY.map((x) => x.title()).join('·')} 를 골라 켜면 빌드 없이 바로 켜지고, 고치고 싶은 건 너에게 말하면 된다고(그땐 <이름>-mode 프로젝트로 복사해 고쳐 — hq-app 스킬 '새 모드')`,
+      `[app] This assistant's home has no mode yet — suggest a try once: on the home's empty box, picking ${HOME_TRY.map((x) => x.title()).join(', ')} opens them without building; to change one, the user just asks you (copy it into a <name>-mode project — hq-app skill 'new mode')`)).catch(() => {});
+  }, [pick, modeRows.length]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const o = pick.startsWith('o:') ? orchs.find((x) => x.id === pick.slice(2)) : undefined;
     setModeDashHere(o?.name || (pick.startsWith('p:') ? pick.slice(2) : '') || orch?.name || chatOrch?.name || null);
@@ -688,26 +780,108 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
   });
   // 검토 결과는 시안을 띄운 참모에게 — 지금 채팅 탭 참모에게 보내니 개발 참모가 띄운 시안 결과가 다른 참모에게 갔다(2026-09-30 사용자 "버그네")
   const curBy = useRef(new Map<string, string>());
-  const toCuration = (p: string, by?: string) => { setModal(null); if (by) curBy.current.set(p, by); if (!pick.startsWith('c:')) beforeCur.current = pick; setPick(`c:${p}`); };
+  // 시안 검토 = 지금 참모 탭 줄의 검토 탭(c:<경로>) — 창 전체를 덮어 채팅을 가리고 X 로 안 닫히던 검토 모드 대신(2026-10-12 사용자).
+  // 창 전체로 키우는 건 머리 '크게'를 누를 때만(curBig)
+  const [curBig, setCurBig] = useState(false);
+  useEffect(() => { if (!pick.startsWith('c:')) setCurBig(false); }, [pick]);
+  useEffect(() => setCurBig(false), [nav.view]); // 참모를 바꾸면 그 참모 검토는 탭 안에서
+  const toCuration = (p: string, by?: string) => {
+    setModal(null);
+    if (by) curBy.current.set(p, by);
+    const here = now.current.pick;
+    const k = reviewKey(p);
+    const v = now.current.view;
+    if (v && orchs.some((o) => o.id === v)) { setLkHold((h) => openReview(h, v, here, p)); setFreshTab(k); }
+    // html 탭(d:<경로>)이 시안을 알아본 것이면 그 화면을 바꿔 끼운다 — 기록에 html 탭을 남기면 ⌘[ 뒤로가 또 검토로 튄다
+    if (here === `d:${p}`) { why.current = 'review'; setPickRaw(k); } else setPick(k, 'review');
+  };
+  /** 검토 닫기(X·Esc·탭 닫기) — 검토 탭을 닫고 앞 탭으로(없으면 보관함). 같은 시안의 html 탭은 openReview 가 이미 바꿔 끼워서 다시 튀지 않는다 */
+  const closeReview = (p: string) => {
+    setCurBig(false);
+    const k = reviewKey(p);
+    const h = lkRef.current.hold;
+    if (h && h.tabs.includes(k)) { const r = closeTab(h, k, now.current.pick); setLkHold(r.hold); if (r.pick) setPick(r.pick, 'close'); return; }
+    if (now.current.pick === k) setPick(h?.back ?? (orch ? lkPick(orch.id, { kind: 'home' }) : ''), 'close');
+  };
+  // 다른 참모가 띄운 시안 — 그 참모 탭 줄에 검토 탭으로 넣어 두고(보던 참모는 그대로) 알림 한 줄. 지금 그 참모를 보고 있으면 미리보기가 알아서 검토 탭으로
+  const queueReview = (owner: string, f: DashFile) => {
+    if (owner === now.current.view) return;
+    if (f.by) curBy.current.set(f.path, f.by);
+    const sv = screens.current.get(owner);
+    const o = orchs.find((x) => x.id === owner);
+    const back = sv?.pick ?? (o ? homeOf(o) : `l:${owner}`);
+    screens.current.set(owner, { ...(sv ?? { modal: null, sheet: [] }), pick: reviewKey(f.path), modal: sv?.modal?.path === f.path ? null : sv?.modal ?? null });
+    holds.current.set(owner, openReview(holds.current.get(owner) ?? null, owner, back, f.path));
+    if (o) setCurNote(tr(`${josa(oname(o), '이', '가')} 시안을 띄웠어`, `${oname(o)} opened a draft for review`));
+  };
+  // 그 알림 한 줄 — 스페이스 위에 잠깐(경고 띠가 아니라 소식)
+  const [curNote, setCurNote] = useState<string | null>(null);
+  useEffect(() => { if (!curNote) return; const t = window.setTimeout(() => setCurNote(null), 4500); return () => window.clearTimeout(t); }, [curNote]);
   const curOwner = (p: string) => { const by = curBy.current.get(p) ?? ''; const id = orchs.some((o) => o.id === by) ? by : holders.get(by)?.[0]; return orchs.find((o) => o.id === id); };
+  // 검토 머리의 띄운 이 — 참모면 그 프사·이름, 세션이면 그 세션을 맡긴 참모 프사 + 세션 이름
+  const byTag = (p: string) => {
+    const by = curBy.current.get(p);
+    if (!by || by === 'me') return undefined;
+    const o = curOwner(p);
+    return { name: who(by), avatar: o ? <OrchAvatar name={o.name || ''} size={18} state={avatarState(o, statusOf(o))} color={colorOf(o.name || '')} label={oname(o)} /> : null };
+  };
+  const curationEl = (p: string, big: boolean) => {
+    const own = curOwner(p);
+    const to = own ?? chatOrch;
+    return <CurationMode key={p} path={p} big={big} onBig={() => setCurBig((b) => !b)} by={byTag(p)} sendTo={own ? oname(own) : sendTo ?? assistant()} color={to ? bodyColor(avatars, to.name || '', colorOf(to.name || '')) : undefined}
+      onSend={own ? async (text) => { window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id: own.id, text } })); await sendTextToSession(own.id, text); } : send} onClose={() => closeReview(p)} />;
+  };
   /** 문서 화면 — 스페이스 가운데(d:)와 사무실 위 창이 같은 것을 쓴다. onBack = 뒤로(upKey = 위 칸), tail = 머리 끝(창의 크게·닫기) */
   /** 가운데 문서의 위 칸 — ⌘[ 가 기록이 없을 때 문서 뒤로 버튼과 같은 곳으로 */
   const docUp = useRef('');
-  const docPage = (path: string, opt: { onBack?: (upKey: string) => void; tail?: React.ReactNode }) => {
+  // 탭 확대 — 지금 가운데에 떠 있는 파일 탭(모달이 떠 있으면 모달이 받는다). 머리 단추는 가운데 탭에만(사무실 위 창엔 없다)
+  const zoomPath = pick.startsWith('d:') && !modal ? pick.slice(2) : '';
+  const canZoom = !!zoomPath && tabZoomable(zoomPath);
+  const zoomOf = (path: string) => tabZoomOf(tabZooms, path);
+  /** 한 명령 — 처리했으면 true(아니면 App 이 터미널 글자 크기로) */
+  const zoomCmd = (cmd: ZoomCmd): boolean => {
+    if (!canZoom) return false;
+    const z = zoomOf(zoomPath);
+    let shown: number | undefined;
+    let fitTo: number | undefined;
+    if (kindOf(zoomPath) === 'image' && z === FIT) {
+      const img = document.querySelector<HTMLImageElement>('.space .cv-main .ft-body img');
+      if (img?.naturalWidth) shown = Math.round((img.getBoundingClientRect().width / (img.naturalWidth / (window.devicePixelRatio || 1))) * 100);
+    }
+    if (cmd === 'fit') {
+      const el = document.querySelector<HTMLElement>('.space .cv-main .cv-doc-scroll, .space .cv-main .cv-sheet-body');
+      if (el) fitTo = fitZoom(el.clientWidth, el.scrollWidth, z);
+    }
+    setTabZooms((m) => withTabZoom(m, zoomPath, nextTabZoom(zoomPath, z, cmd, { shown, fitTo })));
+    return true;
+  };
+  const zoomUi = (path: string) => (path === zoomPath && canZoom ? <TabZoomBar z={zoomOf(path)} onCmd={(c) => zoomCmd(c)} /> : null);
+  const docPage = (path: string, opt: { onBack?: (upKey: string) => void; tail?: React.ReactNode; where?: string; keepFor?: string }) => {
     const owner = orchs.find((o) => isPinned(o, path) || orchDocs(log, o.id, []).recent.includes(path));
     const g = groups.find((x) => path.startsWith(`${x.root}/`));
     // 뒤로 = 상위(노션처럼): 하위 페이지면 부모 페이지, 내 페이지면 내 페이지 첫 화면, 그 밖은 주인 대시보드(2026-09-30 사용자)
-    const parentPage = pages.includes(path) ? `${path.replace(/\/[^/]+$/, '')}.md` : '';
-    const upKey = parentPage && pages.includes(parentPage) ? `d:${parentPage}` : pages.includes(path) ? 'm:' : owner ? `o:${owner.id}` : g ? `p:${g.root}` : chatOrch ? `o:${chatOrch.id}` : '';
+    const upKey = owner ? `o:${owner.id}` : g ? `p:${g.root}` : chatOrch ? `o:${chatOrch.id}` : '';
     if (opt.onBack) docUp.current = upKey; // 가운데 문서만(사무실 위 창 문서는 뒤로가 없다)
-    const upName = parentPage && pages.includes(parentPage) ? pageName(parentPage) : pages.includes(path) ? tr('내 페이지', 'My pages') : owner ? oname(owner) : g ? g.name : path.split('/').slice(-2, -1)[0] ?? '';
+    const upName = owner ? oname(owner) : g ? g.name : path.split('/').slice(-2, -1)[0] ?? '';
+    if (isSheet(path)) {
+      return <SheetPage key={path} path={path} owner={upName} where={opt.where} onBack={opt.onBack ? () => opt.onBack!(upKey) : undefined} tail={<>{zoomUi(path)}{opt.tail}</>} zoom={zoomOf(path)}
+        pinned={owner ? isPinned(owner, path) : undefined} onPin={owner ? () => togglePin(owner, path) : undefined} onAttach={() => attach(path)} attachTo={attachTo}
+        onPreview={() => setModal({ path, ts: new Date().toISOString(), by: '' })} send={send} sendTo={sendTo}
+        whoOf={(by) => { const o = orchs.find((x) => x.id === showOwner(by, orchIds, holders)); return o ? { name: o.name, color: colorOf(o.name) } : null; }} />;
+    }
     // 문서를 볼 땐 대시보드·사무실 토글을 안 띄운다 — 돌아가기는 왼쪽 '참모 이름' 알약(2026-10-03 사용자)
-    return <DocPage key={path} path={path} at={focus?.path === path ? focus.at : undefined} atKey={focus?.path === path ? focus.key : undefined} title={pages.includes(path) ? pageName(path) : undefined} owner={upName} send={send} sendTo={sendTo} onBack={opt.onBack ? () => opt.onBack!(upKey) : undefined} tail={opt.tail}
+    const page = <DocPage key={path} path={path} where={opt.where} at={focus?.path === path ? focus.at : undefined} atKey={focus?.path === path ? focus.key : undefined} owner={upName} send={send} sendTo={sendTo} onBack={opt.onBack ? () => opt.onBack!(upKey) : undefined} tail={<>{zoomUi(path)}{opt.tail}</>} zoom={zoomOf(path)}
       pinned={owner ? isPinned(owner, path) : undefined} onPin={owner ? () => togglePin(owner, path) : undefined}
-      onTitle={(t) => { if (pages.includes(path)) setTitle(path, t); window.dispatchEvent(new CustomEvent(PAGE_TITLE, { detail: { path, title: t } })); }} onAttach={() => attach(path)}
-      onOpenPath={(p) => openFile(p)}
-      onNewSubpage={pages.includes(path) ? () => invoke<string>('new_page', { title: tr('새 페이지', 'Untitled'), parent: path }).then((p) => { void loadPages(); return p; }) : undefined} />;
+      onTitle={(t) => { window.dispatchEvent(new CustomEvent(PAGE_TITLE, { detail: { path, title: t } })); }} onAttach={() => attach(path)} attachTo={attachTo}
+      onOpenPath={(p) => openFile(p)} />;
+    // 가운데 문서는 참모마다 살려 둔다 — 바꿨다 돌아와도 편집기를 다시 안 만든다(움직이는 동안엔 null — 옛 화면이 덮여 있다)
+    return opt.keepFor ? keep.slot(opt.keepFor, path, page, docKeepLimit(null)) : page;
   };
+  /** 가운데 파일 화면 — md·엑셀은 편집 페이지, 그 밖(그림·영상·html·pdf…)은 탭 안 미리보기 */
+  const filePage = (path: string, opt: { onBack?: (upKey: string) => void; where?: string; keepFor?: string }) => (spacePage(path) ? docPage(path, opt) : (
+    <FileTab key={path} path={path} where={opt.where ?? pathLine(path, lockerTree.dir, home ?? '')} onBig={() => setModal({ path, ts: new Date().toISOString(), by: '' })}
+      onCuration={(p) => { if (now.current.pick === `d:${p}`) toCuration(p); }} onAttach={() => attach(path)} attachTo={attachTo} zoom={zoomOf(path)} zoomUi={zoomUi(path)} />
+  ));
   /** 세션 칸 속 — 진짜 터미널(브라우저 쓰면 브라우저 화면 + 아래 터미널) + 보여 준 파일. 스페이스 세션 화면과 사무실 위 창이 같은 것 */
   const sessionInner = (x: Session) => (
     <>
@@ -725,10 +899,388 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
       )}
     </>
   );
+  // 파일 보관함 v4(2026-10-11 사용자 "추천대로") — 참모마다 진짜 폴더(~/Documents/Chammo/<참모>, Rust locker_fs). 참모를 누르면 첫 화면.
+  // 자리: l:<참모>(받은 것) · l:<참모>#d:<자리>(내 폴더) · l:<참모>#p:<뿌리>(프로젝트 폴더). 보관함에서 연 md·엑셀은 띠·나무 그대로 가운데 문서 탭
+  const projectRoots = useMemo(() => [...groups.map((g) => ({ name: g.name, root: g.root })), ...idle], [groups, idle]);
+  const ownerKey = (o: Session) => o.name || o.id;
+  const lockerOwner = (o: Session) => ({ id: o.id, name: ownerKey(o) });
+  const lockerReport = (r: { errors: string[] }) => { if (r.errors.length) onMessage?.(r.errors.join('\n')); };
+  const lockerFail = (e: unknown) => onMessage?.(tr(`보관함: ${String(e)}`, `Locker: ${String(e)}`));
+  // 왼쪽(보관함 칸·메뉴)은 기능 화면이 떠 있는 동안 열기 전 화면을 따른다 — 기능 단추가 제자리에 남아 다시 눌러 닫는다
+  const leftPick = sidePick(pick, beforeF.current.get(orch?.id ?? '') ?? '', fnHome);
+  const lp = parseLkPick(leftPick);
+  const [lkHold, setLkHold] = useState<LkHold | null>(null);
+  // 방금 보여 줘서 새로 열린 탭 — 잠깐 테두리(홈·모드 v2 A)
+  const [freshTab, setFreshTab] = useState<string | null>(null);
+  useEffect(() => { if (!freshTab) return; const t = window.setTimeout(() => setFreshTab(null), 2400); return () => window.clearTimeout(t); }, [freshTab]);
+  const docPath = leftPick.startsWith('d:') ? leftPick.slice(2) : '';
+  const holdOn = !!lkHold && !!docPath && lkHold.tabs.includes(docPath);
+  // 나무는 늘 — 보관함 밖 화면(세션·기능)에서도 지금 보는 참모 보관함 나무(2026-10-12 패널 하나로)
+  const lockerOrchId = lp?.orch ?? (holdOn && lkHold ? lkHold.orch : orch?.id ?? '');
+  const lockerOrch = lockerOrchId ? orchs.find((x) => x.id === lockerOrchId) ?? null : null;
+  const lockerTree = useLockerTree(lockerOrch ? lockerOwner(lockerOrch) : null, 5000, isLockerOpen(lp));
+  const place: LkPlace = lp?.place ?? (lkHold ? parseLkPick(lkHold.back)?.place ?? { kind: 'root' } : { kind: 'root' });
+  const lkRef = useRef({ tree: lockerTree, hold: lkHold });
+  lkRef.current = { tree: lockerTree, hold: lkHold };
+  // 그 참모 화면에 오면 프사 점을 지운다
+  useEffect(() => {
+    if (lockerOrchId && newFor.has(lockerOrchId)) setNewFor((x) => { const n = new Set(x); n.delete(lockerOrchId); return n; });
+  }, [lockerOrchId, newFor]);
+  // 옛 보관함(이름표 기록 locker.jsonl) → 진짜 폴더, 앱을 켜고 참모 목록이 잡히면 한 번(두 번째부턴 Rust 가 표시 파일을 보고 건너뜀).
+  // 보관함을 시작하기 전(처음 열기 전)엔 기다린다 — 처음 열 때 스크린샷 연결과 한 줄 안내(맥 권한 창이 설명 없이 뜨지 않게, 0.3.0)
+  const migrated = useRef(false);
+  useEffect(() => {
+    if (migrated.current || !orchs.length || !lockerTree.started) return;
+    migrated.current = true;
+    void lockerApi.migrate(orchs.map((o) => ({ key: ownerKey(o), id: o.id, name: ownerKey(o) }))).then((r) => {
+      if (r.pages) onMessage?.(tr(`내 페이지 ${r.pages}개를 보관함 '페이지' 폴더로 옮겼어 — 옛 자리는 데이터 폴더 pages.bak 에 그대로 남겨 뒀어`, `Moved ${r.pages} pages into the locker's 'Pages' folder — the old folder stays as pages.bak`));
+      if (r.shots) onMessage?.(tr("스크린샷 폴더를 보관함에 '스크린샷'으로 연결했어 — 새로 찍으면 바로 떠. 필요 없으면 연결 풀기(원본은 그대로)", "Linked your screenshots folder as 'Screenshots' in the locker — new shots show up right away. Unlink any time (the originals stay)"));
+      if (r.inbox) onMessage?.(tr(`'받은 것'을 없애고 안에 있던 ${r.inbox}개를 보관함 맨 위로 옮겼어 — 주고받은 기록에 그대로 보여`, `Removed 'Received' and moved its ${r.inbox} items to the top of the locker`));
+      if (r.moved || r.gone) onMessage?.(tr(`보관함을 진짜 폴더로 옮겼어 — ${r.moved}개${r.gone ? `, 원본이 없어 못 옮긴 것 ${r.gone}개` : ''}`, `Moved the locker into real folders — ${r.moved}${r.gone ? `, ${r.gone} missing originals` : ''}`));
+    }, () => {});
+  }, [orchs.length, lockerTree.started]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const cur = () => {
+      const l = parseLkPick(now.current.pick);
+      const id = l?.orch ?? lkRef.current.hold?.orch;
+      return id ? orchs.find((x) => x.id === id) : undefined;
+    };
+    // 파인더에서 보관함 칸·폴더에 놓은 파일 — 어디서 왔나로 복사/바로가기(Rust 가 정한다)
+    const onDrop = (e: Event) => {
+      const d = (e as CustomEvent<{ paths: string[]; folder: string }>).detail;
+      const o = cur();
+      if (o && d?.paths?.length) void lockerApi.put(lockerOwner(o), d.paths, d.folder ?? '').then(lockerReport, lockerFail);
+    };
+    // 카드·폴더를 왼쪽 폴더에 끌어 놓았다(홈·모드 ⑤) — 내 폴더 안 것은 진짜 옮기기(정리), 기록(보관함 맨 위 낱 파일·보여 준 파일)은
+    // 바로가기만(기록은 그대로 남고 '→ 폴더'가 붙는다). 기록을 보관함 줄에 놓으면 — 밖 파일만 보관함 맨 위로 넣기
+    const onMove = (e: Event) => {
+      const d = (e as CustomEvent<{ path: string; folder: string }>).detail;
+      const o = cur();
+      if (!o || !d?.path) return;
+      const dir = lkRef.current.tree.dir;
+      const to = d.folder ?? '';
+      const rel = dir && d.path.startsWith(`${dir}/`) ? d.path.slice(dir.length + 1) : null;
+      const ent = rel !== null ? lkRef.current.tree.entries.find((x) => x.rel === rel) : undefined;
+      const isDir = !!ent?.dir;
+      // 맥 폴더 연결 안 파일(읽기 전용) — 옮기지 않는다. 폴더에 놓으면 바로가기, 보관함 맨 위에 놓으면 복사해 넣기
+      if (ent?.ro) {
+        if (ent.dir) return;
+        if (to) void lockerApi.alias(lockerOwner(o), d.path, to).catch(lockerFail);
+        else void lockerApi.put(lockerOwner(o), [d.path], '').then(lockerReport, lockerFail);
+      } else if (rel !== null && (rel.includes('/') || isDir)) void lockerApi.move(lockerOwner(o), rel, to).catch(lockerFail);
+      else if (to) void lockerApi.alias(lockerOwner(o), d.path, to).catch(lockerFail);
+      else if (rel === null) void lockerApi.put(lockerOwner(o), [d.path], '').then(lockerReport, lockerFail);
+    };
+    // 채팅에 붙인 그림(앱 첨부 폴더 — 집이 따로 없는 것)만 그 참모 보관함에. 맥 파일은 원본 그대로 두고 참모가 그걸 고친다
+    const onChat = (e: Event) => {
+      const d = (e as CustomEvent<{ session: string; paths: string[] }>).detail;
+      const o = orchs.find((x) => x.id === d?.session);
+      const pasted = (d?.paths ?? []).filter((p) => /\/attach\/\d+-[^/]+$/.test(p));
+      if (o && pasted.length) void lockerApi.put(lockerOwner(o), pasted).catch(() => {});
+    };
+    window.addEventListener(LOCKER_DROP, onDrop);
+    window.addEventListener(LOCKER_MOVE, onMove);
+    window.addEventListener(LOCKER_CHAT_ATTACH, onChat);
+    return () => { window.removeEventListener(LOCKER_DROP, onDrop); window.removeEventListener(LOCKER_MOVE, onMove); window.removeEventListener(LOCKER_CHAT_ATTACH, onChat); };
+  }, [orchs]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 보관함에서 연 파일을 맥 앱(키노트·한글 등)으로 고쳐 저장하면 그 참모 입력칸에 한 줄(보내기는 사람이) — md·엑셀은 스페이스 편집 고리가 따로
+  const lockerOpened = useRef(new Map<string, number>());
+  const lockerTold = useRef(new Map<string, number>());
+  useEffect(() => {
+    if (!lockerOrch || !lockerTree.dir) return;
+    const items = lockerTree.entries.filter((e) => !e.dir).map((e) => ({ path: `${lockerTree.dir}/${e.rel}`, mtime: e.mtime ?? null, gone: e.gone, name: e.name }));
+    for (const it of editedAfterOpen(items, lockerOpened.current, lockerTold.current)) {
+      window.dispatchEvent(new CustomEvent(CHAT_INSERT, { detail: { id: lockerOrch.id, text: tr(`고침: ${it.name} — ${it.path}`, `Edited: ${it.name} — ${it.path}`) } }));
+    }
+  }, [lockerTree]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 프로젝트 줄 점 — 그 프로젝트 세션 중 가장 급한 것(기다림 > 일함 > 쉼, domain/dot)
+  const dotOf = (ss: Session[]): DotKind => worstDot(ss.map((s) => dotKind(lineOf(s, ''))));
+  const lockerSide = (() => {
+    if (!lockerOrch) return null;
+    const lo = lockerOrch;
+    const held = heldBy(lo);
+    // 진행 중 칩 = 이 참모가 맡긴 프로젝트 중 일하는·기다리는 것, 모든 프로젝트 = 그 밖(쉼·꺼짐)까지(홈·모드 v2 B·D)
+    const dotFor = (root: string): DotKind => { const g = groups.find((x) => x.root === root); return g ? dotOf(g.sessions) : 'off'; };
+    const whatOf = (root: string, name: string) => {
+      const g = groups.find((x) => x.root === root);
+      const names = new Set([name, ...(g?.sessions ?? []).flatMap((s) => [s.name ?? '', nameOf(s)])].filter(Boolean));
+      return [...events].reverse().find((e) => e.type === 'send' && ((e.target && names.has(e.target)) || e.project === name))?.title ?? '';
+    };
+    const all: ChipProject[] = projectRoots.map((p) => { const g = groups.find((x) => x.root === p.root); return { root: p.root, name: p.name, dot: dotFor(p.root), what: whatOf(p.root, p.name), session: (g?.sessions.find((x) => held.some((h) => h.id === x.id)) ?? g?.sessions[0])?.id }; });
+    const mine = groups.filter((g) => g.sessions.some((s) => held.some((h) => h.id === s.id))).map((g) => g.root);
+    const active = all.filter((p) => mine.includes(p.root) && (p.dot === 'run' || p.dot === 'ask'));
+    const shown = dashFiles(log, lo.id, held.map((s) => s.id), []);
+    const items = lockerLog(shown, lockerTree.entries, lockerTree.dir, projectRoots);
+    const to = (p: LkPlace) => setPick(lkPick(lo.id, p));
+    return {
+      held, items, chips: { active, all }, rootNew: items.length > 0 && newFor.has(lo.id),
+    };
+  })();
+  // 펼친 띠 폭 — 앱 전체 한 값(191.png: 맡은 일 글로 490px 까지 늘었다)
+  const [railW, setRailW] = useState(() => { try { const v = localStorage.getItem(RAIL_KEY); return railWidth(v === null ? null : Number(v)); } catch { return railWidth(null); } });
+  // 참모 프사 띠(접힌 참모 패널) — 채팅 칸 위 탭 줄 대신 여기서 참모를 바꾼다(2026-10-11 사용자). 누르면 그 참모가 마지막에 보던 화면 + 채팅 탭도 그 참모로
+  const pip = (o: Session): 'ask' | 'new' | 'run' | 'rest' | null => {
+    const d = dotOf([o, ...heldBy(o)]);
+    return d === 'ask' ? 'ask' : newFor.has(o.id) ? 'new' : d === 'off' ? null : d;
+  };
+  const railOn = lockerOrch?.id ?? orch?.id;
+  // 켜는 중·끄는 중도 띠 위 줄에 자리 그대로(2026-10-12 사용자 "뿅 나왔다 뿅 사라진다") — 끄는 중은 잠들며 제자리, 깨우는 쉬는 참모는 위 줄로 올라와 깨어남
+  const railPrev = useRef<RailRow[]>([]);
+  const rows = railRows({ live: orchs, stopping: new Set(stoppingIds), starting: startingOrchs ?? [], prev: railPrev.current, order: orchOrder, pins: orchPins });
+  // 새로 만든 참모는 '켜는 중' 칸(new:<이름>)과 다른 칸으로 뜬다 — 처음 그릴 때 깨어남 마무리를 한 번(woke)
+  const creatingSeen = useRef(new Set<string>());
+  for (const r of rows) if (r.phase === 'starting' && r.key.startsWith('new:')) creatingSeen.current.add(r.name);
+  useEffect(() => {
+    railPrev.current = rows;
+    for (const r of rows) if (r.phase === 'live') creatingSeen.current.delete(r.name);
+  });
+  const railAvatar = (r: RailRow): RailAvatar => {
+    const text = phaseWord(r.phase, r.waking);
+    if (r.phase === 'starting' || !r.live) {
+      const x = r.off!;
+      const nm = orchDisplay(x) || x.name;
+      return { id: `start:${r.key}`, label: nm, on: false, color: bodyColor(avatars, x.name, colorOf(x.name)), pinned: orchPins.includes(r.key), phase: 'starting', phaseText: text, flip: r.key,
+        node: <OrchAvatar name={x.name} size={32} state="off" phase="starting" color={colorOf(x.name)} label={nm} /> };
+    }
+    const o = r.live;
+    const stopping = r.phase === 'stopping';
+    return { id: o.id, label: oname(o), role: orchRoleOf(o.name || '')?.text, on: o.id === railOn, color: bodyColor(avatars, o.name || '', colorOf(o.name || '')), pinned: !!o.sessionId && orchPins.includes(o.sessionId), pip: stopping ? null : pip(o),
+      phase: stopping ? 'stopping' : undefined, phaseText: text, flip: r.key, flipAlt: `new:${o.name}`,
+      node: <OrchAvatar name={o.name || ''} size={32} state={stopping ? 'off' : avatarState(o, statusOf(o))} phase={stopping ? 'stopping' : undefined} woke={creatingSeen.current.has(o.name)} color={colorOf(o.name || '')} label={oname(o)} /> };
+  };
+  const railList = rows.map(railAvatar);
+  const rail = (
+    <OrchRail
+      avatars={railList}
+      onPick={(id) => {
+        const o = orchs.find((x) => x.id === id);
+        if (!o) return;
+        // 지금 참모를 또 누르면 그 참모 첫 화면 — 남의 보관함 자리가 박혀 있어도(옛 화면이 눌렸다) 이 참모 홈으로 돌아온다
+        if (id === now.current.view) { if (parseLkPick(pick)?.orch !== id) setPick(homeOf(o)); }
+        else switchTo(id, 'rail');
+        if (id !== nav.chat) onChatTab?.(id);
+      }}
+      onMenu={act ? (e, id) => { const o = orchs.find((x) => x.id === id); if (o) act.menu(e, o, colorOf(o.name || '')); } : undefined}
+      onRename={act ? (id) => { const o = orchs.find((x) => x.id === id); if (o) act.askRename(o); } : undefined}
+      onMove={onReorderOrch ? (from, to) => onReorderOrch(orchs.map((o) => o.id), from, to) : undefined}
+      onNew={onNewOrch} fns={menuOpen ? fns?.row : fns?.col} wide={menuOpen} joined={!!chat} width={railW} onWidth={(w) => { const v = railWidth(w); setRailW(v); try { localStorage.setItem(RAIL_KEY, String(v)); } catch { /* 이번 실행만 */ } }} groupNames={[...helpers, ...loose].map((h) => h.name || h.id).join(' · ')}
+      group={(() => {
+        // 도우미 묶음(P3) — 이 HQ 에서 띄운 도우미 + 프로젝트 밖 세션. 누르면 목록, 고르면 그 세션
+        const hs = [...helpers, ...loose];
+        return { count: hs.length, label: tr(`도우미 ${hs.length}`, `Helpers ${hs.length}`), onOpen: (e: React.MouseEvent) => act?.openMenu(e, hs.map((h) => ({ label: `${h.name || h.id} · ${stateWord(h)}`, run: () => setPick(`s:${h.id}`) }))) };
+      })()}
+      resting={stoppedOrchs(stopped, orchCwd, orchs).slice(0, 6).map((x) => {
+        // 쉬는 참모(P2) — 누르면 이어서 켜기, 오른쪽 = 켜기·목록에서 지우기(옛 메뉴 그대로)
+        const nm = orchDisplay(x) || x.name;
+        return { key: x.sessionId || x.id, label: nm, node: <OrchAvatar name={x.name} size={26} state="off" color={colorOf(x.name)} label={nm} />, onWake: () => (onWakeOrch ?? onResume)?.(x),
+          onMenu: act ? (e: React.MouseEvent) => act.openMenu(e, [
+            ...(onWakeOrch ?? onResume ? [{ label: tr('이어서 켜기', 'Resume'), run: () => (onWakeOrch ?? onResume)?.(x) }] : []),
+            ...(onRemoveStopped ? [{ label: tr('목록에서 지우기', 'Remove from list'), danger: true, run: () => act.confirm({ title: tr(`${nm} 지울까?`, `Remove ${nm}?`), body: tr('꺼진 세션 목록에서 빼 — 같은 이름으로 쌓인 옛 기록도 같이(대화 기록 파일은 남아).', 'Removes it from stopped sessions, with older ones under the same name (transcript files stay).'), ok: tr('지우기', 'Remove'), run: () => sameOrchSlot(stopped, x, orchCwd).forEach((y) => onRemoveStopped(y)) }) }] : []),
+          ]) : undefined };
+      })}
+      sched={routines ? { on: featureOf(pick) === 'r:', onToggle: () => featureTo('r:', 'toggle') } : undefined}
+      onExpand={() => onMenuToggle?.()} />
+  );
+  // 홈 곁가지(옛 참모 대시보드에서 옮김, 패널 하나로 7) — 위 알림 = 닫히지 않은 일·주인 없는 일, 오른쪽 = 참모 할 일·결정·분신
+  const homeHint = (o: Session) => {
+    const un = tasks ? unclosedOf(tasks.orphaned, events, o.id, tasks.known) : [];
+    if (!un.length && !orphans.length) return undefined;
+    return (
+      <>
+        {tasks && un.length > 0 && <div className="cv-hints"><UnclosedTasks cards={un} nameOf={(t) => targetLabel(t, tasks.known)} canResume={tasks.canResume} onResume={tasks.onResume} onFinish={tasks.onFinish} /></div>}
+        {orphans.length > 0 && (
+          <div className="cv-orphans">
+            <div className="cv-orphans-head"><b>{tr(`누가 시켰는지 모르는 일 ${orphans.length}`, `${orphans.length} tasks with no owner`)}</b>
+              <span>{tr(`기록에 시킨 ${josa(assistant(), '이', '가')} 안 남은 옛 일이야 — 이 ${assistant()} 것으로 붙이거나 끝난 걸로 정리해 줘`, 'Old tasks with no recorded owner — claim them or mark done')}</span></div>
+            {orphans.map((x) => (
+              <div key={x.task} className="cv-orphan">
+                <b>{x.target}</b><span>{x.title ?? ''}</span><em>{new Date(x.ts).toTimeString().slice(0, 5)}</em>
+                <button onClick={() => void appendTaskEvent({ ts: new Date().toISOString(), type: 'own', task: x.task, from: o.id }).catch(() => {})}>{tr(`${o.name || '참모'} 일로`, `Claim for ${o.name || 'assistant'}`)}</button>
+                <button onClick={() => void appendTaskEvent({ ts: new Date().toISOString(), type: 'done', task: x.task, note: tr('대시보드에서 정리', 'Tidied from dashboard') }).catch(() => {})}>{tr('끝난 걸로', 'Mark done')}</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </>
+    );
+  };
+  const homeAside = (o: Session) => (
+    <>
+      <NotePanel base={note} storeKey={`noteEdits:${o.name || o.id}`} sendTo={oname(o)} onOpenStarter={hasStarter ? () => setPick(`d:${projectRoot(o.cwd)}/docs/starter.md`) : undefined}
+        send={async (text) => { window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id: o.id, text } })); await sendTextToSession(o.id, text); }} />
+      <AgentList key={o.id} sid={o.sessionId} agents={agentsOf.current.get(o.id) ?? []} />
+    </>
+  );
+  // 가운데 + 아래 세션 독(패널 하나로 S1, 어디서나) — 독 끝은 조용한 상태(대화 %, 60% 넘을 때만). framed = 이번 화면이 이미 독으로 감쌌나
+  let framed = false;
+  const lockerFrame = (lo: Session, center: React.ReactNode) => {
+    framed = true;
+    const ctx = ctxOf?.(lo);
+    const held = heldBy(lo);
+    const b = liveOf(lo, lives); // 참모 자기 브라우저 — 독 맨 앞 칸
+    const lines = [...(b ? [ownBrowserLine(oname(lo), { live: b, tail: lo.sessionId ? tails[lo.sessionId] : undefined })] : []), ...held.map((s) => lineOf(s, cardName(s)))];
+    return (
+      <div className="lk-main">
+        <div className="lk-center">{center}</div>
+        <ActivityBar lines={lines} quiet={ctx !== undefined && ctx >= 60 ? tr(`대화 ${ctx}%`, `Context ${ctx}%`) : undefined}
+          onOpenSession={(id) => setPick(`s:${id}`)} term={termOf} on={pick.startsWith('s:') ? pick.slice(2) : null}
+          onMenu={act ? (e, id) => { const s = held.find((x) => x.id === id); if (!s) return; act.openMenu(e, [
+            { label: tr('크게 보기', 'Open large'), run: () => setPick(`s:${id}`) },
+            { label: tr('세션 끄기', 'Stop session'), danger: true, sep: true, run: () => act.askStop(s, cardName(s), 'dock') },
+          ]); } : undefined} />
+      </div>
+    );
+  };
+  // 보관함 파일을 열거나 붙이기 직전 — iCloud 로 빠졌으면 먼저 내려받는다(보관함 밖 파일은 맥에 맡김)
+  const fetched = (p: string) => (lockerTree.dir && p.startsWith(`${lockerTree.dir}/`) ? lockerApi.fetch(p).catch((e: unknown) => { lockerFail(e); return false; }) : Promise.resolve(false));
+  const lockerActs = (lo: Session): CardActs => ({
+    // 무엇이든 탭으로 연다 — md·엑셀은 편집 페이지, 그림·영상·html·pdf 는 탭 안 미리보기(2026-10-11 사용자). 모달은 '띄워 보기'·탭의 '크게 보기'
+    onOpen: (p) => void fetched(p).then(() => {
+      if (!spacePage(p)) lockerOpened.current.set(p, Date.now());
+      setLkHold((h) => openTab(h, lo.id, pick, p));
+      setPick(`d:${p}`);
+    }),
+    onFloat: (p) => void fetched(p).then(() => { if (!spacePage(p)) lockerOpened.current.set(p, Date.now()); setModal({ path: p, ts: new Date().toISOString(), by: '' }); }),
+    onSend: (p) => void fetched(p).then(() => attach(p)),
+    sendTo: attachTo,
+    onRename: (rel, name) => void lockerApi.rename(lockerOwner(lo), rel, name).catch(lockerFail),
+    onTrash: (rel) => void lockerApi.trash(lockerOwner(lo), rel).catch(lockerFail),
+    onReveal: (p) => void lockerApi.reveal(p).catch(lockerFail),
+    onBack: (p) => void lockerApi.back(p).catch(lockerFail),
+    onKeep: (p) => void lockerApi.put(lockerOwner(lo), [p]).then(lockerReport, lockerFail),
+    loadVers: (p) => lockerApi.versions(p),
+    onRestore: (p, n) => void lockerApi.restore(p, n).catch(lockerFail),
+    findOrig: (p) => lockerApi.find(p),
+    onRelink: (p, t) => void lockerApi.relink(p, t).catch(lockerFail),
+    onAlias: (p, folder) => void lockerApi.alias(lockerOwner(lo), p, folder).catch(lockerFail),
+    onMove: (rel, to) => void lockerApi.move(lockerOwner(lo), rel, to).catch(lockerFail),
+    onReconnect: (rel) => void lockerApi.reconnect(lockerOwner(lo), rel).catch(lockerFail),
+    onDisconnect: (rel) => void lockerApi.disconnect(lockerOwner(lo), rel).catch(lockerFail),
+    onSendMany: (ps) => void Promise.all(ps.map(fetched)).then(() => { if (chatOrch) attachToChat(chatOrch.id, ps); }),
+    onAliasMany: (ps, folder) => void lockerApi.aliasMany(lockerOwner(lo), ps, folder).catch(lockerFail),
+    onMoveMany: (rels, to) => void lockerApi.moveMany(lockerOwner(lo), rels, to).catch(lockerFail),
+    onTrashMany: (rels, foldersOk) => void lockerApi.trashMany(lockerOwner(lo), rels, foldersOk).catch(lockerFail),
+    planTrash: (rels) => lockerApi.trashPlan(lockerOwner(lo), rels),
+    onEmptyOut: (rels, to) => void lockerApi.emptyOut(lockerOwner(lo), rels, to).catch(lockerFail),
+    onUndoTrash: () => void lockerApi.trashUndo().then((u) => { if (u.errors.length) lockerFail(u.errors.join('\n')); }, lockerFail),
+  });
+  // 단축키 — ⌘W 탭 닫기 · ⌘T 새 문서 · ⌘⇧H 홈 · ⌘⇧L 보관함 (App 이 SPACE_CMD 로 넘긴다, 2026-10-12 사용자). 최신 상태는 cmd 가 매 그리기에 새로 잡힌다.
+  // 탭만 닫고 입력 초안(채팅 입력칸)은 건드리지 않는다 — 초안은 입력칸이 바뀔 때마다 따로 저장돼 있다
+  const goHome = (lo: Session) => { if (tabRow(lkHold, lo.id, pick).homeOn) return; setLkHold((x) => leaveFolder(x, lo.id, pick)); setPick(lkPick(lo.id, { kind: 'home' })); };
+  const goFolder = (lo: Session) => { const row = tabRow(lkHold, lo.id, pick); if (!row.folderOn) setPick(row.folderTo); };
+  const cmd = (c: SpaceCmd) => {
+    const lo = orch;
+    if (!lo) return;
+    if (c === 'closeTab') { const r = closeCurrentTab(lkHold, lo.id, pick); if (!r) return; setLkHold(r.hold); if (r.pick) setPick(r.pick); return; }
+    if (c === 'newDoc') { void lockerApi.newDoc(lockerOwner(lo), newDocFolder(pick), 'md').then((p) => lockerActs(lo).onOpen(p), lockerFail); return; }
+    if (c === 'home') goHome(lo); else goFolder(lo);
+  };
+  const cmdRef = useRef(cmd);
+  cmdRef.current = cmd;
+  useEffect(() => {
+    const on = (e: Event) => cmdRef.current((e as CustomEvent<SpaceCmd>).detail);
+    window.addEventListener(SPACE_CMD, on);
+    return () => window.removeEventListener(SPACE_CMD, on);
+  }, []);
+  // 확대 명령 받기 — App 의 ⌘+ ⌘- ⌘0 ⌘9 가 window.__tabZoom 을 먼저 부른다, ⌘/Ctrl/Alt+휠·트랙패드 핀치(ctrlKey 붙은 wheel)·사파리 핀치(gesturechange)는 여기서 직접
+  const zoomRef = useRef(zoomCmd);
+  zoomRef.current = zoomCmd;
+  const canZoomRef = useRef(false);
+  canZoomRef.current = canZoom;
+  useEffect(() => {
+    const w = window as unknown as { __tabZoom?: (c: ZoomCmd) => boolean };
+    w.__tabZoom = (c) => zoomRef.current(c);
+    const wheelAcc = makeWheelAccum();
+    const pinch = makePinchAccum();
+    const inMain = (t: EventTarget | null) => !!document.querySelector('.space .cv-main')?.contains(t as Node);
+    const wheel = (e: WheelEvent) => {
+      if (wheelDir(e) === null || !canZoomRef.current || !inMain(e.target)) return;
+      e.preventDefault(); // 웹뷰 기본 확대·스크롤을 막고 탭 확대로
+      const s = wheelAcc(e.deltaY);
+      if (s) zoomRef.current(s);
+    };
+    const gStart = (e: Event) => { if (!canZoomRef.current || !inMain(e.target)) return; e.preventDefault(); pinch.start(); };
+    const gChange = (e: Event) => {
+      if (!canZoomRef.current || !inMain(e.target)) return;
+      e.preventDefault();
+      const s = pinch.move((e as Event & { scale: number }).scale);
+      if (s) zoomRef.current(s);
+    };
+    window.addEventListener('wheel', wheel, { passive: false, capture: true });
+    window.addEventListener('gesturestart', gStart, { passive: false, capture: true });
+    window.addEventListener('gesturechange', gChange, { passive: false, capture: true });
+    return () => {
+      delete w.__tabZoom;
+      window.removeEventListener('wheel', wheel, { capture: true });
+      window.removeEventListener('gesturestart', gStart, { capture: true });
+      window.removeEventListener('gesturechange', gChange, { capture: true });
+    };
+  }, []);
+  // 탭 줄 — 맨 왼쪽 고정 탭 둘(홈 집 · 보관함 폴더, 닫기 없음), 그 뒤로 연 파일. 연 탭이 없어도 늘 보인다(2026-10-12 사용자 — 나무 머리 켜기가 설정 토글로 착각됐다)
+  const lockerTabs = (lo: Session, rootNew = false) => {
+    const row = tabRow(lkHold, lo.id, pick);
+    const h = lkHold && lkHold.orch === lo.id ? lkHold : null;
+    const go = (p: string) => { if (h && pick.startsWith('l:')) setLkHold(leaveFolder(h, lo.id, pick)); setPick(tabPick(p)); };
+    const close = (p: string) => { if (!h) return; const r = closeTab(h, p, pick); setLkHold(r.hold); if (r.pick) setPick(r.pick); };
+    // 탭 오른쪽 클릭 — 크게·보내기 / 파인더(보관함 안) 또는 보관함에 넣기(밖) / 닫기
+    const tabMenu = (e: React.MouseEvent, p: string) => {
+      const a = lockerActs(lo);
+      act?.openMenu(e, menuItems(lockerMenu({ kind: 'tab', inLocker: !!lockerTree.dir && p.startsWith(`${lockerTree.dir}/`) }), {
+        big: { run: () => setModal({ path: p, ts: new Date().toISOString(), by: '' }) },
+        send: { run: () => a.onSend(p), label: attachTo?.name ? tr(`${attachTo.name}에게 보내기`, `Send to ${attachTo.name}`) : undefined },
+        reveal: { run: () => a.onReveal?.(p) },
+        keep: { run: () => a.onKeep?.(p) },
+        close: { run: () => close(p) },
+      }));
+    };
+    return (
+      <nav className="lk-tabs" aria-label={tr('열린 파일', 'Open files')}>
+        <button className={`lk-tab home ${row.homeOn ? 'on' : ''}`} aria-pressed={row.homeOn} onClick={() => goHome(lo)}
+          aria-label={tr('홈', 'Home')} title={`${tr('홈', 'Home')} ${keyLabel('⌘⇧H', IS_WIN)}`}><IconHome /></button>
+        <button className={`lk-tab folder ${row.folderOn ? 'on' : ''}`} aria-pressed={row.folderOn} onClick={() => goFolder(lo)}
+          data-locker-folder="" data-locker-drop="" aria-label={tr('보관함', 'Locker')} title={`${tr('보관함', 'Locker')} ${keyLabel('⌘⇧L', IS_WIN)}`}><IconFolder />{rootNew && <i className="lk-newdot" aria-label={tr('새 것 있음', 'New items')} />}</button>
+        {row.tabs.map(({ path: p, on }) => {
+          if (p.startsWith('c:')) {
+            // 시안 검토 탭 — 파일 이름 + '검토' 표, 오른쪽 클릭 = 크게·닫기
+            const fp = p.slice(2);
+            return (
+              <span key={p} className={`lk-tab ${on ? 'on' : ''} ${freshTab === p ? 'fresh' : ''}`} role="tab" aria-selected={on} tabIndex={0} onClick={() => go(p)} title={fp}
+                onKeyDown={(e) => { if (e.key === 'Enter') go(p); }}
+                onContextMenu={act ? (e) => act.openMenu(e, [{ label: tr('크게', 'Large'), run: () => { go(p); setCurBig(true); } }, { label: tr('탭 닫기', 'Close tab'), run: () => closeReview(fp) }]) : undefined}>
+                <span>{fp.split('/').pop()}</span><i className="lk-tab-rv">{tr('검토', 'Review')}</i>
+                <IconButton size="s" label={tr('탭 닫기', 'Close tab')} onClick={(e) => { e.stopPropagation(); closeReview(fp); }}><IconClose /></IconButton>
+              </span>
+            );
+          }
+          if (p.startsWith('s:')) {
+            // 세션 탭 — 점 + 이름(꺼졌으면 흐리게), 오른쪽 클릭 = 닫기·세션 끄기
+            const ss = sessions.find((x) => x.id === p.slice(2));
+            const nm = ss ? cardName(ss) : tr('꺼진 세션', 'Ended session');
+            return (
+              <span key={p} className={`lk-tab sess ${on ? 'on' : ''} ${ss ? '' : 'gone'}`} role="tab" aria-selected={on} tabIndex={0} onClick={() => go(p)} title={ss ? `${nm} — ${ss.cwd}` : nm}
+                onKeyDown={(e) => { if (e.key === 'Enter') go(p); }}
+                onContextMenu={act ? (e) => act.openMenu(e, [{ label: tr('탭 닫기', 'Close tab'), run: () => close(p) }, ...(ss ? [{ label: tr('세션 끄기', 'Stop session'), danger: true, sep: true, run: () => act.askStop(ss, nm, 'tab') }] : [])]) : undefined}>
+                {ss && <span className={`lk-dot d-${dotKind(lineOf(ss, nm))}`} aria-hidden="true" />}<span>{nm}</span>
+                <IconButton size="s" label={tr('탭 닫기', 'Close tab')} onClick={(e) => { e.stopPropagation(); close(p); }}><IconClose /></IconButton>
+              </span>
+            );
+          }
+          const pj = projectOf(p, projectRoots);
+          return (
+          <span key={p} className={`lk-tab ${on ? 'on' : ''} ${freshTab === p ? 'fresh' : ''}`} role="tab" aria-selected={on} tabIndex={0} onClick={() => go(p)} title={p}
+            onKeyDown={(e) => { if (e.key === 'Enter') go(p); }} onContextMenu={act ? (e) => tabMenu(e, p) : undefined}>
+            <span>{p.split('/').pop()}</span>{pj && <i className="lk-tab-pj">{pj}</i>}
+            <IconButton size="s" label={tr('탭 닫기', 'Close tab')} onClick={(e) => { e.stopPropagation(); close(p); }}><IconClose /></IconButton>
+          </span>
+          );
+        })}
+      </nav>
+    );
+  };
   let main: React.ReactNode = null;
   // 있던 프로젝트(clone)에 이 프로젝트 브라우저가 없으면 — 깔려 있고 안 붙었을 때만 보인다(GitHub #2)
   const browserBtn = (root: string, running: number) => <BrowserAttachButton key={`b:${root}`} dir={root} running={running} className="cv-btn" onDone={(m) => onMessage?.(m)} />;
-  const toolsBtn = (root: string) => <button className="cv-btn" onClick={() => setPick(`t:${root}`)} title={tr('MCP·플러그인·스킬', 'MCP, plugins and skills')}>{tr('도구', 'Tools')}</button>;
+  const toolsBtn = (root: string) => <button className="cv-btn" onClick={() => featureTo('t:', 'open', `t:${root}`)} title={tr('MCP·플러그인·스킬', 'MCP, plugins and skills')}>{tr('도구', 'Tools')}</button>;
   // 오케스트레이터 홈 — 머리를 눌렀거나('oh:'), 참모가 하나도 없는데 참모 화면을 보려던 참(2026-10-03 사용자)
   const atHome = pick === HOME || (!orchs.length && (pick === '' || pick.startsWith('o:') || pick === OFFICE));
   const seg = office ? <SideSeg office={pick === OFFICE} onPick={officeTo} /> : null;
@@ -737,12 +1289,35 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
   const pickSide = (want: SpaceSide) => {
     if (!orch) return;
     if (want === 'office') { officeTo('office'); return; }
-    setPetFor(want === 'pet' ? orch.id : null);
-    if (pick === OFFICE) officeTo('space');
-    if (pick !== `o:${orch.id}` && pick !== OFFICE) setPick(`o:${orch.id}`);
+    // 펫 = o:<참모>(펫 자리만 남았다), 대시보드 칸 = 그 참모 홈(옛 대시보드 자리, 2026-10-12 패널 하나로)
+    const pet = want === 'pet' ? orch.id : null;
+    petRef.current = pet;
+    setPetFor(pet);
+    setPick(pet ? `o:${orch.id}` : lkPick(orch.id, { kind: 'home' }));
   };
   const viewSeg = side && !atHome ? <ViewSeg side={side} pet={!!pet} office={!!office} onPick={pickSide} /> : null;
-  if (atHome && orchHome) {
+  const feat = featureOf(pick);
+  if (feat === 'rv:') {
+    // 리뷰 — 세션 열기는 스페이스 안에서 그 세션 화면으로
+    main = reviewPage?.(pick.slice(3) || undefined, (k) => setPick(`rv:${k}`), (t) => { const s = findTarget(sessions, t); if (s) setPick(orchs.some((o) => o.id === s.id) ? `o:${s.id}` : `s:${s.id}`); }) ?? null;
+  } else if (feat === 't:') {
+    // 도구 — 기준 폴더는 고른 프로젝트, 없으면 채팅 탭 참모 HQ(2026-10-04 사용자)
+    const root = pick.slice(2) || chatOrch?.cwd || orchCwd;
+    const hq = orchCwd ? [{ name: tr(`${assistant()} HQ`, `${assistant()} HQ`), root: orchCwd }] : [];
+    const roots = [...hq, ...groups.map((g) => ({ name: g.name, root: g.root })), ...idle].filter((r, i, a) => a.findIndex((x) => x.root === r.root) === i);
+    main = <ToolsPage key={root} root={root} roots={roots} onRoot={(r) => setPick(`t:${r}`)}
+      sessions={sessions.filter((s) => s.cwd === root || s.cwd.startsWith(`${root}/`))}
+      onInvoke={chatOrch ? (name) => window.dispatchEvent(new CustomEvent(CHAT_INSERT, { detail: { id: chatOrch.id, text: `/${name}` } })) : undefined}
+      onOpen={(p) => setPick(`d:${p}`)} computerUse={computerUse} />;
+  } else if (feat === 'r:') {
+    // 예약(P4) — r: = 목록, r:<이름> = 그 예약. 지우면 목록으로
+    main = pick === 'r:' ? <RoutineList routines={routines ?? []} onOpen={(n) => setPick(`r:${n}`)} />
+      : routinePage?.(pick.slice(2), () => setPick('r:'), chatOrch ? (text) => window.dispatchEvent(new CustomEvent(CHAT_INSERT, { detail: { id: chatOrch.id, text } })) : undefined) ?? null;
+  } else if (feat === 'rp:') {
+    main = replayPage?.() ?? null;
+  } else if (feat === 'h:') {
+    main = <HarnitorPanel key={orch?.id} onClose={() => featureTo('h:', 'close')} restore={hSel.current.get(orch?.id ?? '')} onView={(v) => hSel.current.set(orch?.id ?? '', v)} />;
+  } else if (atHome && orchHome) {
     main = orchHome((id) => { const o = orchs.find((x) => x.id === id); if (!o) return; setPick(homeOf(o)); setNav({ view: id, chat: id }); onChatTab?.(id); });
   } else if (pick === OFFICE && office && orch) {
     // 책상·카드 = 사무실 위 창에 그 세션 칸(사무실을 떠나지 않음, 오피스 A 1단계), 참모 책상 = 그 참모 채팅 탭. 지금 탭 참모가 시킨 세션만 이름표·현황판 진하게
@@ -768,139 +1343,83 @@ export function SpaceView({ orchPins = [], orchOrder = [], pet, office, officeRe
         })()}
       </div>
     );
+  } else if (lp) {
+    const lo = lockerOrch;
+    const ls = lockerSide;
+    main = lo && ls && place.kind === 'home' ? lockerFrame(lo, (
+      <>{lockerTabs(lo, ls.rootNew)}<HomeView key={lo.id} hint={homeHint(lo)} aside={homeAside(lo)}
+        modes={<ModeHome rows={modeRows} keys={[lo.name || '', lo.id, lo.sessionId || '']} dash={lo.name || lo.id}
+          onAsk={(t) => { const text = tr(`홈에 모드 하나 만들어 줘 — ${t}`, `Make a mode for my home — ${t}`); window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id: lo.id, text } })); void sendTextToSession(lo.id, text); }} />} /></>
+    )) : lo && ls && place.kind !== 'home' ? lockerFrame(lo, (
+      <>{lockerTabs(lo, ls.rootNew)}<LockerPage key={lo.id} dir={lockerTree.dir} place={place} entries={lockerTree.entries} log={ls.items} chips={ls.chips} projects={projectRoots}
+        whoOf={(by) => (by === 'me' || by === lo.id ? who(by) : orchs.some((x) => x.id === by) ? who(by) : tr(`${who(by)} 세션`, `${who(by)} session`))}
+        onPlace={(p) => { const k = lkPick(lo.id, p); docScroll.current.delete(scrollKey(now.current.view, k)); setPick(k); }}
+        onChoose={(folder) => void lockerApi.choose(lockerOwner(lo), folder).then(lockerReport, lockerFail)}
+        onConnect={(folder) => void lockerApi.connect(lockerOwner(lo), folder).catch(lockerFail)}
+        onNewDoc={(folder, kind) => void lockerApi.newDoc(lockerOwner(lo), folder, kind).then((p) => lockerActs(lo).onOpen(p), lockerFail)}
+        onNewFolder={(parent) => lockerApi.mkdir(lockerOwner(lo), parent, tr('새 폴더', 'New folder')).catch((e: unknown) => { lockerFail(e); return ''; })}
+        acts={lockerActs(lo)} onBigProject={(id) => setPick(`s:${id}`)} onAddProject={onAddProject} /></>
+    )) : <div className="cv-blank">{tr(`그 ${josa(assistant(), '이', '가')} 꺼졌어요`, 'That assistant is off')}</div>;
   } else if (pick.startsWith('o:')) {
-    const o = orchs.find((x) => x.id === pick.slice(2)) ?? orch;
-    const held = heldBy(o);
-    const files = o ? dashFiles(log, o.id, held.map((s) => s.id), o.id === orch?.id ? myImages : []).slice(0, 40).map((f) => ({ ...f, byName: who(f.by) })) : [];
-    main = o ? (
-      <DashboardView key={o.id} browser={(() => { const b = liveOf(o, lives); return b ? { live: b, tail: o.sessionId ? tails[o.sessionId] : undefined } : undefined; })()} pet={pet ? { on: petFor === o.id, node: pet((id) => { const x = orchs.find((y) => y.id === id); return x ? { name: x.name || '', color: colorOf(x.name || '') } : null; }) } : undefined}
-        modes={<ModeDash rows={modeRows} keys={[o.name || '', o.id, o.sessionId || '']} />}
-        title={oname(o)} titleNode={<OrchName s={o} />} avatar={act ? (
-        <button className="oa-btn" onClick={() => act.askAvatar(o, colorOf(o.name || ''))} aria-label={tr(`${oname(o)} 프로필 바꾸기`, `Change ${oname(o)}'s avatar`)}>
-          <OrchAvatar name={o.name || ''} size={44} state={avatarState(o, statusOf(o))} color={colorOf(o.name || '')} label={oname(o)} /><span className="oa-change" aria-hidden="true">{tr('바꾸기', 'Change')}</span>
-        </button>
-      ) : <OrchAvatar name={o.name || ''} size={44} state={avatarState(o, statusOf(o))} color={colorOf(o.name || '')} label={oname(o)} />} onTitleEdit={act ? () => act.askRename(o) : undefined}
-        under={<AgentList key={o.id} sid={o.sessionId} agents={agentsOf.current.get(o.id) ?? []} />}
-        aside={<NotePanel base={note} storeKey={`noteEdits:${o.name || o.id}`} sendTo={oname(o)} onOpenStarter={hasStarter ? () => setPick(`d:${projectRoot(o.cwd)}/docs/starter.md`) : undefined}
-          send={async (text) => { window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id: o.id, text } })); await sendTextToSession(o.id, text); }} />}
-        meta={[orchRoleOf(o.name || '')?.text, tr(`${stateWord(o)} · 맡긴 세션 ${held.length}`, `${stateWord(o)} · ${held.length} delegated`)].filter(Boolean).join(' · ') /* 맡은 일이 맨 앞(이름 밑 회색 줄, 2026-10-04) */} 
-        files={files} lines={held.map((s) => lineOf(s, cardName(s)))}
-        onStop={act ? (id) => { const s = held.find((x) => x.id === id); if (s) act.askStop(s, cardName(s), 'card'); } : undefined}
-        hint={<>
-          <div className="cv-hints">
-            {tasks && <UnclosedTasks cards={unclosedOf(tasks.orphaned, events, o.id, tasks.known)} nameOf={(t) => targetLabel(t, tasks.known)} canResume={tasks.canResume} onResume={tasks.onResume} onFinish={tasks.onFinish} />}
-          </div>
-          {orphans.length > 0 && (
-          <div className="cv-orphans">
-            <div className="cv-orphans-head"><b>{tr(`누가 시켰는지 모르는 일 ${orphans.length}`, `${orphans.length} tasks with no owner`)}</b>
-              <span>{tr(`기록에 시킨 ${josa(assistant(), '이', '가')} 안 남은 옛 일이야 — 이 ${assistant()} 것으로 붙이거나 끝난 걸로 정리해 줘`, 'Old tasks with no recorded owner — claim them or mark done')}</span></div>
-            {orphans.map((x) => (
-              <div key={x.task} className="cv-orphan">
-                <b>{x.target}</b><span>{x.title ?? ''}</span><em>{new Date(x.ts).toTimeString().slice(0, 5)}</em>
-                <button onClick={() => void appendTaskEvent({ ts: new Date().toISOString(), type: 'own', task: x.task, from: o.id }).catch(() => {})}>{tr(`${o.name || '참모'} 일로`, `Claim for ${o.name || 'assistant'}`)}</button>
-                <button onClick={() => void appendTaskEvent({ ts: new Date().toISOString(), type: 'done', task: x.task, note: tr('대시보드에서 정리', 'Tidied from dashboard') }).catch(() => {})}>{tr('끝난 걸로', 'Mark done')}</button>
-              </div>
-            ))}
-          </div>
-          )}
-        </>}
-        onOpenSession={(id) => setPick(id === o.id ? `o:${id}` : `s:${id}`)} onOpenDoc={(p) => setPick(`d:${p}`)} onAttach={attach} onSendText={send} onCuration={toCuration} term={termOf}
-        emptyText={tr(`아직 없어요 — ${josa(assistant(), '이나', '나')} 맡긴 세션이 띄워 주면 여기 모여요`, 'Nothing yet — shown files gather here')} />
-    ) : null;
-  } else if (pick.startsWith('p:')) {
-    const g = groups.find((x) => x.root === pick.slice(2));
-    const files = g ? g.sessions.flatMap((s) => shownFiles(log, s.id).map((f) => ({ ...f, by: s.id, byName: s.workspace ?? s.project }))).sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, 40) : [];
-    main = g ? (
-      <DashboardView key={g.root} work modes={<ModeDash rows={modeRows} keys={[g.name, g.root]} />} title={g.name} meta={tr(`세션 ${g.sessions.length} · ${g.root}`, `${g.sessions.length} sessions · ${g.root}`)}
-        headAction={<>{toolsBtn(g.root)}{browserBtn(g.root, g.sessions.length)}{onNewSession && <button className="cv-btn" onClick={() => onNewSession(g.root, g.name)}>{tr('새 세션', 'New session')}</button>}</>}
-        onStop={act ? (id) => { const s = g.sessions.find((x) => x.id === id); if (s) act.askStop(s, s.workspace ? `${g.name} / ${s.workspace}` : tr(`${g.name} 본체`, `${g.name} (main)`), 'card'); } /* 세션이 여럿이면 어느 것인지 보이게 */ : undefined}
-        files={files} lines={g.sessions.map((s) => lineOf(s, s.workspace ?? tr('본체', 'main')))}
-        lists={plists ?? undefined} onOpenSession={(id) => setPick(`s:${id}`)} onOpenDoc={(p) => setPick(`d:${p}`)} onAttach={attach} onSendText={send} onCuration={toCuration} term={termOf} emptyText={tr('이 프로젝트 세션이 보여 준 파일이 여기 모여요', "Files this project's sessions show gather here")} />
-    ) : (() => {
-      // 세션이 안 떠 있는 프로젝트 — 할 일·결정은 그대로 보고, 꺼진 세션 이어서 켜기·새 세션
-      const root = pick.slice(2);
-      const name = idle.find((x) => x.root === root)?.name ?? root.split('/').pop() ?? root;
-      const off = stopped.filter((x) => projectRoot(x.cwd) === root);
-      return (
-        <DashboardView key={root} work modes={<ModeDash rows={modeRows} keys={[name, root]} />} title={name} meta={tr(`쉬는 중 · ${root}`, `Idle · ${root}`)} headAction={<>{toolsBtn(root)}{browserBtn(root, 0)}</>} files={[]} lines={[]} lists={plists ?? undefined}
-          onOpenSession={() => {}} onOpenDoc={(p) => setPick(`d:${p}`)} emptyText=""
-          hint={
-            <div className="cv-idle">
-              <div className="cv-idle-row"><b>{tr('떠 있는 세션이 없어요', 'No running sessions')}</b>
-                {onNewSession && <button className="cv-btn solid" onClick={() => onNewSession(root, name)}>{tr('새 세션 열기', 'Start a session')}</button>}</div>
-              {off.map((x) => (
-                <div key={x.id} className="cv-idle-row off"><span>{x.name || x.project}{x.workspace ? ` / ${x.workspace}` : ''}</span><em>{x.reason === 'failed' ? tr('비정상 종료', 'Crashed') : x.reason === 'done' ? tr('끝남', 'Done') : tr('끔', 'Stopped')}</em>
-                  {onResume && <button className="cv-btn" onClick={() => onResume(x)}>{tr('이어서 켜기', 'Resume')}</button>}</div>
-              ))}
-            </div>
-          } />
-      );
-    })();
-  } else if (pick === 'rv:' || pick.startsWith('rv:')) {
-    // 리뷰 — 세션 열기는 스페이스 안에서 그 세션 화면으로
-    main = reviewPage?.(pick.slice(3) || undefined, (k) => setPick(`rv:${k}`), (t) => { const s = findTarget(sessions, t); if (s) setPick(orchs.some((o) => o.id === s.id) ? `o:${s.id}` : `s:${s.id}`); }) ?? null;
-  } else if (pick.startsWith('r:')) {
-    main = routinePage?.(pick.slice(2), () => setPick(chatOrch ? `o:${chatOrch.id}` : ''), chatOrch ? (text) => window.dispatchEvent(new CustomEvent(CHAT_INSERT, { detail: { id: chatOrch.id, text } })) : undefined) ?? null; // 지우면 참모 화면으로 — '찾을 수 없어요'에 남지 않게
-  } else if (pick.startsWith('t:')) {
-    // 도구 — 기준 폴더는 고른 프로젝트, 없으면 채팅 탭 참모 HQ(2026-10-04 사용자)
-    const root = pick.slice(2) || chatOrch?.cwd || orchCwd;
-    const hq = orchCwd ? [{ name: tr(`${assistant()} HQ`, `${assistant()} HQ`), root: orchCwd }] : [];
-    const roots = [...hq, ...groups.map((g) => ({ name: g.name, root: g.root })), ...idle].filter((r, i, a) => a.findIndex((x) => x.root === r.root) === i);
-    main = <ToolsPage key={root} root={root} roots={roots} onRoot={(r) => setPick(`t:${r}`)}
-      sessions={sessions.filter((s) => s.cwd === root || s.cwd.startsWith(`${root}/`))}
-      onInvoke={chatOrch ? (name) => window.dispatchEvent(new CustomEvent(CHAT_INSERT, { detail: { id: chatOrch.id, text: `/${name}` } })) : undefined}
-      onOpen={(p) => setPick(`d:${p}`)} computerUse={computerUse} />;
-  } else if (pick === 'm:') {
-    main = <PagesHome pages={pages} titleOf={pageName} onOpen={(p) => setPick(`d:${p}`)} onNew={newPage} />;
+    // 펫 자리 — 옛 참모 대시보드(o:)는 지웠다(패널 하나로 7). o: 는 펫 탭을 연 참모만 남는다(그 밖은 legacyPick 이 홈으로)
+    const o = orchs.find((x) => x.id === pick.slice(2));
+    main = o && pet && petFor === o.id ? <div className="cv-pet">{pet((id) => { const x = orchs.find((y) => y.id === id); return x ? { name: x.name || '', color: colorOf(x.name || '') } : null; })}</div> : null;
+  } else if (holdOn && lkHold && lockerOrch) {
+    docUp.current = lkHold.back; // ⌘[ 가 기록이 없으면 폴더로(탭 문서엔 뒤로 알약이 없다)
+    main = lockerFrame(lockerOrch, (
+      <>
+        {lockerTabs(lockerOrch, !!lockerSide?.rootNew)}
+        <div className="lk-doc-body">{filePage(docPath, { where: pathLine(docPath, lockerTree.dir, home ?? ''), keepFor: lockerOrch.id })}</div>
+      </>
+    ));
+  } else if (pick.startsWith('c:')) {
+    // 시안 검토 탭 — 탭 줄·독은 그대로, 가운데에 검토(채팅 칸도 그대로 보이고 칠 수 있다). '크게'면 아래에서 창 전체로 그리고 여긴 비운다
+    const review = curBig ? <div className="cv-blank" /> : curationEl(pick.slice(2), false);
+    main = lockerOrch ? lockerFrame(lockerOrch, <>{lockerTabs(lockerOrch, !!lockerSide?.rootNew)}{review}</>) : review;
   } else if (pick.startsWith('d:')) {
     // 알약은 적힌 이름(주인 대시보드·부모 페이지)으로 간다 — 기록 뒤로(step)였더니 직전 시안 화면으로 돌아갔다(2026-10-10 사용자). 기록 뒤로는 ⌘[
-    main = docPage(pick.slice(2), { onBack: (upKey) => (upKey ? setPick(upKey, 'up') : step(-1)) });
-  } else if (cur) {
-    main = (
-      <div className="cv-session">
-        <header className="cv-page-head small">
-          <div className="cv-titles"><h1>{nameOf(cur)} <StateMark st={statusOf(cur)} /></h1><p>{cur.name} · {stateWord(cur)} · {cur.cwd}</p></div>
-          {seg && <div className="cv-head-act">{seg}</div>}
-        </header>
-        {sessionInner(cur)}
-      </div>
-    );
+    main = filePage(pick.slice(2), { onBack: (upKey) => (upKey ? setPick(upKey, 'up') : step(-1)), keepFor: orch?.id });
+  } else if (cur && lockerOrch) {
+    // 세션 탭(패널 하나로 S4) — 탭 줄·나무·독은 그대로, 가운데에 큰 터미널 + 오른쪽 할 일·최근 결정
+    const root = projectRoot(cur.cwd);
+    const g = groups.find((x) => x.root === root);
+    main = lockerFrame(lockerOrch, (
+      <>
+        {lockerTabs(lockerOrch, !!lockerSide?.rootNew)}
+        <SessionPage key={cur.id} title={cardName(cur)} mark={<StateMark st={statusOf(cur)} />} meta={live[cur.id]?.line || stateWord(cur)}
+          path={home && cur.cwd.startsWith(home) ? `~${cur.cwd.slice(home.length)}` : cur.cwd}
+          actions={<>{toolsBtn(root)}{browserBtn(root, g?.sessions.length ?? 1)}{onNewSession && g && <button className="cv-btn" onClick={() => onNewSession(g.root, g.name)}>{tr('새 세션', 'New session')}</button>}{seg}</>}
+          body={sessionInner(cur)} lists={plists} onOpenStarter={() => setPick(`d:${root}/docs/starter.md`)} />
+      </>
+    ));
   } else {
     main = <div className="cv-blank">{tr('왼쪽 메뉴에서 골라 줘', 'Pick something from the menu')}</div>;
   }
 
+  // 보관함 밖 화면(세션·기능)도 그 참모 세션 독을 아래에 — 사무실·시안 검토·오케스트레이터 홈은 빼고
+  const dockOrch = lockerOrch ?? orch;
+  if (main && dockOrch && !framed && pick !== OFFICE && !atHome) main = lockerFrame(dockOrch, main);
+
   return (
     <div className="space cv">
-      {menuOpen && (
-        <SpaceNav statusOf={statusOf} orchPins={orchPins} orchOrder={orchOrder} onNewOrch={onNewOrch} routines={routines} onTrashPage={(p) => void invoke('trash_page', { path: p }).then(() => { if (pick === `d:${p}` || pick.startsWith(`d:${p.replace(/\.md$/, '')}/`)) setPick('m:'); loadPages(); }).catch(() => {})} idle={idle} offOrchs={stoppedOrchs(stopped, orchCwd, orchs)} stoppingIds={stoppingIds} startingOrchs={startingOrchs} helpers={helpers} loose={loose} onChatTab={onChatTab} ctxOf={ctxOf} onAddProject={onAddProject} onResume={onResume} onRemoveStopped={onRemoveStopped ? (x) => sameOrchSlot(stopped, x, orchCwd).forEach((y) => onRemoveStopped(y)) : undefined} orchs={orchs} viewId={orch?.id} colorOf={colorOf} projects={groups} holders={holders} pick={pick}
-          onPick={(k, orchId) => { const o = orchId ? orchs.find((x) => x.id === orchId) : undefined; setPick(navPick(k, orchId, orch?.id, o ? homeOf(o) : k)); if (orchId) setNav((n) => ({ ...n, view: orchId })); }}
-          orchDocsOf={(o) => orchDocs(log, o.id, pins[pinKey(o)] ?? [])} isPinned={isPinned} onTogglePin={togglePin}
-          pagesRoot={pagesRoot} pages={pages} pageTitle={pageName} onNewPage={newPage}
-          onOpenFile={(p) => (kindOf(p) === 'md' ? setPick(`d:${p}`) : openFile(p))} /* 메뉴는 '그 화면으로 가기' — 사무실에서 눌러도 문서 페이지로 */ selectedFile={pick.startsWith('d:') ? pick.slice(2) : modal?.path} />
-      )}
-      <main className={`cv-main ${viewSeg && !hold ? 'has-viewseg' : ''}`}>
-        {hold ? null : main}
+      {keep.host()}
+      {/* 왼쪽은 띠만 — ⌘B 는 띠를 넓힐 뿐(패널 하나로 P1 A). 보관함 나무 칸은 없앴다(2026-10-12 사용자 '이제 필요 없겠다' — 홈·보관함 고정 탭 + 가운데 경로 줄) */}
+      {rail}{chat}
+      {/* 고른 프사 ↔ 채팅 카드 — 참모 색 윤곽선 하나(맞닿는 변만 열림) */}
+      {chat && <ChatLink color={railList.find((a) => a.on)?.color} />}
+      {/* 기다리는 동안 옛 화면은 못 누른다 — 눌리면 옛 참모 보관함 자리가 박혀 다른 참모 기억으로 옮아 갔다(2026-10-13) */}
+      <main inert={held} className={`cv-main ${viewSeg && !hold ? 'has-viewseg' : ''}`}>
+        {held ? shownMain.current : (shownMain.current = main)}
         {hold ? null : viewSeg}
-        {notice && (() => {
-          const o = orchs.find((x) => x.id === notice.id);
-          if (!o) return null;
-          return (
-            <div className="cv-notice" role="status">
-              <span>{tr(`${josa(oname(o), '이', '가')} 띄웠어`, `${oname(o)} opened`)} · <b>{notice.path.split('/').pop()}</b></span>
-              <button className="cv-btn" onClick={() => { setNotice(null); switchTo(o.id, 'notice'); onChatTab?.(o.id); }}>{tr('보기', 'Open')}</button>
-              <button className="ib" onClick={() => setNotice(null)} aria-label={tr('닫기', 'Dismiss')} title={tr('닫기', 'Dismiss')}><IconClose /></button>
-            </div>
-          );
-        })()}
+        {/* 다른 참모가 띄운 것·시안 — 스페이스 가운데 아래 한 줄(채팅 칸에 걸치지 않게 main 안) */}
+        {curNote && <div className="cv-cur-note" role="status">{curNote}</div>}
         {switching && <div className="cv-switch" aria-live="polite"><span className="cv-spin" /><b>{tr(`${oname(orchs.find((x) => x.id === switching) ?? orch!)} 불러오는 중`, `Loading ${switching}`)}</b></div>}
       </main>
       {/* 참모 모드 — '스페이스 패널로' 켠 것은 오른쪽에, 미리보기·꽉 채우기는 스페이스 위에(따로 창이 기본) */}
       <ModePanel rows={modeRows} />
       <ModeLayer rows={modeRows} />
-      {modal && <Preview f={modal} onClose={() => setModal(null)} onAttach={() => attach(modal.path)} onSendText={send} onCuration={toCuration} />}
-      {pick.startsWith('c:') && (() => { const own = curOwner(pick.slice(2)); const to = own ?? chatOrch; return <CurationMode key={pick} path={pick.slice(2)} sendTo={own ? oname(own) : sendTo ?? assistant()} color={to ? bodyColor(avatars, to.name || '', colorOf(to.name || '')) : undefined}
-        onSend={own ? async (text) => { window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id: own.id, text } })); await sendTextToSession(own.id, text); } : send} onClose={() => setPick(beforeCur.current || (orch ? `o:${orch.id}` : ''))} />; })()}
-      {pick === 'h:' && <HarnitorPanel key={orch?.id} onClose={() => harnitorTo('close')} restore={hSel.current.get(orch?.id ?? '')} onView={(v) => hSel.current.set(orch?.id ?? '', v)} />}
+      {modal && <Preview f={modal} onClose={() => setModal(null)} onAttach={() => attach(modal.path)} attachTo={attachTo} onSendText={send} onCuration={toCuration} />}
+      {pick.startsWith('c:') && curBig && curationEl(pick.slice(2), true)}
     </div>
   );
 }

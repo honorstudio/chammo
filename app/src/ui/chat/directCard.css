@@ -27,6 +27,7 @@
 .dc-if dd { margin: 0; }
 .dc-opts { display: flex; flex-wrap: wrap; gap: 6px; }
 .dc-acts { display: flex; gap: 8px; justify-content: flex-end; align-items: center; flex-wrap: wrap; }
+.dc-acts .dc-ib { width: 40px; height: 40px; border-radius: 9px; color: var(--text); }
 .dc-btn { all: unset; box-sizing: border-box; min-height: 40px; padding: 0 16px; border-radius: 9px; font-weight: 700; font-size: 13.5px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 .dc-btn:disabled { opacity: .5; cursor: default; }
 .dc-btn:focus-visible, .dc-link:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }

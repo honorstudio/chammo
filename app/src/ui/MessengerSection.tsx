@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { messengerApi, openTarget, writeClipboard, type MessengerLink, type MessengerView } from '../data/tauri';
 import { accountLine, BOTFATHER, dotOf, stageOf, tokenFrom, tokenLooksRight } from '../domain/messenger';
-import { IconClose, IconCopy, IconOpen, IconUnlink } from './Icons';
+import { IconClose, IconCopy, IconOpen, IconPower, IconUnlink } from './Icons';
+import { IconButton } from './kit/IconButton';
 import { tr } from '../i18n';
 
 const left = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -51,9 +52,7 @@ export function MessengerSection({ title }: { title: string }) {
       <div className="su-sec-head">
         <h2>{title}</h2>
         {st?.hasToken && st.bot && (
-          <button className={st.on ? 'btn' : 'btn pri'} disabled={busy} onClick={() => { setLink(null); act(() => messengerApi.set(!st.on)); }}>
-            {st.on ? tr('끄기', 'Turn off') : tr('켜기', 'Turn on')}
-          </button>
+          <IconButton size="l" tone={st.on ? 'line' : 'pri'} pressed={st.on} label={st.on ? tr('끄기', 'Turn off') : tr('켜기', 'Turn on')} disabled={busy} onClick={() => { setLink(null); act(() => messengerApi.set(!st.on)); }}><IconPower /></IconButton>
         )}
       </div>
       <p className="su-hint">

@@ -118,7 +118,8 @@ pub fn shareable(p: &Path, r: &Rules) -> bool {
         c.len() == 2 && c[1].as_os_str() == "ROUTINE.md" && !c[0].as_os_str().to_string_lossy().starts_with('.')
     });
     let starter = !hq_dir.is_empty() && p == Path::new(hq_dir).join("docs/starter.md");
-    if routine || starter || phone_attach(p, data_dir) {
+    // 보관함 복사본(<데이터>/locker/files/<숫자>-<이름>) — 폰에서 올린 것·채팅에 붙인 그림을 보관함에 둔 것
+    if routine || starter || phone_attach(p, data_dir) || crate::locker::is_locker_copy(p, data_dir) {
         return true;
     }
     if p.starts_with(data_dir) {

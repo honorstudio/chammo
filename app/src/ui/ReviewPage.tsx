@@ -1,7 +1,8 @@
 // 사이드바 '리뷰' — 왼쪽 PR 목록, 오른쪽 한 건(요약 3줄·걸린 조건·파일 묶음·CI·diff 접기·머지/수정 요청/나중에).
 // 오늘 머지된 건 되돌리기(revert PR 만들기만). 시안 docs/design-drafts/review-merge A안
 // 리뷰 칸이 받은 폭이 모자라면(채팅 패널을 연 채팅 뷰) 목록·상세를 한 칸씩 — 상세 왼쪽 위 뒤로 아이콘으로 목록에
-import { IconBack, IconChevron, IconRefresh } from './Icons';
+import { IconBack, IconChevron, IconOpen, IconRefresh, IconSend } from './Icons';
+import { IconButton } from './kit/IconButton';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { openTarget, prDiff } from '../data/tauri';
 import { ciState, FILE_KIND_LABEL, GATE_LABEL, groupFiles, reviewPanes, splitPath, type CiState, type OpenPr } from '../domain/review';
@@ -219,13 +220,13 @@ function OpenDetail({ pr, data, now, session, named, onOpenSession }: { pr: Revi
         </button>
         <button className="btn ghost" onClick={() => { data.postpone(pr); setMsg(tr('나중에 — 새 커밋이 오면 다시 올라와', 'Later — it comes back when there is a new commit')); }}>{tr('나중에', 'Later')}</button>
         <span className="grow" />
-        <button className="linkish" onClick={() => void openTarget('url', pr.url)}>{tr('GitHub에서 열기', 'Open on GitHub')}</button>
+        <IconButton label={tr('GitHub에서 열기', 'Open on GitHub')} onClick={() => void openTarget('url', pr.url)}><IconOpen /></IconButton>
       </div>
       {asking && session && (
         <div className="rv-ask">
           <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={tr(`${session.name || session.project} 에 보낼 말 — 앞에 "${pr.folder} #${pr.number} 수정 요청:" 이 붙는다`, `Message to ${session.name || session.project} — prefixed with "${pr.folder} #${pr.number} change request:"`)} />
           <div className="rv-actions">
-            <button className="btn pri" disabled={!text.trim() || doing || !!blocked} onClick={() => void act(tr('보내기', 'Send'), () => data.requestFix(pr, session.id, session.name || session.project, text.trim())).then(() => { setText(''); setAsking(false); })}>{tr('보내기', 'Send')}</button>
+            <IconButton size="l" tone="pri" label={tr('보내기', 'Send')} title={tr('보내기 — 수정 요청을 그 세션에', 'Send the change request to that session')} disabled={!text.trim() || doing || !!blocked} onClick={() => void act(tr('보내기', 'Send'), () => data.requestFix(pr, session.id, session.name || session.project, text.trim())).then(() => { setText(''); setAsking(false); })}><IconSend /></IconButton>
             <span className="dim">{blocked ?? tr('보내면 작업 패널에 시킨 일로 남는다', 'Sending logs it as a task in the task panel')}</span>
           </div>
         </div>
@@ -283,7 +284,7 @@ function MergedDetail({ m, data }: { m: MergedPr; data: ReviewData }) {
           <button className="btn" onClick={() => { if (arm()) { setMsg(tr('revert PR 만드는 중…', 'Opening revert PR…')); data.revert(m).then((r) => setMsg(tr(`revert PR #${r.number} 만들었어 — 확인하고 머지해줘`, `Opened revert PR #${r.number} — check it and merge`)), (e: unknown) => setMsg(tr(`되돌리기 실패 — ${String(e)}`, `Revert failed — ${String(e)}`))); } }}>{armed ? tr('한 번 더 누르면 revert PR 만들기', 'Click again to open a revert PR') : tr('되돌리기', 'Revert')}</button>
         )}
         <span className="grow" />
-        <button className="linkish" onClick={() => void openTarget('url', m.url)}>{tr('GitHub에서 열기', 'Open on GitHub')}</button>
+        <IconButton label={tr('GitHub에서 열기', 'Open on GitHub')} onClick={() => void openTarget('url', m.url)}><IconOpen /></IconButton>
       </div>
       {msg && <div className="rv-msg">{msg}</div>}
     </div>

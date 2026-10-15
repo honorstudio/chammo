@@ -4,7 +4,8 @@
 import type { DashFile } from './dashboard';
 import type { ShowAt } from './showAt';
 import { HOME_PICK } from './orchHome';
-import { OFFICE, sheetOpen, showPick } from './spaceOffice';
+import { openTab, type LkHold } from './lockerTabs';
+import { OFFICE } from './spaceOffice';
 
 /** 탭(참모)마다 기억하는 스페이스 화면 — SpaceView screens 와 같은 모양 */
 export type SavedScreen = { pick: string; modal: DashFile | null; focus?: { path: string; at: ShowAt; key: string } | null; scroll?: number; sheet?: string[] };
@@ -17,14 +18,30 @@ export function showPlace(owner: string | null, viewing: string | undefined, cha
   return owner === chat ? 'chat' : 'queue';
 }
 
-/** 다른 참모 탭에 넣어 둘 화면 — 그 탭으로 가면 지금 화면에 띄우는 것과 똑같이 보이게(사무실이면 사무실 위 창·미리보기) */
-export function queueShow(saved: SavedScreen | undefined, home: string, f: DashFile, md: boolean): SavedScreen {
+/** 한 번에 읽은 띄운 파일 여럿(show 기록은 3초마다 읽는다) — 다른 참모 것은 하나하나 그 탭에(queue), 지금 화면에 띄울 건 마지막 하나(here).
+ *  마지막 줄만 보니 두 참모가 같이 띄우면 앞 참모 문서가 그 탭에 안 들어갔다(2026-10-11) */
+export function showBatch<T extends { by: string }>(fresh: T[], ownerOf: (by: string) => string | null, viewing: string | undefined, chat?: string): { queue: { owner: string; show: T }[]; here: { show: T; place: 'here' | 'chat'; owner: string | null } | null } {
+  const queue: { owner: string; show: T }[] = [];
+  let here: { show: T; place: 'here' | 'chat'; owner: string | null } | null = null;
+  for (const show of fresh) {
+    const owner = ownerOf(show.by);
+    const place = showPlace(owner, viewing, chat);
+    if (place === 'queue' && owner) queue.push({ owner, show });
+    else here = { show, place: place === 'chat' ? 'chat' : 'here', owner };
+  }
+  return { queue, here };
+}
+
+/** 다른 참모가 띄운 파일 — 그 참모 탭 줄 끝에 새 탭으로 넣어 두고 그 탭을 연 화면으로(그 참모로 가면 그 탭이 떠 있다).
+ *  지금 화면에 띄울 때(SpaceView present)·시안 검토(queueReview)와 같은 규칙. 예전엔 md 가 아니면 미리보기 모달로 넣어 둬서, 그 참모로 가는 순간
+ *  PDF 가 창 전체를 덮었다(2026-10-15 사용자). 모달은 사람이 '크게 보기'로 직접 고를 때만 — 그 참모 화면에 열어 둔 미리보기는 그대로 둔다 */
+export function queueShow(saved: SavedScreen | undefined, hold: LkHold | null, owner: string, home: string, f: DashFile): { screen: SavedScreen; hold: LkHold } {
   const base: SavedScreen = saved ?? { pick: home, modal: null, sheet: [] };
-  const r = showPick(base.pick, f.path, md);
-  if (!md) return { ...base, modal: f };
   const focus = f.at ? { path: f.path, at: f.at, key: f.ts } : undefined; // 앞서 넣어 둔 짚을 곳은 지운다
-  if (r.sheet) return { ...base, sheet: sheetOpen(base.sheet ?? [], r.sheet), focus };
-  return { ...base, pick: r.pick, modal: null, sheet: base.sheet ?? [], focus, scroll: undefined }; // 새 문서는 맨 위부터
+  return {
+    screen: { ...base, pick: `d:${f.path}`, modal: base.modal?.path === f.path ? null : base.modal, sheet: base.sheet ?? [], focus, scroll: undefined }, // 새 문서는 맨 위부터
+    hold: openTab(hold, owner, base.pick, f.path),
+  };
 }
 
 /** 화면 키의 종류만 — 기록에 경로·세션 번호가 남지 않게 */
@@ -47,4 +64,22 @@ export function traceLine(t: { ts: string; why: string; from: string; to: string
     ...(t.viewFrom !== t.viewTo ? { view: true } : {}),
     ...(t.viewTo && t.chat && t.viewTo !== t.chat ? { off: true } : {}),
   });
+}
+
+/** 문서 스크롤 자리 열쇠 — 참모 탭 + 화면(pick). 탭마다 하나만 기억하면 같은 탭에서 다른 문서를 띄웠다 ⌘[ 로 돌아올 때 맨 위였다(2026-10-11) */
+export const scrollKey = (view: string | undefined, pick: string) => `${view ?? ''}\n${pick}`;
+const SCROLL_KEEP = 200;
+/** 떠날 때 스크롤 자리를 재는 칸 — 문서, 보관함(기록 목록·폴더, 카드·목록 보기 같은 칸), 홈 모드 칸, 세션 탭 옆칸(할 일·최근 결정). 2026-10-12 사용자: 보관함은 안 재서 맨 위로 */
+export const SCROLL_PANES = ['.cv-doc-scroll', '.lk-page-wrap', '.hm-modes', '.sp-side'];
+/** 화면에 돌아왔을 때 맞출 자리 — 적어 둔 게 있으면 그 자리. 없으면: 칸을 다시 쓰는 화면(보관함 — 폴더를 바꿔도 같은 칸이라 앞 폴더 자리가 남았다)은 맨 위,
+ *  새로 그리는 화면은 null(손대지 않음 — 문서 '짚어 띄우기' 줄 맞춤을 덮지 않게) */
+export function restoreTop(saved: number | undefined, reused: boolean): number | null {
+  if (saved && saved > 0) return saved;
+  return reused ? 0 : null;
+}
+/** 떠나는 화면의 스크롤 자리를 적는다 — 0 이면 지우고, 오래된 것부터 SCROLL_KEEP 개만 */
+export function keepScroll(m: Map<string, number>, key: string, top: number): void {
+  m.delete(key);
+  if (top > 0) m.set(key, top);
+  while (m.size > SCROLL_KEEP) m.delete(m.keys().next().value!);
 }

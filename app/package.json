@@ -1,7 +1,7 @@
 {
   "name": "honor-orchestrator",
   "private": true,
-  "version": "0.2.7",
+  "version": "0.3.0",
   "license": "AGPL-3.0-only",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
@@ -19,6 +19,9 @@
     "@blocknote/mantine": "0.51.4",
     "@blocknote/react": "0.51.4",
     "@tauri-apps/api": "2",
+    "@univerjs/preset-sheets-conditional-formatting": "1.0.3",
+    "@univerjs/preset-sheets-core": "1.0.3",
+    "@univerjs/presets": "1.0.3",
     "@xterm/addon-fit": "0.11",
     "@xterm/addon-webgl": "0.19",
     "@xterm/xterm": "6",

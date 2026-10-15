@@ -2,14 +2,17 @@
 // 검토 시안(design·flow-curation 껍데기)이면 블록을 눌러 쓴다·애매·뺀다를 고르고, 표시는 맥 curation/ 에 바로 적히며, 위 보내기로 참모에게.
 // (전략 표 6번, 2026-10-03 사용자 "큐레이션 폰에서 누르기 예 + curation/ 에 남김")
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { curationSave, curationState, htmlTicket, sendTextToSession } from '../../data/web';
-import { emptyStore } from '../../domain/curation';
+import { curationSave, curationState, htmlTicket } from '../../data/web';
+import { canCurSend, curSendState, emptyStore, readCurSent, writeCurSent, type CurSend } from '../../domain/curation';
+import { sendOut, storage } from './outbox';
 import { draftFit, pinchZoom } from '../../domain/htmlFit';
 import { sendPreview } from '../../domain/sendPreview';
 import { IconClose, IconSend } from '../Icons';
 import { HTML_SANDBOX } from './htmlFrame';
 import { fileError } from '../../domain/phoneFile';
 import { machine } from '../../i18n';
+import { ShareButton } from './ShareButton';
+import { BottomSheet } from './kit';
 
 type Cur = { title: string; total: number; done: number; text: string };
 const why = (): Record<string, string> => ({ 'secret inside': `시안 속에 키가 보여서 폰엔 안 보여 줘요 — ${machine()}에서 열어 주세요`, 'not allowed': '폰에서 열 수 없는 시안이에요', 'file too large': `시안이 10MB 를 넘어 폰에선 못 열어요 — ${machine()}에서` });
@@ -24,9 +27,15 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
   const [cur, setCur] = useState<Cur | null>(null);
   const [z, setZ] = useState(1);
   const [live, setLive] = useState(1);
-  const [sent, setSent] = useState<'idle' | 'sending' | 'sent' | 'fail'>('idle');
+  // 보내기 — 보낼 함으로(채팅에 말풍선이 바로 뜬다). 보내면 '보냈어요' 뒤 창을 닫고, 같은 결과는 다시 안 보낸다(2026-10-11 두 번 들어감)
+  const [phase, setPhase] = useState<CurSend>('idle');
+  const [sentText, setSentText] = useState<string | null>(() => readCurSent(storage(), path));
+  const [failId, setFailId] = useState<string | undefined>();
+  const busy = useRef(false);
   // 시안이 보내자고 한 글 — 사람이 미리보기를 보고 눌러야 보낸다(시안 안 글이 참모에게 바로 가면 프롬프트 주입 길)
   const [ask, setAsk] = useState<string | null>(null);
+  // 블록 메모 — 시안 안 작은 칸 대신 아래 시트(폰 서버가 넣는 다리가 cur-note 로 넘긴다, 2026-10-11 폰에서 거의 못 씀)
+  const [note, setNote] = useState<{ k: string; text: string } | null>(null);
 
   useEffect(() => {
     htmlTicket(path).then((r) => setUrl(r.url), (e: unknown) => { const m = (e as Error).message; setErr(fileError(m, why())); });
@@ -40,9 +49,18 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
   }, []);
 
   const send = async (text: string) => {
-    if (!orch) return false;
-    setSent('sending');
-    try { await sendTextToSession(orch, text, `${Date.now()}-cur`); setSent('sent'); return true; } catch { setSent('fail'); return false; }
+    if (!orch || busy.current || !canCurSend(curSendState(phase, sentText, text))) return false;
+    busy.current = true;
+    setPhase('sending');
+    const r = await sendOut(orch, text, phase === 'fail' ? failId : undefined);
+    busy.current = false;
+    if (!r.ok) { setFailId(r.id); setPhase('fail'); return false; }
+    writeCurSent(storage(), path, text);
+    setSentText(text);
+    setFailId(undefined);
+    setPhase('idle');
+    window.setTimeout(onClose, 700); // '보냈어요'를 잠깐 보이고 닫는다 — 채팅에 보낸 말풍선이 있다
+    return true;
   };
   const post = (m: Record<string, unknown>) => frame.current?.contentWindow?.postMessage(m, '*');
 
@@ -73,7 +91,6 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
         const c = { title: d.title ?? '', total: d.total ?? 0, done: typeof d.done === 'number' ? d.done : 0, text: d.text };
         curRef.current = c;
         setCur(c);
-        setSent((x) => (x === 'sent' ? 'idle' : x));
         // 처음 알림이 비었으면 맥에 적어 둔 표시를 되돌린다(시안 저장소는 이 페이지 동안만) — 확인 전엔 안 적는다
         if (!checked) {
           checked = true;
@@ -90,6 +107,8 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
       }
       // 껍데기 안 '참모에게 보내기' — 바로 안 보내고 폰 화면에서 묻는다. 답(curation-sent)은 사람이 고른 뒤에
       if (d.hodoc === 'curation' && typeof d.text === 'string' && orch) setAsk(d.text);
+      const n = e.data as { hodoc?: string; k?: unknown; text?: unknown };
+      if (n.hodoc === 'cur-note' && typeof n.k === 'string' && n.k) setNote({ k: n.k, text: typeof n.text === 'string' ? n.text : '' });
     };
     window.addEventListener('message', on);
     const ping = window.setTimeout(() => post({ hodoc: 'cur-cmd', cmd: 'ping' }), 900);
@@ -103,16 +122,24 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
   const fw = cur || !size ? undefined : size.w;
   const fh = cur || !size ? undefined : size.h;
   return (
-    <div className="m-view m-html" role="dialog" aria-label={title}>
+    <BottomSheet kind="full" className="m-html" label={title} onClose={onClose} head={
       <div className="m-picker-head">
         <b className="m-view-title">{cur?.title || title}</b>
         {cur && <span className="m-pdf-no">{cur.done} / {cur.total}</span>}
-        {cur && orch && (
-          <button type="button" className={`m-rt-btn m-ico m-cur-send ${sent}`} disabled={sent === 'sending'} onClick={() => void send(cur.text)}
-            aria-label={sent === 'sent' ? '참모에게 보냈어요' : '검토 결과 참모에게 보내기'} title={sent === 'sent' ? '보냈어요' : sent === 'fail' ? '못 보냄 — 다시 누르기' : '참모에게 보내기'}><IconSend /></button>
-        )}
+        {cur && orch && (() => {
+          const st = curSendState(phase, sentText, cur.text);
+          const say = { idle: '', sending: '보내는 중…', sent: '보냈어요', fail: '못 보냈어요' }[st];
+          return (
+            <>
+              {say && <span className={`m-cur-st ${st}`} role="status">{say}</span>}
+              <button type="button" className={`m-rt-btn m-ico m-cur-send ${st}`} disabled={!canCurSend(st)} onClick={() => void send(cur.text)}
+                aria-label={st === 'sent' ? '참모에게 보냈어요' : st === 'fail' ? '다시 보내기' : '검토 결과 참모에게 보내기'} title={st === 'sent' ? '이 결과는 보냈어요' : st === 'fail' ? '못 보냄 — 다시 누르기' : '참모에게 보내기'}><IconSend /></button>
+            </>
+          );
+        })()}
+        <ShareButton path={path} />
         <button type="button" className="m-rt-btn m-ico" onClick={onClose} aria-label="닫기" title="닫기"><IconClose /></button>
-      </div>
+      </div>}>
       {ask !== null && (() => {
         const p = sendPreview(ask);
         const answer = (go: boolean) => {
@@ -131,6 +158,16 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
           </div>
         );
       })()}
+      {/* 블록 메모 — 공용 아래 시트(키보드가 뜨면 시트가 키보드 위에 붙는다) */}
+      {note && (
+        <BottomSheet label={`${note.k} 메모`} title={note.k} titleClass="m-view-title" onClose={() => setNote(null)}>
+          <form className="m-note-form" onSubmit={(e) => { e.preventDefault(); post({ hodoc: 'cur-cmd', cmd: 'note', k: note.k, text: note.text }); setNote(null); }}>
+            <textarea className="m-note-ta" autoFocus value={note.text} placeholder="왜 그렇게 생각하는지 / 어떻게 바꿨으면 하는지"
+              onChange={(e) => setNote({ k: note.k, text: e.target.value })} />
+            <div className="m-new-row"><button type="submit" className="m-send">저장</button></div>
+          </form>
+        </BottomSheet>
+      )}
       <div className={cur ? 'm-html-body m-html-cur' : 'm-html-body'} ref={wrap}>
         {err && <p className={`${err.gone ? 'm-muted' : 'm-error'} m-pad`}>{err.text}</p>}
         {!url && !err && <p className="m-muted m-pad">여는 중…</p>}
@@ -141,6 +178,6 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
           </div>
         )}
       </div>
-    </div>
+    </BottomSheet>
   );
 }

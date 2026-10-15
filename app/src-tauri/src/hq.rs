@@ -21,6 +21,8 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "scripts/task", body: include_str!("../../hq-template/scripts/task"), exec: true },
     TemplateFile { path: "scripts/say", body: include_str!("../../hq-template/scripts/say"), exec: true },
     TemplateFile { path: "scripts/show", body: include_str!("../../hq-template/scripts/show"), exec: true },
+    // 엑셀 칸 읽기·쓰기 — 앱(app.jsonl)을 거친다. 스페이스에 열려 있으면 칸마다 보여 주며 넣는다
+    TemplateFile { path: "scripts/sheet", body: include_str!("../../hq-template/scripts/sheet"), exec: true },
     TemplateFile { path: "scripts/direct", body: include_str!("../../hq-template/scripts/direct"), exec: true },
     TemplateFile { path: "scripts/app", body: include_str!("../../hq-template/scripts/app"), exec: true },
     TemplateFile { path: "scripts/voice-hint", body: include_str!("../../hq-template/scripts/voice-hint"), exec: true },
@@ -30,6 +32,7 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "scripts/routine", body: include_str!("../../hq-template/scripts/routine"), exec: true },
     TemplateFile { path: "scripts/choice", body: include_str!("../../hq-template/scripts/choice"), exec: true },
     TemplateFile { path: "scripts/skill-hint", body: include_str!("../../hq-template/scripts/skill-hint"), exec: true },
+    TemplateFile { path: "scripts/locker", body: include_str!("../../hq-template/scripts/locker"), exec: true },
     // scripts/task 가 import 하는 모듈(교훈 → 프로젝트 스킬) — 직접 실행하지 않는다
     TemplateFile { path: "scripts/lesson_skill.py", body: include_str!("../../hq-template/scripts/lesson_skill.py"), exec: false },
     TemplateFile { path: ".claude/skills/hq-browser/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-browser/SKILL.md"), exec: false },
@@ -37,6 +40,9 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: ".claude/skills/hq-routine/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-routine/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-app/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-app/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-login/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-login/SKILL.md"), exec: false },
+    TemplateFile { path: ".claude/skills/hq-mode-kit/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/SKILL.md"), exec: false },
+    TemplateFile { path: ".claude/skills/hq-mode-kit/kit.tsx", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/kit.tsx"), exec: false },
+    TemplateFile { path: ".claude/skills/hq-mode-kit/kit-svg.ts", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/kit-svg.ts"), exec: false },
 ];
 
 #[derive(Serialize, Debug, Default, PartialEq)]

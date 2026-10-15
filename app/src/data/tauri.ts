@@ -4,6 +4,7 @@ import type { Features } from '../domain/config';
 import type { AccountsView } from '../domain/accounts';
 import type { PreviewPhase } from '../domain/voiceDial';
 import type { SayNow } from '../domain/speakGlow';
+import type { TaskLogChunk } from '../domain/taskTail';
 import type { ApiGot } from '../domain/accountAuto';
 import type { DeviceRow } from '../domain/mobileDevices';
 import type { MessengerView } from '../domain/messenger';
@@ -94,7 +95,8 @@ export const sessionOrigins = (pids: number[]) => invoke<Record<string, { unatte
 export const ttsWarm = (command: string) => invoke<void>('tts_warm', { command });
 
 /** `claude agents --json` 원문. 파싱은 domain/session.ts 의 parseAgents */
-export const listSessionsRaw = () => invoke<string>('list_sessions');
+/** fresh = 같이 쓰는 2.5초 목록을 버리고 새로(자동 허용이 누른 뒤 풀렸나 볼 때) */
+export const listSessionsRaw = (fresh?: boolean) => invoke<string>('list_sessions', { fresh: fresh ?? null });
 
 export const spawnSession = (cwd: string, name: string, prompt: string) =>
   invoke<string>('spawn_session', { cwd, name, prompt });
@@ -156,8 +158,8 @@ export const stopSession = (id: string, why: string) => invoke<string>('stop_ses
 /** 세션을 끄고 목록에서도 지운다(claude stop + rm). 대화 기록 파일은 남는다 */
 export const removeSession = (id: string, why: string) => invoke<string>('remove_session', { id, why });
 
-/** 참모 작업 기록(tasks.jsonl) 원문 */
-export const readTasks = () => invoke<string>('read_tasks');
+/** 참모 작업 기록(tasks.jsonl) 이어 읽기 — from·id = 지난번 next·id(처음은 없음 = 통째). 이어 붙이기는 domain/taskTail makeTaskLog */
+export const readTasksSince = (from: number | undefined, id: string | undefined) => invoke<TaskLogChunk>('read_tasks_since', { from, id });
 
 /** 세션 대화 기록 꼬리 — { sessionId: 원문 } */
 /** 참모 대화 기록에서 세션 띄움·말 건 줄만, from 바이트 뒤로(처음은 0 = 전체) */

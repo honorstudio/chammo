@@ -589,7 +589,7 @@ fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
     }
     let port = port();
     // 먼저 묶는다 — 포트를 못 잡으면 serve 도 걸지 않는다. 문지기는 https 이름까지 받아 두고, serve 를 못 걸면 그 이름으로 올 길이 없을 뿐
-    let gate = Gate { devices: devices(), hosts: hosts(&t, port, true), origins: origins(&t, port, true), stops: Default::default(), sends: Default::default(), tickets: Default::default() };
+    let gate = Gate { devices: devices(), hosts: hosts(&t, port, true), origins: origins(&t, port, true), stops: Default::default(), sends: Arc::new(crate::mobile_sends::Sends::load(crate::config::data_dir().join("mobile-sends.json"))), tickets: Default::default() };
     let be: Arc<dyn Backend> = Arc::new(MacBackend { app: app.clone() });
     let sock = t.socket.clone();
     let peers = Arc::new(Peers::new(allowed_peers(&t.ip, &t.peers), move || tailscale_status(&sock).map(|st| allowed_peers(&st.ip, &st.peers))));
@@ -830,9 +830,8 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         })
     }
     fn sessions(&self) -> Result<String, String> {
-        // claude agents 가 멈추면 10초 뒤 죽인다(앱의 list_sessions 는 시간 제한이 없다)
-        let out = crate::platform::run_capped(crate::platform::command(crate::claude::claude_bin()).args(["agents", "--json"]), Duration::from_secs(10)).map_err(|e| e.to_string())?;
-        if out.status.success() { Ok(String::from_utf8_lossy(&out.stdout).into_owned()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_string()) }
+        // 데스크톱·메신저와 같은 목록을 같이 쓴다(2.5초 안이면 그 결과, claude agents 가 멈추면 10초 뒤 죽인다)
+        crate::claude::agents_json()
     }
     fn sessions_all(&self) -> Result<String, String> {
         let out = crate::platform::run_capped(crate::platform::command(crate::claude::claude_bin()).args(["agents", "--json", "--all"]), Duration::from_secs(10)).map_err(|e| e.to_string())?;
@@ -918,6 +917,17 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     fn diag(&self, line: &str) {
         crate::claude::log_out("phone-diag", line);
     }
+    fn layout_log(&self, line: &str) {
+        let dir = self.data_dir();
+        if !dir.is_absolute() {
+            return;
+        }
+        let path = dir.join("phone-layout.jsonl");
+        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+        let row = serde_json::json!({ "ts": ts, "line": line }).to_string();
+        let old = std::fs::read_to_string(&path).unwrap_or_default();
+        let _ = std::fs::write(&path, crate::mobile_http::capped_append(&old, &row, crate::mobile_http::PHONE_LAYOUT_CAP));
+    }
     fn open_on_mac(&self, path: &str) -> Result<(), String> {
         let o = crate::platform::command("/usr/bin/open").arg(path).output().map_err(|e| e.to_string())?;
         if o.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&o.stderr).trim().to_string()) }
@@ -951,6 +961,30 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         self.accounts_changed();
         r.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
     }
+    fn voice_on(&self) -> bool {
+        std::fs::read_to_string(self.data_dir().join("voice.json")).is_ok_and(|t| t.contains("\"on\":true"))
+    }
+    fn set_voice(&self, on: bool) -> Result<(), String> {
+        use tauri::Manager;
+        // 앱 음성 모드 스위치와 같은 길 — 앱이 상태를 바꾸고 voice.json 을 쓴다(꺼 둔 음성 기능도 켠다, appctl intentOf voice)
+        let w = self.app.get_webview_window("main").ok_or("앱 창이 없어요")?;
+        let line = serde_json::json!({ "action": "voice", "arg": if on { "on" } else { "off" } });
+        w.eval(format!("window.__appctl && window.__appctl({line})")).map_err(|e| e.to_string())
+    }
+    fn voice_beat(&self, b: crate::phone_voice::Beat) -> serde_json::Value {
+        crate::phone_voice::reply_json(&crate::phone_voice::beat(b))
+    }
+    fn voice_audio(&self, id: u64) -> Option<Vec<u8>> {
+        // 내놓은 소리(그 id)만 — 폰이 경로를 정하지 못한다
+        std::fs::read(crate::phone_voice::audio_path(id)?).ok()
+    }
+    fn pick_model(&self, id: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+        use tauri::Manager;
+        // 데스크톱 모델 칩과 같은 길 — 앱이 그 세션 창에 runModelPick(/model·/effort 치고 settings.json 기본값 되돌림)
+        let w = self.app.get_webview_window("main").ok_or("앱 창이 없어요")?;
+        let line = serde_json::json!({ "action": "model-pick", "arg": { "id": id, "model": model, "effort": effort } });
+        w.eval(format!("window.__appctl && window.__appctl({line})")).map_err(|e| e.to_string())
+    }
     fn login_view(&self) -> serde_json::Value {
         crate::login::phone_view(&self.data_dir())
     }
@@ -977,6 +1011,37 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     }
     fn show_log(&self) -> String {
         crate::reader::read_show_log()
+    }
+    fn locker_root(&self) -> Option<PathBuf> {
+        Some(crate::locker_fs::app_ctx().root)
+    }
+    fn locker_add(&self, owner: &str, path: &str) -> Result<String, String> {
+        let a = crate::locker_fs::app_ctx();
+        crate::locker_fs::add_for_name(&a.ctx(), owner, Path::new(path)).map(|x| x.path.to_string_lossy().into_owned())
+    }
+    fn modes(&self) -> serde_json::Value {
+        crate::modes_host::phone_rows()
+    }
+    fn mode_view(&self, name: &str, columns: u32, rows: u32) -> Result<serde_json::Value, String> {
+        crate::modes_host::phone_view(&self.app, name, columns, rows)
+    }
+    fn mode_act(&self, name: &str, act: &serde_json::Value) -> Result<serde_json::Value, String> {
+        crate::modes_host::phone_act(name, act)
+    }
+    fn mode_open(&self, name: &str, dash: &str) -> Result<(), String> {
+        crate::modes_host::phone_open(&self.app, name, dash)
+    }
+    fn mode_close(&self, name: &str, dash: &str) -> Result<(), String> {
+        crate::modes_host::phone_close(&self.app, name, dash)
+    }
+    fn mode_card(&self, name: &str) -> serde_json::Value {
+        crate::modes_host::card(name)
+    }
+    fn mode_remove(&self, name: &str) -> Result<serde_json::Value, String> {
+        crate::modes_host::remove(&self.app, name, false).map(|r| serde_json::to_value(r).unwrap_or_default())
+    }
+    fn mode_restore(&self, name: &str) -> Result<(), String> {
+        crate::modes_host::restore(&self.app, name).map(|_| ())
     }
     fn data_dir(&self) -> PathBuf {
         crate::config::data_dir().to_path_buf()

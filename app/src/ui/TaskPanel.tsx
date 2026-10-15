@@ -1,21 +1,18 @@
 import type { Activity } from '../domain/activity';
 import type { Session } from '../domain/session';
-import type { ActivityStatus } from '../domain/status';
+import { statusWord, type ActivityStatus } from '../domain/status';
 import { splitCards, taskTags, type TaskCard } from '../domain/tasks';
 import { useRef, useState, type ReactNode } from 'react';
 import { assistant, tr } from '../i18n';
+import { IconChevronDown, IconChevronUp } from './Icons';
+import { Badge } from './kit/Badge';
 
 export type SessionActivity = { session: Session; activity: Activity; status: ActivityStatus };
 
-// label 은 화면 글자(언어 따라), cls 는 CSS 클래스(번역 안 함)
-const STATE: Record<ActivityStatus, { readonly label: string; cls: string }> = {
-  asks: { get label() { return tr('답 필요', 'Needs reply'); }, cls: 'needsInput' },
-  blocked: { get label() { return tr('확인창', 'Prompt'); }, cls: 'needsInput' },
-  login: { get label() { return tr('로그인 필요', 'Sign-in needed'); }, cls: 'needsInput' },
-  working: { get label() { return tr('작업 중', 'Working'); }, cls: 'working' },
-  done: { get label() { return tr('끝남', 'Done'); }, cls: 'replied' },
-  idle: { get label() { return tr('대기', 'Idle'); }, cls: 'done' },
-  stale: { get label() { return tr('쉼', 'Resting'); }, cls: 'done' },
+// 점 모양(CSS 클래스) — 말은 statusWord 한 표(사이드바·대시보드·사무실과 같은 말, 2026-10-11)
+const DOT: Record<ActivityStatus, string> = {
+  asks: 'needsInput', blocked: 'needsInput', login: 'needsInput', working: 'working',
+  bgwait: 'done', unknown: 'done', done: 'replied', idle: 'done', stale: 'done',
 };
 
 
@@ -25,12 +22,12 @@ export function Sec({ title, count, open, onToggle, tone }: { title: string; cou
   const body = (
     <>
       <span>{title}</span>
-      <span className="tp-count">{count}</span>
-      {onToggle && <span className="tp-fold">{open ? tr('접기', 'Hide') : tr('펼치기', 'Show')}</span>}
+      <Badge n={count} zero className="tp-count" />
+      {onToggle && <span className="tp-fold" aria-hidden>{open ? <IconChevronUp /> : <IconChevronDown />}</span>}
     </>
   );
   return onToggle ? (
-    <button className={`tasks-sec fold ${tone ?? ''}`} onClick={onToggle}>{body}</button>
+    <button className={`tasks-sec fold ${tone ?? ''}`} onClick={onToggle} aria-expanded={!!open} title={open ? tr('접기', 'Hide') : tr('펼치기', 'Show')}>{body}</button>
   ) : (
     <div className={`tasks-sec ${tone ?? ''}`}>{body}</div>
   );
@@ -65,12 +62,13 @@ const hm = (iso: string) => {
  * 왼쪽 가장자리를 끌어 폭 조절 (220~560). 끄는 동안 포인터를 손잡이에 붙잡아 둔다(pointer capture) —
  * 왼쪽으로 끌면 터미널 위를 지나가는데, 터미널(xterm)이 마우스 이동을 가로채서 창 전체 리스너로는 못 받았다
  */
-export function Grip({ width, onWidth, min = 220, max = 560 }: { width: number; onWidth: (w: number) => void; min?: number; max?: number }) {
+/** side = 손잡이가 붙는 쪽 — left(기본, 오른쪽 칸의 왼쪽 가장자리: 왼쪽으로 끌면 넓어짐)·right(왼쪽 칸의 오른쪽 가장자리: 오른쪽으로 끌면 넓어짐) */
+export function Grip({ width, onWidth, min = 220, max = 560, side = 'left' }: { width: number; onWidth: (w: number) => void; min?: number; max?: number; side?: 'left' | 'right' }) {
   // 폭이 바뀔 때마다 다시 그려지니 끄는 상태는 ref 에 (일반 변수면 한 칸 움직이고 멈춘다)
   const drag = useRef({ x0: 0, w0: 0, on: false }).current;
   return (
     <div
-      className="tasks-grip"
+      className={`tasks-grip ${side === 'right' ? 'right' : ''}`}
       title={tr('끌어서 폭 조절', 'Drag to resize')}
       onPointerDown={(e) => {
         e.preventDefault();
@@ -79,7 +77,7 @@ export function Grip({ width, onWidth, min = 220, max = 560 }: { width: number; 
         document.body.classList.add('resizing');
       }}
       onPointerMove={(e) => {
-        if (drag.on) onWidth(Math.min(max, Math.max(min, drag.w0 + (drag.x0 - e.clientX))));
+        if (drag.on) onWidth(Math.min(max, Math.max(min, drag.w0 + (side === 'right' ? e.clientX - drag.x0 : drag.x0 - e.clientX))));
       }}
       onPointerUp={(e) => {
         drag.on = false;
@@ -100,9 +98,9 @@ export function TaskPanel({ width, onWidth, cards, activities, onOpen, top, bott
   const sessionRow = ({ session: s, activity: a, status }: SessionActivity) => (
     <Row
       key={s.id}
-      dot={STATE[status].cls}
+      dot={DOT[status]}
       name={s.workspace ? `${s.project} / ${s.workspace}` : s.project}
-      line={STATE[status].label}
+      line={statusWord(status)}
       sub={a.reply?.text ?? a.prompt?.text}
       when={hm(a.reply?.ts ?? a.prompt?.ts ?? '')}
       onClick={() => onOpen(s.id)}

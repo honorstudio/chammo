@@ -63,6 +63,7 @@ export type SpaceSide = 'dash' | 'pet' | 'office';
  *  두 묶음(대시보드|펫, 스페이스|사무실)이 따로 그려져 오갈 때 자리가 튀었다 — 하나로 합쳐 한 자리에(2026-10-03 사용자) */
 export function spaceView(pick: string, petFor: string | null, orchId: string): SpaceSide | null {
   if (pick === OFFICE) return 'office';
+  if (pick === `l:${orchId}#h`) return 'dash'; // 옛 대시보드 자리 = 그 참모 홈(2026-10-12 패널 하나로)
   if (pick !== `o:${orchId}`) return null;
   return petFor === orchId ? 'pet' : 'dash';
 }

@@ -11,9 +11,14 @@ const NO_FIRST = /^(\d+\.\s*)?no\b/i;
 const DOWN = '\x1b[B';
 const UP = '\x1b[A';
 
-export type AllowPick = { keys: string; option: string } | { skip: string };
+/** hold = 사람이 골라야 하는 창(민감함·허용 줄 없음) — 세션이 그 창을 벗어날 때까지 다시 안 본다. 커서를 못 찾은 건 화면이 덜 그려졌을 수 있어 hold 아님.
+ *  soon = attach 가 붙는 중 뜨는 전환 화면 — 창이 아니다, 곧 다시 본다 */
+export type AllowPick = { keys: string; option: string } | { skip: string; hold?: true; soon?: true };
 
-const SENSITIVE_SKIP = () => ({ skip: tr('민감한 창(비밀번호·인증·결제) — 직접 골라줘', 'Sensitive prompt (password, verification, payment) — choose it yourself') });
+/** attach 가 세션에 붙는 동안 잠깐 보이는 화면(Claude Code 문구) — 10-08~10 '커서 못 찾음' 35건 중 32건이 이것이었다 */
+const ATTACHING = /session is starting|waiting for session to redraw|starting background service|waking session/i;
+
+const SENSITIVE_SKIP = (): AllowPick => ({ skip: tr('민감한 창(비밀번호·인증·결제) — 직접 골라줘', 'Sensitive prompt (password, verification, payment) — choose it yourself'), hold: true });
 
 export function pickAllow(screen: string): AllowPick {
   const all = screen.split('\n');
@@ -22,6 +27,7 @@ export function pickAllow(screen: string): AllowPick {
   all.forEach((l, i) => { if (/─{4,}/.test(l)) from = i + 1; });
   const lines = all.slice(from);
   const cur = lines.findIndex((l) => /^\s*❯\s/.test(l));
+  if (cur < 0 && ATTACHING.test(screen)) return { skip: tr('세션 화면이 아직 안 떴어', 'Session screen not ready yet'), soon: true };
   if (cur < 0) return SENSITIVE.test(lines.join('\n')) ? SENSITIVE_SKIP() : { skip: tr('선택지 커서를 못 찾았어', "Couldn't find the option cursor") };
   // 선택지 = 커서 줄과 글자 시작 칸이 같은, 이어진 줄들
   const col = lines[cur]!.indexOf('❯') + 2;
@@ -47,14 +53,30 @@ export function pickAllow(screen: string): AllowPick {
   const asked = lines.slice(q >= 0 && /\?\s*(\(.*\))?\s*$/.test(lines[q]!) ? q : 0, bottom + 1);
   if (SENSITIVE.test(asked.join('\n'))) return SENSITIVE_SKIP();
   const target = options.findIndex((o) => ALLOW.test(o) && !NOT.test(o) && !NO_FIRST.test(o));
-  if (target < 0) return { skip: tr('허용 줄을 못 찾았어', "Couldn't find an allow option") };
+  if (target < 0) return { skip: tr('허용 줄을 못 찾았어', "Couldn't find an allow option"), hold: true };
   const d = target - curOpt;
   return { keys: (d > 0 ? DOWN.repeat(d) : UP.repeat(-d)) + '\r', option: options[target]! };
 }
 
-/** 같은 세션을 다시 보기까지 — 풀었으면 5초 뒤(곧 다음 창이 뜰 수 있다 — 막 풀린 창이 목록에 한 번 더 남아 있어도 헛손질 안 하게), 건너뛰었거나 못 풀었으면 1분(같은 창을 계속 두드리지 않게) */
-export type AllowOutcome = 'allowed' | 'skipped' | 'stillOpen' | 'failed';
-export const retryAfter = (o: AllowOutcome): number => (o === 'allowed' ? 5_000 : 60_000);
+/** 같은 세션을 다시 보기까지 — 풀었으면 5초 뒤(곧 다음 창이 뜰 수 있다 — 막 풀린 창이 목록에 한 번 더 남아 있어도 헛손질 안 하게), 건너뛰었거나 못 풀었으면 1분(같은 창을 계속 두드리지 않게).
+ * held(사람이 골라야 하는 창) = 세션이 그 창을 벗어나면(leftWindow) 바로 놓고, 안 벗어나면 안전망으로 10분에 한 번만 — 같은 창을 6.5시간 동안 250번 다시 봤다(2026-10-11 perf 9번) */
+export type AllowOutcome = 'allowed' | 'soon' | 'skipped' | 'held' | 'stillOpen' | 'failed';
+export const retryAfter = (o: AllowOutcome): number => (o === 'allowed' || o === 'soon' ? 5_000 : o === 'held' ? 10 * 60_000 : 60_000);
+
+/** 건너뛴 창을 어떻게 — 사람 몫(hold)은 바로 알리고, 전환 화면(soon)은 조용히 5초 뒤(30초 넘게 그대로면 알리고 보통 주기 — attach 를 끝없이 안 띄우게),
+ *  커서를 못 찾은 건 한 번은 조용히 다시 보고(덜 그려졌을 수 있다). misses = 이 세션에서 연달아 못 읽은 횟수(이번 것 빼고) */
+export const SOON_MAX = 6;
+export function skipPlan(pick: { skip: string; hold?: true; soon?: true }, misses: number): { outcome: AllowOutcome; tell: boolean } {
+  if (pick.hold) return { outcome: 'held', tell: true };
+  if (misses < (pick.soon ? SOON_MAX : 1)) return { outcome: 'soon', tell: false };
+  return { outcome: 'skipped', tell: true };
+}
+
+/** 붙잡아 둔 세션 중 그 창을 벗어난 것 — 목록에서 빠졌거나 자동 허용 대상 기다림이 아니게 됨. 다음 창은 바로 본다 */
+export function leftWindow(held: Iterable<string>, sessions: { id: string; waitingFor?: string }[], auto: string[]): string[] {
+  const waiting = new Set(sessions.filter((s) => auto.includes(s.waitingFor ?? '')).map((s) => s.id));
+  return [...held].filter((id) => !waiting.has(id));
+}
 
 export type AllowLog = { ts: string; where: string; option?: string; result: string };
 

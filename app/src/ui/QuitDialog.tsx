@@ -20,13 +20,14 @@ export function QuitDialog({ running, onQuit, onCancel }: { running: number; onQ
         <h2>{tr('세션까지 모두 끄고 종료할까요?', 'Stop all sessions and quit?')}</h2>
         <p>
           {running
-            ? tr(`Chammo 가 다루는 세션 ${running}개를 끄고 앱을 닫아요. 대화는 남아서 나중에 "꺼진 세션"에서 이어서 켤 수 있어요. 세션은 두고 앱만 닫으려면 ⌘Q.`, `Stops the ${running} sessions Chammo manages and quits. Conversations are kept — resume them later from "Stopped sessions". To close only the app and keep sessions running, use ⌘Q.`)
+            ? tr(`Chammo 가 다루는 세션 ${running}개를 끄고 앱을 닫아요. 대화는 남아서 나중에 "꺼진 세션"에서 이어서 켤 수 있어요. 세션은 두고 앱만 다시 켜려면 '앱만 종료'.`, `Stops the ${running} sessions Chammo manages and quits. Conversations are kept — resume them later from "Stopped sessions". To restart only the app and keep sessions running, choose 'Quit app only'.`)
             : tr('돌고 있는 세션이 없어요. 앱을 닫아요.', 'No sessions are running. The app will quit.')}
         </p>
         <div className="tour-nav">
           <button className="btn" disabled={!!busy} onClick={onCancel}>{tr('취소', 'Cancel')}</button>
           <span className="grow" />
-          <button className="btn pri" disabled={!!busy} onClick={() => go(true)}>{busy ? tr('끄는 중…', 'Stopping…') : running ? tr('끄고 종료', 'Stop and quit') : tr('종료', 'Quit')}</button>
+          {running > 0 && <button className="btn" disabled={!!busy} onClick={() => go(false)}>{busy === 'app' ? tr('끄는 중…', 'Quitting…') : tr('앱만 종료', 'Quit app only')}</button>}
+          <button className="btn pri" disabled={!!busy} onClick={() => go(true)}>{busy === 'all' ? tr('끄는 중…', 'Stopping…') : running ? tr('끄고 종료', 'Stop and quit') : tr('종료', 'Quit')}</button>
         </div>
       </div>
     </div>

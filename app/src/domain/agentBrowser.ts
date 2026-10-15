@@ -15,10 +15,14 @@ export type Live = { profile: string; pid: number; sessionPid: number; url: stri
   takeover?: { by: 'desktop' | 'phone'; at: number } | null;
   /** 이 크롬을 같이 쓰는 산 스크립트 수(chammo-browser launch) — 앱이 채움. 스크립트는 개입해도 못 멈춘다 */
   scripts?: number;
-  /** 크롬이 그림 밖에 자기 창(패스키·Touch ID·폰 QR)을 띄워 둠 — 앱이 1초마다 채운다(모달을 안 봐도, agent_browser watch_popups) */
+  /** 크롬이 그림 밖에 사람을 부를 자기 창(패스키·권한·기본 인증 등)을 띄워 둠 — 앱이 1초마다 채운다(모달을 안 봐도, agent_browser watch_popups).
+   *  비밀번호 저장·다운로드 같은 주소창 풍선은 안 켠다 */
   popup?: boolean;
+  /** 그 창 종류 — 패스키라고 확신할 때만 'passkey', 모르면 'window'(중립 '크롬 창') */
+  popupKind?: PopupKind;
   /** 폰 목록에만 — 화면 받기 상태(맥 일꾼이 있을 때, agent_browser phone_screen). 이유는 주소를 뺀 한 줄 */
   screen?: PhoneScreen | null };
+export type PopupKind = 'passkey' | 'window';
 export type PhoneScreen = { error: string; attached: boolean; pages: number };
 
 /** 사람이 조작해도 되나(2026-10-06 사용자) — 평소엔 보기만(view), 개입 중(mine)·세션이 부르는 중(ask)만 조작 */
@@ -188,10 +192,16 @@ export function focusFailLine(err: unknown): string {
 export const ACTIVE_MS = 30_000;
 
 /**
- * 패스키·Touch ID·폰 QR 처럼 크롬이 그림 밖에 자기 창을 띄웠을 때 모달이 할 일(2026-10-10 사용자 — 사람은 '크롬에서 보기'를 찾아가지 않는다).
+ * 패스키·Touch ID·폰 QR·권한 창처럼 크롬이 그림 밖에 자기 창을 띄웠을 때 모달이 할 일(2026-10-10 사용자 — 사람은 '크롬에서 보기'를 찾아가지 않는다).
  * 'peek' = 크롬을 작게 꺼낸다(사람이 쓰는 중일 때만 — 세션 혼자 돌다 뜬 건 알림·카드), 'unpeek' = 꺼냈던 걸 되돌린다(창이 사라졌거나 페이지가 넘어감).
  * peeked = 자동으로 꺼냈을 때의 주소(사람이 '크롬에서 보기'로 연 건 null — 저절로 안 숨긴다), failed = 이번 창에서 꺼내기 실패(다시 안 부른다)
  */
+/** 저절로 숨기기(agent_hide auto) 뒤 꺼낸 표 — 숨겼으면 지우고, 거절(크롬 자체 창이 아직 떠 있음·모름)이면 꺼낸 채 */
+export function afterUnpeek(hidden: boolean, peeked: { url: string | undefined } | null, url: string | undefined): { url: string | undefined } | null {
+  if (hidden) return null;
+  return peeked && peeked.url === url ? peeked : { url };
+}
+
 export function peekStep(x: { popup: boolean; shown: boolean; peeked: { url: string | undefined } | null; failed: boolean; active: boolean; url: string | undefined }): 'peek' | 'unpeek' | null {
   if (x.peeked) return !x.popup || x.url !== x.peeked.url ? 'unpeek' : null;
   // 주소를 모르면 기다린다 — 모른 채 꺼내면 주소가 오는 순간 '넘어갔다'로 보고 숨겼다

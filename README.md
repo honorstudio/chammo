@@ -4,7 +4,7 @@
 
 ![Chammo in 10 seconds](docs/screenshots/promo-en.gif)
 
-![Chammo: the chat on the right, a page the team wrote on the left](docs/screenshots/hero.png)
+![Chammo: your assistants in the strip on the left, the chat in the middle, the space on the right (home, locker, open files)](docs/screenshots/hero.png)
 
 Chammo (Korean *참모*, "chief of staff", said *CHAM-oh*) is a desktop app for macOS (Windows in preview) for one person running many projects at once. You chat with one Claude Code session — your chief of staff. It starts a background Claude Code session for each project, hands out the work, reads the results, merges what is safe, and comes back to you only for the calls that can't be undone. Every session is a real interactive Claude Code session you can open and type into at any moment.
 
@@ -14,7 +14,7 @@ Chammo (Korean *참모*, "chief of staff", said *CHAM-oh*) is a desktop app for 
 
 ### Ask once, and the team gets to work
 
-Tell the chief of staff what you want, by typing or by voice. It splits the request across projects, starts a session where none is running, and answers in a line or two when the work comes back. Each assistant is a tab, like in a browser — drag tabs to reorder them. In the sidebar, a session's picture carries its state: the ring is how full its context is, the dot says whether it is working or waiting on a question.
+Tell the chief of staff what you want, by typing or by voice. It splits the request across projects, starts a session where none is running, and answers in a line or two when the work comes back. The window has three parts — the strip on the left (one avatar per assistant; drag to reorder) | the chat in the middle | the space on the right. An avatar carries its state: the ring is how full its context is, the dot says whether it is working or waiting on a question.
 
 ![The chief of staff splits one request across three projects](docs/screenshots/chat.png)
 
@@ -26,15 +26,23 @@ Anything that moves money (payments, refunds, billing) waits for you before it i
 
 ### Read and review next to the chat
 
-Documents a session shows you open beside the chat: Markdown as Notion-like pages you can edit (drag blocks, `/` to insert; edits made outside the app are merged, not overwritten), plus HTML design reviews, PDF, images and video. Each assistant and project also has a dashboard of what it is working on.
+Documents a session shows you open as tabs in the space beside the chat: Markdown as Notion-like pages you can edit (drag blocks, `/` to insert; edits made outside the app are merged, not overwritten), Excel sheets you can edit cell by cell, plus HTML design reviews, PDF, images and video. Tabs zoom, and the zoom is remembered per file.
 
 ![A design review next to the chat: three headline options](docs/screenshots/space.png)
+
+### A file locker that is a real folder
+
+Each assistant has a locker, and it is a real folder: `~/Documents/Chammo/<assistant>` (Finder shows the same thing). Drop files in or let the assistant add them; link a Mac folder and its files show up in the locker while the originals stay where they are. The folder is created the first time you open the locker, and that is also when your screenshots folder (on Windows, Pictures\Screenshots if it exists) is linked as 'Screenshots', with a one-line note — macOS may ask for access to Documents and Desktop, and you can unlink at any time (the originals stay). Deleted items go to the macOS Trash, and the last delete can be undone.
+
+![An assistant's locker](docs/screenshots/locker.png)
 
 ### Make your own panels — Chammo modes (preview)
 
 A mode is a Claude Code plugin with an interface: a launch checklist, an order board, a button that runs a routine. Chammo draws it as a real panel — in its own window, on the side, in a dashboard slot, as a pop-up, or full screen. Ask the chief of staff for one (**Modes > New Mode…**) and it builds it as a project. Needs Claude Code 2.1.287 or later.
 
-![A mode in a dashboard slot](docs/screenshots/mode.png)
+Each assistant has a home: under the to-do and recent-decision strip is the modes area. The grid button at the top of the home picks which modes to turn on; Manage hides or removes them. Four samples are ready from the start — calendar, status board, to-do and team status — each with three skins. The samples are **Korean examples**: their text is in Korean, and the calendar uses Seoul time and Korean public holidays.
+
+![Picking modes on an assistant's home](docs/screenshots/home.png)
 
 ### Let sessions use a browser you can watch
 
@@ -62,7 +70,8 @@ Each session is a pixel character at a desk — typing when it edits, reading wh
 - **Projects with a harness** — new work gets its own project folder with `CLAUDE.md`, `docs/starter.md` and `docs/roadmap.md` that each session reads first and updates when it finishes.
 - **Lessons** — sessions end replies with `Lesson:` lines; they ride along with the next instructions to that project.
 - **Tools** — turn MCP servers, plugins and skills on per project or everywhere (the wrench), and see what your harness weighs (Harnitor).
-- **Korean and English** — the whole app.
+- **Animation** — Auto (follows macOS Reduce Motion and calms down on its own when the Mac is busy), Reduce or Off, in Settings.
+- **Korean and English** — the whole app (the four sample modes are Korean examples).
 
 ## Requirements
 
@@ -81,7 +90,7 @@ Everything else — Xcode Command Line Tools, Claude Code, signing in, GitHub CL
 curl -fsSL https://raw.githubusercontent.com/honorstudio/chammo/main/scripts/install.sh | bash
 ```
 
-**Windows (preview)** — run `Chammo_x.y.z_x64-setup.exe` from [Releases](https://github.com/honorstudio/chammo/releases). It installs for your user only and fetches WebView2 if needed. The installer is not code-signed yet, so SmartScreen may warn — click **More info > Run anyway**. The chief of staff's helper scripts need **Python 3** (`winget install Python.Python.3.12`). Shortcuts use Ctrl instead of ⌘ (Ctrl+Shift with letters, plain Ctrl with digits and symbols).
+**Windows (preview)** — run `Chammo_x.y.z_x64-setup.exe` from [Releases](https://github.com/honorstudio/chammo/releases). It installs for your user only and fetches WebView2 if needed. The installer is not code-signed yet, so SmartScreen may warn — click **More info > Run anyway**. The chief of staff's helper scripts need **Python 3** (`winget install Python.Python.3.12`). See the note under [Shortcuts](#shortcuts) for the Windows keys.
 
 **From source** — needs Rust (stable), Node.js 22+, pnpm and Xcode Command Line Tools.
 
@@ -96,19 +105,25 @@ The app lands in `app/src-tauri/target.noindex/release/bundle/macos/Chammo.app`.
 
 ## First run
 
-A five-step setup opens: language → check this Mac (installs what is missing) → your assistant's name, the **projects folder** (each folder inside is a project) and the **HQ folder** (where the chief of staff runs) → features to turn on → ready. Chammo does not log in to anything; it uses the `claude` login already on your Mac. Settings live under **Chammo > Settings…** (⌘,).
+A five-step setup opens: language → check this Mac (installs what is missing) → your assistant's name, the **projects folder** (each folder inside is a project) and the **HQ folder** (where the chief of staff runs) → features to turn on → ready. Chammo does not log in to anything; it uses the `claude` login already on your Mac. Settings live under **Chammo > Settings…** (⌘,). The locker folder (`~/Documents/Chammo`) is created the first time you open the locker.
 
 ## Shortcuts
 
 | Keys | What |
 |---|---|
-| ⌘1 – ⌘9 | Switch chat tabs |
-| ⌃⇧PageUp / PageDown | Move the current tab left / right |
+| ⌘1 – ⌘9 | Go to the Nth assistant (in strip order) |
+| ⌃⇧PageUp / PageDown · ⌥⌘⇧← / → | Move the selected assistant one place up / down the strip |
 | ⌘Enter | Interrupt and send now |
-| ⌘T · ⌘W | New session · stop the focused session (the conversation is kept) |
+| ⌘W · ⌘T | Close the open tab (pinned Home/Locker tabs stay) · new document in the locker |
+| ⌘⇧H · ⌘⇧L | Go to the Home · Locker tab |
+| ⌘⇧T · ⌘⇧W | New session · stop the focused session (after a confirm; the conversation is kept) |
+| ⌘+ · ⌘- · ⌘0 · ⌘9 | Open tab: zoom in · out · 100% · fit (also ⌘/Ctrl+wheel and pinch; the zoom is remembered per file). ⌘9 fits only while a tab is open — otherwise it goes to the 9th assistant |
+| ⌘[ · ⌘] | Back · forward in the space |
 | ⌘K · ⌘B · ⌘J | Project search · sidebar · task panel |
 | ⌘F | Find in document |
 | ⌘, | Settings |
+
+Windows has no ⌘, so the keys change like this: ⌘+letter → Ctrl+Shift+letter, ⌘⇧+letter (H, L, T, W) → Ctrl+Alt+letter, digits, symbols and Enter → plain Ctrl, ⌘[ ⌘] → Ctrl+Shift+[ ], ⌥⌘⇧←/→ → Ctrl+Alt+Shift+←/→. The menus show the Windows keys too.
 
 ## How it works
 
@@ -140,7 +155,7 @@ Everything lives in the data folder: `$CHAMMO_HOME`, or `~/.chammo` by default. 
 | `hqDir` | chief of staff's folder | `<data>/hq` |
 | `githubUser` | used for review and CI | from `gh api user` |
 | `ttsCommand` | command that speaks a line of text | macOS `say` |
-| `features` | `office`, `tama`, `gacha`, `review`, `voice`, `agentView` (watch session browsers in the app), `autoRevive` (bring stopped sessions back on their own), `computerUse` (let sessions control the screen) | on, except `autoRevive` and `computerUse` |
+| `features` | `office`, `tama`, `gacha`, `review`, `voice`, `agentView` (watch session browsers in the app), `autoRevive` (bring stopped sessions back on their own), `computerUse` (let sessions control the screen), `animation` (`"auto"`, `"reduce"` or `"off"`) | on, except `autoRevive` and `computerUse`; `animation` is `"auto"` |
 
 ## Privacy
 
@@ -149,6 +164,7 @@ Chammo runs entirely on your computer. It has no server, no account and no telem
 - **Version check** — the latest Claude Code version from the npm registry and the latest Chammo release from GitHub. Nothing about you is sent.
 - **Browser install** (when you press Install) — Node.js, Chrome Beta and the browser tool parts from their official sources, used only after the checksum or Google signature checks out.
 - **Account usage** (only if you saved accounts) — each account's 5-hour and weekly usage from api.anthropic.com with that account's own token, the same request as Claude Code's `/usage`.
+- **Account token refresh** (only if you use automatic account switching) — a saved account's token that is about to expire is refreshed at platform.claude.com with that account's refresh token before switching to it, the same request Claude Code makes to keep you logged in.
 - **Phone notifications** (only if you paired a phone) — a title and one line, end-to-end encrypted, through your phone's push service.
 - **Telegram** (only if you connect your own bot) — your messages to the bot, the chief of staff's replies (keys and passwords masked) and decision cards go through api.telegram.org. Payments, sends, deletions and production steps are only notified there; you answer them in the app.
 - **Harnitor fonts** — loaded from Google Fonts when you open Harnitor.
@@ -169,6 +185,6 @@ Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for
 
 [AGPL-3.0](LICENSE) © 2026 Honor Studio
 
-Third-party: the terminal's Hangul font `app/public/fonts/ChammoHangul.woff2` is a modified (Hangul-only) version of NAVER [D2Coding](https://github.com/naver/d2codingfont), renamed as the SIL Open Font License 1.1 requires — see [`app/public/fonts/OFL.txt`](app/public/fonts/OFL.txt). The optional Supertonic voice is downloaded to your Mac only when you pick it: the `supertonic` package (MIT) and the Supertone model under the [OpenRAIL-M license](https://huggingface.co/Supertone/supertonic-3) with its use restrictions. Libraries (Tauri, React, xterm.js, BlockNote, pdf.js, Playwright MCP, …) keep their own licenses (MIT / Apache-2.0 / MPL-2.0); see each package.
+Third-party: the terminal's Hangul font `app/public/fonts/ChammoHangul.woff2` is a modified (Hangul-only) version of NAVER [D2Coding](https://github.com/naver/d2codingfont), renamed as the SIL Open Font License 1.1 requires — see [`app/public/fonts/OFL.txt`](app/public/fonts/OFL.txt). The optional Supertonic voice is downloaded to your Mac only when you pick it: the `supertonic` package (MIT) and the Supertone model under the [OpenRAIL-M license](https://huggingface.co/Supertone/supertonic-3) with its use restrictions. The spreadsheet in Space uses [Univer](https://github.com/dream-num/univer) (open-source edition, Apache-2.0) — notices in [`app/public/licenses/THIRD_PARTY_NOTICES.md`](app/public/licenses/THIRD_PARTY_NOTICES.md). Libraries (Tauri, React, xterm.js, BlockNote, pdf.js, Playwright MCP, …) keep their own licenses (MIT / Apache-2.0 / MPL-2.0); see each package.
 
 Chammo is an independent project. It is not affiliated with, endorsed by, or sponsored by Anthropic. Claude and Claude Code are trademarks of Anthropic.

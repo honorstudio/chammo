@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { ctxFromAgents, foldSummary, heldIds, orchAsk, orchTasks, releaseSnap, routineOrch, rubberTop, sheetTop, closeOnRelease, dropLabel, keyboardOpen, frameAt, driftBias, ghostKeyboard, readViewport, diagLine, isTyping, liveWork, phoneBubble, usageText, waitingList, withAttachments, phoneName, offOrchRows, wokeOrch, waitAnswer, waitKey, shownWaiting, pruneWaitSent, dupAnswer, answerFail, sessionBoard, nearBottom, stickBottom, shrinkPlan, withEarlier, wantEarlier, nextAfterStop, lineSlot, orchMenu, pendingName, prunePendingNicks } from './mobile';
+import { cardTag, ctxFromAgents, heldIds, orchAsk, orchTasks, releaseSnap, routineOrch, rubberTop, sheetTop, closeOnRelease, dropLabel, keyboardOpen, frameAt, driftBias, ghostKeyboard, readViewport, diagLine, isTyping, liveWork, phoneBubble, usageText, waitingList, withAttachments, phoneName, offOrchRows, wokeOrch, waitAnswer, waitKey, shownWaiting, pruneWaitSent, dupAnswer, answerFail, sessionBoard, nearBottom, stickBottom, shrinkPlan, withEarlier, wantEarlier, nextAfterStop, lineSlot, orchMenu, pendingName, prunePendingNicks, subTag, subStatus } from './mobile';
 import type { Session } from './session';
+import { dashList } from './dashList';
 import type { ChatItem } from './chat';
 import type { TaskEvent } from './tasks';
+import type { ActivityStatus } from './status';
 
 const o = (id: string, name: string) => ({ id, name });
 
@@ -68,7 +70,19 @@ describe('그 참모가 시킨 일 — 접는 한 줄과 펼친 묶음', () => {
     expect(g.ask.map((c) => c.title)).toEqual(['글 쓰기']);
     expect(g.doing.map((c) => c.title)).toEqual(['버그 고치기']);
     expect(g.done.map((c) => c.title)).toEqual(['문서']);
-    expect(foldSummary(g)).toBe('시킨 일 3 · 물음 1 · 일함 1');
+    expect(dashList(g, [], [], ev, 'o1', (x) => x)).toMatchObject({ need: [{ kind: 'sub', name: 'blog' }], run: [{ name: 'shop' }], done: { n: 1 } });
+  });
+  it('펼쳐서 세션 판단(subStatus)을 넘기면 세션판·데스크톱과 같은 말 — 쉬지만 물어보는 세션은 물어봄 칸에 물음(2026-10-11 bug-hunt: 대기로 보였다)', () => {
+    const t1 = { ts: '2026-10-02T10:04:00Z', type: 'send', task: 't5', target: 'notes', from: 'o1', title: '노트' } as TaskEvent;
+    const ss = [...sessions, ses('s5', 'notes', 'idle')];
+    const st = (c: { target: string }) => (c.target === 'notes' ? 'asks' : c.target === 'shop' ? 'working' : c.target === 'blog' ? 'blocked' : undefined) as ActivityStatus | undefined;
+    const g = orchTasks([...ev, t1], ss, 'o1', now, st);
+    expect(g.ask.map((c) => c.title).sort()).toEqual(['글 쓰기', '노트']);
+    expect(g.doing.map((c) => c.title)).toEqual(['버그 고치기']);
+    expect(g.ask.map((c) => cardTag(c).text)).toEqual(['물음', '물음']);
+    expect(dashList(g, [], [], [...ev, t1], 'o1', (x) => x).need.map((r) => r.name).sort()).toEqual(['blog', 'notes']);
+    // 판단을 안 넘기면(접힘) 예전 그대로 — 일 기록만으로
+    expect(orchTasks([...ev, t1], ss, 'o1', now).ask.map((c) => c.title)).toEqual(['글 쓰기']);
   });
   it('맡긴 세션 id — 그 참모가 마지막으로 일을 보낸 세션', () => {
     expect(heldIds(ev, sessions, 'o1', now).sort()).toEqual(['s1', 's2', 's3']);
@@ -143,20 +157,20 @@ describe('시트 끌기 감도 — 놓을 때 어디로 붙나', () => {
   });
 });
 
-describe('phoneBubble — 폰이 보낸 말의 첨부 경로를 @img·@file 이름표로', () => {
+describe('phoneBubble — 폰이 보낸 말의 첨부 경로를 #img·#file 이름표로', () => {
   const A = '/Users/me/.honor-orchestrator/attach/1790949356271-phone.jpg';
   const B = '/Users/me/.honor-orchestrator/attach/1790949356272-phone.pdf';
   it('사용자 실기기 줄 — 경로는 빼고 썸네일로', () => {
     expect(phoneBubble(`${A} 닫힌 상태로 이미지 올릴경우 ui밀림 발생.`)).toEqual({
       body: '닫힌 상태로 이미지 올릴경우 ui밀림 발생.',
-      atts: [{ path: A, label: '@img1', image: true }],
+      atts: [{ path: A, label: '#img1', image: true }],
     });
   });
   it('그림·파일은 따로 센다, 보낸 모양(withAttachments) 그대로 되돌린다', () => {
     const C = A.replace('271-', '273-').replace('.jpg', '.png');
-    expect(phoneBubble(withAttachments('@img1 @img2 비교 @file1', [A, B, C]))).toEqual({
-      body: '@img1 @img2 비교 @file1',
-      atts: [{ path: A, label: '@img1', image: true }, { path: B, label: '@file1', image: false }, { path: C, label: '@img2', image: true }],
+    expect(phoneBubble(withAttachments('#img1 #img2 비교 #file1', [A, B, C]))).toEqual({
+      body: '#img1 #img2 비교 #file1',
+      atts: [{ path: A, label: '#img1', image: true }, { path: B, label: '#file1', image: false }, { path: C, label: '#img2', image: true }],
     });
   });
   it('첨부 폴더 이름 꼴이 아닌 경로는 글 그대로', () => {
@@ -165,15 +179,15 @@ describe('phoneBubble — 폰이 보낸 말의 첨부 경로를 @img·@file 이�
     expect(phoneBubble('/Users/me/x/attach/1-image.png 봐').atts).toEqual([]);
   });
   it('그림만 보내면 글은 빈 것', () => {
-    expect(phoneBubble(A)).toEqual({ body: '', atts: [{ path: A, label: '@img1', image: true }] });
+    expect(phoneBubble(A)).toEqual({ body: '', atts: [{ path: A, label: '#img1', image: true }] });
   });
 });
 
 describe('dropLabel — 칩을 빼면 입력칸의 이름표도', () => {
-  it('그 이름표와 뒤 공백 하나만, @img10 은 그대로', () => {
-    expect(dropLabel('@img1 @img10 이거', '@img1')).toBe('@img10 이거');
-    expect(dropLabel('봐 @img2', '@img2')).toBe('봐 ');
-    expect(dropLabel('없음', '@img3')).toBe('없음');
+  it('그 이름표와 뒤 공백 하나만, #img10 은 그대로', () => {
+    expect(dropLabel('#img1 #img10 이거', '#img1')).toBe('#img10 이거');
+    expect(dropLabel('봐 #img2', '#img2')).toBe('봐 ');
+    expect(dropLabel('없음', '#img3')).toBe('없음');
   });
 });
 
@@ -278,6 +292,10 @@ describe('frameAt fullH — 유령 키보드면 같은 폭에서 본 가장 큰 
   });
   it('레이아웃 높이가 더 크면 그대로', () => {
     expect(frameAt({ vvTop: 0, vvH: 590, layoutH: 932, scrollY: 0, kb: false, editing: false, fullH: 900 })).toEqual({ top: 0, h: 932, scroll: false });
+  });
+  it('레이아웃 높이가 키보드만큼 안 줄었으면(iOS 18 — 거짓은 vvH 뿐) 레이아웃 높이 — 웹뷰보다 큰 틀로 입력줄이 바닥 밑에 숨지 않게', () => {
+    // 2026-10-11·12 사용자 실기기 vp-ghost: 홈 화면 앱 웹뷰 innerH=clientH=812 인데 예전에 본 874 가 가장 큰 높이라 화면 틀 874(fixedH=874) — 입력줄이 바닥 밑 62
+    expect(frameAt({ vvTop: 0, vvH: 511, layoutH: 812, scrollY: 0, kb: false, editing: false, fullH: 874 })).toEqual({ top: 0, h: 812, scroll: false });
   });
 });
 
@@ -618,5 +636,29 @@ describe('결정 카드 답 — 한 번만(2026-10-06 사용자 폰에서 ㄱㄱ
     expect(answerFail('too soon')).toBe('soon');
     expect(answerFail('Failed to fetch')).toBe('retry');
     expect(answerFail('HTTP 502')).toBe('retry');
+  });
+});
+
+// 폰 세션판 칩도 데스크톱과 같은 판단(activityStatus) — 질문으로 턴을 끝낸 하위 세션이 '쉼'으로 보였다(2026-10-11)
+describe('subTag — 폰 세션판 칩', () => {
+  it('판단마다 짧은 말·색', () => {
+    expect(subTag('asks')).toEqual({ cls: 't-wait', text: '물음' });
+    expect(subTag('blocked')).toEqual({ cls: 't-wait', text: '물음' });
+    expect(subTag('login')).toEqual({ cls: 't-wait', text: '로그인' });
+    expect(subTag('working')).toEqual({ cls: 't-work', text: '일함' });
+    expect(subTag('bgwait')).toEqual({ cls: 't-done', text: '기다림' });
+    expect(subTag('done')).toEqual({ cls: 't-done', text: '답함' });
+    expect(subTag('idle')).toEqual({ cls: 't-done', text: '쉼' });
+    expect(subTag('stale')).toEqual({ cls: 't-done', text: '쉼' });
+    expect(subTag('unknown')).toEqual({ cls: 't-done', text: '모름' });
+  });
+  it('꼬리를 받은 세션은 기록으로, 못 받은 세션은 목록만으로(쉬면 모름)', () => {
+    const s = (id: string, state: 'working' | 'idle', sessionId?: string) => ({ id, name: id, cwd: '/d/' + id, kind: 'background', state, project: id, workspace: null, startedAt: 0, ...(sessionId ? { sessionId } : {}) }) as const;
+    const ask = JSON.stringify({ type: 'assistant', timestamp: '2026-10-11T00:45:46Z', message: { role: 'assistant', content: [{ type: 'text', text: '빨강이랑 파랑 중 어느 색으로 할까?' }], stop_reason: 'end_turn' } });
+    const tails = { 'sid-a': ask };
+    const now = Date.parse('2026-10-11T00:50:00Z');
+    expect(subStatus(s('a', 'idle', 'sid-a'), tails, now)).toBe('asks');
+    expect(subStatus(s('b', 'idle', 'sid-b'), tails, now)).toBe('unknown');
+    expect(subStatus(s('c', 'working'), tails, now)).toBe('working');
   });
 });

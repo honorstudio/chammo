@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { stripMarks, type ChatItem } from '../../domain/chat';
 import { nearBottom, phoneBubble, phoneName, stickBottom, wantEarlier, type PhoneAtt } from '../../domain/mobile';
 import type { OutMsg } from '../../domain/mobileOutbox';
+import { sentMentionLabel, splitTokens } from '../../domain/chatTokens';
 import type { EarlierApi } from './useEarlier';
 import { IconClose, IconRefresh } from '../Icons';
 import { mdToHtmlNewTab } from '../md';
@@ -38,14 +39,17 @@ function Thumb({ att }: { att: PhoneAtt }) {
 /** 내 말 — 폰에서 붙인 첨부 경로는 썸네일로(phoneBubble), 데스크톱에서 붙인 그림(data URL)도 같은 자리에 */
 function Mine({ text, images, pending }: { text: string; images?: string[]; pending?: boolean }) {
   const { body, atts } = phoneBubble(text);
-  const all: PhoneAtt[] = [...(images ?? []).map((src, i) => ({ path: src, label: `@img${i + 1}`, image: true })), ...atts];
+  const all: PhoneAtt[] = [...(images ?? []).map((src, i) => ({ path: src, label: `#img${i + 1}`, image: true })), ...atts];
   return (
     <div className={pending ? 'm-bubble m-me m-pending' : 'm-bubble m-me'}>
       {all.length > 0 && <div className="m-pics">{all.map((a) => <Thumb key={a.path} att={a} />)}</div>}
-      {body}
+      {mentionText(body)}
     </div>
   );
 }
+
+/** 데스크톱에서 보낸 멘션 @[참모-3 · 가나 담당] 은 화면 이름 @가나 담당 으로 */
+const mentionText = (body: string) => splitTokens(body).map((t) => (typeof t === 'string' ? t : 'mention' in t ? `@${sentMentionLabel(t.mention)}` : 'ref' in t ? t.ref : t.live)).join('');
 
 /** 보낼 함 말풍선 — 보내는 중은 흐리게, 못 보냈으면 아래에 이유 + 다시 보내기·지우기 */
 function Outgoing({ m, onRetry, onDrop }: { m: OutMsg; onRetry: (id: string) => void; onDrop: (id: string) => void }) {

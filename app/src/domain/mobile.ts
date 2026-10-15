@@ -12,7 +12,7 @@ import { homeRows, resumedOrch, type HomeRow } from './orchHome';
 import { heldBy, holderMap } from './spaceNav';
 import { parseStopped, resumable, stoppedOrchs } from './stopped';
 import { foldTasks, splitCards, type TaskCard, type TaskEvent } from './tasks';
-import { asksUser } from './status';
+import { activityStatus, asksUser, sessionStatus, type ActivityStatus } from './status';
 import { parseUsage } from './usage';
 
 /** 예약 판을 열면 채팅이 따라갈 참모 — 이름에 '루틴'이 든 참모, 없으면 마지막으로 쓴 참모, 그것도 없으면 맨 앞(2026-10-02 참모-2 결정) */
@@ -38,7 +38,7 @@ const PHONE_ATTACH = /\/attach\/\d+-phone\.(png|jpe?g|gif|webp|pdf|md|txt)$/;
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/;
 export type PhoneAtt = { path: string; label: string; image: boolean };
 
-/** 폰이 보낸 말(withAttachments 모양) → 글 + 첨부. 첨부는 붙인 차례대로 @img1·@file1(데스크톱 입력칸 이름표와 같은 셈) */
+/** 폰이 보낸 말(withAttachments 모양) → 글 + 첨부. 첨부는 붙인 차례대로 #img1·#file1(데스크톱 입력칸 이름표와 같은 셈) */
 export function phoneBubble(text: string): { body: string; atts: PhoneAtt[] } {
   const atts: PhoneAtt[] = [];
   let img = 0, file = 0;
@@ -46,14 +46,14 @@ export function phoneBubble(text: string): { body: string; atts: PhoneAtt[] } {
     .map((x) => {
       if ('text' in x || !PHONE_ATTACH.test(x.path)) return 'text' in x ? x.text : x.path;
       const image = IMAGE_EXT.test(x.path);
-      atts.push({ path: x.path, label: image ? `@img${++img}` : `@file${++file}`, image });
+      atts.push({ path: x.path, label: image ? `#img${++img}` : `#file${++file}`, image });
       return '';
     })
     .join('');
   return atts.length ? { body: body.replace(/^\s+/, '').replace(/ {2,}/g, ' ').trim(), atts } : { body: text, atts };
 }
 
-/** 칩을 빼면 입력칸에서 그 이름표(+뒤 공백 하나)도 — @img1 을 빼도 @img10 은 남는다 */
+/** 칩을 빼면 입력칸에서 그 이름표(+뒤 공백 하나)도 — #img1 을 빼도 #img10 은 남는다 */
 export const dropLabel = (draft: string, label: string) => draft.replace(new RegExp(`${label}(?!\\d) ?`), '');
 
 
@@ -70,17 +70,22 @@ export function sheetTop(snap: Snap, viewport: number, peekH = PEEK_H): number {
 
 
 /** 그 참모가 시킨 일(send.from) — 펼치면 물어봄 → 일하는 중 → 오늘 끝남(시안 v2 S). 주인 잃은 일·밀린 일은 폰에선 뺀다 */
-export function orchTasks(events: TaskEvent[], sessions: Session[], orchId: string, now: number): { ask: TaskCard[]; doing: TaskCard[]; done: TaskCard[] } {
+/** live = 그 세션 판단(subStatus — 세션판·데스크톱과 같은 activityStatus). 펼쳤을 때만 꼬리를 받아 채운다 */
+export type FoldCard = TaskCard & { live?: ActivityStatus };
+const ASKING: ActivityStatus[] = ['asks', 'blocked', 'login'];
+
+/** 묶음 — 판단(statusOf)을 넘기면 그걸로 물어봄·일하는 중을 가른다. 일 기록만 보면 쉬지만 물어보는 세션이 '대기'로 보였다(2026-10-11 bug-hunt) */
+export function orchTasks(events: TaskEvent[], sessions: Session[], orchId: string, now: number, statusOf?: (c: TaskCard) => ActivityStatus | undefined): { ask: FoldCard[]; doing: FoldCard[]; done: FoldCard[] } {
   const mine = new Set(events.filter((e) => e.type === 'send' && e.from === orchId).map((e) => e.task));
   const { active, doneToday } = splitCards(foldTasks(events, sessions).filter((c) => mine.has(c.id)), now);
-  return { ask: active.filter((c) => c.status === 'needsInput'), doing: active.filter((c) => c.status !== 'needsInput'), done: doneToday };
+  const cards: FoldCard[] = active.map((c) => { const live = statusOf?.(c); return live ? { ...c, live } : c; });
+  const asks = (c: FoldCard) => (c.live ? ASKING.includes(c.live) : c.status === 'needsInput');
+  return { ask: cards.filter(asks), doing: cards.filter((c) => !asks(c)), done: doneToday };
 }
 
-/** 접힌 한 줄 — "시킨 일 4 · 물음 1 · 일함 2" */
-export function foldSummary(g: { ask: TaskCard[]; doing: TaskCard[]; done: TaskCard[] }): string {
-  const working = g.doing.filter((c) => c.status === 'working').length;
-  return [`시킨 일 ${g.ask.length + g.doing.length + g.done.length}`, g.ask.length ? `물음 ${g.ask.length}` : '', working ? `일함 ${working}` : ''].filter(Boolean).join(' · ');
-}
+/** 펼친 줄 머리표 — 판단이 있으면 세션판 칩(subTag), 없으면 일 기록으로 */
+export const cardTag = (c: FoldCard): { cls: string; text: string } => (c.live ? subTag(c.live)
+  : c.status === 'needsInput' ? { cls: 't-wait', text: '물음' } : c.status === 'working' ? { cls: 't-work', text: '일함' } : c.status === 'done' ? { cls: 't-done', text: '끝' } : { cls: 't-off', text: '대기' });
 
 /** 그 참모가 잡고 있는 세션 id(마지막으로 일을 보낸 참모가 잡는다) — 파일 카드에 그 세션들이 보여 준 파일도 모은다 */
 export function heldIds(events: TaskEvent[], sessions: Session[], orchId: string, now: number): string[] {
@@ -172,8 +177,11 @@ export function keyboardOpen(tallest: { w: number; h: number }, w: number, h: nu
 export function frameAt(o: { vvTop: number; vvH: number; layoutH: number; scrollY: number; kb: boolean; editing: boolean; fullH?: number }): { top: number; h: number; scroll: boolean } {
   if (o.kb || o.editing) return { top: o.vvTop, h: o.vvH, scroll: false };
   // 높이도 레이아웃 높이(documentElement.clientHeight = height:100%) — 키보드를 연 채 돌리고 닫으면 보이는 높이가 4px 모자란 채 남았다(2026-10-04 시뮬레이터)
-  // fullH = 유령 키보드(ghostKeyboard)일 때 같은 폭에서 본 가장 큰 높이 — 레이아웃 높이까지 키보드만큼 줄어 남는다(iOS 26)
-  return { top: 0, h: Math.max(o.layoutH || o.vvH, o.fullH ?? 0), scroll: o.vvTop !== 0 || o.scrollY !== 0 };
+  // fullH = 유령 키보드(ghostKeyboard)일 때 같은 폭에서 본 가장 큰 높이 — 레이아웃 높이까지 키보드만큼 줄어 남는다(iOS 26).
+  // 레이아웃 높이가 키보드만큼(150) 안 줄었으면 거짓은 vvH 뿐이니 레이아웃 높이 — 예전에 본 874 로 812 웹뷰보다 큰 틀을 그려 입력줄이 바닥 밑 62 에 숨었다(2026-10-12 실기기 iOS 18.7)
+  const layout = o.layoutH || o.vvH;
+  const full = o.fullH !== undefined && layout < o.fullH - 150 ? o.fullH : 0;
+  return { top: 0, h: Math.max(layout, full), scroll: o.vvTop !== 0 || o.scrollY !== 0 };
 }
 
 /** 유령 키보드를 볼 때까지 기다리는 시간 — 키보드가 내려가는 동안(0.3초쯤)은 진짜로 높이가 작다 */
@@ -377,6 +385,26 @@ export function sessionBoard(sessions: Session[], hqDir: string): { name: string
   const top = (p: { sessions: Session[] }) => Math.min(...p.sessions.map(rank));
   return groups.map((p, i) => ({ p, i })).sort((a, b) => top(a.p) - top(b.p) || a.i - b.i).map((x) => x.p);
 }
+
+/** 폰 세션판 칩 — 데스크톱 statusWord 를 폰 칩 길이로(같은 판단, 2026-10-11) */
+export function subTag(st: ActivityStatus): { cls: 't-work' | 't-wait' | 't-done'; text: string } {
+  switch (st) {
+    case 'working': return { cls: 't-work', text: '일함' };
+    case 'asks':
+    case 'blocked': return { cls: 't-wait', text: '물음' };
+    case 'login': return { cls: 't-wait', text: '로그인' };
+    case 'bgwait': return { cls: 't-done', text: '기다림' };
+    case 'done': return { cls: 't-done', text: '답함' };
+    case 'unknown': return { cls: 't-done', text: '모름' };
+    default: return { cls: 't-done', text: '쉼' };
+  }
+}
+
+/** 하위 세션 판단 — /api/tails 꼬리를 받았으면 기록으로(activityStatus), 못 받았으면 목록만으로(쉬면 모름) */
+export const subStatus = (s: Session, tails: Readonly<Record<string, string>>, now: number): ActivityStatus => {
+  const t = s.sessionId ? tails[s.sessionId] : undefined;
+  return t === undefined ? sessionStatus(s) : activityStatus(s.state, summarizeTranscript(t), now);
+};
 
 /** 대화 목록 바닥 근처를 보고 있나 — 남은 거리가 slack 안이면 */
 export const nearBottom = (scrollHeight: number, scrollTop: number, clientHeight: number, slack = 80) => scrollHeight - scrollTop - clientHeight <= slack;

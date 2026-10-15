@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { pickAllow, retryAfter } from './autoAllow';
+import { leftWindow, pickAllow, retryAfter, skipPlan } from './autoAllow';
 
 // 실제 화면 (2026-09-27, computer-use request_access — attach + pyte 로 뜬 것)
 const COMPUTER_USE = [
@@ -99,11 +99,11 @@ describe('pickAllow — 권한 창에서 허용 줄을 이름으로 찾는다 (E
 
   it('비밀번호·2FA·결제·과금을 묻는 창이면 건드리지 않는다', () => {
     for (const w of ['password', '비밀번호', '2FA code', '결제', 'billing account', '카드'])
-      expect(pickAllow(BASH.replace('Do you want to proceed?', `Do you want to proceed? (${w})`)), w).toEqual({ skip: '민감한 창(비밀번호·인증·결제) — 직접 골라줘' });
+      expect(pickAllow(BASH.replace('Do you want to proceed?', `Do you want to proceed? (${w})`)), w).toEqual({ skip: '민감한 창(비밀번호·인증·결제) — 직접 골라줘', hold: true });
   });
 
   it('질문 줄이 없는 창(computer-use)은 창 전체를 본다 — 이유 줄에 결제가 있으면 건드리지 않는다', () => {
-    expect(pickAllow(COMPUTER_USE.replace('계산기 앱을 조작하기', '결제 앱을 조작하기'))).toEqual({ skip: '민감한 창(비밀번호·인증·결제) — 직접 골라줘' });
+    expect(pickAllow(COMPUTER_USE.replace('계산기 앱을 조작하기', '결제 앱을 조작하기'))).toEqual({ skip: '민감한 창(비밀번호·인증·결제) — 직접 골라줘', hold: true });
   });
 
   // 2026-09-28 project-b: 커밋 메시지(heredoc)에 "인증번호" 가 있어 10분 동안 건너뛰었다
@@ -167,13 +167,13 @@ describe('pickAllow — 권한 창에서 허용 줄을 이름으로 찾는다 (E
   });
 
   it('창 안(질문·선택지)의 민감한 낱말은 작업 목록이 붙어도 그대로 건너뛴다', () => {
-    expect(pickAllow(HOOK_ASK_WITH_TASKS.replace('Do you want to proceed?', 'Do you want to proceed? (결제)'))).toEqual({ skip: '민감한 창(비밀번호·인증·결제) — 직접 골라줘' });
-    expect(pickAllow(`${COMPUTER_USE.replace('계산기 앱을 조작하기', '결제 앱을 조작하기')}\n\n  ◻ 목록 정리`)).toEqual({ skip: '민감한 창(비밀번호·인증·결제) — 직접 골라줘' });
+    expect(pickAllow(HOOK_ASK_WITH_TASKS.replace('Do you want to proceed?', 'Do you want to proceed? (결제)'))).toEqual({ skip: '민감한 창(비밀번호·인증·결제) — 직접 골라줘', hold: true });
+    expect(pickAllow(`${COMPUTER_USE.replace('계산기 앱을 조작하기', '결제 앱을 조작하기')}\n\n  ◻ 목록 정리`)).toEqual({ skip: '민감한 창(비밀번호·인증·결제) — 직접 골라줘', hold: true });
   });
 
   it('허용 줄이 없으면(선택지 질문 등) 안 누른다', () => {
     const q = ['────', ' 어느 쪽?', ' ❯ 1. 첫째(A)', '   2. 둘째(B)'].join('\n');
-    expect(pickAllow(q)).toEqual({ skip: '허용 줄을 못 찾았어' });
+    expect(pickAllow(q)).toEqual({ skip: '허용 줄을 못 찾았어', hold: true });
   });
 
   it('커서(❯)가 안 보이면 안 누른다', () => {
@@ -185,7 +185,7 @@ describe('영어 모드', () => {
   afterEach(() => setLang('ko'));
   it('건너뛴 이유를 영어로', () => {
     setLang('en');
-    expect(pickAllow('Enter your password')).toEqual({ skip: 'Sensitive prompt (password, verification, payment) — choose it yourself' });
+    expect(pickAllow('Enter your password')).toEqual({ skip: 'Sensitive prompt (password, verification, payment) — choose it yourself', hold: true });
   });
 });
 
@@ -194,5 +194,49 @@ describe('retryAfter — 같은 세션을 다시 보기까지', () => {
   it('풀었으면 곧 다음 창을 받는다 (5초 — 막 풀린 창이 목록에 한 번 더 남아 있어도 헛손질 안 하게)', () => expect(retryAfter('allowed')).toBe(5_000));
   it('건너뛰었거나 못 풀었으면 1분 — 같은 창을 계속 두드리지 않게', () => {
     for (const r of ['skipped', 'stillOpen', 'failed'] as const) expect(retryAfter(r)).toBe(60_000);
+  });
+});
+
+describe('같은 창 다시 안 보기(2026-10-11 perf 9번 — 민감한 창 하나를 6.5시간 동안 250번 다시 봄)', () => {
+  it('사람이 골라야 하는 창은 붙잡아 둔다(hold), 커서를 못 찾은 건 화면이 덜 그려졌을 수 있어 1분 뒤 다시', () => {
+    expect(retryAfter('held')).toBe(10 * 60_000);
+    expect(retryAfter('skipped')).toBe(60_000);
+  });
+  it('세션이 그 창을 벗어나면(기다림이 풀림·목록에서 빠짐) 붙잡은 걸 놓는다 — 다음 창은 바로 본다', () => {
+    const auto = ['permission prompt', 'startup prompt'];
+    const sessions = [
+      { id: 'a1', waitingFor: 'permission prompt' },
+      { id: 'b2', waitingFor: 'input needed' },
+      { id: 'c3' },
+    ];
+    expect(leftWindow(['a1', 'b2', 'c3', 'gone9'], sessions, auto).sort()).toEqual(['b2', 'c3', 'gone9']);
+    expect(leftWindow([], sessions, auto)).toEqual([]);
+  });
+});
+
+describe('붙는 중 화면·커서 못 찾음은 헛알림 내지 않기(2026-10-11 bug-hunt — 10-08~10 auto-allow.jsonl 35건 중 32건이 attach 전환 화면, "직접 골라야 하는 창" 헛알림 26번)', () => {
+  const TRANSITION = [
+    'Session is starting — showing its transcript until it appears. Ctrl+Z to detach',
+    'Waiting for session to redraw… Ctrl+Z to detach',
+    'Starting background service…',
+    'Waking session ab12cd34…',
+  ];
+  it.each(TRANSITION)('전환 화면 "%s" 은 곧 다시 볼 것(soon) — 사람 몫(hold) 아님', (t) => {
+    const p = pickAllow(`\n\n${t}\n`);
+    expect('skip' in p && p.soon).toBe(true);
+    expect(skipPlan(p as { skip: string }, 0)).toEqual({ outcome: 'soon', tell: false });
+    expect(skipPlan(p as { skip: string }, 5)).toEqual({ outcome: 'soon', tell: false });
+    // 30초(6번) 넘게 그 화면이면 5초마다 attach 를 끝없이 띄우지 않고 알린 뒤 보통 주기로
+    expect(skipPlan(p as { skip: string }, 6)).toEqual({ outcome: 'skipped', tell: true });
+  });
+  it('전환 화면은 5초 뒤 다시 본다', () => expect(retryAfter('soon')).toBe(5_000));
+  it('커서 못 찾음은 처음엔 조용히 곧 다시, 같은 창을 또 못 읽으면 그때 알린다', () => {
+    const p = pickAllow('─────\n 아무 선택지도 없는 창\n');
+    expect('skip' in p && !p.soon && !p.hold).toBe(true);
+    expect(skipPlan(p as { skip: string }, 0)).toEqual({ outcome: 'soon', tell: false });
+    expect(skipPlan(p as { skip: string }, 1)).toEqual({ outcome: 'skipped', tell: true });
+  });
+  it('사람 몫 창(민감함·허용 줄 없음)은 처음부터 알린다', () => {
+    expect(skipPlan({ skip: 'x', hold: true }, 0)).toEqual({ outcome: 'held', tell: true });
   });
 });

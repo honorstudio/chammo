@@ -28,6 +28,10 @@ pub struct Live {
     pub service: String,
     pub account: String,
     pub claude_json: PathBuf,
+    /// Claude Code 설정 폴더(~/.claude) — 토큰 갱신 잠금이 여기 있다. None 이면 잠금을 안 본다(시험 앱이 가짜 자리를 안 줬을 때)
+    pub claude_dir: Option<PathBuf>,
+    /// 끼울 칸 토큰이 곧 만료면 미리 갱신하는 길(accounts_refresh)
+    pub refresh: crate::accounts_refresh::Refresher,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -81,6 +85,10 @@ pub enum Error {
     Moved,
     /// macOS 허용 창에서 거절·닫음
     Denied,
+    /// Claude Code 세션이 토큰을 갱신하는 중(갱신 잠금) — 잠시 뒤 다시
+    Busy,
+    /// 끼울 칸 토큰을 미리 갱신하지 못했다(dead = 갱신 토큰이 죽음 · network · http4xx 등)
+    Refresh(String),
     Store(String),
     Io(String),
 }
@@ -98,6 +106,8 @@ impl Error {
             Error::Locked => "locked".into(),
             Error::Moved => "moved".into(),
             Error::Denied => "denied".into(),
+            Error::Busy => "busy".into(),
+            Error::Refresh(m) => format!("refresh:{m}"),
             Error::Store(m) => format!("store:{m}"),
             Error::Io(m) => format!("io:{m}"),
         }
@@ -350,7 +360,14 @@ pub fn switch_if(store: &dyn Store, live: &Live, list: &Path, id: &str, expect: 
     if pool.current.as_deref() == Some(id) {
         return Ok(pool);
     }
-    let want = slot_part(store, id)?.ok_or(Error::NoSlot)?;
+    let mut want = slot_part(store, id)?.ok_or(Error::NoSlot)?;
+    // 칸 토큰이 곧 만료면 끼우기 전에 그 칸만 갱신한다(accounts_refresh 머리말) — 새 갱신 토큰은 칸에 먼저 둔다(옛 것은 이미 써 버렸다)
+    if crate::accounts_refresh::needs(&want, crate::accounts_refresh::now_ms()) {
+        want = (live.refresh)(&want).map_err(Error::Refresh)?;
+        store.set(SLOT_SERVICE, id, &slot_secret(&want))?;
+    }
+    // 여기서부터 끝까지 Claude Code 갱신 잠금을 쥔다 — 세션이 지금 계정을 갱신하는 도중엔 안 바꾼다
+    let _held = hold_refresh_lock(live)?;
     let now = store.get(&live.service, &live.account)?;
     let from = pool.current.clone();
     if let Some(n) = &now {
@@ -392,6 +409,17 @@ pub fn switch_if(store: &dyn Store, live: &Live, list: &Path, id: &str, expect: 
     Ok(pool)
 }
 
+/// Claude Code 갱신 잠금 — 설정 폴더를 모르면(시험 앱이 가짜 자리를 안 줬을 때) 안 잡는다
+fn hold_refresh_lock(live: &Live) -> Result<Option<crate::accounts_refresh::Held>, Error> {
+    use crate::accounts_refresh::{hold, LockError};
+    let Some(dir) = &live.claude_dir else { return Ok(None) };
+    match hold(dir) {
+        Ok(h) => Ok(Some(h)),
+        Err(LockError::Busy) => Err(Error::Busy),
+        Err(LockError::Io(m)) => Err(Error::Io(m)),
+    }
+}
+
 fn note_backup(pool: &mut Pool, which: &str, oauth: Option<&Value>) {
     if !pool.backup_oauth.is_object() {
         pool.backup_oauth = Value::Object(Default::default());
@@ -422,6 +450,7 @@ pub fn restore(store: &dyn Store, live: &Live, list: &Path, which: &str) -> Resu
             found
         }
     };
+    let _held = hold_refresh_lock(live)?; // 바꿔 끼우기와 같은 까닭
     let now = store.get(&live.service, &live.account)?;
     if let Some(n) = &now {
         if which != BACKUP_UNDO {

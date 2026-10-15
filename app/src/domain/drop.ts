@@ -34,6 +34,14 @@ export function paneAt(panes: PaneRect[], x: number, y: number): string | null {
   return null;
 }
 
+/** 채팅 칸 안 어디에 놓든 받을 세션 칸(2026-10-12 사용자 — 입력창까지 안 옮겨도) — 칸 위면 그 칸, 칸 밖(채팅 머리·카드 여백)이면 위아래로 가장 가까운 칸 */
+export function chatCellAt(cells: PaneRect[], x: number, y: number): string | null {
+  const hit = paneAt(cells, x, y);
+  if (hit !== null || !cells.length) return hit;
+  const gap = (p: PaneRect) => (y < p.top ? p.top - y : y >= p.bottom ? y - p.bottom : 0);
+  return cells.reduce((a, b) => (gap(b) < gap(a) ? b : a)).id;
+}
+
 export type DocDropBlock = { path: string; type: 'image' | 'video' | 'audio' | 'file' };
 
 /** 스페이스 문서 편집기에 끌어다 놓은 파일 → 넣을 블록 종류. 그림·영상·소리는 그 블록, 나머지(PDF 등)는 파일 블록(md 엔 링크) — 2026-10-01 사용자 */

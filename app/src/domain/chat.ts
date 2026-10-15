@@ -78,7 +78,8 @@ type Out = { kind: 'out'; id: string; ts: string; out: string };
 function injected(t: string): { note: string } | 'hide' | null {
   const cmd = t.match(/^<command-name>(\/[^<]*)<\/command-name>/);
   if (cmd) return { note: cmd[1]!.trim() };
-  if (/^\[Request interrupted by user[^\]]*\]$/.test(t)) return 'hide'; // 멈추기 뒤 Claude 가 남기는 표시 — 말풍선으로는 군더더기(2026-09-30 사용자)
+  // 멈추기 뒤 Claude 가 남기는 표시 — 말풍선은 군더더기(2026-09-30)라 알림 한 줄로. 채팅 Esc 로 멈춘 게 보여야 한다(2026-10-15 사용자)
+  if (/^\[Request interrupted by user[^\]]*\]$/.test(t)) return { note: '멈췄어' };
   if (t.startsWith('<') && !t.startsWith('<pasted_content')) return 'hide';
   return null;
 }
@@ -89,6 +90,8 @@ const chatTarget = (input: Record<string, unknown> | undefined) =>
 
 /** 한 줄 → 새 항목들(합치기 전) */
 function itemsOf(r: Rec): (ChatItem | Out)[] {
+  // 기록은 Claude Code 가 쓰는 바깥 글 — 객체가 아닌 줄(null·숫자)은 건너뛴다(렌더 중 TypeError 면 창이 통째로 멈췄다, 2026-10-11)
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return [];
   if (r.isSidechain) return [];
   const id = r.uuid ?? '';
   const ts = r.timestamp ?? '';
@@ -132,7 +135,7 @@ function itemsOf(r: Rec): (ChatItem | Out)[] {
   if (r.type === 'assistant') {
     const out: ChatItem[] = [];
     for (const b of blocks(r.message?.content)) {
-      if (b.type === 'text' && b.text?.trim()) out.push({ kind: 'assistant', id, ts, text: b.text.trim() });
+      if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) out.push({ kind: 'assistant', id, ts, text: b.text.trim() });
       else if (b.type === 'tool_use' && b.name) out.push({ kind: 'tools', id, ts, tools: [{ name: b.name, target: chatTarget(b.input) }] });
     }
     return out;
@@ -229,6 +232,14 @@ export function stuckInInput(pending: string[], input: string): string | null {
 }
 
 /** 작업 중 = 세션이 working 이고 마지막이 답이 아님. 백그라운드 job 참모는 쉬어도 working 으로 나와서 마지막 항목으로 가른다 */
+/** 채팅 칸에서 누른 Esc 가 참모의 지금 턴을 멈추나 — CLI 처럼 한 번(2026-10-15 사용자). 일하는 중일 때만: 쉴 때 Esc 두 번은 Claude 의 되감기 창·입력칸 지우기다.
+ *  한글 조합 중·채팅 위에 뜬 것(멘션·/ 목록·메모리·모델 칩·선택지 창·미리보기 모달)·이미 다른 데서 받은 Esc 는 그쪽이 먼저.
+ *  시안 검토 탭이 떠 있으면 입력칸 밖 Esc 는 검토 닫기다(domain/curation reviewEscCloses) — 입력칸 Esc 는 검토가 안 받는다 */
+export function chatEscStops(o: { key: string; composing: boolean; prevented: boolean; working: boolean; overlay: boolean; inInput: boolean; review: boolean }): boolean {
+  if (o.key !== 'Escape' || o.composing || o.prevented || o.overlay || !o.working) return false;
+  return o.inInput || !o.review;
+}
+
 export const chatBusy = (state: string, items: ChatItem[]) => state === 'working' && items[items.length - 1]?.kind !== 'assistant';
 
 /** 입력칸 오른쪽 버튼 — 보내기는 쓴 글(또는 터미널 입력칸 글)이 있을 때만 칠하고, 일하는 중에 칸이 비면 옆에 '멈춤'.
@@ -323,10 +334,10 @@ export function termRest(termText: string, paths: string[]): string {
   return splitPaths(s).map((x) => ('text' in x ? x.text : ' ')).join('').replace(/\s+/g, ' ').trim();
 }
 
-/** 말풍선 참조 — 앞 말풍선을 @chat1 로 입력칸에 끌어온 것(2026-09-30 사용자) */
+/** 말풍선 참조 — 앞 말풍선을 #chat1 로 입력칸에 끌어온 것(2026-09-30 사용자, 10-12 @ → # — 옛 @chat1 기록도 읽는다) */
 export type ChatRef = { label: string; who: string; text: string };
 const REF_MAX = 600;
-const REF_HEAD = /^\[참조 (@chat\d+) · ([^\]]*)\]$/;
+const REF_HEAD = /^\[참조 ([#@]chat\d+) · ([^\]]*)\]$/;
 
 /** 보낼 글 = 쓴 글 + 글에 남아 있는 이름표의 인용 블록. 빈 줄은 빼고 600자에서 자른다 */
 export function withRefs(text: string, refs: ChatRef[]): string {
@@ -342,7 +353,7 @@ export function withRefs(text: string, refs: ChatRef[]): string {
 
 /** 보낸 말풍선에서 본문과 참조 블록을 가른다 — withRefs 의 반대 */
 export function splitRefs(text: string): { body: string; refs: ChatRef[] } {
-  const at = text.search(/\n\n\[참조 @chat\d+ · [^\]]*\]\n/);
+  const at = text.search(/\n\n\[참조 [#@]chat\d+ · [^\]]*\]\n/);
   if (at < 0) return { body: text, refs: [] };
   const refs: ChatRef[] = [];
   for (const block of text.slice(at + 2).split('\n\n')) {

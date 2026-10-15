@@ -90,3 +90,16 @@ describe('chatViewOf — 채팅 패널 보기 방식 기본값', () => {
     expect(chatViewOf(3)).toBe('tabs');
   });
 });
+
+describe('엑셀 고친 칸도 같은 [스페이스] 글로(2026-10-11)', () => {
+  it('문서 줄 앞에 엑셀 파일 부분, 메모는 끝', () => {
+    const pending = { cells: [{ sheet: 'p', name: '시트1', r: 2, c: 1, before: { v: 10, f: null }, after: { v: 12, f: null }, styled: false }], notes: ['시트1: 4행 앞에 1행 끼움'] };
+    expect(composeSend([], '확인해 줘', [], [{ path: '/H/dev/x/가계부.xlsx', pending }])).toBe([
+      '[스페이스] 사용자가 고친 것',
+      '■ 가계부.xlsx (/H/dev/x/가계부.xlsx)',
+      '· 시트1!B3 10 → 12',
+      '· 시트1: 4행 앞에 1행 끼움',
+      '메모: 확인해 줘',
+    ].join('\n'));
+  });
+});

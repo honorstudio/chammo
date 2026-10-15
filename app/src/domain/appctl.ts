@@ -1,6 +1,6 @@
 // 참모가 앱을 대신 조작한다 — HQ scripts/app 이 <데이터 폴더>/app.jsonl 에 {ts, action, arg} 를 쓰면
 // Rust(appctl.rs)가 새 줄을 window.__appctl 로 넘기고, 여기서 "앱이 할 일"로 바꾼다. 실제 적용은 App.tsx
-import type { Features } from './config';
+import type { FeatureSwitch, Features } from './config';
 import type { Session } from './session';
 import type { Shortcut } from './shortcuts';
 import { findTarget } from './inbox';
@@ -9,11 +9,11 @@ export const OPEN = ['settings', 'tour', 'office', 'review', 'all', 'replay', 'l
 export type OpenWhat = (typeof OPEN)[number];
 export const CLOSE = ['settings', 'office', 'reader', 'tasks', 'inbox', 'harnitor', 'tools', 'review'] as const;
 export type CloseWhat = (typeof CLOSE)[number];
-const FEATURES: (keyof Features)[] = ['office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'computerUse'];
+const FEATURES: FeatureSwitch[] = ['office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'computerUse'];
 
 export type AppIntent =
   | { kind: 'voice'; on: boolean }
-  | { kind: 'feature'; name: keyof Features; on: boolean }
+  | { kind: 'feature'; name: FeatureSwitch; on: boolean }
   | { kind: 'open'; what: OpenWhat }
   | { kind: 'close'; what: CloseWhat }
   | { kind: 'focus'; target: string; terminal?: true }
@@ -22,7 +22,12 @@ export type AppIntent =
   /** 폰(폰 서버 /api/rename)이 바꾼 참모 별명 — 앱 별명에 넣으면 쉬는 때 /rename 이 따라간다 */
   | { kind: 'label'; id: string; nick: string }
   /** 브라우저 일인데 그 프로젝트에 이 프로젝트 브라우저가 없다 — 결정 대기함 [연결] 카드(task send·scripts/app browser need, GitHub #2) */
-  | { kind: 'browserNeed'; dir: string; session: string; why: string };
+  | { kind: 'browserNeed'; dir: string; session: string; why: string }
+  /** 폰(폰 서버 /api/model)이 고른 참모 모델·에포트 — 데스크톱 칩과 같은 runModelPick 으로(SessionGrid) */
+  | { kind: 'modelPick'; id: string; want: { model?: 'opus' | 'sonnet' | 'haiku'; effort?: string } };
+
+const MODEL_ALIASES = ['opus', 'sonnet', 'haiku'] as const;
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 const onOff = (v: string | undefined) => (v === 'on' ? true : v === 'off' ? false : null);
 
@@ -34,6 +39,14 @@ export function intentOf(line: unknown): AppIntent | null {
   if (action === 'orch-label') {
     const o = arg as { id?: unknown; nick?: unknown } | null;
     return o && typeof o === 'object' && typeof o.id === 'string' && typeof o.nick === 'string' ? { kind: 'label', id: o.id, nick: o.nick } : null;
+  }
+  if (action === 'model-pick') {
+    const o = arg as { id?: unknown; model?: unknown; effort?: unknown } | null;
+    if (!o || typeof o !== 'object' || typeof o.id !== 'string' || !o.id) return null;
+    const model = MODEL_ALIASES.find((m) => m === o.model);
+    const effort = EFFORT_LEVELS.find((e) => e === o.effort);
+    if ((o.model != null && !model) || (o.effort != null && !effort) || (!model && !effort)) return null;
+    return { kind: 'modelPick', id: o.id, want: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) } };
   }
   if (action === 'browser-need') {
     const o = arg as { dir?: unknown; session?: unknown; why?: unknown } | null;
@@ -49,7 +62,7 @@ export function intentOf(line: unknown): AppIntent | null {
   if (action === 'feature') {
     const [name, v] = a.split(/\s+/);
     const on = onOff(v);
-    return FEATURES.includes(name as keyof Features) && on !== null ? { kind: 'feature', name: name as keyof Features, on } : null;
+    return FEATURES.includes(name as FeatureSwitch) && on !== null ? { kind: 'feature', name: name as FeatureSwitch, on } : null;
   }
   if (action === 'open') return (OPEN as readonly string[]).includes(a) ? { kind: 'open', what: a as OpenWhat } : null;
   if (action === 'close') return (CLOSE as readonly string[]).includes(a) ? { kind: 'close', what: a as CloseWhat } : null;
@@ -89,7 +102,7 @@ export function openShortcut(what: OpenWhat): Shortcut | null {
 }
 
 /** 설정의 기능 하나만 바꾼 새 설정(원본은 그대로) — 설정 화면 저장과 같은 모양으로 write_config 에 넘긴다 */
-export const withFeature = <C extends { features: Features }>(c: C, name: keyof Features, on: boolean): C => ({ ...c, features: { ...c.features, [name]: on } });
+export const withFeature = <C extends { features: Features }>(c: C, name: FeatureSwitch, on: boolean): C => ({ ...c, features: { ...c.features, [name]: on } });
 
 /** "그 세션으로 가기" — 세션 id·이름·대화 id 가 먼저, 아니면 프로젝트 이름(도는 세션이 없어도 화면은 있다) */
 export function focusPlan(target: string, sessions: Session[], projects: string[]): { session: string } | { project: string } | null {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { atLine, cardMoves, chatFiles, MERGE_MS } from './chatFiles';
+import { atLine, cardMoves, chatFiles, MERGE_MS, showOwnerOf } from './chatFiles';
+import type { Session } from './session';
+import type { TaskEvent } from './tasks';
 import { interleave } from './chatExtras';
 
 const row = (o: Record<string, unknown>) => JSON.stringify(o);
@@ -111,5 +113,60 @@ describe('cardMoves — 카드를 누르면 스페이스·채팅 탭을 그 참�
   it('이미 그 참모면 아무것도 안 옮긴다, 주인 모르면(by 없음) 그대로', () => {
     expect(cardMoves(ME, { view: ME, chat: ME })).toEqual({ space: null, tab: null });
     expect(cardMoves('', { view: ME, chat: OTHER })).toEqual({ space: null, tab: null });
+  });
+});
+
+describe('chatFiles ownerOf — 하위 세션이 띄운 파일은 그 세션을 맡긴 참모 채팅에도(2026-10-11 사용자 "v2 시안 뜬 게 왜 여기 채팅창에 한 번 안 뜸?")', () => {
+  const SUB = 'cccc0003';
+  const STRANGER = 'dddd0004';
+  const ownerOf = (from: string) => (from === ME || from === OTHER ? from : from === SUB ? ME : null); // spaceNav showOwner 흉내
+  const log = [
+    row({ ts: '2026-10-11T04:00:00Z', path: '/u/mine.md', from: ME }),
+    row({ ts: '2026-10-11T04:28:00Z', path: '/u/v1.html', from: SUB, cwd: '/u/wt/tabs' }),
+    row({ ts: '2026-10-11T04:30:00Z', path: '/u/s.png', from: STRANGER }),
+    row({ ts: '2026-10-11T04:31:00Z', path: '/u/o.md', from: OTHER }),
+  ].join('\n');
+
+  it('주인이 이 참모인 하위 세션 줄도 카드 — 띄운 세션(from)을 붙인다. 참모 자기 줄엔 from 없음', () => {
+    expect(chatFiles(log, ME, ownerOf).map((f) => [f.path, f.from])).toEqual([
+      ['/u/mine.md', undefined],
+      ['/u/v1.html', SUB],
+    ]);
+  });
+
+  it('다른 참모·주인 모르는 세션 줄은 여전히 뺀다, ownerOf 가 없으면 예전처럼 자기 줄만', () => {
+    expect(chatFiles(log, OTHER, ownerOf).map((f) => f.path)).toEqual(['/u/o.md']);
+    expect(chatFiles(log, ME).map((f) => f.path)).toEqual(['/u/mine.md']);
+  });
+
+  it('참모가 같은 파일을 다시 띄우면 하위 세션 카드와 한 장으로 묶고 참모 것으로(from 지움)', () => {
+    const again = `${log}\n${row({ ts: '2026-10-11T04:35:00Z', path: '/u/v1.html', from: ME })}`;
+    expect(chatFiles(again, ME, ownerOf).map((f) => [f.path, f.ts, f.from])).toEqual([
+      ['/u/mine.md', '2026-10-11T04:00:00Z', undefined],
+      ['/u/v1.html', '2026-10-11T04:35:00Z', undefined],
+    ]);
+  });
+});
+
+describe('showOwnerOf — 띄운 세션 → 맡긴 참모(데스크톱·폰 채팅 카드가 같은 판단, spaceNav holderMap·showOwner)', () => {
+  const now = Date.parse('2026-10-11T05:00:00Z');
+  const ses = (id: string, name: string) => ({ id, name, cwd: `/d/${name}`, kind: 'background', state: 'working', project: name, workspace: null, startedAt: 0 }) as unknown as Session;
+  const sessions = [ses('o1', '참모-1'), ses('o2', '참모-2'), ses('w1', 'tabs-draft'), ses('w2', 'shop-site')];
+  const ev = [
+    { ts: '2026-10-11T04:00:00Z', type: 'send', task: 't1', target: 'tabs-draft', from: 'o1' },
+    { ts: '2026-10-11T04:10:00Z', type: 'send', task: 't2', target: 'shop-site', from: 'o1' },
+    { ts: '2026-10-11T04:20:00Z', type: 'send', task: 't3', target: 'shop-site', from: 'o2' }, // 마지막으로 보낸 참모가 잡는다
+  ] as TaskEvent[];
+  const own = showOwnerOf(ev, sessions, ['o1', 'o2'], now);
+  it('하위 세션은 마지막으로 일을 보낸 참모, 참모는 자기 자신, 모르는 세션은 null', () => {
+    expect(own('w1')).toBe('o1');
+    expect(own('w2')).toBe('o2');
+    expect(own('o2')).toBe('o2');
+    expect(own('zz99')).toBeNull();
+  });
+  it('chatFiles 에 그대로 넘기면 맡긴 참모 채팅에만 하위 세션 카드', () => {
+    const log = row({ ts: '2026-10-11T04:30:00Z', path: '/u/v1.html', from: 'w1' });
+    expect(chatFiles(log, 'o1', own).map((f) => f.from)).toEqual(['w1']);
+    expect(chatFiles(log, 'o2', own)).toEqual([]);
   });
 });

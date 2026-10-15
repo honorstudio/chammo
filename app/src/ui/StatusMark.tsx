@@ -10,11 +10,13 @@ const SHAPE: Record<StatusKind, ReactElement> = {
       <path d="M6 1.8a4.2 4.2 0 1 1-4.2 4.2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </>
   ),
-  // 사람 차례: 펼친 손바닥 — 손가락 넷 + 엄지 + 손바닥
+  // 사람 차례: 꼬리 달린 말풍선 + 점 셋(…) — 12px·10px 에서 점이 읽히는 테두리형(2026-10-12 사용자, 손바닥에서 바꿈)
   waiting: (
     <>
-      <path d="M3.7 6.4V3.2M5.6 6V1.9M7.5 6V2.3M9.3 6.6V3.6M3.3 8.2 1.9 6.6" fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" />
-      <path d="M3 6.2h7v2.1a3.3 3.3 0 0 1-3.3 3.2h-.5A3.2 3.2 0 0 1 3 8.3z" fill="currentColor" />
+      <path d="M3.2 1.9h5.6a2.3 2.3 0 0 1 2.3 2.3v2.6a2.3 2.3 0 0 1-2.3 2.3H5.6L3.1 10.9V9.1a2.3 2.3 0 0 1-2.2-2.3V4.2a2.3 2.3 0 0 1 2.3-2.3z" fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinejoin="round" />
+      <circle cx="4.1" cy="5.5" r=".8" fill="currentColor" />
+      <circle cx="6" cy="5.5" r=".8" fill="currentColor" />
+      <circle cx="7.9" cy="5.5" r=".8" fill="currentColor" />
     </>
   ),
   // 대기: 가만히 있는 꽉 찬 원

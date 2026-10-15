@@ -4,7 +4,7 @@
 .pdfv-page canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .pdfv-no { position: absolute; right: 8px; bottom: -18px; font-size: 11px; color: var(--text-3); }
 .pdfv-msg { margin: auto; color: var(--text-3); font-size: 13px; }
-.pdfv .textLayer { position: absolute; inset: 0; overflow: clip; line-height: 1; text-align: initial; text-size-adjust: none; -webkit-text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; z-index: 1;
+.pdfv .textLayer { position: absolute; inset: 0; overflow: clip; line-height: 1; text-align: initial; text-size-adjust: none; -webkit-text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; z-index: calc(var(--z-base) + 1);
   --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); }
 .pdfv .textLayer span, .pdfv .textLayer br { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0% 0%; user-select: text; }
 .pdfv .textLayer > :not(.markedContent), .pdfv .textLayer .markedContent span:not(.markedContent) { --font-height: 0; font-size: calc(var(--text-scale-factor) * var(--font-height)); --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }

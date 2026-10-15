@@ -7,6 +7,7 @@ import { needsView, parseHits, parseMerged, parseRepoMap, parseView, type Merged
 import { sinceIso, taskId, type Reviewed } from '../domain/reviewSummary';
 import { dayStart } from '../domain/usage';
 import { tr } from '../i18n';
+import { every } from './poll';
 
 export const REVIEW_POLL_MS = 2 * 60_000;
 const MAP_MS = 10 * 60_000;
@@ -101,8 +102,7 @@ export function useReview(env: AppEnv | null, onTaskLogged: () => void): ReviewD
   useEffect(() => {
     if (!env) return;
     void scan();
-    const t = setInterval(() => void scan(), REVIEW_POLL_MS);
-    return () => clearInterval(t);
+    return every(() => void scan(), REVIEW_POLL_MS);
   }, [env, scan]);
 
   const merge = async (p: OpenPr) => {

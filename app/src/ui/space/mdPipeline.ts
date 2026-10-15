@@ -62,7 +62,8 @@ const serOne = async (ed: Ed, b: Blocks[number]) => (await ed.blocksToMarkdownLo
 /** 문서 글의 조각 지도 — 조각마다 따로 읽어 문서 전체를 읽은 블록과 맞춘다(열 때·바깥 판이 들어올 때 한 번) */
 function mappingFor(ed: Ed, st: State, text: string): Promise<Mapping> {
   const hit = st.maps.get(text);
-  if (hit) return hit;
+  // 쓸 때마다 새 글 지도가 쌓여서, 꺼내 쓴 지도를 최근으로 안 올리면 키 6번마다 기준 문서 지도가 밀려나 문서 전체를 다시 읽었다(2026-10-11 표 많은 문서에서 키당 90ms)
+  if (hit) { remember(st, text, hit); return hit; }
   const m = (async () => {
     const base = await sersOf(ed, st, await parseMd(ed, text));
     return alignChunks(text, base, async (t) => sersOf(ed, st, await parseMd(ed, t)));

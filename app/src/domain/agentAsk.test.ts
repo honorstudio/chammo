@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ASK_EMPTY, askClose, askNotice, askOpen, askShown, askStep, askWaiting, openLive, pickLive, popupNotice, popupStep, type AskState } from './agentAsk';
+import { ASK_EMPTY, askClose, askNotice, askOpen, askShown, askStep, askWaiting, openLive, pickLive, popupLabel, popupLine, popupNotice, popupStep, type AskState } from './agentAsk';
 import type { Live } from './agentBrowser';
 
 const live = (profile: string, o: Partial<Live> = {}): Live => ({ profile, pid: 10, sessionPid: 20, url: 'https://a.com/', title: 'A', tabs: [], tool: '', toolAt: 0, busy: false, ts: 0, ...o });
@@ -209,7 +209,17 @@ describe('popupStep — 모달을 안 보는 동안 뜬 패스키 창은 알림 
     expect(popupStep(r.keys, [a], null).notify.length).toBe(1);
   });
   it('알림 글 — 세션 이름이 있으면 붙인다', () => {
-    expect(popupNotice('shop-app · login').title).toBe('shop-app · login 세션에 패스키 창이 떴어요');
-    expect(popupNotice('').title).toBe('세션 브라우저에 패스키 창이 떴어요');
+    expect(popupNotice('shop-app · login', 'passkey').title).toBe('shop-app · login 세션에 패스키 창이 떴어요');
+    expect(popupNotice('', 'passkey').title).toBe('세션 브라우저에 패스키 창이 떴어요');
+  });
+  it('패스키라고 확신 못 하면 중립 — 크롬 창(2026-10-11 사용자, 비밀번호 저장 풍선을 패스키로 불렀다)', () => {
+    expect(popupNotice('shop-app · login', 'window').title).toBe('shop-app · login 세션에 크롬 창이 떴어요');
+    expect(popupNotice('', undefined).title).toBe('세션 브라우저에 크롬 창이 떴어요');
+    expect(popupNotice('x', 'window').body).not.toContain('패스키');
+    expect(popupLabel('passkey')).toBe('패스키 창');
+    expect(popupLabel('window')).toBe('크롬 창');
+    expect(popupLabel(undefined)).toBe('크롬 창');
+    expect(popupLine('passkey')).toContain('패스키');
+    expect(popupLine('window')).not.toContain('패스키');
   });
 });

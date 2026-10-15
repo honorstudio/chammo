@@ -21,7 +21,22 @@ pub struct Take {
     pub events: Vec<Value>,
     /// 크롬 창을 꺼내 직접 만졌다 — 그 클릭·입력은 앱이 못 본다
     pub chrome_shown: bool,
+    /// 마지막 사람 조작(모달 입력·기록) 시각 — 오래 없으면 앱이 돌려준다(idle_pid)
+    pub touched: u64,
+    /// 패스키 꺼내기(agent_peek)가 저절로 켠 개입 — 다시 숨길 때 돌려준다(release_auto)
+    pub auto: bool,
 }
+
+impl Take {
+    fn new(pid: i32, at: u64, by: &str) -> Take {
+        Take { pid, at, by: by.into(), events: vec![], chrome_shown: false, touched: now_ms(), auto: false }
+    }
+}
+
+/// 사람 조작 없이 이만큼 지나면 앱이 개입을 돌려준다 — 꺼내기 오탐·아무것도 안 한 개입이 세션 도구를 붙잡고 있었다(2026-10-10·11)
+pub const IDLE_MS: u64 = 3 * 60_000;
+/// 크롬 창을 꺼내 둔 동안 — 사람이 크롬을 직접 만지면 앱이 못 봐서(Touch ID·긴 양식) 더 기다린다
+pub const IDLE_SHOWN_MS: u64 = 10 * 60_000;
 
 const MAX_EVENTS: usize = 300;
 
@@ -70,7 +85,7 @@ pub fn start(dir: &Path, profile: &str, pid: i32, by: &str) -> Result<(), String
     write_secure(&take_file(dir, profile), json!({ "pid": pid, "at": at, "by": by }).to_string().as_bytes())?;
     with(|m| {
         let keep = m.get(profile).filter(|t| t.pid == pid).cloned();
-        m.insert(profile.to_string(), keep.map(|t| Take { by: by.into(), ..t }).unwrap_or(Take { pid, at, by: by.into(), events: vec![], chrome_shown: false }));
+        m.insert(profile.to_string(), keep.map(|t| Take { by: by.into(), touched: now_ms(), ..t }).unwrap_or(Take::new(pid, at, by)));
     });
     Ok(())
 }
@@ -95,7 +110,7 @@ pub fn dialog_done(dir: &Path, profile: &str, pid: i32) -> Option<Value> {
 pub fn start_ask(profile: &str, pid: i32, at: u64) {
     with(|m| {
         if m.get(profile).is_none_or(|t| t.pid != pid) {
-            m.insert(profile.to_string(), Take { pid, at, by: "ask".into(), events: vec![], chrome_shown: false });
+            m.insert(profile.to_string(), Take::new(pid, at, "ask"));
         }
     });
 }
@@ -121,7 +136,7 @@ pub fn current(dir: &Path, profile: &str) -> Option<(i32, u64, String)> {
     let f = read_file(dir, profile)?;
     with(|m| {
         if m.get(profile).is_none_or(|t| t.pid != f.0) {
-            m.insert(profile.to_string(), Take { pid: f.0, at: f.1, by: f.2.clone(), events: vec![], chrome_shown: false });
+            m.insert(profile.to_string(), Take::new(f.0, f.1, &f.2));
         }
     });
     Some(f)
@@ -144,6 +159,11 @@ pub fn drop_foreign(dir: &Path, profile: &str, live_pid: i32) {
 
 /// 돌려주기 기록을 쓰고(먼저) 개입 파일을 지운다. 기록은 그 래퍼(pid) 것만
 pub fn hand_back(dir: &Path, profile: &str, pid: i32) -> Result<(), String> {
+    hand_back_why(dir, profile, pid, None)
+}
+
+/// 앱이 저절로 돌려줄 때 왜(idle · hidden)를 같이 적는다 — 래퍼 꼬리표가 '사람이 돌려줌'과 갈라 말한다
+pub fn hand_back_why(dir: &Path, profile: &str, pid: i32, why: Option<&str>) -> Result<(), String> {
     let t = take_mine(profile, pid);
     let file = read_file(dir, profile);
     if t.is_none() && file.as_ref().is_none_or(|(p, _, _)| *p != pid) {
@@ -151,9 +171,9 @@ pub fn hand_back(dir: &Path, profile: &str, pid: i32) -> Result<(), String> {
     }
     let t = t.unwrap_or_else(|| {
         let (p, at, by) = file.clone().unwrap_or((pid, now_ms(), "desktop".into()));
-        Take { pid: p, at, by, events: vec![], chrome_shown: false }
+        Take::new(p, at, &by)
     });
-    write_handback(dir, profile, &t)?;
+    write_handback(dir, profile, &t, why)?;
     if file.as_ref().is_some_and(|(p, _, _)| *p == pid) {
         std::fs::remove_file(take_file(dir, profile)).map_err(|e| e.to_string())?;
     }
@@ -163,7 +183,7 @@ pub fn hand_back(dir: &Path, profile: &str, pid: i32) -> Result<(), String> {
 /// 세션이 부른 일을 '다 했어' — 모은 기록이 있으면 .handback(래퍼가 .done 을 보고 읽는다)
 pub fn ask_done(dir: &Path, profile: &str, pid: i32) -> Result<(), String> {
     if let Some(t) = take_mine(profile, pid) {
-        write_handback(dir, profile, &t)?;
+        write_handback(dir, profile, &t, None)?;
         // 사람이 부름 중에 '개입'까지 눌렀으면 그것도 같이 끝낸다
         if read_file(dir, profile).is_some_and(|(p, _, _)| p == pid) {
             let _ = std::fs::remove_file(take_file(dir, profile));
@@ -177,10 +197,58 @@ fn take_mine(profile: &str, pid: i32) -> Option<Take> {
     with(|m| if m.get(profile).is_some_and(|t| t.pid == pid) { m.remove(profile) } else { None })
 }
 
-fn write_handback(dir: &Path, profile: &str, t: &Take) -> Result<(), String> {
+fn write_handback(dir: &Path, profile: &str, t: &Take, why: Option<&str>) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let body = json!({ "pid": t.pid, "startedAt": t.at, "endedAt": now_ms(), "by": t.by, "events": t.events, "chromeShown": t.chrome_shown });
+    let mut body = json!({ "pid": t.pid, "startedAt": t.at, "endedAt": now_ms(), "by": t.by, "events": t.events, "chromeShown": t.chrome_shown });
+    if let Some(w) = why {
+        body["why"] = json!(w);
+    }
     write_secure(&dir.join(format!("{profile}.handback")), body.to_string().as_bytes())
+}
+
+/// 패스키 꺼내기가 켜는 개입 — 이미 개입 중이 아니었을 때만 '저절로'로 표시(사람이 켠 개입은 사람 것 그대로)
+pub fn start_auto(dir: &Path, profile: &str, pid: i32) -> Result<(), String> {
+    let fresh = read_file(dir, profile).is_none_or(|(p, _, _)| p != pid);
+    start(dir, profile, pid, "desktop")?;
+    if fresh {
+        with(|m| {
+            if let Some(t) = m.get_mut(profile).filter(|t| t.pid == pid) {
+                t.auto = true;
+            }
+        });
+    }
+    Ok(())
+}
+
+/// 사람이 그 개입을 이어 받았다('크롬에서 보기' 등) — 숨겨도 안 푼다
+pub fn set_manual(profile: &str) {
+    with(|m| {
+        if let Some(t) = m.get_mut(profile) {
+            t.auto = false;
+        }
+    });
+}
+
+/// 꺼냈던 창을 다시 숨길 때 — 꺼내기가 저절로 켠 개입이면 돌려준다. 돌려줬으면 true
+pub fn release_auto(dir: &Path, profile: &str, pid: i32) -> bool {
+    let auto = with(|m| m.get(profile).is_some_and(|t| t.pid == pid && t.auto));
+    auto && read_file(dir, profile).is_some_and(|(p, _, _)| p == pid) && hand_back_why(dir, profile, pid, Some("hidden")).is_ok()
+}
+
+/// 사람이 모달에서 조작했다(입력 한 묶음) — 돌려주기 시계를 다시
+pub fn touched(profile: &str) {
+    with(|m| {
+        if let Some(t) = m.get_mut(profile) {
+            t.touched = now_ms();
+        }
+    });
+}
+
+/// 사람 조작이 오래 없는 개입이면 그 래퍼 pid — 세션이 부른 동안(asking·ask 기록)은 안 푼다(래퍼가 부름 시간을 따로 잰다).
+/// 부름 중에 사람이 '개입'까지 누르면 기록의 by 가 desktop 으로 바뀌어서 지금 부르는 중인지(asking)를 따로 받는다
+pub fn idle_pid(profile: &str, now: u64, shown: bool, asking: bool) -> Option<i32> {
+    let limit = if shown { IDLE_SHOWN_MS } else { IDLE_MS };
+    with(|m| m.get(profile).filter(|t| !asking && t.by != "ask" && now.saturating_sub(t.touched) >= limit).map(|t| t.pid))
 }
 
 /// 크롬 창을 꺼냈다(개입 중일 때만 표시)
@@ -201,6 +269,7 @@ pub fn holding(profile: &str) -> bool {
 pub fn record(profile: &str, ev: Value) {
     with(|m| {
         if let Some(t) = m.get_mut(profile) {
+            t.touched = now_ms();
             if t.events.last() != Some(&ev) && t.events.len() < MAX_EVENTS {
                 t.events.push(ev);
             }
@@ -337,6 +406,93 @@ mod tests {
             record(p, json!({ "k": "click", "what": i }));
         }
         assert_eq!(events(p).len(), MAX_EVENTS);
+        with(|m| m.remove(p));
+    }
+
+    fn handback(d: &Path, p: &str) -> Value {
+        serde_json::from_str(&std::fs::read_to_string(d.join(format!("{p}.handback"))).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn 패스키_꺼내기가_켠_개입은_다시_숨길_때_돌려준다() {
+        // 2026-10-10·11 — 꺼내기(agent_peek)가 개입을 켜고 숨기기(agent_hide)는 안 풀어서, 오탐·아무것도 안 한 날 세션 도구가 계속 묶였다
+        let d = dir();
+        let p = "t-auto";
+        start_auto(&d, p, 21).unwrap();
+        assert!(allows(&d, p, 21, false));
+        assert!(!release_auto(&d, p, 22), "남의 래퍼는 안 푼다");
+        assert!(release_auto(&d, p, 21));
+        assert!(read_file(&d, p).is_none());
+        assert_eq!(handback(&d, p)["why"], "hidden");
+        assert!(!holding(p));
+        assert!(!release_auto(&d, p, 21), "이미 풀렸으면 아무 일 없음");
+    }
+
+    #[test]
+    fn 사람이_직접_켠_개입은_숨겨도_안_풀린다() {
+        let d = dir();
+        let p = "t-manual";
+        start(&d, p, 31, "desktop").unwrap();
+        assert!(!release_auto(&d, p, 31));
+        assert!(read_file(&d, p).is_some());
+        // 꺼내기가 켠 뒤 사람이 '크롬에서 보기'를 누르면 사람 것이 된다
+        let q = "t-manual2";
+        start_auto(&d, q, 32).unwrap();
+        set_manual(q);
+        assert!(!release_auto(&d, q, 32));
+        // 이미 사람이 개입 중인데 꺼내기가 오면 사람 것 그대로
+        start_auto(&d, p, 31).unwrap();
+        assert!(!release_auto(&d, p, 31));
+        hand_back(&d, p, 31).unwrap();
+        hand_back(&d, q, 32).unwrap();
+    }
+
+    #[test]
+    fn 사람_조작이_없으면_정한_시간_뒤_돌려줄_차례다() {
+        let d = dir();
+        let p = "t-idle";
+        start(&d, p, 41, "desktop").unwrap();
+        let t0 = with(|m| m[p].touched);
+        assert_eq!(idle_pid(p, t0 + IDLE_MS - 1, false, false), None);
+        assert_eq!(idle_pid(p, t0 + IDLE_MS, false, false), Some(41));
+        assert_eq!(idle_pid(p, t0 + IDLE_MS, true, false), None, "크롬을 꺼내 둔 동안은 사람이 크롬을 직접 만질 수 있어 더 기다린다");
+        assert_eq!(idle_pid(p, t0 + IDLE_SHOWN_MS, true, false), Some(41));
+        // 조작하면 시계가 다시 간다 — 모달 입력(touched)·기록(record) 둘 다
+        with(|m| m.get_mut(p).unwrap().touched = 0);
+        touched(p);
+        assert!(idle_pid(p, now_ms() + IDLE_MS - 1000, false, false).is_none());
+        with(|m| m.get_mut(p).unwrap().touched = 0);
+        record(p, key("Tab"));
+        assert!(idle_pid(p, now_ms() + IDLE_MS - 1000, false, false).is_none());
+        hand_back_why(&d, p, 41, Some("idle")).unwrap();
+        assert_eq!(handback(&d, p)["why"], "idle");
+        assert_eq!(handback(&d, p)["events"][0]["key"], "Tab");
+        assert!(read_file(&d, p).is_none());
+    }
+
+    #[test]
+    fn 세션이_부른_동안은_시간으로_안_푼다() {
+        // 부름(browser_ask_human)은 래퍼가 10분 기다린다 — 사람이 로그인할 시간을 앱이 줄이지 않는다
+        let p = "t-idle-ask";
+        start_ask(p, 51, 0);
+        with(|m| m.get_mut(p).unwrap().touched = 0);
+        assert_eq!(idle_pid(p, now_ms() + IDLE_SHOWN_MS * 10, false, false), None);
+        with(|m| m.remove(p));
+    }
+
+    #[test]
+    fn 부름_중에_사람이_개입을_눌러도_부름이_끝날_때까지_시간으로_안_푼다() {
+        // 부름 중 '개입'을 누르면 start 가 by 를 desktop 으로 바꿔서 SMS·앱 승인 기다리는 3분 사이 풀리고 모은 기록이 사라졌다(2026-10-11 bug-hunt)
+        let d = dir();
+        let p = "t-idle-ask-take";
+        start_ask(p, 52, 0);
+        record(p, key("Enter"));
+        start(&d, p, 52, "desktop").unwrap();
+        with(|m| m.get_mut(p).unwrap().touched = 0);
+        assert_eq!(idle_pid(p, now_ms() + IDLE_MS * 2, false, true), None);
+        assert_eq!(events(p).len(), 1);
+        // 부름이 끝나고 개입만 남으면 평소처럼 3분
+        assert_eq!(idle_pid(p, now_ms() + IDLE_MS * 2, false, false), Some(52));
         with(|m| m.remove(p));
     }
 

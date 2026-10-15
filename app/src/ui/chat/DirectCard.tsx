@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { cardLine, cardShow, dismiss, kindView, LINE_TTL, type DirectCard, type Dismissed } from '../../domain/directAsk';
 import { josa, machine, tr } from '../../i18n';
 import { openAgentModal } from '../AgentBrowserModal';
-import { IconClose } from '../Icons';
+import { IconChevronUp, IconClose, IconMaximize, IconOpen } from '../Icons';
+import { IconButton } from '../kit/IconButton';
 import './directCard.css';
 
 type Pick = { pick: 'yes' } | { pick: 'no' } | { pick: 'option'; option: number } | { pick: 'text'; text: string };
@@ -43,7 +44,7 @@ export function DirectCardView({ c, name, project, profile, compact, onOpen, onA
 
   if (compact) {
     return (
-      <div className="dc-mini" ref={box}>{who}<div className="dc-t"><b>{name}</b> {badge}<div className="dc-muted">{c.state === 'gone' ? tr('세션이 꺼졌어요', 'Session ended') : c.q}</div></div><button className="dc-link" onClick={onOpen}>{tr('열기', 'Open')}</button></div>
+      <div className="dc-mini" ref={box}>{who}<div className="dc-t"><b>{name}</b> {badge}<div className="dc-muted">{c.state === 'gone' ? tr('세션이 꺼졌어요', 'Session ended') : c.q}</div></div><IconButton label={tr('열기', 'Open')} onClick={onOpen}><IconOpen /></IconButton></div>
     );
   }
   const danger = k.tone === 'danger';
@@ -84,7 +85,7 @@ export function DirectCardView({ c, name, project, profile, compact, onOpen, onA
       )}
       <div className="dc-acts">
         {free === null && <button className="dc-link dc-free" onClick={() => setFree('')}>{tr('직접 답 쓰기', 'Write an answer')}</button>}
-        {c.kind === 'login' && profile && <button className="dc-btn dc-no" onClick={() => openAgentModal(profile)}>{tr('크게 보기로 하기', 'Open big view')}</button>}
+        {c.kind === 'login' && profile && <IconButton size="l" tone="line" className="dc-ib" label={tr('크게 보기로 하기', 'Open big view')} onClick={() => openAgentModal(profile)}><IconMaximize /></IconButton>}
         {c.kind === 'login' && !profile && <span className="dc-muted">{tr(`로그인은 ${machine()} 앱 크게 보기에서`, `Sign in from the ${machine()} app big view`)}</span>}
         <button className="dc-btn dc-no" disabled={busy} onClick={(e) => answer(e, { pick: 'no' })}>{c.no}</button>
         <button className={`dc-btn dc-go ${danger ? 'dc-pay' : ''}`} disabled={busy} onClick={(e) => answer(e, { pick: 'yes' })}>{c.yes}</button>
@@ -93,7 +94,7 @@ export function DirectCardView({ c, name, project, profile, compact, onOpen, onA
         <div className="dc-freebox">
           <textarea value={free} onChange={(e) => setFree(e.target.value)} rows={2} placeholder={tr('예: 카드 말고 다음 주에 계좌로 다시 해 줘', 'e.g. Not by card — do it by bank transfer next week')} aria-label={tr('직접 답', 'Your answer')} />
           <div className="dc-muted">{tr(`이 글은 ${name} 입력칸에 네가 친 말로 들어가요`, `This goes into ${name}'s input as your own words`)}</div>
-          <div className="dc-acts"><button className="dc-btn dc-no" onClick={() => setFree(null)}>{tr('접기', 'Close')}</button><button className="dc-btn dc-go" disabled={busy || !free.trim()} onClick={(e) => answer(e, { pick: 'text', text: free })}>{tr(`${name}에 보내기`, `Send to ${name}`)}</button></div>
+          <div className="dc-acts"><IconButton size="l" tone="line" className="dc-ib" label={tr('접기', 'Close')} onClick={() => setFree(null)}><IconChevronUp /></IconButton><button className="dc-btn dc-go" disabled={busy || !free.trim()} onClick={(e) => answer(e, { pick: 'text', text: free })}>{tr(`${name}에 보내기`, `Send to ${name}`)}</button></div>
         </div>
       )}
       {(err || c.state === 'failed') && <div className="dc-err" role="alert">{err || tr('못 보냈어요 — 다시 눌러 주세요', 'Not sent — press again')}</div>}

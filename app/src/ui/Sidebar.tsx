@@ -1,14 +1,16 @@
 import { useState, type RefObject } from 'react';
 import { searchProjects } from '../domain/search';
 import { ctxLevel } from '../domain/ctx';
-import { sessionMarks, statusKind, urgentKind, type StatusKind } from '../domain/statusMark';
+import { projectLine, sessionMarks, statusKind, urgentKind, type StatusKind } from '../domain/statusMark';
+import { sessionStatus, statusWord, type ActivityStatus } from '../domain/status';
 import { groupRoutines, type RoutineItem, type RoutineState } from '../domain/routine';
-import { IconDb } from './Icons';
+import { IconDb, IconPlus } from './Icons';
+import { IconButton } from './kit/IconButton';
 import { StatusMark } from './StatusMark';
 import { assistant, josa, tr } from '../i18n';
 import { keyLabel } from '../domain/keys';
 import { IS_WIN } from '../domain/reader';
-import type { ProjectGroup, Session, SessionState } from '../domain/session';
+import type { ProjectGroup, Session } from '../domain/session';
 
 export type Selection = { kind: 'orchestrator' } | { kind: 'orchHome' } | { kind: 'all' } | { kind: 'tama' } | { kind: 'replay' } | { kind: 'load' } | { kind: 'helpers' } | { kind: 'loose' } | { kind: 'review'; key?: string } | { kind: 'project'; name: string } | { kind: 'routine'; name: string } | { kind: 'external'; id: string };
 
@@ -38,9 +40,10 @@ type Props = {
   helpers?: Session[];
   /** dev 폴더 자체에서 연 세션('프로젝트 밖') */
   loose?: Session[];
+  /** 세션 판단(domain/status activityStatus) — 채팅 사이드바·대시보드와 같은 말. 없으면 세션 목록만으로(기록 못 읽음 = 모름) */
+  statusOf?: (s: Session) => ActivityStatus;
 };
 
-const STATE_LABEL = (): Record<SessionState, string> => ({ working: tr('작업 중', 'Working'), blocked: tr('확인창', 'Prompt'), idle: tr('대기', 'Idle') });
 
 const Badges = ({ list }: { list?: string[] }) =>
   list && list.length ? <div className="badges">{list.join(' · ')}</div> : null;
@@ -54,7 +57,7 @@ export const Ctx = ({ v }: { v?: number }) =>
   );
 
 /** 세션 여럿인 프로젝트: 세션마다 표시 하나(급한 것부터), 넷 넘으면 +N */
-function SessionMarks({ states }: { states: SessionState[] }) {
+function SessionMarks({ states }: { states: ActivityStatus[] }) {
   const { marks, more } = sessionMarks(states);
   return (
     <span className="dots">
@@ -70,7 +73,7 @@ const isOn = (a: Selection, b: Selection) =>
   (a.kind !== 'routine' || b.kind !== 'routine' || a.name === b.name) &&
   (a.kind !== 'external' || b.kind !== 'external' || a.id === b.id);
 
-export function Sidebar({ routines, external = [], orchestrator, projects: allProjects, selected, onSelect, footer, badges, idleProjects: allIdle, query, onQuery, searchRef, ctxOf, onAddProject, helpers, loose }: Props) {
+export function Sidebar({ routines, external = [], orchestrator, projects: allProjects, selected, onSelect, footer, badges, idleProjects: allIdle, query, onQuery, searchRef, ctxOf, onAddProject, helpers, loose, statusOf = sessionStatus }: Props) {
   // 프로젝트에 세션이 여럿이면 가장 많이 찬 것 — 곧 요약될 세션을 놓치지 않게
   const ctxMax = (ss: Session[]) => ss.map((s) => ctxOf?.(s)).filter((x): x is number => x !== undefined).reduce<number | undefined>((m, x) => (m === undefined || x > m ? x : m), undefined);
   const running = allProjects.reduce((n, p) => n + p.sessions.length, 0);
@@ -79,7 +82,7 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
   // 예약 한 줄 — 첫째 줄 이름 + 상태 글자, 둘째 줄 언제(다음 실행·날짜·남은 횟수)
   const schedItem = (r: RoutineItem) => (
     <button key={r.name} className={`it ${isOn(selected, { kind: 'routine', name: r.name }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'routine', name: r.name })}>
-      {/* 도는 중 = 도는 호, 실패·보고 없음 = 손바닥(네가 볼 차례), 성공·끝남 = 꽉 찬 원, 꺼 둠·첫 실행 전·클라우드 = 빈 원 */}
+      {/* 도는 중 = 도는 호, 실패·보고 없음 = 말풍선(네가 볼 차례), 성공·끝남 = 꽉 찬 원, 꺼 둠·첫 실행 전·클라우드 = 빈 원 */}
       <StatusMark kind={ROUTINE_MARK[r.state]} />
       <span>
         <div className="nm">{r.name}{r.cloud ? <span className="tag rt-cloud">{tr('클라우드', 'Cloud')}</span> : <span className={`sched-st st-${r.state}`}>{r.status}</span>}</div>
@@ -115,10 +118,10 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
       </div>
       <button className={`grp-link ${isOn(selected, { kind: 'orchHome' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'orchHome' })} title={tr(`오케스트레이터 홈 — 어떤 ${josa(assistant(), '을', '를')} 켤지`, 'Orchestrator home — pick who to run')}>{tr('오케스트레이터', 'Orchestrator')}</button>
       <button className={`it ${isOn(selected, { kind: 'orchestrator' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'orchestrator' })}>
-        <StatusMark kind={statusKind(orchestrator?.state)} />
+        <StatusMark kind={orchestrator ? statusKind(statusOf(orchestrator)) : 'none'} />
         <span>
           <div className="nm">{assistant()}</div>
-          <div className="ln">{orchestrator ? STATE_LABEL()[orchestrator.state] : tr('세션 없음', 'No session')}<Ctx v={orchestrator ? ctxOf?.(orchestrator) : undefined} /></div>
+          <div className="ln">{orchestrator ? statusWord(statusOf(orchestrator)) : tr('세션 없음', 'No session')}<Ctx v={orchestrator ? ctxOf?.(orchestrator) : undefined} /></div>
         </span>
       </button>
       <button className={`it ${isOn(selected, { kind: 'all' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'all' })}>
@@ -133,7 +136,7 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
       {helpers && helpers.length > 0 && (
         <button className={`it ${isOn(selected, { kind: 'helpers' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'helpers' })}
           title={tr(`${assistant()}가 따로 띄운 도우미 세션`, `Helper sessions ${assistant()} started`)}>
-          <StatusMark kind={urgentKind(helpers.map((h) => h.state))} />
+          <StatusMark kind={urgentKind(helpers.map(statusOf))} />
           <span>
             <div className="nm">{tr(`도우미 · ${helpers.length}`, `Helpers · ${helpers.length}`)}</div>
             <div className="ln">{helpers.map((h) => h.name).join(' · ')}</div>
@@ -144,7 +147,7 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
       {loose && loose.length > 0 && (
         <button className={`it ${isOn(selected, { kind: 'loose' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'loose' })}
           title={tr('프로젝트 폴더가 아니라 dev 폴더 자체에서 연 세션', 'Sessions opened in the projects folder itself, not in a project')}>
-          <StatusMark kind={urgentKind(loose.map((h) => h.state))} />
+          <StatusMark kind={urgentKind(loose.map(statusOf))} />
           <span>
             <div className="nm">{tr(`프로젝트 밖 · ${loose.length}`, `Outside projects · ${loose.length}`)}</div>
             <div className="ln">{loose.map((h) => h.name || h.id).join(' · ')}</div>
@@ -177,7 +180,7 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
 
       <div className="grp grp-act">
         {tr(`프로젝트 · 세션 ${running}개`, `Projects · ${running} sessions`)}
-        {onAddProject && <button type="button" className="grp-btn" title={tr('프로젝트 폴더 밖 폴더를 프로젝트로 추가', 'Add a folder outside the projects folder as a project')} onClick={onAddProject}>{tr('폴더 추가', 'Add folder')}</button>}
+        {onAddProject && <IconButton size="s" className="grp-btn" label={tr('폴더 추가', 'Add folder')} title={tr('폴더 추가 — 프로젝트 폴더 밖 폴더를 프로젝트로', 'Add a folder outside the projects folder as a project')} onClick={onAddProject}><IconPlus /></IconButton>}
       </div>
       <div className="list">
         {projects.map((p) => (
@@ -186,14 +189,14 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
             className={`it ${isOn(selected, { kind: 'project', name: p.name }) ? 'on' : ''}`}
             onClick={() => onSelect({ kind: 'project', name: p.name })}
           >
-            {/* 왼쪽은 가장 급한 세션 것 — 첫 세션만 보면 뒤에서 기다리는 손바닥을 놓친다 */}
-            <StatusMark kind={urgentKind(p.sessions.map((s) => s.state))} />
+            {/* 왼쪽은 가장 급한 세션 것 — 첫 세션만 보면 뒤에서 기다리는 말풍선을 놓친다 */}
+            <StatusMark kind={urgentKind(p.sessions.map(statusOf))} />
             <span>
               <div className="nm">
                 {p.name}
-                {p.sessions.length > 1 && <SessionMarks states={p.sessions.map((s) => s.state)} />}
+                {p.sessions.length > 1 && <SessionMarks states={p.sessions.map(statusOf)} />}
               </div>
-              <div className="ln">{describe(p.sessions)}<Ctx v={ctxMax(p.sessions)} /></div>
+              <div className="ln">{projectLine(p.sessions, statusOf)}<Ctx v={ctxMax(p.sessions)} /></div>
               <Badges list={badges[p.name]} />
             </span>
           </button>
@@ -221,12 +224,3 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
 }
 
 const ROUTINE_MARK: Record<RoutineState, StatusKind> = { running: 'working', failed: 'waiting', noReport: 'waiting', ok: 'idle', done: 'idle', paused: 'none', waiting: 'none', cloud: 'none' };
-
-function describe(sessions: Session[]): string {
-  if (sessions.length === 1) {
-    const s = sessions[0]!;
-    return `${STATE_LABEL()[s.state]} · ${s.workspace ?? s.name}`;
-  }
-  const working = sessions.filter((s) => s.state === 'working').length;
-  return tr(`창 ${sessions.length} · 작업 중 ${working}`, `${sessions.length} panes · ${working} working`);
-}

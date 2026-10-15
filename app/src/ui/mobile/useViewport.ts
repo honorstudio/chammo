@@ -6,6 +6,7 @@
 // 엉터리 visualViewport 높이(domain/mobile visibleHeight)는 innerHeight 로 바꿔 그리고, 처음 바꾼 때 값을 맥에 한 줄(vp-fix)
 import { useEffect, useState, type RefObject } from 'react';
 import { diagLine, driftBias, isTyping, readViewport } from '../../domain/mobile';
+import { layoutOff } from '../../domain/sheetGuard';
 import { RESUME_EVENT } from '../../domain/poller';
 import { phoneDiag } from '../../data/web';
 import { isStandalone } from './standalone';
@@ -111,9 +112,37 @@ export function useViewport(frame: RefObject<HTMLElement | null>): Viewport {
     };
     // 이름을 남기고 다시 읽기 — 진단 줄이 '무슨 사건 뒤에'를 알게
     const mark = (ev: string, fn: () => void) => () => { note(ev); fn(); };
+    // 박힘 지킴이(2026-10-11) — 쓰는 중이 아닌데 입력줄이 보이는 화면 밖이거나 화면 틀이 밀린 게 두 번 연달아면
+    // 그때 값을 맥 <데이터>/phone-layout.jsonl 에 한 줄 남기고(글 내용 없음) 보정을 지우고 다시 재서 틀을 맨 위·보이는 높이로
+    let offs = 0;
+    let offSentAt = 0;
+    const guard = () => {
+      const el = frame.current;
+      const comp = document.querySelector('.m-comp-wrap');
+      if (!el || !comp) return;
+      const vv = window.visualViewport;
+      const visBottom = Math.round(vv ? vv.offsetTop + vv.height : window.innerHeight);
+      const compBottom = Math.round(comp.getBoundingClientRect().bottom);
+      const frameTop = Math.round(el.getBoundingClientRect().top);
+      const r = read(bias);
+      // 유령 키보드면 보이는 화면 값(vv)이 거짓이라 입력줄이 그 아래로 빠진 걸로 읽힌다(2026-10-11 phone-layout comp-below vvH=511) — 화면 틀은 유령 판정이 맡는다
+      if (r.ghost) { offs = 0; return; }
+      const why = layoutOff({ compBottom, visBottom, frameTop, editing: r.editing, kb: r.kb });
+      offs = why ? offs + 1 : 0;
+      if (!why || offs < 2) return;
+      offs = 0;
+      if (Date.now() - offSentAt > 30_000) {
+        offSentAt = Date.now();
+        void phoneDiag('layout-off', diagLine({ ...snapshot(el), why, compBottom, visBottom, frameTop, bias }));
+      }
+      bias = 0; prev = null;
+      relayout();
+      setVp({ h: Math.min(r.h, visBottom), top: 0, kb: false });
+    };
     // 그려진 자리 — 화면 틀 위가 0 이 아닌 게 두 번 연달아 같으면 그만큼 보정. 보정을 바꿨으면 새 자리에서 다시 두 번
     const check = () => {
       if (document.hidden) return;
+      guard();
       const el = frame.current;
       if (el) {
         const rect = Math.round(el.getBoundingClientRect().top);

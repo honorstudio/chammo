@@ -1,0 +1,4 @@
+# 의존성 설치 스크립트 허락(pnpm 11) — 정하지 않은 게 있으면 install 이 실패한다. src/pnpmBuilds.test.ts
+allowBuilds:
+  # Univer → @univerjs/protocol → grpc 가 끌어온다. postinstall 은 판 표기 경고만 찍어서 안 돌려도 된다
+  protobufjs: false
