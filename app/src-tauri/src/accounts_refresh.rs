@@ -21,6 +21,11 @@ pub type Refresher = fn(&Value) -> Result<Value, String>;
 /// Claude Code 와 같은 주소·앱 id(2.1.296 의 TOKEN_URL·CLIENT_ID)
 pub const TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
 pub const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+/// 토큰 주소에 보내는 User-Agent — 이 앱 이름과 판, 저장소 주소. curl 기본 UA 로 보내면 토큰 주소가 429 로 거절한다
+pub fn user_agent() -> String {
+    format!("Chammo/{} (+https://github.com/honorstudio/chammo)", env!("CARGO_PKG_VERSION"))
+}
+
 /// 이만큼 안 남았으면 끼우기 전에 갱신한다 — Claude Code 는 5분 남으면 갱신하러 간다
 pub const MARGIN_MS: i64 = 30 * 60_000;
 
@@ -83,8 +88,9 @@ pub fn refresh(o: &Value) -> Result<Value, String> {
     let b = body(o).ok_or("noRefreshToken")?;
     let url = std::env::var("CHAMMO_ACCOUNT_TOKEN_URL").ok().filter(|u| !u.is_empty()).unwrap_or_else(|| TOKEN_URL.into());
     let mut c = crate::platform::command("/usr/bin/curl");
+    let ua = format!("User-Agent: {}", user_agent());
     // 끝 줄 = 상태 코드 + 탭 + Retry-After 머리(curl 7.84+ %header, 맥 기본 8.x) — 429 면 언제 다시 할지
-    c.args(["-sS", "--max-time", "20", "-X", "POST", "-H", "Content-Type: application/json", "--data-binary", "@-", "-w", "\n%{http_code}\t%header{retry-after}", &url])
+    c.args(["-sS", "--max-time", "20", "-X", "POST", "-H", "Content-Type: application/json", "-H", "Accept: application/json", "-H", &ua, "--data-binary", "@-", "-w", "\n%{http_code}\t%header{retry-after}", &url])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -314,6 +320,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(d.parent().unwrap());
     }
 
+    /// 가짜 토큰 주소를 env 로 주는 시험끼리 겹치지 않게
+    static URL_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// 가짜 토큰 주소 — 받은 요청 수만큼 정해 둔 답(상태 줄·머리)을 하나씩. 실제 토큰 주소는 부르지 않는다
     fn fake_token_server(replies: Vec<&'static str>) -> String {
         use std::io::{Read, Write as _};
@@ -334,6 +343,7 @@ mod tests {
     fn 갱신이_429면_rate_와_쉴_초() {
         // 2026-10-15 17:0x 실제 — platform.claude.com 이 이 맥 IP 를 잠깐 막아(rate_limit_error) 'http429' 로 떴다. 계정 문제가 아니다
         let url = fake_token_server(vec!["HTTP/1.1 429 Too Many Requests\r\nRetry-After: 600", "HTTP/1.1 429 Too Many Requests", "HTTP/1.1 429 Too Many Requests\r\nRetry-After: Wed, 21 Oct 2026 07:28:00 GMT", "HTTP/1.1 503 Service Unavailable"]);
+        let _g = URL_ENV.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("CHAMMO_ACCOUNT_TOKEN_URL", &url);
         let o = json!({ "accessToken": "a", "refreshToken": "r-가짜", "expiresAt": 0 });
         assert_eq!(refresh(&o), Err("rate:600".to_string()), "Retry-After 초를 같이");
@@ -341,6 +351,37 @@ mod tests {
         assert_eq!(refresh(&o), Err("rate".to_string()), "날짜 꼴 Retry-After 는 버린다");
         assert_eq!(refresh(&o), Err("http503".to_string()), "다른 실패는 그대로");
         std::env::remove_var("CHAMMO_ACCOUNT_TOKEN_URL");
+    }
+
+    #[test]
+    fn 토큰_주소엔_앱_ua_로_보낸다() {
+        // curl 기본 UA 가 아니라 이 앱 UA·Accept 머리로 보낸다
+        use std::io::{Read, Write as _};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://127.0.0.1:{}/v1/oauth/token", l.local_addr().unwrap().port());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Some(mut s) = l.incoming().flatten().next() {
+                let mut buf = [0u8; 8192];
+                let n = s.read(&mut buf).unwrap_or(0);
+                let _ = tx.send(String::from_utf8_lossy(&buf[..n]).to_lowercase());
+                let _ = write!(s, "HTTP/1.1 400 Bad Request\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}");
+            }
+        });
+        let _g = URL_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("CHAMMO_ACCOUNT_TOKEN_URL", &url);
+        let got = refresh(&json!({ "accessToken": "a", "refreshToken": "r-가짜", "expiresAt": 0 }));
+        std::env::remove_var("CHAMMO_ACCOUNT_TOKEN_URL");
+        assert_eq!(got, Err("dead".to_string()));
+        let head = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(head.contains(&format!("\r\nuser-agent: {}\r\n", user_agent().to_lowercase())), "{head}");
+        assert!(head.contains("\r\naccept: application/json\r\n"), "{head}");
+        assert!(!head.contains("user-agent: curl"), "{head}");
+    }
+
+    #[test]
+    fn ua_는_이_앱_이름과_판() {
+        assert_eq!(user_agent(), format!("Chammo/{} (+https://github.com/honorstudio/chammo)", env!("CARGO_PKG_VERSION")));
     }
 
     #[test]

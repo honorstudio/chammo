@@ -4,7 +4,8 @@
 //!
 //! - 지금 계정(키체인 로그인 칸)은 여기서 안 건드린다 — 그건 login_keep 이 Claude Code 갱신 잠금을 쥐고 따로 한다(ADR 0008, 엇갈리면 세션이 끊긴다).
 //!   지금 칸·로그인 표시와 같은 계정 칸·로그인 칸과 같은 토큰을 가진 칸은 다 뺀다
-//! - 막히면(rate) 모든 칸을 길게 쉰다(이 맥 IP 단위라 칸 하나만 쉬어선 소용없다). 갱신 토큰이 죽은 칸은 칸 값이 바뀔 때까지 다시 안 보낸다
+//! - 막히면(rate) 모든 칸을 길게 쉰다(이 맥 IP 단위라 칸 하나만 쉬어선 소용없다) — 바꾸기·지금 로그인 미리와 같이 보는 token_rate 한 곳에서.
+//!   갱신 토큰이 죽은 칸은 칸 값이 바뀔 때까지 다시 안 보낸다
 //! - 자동 전환을 꺼 둔 사람·칸이 하나뿐인 사람은 안 돈다
 //! - 보낼 때마다 기록 한 줄(토큰 값은 안 남긴다). 판단은 pick(순수), 키체인·파일은 run — 부르는 쪽(accounts_cmd)이 바꿔 끼우기와 같은 줄에 선다
 use crate::accounts::{self, Error, Live, Pool, SLOT_SERVICE};
@@ -19,10 +20,8 @@ use std::path::Path;
 pub const AHEAD_MS: i64 = 2 * 3600_000;
 /// 아무 칸이든 보낸 뒤 다음 칸까지 — 한 번에 몰아 보내지 않게
 pub const GAP_MS: i64 = 20 * 60_000;
-/// 막혔거나(rate·서버 오류·인터넷) 실패하면 이만큼 쉰다
+/// 칸 하나가 실패하면(서버 오류·인터넷) 그 칸만 이만큼 쉰다. 막힘(rate)은 token_rate
 pub const REST_MS: i64 = 3600_000;
-/// 서버가 준 Retry-After 를 믿는 끝 — 이상하게 큰 값에 하루 넘게 서 있지 않게
-const RETRY_MAX_MS: i64 = 24 * 3600_000;
 const DAY_MS: i64 = 24 * 3600_000;
 
 /// 데우기 기록 — accounts.json 의 warm(토큰 없음)
@@ -31,8 +30,6 @@ const DAY_MS: i64 = 24 * 3600_000;
 pub struct Warm {
     /// 마지막으로 보낸 때(성공·실패 모두)
     pub last_at: i64,
-    /// 이때까지 아무 칸도 안 보낸다(rate)
-    pub rest_until: i64,
     /// 보낸 횟수를 세는 날(UTC 날 번호)과 그날 보낸 횟수 — 기록 줄에 '몇 번째'로
     pub day: i64,
     pub sent: u32,
@@ -63,9 +60,9 @@ pub struct Cand {
     pub refreshable: bool,
 }
 
-/// 이번에 데울 칸(cands 의 번호) — 쉬는 중·간격 안이면 없음. 곧 만료되는 칸부터
+/// 이번에 데울 칸(cands 의 번호) — 간격 안이면 없음. 곧 만료되는 칸부터(막혀 쉬는 중인지는 run 이 token_rate 로 먼저 본다)
 pub fn pick(w: &Warm, cands: &[Cand], now: i64) -> Option<usize> {
-    if now < w.rest_until || now - w.last_at < GAP_MS {
+    if now - w.last_at < GAP_MS {
         return None;
     }
     cands
@@ -91,12 +88,6 @@ fn refresh_token(p: &Value) -> Option<&str> {
     p.get("refreshToken").and_then(Value::as_str).filter(|r| !r.is_empty())
 }
 
-/// 'rate:<초>' 의 쉬는 시간 — 1시간보다 짧으면 1시간
-fn rest_for(code: &str) -> i64 {
-    let given = code.strip_prefix("rate:").and_then(|s| s.parse::<i64>().ok()).map(|s| s.saturating_mul(1000)).unwrap_or(0);
-    given.clamp(REST_MS, RETRY_MAX_MS)
-}
-
 /// 한 차례 — 데웠으면(성공·실패) 그 칸 id. 키체인을 못 읽으면 오류(부르는 쪽이 다음 차례에 다시)
 pub fn run(store: &dyn Store, live: &Live, list: &Path, now: i64, refresh: Refresher, log: &mut dyn FnMut(&str)) -> Result<Option<String>, Error> {
     let mut pool = accounts::load(list)?;
@@ -105,7 +96,7 @@ pub fn run(store: &dyn Store, live: &Live, list: &Path, now: i64, refresh: Refre
         return Ok(None);
     }
     let w = &pool.warm;
-    if now < w.rest_until || now - w.last_at < GAP_MS {
+    if now - w.last_at < GAP_MS || crate::token_rate::resting(&crate::token_rate::load(&crate::token_rate::path_for(list)), now).is_some() {
         return Ok(None); // 키체인도 안 읽는다
     }
     // 지금 계정 — 지금 칸, 로그인 표시와 같은 계정 칸, 로그인 칸과 같은 갱신 토큰을 가진 칸(어긋난 중이어도 — 이건 고른 뒤에 본다)
@@ -149,7 +140,7 @@ pub fn run(store: &dyn Store, live: &Live, list: &Path, now: i64, refresh: Refre
     };
     let (id, old) = (cands[i].id.clone(), &parts[i]);
     let left = exp_of(old).map(|e| (e - now) / 60_000).unwrap_or(0);
-    let got = refresh(old);
+    let got = crate::token_rate::call(list, now, refresh, old, "warm", false);
     let w = &mut pool.warm;
     w.last_at = now;
     if w.day != now / DAY_MS {
@@ -177,8 +168,8 @@ pub fn run(store: &dyn Store, live: &Live, list: &Path, now: i64, refresh: Refre
             let s = w.slots.entry(id.clone()).or_default();
             if code == "dead" {
                 s.dead_exp = dead_exp;
-            } else if code == "rate" || code.starts_with("rate:") {
-                w.rest_until = now + rest_for(&code);
+            } else if crate::token_rate::is_rate(&code) || code.starts_with("wait:") {
+                // 막힘 — token_rate 가 세 길 모두 쉬게 적었다
             } else {
                 s.rest_until = now + REST_MS;
             }

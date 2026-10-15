@@ -104,6 +104,7 @@ mod sheet_struct;
 mod sheet_xml;
 mod slash;
 mod tama;
+mod token_rate;
 mod tools;
 mod tools_mcp;
 mod tools_plugins;

@@ -1,6 +1,8 @@
 //! 지금 로그인 미리 갱신(ADR 0008) — Claude Code 는 지금 로그인을 만료 5분 전쯤 한 번만 갱신한다. 그 순간 토큰 주소가 이 맥 IP 를 429 로 막고 있으면
 //! 세션들이 멈춘다(2026-10-15 17시~ 몇 시간). 그래서 앱이 남은 시간이 60분 아래가 되면 Claude Code 와 같은 갱신 잠금을 쥐고 대신 갱신하고,
-//! 막히면 10분마다(Retry-After 가 더 길면 그만큼) 다시 한다. 만료 15분 전까지 못 받았거나 갱신 토큰이 죽었으면 그때만 '로그인' 카드(need).
+//! 막히면(rate) 바꾸기·데우기와 같이 보는 token_rate 쉬기가 풀릴 때까지 안 부른다 — 10분마다 다시 두드리면 막힘이 늘었다(2026-10-15).
+//! 예외는 하나: 만료 20분 안이면 쉬는 중이어도 딱 한 번(세션이 멈추기 직전 마지막 기회), 그것도 막히면 바로 카드.
+//! 막힘이 아닌 실패(인터넷·잠금 등)는 10분 뒤 다시. 만료 15분 전까지 못 받았거나 갱신 토큰이 죽었으면 그때만 '로그인' 카드(need).
 //!
 //! - 잠금 없이는 절대 안 한다 — 설정 폴더(잠금 자리)를 모르면 안 돈다. 잠금을 잡은 뒤 키체인을 다시 읽어 세션이 먼저 갱신했으면 서버를 안 부른다
 //! - 키체인 지금 칸은 계정 로그인(claudeAiOauth)만 바꾼다 — MCP 로그인·.claude.json 계정 표시·다른 칸은 그대로.
@@ -17,16 +19,16 @@ use std::path::Path;
 const MIN: i64 = 60_000;
 /// 이만큼 안 남으면 대신 갱신한다
 pub const AHEAD_MS: i64 = 60 * MIN;
-/// 막히거나 실패하면 이만큼 뒤 다시
+/// 실패하면(막힘 말고) 이만큼 뒤 다시
 pub const RETRY_MS: i64 = 10 * MIN;
+/// 이만큼 안 남았으면 막혀 쉬는 중이어도 딱 한 번 부른다
+pub const LAST_MS: i64 = 20 * MIN;
 /// 이만큼 안 남았는데 못 받았으면 카드
 pub const LATE_MS: i64 = 15 * MIN;
 /// 넉넉해도 이만큼마다 한 번은 본다 — 계정 바꾸기·다시 로그인으로 만료 시각이 앞당겨질 수 있다
 pub const LOOK_MAX_MS: i64 = 15 * MIN;
 /// 카드 판단은 이만큼 안에 본 것만 — 앱이 꺼져 있던 동안의 옛 기록으로 카드를 띄우지 않게
 pub const FRESH_MS: i64 = 5 * MIN;
-/// 서버가 준 Retry-After 를 믿는 끝
-const RETRY_MAX_MS: i64 = 6 * 60 * MIN;
 
 /// 상태 — <데이터>/login-keep.json(토큰 없음)
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -43,9 +45,12 @@ pub struct Keep {
     pub fails: u32,
     /// 갱신 토큰이 죽었을 때(또는 새 값을 못 담았을 때) 그 만료 시각 — 로그인이 바뀌면(시각이 달라지면) 풀린다
     pub dead_exp: Option<i64>,
+    /// 쉬는 중 마지막 한 번(만료 20분 안)을 쓴 로그인의 만료 시각 — 로그인마다 한 번
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chance: Option<i64>,
 }
 
-/// 카드가 필요한가 — "dead"(갱신 토큰이 죽음) · "late"(만료 15분 안인데 못 받음). 최근에 본 것만
+/// 카드가 필요한가 — "dead"(갱신 토큰이 죽음) · "late"(만료 15분 안인데 못 받음, 또는 마지막 한 번도 막힘). 최근에 본 것만
 pub fn need(k: &Keep, now: i64) -> Option<&'static str> {
     if k.seen_at == 0 || now - k.seen_at > FRESH_MS {
         return None;
@@ -53,7 +58,7 @@ pub fn need(k: &Keep, now: i64) -> Option<&'static str> {
     if k.dead_exp.is_some() {
         return Some("dead");
     }
-    k.exp.filter(|e| e - now < LATE_MS).map(|_| "late")
+    k.exp.filter(|e| e - now < LATE_MS || (k.chance == Some(*e) && crate::token_rate::is_rate(&k.last))).map(|_| "late")
 }
 
 pub fn load_keep(p: &Path) -> Keep {
@@ -79,10 +84,13 @@ fn live_part(store: &dyn Store, live: &Live) -> Result<(Option<crate::accounts_s
     Ok((s, p))
 }
 
-/// 'rate:<초>' 면 그만큼(10분보다 짧으면 10분)
-fn wait_for(code: &str) -> i64 {
-    let given = code.strip_prefix("rate:").and_then(|s| s.parse::<i64>().ok()).map(|s| s.saturating_mul(1000)).unwrap_or(0);
-    given.clamp(RETRY_MS, RETRY_MAX_MS)
+/// 막혀 쉬는 동안 다음에 볼 때 — 쉬기가 풀릴 때, 아직 마지막 한 번을 안 썼으면 그보다 먼저 만료 20분 전
+fn rest_next(until: i64, exp: i64, k: &Keep) -> i64 {
+    if k.chance == Some(exp) {
+        until
+    } else {
+        until.min(exp - LAST_MS)
+    }
 }
 
 fn mins(ms: i64) -> i64 {
@@ -107,7 +115,8 @@ fn after_new(exp: i64, now: i64) -> i64 {
 pub fn tick(store: &dyn Store, live: &Live, list: &Path, state: &Path, now: i64, refresh: Refresher, log: &mut dyn FnMut(&str)) -> Result<(), Error> {
     let Some(dir) = &live.claude_dir else { return Ok(()) };
     let before = load_keep(state);
-    let watch = before.dead_exp.is_some() || before.exp.is_some_and(|e| e - now < LATE_MS);
+    // 카드가 떠 있을 수 있는 동안(죽음·15분 안·마지막 한 번도 막힘)은 매 차례 본다 — 안 보면 5분 뒤 카드가 꺼진다(FRESH_MS)
+    let watch = before.dead_exp.is_some() || before.exp.is_some_and(|e| e - now < LATE_MS || (before.chance == Some(e) && crate::token_rate::is_rate(&before.last)));
     if now < before.next_at && !watch {
         return Ok(());
     }
@@ -147,6 +156,18 @@ fn step(store: &dyn Store, live: &Live, list: &Path, dir: &Path, k: &mut Keep, n
         return Ok(()); // 막혀서 쉬는 중 — 보기만
     }
     let left = mins(exp - now);
+    // 토큰 주소가 막혀 쉬는 중(세 길이 같이 보는 token_rate) — 만료 20분 안 마지막 한 번만 예외
+    let rp = crate::token_rate::path_for(list);
+    let rate = crate::token_rate::load(&rp);
+    let last_chance = crate::token_rate::resting(&rate, now).is_some() && exp - now <= LAST_MS && k.chance != Some(exp);
+    if let Some(rest) = crate::token_rate::resting(&rate, now).filter(|_| !last_chance) {
+        if k.last != "wait" {
+            log(&format!("wait · left {left}m · rest {}m", mins(rest)));
+        }
+        k.last = "wait".into();
+        k.next_at = rest_next(rate.until, exp, k);
+        return Ok(());
+    }
     // 여기서부터 키체인 쓰기까지 Claude Code 갱신 잠금을 쥔다 — 그동안 세션은 갱신을 못 한다
     let _held = match hold(dir) {
         Ok(h) => h,
@@ -178,7 +199,11 @@ fn step(store: &dyn Store, live: &Live, list: &Path, dir: &Path, k: &mut Keep, n
         log(&format!("session · left {}m", mins(e2 - now)));
         return Ok(());
     }
-    match refresh(&cur) {
+    if last_chance {
+        k.chance = Some(exp);
+        log(&format!("lastChance · left {left}m"));
+    }
+    match crate::token_rate::call(list, now, refresh, &cur, "keep", last_chance) {
         Ok(new) => {
             // 옛 갱신 토큰은 방금 죽었다 — 새 값을 지금 칸에 바로. 못 담으면 그 로그인은 다시 해야 한다(카드)
             if let Err(e) = store.set(&live.service, &live.account, &accounts::with_part(now_secret.as_ref(), &new)) {
@@ -198,7 +223,11 @@ fn step(store: &dyn Store, live: &Live, list: &Path, dir: &Path, k: &mut Keep, n
         }
         Err(code) => {
             k.fails += 1;
-            k.next_at = now + wait_for(&code);
+            k.next_at = if crate::token_rate::is_rate(&code) || code.starts_with("wait:") {
+                rest_next(crate::token_rate::load(&rp).until, exp, k)
+            } else {
+                now + RETRY_MS
+            };
             if code == "dead" {
                 k.dead_exp = Some(exp);
             }

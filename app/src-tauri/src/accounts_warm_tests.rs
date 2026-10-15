@@ -159,9 +159,7 @@ fn 한_번에_하나_칸_사이엔_간격() {
 #[test]
 fn 쉬는_중이면_안_보내고_죽은_칸은_칸_값이_바뀔_때까지_안_건드린다() {
     let c = [cand("a", Some(T0)), cand("b", Some(T0 + MIN))];
-    // 전체 쉬기(429 — 이 맥 IP 단위)
-    let w = Warm { rest_until: T0 + 1, ..Warm::default() };
-    assert_eq!(pick(&w, &c, T0), None);
+    // 전체 쉬기(429 — 이 맥 IP 단위)는 여기 없다 — 세 길이 같이 보는 token_rate 가 run 앞에서 막는다
     // 칸 하나 쉬기 → 다른 칸
     let mut w = Warm::default();
     w.slots.insert("a".into(), WarmSlot { rest_until: T0 + 1, dead_exp: None });
@@ -272,6 +270,36 @@ fn 막히면_길게_쉬고_서버가_준_만큼_쉰다() {
     assert_eq!(e.warm(T0 + 119 * MIN, ok), None);
     assert!(e.warm(T0 + 120 * MIN, ok).is_some());
     assert!(e.log.iter().any(|l| l.contains("rate")));
+}
+
+#[test]
+fn 막힘은_세_길이_같이_보는_파일에_남고_이어지면_2배() {
+    let mut e = Env::new("rate-shared", &["a", "b", "c"]);
+    let rp = crate::token_rate::path_for(&e.list);
+    e.warm(T0, limited);
+    let r = crate::token_rate::load(&rp);
+    assert_eq!((r.until, r.by.as_str(), r.count), (T0 + HOUR, "warm", 1));
+    // 풀리자마자 또 막힘 — 2시간
+    assert!(e.warm(T0 + HOUR, limited).is_some());
+    assert_eq!(crate::token_rate::load(&rp).until, T0 + 3 * HOUR);
+    assert_eq!(e.warm(T0 + 3 * HOUR - 1, ok), None);
+    assert_eq!(calls().len(), 2);
+    // 받으면 풀린다
+    assert!(e.warm(T0 + 3 * HOUR, ok).is_some());
+    assert_eq!(crate::token_rate::load(&rp).until, 0);
+}
+
+#[test]
+fn 다른_길이_막혀_둔_쉬기도_지키고_키체인도_안_읽는다() {
+    let mut e = Env::new("rate-other", &["a", "b", "c"]);
+    let r = crate::token_rate::Rate { until: T0 + 3 * HOUR, at: T0, count: 1, by: "keep".into(), ..Default::default() };
+    crate::token_rate::save(&crate::token_rate::path_for(&e.list), &r);
+    *e.store.locked.borrow_mut() = true; // 키체인을 읽으면 오류가 난다
+    for k in 0..9 {
+        assert_eq!(run(&e.store, &e.live, &e.list, T0 + k * GAP_MS, never, &mut |_: &str| {}).unwrap(), None);
+    }
+    *e.store.locked.borrow_mut() = false;
+    assert!(e.warm(T0 + 3 * HOUR, ok).is_some());
 }
 
 #[test]

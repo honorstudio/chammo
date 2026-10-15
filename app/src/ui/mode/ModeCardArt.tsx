@@ -1,7 +1,9 @@
 // 고르기 카드 그림(10/12 사용자) — 데스크톱·폰 고르기 시트가 같이 쓴다. 모드가 정한 그림(chammo.json card)은 object-fit cover 그림으로,
 // 없으면 마지막으로 그려진 칸을 같은 렌더러로 크게 그려 작게 줄인다(누를 수 없는 그림). 그것도 없으면 fallback(지금 자리표시)
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { cardView, type CardView } from '../../domain/modeCard';
+import { svgSrc } from '../../domain/modeSvg';
+import { useScheme } from '../scheme';
 import { ModeEnvCtx, Node, type Drafts } from './ModeTree';
 
 // 시트를 열 때마다 묻지 않게 — 모드마다 1분
@@ -40,8 +42,16 @@ function TreeShot({ tree }: { tree: Extract<CardView, { kind: 'tree' }>['tree'] 
   );
 }
 
+/** 모드가 정한 Svg 카드 — <img> 안 SVG 는 앱 테마를 못 봐서 지금 테마로 못 박아 그린다 */
+function SvgArt({ svg }: { svg: string }) {
+  const scheme = useScheme();
+  const src = useMemo(() => svgSrc(svg, scheme), [svg, scheme]);
+  return <img className="mdv-card-img" src={src ?? ''} alt="" draggable={false} />;
+}
+
 /** 카드 그림 — art 가 있으면 그것, 없으면 fallback */
 export function ModeCardArt({ art, fallback }: { art: CardView | null; fallback: ReactNode }) {
   if (!art) return <>{fallback}</>;
+  if (art.kind === 'svg') return <SvgArt svg={art.svg} />;
   return art.kind === 'img' ? <img className="mdv-card-img" src={art.src} alt="" draggable={false} /> : <TreeShot tree={art.tree} />;
 }

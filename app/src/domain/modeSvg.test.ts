@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BigNum, svgDoc } from '../../hq-template/.claude/skills/hq-mode-kit/kit-svg';
 import { safeSvg, svgSrc, svgStillSrc } from './modeSvg';
 
 const OK = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#2f74e0"/></svg>';
@@ -73,11 +74,11 @@ describe('safeSvg — 모드 Svg 거르기(그 뒤 <img> 로만 그린다)', () 
 
 describe('svgSrc — <img> 주소', () => {
   it('data: 주소로만, 걸러지면 null', () => {
-    const s = svgSrc(OK)!;
+    const s = svgSrc(OK, 'light')!;
     expect(s.startsWith('data:image/svg+xml;charset=utf-8,')).toBe(true);
     expect(decodeURIComponent(s.slice('data:image/svg+xml;charset=utf-8,'.length))).toBe(OK);
     expect(s).not.toMatch(/[<>"#\s]/);
-    expect(svgSrc('<svg onload="x"/>')).toBeNull();
+    expect(svgSrc('<svg onload="x"/>', 'light')).toBeNull();
   });
 });
 
@@ -87,14 +88,50 @@ describe('svgStillSrc — 움직임 끈 정지판', () => {
   const MOVING = '<svg class="mode-anim" viewBox="0 0 10 10"><style>@keyframes b{50%{opacity:.3}}.d{animation:b 2s infinite}</style><circle class="d" cx="5" cy="5" r="2"/></svg>';
   const dec = (u: string | null) => decodeURIComponent((u ?? '').replace(/^data:image\/svg\+xml;charset=utf-8,/, ''));
   it('여는 <svg …> 바로 뒤에 움직임·전환을 끄는 <style> 을 끼운다(그림은 그대로)', () => {
-    const still = dec(svgStillSrc(MOVING));
+    const still = dec(svgStillSrc(MOVING, 'light'));
     expect(still).toMatch(/^<svg class="mode-anim" viewBox="0 0 10 10"><style>\*\{animation:none!important;transition:none!important\}<\/style><style>@keyframes b/);
     expect(still).toContain('<circle class="d" cx="5" cy="5" r="2"/>');
   });
   it('<?xml·주석 머리가 있어도 <svg 여는 꼬리 뒤에', () => {
-    expect(dec(svgStillSrc(`<?xml version="1.0"?><!-- x --><svg\nviewBox="0 0 1 1"><rect/></svg>`))).toMatch(/<svg\nviewBox="0 0 1 1"><style>\*\{animation:none!important/);
+    expect(dec(svgStillSrc(`<?xml version="1.0"?><!-- x --><svg\nviewBox="0 0 1 1"><rect/></svg>`, 'light'))).toMatch(/<svg\nviewBox="0 0 1 1"><style>\*\{animation:none!important/);
   });
   it('걸러지는 SVG 는 정지판도 없다', () => {
-    expect(svgStillSrc('<svg onload="alert(1)"/>')).toBeNull();
+    expect(svgStillSrc('<svg onload="alert(1)"/>', 'light')).toBeNull();
+  });
+});
+
+// 2026-10-16 폰(다크) 실측: <img> 안 SVG 의 @media (prefers-color-scheme: dark) 는 앱이 고른 테마를 못 본다(WebKit 은 그림 안을 늘 라이트로 본다)
+// → kit-svg 계기판 큰 숫자(var(--ink))가 어두운 바탕에 거의 안 보였다. 앱이 그릴 때 지금 테마로 그 조건을 못 박는다 — OS 설정이 끼어들 자리가 없게
+describe('svgSrc·svgStillSrc — 앱 테마로 못 박기', () => {
+  const dec = (u: string | null) => decodeURIComponent((u ?? '').replace(/^data:image\/svg\+xml;charset=utf-8,/, ''));
+  const KIT = svgDoc({ layers: [{ skin: 'gauge', w: 300, h: 120, body: BigNum(20, 90, '$12.34', { size: 64 }) }] }).svg;
+  const DARK_INK = '--ink:#e7e7ea';
+  // 그 스킨 변수 블록이 늘 참인 조건(또는 조건 없음) 안에 있으면 켜진 것
+  const on = (svg: string, vars: string) => {
+    const at = svg.indexOf(vars);
+    const media = svg.lastIndexOf('@media', at);
+    if (media < 0 || svg.lastIndexOf('}}', at) > media) return true; // @media 밖
+    return /^@media \(grid:0\)\{/.test(svg.slice(media));
+  };
+  it('앱 다크면 다크 변수가 켜지고 OS 조건(prefers-color-scheme)이 남지 않는다', () => {
+    for (const s of [dec(svgSrc(KIT, 'dark')), dec(svgStillSrc(KIT, 'dark'))]) {
+      expect(s).not.toMatch(/prefers-color-scheme/);
+      expect(on(s, DARK_INK)).toBe(true);
+    }
+  });
+  it('앱 라이트면 다크 변수는 꺼진다(OS 가 다크여도)', () => {
+    for (const s of [dec(svgSrc(KIT, 'light')), dec(svgStillSrc(KIT, 'light'))]) {
+      expect(s).not.toMatch(/prefers-color-scheme/);
+      expect(on(s, DARK_INK)).toBe(false);
+      expect(on(s, '--ink:#1d1d20')).toBe(true);
+    }
+  });
+  it('모드가 직접 쓴 조건도 — 띄어쓰기·대소문자·light 쪽·style media 속성·not', () => {
+    const own = '<svg viewBox="0 0 1 1" xmlns="http://www.w3.org/2000/svg"><style media="( Prefers-Color-Scheme:LIGHT )">.a{fill:#000}</style><style>@media screen and (prefers-color-scheme:dark){.a{fill:#fff}}@media not all and (prefers-color-scheme: dark){.b{fill:red}}</style><rect class="a"/></svg>';
+    expect(dec(svgSrc(own, 'dark'))).toBe('<svg viewBox="0 0 1 1" xmlns="http://www.w3.org/2000/svg"><style media="(grid:1)">.a{fill:#000}</style><style>@media screen and (grid:0){.a{fill:#fff}}@media not all and (grid:0){.b{fill:red}}</style><rect class="a"/></svg>');
+    expect(dec(svgSrc(own, 'light'))).toContain('<style media="(grid:0)">');
+  });
+  it('조건이 없는 그림은 그대로', () => {
+    expect(dec(svgSrc(OK, 'dark'))).toBe(OK);
   });
 });

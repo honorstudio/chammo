@@ -50,6 +50,11 @@ fn limited_30m(o: &Value) -> Result<Value, String> {
     Err("rate:1800".into())
 }
 
+fn limited_3h(o: &Value) -> Result<Value, String> {
+    record(o);
+    Err("rate:10800".into())
+}
+
 fn dead(o: &Value) -> Result<Value, String> {
     record(o);
     Err("dead".into())
@@ -228,30 +233,85 @@ fn 잠금을_기다리는_사이_세션이_먼저_갱신했으면_안_부른다(
     assert_eq!(e.log, vec!["session · left 480m"]);
 }
 
+fn rate_file(e: &Env) -> crate::token_rate::Rate {
+    crate::token_rate::load(&crate::token_rate::path_for(&e.list))
+}
+
 #[test]
-fn 막히면_10분마다_retry_after_가_더_길면_그만큼() {
-    let mut e = Env::new("rate", 55 * MIN);
+fn 막히면_10분마다_두드리지_않고_한_곳_쉬기가_풀릴_때까지_안_부른다() {
+    // 2026-10-15 17:18~ 이 맥 IP 가 막혔을 때 10분마다 다시 보내 막힘을 늘렸다
+    let mut e = Env::new("rate", 3 * HOUR + 55 * MIN);
+    e.tick(T0 + 3 * HOUR, limited);
     let live = e.live_all();
-    e.tick(T0, limited);
+    let k = e.keep();
+    // 다음에 볼 때 = 쉬기가 풀릴 때, 그보다 먼저 만료 20분 전(마지막 한 번)이 오면 그때
+    assert_eq!((k.next_at, k.fails, k.last.as_str()), (T0 + 3 * HOUR + 35 * MIN, 1, "rate"));
+    assert_eq!(rate_file(&e).until, T0 + 4 * HOUR, "세 길이 같이 보는 쉬기 1시간");
+    for m in 1..35 {
+        e.tick(T0 + 3 * HOUR + m * MIN, never); // 10분마다 안 부른다
+    }
     assert_eq!(e.live_all(), live, "실패하면 키체인은 그대로");
-    let k = e.keep();
-    assert_eq!((k.next_at, k.fails, k.last.as_str()), (T0 + RETRY_MS, 1, "rate"));
-    e.tick(T0 + RETRY_MS - 1, never); // 10분 안엔 안 부른다
-    e.tick(T0 + RETRY_MS, limited_30m);
-    assert_eq!(e.keep().next_at, T0 + RETRY_MS + 30 * MIN, "Retry-After 30분");
-    e.tick(T0 + RETRY_MS + 29 * MIN, never);
-    e.tick(T0 + RETRY_MS + 30 * MIN, network);
-    assert_eq!(e.keep().next_at, T0 + 2 * RETRY_MS + 30 * MIN);
-    assert_eq!(calls().len(), 3);
-    assert_eq!(e.log, vec!["rate · left 55m · try #1", "rate:1800 · left 45m · try #2", "network · left 15m · try #3"]);
-    // 이제 15분 아래 — 카드
-    assert_eq!(need(&e.keep(), T0 + RETRY_MS + 30 * MIN + MIN), Some("late"));
-    // 사람이 브라우저로 로그인하면(새 만료 시각) 카드는 내려가고 서버도 안 부른다
+    // 그사이 사람이 브라우저로 로그인 — 카드 없이 넉넉
     e.login("a", T0 + 9 * HOUR);
-    e.tick(T0 + 41 * MIN, never);
-    let k = e.keep();
-    assert_eq!((need(&k, T0 + 41 * MIN), k.fails), (None, 0));
-    assert!(e.log.last().unwrap().starts_with("card off"));
+    e.tick(T0 + 3 * HOUR + 35 * MIN, never);
+    assert_eq!(need(&e.keep(), T0 + 3 * HOUR + 35 * MIN), None);
+    assert_eq!(calls().len(), 1);
+    assert_eq!(e.log, vec!["rate · left 55m · try #1"]);
+}
+
+#[test]
+fn 다른_길이_막혀_둔_쉬기도_지키고_retry_after_가_길면_그만큼() {
+    let mut e = Env::new("rate-other", 50 * MIN);
+    let r = crate::token_rate::Rate { until: T0 + 3 * HOUR, at: T0, count: 1, by: "warm".into(), ..Default::default() };
+    crate::token_rate::save(&crate::token_rate::path_for(&e.list), &r);
+    for m in 0..30 {
+        e.tick(T0 + m * MIN, never); // 만료 20분 전까지는 안 부른다
+    }
+    assert_eq!(e.keep().last, "wait");
+    assert_eq!(e.log, vec!["wait · left 50m · rest 180m"], "쉬는 동안 기록은 한 줄");
+    // Retry-After 3시간
+    let mut e = Env::new("rate-3h", 55 * MIN);
+    e.tick(T0, limited_3h);
+    assert_eq!(rate_file(&e).until, T0 + 3 * HOUR);
+}
+
+#[test]
+fn 만료_20분_안이면_쉬는_중이어도_딱_한_번_또_막히면_바로_카드() {
+    let mut e = Env::new("last", 55 * MIN);
+    e.tick(T0, limited); // 쉬기 1시간 — 만료(55분)보다 길다
+    e.tick(T0 + 34 * MIN, never); // 21분 남음 — 아직(보기만)
+    assert_eq!(need(&e.keep(), T0 + 34 * MIN), None);
+    e.tick(T0 + 35 * MIN, limited); // 20분 안 — 세션이 멈추기 직전 마지막 기회
+    assert_eq!(calls().len(), 2);
+    assert_eq!(need(&e.keep(), T0 + 35 * MIN), Some("late"), "또 막혔으면 15분을 기다리지 않고 바로 카드");
+    let r = rate_file(&e);
+    assert_eq!((r.count, r.until, r.by.as_str()), (2, T0 + 35 * MIN + 2 * HOUR, "keep"), "이어진 막힘이라 2배");
+    for m in 36..60 {
+        e.tick(T0 + m * MIN, never); // 한 번뿐
+        assert_eq!(need(&e.keep(), T0 + m * MIN), Some("late"), "{m}분 — 카드는 계속 떠 있어야");
+    }
+    assert_eq!(e.log, vec!["rate · left 55m · try #1", "lastChance · left 20m", "rate · left 20m · try #2", "card late"]);
+}
+
+#[test]
+fn 마지막_한_번이_되면_쉬기도_풀린다() {
+    let mut e = Env::new("last-ok", 55 * MIN);
+    e.tick(T0, limited);
+    e.tick(T0 + 40 * MIN, ok); // 15분 남음
+    assert_eq!(e.live_part()["accessToken"], json!("new-tok-a"));
+    assert_eq!(need(&e.keep(), T0 + 40 * MIN), None);
+    assert_eq!(rate_file(&e).until, 0, "받았으면 다른 길도 다시 부를 수 있다");
+}
+
+#[test]
+fn 막힌_게_아닌_실패는_10분_뒤_다시() {
+    let mut e = Env::new("net", 55 * MIN);
+    e.tick(T0, network);
+    assert_eq!(e.keep().next_at, T0 + RETRY_MS);
+    e.tick(T0 + RETRY_MS - 1, never);
+    e.tick(T0 + RETRY_MS, network);
+    assert_eq!(calls().len(), 2);
+    assert_eq!(rate_file(&e).until, 0);
 }
 
 #[test]

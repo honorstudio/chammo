@@ -4,10 +4,8 @@ import { cardView } from './modeCard';
 // 고르기 카드 그림(10/12 사용자) — chammo.json card(Svg 글·모드 폴더 그림) 먼저, 없으면 마지막으로 그려진 칸, 없으면 자리표시
 describe('cardView — 카드 그림 고르기', () => {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 3"><rect width="4" height="3" fill="#36c"/></svg>';
-  it('Svg 는 거른 뒤 data: 그림으로', () => {
-    const v = cardView({ kind: 'svg', svg });
-    expect(v?.kind).toBe('img');
-    expect(v && v.kind === 'img' && decodeURIComponent(v.src.replace('data:image/svg+xml;charset=utf-8,', ''))).toBe(svg);
+  it('Svg 는 거른 글로 — 주소는 그릴 때 지금 테마로(ModeCardArt)', () => {
+    expect(cardView({ kind: 'svg', svg })).toEqual({ kind: 'svg', svg });
   });
   it('거름에 걸린 Svg 는 자리표시(null)', () => {
     expect(cardView({ kind: 'svg', svg: '<svg><script>alert(1)</script></svg>' })).toBeNull();

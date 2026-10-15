@@ -177,13 +177,14 @@ export function pinText(hint: boolean): string {
   return hint ? tr('고정 — 다 쓰면 넘어감', 'Pinned — switches when used up') : tr('고정', 'Pinned');
 }
 
-/** 갱신 429(refresh:rate[:초])면 쉴 초(Retry-After 가 없으면 secs null), 아니면 null */
+/** 갱신 429(refresh:rate[:초])·쉬는 중이라 안 부름(refresh:wait[:남은 초], Rust token_rate)이면 쉴 초(모르면 secs null), 아니면 null */
 const rateOf = (code: string): { secs: number | null } | null => {
-  const m = /^refresh:rate(?::(\d+))?$/.exec(code);
+  const m = /^refresh:(?:rate|wait)(?::(\d+))?$/.exec(code);
   return m ? { secs: m[1] ? Number(m[1]) : null } : null;
 };
 
 /** 자동 전환이 실패했을 때 — busy(세션이 로그인 갱신 중)는 몇 초면 풀리니 알리지 않고 잠깐 뒤 다시, 나머지는 알리고 5분 쉰다.
+ *  wait(Rust 가 세 길 공통 쉬기 안이라 서버를 안 부름)도 rate 와 같이 — 남은 만큼 쉬고 알림은 이어지는 동안 한 번.
  *  rate(갱신 주소 429 — 이 맥 요청이 많아 잠깐 막힘)는 Retry-After 만큼(없으면 15분, 1분 아래로는 안 줄임) 쉬고, 알림은 이어지는 동안 한 번만(rateNoted) —
  *  5분마다 다시 때리면 제한이 늘었다(2026-10-15) */
 export function switchFailure(code: string, rateNoted = false): { notify: boolean; restMs: number; rate: boolean } {
@@ -196,7 +197,7 @@ export function switchFailure(code: string, rateNoted = false): { notify: boolea
 /** 바꾸기 실패가 그 계정으로 브라우저 로그인하면 풀리는 것인가 — 칸 토큰 갱신이 막힘(rate, 2026-10-15 이 맥 IP 429)·갱신 토큰이 죽음(dead).
  *  브라우저 로그인(authorization_code)은 같은 때 됐다 — 새 로그인이 들어오면 Rust reconcile 이 그 칸에 담는다 */
 export function loginFixes(code: string): boolean {
-  return /^refresh:(rate(:\d+)?|dead)$/.test(code);
+  return /^refresh:((rate|wait)(:\d+)?|dead)$/.test(code);
 }
 
 /** 앱 안 터미널에서 그 계정으로 로그인 — 이메일을 로그인 화면에 미리 채운다(claude auth login --email) */
@@ -224,7 +225,14 @@ export function accountError(code: string): string {
     case 'denied': return tr('맥이 키체인 사용 허용을 물었는데 거절됐거나 창이 닫혔어요. 다시 누르고, 뜨는 창에 맥 로그인 암호를 넣은 뒤 "항상 허용"을 눌러 주세요.', 'macOS asked to allow keychain access and it was denied or closed. Try again, enter your Mac login password in the window, and choose "Always Allow".');
     case 'locked': return tr('키체인이 잠겼거나 허용을 거절했어요. 맥 잠금을 풀고 다시 해 주세요.', 'The keychain is locked or access was denied. Unlock your Mac and try again.');
     case 'busy': return tr('Claude Code 세션이 로그인을 갱신하는 중이라 이번엔 안 바꿨어요. 잠시 뒤 다시 해 주세요.', 'A Claude Code session is refreshing its sign-in, so the switch was skipped. Try again in a moment.');
-    case 'refresh': if (detail === 'rate' || detail.startsWith('rate:')) {
+    case 'refresh': if (detail === 'wait' || detail.startsWith('wait:')) {
+      // 세 길이 같이 보는 쉬기(Rust token_rate) 안이라 서버를 안 불렀다 — 브라우저 로그인은 된다
+      const sec = Number(detail.slice(5));
+      const ko = sec > 0 ? `(${Math.ceil(sec / 60)}분 남음)` : '';
+      const en = sec > 0 ? ` (${Math.ceil(sec / 60)} min left)` : '';
+      return tr(`지금은 Anthropic 이 잠깐 막는 중이에요${ko} — 로그인해서 바꾸면 바로 돼요.`, `Anthropic is briefly limiting requests${en} — sign in to switch right away.`);
+    }
+    if (detail === 'rate' || detail.startsWith('rate:')) {
       const sec = Number(detail.slice(5));
       const ko = sec > 0 ? `${Math.ceil(sec / 60)}분` : '몇 분';
       const en = sec > 0 ? `${Math.ceil(sec / 60)} min` : 'a few minutes';

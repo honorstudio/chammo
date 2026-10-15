@@ -579,3 +579,56 @@ fn 바꿔_끼우는_동안_Claude_Code_갱신_잠금을_쥔다() {
     assert_eq!(*seen.borrow(), vec![true], "로그인 칸에 쓰는 순간 두 잠금을 다 쥐고 있어야 한다");
     assert!(!new.exists() && !legacy.exists(), "끝나면 놓는다");
 }
+
+// ── 2026-10-15 17:18~ 토큰 주소가 이 맥 IP 를 막았는데 자동 전환이 5분마다 끼울 칸을 갱신하러 또 보낸 것(token_rate) ──
+
+fn limited_10m(_: &Value) -> Result<Value, String> {
+    Err("rate:600".into())
+}
+
+/// 다른 길(데우기·지금 로그인 미리)이 막혀 둔 쉬기
+fn rest_until(e: &Env, until: i64) {
+    let r = crate::token_rate::Rate { until, at: until - HOUR, count: 1, by: "warm".into(), ..Default::default() };
+    crate::token_rate::save(&crate::token_rate::path_for(&e.list), &r);
+}
+
+#[test]
+fn 토큰_주소가_쉬는_중이면_만료된_칸으로는_서버를_안_부르고_바로_wait() {
+    let e = Env::two("rate-gate");
+    let now = crate::accounts_refresh::now_ms();
+    e.store.put(SLOT_SERVICE, "a1", &slot_blob("tokA", now - HOUR));
+    rest_until(&e, now + HOUR);
+    // no_refresh — 불리면 실패
+    let Error::Refresh(code) = switch(&e.store, &e.live, &e.list, "a1").unwrap_err() else { panic!("wait 이어야") };
+    let secs: i64 = code.strip_prefix("wait:").expect(&code).parse().unwrap();
+    assert!((3590..=3600).contains(&secs), "남은 초 {secs}");
+    let p = e.pool();
+    assert_eq!((e.live_tok().as_deref(), p.current.as_deref(), p.switching), (Some("tokB"), Some("a2"), None), "안 바꿨다");
+}
+
+#[test]
+fn 쉬는_중이어도_만료_전_칸은_서버_없이_그대로_바꾼다() {
+    let e = Env::two("rate-fresh");
+    let now = crate::accounts_refresh::now_ms();
+    e.store.put(SLOT_SERVICE, "a1", &slot_blob("tokA", now + 5 * HOUR));
+    rest_until(&e, now + HOUR);
+    switch(&e.store, &e.live, &e.list, "a1").unwrap();
+    assert_eq!(e.live_tok().as_deref(), Some("tokA"));
+}
+
+#[test]
+fn 바꾸다_막히면_세_길이_같이_보는_쉬기를_남기고_다음엔_안_부른다() {
+    let mut e = Env::two("rate-hit");
+    let now = crate::accounts_refresh::now_ms();
+    e.store.put(SLOT_SERVICE, "a1", &slot_blob("tokA", now - HOUR));
+    e.live.refresh = limited_10m;
+    // 화면엔 서버가 준 10분이 아니라 실제로 쉬는 시간(1시간)
+    let Error::Refresh(code) = switch(&e.store, &e.live, &e.list, "a1").unwrap_err() else { panic!("rate 여야") };
+    let secs: i64 = code.strip_prefix("rate:").expect(&code).parse().unwrap();
+    assert!((3590..=3600).contains(&secs), "{code}");
+    let r = crate::token_rate::load(&crate::token_rate::path_for(&e.list));
+    assert!(r.until >= now + HOUR && r.until < now + HOUR + 60_000, "Retry-After 10분이어도 1시간");
+    assert_eq!((r.by.as_str(), r.retry_after, r.count), ("switch", Some(600), 1));
+    e.live.refresh = no_refresh;
+    assert!(matches!(switch(&e.store, &e.live, &e.list, "a1").unwrap_err(), Error::Refresh(c) if c.starts_with("wait:")));
+}

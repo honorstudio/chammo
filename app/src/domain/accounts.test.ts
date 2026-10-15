@@ -90,6 +90,17 @@ describe('accountError — 오류 이름을 글로', () => {
     expect(switchFailure('refresh:rate', true)).toEqual({ notify: false, restMs: 15 * 60_000, rate: true });
     expect(switchFailure('refresh:dead', true)).toEqual({ notify: true, restMs: 5 * 60_000, rate: false });
   });
+  // 2026-10-16 — 세 길이 같이 보는 쉬기(Rust token_rate) 안이면 서버를 안 부르고 refresh:wait:<남은 초>
+  it('쉬는 중(wait) — 서버를 안 불렀고, 로그인해서 바꾸면 바로 된다고', () => {
+    expect(accountError('refresh:wait:2700')).toBe('지금은 Anthropic 이 잠깐 막는 중이에요(45분 남음) — 로그인해서 바꾸면 바로 돼요.');
+    expect(accountError('refresh:wait:30')).toContain('1분 남음');
+    expect(accountError('refresh:wait')).toBe('지금은 Anthropic 이 잠깐 막는 중이에요 — 로그인해서 바꾸면 바로 돼요.');
+  });
+  it('자동 전환: wait 는 남은 만큼 쉬고 알림은 rate 와 같이 이어지는 동안 한 번', () => {
+    expect(switchFailure('refresh:wait:2700')).toEqual({ notify: true, restMs: 2_700_000, rate: true });
+    expect(switchFailure('refresh:wait:2700', true)).toEqual({ notify: false, restMs: 2_700_000, rate: true });
+    expect(switchFailure('refresh:wait:5')).toEqual({ notify: true, restMs: 60_000, rate: true });
+  });
   it('모르는 것은 원문을 붙인다', () => {
     expect(accountError('io:디스크 가득')).toContain('디스크 가득');
   });
@@ -217,7 +228,8 @@ describe('로그인해서 바꾸기 — 바꾸기가 갱신 막힘·죽은 갱�
     expect(loginFixes('refresh:rate')).toBe(true);
     expect(loginFixes('refresh:rate:600')).toBe(true);
     expect(loginFixes('refresh:dead')).toBe(true);
-    for (const c of ['refresh:network', 'refresh:http503', 'busy', 'locked', 'moved', 'noSlot', 'refresh:rate:x', 'refresh:ratex']) expect(loginFixes(c)).toBe(false);
+    expect(loginFixes('refresh:wait:2700')).toBe(true); // 쉬는 중이라 서버를 안 부른 것 — 버튼 그대로
+    for (const c of ['refresh:wait:x', 'refresh:network', 'refresh:http503', 'busy', 'locked', 'moved', 'noSlot', 'refresh:rate:x', 'refresh:ratex']) expect(loginFixes(c)).toBe(false);
   });
   it('그 계정 이메일을 채운 claude auth login — 따옴표로 감싼다', () => {
     expect(accountLoginCommand('/opt/c/claude', 'kim@x.com', '끝')).toBe("'/opt/c/claude' auth login --email 'kim@x.com'; echo; echo '끝'");

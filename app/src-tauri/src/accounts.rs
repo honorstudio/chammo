@@ -364,9 +364,11 @@ pub fn switch_if(store: &dyn Store, live: &Live, list: &Path, id: &str, expect: 
         return Ok(pool);
     }
     let mut want = slot_part(store, id)?.ok_or(Error::NoSlot)?;
-    // 칸 토큰이 곧 만료면 끼우기 전에 그 칸만 갱신한다(accounts_refresh 머리말) — 새 갱신 토큰은 칸에 먼저 둔다(옛 것은 이미 써 버렸다)
-    if crate::accounts_refresh::needs(&want, crate::accounts_refresh::now_ms()) {
-        want = (live.refresh)(&want).map_err(Error::Refresh)?;
+    // 칸 토큰이 곧 만료면 끼우기 전에 그 칸만 갱신한다(accounts_refresh 머리말) — 새 갱신 토큰은 칸에 먼저 둔다(옛 것은 이미 써 버렸다).
+    // 토큰 주소가 막혀 쉬는 중이면 부르지 않고 'wait:<초>'(token_rate) — 만료 전 칸은 서버 없이 끼우니 그대로 바꾼다
+    let now_ms = crate::accounts_refresh::now_ms();
+    if crate::accounts_refresh::needs(&want, now_ms) {
+        want = crate::token_rate::call(list, now_ms, live.refresh, &want, "switch", false).map_err(|c| Error::Refresh(rest_code(list, &c, now_ms)))?;
         store.set(SLOT_SERVICE, id, &slot_secret(&want))?;
     }
     // 여기서부터 끝까지 Claude Code 갱신 잠금을 쥔다 — 세션이 지금 계정을 갱신하는 도중엔 안 바꾼다
@@ -410,6 +412,15 @@ pub fn switch_if(store: &dyn Store, live: &Live, list: &Path, id: &str, expect: 
     pool.current = Some(id.to_string());
     save(list, &pool)?;
     Ok(pool)
+}
+
+/// 막혔으면 서버가 준 Retry-After 대신 세 길이 실제로 쉬는 시간('rate:<남은 초>') — 화면이 그만큼 쉬고 그 시간을 알린다
+fn rest_code(list: &Path, code: &str, now: i64) -> String {
+    if !crate::token_rate::is_rate(code) {
+        return code.to_string();
+    }
+    let left = crate::token_rate::load(&crate::token_rate::path_for(list)).until - now;
+    if left > 0 { format!("rate:{}", (left + 999) / 1000) } else { code.to_string() }
 }
 
 /// Claude Code 갱신 잠금 — 설정 폴더를 모르면(시험 앱이 가짜 자리를 안 줬을 때) 안 잡는다

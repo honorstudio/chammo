@@ -2,7 +2,7 @@
 // 규약(@internal)이 바뀌면 이 파일 한 곳만 고치게 어댑터로 둔다. HTML 은 안 받는다 — 글은 글로, Markdown 만 앱 md 거름(DOMPurify)으로.
 // 그리는 것: Box·Text·Button·Markdown·Code·Link·Input·Select, Svg(거른 뒤 <img>, domain/modeSvg). 모르는 것 = '못 그림' 칸(docs/research/2026-10-05-chammo-mod.md)
 import type { CSSProperties } from 'react';
-import { svgSrc, svgStillSrc } from './modeSvg';
+import { safeSvg } from './modeSvg';
 import { tr } from '../i18n';
 
 /** 누름 손잡이 — 모드 쪽(plugin·handle) 또는 Client 방 쪽(held: 방 런타임이 닫힌 함수를 쥔 번호) */
@@ -19,7 +19,7 @@ export type TNode =
   | { type: 'Input'; key: string; label: string; placeholder: string; value: string; submitLabel: string; press: Press | null }
   | { type: 'Select'; key: string; label: string; value: string; options: { value: string; label: string }[]; press: Press | null }
   /** still = 움직임 끈 정지판(줄이기·끄기·안 볼 때·칸이 안 보일 때) — 한 번만 만들어 둔다 */
-  | { type: 'Svg'; src: string; still: string; alt: string }
+  | { type: 'Svg'; svg: string; alt: string } // 거른 글 — 주소는 그릴 때 지금 테마로(ui/mode/ModeSvg)
   | { type: 'Client'; plugin: string; module: string; key: string; props: unknown; style: CSSProperties }
   | { type: 'Cant'; what: string; alt: string };
 
@@ -97,8 +97,8 @@ export function normalize(raw: unknown, depth = 0, inClient = false): TNode {
     }
     case 'Svg': {
       if (inClient) return { type: 'Cant', what: 'Svg', alt: str(p.alt) };
-      const src = svgSrc(p.source);
-      return src ? { type: 'Svg', src, still: svgStillSrc(p.source) ?? src, alt: str(p.alt) } : { type: 'Cant', what: 'Svg', alt: str(p.alt) };
+      const svg = safeSvg(p.source);
+      return svg !== null ? { type: 'Svg', svg, alt: str(p.alt) } : { type: 'Cant', what: 'Svg', alt: str(p.alt) };
     }
     default:
       // 엔진 몫({type:"engine"})·새 요소

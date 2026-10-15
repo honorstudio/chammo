@@ -3,7 +3,7 @@
 // 함수는 다 Svg 글 조각을 돌려준다. svgDoc 이 조각을 스킨 층으로 감싸 한 장으로 만든다.
 // 약속(앱이 멈춤·부하 줄이기 때 정지판을 그린다): 루트 class="mode-anim", 움직임은 <style> 한 블록의 @keyframes 에만,
 // 움직임을 다 빼도 그림이 그 순간 그대로 보이게(바늘 = 바깥 g 가 각도, 그려지기 = both, 사라지는 층 = 기본 투명).
-// 색은 스킨 층의 CSS 변수(--ink·--dim·--line·--surf·--a1·--warm·--red)라 다크 모드(맥 설정)를 따라간다.
+// 색은 스킨 층의 CSS 변수(--ink·--dim·--line·--surf·--a1·--warm·--red)라 다크 모드를 따라간다 — 앱이 그릴 때 @media (prefers-color-scheme) 조건을 앱 테마로 바꿔 넣는다(<img> 안은 앱 테마를 못 봐서).
 
 export type Skin = 'gauge' | 'sky' | 'cover'
 /** 스킨 셋 — 계기판(숫자·고리·점) · 하늘(장면·빛·흐름) · 표지(활자·여백) */

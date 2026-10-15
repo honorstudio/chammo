@@ -115,7 +115,7 @@ export function Node({ n, onAct, drafts }: { n: TNode; onAct: (a: Act) => void; 
       return env.client ? env.client(n) : <span className="mdv-cant">{tr('못 그림', "Can't draw")} · Client</span>;
     case 'Svg':
       // 거른 SVG 를 그림으로만 — <img> 안 SVG 는 스크립트·바깥 불러오기가 안 돈다. 줄이기·안 볼 때·안 보이는 칸은 정지판(ModeSvg)
-      return <ModeSvg src={n.src} still={n.still} alt={n.alt} />;
+      return <ModeSvg svg={n.svg} alt={n.alt} />;
     case 'Cant':
       return <span className="mdv-cant" title={n.what}>{tr('못 그림', "Can't draw")} · {n.alt || n.what}</span>;
   }

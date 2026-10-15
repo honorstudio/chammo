@@ -136,7 +136,7 @@ Progress(ui, 84, 'success')
 앱 안 맛보기(달력·현황판·할 일·참모 상태)는 **위에 Svg 큰 장면, 아래에 키트로 누르는 것**으로 짜여 있고, 데스크톱에선 오른쪽 위 단추로 **스킨 셋**을 바꾼다 —
 계기판(숫자·고리·점) · 하늘(이 시각 하늘·해·달·별·등불) · 표지(큰 세리프·활자·여백). 고른 스킨은 `$.store` 에 남고, 바꿀 때 겹쳐 사라진다.
 
-`<Svg source={…} alt="…"/>` 는 앱에서 **그림(<img>)** 으로 그려진다 — 누를 수 없고, 대신 글자 크기·그라데이션·흐림·`<style>` @keyframes·다크 모드(`@media (prefers-color-scheme: dark)`, 맥 설정)가 다 된다.
+`<Svg source={…} alt="…"/>` 는 앱에서 **그림(<img>)** 으로 그려진다 — 누를 수 없고, 대신 글자 크기·그라데이션·흐림·`<style>` @keyframes·다크 모드(`@media (prefers-color-scheme: dark)` — 맥 설정이 아니라 **앱 테마**(데스크톱 테마 메뉴·폰 화면)를 따른다: 앱이 그릴 때 그 조건을 지금 테마로 바꿔 넣고, 테마가 바뀌면 다시 그린다)가 다 된다.
 글은 `kit-svg.ts` 함수(전부 Svg 글 조각을 돌려줌)로 짠다:
 
 | 함수 | 만드는 것 |
@@ -300,7 +300,7 @@ top right switches between **three skins** — gauge (numbers, rings, dots) · s
 The chosen skin is kept in `$.store` and the switch cross-fades.
 
 `<Svg source={…} alt="…"/>` is drawn by the app as an **image (<img>)** — it can't be pressed, but font sizes, gradients, blur, `<style>` @keyframes and dark mode
-(`@media (prefers-color-scheme: dark)`, following the Mac) all work. Write it with the `kit-svg.ts` functions (each returns a piece of Svg text):
+(`@media (prefers-color-scheme: dark)` — follows the **app theme** (desktop theme menu, phone screen), not the Mac setting: the app rewrites that condition to the current theme when it draws and redraws when the theme changes) all work. Write it with the `kit-svg.ts` functions (each returns a piece of Svg text):
 
 | Function | Makes |
 |---|---|

@@ -22,8 +22,7 @@ describe('normalize', () => {
   it('Svg 는 거른 뒤 data: 그림으로, 걸러지면 못 그림 칸(alt)', () => {
     const ok = normalize({ type: 'Svg', props: { source: '<svg viewBox="0 0 4 4"><rect width="4" height="4"/></svg>', alt: '상자' } });
     expect(ok).toMatchObject({ type: 'Svg', alt: '상자' });
-    expect(ok.type === 'Svg' && ok.src.startsWith('data:image/svg+xml;')).toBe(true);
-    expect(ok.type === 'Svg' && decodeURIComponent(ok.still).includes('*{animation:none!important')).toBe(true); // 정지판은 미리 한 번(줄이기·안 볼 때 꺼내 쓴다)
+    expect(ok.type === 'Svg' && ok.svg).toBe('<svg viewBox="0 0 4 4"><rect width="4" height="4"/></svg>'); // 거른 글만 — 주소는 그릴 때 지금 테마로(ui/mode/ModeSvg)
     expect(normalize({ type: 'Svg', props: { source: '<svg onload="alert(1)"/>', alt: '상자' } })).toEqual({ type: 'Cant', what: 'Svg', alt: '상자' });
     expect(normalize({ type: 'Svg', props: {} })).toEqual({ type: 'Cant', what: 'Svg', alt: '' });
   });
