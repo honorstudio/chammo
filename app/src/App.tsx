@@ -22,6 +22,7 @@ import { selectionWord } from './domain/viewNow';
 import { Setup } from './ui/Setup';
 import { Tour } from './ui/Tour';
 import { QuitDialog } from './ui/QuitDialog';
+import { LicensesDialog } from './ui/LicensesDialog';
 import { RoutinePage } from './ui/RoutinePage';
 import { isCloud, parseRoutines, routineItem, routineState, type Routine } from './domain/routine';
 import { shouldShowTour } from './domain/tour';
@@ -134,6 +135,7 @@ import { parseAllowLog, type AllowLog } from './domain/autoAllow';
 import { useAutoAllow } from './ui/useAutoAllow';
 import { useForwardQuestions } from './ui/useForwardQuestions';
 import { useForeignBrowsers } from './ui/useForeignBrowsers';
+import { useCraftHandback } from './ui/useCraftHandback';
 import { bornAfter, buildInbox, findTarget, freshItems, popoverOpen, replyBlocked, type InboxItem } from './domain/inbox';
 import { InboxPopover } from './ui/Inbox';
 import { ctxAlerts, parseCtx, type Ctx } from './domain/ctx';
@@ -215,7 +217,8 @@ export default function App() {
   }, [config?.setupDone]); // eslint-disable-line react-hooks/exhaustive-deps
   const closeTour = () => { setTourOpen(false); save('tourSeen', true); };
   // ⌘Q 종료 확인 — 앱만 끌지, Chammo 가 다루는 세션까지 끌지
-  const [quitOpen, setQuitOpen] = useState(false);
+  const [quitOpen, setQuitOpen] = useState<boolean | 'dock'>(false);
+  const [licensesOpen, setLicensesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // 하니터 — 하네스 보기·끄고 켜기(탑바 버튼·scripts/app open harnitor)
   // 스페이스(채팅 뷰)에선 탭마다 기억되는 화면이라 SpaceView 가 띄우고 여기는 요청만 넘긴다(harnitorReq) — harnitorOpen 은 지금 탭에 떠 있나(탑바 버튼).
@@ -472,6 +475,7 @@ export default function App() {
     else if (sc.type === 'nav') window.dispatchEvent(new CustomEvent(SPACE_NAV, { detail: sc.dir })); // 스페이스 뒤로·앞으로(SpaceView 가 받는다)
     else if (sc.type === 'tour') setTourOpen(true);
     else if (sc.type === 'harnitor') harnitorRef.current('toggle');
+    else if (sc.type === 'licenses') setLicensesOpen(true);
     else if (sc.type === 'quitAsk') { setQuitOpen(true); void invoke('app_quit_shown').catch(() => {}); } // 들었다고 Rust 에 — 못 들으면(웹 굳음) Rust 가 4초 뒤 앱만 끈다(quit.rs). 이미 떠 있어도 매번
     // 미리보기 모달이 떠 있으면 ⌘` 는 모달을 스페이스 가득으로(2026-09-30 사용자)
     else if (sc.type === 'maximizePane' && previewMaxFn()) previewMaxFn()!();
@@ -522,10 +526,12 @@ export default function App() {
       run(sc, 'key');
     };
     // 메뉴바 항목을 누르면 Rust 가 window.__menu('<id>') 를 부른다
-    const w = window as unknown as { __menu?: (id: string) => void };
+    const w = window as unknown as { __menu?: (id: string) => void; __dockQuit?: () => void };
     w.__menu = (id) => { if (browserMenu(id)) return; const sc = menuAction(id); if (sc) run(sc, 'menu'); };
+    // 독 '종료' — Craft 저장이 남아 Rust 가 끄기를 미뤘다(dock_quit.rs). 묻지 않고 저장 중 창으로, 띄웠다고 알린다(못 들으면 Rust 가 4초 뒤 끈다)
+    w.__dockQuit = () => { setQuitOpen('dock'); void invoke('app_quit_shown').catch(() => {}); };
     window.addEventListener('keydown', onKey, true);
-    return () => { window.removeEventListener('keydown', onKey, true); delete w.__menu; };
+    return () => { window.removeEventListener('keydown', onKey, true); delete w.__menu; delete w.__dockQuit; };
   }, []);
   const widgetToggleRef = useRef<() => void>(() => {});
   // 화면(프로젝트 이름 / 'all')마다 따로 기억한다 — 프로젝트를 오가도 크게·접기가 유지되게
@@ -979,6 +985,7 @@ export default function App() {
     groups.orchestrators.map((o) => o.sessionId).filter((x): x is string => !!x), taskEvents, groups.orchestrators, sessions, heirOf, cards);
   // 앱 밖 크롬(직접 띄운 크롬·확장 중계)을 쓰는 세션 — 맡긴 참모에게 한 줄(2026-10-10 사용자 '참모 브라우저만')
   useForeignBrowsers(subSessions, groups.orchestrator, taskEvents, groups.orchestrators, sessions, heirOf);
+  useCraftHandback(groups.orchestrator);
   // 직접 답하기 카드 — 하위 세션이 본인 승인을 원하면 맡긴 참모 채팅에 카드(사람이 누르면 그 세션에 사람 말로)
   // 살아 있나·이름은 폴더로 거르기 전 전체 목록(allSessions)으로 — 워크트리로 들어가 사이드바에서 빠진 세션 카드가 꺼짐으로 숨었다(2026-10-05 아이맥)
   const direct = useDirectCards(allSessions, allActs, taskEvents, groups.orchestrators, groups.orchestrator, agentLives, (c, name) => notifyOnce({
@@ -1654,13 +1661,14 @@ export default function App() {
     {/* 세션 브라우저가 사람을 부르면(browser_ask_human) 어느 화면에서든 크게 띄우고 알린다 */}
     <AgentAskHost lives={agentLives} nameOf={(l) => askName(l, sessions)} notify={(profile, reason, name) => notifyOnce({ kind: 'human', session: profile, orch: false, ...askNotice(name, reason) })}
       notifyPopup={(profile, name, kind) => notifyOnce({ kind: 'human', session: profile, orch: false, ...popupNotice(name, kind) })} onPopupCards={setPopupCards} />
+    {licensesOpen && <LicensesDialog onClose={() => setLicensesOpen(false)} />}
     {quitOpen && (() => {
       const mine = sessionsToStop(sessions, appRoots(env?.devRoot ?? '', env?.orchestratorCwd ?? '', env?.extraProjects ?? []));
       return (
-        <QuitDialog running={mine.length} onCancel={() => setQuitOpen(false)} onQuit={async (all) => {
+        <QuitDialog running={mine.length} dock={quitOpen === 'dock'} onCancel={() => setQuitOpen(false)} onQuit={async (all) => {
           // 세션 끄기가 걸려도(claude stop 이 안 돌아옴) 15초 뒤엔 종료로 간다
           if (all) await Promise.race([Promise.allSettled(mine.map((x) => stopSession(x.id, `quit-all ${x.name}`))), new Promise((r) => setTimeout(r, 15_000))]);
-          await invoke('app_exit');
+          // 다음은 종료 창이 — Craft 저장(진행·건너뛰기) 뒤 app_exit
         }} />
       );
     })()}

@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { FIT } from '../../domain/readerZoom';
 import { docUrl, kindOf, pageDoc } from '../../domain/reader';
 import { isCurationHtml } from '../../domain/curation';
@@ -9,11 +9,13 @@ import { IconButton } from '../kit/IconButton';
 import { ExtraDoc, HtmlFrame } from '../reader/Reader';
 import { OfficeDoc } from './Preview';
 import { SendToOrch, type OrchTo } from './SendToOrch';
+import { WebPage } from '../WebPage';
+import { applyAnchor } from '../zoomAnchor';
 
 const PdfView = lazy(() => import('../reader/PdfView'));
 
 /**
- * 보관함 탭 안 미리보기 — 그림·영상·html·pdf·오피스(2026-10-11 사용자 "기본은 탭으로"). md·엑셀은 편집 페이지(DocPage·SheetPage)가 따로.
+ * 보관함 탭 안 미리보기 — 그림·영상·html·pdf·오피스·http(s) 주소(2026-10-11 사용자 "기본은 탭으로", 주소는 10-16). md·엑셀은 편집 페이지(DocPage·SheetPage)가 따로.
  * 머리 = 작은 경로 한 줄 + 확대 단추 + 보내기·크게 보기(모달). 확대는 탭에서도(2026-10-12), 짚기는 크게 보기(Preview)에서
  */
 export function FileTab({ path, where, attachTo, onAttach, onBig, onCuration, zoom = 100, zoomUi }: {
@@ -43,18 +45,22 @@ export function FileTab({ path, where, attachTo, onAttach, onBig, onCuration, zo
   // 그림 확대 — 실제 픽셀 기준 %(맞춤이면 창 안에 담는다). 자연 폭은 불러온 뒤에 안다
   const [natural, setNatural] = useState(0);
   const sized = kind === 'image' && zoom !== FIT && natural > 0;
+  // 확대 기준점(SpaceView 가 배율 바꾸기 직전 markAnchor) — 다시 그린 뒤 그 점이 제자리에 오게 스크롤(왼쪽 위로 커졌다, 2026-10-19 사용자)
+  const imgBox = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => applyAnchor(imgBox.current), [zoom]);
   return (
     <div className="cv-doc cv-filetab">
-      <div className="cv-doc-bar">
+      {kind !== 'web' && <div className="cv-doc-bar">
         <span className="cv-path" title={path}>{where}</span>
         <span className="cv-sp" />
         {zoomUi}
         {onAttach && <SendToOrch to={attachTo} onClick={onAttach} />}
         <IconButton label={tr('크게 보기', 'Open large')} title={tr('크게 보기 — 확대·가득 채우기', 'Open large — zoom and fill')} onClick={onBig}><IconMaximize /></IconButton>
-      </div>
+      </div>}
       <div className="ft-body">
         {gate ? null
-          : kind === 'image' ? <div className={`pv-image ${sized ? '' : 'fit'}`}><img src={docUrl(path)} alt="" onLoad={(e) => setNatural(e.currentTarget.naturalWidth / (window.devicePixelRatio || 1))}
+          : kind === 'web' ? <WebPage url={path} />
+          : kind === 'image' ? <div className={`pv-image ${sized ? '' : 'fit'}`} ref={imgBox}><img src={docUrl(path)} alt="" onLoad={(e) => setNatural(e.currentTarget.naturalWidth / (window.devicePixelRatio || 1))}
             style={sized ? { maxWidth: 'none', maxHeight: 'none', width: `${natural * zoom / 100}px` } : undefined} /></div>
           : kind === 'video' ? <video className="pv-video" src={docUrl(path)} controls playsInline />
           : kind === 'html' ? <div className="rd-zoombox"><HtmlFrame className="rd-frame" src={docUrl(path)} zoom={zoom} record={path} /></div>

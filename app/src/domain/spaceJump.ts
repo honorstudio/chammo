@@ -18,6 +18,15 @@ export function showPlace(owner: string | null, viewing: string | undefined, cha
   return owner === chat ? 'chat' : 'queue';
 }
 
+/** Craft 칸을 둘 참모 — 띄운 세션의 주인(owner, showOwner)을 show 와 같은 규칙으로: 주인 모르면(서랍·셸) 지금 보는 참모 → 대표(fallback),
+ *  보는 참모·채팅 탭 참모 몫이면 그 화면에, 다른 참모 몫이면 보던 화면은 그대로 두고 그 참모 탭 줄에(queue).
+ *  예전엔 늘 지금 보는 참모 화면이라 프로젝트 세션이 띄운 칸이 엉뚱한 참모 탭에 붙었다(2026-10-19 사람이 보면서 따라가게) */
+export function craftTarget(owner: string | null, viewing: string | undefined, chat: string | undefined, fallback: string | undefined): { to: string | null; queue: boolean } {
+  const place = showPlace(owner, viewing, chat);
+  if (place !== 'here') return { to: owner, queue: place === 'queue' };
+  return { to: owner ?? viewing ?? fallback ?? null, queue: false };
+}
+
 /** 한 번에 읽은 띄운 파일 여럿(show 기록은 3초마다 읽는다) — 다른 참모 것은 하나하나 그 탭에(queue), 지금 화면에 띄울 건 차례로 다(here, 마지막 것이 보인다).
  *  채팅 탭 참모 것이 있으면 그 참모로 옮겨(go) 띄우고, 보던 참모 것은 그 참모 탭 줄에 넣어 둔다. 주인 모르는 것은 옮겨 간 화면에.
  *  마지막 줄만 보니 두 참모가 같이 띄우면 앞 참모 문서가 그 탭에 안 들어갔고(2026-10-11), 보는 참모 것과 채팅 탭 참모 것이 같이 오면 앞 것이 버려졌다(bug-hunt L12).

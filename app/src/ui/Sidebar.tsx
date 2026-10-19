@@ -116,106 +116,109 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
           }}
         />
       </div>
-      <button className={`grp-link ${isOn(selected, { kind: 'orchHome' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'orchHome' })} title={tr(`오케스트레이터 홈 — 어떤 ${josa(assistant(), '을', '를')} 켤지`, 'Orchestrator home — pick who to run')}>{tr('오케스트레이터', 'Orchestrator')}</button>
-      <button className={`it ${isOn(selected, { kind: 'orchestrator' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'orchestrator' })}>
-        <StatusMark kind={orchestrator ? statusKind(statusOf(orchestrator)) : 'none'} />
-        <span>
-          <div className="nm">{assistant()}</div>
-          <div className="ln">{orchestrator ? statusWord(statusOf(orchestrator)) : tr('세션 없음', 'No session')}<Ctx v={orchestrator ? ctxOf?.(orchestrator) : undefined} /></div>
-        </span>
-      </button>
-      <button className={`it ${isOn(selected, { kind: 'all' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'all' })}>
-        <span className="st" style={{ background: 'transparent', border: '1.5px solid #a3a3a3' }} />
-        <span>
-          <div className="nm">{tr('전체 보기', 'All')}</div>
-          <div className="ln">{tr(`돌고 있는 창 ${running}개`, `${running} running`)}</div>
-        </span>
-      </button>
-      {/* 리뷰는 위 막대 아이콘으로 옮겼다 — 사이드바는 세션이 사는 곳만(2026-10-06 사용자) */}
-
-      {helpers && helpers.length > 0 && (
-        <button className={`it ${isOn(selected, { kind: 'helpers' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'helpers' })}
-          title={tr(`${assistant()}가 따로 띄운 도우미 세션`, `Helper sessions ${assistant()} started`)}>
-          <StatusMark kind={urgentKind(helpers.map(statusOf))} />
+      {/* 검색 아래는 한 줄기로 스크롤 — 프로젝트 목록만 스크롤하면 예약이 많을 때 그 칸이 0 으로 눌려 아래가 잘렸다(2026-10-19 report-241) */}
+      <div className="side-scroll">
+        <button className={`grp-link ${isOn(selected, { kind: 'orchHome' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'orchHome' })} title={tr(`오케스트레이터 홈 — 어떤 ${josa(assistant(), '을', '를')} 켤지`, 'Orchestrator home — pick who to run')}>{tr('오케스트레이터', 'Orchestrator')}</button>
+        <button className={`it ${isOn(selected, { kind: 'orchestrator' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'orchestrator' })}>
+          <StatusMark kind={orchestrator ? statusKind(statusOf(orchestrator)) : 'none'} />
           <span>
-            <div className="nm">{tr(`도우미 · ${helpers.length}`, `Helpers · ${helpers.length}`)}</div>
-            <div className="ln">{helpers.map((h) => h.name).join(' · ')}</div>
+            <div className="nm">{assistant()}</div>
+            <div className="ln">{orchestrator ? statusWord(statusOf(orchestrator)) : tr('세션 없음', 'No session')}<Ctx v={orchestrator ? ctxOf?.(orchestrator) : undefined} /></div>
           </span>
         </button>
-      )}
-
-      {loose && loose.length > 0 && (
-        <button className={`it ${isOn(selected, { kind: 'loose' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'loose' })}
-          title={tr('프로젝트 폴더가 아니라 dev 폴더 자체에서 연 세션', 'Sessions opened in the projects folder itself, not in a project')}>
-          <StatusMark kind={urgentKind(loose.map(statusOf))} />
+        <button className={`it ${isOn(selected, { kind: 'all' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'all' })}>
+          <span className="st" style={{ background: 'transparent', border: '1.5px solid #a3a3a3' }} />
           <span>
-            <div className="nm">{tr(`프로젝트 밖 · ${loose.length}`, `Outside projects · ${loose.length}`)}</div>
-            <div className="ln">{loose.map((h) => h.name || h.id).join(' · ')}</div>
+            <div className="nm">{tr('전체 보기', 'All')}</div>
+            <div className="ln">{tr(`돌고 있는 창 ${running}개`, `${running} running`)}</div>
           </span>
         </button>
-      )}
+        {/* 리뷰는 위 막대 아이콘으로 옮겼다 — 사이드바는 세션이 사는 곳만(2026-10-06 사용자) */}
 
-      {((routines && routines.length > 0) || external.length > 0) && (
-        <>
-          <div className="grp">{tr(`예약 · ${sched.active.length + external.length}`, `Scheduled · ${sched.active.length + external.length}`)}</div>
-          {sched.active.map(schedItem)}
-          {sched.done.length > 0 && (
-            <button type="button" className="it sched-fold" onClick={() => setDoneOpen((v) => !v)}>
-              <StatusMark kind="none" />
-              <span><div className="ln">{doneOpen ? tr(`끝난 예약 ${sched.done.length}개 접기`, `Hide ${sched.done.length} finished`) : tr(`끝난 예약 ${sched.done.length}개`, `${sched.done.length} finished`)}</div></span>
-            </button>
-          )}
-          {doneOpen && sched.done.map(schedItem)}
-          {external.map((x) => (
-            <button key={x.id} className={`it ${isOn(selected, { kind: 'external', id: x.id }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'external', id: x.id })}>
-              <StatusMark kind="idle" />
+        {helpers && helpers.length > 0 && (
+          <button className={`it ${isOn(selected, { kind: 'helpers' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'helpers' })}
+            title={tr(`${assistant()}가 따로 띄운 도우미 세션`, `Helper sessions ${assistant()} started`)}>
+            <StatusMark kind={urgentKind(helpers.map(statusOf))} />
+            <span>
+              <div className="nm">{tr(`도우미 · ${helpers.length}`, `Helpers · ${helpers.length}`)}</div>
+              <div className="ln">{helpers.map((h) => h.name).join(' · ')}</div>
+            </span>
+          </button>
+        )}
+
+        {loose && loose.length > 0 && (
+          <button className={`it ${isOn(selected, { kind: 'loose' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'loose' })}
+            title={tr('프로젝트 폴더가 아니라 dev 폴더 자체에서 연 세션', 'Sessions opened in the projects folder itself, not in a project')}>
+            <StatusMark kind={urgentKind(loose.map(statusOf))} />
+            <span>
+              <div className="nm">{tr(`프로젝트 밖 · ${loose.length}`, `Outside projects · ${loose.length}`)}</div>
+              <div className="ln">{loose.map((h) => h.name || h.id).join(' · ')}</div>
+            </span>
+          </button>
+        )}
+
+        {((routines && routines.length > 0) || external.length > 0) && (
+          <>
+            <div className="grp">{tr(`예약 · ${sched.active.length + external.length}`, `Scheduled · ${sched.active.length + external.length}`)}</div>
+            {sched.active.map(schedItem)}
+            {sched.done.length > 0 && (
+              <button type="button" className="it sched-fold" onClick={() => setDoneOpen((v) => !v)}>
+                <StatusMark kind="none" />
+                <span><div className="ln">{doneOpen ? tr(`끝난 예약 ${sched.done.length}개 접기`, `Hide ${sched.done.length} finished`) : tr(`끝난 예약 ${sched.done.length}개`, `${sched.done.length} finished`)}</div></span>
+              </button>
+            )}
+            {doneOpen && sched.done.map(schedItem)}
+            {external.map((x) => (
+              <button key={x.id} className={`it ${isOn(selected, { kind: 'external', id: x.id }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'external', id: x.id })}>
+                <StatusMark kind="idle" />
+                <span>
+                  <div className="nm">{x.name}</div>
+                  <div className="ln">{x.line}</div>
+                </span>
+              </button>
+            ))}
+          </>
+        )}
+
+        <div className="grp grp-act">
+          {tr(`프로젝트 · 세션 ${running}개`, `Projects · ${running} sessions`)}
+          {onAddProject && <IconButton size="s" className="grp-btn" label={tr('폴더 추가', 'Add folder')} title={tr('폴더 추가 — 프로젝트 폴더 밖 폴더를 프로젝트로', 'Add a folder outside the projects folder as a project')} onClick={onAddProject}><IconPlus /></IconButton>}
+        </div>
+        <div className="list">
+          {projects.map((p) => (
+            <button
+              key={p.name}
+              className={`it ${isOn(selected, { kind: 'project', name: p.name }) ? 'on' : ''}`}
+              onClick={() => onSelect({ kind: 'project', name: p.name })}
+            >
+              {/* 왼쪽은 가장 급한 세션 것 — 첫 세션만 보면 뒤에서 기다리는 말풍선을 놓친다 */}
+              <StatusMark kind={urgentKind(p.sessions.map(statusOf))} />
               <span>
-                <div className="nm">{x.name}</div>
-                <div className="ln">{x.line}</div>
+                <div className="nm">
+                  {p.name}
+                  {p.sessions.length > 1 && <SessionMarks states={p.sessions.map(statusOf)} />}
+                </div>
+                <div className="ln">{projectLine(p.sessions, statusOf)}<Ctx v={ctxMax(p.sessions)} /></div>
+                <Badges list={badges[p.name]} />
               </span>
             </button>
           ))}
-        </>
-      )}
-
-      <div className="grp grp-act">
-        {tr(`프로젝트 · 세션 ${running}개`, `Projects · ${running} sessions`)}
-        {onAddProject && <IconButton size="s" className="grp-btn" label={tr('폴더 추가', 'Add folder')} title={tr('폴더 추가 — 프로젝트 폴더 밖 폴더를 프로젝트로', 'Add a folder outside the projects folder as a project')} onClick={onAddProject}><IconPlus /></IconButton>}
-      </div>
-      <div className="list">
-        {projects.map((p) => (
-          <button
-            key={p.name}
-            className={`it ${isOn(selected, { kind: 'project', name: p.name }) ? 'on' : ''}`}
-            onClick={() => onSelect({ kind: 'project', name: p.name })}
-          >
-            {/* 왼쪽은 가장 급한 세션 것 — 첫 세션만 보면 뒤에서 기다리는 말풍선을 놓친다 */}
-            <StatusMark kind={urgentKind(p.sessions.map(statusOf))} />
-            <span>
-              <div className="nm">
-                {p.name}
-                {p.sessions.length > 1 && <SessionMarks states={p.sessions.map(statusOf)} />}
-              </div>
-              <div className="ln">{projectLine(p.sessions, statusOf)}<Ctx v={ctxMax(p.sessions)} /></div>
-              <Badges list={badges[p.name]} />
-            </span>
-          </button>
-        ))}
-        {projects.length === 0 && <div className="ln" style={{ padding: '4px 18px' }}>{tr('돌고 있는 세션이 없어', 'No running sessions')}</div>}
-        {idleProjects.length > 0 && <div className="grp">{tr('세션 없음', 'No session')} · {idleProjects.length}</div>}
-        {idleProjects.map((name) => (
-          <button
-            key={name}
-            className={`it off ${isOn(selected, { kind: 'project', name }) ? 'on' : ''}`}
-            onClick={() => onSelect({ kind: 'project', name })}
-          >
-            <StatusMark kind="none" />
-            <span>
-              <div className="nm">{name}</div>
-              <Badges list={badges[name]} />
-            </span>
-          </button>
-        ))}
+          {projects.length === 0 && <div className="ln" style={{ padding: '4px 18px' }}>{tr('돌고 있는 세션이 없어', 'No running sessions')}</div>}
+          {idleProjects.length > 0 && <div className="grp">{tr('세션 없음', 'No session')} · {idleProjects.length}</div>}
+          {idleProjects.map((name) => (
+            <button
+              key={name}
+              className={`it off ${isOn(selected, { kind: 'project', name }) ? 'on' : ''}`}
+              onClick={() => onSelect({ kind: 'project', name })}
+            >
+              <StatusMark kind="none" />
+              <span>
+                <div className="nm">{name}</div>
+                <Badges list={badges[name]} />
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
       {/* 설정 버튼은 맨 위 줄로 옮겼다 — 사이드바를 닫으면(⌘B) 못 찾았다 */}
       {footer && <div className="sidefoot"><div>{footer}</div></div>}

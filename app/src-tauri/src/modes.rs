@@ -331,6 +331,50 @@ pub fn store_dir(claude_dir: &Path, mode_dir: &Path) -> Option<PathBuf> {
     safe_name(&name).then(|| claude_dir.join("plugins/data").join(format!("{name}-inline")))
 }
 
+/// $.store 의 실제 파일 — <Claude 설정>/plugins/store/<플러그인>_inline-<해시>.json(2.1.303 실측). 밖(참모·스크립트)에서 고쳐도 떠 있는 모드는
+/// 다시 그리기 계기가 없어 안 보인다(10/19 할 일 8개) — 앱이 이 폴더를 보고 바뀐 주인 모드에 ui_invalidate 를 민다(modes_host::watch_store)
+pub fn store_files(claude_dir: &Path) -> PathBuf {
+    claude_dir.join("plugins/store")
+}
+
+/// 저장 파일 이름 → 주인 플러그인 이름. --plugin-dir 로 띄운 것(_inline-)만 — 설치 플러그인(_builtin- 등)·.lock 은 None
+pub fn store_owner(file: &str) -> Option<&str> {
+    let (name, hash) = file.strip_suffix(".json")?.rsplit_once("_inline-")?;
+    (safe_name(name) && !hash.is_empty() && hash.chars().all(|c| c.is_ascii_hexdigit())).then_some(name)
+}
+
+/// 파일 하나의 도장 — 바뀜은 고친 때·크기로 본다
+pub type Stamp = (std::time::SystemTime, u64);
+
+/// 지난번과 지금 도장을 견줘 바뀐(새로 생김·고침·지움) 주인 플러그인 — 이름순, 겹치지 않게
+pub fn store_changed(prev: &std::collections::HashMap<String, Stamp>, now: &std::collections::HashMap<String, Stamp>) -> Vec<String> {
+    let moved = |f: &String| prev.get(f) != now.get(f);
+    let mut out: Vec<String> = prev.keys().chain(now.keys()).filter(|f| moved(f)).filter_map(|f| store_owner(f)).map(str::to_string).collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// 호스트 첫 붙기(initialize) 기다림 — 평소 1초 안팎. 10/19 맥 전체에서 claude -p 시작이 1분 막혔을 때 30초에서 끊어 호스트를 죽이자
+/// 칸이 '멈췄어'가 됐고 다시 켜도 또 막혔다. 끊지 않고 기다리면 막힘이 풀리는 대로 그려진다 — 화면은 60초(START_SLOW_MS)에 '오래 걸려 · 다시 켜기'를 따로 보인다
+pub const INIT_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// 그리기·누름을 받은 지 이만큼 안의 바뀜은 그 모드가 스스로 쓴 것 — 다시 밀지 않는다(렌더마다 저장하는 모드가 고리를 돌지 않게)
+pub const STORE_QUIET: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// 바뀐 플러그인 → 다시 그리라고 밀 모드. live = 떠 있는 (모드, 플러그인) — 잠든 모드는 없으니 안 깨운다. touched = 모드가 마지막으로 그리기·누름을 끝낸 때
+pub fn store_targets(changed: &[String], live: &[(String, String)], touched: &std::collections::HashMap<String, std::time::Instant>, now: std::time::Instant) -> Vec<String> {
+    let quiet = |m: &str| touched.get(m).is_some_and(|t| now.saturating_duration_since(*t) < STORE_QUIET);
+    live.iter().filter(|(m, p)| changed.contains(p) && !quiet(m)).map(|(m, _)| m.clone()).collect()
+}
+
+/// plugin.json name — 앱 안 예시는 안에 든 것, 그 밖은 폴더에서. 못 읽으면 모드 이름
+pub fn plugin_name(info: &ModeInfo) -> String {
+    let embedded = EXAMPLES.iter().find(|(n, _)| info.source == "example" && *n == info.name).and_then(|(_, f)| f.iter().find(|(p, _)| *p == ".claude-plugin/plugin.json")).map(|(_, b)| b.to_string());
+    let manifest = embedded.unwrap_or_else(|| std::fs::read_to_string(Path::new(&info.dir).join(".claude-plugin/plugin.json")).unwrap_or_default());
+    serde_json::from_str::<Value>(&manifest).ok().and_then(|v| v.get("name").and_then(Value::as_str).map(str::to_string)).unwrap_or_else(|| info.name.clone())
+}
+
 fn removed_dir(data: &Path, name: &str) -> PathBuf {
     data.join("modes/.removed").join(name)
 }
@@ -565,6 +609,15 @@ pub fn control(id: &str, request: Value) -> String {
 
 pub fn attach_req(columns: u32, rows: u32) -> Value {
     json!({"subtype": "ui_attach", "surface": SURFACE, "client_id": CLIENT_ID, "viewport": {"columns": columns.max(1), "rows": rows.max(1), "isFullscreen": true}})
+}
+
+/// 밖에서 저장이 바뀐 모드의 그리기 요청 — props 에 판 번호(storeRev)를 실는다. 호스트는 같은 props 면 모드가 스스로 invalidate 할 때까지 옛 트리를 준다
+/// (2.1.303 실측: 밖에서 고친 파일은 크기를 바꿔 그려야 보였다). 0 = 바뀐 적 없음 — 요청 그대로
+pub fn with_store_rev(mut req: Value, rev: u64) -> Value {
+    if rev > 0 {
+        req["props"]["storeRev"] = rev.into();
+    }
+    req
 }
 
 /// 2.1.296 부터 surface·client_id 를 같이 보내야 한다(없으면 오류)
@@ -834,6 +887,13 @@ pub fn missing(starting: bool, asleep: bool, on: bool) -> Missing {
 
 #[cfg(test)]
 mod tests {
+    // 화면(modeTree START_SLOW_MS 60초)이 '오래 걸려'를 먼저 보이고, 그 뒤로도 붙기를 기다린다
+    #[test]
+    fn 첫_붙기는_화면의_오래_걸려보다_오래_기다린다() {
+        assert!(super::INIT_WAIT > std::time::Duration::from_secs(60));
+        assert!(super::INIT_WAIT <= std::time::Duration::from_secs(120), "너무 길면 진짜로 죽은 호스트가 오래 '켜는 중'에 남는다");
+    }
+
     /// 기본 모드는 공개판 사용자 맥 전부에서 돈다 — 프로세스를 띄우거나 대화 기록(~/.claude/projects)을 읽는 길이 있으면 안 된다(2026-10-12 참모 상태 들여오며)
     #[test]
     fn 예시_모드는_프로세스를_안_띄우고_대화_기록을_안_읽는다() {
@@ -1184,6 +1244,70 @@ mod tests {
     }
 
     #[test]
+    fn 저장_파일_주인은_inline_플러그인만() {
+        assert_eq!(store_owner("shop-mode_inline-0a1b2c3d4e5f.json"), Some("shop-mode"));
+        assert_eq!(store_owner("a_inline-b_inline-0a1b.json"), Some("a_inline-b"), "해시는 맨 끝 _inline- 뒤");
+        assert_eq!(store_owner("diff_builtin-0a1b2c3d4e5f.json"), None, "설치 플러그인은 모드가 아니다");
+        assert_eq!(store_owner("shop-mode_inline-0a1b2c3d4e5f.json.lock"), None);
+        assert_eq!(store_owner("shop-mode_inline-zz.json"), None, "해시는 16진수");
+        assert_eq!(store_owner("_inline-0a1b.json"), None);
+        assert_eq!(store_owner("../x_inline-0a1b.json"), None, "이름은 safe_name");
+    }
+
+    #[test]
+    fn 저장_바뀜은_새것_고침_지움을_주인_이름으로() {
+        use std::collections::HashMap;
+        use std::time::{Duration, UNIX_EPOCH};
+        let t = |s: u64, n: u64| (UNIX_EPOCH + Duration::from_secs(s), n);
+        let prev: HashMap<String, Stamp> =
+            [("a_inline-01.json", t(1, 10)), ("b_inline-02.json", t(1, 10)), ("c_inline-03.json", t(1, 10)), ("d_inline-04.json", t(1, 10))].into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+        let now: HashMap<String, Stamp> =
+            [("a_inline-01.json", t(1, 10)), ("b_inline-02.json", t(2, 10)), ("d_inline-04.json", t(1, 11)), ("e_inline-05.json", t(3, 1)), ("x_builtin-06.json", t(3, 1))].into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+        assert_eq!(store_changed(&prev, &now), ["b", "c", "d", "e"], "그대로인 a·모드 아닌 x 는 빠진다");
+        assert!(store_changed(&now, &now).is_empty());
+    }
+
+    #[test]
+    fn 저장_바뀜은_떠_있고_방금_안_그린_모드에만() {
+        use std::collections::HashMap;
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        let live = vec![("td".to_string(), "home-todo".to_string()), ("cal".to_string(), "home-calendar".to_string()), ("shop".to_string(), "shop-mode".to_string())];
+        let touched: HashMap<String, Instant> = [("cal".to_string(), now - Duration::from_millis(300)), ("shop".to_string(), now - Duration::from_secs(5))].into_iter().collect();
+        let changed = vec!["home-todo".to_string(), "home-calendar".to_string(), "shop-mode".to_string(), "sleepy".to_string()];
+        assert_eq!(store_targets(&changed, &live, &touched, now), ["td", "shop"], "방금 그린 cal·떠 있지 않은 sleepy 는 빠진다");
+        assert!(store_targets(&[], &live, &touched, now).is_empty());
+    }
+
+    #[test]
+    fn 렌더마다_저장하는_모드는_고리를_돌지_않는다() {
+        use std::collections::HashMap;
+        use std::time::{Duration, Instant, UNIX_EPOCH};
+        // 가짜 모드: 그려질 때마다 저장 파일을 고친다. 밖에서 한 번 쓰면 앱이 한 번 밀고, 그 렌더가 쓴 바뀜에는 다시 밀지 않아야 한다
+        let file = "loop_inline-0a.json".to_string();
+        let live = vec![("lp".to_string(), "loop".to_string())];
+        let mut clock = Instant::now();
+        let mut touched: HashMap<String, Instant> = HashMap::new();
+        let mut size = 1u64;
+        let stamp = |n: u64| -> HashMap<String, Stamp> { [(file.clone(), (UNIX_EPOCH + Duration::from_secs(n), n))].into_iter().collect() };
+        let mut prev = stamp(size);
+        size += 1; // 밖에서 한 번 쓴다
+        let mut pushes = 0;
+        for _ in 0..10 {
+            clock += Duration::from_secs(1); // 1초마다 본다
+            let now_stamps = stamp(size);
+            let targets = store_targets(&store_changed(&prev, &now_stamps), &live, &touched, clock);
+            prev = now_stamps;
+            for t in targets {
+                pushes += 1;
+                touched.insert(t, clock + Duration::from_millis(50)); // 밀림 → 화면이 그린다(그리기 끝난 때)
+                size += 1; // 그 렌더가 저장한다
+            }
+        }
+        assert_eq!(pushes, 1, "밖에서 쓴 한 번만 민다");
+    }
+
+    #[test]
     fn 모드_저장_자리는_플러그인_이름_inline() {
         let d = tmp("store");
         mode(&d.join("dev/shop-mode"), true, None); // plugin.json name = "x"
@@ -1348,6 +1472,10 @@ mod tests {
         // 2.1.296 실측: 호스트는 같은 폭·같은 props 면 높이만 바뀌어도 옛 트리를 준다 — 칸 크기를 props 에도 실어 높이가 바뀌면 새로 그리게
         assert_eq!(r["props"], json!({"bodyColumns": 100, "bodyRows": 30}));
         assert_ne!(render_req("Pane", "board", 100, 7)["props"], r["props"]);
+        assert_eq!(with_store_rev(r.clone(), 0), r, "바뀐 적 없으면 그대로");
+        let b = with_store_rev(r.clone(), 2);
+        assert_eq!(b["props"], json!({"bodyColumns": 100, "bodyRows": 30, "storeRev": 2}), "판 번호가 props 를 바꿔 호스트가 새로 그린다");
+        assert_eq!((b["viewport"].clone(), b["instance_id"].clone()), (r["viewport"].clone(), r["instance_id"].clone()));
         let line: Value = serde_json::from_str(&control("a1", attach_req(0, 0))).unwrap();
         assert_eq!(line["type"], "control_request");
         assert_eq!(line["request"]["viewport"]["columns"], 1);

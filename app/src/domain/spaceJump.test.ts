@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { keepScroll, pickKind, queueShow, restoreTop, SCROLL_PANES, scrollKey, showBatch, showPlace, traceLine } from './spaceJump';
+import { craftTarget, keepScroll, pickKind, queueShow, restoreTop, SCROLL_PANES, scrollKey, showBatch, showPlace, traceLine } from './spaceJump';
 import { OFFICE } from './spaceOffice';
 
 describe('showPlace — 띄운 파일을 지금 화면에 둘지, 그 참모 탭에 넣어 둘지', () => {
@@ -178,5 +178,25 @@ describe('SCROLL_PANES·restoreTop — 탭을 바꿨다 오면 그 화면 스크
     expect(restoreTop(undefined, true)).toBe(0);
     expect(restoreTop(0, true)).toBe(0);
     expect(restoreTop(undefined, false)).toBeNull();
+  });
+});
+
+// 2026-10-19 사용자 "세션이 Craft 로 만드는 걸 사람이 보면서 따라가게" — 프로젝트 세션이 띄운 칸은 그 세션을 맡긴 참모 탭에(show 와 같은 규칙)
+describe('craftTarget — Craft 칸을 둘 참모', () => {
+  it('주인 모르면(서랍·셸) 지금 보는 참모, 없으면 대표', () => {
+    expect(craftTarget(null, 'orch-a', 'orch-a', 'orch-z')).toEqual({ to: 'orch-a', queue: false });
+    expect(craftTarget(null, undefined, 'orch-a', 'orch-z')).toEqual({ to: 'orch-z', queue: false });
+  });
+  it('보고 있는 참모가 맡긴 세션이면 그 화면에 바로', () => {
+    expect(craftTarget('orch-a', 'orch-a', 'orch-a', 'orch-z')).toEqual({ to: 'orch-a', queue: false });
+  });
+  it('채팅 탭 참모가 맡긴 세션이면 그 참모로 옮겨서', () => {
+    expect(craftTarget('orch-b', 'orch-a', 'orch-b', 'orch-z')).toEqual({ to: 'orch-b', queue: false });
+  });
+  it('다른 참모가 맡긴 세션이면 보던 화면은 그대로 두고 그 참모 탭 줄에', () => {
+    expect(craftTarget('orch-c', 'orch-a', 'orch-a', 'orch-z')).toEqual({ to: 'orch-c', queue: true });
+  });
+  it('스페이스에 참모가 없으면 맡긴 참모', () => {
+    expect(craftTarget('orch-c', undefined, undefined, 'orch-z')).toEqual({ to: 'orch-c', queue: false });
   });
 });

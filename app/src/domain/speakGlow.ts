@@ -14,8 +14,10 @@ export function foldSay(prev: Glow | null, next: SayNow): Glow {
   return { ...next, env: next.env ?? prev.env };
 }
 
-/** 지금 빛낼 참모 — 재생 중이고 소리가 귀에 닿은 뒤(startedMs)부터. Rust 가 블루투스 지연까지 더한 시각을 준다(2026-10-10) */
-export const speakingFrom = (g: Glow | null, nowMs: number) => (g && g.phase === 'playing' && nowMs >= g.startedMs ? g.from : null);
+/** 지금 빛낼 참모 — 재생 중이고 소리가 귀에 닿은 뒤(startedMs)부터. Rust 가 블루투스 지연까지 더한 시각을 준다(2026-10-10).
+ *  곡선이 있으면 곡선 끝에서 끝 — afplay 는 소리가 끝난 뒤 1초쯤 조용히 더 살아서 그동안 빛 0 인 말하는 표시가 남았다(2026-10-16 실측) */
+export const speakingFrom = (g: Glow | null, nowMs: number) =>
+  g && g.phase === 'playing' && nowMs >= g.startedMs && (!g.env || nowMs < g.startedMs + g.env.length * g.hopMs) ? g.from : null;
 
 const FLOOR = 0.15; // 말 사이 조용한 칸에도 누가 말하는지는 보이게
 

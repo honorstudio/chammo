@@ -326,6 +326,16 @@ export const pickFolder = (prompt: string, start?: string) => invoke<string | nu
 export const notifyStatus = () => invoke<'granted' | 'denied' | 'notDetermined' | 'unavailable'>('notify_status');
 export const notifyRequest = () => invoke<boolean>('notify_request');
 export const notifyOpenSettings = () => invoke<void>('notify_open_settings');
+/** 손쉬운 사용 허용이 있나 — 묻지 않고 보기만(맥 밖은 늘 true) */
+export const axTrusted = () => invoke<boolean>('ax_trusted');
+export const screenTrusted = () => invoke<boolean>('screen_trusted');
+
+/** 맥 권한 '설정 열기' — 사람이 누를 때만 권한을 한 번 요청하고(맥은 한 번 요청한 앱만 손쉬운 사용·화면 기록 목록에 올린다, 0.3.4 2차 검증) 그 설정 화면을 연다 */
+export async function askPermission(kind: 'ax' | 'screen') {
+  await invoke('ask_permission', { kind }).catch(() => {});
+  const pane = kind === 'ax' ? 'Privacy_Accessibility' : 'Privacy_ScreenCapture';
+  await invoke('open_target', { kind: 'url', target: `x-apple.systempreferences:com.apple.preference.security?${pane}` });
+}
 /** 이 프로젝트 브라우저(chammo-browser)가 붙었나 / 붙이기 — 저장소 .mcp.json 은 안 건드린다(GitHub #2) */
 export const projectBrowser = (dir: string) => invoke<import('../domain/browserNeed').BrowserLink>('project_browser', { dir });
 export const projectBrowserAttach = (dir: string) => invoke<import('../domain/browserNeed').BrowserLink>('project_browser_attach', { dir });

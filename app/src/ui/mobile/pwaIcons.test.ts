@@ -27,6 +27,10 @@ describe('폰 홈 화면 앱 아이콘(대표 캐릭터 파란 모찌)', () => {
     }
   });
 
+  it('manifest 에 start_url 이 없다 — 있으면 아이폰이 그걸 시작 주소로 써서 홈 화면 앱 넘기기 코드(?home=)를 잃는다(bootPair)', () => {
+    expect(manifest).not.toHaveProperty('start_url');
+  });
+
   it('mobile.html — apple-touch-icon 180·파비콘이 폰 서버가 내주는 길', () => {
     const html = mobileHtml;
     const hrefs = [...html.matchAll(/<link rel="(apple-touch-icon|icon)"[^>]*href="([^"]+)"/g)].map((m) => [m[1], m[2]!] as const);

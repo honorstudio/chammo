@@ -377,6 +377,17 @@ fn asset_path(path: &str) -> Option<String> {
     ok.then(|| format!("assets/{name}"))
 }
 
+/// 홈 화면 아이콘 요청 진단 한 줄 — 아이폰 '홈 화면에 추가'가 프사 대신 '참' 글자였는데 시뮬레이터로는 재현이 안 됐다(2026-10-16).
+/// 다음 실기에서 그 요청이 맥에 닿았나·몇으로 답했나를 가른다. 경로·상태·보낸 쪽(UA 앞 낱말)만 — 쿼리·주소·열쇠는 없다
+fn icon_note(req: &Req, status: u16) -> Option<String> {
+    if !req.path.contains("apple-touch-icon") {
+        return None;
+    }
+    let clean = |s: &str, n: usize| s.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '-' | '_')).take(n).collect::<String>();
+    let who = req.header("user-agent").and_then(|u| u.split(['/', ' ']).next()).unwrap_or("");
+    Some(format!("icon {} {status} {}", clean(&req.path, 80), clean(who, 32)))
+}
+
 /// 짝지은 기기의 토큰(Bearer)인가 — 쿠키·마스터 열쇠는 안 받는다
 fn authed(req: &Req, gate: &Gate) -> bool {
     device_of(req, gate).is_some()
@@ -1059,9 +1070,13 @@ fn inject_shim(html: &str) -> String {
 /// 표 주소로 시안 — 열쇠 없이(iframe 이 못 싣는다) 표만 본다. 응답은 sandbox allow-scripts(불투명 출처: 폰 열쇠·/api 에 못 닿음),
 /// 바깥으로 보내기(connect) 금지, 같은 출처 틀에만
 fn ticket_path(req: &Req, gate: &Gate) -> Option<String> {
+    ticket_of(gate, req.param("t"))
+}
+
+fn ticket_of(gate: &Gate, t: Option<&str>) -> Option<String> {
     let mut m = gate.tickets.lock().unwrap_or_else(|e| e.into_inner());
     m.retain(|_, (_, at)| at.elapsed() < TICKET_KEEP);
-    req.param("t").and_then(|t| m.get(t)).map(|(p, _)| p.clone())
+    t.and_then(|t| m.get(t)).map(|(p, _)| p.clone())
 }
 
 fn new_ticket(gate: &Gate, path: &str) -> Option<String> {
@@ -1167,9 +1182,53 @@ fn dl_page(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     r
 }
 
+/// 시안 표 주소 — 폴더 꼴(/api/html/<표>/<이름>)이라 시안이 상대 경로로 부른 그림(v2/a.jpg)이 /api/html/<표>/v2/a.jpg 로 와서 같은 표로 받는다
+fn html_url(t: &str, path: &str) -> String {
+    let name = Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    const KEEP: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC.remove(b'.').remove(b'-').remove(b'_');
+    format!("/api/html/{t}/{}", percent_encoding::utf8_percent_encode(&name, KEEP))
+}
+
+/// 시안 곁 파일(그림·스타일·글꼴·스크립트) — 표의 html 폴더 안만(mobile_files::html_asset), 글 속 비밀은 안 낸다
+fn html_asset_resp(html: &str, rel: &str, be: &dyn Backend) -> Resp {
+    let rules = mobile_files::Rules { data_dir: be.data_dir(), hq_dir: be.hq_dir(), home: PathBuf::from(crate::platform::home()) };
+    let real = match mobile_files::html_asset(Path::new(html), rel, &rules) {
+        Pick::Ok(p) => p,
+        Pick::Forbidden => return Resp::text(403, "not allowed"),
+        Pick::NotFound => return Resp::text(404, "not found"),
+    };
+    let ctype = mobile_files::asset_type(&real).unwrap_or("application/octet-stream");
+    let bytes = match mobile_files::read_verified(&real.to_string_lossy(), MAX_HTML_FILE) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => return Resp::text(413, "file too large"),
+        Err(_) => return Resp::text(403, "not allowed"),
+    };
+    // 글 속 비밀 검사는 글 파일만(css·js·글꼴) — 그림 바이트는 글이 아니다, svg 는 글이라 본다
+    if (!ctype.starts_with("image/") || ctype.starts_with("image/svg")) && mobile_files::secret_in(&bytes) {
+        return Resp::text(403, "secret inside");
+    }
+    let mut r = Resp::new(200, ctype, bytes);
+    r.headers.push(("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'".into()));
+    r
+}
+
 fn html_page(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
-    let Some(path) = ticket_path(req, gate).filter(|p| is_html(p)) else { return Resp::text(403, "bad ticket") };
+    // /api/html/<표>/<나머지> — 나머지가 시안 이름이면 시안, 아니면 시안 폴더 안 곁 파일. 옛 꼴(/api/html?t=)은 시안만
+    let (t, rest) = match req.path.strip_prefix("/api/html/") {
+        Some(tail) => match tail.split_once('/') {
+            Some((t, rest)) => (Some(t), Some(rest)),
+            None => return Resp::text(403, "bad ticket"),
+        },
+        None => (req.param("t"), None),
+    };
+    let Some(path) = ticket_of(gate, t).filter(|p| is_html(p)) else { return Resp::text(403, "bad ticket") };
     let Pick::Ok(_) = pick_shown(be, &path) else { return Resp::text(403, "not allowed") };
+    if let Some(rest) = rest {
+        let Ok(rel) = percent_encoding::percent_decode_str(rest).decode_utf8() else { return Resp::text(403, "not allowed") };
+        if Path::new(&path).file_name().is_none_or(|n| n.to_string_lossy() != rel) {
+            return html_asset_resp(&path, &rel, be);
+        }
+    }
     let bytes = match mobile_files::read_verified(&path, MAX_HTML_FILE) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::InvalidData => return Resp::text(413, "file too large"),
@@ -1179,7 +1238,7 @@ fn html_page(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         return Resp::text(403, "secret inside");
     }
     let mut r = Resp::new(200, "text/html; charset=utf-8", inject_shim(&String::from_utf8_lossy(&bytes)).into_bytes());
-    r.headers.push(("Content-Security-Policy", "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src https://cdn.jsdelivr.net https://fonts.gstatic.com data:; img-src https: data: blob:; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'".into()));
+    r.headers.push(("Content-Security-Policy", "sandbox allow-scripts; default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; img-src 'self' https: data: blob:; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'".into()));
     r.headers.push(("X-Frame-Options", "SAMEORIGIN".into()));
     r
 }
@@ -1308,10 +1367,16 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     let is_get = req.method == "GET" || req.method == "HEAD";
     if is_get && !req.path.starts_with("/api/") {
         // 화면 껍데기(html·js·css)는 열쇠 없이 — 비밀이 없다. 짝짓기 주소(?pair=)도 껍데기만 주고, 코드는 페이지가 POST /api/pair 로 낸다. 데이터는 전부 /api 뒤
-        return match asset_path(&req.path).and_then(|p| be.asset(&p)) {
+        let resp = match asset_path(&req.path).and_then(|p| be.asset(&p)) {
+            // 묶인 화면 파일 해석기는 .webmanifest 를 몰라 text/html 로 줬다 — nosniff 라 형식을 바로 적는다
+            Some((bytes, _)) if req.path == "/manifest.webmanifest" => Resp::new(200, "application/manifest+json", bytes),
             Some((bytes, ctype)) => Resp::new(200, &ctype, bytes),
             None => Resp::text(404, "not found"),
         };
+        if let Some(line) = icon_note(req, resp.status) {
+            be.diag(&line);
+        }
+        return resp;
     }
     // 다른 기기 참모가 '여기 참모가 있나·말이 통하나'만 묻는다 — 열쇠 없이, 앱 표시·약속 번호·버전·OS 만(이름·경로·세션은 없음)
     if req.path == "/api/hello" {
@@ -1345,7 +1410,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         return link_route(req, gate, crate::peer_ask::asks(), be.link_env(), crate::messenger_cmd::now_ms());
     }
     // html 시안 — 표가 열쇠(iframe 은 Bearer 를 못 싣는다)
-    if req.path == "/api/html" {
+    if req.path == "/api/html" || req.path.starts_with("/api/html/") {
         return if is_get { html_page(req, gate, be) } else { Resp::text(405, "method not allowed") };
     }
     if req.path == "/api/dl" {
@@ -1629,7 +1694,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Err(_) => return Resp::text(403, "not allowed"),
             }
             let Some(t) = new_ticket(gate, &b.path) else { return Resp::text(500, "no random") };
-            Resp::json(&serde_json::json!({ "url": format!("/api/html?t={t}") }))
+            Resp::json(&serde_json::json!({ "url": html_url(&t, &b.path) }))
         }
         // 받기 표 — 보여 준 파일이면 무엇이든(폰 공유 시트·내려받기). 이름·크기·MIME 도 같이(폰이 50MB 넘으면 공유 대신 내려받기)
         ("POST", "/api/dl-ticket") => {

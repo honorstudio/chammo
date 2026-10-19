@@ -73,8 +73,7 @@
 .seg button svg { width: 15px; height: 15px; }
 /* 붙인 그림 — 말풍선 썸네일(누르면 크게), 보내기 전 입력칸 위 썸네일 */
 .chat-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
-.chat-thumb { max-height: 96px; max-width: 160px; border-radius: 6px; cursor: zoom-in; display: block; }
-.chat-thumb.big { max-height: none; max-width: 100%; cursor: zoom-out; }
+.chat-thumb { max-height: 96px; max-width: 160px; border-radius: 6px; cursor: pointer; display: block; }
 .chat-attach { display: inline-flex; gap: 4px; flex: 0 0 auto; }
 .chat-attach img { height: 36px; max-width: 64px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line); }
 .chat-file { font-size: 11px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
@@ -153,6 +152,9 @@
 .bubble .chat-file { display: inline-block; margin: 0 2px; vertical-align: baseline; }
 .chat-file { display: inline-flex; align-items: center; gap: 4px; }
 .chat-file svg { width: 13px; height: 13px; }
+/* 누르면 스페이스에 연다 — .cv button { font: inherit } 보다 무겁게(그대로면 11px 가 13.5px 로 덮인다) */
+.bubble button.chat-file { font: inherit; font-size: 11px; color: inherit; cursor: pointer; }
+.bubble button.chat-file:hover { border-color: var(--text-3); }
 /* #img1·#file1·@참모 칩 — 말풍선은 진짜 칩, 입력칸은 뒤판에 칠해 칩처럼(글자 폭은 그대로라 커서가 안 어긋난다) */
 .at-chip { display: inline-block; padding: 0 5px; margin: 0 1px; border-radius: 5px; font-size: 12px; font-weight: 700; background: color-mix(in srgb, var(--orch, var(--accent)) 16%, var(--surface)); color: var(--orch-text, var(--accent)); }
 .chat-field { position: relative; flex: 1; display: flex; min-width: 0; border-radius: 8px; background: var(--surface); }

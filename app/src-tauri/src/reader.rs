@@ -1014,6 +1014,11 @@ pub fn set_view_mode(chat: bool) {
     let _ = std::fs::write(crate::config::data_file("view.json"), format!("{{\"view\":\"{}\"}}", if chat { "chat" } else { "terminal" }));
 }
 
+/// 지금 채팅 뷰인가(스페이스가 떠 있나) — Craft 맥 앱 기본 자리(스페이스 탭)를 고를 때
+pub fn chat_view() -> bool {
+    CHAT_VIEW.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// 파일 크기·수정 시각 — 같으면 안 읽는다(감시 루프가 0.7초마다 통째로 읽던 것, 2026-10-11 perf 6번). 없으면 None
 pub fn stamp(path: &std::path::Path) -> Option<(u64, std::time::SystemTime)> {
     let m = std::fs::metadata(path).ok()?;

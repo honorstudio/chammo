@@ -19,6 +19,25 @@ describe('완전히 종료 — 늘 끝까지 간다', () => {
     expect(app).toMatch(/Promise\.race\(\[Promise\.allSettled\(mine\.map/);
   });
   it('app_exit 는 정리가 걸려도 강제로 끝난다', () => {
-    expect(main).toMatch(/fn app_exit\(app: tauri::AppHandle\) \{\s*quit::exit_now\(&app,/);
+    expect(main).toMatch(/fn app_exit\(app: tauri::AppHandle\) \{[\s\S]*?dock_quit::finish\(&app, 0[\s\S]*?quit::exit_now\(&app,/); // 독 종료를 미뤄 둔 길도 finish 가 같은 강제 종료 감시를 건다
+  });
+});
+
+describe('끌 때 Craft 저장 — 진행·건너뛰기(2026-10-19 끄기 QA)', () => {
+  it('세션을 끈 뒤 Craft 저장을 시작하고, 떠 있으면 저장 중 글과 건너뛰기를 보인다 — 다 저장되면 종료', () => {
+    expect(dialog).toMatch(/invoke<string\[\]>\('craft_quit_start'\)/);
+    expect(dialog).toMatch(/invoke<string\[\]>\('craft_quit_left'\)/);
+    expect(dialog).toMatch(/건너뛰기/);
+    expect(main).toMatch(/craft_screen::close_apps_on_exit\b/);
+  });
+});
+
+describe('독 종료 — 한 번에, 기다림은 눈에 보이게(2026-10-19 사용자 "독에서 종료할 때 어려움")', () => {
+  it('Rust 가 끄기를 미루면(Craft 저장) 묻지 않고 바로 저장 중 창 — 띄웠다고 알리고 끝나면 app_exit', () => {
+    expect(app).toMatch(/__dockQuit/);
+    expect(app).toMatch(/setQuitOpen\('dock'\)/);
+    expect(dialog).toMatch(/dock\?: boolean/);
+    expect(dialog).toMatch(/if \(dock\) void go\(false\)/);
+    expect(main).toMatch(/dock_quit::finish\(&app, 0/);
   });
 });

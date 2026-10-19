@@ -6,6 +6,8 @@ export type Access = { state: AccessState; dir: string; protected: boolean; deta
 
 /** 시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한 */
 export const FULL_DISK_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles';
+/** 손쉬운 사용 — Craft 앱 개입(진짜 창을 칸 자리로)·다른 앱 위 말하기 키 */
+export const ACCESSIBILITY_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility';
 
 /** 앱 띠 — 막혔을 때만. mac = 맥 개인정보 보호가 막음(설정 열기), perm = 파일 권한. 닫은 폴더(dismissed)는 다시 안 띄운다 */
 export function accessBanner(a: Access | null, dismissed?: string | null): { kind: 'mac' | 'perm'; dir: string } | null {

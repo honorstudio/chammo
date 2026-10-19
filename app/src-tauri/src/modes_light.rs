@@ -225,18 +225,14 @@ pub fn read_texts(dir: &Path) -> Option<Vec<String>> {
 /// 모드 하나 → 판단 재료. 예시는 앱 안 사본에서(풀기 전에도), 그 밖은 폴더에서. 플러그인 이름은 plugin.json name(없으면 모드 이름)
 pub fn cand(info: &crate::modes::ModeInfo) -> Cand {
     let embedded = crate::modes::EXAMPLES.iter().find(|(n, _)| info.source == "example" && *n == info.name).map(|(_, f)| *f);
-    let (manifest, texts): (String, Option<Vec<String>>) = match embedded {
+    let texts: Option<Vec<String>> = match embedded {
         Some(files) => {
-            let m = files.iter().find(|(p, _)| *p == ".claude-plugin/plugin.json").map(|(_, b)| b.to_string()).unwrap_or_default();
             let src = |p: &str| [".ts", ".tsx", ".js", ".jsx", ".mjs"].iter().any(|x| p.ends_with(x)) && !p.contains(".test.");
-            (m, Some(files.iter().filter(|(p, _)| src(p)).map(|(_, b)| b.to_string()).collect()))
+            Some(files.iter().filter(|(p, _)| src(p)).map(|(_, b)| b.to_string()).collect())
         }
-        None => {
-            let dir = Path::new(&info.dir);
-            (std::fs::read_to_string(dir.join(".claude-plugin/plugin.json")).unwrap_or_default(), read_texts(dir))
-        }
+        None => read_texts(Path::new(&info.dir)),
     };
-    let plugin = serde_json::from_str::<Value>(&manifest).ok().and_then(|v| v.get("name").and_then(Value::as_str).map(str::to_string)).unwrap_or_else(|| info.name.clone());
+    let plugin = crate::modes::plugin_name(info);
     let (veto, ids) = match &texts {
         Some(t) => {
             let t: Vec<&str> = t.iter().map(String::as_str).collect();

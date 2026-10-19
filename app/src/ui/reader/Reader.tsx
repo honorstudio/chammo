@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { modKey } from '../../domain/keys';
 import { curStep, DOC_SANDBOX, emptyStore } from '../../domain/curation';
 import { docUrl, IS_WIN, isDocUrl, dropIndex, inStrip, kindOf, titleOf, type DocKind, type Surface, docFileUrl } from '../../domain/reader';
@@ -17,6 +17,7 @@ import { addComment, setBaseline } from '../space/pending';
 import { SendFab } from '../space/SendFab';
 import { lastSaved } from '../space/docSave';
 import { WebPage } from '../WebPage';
+import { applyAnchor, markAnchor, useWheelZoom } from '../zoomAnchor';
 import type { BlockNoteEditor } from '@blocknote/core';
 
 // 스페이스 편집기(BlockNote)는 고칠 때만 불러온다 — 보기만 할 땐 무게를 안 싣는다
@@ -313,12 +314,17 @@ export function ReaderView({ surface, actions, send, sendTo }: { surface: string
   const [zooms, setZooms] = useState<ZoomMap>(loadZoom);
   const kind = s.active ? kindOf(s.active) : null;
   const zoom = kind ? zoomOf(zooms, kind) : 100;
-  const zoomBy = useRef<(dir: 1 | -1 | 0) => void>(() => {});
+  const zoomBy = useRef<(dir: 1 | -1 | 0, at?: { x: number; y: number }) => void>(() => {});
   const body = useRef<HTMLDivElement>(null);
-  zoomBy.current = (dir) => {
+  // 그림 확대 기준점 — 핀치·⌘휠은 커서 아래, 키보드·단추는 보던 가운데(2026-10-19 사용자, ui/zoomAnchor)
+  const imgBox = () => body.current?.querySelector<HTMLElement>('.rd-image');
+  useLayoutEffect(() => applyAnchor(imgBox()), [zoom]);
+  useWheelZoom(imgBox, (dir, at) => zoomBy.current(dir, at));
+  zoomBy.current = (dir, at) => {
     if (!kind || !zoomable(kind)) return;
     let z: number;
     if (kind === 'image') {
+      markAnchor(imgBox(), at);
       // 맞춤에서 누르면 지금 보이는 실제 비율에서 한 단계 — 맞춤이 37% 면 ⌘- 는 33%, ⌘+ 는 50%
       const img = body.current?.querySelector('img');
       const now = zoom !== FIT ? zoom : img?.naturalWidth ? Math.round(img.getBoundingClientRect().width / (img.naturalWidth / (window.devicePixelRatio || 1)) * 100) : 100;

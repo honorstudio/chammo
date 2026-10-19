@@ -4,6 +4,7 @@ import app from '../../App.tsx?raw';
 import rail from './OrchRail.tsx?raw';
 import css from './locker.css?raw';
 import space from './space.css?raw';
+import chatCss from '../chat/chat.css?raw';
 
 // 2026-10-12 사용자(참모-2 전달, 시안 v2 Q1 A·Q2·Q3 추천대로): 채팅이 오른쪽이라 어느 참모 채팅인지 헷갈렸다 → 띠 | 채팅 | 스페이스.
 // 채팅 머리 = 그 참모 프사 + 이름 + 맡은 일(한 줄 말줄임), 고른 프사와 채팅 칸이 하나로 이어져 켜진 것처럼(고른 탭이 아래 내용과 붙듯)
@@ -84,7 +85,34 @@ describe('고른 프사 ↔ 채팅 카드 이음 윤곽', () => {
 // 2026-10-12 사용자(참모-2 전달): 지금 보는 참모(고른 프사)가 말하면 빛이 칸 네모 모양 — 캐릭터 모양을 따라가게(동작 줄이기면 levelAt 0.7 고정 = 은은히 켜짐)
 describe('고른 프사 말하는 빛 = 캐릭터 모양', () => {
   it('고른 칸은 네모 빛(box-shadow)을 끄고 그림에 drop-shadow', () => {
-    expect(css).toMatch(/\.lk-strip\.joined \.lk-av\.on\.st-speak \{ box-shadow: none !important; \}/);
-    expect(css).toMatch(/\.lk-strip\.joined \.lk-av\.on\.st-speak \.lk-av-pic > :first-child \{[^}]*filter: drop-shadow\([^)]*var\(--speak-level/);
+    expect(css).toMatch(/\.lk-strip\.joined \.lk-av\.on\.st-speak \{ box-shadow: none !important;[^}]*\}/);
+    expect(css).toMatch(/\.lk-strip\.joined \.lk-av\.on\.st-speak \.lk-av-pic > :first-child \{[^}]*filter: drop-shadow\([^}]*var\(--speak-level/);
+  });
+  // 2026-10-16 사용자: 고른 참모 빛이 안 고른 참모보다 약하다 — 모양은 그대로, 세기를 안 고른 칸만큼(블러 최대치가 같고, 겹쳐 쌓아 진하게)
+  it('고른 칸 빛도 안 고른 칸만큼 — 가장 넓은 블러가 4px + 14px × 소리 크기, 그림자 셋 이상 겹침', () => {
+    const rule = css.match(/\.lk-strip\.joined \.lk-av\.on\.st-speak \.lk-av-pic > :first-child \{([^}]*)\}/)?.[1] ?? '';
+    const unsel = css.match(/\.lk-av\.st-speak \{([^}]*)\}/)?.[1] ?? '';
+    expect(unsel).toMatch(/calc\(4px \+ 14px \* var\(--speak-level, 0\)\)/);
+    expect(rule).toMatch(/drop-shadow\(0 0 calc\(4px \+ 14px \* var\(--speak-level, 0\)\)/);
+    expect(rule.match(/drop-shadow\(/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+    expect(rule).not.toMatch(/border-left|inset/);
+  });
+  // 2026-10-16 실제 앱(WebKit): 사람이 보는 동안 프사 SVG 애니메이션(숨쉬기·깜빡임)이 돌면 그 위 drop-shadow 가 통째로 안 그려졌다 —
+  // 안 볼 때(oa-paused = animation: none)만 보였다. 멈춤(paused)으론 안 됐고 none 이어야 한다(개발판 실측 .shots/voice-glow-2)
+  it('고른 프사가 말하는 동안은 프사 애니메이션을 뺀다(animation: none — paused 는 WebKit 에서 빛이 안 그려짐)', () => {
+    const rule = css.match(/([^{}]*\.lk-strip\.joined \.lk-av\.on\.st-speak \.oa\b[^{}]*)\{([^}]*)\}/);
+    expect(rule?.[1]).toMatch(/\.lk-strip\.joined \.lk-av\.on\.st-speak \.oa \*/);
+    expect(rule?.[2]).toMatch(/animation:\s*none !important/);
+    expect(rule?.[2]).not.toMatch(/animation-play-state/);
+  });
+  // 2026-10-16 사용자(참모-2 전달 228.png): 빛이 띠 오른쪽 끝(채팅 카드 왼쪽 변)에서 세로로 잘렸다 — 채팅 칸 .chat(base+3, 불투명 바탕)이 프사(base+1) 위에 있었다.
+  // 말하는 고른 프사만 채팅 칸 위로 — 이어진 면을 따라 빛이 카드 쪽으로 번지고, 윤곽선(ChatLink, base+4, DOM 이 뒤)은 그 위에 남는다
+  it('말하는 고른 프사는 채팅 칸(.chat base+3) 위 — 빛이 카드 쪽에서 안 잘린다, 윤곽선(base+4)보다 높지 않게', () => {
+    const chatZ = Number(chatCss.match(/\.chat \{[^}]*z-index: calc\(var\(--z-base\) \+ (\d+)\)/)?.[1]);
+    const linkZ = Number(css.match(/\.chat-link \{[^}]*z-index: calc\(var\(--z-base\) \+ (\d+)\)/)?.[1]);
+    const avZ = Number(css.match(/\.lk-strip\.joined \.lk-av\.on\.st-speak \{[^}]*z-index: calc\(var\(--z-base\) \+ (\d+)\)/)?.[1]);
+    expect(chatZ).toBe(3);
+    expect(avZ).toBeGreaterThan(chatZ);
+    expect(avZ).toBeLessThanOrEqual(linkZ);
   });
 });

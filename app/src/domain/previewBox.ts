@@ -22,12 +22,3 @@ export function parseBox(raw: string | null): Box | null {
     return null;
   }
 }
-
-/** 확대 전 보던 가운데(스크롤 창 view, 내용 크기 before) → 새 내용 크기 after 에서 같은 가운데가 오게 하는 스크롤 자리 */
-export function keepCenter(view: { left: number; top: number; w: number; h: number }, before: Box, after: Box): { left: number; top: number } {
-  const axis = (pos: number, span: number, b: number, a: number) => {
-    const ratio = b > 0 ? (pos + span / 2) / b : 0.5;
-    return Math.round(clamp(ratio * a - span / 2, 0, Math.max(0, a - span)));
-  };
-  return { left: axis(view.left, view.w, before.w, after.w), top: axis(view.top, view.h, before.h, after.h) };
-}

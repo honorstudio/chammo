@@ -631,6 +631,34 @@ fn 허용_목록_밖은_404_405() {
 }
 
 #[test]
+fn 홈_화면_아이콘_요청은_진단_한_줄_경로_상태_보낸_쪽만() {
+    // 아이폰 '홈 화면에 추가'가 프사 대신 '참' 글자였다(2026-10-16) — 아이콘 요청이 맥에 닿았나·몇으로 답했나를 다음 실기에서 바로 가르게
+    let ua = |p: &str, ua: &str| set(get(p), "user-agent", Some(ua));
+    let (s, f, _) = run(ua("/assets/apple-touch-icon.png", "SafariViewService/8624.2.5.10.4 CFNetwork/3860.100.1 Darwin/25.0.0"));
+    assert_eq!(s, 404); // 가짜 백엔드엔 그림이 없다
+    assert!(f.calls().contains(&"diag icon /assets/apple-touch-icon.png 404 SafariViewService".to_string()), "{:?}", f.calls());
+    // 맨 위 길로 먼저 찔러 보는 것도(아이폰 미리보기)
+    let (_, f, _) = run(ua("/apple-touch-icon-precomposed.png", "NetworkingExtension/8624 Network/5812"));
+    assert!(f.calls().contains(&"diag icon /apple-touch-icon-precomposed.png 404 NetworkingExtension".to_string()), "{:?}", f.calls());
+    // 보낸 쪽은 앞 낱말만, 이상한 글자는 버린다
+    let (_, f, _) = run(ua("/assets/apple-touch-icon.png", "<b>x</b> evil"));
+    assert!(f.calls().contains(&"diag icon /assets/apple-touch-icon.png 404 bx".to_string()), "{:?}", f.calls());
+    // 다른 화면 파일은 안 남긴다
+    let (_, f, _) = run(ua("/assets/app-1.js", "Mozilla/5.0"));
+    assert!(f.calls().iter().all(|c| !c.starts_with("diag")), "{:?}", f.calls());
+}
+
+#[test]
+fn manifest_는_manifest_형식으로_나간다() {
+    // 묶인 화면 파일 해석기는 .webmanifest 를 모른다(text/html 로 줬다) — nosniff 라 형식을 바로 적는다(가짜 백엔드도 text/html 을 준다)
+    let (s, _, r) = run(get("/manifest.webmanifest"));
+    assert_eq!(s, 200);
+    assert!(r.headers.iter().any(|(k, v)| *k == "Content-Type" && v == "application/manifest+json"), "{:?}", r.headers);
+    let (_, _, r) = run(get("/"));
+    assert!(r.headers.iter().any(|(k, v)| *k == "Content-Type" && v == "text/html"), "{:?}", r.headers);
+}
+
+#[test]
 fn 화면_파일은_정해_둔_이름만() {
     assert_eq!(run(get("/")).0, 200);
     assert_eq!(run(get("/assets/app-1.js")).0, 200);
@@ -1525,7 +1553,7 @@ fn 폰_html_시안은_표_주소로_스크립트만_허용() {
     let r = ticket(&page);
     assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
     let url = serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["url"].as_str().unwrap().to_string();
-    assert!(url.starts_with("/api/html?t="), "{url}");
+    assert!(url.starts_with("/api/html/") && url.ends_with("/v1.html"), "{url}");
     // iframe 은 열쇠를 못 실으니 표만으로 — 응답은 sandbox allow-scripts(같은 출처 아님), 같은 출처 틀에만, 앞에 대체 저장소·크기 알림
     let h = handle(&get(&url), &g, &f);
     assert_eq!(h.status, 200);
@@ -1570,6 +1598,93 @@ fn 그림_박힌_큰_html_시안도_표_주소로_연다() {
     // 상한(10MB)을 넘으면 '못 열어요'가 아니라 크다고
     let r = ticket(&huge);
     assert_eq!((r.status, String::from_utf8_lossy(&r.body).to_string()), (413, "file too large".to_string()));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn html_시안이_상대_경로로_부르는_같은_폴더_그림은_같은_표로_받는다() {
+    // 폰에서 시안의 src="v2/now-locker.jpg" 가 전부 '?' 로 깨졌다 — 표 주소가 /api/html?t= 라 상대 경로가 /api/v2/… 로 풀렸다(2026-10-17)
+    let d = tmp("htmlasset");
+    let drafts = d.join("drafts");
+    std::fs::create_dir_all(drafts.join("v2")).unwrap();
+    std::fs::create_dir_all(drafts.join("시안 3")).unwrap();
+    std::fs::create_dir_all(drafts.join(".hidden")).unwrap();
+    std::fs::create_dir_all(d.join("other")).unwrap();
+    let page = drafts.join("v3 · 보기.html");
+    std::fs::write(&page, "<!doctype html><html><head></head><body><img src=\"v2/now-locker.jpg\"></body></html>").unwrap();
+    std::fs::write(drafts.join("v2/now-locker.jpg"), b"\xff\xd8\xffJPEG").unwrap();
+    std::fs::write(drafts.join("시안 3/거울 · 1.png"), b"\x89PNG").unwrap();
+    std::fs::write(drafts.join("style.css"), "body{color:red}").unwrap();
+    std::fs::write(drafts.join("leak.css"), "/* sk-proj-abcdefghijklmnopqrstuvwxyz012345 */").unwrap();
+    std::fs::write(drafts.join("api-key.png"), b"\x89PNG").unwrap();
+    std::fs::write(drafts.join(".hidden/a.png"), b"\x89PNG").unwrap();
+    std::fs::write(drafts.join("notes.md"), "# 메모").unwrap();
+    std::fs::write(drafts.join("v2/run.sh"), "echo hi").unwrap();
+    std::fs::write(d.join("other/x.png"), b"\x89PNG").unwrap();
+    std::os::unix::fs::symlink(d.join("other/x.png"), drafts.join("link.png")).unwrap();
+    let show = format!("{{\"path\":\"{}\"}}\n", page.display());
+    let g = gate();
+    let f = Fake { show, data: d.join("data"), ..Default::default() };
+    let r = handle(&post("/api/html-ticket", &serde_json::json!({ "path": page.to_string_lossy() }).to_string()), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let url = serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["url"].as_str().unwrap().to_string();
+    // 표 주소가 폴더처럼 생겨야 브라우저가 상대 경로를 그 옆으로 푼다
+    let base = url.rsplit_once('/').unwrap().0.to_string();
+    assert!(base.starts_with("/api/html/") && base.len() == "/api/html/".len() + 32, "{url}");
+    let h = handle(&get(&url), &g, &f);
+    assert_eq!(h.status, 200, "{}", String::from_utf8_lossy(&h.body));
+    let csp = h.headers.iter().find(|(n, _)| *n == "Content-Security-Policy").map(|(_, v)| v.clone()).unwrap_or_default();
+    assert!(csp.contains("img-src 'self'") && csp.contains("style-src 'self'"), "{csp}");
+    assert!(csp.starts_with("sandbox allow-scripts;") && csp.contains("connect-src 'none'"), "{csp}");
+    let at = |rel: &str| handle(&get(&format!("{base}/{rel}")), &g, &f);
+    // 받는 것 — 같은 폴더와 하위 폴더, 공백·가운뎃점·한글 이름(퍼센트 인코딩)
+    let a = at("v2/now-locker.jpg");
+    assert_eq!((a.status, a.body.as_slice()), (200, &b"\xff\xd8\xffJPEG"[..]));
+    assert_eq!(ctype(&a), "image/jpeg");
+    let a = at(&format!("{}/{}", enc("시안 3"), enc("거울 · 1.png")));
+    assert_eq!((a.status, ctype(&a)), (200, "image/png".to_string()), "{}", String::from_utf8_lossy(&a.body));
+    let a = at("style.css");
+    assert_eq!((a.status, ctype(&a)), (200, "text/css; charset=utf-8".to_string()));
+    // 거절 — ../ 탈출(날 것·인코딩), 절대 경로, 다른 폴더, 링크, 점 폴더, 민감 이름, 글 속 비밀, 그림·글꼴·스타일 아닌 것
+    for rel in [
+        "../other/x.png",
+        "v2/../../other/x.png",
+        "%2e%2e/other/x.png",
+        "..%2fother%2fx.png",
+        "v2%2f..%2f..%2fother%2fx.png",
+        "./v2/now-locker.jpg",
+        "v2//now-locker.jpg",
+        "/etc/hosts",
+        &enc(&d.join("other/x.png").to_string_lossy()),
+        "link.png",
+        ".hidden/a.png",
+        "api-key.png",
+        "leak.css",
+        "notes.md",
+        "v2/run.sh",
+        "v2\\now-locker.jpg",
+        "%00.png",
+        "",
+    ] {
+        let s = at(rel).status;
+        assert!(s == 403 || s == 404, "{rel} → {s}");
+        assert_ne!(at(rel).body.as_slice(), b"\x89PNG", "{rel}");
+    }
+    // 틀린 표·옛 표 주소 꼴(?t=)로 그림은 못 받는다
+    assert_eq!(handle(&get("/api/html/00112233445566778899aabbccddeeff/v2/now-locker.jpg"), &g, &f).status, 403);
+    // 다른 폴더 시안의 표로는 이 폴더 그림을 못 받는다
+    let other_page = d.join("other/o.html");
+    std::fs::write(&other_page, "<p>o</p>").unwrap();
+    let f2 = Fake { show: format!("{{\"path\":\"{}\"}}\n{{\"path\":\"{}\"}}\n", page.display(), other_page.display()), data: d.join("data"), ..Default::default() };
+    let r = handle(&post("/api/html-ticket", &serde_json::json!({ "path": other_page.to_string_lossy() }).to_string()), &g, &f2);
+    let ou = serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["url"].as_str().unwrap().to_string();
+    let ob = ou.rsplit_once('/').unwrap().0;
+    assert_eq!(handle(&get(&format!("{ob}/x.png")), &g, &f2).status, 200);
+    for rel in ["../drafts/v2/now-locker.jpg", "%2e%2e%2fdrafts%2fv2%2fnow-locker.jpg"] {
+        assert_eq!(handle(&get(&format!("{ob}/{rel}")), &g, &f2).status, 403, "{rel}");
+    }
+    // 쓰기·머리만 아닌 방법은 거절
+    assert_eq!(handle(&Req { method: "POST".into(), ..get(&format!("{base}/v2/now-locker.jpg")) }, &g, &f).status, 405);
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -1695,7 +1810,8 @@ fn 폰_영상은_표_주소로_range_206() {
     // 표가 틀리면·html 표로 영상은·영상 아닌 것에 영상 표는
     assert_eq!(handle(&get("/api/media?t=00112233445566778899aabbccddeeff"), &g, &f).status, 403);
     let h = handle(&post("/api/html-ticket", &serde_json::json!({ "path": page.to_string_lossy() }).to_string()), &g, &f);
-    let hu = serde_json::from_slice::<serde_json::Value>(&h.body).unwrap()["url"].as_str().unwrap().replace("/api/html", "/api/media");
+    let hurl = serde_json::from_slice::<serde_json::Value>(&h.body).unwrap()["url"].as_str().unwrap().to_string();
+    let hu = format!("/api/media?t={}", hurl.trim_start_matches("/api/html/").split('/').next().unwrap());
     assert_eq!(handle(&get(&hu), &g, &f).status, 403);
     assert_eq!(handle(&post("/api/media-ticket", &serde_json::json!({ "path": page.to_string_lossy() }).to_string()), &g, &f).status, 400);
     assert!(head_check(&post("/api/media-ticket", "{}"), &g).is_none());

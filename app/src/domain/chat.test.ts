@@ -256,6 +256,15 @@ describe('splitPaths — 말풍선 속 파일 경로를 이름 칸으로', () =>
   it('경로가 없으면 글 하나', () => {
     expect(splitPaths('그냥 말')).toEqual([{ text: '그냥 말' }]);
   });
+  it('따옴표로 감싼 칩 경로는 따옴표 안이 통째로 경로 — 바로 뒤 사람 글은 글', () => {
+    expect(splitPaths('#file1 "/Users/me/보관함/보고 폴더" 보낼 파일 여기에')).toEqual([
+      { text: '#file1 ' }, { path: '/Users/me/보관함/보고 폴더', name: '보고 폴더' }, { text: ' 보낼 파일 여기에' },
+    ]);
+  });
+  it('따옴표 안 \\" 는 " 로 푼다, 경로가 아닌 따옴표 글은 글', () => {
+    expect(splitPaths('"/a/"x" b.md"'.replace('"x"', '\\"x\\"'))).toEqual([{ path: '/a/"x" b.md', name: '"x" b.md' }]);
+    expect(splitPaths('"그냥 인용" 이야')).toEqual([{ text: '"그냥 인용" 이야' }]);
+  });
   it('한글 경로·여러 개', () => {
     expect(splitPaths('앞 /Users/x/샘플_제안서.pptx 와 ~/a/b.png')).toEqual([
       { text: '앞 ' }, { path: '/Users/x/샘플_제안서.pptx', name: '샘플_제안서.pptx' }, { text: ' 와 ' }, { path: '~/a/b.png', name: 'b.png' },
@@ -270,6 +279,9 @@ describe('termRest — 첨부 줄에 남길 글(붙인 것 표시·경로는 빼
   });
   it('띄어쓰기가 이스케이프된 경로, 그림 표시도 뺀다', () => {
     expect(termRest('[Image #3] /Users/me/a\\ b.pptx 이거', ['/Users/me/a b.pptx'])).toBe('이거');
+  });
+  it('이름표 + 따옴표 칩 경로도 뺀다', () => {
+    expect(termRest('#file1 "/Users/me/보고 폴더" 이거', ['/Users/me/보고 폴더'])).toBe('이거');
   });
   it('붙인 게 없으면 그대로', () => {
     expect(termRest('지구본 키로 한 말', [])).toBe('지구본 키로 한 말');

@@ -86,6 +86,51 @@ def orch_base(name, bases):
     return b if any(b == x or re.fullmatch(re.escape(x) + r'-\d+', b) for x in bases) else None
 
 
+XMSG = re.compile(r'<cross-session-message\b([^>]*)>.*?</cross-session-message>', re.S)
+FROM_NAME = re.compile(r'\bfrom-name="([^"]*)"')
+
+
+def from_orch(prompt, bases):
+    """이 턴이 다른 참모가 보낸 말(SendMessage)로만 깼나 — 음성 모드에서 그 참모는 말하지 않는다(사람이 말 건 참모만 말한다, 2026-10-16).
+    하위 세션 회신·백그라운드 끝 알림·사람 말이 하나라도 섞이면 아니다"""
+    if not isinstance(prompt, str):
+        return False
+    msgs = list(XMSG.finditer(prompt))
+    if not msgs or XMSG.sub('', prompt).strip():
+        return False
+    for m in msgs:
+        n = FROM_NAME.search(m.group(1))
+        if not n or not orch_base(n.group(1), bases):
+            return False
+    return True
+
+
+def hq_path(cfg, d, env):
+    """HQ 폴더 — 앱과 같은 순서: CHAMMO_HQ → HONOR_ORCH_CWD → 설정 hqDir → <데이터>/hq (Rust config::hq_dir)"""
+    for k in ('CHAMMO_HQ', 'HONOR_ORCH_CWD'):
+        if (env.get(k) or '').strip():
+            return env[k]
+    h = cfg.get('hqDir') if isinstance(cfg.get('hqDir'), str) else ''
+    return h.strip() or os.path.join(d, 'hq')
+
+
+def launch_key(p):
+    """Claude Code 기록 폴더 이름 — 띄운 폴더 경로에서 영숫자 밖은 전부 -"""
+    return re.sub(r'[^A-Za-z0-9]', '-', p)
+
+
+def hq_session(inp, cfg, d, env):
+    """HQ 에서 띄운 세션(참모·도우미)인가 — 음성 줄은 여기만 붙인다. HQ 안 앱 수리 워크트리·프로젝트 세션은 아니다(2026-10-16).
+    띄운 폴더는 transcript_path 의 기록 폴더 이름이라 세션이 cd 해도 안 바뀐다 → 없으면 cwd → 둘 다 없으면 참모로 친다(예전처럼)"""
+    hq = fwd(hq_path(cfg, d, env)).rstrip('/')
+    tp = inp.get('transcript_path') if isinstance(inp.get('transcript_path'), str) else ''
+    if tp:
+        folder = base_name(fwd(tp).rsplit('/', 1)[0])
+        return folder in {launch_key(hq), launch_key(fwd(os.path.realpath(hq)).rstrip('/'))}
+    cwd = inp.get('cwd') if isinstance(inp.get('cwd'), str) else ''
+    return same_dir(cwd, hq) if cwd else True
+
+
 def base_name(p):
     return ([x for x in p.split('/') if x] or [p])[-1]
 
@@ -269,10 +314,22 @@ def live_agents(d):
 
 def main():
     try:
-        me = json.load(sys.stdin).get('session_id', '')
+        inp = json.load(sys.stdin)
     except Exception:
-        me = ''
+        inp = {}
+    inp = inp if isinstance(inp, dict) else {}
+    me = inp.get('session_id', '')
     d = data_dir()
+    if sys.argv[1:] == ['--from-orch']:
+        # voice-hint 가 묻는다 — 다른 참모가 보낸 말로 깬 턴이면 종료 0(claude agents 는 안 부른다, 빨라야 한다)
+        sys.exit(0 if from_orch(inp.get('prompt'), bases_of(read_json(os.path.join(d, 'config.json'), {}))) else 1)
+    if sys.argv[1:] == ['--hq-session']:
+        # voice-hint 가 묻는다 — HQ 에서 띄운 세션이면 종료 0(음성 줄을 붙인다)
+        try:
+            ok = hq_session(inp, read_json(os.path.join(d, 'config.json'), {}), d, os.environ)
+        except Exception:
+            ok = True  # 못 가리면 예전처럼 참모로 — 참모 음성이 빠지는 쪽이 더 나쁘다
+        sys.exit(0 if ok else 1)
     agents = live_agents(d)
     cfg = read_json(os.path.join(d, 'config.json'), {})
     try:

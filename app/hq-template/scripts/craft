@@ -1,0 +1,2159 @@
+#!/bin/sh
+''':'
+# 지금은 맥만 — 윈도우는 파이썬이 스토어 대리 실행기(가짜)일 때가 많고 맥 앱 길도 없어서, 파이썬을 찾기 전에 한 줄로 멈춘다(윈도우 지원은 다음 판)
+[ "$OS" = Windows_NT ] && { echo "craft: macOS only for now / 지금은 맥만" >&2; exit 1; }
+exec python3 "$0" "$@"
+':'''
+__doc__ = """Open the open-source Craft apps (ArtCraft, github.com/storytold) inside the app, unchanged.
+Craft 앱(ArtCraft 오픈소스)을 고치지 않은 원본 그대로 앱 안에서 연다.
+
+  scripts/craft list [--json [--refresh]]  — apps, the version you have / 앱 목록과 받은 판 (--json: 앱 서랍이 읽는 모양)
+  scripts/craft open <app>           — first time: download the web build, then show it in the space / 처음엔 받아서 스페이스에
+  scripts/craft open <app> --native [--work <dir>] [--here]
+                                     — the macOS app with its control channel, on the agents screen when it can (--here: a normal
+                                       window). Not installed → the first time it downloads the release DMG, checks SHA256SUMS,
+                                       the bundle id and Apple notarization, and installs it to /Applications (any mismatch: nothing
+                                       installed) / 맥 앱을 조작 채널과 함께 — 없으면 처음 한 번 DMG 를 맞춰 보고 설치
+  scripts/craft run <app> <command id> ['<json params>']  — one app command (menu item), reply as JSON / 앱 명령 하나
+  scripts/craft do <app> <method> ['<json>']              — a raw control-channel call (app.open, ui.inspect …) / 채널 명령 그대로
+  scripts/craft shot <app> [--out <png>]  ·  close <app>  ·  status   — window picture / save if changed, then quit (closes the port) / what's open
+  scripts/craft open <app> --native <file>  — open a file of the person's; on close it is saved back there (+ a layered .psd beside it)
+                                     / 사람 파일 열기 — 닫을 때 그 자리에 저장(+ 옆에 레이어 살린 PSD)
+  scripts/craft save <app>             — save if changed, keep the app open / 끄지 않고 저장만
+  scripts/craft dialog <app> [close]   — the open dialog (kind, text) / close it whatever the app calls it / 떠 있는 대화창 보기·닫기(앱마다 다른 메서드를 알아서)
+  macOS apps are the Chammo builds (참모 ○○, ArtCraft rebuilt) from one release of the Chammo GitHub repo, tag crafts-<date>
+               (13 DMGs + SHA256SUMS.txt). Testing your own DMGs: {"root": "<release folder>"} in <data folder>/craft-native/local-releases.json
+               wins for apps with a DMG there (checksum·bundle id·notarization checked as usual) / 맥 앱은 참모 앱 공개 릴리스에서, 내 DMG 폴더가 있으면 그게 먼저
+  scripts/craft recent [<app>]         — recently saved/opened Craft documents / 최근 Craft 문서
+  scripts/craft takeover <app> on|off  — (the app's Take over / Hand back) on: commands pause; off: prints what the person changed
+                                     / 개입 켜기·끄기 — 끄면 사람이 바꾼 것 한 줄
+  scripts/craft eject <app>          — pop out: save (PSD), quit, reopen on your screen with the file / 꺼내기 — 저장 후 내 화면에 다시 열기
+  scripts/craft cli <app> [args…]   — the windowless engine (<app>-cli: convert, run, batch, commands --filter, mcp) /
+                                     창 없는 엔진 — 일괄 처리·명령 찾기. First time: downloads the release CLI zip (SHA256SUMS)
+                                     Nobody sees it — to make or edit something the person should watch, use open <app> --native / 사람이 못 봄 — 만들고 고치는 일은 open --native
+  scripts/craft update [<app>]       — newer release → download it, drop the old one; macOS apps it installed too / 새 판 받기(맥 앱도)
+  scripts/craft remove <app>         — to the Trash: downloaded web build/CLI, the macOS app if Chammo installed it (yours stays), its
+                                     settings and work folder / 받은 것·우리가 깐 맥 앱·설정·작업 폴더를 휴지통으로
+  scripts/craft stop                 — stop the local server / 로컬 서버 끄기
+
+<app> = photocraft, photo, PhotoCraft … (any case, 'craft' optional).
+The web build (a static WebAssembly site) comes from the app's latest GitHub release and must match the release's
+SHA256SUMS.txt, or it is thrown away. It lives in <data folder>/craft/<app>/<version>/ with the repo's LICENSE-MIT,
+LICENSE-APACHE and NOTICE beside it, and is served on 127.0.0.1 only. The space opens it through the address preview,
+which can't call the app or read your files (only the browser's own open/save dialogs).
+The web build has no autosave — save or download before closing.
+"""
+import contextlib, hashlib, http.server, io, json, os, re, shutil, signal, socket, subprocess, sys, tempfile, time, urllib.error, urllib.request, zipfile
+
+OWNER = 'storytold'
+# 저장소 이름 → (보이는 이름, 하는 일). 맥 앱 이름·번들 id·자리는 아래 NATIVE 표(갈아끼울 땐 거기만)
+APPS = {
+    'photocraft': ('PhotoCraft', 'photo editing / 사진 편집'),
+    'lightcraft': ('LightCraft', 'photo library, raw / 사진 보관·RAW 현상'),
+    'filmcraft': ('FilmCraft', 'video editing / 영상 편집'),
+    'effectcraft': ('EffectCraft', 'motion graphics / 모션그래픽·합성'),
+    'vectorcraft': ('VectorCraft', 'vector art / 벡터 그림'),
+    'designcraft': ('DesignCraft', 'page layout / 지면·레이아웃'),
+    'pdfcraft': ('PdfCraft', 'PDF / PDF 읽기·편집'),
+    'wordcraft': ('WordCraft', 'documents / 문서'),
+    'gridcraft': ('GridCraft', 'spreadsheets / 표 계산'),
+    'deckcraft': ('DeckCraft', 'slides / 발표 자료'),
+    'figcraft': ('FigCraft', 'interface design / 화면 설계'),
+    'cadcraft': ('CADCraft', 'CAD / 캐드'),
+    'soundcraft': ('SoundCraft', 'audio / 오디오 편집'),
+}
+NOTICES = ('LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE')
+APPS_DIR = os.environ.get('CHAMMO_CRAFT_APPS_DIR') or '/Applications'  # 맥 앱을 까는 자리(시험은 CHAMMO_CRAFT_APPS_DIR 로 따로)
+LICENSE_LINE = ('open source · MIT OR Apache-2.0 — ArtCraft (github.com/storytold), unchanged. '
+                'The ArtCraft name and logos are ArtCraft Team trademarks. / 오픈소스 · MIT OR Apache-2.0, 원본 그대로')
+# 서버 응답에 붙이는 표 — 떠 있는 서버가 이 데이터 폴더 것인지 본다
+MARK = 'X-Chammo-Craft'
+
+
+class CraftError(Exception):
+    pass
+
+
+class TakeoverError(CraftError):
+    """사람이 개입해 쓰기 명령을 막음 — 종료 코드 4(다른 실패 1 과 갈라 돌던 스크립트가 알아본다)"""
+
+
+class FetchError(CraftError):
+    pass
+
+
+def data_dir(home=None, env=None, exists=os.path.isdir):
+    """데이터 폴더 — 앱(config.rs)·scripts/show 와 같은 규칙: $CHAMMO_HOME → ~/.chammo → 단 ~/.chammo 가 없고 ~/.honor-orchestrator 가 있으면 그것"""
+    home = home or os.path.expanduser('~')
+    env = os.environ.get('CHAMMO_HOME', '') if env is None else env
+    if env.strip():
+        return os.path.expanduser(env.strip())
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not exists(new) and exists(old) else new
+
+
+def fetch(url):
+    """주소 → 바이트(리다이렉트 따라감). 실패는 FetchError. 절대 경로면 그 파일(CHAMMO_CRAFT_LOCAL 릴리스)"""
+    if os.path.isabs(url):
+        try:
+            with open(url, 'rb') as f:
+                return f.read()
+        except OSError as e:
+            raise FetchError(f'{url} — {e}') from e
+    req = urllib.request.Request(url, headers={'User-Agent': 'Chammo-craft', 'Accept': '*/*'})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return r.read()
+    except (urllib.error.URLError, OSError) as e:
+        raise FetchError(f'{url} — {e}') from e
+
+
+def app_key(name):
+    """'PhotoCraft'·'photo'·'photocraft' → 'photocraft'. 모르는 이름은 CraftError"""
+    k = (name or '').strip().lower()
+    k = k if k.endswith('craft') else k + 'craft'
+    if k not in APPS:
+        raise CraftError(f'unknown app / 모르는 앱: {name} — {", ".join(APPS)}')
+    return k
+
+
+def ver_key(v):
+    return tuple(int(x) if x.isdigit() else 0 for x in re.split(r'[.\-+]', v))
+
+
+def parse_sums(text):
+    """SHA256SUMS.txt → {파일 이름: 해시}"""
+    out = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            out[parts[-1].lstrip('*')] = parts[0].lower()
+    return out
+
+
+def local_release(folder):
+    """CHAMMO_CRAFT_LOCAL=<폴더> — 공개 저장소 전, 우리가 빌드한 DMG 와 SHA256SUMS.txt 가 든 폴더를 릴리스처럼(설치 확인은 그대로)"""
+    names = os.listdir(folder)
+    dmgs = [n for n in names if re.search(r'-\d+\.\d+\.\d+-macos-universal\.dmg$', n) and '-cli-' not in n]
+    if len(dmgs) != 1 or 'SHA256SUMS.txt' not in names:
+        raise CraftError(f'CHAMMO_CRAFT_LOCAL: need one *-<ver>-macos-universal.dmg and SHA256SUMS.txt / DMG 하나와 체크섬 파일이 있어야 함 ({folder})')
+    ver = re.search(r'-(\d+\.\d+\.\d+)-macos-universal\.dmg$', dmgs[0]).group(1)
+    return ver, os.path.join(folder, dmgs[0]), os.path.join(folder, 'SHA256SUMS.txt')
+
+
+def latest(app, get=fetch, native=False):
+    """최신 릴리스에서 판·웹판 zip·체크섬·맥 DMG 주소 — 맥 전용 릴리스(웹판 없음)면 zip 은 None.
+    native=True(맥 앱 설치·업데이트)만 앱 표의 저장소·CHAMMO_CRAFT_LOCAL 을 본다 — 웹판·CLI 는 늘 ArtCraft 원본에서"""
+    app = app_key(app)
+    if native and app in LOCAL:
+        return local_latest(app, LOCAL[app])
+    local = os.environ.get('CHAMMO_CRAFT_LOCAL', '').strip() if native else ''
+    row = (NATIVE.get(app) or {}) if native else {}
+    if local:
+        ver, dmg, sums = local_release(local)
+        return {'app': app, 'tag': 'v' + ver, 'ver': ver, 'zip': None, 'zip_name': None, 'sums': sums, 'dmg': dmg, 'cli': None, 'cli_name': None}
+    if native and bundle_id(app).startswith('app.chammo.') and app in CHAMMO:
+        return crafts_latest(app, get)
+    if row.get('bundle') and not row.get('repo'):
+        # 갈아끼운 판인데 받을 저장소가 아직 없다 — 원본(ArtCraft) 저장소로 가면 번들 id 가 달라 어차피 안 깔린다
+        raise CraftError(f'{display(app)}: no public release yet / 아직 공개 릴리스 없음 — CHAMMO_CRAFT_LOCAL=<DMG folder / DMG 폴더>')
+    rel = json.loads(get(f'https://api.github.com/repos/{repo_of(app) if native else OWNER + "/" + app}/releases/latest'))
+    tag = rel['tag_name']
+    ver = tag.lstrip('v')
+    urls = {a['name']: a['browser_download_url'] for a in rel.get('assets', [])}
+    sizes = {a['name']: a.get('size') for a in rel.get('assets', [])}
+    if 'SHA256SUMS.txt' not in urls:
+        raise CraftError(f'{app} {tag}: no SHA256SUMS.txt in the release / 릴리스에 체크섬 파일이 없음')
+    zname = f'{app}-web-{ver}.zip'
+    dname = next((n for n in urls if n.endswith('-macos-universal.dmg') and '-cli-' not in n), None)
+    dmg = urls.get(dname) if dname else None
+    cname = f'{app}-cli-{ver}-macos-universal.zip'
+    return {'app': app, 'tag': tag, 'ver': ver, 'zip': urls.get(zname), 'zip_name': zname, 'sums': urls['SHA256SUMS.txt'], 'dmg': dmg,
+            'dmg_size': sizes.get(dname) if dname else None, 'cli': urls.get(cname), 'cli_name': cname}
+
+
+def installed(root, app):
+    """받아 둔 판(작은 것부터) — index.html 이 있는 폴더만, 받다 만 .tmp-* 는 빼고"""
+    d = os.path.join(root, app)
+    if not os.path.isdir(d):
+        return []
+    vs = [v for v in os.listdir(d) if not v.startswith('.') and os.path.isfile(os.path.join(d, v, 'index.html'))]
+    return sorted(vs, key=ver_key)
+
+
+def safe_extract(zbytes, dest):
+    """zip 을 dest 에 푼다 — dest 밖으로 나가는 이름(../·절대 경로)이 하나라도 있으면 아무것도 안 풀고 거절"""
+    import io
+    dest = os.path.realpath(dest)
+    with zipfile.ZipFile(io.BytesIO(zbytes)) as z:
+        for n in z.namelist():
+            t = os.path.realpath(os.path.join(dest, n))
+            if os.path.isabs(n) or not (t == dest or t.startswith(dest + os.sep)):
+                raise CraftError(f'unsafe path in zip / zip 안 경로가 밖으로 나감: {n}')
+        z.extractall(dest)
+
+
+def site_root(d):
+    """index.html 이 있는 곳 — zip 맨 위 폴더 하나는 벗긴다"""
+    if os.path.isfile(os.path.join(d, 'index.html')):
+        return d
+    subs = [os.path.join(d, x) for x in os.listdir(d) if os.path.isdir(os.path.join(d, x))]
+    if len(subs) == 1 and os.path.isfile(os.path.join(subs[0], 'index.html')):
+        return subs[0]
+    raise CraftError('no index.html in the web build / 웹판에 index.html 이 없음')
+
+
+def install(root, rel, get=fetch):
+    """웹판을 받아 SHA-256 을 맞춰 보고 <root>/<앱>/<판>/ 에 푼다. 안 맞으면 아무것도 안 남기고 CraftError"""
+    app, ver = rel['app'], rel['ver']
+    if not rel.get('zip'):
+        raise CraftError(f'{display(app)} {rel["tag"]}: no web build / 웹판이 없는 앱 — scripts/craft open {app} --native')
+    zbytes = get(rel['zip'])
+    want = parse_sums(get(rel['sums']).decode('utf-8', 'replace')).get(rel['zip_name'])
+    if not want:
+        raise CraftError(f'{rel["zip_name"]} is not in SHA256SUMS.txt / 체크섬 목록에 없음 — not installed')
+    got = hashlib.sha256(zbytes).hexdigest()
+    if got != want:
+        raise CraftError(f'SHA-256 mismatch / 체크섬이 안 맞음 ({rel["zip_name"]}: {got[:12]}… ≠ {want[:12]}…) — thrown away')
+    appdir = os.path.join(root, app)
+    os.makedirs(appdir, exist_ok=True)
+    tmp = tempfile.mkdtemp(prefix='.tmp-', dir=appdir)
+    try:
+        safe_extract(zbytes, tmp)
+        site = site_root(tmp)
+        raw = f'https://raw.githubusercontent.com/{OWNER}/{app}/{rel["tag"]}/'
+        for f in NOTICES:  # 저장소의 원본 고지 — 웹판 zip 엔 NOTICE 가 없다
+            try:
+                with open(os.path.join(site, f), 'wb') as out:
+                    out.write(get(raw + f))
+            except FetchError:
+                pass
+        final = os.path.join(appdir, ver)
+        if not os.path.isdir(final):
+            os.rename(site, final)
+        return final
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def ensure_cli(root, app, get=fetch):
+    """창 없는 엔진(<앱>-cli) — 받아 둔 게 있으면 그것, 없으면 최신 릴리스 CLI zip 을 SHA256SUMS 로 맞춰 <root>/<앱>/cli/<판>/ 에"""
+    app = app_key(app)
+    d = os.path.join(root, app, 'cli')
+    exe = f'{app}-cli'
+    have = sorted((v for v in os.listdir(d) if not v.startswith('.') and os.path.isfile(os.path.join(d, v, exe))), key=ver_key) if os.path.isdir(d) else []
+    if have:
+        return os.path.join(d, have[-1], exe)
+    rel = latest(app, get)
+    if not rel.get('cli'):
+        raise CraftError(f'{app} {rel["tag"]}: no macOS CLI in the release / 릴리스에 맥 CLI 가 없음')
+    zbytes = get(rel['cli'])
+    want = parse_sums(get(rel['sums']).decode('utf-8', 'replace')).get(rel['cli_name'])
+    if not want or hashlib.sha256(zbytes).hexdigest() != want:
+        raise CraftError(f'SHA-256 mismatch or missing / 체크섬이 안 맞거나 없음 ({rel["cli_name"]}) — thrown away')
+    os.makedirs(d, exist_ok=True)
+    tmp = tempfile.mkdtemp(prefix='.tmp-', dir=d)
+    try:
+        safe_extract(zbytes, tmp)
+        top = tmp if os.path.isfile(os.path.join(tmp, exe)) else next(
+            (os.path.join(tmp, x) for x in os.listdir(tmp) if os.path.isfile(os.path.join(tmp, x, exe))), None)
+        if not top:
+            raise CraftError(f'no {exe} in the CLI zip / CLI zip 에 {exe} 가 없음')
+        os.chmod(os.path.join(top, exe), 0o755)  # zip 은 실행 권한을 안 실어 온다
+        os.rename(top, os.path.join(d, rel['ver']))
+        return os.path.join(d, rel['ver'], exe)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def ensure(root, app, get=fetch):
+    """(판, 폴더) — 받아 둔 게 있으면 그 중 최신(네트워크 안 씀), 없으면 최신 릴리스를 받는다"""
+    app = app_key(app)
+    have = installed(root, app)
+    if have:
+        return have[-1], os.path.join(root, app, have[-1])
+    rel = latest(app, get)
+    return rel['ver'], install(root, rel, get)
+
+
+def update(root, app, get=fetch):
+    """(옛 판, 지금 판) — 새 판이 있으면 받고 옛 판은 지운다"""
+    app = app_key(app)
+    have = installed(root, app)
+    old = have[-1] if have else None
+    rel = latest(app, get)
+    if old == rel['ver']:
+        return old, old
+    install(root, rel, get)
+    for v in have:
+        if v != rel['ver']:
+            shutil.rmtree(os.path.join(root, app, v), ignore_errors=True)
+    return old, rel['ver']
+
+
+def listing(root, ddir=None, apps_dir=APPS_DIR):
+    """앱마다 웹판 판 · 맥 앱 판(우리가 깐 것 = ours) · 차지하는 크기 · 마지막으로 쓴 날"""
+    w = max(len(n) for n, _ in APPS.values())
+    recs = load_installs(ddir) if ddir else {}
+    used = _read_json(os.path.join(ddir, 'craft-native', 'used.json')) if ddir else {}
+    lines = []
+    for k, (name, what) in APPS.items():
+        where = app_path(k, apps_dir)  # 줄 이름은 ArtCraft 이름(웹판), 맥 앱을 갈아끼웠으면 맥 앱 칸에 그 이름
+        have = installed(root, k)
+        size = dir_size(os.path.join(root, k)) if os.path.isdir(os.path.join(root, k)) else 0
+        appv = native_version(where)
+        native = ''
+        if appv:
+            mine = recs.get(k, {}).get('path') == where
+            size += dir_size(where) if mine else 0
+            native = f'app {appv}{"" if display(k) == name else " " + display(k)}{"" if mine else " (yours / 직접 깐 것)"}'
+        if ddir and os.path.isdir(native_dir(ddir, k)):
+            size += dir_size(native_dir(ddir, k))
+        extra = f'  {native.ljust(14)}  {(human(size) if size else "-").ljust(7)}  {used.get(k, "-").ljust(10)}' if ddir else ''
+        lines.append(f'{name.ljust(w)}  {(have[-1] if have else "-").ljust(8)}{extra}  {what}')
+    lines.append(LICENSE_LINE)
+    return '\n'.join(lines)
+
+
+# ── 앱 서랍(2026-10-17) — 13개 앱 아이콘 격자: 깔린 것(판·크기·마지막 사용)·깔 수 있는 것(새 판·DMG 크기) ──
+
+def pick_icon(paths):
+    """저장소 assets/app-icon 에서 쓸 그림 하나 — 맥 512 PNG > 256 PNG > 1024 PNG > hicolor 128 > SVG"""
+    icons = [p for p in paths if '/app-icon/' in f'/{p}']
+    for test in (lambda p: p.endswith('-macos-512.png'), lambda p: p.endswith('-256.png'), lambda p: p.endswith('-1024.png'),
+                 lambda p: '/128x128/' in p and p.endswith('.png'), lambda p: p.endswith('.svg')):
+        hit = next((p for p in icons if test(p)), None)
+        if hit:
+            return hit
+    return None
+
+
+def release_info(ddir, app, get=fetch, refresh=False, offline=False):
+    """새 판·DMG 크기 — <데이터>/craft-native/releases.json 에 하루 묵혀 둔다(13개를 열 때마다 GitHub 에 묻지 않게). 못 받으면 None.
+    offline = 받아 둔 것만(묵었어도) — 서랍이 먼저 그릴 때(v8 A2). 못 받았고 받아 둔 것도 없으면 {'error': 까닭 한 줄}"""
+    if app in LOCAL:  # 로컬 DMG — 묵히지 않고 바로(새 판이 같은 자리에 쌓인다)
+        try:
+            return local_latest(app, LOCAL[app])
+        except CraftError:
+            return None
+    p = os.path.join(ddir, 'craft-native', 'releases.json')
+    cache = _read_json(p)
+    hit = cache.get(app)
+    if offline or (hit and not refresh and time.time() - hit.get('at', 0) < 86400):
+        return hit
+    try:
+        rel = latest(app, get, native=True)
+    except (CraftError, FetchError, ValueError, KeyError) as e:
+        return hit or {'error': str(e)}
+    cache[app] = {'ver': rel['ver'], 'tag': rel['tag'], 'dmg_size': rel.get('dmg_size'), 'at': time.time()}
+    _write_json(p, cache)
+    return cache[app]
+
+
+def icon_file(ddir, app, apps_dir=APPS_DIR, tag=None, get=fetch, run=subprocess.run):
+    """앱 아이콘 PNG(256 — 레티나에서 64점 칸이 선명하게) — <데이터>/craft-native/icons/. 깔린 앱은 번들 icns(이름에 번들·수정 시각 — 앱이 바뀌면 새로),
+    안 깐 참모 앱은 로컬 DMG 를 읽기 전용으로 붙여 그 안 앱 icns, 없으면 공개 릴리스의 아이콘 PNG, 안 깐 원본 앱은 저장소 릴리스 태그의 assets/app-icon.
+    못 구하면 None"""
+    icons = os.path.join(ddir, 'craft-native', 'icons')
+    os.makedirs(icons, exist_ok=True)
+    bundle = app_path(app, apps_dir)
+
+    def bundle_icns(b):
+        import plistlib
+        try:
+            with open(os.path.join(b, 'Contents', 'Info.plist'), 'rb') as f:
+                name = plistlib.load(f).get('CFBundleIconFile') or ''
+        except (OSError, ValueError):
+            return None
+        return os.path.join(b, 'Contents', 'Resources', name if name.endswith('.icns') else name + '.icns')
+
+    def to_png(src, out):
+        if src.endswith('.svg'):
+            ok = run(['qlmanage', '-t', '-s', '256', '-o', os.path.dirname(out), src], capture_output=True).returncode == 0
+            if ok and os.path.exists(src + '.png'):
+                os.replace(src + '.png', out)
+        else:
+            run(['sips', '-s', 'format', 'png', '-Z', '256', src, '--out', out], capture_output=True)
+        return out if os.path.exists(out) else None
+
+    if native_version(bundle):
+        try:
+            mtime = os.path.getmtime(os.path.join(bundle, 'Contents', 'Info.plist'))
+        except OSError:
+            return None
+        out = os.path.join(icons, icon_cache_name(app, bundle, mtime))
+        if os.path.exists(out):
+            return out
+        src = bundle_icns(bundle)
+        return to_png(src, out) if src and os.path.exists(src) else None
+    if app in LOCAL:
+        try:
+            ver, dmg, _ = local_release(LOCAL[app])
+        except CraftError:
+            return None
+        out = os.path.join(icons, f'{app}-dmg-{ver}.png')
+        if os.path.exists(out):
+            return out
+        mnt = tempfile.mkdtemp(prefix='chammo-icon-')
+        try:
+            if run(['hdiutil', 'attach', '-nobrowse', '-readonly', '-noautoopen', '-mountpoint', mnt, dmg], capture_output=True).returncode != 0:
+                return None
+            found = [x for x in os.listdir(mnt) if x.endswith('.app')]
+            src = bundle_icns(os.path.join(mnt, found[0])) if found else None
+            return to_png(src, out) if src and os.path.exists(src) else None
+        finally:
+            run(['hdiutil', 'detach', mnt, '-quiet'], capture_output=True)
+            shutil.rmtree(mnt, ignore_errors=True)
+    if app in CHAMMO and tag:  # 안 깐 참모 앱 — 공개 릴리스의 아이콘 PNG(chammo-<영문>-<판>-icon.png, SHA256SUMS 에 있는 것만)
+        ver = tag.lstrip('v')
+        out = os.path.join(icons, f'{app}-release-{ver}.png')
+        if os.path.exists(out):
+            return out
+        name = f'chammo-{CHAMMO[app]["short"]}-{ver}-icon.png'
+        try:
+            assets, sums, _ = crafts_release(get)
+            if name not in assets or name not in sums:
+                return None
+            data = get(assets[name][0])
+        except CraftError:
+            return None
+        if hashlib.sha256(data).hexdigest() != sums[name]:
+            return None
+        with open(out + '.tmp', 'wb') as f:
+            f.write(data)
+        os.replace(out + '.tmp', out)
+        return out
+    if not tag or (NATIVE.get(app) or {}).get('bundle'):
+        return None
+    out = os.path.join(icons, f'{app}-{tag}.png')
+    if os.path.exists(out):
+        return out
+    try:
+        tree = json.loads(get(f'https://api.github.com/repos/{repo_of(app)}/git/trees/{tag}?recursive=1'))
+        hit = pick_icon([t.get('path', '') for t in tree.get('tree', [])])
+        if not hit:
+            return None
+        src = os.path.join(icons, f'.{app}-src{os.path.splitext(hit)[1]}')
+        with open(src, 'wb') as f:
+            f.write(get(f'https://raw.githubusercontent.com/{repo_of(app)}/{tag}/{hit}'))
+    except (FetchError, ValueError, OSError):
+        return None
+    try:
+        return to_png(src, out)
+    finally:
+        try:
+            os.remove(src)
+        except OSError:
+            pass
+
+
+def based_on(bundle):
+    """참모 앱 Info.plist 의 ChammoBasedOn(원작 판), 없으면 None"""
+    import plistlib
+    try:
+        with open(os.path.join(bundle, 'Contents', 'Info.plist'), 'rb') as f:
+            return plistlib.load(f).get('ChammoBasedOn')
+    except (OSError, ValueError):
+        return None
+
+
+def drawer_rows(ddir, root, apps_dir=APPS_DIR, get=fetch, refresh=False, icons=True, fast=False):
+    """서랍 줄 — 앱마다 이름·하는 일·깔린 판(없으면 None)·우리가 깔았나·차지하는 크기·마지막 사용·새 판·DMG 크기·아이콘 자리,
+    라이선스 창(원작 이름·저장소·기반 판·참모 앱인가), 안 깔렸는데 받을 수 없으면 그 까닭(unavailable). fast = 네트워크 없이(깔린 앱·로컬 DMG·받아 둔 것만 — 서랍이 먼저 그린다)"""
+    if fast:
+        def get(u):
+            raise FetchError('offline')
+    recs = load_installs(ddir)
+    used = _read_json(os.path.join(ddir, 'craft-native', 'used.json'))
+    rows = []
+    for k, (_, what) in APPS.items():
+        where = app_path(k, apps_dir)
+        ver = native_version(where)
+        mine = bool(ver) and recs.get(k, {}).get('path') == where
+        size = (dir_size(where) if mine else 0) + (dir_size(native_dir(ddir, k)) if os.path.isdir(native_dir(ddir, k)) else 0)
+        rel = release_info(ddir, k, get, refresh, offline=fast) or {}
+        rows.append({'app': k, 'name': display(k), 'what': what, 'installed': ver, 'mine': mine, 'size': size, 'used': used.get(k),
+                     'latest': rel.get('ver'), 'dmgSize': rel.get('dmg_size'), 'unavailable': None if ver else rel.get('error'),
+                     'icon': icon_file(ddir, k, apps_dir, rel.get('tag'), get) if icons else None,
+                     'origName': APPS[k][0], 'repo': f'github.com/{OWNER}/{k}', 'basedOn': based_on(where) if ver else None,
+                     'chammo': bundle_id(k).startswith('app.chammo.')})
+    return rows
+
+
+# ── 로컬 서버: <root> 를 127.0.0.1 에서만, 폴더 목록 없이 ──
+
+def make_server(root, port):
+    root = os.path.realpath(root)
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, directory=root, **kw)
+
+        def list_directory(self, path):  # index.html 없는 폴더는 목록 대신 404
+            self.send_error(404)
+            return None
+
+        def end_headers(self):
+            self.send_header(MARK, root)
+            self.send_header('Cache-Control', 'no-cache')
+            super().end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    Handler.extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, '.wasm': 'application/wasm', '.js': 'text/javascript'}
+    return http.server.ThreadingHTTPServer(('127.0.0.1', port), Handler)
+
+
+def alive(root, port):
+    """그 포트에 이 데이터 폴더의 craft 서버가 떠 있나"""
+    try:
+        r = urllib.request.urlopen(f'http://127.0.0.1:{port}/', timeout=1)
+        h = r.headers
+    except urllib.error.HTTPError as e:
+        h = e.headers
+        e.close()
+    except (urllib.error.URLError, OSError):
+        return False
+    return h.get(MARK) == os.path.realpath(root)
+
+
+def state_path(ddir):
+    return os.path.join(ddir, 'craft-server.json')
+
+
+def read_state(ddir):
+    try:
+        with open(state_path(ddir), encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def start_server(ddir, root):
+    """떠 있으면 그 포트, 없으면 새로 띄운다(앱 저장소가 이어지게 지난 포트부터)"""
+    st = read_state(ddir)
+    if st.get('port') and alive(root, st['port']):
+        return st['port']
+    me = os.path.abspath(__file__)
+    subprocess.Popen([sys.executable, me, '_serve', ddir, root, str(st.get('port') or 0)],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(50):
+        time.sleep(0.1)
+        st = read_state(ddir)
+        if st.get('port') and alive(root, st['port']):
+            return st['port']
+    raise CraftError('local server did not start / 로컬 서버가 안 떴음')
+
+
+def serve_main(ddir, root, port):
+    try:
+        srv = make_server(root, int(port))
+    except OSError:
+        srv = make_server(root, 0)
+    with open(state_path(ddir), 'w', encoding='utf-8') as f:
+        json.dump({'pid': os.getpid(), 'port': srv.server_address[1]}, f)
+    srv.serve_forever()
+
+
+def stop_server(ddir, root):
+    st = read_state(ddir)
+    if st.get('port') and alive(root, st['port']) and st.get('pid'):
+        os.kill(st['pid'], signal.SIGTERM)
+        return True
+    return False
+
+
+def open_native(app, get=fetch):
+    name = display(app)
+    if sys.platform == 'darwin' and subprocess.run(['open', '-b', bundle_id(app)], capture_output=True).returncode == 0:
+        print(f'{name}: opened the macOS app / 맥 앱 열었음')
+        return 0
+    try:
+        dmg = latest(app, get, native=True).get('dmg')
+    except CraftError:
+        dmg = None
+    print(f'{name}: not installed / 안 깔려 있음 — install it yourself / 설치는 직접: '
+          f'{dmg or (f"https://github.com/{CRAFTS_REPO}/releases/tag/{CRAFTS_TAG}" if app in CHAMMO else f"https://github.com/{repo_of(app)}/releases/latest")}', file=sys.stderr)
+    return 1
+
+
+# ── 맥 앱 조종 길: 13개 다 127.0.0.1 조작 채널(--control, JSON 한 줄 = 요청 하나) ──
+# auth: token = 토큰 파일을 앱에 넘김(첫 줄 auth params.token) / key = 앱이 설정 폴더에 키 파일을 씀(auth 줄 key)
+#       file = --control <파일> 에 앱이 {port, token} 을 씀 / None = 인증 없음(쓸 때만 켜고 close 로 닫는다)
+# env: 앱 설정 폴더를 따로 두는 환경 변수 — 사람이 쓰는 그 앱 설정과 안 섞이게
+# roots: 데스크톱 앱이 받는 작업 폴더 묶기(r = 읽기만). 모르는 인자를 주면 앱이 안 떠서 받는 앱에만
+# uiron: 창 자리를 <설정>/ui.ron 에 저장하는 앱 — 가짜 화면 좌표를 미리 써 넣을 수 있다
+# 앱 자체(이름·번들 id·받는 저장소·깔린 자리)도 이 표 한 곳에서 — 같은 앱을 우리가 빌드한 판으로 갈아끼울 땐 그 줄만 바꾼다
+#   name: 보이는 이름이자 <이름>.app (없으면 APPS 의 이름) / bundle: 번들 id (없으면 ai.storyteller.<키>)
+#   repo: 릴리스를 받는 저장소 owner/name (없으면 storytold/<키>) / path: 깔린 자리를 못 박을 때(없으면 /Applications/<이름>.app)
+#   frame: 앱에 창 자리 명령(ui.window.frame {x,y,width,height}, 맥 점)이 있다 — 띄운 뒤 바로 가짜 화면으로 옮긴다(ui.ron 배율 짐작이 빗나가도)
+#   save: 닫기 전 저장 명령(engine.execute 명령 id, params {path: 작업 폴더 안 절대 경로}) · ext: 그 앱 문서 형식(새 문서 저장 이름)
+#         save=None 이면 앱이 스스로 쓴다(LightCraft 보관함) — 10/16 craft-smoke: PSD 길을 12개에 쓰면 거절되거나 바꾼 걸 버렸다
+#   args: 설정·데이터 자리를 우리 폴더로 보내는 앱 인자({dir} = <데이터>/craft-native/<앱>) · extra: 그래도 앱이 홈에 만드는 설정(remove 가 휴지통으로)
+def _n(auth=None, env=None, roots=None, uiron=False, name=None, bundle=None, repo=None, path=None, frame=False, save=None, ext='', args=(), extra=()):
+    return {'auth': auth, 'env': env, 'roots': roots, 'uiron': uiron, 'name': name, 'bundle': bundle, 'repo': repo, 'path': path, 'frame': frame,
+            'save': save, 'ext': ext, 'args': list(args), 'extra': list(extra)}
+
+
+_AS = 'Library/Application Support/'  # 홈 기준
+
+
+NATIVE = {
+    # 참모 포토 — PhotoCraft 를 우리가 빌드한 판(Dock 안 보임·끌기·창 자리 명령). 공개 저장소가 정해지면 repo 만 채운다(그전엔 CHAMMO_CRAFT_LOCAL)
+    'photocraft': _n('token', 'PHOTOCRAFT_CONFIG_DIR', 'rw', True, name='참모 포토', bundle='app.chammo.photo', path='/Applications/Chammo Photo.app', frame=True,
+                     save='app.save', ext='.psd'),
+    'wordcraft': _n('key', 'WORDCRAFT_PROFILE_DIR', save='file.saveAs', ext='.docx', extra=[_AS + 'WordCraft']),
+    'pdfcraft': _n('file', save='file.save', ext='.pdf', extra=[_AS + 'PdfCraft']),
+    'vectorcraft': _n(env='VECTORCRAFT_CONFIG_DIR', roots='rw', save='file.saveAs', ext='.vectorcraft'),
+    'effectcraft': _n(env='EFFECTCRAFT_CONFIG_DIR', save='file.saveAs', ext='.ecproj'),  # 0.10 은 --automation-read-root 를 몰라 안 뜬다
+    'lightcraft': _n(env='LIGHTCRAFT_CONFIG_DIR', args=['--library', '{dir}/library']),
+    'designcraft': _n(env='DESIGNCRAFT_CONFIG_DIR', save='file.saveAs', ext='.dcdoc'),
+    'cadcraft': _n(env='CADCRAFT_CONFIG_DIR', save='saveas', ext='.dwg', extra=[_AS + 'ai.storyteller.cadcraft']),
+    'soundcraft': _n(env='SOUNDCRAFT_CONFIG_DIR', save='session.save', ext='.scproj'),
+    'filmcraft': _n(save='file.saveAs', ext='.fcproj', args=['--data-dir', '{dir}/data']),
+    'gridcraft': _n(save='file.saveAs', ext='.xlsx', extra=[_AS + 'GridCraft']),
+    'deckcraft': _n(save='file.saveAs', ext='.pptx', extra=[_AS + 'DeckCraft']),
+    'figcraft': _n(save='file.saveAs', ext='.fig', extra=[_AS + 'FigCraft']),
+}
+WIN = (1360.0, 820.0)  # 가짜 화면에 띄울 창 크기(화면이 작으면 줄인다)
+
+# 참모 앱 — ArtCraft 원본을 우리가 빌드한 판(번들 app.chammo.<영문>, 'Chammo <영문>.app', 서랍 이름 '참모 ○○'). 맥 앱 표는 13개 다 이것(10/19 공개판 —
+# 원본 ArtCraft 맥 앱 길은 끝, 웹판·CLI 만 원본). 받기는 아래 공개 릴리스, <데이터>/craft-native/local-releases.json 에 DMG 폴더
+# ({"root": "<release 폴더>"} 또는 {"<앱>": "<DMG 폴더>"})가 있으면 그 앱은 거기서(내 맥 시험용 덮어쓰기). 원본이 깔린 맥도 자리·번들이 달라 새 앱을 따로 깐다.
+# 설정 env·조작 인자는 원본 그대로, 작업 폴더·첫 자리는 env 로
+CHAMMO = {
+    'photocraft': {'short': 'photo'},  # 이미 참모 포토 표 — 로컬 DMG 자리만(창 첫 자리는 ui.ron)
+    'vectorcraft': {'short': 'vector', 'name': '참모 벡터', 'bundle': 'app.chammo.vector', 'path': '/Applications/Chammo Vector.app'},
+    'wordcraft': {'short': 'word', 'name': '참모 문서', 'bundle': 'app.chammo.word', 'path': '/Applications/Chammo Word.app', 'work': True},
+    'pdfcraft': {'short': 'pdf', 'name': '참모 PDF', 'bundle': 'app.chammo.pdf', 'path': '/Applications/Chammo PDF.app', 'env': 'PDFCRAFT_CONFIG_DIR', 'work': True},
+    'deckcraft': {'short': 'deck', 'name': '참모 슬라이드', 'bundle': 'app.chammo.deck', 'path': '/Applications/Chammo Deck.app', 'env': 'DECKCRAFT_CONFIG_DIR', 'work': True},
+    'designcraft': {'short': 'design', 'name': '참모 디자인', 'bundle': 'app.chammo.design', 'path': '/Applications/Chammo Design.app', 'work': True, 'ext': '.designcraft'},  # .dcdoc 로 저장하면 '.dcdoc.designcraft' 가 된다
+    'gridcraft': {'short': 'grid', 'name': '참모 표', 'bundle': 'app.chammo.grid', 'path': '/Applications/Chammo Grid.app', 'env': 'GRIDCRAFT_CONFIG_DIR', 'work': True},
+    'figcraft': {'short': 'fig', 'name': '참모 화면', 'bundle': 'app.chammo.fig', 'path': '/Applications/Chammo Fig.app', 'env': 'FIGCRAFT_CONFIG_DIR', 'work': True},
+    'filmcraft': {'short': 'film', 'name': '참모 필름', 'bundle': 'app.chammo.film', 'path': '/Applications/Chammo Film.app', 'work': True},  # 데이터 자리는 원본 --data-dir 그대로
+    'effectcraft': {'short': 'effect', 'name': '참모 이펙트', 'bundle': 'app.chammo.effect', 'path': '/Applications/Chammo Effect.app', 'work': True},  # 설정 env 원본 그대로
+    'lightcraft': {'short': 'light', 'name': '참모 라이트', 'bundle': 'app.chammo.light', 'path': '/Applications/Chammo Light.app', 'work': True},  # 설정 env·--library 원본 그대로
+    'soundcraft': {'short': 'sound', 'name': '참모 사운드', 'bundle': 'app.chammo.sound', 'path': '/Applications/Chammo Sound.app', 'work': True},  # 설정 env 원본 그대로
+    'cadcraft': {'short': 'cad', 'name': '참모 캐드', 'bundle': 'app.chammo.cad', 'path': '/Applications/Chammo CAD.app', 'work': True},  # 설정 env 원본 그대로
+}
+LOCAL = {}  # 앱 → 로컬 DMG 폴더(main 이 local-releases.json 으로 채운다)
+
+# 참모 앱 공개 릴리스 — Chammo 공개 저장소(CRAFTS_REPO)의 릴리스 하나(태그 crafts-<날짜>)에 13개 DMG(chammo-<영문>-<판>-macos-universal.dmg)와
+# 합친 SHA256SUMS.txt(scripts/craft-release-assets 가 만든다). 판·파일 이름·체크섬은 SHA256SUMS 에서, 받을 주소·크기는 자산 목록에서.
+# 새 판은 같은 태그에 DMG 를 바꿔 올리고 SHA256SUMS 를 다시 — 깐 앱의 '새 판 확인'이 그걸 본다. 로컬 DMG 폴더가 있으면 그게 이긴다
+# 저장소 이름은 앱 업데이터 주소와 같은 공개 저장소 — 템플릿 이름 검사(test_hq_scripts) 목록 글자라 조각으로 잇는다
+CRAFTS_REPO, CRAFTS_TAG = 'honor' + 'studio/chammo', 'crafts-2026.10.19'
+_CRAFTS = {}  # (주소, 받기 함수) → (자산 {이름: (주소, 크기)}, 체크섬 {이름: 해시}, 체크섬 주소) 또는 못 받은 까닭 — 13개가 같은 릴리스라 한 번만
+
+
+def crafts_release_url(env=None):
+    """참모 앱 릴리스 JSON 주소 — 시험은 CHAMMO_CRAFT_RELEASE 로 가짜 서버를"""
+    env = os.environ if env is None else env
+    return env.get('CHAMMO_CRAFT_RELEASE') or f'https://api.github.com/repos/{CRAFTS_REPO}/releases/tags/{CRAFTS_TAG}'
+
+
+def crafts_release(get=fetch):
+    url = crafts_release_url()
+    key = (url, get)
+    if key not in _CRAFTS:
+        try:
+            rel = json.loads(get(url))
+            assets = {a['name']: (a['browser_download_url'], a.get('size')) for a in rel.get('assets', [])}
+            if 'SHA256SUMS.txt' not in assets:
+                raise CraftError('no SHA256SUMS.txt / 체크섬 파일이 없음')
+            sums_url = assets['SHA256SUMS.txt'][0]
+            _CRAFTS[key] = (assets, parse_sums(get(sums_url).decode('utf-8', 'replace')), sums_url)
+        except (CraftError, ValueError, KeyError, TypeError, AttributeError) as e:
+            why = str(e).rsplit(' — ', 1)[-1] if isinstance(e, FetchError) else str(e) or type(e).__name__
+            _CRAFTS[key] = f'{CRAFTS_TAG}: could not get the Chammo apps release / 참모 앱 공개 릴리스를 못 받음 — {why}'
+    hit = _CRAFTS[key]
+    if isinstance(hit, str):
+        raise CraftError(hit)
+    return hit
+
+
+def crafts_latest(app, get=fetch):
+    """공개 릴리스에서 그 앱의 가장 높은 판 — SHA256SUMS 와 자산 목록에 다 있는 DMG 만"""
+    assets, sums, sums_url = crafts_release(get)
+    pat = re.compile(rf'chammo-{re.escape(CHAMMO[app]["short"])}-(\d+\.\d+\.\d+)-macos-universal\.dmg')
+    found = [(m.group(1), n) for n in sums if (m := pat.fullmatch(n)) and n in assets]
+    if not found:
+        raise CraftError(f'{display(app)}: not in the release {CRAFTS_TAG} / 공개 릴리스에 없음')
+    ver, name = max(found, key=lambda f: _ver_key(f[0]))
+    url, size = assets[name]
+    return {'app': app, 'tag': 'v' + ver, 'ver': ver, 'zip': None, 'zip_name': None, 'sums': sums_url, 'dmg': url,
+            'dmg_size': size, 'cli': None, 'cli_name': None}
+
+
+def _ver_key(v):
+    return tuple(int(x) for x in v.split('.'))
+
+
+def _has_dmg(f):
+    try:
+        return any(n.endswith('-macos-universal.dmg') for n in os.listdir(f))
+    except OSError:
+        return False
+
+
+def resolve_local(folder):
+    """앱별로 적은 폴더 — 판 폴더(X.Y.Z)들을 담았으면 DMG 가 든 가장 높은 판, 아니면 DMG 가 바로 든 그 폴더, 둘 다 아니면 None.
+    참모 포토 DMG 는 다른 저장소(chammo-photo) .shots/release/<판>/ 이고 맨 위에 옛 DMG 가 섞여 있다(10/19)"""
+    base = os.path.dirname(folder.rstrip('/'))
+    return newest_local(base, os.path.basename(folder.rstrip('/'))) or (folder if _has_dmg(folder) else None)
+
+
+def newest_local(root, short):
+    """<root>/<short>/<판>/ 중 DMG 가 든 가장 높은 판 폴더(숫자로 견줌), 없으면 None"""
+    base = os.path.join(root, short)
+    try:
+        vers = [v for v in os.listdir(base) if re.fullmatch(r'\d+\.\d+\.\d+', v)]
+    except OSError:
+        return None
+    for v in sorted(vers, key=_ver_key, reverse=True):
+        f = os.path.join(base, v)
+        if any(n.endswith('-macos-universal.dmg') for n in os.listdir(f)):
+            return f
+    return None
+
+
+def chammo_table(native, cfg):
+    """(앱 표, 로컬 DMG 폴더) — 13개 다 참모 앱 값으로 덮고, 로컬 DMG 폴더는 있는 앱만(내 맥 시험용 — 있으면 공개 릴리스보다 먼저). 넘긴 표는 안 바꾼다"""
+    out, local = dict(native), {}
+    root = os.path.expanduser(cfg.get('root') or '')
+    for app, row in CHAMMO.items():
+        mine = os.path.expanduser(cfg.get(app) or '')
+        folder = resolve_local(mine) if mine else (newest_local(root, row['short']) if root else None)
+        if folder and os.path.isdir(folder):
+            local[app] = folder
+        over = {k: v for k, v in row.items() if k not in ('short', 'work')}
+        if app != 'photocraft':
+            over.update(frame=True, chammo=True, work=bool(row.get('work')), uiron=False)
+        out[app] = {**native[app], **over}
+    return out, local
+
+
+NATIVE = chammo_table(NATIVE, {})[0]  # 기본 = 참모 앱 13개(main 이 local-releases.json 으로 로컬 DMG 자리를 더한다)
+
+
+def local_config(ddir):
+    return _read_json(os.path.join(ddir, 'craft-native', 'local-releases.json')) if ddir else {}
+
+
+def local_latest(app, folder):
+    """로컬 DMG 폴더를 릴리스처럼 — 판·DMG·체크섬·크기(설치 확인은 그대로)"""
+    ver, dmg, sums = local_release(folder)
+    return {'app': app, 'tag': 'v' + ver, 'ver': ver, 'zip': None, 'zip_name': None, 'sums': sums, 'dmg': dmg,
+            'dmg_size': os.path.getsize(dmg), 'cli': None, 'cli_name': None}
+
+
+def icon_cache_name(app, bundle, mtime):
+    """아이콘 캐시 파일 이름 — 앱 번들 이름 + Info.plist 수정 시각(앱이 바뀌면 새로). 앱(craft_dock.rs icon_of)과 같은 규칙"""
+    base = re.sub(r'[^A-Za-z0-9]+', '_', os.path.basename(bundle.rstrip('/'))[:-4] if bundle.endswith('.app') else os.path.basename(bundle)).strip('_')
+    return f'{app}-{base}-{int(mtime)}.png'
+
+
+def frame_params(vd):
+    """창 자리 명령 값 — 가짜 화면 왼쪽 위에서 조금 비켜, 화면이 작으면 줄여서(uiron_text 와 같은 자리)"""
+    x, y, w, h = vd
+    return {'x': x + 30, 'y': y + 33, 'width': min(WIN[0], w - 80), 'height': min(WIN[1], h - 80)}
+
+
+def display(app):
+    """보이는 이름 — 맥 앱 표에 이름이 있으면 그것(갈아끼운 판), 없으면 ArtCraft 이름"""
+    return (NATIVE.get(app) or {}).get('name') or APPS[app][0]
+
+
+def bundle_id(app):
+    return (NATIVE.get(app) or {}).get('bundle') or f'ai.storyteller.{app}'
+
+
+def repo_of(app):
+    return (NATIVE.get(app) or {}).get('repo') or f'{OWNER}/{app}'
+
+
+def app_path(app, apps_dir=APPS_DIR):
+    """깔린 자리 — 표에 박힌 자리가 있으면 그것, 다른 앱 폴더를 주면(시험) 그 폴더 안 같은 이름"""
+    pinned = (NATIVE.get(app) or {}).get('path')
+    if pinned:
+        return pinned if os.path.dirname(pinned) == apps_dir else os.path.join(apps_dir, os.path.basename(pinned))
+    return os.path.join(apps_dir, display(app) + '.app')
+
+
+def native_dir(ddir, app):
+    return os.path.join(ddir, 'craft-native', app)
+
+
+def free_port():
+    s = socket.socket()
+    s.bind(('127.0.0.1', 0))
+    p = s.getsockname()[1]
+    s.close()
+    return p
+
+
+def read_vd(ddir):
+    """앱이 띄운 가짜 화면(Chammo agents) 자리 (x, y, w, h) — <데이터>/browser/vdisplay.json, 없으면 None"""
+    try:
+        with open(os.path.join(ddir, 'browser', 'vdisplay.json'), encoding='utf-8') as f:
+            b = json.load(f)['bounds']
+        return tuple(float(v) for v in b[:4])
+    except Exception:
+        return None
+
+
+def uiron_text(vd, scale):
+    """가짜 화면 왼쪽 위에서 조금 비켜 띄울 eframe 창 기록. 이 앱들은 자리를 '배율 곱한 픽셀'로 읽는다(맥북 2배+가짜 화면 1배면 2)"""
+    x, y, w, h = vd
+    ww, hh = min(WIN[0], w - 80), min(WIN[1], h - 80)
+    ix, iy = (x + 30) * scale, (y + 33) * scale
+    win = (f'(inner_position_pixels:Some((x:{ix:.1f},y:{iy:.1f})),outer_position_pixels:Some((x:{ix:.1f},y:{iy - 28 * scale:.1f})),'
+           f'fullscreen:false,maximized:false,inner_size_points:Some((x:{ww:.1f},y:{hh:.1f})))')
+    return json.dumps({'window': win})
+
+
+def launch_plan(ddir, app, port, work, vd=None, scale=1.0):
+    """띄울 명령·비밀 파일·ui.ron — 비밀 값은 인자에 넣지 않는다(파일 경로만)"""
+    spec = NATIVE[app]
+    cfg = os.path.join(native_dir(ddir, app), 'config')
+    argv = ['open', '-n', '-g', '-a', app_path(app)]  # 자리로 연다 — 같은 번들 id 판이 여럿이어도 표에 적힌 그 앱
+    if spec['env']:
+        argv += ['--env', f'{spec["env"]}={cfg}']
+    if spec.get('chammo'):  # 참모 앱 — 작업 폴더·첫 자리(보이기 전에 가짜 화면에 놓인다 — ui.ron·System Events 옮기기 대신)
+        if spec.get('work') and work:
+            argv += ['--env', f'CHAMMO_WORK_DIR={work}']
+        if vd:
+            fp = frame_params(vd)
+            argv += ['--env', 'CHAMMO_WINDOW_FRAME=' + ','.join(str(int(fp[k])) for k in ('x', 'y', 'width', 'height'))]
+    args, secret = [], None
+    if spec['auth'] == 'file':
+        secret = os.path.join(native_dir(ddir, app), 'control.json')
+        args += ['--control', secret]
+        port = None
+    else:
+        args += ['--control', str(port)]
+    if spec['auth'] == 'token':
+        secret = os.path.join(native_dir(ddir, app), 'control.token')
+        args += ['--control-token-file', secret]
+    elif spec['auth'] == 'key':
+        secret = os.path.join(cfg, f'control-key.local-{port}')
+    args += [a.replace('{dir}', native_dir(ddir, app)) for a in spec['args']]  # 설정·데이터 자리를 우리 폴더로(홈에 안 남게)
+    if spec['roots'] and work:
+        args += ['--automation-read-root', work]
+        if spec['roots'] == 'rw':
+            args += ['--automation-write-root', work]
+    uiron = (os.path.join(cfg, 'ui.ron'), uiron_text(vd, scale)) if spec['uiron'] and vd else None
+    return {'argv': argv + ['--args'] + args, 'secret': secret, 'port': port, 'config': cfg, 'uiron': uiron}
+
+
+def state_file(ddir, app):
+    return os.path.join(ddir, 'craft-native', f'{app}.json')
+
+
+def save_state(ddir, app, st):
+    p = state_file(ddir, app)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    fd = os.open(p + '.tmp', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        json.dump(st, f)
+    os.replace(p + '.tmp', p)
+
+
+def load_state(ddir, app):
+    try:
+        with open(state_file(ddir, app), encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def drop_state(ddir, app):
+    try:
+        os.remove(state_file(ddir, app))
+    except OSError:
+        pass
+
+
+class Channel:
+    """띄운 앱의 조작 채널 — 연결하고 앱 방식대로 인증한 뒤 call(method, params) → result. 실패는 CraftError"""
+
+    def __init__(self, st, timeout=70):
+        self.i = 0
+        port, secret = st.get('port'), None
+        try:
+            if st['auth'] == 'file':
+                with open(st['secret'], encoding='utf-8') as f:
+                    j = json.load(f)
+                port, secret = j['port'], j['token']
+            elif st['auth']:
+                with open(st['secret'], encoding='utf-8') as f:
+                    secret = f.read().strip()
+            self.s = socket.create_connection(('127.0.0.1', int(port)), timeout=timeout)
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            raise CraftError(f'{st.get("app")}: not running or no control channel / 안 떠 있음 — scripts/craft open {st.get("app")} --native ({e})') from e
+        self.f = self.s.makefile('rw', encoding='utf-8')
+        try:
+            if st['auth'] == 'key':
+                self._send({'method': 'auth', 'key': secret})
+            elif st['auth']:
+                self._send({'method': 'auth', 'params': {'token': secret}})
+        except CraftError:
+            self.close()
+            raise
+
+    def _send(self, req):
+        self.i += 1
+        req['id'] = self.i
+        try:
+            self.f.write(json.dumps(req) + '\n')
+            self.f.flush()
+            line = self.f.readline()
+        except OSError as e:
+            raise CraftError(f'control channel: {e}') from e
+        if not line:
+            raise CraftError('control channel closed / 앱이 연결을 끊음 (wrong key? / 비밀이 틀렸나)')
+        r = json.loads(line)
+        if 'jsonrpc' in r:  # PdfCraft — JSON-RPC 2.0(ok 없음, 오류는 {code, message})
+            if r.get('error'):
+                e = r['error']
+                raise CraftError(e.get('message') if isinstance(e, dict) else str(e))
+            return r.get('result')
+        if not r.get('ok'):
+            raise CraftError(r.get('error') or 'error')
+        return r.get('result')
+
+    def call(self, method, params=None):
+        return self._send({'method': method, 'params': params or {}})
+
+    def close(self):
+        for x in (getattr(self, 'f', None), getattr(self, 's', None)):
+            try:
+                x and x.close()
+            except OSError:
+                pass
+
+
+def run_call(app, cmd, params):
+    """명령 id → 채널 요청. 다 engine.execute, PdfCraft 만 ui.command(메뉴 명령)"""
+    if app == 'pdfcraft':
+        return 'ui.command', {'id': cmd}
+    return 'engine.execute', ({'command': cmd, 'params': params} if params is not None else {'command': cmd})
+
+
+def shot_params(app):
+    return {'focus': False} if app == 'photocraft' else {}  # PhotoCraft 는 기본으로 창을 앞으로 부른다
+
+
+def shot_bytes(res):
+    for k in ('base64', 'png', 'png_base64', 'pngBase64'):
+        if isinstance(res, dict) and isinstance(res.get(k), str):
+            import base64
+            return base64.b64decode(res[k])
+    return None
+
+
+def shot_file(res, asked):
+    """찍기 답 → PNG 바이트. 앱마다 모양이 다르다(10/16): 바이트(base64) · 그림 경로만(CAD 임시 폴더) · 크기만 주고 넘긴 자리(asked)에 씀. 없으면 None"""
+    b = shot_bytes(res)
+    if b:
+        return b
+    for p in ([res.get('path')] if isinstance(res, dict) and isinstance(res.get('path'), str) else []) + [asked]:
+        if p and os.path.isfile(p):
+            with open(p, 'rb') as f:
+                return f.read()
+    return None
+
+
+def ax_ok():
+    """손쉬운 사용 허용이 있나 — 묻지 않고 보기만(이 스크립트를 띄운 앱 기준). 없을 때 System Events 를 부르면 맥이 권한 창을 띄운다(2026-10-19)"""
+    if sys.platform != 'darwin':
+        return False
+    try:
+        import ctypes
+        lib = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices')
+        lib.AXIsProcessTrusted.restype = ctypes.c_bool
+        return bool(lib.AXIsProcessTrusted())
+    except OSError:
+        return False
+
+
+def place_window(pid, x, y, ax=ax_ok, run=subprocess.run):
+    """띄운 창을 가짜 화면으로 — 손쉬운 사용 허용이 있을 때만(없으면 묻는 창 대신 그대로 둔다). 옮겼으면 True"""
+    if not ax():
+        print('no Accessibility permission — window left where it opened / 손쉬운 사용 허용이 없어 창을 못 옮김(설정 > 기능 > 손쉬운 사용)', file=sys.stderr)
+        return False
+    run(['osascript', '-e', move_window_script(pid, x, y)], capture_output=True, timeout=10)
+    return True
+
+
+def move_window_script(pid, x, y):
+    """띄운 창을 가짜 화면으로 — System Events(손쉬운 사용). 12개 다 먹는다(10/16 실측, PhotoCraft 계열만 ui.ron·창 자리 명령)"""
+    return f'tell application "System Events" to tell (first process whose unix id is {int(pid)}) to set position of window 1 to {{{int(x)}, {int(y)}}}'
+
+
+def save_call(app, work, name):
+    """닫기 전 저장 채널 요청 — None 이면 그 앱은 스스로 쓴다. PhotoCraft 는 작업 폴더 기준 이름, 나머지는 절대 경로(VectorCraft 는 상대 경로를 못 씀)"""
+    cmd = (NATIVE.get(app) or {}).get('save')
+    if not cmd:
+        return None
+    if app == 'photocraft':
+        return 'app.save', {'path': name}
+    if app == 'pdfcraft':
+        return 'ui.command', {'id': cmd}  # 메뉴 명령 — 제자리 저장
+    return 'engine.execute', {'command': cmd, 'params': {'path': os.path.join(work, name)}}
+
+
+def quit_method(app):
+    return 'ui.quit' if app == 'pdfcraft' else 'app.quit'
+
+
+def native_version(app_path):
+    """깔린 맥 앱의 판(Info.plist), 없으면 None"""
+    import plistlib
+    try:
+        with open(os.path.join(app_path, 'Contents', 'Info.plist'), 'rb') as f:
+            return plistlib.load(f).get('CFBundleShortVersionString')
+    except (OSError, ValueError):
+        return None
+
+
+def install_native(app, get=fetch, run=subprocess.run, apps_dir=APPS_DIR, ddir=None):
+    """최신 릴리스 맥 DMG → SHA256SUMS 대조 → 마운트 → 번들 id·공증(spctl) 확인 → <apps_dir>/<이름>.app(있던 건 바꿔 끼움).
+    하나라도 안 맞으면 아무것도 안 깔고 CraftError"""
+    app = app_key(app)
+    rel = latest(app, get, native=True)
+    if not rel.get('dmg'):
+        raise CraftError(f'{app} {rel["tag"]}: no macOS DMG in the release / 릴리스에 맥 DMG 가 없음')
+    dname = rel['dmg'].rsplit('/', 1)[-1]
+    data = get(rel['dmg'])
+    want = parse_sums(get(rel['sums']).decode('utf-8', 'replace')).get(dname)
+    if not want or hashlib.sha256(data).hexdigest() != want:
+        raise CraftError(f'SHA-256 mismatch or missing / 체크섬이 안 맞거나 없음 ({dname}) — thrown away, not installed')
+    tmp = tempfile.mkdtemp(prefix='craft-dmg-')
+    mnt = os.path.join(tmp, 'mnt')
+    try:
+        with open(os.path.join(tmp, dname), 'wb') as f:
+            f.write(data)
+        if run(['hdiutil', 'attach', '-nobrowse', '-readonly', '-noautoopen', '-mountpoint', mnt, os.path.join(tmp, dname)], capture_output=True, text=True).returncode != 0:
+            raise CraftError(f'could not open the DMG / DMG 를 못 열었음 ({dname})')
+        try:
+            found = [x for x in os.listdir(mnt) if x.endswith('.app')]
+            if len(found) != 1:
+                raise CraftError(f'expected one .app in the DMG / DMG 안 앱이 하나가 아님: {found}')
+            src = os.path.join(mnt, found[0])
+            sig = run(['codesign', '-dv', src], capture_output=True, text=True)
+            ident = re.search(r'^Identifier=(\S+)', sig.stderr or '', re.M)
+            if not ident or ident.group(1) != bundle_id(app):
+                raise CraftError(f'unexpected bundle id / 다른 앱: {ident.group(1) if ident else "unsigned"} — not installed')
+            gk = run(['spctl', '-a', '-t', 'exec', '-vv', src], capture_output=True, text=True)
+            if gk.returncode != 0 or 'Notarized Developer ID' not in (gk.stderr or '') + (gk.stdout or ''):
+                raise CraftError('not notarized by Apple / 애플 공증이 아님 — not installed')
+            dest = os.path.join(apps_dir, found[0])
+            new = dest + '.craft-new'
+            shutil.rmtree(new, ignore_errors=True)
+            run(['ditto', src, new], capture_output=True)
+            if not os.path.isdir(new):
+                shutil.copytree(src, new, symlinks=True)
+            shutil.rmtree(dest, ignore_errors=True)
+            os.rename(new, dest)
+            if ddir:  # 우리가 깐 것 — remove 는 이 기록에 있는 것만 지운다
+                recs = load_installs(ddir)
+                recs[app] = {'path': dest, 'ver': rel['ver'], 'at': time.strftime('%Y-%m-%d')}
+                _write_json(os.path.join(ddir, 'craft-native', 'installed.json'), recs)
+            return dest
+        finally:
+            run(['hdiutil', 'detach', mnt, '-quiet'], capture_output=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _write_json(path, obj):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + '.tmp', 'w', encoding='utf-8') as f:
+        json.dump(obj, f, ensure_ascii=False)
+    os.replace(path + '.tmp', path)
+
+
+def _read_json(path):
+    try:
+        with open(path, encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def load_installs(ddir):
+    return _read_json(os.path.join(ddir, 'craft-native', 'installed.json'))
+
+
+def touch_used(ddir, app, when=None):
+    """마지막으로 쓴 날 — list 에 보이고, 오래 안 쓴 것 정리 제안의 근거(지우기는 사람이 고른 뒤에만)"""
+    p = os.path.join(ddir, 'craft-native', 'used.json')
+    used = _read_json(p)
+    used[app] = when or time.strftime('%Y-%m-%d')
+    try:
+        _write_json(p, used)
+    except OSError:
+        pass
+
+
+def dir_size(path):
+    if os.path.isfile(path):
+        return os.path.getsize(path)
+    n = 0
+    for base, _, files in os.walk(path):
+        for f in files:
+            try:
+                n += os.lstat(os.path.join(base, f)).st_size
+            except OSError:
+                pass
+    return n
+
+
+def human(n):
+    for unit in ('B', 'KB', 'MB', 'GB'):
+        if n < 1024 or unit == 'GB':
+            v = round(n, 1) if unit == 'GB' else round(n)
+            return f'{v:g} {unit}'
+        n /= 1024
+
+
+def to_trash(path, trash=None, label=None):
+    """지우지 않고 휴지통으로 — 이름표(label)로, 같은 이름이 있으면 시각을 붙인다"""
+    trash = trash or os.path.expanduser('~/.Trash')
+    dest = os.path.join(trash, label or os.path.basename(path.rstrip('/')))
+    if os.path.exists(dest):
+        dest += time.strftime(' %H%M%S')
+    shutil.move(path, dest)
+    return dest
+
+
+def remove_app(ddir, app, apps_dir=APPS_DIR, trash=None, home=None):
+    """받은 웹판·CLI, 우리가 깐 맥 앱(설치 기록에 있고 번들 id 가 맞을 때만), 맥 앱 설정·작업 폴더 → 휴지통. 옮긴 자리 목록"""
+    app = app_key(app)
+    st = load_state(ddir, app)
+    if st and pid_alive(st.get('pid')):
+        raise CraftError(f'{display(app)} is open — scripts/craft close {app} first / 떠 있음, 먼저 close')
+    gone = []
+    recs = load_installs(ddir)
+    rec = recs.get(app)
+    if rec and os.path.isdir(rec['path']):
+        import plistlib
+        try:
+            with open(os.path.join(rec['path'], 'Contents', 'Info.plist'), 'rb') as f:
+                ident = plistlib.load(f).get('CFBundleIdentifier')
+        except (OSError, ValueError):
+            ident = None
+        if ident == bundle_id(app):
+            if subprocess.run(['pgrep', '-f', rec['path'] + '/Contents/MacOS/'], capture_output=True).returncode == 0:
+                raise CraftError(f'{display(app)} is running / 떠 있음 — quit it first')
+            gone.append(to_trash(rec['path'], trash))
+    if rec:
+        recs.pop(app)
+        _write_json(os.path.join(ddir, 'craft-native', 'installed.json'), recs)
+    name = display(app)
+    home = home or os.path.expanduser('~')
+    extra = [(os.path.join(home, e), f'{name} app settings — {os.path.basename(e)} (Chammo)') for e in (NATIVE.get(app) or {}).get('extra', [])]
+    for p, label in [(os.path.join(ddir, 'craft', app), f'{name} downloads (Chammo)'), (native_dir(ddir, app), f'{name} settings and work (Chammo)')] + extra:
+        if os.path.exists(p):
+            gone.append(to_trash(p, trash, label))
+    drop_state(ddir, app)
+    return gone
+
+
+def update_native(app, get=fetch, run=subprocess.run, apps_dir=APPS_DIR, ddir=None):
+    """(옛 판, 지금 판) — 내가 깐 자리(<apps_dir>/<이름>.app)에 있을 때만. 안 깔렸으면 (None, None)"""
+    app = app_key(app)
+    dest = app_path(app, apps_dir)
+    old = native_version(dest)
+    if not old:
+        return None, None
+    ver = latest(app, get, native=True)['ver']
+    if ver_key(ver) <= ver_key(old):
+        return old, old
+    if subprocess.run(['pgrep', '-f', dest + '/Contents/MacOS/'], capture_output=True).returncode == 0:
+        raise CraftError(f'{display(app)} is running — close it first / 떠 있음, 끄고 다시 (scripts/craft close {app})')
+    install_native(app, get, run, apps_dir, ddir)
+    return old, native_version(dest)
+
+
+# ── Chammo 따로 창과 잇기: 창 열기·닫기 줄(app.jsonl) + 머리줄이 읽는 마지막 일·저장 상태(<앱>.status.json) ──
+
+def window_line(ddir, verb, app):
+    import datetime, uuid
+    arg = {'verb': verb, 'app': app}
+    who = os.path.basename((os.environ.get('CLAUDE_JOB_DIR') or '').rstrip('/'))  # 띄운 세션 — 앱이 그 세션을 맡긴 참모 탭에 칸을(scripts/show 의 from 과 같은 규칙)
+    if who:
+        arg['by'] = who
+    line = {'ts': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), 'action': 'craft',
+            'arg': arg, 'id': uuid.uuid4().hex[:12]}
+    os.makedirs(ddir, exist_ok=True)
+    with open(os.path.join(ddir, 'app.jsonl'), 'a', encoding='utf-8') as f:
+        f.write(json.dumps(line, ensure_ascii=False) + '\n')
+
+
+def cli_hint(rest):
+    """창 없는 엔진으로 오래 도는 일(serve·run) — 사람이 못 본다. 만들고 고치는 일이면 맥 앱으로 띄우라는 한 줄, 아니면 None
+    (2026-10-19 세션들이 cli serve/run 으로 PSD 를 짜서 끝날 때까지 아무것도 안 보였다)"""
+    if len(rest) < 2 or rest[1] not in ('serve', 'run'):
+        return None
+    app = rest[0]
+    return (f'craft: the windowless engine is invisible to the person — if this is something they should watch being made, use '
+            f'`scripts/craft open {app} --native` + run/do instead / 사람이 못 봄 — 보여 줄 일이면 open {app} --native 로 띄워 run/do')
+
+
+def status_file(ddir, app):
+    return os.path.join(ddir, 'craft-native', f'{app}.status.json')
+
+
+def load_status(ddir, app):
+    return _read_json(status_file(ddir, app)) or {'last': '', 'dirty': False}
+
+
+READS = {'ui.inspect', 'ui.screenshot', 'engine.commands', 'ui.menu.list', 'engine.journal', 'ui.state', 'ui.commands', 'jobs.list', 'session.inspect'}
+
+
+def note_call(ddir, app, method, params):
+    """참모가 보낸 채널 명령 하나 → 아래 줄 글·저장 상태. 읽기만 하는 건 안 건드린다"""
+    params = params or {}
+    cmd = params.get('command') or params.get('id') or ''
+    if method in READS or cmd.endswith('.inspect') or cmd.endswith('.list'):
+        return
+    st = load_status(ddir, app)
+    if method in ('app.save', 'file.save'):
+        st = {'last': f'saved / 저장 {params.get("path", "")}'.strip(), 'dirty': False}
+    elif method in ('app.open', 'file.open'):
+        st = {'last': f'opened / 열기 {params.get("path", "")}'.strip(), 'dirty': False}
+    else:
+        name = '.'.join(cmd.split('.')[-2:]) if cmd else method
+        inner = params.get('params') if isinstance(params.get('params'), dict) else ({k: v for k, v in params.items() if k != 'command'} if not cmd else {})
+        args = ' '.join(f'{k} {v}' for k, v in inner.items() if isinstance(v, (int, float, str)))[:80]
+        st = {'last': f'{name} {args}'.strip(), 'dirty': True}
+    st['at'] = time.strftime('%H:%M:%S')
+    try:
+        _write_json(status_file(ddir, app), st)
+    except OSError:
+        pass
+
+
+# 참모 손 — PhotoCraft 한국어 화면 이름(손쉬운 사용 트리, 10/16 실측). 다른 앱은 앱마다 실측한 뒤에
+PC_KIND = {'hueSaturation': '색조/채도', 'brightnessContrast': '밝기/대비', 'colorBalance': '색상 균형', 'vibrance': '활기', 'levels': '레벨',
+           'curves': '곡선', 'invert': '반전', 'exposure': '노출', 'blackWhite': '흑백', 'photoFilter': '사진 필터', 'threshold': '한계값', 'posterize': '포스터화'}
+PC_PARAM = {'saturation': '채도', 'hue': '색조', 'lightness': '명도', 'brightness': '밝기', 'contrast': '대비', 'vibrance': '활기',
+            'shadows': '어두운 영역', 'midtones': '중간 영역', 'highlights': '밝은 영역', 'exposure': '노출'}
+
+
+def _param_hand(params):
+    keys = [k for k in (params or {}) if k in PC_PARAM]
+    if not keys:
+        return None
+    return [PC_PARAM[k] for k in keys], ' · '.join(f'{PC_PARAM[k]} {params[k]}' for k in keys if isinstance(params[k], (int, float)))
+
+
+PC_SHAPE = {'rect': '사각형', 'roundedRect': '둥근 사각형', 'ellipse': '타원', 'polygon': '다각형', 'star': '별', 'line': '선', 'path': '패스'}
+PC_FILL = {'solidColor': '단색 칠', 'gradient': '그라데이션 칠', 'pattern': '패턴 칠'}
+PC_STYLE = {'dropShadow': '그림자', 'innerShadow': '안쪽 그림자', 'outerGlow': '바깥 광선', 'innerGlow': '안쪽 광선', 'stroke': '획',
+            'colorOverlay': '색 덮기', 'gradientOverlay': '그라데이션 덮기', 'patternOverlay': '패턴 덮기', 'bevelEmboss': '경사와 엠보스', 'satin': '새틴'}
+READ_ONLY = ('inspect', 'list', 'get', 'query', 'commands', 'defaultFor')
+
+
+def _layer_name(ask, layer_id=None):
+    """레이어 패널 줄 이름 — id 를 주면 그 레이어, 없으면 지금 레이어"""
+    doc = ask('engine.execute', {'command': 'document.inspect'}) or {}
+    want = layer_id if layer_id is not None else doc.get('activeLayer')
+    return next((l.get('name') for l in doc.get('layers', []) if l.get('id') == want), None)
+
+
+def _doc_spot(ask, bounds):
+    """문서 좌표 [x,y,w,h] → 손 자리 '@doc:x,y,w,h|가운데x,가운데y,점당 문서 픽셀' — 화면 자리는 앱이 캔버스 자리로 바꾼다"""
+    ui = ask('ui.inspect', {}) or {}
+    views = ui.get('views') or [{}]
+    i = (ui.get('session') or {}).get('active') or 0  # 문서마다 보기 하나 — 지금 문서 것(첫 것이면 먼저 연 문서 보기였다)
+    v = views[i] if 0 <= i < len(views) else views[0]
+    ppp = (ui.get('window') or {}).get('pixelsPerPoint') or 1.0
+    c, z = v.get('center'), v.get('zoom')
+    if not c or not z or not bounds:
+        return None
+    g = lambda n: f'{n:g}'
+    return f'@doc:{",".join(g(n) for n in bounds[:4])}|{g(c[0])},{g(c[1])},{g(z / ppp)}'
+
+
+def hand_plan(app, method, params):
+    """(명령 전 손, 명령 뒤 손) — 손 = (이름들, 글) 또는 None, 명령 뒤 손은 응답을 봐야 하면 함수(hand_after 가 푼다).
+    이름 = 앱 손쉬운 사용 이름, '@canvas'(캔버스), '@title'(제목줄), '@doc:…'(문서 좌표), '@bounds:[x,y,w,h]'(창 점).
+    명령은 안 늦추고 앞뒤로 줄만 보낸다(빨라도 된다). 10/16 첫 시연(카드뉴스)에서 손이 한 번도 안 보였다 — 만드는 명령을 다 다룬다"""
+    if app != 'photocraft':
+        return None, None
+    params = params or {}
+    if method in ('app.save', 'app.open'):
+        return None, (['@title'], f"{'저장' if method == 'app.save' else '열기'} {params.get('path', '')}".strip())
+    if method != 'engine.execute':
+        return None, None  # ui.* 같은 채널 명령 — 읽기거나 사람 입력 흉내
+    cmd = params.get('command', '')
+    inner = params.get('params') or {}
+    tail = cmd.split('.')[-1]
+    if cmd.startswith('layer.newAdjustmentLayer.'):
+        return (['새 칠 또는 조정 레이어 만들기'], f'새 {PC_KIND.get(tail, tail)} 레이어'), _param_hand(inner)
+    if cmd == 'layer.setAdjustment':
+        return _param_hand({k: v for k, v in inner.items() if k != 'layer'}), None
+    if cmd.startswith(('image.adjustments.', 'filter.')):
+        return (['@canvas'], PC_KIND.get(tail, tail)), None
+    if cmd == 'file.new':
+        return None, (['@canvas'], f"새 문서 {inner.get('width', 1920)}×{inner.get('height', 1080)}")
+    if cmd.startswith('layer.newFillLayer.'):
+        return (['새 칠 또는 조정 레이어 만들기'], f'새 {PC_FILL.get(tail, tail)}'), (['@canvas'], PC_FILL.get(tail, tail))
+    if cmd in ('shape.create', 'type.create'):
+        shape = cmd == 'shape.create'
+        pre = (['@canvas'], f"새 모양 · {PC_SHAPE.get(inner.get('kind', 'rect'), inner.get('kind'))}" if shape else '새 글자')
+
+        def post(resp, ask):
+            name = (resp or {}).get('name') or inner.get('name')
+            try:
+                spot = _doc_spot(ask, (resp or {}).get('bounds'))
+                name = name or _layer_name(ask, (resp or {}).get('layer'))
+            except CraftError:
+                spot = None
+            names = [n for n in (spot, name) if n]
+            label = name if shape else f"글자 “{inner.get('text', '')}”"
+            return (names, label) if names else None
+        return pre, post
+    if cmd == 'type.setStyle' or cmd.startswith('layer.layerStyle.'):
+        label = '글자 모양' if cmd == 'type.setStyle' else f'레이어 스타일 · {PC_STYLE.get(tail, tail)}'
+
+        def post(resp, ask):
+            try:
+                name = _layer_name(ask, inner.get('layer'))
+            except CraftError:
+                name = None
+            return ([name], label) if name else (['@canvas'], label)
+        return None, post
+    if any(w in tail for w in READ_ONLY) or not cmd:
+        return None, None
+    return None, (['@canvas'], cmd)  # 모르는 명령도 최소한 캔버스에 이름
+
+
+def hand_after(post, resp, ask):
+    """명령 뒤 손 — 함수면 응답·채널(ask)로 자리를 정한다. 못 정하면 None(명령은 이미 끝났다)"""
+    if callable(post):
+        try:
+            return post(resp, ask)
+        except Exception:
+            return None
+    return post
+
+
+def hand_line(ddir, app, hand):
+    import datetime, uuid
+    if not hand:
+        return
+    names, label = hand
+    line = {'ts': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), 'action': 'craft',
+            'arg': {'verb': 'point', 'app': app, 'names': names, 'label': label}, 'id': uuid.uuid4().hex[:12]}
+    with open(os.path.join(ddir, 'app.jsonl'), 'a', encoding='utf-8') as f:
+        f.write(json.dumps(line, ensure_ascii=False) + '\n')
+
+
+# ── 개입: 사람이 Craft 창에서 직접 조작하는 동안 참모 명령은 멈추고, 돌려받을 때 바뀐 것을 한 줄로 ──
+
+def takeover_file(ddir, app):
+    return os.path.join(ddir, 'craft-native', f'{app}.takeover.json')
+
+
+def save_takeover(ddir, app, obj):
+    _write_json(takeover_file(ddir, app), obj)
+
+
+def drop_takeover(ddir, app):
+    try:
+        os.remove(takeover_file(ddir, app))
+    except OSError:
+        pass
+
+
+def is_read(method, params):
+    """보기만 하는 채널 명령인가 — 개입 중에도 된다(사람이 하는 걸 참모가 읽어 볼 수 있게)"""
+    if method in ('ui.inspect', 'ui.screenshot', 'engine.commands'):
+        return True
+    if method == 'engine.execute':
+        tail = ((params or {}).get('command') or '').split('.')[-1]
+        return any(w in tail for w in READ_ONLY)
+    return False
+
+
+def check_takeover(ddir, app, method=None, params=None):
+    if method and is_read(method, params):
+        return
+    if _read_json(takeover_file(ddir, app)).get('on'):
+        raise TakeoverError(f'{display(app)}: a person took over — script stopped. When they hand it back you get the state; ask them what next instead of rerunning / '
+                            f'사람이 개입함 — 스크립트 멈춤. 돌려받으면 상태가 오니 남은 걸 다시 돌리지 말고 사람에게 다음을 물어')
+
+
+def change_summary(before, after):
+    """개입 전후 문서 상태(document.inspect) → 사람이 바꾼 것 한 줄(참모 입력칸으로)"""
+    out = []
+    bl = {x['id']: x for x in before.get('layers', [])}
+    al = {x['id']: x for x in after.get('layers', [])}
+    out += [f"레이어 '{x['name']}' 추가" for i, x in al.items() if i not in bl]
+    out += [f"레이어 '{x['name']}' 지움" for i, x in bl.items() if i not in al]
+    for i in [i for i in al if i in bl]:
+        a, b = bl[i], al[i]
+        if a.get('visible') != b.get('visible'):
+            out.append(f"'{b['name']}' {'보임' if b.get('visible') else '숨김'}")
+        if abs(a.get('opacity', 1) - b.get('opacity', 1)) > 1e-6:
+            out.append(f"'{b['name']}' 불투명도 {round(a.get('opacity', 1) * 100)}→{round(b.get('opacity', 1) * 100)}%")
+        pa = (a.get('adjustment') or {}).get('params') or {}
+        pb = (b.get('adjustment') or {}).get('params') or {}
+        for k, v in pb.items():
+            if isinstance(v, (int, float)) and pa.get(k) != v:
+                name = PC_PARAM.get(k, k)
+                fmt = lambda n: f'{n:g}' if isinstance(n, (int, float)) else str(n)
+                out.append(f"'{b['name']}' {name} {fmt(pa.get(k))}→{fmt(v)}")
+    h = after.get('history', [])[len(before.get('history', [])):]
+    if h:
+        out.append(f'작업 내역 +{len(h)}(' + ', '.join(h) + ')')
+    return ' · '.join(out) or '바뀐 것 없음'
+
+
+# ── 닫기 = 묻지 않고 저장 후 닫기(2026-10-16 결정) ──
+# 저장은 한 번에 0.3~0.37초(1520x2000, PSD·PNG 실측) — 명령마다 저장하면 명령이 0.08 → 0.4초로 늘어서 닫을 때·꺼낼 때·앱을 끌 때만 한다
+RECENT_MAX = 20
+
+
+def free_name(path, ours=frozenset()):
+    """덮어쓰지 않을 자리 — 있으면 ' 2'·' 3'… 우리가 써 둔 자리(ours, 최근 문서)면 그대로 다시 쓴다"""
+    if path in ours or not os.path.lexists(path):
+        return path
+    stem, ext = os.path.splitext(path)
+    n = 2
+    while os.path.lexists(f'{stem} {n}{ext}') and f'{stem} {n}{ext}' not in ours:
+        n += 1
+    return f'{stem} {n}{ext}'
+
+
+def close_plan(doc, sources, save_dir, work, ours=frozenset(), ext='.psd'):
+    """[(작업 폴더 안에 저장할 이름, 옮길 자리)] — 파일에서 왔으면 그 파일(같은 형식) + 옆에 레이어 살린 PSD,
+    새 문서면 보관함 Craft 폴더에 PSD, 보관함을 모르면 작업 폴더. 옆 PSD·보관함 PSD 는 사람이 가진 파일을 덮지 않는다(' 2')
+    — 우리가 써 둔 것(ours)만 그 자리에 다시"""
+    name = doc.get('name') or ''
+    stem, own = os.path.splitext(name or 'untitled')
+    src = sources.get(name)
+    if src:
+        out = [(name, src)]
+        if ext == '.psd' and own.lower() != '.psd':  # 레이어 살린 PSD 사본은 PhotoCraft 만
+            out.append((stem + '.psd', free_name(os.path.splitext(src)[0] + '.psd', ours)))
+        return out
+    dest = os.path.join(save_dir or work, stem + ext)
+    return [(stem + ext, free_name(dest, ours) if save_dir else dest)]
+
+
+def recent_file(ddir):
+    return os.path.join(ddir, 'craft-native', 'recent.json')
+
+
+def recent(ddir):
+    r = _read_json(recent_file(ddir))
+    return r.get('items', []) if isinstance(r, dict) else []
+
+
+def add_recent(ddir, app, paths, saved=False):
+    """최근 Craft 문서 — 새것부터, 같은 자리는 하나, RECENT_MAX 개까지(scripts/craft recent·open <앱> <파일> 로 이어 다룬다).
+    saved = 우리가 쓴 파일(다음 닫기 때 그 자리에 다시 써도 되는 것)"""
+    now = time.strftime('%Y-%m-%d %H:%M')
+    old = {r.get('path'): r for r in recent(ddir)}
+    new = [{'app': app, 'path': p, 'at': now, **({'saved': True} if saved or old.get(p, {}).get('saved') else {})} for p in paths]
+    keep = [r for r in recent(ddir) if r.get('path') not in paths]
+    _write_json(recent_file(ddir), {'items': (new + keep)[:RECENT_MAX]})
+
+
+def open_file_arg(rest):
+    """open <앱> [--native] [<파일>] — 앱 이름 뒤 첫 글자 인자(--work 값은 빼고)"""
+    skip = False
+    for a in rest[1:]:
+        if skip:
+            skip = False
+        elif a == '--work':
+            skip = True
+        elif not a.startswith('--'):
+            return a
+    return None
+
+
+def locker_craft_dir(env=os.environ):
+    """새 문서를 둘 자리 — 띄운 참모의 보관함 Craft 폴더(scripts/locker 와 같은 규칙). 참모 밖에서 띄웠으면 None"""
+    try:
+        import importlib.machinery, importlib.util
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'locker')
+        lo = importlib.machinery.SourceFileLoader('chammo_locker', path)
+        lk = importlib.util.module_from_spec(importlib.util.spec_from_loader('chammo_locker', lo))
+        lo.exec_module(lk)
+        home, d = os.path.expanduser('~'), lk.data_dir()
+        root = lk.root_of(home, d, env.get('CHAMMO_LOCKER_ROOT', ''))
+        who = lk.find_owner(env, d, root, None)
+        return lk.sub_dir(lk.owner_dir(root, *who), 'Craft', make=True) if who else None
+    except Exception:
+        return None
+
+
+def opener_id(env=os.environ):
+    """이 명령을 부른 참모 세션 번호 — 세션마다 CLAUDE_JOB_DIR 끝이 세션 번호(scripts/locker 와 같은 길). 참모 밖이면 None"""
+    return os.path.basename((env.get('CLAUDE_JOB_DIR') or '').rstrip('/')) or None
+
+
+def opener_for(st, me):
+    """돌려받음 [앱] 줄을 받을 참모 — 그 앱을 처음 연 참모. 떠 있는 앱에 다른 참모가 파일을 열어도 안 바꾼다(엉뚱한 참모에게 가던 것)"""
+    return st.get('by') or me
+
+
+def open_file(ddir, app, path):
+    """사람 파일을 작업 폴더로 복사해 열고, 닫을 때 돌려놓을 자리를 기억한다(원본은 닫을 때까지 안 건드린다)"""
+    st = load_state(ddir, app)
+    src = os.path.abspath(os.path.expanduser(path))
+    if not os.path.isfile(src):
+        raise CraftError(f'no such file / 파일 없음: {path}')
+    work = st.get('work') or '.'
+    name = os.path.basename(src)
+    shutil.copy2(src, os.path.join(work, name))
+    st.setdefault('sources', {})[name] = src
+    save_state(ddir, app, st)
+    c = Channel(st)
+    try:
+        c.call('app.open', {'path': name})
+    finally:
+        c.close()
+    add_recent(ddir, app, [src])
+    print(f'{display(app)}: opened / 열었음 — {src}')
+
+
+def autosave(ddir, app, st):
+    """닫기 전에 — 바뀐 게 있으면 그 앱 저장 명령으로 작업 폴더에 저장하고 원래 자리로 옮긴다. 옮긴 자리 목록(안 바뀌었으면 빈 목록)"""
+    if not _read_json(status_file(ddir, app)).get('dirty'):
+        return []
+    spec = NATIVE.get(app) or {}
+    if not spec.get('save'):
+        return []
+    work = st.get('work') or '.'
+    c = Channel(st)
+    try:
+        doc = {}
+        if app == 'photocraft':
+            try:
+                doc = c.call('engine.execute', {'command': 'document.inspect'}) or {}
+            except CraftError:
+                return []  # 연 문서가 없다
+        else:
+            # 다른 앱은 지금 문서 이름을 물을 길이 앱마다 달라 — 사람 파일로 열었으면 그 이름, 아니면 새 문서
+            srcs = st.get('sources') or {}
+            doc = {'name': next(iter(srcs), '')} if len(srcs) == 1 else {}
+        ours = {r.get('path') for r in recent(ddir) if r.get('saved')}  # 우리가 저장해 둔 자리 — 다시 쓸 수 있다
+        plan = close_plan(doc, st.get('sources') or {}, st.get('saveDir'), work, ours, spec.get('ext') or '.psd')
+        for name, _ in plan:
+            m, p = save_call(app, work, name)
+            c.call(m, p)
+    finally:
+        c.close()
+    out = []
+    for name, dest in plan:
+        here = os.path.join(work, name)
+        if os.path.abspath(dest) != os.path.abspath(here) and os.path.exists(here):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            shutil.copy2(here, dest)
+        if os.path.exists(dest):
+            out.append(dest)
+    # 사람이 연 원본은 우리가 쓴 게 아니다 — 옆 PSD·보관함 문서만 '우리 것'
+    src = set((st.get('sources') or {}).values())
+    add_recent(ddir, app, [p for p in out if p in src])
+    add_recent(ddir, app, [p for p in out if p not in src], saved=True)
+    return out
+
+
+def close_native(ddir, app, st):
+    """닫기 — 바뀐 게 있으면 저장하고, 저장이 실패해도 끄기는 끝까지(무인증 포트가 열린 채 남지 않게, 10/16 craft-smoke). 찍을 한 줄을 돌려준다"""
+    note = ''
+    try:
+        saved = autosave(ddir, app, st)
+        note = ' — saved / 저장: ' + ', '.join(saved) if saved else ''
+    except (CraftError, OSError) as e:
+        note = f' — could not save / 저장 못 함: {e}'
+    window_line(ddir, 'close', app)
+    stop_app(ddir, app, st)
+    return f'{display(app)}: closed / 껐음{note}'
+
+def eject_save(app, doc_name):
+    """꺼내기 전에 저장할 자리(작업 폴더 기준) — 지금은 PhotoCraft 만(PSD 로 레이어째)"""
+    if app != 'photocraft':
+        return None
+    return {'path': os.path.splitext(doc_name or 'untitled')[0] + '.psd'}
+
+
+def craft_screen(ddir, wait=6):
+    """Craft 전용 레티나 가짜 화면 자리 — 앱에 부탁(app.jsonl craft screen)하고 <데이터>/craft-native/screen.json 을 기다린다.
+    앱이 없거나 옛 판이라 답이 없으면 세션 크롬의 1배 화면(read_vd)"""
+    p = os.path.join(ddir, 'craft-native', 'screen.json')
+
+    def live():
+        j = _read_json(p)
+        return tuple(float(v) for v in j['bounds'][:4]) if j.get('bounds') and pid_alive(j.get('pid')) else None
+    if live():
+        return live()
+    window_line(ddir, 'screen', 'photocraft')
+    end = time.time() + wait
+    while time.time() < end:
+        r = live()
+        if r:
+            return r
+        time.sleep(0.1)
+    return read_vd(ddir)
+
+
+def on_vd(rect, vd):
+    """창(x, y, w, h)의 가운데가 가짜 화면 안인가"""
+    x, y, w, h = rect
+    cx, cy = x + w / 2, y + h / 2
+    return vd[0] <= cx < vd[0] + vd[2] and vd[1] <= cy < vd[1] + vd[3]
+
+
+def scale_order(learned, scales):
+    """ui.ron 배율 시도 순서 — 지난번 맞은 것, 그다음 큰 배율부터(이 맥에선 2배가 맞았다)"""
+    order = [learned] if learned else []
+    return order + [s for s in sorted(set(scales), reverse=True) if s not in order]
+
+
+JXA_SCREENS = 'ObjC.import("AppKit"); var a=$.NSScreen.screens, o=[]; for (var i=0;i<a.count;i++) o.push(a.objectAtIndex(i).backingScaleFactor); JSON.stringify(o)'
+JXA_WINDOW = ('ObjC.import("CoreGraphics"); var a=ObjC.castRefToObject($.CGWindowListCopyWindowInfo(16, 0)), best=null;'
+              'for (var i=0;i<a.count;i++){var w=a.objectAtIndex(i); if (w.objectForKey("kCGWindowOwnerPID").js!=__PID__ || w.objectForKey("kCGWindowLayer").js!=0) continue;'
+              'var b=w.objectForKey("kCGWindowBounds"), r=[b.objectForKey("X").js,b.objectForKey("Y").js,b.objectForKey("Width").js,b.objectForKey("Height").js];'
+              'if (!best || r[2]*r[3] > best[2]*best[3]) best=r} JSON.stringify(best)')
+
+
+def jxa(src):
+    r = subprocess.run(['osascript', '-l', 'JavaScript', '-e', src], capture_output=True, text=True, timeout=10)
+    return json.loads(r.stdout.strip() or 'null')
+
+
+def pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def find_pid(marker, wait=15):
+    """띄운 앱 pid — 인자에 든 표(--control <포트|파일>)로 찾는다"""
+    for _ in range(wait * 4):
+        r = subprocess.run(['pgrep', '-f', '--', marker], capture_output=True, text=True).stdout.split()
+        if r:
+            return int(r[0])
+        time.sleep(0.25)
+    return None
+
+
+def key_alt(port, home=None):
+    """WordCraft 0.7 은 설정 폴더 변수를 아직 안 읽어 키를 기본 설정 폴더에 쓴다"""
+    return os.path.join(home or os.path.expanduser('~'), 'Library', 'Application Support', 'WordCraft', f'control-key.local-{port}')
+
+
+def wait_channel(st, wait=20):
+    """조작 채널이 열릴 때까지(키·control 파일은 앱이 포트를 잡은 뒤에 쓴다)"""
+    last = None
+    for _ in range(wait * 4):
+        if st['auth'] == 'key' and not os.path.exists(st['secret']) and os.path.exists(key_alt(st['port'])):
+            st['secret'] = key_alt(st['port'])
+        try:
+            c = Channel(st, timeout=5)
+            c.close()
+            return
+        except CraftError as e:
+            last = e
+            time.sleep(0.25)
+    raise CraftError(f'control channel did not open / 조작 채널이 안 열림: {last}')
+
+
+def stop_app(ddir, app, st):
+    """채널로 끄고, 안 꺼지면 SIGTERM — 무인증 포트가 남지 않게"""
+    try:
+        c = Channel(st, timeout=5)
+        try:
+            c.call(quit_method(app))
+        except CraftError:
+            pass
+        c.close()
+    except CraftError:
+        pass
+    for _ in range(20):
+        if not pid_alive(st.get('pid')):
+            break
+        time.sleep(0.25)
+    else:
+        os.kill(int(st['pid']), signal.SIGTERM)
+    drop_takeover(ddir, app)  # 앱이 꺼지면 개입도 끝 — 남으면 다시 띄운 앱에 참모 명령이 계속 막힌다
+    drop_state(ddir, app)
+
+
+def open_native_ctl(ddir, app, work=None, here=False, window=True):
+    """맥 앱을 조작 채널과 함께 띄운다 — 가짜 화면이 있으면 거기(ui.ron 을 아는 앱), 상태는 <데이터>/craft-native/<앱>.json"""
+    name = display(app)
+    st = load_state(ddir, app)
+    if st and pid_alive(st.get('pid')):
+        print(f'{name}: already open / 이미 떠 있음 — work / 작업 폴더: {st.get("work")}')
+        if window and not here:
+            window_line(ddir, 'open', app)  # 다시 열면 다시 보이게(앱을 다시 켰거나 탭을 닫았을 때)
+        return 0
+    work = os.path.abspath(work or os.path.join(native_dir(ddir, app), 'work'))
+    os.makedirs(work, exist_ok=True)
+    vd = None if here else craft_screen(ddir)
+    place = bool(vd)  # 다 가짜 화면으로 — ui.ron 을 읽는 앱(PhotoCraft 계열)은 미리 자리, 나머지는 띄운 뒤 System Events 로 옮긴다
+    learned_file = os.path.join(ddir, 'craft-native', 'scale.json')
+    try:
+        with open(learned_file, encoding='utf-8') as f:
+            learned = json.load(f).get('scale')
+    except Exception:
+        learned = None
+    scales = scale_order(learned, jxa(JXA_SCREENS) or [1.0]) if place else [1.0]
+    tried = []
+    for scale in scales:
+        plan = launch_plan(ddir, app, free_port(), work, vd if place else None, scale)
+        os.makedirs(plan['config'], exist_ok=True)
+        if plan['uiron']:
+            with open(plan['uiron'][0], 'w', encoding='utf-8') as f:
+                f.write(plan['uiron'][1])
+        if NATIVE[app]['auth'] == 'token' and not os.path.exists(plan['secret']):
+            fd = os.open(plan['secret'], os.O_WRONLY | os.O_CREAT, 0o600)
+            os.write(fd, (os.urandom(32).hex() + '\n').encode())
+            os.close(fd)
+        if NATIVE[app]['auth'] == 'file' and os.path.exists(plan['secret']):
+            os.remove(plan['secret'])  # 옛 포트·토큰을 새것으로 읽지 않게
+        if subprocess.run(plan['argv'], capture_output=True).returncode != 0:
+            # 안 깔림 → 처음 한 번 릴리스 DMG 를 받아(SHA·공증·번들 id 확인) /Applications 에, 그다음 다시 띄운다
+            print(f'{name}: installing the macOS app / 맥 앱 설치 중(처음 한 번)…', file=sys.stderr)
+            print(f'{name}: installed / 설치함 — {install_native(app, ddir=ddir)}', file=sys.stderr)
+            if subprocess.run(plan['argv'], capture_output=True).returncode != 0:
+                return open_native(app)
+        args = plan['argv'][plan['argv'].index('--args') + 1:]
+        pid = find_pid('--control ' + args[args.index('--control') + 1])
+        if not pid:
+            raise CraftError(f'{name} did not start / 안 떴음')
+        st = {'app': app, 'pid': pid, 'port': plan['port'], 'auth': NATIVE[app]['auth'], 'secret': plan['secret'], 'work': work,
+              'exe': os.path.join(app_path(app), 'Contents', 'MacOS'), 'here': bool(here)}  # exe: 앱이 끌 때 pid 가 그 앱인지 대조 · here: 사람 화면에 띄운 것
+        try:
+            wait_channel(st)
+        except CraftError:
+            os.kill(pid, signal.SIGTERM)  # 상태 파일 없이 포트가 열린 채 남지 않게
+            raise
+        if place:
+            rect = None
+            uiron = bool(NATIVE[app]['uiron'])
+            # 채널이 창보다 먼저 열릴 때가 있다 — 창이 생길 때까지(ui.ron 앱 3초, 나머지는 창이 8~10초 걸리기도 해서 15초)
+            for _ in range(12 if uiron else 60):
+                rect = jxa(JXA_WINDOW.replace('__PID__', str(pid)))
+                if rect and rect[2] > 300:
+                    break
+                time.sleep(0.25)
+            if not uiron:
+                # ui.ron 을 안 읽는 앱 — 뜬 창을 바로 가짜 화면으로(사람 화면에 0.5~8초 보이는 건 아직 남는다, 10/16 실측)
+                x, y = vd[0] + 30, vd[1] + 33
+                if rect and not on_vd(rect, vd):
+                    place_window(pid, x, y)
+                    time.sleep(0.3)
+                    rect = jxa(JXA_WINDOW.replace('__PID__', str(pid)))
+                if not rect:
+                    # 창이 아주 늦게 뜨는 앱(EffectCraft 첫 실행 GPU 준비 66초) — 끄지 않고 뒤에서 기다렸다 옮긴다
+                    subprocess.Popen([sys.executable, os.path.abspath(__file__), '_place', str(pid), str(x), str(y)],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                    rect = (x, y, 1, 1)
+            if rect and NATIVE[app].get('frame') and not on_vd(rect, vd):
+                # 창 자리 명령이 있는 앱 — 짐작이 빗나갔으면 그 자리에서 옮긴다(다시 띄우지 않고)
+                c = Channel(st)
+                try:
+                    c.call('ui.window.frame', frame_params(vd))
+                except CraftError:
+                    pass
+                finally:
+                    c.close()
+                time.sleep(0.3)
+                rect = jxa(JXA_WINDOW.replace('__PID__', str(pid)))
+            tried.append((scale, rect))
+            if not rect or (not on_vd(rect, vd) and uiron):
+                jxa(f'ObjC.import("AppKit"); $.NSRunningApplication.runningApplicationWithProcessIdentifier({pid}).hide; 0')
+                stop_app(ddir, app, st)
+                continue
+            if uiron:
+                with open(learned_file, 'w', encoding='utf-8') as f:
+                    json.dump({'scale': scale}, f)
+        st['version'] = native_version(app_path(app)) or ''
+        st['name'] = name  # 앱 창 머리줄 이름 — 갈아끼운 판이면 그 이름
+        save_state(ddir, app, st)
+        _write_json(status_file(ddir, app), {'last': '', 'dirty': False})
+        where = 'agents screen / 가짜 화면' if place else 'normal window / 보통 창'
+        print(f'{name}: open with control channel / 조작 채널로 띄움 ({where}) — work / 작업 폴더: {work}')
+        if place and window:  # 가짜 화면에 띄웠으면 Chammo 따로 창에 비춘다
+            window_line(ddir, 'open', app)
+        if not NATIVE[app]['auth']:
+            print('this app\'s control port has no auth — scripts/craft close when done / 인증 없는 포트라 끝나면 close', file=sys.stderr)
+        return 0
+    raise CraftError(f'{name}: the window did not land on the agents screen / 창이 가짜 화면에 안 떴음 {tried} — try --here')
+
+
+# 경로 이름표 — 작업 폴더 기준 상대 경로를 절대 경로로 바꿔 넘긴다(앱마다 상대 경로를 거부하거나 나중에 거부 창, 2026-10-19 VectorCraft)
+PATH_KEYS = {'path', 'paths', 'out', 'output', 'outputpath', 'file', 'filepath', 'dest', 'destination', 'target', 'savepath', 'dir', 'folder'}
+
+
+def abs_paths(params, work):
+    """params 안 경로 이름표의 상대 경로 → work 기준 절대 경로, ~ 는 홈. 주소(://)·절대 경로는 그대로"""
+    def fix(v):
+        if not isinstance(v, str) or not v or '://' in v:
+            return v
+        if v.startswith('~'):
+            return os.path.expanduser(v)
+        return v if os.path.isabs(v) else os.path.join(work, v)
+
+    def walk(x, key=''):
+        if isinstance(x, dict):
+            return {k: walk(v, k.lower()) for k, v in x.items()}
+        if isinstance(x, list):
+            return [walk(v, key) for v in x]
+        return fix(x) if key in PATH_KEYS else x
+    return walk(params)
+
+
+# 한 Craft 에 참모 둘이 같이 붙지 않게 — do/run 을 부른 참모가 '쓰는 참모', 이만큼 쉬면 다른 참모가 넘겨받는다(2026-10-19 같은 VectorCraft 충돌)
+LEASE_IDLE = 180
+
+
+def lease_holder(st, me, now):
+    """지금 이 앱을 쓰는 다른 참모(막아야 하면 그 세션 번호), 아니면 None. 참모 밖(me=None)은 막지 않는다"""
+    lease = st.get('lease') or {}
+    who = lease.get('by')
+    if not me or not who or who == me or now - lease.get('at', 0) > LEASE_IDLE:
+        return None
+    return who
+
+
+def lease_take(st, me, now):
+    if me:
+        st['lease'] = {'by': me, 'at': now}
+
+
+def session_name(sid):
+    """세션 번호 → 이름(claude agents --json), 못 찾으면 번호"""
+    try:
+        rows = json.loads(subprocess.run(['claude', 'agents', '--json'], capture_output=True, text=True, timeout=10).stdout or '[]')
+        rows = rows if isinstance(rows, list) else rows.get('agents', [])
+        return next((r.get('name') or sid for r in rows if str(r.get('id', '')).startswith(sid) or sid.startswith(str(r.get('id', '')) or '-')), sid)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return sid
+
+
+def dialog_of(inspect):
+    """ui.inspect 답에서 떠 있는 대화창(kind·fields), 없으면 None"""
+    if not isinstance(inspect, dict):
+        return None
+    return (inspect.get('ui') or {}).get('dialog') or inspect.get('dialog') or None
+
+
+# 대화창 닫기 — 앱마다 있는 메서드가 다르다(10/19: VectorCraft·GridCraft 등은 cancel, WordCraft·DeckCraft 는 close, FilmCraft·PdfCraft 등은 dialog.* 없음)
+DIALOG_CLOSE = [('ui.dialog.cancel', None), ('ui.dialog.close', None), ('ui.dialog.dismiss', None), ('ui.dialog.confirm', 'message'), ('ui.key', {'key': 'Escape'})]
+
+
+def close_dialog(call):
+    """떠 있는 대화창을 닫는다 — 닫은 길 이름(없었으면 None). call(method, params) 는 채널 한 번. 확인(confirm)은 메시지 창(OK 하나)일 때만"""
+    def look():
+        try:
+            return dialog_of(call('ui.inspect', None)), True
+        except CraftError:
+            return None, False
+    d, can_look = look()
+    if can_look and not d:
+        return None
+    for method, cond in DIALOG_CLOSE:
+        if cond == 'message' and (d or {}).get('kind') != 'message':
+            continue
+        params = cond if isinstance(cond, dict) else None
+        try:
+            call(method, params)
+        except CraftError:
+            continue
+        label = method + (' Escape' if params else '')
+        if not can_look:
+            return label
+        time.sleep(0.2)
+        if not look()[0]:
+            return label
+    raise CraftError('the dialog did not close / 대화창이 안 닫힘 — scripts/craft shot 으로 보고 ui.click 으로(참모 화면은 ui.mouse)')
+
+
+def native_cmd(ddir, cmd, rest):
+    """do|run|shot|close|status — 답은 JSON 그대로"""
+    if cmd == 'status':
+        for a in NATIVE:
+            st = load_state(ddir, a)
+            if st and pid_alive(st.get('pid')):
+                print(f'{display(a)}  pid {st["pid"]}  port {st.get("port") or "-"}  work {st.get("work")}')
+        return 0
+    app = app_key(rest[0])
+    st = load_state(ddir, app)
+    if not st:
+        raise CraftError(f'{display(app)} is not open / 안 띄움 — scripts/craft open {app} --native')
+    if cmd == 'close':
+        print(close_native(ddir, app, st))  # 묻지 않고 저장 후 닫기 — 저장이 실패해도 끈다
+        return 0
+    if cmd == 'save':
+        # 끄지 않고 저장만(앱을 끌 때 사람 화면에 꺼내 둔 앱) — 바뀐 게 없으면 아무것도 안 한다
+        saved = autosave(ddir, app, st)
+        print(f'{display(app)}: ' + ('saved / 저장: ' + ', '.join(saved) if saved else 'nothing to save / 저장할 것 없음'))
+        return 0
+    if cmd == 'eject':
+        return eject(ddir, app, st)
+    if cmd == 'takeover':
+        return takeover(ddir, app, st, rest[1] if len(rest) > 1 else '')
+    if cmd == 'dialog':
+        c = Channel(st)
+        try:
+            call = lambda m, q=None: c.call(m, q) if q is not None else c.call(m)
+            if len(rest) > 1 and rest[1] == 'close':
+                how = close_dialog(call)
+                print(f'{display(app)}: ' + (f'closed / 닫음 ({how})' if how else 'no dialog / 대화창 없음'))
+            else:
+                print(json.dumps(dialog_of(call('ui.inspect')), ensure_ascii=False))
+        finally:
+            c.close()
+        return 0
+    force = '--force' in rest
+    rest = [r for r in rest if r != '--force']
+    if cmd in ('run', 'do') and len(rest) > 1:
+        me, now = opener_id(), time.time()
+        holder = lease_holder(st, me, now)
+        if holder and not force:
+            who = session_name(holder)
+            raise CraftError(f'{who} is using {display(app)} / {who} 참모가 쓰는 중 — 덮어쓰려면 --force')
+        lease_take(st, me, now)
+        save_state(ddir, app, st)
+        q = json.loads(rest[2]) if len(rest) > 2 else None
+        check_takeover(ddir, app, *((rest[1], q) if cmd == 'do' else run_call(app, rest[1], q)))
+    touch_used(ddir, app)
+    c = Channel(st)
+    try:
+        if cmd == 'shot':
+            work = os.path.abspath(st.get('work') or '.')
+            out = rest[rest.index('--out') + 1] if '--out' in rest else os.path.join(work, 'chammo-shot.png')
+            # 앱마다 답 모양이 달라(10/16) — 작업 폴더 안 절대 경로를 같이 넘기고, 바이트·경로·그 자리 파일 중 있는 것으로
+            asked = os.path.join(work, '.chammo-shot.png')
+            if os.path.exists(asked):
+                os.remove(asked)
+            params = dict(shot_params(app), **({} if app == 'photocraft' else {'path': asked}))
+            try:
+                res = c.call('ui.screenshot', params)
+            except CraftError:
+                res = {}  # PdfCraft 처럼 못 찍는 앱 — 아래 화면 캡처로
+            png = shot_file(res, asked)
+            if png is None:
+                rect = jxa(JXA_WINDOW.replace('__PID__', str(st['pid'])))
+                if rect and subprocess.run(['screencapture', '-x', '-o', '-R', ','.join(str(int(v)) for v in rect), out], capture_output=True).returncode == 0:
+                    print(os.path.abspath(out))
+                    return 0
+                print(json.dumps(res, ensure_ascii=False))
+                return 0
+            with open(out, 'wb') as f:
+                f.write(png)
+            if os.path.exists(asked):
+                os.remove(asked)
+            print(os.path.abspath(out))
+            return 0
+        params = abs_paths(json.loads(rest[2]) if len(rest) > 2 else None, os.path.abspath(st.get('work') or '.'))
+        method, p = (rest[1], params) if cmd == 'do' else run_call(app, rest[1], params)
+        pre, post = hand_plan(app, method, p)
+        hand_line(ddir, app, pre)  # 참모 손: 누를 곳 → 명령 → 바뀐 곳(앱이 안 보는 중이면 그냥 넘긴다) — run 이든 do 든
+        resp = c.call(method, p)
+        print(json.dumps(resp, ensure_ascii=False), flush=True)  # 답 먼저 — 손 자리 묻기는 그 뒤라 명령을 안 늦춘다
+        hand_line(ddir, app, hand_after(post, resp, lambda m, q=None: c.call(m, q) if q is not None else c.call(m)))
+        note_call(ddir, app, method, p)
+        return 0
+    finally:
+        c.close()
+
+
+def takeover(ddir, app, st, onoff):
+    """개입 켜기(지금 문서 상태를 떠 둔다)·끄기(다시 떠서 바뀐 것 한 줄을 찍는다 — 앱이 참모 입력칸으로 넘긴다)"""
+    # 문서 상태는 읽을 수 있을 때만 — 문서를 안 열었거나 document.inspect 가 없는 앱(포토 말고)에서 여기서 멈추면 잠금이 안 걸려 스크립트가 계속 썼다(10/19 실측)
+    c = Channel(st)
+    try:
+        doc = c.call('engine.execute', {'command': 'document.inspect'}) or {}
+    except CraftError:
+        doc = None
+    finally:
+        c.close()
+    if onoff == 'on':
+        save_takeover(ddir, app, {'on': True, 'before': doc, 'at': time.strftime('%H:%M:%S')})
+        print(f'{display(app)}: a person has control / 사람이 조작 중')
+        return 0
+    lock = _read_json(takeover_file(ddir, app))
+    before = lock.get('before')
+    drop_takeover(ddir, app)
+    if before is None or doc is None or change_summary(before, doc) != '바뀐 것 없음':
+        _write_json(status_file(ddir, app), {'last': 'person / 사람이 고침', 'dirty': True})  # 닫을 때 저장되게(못 읽었으면 바뀐 걸로)
+    shot = os.path.join(os.path.abspath(st.get('work') or '.'), 'chammo-handback.png')
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            native_cmd(ddir, 'shot', [app, '--out', shot])
+    except Exception:
+        pass
+    shot = shot if os.path.exists(shot) else None
+    if before is None or doc is None:  # 이 앱(또는 이때)은 문서 상태를 못 읽음 — 바뀐 게 없다고 하지 않고 화면으로
+        print('바뀐 것은 문서 상태로 못 읽음 — 화면으로 확인' + (f' · 화면 {shot}' if shot else ''))
+    else:
+        print(handback_text(before, doc, shot))
+    return 0
+
+
+def handback_text(before, after, shot):
+    """돌려받음 한 줄 — 사람이 바꾼 것 + 지금 문서 상태(이름·레이어 수·찍은 화면). 세션이 이걸 보고 상황을 파악한 뒤 사람 지시를 기다린다(2026-10-19)"""
+    now = []
+    if after.get('name'):
+        now.append(f"'{after['name']}'")
+    if isinstance(after.get('layers'), list):
+        now.append(f"레이어 {len(after['layers'])}개")
+    if shot:
+        now.append(f'화면 {shot}')
+    line = change_summary(before, after) + (f" · 지금 문서 {' · '.join(now)}" if now else '')
+    return ' '.join(line.split())
+
+
+def eject(ddir, app, st):
+    """꺼내기 — 지금 문서를 작업 폴더에 저장하고, 앱을 끈 뒤 사람 화면(--here)에 다시 열어 그 파일을 연다. 따로 창은 닫는다"""
+    c = Channel(st)
+    try:
+        doc = c.call('engine.execute', {'command': 'document.inspect'}) or {}
+        save = eject_save(app, doc.get('name', ''))
+        if save is None:
+            raise CraftError(f'{display(app)}: pop out is PhotoCraft-only for now / 꺼내기는 아직 PhotoCraft 만')
+        c.call('app.save', save)
+    finally:
+        c.close()
+    window_line(ddir, 'close', app)
+    stop_app(ddir, app, st)
+    open_native_ctl(ddir, app, st.get('work'), here=True, window=False)
+    c = Channel(load_state(ddir, app))
+    try:
+        c.call('app.open', save)
+    finally:
+        c.close()
+    print(f'{display(app)}: popped out / 꺼냄 — {os.path.join(st.get("work") or "", save["path"])}')
+    return 0
+
+
+def mac_only_ok(platform=None):
+    """윈도우는 아직 안 한다(파이썬으로 바로 불러도) — 맥·리눅스만"""
+    return not (platform or sys.platform).startswith('win')
+
+
+def main(argv):
+    if not argv or argv[0] in ('-h', '--help'):
+        print(__doc__, file=sys.stderr)
+        return 2
+    cmd, rest = argv[0], argv[1:]
+    if not mac_only_ok():
+        print('craft: macOS only for now / 지금은 맥만', file=sys.stderr)
+        return 1
+    if cmd == '_serve':
+        serve_main(*rest)
+        return 0
+    if cmd == '_place':
+        # 뒤에서 — 창이 생기면(최대 120초) 가짜 화면으로 옮기고 끝
+        pid, x, y = int(rest[0]), rest[1], rest[2]
+        for _ in range(240):
+            if not pid_alive(pid):
+                return 0
+            r = jxa(JXA_WINDOW.replace('__PID__', str(pid)))
+            if r and r[2] > 300:
+                place_window(pid, float(x), float(y))
+                return 0
+            time.sleep(0.5)
+        return 0
+    ddir = data_dir()
+    global NATIVE, LOCAL
+    NATIVE, LOCAL = chammo_table(NATIVE, local_config(ddir))  # 로컬 DMG 가 있는 앱만 참모 앱으로
+    root = os.path.join(ddir, 'craft')
+    os.makedirs(root, exist_ok=True)
+    try:
+        if cmd == 'list':
+            if '--json' in rest:  # 앱 서랍이 읽는 길(--refresh = 새 판 다시 확인, --fast = 네트워크 없이 먼저)
+                print(json.dumps(drawer_rows(ddir, root, refresh='--refresh' in rest, fast='--fast' in rest), ensure_ascii=False))
+            else:
+                print(listing(root, ddir))
+        elif cmd == 'open' and rest:
+            app = app_key(rest[0])
+            if '--native' in rest:
+                if sys.platform != 'darwin':
+                    return open_native(app)
+                work = rest[rest.index('--work') + 1] if '--work' in rest else None
+                f = open_file_arg(rest)
+                rc = open_native_ctl(ddir, app, work, '--here' in rest)
+                if rc:
+                    return rc
+                st = load_state(ddir, app)
+                if not st.get('saveDir'):
+                    st['saveDir'] = locker_craft_dir()  # 새 문서 저장 자리 — 띄운 참모의 보관함(창 단추로 닫을 땐 참모가 없어 지금 정해 둔다)
+                    save_state(ddir, app, st)
+                by = opener_for(st, opener_id())
+                if by and st.get('by') != by:
+                    st['by'] = by  # 돌려받음 [앱] 줄을 받을 참모 — 대표 참모가 아니라 이 앱을 처음 연 참모(10/16 실사용: 회사 비서로 갔다)
+                    save_state(ddir, app, st)
+                if f:
+                    open_file(ddir, app, f)
+                return 0
+            touch_used(ddir, app)
+            if not installed(root, app):
+                print(f'{APPS[app][0]}: downloading the web build / 웹판 받는 중…', file=sys.stderr)
+            ver, _ = ensure(root, app)
+            port = start_server(ddir, root)
+            url = f'http://127.0.0.1:{port}/{app}/{ver}/'
+            print(f'{APPS[app][0]} {ver} — {url}')  # 웹판은 ArtCraft 원본 — 원래 이름으로
+            print('no autosave in the web build — save before closing / 웹판은 자동 저장 없음, 닫기 전에 저장', file=sys.stderr)
+            show = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'show')
+            return subprocess.run([sys.executable, show, url]).returncode
+        elif cmd == 'recent':
+            for r in recent(ddir):
+                if not rest or r.get('app') == app_key(rest[0]):
+                    print(f"{r.get('at', '')}  {display(r['app']) if r.get('app') in APPS else r.get('app')}  {r['path']}{'' if os.path.exists(r['path']) else '  (gone / 없음)'}")
+            return 0
+        elif cmd == 'update':
+            apps = [app_key(rest[0])] if rest else [k for k in APPS if installed(root, k)]
+            for a in apps:
+                old, new = update(root, a)
+                print(f'{display(a)}: {old or "-"} → {new}' if old != new else f'{display(a)}: {new} (latest / 최신)')
+            # 맥 앱 — 내가 /Applications 에 깐 것만 같은 길(DMG·SHA·공증)로
+            for a in ([app_key(rest[0])] if rest else list(APPS)) if sys.platform == 'darwin' else []:
+                if native_version(app_path(a)):
+                    old, new = update_native(a, ddir=ddir)
+                    print(f'{display(a)} (macOS app / 맥 앱): {old} → {new}' if old != new else f'{display(a)} (macOS app / 맥 앱): {new} (latest / 최신)')
+        elif cmd == 'remove' and rest:
+            app = app_key(rest[0])
+            gone = remove_app(ddir, app)
+            for g in gone:
+                print(f'→ Trash / 휴지통: {g}')
+            print(f'{display(app)}: removed / 지웠음' if gone else f'{display(app)}: nothing of ours to remove / 우리가 깐 게 없음')
+        elif cmd == 'cli' and rest:
+            exe = ensure_cli(root, rest[0])
+            hint = cli_hint(rest)
+            if hint:
+                print(hint, file=sys.stderr)
+            os.execv(exe, [exe] + rest[1:])
+        elif cmd in ('do', 'run') and len(rest) >= 2 or cmd in ('shot', 'close', 'save', 'eject', 'takeover', 'dialog') and rest or cmd == 'status':
+            return native_cmd(ddir, cmd, rest)
+        elif cmd == 'stop':
+            print('stopped / 껐음' if stop_server(ddir, root) else 'not running / 안 떠 있음')
+        else:
+            print(__doc__, file=sys.stderr)
+            return 2
+    except TakeoverError as e:
+        print(f'craft: {e}', file=sys.stderr)
+        return 4
+    except CraftError as e:
+        print(f'craft: {e}', file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

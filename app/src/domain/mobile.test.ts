@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardTag, ctxFromAgents, heldIds, orchAsk, orchTasks, releaseSnap, routineOrch, rubberTop, sheetTop, closeOnRelease, dropLabel, keyboardOpen, frameAt, driftBias, ghostKeyboard, readViewport, diagLine, isTyping, liveWork, phoneBubble, usageText, waitingList, withAttachments, phoneName, offOrchRows, wokeOrch, waitAnswer, waitKey, shownWaiting, pruneWaitSent, dupAnswer, answerFail, sessionBoard, nearBottom, stickBottom, shrinkPlan, withEarlier, wantEarlier, nextAfterStop, lineSlot, orchMenu, pendingName, prunePendingNicks, subTag, subStatus } from './mobile';
+import { cardTag, ctxFromAgents, heldIds, orchAsk, orchTasks, releaseSnap, routineOrch, rubberTop, sheetTop, closeOnRelease, dropLabel, keyboardOpen, frameAt, driftBias, ghostKeyboard, readViewport, diagLine, isTyping, liveWork, phoneBubble, usageText, waitingList, withAttachments, phoneName, offOrchRows, wokeOrch, waitAnswer, waitKey, shownWaiting, pruneWaitSent, dupAnswer, answerFail, sessionBoard, nearBottom, stickBottom, farFromBottom, jumpDot, shrinkPlan, withEarlier, wantEarlier, nextAfterStop, lineSlot, orchMenu, pendingName, prunePendingNicks, subTag, subStatus } from './mobile';
 import type { Session } from './session';
 import { dashList } from './dashList';
 import type { ChatItem } from './chat';
@@ -32,6 +32,9 @@ describe('그림 붙여 보내기', () => {
     expect(withAttachments('이거 봐', ['/d/attach/1-phone.png'])).toBe('/d/attach/1-phone.png 이거 봐');
     expect(withAttachments('글만', [])).toBe('글만');
     expect(withAttachments('', ['/a b.png'])).toBe('/a\\ b.png');
+  });
+  it('그림 아닌 파일은 이름표 + 따옴표 경로(데스크톱 칩과 같은 함수) — 뒤 글과 경계가 보인다', () => {
+    expect(withAttachments('이거 봐', ['/d/attach/1-phone.png', '/d/attach/2-phone.pdf'])).toBe('/d/attach/1-phone.png #file1 "/d/attach/2-phone.pdf" 이거 봐');
   });
 });
 
@@ -166,11 +169,11 @@ describe('phoneBubble — 폰이 보낸 말의 첨부 경로를 #img·#file 이�
       atts: [{ path: A, label: '#img1', image: true }],
     });
   });
-  it('그림·파일은 따로 센다, 보낸 모양(withAttachments) 그대로 되돌린다', () => {
+  it('그림·파일은 따로 센다, 보낸 모양(withAttachments) 그대로 되돌린다 — 그림이 앞에 모이고 파일 이름표는 썸네일이 가진다', () => {
     const C = A.replace('271-', '273-').replace('.jpg', '.png');
     expect(phoneBubble(withAttachments('#img1 #img2 비교 #file1', [A, B, C]))).toEqual({
       body: '#img1 #img2 비교 #file1',
-      atts: [{ path: A, label: '#img1', image: true }, { path: B, label: '#file1', image: false }, { path: C, label: '#img2', image: true }],
+      atts: [{ path: A, label: '#img1', image: true }, { path: C, label: '#img2', image: true }, { path: B, label: '#file1', image: false }],
     });
   });
   it('첨부 폴더 이름 꼴이 아닌 경로는 글 그대로', () => {
@@ -485,6 +488,21 @@ describe('stickBottom — 대화 목록 바닥 붙이기(키보드·새 말풍�
     expect(stickBottom({ wasNear: true, sentMine: false })).toBe(true);
     expect(stickBottom({ wasNear: false, sentMine: false })).toBe(false);
     expect(stickBottom({ wasNear: false, sentMine: true })).toBe(true);
+  });
+});
+
+describe('맨 아래로 버튼 — 데스크톱 채팅과 같은 기준(400px 넘게 올려 읽을 때만), 새 답이 오면 점', () => {
+  it('바닥에서 400px 넘게 올렸을 때만 보인다', () => {
+    expect(farFromBottom(2000, 1200, 380)).toBe(true); // 420px 위
+    expect(farFromBottom(2000, 1220, 380)).toBe(false); // 딱 400px
+    expect(farFromBottom(2000, 1620, 380)).toBe(false); // 바닥
+  });
+  it('올려 읽는 중에 새 답이 늘면 점, 바닥으로 돌아오면 끈다', () => {
+    expect(jumpDot({ dot: false, away: true, before: 3, after: 4 })).toBe(true);
+    expect(jumpDot({ dot: true, away: true, before: 4, after: 4 })).toBe(true); // 켜진 점은 바닥 갈 때까지
+    expect(jumpDot({ dot: true, away: false, before: 4, after: 4 })).toBe(false);
+    expect(jumpDot({ dot: false, away: false, before: 3, after: 4 })).toBe(false); // 바닥을 보던 중이면 점 없이 따라 내려간다
+    expect(jumpDot({ dot: false, away: true, before: 4, after: 4 })).toBe(false); // 앞 대화를 거슬러 읽어 늘어난 건 지금 답 글 양이 그대로
   });
 });
 

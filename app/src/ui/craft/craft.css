@@ -1,0 +1,29 @@
+/* Craft 맥 앱 따로 창 — 머리줄 40px · 가운데 칸(네이티브 비추기) · 아래 줄 28px. 높이는 Rust craft_window TOP·BOTTOM 과 같게 */
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--surface); overflow: hidden; }
+.cw { height: 100%; display: flex; flex-direction: column; }
+.cw-head { flex: none; height: 40px; box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 0 6px 0 14px; border-bottom: 1px solid var(--line); background: var(--surface); font-size: 12.5px; color: var(--text); }
+.cw-name { font-size: 13px; font-weight: 650; }
+.cw-ver { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.cw-sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; }
+.cw-save { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); font-size: 12px; }
+.cw-save i { width: 6px; height: 6px; border-radius: 50%; background: var(--idle, #1f9a62); }
+.cw-save.dirty i { background: var(--blocked, #c98a00); }
+.cw-sp { flex: 1; }
+.cw-btn { height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: var(--surface-2); color: var(--text); font-size: 12.5px; cursor: pointer; }
+.cw-btn:hover { background: var(--hover); }
+.cw-stage { flex: 1; min-height: 0; position: relative; background: #1e1e1e; display: flex; align-items: center; justify-content: center; }
+.cw-still { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
+.cw-note { position: relative; max-width: 440px; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 18px 22px; border-radius: 12px; background: #26262c; color: #e6e6ec; font-size: 13px; line-height: 1.6; text-align: center; }
+.cw-doing { flex: none; height: 28px; box-sizing: border-box; display: flex; align-items: center; padding: 0 12px; font: 11.5px/1.5 "MesloLGS NF", ui-monospace, Menlo, Consolas, monospace; color: #c9c9d1; background: #18181c; white-space: nowrap; overflow: hidden; }
+.cw-doing.busy { color: #fff; }
+.cw-doing span { overflow: hidden; text-overflow: ellipsis; }
+/* 개입 — 참모 브라우저(ab-follow·ab-taking)와 같은 모양 */
+.cw-take { height: 26px; padding: 0 10px; border: 0; border-radius: 6px; font-size: 12px; font-weight: 600; color: #2f4fd0; background: rgba(107, 140, 255, .16); cursor: pointer; white-space: nowrap; }
+.cw-take.on { color: #fff; background: #4c6fe0; }
+.cw-doing.taking { color: #dfe6ff; background: color-mix(in srgb, #6b8cff 18%, #18181c); }
+.cw-axbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #26262c; color: #e6e6ec; font-size: 12.5px; line-height: 1.5; }
+.cw-axbar > span:first-child { flex: 1; }
+.cw-ax-acts { display: flex; gap: 4px; }
+.cw-spin { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--text-2); animation: cw-spin 0.8s linear infinite; }
+@keyframes cw-spin { to { transform: rotate(360deg); } }

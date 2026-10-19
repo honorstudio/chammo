@@ -244,7 +244,7 @@ export function actOf(n: TNode, o: { value?: string; submit?: boolean; href?: st
 
 export type HostState = { alive: boolean; ready: boolean; unsupported: boolean; error: string | null; status?: string | null; panes?: { id: string; title: string; plugin?: string }[]; shown?: string | null; log?: string; pid?: number };
 
-/** '켜는 중'이 이보다 길면 다시 켜기를 보인다(첫 켬 실측 0.6~0.8초, Rust 붙기 기다림 최대 45초) — 10/13 까닭 없이 영원히 돌았다 */
+/** '켜는 중'이 이보다 길면 다시 켜기를 보인다(첫 켬 실측 0.6~0.8초, Rust 붙기 기다림 최대 105초 — modes::INIT_WAIT 90 + 붙기 15, 그 사이 다시 켜기는 띄우는 중인 것을 기다린다) — 10/13 까닭 없이 영원히 돌았다 */
 export const START_SLOW_MS = 60_000;
 
 /** 모드 칸이 무엇을 보일까 — 판이 규약을 모름 / 멈춤(다시 켜기) / 띄우는 중 / 오래 걸림(다시 켜기) / 그림 */

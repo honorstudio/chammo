@@ -6,8 +6,11 @@ import { parseLkPick } from './lockerTree';
 /** 보관함 화면 자리인가(홈 l:<참모>#h 는 아님) — 폴더 탭이 돌아갈 곳 */
 const isFolderPick = (pick: string) => pick.startsWith('l:') && !pick.endsWith('#h');
 
-/** 탭 열쇠 → 화면 키 — 파일은 경로(d:<경로>), 세션은 s:<id>·시안 검토는 c:<경로> 그대로(패널 하나로 S4: 세션 '크게' = 가운데 탭) */
-export const tabPick = (key: string) => (key.startsWith('s:') || key.startsWith('c:') ? key : `d:${key}`);
+/** 열쇠 그대로가 화면 키인 탭 — 세션 s:<id>·시안 검토 c:<경로>·Craft 맥 앱 k:<앱>(비추기 칸, 2026-10-16) */
+const keyIsPick = (key: string) => key.startsWith('s:') || key.startsWith('c:') || key.startsWith('k:');
+
+/** 탭 열쇠 → 화면 키 — 파일은 경로(d:<경로>), 나머지는 열쇠 그대로(패널 하나로 S4: 세션 '크게' = 가운데 탭) */
+export const tabPick = (key: string) => (keyIsPick(key) ? key : `d:${key}`);
 
 /** 시안 검토 탭 열쇠 — 화면 키와 같다(c:<경로>) */
 export const reviewKey = (path: string) => `c:${path}`;
@@ -40,7 +43,7 @@ export function openReview(h: LkHold | null, orch: string, here: string, path: s
 export type TabRow = { homeOn: boolean; folderOn: boolean; folderTo: string; tabs: { path: string; on: boolean }[] };
 export function tabRow(h: LkHold | null, orch: string, pick: string): TabRow {
   const same = h && h.orch === orch ? h : null;
-  const cur = pick.startsWith('d:') ? pick.slice(2) : pick.startsWith('s:') || pick.startsWith('c:') ? pick : '';
+  const cur = pick.startsWith('d:') ? pick.slice(2) : keyIsPick(pick) ? pick : '';
   return { homeOn: pick === `l:${orch}#h`, folderOn: isFolderPick(pick), folderTo: same?.back ?? `l:${orch}`, tabs: (same?.tabs ?? []).map((path) => ({ path, on: path === cur })) };
 }
 

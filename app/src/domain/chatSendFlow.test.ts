@@ -3,7 +3,7 @@
 // 이 표는 ChatView 가 매 초 하는 것(waitingOf → pendingState → pendAct, 다시 보내기 = againPlan → resent, 걸린 Enter = autoEnterTarget)을
 // 시간 순서대로 그대로 돌린다. 새 증상이 나오면 고치기 전에 여기 한 줄(장면)을 먼저 더한다.
 import { describe, expect, it } from 'vitest';
-import { appendChat, enterDelay, type ChatItem } from './chat';
+import { appendChat, enterDelay, escUnsends, type ChatItem } from './chat';
 import { againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, LOST_AFTER, newPending, pendAct, pendingState, PENDING_MS, resent, waitingOf, type QueueState } from './chatQueue';
 
 const T0 = Date.parse('2026-10-10T12:00:00Z');
@@ -11,7 +11,8 @@ const iso = (ms: number) => new Date(ms).toISOString();
 const L = (o: object) => JSON.stringify(o);
 let n = 0;
 /** 기록 줄 — at = T0 부터 몇 ms(기록 시각은 보낸 때로 찍힌다, 훅이 늦으면 붙는 것만 늦다) */
-const user = (text: string, at: number) => L({ type: 'user', uuid: `u${n++}`, timestamp: iso(T0 + at), message: { role: 'user', content: text } });
+const user = (text: string, at: number, parent?: string) => L({ type: 'user', uuid: `u${n++}`, timestamp: iso(T0 + at), message: { role: 'user', content: text }, ...(parent ? { parentUuid: parent } : {}) });
+const think = (at: number) => L({ type: 'assistant', uuid: `a${n++}`, timestamp: iso(T0 + at), message: { role: 'assistant', content: [{ type: 'thinking', thinking: '...' }] } });
 const queued = (text: string, at: number) => L({ type: 'attachment', uuid: `q${n++}`, timestamp: iso(T0 + at), attachment: { type: 'queued_command', prompt: text, origin: { kind: 'human' } } });
 const op = (operation: string, at: number, content?: string) => L({ type: 'queue-operation', operation, timestamp: iso(T0 + at), sessionId: 's', ...(content === undefined ? {} : { content }) });
 const peer = (text: string, at: number) => user(`<cross-session-message from="uds:/tmp/x.sock" from-name="demo">${text}</cross-session-message>`, at);
@@ -23,7 +24,9 @@ type Step =
   | { term: string } // 터미널 입력칸에 보이는 글
   | { see: string[] } // 말풍선들 '글=상태/단추'
   | { again: 'send' | 'warn' } // 다시 보내기(맨 앞 말풍선 또는 입력칸 글 A) 눌렀을 때 막나
-  | { enter: string | null }; // 입력칸에 걸린 말에 Enter 를 다시 넣나
+  | { enter: string | null } // 입력칸에 걸린 말에 Enter 를 다시 넣나
+  | { esc: boolean } // 채팅 Esc 가 방금 보낸 말을 거둬들이게 되나(그럼 안 넘긴다 — domain/chat escUnsends)
+  | { bubbles: string[] }; // 기록에서 그린 내 말풍선들
 
 type Sim = { now: number; pending: { text: string; at: number; since?: number }[]; items: ChatItem[]; queue: QueueState; term: string; warned: { text: string; at: number } | null; lastSent: string };
 
@@ -50,6 +53,11 @@ function run(steps: Step[]): void {
       expect(plan, where).toBe(step.again);
       if (plan === 'warn') s.warned = { text, at: s.now };
       else { s.warned = null; if (p) s.pending = [...s.pending.filter((x) => x.at !== p.at), resent(p, s.now)]; }
+    } else if ('esc' in step) {
+      const { rows } = view();
+      expect(escUnsends(s.items, rows.some((r) => r.st === 'sending')), where).toBe(step.esc);
+    } else if ('bubbles' in step) {
+      expect(s.items.filter((x) => x.kind === 'user').map((x) => (x as { text: string }).text), where).toEqual(step.bubbles);
     } else {
       const { enterWait } = view();
       expect(autoEnterTarget(s.pending, { queue: s.queue, termText: s.term, now: s.now, enterWait, tries: {} }), where).toBe(step.enter);
@@ -97,6 +105,10 @@ const FLOW: [string, Step[]][] = [
     [{ send: A }, { wait: 1000 }, { log: [user(A, 300)] }, { wait: 3000 }, { send: A }, { wait: 2000 }, { log: [user(A, 4300)] }, { see: [] }]],
   ['둘을 잇따라 보냈는데 하나만 들어감 — 안 들어간 것만 안 갔어요',
     [{ send: A }, { wait: 100 }, { send: B }, { wait: 2000 }, { log: [user(A, 400)] }, { wait: LOST_AFTER }, { see: [`${B}=lost/again`] }]],
+  ['쉬는 참모에 보낸 말에 답(생각·도구·글)이 나오기 전 Esc 는 안 넘긴다 — 넘기면 Claude Code 가 그 말을 거둬들여 참모에게 안 간다(2026-10-16 사용자)',
+    [{ send: A }, { wait: 300 }, { esc: true }, { wait: 700 }, { log: [user(A, 0, 'p0')] }, { see: [] }, { esc: true }, { wait: 3000 }, { log: [think(4000)] }, { esc: false }]],
+  ['다른 길(터미널 Esc)로 거둬들여진 말 — 같은 부모의 다음 말이 붙으면 앞 말은 보통 말풍선으로 안 남는다',
+    [{ log: [user(A, 0, 'p0')] }, { bubbles: [A] }, { wait: 3000 }, { send: B }, { wait: 1000 }, { log: [user(B, 3000, 'p0')] }, { see: [] }, { bubbles: [B] }]],
   ['/ 명령은 기록에 안 남을 때가 있어 4초 뒤 보낸 걸로', [{ send: '/model' }, { see: ['/model=sending'] }, { wait: 4100 }, { see: [] }]],
   ['한 시간 넘게 안 간 말풍선은 지운다', [{ send: A }, { wait: PENDING_MS + 1 }, { see: [] }]],
 ];

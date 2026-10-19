@@ -1,0 +1,18 @@
+/* 오픈소스 라이선스 창 — 앱마다 한 줄, 아래 칸은 담아 가는 것의 고지 원문(펼치기) */
+.lic-card { width: min(760px, 100%); max-height: min(720px, 90vh); display: flex; flex-direction: column; padding: 18px 0 12px; }
+.lic-head { display: flex; align-items: center; justify-content: space-between; padding: 0 22px; }
+.lic-head h2 { margin: 0; font-size: 17px; }
+.lic-sub { padding: 6px 22px 10px; font-size: 12.5px !important; }
+.lic-list { overflow: auto; min-height: 0; flex: 1; }
+.lic-row { display: grid; grid-template-columns: 28px 1fr auto; gap: 12px; align-items: center; padding: 8px 22px; border-top: 1px solid var(--line); }
+.lic-row img, .lic-ph { width: 28px; height: 28px; border-radius: 7px; display: block; }
+.lic-ph { background: var(--surface-2); }
+.lic-main { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.lic-main b { font-size: 13px; font-weight: 600; }
+.lic-main span { font-size: 11.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lic-l { font-size: 11.5px; color: var(--text-2); white-space: nowrap; }
+.lic-sec { padding: 12px 22px 6px; font-size: 12px; font-weight: 600; color: var(--text-2); border-top: 1px solid var(--line); }
+.lic-notice { padding: 0 22px; }
+.lic-notice summary { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; cursor: pointer; font-size: 12.5px; }
+.lic-notice pre { margin: 0 0 10px; padding: 10px; border-radius: 8px; background: var(--surface-2); font-size: 11px; line-height: 1.5; white-space: pre-wrap; max-height: 220px; overflow: auto; }
+.lic-foot { padding: 8px 22px 4px; margin: 0; font-size: 11.5px !important; color: var(--text-3) !important; border-top: 1px solid var(--line); }

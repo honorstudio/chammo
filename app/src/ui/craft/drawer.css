@@ -1,0 +1,36 @@
+/* 앱 서랍 — 런치패드처럼 아이콘 격자, 아이콘 아래 이름 한 줄. 안 깐 앱은 흐리게 + '받기' */
+.cd { flex: 1; min-height: 0; overflow: auto; padding: 22px 28px 28px; box-sizing: border-box; color: var(--text); }
+.cd-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.cd-head h1 { margin: 0; font-size: 18px; font-weight: 700; }
+.cd-n { color: var(--text-3); font-size: 13px; font-variant-numeric: tabular-nums; }
+.cd-sp { flex: 1; }
+.cd-used { color: var(--text-2); font-size: 12.5px; }
+.cd-sec { margin: 18px 0 10px; color: var(--text-2); font-size: 12.5px; font-weight: 600; }
+.cd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 14px 10px; }
+.cd-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 6px 10px; border-radius: 14px; cursor: pointer; outline: none; }
+.cd-tile:hover, .cd-tile:focus-visible { background: var(--hover); }
+.cd-icon { position: relative; width: 64px; height: 64px; display: grid; place-items: center; }
+.cd-icon img { width: 64px; height: 64px; display: block; }
+.cd-letter { width: 56px; height: 56px; border-radius: 14px; display: grid; place-items: center; font-size: 24px; font-weight: 700; color: var(--surface); background: var(--text-3); }
+.cd-name { max-width: 100%; font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cd-sub { margin-top: -3px; font-size: 11px; color: var(--accent, #2f74e0); font-weight: 600; }
+.cd-tile.off .cd-icon { opacity: .45; filter: saturate(.5); }
+.cd-tile.off .cd-name { color: var(--text-2); }
+.cd-tile.busy { cursor: progress; }
+.cd-tile.busy .cd-sub, .cd-tile.no .cd-sub { color: var(--text-2); }
+.cd-del { all: unset; position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border-radius: 7px; display: none; place-items: center; color: var(--text-2); background: var(--surface); box-shadow: 0 0 0 1px var(--line); cursor: pointer; }
+.cd-del svg { width: 14px; height: 14px; }
+.cd-tile:hover .cd-del { display: grid; }
+.cd-del:hover { color: var(--danger, #d83b3b); }
+.cd-ask { display: flex; align-items: center; gap: 8px; padding: 10px 12px; margin-bottom: 8px; border-radius: 10px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); font-size: 12.5px; }
+.cd-btn { height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: var(--surface); color: var(--text); font-size: 12.5px; cursor: pointer; box-shadow: 0 0 0 1px var(--line); }
+.cd-btn.danger { background: var(--text); color: var(--surface); box-shadow: none; }
+.cd-err { margin: 8px 0; color: var(--danger, #d83b3b); font-size: 12.5px; white-space: pre-wrap; }
+.cd-wait { margin-top: 30px; color: var(--text-2); font-size: 13px; }
+.cd-run { position: absolute; top: 2px; right: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--idle, #1f9a62); box-shadow: 0 0 0 2px var(--surface); }
+.cd-quit:hover { color: var(--danger, #d83b3b); }
+.cd-sktile { cursor: default; }
+.cd-sktile:hover { background: none; }
+.cd-sk { width: 56px; height: 56px; margin: 4px; border-radius: 14px; background: linear-gradient(110deg, var(--surface-2) 40%, var(--hover) 50%, var(--surface-2) 60%); background-size: 220% 100%; animation: cd-shine 1.4s linear infinite; }
+.cd-skn { width: 58px; height: 10px; border-radius: 5px; background: var(--surface-2); }
+@keyframes cd-shine { from { background-position: 120% 0; } to { background-position: -20% 0; } }

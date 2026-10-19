@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dropText, paneAt, shellEscape, docDropBlocks, dropSlot, chatCellAt } from './drop';
+import { dropText, paneAt, shellEscape, docDropBlocks, dropSlot, chatCellAt, quotePath, chipPastes } from './drop';
 
 describe('shellEscape — iTerm 처럼 경로를 백슬래시로 이스케이프', () => {
   it('평범한 경로는 그대로', () => {
@@ -35,6 +35,41 @@ describe('dropText — 여러 개는 공백으로, 끝에 공백 하나(이어�
   });
   it('없으면 빈 글자', () => {
     expect(dropText([])).toBe('');
+  });
+});
+
+describe('quotePath — 칩 경로는 큰따옴표 안이 통째로 경로', () => {
+  it('띄어쓰기·가운뎃점은 그대로, 바깥만 따옴표', () => {
+    expect(quotePath('/Users/me/Documents/Chammo/참모 · 시험/보고 폴더')).toBe('"/Users/me/Documents/Chammo/참모 · 시험/보고 폴더"');
+  });
+  it('안의 " 와 \\ 는 앞에 \\', () => {
+    expect(quotePath('/a/"따옴표" 폴더/b\\c')).toBe('"/a/\\"따옴표\\" 폴더/b\\\\c"');
+  });
+  it('줄바꿈은 \\n — 입력칸에서 Enter 로 먹히지 않게', () => {
+    expect(quotePath('/a/x\ny')).toBe('"/a/x\\ny"');
+  });
+});
+
+describe('chipPastes — 붙인 칩 → 입력칸에 붙여넣을 글 조각', () => {
+  it('폴더·문서는 이름표 바로 뒤 따옴표 경로 — 뒤에 사람 글이 붙어도 경계가 보인다(10/19 새 폴더 사고)', () => {
+    const [t] = chipPastes([{ path: '/Users/me/보관함/보고 폴더', label: '#file1' }]);
+    expect(t).toBe('#file1 "/Users/me/보관함/보고 폴더" ');
+    expect(`${t}보낼 파일 여기에 담아줘`).toContain('"/Users/me/보관함/보고 폴더" 보낼');
+    expect(t).not.toContain('\\ ');
+  });
+  it('Claude Code 가 그림으로 읽는 것(png·jpg·gif·webp)은 이스케이프 그대로 따로 한 조각 — 따옴표·이름표를 섞으면 [Image #n] 으로 안 바뀐다', () => {
+    expect(chipPastes([
+      { path: '/a/스크린샷 1.png', label: '#img1' },
+      { path: '/a/제안서 v2.pdf', label: '#file1' },
+      { path: '/a/b.JPG', label: '#img2' },
+    ])).toEqual(['/a/스크린샷\\ 1.png /a/b.JPG ', '#file1 "/a/제안서 v2.pdf" ']);
+  });
+  it('그림이라도 Claude 가 못 읽는 확장자(heic)는 이름표 + 따옴표', () => {
+    expect(chipPastes([{ path: '/a/IMG 1.heic', label: '#img1' }])).toEqual(['#img1 "/a/IMG 1.heic" ']);
+  });
+  it('이름표가 없으면 따옴표 경로만, 아무것도 없으면 빈 목록', () => {
+    expect(chipPastes([{ path: '/a/메모.md' }])).toEqual(['"/a/메모.md" ']);
+    expect(chipPastes([])).toEqual([]);
   });
 });
 

@@ -5,6 +5,9 @@ import doc from './DocPage.tsx?raw';
 import sheet from './SheetPage.tsx?raw';
 import file from './FileTab.tsx?raw';
 import bar from './TabZoomBar.tsx?raw';
+import anchor from '../zoomAnchor.ts?raw';
+import preview from './Preview.tsx?raw';
+import reader from '../reader/Reader.tsx?raw';
 import icons from '../Icons.tsx?raw';
 import css from './space.css?raw';
 import tour from '../../domain/tour.ts?raw';
@@ -40,10 +43,20 @@ describe('탭 확대 — SpaceView', () => {
   });
   it('window.__tabZoom 을 걸고, 휠(⌘·Ctrl·Alt)·사파리 핀치는 기본 동작을 막고(passive false) capture 로 받는다', () => {
     expect(view).toMatch(/w\.__tabZoom = \(c\) => zoomRef\.current\(c\)/);
-    expect(view).toMatch(/addEventListener\('wheel', wheel, \{ passive: false, capture: true \}\)/);
-    expect(view).toMatch(/addEventListener\('gesturechange', gChange, \{ passive: false, capture: true \}\)/);
-    expect(view).toMatch(/if \(wheelDir\(e\) === null \|\| !canZoomRef\.current \|\| !inMain\(e\.target\)\) return;/);
+    expect(view).toMatch(/useWheelZoom\(\(\) => \(canZoomRef\.current \? document\.querySelector\('\.space \.cv-main'\) : null\), \(dir, at\) => zoomRef\.current\(dir, at\)\)/);
+    expect(anchor).toMatch(/addEventListener\('wheel', wheel, \{ passive: false, capture: true \}\)/);
+    expect(anchor).toMatch(/addEventListener\('gesturechange', gChange, \{ passive: false, capture: true \}\)/);
+    expect(anchor).toMatch(/if \(wheelDir\(e\) === null \|\| !inside\(e\.target\)\) return;/);
     expect(view).toMatch(/delete w\.__tabZoom/);
+  });
+  it('그림 확대 기준점 — 핀치·휠은 커서 자리를 넘기고, 배율 바꾸기 직전 markAnchor·다시 그린 뒤 applyAnchor(탭·크게 보기·리더 같은 함수)', () => {
+    expect(anchor).toMatch(/cb\.current\.step\(s, \{ x: e\.clientX, y: e\.clientY \}\)/);
+    expect(view).toMatch(/markAnchor\(document\.querySelector<HTMLElement>\('\.space \.cv-main \.ft-body \.pv-image'\), at\)/);
+    expect(file).toMatch(/useLayoutEffect\(\(\) => applyAnchor\(imgBox\.current\), \[zoom\]\)/);
+    expect(preview).toMatch(/markAnchor\(imgBox\.current, at\)/);
+    expect(preview).toMatch(/useLayoutEffect\(\(\) => applyAnchor\(imgBox\.current\), \[zoom\]\)/);
+    expect(reader).toMatch(/markAnchor\(imgBox\(\), at\)/);
+    expect(reader).toMatch(/useLayoutEffect\(\(\) => applyAnchor\(imgBox\(\)\), \[zoom\]\)/);
   });
   it('머리 단추는 지금 가운데에 떠 있는 탭에만, 세 페이지(md·엑셀·그 밖)가 배율을 받는다', () => {
     expect(view).toMatch(/const zoomUi = \(path: string\) => \(path === zoomPath && canZoom \? <TabZoomBar/);

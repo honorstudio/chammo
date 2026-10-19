@@ -9,7 +9,7 @@ export type DropEvent = { type: 'over' | 'drop' | 'leave'; x?: number; y?: numbe
 
 /** 칸이 이 이벤트를 받으면 자기 xterm 에 붙여넣는다 (TerminalPane) */
 export const DROP_EVENT = 'honor-drop';
-/** 같은 칸에 놓은 파일 경로들(배열) — 채팅 판이 보내기 전 썸네일로 쓴다 */
+/** 같은 칸에 놓은 파일 경로들(배열) — 채팅 판이 보내기 전 썸네일로 쓰고, 받으면 preventDefault 하고 터미널 붙여넣기도 맡는다 */
 export const DROP_PATHS_EVENT = 'honor-drop-paths';
 /** 스페이스 문서 편집기에 놓은 파일 — SpaceEditor 가 그림 블록으로 넣는다 */
 export const DOC_DROP_EVENT = 'honor-doc-drop';
@@ -91,12 +91,7 @@ export function installFileDrop(): () => void {
     const el = targetAt(e.x, e.y);
     if (e.type === 'over') return light(el);
     light(null);
-    const text = dropText(e.paths ?? []);
-    if (el && text) {
-      el.dispatchEvent(new CustomEvent(DROP_EVENT, { detail: text }));
-      el.dispatchEvent(new CustomEvent(DROP_PATHS_EVENT, { detail: e.paths ?? [] }));
-      chatAttached(el, e.paths ?? []);
-    }
+    if (el && e.paths?.length) pastePaths(el, e.paths);
   };
   return () => {
     light(null);
@@ -107,12 +102,16 @@ export function installFileDrop(): () => void {
 /** 파일을 그 세션 채팅에 붙인다 — 끌어다 놓기와 똑같이(터미널 입력칸에 경로, 채팅엔 #img·#file 이름표). 스페이스 미리보기·문서의 "채팅에 붙이기" */
 export function attachToChat(sessionId: string, paths: string[]): boolean {
   const el = document.querySelector<HTMLElement>(`.cell[data-session="${CSS.escape(sessionId)}"] .pane[data-drop]`);
-  const text = dropText(paths);
-  if (!el || !text) return false;
-  el.dispatchEvent(new CustomEvent(DROP_EVENT, { detail: text }));
-  el.dispatchEvent(new CustomEvent(DROP_PATHS_EVENT, { detail: paths }));
-  chatAttached(el, paths);
+  if (!el || !paths.length) return false;
+  pastePaths(el, paths);
   return true;
+}
+
+/** 칸에 경로들을 넣는다 — 채팅 판이 받으면(preventDefault) 그쪽이 이름표를 매겨 칩 글(#file1 "…")로 붙여넣고, 없으면 iTerm 처럼 셸 이스케이프로 */
+function pastePaths(el: HTMLElement, paths: string[]) {
+  const took = !el.dispatchEvent(new CustomEvent(DROP_PATHS_EVENT, { detail: paths, cancelable: true }));
+  if (!took) el.dispatchEvent(new CustomEvent(DROP_EVENT, { detail: dropText(paths) }));
+  chatAttached(el, paths);
 }
 
 /** 채팅에 붙인 파일 — 그 칸이 참모면 보관함에도(SpaceView 가 참모인지 보고 넣는다) */

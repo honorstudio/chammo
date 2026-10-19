@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { DashFile } from '../../domain/dashboard';
-import { keepCenter, parseBox, resizeBox, type Box, type Edge } from '../../domain/previewBox';
+import { parseBox, resizeBox, type Box, type Edge } from '../../domain/previewBox';
 import { docUrl, kindOf, pageDoc } from '../../domain/reader';
 import { FIT, IMAGE_STEPS, stepZoom, withZoom, zoomable, zoomLabel, zoomOf, type ZoomMap } from '../../domain/readerZoom';
 import { assistant, tr } from '../../i18n';
@@ -15,6 +15,7 @@ import { fromFrame, isCurationHtml } from '../../domain/curation';
 import { webTitle } from '../../domain/webUrl';
 import { WebPage } from '../WebPage';
 import { SendToOrch, type OrchTo } from './SendToOrch';
+import { applyAnchor, markAnchor, useWheelZoom } from '../zoomAnchor';
 
 const fileName = (p: string) => (p.startsWith('data:') ? tr('붙인 그림', 'Attached image') : kindOf(p) === 'web' ? webTitle(p) : p.split('/').pop() ?? p);
 const BOX_KEY = 'previewBox';
@@ -97,8 +98,8 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
   const zoom = zoomOf(zooms, kind);
   const content = useRef<HTMLDivElement>(null);
   const [natural, setNatural] = useState(0);
-  const zoomBy = useRef<(dir: 1 | -1 | 0) => void>(() => {});
-  // 그림은 보던 가운데를 기준으로 확대 — 확대 전 스크롤 자리를 잡아 뒀다가 다시 그린 뒤 맞춘다(좌상단으로 커졌다, 2026-09-30 사용자)
+  const zoomBy = useRef<(dir: 1 | -1 | 0, at?: { x: number; y: number }) => void>(() => {});
+  // 그림은 핀치·휠이면 커서 아래, 단추·키보드면 보던 가운데를 기준으로 확대(좌상단으로 커졌다, 2026-09-30·10-19 사용자) — ui/zoomAnchor
   const imgBox = useRef<HTMLDivElement>(null);
   // 짚어 보여 주기(scripts/show --line/--find/--box) — 글·마크다운은 그 곳으로 스크롤해 반짝, 웹 페이지는 페이지 안 다리에 부탁, 그림은 네모
   const at = f.at;
@@ -118,22 +119,12 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
     const t = window.setTimeout(() => imgBox.current?.querySelector('.pv-box')?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' }), 150);
     return () => { ro.disconnect(); window.clearTimeout(t); };
   }, [f.ts, natural, zoom]); // eslint-disable-line react-hooks/exhaustive-deps
-  const center = useRef<{ view: { left: number; top: number; w: number; h: number }; before: Box } | null>(null);
-  useLayoutEffect(() => {
-    const el = imgBox.current;
-    const c = center.current;
-    center.current = null;
-    if (!el || !c) return;
-    const at = keepCenter(c.view, c.before, { w: el.scrollWidth, h: el.scrollHeight });
-    el.scrollLeft = at.left;
-    el.scrollTop = at.top;
-  }, [zoom]);
-  zoomBy.current = (dir) => {
+  useLayoutEffect(() => applyAnchor(imgBox.current), [zoom]);
+  zoomBy.current = (dir, at) => {
     if (!zoomable(kind)) return;
     let z: number;
     if (kind === 'image') {
-      const el = imgBox.current;
-      if (el) center.current = { view: { left: el.scrollLeft, top: el.scrollTop, w: el.clientWidth, h: el.clientHeight }, before: { w: el.scrollWidth, h: el.scrollHeight } };
+      markAnchor(imgBox.current, at);
       const img = content.current?.querySelector('img');
       const now = zoom !== FIT ? zoom : img?.naturalWidth ? Math.round(img.getBoundingClientRect().width / (img.naturalWidth / (window.devicePixelRatio || 1)) * 100) : 100;
       z = dir === 0 ? FIT : stepZoom(now, dir, IMAGE_STEPS);
@@ -142,6 +133,7 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
     setZooms(next);
     try { localStorage.setItem(ZOOM_KEY, JSON.stringify(next)); } catch { /* 이번엔 된다 */ }
   };
+  useWheelZoom(() => imgBox.current, (dir, at) => zoomBy.current(dir, at));
   useEffect(() => {
     const w = window as unknown as { __previewZoom?: (d: 1 | -1 | 0) => void };
     w.__previewZoom = (d) => zoomBy.current(d);

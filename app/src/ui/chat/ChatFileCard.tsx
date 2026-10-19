@@ -1,15 +1,13 @@
 // 채팅 안 파일 카드(PC) — 참모가 scripts/show 로 보여 준 그 시각 자리에(domain/chatFiles). 썸네일은 대시보드 '주고받은 파일'과 같은 것.
-// 누르면 왼쪽 스페이스에 연다(show 가 여는 길 — SpaceView 가 CHAT_FILE_OPEN 을 받는다)
+// 누르면 show 가 여는 곳에 다시 연다(openChatFile — 채팅 뷰는 스페이스, 터미널 뷰는 리더)
 import { atLine, type ChatFile } from '../../domain/chatFiles';
 import { titleOf } from '../../domain/reader';
 import { Thumb } from '../space/DashboardView';
-
-/** 스페이스에 열기 신호 — detail = { path, at, by(띄운 참모 id) } */
-export const CHAT_FILE_OPEN = 'chat-file-open';
+import { openChatFile } from './openChatFile';
 
 export function ChatFileCard({ f, by }: { f: ChatFile; by: string }) {
   const where = atLine(f.at);
-  const open = () => window.dispatchEvent(new CustomEvent(CHAT_FILE_OPEN, { detail: { path: f.path, at: f.at, by } }));
+  const open = () => void openChatFile(f.path, by, f.at);
   return (
     <div className="chat-row">
       <button type="button" className="chat-filecard" onClick={open} title={f.path}>

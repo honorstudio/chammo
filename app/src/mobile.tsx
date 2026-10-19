@@ -8,8 +8,9 @@ import './ui/layers.css';
 import './ui/mobile/mobile.css';
 import './ui/paused.css';
 
-import { avatarBlobUrl, pair, readAvatarsForPhone } from './data/web';
-import { pairCodeFrom } from './domain/mobileAuth';
+import { avatarBlobUrl, hasToken, homeTried, markHomeTried, newPairCode, pair, readAvatarsForPhone } from './data/web';
+import { bootPair, homeCodeFrom, homeUrl, pairCodeFrom, spentBy } from './domain/mobileAuth';
+import { isStandalone } from './ui/mobile/standalone';
 import { refreshAvatars, setAvatarSource } from './ui/avatar';
 import { RESUME_EVENT } from './domain/poller';
 import { blockPageZoom } from './ui/mobile/zoomGuard';
@@ -26,14 +27,36 @@ window.addEventListener(RESUME_EVENT, () => { void refreshAvatars(); });
 const root = createRoot(document.getElementById('root')!);
 const show = () => root.render(<StrictMode><ErrorBoundary><MobileApp /></ErrorBoundary></StrictMode>);
 
-// QR 로 열었으면 — 일회용 코드를 내고 이 기기 토큰을 받아 저장한 뒤 주소에서 코드를 지운다
-const code = pairCodeFrom(location.search);
-if (code) {
-  history.replaceState(null, '', '/');
-  pair(code).then(show, (e: unknown) => {
-    hideBootSplash(); // 첫 그림(모찌)이 덮고 있다 — 못 했다는 말이 보이게
-    root.render(<><div className="m-center"><h1>연결 못 했어요</h1><p>{(e as Error).message}</p></div><PairHelp /></>);
-  });
+/** 홈 화면 앱 넘기기 — 1회용 코드를 받아 그 코드를 든 주소로 다시 연다(bootPair). 못 받으면(맥이 늦음·막 받음) false → 그냥 화면,
+ *  홈 화면 앱은 그때 '홈 화면 앱 연결'(HomeAppLink) 붙여넣기로 */
+const HANDOFF_WAIT_MS = 5000;
+async function handoff(): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const late = new Promise<never>((_, no) => { timer = setTimeout(() => no(new Error('late')), HANDOFF_WAIT_MS); });
+    const { code } = await Promise.race([newPairCode(), late]);
+    location.replace(homeUrl(code));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// QR(?pair=)·홈 화면 앱 넘기기(?home=) — 코드를 내고 이 기기 토큰을 받아 저장한다. 사파리면 이어서 홈 화면 앱 몫 코드를 든 주소로 다시 연다
+const plan = bootPair({ search: location.search, standalone: isStandalone(), hasToken: hasToken(), tried: homeTried() });
+// 코드 든 주소는 주소 줄·공유에서 지운다 — '홈 화면에 추가'의 시작 주소는 처음 읽은 주소로 이미 굳어서 지워도 남는다(시뮬레이터 실측)
+if (pairCodeFrom(location.search) || homeCodeFrom(location.search)) history.replaceState(null, '', '/');
+if (plan) {
+  pair(plan.code, plan.home).then(
+    async () => { if (!(plan.handoff && (await handoff()))) show(); },
+    (e: unknown) => {
+      if (plan.home && spentBy(e)) markHomeTried(plan.code); // 성공하면 열쇠가 있어 다시 안 낸다
+      hideBootSplash(); // 첫 그림(모찌)이 덮고 있다 — 못 했다는 말이 보이게
+      root.render(<><div className="m-center"><h1>연결 못 했어요</h1><p>{(e as Error).message}</p></div><PairHelp /></>);
+    },
+  );
 } else {
   show();
 }

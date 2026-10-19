@@ -178,6 +178,11 @@ export function notifyRow(s: NotifyStatus): { state: 'ok' | 'need' | 'opt'; acti
   return { state: 'opt', action: null };
 }
 
+/** 손쉬운 사용 줄 — 앱은 맥 권한 창을 스스로 띄우지 않는다(2026-10-19), 꺼져 있으면 설정 열기만 */
+export function axRow(trusted: boolean): { state: 'ok' | 'need'; action: 'settings' | null } {
+  return trusted ? { state: 'ok', action: null } : { state: 'need', action: 'settings' };
+}
+
 /** Rust browser_status — 확인 목록(Node · 크롬 베타 · 도구 부품 · 시험 열기) */
 export type BrowserStatus = {
   node: string | null; nodeVersion: string; nodeOk: boolean; nodeSource: 'system' | 'ours' | '';

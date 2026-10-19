@@ -2,6 +2,7 @@
 // 터미널(TUI)은 뒤에 그대로 살아 있고, 이건 그 기록을 읽기 좋게 다시 그리는 보기일 뿐이다(원칙 1 — 2026-09-30 사용자).
 
 import { toolTarget } from './activity';
+import { quotePath } from './drop';
 
 export type ChatTool = { name: string; target: string };
 export type ChatItem =
@@ -14,7 +15,7 @@ export type ChatItem =
   | { kind: 'relay'; id: string; ts: string; from: string; text: string };
 
 type Block = { type?: string; text?: string; name?: string; input?: Record<string, unknown>; source?: { type?: string; media_type?: string; data?: string } };
-type Rec = { type?: string; subtype?: string; content?: unknown; uuid?: string; timestamp?: string; isMeta?: boolean; isSidechain?: boolean; isCompactSummary?: boolean; message?: { content?: unknown };
+type Rec = { type?: string; subtype?: string; content?: unknown; uuid?: string; parentUuid?: string | null; timestamp?: string; isMeta?: boolean; isSidechain?: boolean; isCompactSummary?: boolean; message?: { content?: unknown };
   /** 일하는 중에 끼어든 메시지는 user 줄이 아니라 queued_command 첨부로 남는다(2026-09-30 실측) */
   attachment?: { type?: string; prompt?: unknown; origin?: { kind?: string } } };
 
@@ -160,6 +161,13 @@ function push(list: ChatItem[], it: ChatItem | Out) {
   else list.push(it);
 }
 
+/** 보낸 말(사람 말·앱 줄·다른 세션 말) — 새 턴을 연다 */
+const isPrompt = (i: ChatItem | undefined) => i?.kind === 'user' || i?.kind === 'relay';
+/** 보낸 말의 부모 줄 — 같은 부모의 다음 말이 오면 앞 말은 거둬들여진(버려진 갈래) 것. 항목 모양은 그대로 두려고 따로 든다 */
+const parentOf = new WeakMap<ChatItem, string>();
+/** 참모가 무엇이든(생각 줄 하나라도) 낸 뒤의 보낸 말 — 그 뒤 Esc 는 멈춤이다 */
+const answered = new WeakSet<ChatItem>();
+
 function feed(list: ChatItem[], chunk: string): boolean {
   let added = false;
   for (const raw of chunk.split('\n')) {
@@ -170,9 +178,31 @@ function feed(list: ChatItem[], chunk: string): boolean {
     } catch {
       continue; // 꼬리를 잘라 읽어 첫 줄은 깨져 있을 수 있다
     }
-    for (const it of itemsOf(r)) { push(list, it); added = true; }
+    if (r?.type === 'assistant' && !r.isSidechain && isPrompt(list[list.length - 1])) answered.add(list[list.length - 1]!);
+    for (const it of itemsOf(r)) {
+      const parent = r.type === 'user' && isPrompt(it as ChatItem) ? r.parentUuid : null;
+      // 보낸 말에 답이 나오기 전 Esc 가 가면 Claude Code 는 그 말을 입력칸에 되돌리고 다음 말을 같은 부모에 단다 —
+      // 앞 말(과 그 갈래)은 참모가 못 받은 말이라 보통 말풍선으로 남기지 않는다(2026-10-16 사용자 '안 갔어요' 두 번)
+      if (parent) {
+        const i = list.findIndex((x) => parentOf.get(x) === parent);
+        if (i >= 0) { list.splice(i); added = true; }
+      }
+      push(list, it);
+      added = true;
+      if (parent) parentOf.set(it as ChatItem, parent);
+      else if (r.type === 'attachment' && isPrompt(it as ChatItem)) answered.add(it as ChatItem); // 일하는 중 흡수된 말 — 턴은 이미 돌고 있다
+    }
   }
   return added;
+}
+
+/** 지금 Esc 를 넘기면 방금 보낸 말을 거둬들이나 — 보낸 말에 참모가 아직 아무 기록(생각·도구·글)도 안 냈거나,
+ *  턴이 끝난 뒤 보낸 말이 아직 기록 전(inFlight — 훅 도는 중)일 때. 그땐 Claude Code 가 Esc 를 멈춤이 아니라 '보낸 말 취소'로 받는다
+ *  (2.1.301 시험 세션 실측: 7초 생각 중에도 거둬들였다, 2026-10-16) */
+export function escUnsends(items: ChatItem[], inFlight: boolean): boolean {
+  const last = items[items.length - 1];
+  if (isPrompt(last)) return !answered.has(last!);
+  return inFlight && (!last || last.kind === 'assistant' || last.kind === 'note');
 }
 
 export function parseChat(jsonl: string): ChatItem[] {
@@ -238,8 +268,9 @@ export function stuckInInput(pending: string[], input: string): string | null {
 /** 채팅 칸에서 누른 Esc 가 참모의 지금 턴을 멈추나 — CLI 처럼 한 번(2026-10-15 사용자). 일하는 중일 때만: 쉴 때 Esc 두 번은 Claude 의 되감기 창·입력칸 지우기다.
  *  한글 조합 중·채팅 위에 뜬 것(멘션·/ 목록·메모리·모델 칩·선택지 창·미리보기 모달)·이미 다른 데서 받은 Esc 는 그쪽이 먼저.
  *  시안 검토 탭이 떠 있으면 입력칸 밖 Esc 는 검토 닫기다(domain/curation reviewEscCloses) — 입력칸 Esc 는 검토가 안 받는다 */
-export function chatEscStops(o: { key: string; composing: boolean; prevented: boolean; working: boolean; overlay: boolean; inInput: boolean; review: boolean }): boolean {
-  if (o.key !== 'Escape' || o.composing || o.prevented || o.overlay || !o.working) return false;
+export function chatEscStops(o: { key: string; composing: boolean; prevented: boolean; working: boolean; overlay: boolean; inInput: boolean; review: boolean; unsends?: boolean }): boolean {
+  // 보낸 말에 아직 답이 없으면 넘기지 않는다 — 멈출 일은 없고 방금 보낸 말만 거둬들여져 참모에게 안 간다(escUnsends)
+  if (o.key !== 'Escape' || o.composing || o.prevented || o.overlay || !o.working || o.unsends) return false;
   return o.inInput || !o.review;
 }
 
@@ -306,20 +337,24 @@ export function typedChunks(text: string, size = 200): string[] {
   return out;
 }
 
-/** 파일 경로(끌어 놓으면 셸 이스케이프된 절대 경로가 들어간다) — /… 또는 ~/… 로 시작, 띄어쓰기는 "\ " */
-const PATH_RE = /(?:^|(?<=\s))((?:\/|~\/)(?:\\ |[^\s])+)/g;
+/** 파일 경로 — 채팅 칩은 큰따옴표 안이 통째로 경로(drop quotePath, 안의 " 는 \"), 끌어 놓은 그림·옛 기록은 셸 이스케이프(띄어쓰기는 "\ ").
+ *  /… 또는 ~/… 로 시작. 1 = 따옴표 경로, 2 = 이스케이프 경로 */
+const PATH_RE = /(?:^|(?<=\s))(?:"((?:\/|~\/)(?:\\.|[^"\\\n])*)"|((?:\/|~\/)(?:\\ |[^\s])+))/g;
+const unquote = (q: string) => q.replace(/\\(x[0-9a-f]{2}|.)/g, (_, c: string) => (c === 'n' ? '\n' : c === 'r' ? '\r' : c.length === 3 ? String.fromCharCode(parseInt(c.slice(1), 16)) : c));
 export type Seg = { text: string } | { path: string; name: string };
 /** 사람 말 속 파일 경로를 이름 칸으로 떼어 낸다 — 말풍선이 긴 경로로 지저분했다(2026-09-30 사용자) */
 export function splitPaths(text: string): Seg[] {
   const out: Seg[] = [];
   let last = 0;
   for (const m of text.matchAll(PATH_RE)) {
-    if (!m[1]!.slice(1).includes('/')) continue; // /compact 같은 슬래시 명령은 경로가 아니다
-    const at = m.index! + (m[0].length - m[1]!.length);
+    const raw = m[1] ?? m[2]!;
+    if (!raw.slice(1).includes('/')) continue; // /compact 같은 슬래시 명령은 경로가 아니다
+    const len = m[1] !== undefined ? raw.length + 2 : raw.length;
+    const at = m.index! + (m[0].length - len);
     if (at > last) out.push({ text: text.slice(last, at) });
-    const path = m[1]!.replace(/\\ /g, ' ');
+    const path = m[1] !== undefined ? unquote(raw) : raw.replace(/\\ /g, ' ');
     out.push({ path, name: path.split('/').pop() || path });
-    last = at + m[1]!.length;
+    last = at + len;
   }
   if (last < text.length) out.push({ text: text.slice(last) });
   return out.length ? out : [{ text }];
@@ -332,8 +367,9 @@ export function splitPaths(text: string): Seg[] {
 export function termRest(termText: string, paths: string[]): string {
   if (!paths.length && !/\[Image #\d+\]/.test(termText)) return termText;
   let s = termText.split('\n').map((l) => l.trim()).join('');
-  for (const p of paths) s = s.split(p.replace(/ /g, '\\ ')).join(' ').split(p).join(' ');
-  s = s.replace(/\[Image #\d+\]/g, ' ');
+  for (const p of paths) s = s.split(quotePath(p)).join(' ').split(p.replace(/ /g, '\\ ')).join(' ').split(p).join(' ');
+  // 칩 경로 앞 이름표(#file1 "…")도 — 첨부 줄엔 칩이 따로 보인다
+  s = s.replace(/\[Image #\d+\]/g, ' ').replace(/(?:^|(?<=\s))[#@](?:img|file)\d+(?!\d)/g, ' ');
   return splitPaths(s).map((x) => ('text' in x ? x.text : ' ')).join('').replace(/\s+/g, ' ').trim();
 }
 

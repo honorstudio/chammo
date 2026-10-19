@@ -33,6 +33,8 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "scripts/choice", body: include_str!("../../hq-template/scripts/choice"), exec: true },
     TemplateFile { path: "scripts/skill-hint", body: include_str!("../../hq-template/scripts/skill-hint"), exec: true },
     TemplateFile { path: "scripts/locker", body: include_str!("../../hq-template/scripts/locker"), exec: true },
+    // Craft 앱(ArtCraft 오픈소스): 웹판 받기·SHA 대조·127.0.0.1 서빙·주소 미리보기 + 맥 앱을 조작 채널로 띄워 참모가 명령으로 — 앱은 안 거친다
+    TemplateFile { path: "scripts/craft", body: include_str!("../../hq-template/scripts/craft"), exec: true },
     // 다른 기기 참모에게 말 넣고 답 받기 — 앱(app.jsonl)을 거친다, 열쇠는 앱 키체인에만(ADR 0007)
     TemplateFile { path: "scripts/peer", body: include_str!("../../hq-template/scripts/peer"), exec: true },
     // scripts/task 가 import 하는 모듈(교훈 → 프로젝트 스킬) — 직접 실행하지 않는다
@@ -41,6 +43,7 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: ".claude/skills/hq-folders/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-folders/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-routine/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-routine/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-app/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-app/SKILL.md"), exec: false },
+    TemplateFile { path: ".claude/skills/hq-craft/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-craft/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-login/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-login/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-mode-kit/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-mode-kit/kit.tsx", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/kit.tsx"), exec: false },
@@ -340,7 +343,7 @@ mod tests {
         assert!(d.join("scripts/routine").is_file());
         // 상황별 안내는 HQ 스킬 — 앱 몫이라 켤 때마다 새로 쓴다(늘 실리는 안내문을 줄이려고 뺐다)
         assert!(std::fs::read_to_string(d.join(".claude/skills/hq-login/SKILL.md")).unwrap().starts_with("---\nname: hq-login"));
-        for n in ["hq-browser", "hq-folders", "hq-routine", "hq-app"] {
+        for n in ["hq-browser", "hq-folders", "hq-routine", "hq-app", "hq-craft"] {
             assert!(d.join(format!(".claude/skills/{n}/SKILL.md")).is_file(), "{n}");
         }
         assert_ne!(std::fs::read_to_string(d.join("scripts/task")).unwrap(), "옛 스크립트");

@@ -108,7 +108,9 @@ button { font: inherit; color: inherit; }
 .grp-link:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
 .grp-act { display: flex; align-items: center; gap: 8px; }
 .grp-btn { margin-left: auto; }
-.side .list, .tasks-list { flex: 1; overflow: auto; min-height: 0; }
+.tasks-list { flex: 1; overflow: auto; min-height: 0; }
+/* 터미널 뷰 사이드바 — 검색 아래(오케스트레이터·예약·프로젝트)는 한 칸으로 스크롤. 프로젝트 목록만 스크롤하면 예약이 많을 때 그 칸이 0 으로 눌렸다 */
+.side-scroll { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 8px; }
 .sidefoot { border-top: 1px solid var(--line); padding: 10px 12px; font-size: 11px; color: var(--text-3); line-height: 1.5; }
 
 .it { display: flex; gap: 10px; align-items: flex-start; width: calc(100% - 16px); margin: 0 8px 2px; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; text-align: left; cursor: default; }

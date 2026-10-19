@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { TtsField } from './TtsField';
-import { appVersion, browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, projectAccess, notifyOpenSettings, notifyRequest, notifyStatus, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
-import { addExtraProject, canNext, parseClaudeVersion, setupCommand, setupReady, tildify, notifyRow, browserRow, browserChecklist, ghRow, versionFit, WIZARD, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
+import { appVersion, browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, projectAccess, notifyOpenSettings, notifyRequest, notifyStatus, axTrusted, screenTrusted, askPermission, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
+import { addExtraProject, canNext, parseClaudeVersion, setupCommand, setupReady, tildify, notifyRow, axRow, browserRow, browserChecklist, ghRow, versionFit, WIZARD, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
 import type { Animation, FeatureSwitch } from '../domain/config';
 import { firstTab, settingsEscCloses, settingsTabs, type SettingsTab } from '../domain/settingsTabs';
 import { BRAND } from '../domain/avatar';
@@ -144,6 +144,16 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
     read();
     window.addEventListener('focus', read);
     return () => window.removeEventListener('focus', read);
+  }, []);
+  // 손쉬운 사용 — Craft 개입·다른 앱 위 말하기 키. 앱은 권한 창을 띄우지 않고, 꺼져 있으면 1초마다 다시 읽어 켜지면 바로 '켜짐'
+  const [ax, setAx] = useState<boolean | null>(null);
+  const [screen, setScreen] = useState<boolean | null>(null); // 화면 기록 — Craft 앱 창을 칸에 비추기
+  useEffect(() => {
+    if (IS_WIN) return;
+    const read = () => { void axTrusted().then(setAx, () => {}); void screenTrusted().then(setScreen, () => {}); };
+    read();
+    const t = setInterval(read, 1000);
+    return () => clearInterval(t);
   }, []);
   useEffect(() => { void getAppEnv().then((e) => setHome(e.home)).catch(() => {}); }, []);
   const abs = (p: string) => p.replace(/^~(?=\/|$)/, home);
@@ -456,7 +466,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
             </span>
             {draft.talkKey ? (
               <label className="su-check"><input type="checkbox" checked={!!draft.talkAnywhere} onChange={(e) => set('talkAnywhere', e.target.checked)} />
-                {tr('다른 앱을 보고 있을 때도(손쉬운 사용 권한을 한 번 물어요)', 'Also while using other apps (asks for Accessibility permission once)')}</label>
+                {tr('다른 앱을 보고 있을 때도(설정 > 기능의 손쉬운 사용을 켜야 해요)', 'Also while using other apps (needs Accessibility on — Settings > Features)')}</label>
             ) : null}
           </Field>
   );
@@ -507,6 +517,30 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
                     : tr('이 빌드에서는 확인할 수 없어요.', 'Cannot be checked in this build.')}>
                   {n.action === 'request' && <button className="btn pri" onClick={() => void notifyRequest().then(() => notifyStatus()).then(setNotify, () => {})}>{tr('알림 허용', 'Allow')}</button>}
                   {n.action === 'settings' && <IconButton size="l" tone="line" label={tr('설정 열기', 'Open Settings')} title={tr('맥 알림 설정 열기', 'Open macOS notification settings')} onClick={() => void notifyOpenSettings()}><IconSettings /></IconButton>}
+                </Row>
+              </div>
+            );
+          })();
+  const axBlock = IS_WIN || ax === null ? null : (() => {
+            const a = axRow(ax);
+            return (
+              <div className="su-rows">
+                <Row state={a.state} title={tr('손쉬운 사용', 'Accessibility')}
+                  text={a.state === 'ok' ? tr('켜져 있어요. Craft 앱에 직접 손대기(개입)와 다른 앱 위 말하기 키가 돼요.', 'On. Taking over a Craft app and the talk key over other apps work.')
+                    : tr('꺼져 있어요. 시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용에서 Chammo 를 켜 주세요 — Craft 앱에 직접 손대기(개입)에 필요해요. 나중에 해도 돼요.', 'Off. Turn on Chammo in System Settings > Privacy & Security > Accessibility — needed to take over a Craft app. You can do this later.')}>
+                  {a.action === 'settings' && <IconButton size="l" tone="line" label={tr('설정 열기', 'Open Settings')} title={tr('맥 설정 열기 — 손쉬운 사용', 'Open macOS Settings — Accessibility')} onClick={() => void askPermission('ax').catch(() => {})}><IconSettings /></IconButton>}
+                </Row>
+              </div>
+            );
+          })();
+  const screenBlock = IS_WIN || screen === null ? null : (() => {
+            const a = axRow(screen);
+            return (
+              <div className="su-rows">
+                <Row state={a.state} title={tr('화면 기록', 'Screen Recording')}
+                  text={a.state === 'ok' ? tr('켜져 있어요. Craft 앱 창을 칸에 비춰 보여 줘요.', 'On. Craft app windows show in their pane.')
+                    : tr('꺼져 있어요. 시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 Chammo 를 켜고 Chammo 를 다시 켜 주세요 — Craft 앱이 만드는 걸 칸에서 보려면 필요해요. 그 앱 창 하나만 찍어요.', 'Off. Turn on Chammo in System Settings > Privacy & Security > Screen & System Audio Recording, then restart Chammo — needed to watch Craft apps in their pane. Only that app window is captured.')}>
+                  {a.action === 'settings' && <IconButton size="l" tone="line" label={tr('설정 열기', 'Open Settings')} title={tr('맥 설정 열기 — 화면 기록', 'Open macOS Settings — Screen Recording')} onClick={() => void askPermission('screen').catch(() => {})}><IconSettings /></IconButton>}
                 </Row>
               </div>
             );
@@ -570,7 +604,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
         <section className="su-sec">
           <h2>{tr('기능', 'Features')}</h2>
           <p className="su-hint">{tr('꺼 두면 그 버튼과 메뉴가 숨어요. 언제든 여기서 다시 켤 수 있어요.', 'Turned-off features hide their buttons and menus. You can turn them back on here any time.')}</p>
-          {notifyBlock}{browserBlock}{featGrid}{animField}
+          {notifyBlock}{axBlock}{screenBlock}{browserBlock}{featGrid}{animField}
         </section>
   );
   // 마지막 단계 — 고른 것 한눈에
@@ -630,7 +664,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
   const tabBody: Record<SettingsTab, ReactNode> = {
     general: <>{langField}{memoField}{githubField}</>,
     agent: <>{nameField}{hqField}{devField}{extrasField}{trustBlock}{switches(['autoRevive'])}</>,
-    features: <>{switches(['office', 'tama', 'gacha', 'review'])}{animField}</>,
+    features: <>{axBlock}{screenBlock}{switches(['office', 'tama', 'gacha', 'review'])}{animField}</>,
     voice: <>{notifyBlock}{switches(['voice'])}{ttsField}{talkField}</>,
     phone: <><MobileSection title={tr('폰', 'Phone')} /><PeerSection title={tr('다른 기기 참모', 'Chammo on other devices')} /><MessengerSection title={tr('텔레그램', 'Telegram')} /></>,
     accounts: <AccountsSection title={tr('Claude 계정', 'Claude accounts')} claude={check?.claudePath} fontSize={fontSize} />,

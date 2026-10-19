@@ -33,6 +33,7 @@ export type Shortcut =
   | { type: 'tour' }
   /** 하니터(하네스 보기·끄고 켜기) 열고 닫기 — 탑바 버튼·메뉴 */
   | { type: 'harnitor' }
+  | { type: 'licenses' }
   | { type: 'quitAsk' }
   | { type: 'selectAll' }
   /** ⌘[ ⌘] — 스페이스 뒤로(왔던 곳)·앞으로(2026-10-04 QA D2) */
@@ -166,6 +167,7 @@ const MENU: Record<string, Shortcut> = {
   select_all: { type: 'selectAll' },
   tour: { type: 'tour' },
   harnitor: { type: 'harnitor' },
+  licenses: { type: 'licenses' },
   app_quit_all: { type: 'quitAsk' },
 };
 export const menuAction = (id: string): Shortcut | null => MENU[id] ?? null;

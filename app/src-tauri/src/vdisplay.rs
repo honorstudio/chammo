@@ -160,6 +160,30 @@ fn write_json(pid: u32, id: u32, r: Rect) {
     }
 }
 
+/// 도우미 실행 파일을 데이터 폴더에 풀고(바뀌었으면 다시) 이 macOS 에서 되는지 본다 — 안 되면 None. Craft 레티나 화면(craft_screen)도 같은 것을 쓴다
+pub fn helper_exe() -> Option<std::path::PathBuf> {
+    if HELPER.is_empty() {
+        return None;
+    }
+    let exe = crate::config::data_file("tools").join("chammo-vdisplay");
+    if std::fs::read(&exe).map(|b| b != HELPER).unwrap_or(true) {
+        let _ = std::fs::create_dir_all(exe.parent().unwrap_or(std::path::Path::new(".")));
+        std::fs::write(&exe, HELPER).ok()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+    // 이 macOS 에 비공개 API 가 있나 — 없으면(3) 조용히 앱 가리기만
+    crate::platform::command(&exe).arg("--probe").status().is_ok_and(|s| s.success()).then_some(exe)
+}
+
+/// 그 번호 화면의 지금 자리(다른 화면과 겹치면 None)
+pub fn display_rect(id: u32) -> Option<Rect> {
+    live_rect(id, &cg::displays())
+}
+
 /// 앱이 뜰 때 — 기능이 켜져 있고 이 macOS 에서 되면 가짜 화면을 띄운다(백그라운드 스레드, 실패하면 조용히 안 함)
 pub fn start() {
     // CHAMMO_VDISPLAY=0 — 개발판 시험처럼 가짜 화면을 하나 더 만들면 안 될 때(사용자 화면 배치를 건드린다)
@@ -174,22 +198,7 @@ pub fn start() {
         }
         // 살아 있는 주인이 없다 — 남은 파일은 낡은 것
         let _ = std::fs::remove_file(json_path());
-        let exe = crate::config::data_file("tools").join("chammo-vdisplay");
-        if std::fs::read(&exe).map(|b| b != HELPER).unwrap_or(true) {
-            let _ = std::fs::create_dir_all(exe.parent().unwrap_or(std::path::Path::new(".")));
-            if std::fs::write(&exe, HELPER).is_err() {
-                return;
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755));
-            }
-        }
-        // 이 macOS 에 비공개 API 가 있나 — 없으면(3) 조용히 앱 가리기만
-        if !crate::platform::command(&exe).arg("--probe").status().is_ok_and(|s| s.success()) {
-            return;
-        }
+        let Some(exe) = helper_exe() else { return };
         let Ok(mut child) = crate::platform::command(&exe).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else { return };
         let pid = child.id();
         let Some(out) = child.stdout.take() else { return };
@@ -310,8 +319,8 @@ mod cg {
 
 /// 보이는 화면들(가짜 화면 빼고) — (네모, 내장인가)
 pub fn visible_displays() -> Vec<(Rect, bool)> {
-    let fake = fake_id();
-    cg::displays().into_iter().filter(|d| Some(d.0) != fake).map(|d| (d.1, d.2)).collect()
+    let (fake, craft) = (fake_id(), crate::craft_screen::id());
+    cg::displays().into_iter().filter(|d| Some(d.0) != fake && Some(d.0) != craft).map(|d| (d.1, d.2)).collect()
 }
 
 #[cfg(test)]

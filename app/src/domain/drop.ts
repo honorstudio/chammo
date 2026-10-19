@@ -23,6 +23,34 @@ export function shellEscape(path: string): string {
 /** 드롭한 경로들 → 입력칸에 넣을 글자. 여러 개는 공백으로, 끝에 공백 하나(이어서 쓰기 좋게) */
 export const dropText = (paths: string[]) => (paths.length ? `${paths.map(shellEscape).join(' ')} ` : '');
 
+/** 경로 하나를 큰따옴표로 — 안의 \ 와 " 는 앞에 \, 줄바꿈 같은 제어 문자는 \n·\xNN(그대로 넣으면 입력칸에서 Enter 로 먹힌다) */
+export function quotePath(path: string): string {
+  const inner = path
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
+  return `"${inner}"`;
+}
+
+/** Claude Code 가 붙여넣은 경로를 [Image #n] 으로 바꾸는 확장자(2.1.303) */
+const CLAUDE_IMAGE = /\.(png|jpe?g|gif|webp)$/i;
+
+/**
+ * 채팅에 붙인 칩(#img·#file) → 터미널 입력칸에 붙여넣을 글 조각들(조각마다 따로 붙여넣는다).
+ * 폴더·문서는 이름표 바로 뒤 따옴표 경로(`#file1 "…/보고 폴더"`) — 띄어쓰기를 \ 로 펼치면 바로 뒤 사람 글과 경계가 안 보여
+ * 참모가 '보고 폴더 보낼 파일'이라는 새 폴더를 만들었다(2026-10-19 사용자).
+ * Claude 가 읽는 그림은 지금처럼 이스케이프 경로만 앞 조각에 모은다 — Claude 는 붙여넣은 글을 ' /' 앞에서만 잘라 그림을 알아봐서
+ * 따옴표로 묶거나 이름표를 사이에 섞으면 [Image #n] 으로 안 바뀐다(바뀐 뒤엔 [Image #n] 이 경계라 문제없다)
+ */
+export function chipPastes(items: { path: string; label?: string }[]): string[] {
+  const imgs = items.filter((i) => CLAUDE_IMAGE.test(i.path)).map((i) => i.path);
+  const rest = items.filter((i) => !CLAUDE_IMAGE.test(i.path)).map((i) => `${i.label ? `${i.label} ` : ''}${quotePath(i.path)}`);
+  return [dropText(imgs), rest.length ? `${rest.join(' ')} ` : ''].filter(Boolean);
+}
+
 export type PaneRect = { id: string; left: number; top: number; right: number; bottom: number };
 
 /** 점(창 안 좌표)이 들어 있는 칸. 경계는 오른쪽·아래 끝을 빼서 한 칸만 잡히게, 겹치면 나중 것(위에 그려진 것) */

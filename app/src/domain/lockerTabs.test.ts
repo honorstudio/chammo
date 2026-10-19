@@ -28,6 +28,15 @@ describe('openTab — 보관함에서 파일을 열면 탭', () => {
   });
 });
 
+describe('Craft 탭(k:<앱>) — 스페이스 탭이 Craft 맥 앱 기본 자리', () => {
+  it('열쇠가 곧 화면 키, 탭 줄에서 켜진다', () => {
+    expect(tabPick('k:photocraft')).toBe('k:photocraft');
+    const h = openTab(null, 'a', 'l:a', 'k:photocraft');
+    expect(tabRow(h, 'a', 'k:photocraft').tabs).toEqual([{ path: 'k:photocraft', on: true }]);
+    expect(closeTab(h, 'k:photocraft', 'k:photocraft').pick).toBe('l:a');
+  });
+});
+
 describe('tabRow — 탭 줄', () => {
   const h = { orch: 'a', back: 'l:a#d:10월', tabs: ['/L/x.md', '/L/y.png'] };
   it('보관함 화면에서도 보인다 — 폴더 탭이 켜짐', () => {

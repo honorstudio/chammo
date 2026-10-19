@@ -92,7 +92,7 @@ fn aside_of<R: Runtime>(w: &tauri::WebviewWindow<R>) -> Option<((i32, i32), Opti
         let s = m.scale_factor();
         ((m.position().x as f64 / s) as i32, (m.position().y as f64 / s) as i32, (m.size().width as f64 / s) as u32, (m.size().height as f64 / s) as u32)
     };
-    let list: Vec<_> = ms.iter().map(|m| { let (x, y, w, h) = lg(m); (x, y, w, h, m.name().is_some_and(|n| n == crate::vdisplay::NAME)) }).collect();
+    let list: Vec<_> = ms.iter().map(|m| { let (x, y, w, h) = lg(m); (x, y, w, h, m.name().is_some_and(|n| n == crate::vdisplay::NAME || n == crate::craft_screen::NAME)) }).collect();
     let (spot, at) = aside_spot(&list, 1.0);
     Some((spot, at.map(|i| (list[i].2, list[i].3))))
 }

@@ -20,6 +20,12 @@ mod computer_use;
 mod browser_attach;
 mod browser_foreign;
 mod config;
+mod craft_dock;
+mod dock_quit;
+mod craft_input;
+mod craft_mirror;
+mod craft_screen;
+mod craft_window;
 mod harnitor;
 mod hq;
 mod i18n;
@@ -168,6 +174,8 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
             (!cfg!(target_os = "macos")).then(|| about_label(i18n::is_en(), name)).as_deref(),
             (!cfg!(target_os = "macos")).then(|| about_metadata(name, &app.package_info().version.to_string())),
         )?)
+        // 오픈소스 라이선스 — Craft 앱(원작·저장소·라이선스, 앱 표에서 자동)과 Chammo 가 담아 가는 것(THIRD_PARTY_NOTICES). 앱 서랍 아래 줄 대신(2026-10-19 사용자 v8 B1)
+        .item(&MenuItem::with_id(app, "licenses", tr("오픈소스 라이선스…", "Open-Source Licenses…"), true, None::<&str>)?)
         .separator()
         // 설정·첫 실행 화면(ui/Setup.tsx) — macOS 관례 ⌘,
         .item(&MenuItem::with_id(app, "settings", tr("설정…", "Settings…"), true, Some(&*platform::accel("CmdOrCtrl+,")))?)
@@ -330,7 +338,43 @@ fn app_background(app: tauri::AppHandle) {
 /// 종료 창에서 고른 뒤 — 진짜로 끈다(정리가 걸려도 quit::EXIT_WAIT 뒤엔 끝난다)
 #[tauri::command]
 fn app_exit(app: tauri::AppHandle) {
+    // 독 종료를 미뤄 둔 중이면(종료 창이 저장을 보였다) 그 끄기를 마저 — 아니면 ⌥⌘Q 종료 창
+    if dock_quit::finish(&app, 0, "dock quit — dialog done") {
+        return;
+    }
     quit::exit_now(&app, "quit dialog");
+}
+
+/// 화면 기록 허용이 있나(보기만) — 첫 실행 안내·설정 줄. 맥 밖은 늘 true
+#[tauri::command]
+fn screen_trusted() -> bool {
+    #[cfg(target_os = "macos")]
+    return keys_mac::screen_trusted();
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
+/// 사람이 '설정 열기'·'권한 열기'를 눌렀을 때만 — 권한을 한 번 요청해 맥 목록에 Chammo 를 올린다(설정 화면은 웹이 이어서 연다). 켤 때·자동으로는 안 부른다
+#[tauri::command]
+fn ask_permission(kind: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    match kind.as_str() {
+        "ax" => keys_mac::ask_ax(),
+        "screen" => keys_mac::ask_screen(),
+        _ => return Err("unknown permission".into()),
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = kind;
+    Ok(())
+}
+
+/// 손쉬운 사용 허용이 있나(묻지 않고 보기만) — 첫 실행 안내·설정 > 기능 줄, 개입 카드가 1초마다 본다. 맥 밖은 늘 true
+#[tauri::command]
+fn ax_trusted() -> bool {
+    #[cfg(target_os = "macos")]
+    return keys_mac::ax_trusted();
+    #[cfg(not(target_os = "macos"))]
+    true
 }
 
 /// 종료 창이 떴다 — Rust 가 기다리던 '웹 굳음' 대비 종료를 거둔다
@@ -398,7 +442,7 @@ fn main() {
                 return;
             }
             // 기본 항목(가리기·종료 등)은 macOS 가 알아서 한다 — 우리 항목만 넘긴다(안 그러면 '가리기' 뒤에 창이 다시 뜬다)
-            const OURS: &[&str] = &["goto_orch", "goto_all", "goto_review", "goto_office", "reader_toggle", "reader_full", "reader_next", "reader_prev", "reader_close", "goto_tama", "open_dex", "sidebar", "tasks", "search", "font_up", "font_down", "font_reset", "new_session", "close_pane", "close_tab", "new_doc", "go_home", "go_locker", "pane_max", "widget_toggle", "memo", "settings", "harnitor", "tour", "app_quit_all", "select_all"];
+            const OURS: &[&str] = &["licenses", "goto_orch", "goto_all", "goto_review", "goto_office", "reader_toggle", "reader_full", "reader_next", "reader_prev", "reader_close", "goto_tama", "open_dex", "sidebar", "tasks", "search", "font_up", "font_down", "font_reset", "new_session", "close_pane", "close_tab", "new_doc", "go_home", "go_locker", "pane_max", "widget_toggle", "memo", "settings", "harnitor", "tour", "app_quit_all", "select_all"];
             if !OURS.contains(&id.as_str()) {
                 return;
             }
@@ -421,6 +465,13 @@ fn main() {
             agent_browser::watch_hidden();
             // 가상 모니터 — 세션 크롬을 눈에 안 보이는 화면에(안 되는 맥이면 조용히 안 함)
             vdisplay::start();
+            craft_mirror::debug_event_watch(app.handle());
+            craft_window::restore_on_start(app.handle());
+            craft_screen::watch_idle();
+            craft_dock::watch_hidden();
+            craft_screen::watch_scale(app.handle());
+            quit::watch_sigterm(app.handle());
+            dock_quit::install(app.handle());
             // 참모 scripts/app — 앱을 대신 조작(음성·기능·화면)
             appctl::watch(app.handle());
             // 켜 두었던 참모 모드를 다시(호스트는 뒤에서)
@@ -632,6 +683,9 @@ fn main() {
             rebuild_menu,
             app_exit,
             app_quit_shown,
+            ax_trusted,
+            screen_trusted,
+            ask_permission,
             app_background,
             claude::list_sessions,
             claude::spawn_session,
@@ -806,6 +860,25 @@ fn main() {
             modes_host::mode_client_act,
             modes_host::mode_client_message,
             modes_host::mode_client_fault,
+            craft_window::craft_win_info,
+            craft_window::craft_win_act,
+            craft_window::craft_win_takeover,
+            craft_window::craft_space_place,
+            craft_window::craft_space_still,
+            craft_screen::craft_quit_start,
+            craft_screen::craft_quit_left,
+            craft_window::craft_space_detach,
+            craft_window::craft_move,
+            craft_dock::craft_dock,
+            craft_dock::craft_recent,
+            craft_dock::craft_hide,
+            craft_dock::craft_leave,
+            craft_dock::craft_enter,
+            craft_dock::craft_show,
+            craft_dock::craft_open_file,
+            craft_dock::craft_apps,
+            craft_dock::craft_launch,
+            craft_dock::craft_remove,
         ]))
         // ⌘W(창 닫기)로 앱이 통째로 꺼지지 않게 — 창만 숨기고, Dock 아이콘을 누르면 다시 보인다. 완전히 끄는 건 ⌘Q
         .on_window_event(|window, event| match event {
@@ -813,6 +886,8 @@ fn main() {
             tauri::WindowEvent::CloseRequested { .. } if window.label().starts_with("reader-") => reader::forget(window.label()),
             // 모드 따로 창을 닫으면 그 모드를 끈다(호스트도)
             tauri::WindowEvent::CloseRequested { .. } if modes_host::is_mode_window(window.label()) => modes_host::window_closed(window.app_handle(), window.label()),
+            // Craft 따로 창은 진짜로 닫는다 — 비추기만 떼고 앱은 그대로(앱을 끄는 건 머리줄 닫기·scripts/craft close)
+            tauri::WindowEvent::CloseRequested { .. } if craft_window::is_craft_window(window.label()) => craft_window::window_closed(window),
             // 주소 미리보기 창(⌘W 등)은 진짜로 닫고 상태를 비운다
             tauri::WindowEvent::CloseRequested { .. } if window.label() == webpage::LABEL => webpage::forget(),
             // 미리보기 창이 붙은 창이 움직이면 따라간다(맥은 자식 창이 저절로 따라오지만 윈도우는 아니다)
@@ -840,14 +915,25 @@ fn main() {
             // 앱이 꺼질 때 말하던 음성도 같이 끈다 — 앱을 바꿔 넣어도 옛 앱이 띄운 음성이 계속 돌았다(2026-09-28)
             if let tauri::RunEvent::Exit = event {
                 // 가상 모니터를 지우기 전에 세션 크롬을 가린다 — 안 그러면 어느 화면도 아닌 곳에 남거나 사용자 화면으로 튈 수 있다
-                agent_browser::hide_all();
-                vdisplay::stop();
-                claude::stop_speaking();
+                // 단계마다 0.3초 넘게 걸리면 notify.log 에 — 끌 때 무엇이 붙잡는지 실사용 앱에서 보려고(2026-10-19 독 종료 QA)
+                let step = |name: &str, f: &dyn Fn()| {
+                    let t = std::time::Instant::now();
+                    f();
+                    let ms = t.elapsed().as_millis();
+                    if ms >= 300 {
+                        claude::log_out("quit", &format!("exit step {name} {ms}ms"));
+                    }
+                };
+                step("hide browsers", &agent_browser::hide_all);
+                step("agents screen", &vdisplay::stop);
+                step("craft save", &craft_screen::close_apps_on_exit);
+                step("craft screen", &craft_screen::stop);
+                step("voice", &claude::stop_speaking);
                 // 모드 호스트를 남기지 않는다
-                modes_host::shutdown();
+                step("modes", &modes_host::shutdown);
                 // 모바일 서버·테일스케일 serve 정리
-                mobile::shutdown();
-                messenger_cmd::shutdown();
+                step("mobile", &mobile::shutdown);
+                step("messenger", &messenger_cmd::shutdown);
             }
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {

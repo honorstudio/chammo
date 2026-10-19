@@ -9,6 +9,18 @@ export const IconMaximize = () => (
 export const IconRestore = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5" /></svg>
 );
+/** 앱 서랍: 둥근 칸 넷(격자) */
+export const IconApps = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M3.5 2.5h2.5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1ZM10 2.5h2.5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1ZM3.5 9H6a1 1 0 0 1 1 1v2.5a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1ZM10 9h2.5a1 1 0 0 1 1 1v2.5a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1Z" /></svg>
+);
+/** 따로 창으로: 뒤 창 하나가 앞으로 떨어져 나옴 */
+export const IconWindowOut = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M5.5 5V3.5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H11M2.5 6.5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1Z" /></svg>
+);
+/** 스페이스로: 옆 칸이 있는 창 안으로 들이는 화살표 */
+export const IconDockIn = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M2.5 3.5h11v9h-11ZM6.5 3.5v9M12 8H8.5M10 6.5 8.5 8 10 9.5" /></svg>
+);
 /** 접기: 아래로 내려놓는 막대 */
 export const IconCollapse = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M3 12.5h10M8 3v6.5M5 7l3 3 3-3" /></svg>

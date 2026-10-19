@@ -1999,6 +1999,8 @@ pub fn open_target(kind: String, target: String) -> Result<(), String> {
         "url" if target.starts_with("http://") || target.starts_with("https://") => {}
         // 말하기 키 안내의 "키보드 설정 열기" — 이 주소 하나만(🌐 키 동작을 '아무것도 안 함'으로)
         "url" if target == "x-apple.systempreferences:com.apple.Keyboard-Settings.extension" => {}
+        // Craft 따로 창의 "권한 열기" — 화면 기록 설정 하나만(맥 앱 창을 비추려면 한 번 필요)
+        "url" if target == "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" => {}
         "file" if std::path::Path::new(&target).exists() => {}
         "file" => return Err(format!("{}: {target}", crate::i18n::tr("파일이 없어", "File not found"))),
         _ => return Err(crate::i18n::tr("열 수 없는 링크", "This link cannot be opened").into()),

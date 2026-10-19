@@ -3,7 +3,7 @@ import { josa, machine, tr } from '../i18n';
 import { askView, summarizeTranscript } from './activity';
 import { chatBusy, splitPaths, type ChatItem } from './chat';
 import { parseCtx, type Ctx } from './ctx';
-import { dropText } from './drop';
+import { chipPastes } from './drop';
 import { findTarget } from './inbox';
 import type { Session } from './session';
 import { displayName, shownName, splitOrchName, withNick } from './orchLabel';
@@ -30,8 +30,12 @@ export function ctxFromAgents(json: string): Record<string, Ctx> {
   }
 }
 
-/** 붙인 그림 경로 + 글 — 데스크톱 끌어 놓기(dropText)와 같은 모양이라 비서가 경로로 받아 읽는다 */
-export const withAttachments = (text: string, paths: string[]) => `${dropText(paths)}${text}`.trim();
+/** 붙인 첨부 경로 + 글 — 데스크톱 채팅 칩과 같은 함수(chipPastes): 그림은 이스케이프 경로, 그 밖은 #file1 "경로" */
+export function withAttachments(text: string, paths: string[]): string {
+  let file = 0;
+  const items = paths.map((path) => ({ path, label: IMAGE_EXT.test(path) ? undefined : `#file${++file}` }));
+  return `${chipPastes(items).join('')}${text}`.trim();
+}
 
 /** 폰이 올린 첨부 — 서버가 지은 이름 꼴(<데이터>/attach/<숫자>-phone.<확장자>, Rust mobile_files::phone_attach 와 같은 꼴) */
 const PHONE_ATTACH = /\/attach\/\d+-phone\.(png|jpe?g|gif|webp|pdf|md|txt)$/;
@@ -42,14 +46,15 @@ export type PhoneAtt = { path: string; label: string; image: boolean };
 export function phoneBubble(text: string): { body: string; atts: PhoneAtt[] } {
   const atts: PhoneAtt[] = [];
   let img = 0, file = 0;
-  const body = splitPaths(text)
-    .map((x) => {
-      if ('text' in x || !PHONE_ATTACH.test(x.path)) return 'text' in x ? x.text : x.path;
-      const image = IMAGE_EXT.test(x.path);
-      atts.push({ path: x.path, label: image ? `#img${++img}` : `#file${++file}`, image });
-      return '';
-    })
-    .join('');
+  const parts: string[] = [];
+  for (const x of splitPaths(text)) {
+    if ('text' in x || !PHONE_ATTACH.test(x.path)) { parts.push('text' in x ? x.text : x.path); continue; }
+    const image = IMAGE_EXT.test(x.path);
+    atts.push({ path: x.path, label: image ? `#img${++img}` : `#file${++file}`, image });
+    // 파일 칩은 경로 바로 앞에 이름표가 붙어 간다(#file1 "…") — 그 이름표는 썸네일 쪽이 가진다
+    if (!image && parts.length) parts[parts.length - 1] = parts[parts.length - 1]!.replace(/(?:^|\s)#file\d+\s*$/, ' ');
+  }
+  const body = parts.join('');
   return atts.length ? { body: body.replace(/^\s+/, '').replace(/ {2,}/g, ' ').trim(), atts } : { body: text, atts };
 }
 
@@ -411,6 +416,12 @@ export const nearBottom = (scrollHeight: number, scrollTop: number, clientHeight
 
 /** 목록이 줄거나(키보드) 말풍선이 늘 때 바닥에 붙일까 — 바닥 근처를 보던 중이었거나 내가 막 보냈으면. 옛 글을 보는 중이면 그대로(2026-10-03 사용자) */
 export const stickBottom = (o: { wasNear: boolean; sentMine: boolean }) => o.wasNear || o.sentMine;
+
+/** '맨 아래로' 버튼을 띄울까 — 데스크톱 채팅(ChatView)과 같은 기준, 바닥에서 400px 넘게 올려 읽는 중일 때만 */
+export const farFromBottom = (scrollHeight: number, scrollTop: number, clientHeight: number) => scrollHeight - scrollTop - clientHeight > 400;
+
+/** 버튼의 새 답 점 — 올려 읽는 중에 답 글 양(before → after)이 늘면 켜고, 바닥으로 돌아오면(away 아님) 끈다 */
+export const jumpDot = (o: { dot: boolean; away: boolean; before: number; after: number }) => o.away && (o.dot || o.after > o.before);
 
 const SHRINK_SIDE = 2048;
 const SHRINK_BYTES = 1_500_000;

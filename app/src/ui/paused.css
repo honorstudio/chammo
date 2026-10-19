@@ -35,6 +35,8 @@
 :is(html.oa-paused, html.oa-calm) .m-retrying svg,
 :is(html.oa-paused, html.oa-calm) .m-spin,
 :is(html.oa-paused, html.oa-calm) .cv-spin,
+:is(html.oa-paused, html.oa-calm) .cw-spin,
+:is(html.oa-paused, html.oa-calm) .cd-sk,
 :is(html.oa-paused, html.oa-calm) .sfab.has .sfab-plane,
 :is(html.oa-paused, html.oa-calm) .sfab.has:not(.open) .sfab-pill,
 :is(html.oa-paused, html.oa-calm) .sfab.has:not(.open),

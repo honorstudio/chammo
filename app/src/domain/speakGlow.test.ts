@@ -40,6 +40,17 @@ describe('speakingFrom — 빛낼 참모는 재생 중일 때만', () => {
     expect(speakingFrom(g, 1_399)).toBeNull();
     expect(speakingFrom(g, 1_400)).toBe('f00d0007');
   });
+  // 2026-10-16 실측: afplay 는 소리가 끝난 뒤 1초쯤 조용히 더 살아서(장치 시작 0.77초 + 소리 4.25초 → afplay 끝 6.16초),
+  // 그동안 '재생 중'인데 곡선은 끝나 빛 세기 0 인 채 말하는 표시(고른 프사는 움직임까지 멈춤)가 남았다 — 곡선 끝 = 말 끝
+  it('곡선이 있으면 곡선 끝(시작 + 칸 수 × 25ms)에서 끝 — afplay 의 조용한 꼬리는 말이 아니다', () => {
+    const g = foldSay(null, now({ env: [10, 200, 30] })); // 3칸 = 75ms
+    expect(speakingFrom(g, 1_074)).toBe('f00d0007');
+    expect(speakingFrom(g, 1_075)).toBeNull();
+    expect(speakingFrom(foldSay(null, now({ env: [] })), 1_000)).toBeNull();
+  });
+  it('곡선이 없으면(파일 없는 명령·아직 못 받음) 예전처럼 재생 중이면 계속', () => {
+    expect(speakingFrom(foldSay(null, now({ env: null })), 60_000)).toBe('f00d0007');
+  });
 });
 
 describe('levelAt — 지금 시각의 빛 세기(0~1)', () => {

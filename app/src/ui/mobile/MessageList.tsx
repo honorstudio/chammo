@@ -1,11 +1,11 @@
 // 말풍선 목록 — parseChat 결과를 그리는 얇은 목록(데스크톱 ChatView 는 tauri 의존이라 통째로 못 쓴다)
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { stripMarks, type ChatItem } from '../../domain/chat';
-import { nearBottom, phoneBubble, phoneName, stickBottom, wantEarlier, type PhoneAtt } from '../../domain/mobile';
+import { farFromBottom, jumpDot, nearBottom, phoneBubble, phoneName, stickBottom, wantEarlier, type PhoneAtt } from '../../domain/mobile';
 import type { OutMsg } from '../../domain/mobileOutbox';
 import { sentMentionLabel, splitTokens } from '../../domain/chatTokens';
 import type { EarlierApi } from './useEarlier';
-import { IconClose, IconRefresh } from '../Icons';
+import { IconChevronDown, IconClose, IconRefresh } from '../Icons';
 import { mdToHtmlNewTab } from '../md';
 import { useBlobUrl } from './useBlobUrl';
 import { interleave } from '../../domain/chatExtras';
@@ -109,11 +109,23 @@ export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earli
   const near = useRef(true);
   const mine = useRef(out.length);
   const toBottom = () => { const el = log.current; if (el) el.scrollTop = el.scrollHeight; };
+  // 맨 아래로 버튼 — 데스크톱 채팅과 같이 400px 넘게 올려 읽을 때만, 그사이 새 답이 오면 점(2026-10-17 사용자 폰)
+  const [away, setAway] = useState(false);
+  const [dot, setDot] = useState(false);
+  // 이어진 답은 말풍선 하나로 합쳐지니 개수가 아니라 답 글 양으로 잰다
+  const replies = items.reduce((n, it) => n + (it.kind === 'assistant' ? it.text.length : 0), 0);
+  const seen = useRef(replies);
+  useEffect(() => {
+    setDot((d) => jumpDot({ dot: d, away, before: seen.current, after: replies }));
+    seen.current = replies;
+  }, [replies, away]);
+  const jump = () => { const el = log.current; if (!el) return; near.current = true; el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }); setAway(false); };
   useEffect(() => {
     const el = log.current;
     if (!el) return;
     const on = () => {
       near.current = nearBottom(el.scrollHeight, el.scrollTop, el.clientHeight);
+      setAway(farFromBottom(el.scrollHeight, el.scrollTop, el.clientHeight));
       prev.current.h = el.scrollHeight; // 그림이 늦게 그려져 높이가 바뀐 것도 따라간다(다음에 붙을 때 그만큼 더 밀지 않게)
       // 위로 무한 스크롤 — 위 끝에 닿기 전, 화면 한 장 남았을 때 미리(2026-10-03 사용자)
       if (el.scrollTop < el.clientHeight) top.current();
@@ -171,6 +183,14 @@ export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earli
           <div className="m-ask-label">{who}답을 기다려요</div>
           {ask.lead && <div className="m-muted m-sm">{ask.lead}</div>}
           <div className="m-ask-q">{ask.q}</div>
+        </div>
+      )}
+      {away && (
+        <div className="m-jump-at">
+          <button type="button" className="m-jump" onClick={jump} aria-label={dot ? '맨 아래로 · 새 답' : '맨 아래로'} title="맨 아래로">
+            <IconChevronDown />
+            {dot && <span className="m-jump-dot" aria-hidden />}
+          </button>
         </div>
       )}
     </div>

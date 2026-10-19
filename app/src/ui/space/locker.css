@@ -201,6 +201,14 @@
 .lk-tab.home, .lk-tab.folder { position: relative; flex: none; padding: 0 11px; }
 .lk-tab.home.on svg, .lk-tab.folder.on svg { color: var(--text); }
 .lk-tab .lk-newdot { position: absolute; top: 6px; right: 6px; }
+/* Craft 독 — 앱 아이콘 하나씩(글자 없이), 모서리 점 = 상태 */
+.lk-tab.dock { position: relative; flex: none; padding: 0 8px; }
+.lk-tab.dock img { width: 18px; height: 18px; display: block; }
+.lk-dock-letter { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font-size: 11px; font-weight: 700; color: var(--surface); background: var(--text-3); }
+.lk-dock-dot { position: absolute; top: 5px; right: 4px; width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--panel, var(--surface)); }
+.lk-dock-dot.human { background: #1f9a62; }
+.lk-dock-dot.agent { background: #4c8dff; }
+.lk-dock-dot.dirty { background: var(--blocked, #c98a00); }
 .lk-tab.folder.drop-over, .lk-tab.folder.drop-hot { box-shadow: inset 0 0 0 1.5px var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .lk-tab > span { overflow: hidden; text-overflow: ellipsis; }
 .lk-tab.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--line); clip-path: inset(-1px -1px 0 -1px); }
@@ -326,9 +334,16 @@
 .lk-strip.joined .lk-av.on { box-shadow: none; background: none; }
 .lk-strip.joined.wide .lk-av.on .lk-av-pic { box-shadow: none; }
 /* 고른 프사가 말할 때 — 칸 네모 빛 대신 캐릭터 모양을 따라가는 빛(2026-10-12 사용자 '네모 칸 모양이라 별로'). 고른 표시는 윤곽선이 맡고,
-   빛은 그림에만 drop-shadow — 소리 크기(--speak-level)대로, 동작 줄이기면 levelAt 이 0.7 고정이라 은은히 켜진 채 */
-.lk-strip.joined .lk-av.on.st-speak { box-shadow: none !important; }
-.lk-strip.joined .lk-av.on.st-speak .lk-av-pic > :first-child { filter: drop-shadow(0 0 calc(1.5px + 6px * var(--speak-level, 0)) var(--orch, var(--text-3))) drop-shadow(0 0 1px color-mix(in srgb, var(--orch, var(--text-3)) 60%, transparent)); }
+   빛은 그림에만 drop-shadow — 소리 크기(--speak-level)대로, 동작 줄이기면 levelAt 이 0.7 고정이라 은은히 켜진 채.
+   세기는 안 고른 칸만큼(2026-10-16 사용자 '고른 참모 빛이 더 약하다') — 둘레 1px 윤곽 + 가운데 빛 + 안 고른 칸과 같은 넓은 블러 두 겹(다크에서 한 겹은 약했다)
+   (drop-shadow 는 앞 그림자까지 다시 비춰서 겹칠수록 진해진다 — 캐릭터 둘레가 칸 네모보다 짧아 한 겹이면 약했다) */
+/* 채팅 칸(.chat base+3, 불투명 바탕)보다 위 — 아래면 빛이 띠 끝(채팅 카드 왼쪽 변)에서 세로로 잘렸다(2026-10-16 228.png). 이어진 면을 따라 카드 쪽으로 번지고,
+   윤곽선(.chat-link base+4, DOM 이 뒤)은 그 위에 남는다 */
+.lk-strip.joined .lk-av.on.st-speak { box-shadow: none !important; z-index: calc(var(--z-base) + 4); }
+.lk-strip.joined .lk-av.on.st-speak .lk-av-pic > :first-child { filter: drop-shadow(0 0 1px color-mix(in srgb, var(--orch, var(--text-3)) 70%, transparent)) drop-shadow(0 0 calc(2px + 5px * var(--speak-level, 0)) var(--orch, var(--text-3))) drop-shadow(0 0 calc(4px + 14px * var(--speak-level, 0)) var(--orch, var(--text-3))) drop-shadow(0 0 calc(4px + 14px * var(--speak-level, 0)) color-mix(in srgb, var(--orch, var(--text-3)) 60%, transparent)); }
+/* 말하는 동안 고른 프사는 기본 자세로(안 볼 때 oa-paused 와 같은 animation: none) — 실제 앱(WebKit)에선 프사 SVG 애니메이션이 돌면 위 drop-shadow 가
+   통째로 안 그려졌다(2026-10-16 개발판 실측, 크롬 하네스는 멀쩡). paused 로 멈추면 안 되고 none 이어야 그려진다. 움직임은 빛이 소리 크기대로 맡는다 */
+.lk-strip.joined .lk-av.on.st-speak .oa, .lk-strip.joined .lk-av.on.st-speak .oa *, .lk-strip.joined .lk-av.on.st-speak .oa::before { animation: none !important; }
 @media (prefers-reduced-motion: reduce) { .lk-join { transition: none; } }
 /* 이음 윤곽(ChatLink) — 고른 프사 탭과 채팅 카드를 참모 색 선 하나로(맞닿는 변만 열림, 2026-10-12 사용자 201.png). 한쪽 변만 굵은 띠가 아니라 전체 둘레.
    .space 위 SVG 한 장 — 누르기는 아래로 통과. 색은 참모를 바꾸면 140ms 에 바뀌고(자리는 JS 가 같은 140ms 로), 동작 줄이기면 바로 */

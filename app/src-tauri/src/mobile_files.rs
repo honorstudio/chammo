@@ -103,14 +103,58 @@ fn dot_ok(p: &Path, home: &Path) -> bool {
 }
 
 pub fn shareable(p: &Path, r: &Rules) -> bool {
+    let ext_ok = matches!(p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(), Some("md" | "txt" | "html" | "json" | "csv" | "tsv" | "log" | "yaml" | "yml" | "toml" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "py" | "rs" | "sh" | "swift" | "kt" | "css" | "sql" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "pdf" | "pptx" | "ppt" | "key" | "docx" | "doc" | "pages" | "xlsx" | "xls" | "numbers" | "mp4" | "mov" | "m4v"));
+    ext_ok && place_ok(p, r)
+}
+
+/// html 시안이 부르는 곁 파일 — 그림·스타일·글꼴·스크립트 형식(확장자 → Content-Type)
+pub fn asset_type(p: &Path) -> Option<&'static str> {
+    Some(match p.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "svg" => "image/svg+xml",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        _ => return None,
+    })
+}
+
+/// html 시안(이미 보여 준 것)이 상대 경로로 부른 곁 파일 — 그 html 폴더와 하위 폴더 안만(2026-10-17 폰에서 시안 그림이 '?').
+/// rel 은 퍼센트 인코딩을 푼 글: 빈 성분·. · .. · 점으로 시작하는 성분·역슬래시·NUL·절대 경로는 거절, 형식은 asset_type 만,
+/// 이름·자리 거름(place_ok)과 링크 검사(plain_path)는 보여 준 파일과 같다. 글 속 비밀은 읽는 쪽(secret_in)이 따로 본다
+pub fn html_asset(html: &Path, rel: &str, rules: &Rules) -> Pick {
+    let segs: Vec<&str> = rel.split('/').collect();
+    if rel.is_empty() || rel.contains(['\\', '\0']) || segs.iter().any(|s| s.is_empty() || s.starts_with('.')) {
+        return Pick::Forbidden;
+    }
+    let Some(dir) = html.parent().filter(|d| d.is_absolute()) else { return Pick::Forbidden };
+    let p = segs.iter().fold(dir.to_path_buf(), |acc, s| acc.join(s));
+    if !p.starts_with(dir) || asset_type(&p).is_none() || !place_ok(&p, rules) {
+        return Pick::Forbidden;
+    }
+    match plain_path(&p) {
+        Plain::Link => Pick::Forbidden,
+        Plain::Ok if p.is_file() => Pick::Ok(p),
+        _ => Pick::NotFound,
+    }
+}
+
+/// 이름(민감 낱말)·자리(데이터 폴더·점 성분) 거름 — 확장자는 부르는 쪽이 본다
+fn place_ok(p: &Path, r: &Rules) -> bool {
     let (data_dir, hq_dir) = (r.data_dir.as_path(), r.hq_dir.as_str());
     let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
-    let ext_ok = matches!(p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(), Some("md" | "txt" | "html" | "json" | "csv" | "tsv" | "log" | "yaml" | "yml" | "toml" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "py" | "rs" | "sh" | "swift" | "kt" | "css" | "sql" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "pdf" | "pptx" | "ppt" | "key" | "docx" | "doc" | "pages" | "xlsx" | "xls" | "numbers" | "mp4" | "mov" | "m4v"));
     // 코드·설정 글(json 등)을 열면서 서비스 계정·SSH 키 이름도 막는다(2026-10-03). 글 속 키는 secret_in 이 따로 본다
     let word_bad = ["secret", "key", "token", "credential", "password", "infra", "service-account", "service_account", "adminsdk", "google-services", "googleservice", "id_rsa", "id_ed25519", "settings", "accounts"].iter().any(|w| name.contains(w))
         || name.ends_with(".local.md")
         || name.starts_with(".env");
-    if !ext_ok || word_bad {
+    if word_bad {
         return false;
     }
     let routine = p.strip_prefix(data_dir.join("routines")).ok().is_some_and(|r| {

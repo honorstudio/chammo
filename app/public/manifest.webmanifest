@@ -1,7 +1,6 @@
 {
   "name": "참모",
   "short_name": "참모",
-  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f6f6f8",

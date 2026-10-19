@@ -1,10 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { appendTaskEvent, readSessionTasks, readTranscriptTails, sendTextToSession, spaceTrace, spawnLines } from '../../data/tauri';
-import { keepScroll, queueShow, restoreTop, SCROLL_PANES, scrollKey, showBatch, traceLine } from '../../domain/spaceJump';
+import { craftTarget, keepScroll, queueShow, restoreTop, SCROLL_PANES, scrollKey, showBatch, traceLine } from '../../domain/spaceJump';
 import { dashFiles, ownBrowserLine, paneState, type DashFile } from '../../domain/dashboard';
 import { findTarget } from '../../domain/inbox';
-import { isSheet, kindOf, spacePage } from '../../domain/reader';
+import { isSheet, kindOf, spacePage, titleOf } from '../../domain/reader';
 import type { Session } from '../../domain/session';
 import { sameOrchSlot, stoppedOrchs } from '../../domain/stopped';
 import { foldAgents, pruneAgents, type SubAgent } from '../../domain/subAgents';
@@ -38,7 +38,13 @@ import { OPEN_PAGE, PAGE_TITLE } from './PageBlock';
 import { Preview } from './Preview';
 import { CHAT_INSERT, dragPath } from './dragPath';
 import { useShowLog } from './useShowLog';
-import { CHAT_FILE_OPEN } from '../chat/ChatFileCard';
+import { CraftPane } from '../craft/CraftPane';
+import { CraftDrawer } from '../craft/CraftDrawer';
+import { APPS_KEY } from '../../domain/craftDrawer';
+import { setCraftOwner } from '../craftOwner';
+import { craftAppOf, craftKey, leftCraft } from '../../domain/craftTab';
+import { dockLetter, dockTitle, recentLabel, type DockItem } from '../../domain/craftDock';
+import { CHAT_FILE_OPEN, imageFile } from '../chat/openChatFile';
 import { cardMoves } from '../../domain/chatFiles';
 import { attachToChat } from '../fileDrop';
 import { StateMark } from './StateMark';
@@ -60,13 +66,14 @@ import { EMPTY_NAV, goBack, goForward, keyFallback, visit, type Nav } from '../.
 import { SPACE_CMD, SPACE_NAV, type SpaceCmd } from './navSignal';
 import { TabZoomBar } from './TabZoomBar';
 import { FIT } from '../../domain/readerZoom';
-import { fitZoom, makePinchAccum, makeWheelAccum, nextTabZoom, parseTabZooms, tabZoomable, tabZoomOf, TAB_ZOOM_KEY, wheelDir, withTabZoom, type TabZooms, type ZoomCmd } from '../../domain/tabZoom';
+import { fitZoom, nextTabZoom, parseTabZooms, tabZoomable, tabZoomOf, TAB_ZOOM_KEY, withTabZoom, type TabZooms, type ZoomCmd } from '../../domain/tabZoom';
+import { markAnchor, useWheelZoom } from '../zoomAnchor';
 import { keyLabel } from '../../domain/keys';
 import { IS_WIN } from '../../domain/reader';
 import { deskTarget, OFFICE, officePick, rememberSide, sheetBack, sheetOpen, showPick, spaceView, startPick, type Side, type SpaceSide } from '../../domain/spaceOffice';
 import { OfficeSheet, SheetIcons } from '../office/OfficeSheet';
 import { HOME_PICK as HOME } from '../../domain/orchHome';
-import { IconClose, IconDashboard, IconFolder, IconHome, IconOffice, IconPet } from '../Icons';
+import { IconClose, IconDashboard, IconFolder, IconHome, IconOffice, IconPet, IconApps } from '../Icons';
 import { IconButton } from '../kit/IconButton';
 import { BrowserAttachButton } from '../BrowserAttach';
 import { every } from '../poll';
@@ -441,6 +448,56 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
     window.addEventListener('space-focus', on);
     return () => window.removeEventListener('space-focus', on);
   });
+  // Craft 맥 앱 — 기본 자리는 지금 보는 참모 탭 줄의 Craft 탭(k:<앱>). 끄면 탭도 닫는다, 따로 창으로 가면 탭은 '따로 창에 떠 있어' 안내
+  const craftNames = useRef(new Map<string, string>());
+  // Craft 독 — 떠 있는 Craft 앱(2초마다). 떠 있는 게 없으면 빈 목록이라 아이콘도 없다
+  const [dock, setDock] = useState<DockItem[]>([]);
+  useEffect(() => {
+    let alive = true;
+    const tick = () => void invoke<DockItem[]>('craft_dock').then((d) => { if (!alive) return; d.forEach((it) => craftNames.current.set(it.app, it.name)); setDock((old) => (JSON.stringify(old) === JSON.stringify(d) ? old : d)); }, () => {});
+    tick();
+    const t = setInterval(tick, 2000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  const craftLatest = useRef({ orchs, chatOrch, switchTo, orchIds, holders });
+  craftLatest.current = { orchs, chatOrch, switchTo, orchIds, holders }; // 구독은 한 번 — 참모 목록·바꾸기는 늘 최신으로(처음 렌더의 빈 목록을 붙잡지 않게)
+  useEffect(() => {
+    // Rust 가 window.__craftSpace(...) 를 eval 로 부른다 — 이 앱은 capabilities 가 없어 이벤트 listen 이 막혀 있다(appctl 과 같은 길)
+    const w = window as unknown as { __craftSpace?: (p: { app: string; name?: string; place: string; by?: string }) => void };
+    w.__craftSpace = ({ app, name, place, by }) => {
+      const { orchs, chatOrch, switchTo, orchIds, holders } = craftLatest.current;
+      const key = craftKey(app);
+      if (name) craftNames.current.set(app, name);
+      if (place === 'space') {
+        // 띄운 세션(by)을 맡긴 참모 탭에 — show 와 같은 주인 판단. 서랍·셸에서 띄웠으면 지금 보는 참모 → 대표(2026-10-19 사람이 보면서 따라가게)
+        const v = now.current.view ?? null;
+        const t = craftTarget(showOwner(by ?? '', orchIds, holders), v && orchs.some((o) => o.id === v) ? v : undefined, nav.chat, chatOrch?.id ?? orchs[0]?.id);
+        if (t.queue) { // 다른 참모 몫 — 보던 화면은 그대로, 그 참모 탭 줄 끝에 넣고 프사에 점(show-queued 와 같은 길)
+          const o = orchs.find((x) => x.id === t.to)!;
+          const sv = screens.current.get(t.to!) ?? { pick: homeOf(o), sheet: [] };
+          screens.current.set(t.to!, { ...sv, pick: key, modal: null });
+          holds.current.set(t.to!, openTab(holds.current.get(t.to!) ?? null, t.to!, sv.pick, key));
+          setNewFor((x) => (x.has(t.to!) ? x : new Set(x).add(t.to!)));
+          setCurNote(tr(`${josa(oname(o), '이', '가')} 맡긴 세션이 ${craftNames.current.get(app) ?? app} 를 띄웠어`, `A session ${oname(o)} delegated opened ${craftNames.current.get(app) ?? app}`));
+          return;
+        }
+        const to = t.to;
+        if (!to) { void invoke('craft_move', { app, to: 'window' }).catch(() => {}); return; } // 탭 줄을 둘 참모가 없으면 따로 창
+        if (now.current.view !== to) switchTo(to, 'craft');
+        setModal(null);
+        setLkHold((h) => openTab(h, to, now.current.pick, key));
+        setPick(key, 'craft');
+      } else if (place === 'closed' || place === 'hidden') { // 꺼짐·숨김 — 탭을 닫는다(숨김이면 독 아이콘은 남는다)
+        setLkHold((h) => {
+          if (!h || !h.tabs.includes(key)) return h;
+          const r = closeTab(h, key, now.current.pick);
+          if (r.pick) setPick(r.pick, 'craft');
+          return r.hold;
+        });
+      }
+    };
+    return () => { delete w.__craftSpace; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   // scripts/show 기록 — 3초마다 꼬리(채팅 안 파일 카드와 같이 읽는다). 대시보드 파일·참모 문서가 여기서 나온다
@@ -701,12 +758,8 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
   // 채팅에 붙이기 — 지금 채팅 탭 참모 입력칸에(끌어다 놓기와 같게)
   const attach = (path: string) => {
     if (!chatOrch) return;
-    if (!path.startsWith('data:')) { attachToChat(chatOrch.id, [path]); return; }
-    // 경로 없는 그림(채팅에 붙인 그림) — 파일로 저장한 뒤 그 경로로 붙인다
-    const m = path.match(/^data:image\/(\w+);base64,(.*)$/);
-    if (!m) return;
-    const bytes = Array.from(Uint8Array.from(atob(m[2]!), (c) => c.charCodeAt(0)));
-    void invoke<string>('save_attach', { name: `pasted.${m[1] === 'jpeg' ? 'jpg' : m[1]}`, bytes }).then((p) => attachToChat(chatOrch.id, [p])).catch(() => {});
+    // 경로 없는 그림(채팅에 붙인 그림) — 파일로 저장한 뒤 그 경로로 붙인다(말풍선 그림 열기와 같은 저장)
+    void imageFile(path).then((p) => attachToChat(chatOrch.id, [p])).catch(() => {});
   };
   // 붙이기 받는 참모(지금 채팅 탭) — 보내기 단추가 그 참모 색 말풍선(채팅 칸과 같은 색, 프사에서 고른 색 먼저)
   const attachTo = chatOrch ? { name: oname(chatOrch), color: bodyColor(avatars, chatOrch.name || '', colorOf(chatOrch.name || '')) } : null;
@@ -826,14 +879,16 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
   const canZoom = !!zoomPath && tabZoomable(zoomPath);
   const zoomOf = (path: string) => tabZoomOf(tabZooms, path);
   /** 한 명령 — 처리했으면 true(아니면 App 이 터미널 글자 크기로) */
-  const zoomCmd = (cmd: ZoomCmd): boolean => {
+  const zoomCmd = (cmd: ZoomCmd, at?: { x: number; y: number }): boolean => {
     if (!canZoom) return false;
     const z = zoomOf(zoomPath);
     let shown: number | undefined;
     let fitTo: number | undefined;
-    if (kindOf(zoomPath) === 'image' && z === FIT) {
+    if (kindOf(zoomPath) === 'image') {
+      // 핀치·휠은 커서 아래, 키보드·단추는 보이는 가운데가 제자리에 — FileTab 이 다시 그린 뒤 스크롤을 맞춘다
+      markAnchor(document.querySelector<HTMLElement>('.space .cv-main .ft-body .pv-image'), at);
       const img = document.querySelector<HTMLImageElement>('.space .cv-main .ft-body img');
-      if (img?.naturalWidth) shown = Math.round((img.getBoundingClientRect().width / (img.naturalWidth / (window.devicePixelRatio || 1))) * 100);
+      if (z === FIT && img?.naturalWidth) shown = Math.round((img.getBoundingClientRect().width / (img.naturalWidth / (window.devicePixelRatio || 1))) * 100);
     }
     if (cmd === 'fit') {
       const el = document.querySelector<HTMLElement>('.space .cv-main .cv-doc-scroll, .space .cv-main .cv-sheet-body');
@@ -905,6 +960,16 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
   // 나무는 늘 — 보관함 밖 화면(세션·기능)에서도 지금 보는 참모 보관함 나무(2026-10-12 패널 하나로)
   const lockerOrchId = lp?.orch ?? (holdOn && lkHold ? lkHold.orch : orch?.id ?? '');
   const lockerOrch = lockerOrchId ? orchs.find((x) => x.id === lockerOrchId) ?? null : null;
+  // Craft 탭이 이 참모 스페이스에 떠 있다 — 돌려받음 [앱] 줄을 이 참모에게(ui/craftOwner)
+  useEffect(() => { if (pick.startsWith('k:') && lockerOrch) setCraftOwner(craftAppOf(pick), lockerOrch.id); }, [pick, lockerOrch?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Craft 글자 탭이 없다(독 아이콘이 탭, 2026-10-19 사용자) — 칸을 떠나면 숨기기(10분 뒤 저장·끄기), 들어오면 숨김 풀기
+  const prevPick = useRef(pick);
+  useEffect(() => {
+    const gone = leftCraft(prevPick.current, pick);
+    if (gone) void invoke('craft_leave', { app: gone }).catch(() => {});
+    if (pick.startsWith('k:') && pick !== APPS_KEY && pick !== prevPick.current) void invoke('craft_enter', { app: craftAppOf(pick) }).catch(() => {});
+    prevPick.current = pick;
+  }, [pick]);
   const lockerTree = useLockerTree(lockerOrch ? lockerOwner(lockerOrch) : null, 5000, isLockerOpen(lp));
   const place: LkPlace = lp?.place ?? (lkHold ? parseLkPick(lkHold.back)?.place ?? { kind: 'root' } : { kind: 'root' });
   const lkRef = useRef({ tree: lockerTree, hold: lkHold });
@@ -1169,7 +1234,7 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
     window.addEventListener(SPACE_CMD, on);
     return () => window.removeEventListener(SPACE_CMD, on);
   }, []);
-  // 확대 명령 받기 — App 의 ⌘+ ⌘- ⌘0 ⌘9 가 window.__tabZoom 을 먼저 부른다, ⌘/Ctrl/Alt+휠·트랙패드 핀치(ctrlKey 붙은 wheel)·사파리 핀치(gesturechange)는 여기서 직접
+  // 확대 명령 받기 — App 의 ⌘+ ⌘- ⌘0 ⌘9 가 window.__tabZoom 을 먼저 부른다, ⌘/Ctrl/Alt+휠·트랙패드 핀치(ctrlKey 붙은 wheel)·사파리 핀치(gesturechange)는 useWheelZoom 이 커서 자리와 같이
   const zoomRef = useRef(zoomCmd);
   zoomRef.current = zoomCmd;
   const canZoomRef = useRef(false);
@@ -1177,32 +1242,9 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
   useEffect(() => {
     const w = window as unknown as { __tabZoom?: (c: ZoomCmd) => boolean };
     w.__tabZoom = (c) => zoomRef.current(c);
-    const wheelAcc = makeWheelAccum();
-    const pinch = makePinchAccum();
-    const inMain = (t: EventTarget | null) => !!document.querySelector('.space .cv-main')?.contains(t as Node);
-    const wheel = (e: WheelEvent) => {
-      if (wheelDir(e) === null || !canZoomRef.current || !inMain(e.target)) return;
-      e.preventDefault(); // 웹뷰 기본 확대·스크롤을 막고 탭 확대로
-      const s = wheelAcc(e.deltaY);
-      if (s) zoomRef.current(s);
-    };
-    const gStart = (e: Event) => { if (!canZoomRef.current || !inMain(e.target)) return; e.preventDefault(); pinch.start(); };
-    const gChange = (e: Event) => {
-      if (!canZoomRef.current || !inMain(e.target)) return;
-      e.preventDefault();
-      const s = pinch.move((e as Event & { scale: number }).scale);
-      if (s) zoomRef.current(s);
-    };
-    window.addEventListener('wheel', wheel, { passive: false, capture: true });
-    window.addEventListener('gesturestart', gStart, { passive: false, capture: true });
-    window.addEventListener('gesturechange', gChange, { passive: false, capture: true });
-    return () => {
-      delete w.__tabZoom;
-      window.removeEventListener('wheel', wheel, { capture: true });
-      window.removeEventListener('gesturestart', gStart, { capture: true });
-      window.removeEventListener('gesturechange', gChange, { capture: true });
-    };
+    return () => { delete w.__tabZoom; };
   }, []);
+  useWheelZoom(() => (canZoomRef.current ? document.querySelector('.space .cv-main') : null), (dir, at) => zoomRef.current(dir, at));
   // 탭 줄 — 맨 왼쪽 고정 탭 둘(홈 집 · 보관함 폴더, 닫기 없음), 그 뒤로 연 파일. 연 탭이 없어도 늘 보인다(2026-10-12 사용자 — 나무 머리 켜기가 설정 토글로 착각됐다)
   const lockerTabs = (lo: Session, rootNew = false) => {
     const row = tabRow(lkHold, lo.id, pick);
@@ -1226,6 +1268,28 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
           aria-label={tr('홈', 'Home')} title={`${tr('홈', 'Home')} ${keyLabel('⌘⇧H', IS_WIN)}`}><IconHome /></button>
         <button className={`lk-tab folder ${row.folderOn ? 'on' : ''}`} aria-pressed={row.folderOn} onClick={() => goFolder(lo)}
           data-locker-folder="" data-locker-drop="" aria-label={tr('보관함', 'Locker')} title={`${tr('보관함', 'Locker')} ${keyLabel('⌘⇧L', IS_WIN)}`}><IconFolder />{rootNew && <i className="lk-newdot" aria-label={tr('새 것 있음', 'New items')} />}</button>
+        {!IS_WIN && ( // Craft 는 지금 맥만 — 윈도우에선 서랍을 열면 스크립트 실행 오류 원문만 떴다(0.3.4 2차 검증)
+        <button className={`lk-tab folder ${pick === APPS_KEY ? 'on' : ''}`} aria-pressed={pick === APPS_KEY} onClick={() => setPick(APPS_KEY)}
+          aria-label={tr('Craft 앱', 'Craft apps')} title={tr('Craft 앱 — 사진·영상·문서·표 편집기', 'Craft apps — photo, video, document and spreadsheet editors')}><IconApps /></button>
+        )}
+        {dock.map((it) => {
+          // Craft 독 아이콘 = 그 앱의 탭(글자 탭은 없다, 2026-10-19 사용자) — 누르면 그 칸, 지금 보는 앱은 선택 표시, 오른쪽 클릭 = 따로 창·꺼내기·끄기·최근 문서
+          const title = dockTitle(it);
+          const on = pick === craftKey(it.app);
+          const menu = act ? (e: React.MouseEvent) => act.openMenu(e, [
+            { label: tr('따로 창으로', 'Open in its own window'), run: () => void invoke('craft_move', { app: it.app, to: 'window' }).catch(() => {}) },
+            { label: tr('맥 앱으로 꺼내기 — 저장하고 내 화면에 다시 열기', 'Pop out to the macOS app — save and reopen on my screen'), run: () => void invoke('craft_win_act', { app: it.app, act: 'eject' }).catch(() => {}) },
+            { label: tr('끄기 — 바뀐 게 있으면 저장하고', 'Quit — saves first if anything changed'), run: () => void invoke('craft_win_act', { app: it.app, act: 'close' }).catch(() => {}) },
+            ...it.recent.map((f, i) => ({ label: recentLabel(f), sep: i === 0, run: () => void invoke('craft_open_file', { app: it.app, path: f }).catch(() => {}) })),
+          ]) : undefined;
+          return (
+            <button key={`dock-${it.app}`} className={`lk-tab dock ${on ? 'on' : ''}`} aria-pressed={on} aria-label={title} title={title}
+              onClick={() => void invoke('craft_show', { app: it.app }).catch(() => {})} onContextMenu={menu}>
+              {it.icon ? <img src={it.icon} alt="" /> : <span className="lk-dock-letter">{dockLetter(it)}</span>}
+              {it.dot && <i className={`lk-dock-dot ${it.dot}`} aria-hidden="true" />}
+            </button>
+          );
+        })}
         {row.tabs.map(({ path: p, on }) => {
           if (p.startsWith('c:')) {
             // 시안 검토 탭 — 파일 이름 + '검토' 표, 오른쪽 클릭 = 크게·닫기
@@ -1239,6 +1303,8 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
               </span>
             );
           }
+          // Craft 칸(k:<앱>)은 글자 탭을 안 그린다 — 독 아이콘이 탭이다(2026-10-19 사용자 "앱 아이콘이 이미 탭 줄에 있고 앱 안 탭으로 문서가 나뉘니 겹친다")
+          if (p.startsWith('k:')) return null;
           if (p.startsWith('s:')) {
             // 세션 탭 — 점 + 이름(꺼졌으면 흐리게), 오른쪽 클릭 = 닫기·세션 끄기
             const ss = sessions.find((x) => x.id === p.slice(2));
@@ -1256,7 +1322,7 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
           return (
           <span key={p} className={`lk-tab ${on ? 'on' : ''} ${freshTab === p ? 'fresh' : ''}`} role="tab" aria-selected={on} tabIndex={0} onClick={() => go(p)} title={p}
             onKeyDown={(e) => { if (e.key === 'Enter') go(p); }} onContextMenu={act ? (e) => tabMenu(e, p) : undefined}>
-            <span>{p.split('/').pop()}</span>{pj && <i className="lk-tab-pj">{pj}</i>}
+            <span>{titleOf(p)}</span>{pj && <i className="lk-tab-pj">{pj}</i>}
             <IconButton size="s" label={tr('탭 닫기', 'Close tab')} onClick={(e) => { e.stopPropagation(); close(p); }}><IconClose /></IconButton>
           </span>
           );
@@ -1359,6 +1425,14 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
         <div className="lk-doc-body">{filePage(docPath, { where: pathLine(docPath, lockerTree.dir, home ?? ''), keepFor: lockerOrch.id })}</div>
       </>
     ));
+  } else if (pick === APPS_KEY) {
+    // 앱 서랍 — 13개 Craft 앱 아이콘 격자(v3 덱 1)
+    const page = <div className="lk-doc-body"><CraftDrawer running={dock.map((d) => d.app)} openMenu={act?.openMenu} /></div>;
+    main = lockerOrch ? lockerFrame(lockerOrch, <>{lockerTabs(lockerOrch, !!lockerSide?.rootNew)}{page}</>) : page;
+  } else if (pick.startsWith('k:')) {
+    // Craft 탭 — 칸은 비워 두고 네이티브 비추기가 그 위에(CraftPane 이 자리·보이는지를 알린다)
+    const pane = <div className="lk-doc-body"><CraftPane key={pick} app={craftAppOf(pick)} place="space" /></div>;
+    main = lockerOrch ? lockerFrame(lockerOrch, <>{lockerTabs(lockerOrch, !!lockerSide?.rootNew)}{pane}</>) : pane;
   } else if (pick.startsWith('c:')) {
     // 시안 검토 탭 — 탭 줄·독은 그대로, 가운데에 검토(채팅 칸도 그대로 보이고 칠 수 있다). '크게'면 아래에서 창 전체로 그리고 여긴 비운다
     const review = curBig ? <div className="cv-blank" /> : curationEl(pick.slice(2), false);

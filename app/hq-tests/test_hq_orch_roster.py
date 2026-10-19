@@ -138,6 +138,63 @@ class Roster(unittest.TestCase):
             self.assertEqual(roster.bases_of(CFG), ['참모', '아틀라스', 'Chammo'], '공백·빈 칸·겹침은 거른다')
 
 
+def xmsg(name, body='끝났어'):
+    return f'<cross-session-message from="uds:/tmp/x.sock" from-name="{name}" from-mode="bypass">\n{body}\n</cross-session-message>'
+
+
+class FromOrch(unittest.TestCase):
+    """음성 모드에서 사람이 말 건 참모만 말한다 — 다른 참모가 보낸 말로 깬 턴인가(2026-10-16)"""
+    B = ['참모', '참모', 'Chammo']
+
+    def test_다른_참모가_보낸_말만_있으면_참(self):
+        self.assertTrue(roster.from_orch(xmsg('참모-2 · 두부'), self.B))
+        self.assertTrue(roster.from_orch(xmsg('참모-7 · 예약'), self.B), '옛 이름')
+        self.assertTrue(roster.from_orch(xmsg('참모'), self.B), '번호 없는 첫 참모')
+        self.assertTrue(roster.from_orch(xmsg('참모-2 · 두부') + '\n' + xmsg('참모-3'), self.B), '참모 둘이 같이')
+
+    def test_사람_하위_세션_알림은_거짓(self):
+        self.assertFalse(roster.from_orch('이거 고쳐 줘', self.B), '사람')
+        self.assertFalse(roster.from_orch(xmsg('alpha-shop'), self.B), '프로젝트 세션 회신')
+        self.assertFalse(roster.from_orch(xmsg('참모-쇼핑'), self.B), '참모 이름 꼴 아님')
+        self.assertFalse(roster.from_orch('<task-notification>\n<status>completed</status>\n</task-notification>', self.B), '백그라운드 끝 알림')
+        self.assertFalse(roster.from_orch(xmsg('참모-2 · 두부') + '\n그리고 이것도 봐 줘', self.B), '사람 말이 섞임')
+        self.assertFalse(roster.from_orch(xmsg('참모-2') + xmsg('alpha-shop'), self.B), '하위 세션 회신이 섞임')
+        self.assertFalse(roster.from_orch('', self.B))
+        self.assertFalse(roster.from_orch(None, self.B))
+
+
+class HqSession(unittest.TestCase):
+    """음성 줄은 참모(HQ 에서 띄운 세션)에게만 — HQ 안 앱 수리 워크트리·프로젝트 세션엔 안 붙인다(2026-10-16).
+    띄운 폴더는 transcript_path 의 기록 폴더 이름(경로의 / . 를 - 로)이라 세션이 cd 해도 안 바뀐다. 없으면 cwd, 둘 다 없으면 참모로 친다"""
+    CFG = {'hqDir': '/d/hq'}
+    T = lambda self, folder: f'/home/u/.claude/projects/{folder}/0000-aaaa.jsonl'
+
+    def hq(self, inp, cfg=None, env=None):
+        return roster.hq_session(inp, self.CFG if cfg is None else cfg, '/data', env or {})
+
+    def test_HQ_에서_띄운_세션(self):
+        self.assertTrue(self.hq({'transcript_path': self.T('-d-hq'), 'cwd': '/d/hq/app'}), 'cd 해도 띄운 폴더로')
+        self.assertTrue(self.hq({'cwd': '/d/hq'}), '기록 경로가 없으면 cwd')
+        self.assertTrue(self.hq({}), '둘 다 없으면 지금처럼')
+
+    def test_워크트리_프로젝트_세션은_아니다(self):
+        self.assertFalse(self.hq({'transcript_path': self.T('-d-hq--claude-worktrees-fix-a'), 'cwd': '/d/hq/.claude/worktrees/fix-a'}))
+        self.assertFalse(self.hq({'transcript_path': self.T('-d-dev-alpha-shop'), 'cwd': '/d/dev/alpha-shop'}))
+        self.assertFalse(self.hq({'cwd': '/d/hq/.claude/worktrees/fix-a'}), 'cwd 만 있어도')
+
+    def test_HQ_자리는_앱과_같은_순서(self):
+        # 환경변수 CHAMMO_HQ → HONOR_ORCH_CWD → 설정 hqDir(~ 풀기) → <데이터>/hq (Rust config::hq_dir)
+        self.assertTrue(self.hq({'cwd': '/e/hq'}, env={'CHAMMO_HQ': '/e/hq'}))
+        self.assertTrue(self.hq({'cwd': '/e/hq'}, env={'HONOR_ORCH_CWD': '/e/hq'}))
+        self.assertTrue(self.hq({'transcript_path': self.T('-data-hq')}, cfg={}), '공개판 기본 <데이터>/hq')
+        home = os.path.expanduser('~')
+        self.assertTrue(self.hq({'cwd': home + '/my-hq'}, cfg={'hqDir': '~/my-hq'}))
+
+    def test_윈도우_경로(self):
+        self.assertTrue(self.hq({'transcript_path': 'C:\\Users\\me\\.claude\\projects\\C--Users-me--chammo-hq\\s.jsonl'}, cfg={'hqDir': 'C:\\Users\\me\\.chammo\\hq'}))
+        self.assertFalse(self.hq({'cwd': 'C:/Users/me/dev/shop'}, cfg={'hqDir': 'C:\\Users\\me\\.chammo\\hq'}))
+
+
 class LiveFallback(unittest.TestCase):
     def test_claude_agents_가_늦으면_앱_세션_목록으로(self):
         import json, os, tempfile, subprocess as sp

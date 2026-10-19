@@ -78,7 +78,7 @@ pub fn apply_talk(key: &str, anywhere: bool) {
     let outside = anywhere && k != 0;
     ANYWHERE.store(outside, Ordering::Relaxed);
     if outside && !GLOBAL_ON.swap(true, Ordering::Relaxed) {
-        ask_accessibility();
+        // 손쉬운 사용 허용이 없으면 다른 앱 위에선 키가 안 온다 — 묻는 창은 띄우지 않는다(첫 실행 안내·설정 > 기능 줄에서 사람이 켠다)
         let flags = RcBlock::new(|ev: NonNull<NSEvent>| on_flags(unsafe { ev.as_ref() }, true));
         let keys = RcBlock::new(|_ev: NonNull<NSEvent>| on_key(true));
         let f = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(NSEventMask::FlagsChanged, &flags);
@@ -90,17 +90,53 @@ pub fn apply_talk(key: &str, anywhere: bool) {
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXIsProcessTrustedWithOptions(options: *const std::ffi::c_void) -> bool;
+    static kAXTrustedCheckOptionPrompt: *const std::ffi::c_void;
 }
 
-/// 손쉬운 사용 권한이 없으면 시스템이 한 번 묻게 한다(이미 있으면 조용히 넘어간다)
-fn ask_accessibility() {
-    use objc2::runtime::AnyObject;
-    use objc2::{class, msg_send};
-    use objc2_foundation::NSString;
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    static kCFBooleanTrue: *const std::ffi::c_void;
+    static kCFTypeDictionaryKeyCallBacks: u8;
+    static kCFTypeDictionaryValueCallBacks: u8;
+    fn CFDictionaryCreate(alloc: *const std::ffi::c_void, keys: *const *const std::ffi::c_void, values: *const *const std::ffi::c_void, n: isize, kcb: *const u8, vcb: *const u8) -> *const std::ffi::c_void;
+    fn CFRelease(p: *const std::ffi::c_void);
+}
+
+/// 손쉬운 사용 허용이 있나 — 묻지 않고 보기만(옵션 없이 부르면 맥이 창을 안 띄운다). 앱을 켤 때마다 묻던 것(2026-10-19 사용자 "왜 자꾸 뜨는 거임")을 뺐다
+pub fn ax_trusted() -> bool {
+    unsafe { AXIsProcessTrustedWithOptions(std::ptr::null()) }
+}
+
+/// 화면 기록 허용이 있나 — 보기만(Craft 비추기에 필요)
+pub fn screen_trusted() -> bool {
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
+/// 사람이 '설정 열기'를 누를 때만 — 손쉬운 사용을 한 번 요청한다. 맥은 한 번 요청한 앱만 목록에 올려서, 안 부르면 새 맥 목록에 Chammo 가 아예 없다(0.3.4 2차 검증)
+pub fn ask_ax() {
+    if ax_trusted() {
+        return;
+    }
     unsafe {
-        let key = NSString::from_str("AXTrustedCheckOptionPrompt");
-        let yes: *mut AnyObject = msg_send![class!(NSNumber), numberWithBool: true];
-        let dict: *mut AnyObject = msg_send![class!(NSDictionary), dictionaryWithObject: yes, forKey: &*key];
-        AXIsProcessTrustedWithOptions(dict as *const std::ffi::c_void);
+        let keys = [kAXTrustedCheckOptionPrompt];
+        let vals = [kCFBooleanTrue];
+        let d = CFDictionaryCreate(std::ptr::null(), keys.as_ptr(), vals.as_ptr(), 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        AXIsProcessTrustedWithOptions(d);
+        if !d.is_null() {
+            CFRelease(d);
+        }
+    }
+}
+
+/// 사람이 '권한 열기'를 누를 때만 — 화면 기록을 한 번 요청한다(목록에 올리기, 같은 까닭)
+pub fn ask_screen() {
+    if !screen_trusted() {
+        unsafe { CGRequestScreenCaptureAccess() };
     }
 }

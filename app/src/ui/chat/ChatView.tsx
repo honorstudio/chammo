@@ -10,13 +10,14 @@ import { modelCommand } from '../../domain/modelPick';
 import { screenDialog, type ScreenDialog } from '../../domain/screenDialog';
 import type { PickResult, PickWant } from './modelPickRun';
 import { builtinSlash, completeSlash, isMemoryCmd, matchSlash, slashQuery, type SlashItem } from '../../domain/slash';
-import { appendChat, chatBusy, chatEscStops, chatNorm, enterDelay, parseChat, clickFocusesInput, sentByMe, promptInput, sendControls, splitPaths, splitRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
+import { appendChat, chatBusy, chatEscStops, chatNorm, escUnsends, enterDelay, parseChat, clickFocusesInput, sentByMe, promptInput, sendControls, splitPaths, splitRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
 import { againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, mineForLeftover, newPending, pendAct, pendingState, resent, waitingOf, type PendingState, type QueueState } from '../../domain/chatQueue';
 import { mdToHtml } from '../md';
 import { openTarget, readSessionTasks, readTranscript, type SessionTask } from '../../data/tauri';
 import { modKey } from '../../domain/keys';
 import { docUrl, IS_WIN } from '../../domain/reader';
-import { DROP_PATHS_EVENT } from '../fileDrop';
+import { DROP_EVENT, DROP_PATHS_EVENT } from '../fileDrop';
+import { chipPastes } from '../../domain/drop';
 import { assistant, tr } from '../../i18n';
 import { IconChatSend, IconChevron, IconChevronDown, IconChevronUp, IconClose, IconEnter, IconFile, IconRefresh, IconSend, IconSpeaker, IconStop, IconTerminal } from '../Icons';
 import { ChatVoice } from './chatVoice';
@@ -31,6 +32,7 @@ import { lockerApi, useLockerTree, useRecentShots, type LockerOwner } from '../s
 import { IconButton } from '../kit/IconButton';
 import { CHAT_INSERT, PATH_MIME } from '../space/dragPath';
 import { OPEN_PAGE } from '../space/PageBlock';
+import { openChatFile } from './openChatFile';
 import { attachToChat } from '../fileDrop';
 import { every } from '../poll';
 import './chat.css';
@@ -150,11 +152,12 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const imgCount = useRef(0); // 이번 메시지에 붙인 그림·파일 수 — 붙인 게 비면 0 으로
   const fileCount = useRef(0);
   const lastAttach = useRef(0);
-  const attach = (item: { key: string; url?: string; name: string; path?: string }, kind: 'img' | 'file') => {
+  const attach = (item: { key: string; url?: string; name: string; path?: string }, kind: 'img' | 'file'): string => {
     lastAttach.current = Date.now();
     const label = kind === 'img' ? `${REF_PREFIX}img${++imgCount.current}` : `${REF_PREFIX}file${++fileCount.current}`;
     setAttached((a) => [...a, { ...item, label }]);
     setDraft((d) => `${d}${d && !/\s$/.test(d) ? ' ' : ''}${label} `);
+    return label;
   };
   // 말풍선 참조 #chat1 — 앞 말풍선에 마우스를 올려 "참조"를 누르면 입력칸에 이름표, 보낼 때 인용으로 붙는다(2026-09-30 사용자)
   const [refs, setRefs] = useState<ChatRef[]>(() => drafts.load(paneId).refs);
@@ -254,11 +257,16 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     if (!pane) return;
     const onPaths = (e: Event) => {
       const paths = (e as CustomEvent<string[]>).detail ?? [];
-      for (const p of paths) {
+      const chips = paths.map((p) => {
         const it = { key: `${p}:${Date.now()}`, name: p.split('/').pop() ?? p, path: p };
-        if (/\.(png|jpe?g|gif|webp|heic)$/i.test(p)) addImage({ ...it, url: docUrl(p) });
-        else attach(it, 'file');
-      }
+        return { path: p, label: /\.(png|jpe?g|gif|webp|heic)$/i.test(p) ? attach({ ...it, url: docUrl(p) }, 'img') : attach(it, 'file') };
+      });
+      // 터미널 입력칸엔 이름표 바로 뒤 따옴표 경로로(그림은 이스케이프 따로 한 조각) — 조각 사이는 Claude 가 앞 붙여넣기를 다 읽게 조금 쉬고
+      e.preventDefault();
+      chipPastes(chips).forEach((t, i) => {
+        const put = () => pane.dispatchEvent(new CustomEvent(DROP_EVENT, { detail: t }));
+        if (i) window.setTimeout(put, 400 * i); else put();
+      });
     };
     pane.addEventListener(DROP_PATHS_EVENT, onPaths);
     return () => pane.removeEventListener(DROP_PATHS_EVENT, onPaths);
@@ -444,6 +452,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   }, [waiting.length]);
   const enterWait = Math.max(0, ...waiting.map((p) => enterDelay(p.text.length, IS_WIN)));
   const stateOf = new Map<number, PendingState>(waiting.map((p) => [p.at, pendingState(p, { queue, termText, now: Date.now(), enterWait })]));
+  /** 지금 Esc 를 넘기면 방금 보낸 말이 거둬들여지나(domain/chat escUnsends) — 그땐 채팅 Esc·⌘Enter·지금 보내기가 Esc 를 안 넘긴다. ■ 멈춤 버튼은 그대로 */
+  const unsendsNow = () => escUnsends(items, waiting.some((p) => stateOf.get(p.at) === 'sending'));
 
   // 보낸 말이 Enter 없이 입력칸에 그대로 남았으면 Enter 를 다시(2초 그대로일 때, 같은 말에 세 번까지). 일하는 중이어도 —
   // 일하는 중 Enter 는 줄 서기다. 예전엔 쉴 때 한 번만 눌러, 일하는 중 걸린 말은 '보내는 중'으로 10분 남았다(2026-10-06 사용자)
@@ -470,6 +480,10 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const knownRef = useRef<string[]>([]);
   knownRef.current = [...waiting.map((p) => p.text), ...recentMine];
   const leftover = termText ? inputLeftover(termText, knownRef.current) : null;
+  // 거둬들여져 입력칸에 되돌아온 말 — 기록엔 보낸 말로 남았지만 참모는 못 받았다. 말풍선은 빼고 입력칸 줄(다시 보내기) 하나로만(2026-10-16 사용자 두 번 보임)
+  const lastItem = items[items.length - 1];
+  const rewound = lastItem?.kind === 'user' && leftover?.length === 1 && chatNorm(leftover[0]!) === chatNorm(lastItem.text) && escUnsends(items, false) ? lastItem : null;
+  const liveItems = useMemo(() => (rewound ? items.filter((i) => i !== rewound) : items), [items, rewound]);
   const dropPending = (at: number) => setPending((ps) => ps.filter((x) => x.at !== at));
   // 방금 간 글을 또 보내려 하면 한 번 막는다 — 간 줄이 화면에 남아 보여 보내기를 계속 눌렀다(2026-10-10 사용자). 곧 한 번 더 누르면 보낸다
   const [dupWarn, setDupWarn] = useState<{ text: string; at: number } | null>(null);
@@ -480,7 +494,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   }, [dupWarn]);
   const dupBlocked = (text: string) => {
     const now = Date.now();
-    if (againPlan(text, items, now, dupWarn) === 'send') { setDupWarn(null); return false; }
+    if (againPlan(text, liveItems, now, dupWarn) === 'send') { setDupWarn(null); return false; }
     setDupWarn({ text, at: now });
     return true;
   };
@@ -532,7 +546,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     const st = stateOf.get(p.at);
     if (what === 'again') { if (dupBlocked(p.text)) return; flushLeftover(); send(p.text); repend(p); return; }
     if (st === 'queued') {
-      if (what === 'now') { if (busy) sendQueuedNow(); return; } // 쉬고 있으면 Claude 가 곧 꺼내 보낸다
+      if (what === 'now') { if (busy && !unsendsNow()) sendQueuedNow(); return; } // 쉬고 있으면 Claude 가 곧 꺼내 보낸다 · 앞 말에 답이 없으면 줄 선 채로(Esc 가 앞 말을 거둬들인다)
       // ↑ 는 대기열이 비면 지난 말을 불러온다 — 일하는 중이고 그 말이 아직 줄에 있을 때만
       if (!rawKeys || !busy || termRef.current || !queue.waiting.some((q) => chatNorm(q.text) === chatNorm(p.text))) return;
       removing.current = { at: p.at, text: p.text, until: Date.now() + 4000 };
@@ -573,7 +587,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
 
   const tail = items[items.length - 1];
   const lastTool = tail?.kind === 'tools' ? (() => { const t = tail.tools[tail.tools.length - 1]!; return `${t.name.replace(/^mcp__[^_]+(?:_[^_]+)*?__/, '')} ${t.target}`.trim(); })() : '';
-  const shown = items.length > limit ? items.slice(items.length - limit) : items;
+  const shown = liveItems.length > limit ? liveItems.slice(liveItems.length - limit) : liveItems;
 
   const submit = (now = false) => {
     // 멘션 칩(@가나 담당)은 진짜 SendMessage 이름 @[참모-3 · 가나 담당] 으로 풀어 보낸다 — 참모가 누구에게 전할지 헷갈리지 않게
@@ -626,7 +640,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     || !!root.current?.querySelector('.mc-pop, [role="listbox"], [role="menu"]') || !!document.querySelector('.od-back, .dash-preview');
   const escStops = (e: React.KeyboardEvent, inInput: boolean) => chatEscStops({
     key: e.key, composing: e.nativeEvent.isComposing, prevented: e.defaultPrevented, working: busy || state === 'working',
-    overlay: e.key === 'Escape' && escOverlay(), inInput, review: !!document.querySelector('.cur-mode'),
+    overlay: e.key === 'Escape' && escOverlay(), inInput, review: !!document.querySelector('.cur-mode'), unsends: e.key === 'Escape' && unsendsNow(),
   });
 
   return (
@@ -673,7 +687,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
         {!sessionId && <div className="chat-empty">{tr('아직 대화 기록이 없어요. 아래에 첫 지시를 보내 보세요', 'No conversation yet. Send the first message below')}</div>}
         {/* 끼울 것(직접 답하기 카드)을 시각 순으로 말풍선 사이에 — 답을 기다리는 카드(pin)는 맨 아래(domain/chatExtras) */}
         {interleave(shown, extra).map((x) => ('item' in x
-          ? <Bubble key={`${x.item.kind}:${x.item.id}`} it={x.item} onRef={stableRef} />
+          ? <Bubble key={`${x.item.kind}:${x.item.id}`} it={x.item} by={paneId ?? ''} onRef={stableRef} />
           : <div key={x.extra.key}>{x.extra.node}</div>))}
         {waiting.map((p) => {
           const st = stateOf.get(p.at) ?? 'sending';
@@ -834,8 +848,10 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               // 입력칸이 빈 채로 ⌘Enter + 줄 서 있는 말이 있으면 그 말을 바로(멈추면 Claude 가 곧바로 보낸다)
-              if (modKey(e, IS_WIN) && busy && !draft.trim() && !termText && waiting.length) { sendQueuedNow(); return; }
-              submit(modKey(e, IS_WIN) && busy);
+              // 보낸 말에 아직 답이 없으면 끊지 않고 그냥 보낸다 — Esc 가 앞 말을 거둬들여 참모에게 안 간다(domain/chat escUnsends)
+              const cut = modKey(e, IS_WIN) && busy && !unsendsNow();
+              if (cut && !draft.trim() && !termText && waiting.length) { sendQueuedNow(); return; }
+              submit(cut);
             }
             // Esc = CLI 처럼 하던 일 멈추기(일하는 중일 때만 — 2026-09-30 사용자)
             // 일하는 중일 때만 넘긴다 — 쉴 때 Esc 두 번은 Claude 의 되감기 창·입력칸 지우기라 걸린 말이 흔적 없이 지워졌다(2026-10-06).
@@ -878,15 +894,15 @@ const RefBtn = ({ onClick }: { onClick: () => void }) => (
   <IconButton size="s" className="chat-refbtn send-orch" label={tr('이 말풍선을 입력칸에 #참조로 넣기', 'Reference this bubble in the input')} title={tr('이 말풍선을 입력칸에 #참조로 넣기', 'Reference this bubble in the input')} onClick={(e) => { e.stopPropagation(); onClick(); }}><IconChatSend /></IconButton>
 );
 
-const Bubble = memo(function Bubble({ it, onRef }: { it: ChatItem; onRef: (who: string, text: string) => void }) {
+const Bubble = memo(function Bubble({ it, by, onRef }: { it: ChatItem; by: string; onRef: (who: string, text: string) => void }) {
   if (it.kind === 'user') {
     const { body, refs } = splitRefs(it.text);
     return (
       <div className="chat-row me">
         <RefBtn onClick={() => onRef(tr(`내 말${hhmm(it.ts)}`, `Me${hhmm(it.ts)}`), body)} />
         <div className="bubble me">
-          {it.images && <div className="chat-thumbs">{it.images.map((src, i) => <Thumb key={i} src={src} label={`${REF_PREFIX}img${i + 1}`} />)}</div>}
-          {splitPaths(body).map((x, i) => ('text' in x ? <AtText key={i} text={x.text} /> : <span key={i} className="chat-file" title={x.path}><IconFile />{x.name}</span>))}
+          {it.images && <div className="chat-thumbs">{it.images.map((src, i) => <Thumb key={i} src={src} by={by} label={`${REF_PREFIX}img${i + 1}`} />)}</div>}
+          {splitPaths(body).map((x, i) => ('text' in x ? <AtText key={i} text={x.text} /> : <button type="button" key={i} className="chat-file" title={x.path} onClick={() => void openChatFile(x.path, by)}><IconFile />{x.name}</button>))}
           {refs.map((r) => <div key={r.label} className="chat-quote" title={r.text}><span className="at-chip">{r.label}</span> <span className="dim">{r.who}</span><div className="q">{r.text}</div></div>)}
         </div>
       </div>
@@ -924,12 +940,11 @@ const memoryLabel = (k: MemoryFile['kind']) =>
   : k === 'local' ? tr('CLAUDE.local.md — 나만', 'CLAUDE.local.md — just me')
   : tr('자동 메모리', 'Auto memory');
 
-/** 말풍선 속 그림 — 누르면 크게, 한 번 더 누르면 작게 */
-function Thumb({ src, label }: { src: string; label: string }) {
-  const [big, setBig] = useState(false);
+/** 말풍선 속 그림 — 누르면 show 가 여는 곳(채팅 뷰는 스페이스 탭, 터미널 뷰는 리더)에 크게(2026-10-19 사용자 — 예전엔 제자리에서 크게) */
+function Thumb({ src, by, label }: { src: string; by: string; label: string }) {
   return (
     <span className="chat-att">
-      <img className={`chat-thumb ${big ? 'big' : ''}`} src={src} alt={label} onClick={() => setBig((b) => !b)} />
+      <img className="chat-thumb" src={src} alt={label} onClick={() => void openChatFile(src, by)} />
       <em>{label}</em>
     </span>
   );

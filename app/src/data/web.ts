@@ -17,6 +17,13 @@ const TOKEN_KEY = 'chammo.token';
 const getToken = (): string | null => { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } };
 const setToken = (t: string | null) => { try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch { /* 개인 정보 보호 모드 — 저장 못 하면 매번 짝짓기 */ } };
 
+export const hasToken = () => !!getToken();
+
+/** 홈 화면 앱이 시작 주소의 코드를 내서 맥이 거절했나(domain/mobileAuth bootPair·spentBy) — 시작 주소는 켤 때마다 같아서 */
+const HOME_TRIED_KEY = 'chammo.homeTried';
+export const homeTried = (): string | null => { try { return localStorage.getItem(HOME_TRIED_KEY); } catch { return null; } };
+export const markHomeTried = (code: string) => { try { localStorage.setItem(HOME_TRIED_KEY, code); } catch { /* 저장이 막히면 pair 가 먼저 알린다 */ } };
+
 /** 이 브라우저가 localStorage 에 쓸 수 있나 — 개인 정보 보호 모드·막힌 저장소면 false */
 function storageWorks(): boolean {
   try {

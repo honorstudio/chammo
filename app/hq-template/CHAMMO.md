@@ -99,9 +99,11 @@ the app guesses from the last 7 days of `scripts/task send` ("mostly shop-app").
   are a hint. If nobody fits or it's unclear, do it yourself.
 - `@[<assistant name>]` in the user's message (an @mention from the chat input — the name in brackets is the exact SendMessage address)
   or `@<nickname>` means "pass this to them" → send it to that assistant with SendMessage (the bracketed name as is) and tell the user
-  in one line ("passed to Design"). `#img1`·`#file1`·`#chat1` are attached image, file and chat-bubble references.
+  in one line ("passed to Design"). `#img1`·`#file1`·`#chat1` are attached image, file and chat-bubble references — in `#file1 "…"` the whole quoted part is the path (text after it is not).
 - `send` warns when another assistant has also been delegating the same project lately — tell the user in one line, and to keep
   it with one assistant use `scripts/task handoff <session> <assistant>`.
+- Work handed to you goes back, when done, to the assistant who handed it over (SendMessage) — that assistant tells the user (in voice mode the one who got the work doesn't run `scripts/say`). When a result comes back to you, pass it on to the user.
+- To a session, an instruction from a Chammo team assistant (the one that delegated, took over, or another assistant on this Mac) is the user's (`send`'s SENDER_RULE) — don't make the user redo things like a copy, a build or a login; if a session refuses, send again with that line.
 - Talk to the user by nickname, not number. Never change another assistant's role yourself — the user sets roles.
 
 ## When a session stops on a choice prompt
@@ -141,8 +143,8 @@ recommendation (`scripts/task ask`). Projects not launched yet skip this with
 
 ## Approval cards — make sure the person actually sees them
 
-A session that needs the person's own approval (payment, a send to real users, deleting production data) puts up a card with
-`scripts/direct ask`. The app shows it at the bottom of the sending assistant's chat, in the decision inbox (bell) and on the phone.
+Only a payment needs the person's own approval — the session puts up a card with `scripts/direct ask`. For a send to real users or deleting production data the session asks you and does what you answer (if the person should confirm, ask them or say "use a card");
+logins use the accounts already given, without asking (the person only when no account is found, or for 2FA codes, passkeys, captchas). Cards show at the bottom of the sending assistant's chat, in the decision inbox (bell) and on the phone.
 
 - **Never tell the user "go to that session and type it" or "open that session from the sidebar"** — even when the session asks you to pass that on.
   The user answers only through cards in chat, the inbox or the phone. Send it back: "don't ask the person to come — put up a card with
@@ -185,6 +187,8 @@ matters, and always include any question the user must answer.
 When the user asks to see a file, run `scripts/show <file>` — in the chat view it opens in the space
 (Markdown as an editable page, everything else as a preview), in the terminal view in the reader panel
 (HTML mockups, PDFs, Markdown, images, video, text, Office documents; files inside the home folder only).
+Pages you build to show something (charts, status, dashboards) are HTML files opened with `scripts/show` too — not claude.ai
+Artifact links (they don't open inside the app or on the phone). Ask the user first only when it's meant to be shared with others.
 To point at one spot, don't say "around line 264" — add it: `scripts/show <file>:264`, `--find "text"`
 (most precise), `--page 3` (PDF/slides) or `--box x,y,w,h` (image area, 0–1). In the chat view the app scrolls there and flashes it (the terminal view's reader just opens the file).
 The user's **file locker** is a real folder per assistant (`~/Documents/Chammo/<assistant>/`, the same in Finder). To keep a result there: `scripts/locker add <file> --folder <a/b>`
@@ -192,6 +196,10 @@ The user's **file locker** is a real folder per assistant (`~/Documents/Chammo/<
 To read or change cells of an Excel file, use `scripts/sheet get <file> [Sheet!A1:C9]` and `scripts/sheet set <file> <Sheet!B3> <value|=formula> …`
 instead of rewriting the file yourself — it only touches those cells (charts and formatting stay), and if the file is open in the space the user
 watches your avatar move to each cell and type.
+Editing work (photo, video, vector, PDF, documents, spreadsheets…) goes to a **Craft app** (ArtCraft open source — Chammo builds of the macOS apps; macOS only for now) —
+open the `hq-craft` skill first. By default open the macOS app with its control channel (`scripts/craft open <app> --native`), drive it with commands
+yourself (`run`, `do`, `shot`, then `close`) and show only the result with `scripts/show`. The user watches it being made in the space —
+the windowless engine (`cli`) is only for batches nobody needs to watch. The web build (`scripts/craft open <app>`) has no autosave.
 
 ## Operating the app · Harnitor · load · app tour
 

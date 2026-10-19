@@ -29,6 +29,7 @@ pub fn unanswered(n: u64) -> bool {
 
 /// 앱만 끈다(세션은 계속) — 막혀도 EXIT_WAIT 뒤엔 프로세스를 끝낸다
 pub fn exit_now<R: tauri::Runtime>(app: &tauri::AppHandle<R>, why: &str) {
+    crate::dock_quit::EXITING.store(true, Ordering::SeqCst);
     crate::claude::log_out("quit", why);
     std::thread::spawn(|| {
         std::thread::sleep(EXIT_WAIT);
@@ -48,6 +49,34 @@ pub fn ask_or_exit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
             exit_now(&app, "quit dialog not shown (web stuck) — app only, sessions keep running");
         }
     });
+}
+
+/// SIGTERM(kill·install-personal-app 이 30초 뒤 보내는 것)도 같은 끄기 길로 — 예전엔 즉사해서 Craft 앱이 저장 없이 고아로 남았다(2026-10-19 끄기 QA).
+/// 신호 처리기에선 표시만 하고, 지켜보는 스레드가 exit_now 를 부른다
+#[cfg(unix)]
+static TERM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(unix)]
+extern "C" fn on_term(_: libc::c_int) {
+    TERM.store(true, Ordering::SeqCst);
+}
+
+pub fn watch_sigterm<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    #[cfg(unix)]
+    {
+        unsafe { libc::signal(libc::SIGTERM, on_term as *const () as libc::sighandler_t) };
+        let app = app.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(200));
+            if TERM.load(Ordering::SeqCst) {
+                crate::craft_screen::SIGTERM.store(true, Ordering::SeqCst);
+                exit_now(&app, "SIGTERM");
+                return;
+            }
+        });
+    }
+    #[cfg(not(unix))]
+    let _ = app;
 }
 
 #[cfg(test)]

@@ -904,3 +904,12 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-mode-say { display: flex; align-items: center; gap: 4px; }
 .m-mode-say input { flex: 1; min-width: 0; min-height: 44px; font-size: 16px; padding: 0 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--text); }
 .m-mode-err { margin: 0; font-size: 13px; color: var(--danger-ink); }
+/* 맨 아래로 — 데스크톱 채팅(.chat-bottom) 모양 그대로, 폰은 44px 손가락 칸. 목록 끝에 높이 0 으로 붙여 스크롤해도 입력칸 위 가운데에 떠 있다 */
+.m-jump-at { position: sticky; bottom: 0; height: 0; display: flex; justify-content: center; z-index: calc(var(--z-base) + 6); }
+.m-jump { all: unset; position: absolute; bottom: 10px; box-sizing: border-box; width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; background: var(--surface); color: var(--text-2); box-shadow: 0 6px 18px rgba(0, 0, 0, .14), 0 0 0 1px var(--line); animation: m-jump-in .18s ease-out; -webkit-tap-highlight-color: transparent; }
+.m-jump svg { width: 18px; height: 18px; }
+.m-jump:active { background: var(--surface-2); }
+.m-jump-dot { position: absolute; top: 6px; right: 6px; width: 9px; height: 9px; border-radius: 50%; background: var(--orch-solid, var(--accent)); box-shadow: 0 0 0 2px var(--surface); }
+.m-log.m-stale > .m-jump-at { opacity: 1; }
+@keyframes m-jump-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .m-jump { animation: none; } }

@@ -66,6 +66,31 @@ class Send(unittest.TestCase):
                 os.environ['CLAUDE_JOB_DIR'] = old
         self.assertEqual(events[0]['from'], 'abcd1234')
 
+    def test_맡긴_참모_말을_따르라는_규칙을_준다(self):
+        # 2026-10-19: 맡긴 참모의 "바탕화면에 복사해 줘"를 세션이 "그쪽 권한을 우회하는 것"이라며 거절했다
+        _, _, err, _ = self.run_send('copy out/a.png to the desktop')
+        self.assertIn(task.SENDER_RULE, err)
+        for w in ('맡긴 참모', '같은 맥의 다른 참모', '사용자 지시와 같다', '기술적', '정보로만'):
+            self.assertIn(w, task.SENDER_RULE)
+
+    def test_영문_설정이면_규칙도_영문(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'config.json'), 'w', encoding='utf-8') as f:
+                json.dump({'language': 'en'}, f)
+            old = os.environ.get('CHAMMO_HOME')
+            os.environ['CHAMMO_HOME'] = d
+            try:
+                en = load('task')
+            finally:
+                if old is None:
+                    os.environ.pop('CHAMMO_HOME', None)
+                else:
+                    os.environ['CHAMMO_HOME'] = old
+        for w in ('handed off', 'another assistant on this Mac', 'technical block', 'information only'):
+            self.assertIn(w, en.SENDER_RULE)
+        for w in ('only thing that needs', 'not to log in', 'passkeys'):
+            self.assertIn(w, en.direct_rule())
+
     def test_결제_일은_코드_3과_결정_대기(self):
         code, _, _, events = self.run_send('refund flow')
         self.assertEqual(code, 3)

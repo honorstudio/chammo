@@ -217,8 +217,8 @@ fn start(key: &str, plugin_dirs: &[std::path::PathBuf], members: Vec<(String, St
             n2(&t, json!({"subtype": "exit"}));
         }
     });
-    // 붙기 — 첫 켬은 1초 안팎(실측 0.6~0.8초), 넉넉히
-    let init = host.call(json!({"subtype": "initialize"}), Duration::from_secs(30));
+    // 붙기 — 첫 켬은 1초 안팎(실측 0.6~0.8초). 맥이 claude 시작을 잠깐 막아도 끊지 않게 넉넉히(modes::INIT_WAIT)
+    let init = host.call(json!({"subtype": "initialize"}), modes::INIT_WAIT);
     let attach = init.and_then(|_| Ok(host.call(modes::attach_req(100, 30), Duration::from_secs(15))));
     let mut st = host.st.lock().unwrap();
     match attach {
@@ -281,7 +281,7 @@ fn key_of(name: &str) -> String {
 }
 
 fn refresh_keys(all: &[ModeInfo]) {
-    let cands: Vec<modes_light::Cand> = all.iter().map(|m| if m.light { modes_light::cand(m) } else { modes_light::Cand { name: m.name.clone(), plugin: m.name.clone(), light: false, veto: None, ids: Ok(vec![]) } }).collect();
+    let cands: Vec<modes_light::Cand> = all.iter().map(|m| if m.light { modes_light::cand(m) } else { modes_light::Cand { name: m.name.clone(), plugin: modes::plugin_name(m), light: false, veto: None, ids: Ok(vec![]) } }).collect();
     let mut t = key_table().lock().unwrap();
     for ((name, key, why), c) in modes_light::keys(&cands).into_iter().zip(cands) {
         if why.is_some() && t.get(&name).map(|k| &k.why) != Some(&why) {
@@ -706,6 +706,75 @@ fn sweep<R: Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+// ── 밖에서 고친 $.store → 떠 있는 모드 다시 그리기(10/19 참모가 넣은 할 일 8개가 참모를 바꿔야 보였다) ──
+
+/// 모드가 마지막으로 그리기·누름을 끝낸 때 — 그 직후의 저장 바뀜은 그 모드가 쓴 것(modes::STORE_QUIET)
+fn touched() -> &'static Mutex<HashMap<String, std::time::Instant>> {
+    static T: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
+    T.get_or_init(Default::default)
+}
+
+fn touch(name: &str) {
+    touched().lock().unwrap().insert(name.to_string(), std::time::Instant::now());
+}
+
+/// 밖에서 저장이 바뀐 횟수 — 그리기 요청 props 에 실어 호스트의 옛 트리를 비켜 간다(modes::with_store_rev)
+fn store_revs() -> &'static Mutex<HashMap<String, u64>> {
+    static R: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+    R.get_or_init(Default::default)
+}
+
+fn store_rev(name: &str) -> u64 {
+    store_revs().lock().unwrap().get(name).copied().unwrap_or(0)
+}
+
+fn bump_store_rev(name: &str) {
+    *store_revs().lock().unwrap().entry(name.to_string()).or_insert(0) += 1;
+}
+
+/// 떠 있는 (모드, 플러그인) — 같이 쓰는 호스트는 members, 자기 호스트는 키 표의 플러그인. 잠든 모드는 호스트가 없어 빠진다
+fn live_plugins() -> Vec<(String, String)> {
+    let hs = hosts().lock().unwrap();
+    let keys = key_table().lock().unwrap();
+    hs.iter()
+        .filter(|(_, h)| h.st.lock().unwrap().alive)
+        .flat_map(|(k, h)| if h.members.is_empty() { vec![(k.clone(), keys.get(k).map_or_else(|| k.clone(), |x| x.plugin.clone()))] } else { h.members.clone() })
+        .collect()
+}
+
+fn store_stamps(dir: &Path) -> HashMap<String, modes::Stamp> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return HashMap::new() };
+    rd.flatten()
+        .filter_map(|e| {
+            let n = e.file_name().into_string().ok()?;
+            modes::store_owner(&n)?;
+            let m = e.metadata().ok()?;
+            Some((n, (m.modified().ok()?, m.len())))
+        })
+        .collect()
+}
+
+/// 1초마다 저장 폴더를 보고, 바뀐 파일 주인 모드의 판 번호를 올리고 ui_invalidate — 화면이 늘 하던 대로 다시 그린다.
+/// 판 번호가 없으면 호스트가 같은 props 라 옛 트리를 준다($.store 값 자체는 호스트가 매번 파일에서 읽는다, 2.1.303 실측)
+fn watch_store<R: Runtime>(app: tauri::AppHandle<R>) {
+    let dir = modes::store_files(&crate::tools::cfg().dir);
+    let mut prev = store_stamps(&dir);
+    loop {
+        std::thread::sleep(Duration::from_secs(1));
+        let now = store_stamps(&dir);
+        let changed = modes::store_changed(&prev, &now);
+        prev = now;
+        if changed.is_empty() {
+            continue;
+        }
+        let t = touched().lock().unwrap().clone();
+        for name in modes::store_targets(&changed, &live_plugins(), &t, std::time::Instant::now()) {
+            bump_store_rev(&name);
+            push_to(&app, &name, json!({"subtype": "ui_invalidate"}));
+        }
+    }
+}
+
 // ── 폰 홈 모드 카드(폰 서버 mobile_http 가 부른다) ──
 
 /// 폰에 넘길 상태 — 로그 자리·pid 는 뺀다
@@ -741,7 +810,9 @@ pub fn phone_view<R: Runtime>(app: &tauri::AppHandle<R>, name: &str, columns: u3
     let mut out = json!({"state": phone_state(&st)});
     let id = st.shown.clone().or_else(|| st.panes.first().and_then(|p| p.get("id")).and_then(Value::as_str).map(str::to_string));
     if let (true, Some(id)) = (st.ready, id) {
-        let r = h.call(modes::render_req("Pane", &id, columns, lines), Duration::from_secs(10))?;
+        let r = h.call(modes::with_store_rev(modes::render_req("Pane", &id, columns, lines), store_rev(name)), Duration::from_secs(10));
+        touch(name);
+        let r = r?;
         remember_card(name, &r);
         out["tree"] = r.get("tree").cloned().unwrap_or(Value::Null);
     }
@@ -750,7 +821,9 @@ pub fn phone_view<R: Runtime>(app: &tauri::AppHandle<R>, name: &str, columns: u3
 
 pub fn phone_act(name: &str, act: &Value) -> Result<Value, String> {
     let h = host(name).ok_or("not running")?;
-    h.call(modes::act_req(act)?, Duration::from_secs(10))
+    let r = h.call(modes::act_req(act)?, Duration::from_secs(10));
+    touch(name);
+    r
 }
 
 /// 폰 고르기 — 등록된 모드(내가 만든 것·참모 모드)를 그 참모 홈(대시보드 칸)에 켠다. 다른 자리에 켜져 있었으면 이리로 옮긴다(데스크톱 고르기와 같다)
@@ -1082,6 +1155,8 @@ pub fn boot<R: Runtime>(app: &tauri::AppHandle<R>) {
     }
     let app = app.clone();
     let app2 = app.clone();
+    let app3 = app.clone();
+    std::thread::spawn(move || watch_store(app3));
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(30));
         sweep(&app2);
@@ -1209,7 +1284,9 @@ pub async fn mode_render(name: String, component: String, instance: String, colu
         return Err("component".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let r = h.call(modes::render_req(&component, &instance, columns, rows), Duration::from_secs(10))?;
+        let r = h.call(modes::with_store_rev(modes::render_req(&component, &instance, columns, rows), store_rev(&name)), Duration::from_secs(10));
+        touch(&name);
+        let r = r?;
         if component == "Pane" {
             remember_card(&name, &r);
         }
@@ -1230,7 +1307,13 @@ pub async fn mode_card(name: String) -> Value {
 pub async fn mode_act(name: String, act: Value) -> Result<Value, String> {
     let h = host(&name).ok_or("not running")?;
     let req = modes::act_req(&act)?;
-    tauri::async_runtime::spawn_blocking(move || h.call(req, Duration::from_secs(10))).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        let r = h.call(req, Duration::from_secs(10));
+        touch(&name);
+        r
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ── Client 칸 — 화면 모듈은 별도 주소 방(modeframe://)에서 돌고, 앱은 규약 다리만 놓는다 ──
@@ -1618,6 +1701,109 @@ mod tests {
         std::thread::sleep(Duration::from_millis(500));
         assert!(!h.st.lock().unwrap().alive, "끄면 프로세스가 끝난다");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    // 10/19 대시보드 두 칸이 '켜는 중' → '멈췄어': 그 1분 동안 claude -p 시작이 통째로 막혔고(두 호스트가 같은 초에 풀림)
+    // 앱이 붙기를 30초에서 끊어 호스트를 죽였다 — 다시 켜도 막힘이 풀릴 때까지 또 기다렸다. 시작이 35초 막혀도(SIGSTOP) 끊지 않고 기다렸다 붙는지
+    // cargo test --bin honor-orchestrator modes_host::tests::진짜_claude_로_첫_켬이 -- --ignored --exact 로
+    #[test]
+    #[ignore]
+    fn 진짜_claude_로_첫_켬이_35초_막혀도_끊지_않고_붙는다() {
+        let d = std::env::temp_dir().join(format!("chammo-modeslow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let dir = modes::write_example(&d, "home-calendar").unwrap();
+        let info = modes::discover(&d, &Value::Null).into_iter().find(|m| m.name == "home-calendar").unwrap();
+        let pat = format!("plugin-dir {}", dir.display());
+        let freezer = std::thread::spawn(move || {
+            for _ in 0..300 {
+                let out = crate::platform::command("pgrep").args(["-f", &pat]).output().ok();
+                if let Some(pid) = out.and_then(|o| String::from_utf8(o.stdout).ok()).and_then(|s| s.lines().next().map(str::to_string)) {
+                    let _ = crate::platform::command("kill").args(["-STOP", &pid]).status();
+                    std::thread::sleep(Duration::from_secs(35));
+                    let _ = crate::platform::command("kill").args(["-CONT", &pid]).status();
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            false
+        });
+        let h = start(&info.name, &[dir], vec![], &modes::run_dir(&d, "home-calendar"), Arc::new(|_: &str, _: Value| {}));
+        assert!(freezer.join().unwrap(), "호스트를 못 찾아 못 얼렸다");
+        let st = h.st.lock().unwrap().clone();
+        stop_host(&h, "test");
+        let _ = std::fs::remove_dir_all(&d);
+        assert!(st.ready, "35초 막혀도 붙어야 한다: {st:?}");
+    }
+
+    // 밖에서 고친 $.store 실측(10/19) — 진짜 claude 로 시험 전용 플러그인을 띄워 넣기로 저장 파일을 만들고, 그 파일을 밖에서 고치면
+    // 감시가 그 모드를 고르고 다시 그린 트리에 새 값이 보이는지(호스트가 값을 메모리에 들고 있지 않은지).
+    // 저장 파일 이름은 폴더가 아니라 플러그인 이름을 따른다 — 예시(home-todo)를 임시 폴더에 풀어 띄워도 사용자 할 일 파일에 쓴다(10/19 한 줄 섞였다). 그래서 이름이 안 겹치는 시험 플러그인, 끝나면 지운다
+    // cargo test --bin honor-orchestrator modes_host::tests::진짜_claude_로_밖에서_고친_저장이 -- --ignored --exact 로
+    #[test]
+    #[ignore]
+    fn 진짜_claude_로_밖에서_고친_저장이_다시_그리면_보인다() {
+        const PROBE: &str = "chammo-store-probe";
+        fn find<'a>(n: &'a Value, ty: &str) -> Option<&'a Value> {
+            if n["type"] == ty {
+                return Some(n);
+            }
+            n["children"].as_array()?.iter().find_map(|c| find(c, ty))
+        }
+        let d = std::env::temp_dir().join(format!("chammo-modestore-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let dir = d.join(PROBE);
+        for (rel, body) in [
+            (".claude-plugin/plugin.json", format!(r#"{{"name":"{PROBE}","version":"0.1.0","description":"store probe"}}"#)),
+            ("hooks/hooks.json", r#"{"modules":["./register.tsx"]}"#.to_string()),
+            ("hooks/register.tsx", r#"import type { Register } from 'claude-code'
+export const register: Register = on => {
+  on('session.start', async ($, e, next) => { void $.ui.open({ id: 'probe', title: 'probe' }); return next(e) })
+  on('ui.render', { component: 'Pane', requestId: 'probe' }, async ($, e) => {
+    const { Box, Text, Input } = $.ui.resolve(e)
+    const v = await $.store.get('items')
+    return <Box flexDirection="column"><Input key="add" placeholder="add" onSubmit={async (t) => { await $.store.set('items', [String(t)]); await $.ui.invalidate('ui.render') }} /><Text>{JSON.stringify(v ?? [])}</Text></Box>
+  })
+}
+"#.to_string()),
+        ] {
+            std::fs::create_dir_all(dir.join(rel).parent().unwrap()).unwrap();
+            std::fs::write(dir.join(rel), body).unwrap();
+        }
+        let store = modes::store_files(&crate::tools::cfg().dir);
+        let before = store_stamps(&store);
+        assert!(!before.keys().any(|f| modes::store_owner(f) == Some(PROBE)), "지난 시험 찌꺼기가 없어야 새 파일을 찾는다");
+        let h = start(PROBE, &[dir], vec![], &modes::run_dir(&d, PROBE), Arc::new(|_: &str, _: Value| {}));
+        assert!(h.st.lock().unwrap().ready, "{:?}", h.st.lock().unwrap());
+        std::thread::sleep(Duration::from_secs(1)); // 칸 열기
+        // 앱과 같은 길 — 크기는 그대로, 판 번호만 store_rev 로
+        let draw = || h.call(modes::with_store_rev(modes::render_req("Pane", "probe", 60, 20), store_rev(PROBE)), Duration::from_secs(10)).map(|r| r["tree"].clone()).unwrap_or_default();
+        let tree = draw();
+        let got = find(&tree, "Input").map(|input| {
+            let act = json!({"kind": "input", "plugin": input["press"]["plugin"], "handle": input["press"]["handle"], "key": input["props"]["key"], "value": "inside"});
+            let _ = h.call(modes::act_req(&act).unwrap(), Duration::from_secs(10));
+            let mid = store_stamps(&store);
+            let file = mid.keys().find(|f| modes::store_owner(f) == Some(PROBE)).cloned();
+            let inside = draw().to_string().contains("inside");
+            let (targets, t) = match &file {
+                Some(f) => {
+                    std::thread::sleep(Duration::from_millis(1100));
+                    std::fs::write(store.join(f), r#"{"items":["outside"]}"#).unwrap();
+                    let changed = modes::store_changed(&mid, &store_stamps(&store));
+                    println!("판 번호 없이 다시(호스트가 옛 트리를 주나): {}", draw());
+                    let targets = modes::store_targets(&changed, &[(PROBE.to_string(), PROBE.to_string())], &HashMap::new(), std::time::Instant::now());
+                    targets.iter().for_each(|n| bump_store_rev(n)); // watch_store 가 하는 것
+                    (targets, draw().to_string())
+                }
+                None => (vec![], String::new()),
+            };
+            (file.is_some(), inside, targets, t.contains("outside"), t.contains("inside"))
+        });
+        stop_host(&h, "test");
+        for f in store_stamps(&store).keys().filter(|f| modes::store_owner(f) == Some(PROBE)) {
+            let _ = std::fs::remove_file(store.join(f));
+        }
+        let _ = std::fs::remove_dir_all(&d);
+        assert_eq!(got, Some((true, true, vec![PROBE.to_string()], true, false)), "넣기가 파일을 만들고, 감시가 고르고, 다시 그리면 밖에서 쓴 값만 보인다: {tree}");
     }
 
     // 같이 쓰는 호스트 실측(ADR 0006) — 맛보기 넷을 한 호스트에 올려 모드마다 제 칸만 보이고 그려지는지, 하나를 빼고 다시 띄우면 나머지가 사는지,

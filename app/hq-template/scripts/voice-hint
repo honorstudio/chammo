@@ -72,6 +72,19 @@ PY
   fi
 fi
 grep -q '"on":true' "$d/voice.json" 2>/dev/null || exit 0
+# Voice lines only for sessions started in the HQ (assistants) — not app-fix worktrees or project sessions; decided by the launch folder
+# 음성 줄은 HQ 에서 띄운 세션(참모)에게만 — HQ 안 워크트리·프로젝트 세션은 사용자에게 말하지 않는다(띄운 폴더로, orch-roster --hq-session)
+printf '%s' "$inp" | "$(dirname "$0")/orch-roster" --hq-session 2>/dev/null || exit 0
+# Woken by another assistant's message (SendMessage) — stay quiet; only the assistant the user talked to speaks
+# 다른 참모가 보낸 말로 깬 턴은 말하지 않는다 — 사람이 말 건 참모만 말한다(참모 1에게 시킨 일을 2·3이 하면 셋 다 말했다, 2026-10-16)
+if printf '%s' "$inp" | "$(dirname "$0")/orch-roster" --from-orch 2>/dev/null; then
+  if grep -q '"language": *"en"' "$d/config.json" 2>/dev/null; then
+    echo 'Voice mode is on — but this turn is a message from another assistant: do not run scripts/say (speaking to the user is the job of the assistant who handed you the work). Send the result back to that assistant with SendMessage and it will say it.'
+  else
+    echo '음성 모드 켜짐 — 하지만 이 턴은 다른 참모가 보낸 말이다. scripts/say 를 부르지 마라(사용자에게 말하는 건 일을 넘긴 참모 몫). 결과는 보낸 참모에게 SendMessage 로 돌려주면 그 참모가 말한다.'
+  fi
+  exit 0
+fi
 if grep -q '"language": *"en"' "$d/config.json" 2>/dev/null; then
   echo 'Voice mode is on — the user is listening, not reading. Right before you finish, run scripts/say "<what to say>" once. Length by importance (one sentence for small things, more when it needs explaining); use words instead of tables, code names or paths; always include any question the user must answer. Write your on-screen answer as usual.'
 else

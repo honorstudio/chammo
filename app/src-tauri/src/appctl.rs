@@ -294,6 +294,19 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                     });
                     continue;
                 }
+                // Craft 맥 앱 따로 창 — 열기·닫기. 답은 <데이터>/craft.txt
+                if let Some(req) = crate::craft_window::request(&line) {
+                    let app = app.clone();
+                    std::thread::spawn(move || {
+                        let ans = crate::craft_window::answer(&app, &req);
+                        let file = crate::config::data_file("craft.txt");
+                        let tmp = file.with_extension("txt.tmp");
+                        if std::fs::write(&tmp, format!("#id {}\n{ans}\n", req.id)).is_ok() {
+                            let _ = std::fs::rename(&tmp, &file);
+                        }
+                    });
+                    continue;
+                }
                 // 다른 기기 참모(scripts/peer) — 찾기·짝짓기·말 넣기·답 읽기. 열쇠는 키체인에만, 답은 <데이터>/peer.txt
                 if let Some(req) = crate::peer_cmd::request(&line) {
                     std::thread::spawn(move || {

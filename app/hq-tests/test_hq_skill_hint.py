@@ -23,11 +23,16 @@ class SkillHint(unittest.TestCase):
             'hq-routine': '매주 월요일 9시에 리뷰 확인하는 거 걸어 줘',
             'hq-folders': 'claude --bg 가 Operation not permitted 로 실패했어',
             'hq-app': '음성 모드 켜 줘',
+            'hq-craft': '이 사진 좀 밝게 보정해 줘',
         }
         for skill, prompt in cases.items():
             out = hint(prompt)
             self.assertIn(f'`{skill}`', out, prompt)
             self.assertIn('스킬', out)
+
+    def test_Craft_앱_이름이나_편집_일이면_hq_craft(self):
+        for p in ['포토크래프트 열어 줘', 'PhotoCraft 로 대비 올려', '표 편집기 띄워 줘', 'crop this photo and export a png']:
+            self.assertIn('`hq-craft`', hint(p), p)
 
     def test_상관없는_말엔_아무것도_안_붙인다(self):
         for p in ['PR 512 머지해 줘', 'project-x 세션 회신: 테스트 다 통과했어', '']:
