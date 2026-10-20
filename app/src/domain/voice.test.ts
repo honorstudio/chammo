@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { freshReplies, parseSay, pickSay, speakable, type ReplySeen, type Watch } from './voice';
+import { freshReplies, fromOrchTurn, parseSay, pickSay, speakable, type ReplySeen, type Watch } from './voice';
 import { summarizeTranscript } from './activity';
 
 describe('speakable — 참모 답을 소리 내 읽기 좋게', () => {
@@ -155,5 +155,60 @@ describe('영어 모드', () => {
   it('주소는 link 로 읽는다', () => {
     setLang('en');
     expect(speakable('See https://example.com/x for details.')).toBe('See link for details.');
+  });
+});
+
+// 2026-10-20 — 다른 참모가 respawn 으로 깨운 참모의 일주일 전 마지막 답을 읽었다
+describe('freshReplies — 다시 켜진 세션·앱 재시작 뒤엔 그 뒤에 끝난 턴만', () => {
+  const w = (reply?: string, since?: string): Watch => ({
+    id: 'c3',
+    state: 'working',
+    since,
+    activity: reply ? { reply: { ts: reply, text: `답 ${reply}`, turnEnd: true } } : {},
+  });
+  const run = (steps: Watch[][], start: ReplySeen | null = null) => {
+    let seen = start;
+    const said: string[] = [];
+    for (const list of steps) {
+      const r = freshReplies(seen, list);
+      seen = r.seen;
+      said.push(...r.fresh.map((f) => f.reply.ts));
+    }
+    return { said, seen };
+  };
+  const OLD = '2026-10-13T10:18:56.712Z';
+  const WOKE = '2026-10-20T09:15:32.228Z';
+
+  it('재현: 다시 켜진 세션이 목록에 먼저 뜨고 대화 기록은 늦게 읽힌다 → 다시 켜기 전 답은 0번, 새 답만 1번', () => {
+    const { said } = run([
+      [], // 꺼져 있어 목록에 없음
+      [w(undefined, WOKE)], // 다시 켜짐 — 기록은 아직 안 읽힘
+      [w(OLD, WOKE)], // 기록이 따라옴 — 옛 로직은 여기서 10/13 답을 읽었다
+      [w(OLD, WOKE)],
+      [w('2026-10-20T09:16:02.797Z', WOKE)], // 깨어난 뒤 끝난 턴
+      [w('2026-10-20T09:16:02.797Z', WOKE)],
+    ]);
+    expect(said).toEqual(['2026-10-20T09:16:02.797Z']);
+  });
+
+  it('앱을 다시 켠 뒤 처음 읽힌 기록의 옛 답(앱 켜기 전)은 안 읽는다 — 기억이 남아 있어도', () => {
+    expect(run([[w(undefined, WOKE)], [w(OLD, WOKE)]], { c3: '2026-10-12T00:00:00Z' }).said).toEqual([]);
+  });
+
+  it('since 가 없으면 지금처럼(처음 본 답은 기억만, 그 뒤 새 답은 읽는다)', () => {
+    expect(run([[w('t1')], [w('t2')]]).said).toEqual(['t2']);
+  });
+});
+
+describe('fromOrchTurn — 다른 참모가 보낸 말로만 깬 턴은 말하지 않는다(사람이 말 건 참모만 말한다, 2026-10-16)', () => {
+  const r = (woke?: string[]) => ({ ts: 't1', text: '답', woke });
+  it('보낸 이가 전부 참모 이름이면 참', () => {
+    expect(fromOrchTurn(r(['참모-3 · 시험']))).toBe(true);
+    expect(fromOrchTurn(r(['참모', '참모-4']))).toBe(true);
+  });
+  it('하위 세션 회신이 섞이거나 사람·알림으로 깬 턴이면 거짓', () => {
+    expect(fromOrchTurn(r(['참모-3', 'shop-app']))).toBe(false);
+    expect(fromOrchTurn(r(['shop-app']))).toBe(false);
+    expect(fromOrchTurn(r())).toBe(false);
   });
 });

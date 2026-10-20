@@ -36,3 +36,14 @@ test('화면 밖에 띄웠는데 크롬이 화면 안으로 끌어온 창만 최
 test('WebSocket 이 없는 노드면 아무것도 안 함', async () => {
   assert.strictEqual(await minimizePulledIn({ port: 1, wsPath: '/x' }, [9000, 0], undefined), 0);
 });
+
+test('가짜 화면 안에 뜬 창은 끌려온 게 아니다 — 최소화 안 함(크롬이 뜰 때 자리를 가짜 화면으로 다시 정했다)', async () => {
+  const { WS, sent } = fakeWS({
+    a: { windowId: 1, bounds: { left: -2886, top: 980, windowState: 'normal' } },
+    b: { windowId: 1, bounds: { left: -2886, top: 980, windowState: 'normal' } },
+    c: { windowId: 2, bounds: { left: 24, top: 48, windowState: 'normal' } },
+  });
+  const n = await minimizePulledIn({ port: 1, wsPath: '/x' }, [9000, 0], WS, [-2910, 956, 1440, 900]);
+  assert.strictEqual(n, 1, '진짜 화면에 끌려온 창만');
+  assert.deepStrictEqual(sent.filter((m) => m.method === 'Browser.setWindowBounds').map((m) => m.params.windowId), [2]);
+});

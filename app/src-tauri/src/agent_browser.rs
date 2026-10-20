@@ -1716,6 +1716,10 @@ pub fn watch_hidden() {
             std::thread::sleep(watch_sleep(has));
             let lives = agent_lives();
             has = !lives.is_empty();
+            // 세션 크롬이 떠 있는 동안은 가짜 화면을 살려 둔다(없으면 띄운다 — 옛 래퍼가 부탁 없이 띄운 크롬도)
+            if has {
+                crate::vdisplay::want();
+            }
             hide_tick(&lives, &mut seen);
             if cfg!(target_os = "macos") && popup_due(popup_at, Instant::now()) {
                 let l = lives.clone();

@@ -25,6 +25,8 @@ pub struct DockItem {
     pub hidden: bool,
     /// 최근 문서 셋(오른쪽 클릭 메뉴)
     pub recent: Vec<String>,
+    /// 이 인스턴스를 띄운 세션 id — 같은 앱이 여럿이면 웹이 그 세션 별명을 이름표에(빈 글 = 사람이 연 것)
+    pub by: String,
 }
 
 /// 점 하나 — 사람 개입이 가장 앞, 그다음 참모가 지금 다루는 중, 그다음 저장 안 됨
@@ -106,7 +108,9 @@ fn icon_of(data_dir: &Path, app: &str, exe_dir: Option<&str>) -> String {
 pub fn items(data_dir: &Path) -> Vec<DockItem> {
     crate::craft_screen::running(data_dir, crate::platform::pid_alive)
         .into_iter()
-        .map(|app| {
+        .map(|key| {
+            let app = key.as_str();
+            let base = crate::craft_window::base(app).unwrap_or(app);
             let info = crate::craft_window::read_info(data_dir, app);
             let n = data_dir.join("craft-native");
             let st: serde_json::Value = std::fs::read_to_string(n.join(format!("{app}.json"))).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
@@ -116,10 +120,11 @@ pub fn items(data_dir: &Path) -> Vec<DockItem> {
             DockItem {
                 app: app.to_string(),
                 name: info.name.clone(),
-                icon: icon_of(data_dir, app, st["exe"].as_str()),
+                icon: icon_of(data_dir, base, st["exe"].as_str()),
                 dot: dot_kind(info.takeover, since, info.dirty).to_string(),
                 hidden: is_hidden(app),
-                recent: recent(data_dir, app),
+                recent: recent(data_dir, base),
+                by: info.by,
             }
         })
         .collect()
@@ -138,7 +143,7 @@ pub fn craft_dock() -> Vec<DockItem> {
 
 #[tauri::command]
 pub fn craft_recent(app: String) -> Vec<String> {
-    recent(crate::config::data_dir(), &app)
+    recent(crate::config::data_dir(), crate::craft_window::base(&app).unwrap_or(&app))
 }
 
 /// 탭 X — 탭만 닫고(비추기는 탭이 내려가며 떨어진다) 아이콘은 남긴다. 따로 창이면 창도 닫는다. 10분 뒤 저장 후 끄기
@@ -184,7 +189,7 @@ pub fn craft_show<R: tauri::Runtime>(handle: tauri::AppHandle<R>, app: String) -
 pub fn craft_open_file(app: String, path: String) -> Result<(), String> {
     crate::craft_window::display_name(&app).ok_or("unknown app")?;
     unhide(&app);
-    crate::platform::command(crate::craft_window::script()).args(["open", &app, "--native", &path]).spawn().map(|_| ()).map_err(|e| e.to_string())
+    crate::platform::command(crate::craft_window::script()).args(["open", &crate::craft_window::arg(&app), "--native", &path]).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// 앱 서랍 줄(scripts/craft list --json) — 아이콘 자리를 PNG data URL 로 바꿔 웹에 그대로
@@ -228,11 +233,15 @@ pub fn craft_launch(app: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn craft_remove<R: tauri::Runtime>(handle: tauri::AppHandle<R>, app: String) -> Result<String, String> {
     crate::craft_window::display_name(&app).ok_or("unknown app")?;
-    if crate::craft_window::read_info(crate::config::data_dir(), &app).pid.is_some_and(crate::platform::pid_alive) {
-        let _ = crate::platform::command(crate::craft_window::script()).args(["close", &app]).output();
-        let _ = crate::craft_window::close(&handle, &app);
+    let base = crate::craft_window::base(&app).ok_or("unknown app")?;
+    // 같은 앱이 세션마다 떠 있으면 다 — 지우기는 앱째라
+    for key in crate::craft_screen::running(crate::config::data_dir(), crate::platform::pid_alive) {
+        if crate::craft_window::base(&key) == Some(base) {
+            let _ = crate::platform::command(crate::craft_window::script()).args(["close", &crate::craft_window::arg(&key)]).output();
+            let _ = crate::craft_window::close(&handle, &key);
+        }
     }
-    let out = crate::platform::command(crate::craft_window::script()).args(["remove", &app]).output().map_err(|e| e.to_string())?;
+    let out = crate::platform::command(crate::craft_window::script()).args(["remove", base]).output().map_err(|e| e.to_string())?;
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)).trim().to_string();
     if out.status.success() { Ok(text) } else { Err(text) }
 }
@@ -246,7 +255,7 @@ pub fn watch_hidden() {
             unhide(&app);
             let alive = crate::craft_window::read_info(crate::config::data_dir(), &app).pid.is_some_and(crate::platform::pid_alive);
             if alive {
-                let _ = crate::platform::command(crate::craft_window::script()).args(["close", &app]).spawn();
+                let _ = crate::platform::command(crate::craft_window::script()).args(["close", &crate::craft_window::arg(&app)]).spawn();
             }
         }
     });

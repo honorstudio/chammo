@@ -28,6 +28,16 @@ export function cmpVer(a: string, b: string): number {
 export const claudeBehind = (cur: string, latest: string | undefined): string | null =>
   latest && cmpVer(cur, latest) < 0 ? latest : null;
 
+/** 이 기기 claude 의 설치 길(Rust claude_source) — winget·brew 는 그 길로 받을 수 있는 최신 판을 같이 준다 */
+export type ClaudeSource = { kind: 'winget' | 'brew' | 'npm'; latest: string | null };
+
+/** 새 버전 띠가 비교할 최신 — winget·brew 로 깐 건 그 길이 실제로 주는 판(npm 최신이 아직 안 올라왔으면 눌러도 안 올라가
+ *  띠가 영영 남고 재설치 길만 탔다, 2026-10-20 윈도우 시험 PC), 공식 설치는 npm. 모르면 undefined(안 띄운다) */
+export function reachableLatest(src: ClaudeSource | null, npm: string | undefined): string | undefined {
+  if (!src) return undefined;
+  return src.kind === 'npm' ? npm : src.latest ?? undefined;
+}
+
 export type LatestApp = { version: string; url: string; page: string };
 
 type Rel = { tag_name?: unknown; html_url?: unknown; draft?: unknown; prerelease?: unknown; assets?: { name?: unknown; browser_download_url?: unknown }[] };

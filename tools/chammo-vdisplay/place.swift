@@ -63,6 +63,12 @@ func lingerPids(_ line: String) -> [pid_t]? {
   return pids.contains(nil) ? nil : pids.compactMap { $0 }
 }
 
+/// 가운데가 가짜 화면 안인 창 수 — 앱이 '쓰는 창이 없다'를 판단하는 값(창 네모는 CGWindowList, 가려진 앱 창도 든다).
+/// 100점보다 작은 창은 뺀다 — 앱마다 화면마다 1440x30 메뉴줄 창(층 0)이 있어 세면 영영 안 내려간다(10/20 실측 20개)
+func windowsInside(_ wins: [CGRect], _ v: CGRect) -> Int {
+  wins.filter { $0.width >= 100 && $0.height >= 100 && v.contains(CGPoint(x: $0.midX, y: $0.midY)) }.count
+}
+
 /// --test — 도우미를 빌드한 뒤 앱 테스트(Rust)가 부른다. 실패하면 1
 func selfTest() -> Int32 {
   var fails = 0
@@ -96,6 +102,11 @@ func selfTest() -> Int32 {
   if lingerPids("linger 101 202") != [101, 202] { print("FAIL linger 두 pid"); fails += 1 }
   if lingerPids("linger") != [] { print("FAIL linger 비움"); fails += 1 }
   if lingerPids("scale 2") != nil || lingerPids("linger x") != nil { print("FAIL linger 아닌 줄"); fails += 1 }
+  // 창 수 — 가운데가 가짜 화면 안인 창만(앱이 '아무 창 없음'이 2분 이어지면 화면을 내린다)
+  let inV = CGRect(x: 1944, y: 1128, width: 1400, height: 800), onMain = CGRect(x: 24, y: 48, width: 800, height: 600)
+  if windowsInside([inV, onMain, CGRect(x: 1800, y: 1000, width: 100, height: 100)], v) != 1 { print("FAIL 창 수 — 가짜 화면 안 하나"); fails += 1 }
+  if windowsInside([], v) != 0 { print("FAIL 창 수 — 없음"); fails += 1 }
+  if windowsInside([CGRect(x: 1920, y: 1080, width: 1440, height: 30)], v) != 0 { print("FAIL 창 수 — 메뉴줄 띠는 창이 아니다"); fails += 1 }
   print(fails == 0 ? "ok" : "\(fails) failed")
   return fails == 0 ? 0 : 1
 }

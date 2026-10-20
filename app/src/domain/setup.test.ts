@@ -185,7 +185,7 @@ describe('setupCommand — 윈도우(cmd /C 가 읽는 모양, 윈도우판)', (
     const s = decode(setupCommand('update', { claude: c }, '', undefined, true));
     const rename = s.indexOf("Rename-Item -LiteralPath $exe -NewName $old");
     const upgrade = s.indexOf('winget upgrade');
-    const restore = s.indexOf("Rename-Item -LiteralPath (Join-Path $dir $old) -NewName 'claude.exe'");
+    const restore = s.indexOf("Copy-Item -LiteralPath $last.FullName -Destination $exe -Force", rename);
     expect(rename).toBeGreaterThan(-1);
     expect(upgrade).toBeGreaterThan(rename);
     expect(restore).toBeGreaterThan(upgrade);
@@ -197,6 +197,39 @@ describe('setupCommand — 윈도우(cmd /C 가 읽는 모양, 윈도우판)', (
     expect(s.trim().endsWith('exit $code')).toBe(true);
     // 진행 표시가 #< CLIXML 덩어리로 터미널에 깨져 나왔다 — 끈다
     expect(s.startsWith("$ProgressPreference = 'SilentlyContinue'")).toBe(true);
+  });
+  const notes = { busy: "Claude {0}개 도는 중 — 세션은 옛 판 그대로", back: "업데이트 실패, 이전 판으로 되돌렸어요" };
+  it('업데이트(winget): 지난번에 끊겨 .old 만 남았으면 지우기 전에 먼저 되살린다 — 그걸 지우면 claude 가 사라진다(2026-10-20 윈도우 시험 PC)', () => {
+    const s = decode(setupCommand('update', { claude: c }, '', undefined, true, notes));
+    const heal = s.indexOf("if (-not (Test-Path -LiteralPath $exe)) { $last = ");
+    const drop = s.indexOf("'claude.exe.old-*' -ErrorAction SilentlyContinue | Remove-Item");
+    expect(heal).toBeGreaterThan(-1);
+    expect(drop).toBeGreaterThan(heal);
+    // 지우기는 claude.exe 가 있을 때만
+    expect(s.slice(heal, drop)).toContain('if (Test-Path -LiteralPath $exe) { Get-ChildItem');
+  });
+  it('업데이트(winget): 돌고 있는 claude 가 있으면 올리기 전에 알린다', () => {
+    const s = decode(setupCommand('update', { claude: c }, '', undefined, true, notes));
+    const busy = s.indexOf('Get-Process -Name claude');
+    expect(busy).toBeGreaterThan(-1);
+    expect(busy).toBeLessThan(s.indexOf('winget upgrade'));
+    expect(s).toContain("Write-Output ('Claude {0}개 도는 중 — 세션은 옛 판 그대로' -f $busy)");
+  });
+  it('업데이트(winget): 끝난 뒤 claude.exe 가 있고 --version 이 도는지 보고, 아니면 가장 새 .old 로 되돌리고 한 줄', () => {
+    const s = decode(setupCommand('update', { claude: c }, '', undefined, true, notes));
+    const up = s.indexOf('winget upgrade');
+    const ver = s.indexOf('try { & $exe --version *> $null; $ok = $LASTEXITCODE -eq 0 } catch { $ok = $false }');
+    const back = s.indexOf("Write-Output '업데이트 실패, 이전 판으로 되돌렸어요'");
+    expect(ver).toBeGreaterThan(up);
+    expect(back).toBeGreaterThan(ver);
+    expect(s).toContain("Sort-Object Name -Descending | Select-Object -First 1");
+    // '이미 최신'이라 안 받은 거면 조용히 되돌린다(실패 아님)
+    expect(s).toContain('if (-not $latest) {');
+  });
+  it('안내 문구의 작은따옴표는 PowerShell 에서 두 번', () => {
+    const s = decode(setupCommand('update', { claude: c }, '', undefined, true, { busy: "it's {0}", back: "can't" }));
+    expect(s).toContain("'it''s {0}'");
+    expect(s).toContain("'can''t'");
   });
   it('업데이트: 공식 설치(.local\\bin) 면 그 claude 로 update', () => {
     const own = 'C:\\Users\\a\\.local\\bin\\claude.exe';

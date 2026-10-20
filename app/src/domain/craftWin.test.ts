@@ -15,6 +15,12 @@ describe('Craft 따로 창 머리줄·아래 줄', () => {
     expect(doingLine(info({ pid: null }))).toBe('앱이 꺼져 있어');
   });
 
+  it('아래 줄은 그 인스턴스를 띄운 세션 별명으로 — 늘 대표 참모 이름이던 것', () => {
+    expect(doingLine(info({ last: '채도 +40' }), '개발 담당')).toBe('개발 담당 · 채도 +40');
+    expect(doingLine(info(), '회사 비서')).toBe('회사 비서가 다루는 중');
+    expect(doingLine(info({ takeover: true }), '개발 담당')).toContain('개발 담당은 멈춰서');
+  });
+
   it('개입 중이면 아래 줄이 그 말, 머리줄 단추는 돌려주기', () => {
     expect(doingLine(info({ takeover: true, last: '채도 +40' }))).toContain('직접 조작 중');
     expect(takeButton(info())).toEqual({ text: '개입', on: true });

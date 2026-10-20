@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appUpdate, claudeBehind, claudeUpdateNote, cmpVer, parseLatestApp, verLabel } from './updates';
+import { appUpdate, claudeBehind, claudeUpdateNote, cmpVer, parseLatestApp, reachableLatest, verLabel } from './updates';
 
 describe('cmpVer — 버전 비교', () => {
   it('앞 v·뒤 꼬리 무시, 숫자로', () => {
@@ -70,5 +70,23 @@ describe('업데이트 띠 문구 — 괄호가 겹치지 않게', () => {
       expect(t).not.toContain('(Claude Code)');
     }
     expect(ko).toBe('Claude Code 2.1.290 이 나왔어요 (지금 2.1.288). 올리면 새로 띄우는 세션부터 새 버전으로 돌아요.');
+  });
+});
+
+describe('reachableLatest — 이 기기 설치 길로 실제로 받을 수 있는 판과 비교', () => {
+  it('재현: winget 은 2.1.302 까지만 있는데 npm 은 2.1.304 — 띠는 2.1.302 기준(2026-10-20 윈도우 시험 PC, 띠가 영영 안 꺼졌다)', () => {
+    const latest = reachableLatest({ kind: 'winget', latest: '2.1.302' }, '2.1.304');
+    expect(latest).toBe('2.1.302');
+    expect(claudeBehind('2.1.302 (Claude Code)', latest)).toBeNull();
+    expect(claudeBehind('2.1.292 (Claude Code)', latest)).toBe('2.1.302');
+  });
+  it('winget·brew 에서 못 읽었으면 안 띄운다(눌러도 못 올리는 띠보다 낫다)', () => {
+    expect(reachableLatest({ kind: 'winget', latest: null }, '2.1.304')).toBeUndefined();
+    expect(reachableLatest({ kind: 'brew', latest: null }, '2.1.304')).toBeUndefined();
+  });
+  it('brew 는 cask 판', () => expect(reachableLatest({ kind: 'brew', latest: '2.1.300' }, '2.1.304')).toBe('2.1.300'));
+  it('공식 설치(npm)는 npm 최신, 설치 길을 아직 모르면 안 띄운다', () => {
+    expect(reachableLatest({ kind: 'npm', latest: null }, '2.1.304')).toBe('2.1.304');
+    expect(reachableLatest(null, '2.1.304')).toBeUndefined();
   });
 });

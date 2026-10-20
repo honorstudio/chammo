@@ -4,6 +4,9 @@
 export const craftKey = (app: string) => `k:${app}`;
 export const craftAppOf = (key: string) => (key.startsWith('k:') ? key.slice(2) : '');
 
+/** 인스턴스 키 → 앱 — 같은 앱을 세션마다 따로 띄우면 2·3번째는 '<앱>-2'·'<앱>-3'(2026-10-20 사용자, scripts/craft 와 같은 규칙) */
+export const craftBase = (key: string) => key.replace(/^([a-z]+craft)-[23]$/, '$1');
+
 /** 칸을 덮는 것 — 확인 창·미리보기 모달·메뉴·목록 팝업이 떠 있으면 네이티브 비추기를 숨긴다(안 그러면 그 위에 그려진다).
  *  목록은 칸을 살짝만 덮는 것(구석 메뉴) 몫 — 그 밖의 팝오버(결정 대기함 등)는 coveredAt 이 칸 안 9점으로 잡는다 */
 export const COVERS = '.od-back, .dash-preview, .mc-pop, [role=listbox], [role=menu], .cv-switch';

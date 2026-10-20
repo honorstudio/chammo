@@ -9,20 +9,20 @@ describe('heldBy — 이 참모가 잡고 있는 세션(채팅 뷰 스페이스 
   it('마지막으로 일을 보낸 참모가 잡는다 — 끝으로 닫아도 유지(답 받자마자 닫아서 표시가 사라졌다, 2026-09-30 사용자)', () => {
     const evs = [
       ev({ type: 'send', task: 'a', target: 'demo-lab', from: 'orch-a', ts: '2026-09-30T01:00:00Z' }),
-      ev({ type: 'send', task: 'b', target: 'oms', from: 'orch-b' }),
+      ev({ type: 'send', task: 'b', target: 'crm', from: 'orch-b' }),
       ev({ type: 'send', task: 'c', target: 'shop-app', from: 'orch-a', ts: '2026-09-30T02:00:00Z' }),
       ev({ type: 'done', task: 'c' }),
     ];
     expect(heldBy(evs, 'orch-a', T)).toEqual(['shop-app', 'demo-lab']);
-    expect(heldBy(evs, 'orch-b', T)).toEqual(['oms']);
+    expect(heldBy(evs, 'orch-b', T)).toEqual(['crm']);
   });
-  it('다른 참모가 나중에 보내면 그 참모로 넘어간다 — "oms" 와 "oms [id]" 는 같은 세션', () => {
+  it('다른 참모가 나중에 보내면 그 참모로 넘어간다 — "crm" 와 "crm [id]" 는 같은 세션', () => {
     const evs = [
-      ev({ type: 'send', task: 'a', target: 'oms [ee5566]', from: 'orch-a', ts: '2026-09-30T01:00:00Z' }),
-      ev({ type: 'send', task: 'b', target: 'oms', from: 'orch-b', ts: '2026-09-30T02:00:00Z' }),
+      ev({ type: 'send', task: 'a', target: 'crm [ee5566]', from: 'orch-a', ts: '2026-09-30T01:00:00Z' }),
+      ev({ type: 'send', task: 'b', target: 'crm', from: 'orch-b', ts: '2026-09-30T02:00:00Z' }),
     ];
     expect(heldBy(evs, 'orch-a', T)).toEqual([]);
-    expect(heldBy(evs, 'orch-b', T)).toEqual(['oms']);
+    expect(heldBy(evs, 'orch-b', T)).toEqual(['crm']);
   });
   it('누가 시켰는지 안 남은 옛 기록은 어느 참모에도 안 붙는다 — 참모-2 대시보드에 참모1 일이 떴다(2026-09-30 사용자)', () => {
     const evs = [ev({ type: 'send', task: 'a', target: 'notes-app' })];
@@ -37,11 +37,11 @@ describe('heldBy — 이 참모가 잡고 있는 세션(채팅 뷰 스페이스 
     const evs = [
       ev({ type: 'send', task: 'old', target: 'project-b', from: 'x', ts: '2026-09-26T00:00:00Z' }),
       ev({ type: 'send', task: 'mid', target: 'video-app', from: 'x', ts: '2026-09-28T00:00:00Z' }),
-      ev({ type: 'send', task: 'a', target: 'oms', from: 'x', ts: '2026-09-30T01:00:00Z' }),
-      ev({ type: 'send', task: 'b', target: 'oms', from: 'x', ts: '2026-09-30T02:00:00Z' }),
+      ev({ type: 'send', task: 'a', target: 'crm', from: 'x', ts: '2026-09-30T01:00:00Z' }),
+      ev({ type: 'send', task: 'b', target: 'crm', from: 'x', ts: '2026-09-30T02:00:00Z' }),
       ev({ type: 'send', task: 'c', target: 'shop-app', from: 'x', ts: '2026-09-30T02:30:00Z' }),
     ];
-    expect(heldBy(evs, 'x', T)).toEqual(['shop-app', 'oms', 'video-app']);
+    expect(heldBy(evs, 'x', T)).toEqual(['shop-app', 'crm', 'video-app']);
   });
 });
 
@@ -71,16 +71,16 @@ describe('shownFiles — 그 세션이 보여 준 파일(scripts/show 기록)', 
 
 describe('holderMap — 프로젝트 세션마다 잡고 있는 참모들(메뉴 색 점)', () => {
   const T2 = Date.parse('2026-09-30T04:00:00Z');
-  const resolve = (t: string) => ({ 'project-b-inside': 's-project-b', oms: 's-oms', 'shop-app': 's-shop' } as Record<string, string>)[t];
+  const resolve = (t: string) => ({ 'project-b-inside': 's-project-b', crm: 's-crm', 'shop-app': 's-shop' } as Record<string, string>)[t];
   it('참모마다 잡은 세션 → 세션마다 잡은 참모', () => {
     const evs = [
-      ev({ type: 'send', task: 'a', target: 'oms', from: 'b1' }),
+      ev({ type: 'send', task: 'a', target: 'crm', from: 'b1' }),
       ev({ type: 'send', task: 'b', target: 'project-b-inside', from: 'b1', ts: '2026-09-30T01:00:00Z' }),
       ev({ type: 'send', task: 'c', target: 'project-b-inside', from: 'b2', ts: '2026-09-30T02:00:00Z' }),
       ev({ type: 'send', task: 'd', target: 'shop-app', from: 'b2' }),
     ];
     const m = holderMap(evs, ['b1', 'b2'], resolve, T2);
-    expect(m.get('s-oms')).toEqual(['b1']);
+    expect(m.get('s-crm')).toEqual(['b1']);
     expect(m.get('s-project-b')).toEqual(['b2']); // 나중에 보낸 참모가 잡는다
     expect(m.get('s-shop')).toEqual(['b2']);
   });
@@ -93,7 +93,7 @@ describe('holderMap — 프로젝트 세션마다 잡고 있는 참모들(메뉴
     expect(holderMap(evs, ['b1', 'b2'], res, T2).get('s-site')).toEqual(['b2']);
   });
   it('못 찾는 대상(꺼진 세션)은 빼고, 누가 시켰는지 안 남은 옛 기록은 아무 참모에도', () => {
-    const evs = [ev({ type: 'send', task: 'a', target: 'gone', from: 'b1' }), ev({ type: 'send', task: 'b', target: 'oms' })];
+    const evs = [ev({ type: 'send', task: 'a', target: 'gone', from: 'b1' }), ev({ type: 'send', task: 'b', target: 'crm' })];
     expect([...holderMap(evs, ['b1', 'b2'], resolve, T2).keys()]).toEqual([]);
   });
 });
@@ -136,7 +136,7 @@ describe('newShows(ids = null) — 채팅 뷰에선 어느 세션이 띄운 것�
 describe('orphanSends — 누가 시켰는지 모르는 열린 일(대시보드 힌트, 사용자가 붙이거나 정리)', () => {
   it('하루 안·안 닫힘·주인 없음만, 최근 순', () => {
     const evs = [
-      ev({ type: 'send', task: 'a', target: 'oms', title: 'OMS 정리', ts: '2026-09-30T01:00:00Z' }),
+      ev({ type: 'send', task: 'a', target: 'crm', title: 'CRM 정리', ts: '2026-09-30T01:00:00Z' }),
       ev({ type: 'send', task: 'b', target: 'shop-app', ts: '2026-09-30T02:00:00Z' }),
       ev({ type: 'done', task: 'b' }),
       ev({ type: 'send', task: 'c', target: 'project-b', from: 'b1' }),
@@ -144,7 +144,7 @@ describe('orphanSends — 누가 시켰는지 모르는 열린 일(대시보드 
       ev({ type: 'own', task: 'd', from: 'b2' }),
       ev({ type: 'send', task: 'e', target: 'old', ts: '2026-09-28T00:00:00Z' }),
     ];
-    expect(orphanSends(evs, T).map((x) => [x.task, x.target, x.title])).toEqual([['a', 'oms', 'OMS 정리']]);
+    expect(orphanSends(evs, T).map((x) => [x.task, x.target, x.title])).toEqual([['a', 'crm', 'CRM 정리']]);
   });
 });
 

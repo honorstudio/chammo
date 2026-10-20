@@ -2,8 +2,11 @@
 // 127.0.0.1 CDP 로만. 노드에 WebSocket 이 없으면(22 미만) 아무것도 안 한다
 const LIMIT_MS = 5000;
 
-/** port = { port, wsPath }(DevToolsActivePort), off = 띄운 화면 밖 자리 [왼쪽, 위]. 돌려주는 값 = 최소화한 창 수 */
-async function minimizePulledIn(port, off, WS = globalThis.WebSocket) {
+/**
+ * port = { port, wsPath }(DevToolsActivePort), off = 띄운 화면 밖 자리 [왼쪽, 위], keep = 가짜 화면 [x, y, w, h](크롬 좌표) — 그 안 창은 그대로
+ * (크롬이 뜰 때 자리를 가짜 화면으로 다시 정했다, src/place-at-launch.js). 돌려주는 값 = 최소화한 창 수
+ */
+async function minimizePulledIn(port, off, WS = globalThis.WebSocket, keep = null) {
   if (!WS || !port || !off) return 0;
   const ws = new WS(`ws://127.0.0.1:${port.port}${port.wsPath}`);
   const timer = new Promise((r) => setTimeout(() => r('timeout'), LIMIT_MS).unref?.());
@@ -23,7 +26,8 @@ async function minimizePulledIn(port, off, WS = globalThis.WebSocket) {
       if (!w || seen.has(w.windowId)) continue;
       seen.add(w.windowId);
       const b = w.bounds || {};
-      const pulled = b.windowState !== 'minimized' && Math.abs((b.left ?? off[0]) - off[0]) > 100;
+      const inKeep = keep && b.left >= keep[0] && b.left < keep[0] + keep[2] && b.top >= keep[1] && b.top < keep[1] + keep[3];
+      const pulled = b.windowState !== 'minimized' && !inKeep && Math.abs((b.left ?? off[0]) - off[0]) > 100;
       if (pulled) {
         await send('Browser.setWindowBounds', { windowId: w.windowId, bounds: { windowState: 'minimized' } });
         n += 1;

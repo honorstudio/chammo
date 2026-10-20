@@ -33,7 +33,7 @@ extern "C" {
     fn craft_mirror_attach(win: *mut std::ffi::c_void, pid: i32, top: f64, bottom: f64) -> *mut std::ffi::c_void;
     fn craft_mirror_status(h: *mut std::ffi::c_void) -> i32;
     fn craft_mirror_detach(h: *mut std::ffi::c_void);
-    fn craft_mirror_point(h: *mut std::ffi::c_void, names: *const std::ffi::c_char, label: *const std::ffi::c_char);
+    fn craft_mirror_point(h: *mut std::ffi::c_void, names: *const std::ffi::c_char, label: *const std::ffi::c_char, hold: f64);
     fn craft_mirror_input(h: *mut std::ffi::c_void, on: i32);
     fn craft_mirror_debug_event(win: *mut std::ffi::c_void, gx: f64, gy: f64, kind: i32, chars: *const std::ffi::c_char);
     fn craft_mirror_place(h: *mut std::ffi::c_void, x: f64, y: f64, w: f64, hh: f64, vh: f64, visible: i32);
@@ -67,15 +67,15 @@ pub fn status(h: &Handle) -> Status {
     }
 }
 
-/// 참모 손 — 이름들(JSON 배열)의 자리로 손이 옮겨 가 누르고 글. 메인 스레드에서만(AX 훑기는 Swift 가 뒤에서)
-pub fn point(h: &Handle, names_json: &str, label: &str) {
+/// 참모 손 — 이름들(JSON 배열)의 자리로 손이 옮겨 가 누르고 글. hold 초 동안은 안 사라지고 머문다(긴 명령). 메인 스레드에서만(AX 훑기는 Swift 가 뒤에서)
+pub fn point(h: &Handle, names_json: &str, label: &str, hold: u32) {
     #[cfg(craft_mirror)]
     {
         let (Ok(n), Ok(l)) = (std::ffi::CString::new(names_json), std::ffi::CString::new(label)) else { return };
-        unsafe { craft_mirror_point(h.0 as *mut _, n.as_ptr(), l.as_ptr()) }
+        unsafe { craft_mirror_point(h.0 as *mut _, n.as_ptr(), l.as_ptr(), hold as f64) }
     }
     #[cfg(not(craft_mirror))]
-    let _ = (h, names_json, label);
+    let _ = (h, names_json, label, hold);
 }
 
 /// 스페이스 탭 칸에 얹기 — [x, y, w, h] 는 웹뷰 왼쪽 위 기준 CSS 점, vh = 웹 innerHeight(제목줄 밑 깔림 재기), 안 보이면 숨기고 받기를 멈춘다. 메인 스레드에서만

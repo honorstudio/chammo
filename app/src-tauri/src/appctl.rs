@@ -294,6 +294,11 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                     });
                     continue;
                 }
+                // 가짜 화면 — 세션 크롬이 뜨기 직전 래퍼가 부탁한다. 답 없음(래퍼는 화면 목록을 보며 기다린다)
+                if crate::vdisplay::request(&line) {
+                    crate::vdisplay::want();
+                    continue;
+                }
                 // Craft 맥 앱 따로 창 — 열기·닫기. 답은 <데이터>/craft.txt
                 if let Some(req) = crate::craft_window::request(&line) {
                     let app = app.clone();

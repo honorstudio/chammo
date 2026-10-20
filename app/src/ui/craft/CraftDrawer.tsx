@@ -4,12 +4,15 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import { tr } from '../../i18n';
+import { craftBase } from '../../domain/craftTab';
 import { sizeText, splitRows, tileCorner, tileIcon, tileLetter, tileLoading, tileTitle, tileUnavailable, usedTotal, type DrawerRow } from '../../domain/craftDrawer';
 import type { MenuItem } from '../OrchDialogs';
 import { IconPower, IconRefresh, IconTrash } from '../Icons';
 import './drawer.css';
 
-export function CraftDrawer({ running, openMenu }: { running: string[]; openMenu?: (e: React.MouseEvent, items: MenuItem[]) => void }) {
+/** running = 떠 있는 인스턴스 키('photocraft'·'photocraft-2' …) — 서랍 칸은 앱 하나라 앱으로 묶는다 */
+export function CraftDrawer({ running: keys, openMenu }: { running: string[]; openMenu?: (e: React.MouseEvent, items: MenuItem[]) => void }) {
+  const running = keys.map(craftBase);
   const [rows, setRows] = useState<DrawerRow[] | null>(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState<Record<string, number>>({}); // 설치·여는 중(앱 → 누른 때)
@@ -50,9 +53,10 @@ export function CraftDrawer({ running, openMenu }: { running: string[]; openMenu
   };
   // 끄기(v7 A1) — 떠 있는 앱은 올리면 전원, 누르면 저장하고 끈다(독 오른쪽 클릭 '끄기'와 같은 길)
   const [stopping, setStopping] = useState<string[]>([]);
+  // 서랍 칸은 앱째 — 세션마다 따로 떠 있으면 다 끈다(독 아이콘 '끄기'는 그 인스턴스만)
   const stop = (r: DrawerRow) => {
     setStopping((s) => [...s, r.app]);
-    void invoke('craft_win_act', { app: r.app, act: 'close' }).catch(() => setStopping((s) => s.filter((a) => a !== r.app)));
+    for (const k of keys.filter((x) => craftBase(x) === r.app)) void invoke('craft_win_act', { app: k, act: 'close' }).catch(() => setStopping((s) => s.filter((a) => a !== r.app)));
   };
   useEffect(() => { setStopping((s) => s.filter((a) => running.includes(a))); }, [running.join()]); // eslint-disable-line react-hooks/exhaustive-deps
   const skTile = (key: string) => <div key={key} className="cd-tile cd-sktile" aria-hidden="true"><span className="cd-sk" /><span className="cd-skn" /></div>;

@@ -122,8 +122,9 @@ pub fn any_running(data_dir: &std::path::Path, alive: impl Fn(i32) -> bool) -> b
     !running(data_dir, alive).is_empty()
 }
 
-pub fn running(data_dir: &std::path::Path, alive: impl Fn(i32) -> bool) -> Vec<&'static str> {
-    crate::craft_window::APPS.iter().filter(|(k, _)| crate::craft_window::read_info(data_dir, k).pid.is_some_and(&alive)).map(|(k, _)| *k).collect()
+/// 떠 있는 인스턴스 키 — 같은 앱이 세션마다 따로 떠 있으면 다 ('photocraft', 'photocraft-2' …)
+pub fn running(data_dir: &std::path::Path, alive: impl Fn(i32) -> bool) -> Vec<String> {
+    crate::craft_window::keys().into_iter().filter(|k| crate::craft_window::read_info(data_dir, k).pid.is_some_and(&alive)).collect()
 }
 
 /// 그 pid 가 아직 그 앱인가 — 상태 파일의 exe(<앱>.app/Contents/MacOS)로 시작하는 실행 파일만. 옛 상태 파일(exe 없음)은 맥 앱 모양이면
@@ -160,7 +161,7 @@ pub fn exit_wait(dialog: bool, sigterm: bool) -> std::time::Duration {
 }
 
 /// 떠 있는 Craft 앱마다 scripts/craft close|save 를 뒤에서 — 저장을 맡긴 앱 이름들(pid 가 다른 프로그램이면 뺀다)
-fn start_closing() -> Vec<(&'static str, i32)> {
+fn start_closing() -> Vec<(String, i32)> {
     let d = crate::config::data_dir();
     let script = crate::craft_window::script();
     let mut out = vec![];
@@ -169,7 +170,7 @@ fn start_closing() -> Vec<(&'static str, i32)> {
         let Some(pid) = st["pid"].as_i64() else { continue };
         let comm = crate::platform::command("ps").args(["-o", "comm=", "-p", &pid.to_string()]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
         if let Some(verb) = exit_verb(&st, &comm) {
-            if crate::platform::command(&script).args([verb, a]).spawn().is_ok() {
+            if crate::platform::command(&script).args([verb.to_string(), crate::craft_window::arg(&a)]).spawn().is_ok() {
                 out.push((a, pid as i32));
             }
         }
@@ -206,7 +207,7 @@ pub fn close_apps_on_exit() {
     while std::time::Instant::now() < end && any_running(d, crate::platform::pid_alive) {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    let left: Vec<i32> = crate::craft_window::APPS.iter().filter_map(|(k, _)| crate::craft_window::read_info(d, k).pid.filter(|p| crate::platform::pid_alive(*p))).collect();
+    let left: Vec<i32> = crate::craft_window::keys().iter().filter_map(|k| crate::craft_window::read_info(d, k).pid.filter(|p| crate::platform::pid_alive(*p))).collect();
     if !left.is_empty() {
         linger(&left);
     }

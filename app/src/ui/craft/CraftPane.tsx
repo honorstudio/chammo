@@ -53,7 +53,8 @@ function useSpacePlace(app: string, on: boolean, stage: React.RefObject<HTMLElem
   return { elsewhere, still };
 }
 
-export function CraftPane({ app, place }: { app: string; place: 'space' | 'window' }) {
+/** app = 인스턴스 키('photocraft-2' 도), whoOf = 띄운 세션 id → 별명(스페이스만 — 따로 창은 세션 목록이 없어 대표 참모 이름) */
+export function CraftPane({ app, place, whoOf }: { app: string; place: 'space' | 'window'; whoOf?: (by?: string) => string | undefined }) {
   const [info, setInfo] = useState<CraftInfo>(EMPTY);
   const stage = useRef<HTMLElement | null>(null);
   const { elsewhere, still } = useSpacePlace(app, place === 'space', stage);
@@ -92,6 +93,7 @@ export function CraftPane({ app, place }: { app: string; place: 'space' | 'windo
     void invoke('craft_win_takeover', { app, on: false }).catch(() => {});
   };
   const note = elsewhere ? null : mirrorNote(info);
+  const who = whoOf?.(info.by);
   const move = () => void invoke('craft_move', { app, to: place === 'space' ? 'window' : 'space' }).catch(() => {});
   const moveLabel = place === 'space' ? tr('따로 창으로', 'Open in its own window') : tr('스페이스로 옮기기', 'Move into the space');
   const closeLabel = tr('닫기 — 앱은 독에 남아요(10분 안 다시 안 열면 저장하고 꺼요)', 'Close — the app stays in the dock (saved and quit after 10 minutes)');
@@ -100,6 +102,7 @@ export function CraftPane({ app, place }: { app: string; place: 'space' | 'windo
     <div className="cw">
       <header className="cw-head">
         <b className="cw-name">{info.name}</b>
+        {who && <span className="cw-who">{who}</span>}
         {info.version && <span className="cw-ver">{info.version}</span>}
         <span className="cw-sep" />
         {quitting ? <span className="cw-save cw-quitting"><span className="cw-spin" aria-hidden="true" />{tr('저장하고 끄는 중', 'Saving and quitting')}</span>
@@ -140,7 +143,7 @@ export function CraftPane({ app, place }: { app: string; place: 'space' | 'windo
           </div>
         )}
       </main>
-      <footer className={`cw-doing${info.pid != null ? ' busy' : ''}${info.takeover ? ' taking' : ''}`}><span>{doingLine(info)}</span></footer>
+      <footer className={`cw-doing${info.pid != null ? ' busy' : ''}${info.takeover ? ' taking' : ''}`}><span>{doingLine(info, who)}</span></footer>
     </div>
   );
 }

@@ -7,7 +7,7 @@ import { speakable } from './voice';
 /** asks: 자르기 전 전체 답으로 판단한 '사용자에게 묻는가'(text 는 화면용으로 잘린 것). say: 음성 모드로 읽을 글(domain/voice).
  *  midTurn: 도구를 부르기 전 중간 멘트("먼저 찾아볼게") — 턴 끝 답이 아니라 읽지·알리지 않는다
  *  turnEnd: 턴 끝 답(stop_reason end_turn) — 세션 상태가 계속 작업 중으로 나와도 답이 끝난 걸 안다(백그라운드 job 참모) */
-export type Line = { ts: string; text: string; /** 답 끝 200자 — 넘길 때 끝의 질문·요청이 보이게(text 는 앞에서 자른다) */ tail?: string; asks?: boolean; say?: string; midTurn?: boolean; turnEnd?: boolean; /** 물어볼 때만 — 결정 대기함용 결론·질문(askView) */ ask?: AskView };
+export type Line = { ts: string; text: string; /** 답 끝 200자 — 넘길 때 끝의 질문·요청이 보이게(text 는 앞에서 자른다) */ tail?: string; asks?: boolean; say?: string; midTurn?: boolean; turnEnd?: boolean; /** 그 턴을 깨운 말이 전부 다른 세션 메시지였으면 보낸 이름들(from-name) — 참모끼리 넘긴 턴은 소리로 안 읽는다(domain/voice fromOrchTurn) */ woke?: string[]; /** 물어볼 때만 — 결정 대기함용 결론·질문(askView) */ ask?: AskView };
 /** tool = 마지막으로 부른 도구(사무실 행동·머리 위 한 줄) */
 export type Tool = { name: string; target: string; ts: string };
 /** messaged = 마지막으로 SendMessage 를 부른 시각 — 이미 참모에게 보고했는지(참모 기록이 커서 거기선 못 찾았다, 2026-09-30) */
@@ -74,12 +74,19 @@ function launchedId(r: unknown): string | undefined {
 /** 다른 세션 메시지 user 줄에서 본문만 — 'Another Claude session sent a message:' 머리말·<cross-session-message> 태그·꼬리 안내를 뺀다 */
 const peerBody = (t: string) => /<cross-session-message[^>]*>\n?([\s\S]*?)\n?<\/cross-session-message>/.exec(t)?.[1]?.trim() || t;
 
+/** 다른 세션 메시지 줄의 보낸 이름들(cross-session-message from-name) */
+const fromNames = (t: string) => [...t.matchAll(/<cross-session-message[^>]*\bfrom-name="([^"]*)"/g)].map((m) => m[1]!.trim());
+
 const onlyToolResults = (c: unknown) => Array.isArray(c) && c.length > 0 && c.every((b) => (b as { type?: string }).type === 'tool_result');
 
 export function summarizeTranscript(tail: string): Activity {
   const out: Activity = {};
   const waiting = new Set<string>(); // 띄우고 아직 끝 알림이 없는 일
   let wake = false; // 깨우기 예약을 걸고 아직 안 깨어남
+  // 이 턴을 깨운 말 — 턴이 끝난 뒤(closed) 첫 답 줄 전까지 온 user 줄. 다른 세션 메시지면 보낸 이름, 사람 말·끝 알림·깨우기는 ''
+  let woke: string[] = [];
+  let closed = true;
+  let collecting = false;
   for (const raw of tail.split('\n')) {
     if (!raw.trim()) continue;
     let d: { type?: string; timestamp?: string; isMeta?: boolean; origin?: { kind?: string }; isApiErrorMessage?: boolean; error?: string; content?: unknown; toolUseResult?: unknown; message?: { content?: unknown; stop_reason?: string; model?: string; usage?: Record<string, unknown> } };
@@ -117,6 +124,13 @@ export function summarizeTranscript(tail: string): Activity {
           if (b.type === 'tool_use' && b.name === 'ScheduleWakeup') wake = b.input?.stop !== true;
     }
     const text = textOf(d.message?.content).trim();
+    if (d.type === 'user' && text && !onlyToolResults(d.message?.content)) {
+      if (closed) { woke = []; closed = false; collecting = true; }
+      const peer = d.origin?.kind === 'peer';
+      // 턴 중간에 끼어든 meta 줄(스킬 본문 등)은 깨운 말이 아니다 — 사람 말은 언제 와도 사람이 말 건 턴
+      if (collecting || (!d.isMeta && !isInjected(text))) woke.push(...(peer ? (fromNames(text).length ? fromNames(text) : ['']) : ['']));
+    }
+    if (d.type === 'assistant') { collecting = false; closed = d.message?.stop_reason !== 'tool_use'; }
     if (!text) continue;
     if (d.type === 'assistant' && isLimitError(d, text)) out.limit = { ts, text: text.slice(0, MAX) }; // 답으로도 그대로 남긴다(대시보드에 보이게)
     else if (d.type === 'assistant' && isAuthError(d, text)) out.auth = { ts, text: text.slice(0, MAX) };
@@ -129,6 +143,7 @@ export function summarizeTranscript(tail: string): Activity {
       out.reply = { ts, text: squash(text), tail: flat.length > 200 ? '…' + flat.slice(-200) : flat, asks, say: speakable(text), ...(asks ? { ask: askView(text) } : {}) };
       if (d.message?.stop_reason === 'tool_use') out.reply.midTurn = true;
       if (d.message?.stop_reason === 'end_turn') out.reply.turnEnd = true;
+      if (woke.length && woke.every(Boolean)) out.reply.woke = [...woke];
     }
   }
   const n = waiting.size + (wake ? 1 : 0);

@@ -19,6 +19,7 @@ pub const FILES: &[(&str, &str)] = &[
     ("src/window.js", include_str!("../../../tools/chammo-browser/src/window.js")),
     ("src/live.js", include_str!("../../../tools/chammo-browser/src/live.js")),
     ("src/minimize.js", include_str!("../../../tools/chammo-browser/src/minimize.js")),
+    ("src/place-at-launch.js", include_str!("../../../tools/chammo-browser/src/place-at-launch.js")),
     ("src/guard.js", include_str!("../../../tools/chammo-browser/src/guard.js")),
     ("src/check.js", include_str!("../../../tools/chammo-browser/src/check.js")),
     ("src/features.js", include_str!("../../../tools/chammo-browser/src/features.js")),

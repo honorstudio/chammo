@@ -12,16 +12,16 @@ const ev = (type: TaskEvent['type'], task: string, ts: string, extra: Partial<Ta
 
 describe('buildInbox — 나한테 온 것만 한 칸에', () => {
   it('참모 세션이 질문으로 끝났거나 확인창에 멈췄으면', () => {
-    const items = buildInbox([act(s('a', 'todo-api'), 'asks', 'PR 올렸어. 머지할까?'), act(s('b', 'oms', 'oms'), 'blocked'), act(s('c', 'acme-shop'), 'done', '끝났어')], [], new Set(), [], () => true);
+    const items = buildInbox([act(s('a', 'todo-api'), 'asks', 'PR 올렸어. 머지할까?'), act(s('b', 'crm', 'crm'), 'blocked'), act(s('c', 'acme-shop'), 'done', '끝났어')], [], new Set(), [], () => true);
     expect(items.map((i) => [i.kind, i.project, i.where, i.text])).toEqual([
       ['ask', 'todo-api', '', 'PR 올렸어. 머지할까?'],
-      ['blocked', 'oms', 'oms', '확인창·선택지에서 멈춰 있어 — 열어서 골라줘'],
+      ['blocked', 'crm', 'crm', '확인창·선택지에서 멈춰 있어 — 열어서 골라줘'],
     ]);
   });
 
   it('하위 세션이 물은 건 참모한테 한 말이라 안 띄운다 — 참모 세션 것만(사용자 2026-09-27)', () => {
     const orch = { ...s('o', 'honor-orchestrator'), name: '참모' };
-    const acts = [act(orch, 'asks', '이거 머지할까?'), act(s('a', 'todo-api'), 'asks', '참모, 머지할까?'), act(s('b', 'oms'), 'blocked')];
+    const acts = [act(orch, 'asks', '이거 머지할까?'), act(s('a', 'todo-api'), 'asks', '참모, 머지할까?'), act(s('b', 'crm'), 'blocked')];
     const items = buildInbox(acts, [], new Set(), [], (x) => x.id === 'o');
     expect(items.map((i) => [i.kind, i.project])).toEqual([['ask', 'honor-orchestrator']]);
   });
@@ -64,8 +64,8 @@ describe('buildInbox — 나한테 온 것만 한 칸에', () => {
   });
 
   it('최근 것이 위로', () => {
-    const items = buildInbox([act(s('a', 'todo-api'), 'asks', '1?', '2026-09-27T01:00:00Z'), act(s('b', 'oms'), 'asks', '2?', '2026-09-27T03:00:00Z')], [], new Set(), [], () => true);
-    expect(items.map((i) => i.project)).toEqual(['oms', 'todo-api']);
+    const items = buildInbox([act(s('a', 'todo-api'), 'asks', '1?', '2026-09-27T01:00:00Z'), act(s('b', 'crm'), 'asks', '2?', '2026-09-27T03:00:00Z')], [], new Set(), [], () => true);
+    expect(items.map((i) => i.project)).toEqual(['crm', 'todo-api']);
   });
 });
 
@@ -151,15 +151,15 @@ describe('영어 모드', () => {
 });
 
 describe('findTarget — 기록의 대상으로 지금 세션 찾기', () => {
-  const live = [{ ...s('aa11bb22', 'project-a'), name: 'oms', sessionId: 'aa11bb22-aaaa' }, { ...s('cc33dd44', 'hello-docs'), name: 'notes' }];
+  const live = [{ ...s('aa11bb22', 'project-a'), name: 'crm', sessionId: 'aa11bb22-aaaa' }, { ...s('cc33dd44', 'hello-docs'), name: 'notes' }];
   it('id·이름·전체 sessionId', () => {
     expect(findTarget(live, 'aa11bb22')?.id).toBe('aa11bb22');
-    expect(findTarget(live, 'oms')?.id).toBe('aa11bb22');
+    expect(findTarget(live, 'crm')?.id).toBe('aa11bb22');
     expect(findTarget(live, 'aa11bb22-aaaa')?.id).toBe('aa11bb22');
   });
   it('"이름 [id 앞자리]" — id 가 살아 있으면 그 세션, 다시 켜져 id 가 바뀌었으면 이름으로(잡은 표시가 사라졌다, 2026-09-30)', () => {
-    expect(findTarget(live, 'oms [aa11bb]')?.id).toBe('aa11bb22');
-    expect(findTarget(live, 'oms [ee5566]')?.id).toBe('aa11bb22');
+    expect(findTarget(live, 'crm [aa11bb]')?.id).toBe('aa11bb22');
+    expect(findTarget(live, 'crm [ee5566]')?.id).toBe('aa11bb22');
     expect(findTarget(live, 'gone [ee5566]')).toBeUndefined();
   });
 });

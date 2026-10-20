@@ -322,13 +322,20 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
     }
   };
 
+  // 윈도우 winget 업데이트 터미널에 찍는 두 줄 — {0} = 돌고 있는 claude 수
+  const winNotes = {
+    busy: tr('Claude 가 {0}개 돌고 있어요(세션). 업데이트는 하지만 그 세션들은 다시 켜기 전까지 옛 버전이에요.', 'Claude is running ({0}, your sessions). Updating anyway — those sessions keep the old version until restarted.'),
+    back: tr('업데이트 실패, 이전 판으로 되돌렸어요.', 'Update failed — restored the previous version.'),
+  };
   const claudeRow = !check ? null : check.claudePath ? (
     fit === 'old' ? (
       <Row state="need" title="Claude Code" text={tr(`설치돼 있는데 옛 버전이에요 (${ver}). Chammo 는 2.1.280 이상이 필요해요 — 버튼을 누르면 아래 터미널에서 최신으로 올려요.`, `Installed, but old (${ver}). Chammo needs 2.1.280 or later — the button updates it to the latest in the terminal below.`)}>
         <button className="btn pri" onClick={() => run('update')}>{tr('업데이트', 'Update')}</button>
       </Row>
     ) : (
-      <Row state="ok" title="Claude Code" text={tr(`설치돼 있어요 (${ver || check.claudePath}).`, `Installed (${ver || check.claudePath}).`)} />
+      <Row state="ok" title="Claude Code" text={check.claudeRestored
+        ? tr(`업데이트가 중간에 끊겨서 이전 판으로 되돌렸어요 (${ver || check.claudePath}).`, `The update was cut off, so the previous version was restored (${ver || check.claudePath}).`)
+        : tr(`설치돼 있어요 (${ver || check.claudePath}).`, `Installed (${ver || check.claudePath}).`)} />
     )
   ) : (
     <Row state="need" title="Claude Code" text={tr('아직 없어요. 버튼을 누르면 아래 터미널에서 공식 설치 스크립트를 돌려요. 1~2분이면 끝나요.', 'Not installed yet. The button runs the official install script in the terminal below — it takes a minute or two.')}>
@@ -382,7 +389,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
             <div className="su-term">
               <TerminalPane
                 key={task}
-                command={setupCommand(task, { claude: check?.claudePath, gh: check?.ghPath }, doneLine)}
+                command={setupCommand(task, { claude: check?.claudePath, gh: check?.ghPath }, doneLine, undefined, undefined, winNotes)}
                 title={task === 'install' ? tr('Claude Code 설치', 'Installing Claude Code') : task === 'update' ? tr('Claude Code 업데이트', 'Updating Claude Code') : task === 'login' ? tr('Claude 로그인', 'Claude sign-in') : task === 'clt' ? tr('명령줄 도구 설치', 'Installing Command Line Tools') : tr('GitHub 로그인', 'GitHub sign-in')}
                 subtitle={tr('이 창에 바로 입력할 수 있어요', 'You can type in this window')}
                 fontSize={fontSize}

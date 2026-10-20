@@ -2,7 +2,7 @@
 // 읽을 글은 대화 기록을 읽을 때 자르기 전 전체 답으로 만든다(activity.ts). 마크다운·주소는 빼고 앞 두세 문장만
 import { tr } from '../i18n';
 import type { Activity, Line } from './activity';
-import type { SessionState } from './session';
+import { orchestratorLike, type SessionState } from './session';
 
 const MAX = 200;
 
@@ -61,26 +61,39 @@ export function pickSay(lines: SayLine[], id: string | (string | undefined)[], s
 
 /** 세션 id → 마지막으로 처리한(읽었거나 처음 보고 넘긴) 답의 ts */
 export type ReplySeen = Record<string, string>;
-export type Watch = { id: string; state: SessionState; activity: Activity };
+/** since = 이 앱이 켜진 때와 그 세션이 (다시) 켜진 때 중 늦은 것(ISO) — 그 전에 끝난 턴은 이미 지난 말이라 안 읽는다 */
+export type Watch = { id: string; state: SessionState; activity: Activity; since?: string };
 
 /**
  * 참모 세션이 새로 마친 답 — 음성으로 읽고, 묻는 답이면 알림. 넘겨주는 건 참모 세션만(하위 세션 답은 참모한테 한 말).
  * 상태 바뀜(작업 중→끝남)으로 판단하면 안 된다: 상태는 3초, 대화 기록은 10초마다 읽어서 세션이 먼저 쉬면
  * 옛 답이 '방금 끝난 답'처럼 보여 직전 답을 한 번 더 읽었다(2026-09-27 사용자 "음성이 두 번"). 그래서 답 ts 로 한 번만,
- * 턴 중간 멘트(midTurn)는 건너뛰고, 작업 중엔 기다린다. 처음 보는 세션은 이미 있던 답이라 기억만 한다
+ * 턴 중간 멘트(midTurn)는 건너뛰고, 작업 중엔 기다린다. 처음 보는 세션은 이미 있던 답이라 기억만 한다.
+ * 다시 켜진(respawn) 세션은 목록에 먼저 뜨고 대화 기록은 늦게 읽혀 '처음 본 답 없음'으로 기억됐다 — 그 뒤 읽힌 일주일 전 답을
+ * 새 답으로 읽었다(2026-10-20 사용자: 깨어난 참모가 지난 대화를 읽음). 그래서 since 전에 끝난 턴은 아예 안 읽는다
  */
 export function freshReplies(seen: ReplySeen | null, list: Watch[]): { fresh: { id: string; reply: Line }[]; seen: ReplySeen } {
   const next: ReplySeen = {};
   const fresh: { id: string; reply: Line }[] = [];
-  for (const { id, state, activity: a } of list) {
+  for (const { id, state, activity: a, since } of list) {
     const r = a.reply && !a.reply.midTurn && !(a.prompt && a.prompt.ts > a.reply.ts) ? a.reply : undefined;
     const before = seen?.[id];
     if (before === undefined) next[id] = a.reply?.ts ?? '';
     // 턴 끝(end_turn)이 찍힌 답은 상태와 상관없이 끝난 것 — 백그라운드 job 참모는 기다리는 동안에도 working 으로 나온다(2026-09-28)
+    else if (r && since && r.ts <= since) next[id] = r.ts;
     else if ((state !== 'working' || r?.turnEnd) && r && r.ts !== before) {
       fresh.push({ id, reply: r });
       next[id] = r.ts;
     } else next[id] = before;
   }
   return { fresh, seen: next };
+}
+
+/**
+ * 다른 참모가 보낸 말(SendMessage)로만 깬 턴인가 — 그 답은 보낸 참모에게 한 말이라 소리로 안 읽는다(사람이 말 건 참모만 말한다, 2026-10-16).
+ * 훅(voice-hint)은 세션에 scripts/say 를 부르지 말라고만 했고, 앱이 답 앞부분을 읽는 길엔 거름이 없었다(2026-10-20).
+ * 하위 세션 회신·사람 말·끝 알림이 하나라도 섞이면 아니다(scripts/orch-roster from_orch 와 같은 규칙)
+ */
+export function fromOrchTurn(reply: Line): boolean {
+  return !!reply.woke?.length && reply.woke.every(orchestratorLike);
 }

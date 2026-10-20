@@ -578,7 +578,20 @@ fn stop_running(keep_https: bool) {
     }
 }
 
+/// 켜기를 한 줄로 — 다시 시도 고리·설정 화면·켜기 단추가 동시에 켜면 서로의 서버를 내렸다 묶었다 한다
+static START: Mutex<()> = Mutex::new(());
+/// 앱이 끝나는 중 — 다시 시도 고리가 내린 서버를 도로 켜지 않게
+static QUIT: AtomicBool = AtomicBool::new(false);
+
 fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    let _one = START.lock().unwrap_or_else(|e| e.into_inner());
+    if QUIT.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    start_locked(app)
+}
+
+fn start_locked<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
     stop_running(true);
     let t = detect().ok_or_else(|| crate::i18n::tr("테일스케일 주소가 없어요 — 테일스케일을 켜고 로그인한 뒤 다시 켜 주세요", "No Tailscale address — start and log in to Tailscale, then turn this on again").to_string())?;
     // funnel(인터넷 공개)이 켜져 있으면 아예 안 켠다 — serve 가 이 서버를 넘기면 인터넷 전체에 열린다
@@ -654,6 +667,8 @@ fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
 
 /// 앱이 끝날 때 — 서버를 멈추고 우리가 건 serve 를 내린다(안 그러면 443 → 죽은 포트가 남아 폰이 502)
 pub fn shutdown() {
+    QUIT.store(true, Ordering::Relaxed);
+    let _one = START.lock().unwrap_or_else(|e| e.into_inner());
     stop_running(false);
 }
 
@@ -661,12 +676,17 @@ fn set_error(e: Option<String>) {
     *LAST_ERROR.lock().unwrap() = e;
 }
 
-/// 앱이 뜰 때 — 켜 둔 상태면 연다(테일스케일이 늦게 뜨면 설정 화면을 열 때 다시 시도)
+/// 앱이 뜰 때 — 켜 둔 상태면 연다. 못 열면(재부팅 뒤 테일스케일이 앱보다 늦게 뜬다) 다시 시도 고리가 이어서 연다
 pub fn boot<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    if saved_on(crate::config::data_dir()) {
-        let h = app.clone();
-        std::thread::spawn(move || set_error(start(&h).err()));
-    } else {
+    let mut k = RealKeep { app: app.clone() };
+    std::thread::spawn(move || {
+        let mut st = KeepState::default();
+        while !QUIT.load(Ordering::Relaxed) {
+            let wait = keep_step(&mut k, &mut st, std::time::Instant::now());
+            std::thread::sleep(wait);
+        }
+    });
+    if !saved_on(crate::config::data_dir()) {
         // 꺼진 채로 떴는데 지난번(강제 종료·크래시) 우리 serve 가 남아 있으면 내린다 — 포트가 같은 것만. 시험 폴더면 serve 를 안 만진다
         if !serve_allowed() {
             return;
@@ -678,6 +698,104 @@ pub fn boot<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 let _ = tailscale(&t, &["serve", "--https=443", "off"]);
             }
         });
+    }
+}
+
+// ── 켜 둔 서버 살려 두기 ─────────────────────────────────────
+// 2026-10-20: 재부팅 뒤 앱이 brew userspace tailscaled(로그인 항목)보다 먼저 떠서 켜기가 '주소 없음'으로 끝나고
+// 설정 화면을 열기 전까지 다시 안 해 폰이 끊겼다(serve 502). 켜 둔 상태인데 안 떠 있으면 처음 2분은 5초마다, 그 뒤 1분마다 다시 켠다
+
+const KEEP_FAST: Duration = Duration::from_secs(5);
+const KEEP_SLOW: Duration = Duration::from_secs(60);
+const KEEP_FAST_FOR: Duration = Duration::from_secs(120);
+
+/// 살려 두기 고리가 바깥에 묻는 것 — 시험은 가짜로 갈아 끼운다
+pub(crate) trait Keep {
+    fn on(&self) -> bool;
+    /// 떠 있는 서버의 주소(없으면 안 떠 있음)
+    fn running(&self) -> Option<Tailnet>;
+    fn detect(&mut self) -> Option<Tailnet>;
+    /// restart = 떠 있어도 갈아 끼운다(주소가 바뀜). 아니면 그사이 누가 켰으면 그대로
+    fn start(&mut self, restart: bool) -> Result<(), String>;
+    /// notify.log 한 줄('mobile' 칸)
+    fn log(&mut self, line: &str);
+}
+
+#[derive(Default)]
+pub(crate) struct KeepState {
+    /// 켜 뒀는데 안 떠 있는 걸 처음 본 때 — 여기서 2분까지 빠르게
+    down_since: Option<std::time::Instant>,
+    /// 마지막으로 적은 실패 이유 — 같은 이유는 한 번만 적는다
+    last_err: Option<String>,
+    fails: usize,
+}
+
+/// 한 번 보고 할 일을 하고, 다음에 볼 때까지 기다릴 시간을 돌려준다
+pub(crate) fn keep_step(k: &mut impl Keep, st: &mut KeepState, now: std::time::Instant) -> Duration {
+    if !k.on() {
+        *st = KeepState::default();
+        return KEEP_SLOW;
+    }
+    if let Some(cur) = k.running() {
+        // 떠 있으면(설정 화면이 켰어도) 처음부터 — 다음에 같은 이유로 실패해도 다시 적는다
+        *st = KeepState::default();
+        // 테일스케일이 다른 주소로 돌아왔으면 새 주소로(묶은 곳·Host 문지기가 옛 주소다). 잠깐 없으면(다시 뜨는 중) 그대로 둔다
+        if let Some(t) = k.detect().filter(|t| (t.bind, t.ip, &t.dns, &t.socket) != (cur.bind, cur.ip, &cur.dns, &cur.socket)) {
+            k.log(&format!("tailnet changed {} → {}: restarting", cur.ip, t.ip));
+            if let Err(e) = k.start(true) {
+                k.log(&format!("start failed: {e}"));
+                st.last_err = Some(e);
+                st.fails = 1;
+            }
+        }
+        return KEEP_SLOW;
+    }
+    let since = *st.down_since.get_or_insert(now);
+    match k.start(false) {
+        Ok(()) => {
+            if st.fails > 0 {
+                k.log(&format!("started after {} failed tries", st.fails));
+            }
+            *st = KeepState::default();
+            KEEP_SLOW
+        }
+        Err(e) => {
+            if st.last_err.as_deref() != Some(e.as_str()) {
+                k.log(&format!("start failed: {e}"));
+                st.last_err = Some(e);
+            }
+            st.fails += 1;
+            if now.duration_since(since) < KEEP_FAST_FOR { KEEP_FAST } else { KEEP_SLOW }
+        }
+    }
+}
+
+struct RealKeep<R: tauri::Runtime> {
+    app: tauri::AppHandle<R>,
+}
+
+impl<R: tauri::Runtime> Keep for RealKeep<R> {
+    fn on(&self) -> bool {
+        !QUIT.load(Ordering::Relaxed) && saved_on(crate::config::data_dir())
+    }
+    fn running(&self) -> Option<Tailnet> {
+        RUNNING.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|r| r.tailnet.clone())
+    }
+    fn detect(&mut self) -> Option<Tailnet> {
+        detect()
+    }
+    fn start(&mut self, restart: bool) -> Result<(), String> {
+        let _one = START.lock().unwrap_or_else(|e| e.into_inner());
+        // 잠금을 기다리는 사이 꺼졌거나(끄기 단추) 누가 켰으면 그대로
+        if !self.on() || (!restart && server_running()) {
+            return Ok(());
+        }
+        let r = start_locked(&self.app);
+        set_error(r.clone().err());
+        r
+    }
+    fn log(&mut self, line: &str) {
+        crate::claude::log_out("mobile", line);
     }
 }
 
@@ -749,6 +867,7 @@ pub async fn mobile_set<R: tauri::Runtime>(app: tauri::AppHandle<R>, on: bool) -
         if on {
             set_error(start(&app).err());
         } else {
+            let _one = START.lock().unwrap_or_else(|e| e.into_inner());
             stop_running(false);
             set_error(None);
         }

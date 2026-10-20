@@ -19,6 +19,8 @@ export type AppEnv = {
   orchestratorCwd: string;
   claudeBin: string;
   claudeVersion: string;
+  /** 켤 때 끊긴 winget 업그레이드의 claude.exe.old-* 를 되살렸으면 그 이름(윈도우) */
+  claudeRestored?: string | null;
   /** 다마고치 CI 배틀용(설정 githubUser). 비면 CI 는 안 읽는다 */
   githubUser: string;
   /** 내 커밋을 가리는 작성자(git config --global user.email) */
@@ -300,6 +302,8 @@ export const accountsApi = {
   usage: (ids: string[], live: boolean) => invoke<ApiGot[]>('accounts_usage', { ids, live }),
 };
 export const appVersion = () => invoke<string>('app_version');
+/** 이 claude 의 설치 길과 그 길로 받을 수 있는 최신 판(winget·brew) */
+export const claudeSource = (path: string) => invoke<import('../domain/updates').ClaudeSource>('claude_source', { path });
 /** 자동 업데이트(ADR 0005) — 받기·서명 확인·설치 뒤 Rust 가 앱을 다시 켠다. 안 되면 거절 글('off'·'none'·오류) */
 export const appUpdateInstall = (onStep: (s: AppInstallStep) => void) => {
   const ch = new Channel<AppInstallStep>();

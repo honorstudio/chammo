@@ -74,6 +74,8 @@ pub struct AppEnv {
     pub orchestrator_cwd: String,
     pub claude_bin: String,
     pub claude_version: String,
+    /// 켤 때 끊긴 winget 업그레이드의 claude.exe.old-* 를 되살렸으면 그 이름 — 화면 띠로 알린다
+    pub claude_restored: Option<String>,
     /// 다마고치 CI 배틀용 GitHub 아이디(설정)
     pub github_user: String,
     /// 내 커밋을 가리는 작성자 이메일(`git config --global user.email`)
@@ -91,6 +93,8 @@ pub fn app_env() -> AppEnv {
         orchestrator_cwd: crate::config::hq_dir(&home, &c, |k| std::env::var(k).ok()),
         dev_root: crate::config::expand(&home, &c.dev_root),
         extra_projects: c.extra_projects.iter().map(|p| crate::config::expand(&home, p).trim_end_matches('/').to_string()).collect(),
+        // 되살리기가 claude 찾기보다 먼저(필드 순서대로 돈다)
+        claude_restored: crate::claude_src::heal(),
         claude_bin: claude_bin(),
         claude_version: run(&["--version"]).unwrap_or_default().trim().to_string(),
         github_user: c.github_user,

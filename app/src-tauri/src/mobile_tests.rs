@@ -531,3 +531,123 @@ fn w8_127_0_0_1_을_못_묶으면_100x_만_다시() {
     let u = Tailnet { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), ..iface_tailnet() };
     assert_eq!(fallback_binds(&u, true), None);
 }
+
+// ── 재부팅 뒤 테일스케일이 앱보다 늦게 뜰 때(2026-10-20) — 켜 둔 상태면 다시 시도한다 ──
+
+fn net(ip_s: &str) -> Tailnet {
+    Tailnet { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), ip: ip(ip_s), dns: Some("mac.ts.net".into()), socket: "/s".into(), peers: vec![] }
+}
+
+/// 가짜 바깥 — detect 는 nets 를 앞에서부터 하나씩(마지막 것은 계속), start 는 그 주소가 있으면 진짜 소켓을 연다
+struct FakeKeep {
+    on: bool,
+    nets: Vec<Option<Tailnet>>,
+    up: Option<(Tailnet, Arc<AtomicBool>, SocketAddr)>,
+    starts: usize,
+    logs: Vec<String>,
+}
+
+impl FakeKeep {
+    fn new(on: bool, nets: Vec<Option<Tailnet>>) -> Self {
+        FakeKeep { on, nets, up: None, starts: 0, logs: vec![] }
+    }
+    fn next_net(&mut self) -> Option<Tailnet> {
+        if self.nets.len() > 1 { self.nets.remove(0) } else { self.nets[0].clone() }
+    }
+}
+
+impl Keep for FakeKeep {
+    fn on(&self) -> bool { self.on }
+    fn running(&self) -> Option<Tailnet> { self.up.as_ref().map(|u| u.0.clone()) }
+    fn detect(&mut self) -> Option<Tailnet> { self.next_net() }
+    fn start(&mut self, _restart: bool) -> Result<(), String> {
+        self.starts += 1;
+        if let Some((_, stop, _)) = self.up.take() {
+            stop.store(true, Ordering::Relaxed);
+        }
+        let t = self.next_net().ok_or("테일스케일 주소가 없어요")?;
+        let gate = Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&"d".repeat(64), "시험")), hosts: vec![], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default() };
+        let (stop, addrs) = serve(&["127.0.0.1:0".parse().unwrap()], gate, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).map_err(|e| e.to_string())?;
+        self.up = Some((t, stop, addrs[0]));
+        Ok(())
+    }
+    fn log(&mut self, line: &str) { self.logs.push(line.to_string()) }
+}
+
+#[test]
+fn 켜_둔_채_테일스케일이_늦게_뜨면_다시_시도해_서버가_뜬다() {
+    let mut k = FakeKeep::new(true, vec![None, None, None, Some(net("100.100.10.1"))]);
+    let mut st = KeepState::default();
+    let t0 = std::time::Instant::now();
+    let mut waits = vec![];
+    for i in 0..4 {
+        waits.push(keep_step(&mut k, &mut st, t0 + Duration::from_secs(5 * i)));
+    }
+    assert_eq!(k.starts, 4);
+    assert_eq!(waits[..3], [Duration::from_secs(5); 3], "처음 2분은 5초마다");
+    let (_, stop, addr) = k.up.clone().expect("네 번째에 떠야 한다");
+    assert!(ask(addr, "GET /api/sessions HTTP/1.1\r\nHost: x\r\n\r\n").starts_with("HTTP/1.1 "), "진짜 소켓이 받는다");
+    // 같은 이유 실패는 처음 한 번만, 살아나면 한 줄
+    assert_eq!(k.logs, vec!["start failed: 테일스케일 주소가 없어요".to_string(), "started after 3 failed tries".to_string()]);
+    // 떠 있으면 다시 켜지 않는다
+    keep_step(&mut k, &mut st, t0 + Duration::from_secs(80));
+    assert_eq!(k.starts, 4);
+    stop.store(true, Ordering::Relaxed);
+}
+
+#[test]
+fn 꺼_둔_상태면_다시_시도하지_않는다() {
+    let mut k = FakeKeep::new(false, vec![Some(net("100.100.10.1"))]);
+    let mut st = KeepState::default();
+    let t0 = std::time::Instant::now();
+    for i in 0..5 {
+        assert_eq!(keep_step(&mut k, &mut st, t0 + Duration::from_secs(60 * i)), Duration::from_secs(60));
+    }
+    assert_eq!((k.starts, k.up.is_none(), k.logs.len()), (0, true, 0));
+}
+
+#[test]
+fn 다시_시도는_2분_뒤엔_1분마다_켜고_끄면_처음부터() {
+    let mut k = FakeKeep::new(true, vec![None]);
+    let mut st = KeepState::default();
+    let t0 = std::time::Instant::now();
+    assert_eq!(keep_step(&mut k, &mut st, t0), Duration::from_secs(5));
+    assert_eq!(keep_step(&mut k, &mut st, t0 + Duration::from_secs(115)), Duration::from_secs(5));
+    assert_eq!(keep_step(&mut k, &mut st, t0 + Duration::from_secs(120)), Duration::from_secs(60));
+    assert_eq!(keep_step(&mut k, &mut st, t0 + Duration::from_secs(600)), Duration::from_secs(60));
+    assert_eq!(k.logs.len(), 1, "같은 이유는 한 번만: {:?}", k.logs);
+    // 끄면 멈추고, 다시 켜면 빠른 구간부터
+    k.on = false;
+    let n = k.starts;
+    keep_step(&mut k, &mut st, t0 + Duration::from_secs(660));
+    assert_eq!(k.starts, n);
+    k.on = true;
+    assert_eq!(keep_step(&mut k, &mut st, t0 + Duration::from_secs(720)), Duration::from_secs(5));
+    assert_eq!(k.logs.len(), 2, "끄고 켠 뒤 실패는 다시 적는다");
+}
+
+#[test]
+fn 떠_있는데_테일스케일_주소가_바뀌면_새_주소로_다시_켠다() {
+    let mut k = FakeKeep::new(true, vec![Some(net("100.100.10.1"))]);
+    let mut st = KeepState::default();
+    let t0 = std::time::Instant::now();
+    keep_step(&mut k, &mut st, t0);
+    assert_eq!(k.starts, 1);
+    // 테일스케일이 잠깐 없으면(다시 뜨는 중) 서버는 그대로 둔다
+    k.nets = vec![None];
+    assert_eq!(keep_step(&mut k, &mut st, t0 + Duration::from_secs(60)), Duration::from_secs(60));
+    assert_eq!((k.starts, k.up.is_some()), (1, true));
+    // 같은 주소로 돌아오면 그대로
+    k.nets = vec![Some(net("100.100.10.1"))];
+    keep_step(&mut k, &mut st, t0 + Duration::from_secs(120));
+    assert_eq!(k.starts, 1);
+    // 다른 주소로 돌아오면 새 주소로 다시 켠다
+    k.nets = vec![Some(net("100.100.10.9"))];
+    keep_step(&mut k, &mut st, t0 + Duration::from_secs(180));
+    assert_eq!(k.starts, 2);
+    assert_eq!(k.up.as_ref().map(|u| u.0.ip), Some(ip("100.100.10.9")));
+    assert!(k.logs.iter().any(|l| l.starts_with("tailnet changed")), "{:?}", k.logs);
+    if let Some((_, stop, _)) = k.up.take() {
+        stop.store(true, Ordering::Relaxed);
+    }
+}

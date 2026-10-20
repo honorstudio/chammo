@@ -16,6 +16,7 @@ const users = require('./users');
 const liveMod = require('./live');
 const channelMod = require('./channel');
 const { placement, chromeLaunch, chromeArgs } = require('./window');
+const { askApp } = require('./place-at-launch');
 const { minimizePulledIn } = require('./minimize');
 const { sessionChrome } = require('./appcopy');
 
@@ -239,7 +240,7 @@ async function hold(o, { out = (r) => process.stdout.write(`${JSON.stringify(r)}
     // 창 자리는 MCP 래퍼와 같은 규칙(가짜 화면 → 화면 밖) — --no-view 는 앱 화면 연결만 끈다(창은 그대로 사람 화면 밖)
     const feature = liveMod.enabled(paths.dataDir());
     const appHere = fs.existsSync(path.join(paths.dataDir(), 'config.json'));
-    const place = o.headless ? { pos: null, size: null, offPos: null } : placement({ profile, watchable: feature, appHere, vdFile: path.join(paths.ROOT, 'vdisplay.json') });
+    const place = o.headless ? { pos: null, size: null, offPos: null } : placement({ profile, watchable: feature, appHere, vdFile: path.join(paths.ROOT, 'vdisplay.json'), ask: () => askApp(paths.dataDir()) });
     live = feature && o.view ? liveMod.createLive({ profile, root: paths.ROOT, profileDir, pid: process.pid, ppid: o.session || 0 }) : null;
     if (live) live.reset();
     else fs.rmSync(portFile, { force: true }); // 지난 크롬이 남긴 포트로 엉뚱한 주소를 알리지 않게

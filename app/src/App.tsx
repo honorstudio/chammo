@@ -48,7 +48,7 @@ import { appUpdateInstall, openTarget as openLink } from './data/tauri';
 import { installNote, runInstall, type Phase as InstallPhase } from './domain/appInstall';
 import { assistant, getLang, josa, tr } from './i18n';
 import { getAppEnv, listSessionsAllRaw, listSessionsRaw, readSay, writeVoiceMode, speak, projectScan, readTasksSince, readTranscriptTails, spawnSession, type AppEnv } from './data/tauri';
-import { freshReplies, parseSay, pickSay, type ReplySeen } from './domain/voice';
+import { freshReplies, fromOrchTurn, parseSay, pickSay, type ReplySeen } from './domain/voice';
 import { baseVoice, voiceFor } from './domain/avatar';
 import { avatarSnapshot, refreshAvatars, setAvatarTts } from './ui/avatar';
 import { blockedBody, readNoteTarget } from './domain/notify';
@@ -195,7 +195,7 @@ function mirrorConfig(c: Config) {
 
 export default function App() {
   const [env, setEnv] = useState<AppEnv | null>(null);
-  const updates = useUpdates(env?.claudeVersion);
+  const updates = useUpdates(env?.claudeVersion, env?.claudeBin);
   // 설정(config.json) — 못 읽은 동안엔 기능을 다 켠 것으로(featuresOf)
   const [config, setConfig] = useState<Config | null>(null);
   // 참모 목소리 — 설정 음성 명령을 프사 저장소에 알린다(고르기 창·참모 답 읽기가 쓴다)
@@ -404,7 +404,7 @@ export default function App() {
     setTimeout(() => setPending((p) => { const n = new Set(p); n.delete(sid); return n; }), 15_000);
   };
   const prevStatus = useRef<Record<string, ActivityStatus>>({});
-  const seenReplies = useRef<ReplySeen | null>(null); // 참모 답 중 이미 읽은(또는 처음 보고 넘긴) 것
+  const seenReplies = useRef<ReplySeen | null>(load<ReplySeen | null>('seenReplies', null)); // 참모 답 중 이미 읽은(또는 처음 보고 넘긴) 것 — 앱을 다시 켜도 남긴다
   const spokenSay = useRef<Record<string, string>>({});
   const appStartedAt = useRef(new Date().toISOString()); // 세션 id → 이미 읽은 scripts/say 말의 마지막 ts(domain/voice pickSay)
   useEffect(() => save('fontSize', fontSize), [fontSize]);
@@ -857,13 +857,16 @@ export default function App() {
     }
     prevStatus.current = settled(prevStatus.current, next);
     // 참모가 새로 마친 답 — 답 ts 로 한 번만(상태 바뀜으로 보면 10초 늦은 대화 기록 탓에 옛 답을 또 읽었다, domain/voice)
-    const r = freshReplies(seenReplies.current, orchActs.map((x) => ({ id: x.session.id, state: x.session.state, activity: x.activity })));
+    // since — 앱이 켜진 때와 그 세션이 (다시) 켜진 때 중 늦은 것. 그 전에 끝난 턴은 안 읽는다(respawn 한 참모가 일주일 전 답을 읽었다, 2026-10-20)
+    const sinceOf = (s: Session) => [appStartedAt.current, s.startedAt > 0 ? new Date(s.startedAt).toISOString() : ''].sort().pop()!;
+    const r = freshReplies(seenReplies.current, orchActs.map((x) => ({ id: x.session.id, state: x.session.state, activity: x.activity, since: sinceOf(x.session) })));
+    if (JSON.stringify(r.seen) !== JSON.stringify(seenReplies.current)) save('seenReplies', r.seen);
     seenReplies.current = r.seen;
     for (const f of r.fresh) {
       const x = orchActs.find((a) => a.session.id === f.id)!;
       const s = x.session;
-      // 참모가 음성용 말을 따로 넘겼으면(scripts/say) 그걸, 아니면 답 앞부분 + 끝 질문
-      if (voiceRef.current) void readSay().catch(() => '').then((log) => {
+      // 참모가 음성용 말을 따로 넘겼으면(scripts/say) 그걸, 아니면 답 앞부분 + 끝 질문. 다른 참모가 보낸 말로만 깬 턴은 그 참모에게 한 답이라 안 읽는다
+      if (voiceRef.current && !fromOrchTurn(f.reply)) void readSay().catch(() => '').then((log) => {
         // 앱을 켜기 전에 넘긴 말은 안 읽는다 — 켤 때마다 '이미 읽은 말' 기억이 비어 옛 말을 몰아 읽었다
         const since = [x.activity.prompt?.ts ?? '', appStartedAt.current].sort().pop()!;
         const p = pickSay(parseSay(log), [s.id, s.sessionId], since, spokenSay.current[s.id]);
@@ -1725,6 +1728,13 @@ export default function App() {
             {appInstall.kind !== 'get' && appInstall.kind !== 'install' && (
               <IconButton label={tr('나중에', 'Later')} title={tr('나중에 — 이 버전은 다시 안 띄움', 'Later — skip this version')} onClick={() => setUpdDismissed(`app:${updates.app!.version}`)}><IconClose /></IconButton>
             )}
+          </div>
+        )}
+        {/* 지난 Claude 업데이트(winget)가 중간에 끊겨 .old 만 남았던 걸 켤 때 되살렸다(2026-10-20 윈도우 시험 PC) */}
+        {env?.claudeRestored && updDismissed !== `restored:${env.claudeRestored}` && (
+          <div className="banner warn">
+            <span>{tr(`Claude Code 업데이트가 중간에 끊겨 이전 판으로 되돌렸어요 (${verLabel(env.claudeVersion)}).`, `The Claude Code update was cut off, so the previous version was restored (${verLabel(env.claudeVersion)}).`)}</span>
+            <IconButton label={tr('닫기', 'Close')} title={tr('닫기', 'Close')} onClick={() => setUpdDismissed(`restored:${env.claudeRestored}`)}><IconClose /></IconButton>
           </div>
         )}
         {updates.claude && updDismissed !== `claude:${updates.claude}` && (

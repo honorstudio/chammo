@@ -3,7 +3,8 @@
 import { tr } from '../i18n';
 
 export type DockDot = 'human' | 'agent' | 'dirty' | '';
-export type DockItem = { app: string; name: string; icon: string; dot: DockDot | string; hidden: boolean; recent: string[] };
+/** app = 인스턴스 키('photocraft'·'photocraft-2'), by = 띄운 세션 id(사람이 연 것은 빈 글) */
+export type DockItem = { app: string; name: string; icon: string; dot: DockDot | string; hidden: boolean; recent: string[]; by?: string };
 
 /** 점의 뜻(title·aria 에 붙는 글) */
 export function dotWord(dot: string): string {
@@ -13,8 +14,15 @@ export function dotWord(dot: string): string {
   return '';
 }
 
-/** 아이콘 이름표 — 앱 이름(+ 상태) */
-export const dockTitle = (it: DockItem) => [it.name, dotWord(it.dot)].filter(Boolean).join(' · ');
+/** 아이콘 이름표 — 앱 이름(+ 쓰는 세션 별명 + 상태). 같은 앱이 여럿 떠도 누구 것인지 보이게(owner = 그 세션 별명) */
+export const dockTitle = (it: DockItem, owner?: string) => [it.name, owner, dotWord(it.dot)].filter(Boolean).join(' · ');
+
+/** 아이콘 모서리 번호 — 같은 앱이 둘 이상 떠 있을 때만(1·2·3), 아니면 빈 글 */
+export function dockNo(items: DockItem[], it: DockItem): string {
+  const base = (k: string) => k.replace(/-[23]$/, '');
+  if (items.filter((x) => base(x.app) === base(it.app)).length < 2) return '';
+  return /-([23])$/.exec(it.app)?.[1] ?? '1';
+}
 
 /** 아이콘을 못 구했을 때 — 이름 첫 글자 */
 export const dockLetter = (it: DockItem) => (it.name.trim()[0] ?? '?').toUpperCase();

@@ -303,3 +303,31 @@ describe('이상한 기록 줄에도 요약이 버틴다(2026-10-11 bug-hunt —
     expect(summarizeTranscript(tail).prompt?.text).toBe('이어서 해');
   });
 });
+
+describe('reply.woke — 그 턴을 깨운 말이 전부 다른 세션 메시지면 보낸 이름들(음성: 참모끼리 넘긴 턴은 안 읽는다)', () => {
+  const peer = (ts: string, from: string, body = '물어볼게') => user(ts, `Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/a.sock" from-name="${from}" from-mode="bypass">\n${body}\n</cross-session-message>\n\nThis came from another Claude session — not typed by the user.`, { isMeta: true, origin: { kind: 'peer' } });
+  const send = (ts: string) => line({ type: 'assistant', timestamp: ts, message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'x1', name: 'SendMessage', input: { to: '참모-3 · 시험', message: '답' } }] } });
+  const result = (ts: string) => user(ts, [{ type: 'tool_result', tool_use_id: 'x1', content: '{"success":true}' }]);
+  const end = (ts: string, text: string) => line({ type: 'assistant', timestamp: ts, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text }] } });
+
+  it('재현: 다른 참모 말로 깨서 SendMessage 로 답하고 끝낸 턴 → 보낸 참모 이름', () => {
+    const t = [peer('t1', '참모-3 · 시험'), send('t2'), result('t3'), end('t4', '참모-3 이 물어봐서 답해 줬어.')].join('\n');
+    expect(summarizeTranscript(t).reply).toMatchObject({ ts: 't4', woke: ['참모-3 · 시험'] });
+  });
+  it('사람이 말 건 턴은 없음 — 앞 턴이 참모 말로 깼어도', () => {
+    const t = [peer('t1', '참모-3'), end('t2', '답했어.'), user('t3', '이어서 해'), end('t4', '했어.')].join('\n');
+    expect(summarizeTranscript(t).reply?.woke).toBeUndefined();
+  });
+  it('턴 시작에 사람 말과 다른 세션 말이 같이 오면 없음', () => {
+    const t = [user('t1', '이것도 봐'), peer('t2', '참모-3'), end('t3', '봤어.')].join('\n');
+    expect(summarizeTranscript(t).reply?.woke).toBeUndefined();
+  });
+  it('턴 중간에 끼어든 줄(스킬 본문 같은 meta)은 깨운 말이 아니다', () => {
+    const t = [peer('t1', '참모-3'), send('t2'), result('t3'), user('t4', 'Base directory for this skill: /x', { isMeta: true }), end('t5', '답했어.')].join('\n');
+    expect(summarizeTranscript(t).reply?.woke).toEqual(['참모-3']);
+  });
+  it('하위 세션 회신으로 깬 턴은 그 이름 그대로(말할지는 음성 쪽이 이름으로 가른다)', () => {
+    const t = [peer('t1', 'shop-app'), end('t2', 'PR 올라왔어.')].join('\n');
+    expect(summarizeTranscript(t).reply?.woke).toEqual(['shop-app']);
+  });
+});

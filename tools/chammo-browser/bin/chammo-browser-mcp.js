@@ -10,7 +10,7 @@ const lock = require('../src/lock');
 const paths = require('../src/paths');
 const { createRelay, createLineSplitter, parseIdleMs } = require('../src/relay');
 const { createFocusGuard } = require('../src/focus');
-const { placement, chromeLaunch, chromeArgs } = require('../src/window');
+const { placement, chromeLaunch, chromeArgs, offscreenPosition, macScreens, vdBounds } = require('../src/window');
 const { sessionChrome } = require('../src/appcopy');
 const { minimizePulledIn } = require('../src/minimize');
 const { guardTool } = require('../src/guard');
@@ -83,9 +83,13 @@ if (live && !othersHold()) live.reset();
 const mac = process.platform === 'darwin';
 const configArgs = [];
 let offPos = null; // 가짜 화면이 없어 화면 밖에 띄웠으면 그 자리 — 크롬이 끌어오면 최소화
+const vdFile = require('path').join(paths.ROOT, 'vdisplay.json');
+let placeEnv = null; // 크롬이 뜰 때 자리를 다시 정하기(src/place-at-launch.js) — 앱이 있는 맥에서 우리가 자리를 넣었을 때만
 if (!extra.some((a) => a === '--config' || a.startsWith('--config='))) {
   const appHere = fs.existsSync(require('path').join(paths.dataDir(), 'config.json'));
-  const place = placement({ profile, watchable, appHere, vdFile: require('path').join(paths.ROOT, 'vdisplay.json'), mac });
+  // 지금은 기다리지 않고 정한다 — 앱은 가짜 화면을 필요할 때만 띄우니 세션마다 3초씩 기다리지 않게, 진짜 자리는 크롬이 뜰 때
+  const place = placement({ profile, watchable, appHere, vdFile, mac, wait: 0 });
+  if (mac && watchable && appHere) placeEnv = JSON.stringify({ profile, vdFile, dataDir: paths.dataDir() });
   offPos = place.offPos;
   const { pos, size } = place;
   const configFile = require('path').join(paths.ROOT, 'run', `${profile}.json`);
@@ -119,15 +123,17 @@ const ASK_TOOL = {
 };
 
 // 세션 run_code 처리기 예외로 플레이라이트가 통째로 죽지 않게 + 상자에 URL 같은 전역(src/survive.js)
-const SURVIVE = ['--require', require('path').join(__dirname, '..', 'src', 'survive.js')];
+const SURVIVE = ['--require', require('path').join(__dirname, '..', 'src', 'survive.js'), ...(placeEnv ? ['--require', require('path').join(__dirname, '..', 'src', 'place-at-launch.js')] : [])];
 
 const child = spawn(process.execPath, [...SURVIVE, cli, '--user-data-dir', userDataDir, ...configArgs, ...extra], {
   stdio: ['pipe', 'pipe', 'inherit'], // stdin/stdout 은 중계, stderr 는 그대로
   windowsHide: true, // 윈도우: 콘솔 없는 부모 밑에서 검은 창이 안 뜨게(test/windows-hide.test.js)
+  ...(placeEnv ? { env: { ...process.env, CHAMMO_PLACE: placeEnv } } : {}),
 });
 
 // 화면 밖에 띄운 크롬을 크롬·맥이 화면 안으로 끌어오면 최소화 — 포트가 생기면 몇 번(처음 창·곧 뜨는 창). 앱이 나중에 켜지면 가짜 화면으로 옮긴다
-if (offPos && live) {
+// 자리는 크롬이 뜰 때 다시 정해진다 — 그때 화면 밖 자리·가짜 화면을 다시 읽어 가짜 화면 안 창은 두고 끌려온 창만
+if ((offPos || placeEnv) && live) {
   const started = Date.now();
   const tries = [0, 1500, 4000];
   const tick = setInterval(() => {
@@ -137,7 +143,10 @@ if (offPos && live) {
       return;
     }
     clearInterval(tick);
-    for (const ms of tries) setTimeout(() => { minimizePulledIn(port, offPos).catch(() => {}); }, ms).unref();
+    for (const ms of tries) setTimeout(() => {
+      const off = (placeEnv && offscreenPosition(macScreens())) || offPos;
+      minimizePulledIn(port, off, globalThis.WebSocket, placeEnv ? vdBounds(vdFile) : null).catch(() => {});
+    }, ms).unref();
   }, 300);
   tick.unref();
 }

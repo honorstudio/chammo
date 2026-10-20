@@ -384,7 +384,7 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
         CATransaction.commit()
     }
 
-    /// 캔버스 자리(원본 창 점) — 손쉬운 사용 트리의 이름 없는 가장 큰 칸(참모 손 '@canvas' 와 같은 훑기)
+    /// 캔버스 자리(원본 창 점) — 손쉬운 사용 트리에서 창 안에 보이는 가장 큰 칸(참모 손 '@canvas' 와 같은 훑기)
     func canvasRect(tries: Int = 4) -> CGRect? {
         // AccessKit 은 처음 물을 때 켜져 첫 조회가 빈다 — 잠깐씩 다시(10/16 실사용: 캔버스를 몰라 끌기가 클릭 여러 번으로 갔다)
         for i in 0...tries {
@@ -487,7 +487,7 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     /// 이름들의 자리(원본 창 기준 가운데 점) — AccessKit 은 처음 물을 때 켜지니 비면 잠깐 뒤 다시
-    /// 손쉬운 사용 트리 훑기 — 이름들의 자리(전역 점)와 이름 없는 가장 큰 칸(캔버스). AccessKit 은 처음 물을 때 켜진다
+    /// 손쉬운 사용 트리 훑기 — 이름들의 자리(전역 점)와 창 안에 보이는 가장 큰 칸(캔버스). AccessKit 은 처음 물을 때 켜진다
     func axScan(_ names: [String]) -> (found: [String: CGRect], canvas: CGRect) {
         guard Mirror.axOK() else { return ([:], .zero) }
         let app = AXUIElementCreateApplication(pid)
@@ -507,9 +507,11 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
         func walk(_ e: AXUIElement, _ d: Int) {
             let name = (attr(e, kAXTitleAttribute) as String?).flatMap { $0.isEmpty ? nil : $0 } ?? (attr(e, kAXDescriptionAttribute) as String?) ?? ""
             if !name.isEmpty, found[name] == nil, names.contains(name), let r = rect(e) { found[name] = r }
-            // 이름 없는 가장 큰 칸 = 캔버스(@canvas) — 창 전체 그룹은 빼고
-            if name.isEmpty || name == "알 수 없음", (attr(e, kAXRoleAttribute) as String?) == "AXUnknown", let r = rect(e),
-               r.width * r.height > canvas.width * canvas.height, r.width < srcFrame.width * 0.95 { canvas = r }
+            // 창 안에 보이는 가장 큰 칸 = 주 작업 영역(@canvas) — 창·창 전체 묶음만 빼고(이름·역할은 안 가린다).
+            // 10/20 12개 실측: '이름 없는 AXUnknown·폭 95% 미만'은 표(폭 99%)·문서 본문('문서1')·화면('캔버스')·라이트(AXButton 'Photo')를 놓쳐
+            // 수식 입력줄·제목줄로 갔다. 창 밖으로 넘친 본문(문서·PDF 쪽)은 보이는 만큼만
+            if (attr(e, kAXRoleAttribute) as String?) != "AXWindow", let r = rect(e)?.intersection(srcFrame), !r.isNull,
+               !(r.width >= srcFrame.width * 0.95 && r.height >= srcFrame.height * 0.9), r.width * r.height > canvas.width * canvas.height { canvas = r }
             if d < 40, let kids: [AXUIElement] = attr(e, kAXChildrenAttribute) { for k in kids { walk(k, d + 1) } }
         }
         if let wins: [AXUIElement] = attr(app, kAXWindowsAttribute) { for w in wins { walk(w, 0) } }
@@ -527,7 +529,10 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
         let local = names.allSatisfy { $0 == "@title" || $0.hasPrefix("@bounds:") }
         var (found, canvas) = local ? ([:], .zero) : axScan(names)
         var left = local ? 0 : tries
-        while found.isEmpty && canvas == .zero && left > 0 {
+        // AccessKit 은 처음 물을 때 창 머리 칸만 내놓는다 — 캔버스가 창의 10% 도 안 되면 덜 채워진 것(10/20 시험: 손이 왼쪽 위 구석으로)
+        let wantCanvas = names.contains { $0 == "@canvas" || $0.hasPrefix("@doc:") }
+        let thin = { (c: CGRect) in c.width * c.height < self.srcFrame.width * self.srcFrame.height * 0.1 }
+        while ((found.isEmpty && canvas == .zero) || (wantCanvas && thin(canvas))) && left > 0 {
             Thread.sleep(forTimeInterval: 0.3)
             (found, canvas) = axScan(names)
             left -= 1
@@ -591,6 +596,10 @@ final class Hand {
     let chip = CATextLayer()
     var last: CGPoint?
     var nextAt: CFTimeInterval = 0  // 다음 손을 그려도 되는 때(연속 명령 — enqueue)
+    var pulse: Timer?  // 머무는 손(긴 명령) — 1초마다 지난 시간·고리
+    var holdStart: CFTimeInterval = 0
+    var holdUntil: CFTimeInterval = 0
+    var holdLabel = ""
 
     init() {
         let p = CGMutablePath()  // 커서 모양(끝이 왼쪽 위)
@@ -644,11 +653,7 @@ final class Hand {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         arrow.position = pts.last!
         root.opacity = 1
-        let text = label as NSString
-        let w = text.size(withAttributes: [.font: NSFont.boldSystemFont(ofSize: 12)]).width + 16
-        chip.string = label
-        chip.isHidden = label.isEmpty
-        chip.frame = CGRect(x: min(max(4, pts.last!.x - w - 8), layer.bounds.width - w - 4), y: max(4, pts.last!.y - 40), width: w, height: 20)
+        setChip(label, at: pts.last!, in: layer)
         CATransaction.commit()
         arrow.add(move, forKey: "move")
         for (i, p) in pts.enumerated() { ring(p, in: root, delay: step * Double(i + 1) - 0.05) }
@@ -657,10 +662,17 @@ final class Hand {
         fade.beginTime = CACurrentMediaTime() + move.duration + 1.6; fade.duration = 0.4; fade.fillMode = .forwards; fade.isRemovedOnCompletion = false
         root.add(fade, forKey: "fade")
     }
+
+    func setChip(_ label: String, at p: CGPoint, in layer: CALayer) {
+        let w = (label as NSString).size(withAttributes: [.font: NSFont.boldSystemFont(ofSize: 12)]).width + 16
+        chip.string = label
+        chip.isHidden = label.isEmpty
+        chip.frame = CGRect(x: min(max(4, p.x - w - 8), layer.bounds.width - w - 4), y: max(4, p.y - 40), width: w, height: 20)
+    }
 }
 
 @_cdecl("craft_mirror_point")
-public func craftMirrorPoint(_ h: UnsafeMutableRawPointer?, _ namesJson: UnsafePointer<CChar>?, _ label: UnsafePointer<CChar>?) {
+public func craftMirrorPoint(_ h: UnsafeMutableRawPointer?, _ namesJson: UnsafePointer<CChar>?, _ label: UnsafePointer<CChar>?, _ hold: Double) {
     guard let h, let namesJson else { return }
     let m = Unmanaged<Mirror>.fromOpaque(h).takeUnretainedValue()
     let names = (try? JSONSerialization.jsonObject(with: Data(String(cString: namesJson).utf8))) as? [String] ?? []
@@ -668,7 +680,7 @@ public func craftMirrorPoint(_ h: UnsafeMutableRawPointer?, _ namesJson: UnsafeP
     // AX 훑기(수십 ms)는 한 줄씩 차례로 뒤에서(순서가 섞이지 않게), 그리기는 메인에서
     Mirror.scanQ.async {
         let pts = m.status == 1 && !m.paused ? m.targets(names) : []  // 안 보는 중이면 연출 없이
-        DispatchQueue.main.async { if !pts.isEmpty { m.hand.enqueue(in: m.view, to: pts.map(m.toView), label: text) } }
+        DispatchQueue.main.async { if !pts.isEmpty { m.hand.enqueue(in: m.view, to: pts.map(m.toView), label: text, hold: hold) } }
     }
 }
 
@@ -681,16 +693,51 @@ extension Hand {
 
     /// 연속 명령이면 손 자리가 바뀔 때마다 적어도 몇 프레임은 그려지게 — 앞 손이 시작한 지 minShow 가 안 됐으면 그만큼만 미룬다(속도는 그대로)
     static let minShow: CFTimeInterval = 0.07
-    func enqueue(in view: NSView, to pts: [CGPoint], label: String) {
+    func enqueue(in view: NSView, to pts: [CGPoint], label: String, hold: Double = 0) {
         let now = CACurrentMediaTime()
+        if hold > 0, pulse != nil, label == holdLabel {  // 머물기 이어 주기 — 같은 일이면 시간만 늘린다(자리·지난 시간 그대로)
+            holdUntil = now + hold
+            return
+        }
         let at = max(now, nextAt)
         nextAt = at + Hand.minShow
         let go = { [weak self, weak view] in
             guard let self, let view else { return }
+            self.stopHold()
             self.removeFade()
             self.play(in: view, to: pts, label: label)
+            if hold > 0 { self.startHold(label, hold, in: view) }
         }
         if at <= now { go() } else { DispatchQueue.main.asyncAfter(deadline: .now() + (at - now), execute: go) }
+    }
+
+    /// 긴 명령(내보내기·렌더) — 손이 그 자리에 머물며 1초마다 글 옆 지난 시간(0:12), 2초마다 고리. 화면이 멈춘 것처럼 안 보이게(10/20).
+    /// 이어 주기(scripts/craft 15초마다)가 끊겨 holdUntil 이 지나면 내린다 — 스크립트가 죽어도 손이 남지 않게
+    func startHold(_ label: String, _ hold: Double, in view: NSView) {
+        removeFade()
+        holdStart = CACurrentMediaTime()
+        holdUntil = holdStart + hold
+        holdLabel = label
+        pulse = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self, weak view] _ in
+            guard let self, let layer = view?.layer, let at = self.last else { return }
+            let now = CACurrentMediaTime()
+            if now > self.holdUntil {
+                self.stopHold()
+                let f = CABasicAnimation(keyPath: "opacity"); f.fromValue = 1; f.toValue = 0; f.duration = 0.4; f.fillMode = .forwards; f.isRemovedOnCompletion = false
+                self.root.add(f, forKey: "fade")
+                return
+            }
+            let s = Int(now - self.holdStart)
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            self.setChip("\(self.holdLabel) \(s / 60):\(String(format: "%02d", s % 60))", at: at, in: layer)
+            CATransaction.commit()
+            if s % 2 == 0 { self.ring(at, in: self.root, delay: 0) }
+        }
+    }
+
+    func stopHold() {
+        pulse?.invalidate()
+        pulse = nil
     }
 }
 

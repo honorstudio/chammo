@@ -9,6 +9,7 @@ mod appctl;
 mod audio_out;
 mod avatar;
 mod claude;
+mod claude_src;
 mod accounts;
 mod accounts_cmd;
 mod accounts_refresh;
@@ -419,6 +420,8 @@ fn main() {
     keyrepeat::disable_press_and_hold();
     // 스레드가 생기기 전에 — 세션(→ MCP)이 터미널과 같은 PATH 를 물려받게
     claude::adopt_user_path();
+    // 띄운 쪽 Claude 세션 표시를 안 물려받게 — 사람이 연 Craft 의 주인이 그 세션으로 잡혔다(2026-10-20)
+    craft_window::drop_session_env();
     let ctx = tauri::generate_context!();
     // 자동 업데이트 — 공개판만(개인 앱은 엔드포인트를 비워 둠, updater.rs)
     updater::attach(tauri::Builder::default(), &ctx)
@@ -463,8 +466,8 @@ fn main() {
             std::thread::spawn(|| { browser_attach::reassert(); });
             // 세션 크롬 가리기 지킴이(세션 브라우저 앱에서 보기) + 크롬 자체 창(패스키) 보기 — 앱이 떠 있을 때만 가려진다
             agent_browser::watch_hidden();
-            // 가상 모니터 — 세션 크롬을 눈에 안 보이는 화면에(안 되는 맥이면 조용히 안 함)
-            vdisplay::start();
+            // 가상 모니터 — 세션 크롬을 눈에 안 보이는 화면에. 켤 때는 안 띄우고 세션 크롬이 뜰 때만(want), 2분 비면 내린다
+            vdisplay::watch_idle();
             craft_mirror::debug_event_watch(app.handle());
             craft_window::restore_on_start(app.handle());
             craft_screen::watch_idle();
@@ -610,6 +613,7 @@ fn main() {
             hq::folder_status,
             hq::make_dir,
             setup::check_env,
+            claude_src::claude_source,
             setup::app_version,
             updater::app_update_install,
             debug::pick_log,

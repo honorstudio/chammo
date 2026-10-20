@@ -64,13 +64,18 @@ const VD_NAME = 'Chammo agents';
  * 화면 목록을 못 읽을 때(osascript 실패·이름 없는 목록)만 자리 파일 {pid, bounds:[x,y,w,h]}(크롬 좌표) — 도우미가 살아 있을 때
  */
 function virtualDisplay(file, alive = pidAlive, screens = macScreens) {
+  return fit(vdBounds(file, alive, screens));
+}
+
+/** 가짜 화면 네모 [왼쪽, 위, 폭, 높이](크롬 좌표) — virtualDisplay 와 같은 규칙, 없으면 null */
+function vdBounds(file, alive = pidAlive, screens = macScreens) {
   const info = screens();
-  if (info && Array.isArray(info.screens) && Array.isArray(info.names)) return fit(namedScreen(info));
+  if (info && Array.isArray(info.screens) && Array.isArray(info.names)) return namedScreen(info);
   let v;
   try { v = JSON.parse(require('fs').readFileSync(file, 'utf8')); } catch { return null; }
   const b = v && Array.isArray(v.bounds) && v.bounds.length === 4 && v.bounds.every(Number.isFinite) ? v.bounds : null;
   if (!b || !Number.isInteger(v.pid) || !alive(v.pid)) return null;
-  return fit(b);
+  return b;
 }
 
 /** 화면 목록에서 가짜 화면을 크롬 좌표 [왼쪽, 위, 폭, 높이]로 — 없거나 다른 화면과 겹치면(면적이 생기면) null */
@@ -187,12 +192,17 @@ function offscreenPosition(info) {
 /**
  * 세션 크롬 창 자리·크기 — MCP 래퍼와 스크립트 지킴이(chammo-browser launch)가 같이 쓴다.
  * 세션 브라우저 앱에서 보기가 켜져 있고(watchable) 앱이 가상 모니터를 띄워 뒀으면 거기에(사용자 화면 어디에도 안 보이게), 아니면 비켜 놓은 자리.
- * 앱이 있는 맥이면(appHere) 가짜 화면 자리를 3초 기다리고 — 앱이 다시 켜지는 사이·도우미가 막 뜨는 중이면 곧 생긴다 —
+ * 앱이 있는 맥이면(appHere) 가짜 화면이 없을 때 앱에 부탁하고(ask — 앱은 필요할 때만 띄운다, 2026-10-20) wait ms 기다리고
  * 그래도 없으면 화면 밖에(사용자 화면에 안 뜨게, 2026-10-03 맥북 하나일 때). 앱이 아예 없는 기계는 보이는 자리.
+ * MCP 래퍼는 세션이 뜰 때 wait 0 으로 일단 정하고, 크롬이 실제로 뜰 때 place-at-launch.js 가 부탁·기다림으로 다시 정한다.
  * offPos = 화면 밖에 띄웠으면 그 자리(크롬이 끌어오면 minimize.js 가 최소화)
  */
-function placement({ profile, watchable, appHere, vdFile, mac = process.platform === 'darwin' }) {
-  const vd = mac && watchable ? (appHere ? waitVirtualDisplay(() => virtualDisplay(vdFile)) : virtualDisplay(vdFile)) : null;
+function placement({ profile, watchable, appHere, vdFile, mac = process.platform === 'darwin', wait = 6000, ask = null }) {
+  let vd = mac && watchable ? virtualDisplay(vdFile) : null;
+  if (!vd && mac && watchable && appHere && wait > 0) {
+    if (ask) ask();
+    vd = waitVirtualDisplay(() => virtualDisplay(vdFile), { ms: wait });
+  }
   const screens = mac && !vd ? { ...(macScreens() || {}), profile } : null;
   const offPos = mac && watchable && appHere && !vd ? offscreenPosition(screens) : null;
   const pos = vd ? vd.pos : offPos || (screens ? windowPosition(screens) : null);
@@ -200,4 +210,4 @@ function placement({ profile, watchable, appHere, vdFile, mac = process.platform
   return { pos, size, offPos };
 }
 
-module.exports = { placement, offsetFor, windowPosition, windowSize, virtualDisplay, chromeChannel, chromeLaunch, chromeArgs, macScreens, waitVirtualDisplay, offscreenPosition };
+module.exports = { placement, offsetFor, windowPosition, windowSize, virtualDisplay, vdBounds, chromeChannel, chromeLaunch, chromeArgs, macScreens, waitVirtualDisplay, offscreenPosition };

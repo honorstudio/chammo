@@ -1,5 +1,8 @@
 //! 가상 모니터(2026-10-03 사용자 "가상 모니터 개지린다") — 세션 크롬을 눈에 안 보이는 가짜 화면에 띄운다.
-//! 도우미 tools/chammo-vdisplay(Swift, CGVirtualDisplay 비공개 API)를 build.rs 가 빌드해 실행 파일에 넣고, 앱이 뜰 때 데이터 폴더에 풀어 띄운다.
+//! 도우미 tools/chammo-vdisplay(Swift, CGVirtualDisplay 비공개 API)를 build.rs 가 빌드해 실행 파일에 넣고, 필요할 때 데이터 폴더에 풀어 띄운다.
+//! 필요할 때만(2026-10-20 사용자 — 늘 떠 있으니 아이맥 유니버설 컨트롤 커서가 맥북으로 못 돌아왔다): 세션 크롬이 뜨기 직전 래퍼가
+//! app.jsonl {"action":"vdisplay","arg":{"verb":"want"}} 로 부탁하거나 세션 크롬이 떠 있으면(agent_browser 지킴이) 띄우고,
+//! 부탁·세션 크롬·그 화면 위 창(도우미가 5초마다 찍는 수)이 다 없는 채 2분이 지나면 내린다. 앱이 켜질 때는 안 띄운다
 //! 도우미가 살아 있는 동안만 화면이 있고(입력이 닫히면 = 앱이 꺼지면 사라짐), 커서 막이·배치가 바뀔 때 모서리 자리 다시 잡기도 도우미가 한다.
 //! 자리는 <데이터>/browser/vdisplay.json(600) {pid, displayID, bounds} — 참모 브라우저 래퍼가 읽어 크롬 창을 거기 띄운다.
 //! 안 되는 macOS·기능 꺼짐·도우미 빌드 실패면 아무것도 안 하고, 세션 크롬은 앱 가리기(agent_browser watch_hidden)만으로 숨는다
@@ -82,6 +85,65 @@ struct Running {
     bounds: Option<(u32, Rect)>,
 }
 static RUN: Mutex<Option<Running>> = Mutex::new(None);
+/// 마지막으로 쓰인 때(부탁·세션 크롬·화면 위 창) — 2분 지나면 내린다
+static LAST_USE: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+/// 마지막으로 띄워 본 때 — 못 띄우는 맥에서 지킴이(0.3초)마다 도우미를 다시 돌리지 않게
+static LAST_TRY: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+const IDLE: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// 도우미 창 수 줄 {"windows":n} → n
+pub fn windows_line(line: &str) -> Option<u32> {
+    serde_json::from_str::<serde_json::Value>(line).ok()?["windows"].as_u64().map(|n| n as u32)
+}
+
+/// app.jsonl 한 줄이 가짜 화면 부탁인가(래퍼 src/place-at-launch.js)
+pub fn request(line: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(line).is_ok_and(|v| v["action"] == "vdisplay" && v["arg"]["verb"] == "want")
+}
+
+/// 안 쓰인 지 이만큼이면 내린다
+pub fn idle_due(idle: std::time::Duration) -> bool {
+    idle >= IDLE
+}
+
+/// 다시 띄워 볼 때인가 — 10초에 한 번
+pub fn may_try(last: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    last.is_none_or(|t| now.duration_since(t) >= std::time::Duration::from_secs(10))
+}
+
+fn touch() {
+    if let Ok(mut g) = LAST_USE.lock() {
+        *g = Some(std::time::Instant::now());
+    }
+}
+
+/// 가짜 화면이 필요하다 — 없으면 띄우고(백그라운드), 있으면 쓰임만 적는다. 래퍼 부탁·세션 크롬 지킴이가 부른다
+pub fn want() {
+    touch();
+    if RUN.lock().is_ok_and(|g| g.is_some()) {
+        return;
+    }
+    let now = std::time::Instant::now();
+    match LAST_TRY.lock() {
+        Ok(mut t) if may_try(*t, now) => *t = Some(now),
+        _ => return,
+    }
+    start();
+}
+
+/// 안 쓰는 가짜 화면 내리기 — 10초마다 본다. 기능을 끄면 바로
+pub fn watch_idle() {
+    std::thread::spawn(|| loop {
+        std::thread::sleep(std::time::Duration::from_secs(10));
+        if RUN.lock().is_ok_and(|g| g.is_none()) {
+            continue;
+        }
+        let idle = LAST_USE.lock().ok().and_then(|g| *g).map(|t| t.elapsed()).unwrap_or(IDLE);
+        if idle_due(idle) || !crate::config::current().features.agent_view {
+            stop();
+        }
+    });
+}
 
 fn json_path() -> std::path::PathBuf {
     crate::config::data_file("browser").join("vdisplay.json")
@@ -184,8 +246,8 @@ pub fn display_rect(id: u32) -> Option<Rect> {
     live_rect(id, &cg::displays())
 }
 
-/// 앱이 뜰 때 — 기능이 켜져 있고 이 macOS 에서 되면 가짜 화면을 띄운다(백그라운드 스레드, 실패하면 조용히 안 함)
-pub fn start() {
+/// 가짜 화면을 띄운다(want 가 부른다) — 기능이 켜져 있고 이 macOS 에서 되면(백그라운드 스레드, 실패하면 조용히 안 함)
+fn start() {
     // CHAMMO_VDISPLAY=0 — 개발판 시험처럼 가짜 화면을 하나 더 만들면 안 될 때(사용자 화면 배치를 건드린다)
     if HELPER.is_empty() || !crate::config::current().features.agent_view || std::env::var("CHAMMO_VDISPLAY").is_ok_and(|v| v == "0") {
         return;
@@ -205,8 +267,11 @@ pub fn start() {
         if let Ok(mut g) = RUN.lock() {
             *g = Some(Running { child, bounds: None });
         }
-        // 도우미는 처음 한 줄 + 배치가 바뀔 때마다 한 줄씩 자리를 찍는다
+        // 도우미는 처음 한 줄 + 배치가 바뀔 때마다 한 줄씩 자리를 찍는다. 5초마다 화면 위 창 수도
         for line in BufReader::new(out).lines().map_while(Result::ok) {
+            if windows_line(&line).is_some_and(|n| n > 0) {
+                touch();
+            }
             if let Some((id, r)) = parse_line(&line) {
                 if let Ok(mut g) = RUN.lock() {
                     if let Some(run) = g.as_mut() {
@@ -223,8 +288,8 @@ pub fn start() {
         }
         // 도우미가 끝났다 — 내 자리 파일이면 지워 래퍼가 다른 자리로 돌아가게
         remove_mine(Some(pid));
-        // 끝난 도우미를 거둔다 — 그냥 버리면 좀비(<defunct>)로 남았다
-        let ended = RUN.lock().ok().and_then(|mut g| g.take());
+        // 끝난 도우미를 거둔다 — 그냥 버리면 좀비(<defunct>)로 남았다. 내 것만(내린 뒤 새로 띄운 것은 두고)
+        let ended = RUN.lock().ok().and_then(|mut g| if g.as_ref().is_some_and(|r| r.child.id() == pid) { g.take() } else { None });
         if let Some(mut run) = ended {
             let _ = run.child.wait();
         }
@@ -412,6 +477,27 @@ mod tests {
         assert_eq!(parse_line(r#"{"available":true}"#), None);
         assert_eq!(parse_line(r#"{"displayID":4,"bounds":[0,0,0,0]}"#), None);
         assert_eq!(parse_line("깨짐"), None);
+    }
+
+    #[test]
+    fn 필요할_때만_띄우고_2분_비면_내린다() {
+        // 도우미 창 수 줄 — 화면 자리 줄과 따로
+        assert_eq!(windows_line(r#"{"windows":2}"#), Some(2));
+        assert_eq!(windows_line(r#"{"windows":0}"#), Some(0));
+        assert_eq!(windows_line(r#"{"displayID":4,"bounds":[0,0,1440,900]}"#), None);
+        // 래퍼 부탁 줄(app.jsonl)
+        assert!(request(r#"{"ts":"t","action":"vdisplay","arg":{"verb":"want"}}"#));
+        assert!(!request(r#"{"action":"vdisplay","arg":{"verb":"stop"}}"#), "모르는 동작");
+        assert!(!request(r#"{"action":"craft","arg":{"verb":"screen","app":"photocraft"}}"#));
+        // 내리기 — 마지막 쓰임(부탁·세션 크롬·창)에서 2분
+        let s = std::time::Duration::from_secs;
+        assert!(!idle_due(s(119)), "쓰는 중이거나 막 비었다");
+        assert!(idle_due(s(120)));
+        // 못 띄웠으면 10초 안엔 다시 안 해 본다(지킴이가 0.3초마다 부른다)
+        let t0 = std::time::Instant::now();
+        assert!(may_try(None, t0));
+        assert!(!may_try(Some(t0), t0 + s(9)));
+        assert!(may_try(Some(t0), t0 + s(10)));
     }
 
     #[test]

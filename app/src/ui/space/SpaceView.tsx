@@ -42,8 +42,8 @@ import { CraftPane } from '../craft/CraftPane';
 import { CraftDrawer } from '../craft/CraftDrawer';
 import { APPS_KEY } from '../../domain/craftDrawer';
 import { setCraftOwner } from '../craftOwner';
-import { craftAppOf, craftKey, leftCraft } from '../../domain/craftTab';
-import { dockLetter, dockTitle, recentLabel, type DockItem } from '../../domain/craftDock';
+import { craftAppOf, craftKey, craftBase, leftCraft } from '../../domain/craftTab';
+import { dockLetter, dockNo, dockTitle, recentLabel, type DockItem } from '../../domain/craftDock';
 import { CHAT_FILE_OPEN, imageFile } from '../chat/openChatFile';
 import { cardMoves } from '../../domain/chatFiles';
 import { attachToChat } from '../fileDrop';
@@ -677,6 +677,14 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
     for (const h of b.here) present(h.show);
   }, [log]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Craft 인스턴스를 띄운 세션 별명 — 같은 앱이 세션마다 떠도 독·칸에서 누구 것인지(by = 세션 id, 사람이 연 것은 없음)
+  const craftWho = (by?: string) => {
+    if (!by) return undefined;
+    const o = orchs.find((x) => x.id === by || x.id.startsWith(by));
+    if (o) return oname(o);
+    const s = findTarget(sessions, by);
+    return s ? s.name || nameOf(s) : undefined;
+  };
   const who = (id: string) => {
     if (id === 'me') return tr('나', 'You');
     const o = orchs.find((x) => x.id === id);
@@ -1274,7 +1282,8 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
         )}
         {dock.map((it) => {
           // Craft 독 아이콘 = 그 앱의 탭(글자 탭은 없다, 2026-10-19 사용자) — 누르면 그 칸, 지금 보는 앱은 선택 표시, 오른쪽 클릭 = 따로 창·꺼내기·끄기·최근 문서
-          const title = dockTitle(it);
+          const title = dockTitle(it, craftWho(it.by));
+          const no = dockNo(dock, it);
           const on = pick === craftKey(it.app);
           const menu = act ? (e: React.MouseEvent) => act.openMenu(e, [
             { label: tr('따로 창으로', 'Open in its own window'), run: () => void invoke('craft_move', { app: it.app, to: 'window' }).catch(() => {}) },
@@ -1287,6 +1296,7 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
               onClick={() => void invoke('craft_show', { app: it.app }).catch(() => {})} onContextMenu={menu}>
               {it.icon ? <img src={it.icon} alt="" /> : <span className="lk-dock-letter">{dockLetter(it)}</span>}
               {it.dot && <i className={`lk-dock-dot ${it.dot}`} aria-hidden="true" />}
+              {no && <b className="lk-dock-no" aria-hidden="true">{no}</b>}
             </button>
           );
         })}
@@ -1431,7 +1441,7 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
     main = lockerOrch ? lockerFrame(lockerOrch, <>{lockerTabs(lockerOrch, !!lockerSide?.rootNew)}{page}</>) : page;
   } else if (pick.startsWith('k:')) {
     // Craft 탭 — 칸은 비워 두고 네이티브 비추기가 그 위에(CraftPane 이 자리·보이는지를 알린다)
-    const pane = <div className="lk-doc-body"><CraftPane key={pick} app={craftAppOf(pick)} place="space" /></div>;
+    const pane = <div className="lk-doc-body"><CraftPane key={pick} app={craftAppOf(pick)} place="space" whoOf={craftWho} /></div>;
     main = lockerOrch ? lockerFrame(lockerOrch, <>{lockerTabs(lockerOrch, !!lockerSide?.rootNew)}{pane}</>) : pane;
   } else if (pick.startsWith('c:')) {
     // 시안 검토 탭 — 탭 줄·독은 그대로, 가운데에 검토(채팅 칸도 그대로 보이고 칠 수 있다). '크게'면 아래에서 창 전체로 그리고 여긴 비운다

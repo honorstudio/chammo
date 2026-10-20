@@ -93,6 +93,19 @@ guardTimer.setEventHandler {
 }
 guardTimer.resume()
 
+// 창 수 — 5초마다 {"windows":n}(일반 창, 가려진·최소화한 것도). 앱이 0 이 2분 이어지면 화면을 내린다(10/20 유니버설 컨트롤 커서가 갇힘)
+let countTimer = DispatchSource.makeTimerSource(queue: .main)
+countTimer.schedule(deadline: .now() + 1, repeating: .seconds(5))
+countTimer.setEventHandler {
+  let list = (CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]]) ?? []
+  let rects = list.compactMap { w -> CGRect? in
+    guard (w[kCGWindowLayer as String] as? Int) == 0, let b = w[kCGWindowBounds as String] as? NSDictionary else { return nil }
+    return CGRect(dictionaryRepresentation: b as CFDictionary)
+  }
+  out(["windows": windowsInside(rects, CGDisplayBounds(id))])
+}
+countTimer.resume()
+
 // 입력이 닫히면(앱이 꺼짐) 끝 — 프로세스가 끝나면 가짜 화면도 사라진다
 signal(SIGTERM) { _ in exit(0) }
 signal(SIGINT) { _ in exit(0) }

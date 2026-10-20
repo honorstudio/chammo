@@ -17,15 +17,19 @@ export interface CraftInfo {
   takeover: boolean;
   /** 지금 비추는 자리 — window(따로 창)·space(스페이스 탭)·''(없음). 비추기는 한 곳만 */
   place?: string;
+  /** 이 인스턴스를 띄운 세션 id — 칸 이름·아래 줄에 그 세션 별명(사람이 연 것은 빈 글) */
+  by?: string;
 }
 
 // 닫기는 묻지 않는다 — 바뀐 게 있으면 scripts/craft close 가 저장하고 닫는다(사람 파일 자리 또는 보관함 Craft 폴더)
 export const saveState = (i: CraftInfo) => ({ text: i.dirty ? tr('닫으면 저장', 'Saves on close') : tr('저장됨', 'Saved'), dirty: i.dirty });
 
-export function doingLine(i: CraftInfo): string {
+/** 아래 줄 — who = 이 인스턴스를 띄운 세션 별명(모르면 대표 참모 이름). 같은 앱이 세션마다 떠도 누가 다루는지 보이게 */
+export function doingLine(i: CraftInfo, who?: string): string {
+  const w = who || assistant();
   if (i.pid == null) return tr('앱이 꺼져 있어', 'The app is not running');
-  if (i.takeover) return tr(`직접 조작 중 — ${josa(assistant(), '은', '는')} 멈춰서 기다려 · 다 했으면 돌려주기`, `You have control — ${assistant()} is waiting · Hand back when done`);
-  return i.last ? `${assistant()} · ${i.last}` : tr(`${josa(assistant(), '이', '가')} 다루는 중`, `${assistant()} is working`);
+  if (i.takeover) return tr(`직접 조작 중 — ${josa(w, '은', '는')} 멈춰서 기다려 · 다 했으면 돌려주기`, `You have control — ${w} is waiting · Hand back when done`);
+  return i.last ? `${w} · ${i.last}` : tr(`${josa(w, '이', '가')} 다루는 중`, `${w} is working`);
 }
 
 /** 비추기가 안 될 때 칸 가운데 안내 — settings: 화면 기록 권한 열기 단추를 보일지 */

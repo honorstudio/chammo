@@ -209,6 +209,8 @@
 .lk-dock-dot.human { background: #1f9a62; }
 .lk-dock-dot.agent { background: #4c8dff; }
 .lk-dock-dot.dirty { background: var(--blocked, #c98a00); }
+/* 같은 앱이 세션마다 떠 있으면 아래 오른쪽 번호(1·2·3) — 누구 것인지는 title 의 세션 별명 */
+.lk-dock-no { position: absolute; right: 0; bottom: 1px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; display: grid; place-items: center; font-size: 11px; font-weight: 700; line-height: 1; color: var(--text-2); background: var(--panel, var(--surface)); box-shadow: 0 0 0 1px var(--line); font-variant-numeric: tabular-nums; }
 .lk-tab.folder.drop-over, .lk-tab.folder.drop-hot { box-shadow: inset 0 0 0 1.5px var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .lk-tab > span { overflow: hidden; text-overflow: ellipsis; }
 .lk-tab.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--line); clip-path: inset(-1px -1px 0 -1px); }

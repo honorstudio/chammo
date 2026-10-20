@@ -12,6 +12,8 @@ export type EnvCheck = {
   ghUser: string | null;
   /** gh 가 쓰는 계정 토큰이 깨짐(만료·취소) — 다시 로그인 필요 */
   ghStale: boolean;
+  /** 끊긴 winget 업그레이드가 남긴 claude.exe.old-* 를 이번 점검에서 되살렸으면 그 이름(윈도우) */
+  claudeRestored?: string | null;
 };
 
 /** "2.1.283 (Claude Code)" → [2, 1, 283]. 모양이 다르면 null */
@@ -44,6 +46,9 @@ export function versionWarning(text: string, dismissed: string | null): VersionF
 /** 설정을 끝낼 수 있나 — Claude Code 설치·로그인·확인된 버전 이상, 명령줄 도구(git)는 꼭. gh 는 선택 */
 export const setupReady = (c: EnvCheck | null): boolean => !!c && !!c.claudePath && c.loggedIn && c.clt && versionFit(c.claudeVersion) !== 'old';
 
+/** 화면 언어를 모를 때(시험) 쓰는 기본 문구 — Setup 이 tr 로 넘긴다 */
+const WIN_NOTES: WinNotes = { busy: 'Claude is running ({0}) — those sessions keep the old version until restarted.', back: 'Update failed — restored the previous version.' };
+
 /** 셸 작은따옴표로 감싸기 — 경로·안내 문장을 명령에 그대로 넣으려고 */
 export const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
@@ -53,8 +58,8 @@ export type SetupTask = 'install' | 'update' | 'login' | 'clt' | 'ghLogin' | 'tr
  * 설정 화면의 터미널에서 돌릴 한 번짜리 명령. 끝나면 무엇을 하면 되는지 한 줄 찍는다(done).
  * claude·gh 는 찾은 절대 경로로(앱의 PATH 에 없을 수 있어서)
  */
-export function setupCommand(task: SetupTask, bins: { claude?: string | null; gh?: string | null }, done: string, dir?: string, win = IS_WIN): string {
-  if (win) return winSetupCommand(task, bins, done, dir);
+export function setupCommand(task: SetupTask, bins: { claude?: string | null; gh?: string | null }, done: string, dir?: string, win = IS_WIN, notes: WinNotes = WIN_NOTES): string {
+  if (win) return winSetupCommand(task, bins, done, dir, notes);
   const tail = `; echo; echo ${shq(done)}`;
   switch (task) {
     case 'install':
@@ -82,26 +87,51 @@ const dq = (s: string) => `"${s.replace(/"/g, '""')}"`;
 /** cmd echo 에 그대로 찍히게 — & | < > ^ 는 ^ 로 */
 const cmdEcho = (s: string) => s.replace(/[&|<>^]/g, '^$&');
 
+/** winget 업데이트 터미널에 찍을 두 줄 — busy 의 {0} 은 돌고 있는 claude 수 */
+export type WinNotes = { busy: string; back: string };
+
+/** PowerShell 작은따옴표 글자 */
+const psq = (s: string) => `'${s.replace(/'/g, "''")}'`;
+
 /** winget 으로 깐 claude 올리기. 돌고 있는 claude(참모 세션 등)가 claude.exe 를 잡고 있으면 winget 이 옛 파일을 못 지워
  *  `Access is denied` · 0x8a150003 으로 끝났다(2026-10-01 윈도우 PC, 세션 4개). 윈도우는 실행 중인 exe 도 이름은 바뀐다 —
- *  먼저 claude.exe.old-<시각> 으로 비켜 두고 올리고, 실패하면 되돌린다. 지난번에 비켜 둔 건 지우되 아직 잠겨 있으면 넘어간다.
- *  돌던 세션은 다시 켜기 전까지 옛 버전 그대로다 */
-const WIN_WINGET_UPGRADE = [
+ *  먼저 claude.exe.old-<시각> 으로 비켜 두고 올린다. 돌던 세션은 다시 켜기 전까지 옛 버전 그대로라 먼저 알린다.
+ *  winget 이 중간에 죽으면(2026-10-20 윈도우 시험 PC — 로그가 3초 만에 끊김) .old 만 남아 claude 가 사라진다 —
+ *  끝나면 claude.exe 가 실제로 도는지 보고 아니면 가장 새 .old 로 되돌린다. 다음 번엔 .old 를 지우기 전에 먼저 되살린다
+ *  (스크립트째 죽은 경우는 앱 점검·켤 때 Rust claude_src::heal 이 되살린다) */
+const winWingetUpgrade = (n: WinNotes) => [
   // 진행 표시가 cmd 창에 #< CLIXML 덩어리로 깨져 나왔다(참모 PC 실측)
   "$ProgressPreference = 'SilentlyContinue'",
   "$pkg = Join-Path $env:LOCALAPPDATA 'Microsoft\\WinGet\\Packages'",
   "$dir = Get-ChildItem -LiteralPath $pkg -Directory -Filter 'Anthropic.ClaudeCode_*' -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName",
+  '$busy = @(Get-Process -Name claude -ErrorAction SilentlyContinue).Count',
+  `if ($busy -gt 0) { Write-Output (${psq(n.busy)} -f $busy) }`,
   '$old = $null',
   'if ($dir) {',
-  "  Get-ChildItem -LiteralPath $dir -Filter 'claude.exe.old-*' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue",
   "  $exe = Join-Path $dir 'claude.exe'",
+  "  if (-not (Test-Path -LiteralPath $exe)) { $last = Get-ChildItem -LiteralPath $dir -Filter 'claude.exe.old-*' -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1; if ($last) { Copy-Item -LiteralPath $last.FullName -Destination $exe -Force -ErrorAction SilentlyContinue } }",
+  "  if (Test-Path -LiteralPath $exe) { Get-ChildItem -LiteralPath $dir -Filter 'claude.exe.old-*' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue }",
   "  if (Test-Path -LiteralPath $exe) { $old = 'claude.exe.old-' + (Get-Date -Format 'yyyyMMddHHmmss'); Rename-Item -LiteralPath $exe -NewName $old -ErrorAction SilentlyContinue; if (Test-Path -LiteralPath $exe) { $old = $null } }",
   '}',
   'winget upgrade -e --id Anthropic.ClaudeCode --accept-source-agreements --accept-package-agreements',
   '$code = $LASTEXITCODE',
   // 0x8A15002B = '올릴 게 없다'(이미 최신) — 실패가 아니다
-  'if ($code -eq -1978335189) { $code = 0 }',
-  "if ($old -and -not (Test-Path -LiteralPath (Join-Path $dir 'claude.exe'))) { Rename-Item -LiteralPath (Join-Path $dir $old) -NewName 'claude.exe' -ErrorAction SilentlyContinue }",
+  '$latest = $code -eq -1978335189',
+  'if ($latest) { $code = 0 }',
+  'if ($dir) {',
+  "  $exe = Join-Path $dir 'claude.exe'",
+  '  $ok = $false',
+  // 깨진 파일은 '실행 실패'를 던지고 $LASTEXITCODE 엔 winget 값이 남는다 — try 로 받아 실패로 친다
+  '  if (Test-Path -LiteralPath $exe) { try { & $exe --version *> $null; $ok = $LASTEXITCODE -eq 0 } catch { $ok = $false } }',
+  '  if (-not $ok) {',
+  "    $last = Get-ChildItem -LiteralPath $dir -Filter 'claude.exe.old-*' -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1",
+  '    if ($last) {',
+  '      Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue',
+  '      Copy-Item -LiteralPath $last.FullName -Destination $exe -Force -ErrorAction SilentlyContinue',
+  `      if (-not $latest) { Write-Output ${psq(n.back)}; if ($code -eq 0) { $code = 1 } }`,
+  '    }',
+  '  }',
+  '}',
   'exit $code',
 ].join('\n');
 
@@ -116,7 +146,7 @@ function psEncode(script: string): string {
 }
 
 /** 윈도우 설정 명령 — cmd /C 가 읽는다(작은따옴표·exec·; 가 안 먹어서 폴더 믿기가 "구문이 잘못됨"으로 끝났다, 윈도우판) */
-function winSetupCommand(task: SetupTask, bins: { claude?: string | null; gh?: string | null }, done: string, dir?: string): string {
+function winSetupCommand(task: SetupTask, bins: { claude?: string | null; gh?: string | null }, done: string, dir: string | undefined, notes: WinNotes): string {
   const tail = done ? ` & echo. & echo ${cmdEcho(done)}` : '';
   const claude = dq(bins.claude || 'claude');
   switch (task) {
@@ -124,7 +154,7 @@ function winSetupCommand(task: SetupTask, bins: { claude?: string | null; gh?: s
       return `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"${tail}`;
     case 'update':
       // winget 으로 깐 claude(…\WinGet\Links·Packages)는 claude update 로 못 올린다 — 자기가 "winget upgrade" 하라고 한다(2026-10-01 윈도우 PC)
-      if (/\\WinGet\\/i.test(bins.claude ?? '')) return `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${psEncode(WIN_WINGET_UPGRADE)}${tail}`;
+      if (/\\WinGet\\/i.test(bins.claude ?? '')) return `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${psEncode(winWingetUpgrade(notes))}${tail}`;
       return `${claude} update${tail}`;
     case 'login':
       return `${claude} auth login${tail}`;

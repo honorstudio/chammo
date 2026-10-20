@@ -82,7 +82,7 @@ pub fn parse_gh(out: &str) -> GhAuth {
 }
 
 /// 명령을 돌리되 secs 안에 안 끝나면 None(프로세스는 버린다)
-fn run_for(bin: &str, args: &[&str], secs: u64) -> Option<Output> {
+pub(crate) fn run_for(bin: &str, args: &[&str], secs: u64) -> Option<Output> {
     let child = crate::platform::command(bin).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().ok()?;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -110,6 +110,8 @@ pub struct EnvCheck {
     pub gh_user: Option<String>,
     /// gh 는 있는데 쓰는 계정 토큰이 깨짐(만료·취소) — 다시 로그인 필요
     pub gh_stale: bool,
+    /// 끊긴 winget 업그레이드가 남긴 claude.exe.old-* 를 이번 점검에서 claude.exe 로 되살렸으면 그 이름(claude_src)
+    pub claude_restored: Option<String>,
 }
 
 pub fn find(name: &str) -> Option<String> {
@@ -123,7 +125,9 @@ pub fn auth_status(bin: &str) -> Option<bool> {
 }
 
 pub fn check() -> EnvCheck {
-    let mut c = EnvCheck { claude_path: find("claude"), gh_path: find("gh"), ..Default::default() };
+    // 되살리기가 먼저 — .old 만 남으면 링크(WinGet\Links\claude.exe)가 빈 곳을 가리켜 '설치 안 됨'으로 보인다
+    let claude_restored = crate::claude_src::heal();
+    let mut c = EnvCheck { claude_path: find("claude"), gh_path: find("gh"), claude_restored, ..Default::default() };
     if let Some(bin) = c.claude_path.clone() {
         if let Some(o) = run_for(&bin, &["--version"], 10) {
             c.claude_version = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string();
