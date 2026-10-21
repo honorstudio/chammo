@@ -28,7 +28,7 @@ export function TamaMini({ file, onOpen, on = false }: { file: TamaFile | null; 
   });
   const label = pet && !pet.dead ? nameOf(pet.egg, pet.slot) : tr('다마고치', 'Pet');
   return (
-    <button className={`tama-mini ${on ? 'on' : ''}`} title={on ? tr(`${label} — 눌러서 다마고치 창 숨기기`, `${label} — click to hide the pet window`) : tr(`${label} — 눌러서 다마고치 창 띄우기`, `${label} — click to show the pet window`)} onClick={onOpen}>
+    <button className={`tama-mini ${on ? 'on' : ''}`} aria-label={tr('다마고치', 'Tamagotchi')} aria-pressed={on} title={on ? tr(`${label} — 눌러서 다마고치 창 숨기기`, `${label} — click to hide the pet window`) : tr(`${label} — 눌러서 다마고치 창 띄우기`, `${label} — click to show the pet window`)} onClick={onOpen}>
       <canvas ref={ref} style={{ width: W * DOT, height: AREA_H * DOT }} />
     </button>
   );

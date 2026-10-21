@@ -166,7 +166,8 @@ export const lockerAlias = (owner: string, path: string, folder: string) => post
 export const lockerUnalias = (owner: string, rel: string) => post<{ ok: true }>('/api/locker-unalias', { owner, rel });
 export const lockerNewDoc = (owner: string, folder: string, title: string) => post<{ path: string }>('/api/locker-new', { owner, folder, title });
 export const lockerMkdir = (owner: string, parent: string, name: string) => post<{ rel: string }>('/api/locker-mkdir', { owner, parent, name });
-export const lockerWrite = (owner: string, path: string, text: string) => post<{ ok: true }>('/api/locker-write', { owner, path, text });
+/** base = 열 때(지난 저장 때) 받은 글 — 맥에서 그새 바뀌었으면 맥이 409 CHANGED_OUTSIDE 로 안 쓴다 */
+export const lockerWrite = (owner: string, path: string, text: string, base?: string) => post<{ ok: true }>('/api/locker-write', { owner, path, text, ...(base === undefined ? {} : { base }) });
 /** 폰 홈 모드 카드 — 목록 · 한 칸(상태 + 보이는 칸 트리, 크기는 글자 칸) · 누름 · 맛보기 예시 켜기(그 참모 홈에) */
 export type PhoneModeRow = { name: string; title: string; source: string; on: boolean; where: string; dash: string | null; alive: boolean; hidden?: boolean };
 export const readModes = () => getJson<PhoneModeRow[]>('/api/modes');

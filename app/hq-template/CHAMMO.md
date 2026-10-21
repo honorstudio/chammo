@@ -12,7 +12,7 @@ settings (`<data folder>/config.json`; the data folder is `$CHAMMO_HOME`, else `
   Always with `--dangerously-skip-permissions`: you run that way too, and sessions in a different permission mode
   hold every message you send ("Held message from another session") until someone approves it.
   List them: `claude agents --json`. Talk to a running one: SendMessage.
-- Read their replies, decide the next step, and report back to the user briefly.
+- Read their replies, decide the next step, and report back to the user briefly — results and what the user needs to do. Leave your own bookkeeping (`scripts/task`, SendMessage) out of the report.
 - The user can open any session in the app and step in at any time. Never hide work from them.
 
 
@@ -232,7 +232,7 @@ and don't send "continue" to the stopped session (the app does it once sign-in i
 don't list them as yours, don't message them, don't stop them. If the user asks about one, say it's outside Chammo.
 
 **"Have an agent do it" means a project session.** When the user hands you work (even if they say "agent", "spin up someone"),
-the default is to start or message that **project's session** (`claude --bg` in the project folder) — it shows in the sidebar,
+the default is to start or message that **project's session** (`claude --bg` in the project folder) — it shows in the app (your dashboard and session tabs in the chat view, the sidebar in the terminal view),
 the user can watch and step in, and it keeps the project's docs. Use your own in-process sub-agents (the Agent tool) only for
 your own side jobs: an independent review of a branch, a quick search across your notes, a check you'll read yourself. Never use
 a sub-agent to do a project's work just because it's faster to start.

@@ -123,8 +123,8 @@ export function AccountsSection({ title, claude, fontSize }: { title: string; cl
         })}
         {unknownLive && !adding && (
           <div className="su-row">
-            <div className="su-row-text"><b>{view!.liveEmail}</b><span>{tr('지금 로그인인데 아직 칸에 없어요.', 'Your current sign-in is not in the list yet.')}</span></div>
-            <div className="su-row-act"><button className="btn su-mini" disabled={busy} onClick={() => void act(() => accountsApi.capture())}>{tr('칸으로 보관', 'Keep it')}</button></div>
+            <div className="su-row-text"><b>{view!.liveEmail}</b><span>{tr('지금 로그인인데 아직 목록에 없어요.', 'Your current sign-in is not in the list yet.')}</span></div>
+            <div className="su-row-act"><button className="btn su-mini" disabled={busy} onClick={() => void act(() => accountsApi.capture())}>{tr('목록에 보관', 'Keep it')}</button></div>
           </div>
         )}
       </div>
@@ -153,7 +153,7 @@ export function AccountsSection({ title, claude, fontSize }: { title: string; cl
         ? <IconButton size="l" tone="line" className="su-add-wide" label={tr('계정 추가', 'Add account')} disabled={busy} onClick={() => void startAdd()}><IconPlus /></IconButton>
         : (
           <div className="su-rows">
-            <div className="su-hint">{tr('아래 터미널에서 브라우저가 열려요. 새로 쓸 계정으로 로그인하고 돌아오면 보관 버튼이 켜져요. 지금 로그인은 이미 칸으로 보관해 뒀어요.', 'A browser opens from the terminal below. Sign in with the new account and come back — the Keep button lights up. Your current sign-in is already kept.')}</div>
+            <div className="su-hint">{tr('아래 터미널에서 브라우저가 열려요. 새로 쓸 계정으로 로그인하고 돌아오면 보관 버튼이 켜져요. 지금 로그인은 이미 목록에 보관해 뒀어요.', 'A browser opens from the terminal below. Sign in with the new account and come back — the Keep button lights up. Your current sign-in is already kept.')}</div>
             <div className="su-term">
               <TerminalPane key="acct-login" command={setupCommand('login', { claude }, tr('끝났어요. 아래의 보관 버튼을 눌러 주세요.', 'Done. Press Keep below.'))}
                 title={tr('계정 추가 — Claude 로그인', 'Add account — Claude sign-in')} subtitle={tr('이 창에 바로 입력할 수 있어요', 'You can type in this window')} fontSize={fontSize}
@@ -161,7 +161,7 @@ export function AccountsSection({ title, claude, fontSize }: { title: string; cl
             </div>
             <div className="su-row">
               <div className="su-row-text">
-                <b>{state === 'newLogin' ? tr(`새 로그인: ${view!.liveEmail}`, `New sign-in: ${view!.liveEmail}`) : state === 'known' ? tr(`이미 칸에 있는 계정이에요: ${view!.liveEmail}`, `Already in the list: ${view!.liveEmail}`) : tr('로그인 기다리는 중…', 'Waiting for sign-in…')}</b>
+                <b>{state === 'newLogin' ? tr(`새 로그인: ${view!.liveEmail}`, `New sign-in: ${view!.liveEmail}`) : state === 'known' ? tr(`이미 목록에 있는 계정이에요: ${view!.liveEmail}`, `Already in the list: ${view!.liveEmail}`) : tr('로그인 기다리는 중…', 'Waiting for sign-in…')}</b>
                 <input className="acct-name" placeholder={tr('이름 (예: 작은 것)', 'Name (e.g. Small)')} value={newName} onChange={(e) => setNewName(e.target.value)} />
               </div>
               <div className="su-row-act"><button className="btn pri su-mini" disabled={busy || state !== 'newLogin'} onClick={() => void keepNew()}>{tr('보관', 'Keep')}</button></div>

@@ -295,6 +295,8 @@ pub mod fake {
         pub locked: RefCell<bool>,
         /// 이 서비스에 쓰면 실패
         pub fail_set: RefCell<Option<String>>,
+        /// 이 칸 이름(account)에 쓰기를 n 번 실패시킨다(서비스 무관)
+        pub fail_account: RefCell<Option<(String, u32)>>,
         /// 실패할 때 반쯤 쓴 값을 남긴다(실제 security -i 가 잘린 값으로 칸을 만들고 실패했다)
         pub partial: RefCell<bool>,
         /// 쓰기 직전에 부른다(서비스 이름) — 쓰는 순간의 바깥 상태(잠금 등)를 보려고
@@ -330,6 +332,11 @@ pub mod fake {
             }
             if let Some(f) = self.on_set.borrow().as_ref() {
                 f(service);
+            }
+            if let Some((acc, n)) = self.fail_account.borrow_mut().as_mut().filter(|(a, n)| a == account && *n > 0) {
+                let _ = acc;
+                *n -= 1;
+                return Err(StoreError::Failed("가짜 칸 쓰기 실패".into()));
             }
             if self.fail_set.borrow().as_deref() == Some(service) {
                 if *self.partial.borrow() {

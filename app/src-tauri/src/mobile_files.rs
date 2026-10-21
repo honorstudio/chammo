@@ -166,10 +166,31 @@ fn place_ok(p: &Path, r: &Rules) -> bool {
     if routine || starter || phone_attach(p, data_dir) || crate::locker::is_locker_copy(p, data_dir) {
         return true;
     }
-    if p.starts_with(data_dir) {
+    if within(p, data_dir) {
         return false;
     }
     dot_ok(p, &r.home)
+}
+
+/// p 가 dir 안인가 — 글자만 보면 대소문자만 다른 철자(APFS·NTFS 는 대소문자 무시)나 /System/Volumes/Data 펌링크로 같은 폴더를
+/// 다르게 불러 빠졌다: 점 없는 CHAMMO_HOME 이면 push-vapid.json(VAPID 개인 키)이 폰에 나갔다(2026-10-21 리뷰 ④-4).
+/// 그래서 p 의 위 폴더 중 dir 과 같은 폴더(맥·리눅스 장치+inode, 윈도우 실제 경로 대소문자 무시)가 있나로 본다
+pub(crate) fn within(p: &Path, dir: &Path) -> bool {
+    if p.starts_with(dir) {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(d) = std::fs::metadata(dir) else { return false };
+        p.ancestors().any(|a| std::fs::metadata(a).is_ok_and(|m| m.dev() == d.dev() && m.ino() == d.ino()))
+    }
+    #[cfg(windows)]
+    {
+        let Ok(d) = std::fs::canonicalize(dir) else { return false };
+        let d = d.to_string_lossy().to_lowercase();
+        p.ancestors().filter_map(|a| std::fs::canonicalize(a).ok()).any(|a| a.to_string_lossy().to_lowercase() == d)
+    }
 }
 
 /// 폰이 올린 첨부 — <데이터>/attach/<숫자>-phone.<보기 되는 확장자>, 서버가 지은 이름 꼴만(save_attach("phone.<ext>")).
@@ -587,6 +608,40 @@ pub fn doc_html(src: &Path) -> Option<String> {
 #[path = "mobile_files_tests.rs"]
 mod tests;
 
+/// 오피스 원본(docx·xlsx·pptx 같은 zip) 속 글에 비밀이 보이나 — 안의 xml 마다 태그를 빼고 이어서(글 조각 run 이 나뉘어도) secret_in.
+/// zip 이 아니면 바이트 그대로. 폰 받기(/api/dl)가 보기(as=sheet·html)와 같은 약속을 지키게(2026-10-21 리뷰 ④-13)
+pub fn office_secret(bytes: &[u8]) -> bool {
+    use std::io::Read;
+    let Ok(mut z) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else { return secret_in(bytes) };
+    let mut budget: u64 = 64 << 20; // 압축 폭탄 막이 — 풀어 읽는 건 합쳐 64MB 까지
+    for i in 0..z.len() {
+        let Ok(f) = z.by_index(i) else { continue };
+        if !f.name().ends_with(".xml") && !f.name().ends_with(".rels") {
+            continue;
+        }
+        let mut xml = Vec::new();
+        let n = f.take(budget).read_to_end(&mut xml).unwrap_or(0) as u64;
+        budget = budget.saturating_sub(n);
+        let mut text = Vec::with_capacity(xml.len());
+        let mut tag = false;
+        for b in xml {
+            match b {
+                b'<' => tag = true,
+                b'>' => tag = false,
+                _ if !tag => text.push(b),
+                _ => {}
+            }
+        }
+        if secret_in(&text) {
+            return true;
+        }
+        if budget == 0 {
+            break;
+        }
+    }
+    false
+}
+
 /// 글 속에 비밀이 보이나 — 개인 키·API 키(sk-·ghp_·xoxb-·AKIA·sb_secret_)·서비스 계정 JSON·긴 JWT(supabase service_role 등).
 /// 코드·설정 글을 폰에 열면서 이름만으론 못 거르는 것(2026-10-03). 앞 글자가 영숫자면 단어 중간이라 안 본다(task-… 등)
 pub fn secret_in(bytes: &[u8]) -> bool {
@@ -621,6 +676,16 @@ pub fn secret_in(bytes: &[u8]) -> bool {
 
 /// md 문서가 가리킨 그림(상대 경로만) — ![..](경로 "제목") 와 <img src="경로">. 웹 주소·절대 경로·data: 는 뺀다.
 /// 폰 문서 보기에서 속 그림을 그 문서 덕에 열어 준다(보여 준 목록에 없어도) — 문서가 가리킨 것만
+/// md 속 그림이 나갈 수 있는 끝 — 보관함 md 는 그 참모 칸, 저장소 안 문서는 저장소 뿌리(.git 이 있는 가장 가까운 위 폴더), 그 밖은 문서 폴더.
+/// 폰이 보관함 md 를 써서 ![](../../../../Pictures/x.png) 로 허용 집합 밖 아무 그림이나 읽을 수 있었다(2026-10-21 리뷰 ④-3)
+pub fn md_root(doc: &Path, locker_root: Option<&Path>) -> PathBuf {
+    let base = doc.parent().unwrap_or(Path::new("/"));
+    if let Some(owner) = locker_root.and_then(|r| doc.strip_prefix(r).ok().and_then(|rel| rel.components().next()).map(|c| r.join(c))) {
+        return owner;
+    }
+    base.ancestors().take(12).find(|a| a.join(".git").exists()).unwrap_or(base).to_path_buf()
+}
+
 pub fn md_images(md: &str, doc: &Path) -> Vec<PathBuf> {
     let mut raw: Vec<&str> = Vec::new();
     let mut rest = md;

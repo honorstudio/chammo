@@ -49,4 +49,4 @@ export function projectGroups<S extends { id: string; cwd: string; project: stri
 }
 
 /** 메뉴에 보일 문서 이름 — 파일 이름에서 .md, ADR 번호(0003-) 뗀다 */
-export const docTitle = (path: string) => (path.split('/').pop() ?? path).replace(/\.md$/i, '').replace(/^\d{3,4}-/, '');
+export const docTitle = (path: string) => (path.split(/[\\/]/).pop() ?? path).replace(/\.md$/i, '').replace(/^\d{3,4}-/, '');

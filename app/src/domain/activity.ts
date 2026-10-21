@@ -1,7 +1,7 @@
 // 세션마다 "지금 뭐 하는 중인지"를 대화 기록(~/.claude/projects/*/<sessionId>.jsonl) 꼬리에서 뽑는다.
 // 참모가 시킨 일이 아니어도(사용자가 직접 시킨 일) 작업 패널에 보이게 하려는 것.
 
-import { asksUser } from './status';
+import { asksSentence, asksUser } from './status';
 import { speakable } from './voice';
 
 /** asks: 자르기 전 전체 답으로 판단한 '사용자에게 묻는가'(text 는 화면용으로 잘린 것). say: 음성 모드로 읽을 글(domain/voice).
@@ -165,8 +165,10 @@ export function askView(text: string): AskView {
   const lines = text.split('\n').map(plain).filter(Boolean);
   const split = (l: string) => l.split(/(?<=[.?!])\s+/);
   const sentences = split(lines[lines.length - 1] ?? '');
-  // 질문 뒤 줄에 "참고로 …"가 붙는 답이 많다 — 끝 세 줄 안의 마지막 질문, 없으면 마지막 문장(asksUser 가 끝 300자를 본다)
-  const q = lines.slice(-3).flatMap(split).filter((x) => /\?$/.test(x)).pop() ?? sentences[sentences.length - 1] ?? '';
+  // 질문 뒤 줄에 "참고로 …"가 붙는 답이 많다 — 끝 세 줄 안의 마지막 묻는 문장(질문꼴·'정해 줘' 부탁), 없으면 마지막 문장(asksUser 가 끝 300자를 본다).
+  // '?' 만 찾으면 '…네가 정해 줘. 합치면 …' 꼴에서 정작 물은 문장이 카드에서 빠졌다(2026-10-22 첫 사용자 QA 13)
+  const tail = lines.slice(-3).flatMap(split);
+  const q = tail.filter((x) => /\?$/.test(x)).pop() ?? tail.filter(asksSentence).pop() ?? sentences[sentences.length - 1] ?? '';
   const first = (lines[0] ?? '').split(/(?<=[.?!])\s+/)[0] ?? '';
   return { lead: first === q ? '' : first, q };
 }

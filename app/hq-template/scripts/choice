@@ -6,7 +6,7 @@ for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
 echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
 ':'''
 __doc__ = """Read and answer a session's choice prompt (AskUserQuestion) for it.
-하위 세션이 띄운 선택지 창(AskUserQuestion)을 비서가 읽고 대신 답한다.
+하위 세션이 띄운 선택지 창(AskUserQuestion)을 참모가 읽고 대신 답한다.
 
   scripts/choice show   <session id>            -> the pending questions with numbered options
   scripts/choice answer <session id> <pick> ... -> one pick per question (e.g. answer c0ffee01 1 2,3 "t:my words")

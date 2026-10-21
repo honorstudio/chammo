@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { TtsField } from './TtsField';
 import { appVersion, browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, projectAccess, notifyOpenSettings, notifyRequest, notifyStatus, axTrusted, screenTrusted, askPermission, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
-import { addExtraProject, canNext, parseClaudeVersion, setupCommand, setupReady, tildify, notifyRow, axRow, browserRow, browserChecklist, ghRow, gitStillMissing, versionFit, WIZARD, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
+import { addExtraProject, canNext, nextWhy, trustExitNote, parseClaudeVersion, setupCommand, setupReady, tildify, notifyRow, axRow, browserRow, browserChecklist, ghRow, gitStillMissing, versionFit, WIZARD, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
 import type { Animation, FeatureSwitch } from '../domain/config';
 import { firstTab, settingsEscCloses, settingsTabs, type SettingsTab, type SetupStart } from '../domain/settingsTabs';
 import { BRAND } from '../domain/avatar';
@@ -83,11 +83,11 @@ function Field({ label, hint, children }: { label: string; hint?: ReactNode; chi
 }
 
 const features = (): [FeatureSwitch, string, string][] => [
-  ['office', tr('사무실', 'Office'), tr('비서 화면을 픽셀 사무실로 보여 줘요', 'Shows the assistant view as a pixel office')],
+  ['office', tr('사무실', 'Office'), tr('참모 화면을 픽셀 사무실로 보여 줘요', 'Shows the assistant view as a pixel office')],
   ['tama', tr('다마고치', 'Tamagotchi'), tr('커밋·머지를 먹고 자라는 작은 펫 위젯', 'A small pet widget that grows on your commits and merges')],
   ['gacha', tr('뽑기', 'Gacha'), tr('머지·커밋으로 모은 코인으로 사무실 꾸미기', 'Decorate the office with coins earned from merges and commits')],
   ['review', tr('PR 리뷰', 'PR review'), tr('열린 PR 과 머지 전에 볼 것을 모아 보여 줘요 (gh 필요)', 'Collects open PRs and what to check before merging (needs gh)')],
-  ['voice', tr('음성 모드', 'Voice mode'), tr('비서의 답을 소리로 읽어 줘요', "Reads the assistant's replies aloud")],
+  ['voice', tr('음성 모드', 'Voice mode'), tr('채팅에 음성 모드 단추를 보여 줘요 — 그 단추를 켜면 참모의 답을 소리로 읽어 줘요', "Shows the voice mode button in chat — turn that on to hear the assistant's replies")],
   ['agentView', tr('세션 브라우저 앱에서 보기', 'Watch session browsers in the app'), tr(`세션이 브라우저를 쓰면 그 화면을 대시보드에 띄워요. 그동안 이 ${machine()}의 다른 프로그램도 그 크롬을 조종할 수 있는 틈이 생겨요 — 켜고 끈 건 세션을 새로 켜야 적용돼요`, `Shows what a session's browser is doing on its dashboard. While on, other programs on this ${machine()} could also control that Chrome — changes apply to sessions started afterwards`)],
   // 맥만 — Claude Code 내장 화면 조종(computer-use)은 맥에서만 준다
   ...(IS_WIN ? [] : [['computerUse', tr('화면 조종 모든 프로젝트', 'Screen control in all projects'), tr('세션이 이 맥 화면을 보고 클릭·입력할 수 있게(Claude Code computer-use) 모든 프로젝트에서 켜요. 쓸 때마다 앱별로 허락을 묻지만, 켜 두면 세션이 내 화면을 움직일 수 있어요 — 끄면 모든 프로젝트에서 빠져요', 'Lets sessions see and click on this Mac\'s screen (Claude Code computer-use) in every project. It still asks per app, but while on, sessions can move your screen — turning it off removes it from every project')] as [FeatureSwitch, string, string]]),
@@ -244,7 +244,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
     return () => clearInterval(t);
   }, [trusting, refreshTrust]);
   // 믿기 터미널의 claude 가 끝났다 — 믿었으면 위 2초 확인이 닫고, 아니면(Enter 만 쳐서 No) 닫고 다시 하라고(2026-10-21 첫 사용자 QA)
-  const trustExit = () => void refreshTrust().then((r) => setTrusting((w) => { if (w && !r[w]) { setError(tr('믿지 않고 끝났어요 — 믿기를 다시 누르고 ↓ 로 "Yes, I trust this folder"를 고른 뒤 Enter 를 눌러 주세요.', 'It ended without trusting — press Trust again, pick "Yes, I trust this folder" with ↓, then Enter.')); return null; } return w; }));
+  const trustExit = (screen: string) => void refreshTrust().then((r) => setTrusting((w) => { if (w && !r[w]) { setError(trustExitNote(screen)); return null; } return w; }));
   const startTrust = async (which: 'dev' | 'hq') => {
     setError(null);
     try {
@@ -424,7 +424,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
   );
   // 아래 조각들을 첫 실행 안내(단계)와 설정 모달(탭)이 따로 묶는다 — 안내 순서는 예전 그대로
   const nameField = (
-          <Field label={tr('비서 이름', 'Assistant name')} hint={tr('세션 목록·알림에 이 이름으로 보여요.', 'Shown in the session list and notifications.')}>
+          <Field label={tr('참모 이름', 'Assistant name')} hint={tr('세션 목록·알림에 이 이름으로 보여요.', 'Shown in the session list and notifications.')}>
             <input value={draft.assistantName} placeholder={defaultName} onChange={(e) => set('assistantName', e.target.value)} />
           </Field>
   );
@@ -634,10 +634,13 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
   const readySec = (
         <section className="su-sec">
           <h2>{tr('준비 끝', 'All set')}</h2>
-          <p className="su-hint">{tr(`시작하기를 누르면 HQ 폴더를 만들어요. 첫 화면에서 '새 ${name} 만들기'를 누르고 말을 걸어 보세요 — 예: "acme-shop 에 README 정리 시켜줘".`, `Press Get started to create the HQ folder. On the first screen, press 'Create a new ${name}' and talk to it — e.g. "ask acme-shop to tidy up its README".`)}</p>
+          {/* HQ 는 3단계 '믿기'에서 이미 만들어졌으면 또 만든다고 하지 않는다(윈도우 QA 31), 예는 '새로 만들어 줘' 꼴 — 새 프로젝트 폴더는 비어 있다(QA 11) */}
+          <p className="su-hint">{hq?.hqReady
+            ? tr(`시작하기를 누르면 첫 화면이 떠요. '새 ${name} 만들기'를 누르고 말을 걸어 보세요 — 예: "할 일 목록 웹페이지 하나 만들어 줘".`, `Press Get started for the first screen. Press 'Create a new ${name}' and talk to it — e.g. "make me a simple to-do list web page".`)
+            : tr(`시작하기를 누르면 HQ 폴더를 만들어요. 첫 화면에서 '새 ${name} 만들기'를 누르고 말을 걸어 보세요 — 예: "할 일 목록 웹페이지 하나 만들어 줘".`, `Press Get started to create the HQ folder. On the first screen, press 'Create a new ${name}' and talk to it — e.g. "make me a simple to-do list web page".`)}</p>
           <p className="su-hint">{tr(`${name}와 세션은 확인 없이 명령을 실행하는 모드로 돌아요 — 처음 띄울 때 한 번 동의를 물어요.`, `${name} and its sessions run commands without asking — you will be asked to agree once when the first one starts.`)}</p>
           <dl className="su-sum">
-            <dt>{tr('비서 이름', 'Assistant')}</dt><dd>{name}</dd>
+            <dt>{tr('참모 이름', 'Assistant')}</dt><dd>{name}</dd>
             <dt>{tr('프로젝트 폴더', 'Projects')}</dt><dd>{draft.devRoot}</dd>
             <dt>{tr('HQ 폴더', 'HQ')}</dt><dd>{draft.hqDir}</dd>
             <dt>{tr('음성', 'Speech')}</dt><dd>{IS_WIN && /^(say( -v \S+)?)?$/.test(draft.ttsCommand.trim()) ? tr('Windows 목소리', 'Windows voice') : draft.ttsCommand || 'say'}</dd>
@@ -646,6 +649,8 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
   );
   const [step, setStep] = useState<WizardStep>(start ? 'check' : 'welcome');
   const at = WIZARD.indexOf(step);
+  // 단계의 알림 줄('HQ 를 만들었어요')은 그 단계에서만 — 4·5단계까지 따라왔다(윈도우 QA 31)
+  useEffect(() => { setNote(null); }, [step]);
   const sectionOf: Record<WizardStep, ReactNode> = { welcome: langSec, check: checkSec, basics: basicsSec, features: featSec, ready: readySec };
 
   // ---- 설정(첫 실행 아님) = 앱 창 안 모달 + 왼쪽 탭. 지금 탭만 그린다 — 안 보는 탭의 읽기(목소리 목록 등)가 열 때 안 돈다 ----
@@ -714,7 +719,8 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
             {note && <div className="su-note">{note}</div>}
             {error && <div className="su-error">{error}</div>}
             <div className="cfg-foot-row">
-              <span>{tr('언어와 비서 이름은 저장하면 창을 다시 열며 바뀌어요', 'Language and assistant name apply as the window reopens')}</span>
+              {/* 언어(일반)·참모 이름(참모 탭)이 사는 탭에서만 — 모든 탭에 같은 줄이 붙어 글만 늘었다(QA 30) */}
+              <span>{tab === 'general' ? tr('언어는 저장하면 창을 다시 열며 바뀌어요', 'Language applies as the window reopens') : tab === 'agent' ? tr('참모 이름은 저장하면 창을 다시 열며 바뀌어요', 'The assistant name applies as the window reopens') : null}</span>
               <button className="btn" disabled={busy} onClick={onClose}>{tr('취소', 'Cancel')}</button>
               <button className="btn pri su-go" disabled={busy} onClick={() => void finish()}>{busy ? tr('저장하는 중…', 'Saving…') : tr('저장', 'Save')}</button>
             </div>
@@ -744,7 +750,8 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
         <footer className="su-foot">
           {note && <div className="su-note">{note}</div>}
           {error && <div className="su-error">{error}</div>}
-          {step === 'check' && !canNext('check', check) && check && <div className="su-hint">{IS_WIN ? tr('위의 Claude Code 설치·로그인과 git·파이썬 3 이 끝나면 다음으로 갈 수 있어요.', 'Finish installing and signing in to Claude Code, plus git and Python 3, to continue.') : tr('위의 Claude Code 설치·로그인과 명령줄 도구가 끝나면 다음으로 갈 수 있어요.', 'Finish installing and signing in to Claude Code, and the Command Line Tools, to continue.')}</div>}
+          {/* 다음이 꺼진 까닭은 단추 바로 위에 — 점검 단계는 점검 결과가 온 뒤에만 */}
+          {(step !== 'check' || check) && nextWhy(step, check, trust, devAccess, IS_WIN) && <div className="su-hint">{nextWhy(step, check, trust, devAccess, IS_WIN)}</div>}
           <div className="su-nav">
             {at > 0 && <IconButton size="l" tone="line" className="su-nav-ib" label={tr('뒤로', 'Back')} disabled={busy} onClick={() => setStep(WIZARD[at - 1]!)}><IconBack /></IconButton>}
             <span className="grow" />

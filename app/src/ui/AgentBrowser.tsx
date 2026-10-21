@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
-import { browserBig, browserScreen, closedText, tabStrip, takeoverLine, unpackFrame, type CdpPage, type Live, type FedcmDialog, type PagePermission, type PopupKind, type WrapperDialog } from '../domain/agentBrowser';
+import { browserBig, browserScreen, closedText, showsPicture, tabStrip, takeoverLine, unpackFrame, type CdpPage, type Live, type FedcmDialog, type PagePermission, type PopupKind, type WrapperDialog } from '../domain/agentBrowser';
 import { sharedPoll } from '../domain/sharedPoll';
 import { tr } from '../i18n';
 import { IconCollapse, IconExpand, IconHide, IconMaximize, IconOpen, IconRefresh } from './Icons';
@@ -109,7 +109,7 @@ export function useAgentTabs(profile: string, every = 1000) {
   // dialog = 지금 탭 대화상자, dialogTabs = 대화상자가 떠 있는 탭들, stuck = 지금 탭이 멈춤(답이 안 들어감·앱이 모르는 대화상자 — 크롬에서 보기로 푼다)
   // error = 화면 받기 실패 이유(Rust 일꾼) — 다시 붙으면 지워진다. attached = 일꾼이 붙어 탭 목록을 읽음(그런데 탭 0개면 닫힘)
   // popup = 크롬이 이 그림 밖에 사람을 부를 자기 창을 띄움(패스키·Touch ID·폰 QR·권한) — 크롬에서 보기로 꺼내야 보인다. popupKind = 패스키인지
-  const [t, setT] = useState<{ pages: CdpPage[]; current: string | null; pinned: boolean; shown: boolean; dialog: AgentDialog | null; dialogTabs: string[]; stuck: boolean; chooser: string | null; reopened: boolean; dropped: number; error: string; attached: boolean; popup: boolean; popupKind?: PopupKind; wrapperDialog: WrapperDialog | null; permission: PagePermission | null; fedcm: FedcmDialog | null }>({ pages: [], current: null, pinned: false, shown: false, dialog: null, dialogTabs: [], stuck: false, chooser: null, reopened: false, dropped: 0, error: '', attached: false, popup: false, wrapperDialog: null, permission: null, fedcm: null });
+  const [t, setT] = useState<{ pages: CdpPage[]; current: string | null; pinned: boolean; shown: boolean; dialog: AgentDialog | null; dialogTabs: string[]; stuck: boolean; chooser: string | null; reopened: boolean; dropped: number; error: string; attached: boolean; popup: boolean; popupKind?: PopupKind; wrapperDialog: WrapperDialog | null; permission: PagePermission | null; fedcm: FedcmDialog | null; framed?: boolean }>({ pages: [], current: null, pinned: false, shown: false, dialog: null, dialogTabs: [], stuck: false, chooser: null, reopened: false, dropped: 0, error: '', attached: false, popup: false, wrapperDialog: null, permission: null, fedcm: null });
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     let alive = true;
@@ -137,7 +137,7 @@ export function AgentBrowser({ live, children, className = '' }: { live: Live; c
   const { pages, current, pinned, shown, setShown, now, reopened, dialogTabs, stuck, error, popup, popupKind } = tabsNow;
   const [bigNow, setBigNow] = useState(true);
   const { src, lastFrameAt } = useAgentFrame(live.profile, bigNow ? 100 : 700); // 크게 10fps, 작게 띠 썸네일
-  const scr = useBrowserScreen(tabsNow, false, !!src);
+  const scr = useBrowserScreen(tabsNow, false, showsPicture(src, tabsNow.framed));
   const autoBig = browserBig(live, lastFrameAt, now);
   const big = manual && manual.at === live.toolAt ? manual.big : autoBig;
   useEffect(() => setBigNow(big), [big]);

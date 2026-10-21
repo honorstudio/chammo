@@ -23,7 +23,22 @@ export type InboxItem = {
   /** 답장·열기 대상 세션(attach id 또는 이름) */
   target?: string;
   taskId?: string;
+  /** 답장이 물어본 참모에게 가나(참모 물음·참모가 올린 결정) — 아니면 일을 받은 세션 입력칸 */
+  toOrch?: boolean;
+  /** 보내기 관문(scripts/task send 종료 3 — '… 보내도 돼?') — 보낼까 단추 둘 */
+  gate?: boolean;
 };
+
+/** 보내기 관문 카드 — task send 가 결제·위험 지시를 멈추고 올린 '… — 보내도 돼?' */
+const GATE = /— (보내도 돼\?|OK to send\?)\s*$/;
+
+/** 답장칸 자리표시 — 실제로 가는 곳과 같게(QA 12: '그 세션 입력칸에 들어가'인데 물은 참모에게 갔다) */
+export const replyHint = (i: InboxItem): string =>
+  i.toOrch ? tr('답장 — 물어본 참모에게 가요', 'Reply — goes to the assistant who asked') : tr('답장 — 그 세션 입력칸에 들어가요', "Reply — goes into that session's input");
+
+/** 보내기 관문 단추가 참모에게 보내는 답 — 참모는 '결정 대기함에서 사용자 답을 기다려'라고 안내받았다 */
+export const gateReply = (ok: boolean): string =>
+  ok ? tr('보내도 돼 — 그 일 보내', 'OK to send — go ahead and send it') : tr('보내지 마 — 그 일은 보내지 말고 멈춰', 'Do not send — hold that job');
 
 
 type Act = { session: Session; status: ActivityStatus; activity: Activity };
@@ -58,7 +73,7 @@ export function buildInbox(
     const who = orchName?.(s);
     if (who) Object.assign(at, { project: who, where: '' });
     // 물음은 결론 첫 문장(lead) + 마지막 질문(text) — 앞에서 자른 답은 질문이 잘렸다(domain/activity askView)
-    if (status === 'asks') out.push({ key: `ask:${s.id}:${ts}`, kind: 'ask', ...at, text: a.reply?.ask?.q || a.reply?.text || '', ...(a.reply?.ask?.lead ? { lead: a.reply.ask.lead } : {}), ts, target: s.id });
+    if (status === 'asks') out.push({ key: `ask:${s.id}:${ts}`, kind: 'ask', ...at, text: a.reply?.ask?.q || a.reply?.text || '', ...(a.reply?.ask?.lead ? { lead: a.reply.ask.lead } : {}), ts, target: s.id, toOrch: true });
     if (status === 'blocked') out.push({ key: `blocked:${s.id}:${ts}`, kind: 'blocked', ...at, text: tr('확인창·선택지에서 멈춰 있어 — 열어서 골라줘', 'Waiting on a prompt or choice — open it and pick one'), ts, target: s.id });
   }
 
@@ -76,7 +91,7 @@ export function buildInbox(
     if (e.type === 'ask') {
       // 프로젝트는 일을 받은 세션 쪽 — 답장 받을 참모(to)가 아니라
       const project = findTarget(sessions, t.target)?.project ?? t.target;
-      out.push({ key: `task:${id}:${e.ts}`, kind: 'decide', project, where: t.title, text: e.note, ts: e.ts, target: e.to || t.target, taskId: id });
+      out.push({ key: `task:${id}:${e.ts}`, kind: 'decide', project, where: t.title, text: e.note, ts: e.ts, target: e.to || t.target, taskId: id, toOrch: !!e.to, ...(GATE.test(e.note) ? { gate: true } : {}) });
     }
   }
   return out.filter((i) => !dismissed.has(i.key)).sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
@@ -98,9 +113,12 @@ export function freshItems(prev: ReadonlySet<string> | null, items: InboxItem[])
 /** 앱을 켠 뒤에 생긴 결정인가 — 켤 때 목록이 늦게 채워져 옛 결정이 전부 '새 것'으로 알림이 갔다. 시각을 못 읽으면 참 */
 export const bornAfter = (i: InboxItem, sinceMs: number): boolean => !(Date.parse(i.ts) < sinceMs);
 
-/** 종 아래 결정 드롭다운을 펼칠지. 결정이 들어오면 펼치고, 사용자가 닫으면("나중에") 다음 새 결정이 올 때까지 접어 둔다 */
-export function popoverOpen(wasOpen: boolean, prev: ReadonlySet<string> | null, items: InboxItem[]): boolean {
+/** 종 아래 결정 드롭다운을 펼칠지. 결정이 들어오면 펼치고, 사용자가 닫으면("나중에") 다음 새 결정이 올 때까지 접어 둔다.
+ *  hold = 설정 창이 떠 있다(그 위를 덮었다), askInView = 채팅 뷰라 참모 물음(ask)은 이미 채팅에 보인다 — 둘 다 새로 펼치지는 않는다(2026-10-22 QA 21) */
+export function popoverOpen(wasOpen: boolean, prev: ReadonlySet<string> | null, items: InboxItem[], opts: { hold?: boolean; askInView?: boolean } = {}): boolean {
   if (items.length === 0) return false;
-  if (prev === null) return true;
-  return freshItems(prev, items).length > 0 || wasOpen;
+  if (opts.hold) return wasOpen;
+  const pulls = (xs: InboxItem[]) => xs.some((i) => !(opts.askInView && i.kind === 'ask'));
+  if (prev === null) return pulls(items);
+  return pulls(freshItems(prev, items)) || wasOpen;
 }

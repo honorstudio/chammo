@@ -232,6 +232,8 @@ pub struct Gate {
     pub sends: std::sync::Arc<crate::mobile_sends::Sends>,
     /// html 시안 표(ticket) → (경로, 낸 때) — iframe 은 열쇠를 못 실어서 짧게 사는 표 주소로 연다(10분)
     pub tickets: std::sync::Mutex<std::collections::HashMap<String, (String, std::time::Instant)>>,
+    /// 내 테일스케일 계정 — tailscale serve(https)가 붙이는 Tailscale-User-Login 이 다르면 거절. 모르면 None(안 본다)
+    pub owner: Option<String>,
 }
 
 /// 폰 화면(껍데기·api 응답) 공통 CSP — media-src 의 blob: 은 폰이 맥에서 받은 음성 소리를 틀 때만(data/phoneVoice). 그 밖의 곳으로는 안 열린다
@@ -695,8 +697,9 @@ fn file_resp(req: &Req, be: &dyn Backend) -> Resp {
             let Ok(doc) = percent_encoding::percent_decode_str(d).decode_utf8() else { return Resp::text(400, "bad doc") };
             let Pick::Ok(_) = mobile_files::pick(&doc, &allowed, &rules) else { return Resp::text(403, "not allowed") };
             let Ok(text) = mobile_files::read_verified(&doc, mobile_files::MAX_TEXT_FILE) else { return Resp::text(403, "not allowed") };
+            let root = mobile_files::md_root(Path::new(doc.as_ref()), be.locker_root().as_deref());
             let refs = mobile_files::md_images(&String::from_utf8_lossy(&text), Path::new(doc.as_ref()));
-            if !refs.iter().any(|p| p.as_os_str() == path.as_ref() as &str) {
+            if !refs.iter().any(|p| p.as_os_str() == path.as_ref() as &str && p.starts_with(&root)) {
                 return Resp::text(403, "not allowed");
             }
             vec![path.to_string()]
@@ -1013,6 +1016,9 @@ struct LockerOpBody {
     name: String,
     #[serde(default)]
     text: String,
+    /// md 저장 — 폰이 알던 글(맥에서 그새 바뀌었으면 409 CHANGED_OUTSIDE)
+    #[serde(default)]
+    base: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1079,8 +1085,9 @@ fn locker_op(req: &Req, be: &dyn Backend) -> Resp {
             Ok(rel) => Resp::json(&serde_json::json!({ "rel": rel })),
             Err(e) => bad(e),
         },
-        _ => match crate::locker_fs::write_md(&owner, Path::new(&b.path), &b.text) {
+        _ => match crate::locker_fs::write_md_from(&owner, Path::new(&b.path), &b.text, b.base.as_deref()) {
             Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+            Err(e) if e == crate::reader::CHANGED_OUTSIDE => Resp::text(409, &e),
             Err(e) => bad(e),
         },
     }
@@ -1254,14 +1261,35 @@ fn attachment(name: &str) -> String {
 
 /// 표 주소로 받기 — 열쇠 없이 표만(사파리 내려받기 링크는 Bearer 를 못 싣는다). 보여 준 파일 거름은 /api/file 과 같고, 글 속 키가 보이면 안 준다.
 /// 원본 그대로·attachment·Range(조각 8MB)
+/// 받기 비밀 검사 — 같은 파일(경로·크기·고친 때)이면 지난 결과. 큰 파일은 사파리가 Range(8MB) 로 스무 번쯤 받는데, 조각마다 파일 전체를 읽고
+/// 오피스면 zip 까지 풀어 다시 훑었다(2026-10-22 코드 리뷰)
+fn dl_secret(path: &str, real: &Path, kind: Kind) -> std::io::Result<bool> {
+    type Key = (PathBuf, u64, Option<std::time::SystemTime>);
+    static SEEN: std::sync::Mutex<Vec<(Key, bool)>> = std::sync::Mutex::new(Vec::new());
+    let m = std::fs::metadata(real)?;
+    let key: Key = (real.to_path_buf(), m.len(), m.modified().ok());
+    if let Some(&(_, hit)) = SEEN.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, _)| *k == key) {
+        return Ok(hit);
+    }
+    let b = mobile_files::read_verified(path, MAX_DOWNLOAD)?;
+    let hit = if kind == Kind::Text { mobile_files::secret_in(&b) } else { mobile_files::office_secret(&b) };
+    let mut g = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if g.len() >= 32 {
+        g.remove(0);
+    }
+    g.push((key, hit));
+    Ok(hit)
+}
+
 fn dl_page(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     let Some(path) = ticket_path(req, gate) else { return Resp::text(403, "bad ticket") };
     let Pick::Ok(real) = pick_shown(be, &path) else { return Resp::text(403, "not allowed") };
     let Ok((_, total)) = mobile_files::open_verified(&path) else { return Resp::text(403, "not allowed") };
-    if mobile_files::kind_of(&real) == Kind::Text {
-        match mobile_files::read_verified(&path, MAX_DOWNLOAD) {
-            Ok(b) if mobile_files::secret_in(&b) => return Resp::text(403, "secret inside"),
-            Ok(_) => {}
+    let kind = mobile_files::kind_of(&real);
+    if matches!(kind, Kind::Text | Kind::Office) {
+        match dl_secret(&path, &real, kind) {
+            Ok(true) => return Resp::text(403, "secret inside"),
+            Ok(false) => {}
             Err(e) if e.kind() == std::io::ErrorKind::InvalidData => return Resp::text(413, "file too large"),
             Err(_) => return Resp::text(403, "not allowed"),
         }
@@ -1511,7 +1539,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         let p = crate::mobile_pair::Pairing { name: &name, home: b.home && !b.peer, prev: b.prev.as_deref(), peer: b.peer };
         return match gate.devices.pair_with(&b.code, &p, std::time::SystemTime::now()) {
             Some(token) => Resp::json(&serde_json::json!({ "token": token })),
-            None => Resp::text(401, "짝짓기 코드가 틀렸거나 10분이 지났어요 — 맥 설정 > 폰에서 QR 을 새로 만들어 주세요"),
+            None => Resp::text(401, "짝짓기 코드가 틀렸거나 10분이 지났어요 — 컴퓨터 Chammo 설정 > 폰과 메신저에서 QR 을 새로 만들어 주세요"),
         };
     }
     // 다른 기기 참모 연결(코드 없이, peer_ask) — 열쇠 없이 받지만 열쇠는 되묻기 + 이 기기 사람의 카드 허용을 지나야 생긴다
@@ -2381,6 +2409,8 @@ impl TimedRead for std::io::Cursor<Vec<u8>> {
 
 /// 요청 하나 전체 마감
 pub const REQ_DEADLINE: Duration = Duration::from_secs(15);
+/// 머리(열쇠 확인 전)는 이 안에 다 와야 — 1바이트씩 흘리는 연결이 15초씩 자리를 잡아 16자리를 다 묶었다(2026-10-21 리뷰 ④-5)
+pub const HEAD_DEADLINE: Duration = Duration::from_secs(5);
 
 fn read_more(s: &mut impl TimedRead, deadline: std::time::Instant, chunk: &mut [u8]) -> Result<usize, Resp> {
     let left = deadline.saturating_duration_since(std::time::Instant::now());
@@ -2404,6 +2434,12 @@ pub fn head_check(req: &Req, gate: &Gate) -> Option<Resp> {
     if req.header("tailscale-funnel-request").is_some() {
         return Some(Resp::text(403, "funnel"));
     }
+    // serve 는 공유받은 남의 노드 요청도 127.0.0.1 로 넘겨 맞은편 주소로는 못 가른다 — serve 가 붙이는 계정 머리로(2026-10-21 리뷰 ④-5)
+    if let (Some(me), Some(who)) = (gate.owner.as_deref(), req.header("tailscale-user-login")) {
+        if !who.trim().eq_ignore_ascii_case(me) {
+            return Some(Resp::text(403, "not your tailscale account"));
+        }
+    }
     let has_body = req.header("content-length").is_some_and(|v| v.trim() != "0");
     if req.method != "POST" && !has_body {
         return None;
@@ -2426,6 +2462,7 @@ pub fn head_check(req: &Req, gate: &Gate) -> Option<Resp> {
 pub fn read_req_checked(s: &mut impl TimedRead, deadline: std::time::Instant, check: impl Fn(&Req) -> Option<Resp>) -> Result<Req, Resp> {
     let mut buf = Vec::with_capacity(2048);
     let mut chunk = [0u8; 4096];
+    let head_by = deadline.min(std::time::Instant::now() + HEAD_DEADLINE);
     let head_end = loop {
         if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
             break i + 4;
@@ -2433,7 +2470,7 @@ pub fn read_req_checked(s: &mut impl TimedRead, deadline: std::time::Instant, ch
         if buf.len() > MAX_HEAD {
             return Err(Resp::text(431, "header too large"));
         }
-        let n = read_more(s, deadline, &mut chunk)?;
+        let n = read_more(s, head_by, &mut chunk)?;
         buf.extend_from_slice(&chunk[..n]);
     };
     if head_end > MAX_HEAD {

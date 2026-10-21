@@ -71,6 +71,9 @@ pub fn system_node(data: &Path) -> Option<(String, String, u32)> {
     } else {
         bn::stable_node(&p, |q| Path::new(q).exists())
     };
+    if bn::versioned(&p) {
+        return None; // 판 폴더 node 는 링크로 못 믿는다 — 앱이 받은 node 로
+    }
     let (v, m) = bn::version_of(Path::new(&p))?;
     Some((p, v, m))
 }

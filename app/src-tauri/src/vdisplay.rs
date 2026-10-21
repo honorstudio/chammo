@@ -222,21 +222,41 @@ fn write_json(pid: u32, id: u32, r: Rect) {
     }
 }
 
+/// 실행 파일을 그 자리에 깐다(같으면 그대로) — 같은 폴더 임시 이름에 다 쓴 뒤 rename: 새 inode 라 도는 도우미는 옛 파일을 그대로 쓰고,
+/// 같이 깔아도 반쪽 파일을 실행하지 않는다. 예전엔 그 자리에 덮어써 저장 중 남은(linger) 도우미가 서명 깨짐으로 죽어
+/// 화면이 사라지고 Craft 창이 사람 화면으로 튀었다(2026-10-21 리뷰 ③-16)
+pub(crate) fn install_exe(exe: &std::path::Path, body: &[u8]) -> std::io::Result<()> {
+    static INSTALL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _g = INSTALL.lock().unwrap_or_else(|e| e.into_inner());
+    if std::fs::read(exe).is_ok_and(|b| b == body) {
+        return Ok(());
+    }
+    let dir = exe.parent().unwrap_or(std::path::Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let name = exe.file_name().and_then(|n| n.to_str()).unwrap_or("helper");
+    let tmp = dir.join(format!(".{name}.{}.installing", std::process::id()));
+    let r = (|| {
+        std::fs::write(&tmp, body)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+        }
+        std::fs::rename(&tmp, exe)
+    })();
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
+}
+
 /// 도우미 실행 파일을 데이터 폴더에 풀고(바뀌었으면 다시) 이 macOS 에서 되는지 본다 — 안 되면 None. Craft 레티나 화면(craft_screen)도 같은 것을 쓴다
 pub fn helper_exe() -> Option<std::path::PathBuf> {
     if HELPER.is_empty() {
         return None;
     }
     let exe = crate::config::data_file("tools").join("chammo-vdisplay");
-    if std::fs::read(&exe).map(|b| b != HELPER).unwrap_or(true) {
-        let _ = std::fs::create_dir_all(exe.parent().unwrap_or(std::path::Path::new(".")));
-        std::fs::write(&exe, HELPER).ok()?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755));
-        }
-    }
+    install_exe(&exe, HELPER).ok()?;
     // 이 macOS 에 비공개 API 가 있나 — 없으면(3) 조용히 앱 가리기만
     crate::platform::command(&exe).arg("--probe").status().is_ok_and(|s| s.success()).then_some(exe)
 }
@@ -390,6 +410,31 @@ pub fn visible_displays() -> Vec<(Rect, bool)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[cfg(unix)]
+    fn 도우미를_바꿔_깔아도_도는_도우미는_옛_파일_그대로() {
+        // 그 자리에 덮어쓰면 도는 도우미의 실행 파일이 잘려 맥이 서명 깨짐으로 죽이고, 같이 깔면 반쪽 파일을 --probe 했다(2026-10-21 리뷰 ③-16)
+        use std::os::unix::fs::MetadataExt;
+        let d = std::env::temp_dir().join(format!("vd-install-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let exe = d.join("chammo-vdisplay");
+        super::install_exe(&exe, &std::fs::read("/bin/sleep").unwrap()).unwrap();
+        let mut running = crate::platform::command(&exe).arg("30").spawn().unwrap();
+        let before = std::fs::metadata(&exe).unwrap().ino();
+        let new = std::fs::read("/bin/cat").unwrap();
+        let hs: Vec<_> = (0..4).map(|_| { let (exe, new) = (exe.clone(), new.clone()); std::thread::spawn(move || super::install_exe(&exe, &new).unwrap()) }).collect();
+        hs.into_iter().for_each(|h| h.join().unwrap());
+        assert_eq!(std::fs::read(&exe).unwrap(), new);
+        assert_ne!(std::fs::metadata(&exe).unwrap().ino(), before, "새 파일(새 inode)로 갈아 끼워야 도는 도우미가 옛 파일을 계속 쓴다");
+        assert!(running.try_wait().unwrap().is_none(), "도는 도우미는 살아 있어야");
+        let left: Vec<_> = std::fs::read_dir(&d).unwrap().filter_map(Result::ok).map(|e| e.file_name()).collect();
+        assert_eq!(left.len(), 1, "임시 파일이 남으면 안 된다: {left:?}");
+        let _ = running.kill();
+        let _ = running.wait();
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn 창이_가상_모니터_안에_다_있어야_그대로() {
         let vd = Rect { x: -1440.0, y: 956.0, w: 1440.0, h: 900.0 };

@@ -43,6 +43,21 @@ pub fn tilde(home: &str, p: &str) -> String {
     }
 }
 
+/// 데이터 폴더를 설정 칸 모양으로 — 윈도우 `C:\Users\me\.chammo` 도 홈 아래면 `~/.chammo`(devRoot 기본 `~/Developer` 와 같은 모양).
+/// 안 그러면 기본 HQ 가 `C:\Users\me\.chammo/hq` 로 \ / 가 섞였다(2026-10-22 QA 31). tilde 는 tts 실행기 경로도 써서 따로 둔다
+fn data_field(home: &str, data: &str) -> String {
+    match data.strip_prefix(home).filter(|_| !home.is_empty()) {
+        Some(rest) if rest.starts_with('\\') => format!("~{}", rest.replace('\\', "/")),
+        _ => tilde(home, data),
+    }
+}
+
+/// 폴더 아래 이름 — 그 경로가 쓰는 나눔 기호로(`D:\chammo` + hq = `D:\chammo\hq`)
+fn under(dir: &str, name: &str) -> String {
+    let sep = if dir.contains('\\') && !dir.contains('/') { '\\' } else { '/' };
+    format!("{}{sep}{name}", dir.trim_end_matches(sep))
+}
+
 /// 데이터 폴더 고르기. `exists` 를 밖에서 받는 건 테스트 때문
 pub fn resolve_data_dir(home: &str, env: Option<&str>, exists: impl Fn(&str) -> bool) -> PathBuf {
     if let Some(e) = env.map(str::trim).filter(|e| !e.is_empty()) {
@@ -151,16 +166,16 @@ pub fn default_config(home: &str, data: &Path, lang: &str, exists: impl Fn(&str)
         .iter()
         .find(|d| exists(&format!("{home}/{d}")))
         .unwrap_or(&"Developer");
-    let data = tilde(home, &data.to_string_lossy());
+    let data = data_field(home, &data.to_string_lossy());
     Config {
         language: lang.into(),
         assistant_name: String::new(),
         dev_root: format!("~/{dev}"),
-        hq_dir: format!("{data}/hq"),
+        hq_dir: under(&data, "hq"),
         extra_projects: Vec::new(),
         github_user: String::new(),
         tts_command: "say".into(),
-        memo_dir: format!("{data}/memo"),
+        memo_dir: under(&data, "memo"),
         features: Features::default(),
         setup_done: false,
         talk_key: String::new(),
@@ -612,5 +627,17 @@ mod tests {
         assert_eq!(tilde("/h", "/h"), "~");
         assert_eq!(tilde("/h", "/hx/a"), "/hx/a");
         assert_eq!(tilde("", "/a"), "/a");
+    }
+
+    #[test]
+    fn 윈도우_데이터_폴더_경로가_한_모양() {
+        // 2026-10-22 첫 사용자 QA 31: HQ·메모 칸이 `C:\Users\me\.chammo/hq` 로 \ / 가 섞였다
+        assert_eq!(data_field(r"C:\Users\me", r"C:\Users\me\.chammo"), "~/.chammo");
+        assert_eq!(data_field(r"C:\Users\me", r"C:\Users\mex\a"), r"C:\Users\mex\a");
+        let c = default_config(r"C:\Users\me", Path::new(r"C:\Users\me\.chammo"), "ko", |_| false);
+        assert_eq!((c.hq_dir.as_str(), c.memo_dir.as_str()), ("~/.chammo/hq", "~/.chammo/memo"));
+        // 홈 밖이면 그 경로의 나눔 기호 그대로
+        let c = default_config(r"C:\Users\me", Path::new(r"D:\chammo"), "ko", |_| false);
+        assert_eq!((c.hq_dir.as_str(), c.memo_dir.as_str()), (r"D:\chammo\hq", r"D:\chammo\memo"));
     }
 }

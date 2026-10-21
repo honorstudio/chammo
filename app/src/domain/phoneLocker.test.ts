@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dotClass, openPathOf, peekLines, phoneChips, phoneTree } from './phoneLocker';
+import { dotClass, openPathOf, peekLines, phoneChips, phoneTree, shownBy } from './phoneLocker';
 import type { LockerView } from './locker';
 import type { Session } from './session';
 
@@ -85,5 +85,13 @@ describe('peekLines — 세션 줄 그 자리 펼침(마지막 세 줄)', () => 
   it('없는 칸은 빼고, 아무것도 없으면 빈 목록', () => {
     expect(peekLines({ reply: { ts: '1', text: '끝났어' } })).toEqual([{ who: 'ai', text: '끝났어' }]);
     expect(peekLines({})).toEqual([]);
+  });
+});
+
+describe('shownBy — 보관함 줄 \'누가 보여 줌\' 조사(QA 2차 \'참모이 보여 줌\')', () => {
+  it('받침 없으면 가, 있으면 이, 세션은 그대로', () => {
+    expect(shownBy('참모')).toBe('참모가 보여 줌');
+    expect(shownBy('두목')).toBe('두목이 보여 줌');
+    expect(shownBy('todo-web 세션')).toBe('todo-web 세션 보여 줌');
   });
 });

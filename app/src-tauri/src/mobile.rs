@@ -65,9 +65,14 @@ pub struct TsStatus {
     pub ip: Ipv4Addr,
     pub dns: Option<String>,
     pub peers: Vec<IpAddr>,
+    /// 테일넷 HTTPS 인증서가 켜졌나 — 새 테일넷은 기본 꺼짐이라 serve(https)를 못 건다
+    pub certs: bool,
+    /// 내 테일스케일 계정(로그인 이름) — serve 로 온 요청의 Tailscale-User-Login 과 견준다
+    pub login: Option<String>,
 }
 
-/// 로그아웃·꺼짐이면 None
+/// 로그아웃·꺼짐이면 None. 피어는 같은 계정의 내 기기만(태그 노드 빼고 — remote::same_user_peers 와 같은 규칙):
+/// 공유받은 남의 노드까지 받아 인증 없이 연결 16자리를 묶거나 연결 요청 상한을 써 버릴 수 있었다(2026-10-21 리뷰 ④-5·6). 내 계정을 모르면 피어는 없음
 pub fn parse_status(json: &str) -> Option<TsStatus> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     if v["BackendState"].as_str().is_some_and(|s| s != "Running") {
@@ -76,10 +81,16 @@ pub fn parse_status(json: &str) -> Option<TsStatus> {
     let me = &v["Self"];
     let ip = me["TailscaleIPs"].as_array()?.iter().filter_map(|s| s.as_str()?.parse::<Ipv4Addr>().ok()).find(|ip| is_cgnat(*ip))?;
     let dns = me["DNSName"].as_str().map(|d| d.trim_end_matches('.').to_string()).filter(|d| !d.is_empty());
+    let uid = me["UserID"].as_u64();
+    let mine = |p: &serde_json::Value| uid.is_some() && p["UserID"].as_u64() == uid && p["Tags"].as_array().is_none_or(|t| t.is_empty());
     let peers = v["Peer"].as_object().map(|m| {
-        m.values().flat_map(|p| p["TailscaleIPs"].as_array().cloned().unwrap_or_default()).filter_map(|x| x.as_str()?.parse::<IpAddr>().ok()).collect()
+        m.values().filter(|p| mine(p)).flat_map(|p| p["TailscaleIPs"].as_array().cloned().unwrap_or_default()).filter_map(|x| x.as_str()?.parse::<IpAddr>().ok()).collect()
     }).unwrap_or_default();
-    Some(TsStatus { ip, dns, peers })
+    let login = uid.and_then(|u| v["User"][u.to_string()]["LoginName"].as_str()).map(str::to_string);
+    let certs = me["CapMap"].get("https").is_some()
+        || me["Capabilities"].as_array().is_some_and(|a| a.iter().any(|c| c == "https"))
+        || v["CertDomains"].as_array().is_some_and(|a| !a.is_empty());
+    Some(TsStatus { ip, dns, peers, certs, login })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,6 +104,8 @@ pub struct Tailnet {
     pub socket: String,
     /// 켤 때의 테일넷 피어 주소 — 맞은편 확인(Peers)의 처음 값
     pub peers: Vec<IpAddr>,
+    /// 테일넷 HTTPS 인증서(TsStatus.certs)
+    pub certs: bool,
 }
 
 #[cfg(unix)]
@@ -164,12 +177,12 @@ pub fn plan(ifaces: &[(String, Ipv4Addr)], iface_status: impl FnOnce() -> Option
     if pick_iface(ifaces).is_some() {
         if let Some(st) = iface_status() {
             if ifaces.iter().any(|(n, ip)| (n.starts_with("utun") || n.starts_with("tailscale")) && *ip == st.ip) {
-                return Some(Tailnet { bind: IpAddr::V4(st.ip), ip: st.ip, dns: st.dns, socket: String::new(), peers: st.peers });
+                return Some(Tailnet { bind: IpAddr::V4(st.ip), ip: st.ip, dns: st.dns, socket: String::new(), peers: st.peers, certs: st.certs });
             }
         }
     }
     let (st, socket) = userspace()?;
-    Some(Tailnet { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), ip: st.ip, dns: st.dns, socket, peers: st.peers })
+    Some(Tailnet { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), ip: st.ip, dns: st.dns, socket, peers: st.peers, certs: st.certs })
 }
 
 fn userspace_status() -> Option<(TsStatus, String)> {
@@ -302,6 +315,53 @@ pub fn serve_state_for(json: &str, dns: &str, t: &Tailnet, port: u16, win: bool)
     }
 }
 
+/// 테일스케일 관리 화면 DNS 칸 — MagicDNS·HTTPS Certificates 를 켜는 곳
+pub const TS_DNS_ADMIN: &str = "https://login.tailscale.com/admin/dns";
+
+/// serve(https)를 부르기 전에 아는 '못 거는 까닭'. 새 테일넷은 HTTPS 인증서가 기본 꺼짐 — 그대로 serve 를 부르면
+/// '켜러 가세요' 주소를 찍고 기다리다 15초 제한에 죽어 "command timed out" 만 남았다(2026-10-22, 사용자 테일넷만 켜져 있어 사용자만 됐다)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HttpsSkip {
+    TestFolder,
+    NoMagicDns,
+    CertsOff,
+}
+
+impl HttpsSkip {
+    pub fn note(self) -> String {
+        match self {
+            HttpsSkip::TestFolder => crate::i18n::tr("시험 데이터 폴더라 테일스케일 https 는 안 걸었어요", "Test data folder — Tailscale HTTPS was not set up").into(),
+            HttpsSkip::NoMagicDns => crate::i18n::tr("테일스케일 MagicDNS 가 꺼져 있어 http 주소예요 — 테일스케일 관리 화면 DNS 에서 MagicDNS 와 HTTPS Certificates 를 켜 주세요", "Tailscale MagicDNS is off, so this is an http address — turn on MagicDNS and HTTPS Certificates in the Tailscale admin console under DNS").into(),
+            HttpsSkip::CertsOff => crate::i18n::tr("이 테일넷은 HTTPS 인증서가 꺼져 있어 http 주소예요 — 테일스케일 관리 화면 DNS 에서 HTTPS Certificates 를 켜면 1분 안에 https 로 바뀌어요", "HTTPS certificates are off for this tailnet, so this is an http address — turn on HTTPS Certificates in the Tailscale admin console under DNS and it switches to https within a minute").into(),
+        }
+    }
+    /// 사람이 고칠 곳(없으면 None)
+    pub fn fix_url(self) -> Option<&'static str> {
+        (self != HttpsSkip::TestFolder).then_some(TS_DNS_ADMIN)
+    }
+}
+
+/// allowed = tailscale serve(맥 전역에 남는 설정)를 만져도 되나(serve_allowed)
+pub fn https_skip(t: &Tailnet, allowed: bool) -> Option<HttpsSkip> {
+    if !allowed {
+        Some(HttpsSkip::TestFolder)
+    } else if t.dns.is_none() {
+        Some(HttpsSkip::NoMagicDns)
+    } else if !t.certs {
+        Some(HttpsSkip::CertsOff)
+    } else {
+        None
+    }
+}
+
+/// serve 를 건 뒤 다시 본 상태 — 정말 이 서버로 넘기나. tailscale 이 안내만 찍고 0 으로 끝나도 https 라고 믿지 않게
+pub fn serve_took(json: &str, dns: &str, t: &Tailnet, port: u16, win: bool) -> Result<(), String> {
+    match serve_state_for(json, dns, t, port, win) {
+        ServeState::Ours => Ok(()),
+        s => Err(format!("{} ({s:?})", crate::i18n::tr("테일스케일 serve 가 걸리지 않았어요", "Tailscale serve was not applied"))),
+    }
+}
+
 /// https://<맥>.ts.net → 이 서버. 남의 443 설정은 덮지 않는다
 fn https_on(t: &Tailnet, port: u16) -> Result<(), String> {
     let dns = t.dns.as_deref().ok_or("MagicDNS 이름이 없어요")?;
@@ -310,11 +370,15 @@ fn https_on(t: &Tailnet, port: u16) -> Result<(), String> {
         ServeState::Ours => Ok(()),
         ServeState::Legacy => {
             tailscale(t, &["serve", "--https=443", "off"])?;
-            tailscale(t, &["serve", "--bg", "--https=443", &target]).map(|_| ())
+            tailscale(t, &["serve", "--bg", "--https=443", &target])?;
+            serve_took(&tailscale(t, &["serve", "status", "--json"])?, dns, t, port, cfg!(windows))
         }
         ServeState::Funnel => Err(format!("{dns} 가 funnel 로 인터넷에 열려 있어요")),
         ServeState::Other(what) => Err(format!("{dns}:443 에 다른 serve 설정이 있어 건드리지 않았어요 ({what})")),
-        ServeState::Free => tailscale(t, &["serve", "--bg", "--https=443", &target]).map(|_| ()),
+        ServeState::Free => {
+            tailscale(t, &["serve", "--bg", "--https=443", &target])?;
+            serve_took(&tailscale(t, &["serve", "status", "--json"])?, dns, t, port, cfg!(windows))
+        }
     }
 }
 
@@ -501,6 +565,8 @@ struct Running {
     /// 테일스케일 HTTPS 를 걸었나(못 걸면 이유는 LAST_ERROR 가 아니라 https_note)
     https: bool,
     https_note: Option<String>,
+    /// https 를 못 건 까닭을 사람이 고칠 곳(테일스케일 관리 화면)
+    https_fix: Option<&'static str>,
 }
 
 static RUNNING: Mutex<Option<Running>> = Mutex::new(None);
@@ -615,7 +681,8 @@ fn start_locked<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), Stri
     }
     let port = port();
     // 먼저 묶는다 — 포트를 못 잡으면 serve 도 걸지 않는다. 문지기는 https 이름까지 받아 두고, serve 를 못 걸면 그 이름으로 올 길이 없을 뿐
-    let gate = Gate { devices: devices(), hosts: hosts(&t, port, true), origins: origins(&t, port, true), stops: Default::default(), sends: sends(), tickets: Default::default() };
+    let owner = tailscale_status(&t.socket).and_then(|st| st.login);
+    let gate = Gate { devices: devices(), hosts: hosts(&t, port, true), origins: origins(&t, port, true), stops: Default::default(), sends: sends(), tickets: Default::default(), owner };
     let be: Arc<dyn Backend> = Arc::new(MacBackend { app: app.clone() });
     let sock = t.socket.clone();
     let peers = Arc::new(Peers::new(allowed_peers(&t.ip, &t.peers), move || tailscale_status(&sock).map(|st| allowed_peers(&st.ip, &st.peers))));
@@ -631,10 +698,12 @@ fn start_locked<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), Stri
     };
     // tailscale serve 는 tailscaled 상태에 남아 재시작 뒤에도 그대로다 — 시험 데이터 폴더 개발판이 443 을 자기 포트로 걸면
     // 진짜 앱이 '다른 serve'로 보고 물러나 사용자 폰이 못 붙었다(2026-10-03). 시험 폴더면 serve 는 아예 안 건드린다(127.0.0.1:<포트>로 바로)
+    let mut https_fix = None;
     let (https, https_note) = if let Some(e) = loopback_err {
         (false, Some(format!("{} ({e})", crate::i18n::tr("다른 프로그램이 이 포트를 쓰고 있어 테일스케일 https 는 안 걸었어요 — 폰은 http 주소로 붙어요", "Another program is using this port, so Tailscale HTTPS was not set up — the phone uses the plain HTTP address"))))
-    } else if !serve_allowed() {
-        (false, Some(crate::i18n::tr("시험 데이터 폴더라 테일스케일 https 는 안 걸었어요", "Test data folder — Tailscale HTTPS was not set up").to_string()))
+    } else if let Some(skip) = https_skip(&t, serve_allowed()) {
+        https_fix = skip.fix_url();
+        (false, Some(skip.note()))
     } else {
         match https_on(&t, port) {
             Ok(()) => (true, None),
@@ -643,7 +712,7 @@ fn start_locked<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), Stri
     };
     let watch = stop.clone();
     let check = (https && cfg!(windows)).then(|| (t.dns.clone().unwrap_or_default(), t.ip, stop.clone()));
-    *RUNNING.lock().unwrap() = Some(Running { stop, tailnet: t, port, https, https_note });
+    *RUNNING.lock().unwrap() = Some(Running { stop, tailnet: t, port, https, https_note, https_fix });
     // 윈도우는 serve 를 건 뒤 실제로 열리나 본다(최대 60초라 켜기를 붙잡지 않게 따로) — 안 열리면 serve 를 내리고 http 로, 이유는 화면에
     if let Some((dns, ip, me)) = check {
         std::thread::spawn(move || {
@@ -753,8 +822,13 @@ pub(crate) fn keep_step(k: &mut impl Keep, st: &mut KeepState, now: std::time::I
         // 떠 있으면(설정 화면이 켰어도) 처음부터 — 다음에 같은 이유로 실패해도 다시 적는다
         *st = KeepState::default();
         // 테일스케일이 다른 주소로 돌아왔으면 새 주소로(묶은 곳·Host 문지기가 옛 주소다). 잠깐 없으면(다시 뜨는 중) 그대로 둔다
-        if let Some(t) = k.detect().filter(|t| (t.bind, t.ip, &t.dns, &t.socket) != (cur.bind, cur.ip, &cur.dns, &cur.socket)) {
-            k.log(&format!("tailnet changed {} → {}: restarting", cur.ip, t.ip));
+        // 사람이 관리 화면에서 HTTPS 인증서를 켰으면(꺼짐 → 켜짐만) 다시 띄워 serve 를 건다 — http 로 굳지 않게
+        if let Some(t) = k.detect().filter(|t| (t.bind, t.ip, &t.dns, &t.socket) != (cur.bind, cur.ip, &cur.dns, &cur.socket) || (t.certs && !cur.certs)) {
+            if t.ip == cur.ip && t.certs && !cur.certs {
+                k.log("https certificates on: restarting");
+            } else {
+                k.log(&format!("tailnet changed {} → {}: restarting", cur.ip, t.ip));
+            }
             if let Err(e) = k.start(true) {
                 k.log(&format!("start failed: {e}"));
                 st.last_err = Some(e);
@@ -823,6 +897,8 @@ pub struct MobileStatus {
     /// 테일스케일 HTTPS 로 열린다(폰 마이크가 된다). 못 걸었으면 이유
     pub https: bool,
     pub https_note: Option<String>,
+    /// https 를 켜러 갈 곳(테일스케일 관리 화면 DNS) — 사람이 고칠 수 있을 때만
+    pub https_fix: Option<&'static str>,
     /// 짝지은 기기들(이름·만든 때·마지막 접속)
     pub devices: Vec<crate::mobile_pair::DeviceView>,
 }
@@ -857,6 +933,7 @@ fn status() -> MobileStatus {
         error: LAST_ERROR.lock().unwrap().clone(),
         https: r.as_ref().is_some_and(|r| r.https),
         https_note: r.as_ref().and_then(|r| r.https_note.clone()),
+        https_fix: r.as_ref().and_then(|r| r.https_fix.filter(|_| !r.https)),
         devices: devices().list(),
     }
 }
@@ -978,8 +1055,8 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         crate::claude::resume_blocking(cwd, session_id, (!id.is_empty()).then_some(id))
     }
     fn spawn(&self, cwd: &str, name: &str) -> Result<String, String> {
-        // 데스크톱 새 참모와 같은 첫 지시(자기소개) — 질문으로 끝나면 결정 대기로 뜬다(App spawnOrchestrator)
-        let prompt = crate::i18n::tr("안녕! 네 이름과 맡은 일로 2~3줄 자기소개해 줘 — 누구고, 뭘 맡았고, 이런 걸 시키면 된다는 예 하나. 도구는 쓰지 말고, 질문으로 끝내지 마.", "Hi! Introduce yourself in 2-3 lines from your name and role — who you are, what you handle, and one example of what to ask you. Don't use tools, and don't end with a question.");
+        // 데스크톱 새 참모와 같은 첫 지시(자기소개, domain/orchIntro — 글이 같은지 orchIntro.test 가 대조) — 질문으로 끝나면 결정 대기로 뜬다
+        let prompt = crate::i18n::tr("[앱] 안녕! 네 이름과 맡은 일로 2~3줄 자기소개해 줘 — 누구고, 뭘 맡았고, 이런 걸 시키면 된다는 예 하나. 영어 직함 없이 우리말로, 도구는 쓰지 말고, 질문으로 끝내지 마.", "[앱] Hi! Introduce yourself in 2-3 lines from your name and role — who you are, what you handle, and one example of what to ask you. Don't use tools, and don't end with a question.");
         crate::claude::spawn_blocking(cwd, name, prompt)
     }
     fn push_key(&self) -> Result<String, String> {

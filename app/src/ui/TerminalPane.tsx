@@ -8,6 +8,7 @@ import { imeStep, normalizeInput, yieldsToXterm } from '../domain/imeBridge';
 import { macKeySequence, ctrlLetter } from '../domain/macKeys';
 import { copyKeyAction, parseOsc52, winTermKey } from '../domain/clipboard';
 import { IS_WIN } from '../domain/reader';
+import { termFont } from '../domain/termFont';
 import { modKey } from '../domain/keys';
 import { resizeAfterOpen } from '../domain/ptySize';
 import { followLink } from './followLink';
@@ -42,11 +43,8 @@ export function selectAllTerminalAt(from: Element | null): boolean {
   return false;
 }
 
-// 아이콘(Nerd Font 글리프: 상태줄 파워라인 등)은 맥에 깔린 Meslo Nerd Font, 한글은 번들한 Chammo Hangul(D2Coding 한글 수정판), 나머지는 Menlo.
-// 윈도우는 Menlo 가 없어 Cascadia Mono·Consolas — 없으면 한글 윈도우 기본 고정폭(굴림체)으로 넘어가 줄이 겹치고 \ 가 ₩ 로 보였다(윈도우판)
-// 폰트는 main.tsx 에서 그리기 전에 미리 불러온다 — 늦게 오면 xterm 이 칸 폭을 잘못 잰다
-export const TERM_FONT =
-  '"MesloLGSDZ Nerd Font Mono", "MesloLGS NF", "MesloLGLDZ Nerd Font Mono", "Chammo Hangul", Menlo, "Cascadia Mono", Consolas, "Apple SD Gothic Neo", monospace';
+// 글꼴 줄은 domain/termFont(윈도우는 한글을 칸에 맞춘 글꼴). 폰트는 main.tsx 에서 그리기 전에 미리 불러온다 — 늦게 오면 xterm 이 칸 폭을 잘못 잰다
+export const TERM_FONT = termFont(IS_WIN);
 
 /** write = 입력칸에 넣고 터미널에 포커스, raw = 포커스는 그대로 두고 넣기(채팅 입력칸이 보낼 때),
  *  claimPtt = 지구본 키 말하기를 이 창으로(채팅 입력칸에 포커스가 가면 터미널이 포커스를 안 받아서),
@@ -89,7 +87,8 @@ type Props = {
   /** 세션에 붙어 있나 — attach 가 'Session … has exited.' 로 끝나면 reattaching, 오래 안 돌아오면 gone, 다시 붙으면 live(domain/attachExit) */
   onLink?: (s: LinkState) => void;
   /** 세션에 붙은 게 아닌 명령(설정의 설치·믿기)이 끝났을 때 — 끝난 터미널이 그대로 남아 다음 할 일을 몰랐다 */
-  onExit?: () => void;
+  /** 터미널이 끝남 — screen = 끝날 때 버퍼 끝 글(200줄, 믿기 터미널이 왜 끝났는지 가른다) */
+  onExit?: (screen: string) => void;
   /** 열자마자 키보드를 이 터미널로 + 화면 안으로 — 첫 설정의 믿기·설치 터미널(누른 버튼은 꺼지며 포커스를 잃어 ↓·Enter 가 어디에도 안 갔다) */
   autoFocus?: boolean;
 };
@@ -317,9 +316,16 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
     };
     // 화면이 오기 시작하면 붙은 것(live) — 그 전에 친 말은 붙기 전 attach 에 들어가 사라질 수 있어 SessionGrid 가 이때까지 기다린다
     let shown = false;
+    // 끝날 때 버퍼 끝 200줄 — 믿기 터미널이 질문 전에 끝났는지 가른다(Setup trustExit)
+    const tailText = () => {
+      const b = term.buffer.active;
+      const lines: string[] = [];
+      for (let y = Math.max(0, b.length - 200); y < b.length; y++) lines.push(b.getLine(y)?.translateToString(true) ?? '');
+      return lines.join('\n');
+    };
     void openPty(command, cwd, cols, rows, (bytes) => {
       // 빈 조각 = attach 가 끝남(Rust spawn_pty) — 끝 글을 못 알아봐도 이걸로 안다. 끝 글(exitWatcher)이 먼저 오면 그쪽으로
-      if (!bytes.length) { if (!disposed) { onEnded(); if (!sid) exitRef.current?.(); } return; }
+      if (!bytes.length) { if (!disposed) { onEnded(); if (!sid) exitRef.current?.(tailText()); } return; }
       term.write(bytes);
       if (!shown && !disposed) { shown = true; linkRef.current?.('live'); }
       const text = dec.decode(bytes, { stream: true });

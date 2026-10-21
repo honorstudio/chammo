@@ -70,8 +70,15 @@ fn write_file(pid: u32, id: u32, r: crate::vdisplay::Rect) {
     }
 }
 
-/// 화면이 있으면 그 자리, 없으면 띄우고 자리를 적는다
+/// 화면이 있으면 그 자리, 없으면 띄우고 자리를 적는다 — 한 번에 하나만: 화면이 없을 때 두 세션의 scripts/craft open --native 가
+/// 같이 부르면(appctl 은 요청마다 스레드) 둘 다 도우미를 띄우고 나중 쪽이 앞 것을 덮어 앞 화면이 사라졌다(2026-10-21 리뷰 ③-15)
 pub fn ensure() -> Result<crate::vdisplay::Rect, String> {
+    static ENSURE: Mutex<()> = Mutex::new(());
+    let _one = ENSURE.lock().unwrap_or_else(|e| e.into_inner());
+    ensure_locked()
+}
+
+fn ensure_locked() -> Result<crate::vdisplay::Rect, String> {
     // 세션 크롬 가짜 화면과 같은 규칙 — 개발판 시험처럼 화면을 더 만들면 안 될 때(scripts/craft 는 1배 화면이나 보통 창으로 간다)
     if std::env::var("CHAMMO_VDISPLAY").is_ok_and(|v| v == "0") {
         return Err("virtual displays are off (CHAMMO_VDISPLAY=0)".into());
@@ -305,6 +312,15 @@ pub fn watch_idle() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 가짜_화면_띄우기는_한_번에_하나만() {
+        let src = include_str!("craft_screen.rs");
+        let body = &src[src.find("\npub fn ensure()").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let (lock, work) = (body.find("ENSURE.lock()").expect("ensure 는 ENSURE 를 잡는다"), body.find("ensure_locked()").unwrap());
+        assert!(lock < work);
+    }
 
     #[test]
     fn 윈도우는_exe_전체_경로로_대조_대소문자_무관() {

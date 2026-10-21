@@ -6,7 +6,7 @@ fn ip(s: &str) -> Ipv4Addr {
 }
 
 fn st(self_ip: &str) -> TsStatus {
-    TsStatus { ip: ip(self_ip), dns: Some("mac.ts.net".to_string()), peers: vec!["100.100.10.2".parse().unwrap()] }
+    TsStatus { ip: ip(self_ip), dns: Some("mac.ts.net".to_string()), peers: vec!["100.100.10.2".parse().unwrap()], certs: true, login: None }
 }
 
 #[test]
@@ -63,8 +63,9 @@ fn ps_에서_userspace_tailscaled_찾기() {
 
 #[test]
 fn tailscale_status_읽기() {
-    let j = r#"{"BackendState":"Running","Self":{"DNSName":"mac.tail1.ts.net.","TailscaleIPs":["fd7a:115c:a1e0::1","100.100.10.1"]},
-      "Peer":{"k1":{"TailscaleIPs":["100.100.10.2","fd7a:115c:a1e0::2"]},"k2":{"TailscaleIPs":["100.100.10.3"]}}}"#;
+    let j = r#"{"BackendState":"Running","Self":{"DNSName":"mac.tail1.ts.net.","UserID":7,"TailscaleIPs":["fd7a:115c:a1e0::1","100.100.10.1"]},
+      "Peer":{"k1":{"UserID":7,"TailscaleIPs":["100.100.10.2","fd7a:115c:a1e0::2"]},"k2":{"UserID":7,"Tags":[],"TailscaleIPs":["100.100.10.3"]}},
+      "User":{"7":{"ID":7,"LoginName":"me@example.com"}}}"#;
     let s = parse_status(j).unwrap();
     assert_eq!((s.ip, s.dns.as_deref()), (ip("100.100.10.1"), Some("mac.tail1.ts.net")));
     let mut p: Vec<String> = s.peers.iter().map(|x| x.to_string()).collect();
@@ -73,6 +74,21 @@ fn tailscale_status_읽기() {
     assert_eq!(parse_status(r#"{"BackendState":"NeedsLogin","Self":{"TailscaleIPs":["100.100.10.1"]}}"#), None);
     assert_eq!(parse_status(r#"{"BackendState":"Running","Self":{"TailscaleIPs":["192.168.0.1"]}}"#), None);
     assert_eq!(parse_status("nope"), None);
+}
+
+#[test]
+fn s2_맞은편은_같은_계정의_내_기기만() {
+    // 공유받은 남의 노드·태그 노드도 피어로 받아 연결 16자리를 묶고 연결 요청 상한을 써 버릴 수 있었다(2026-10-21 리뷰 ④-5·6)
+    let j = r#"{"BackendState":"Running","Self":{"UserID":7,"TailscaleIPs":["100.100.10.1"]},
+      "Peer":{"phone":{"UserID":7,"TailscaleIPs":["100.100.10.2"]},"shared":{"UserID":9,"TailscaleIPs":["100.100.10.9"]},
+              "tagged":{"UserID":7,"Tags":["tag:server"],"TailscaleIPs":["100.100.10.8"]}},
+      "User":{"7":{"ID":7,"LoginName":"me@example.com"},"9":{"ID":9,"LoginName":"friend@example.com"}}}"#;
+    let s = parse_status(j).unwrap();
+    assert_eq!(s.peers, vec!["100.100.10.2".parse::<IpAddr>().unwrap()]);
+    assert_eq!(s.login.as_deref(), Some("me@example.com"));
+    // 계정을 모르면(UserID 없음) 피어는 아무도
+    let s = parse_status(r#"{"BackendState":"Running","Self":{"TailscaleIPs":["100.100.10.1"]},"Peer":{"k":{"UserID":7,"TailscaleIPs":["100.100.10.2"]}}}"#).unwrap();
+    assert!(s.peers.is_empty() && s.login.is_none());
 }
 
 #[test]
@@ -103,7 +119,7 @@ fn s2_모르는_주소면_피어_목록을_다시_묻되_10초에_한_번() {
 
 #[test]
 fn host_origin_목록() {
-    let t = Tailnet { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), ip: ip("100.100.10.1"), dns: Some("mac.ts.net".into()), socket: String::new(), peers: vec![] };
+    let t = Tailnet { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), ip: ip("100.100.10.1"), dns: Some("mac.ts.net".into()), socket: String::new(), peers: vec![], certs: true };
     assert_eq!(hosts(&t, 47123, false), vec!["100.100.10.1:47123", "mac.ts.net:47123", "127.0.0.1:47123", "localhost:47123"]);
     assert_eq!(hosts(&t, 47123, true), vec!["100.100.10.1:47123", "mac.ts.net:47123", "mac.ts.net", "127.0.0.1:47123", "localhost:47123"]);
     let o = origins(&t, 47123, true);
@@ -219,7 +235,7 @@ fn 소켓으로_401_403_200() {
     let port = probe.local_addr().unwrap().port();
     drop(probe);
     let h = format!("127.0.0.1:{port}");
-    let (stop, addrs) = serve(&[format!("127.0.0.1:{port}").parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![format!("http://{h}")], stops: Default::default(), sends: Default::default(), tickets: Default::default() }, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
+    let (stop, addrs) = serve(&[format!("127.0.0.1:{port}").parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![format!("http://{h}")], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None }, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
     let addr = addrs[0];
     assert!(ask(addr, &format!("GET /api/sessions HTTP/1.1\r\nHost: {h}\r\n\r\n")).starts_with("HTTP/1.1 401"));
     assert!(ask(addr, &format!("GET /api/sessions HTTP/1.1\r\nHost: evil.com\r\nAuthorization: Bearer {key}\r\n\r\n")).starts_with("HTTP/1.1 403"));
@@ -240,7 +256,7 @@ fn 쉬던_서버도_요청을_바로_받는다() {
     let port = probe.local_addr().unwrap().port();
     drop(probe);
     let h = format!("127.0.0.1:{port}");
-    let (stop, addrs) = serve(&[h.parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default() }, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
+    let (stop, addrs) = serve(&[h.parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None }, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
     let req = format!("GET /api/sessions HTTP/1.1\r\nHost: {h}\r\nAuthorization: Bearer {key}\r\n\r\n");
     let mut total = Duration::ZERO;
     for i in 0..20u64 {
@@ -313,7 +329,7 @@ fn s1_처리_중_패닉이_20번_나도_서버는_계속_답한다() {
     let port = probe.local_addr().unwrap().port();
     drop(probe);
     let h = format!("127.0.0.1:{port}");
-    let (stop, addrs) = serve(&[h.parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default() }, Arc::new(Panicky), Arc::new(Peers::new(vec![], || None))).unwrap();
+    let (stop, addrs) = serve(&[h.parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None }, Arc::new(Panicky), Arc::new(Peers::new(vec![], || None))).unwrap();
     let addr = addrs[0];
     for _ in 0..(MAX_CONNS + 4) {
         let _ = ask(addr, &format!("GET /api/sessions HTTP/1.1\r\nHost: {h}\r\nAuthorization: Bearer {key}\r\n\r\n"));
@@ -353,7 +369,7 @@ fn s6_개발판과_본판은_기본_포트가_달라_서로의_serve_를_우리_
 #[test]
 fn r2_내_self_ip_도_맞은편으로_받는다() {
     // 인터페이스 모드: serve(→ http://100.x:포트)가 내 Self IP 에서 들어오고, 맥 브라우저 직접 접속도 Self IP
-    let t = Tailnet { bind: IpAddr::V4(ip("100.100.10.1")), ip: ip("100.100.10.1"), dns: None, socket: String::new(), peers: vec!["100.100.10.2".parse().unwrap()] };
+    let t = Tailnet { bind: IpAddr::V4(ip("100.100.10.1")), ip: ip("100.100.10.1"), dns: None, socket: String::new(), peers: vec!["100.100.10.2".parse().unwrap()], certs: true };
     let ps = Peers::new(allowed_peers(&t.ip, &t.peers), || None);
     assert!(ps.allows("100.100.10.1".parse().unwrap()));
     assert!(ps.allows("100.100.10.2".parse().unwrap()));
@@ -410,7 +426,7 @@ fn 테일스케일_cli_자리() {
 }
 
 fn iface_tailnet() -> Tailnet {
-    Tailnet { bind: IpAddr::V4(ip("100.64.0.20")), ip: ip("100.64.0.20"), dns: Some("pc.ts.net".into()), socket: String::new(), peers: vec![] }
+    Tailnet { bind: IpAddr::V4(ip("100.64.0.20")), ip: ip("100.64.0.20"), dns: Some("pc.ts.net".into()), socket: String::new(), peers: vec![], certs: true }
 }
 
 #[test]
@@ -477,7 +493,7 @@ fn w4_여러_주소에_묶고_하나라도_못_묶으면_다_푼다() {
     let probe = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = probe.local_addr().unwrap().port();
     drop(probe);
-    let gate = |h: &str| Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.to_string(), format!("[::1]:{port}")], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default() };
+    let gate = |h: &str| Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.to_string(), format!("[::1]:{port}")], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None };
     let h = format!("127.0.0.1:{port}");
     let v6: SocketAddr = format!("[::1]:{port}").parse().unwrap();
     let (stop, addrs) = serve(&[h.parse().unwrap(), v6], gate(&h), Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
@@ -547,7 +563,7 @@ fn w8_127_0_0_1_을_못_묶으면_100x_만_다시() {
 // ── 재부팅 뒤 테일스케일이 앱보다 늦게 뜰 때(2026-10-20) — 켜 둔 상태면 다시 시도한다 ──
 
 fn net(ip_s: &str) -> Tailnet {
-    Tailnet { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), ip: ip(ip_s), dns: Some("mac.ts.net".into()), socket: "/s".into(), peers: vec![] }
+    Tailnet { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), ip: ip(ip_s), dns: Some("mac.ts.net".into()), socket: "/s".into(), peers: vec![], certs: true }
 }
 
 /// 가짜 바깥 — detect 는 nets 를 앞에서부터 하나씩(마지막 것은 계속), start 는 그 주소가 있으면 진짜 소켓을 연다
@@ -578,7 +594,7 @@ impl Keep for FakeKeep {
             stop.store(true, Ordering::Relaxed);
         }
         let t = self.next_net().ok_or("테일스케일 주소가 없어요")?;
-        let gate = Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&"d".repeat(64), "시험")), hosts: vec![], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default() };
+        let gate = Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&"d".repeat(64), "시험")), hosts: vec![], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None };
         let (stop, addrs) = serve(&["127.0.0.1:0".parse().unwrap()], gate, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).map_err(|e| e.to_string())?;
         self.up = Some((t, stop, addrs[0]));
         Ok(())
@@ -660,6 +676,77 @@ fn 떠_있는데_테일스케일_주소가_바뀌면_새_주소로_다시_켠다
     assert_eq!(k.up.as_ref().map(|u| u.0.ip), Some(ip("100.100.10.9")));
     assert!(k.logs.iter().any(|l| l.starts_with("tailnet changed")), "{:?}", k.logs);
     if let Some((_, stop, _)) = k.up.take() {
+        stop.store(true, Ordering::Relaxed);
+    }
+}
+
+// ── 남의 테일넷은 HTTPS 인증서가 기본 꺼짐(2026-10-22 '사용자 말고는 PWA 가 다 안 된다') ──
+// 꺼진 테일넷에서 `tailscale serve --https` 는 '켜러 가세요' 주소를 찍고 기다리다 15초 제한에 죽어 "command timed out" 만 남았다.
+// 폰은 http://100.x 로 열려 보안 안 된 출처 — 안드로이드는 설치가 막히고(크롬 '이 앱을 설치할 수 없습니다'), 알림 종은 숨고, 마이크도 안 된다
+
+fn status_json(self_extra: &str, top: &str) -> String {
+    format!(r#"{{"BackendState":"Running"{top},"Self":{{"DNSName":"mac.tail1.ts.net.","TailscaleIPs":["100.100.10.1"]{self_extra}}}}}"#)
+}
+
+#[test]
+fn p1_tailscale_status_에서_https_인증서가_켜졌나_읽는다() {
+    // 사용자 테일넷 모양 — Capabilities·CapMap 에 https, CertDomains 에 내 이름
+    assert!(parse_status(&status_json(r#","Capabilities":["https"],"CapMap":{"https":null}"#, r#","CertDomains":["mac.tail1.ts.net"]"#)).unwrap().certs);
+    assert!(parse_status(&status_json(r#","CapMap":{"https":null}"#, "")).unwrap().certs);
+    assert!(parse_status(&status_json("", r#","CertDomains":["mac.tail1.ts.net"]"#)).unwrap().certs);
+    // 새 테일넷 기본값 — https 로 시작하는 다른 권한 이름에 속지 않는다
+    assert!(!parse_status(&status_json(r#","CapMap":{"https://tailscale.com/cap/ssh":null},"Capabilities":["https://tailscale.com/cap/file-sharing"]"#, r#","CertDomains":null"#)).unwrap().certs);
+    assert!(!parse_status(&status_json("", r#","CertDomains":[]"#)).unwrap().certs);
+}
+
+#[test]
+fn p2_https_를_못_거는_까닭은_serve_를_부르기_전에_가른다() {
+    let t = iface_tailnet();
+    assert_eq!(https_skip(&t, true), None);
+    assert_eq!(https_skip(&t, false), Some(HttpsSkip::TestFolder));
+    assert_eq!(https_skip(&Tailnet { dns: None, ..t.clone() }, true), Some(HttpsSkip::NoMagicDns));
+    assert_eq!(https_skip(&Tailnet { certs: false, ..t.clone() }, true), Some(HttpsSkip::CertsOff));
+    // 사람이 고칠 곳은 관리 화면 DNS 칸(MagicDNS·HTTPS Certificates 둘 다 거기) — 시험 폴더는 고칠 게 없다
+    assert_eq!(HttpsSkip::CertsOff.fix_url(), Some(TS_DNS_ADMIN));
+    assert_eq!(HttpsSkip::NoMagicDns.fix_url(), Some(TS_DNS_ADMIN));
+    assert_eq!(HttpsSkip::TestFolder.fix_url(), None);
+    // 안내는 무엇을 켤지 말한다 — "command timed out" 같은 말이 아니라
+    assert!(HttpsSkip::CertsOff.note().contains("HTTPS"));
+}
+
+#[test]
+fn p3_serve_를_건_뒤_진짜_걸렸나_다시_본다() {
+    let t = Tailnet { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), ..iface_tailnet() };
+    let ours = r#"{"Web":{"pc.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:47123"}}}}}"#;
+    assert_eq!(serve_took(ours, "pc.ts.net", &t, 47123, false), Ok(()));
+    // tailscale 이 '켜러 가세요' 안내만 찍고 0 으로 끝난 경우 — 설정이 비어 있으면 https 가 아니다
+    assert!(serve_took("{}", "pc.ts.net", &t, 47123, false).is_err());
+    assert!(serve_took(r#"{"Web":{"pc.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:9999"}}}}}"#, "pc.ts.net", &t, 47123, false).is_err());
+}
+
+#[test]
+fn p4_켜_둔_채_https_인증서가_켜지면_다시_띄워_https_로_간다() {
+    let off = Tailnet { certs: false, ..net("100.100.10.1") };
+    let on = Tailnet { certs: true, ..off.clone() };
+    let mut k = FakeKeep::new(true, vec![Some(off.clone()), Some(off.clone()), Some(on.clone())]);
+    let mut st = KeepState::default();
+    let t0 = std::time::Instant::now();
+    keep_step(&mut k, &mut st, t0); // 처음 켬(인증서 꺼짐 → http)
+    keep_step(&mut k, &mut st, t0 + Duration::from_secs(60)); // 그대로
+    assert_eq!(k.starts, 1);
+    keep_step(&mut k, &mut st, t0 + Duration::from_secs(120)); // 사람이 관리 화면에서 켰다
+    assert_eq!(k.starts, 2, "인증서가 켜지면 다시 띄워 serve 를 건다: {:?}", k.logs);
+    assert!(k.logs.iter().any(|l| l.contains("https certificates on")), "{:?}", k.logs);
+    keep_step(&mut k, &mut st, t0 + Duration::from_secs(180));
+    assert_eq!(k.starts, 2, "한 번만");
+    // 거꾸로(켜짐 → 꺼짐)는 다시 띄우지 않는다 — 떠 있는 https 를 굳이 내리지 않게
+    let mut k2 = FakeKeep::new(true, vec![Some(on.clone()), Some(on), Some(off)]);
+    let mut st = KeepState::default();
+    for i in 0..3 {
+        keep_step(&mut k2, &mut st, t0 + Duration::from_secs(60 * i));
+    }
+    assert_eq!(k2.starts, 1);
+    for (_, stop, _) in [k.up, k2.up].into_iter().flatten() {
         stop.store(true, Ordering::Relaxed);
     }
 }

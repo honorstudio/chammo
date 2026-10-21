@@ -76,6 +76,7 @@ import { orchDisplay, orchLabel, setOrchLabel, setOrchRoster, useOrchLabels } fr
 import { Confirm, NameNew } from './ui/OrchDialogs';
 import { consentBeforeSpawn, isDisclaimerError } from './domain/bypassConsent';
 import { dupRenames, labelRenames, nickProblem, renamesToSend, withNick, type RenameSent } from './domain/orchLabel';
+import { orchIntro } from './domain/orchIntro';
 import { markReader, ReaderPanel, readerFocused } from './ui/reader/ReaderPanel';
 import { selectAllHere } from './ui/selectAll';
 import { IS_WIN, type Surface } from './domain/reader';
@@ -200,6 +201,9 @@ function mirrorConfig(c: Config) {
   }
   location.reload();
 }
+
+/** 동의 카드에 보이는 깃발 이름 — 하이픈마다 뒤에 단어 잇기(U+2060)를 붙여 '(--' / 'dangerously-skip-permissions)' 처럼 이름 가운데서 줄이 안 갈리게(윈도우 QA 31) */
+const SKIP_FLAG = '--dangerously-skip-permissions'.replace(/-/g, '-\u2060');
 
 export default function App() {
   const [env, setEnv] = useState<AppEnv | null>(null);
@@ -789,7 +793,7 @@ export default function App() {
     isOrch: isLostOrch,
     autoRevive: features.autoRevive, devRoot: env?.devRoot, extras: env?.extraProjects ?? [], update: updateSnap,
   });
-  /** nick 이 있으면 '참모-N · 별명'(N 은 꺼진 참모 번호까지 피해서), 없으면 첫 참모 이름(설정 이름) — 자동 시작·빈 화면 버튼 */
+  /** nick 이 있으면 '참모-N · 별명'(N 은 꺼진 참모 번호까지 피해서, 새 참모 창에서 별명을 비우면 '참모-N'), 없으면 첫 참모 이름(설정 이름) — 자동 시작·빈 화면 버튼 */
   const spawnOrchestrator = async (nick?: string, role = '') => {
     if (!env || spawningRef.current) return; // + 를 연달아 눌러도 하나만(띄우는 데 1초 남짓)
     spawningRef.current = true;
@@ -798,11 +802,11 @@ export default function App() {
     try {
       // 새 컴퓨터는 bypass 경고에 아직 동의 안 했다 — 띄우면 'requires accepting the disclaimer' 로 실패하니 카드부터(2026-10-21 새 윈도우 PC)
       if (consentBeforeSpawn(await bypassConsent().catch(() => null)) === 'ask') { setConsentAsk(() => again); return; }
-      const name = nick ? withNick(nextOrchestratorName([...navOrchs, ...offOrchList].map((s) => s.name)), nick) : nextOrchestratorName(groups.orchestrators.map((s) => s.name));
-      if (nick) setCreating(name);
+      const name = nick !== undefined ? withNick(nextOrchestratorName([...navOrchs, ...offOrchList].map((s) => s.name)), nick) : nextOrchestratorName(groups.orchestrators.map((s) => s.name));
+      if (nick !== undefined) setCreating(name);
       // 맡은 일·태어난 때를 먼저 적는다 — 꺼진 참모를 지워 번호가 다시 쓰이면 옛 맡은 일·기록이 새 참모에 붙었다(2026-10-04 QA ⑥·리뷰)
       await saveOrchRole(name, role, true).catch(() => {});
-      await spawnSession(env.orchestratorCwd, name, tr('안녕! 네 이름과 맡은 일로 2~3줄 자기소개해 줘 — 누구고, 뭘 맡았고, 이런 걸 시키면 된다는 예 하나. 도구는 쓰지 말고, 질문으로 끝내지 마.', "Hi! Introduce yourself in 2-3 lines from your name and role — who you are, what you handle, and one example of what to ask you. Don't use tools, and don't end with a question.") /* 첫 인사 = 자기소개(2026-10-21 사용자 — '준비됐어' 한 줄은 어색). 질문으로 끝나면 결정 대기 창이 채팅을 덮었다(2026-09-30 시험) */);
+      await spawnSession(env.orchestratorCwd, name, orchIntro());
       await refresh();
     } catch (e: unknown) {
       if (isDisclaimerError(String(e))) setConsentAsk(() => again); // 띠 대신 동의 카드 — 누르면 다시 띄운다
@@ -1051,7 +1055,7 @@ export default function App() {
     await resumeSession(st?.cwd ?? c.cwd, st?.sessionId ?? '', c.from);
     refresh();
   });
-  const inbox = buildInbox(allActs, taskEvents, new Set(dismissed), sessions, (s) => orchIds.has(s.id), groups.orchestrators.length > 1 ? (s) => orchDisplay(s) || assistant() : undefined).filter((i) => !(i.kind === 'blocked' && picking.has(i.target ?? '')));
+  const inbox = buildInbox(allActs, taskEvents, new Set(dismissed), sessions, (s) => orchIds.has(s.id), (s) => orchDisplay(s) || assistant()).filter((i) => !(i.kind === 'blocked' && picking.has(i.target ?? '')));
   // 새 결정이 생기면: 종 아래 드롭다운이 저절로 펼쳐짐 + macOS 알림. 개수는 상단 바 종·Dock 뱃지
   // 직접 답하기 카드도 결정 대기함에 — 새로 기다리는 카드가 생기면 드롭다운도 펼친다(어느 화면·탭을 보든 보이게)
   // 짝지은 다른 기기의 카드(ADR 0011) — 같은 종에, 새로 기다리면 같이 펼친다
@@ -1072,7 +1076,7 @@ export default function App() {
     prevDirect.current = new Set(directWait);
     prevLogin.current = login.need?.since ?? null;
     // 결정 항목이 0이어도 카드가 남아 있으면 펼친 걸 닫지 않는다(popoverOpen 은 항목 0이면 닫는다)
-    setInboxOpen((o) => newDirect || popoverOpen(o, prev, inbox) || (o && (direct.inboxCards.length + remote.cards.length > 0 || login.need !== null || browserCount > 0)));
+    setInboxOpen((o) => newDirect || popoverOpen(o, prev, inbox, { hold: settingsOpen || firstRun, askInView: spaceShownRef.current }) || (o && (direct.inboxCards.length + remote.cards.length > 0 || login.need !== null || browserCount > 0)));
     prevInbox.current = new Set(inbox.map((i) => i.key));
     if (fresh.length) {
       // 참모 물어봄·확인창은 위에서 따로 알린다 — 여기선 결정(task ask)만. 로그인 풀림은 useLogin 이 한 번에 묶어서
@@ -1737,8 +1741,8 @@ export default function App() {
     <OrchActionsProvider pins={orchPins} onPin={pinOrch} onNick={wantNick} onStop={(s, why) => closeSession(s, why)} onRemove={(id) => { markPending(stopped.find((x) => x.id === id)?.sessionId ?? id); void removeSession(id, `menu ${stopped.find((x) => x.id === id)?.name ?? ''}`).then(() => refresh(), (e: unknown) => setError(tr(`지우기 실패: ${String(e)}`, `Remove failed: ${String(e)}`))); }}>
       {consentAsk && <Confirm
         title={tr('확인 없이 실행하는 모드에 동의', 'Allow running without confirmations')}
-        body={tr(`${assistant()}와 세션은 Claude Code 를 확인 없이 실행하는 모드(--dangerously-skip-permissions)로 돌려요. Claude Code 의 경고 그대로:\n· 위험할 수 있는 명령도 묻지 않고 실행해요.\n· Claude Code 는 인터넷이 제한되고 쉽게 되돌릴 수 있는 격리 환경(컨테이너·가상 머신)에서만 쓰라고 권해요.\n· 이 모드에서 생긴 일의 책임은 동의한 사람에게 있어요.\n${assistant()}에게는 결제·운영 앞에서 먼저 묻게 지시하지만, 완전히 막아 주지는 않아요. 동의하면 이 컴퓨터의 Claude Code 설정에 적혀서, 터미널에서 켜는 Claude Code 도 이 경고를 다시 띄우지 않아요.`,
-          `${assistant()} and its sessions run Claude Code in Bypass Permissions mode (--dangerously-skip-permissions). Claude Code's own warning:\n· Claude Code will not ask for your approval before running potentially dangerous commands.\n· This mode should only be used in a sandboxed container/VM that has restricted internet access and can easily be restored if damaged.\n· By proceeding, you accept all responsibility for actions taken while running in Bypass Permissions mode.\n${assistant()} is instructed to ask before payments and production changes, but that is not a guarantee. Agreeing records this in this computer's Claude Code settings, so Claude Code started from a terminal won't show this warning again either.`)}
+        body={tr(`${assistant()}와 세션은 Claude Code 를 확인 없이 실행하는 모드(${SKIP_FLAG})로 돌려요. Claude Code 의 경고 그대로:\n· 위험할 수 있는 명령도 묻지 않고 실행해요.\n· Claude Code 는 인터넷이 제한되고 쉽게 되돌릴 수 있는 격리 환경(컨테이너·가상 머신)에서만 쓰라고 권해요.\n· 이 모드에서 생긴 일의 책임은 동의한 사람에게 있어요.\n${assistant()}에게는 결제·운영 앞에서 먼저 묻게 지시하지만, 완전히 막아 주지는 않아요. 동의하면 이 컴퓨터의 Claude Code 설정에 적혀서, 터미널에서 켜는 Claude Code 도 이 경고를 다시 띄우지 않아요.`,
+          `${assistant()} and its sessions run Claude Code in Bypass Permissions mode (${SKIP_FLAG}). Claude Code's own warning:\n· Claude Code will not ask for your approval before running potentially dangerous commands.\n· This mode should only be used in a sandboxed container/VM that has restricted internet access and can easily be restored if damaged.\n· By proceeding, you accept all responsibility for actions taken while running in Bypass Permissions mode.\n${assistant()} is instructed to ask before payments and production changes, but that is not a guarantee. Agreeing records this in this computer's Claude Code settings, so Claude Code started from a terminal won't show this warning again either.`)}
         ok={tr('동의', 'Agree')}
         onCancel={() => setConsentAsk(null)}
         onOk={() => { const next = consentAsk; setConsentAsk(null); void bypassConsentAccept().then(next, (e: unknown) => setError(tr(`동의를 못 적었어요: ${String(e)}`, `Could not record the agreement: ${String(e)}`))); }} />}
@@ -1746,7 +1750,7 @@ export default function App() {
     <StopBridge to={askStopRef} />
     <div className="shell">
     {setup}
-    {tourOpen && <Tour onClose={closeTour} />}
+    {tourOpen && <Tour none={navOrchs.length + offOrchList.length === 0} onClose={closeTour} />}
     {petModal && features.tama && <PetModal onClose={() => setPetModal(false)}>{petNode(petWho)}</PetModal>}
     {/* 세션 브라우저가 사람을 부르면(browser_ask_human) 어느 화면에서든 크게 띄우고 알린다 */}
     <AgentAskHost lives={agentLives} nameOf={(l) => askName(l, sessions)} notify={(profile, reason, name) => notifyOnce({ kind: 'human', session: profile, orch: false, ...askNotice(name, reason) })}

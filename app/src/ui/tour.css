@@ -7,8 +7,10 @@
 .tour-card h2 { font-size: 20px; line-height: 1.35; margin: 4px 0 10px; }
 .tour-card p { font-size: 14px; line-height: 1.7; color: var(--text-2); margin: 0; }
 .tour-keys { margin: 14px 0 0; display: grid; gap: 6px; }
-.tour-keys div { display: grid; grid-template-columns: 150px 1fr; gap: 12px; font-size: 13px; }
-.tour-keys dt { font-family: ui-monospace, "D2Coding", "Cascadia Mono", Consolas, monospace; color: var(--text); }
+.tour-keys div { display: grid; grid-template-columns: 190px 1fr; gap: 12px; font-size: 13px; } /* 윈도우 키(Ctrl+Alt+1)는 길어 150px 이면 네 줄이었다(QA 22) */
+.tour-keys dt { font-family: ui-monospace, "D2Coding", "Cascadia Mono", Consolas, monospace; color: var(--text); display: flex; flex-wrap: wrap; column-gap: .5ch; }
+/* 키 하나(Ctrl+Alt+1)는 안 쪼갠다 — 사이 '·' 는 다음 키 앞에 붙어 줄 끝에 혼자 매달리지 않는다(윈도우 QA 22) */
+.tour-k { white-space: nowrap; }
 .tour-keys dd { margin: 0; color: var(--text-2); }
 .tour-nav { display: flex; align-items: center; gap: 8px; margin-top: 22px; }
 .tour-nav .grow { flex: 1; }

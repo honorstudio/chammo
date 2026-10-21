@@ -250,6 +250,8 @@ fn keep_slots(store: &dyn Store, live: &Live, list: &Path, old: &Value, new: &Va
             Ok(p) => p.as_ref().and_then(refresh_token).is_some_and(|r| Some(r) == old_rt),
             Err(_) => false,
         };
+        // 지금 칸이어도 그 토큰이 남의 계정 것이면 안 쓴다(되쓴 옛 계정 토큰, ⑤-2) — 옛 갱신 토큰을 든 칸(held)은 계보가 확실하다
+        let current = current && !accounts::foreign(live, new, &a.oauth);
         if (current || held) && store.set(SLOT_SERVICE, &a.id, &accounts::slot_secret(new)).is_err() {
             bad += 1;
         }

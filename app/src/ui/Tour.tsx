@@ -6,8 +6,8 @@ import { IconButton } from './kit/IconButton';
 import './tour.css';
 
 /** 둘러보기 — 카드 한 장씩, 이전·다음·건너뛰기. Esc 로 닫힌다. 익숙한 동작(닫기·이전·다음)은 아이콘, 끝의 시작하기만 글자 */
-export function Tour({ onClose }: { onClose: () => void }) {
-  const steps = tourSteps();
+export function Tour({ none, onClose }: { none: boolean; onClose: () => void }) {
+  const steps = tourSteps({ none });
   const [i, setI] = useState(0);
   const last = i === steps.length - 1;
   const s = steps[i]!;
@@ -32,7 +32,7 @@ export function Tour({ onClose }: { onClose: () => void }) {
         {s.keys && (
           <dl className="tour-keys">
             {s.keys.map(([k, v]) => (
-              <div key={k}><dt>{k}</dt><dd>{v}</dd></div>
+              <div key={k}><dt>{k.split(' · ').map((p, n) => <span key={n} className="tour-k">{n > 0 ? `· ${p}` : p}</span>)}</dt><dd>{v}</dd></div>
             ))}
           </dl>
         )}

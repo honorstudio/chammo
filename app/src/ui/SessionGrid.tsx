@@ -6,7 +6,7 @@ import { chatHeadPane, paneToFocus, visiblePanes, type LayoutAction, type PaneLa
 import type { Session } from '../domain/session';
 import { pasteSequence } from '../domain/memo';
 import { enterDelay, typedChunks } from '../domain/chat';
-import { escPlan, typeQueue } from '../domain/chatQueue';
+import { enterTask, escPlan, typeQueue } from '../domain/chatQueue';
 import { LINK_WAIT, paneLinks } from '../domain/paneLinks';
 import type { LinkState } from '../domain/attachExit';
 import { AdoptCard } from './AdoptCard';
@@ -385,7 +385,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           onTerminal={() => showTerm(id, true)}
                           onInputFocus={() => panes.current.get(id)?.claimPtt()}
                           screen={() => panes.current.get(id)?.screen()}
-                          submitTerminal={() => panes.current.get(id)?.raw('\r')}
+                          submitTerminal={(expect) => { const api = panes.current.get(id); if (api) void typing.push(id, enterTask(api, expect)); }}
                           pasteImage={() => panes.current.get(id)?.raw('\x16')}
                           voiceStop={voiceStops[id] ?? 0}
                           paneId={id}

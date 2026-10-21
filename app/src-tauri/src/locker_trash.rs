@@ -336,8 +336,10 @@ pub fn undo_last(data: &Path) -> Result<Undone, String> {
     let mut left = Vec::new();
     let mut u = Undone { restored: 0, errors: Vec::new() };
     for m in r.moves.iter().rev() {
-        let back = exists_any(&m.to) && !exists_any(&m.from) && m.from.parent().is_some_and(|p| p.is_dir());
-        if back && std::fs::rename(&m.to, &m.from).is_ok() {
+        // 윈도우 휴지통으로 간 것은 휴지통 기록에서 원래 경로로 찾아 되돌린다(win_recycle)
+        let recycled = crate::win_recycle::is_mark(&m.to);
+        let back = (recycled || exists_any(&m.to)) && !exists_any(&m.from) && m.from.parent().is_some_and(|p| p.is_dir());
+        if back && if recycled { crate::win_recycle::restore(&m.from).is_ok() } else { std::fs::rename(&m.to, &m.from).is_ok() } {
             if m.kind == Kind::Trash {
                 u.restored += 1;
             }
@@ -350,7 +352,7 @@ pub fn undo_last(data: &Path) -> Result<Undone, String> {
         left.push(m.clone());
     }
     left.reverse();
-    save(data, &Record { at: r.at, moves: left.into_iter().filter(|m| m.kind != Kind::Extra || exists_any(&m.to)).collect() })?;
+    save(data, &Record { at: r.at, moves: left.into_iter().filter(|m| m.kind != Kind::Extra || crate::win_recycle::is_mark(&m.to) || exists_any(&m.to)).collect() })?;
     Ok(u)
 }
 
@@ -365,7 +367,10 @@ fn session_dirs() -> Option<Vec<PathBuf>> {
 
 fn bin_of(a: &locker_fs::AppCtx) -> Result<PathBuf, String> {
     let bin = a.home.join(".Trash");
-    std::fs::create_dir_all(&bin).map_err(es)?;
+    // 윈도우는 시스템 휴지통으로 보낸다(locker_fs::send_to_bin) — 홈에 .Trash 를 안 만든다
+    if !cfg!(windows) {
+        std::fs::create_dir_all(&bin).map_err(es)?;
+    }
     Ok(bin)
 }
 

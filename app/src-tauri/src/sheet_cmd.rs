@@ -70,24 +70,35 @@ pub fn request(line: &str) -> Option<Req> {
     }
 }
 
-/// 앱 표에 열린 엑셀(진짜 경로 → 열린 표 수) — 표가 열 때·닫을 때 sheet_open 으로 알린다
-static OPEN: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
+/// 앱 표에 열린 엑셀(진짜 경로 → 표가 연 경로들, 표마다 하나) — 표가 열 때·닫을 때 sheet_open 으로 알린다.
+/// 연 경로를 같이 두는 건 표가 그 경로로 받기(window.__sheetPlay) 때문 — 보관함 바로가기로 연 표에 진짜 경로로 보내면 받는 표가 없어
+/// 3초 뒤 파일에만 써졌다(커서·타자 없이, 사용자가 고치는 칸도 안 건너뜀, 2026-10-21 리뷰 ⑦-16)
+static OPEN: Mutex<Option<HashMap<String, Vec<String>>>> = Mutex::new(None);
 
 fn real(path: &str) -> String {
     std::fs::canonicalize(path).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| path.to_string())
 }
 
 pub fn is_open(path: &str) -> bool {
-    OPEN.lock().ok().and_then(|g| g.as_ref().and_then(|m| m.get(&real(path)).copied())).unwrap_or(0) > 0
+    opened_as(path).is_some()
+}
+
+/// 그 파일을 표가 연 경로(가장 최근 표) — 없으면 None
+pub fn opened_as(path: &str) -> Option<String> {
+    OPEN.lock().ok().and_then(|g| g.as_ref().and_then(|m| m.get(&real(path)).and_then(|v| v.last().cloned())))
 }
 
 #[tauri::command]
 pub fn sheet_open(path: String, on: bool) {
     if let Ok(mut g) = OPEN.lock() {
         let m = g.get_or_insert_with(HashMap::new);
-        let k = real(&path);
-        let n = m.get(&k).copied().unwrap_or(0);
-        if on { m.insert(k, n + 1); } else if n <= 1 { m.remove(&k); } else { m.insert(k, n - 1); }
+        let v = m.entry(real(&path)).or_default();
+        if on {
+            v.push(path);
+        } else if let Some(i) = v.iter().rposition(|x| *x == path) {
+            v.remove(i);
+        }
+        m.retain(|_, v| !v.is_empty());
     }
 }
 
@@ -111,7 +122,7 @@ fn claim(id: &str) -> Option<(std::path::PathBuf, Vec<Put>)> {
 /// 표가 아직 안 받았으면 그 칸만 파일에 쓴다 — 받았으면 None(표가 쓰고 답한다)
 fn fall_back(id: &str) -> Option<Result<usize, String>> {
     let (p, puts) = claim(id)?;
-    Some(set_closed(&p, &puts, |q| crate::reader::keep_history_as(q, "xlsx")))
+    Some(set_closed(&p, &puts, keep_both))
 }
 
 /// 표가 쓰기를 받았다 — 이제 표가 칸마다 넣고 저장한 뒤 sheet_play_done 으로 답한다
@@ -160,6 +171,13 @@ pub fn get_text(book: &Book, range: &str) -> Result<String, String> {
     Ok(lines.join("\n"))
 }
 
+/// 참모 칸 쓰기 직전 원본 남기기 — 데이터 폴더 history 와, 보관함 안 파일이면 보관함 '이전 판'도(표 저장 write_sheet 와 같게).
+/// history 에만 남겨 보관함 '이전 판' 메뉴로는 참모가 고치기 전 판을 못 되돌렸다(2026-10-21 리뷰 ⑦-19)
+fn keep_both(q: &std::path::Path) {
+    crate::locker_fs::keep_before_write(q);
+    crate::reader::keep_history_as(q, "xlsx");
+}
+
 /// 안 열린 파일에 바로 쓰기 — 원본에서 그 칸만(저장 전 history). 수식 칸은 계산 결과 없이 쓰고 엑셀이 열 때 계산한다
 pub fn set_closed(path: &std::path::Path, puts: &[Put], keep: impl Fn(&std::path::Path)) -> Result<usize, String> {
     // 도장을 읽는 데서부터 잡는다 — 방금 읽은 도장을 expected 로 넘기니, 잠금 없이는 동시에 온 둘이 다 검사를 지나 한쪽 고침이 사라졌다
@@ -184,16 +202,16 @@ pub fn handle<R: tauri::Runtime>(app: &tauri::AppHandle<R>, req: Req) {
         }
         Req::Set { id, path, puts, by } => {
             let p = match sheet_file(&path) { Ok(p) => p, Err(e) => return answer(&id, &serde_json::json!({ "ok": false, "error": e })) };
-            if is_open(&p.to_string_lossy()) {
+            if let Some(shown) = opened_as(&p.to_string_lossy()) {
                 park(&id, p.clone(), puts.clone());
-                crate::craft_window::to_main(app, "__sheetPlay", serde_json::json!({ "id": id, "path": p.to_string_lossy(), "puts": puts, "by": by }));
+                crate::craft_window::to_main(app, "__sheetPlay", serde_json::json!({ "id": id, "path": shown, "puts": puts, "by": by }));
                 std::thread::sleep(ACK_WAIT); // handle 은 따로 스레드(appctl)
                 if let Some(r) = fall_back(&id) {
                     answer(&id, &match r { Ok(n) => serde_json::json!({ "ok": true, "written": n, "shown": false }), Err(e) => serde_json::json!({ "ok": false, "error": e }) });
                 }
                 return;
             }
-            let r = set_closed(&p, &puts, |q| crate::reader::keep_history_as(q, "xlsx"));
+            let r = set_closed(&p, &puts, keep_both);
             answer(&id, &match r { Ok(n) => serde_json::json!({ "ok": true, "written": n, "shown": false }), Err(e) => serde_json::json!({ "ok": false, "error": e }) });
         }
     }
@@ -203,6 +221,34 @@ pub fn handle<R: tauri::Runtime>(app: &tauri::AppHandle<R>, req: Req) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    #[cfg(unix)]
+    fn 바로가기로_연_표에는_연_경로로_보낸다() {
+        let d = std::env::temp_dir().join(format!("sheet-open-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let real_file = d.join("진짜.xlsx");
+        std::fs::write(&real_file, b"x").unwrap();
+        let link = d.join("바로가기.xlsx");
+        std::os::unix::fs::symlink(&real_file, &link).unwrap();
+        let (l, r) = (link.to_string_lossy().into_owned(), std::fs::canonicalize(&real_file).unwrap().to_string_lossy().into_owned());
+        sheet_open(l.clone(), true);
+        assert_eq!(opened_as(&r).as_deref(), Some(l.as_str()), "진짜 경로로 물어도 표가 연 경로");
+        assert!(is_open(&r));
+        sheet_open(l.clone(), false);
+        assert!(!is_open(&r));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 참모_칸_쓰기도_보관함_이전_판을_남긴다() {
+        let src = include_str!("sheet_cmd.rs");
+        let body = &src[..src.find("#[cfg(test)]").unwrap()];
+        let calls: Vec<&str> = body.match_indices("set_closed(&p").map(|(i, _)| &body[i..i + body[i..].find(')').unwrap() + 1]).collect();
+        assert_eq!(calls.len(), 2);
+        assert!(calls.iter().all(|c| c.ends_with("keep_both)")), "{calls:?}");
+    }
 
     #[test]
     fn 칸_주소와_값_종류() {

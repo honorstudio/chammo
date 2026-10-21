@@ -50,7 +50,7 @@ const PLAIN = /^(index\.html?|readme\.md)$/i;
 /** 탭 이름 — 파일 이름. index.html·README.md 처럼 흔한 이름은 폴더를 앞에 붙인다 */
 export function titleOf(path: string): string {
   if (isWebUrl(path)) return webTitle(path);
-  const parts = path.split('/').filter(Boolean);
+  const parts = path.split(/[\\/]/).filter(Boolean); // 윈도우 경로(\)도 — 탭에 전체 경로가 떴다(윈도우 QA 31)
   const name = parts[parts.length - 1] ?? path;
   return PLAIN.test(name) && parts.length > 1 ? `${parts[parts.length - 2]}/${name}` : name;
 }

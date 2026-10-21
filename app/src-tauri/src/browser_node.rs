@@ -65,6 +65,13 @@ pub fn stable_node(real: &str, exists: impl Fn(&str) -> bool) -> String {
     }
 }
 
+/// 판 관리자(fnm·nvm·volta·asdf)의 판 폴더 안 node — 그 판을 지우면 링크가 끊기고, 판도 사용자가 그때 고른 것(20 은 전역 WebSocket 이 없어
+/// minimize.js 가 아무것도 안 했다). 이런 node 는 링크 대상으로 안 쓰고 앱이 받은 node 로 간다(2026-10-22 첫 사용자 QA 4)
+pub fn versioned(p: &str) -> bool {
+    let p = p.replace('\\', "/");
+    ["/fnm/node-versions/", "/.nvm/versions/", "/.volta/tools/image/", "/.asdf/installs/"].iter().any(|m| p.contains(m))
+}
+
 /// fnm·volta 같은 셸마다 임시로 만드는 경로 — 셸이 끝나면 사라져 링크 대상으로 못 쓴다
 pub fn ephemeral(p: &str) -> bool {
     p.contains("fnm_multishells") || p.contains("/.volta/tmp/")
@@ -219,6 +226,13 @@ mod tests {
         assert_eq!(stable_node("/usr/local/bin/node", has(&["/usr/local/opt/node/bin/node"])), "/usr/local/bin/node");
         assert!(ephemeral("/Users/a/.local/state/fnm_multishells/123_456/bin/node"));
         assert!(!ephemeral("/Users/a/.nvm/versions/node/v22.1.0/bin/node"));
+        // 판 폴더에 묶인 node — 지우면 링크가 끊긴다(2026-10-22 첫 사용자 QA 4: tools/bin/node → fnm v20.20.0)
+        assert!(versioned("/Users/a/.local/share/fnm/node-versions/v20.20.0/installation/bin/node"));
+        assert!(versioned("/Users/a/.nvm/versions/node/v22.1.0/bin/node"));
+        assert!(versioned("/Users/a/.volta/tools/image/node/22.1.0/bin/node"));
+        assert!(versioned("/Users/a/.asdf/installs/nodejs/22.1.0/bin/node"));
+        assert!(!versioned("/opt/homebrew/opt/node/bin/node"));
+        assert!(!versioned("/usr/local/bin/node"));
     }
 
     #[test]

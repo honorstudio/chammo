@@ -2,7 +2,7 @@
 // iOS 는 홈 화면에 붙인 앱에서만 된다(pushSupport). 맥이 알림을 보낼 때(참모 창을 안 보고 있을 때) 폰에 뜬다
 import { useEffect, useState } from 'react';
 import { getPushKey, pushSubscribe, pushUnsubscribe } from '../../data/web';
-import { autoResubscribe, b64urlBytes, pushSupport, type PushSupport } from '../../domain/mobilePush';
+import { autoResubscribe, b64urlBytes, pushError, pushSupport, type PushSupport } from '../../domain/mobilePush';
 import { isStandalone } from './standalone';
 
 const support = (): PushSupport => {
@@ -14,6 +14,7 @@ const support = (): PushSupport => {
     standalone: isStandalone(),
     ios: /iPhone|iPad|iPod/.test(navigator.userAgent),
     permission: typeof Notification !== 'undefined' ? Notification.permission : 'default',
+    secure: typeof window === 'undefined' || window.isSecureContext !== false,
   });
 };
 
@@ -67,7 +68,7 @@ export function usePush() {
       setUserOff(false);
       setOn(true);
     } catch (e) {
-      setError((e as Error).message);
+      setError(pushError(e as Error));
     } finally {
       setBusy(false);
     }
@@ -81,7 +82,7 @@ export function usePush() {
       setUserOff(true);
       setOn(false);
     } catch (e) {
-      setError((e as Error).message);
+      setError(pushError(e as Error));
     } finally {
       setBusy(false);
     }

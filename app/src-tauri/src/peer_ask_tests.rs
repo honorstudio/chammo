@@ -171,8 +171,33 @@ fn pe_요청은_10분에_5번_기다리는_카드는_3장까지() {
     assert_eq!(ok("nE", T0), Err(AskErr::TooMany), "기다리는 카드 3장");
     assert!(ok("nA", T0 + 1).is_ok(), "같은 기기 새 요청은 옛 카드를 바꿔 끼운다");
     assert_eq!(e.closed.borrow()[0].0, "card1");
-    assert_eq!(ok("nA", T0 + 2), Err(AskErr::TooMany), "10분에 5번");
+    for i in 0..3 {
+        assert!(ok("nA", T0 + 2 + i).is_ok(), "같은 기기 {}번째", i + 3);
+    }
+    assert_eq!(ok("nA", T0 + 9), Err(AskErr::TooMany), "기기마다 10분에 5번");
     assert!(ok("nA", T0 + WINDOW_MS + 1).is_ok(), "창이 지나면 다시");
+}
+
+#[test]
+fn pe_남의_요청은_내_기기_연결_상한을_못_써_버린다() {
+    // 확인 전에 기기 가리지 않고 세서 공유받은 노드가 가짜 요청 5개로 10분마다 내 기기끼리 연결을 막았다(2026-10-21 리뷰 ④-6)
+    let (a, b) = (Asks::default(), Asks::default());
+    let e = env(&a);
+    for i in 0..10 {
+        let r = a.start(&format!("spam-{i}"), T0).unwrap();
+        assert_eq!(b.request(&e, &r, "nSHARED", T0), Err(AskErr::NotMine));
+    }
+    let r = a.start("to-nA", T0).unwrap();
+    assert!(b.request(&e, &r, "nA", T0).is_ok());
+    // 내 기기 id 를 대고 되묻기에 못 지나는 가짜 요청을 쏟아도 그 기기 몫은 안 준다(2026-10-22 코드 리뷰)
+    let (a2, b2) = (Asks::default(), Asks::default());
+    let e2 = env(&a2);
+    for i in 0..10 {
+        let fake = Asks::default().start(&format!("spoof-{i}"), T0).unwrap();
+        assert_eq!(b2.request(&e2, &fake, "nA", T0), Err(AskErr::Unconfirmed));
+    }
+    let r = a2.start("to-nA", T0).unwrap();
+    assert!(b2.request(&e2, &r, "nA", T0).is_ok());
 }
 
 #[test]

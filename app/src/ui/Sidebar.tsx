@@ -118,7 +118,7 @@ export function Sidebar({ routines, external = [], orchestrator, projects: allPr
       </div>
       {/* 검색 아래는 한 줄기로 스크롤 — 프로젝트 목록만 스크롤하면 예약이 많을 때 그 칸이 0 으로 눌려 아래가 잘렸다(2026-10-19 report-241) */}
       <div className="side-scroll">
-        <button className={`grp-link ${isOn(selected, { kind: 'orchHome' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'orchHome' })} title={tr(`오케스트레이터 홈 — 어떤 ${josa(assistant(), '을', '를')} 켤지`, 'Orchestrator home — pick who to run')}>{tr('오케스트레이터', 'Orchestrator')}</button>
+        <button className={`grp-link ${isOn(selected, { kind: 'orchHome' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'orchHome' })} title={tr(`참모 홈 — 어떤 ${josa(assistant(), '을', '를')} 켤지`, 'Assistants home — pick who to run')}>{tr('참모', 'Assistants')}</button>
         <button className={`it ${isOn(selected, { kind: 'orchestrator' }) ? 'on' : ''}`} onClick={() => onSelect({ kind: 'orchestrator' })}>
           <StatusMark kind={orchestrator ? statusKind(statusOf(orchestrator)) : 'none'} />
           <span>

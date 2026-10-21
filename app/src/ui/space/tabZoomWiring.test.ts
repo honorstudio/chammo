@@ -93,7 +93,8 @@ describe('탭 확대 — 머리 단추', () => {
 
 describe('탭 확대 — 안내 글', () => {
   it('둘러보기·README·hq-app 스킬에 ⌘+ ⌘- ⌘0 ⌘9 확대', () => {
-    expect(tour).toMatch(/⌘\+ · ⌘- · ⌘0 · ⌘9/);
+    expect(tour).toMatch(/⌘\+ · ⌘- · ⌘0/);
+    expect(tour).toMatch(/⌘9 는 맞춤/); // ⌘9 는 채팅 탭 줄에 한 번만(2026-10-22 QA 22)
     for (const d of [readmeKo, readmeEn, skill]) expect(d).toMatch(/⌘9/);
   });
 });

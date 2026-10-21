@@ -384,22 +384,15 @@ fn 홈_화면_앱이_낸_코드로는_그_앱을_바꿔_끼우지_않는다() {
 }
 
 #[test]
-fn md1_틀린_코드를_5번_내면_그_코드는_죽는다() {
-    // 128비트라 맞히기는 못 해도, 연타는 코드 하나당 5번까지만 — 넘으면 맞는 코드도 안 된다(새 코드는 된다)
+fn md1_틀린_코드를_여러_번_내도_맞는_코드는_산다() {
+    // 128비트라 맞히기는 못 한다 — 틀린 코드 5번에 코드를 죽이면 남이 연타로 사람이 막 띄운 QR 을 죽일 수 있었다(2026-10-21 리뷰 ④-6)
     let st = Devices::memory();
     let now = SystemTime::now();
     let code = st.new_code(now).unwrap();
-    for _ in 0..4 {
+    for _ in 0..50 {
         assert!(st.pair(&"0".repeat(32), "x", now).is_none());
     }
-    assert!(st.pair(&code, "iPhone", now).is_some(), "4번 틀려도 아직 된다");
-    let c2 = st.new_code(now).unwrap();
-    for _ in 0..5 {
-        assert!(st.pair(&"0".repeat(32), "x", now).is_none());
-    }
-    assert!(st.pair(&c2, "iPhone", now).is_none(), "5번 틀리면 코드가 죽는다");
-    let c3 = st.new_code(now).unwrap();
-    assert!(st.pair(&c3, "iPhone", now).is_some(), "새 코드는 셈이 처음부터");
+    assert!(st.pair(&code, "iPhone", now).is_some(), "틀린 코드 연타에도 맞는 코드는 된다");
 }
 
 #[test]

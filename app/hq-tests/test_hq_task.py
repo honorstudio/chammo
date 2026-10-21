@@ -131,12 +131,25 @@ class Harness(unittest.TestCase):
             subprocess.run(['git', 'init', '-q', os.path.join(d, 'p')], check=True)
             with open(os.path.join(d, 'p', '.gitignore'), 'w') as f:
                 f.write('CLAUDE.local.md\n')
-            with contextlib.redirect_stderr(io.StringIO()):
+            with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
                 task.main(['lesson', '--all', 'common'])
                 task.main(['lesson', 'p', 'mine'])
             self.assertEqual(task.lessons_of('p'), ['common', 'mine'])
             with open(os.path.join(d, 'p', 'CLAUDE.local.md'), encoding='utf-8') as f:
                 self.assertIn('- mine\n', f.read())
+
+    def test_교훈_적으면_적었다고_말한다(self):
+        # 2026-10-22 첫 사용자 QA 20: 성공해도 출력이 없어 참모가 '저장됐는지 확인 못 했어'라고 보고했다
+        with tempfile.TemporaryDirectory() as d:
+            task.LESSONS, task.DEV = os.path.join(d, 'lessons'), d
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                task.main(['lesson', 'p', '새 교훈'])
+                task.main(['lesson', 'p', '새 교훈'])
+            first, again = out.getvalue().strip().splitlines()
+            self.assertIn('p', first)
+            self.assertIn(os.path.join(d, 'lessons', 'p.md'), first)
+            self.assertNotEqual(first, again)  # 이미 있던 줄이면 그렇다고
 
     def test_세_번째_되돌림과_증거(self):
         with tempfile.TemporaryDirectory() as d:
@@ -151,6 +164,15 @@ class Harness(unittest.TestCase):
             with contextlib.redirect_stderr(err):
                 task.main(['done', 't', 'PR #3 merged'])
             self.assertEqual(err.getvalue(), '')
+
+    def test_취소로_닫는_done_은_증거를_안_묻는다(self):
+        with tempfile.TemporaryDirectory() as d:
+            task.LOG = os.path.join(d, 'tasks.jsonl')
+            for note in ['사용자가 보내지 말라고 해서 취소', 'cancelled — not sent']:
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    task.main(['done', 't', note])
+                self.assertEqual(err.getvalue(), '', note)
 
     def test_운영_관문과_출시_전(self):
         with tempfile.TemporaryDirectory() as d:

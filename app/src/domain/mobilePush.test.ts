@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { autoResubscribe, b64urlBytes, goFrom, pushSupport } from './mobilePush';
+import { autoResubscribe, b64urlBytes, goFrom, PUSH_HINT, pushError, pushSupport } from './mobilePush';
 
 describe('pushSupport — 이 폰에서 웹 푸시를 켤 수 있나', () => {
-  const base = { sw: true, push: true, notif: true, standalone: true, ios: true, permission: 'default' };
+  const base = { sw: true, push: true, notif: true, standalone: true, ios: true, permission: 'default', secure: true };
   it('홈 화면에 붙인 앱이면 켤 수 있다', () => {
     expect(pushSupport(base)).toBe('ok');
   });
@@ -16,6 +16,12 @@ describe('pushSupport — 이 폰에서 웹 푸시를 켤 수 있나', () => {
   it('막아 뒀거나 기능이 없으면', () => {
     expect(pushSupport({ ...base, permission: 'denied' })).toBe('denied');
     expect(pushSupport({ ...base, ios: false, sw: false })).toBe('unsupported');
+  });
+  it('http 주소(보안 안 된 출처)면 따로 — 서비스 워커·푸시가 아예 없어서 종이 조용히 숨었다(남의 테일넷 HTTPS 꺼짐, 2026-10-22)', () => {
+    expect(pushSupport({ ...base, secure: false, sw: false, push: false })).toBe('insecure');
+    expect(pushSupport({ ...base, ios: false, standalone: false, secure: false, sw: false, push: false })).toBe('insecure');
+    // 아이폰 사파리 탭이어도 '홈 화면에 추가' 안내는 소용없다 — http 면 홈 화면 앱도 못 받는다
+    expect(pushSupport({ ...base, standalone: false, secure: false, sw: false })).toBe('insecure');
   });
 });
 
@@ -44,5 +50,27 @@ describe('autoResubscribe — 앱 업데이트·서비스 워커 갱신으로 �
     expect(autoResubscribe({ can: 'ok', permission: 'granted', hasSub: true, userOff: false })).toBe(false);
     expect(autoResubscribe({ can: 'ok', permission: 'default', hasSub: false, userOff: false })).toBe(false);
     expect(autoResubscribe({ can: 'need-home', permission: 'granted', hasSub: false, userOff: false })).toBe(false);
+  });
+});
+
+describe('PUSH_HINT — 종을 눌렀는데 못 켤 때 까닭(QA 2차)', () => {
+  it('http 안내는 데스크톱 설정의 실제 탭 이름(폰과 메신저)을 가리킨다 — \'모바일\' 탭은 없다', () => {
+    expect(PUSH_HINT.insecure).toContain('폰과 메신저');
+    expect(PUSH_HINT.insecure).not.toContain('설정 > 모바일');
+  });
+  it('막힘 안내는 브라우저 탭으로 연 경우(사이트 설정)도 말한다 — 홈 화면 앱이 아니면 설정 > 알림에 참모가 없다', () => {
+    expect(PUSH_HINT.denied).toMatch(/사이트 설정/);
+  });
+});
+
+describe('pushError — 브라우저가 준 영어 오류를 그대로 띄우지 않는다(QA 2차 iOS \'User denied push permission\')', () => {
+  it('허락 거절(NotAllowedError)은 우리말 까닭으로', () => {
+    const e = Object.assign(new Error('User denied push permission'), { name: 'NotAllowedError' });
+    expect(pushError(e)).toMatch(/허락/);
+    expect(pushError(e)).not.toMatch(/User denied/);
+  });
+  it('우리가 만든 한글 오류는 그대로, 모르는 오류는 우리말 앞머리 + 원문', () => {
+    expect(pushError(new Error('알림을 허락해야 받을 수 있어요'))).toBe('알림을 허락해야 받을 수 있어요');
+    expect(pushError(new Error('AbortError: boom'))).toMatch(/^알림을 못 켰어요 — /);
   });
 });

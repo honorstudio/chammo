@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { bornAfter, buildInbox, findTarget, freshItems, popoverOpen, replyBlocked } from './inbox';
+import { bornAfter, buildInbox, findTarget, freshItems, gateReply, popoverOpen, replyBlocked, replyHint } from './inbox';
 import type { Session } from './session';
 import type { ActivityStatus } from './status';
 import type { TaskEvent } from './tasks';
@@ -144,6 +144,39 @@ describe('popoverOpen — 결정이 들어오면 펼치고, 내가 닫으면(나
   it('새 게 없으면 닫아 둔 걸 그대로 둔다(나중에)', () => expect(popoverOpen(false, new Set(['a', 'b']), [it1, it2])).toBe(false));
   it('새 게 없으면 펼쳐 둔 것도 그대로', () => expect(popoverOpen(true, new Set(['a']), [it1])).toBe(true));
   it('다 처리해서 비면 접는다', () => expect(popoverOpen(true, new Set(['a']), [])).toBe(false));
+  // 2026-10-22 첫 사용자 QA 21: 새 물음마다 저절로 펼쳐져 오른쪽 위를(설정 창 위로도) 덮었다
+  const dec = { ...it1, key: 'd', kind: 'decide' as const };
+  it('재현: 설정 창이 떠 있으면 새 결정이 와도 펼치지 않는다(펼쳐 둔 건 그대로)', () => {
+    expect(popoverOpen(false, new Set(['a']), [it1, dec], { hold: true })).toBe(false);
+    expect(popoverOpen(true, new Set(['a']), [it1, dec], { hold: true })).toBe(true);
+  });
+  it('재현: 채팅에 이미 보이는 참모 물음(ask)은 펼치지 않는다 — 결정(decide)은 펼친다', () => {
+    expect(popoverOpen(false, new Set(['a']), [it1, it2], { askInView: true })).toBe(false);
+    expect(popoverOpen(false, new Set(['a']), [it1, dec], { askInView: true })).toBe(true);
+    expect(popoverOpen(false, null, [it1], { askInView: true })).toBe(false);
+  });
+});
+
+describe('결정 카드 — 단추·자리표시가 실제 동작과 같게(QA 12)', () => {
+  const send = ev('send', 't1', '2026-09-27T00:00:00Z', { target: 'calc-page', title: '계산 페이지' });
+  it('재현: 보내기 관문 카드(… 보내도 돼?)는 보낼까 단추가 있고 답은 물어본 참모에게 간다', () => {
+    const [item] = buildInbox([], [send, ev('ask', 't1', '2026-09-27T00:00:01Z', { note: '결제 확인 — calc-page: 계산 페이지 — 보내도 돼?', to: 'sid-orch' })], new Set());
+    expect(item?.gate).toBe(true);
+    expect(item?.toOrch).toBe(true);
+    expect(replyHint(item!)).toContain('물어본 참모');
+    expect(gateReply(true)).toContain('보내도 돼');
+    expect(gateReply(false)).toContain('보내지 마');
+  });
+  it('보통 결정은 단추 없이 답장만, 참모가 없으면 그 세션으로', () => {
+    const [item] = buildInbox([], [send, ev('ask', 't1', '2026-09-27T00:00:01Z', { note: '어느 안으로 할까?' })], new Set());
+    expect(item?.gate).toBeFalsy();
+    expect(item?.toOrch).toBe(false);
+    expect(replyHint(item!)).toContain('그 세션');
+  });
+  it('참모 물음(ask) 답장도 참모에게', () => {
+    const [item] = buildInbox([act(s('o', 'hq'), 'asks', '머지할까?')], [], new Set(), [], () => true);
+    expect(replyHint(item!)).toContain('물어본 참모');
+  });
 });
 
 describe('영어 모드', () => {

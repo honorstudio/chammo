@@ -128,6 +128,27 @@ class Harness:
 class Flow(Harness):
     """review·propose·group·drop·restore 흐름"""
 
+    def test_묶는_사이_덧붙인_새_교훈이_안_사라진다(self):
+        # 2026-10-21 리뷰 ⑥-3: lesson-group 이 교훈 파일을 읽고 줄을 뺀 글로 갈아 끼우는 사이 다른 참모의 task reply 가 덧붙인 줄이 사라졌다
+        import threading, time
+        t, src = self.task, os.path.join(self.task.LESSONS, 'proj.md')
+        real = t.lesson_skill._write
+        th = []
+
+        def racing(path, text):
+            if os.path.realpath(path) == os.path.realpath(src) and not th:
+                th.append(threading.Thread(target=t.add_lesson, args=('proj', '그새 들어온 교훈')))
+                th[0].start()
+                time.sleep(0.3)  # 잠금이 없으면 이 사이에 덧붙는다
+            return real(path, text)
+
+        with mock.patch.object(t.lesson_skill, '_write', racing):
+            code, _, err = self.group()
+        th[0].join(5)
+        self.assertEqual(code, 0, err)
+        self.assertIn('그새 들어온 교훈', self.lessons())
+        self.assertNotIn(LESSONS[0], self.lessons())
+
     def test_review_는_번호와_크기를_보여_주고_아무것도_안_바꾼다(self):
         before = read(os.path.join(self.task.LESSONS, 'proj.md'))
         code, out, err = self.run_task('lesson-review', 'proj')

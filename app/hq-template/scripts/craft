@@ -588,7 +588,13 @@ def read_state(ddir):
 
 
 def start_server(ddir, root):
-    """떠 있으면 그 포트, 없으면 새로 띄운다(앱 저장소가 이어지게 지난 포트부터)"""
+    """떠 있으면 그 포트, 없으면 새로 띄운다(앱 저장소가 이어지게 지난 포트부터) — 한 번에 한 스크립트만:
+    두 세션이 같이 띄우면 둘 다 _serve 를 띄우고 나중 것이 상태 파일을 덮어 첫 서버는 stop 으로 못 끄는 고아로 남았다(2026-10-21 리뷰 ③-18)"""
+    with file_lock(os.path.join(ddir, 'craft-server.lock')):
+        return _start_server(ddir, root)
+
+
+def _start_server(ddir, root):
     st = read_state(ddir)
     if st.get('port') and alive(root, st['port']):
         return st['port']
@@ -608,8 +614,11 @@ def serve_main(ddir, root, port):
         srv = make_server(root, int(port))
     except OSError:
         srv = make_server(root, 0)
-    with open(state_path(ddir), 'w', encoding='utf-8') as f:
+    # 다 쓴 뒤 갈아 끼운다 — 읽는 쪽이 반쯤 쓴 JSON 을 안 보게
+    tmp = f'{state_path(ddir)}.{os.getpid()}.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
         json.dump({'pid': os.getpid(), 'port': srv.server_address[1]}, f)
+    os.replace(tmp, state_path(ddir))
     srv.serve_forever()
 
 
@@ -1012,10 +1021,14 @@ def _taken(ddir, key):
     return inst_alive(st) or pid_alive(_read_json(claim_file(ddir, key)).get('pid'))
 
 
-@contextlib.contextmanager
 def slot_lock(ddir, app):
     """자리 고르기·줄은 한 번에 한 스크립트만 — 둘이 같이 띄워도 같은 자리를 안 잡게"""
-    p = os.path.join(ddir, 'craft-native', f'{app}.lock')
+    return file_lock(os.path.join(ddir, 'craft-native', f'{app}.lock'))
+
+
+@contextlib.contextmanager
+def file_lock(p):
+    """그 잠금 파일을 쥔 동안 다른 스크립트는 기다린다(프로세스 사이)"""
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, 'a', encoding='utf-8') as f:
         if IS_WIN:  # 윈도우엔 fcntl 이 없다 — msvcrt 잠금(craft_win.lock)

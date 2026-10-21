@@ -46,14 +46,17 @@ const SAY_TO_GO = /""\s*(만\s*)?(이?라고\s*)?하면.*게[.!]?$|""\s*(만\s*)
 /** 예를 드는 문장 — 자기소개의 '예를 들면 "…"라고 하면 …할게'는 시킬 거리를 보여 주는 것이지 답을 기다리는 게 아니다(2026-10-21 첫 사용자 QA) */
 const EXAMPLE = /예를\s*들(?:어|면|자면)|예컨대|가령|이를테면|예시로|예로\s*들면|for example|e\.g\./i;
 
+/** 문장 하나가 사용자에게 묻는 말인가(질문꼴·'정해 줘' 같은 부탁·말할 낱말 쥐여 주기) — 결정 대기함 카드도 이걸로 물은 문장을 고른다(activity askView) */
+export function asksSentence(s: string): boolean {
+  const x = s.replace(QUOTED, '""').replace(/\*\*/g, '');
+  if (SAY_TO_GO.test(x) && !EXAMPLE.test(x)) return true;
+  if (/[?？]\s*[ㅇㅎㅋ;~!\s]*$/.test(x) && !SELF_Q.test(x)) return true;
+  const m = REQUEST.exec(x);
+  return !!m && !IF_BEFORE.test(x.slice(0, m.index));
+}
+
 function asksInTail(tail: string): boolean {
-  for (const x of sentences(tail.replace(QUOTED, '""').replace(/\*\*/g, ''))) {
-    if (SAY_TO_GO.test(x) && !EXAMPLE.test(x)) return true;
-    if (/[?？]\s*[ㅇㅎㅋ;~!\s]*$/.test(x) && !SELF_Q.test(x)) return true;
-    const m = REQUEST.exec(x);
-    if (m && !IF_BEFORE.test(x.slice(0, m.index))) return true;
-  }
-  return false;
+  return sentences(tail.replace(QUOTED, '""').replace(/\*\*/g, '')).some(asksSentence);
 }
 
 /** reply 는 자르기 전 전체 답이어야 한다 — 끝 80자로 질문꼴, 끝 300자로 묻는 문장·부탁, 끝 400자로 허락·확인 요청·답 기다림을 본다 */

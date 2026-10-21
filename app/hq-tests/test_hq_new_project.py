@@ -244,6 +244,39 @@ class StatusLine(unittest.TestCase):
             self.assertNotIn('statusLine', s)
             self.assertEqual(s['worktree'], {'bgIsolation': 'none'})
 
+    def test_데이터_폴더를_바꾼_설치면_새_프로젝트_세션에_CHAMMO_HOME(self):
+        # 2026-10-22 첫 사용자 QA 1: 데몬이 띄운 세션엔 CHAMMO_HOME 이 안 넘어가 scripts/direct·task·show 가 기본 폴더(~/.chammo)로 샜다
+        with tempfile.TemporaryDirectory() as root:
+            data, dev = fake_data(root)
+            np.create('web-app', '설명', data=str(data), home=root, today='2026-09-28', node='/nope')
+            s = json.loads((dev / 'web-app/.claude/settings.local.json').read_text())
+            self.assertEqual(s['env'], {'CHAMMO_HOME': str(data)})
+
+    def test_윈도우는_경로를_한_모양으로_파이썬은_UTF_8_로(self):
+        # 2026-10-22 윈도우 QA 2차: path 가 'C:\\Users\\Me/…/내 프로젝트\\todo-list' 로 섞여 참모가 옮겨 치다 틀렸고,
+        # 프로젝트·예약 세션이 부르는 scripts(routine report 등) 출력 한글이 cp949 로 깨졌다(HQ 엔 PYTHONUTF8 이 있었다)
+        with tempfile.TemporaryDirectory() as root:
+            data, dev = fake_data(root)
+            out = np.create('web-app', '설명', data=str(data), home=root, today='2026-09-28', node='/nope', win=True)
+            self.assertNotIn('\\', out['path'])
+            s = json.loads((dev / 'web-app/.claude/settings.local.json').read_text())
+            self.assertEqual(s['env']['PYTHONUTF8'], '1')
+            self.assertNotIn('\\', s['env']['CHAMMO_HOME'])
+
+    def test_다음_명령의_경로는_빈칸이_있어도_한_덩어리(self):
+        import shlex
+        line = np.next_cmd('/Users/me/내 프로젝트/web-app', 'web-app', '')
+        self.assertEqual(shlex.split(line)[:2], ['cd', '/Users/me/내 프로젝트/web-app'])
+
+    def test_기본_데이터_폴더면_env_를_안_적는다(self):
+        with tempfile.TemporaryDirectory() as root:
+            data, dev = fake_data(root)
+            default = pathlib.Path(root) / '.chammo'
+            os.rename(data, default)
+            np.create('web-app', '설명', data=str(default), home=root, today='2026-09-28', node='/nope')
+            s = json.loads((dev / 'web-app/.claude/settings.local.json').read_text())
+            self.assertNotIn('env', s)
+
 
 if __name__ == '__main__':
     unittest.main()

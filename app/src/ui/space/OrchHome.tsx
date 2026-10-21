@@ -102,7 +102,7 @@ export function OrchHome({ live, off, ctx, lines, starting, ready, creating, wai
   return (
     <div className="cv-dash oh">
       <header className="cv-page-head">
-        <div className="cv-titles"><h1>{tr('오케스트레이터', 'Orchestrators')}</h1></div>
+        <div className="cv-titles"><h1>{tr('참모', 'Assistants')}</h1></div>
         {onNew && !empty && <button className="oh-new" onClick={onNew} aria-label={tr(`새 ${assistant()}`, `New ${assistant()}`)} title={tr(`새 ${assistant()} (${keyLabel('⌘⇧T', IS_WIN)})`, `New ${assistant()} (${keyLabel('⌘⇧T', IS_WIN)})`)}><IconPlus /></button>}
       </header>
       {empty ? (

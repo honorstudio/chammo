@@ -263,14 +263,14 @@ pub fn apply_ops(bytes: &[u8], ops: &[Op]) -> Result<Vec<u8>, String> {
                 flush(&mut parts, &mut batch, &mut styles)?;
                 let p = crate::sheet_sheets::resolve(&parts, part)?;
                 let xml = get(&parts, &p).ok_or("그 시트가 없어")?;
-                let new = if matches!(op, Op::Merge { .. }) { crate::sheet_layout_ops::merge(&xml, range) } else { crate::sheet_layout_ops::unmerge(&xml, range) };
+                let new = if matches!(op, Op::Merge { .. }) { crate::sheet_layout_ops::merge(&xml, range)? } else { crate::sheet_layout_ops::unmerge(&xml, range)? };
                 put(&mut parts, &p, new);
                 continue;
             }
             Op::ColWidth { part, at, n, width } => {
                 let p = crate::sheet_sheets::resolve(&parts, part)?;
                 let xml = get(&parts, &p).ok_or("그 시트가 없어")?;
-                put(&mut parts, &p, crate::sheet_layout_ops::col_width(&xml, *at, *n, *width));
+                put(&mut parts, &p, crate::sheet_layout_ops::col_width(&xml, *at, *n, *width)?);
                 continue;
             }
             Op::RowHeight { part, at, n, height } => {

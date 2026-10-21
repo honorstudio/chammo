@@ -160,6 +160,10 @@ export function phoneTrouble(screen: PhoneScreen | null | undefined, pullErr: st
   return s.kind === 'closed' ? closed : s.kind === 'fail' ? fail(screen.error) : null;
 }
 
+/** 지금 탭 그림이 있나 — 탭이 바뀌면 칸엔 앞 탭 그림이 남아 '그림 없음'(NO_FRAME_MS 뒤 이유)이 영영 안 떴다(2026-10-22 QA 6).
+ *  framed = 일꾼이 지금 탭 그림을 한 장이라도 받았나(agent_tabs, 옛 앱이면 없음 — 그림만 본다) */
+export const showsPicture = (src: string, framed: boolean | undefined) => !!src && framed !== false;
+
 /** 붙고 지금 탭도 아는데 그림이 이만큼 안 오면 이유를 보인다 — 첫 장은 보통 1초 안, 일꾼이 2초마다 다시 찍는다(2026-10-21 첫 사용자 제보) */
 export const NO_FRAME_MS = 8000;
 

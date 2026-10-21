@@ -615,6 +615,8 @@ fn history_name(tag: Option<&str>, at: std::time::SystemTime) -> String {
     let secs = at.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     match tag {
         Some("outside") => format!("{}-outside-{:02}.md", secs / 60, secs % 60),
+        // 엑셀 표를 충돌·막힘 상태로 닫을 때 못 쓴 칸 고침(SheetGrid) — 초까지, 글은 JSON(2026-10-21 리뷰 ⑦-7)
+        Some("edits") => format!("{}-edits-{:02}.json", secs / 60, secs % 60),
         _ => format!("{}-mine.md", secs / 60),
     }
 }
@@ -1561,6 +1563,7 @@ mod tests {
         let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(29_850_823 * 60 + 7);
         assert_eq!(super::history_name(Some("outside"), t), "29850823-outside-07.md");
         assert_eq!(super::history_name(None, t), "29850823-mine.md");
+        assert_eq!(super::history_name(Some("edits"), t), "29850823-edits-07.json");
         assert_eq!(super::history_name(Some("../x"), t), "29850823-mine.md", "모르는 표시는 이름에 안 넣는다");
     }
 }

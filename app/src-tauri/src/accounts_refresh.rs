@@ -18,6 +18,35 @@ use std::time::{Duration, SystemTime};
 /// 끼울 칸 토큰을 미리 갱신하는 길 — 칸의 claudeAiOauth 를 받아 갱신된 claudeAiOauth 를 준다. 실제는 refresh(curl), 시험은 가짜
 pub type Refresher = fn(&Value) -> Result<Value, String>;
 
+/// 토큰(claudeAiOauth)의 주인 계정(accountUuid) — 모르면 None(망이 안 됨 등). 실제는 owner(curl), 시험은 가짜
+pub type Owner = fn(&Value) -> Option<String>;
+
+/// Claude Code 가 계정 정보를 묻는 주소 — 칸에 토큰을 넣기 전에 그 토큰이 정말 그 칸 계정 것인지 본다(2026-10-21 리뷰 ⑤-2)
+pub const PROFILE_URL: &str = "https://api.anthropic.com/api/oauth/profile";
+
+/// 토큰으로 주인 계정을 묻는다 — 토큰은 curl 의 stdin 헤더로만(accounts_usage 와 같게). 4초, 실패·모르는 모양이면 None
+pub fn owner(o: &Value) -> Option<String> {
+    let token = o.get("accessToken")?.as_str().filter(|t| !t.is_empty())?;
+    let h = crate::accounts_usage::header_text(token)?;
+    let mut c = crate::platform::command("/usr/bin/curl");
+    c.args(["-sS", "--max-time", "4", "-H", "@-", "-w", "\n%{http_code}", PROFILE_URL]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+    let mut child = c.spawn().ok()?;
+    if let Some(mut si) = child.stdin.take() {
+        let _ = si.write_all(h.as_bytes());
+    }
+    let out = child.wait_with_output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let (body, code) = text.rsplit_once('\n')?;
+    (code.trim() == "200").then_some(())?;
+    profile_owner(body)
+}
+
+/// 계정 정보 응답 → accountUuid
+pub fn profile_owner(body: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    v["account"]["uuid"].as_str().filter(|u| !u.is_empty()).map(str::to_string)
+}
+
 /// Claude Code 와 같은 주소·앱 id(2.1.296 의 TOKEN_URL·CLIENT_ID)
 pub const TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
 pub const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -67,7 +96,8 @@ pub fn body(o: &Value) -> Option<String> {
 /// 응답을 칸 값에 — 새 토큰·만료 시각만 바꾸고 나머지(요금제·clientId 등)는 그대로. 갱신 토큰이 안 왔으면 쓰던 것(Claude Code 와 같다)
 pub fn apply(old: &Value, resp: &Value, now: i64) -> Option<Value> {
     let at = resp.get("access_token")?.as_str().filter(|t| !t.is_empty())?;
-    let secs = resp.get("expires_in")?.as_i64()?;
+    // 만료 시간이 없거나 모양이 달라도 새 토큰은 받는다 — 서버가 갱신 토큰을 이미 돌렸으면 버리는 순간 그 칸이 죽는다(⑤-3). 모르면 1시간으로 보고 일찍 다시 갱신
+    let secs = resp.get("expires_in").and_then(Value::as_i64).unwrap_or(3600);
     let mut n = old.clone();
     n["accessToken"] = at.into();
     n["expiresAt"] = (now + secs * 1000).into();

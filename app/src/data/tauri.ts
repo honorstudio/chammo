@@ -124,6 +124,8 @@ export const writePty = (id: number, data: string) => invoke<void>('pty_write', 
 export const typePty = (id: number, keys: string[], enterMs?: number) => invoke<void>('pty_type', { id, keys, enterMs: enterMs ?? null });
 export const resizePty = (id: number, cols: number, rows: number) => invoke<void>('pty_resize', { id, cols, rows });
 export const closePty = (id: number) => invoke<void>('pty_close', { id });
+/** 창이 뜰 때 한 번 — 이 창이 지난번(location.reload 전)에 열어 둔 pty 를 닫는다(React 정리가 안 돌아 attach 자식이 남았다) */
+export const closeMyPtys = () => invoke<number>('pty_close_mine');
 /** 지구본(fn) 키 말하기가 스페이스를 흘릴 pty — 마지막으로 포커스를 받은 입력 창 */
 export const pttTarget = (id: number | null) => invoke<void>('ptt_target', { id });
 /** 지구본 키 말하기가 끝난 pty 를 받는다(한 번만 등록 — 여러 창은 TerminalPane 이 나눠 듣는다) */
@@ -262,7 +264,8 @@ export const logAutoAllow = (ev: object) => invoke<void>('log_auto_allow', { lin
 export const readMemos = (names: string[]) => invoke<Record<string, string>>('read_memos', { names });
 export const writeMemo = (name: string, content: string) => invoke<void>('write_memo', { name, content });
 export const readLessons = (names: string[]) => invoke<Record<string, string>>('read_lessons', { names });
-export const writeLessons = (name: string, content: string) => invoke<void>('write_lessons', { name, content });
+/** base = 고치기 전에 읽은 글 — 그 뒤 덧붙은 교훈은 Rust 가 잠근 채 다시 읽어 남긴다 */
+export const writeLessons = (name: string, content: string, base?: string) => invoke<void>('write_lessons', { name, content, base: base ?? null });
 export const unmirrorLesson = (project: string, lesson: string) => invoke<boolean>('unmirror_lesson', { project, lesson });
 export const appendMemo = (name: string, entry: string) => invoke<void>('append_memo', { name, entry });
 export const readAutoAllow = () => invoke<string>('read_auto_allow');
@@ -401,7 +404,7 @@ export const deleteAvatarFile = (key: string) => invoke<void>('avatar_delete', {
 /** 모바일(폰 → 테일스케일) — 켜고 끄기·짝짓기 QR·연결된 기기(Rust mobile.rs·mobile_pair.rs). 마스터 열쇠는 폰으로 안 나간다 */
 /** 기기 줄 하나 = 열쇠 하나(사파리·홈 화면 앱은 따로) — group 이 같으면 같은 폰(domain/mobileDevices) */
 export type MobileDevice = DeviceRow;
-export type MobileStatus = { on: boolean; running: boolean; bind: string | null; error: string | null; https: boolean; httpsNote: string | null; devices: MobileDevice[] };
+export type MobileStatus = { on: boolean; running: boolean; bind: string | null; error: string | null; https: boolean; httpsNote: string | null; /** https 를 켜러 갈 곳(테일스케일 관리 화면) */ httpsFix: string | null; devices: MobileDevice[] };
 /** 짝짓기 QR — 10분 지나거나 한 번 쓰면 죽는다 */
 export type PairQr = { url: string; qrSvg: string | null; expires: number };
 /** 텔레그램(Rust messenger_cmd.rs) — 토큰은 키체인(윈도우는 600 파일), 짝짓기는 10분 한 번짜리 딥링크. 보안 판단은 Rust 에 */

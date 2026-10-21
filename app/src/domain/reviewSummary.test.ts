@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { OpenPr } from './review';
-import { mergedSince, pickSession, sessionOf, sinceIso, splitOpen, summarize, taskId } from './reviewSummary';
+import { mergedSince, pickSession, readFailLine, sessionOf, sinceIso, splitOpen, summarize, taskId } from './reviewSummary';
 import type { TaskEvent } from './tasks';
 
 const pr = (o: Partial<OpenPr>): OpenPr => ({
@@ -137,5 +137,13 @@ describe('sinceIso · taskId', () => {
   });
   it('작업 기록 id 는 scripts/task 와 같은 모양(MMDD-HHMM-4자)', () => {
     expect(taskId(new Date(2026, 8, 27, 20, 13), () => 0.5)).toMatch(/^0927-2013-[0-9a-f]{4}$/);
+  });
+});
+
+describe('readFailLine — GitHub 읽기 실패 까닭 한 줄(2026-10-22 윈도우 QA 8: gh 는 로그인돼 있는데 까닭 없이 실패만 떴다)', () => {
+  it('첫 줄만, 앞의 Error: 는 떼고, 길면 자른다', () => {
+    expect(readFailLine('Error: gh 실행 실패: program not found\nmore')).toBe('gh 실행 실패: program not found');
+    expect(readFailLine('x'.repeat(200)).length).toBeLessThanOrEqual(81);
+    expect(readFailLine('')).toBe('');
   });
 });

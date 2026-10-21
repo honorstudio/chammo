@@ -1,7 +1,7 @@
 // 설정 > 모바일 — 폰에서 참모를 여는 서버 켜기/끄기, 폰 연결 QR(10분 한 번짜리 짝짓기), 연결된 기기·끊기(Rust mobile.rs). 기본 꺼짐.
 // 목록은 폰 단위 — 사파리·홈 화면 앱(열쇠 둘)을 한 줄로 묶고 칸은 작은 글로(domain/mobileDevices)
 import { useEffect, useState } from 'react';
-import { mobileApi, writeClipboard, type MobileStatus, type PairQr } from '../data/tauri';
+import { mobileApi, openTarget, writeClipboard, type MobileStatus, type PairQr } from '../data/tauri';
 import { groupCode, pairCodeFrom } from '../domain/mobileAuth';
 import { kindLabels, lastPaired, phoneGroups } from '../domain/mobileDevices';
 import { IconClose, IconPower, IconUnlink } from './Icons';
@@ -58,9 +58,10 @@ export function MobileSection({ title }: { title: string }) {
         )}
       </div>
       <p className="su-hint">
-        {tr('폰에서 비서와 채팅하고 세션·예약을 봐요. 테일스케일로만 열리고(같은 와이파이에도 안 보임), 폰마다 한 번 연결 QR 을 찍으면 그 폰만의 열쇠가 생겨요. QR 은 10분 안에 한 번만 쓸 수 있어요.',
-          'Chat with your assistant and check sessions and routines from your phone. Reachable only over Tailscale (not even on the same Wi-Fi); scan a connect QR once per phone and it gets its own key. A QR works once, within 10 minutes.')}
+        {tr('폰에서 참모와 채팅하고 세션·예약을 봐요. 테일스케일로만 열리고(같은 와이파이에도 안 보임) 폰도 이 컴퓨터와 같은 테일스케일 계정으로 로그인해야 해요(공유받은 기기·다른 계정·태그 기기는 안 받아요). 폰마다 한 번 연결 QR 을 찍으면 그 폰만의 열쇠가 생겨요. QR 은 10분 안에 한 번만 쓸 수 있어요.',
+          'Chat with your assistant and check sessions and routines from your phone. Reachable only over Tailscale (not even on the same Wi-Fi), and the phone must be signed in to the same Tailscale account as this computer (shared nodes, other accounts and tagged nodes are refused); scan a connect QR once per phone and it gets its own key. A QR works once, within 10 minutes.')}
       </p>
+      {st && !st.on && <span className="su-hint">{tr('꺼져 있어요 — 오른쪽 위 단추로 켜요.', 'Off — turn it on with the button at the top right.')}</span>}
       {st?.running && (
         <>
           {qr ? (
@@ -84,7 +85,12 @@ export function MobileSection({ title }: { title: string }) {
           ) : (
             <div className="su-inline"><button className="btn pri" onClick={newQr}>{tr('폰 연결 QR 만들기', 'Make connect QR')}</button></div>
           )}
-          {!st.https && <span className="su-hint">{tr(`테일스케일 HTTPS 를 못 걸어 http 주소예요 — 폰에서 누르고 말하기(마이크)는 안 돼요. ${st.httpsNote ?? ''}`, `Tailscale HTTPS is not set, so this is an http address — push-to-talk (mic) won't work on the phone. ${st.httpsNote ?? ''}`)}</span>}
+          {!st.https && (
+            <>
+              <span className="su-hint">{tr(`http 주소라 폰에서 홈 화면 앱 설치(안드로이드)·알림·마이크가 안 돼요. ${st.httpsNote ?? ''}`, `This is an http address, so the phone can't install the home-screen app (Android), get notifications or use the mic. ${st.httpsNote ?? ''}`)}</span>
+              {st.httpsFix && <div className="su-inline"><button className="btn" onClick={() => void openTarget('url', st.httpsFix!).catch(() => {})}>{tr('테일스케일 관리 화면 열기', 'Open Tailscale admin')}</button></div>}
+            </>
+          )}
           <div className="su-rows">
             {phones.map((g) => (
               <div key={g.group} className="su-row">

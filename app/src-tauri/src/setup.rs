@@ -208,7 +208,8 @@ pub async fn claude_trusted(dir: String) -> bool {
 
 fn claude_trusted_now(dir: &str) -> bool {
     let home = crate::platform::home();
-    let text = std::fs::read_to_string(format!("{home}/.claude.json")).unwrap_or_default();
+    // CLAUDE_CONFIG_DIR 를 쓰면 claude 는 그 밑 .claude.json 에 적는다 — 홈 것만 봐서 믿어도 '안 믿음'으로 남았다(QA 7)
+    let text = std::fs::read_to_string(crate::tools::cfg().json).unwrap_or_default();
     trusted_at(&text, &crate::config::expand(&home, dir))
 }
 

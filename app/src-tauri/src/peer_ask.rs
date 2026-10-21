@@ -14,7 +14,8 @@ use std::sync::Mutex;
 pub const TTL_MS: u64 = 5 * 60_000;
 /// 허용한 뒤 요청한 기기가 열쇠를 받아 가야 하는 시간
 pub const PICKUP_MS: u64 = 60_000;
-/// 요청 상한 창 — 이 안에 PER_WINDOW 번(기기 가리지 않고)
+/// 요청 상한 창 — 이 안에 기기마다 PER_WINDOW 번. 같은 계정 기기로 확인된 뒤에만 센다 — 예전엔 확인 전에 기기 가리지 않고 세서
+/// 테일넷의 아무 피어가 10분마다 가짜 요청 5개로 내 기기끼리 연결을 늘 막을 수 있었다(2026-10-21 리뷰 ④-6)
 pub const WINDOW_MS: u64 = 10 * 60_000;
 pub const PER_WINDOW: usize = 5;
 /// 한꺼번에 허용을 기다리는 카드
@@ -122,7 +123,7 @@ struct Outgoing {
 #[derive(Default)]
 struct Inner {
     incoming: Vec<Incoming>,
-    times: Vec<u64>,
+    times: Vec<(String, u64)>,
     outgoing: Vec<Outgoing>,
 }
 
@@ -173,21 +174,22 @@ impl Asks {
         if !env.supported() {
             return Err(AskErr::Unsupported);
         }
+        let peer = env.lookup(node).ok_or(AskErr::NotMine)?;
         {
             let mut g = self.lock();
             sweep(&mut g, env, now);
-            g.times.retain(|t| now.saturating_sub(*t) < WINDOW_MS);
-            if g.times.len() >= PER_WINDOW {
+            g.times.retain(|(_, t)| now.saturating_sub(*t) < WINDOW_MS);
+            if g.times.iter().filter(|(n, _)| n == node).count() >= PER_WINDOW {
                 return Err(AskErr::TooMany);
             }
-            g.times.push(now);
         }
-        let peer = env.lookup(node).ok_or(AskErr::NotMine)?;
         let hash = hex_sha(req);
         if !env.confirm(&peer, &hash) {
             return Err(AskErr::Unconfirmed);
         }
         let mut g = self.lock();
+        // 되묻기가 통과한 요청만 센다 — node 는 보낸 쪽이 밝히는 값이라, 확인 전에 세면 남이 내 기기 id 를 대고 그 기기 몫을 다 썼다(2026-10-22 코드 리뷰)
+        g.times.push((node.to_string(), now));
         if let Some(i) = g.incoming.iter().position(|i| i.peer.id == node && i.pick == Pick::Wait) {
             let old = g.incoming.remove(i);
             env.close_card(&old.card, false, "새 요청으로 바뀌었어요");

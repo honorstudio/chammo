@@ -41,6 +41,9 @@ describe('kindOf — 더 많은 확장자(2026-09-30 사용자 "더 많은 확�
 describe('titleOf — 탭 이름', () => {
   it('파일 이름, 흔한 이름(index.html·README.md)은 폴더/파일', () => {
     expect(titleOf('/x/pixel-office/v3.html')).toBe('v3.html');
+    // 윈도우 경로는 \ — 탭에 'C:\Users\Me\chammo-…' 전체 경로가 떴다(2026-10-22 윈도우 QA 31)
+    expect(titleOf('C:\\Users\\Me\\projects\\todo-list\\v3.html')).toBe('v3.html');
+    expect(titleOf('C:\\Users\\Me\\projects\\todo-list/index.html')).toBe('todo-list/index.html');
     expect(titleOf('/x/pixel-office/index.html')).toBe('pixel-office/index.html');
     expect(titleOf('/x/pixel-office/README.md')).toBe('pixel-office/README.md');
   });

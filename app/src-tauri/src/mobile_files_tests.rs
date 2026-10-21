@@ -697,3 +697,19 @@ fn 기록을_읽을_때_옮긴_줄은_새_자리_못_찾으면_gone() {
     assert_eq!(g["gone"], true);
     assert!(out.ends_with('\n'));
 }
+
+#[test]
+#[cfg(target_os = "macos")]
+fn 데이터_폴더는_다른_철자로도_못_빠져나간다() {
+    // 글자 비교라 점 없는 CHAMMO_HOME 에서 대소문자만 다른 철자(APFS 는 대소문자 무시)로 push-vapid.json(VAPID 개인 키)이 폰에 나갔다(2026-10-21 리뷰 ④-4)
+    let d = tmp("datacase");
+    let data = d.join("ChammoData");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("push-vapid.json"), "{}").unwrap();
+    let r = rules(&data, "");
+    assert!(!shareable(&data.join("push-vapid.json"), &r));
+    assert!(!shareable(&d.join("chammodata").join("push-vapid.json"), &r), "대소문자만 다른 철자");
+    assert!(!shareable(&d.join("CHAMMODATA/sub/../push-vapid.json"), &r));
+    std::fs::write(d.join("note.md"), "x").unwrap();
+    assert!(shareable(&d.join("note.md"), &r), "데이터 폴더 밖은 그대로");
+}

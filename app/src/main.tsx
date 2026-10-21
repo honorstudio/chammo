@@ -8,6 +8,8 @@ import { installFileDrop } from './ui/fileDrop';
 import { installImeGuard } from './ui/imeGuard';
 import { installModeBus } from './ui/mode/modeBus';
 import { ErrorBoundary } from './ui/ErrorBoundary';
+import { HANGUL_FIT, HANGUL_RANGE, hangulFit, LATIN_STACK } from './domain/termFont';
+import { IS_WIN } from './domain/reader';
 
 // 언어·비서 이름은 App 을 불러오기 **전에** 정한다 — 모듈 맨 위의 표(가챠 이름 등)가 tr() 로 된 채 평가되기 때문.
 // 설정(config.json)의 값을 localStorage 에 비춰 둔 것을 읽는다(동기). 설정에서 바꾸면 창을 다시 연다
@@ -25,11 +27,24 @@ installModeBus();
 installImeGuard();
 
 // 터미널 폰트를 먼저 불러온 뒤 그린다 (xterm 은 처음 열 때 칸 폭을 잰다). 실패해도 1.5초 뒤엔 그린다
+// 윈도우는 한글을 터미널 칸 폭에 맞춘 글꼴을 하나 더 — 라틴 한 칸을 재서 size-adjust(domain/termFont, 윈도우 QA 31)
+const fitHangul = (): Promise<unknown> => {
+  if (!IS_WIN) return Promise.resolve();
+  const c = document.createElement('canvas').getContext('2d');
+  if (!c) return Promise.resolve();
+  c.font = `100px ${LATIN_STACK}`;
+  const face = new FontFace(HANGUL_FIT, 'url(/fonts/ChammoHangul.woff2)', { unicodeRange: HANGUL_RANGE, sizeAdjust: `${hangulFit(c.measureText('W').width, 100)}%` } as FontFaceDescriptors);
+  document.fonts.add(face);
+  return face.load();
+};
 const fonts = Promise.all([
   document.fonts.load('12px "Chammo Hangul"', '가'),
+  fitHangul().catch(() => {}),
   document.fonts.load('12px "MesloLGSDZ Nerd Font Mono"', 'a'),
 ]);
 Promise.race([fonts, new Promise((r) => setTimeout(r, 1500))]).finally(async () => {
+  // 설정 저장으로 창을 다시 읽었으면 지난번 터미널 칸(pty·claude attach)이 Rust 에 남아 있다 — 새 칸을 열기 전에 닫는다(2026-10-21 리뷰 ①-9)
+  await import('./data/tauri').then((t) => t.closeMyPtys()).catch(() => {});
   const { default: App } = await import('./App');
   createRoot(document.getElementById('root')!).render(
     <StrictMode>

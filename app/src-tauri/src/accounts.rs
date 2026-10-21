@@ -32,6 +32,16 @@ pub struct Live {
     pub claude_dir: Option<PathBuf>,
     /// 끼울 칸 토큰이 곧 만료면 미리 갱신하는 길(accounts_refresh)
     pub refresh: crate::accounts_refresh::Refresher,
+    /// 토큰 주인 묻기 — 칸에 넣기 전에 남의 계정 토큰인지 본다
+    pub owner: crate::accounts_refresh::Owner,
+}
+
+/// 이 토큰(claudeAiOauth)이 그 칸 계정 것이 아님이 확실한가 — 주인을 물어 다른 계정이면 true. 모르면 false(예전처럼 저장 —
+/// 안 그러면 정상 갱신된 토큰을 버려 그 칸이 죽는다). 돌던 세션이 옛 계정 토큰을 로그인 칸에 되써도(oauthAccount 는 그대로)
+/// 그 토큰으로 이름 붙은 칸을 덮어 계정 하나가 통째로 죽었다(2026-10-21 리뷰 ⑤-2)
+pub(crate) fn foreign(live: &Live, token: &Value, slot_oauth: &Value) -> bool {
+    let Some((want, _)) = key(slot_oauth) else { return false };
+    (live.owner)(token).is_some_and(|got| got != want)
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -281,7 +291,7 @@ pub fn reconcile(store: &dyn Store, live: &Live, list: &Path, pool: &mut Pool) -
                 for a in pool.accounts.iter().filter(|a| a.id != id) {
                     clash |= slot_part(store, &a.id)?.as_ref() == Some(n);
                 }
-                if !clash {
+                if !clash && !slot(pool, &id).is_some_and(|a| foreign(live, n, &a.oauth)) {
                     store.set(SLOT_SERVICE, &id, &slot_secret(n))?;
                     pool.current = Some(id);
                 }
@@ -369,7 +379,14 @@ pub fn switch_if(store: &dyn Store, live: &Live, list: &Path, id: &str, expect: 
     let now_ms = crate::accounts_refresh::now_ms();
     if crate::accounts_refresh::needs(&want, now_ms) {
         want = crate::token_rate::call(list, now_ms, live.refresh, &want, "switch", false).map_err(|c| Error::Refresh(rest_code(list, &c, now_ms)))?;
-        store.set(SLOT_SERVICE, id, &slot_secret(&want))?;
+        // 새 갱신 토큰은 이것뿐(옛 것은 서버가 돌려 죽었다) — 칸에 못 담아도 버리지 않는다: 몇 번 다시 해 보고, 그래도 안 되면 바꾸기는 그대로 간다.
+        // 로그인 칸에 담기고, 다음에 이 칸에서 다른 칸으로 바꿀 때 이 칸에 저장된다. 예전엔 `?` 로 돌아가며 버려 그 칸이 죽었다(⑤-3)
+        let _ = (0..3).any(|i| {
+            if i > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            store.set(SLOT_SERVICE, id, &slot_secret(&want)).is_ok()
+        });
     }
     // 여기서부터 끝까지 Claude Code 갱신 잠금을 쥔다 — 세션이 지금 계정을 갱신하는 도중엔 안 바꾼다
     let _held = hold_refresh_lock(live)?;
@@ -384,7 +401,10 @@ pub fn switch_if(store: &dyn Store, live: &Live, list: &Path, id: &str, expect: 
         store.set(SLOT_SERVICE, BACKUP_LAST, n)?;
         note_backup(&mut pool, BACKUP_LAST, shown.as_ref());
         if let (Some(c), Some(p)) = (&from, part(n)) {
-            store.set(SLOT_SERVICE, c, &slot_secret(&p))?; // reconcile 이 지금 칸 = 실제 로그인 계정임을 확인했다
+            // reconcile 이 지금 칸 = 표시 계정임을 확인했다 — 토큰 주인이 다르면(되쓴 옛 계정 토큰) 칸은 그대로, 백업에만 남는다
+            if !slot(&pool, c).is_some_and(|a| foreign(live, &p, &a.oauth)) {
+                store.set(SLOT_SERVICE, c, &slot_secret(&p))?;
+            }
         }
     }
     pool.current = None;

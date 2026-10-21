@@ -357,6 +357,8 @@ struct View {
     fedcm_answers: Vec<(String, &'static str, serde_json::Value)>,
     seq: u64,
     jpeg: Vec<u8>,
+    /// 지금 탭 그림이 한 장이라도 왔나(St.framed) — 탭이 바뀌면 jpeg 엔 앞 탭 그림이 남아 칸이 '그림 없음'을 못 보였다(QA 6)
+    framed: bool,
     pages: Vec<Page>,
     current: Option<String>,
     pinned: Option<String>,
@@ -550,6 +552,8 @@ pub struct Tabs {
     fedcm: Option<serde_json::Value>,
     /// 멈춘 탭 대화상자를 래퍼에 부탁한 결과 {at, ok, error}(takeover::dialog_done) — 못 풀었으면 모달이 알린다
     wrapper_dialog: Option<serde_json::Value>,
+    /// 지금 탭 그림이 왔나 — 칸이 앞 탭 그림을 지금 것으로 안 치게(domain showsPicture)
+    framed: bool,
 }
 
 /// 탭 띠 — CDP 로 본 탭들과 지금 보여 주는 탭
@@ -568,7 +572,7 @@ pub fn agent_tabs(profile: String) -> Tabs {
     let dialog = v.current.as_ref().and_then(|c| v.dialogs.get(c)).cloned();
     let dialog_tabs = v.pages.iter().filter(|p| v.dialogs.contains_key(&p.id)).map(|p| p.id.clone()).collect();
     let stuck = v.current.is_some() && v.stuck == v.current && dialog.is_none();
-    Tabs { pages: v.pages.clone(), current: v.current.clone(), pinned: v.pinned.is_some(), error: v.error.clone(), attached: v.attached, dialog, dialog_tabs, stuck, shown, chooser, reopened, dropped: v.dropped, popup: popup_now(&profile), popup_kind: popup_kind_now(&profile).to_string(), permission: perm_of(&v), fedcm: fedcm_of(&v), wrapper_dialog }
+    Tabs { pages: v.pages.clone(), current: v.current.clone(), pinned: v.pinned.is_some(), error: v.error.clone(), attached: v.attached, dialog, dialog_tabs, stuck, shown, chooser, reopened, dropped: v.dropped, popup: popup_now(&profile), popup_kind: popup_kind_now(&profile).to_string(), permission: perm_of(&v), fedcm: fedcm_of(&v), wrapper_dialog, framed: v.framed }
 }
 
 /// 멈춘 탭(앱이 붙기 전에 뜬 대화상자) 답을 래퍼에 부탁 — 그 래퍼가 세션 도구를 붙잡는 래퍼(gate)일 때만. 사람 조작으로 센다
@@ -1334,6 +1338,7 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
             if let Ok(mut v) = view.lock() {
                 v.pages = st.pages.clone();
                 v.current = st.target.clone();
+                v.framed = st.framed;
                 if v.pinned.as_ref().is_some_and(|p| !st.pages.iter().any(|x| &x.id == p)) {
                     v.pinned = None;
                 }

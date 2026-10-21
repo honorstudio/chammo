@@ -10,7 +10,7 @@ import { modelCommand } from '../../domain/modelPick';
 import { screenDialog, type ScreenDialog } from '../../domain/screenDialog';
 import type { PickResult, PickWant } from './modelPickRun';
 import { builtinSlash, completeSlash, isMemoryCmd, matchSlash, slashQuery, type SlashItem } from '../../domain/slash';
-import { appendChat, chatBusy, chatEscStops, chatNorm, escUnsends, enterDelay, parseChat, clickFocusesInput, sentByMe, promptInput, sendControls, splitPaths, splitRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
+import { appendChat, chatBusy, chatEscStops, chatNorm, escUnsends, enterDelay, parseChat, pasteKind, clickFocusesInput, sentByMe, promptInput, sendControls, splitPaths, splitRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
 import type { LinkState } from '../../domain/attachExit';
 import { LINK_WAIT } from '../../domain/paneLinks';
 import { absorbedAt, absorbedLeft, againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, mineForLeftover, newPending, pendAct, pendingState, resent, waitingOf, type PendingState, type QueueState } from '../../domain/chatQueue';
@@ -99,7 +99,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   /** 뒤 터미널 화면 — 입력칸에 들어간 글(지구본 키로 받아 적은 말)을 채팅에 보여 준다 */
   screen?: () => { lines: string[]; cursor: [number, number] } | undefined;
   /** 터미널 입력칸에 있는 글을 그대로 보낸다(Enter) */
-  submitTerminal: () => void;
+  /** 터미널 입력칸에 Enter(앱 치기 줄 뒤에) — expect 면 칠 때 입력칸이 그 말 그대로일 때만(domain/chatQueue enterTask) */
+  submitTerminal: (expect?: string) => void;
   /** 클립보드 그림을 터미널 입력칸으로(Claude 의 Ctrl+V) */
   pasteImage: () => void;
   /** 이 창 세션 id — 다른 곳(스페이스)에서 이 세션에 보낸 말도 "보내는 중"으로 보이게 */
@@ -462,7 +463,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     const t = window.setTimeout(() => {
       const left = termRef.current;
       if (!left || /\[Image #\d+\]/.test(left) || draftRef.current.trim() || dialogRef.current) return;
-      submitTerminal();
+      submitTerminal(left);
       setPending((p) => [...p, newPending(left, itemsRef.current, Date.now())]);
       quietUntil.current = Date.now() + 1500;
     }, 4000);
@@ -498,7 +499,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       if (stuckInInput([stuckTarget], termRef.current) !== stuckTarget || dialogRef.current) return; // 선택 창이 뜨면 Enter 가 창에서 골라 버린다
       const at = waiting.find((p) => p.text === stuckTarget)?.at ?? 0;
       tries.current[at] = (tries.current[at] ?? 0) + 1;
-      submitTerminal();
+      submitTerminal(stuckTarget);
       quietUntil.current = Date.now() + 1500;
       setTryN((n) => n + 1);
     }, 2000);
@@ -518,6 +519,13 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const dropPending = (at: number) => setPending((ps) => ps.filter((x) => x.at !== at));
   // 방금 간 글을 또 보내려 하면 한 번 막는다 — 간 줄이 화면에 남아 보여 보내기를 계속 눌렀다(2026-10-10 사용자). 곧 한 번 더 누르면 보낸다
   const [dupWarn, setDupWarn] = useState<{ text: string; at: number } | null>(null);
+  // 그림 아닌 파일을 붙여넣었을 때 잠깐 띄우는 안내(domain/chat pasteKind)
+  const [pasteFile, setPasteFile] = useState(false);
+  useEffect(() => {
+    if (!pasteFile) return;
+    const t = window.setTimeout(() => setPasteFile(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [pasteFile]);
   useEffect(() => {
     if (!dupWarn) return;
     const t = window.setTimeout(() => setDupWarn(null), DUP_CONFIRM);
@@ -546,7 +554,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const flushLeftover = (left = leftover, term = termText) => {
     if (!left) return;
     const mine = left.length === 1 ? waiting.find((p) => p.text === left[0]) : undefined;
-    if (mine && stuckInInput(left, term) && enterOk()) { submitTerminal(); repend(mine); }
+    if (mine && stuckInInput(left, term) && enterOk()) { submitTerminal(mine.text); repend(mine); }
     else {
       clearTerminal([...term].length + 20);
       // 말풍선이 없는 것(끊겨서 되돌아온 말)은 '안 갔어요'로 남겨 다시 보낼 수 있게 — 조용히 지우지 않는다
@@ -625,7 +633,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     const text = withRefs(expandMentions(draft.trim(), who), refs);
     if (!text && termText && dupBlocked(termText)) return;
     quietUntil.current = Date.now() + 1500;
-    if (!text && termText) { submitTerminal(); setPending((p) => [...p, newPending(termText, items, Date.now())]); stick.current = true; return; }
+    if (!text && termText) { submitTerminal(termText); setPending((p) => [...p, newPending(termText, items, Date.now())]); stick.current = true; return; }
     if (!text) return;
     // /model·/effort 는 터미널 고르는 창 대신 칩으로 — 창은 보낸 Enter 가 바로 골라 기본값이 저장됐다(2026-10-01 시험)
     if (isMemoryCmd(text)) { setDraft(''); setSlashOff(''); openMemory(); return; }
@@ -793,6 +801,11 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
           <IconButton size="s" tone="line" label={tr('빼기', 'Remove')} title={tr('빼기 — 터미널 입력칸에 붙인 것 전부', 'Remove everything attached in the terminal input')} onClick={clearAttached}><IconClose /></IconButton>
         </div>
       )}
+      {pasteFile && (
+        <div className="chat-hint chat-dup" role="status">
+          <span>{tr('파일은 붙여넣기로 못 붙여요 — 채팅 칸에 끌어다 놓아 주세요', "Files can't be pasted — drag them into the chat instead")}</span>
+        </div>
+      )}
       {dupWarn && (
         <div className="chat-hint chat-dup" role="status">
           <span>{tr('방금 이미 간 말이에요 — 또 보내려면 한 번 더 눌러 주세요', 'This was just sent — press again to send it once more')}</span>
@@ -896,9 +909,11 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
             // ⌘V 인데 클립보드에 그림이 있으면 글 대신 그림을 터미널 입력칸으로 — Claude 가 [Image #n] 으로 받는다
             // 웹뷰가 클립보드 그림을 파일로 안 넘겨줄 때가 있다 — 붙일 글이 없으면 그림으로 보고 터미널로(아무것도 안 들어갔다, 2026-09-30)
             if (remote) return; // 원격엔 그림을 넘길 터미널이 없다 — 글만
-            const item = [...e.clipboardData.items].find((i) => i.kind === 'file' || i.type.startsWith('image/'));
-            const file = item?.getAsFile() ?? null;
-            if (file || !e.clipboardData.getData('text/plain')) {
+            const items = [...e.clipboardData.items];
+            const kind = pasteKind(items, !!e.clipboardData.getData('text/plain'));
+            if (kind === 'file') { e.preventDefault(); setPasteFile(true); return; } // 경로를 못 받는다 — 끌어다 놓기로
+            const file = items.find((i) => i.type.startsWith('image/'))?.getAsFile() ?? null;
+            if (kind === 'image') {
               e.preventDefault();
               pasteImage();
               empties.current = 0;
@@ -947,7 +962,7 @@ const Bubble = memo(function Bubble({ it, by, onRef }: { it: ChatItem; by: strin
   const last = it.tools[it.tools.length - 1]!;
   return (
     <details className="chat-tools">
-      <summary>{tr(`도구 ${it.tools.length}번`, `${it.tools.length} tool calls`)} <span className="dim">— {last.name} {last.target}</span></summary>
+      <summary>{tr(`도구 ${it.tools.length}번`, `${it.tools.length} tool call${it.tools.length === 1 ? "" : "s"}`)} <span className="dim">— {last.name} {last.target}</span></summary>
       <ul>{it.tools.map((t, i) => <li key={i}><b>{t.name}</b> {t.target}</li>)}</ul>
     </details>
   );

@@ -99,6 +99,12 @@ export function splitOpen<T extends Reviewed>(prs: T[], later: Record<string, st
 }
 
 /** start(ms) 뒤에 머지된 것 */
+/** 리뷰 읽기 실패 까닭 한 줄 — 띠에 '실패'만 떠서 gh 가 멀쩡한데 왜인지 몰랐다(윈도우 QA 8). 첫 줄, 'Error:' 떼고 80자 */
+export const readFailLine = (e: string) => {
+  const l = (e.split('\n')[0] ?? '').replace(/^Error:\s*/, '').trim();
+  return l.length > 80 ? `${l.slice(0, 80)}…` : l;
+};
+
 export const mergedSince = <T extends { mergedAt: string }>(list: T[], start: number) => list.filter((m) => Date.parse(m.mergedAt) >= start);
 
 /** 수정 요청 받을 세션 — 기록에 나온 세션이 살아 있으면 그것, 아니면 그 프로젝트에 살아 있는 세션이 하나뿐일 때 그것 */

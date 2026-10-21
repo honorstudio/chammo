@@ -7,7 +7,7 @@ import { lockerAlias, lockerUnalias } from '../../data/web';
 import type { LockerView } from '../../domain/locker';
 import { defaultView, logDays, lockerLog, type LockerViewMode, type LogItem } from '../../domain/lockerLog';
 import { kidsOf, readOnlyAt, userFolders, type LkEntry } from '../../domain/lockerTree';
-import { dotClass, openPathOf, phoneTree, type PhoneChip } from '../../domain/phoneLocker';
+import { dotClass, openPathOf, phoneTree, shownBy, type PhoneChip } from '../../domain/phoneLocker';
 import { IconBack, IconDashboard, IconFolderPlus, IconList, IconPlus } from '../Icons';
 import { BottomSheet, IconBtn } from './kit';
 import { AddSheet, FolderPick, Item, ItemMenu, MdEditor, NameSheet, type Held } from './PhoneLockerParts';
@@ -80,7 +80,7 @@ export function PhoneLocker({ owner, view: lv, shown, projects, chips, whoOf, on
   const filedWord = (it: LogItem) => (it.filed.length ? `→ ${it.filed.map((f) => baseName(f)).join(', ')}` : '');
   const metaOf = (it: LogItem) => {
     const w = whoOf(it.by);
-    const what = it.act === 'shown' && it.by !== 'me' ? `${w}${w.endsWith('세션') ? '' : '이'} 보여 줌` : w;
+    const what = it.act === 'shown' && it.by !== 'me' ? shownBy(w) : w;
     return [what, hm(it.ts)].filter(Boolean).join(' · ');
   };
   const logView = (items: LogItem[]) => (items.length === 0 ? <p className="m-muted m-sm">아직 주고받은 파일이 없어요</p> : logDays(items).map((g) => (

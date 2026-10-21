@@ -727,16 +727,31 @@ pub fn remove(owner: &Path, rel: &str, bin: &Path) -> Result<Vec<crate::locker_t
     }
     let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let v = vers_dir(&p);
-    let to = unique(bin, &name, true);
-    std::fs::rename(&p, &to).map_err(es)?;
+    let to = send_to_bin(&p, bin, &name, true)?;
     let mut out = vec![crate::locker_trash::Moved { from: p, to, kind: Default::default() }];
     if v.is_dir() {
-        let vt = unique(bin, &format!("{name} 이전 판"), false);
-        if std::fs::rename(&v, &vt).is_ok() {
+        if let Ok(vt) = send_to_bin(&v, bin, &format!("{name} 이전 판"), false) {
             out.push(crate::locker_trash::Moved { from: v, to: vt, kind: crate::locker_trash::Kind::Extra });
         }
     }
     Ok(out)
+}
+
+/// 휴지통으로 — 맥은 bin(~/.Trash)에 겹치지 않는 이름으로 옮긴다(되돌리기는 다시 옮김). 윈도우는 시스템 휴지통(Recycle Bin)으로 보내고
+/// 기록엔 표시(win_recycle::MARK)만 — 되돌리기는 휴지통 기록에서 원래 경로로 찾는다(2026-10-21 리뷰 ⑦-18)
+pub fn send_to_bin(p: &Path, bin: &Path, name: &str, file: bool) -> Result<PathBuf, String> {
+    #[cfg(windows)]
+    {
+        let _ = (bin, name, file);
+        crate::win_recycle::recycle(p)?;
+        Ok(PathBuf::from(crate::win_recycle::MARK))
+    }
+    #[cfg(not(windows))]
+    {
+        let to = unique(bin, name, file);
+        std::fs::rename(p, &to).map_err(es)?;
+        Ok(to)
+    }
 }
 
 /// 화면이 받는 한 줄 — 폴더·파일·별칭(가리키는 곳, 끊겼으면 gone)
@@ -1186,7 +1201,14 @@ pub fn unalias(owner: &Path, rel: &str) -> Result<(), String> {
 pub const MAX_PHONE_MD: usize = 512 * 1024;
 
 /// 폰 md 글 칸 저장 — 그 참모 보관함 안 집 파일(.md, 이미 있는 것)만. 고치기 직전 모양은 판으로, 쓰기는 옆 조각 → 바꿔 끼우기
+#[cfg(test)]
 pub fn write_md(owner: &Path, file: &Path, text: &str) -> Result<(), String> {
+    write_md_from(owner, file, text, None)
+}
+
+/// base = 폰이 열 때(또는 지난번 저장 때) 받은 글 — 지금 파일이 그것과 다르면 CHANGED_OUTSIDE 로 안 쓴다(데스크톱 편집기 write_doc_text 의 expected 와 같게).
+/// 폰이 연 뒤 맥에서 더한 줄을 폰 저장이 통째로 덮어 말없이 지웠다(2026-10-21 리뷰 ⑦-5). None = 옛 폰 화면(비교 없음)
+pub fn write_md_from(owner: &Path, file: &Path, text: &str, base: Option<&str>) -> Result<(), String> {
     if text.len() >= MAX_PHONE_MD {
         return Err("너무 길어".into());
     }
@@ -1197,6 +1219,9 @@ pub fn write_md(owner: &Path, file: &Path, text: &str) -> Result<(), String> {
     let hidden = file.strip_prefix(owner).map(|r| r.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.'))).unwrap_or(true);
     if !meta.is_file() || hidden || !canon(file).starts_with(canon(owner)) {
         return Err(format!("이 참모 보관함 밖: {}", file.display()));
+    }
+    if base.is_some_and(|b| std::fs::read_to_string(file).ok().as_deref() != Some(b)) {
+        return Err(crate::reader::CHANGED_OUTSIDE.into());
     }
     track_file(file);
     let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -1344,8 +1369,14 @@ pub fn migrate_all(ctx: &Ctx, owners: &[Owner], configured: Option<&str>) -> Res
 }
 
 /// 보관함 안 경로인가(화면이 넘긴 절대 경로) — 판·되돌리기·이사는 이 안에서만
+/// 화면이 만든 경로를 OS 모양으로 — 윈도우 화면은 Rust 가 준 dir(`C:\…\참모`) 뒤에 rel 을 `/` 로 붙여 넘긴다. Path 는 그걸 구분자로 읽지만
+/// 다시 모으면 `\` 라 plain_abs 가 달라 보여 이전 판·되돌리기·이사·파인더로 보기·다시 찾기가 모두 '보관함 밖'으로 막혔다(2026-10-21 리뷰 ⑦-8)
+pub(crate) fn os_sep(p: &str, win: bool) -> String {
+    if win { p.replace('/', "\\") } else { p.to_string() }
+}
+
 fn in_root(a: &AppCtx, p: &str) -> Result<PathBuf, String> {
-    let p = PathBuf::from(p);
+    let p = PathBuf::from(os_sep(p, cfg!(windows)));
     let parent = p.parent().map(canon).unwrap_or_default();
     if !plain_abs(&p) || !parent.starts_with(canon(&a.root)) {
         return Err(format!("보관함 밖 경로: {}", p.display()));
@@ -1355,7 +1386,8 @@ fn in_root(a: &AppCtx, p: &str) -> Result<PathBuf, String> {
 
 /// 읽기만 하는 길 — 보관함 안이거나, 연결 폴더를 지나 홈 안 안전한 곳에 닿은 경로
 fn in_root_ro(a: &AppCtx, p: &str) -> Result<PathBuf, String> {
-    in_root(a, p).or_else(|e| if crate::locker_link::read_path_ok(&a.ctx(), Path::new(p)) { Ok(PathBuf::from(p)) } else { Err(e) })
+    let q = os_sep(p, cfg!(windows));
+    in_root(a, p).or_else(|e| if crate::locker_link::read_path_ok(&a.ctx(), Path::new(&q)) { Ok(PathBuf::from(q)) } else { Err(e) })
 }
 
 #[derive(serde::Serialize)]

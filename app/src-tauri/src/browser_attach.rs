@@ -132,7 +132,12 @@ pub fn attach_text(text: &str, key: &str, e: &Value, mcp_json: Option<&Value>, s
     }
     let name = pick_name(&v, mcp_json, key).ok_or_else(|| crate::i18n::tr("playwright·chammo-browser 이름을 둘 다 다른 서버가 쓰고 있어 — 도구 화면에서 하나를 정리해 줘", "Both names (playwright, chammo-browser) are taken by other servers — remove one in Tools").to_string())?;
     let projects = v.as_object_mut().ok_or("not an object")?.entry("projects").or_insert_with(|| json!({}));
-    let p = projects.as_object_mut().ok_or("projects")?.entry(key).or_insert_with(crate::computer_use::new_project);
+    let projects = projects.as_object_mut().ok_or("projects")?;
+    if !projects.contains_key(key) {
+        let fresh = crate::computer_use::new_project_under(projects, key); // 위 폴더 믿음을 물려받게(QA 32)
+        projects.insert(key.into(), fresh);
+    }
+    let p = projects.get_mut(key).ok_or("project")?;
     let p = p.as_object_mut().ok_or("project")?;
     let m = p.entry("mcpServers").or_insert_with(|| json!({}));
     if !m.is_object() {

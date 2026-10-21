@@ -351,6 +351,7 @@ fn gate() -> Gate {
         stops: Default::default(),
         sends: Default::default(),
         tickets: Default::default(),
+        owner: None,
     }
 }
 
@@ -942,6 +943,43 @@ fn s5_요청_하나_전체_마감() {
 }
 
 #[test]
+fn s3_serve_로_온_남의_테일스케일_계정_요청은_거절() {
+    // tailscale serve(https)는 공유받은 남의 노드 요청도 127.0.0.1 로 넘겨 맞은편 주소로는 못 가른다 — serve 가 붙이는 계정 머리로(2026-10-21 리뷰 ④-5)
+    let g = Gate { owner: Some("me@example.com".into()), ..gate() };
+    let other = set(get("/"), "tailscale-user-login", Some("friend@example.com"));
+    assert_eq!(head_check(&other, &g).map(|r| r.status), Some(403));
+    let pair = set(set(post("/api/pair", "{}"), "tailscale-user-login", Some("friend@example.com")), "authorization", None);
+    assert_eq!(head_check(&pair, &g).map(|r| r.status), Some(403), "짝짓기 코드 연타도 못 한다");
+    assert!(head_check(&set(get("/"), "tailscale-user-login", Some("Me@Example.com")), &g).is_none(), "내 계정(대소문자 무관)");
+    assert!(head_check(&get("/"), &g).is_none(), "머리가 없으면(직접 http — 맞은편 주소로 이미 거름) 그대로");
+}
+
+#[test]
+fn s5_인증_전_머리_읽기는_짧게_끊는다() {
+    // 머리를 1바이트씩 흘리는 연결이 요청 마감(15초)까지 자리를 잡아 16자리를 다 묶었다(2026-10-21 리뷰 ④-5)
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let t = std::thread::spawn(move || {
+        let mut c = std::net::TcpStream::connect(addr).unwrap();
+        let _ = c.write_all(b"GET / HTTP/1.1\r\nX: ");
+        c.set_read_timeout(Some(Duration::from_millis(300))).unwrap();
+        let start = std::time::Instant::now();
+        let mut out = String::new();
+        while start.elapsed() < Duration::from_secs(14) {
+            if c.write_all(b"a").is_err() { break }
+            let mut b = [0u8; 256];
+            if let Ok(n) = c.read(&mut b) { if n > 0 { out.push_str(&String::from_utf8_lossy(&b[..n])); break } }
+        }
+        (out, start.elapsed())
+    });
+    let (s, _) = l.accept().unwrap();
+    serve_conn_within(s, Arc::new(gate()), Arc::new(Fake::default()), REQ_DEADLINE);
+    let (out, took) = t.join().unwrap();
+    assert!(out.starts_with("HTTP/1.1 408"), "{out:?}");
+    assert!(took < HEAD_DEADLINE + Duration::from_secs(2), "{took:?}");
+}
+
+#[test]
 fn s3_funnel_로_온_요청은_거절() {
     // tailscale funnel 은 인터넷에서 온 요청에 Tailscale-Funnel-Request 를 붙인다 — 나중에 누가 funnel 을 켜도 문지기가 막는다
     let r = set(with_cookie(get("/api/sessions")), "tailscale-funnel-request", Some("?1"));
@@ -1065,7 +1103,11 @@ fn r1_짝짓기는_post_api_pair_가_토큰을_json_으로_주고_쿠키는_없�
     assert_eq!(tok.len(), 64);
     assert_eq!(handle(&set(get("/api/env"), "authorization", Some(&format!("Bearer {tok}"))), &g, &f).status, 200);
     // 같은 코드 두 번째 401, 남의 출처·form 종류 403(머리 검사에서도)
-    assert_eq!(handle(&pair_post(&code), &g, &f).status, 401);
+    let again = handle(&pair_post(&code), &g, &f);
+    assert_eq!(again.status, 401);
+    // 고칠 곳은 지금 설정 탭 이름으로, 윈도우 PC 에서도 맞게 — '맥 설정 > 폰'은 없는 탭이었다(QA 2차)
+    let msg = String::from_utf8_lossy(&again.body);
+    assert!(msg.contains("폰과 메신저") && !msg.contains("맥 설정"), "{msg}");
     let c2 = g.devices.new_code(std::time::SystemTime::now()).unwrap();
     assert_eq!(handle(&set(pair_post(&c2), "origin", Some("http://evil.com")), &g, &f).status, 403);
     assert_eq!(head_check(&set(pair_post(&c2), "content-type", Some("text/plain")), &g).map(|r| r.status), Some(403));
@@ -1546,6 +1588,62 @@ fn 폰_글_파일_비밀은_403_md_속_그림은_doc_으로() {
     assert_eq!(s, 200, "{:?}", String::from_utf8_lossy(&r.body));
     assert_eq!(run_with(file(format!("path={}&doc={}", e(&other), e(&doc))), fake()).0, 403);
     assert_eq!(run_with(file(format!("path={}&doc={}", e(&pic), e(&d.join("nope.md")))), fake()).0, 403);
+}
+
+#[test]
+fn 폰_받기도_오피스_속_글의_비밀을_본다() {
+    // 보기(as=sheet·html)는 'secret inside' 403 인데 같은 파일을 /api/dl 로 받으면 원본이 그대로 나갔다(2026-10-21 리뷰 ④-13)
+    use std::io::Write as _;
+    let d = tmp("dlsecret");
+    let zipped = |name: &str, inner: &str, xml: &str| {
+        let p = d.join(name);
+        let mut z = zip::ZipWriter::new(std::fs::File::create(&p).unwrap());
+        z.start_file(inner, zip::write::SimpleFileOptions::default()).unwrap();
+        z.write_all(xml.as_bytes()).unwrap();
+        z.finish().unwrap();
+        p
+    };
+    // 글 조각(run)이 나뉘어도 — 태그를 빼고 이어 본다
+    let doc = zipped("메모.docx", "word/document.xml", "<w:document><w:p><w:r><w:t>키: sk-proj-abcdefghij</w:t></w:r><w:r><w:t>klmnopqrstuvwxyz012345</w:t></w:r></w:p></w:document>");
+    let book = zipped("정산.xlsx", "xl/sharedStrings.xml", "<sst><si><t>AKIAIOSFODNN7EXAMPLE</t></si></sst>");
+    let clean = zipped("발표.pptx", "ppt/slides/slide1.xml", "<p:sld><a:t>그냥 발표</a:t></p:sld>");
+    let show: String = [&doc, &book, &clean].iter().map(|p| format!("{{\"path\":\"{}\"}}\n", p.display())).collect();
+    let (g, f) = (gate(), Fake { show, data: d.join("data"), ..Default::default() });
+    let dl = |p: &Path| {
+        let r = handle(&post("/api/dl-ticket", &serde_json::json!({ "path": p.to_string_lossy() }).to_string()), &g, &f);
+        let j: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+        handle(&get(j["url"].as_str().unwrap()), &g, &f).status
+    };
+    assert_eq!(dl(&doc), 403);
+    assert_eq!(dl(&book), 403);
+    assert_eq!(dl(&clean), 200);
+}
+
+#[test]
+fn 폰_md_속_그림은_문서_자리_밖으로_못_나간다() {
+    // 폰이 보관함 md 를 써서 ![](../../../../Pictures/x.png) 로 허용 집합 밖 아무 그림이나 읽을 수 있었다(2026-10-21 리뷰 ④-3)
+    let d = tmp("mdout");
+    std::fs::create_dir_all(d.join("a/b/img")).unwrap();
+    let doc = d.join("a/b/plan.md");
+    std::fs::write(&doc, "![밖](../../x.png)\n![안](img/y.png)\n").unwrap();
+    for f in ["x.png", "a/b/img/y.png"] {
+        std::fs::write(d.join(f), b"\x89PNG\r\n\x1a\n").unwrap();
+    }
+    // 저장소 안 문서는 저장소 뿌리까지 — 프로젝트 docs/ 의 ../assets 그림은 그대로 열린다
+    std::fs::create_dir_all(d.join("repo/.git")).unwrap();
+    std::fs::create_dir_all(d.join("repo/docs")).unwrap();
+    std::fs::create_dir_all(d.join("repo/assets")).unwrap();
+    let rdoc = d.join("repo/docs/r.md");
+    std::fs::write(&rdoc, "![자산](../assets/z.png)\n![밖](../../x.png)\n").unwrap();
+    std::fs::write(d.join("repo/assets/z.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+    let show: String = [&doc, &rdoc].iter().map(|p| format!("{{\"path\":\"{}\"}}\n", p.display())).collect();
+    let fake = || Fake { show: show.clone(), data: d.join("data"), ..Default::default() };
+    let e = |p: &Path| enc(&p.to_string_lossy());
+    let file = |pic: &Path, doc: &Path| run_with(with_cookie(get(&format!("/api/file?path={}&doc={}", e(pic), e(doc)))), fake()).0;
+    assert_eq!(file(&d.join("x.png"), &doc), 403, "문서 폴더 밖");
+    assert_eq!(file(&d.join("a/b/img/y.png"), &doc), 200);
+    assert_eq!(file(&d.join("repo/assets/z.png"), &rdoc), 200, "같은 저장소");
+    assert_eq!(file(&d.join("x.png"), &rdoc), 403, "저장소 밖");
 }
 
 #[test]

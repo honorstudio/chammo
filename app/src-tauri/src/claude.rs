@@ -54,8 +54,23 @@ pub fn adopt_user_path() {
     }
 }
 
+/// claude 하위 명령의 시간 제한 — 띄우기·되살리기는 daemon 을 새로 띄우며 수십 초 걸리기도 한다. 넘으면 그룹째 끊는다.
+/// 예전엔 .output() 이라 daemon 손자가 출력 파이프를 쥐거나 daemon 이 답을 안 하면 영영 안 돌아와 참모 되살리기 고리가 멈췄다(2026-10-21 리뷰 ①-4)
+const CLAUDE_LIMIT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// claude(또는 시험의 가짜)를 시간 제한 안에서 — 끝난 뒤 손자가 파이프를 쥐어도 2초 뒤 받은 데까지 돌려준다(run_capped)
+fn claude_out(cmd: &mut std::process::Command, limit: std::time::Duration) -> Result<std::process::Output, String> {
+    crate::platform::run_capped(cmd, limit).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::TimedOut {
+            format!("claude did not answer within {}s — stopped it", limit.as_secs_f32().round())
+        } else {
+            e.to_string()
+        }
+    })
+}
+
 fn run(args: &[&str]) -> Result<String, String> {
-    let out = crate::platform::command(claude_bin()).args(args).output().map_err(|e| e.to_string())?;
+    let out = claude_out(crate::platform::command(claude_bin()).args(args), CLAUDE_LIMIT)?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
@@ -170,16 +185,17 @@ pub fn spawn_blocking(cwd: &str, name: &str, prompt: &str) -> Result<String, Str
     crate::trust::before_spawn(cwd);
     crate::computer_use::sweep_logged();
     crate::browser_attach::reassert_for(cwd);
-    let out = crate::platform::command(claude_bin())
-        .current_dir(cwd)
-        .args(["--bg", "--dangerously-skip-permissions", "-n", name, prompt])
-        .output()
-        .map_err(|e| e.to_string())?;
+    let out = claude_out(crate::platform::command(claude_bin()).current_dir(cwd).args(spawn_args(name, prompt)), CLAUDE_LIMIT)?;
     forget_agents();
     if !out.status.success() {
         return Err(crate::access::explain_spawn_error(String::from_utf8_lossy(&out.stderr).trim(), cwd));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// 띄우기 인자 — 첫 지시는 `--` 뒤에: '-' 로 시작하는 지시("--help", "- 로그인 고쳐")를 claude 가 옵션으로 읽었다(①-13, 2.1.306 은 `--` 뒤를 지시로 받음 실측)
+fn spawn_args(name: &str, prompt: &str) -> Vec<String> {
+    ["--bg", "--dangerously-skip-permissions", "-n", name, "--", prompt].iter().map(|a| a.to_string()).collect()
 }
 
 fn alive(pid: i32) -> bool {
@@ -237,11 +253,7 @@ pub async fn adopt_session(pid: i32, session_id: String, cwd: String, name: Stri
             return Err(crate::i18n::tr("세션이 아직 목록에 남아 있어 — 잠깐 뒤에 다시 눌러줘", "The session is still listed — please try again in a moment").into());
         }
         crate::trust::before_spawn(&cwd);
-        let out = crate::platform::command(claude_bin())
-            .current_dir(&cwd)
-            .args(["--bg", "--dangerously-skip-permissions", "-n", &name, "--resume", &session_id])
-            .output()
-            .map_err(|e| e.to_string())?;
+        let out = claude_out(crate::platform::command(claude_bin()).current_dir(&cwd).args(["--bg", "--dangerously-skip-permissions", "-n", &name, "--resume", &session_id]), CLAUDE_LIMIT)?;
         forget_agents(); // 넘겨받은 세션이 다음 목록에 바로 보이게
         let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
         if !out.status.success() {
@@ -265,7 +277,7 @@ pub async fn new_session(cwd: String, name: String, worktree: Option<String>) ->
         }
         crate::trust::before_spawn(&cwd);
         crate::computer_use::sweep_logged();
-        let out = crate::platform::command(claude_bin()).current_dir(&cwd).args(&args).output().map_err(|e| e.to_string())?;
+        let out = claude_out(crate::platform::command(claude_bin()).current_dir(&cwd).args(&args), CLAUDE_LIMIT)?;
         forget_agents(); // 새 세션이 바로 다음 목록에 — 2.5초 같이 쓰던 목록이면 띄움 자리표시가 사라진 뒤 3초쯤 비었다
         let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
         if !out.status.success() {
@@ -683,6 +695,91 @@ mod reply_tests {
         // 붙여넣기로 감싸면 긴 글이 '붙여넣은 글'로 간다(2026-09-30 실험). Enter 는 attach_type 이 쉬었다가 따로 넣는다
         assert_eq!(super::reply_text("응\t그걸로"), b"\xec\x9d\x91  \xea\xb7\xb8\xea\xb1\xb8\xeb\xa1\x9c".to_vec());
         assert!(!super::reply_text("a").contains(&b'\r'));
+    }
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn claude_를_부르는_명령은_모두_시간_제한이_있다() {
+        // 매달린 claude(daemon 손자가 출력 파이프를 쥠 등)에 .output() 은 영영 안 돌아와 참모 되살리기 고리가 멈췄다(2026-10-21 리뷰 ①-4)
+        let src = include_str!("claude.rs");
+        let src = &src[..src.find("#[cfg(test)]").unwrap()];
+        for (i, _) in src.match_indices("command(claude_bin())") {
+            let stmt = &src[i..i + src[i..].find(';').unwrap()];
+            assert!(!stmt.contains(".output()"), "시간 제한 없는 claude 명령: {}", &stmt[..stmt.len().min(120)]);
+        }
+        let run_body = &src[src.find("fn run(args").unwrap()..];
+        let run_body = &run_body[..run_body.find("\n}\n").unwrap()];
+        assert!(run_body.contains("claude_out("), "run() 도 시간 제한 길로");
+    }
+
+    #[test]
+    fn 손자가_출력을_쥐고_남아도_띄우기는_돌아온다() {
+        let t0 = Instant::now();
+        let mut c = crate::platform::command("/bin/sh");
+        c.args(["-c", "sleep 30 & echo backgrounded"]);
+        let out = claude_out(&mut c, Duration::from_secs(20)).unwrap();
+        assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).contains("backgrounded"));
+        assert!(t0.elapsed() < Duration::from_secs(10), "{:?}", t0.elapsed());
+    }
+
+    #[test]
+    fn 매달린_claude_는_시간_제한에서_끊고_까닭을_말한다() {
+        let mut c = crate::platform::command("/bin/sh");
+        c.args(["-c", "sleep 30"]);
+        let e = claude_out(&mut c, Duration::from_millis(300)).unwrap_err();
+        assert!(e.contains("claude"), "{e}");
+    }
+
+    #[test]
+    fn 첫_지시는_옵션_끝_표시_뒤에_간다() {
+        // '-' 로 시작하는 지시("--help", "- 로그인 고쳐")가 claude 옵션으로 읽혔다(①-13). 2.1.306 은 `--` 뒤 지시를 그대로 받는다(실측)
+        let a = spawn_args("참모", "--help 해 줘");
+        assert_eq!(&a[a.len() - 2..], ["--", "--help 해 줘"]);
+        assert_eq!(&a[..4], ["--bg", "--dangerously-skip-permissions", "-n", "참모"]);
+    }
+
+    #[test]
+    fn 같은_세션_되살리기는_한_번에_하나만() {
+        // 홈 '깨우기'와 자동 되살리기가 같은 순간 들어와 둘 다 respawn — 두 번째가 막 켜진 세션을 다시 시작했다(①-14)
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let inside = Arc::new(AtomicUsize::new(0));
+        let most = Arc::new(AtomicUsize::new(0));
+        let hs: Vec<_> = (0..4)
+            .map(|i| {
+                let (inside, most) = (inside.clone(), most.clone());
+                std::thread::spawn(move || {
+                    let keys = if i % 2 == 0 { ["sess-1", "abcd1234"] } else { ["", "abcd1234"] };
+                    let _g = ReviveLock::take(&keys);
+                    let n = inside.fetch_add(1, Ordering::SeqCst) + 1;
+                    most.fetch_max(n, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(60));
+                    inside.fetch_sub(1, Ordering::SeqCst);
+                })
+            })
+            .collect();
+        hs.into_iter().for_each(|h| h.join().unwrap());
+        assert_eq!(most.load(Ordering::SeqCst), 1);
+        // 다른 세션은 서로 안 기다린다
+        let _a = ReviveLock::take(&["s-a", ""]);
+        let t0 = Instant::now();
+        let _b = ReviveLock::take(&["s-b", ""]);
+        assert!(t0.elapsed() < Duration::from_millis(50));
+    }
+
+    #[test]
+    fn 되살리기는_잠근_뒤_살아_있나를_다시_본다() {
+        let src = include_str!("claude.rs");
+        let body = &src[src.find("\nfn resume_with(").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let (lock, live, inner) = (body.find("ReviveLock::take").unwrap(), body.find("live_now(").unwrap(), body.find("resume_inner(").unwrap());
+        assert!(lock < live && live < inner, "잠금 → 살아 있나 → 되살리기 순서");
     }
 }
 
@@ -1563,11 +1660,6 @@ fn live_has(live_json: &str, session_id: &str) -> bool {
 /// copy = respawn 이 안 되면 이어 띄우기(새 번호 복사본)로 떨어져도 되나 — 없으면 true(사람이 누른 ▷), 참모 자동 되살리기는 false
 pub async fn resume_session(cwd: String, session_id: String, id: Option<String>, copy: Option<bool>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let live = crate::platform::run_capped(crate::platform::command(claude_bin()).args(["agents", "--json"]), std::time::Duration::from_secs(10));
-        if live.is_ok_and(|o| o.status.success() && live_has(&String::from_utf8_lossy(&o.stdout), &session_id)) {
-            revived(id.as_deref()); // 깨우려던 세션이 이미 켜져 있다 — 켜진 것으로 본다
-            return Ok("already running".to_string());
-        }
         resume_with(&cwd, &session_id, id.as_deref(), copy.unwrap_or(true))
     })
     .await
@@ -1579,7 +1671,51 @@ pub fn resume_blocking(cwd: &str, session_id: &str, id: Option<&str>) -> Result<
     resume_with(cwd, session_id, id, true)
 }
 
+/// 되살리는 중인 세션(대화 id·짧은 번호) — 같은 세션 되살리기가 여러 길(홈 깨우기·자동 되살리기·주인 잃은 일·폰)에서
+/// 같은 순간 들어오면 둘 다 '아직 꺼짐'을 보고 respawn 두 번 → 두 번째가 막 켜진 세션을 다시 시작해 첫 지시가 끊겼다(①-14)
+static REVIVING: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+static REVIVE_DONE: std::sync::Condvar = std::sync::Condvar::new();
+
+/// 세션별 되살리기 자물쇠 — 같은 열쇠(빈 것 빼고 하나라도 같음)를 쥔 쪽이 끝날 때까지 기다린다. 놓기는 drop(패닉에도)
+struct ReviveLock(Vec<String>);
+
+impl ReviveLock {
+    fn take(keys: &[&str]) -> ReviveLock {
+        let keys: Vec<String> = keys.iter().filter(|k| !k.is_empty()).map(|k| k.to_string()).collect();
+        let mut g = REVIVING.lock().unwrap_or_else(|e| e.into_inner());
+        while g.iter().any(|k| keys.contains(k)) {
+            g = REVIVE_DONE.wait(g).unwrap_or_else(|e| e.into_inner());
+        }
+        g.extend(keys.iter().cloned());
+        ReviveLock(keys)
+    }
+}
+
+impl Drop for ReviveLock {
+    fn drop(&mut self) {
+        let mut g = REVIVING.lock().unwrap_or_else(|e| e.into_inner());
+        for k in &self.0 {
+            if let Some(i) = g.iter().position(|x| x == k) {
+                g.remove(i);
+            }
+        }
+        REVIVE_DONE.notify_all();
+    }
+}
+
+/// 지금 목록에 그 대화가 살아 있나(10초 제한). 못 읽으면 false — 예전처럼 켠다
+fn live_now(session_id: &str) -> bool {
+    let live = crate::platform::run_capped(crate::platform::command(claude_bin()).args(["agents", "--json"]), std::time::Duration::from_secs(10));
+    live.is_ok_and(|o| o.status.success() && live_has(&String::from_utf8_lossy(&o.stdout), session_id))
+}
+
+/// 그사이 다른 길로 이미 켜졌으면 아무것도 안 한다 — 잠근 뒤에 본다(앞 사람이 막 켠 것도 보이게)
 fn resume_with(cwd: &str, session_id: &str, id: Option<&str>, copy: bool) -> Result<String, String> {
+    let _turn = ReviveLock::take(&[session_id, id.unwrap_or("")]);
+    if live_now(session_id) {
+        revived(id); // 깨우려던 세션이 이미 켜져 있다 — 켜진 것으로 본다
+        return Ok("already running".to_string());
+    }
     let r = resume_inner(cwd, session_id, id, copy);
     if r.is_ok() {
         revived(id);
@@ -1592,7 +1728,7 @@ fn resume_inner(cwd: &str, session_id: &str, id: Option<&str>, copy: bool) -> Re
     crate::trust::before_spawn(cwd);
     crate::browser_attach::reassert_for(cwd);
     resume_steps(session_id, id, copy, &mut |args| {
-        let out = crate::platform::command(claude_bin()).current_dir(cwd).args(args).output().map_err(|e| e.to_string())?;
+        let out = claude_out(crate::platform::command(claude_bin()).current_dir(cwd).args(args), CLAUDE_LIMIT)?;
         Ok((out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))))
     })
 }
@@ -1881,10 +2017,10 @@ fn attach_do(id: &str, write: impl FnOnce(&mut dyn std::io::Write, Option<&vt100
     // 윈도우: 앱이 이 세션 터미널 보기를 열어 두었으면 거기에 바로 쓴다 — 새로 붙으면 그 창이 쫓겨나고(세션당 한 창) 붙는 데 20초 걸렸다.
     // 화면 글자는 없으니 빈 글로 돌려준다(권한 창 자동 허용의 화면 읽기는 with_attach 가 따로 막는다)
     if cfg!(windows) {
-        if let Some(w) = crate::pty::session_writer(id) {
+        if let Some((w, screen)) = crate::pty::session_writer(id) {
             log_out("attach", &format!("{id} via-open-terminal"));
-            let mut g = w.lock().unwrap();
-            return write(&mut **g, None).map(|_| String::new()).map_err(|e| e.to_string());
+            // 조각마다 자물쇠(①-1), 화면은 Rust 가 그려 둔 그 보기 화면(②-1 — 입력칸에 사람 글이 있으면 치워 두기)
+            return crate::pty::write_view(&w, screen.as_ref(), write).map(|_| String::new()).map_err(|e| e.to_string());
         }
         // 열린 보기가 화면을 못 받았으면(가짜 콘솔이 멈춤) 거기 쓰면 허공에 간다 — 새로 붙는다
         if crate::pty::session_has_view(id) {

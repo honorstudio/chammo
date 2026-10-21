@@ -251,8 +251,7 @@ pub fn trash_linked(ctx: &Ctx, owner: &Path, rel: &str, bin: &Path, g: &Guard) -
     let p = linked_checked(ctx, owner, rel, g)?;
     let is_dir = p.is_dir();
     let name = p.file_name().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default();
-    let to = locker_fs::unique(bin, &name, !is_dir);
-    std::fs::rename(&p, &to).map_err(es)?;
+    let to = locker_fs::send_to_bin(&p, bin, &name, !is_dir)?;
     Ok(Moved { from: p, to, kind: Default::default() })
 }
 

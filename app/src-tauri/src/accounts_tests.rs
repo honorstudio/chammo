@@ -21,6 +21,18 @@ fn no_refresh(_: &Value) -> Result<Value, String> {
     panic!("이 시험에선 칸 토큰을 갱신하면 안 된다")
 }
 
+/// 토큰 주인을 모름(망이 안 됨) — 예전처럼 저장한다
+fn unknown_owner(_: &Value) -> Option<String> {
+    None
+}
+
+/// 가짜 주인 묻기 — accessToken 이 "tokA…"·"fresh-tokA…" 면 u-a
+fn owner_by_tok(o: &Value) -> Option<String> {
+    let t = o["accessToken"].as_str()?.trim_start_matches("fresh-");
+    let c = t.strip_prefix("tok")?.chars().next()?;
+    Some(format!("u-{}", c.to_ascii_lowercase()))
+}
+
 struct Env {
     dir: PathBuf,
     list: PathBuf,
@@ -47,7 +59,7 @@ fn env(tag: &str) -> Env {
     let store = Fake::default();
     store.put(LIVE, "me", &blob("tokA", "m1"));
     let claude_dir = Some(dir.join(".claude"));
-    Env { list: dir.join("accounts.json"), live: Live { service: LIVE.into(), account: "me".into(), claude_json, claude_dir, refresh: no_refresh }, dir, store }
+    Env { list: dir.join("accounts.json"), live: Live { service: LIVE.into(), account: "me".into(), claude_json, claude_dir, refresh: no_refresh, owner: unknown_owner }, dir, store }
 }
 
 impl Env {
@@ -646,4 +658,71 @@ fn 바꾸다_막히면_세_길이_같이_보는_쉬기를_남기고_다음엔_�
     assert_eq!((r.by.as_str(), r.retry_after, r.count), ("switch", Some(600), 1));
     e.live.refresh = no_refresh;
     assert!(matches!(switch(&e.store, &e.live, &e.list, "a1").unwrap_err(), Error::Refresh(c) if c.starts_with("wait:")));
+}
+
+// ── 2026-10-21 리뷰 ⑤-2·3 ──
+
+#[test]
+fn 돌던_세션이_옛_계정_토큰을_되써도_지금_칸을_남의_토큰으로_덮지_않는다() {
+    // A→B 로 바꾼 뒤 돌던 세션이 A 토큰으로 갱신해 로그인 칸에 되쓰면(oauthAccount 는 B 그대로) 다음 바꾸기가 칸 b 의 B 토큰을 A 것으로 덮었다
+    let mut e = Env::two("owner");
+    e.live.owner = owner_by_tok;
+    e.store.put(LIVE, "me", &blob("tokA-세션이-되씀", "m1"));
+    switch(&e.store, &e.live, &e.list, "a1").unwrap();
+    assert_eq!(e.slot("a2").as_deref(), Some("tokB"), "칸 b 는 B 토큰 그대로");
+    assert_eq!(e.slot(BACKUP_LAST).as_deref(), Some("tokA-세션이-되씀"), "되돌리기 백업엔 남는다");
+    // 주인이 맞으면(정상 갱신) 그대로 저장
+    e.store.put(LIVE, "me", &blob("tokA-갱신됨", "m1"));
+    switch(&e.store, &e.live, &e.list, "a2").unwrap();
+    assert_eq!(e.slot("a1").as_deref(), Some("tokA-갱신됨"));
+}
+
+#[test]
+fn 남의_계정_토큰은_표시가_같아도_칸으로_맡지_않는다() {
+    // reconcile — 지금 칸을 모를 때 표시 계정이 같은 칸에 로그인 토큰을 넣는데, 그 토큰이 다른 계정 것이면 칸이 죽는다
+    let mut e = Env::two("owner-reconcile");
+    e.live.owner = owner_by_tok;
+    let mut p = e.pool();
+    p.current = None;
+    save(&e.list, &p).unwrap();
+    e.store.put(LIVE, "me", &blob("tokA-섞임", "m1")); // 표시는 B
+    let mut p = e.pool();
+    reconcile(&e.store, &e.live, &e.list, &mut p).unwrap();
+    assert_eq!((p.current, e.slot("a2").as_deref()), (None, Some("tokB")));
+}
+
+#[test]
+fn 갱신한_새_토큰을_칸에_못_담아도_버리지_않는다() {
+    // 서버가 갱신 토큰을 돌린 뒤 칸 쓰기가 실패하면 `?` 로 돌아가며 유일한 새 토큰을 버려 그 칸이 죽었다(⑤-3)
+    let mut e = Env::two("refresh-keep");
+    e.store.put(SLOT_SERVICE, "a1", &slot_blob("tokA", crate::accounts_refresh::now_ms() - HOUR));
+    e.live.refresh = fresh;
+    *e.store.fail_account.borrow_mut() = Some(("a1".into(), 1));
+    switch(&e.store, &e.live, &e.list, "a1").unwrap();
+    assert_eq!(e.slot("a1").as_deref(), Some("fresh-tokA"), "한 번 실패해도 다시 담는다");
+    // 끝내 못 담아도 바꾸기는 새 토큰으로 — 로그인 칸에 살아 있고, 다음에 이 칸에서 바꿀 때 칸에 담긴다
+    let mut e = Env::two("refresh-keep2");
+    e.store.put(SLOT_SERVICE, "a1", &slot_blob("tokA", crate::accounts_refresh::now_ms() - HOUR));
+    e.live.refresh = fresh;
+    *e.store.fail_account.borrow_mut() = Some(("a1".into(), 99));
+    switch(&e.store, &e.live, &e.list, "a1").unwrap();
+    assert_eq!(e.live_tok().as_deref(), Some("fresh-tokA"));
+    *e.store.fail_account.borrow_mut() = None;
+    switch(&e.store, &e.live, &e.list, "a2").unwrap();
+    assert_eq!(e.slot("a1").as_deref(), Some("fresh-tokA"));
+}
+
+#[test]
+fn 갱신_응답에_만료_시간이_없어도_새_토큰을_받는다() {
+    let old = json!({ "accessToken": "x", "refreshToken": "r", "expiresAt": 1 });
+    let n = crate::accounts_refresh::apply(&old, &json!({ "access_token": "y", "refresh_token": "r2" }), 1_000).unwrap();
+    assert_eq!((n["accessToken"].as_str(), n["refreshToken"].as_str()), (Some("y"), Some("r2")));
+    assert!(n["expiresAt"].as_i64().unwrap() > 1_000);
+}
+
+#[test]
+fn 계정_정보_응답에서_주인을_읽는다() {
+    assert_eq!(crate::accounts_refresh::profile_owner(r#"{"account":{"uuid":"u-1","email":"a@x.com"},"organization":{"uuid":"o-1"}}"#).as_deref(), Some("u-1"));
+    assert_eq!(crate::accounts_refresh::profile_owner(r#"{"error":"x"}"#), None);
+    assert_eq!(crate::accounts_refresh::profile_owner("nope"), None);
 }

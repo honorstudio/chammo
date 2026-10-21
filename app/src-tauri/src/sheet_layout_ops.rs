@@ -6,7 +6,18 @@ use crate::sheet_xml::{edit_attr, fix_group};
 /// 스키마상 mergeCells 뒤에 와야 하는 것들 — 이 중 처음 나오는 것 앞에 넣는다
 const AFTER_MERGES: [&str; 16] = ["<phoneticPr", "<conditionalFormatting", "<dataValidations", "<hyperlinks", "<printOptions", "<pageMargins", "<pageSetup", "<headerFooter", "<rowBreaks", "<colBreaks", "<ignoredErrors", "<drawing", "<legacyDrawing", "<picture", "<tableParts", "<extLst"];
 
-pub fn merge(xml: &str, rf: &str) -> String {
+/// 접두어 없는 시트 모양(<worksheet>…<sheetData…</worksheet>)인가 — 일부 도구(.NET Open XML SDK)는 <x:worksheet><x:sheetData> 처럼 쓴다.
+/// 그런 시트에서 자리 표시(<sheetData·</worksheet>)를 못 찾으면 요소를 루트 밖(문서 끝)에 붙여 엑셀이 '복구' 창을 띄웠다 — 고치지 않고 거절(split_rows 와 같게, 2026-10-21 리뷰 ⑦-14)
+fn plain(xml: &str) -> Result<(), String> {
+    if xml.contains("<sheetData") && xml.contains("</worksheet>") {
+        Ok(())
+    } else {
+        Err("이 시트 모양(접두어 붙은 XML)은 아직 못 고쳐 / this sheet's XML form (prefixed) can't be edited yet".into())
+    }
+}
+
+pub fn merge(xml: &str, rf: &str) -> Result<String, String> {
+    plain(xml)?;
     let item = format!("<mergeCell ref=\"{rf}\"/>");
     let out = if let Some(i) = xml.find("</mergeCells>") {
         format!("{}{item}{}", &xml[..i], &xml[i..])
@@ -14,11 +25,12 @@ pub fn merge(xml: &str, rf: &str) -> String {
         let at = AFTER_MERGES.iter().filter_map(|t| xml.find(t)).min().or_else(|| xml.rfind("</worksheet>")).unwrap_or(xml.len());
         format!("{}<mergeCells count=\"1\">{item}</mergeCells>{}", &xml[..at], &xml[at..])
     };
-    fix_group(&out, "mergeCells", "mergeCell")
+    Ok(fix_group(&out, "mergeCells", "mergeCell"))
 }
 
-pub fn unmerge(xml: &str, rf: &str) -> String {
-    fix_group(&edit_attr(xml, "mergeCell", "ref", |v| (v != rf).then(|| v.to_string())), "mergeCells", "mergeCell")
+pub fn unmerge(xml: &str, rf: &str) -> Result<String, String> {
+    plain(xml)?;
+    Ok(fix_group(&edit_attr(xml, "mergeCell", "ref", |v| (v != rf).then(|| v.to_string())), "mergeCells", "mergeCell"))
 }
 
 fn attr_of(tag: &str, k: &str) -> Option<String> {
@@ -38,7 +50,8 @@ fn set_attr(tag: &str, k: &str, v: &str) -> String {
 }
 
 /// 열 at..at+n 의 너비(엑셀 글자 단위) — 겹치는 <col> 줄은 쪼개서 그 부분만 바꾼다. 1부터 쓰는 min·max
-pub fn col_width(xml: &str, at: u32, n: u32, width: f64) -> String {
+pub fn col_width(xml: &str, at: u32, n: u32, width: f64) -> Result<String, String> {
+    plain(xml)?;
     let (a, b) = (at + 1, at + n);
     let w = format!("{}", (width * 100.0).round() / 100.0);
     let mut cols: Vec<(u32, u32, String)> = Vec::new();
@@ -74,7 +87,7 @@ pub fn col_width(xml: &str, at: u32, n: u32, width: f64) -> String {
         c = end + 1;
     }
     out.sort_by_key(|x| x.0);
-    format!("{head}<cols>{}</cols>{tail}", out.into_iter().map(|x| x.1).collect::<String>())
+    Ok(format!("{head}<cols>{}</cols>{tail}", out.into_iter().map(|x| x.1).collect::<String>()))
 }
 
 /// 행 at..at+n 의 높이(pt) — 없는 행은 빈 행으로 만든다
@@ -97,20 +110,29 @@ mod tests {
     #[test]
     fn 병합은_자리를_지켜_넣고_풀면_빈_묶음째_뺀다() {
         let x = "<worksheet><sheetData/><conditionalFormatting sqref=\"A1\"/><pageMargins/></worksheet>";
-        let m = merge(x, "A1:C1");
+        let m = merge(x, "A1:C1").unwrap();
         assert_eq!(m, "<worksheet><sheetData/><mergeCells count=\"1\"><mergeCell ref=\"A1:C1\"/></mergeCells><conditionalFormatting sqref=\"A1\"/><pageMargins/></worksheet>");
-        let m2 = merge(&m, "B3:B4");
+        let m2 = merge(&m, "B3:B4").unwrap();
         assert!(m2.contains("<mergeCells count=\"2\">"));
-        assert_eq!(unmerge(&unmerge(&m2, "A1:C1"), "B3:B4"), x);
+        assert_eq!(unmerge(&unmerge(&m2, "A1:C1").unwrap(), "B3:B4").unwrap(), x);
     }
 
     #[test]
     fn 열_너비는_겹친_줄을_쪼개서_그_열만() {
         let x = "<worksheet><cols><col min=\"1\" max=\"5\" width=\"9\" style=\"3\"/></cols><sheetData/></worksheet>";
         // C·D(0부터 2, 2칸)를 20 으로
-        assert_eq!(col_width(x, 2, 2, 20.0), "<worksheet><cols><col min=\"1\" max=\"2\" width=\"9\" style=\"3\"/><col min=\"3\" max=\"4\" width=\"20\" style=\"3\" customWidth=\"1\"/><col min=\"5\" max=\"5\" width=\"9\" style=\"3\"/></cols><sheetData/></worksheet>");
+        assert_eq!(col_width(x, 2, 2, 20.0).unwrap(), "<worksheet><cols><col min=\"1\" max=\"2\" width=\"9\" style=\"3\"/><col min=\"3\" max=\"4\" width=\"20\" style=\"3\" customWidth=\"1\"/><col min=\"5\" max=\"5\" width=\"9\" style=\"3\"/></cols><sheetData/></worksheet>");
         // cols 가 없으면 sheetData 앞에 새로
-        assert_eq!(col_width("<worksheet><sheetData/></worksheet>", 0, 1, 12.5), "<worksheet><cols><col min=\"1\" max=\"1\" width=\"12.5\" customWidth=\"1\"/></cols><sheetData/></worksheet>");
+        assert_eq!(col_width("<worksheet><sheetData/></worksheet>", 0, 1, 12.5).unwrap(), "<worksheet><cols><col min=\"1\" max=\"1\" width=\"12.5\" customWidth=\"1\"/></cols><sheetData/></worksheet>");
+    }
+
+    #[test]
+    fn 접두어_붙은_시트는_고치지_않고_거절한다() {
+        // 열 너비·병합만 바꾸면 <cols>·<mergeCells> 를 루트 </x:worksheet> 뒤에 붙여 깨진 xlsx 를 썼다(2026-10-21 리뷰 ⑦-14)
+        let x = "<x:worksheet xmlns:x=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><x:sheetData/></x:worksheet>";
+        assert!(col_width(x, 0, 1, 12.0).is_err());
+        assert!(merge(x, "A1:B1").is_err());
+        assert!(unmerge(x, "A1:B1").is_err());
     }
 
     #[test]

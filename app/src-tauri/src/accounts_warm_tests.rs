@@ -93,7 +93,7 @@ impl Env {
         std::fs::write(&claude_json, "{}").unwrap();
         let e = Env {
             list: dir.join("accounts.json"),
-            live: Live { service: LIVE.into(), account: "me".into(), claude_json, claude_dir: None, refresh: never },
+            live: Live { service: LIVE.into(), account: "me".into(), claude_json, claude_dir: None, refresh: never, owner: |_| None },
             dir,
             store: Fake::default(),
             log: Vec::new(),

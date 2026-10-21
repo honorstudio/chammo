@@ -8,7 +8,7 @@ export type ViewParts = {
   mode?: string;
   /** 채팅 뷰 오른쪽에서 보고 있는 참모 탭 */
   tab?: string;
-  /** 왼쪽 스페이스 화면(spaceWord) */
+  /** 오른쪽 스페이스 화면(spaceWord) */
   space?: string;
   /** 하니터 안에서 고른 프로젝트·항목 — 스페이스가 하니터일 때만 붙인다 */
   harnitor?: string;
@@ -24,7 +24,7 @@ export function viewLine(p: ViewParts): string {
   if (p.tab) out.push(tr(`채팅 탭 ${p.tab}`, `chat tab ${p.tab}`));
   if (p.space) {
     const h = p.space === tr('하니터', 'Harnitor') && p.harnitor ? ` (${p.harnitor})` : '';
-    out.push(tr(`왼쪽 스페이스: ${p.space}${h}`, `left space: ${p.space}${h}`));
+    out.push(tr(`오른쪽 스페이스: ${p.space}${h}`, `right space: ${p.space}${h}`));
   }
   if (p.preview) out.push(tr(`그 위 미리보기 창: ${p.preview}`, `preview on top: ${p.preview}`));
   if (p.focus) out.push(tr(`커서가 있는 세션 ${p.focus}`, `focused session ${p.focus}`));
@@ -61,7 +61,7 @@ export function spaceWord(key: string, n: { orch: (id: string) => string | undef
     case 'c:': return tr(`시안 검토(큐레이션) ${tilde(rest, n.home)}`, `design review (curation) ${tilde(rest, n.home)}`);
     case 'h:': return tr('하니터', 'Harnitor');
     case 'f:': return tr('사무실', 'office');
-    case 'oh:': return tr('오케스트레이터 홈', 'orchestrator home');
+    case 'oh:': return tr('참모 홈', 'assistants home');
     case 'rp:': return tr('하루 리플레이', 'day replay');
     case 'rv:': return rest ? tr(`리뷰 ${rest}`, `review ${rest}`) : tr('리뷰', 'review');
     case 'r:': return tr(`예약(루틴) ${rest}`, `scheduled (routine) ${rest}`);
@@ -79,8 +79,8 @@ export function spaceWord(key: string, n: { orch: (id: string) => string | undef
 /** 터미널 뷰 왼쪽 메뉴에서 고른 칸(ui/Sidebar Selection)을 말로 */
 export function selectionWord(s: { kind: string; name?: string; key?: string; id?: string }): string {
   switch (s.kind) {
-    case 'orchestrator': return tr('오케스트레이터', 'orchestrator');
-    case 'orchHome': return tr('오케스트레이터 홈', 'orchestrator home');
+    case 'orchestrator': return tr('참모', 'assistant');
+    case 'orchHome': return tr('참모 홈', 'assistants home');
     case 'all': return tr('전체 보기', 'all sessions');
     case 'project': return tr(`프로젝트 ${s.name ?? ''}`, `project ${s.name ?? ''}`);
     case 'routine': return tr(`예약(루틴) ${s.name ?? ''}`, `scheduled (routine) ${s.name ?? ''}`);

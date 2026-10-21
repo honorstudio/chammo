@@ -597,6 +597,20 @@ fn write_md_only_real_md_inside_owner() {
 }
 
 #[test]
+fn phone_md_save_does_not_overwrite_mac_edits() {
+    // 폰이 연 뒤 맥(사람·참모)이 같은 md 에 줄을 더하면, 폰 저장이 통째로 써 그 줄이 말없이 사라졌다(2026-10-21 리뷰 ⑦-5)
+    let w = W::new("wmd-base");
+    let d = owner(&w);
+    let doc = new_doc(&d, "", "md", "메모").unwrap();
+    write_md(&d, &doc, "# 메모\n").unwrap();
+    std::fs::write(&doc, "# 메모\n- 맥에서 더한 줄\n").unwrap();
+    assert_eq!(write_md_from(&d, &doc, "# 메모\n폰 글\n", Some("# 메모\n")).unwrap_err(), crate::reader::CHANGED_OUTSIDE);
+    assert_eq!(std::fs::read_to_string(&doc).unwrap(), "# 메모\n- 맥에서 더한 줄\n");
+    write_md_from(&d, &doc, "# 메모\n- 맥에서 더한 줄\n폰 글\n", Some("# 메모\n- 맥에서 더한 줄\n")).unwrap();
+    assert!(std::fs::read_to_string(&doc).unwrap().ends_with("폰 글\n"));
+}
+
+#[test]
 fn phone_add_finds_owner_by_name() {
     let w = W::new("phadd");
     let d = owner(&w);
@@ -1028,4 +1042,19 @@ fn 이미_쓰던_사람은_표식으로_그대로() {
         let t = tree_at(&w.ctx(), "s-1", "운영", false, None).unwrap();
         assert!(t.started && Path::new(&t.dir).is_dir(), "{mark}");
     }
+}
+
+#[test]
+fn screen_paths_use_os_separators() {
+    // 윈도우 화면이 'C:\\…\\참모' + '/자료/a.md' 로 넘긴 경로(2026-10-21 리뷰 ⑦-8)
+    assert_eq!(os_sep(r"C:\Users\Me\Documents\Chammo\참모/자료/a.md", true), r"C:\Users\Me\Documents\Chammo\참모\자료\a.md");
+    assert_eq!(os_sep("/Users/me/Documents/Chammo/참모/자료/a.md", false), "/Users/me/Documents/Chammo/참모/자료/a.md");
+}
+
+#[test]
+#[cfg(windows)]
+fn windows_mixed_separators_are_plain_after_os_sep() {
+    let mixed = r"C:\x\Chammo\o/자료/a.md";
+    assert!(!plain_abs(Path::new(mixed)), "섞인 그대로는 정규형이 아니다");
+    assert!(plain_abs(Path::new(&os_sep(mixed, true))));
 }

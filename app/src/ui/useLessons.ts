@@ -15,7 +15,7 @@ export function useLessons(project: string | null) {
 
   const remove = async (name: string, lesson: string) => {
     const f = await load();
-    await writeLessons(name, removeLesson(f[name] ?? '', lesson));
+    await writeLessons(name, removeLesson(f[name] ?? '', lesson), f[name] ?? '');
     if (name !== COMMON) await unmirrorLesson(name, lesson);
     await load();
   };
@@ -23,8 +23,8 @@ export function useLessons(project: string | null) {
   const promote = async (lesson: string) => {
     if (!project) return;
     const f = await load();
-    await writeLessons(COMMON, addLesson(f[COMMON] ?? '', lesson));
-    await writeLessons(project, removeLesson(f[project] ?? '', lesson));
+    await writeLessons(COMMON, addLesson(f[COMMON] ?? '', lesson), f[COMMON] ?? '');
+    await writeLessons(project, removeLesson(f[project] ?? '', lesson), f[project] ?? '');
     await load();
   };
   return {

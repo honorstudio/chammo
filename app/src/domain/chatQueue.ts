@@ -3,7 +3,7 @@
 // · 일하는 중 Enter = 줄 서기, 기록에 queue-operation enqueue(글) → dequeue(맨 앞, 글 없음)·remove(도중 흡수)·popAll(↑로 입력칸에 되돌림)
 // · 쉴 때 입력칸에 글이 있는데 Esc 두 번 = 입력칸 지우기(기록 0) · 막 보낸 말을 Esc 로 끊으면 그 말이 입력칸으로 되돌아온다
 import type { LinkState } from './attachExit';
-import { alreadySent, chatNorm, humanBody, pendingLeft, sentByMe, type ChatItem } from './chat';
+import { alreadySent, chatNorm, humanBody, pendingLeft, promptInput, sentByMe, type ChatItem } from './chat';
 
 export type QItem = { text: string; ts: number };
 /** waiting = Claude 대기열, popped = ↑로 입력칸에 되돌아간 것(안 간 것), deq = 짝(뒤따르는 user 줄)을 아직 못 본 dequeue 수,
@@ -201,6 +201,21 @@ export function keepAfterRemove(texts: string[], target: string): string[] {
 /** 세션별 앱 치기 줄 — 앞 것이 다 들어간(Enter 까지) 뒤에 다음 것. 실제 치기는 Rust pty_type 이 TYPE_LOCK 을 잡고 해서
  *  스페이스·카드 답장·폰이 치는 글과 한 입력칸에 섞이지 않는다(2026-10-06 fix/chat-ghost 남은 것).
  *  busyUntil = escPlan 의 typingUntil — 치는 중이면 무한, 끝났으면 끝난 때 + 100 */
+/** 채팅이 터미널 입력칸에 넣는 Enter 한 번 — 앱 치기 줄(typeQueue)에 올려 Rust 자물쇠(pty_type)로 친다.
+ *  예전엔 pty 에 '\r' 을 바로 써서 카드 답·[앱] 줄·새 말을 치는 중간에 박혀 반만 보내졌다(2026-10-21 리뷰 ②-8).
+ *  expect = 그 말이 입력칸에 그대로일 때만(칠 때 화면을 다시 본다 — 타이머가 본 화면은 0.4초 전 것이다). 입력칸 모양이 아니면(선택 창) 안 친다 */
+export function enterTask(api: { type: (keys: string[]) => Promise<void>; screen: () => { lines: string[]; cursor: [number, number] } }, expect?: string): () => Promise<void> {
+  return async () => {
+    if (expect !== undefined) {
+      const { lines, cursor } = api.screen();
+      const now = promptInput(lines, cursor);
+      const sq = (t: string) => t.replace(/\s+/g, '');
+      if (now === null || sq(now) !== sq(expect)) return;
+    }
+    await api.type(['\r']);
+  };
+}
+
 export function typeQueue(now: () => number = Date.now) {
   const qs = new Map<string, { tail: Promise<void>; left: number; doneAt: number }>();
   return {

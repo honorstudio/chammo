@@ -7,7 +7,7 @@ import { cellName, type SheetFont, type SheetStyle, type SheetValue, fromUniverS
 
 export interface CellState { v?: SheetValue | null; f?: string | null; style?: SheetStyle }
 export type LogEntry =
-  | { k: 'cell'; sheet: string; name: string; r: number; c: number; now: CellState; styled: boolean; before?: CellState; calc?: boolean }
+  | { k: 'cell'; sheet: string; name: string; r: number; c: number; now: CellState; styled: boolean; before?: CellState; calc?: boolean; agent?: boolean }
   | { k: 'op'; op: Record<string, unknown>; name?: string }
   | { k: 'blocked'; what: string };
 
@@ -164,3 +164,10 @@ export const blockedOf = (log: LogEntry[]) => [...new Set(log.filter((e) => e.k 
 /** 지금 저장을 시작하면 안 되나 — 충돌·막힘·없어짐이거나 고친 게 없거나, 앞 저장이 아직 도는 중.
  *  도는 중에 또 보내면 같은 옛 expected 로 두 쓰기가 같이 돌아 앞 고침이 파일에서 빠졌다(2026-10-21 리뷰) — 끝나면 남은 기록으로 다시 건다 */
 export const saveHeld = (state: string, logLen: number) => state === 'conflict' || state === 'blocked' || state === 'gone' || state === 'saving' || !logLen;
+/** 닫을 때 안 쓴 고침이 그대로 버려지나 — 충돌·막힘·없어짐이면 save 가 안 돌아 기록 없이 사라졌다(md 문서는 history 에 내 판을 남기는데).
+ *  그럴 땐 닫으면서 고친 칸 기록을 history 에 남긴다(2026-10-21 리뷰 ⑦-7). 저장 중이면 그 저장이 마저 쓴다 */
+export const strandedOnClose = (state: string, logLen: number) => logLen > 0 && (state === 'conflict' || state === 'blocked' || state === 'gone' || state === 'error');
+
+/** 바깥 판 위에 다시 얹을 고침 — 표가 스스로 한 것(수식 다시 계산·참조 밀기, calc)은 빼고 사람 고침과 참모 칸 쓰기(agent)는 남긴다.
+ *  참모 쓰기도 calc 로만 표시해서 바깥 변경과 겹치면 합치기에서 빠져 파일에도 표에도 없었다(2026-10-21 리뷰 ⑦-11) */
+export const keptOnMerge = (log: LogEntry[]) => log.filter((e) => !(e.k === 'cell' && e.calc && !e.agent));

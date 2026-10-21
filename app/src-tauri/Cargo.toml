@@ -1,6 +1,6 @@
 [package]
 name = "honor-orchestrator"
-version = "0.3.10"
+version = "0.3.11"
 edition = "2021"
 license = "AGPL-3.0-only"
 
@@ -56,7 +56,7 @@ tauri-winrt-notification = "0.7"
 # 부하 보기 — 윈도우엔 ps·sysctl 이 없다. 맥 ps 모양 글로 만들어 넘긴다(load.rs)
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 # 다른 기기 참모 짝 열쇠 — 자격 증명 관리자(wincred.rs). 이미 락에 있던 판(tokio·mio 가 쓰는 0.61)에 기능만 더한다
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_UI_Shell", "Win32_Storage_FileSystem", "Win32_System_IO"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

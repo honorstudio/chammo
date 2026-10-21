@@ -244,23 +244,69 @@ export const alreadySent = (text: string, items: ChatItem[], since: number): boo
   !!chatNorm(text) && stillPending([text], items.filter((i) => Date.parse(i.ts) >= since)).length === 0;
 
 export function stillPending(pending: string[], items: ChatItem[]): string[] {
-  const norm = chatNorm;
-  const seen = sentByMe(items).map((i) => norm(i.text));
-  // 그림을 같이 보내면 기록엔 [Image #n] 이 붙는다 — 그 표시는 빼고 비교(2026-09-30: 보내는 중이 안 사라졌다)
-  return pending.filter((p) => { const n = norm(p); return !!n && !seen.some((t) => t === n || t.includes(n)); });
+  const left = matchSent(pending.map((p) => ({ n: chatNorm(p), ok: () => true })), sentByMe(items));
+  return pending.filter((_, k) => left[k]);
+}
+
+/** 기록에 든 내 말 하나 — 줄마다 맞춤 모양, 어느 줄을 이미 다른 말에 짝지었나 */
+type SentRec = { ts: number; lines: string[]; used: boolean[] };
+
+/** 기록 줄 하나가 보낸 말 n 을 담았나 — 담았으면 그 자리를 써 버린다(한 자리는 한 말만).
+ *  같다 · 끝이 같다(앞에 그림·경로 칩이나 입력칸에 남아 있던 글) · 줄 몇 개가 통째로 같다(일하는 중 줄 선 말 여럿이 한 기록으로 합쳐 들어감).
+ *  글 일부만 같은 건 아니다 — 늦게 붙은 "네 진행해" 기록이 3초 뒤 보낸 "네" 말풍선까지 지워, "네"가 안 갔어도 몰랐다(2026-10-21 리뷰 ②-3) */
+function takeSent(r: SentRec, n: string): boolean {
+  if (!r.used.some(Boolean)) {
+    const all = chatNorm(r.lines.join('\n'));
+    if (all === n || all.endsWith(` ${n}`)) {
+      r.used.fill(true);
+      return true;
+    }
+  }
+  const norms = r.lines.map(chatNorm);
+  for (let i = 0; i < norms.length; i++) {
+    if (r.used[i] || !n.startsWith(norms[i]!)) continue;
+    for (let j = i; j < norms.length && !r.used[j]; j++) {
+      const b = chatNorm(r.lines.slice(i, j + 1).join('\n'));
+      if (b === n) {
+        for (let k = i; k <= j; k++) r.used[k] = true;
+        return true;
+      }
+      if (b.length > n.length) break;
+    }
+  }
+  return false;
+}
+
+/** 보낸 말마다 아직 기록에 없나 — 앞에 있는 말(오래된 것)부터 짝짓고, 기록 자리 하나는 말 하나만 지운다.
+ *  예전엔 기록 하나가 그 글을 품은 말풍선을 다 지웠다(같은 말을 두 번 보내도 기록 하나로 둘 다 사라짐) */
+function matchSent(pend: { n: string; ok: (ts: number) => boolean }[], sent: { text: string; ts: string }[]): boolean[] {
+  const recs: SentRec[] = sent.map((i) => { const lines = i.text.split('\n'); return { ts: Date.parse(i.ts), lines, used: lines.map(() => false) }; });
+  return pend.map(({ n, ok }) => !!n && !recs.some((r) => ok(r.ts) && takeSent(r, n)));
 }
 
 /** 보내는 중 말풍선 중 아직 기록에 안 들어온 것 — 보낸 뒤(몇 초 여유)에 들어온 내 말하고만 맞춘다.
  *  기록 전체와 맞추니 예전 말에 같은 글("한국말로")이 있으면 방금 보낸 말이 바로 사라졌다(2026-09-30 사용자) */
 export function pendingLeft<T extends { text: string; at: number; since?: number }>(pending: T[], items: ChatItem[], now = Date.now()): T[] {
-  return pending.filter((p) => {
+  // 짝짓기는 보낸 순서대로 — 먼저 보낸 말이 먼저 기록 자리를 가져간다
+  const order = pending.map((_, k) => k).sort((x, y) => pending[x]!.at - pending[y]!.at);
+  // since = 이 시각 뒤 기록만 — 끊겨서 입력칸에 되돌아온 말은 방금 전 기록이 있어도 안 간 말이다(2026-10-06)
+  const left = matchSent(order.map((k) => { const p = pending[k]!; const from = p.since ?? p.at - 10_000; return { n: chatNorm(p.text), ok: (ts: number) => ts >= from }; }), sentByMe(items));
+  const stays = new Set(order.filter((_, i) => left[i]));
+  return pending.filter((p, k) => {
     // / 명령(/rc·/model 등)은 보통 말처럼 기록에 안 남을 때가 있다 — 4초 지나면 보낸 걸로 친다(2026-10-01 사용자)
     if (p.text.trimStart().startsWith('/') && now - p.at > SLASH_PENDING_MS) return false;
-    // since = 이 시각 뒤 기록만 — 끊겨서 입력칸에 되돌아온 말은 방금 전 기록이 있어도 안 간 말이다(2026-10-06)
-    return stillPending([p.text], items.filter((i) => Date.parse(i.ts) >= (p.since ?? p.at - 10_000))).length > 0;
+    return stays.has(k);
   });
 }
 const SLASH_PENDING_MS = 4000;
+
+/** 채팅에 붙여넣은 것 — 그림이면 터미널 그림 붙이기(Ctrl+V), 그림 아닌 파일은 그림 길로 안 보낸다(파인더에서 ⌘C 한 PDF 가
+ *  #img 이름표를 달고 파일 아이콘 그림으로 갔다, 2026-10-21 리뷰 ②-10). 웹뷰가 그림을 파일로 안 넘기고 글도 없으면 그림으로 본다(2026-09-30) */
+export function pasteKind(items: { kind: string; type: string }[], hasText: boolean): 'image' | 'file' | 'text' {
+  if (items.some((i) => i.type.startsWith('image/'))) return 'image';
+  if (items.some((i) => i.kind === 'file')) return 'file';
+  return hasText ? 'text' : 'image';
+}
 
 /** 보내는 중인 말이 Enter 없이 터미널 입력칸에 그대로 있으면 그 말 — 쉬는데 남아 있으면 Enter 를 다시 넣는다 */
 export function stuckInInput(pending: string[], input: string): string | null {

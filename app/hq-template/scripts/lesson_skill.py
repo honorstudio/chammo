@@ -10,7 +10,7 @@ Lessons → project skills, used by scripts/task.
 - 원본 줄은 지우지 않고 <데이터>/lessons/_archive/<프로젝트>.md 로, 만든 기록은 <데이터>/lessons/skills.jsonl
 - 계획: docs/plans/2026-10-06-self-learning.md (1단계)
 """
-import datetime, json, os, re, shutil, subprocess
+import contextlib, datetime, json, os, re, shutil, subprocess
 
 PREFIX = 'lesson-'
 NAME = re.compile(r'^[a-z0-9][a-z0-9-]{0,40}$')
@@ -107,6 +107,35 @@ def skills_line(T, skills_dir, entries):
 
 
 # ── 파일 ──
+
+@contextlib.contextmanager
+def lessons_lock(lessons_dir):
+    """교훈 파일 쓰기(덧붙이기·갈아 끼우기)는 한 번에 하나 — 교훈 폴더 옆 lessons.lock(폴더 안엔 교훈 .md 만). 앱(lessons.rs)도 같은 파일을 잡는다.
+    묶기가 읽고 줄을 뺀 글로 갈아 끼우는 사이 다른 참모의 task reply 가 덧붙인 새 교훈이 사라졌다(2026-10-21 리뷰 ⑥-3)"""
+    os.makedirs(lessons_dir, exist_ok=True)
+    with open(os.path.normpath(lessons_dir) + '.lock', 'a', encoding='utf-8') as f:
+        if os.name == 'nt':
+            import msvcrt
+            f.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)  # 10초 기다리다 OSError — 그럼 다시
+                    break
+                except OSError:
+                    pass
+        else:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == 'nt':
+                import msvcrt
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(f, fcntl.LOCK_UN)
+
 
 def _read(path):
     try:
@@ -442,10 +471,11 @@ def _apply(env, project, name, desc, wanted, tid, drop):
                   'desc': desc, 'path': path, 'task': tid, 'lines': lessons})
     _archive(env, project, T(f'{stamp} {"버림" if drop else "→ " + name} (task {tid})', f'{stamp} {"discarded" if drop else "→ " + name} (task {tid})'), lessons)
     src = os.path.join(env.lessons, f'{project}.md')
-    text, _ = remove_lines(_read(src), lessons)
-    _write(src, text)
-    _unmirror(env, project, lessons)
-    _sync_pointer(env, project)
+    with lessons_lock(env.lessons):  # 잠근 채 다시 읽고 갈아 끼운다 — 그사이 덧붙인 줄이 남게(CLAUDE.local.md 고치기도 같은 잠금 안에서)
+        text, _ = remove_lines(_read(src), lessons)
+        _write(src, text)
+        _unmirror(env, project, lessons)
+        _sync_pointer(env, project)
     return lessons, path, len(gone), appended
 
 

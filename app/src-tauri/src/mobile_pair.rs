@@ -152,7 +152,7 @@ struct Inner {
     mtime: Option<SystemTime>,
     /// (sha256(코드), 만료 시각, 낸 기기 id) — 지금 살아 있는 짝짓기 코드 하나. 맥 QR 은 낸 기기가 없다
     code: Option<(String, SystemTime, Option<String>)>,
-    /// 지금 코드에 틀린 코드를 낸 횟수 — MAX_FAILS 면 그 코드를 죽인다(연타 막기)
+    /// 지금 코드에 틀린 코드를 낸 횟수 — 기록만(MAX_FAILS 번째에 한 줄). 코드는 안 죽인다(128비트, 2026-10-21 리뷰 ④-6)
     fails: u32,
     flushed: Instant,
 }
@@ -314,10 +314,10 @@ impl Devices {
         let mut g = self.inner.lock().unwrap();
         let (h, until, issuer) = g.code.clone()?;
         if !ct_eq(sha(code).as_bytes(), h.as_bytes()) || now > until {
+            // 코드는 128비트라 맞히기는 못 한다 — 틀린 코드로 코드를 죽이면 남이 사람이 막 띄운 QR 을 연타로 죽일 수 있었다(2026-10-21 리뷰 ④-6). 세기만
             g.fails += 1;
-            if g.fails >= MAX_FAILS {
-                g.code = None;
-                log_device(&format!("짝짓기 코드 죽임 — 틀린 코드 {MAX_FAILS}번"));
+            if g.fails == MAX_FAILS {
+                log_device(&format!("짝짓기 — 틀린 코드 {MAX_FAILS}번(코드는 그대로)"));
             }
             return None;
         }
@@ -473,10 +473,10 @@ fn read_list_checked(p: &Path) -> std::io::Result<(Vec<Device>, Option<SystemTim
 }
 
 /// 데이터 폴더의 잠금 파일(flock) — 두 앱이 동시에 바꿔도 한 번에 하나씩. 놓는 건 파일이 닫힐 때(Drop)
-struct FileLock(#[allow(dead_code)] std::fs::File);
+pub(crate) struct FileLock(#[allow(dead_code)] std::fs::File);
 
 impl FileLock {
-    fn take(p: &Path) -> std::io::Result<FileLock> {
+    pub(crate) fn take(p: &Path) -> std::io::Result<FileLock> {
         let mut o = std::fs::OpenOptions::new();
         o.read(true).write(true).create(true).truncate(false);
         #[cfg(unix)]
@@ -489,6 +489,17 @@ impl FileLock {
         {
             use std::os::unix::io::AsRawFd;
             if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+        // 윈도우 — 첫 바이트를 배타 잠금(파이썬 msvcrt.locking(…, 1) 과 같은 자리라 scripts 와도 서로 막는다). 예전엔 윈도우에서 아무것도 안 잠갔다(2026-10-22 코드 리뷰)
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::Storage::FileSystem::{LockFileEx, LOCKFILE_EXCLUSIVE_LOCK};
+            // SAFETY: 핸들은 f 가 쥐고 있고, OVERLAPPED 는 0 자리(파일 처음)
+            let mut ov: windows_sys::Win32::System::IO::OVERLAPPED = unsafe { std::mem::zeroed() };
+            if unsafe { LockFileEx(f.as_raw_handle() as _, LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &mut ov) } == 0 {
                 return Err(std::io::Error::last_os_error());
             }
         }

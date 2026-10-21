@@ -30,6 +30,7 @@ import { BrowserView } from './BrowserView';
 import { liveOf, type Live } from '../../domain/agentBrowser';
 import { IconBell, IconBellOff, IconCalendarClock, IconChevron, IconSessions } from '../Icons';
 import type { Push } from './usePush';
+import { PUSH_HINT } from '../../domain/mobilePush';
 import { HomeAppLink } from './HomeAppLink';
 import { PhoneModes } from './PhoneModes';
 import { MAvatar } from './MAvatar';
@@ -143,10 +144,6 @@ type Props = {
   onAsk: (text: string) => void;
 };
 
-const PUSH_HINT: Record<string, string> = {
-  'need-home': '아이폰은 홈 화면에 추가한 앱에서만 알림을 받아요 — 사파리 공유 → 홈 화면에 추가한 뒤, 아래 \'홈 화면 앱 연결\' 코드를 그 앱에 붙여 넣어요',
-  denied: '알림이 막혀 있어요 — 설정 > 알림에서 참모를 허용해 주세요',
-};
 
 /** 홈 | 보관함 — 참모마다 마지막에 본 칸(데스크톱 1 '마지막에 본 줄'과 같은 규칙), 처음은 홈 */
 const TAB_KEY = 'm.dashTab';

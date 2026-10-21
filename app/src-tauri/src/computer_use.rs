@@ -22,6 +22,19 @@ pub(crate) fn new_project() -> Value {
         "hasTrustDialogAccepted": false, "hasClaudeMdExternalIncludesApproved": false, "hasClaudeMdExternalIncludesWarningShown": false})
 }
 
+/// 앱이 새로 만드는 칸 — 기본 칸에 위 폴더의 믿음을 물려준다. 믿은 devRoot 아래 폴더에 '믿음 false' 칸을 만들면
+/// Claude 가 그 칸을 그대로 써서 물려받던 믿음이 끊겼다(2026-10-22 첫 사용자 QA 32, scripts/app browser connect)
+pub(crate) fn new_project_under(projects: &serde_json::Map<String, Value>, key: &str) -> Value {
+    let k = crate::tools::path_key(key);
+    let trusted = projects.iter().any(|(pk, e)| {
+        let pk = crate::tools::path_key(pk);
+        e.get("hasTrustDialogAccepted") == Some(&json!(true)) && k.strip_prefix(pk.trim_end_matches('/')).is_some_and(|r| r.starts_with('/'))
+    });
+    let mut p = new_project();
+    p["hasTrustDialogAccepted"] = json!(trusted);
+    p
+}
+
 /// 그 프로젝트 목록에 넣거나 뺀다 — 바뀌었으면 true
 fn put(v: &mut Value, key: &str, on: bool) -> Result<bool, String> {
     let projects = v.as_object_mut().ok_or("not an object")?.entry("projects").or_insert_with(|| json!({}));
@@ -29,7 +42,11 @@ fn put(v: &mut Value, key: &str, on: bool) -> Result<bool, String> {
     if !on && !projects.contains_key(key) {
         return Ok(false);
     }
-    let p = projects.entry(key).or_insert_with(new_project).as_object_mut().ok_or("project")?;
+    if !projects.contains_key(key) {
+        let fresh = new_project_under(projects, key);
+        projects.insert(key.into(), fresh);
+    }
+    let p = projects.get_mut(key).ok_or("project")?.as_object_mut().ok_or("project")?;
     let list = p.entry("enabledMcpServers").or_insert_with(|| json!([]));
     if !list.is_array() {
         *list = json!([]);
@@ -198,6 +215,20 @@ mod tests {
         assert_eq!(p["allowedTools"], json!([]));
         assert_eq!(p["mcpServers"], json!({}));
         assert_eq!(p["hasTrustDialogAccepted"], json!(false));
+    }
+
+    #[test]
+    fn 새_칸은_위_폴더_믿음을_물려받는다() {
+        // 2026-10-22 첫 사용자 QA 32: browser connect 가 믿은 devRoot 아래 폴더에 믿음 false 칸을 새로 만들었다
+        let base = r#"{"projects":{"/u/dev":{"hasTrustDialogAccepted":true},"/u/devx":{"hasTrustDialogAccepted":true}}}"#;
+        let t = set_enabled(base, "/u/dev/shop", true).unwrap();
+        assert_eq!(v(&t)["projects"]["/u/dev/shop"]["hasTrustDialogAccepted"], json!(true));
+        let t = set_enabled(base, "/u/de/shop", true).unwrap();
+        assert_eq!(v(&t)["projects"]["/u/de/shop"]["hasTrustDialogAccepted"], json!(false));
+        // 윈도우 키는 대소문자·\ 를 안 가린다
+        let win = r#"{"projects":{"C:/Users/Me/dev":{"hasTrustDialogAccepted":true}}}"#;
+        let t = set_enabled(win, r"c:\users\me\dev\shop", true).unwrap();
+        assert_eq!(v(&t)["projects"][r"c:\users\me\dev\shop"]["hasTrustDialogAccepted"], json!(true));
     }
 
     #[test]

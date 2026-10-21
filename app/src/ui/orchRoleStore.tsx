@@ -51,7 +51,7 @@ export function OrchRole({ name, className }: { name: string; className?: string
 export function RoleField({ value, onChange, onEnter, onEscape }: { value: string; onChange: (v: string) => void; onEnter?: () => void; onEscape?: () => void }) {
   return (
     <div className="od-role">
-      <input value={value} onChange={(e) => onChange(e.target.value)} maxLength={80} placeholder={tr('맡은 일(비워도 돼)', 'What it handles (optional)')} aria-label={tr('맡은 일', 'What it handles')}
+      <input value={value} onChange={(e) => onChange(e.target.value)} maxLength={80} placeholder={tr('맡은 일(비워도 돼요)', 'What it handles (optional)')} aria-label={tr('맡은 일', 'What it handles')}
         onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) onEnter?.(); if (e.key === 'Escape') { e.stopPropagation(); onEscape?.(); } }} />
       <div className="od-chips">
         {roleChips().map((c) => <button key={c} type="button" className={value.trim() === c ? 'on' : ''} onClick={() => onChange(c)}>{c}</button>)}

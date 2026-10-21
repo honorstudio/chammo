@@ -151,7 +151,7 @@ button { font: inherit; color: inherit; }
 .pane-head { display: flex; gap: 8px; align-items: center; height: 34px; padding: 0 6px 0 12px; background: var(--surface-2); border-bottom: 1px solid var(--line); font-size: 12px; white-space: nowrap; }
 /* 이름이 길어도 버튼이 밀려나지 않게 — 글자는 줄이고 버튼은 고정 */
 .pane-head > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.pane-head .sub { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); font-family: ui-monospace, Menlo, "Cascadia Mono", Consolas, monospace; font-size: 11px; }
+.pane-head .sub { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); font-family: ui-monospace, Menlo, "Cascadia Mono", Consolas, "Chammo Hangul", monospace; font-size: 11px; } /* 한글은 번들 글꼴로 — 윈도우 기본 고정폭 한글이 '고 르 고'처럼 벌어졌다(QA 31) */
 .pane-head .sub.plain { font-family: inherit; white-space: nowrap; }
 .pane-head .note { min-width: 0; flex: 1 1 0; display: inline-flex; align-items: center; justify-content: flex-end; gap: 5px; color: var(--text-3); font-size: 11.5px; cursor: pointer; padding: 3px 6px; border-radius: 6px; }
 .pane-head .note svg { flex: 0 0 auto; width: 15px; height: 15px; color: var(--accent); }
@@ -340,6 +340,7 @@ button.acct-pop-row:disabled { cursor: default; opacity: .6; }
 .inbox-more svg { transform: rotate(90deg); transition: transform .15s; }
 .inbox-text.open .inbox-more svg { transform: rotate(-90deg); }
 .inbox-reply { display: flex; gap: 6px; }
+.inbox-gate { display: flex; gap: 6px; }
 .inbox-reply .inp { flex: 1; min-width: 0; }
 .inbox-acts { display: flex; gap: 2px; justify-content: flex-end; }
 .inbox-why { font-size: 11.5px; color: var(--warn-ink); background: var(--warn-bg); border-radius: 6px; padding: 5px 8px; line-height: 1.5; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { askName, closedText, NO_FRAME_MS, controlOf, takeoverLine, browserBig, browserScreen, currentSite, EMPTY_MS, frameTrouble, GONE_MS, UNSURE_MS, liveOf, paneStatus, phoneTrouble, siteOf, tabStrip, unpackFrame, type Live, stuckLine, permLine, fedcmChoices, fedcmLine, focusFailLine, peekStep, afterUnpeek } from './agentBrowser';
+import { askName, closedText, NO_FRAME_MS, controlOf, takeoverLine, browserBig, browserScreen, currentSite, EMPTY_MS, frameTrouble, GONE_MS, UNSURE_MS, liveOf, paneStatus, phoneTrouble, siteOf, tabStrip, unpackFrame, type Live, stuckLine, permLine, fedcmChoices, fedcmLine, focusFailLine, peekStep, afterUnpeek, showsPicture } from './agentBrowser';
 
 const live = (o: Partial<Live> = {}): Live => ({ profile: 'acme', pid: 11, sessionPid: 22, url: 'https://a.com/', title: 'A', tabs: [], tool: '이동 https://a.com/', toolAt: 1000, busy: false, ts: 1000, ...o });
 
@@ -340,5 +340,16 @@ describe('afterUnpeek — 저절로 숨기기를 Rust 가 거절하면(크롬 �
   });
   it('거절인데 주소가 바뀌었으면 새 주소로 — 주소 바뀜만으로 1초마다 다시 숨기려 하지 않게', () => {
     expect(afterUnpeek(false, peeked, 'https://login.example.com/next')).toEqual({ url: 'https://login.example.com/next' });
+  });
+});
+
+describe('showsPicture — 지금 탭 그림이 있나(2026-10-22 첫 사용자 QA 6)', () => {
+  it('재현: 탭이 바뀌어 지금 탭 그림이 아직 없으면 옛 탭 그림이 남아 있어도 없음 — 그래야 8초 뒤 "화면이 안 와요"가 뜬다', () => {
+    expect(showsPicture('blob:old', false)).toBe(false);
+  });
+  it('지금 탭 그림이 왔으면 있음, 옛 앱(framed 모름)은 그림만 본다', () => {
+    expect(showsPicture('blob:new', true)).toBe(true);
+    expect(showsPicture('blob:new', undefined)).toBe(true);
+    expect(showsPicture('', true)).toBe(false);
   });
 });

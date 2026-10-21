@@ -82,7 +82,7 @@ export function TopBar({ features, usage, usageAge, account, accounts, onSetting
           replay: featureButton('replay', fp, 'voice'), voice: featureButton('voice', fp, 'voice'), tools: featureButton('tools', fp, 'voice'),
           harnitor: featureButton('harnitor', fp, 'voice'), review: featureButton('review', fp, 'voice'),
           // 맨 끝: 결정 대기 드롭다운이 바로 아래(오른쪽 위)에 펼쳐진다
-          inbox: <button key="inbox" className={`bell ${inboxCount ? 'on' : ''}`} title={inboxCount ? tr(`결정 대기 ${inboxCount}개 — 눌러서 보기`, `${inboxCount} decisions waiting — click to view`) : tr('결정 대기 없음', 'No decisions waiting')} onClick={onInbox}>
+          inbox: <button key="inbox" className={`bell ${inboxCount ? 'on' : ''}`} aria-label={inboxCount ? tr(`결정 대기 ${inboxCount}개`, `${inboxCount} decisions waiting`) : tr('결정 대기', 'Decisions')} title={inboxCount ? tr(`결정 대기 ${inboxCount}개 — 눌러서 보기`, `${inboxCount} decisions waiting — click to view`) : tr('결정 대기 없음', 'No decisions waiting')} onClick={onInbox}>
             <IconBell />
             <Badge n={inboxCount} className="bell-n" />
           </button>,
@@ -92,7 +92,7 @@ export function TopBar({ features, usage, usageAge, account, accounts, onSetting
           {before.map((id) => item[id])}
           {/* 채팅 | 터미널 — 지금 뷰가 칠해진다. 두 뷰가 아예 달라져서 켜고 끄는 단추 대신 두 칸(2026-10-03 사용자) */}
           <span className="view-seg" role="group" aria-label={tr('보기', 'View')}>
-            <button className={space ? 'on' : ''} aria-pressed={space} aria-label={tr('채팅 뷰', 'Chat view')} title={tr(`채팅 뷰 — 왼쪽 스페이스, 오른쪽 ${assistant()} 채팅`, `Chat view — space on the left, ${assistant()} chat on the right`)} onClick={() => onView(true)}><IconSpace /></button>
+            <button className={space ? 'on' : ''} aria-pressed={space} aria-label={tr('채팅 뷰', 'Chat view')} title={tr(`채팅 뷰 — 가운데 ${assistant()} 채팅, 오른쪽 스페이스`, `Chat view — ${assistant()} chat in the middle, space on the right`)} onClick={() => onView(true)}><IconSpace /></button>
             <button className={space ? '' : 'on'} aria-pressed={!space} aria-label={tr('터미널 뷰', 'Terminal view')} title={tr('터미널 뷰 — 터미널·리더·작업 패널', 'Terminal view — terminals, reader, task panel')} onClick={() => onView(false)}><IconTerminal /></button>
           </span>
           {after.map((id) => item[id])}

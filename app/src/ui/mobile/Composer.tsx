@@ -138,7 +138,7 @@ export function Composer({ avatar, orchName, waiting, placeholder, draftKey, max
   const other = !!speaker?.onGo;
   const orchBtn = (key: string) => (
     <button key={key} ref={setBtn} type="button" className={`m-cbtn m-corch${cin}${speaker ? ' m-speak' : ''}`} style={speaker?.style} onClick={speaker?.onGo ?? onChip}
-      aria-label={other && speaker ? `${speaker.name} 말하는 중 — ${speaker.name}에게 가기` : `${orchName}${speaker ? ' 말하는 중' : ''}${busy ? ' 일하는 중' : ''}${ctxPct !== undefined ? `, 컨텍스트 ${Math.round(ctxPct)}%` : ''} — 비서 바꾸기${waiting > 0 ? `, 답을 기다리는 비서 ${waiting}` : ''}`}
+      aria-label={other && speaker ? `${speaker.name} 말하는 중 — ${speaker.name}에게 가기` : `${orchName}${speaker ? ' 말하는 중' : ''}${busy ? ' 일하는 중' : ''}${ctxPct !== undefined ? `, 컨텍스트 ${Math.round(ctxPct)}%` : ''} — 참모 바꾸기${waiting > 0 ? `, 답을 기다리는 참모 ${waiting}` : ''}`}
       title={other && speaker ? `${speaker.name}에게 가기` : '참모 바꾸기'}>
       <AvatarRing pct={other ? undefined : ctxPct} dot={busy && !other ? 'st-work' : undefined} size={40}><span key={speaker?.id ?? 'own'} className={`m-cdot${swapped.current ? ' m-cin' : ''}`}>{speaker?.avatar ?? avatar}</span></AvatarRing>
       {waiting > 0 && <span className="m-wait-n">{waiting}</span>}

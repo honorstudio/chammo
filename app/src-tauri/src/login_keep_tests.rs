@@ -106,7 +106,7 @@ impl Env {
         let e = Env {
             list: dir.join("accounts.json"),
             state: dir.join("login-keep.json"),
-            live: Live { service: LIVE.into(), account: "me".into(), claude_json, claude_dir: Some(claude_dir), refresh: never },
+            live: Live { service: LIVE.into(), account: "me".into(), claude_json, claude_dir: Some(claude_dir), refresh: never, owner: |_| None },
             dir,
             store: Fake::default(),
             log: Vec::new(),

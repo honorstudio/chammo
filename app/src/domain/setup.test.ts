@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addExtraProject, parseClaudeVersion, setupCommand, setupReady, shq, versionFit, versionWarning, type EnvCheck, WIZARD, canNext, tildify, notifyRow, browserRow, browserChecklist, ghRow, gitStillMissing } from './setup';
+import { addExtraProject, parseClaudeVersion, setupCommand, setupReady, shq, versionFit, versionWarning, type EnvCheck, WIZARD, canNext, nextWhy, trustExitNote, tildify, notifyRow, browserRow, browserChecklist, ghRow, gitStillMissing } from './setup';
 
 describe('Claude Code 버전', () => {
   it('버전 글자를 숫자로', () => {
@@ -84,6 +84,36 @@ describe('폴더 믿기 — 새 폴더에서 claude --bg 가 "Workspace not trus
     expect(canNext('basics', ok, { dev: true, hq: true })).toBe(true);
     expect(canNext('basics', ok)).toBe(false);
   });
+});
+
+describe('nextWhy — 다음이 꺼진 까닭을 단추 옆에(2026-10-22 첫 사용자 QA 17: 믿기 줄이 창 아래라 왜 꺼졌는지 몰랐다)', () => {
+  const ok = { claudePath: '/c', loggedIn: true, clt: true, python: true } as unknown as EnvCheck;
+  it('재현: 기본 설정 단계에서 믿기가 남았으면 그 말', () => {
+    expect(nextWhy('basics', ok, { dev: true, hq: false }, null, false)).toMatch(/믿기/);
+    expect(nextWhy('basics', ok, undefined, null, false)).toMatch(/믿기/);
+    // 까닭 줄은 단추 위 — 믿기 두 줄은 그보다 위에 있다(QA 2차 '아래 두 폴더')
+    expect(nextWhy('basics', ok, undefined, null, false)).toMatch(/^위 /);
+  });
+  it('폴더가 막혀 있으면 그것부터', () => {
+    expect(nextWhy('basics', ok, { dev: true, hq: true }, { state: 'denied' } as never, false)).toMatch(/프로젝트 폴더/);
+  });
+  it('다 됐으면 없음, 점검 단계는 맥·윈도우 따로', () => {
+    expect(nextWhy('basics', ok, { dev: true, hq: true }, null, false)).toBeNull();
+    expect(nextWhy('check', null, undefined, null, true)).toMatch(/파이썬/);
+    expect(nextWhy('check', null, undefined, null, false)).toMatch(/명령줄 도구/);
+    expect(nextWhy('welcome', null, undefined, null, false)).toBeNull();
+  });
+});
+
+describe('trustExitNote — 믿기 터미널이 믿지 않고 끝났을 때 한 줄(2026-10-22 첫 사용자 QA 7)', () => {
+  const asked = 'Accessing workspace:\n\n/u/dev\n\nQuick safety check: Is this a project you created or one you trust?\n❯ 1. Yes, I trust this folder\n  2. No, exit';
+  it('질문을 보고 No 로 끝났으면 Yes 를 고르라고', () => expect(trustExitNote(asked)).toMatch(/Yes, I trust this folder/));
+  it('재현: 질문 전에 끝났는데(실행 실패) Yes 를 고르라고 했다 — 마지막 줄을 보여 준다', () => {
+    const n = trustExitNote('zsh: command not found: claude\n');
+    expect(n).not.toMatch(/Yes, I trust/);
+    expect(n).toContain('zsh: command not found: claude');
+  });
+  it('로그인이 안 됐으면 로그인부터', () => expect(trustExitNote('Invalid API key · Please run /login\n')).toMatch(/로그인/));
 });
 
 describe('폴더 고르기 결과를 입력칸 모양으로', () => {

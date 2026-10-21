@@ -32,18 +32,19 @@ export function Confirm({ title, body, ok, danger, onOk, onCancel }: { title: st
   );
 }
 
-/** 새 참모 이름 짓기 — 번호 대신 별명으로 부른다(2026-10-02 사용자). 빈칸·이미 있는 이름이면 못 만든다(check = domain nickProblem) */
+/** 새 참모 이름 짓기 — 번호 대신 별명으로 부른다(2026-10-02 사용자). 이미 있는 이름이면 못 만든다(check = domain nickProblem).
+ *  비우면 기본 이름 그대로 — 첫 설정에서 이름을 이미 물었는데 여기서 또 막아 두 번 물었다(2026-10-22 첫 사용자 QA 14) */
 export function NameNew({ baseName, color, check, onMake, onCancel }: { baseName: string; color: string; check: (v: string) => string | null; onMake: (v: string, role: string) => void; onCancel: () => void }) {
   const [v, setV] = useState('');
   const [role, setRole] = useState(''); // 맡은 일 — 이름과 따로(2026-10-04 사용자 "업무 담당 vs 그냥 이름"), 비워도 된다
   const [picking, setPicking] = useState(false);
   // 프사는 기본 이름(참모-N)에 붙는다 — 만들기 전에 골라도 그 참모가 뜨면 그대로
   const realName = withNick(baseName, v || '');
-  const label = cleanLabel(v) ?? tr(`새 ${assistant()}`, 'New assistant');
+  const label = cleanLabel(v) ?? baseName;
   const [tried, setTried] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => { input.current?.focus(); }, []);
-  const problem = check(v);
+  const problem = v.trim() ? check(v) : null;
   const make = () => { setTried(true); if (!problem) onMake(v, role); };
   return createPortal(
     <div className="od-back" onMouseDown={onCancel}>
@@ -54,14 +55,14 @@ export function NameNew({ baseName, color, check, onMake, onCancel }: { baseName
             <OrchAvatar name={realName} size={56} state="rest" color={color} label={label} /><span className="oa-change" aria-hidden="true">{tr('바꾸기', 'Change')}</span>
           </button>
         </div>
-        <input ref={input} value={v} onChange={(e) => setV(e.target.value)} maxLength={24} placeholder={tr('예: 개발, 디자인', 'e.g. Dev, Design')} aria-invalid={tried && !!problem}
+        <input ref={input} value={v} onChange={(e) => setV(e.target.value)} maxLength={24} placeholder={tr(`별명 — 예: 개발·디자인, 비우면 ${baseName}`, `Nickname — e.g. Dev, Design; empty = ${baseName}`)} aria-label={tr('별명', 'Nickname')} aria-invalid={tried && !!problem}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) make(); if (e.key === 'Escape') { e.stopPropagation(); onCancel(); } }} />
         {tried && problem && <p className="od-err" role="alert">{problem}</p>}
         <RoleField value={role} onChange={setRole} onEnter={make} onEscape={onCancel} />
         {picking && <AvatarPicker name={realName} label={label} color={color} onClose={() => { setPicking(false); input.current?.focus(); }} />}
         <div className="od-foot">
           <button onClick={onCancel}>{tr('취소', 'Cancel')}</button>
-          <button className="pri" onClick={make} disabled={!v.trim()}>{tr('만들기', 'Create')}</button>
+          <button className="pri" onClick={make} disabled={tried && !!problem}>{tr('만들기', 'Create')}</button>
         </div>
       </div>
     </div>,

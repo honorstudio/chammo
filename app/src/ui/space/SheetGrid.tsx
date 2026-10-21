@@ -10,7 +10,7 @@ import cfKo from '@univerjs/preset-sheets-conditional-formatting/locales/ko-KR';
 import '@univerjs/preset-sheets-core/lib/index.css';
 import '@univerjs/preset-sheets-conditional-formatting/lib/index.css';
 import { toUniver, type SheetBook } from '../../domain/sheetBook';
-import { blockedOf, cellState, compile, fromCalc, fromMutation, saveHeld, type CellState, type LogCtx, type LogEntry } from '../../domain/sheetLog';
+import { blockedOf, cellState, compile, fromCalc, fromMutation, keptOnMerge, saveHeld, strandedOnClose, type CellState, type LogCtx, type LogEntry } from '../../domain/sheetLog';
 import { conflicts } from '../../domain/sheetPending';
 import { cellChanges, plan, skipOf, typed, type Put } from '../../domain/sheetPlay';
 import { ackThenPlay, onSheetPlay } from './sheetPlayBus';
@@ -27,8 +27,8 @@ const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms))
 /** 페이지가 표에 시키는 것 — 충돌 띠의 '내 판으로 저장' */
 export interface SheetControl { keepMine: () => Promise<void> }
 
-/** 내가 한 고침만(표가 스스로 한 칸 쓰기·수식 다시 계산 결과는 뺀다) */
-const mineOnly = (log: LogEntry[]) => log.filter((e) => !(e.k === 'cell' && e.calc));
+/** 바깥 판 위에 얹을 고침 — 사용자 고침 + 참모 칸 쓰기(표가 스스로 한 칸 쓰기·수식 다시 계산 결과는 뺀다, domain/sheetLog keptOnMerge) */
+const mineOnly = keptOnMerge;
 
 /** 밖에서 고쳤나 보는 주기 — md 문서(docSync)와 같다 */
 const WATCH_MS = 1500;
@@ -314,7 +314,8 @@ export default function SheetGrid({ path, book, stamp, onStatus, onSaved, onRelo
       // 저장엔 넣되 '사용자가 고친 것'에선 뺀다(calc). 직전 값(before)도 지우지 않는다 — 바로 뒤 사용자의 칸 쓰기가 쓴다
       const quiet = !calc && (agent || opts?.fromFormula || /insert-(row|col)|remove-(row|col)/.test(String(p.trigger ?? '')));
       const got = calc ? fromCalc(p, ctx, known) : fromMutation(ev.id, p, ctx, before);
-      const add = quiet ? got.map((e) => (e.k === 'cell' ? { ...e, calc: true } : e)) : got;
+      // 참모 칸 쓰기는 agent 도 — '사용자가 고친 것'에선 빠지되 바깥 판 합치기에선 남는다(keptOnMerge, ⑦-11)
+      const add = quiet ? got.map((e) => (e.k === 'cell' ? { ...e, calc: true, ...(agent && !calc ? { agent: true } : {}) } : e)) : got;
       if (!add.length) return;
       if (!calc && !quiet) before.clear();
       log.push(...add);
@@ -344,6 +345,8 @@ export default function SheetGrid({ path, book, stamp, onStatus, onSaved, onRelo
       window.clearTimeout(recalc);
       // 남은 고침은 지금 보낸다 — save 는 await 앞에서 칸을 다 읽으니 바로 치워도 된다
       if (timer) { window.clearTimeout(timer); void save(); }
+      // 충돌·막힘·없어짐이면 save 가 안 돈다 — 고친 칸 기록을 history 에 남긴다(md 의 내 판처럼, ⑦-7)
+      if (strandedOnClose(state, log.length)) void invoke('keep_doc_version', { path, text: JSON.stringify({ state, edits: mineOnly(log) }, null, 1), tag: 'edits' }).catch(() => {});
       delete (window as unknown as { __sheet?: unknown }).__sheet;
       // 바로 치운다(늦게 치우면 StrictMode 가 다시 띄운 표까지 지워 흰 화면이 됐다)
       univer.dispose();

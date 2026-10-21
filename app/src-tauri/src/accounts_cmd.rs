@@ -215,7 +215,7 @@ fn setup_quiet(always_quiet: bool) -> Result<(Keychain, Live, PathBuf), String> 
     // 키체인 계정 이름은 지금 칸에 붙은 것 그대로(값은 안 읽는다). 칸이 없으면 맥 사용자 이름 — Claude Code 와 같은 규칙
     let account = remembered(&ACCOUNT, &service, || kc.account_of(&service)).or_else(|| env("USER")).unwrap_or_default();
     let claude_dir = claude_dir(Path::new(&crate::config::home()), env("CLAUDE_CONFIG_DIR").as_deref(), env("CHAMMO_ACCOUNT_CLAUDE_DIR").as_deref(), env("CHAMMO_ACCOUNT_LIVE_SERVICE").as_deref());
-    Ok((kc, Live { service, account, claude_json, claude_dir, refresh: crate::accounts_refresh::refresh }, crate::config::data_file("accounts.json")))
+    Ok((kc, Live { service, account, claude_json, claude_dir, refresh: crate::accounts_refresh::refresh, owner: crate::accounts_refresh::owner }, crate::config::data_file("accounts.json")))
 }
 
 /// 로그인 칸의 키체인 계정 이름 기억 — (칸 이름, 계정 이름). 앱 켤 때 한 번 읽고, 계정 칸을 바꾸는 일(run) 뒤에 잊는다.

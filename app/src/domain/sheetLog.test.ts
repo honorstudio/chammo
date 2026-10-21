@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blockedOf, cellState, compile, fromCalc, fromMutation, saveHeld, type CellState, type LogCtx } from './sheetLog';
+import { blockedOf, cellState, compile, fromCalc, fromMutation, keptOnMerge, saveHeld, strandedOnClose, type CellState, type LogCtx } from './sheetLog';
 
 // 지어낸 시트 — s0 은 불러온 시트(부품 경로), 새 시트는 이름이 열쇠
 function ctx(cells: Record<string, CellState> = {}) {
@@ -93,5 +93,23 @@ describe('저장 시작 막기', () => {
     expect(saveHeld('dirty', 3)).toBe(false);
     expect(saveHeld('saved', 0)).toBe(true);
     for (const s of ['conflict', 'blocked', 'gone']) expect(saveHeld(s, 3)).toBe(true);
+  });
+});
+
+describe('strandedOnClose — 닫을 때 버려질 고침(2026-10-21 리뷰 ⑦-7)', () => {
+  it('충돌·막힘·없어짐·오류 + 안 쓴 고침이면 남긴다', () => {
+    for (const st of ['conflict', 'blocked', 'gone', 'error']) expect(strandedOnClose(st, 2), st).toBe(true);
+  });
+  it('저장되는 상태거나 고친 게 없으면 아니다', () => {
+    for (const st of ['saved', 'dirty', 'saving']) expect(strandedOnClose(st, 2), st).toBe(false);
+    expect(strandedOnClose('conflict', 0)).toBe(false);
+  });
+});
+
+describe('keptOnMerge — 바깥 판 위에 다시 얹을 고침(2026-10-21 리뷰 ⑦-11)', () => {
+  const cell = (x: object) => ({ k: 'cell' as const, sheet: 's0', name: '시트1', r: 0, c: 0, now: { v: 1, f: null }, styled: false, ...x });
+  it('참모 칸 쓰기는 남기고 표가 스스로 다시 계산한 칸만 뺀다', () => {
+    const log = [cell({ r: 1 }), cell({ r: 2, calc: true, agent: true }), cell({ r: 3, calc: true })];
+    expect(keptOnMerge(log).map((e) => (e.k === 'cell' ? e.r : -1))).toEqual([1, 2]);
   });
 });

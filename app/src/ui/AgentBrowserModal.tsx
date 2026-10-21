@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ASK_EMPTY, askClose, askOpen, askShown, askStep, askWaiting, pickLive, popupLabel, popupLine, popupStep, type AskState } from '../domain/agentAsk';
-import { afterUnpeek, controlOf, currentSite, ACTIVE_MS, fedcmChoices, fedcmLine, focusFailLine, peekStep, permLine, stuckLine, tabStrip, takeoverLine, type Live } from '../domain/agentBrowser';
+import { afterUnpeek, controlOf, showsPicture, currentSite, ACTIVE_MS, fedcmChoices, fedcmLine, focusFailLine, peekStep, permLine, stuckLine, tabStrip, takeoverLine, type Live } from '../domain/agentBrowser';
 import { approach, escCancelsDialog, escClose, keyEvents, keyTarget, menuRoute, modsOf, pointIn, unfocusedKey, type InputEv } from '../domain/agentInput';
 import { tr } from '../i18n';
 import { FrameView, useAgentFrame, useAgentTabs, useBrowserScreen } from './AgentBrowser';
@@ -67,7 +67,7 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
   const tabsNow = useAgentTabs(live.profile, 400); // 주소가 바뀌면 머리 도메인이 빨리 따라오게
   const { pages, current, pinned, shown, setShown, dialog, dialogTabs, stuck, chooser, dropped, error, popup, popupKind, wrapperDialog, permission, fedcm } = tabsNow;
   // 화면이 진짜인가 — 아니면(닫힘·못 받음·오래 주소 모름) 입력을 막는다. 보내 봐야 Rust 가 버린다(예전엔 사진 위를 눌러도 아무 일이 없었다)
-  const scr = useBrowserScreen(tabsNow, gone, !!src);
+  const scr = useBrowserScreen(tabsNow, gone, showsPicture(src, tabsNow.framed));
   // 평소엔 보기만 — 개입(mine)·세션이 부름(ask) 동안만 화면 조작. 누르면 목록(1.5초)을 기다리지 않고 바로 바뀐 것으로 본다(want)
   const [want, setWant] = useState<boolean | null>(() => (Date.now() - (took.get(`${live.profile}:${live.pid}`) ?? 0) < 5000 ? true : null));
   const liveMine = !!live.takeover;

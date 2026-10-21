@@ -39,6 +39,7 @@ describe('projectRoot / projectGroups — 프로젝트마다 워크트리 세션
 describe('docTitle — 메뉴에 보일 문서 이름', () => {
   it('확장자 빼고, decisions 안은 번호 떼고', () => {
     expect(docTitle('/p/docs/starter.md')).toBe('starter');
+    expect(docTitle('C:\\p\\docs\\starter.md')).toBe('starter'); // 윈도우 경로(QA 31)
     expect(docTitle('/p/docs/decisions/0003-tauri-app.md')).toBe('tauri-app');
     expect(docTitle('/x/이번 주 생각.md')).toBe('이번 주 생각');
   });

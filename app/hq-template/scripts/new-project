@@ -18,7 +18,7 @@ it only creates the folder and tells you to start the session with /project-star
 Prints JSON: {path, existed, written, projectStarter, trusted, browser, next}.
 With browser automation installed, a new project also gets its own logged-in browser profile (.mcp.json).
 """
-import datetime, json, os, re, shutil, subprocess, sys, time
+import datetime, json, os, re, shlex, shutil, subprocess, sys, time
 
 NAME = re.compile(r'^[a-z0-9][a-z0-9._-]{0,63}$')
 
@@ -132,8 +132,8 @@ def under_consent(data, path):
     return inside(root, os.path.realpath(path))
 
 
-def local_settings(path, enable=(), statusline=None, isolation=None):
-    """<프로젝트>/.claude/settings.local.json 에 합친다 — MCP 미리 승인, 앱 상태줄(사용량·대화 %), 백그라운드 세션 격리(isolation)"""
+def local_settings(path, enable=(), statusline=None, isolation=None, env=None):
+    """<프로젝트>/.claude/settings.local.json 에 합친다 — MCP 미리 승인, 앱 상태줄(사용량·대화 %), 백그라운드 세션 격리(isolation), 세션 env"""
     sl = os.path.join(path, '.claude/settings.local.json')
     try:
         with open(sl, encoding='utf-8') as f:
@@ -149,6 +149,9 @@ def local_settings(path, enable=(), statusline=None, isolation=None):
     if isolation:
         wt = s.get('worktree') if isinstance(s.get('worktree'), dict) else {}
         s['worktree'] = {**wt, 'bgIsolation': isolation}
+    if env:
+        cur = s.get('env') if isinstance(s.get('env'), dict) else {}
+        s['env'] = {**cur, **env}
     os.makedirs(os.path.dirname(sl), exist_ok=True)
     with open(sl, 'w', encoding='utf-8') as f:
         json.dump(s, f, ensure_ascii=False, indent=2)
@@ -225,7 +228,12 @@ def browser(path, name, data, node=None):
     return True
 
 
-def create(name, summary, data=None, home=None, today=None, node=None):
+def next_cmd(path, name, first):
+    """참모가 칠 세션 띄우기 한 줄 — 경로는 따옴표로(빈칸·한글 폴더 '내 프로젝트')"""
+    return f'cd {shlex.quote(path)} && claude --bg --dangerously-skip-permissions -n {name} "{first}<first instruction>"'
+
+
+def create(name, summary, data=None, home=None, today=None, node=None, win=None):
     """폴더·git·하네스. 있는 파일은 안 덮는다. 사용자 project-starter 스킬이 있으면 그 스킬에 맡긴다"""
     if not valid_name(name):
         raise ValueError(f'folder name must be lowercase letters, digits, - _ . : {name!r}')
@@ -233,7 +241,11 @@ def create(name, summary, data=None, home=None, today=None, node=None):
     data = data or data_dir(home)
     cfg = config(data)
     dev = expand(cfg.get('devRoot') or '~/Developer', home)
+    win = os.name == 'nt' if win is None else win
     path = os.path.join(dev, name)
+    if win:
+        # 홈(C:\\Users\\me) + 설정 '~/…' + join 이 'C:\\Users\\me/a/b\\c' 로 섞였다 — HQ 와 같게 / 로만(파이썬·bash·claude 다 받는다, 2026-10-22 윈도우 QA 2차)
+        path = path.replace('\\', '/')
     existed = os.path.isdir(path)
     os.makedirs(path, exist_ok=True)
     if not os.path.isdir(os.path.join(path, '.git')):
@@ -267,7 +279,12 @@ def create(name, summary, data=None, home=None, today=None, node=None):
     if not existed:
         # 상태줄 = 이 세션의 대화 % 가 사이드바에 뜨게(사용자 원래 상태줄은 그 안에서 그대로).
         # 격리 none = 새 프로젝트는 본 폴더에서 바로 고친다(HQ 와 같은 값) — 결과물이 숨은 .claude/worktrees 에만 생겼다(2026-10-21). 큰 일은 참모가 워크트리로
-        local_settings(path, statusline=status if os.path.isfile(status) else None, isolation='none')
+        # 데이터 폴더를 바꾼 설치(CHAMMO_HOME)면 그 값도 — 참모가 띄운 세션은 claude 데몬 env 로 떠서 CHAMMO_HOME 이 안 넘어가
+        # scripts/direct·task·show 가 기본 폴더(~/.chammo)로 샜다(2026-10-22 첫 사용자 QA 1). 기본 폴더면 안 적는다
+        custom = os.path.realpath(data) != os.path.realpath(data_dir(home, env=''))
+        # 윈도우는 파이썬 도구(scripts/*) 출력이 cp949 라 프로젝트·예약 세션이 받는 한글이 깨졌다 — HQ(hq.rs)처럼 PYTHONUTF8(2026-10-22 윈도우 QA 2차)
+        env = {**({'CHAMMO_HOME': data.replace('\\', '/') if win else data} if custom else {}), **({'PYTHONUTF8': '1'} if win else {})}
+        local_settings(path, statusline=status if os.path.isfile(status) else None, isolation='none', env=env or None)
         committed, note = first_commit(path, 'ko' if cfg.get('language') == 'ko' else 'en')
     first = '/project-starter ' if starter else ''
     return {
@@ -279,7 +296,7 @@ def create(name, summary, data=None, home=None, today=None, node=None):
         'browser': web,
         'committed': committed,
         **({'note': note} if note else {}),
-        'next': f'cd {path} && claude --bg --dangerously-skip-permissions -n {name} "{first}<first instruction>"',
+        'next': next_cmd(path, name, first),
     }
 
 

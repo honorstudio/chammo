@@ -86,6 +86,7 @@ mod vdisplay;
 // 다른 기기 참모 짝 열쇠 — 윈도우 자격 증명 관리자(맥은 키체인)
 #[cfg_attr(not(windows), allow(dead_code))]
 mod wincred;
+mod win_recycle;
 mod webpage;
 mod project;
 mod trust;
@@ -303,7 +304,19 @@ pub fn refresh_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         if let Ok(m) = build_menu(&h) {
             let _ = h.set_menu(m);
         }
+        wizard_menu(&h);
     });
+}
+
+/// 윈도우는 메뉴줄이 창 안에 있어 첫 설정 마법사 중에도 세션·다마고치·모드 메뉴가 보이고 눌렸다(2026-10-22 윈도우 QA 31) —
+/// 설정을 마치기 전엔 메인 창 메뉴줄을 숨긴다. 맥 메뉴는 화면 위 앱 메뉴라 그대로(설정·끝내기가 거기 있다)
+fn wizard_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    #[cfg(not(target_os = "macos"))]
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = if config::current().setup_done { w.show_menu() } else { w.hide_menu() };
+    }
+    #[cfg(target_os = "macos")]
+    let _ = app;
 }
 
 /// ⌘Q — 창을 다 숨기고 독에서 뺀다. 앱은 뒤에서 살아 있어 세션 알림·음성은 그대로, 다시 열면 Reopen 이 되살린다
@@ -393,7 +406,9 @@ fn app_quit_shown() {
 #[tauri::command]
 fn rebuild_menu(app: tauri::AppHandle) -> Result<(), String> {
     let menu = build_menu(&app).map_err(|e| e.to_string())?;
-    app.set_menu(menu).map(|_| ()).map_err(|e| e.to_string())
+    app.set_menu(menu).map(|_| ()).map_err(|e| e.to_string())?;
+    wizard_menu(&app); // 마법사를 마치면 앱이 저장 뒤 이걸 불러 메뉴줄이 다시 보인다
+    Ok(())
 }
 
 /// 주소 미리보기 웹뷰(바깥 페이지)는 앱 명령을 하나도 못 부른다 — Tauri ACL 이 원격 출처를 막지만 개발판 주소(localhost:1420)는
@@ -463,6 +478,7 @@ fn main() {
             }
         })
         .setup(|app| {
+            wizard_menu(app.handle());
             // 파일 감시는 맨 먼저 — 아래 템플릿 쓰기가 윈도우에선 11초쯤 걸려 그 사이 들어온 요청(scripts/app·choice)이 건너뛰어졌다
             reader::watch(app.handle());
             // 화면 조종을 모든 프로젝트에 켜 뒀으면 그사이 생긴 프로젝트에 넣는다(~/.claude.json, 바뀔 때만 백업·쓰기)
@@ -603,6 +619,7 @@ fn main() {
             pty::pty_type,
             pty::pty_resize,
             pty::pty_close,
+            pty::pty_close_mine,
             ptt::ptt_target,
             ptt::ptt_watch,
             ptt::ptt_live,

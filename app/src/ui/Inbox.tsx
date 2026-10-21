@@ -1,7 +1,7 @@
 // 결정 대기함 — 상단 바 종을 누르면 아래로 펼쳐지는 드롭다운. 작업 패널과 따로 논다.
 // 여기서 바로 답장(그 세션 입력칸에 들어감)·열기·처리함. 물음은 줄 그대로 — 첫 줄만 굵게, 길면 앞 3줄 + 펼침(domain/askNote, 폰 카드와 같은 판단)
 import { useState, type ReactNode } from 'react';
-import type { InboxItem } from '../domain/inbox';
+import { gateReply, replyHint, type InboxItem } from '../domain/inbox';
 import { IconCheck, IconChevron, IconClose, IconOpen, IconSend } from './Icons';
 import { askNote, foldNote } from '../domain/askNote';
 import { tr } from '../i18n';
@@ -40,11 +40,11 @@ function Row({ item, onReply, onOpen, onDismiss, blockedWhy }: { item: InboxItem
   const fold = foldNote(note, open);
   const why = item.kind === 'blocked' ? null : item.target ? blockedWhy(item) : null;
   const canReply = item.kind !== 'blocked' && !!item.target && !why;
-  const send = async () => {
-    if (!text.trim()) return;
+  const send = async (t = text.trim()) => {
+    if (!t) return;
     setBusy(true);
     try {
-      await onReply(item, text.trim());
+      await onReply(item, t);
       setText('');
     } finally {
       setBusy(false);
@@ -70,13 +70,20 @@ function Row({ item, onReply, onOpen, onDismiss, blockedWhy }: { item: InboxItem
         <div className="inbox-reply">
           <input
             className="inp"
-            placeholder={tr('답장 — 그 세션 입력칸에 들어가', "Reply — goes into that session's input")}
+            placeholder={replyHint(item)}
             value={text}
             disabled={busy}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void send(); }}
           />
           <button className="ib pri" title={tr('보내기 (Enter)', 'Send (Enter)')} aria-label={tr('보내기', 'Send')} disabled={busy || !text.trim()} onClick={() => void send()}><IconSend /></button>
+        </div>
+      )}
+      {/* 보내기 관문(… 보내도 돼?) — 참모가 '보내도 돼를 누르면'이라 안내하는데 단추가 없었다(QA 12). 되돌리기 어려운 동작이라 글자 단추 */}
+      {canReply && item.gate && (
+        <div className="inbox-gate">
+          <button className="btn pri" disabled={busy} onClick={() => void send(gateReply(true))}>{tr('보내도 돼', 'OK to send')}</button>
+          <button className="btn" disabled={busy} onClick={() => void send(gateReply(false))}>{tr('보내지 마', 'Do not send')}</button>
         </div>
       )}
       {why && <div className="inbox-why">{why}</div>}

@@ -23,11 +23,11 @@ describe('첫 설정 터미널은 열리면 바로 칠 수 있다', () => {
 // 믿기 두 개·다음이 다 꺼진 채 안내가 없었다 — ✕ 를 찾아야만 다시 할 수 있었다
 describe('믿기 터미널이 믿지 않고 끝나면 닫고 다시 하라고 알린다', () => {
   it('TerminalPane 은 세션에 붙은 게 아닌 명령이 끝나면(빈 조각) onExit 을 부른다', () => {
-    expect(pane).toMatch(/onExit\?: \(\) => void/);
-    expect(pane).toMatch(/if \(!bytes\.length\) \{ if \(!disposed\) \{ onEnded\(\); if \(!sid\) exitRef\.current\?\.\(\); \} return; \}/);
+    expect(pane).toMatch(/onExit\?: \(screen: string\) => void/);
+    expect(pane).toMatch(/if \(!bytes\.length\) \{ if \(!disposed\) \{ onEnded\(\); if \(!sid\) exitRef\.current\?\.\(tailText\(\)\); \} return; \}/);
   });
   it('Setup 의 믿기 터미널은 끝나면 믿음을 다시 보고, 아니면 닫고 이유를 띄운다', () => {
-    expect(setup).toMatch(/const trustExit = \(\) => void refreshTrust\(\)\.then\(\(r\) => setTrusting\(\(w\) => \{ if \(w && !r\[w\]\) \{ setError\(/);
+    expect(setup).toMatch(/const trustExit = \(screen: string\) => void refreshTrust\(\)\.then\(\(r\) => setTrusting\(\(w\) => \{ if \(w && !r\[w\]\) \{ setError\(trustExitNote\(screen\)\)/);
     expect(setup).toMatch(/key=\{`trust-\$\{trusting\}`\}[\s\S]{0,80}onExit=\{trustExit\}/);
   });
 });

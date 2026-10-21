@@ -91,7 +91,8 @@ export function useReview(env: AppEnv | null, onTaskLogged: () => void): ReviewD
       void writeReviewState(JSON.stringify(state)).catch(() => {});
       console.info(`[review] 열린 ${list.length} · 상세 다시 읽음 ${stale.length} · 오늘 머지 ${parseMerged(mergedRaw, m).length} · ${Math.round(performance.now() - t0)}ms`);
     } catch (e: unknown) {
-      // GitHub 가 안 돼도 앱 나머지는 그대로 — 리뷰 칸에만 알린다
+      // GitHub 가 안 돼도 앱 나머지는 그대로 — 리뷰 칸에만 알린다(까닭은 띠에 한 줄, 콘솔에 전부)
+      console.warn('[review] 읽기 실패', e);
       setError(String(e));
     } finally {
       running.current = false;

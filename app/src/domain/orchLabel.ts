@@ -66,9 +66,9 @@ export function displayName(name: string, label?: string, roster: { name: string
 /** 새 참모 별명 검사 — 빈칸·이미 있는 이름·구분자(·)는 안 된다. 괜찮으면 null */
 export function nickProblem(raw: string, existing: string[]): string | null {
   const n = cleanLabel(raw);
-  if (!n) return tr('이름을 적어 줘', 'Enter a name');
-  if (n.includes('·')) return tr('· 는 쓸 수 없어', '"·" is not allowed');
-  if (existing.some((e) => e.trim().toLowerCase() === n.toLowerCase())) return tr('이미 있는 이름이야', 'That name is taken');
+  if (!n) return tr('이름을 적어 주세요', 'Enter a name');
+  if (n.includes('·')) return tr('· 는 쓸 수 없어요', '"·" is not allowed');
+  if (existing.some((e) => e.trim().toLowerCase() === n.toLowerCase())) return tr('이미 있는 이름이에요', 'That name is taken');
   return null;
 }
 
