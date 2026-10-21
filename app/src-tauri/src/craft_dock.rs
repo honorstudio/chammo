@@ -190,10 +190,11 @@ pub fn craft_show<R: tauri::Runtime>(handle: tauri::AppHandle<R>, app: String) -
     crate::craft_window::show_in_space(&handle, &app, "")
 }
 
-/// 최근 문서 열기 — scripts/craft open <앱> --native <파일>(떠 있으면 그 앱에서 연다)
-#[tauri::command]
+/// 최근 문서 열기 — scripts/craft open <앱> --native <파일>(떠 있으면 그 앱에서 연다). async = 파이썬 판정을 메인 스레드 밖에서
+#[tauri::command(async)]
 pub fn craft_open_file(app: String, path: String) -> Result<(), String> {
     crate::craft_window::display_name(&app).ok_or("unknown app")?;
+    crate::platform::need_python()?;
     unhide(&app);
     crate::craft_window::craft_cmd().args(["open", &crate::craft_window::arg(&app), "--native", &path]).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
@@ -220,6 +221,8 @@ pub async fn craft_apps(refresh: bool, fast: Option<bool>) -> Result<Vec<serde_j
     if fast == Some(true) {
         args.push("--fast");
     }
+    // 윈도우에 파이썬이 없으면 scripts/craft 를 못 돌린다 — 오류 원문(대리 실행기 안내·os error) 대신 웹이 설치 안내로 바꿀 표시
+    crate::platform::need_python()?;
     let out = crate::craft_window::craft_cmd().args(&args).output().map_err(|e| e.to_string())?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
@@ -228,9 +231,12 @@ pub async fn craft_apps(refresh: bool, fast: Option<bool>) -> Result<Vec<serde_j
 }
 
 /// 서랍에서 앱 누르기 — 깔린 앱은 열고, 안 깐 앱은 처음 한 번 설치(체크섬·번들 id·애플 공증) 뒤 연다. 열리면 독 규칙대로 탭 줄에 붙는다
-#[tauri::command]
+#[tauri::command(async)]
 pub fn craft_launch(app: String, key: Option<String>) -> Result<(), String> {
     crate::craft_window::display_name(&app).ok_or("unknown app")?;
+    // 대리 실행기는 띄우기엔 성공하고 바로 죽어서 오류 없이 '여는 중'만 3분 남았다 — 띄우기 전에 가른다.
+    // 파이썬이 없으면 판정이 프로세스·reg 를 띄워서 메인 스레드에서 돌면 화면이 굳는다 — command(async)
+    crate::platform::need_python()?;
     unhide(key.as_deref().unwrap_or(&app));
     crate::craft_window::craft_cmd().args(launch_args(&app, key.as_deref())).spawn().map(|_| ()).map_err(|e| e.to_string())
 }

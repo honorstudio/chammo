@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { licenseLine, licenseRows, parseNotices, sizeText, splitRows, tileCorner, tileIcon, tileLetter, tileLoading, tileTitle, tileUnavailable, usedLine, usedTotal, type DrawerRow } from './craftDrawer';
+import { craftErr, NO_PYTHON, licenseLine, licenseRows, parseNotices, sizeText, splitRows, tileCorner, tileIcon, tileLetter, tileLoading, tileTitle, tileUnavailable, usedLine, usedTotal, type DrawerRow } from './craftDrawer';
 
 const row = (o: Partial<DrawerRow> = {}): DrawerRow => ({ app: 'gridcraft', name: 'GridCraft', what: 'spreadsheets / 표 계산', installed: null, mine: false, size: 0, used: null, latest: '0.7.0', dmgSize: 24580153, icon: '', origName: 'GridCraft', repo: 'github.com/storytold/gridcraft', basedOn: null, chammo: false, ...o });
 
@@ -96,5 +96,18 @@ describe('서랍 크기 줄은 그 기기 이름으로', () => {
     expect(usedLine(1024 * 1024 * 18, false)).toContain('이 맥에서');
     expect(usedLine(1024 * 1024 * 18, true)).toContain('이 PC 에서');
     expect(usedLine(0, true)).toContain('0MB');
+  });
+});
+
+describe('서랍 오류 — 파이썬이 없으면 원문 대신 설치 안내(2026-10-21 윈도우 새 PC 0.3.8)', () => {
+  it('Rust 가 준 no-python 표시는 설치 안내로(Error 로 와도·앞뒤 공백이 있어도)', () => {
+    expect(craftErr(NO_PYTHON)).toEqual({ python: true, text: '참모 앱을 쓰려면 파이썬 3 이 필요해요' });
+    expect(craftErr(new Error('no-python')).python).toBe(true);
+    expect(craftErr(' no-python\n').python).toBe(true);
+  });
+  it('다른 오류는 지금처럼 원문 그대로 — 원문 안에 python 이란 말이 있어도 가르지 않는다', () => {
+    expect(craftErr('release download failed')).toEqual({ python: false, text: 'release download failed' });
+    expect(craftErr('Python was not found; run without arguments to install')).toEqual({ python: false, text: 'Python was not found; run without arguments to install' });
+    expect(craftErr('')).toEqual({ python: false, text: '' });
   });
 });

@@ -42,7 +42,8 @@ import { claudeUpdateNote, verLabel } from './domain/updates';
 import { useUpdates } from './ui/useUpdates';
 import { useAccessWatch } from './ui/useAccessWatch';
 import { AccessBanners } from './ui/AccessBanners';
-import { SPACE_NAV, spaceCmd } from './ui/space/navSignal';
+import { OPEN_SETUP, SPACE_NAV, spaceCmd } from './ui/space/navSignal';
+import type { SetupStart } from './domain/settingsTabs';
 import { picking } from './ui/chat/modelPickRun';
 import { appUpdateInstall, openTarget as openLink } from './data/tauri';
 import { installNote, runInstall, type Phase as InstallPhase } from './domain/appInstall';
@@ -253,7 +254,12 @@ export default function App() {
   const [replayReq, setReplayReq] = useState<'open' | 'close' | 'toggle' | null>(null);
   const replayBefore = useRef<Selection | null>(null);
   const replayRef = useRef<(req: 'open' | 'close' | 'toggle') => void>(() => {});
-  const [settingsStart, setSettingsStart] = useState<'update' | undefined>();
+  const [settingsStart, setSettingsStart] = useState<SetupStart | undefined>();
+  useEffect(() => {
+    const on = (e: Event) => { setSettingsStart((e as CustomEvent<SetupStart>).detail); setSettingsOpen(true); };
+    window.addEventListener(OPEN_SETUP, on);
+    return () => window.removeEventListener(OPEN_SETUP, on);
+  }, []);
   featuresRef.current = features;
   useEffect(() => {
     readConfig().then((c) => { mirrorConfig(c); setConfig(c); }).catch(() => {});
@@ -1264,7 +1270,7 @@ export default function App() {
       else if (it.what === 'harnitor') harnitorRef.current('open');
       else if (it.what === 'tools') toolsRef.current('open');
     } else if (it.kind === 'close') {
-      if (it.what === 'settings') setSettingsOpen(false);
+      if (it.what === 'settings') { setSettingsOpen(false); setSettingsStart(undefined); } // 시작 작업이 남으면 다음에 열 때 설치를 또 돌린다
       else if (it.what === 'office') { if (spaceShownRef.current) setOfficeReq('close'); else setOffice(false); }
       else if (it.what === 'reader') setReaderOpen(false);
       else if (it.what === 'tasks') setTasksOpen(false);
@@ -1673,7 +1679,7 @@ export default function App() {
   };
 
   const setup = config && (firstRun || settingsOpen) && (
-    <Setup config={config} firstRun={firstRun} fontSize={fontSize} start={settingsStart} onClose={() => { setSettingsOpen(false); setSettingsStart(undefined); void getAppEnv().then(setEnv).catch(() => {}); /* 업데이트했으면 새 버전 번호로 */ }} />
+    <Setup key={settingsStart ?? ''} config={config} firstRun={firstRun} fontSize={fontSize} start={settingsStart} onClose={() => { setSettingsOpen(false); setSettingsStart(undefined); void getAppEnv().then(setEnv).catch(() => {}); /* 업데이트했으면 새 버전 번호로 */ }} />
   );
   if (firstRun) return setup;
 

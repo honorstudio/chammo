@@ -91,7 +91,7 @@ Chammo 는 혼자서 여러 프로젝트를 동시에 굴리는 사람을 위한
 curl -fsSL https://raw.githubusercontent.com/honorstudio/chammo/main/scripts/install.sh | bash
 ```
 
-**Windows(미리보기판)** — [Releases](https://github.com/honorstudio/chammo/releases)의 `Chammo_x.y.z_x64-setup.exe` 를 실행합니다. 내 사용자에게만 깔리고 WebView2 가 없으면 받아 옵니다. 설치 파일에 아직 코드 서명이 없어 SmartScreen 이 막을 수 있습니다 — **추가 정보 > 실행**. 참모의 도우미 스크립트는 **Python 3** 이 필요합니다(`winget install Python.Python.3.12`). 단축키는 아래 [단축키](#단축키) 표 밑에 있습니다.
+**Windows(미리보기판)** — [Releases](https://github.com/honorstudio/chammo/releases)의 `Chammo_x.y.z_x64-setup.exe` 를 실행합니다. 내 사용자에게만 깔리고 WebView2 가 없으면 받아 옵니다. 설치 파일에 아직 코드 서명이 없어 SmartScreen 이 막을 수 있습니다 — **추가 정보 > 실행**. 참모의 도우미 스크립트와 Craft 앱은 **Python 3** 이 필요합니다 — 없으면 첫 설정 '이 PC 점검'(과 앱 서랍)의 **설치하기**가 winget 으로 깝니다(`winget install -e --id Python.Python.3.12 --scope user --custom "InstallLauncherAllUsers=0" --accept-source-agreements --accept-package-agreements` — winget 원본·패키지 약관에 동의하고 `%LOCALAPPDATA%\Programs\Python` 에 깔며 사용자 PATH 맨 앞에 붙습니다, 관리자 권한 필요 없음). 0.3.9 부터 윈도우 첫 설정은 Python 3 이 있어야 다음으로 넘어갑니다. 단축키는 아래 [단축키](#단축키) 표 밑에 있습니다.
 
 **업데이트** — 0.3.1 부터는 새 버전이 나오면 위 띠의 업데이트 버튼 하나로 받기·설치·다시 켜기까지 됩니다(세션은 그대로). 0.3.0 이하에서 올 때만 한 번 손으로 까세요. 소스로 지은 앱도 업데이트를 누르면 공식 판으로 바뀝니다.
 

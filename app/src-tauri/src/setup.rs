@@ -112,6 +112,8 @@ pub struct EnvCheck {
     pub gh_stale: bool,
     /// 끊긴 winget 업그레이드가 남긴 claude.exe.old-* 를 이번 점검에서 claude.exe 로 되살렸으면 그 이름(claude_src)
     pub claude_restored: Option<String>,
+    /// 파이썬 3 — 윈도우의 scripts/*(참모 도구)·참모 앱·예약이 쓴다. 맥은 늘 true(명령줄 도구에 들어 있어 git 줄이 본다)
+    pub python: bool,
 }
 
 pub fn find(name: &str) -> Option<String> {
@@ -138,6 +140,7 @@ pub fn check() -> EnvCheck {
         c.logged_in = run_for(&bin, &["auth", "status"], 10).map(|o| parse_auth_status(&text(&o))).unwrap_or(false);
     }
     c.clt = crate::claude::clt_ready();
+    c.python = crate::platform::python_ready(true);
     if let Some(gh) = c.gh_path.clone() {
         let gh = run_for(&gh, &["auth", "status", "--hostname", "github.com"], 8).map(|o| parse_gh(&text(&o))).unwrap_or_default();
         (c.gh_user, c.gh_stale) = (gh.user, gh.stale);

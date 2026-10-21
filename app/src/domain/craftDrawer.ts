@@ -15,6 +15,15 @@ export type DrawerRow = {
 
 export const APPS_KEY = 'k:@apps';
 
+/** Rust(platform::NO_PYTHON) — 윈도우에 파이썬 3 이 없어 scripts/craft 를 못 돌린다 */
+export const NO_PYTHON = 'no-python';
+
+/** 서랍·참모 앱 열기 오류 → 파이썬이 없으면 설치 안내 한 줄(원문은 일반 사용자가 못 읽는다), 그 밖은 원문 그대로 */
+export function craftErr(e: unknown): { python: boolean; text: string } {
+  const t = (e instanceof Error ? e.message : String(e ?? '')).trim();
+  return t === NO_PYTHON ? { python: true, text: tr('참모 앱을 쓰려면 파이썬 3 이 필요해요', 'Chammo apps need Python 3') } : { python: false, text: t };
+}
+
 /** 사람이 읽는 크기 */
 export function sizeText(n: number | null | undefined): string {
   if (!n) return '';

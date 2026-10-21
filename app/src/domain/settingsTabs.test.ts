@@ -16,6 +16,7 @@ describe('설정 탭 묶음', () => {
   });
   it('업데이트 띠에서 열면 도구 점검 탭부터, 아니면 일반', () => {
     expect(firstTab('update')).toBe('tools');
+    expect(firstTab('python')).toBe('tools'); // 서랍 '파이썬 설치하기'로 열면 점검 줄의 설치 터미널부터
     expect(firstTab(undefined)).toBe('general');
   });
 });

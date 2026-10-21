@@ -3,7 +3,7 @@ import { TtsField } from './TtsField';
 import { appVersion, browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, projectAccess, notifyOpenSettings, notifyRequest, notifyStatus, axTrusted, screenTrusted, askPermission, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
 import { addExtraProject, canNext, parseClaudeVersion, setupCommand, setupReady, tildify, notifyRow, axRow, browserRow, browserChecklist, ghRow, gitStillMissing, versionFit, WIZARD, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
 import type { Animation, FeatureSwitch } from '../domain/config';
-import { firstTab, settingsEscCloses, settingsTabs, type SettingsTab } from '../domain/settingsTabs';
+import { firstTab, settingsEscCloses, settingsTabs, type SettingsTab, type SetupStart } from '../domain/settingsTabs';
 import { BRAND } from '../domain/avatar';
 import { josa, machine, tr, type Lang } from '../i18n';
 import { TerminalPane } from './TerminalPane';
@@ -30,8 +30,8 @@ type Props = {
   firstRun: boolean;
   fontSize: number;
   onClose: () => void;
-  /** 열자마자 할 일 — 'update' = 점검 단계에서 Claude Code 업데이트를 바로 돌린다(새 버전 알림 띠의 버튼) */
-  start?: 'update';
+  /** 열자마자 할 일 — 'update' = 점검 단계에서 Claude Code 업데이트를 바로 돌린다(새 버전 알림 띠의 버튼), 'python' = 파이썬 설치(앱 서랍) */
+  start?: SetupStart;
 };
 
 const reopen = () => {
@@ -107,8 +107,8 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
   const [check, setCheck] = useState<EnvCheck | null>(null);
   const [checking, setChecking] = useState(false);
   const [task, setTask] = useState<SetupTask | null>(start ?? null);
-  /** 윈도우 git 설치를 한 번이라도 돌렸나 — 그 뒤에도 ✕ 면 껐다 켜기 안내 */
-  const [gitTried, setGitTried] = useState(false);
+  /** 윈도우 git·파이썬 설치를 한 번이라도 돌렸나 — 그 뒤에도 ✕ 면 껐다 켜기 안내 */
+  const [tried, setTried] = useState<SetupTask[]>(start ? [start] : []);
   const [dev, setDev] = useState<FolderStatus | null>(null);
   const [hq, setHq] = useState<FolderStatus | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -276,7 +276,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
   };
 
   const doneLine = tr('끝났어요. 위의 "다시 확인"을 누르거나 잠깐 기다려 주세요.', 'Done. Press "Check again" above, or wait a moment.');
-  const run = (t: SetupTask) => { if (t === 'clt') setGitTried(true); setTask(t); };
+  const run = (t: SetupTask) => { setTried((d) => (d.includes(t) ? d : [...d, t])); setTask(t); };
   const ready = setupReady(check);
   const fit = check?.claudeVersion ? versionFit(check.claudeVersion) : 'unknown';
   const ver = parseClaudeVersion(check?.claudeVersion ?? '')?.join('.') ?? check?.claudeVersion;
@@ -373,11 +373,18 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
                   </Row>)}
               {check.clt
                 ? <Row state="ok" title={IS_WIN ? 'git' : tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={tr('있어요.', 'Installed.')} />
-                : <Row state="need" title={IS_WIN ? 'git' : tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={IS_WIN ? (gitStillMissing({ win: IS_WIN, tried: gitTried, running: task === 'clt', ok: check.clt })
+                : <Row state="need" title={IS_WIN ? 'git' : tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={IS_WIN ? (gitStillMissing({ win: IS_WIN, tried: tried.includes('clt'), running: task === 'clt', ok: check.clt })
                     ? tr('git 은 깔려 있는데 Chammo 가 못 찾고 있어요 — Chammo 를 완전히 껐다 켜 주세요.', 'git is installed but Chammo cannot find it — quit Chammo completely and open it again.')
                     : tr('git 이 필요해요. 누르면 winget 으로 설치해요 — 몇 분 걸려요.', 'git is required. The button installs it with winget — it takes a few minutes.')) : tr('git 이 들어 있는 Apple 도구예요. 누르면 macOS 설치 창이 떠요 — 설치에 몇 분 걸려요.', "Apple's tools that include git. The button opens the macOS installer — it takes a few minutes.")}>
                     <button className="btn pri" onClick={() => run('clt')}>{tr('설치하기', 'Install')}</button>
                   </Row>}
+              {IS_WIN && (check.python !== false
+                ? <Row state="ok" title={tr('파이썬 3', 'Python 3')} text={tr('있어요.', 'Installed.')} />
+                : <Row state="need" title={tr('파이썬 3', 'Python 3')} text={gitStillMissing({ win: IS_WIN, tried: tried.includes('python'), running: task === 'python', ok: false })
+                    ? tr('파이썬은 깔려 있는데 Chammo 가 못 찾고 있어요 — Chammo 를 완전히 껐다 켜 주세요.', 'Python is installed but Chammo cannot find it — quit Chammo completely and open it again.')
+                    : tr('파이썬 3 이 필요해요 — 참모 도구와 참모 앱이 써요. 누르면 winget 으로 설치해요 — 몇 분 걸려요.', 'Python 3 is required — the assistant tools and Chammo apps use it. The button installs it with winget — it takes a few minutes.')}>
+                    <button className="btn pri" onClick={() => run('python')}>{tr('설치하기', 'Install')}</button>
+                  </Row>)}
               {ghRow(check) === 'ok'
                 ? <Row state="ok" title={tr('GitHub CLI (선택)', 'GitHub CLI (optional)')} text={tr(`${check.ghUser} 로 로그인돼 있어요.`, `Signed in as ${check.ghUser}.`)} />
                 : ghRow(check) !== 'install'
@@ -394,7 +401,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
               <TerminalPane
                 key={task}
                 command={setupCommand(task, { claude: check?.claudePath, gh: check?.ghPath }, doneLine, undefined, undefined, winNotes)}
-                title={task === 'install' ? tr('Claude Code 설치', 'Installing Claude Code') : task === 'update' ? tr('Claude Code 업데이트', 'Updating Claude Code') : task === 'login' ? tr('Claude 로그인', 'Claude sign-in') : task === 'clt' ? tr('명령줄 도구 설치', 'Installing Command Line Tools') : tr('GitHub 로그인', 'GitHub sign-in')}
+                title={task === 'install' ? tr('Claude Code 설치', 'Installing Claude Code') : task === 'update' ? tr('Claude Code 업데이트', 'Updating Claude Code') : task === 'login' ? tr('Claude 로그인', 'Claude sign-in') : task === 'clt' ? tr('명령줄 도구 설치', 'Installing Command Line Tools') : task === 'python' ? tr('파이썬 3 설치', 'Installing Python 3') : tr('GitHub 로그인', 'GitHub sign-in')}
                 subtitle={tr('이 창에 바로 입력할 수 있어요', 'You can type in this window')}
                 fontSize={fontSize}
                 controls={<IconButton label={tr('닫기', 'Close')} onClick={() => { setTask(null); void recheck(); }}><IconClose /></IconButton>}
@@ -732,7 +739,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
         <footer className="su-foot">
           {note && <div className="su-note">{note}</div>}
           {error && <div className="su-error">{error}</div>}
-          {step === 'check' && !canNext('check', check) && check && <div className="su-hint">{tr('위의 Claude Code 설치·로그인과 명령줄 도구가 끝나면 다음으로 갈 수 있어요.', 'Finish installing and signing in to Claude Code, and the Command Line Tools, to continue.')}</div>}
+          {step === 'check' && !canNext('check', check) && check && <div className="su-hint">{IS_WIN ? tr('위의 Claude Code 설치·로그인과 git·파이썬 3 이 끝나면 다음으로 갈 수 있어요.', 'Finish installing and signing in to Claude Code, plus git and Python 3, to continue.') : tr('위의 Claude Code 설치·로그인과 명령줄 도구가 끝나면 다음으로 갈 수 있어요.', 'Finish installing and signing in to Claude Code, and the Command Line Tools, to continue.')}</div>}
           <div className="su-nav">
             {at > 0 && <IconButton size="l" tone="line" className="su-nav-ib" label={tr('뒤로', 'Back')} disabled={busy} onClick={() => setStep(WIZARD[at - 1]!)}><IconBack /></IconButton>}
             <span className="grow" />

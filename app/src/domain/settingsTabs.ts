@@ -22,9 +22,12 @@ export const FEATURE_TAB: Record<FeatureSwitch, SettingsTab> = {
   computerUse: 'browser',
 };
 
-/** 열 때 처음 탭 — 새 버전 띠의 '업데이트'로 열면 도구 점검부터 */
-export function firstTab(start: 'update' | undefined): SettingsTab {
-  return start === 'update' ? 'tools' : 'general';
+/** 설정을 열자마자 돌릴 점검 작업 — 'update' 새 버전 띠의 업데이트, 'python' 서랍의 파이썬 설치하기 */
+export type SetupStart = 'update' | 'python';
+
+/** 열 때 처음 탭 — 작업을 들고 열면 도구 점검부터 */
+export function firstTab(start: SetupStart | undefined): SettingsTab {
+  return start ? 'tools' : 'general';
 }
 
 /** 설정 모달을 Esc 로 닫나 — 한글 조합 중 Esc 는 조합 취소, 안의 터미널(설치·로그인) Esc 는 Claude Code 몫 */

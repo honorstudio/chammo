@@ -6,10 +6,11 @@ import { useEffect, useState } from 'react';
 import { josa, tr } from '../../i18n';
 import { craftBase } from '../../domain/craftTab';
 import type { DrawerOpen } from '../../domain/craftDock';
-import { sizeText, splitRows, tileCorner, tileIcon, tileLetter, tileLoading, tileTitle, tileUnavailable, usedLine, usedTotal, type DrawerRow } from '../../domain/craftDrawer';
+import { craftErr, NO_PYTHON, sizeText, splitRows, tileCorner, tileIcon, tileLetter, tileLoading, tileTitle, tileUnavailable, usedLine, usedTotal, type DrawerRow } from '../../domain/craftDrawer';
 import { IS_WIN } from '../../domain/reader';
 import type { MenuItem } from '../OrchDialogs';
 import { IconPower, IconRefresh, IconTrash } from '../Icons';
+import { openSetup } from '../space/navSignal';
 import './drawer.css';
 
 /** running = 이 참모의 떠 있는 인스턴스 키('photocraft'·'photocraft-2' …) — 서랍 칸은 앱 하나라 앱으로 묶는다.
@@ -20,6 +21,10 @@ export function CraftDrawer({ running: keys, all = keys, open, openMenu }: { run
   const others = (app: string) => all.filter((k) => craftBase(k) === app).length > keys.filter((k) => craftBase(k) === app).length;
   const [rows, setRows] = useState<DrawerRow[] | null>(null);
   const [err, setErr] = useState('');
+  // 윈도우에 파이썬 3 이 없다(Rust no-python) — 오류 원문 대신 설치 안내 + 설치하기(설정 점검 줄의 winget 터미널), 눌렀으면 다시 시도도
+  const [needPy, setNeedPy] = useState(false);
+  const [pyTried, setPyTried] = useState(false);
+  const fail = (e: unknown) => { const r = craftErr(e); setNeedPy(r.python); setErr(r.python ? '' : r.text); };
   const [busy, setBusy] = useState<Record<string, number>>({}); // 설치·여는 중(앱 → 누른 때)
   const [ask, setAsk] = useState<DrawerRow | null>(null);
   // 두 번에 — 먼저 네트워크 없이(깔린 앱·로컬 DMG·받아 둔 것, 1초 안) 그리고, 저장소에서 받아야 하는 칸만 자리표시였다가 전체로 채운다(v8 A2)
@@ -27,7 +32,7 @@ export function CraftDrawer({ running: keys, all = keys, open, openMenu }: { run
   const load = (refresh = false) => {
     setFull(false);
     if (!refresh) void invoke<DrawerRow[]>('craft_apps', { refresh: false, fast: true }).then((r) => setRows((old) => old ?? r), () => {});
-    void invoke<DrawerRow[]>('craft_apps', { refresh }).then((r) => { setRows(r); setErr(''); setFull(true); }, (e) => { setErr(String(e)); setFull(true); });
+    void invoke<DrawerRow[]>('craft_apps', { refresh }).then((r) => { setRows(r); setErr(''); setNeedPy(false); setFull(true); }, (e) => { fail(e); setFull(true); });
   };
   useEffect(() => { load(); }, []);
   // 떠 오르면(독에 나타나면) 설치 중 표시를 걷고 목록을 다시(판·크기)
@@ -45,7 +50,7 @@ export function CraftDrawer({ running: keys, all = keys, open, openMenu }: { run
     if (how && 'show' in how) { void invoke('craft_show', { app: how.show }).catch((e) => setErr(String(e))); return; }
     if (how && 'full' in how) { setErr(tr(`${josa(r.name, '은', '는')} 다른 참모들이 셋 다 쓰는 중이에요 — 하나가 끝나면 다시 눌러 주세요`, `All three ${r.name} windows are in use by other assistants — try again when one finishes`)); return; }
     setBusy((b) => ({ ...b, [r.app]: Date.now() }));
-    void invoke('craft_launch', { app: r.app, key: how?.key ?? null }).catch((e) => setErr(String(e)));
+    void invoke('craft_launch', { app: r.app, key: how?.key ?? null }).catch((e) => { setBusy((b) => Object.fromEntries(Object.entries(b).filter(([a]) => a !== r.app))); fail(e); });
   };
   const remove = (r: DrawerRow) => {
     setAsk(null);
@@ -114,8 +119,16 @@ export function CraftDrawer({ running: keys, all = keys, open, openMenu }: { run
           <button className="cd-btn danger" onClick={() => remove(ask)}>{tr('지우기', 'Remove')}</button>
         </div>
       )}
+      {needPy && (
+        <div className="cd-ask">
+          <span>{craftErr(NO_PYTHON).text}</span>
+          <span className="cd-sp" />
+          {pyTried && <button className="ib" aria-label={tr('다시 시도', 'Try again')} title={tr('다시 시도', 'Try again')} onClick={() => { setNeedPy(false); load(); }}><IconRefresh /></button>}
+          <button className="cd-btn pri" onClick={() => { setPyTried(true); openSetup('python'); }}>{tr('설치하기', 'Install')}</button>
+        </div>
+      )}
       {err && <div className="cd-err">{err}</div>}
-      {!split && !err && <div className="cd-grid" aria-label={tr('앱 목록 받는 중', 'Loading apps')}>{Array.from({ length: 13 }, (_, k) => skTile(`sk${k}`))}</div>}
+      {!split && !err && !needPy && <div className="cd-grid" aria-label={tr('앱 목록 받는 중', 'Loading apps')}>{Array.from({ length: 13 }, (_, k) => skTile(`sk${k}`))}</div>}
       {split && (
         <>
           {split.have.length > 0 && <><div className="cd-sec">{tr('깔린 것', 'Installed')}</div><div className="cd-grid">{split.have.map(tile)}</div></>}

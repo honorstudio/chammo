@@ -14,6 +14,8 @@ export type EnvCheck = {
   ghStale: boolean;
   /** 끊긴 winget 업그레이드가 남긴 claude.exe.old-* 를 이번 점검에서 되살렸으면 그 이름(윈도우) */
   claudeRestored?: string | null;
+  /** 파이썬 3(윈도우만 판정 — scripts/*·참모 앱·예약이 쓴다). 맥은 늘 true */
+  python?: boolean;
 };
 
 /** "2.1.283 (Claude Code)" → [2, 1, 283]. 모양이 다르면 null */
@@ -43,8 +45,8 @@ export function versionWarning(text: string, dismissed: string | null): VersionF
   return dismissed === text.trim() ? null : fit;
 }
 
-/** 설정을 끝낼 수 있나 — Claude Code 설치·로그인·확인된 버전 이상, 명령줄 도구(git)는 꼭. gh 는 선택 */
-export const setupReady = (c: EnvCheck | null): boolean => !!c && !!c.claudePath && c.loggedIn && c.clt && versionFit(c.claudeVersion) !== 'old';
+/** 설정을 끝낼 수 있나 — Claude Code 설치·로그인·확인된 버전 이상, 명령줄 도구(git)·파이썬 3(윈도우)은 꼭. gh 는 선택 */
+export const setupReady = (c: EnvCheck | null): boolean => !!c && !!c.claudePath && c.loggedIn && c.clt && c.python !== false && versionFit(c.claudeVersion) !== 'old';
 
 /** 화면 언어를 모를 때(시험) 쓰는 기본 문구 — Setup 이 tr 로 넘긴다 */
 const WIN_NOTES: WinNotes = { busy: 'Claude is running ({0}) — those sessions keep the old version until restarted.', back: 'Update failed — restored the previous version.' };
@@ -52,7 +54,7 @@ const WIN_NOTES: WinNotes = { busy: 'Claude is running ({0}) — those sessions 
 /** 셸 작은따옴표로 감싸기 — 경로·안내 문장을 명령에 그대로 넣으려고 */
 export const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
-export type SetupTask = 'install' | 'update' | 'login' | 'clt' | 'ghLogin' | 'trust';
+export type SetupTask = 'install' | 'update' | 'login' | 'clt' | 'python' | 'ghLogin' | 'trust';
 
 /**
  * 설정 화면의 터미널에서 돌릴 한 번짜리 명령. 끝나면 무엇을 하면 되는지 한 줄 찍는다(done).
@@ -73,6 +75,7 @@ export function setupCommand(task: SetupTask, bins: { claude?: string | null; gh
     case 'login':
       return `${shq(bins.claude || 'claude')} auth login${tail}`;
     case 'clt':
+    case 'python': // 맥 python3 는 명령줄 도구에 들어 있다(줄은 윈도우만 보인다)
       return `xcode-select --install${tail}`;
     case 'ghLogin':
       return `${shq(bins.gh || 'gh')} auth login${tail}`;
@@ -160,6 +163,10 @@ function winSetupCommand(task: SetupTask, bins: { claude?: string | null; gh?: s
       return `${claude} auth login${tail}`;
     case 'clt':
       return `winget install -e --id Git.Git${tail}`;
+    case 'python':
+      // 사용자 범위 = 설치기가 사용자 PATH 앞에 붙인다(InstallAllUsers=0 PrependPath=1). py 런처는 기본이 '모든 사용자'(InstallLauncherAllUsers=1)라
+      // 관리자 창이 뜬다 — 이 사용자에게만 깔게 한다. 끝나면 앱이 PATH 를 다시 읽는다
+      return `winget install -e --id Python.Python.3.12 --scope user --custom "InstallLauncherAllUsers=0" --accept-source-agreements --accept-package-agreements${tail}`;
     case 'ghLogin':
       return `${dq(bins.gh || 'gh')} auth login${tail}`;
     case 'trust':
@@ -167,7 +174,7 @@ function winSetupCommand(task: SetupTask, bins: { claude?: string | null; gh?: s
   }
 }
 
-/** 윈도우 git 설치를 돌렸는데도(창이 닫힌 뒤) 아직 없나 — 앱이 PATH 를 다시 읽고 흔한 자리까지 찾아도 못 보면 껐다 켜기 안내(2026-10-21 새 윈도우 PC) */
+/** 윈도우 git·파이썬 설치를 돌렸는데도(창이 닫힌 뒤) 아직 없나 — 앱이 PATH 를 다시 읽고 흔한 자리까지 찾아도 못 보면 껐다 켜기 안내(2026-10-21 새 윈도우 PC) */
 export const gitStillMissing = (o: { win: boolean; tried: boolean; running: boolean; ok: boolean }) => o.win && o.tried && !o.running && !o.ok;
 
 /** 첫 실행 마법사 — 한 화면에 한 단계(사용자 2026-09-28 "설정 마법사같은 거"). 설정 메뉴로 열면 한 페이지 그대로 */

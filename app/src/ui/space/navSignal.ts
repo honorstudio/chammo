@@ -1,3 +1,4 @@
+import type { SetupStart } from '../../domain/settingsTabs';
 // 스페이스 뒤로·앞으로 신호 — ⌘[ ⌘](App 단축키)·마우스 뒤로/앞으로 단추 → SpaceView. detail = -1(뒤로) | 1(앞으로)
 export const SPACE_NAV = 'space-nav';
 
@@ -5,3 +6,7 @@ export const SPACE_NAV = 'space-nav';
 export const SPACE_CMD = 'space-cmd';
 export type SpaceCmd = 'closeTab' | 'newDoc' | 'home' | 'locker';
 export const spaceCmd = (c: SpaceCmd) => window.dispatchEvent(new CustomEvent<SpaceCmd>(SPACE_CMD, { detail: c }));
+
+// 설정 열기 신호 — 앱 서랍 '설치하기'(파이썬 없음) → App 이 설정을 그 작업과 함께 연다(점검 줄의 설치 터미널). detail = SetupStart
+export const OPEN_SETUP = 'open-setup';
+export const openSetup = (s: SetupStart) => window.dispatchEvent(new CustomEvent<SetupStart>(OPEN_SETUP, { detail: s }));

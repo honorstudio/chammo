@@ -476,23 +476,56 @@ pub fn run_capped(cmd: &mut Command, limit: std::time::Duration) -> std::io::Res
 }
 
 /// 파이썬 도구(루틴 등)를 돌릴 명령 — 맥 /usr/bin/python3, 윈도우는 py -3 → python 중 도는 것
-/// (윈도우 python3 는 스토어 대리 실행기라 종료 49로 죽는다). 윈도우는 UTF-8 로(cp949 면 한글이 깨진다)·창 없이
+/// (윈도우 python3·WindowsApps\python 은 스토어 대리 실행기라 종료 49·9009 로 죽는다). 윈도우는 UTF-8 로(cp949 면 한글이 깨진다)·창 없이.
+/// 못 찾으면 'python' 으로 — 부르는 쪽이 실패를 본다(서랍·참모 앱 열기는 그 전에 python_ready 로 가른다)
 pub fn python() -> Command {
     #[cfg(windows)]
     {
-        static PY: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
-        let argv = PY.get_or_init(|| {
-            let works = |a: &[&str]| {
-                command(a[0]).args(&a[1..]).args(["-c", ""]).status().is_ok_and(|s| s.success())
-            };
-            if works(&["py", "-3"]) { vec!["py", "-3"] } else { vec!["python"] }
-        });
-        let mut c = command(argv[0]);
+        let argv = python_argv(false).unwrap_or_else(|| vec!["python".into()]);
+        let mut c = command(&argv[0]);
         c.args(&argv[1..]).env("PYTHONUTF8", "1");
         c
     }
     #[cfg(not(windows))]
     command("/usr/bin/python3")
+}
+
+/// 이 기기에 파이썬 3 이 있나 — 윈도우만 물어본다(맥은 /usr/bin/python3 가 명령줄 도구에 들어 있고 그건 git 줄이 본다).
+/// force = 5초 제한 없이 깊이 찾기(설정 점검 — 설치 창을 닫자마자 다시 확인해도 서랍이 방금 쓴 차례에 걸리지 않게)
+pub fn python_ready(force: bool) -> bool {
+    #[cfg(windows)]
+    return python_argv(force).is_some();
+    #[cfg(not(windows))]
+    {
+        let _ = force;
+        true
+    }
+}
+
+/// 서랍·참모 앱 열기가 파이썬 없이 실패할 때 웹에 주는 오류 — 웹(domain/craftDrawer NO_PYTHON)이 원문 대신 설치 안내로 바꾼다
+pub const NO_PYTHON: &str = "no-python";
+
+pub fn need_python() -> Result<(), String> {
+    if python_ready(false) { Ok(()) } else { Err(NO_PYTHON.into()) }
+}
+
+/// 윈도우 파이썬 찾기 — 찾은 것만 기억한다. 처음 판정이 '없음'이면 끝까지 없음이라 설치하고도 앱을 껐다 켜야 했다.
+/// 못 찾으면 레지스트리 PATH 다시 읽기 → 흔한 설치 자리(win_path::find_python). 깊이 찾기는 5초에 한 번 — 설정 점검(force)은 늘.
+/// 한 번 돌려 보기는 3초까지(py 가 런타임을 받으러 가거나 멈춰도 부르는 쪽이 오래 안 묶이게)
+#[cfg(windows)]
+fn python_argv(force: bool) -> Option<Vec<String>> {
+    static PY: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
+    if let Some(v) = PY.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        return Some(v);
+    }
+    let works = |a: &[String]| run_capped(command(&a[0]).args(&a[1..]).args(["-c", ""]), std::time::Duration::from_secs(3)).is_ok_and(|o| o.status.success());
+    let on_path = || [vec!["py".to_string(), "-3".to_string()], vec!["python".to_string()]].into_iter().find(|a| works(a));
+    let deep = crate::win_path::due_python(std::time::Instant::now()) || force;
+    let got = crate::win_path::find_python(deep, on_path, crate::win_path::refresh, crate::win_path::adopt_python, works);
+    if let Some(v) = &got {
+        *PY.lock().unwrap_or_else(|e| e.into_inner()) = Some(v.clone());
+    }
+    got
 }
 
 /// 외부 프로그램 — 윈도우는 콘솔 창 없이(CREATE_NO_WINDOW). 릴리스판(창 없는 앱)에서 claude agents 를 부를 때마다
@@ -571,6 +604,14 @@ pub fn raise_nofile() {}
 
 #[cfg(test)]
 mod tests {
+    // 서랍이 오류 원문 대신 설치 안내로 바꾸는 표시 — 웹(domain/craftDrawer)과 같은 글이어야 한다
+    #[test]
+    fn 파이썬_없음_표시는_웹과_같은_글이고_맥은_늘_있음() {
+        assert!(include_str!("../../src/domain/craftDrawer.ts").contains(&format!("NO_PYTHON = '{}'", super::NO_PYTHON)));
+        #[cfg(not(windows))]
+        assert!(super::python_ready(false) && super::python_ready(true) && super::need_python().is_ok());
+    }
+
     #[test]
     fn 파일_한도는_256_이면_10240_까지_hard_는_넘지_않고_이미_높으면_그대로() {
         assert_eq!(super::nofile_target(256, u64::MAX), Some(10_240));

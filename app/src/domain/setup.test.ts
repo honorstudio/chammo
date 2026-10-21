@@ -37,6 +37,12 @@ describe('setupReady — 설정을 끝낼 수 있나', () => {
     expect(setupReady({ ...ok, loggedIn: false })).toBe(false);
     expect(setupReady({ ...ok, clt: false })).toBe(false);
   });
+  it('윈도우에 파이썬 3 이 없으면(python: false) 못 끝낸다 — scripts/*·참모 앱·예약이 파이썬이다. 옛 점검 답(칸 없음)은 막지 않는다', () => {
+    expect(setupReady({ ...ok, python: false })).toBe(false);
+    expect(setupReady({ ...ok, python: true })).toBe(true);
+    expect(setupReady(ok)).toBe(true);
+    expect(canNext('check', { ...ok, python: false })).toBe(false);
+  });
 });
 
 describe('setupCommand — 설정 화면 터미널에서 돌릴 명령', () => {
@@ -161,6 +167,10 @@ describe('setupCommand — 윈도우(cmd /C 가 읽는 모양, 윈도우판)', (
   it('로그인: 큰따옴표 + 끝 안내는 & echo', () => {
     expect(setupCommand('login', { claude: c }, '끝났어요 & 닫으세요', undefined, true)).toBe(`"${c}" auth login & echo. & echo 끝났어요 ^& 닫으세요`);
   });
+  it('파이썬 3: winget 공식 패키지를 사용자 범위로 — py 런처도 이 사용자에게만(기본은 모든 사용자라 관리자 창이 뜬다), 사용자 PATH 앞에 붙는다, 끝 안내는 git 과 같은 모양', () => {
+    expect(setupCommand('python', {}, '끝', undefined, true)).toBe('winget install -e --id Python.Python.3.12 --scope user --custom "InstallLauncherAllUsers=0" --accept-source-agreements --accept-package-agreements & echo. & echo 끝');
+    expect(setupCommand('clt', {}, '끝', undefined, true)).toBe('winget install -e --id Git.Git & echo. & echo 끝');
+  });
   it('설치: PowerShell 설치 스크립트', () => {
     expect(setupCommand('install', {}, '끝', undefined, true)).toBe('powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex" & echo. & echo 끝');
   });
@@ -254,6 +264,12 @@ describe('ghRow — GitHub CLI 줄', () => {
   });
 });
 
+describe('setupCommand — 맥 파이썬', () => {
+  it('맥은 파이썬 줄이 없지만 부르면 명령줄 도구(python3 가 들어 있다)', () => {
+    expect(setupCommand('python', {}, '끝', undefined, false)).toBe("xcode-select --install; echo; echo '끝'");
+  });
+});
+
 describe('gitStillMissing — 윈도우에서 git 설치를 눌렀는데도 ✕ 면 껐다 켜기 안내(2026-10-21 새 윈도우 PC)', () => {
   it('윈도우·설치를 한 번 돌렸고·설치 창이 닫혔는데 아직 없으면', () => {
     expect(gitStillMissing({ win: true, tried: true, running: false, ok: false })).toBe(true);
@@ -263,5 +279,8 @@ describe('gitStillMissing — 윈도우에서 git 설치를 눌렀는데도 ✕ 
     expect(gitStillMissing({ win: true, tried: false, running: false, ok: false })).toBe(false);
     expect(gitStillMissing({ win: false, tried: true, running: false, ok: false })).toBe(false);
     expect(gitStillMissing({ win: true, tried: true, running: false, ok: true })).toBe(false);
+  });
+  it('파이썬 줄도 같은 판단 — 설치 창을 닫았는데 아직 못 찾으면 껐다 켜기', () => {
+    expect(gitStillMissing({ win: true, tried: true, running: false, ok: false })).toBe(true);
   });
 });
