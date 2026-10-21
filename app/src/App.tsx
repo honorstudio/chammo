@@ -34,7 +34,7 @@ import { ReplayPage } from './ui/ReplayPage';
 import { LoadPage } from './ui/LoadPage';
 import { useLoad } from './ui/useLoad';
 import { level } from './domain/load';
-import { pickFolder, readConfig, reloadConfig, routineDo, routinesList, type Config } from './data/tauri';
+import { bypassConsent, bypassConsentAccept, pickFolder, readConfig, reloadConfig, routineDo, routinesList, type Config } from './data/tauri';
 import { allowed, featuresOf, mirrorPlan, type FeatureSwitch } from './domain/config';
 import { setAnimation } from './ui/calm';
 import { addExtraProject, versionWarning } from './domain/setup';
@@ -72,7 +72,8 @@ import { TaskPanel, type SessionActivity } from './ui/TaskPanel';
 import { invoke } from '@tauri-apps/api/core';
 import { OrchActionsProvider, useOrchActions } from './ui/orchActions';
 import { orchDisplay, orchLabel, setOrchLabel, setOrchRoster, useOrchLabels } from './ui/orchLabels';
-import { NameNew } from './ui/OrchDialogs';
+import { Confirm, NameNew } from './ui/OrchDialogs';
+import { consentBeforeSpawn, isDisclaimerError } from './domain/bypassConsent';
 import { dupRenames, labelRenames, nickProblem, renamesToSend, withNick, type RenameSent } from './domain/orchLabel';
 import { markReader, ReaderPanel, readerFocused } from './ui/reader/ReaderPanel';
 import { selectAllHere } from './ui/selectAll';
@@ -750,15 +751,19 @@ export default function App() {
     if (!env || spawningRef.current) return; // + 를 연달아 눌러도 하나만(띄우는 데 1초 남짓)
     spawningRef.current = true;
     setSpawning(true);
+    const again = () => void spawnOrchestrator(nick, role);
     try {
+      // 새 컴퓨터는 bypass 경고에 아직 동의 안 했다 — 띄우면 'requires accepting the disclaimer' 로 실패하니 카드부터(2026-10-21 새 윈도우 PC)
+      if (consentBeforeSpawn(await bypassConsent().catch(() => null)) === 'ask') { setConsentAsk(() => again); return; }
       const name = nick ? withNick(nextOrchestratorName([...navOrchs, ...offOrchList].map((s) => s.name)), nick) : nextOrchestratorName(groups.orchestrators.map((s) => s.name));
       if (nick) setCreating(name);
       // 맡은 일·태어난 때를 먼저 적는다 — 꺼진 참모를 지워 번호가 다시 쓰이면 옛 맡은 일·기록이 새 참모에 붙었다(2026-10-04 QA ⑥·리뷰)
       await saveOrchRole(name, role, true).catch(() => {});
-      await spawnSession(env.orchestratorCwd, name, tr('준비만 해 둬 — 답은 "준비됐어" 한 줄로, 묻지 말고 다음 지시를 기다려.', 'Just get ready — reply "Ready." in one line, ask nothing, and wait for the next instruction.') /* 첫 인사를 '뭐부터 할까?'로 물어 결정 대기 창이 채팅을 덮었다(2026-09-30 시험) */);
+      await spawnSession(env.orchestratorCwd, name, tr('안녕! 네 이름과 맡은 일로 2~3줄 자기소개해 줘 — 누구고, 뭘 맡았고, 이런 걸 시키면 된다는 예 하나. 도구는 쓰지 말고, 질문으로 끝내지 마.', "Hi! Introduce yourself in 2-3 lines from your name and role — who you are, what you handle, and one example of what to ask you. Don't use tools, and don't end with a question.") /* 첫 인사 = 자기소개(2026-10-21 사용자 — '준비됐어' 한 줄은 어색). 질문으로 끝나면 결정 대기 창이 채팅을 덮었다(2026-09-30 시험) */);
       await refresh();
     } catch (e: unknown) {
-      setError(tr(`${assistant()} 띄우기 실패: ${String(e)}`, `Could not start ${assistant()}: ${String(e)}`));
+      if (isDisclaimerError(String(e))) setConsentAsk(() => again); // 띠 대신 동의 카드 — 누르면 다시 띄운다
+      else setError(tr(`${assistant()} 띄우기 실패: ${String(e)}`, `Could not start ${assistant()}: ${String(e)}`));
       setCreating(null);
     } finally {
       spawningRef.current = false;
@@ -766,6 +771,8 @@ export default function App() {
     }
   };
   const spawningRef = useRef(false);
+  /** bypass 동의 카드 — 누르면 할 일(참모 다시 띄우기) */
+  const [consentAsk, setConsentAsk] = useState<(() => void) | null>(null);
 
   // 다마고치: 1분마다 작업 기록을 먹여 tama.json 에 쓴다(위젯 창은 읽기만)
   const openPetRef = useRef(() => {});
@@ -1117,12 +1124,13 @@ export default function App() {
   const lastFront = useRef<{ id?: string; prev?: string }>({});
   if (groups.orchestrator?.id !== lastFront.current.id) lastFront.current = { id: groups.orchestrator?.id, prev: lastFront.current.id };
   const reviving = useOrchRevive({
-    orchs: navOrchs, ready: snapReady && !!env, refresh,
+    orchs: navOrchs, all: sessions, ready: snapReady && !!env, refresh,
     revive: async (s) => {
       markPending(s.sessionId);
       markResuming(s.sessionId);
       if (lastFront.current.prev === s.id || lastFront.current.id === s.id) setHomeResume(s.sessionId);
-      await resumeSession(s.cwd, s.sessionId, s.id).catch((e: unknown) => setError(tr(`${orchDisplay(s) || s.name} 다시 켜기 실패: ${String(e)}`, `Could not restart ${orchDisplay(s) || s.name}: ${String(e)}`)));
+      // 복사본으로 떨어지지 않게(copy=false) — 옛 번호를 기다리는 되살리기가 30초마다 또 복사본을 띄웠다(0.3.6 리뷰). 실패면 다음 차례에 다시, 3번이면 카드
+      await resumeSession(s.cwd, s.sessionId, s.id, false).catch((e: unknown) => setError(tr(`${orchDisplay(s) || s.name} 다시 켜기 실패: ${String(e)}`, `Could not restart ${orchDisplay(s) || s.name}: ${String(e)}`)));
     },
   });
   // 깨우는·새로 켜는 동안 참모 채팅 입력칸 위 한 줄(2026-10-12 rail-wake) — 채팅은 뜰 때까지 앞 참모에 남아서, 그사이 친 말이 엉뚱한 참모로 가지 않게
@@ -1671,6 +1679,13 @@ export default function App() {
 
   return (
     <OrchActionsProvider pins={orchPins} onPin={pinOrch} onNick={wantNick} onStop={(s, why) => closeSession(s, why)} onRemove={(id) => { markPending(stopped.find((x) => x.id === id)?.sessionId ?? id); void removeSession(id, `menu ${stopped.find((x) => x.id === id)?.name ?? ''}`).then(() => refresh(), (e: unknown) => setError(tr(`지우기 실패: ${String(e)}`, `Remove failed: ${String(e)}`))); }}>
+      {consentAsk && <Confirm
+        title={tr('확인 없이 실행하는 모드에 동의', 'Allow running without confirmations')}
+        body={tr(`${assistant()}와 세션은 Claude Code 를 확인 없이 실행하는 모드(--dangerously-skip-permissions)로 돌려요. Claude Code 의 경고 그대로:\n· 위험할 수 있는 명령도 묻지 않고 실행해요.\n· Claude Code 는 인터넷이 제한되고 쉽게 되돌릴 수 있는 격리 환경(컨테이너·가상 머신)에서만 쓰라고 권해요.\n· 이 모드에서 생긴 일의 책임은 동의한 사람에게 있어요.\n${assistant()}에게는 결제·운영 앞에서 먼저 묻게 지시하지만, 완전히 막아 주지는 않아요. 동의하면 이 컴퓨터의 Claude Code 설정에 적혀서, 터미널에서 켜는 Claude Code 도 이 경고를 다시 띄우지 않아요.`,
+          `${assistant()} and its sessions run Claude Code in Bypass Permissions mode (--dangerously-skip-permissions). Claude Code's own warning:\n· Claude Code will not ask for your approval before running potentially dangerous commands.\n· This mode should only be used in a sandboxed container/VM that has restricted internet access and can easily be restored if damaged.\n· By proceeding, you accept all responsibility for actions taken while running in Bypass Permissions mode.\n${assistant()} is instructed to ask before payments and production changes, but that is not a guarantee. Agreeing records this in this computer's Claude Code settings, so Claude Code started from a terminal won't show this warning again either.`)}
+        ok={tr('동의', 'Agree')}
+        onCancel={() => setConsentAsk(null)}
+        onOk={() => { const next = consentAsk; setConsentAsk(null); void bypassConsentAccept().then(next, (e: unknown) => setError(tr(`동의를 못 적었어요: ${String(e)}`, `Could not record the agreement: ${String(e)}`))); }} />}
       {naming && <NameNew baseName={nextOrchestratorName([...navOrchs, ...offOrchList].map((s) => s.name))} color={orchColor(nextOrchestratorName([...navOrchs, ...offOrchList].map((s) => s.name)))} check={(v) => nickProblem(v, [...navOrchs, ...offOrchList].map((x) => orchDisplay(x)))} onCancel={() => setNaming(false)} onMake={(v, role) => { setNaming(false); void spawnOrchestrator(v, role); }} />}
     <StopBridge to={askStopRef} />
     <div className="shell">

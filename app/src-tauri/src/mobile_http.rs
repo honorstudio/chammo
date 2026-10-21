@@ -142,7 +142,7 @@ pub trait Backend: Send + Sync {
     fn sessions_all(&self) -> Result<String, String>;
     /// 꺼진 대화를 그대로 다시 켠다(respawn, 안 되면 이어 띄우기 — claude::resume_blocking). 폴더는 문지기가 HQ 로 골랐다
     fn resume(&self, cwd: &str, session_id: &str, id: &str) -> Result<String, String>;
-    /// 새 참모를 띄운다 — 이름은 문지기가 지었고 첫 지시는 Backend 가 정한다(데스크톱 새 참모와 같은 '준비만 해 둬')
+    /// 새 참모를 띄운다 — 이름은 문지기가 지었고 첫 지시는 Backend 가 정한다(데스크톱 새 참모와 같은 자기소개)
     fn spawn(&self, cwd: &str, name: &str) -> Result<String, String>;
     /// 대화 기록 꼬리 — 꺼진 참모가 마지막에 하던 일(sessionId → 꼬리 글)
     fn tails(&self, ids: &[String]) -> serde_json::Value;

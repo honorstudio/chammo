@@ -242,15 +242,20 @@ pub fn win_mirror(pid: Option<i32>) -> &'static str {
 }
 
 /// 윈도우 칸 그림 — 그 Craft 앱 조작 채널에 ui.screenshot 을 보내 받은 PNG 를 data URL 로. 화면 밖 창도 그린다(2026-10-20 실측, 최소화는 안 됨).
-/// 웹이 보는 중에만 1초에 한 번 이하로 부른다(paneShotDue) — 받기마다 앱이 그림을 만들어서(그리드 2fps 한 코어 9~12%·포토 한 장 0.55초)
+/// 웹이 보는 중에만 1초에 한 번 이하로 부른다(paneShotDue) — 받기마다 앱이 그림을 만들어서(그리드 2fps 한 코어 9~12%·포토 한 장 0.55초).
+/// 답을 최대 5초 기다리니 일꾼 스레드에서 — 동기 명령이면 메인 스레드라 칸이 보이는 동안 앱 화면이 1초에 반쯤 굳는다(0.3.6 리뷰)
 #[tauri::command]
-pub fn craft_pane_shot(app: String) -> Result<String, String> {
+pub async fn craft_pane_shot(app: String) -> Result<String, String> {
     display_name(&app).ok_or("unknown app")?;
-    let dir = crate::config::data_file("craft-native").join(&app);
+    tauri::async_runtime::spawn_blocking(move || pane_shot(&app)).await.map_err(|e| e.to_string())?
+}
+
+fn pane_shot(app: &str) -> Result<String, String> {
+    let dir = crate::config::data_file("craft-native").join(app);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("pane.app.png"); // scripts/craft 의 pane.png 와 따로 — 둘이 같이 써도 안 섞이게
     let _ = std::fs::remove_file(&path);
-    let mut c = crate::craft_input::Conn::open(crate::config::data_dir(), &app)?;
+    let mut c = crate::craft_input::Conn::open(crate::config::data_dir(), app)?;
     c.timeout(std::time::Duration::from_secs(5)); // 그림이 안 오면(최소화 등) 칸은 앞 그림 그대로
     let mut params = serde_json::json!({ "path": path.to_string_lossy() });
     if app.starts_with("photocraft") {
@@ -569,9 +574,10 @@ pub fn craft_cmd() -> std::process::Command {
 }
 
 /// 개입(사람이 직접)·돌려주기 — 비추기 칸 입력을 그 앱에 넘기거나 막고, scripts/craft takeover 가 문서 상태를 떠 둔다.
-/// 돌려주면 바뀐 것 한 줄을 메인 창에 'craft-handback' 으로 알린다(참모 입력칸에 [앱] 줄 — 화면엔 안 띄움)
+/// 돌려주면 바뀐 것 한 줄을 메인 창에 'craft-handback' 으로 알린다(참모 입력칸에 [앱] 줄 — 화면엔 안 띄움).
+/// async — 윈도우 개입은 조작 채널 답(ui.window.frame·ui.focus, 각 최대 5초)을 기다린다, 메인 스레드에서 기다리면 앱 화면이 굳는다
 #[tauri::command]
-pub fn craft_win_takeover<R: Runtime>(handle: tauri::AppHandle<R>, app: String, on: bool) -> Result<(), String> {
+pub async fn craft_win_takeover<R: Runtime>(handle: tauri::AppHandle<R>, app: String, on: bool) -> Result<(), String> {
     display_name(&app).ok_or("unknown app")?;
     if let Some((h, _)) = mirror_of(&app) {
         let key = app.clone();
@@ -579,8 +585,11 @@ pub fn craft_win_takeover<R: Runtime>(handle: tauri::AppHandle<R>, app: String, 
     }
     if on {
         #[cfg(windows)]
-        if let Err(e) = win_takeover(&handle, &app) {
-            eprintln!("craft takeover {app}: {e}");
+        {
+            let (h2, a2) = (handle.clone(), app.clone());
+            if let Ok(Err(e)) = tauri::async_runtime::spawn_blocking(move || win_takeover(&h2, &a2)).await {
+                eprintln!("craft takeover {app}: {e}");
+            }
         }
         let mut cmd = craft_cmd();
         std::thread::spawn(move || {
@@ -831,6 +840,24 @@ mod tests {
         assert_eq!((a.pid, a.by.as_str(), a.takeover), (Some(4242), "aaaa", false));
         assert_eq!((b.pid, b.by.as_str(), b.takeover, b.name.as_str()), (Some(4343), "bbbb", true, "PhotoCraft 2"));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 조작_채널을_기다리는_명령은_메인_스레드에서_안_돈다() {
+        // 동기 #[tauri::command] 는 메인(화면) 스레드에서 돈다 — 조작 채널 답(ui.screenshot 최대 5초·포토 장당 0.55초)을 거기서 기다리면
+        // 윈도우에서 칸이 보이는 동안 1초마다 앱 화면 전체가 굳는다(0.3.6 리뷰). 채널을 여는 명령은 async 로
+        let src = include_str!("craft_window.rs");
+        let mut bad = vec![];
+        for (i, _) in src.match_indices("#[tauri::command]\n") {
+            let rest = &src[i..];
+            let head = rest.lines().nth(1).unwrap_or("");
+            let body = &rest[..rest.find("\n}\n").unwrap_or(rest.len())];
+            let blocks = body.contains("Conn::open") || body.contains("win_takeover(");
+            if blocks && !head.contains("async fn") {
+                bad.push(head.trim().to_string());
+            }
+        }
+        assert!(bad.is_empty(), "동기 명령이 조작 채널을 기다린다: {bad:?}");
     }
 
     #[test]

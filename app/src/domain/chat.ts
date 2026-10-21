@@ -43,7 +43,6 @@ function userParts(content: unknown): { text: string; images: string[] } {
     .map((b) => `data:${b.source!.media_type ?? 'image/png'};base64,${b.source!.data}`);
   return { text: IMAGE_SOURCE.test(text) ? '' : text, images };
 }
-const userText = (content: unknown) => userParts(content).text;
 
 /** 도구 결과의 사람 개입 꼬리표 → 첫 줄('사람이 브라우저를 3분 조작하고 돌려줬어'). 아직 조작 중 안내·다른 결과는 null */
 const TAKEOVER = /\[사람 개입\] (사람이 [^\n]*조작하고 돌려줬어)/;
@@ -131,10 +130,12 @@ function itemsOf(r: Rec): (ChatItem | Out)[] {
     // 120초 넘게 붙잡혀 배경으로 넘어간 브라우저 도구 — 돌려준 꼬리표가 끝 알림(task-notification)으로 온다(2026-10-06 실측)
     const take = typeof a.prompt === 'string' && a.prompt.startsWith('<task-notification>') ? a.prompt.match(TAKEOVER) : null;
     if (take) return [{ kind: 'note', id, ts, text: take[1]! }];
-    const text = userText(a.prompt);
+    // 그림을 붙여 보낸 말은 prompt 가 글+그림 블록 배열이다(2.1.305 실측) — 보통 사람 말처럼 썸네일도
+    const { text, images } = userParts(a.prompt);
     const rel = text ? relayOf(text) : null;
     if (rel) return [{ kind: 'relay', id, ts, ...rel }]; // 일하는 중에 들어온 다른 세션 말
-    return text && a.origin?.kind === 'human' ? [{ kind: 'user', id, ts, text }] : [];
+    if (a.origin?.kind !== 'human' || (!text && !images.length)) return [];
+    return [images.length ? { kind: 'user', id, ts, text, images } : { kind: 'user', id, ts, text }];
   }
   if (r.type === 'assistant') {
     const out: ChatItem[] = [];

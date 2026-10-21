@@ -1,6 +1,6 @@
 ---
 name: hq-craft
-description: 사진·벡터·PDF·문서·표·영상·소리 같은 편집 일을 Craft 앱(scripts/craft)으로 할 때 연다 — 맥 앱을 조작 채널로 띄워 참모가 명령으로 다루기, 창 없는 엔진으로 일괄 처리, 앱별로 할 수 있는 것. Editing work with the Craft apps — driving the macOS app over its control channel, the windowless engine for batches, what each app can do.
+description: 사진·벡터·PDF·문서·표·영상·소리 같은 편집 일을 Craft 앱(scripts/craft)으로 할 때 연다 — 명함·전단·간판·로고·인쇄 파일(도련·재단선)·.ai·SVG→ai·"일러스트(레이터)로 만들어"·"포토샵으로"도 여기(사용자 결과물은 늘 Craft 앱으로).  맥 앱을 조작 채널로 띄워 참모가 명령으로 다루기, 창 없는 엔진으로 일괄 처리, 앱별로 할 수 있는 것. Editing work with the Craft apps — business cards, flyers, signs, logos, print files (bleed, trim marks), .ai, SVG→ai, "make it in Illustrator/Photoshop" too — driving the macOS app over its control channel, the windowless engine for batches, what each app can do.
 ---
 
 <!-- Chammo 가 HQ 를 켤 때마다 새로 쓴다 — 고치지 않는다. / Rewritten by Chammo on every start — do not edit. -->
@@ -38,7 +38,7 @@ scripts/show <작업 폴더>/a-edit.png
 | WordCraft | 문서 | 키 | `text.insert`·`file.exportPng` |
 | PdfCraft | PDF | 토큰 | `run` 이 `ui.command`(메뉴 명령), `ui.state` |
 | GridCraft | 표(엑셀) | 없음 | `range.setValues`·`formulas.autoSum`·`data.sort`·`data.removeDuplicates`·`insert.chart`·`home.bold`/`fillColor`/`numberFormat`/`borders`·`sheet.read` |
-| VectorCraft | 벡터 | 없음 | 도구·보기·`app.export` |
+| VectorCraft | 벡터 | 없음 | 도구·보기·`app.export` — 인쇄용 .ai 는 `document.save` 에 `{"bleed":{"useDocument":true}}` 를 줘야 도련까지 담긴다(안 주면 재단 크기로만) |
 | DesignCraft | 지면 | 없음 | `file.exportPdf`(PNG 내보내기 없음)·`view.*` |
 | DeckCraft | 발표 | 없음 | `slide.new` |
 | FilmCraft | 영상 | 없음 | 타임라인·`ui.playback` |

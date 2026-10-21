@@ -6,8 +6,9 @@ import type { LinkState } from './attachExit';
 import { alreadySent, chatNorm, pendingLeft, sentByMe, type ChatItem } from './chat';
 
 export type QItem = { text: string; ts: number };
-/** waiting = Claude 대기열, popped = ↑로 입력칸에 되돌아간 것(안 간 것), deq = 짝(뒤따르는 user 줄)을 아직 못 본 dequeue 수 */
-export type QueueState = { waiting: QItem[]; popped: QItem[]; deq?: number };
+/** waiting = Claude 대기열, popped = ↑로 입력칸에 되돌아간 것(안 간 것), deq = 짝(뒤따르는 user 줄)을 아직 못 본 dequeue 수,
+ *  absorbed = 일하는 도중 흡수된 것(remove, reason absorbed_mid_turn — 참모가 받았다. ts = 흡수된 때) */
+export type QueueState = { waiting: QItem[]; popped: QItem[]; deq?: number; absorbed?: QItem[] };
 export const emptyQueue: QueueState = { waiting: [], popped: [] };
 
 /** 교차 세션 메시지는 user 줄에서 머리말이 붙고 hop-chain 이 빠지고 꼬리말이 붙어 온다 — 앞부분만 맞댄다 */
@@ -35,12 +36,13 @@ export function applyQueueOps(q: QueueState, chunk: string): QueueState {
   if (!chunk.includes('"queue-operation"') && !q.deq) return q;
   const waiting = [...q.waiting];
   const popped = [...q.popped];
+  const absorbed = [...(q.absorbed ?? [])];
   let deq = q.deq ?? 0;
   const take = (text: string) => { const i = waiting.findIndex((w) => w.text === text); return i < 0 ? null : waiting.splice(i, 1)[0]!; };
   for (const line of chunk.split('\n')) {
     const isOp = line.includes('"queue-operation"');
     if (!isOp && !(deq > 0 && (line.includes('"type":"user"') || line.includes('"queued_command"')))) continue;
-    let r: { type?: string; operation?: string; timestamp?: string; content?: unknown; message?: { content?: unknown }; attachment?: { type?: string; prompt?: unknown } };
+    let r: { type?: string; operation?: string; reason?: string; timestamp?: string; content?: unknown; message?: { content?: unknown }; attachment?: { type?: string; prompt?: unknown } };
     try { r = JSON.parse(line); } catch { continue; }
     if (r.type !== 'queue-operation') {
       const got = turnText(r);
@@ -54,11 +56,12 @@ export function applyQueueOps(q: QueueState, chunk: string): QueueState {
     const ts = Date.parse(r.timestamp ?? '') || 0;
     if (r.operation === 'enqueue' && text) waiting.push({ text, ts });
     else if (r.operation === 'dequeue') deq += 1;
-    else if (r.operation === 'remove' && text) take(text);
+    // 흡수(참모가 받음)는 reason absorbed_mid_turn 만 — 그 밖의 remove(취소·비우기·하위 에이전트로 간 작업 알림)는 간 말이 아니다(0.3.6 리뷰)
+    else if (r.operation === 'remove' && text) { take(text); if (r.reason === 'absorbed_mid_turn') absorbed.push({ text, ts }); }
     else if (r.operation === 'popAll' && text) { take(text); popped.push({ text, ts }); }
   }
   // 되돌린 기록은 최근 것만, 짝 못 찾은 낡은 줄도 끝없이 쌓이지 않게
-  return { waiting: waiting.slice(-50), popped: popped.slice(-50), deq: Math.min(Math.max(deq, 0), 20) };
+  return { waiting: waiting.slice(-50), popped: popped.slice(-50), deq: Math.min(Math.max(deq, 0), 20), absorbed: absorbed.slice(-50) };
 }
 
 export type PendingMsg = { text: string; at: number };
@@ -79,6 +82,21 @@ const sq = (t: string) => chatNorm(t).replace(/\s+/g, '');
 /** 보낸 말과 같은 글이 보낸 뒤(10초 여유) 들어왔나 */
 const after = (items: QItem[], p: PendingMsg) => items.some((q) => q.ts >= p.at - 10_000 && chatNorm(q.text) === chatNorm(p.text));
 
+/** 일하는 도중 흡수된 때 — 이 말을 친 뒤 흡수됐으면 그 시각, 아니면 null. 흡수는 Enter 뒤라 보낸 시각(1초 여유)보다 늦다 —
+ *  since(10초 여유)로 보면 몇 초 전 간 같은 말의 흡수에 짝지어 이번 말이 안 가도 사라졌다(시험 장면).
+ *  흡수 글 앞엔 붙인 그림 [Image #n]·입력칸에 남아 있던 글이 붙어 오니 '끝이 같다'로 본다. 다른 세션 말·작업 알림(<…>)은 내 말이 아니다.
+ *  긴 도구(72초 Bash) 중에 보낸 말은 도구가 끝나야 흡수되는데(2026-10-21 사용자 캡처, 최근 닷새 사람 말 505번 중 104번이 30초 넘게 줄 섬),
+ *  흡수 줄만 먼저 읽히면 대기열에도 기록에도 없어 '전달 안 됨 + 다시 보내기'로 튀었다 */
+export function absorbedAt(q: QueueState, p: PendingMsg & { since?: number }): number | null {
+  const n = chatNorm(p.text);
+  if (!n) return null;
+  const from = Math.max(p.at - 1000, p.since ?? -Infinity);
+  const hit = (q.absorbed ?? []).filter((a) => { const t = chatNorm(a.text); return a.ts >= from && !t.startsWith('<') && (t === n || t.endsWith(` ${n}`)); });
+  return hit.length ? Math.max(...hit.map((a) => a.ts)) : null;
+}
+/** 흡수된 뒤 사람 말 기록(queued_command)이 이만큼 안 읽혀도 간 말로 — 보통은 같은 조각에 온다. 모양이 바뀌어 못 읽어도 말풍선이 남지 않게 */
+export const ABSORB_GRACE = 5000;
+
 /** 다시 보낸 말 — 보낸 시각은 새로, 맞출 기록은 처음 보낸 때(10초 여유) 뒤부터. 처음 말의 기록이 훅 때문에 늦게(옛 시각으로) 붙어도 지워진다.
  *  입력칸에 되돌아온 말(since)은 since 그대로 */
 export const resent = (p: PendingMsg & { since?: number }, now: number) => ({ text: p.text, at: now, since: p.since ?? p.at - 10_000 });
@@ -95,7 +113,9 @@ export function newPending(text: string, items: ChatItem[], now: number): Pendin
 
 /** link = 그 세션 터미널 보기(domain/attachExit) — 끊긴 동안엔 화면 글(termText)이 죽은 화면이라 입력칸은 안 본다.
  *  다시 붙는 중이면 wait(단추 없음 — 붙으면 앱이 친다), 끊김이 굳었으면(gone) 30초를 안 기다리고 바로 lost. 대기열에 이미 들어간 말은 그대로 queued */
-export function pendingState(p: PendingMsg, c: { queue: QueueState; termText: string; now: number; enterWait: number; link?: LinkState }): PendingState {
+export function pendingState(p: PendingMsg & { since?: number }, c: { queue: QueueState; termText: string; now: number; enterWait: number; link?: LinkState }): PendingState {
+  // 참모가 이미 받았다 — 기록 줄이 따라올 때까지 보내는 중(단추 없음)
+  if (absorbedAt(c.queue, p) !== null) return 'sending';
   if (c.link && c.link !== 'live') return after(c.queue.waiting, p) ? 'queued' : c.link === 'gone' ? 'lost' : 'wait';
   const typed = p.at + c.enterWait;
   if (c.now < typed + SETTLE) return 'sending';
@@ -107,9 +127,14 @@ export function pendingState(p: PendingMsg, c: { queue: QueueState; termText: st
 
 /** 보낸 글 말풍선을 들고 있는 최대 시간 — 줄 선 말은 긴 일이 끝날 때까지 기다린다. 안 간 말은 사람이 빼거나 다시 보낼 때까지 남긴다 */
 export const PENDING_MS = 3_600_000;
-/** 채팅에 남길 보낸 말 — 아직 기록에 안 들어온 것 중 한 시간 안. ChatView 와 보내기 흐름 시험(chatSendFlow.test)이 같이 쓴다 */
-export const waitingOf = <T extends PendingMsg & { since?: number }>(pending: T[], items: ChatItem[], now: number): T[] =>
-  pendingLeft(pending, items, now).filter((p) => now - p.at < PENDING_MS);
+/** 채팅에 남길 보낸 말 — 아직 기록에 안 들어온 것 중 한 시간 안, 흡수된 지 ABSORB_GRACE 안 지난 것. ChatView 와 보내기 흐름 시험(chatSendFlow.test)이 같이 쓴다 */
+export const waitingOf = <T extends PendingMsg & { since?: number }>(pending: T[], items: ChatItem[], now: number, queue: QueueState = emptyQueue): T[] =>
+  pendingLeft(pending, items, now).filter((p) => { const a = absorbedAt(queue, p); return now - p.at < PENDING_MS && (a === null || now - a < ABSORB_GRACE); });
+/** 흡수된 말이 기록 없이 사라질 때까지 남은 시간 — ChatView 가 그때 한 번 더 센다(기록이 안 바뀌면 다시 셀 일이 없다). 없으면 null */
+export const absorbedLeft = (pending: (PendingMsg & { since?: number })[], queue: QueueState, now: number): number | null => {
+  const left = pending.map((p) => absorbedAt(queue, p)).filter((a): a is number => a !== null).map((a) => a + ABSORB_GRACE - now);
+  return left.length ? Math.max(0, Math.min(...left)) : null;
+};
 /** 말풍선 단추 — 보내는 중엔 없음, 안 갔어요면 다시 보내기, 대기 중·입력칸이면 지금 보내기(빼기는 대기열·입력칸 모양을 더 봐서 따로) */
 export const pendAct = (st: PendingState): 'again' | 'now' | null => (st === 'sending' || st === 'wait' ? null : st === 'lost' ? 'again' : 'now');
 

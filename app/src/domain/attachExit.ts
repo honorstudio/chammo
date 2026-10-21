@@ -30,13 +30,25 @@ export function exitWatcher(id: string): (chunk: string) => boolean {
 }
 
 /** 윈도우: 같은 세션에 다른 창이 붙어 쫓겨났나(attach 가 'Session opened in another window' 를 찍고 끝남, pty.rs KICKED) —
- *  쫓겨난 창까지 다시 붙으면 두 창이 서로 쫓아내며 끝없이 돈다. 이스케이프·공백을 빼고 맞댄다(조각 경계·색 코드) */
+ *  쫓겨난 창까지 다시 붙으면 두 창이 서로 쫓아내며 끝없이 돈다. 이스케이프·공백을 빼고 맞댄다(조각 경계·색 코드).
+ *  그 문장이 새로 완성된 조각에서만 true — 본 뒤엔 꼬리를 비워 같은 문장으로 다시 켜지지 않는다. 쫓겨남인지는 끝날 때 kickedBeforeEnd 로 */
 export function kickWatcher(): (chunk: string) => boolean {
   let tail = '';
   return (chunk) => {
     tail = (tail + chunk).slice(-KEEP);
-    return tail.replace(ESC, '').replace(/\s+/g, '').includes('Sessionopenedinanotherwindow');
+    if (!tail.replace(ESC, '').replace(/\s+/g, '').includes('Sessionopenedinanotherwindow')) return false;
+    tail = '';
+    return true;
   };
+}
+
+/** 쫓겨난 attach 는 그 문장을 찍고 곧 끝난다 — 끝나기 이만큼 안에 본 것만 쫓겨남 */
+export const KICK_WINDOW = 5_000;
+
+/** attach 가 끝났을 때 쫓겨남이었나 — 대화 화면에 그 문장이 그려진 적이 있을 뿐이면(그 문자열을 고치거나 출력한 세션) 아니다.
+ *  칸 수명 내내 한 번만 봐도 영구로 쫓겨남으로 쳐서, 나중에 남의 respawn 으로 끝나면 다시 안 붙었다(0.3.6 리뷰) */
+export function kickedBeforeEnd(kickedAt: number | null, endedAt: number): boolean {
+  return kickedAt != null && endedAt - kickedAt <= KICK_WINDOW;
 }
 
 /** `claude agents --json` 에 그 세션이 살아 있나 — 산 줄은 pid·status 가 있다. 못 읽으면 null(모름) */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addExtraProject, parseClaudeVersion, setupCommand, setupReady, shq, versionFit, versionWarning, type EnvCheck, WIZARD, canNext, tildify, notifyRow, browserRow, browserChecklist, ghRow } from './setup';
+import { addExtraProject, parseClaudeVersion, setupCommand, setupReady, shq, versionFit, versionWarning, type EnvCheck, WIZARD, canNext, tildify, notifyRow, browserRow, browserChecklist, ghRow, gitStillMissing } from './setup';
 
 describe('Claude Code 버전', () => {
   it('버전 글자를 숫자로', () => {
@@ -251,5 +251,17 @@ describe('ghRow — GitHub CLI 줄', () => {
   it('깔렸는데 로그인 전 · 안 깔림', () => {
     expect(ghRow(base)).toBe('login');
     expect(ghRow({ ghPath: null, ghUser: null, ghStale: false })).toBe('install');
+  });
+});
+
+describe('gitStillMissing — 윈도우에서 git 설치를 눌렀는데도 ✕ 면 껐다 켜기 안내(2026-10-21 새 윈도우 PC)', () => {
+  it('윈도우·설치를 한 번 돌렸고·설치 창이 닫혔는데 아직 없으면', () => {
+    expect(gitStillMissing({ win: true, tried: true, running: false, ok: false })).toBe(true);
+  });
+  it('설치 중·안 눌러 봄·맥·이미 있음이면 안내 없음', () => {
+    expect(gitStillMissing({ win: true, tried: true, running: true, ok: false })).toBe(false);
+    expect(gitStillMissing({ win: true, tried: false, running: false, ok: false })).toBe(false);
+    expect(gitStillMissing({ win: false, tried: true, running: false, ok: false })).toBe(false);
+    expect(gitStillMissing({ win: true, tried: true, running: false, ok: true })).toBe(false);
   });
 });

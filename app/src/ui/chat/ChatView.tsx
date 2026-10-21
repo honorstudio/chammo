@@ -13,7 +13,7 @@ import { builtinSlash, completeSlash, isMemoryCmd, matchSlash, slashQuery, type 
 import { appendChat, chatBusy, chatEscStops, chatNorm, escUnsends, enterDelay, parseChat, clickFocusesInput, sentByMe, promptInput, sendControls, splitPaths, splitRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
 import type { LinkState } from '../../domain/attachExit';
 import { LINK_WAIT } from '../../domain/paneLinks';
-import { againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, mineForLeftover, newPending, pendAct, pendingState, resent, waitingOf, type PendingState, type QueueState } from '../../domain/chatQueue';
+import { absorbedAt, absorbedLeft, againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, mineForLeftover, newPending, pendAct, pendingState, resent, waitingOf, type PendingState, type QueueState } from '../../domain/chatQueue';
 import { mdToHtml } from '../md';
 import { openTarget, readSessionTasks, readTranscript, type SessionTask } from '../../data/tauri';
 import { modKey } from '../../domain/keys';
@@ -344,8 +344,15 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     // 80초(LINK_WAIT)를 넘겨 끊겼으면 줄에서 기다리던 말은 이미 포기됐다 — 그대로 두면 '전달 안 됨'으로 남아 다시 보낼 수 있다
     if (d != null) { const now = Date.now(); setPending((ps) => ps.map((p) => (p.at >= d - 1000 && now - p.at < LINK_WAIT ? resent(p, now) : p))); }
   }, [link]);
-  const waiting = useMemo(() => waitingOf(pending, items, Date.now()), [pending, items]);
+  const waiting = useMemo(() => waitingOf(pending, items, Date.now(), queue), [pending, items, queue]);
   useEffect(() => { if (waiting.length !== pending.length) setPending(waiting); }, [waiting, pending.length]);
+  // 일하는 도중 흡수된 말은 기록 줄이 끝내 안 읽혀도 몇 초 뒤 지운다(domain/chatQueue ABSORB_GRACE) — 그때 한 번 더 센다
+  useEffect(() => {
+    const left = absorbedLeft(pending, queue, Date.now());
+    if (left === null) return;
+    const t = window.setTimeout(() => setPending((p) => [...p]), left + 100);
+    return () => window.clearTimeout(t);
+  }, [pending, queue]);
   // / 명령은 4초 뒤 지우는데(domain/chat pendingLeft) 기록이 안 바뀌면 다시 셀 일이 없다 — 시계로 한 번 더 센다
   useEffect(() => {
     if (!pending.some((p) => p.text.trimStart().startsWith('/'))) return;
@@ -466,7 +473,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const enterWait = Math.max(0, ...waiting.map((p) => enterDelay(p.text.length, IS_WIN)));
   const stateOf = new Map<number, PendingState>(waiting.map((p) => [p.at, pendingState(p, { queue, termText, now: Date.now(), enterWait, link })]));
   /** 지금 Esc 를 넘기면 방금 보낸 말이 거둬들여지나(domain/chat escUnsends) — 그땐 채팅 Esc·⌘Enter·지금 보내기가 Esc 를 안 넘긴다. ■ 멈춤 버튼은 그대로 */
-  const unsendsNow = () => escUnsends(items, waiting.some((p) => stateOf.get(p.at) === 'sending'));
+  const unsendsNow = () => escUnsends(items, waiting.some((p) => stateOf.get(p.at) === 'sending' && absorbedAt(queue, p) === null)); // 흡수된 말은 이미 턴 안에 있다 — Esc 는 멈춤
 
   // 보낸 말이 Enter 없이 입력칸에 그대로 남았으면 Enter 를 다시(2초 그대로일 때, 같은 말에 세 번까지). 일하는 중이어도 —
   // 일하는 중 Enter 는 줄 서기다. 예전엔 쉴 때 한 번만 눌러, 일하는 중 걸린 말은 '보내는 중'으로 10분 남았다(2026-10-06 사용자)
@@ -714,7 +721,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
                 <AtText text={splitRefs(p.text).body} />
                 <span className="chat-meta">{{
                   sending: tr('보내는 중', 'Sending'),
-                  queued: tr('대기 중 — 지금 일이 끝나면 가요', 'Queued — goes when the current step ends'),
+                  queued: tr('대기 중 — 지금 도구가 끝나면 가요', 'Queued — goes in when the current tool finishes'), // 일하는 도중엔 도구 사이에 들어간다 — '일이 끝나면'은 안 간 것처럼 읽혔다(2026-10-21 사용자)
                   input: tr('입력칸에 걸려 있어요', 'Stuck in the terminal input'),
                   lost: tr('전달 안 됨', 'Not delivered'),
                   wait: tr('다시 붙는 중 — 붙으면 보내요', 'Reattaching — sends when it is back'),

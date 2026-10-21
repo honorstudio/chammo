@@ -288,7 +288,10 @@ pub async fn tools_respawn(ids: Vec<String>) -> Result<usize, String> {
     blocking(move || {
         let mut n = 0;
         for id in ids.into_iter().filter(|i| i.len() == 8 && i.chars().all(|c| c.is_ascii_hexdigit())) {
-            if claude(None, &["respawn".into(), id], 60).is_ok() { n += 1; }
+            if claude(None, &["respawn".into(), id.clone()], 60).is_ok() {
+                crate::claude::revived(Some(&id));
+                n += 1;
+            }
         }
         Ok(n)
     })

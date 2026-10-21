@@ -122,6 +122,12 @@ describe('parseChat — 대화 기록을 말풍선 항목으로', () => {
     expect(parseChat(t)).toEqual([{ kind: 'user', id: 'q1', ts: 't-q1', text: '이것도 해줘' }]);
   });
 
+  it('일하는 중에 그림 칩과 같이 들어간 말 — prompt 가 글+그림 배열(2.1.305 실측), 보통 말처럼 썸네일도', () => {
+    const t = line({ type: 'attachment', uuid: 'q3', timestamp: 't-q3', attachment: { type: 'queued_command', origin: { kind: 'human' }, imagePasteIds: [255],
+      prompt: [{ type: 'text', text: '[Image #255] #img1 \n고치는 중이지?' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBOR' } }] } });
+    expect(parseChat(t)).toEqual([{ kind: 'user', id: 'q3', ts: 't-q3', text: '#img1 \n고치는 중이지?', images: ['data:image/png;base64,iVBOR'] }]);
+  });
+
   it('붙여넣기 태그(<pasted_content …>)는 말풍선에서 벗긴다 — 채팅으로 보낸 긴 글이 이렇게 감싸져 온다', () => {
     const t = user('p2', '<pasted_content id="faac">\n첫 줄\n둘째 줄\n</pasted_content id="faac">');
     expect(parseChat(t)[0]).toMatchObject({ kind: 'user', text: '첫 줄\n둘째 줄' });

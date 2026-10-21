@@ -965,8 +965,8 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         crate::claude::resume_blocking(cwd, session_id, (!id.is_empty()).then_some(id))
     }
     fn spawn(&self, cwd: &str, name: &str) -> Result<String, String> {
-        // 데스크톱 새 참모와 같은 첫 지시 — 첫 인사를 '뭐부터 할까?'로 물으면 결정 대기로 뜬다(App spawnOrchestrator)
-        let prompt = crate::i18n::tr("준비만 해 둬 — 답은 \"준비됐어\" 한 줄로, 묻지 말고 다음 지시를 기다려.", "Just get ready — reply \"Ready.\" in one line, ask nothing, and wait for the next instruction.");
+        // 데스크톱 새 참모와 같은 첫 지시(자기소개) — 질문으로 끝나면 결정 대기로 뜬다(App spawnOrchestrator)
+        let prompt = crate::i18n::tr("안녕! 네 이름과 맡은 일로 2~3줄 자기소개해 줘 — 누구고, 뭘 맡았고, 이런 걸 시키면 된다는 예 하나. 도구는 쓰지 말고, 질문으로 끝내지 마.", "Hi! Introduce yourself in 2-3 lines from your name and role — who you are, what you handle, and one example of what to ask you. Don't use tools, and don't end with a question.");
         crate::claude::spawn_blocking(cwd, name, prompt)
     }
     fn push_key(&self) -> Result<String, String> {

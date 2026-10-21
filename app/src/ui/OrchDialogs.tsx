@@ -21,7 +21,7 @@ export function Confirm({ title, body, ok, danger, onOk, onCancel }: { title: st
     <div className="od-back" onMouseDown={onCancel}>
       <div className="od-box" role="alertdialog" aria-label={title} onMouseDown={(e) => e.stopPropagation()}>
         <b>{title}</b>
-        {body && <p>{body}</p>}
+        {body && <p style={{ whiteSpace: 'pre-line' }}>{body}</p>}
         <div className="od-foot">
           <button onClick={onCancel}>{tr('취소', 'Cancel')}</button>
           <button ref={btn} className={danger ? 'danger' : 'pri'} onClick={onOk}>{ok}</button>

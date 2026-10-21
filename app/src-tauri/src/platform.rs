@@ -530,7 +530,20 @@ pub fn git_ready() -> bool {
 }
 #[cfg(not(target_os = "macos"))]
 pub fn git_ready() -> bool {
-    command("git").arg("--version").output().is_ok_and(|o| o.status.success())
+    let works = || command("git").arg("--version").output().is_ok_and(|o| o.status.success());
+    if works() {
+        return true;
+    }
+    // 앱이 켜진 뒤 깔았으면 레지스트리 PATH 에만 있다 — 다시 읽고, 그래도 없으면 흔한 자리를 붙인다(2026-10-21 새 윈도우 PC)
+    // git 이 아예 없으면 저장소마다 부르는 git() 이 매번 reg 를 띄운다 — 다시 찾기는 5초에 한 번
+    #[cfg(windows)]
+    if crate::win_path::due(std::time::Instant::now()) {
+        crate::win_path::refresh();
+        if works() || (crate::win_path::adopt_git() && works()) {
+            return true;
+        }
+    }
+    false
 }
 
 /// 파일 한도(soft)를 올릴 값 — launchd 기본 256 을 앱과 앱이 띄우는 claude·예약 tick 이 물려받아

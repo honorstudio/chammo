@@ -125,6 +125,9 @@ pub fn auth_status(bin: &str) -> Option<bool> {
 }
 
 pub fn check() -> EnvCheck {
+    // 윈도우: 앱이 켜진 뒤 깐 도구(winget git·gh·claude)는 레지스트리 PATH 에만 있다 — 점검·다시 확인마다 다시 읽는다
+    #[cfg(windows)]
+    crate::win_path::refresh();
     // 되살리기가 먼저 — .old 만 남으면 링크(WinGet\Links\claude.exe)가 빈 곳을 가리켜 '설치 안 됨'으로 보인다
     let claude_restored = crate::claude_src::heal();
     let mut c = EnvCheck { claude_path: find("claude"), gh_path: find("gh"), claude_restored, ..Default::default() };

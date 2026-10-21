@@ -199,7 +199,8 @@ export const listSessionsAllRaw = () => invoke<string>('list_sessions_all');
 
 /** 꺼진 세션을 같은 대화 그대로 다시 띄운다 */
 /** id = `agents --json` 의 짧은 번호 — 주면 같은 번호로 되살린다(respawn), 없으면 새 번호 복사본(--bg --resume) */
-export const resumeSession = (cwd: string, sessionId: string, id?: string) => invoke<string>('resume_session', { cwd, sessionId, id: id ?? null });
+/** copy=false — respawn 이 안 되면 이어 띄우기(새 번호 복사본)로 떨어지지 않고 실패(참모 자동 되살리기). 없으면 떨어진다 */
+export const resumeSession = (cwd: string, sessionId: string, id?: string, copy?: boolean) => invoke<string>('resume_session', { cwd, sessionId, id: id ?? null, copy: copy ?? null });
 
 /** 관리 프로그램(claude daemon) 시작 시각 ms — 바뀌면 재시작. 안 떠 있으면 null */
 export const daemonStartedAt = () => invoke<number | null>('daemon_started_at');
@@ -288,6 +289,9 @@ export const claudeDefaults = {
   snapshot: () => invoke<string>('claude_defaults_snapshot'),
   restore: (snap: string) => invoke<boolean>('claude_defaults_restore', { snap }),
 };
+/** Claude Code bypass 경고 동의 — 읽기, 그리고 사람이 카드에서 [동의] 를 눌렀을 때만 적기(domain/bypassConsent) */
+export const bypassConsent = () => invoke<boolean>('bypass_consent');
+export const bypassConsentAccept = () => invoke<void>('bypass_consent_accept');
 /** 계정 칸 — 로그인을 칸마다 키체인에 보관해 두고 바꿔 끼운다. 토큰은 화면에 안 온다 */
 export const accountsApi = {
   view: () => invoke<AccountsView>('accounts_view'),

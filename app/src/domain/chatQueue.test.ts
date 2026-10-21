@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyQueueOps, LOST_AFTER, autoEnterTarget, emptyQueue, ESC_GAP, escPlan, inputLeftover, keepAfterRemove, MINE_KEEP, mineForLeftover, pendAct, pendingState, typeQueue, type QueueState } from './chatQueue';
+import { absorbedLeft, ABSORB_GRACE, applyQueueOps, LOST_AFTER, autoEnterTarget, emptyQueue, ESC_GAP, escPlan, inputLeftover, keepAfterRemove, MINE_KEEP, mineForLeftover, pendAct, pendingState, typeQueue, type QueueState } from './chatQueue';
 import grid from '../ui/SessionGrid.tsx?raw';
 import pane from '../ui/TerminalPane.tsx?raw';
 import tauriTs from '../data/tauri.ts?raw';
@@ -56,6 +56,35 @@ describe('applyQueueOps — 기록의 줄 서기(queue-operation)로 Claude 대�
     const q = applyQueueOps(emptyQueue, [op('enqueue', T(1), 'A'), op('remove', T(2), 'A', { reason: 'absorbed_mid_turn' })].join('\n'));
     expect(q.waiting).toEqual([]);
     expect(q.popped).toEqual([]);
+    expect(q.absorbed).toEqual([{ text: 'A', ts: at(2) }]); // 흡수된 때 — 참모가 받았다
+  });
+
+  it('흡수가 아닌 remove(취소·대기열 비우기·하위 에이전트로 간 작업 알림)는 대기열에서만 빼고 간 말로 치지 않는다 — 0.3.6 리뷰', () => {
+    // 실측(2026-10-21, 기록 5,644건): reason 은 absorbed_mid_turn(5,621)·delivered_to_agent(23, 작업 알림)뿐 — 그 밖의 이유는 간 말이 아니다
+    const q = applyQueueOps(emptyQueue, [op('enqueue', T(1), 'A'), op('remove', T(2), 'A', { reason: 'cancelled' }), op('remove', T(2), 'B')].join('\n'));
+    expect(q.waiting).toEqual([]);
+    expect(q.absorbed).toEqual([]);
+    const p = { text: 'A', at: at(1) };
+    expect(pendingState(p, { queue: q, termText: '', now: at(1) + LOST_AFTER + 1000, enterWait: 400 })).toBe('lost'); // '전달 안 됨 + 다시 보내기'
+  });
+
+  it('흡수 기록은 다음 조각에도 이어지고, 최근 50개까지만', () => {
+    let q = applyQueueOps(emptyQueue, op('remove', T(2), 'A', { reason: 'absorbed_mid_turn' }));
+    q = applyQueueOps(q, Array.from({ length: 60 }, (_, i) => op('remove', T(3), `B${i}`, { reason: 'absorbed_mid_turn' })).join('\n'));
+    expect(q.absorbed?.length).toBe(50);
+    expect(q.absorbed?.[49]?.text).toBe('B59');
+    expect(applyQueueOps(q, user('x'))).toBe(q); // 줄 서기 줄이 없는 조각은 그대로
+  });
+
+  it('흡수된 말 — 흡수 글에 붙은 그림 표시·앞 글이 있어도 보내는 중(단추 없음), 맞출 시각 앞에 흡수된 같은 글은 아니다', () => {
+    const q = applyQueueOps(emptyQueue, op('remove', T(40), '[Image #255] #img1 \n고치는 중이지?', { reason: 'absorbed_mid_turn' }));
+    const p = { text: '#img1 고치는 중이지?', at: at(1) };
+    expect(pendingState(p, { queue: q, termText: '', now: at(1) + LOST_AFTER + 20_000, enterWait: 400 })).toBe('sending');
+    expect(pendingState(p, { queue: q, termText: '', now: at(1) + LOST_AFTER + 20_000, enterWait: 400, link: 'gone' })).toBe('sending');
+    expect(pendingState({ ...p, at: at(55), since: at(55) }, { queue: q, termText: '', now: at(55) + LOST_AFTER + 1000, enterWait: 400 })).toBe('lost');
+    expect(absorbedLeft([p], q, at(41))).toBe(ABSORB_GRACE - 1000);
+    expect(absorbedLeft([p], q, at(50))).toBe(0);
+    expect(absorbedLeft([{ text: '다른 말', at: at(1) }], q, at(41))).toBeNull();
   });
 
   it('popAll(↑로 입력칸에 되돌림)은 줄 선 것을 popped 로 옮긴다 — 안 간 것', () => {

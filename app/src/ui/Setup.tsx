@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { TtsField } from './TtsField';
 import { appVersion, browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, projectAccess, notifyOpenSettings, notifyRequest, notifyStatus, axTrusted, screenTrusted, askPermission, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
-import { addExtraProject, canNext, parseClaudeVersion, setupCommand, setupReady, tildify, notifyRow, axRow, browserRow, browserChecklist, ghRow, versionFit, WIZARD, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
+import { addExtraProject, canNext, parseClaudeVersion, setupCommand, setupReady, tildify, notifyRow, axRow, browserRow, browserChecklist, ghRow, gitStillMissing, versionFit, WIZARD, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
 import type { Animation, FeatureSwitch } from '../domain/config';
 import { firstTab, settingsEscCloses, settingsTabs, type SettingsTab } from '../domain/settingsTabs';
 import { BRAND } from '../domain/avatar';
@@ -107,6 +107,8 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
   const [check, setCheck] = useState<EnvCheck | null>(null);
   const [checking, setChecking] = useState(false);
   const [task, setTask] = useState<SetupTask | null>(start ?? null);
+  /** 윈도우 git 설치를 한 번이라도 돌렸나 — 그 뒤에도 ✕ 면 껐다 켜기 안내 */
+  const [gitTried, setGitTried] = useState(false);
   const [dev, setDev] = useState<FolderStatus | null>(null);
   const [hq, setHq] = useState<FolderStatus | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -274,7 +276,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
   };
 
   const doneLine = tr('끝났어요. 위의 "다시 확인"을 누르거나 잠깐 기다려 주세요.', 'Done. Press "Check again" above, or wait a moment.');
-  const run = (t: SetupTask) => setTask(t);
+  const run = (t: SetupTask) => { if (t === 'clt') setGitTried(true); setTask(t); };
   const ready = setupReady(check);
   const fit = check?.claudeVersion ? versionFit(check.claudeVersion) : 'unknown';
   const ver = parseClaudeVersion(check?.claudeVersion ?? '')?.join('.') ?? check?.claudeVersion;
@@ -371,7 +373,9 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
                   </Row>)}
               {check.clt
                 ? <Row state="ok" title={IS_WIN ? 'git' : tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={tr('있어요.', 'Installed.')} />
-                : <Row state="need" title={IS_WIN ? 'git' : tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={IS_WIN ? tr('git 이 필요해요. 누르면 winget 으로 설치해요 — 몇 분 걸려요.', 'git is required. The button installs it with winget — it takes a few minutes.') : tr('git 이 들어 있는 Apple 도구예요. 누르면 macOS 설치 창이 떠요 — 설치에 몇 분 걸려요.', "Apple's tools that include git. The button opens the macOS installer — it takes a few minutes.")}>
+                : <Row state="need" title={IS_WIN ? 'git' : tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={IS_WIN ? (gitStillMissing({ win: IS_WIN, tried: gitTried, running: task === 'clt', ok: check.clt })
+                    ? tr('git 은 깔려 있는데 Chammo 가 못 찾고 있어요 — Chammo 를 완전히 껐다 켜 주세요.', 'git is installed but Chammo cannot find it — quit Chammo completely and open it again.')
+                    : tr('git 이 필요해요. 누르면 winget 으로 설치해요 — 몇 분 걸려요.', 'git is required. The button installs it with winget — it takes a few minutes.')) : tr('git 이 들어 있는 Apple 도구예요. 누르면 macOS 설치 창이 떠요 — 설치에 몇 분 걸려요.', "Apple's tools that include git. The button opens the macOS installer — it takes a few minutes.")}>
                     <button className="btn pri" onClick={() => run('clt')}>{tr('설치하기', 'Install')}</button>
                   </Row>}
               {ghRow(check) === 'ok'
@@ -619,6 +623,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
         <section className="su-sec">
           <h2>{tr('준비 끝', 'All set')}</h2>
           <p className="su-hint">{tr(`시작하기를 누르면 HQ 폴더를 만들어요. 첫 화면에서 '새 ${name} 만들기'를 누르고 말을 걸어 보세요 — 예: "acme-shop 에 README 정리 시켜줘".`, `Press Get started to create the HQ folder. On the first screen, press 'Create a new ${name}' and talk to it — e.g. "ask acme-shop to tidy up its README".`)}</p>
+          <p className="su-hint">{tr(`${name}와 세션은 확인 없이 명령을 실행하는 모드로 돌아요 — 처음 띄울 때 한 번 동의를 물어요.`, `${name} and its sessions run commands without asking — you will be asked to agree once when the first one starts.`)}</p>
           <dl className="su-sum">
             <dt>{tr('비서 이름', 'Assistant')}</dt><dd>{name}</dd>
             <dt>{tr('프로젝트 폴더', 'Projects')}</dt><dd>{draft.devRoot}</dd>

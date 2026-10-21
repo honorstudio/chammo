@@ -180,7 +180,7 @@ Chammo runs entirely on your computer. It has no server, no account and no telem
 
 - **Early.** Chammo started as one person's daily tool and was opened up as is.
 - **It relies on undocumented Claude Code internals** — background sessions, `claude agents --json`, `claude attach`, plugin interfaces. It is tested with Claude Code 2.1.280 and later 2.1.x. An update can break it; Chammo warns when your version is outside the tested range.
-- **Background sessions run with `--dangerously-skip-permissions`.** They act without asking. Chammo's gates (payments, production changes, gated merges) sit in front of that, but only use it on projects and machines where you're comfortable with that.
+- **Background sessions run with `--dangerously-skip-permissions`.** They act without asking. Chammo's gates (payments, production changes, gated merges) sit in front of that, but only use it on projects and machines where you're comfortable with that. On a fresh install Claude Code asks you to accept that mode once — Chammo shows a card before the first assistant starts and records your answer only when you press Agree.
 - **Windows is a preview.** Not there yet: the talk key, Supertonic, Office file previews, a signed installer, Chammo Light and the Craft CLI.
 
 ## Contributing

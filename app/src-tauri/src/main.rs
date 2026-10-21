@@ -98,6 +98,7 @@ mod pty;
 mod quit;
 mod review;
 mod setup;
+mod win_path;
 mod sheet;
 mod sheet_book;
 mod sheet_cmd;
@@ -818,6 +819,8 @@ fn main() {
             claude::read_usage_at,
             claude_defaults::claude_defaults_snapshot,
             claude_defaults::claude_defaults_restore,
+            claude_defaults::bypass_consent,
+            claude_defaults::bypass_consent_accept,
             claude::log_auto_allow,
             claude::read_auto_allow,
             claude::ime_debug_mode,

@@ -315,6 +315,13 @@ fn note_app_stop(id: &str) {
     g.push((id.to_string(), std::time::Instant::now()));
 }
 
+/// 앱이 그 세션을 다시 깨웠다(respawn, 번호 그대로) — 끈 기록에서 지운다. 안 지우면 깨운 뒤 10분 안에 남의 respawn 으로 attach 가 끝날 때
+/// TerminalPane 다시 붙기·참모 되살리기가 '앱이 껐다'로 보고 포기했다(0.3.6 리뷰)
+pub fn revived(id: Option<&str>) {
+    let Some(id) = id else { return };
+    APP_STOPS.lock().unwrap_or_else(|e| e.into_inner()).retain(|(i, _)| i != id);
+}
+
 /// 최근 10분 안에 앱(버튼·메뉴·폰·종료 창)이 끄거나 지운 세션 번호
 #[tauri::command]
 pub fn app_stopped_recently() -> Vec<String> {
@@ -620,6 +627,19 @@ mod stop_memo_tests {
         assert_eq!(super::recent_stops(&mut list, t0 + std::time::Duration::from_secs(60), keep), vec!["aaaaaaaa", "bbbbbbbb"]);
         assert_eq!(super::recent_stops(&mut list, t0 + std::time::Duration::from_secs(601), keep), vec!["bbbbbbbb"], "10분 지난 건 빠진다");
         assert_eq!(list.len(), 1, "지난 것은 목록에서도 지운다");
+    }
+    #[test]
+    fn 앱이_다시_깨운_세션은_끈_기록에서_빠진다() {
+        // 0.3.6 리뷰: 메뉴로 끄고 2분 뒤 홈에서 깨운 참모(respawn, 번호 그대로)가 10분 안에 남의 respawn 으로 attach 가 끝나면
+        // TerminalPane 다시 붙기가 '앱이 껐다'로 보고 영영 포기했다 — 앱이 깨우면 그 번호는 끈 기록에서 지운다
+        super::note_app_stop("cafe0001");
+        super::note_app_stop("cafe0002");
+        super::revived(Some("cafe0001"));
+        let now = super::app_stopped_recently();
+        assert!(!now.contains(&"cafe0001".to_string()), "깨운 세션은 빠진다: {now:?}");
+        assert!(now.contains(&"cafe0002".to_string()), "다른 세션은 그대로");
+        super::revived(None); // 번호 없는 옛 기록(이어 띄우기)은 할 게 없다
+        super::revived(Some("cafe0002"));
     }
 }
 
@@ -1498,13 +1518,15 @@ fn live_has(live_json: &str, session_id: &str) -> bool {
 /// 꺼진 세션 이어서 켜기(데스크톱 ▷·주인 잃은 일). 그사이 다른 길로 이미 켜졌으면 아무것도 안 한다 —
 /// respawn 은 '재시작'이라 살아 있는 세션에 부르면 하던 턴이 끊긴다(낡은 꺼진 목록에서 누름, 2026-10-05). 목록을 못 읽으면 예전처럼 켠다
 #[tauri::command]
-pub async fn resume_session(cwd: String, session_id: String, id: Option<String>) -> Result<String, String> {
+/// copy = respawn 이 안 되면 이어 띄우기(새 번호 복사본)로 떨어져도 되나 — 없으면 true(사람이 누른 ▷), 참모 자동 되살리기는 false
+pub async fn resume_session(cwd: String, session_id: String, id: Option<String>, copy: Option<bool>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let live = crate::platform::run_capped(crate::platform::command(claude_bin()).args(["agents", "--json"]), std::time::Duration::from_secs(10));
         if live.is_ok_and(|o| o.status.success() && live_has(&String::from_utf8_lossy(&o.stdout), &session_id)) {
+            revived(id.as_deref()); // 깨우려던 세션이 이미 켜져 있다 — 켜진 것으로 본다
             return Ok("already running".to_string());
         }
-        resume_blocking(&cwd, &session_id, id.as_deref())
+        resume_with(&cwd, &session_id, id.as_deref(), copy.unwrap_or(true))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1512,32 +1534,47 @@ pub async fn resume_session(cwd: String, session_id: String, id: Option<String>)
 
 /// resume_session 의 몸통 — 폰 서버(mobile.rs)도 같은 길로 되살린다. 끝나면 같이 쓰던 세션 목록을 버린다
 pub fn resume_blocking(cwd: &str, session_id: &str, id: Option<&str>) -> Result<String, String> {
-    let r = resume_inner(cwd, session_id, id);
+    resume_with(cwd, session_id, id, true)
+}
+
+fn resume_with(cwd: &str, session_id: &str, id: Option<&str>, copy: bool) -> Result<String, String> {
+    let r = resume_inner(cwd, session_id, id, copy);
+    if r.is_ok() {
+        revived(id);
+    }
     forget_agents();
     r
 }
 
-fn resume_inner(cwd: &str, session_id: &str, id: Option<&str>) -> Result<String, String> {
+fn resume_inner(cwd: &str, session_id: &str, id: Option<&str>, copy: bool) -> Result<String, String> {
     crate::trust::before_spawn(cwd);
     crate::browser_attach::reassert_for(cwd);
+    resume_steps(session_id, id, copy, &mut |args| {
+        let out = crate::platform::command(claude_bin()).current_dir(cwd).args(args).output().map_err(|e| e.to_string())?;
+        Ok((out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))))
+    })
+}
+
+/// 되살리기 순서 — respawn(같은 번호) 먼저, 안 되면 copy 일 때만 이어 띄우기. run = claude 인자 → (성공, 출력)
+/// copy=false(참모 자동 되살리기) — --bg --resume 는 새 번호 복사본이라(옛 번호를 기다리는 되살리기가 30초마다 또 띄웠다, 0.3.6 리뷰) 실패로 돌려준다
+fn resume_steps(session_id: &str, id: Option<&str>, copy: bool, run: &mut dyn FnMut(&[String]) -> Result<(bool, String), String>) -> Result<String, String> {
     let first = revive_args(id);
+    let mut why = String::from("no short id to respawn");
     if !first.is_empty() {
-        if let Ok(out) = crate::platform::command(claude_bin()).current_dir(cwd).args(&first).output() {
-            let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-            if out.status.success() && text.contains("respawned") {
-                return Ok(text.trim().to_string());
-            }
+        match run(&first) {
+            Ok((ok, text)) if ok && text.contains("respawned") => return Ok(text.trim().to_string()),
+            Ok((_, text)) => why = text.trim().to_string(),
+            Err(e) => why = e,
         }
     }
-    let out = crate::platform::command(claude_bin())
-        .current_dir(cwd)
-        // 이어서 켤 때도 권한 확인 없이 — 안 붙이면 daemon 재시작 뒤 되살린 세션이 auto 모드로 떠서
-        // Bash 마다 사용자 승인을 기다렸다(2026-09-28, 사용자 요청 "항상 바이패스로 켜지게"). CLAUDE.md 원칙 3
-        .args(["--bg", "--dangerously-skip-permissions", "--resume", session_id])
-        .output()
-        .map_err(|e| e.to_string())?;
-    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    if !out.status.success() {
+    if !copy {
+        return Err(format!("respawn failed: {why}"));
+    }
+    // 이어서 켤 때도 권한 확인 없이 — 안 붙이면 daemon 재시작 뒤 되살린 세션이 auto 모드로 떠서
+    // Bash 마다 사용자 승인을 기다렸다(2026-09-28, 사용자 요청 "항상 바이패스로 켜지게"). CLAUDE.md 원칙 3
+    let args: Vec<String> = ["--bg", "--dangerously-skip-permissions", "--resume", session_id].iter().map(|a| a.to_string()).collect();
+    let (ok, text) = run(&args)?;
+    if !ok {
         return Err(text.trim().to_string());
     }
     Ok(text.trim().to_string())
@@ -2228,6 +2265,40 @@ mod tests {
         assert!(!live_has("not json", "11111111-1111-4111-8111-111111111111"));
         assert!(!live_has(live, ""));
     }
+    #[test]
+    fn 자동_되살리기는_respawn_이_안_되면_복사본을_안_띄운다() {
+        // 0.3.6 리뷰: respawn 이 실패하면 --bg --resume 로 떨어져 새 번호 복사본이 떴고, 참모 되살리기는 옛 번호를 계속 기다려
+        // 30초마다 또 복사본(최대 3개) → 멈춤 카드. 되살리기 길(copy=false)에선 실패로 돌려준다 — 사람이 누른 ▷ 는 예전대로 이어 띄우기
+        let mut calls: Vec<String> = vec![];
+        let mut fail = |a: &[String]| -> Result<(bool, String), String> {
+            calls.push(a.join(" "));
+            Ok((false, "Error: respawn failed".into()))
+        };
+        assert!(super::resume_steps("sid-full", Some("cafe0003"), false, &mut fail).is_err());
+        assert_eq!(calls, vec!["respawn cafe0003"], "복사본(--resume)을 부르면 안 된다");
+        let mut calls: Vec<String> = vec![];
+        let mut fail = |a: &[String]| -> Result<(bool, String), String> {
+            calls.push(a.join(" "));
+            Ok((a[0] != "respawn", "ok".into()))
+        };
+        assert!(super::resume_steps("sid-full", Some("cafe0003"), true, &mut fail).is_ok());
+        assert_eq!(calls, vec!["respawn cafe0003", "--bg --dangerously-skip-permissions --resume sid-full"], "사람이 누른 ▷ 는 이어 띄우기로");
+        let mut calls: Vec<String> = vec![];
+        let mut ok = |a: &[String]| -> Result<(bool, String), String> {
+            calls.push(a.join(" "));
+            Ok((true, "Session cafe0003 respawned".into()))
+        };
+        assert!(super::resume_steps("sid-full", Some("cafe0003"), false, &mut ok).is_ok());
+        assert_eq!(calls.len(), 1);
+        let mut calls: Vec<String> = vec![];
+        let mut never = |a: &[String]| -> Result<(bool, String), String> {
+            calls.push(a.join(" "));
+            Ok((true, String::new()))
+        };
+        assert!(super::resume_steps("sid-full", None, false, &mut never).is_err(), "번호가 없어 respawn 을 못 하면 자동 되살리기는 안 한다");
+        assert!(calls.is_empty());
+    }
+
     #[test]
     fn 꺼진_세션은_respawn_으로_같은_번호_그대로_되살린다() {
         // --bg --resume 은 언제나 새 번호 복사본을 만들고, 압축한 세션이면 마지막 압축 앞 대화가 새 기록에 없다(2026-10-01 실측)

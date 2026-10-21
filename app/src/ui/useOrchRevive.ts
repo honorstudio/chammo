@@ -13,6 +13,8 @@ const TICK = 3000;
 export function useOrchRevive(o: {
   /** 살아 있는 참모(백그라운드) */
   orchs: Session[];
+  /** 살아 있는 세션 전부(agents 목록) — 참모 묶음에서 빠졌어도 여기 있으면 산 것 */
+  all: Session[];
   /** 세션 목록을 한 번이라도 읽었나 */
   ready: boolean;
   /** 다시 켜기 — 끝나면(실패해도) 돌아온다 */
@@ -35,7 +37,8 @@ export function useOrchRevive(o: {
         const [daemon, stopped] = await Promise.all([daemonStartedAt().catch(() => null), appStoppedRecently().catch(() => null)]);
         if (!stopped) return;
         const live = latest.current.orchs.filter((s) => s.kind === 'background' && s.sessionId).map((s) => ({ id: s.id, sessionId: s.sessionId!, name: s.name, cwd: s.cwd }));
-        const r = planRevive(memo.current, { live, now: Date.now(), daemon, stoppedByApp: (id) => stopped.includes(id) });
+        const alive = new Set(latest.current.all.map((s) => s.id));
+        const r = planRevive(memo.current, { live, now: Date.now(), daemon, stoppedByApp: (id) => stopped.includes(id), alive: (id) => alive.has(id) });
         memo.current = r.memo;
         const goneIds = new Set(Object.keys(r.memo.goneAt));
         setReviving((x) => {

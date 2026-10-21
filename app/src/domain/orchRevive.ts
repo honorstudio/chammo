@@ -33,6 +33,8 @@ export function planRevive(m: ReviveMemo, o: {
   daemon: number | null;
   /** 앱이 방금 끈·지운 세션(Rust stop_blocking·remove_blocking) — 사람이 끈 것 */
   stoppedByApp: (id: string) => boolean;
+  /** 묶음과 상관없이 agents 목록에 살아 있나 — /rename 으로 참모 같지 않은 이름이 되어 도우미 칸으로 옮겨 간 세션은 산 것(0.3.6 리뷰) */
+  alive: (id: string) => boolean;
 }): { memo: ReviveMemo; revive: ReviveOrch[]; giveUp: ReviveOrch[]; closed: ReviveOrch[] } {
   const seen = { ...m.seen }, goneAt = { ...m.goneAt }, tries = { ...m.tries }, lastTry = { ...m.lastTry }, gaveUp = { ...m.gaveUp }, cardAt = { ...m.cardAt };
   const revive: ReviveOrch[] = [], giveUp: ReviveOrch[] = [], closed: ReviveOrch[] = [];
@@ -46,6 +48,8 @@ export function planRevive(m: ReviveMemo, o: {
   }
   for (const [id, { s, daemon }] of Object.entries(seen)) {
     if (liveIds.has(id)) continue;
+    // 참모 묶음에서만 빠지고 살아 있다 — 이제 참모가 아니니 잊는다(멈춤 카드가 열려 있으면 닫는다). 참모 이름으로 돌아오면 다시 본다
+    if (o.alive(id)) { if (gaveUp[id] != null) closed.push(s); forget(id); continue; }
     const gone = (goneAt[id] ??= o.now);
     if (o.stoppedByApp(id)) { forget(id); continue; }
     if (o.daemon == null) continue;

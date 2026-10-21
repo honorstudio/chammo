@@ -202,6 +202,7 @@ Editing work (photo, video, vector, PDF, documents, spreadsheets…) goes to a *
 open the `hq-craft` skill first. By default open the app with its control channel (`scripts/craft open <app> --native`), drive it with commands
 yourself (`run`, `do`, `shot`, then `close`) and show only the result with `scripts/show`. The user watches it being made in the space —
 the windowless engine (`cli`) is only for batches nobody needs to watch. The web build (`scripts/craft open <app>`) has no autosave.
+Always make the user's work in a Craft app — even if Illustrator, Photoshop or similar apps are installed, don't use them for the work.
 
 ## Operating the app · Harnitor · load · app tour
 

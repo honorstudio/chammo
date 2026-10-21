@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { attachedId, exitWatcher, kickWatcher, listedAlive, linkStep, REATTACH_GIVE_UP } from './attachExit';
+import { attachedId, exitWatcher, KICK_WINDOW, kickedBeforeEnd, kickWatcher, listedAlive, linkStep, REATTACH_GIVE_UP } from './attachExit';
 
 // 2026-10-21 실측(Claude Code 2.1.305, 시험 세션): 붙어 있는 세션을 다른 곳에서 `claude respawn` 하면 붙은 attach 는
 // 아래 글을 찍고 끝난다 — 세션은 새 일꾼으로 계속 산다. 색·커서 코드가 문장 앞뒤에 붙어 온다
@@ -93,5 +93,27 @@ describe('kickWatcher — 다른 창에 쫓겨났나(그땐 다시 안 붙는다
   });
   it('보통 끝(has exited)은 쫓겨남이 아니다', () => {
     expect(kickWatcher()(REAL)).toBe(false);
+  });
+  it('같은 문장은 새로 완성된 조각에서만 한 번 — 꼬리에 남은 옛 문장으로 다시 켜지지 않는다', () => {
+    const k = kickWatcher();
+    expect(k('> grep "Session opened in another window" pty.rs\r\n')).toBe(true);
+    expect(k('\x1b[2K> 다음 할 일을 정리했어\r\n')).toBe(false);
+  });
+  it('실기기 꼴 — 문장 뒤에 셸 프롬프트가 붙어도', () => {
+    expect(kickWatcher()('Session opened in another window\r\nC:\\Windows\\system32>')).toBe(true);
+  });
+});
+
+describe('kickedBeforeEnd — attach 가 끝나기 직전에 본 쫓겨남만(0.3.6 리뷰 — 칸 수명 내내 영구로 켜졌다)', () => {
+  it('대화 화면에 그 문장이 그려지고 한참 뒤 남의 respawn 으로 끝나면 쫓겨남이 아니다 — 다시 붙는다', () => {
+    expect(kickedBeforeEnd(1_000, 1_000 + 60_000)).toBe(false);
+  });
+  it('문장을 찍고 바로 끝나면 쫓겨남', () => {
+    expect(kickedBeforeEnd(1_000, 1_400)).toBe(true);
+    expect(kickedBeforeEnd(1_000, 1_000 + KICK_WINDOW)).toBe(true);
+    expect(kickedBeforeEnd(1_000, 1_001 + KICK_WINDOW)).toBe(false);
+  });
+  it('못 봤으면 쫓겨남이 아니다', () => {
+    expect(kickedBeforeEnd(null, 5_000)).toBe(false);
   });
 });

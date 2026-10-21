@@ -12,7 +12,7 @@ import { modKey } from '../domain/keys';
 import { resizeAfterOpen } from '../domain/ptySize';
 import { followLink } from './followLink';
 import { appStoppedRecently, closePty, listSessionsRaw, openPty, openTarget, pttTarget, pttWatch, resizePty, typePty, writeClipboard, writePty } from '../data/tauri';
-import { attachedId, exitWatcher, kickWatcher, linkStep, listedAlive, REATTACH_POLL, type LinkState } from '../domain/attachExit';
+import { attachedId, exitWatcher, kickedBeforeEnd, kickWatcher, linkStep, listedAlive, REATTACH_POLL, type LinkState } from '../domain/attachExit';
 import { usePttLive } from './pttLive';
 import { pendingWrites } from '../domain/ptyWrites';
 import { imeNoSwallow, imeTrace } from './imeTrace';
@@ -276,14 +276,14 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
     const sid = attachedId(command);
     const ended = sid ? exitWatcher(sid) : null;
     const kick = sid ? kickWatcher() : null;
-    let kicked = false;
+    let kickedAt: number | null = null;
     const dec = new TextDecoder();
     let relink: ReturnType<typeof setInterval> | undefined;
     let endedOnce = false;
     const onEnded = () => {
       if (endedOnce || !sid) return;
       endedOnce = true;
-      if (kicked) { linkRef.current?.('gone'); return; } // 윈도우: 다른 창에 쫓겨남 — 다시 붙으면 그 창을 또 쫓아낸다
+      if (kickedBeforeEnd(kickedAt, Date.now())) { linkRef.current?.('gone'); return; } // 윈도우: 다른 창에 쫓겨남 — 다시 붙으면 그 창을 또 쫓아낸다
       const since = Date.now();
       let asking = false;
       let gone = false;
@@ -312,7 +312,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
       term.write(bytes);
       if (!shown && !disposed) { shown = true; linkRef.current?.('live'); }
       const text = dec.decode(bytes, { stream: true });
-      if (kick?.(text)) kicked = true;
+      if (kick?.(text)) kickedAt = Date.now();
       if (ended?.(text)) onEnded();
     }).then((n) => {
       if (disposed) { void closePty(n); return; }

@@ -4,7 +4,7 @@
 // 시간 순서대로 그대로 돌린다. 새 증상이 나오면 고치기 전에 여기 한 줄(장면)을 먼저 더한다.
 import { describe, expect, it } from 'vitest';
 import { appendChat, enterDelay, escUnsends, type ChatItem } from './chat';
-import { againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, LOST_AFTER, newPending, pendAct, pendingState, PENDING_MS, resent, waitingOf, type QueueState } from './chatQueue';
+import { absorbedAt, againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, LOST_AFTER, newPending, pendAct, pendingState, PENDING_MS, resent, waitingOf, type QueueState } from './chatQueue';
 
 const T0 = Date.parse('2026-10-10T12:00:00Z');
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -15,6 +15,11 @@ const user = (text: string, at: number, parent?: string) => L({ type: 'user', uu
 const think = (at: number) => L({ type: 'assistant', uuid: `a${n++}`, timestamp: iso(T0 + at), message: { role: 'assistant', content: [{ type: 'thinking', thinking: '...' }] } });
 const queued = (text: string, at: number) => L({ type: 'attachment', uuid: `q${n++}`, timestamp: iso(T0 + at), attachment: { type: 'queued_command', prompt: text, origin: { kind: 'human' } } });
 const op = (operation: string, at: number, content?: string) => L({ type: 'queue-operation', operation, timestamp: iso(T0 + at), sessionId: 's', ...(content === undefined ? {} : { content }) });
+/** 일하는 도중 흡수 — 2.1.305 실측(참모-2 기록 10-21 02:44:46): 도구가 끝난 때 찍힌다 */
+const absorbed = (at: number, content: string) => L({ type: 'queue-operation', operation: 'remove', timestamp: iso(T0 + at), sessionId: 's', content, reason: 'absorbed_mid_turn', commandUuid: `c${n}`, deliveryId: `d${n++}` });
+/** 그림 칩을 붙여 일하는 도중 들어간 말 — prompt 가 글+그림 블록 배열, 시각은 보낸 때(2.1.305 실측) */
+const queuedImg = (text: string, at: number) => L({ type: 'attachment', uuid: `q${n++}`, timestamp: iso(T0 + at),
+  attachment: { type: 'queued_command', prompt: [{ type: 'text', text }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo' } }], imagePasteIds: [255], commandMode: 'prompt', origin: { kind: 'human' }, humanTurn: true } });
 /** 2.1.305 기록 user 줄 모양 그대로(qa-036 시험 참모) — origin·promptSource 등이 붙는다 */
 const user305 = (text: string, at: number) => L({ parentUuid: null, isSidechain: false, promptId: `p${n}`, type: 'user', message: { role: 'user', content: text }, uuid: `u${n++}`, timestamp: iso(T0 + at),
   permissionMode: 'bypassPermissions', origin: { kind: 'human' }, promptSource: 'typed', turnOrigin: 'human', sessionKind: 'bg', userType: 'external', entrypoint: 'cli', version: '2.1.305' });
@@ -37,7 +42,7 @@ type Sim = { now: number; pending: { text: string; at: number; since?: number }[
 function run(steps: Step[]): void {
   const s: Sim = { now: T0, pending: [], items: [], queue: emptyQueue, term: '', warned: null, lastSent: '' };
   const view = () => {
-    s.pending = waitingOf(s.pending, s.items, s.now); // ChatView: waiting 이 줄면 setPending(waiting)
+    s.pending = waitingOf(s.pending, s.items, s.now, s.queue); // ChatView: waiting 이 줄면 setPending(waiting)
     const enterWait = Math.max(0, ...s.pending.map((p) => enterDelay(p.text.length, false)));
     return { enterWait, rows: s.pending.map((p) => ({ p, st: pendingState(p, { queue: s.queue, termText: s.term, now: s.now, enterWait }) })) };
   };
@@ -60,7 +65,7 @@ function run(steps: Step[]): void {
       else { s.warned = null; if (p) s.pending = [...s.pending.filter((x) => x.at !== p.at), resent(p, s.now)]; }
     } else if ('esc' in step) {
       const { rows } = view();
-      expect(escUnsends(s.items, rows.some((r) => r.st === 'sending')), where).toBe(step.esc);
+      expect(escUnsends(s.items, rows.some((r) => r.st === 'sending' && absorbedAt(s.queue, r.p) === null)), where).toBe(step.esc);
     } else if ('bubbles' in step) {
       expect(s.items.filter((x) => x.kind === 'user').map((x) => (x as { text: string }).text), where).toEqual(step.bubbles);
     } else {
@@ -72,6 +77,8 @@ function run(steps: Step[]): void {
 
 const A = '도메인 연결 어떻게 됐어?';
 const B = '그리고 시험도 돌려 줘';
+/** 그림 칩 이름표 + 줄바꿈(Shift+Enter) — 채팅 입력칸 글 그대로, 터미널엔 앞에 [Image #n] 이 붙어 있다 */
+const IMG = '#img1 \n고치는 중이지?';
 const APP = '[앱] demo / feature-x 세션(ab12cd34)이 2분째 답을 기다려 — 마지막 말: "시험 다 돌렸어"';
 
 const FLOW: [string, Step[]][] = [
@@ -90,6 +97,23 @@ const FLOW: [string, Step[]][] = [
   ['일하는 중 — 줄 서면 대기 중 + 지금 보내기, 차례가 와 queued_command 로 들어가면 사라진다',
     [{ send: A }, { wait: 1500 }, { log: [op('enqueue', 600, A)] }, { see: [`${A}=queued/now`] }, { wait: 120_000 },
       { see: [`${A}=queued/now`] }, { log: [op('dequeue', 121_000), queued(A, 121_000)] }, { see: [] }]],
+  ['긴 도구(72초) 중 그림 칩과 보냄 — 도구가 끝나 흡수(remove)만 먼저 읽힌 순간에도 안 갔어요로 튀지 않고, 다음 조각의 queued_command(글+그림 배열)로 사라진다(2026-10-21 사용자 캡처)',
+    [{ send: IMG }, { wait: 1500 }, { log: [op('enqueue', 800, `[Image #255] ${IMG}`)] }, { see: [`${IMG}=queued/now`] }, { wait: 71_000 },
+      { log: [absorbed(72_500, `[Image #255] ${IMG}`)] }, { see: [`${IMG}=sending`] }, { wait: 1000 }, { log: [queuedImg(`[Image #255] ${IMG}`, 400)] }, { see: [] }, { bubbles: [IMG] }]],
+  ['흡수된 말이 기록 전이어도 채팅 Esc 는 멈춤으로 넘긴다 — 그 말은 이미 턴 안에 있다(거둬들일 게 없다)',
+    [{ log: [user(B, 0, 'p0'), think(500), L({ type: 'assistant', uuid: 'a-txt', timestamp: iso(T0 + 600), message: { role: 'assistant', content: [{ type: 'text', text: '보는 중' }] } })] },
+      { send: A }, { wait: 1500 }, { log: [op('enqueue', 600, A)] }, { wait: 40_000 }, { log: [absorbed(41_000, A)] }, { see: [`${A}=sending`] }, { esc: false }]],
+  ['흡수됐는데 사람 말 기록이 끝내 안 읽혀도(모양이 바뀌는 등) 참모는 받았다 — 몇 초 뒤 간 것으로 사라진다',
+    [{ send: A }, { wait: 1500 }, { log: [op('enqueue', 600, A)] }, { wait: 60_000 }, { log: [absorbed(61_000, A)] }, { see: [`${A}=sending`] }, { wait: 6000 }, { see: [] }]],
+  ['흡수된 건 앞에 보낸 같은 글 — 이번 말은 그걸로 사라지지 않는다',
+    [{ log: [absorbed(-30_000, A)] }, { send: A }, { wait: LOST_AFTER + 1000 }, { see: [`${A}=lost/again`] }]],
+  ['같은 말을 흡수 몇 초 뒤 또 보냈는데 이번엔 안 감 — 앞 말 흡수에 짝지어 사라지지 않고 안 갔어요',
+    [{ send: A }, { wait: 1500 }, { log: [op('enqueue', 600, A)] }, { wait: 3000 }, { log: [absorbed(4000, A), queued(A, 600)] }, { see: [] },
+      { wait: 3000 }, { send: A }, { wait: LOST_AFTER + 1000 }, { see: [`${A}=lost/again`] }]],
+  ['다른 세션 말이 흡수됨 — 그 안에 내 짧은 말 글자가 있어도 내 말이 아니다',
+    [{ send: '응' }, { wait: 1500 }, { log: [absorbed(1200, '<cross-session-message from="x" from-name="demo">응 알았어</cross-session-message>')] }, { wait: LOST_AFTER }, { see: ['응=lost/again'] }]],
+  ['입력칸에 남아 있던 글(받아 적은 말)과 붙어 흡수됨 — 내 말은 끝에 있다, 간 것으로',
+    [{ term: '받아 적은 말' }, { send: A }, { wait: 1500 }, { term: '' }, { log: [op('enqueue', 600, `받아 적은 말 ${A}`)] }, { wait: 50_000 }, { log: [absorbed(51_000, `받아 적은 말 ${A}`)] }, { see: [`${A}=sending`] }, { wait: 6000 }, { see: [] }]],
   ['Enter 가 줄바꿈으로 먹혀 입력칸에 걸림 — 입력칸에 걸려 있어요 + 2초 뒤 Enter 를 다시, 들어가면 사라진다',
     [{ send: A }, { term: A }, { wait: 1500 }, { see: [`${A}=input/now`] }, { enter: null }, { wait: 1000 }, { enter: A },
       { term: '' }, { log: [user(A, 2600)] }, { see: [] }]],

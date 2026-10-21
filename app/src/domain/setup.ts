@@ -167,6 +167,9 @@ function winSetupCommand(task: SetupTask, bins: { claude?: string | null; gh?: s
   }
 }
 
+/** 윈도우 git 설치를 돌렸는데도(창이 닫힌 뒤) 아직 없나 — 앱이 PATH 를 다시 읽고 흔한 자리까지 찾아도 못 보면 껐다 켜기 안내(2026-10-21 새 윈도우 PC) */
+export const gitStillMissing = (o: { win: boolean; tried: boolean; running: boolean; ok: boolean }) => o.win && o.tried && !o.running && !o.ok;
+
 /** 첫 실행 마법사 — 한 화면에 한 단계(사용자 2026-09-28 "설정 마법사같은 거"). 설정 메뉴로 열면 한 페이지 그대로 */
 export type WizardStep = 'welcome' | 'check' | 'basics' | 'features' | 'ready';
 export const WIZARD: WizardStep[] = ['welcome', 'check', 'basics', 'features', 'ready'];

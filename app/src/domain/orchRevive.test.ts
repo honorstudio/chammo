@@ -4,7 +4,7 @@ import { emptyRevive, GONE_GRACE, MAX_TRIES, planRevive, reviveCard, TRY_WINDOW,
 const orch = (id: string, name = `참모-${id}`) => ({ id, sessionId: `${id}-full`, name, cwd: '/hq' });
 const A = orch('aaaaaaaa', '참모-2 · 참모 업데이트');
 const B = orch('bbbbbbbb', '참모 · 회사 비서');
-const base = { daemon: 100, stoppedByApp: () => false };
+const base = { daemon: 100, stoppedByApp: () => false, alive: () => false };
 
 /** 폴링 한 번 — 살아 있는 참모 목록을 넣고 다음 기억·할 일을 받는다 */
 const poll = (m: ReviveMemo, live: typeof A[], now: number, o: Partial<Parameters<typeof planRevive>[1]> = {}) => planRevive(m, { ...base, live, now, ...o });
@@ -30,6 +30,25 @@ describe('planRevive — 참모가 앱이 끄지 않았는데 목록에서 사�
     const r = poll(m, [B], 3000 + GONE_GRACE);
     expect(r.revive.map((x) => x.id)).toEqual([A.id]);
     expect(poll(r.memo, [B], 3000 + GONE_GRACE + 3000).revive).toEqual([]);
+  });
+
+  it('/rename 으로 도우미 칸에 옮겨 간 살아 있는 세션은 사라진 게 아니다 — 켜지도 세지도 카드도 없이 잊는다(0.3.6 리뷰)', () => {
+    let m = poll(emptyRevive, [A], 0).memo;
+    const alive = (id: string) => id === A.id; // 참모 묶음엔 없지만 agents 목록엔 산다
+    let r = poll(m, [], 3000, { alive });
+    for (let t = 3000; t < 3000 + TRY_WINDOW; t += 3000) { r = poll(r.memo, [], t, { alive }); expect(r.revive).toEqual([]); expect(r.giveUp).toEqual([]); }
+    expect(r.memo.seen[A.id]).toBeUndefined();
+    expect(r.memo.tries[A.id]).toBeUndefined();
+    m = r.memo;
+    // 다시 참모 이름으로 돌아오면 그때부터 다시 본다
+    m = poll(m, [A], 700_000).memo;
+    expect(m.seen[A.id]).toBeDefined();
+  });
+
+  it('멈춤 카드가 열린 참모가 도우미 이름으로 살아 있으면 카드를 닫는다', () => {
+    const m: ReviveMemo = { ...emptyRevive, seen: { [A.id]: { s: A, daemon: 100 } }, goneAt: { [A.id]: 0 }, gaveUp: { [A.id]: 5 }, cardAt: { [A.id]: 5 } };
+    const r = poll(m, [], 60_000, { alive: (id) => id === A.id });
+    expect(r.closed.map((x) => x.id)).toEqual([A.id]);
   });
 
   it('앱이 끈(끄기 버튼·폰·지우기) 참모는 다시 켜지 않고 잊는다', () => {
