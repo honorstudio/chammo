@@ -24,7 +24,7 @@ export type BossIn = { status: ActivityStatus; reply: { text: string; ts: number
  */
 export type EditMode = { drag: string | null; ok: (cell: [number, number]) => boolean; onPick: (id: string) => void; onDrop: (cell: [number, number] | null, e: PointerEvent) => void };
 
-export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen, coins, gain, onGacha, bossIn, deco, peek, dim }: { room: Room; skin?: string; /** 이름표를 옅게 할 세션(채팅 뷰: 지금 채팅 탭 참모가 시킨 것만 진하게) */ dim?: (id: string) => boolean; /** 아래에 덮이는 높이(가구 트레이) — 방을 그만큼 위로 올려 가리지 않게 */ bottom?: number; /** 왼쪽 위 메뉴 */ menu?: ReactNode; /** 이름표에 마우스를 올리면 띄울 미니 터미널(읽기 전용, 머리줄에 지금 하는 일). null 이면 안 띄움 */ peek?: (id: string, doing?: string) => ReactNode; edit?: EditMode; deliver?: (now: number) => Delivery | null; onOpen: (id: string) => void; /** 가챠 코인(오른쪽 위) — 누르면 뽑기 페이지 */ coins?: number; gain?: { n: number; at: number } | null; onGacha?: () => void; bossIn?: BossIn; /** 뽑기로 얻어 장착한 것 — 모자·창밖·펑 대신·춤. cat·coffee 는 펫 친구·커피 액션 */ deco?: Deco & { hasCat?: boolean; coffee?: boolean; /** 반장 이름표 앞 칭호(뽑기) */ title?: string } }) {
+export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen, coins, gain, onGacha, bossIn, deco, peek, dim }: { room: Room; skin?: string; /** 이름표를 옅게 할 세션(채팅 뷰: 지금 채팅 탭 참모가 시킨 것만 진하게) */ dim?: (id: string) => boolean; /** 아래에 덮이는 높이(가구 트레이) — 방을 그만큼 위로 올려 가리지 않게 */ bottom?: number; /** 왼쪽 위 메뉴 */ menu?: ReactNode; /** 이름표에 마우스를 올리면 띄울 미니 터미널(읽기 전용, 머리줄에 지금 하는 일). null 이면 안 띄움 */ peek?: (id: string, doing?: string) => ReactNode; edit?: EditMode; deliver?: (now: number) => Delivery | null; onOpen: (id: string) => void; /** 가챠 코인(오른쪽 위) — 누르면 뽑기 페이지 */ coins?: number; gain?: { n: number; at: number } | null; onGacha?: () => void; bossIn?: BossIn; /** 뽑기로 얻어 장착한 것 — 모자·창밖·펑 대신·춤. cat·coffee 는 펫 친구·커피 액션 */ deco?: Deco & { hasCat?: boolean; coffee?: boolean; /** 반장 이름표 앞 칭호(뽑기) */ title?: string; /** 고양이 말고 가진 펫 친구 id(팩) — 고양이와 시차를 두고 같은 길을 걷는다 */ palIds?: string[] } }) {
   const wrap = useRef<HTMLDivElement>(null);
   const cv = useRef<HTMLCanvasElement>(null);
   const [scale, setScale] = useState(3);
@@ -106,7 +106,7 @@ export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen
       if (rk !== lastReact) { lastReact = rk; setReact(br); }
       // 배달이 없고 반장이 한가하면 커피 액션(장착했을 때)
       const walker = dv?.(now) ?? (dc?.coffee && !br ? coffeeWalk(r, now) : null);
-      const sp = drawRoom(ctx, r, s, t++, { walker, poofs, boss: br, deco: { ...dc, cat: dc?.hasCat ? catWalk(r, now) : null }, edit: ed ? { hover: hv, ok: hv ? ed.ok(hv) : false, ghost: ed.drag } : undefined });
+      const sp = drawRoom(ctx, r, s, t++, { walker, poofs, boss: br, deco: { ...dc, cat: dc?.hasCat ? catWalk(r, now) : null, pals: dc?.palIds?.map((id, k) => ({ id, ...catWalk(r, now + (k + 1) * 6_000) })) }, edit: ed ? { hover: hv, ok: hv ? ed.ok(hv) : false, ghost: ed.drag } : undefined });
       // 이름표는 자리가 바뀔 때만 다시 그린다(매 프레임 setState 하면 화면 전체가 다시 그려진다)
       const key = sp.map((x) => `${x.id}:${x.x}:${x.y}:${x.st}:${x.label}:${x.doing ?? ''}:${x.human ?? '-'}`).join('|');
       if (key !== lastKey) {

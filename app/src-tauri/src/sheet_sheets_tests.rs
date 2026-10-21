@@ -78,3 +78,28 @@ fn 병합_너비_높이_조작_목록() {
     assert_eq!((l.cols[0].min, l.cols[0].width), (0, Some(20.0)));
     assert_eq!(l.rows[0].ht, Some(30.0));
 }
+
+/// 다른 시트(매출)가 '요약 & 메모' 를 가리킨다 — XML 엔 &amp; 로 적힌다
+const POINTS_AT_MEMO: &str = r#"<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><f>'요약 &amp; 메모'!A1*2</f><v>0</v></c></row></sheetData></worksheet>"#;
+
+#[test]
+fn 이름에_앰퍼샌드가_든_시트도_이름_바꾸면_수식이_따라온다() {
+    // 2026-10-21 리뷰: 풀린 이름('요약 & 메모')으로만 찾아서 XML(&amp;) 시트를 건너뛰었다 — 엑셀에서 #REF!·외부 참조 창
+    let out = apply_ops(&book(&[("xl/worksheets/sheet1.xml", POINTS_AT_MEMO)]), &[Op::RenameSheet { part: "xl/worksheets/s2.xml".into(), name: "메모".into() }]).unwrap();
+    let b = read_book(&out).unwrap();
+    assert_eq!(b.sheets[0].cells[0].f.as_deref(), Some("메모!A1*2"));
+}
+
+#[test]
+fn 이름에_앰퍼샌드가_든_시트에_행을_끼우면_다른_시트_수식이_밀린다() {
+    let out = apply_ops(&book(&[("xl/worksheets/sheet1.xml", POINTS_AT_MEMO)]), &[Op::InsertRows { part: "xl/worksheets/s2.xml".into(), at: 0, n: 1 }]).unwrap();
+    let b = read_book(&out).unwrap();
+    assert_eq!(b.sheets[0].cells[0].f.as_deref(), Some("'요약 & 메모'!A2*2"));
+}
+
+#[test]
+fn 시트_이름_찾기는_xml_모양까지() {
+    assert!(mentions("<f>'R&amp;D'!B3</f>", "R&D"));
+    assert!(mentions("<f>'O''Neil'!B3</f>", "O'Neil"));
+    assert!(!mentions("<f>매출!B3</f>", "R&D"));
+}

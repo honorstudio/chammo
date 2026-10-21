@@ -451,6 +451,22 @@ fn give_moves_home_to_project_and_leaves_link() {
 }
 
 #[test]
+fn 이사_중_치워_둔_원본은_바로가기_대신_복사가_지우지_않는다() {
+    // 윈도우(바로가기 권한 없음)에서 link 는 copy_verified(to, file) 로 떨어진다 — 그 조각 이름이 치워 둔 원본 이름과 같아서
+    // 원본을 지우고, give 가 되돌리며 사본까지 지워 파일이 통째로 사라졌다(2026-10-21 리뷰). 맥에서도 같은 순서로 재현한다
+    let d = tmp("give-held");
+    let (file, to) = (d.join("계약서.pdf"), d.join("사본.pdf"));
+    std::fs::write(&file, "원본").unwrap();
+    std::fs::write(&to, "원본").unwrap();
+    let hold = held(&file);
+    std::fs::rename(&file, &hold).unwrap();
+    copy_verified(&to, &file).unwrap(); // 윈도우 link 가 바로가기 대신 하는 일
+    assert_eq!(std::fs::read_to_string(&hold).unwrap(), "원본", "치워 둔 원본이 살아 있어야 되돌릴 수 있다");
+    assert_ne!(held(&file), part_of(&file));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
 fn give_refuses_bad_places() {
     let w = W::new("give2");
     let d = owner(&w);

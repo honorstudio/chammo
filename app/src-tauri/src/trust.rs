@@ -2,13 +2,15 @@
 //! 사용자가 마법사·설정에서 프로젝트 폴더(devRoot)를 한 번 믿으면 그걸 동의로 남기고(<데이터>/trust-consent.json),
 //! 그 아래 폴더(clone·직접 만든 것)는 앱이 세션을 띄우기 직전·주기 점검 때 믿음을 다시 적는다.
 //! 떠 있던 claude 가 ~/.claude.json 을 제 메모리 값으로 덮어 믿음을 지울 수 있어서(2026-10-05) 한 번 적고 끝이 아니다(2026-10-06 이슈 #1).
-//! 믿음은 아래 폴더로 물려 내려간다(2.1.290 실측: 부모만 믿어도, 자식 칸이 false 여도 뜬다) — 그래도 띄울 땐 그 폴더도 같이 적는다
+//! 믿음은 git 아닌 아래 폴더로만 물려 내려간다 — Claude 2.1.306 은 git 저장소 폴더는 그 칸이 없으면 부모를 믿어도 'Workspace not trusted'
+//! (2026-10-21 실측, 2.1.290 땐 물려받았다). 그래서 주기 점검이 프로젝트 폴더 바로 아래 저장소 칸도 적고(repo_keys), 띄울 땐 그 폴더도 같이 적는다
 use serde_json::{json, Value};
 
 /// dir 가 root 이거나 그 아래인가(경로는 / 모양으로 맞춰 본다)
 pub fn covers(root: &str, dir: &str) -> bool {
-    let r = crate::tools::project_key(root);
-    let d = crate::tools::project_key(dir);
+    // 윈도우 드라이브 경로는 대소문자를 안 가린다 — C:/Users/Me 와 c:/users/me 가 다른 폴더로 보여 믿음을 안 적었다
+    let r = crate::tools::path_key(root);
+    let d = crate::tools::path_key(dir);
     !r.is_empty() && (d == r || d.starts_with(&format!("{r}/")))
 }
 
@@ -94,7 +96,7 @@ pub fn before_spawn(cwd: &str) {
 }
 
 /// 주기 점검(프로젝트 폴더가 잘 읽힐 때) — 사용자가 프로젝트 폴더를 믿은 걸 보면 동의로 남기고,
-/// 동의한 폴더의 믿음이 지워졌으면 다시 적는다. 그 아래 새 폴더(clone 등)는 물려받아 믿는다
+/// 동의한 폴더의 믿음이 지워졌으면 다시 적는다. 그 아래 git 저장소(있던 것·clone)는 칸을 따로 적는다(repo_keys)
 pub fn sweep(dev_root: &str) {
     let dev = real(dev_root);
     let text = claude_json();
@@ -104,18 +106,47 @@ pub fn sweep(dev_root: &str) {
         return;
     }
     if consent.as_deref() == Some(dev.as_str()) {
-        let keys = needed(&text, Some(&dev), &dev);
-        // 떠 있는 claude 가 계속 덮어쓰면 1분마다 다시 적으며 백업(20개)을 밀어낸다 — 주기 점검 쓰기는 10분에 한 번. 띄우기 직전 쓰기는 늘 한다
-        if keys.is_empty() || !sweep_due(std::time::Instant::now()) {
+        let mut keys = needed(&text, Some(&dev), &dev);
+        keys.extend(repo_keys(&text, &dev));
+        // 떠 있는 claude 가 계속 덮어쓰면 1분마다 다시 적으며 백업(20개)을 밀어낸다 — 다시 적기는 10분에 한 번, 처음 보는 칸(새 저장소)은 바로.
+        // 띄우기 직전 쓰기는 늘 한다
+        let written = WRITTEN.lock().map(|w| w.clone()).unwrap_or_default();
+        if keys.is_empty() || (!sweep_now(&keys, &written, false) && !sweep_due(std::time::Instant::now())) {
             return;
         }
-        match write(&keys) {
-            Ok(true) => crate::claude::log_out("trust", &format!("projects folder trust was reset — re-trusted {dev}")),
+        let res = write(&keys);
+        // 실패해도 적어 본 칸으로 친다 — 안 그러면 쓰기가 계속 실패할 때(떠 있는 claude 가 덮음·윈도우 바꿔 끼우기 막힘) '처음 보는 칸'이라
+        // 10분 쉬기를 건너뛰고 1분마다 다시 쓰며 백업을 밀어냈다(가지 검토)
+        if let Ok(mut w) = WRITTEN.lock() {
+            w.extend(keys.iter().cloned());
+        }
+        match res {
+            Ok(true) => crate::claude::log_out("trust", &format!("trusted {} folder(s) under {dev}", keys.len())),
             Ok(false) => {}
             Err(e) => crate::claude::log_out("trust", &format!("could not re-trust {dev}: {e}")),
         }
     }
 }
+
+/// 프로젝트 폴더 바로 아래 git 저장소(.git 폴더·파일) 중 그 칸 자체가 아직 안 믿는 것 — 숨은 폴더는 뺀다.
+/// Claude 2.1.306 은 git 저장소 폴더에 위 폴더 믿음을 안 물려줬다(git 아닌 하위 폴더는 물려받음, 2026-10-21 실측)
+pub fn repo_keys(text: &str, dev_real: &str) -> Vec<String> {
+    let Ok(rd) = std::fs::read_dir(dev_real) else { return Vec::new() };
+    let root = dev_real.trim_end_matches(['/', '\\']);
+    rd.flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && !e.file_name().to_string_lossy().starts_with('.') && e.path().join(".git").exists())
+        .map(|e| crate::tools::project_key(&format!("{root}/{}", e.file_name().to_string_lossy())))
+        .filter(|k| !crate::setup::trusted_exact(text, k))
+        .collect()
+}
+
+/// 주기 점검이 써야 하나 — 이번 앱 실행에서 아직 안 적은 칸이 있거나(새 저장소) 쉬기가 끝났을 때(due)
+pub fn sweep_now(keys: &[String], written: &std::collections::HashSet<String>, due: bool) -> bool {
+    !keys.is_empty() && (due || keys.iter().any(|k| !written.contains(k)))
+}
+
+/// 이번 앱 실행에서 주기 점검이 적은 칸 — 다시 지워졌으면 10분 쉬기로, 처음 보는 칸은 바로
+static WRITTEN: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::LazyLock::new(Default::default);
 
 static LAST_SWEEP_WRITE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
 
@@ -143,6 +174,38 @@ mod tests {
     }
 
     #[test]
+    fn 주기_점검은_프로젝트_폴더_바로_아래_git_저장소도_믿는다() {
+        // 2026-10-21 첫 사용자 QA: Claude 2.1.306 은 믿은 프로젝트 폴더 아래라도 자기 git 저장소인 폴더는 그 칸이 없으면
+        // 'Workspace not trusted'(git 아닌 하위 폴더는 물려받음) — 참모가 직접 claude --bg 하는 있던 저장소·clone 이 막혔다
+        let t = std::env::temp_dir().join(format!("chammo-trust-repos-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        for d in ["shop/.git", "site", ".hidden/.git", "wt"] {
+            std::fs::create_dir_all(t.join(d)).unwrap();
+        }
+        std::fs::write(t.join("wt/.git"), "gitdir: /x/.git/worktrees/wt").ok(); // 워크트리는 .git 이 파일
+        std::fs::write(t.join("note.txt"), "x").unwrap();
+        let dev = t.to_string_lossy().into_owned();
+        let none = r#"{"projects":{}}"#;
+        let mut got = repo_keys(none, &dev);
+        got.sort();
+        assert_eq!(got, vec![format!("{dev}/shop"), format!("{dev}/wt")], "git 저장소만, 숨은 폴더·파일·git 아닌 폴더는 빼고");
+        let shop_ok = format!(r#"{{"projects":{{"{dev}/shop":{{"hasTrustDialogAccepted":true}}}}}}"#);
+        assert_eq!(repo_keys(&shop_ok, &dev), vec![format!("{dev}/wt")], "이미 믿는 칸은 다시 안 적는다");
+        assert!(repo_keys(none, &format!("{dev}/없는")).is_empty());
+        std::fs::remove_dir_all(&t).ok();
+    }
+
+    #[test]
+    fn 처음_보는_칸은_10분_쉬기_없이_바로_적는다() {
+        // 쉬기는 떠 있는 claude 가 덮어 지운 칸을 1분마다 다시 쓰는 걸 막으려는 것 — 새로 생긴 저장소까지 10분 기다리게 하면 그동안 참모가 막힌다
+        let written: std::collections::HashSet<String> = ["/u/dev".to_string()].into();
+        assert!(sweep_now(&["/u/dev/new".into()], &written, false), "새 칸 — 바로");
+        assert!(!sweep_now(&["/u/dev".into()], &written, false), "다시 지워진 칸 — 10분 쉬기");
+        assert!(sweep_now(&["/u/dev".into()], &written, true), "쉬기가 끝났으면");
+        assert!(!sweep_now(&[], &written, true), "적을 게 없으면 안 쓴다");
+    }
+
+    #[test]
     fn 동의한_폴더_아래만() {
         assert!(covers("/u/dev", "/u/dev"));
         assert!(covers("/u/dev", "/u/dev/shop"));
@@ -151,6 +214,8 @@ mod tests {
         assert!(!covers("/u/dev", "/u"));
         assert!(!covers("", "/u/dev"));
         assert!(covers(r"C:\Users\me\dev", "C:/Users/me/dev/shop"));
+        assert!(covers("C:/Users/Me/Desktop/dev", "c:/users/me/desktop/dev/shop"), "윈도우 드라이브 경로는 대소문자 무시");
+        assert!(!covers("/Users/Me/dev", "/users/me/dev/shop"), "맥 경로는 그대로 비교");
     }
 
     #[test]
@@ -224,7 +289,7 @@ cur = os.getcwd()
 while True:
     if d.get(cur, {}).get('hasTrustDialogAccepted') is True:
         print('backgrounded · deadbeef · ' + sys.argv[sys.argv.index('-n') + 1]); sys.exit(0)
-    if cur == '/': break
+    if os.path.exists(os.path.join(cur, '.git')) or cur == '/': break  # 2.1.306: git 저장소는 자기 칸이 있어야
     cur = os.path.dirname(cur)
 print(f'Workspace not trusted. Run `claude` in {os.getcwd()} once and accept the trust prompt, then retry.', file=sys.stderr); sys.exit(1)
 "#).unwrap();
@@ -248,12 +313,17 @@ print(f'Workspace not trusted. Run `claude` in {os.getcwd()} once and accept the
         assert!(ok.contains("backgrounded"), "{ok}");
         let cj = std::fs::read_to_string(home.join(".claude.json")).unwrap();
         assert!(crate::setup::trusted_in(&cj, &real(&cloned)));
-        // ④ 주기 점검도 지워진 믿음을 되살린다(새로 clone 한 폴더는 물려받음)
+        // ④ 주기 점검도 지워진 믿음을 되살린다(git 아닌 새 폴더는 물려받음)
         std::fs::write(home.join(".claude.json"), r#"{"projects":{}}"#).unwrap();
         sweep(&dev.to_string_lossy());
         let cj = std::fs::read_to_string(home.join(".claude.json")).unwrap();
         std::fs::create_dir_all(dev.join("another")).unwrap();
         assert!(crate::setup::trusted_in(&cj, &real(&dev.join("another").to_string_lossy())));
+        // ④-2 앱이 안 띄운 새 clone(참모가 직접 claude --bg) — 주기 점검이 그 칸을 바로 적어 뜬다(2026-10-21, 2.1.306 은 git 저장소에 안 물려줌)
+        std::fs::create_dir_all(dev.join("cloned2/.git")).unwrap();
+        sweep(&dev.to_string_lossy());
+        let cj = std::fs::read_to_string(home.join(".claude.json")).unwrap();
+        assert!(crate::setup::trusted_exact(&cj, &real(&dev.join("cloned2").to_string_lossy())), "{cj}");
         // ⑤ 이유 없는 'Unexpected' — 폴더를 못 읽으면 이유를 붙인다(맥 TCC 는 시험에서 못 만드니 파일 권한으로 같은 길을 탄다)
         let locked = dev.join("locked");
         std::fs::create_dir_all(&locked).unwrap();

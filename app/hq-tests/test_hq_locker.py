@@ -120,6 +120,21 @@ class Cli(unittest.TestCase):
         self.assertEqual(self.run_('folder', '견적/세부')[0], 0)
         self.assertTrue(os.path.isdir(os.path.join(self.mine, '견적', '세부')))
 
+    def test_바로가기를_못_만드는_PC_에선_이사하지_않는다(self):
+        # 윈도우(개발자 모드 꺼짐)에서 바로가기 대신 복사가 놓이는데도 성공으로 끝나 보관함·프로젝트에 따로 노는 두 벌이 생겼다(2026-10-21 리뷰)
+        put(os.path.join(self.home, 'Downloads', '컷.png'), 'img')
+        self.run_('add', 'Downloads/컷.png')
+        at = os.path.join(self.mine, '컷.png')
+        proj = os.path.join(self.home, 'Desktop', 'dev', 'shop-video')
+        os.makedirs(proj)
+        with mock.patch.object(locker.os, 'symlink', side_effect=OSError(1314, 'A required privilege is not held by the client')):
+            code, _, err = self.run_('give', at, proj)
+        self.assertNotEqual(code, 0)
+        self.assertFalse(os.path.islink(at))
+        self.assertEqual(pathlib.Path(at).read_text(encoding='utf-8'), 'img', '보관함 파일은 제자리에 그대로')
+        self.assertFalse(os.path.exists(os.path.join(proj, 'assets', '보관함', '컷.png')), '프로젝트엔 안 남는다')
+        self.assertEqual([x for x in os.listdir(self.mine) if x.startswith('.컷')], [], '치워 둔 원본·조각이 안 남는다')
+
     def test_이사와_되돌리기(self):
         put(os.path.join(self.home, 'Downloads', '컷.png'), 'img')
         self.run_('add', 'Downloads/컷.png')

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dialogKeys, screenDialog, stepToward } from './screenDialog';
+import { dialogKeys, dialogSig, screenDialog, stepToward, walkTo } from './screenDialog';
 
 // 2026-10-01 시험 앱에서 찍은 진짜 화면들
 const ASK = [
@@ -103,4 +103,33 @@ describe('stepToward — 화면을 다시 읽어 가며 고른 번호까지(화�
     expect(stepToward(screenDialog(MODEL)!, 1)).toBe('up');
   });
   it('화면에 안 보이는 번호(목록 밖)도 번호로 방향을 안다', () => { expect(stepToward(screenDialog(MODEL)!, 11)).toBe('down'); });
+});
+
+describe('walkTo — 걷는 사이 다른 창이 뜨면 누르지 않는다(2026-10-21 리뷰)', () => {
+  const nowait = async () => {};
+  it('같은 창이면 그 번호까지 가서 그 창을 준다', async () => {
+    const d = screenDialog(MODEL)!;
+    const sent: string[][] = [];
+    expect(await walkTo(4, dialogSig(d), () => d, async (k) => { sent.push(k); }, nowait)).toBe(d);
+    expect(sent).toEqual([]);
+  });
+  it('첫 화살표 뒤 다른 창(권한 창 등)으로 바뀌면 null — Enter 를 넣지 않는다', async () => {
+    const a = screenDialog(MODEL)!, b = screenDialog(SWITCH)!;
+    const seen = [a, b];
+    const sent: string[][] = [];
+    const got = await walkTo(10, dialogSig(a), () => seen.shift() ?? b, async (k) => { sent.push(k); }, nowait);
+    expect(got).toBeNull();
+    expect(sent.length).toBe(1);
+  });
+  it('목록이 길어 일부만 보이는 창은 내리며 보이는 줄이 바뀌어도 같은 창 — 화면 밖 선택지를 끝까지 고른다(2026-10-21 코드 리뷰)', async () => {
+    const a = screenDialog(MODEL)!;
+    expect(a.partial).toBe(true);
+    const target = a.options[a.options.length - 1]!.n + 1; // 화면 밖
+    const scrolled = { ...a, options: [...a.options.slice(1), { ...a.options[0]!, n: target, label: 'Off-screen' }], cursor: a.options.length - 1 };
+    expect(dialogSig(scrolled)).toBe(dialogSig(a));
+    const seen = [a, scrolled];
+    const sent: string[][] = [];
+    expect(await walkTo(target, dialogSig(a), () => seen.shift() ?? scrolled, async (k) => { sent.push(k); }, nowait)).toBe(scrolled);
+    expect(sent.length).toBe(1);
+  });
 });

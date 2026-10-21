@@ -104,6 +104,24 @@ class Trust(unittest.TestCase):
             self.assertEqual(d['numStartups'], 3)
             self.assertTrue(out['trusted'])
 
+    def test_claude_json_권한을_넓히지_않는다(self):
+        # 새 임시 파일이 umask(0644)로 생겨 바꿔 끼우면 계정 정보가 든 ~/.claude.json 이 남도 읽게 됐다
+        with tempfile.TemporaryDirectory() as root:
+            data, dev = fake_data(root)
+            cj = pathlib.Path(root) / '.claude.json'
+            cj.write_text(json.dumps({'projects': {}}))
+            os.chmod(cj, 0o600)
+            np.create('perm-app', '설명', data=str(data), home=root, today='2026-09-28')
+            self.assertEqual(os.stat(cj).st_mode & 0o777, 0o600)
+            self.assertEqual([x for x in os.listdir(root) if 'chammo-tmp' in x], [])
+
+    def test_다음_명령은_참모와_같은_권한_모드로(self):
+        # --dangerously-skip-permissions 가 없으면 참모(바이패스)가 보내는 메시지를 세션이 붙잡는다
+        with tempfile.TemporaryDirectory() as root:
+            data, dev = fake_data(root)
+            out = np.create('next-app', '설명', data=str(data), home=root, today='2026-09-28')
+            self.assertIn('--dangerously-skip-permissions', out['next'])
+
     def test_있던_폴더는_믿음을_대신_주지_않는다(self):
         with tempfile.TemporaryDirectory() as root:
             data, dev = fake_data(root)
@@ -217,11 +235,14 @@ class StatusLine(unittest.TestCase):
             s = json.loads((dev / 'web-app/.claude/settings.local.json').read_text())
             self.assertEqual(s['statusLine'], {'type': 'command', 'command': str(data / 'tools/statusline')})
 
-    def test_스크립트가_없으면_안_건드린다(self):
+    def test_스크립트가_없으면_상태줄만_뺀다(self):
+        # 새 프로젝트는 격리 none 이 늘 들어가니(2026-10-21) 파일은 생기고 statusLine 칸만 없다
         with tempfile.TemporaryDirectory() as root:
             data, dev = fake_data(root)
             np.create('web-app', '설명', data=str(data), home=root, today='2026-09-28', node='/nope')
-            self.assertFalse((dev / 'web-app/.claude/settings.local.json').exists())
+            s = json.loads((dev / 'web-app/.claude/settings.local.json').read_text())
+            self.assertNotIn('statusLine', s)
+            self.assertEqual(s['worktree'], {'bgIsolation': 'none'})
 
 
 if __name__ == '__main__':

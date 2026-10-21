@@ -1,7 +1,7 @@
 //! 환경 점검 — 처음 켠 맥에 Claude Code·로그인·git(Xcode 명령줄 도구)·gh 가 있는지.
 //! 판단(글자 → 결과)은 순수 함수로 두고 테스트한다. 명령은 몇 초 안에 안 끝나면 없는 것으로 친다(설정 화면이 멈추지 않게)
 use serde::Serialize;
-use std::process::{Output, Stdio};
+use std::process::Output;
 use std::time::Duration;
 
 /// claude 를 찾는 순서: 공식 설치본(~/.local/bin) → 앱이 받아 둔 대화형 셸 PATH → brew(Apple 칩·인텔) 자리.
@@ -81,14 +81,10 @@ pub fn parse_gh(out: &str) -> GhAuth {
     }
 }
 
-/// 명령을 돌리되 secs 안에 안 끝나면 None(프로세스는 버린다)
+/// 명령을 돌리되 secs 안에 안 끝나면 None — 넘으면 그 프로세스(와 손자)를 죽인다.
+/// 전엔 기다림만 끊고 프로세스는 버려서, 멈춘 `claude auth status` 가 로그인 재기(15초마다)마다 하나씩 쌓였다(2026-10-21 리뷰)
 pub(crate) fn run_for(bin: &str, args: &[&str], secs: u64) -> Option<Output> {
-    let child = crate::platform::command(bin).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().ok()?;
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
-    });
-    rx.recv_timeout(Duration::from_secs(secs)).ok()?.ok()
+    crate::platform::run_capped(crate::platform::command(bin).args(args), Duration::from_secs(secs)).ok()
 }
 
 fn text(o: &Output) -> String {
@@ -190,9 +186,7 @@ pub fn trusted_exact(claude_json: &str, dir: &str) -> bool {
 
 /// 윈도우는 키가 C:/… 나 C:\… 로 적히고 대소문자를 안 가린다 → 슬래시·소문자로 맞춰 비교
 fn trust_key(s: &str) -> String {
-    let t = s.replace('\\', "/");
-    let t = t.trim_end_matches('/').to_string();
-    if t.as_bytes().get(1) == Some(&b':') { t.to_lowercase() } else { t }
+    crate::tools::path_key(s)
 }
 
 /// 믿음을 받은 칸들(trust_key 모양)
@@ -271,6 +265,24 @@ pub fn app_version() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn 시간을_넘긴_명령은_죽인다() {
+        // 멈춘 claude auth status 가 기다림만 끊긴 채 남아 15초마다 쌓였다 — 넘기면 None 이고 프로세스도 없어야 한다
+        use std::time::Duration;
+        let f = std::env::temp_dir().join(format!("chammo-runfor-{}", std::process::id()));
+        let script = format!("echo $$ > '{}'; exec sleep 30", f.display());
+        let t = std::time::Instant::now();
+        assert!(super::run_for("/bin/sh", &["-c", &script], 1).is_none());
+        assert!(t.elapsed() < Duration::from_secs(5));
+        let pid: i32 = std::fs::read_to_string(&f).unwrap().trim().parse().unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        assert_ne!(unsafe { libc::kill(pid, 0) }, 0, "멈춘 프로세스가 남았다");
+        let _ = std::fs::remove_file(&f);
+        let hi = super::run_for("/bin/sh", &["-c", "echo hi"], 5).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+        assert_eq!(hi.as_deref(), Some("hi"));
+    }
+
     // claude 는 믿은 폴더를 진짜 경로(/private/tmp/…)로 적는다 — 링크 경로(/tmp/…)를 고르면 믿기를 마쳐도 마법사가 못 넘어갔다(2026-10-05 개발판 실측)
     #[cfg(unix)]
     #[test]

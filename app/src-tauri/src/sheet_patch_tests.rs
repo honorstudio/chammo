@@ -208,3 +208,25 @@ fn 고친_결과가_깨지면_원본을_안_건드린다() {
     assert!(save(&p, &[crate::sheet_struct::Op::Cell(e)], &stamp, |_| {}).is_err());
     assert_eq!(std::fs::read(&p).unwrap(), before);
 }
+
+#[test]
+fn 계산_순서_기록_지우기는_닫는_태그가_따로인_연결도_그것만() {
+    // 2026-10-21 리뷰: 첫 "/>" 까지 지워서 옆 연결(styles)까지 지웠고, 맨 끝이면 "/>" 가 없어 끝없이 돌았다
+    let run = |rels: &'static str| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut p: crate::sheet::Parts = Default::default();
+            p.insert("xl/calcChain.xml".into(), b"<calcChain/>".to_vec());
+            p.insert("xl/_rels/workbook.xml.rels".into(), rels.as_bytes().to_vec());
+            drop_calc_chain(&mut p);
+            let _ = tx.send(String::from_utf8(p["xl/_rels/workbook.xml.rels"].clone()).unwrap());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(5)).expect("끝나야 한다")
+    };
+    let mid = run(r#"<Relationships><Relationship Id="rId9" Type="t/calcChain" Target="calcChain.xml"></Relationship><Relationship Id="rId2" Type="t/styles" Target="styles.xml"/></Relationships>"#);
+    assert_eq!(mid, r#"<Relationships><Relationship Id="rId2" Type="t/styles" Target="styles.xml"/></Relationships>"#);
+    let last = run(r#"<Relationships><Relationship Id="rId2" Type="t/styles" Target="styles.xml"/><Relationship Id="rId9" Type="t/calcChain" Target="calcChain.xml"></Relationship></Relationships>"#);
+    assert_eq!(last, r#"<Relationships><Relationship Id="rId2" Type="t/styles" Target="styles.xml"/></Relationships>"#);
+    let selfc = run(r#"<Relationships><Relationship Id="rId9" Type="t/calcChain" Target="calcChain.xml"/><Relationship Id="rId2" Type="t/styles" Target="styles.xml"/></Relationships>"#);
+    assert_eq!(selfc, r#"<Relationships><Relationship Id="rId2" Type="t/styles" Target="styles.xml"/></Relationships>"#);
+}

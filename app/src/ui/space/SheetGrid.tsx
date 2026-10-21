@@ -10,7 +10,7 @@ import cfKo from '@univerjs/preset-sheets-conditional-formatting/locales/ko-KR';
 import '@univerjs/preset-sheets-core/lib/index.css';
 import '@univerjs/preset-sheets-conditional-formatting/lib/index.css';
 import { toUniver, type SheetBook } from '../../domain/sheetBook';
-import { blockedOf, cellState, compile, fromCalc, fromMutation, type CellState, type LogCtx, type LogEntry } from '../../domain/sheetLog';
+import { blockedOf, cellState, compile, fromCalc, fromMutation, saveHeld, type CellState, type LogCtx, type LogEntry } from '../../domain/sheetLog';
 import { conflicts } from '../../domain/sheetPending';
 import { cellChanges, plan, skipOf, typed, type Put } from '../../domain/sheetPlay';
 import { ackThenPlay, onSheetPlay } from './sheetPlayBus';
@@ -100,7 +100,7 @@ export default function SheetGrid({ path, book, stamp, onStatus, onSaved, onRelo
     const before = new Map<string, CellState>();
     const save = async () => {
       timer = 0;
-      if (state === 'conflict' || state === 'blocked' || state === 'gone' || !log.length) return;
+      if (saveHeld(state, log.length)) return; // 도는 중이면 끝난 뒤(아래 then) 남은 기록으로 다시 건다
       const sent = log;
       const ops = compile(sent);
       log = [];
@@ -114,7 +114,8 @@ export default function SheetGrid({ path, book, stamp, onStatus, onSaved, onRelo
       } catch (e) {
         log = [...sent, ...log]; // 못 쓴 건 다음에 다시
         const msg = String(e);
-        if (msg.includes('CHANGED_OUTSIDE')) void outside(); else set('error', msg);
+        // '저장 중'에 멈추면 감시(watch)가 영영 안 돌아 바깥 판을 다시 못 합쳤다 — 바뀜으로 돌려 두고 합치기(합치는 중이면 다음 감시가 한다)
+        if (msg.includes('CHANGED_OUTSIDE')) { set('dirty'); void outside(); } else set('error', msg);
       }
     };
     const view = (): SheetView => {
@@ -208,6 +209,7 @@ export default function SheetGrid({ path, book, stamp, onStatus, onSaved, onRelo
         }
         // 다 넣었으면 바로 저장(1초 모으기 없이) — 저장까지 끝나야 '했다'고 답한다
         window.clearTimeout(timer); timer = 0;
+        for (let i = 0; i < 300 && (state as SheetStatus) === 'saving'; i++) await sleep(100); // 앞 저장이 끝난 뒤에 — 겹쳐 보내면 막힌다(saveHeld)
         if (log.length) await save();
         const ok = (state as SheetStatus) === 'saved' || (state as SheetStatus) === 'dirty';
         await reply({ ok, written, shown: !hidden, skipped: [...skip], missing, ...(ok ? {} : { error: `저장 못 했어(${state})` }) });

@@ -236,15 +236,24 @@ describe('delivery — 회신이 오면 부하가 서류 들고 반장에게', (
 describe('withLounge — 가구가 생기면 오른쪽 휴게실 두 칸', () => {
   const room = planRoom([seat('b1', '참모')], [seat('w1', 'todo-api')], 'bear');
   it('가구가 없으면 방 그대로', () => { expect(withLounge(room, [])).toEqual({ ...room, furniture: [] }); });
+  it('휴게실 자동 자리는 8개까지 — 넘는 건 창고(방이 끝없이 깊어지지 않게), 끌어 놓은 건 그대로 나온다', () => {
+    const ids = Array.from({ length: 20 }, (_, i) => `furn.x${i}`);
+    const r = withLounge(room, ids);
+    expect(r.furniture.length).toBe(8);
+    expect(r.rows).toBe(withLounge(room, ids.slice(0, 8)).rows);
+    const placed = withLounge(room, ids, { 'furn.x15': [1, 6] });
+    expect(placed.furniture.map((f) => f.id)).toContain('furn.x15');
+    expect(placed.furniture.length).toBe(9);
+  });
   it('가구마다 휴게실 칸에 두 줄로 놓는다', () => {
     const r = withLounge(room, ['furn.sofa', 'furn.lamp', 'furn.tank']);
     expect(r.cols).toBe(room.cols + 2);
     expect(r.furniture.map((f) => [f.id, f.gx, f.gy])).toEqual([['furn.sofa', 8.2, 0.5], ['furn.lamp', 9.2, 0.5], ['furn.tank', 8.2, 2.1]]);
   });
-  it('가구가 많으면 방이 깊어진다', () => {
+  it('가구가 많으면 방이 깊어진다(휴게실이 찰 때까지)', () => {
     const ids = Array.from({ length: 10 }, (_, i) => 'f' + i);
     const r = withLounge(room, ids);
-    expect(r.rows).toBeGreaterThanOrEqual(Math.ceil(r.furniture[9]!.gy + 1.2));
+    expect(r.rows).toBeGreaterThanOrEqual(Math.ceil(r.furniture[7]!.gy + 1.2));
   });
 });
 

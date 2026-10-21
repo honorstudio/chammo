@@ -71,7 +71,8 @@ export const rebuildMenu = () => invoke<void>('rebuild_menu');
 // ── HQ 폴더(Rust hq.rs) ──
 export type HqReport = { written: string[]; kept: string[] };
 /** HQ 폴더에 템플릿(비서용 CLAUDE.md·scripts)을 푼다. 있는 파일은 overwrite 일 때만 덮는다 */
-export const createHq = (dir: string, overwrite = false) => invoke<HqReport>('create_hq', { dir, overwrite });
+/** roots = 설정 화면에서 고르는 중인 devRoot·따로 둔 프로젝트(아직 저장 전) — HQ 를 그 자리나 그 위에 못 두게 같이 본다 */
+export const createHq = (dir: string, overwrite = false, roots: string[] = []) => invoke<HqReport>('create_hq', { dir, overwrite, roots });
 export type FolderStatus = { exists: boolean; hqReady: boolean };
 export const folderStatus = (dir: string) => invoke<FolderStatus>('folder_status', { dir });
 /** mkdir -p (`~/…` 가능) */

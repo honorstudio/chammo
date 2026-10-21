@@ -63,7 +63,7 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
 Log: <data folder>/app.jsonl — {ts, action, arg}. The running app checks it every 0.7 s and applies each
 line once; lines written while the app is closed are skipped.
 """
-import datetime, json, os, subprocess, sys
+import datetime, json, os, subprocess, sys, time
 
 FEATURES = ('office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'computerUse')
 OFF_BY_DEFAULT = ('autoRevive', 'computerUse')  # 앱 기본값과 같게 — 무인 맥에서만 켠다 · 화면 조종은 사용자가 고른다
@@ -89,6 +89,15 @@ def read_json(path):
         return v if isinstance(v, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def readable(path):
+    """JSON 객체로 읽히나"""
+    try:
+        with open(path, encoding='utf-8') as f:
+            return isinstance(json.load(f), dict)
+    except (OSError, ValueError):
+        return False
 
 
 def status(data):
@@ -124,17 +133,29 @@ def tilde(p, home):
 
 
 def write_config(data, c):
-    """다른 칸은 그대로 두고 통째로 바꿔 쓴다(쓰다 끊겨도 반쪽 파일이 안 남게)"""
+    """다른 칸은 그대로 두고 통째로 바꿔 쓴다(쓰다 끊겨도 반쪽 파일이 안 남게). 임시 이름은 pid 를 붙여 — 앱 저장과 같은 이름을 쓰면 한쪽이 사라졌다"""
     path = os.path.join(data, 'config.json')
-    tmp = path + '.tmp'
+    tmp = f'{path}.{os.getpid()}.tmp'
     with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(c, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    for i in range(20):  # 윈도우는 앱이 막 연 파일을 못 바꿔 끼운다(WinError 5) — 잠깐씩 다시
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if i == 19:
+                os.remove(tmp)
+                raise
+            time.sleep(0.05)
 
 
 def project(data, home, verb, arg):
     """devRoot 밖 폴더를 프로젝트로 — (종료 코드, 할 말). 앱이 꺼져 있어도 반영되게 config.json 을 직접 고친다"""
-    c = read_json(os.path.join(data, 'config.json'))
+    cfg = os.path.join(data, 'config.json')
+    c = read_json(cfg)
+    if verb != 'list' and os.path.exists(cfg) and not readable(cfg):
+        # 있는데 못 읽으면 {} 위에 extraProjects 만 담아 써서 다른 설정 칸이 다 사라졌다(2026-10-21 리뷰)
+        return 1, f'config.json is unreadable — fix it first / 설정 파일을 못 읽어 안 고쳤어: {cfg}'
     dev = os.path.normpath(expand(c.get('devRoot') or '~/Developer', home))
     extras = extras_of(c)
     if verb == 'list':
@@ -205,12 +226,15 @@ def _new_project():
 
 def _trusted(projects, path):
     """Claude Code 처럼 위 폴더 믿음도 물려받되, 가장 가까운 칸에 적힌 값이 이긴다 — 그 폴더 칸에 false 가 박혀 있으면
-    위 폴더가 true 여도 'Workspace not trusted' 였다(2026-10-11 project-s)"""
+    위 폴더가 true 여도 'Workspace not trusted' 였다(2026-10-11 project-s). git 저장소 폴더는 자기 칸이 없으면 위로 안 올라간다 —
+    Claude 2.1.306 은 믿은 프로젝트 폴더 아래 clone 을 'Workspace not trusted' 로 막았다(git 아닌 하위 폴더는 물려받음, 2026-10-21 실측)"""
     cur = path
     while True:
         p = projects.get(cur)
         if isinstance(p, dict) and 'hasTrustDialogAccepted' in p:
             return p.get('hasTrustDialogAccepted') is True
+        if os.path.exists(os.path.join(cur, '.git')):
+            return False
         up = os.path.dirname(cur)
         if up == cur:
             return False
@@ -226,10 +250,11 @@ def trust(data, home, folder):
     root = read_json(os.path.join(data, 'trust-consent.json')).get('root') or ''
     root = root.replace('\\', '/').rstrip('/')
     key = full.replace('\\', '/') if os.name == 'nt' else full
-    if not root or not (key == root or key.startswith(root + '/')):
+    np = _new_project()
+    # 윈도우 드라이브 경로는 대소문자를 안 가린다(realpath 는 디스크 글자, 동의 폴더는 설정 글자 — 가지 검토)
+    if not np.inside(root, key):
         return 3, (f'not inside a projects folder the user trusted — ask them to run `! cd "{full}" && claude` once, pick '
                    f'"Yes, I trust this folder", then /exit / 사용자가 믿은 프로젝트 폴더 밖이야 — 사용자에게 한 번 믿어 달라고 해')
-    np = _new_project()
     cj = np.claude_json(home)
     projects = read_json(cj).get('projects')
     projects = projects if isinstance(projects, dict) else {}
@@ -296,16 +321,24 @@ def ask_app(data, action, arg, out_name, wait):
     with open(os.path.join(data, 'app.jsonl'), 'a', encoding='utf-8') as f:
         f.write(json.dumps(line, ensure_ascii=False) + '\n')
     out = os.path.join(data, out_name)
+    # 부탁마다 따로인 자리 먼저 — 한 칸(out_name)은 겹친 부탁의 답이 덮는다(앱 appctl::write_answer, 2026-10-21 리뷰)
+    mine = os.path.join(data, 'answers', f'{os.path.splitext(out_name)[0]}-{rid}.txt')
     end = time.time() + wait
     while time.time() < end:
-        try:
-            with open(out, encoding='utf-8') as f:
-                text = f.read()
+        for p in (mine, out):
+            try:
+                with open(p, encoding='utf-8') as f:
+                    text = f.read()
+            except OSError:
+                continue
             head, _, body = text.partition('\n')
             if head == f'#id {rid}':
+                if p == mine:
+                    try:
+                        os.remove(mine)
+                    except OSError:
+                        pass
                 return 0, body.rstrip('\n')
-        except OSError:
-            pass
         time.sleep(0.2)
     return 1, f'Chammo did not answer in {wait:g}s — is the app open? / 앱이 답하지 않았어 — Chammo 가 켜져 있어야 해'
 

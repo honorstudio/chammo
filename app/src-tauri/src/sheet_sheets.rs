@@ -50,11 +50,21 @@ pub fn add_sheet(parts: &mut Parts, name: &str) -> Result<String, String> {
     Ok(part)
 }
 
+/// XML 부품 글에 그 시트 이름이 나오나 — 수식 속 이름은 XML 로 적혀서('R&D' → R&amp;D, O'Neil → O''Neil·&apos;) 풀린 이름으로만 찾으면
+/// 그 부품을 통째로 건너뛰어 이름 바꾸기·지우기·행 끼우기 뒤 다른 시트 수식·차트가 안 따라왔다(2026-10-21 리뷰)
+pub(crate) fn mentions(x: &str, name: &str) -> bool {
+    let q = name.replace('\'', "''");
+    [name, q.as_str()].iter().any(|n| {
+        let e = esc(n);
+        x.contains(*n) || x.contains(&e) || x.contains(&e.replace('\'', "&apos;")) || x.contains(&e.replace('\'', "&#39;"))
+    })
+}
+
 /// 모든 시트의 칸 수식·조건부 서식 수식·입력 목록, 정의된 이름, 차트 범위에 f 적용(그 이름이 든 부품만)
 fn map_all_formulas(parts: &mut Parts, needle: &str, f: &dyn Fn(&str) -> String) -> Result<(), String> {
     for s in sheet_list(parts)? {
         let Some(x) = get(parts, &s.part) else { continue };
-        if !x.contains(needle) { continue; }
+        if !mentions(&x, needle) { continue; }
         let (head, mut rows, tail) = split_rows(&x)?;
         for row in rows.iter_mut() {
             let r = row.r;
@@ -67,7 +77,7 @@ fn map_all_formulas(parts: &mut Parts, needle: &str, f: &dyn Fn(&str) -> String)
     if let Some(wb) = get(parts, "xl/workbook.xml") { put(parts, "xl/workbook.xml", crate::sheet_xml::edit_text(&wb, "definedName", f)); }
     let charts: Vec<String> = parts.keys().filter(|p| p.starts_with("xl/charts/chart") && p.ends_with(".xml")).cloned().collect();
     for p in charts {
-        if let Some(x) = get(parts, &p).filter(|x| x.contains(needle)) { put(parts, &p, crate::sheet_xml::edit_text(&x, "f", f)); }
+        if let Some(x) = get(parts, &p).filter(|x| mentions(x, needle)) { put(parts, &p, crate::sheet_xml::edit_text(&x, "f", f)); }
     }
     Ok(())
 }

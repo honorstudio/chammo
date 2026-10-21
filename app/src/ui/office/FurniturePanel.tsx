@@ -10,9 +10,9 @@ const STATE_LABEL = (s: string) => ({ 창고: tr('창고', 'Stored'), 밀려남:
  * 가구 놓기 트레이(방 아래, 심즈처럼) — 가진 가구가 카드로 늘어서 있고, 카드를 방으로 끌면 놓인다.
  * 방에 놓인 가구도 끌어서 옮기고, 이 트레이로 끌어오면 창고. pushed = 새 책상이 덮어 휴게실로 비켜 있는 가구
  */
-export function FurnitureTray({ file, drag, onGrab, onDone, pushed = [] }: { file: GachaFile | null; drag: string | null; onGrab: (id: string) => void; onDone: () => void; pushed?: string[] }) {
+export function FurnitureTray({ file, drag, onGrab, onDone, pushed = [], inRoom }: { file: GachaFile | null; drag: string | null; onGrab: (id: string) => void; onDone: () => void; pushed?: string[]; /** 방에 그려진 가구 — 없는 건 창고(휴게실이 꽉 참) */ inRoom?: string[] }) {
   const ids = file ? ownedOf(file, 'furn') : [];
-  const state = (id: string) => { const p = file?.placed?.[id]; return p === null ? '창고' : pushed.includes(id) ? '밀려남' : p ? '놓임' : '휴게실'; };
+  const state = (id: string) => { const p = file?.placed?.[id]; return p === null || (inRoom && !inRoom.includes(id)) ? '창고' : pushed.includes(id) ? '밀려남' : p ? '놓임' : '휴게실'; };
   return (
     <div className={`furn-tray ${drag ? 'drop' : ''}`}>
       <div className="furn-tray-head">

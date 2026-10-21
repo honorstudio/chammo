@@ -37,7 +37,11 @@ const saveTimers = new Map<DocSession, ReturnType<typeof setTimeout>>();
 
 export function saveSoon(s: DocSession, md: string) {
   // 편집기가 문서를 처음 읽어 들일 때도 바뀜 알림이 온다 — 지난번 저장과 같으면 파일에 안 쓴다(열기만 해도 "- [ ]"→"* [ ]" 로 바뀌었다, 2026-09-30)
-  if (lastSaved.get(s.path) === md) return;
+  // 쳤다가 0.7초 안에 지워 저장한 판으로 돌아왔으면 기다리던 저장(친 글)도 취소 — 안 그러면 지운 글자가 파일에 남았다
+  if (lastSaved.get(s.path) === md) {
+    clearTimeout(saveTimers.get(s));
+    return;
+  }
   setCurrent(s.path, md);
   clearTimeout(saveTimers.get(s));
   saveTimers.set(s, setTimeout(() => void flush(s, md), 700));

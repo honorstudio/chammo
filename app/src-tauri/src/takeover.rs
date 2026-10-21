@@ -52,7 +52,10 @@ pub fn now_ms() -> u64 {
 }
 
 pub(crate) fn write_secure(f: &Path, body: &[u8]) -> Result<(), String> {
-    let tmp = f.with_extension("tmp-takeover");
+    // 임시 이름은 대상 이름 + 부를 때마다 다른 꼬리 — <프로필>.takeover·.handback·.dialog 가 다 <프로필>.tmp-takeover 를 써서 동시에 쓰면 서로 바뀌었다
+    let mut name = f.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".tmp-{}", crate::tools::tmp_tag()));
+    let tmp = f.with_file_name(name);
     std::fs::write(&tmp, body).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
@@ -396,6 +399,29 @@ mod tests {
         start_ask(p, 12, 1);
         drop_ask(&d, p);
         assert!(!holding(p));
+    }
+
+    #[test]
+    fn 개입_파일들은_같은_임시_이름을_안_쓴다() {
+        // .takeover·.handback 이 다 <프로필>.tmp-takeover 를 써서 동시에 쓰면 한쪽 내용이 다른 이름으로 바꿔 끼워졌다(2026-10-21 리뷰)
+        let d = std::env::temp_dir().join(format!("chammo-tk-tmp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let (a, b) = (d.join("p.takeover"), d.join("p.handback"));
+        let ts: Vec<_> = [(a.clone(), "A"), (b.clone(), "B")]
+            .into_iter()
+            .map(|(f, tag)| std::thread::spawn(move || {
+                for i in 0..300 {
+                    super::write_secure(&f, format!("{tag}{i}").as_bytes()).unwrap();
+                }
+            }))
+            .collect();
+        for t in ts {
+            t.join().unwrap();
+        }
+        assert!(std::fs::read_to_string(&a).unwrap().starts_with('A'));
+        assert!(std::fs::read_to_string(&b).unwrap().starts_with('B'));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

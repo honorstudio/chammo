@@ -2,9 +2,11 @@
 // 0.3.2: 같은 계정 기기는 목록에 바로 뜨고 '연결'을 누르면 그 기기에 허용 카드가 뜬다 → 그쪽 사람이 허용하면 양쪽이 이어진다.
 // 코드(그 기기 설정 > 폰의 연결 코드)는 대피로 — 옛 판이거나 되묻기가 안 닿을 때. 열쇠는 이 기기 키체인(윈도우는 자격 증명 관리자)에만. 참모끼리 말은 scripts/peer 로
 import { useEffect, useState } from 'react';
-import { remoteConnect, remoteConnectCancel, remoteDevices, remotePair, remoteUnpair, type RemoteDevice } from '../data/remote';
+import { remoteApi, remoteConnect, remoteConnectCancel, remoteDevices, remotePair, remoteUnpair, type RemoteDevice } from '../data/remote';
+import { remoteAssistants, type RemoteAssistant } from '../domain/remoteChat';
+import { REMOTE_CHAT_EVENT, type RemoteChatTarget } from './chat/RemoteChat';
 import { peerView } from '../domain/peerDevices';
-import { IconRefresh, IconUnlink } from './Icons';
+import { IconChat, IconRefresh, IconUnlink } from './Icons';
 import { IconButton } from './kit/IconButton';
 import { tr } from '../i18n';
 
@@ -18,9 +20,22 @@ export function PeerSection({ title }: { title: string }) {
   const [pairing, setPairing] = useState<string | null>(null);
   const [code, setCode] = useState('');
 
+  // 이어진 기기의 참모들(ADR 0011) — 누르면 채팅 열이 그 참모로(사람이 친 말은 그 기기에 '사람 말(원격)'로 간다)
+  const [agents, setAgents] = useState<Record<string, RemoteAssistant[]>>({});
   const load = () => {
     setBusy(true);
-    void remoteDevices().then((o) => { setList(o.devices); setErr(null); }, (e: unknown) => { setList([]); setErr(String(e)); }).finally(() => setBusy(false));
+    void remoteDevices().then((o) => {
+      setList(o.devices);
+      setErr(null);
+      for (const d of o.devices.filter((x) => x.status === 'connected')) {
+        const api = remoteApi(d.id);
+        void Promise.all([api.getEnv(), api.listSessionsRaw()]).then(([env, raw]) => setAgents((m) => ({ ...m, [d.id]: remoteAssistants(raw, env.hqDir) })), () => {});
+      }
+    }, (e: unknown) => { setList([]); setErr(String(e)); }).finally(() => setBusy(false));
+  };
+  const chat = (d: RemoteDevice, a: RemoteAssistant) => {
+    const detail: RemoteChatTarget = { dev: d.id, devName: d.name, agent: a.id, name: a.name || a.id };
+    window.dispatchEvent(new CustomEvent(REMOTE_CHAT_EVENT, { detail }));
   };
   useEffect(load, []);
   const act = (f: () => Promise<void>) => {
@@ -64,6 +79,16 @@ export function PeerSection({ title }: { title: string }) {
               {wait && <button className="btn su-row-act" onClick={() => void remoteConnectCancel(d.id)}>{tr('취소', 'Cancel')}</button>}
               {v.unlink && (
                 <button className="ib danger su-row-act" aria-label={tr(`${d.name} 끊기`, `Unlink ${d.name}`)} title={tr('끊기', 'Unlink')} disabled={busy || wait} onClick={() => act(() => remoteUnpair(d.id))}><IconUnlink /></button>
+              )}
+              {d.status === 'connected' && (agents[d.id] ?? []).length > 0 && (
+                <div className="peer-agents">
+                  {agents[d.id]!.map((a) => (
+                    <div key={a.id} className="peer-agent">
+                      <span>{a.name || a.id}</span>
+                      <IconButton size="m" tone="line" label={tr(`${a.name || a.id}와 채팅`, `Chat with ${a.name || a.id}`)} onClick={() => chat(d, a)}><IconChat /></IconButton>
+                    </div>
+                  ))}
+                </div>
               )}
               {pairing === d.id && (
                 <div className="su-inline peer-code">

@@ -65,7 +65,7 @@ import { every } from './ui/poll';
 import { askName, liveOf, takeoverLine, type Live } from './domain/agentBrowser';
 import { activityStatus, docBadges, liveLine, needsHarness, sessionStatus, settled, transitions, type ActivityStatus, type ProjectDoc } from './domain/status';
 import { summarizeTranscript, type Activity } from './domain/activity';
-import { clampFont, DEFAULT_FONT, dedupeMs, gotoOfNum, menuAction, onceAcross, onceWithin, shortcutFor, type Shortcut } from './domain/shortcuts';
+import { clampFont, DEFAULT_FONT, dedupeMs, frameZoomCmd, gotoOfNum, menuAction, onceAcross, onceWithin, shortcutFor, zoomTarget, type Shortcut, type ZoomArea } from './domain/shortcuts';
 import { foldTasks, splitCards, type TaskEvent } from './domain/tasks';
 import { makeTaskLog } from './domain/taskTail';
 import { routineSessions, routineStalls } from './domain/login';
@@ -87,6 +87,9 @@ const previewMaxFn = () => (window as unknown as { __previewMax?: () => void }).
 const previewZoomFn = () => (window as unknown as { __previewZoom?: (d: 1 | -1 | 0) => void }).__previewZoom;
 /** 스페이스 탭 확대(SpaceView 가 건다, 2026-10-12) — 확대할 탭이 떠 있으면 처리하고 true, 아니면 false(터미널·채팅 글자 크기로) */
 const tabZoomFn = () => (window as unknown as { __tabZoom?: (c: 1 | -1 | 0 | 'fit') => boolean }).__tabZoom;
+/** 화면 영역 — ⌘+ ⌘- ⌘0 이 채팅·터미널 글자냐 스페이스 탭 확대냐(domain/shortcuts zoomTarget, 2026-10-22 사용자 제보) */
+const zoomAreaOf = (el: Element | null): ZoomArea =>
+  !el || el === document.body ? 'none' : el.closest('.xterm') ? 'term' : el.closest('.chat') ? 'chat' : el.closest('.space .cv-main') ? 'tab' : 'none';
 const readerZoom = (dir: 1 | -1 | 0) => (window as unknown as { __readerZoom?: (d: 1 | -1 | 0) => void }).__readerZoom?.(dir);
 const readerCloseActive = async () => { const st = await invoke<Surface>('reader_state', { surface: 'dock' }); if (st.active) await invoke('reader_close', { surface: 'dock', path: st.active }); };
 import { Sidebar, type Selection } from './ui/Sidebar';
@@ -130,6 +133,8 @@ import { canPlace, delivery, deliveryTail, placedCells, planRoom, seatSlots, sta
 import { spriteOf } from './ui/tama/lcd';
 import { Grip } from './ui/TaskPanel';
 import { IconClose, IconDownload, IconStack, IconTabs, IconUpdate } from './ui/Icons';
+import { RemoteChat, REMOTE_CHAT_EVENT, type RemoteChatTarget } from './ui/chat/RemoteChat';
+import { useRemoteCards } from './ui/useRemoteCards';
 import { IconButton } from './ui/kit/IconButton';
 import type { TaskCard } from './domain/tasks';
 import { sessionOrigins } from './data/tauri';
@@ -223,6 +228,19 @@ export default function App() {
   const [quitOpen, setQuitOpen] = useState<boolean | 'dock'>(false);
   const [licensesOpen, setLicensesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 다른 기기 참모 채팅(ADR 0011) — 고르면 채팅 열이 그 참모로, 왼쪽 띠에서 내 참모를 누르면 원래대로
+  const [remoteChat, setRemoteChat] = useState<RemoteChatTarget | null>(null);
+  useEffect(() => {
+    const on = (e: Event) => {
+      const t = (e as CustomEvent<RemoteChatTarget>).detail;
+      if (!t?.dev || !t.agent) return;
+      setRemoteChat(t);
+      setSettingsOpen(false);
+      setSpace(true);
+    };
+    window.addEventListener(REMOTE_CHAT_EVENT, on);
+    return () => window.removeEventListener(REMOTE_CHAT_EVENT, on);
+  }, []);
   // 하니터 — 하네스 보기·끄고 켜기(탑바 버튼·scripts/app open harnitor)
   // 스페이스(채팅 뷰)에선 탭마다 기억되는 화면이라 SpaceView 가 띄우고 여기는 요청만 넘긴다(harnitorReq) — harnitorOpen 은 지금 탭에 떠 있나(탑바 버튼).
   // 스페이스가 없을 때(참모가 아직 없음 등)만 앱 전체 위에 띄운다(harnitorFloat)
@@ -422,6 +440,8 @@ export default function App() {
   // 단축키 = 메뉴바 항목과 같은 동작. 창 전체에서 capture 로 먼저 받는다 — 터미널(xterm)보다 앞에서 가로채야 Claude 입력칸에 안 들어간다.
   // 메뉴(Rust main.rs)에도 같은 단축키가 걸려 있어서 둘 다 올 수 있다 → 잠깐 사이(dedupeMs)의 같은 동작은 한 번만
   const runRef = useRef<(sc: Shortcut) => void>(() => {});
+  /** 마지막으로 누른 화면 영역 — 포커스가 안 잡히는 곳(말풍선·탭 그림)을 눌렀을 때 ⌘+ ⌘- 가 어디로 갈지 */
+  const lastZoomArea = useRef<ZoomArea>('none');
   runRef.current = (sc: Shortcut) => {
     // ⌘1~9: 스페이스면 채팅 탭 N번(참모 화면으로 가서), 아니면 예전 화면 이동(⌘1~4) — 2026-09-30 사용자
     if (sc.type === 'num') {
@@ -458,7 +478,8 @@ export default function App() {
     // 리더를 보고 있으면 ⌘+ ⌘- ⌘0 은 리더만 — 터미널 글자는 그대로(사용자 2026-09-29)
     else if ((sc.type === 'font' || sc.type === 'fontReset') && readerOpen && readerFocused()) readerZoom(sc.type === 'fontReset' ? 0 : sc.delta);
     // 스페이스에 확대할 탭(md·txt·엑셀·pdf·그림·html)이 떠 있으면 ⌘+ ⌘- ⌘0 은 그 탭만 — 파일마다 기억(2026-10-12 사용자)
-    else if ((sc.type === 'font' || sc.type === 'fontReset') && tabZoomFn()?.(sc.type === 'fontReset' ? 0 : sc.delta)) { /* 탭이 받았다 */ }
+    // 포커스(없으면 마지막으로 누른 곳)가 채팅·터미널이면 탭이 열려 있어도 글자 크기 — 문서 탭을 띄운 채 채팅에서 눌러도 탭만 커졌다(2026-10-22)
+    else if ((sc.type === 'font' || sc.type === 'fontReset') && zoomTarget(zoomAreaOf(document.activeElement), lastZoomArea.current) === 'tab' && tabZoomFn()?.(sc.type === 'fontReset' ? 0 : sc.delta)) { /* 탭이 받았다 */ }
     else if (sc.type === 'font') setFontSize((f) => clampFont(f + sc.delta));
     else if (sc.type === 'fontReset') setFontSize(DEFAULT_FONT);
     else if (sc.type === 'selectAll') selectAllHere(readerOpen && readerFocused(), document.querySelector('.reader-panel'));
@@ -539,7 +560,23 @@ export default function App() {
     // 독 '종료' — Craft 저장이 남아 Rust 가 끄기를 미뤘다(dock_quit.rs). 묻지 않고 저장 중 창으로, 띄웠다고 알린다(못 들으면 Rust 가 4초 뒤 끈다)
     w.__dockQuit = () => { setQuitOpen('dock'); void invoke('app_quit_shown').catch(() => {}); };
     window.addEventListener('keydown', onKey, true);
-    return () => { window.removeEventListener('keydown', onKey, true); delete w.__menu; delete w.__dockQuit; };
+    const onPointer = (e: PointerEvent) => { lastZoomArea.current = zoomAreaOf(e.target instanceof Element ? e.target : null); };
+    window.addEventListener('pointerdown', onPointer, true);
+    // html 탭·미리보기(iframe) 안에 포커스가 있으면 키가 앱에 안 온다(윈도우는 메뉴 가속키도 안 돎) — hodoc 다리가 확대 셋만 넘긴다.
+    // 보낸 창이 지금 화면의 그 iframe 일 때만, 그 탭·미리보기 확대만(남의 html 이 흉내 내도 자기 확대만 바뀐다 — 다른 단축키·글자 크기로 안 감)
+    const onFrame = (e: MessageEvent) => {
+      const c = frameZoomCmd(e.data);
+      if (c === null) return;
+      const from = [...document.querySelectorAll('iframe')].find((f) => f.contentWindow === e.source);
+      if (!from) return;
+      // 맥은 같은 누름이 메뉴 ⌘+ 로도 온다 — 메뉴·키와 같은 줄(150ms)로 한 번만
+      const same: Shortcut = c === 0 ? { type: 'fontReset' } : { type: 'font', delta: c };
+      if (!fast(JSON.stringify(same), Date.now())) return;
+      if (from.closest('.dash-preview')) previewZoomFn()?.(c);
+      else if (from.closest('.space .cv-main')) tabZoomFn()?.(c);
+    };
+    window.addEventListener('message', onFrame);
+    return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('pointerdown', onPointer, true); window.removeEventListener('message', onFrame); delete w.__menu; delete w.__dockQuit; };
   }, []);
   const widgetToggleRef = useRef<() => void>(() => {});
   // 화면(프로젝트 이름 / 'all')마다 따로 기억한다 — 프로젝트를 오가도 크게·접기가 유지되게
@@ -788,9 +825,8 @@ export default function App() {
   const petWho = (id: string) => { const o = navOrchs.find((x) => x.id === id); return o ? { name: o.name, color: orchColor(o.name) } : null; };
   // 펫 탭 코인 = 사무실과 같은 상점 창(뽑기·도감·스킨) — 펫 탭에서 뽑아도 뽑은 걸 바로 본다
   // 방 스킨은 gacha.json 장착 칸 하나 — 도감·스킨 화면·사무실이 같은 걸 본다. 옛 판은 이 컴퓨터(localStorage officeSkin)에만 뒀다 — 처음 한 번 옮긴다
-  const shopSkins = () => { const g = gacha.file ?? EMPTY_GACHA; return { owned: ownedSkins(g), current: skinOfFile(g), onSkin: (id: string) => void gacha.setSkin(id) }; };
   const petNode = (who: typeof petWho) => <PetView file={tama.file} apply={tama.apply} feed={tama.feed} who={who} coins={features.gacha ? gacha.file?.coins ?? 0 : undefined}
-    shop={features.gacha ? (view, onView, close) => <Shop view={view} onView={onView} file={gacha.file} draw={gacha.draw} equip={(id) => void gacha.equip(id)} skins={shopSkins()} onClose={close} /> : undefined} />;
+    shop={features.gacha ? (view, onView, close) => <Shop view={view} onView={onView} file={gacha.file} draw={gacha.draw} equip={(id) => void gacha.equip(id)} setSkin={(n) => void gacha.setSkin(n)} see={(id) => void gacha.see(id)} onClose={close} /> : undefined} />;
   const gacha = useGacha(env, tama.feed);
   useEffect(() => {
     const old = load<string>('officeSkin', '');
@@ -1018,10 +1054,12 @@ export default function App() {
   const inbox = buildInbox(allActs, taskEvents, new Set(dismissed), sessions, (s) => orchIds.has(s.id), groups.orchestrators.length > 1 ? (s) => orchDisplay(s) || assistant() : undefined).filter((i) => !(i.kind === 'blocked' && picking.has(i.target ?? '')));
   // 새 결정이 생기면: 종 아래 드롭다운이 저절로 펼쳐짐 + macOS 알림. 개수는 상단 바 종·Dock 뱃지
   // 직접 답하기 카드도 결정 대기함에 — 새로 기다리는 카드가 생기면 드롭다운도 펼친다(어느 화면·탭을 보든 보이게)
-  const directWait = direct.inboxCards.filter(needsAnswer).map((c) => c.id);
+  // 짝지은 다른 기기의 카드(ADR 0011) — 같은 종에, 새로 기다리면 같이 펼친다
+  const remote = useRemoteCards();
+  const directWait = [...direct.inboxCards.filter(needsAnswer).map((c) => c.id), ...remote.cards.map((x) => `${x.dev}:${x.card.id}`)];
   const prevDirect = useRef<Set<string> | null>(null);
   // 상태까지 열쇠에 — 꺼짐→기다림(세션이 목록에 다시 나타남)도 새 카드처럼 펼친다(2026-10-05 사고 모양)
-  const inboxKeys = `${inbox.map((i) => i.key).join('|')}#${direct.inboxCards.map((c) => `${c.id}:${c.state}`).join('|')}#${login.need?.since ?? ''}#${browserKeys}`;
+  const inboxKeys = `${inbox.map((i) => i.key).join('|')}#${direct.inboxCards.map((c) => `${c.id}:${c.state}`).join('|')}#${remote.keys}#${login.need?.since ?? ''}#${browserKeys}`;
   const prevLogin = useRef<number | null>(null);
   const prevBrowser = useRef('');
   useEffect(() => {
@@ -1034,13 +1072,13 @@ export default function App() {
     prevDirect.current = new Set(directWait);
     prevLogin.current = login.need?.since ?? null;
     // 결정 항목이 0이어도 카드가 남아 있으면 펼친 걸 닫지 않는다(popoverOpen 은 항목 0이면 닫는다)
-    setInboxOpen((o) => newDirect || popoverOpen(o, prev, inbox) || (o && (direct.inboxCards.length > 0 || login.need !== null || browserCount > 0)));
+    setInboxOpen((o) => newDirect || popoverOpen(o, prev, inbox) || (o && (direct.inboxCards.length + remote.cards.length > 0 || login.need !== null || browserCount > 0)));
     prevInbox.current = new Set(inbox.map((i) => i.key));
     if (fresh.length) {
       // 참모 물어봄·확인창은 위에서 따로 알린다 — 여기선 결정(task ask)만. 로그인 풀림은 useLogin 이 한 번에 묶어서
       for (const f of fresh.filter((x) => x.kind === 'decide' && bornAfter(x, APP_STARTED))) notifyOnce({ kind: 'decide', session: f.key, orch: false, title: tr(`결정 대기 — ${f.project}`, `Decision needed — ${f.project}`), body: f.text });
     }
-    void setBadge(inbox.length + direct.inboxCards.length + (login.need ? 1 : 0) + browserCount).catch(() => {});
+    void setBadge(inbox.length + direct.inboxCards.length + remote.cards.length + (login.need ? 1 : 0) + browserCount).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inboxKeys]);
   const answerTask = (item: InboxItem, note: string) =>
@@ -1393,7 +1431,7 @@ export default function App() {
       officeSlots,
       placedCells(ownedOf(g, 'furn'), g.placed), // 가구가 먼저 — 책상이 놓인 가구 칸을 건너뛴다
     ), ownedOf(g, 'furn'), g.placed);
-    const deco = { hat: g.equip.hat, window: g.equip.window, fx: g.equip.fx, desk: g.equip.desk, light: g.equip.light, title: g.equip.title, dance: g.equip.action === 'action.dance', coffee: g.equip.action === 'action.coffee', hasCat: (g.owned['friend.cat'] ?? 0) > 0 };
+    const deco = { hat: g.equip.hat, window: g.equip.window, fx: g.equip.fx, desk: g.equip.desk, light: g.equip.light, title: g.equip.title, dance: g.equip.action === 'action.dance', coffee: g.equip.action === 'action.coffee', action: g.equip.action, hasCat: (g.owned['friend.cat'] ?? 0) > 0, palIds: ownedOf(g, 'friend').filter((id) => id !== 'friend.cat') };
     // 반장 반응 재료 — 참모의 마지막 턴 끝 답(중간 멘트 제외), 머지만큼(10코인 이상) 들어오면 만세
     const head = orchActs[0];
     const last = head?.activity.reply;
@@ -1407,8 +1445,8 @@ export default function App() {
     const skin = skinOfFile(g);
     const editing = officeTab === 'furniture';
     const closeModal = () => setOfficeTab('office');
-    const modal = officeTab === 'gacha' || officeTab === 'dex' || officeTab === 'skins'
-      ? <Shop view={officeTab} onView={setOfficeTab} file={gacha.file} draw={gacha.draw} equip={(id) => void gacha.equip(id)} skins={shopSkins()} onClose={closeModal} />
+    const modal = officeTab === 'gacha' || officeTab === 'dex' || officeTab === 'deco'
+      ? <Shop view={officeTab} onView={setOfficeTab} file={gacha.file} draw={gacha.draw} equip={(id) => void gacha.equip(id)} setSkin={(n) => void gacha.setSkin(n)} see={(id) => void gacha.see(id)} onPlace={() => setOfficeTab('furniture')} onClose={closeModal} />
       : null;
     // 가구 끌어 놓기: 방 칸이면 거기(못 놓는 칸이면 제자리), 트레이 위에서 놓으면 창고
     const drop = (cell: [number, number] | null, e: PointerEvent) => {
@@ -1429,7 +1467,7 @@ export default function App() {
           }}
           deliver={(t) => delivery(stampSeen(sendTail, seenSends.current, t), room, (target) => findTarget(sessions, target)?.id, t)} onOpen={onOpen} />
         {editing
-          ? <FurnitureTray file={gacha.file} drag={furnPick} onGrab={setFurnPick} onDone={closeModal} pushed={room.furniture.filter((f) => f.pushed).map((f) => f.id)} />
+          ? <FurnitureTray file={gacha.file} drag={furnPick} onGrab={setFurnPick} onDone={closeModal} pushed={room.furniture.filter((f) => f.pushed).map((f) => f.id)} inRoom={room.furniture.map((f) => f.id)} />
           : <OfficeDock dim={dim} desks={room.desks.filter((d) => !d.boss && !d.empty)} sk={skinOf(skin)} notes={Object.fromEntries(allActs.map(({ session: s, activity: a }) => [s.id, a.reply?.ask?.q || noteOf(a.reply?.say ?? a.reply?.text)]))} onOpen={onOpen} />}
         {modal && <OfficeModal onClose={closeModal}>{modal}</OfficeModal>}
       </div>
@@ -1460,7 +1498,7 @@ export default function App() {
       const lastOrch = focusedBy.current.get('orch-col');
       const spaceOrch = groups.orchestrators.find((x) => x.id === lastOrch) ?? groups.orchestrators[0];
       // 채팅 칸 — 띠 바로 옆(띠 | 채팅 | 스페이스, 2026-10-12 사용자 시안 v2 Q1 A): 머리 = 보이는 참모 이름·맡은 일 + 그 창 단추(칸 머리 줄과 한 줄로), 폭 손잡이는 오른쪽 가장자리
-      const chatCol = groups.orchestrators.length > 0 && <div className="office-chats left" style={{ flex: `0 0 ${chatWidth}px`, width: chatWidth, ['--chat-k' as string]: fontSize / DEFAULT_FONT }}>
+      const chatCol = (groups.orchestrators.length > 0 || remoteChat) && <div className="office-chats left" style={{ flex: `0 0 ${chatWidth}px`, width: chatWidth, ['--chat-k' as string]: fontSize / DEFAULT_FONT }}>
             <Grip side="right" width={chatWidth} onWidth={setChatWidth} min={280} max={900} />
             {/* 채팅 카드 — 띠의 고른 프사와 참모 색 윤곽 하나로 잇는다(SpaceView ChatLink, 2026-10-12 사용자 201.png). 손잡이는 카드 밖(가장자리) */}
             <div className="och-card">
@@ -1475,6 +1513,18 @@ export default function App() {
             <ChatVoice.Provider value={features.voice ? { on: voice, toggle: () => turnVoice(!voice) } : null}>
             <SessionGrid column chat={chatView} extraOf={(s) => [...direct.extraOf(s), ...takeoverExtra(s), ...fileExtra(s)]} ctxOf={ctxOf} modelOf={modelOf} sessions={groups.orchestrators} onReorder={reorderOrchPanes} pinnedIds={groups.orchestrators.filter((o) => o.sessionId && orchPins.includes(o.sessionId)).map((o) => o.id)} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => orchDisplay(s) || assistant()} subOf={(s) => orchRoleOf(s.name)?.text} {...gridFocus('orch-col')} onStop={(s, why) => closeSession(s, why)} layout={layoutOf('orch-col')} dispatch={dispatchFor('orch-col')} onMessage={onMessage} memo={memo} headSlot={chatHeadSlot} chatNotice={wakeNote} />
             </ChatVoice.Provider>
+            {/* 다른 기기 참모(ADR 0011) — 내 참모 칸은 붙인 채(터미널 붙임이 안 끊기게) 그 위를 같은 모양 칸으로 덮는다 */}
+            {remoteChat && (
+              <div className="och-remote">
+              <div className="space-chat-head">
+                <span className="sch-who">
+                  <span className="sch-tx"><b className="sch-name">{remoteChat.name}</b><span className="sch-role">{tr(`원격 · ${remoteChat.devName}`, `Remote · ${remoteChat.devName}`)}</span></span>
+                  <span className="sch-ctl"><IconButton size="s" label={tr('내 참모로 돌아가기', 'Back to my assistants')} onClick={() => setRemoteChat(null)}><IconClose /></IconButton></span>
+                </span>
+              </div>
+                <RemoteChat key={`${remoteChat.dev}:${remoteChat.agent}`} target={remoteChat} fontSize={fontSize} />
+              </div>
+            )}
             </div>
           </div>;
       main = (
@@ -1498,7 +1548,7 @@ export default function App() {
             stopped={resumable(stopped, sessions, pending)} orchCwd={env?.orchestratorCwd ?? ''}
             tasks={{ orphaned: splitCards(localCards, Date.now()).orphaned, known: knownSessions, canResume: (c) => !!orphanSession(c.target, stopped), onResume: resumeOrphan, onFinish: finishOrphan }}
             onResume={(x) => { markPending(x.sessionId); markResuming(x.sessionId); void resumeSession(x.cwd, x.sessionId, x.id).then(() => onMessage(null), (e: unknown) => onMessage(tr(`이어서 띄우기 실패: ${String(e)}`, `Resume failed: ${String(e)}`))); }} onWakeOrch={resumeFromHome}
-            onChatTab={(id) => { focusedBy.current.set('orch-col', id); setChatTab(id); setFocusReq((r) => ({ key: 'orch-col', id, n: (r?.n ?? 0) + 1 })); }}
+            onChatTab={(id) => { setRemoteChat(null); focusedBy.current.set('orch-col', id); setChatTab(id); setFocusReq((r) => ({ key: 'orch-col', id, n: (r?.n ?? 0) + 1 })); }}
             helpers={groups.helpers}
             loose={groups.loose}
             ctxOf={ctxOf} onAddProject={config && env ? () => void addProjectFolder() : undefined}
@@ -1712,7 +1762,7 @@ export default function App() {
         }} />
       );
     })()}
-    <TopBar claude={bin} fontSize={fontSize} load={loadMon.sys ? { level: level(loadMon.sys), load1: loadMon.sys.load1, cores: loadMon.sys.cores, swapGb: loadMon.sys.swapUsedMb / 1024 } : undefined} loadOn={selected.kind === 'load'} onLoad={() => setSelected({ kind: 'load' })} features={features} usage={barUsage} usageAge={acctUsage?.age ?? null} account={topLabel(accounts)} accounts={accounts} onSettings={() => setSettingsOpen(true)} today={today} tama={{ file: tama.file, widgetShown: tama.widgetShown, onToggle: () => widgetToggleRef.current() }} replayOn={spaceShown ? replayOpen : selected.kind === 'replay'} onReplay={() => replayRef.current('toggle')} reader={readerOpen} onReader={() => setReaderOpen((o) => !o)} office={space ? spaceOffice : office} onOffice={() => { if (space) { setSelected({ kind: 'orchestrator' }); setOfficeReq(spaceShown ? 'toggle' : 'open'); return; } setOffice(!office); setSelected({ kind: 'orchestrator' }); }} space={space} onView={(chat) => { setSpace(chat); setSelected({ kind: 'orchestrator' }); }} inboxCount={inbox.length + direct.inboxCards.length + (login.need ? 1 : 0) + browserCount} onInbox={() => setInboxOpen((o) => !o)} harnitor={harnitorFloat || (spaceShown && harnitorOpen)} onHarnitor={() => harnitorRef.current('toggle')} tools={spaceShown ? toolsOpen : toolsFloat} onTools={() => toolsRef.current('toggle')} review={{ on: spaceShown ? reviewOpen : selected.kind === 'review', confirm: reviewConfirm }} onReview={() => reviewRef.current('toggle')} voice={voice} onVoice={() => turnVoice(!voice)} />
+    <TopBar claude={bin} fontSize={fontSize} load={loadMon.sys ? { level: level(loadMon.sys), load1: loadMon.sys.load1, cores: loadMon.sys.cores, swapGb: loadMon.sys.swapUsedMb / 1024 } : undefined} loadOn={selected.kind === 'load'} onLoad={() => setSelected({ kind: 'load' })} features={features} usage={barUsage} usageAge={acctUsage?.age ?? null} account={topLabel(accounts)} accounts={accounts} onSettings={() => setSettingsOpen(true)} today={today} tama={{ file: tama.file, widgetShown: tama.widgetShown, onToggle: () => widgetToggleRef.current() }} replayOn={spaceShown ? replayOpen : selected.kind === 'replay'} onReplay={() => replayRef.current('toggle')} reader={readerOpen} onReader={() => setReaderOpen((o) => !o)} office={space ? spaceOffice : office} onOffice={() => { if (space) { setSelected({ kind: 'orchestrator' }); setOfficeReq(spaceShown ? 'toggle' : 'open'); return; } setOffice(!office); setSelected({ kind: 'orchestrator' }); }} space={space} onView={(chat) => { setSpace(chat); setSelected({ kind: 'orchestrator' }); }} inboxCount={inbox.length + direct.inboxCards.length + remote.cards.length + (login.need ? 1 : 0) + browserCount} onInbox={() => setInboxOpen((o) => !o)} harnitor={harnitorFloat || (spaceShown && harnitorOpen)} onHarnitor={() => harnitorRef.current('toggle')} tools={spaceShown ? toolsOpen : toolsFloat} onTools={() => toolsRef.current('toggle')} review={{ on: spaceShown ? reviewOpen : selected.kind === 'review', confirm: reviewConfirm }} onReview={() => reviewRef.current('toggle')} voice={voice} onVoice={() => turnVoice(!voice)} />
     <div className="app">
       {/* 채팅 뷰에선 세션 사이드바 대신 스페이스 메뉴(오케스트레이터·프로젝트 세션)가 ⌘B 자리 — 2026-09-30 사용자 */}
       {sidebarOpen && !spaceShown && <Sidebar
@@ -1825,7 +1875,7 @@ export default function App() {
       return <ToolsFloat root={groups.orchestrators[0]?.cwd || env?.orchestratorCwd || roots[0]?.root || ''} roots={roots} sessions={sessions}
         computerUse={{ all: features.computerUse, setAll: (on) => saveFeature('computerUse', on) }} onClose={() => setToolsFloat(false)} />;
     })()}
-    <InboxPopover open={inboxOpen} onClose={() => setInboxOpen(false)} items={inbox} direct={direct.inboxNode} directCount={direct.inboxCards.length} blockedWhy={(it) => replyBlocked(it, sessions)} onReply={replyItem} onOpen={openTarget} onDismiss={dismissItem} login={login.need ? <LoginCard need={login.need} claude={bin} fontSize={fontSize} /> : undefined} browser={browserNeeds.node || popupCards.length ? <>{browserNeeds.node}<PopupCards lives={popupCards} nameOf={(l) => askName(l, sessions)} /></> : undefined} browserCount={browserCount} />
+    <InboxPopover open={inboxOpen} onClose={() => setInboxOpen(false)} items={inbox} direct={direct.inboxNode || remote.node ? <>{direct.inboxNode}{remote.node}</> : null} directCount={direct.inboxCards.length + remote.cards.length} blockedWhy={(it) => replyBlocked(it, sessions)} onReply={replyItem} onOpen={openTarget} onDismiss={dismissItem} login={login.need ? <LoginCard need={login.need} claude={bin} fontSize={fontSize} /> : undefined} browser={browserNeeds.node || popupCards.length ? <>{browserNeeds.node}<PopupCards lives={popupCards} nameOf={(l) => askName(l, sessions)} /></> : undefined} browserCount={browserCount} />
     </div>
     </OrchActionsProvider>
   );

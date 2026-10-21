@@ -3,7 +3,8 @@
 # sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
 [ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
 for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
-echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
+# 파이썬 없는 깨끗한 PC — 카드만은 떠야 해서 sh 로 같은 기록을 쓰는 길로(direct_nopy.sh)
+exec sh "$(dirname "$0")/direct_nopy.sh" "$@"
 ':'''
 __doc__ = """Ask the human directly — a card in the app (desktop chat and phone). For a background session that needs the person's own
 approval or input: payment, sending to real users, deleting or migrating production data, login/2FA/captcha.

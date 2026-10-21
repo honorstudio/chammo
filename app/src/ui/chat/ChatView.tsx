@@ -15,7 +15,7 @@ import type { LinkState } from '../../domain/attachExit';
 import { LINK_WAIT } from '../../domain/paneLinks';
 import { absorbedAt, absorbedLeft, againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, mineForLeftover, newPending, pendAct, pendingState, resent, waitingOf, type PendingState, type QueueState } from '../../domain/chatQueue';
 import { mdToHtml } from '../md';
-import { openTarget, readSessionTasks, readTranscript, type SessionTask } from '../../data/tauri';
+import { openTarget, readSessionTasks, readTranscript, type SessionTask, type TranscriptChunk } from '../../data/tauri';
 import { modKey } from '../../domain/keys';
 import { docUrl, IS_WIN } from '../../domain/reader';
 import { DROP_EVENT, DROP_PATHS_EVENT } from '../fileDrop';
@@ -66,7 +66,11 @@ const drafts = draftStore((() => { try { return window.localStorage; } catch { r
  * 스페이스 모드의 채팅 보기(2026-09-30 사용자). 터미널(TUI)은 뒤에 그대로 붙어 있고, 이건 그 위에 덮는 판이다.
  * 읽기 = 대화 기록 이어 읽기, 쓰기 = 그 터미널 입력칸에 붙여넣고 Enter(send). 멈추기 = Esc
  */
-export function ChatView({ extra = [], fontSize, sessionId, state, send, interrupt, rawKeys, onTerminal, onInputFocus, focusRef, screen, submitTerminal, pasteImage, voiceStop = 0, sendQueuedNow, typeOnly, clearTerminal, paneId, ctx, modelInfo, pickModel, cwd, locker, notice, link }: {
+export function ChatView({ extra = [], fontSize, sessionId, state, send, interrupt, rawKeys, onTerminal, onInputFocus, focusRef, screen, submitTerminal, pasteImage, voiceStop = 0, sendQueuedNow, typeOnly, clearTerminal, paneId, ctx, modelInfo, pickModel, cwd, locker, notice, link, remote = false, readFn }: {
+  /** 다른 기기 참모 채팅(ADR 0011) — 뒤 터미널이 없다: 터미널·모델·/ 자동완성·보관함·그림 붙이기·멈춤·@ 멘션을 끈다 */
+  remote?: boolean;
+  /** 대화 기록 읽기 — 원격이면 그 기기 폰 서버(remoteApi), 없으면 이 기기 */
+  readFn?: (sessionId: string, from?: number) => Promise<TranscriptChunk>;
   /** 대화 사이에 시각 순으로 끼울 것 — 직접 답하기 카드(useDirectCards)·보여 준 파일 카드(clip = 그려진 첫 말보다 앞이면 안 그림) */
   extra?: { ts: string; key: string; pin?: boolean; clip?: boolean; node: React.ReactNode }[];
   /** 글자 크기(⌘+/⌘−) — 바뀌면 입력칸 높이를 다시 잰다(채팅 글자가 이걸 따라 커진다, space.css --chat-k) */
@@ -129,11 +133,12 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const [slashOff, setSlashOff] = useState<string | null>(null); // Esc 로 닫은 그 글자 — 글자가 바뀌면 다시 뜬다
   useEffect(() => {
     let alive = true;
+    if (remote) return;
     void invoke<SlashItem[]>('slash_commands', { cwd: cwd ?? null }).then((x) => { if (alive) setSlashAll([...builtinSlash(), ...x]); }).catch(() => {});
     return () => { alive = false; };
-  }, [cwd]);
+  }, [cwd, remote]);
   const slashQ = slashQuery(draft, caret);
-  const slashList = slashQ !== null && slashOff !== draft ? matchSlash(slashAll, slashQ) : [];
+  const slashList = !remote && slashQ !== null && slashOff !== draft ? matchSlash(slashAll, slashQ) : [];
   const slashOpen = slashList.length > 0 && !(slashList.length === 1 && slashList[0]!.name === slashQ);
   useEffect(() => { setSlashSel(0); }, [slashQ]);
   const slashFill = (name: string) => { const v = completeSlash(draft, name); setDraft(v); setCaret(name.length + 2); requestAnimationFrame(() => input.current?.setSelectionRange(name.length + 2, name.length + 2)); };
@@ -197,7 +202,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   // @ = 참모 멘션 — 띠 순서, 프사·이름·맡은 일, 쉬는 참모는 흐리게(지금 채팅 주인은 빼고). # 과 둘 다 걸리면 커서에 가까운 쪽
   const labels = useOrchLabels();
   const roles = useOrchRoleData();
-  const who = useMemo(() => mentionRoster(orchRoster(), paneId, orchDisplay, (n) => orchRoleOf(n)?.text), [labels, roles, paneId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const who = useMemo(() => (remote ? [] : mentionRoster(orchRoster(), paneId, orchDisplay, (n) => orchRoleOf(n)?.text)), [labels, roles, paneId, remote]); // eslint-disable-line react-hooks/exhaustive-deps
   const hashQ0 = slashQ === null ? refQuery(draft, caret) : null;
   const atQ0 = slashQ === null ? mentionQuery(draft, caret) : null;
   const atLater = draft.slice(0, caret).lastIndexOf('@') > draft.slice(0, caret).lastIndexOf('#');
@@ -296,9 +301,10 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       if (busy) return; // 앞 물음이 안 끝났으면 겹쳐 묻지 않는다(줄이 두 번 붙지 않게)
       busy = true;
       try {
-        const c = await readTranscript(sessionId, next);
+        const c = await (readFn ?? readTranscript)(sessionId, next);
         if (!alive) return;
-        next = c.next;
+        // 0 이면 다음에도 '처음'으로(끝 1MB 부터) — from 0 은 상한 없이 기록 전체를 읽는다(처음 읽기를 못 했을 때)
+        next = c.next || undefined;
         if (c.reset) { setItems(parseChat(c.text)); setQueue(applyQueueOps(emptyQueue, c.text)); }
         else if (c.text) { setItems((prev) => appendChat(prev, c.text)); setQueue((q) => applyQueueOps(q, c.text)); }
       } catch {
@@ -309,13 +315,13 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     void tick();
     const stop = every(() => void tick(), POLL_MS);
     return () => { alive = false; stop(); };
-  }, [sessionId]);
+  }, [sessionId, readFn]);
 
   // 할 일 목록(터미널의 "N tasks …") — 2초마다. 접기·펴기는 이 컴퓨터에 기억
   const [tasks, setTasks] = useState<SessionTask[]>([]);
   useEffect(() => {
     setTasks([]);
-    if (!sessionId) return;
+    if (!sessionId || remote) return;
     let alive = true;
     const tick = () => void readSessionTasks(sessionId).then((t) => { if (alive) setTasks((p) => (JSON.stringify(p) === JSON.stringify(t) ? p : t)); }).catch(() => {});
     tick();
@@ -345,7 +351,12 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     if (d != null) { const now = Date.now(); setPending((ps) => ps.map((p) => (p.at >= d - 1000 && now - p.at < LINK_WAIT ? resent(p, now) : p))); }
   }, [link]);
   const waiting = useMemo(() => waitingOf(pending, items, Date.now(), queue), [pending, items, queue]);
-  useEffect(() => { if (waiting.length !== pending.length) setPending(waiting); }, [waiting, pending.length]);
+  // 기록에 들어간 것만 뺀다(그때 상태에서) — 렌더 때 계산한 waiting 으로 통째로 바꾸면 그사이 더한 새 말풍선이 지워졌다(2026-10-21 리뷰)
+  useEffect(() => {
+    if (waiting.length === pending.length) return;
+    const gone = new Set(pending.filter((p) => !waiting.includes(p)));
+    setPending((ps) => ps.filter((p) => !gone.has(p)));
+  }, [waiting, pending]);
   // 일하는 도중 흡수된 말은 기록 줄이 끝내 안 읽혀도 몇 초 뒤 지운다(domain/chatQueue ABSORB_GRACE) — 그때 한 번 더 센다
   useEffect(() => {
     const left = absorbedLeft(pending, queue, Date.now());
@@ -670,9 +681,9 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       // 창 아무 데나 눌러도 입력칸으로 — 쌓기 보기에서 급할 때 입력칸 찾아 누르기 어려웠다(2026-09-30 사용자). 글 고르기·버튼·링크는 그대로
       onMouseUp={(e) => { const t = e.target as HTMLElement; if (clickFocusesInput({ interactive: !!t.closest('button, a, input, textarea, select, summary, [contenteditable="true"], [role="button"]'), selected: window.getSelection()?.toString() ?? '' })) input.current?.focus(); }}
       // 스페이스에서 끌어온 파일 — 끌어다 놓기와 똑같이 붙인다(터미널 입력칸에 경로 + #file·#img 이름표)
-      onDragOver={(e) => { if (paneId && e.dataTransfer.types.includes(PATH_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; if (!dropHot) setDropHot(true); } }}
+      onDragOver={(e) => { if (paneId && !remote && e.dataTransfer.types.includes(PATH_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; if (!dropHot) setDropHot(true); } }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropHot(false); }}
-      onDrop={(e) => { const p = e.dataTransfer.getData(PATH_MIME); setDropHot(false); if (p && paneId) { e.preventDefault(); attachToChat(paneId, [p]); requestAnimationFrame(() => input.current?.focus()); } }}>
+      onDrop={(e) => { const p = e.dataTransfer.getData(PATH_MIME); setDropHot(false); if (p && paneId && !remote) { e.preventDefault(); attachToChat(paneId, [p]); requestAnimationFrame(() => input.current?.focus()); } }}>
       {tasks.length > 0 && (() => {
         const c = taskCounts(tasks);
         const now = tasks.find((t) => t.status === 'in_progress');
@@ -748,7 +759,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
           {compacting ? (
             <span className="chat-compact"><span className="spin" />{tr('대화 압축 중 — 앞 대화를 요약하고 있어요', 'Compacting — summarizing earlier conversation')}</span>
           ) : state === 'blocked' && !(dialog && rawKeys) ? (
-            <><span>{tr('터미널에서 선택을 기다리고 있어요', 'Waiting for a choice in the terminal')}</span><IconButton className="chat-ic-pill" label={tr('터미널로 보기', 'Show terminal')} onClick={onTerminal}><IconTerminal /></IconButton></>
+            <><span>{tr('터미널에서 선택을 기다리고 있어요', 'Waiting for a choice in the terminal')}</span>{!remote && <IconButton className="chat-ic-pill" label={tr('터미널로 보기', 'Show terminal')} onClick={onTerminal}><IconTerminal /></IconButton>}</>
           ) : busy ? (
             <><span className="spin" /><span>{tr('작업 중', 'Working')}{lastTool ? ` · ${lastTool}` : ''}</span></>
           ) : null}
@@ -879,11 +890,12 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
             // 보내는 중인 말이 있다는 것만으론 안 넘긴다. 연타(1.5초 안)는 세션 쪽이 거른다 — 그래서 상태가 working 이면 넘겨도 두 번이 안 된다
             else if (escStops(e, true)) { e.preventDefault(); interrupt(); }
             // 터미널에서처럼 Ctrl+V = 클립보드 그림(맥만 — 윈도우 Ctrl+V 는 글 붙여넣기, 그림은 onPaste 가 받는다)
-            else if (!IS_WIN && e.ctrlKey && !e.metaKey && (e.key === 'v' || e.key === 'ㅍ')) { e.preventDefault(); pasteImage(); }
+            else if (!remote && !IS_WIN && e.ctrlKey && !e.metaKey && (e.key === 'v' || e.key === 'ㅍ')) { e.preventDefault(); pasteImage(); }
           }}
           onPaste={(e) => {
             // ⌘V 인데 클립보드에 그림이 있으면 글 대신 그림을 터미널 입력칸으로 — Claude 가 [Image #n] 으로 받는다
             // 웹뷰가 클립보드 그림을 파일로 안 넘겨줄 때가 있다 — 붙일 글이 없으면 그림으로 보고 터미널로(아무것도 안 들어갔다, 2026-09-30)
+            if (remote) return; // 원격엔 그림을 넘길 터미널이 없다 — 글만
             const item = [...e.clipboardData.items].find((i) => i.kind === 'file' || i.type.startsWith('image/'));
             const file = item?.getAsFile() ?? null;
             if (file || !e.clipboardData.getData('text/plain')) {
@@ -897,7 +909,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
         </div>
         {voice && <button className={`btn chat-voice${voice.on ? ' on' : ''}`} onClick={voice.toggle} aria-label={tr('음성 모드', 'Voice mode')} aria-pressed={voice.on}
           title={voice.on ? tr(`음성 모드 켜짐 — ${assistant()}가 답하면 소리로 읽어줘 (눌러서 끄기)`, `Voice mode on — ${assistant()}'s replies are read aloud (click to turn off)`) : tr(`음성 모드 — ${assistant()} 답을 소리로 (눌러서 켜기)`, `Voice mode — read ${assistant()}'s replies aloud (click to turn on)`)}><IconSpeaker /></button>}
-        {ctl.stop && <button className="btn chat-stop" onClick={interrupt} aria-label={tr('멈춤', 'Stop')} title={tr('멈춤 — Esc 를 보내 하던 일을 멈춘다', 'Stop — send Esc to interrupt')}><IconStop /></button>}
+        {ctl.stop && !remote && <button className="btn chat-stop" onClick={interrupt} aria-label={tr('멈춤', 'Stop')} title={tr('멈춤 — Esc 를 보내 하던 일을 멈춘다', 'Stop — send Esc to interrupt')}><IconStop /></button>}
         <button className="btn chat-send" disabled={!ctl.canSend} onClick={() => submit()} aria-label={tr('보내기', 'Send')} title={tr('보내기 (Enter) · 끊고 보내기 (⌘Enter)', 'Send (Enter) · Interrupt & send (⌘Enter)')}><IconEnter /></button>
       </div>
     </div>

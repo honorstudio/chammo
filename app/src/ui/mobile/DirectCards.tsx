@@ -1,6 +1,7 @@
 // 폰 — 이 참모 채팅 끝에 직접 답하기 카드(데스크톱과 같은 카드·같은 문지기). 맥이 그 세션 입력칸에 사람 말로 친다
 import { useMemo, useRef, useState } from 'react';
-import { directAnswer, readDirect } from '../../data/web';
+import { directAnswer, peerCardAnswer, readDirect, readPeerCards } from '../../data/web';
+import { remoteCards, type PeerCardsRow } from '../../domain/remoteCards';
 import { needsLook, placeDirect, stepSeen, type DirectCard, type Seen } from '../../domain/directAsk';
 import type { Session } from '../../domain/session';
 import type { TaskEvent } from '../../domain/tasks';
@@ -35,6 +36,24 @@ export function DirectCards({ mine: all, sessions }: { mine: DirectCard[]; sessi
         if (!needsLook(c)) return <div key={c.id} className="dc-row"><DirectLine c={c} name={s?.name || c.from} onDismiss={() => tidy.hide(c)} /></div>;
         return <div key={c.id} className="dc-row"><DirectCardView c={c} name={s?.name || c.from} project={s?.project ?? undefined} compact={picked ? c.id !== open : c.id !== first} onOpen={() => setOpen(c.id)} onAnswer={directAnswer} onDismiss={() => tidy.hide(c)} /></div>;
       })}
+    </div>
+  );
+}
+
+/** 짝지은 다른 기기의 카드(ADR 0011) — 맨 앞 참모 채팅 끝에. 이 맥이 사람 길로 그 기기에 넘겨 '사람이 <이 맥>에서 원격으로 눌렀어'가 된다 */
+export function PeerCards() {
+  const rows = usePoll<PeerCardsRow[]>(() => readPeerCards().catch(() => []), 4000, []);
+  const [open, setOpen] = useState<string | null>(null);
+  const cards = remoteCards(rows, Date.now());
+  if (!cards.length) return null;
+  const key = (x: (typeof cards)[number]) => `${x.dev}:${x.card.id}`;
+  return (
+    <div className="m-direct">
+      {cards.map((x) => (
+        <div key={key(x)} className="dc-row">
+          <DirectCardView c={x.card} name={x.name} compact={key(x) !== (open ?? key(cards[0]!))} onOpen={() => setOpen(key(x))} onAnswer={peerCardAnswer(x.dev)} />
+        </div>
+      ))}
     </div>
   );
 }

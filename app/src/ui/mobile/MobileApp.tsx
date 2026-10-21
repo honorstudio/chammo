@@ -21,7 +21,7 @@ import { Composer } from './Composer';
 import { ModelChipRow, VoiceMode } from './ComposerExtras';
 import { usePhoneVoice } from './usePhoneVoice';
 import { MessageList } from './MessageList';
-import { DirectCards, usePhoneDirect } from './DirectCards';
+import { DirectCards, PeerCards, usePhoneDirect } from './DirectCards';
 import { needsAnswer } from '../../domain/directAsk';
 import { lastLine } from './peek';
 import { OrchDash } from './OrchDash';
@@ -128,6 +128,7 @@ function OrchSpace({ orch, orchs, sessions, events, waiting, waitSent, ask, ctx,
         <MessageList files={files} onOpenFile={setFileOpen} items={chat.items} earlier={chat.earlier} loading={chat.loading} stale={chat.stale} out={chat.out} onRetry={chat.retry} onDrop={chat.drop} live={chat.live} ask={ask} who={<MAvatar orch={orch} orchs={orchs} size={28} asking />} />
         {/* 직접 답하기 카드 — 맡긴 세션이 본인 승인을 기다릴 때(채팅 끝, 입력칸 바로 위) */}
         <DirectCards mine={direct} sessions={sessions} />
+        {orch.id === orchs[0]?.id && <PeerCards />}
       </ChatSheet>
       {fileOpen && <FileView path={fileOpen.path} title={titleOf(fileOpen.path)} at={fileOpen.at} orch={orch.id} onClose={() => setFileOpen(null)} />}
       {picker && (

@@ -992,6 +992,8 @@ html.cv-dragging, html.cv-dragging * { cursor: grabbing !important; user-select:
    왼쪽은 띠에 붙어 고른 프사 탭이 카드로 이어진다. 윤곽선은 카드가 아니라 스페이스 위 ChatLink 한 줄(탭 + 카드) — 카드엔 테두리 없음 */
 .space-mode .office-chats.left { background: var(--panel); padding: 6px 6px 6px 0; }
 .och-card { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; background: var(--surface); }
+/* 다른 기기 참모 채팅 — 내 참모 칸 위를 같은 모양으로 덮는다(아래 칸은 붙인 채) */
+.och-remote { position: absolute; inset: 0; z-index: calc(var(--z-base) + 5); display: flex; flex-direction: column; background: var(--surface); }
 /* 끌어 오는 중 — 채팅 칸 위 어디든 칸 전체 강조(받을 세션 참모 색 --drop, chatDrop). 점선 둘레 + 옅은 면, 누르기 통과 */
 .och-card.drop-hot::after, .office-chats.drop-hot::after { content: ""; position: absolute; inset: 6px; border-radius: 10px; border: 2px dashed var(--drop, var(--accent)); background: color-mix(in srgb, var(--drop, var(--accent)) 7%, transparent); pointer-events: none; z-index: calc(var(--z-base) + 9); }
 .och-card.drop-hot .chat-input { border-color: var(--drop, var(--accent)); }

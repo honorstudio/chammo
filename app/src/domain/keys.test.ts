@@ -119,3 +119,19 @@ describe('화면 표기 — 파인더·Finder 를 윈도우 탐색기로', () =>
     expect(i18n.tr('파인더에서 보기', 'Show in Finder')).toBe('파인더에서 보기');
   });
 });
+
+// 2026-10-22 사용자 제보(윈도우 Ctrl +/- 로 채팅 글자가 안 바뀜) — 시험 PC 진짜 키로 재 보니 숫자패드 +/- 는 code 가 NumpadAdd·NumpadSubtract 라
+// winToMac 가 버려 아무 일도 없었다(맥은 메뉴 ⌘+ 가 받는다). 위쪽 줄 Ctrl+= / Ctrl+- / Ctrl+0 은 원래 됐다
+describe('윈도우 숫자패드 Ctrl + / - / 0 도 글자 크기', () => {
+  it('숫자패드', () => {
+    expect(shortcutFor(k('+', 'NumpadAdd', { ctrl: true }), true)).toEqual({ type: 'font', delta: 1 });
+    expect(shortcutFor(k('-', 'NumpadSubtract', { ctrl: true }), true)).toEqual({ type: 'font', delta: -1 });
+    expect(shortcutFor(k('0', 'Numpad0', { ctrl: true }), true)).toEqual({ type: 'fontReset' });
+  });
+  it('원래 되던 위쪽 줄은 그대로, Alt·Shift 섞이면 안 잡는다', () => {
+    expect(shortcutFor(k('=', 'Equal', { ctrl: true }), true)).toEqual({ type: 'font', delta: 1 });
+    expect(shortcutFor(k('-', 'Minus', { ctrl: true }), true)).toEqual({ type: 'font', delta: -1 });
+    expect(shortcutFor(k('+', 'NumpadAdd', { ctrl: true, alt: true }), true)).toBeNull();
+    expect(winToMac(k('+', 'NumpadAdd', {}))).toBeNull(); // Ctrl 없으면 그냥 글자
+  });
+});

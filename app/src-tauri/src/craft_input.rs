@@ -51,20 +51,37 @@ impl Conn {
         self.id += 1;
         req["id"] = json!(self.id);
         writeln!(self.w, "{req}").map_err(|e| e.to_string())?;
-        let mut line = String::new();
-        if self.r.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
-            return Err("closed".into());
-        }
-        let v: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
-        if v["ok"].as_bool() == Some(true) {
-            Ok(v["result"].clone())
-        } else {
-            Err(v["error"].as_str().unwrap_or("error").to_string())
-        }
+        // 시간 초과로 버린 앞 요청의 늦은 답이 먼저 올 수 있다 — 답 id 가 이번 id 가 아니면 버리고 다음 줄(안 그러면 답이 하나씩 밀려 끌기가 엉뚱한 자리에)
+        let v = loop {
+            let mut line = String::new();
+            if self.r.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
+                return Err("closed".into());
+            }
+            let v: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+            if v["id"].as_u64().is_none_or(|id| id == self.id) {
+                break v;
+            }
+        };
+        answer(&v)
     }
 
     pub fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
         self.send(json!({"method": method, "params": params}))
+    }
+}
+
+/// 답 한 줄 → 결과. 참모 PDF 는 JSON-RPC 2.0 모양(ok 없음, 오류는 {code, message}) — scripts/craft _send 와 같은 규칙
+fn answer(v: &Value) -> Result<Value, String> {
+    if v.get("jsonrpc").is_some() {
+        return match v.get("error").filter(|e| !e.is_null()) {
+            Some(e) => Err(e["message"].as_str().map(str::to_string).unwrap_or_else(|| e.to_string())),
+            None => Ok(v["result"].clone()),
+        };
+    }
+    if v["ok"].as_bool() == Some(true) {
+        Ok(v["result"].clone())
+    } else {
+        Err(v["error"].as_str().unwrap_or("error").to_string())
     }
 }
 
@@ -256,6 +273,41 @@ mod tests {
         assert!(translate(&mut c, r#"{"method":"app.save","params":{"path":"/x.psd"}}"#).is_err(), "입력 아닌 명령은 막는다");
         let (m, p) = translate(&mut c, r#"{"method":"ui.window.attach","params":{"on":false}}"#).unwrap();
         assert_eq!((m.as_str(), p["on"].as_bool()), ("ui.window.attach", Some(false)), "붙이기(시험)는 그대로");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 참모_PDF_의_JSON_RPC_답도_읽는다() {
+        // pdfcraft 는 auth 답부터 {"jsonrpc":"2.0","id":1,"result":…} — ok 가 없어 연결부터 'error' 로 실패했다(개입 입력·칸 그림 전부)
+        assert_eq!(answer(&json!({"jsonrpc": "2.0", "id": 1, "result": {"a": 1}})), Ok(json!({"a": 1})));
+        assert_eq!(answer(&json!({"jsonrpc": "2.0", "id": 1, "result": null})), Ok(Value::Null));
+        assert_eq!(answer(&json!({"jsonrpc": "2.0", "id": 2, "error": {"code": -32000, "message": "no document"}})), Err("no document".into()));
+        assert_eq!(answer(&json!({"id": 3, "ok": false, "error": "unauthorized"})), Err("unauthorized".into()));
+    }
+
+    #[test]
+    fn 시간_초과로_버린_요청의_늦은_답은_다음_답으로_안_읽는다() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (s, _) = l.accept().unwrap();
+            let mut w = s.try_clone().unwrap();
+            let mut r = BufReader::new(s);
+            let mut line = String::new();
+            r.read_line(&mut line).unwrap(); // 1번 — 늦게(받는 쪽은 이미 포기)
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            line.clear();
+            r.read_line(&mut line).unwrap(); // 2번
+            let _ = writeln!(w, "{}", json!({"id": 1, "ok": true, "result": "late"}));
+            let _ = writeln!(w, "{}", json!({"id": 2, "ok": true, "result": "second"}));
+        });
+        let d = std::env::temp_dir().join(format!("craft-in3-{}", std::process::id()));
+        state(&d, "gridcraft", port, "");
+        let mut c = Conn::open(&d, "gridcraft").unwrap();
+        c.timeout(std::time::Duration::from_millis(150));
+        assert!(c.call("ui.click", json!({})).is_err(), "1번은 시간 초과");
+        c.timeout(std::time::Duration::from_secs(5));
+        assert_eq!(c.call("ui.inspect", json!({})), Ok(json!("second")));
         let _ = std::fs::remove_dir_all(&d);
     }
 }

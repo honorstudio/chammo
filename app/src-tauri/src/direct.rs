@@ -10,7 +10,7 @@ use std::sync::Mutex;
 static ANSWER_LOCK: Mutex<()> = Mutex::new(());
 const MAX_TEXT: usize = 2000;
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[derive(Deserialize, serde::Serialize, Debug, Clone, PartialEq)]
 #[serde(tag = "pick", rename_all = "lowercase")]
 pub enum Pick {
     Yes,
@@ -47,7 +47,9 @@ pub fn check(log: &str, id: &str) -> Result<Value, Refuse> {
         if r["id"] == id && (r["type"] == "done" || r["type"] == "cancel") {
             return Err(Refuse::Closed);
         }
-        if r["type"] == "ask" && r["from"] == ask["from"] {
+        // 연결 요청 카드는 기기마다 따로 — 둘이 같이 오면 앞 카드가 '지난 질문'이 돼 눌러도 안 됐다(같은 기기 새 요청은 peer_ask 가 옛 카드를 닫는다).
+        // 화면(domain/directAsk isLink)과 같은 규칙
+        if r["type"] == "ask" && r["from"] == ask["from"] && ask["kind"] != LINK_KIND {
             return Err(Refuse::Superseded);
         }
     }
@@ -66,7 +68,13 @@ pub fn compose(ask: &Value, pick: &Pick) -> Result<(String, Value), Refuse> {
 pub fn compose_by(ask: &Value, pick: &Pick, by: &str) -> Result<(String, Value), Refuse> {
     let id = ask["id"].as_str().unwrap_or_default();
     let tg = by.starts_with("telegram:");
-    let (ko_at, en_at) = if tg { ("텔레그램 카드에서", "on the Telegram card") } else { ("앱 카드에서", "on the app card") };
+    // 원격(peer_human) — 짝지은 다른 기기 앱 화면·그 기기 폰에서 사람이 눌렀다
+    let remote = by.strip_prefix("remote:").map(|d| d.chars().filter(|c| !c.is_control()).take(40).collect::<String>());
+    let (ko_at, en_at) = match (&remote, tg) {
+        (Some(d), _) => (format!("{d}에서 원격으로 앱 카드에서"), format!("on the app card, remotely from {d}")),
+        (None, true) => ("텔레그램 카드에서".into(), "on the Telegram card".into()),
+        (None, false) => ("앱 카드에서".into(), "on the app card".into()),
+    };
     let tail = |how: &str| crate::i18n::tr(&format!(" — 직접 답(카드 {id}) · 사람이 {ko_at} {how}"), &format!(" — direct answer (card {id}) · the person {how} {en_at}")).to_string();
     let pressed = crate::i18n::tr("눌렀어", "pressed it");
     let label = |k: &str| ask[k].as_str().unwrap_or_default().to_string();
@@ -300,6 +308,14 @@ mod tests {
     }
 
     #[test]
+    fn 연결_요청_카드_둘은_서로_지난_질문이_아니다() {
+        let peer = |name: &str| crate::peer_ask::LinkPeer { id: format!("n-{name}"), name: name.into(), os: "macOS".into(), ip: std::net::Ipv4Addr::new(100, 64, 0, 1), tailnet: "t".into() };
+        let log = format!("{}\n{}", link_row("aa11bb22", &peer("A"), 0, "2026-10-21T00:00:00Z"), link_row("cc33dd44", &peer("B"), 0, "2026-10-21T00:00:01Z"));
+        assert!(check(&log, "aa11bb22").is_ok(), "앞 기기 카드도 누를 수 있다");
+        assert!(check(&log, "cc33dd44").is_ok());
+    }
+
+    #[test]
     fn 실패한_뒤엔_다시_누를_수_있게_실패_줄은_답으로_안_친다() {
         let failed = format!("{ASK}\n{}", r#"{"type":"answer-failed","id":"ab12cd34"}"#);
         // 답 줄이 먼저 남고 실패 줄이 뒤따른다 — 실패면 앞 답 줄을 무른다
@@ -324,6 +340,16 @@ mod tests {
         let (t, _) = compose_by(&ask, &Pick::Option { option: 0 }, "telegram:7001").unwrap();
         assert!(t.contains("직접 답(카드 ab12cd34)") && t.contains("텔레그램 카드에서 눌렀어"), "{t}");
         assert!(compose(&ask, &Pick::Yes).unwrap().0.contains("앱 카드에서"));
+    }
+
+    #[test]
+    fn 원격_카드_답은_어느_기기에서_눌렀는지_알린다() {
+        let ask: Value = serde_json::from_str(ASK).unwrap();
+        let (t, _) = compose_by(&ask, &Pick::Yes, "remote:맥북\u{1b}").unwrap();
+        assert!(t.starts_with("결제 승인") && t.contains("직접 답(카드 ab12cd34)") && t.contains("맥북에서 원격으로 앱 카드에서 눌렀어"), "{t}");
+        assert!(!t.contains('\u{1b}'));
+        // 연결 요청 카드는 원격으로 못 누른다
+        assert!(link_pick(&Pick::Yes, "remote:맥북").is_err());
     }
 
     #[test]

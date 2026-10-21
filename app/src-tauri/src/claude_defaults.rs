@@ -13,9 +13,17 @@ pub fn settings_path(home: &Path, config_dir: Option<&str>) -> PathBuf {
     }
 }
 
-/// 기본값 칸만 뜬다 — 없던 칸은 안 담는다(되돌릴 때 지운다)
+/// 기본값 칸만 뜬다 — 없던 칸은 안 담는다(되돌릴 때 지운다). 글이 있는데 JSON 이 아니면 null — 모르는 걸 '없음'으로 떠 두면
+/// 되돌릴 때 사람이 정한 기본 모델을 지웠다(2026-10-21 리뷰). null 이면 되돌리기가 아무것도 안 한다
 pub fn snapshot(text: &str) -> serde_json::Value {
-    let v: serde_json::Value = serde_json::from_str(text).unwrap_or_else(|_| serde_json::json!({}));
+    let v: serde_json::Value = if text.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        match serde_json::from_str::<serde_json::Value>(text) {
+            Ok(v) if v.is_object() => v,
+            _ => return serde_json::Value::Null,
+        }
+    };
     let mut out = serde_json::Map::new();
     for k in KEYS {
         if let Some(x) = v.get(*k) {
@@ -27,6 +35,7 @@ pub fn snapshot(text: &str) -> serde_json::Value {
 
 /// 지금 파일 글에 떠 둔 칸을 되돌린 새 글 — 바꿀 게 없으면 None(파일을 안 쓴다). 글이 JSON 이 아니면 안 건드린다
 pub fn restored(text: &str, snap: &serde_json::Value) -> Option<String> {
+    snap.as_object()?; // 떠 두지 못했다(null) — 모르니 안 건드린다
     let mut v: serde_json::Value = serde_json::from_str(text).ok()?;
     let obj = v.as_object_mut()?;
     let before = obj.clone();
@@ -48,7 +57,12 @@ fn path() -> PathBuf {
 
 #[tauri::command]
 pub fn claude_defaults_snapshot() -> String {
-    snapshot(&std::fs::read_to_string(path()).unwrap_or_default()).to_string()
+    match std::fs::read_to_string(path()) {
+        Ok(t) => snapshot(&t),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => snapshot(""),
+        Err(_) => serde_json::Value::Null, // 못 읽음 — '칸 없음'으로 떠 두면 되돌릴 때 지운다
+    }
+    .to_string()
 }
 
 /// 되돌렸으면 true
@@ -58,7 +72,8 @@ pub fn claude_defaults_restore(snap: String) -> Result<bool, String> {
     let p = path();
     let text = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
     match restored(&text, &snap) {
-        Some(t) => std::fs::write(&p, t).map(|_| true).map_err(|e| e.to_string()),
+        // 옆에 다 쓴 뒤 바꿔 끼운다 — Claude Code 가 같은 때 읽으면 빈 파일을 봤다
+        Some(t) => crate::accounts::write_atomic(&p, &t).map(|_| true).map_err(|e| format!("{e:?}")),
         None => Ok(false),
     }
 }
@@ -154,6 +169,15 @@ mod tests {
     #[test]
     fn json_이_아니면_안_건드린다() {
         assert_eq!(restored("깨진 글", &snapshot("{}")), None);
+    }
+
+    #[test]
+    fn 떠_둘_때_못_읽었으면_되돌릴_때_안_지운다() {
+        // 떠 두는 순간 다른 쓰기 도중이라 깨져 보이면 {} 로 떠 두고, 되돌릴 때 사람이 정한 기본 모델을 지웠다(2026-10-21 리뷰)
+        let snap = snapshot("{ \"model\": \"opu");
+        assert!(snap.is_null());
+        assert_eq!(restored(r#"{"model":"opus","x":1}"#, &snap), None);
+        assert_eq!(snapshot("  "), serde_json::json!({}), "파일이 없으면(빈 글) 칸 없음 그대로");
     }
 
     #[test]

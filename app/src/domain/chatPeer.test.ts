@@ -25,3 +25,34 @@ describe('다른 기기 참모 말', () => {
     expect(parseChat(asUser('[다른 기기 참모 · 맥북] 안녕'))[0]?.kind).toBe('user');
   });
 });
+
+// 짝지은 기기 앱 화면에서 사람이 직접 친 말(ADR 0011) — '[사람 말 · 원격 · <기기>에서 직접 · human#<cid>]' 이름표
+describe('원격 사람 말', () => {
+  const said = '[사람 말 · 원격 · 맥북에서 직접 · human#h-1a2b]\n그 PC 에서 진행해';
+  it('사람 말풍선으로, 이름표는 숨긴다', () => {
+    expect(parseChat(asUser(said))).toEqual([{ kind: 'user', id: 'u1', ts: '2026-10-15T11:00:00Z', text: '그 PC 에서 진행해' }]);
+  });
+  it('일하는 중에 줄 서 들어온 것도', () => {
+    expect(parseChat(asQueued(said))[0]).toMatchObject({ kind: 'user', text: '그 PC 에서 진행해' });
+  });
+  it('영어 이름표도', () => {
+    expect(parseChat(asUser('[Person · remote · typed on laptop · human#h-9]\nhi'))[0]).toMatchObject({ kind: 'user', text: 'hi' });
+  });
+  it('보낸 말로 센다(원격 화면의 보내는 중 맞추기)', () => {
+    expect(sentByMe(parseChat(asUser(said))).length).toBe(1);
+  });
+  it('꼬리표 없는 비슷한 글은 그대로 둔다', () => {
+    expect(parseChat(asUser('[사람 말 · 원격 · 맥북에서 직접] 안녕'))[0]).toMatchObject({ kind: 'user', text: '[사람 말 · 원격 · 맥북에서 직접] 안녕' });
+  });
+});
+
+describe('원격 사람 말 — 보내는 중 맞추기', () => {
+  it('받는 서버가 붙인 › 는 사람 말이면 뗀다(보낸 글과 같게)', () => {
+    expect(parseChat(asUser('[사람 말 · 원격 · 맥북에서 직접 · human#h-2]\n› [메모] 이거 봐\n› <b>'))[0]).toMatchObject({ kind: 'user', text: '[메모] 이거 봐\n<b>' });
+  });
+  it('일하는 중 줄 선 말도 이름표 없이 대기열에', async () => {
+    const { applyQueueOps, emptyQueue } = await import('./chatQueue');
+    const enq = L({ type: 'queue-operation', operation: 'enqueue', timestamp: '2026-10-21T10:00:00Z', content: '[사람 말 · 원격 · 맥북에서 직접 · human#h-3]\n캐시 옮겨' });
+    expect(applyQueueOps(emptyQueue, enq).waiting.map((w) => w.text)).toEqual(['캐시 옮겨']);
+  });
+});

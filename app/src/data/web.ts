@@ -101,6 +101,9 @@ export const {
 export const listSessionsRaw = makeTagTail((since, signal) => getText(`/api/sessions?since=${encodeURIComponent(since)}`, signal).then(parseTagChunk));
 
 /** 계정 칸 — 이름·요금제·사용량·쉬는 때만(맥이 이메일·토큰을 안 낸다). 읽기는 domain/phoneAccounts readPhoneAccounts */
+/** 짝지은 다른 기기의 카드(ADR 0011) — 이 맥이 거쳐 읽고, 누른 답은 이 맥이 사람 길로 그 기기에 넘긴다 */
+export const readPeerCards = () => getJson<import('../domain/remoteCards').PeerCardsRow[]>('/api/peer-cards');
+export const peerCardAnswer = (dev: string) => (id: string, pick: unknown) => post<{ ok: true }>('/api/peer-card-answer', { dev, id, pick }).then(() => undefined);
 export const readAccounts = (signal?: AbortSignal) => getText('/api/accounts', signal);
 /** 이 계정으로 — 맥 키체인 로그인을 바꿔 끼우고 그 칸에 고정(데스크톱 '이 계정으로'와 같은 길). 답 = 바뀐 계정 칸 원문 */
 export const switchAccount = (id: string) => post<unknown>('/api/account-switch', { id }).then((v) => JSON.stringify(v));

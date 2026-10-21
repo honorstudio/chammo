@@ -230,6 +230,15 @@ fn s4b_점_경로는_프로젝트_안_shots_와_claude_worktrees_만() {
 }
 
 #[test]
+fn 시간_제한_실행은_큰_출력도_비우면서_기다린다() {
+    // security -w 처럼 출력이 파이프 버퍼(64KB)를 넘으면, 끝나길 기다린 뒤에 읽는 길은 자식이 쓰기에서 막혀 시간 제한까지 멈췄다(2026-10-21 리뷰)
+    let t = std::time::Instant::now();
+    let out = crate::platform::run_capped(crate::platform::command("/bin/sh").args(["-c", "head -c 300000 /dev/zero | tr '\\0' a"]), Duration::from_secs(20)).unwrap();
+    assert_eq!(out.stdout.len(), 300_000);
+    assert!(t.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
 fn r3_외부_명령은_시간이_넘으면_죽인다() {
     let t0 = std::time::Instant::now();
     let r = crate::platform::run_capped(crate::platform::command("/bin/sleep").arg("5"), Duration::from_millis(500));

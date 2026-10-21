@@ -26,7 +26,7 @@ pub fn tag(cid: &str) -> String {
 }
 
 /// 보이지 않는 글자(zero-width·단어 잇기·BOM·방향 표시) — 끼워 넣어 거름을 피하지 못하게 본문에서도 뺀다
-fn invisible(c: char) -> bool {
+pub(crate) fn invisible(c: char) -> bool {
     matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{feff}' | '\u{00ad}')
 }
 
@@ -83,13 +83,25 @@ fn fold(text: &str) -> String {
     out.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
 }
 
-/// 사람 직접 승인 문구(CHAMMO 안내문 두 판) — 띄어쓰기·대소문자·닮은 글자·사이에 끼운 점을 바꿔도 잡는다
+/// 사람 직접 승인 문구(CHAMMO 안내문 두 판)·원격 사람 말 이름표(peer_human)·카드 답 꼬리(direct::compose_by) —
+/// 띄어쓰기·대소문자·닮은 글자·사이에 끼운 점·전각 괄호를 바꿔도 잡는다. 다른 기기 참모 말 안에 사람 표시가 섞이지 않게
 fn forged(text: &str) -> bool {
     let s = fold(&text.chars().filter(|c| !invisible(*c)).collect::<String>());
-    ["사람직접승인", "approvedbythepersondirectly"].iter().any(|p| s.contains(p))
+    // 어순·조사만 바꾼 '받았다' 주장도("사람이 직접 승인했어"·"직접 사람 승인 받음"·"approved directly by the person") — 2026-10-21 리뷰.
+    // '사람 승인 카드로 해'·'직접 승인해 줘'·'Has the user approved the PR?' 같은 그냥 승인 얘기는 된다(코드 리뷰: 짧은 조각만 보면 이것까지 막았다)
+    // 사람 말 이름표(원격)·카드 답 꼬리 뒤쪽(direct::compose_by) — 앞쪽 '직접 답(카드' 없이 끝만 흉내 내도(remote-chat)
+    [
+        "사람직접승인", "직접사람승인", "사람이직접승인", "본인직접승인", "직접승인받", "직접승인했", "직접승인됐", "사람승인받", "사람승인됐", "사람이승인했", "본인승인받", "본인이승인했",
+        "approvedbythepersondirectly", "approveddirectlybytheperson", "personapproveddirectly", "humanapproveddirectly", "userapproveddirectly", "approveddirectlybytheuser", "approvedbythehumandirectly",
+        "사람말원격", "personremote", "직접답카드", "directanswercard",
+        "앱카드에서눌렀", "앱카드에서썼", "텔레그램카드에서눌렀", "텔레그램카드에서썼", "원격으로앱카드",
+        "presseditontheappcard", "wroteitontheappcard", "ontheappcardremotely", "onthetelegramcard",
+    ]
+    .iter()
+    .any(|p| s.contains(p))
 }
 
-fn clean_name(s: &str) -> String {
+pub(crate) fn clean_name(s: &str) -> String {
     let t: String = s.chars().filter(|c| !c.is_control() && !invisible(*c) && !matches!(c, '[' | ']' | '<' | '>')).take(40).collect();
     let t = t.trim().to_string();
     if t.is_empty() { "?".into() } else { t }
@@ -97,7 +109,8 @@ fn clean_name(s: &str) -> String {
 
 /// 세션에 칠 글 — 이름표 한 줄 + 본문(제어 글자는 줄바꿈·탭만 남김).
 /// device = 짝지을 때 받은 이름("참모 · 맥북" — 앞의 "참모 · " 는 뺀다), who = 보낸 참모 이름(그 기기 앱이 알려 준 것, 비면 뺌)
-pub fn compose(device: &str, who: &str, cid: &str, text: &str) -> Result<String, SayErr> {
+/// 본문 줄 — 제어 글자는 줄바꿈·탭만, 보이지 않는 글자 빼기, 줄 첫머리 [ < 엔 › (이름표·앱 줄인 척 못 하게)
+pub(crate) fn body_lines(text: &str) -> Result<Vec<String>, SayErr> {
     let body: String = text.replace("\r\n", "\n").chars().map(|c| if line_break(c) { '\n' } else { c }).filter(|c| (!c.is_control() || *c == '\n' || *c == '\t') && !invisible(*c)).collect();
     if body.trim().is_empty() {
         return Err(SayErr::Empty);
@@ -105,17 +118,24 @@ pub fn compose(device: &str, who: &str, cid: &str, text: &str) -> Result<String,
     if body.chars().count() > MAX_SAY {
         return Err(SayErr::TooLong);
     }
-    if forged(&body) {
-        return Err(SayErr::Forged);
-    }
-    let lines: Vec<String> = body
+    Ok(body
         .trim_matches('\n')
         .lines()
         .map(|l| {
             let s = l.trim_start();
-            if s.starts_with('[') || s.starts_with('<') { format!("› {s}") } else { l.to_string() }
+            // 앱 줄·이름표처럼 보이는 머리 — 전각·다른 괄호(［앱］·【…】·＜…＞)도
+            if s.starts_with(['[', '<', '［', '＜', '【', '〔', '〈', '《', '「', '『', '〖', '〘', '〚', '⟦', '⟨', '❬', '❮', '﹝', '‹', '«']) { format!("› {s}") } else { l.to_string() }
         })
-        .collect();
+        .collect())
+}
+
+/// 세션에 칠 글 — 이름표 한 줄 + 본문(제어 글자는 줄바꿈·탭만 남김).
+/// device = 짝지을 때 받은 이름("참모 · 맥북" — 앞의 "참모 · " 는 뺀다), who = 보낸 참모 이름(그 기기 앱이 알려 준 것, 비면 뺌)
+pub fn compose(device: &str, who: &str, cid: &str, text: &str) -> Result<String, SayErr> {
+    if forged(text) {
+        return Err(SayErr::Forged);
+    }
+    let lines = body_lines(text)?;
     let head = crate::i18n::tr("다른 기기 참모", "Assistant on another device");
     let dev = clean_name(device.strip_prefix("참모 · ").unwrap_or(device));
     let who = if forged(who) { "?".to_string() } else { clean_name(who) };

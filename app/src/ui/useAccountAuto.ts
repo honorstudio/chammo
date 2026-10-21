@@ -5,7 +5,7 @@
 import { useEffect, useRef } from 'react';
 import { accountsApi, sendToSession, speak } from '../data/tauri';
 import { accountError, ACCOUNTS_CHANGED, switchFailure, type AccountsView } from '../domain/accounts';
-import { afterSwitch, applyApi, changedKeys, fmtUntil, markNudged, migrate, readAuto, step, stuckOf } from '../domain/accountAuto';
+import { afterSwitch, applyApi, changedKeys, fmtUntil, markNudged, migrate, readAuto, step, stuckOf, markDead, slotDead } from '../domain/accountAuto';
 import type { SessionActivity } from './TaskPanel';
 import { tr } from '../i18n';
 import { notifyOnce } from './notifier';
@@ -68,7 +68,13 @@ export function useAccountAuto(accounts: AccountsView | null, acts: SessionActiv
           } catch (e: unknown) {
             if (String(e) === 'moved') return; // 다시 읽은 뒤 그 몇 ms 사이에 폰·사람이 먼저 바꿨다 — 그 선택을 둔다
             const f = switchFailure(String(e), rateNoted.current);
-            restUntil.current = Date.now() + f.restMs;
+            const dead = slotDead(String(e));
+            if (dead) { // 그 칸을 막아 두고 곧 다음 칸으로 — 같은 죽은 칸을 5분마다 고르지 않게
+              state = markDead(state, plan.switchTo, Date.now());
+              await accountsApi.autoPatch(changedKeys(before, state)).catch(() => {});
+              before = state;
+            }
+            restUntil.current = Date.now() + (dead ? 30_000 : f.restMs);
             rateNoted.current = f.rate; // 429 가 이어지는 동안 알림은 한 번
             if (f.notify) notifyOnce({ kind: 'accounts', session: 'accounts', orch: false, title: tr('계정 자동 전환 실패', 'Account auto-switch failed'), body: accountError(String(e)) });
             return;

@@ -83,8 +83,8 @@ DEV = expand(CFG.get('devRoot') or '~/Developer')
 # devRoot 밖에 따로 추가한 프로젝트 폴더들(설정 extraProjects)
 EXTRAS = [expand(x) for x in CFG.get('extraProjects') or [] if isinstance(x, str)]
 
-# Money moves: payments, refunds, billing. English words only as whole words (not "discharge").
-PAYMENT = re.compile(r'실결제|결제|환불|과금|\b(payments?|refunds?|billing|charges?|checkout)\b')
+# Money moves: payments, refunds, billing. Substrings on purpose (payment_method, stripeCheckout count) — only "charge" is a whole word (not discharge, charger, in charge of).
+PAYMENT = re.compile(r'실결제|결제|환불|과금|토스페이먼츠|포트원|아임포트|인앱 ?구매|청구서|송금|payment|refund|billing|checkout|stripe|paypal|tosspayments|portone|iamport|invoice|purchase|chargeback|(?<!in )(?<![a-z])charges?(?![a-z])(?! of)')
 
 MERGE_RULE = T('PR 은 올리고 머지하지 마 — CI 초록이면 PR 번호만 알려줘, 머지는 내가 한다.',
                "Open a PR but don't merge it — when CI is green just send me the PR number; I'll do the merge.")
@@ -141,8 +141,8 @@ def lessons_in(text):
 
 
 # Checklist + proof + three strikes — so a progress report isn't mistaken for the end
-PROOF_RULE = T('단계가 셋 넘는 일이면 체크리스트(TaskCreate 나 docs/plans/)를 두고 다 지우기 전엔 끝났다고 하지 마. 끝났다고 할 땐 확인한 증거(PR 번호·주소·응답 코드·로그)를 같이 적고, 같은 조각이 세 번 실패하면 더 밀지 말고 이 지시를 보낸 세션에 계획부터 다시 물어.',
-               "If this has more than three steps, keep a checklist (TaskCreate or docs/plans/) and don't call it done until it's empty. When you say done, include the proof you checked (PR number, URL, status code, log). If the same piece fails three times, stop pushing and ask the session that sent this to rethink the plan.")
+PROOF_RULE = T('단계가 셋 넘는 일이면 체크리스트(TaskCreate 나 docs/plans/)를 두고 다 지우기 전엔 끝났다고 하지 마. 끝났다고 할 땐 확인한 증거(PR 번호·주소·응답 코드·로그)를 같이 적고, 같은 조각이 세 번 실패하면 더 밀지 말고 이 지시를 보낸 세션에 계획부터 다시 물어. 끝나거나 막히면 이 지시를 보낸 세션에 SendMessage 로 결과 한 줄(+증거)을 보내 — 안 보내면 그 참모와 사용자는 끝난 줄 모른다. git 작성자(user.name·user.email)가 없으면 지어 넣지 말고(로그인 메일 등 — 공개 push 때 그대로 나간다) 커밋 없이 끝낸 뒤 그렇다고 알려.',
+               "If this has more than three steps, keep a checklist (TaskCreate or docs/plans/) and don't call it done until it's empty. When you say done, include the proof you checked (PR number, URL, status code, log). If the same piece fails three times, stop pushing and ask the session that sent this to rethink the plan. When you finish or get stuck, SendMessage the session that sent this a one-line result (+ proof) — otherwise that assistant and the user never learn it is done. If git has no author (user.name / user.email), don't make one up (a login email would go public on push) — finish without committing and say so.")
 
 # How hard to verify — tasks with hidden edge cases get "verify hard", sketches get "be quick".
 HIGH = re.compile(r'결제|환불|보안|취약|권한|마이그|운영|배포|삭제|데이터|버그|고치|인증|로그인|토큰|시크릿|'
@@ -172,7 +172,8 @@ def effort_for(text):
 
 # 참모 브라우저(chammo-browser) — clone 한 프로젝트엔 안 붙어 있을 수 있다(GitHub #2: 저장소 .mcp.json 의 남의 playwright 만 떠
 # browser_ask_human 이 없어 사람에게 로그인을 못 물었다). 브라우저 일을 보낼 때 안 붙어 있으면 참모에게 한 줄 + 앱 결정 대기함에 [연결] 카드
-BROWSER_WORK = re.compile(r'브라우저|browser|크롬|chrome|playwright|사이트|웹페이지|웹에서|대시보드에 들어|들어가서|로그인해서|로그인 해서|인앱|스크린샷|screenshot|website')
+# 사이트·웹페이지는 열기·접속·확인·캡처 같은 동작이 붙을 때만 — '웹페이지·사이트 만들어 줘'는 브라우저 일이 아니다(2026-10-21 첫 사용자 QA)
+BROWSER_WORK = re.compile(r'브라우저|browser|크롬|chrome|playwright|웹에서|대시보드에 들어|들어가서|로그인해서|로그인 해서|인앱|스크린샷|screenshot|(?:사이트|웹페이지|웹사이트|홈페이지|website|web ?page|site)[^.\n]{0,12}?(?:열|접속|들어가|확인|캡처|로그인|긁|띄워|뜨는지|봐|open|visit|check|log ?in|scrape|screenshot)')
 CHAMMO_WRAPPER = 'chammo-browser-mcp.js'
 APPLOG = os.path.join(DATA, 'app.jsonl')
 CLAUDE_JSON = os.path.join(os.environ.get('CLAUDE_CONFIG_DIR') or os.path.expanduser('~'), '.claude.json')
@@ -334,6 +335,11 @@ def needs_confirm(text):
     return bool(PAYMENT.search(text.lower()))
 
 
+def payment_work(title, cwd):
+    """결제가 걸린 일인가 — 한 줄 제목과, 제목에 적힌 지시 파일(docs/plans/*.md) 본문까지(브라우저 판정과 같게)"""
+    return needs_confirm(title) or any(needs_confirm(b) for b in doc_bodies(title, cwd))
+
+
 COMMON = '_common'   # lesson --all — attached to every project
 LESSON_MAX = 12      # more than this gets heavy, since all of it rides on every message
 
@@ -355,26 +361,63 @@ def lessons_of(project):
     return _lines(COMMON) + ([] if project == COMMON else _lines(project))
 
 
+def with_lesson(body, head, line, note):
+    """교훈 칸(줄 머리가 head 인 줄 — '### 교훈 메모' 같은 다른 머리가 아니라) 끝에 '- line' 을 붙인 글. 칸이 없으면 끝에 만든다.
+    lesson_skill·lessons.rs 가 지울 때 찾는 규칙(줄이 '## 교훈' 으로 시작)과 같게 — 글자 일부로 찾아 계정 칸에 적었다(2026-10-21 리뷰)"""
+    ls = body.split('\n') if body else []
+    i = next((k for k, l in enumerate(ls) if l.startswith(head)), None)
+    if i is None:
+        while ls and not ls[-1].strip():
+            ls.pop()
+        if ls:
+            ls.append('')
+        ls += [f'{head} {note}', '']
+        i = len(ls) - 2
+    j = next((k for k in range(i + 1, len(ls)) if ls[k].startswith('## ')), len(ls))
+    k = j
+    while k > i + 1 and not ls[k - 1].strip():
+        k -= 1
+    ls.insert(k, f'- {line}')
+    text = '\n'.join(ls)
+    return text if text.endswith('\n') else text + '\n'
+
+
+def write_kept(path, text):
+    """제자리에 비우고 쓰지 않고 옆에 다 쓴 뒤 바꿔 끼운다 — 원래 권한(계정이 든 0600)·링크 대상을 지킨다"""
+    path = os.path.realpath(path)
+    try:
+        mode = os.stat(path).st_mode & 0o777
+    except OSError:
+        mode = 0o600
+    tmp = f'{path}.{os.getpid()}.{os.urandom(3).hex()}.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def mirror_lesson(project, line):
     """Also write it under '## Lessons' in the project's CLAUDE.local.md, so sessions you open there yourself see it.
     Only when git ignores that file — a lesson can mention account names and must not get committed."""
     root = os.path.join(DEV, project)
     if not os.path.isdir(root):
         return False
-    if subprocess.run(['git', '-C', root, 'check-ignore', '-q', 'CLAUDE.local.md'], capture_output=True).returncode != 0:
+    try:
+        if subprocess.run(['git', '-C', root, 'check-ignore', '-q', 'CLAUDE.local.md'], capture_output=True).returncode != 0:
+            return False
+    except OSError:  # no git on this PC (Windows with Python only) — can't tell it's ignored, so don't write
         return False
     path = os.path.join(root, 'CLAUDE.local.md')
     body = open(path, encoding='utf-8').read() if os.path.exists(path) else ''
-    head = T('## 교훈', '## Lessons')
-    if head not in body:
-        body = body.rstrip('\n') + ('\n\n' if body.strip() else '') + T(f'{head} (확인된 것 — 같은 벽에 두 번 안 박게)\n', f'{head} (confirmed — so nobody hits the same wall twice)\n')
-    i = body.index(head)
-    j = body.find('\n## ', i + len(head))
-    j = len(body) if j < 0 else j + 1
-    part = body[i:j].rstrip('\n') + f'\n- {line}\n'
-    body = body[:i] + part + ('\n' + body[j:] if j < len(body) else '')
-    with open(path, 'w', encoding='utf-8') as f:
-        f.write(body)
+    write_kept(path, with_lesson(body, T('## 교훈', '## Lessons'), line,
+                                 T('(확인된 것 — 같은 벽에 두 번 안 박게)', '(confirmed — so nobody hits the same wall twice)')))
     return True
 
 
@@ -541,9 +584,19 @@ def now():
 
 
 def append(ev):
+    """한 줄을 한 번에 덧붙인다. 끝 줄이 반쪽(줄바꿈 없음)으로 남아 있으면 줄바꿈부터 — 안 그러면 새 줄이 거기 붙어 둘 다 못 읽는다"""
     os.makedirs(os.path.dirname(LOG), exist_ok=True)
-    with open(LOG, 'a', encoding='utf-8') as f:
-        f.write(json.dumps(ev, ensure_ascii=False) + '\n')
+    line = (json.dumps(ev, ensure_ascii=False) + '\n').encode('utf-8')
+    fd = os.open(LOG, os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, 'O_BINARY', 0), 0o644)
+    try:
+        end = os.lseek(fd, 0, os.SEEK_END)
+        if end:
+            os.lseek(fd, end - 1, os.SEEK_SET)
+            if os.read(fd, 1) != b'\n':
+                line = b'\n' + line
+        os.write(fd, line)  # O_APPEND — 늘 끝에, 한 번의 쓰기로
+    finally:
+        os.close(fd)
 
 
 NICK_SEP = ' · '
@@ -719,7 +772,7 @@ def main(a):
         append(ev)
         print(tid)
         project = project_of(a[1], agents) or a[1]
-        if needs_confirm(a[2]):
+        if payment_work(a[2], tgt.get('cwd')):
             # the answer comes back to the assistant that asked (this session), not to the target
             ev = {'ts': now(), 'type': 'ask', 'task': tid, 'note': T(f'결제 확인 — {project}: {a[2]} — 보내도 돼?', f'Payment check — {project}: {a[2]} — OK to send?')}
             if me:

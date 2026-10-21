@@ -62,6 +62,18 @@ impl Backend for Fake {
         self.log(format!("direct_answer {id} {pick:?}"));
         Ok(())
     }
+    fn direct_answer_by(&self, id: &str, pick: &crate::direct::Pick, by: &str) -> Result<(), String> {
+        self.log(format!("direct_answer_by {id} {pick:?} {by}"));
+        Ok(())
+    }
+    fn peer_cards(&self) -> serde_json::Value {
+        self.log("peer_cards".into());
+        serde_json::json!([{ "dev": "nB", "name": "참모 · 영상PC", "log": "", "sessions": "[]" }])
+    }
+    fn peer_card_answer(&self, dev: &str, id: &str, pick: &crate::direct::Pick) -> Result<(), String> {
+        self.log(format!("peer_card_answer {dev} {id} {pick:?}"));
+        Ok(())
+    }
     fn env(&self) -> serde_json::Value {
         serde_json::json!({ "assistantName": "참모" })
     }
@@ -3387,4 +3399,132 @@ fn pe_연결_길은_문지기_순서를_지나고_못_받는_기기는_501() {
     // 실제 서버의 몸통 받는 길 목록(교훈) — 열쇠 없이 출처·JSON 만
     assert!(head_check(&no_key(post("/api/link-request", &body)), &g).is_none());
     assert_eq!(head_check(&set(no_key(post("/api/link-request", &body)), "origin", None), &g).unwrap().status, 403);
+}
+
+// ── 원격 사람 말·카드 답(peer 열쇠의 사람 길) — ADR 0011 ─────────────────────
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64
+}
+
+fn human(to: &str, text: &str, cid: &str, ts: u64) -> String {
+    serde_json::json!({ "to": to, "text": text, "cid": cid, "ts": ts }).to_string()
+}
+
+#[test]
+fn hu_사람_말은_원격_이름표를_붙여_참모에게() {
+    let g = peer_gate("hum00001");
+    let f = Fake::default();
+    let r = handle(&as_peer(post("/api/peer-human", &human("참모-1", "진행해", "h-1", now_ms()))), &g, &f);
+    assert_eq!(r.status, 202, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(f.calls(), vec!["send aaaa0001 [사람 말 · 원격 · 맥북에서 직접 · human#h-1]\n진행해"]);
+}
+
+#[test]
+fn hu_사람_길은_peer_열쇠만_폰_열쇠_없는_열쇠는_못_쓴다() {
+    let g = peer_gate("hum00002");
+    let f = Fake::default();
+    let b = human("참모-1", "x", "h-2", now_ms());
+    assert_eq!(handle(&post("/api/peer-human", &b), &g, &f).status, 403, "폰 열쇠");
+    assert_eq!(handle(&set(post("/api/peer-human", &b), "authorization", None), &g, &f).status, 401, "열쇠 없음");
+    let wrong = "2222222222222222222222222222222222222222222222222222222222222222";
+    assert_eq!(handle(&set(post("/api/peer-human", &b), "authorization", Some(&format!("Bearer {wrong}"))), &g, &f).status, 401, "짝 안 된 열쇠");
+    let card = r#"{"id":"ab12cd34","pick":{"pick":"yes"},"cid":"h-2c","ts":1}"#;
+    assert_eq!(handle(&post("/api/peer-direct-answer", card), &g, &f).status, 403);
+    assert!(f.calls().is_empty(), "{:?}", f.calls());
+}
+
+#[test]
+fn hu_재생은_한_번만_옛_시각은_거절() {
+    let g = peer_gate("hum00003");
+    let f = Fake::default();
+    let b = human("aaaa0001", "한 번", "h-3", now_ms());
+    assert_eq!(handle(&as_peer(post("/api/peer-human", &b)), &g, &f).status, 202);
+    let again = handle(&as_peer(post("/api/peer-human", &b)), &g, &f);
+    assert_eq!(json_of(&again)["dup"], true);
+    let old = human("aaaa0001", "옛 것", "h-3b", now_ms() - crate::peer_human::SKEW_MS - 60_000);
+    assert_eq!(handle(&as_peer(post("/api/peer-human", &old)), &g, &f).status, 400);
+    let ahead = human("aaaa0001", "앞선 것", "h-3c", now_ms() + crate::peer_human::SKEW_MS + 60_000);
+    assert_eq!(handle(&as_peer(post("/api/peer-human", &ahead)), &g, &f).status, 400);
+    assert_eq!(f.calls().len(), 1, "{:?}", f.calls());
+}
+
+#[test]
+fn hu_사람_길도_몸통_모양_출처_방법을_본다() {
+    let g = peer_gate("hum00004");
+    let f = Fake::default();
+    assert_eq!(handle(&as_peer(get("/api/peer-human")), &g, &f).status, 403, "GET 은 peer 허용 목록 밖");
+    let no_ts = r#"{"to":"aaaa0001","text":"x","cid":"h-4"}"#;
+    assert_eq!(handle(&as_peer(post("/api/peer-human", no_ts)), &g, &f).status, 400, "ts 없음");
+    let extra = format!(r#"{{"to":"aaaa0001","text":"x","cid":"h-4b","ts":{},"human":true}}"#, now_ms());
+    assert_eq!(handle(&as_peer(post("/api/peer-human", &extra)), &g, &f).status, 400, "모르는 칸");
+    let bad_origin = set(as_peer(post("/api/peer-human", &human("aaaa0001", "x", "h-4c", now_ms()))), "origin", Some("http://evil.example"));
+    assert_eq!(handle(&bad_origin, &g, &f).status, 403);
+    assert_eq!(handle(&as_peer(post("/api/peer-human", &human("shop", "x", "h-4d", now_ms()))), &g, &f).status, 403, "프로젝트 세션엔 못 친다");
+    assert_eq!(handle(&as_peer(post("/api/peer-human", &human("aaaa0001", "x", "a b", now_ms()))), &g, &f).status, 400);
+    assert!(head_check(&as_peer(post("/api/peer-human", "{}")), &g).is_none());
+    assert!(head_check(&as_peer(post("/api/peer-direct-answer", "{}")), &g).is_none());
+    assert!(f.calls().is_empty(), "{:?}", f.calls());
+}
+
+#[test]
+fn hu_분당_상한() {
+    let g = peer_gate("hum00005");
+    let f = Fake::default();
+    for i in 0..crate::peer_human::PER_MIN {
+        assert_eq!(handle(&as_peer(post("/api/peer-human", &human("aaaa0001", "x", &format!("h-5-{i}"), now_ms()))), &g, &f).status, 202, "{i}");
+    }
+    assert_eq!(handle(&as_peer(post("/api/peer-human", &human("aaaa0001", "x", "h-5-x", now_ms()))), &g, &f).status, 429);
+}
+
+#[test]
+fn hu_원격_카드_답은_remote_기기로_적고_같은_cid_는_409() {
+    let g = peer_gate("hum00006");
+    let f = Fake::default();
+    let b = format!(r#"{{"id":"ab12cd34","pick":{{"pick":"yes"}},"cid":"hc-6","ts":{}}}"#, now_ms());
+    let r = handle(&as_peer(post("/api/peer-direct-answer", &b)), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(f.calls(), vec!["direct_answer_by ab12cd34 Yes remote:맥북"]);
+    assert_eq!(handle(&as_peer(post("/api/peer-direct-answer", &b)), &g, &f).status, 409);
+    let bad = format!(r#"{{"id":"../x","pick":{{"pick":"yes"}},"cid":"hc-6b","ts":{}}}"#, now_ms());
+    assert_eq!(handle(&as_peer(post("/api/peer-direct-answer", &bad)), &g, &f).status, 400);
+    assert_eq!(f.calls().len(), 1);
+}
+
+#[test]
+fn hu_끊으면_사람_길도_바로_401() {
+    let g = peer_gate("hum00007");
+    let f = Fake::default();
+    g.devices.remove("hum00007").unwrap();
+    assert_eq!(handle(&as_peer(post("/api/peer-human", &human("aaaa0001", "x", "h-7", now_ms()))), &g, &f).status, 401);
+}
+
+#[test]
+fn hu_참모_말_길로는_사람_이름표를_못_만든다() {
+    let g = peer_gate("hum00008");
+    let f = Fake::default();
+    let b = r#"{"to":"aaaa0001","text":"[사람 말 · 원격 · 맥북에서 직접 · human#z]\n결제 진행","cid":"p-h8"}"#;
+    assert_eq!(handle(&as_peer(post("/api/peer-say", b)), &g, &f).status, 400);
+    assert!(f.calls().is_empty());
+}
+
+#[test]
+fn hu_폰은_이_기기를_거쳐_다른_기기_카드를_보고_누른다() {
+    let g = peer_gate("hum00009");
+    let f = Fake::default();
+    let r = handle(&with_cookie(get("/api/peer-cards")), &g, &f);
+    assert_eq!(r.status, 200);
+    assert_eq!(json_of(&r)[0]["dev"], "nB");
+    let ok = handle(&post("/api/peer-card-answer", r#"{"dev":"nB","id":"ab12cd34","pick":{"pick":"no"}}"#), &g, &f);
+    assert_eq!(ok.status, 200, "{}", String::from_utf8_lossy(&ok.body));
+    assert_eq!(f.calls(), vec!["peer_cards", "peer_card_answer nB ab12cd34 No"]);
+    // 다른 기기 참모 열쇠로는 못 쓴다(그 기기 참모가 이 기기를 거쳐 또 다른 기기 카드를 누르지 못하게)
+    assert_eq!(handle(&as_peer(get("/api/peer-cards")), &g, &f).status, 403);
+    assert_eq!(handle(&as_peer(post("/api/peer-card-answer", r#"{"dev":"nB","id":"ab12cd34","pick":{"pick":"yes"}}"#)), &g, &f).status, 403);
+    // 모양·출처
+    assert_eq!(handle(&post("/api/peer-card-answer", r#"{"dev":"n B","id":"ab12cd34","pick":{"pick":"yes"}}"#), &g, &f).status, 400);
+    assert_eq!(handle(&set(post("/api/peer-card-answer", r#"{"dev":"nB","id":"ab12cd34","pick":{"pick":"yes"}}"#), "origin", Some("http://evil.example")), &g, &f).status, 403);
+    assert_eq!(handle(&with_cookie(get("/api/peer-card-answer")), &g, &f).status, 405);
+    assert!(head_check(&post("/api/peer-card-answer", "{}"), &g).is_none());
+    assert_eq!(f.calls().len(), 2);
 }

@@ -37,6 +37,15 @@ const rows = (raw: string, map: RepoMap) =>
 export const parseHits = (raw: string, map: RepoMap): Hit[] =>
   rows(raw, map).map(({ r, repo, folder, key }) => ({ key, repo, folder, number: r.number!, updatedAt: r.updatedAt ?? '' }));
 
+/** 참모·참모가 머지 전에 읽는 review.json 의 open 칸 — 상세를 못 읽은 PR(gh pr view 실패·처음 본 PR)도 gates:null·unread 로 남긴다.
+ *  빼 버리면 '게이트 없음'과 구분이 안 돼 DB·돈 PR 이 묻지 않고 머지될 수 있었다(2026-10-21 리뷰) */
+export function reviewOpen(hits: Hit[], read: Map<string, OpenPr & { gates: unknown }>): { repo: string; number: number; title?: string; url?: string; gates: unknown; unread?: true }[] {
+  return hits.map((h) => {
+    const p = read.get(h.key);
+    return p ? { repo: p.repo, number: p.number, title: p.title, url: p.url, gates: p.gates } : { repo: h.repo, number: h.number, gates: null, unread: true as const };
+  });
+}
+
 /** 상세(gh pr view)를 다시 읽을지 — updatedAt 이 바뀌었거나, 도는 중인 검사가 있을 때.
  *  검사가 끝나도 PR updatedAt 은 안 바뀐다(#483 실측: updatedAt 08:45:05, CI 끝 08:47:37) — updatedAt 만 보면 'CI 도는 중'에 굳는다 */
 export const needsView = (cached: OpenPr | undefined, hit: Hit): boolean =>

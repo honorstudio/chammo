@@ -39,6 +39,40 @@ pub fn replay_on_start(content: &str, seen: Option<usize>, now: u64) -> Vec<Stri
         .collect()
 }
 
+/// 스크립트(scripts/peer·sheet·craft·app 의 harness·browser-attach·mode)에 답 쓰기 — 옛 자리(<데이터>/<name>.txt, 한 칸)와 부탁마다 따로인 자리(<데이터>/answers/<name>-<id>.txt).
+/// 한 칸만 쓰면 둘이 겹칠 때 뒤 답이 앞 답을 덮어(임시 파일 이름도 같았다) 앞 스크립트는 '앱이 답하지 않았어'로 끝났고, 말은 이미 갔는데
+/// 실패로 보여 다시 보내면 두 번 갔다(2026-10-21 리뷰). 스크립트는 따로인 자리를 먼저 읽고 지운다
+pub(crate) fn write_answer(name: &str, id: &str, text: &str) {
+    write_answer_in(&crate::config::data_dir(), name, id, text)
+}
+
+pub(crate) fn write_answer_in(dir: &std::path::Path, name: &str, id: &str, text: &str) {
+    let body = format!("#id {id}\n{text}\n");
+    let put = |file: std::path::PathBuf| {
+        let mut n = file.file_name().unwrap_or_default().to_os_string();
+        n.push(format!(".{}.tmp", crate::tools::tmp_tag()));
+        let tmp = file.with_file_name(n);
+        if std::fs::write(&tmp, &body).is_ok() && std::fs::rename(&tmp, &file).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    };
+    put(dir.join(format!("{name}.txt")));
+    if !id.is_empty() && id.len() <= 40 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        let d = dir.join("answers");
+        if std::fs::create_dir_all(&d).is_ok() {
+            // 아무도 안 읽어 간 옛 답(스크립트가 먼저 끝남)은 한 시간 뒤 치운다
+            if let Ok(rd) = std::fs::read_dir(&d) {
+                for e in rd.flatten() {
+                    if e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a > std::time::Duration::from_secs(3600)) {
+                        let _ = std::fs::remove_file(e.path());
+                    }
+                }
+            }
+            put(d.join(format!("{name}-{id}.txt")));
+        }
+    }
+}
+
 /// 화면을 바꾸는 명령이면 숨어 있던 창도 앞으로(⌘W 로 숨겼을 수 있다). 음성·기능 켜기는 창을 안 띄운다
 fn wants_window(line: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(line)
@@ -240,7 +274,9 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                 }
                 // 폰 푸시 — 참모가 일부러 부른 것이라 맥 창을 보고 있어도 보낸다. 진짜 데이터 폴더·모바일 켬·짝지은 기기 구독만(push::send_all)
                 if let Some((title, body)) = push_request(&line) {
-                    crate::push::send_all(&title, &body, "");
+                    if !crate::claude::os_notify_off(std::env::var("CHAMMO_NO_OS_NOTIFY").ok().as_deref()) {
+                        crate::push::send_all(&title, &body, "");
+                    }
                     continue;
                 }
                 // 자리표 알림 — 쥔 세션에 정해진 한 줄. 창은 안 띄운다
@@ -259,11 +295,7 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                     std::thread::spawn(move || {
                         let lang = harnitor_core::i18n::Lang::parse(&crate::config::current().language);
                         let text = crate::harnitor::report_at(&crate::harnitor::home(), lang, project.as_deref());
-                        let file = crate::config::data_file("harness.txt");
-                        let tmp = file.with_extension("txt.tmp");
-                        if std::fs::write(&tmp, format!("#id {id}\n{text}\n")).is_ok() {
-                            let _ = std::fs::rename(&tmp, &file);
-                        }
+                        write_answer("harness", &id, &text);
                     });
                     continue;
                 }
@@ -272,11 +304,7 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                 if let Some((id, verb, dir)) = browser_request(&line) {
                     std::thread::spawn(move || {
                         let ans = crate::browser_attach::answer(&verb, &dir);
-                        let file = crate::config::data_file("browser-attach.txt");
-                        let tmp = file.with_extension("txt.tmp");
-                        if std::fs::write(&tmp, format!("#id {id}\n{ans}\n")).is_ok() {
-                            let _ = std::fs::rename(&tmp, &file);
-                        }
+                        write_answer("browser-attach", &id, &format!("{ans}"));
                     });
                     continue;
                 }
@@ -285,12 +313,7 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                     let app = app.clone();
                     std::thread::spawn(move || {
                         let ans = crate::modes_host::answer(&app, &req);
-                        let id = req.id;
-                        let file = crate::config::data_file("mode.txt");
-                        let tmp = file.with_extension("txt.tmp");
-                        if std::fs::write(&tmp, format!("#id {id}\n{ans}\n")).is_ok() {
-                            let _ = std::fs::rename(&tmp, &file);
-                        }
+                        write_answer("mode", &req.id, &format!("{ans}"));
                     });
                     continue;
                 }
@@ -304,11 +327,7 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                     let app = app.clone();
                     std::thread::spawn(move || {
                         let ans = crate::craft_window::answer(&app, &req);
-                        let file = crate::config::data_file("craft.txt");
-                        let tmp = file.with_extension("txt.tmp");
-                        if std::fs::write(&tmp, format!("#id {}\n{ans}\n", req.id)).is_ok() {
-                            let _ = std::fs::rename(&tmp, &file);
-                        }
+                        write_answer("craft", &req.id, &ans);
                     });
                     continue;
                 }
@@ -316,11 +335,7 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                 if let Some(req) = crate::peer_cmd::request(&line) {
                     std::thread::spawn(move || {
                         let ans = crate::peer_cmd::answer(&req, &crate::peer_cmd::RealOps);
-                        let file = crate::config::data_file("peer.txt");
-                        let tmp = file.with_extension("txt.tmp");
-                        if std::fs::write(&tmp, format!("#id {}\n{ans}\n", req.id)).is_ok() {
-                            let _ = std::fs::rename(&tmp, &file);
-                        }
+                        write_answer("peer", &req.id, &ans.to_string());
                     });
                     continue;
                 }
@@ -345,6 +360,22 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 답은_부탁마다_따로인_자리에도_남는다() {
+        // 한 칸(peer.txt)만 쓰면 겹친 두 부탁 중 앞 답이 덮여 앞 스크립트가 '앱이 답하지 않았어'로 끝났다(2026-10-21 리뷰)
+        let d = std::env::temp_dir().join(format!("chammo-answers-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        write_answer_in(&d, "peer", "aaaa1111", "{\"ok\":1}");
+        write_answer_in(&d, "peer", "bbbb2222", "{\"ok\":2}");
+        assert_eq!(std::fs::read_to_string(d.join("answers/peer-aaaa1111.txt")).unwrap(), "#id aaaa1111\n{\"ok\":1}\n");
+        assert_eq!(std::fs::read_to_string(d.join("answers/peer-bbbb2222.txt")).unwrap(), "#id bbbb2222\n{\"ok\":2}\n");
+        assert_eq!(std::fs::read_to_string(d.join("peer.txt")).unwrap(), "#id bbbb2222\n{\"ok\":2}\n", "옛 자리는 마지막 답(옛 스크립트용)");
+        write_answer_in(&d, "peer", "../x", "y"); // 이상한 id 는 따로인 자리에 안 쓴다
+        assert!(!d.join("x.txt").exists() && !d.join("answers/peer-../x.txt").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
     #[test]
     fn 앱이_꺼진_동안_쓴_자리표_알림은_켤_때_다시_본다() {
         // 2026-10-06 slot 남은 것 ①: 켤 때 파일 끝부터 읽어 꺼진 동안 쓴 slot-notice 가 영영 안 갔다

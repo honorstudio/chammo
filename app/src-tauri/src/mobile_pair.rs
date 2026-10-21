@@ -273,7 +273,7 @@ impl Devices {
             return Ok(());
         };
         let _lock = FileLock::take(&p.with_extension("lock"))?;
-        let (mut list, _) = read_list(p);
+        let (mut list, _) = read_list_checked(p)?;
         f(&mut list);
         write_private(p, &serde_json::to_string_pretty(&list).unwrap_or_else(|_| "[]".into()))?;
         g.mtime = std::fs::metadata(p).and_then(|m| m.modified()).ok();
@@ -453,14 +453,23 @@ impl Devices {
 }
 
 fn read_list(p: &Path) -> (Vec<Device>, Option<SystemTime>) {
-    let mut list: Vec<Device> = std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    read_list_checked(p).unwrap_or_else(|_| (Vec::new(), std::fs::metadata(p).and_then(|m| m.modified()).ok()))
+}
+
+/// 없으면 빈 목록, 있는데 못 읽거나 깨졌으면 오류 — 바꾸기(mutate)가 깨진 파일을 빈 목록+새 줄로 덮어 모든 기기·짝이 사라졌다(2026-10-21 리뷰, push.rs load_subs 와 같게)
+fn read_list_checked(p: &Path) -> std::io::Result<(Vec<Device>, Option<SystemTime>)> {
+    let mut list: Vec<Device> = match std::fs::read_to_string(p) {
+        Ok(t) => serde_json::from_str(&t).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{} 깨짐: {e}", p.display())))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(e),
+    };
     for d in list.iter_mut() {
         if let Some(base) = d.name.strip_suffix(HOME_SUFFIX) {
             d.name = base.to_string();
             d.home = true;
         }
     }
-    (list, std::fs::metadata(p).and_then(|m| m.modified()).ok())
+    Ok((list, std::fs::metadata(p).and_then(|m| m.modified()).ok()))
 }
 
 /// 데이터 폴더의 잠금 파일(flock) — 두 앱이 동시에 바꿔도 한 번에 하나씩. 놓는 건 파일이 닫힐 때(Drop)

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { COIN_LIMITS, COIN_RULES, itemOf, PITY, PRICE, PRICE_TEN, rarityLabel, type GachaFile, type PullResult, type Rarity } from '../../domain/gacha';
+import { COIN_LIMITS, COIN_RULES, EVENTS, itemOf, liveEvent, PITY, PRICE, PRICE_TEN, rarityLabel, type GachaFile, type PullResult, type Rarity } from '../../domain/gacha';
 import { tr } from '../../i18n';
 import { IconSkip } from '../Icons';
 import { brush } from '../office/draw';
@@ -11,6 +11,7 @@ import { Stars } from './Stars';
 const RARITY: Rarity[] = ['흔함', '보통', '희귀', '전설'];
 const RATE: Record<Rarity, string> = { 흔함: '60%', 보통: '28%', 희귀: '10%', 전설: '2%' };
 const short = (name: string) => name.replace(/^.* — /, '');
+const until = (ev: keyof typeof EVENTS) => { const d = new Date(EVENTS[ev].until); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 /** 결과 카드 자리(styles.css .gacha-card-slot 높이 + 틈) — 카드가 기계 배출구를 덮지 않게 그림 밑에 비워 둔다(상점 QA 8) */
 const CARD_ROOM = 104;
 
@@ -122,6 +123,8 @@ export function GachaPage({ file, draw, onClose, nav }: { file: GachaFile | null
   const short1 = coins < PRICE;
   const price = (cost: number) => (coins >= cost ? tr(`코인 ${cost}`, `${cost} coins`) : tr(`코인 ${cost - coins} 모자라`, `${cost - coins} coins short`));
   const owned = (id: string) => view?.owned[id] ?? 0;
+  // 한정 이벤트(할로윈) — 기간 중에만 줄이 보인다. 시각은 이 기기 기준
+  const ev = liveEvent(Date.now());
 
   return (
     <div className="office-sub gacha">
@@ -170,6 +173,12 @@ export function GachaPage({ file, draw, onClose, nav }: { file: GachaFile | null
             <h4>{tr('확률', 'Odds')}</h4>
             <div className="gacha-rates">{RARITY.map((r) => <span key={r}><b className={`r-${r}`}>{rarityLabel(r)}</b> {RATE[r]}</span>)}</div>
           </section>
+          {ev && (
+            <section className="gacha-event">
+              <h4>{tr(EVENTS[ev].ko, EVENTS[ev].en)}</h4>
+              <div className="dim">{tr(`${until(ev)}까지 · 뽑을 때 ${Math.round(EVENTS[ev].share * 100)}%`, `Until ${until(ev)} · ${Math.round(EVENTS[ev].share * 100)}% of pulls`)}</div>
+            </section>
+          )}
           {!(short1 && !playing) && <HowToEarn open={false} />}
           {recent.length > 0 && (
             <section>

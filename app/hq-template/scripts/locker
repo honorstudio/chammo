@@ -275,14 +275,21 @@ def give(f, project, home, data, root):
     os.makedirs(d, exist_ok=True)
     to = unique(d, os.path.basename(f))
     copy_verified(f, to)
-    hold = os.path.join(os.path.dirname(f), '.' + os.path.basename(f) + PART)
+    # 치워 둘 이름은 copy_verified 의 조각 이름(.<이름><PART>)과 달라야 한다 — 같으면 바로가기 대신 복사하는 길이 치워 둔 원본을 지운다
+    hold = os.path.join(os.path.dirname(f), '.' + os.path.basename(f) + '.held' + PART)
     os.rename(f, hold)
     try:
-        link(to, f)
+        linked = link(to, f)
     except OSError:
         os.rename(hold, f)
         os.remove(to)
         raise
+    if not linked:
+        # 바로가기를 못 만들어 복사가 놓였다 — 그대로 두면 보관함·프로젝트에 따로 노는 두 벌이 된다(앱 locker_fs::give 의 Ok(false) 와 같게 되돌린다)
+        os.remove(f)
+        os.rename(hold, f)
+        os.remove(to)
+        raise ValueError("this computer can't make shortcuts here, so the file was not moved / 이 컴퓨터에선 바로가기를 못 만들어 이사 안 함")
     os.remove(hold)
     return to
 

@@ -238,12 +238,23 @@ pub(crate) fn full_calc(wb: &str) -> String {
 /// 계산 순서 기록(calcChain.xml)은 지운다 — 수식이 바뀌면 틀려져 엑셀이 '복구' 창을 띄운다. 엑셀이 열 때 다시 만든다
 pub(crate) fn drop_calc_chain(parts: &mut Parts) {
     if parts.remove("xl/calcChain.xml").is_none() { return; }
+    // 요소 하나째(<X …/> 또는 <X …></X>)만 지운다 — 첫 "/>" 까지로 보면 닫는 태그가 따로인 연결은 옆 연결까지 지우거나(sharedStrings·styles 빠짐)
+    // 뒤에 "/>" 가 없으면 끝없이 돌았다(2026-10-21 리뷰). 모양을 모르면 그대로 둔다
     let cut = |xml: &str, tag: &str, needle: &str| -> String {
+        let name = tag.trim_start_matches('<').trim_end();
         let mut out = xml.to_string();
-        while let Some(n) = out.find(needle) {
-            let i = out[..n].rfind(tag).unwrap_or(n);
-            let j = out[n..].find("/>").map(|k| n + k + 2).unwrap_or(n);
+        let mut from = 0;
+        while let Some(n) = out[from..].find(needle).map(|k| from + k) {
+            let Some(i) = out[..n].rfind(tag) else { break };
+            let Some(gt) = out[n..].find('>').map(|k| n + k) else { break };
+            let j = if out[..gt].ends_with('/') {
+                gt + 1
+            } else {
+                let close = format!("</{name}>");
+                match out[gt..].find(&close) { Some(k) => gt + k + close.len(), None => break }
+            };
             out.replace_range(i..j, "");
+            from = i;
         }
         out
     };
@@ -284,13 +295,29 @@ pub fn rezip(bytes: &[u8], replaced: &HashMap<String, Vec<u8>>, removed: &HashSe
 /// 화면이 다시 읽고 합치게 한다(사용자 것도 바깥 것도 안 덮는다). 쓰기 전 원본을 history 에 남기고, 새 파일이 다시 읽히는지 본 뒤
 /// 임시 파일에 써서 바꿔 끼운다. 돌려주는 값 = 새 도장. keep = 쓰기 전 원본 남기기(앱은 history, 시험은 가짜)
 pub fn save(path: &std::path::Path, ops: &[crate::sheet_struct::Op], expected: &str, keep: impl Fn(&std::path::Path)) -> Result<String, String> {
+    let lock = file_lock(path);
+    let _one = lock.lock().unwrap_or_else(|e| e.into_inner());
+    save_locked(path, ops, expected, keep)
+}
+
+/// 한 파일에 쓰기는 한 번에 하나 — 표 저장(write_sheet)·참모 칸 쓰기(set_closed)가 같이 돌면 둘 다 바깥 변경 검사를 지나 같은 원본을
+/// 읽고, 나중에 바꿔 끼운 쪽이 앞 고침을 지웠다(둘 다 '됐다', 2026-10-21 리뷰). 잡은 채로 도장 확인 → 읽기 → 바꿔 끼우기까지
+pub(crate) fn file_lock(path: &std::path::Path) -> std::sync::Arc<std::sync::Mutex<()>> {
+    static LOCKS: std::sync::Mutex<Option<HashMap<std::path::PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>> = std::sync::Mutex::new(None);
+    let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut g = LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    g.get_or_insert_with(HashMap::new).entry(key).or_default().clone()
+}
+
+/// save 의 몸통 — file_lock 을 이미 잡은 쪽이 부른다
+pub(crate) fn save_locked(path: &std::path::Path, ops: &[crate::sheet_struct::Op], expected: &str, keep: impl Fn(&std::path::Path)) -> Result<String, String> {
     use crate::reader::{stamp_of, CHANGED_OUTSIDE};
     if stamp_of(path).as_deref() != Some(expected) { return Err(CHANGED_OUTSIDE.into()); }
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let out = crate::sheet_struct::apply_ops(&bytes, ops)?;
     crate::sheet_book::read_book(&out).map_err(|e| format!("저장본을 다시 못 읽어서 안 썼어: {e}"))?;
     keep(path);
-    let tmp = path.with_extension("chammo-tmp");
+    let tmp = crate::reader::tmp_beside(path);
     std::fs::write(&tmp, &out).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, path).map_err(|e| { let _ = std::fs::remove_file(&tmp); e.to_string() })?;
     stamp_of(path).ok_or_else(|| "저장한 파일을 못 읽었어".into())

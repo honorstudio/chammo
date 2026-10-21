@@ -214,10 +214,24 @@ fn system_lang() -> &'static str {
 
 fn write_file(c: &Config) -> Result<(), String> {
     let path = data_file("config.json");
-    let tmp = data_file("config.json.tmp");
+    // 임시 이름은 부를 때마다 다르게 — 늘 config.json.tmp 면 scripts/app 과 같이 쓸 때 한쪽 저장이 사라졌다(2026-10-21 리뷰)
+    let tmp = data_file(&format!("config.json.chammo-{}", crate::tools::tmp_tag()));
     let text = serde_json::to_string_pretty(c).map_err(|e| e.to_string())?;
     std::fs::write(&tmp, text + "\n").map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })
+}
+
+/// 있는데 못 읽는 설정 파일 — 기본값으로 덮기 전에 옆에 옮겨 둔다(칸 하나 타입이 틀려도 사람 값이 통째로 사라졌다, 2026-10-21 리뷰).
+/// 옮긴 자리(못 옮겼으면 None)
+fn keep_broken(path: &Path, text: &str, stamp: u64) -> Option<PathBuf> {
+    if serde_json::from_str::<Config>(text).is_ok() {
+        return None;
+    }
+    let to = path.with_file_name(format!("config.json.broken-{stamp}"));
+    std::fs::rename(path, &to).ok().map(|_| to)
 }
 
 static CURRENT: RwLock<Option<Config>> = RwLock::new(None);
@@ -229,6 +243,12 @@ pub fn current() -> Config {
     }
     let home = home();
     let text = std::fs::read_to_string(data_file("config.json")).ok();
+    if let Some(t) = &text {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        if let Some(to) = keep_broken(&data_file("config.json"), t, now) {
+            crate::claude::log_out("config", &format!("못 읽는 설정 파일을 {} 로 옮겨 두고 기본값으로 켬", to.display()));
+        }
+    }
     let c = match boot(&home, data_dir(), text.as_deref()) {
         Boot::Saved(c) => c,
         Boot::Owner(c) => {
@@ -467,6 +487,24 @@ mod tests {
         assert!(!c.setup_done);
         assert_eq!(default_config("/h", Path::new("/d"), "ko", |_| false).dev_root, "~/Developer");
         assert_eq!(default_config("/h", Path::new("/d"), "ko", |_| false).hq_dir, "/d/hq");
+    }
+
+    #[test]
+    fn 못_읽는_설정_파일은_덮기_전에_옆에_둔다() {
+        let d = std::env::temp_dir().join(format!("chammo-cfg-broken-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("config.json");
+        let bad = r#"{"devRoot":"~/Work","extraProjects":"~/x"}"#; // 칸 하나 타입이 틀림 — 전엔 주인 기본값으로 통째로 덮었다
+        std::fs::write(&f, bad).unwrap();
+        let to = keep_broken(&f, bad, 7).expect("옮김");
+        assert_eq!(to, d.join("config.json.broken-7"));
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), bad);
+        assert!(!f.exists());
+        std::fs::write(&f, r#"{"language":"en"}"#).unwrap();
+        assert_eq!(keep_broken(&f, r#"{"language":"en"}"#, 8), None, "읽히는 파일은 그대로");
+        assert!(f.exists());
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

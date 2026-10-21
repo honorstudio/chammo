@@ -67,7 +67,7 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
   const tabsNow = useAgentTabs(live.profile, 400); // 주소가 바뀌면 머리 도메인이 빨리 따라오게
   const { pages, current, pinned, shown, setShown, dialog, dialogTabs, stuck, chooser, dropped, error, popup, popupKind, wrapperDialog, permission, fedcm } = tabsNow;
   // 화면이 진짜인가 — 아니면(닫힘·못 받음·오래 주소 모름) 입력을 막는다. 보내 봐야 Rust 가 버린다(예전엔 사진 위를 눌러도 아무 일이 없었다)
-  const scr = useBrowserScreen(tabsNow, gone);
+  const scr = useBrowserScreen(tabsNow, gone, !!src);
   // 평소엔 보기만 — 개입(mine)·세션이 부름(ask) 동안만 화면 조작. 누르면 목록(1.5초)을 기다리지 않고 바로 바뀐 것으로 본다(want)
   const [want, setWant] = useState<boolean | null>(() => (Date.now() - (took.get(`${live.profile}:${live.pid}`) ?? 0) < 5000 ? true : null));
   const liveMine = !!live.takeover;
@@ -342,7 +342,7 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
           onPointerMove={(e) => { const t = performance.now(); if (t - lastMove.current < 30) return; lastMove.current = t; mouse('mouseMoved', e); }}
           onWheel={(e) => { const p = at(e); if (p) sendIf(blocked, live.profile, pid, expect.current, [{ kind: 'mouse', type: 'mouseWheel', x: p.x, y: p.y, deltaX: e.deltaX, deltaY: e.deltaY, modifiers: modsOf(e) }]); }}
           onContextMenu={(e) => e.preventDefault()}>
-          <FrameView profile={live.profile} src={src} scr={scr} error={error} alt={live.title || live.url} imgRef={img} />
+          <FrameView profile={live.profile} src={src} scr={scr} error={error} alt={live.title || live.url} imgRef={img} onShow={showChrome} />
           {/* 숨은 글칸 — 글자를 받아 insertText 로. 값은 보내자마자 비운다(남기지 않는다) */}
           <textarea ref={field} className="abm-field" readOnly={scr.blocked || !canCtl} aria-label={tr('세션 브라우저에 입력', 'Type into the session browser')} autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
             onInput={(e) => {

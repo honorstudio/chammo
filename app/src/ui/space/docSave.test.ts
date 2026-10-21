@@ -70,6 +70,17 @@ describe('docSave — 알던 판일 때만 쓴다(밖에서 고친 줄을 덮지
     expect(fresh.base).toMatchObject({ text: '# 원래\n', stamp: null }); // 새 편집기는 첫 감시에서 파일을 읽어 마지막 타자를 받아 온다
   });
 
+  it('친 글자를 0.7초 안에 지워 저장한 판으로 돌아오면 기다리던 저장도 취소한다(2026-10-21 리뷰 — 지운 글자가 파일에 남았다)', async () => {
+    const s = newSession(P, '가나');
+    await saveNow(s, '가나');
+    vi.useFakeTimers();
+    saveSoon(s, '가나다');
+    saveSoon(s, '가나');
+    await vi.advanceTimersByTimeAsync(800);
+    vi.useRealTimers();
+    expect(writes().map((w) => w.args.text)).toEqual(['가나']);
+  });
+
   it('기준 번호(ver)는 바뀔 때마다 오른다 — 감시가 낡은 결과를 버린다', () => {
     const s = newSession(P, 'a');
     setBase(s, 'b', '2:2');

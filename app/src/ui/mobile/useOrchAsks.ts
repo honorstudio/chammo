@@ -27,7 +27,7 @@ export function useOrchAsks(orchs: Session[]): { asks: Record<string, Ask>; line
           const had = mem.current.get(o.sessionId);
           const c = await readTranscript(o.sessionId, had?.next);
           const items = c.reset ? parseChat(c.text) : c.text ? appendChat(had?.items ?? [], c.text) : had?.items ?? [];
-          mem.current.set(o.sessionId, { items, next: c.next });
+          mem.current.set(o.sessionId, { items, next: c.next || undefined }); // 0 이면 다음에도 '처음'으로(from 0 은 기록 전체를 읽는다)
           out[o.id] = orchAsk(items, o.state);
           ln[o.id] = orchLine(items, o.state);
         } catch {

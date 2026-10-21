@@ -57,6 +57,10 @@ function takeoverNote(content: unknown): string | null {
   return null;
 }
 
+/** 짝지은 기기 앱 화면에서 사람이 직접 친 말(ADR 0011) — 받는 폰 서버가 붙인 이름표를 떼면 사람 말 그대로(꼬리표 human#cid 째) */
+const HUMAN_REMOTE = /^\[(?:사람 말 · 원격 · [^\]\n]+?에서 직접|Person · remote · typed on [^\]\n]+?) · human#[A-Za-z0-9_-]+\]\n?/;
+export const humanBody = (t: string) => (HUMAN_REMOTE.test(t) ? t.replace(HUMAN_REMOTE, '').replace(/^› (?=[[<［＜])/gm, '') : t);
+
 /** 다른 세션이 보낸 말(<cross-session-message from-name=…>)·앱이 넘긴 줄([앱] …) → 보낸 쪽과 본문 */
 function relayOf(t: string): { from: string; text: string } | null {
   if (t.startsWith('[앱] ')) return { from: '앱', text: t.replace(/^\[앱\]\s*/, '').trim() };
@@ -112,7 +116,8 @@ function itemsOf(r: Rec): (ChatItem | Out)[] {
     if (take) return [{ kind: 'note', id, ts, text: take }];
     // 컨텍스트가 차서 앞부분을 요약해 넣은 글 — 사용자가 친 말이 아니다
     if (r.isCompactSummary) return [{ kind: 'note', id, ts, text: '대화가 길어서 앞부분을 요약했어' }];
-    const { text, images } = userParts(r.message?.content);
+    const { text: said, images } = userParts(r.message?.content);
+    const text = humanBody(said);
     if (!text && !images.length) return [];
     const rel = text ? relayOf(text) : null;
     if (rel) return [{ kind: 'relay', id, ts, ...rel }];
@@ -131,7 +136,8 @@ function itemsOf(r: Rec): (ChatItem | Out)[] {
     const take = typeof a.prompt === 'string' && a.prompt.startsWith('<task-notification>') ? a.prompt.match(TAKEOVER) : null;
     if (take) return [{ kind: 'note', id, ts, text: take[1]! }];
     // 그림을 붙여 보낸 말은 prompt 가 글+그림 블록 배열이다(2.1.305 실측) — 보통 사람 말처럼 썸네일도
-    const { text, images } = userParts(a.prompt);
+    const { text: said, images } = userParts(a.prompt);
+    const text = humanBody(said);
     const rel = text ? relayOf(text) : null;
     if (rel) return [{ kind: 'relay', id, ts, ...rel }]; // 일하는 중에 들어온 다른 세션 말
     if (a.origin?.kind !== 'human' || (!text && !images.length)) return [];

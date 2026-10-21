@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { browserBig, browserScreen, closedText, tabStrip, takeoverLine, unpackFrame, type CdpPage, type Live, type FedcmDialog, type PagePermission, type PopupKind, type WrapperDialog } from '../domain/agentBrowser';
 import { sharedPoll } from '../domain/sharedPoll';
 import { tr } from '../i18n';
-import { IconCollapse, IconExpand, IconHide, IconMaximize, IconRefresh } from './Icons';
+import { IconCollapse, IconExpand, IconHide, IconMaximize, IconOpen, IconRefresh } from './Icons';
 import { handBack, openAgentModal, takeOver } from './AgentBrowserModal';
 import './agentBrowser.css';
 
@@ -41,7 +41,7 @@ export function useAgentFrame(profile: string, interval: number) {
       try {
         const buf = await invoke<ArrayBuffer>('agent_frame', { profile, since: seq.current });
         const f = unpackFrame(buf);
-        if (alive && f && f.seq > seq.current) {
+        if (alive && f && f.seq !== seq.current) { // 일꾼이 다시 뜨면 순번이 0부터라 작아진다 — 다르면 새 그림
           seq.current = f.seq;
           const next = URL.createObjectURL(new Blob([f.jpeg as BlobPart], { type: 'image/jpeg' }));
           if (url.current) URL.revokeObjectURL(url.current);
@@ -60,10 +60,10 @@ export function useAgentFrame(profile: string, interval: number) {
 }
 
 /** 화면이 진짜인가(domain browserScreen) — 목록에서 빠진·탭 0개·지금 탭 모름이 얼마나 이어졌는지 세서 넘긴다. gone = 모달이 목록에서 빠진 브라우저를 붙든 채 */
-export function useBrowserScreen(t: { error: string; attached: boolean; pages: CdpPage[]; current: string | null; now: number }, gone = false) {
-  const since = useRef<{ gone: number | null; empty: number | null; unsure: number | null }>({ gone: null, empty: null, unsure: null });
+export function useBrowserScreen(t: { error: string; attached: boolean; pages: CdpPage[]; current: string | null; now: number }, gone = false, hasFrame = true) {
+  const since = useRef<{ gone: number | null; empty: number | null; unsure: number | null; noframe: number | null }>({ gone: null, empty: null, unsure: null, noframe: null });
   const s = since.current;
-  const age = (k: 'gone' | 'empty' | 'unsure', on: boolean) => {
+  const age = (k: 'gone' | 'empty' | 'unsure' | 'noframe', on: boolean) => {
     if (!on) s[k] = null;
     else if (s[k] == null) s[k] = t.now;
     return s[k] == null ? 0 : t.now - s[k]!;
@@ -73,6 +73,8 @@ export function useBrowserScreen(t: { error: string; attached: boolean; pages: C
   return browserScreen({
     goneMs: age('gone', gone), error: t.error, attached: t.attached, pages: t.pages.length, emptyMs: age('empty', empty),
     current: !!t.current, unsureMs: age('unsure', !t.current && !t.error && !gone),
+    // 붙고 탭도 아는데 그림이 한 장도 없다 — 오래가면 이유·다시 시도·크롬에서 보기(2026-10-21 첫 사용자 제보)
+    noFrameMs: age('noframe', t.attached && !!t.current && !hasFrame && !t.error && !gone),
   });
 }
 
@@ -81,7 +83,7 @@ export function useBrowserScreen(t: { error: string; attached: boolean; pages: C
  * 예전엔 그림이 한 번 오면 이유를 안 그려서, 닫힌 브라우저의 마지막 화면이 '사진'처럼 남아 눌러도 안 먹었다(2026-10-05 사용자 실사용).
  * 이유 없이 '화면 받는 중'에 멈춰 사람이 기다리기만 한 것도(2026-10-05 QA 5)
  */
-export function FrameView({ profile, src, scr, error, alt, imgRef }: { profile: string; src: string; scr: ReturnType<typeof browserScreen>; error: string; alt: string; imgRef?: React.Ref<HTMLImageElement> }) {
+export function FrameView({ profile, src, scr, error, alt, imgRef, onShow }: { profile: string; src: string; scr: ReturnType<typeof browserScreen>; error: string; alt: string; imgRef?: React.Ref<HTMLImageElement>; onShow?: () => void }) {
   const msg = scr.kind === 'closed' ? closedText()
     : scr.kind === 'fail' ? tr('화면을 못 받았어', 'Could not get the screen') : scr.why;
   return (
@@ -93,6 +95,7 @@ export function FrameView({ profile, src, scr, error, alt, imgRef }: { profile: 
             {msg}
             {/* 모달 화면 칸은 누름을 잡아(포인터 캡처) 크롬으로 보낸다 — 여기서 끊어야 버튼이 눌린다 */}
             <button className="ab-ic" onPointerDown={(e) => e.stopPropagation()} onClick={() => void invoke('agent_retry', { profile }).catch(() => {})} title={tr('다시 시도', 'Retry')} aria-label={tr('다시 시도', 'Retry')}><IconRefresh /></button>
+            {scr.kind === 'noframe' && onShow && <button className="ab-ic" onPointerDown={(e) => e.stopPropagation()} onClick={onShow} title={tr('크롬에서 보기', 'Show in Chrome')} aria-label={tr('크롬에서 보기', 'Show in Chrome')}><IconOpen /></button>}
           </span></span>
         )
         : !src && <span className="ab-wait">{tr('화면 받는 중', 'Connecting')}</span>}
@@ -132,9 +135,9 @@ export function AgentBrowser({ live, children, className = '' }: { live: Live; c
   const [manual, setManual] = useState<{ big: boolean; at: number } | null>(null);
   const tabsNow = useAgentTabs(live.profile);
   const { pages, current, pinned, shown, setShown, now, reopened, dialogTabs, stuck, error, popup, popupKind } = tabsNow;
-  const scr = useBrowserScreen(tabsNow);
   const [bigNow, setBigNow] = useState(true);
   const { src, lastFrameAt } = useAgentFrame(live.profile, bigNow ? 100 : 700); // 크게 10fps, 작게 띠 썸네일
+  const scr = useBrowserScreen(tabsNow, false, !!src);
   const autoBig = browserBig(live, lastFrameAt, now);
   const big = manual && manual.at === live.toolAt ? manual.big : autoBig;
   useEffect(() => setBigNow(big), [big]);
@@ -173,7 +176,7 @@ export function AgentBrowser({ live, children, className = '' }: { live: Live; c
             <button className="ab-ic" onClick={() => openAgentModal(live.profile, live.pid)} title={tr('크게 보기 — 직접 조작', 'Open large — control it')} aria-label={tr('크게 보기', 'Open large')}><IconMaximize /></button>
             <button className="ab-ic" onClick={flip} title={tr('터미널 크게', 'Terminal larger')} aria-label={tr('터미널 크게', 'Terminal larger')}><IconCollapse /></button>
           </div>
-          <div className="ab-screen"><FrameView profile={live.profile} src={src} scr={scr} error={error} alt={live.title || live.url} /></div>
+          <div className="ab-screen"><FrameView profile={live.profile} src={src} scr={scr} error={error} alt={live.title || live.url} onShow={() => void invoke('agent_focus', { profile: live.profile }).then(() => setShown(true), () => {})} /></div>
           <div className={`ab-doing ${live.busy ? 'ab-busy' : ''} ${taking ? 'ab-taking' : ''}`}>{live.busy && !taking && <span className="cv-spin" />}<span>{doing}</span></div>
         </div>
       ) : (

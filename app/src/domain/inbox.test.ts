@@ -40,6 +40,13 @@ describe('buildInbox — 나한테 온 것만 한 칸에', () => {
     expect(buildInbox([], [...evs, ev('done', 't1', '2026-09-27T00:20:00Z')], new Set())).toEqual([]);
   });
 
+  it('결정 뒤에 넘기기(own)가 와도 카드는 남는다 — 답은 아직 없다(2026-10-21 리뷰: 결제 확인 카드가 handoff 로 사라졌다)', () => {
+    const evs = [ev('send', 't1', '2026-09-27T00:00:00Z', { title: '결제 붙이기', target: 'todo-api' }), ev('ask', 't1', '2026-09-27T00:10:00Z', { note: '보내도 돼?' }),
+      ev('own', 't1', '2026-09-27T00:11:00Z', { from: 'o2' })];
+    expect(buildInbox([], evs, new Set()).map((i) => [i.kind, i.text])).toEqual([['decide', '보내도 돼?']]);
+    expect(buildInbox([], [...evs, ev('answer', 't1', '2026-09-27T00:20:00Z', { note: 'ㅇㅇ' })], new Set())).toEqual([]);
+  });
+
   it('ask 에 to(물어본 참모 세션)가 있으면 답장은 그쪽으로 — 위험 지시 확인', () => {
     const evs = [ev('send', 't3', '2026-09-27T00:00:00Z', { target: 'todo-api', title: '프로덕션 배포' }), ev('ask', 't3', '2026-09-27T00:00:01Z', { note: '위험 지시 확인 — todo-api: 프로덕션 배포 — 보내도 돼?', to: 'sid-orch' })];
     expect(buildInbox([], evs, new Set())[0]?.target).toBe('sid-orch');

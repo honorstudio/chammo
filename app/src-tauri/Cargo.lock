@@ -1582,7 +1582,7 @@ dependencies = [
 
 [[package]]
 name = "honor-orchestrator"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",

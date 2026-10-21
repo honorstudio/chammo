@@ -164,7 +164,7 @@ pub fn shift_package(parts: &mut Parts, sheets: &[SheetInfo], target: &str, sh: 
     }
     for s in sheets {
         let Some(x) = get(parts, &s.part) else { continue };
-        let new = if s.part == target { shift_target_sheet(&x, &name, sh)? } else if x.contains(&name) {
+        let new = if s.part == target { shift_target_sheet(&x, &name, sh)? } else if crate::sheet_sheets::mentions(&x, &name) {
             // 다른 시트: 이 시트를 가리키는 수식만. 공유 수식이 있으면 펼친 뒤(따라오는 칸마다 밀림이 달라질 수 있다)
             let (head, mut rows, tail) = split_rows(&x)?;
             let all: HashSet<String> = rows.iter().flat_map(|r| r.cells.values().filter_map(|c| crate::sheet_patch::shared_si(c))).collect();
@@ -183,7 +183,7 @@ pub fn shift_package(parts: &mut Parts, sheets: &[SheetInfo], target: &str, sh: 
     let names: Vec<String> = parts.keys().cloned().collect();
     for p in names {
         if p.starts_with("xl/charts/chart") && p.ends_with(".xml") {
-            if let Some(x) = get(parts, &p) { if x.contains(&name) { put(parts, &p, edit_text(&x, "f", |f| shift_formula(f, &name, "", sh))); } }
+            if let Some(x) = get(parts, &p) { if crate::sheet_sheets::mentions(&x, &name) { put(parts, &p, edit_text(&x, "f", |f| shift_formula(f, &name, "", sh))); } }
         } else if p.starts_with("xl/pivotCache/pivotCacheDefinition") {
             if let Some(x) = get(parts, &p) {
                 if x.contains(&format!("sheet=\"{}\"", esc(&name))) { put(parts, &p, edit_attr(&x, "worksheetSource", "ref", |v| Some(shift_sqref(v, sh).unwrap_or_else(|| v.to_string())))); }

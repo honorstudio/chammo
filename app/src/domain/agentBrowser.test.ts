@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { askName, closedText, controlOf, takeoverLine, browserBig, browserScreen, currentSite, EMPTY_MS, frameTrouble, GONE_MS, UNSURE_MS, liveOf, paneStatus, phoneTrouble, siteOf, tabStrip, unpackFrame, type Live, stuckLine, permLine, fedcmChoices, fedcmLine, focusFailLine, peekStep, afterUnpeek } from './agentBrowser';
+import { askName, closedText, NO_FRAME_MS, controlOf, takeoverLine, browserBig, browserScreen, currentSite, EMPTY_MS, frameTrouble, GONE_MS, UNSURE_MS, liveOf, paneStatus, phoneTrouble, siteOf, tabStrip, unpackFrame, type Live, stuckLine, permLine, fedcmChoices, fedcmLine, focusFailLine, peekStep, afterUnpeek } from './agentBrowser';
 
 const live = (o: Partial<Live> = {}): Live => ({ profile: 'acme', pid: 11, sessionPid: 22, url: 'https://a.com/', title: 'A', tabs: [], tool: '이동 https://a.com/', toolAt: 1000, busy: false, ts: 1000, ...o });
 
@@ -127,6 +127,22 @@ describe('frameTrouble — 화면 받기 실패 이유(Rust 일꾼 error)를 사
   });
   it('그 밖은 못 받음(이유는 툴팁에)', () => {
     expect(frameTrouble('HTTP error: 404 Not Found')).toBe('fail');
+  });
+});
+
+describe('2026-10-21 첫 사용자 제보 — 사람 부르기 때 \'화면 받는 중\'에서 이유 없이 멈춤', () => {
+  const base = { goneMs: 0, error: '', attached: true, pages: 1, emptyMs: 0, current: true, unsureMs: 0 };
+  it('붙고 지금 탭도 아는데 그림이 오래 안 오면 — 이유를 보이고 막는다(다시 시도·크롬에서 보기)', () => {
+    expect(browserScreen({ ...base, noFrameMs: NO_FRAME_MS })).toMatchObject({ kind: 'noframe', blocked: true });
+    expect(browserScreen({ ...base, noFrameMs: NO_FRAME_MS }).why).not.toBe('');
+  });
+  it('경계 — 조금 늦는 건 그대로 기다린다(첫 장은 보통 1초 안)', () => {
+    expect(browserScreen({ ...base, noFrameMs: NO_FRAME_MS - 1 })).toEqual({ kind: 'ok', why: '', blocked: false });
+    expect(browserScreen(base)).toEqual({ kind: 'ok', why: '', blocked: false });
+  });
+  it('닫힘·실패가 먼저 — 그림 없음보다 정확한 이유', () => {
+    expect(browserScreen({ ...base, noFrameMs: 60_000, error: 'Target.getTargets: no answer', attached: false, current: false })).toMatchObject({ kind: 'fail' });
+    expect(browserScreen({ ...base, noFrameMs: 60_000, pages: 0, emptyMs: EMPTY_MS, current: false })).toMatchObject({ kind: 'closed' });
   });
 });
 

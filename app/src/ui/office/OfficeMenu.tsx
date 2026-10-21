@@ -6,12 +6,12 @@ import { IconClose } from '../Icons';
  * 사무실 칸 위에 띄우는 것 — 뽑기·도감·스킨은 모달, 가구는 방 위에서 바로 끌어 놓기.
  * 참모 열·작업 패널은 그대로 두고 이 칸 안에서만(사용자 2026-09-27: 채팅을 가리지 말 것, 2026-09-28: 페이지 말고 모달)
  */
-export type OfficeTab = 'office' | 'gacha' | 'dex' | 'skins' | 'furniture';
-/** 한 창 안에서 오가는 상점 화면 — 사무실 메뉴와 펫 탭 코인이 같은 창을 연다 */
-export type ShopView = 'gacha' | 'dex' | 'skins';
+export type OfficeTab = 'office' | 'gacha' | 'dex' | 'deco' | 'furniture';
+/** 한 창 안에서 오가는 상점 화면 — 사무실 메뉴와 펫 탭 코인이 같은 창을 연다. 가구 놓기(furniture)는 꾸미기 안 '방에 놓기'로 */
+export type ShopView = 'gacha' | 'dex' | 'deco';
 
 /** 직접 그린 도트 아이콘(16칸) — '#' 칸을 글자색으로 칠한다. 라이브러리·이모지 금지(CLAUDE.md) */
-const ICON: Record<Exclude<OfficeTab, 'office'>, string[]> = {
+const ICON: Record<Exclude<OfficeTab, 'office' | 'furniture'>, string[]> = {
   gacha: [
     '.....######.....', '...##......##...', '..#..##.......#.', '..#.##..##....#.', '..#.....##..#.#.', '...##......##...',
     '....########....', '....#......#....', '....#.####.#....', '....#.#..#.#....', '....#.####.#....', '....#......#....',
@@ -22,15 +22,10 @@ const ICON: Record<Exclude<OfficeTab, 'office'>, string[]> = {
     '..#.#.####.#.#..', '..#.#.......#.#.', '..#.#.......#.#.', '..#.#.......#.#.', '..#.#.......#.#.', '..#.#.......#.#.',
     '..#.#########.#.', '..#...........#.', '..#############..', '................',
   ],
-  skins: [
+  deco: [
     '................', '..##########....', '..#........#....', '..#.######.###..', '..#........#.#..', '..##########.#..',
     '.............#..', '.......#######..', '.......#........', '.......#........', '......###.......', '......###.......',
     '......###.......', '......###.......', '......###.......', '................',
-  ],
-  furniture: [
-    '................', '................', '...##########...', '..#..........#..', '..#..........#..', '.##..........##.',
-    '#..#........#..#', '#...########...#', '#..............#', '#..............#', '################', '.#............#.',
-    '.#............#.', '.##..........##.', '................', '................',
   ],
 };
 
@@ -42,14 +37,14 @@ export function PixelIcon({ rows, size = 22 }: { rows: string[]; size?: number }
   );
 }
 
-const TOOLS: [Exclude<OfficeTab, 'office'>, string][] = [['gacha', tr('뽑기', 'Gacha')], ['dex', tr('도감', 'Collection')], ['skins', tr('스킨', 'Skins')], ['furniture', tr('가구', 'Furniture')]];
+const TOOLS: [ShopView, string][] = [['gacha', tr('뽑기', 'Gacha')], ['dex', tr('도감', 'Collection')], ['deco', tr('꾸미기', 'Decorate')]];
 
 /** 왼쪽 위 아이콘 줄 — 누르면 그 모달(가구는 방 위 편집). 켜진 걸 다시 누르면 닫힌다. 아이콘만(이름은 aria-label·title — 아이콘+글자 같이 금지, 상점 QA 11) */
 export function OfficeTools({ tab, onTab, dot }: { tab: OfficeTab; onTab: (t: OfficeTab) => void; /** 작은 점 — 도감에 NEW 가 있을 때 */ dot?: Partial<Record<OfficeTab, boolean>> }) {
   return (
     <div className="office-tools" role="toolbar" aria-label={tr('사무실 메뉴', 'Office menu')}>
       {TOOLS.map(([id, name]) => (
-        <button key={id} className={`office-tool ${tab === id ? 'on' : ''} ${dot?.[id] ? 'has-new' : ''}`} aria-pressed={tab === id} aria-label={name} title={name} onClick={() => onTab(tab === id ? 'office' : id)}>
+        <button key={id} className={`office-tool ${tab === id || (id === 'deco' && tab === 'furniture') ? 'on' : ''} ${dot?.[id] ? 'has-new' : ''}`} aria-pressed={tab === id} aria-label={name} title={name} onClick={() => onTab(tab === id ? 'office' : id)}>
           <PixelIcon rows={ICON[id]} />
         </button>
       ))}
@@ -71,7 +66,7 @@ export function OfficeModal({ onClose, children }: { onClose: () => void; childr
   );
 }
 
-const SHOP: [ShopView, string][] = [['gacha', tr('뽑기', 'Gacha')], ['dex', tr('도감', 'Collection')], ['skins', tr('스킨', 'Skins')]];
+const SHOP = TOOLS;
 
 /** 상점 창 안에서 뽑기·도감·스킨을 오가는 아이콘 — 펫 탭에서 뽑아도 뽑은 걸 바로 본다(2026-10-04 QA 3번) */
 export function ShopNav({ view, onView, dot }: { view: ShopView; onView: (v: ShopView) => void; dot?: Partial<Record<ShopView, boolean>> }) {

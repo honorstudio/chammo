@@ -449,7 +449,7 @@ pub fn agent_frame(profile: String, since: u64) -> tauri::ipc::Response {
 pub fn frame_bytes(profile: &str, since: u64) -> Vec<u8> {
     let view = touch(profile);
     let v = view.lock().unwrap_or_else(|e| e.into_inner());
-    if v.seq > since && !v.jpeg.is_empty() { pack_frame(v.seq, &v.jpeg) } else { vec![] }
+    if frame_due(v.seq, since, v.jpeg.is_empty()) { pack_frame(v.seq, &v.jpeg) } else { vec![] }
 }
 
 /// 폰 브라우저 보기의 화면 받기 상태 — 이유(주소 뺀 한 줄, 120자)·붙음·탭 수. 폰이 맥 모달과 같은 판단(browserScreen)으로 이유를 보인다.
@@ -959,6 +959,34 @@ struct St {
     casting: bool,
     /// 사람 개입 기록용으로 물은 요소 설명(요청 번호, 누름이면 true·글자면 false) — 답은 on_event 가 기록한다
     describes: Vec<(u64, bool)>,
+    /// 지금 탭 그림이 한 장이라도 왔나(화면 받기·한 장 찍기) — 탭을 바꾸면 처음부터
+    framed: bool,
+    /// 답을 기다리는 한 장 찍기(요청 번호, 그때 탭)와 마지막으로 보낸 때 — 늦게 온 답도 그 탭이 그대로면 쓴다(resnap_due)
+    snaps: Vec<(u64, String, Instant)>,
+    snap_at: Option<Instant>,
+}
+
+/// 그림 없이 이만큼 지나면 한 장 다시 찍는다
+const RESNAP: Duration = Duration::from_secs(2);
+/// 답 안 온 찍기가 이만큼 쌓이면 더 안 보낸다(크롬이 아예 안 그리는 중)
+const SNAPS_MAX: usize = 5;
+/// 이만큼 답이 없는 찍기는 버린다 — 안 버리면 5개가 쌓인 뒤 탭이 바뀌기 전까지 다시 안 찍었다(가지 검토)
+const SNAP_TTL: Duration = Duration::from_secs(10);
+
+/// 오래 답 없는 찍기 버리기
+pub fn prune_snaps(snaps: &mut Vec<(u64, String, Instant)>, now: Instant) {
+    snaps.retain(|s| now.duration_since(s.2) < SNAP_TTL);
+}
+
+/// 칸에 그림을 줄까 — 순번이 다르면. 일꾼이 다시 뜨면 순번을 0부터 세서 칸이 든 옛 순번(since)보다 작아진다(가지 검토)
+pub fn frame_due(seq: u64, since: u64, empty: bool) -> bool {
+    seq != since && !empty
+}
+
+/// 지금 탭을 한 장 다시 찍을 때인가 — 화면 받기는 페이지가 안 바뀌면 그림을 안 보내서, 붙을 때 한 장이 늦거나 빠지면
+/// 가만히 있는 화면(사람을 부른 인증 화면)은 영영 '화면 받는 중'이었다(2026-10-21 첫 사용자 제보)
+pub fn resnap_due(framed: bool, last: Option<Instant>, pending: usize, now: Instant) -> bool {
+    !framed && pending < SNAPS_MAX && last.is_none_or(|t| now.duration_since(t) >= RESNAP)
 }
 
 fn screencast_params() -> serde_json::Value {
@@ -974,6 +1002,20 @@ impl St {
 
 /// 사건 처리 — 탭 목록·바뀐 탭·대화상자·프레임(받은 프레임 번호는 acks 에 모아 확인을 돌려준다 — 안 돌려주면 크롬이 다음 프레임을 안 보낸다)
 fn on_event(m: &serde_json::Value, view: &Arc<Mutex<View>>, st: &mut St) {
+    // 한 장 찍기의 답 — 기다리지 않고 받는다(늦게 와도 그 탭이 지금 탭이고 아직 그림이 없으면 그림으로 — 화면 받기 그림이 더 새것)
+    if let Some(i) = m["id"].as_u64().and_then(|id| st.snaps.iter().position(|s| s.0 == id)) {
+        let (_, t, _) = st.snaps.remove(i);
+        if st.target.as_deref() == Some(t.as_str()) && !st.framed {
+            if let Some(jpeg) = m["result"]["data"].as_str().and_then(|d| base64::engine::general_purpose::STANDARD.decode(d).ok()).filter(|j| !j.is_empty()) {
+                if let Ok(mut v) = view.lock() {
+                    v.seq += 1;
+                    v.jpeg = jpeg;
+                }
+                st.framed = true;
+            }
+        }
+        return;
+    }
     if let Some(id) = m["id"].as_u64() {
         // 사람 개입 기록 — 누른 곳·글자 넣은 칸의 이름(값 없음, takeover::describe_js)
         if let Some(i) = st.describes.iter().position(|d| d.0 == id) {
@@ -1105,6 +1147,7 @@ fn on_event(m: &serde_json::Value, view: &Arc<Mutex<View>>, st: &mut St) {
         }
         "Page.screencastFrame" if mine => {
             if let Ok(jpeg) = base64::engine::general_purpose::STANDARD.decode(m["params"]["data"].as_str().unwrap_or_default()) {
+                st.framed = true;
                 if let Ok(mut v) = view.lock() {
                     v.seq += 1;
                     v.jpeg = jpeg;
@@ -1157,19 +1200,12 @@ fn probe(cdp: &mut Cdp, st: &mut St, target: &str, session: &str) {
 }
 
 /// 지금 탭을 한 장 직접 찍는다 — 화면이 가만히 있으면 screencast 가 첫 장을 안 보내 옛 탭 그림이 남았다(2026-10-03 실측).
-/// 대화상자에 막힌 페이지는 그림이 안 올 수 있어 짧게만 기다린다
-fn snap(cdp: &mut Cdp, s: &str, view: &Arc<Mutex<View>>, st: &mut St) {
-    let mut buf = vec![];
-    if let Ok(shot) = cdp.call_for("Page.captureScreenshot", serde_json::json!({ "format": "jpeg", "quality": 60, "optimizeForSpeed": true }), Some(s), Duration::from_millis(1500), |m| buf.push(m.clone())) {
-        if let Ok(jpeg) = base64::engine::general_purpose::STANDARD.decode(shot["data"].as_str().unwrap_or_default()) {
-            if let Ok(mut v) = view.lock() {
-                v.seq += 1;
-                v.jpeg = jpeg;
-            }
-        }
-    }
-    for m in buf {
-        on_event(&m, view, st);
+/// 기다리지 않는다 — 답은 on_event 가 받는다(대화상자에 막힌 페이지는 답이 안 올 수 있고, 1.5초만 기다렸을 땐 늦은 답을 버려 빈 칸이 남았다)
+fn snap(cdp: &mut Cdp, s: &str, st: &mut St) {
+    let Some(t) = st.target.clone() else { return };
+    st.snap_at = Some(Instant::now());
+    if let Ok(id) = cdp.send("Page.captureScreenshot", serde_json::json!({ "format": "jpeg", "quality": 60, "optimizeForSpeed": true }), Some(s)) {
+        st.snaps.push((id, t, Instant::now()));
     }
 }
 
@@ -1235,6 +1271,9 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
                 }
                 st.casting = false;
                 st.target = want.clone();
+                st.framed = false;
+                st.snaps.clear();
+                st.snap_at = None;
                 if let Some(t) = want {
                     let s = match st.sessions.get(&t) {
                         Some(s) => s.clone(),
@@ -1270,7 +1309,7 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
                     if !known {
                         probe(&mut cdp, &mut st, &t, &s);
                     }
-                    snap(&mut cdp, &s, view, &mut st);
+                    snap(&mut cdp, &s, &mut st);
                 }
             }
             // 아무도 안 보는데 대화상자 때문에 붙어 있는 동안은 화면을 안 받는다(CPU·대역폭) — 다시 보면 다시 받는다
@@ -1280,8 +1319,16 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
                     let _ = cdp.send(m, p, Some(&s));
                     st.casting = watching;
                     if watching {
-                        snap(&mut cdp, &s, view, &mut st);
+                        // 안 보는 동안 화면이 바뀌었을 수 있다 — 새로 받을 때까지 그림 없음으로 보고 다시 찍는다
+                        st.framed = false;
+                        st.snaps.clear();
+                        snap(&mut cdp, &s, &mut st);
                     }
+                }
+                // 보는 중인데 그림이 아직 한 장도 없다 — 붙을 때 찍은 한 장이 빠졌으면 화면이 안 바뀌는 동안 영영 빈 칸이다
+                prune_snaps(&mut st.snaps, Instant::now());
+                if st.casting && resnap_due(st.framed, st.snap_at, st.snaps.len(), Instant::now()) {
+                    snap(&mut cdp, &s, &mut st);
                 }
             }
             if let Ok(mut v) = view.lock() {
@@ -2097,6 +2144,68 @@ fn front_chrome(port: u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 그림이_없으면_다시_찍고_쌓이면_쉰다() {
+        // 2026-10-21 첫 사용자 제보 — 사람 부르기 때 '화면 받는 중'에서 멈춤. 화면 받기는 페이지가 안 바뀌면 그림을 안 보내서
+        // 붙을 때 한 장 찍기가 한 번 늦으면(1.5초) 가만히 있는 인증 화면은 영영 빈 칸이었다
+        let t0 = Instant::now();
+        assert!(resnap_due(false, None, 0, t0), "아직 한 번도 안 찍었다");
+        assert!(!resnap_due(false, Some(t0), 0, t0 + Duration::from_millis(1900)), "방금 찍었다");
+        assert!(resnap_due(false, Some(t0), 1, t0 + RESNAP), "답 없이 2초 — 다시");
+        assert!(!resnap_due(true, Some(t0), 0, t0 + RESNAP * 10), "그림이 왔으면 화면 받기가 맡는다");
+        assert!(!resnap_due(false, Some(t0), SNAPS_MAX, t0 + RESNAP * 10), "답 안 온 찍기가 쌓이면 더 안 보낸다");
+    }
+
+    #[test]
+    fn 답_없는_찍기는_10초_지나면_버려_다시_찍게_한다() {
+        // 가지 검토: 답 안 오는 찍기가 5개 쌓이면(대화상자에 막힌 탭·크롬이 답을 버림) 탭이 바뀌기 전까지 다시 안 찍었다
+        let t0 = Instant::now();
+        let mut snaps: Vec<(u64, String, Instant)> = (0..SNAPS_MAX as u64).map(|i| (i, "T".to_string(), t0)).collect();
+        prune_snaps(&mut snaps, t0 + SNAP_TTL - Duration::from_millis(1));
+        assert_eq!(snaps.len(), SNAPS_MAX, "아직은 기다린다");
+        assert!(!resnap_due(false, Some(t0), snaps.len(), t0 + SNAP_TTL));
+        prune_snaps(&mut snaps, t0 + SNAP_TTL);
+        assert!(snaps.is_empty());
+        assert!(resnap_due(false, Some(t0), snaps.len(), t0 + SNAP_TTL), "버린 뒤엔 다시 찍는다");
+    }
+
+    #[test]
+    fn 일꾼이_새로_뜨면_순번이_작아도_그림을_준다() {
+        // 가지 검토: 새 일꾼은 순번을 0부터 세는데 칸은 옛 순번(since)을 들고 있어, '순번 > since' 만 주면 새 그림을 영영 못 받았다
+        assert!(frame_due(5, 3, false), "새 그림");
+        assert!(!frame_due(3, 3, false), "같은 그림");
+        assert!(frame_due(2, 900, false), "일꾼이 다시 떴다 — 작아도 준다");
+        assert!(!frame_due(2, 900, true), "그림이 비었으면 안 준다");
+    }
+
+    #[test]
+    fn 늦게_온_한_장도_지금_탭_것이면_쓴다() {
+        let jpeg = base64::engine::general_purpose::STANDARD.encode([0xFF, 0xD8, 0xFF, 0xD9]);
+        let view = Arc::new(Mutex::new(View::default()));
+        let mut st = St { target: Some("T1".into()), snaps: vec![(7, "T1".into(), Instant::now()), (8, "T0".into(), Instant::now())], ..St::default() };
+        on_event(&serde_json::json!({ "id": 8, "result": { "data": jpeg } }), &view, &mut st);
+        assert_eq!(view.lock().unwrap().seq, 0, "앞 탭 것은 버린다");
+        assert!(!st.framed);
+        on_event(&serde_json::json!({ "id": 7, "result": { "data": jpeg } }), &view, &mut st);
+        let v = view.lock().unwrap();
+        assert_eq!((v.seq, v.jpeg.len()), (1, 4), "늦은 답도 지금 탭 것이면 그림으로");
+        assert!(st.framed && st.snaps.is_empty());
+    }
+
+    #[test]
+    fn 화면_받기_그림이_먼저_오면_늦은_한_장은_버린다() {
+        // 한 장은 보낸 때 그림 — 그사이 화면 받기가 더 새 그림을 줬으면 그걸 옛 그림으로 덮지 않는다(가만히 있는 화면이면 그대로 남는다)
+        let jpeg = base64::engine::general_purpose::STANDARD.encode([0xFF, 0xD8, 0xFF, 0xD9]);
+        let view = Arc::new(Mutex::new(View::default()));
+        let mut st = St { target: Some("T1".into()), session: Some("S1".into()), snaps: vec![(7, "T1".into(), Instant::now())], ..St::default() };
+        on_event(&serde_json::json!({ "method": "Page.screencastFrame", "sessionId": "S1", "params": { "data": jpeg, "sessionId": 1, "metadata": {} } }), &view, &mut st);
+        assert!(st.framed);
+        assert_eq!(view.lock().unwrap().seq, 1);
+        on_event(&serde_json::json!({ "id": 7, "result": { "data": jpeg } }), &view, &mut st);
+        assert_eq!(view.lock().unwrap().seq, 1, "늦은 한 장은 안 쓴다");
+        assert!(st.snaps.is_empty(), "기다림 목록에선 빠진다");
+    }
 
     #[test]
     fn 창을_옮길_땐_한_칸_작게_한_번_더() {

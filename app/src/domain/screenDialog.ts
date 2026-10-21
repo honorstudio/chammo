@@ -92,6 +92,24 @@ export function dialogKeys(d: ScreenDialog, i: number): string {
   return (n > 0 ? DOWN.repeat(n) : UP.repeat(-n)) + (d.confirm ?? '\r');
 }
 
+/** 창 하나를 알아보는 모양 — 질문·탭 줄·선택지 이름. 목록이 길어 일부만 보이는 창(partial)은 내릴 때마다 보이는 선택지가 바뀌니
+ *  선택지 이름은 빼고 본다(넣으면 화면 밖 선택지를 고르다 한 칸 가고 멈췄다 — 2026-10-21 코드 리뷰) */
+export const dialogSig = (d: ScreenDialog) => JSON.stringify([d.question, d.tabs, d.partial ? null : d.options.map((o) => o.label)]);
+
+/** 그 번호까지 한 칸씩(누를 때마다 화면을 다시 읽어) — 다 왔으면 그 창, 창이 사라졌거나 **다른 창으로 바뀌었으면** null(누르지 않는다).
+ *  걷는 사이 다른 길(자동 허용·참모 답·사람)이 창을 닫고 다음 창이 뜨면, 사람이 보지 않은 그 창에 같은 번호·Enter 가 들어갔다(2026-10-21 리뷰) */
+export async function walkTo(n: number, want: string, read: () => ScreenDialog | null, keys: (seq: string[]) => Promise<void>, wait: (ms: number) => Promise<unknown>): Promise<ScreenDialog | null> {
+  for (let i = 0; i < 40; i++) {
+    const cur = read();
+    if (!cur || dialogSig(cur) !== want) return null;
+    const st = stepToward(cur, n);
+    if (st === 'here') return cur;
+    await keys([st === 'down' ? DOWN : UP]);
+    await wait(160);
+  }
+  return null;
+}
+
 /** 지금 화면에서 그 번호 선택지까지 한 걸음 — 번호로 가린다(목록이 길어 화면 밖이어도). 화살표를 한꺼번에 보내면 몇 개 씹혔다 */
 export function stepToward(d: ScreenDialog, n: number): 'here' | 'up' | 'down' {
   const cur = d.options[d.cursor]!.n;

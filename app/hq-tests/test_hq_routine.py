@@ -176,6 +176,68 @@ class Lifecycle(unittest.TestCase):
         self.assertFalse((self.data / 'routines/blog-daily').exists())
 
 
+class ReviewDeepRoutine(Lifecycle):
+    """2026-10-21 밤 리뷰 — 깨진 기록 한 줄·빈 설정·'끝났는데 뒤 작업만 남음'"""
+
+    def test_실행_기록에_깨진_줄이_있어도_목록과_실행은_된다(self):
+        self.new(Calls())
+        self.new(Calls(), name='other')
+        runs = self.data / 'routines/blog-daily/runs.jsonl'
+        with open(runs, 'a', encoding='utf-8') as f:
+            f.write('{"ts":"2026-09-28T09:0')  # 쓰다 만 줄
+        lst = rt.list_routines(data=str(self.data), now=datetime.datetime(2026, 9, 28, 15, 0))
+        self.assertEqual([r['name'] for r in lst], ['blog-daily', 'other'])
+        self.assertEqual(rt.run_now('blog-daily', data=str(self.data), run=Calls())['session'], '1a2b3c4d')
+        events = [json.loads(l) for l in runs.read_text().splitlines() if l.startswith('{"ts":"2026-') is False or l.endswith('}')]
+        self.assertEqual(rt._runs('blog-daily', str(self.data))[-1]['event'], 'start', '새 줄이 반쪽 줄에 붙지 않는다')
+
+    def test_설정이_비었어도_지울_수_있다(self):
+        self.new(Calls())
+        (self.data / 'routines/blog-daily/routine.json').write_text('')
+        rt.remove('blog-daily', data=str(self.data), home=str(self.home), run=Calls(), uid=501)
+        self.assertFalse((self.data / 'routines/blog-daily').exists())
+        with self.assertRaises(ValueError):
+            rt.remove('../escape', data=str(self.data), home=str(self.home), run=Calls(), uid=501)
+
+    def test_설정_저장은_바꿔_끼우기(self):
+        self.new(Calls())
+        p = self.data / 'routines/blog-daily/routine.json'
+        before = p.read_text()
+        cfg = json.loads(before)
+        with unittest.mock.patch.object(rt.json, 'dump', side_effect=OSError(28, 'No space left on device')):
+            with self.assertRaises(OSError):
+                rt._save(cfg, str(self.data))
+        self.assertEqual(p.read_text(), before)
+        self.assertEqual(sorted(x.name for x in p.parent.iterdir() if x.name.startswith('routine.json')), ['routine.json'])
+
+    def test_같은_예약을_두_길이_동시에_띄우면_하나만_뜬다(self):
+        # 정시 tick 이 띄우는 몇 초 사이에 사람이 '지금 실행'을 누르면 둘 다 agents 에서 못 보고 같은 이름 세션을 둘 띄웠다
+        import threading, time as _t
+        self.new(Calls())
+
+        class Slow(Calls):
+            def __call__(s, argv, **kw):
+                if '--bg' in argv:
+                    _t.sleep(0.5)
+                return Calls.__call__(s, argv, **kw)
+        calls = Slow()
+        out = []
+        ts = [threading.Thread(target=lambda: out.append(rt.run_now('blog-daily', data=str(self.data), run=calls))) for _ in range(2)]
+        [t.start() for t in ts]; [t.join() for t in ts]
+        self.assertEqual(sum('--bg' in c for c in calls.calls), 1, out)
+        self.assertIn({'skipped': 'starting'}, out)
+        self.assertFalse((self.data / 'routines/blog-daily/run.lock').exists(), '끝나면 잠금을 푼다')
+        self.assertEqual(rt.run_now('blog-daily', data=str(self.data), run=Calls()).get('session'), '1a2b3c4d', '다음 실행은 된다')
+
+    def test_답은_끝났고_뒤_작업만_남은_세션은_치우고_새로(self):
+        # agents 가 state done + status busy(Monitor·개발 서버가 남음)를 주면 영영 '아직 도는 중'으로 건너뛰었다
+        self.new(Calls())
+        calls = Calls(agents=json.dumps([{'id': 'old1', 'name': 'routine-blog-daily', 'status': 'busy', 'state': 'done'}]))
+        r = rt.run_now('blog-daily', data=str(self.data), run=calls, scheduled=True)
+        self.assertEqual(r.get('session'), '1a2b3c4d', r)
+        self.assertIn(['/bin/claude', 'rm', 'old1'], calls.calls)
+
+
 class SpawnTrust(unittest.TestCase):
     """띄우기 직전에 루틴 폴더 믿음을 다시 본다 — 떠 있던 claude 가 ~/.claude.json 을 제 메모리 값으로 덮어 False 로 돌려놓는다(2026-10-05 예약 하나가 시작부터 실패)"""
     def setUp(self):

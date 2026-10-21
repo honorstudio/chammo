@@ -61,6 +61,7 @@ mod mobile_sends;
 mod mobile_wake;
 mod peer_ask;
 mod peer_cmd;
+mod peer_human;
 mod peer_link;
 mod phone_voice;
 mod remote;
@@ -573,6 +574,9 @@ fn main() {
             remote::remote_connect,
             remote::remote_connect_cancel,
             remote::remote_call,
+            remote::remote_human_say,
+            remote::remote_direct_answer,
+            remote::remote_cards,
             agent_browser::agent_lives,
             agent_browser::agent_retry,
             agent_browser::agent_frame,

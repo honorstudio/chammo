@@ -18,6 +18,8 @@ GLOBAL = ('_common', '_app')     # 여러 프로젝트에 붙는 칸 — 전역 
 # 사람 답이 '하지 마'면 승격하지 않는다. 앱 '처리함' 은 치우기지 승인이 아니다
 NO = re.compile(r'그대로|아니|말자|말아|하지 ?마|안 ?(해|돼|묶)|처리함|다시|\bhandled\b|\bkeep\b|\bno\b|\bdon\'?t\b|\bredo\b', re.I)
 DROP = re.compile(r'버려|버리|빼|지워|\bdrop\b|\bdiscard\b', re.I)
+# 버리기는 되돌릴 길이 없다 — "버리지 마"·"남겨 둬" 도 DROP 에 걸려서 버렸다(2026-10-21 리뷰). 이런 답이면 안 버린다
+KEEP = re.compile(r'(버리|빼|지우)지\s*(마|말)|안\s*(버|빼|지워)|남겨\s*(둬|두)|남기자|보류|쓸모\s*있|\bnever\b', re.I)
 PREVIEW = 8          # 카드에 보여 줄 줄 수
 MIN_NEW = 3          # 새 스킬 하나에 최소 줄 수 — 한두 줄짜리 스킬은 남발이다(덧붙일 땐 1줄도 된다)
 SEND_HEAD = ('이 프로젝트 교훈 — 지시에 붙여: ', 'project lesson — append to your message: ')
@@ -116,11 +118,25 @@ def _read(path):
 
 def _write(path, text):
     """임시 파일에 쓰고 옮긴다 — task send 가 반쯤 쓴 파일을 읽지 않게"""
+    path = os.path.realpath(path)  # 링크(워크트리끼리 나눠 쓰는 CLAUDE.local.md)면 가리키는 파일을 — 링크를 파일로 바꾸지 않게
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + '.tmp'
-    with open(tmp, 'w', encoding='utf-8') as f:
-        f.write(text)
-    os.replace(tmp, path)
+    try:
+        mode = os.stat(path).st_mode & 0o777
+    except OSError:
+        mode = None
+    tmp = f'{path}.{os.getpid()}.{os.urandom(3).hex()}.tmp'  # 늘 같은 이름이면 둘이 같이 쓸 때 서로 지운다
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(text)
+        if mode is not None:
+            os.chmod(tmp, mode)  # 계정이 든 0600 파일이 umask 0644 로 바뀌지 않게
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _lines(env, project):
@@ -451,7 +467,10 @@ def promote(env, tid, drop=False):
     if drop and not drop_card and not DROP.search(said):
         raise Refuse(T(f'사람 답이 "{said}" 라 버리지 않아 — 버리기는 사람이 버리라고 했을 때만', f'The user answered "{said}", so not discarding — only when they said to discard'))
     drop = drop or drop_card
-    if NO.search(said) or (not drop and DROP.search(said)):
+    if drop_card and not (DROP.search(said) and not KEEP.search(said)) and not NO.search(said):  # 버리기 카드는 버리라는 말이 있을 때만
+        raise Refuse(T(f'사람 답이 "{said}" 라 버리지 않아 — 버리기는 사람이 버리라고 했을 때만. 그대로 둘 거면 scripts/task done {tid} "<답>"',
+                       f'The user answered "{said}", so not discarding — only when they said to discard. To leave it: scripts/task done {tid} "<answer>"'))
+    if NO.search(said) or (drop and KEEP.search(said)) or (not drop and DROP.search(said)):
         hint = T(' — 버리라고 했으면 --drop', ' — if they said discard, use --drop') if DROP.search(said) and not drop else ''
         raise Refuse(T(f'사람 답이 "{said}" 라 {"버리지" if drop else "묶지"} 않아{hint}. 그대로 둘 거면 scripts/task done {tid} "<답>"',
                        f'The user answered "{said}", so not {"discarding" if drop else "grouping"}{hint}. To leave it: scripts/task done {tid} "<answer>"'))

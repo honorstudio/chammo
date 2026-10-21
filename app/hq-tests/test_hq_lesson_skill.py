@@ -414,6 +414,30 @@ class Flow(Harness):
             self.assertEqual(self.run_task('lesson-promote', tid)[0], 2, note)
         self.assertEqual(self.lessons(), LESSONS)
 
+    def test_drop_카드에_버리지_말라는_답이면_안_버린다(self):
+        # NO 가 '하지 마'·'안 해' 만 알아서 "버리지 마"·"남겨 둬" 에도 버렸다(2026-10-21 리뷰) — 버리기는 되돌릴 길이 없다
+        for note in ['버리지 마', '안 버려', '남겨 둬', '보류', '아직 쓸모 있어', "don't discard", 'keep them']:
+            tid = self.run_task('lesson-drop', 'proj', '--lines', '5')[1].strip()
+            self.answer(tid, note)
+            self.assertEqual(self.run_task('lesson-promote', tid)[0], 2, note)
+        self.assertEqual(self.lessons(), LESSONS)
+
+    def test_drop_카드는_버리라는_말이_있어야_버린다(self):
+        for note in ['응', '좋아']:  # 버리라는 말이 없으면 묻는 카드의 뜻을 짐작하지 않는다
+            tid = self.run_task('lesson-drop', 'proj', '--lines', '5')[1].strip()
+            self.answer(tid, note)
+            self.assertEqual(self.run_task('lesson-promote', tid)[0], 2, note)
+        tid = self.run_task('lesson-drop', 'proj', '--lines', '5')[1].strip()
+        self.answer(tid, 'discard')
+        self.assertEqual(self.run_task('lesson-promote', tid)[0], 0)
+
+    def test_drop_카드의_버리라는_말은_흔한_꼴도_받는다(self):
+        # KEEP 이 넓어 "쓸모없어 버려"·"drop it, not needed" 를 '남기라'로 읽었다(2026-10-21 코드 리뷰)
+        for i, note in enumerate(['쓸모없어 버려', 'drop it, not needed']):
+            tid = self.run_task('lesson-drop', 'proj', '--lines', str(5 - i))[1].strip()
+            self.answer(tid, note)
+            self.assertEqual(self.run_task('lesson-promote', tid)[0], 0, note)
+
     def test_drop_은_이상한_번호를_거절한다(self):
         self.assertEqual(self.run_task('lesson-drop', 'proj', '--lines', '9')[0], 2)
         self.assertEqual(self.run_task('lesson-drop', 'proj')[0], 2)

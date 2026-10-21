@@ -243,12 +243,14 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
     const t = setInterval(() => void refreshTrust().then((r) => { if (r[trusting]) setTrusting(null); }), 2000);
     return () => clearInterval(t);
   }, [trusting, refreshTrust]);
+  // 믿기 터미널의 claude 가 끝났다 — 믿었으면 위 2초 확인이 닫고, 아니면(Enter 만 쳐서 No) 닫고 다시 하라고(2026-10-21 첫 사용자 QA)
+  const trustExit = () => void refreshTrust().then((r) => setTrusting((w) => { if (w && !r[w]) { setError(tr('믿지 않고 끝났어요 — 믿기를 다시 누르고 ↓ 로 "Yes, I trust this folder"를 고른 뒤 Enter 를 눌러 주세요.', 'It ended without trusting — press Trust again, pick "Yes, I trust this folder" with ↓, then Enter.')); return null; } return w; }));
   const startTrust = async (which: 'dev' | 'hq') => {
     setError(null);
     try {
       // 믿으려면 폴더가 있어야 한다 — 프로젝트 폴더는 만들고, HQ 는 템플릿으로 만든다
       if (which === 'dev') { await makeDir(draft.devRoot); setDev(await folderStatus(draft.devRoot)); }
-      else if (!(await folderStatus(draft.hqDir)).hqReady) { await createHq(draft.hqDir); setHq(await folderStatus(draft.hqDir)); }
+      else if (!(await folderStatus(draft.hqDir)).hqReady) { await createHq(draft.hqDir, false, [draft.devRoot, ...(draft.extraProjects ?? [])]); setHq(await folderStatus(draft.hqDir)); }
       setTask(null);
       setTrusting(which);
     } catch (e: unknown) {
@@ -284,7 +286,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
   const makeHq = async () => {
     setError(null);
     try {
-      const r = await createHq(draft.hqDir);
+      const r = await createHq(draft.hqDir, false, [draft.devRoot, ...(draft.extraProjects ?? [])]);
       setNote(r.kept.length
         ? tr(`HQ 를 만들었어요 — 새 파일 ${r.written.length}개, 이미 있던 ${r.kept.length}개는 그대로 뒀어요.`, `HQ is ready — ${r.written.length} new files; ${r.kept.length} existing files were left as they were.`)
         : tr(`HQ 를 만들었어요 — 파일 ${r.written.length}개.`, `HQ is ready — ${r.written.length} files.`));
@@ -311,7 +313,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
     try {
       if (firstRun) {
         await makeDir(draft.devRoot);
-        if (!(await folderStatus(draft.hqDir)).hqReady) await createHq(draft.hqDir);
+        if (!(await folderStatus(draft.hqDir)).hqReady) await createHq(draft.hqDir, false, [draft.devRoot, ...(draft.extraProjects ?? [])]);
       }
       const next = { ...draft, setupDone: true };
       await writeConfig(next);
@@ -400,6 +402,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
             <div className="su-term">
               <TerminalPane
                 key={task}
+                autoFocus
                 command={setupCommand(task, { claude: check?.claudePath, gh: check?.ghPath }, doneLine, undefined, undefined, winNotes)}
                 title={task === 'install' ? tr('Claude Code 설치', 'Installing Claude Code') : task === 'update' ? tr('Claude Code 업데이트', 'Updating Claude Code') : task === 'login' ? tr('Claude 로그인', 'Claude sign-in') : task === 'clt' ? tr('명령줄 도구 설치', 'Installing Command Line Tools') : task === 'python' ? tr('파이썬 3 설치', 'Installing Python 3') : tr('GitHub 로그인', 'GitHub sign-in')}
                 subtitle={tr('이 창에 바로 입력할 수 있어요', 'You can type in this window')}
@@ -506,6 +509,8 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
               <div className="su-term">
                 <TerminalPane
                   key={`trust-${trusting}`}
+                  autoFocus
+                  onExit={trustExit}
                   command={setupCommand('trust', { claude: check?.claudePath }, '', abs(trusting === 'dev' ? draft.devRoot : draft.hqDir))}
                   title={tr('폴더 믿기', 'Trust folder')}
                   subtitle={tr('↓ 로 Yes 고르고 Enter', '↓ to Yes, then Enter')}

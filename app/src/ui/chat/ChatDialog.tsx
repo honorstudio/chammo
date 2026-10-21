@@ -2,35 +2,24 @@
 // 읽기는 domain/screenDialog. "Type something" 같은 직접 쓰기 칸은 글을 받아 넣는다
 import { useEffect, useState } from 'react';
 import { tr } from '../../i18n';
-import { stepToward, type ScreenDialog } from '../../domain/screenDialog';
+import { dialogSig, walkTo, type ScreenDialog } from '../../domain/screenDialog';
 import { claudeDefaults } from '../../data/tauri';
 import { IconTerminal } from '../Icons';
 import { IconButton } from '../kit/IconButton';
 
 const FREE = /^(type something|other|직접 입력)/i;
-const DOWN = '\x1b[B';
-const UP = '\x1b[A';
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function ChatDialog({ d, keys, read, onTerminal }: { d: ScreenDialog; keys: (seq: string[]) => Promise<void>; /** 지금 화면의 창(다시 읽기) */ read: () => ScreenDialog | null; onTerminal: () => void }) {
   const [sent, setSent] = useState(false);
   const [free, setFree] = useState<number | null>(null);
   const [text, setText] = useState('');
-  const sig = JSON.stringify([d.question, d.options.map((o) => o.label), d.tabs]);
+  const sig = dialogSig(d);
   useEffect(() => { setSent(false); setFree(null); setText(''); }, [sig]);
   const press = async (seq: string[]) => { setSent(true); await keys(seq); window.setTimeout(() => setSent(false), 2500); };
-  // 그 번호까지 한 칸씩 — 누를 때마다 화면을 다시 읽는다. 한꺼번에 보내면 화살표가 몇 개 씹혀 엉뚱한 줄이 골라졌다(2026-10-01 시험: 하이쿠 → 페이블)
-  const goTo = async (n: number): Promise<ScreenDialog | null> => {
-    for (let i = 0; i < 40; i++) {
-      const cur = read();
-      if (!cur) return null;
-      const st = stepToward(cur, n);
-      if (st === 'here') return cur;
-      await keys([st === 'down' ? DOWN : UP]);
-      await wait(160);
-    }
-    return null;
-  };
+  // 그 번호까지 한 칸씩 — 누를 때마다 화면을 다시 읽는다. 한꺼번에 보내면 화살표가 몇 개 씹혀 엉뚱한 줄이 골라졌다(2026-10-01 시험: 하이쿠 → 페이블).
+  // 누른 창(sig)과 다른 창이 뜨면 멈춘다(domain/screenDialog walkTo)
+  const goTo = (n: number) => walkTo(n, sig, read, keys, wait);
   /** /model 목록처럼 고르면 새 세션 기본값까지 바뀌는 창 — 모델 칩처럼 떠 뒀다 되돌린다 */
   const touchesDefaults = d.question.some((q) => /default for new sessions/i.test(q));
   const run = async (n: number, tail: string[]) => {

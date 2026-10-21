@@ -470,6 +470,21 @@ fn 마지막_백업으로도_되돌린다() {
 }
 
 #[test]
+fn 백업보다_칸이_새것이면_되돌려도_칸의_새_토큰을_지키고_그걸_끼운다() {
+    // 2026-10-21 리뷰: 데우기가 칸 a1 을 tokA2 로 갱신한 뒤(백업 tokA 의 갱신 토큰은 회전돼 죽음) 마지막 백업으로 되돌리면
+    // reconcile 이 죽은 tokA 로 칸 a1 을 덮어 그 계정을 다시 로그인해야 했다
+    let e = Env::two("restore-newer");
+    switch(&e.store, &e.live, &e.list, "a1").unwrap();
+    switch(&e.store, &e.live, &e.list, "a2").unwrap(); // 마지막 백업 = A(tokA)
+    let later = crate::accounts_refresh::now_ms() + 8 * HOUR;
+    e.store.put(SLOT_SERVICE, "a1", &slot_blob("tokA2", later)); // 데우기가 갱신한 칸
+    let pool = restore(&e.store, &e.live, &e.list, BACKUP_LAST).unwrap();
+    assert_eq!(e.slot("a1").as_deref(), Some("tokA2"), "살아 있던 칸 토큰을 옛 백업으로 덮지 않는다");
+    assert_eq!(e.live_tok().as_deref(), Some("tokA2"), "로그인엔 그 계정의 새 토큰");
+    assert_eq!((e.live_email().as_str(), pool.current.as_deref()), ("a@x.com", Some("a1")));
+}
+
+#[test]
 fn 표시를_안_적은_옛_백업은_같은_토큰_칸의_표시로() {
     let e = Env::two("restore-old");
     switch(&e.store, &e.live, &e.list, "a1").unwrap();

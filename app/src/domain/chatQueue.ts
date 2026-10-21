@@ -3,7 +3,7 @@
 // · 일하는 중 Enter = 줄 서기, 기록에 queue-operation enqueue(글) → dequeue(맨 앞, 글 없음)·remove(도중 흡수)·popAll(↑로 입력칸에 되돌림)
 // · 쉴 때 입력칸에 글이 있는데 Esc 두 번 = 입력칸 지우기(기록 0) · 막 보낸 말을 Esc 로 끊으면 그 말이 입력칸으로 되돌아온다
 import type { LinkState } from './attachExit';
-import { alreadySent, chatNorm, pendingLeft, sentByMe, type ChatItem } from './chat';
+import { alreadySent, chatNorm, humanBody, pendingLeft, sentByMe, type ChatItem } from './chat';
 
 export type QItem = { text: string; ts: number };
 /** waiting = Claude 대기열, popped = ↑로 입력칸에 되돌아간 것(안 간 것), deq = 짝(뒤따르는 user 줄)을 아직 못 본 dequeue 수,
@@ -20,6 +20,10 @@ const sameItem = (item: string, got: string) => {
 };
 /** user 줄(사람 말·교차 세션) 또는 queued_command(작업 알림)의 글 — 도구 결과는 아니다 */
 function turnText(r: { type?: string; message?: { content?: unknown }; attachment?: { type?: string; prompt?: unknown } }): string | null {
+  const t = rawTurnText(r);
+  return t === null ? null : humanBody(t); // 원격 사람 말 이름표(ADR 0011)는 대기열 글에서도 뗀다 — 보낸 글과 맞게
+}
+function rawTurnText(r: { type?: string; message?: { content?: unknown }; attachment?: { type?: string; prompt?: unknown } }): string | null {
   if (r.type === 'attachment') return r.attachment?.type === 'queued_command' && typeof r.attachment.prompt === 'string' ? r.attachment.prompt : null;
   if (r.type !== 'user') return null;
   const c = r.message?.content;
@@ -52,7 +56,7 @@ export function applyQueueOps(q: QueueState, chunk: string): QueueState {
       if (i >= 0) waiting.splice(i, 1);
       continue;
     }
-    const text = typeof r.content === 'string' ? r.content : '';
+    const text = typeof r.content === 'string' ? humanBody(r.content) : '';
     const ts = Date.parse(r.timestamp ?? '') || 0;
     if (r.operation === 'enqueue' && text) waiting.push({ text, ts });
     else if (r.operation === 'dequeue') deq += 1;

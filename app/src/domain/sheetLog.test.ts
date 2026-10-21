@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blockedOf, cellState, compile, fromCalc, fromMutation, type CellState, type LogCtx } from './sheetLog';
+import { blockedOf, cellState, compile, fromCalc, fromMutation, saveHeld, type CellState, type LogCtx } from './sheetLog';
 
 // 지어낸 시트 — s0 은 불러온 시트(부품 경로), 새 시트는 이름이 열쇠
 function ctx(cells: Record<string, CellState> = {}) {
@@ -84,5 +84,14 @@ describe('수식 다시 계산 결과', () => {
     expect(fromCalc(p, c, known)).toEqual([]); // 같은 결과가 또 와도
     // 파일에 15자리로 적힌 값과 끝자리만 다른 계산 결과는 같은 값
     expect(fromCalc({ unitData: { wb: { s0: { 5: { 1: { v: 3944666.6666666665 } } } } } }, c, new Map([['s0!5!1', 3944666.66666667]]))).toEqual([]);
+  });
+});
+
+describe('저장 시작 막기', () => {
+  it('앞 저장이 도는 중이면 또 보내지 않는다 — 끝난 뒤 남은 기록으로', () => {
+    expect(saveHeld('saving', 3)).toBe(true);
+    expect(saveHeld('dirty', 3)).toBe(false);
+    expect(saveHeld('saved', 0)).toBe(true);
+    for (const s of ['conflict', 'blocked', 'gone']) expect(saveHeld(s, 3)).toBe(true);
   });
 });

@@ -350,6 +350,15 @@ export function pinPatch(id: string, now: number): Pick<AutoState, 'pinned' | 's
   return { pinned: id, switchedAt: now };
 }
 
+/** 바꾸기가 그 칸 탓으로 실패했나 — 갱신 토큰이 죽음·키체인에 보관 로그인이 없음(다시 해도 같다) */
+export const slotDead = (code: string) => code === 'refresh:dead' || code === 'noSlot';
+
+/** 그 칸을 로그인 막힘으로 적는다 — 다음 차례 step 이 그 칸을 빼고 다음 칸을 고른다.
+ *  안 적으면 5분마다 같은 죽은 칸을 고르고 죽은 갱신 토큰을 토큰 주소에 보내며, 뒤의 멀쩡한 칸으로는 영영 안 넘어갔다(2026-10-21 리뷰) */
+export function markDead(s: AutoState, id: string, now: number): AutoState {
+  return { ...s, slots: { ...s.slots, [id]: { ...s.slots[id], authAt: now } } };
+}
+
 /** 저장할 것만 — 바뀐 윗단 키(null 이면 지우기). 통째로 쓰면 그새 설정에서 바꾼 키(자동 켜기 등)를 옛 값으로 덮는다 */
 export function changedKeys(before: AutoState, after: AutoState): Record<string, unknown> {
   const out: Record<string, unknown> = {};

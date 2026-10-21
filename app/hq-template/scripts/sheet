@@ -62,18 +62,25 @@ def ask(data, arg, wait):
     with open(os.path.join(data, 'app.jsonl'), 'a', encoding='utf-8') as f:
         f.write(json.dumps(line, ensure_ascii=False) + '\n')
     out = os.path.join(data, 'sheet.txt')
+    mine = os.path.join(data, 'answers', f'sheet-{rid}.txt')  # 부탁마다 따로인 자리 — 겹친 부탁의 답이 한 칸을 덮어도 내 답은 남는다
     end = time.time() + wait
     while time.time() < end:
-        try:
-            with open(out, encoding='utf-8') as f:
-                head, _, body = f.read().partition('\n')
+        for p in (mine, out):
+            try:
+                with open(p, encoding='utf-8') as f:
+                    head, _, body = f.read().partition('\n')
+            except OSError:
+                continue
             if head == f'#id {rid}':
+                if p == mine:
+                    try:
+                        os.remove(mine)
+                    except OSError:
+                        pass
                 try:
                     return 0, json.loads(body)
                 except ValueError:
                     return 1, body.strip()
-        except OSError:
-            pass
         time.sleep(0.2)
     return 1, f'Chammo did not answer in {wait:g}s — is the app open? / 앱이 답하지 않았어 — Chammo 가 켜져 있어야 해'
 

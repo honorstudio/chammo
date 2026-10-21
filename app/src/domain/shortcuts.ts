@@ -198,3 +198,22 @@ export function onceWithin(ms: number) {
     return prev === undefined || now - prev >= ms;
   };
 }
+
+/** ⌘+ ⌘- ⌘0 을 받을 곳 — 화면 영역(포커스 또는 마지막으로 누른 곳) */
+export type ZoomArea = 'chat' | 'term' | 'tab' | 'none';
+
+/**
+ * 글자 크기(font)냐 스페이스 탭 확대(tab)냐 — 포커스가 채팅·터미널이면 글자, 탭이면 탭, 포커스가 어디도 아니면 마지막으로 누른 곳,
+ * 그것도 모르면 지금처럼 탭 먼저(확대할 탭이 없으면 App 이 글자로). 문서 탭을 띄운 채 채팅에서 눌러도 탭만 커져 '안 된다'로 보였다(2026-10-22 사용자 제보)
+ */
+export function zoomTarget(active: ZoomArea, last: ZoomArea): 'font' | 'tab' {
+  const at = active === 'none' ? last : active;
+  return at === 'chat' || at === 'term' ? 'font' : 'tab';
+}
+
+/** html 탭(iframe)이 hodoc 다리로 넘긴 확대 키 — 확대 셋(1·-1·0)만. 그 페이지(남의 html)가 흉내 내도 자기 확대만 바뀌게 다른 건 다 버린다 */
+export function frameZoomCmd(data: unknown): 1 | -1 | 0 | null {
+  const d = data as { hodoc?: unknown; c?: unknown } | null;
+  if (!d || d.hodoc !== 'zoom') return null;
+  return d.c === 1 || d.c === -1 || d.c === 0 ? d.c : null;
+}

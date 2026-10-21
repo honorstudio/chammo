@@ -105,6 +105,22 @@ if [ ! -d "$SRC" ]; then
 fi
 
 # ── 4. 응용 프로그램 폴더로 복사 ───────────────────────────────────
+# 새 앱을 옆에 다 복사한 뒤 바꿔 끼운다 — 옛 앱을 먼저 지우고 복사하면 복사가 실패할 때(디스크 부족 등) 앱이 아예 없었다(2026-10-21 리뷰)
+swap_in() {  # $1 = 새 앱, $2 = 놓을 자리
+  new="$2.chammo-new"; old="$2.chammo-old"
+  $SUDO rm -rf "$new" "$old"
+  $SUDO ditto "$1" "$new" || { $SUDO rm -rf "$new"; return 1; }
+  if [ -d "$2" ]; then
+    $SUDO mv "$2" "$old" || { $SUDO rm -rf "$new"; return 1; }
+  fi
+  if ! $SUDO mv "$new" "$2"; then
+    [ -d "$old" ] && $SUDO mv "$old" "$2"
+    $SUDO rm -rf "$new"
+    return 1
+  fi
+  $SUDO rm -rf "$old"
+}
+
 SUDO=""
 if [ ! -w "$DEST_DIR" ]; then
   SUDO="sudo"
@@ -124,14 +140,16 @@ if [ -d "$DEST" ]; then
   if pgrep -x "Chammo" >/dev/null 2>&1; then
     info "켜져 있는 Chammo 를 끄는 중이에요…" "Quitting the running Chammo…"
     osascript -e 'quit app "Chammo"' >/dev/null 2>&1 || true
-    sleep 2
+    # 꺼진 걸 보고 바꾼다(최대 15초) — 끄는 중인 앱의 번들을 바꿔 끼우지 않게
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+      pgrep -x "Chammo" >/dev/null 2>&1 || break
+      sleep 1
+    done
   fi
-  step "이전 버전을 치우는 중이에요…" "Removing the previous version…"
-  $SUDO rm -rf "$DEST"
 fi
 
 step "응용 프로그램 폴더에 넣는 중이에요…" "Copying to the Applications folder…"
-$SUDO ditto "$SRC" "$DEST" || die "복사에 실패했어요." "Copying failed."
+swap_in "$SRC" "$DEST" || die "복사에 실패했어요 — 이전 버전은 그대로예요." "Copying failed — the previous version is left as it was."
 
 hdiutil detach "$MNT" -quiet >/dev/null 2>&1 || true
 

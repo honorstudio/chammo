@@ -12,7 +12,7 @@ describe('끊긴 터미널 보기 — 다시 붙기·기다렸다 치기·말풍
     expect(pane).toMatch(/stopped\.includes\(sid!\)/); // 앱이 끈 세션엔 안 붙는다(attach 가 다시 켠다)
     expect(pane).toMatch(/step === 'attach'[^\n]*setEpoch/);
     expect(pane).toMatch(/clearInterval\(relink\)/);
-    expect(pane).toMatch(/if \(!bytes\.length\) \{ if \(!disposed\) onEnded\(\); return; \}/); // 끝 글을 못 알아봐도 attach 가 끝나면(빈 조각) 안다
+    expect(pane).toMatch(/if \(!bytes\.length\) \{ if \(!disposed\) \{ onEnded\(\);/); // 끝 글을 못 알아봐도 attach 가 끝나면(빈 조각) 안다
   });
 
   it('SessionGrid 는 누른 순간의 손잡이가 아니라 붙어 있는 보기를 기다렸다 친다', () => {

@@ -464,7 +464,18 @@ pub fn restore(store: &dyn Store, live: &Live, list: &Path, which: &str) -> Resu
             found
         }
     };
-    let _held = hold_refresh_lock(live)?; // 바꿔 끼우기와 같은 까닭
+    // 되돌릴 계정의 칸에 백업보다 새 토큰이 있으면(쉬는 칸 데우기가 갱신했다) 그 토큰을 끼운다 — 백업 토큰의 갱신 토큰은 그때 회전돼
+    // 죽었고, 되돌린 뒤 reconcile 이 그 죽은 토큰으로 살아 있던 칸까지 덮어 그 계정을 다시 로그인해야 했다(2026-10-21 리뷰)
+    let _held = hold_refresh_lock(live)?; // 바꿔 끼우기와 같은 까닭 — 칸 토큰은 이 잠금을 잡은 뒤에 읽는다(코드 리뷰: 잡기 전에 읽으면 그 사이 갱신이 돌 수 있다)
+    let exp = |p: &Value| p["expiresAt"].as_i64().unwrap_or(0);
+    let mut want = want;
+    if let Some(k) = shown.as_ref().and_then(key) {
+        if let Some(a) = pool.accounts.iter().find(|a| key(&a.oauth).as_ref() == Some(&k)) {
+            if let Some(newer) = slot_part(store, &a.id)?.filter(|p| exp(p) > exp(&want)) {
+                want = newer;
+            }
+        }
+    }
     let now = store.get(&live.service, &live.account)?;
     if let Some(n) = &now {
         if which != BACKUP_UNDO {

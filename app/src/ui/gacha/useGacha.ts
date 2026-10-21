@@ -50,5 +50,8 @@ export function useGacha(env: AppEnv | null, feed: TamaEvent[]) {
   /** 스킨 화면에서 고르기 — 도감 장착과 같은 칸(equip.skin), 'wood' = 기본 */
   const setSkin = useCallback(async (name: string) => { await change((f) => setSkinOf(seeItem(f, `skin.${name}`), name)); }, [change]);
 
-  return { file, gain, draw, equip, placeItem, setSkin };
+  /** NEW 끄기만 — 도감에서 눌러 봄 */
+  const see = useCallback(async (id: string) => { await change((f) => seeItem(f, id)); }, [change]);
+
+  return { file, gain, draw, equip, placeItem, setSkin, see };
 }

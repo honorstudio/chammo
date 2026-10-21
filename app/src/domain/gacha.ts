@@ -5,26 +5,28 @@ import { tr } from '../i18n';
 import type { TamaEvent } from './tama/pet';
 import { coinsOf } from './tama/monsters';
 import { DAY_EXTRA, SHOW_PER_DAY } from './tama/sources';
+import { desk, furn, fx, hat, light, move, pal, skin, title, view } from './catalog/names';
+import { HALLOWEEN } from './catalog/halloween';
+import { HOME } from './catalog/home';
+import { MEME } from './catalog/meme';
+import { PALS } from './catalog/pals';
 
 export type Rarity = '흔함' | '보통' | '희귀' | '전설';
 export type ItemKind = 'skin' | 'furn' | 'hat' | 'window' | 'friend' | 'fx' | 'action' | 'desk' | 'title' | 'light';
 /** 등급은 키(색·확률·비교)로 쓰니 한국어 그대로 두고, 화면에 보일 때만 이걸로 */
 export const rarityLabel = (r: Rarity): string =>
   ({ 흔함: tr('흔함', 'Common'), 보통: tr('보통', 'Uncommon'), 희귀: tr('희귀', 'Rare'), 전설: tr('전설', 'Legendary') })[r];
-export type Item = { id: string; kind: ItemKind; rarity: Rarity; name: string };
+/** limited = 한정 이벤트 키(EVENTS) — 그 기간에만 뽑기에서 나온다. 이미 뽑은 건 기간이 지나도 그대로 */
+export type Item = { id: string; kind: ItemKind; rarity: Rarity; name: string; limited?: EventKey };
 
-/** 이름 = '<종류> — <이름>' (뽑기 화면은 ' — ' 앞을 떼고 보여 준다). 한·영 같은 모양 */
-const named = (ko: string, en: string) => (k: string, e: string) => tr(`${ko} — ${k}`, `${en} — ${e}`);
-const skin = named('방 스킨', 'Room skin');
-const furn = named('가구', 'Furniture');
-const hat = named('캐릭터 꾸미기', 'Outfit');
-const view = named('창밖', 'Window view');
-const fx = named('펑 대신', 'Pop effect');
-const move = named('반장 액션', 'Boss move');
-const pal = named('펫 친구', 'Pet pal');
-const desk = named('책상 소품', 'Desk item');
-const title = named('칭호', 'Title');
-const light = named('조명', 'Lighting');
+/** 한정 이벤트 — until = 마지막 순간(사용자 기기 시각, new Date 는 그 기기 시간대로 만든다), share = 기간 중 한 번 뽑을 때 이 세트가 나올 확률(등급은 그대로 굴린 뒤 그 등급 안에서) */
+export type EventKey = 'halloween2026';
+export const EVENTS: Record<EventKey, { until: number; share: number; ko: string; en: string }> = {
+  halloween2026: { until: new Date(2026, 10, 15, 23, 59, 59, 999).getTime(), // 10/31 → 11/15 로 늘림(2026-10-22 사용자)
+    share: 0.4, ko: '할로윈 한정', en: 'Halloween limited' },
+};
+/** 지금 뽑기에 나오는 한정 이벤트(없으면 null) */
+export const liveEvent = (now: number): EventKey | null => (Object.keys(EVENTS) as EventKey[]).find((k) => now <= EVENTS[k].until) ?? null;
 
 /** 뽑기 풀. 스킨 id 는 `skin.<ui/office/skins 이름>` — 뽑으면 사무실 스킨 버튼에 생긴다 */
 export const CATALOG: Item[] = [
@@ -152,6 +154,8 @@ export const CATALOG: Item[] = [
   { id: 'light.neon', kind: 'light', rarity: '보통', name: light('네온사인', 'Neon Sign') },
   { id: 'light.spot', kind: 'light', rarity: '보통', name: light('스포트라이트', 'Spotlight') },
   { id: 'light.disco', kind: 'light', rarity: '희귀', name: light('디스코볼', 'Disco Ball') },
+  // 2026-10-21 — 할로윈 한정(11/15 까지)·비스킨 대량(가구·책상·조명 / 모자·창밖·펑·칭호·액션·펫 친구)·밈 스킨. 그림은 ui/gacha/packs
+  ...HALLOWEEN, ...HOME, ...PALS, ...MEME,
 ];
 export const itemOf = (id: string) => CATALOG.find((c) => c.id === id);
 
@@ -173,7 +177,7 @@ export const nextStar = (count: number): number | null => {
   return count > 0 && next !== undefined ? next - (count - 1) : null;
 };
 /** 도감 머리의 별 합계 — 카탈로그에 있는 것만 */
-export const starTotal = (f: GachaFile) => ({ have: CATALOG.reduce((n, c) => n + starOf(f.owned[c.id] ?? 0), 0), max: CATALOG.length * MAX_STAR });
+export const starTotal = (f: GachaFile, now = Date.now()) => { const list = dexCatalog(f.owned, now); return { have: list.reduce((n, c) => n + starOf(f.owned[c.id] ?? 0), 0), max: list.length * MAX_STAR }; };
 const HISTORY = 30;
 
 export type Pulled = { t: number; id: string; dup: boolean };
@@ -302,10 +306,18 @@ export function rollRarity(x: number): Rarity {
   return x < 0.6 ? '흔함' : x < 0.88 ? '보통' : x < 0.98 ? '희귀' : '전설';
 }
 
-const pick = (rarity: Rarity, x: number): Item => {
-  const list = CATALOG.filter((c) => c.rarity === rarity);
-  return list[Math.min(list.length - 1, Math.floor(x * list.length))]!;
+/** 등급 안에서 하나 — 한정 이벤트 기간이면 x 의 앞 share 만큼은 그 세트에서, 나머지는 평소 풀에서(rng 를 더 쓰지 않는다).
+ *  기간이 지난 한정은 풀에서 빠진다. 그 등급에 한정이 없으면 평소 풀 */
+export const pick = (rarity: Rarity, x: number, now = Date.now()): Item => {
+  const ev = liveEvent(now);
+  const base = CATALOG.filter((c) => c.rarity === rarity && !c.limited);
+  const lim = ev ? CATALOG.filter((c) => c.rarity === rarity && c.limited === ev) : [];
+  const share = EVENTS[ev ?? 'halloween2026'].share;
+  const [list, y] = lim.length && x < share ? [lim, x / share] : lim.length ? [base, (x - share) / (1 - share)] : [base, x];
+  return list[Math.min(list.length - 1, Math.floor(y * list.length))]!;
 };
+/** 도감에 보일 것 — 기간이 지난 한정은 가진 것만(못 모으는 칸이 남지 않게) */
+export const dexCatalog = (owned: Record<string, number>, now = Date.now()) => CATALOG.filter((c) => !c.limited || now <= EVENTS[c.limited].until || (owned[c.id] ?? 0) > 0);
 
 /** star = 뽑은 뒤 별, up = 이번에 별이 올랐나 */
 export type PullResult = { id: string; rarity: Rarity; name: string; dup: boolean; refund: number; star: number; up: boolean };
@@ -327,7 +339,7 @@ export function pull(f: GachaFile, n: 1 | 10, rng: () => number, now = Date.now(
   // 10연: 희귀 이상 하나 보장 — 없으면 마지막을 희귀로
   if (n === 10 && !rarities.some((r) => r === '희귀' || r === '전설')) rarities[9] = '희귀';
   const results = rarities.map((r): PullResult => {
-    const item = pick(r, rng());
+    const item = pick(r, rng(), now);
     const had = owned[item.id] ?? 0;
     const dup = had > 0;
     owned[item.id] = had + 1;

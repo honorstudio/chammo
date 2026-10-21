@@ -456,6 +456,13 @@ impl Peers {
 
 // ── 짝지은 기기 ──────────────────────────────────────────────
 
+/// 보낸 말 기록은 앱 하나에 하나 — 서버를 다시 띄울 때마다 파일에서 새로 읽으면(치는 중이던 것을 Lost 로) 옛 서버 스레드가 Done 을 적어도
+/// 새 기록은 Lost 라 폰의 다시 보내기가 같은 말을 또 쳤고, 두 기록이 번갈아 파일을 덮었다(2026-10-21 리뷰). Lost 는 앱이 새로 뜰 때만
+fn sends() -> Arc<crate::mobile_sends::Sends> {
+    static S: std::sync::OnceLock<Arc<crate::mobile_sends::Sends>> = std::sync::OnceLock::new();
+    S.get_or_init(|| Arc::new(crate::mobile_sends::Sends::load(crate::config::data_dir().join("mobile-sends.json")))).clone()
+}
+
 /// 앱 전체에 하나 — 서버를 다시 띄워도(테일스케일 주소가 바뀌어도) 같은 기기 목록
 pub(crate) fn devices() -> Arc<crate::mobile_pair::Devices> {
     static D: std::sync::OnceLock<Arc<crate::mobile_pair::Devices>> = std::sync::OnceLock::new();
@@ -585,10 +592,16 @@ static QUIT: AtomicBool = AtomicBool::new(false);
 
 fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
     let _one = START.lock().unwrap_or_else(|e| e.into_inner());
-    if QUIT.load(Ordering::Relaxed) {
+    // 잠금을 기다리는 사이 사람이 껐으면 켜지 않는다 — 설정 화면이 켜기를 넣은 직후 끄기를 누르면 저장은 off 인데 서버가 떠 있었다(2026-10-21 리뷰, RealKeep::start 와 같게)
+    if !may_start(QUIT.load(Ordering::Relaxed), crate::config::data_dir()) {
         return Ok(());
     }
     start_locked(app)
+}
+
+/// 켜도 되나 — 앱이 끝나는 중이 아니고 저장값이 켜짐
+fn may_start(quitting: bool, dir: &Path) -> bool {
+    !quitting && saved_on(dir)
 }
 
 fn start_locked<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
@@ -602,7 +615,7 @@ fn start_locked<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), Stri
     }
     let port = port();
     // 먼저 묶는다 — 포트를 못 잡으면 serve 도 걸지 않는다. 문지기는 https 이름까지 받아 두고, serve 를 못 걸면 그 이름으로 올 길이 없을 뿐
-    let gate = Gate { devices: devices(), hosts: hosts(&t, port, true), origins: origins(&t, port, true), stops: Default::default(), sends: Arc::new(crate::mobile_sends::Sends::load(crate::config::data_dir().join("mobile-sends.json"))), tickets: Default::default() };
+    let gate = Gate { devices: devices(), hosts: hosts(&t, port, true), origins: origins(&t, port, true), stops: Default::default(), sends: sends(), tickets: Default::default() };
     let be: Arc<dyn Backend> = Arc::new(MacBackend { app: app.clone() });
     let sock = t.socket.clone();
     let peers = Arc::new(Peers::new(allowed_peers(&t.ip, &t.peers), move || tailscale_status(&sock).map(|st| allowed_peers(&st.ip, &st.peers))));
@@ -1138,6 +1151,15 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     }
     fn direct_answer(&self, id: &str, pick: &crate::direct::Pick) -> Result<(), String> {
         crate::direct::answer(id, pick, "phone")
+    }
+    fn direct_answer_by(&self, id: &str, pick: &crate::direct::Pick, by: &str) -> Result<(), String> {
+        crate::direct::answer(id, pick, by)
+    }
+    fn peer_cards(&self) -> serde_json::Value {
+        crate::remote::cards_now()
+    }
+    fn peer_card_answer(&self, dev: &str, id: &str, pick: &crate::direct::Pick) -> Result<(), String> {
+        crate::remote::card_answer_now(dev, id, pick)
     }
     fn interrupt(&self, id: &str) -> Result<(), String> {
         // 데스크톱 채팅 멈춤과 같은 Esc 한 글자 — 붙어서 넣고 뗀다. 글 치기와 차례를 지킨다(claude::interrupt_session)

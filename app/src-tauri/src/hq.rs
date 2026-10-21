@@ -24,6 +24,7 @@ pub const TEMPLATE: &[TemplateFile] = &[
     // 엑셀 칸 읽기·쓰기 — 앱(app.jsonl)을 거친다. 스페이스에 열려 있으면 칸마다 보여 주며 넣는다
     TemplateFile { path: "scripts/sheet", body: include_str!("../../hq-template/scripts/sheet"), exec: true },
     TemplateFile { path: "scripts/direct", body: include_str!("../../hq-template/scripts/direct"), exec: true },
+    TemplateFile { path: "scripts/direct_nopy.sh", body: include_str!("../../hq-template/scripts/direct_nopy.sh"), exec: true },
     TemplateFile { path: "scripts/app", body: include_str!("../../hq-template/scripts/app"), exec: true },
     TemplateFile { path: "scripts/voice-hint", body: include_str!("../../hq-template/scripts/voice-hint"), exec: true },
     TemplateFile { path: "scripts/orch-roster", body: include_str!("../../hq-template/scripts/orch-roster"), exec: true },
@@ -95,10 +96,16 @@ fn body_for(f: &TemplateFile) -> String {
 /// 데이터 폴더를 옮긴 사람의 작업 패널이 비고, 옛 폴더가 있는 맥에선 엉뚱한 기록에 섞인다(데모 촬영 준비 중 발견)
 pub fn pin_data_dir(dir: &Path, data_dir: &str) -> std::io::Result<()> {
     let path = dir.join(".claude/settings.json");
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".into());
-    let mut v: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({}));
+    // 있는데 못 읽거나 깨졌으면 건드리지 않는다 — 쉼표 하나 틀린 파일을 빈 객체로 갈아 써서 사람이 넣은 훅·권한이 다 사라졌다(2026-10-21 리뷰)
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => "{}".into(),
+        Err(e) => return Err(e),
+    };
+    let bad = |why: String| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{} — {why}", path.display()));
+    let mut v: serde_json::Value = serde_json::from_str(&text).map_err(|e| bad(e.to_string()))?;
     if !v.is_object() {
-        v = serde_json::json!({});
+        return Err(bad("not a JSON object".into()));
     }
     let before = v.clone();
     if !v["env"].is_object() {
@@ -130,7 +137,18 @@ pub fn pin_data_dir(dir: &Path, data_dir: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&path, serde_json::to_string_pretty(&v).unwrap_or_default() + "\n")
+    write_replace(&path, &(serde_json::to_string_pretty(&v).unwrap_or_default() + "\n"))
+}
+
+/// 옆에 다 쓴 뒤 바꿔 끼운다 — 쓰다 꺼져 반쪽 파일이 남지 않게
+fn write_replace(path: &Path, text: &str) -> std::io::Result<()> {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".chammo-{}", crate::tools::tmp_tag()));
+    let tmp = path.with_file_name(name);
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 /// 예전 템플릿이 통째로 CLAUDE.md 였던 HQ — 첫 줄로 알아본다(사용자가 안 고쳤으면 새 짧은 파일로 바꿔도 된다)
@@ -143,11 +161,16 @@ pub fn refresh(dir: &Path) -> std::io::Result<()> {
         let app_owned = f.path.starts_with("CHAMMO") || f.path.starts_with("scripts/") || f.path.starts_with(".claude/skills/hq-");
         let dest = dir.join(f.path);
         if f.path == "CLAUDE.md" {
-            let cur = std::fs::read_to_string(&dest).unwrap_or_default();
+            // 없을 때만 새로 — 못 읽으면(메모장 ANSI 저장·잠김) 빈 글로 보고 사람이 쓴 CLAUDE.md 를 템플릿으로 덮었다(2026-10-21 리뷰)
+            let cur = match std::fs::read_to_string(&dest) {
+                Ok(t) => t,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(_) => continue,
+            };
             if cur.is_empty() || cur.starts_with(OLD_TEMPLATE_HEAD) {
-                std::fs::write(&dest, body_for(f))?;
+                write_replace(&dest, &body_for(f))?;
             } else if !cur.contains("@CHAMMO.md") {
-                std::fs::write(&dest, format!("{}\n\n@CHAMMO.md\n", cur.trim_end()))?;
+                write_replace(&dest, &format!("{}\n\n@CHAMMO.md\n", cur.trim_end()))?;
             }
             continue;
         }
@@ -283,13 +306,35 @@ pub fn folder_status_of(dir: &Path) -> FolderStatus {
     FolderStatus { exists: dir.is_dir(), hq_ready: dir.join("CLAUDE.md").is_file() && dir.join("scripts/task").is_file() }
 }
 
+/// HQ 로 쓸 수 있는 자리인가 — 홈·루트·devRoot(따로 둔 프로젝트) 이거나 그 위 폴더면 안 된다. 그 자리에 깔면 .claude/settings.json 이
+/// 전역 설정(~/.claude)이 되거나(상태줄 바꿔 끼움·선택지 도구 막음) CLAUDE.md 가 모든 프로젝트 세션에 실렸다(2026-10-21 리뷰)
+pub fn hq_place_ok(dir: &str, home: &str, project_roots: &[String]) -> Result<(), String> {
+    let norm = crate::tools::path_key;
+    let d = norm(dir);
+    let bad = crate::i18n::tr("HQ 는 홈·devRoot 가 아닌 따로 된 폴더여야 해요(예: ~/Chammo HQ)", "The HQ must be its own folder, not your home or devRoot (e.g. ~/Chammo HQ)");
+    if d.is_empty() || d == "/" || d == norm(home) || d.trim_end_matches(':').len() <= 2 {
+        return Err(bad.into());
+    }
+    for r in project_roots.iter().map(|r| norm(r)).filter(|r| !r.is_empty()) {
+        if r == d || r.starts_with(&format!("{d}/")) {
+            return Err(bad.into());
+        }
+    }
+    Ok(())
+}
+
 /// 설정 화면: HQ 만들기. dir 은 `~/…` 모양이어도 된다
 #[tauri::command]
-pub fn create_hq(dir: String, overwrite: Option<bool>) -> Result<HqReport, String> {
+pub fn create_hq(dir: String, overwrite: Option<bool>, roots: Option<Vec<String>>) -> Result<HqReport, String> {
     let dir = crate::config::expand(&crate::config::home(), &dir);
     if dir.trim().is_empty() {
         return Err(crate::i18n::tr("HQ 폴더를 먼저 적어 주세요", "Please enter an HQ folder first").into());
     }
+    let home = crate::config::home();
+    let c = crate::config::current();
+    // 저장된 것 + 설정 화면에서 고르는 중인 것(첫 설정은 HQ 를 devRoot 저장 전에 만든다 — 코드 리뷰)
+    let roots: Vec<String> = std::iter::once(c.dev_root.clone()).chain(c.extra_projects.iter().cloned()).chain(roots.unwrap_or_default()).filter(|p| !p.trim().is_empty()).map(|p| crate::config::expand(&home, &p)).collect();
+    hq_place_ok(&dir, &home, &roots)?;
     let report = install(Path::new(&dir), overwrite.unwrap_or(false)).map_err(|e| e.to_string())?;
     pin_data_dir(Path::new(&dir), &crate::config::data_dir().to_string_lossy()).map_err(|e| e.to_string())?;
     Ok(report)
@@ -380,6 +425,40 @@ mod tests {
         pin_data_dir(&d, "/Users/me/demo-data").unwrap();
         let again: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join(".claude/settings.json")).unwrap()).unwrap();
         assert_eq!(again, v);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn hq_는_홈_devroot_그_위에_못_둔다() {
+        let roots = vec!["/Users/me/Desktop/dev".to_string(), "/Users/me/work/blog".to_string()];
+        for bad in ["/Users/me", "/Users/me/", "/", "/Users/me/Desktop/dev", "/Users/me/Desktop", "/Users/me/work", "C:/"] {
+            assert!(hq_place_ok(bad, "/Users/me", &roots).is_err(), "{bad}");
+        }
+        for ok in ["/Users/me/Chammo HQ", "/Users/me/Desktop/dev/honor-orchestrator", "/Users/me/Documents/hq"] {
+            assert!(hq_place_ok(ok, "/Users/me", &roots).is_ok(), "{ok}");
+        }
+        assert!(hq_place_ok("c:/users/me", "C:/Users/Me", &[]).is_err(), "윈도우 대소문자");
+    }
+
+    #[test]
+    fn 깨진_hq_설정은_건드리지_않는다() {
+        let d = temp("env-broken");
+        install(&d, false).unwrap();
+        let broken = r#"{"hooks":{"Stop":[{"command":"x"}]},}"#; // 끝 쉼표 — 사람이 손으로 넣다 틀림
+        std::fs::write(d.join(".claude/settings.json"), broken).unwrap();
+        assert!(pin_data_dir(&d, "/Users/me/demo-data").is_err());
+        assert_eq!(std::fs::read_to_string(d.join(".claude/settings.json")).unwrap(), broken, "훅이 든 글이 그대로");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn utf8_이_아닌_hq_claude_md_는_덮지_않는다() {
+        let d = temp("claude-ansi");
+        install(&d, false).unwrap();
+        let ansi = [0xC7u8, 0xD1, 0xB1, 0xDB, b'\n']; // cp949 '한글'
+        std::fs::write(d.join("CLAUDE.md"), ansi).unwrap();
+        refresh(&d).unwrap();
+        assert_eq!(std::fs::read(d.join("CLAUDE.md")).unwrap(), ansi.to_vec());
         let _ = std::fs::remove_dir_all(&d);
     }
 

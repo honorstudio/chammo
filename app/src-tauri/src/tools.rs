@@ -38,6 +38,13 @@ pub fn project_key(root: &str) -> String {
     root.replace('\\', "/").trim_end_matches('/').to_string()
 }
 
+/// 같은 폴더인지 견줄 때의 열쇠 — project_key 에 윈도우 드라이브 경로(C:/…)면 소문자(대소문자를 안 가린다).
+/// 믿음(trust)·HQ 자리 검사·설정 화면 믿음 확인이 같은 규칙을 쓴다(셋이 따로 베끼면 하나만 고쳐질 때 다시 어긋난다)
+pub fn path_key(s: &str) -> String {
+    let k = project_key(s);
+    if k.as_bytes().get(1) == Some(&b':') { k.to_lowercase() } else { k }
+}
+
 /// ~/.claude.json 고치기 — 앱 안의 모든 길(계정 oauthAccount·믿음·화면 조종·브라우저 붙이기·MCP 끄기)이 이 하나로.
 /// f = 지금 글 → 고친 글(안 바뀌면 None, 아무것도 안 쓴다) · first = 처음 쓰기 직전 한 번(백업) · ok = 쓴 뒤 다시 읽어 확인.
 /// 쓰기 직전에 다시 읽어 그새 바뀌었으면(떠 있는 claude 가 썼다) 새로 읽어 다시, 확인이 틀려도(쓴 뒤에 덮였다) 다시 — 세 번까지.

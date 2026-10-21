@@ -219,10 +219,12 @@ export function bossReaction(x: { status: ActivityStatus; reply: { text: string;
   return null;
 }
 
-/** 가구가 생기면 방 오른쪽에 휴게실 두 칸 — 가구를 두 줄로 놓는다. 끌어다 놓기(가구 놓기) 전까지의 자동 자리 */
+/** 휴게실 자동 자리 수 — 가구가 25개를 넘으면서(2026-10-21) 다 놓으면 방이 깊어져 사무실이 작아졌다. 넘는 건 창고(트레이에서 끌어 놓으면 나온다) */
+export const LOUNGE_MAX = 8;
+/** 가구가 생기면 방 오른쪽에 휴게실 두 칸 — 가구를 두 줄로 놓는다. 끌어다 놓기(가구 놓기) 전까지의 자동 자리(LOUNGE_MAX 까지) */
 export function withLounge(room: Room, ids: string[], placed: Record<string, [number, number] | null> = {}): Room & { furniture: Placed[] } {
   if (!ids.length) return { ...room, furniture: [] };
-  let auto = 0;
+  let auto = 0, lounged = 0;
   const furniture: Placed[] = [];
   const covered = (p: [number, number]) => room.desks.some((d) => p[0] < d.gx + d.w && p[0] + 1 > d.gx && p[1] < d.gy + 1.2 && p[1] + 1 > d.gy);
   // 놓인 가구 칸 — 자동 자리가 그 위에 겹쳐 그려지지 않게 먼저 모은다
@@ -235,6 +237,8 @@ export function withLounge(room: Room, ids: string[], placed: Record<string, [nu
     // 옛 자리가 책상(뒷줄 옆자리)과 겹치면 휴게실로 비켜 있다 — 앞줄 책상은 planRoom 이 가구를 피한다
     const pushed = !!p && covered(p);
     if (p && !pushed) { furniture.push({ id, gx: p[0], gy: p[1] }); continue; }
+    if (lounged >= LOUNGE_MAX) continue; // 휴게실이 찼다 — 창고
+    lounged++;
     while (!free(spot(auto))) auto++;
     const [gx, gy] = spot(auto);
     furniture.push({ id, gx, gy, ...(pushed ? { pushed: true } : {}) });
@@ -242,7 +246,7 @@ export function withLounge(room: Room, ids: string[], placed: Record<string, [nu
   }
   // 방 크기는 놓은 자리와 무관하게 — 가진 가구가 다 휴게실에 있을 때의 깊이로 정한다.
   // 놓은 가구에 +1.2 를 주면 맨 아래 줄에 놓을 때마다 방이 한 줄씩 커지고 배율이 뚝 떨어졌다(사용자 2026-09-27)
-  const lounge = Math.ceil(0.5 + Math.floor((ids.length - 1) / 2) * 1.6 + 1.2);
+  const lounge = Math.ceil(0.5 + Math.floor((Math.min(ids.length, LOUNGE_MAX) - 1) / 2) * 1.6 + 1.2);
   const deepest = Math.max(0, ...furniture.filter((f) => !placed[f.id] || f.pushed).map((f) => Math.ceil(f.gy + 1.2)), ...furniture.filter((f) => placed[f.id] && !f.pushed).map((f) => f.gy + 1));
   return { ...room, cols: room.cols + 2, rows: Math.max(room.rows, lounge, deepest), furniture };
 }

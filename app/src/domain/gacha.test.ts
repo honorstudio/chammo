@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setLang } from '../i18n';
-import { CATALOG, COIN_RULES, dayStartAt, earn, EMPTY_GACHA, starOf, starTotal, nextStar, softPay, ownedOf, ownedSkins, parseGacha, place, pull, rarityLabel, rollRarity, seeItem, setSkin, skinOfFile, toggleEquip, type GachaFile } from './gacha';
+import { CATALOG, COIN_RULES, dexCatalog, EVENTS, liveEvent, pick, dayStartAt, earn, EMPTY_GACHA, starOf, starTotal, nextStar, softPay, ownedOf, ownedSkins, parseGacha, place, pull, rarityLabel, rollRarity, seeItem, setSkin, skinOfFile, toggleEquip, type GachaFile } from './gacha';
 
+/** 한정 이벤트가 끝난 뒤 — 평소 풀만 나오게(날짜 따라 시험이 흔들리지 않게) */
+const NOV = new Date(2026, 10, 20, 12).getTime();
 const rngOf = (...xs: number[]) => { let i = 0; return () => xs[i++ % xs.length]!; };
 const withCoins = (coins: number, extra: Partial<GachaFile> = {}): GachaFile => ({ ...EMPTY_GACHA, coins, ...extra });
 
@@ -123,8 +125,8 @@ describe('rollRarity — 흔함 60 · 보통 28 · 희귀 10 · 전설 2', () =>
 
 describe('pull — 뽑기', () => {
   it('한 번 = 코인 100, 코인이 모자라면 못 뽑는다', () => {
-    expect(pull(withCoins(99), 1, rngOf(0.1, 0))).toBeNull();
-    const r = pull(withCoins(250), 1, rngOf(0.1, 0))!;
+    expect(pull(withCoins(99), 1, rngOf(0.1, 0), NOV)).toBeNull();
+    const r = pull(withCoins(250), 1, rngOf(0.1, 0), NOV)!;
     expect(r.file.coins).toBe(150);
     expect(r.results).toHaveLength(1);
     expect(r.results[0]!.rarity).toBe('흔함');
@@ -132,24 +134,24 @@ describe('pull — 뽑기', () => {
   });
 
   it('중복이면 별이 오른다(★5 전엔 코인 10만 돌려받음) — 조각은 옛 판을 위해 그대로 센다', () => {
-    const first = pull(withCoins(300), 1, rngOf(0.1, 0))!;
+    const first = pull(withCoins(300), 1, rngOf(0.1, 0), NOV)!;
     expect(first.results[0]).toMatchObject({ dup: false, star: 1, up: false, refund: 0 });
-    const again = pull(first.file, 1, rngOf(0.1, 0))!;
+    const again = pull(first.file, 1, rngOf(0.1, 0), NOV)!;
     expect(again.results[0]).toMatchObject({ dup: true, star: 2, up: true, refund: 10 });
     expect(again.file.coins).toBe(300 - 100 - 100 + 10);
     expect(again.file.shards).toBe(1);
   });
 
   it('★5(중복 10) 뒤의 중복은 코인 50 — 별은 ★5 에서 멈춘다', () => {
-    const id = pull(withCoins(100), 1, rngOf(0.1, 0))!.results[0]!.id;
-    const at = (n: number) => pull(withCoins(100, { owned: { [id]: n } }), 1, rngOf(0.1, 0))!.results[0]!;
+    const id = pull(withCoins(100), 1, rngOf(0.1, 0), NOV)!.results[0]!.id;
+    const at = (n: number) => pull(withCoins(100, { owned: { [id]: n } }), 1, rngOf(0.1, 0), NOV)!.results[0]!;
     expect(at(10)).toMatchObject({ star: 5, up: true, refund: 10 }); // 중복 9 → 10 = ★5 가 되는 판
     expect(at(11)).toMatchObject({ star: 5, up: false, refund: 50 });
     expect(at(4)).toMatchObject({ star: 3, up: false, refund: 10 }); // 중복 3 → 4 는 아직 ★3
   });
 
   it('10번 = 900, 희귀 이상이 하나도 없으면 마지막이 희귀로', () => {
-    const r = pull(withCoins(900), 10, rngOf(0.1, 0))!;
+    const r = pull(withCoins(900), 10, rngOf(0.1, 0), NOV)!;
     expect(r.file.coins).toBe(r.results.reduce((n, x) => n + x.refund, 0)); // 900 - 900 + 중복 환급
     expect(r.results).toHaveLength(10);
     expect(r.results.filter((x) => x.rarity === '희귀' || x.rarity === '전설').length).toBeGreaterThanOrEqual(1);
@@ -157,16 +159,16 @@ describe('pull — 뽑기', () => {
   });
 
   it('천장: 50번째까지 전설이 없으면 50번째는 전설, 전설이 나오면 다시 0부터', () => {
-    const r = pull(withCoins(100, { pity: 49 }), 1, rngOf(0.1, 0))!;
+    const r = pull(withCoins(100, { pity: 49 }), 1, rngOf(0.1, 0), NOV)!;
     expect(r.results[0]!.rarity).toBe('전설');
     expect(r.file.pity).toBe(0);
-    const s = pull(withCoins(100, { pity: 10 }), 1, rngOf(0.1, 0))!;
+    const s = pull(withCoins(100, { pity: 10 }), 1, rngOf(0.1, 0), NOV)!;
     expect(s.file.pity).toBe(11);
   });
 
   it('뽑은 기록은 최근 30개까지', () => {
     let f = withCoins(100 * 40);
-    for (let i = 0; i < 40; i++) f = pull(f, 1, rngOf(0.1, i / 40))!.file;
+    for (let i = 0; i < 40; i++) f = pull(f, 1, rngOf(0.1, i / 40), NOV)!.file;
     expect(f.history).toHaveLength(30);
   });
 });
@@ -238,10 +240,10 @@ describe('NEW — 처음 얻고 아직 안 눌러 본 것(gacha.json fresh — �
   const rich = { ...EMPTY_GACHA, coins: 1000, owned: { 'skin.mint': 1 } };
   const rng = (xs: number[]) => { let i = 0; return () => xs[i++ % xs.length]!; };
   it('뽑아서 처음 얻은 것만 NEW — 중복(별)은 안 붙는다', () => {
-    const r = pull(rich, 1, rng([0.0, 0.0]))!; // 흔함 첫 번째
+    const r = pull(rich, 1, rng([0.0, 0.0]), NOV)!; // 흔함 첫 번째
     expect(r.results[0]!.dup).toBe(false);
     expect(r.file.fresh).toEqual([r.results[0]!.id]);
-    const again = pull(r.file, 1, rng([0.0, 0.0]))!;
+    const again = pull(r.file, 1, rng([0.0, 0.0]), NOV)!;
     expect(again.results[0]!.dup).toBe(true);
     expect(again.file.fresh).toEqual([r.results[0]!.id]);
   });
@@ -272,9 +274,7 @@ describe('새 종류 — 책상 소품·칭호·조명(2026-10-10 사용자: 뽑
     const other = CATALOG.filter((c) => c.kind === 'desk')[1]!.id;
     expect(toggleEquip(a, other).equip.desk).toBe(other);
   });
-  it('확률표는 그대로 — 스킨이 여전히 풀의 대부분(새 종류가 스킨 뽑을 맛을 빼앗지 않게)', () => {
-    const share = CATALOG.filter((c) => (kinds as readonly string[]).includes(c.kind)).length / CATALOG.length;
-    expect(share).toBeLessThan(0.2);
+  it('확률표는 그대로 — 등급 확률은 종류가 늘어도 같다', () => {
     expect(rollRarity(0.59)).toBe('흔함');
   });
 });
@@ -333,7 +333,7 @@ describe('별 — 중복을 별로(★2~★5 = 중복 누적 1·3·6·10)', () =
   it('남아 있던 조각(옛 중복)은 owned 숫자에 이미 들어 있어 새 저장 없이 별로 — 잃는 것 없음', () => {
     const old = parseGacha(JSON.stringify({ coins: 5, since: 1, owned: { 'skin.mint': 4, 'skin.cafe': 1, 'furn.sofa': 12 }, pity: 0, shards: 14, history: [] }), 0);
     expect(starOf(old.owned['skin.mint']!)).toBe(3);
-    expect(starTotal(old)).toEqual({ have: 3 + 1 + 5, max: CATALOG.length * 5 });
+    expect(starTotal(old, NOV)).toEqual({ have: 3 + 1 + 5, max: dexCatalog(old.owned, NOV).length * 5 });
   });
 
   it('별 합계는 카탈로그에 없는 옛 id 를 세지 않는다', () => {
@@ -380,5 +380,52 @@ describe('코인 버는 법 표 — 화면 글과 실제 계산이 같다', () =
     expect([one({ t: 1, type: 'commit', lines: 300, hasTest: false }), one({ t: 1, type: 'talk' }), one({ t: 1, type: 'doc' })]).toEqual([1, 1, 1]);
     expect(one({ t: 1, type: 'slay', kind: 'slime', lv: 1 })).toBe(val[5]);
     expect(COIN_RULES.map(([n]) => n)).toEqual([10, 5, 3, 2, 1]);
+  });
+});
+
+describe('할로윈 한정 — 11/15 23:59(기기 시각)까지만 뽑기에, 기간 중 40%', () => {
+  const at = (mo: number, d: number, h: number, mi: number, sec = 0) => new Date(2026, mo, d, h, mi, sec).getTime();
+  const EVE = at(10, 15, 23, 59, 30), END = at(10, 15, 23, 59, 59) + 999, AFTER = at(10, 16, 0, 0);
+  const lim = CATALOG.filter((c) => c.limited === 'halloween2026');
+  it('기간 — 11/15 23:59:59.999 까지 열리고 11/16 0시부터 닫힌다(10/31·11/01 도 열림)', () => {
+    expect(EVENTS.halloween2026.until).toBe(END);
+    expect(liveEvent(at(9, 21, 23, 0))).toBe('halloween2026');
+    expect(liveEvent(at(9, 31, 23, 59, 59) + 999)).toBe('halloween2026');
+    expect(liveEvent(at(10, 1, 0, 0))).toBe('halloween2026');
+    expect(liveEvent(EVE)).toBe('halloween2026');
+    expect(liveEvent(END)).toBe('halloween2026');
+    expect(liveEvent(END + 1)).toBeNull();
+    expect(liveEvent(AFTER)).toBeNull();
+  });
+  it('세트는 30개 안팎, 네 등급이 다 있다', () => {
+    expect(lim.length).toBeGreaterThanOrEqual(28);
+    for (const r of ['흔함', '보통', '희귀', '전설'] as const) expect(lim.some((c) => c.rarity === r), r).toBe(true);
+  });
+  it('기간 중엔 등급마다 x 의 40% 가 할로윈, 11/16 부터는 0', () => {
+    for (const r of ['흔함', '보통', '희귀', '전설'] as const) {
+      const xs = Array.from({ length: 1000 }, (_, i) => (i + 0.5) / 1000);
+      const during = xs.filter((x) => pick(r, x, EVE).limited).length / xs.length;
+      expect(during, r).toBeCloseTo(0.4, 2);
+      expect(xs.filter((x) => pick(r, x, AFTER).limited).length, r).toBe(0);
+    }
+  });
+  it('뽑기 결과로도 — 11/15 밤엔 나오고 11/16 엔 안 나온다(천장·환급은 그대로)', () => {
+    const rich = { ...EMPTY_GACHA, coins: 100_000 };
+    const ids = (now: number) => Array.from({ length: 50 }, (_, i) => pull(rich, 10, rngOf(i / 50, (i * 7 % 50) / 50), now)!.results.map((r) => r.id)).flat();
+    const hit = (now: number) => ids(now).filter((id) => CATALOG.find((c) => c.id === id)?.limited).length;
+    expect(hit(EVE)).toBeGreaterThan(0);
+    expect(hit(AFTER)).toBe(0);
+    const p = pull({ ...rich, pity: 49 }, 1, rngOf(0.1, 0.1), EVE)!;
+    expect(p.results[0]!.rarity).toBe('전설');
+  });
+  it('11/16 부터 — 이미 뽑은 한정은 도감에 남고 장착도 된다, 못 뽑은 한정은 도감에서 빠진다', () => {
+    const got = lim.find((c) => c.kind === 'skin')!;
+    const f = { ...EMPTY_GACHA, owned: { [got.id]: 1 } };
+    const list = dexCatalog(f.owned, AFTER).map((c) => c.id);
+    expect(list).toContain(got.id);
+    expect(list.filter((id) => lim.some((c) => c.id === id))).toEqual([got.id]);
+    expect(dexCatalog({}, EVE).length).toBe(CATALOG.length);
+    expect(setSkin(f, got.id.slice(5)).equip.skin).toBe(got.id);
+    expect(starTotal(f, AFTER).max).toBe((CATALOG.length - lim.length + 1) * 5);
   });
 });

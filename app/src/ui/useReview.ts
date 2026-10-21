@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { appendTaskEvent, prMerge, prRevert, prSearch, prViews, repoMap, sendToSession, writeReviewState, type AppEnv } from '../data/tauri';
 import { gates, type OpenPr } from '../domain/review';
-import { needsView, parseHits, parseMerged, parseRepoMap, parseView, type MergedPr, type RepoMap } from '../domain/reviewSource';
+import { needsView, parseHits, parseMerged, parseRepoMap, parseView, reviewOpen, type MergedPr, type RepoMap } from '../domain/reviewSource';
 import { sinceIso, taskId, type Reviewed } from '../domain/reviewSummary';
 import { dayStart } from '../domain/usage';
 import { tr } from '../i18n';
@@ -87,7 +87,7 @@ export function useReview(env: AppEnv | null, onTaskLogged: () => void): ReviewD
       setTookMs(Math.round(performance.now() - t0));
       setError(null);
       // 참모가 머지하기 전에 읽는 판정 — 앱과 참모가 같은 기준을 쓰게
-      const state = { updatedAt: new Date().toISOString(), open: list.map((p) => ({ repo: p.repo, number: p.number, title: p.title, url: p.url, gates: p.gates })) };
+      const state = { updatedAt: new Date().toISOString(), open: reviewOpen(hits, new Map(list.map((p) => [p.key, p]))) };
       void writeReviewState(JSON.stringify(state)).catch(() => {});
       console.info(`[review] 열린 ${list.length} · 상세 다시 읽음 ${stale.length} · 오늘 머지 ${parseMerged(mergedRaw, m).length} · ${Math.round(performance.now() - t0)}ms`);
     } catch (e: unknown) {

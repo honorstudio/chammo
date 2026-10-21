@@ -305,16 +305,35 @@ def _load(name, data):
 
 
 def _save(cfg, data):
+    """옆에 다 쓴 뒤 바꿔 끼운다 — 제자리에 비우고 쓰다 죽으면 빈 routine.json 이 남아 목록에서 사라지고 지우기도 막혔다"""
     _, cfg_path, _, _ = _paths(cfg['name'], data)
-    with open(cfg_path, 'w', encoding='utf-8') as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    tmp = f'{cfg_path}.{os.getpid()}.{os.urandom(3).hex()}.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, cfg_path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _log(name, data, now=None, **event):
     _, _, _, runs = _paths(name, data)
     event = {'ts': (now or datetime.datetime.now()).isoformat(timespec='seconds'), **event}
-    with open(runs, 'a', encoding='utf-8') as f:
-        f.write(json.dumps(event, ensure_ascii=False) + '\n')
+    line = (json.dumps(event, ensure_ascii=False) + '\n').encode('utf-8')
+    fd = os.open(runs, os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, 'O_BINARY', 0), 0o644)
+    try:
+        end = os.lseek(fd, 0, os.SEEK_END)
+        if end:  # 끝 줄이 반쪽이면 줄바꿈부터 — 새 줄이 거기 붙어 둘 다 못 읽었다
+            os.lseek(fd, end - 1, os.SEEK_SET)
+            if os.read(fd, 1) != b'\n':
+                line = b'\n' + line
+        os.write(fd, line)
+    finally:
+        os.close(fd)
     return event
 
 
@@ -723,7 +742,7 @@ def watch(name, data, now, agents, home, run=subprocess.run, sleep=time.sleep, s
         return None
     start = runs[i]
     row = next((a for a in agents if a.get('id') == start['session']), None)
-    if not row or row.get('status') == 'busy' or row.get('state') == 'working':
+    if not row or (row.get('status') == 'busy' and row.get('state') != 'done') or row.get('state') == 'working':
         return None  # 목록에 없으면(지워짐) 모른다 · 일하는 중이면 멈춘 게 아니다
     path = _transcript(row['sessionId'], home) if row.get('sessionId') else None
     kind, at = _last_turn(path) if path else (None, None)
@@ -842,8 +861,16 @@ def _runs(name, data):
     _, _, _, runs_path = _paths(name, data)
     if not os.path.isfile(runs_path):
         return []
+    out = []
     with open(runs_path, encoding='utf-8') as f:
-        return [json.loads(l) for l in f if l.strip()]
+        for l in f:
+            if not l.strip():
+                continue
+            try:
+                out.append(json.loads(l))
+            except ValueError:
+                continue  # 쓰다 만 줄 하나에 목록 전체·그 예약 실행이 영영 멈췄다
+    return out
 
 
 def _pending(cfg, data, now):
@@ -899,7 +926,50 @@ def _transient(said):
     return None
 
 
-def run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, home=None, uid=None, win=None, sleep=time.sleep, stagger=0, again=False, catchup=False):
+RUN_LOCK_S = SPAWN_TIMEOUT * 2 + CLAUDE_TIMEOUT * 2  # 띄우기 두 번(다시 시도)·agents·rm — 이보다 오래된 잠금은 죽은 프로세스가 남긴 것
+
+
+def _take_run_lock(name, data):
+    """그 예약 폴더의 run.lock(O_EXCL) — 잡으면 경로, 남이 띄우는 중이면 None. 예약 폴더가 없으면(없는 이름·클라우드) '' — 잠그지 않고 그냥(오류는 실행이 낸다)"""
+    d = _paths(name, data)[0]
+    if not (NAME.match(name or '') and '..' not in name and os.path.isdir(d)):
+        return ''
+    p = os.path.join(d, 'run.lock')
+    for _ in range(2):
+        try:
+            fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            os.write(fd, f'{os.getpid()} {time.time():.0f}'.encode())
+            os.close(fd)
+            return p
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(p) < RUN_LOCK_S:
+                    return None
+                os.remove(p)  # 띄우다 죽은 프로세스가 남긴 잠금
+            except OSError:
+                pass
+    return None
+
+
+def run_now(name, data=None, **kw):
+    """한 번 실행 — 같은 예약을 두 길(정시 tick·사람의 '지금 실행'·watch 의 다시 돌리기)이 같은 순간 띄우면 둘 다 agents 에서 아직 못 보고
+    같은 이름 세션을 둘 띄웠다(발송 예약이면 두 번 나감, 2026-10-21 리뷰) — 예약 폴더 잠금 안에서 _run_now"""
+    data = data or data_dir()
+    lock = _take_run_lock(name, data)
+    if lock is None:
+        _log(name, data, event='skip', reason='another run of this routine is starting')
+        return {'skipped': 'starting'}
+    try:
+        return _run_now(name, data=data, **kw)
+    finally:
+        if lock:
+            try:
+                os.remove(lock)
+            except OSError:
+                pass
+
+
+def _run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, home=None, uid=None, win=None, sleep=time.sleep, stagger=0, again=False, catchup=False):
     """한 번 실행 — 지난 실행이 아직 돌면 건너뛰고, 끝난 지난 세션은 치우고 새 세션을 띄운다.
     날짜 일정은 launchd 가 해마다(윈도우는 날마다) 깨우니, 예약으로 깨면 아직 안 돈 날짜가 왔을 때만 돈다.
     stagger: 띄우기 직전에 쉴 초(tick 이 바로 앞 예약을 띄웠을 때). again: 멈춘 실행을 다시 돌림(watch) — 날짜 칸은 이미 돌았다.
@@ -918,7 +988,8 @@ def run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, home
             return {'skipped': 'not due'}
     session = f'routine-{name}'
     mine = [a for a in _agents(cfg['claude'], run) if a.get('name') == session]
-    if any(a.get('status') == 'busy' for a in mine):
+    # 답은 끝났고 뒤 작업(Monitor·개발 서버)만 남은 세션은 state done + status busy — 앱 toState 처럼 끝난 것으로 본다
+    if any(a.get('status') == 'busy' and a.get('state') != 'done' for a in mine):
         _log(name, data, event='skip', reason='still running')
         return {'skipped': 'still running'}
     for a in mine:
@@ -1018,7 +1089,13 @@ def remove(name, data=None, home=None, run=subprocess.run, uid=None, win=None):
     win = os.name == 'nt' if win is None else win
     home = home or os.path.expanduser('~')
     data = data or data_dir(home)
-    _load(name, data)
+    try:
+        _load(name, data)
+    except ValueError:
+        # 설정이 비었거나 깨졌어도 그 예약 폴더면 지운다(전엔 손으로 폴더를 지우기 전엔 못 치웠다) — 이름 꼴은 만들 때 규칙 그대로
+        d, cfg_path, _, _ = _paths(name, data)
+        if not (NAME.match(name or '') and '..' not in name and os.path.isfile(cfg_path)):
+            raise
     if win:
         run(['schtasks', '/Delete', '/TN', TASK + name, '/F'], capture_output=True, text=True, **SCHT)
     else:

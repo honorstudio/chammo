@@ -145,6 +145,18 @@ fn 기본은_꺼짐() {
 }
 
 #[test]
+fn 잠금을_기다리는_사이_꺼졌으면_안_켠다() {
+    // 설정 화면 켜기 시도(start) 뒤에 끄기를 누르면 저장은 off 인데 서버가 떠 있었다 — start 는 잠금을 잡은 뒤 저장값을 다시 본다
+    let d = tmp("may");
+    save_on(&d, true).unwrap();
+    assert!(may_start(false, &d));
+    assert!(!may_start(true, &d), "앱이 끝나는 중");
+    save_on(&d, false).unwrap();
+    assert!(!may_start(false, &d), "사람이 껐다");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
 fn 작업_기록은_끝만_줄_경계로() {
     assert_eq!(tail_lines("a\nb\nc\n".into(), 100), "a\nb\nc\n");
     assert_eq!(tail_lines("aaaa\nbb\ncc\n".into(), 5), "cc\n");

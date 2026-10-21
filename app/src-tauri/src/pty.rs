@@ -89,6 +89,22 @@ impl Visible {
     }
 }
 
+/// 보기 출력 한 조각 — 글자 수는 문턱까지만 쌓고, 쫓겨남 문구는 끝까지 본다. 빈 조각(읽기 끝 = attach 가 끝남)이면 끝난 보기로:
+/// 안 그러면 respawn 등으로 attach 만 끝난 동안 그 죽은 보기를 session_writer 가 계속 골라, 쓴 글이 오류 없이 사라지고 'ok' 로 남았다(2026-10-21 리뷰)
+fn note_chunk(counter: &mut Visible, seen: &AtomicUsize, gone: &AtomicBool, b: &[u8]) {
+    if b.is_empty() {
+        gone.store(true, Ordering::Relaxed);
+        return;
+    }
+    let (n, kicked) = counter.scan(b);
+    if seen.load(Ordering::Relaxed) < VIEW_READY_VISIBLE {
+        seen.fetch_add(n, Ordering::Relaxed);
+    }
+    if kicked {
+        gone.store(true, Ordering::Relaxed);
+    }
+}
+
 /// 이 세션에 붙어 있는 터미널 보기의 쓰기 — 화면이 실제로 온 것 중 가장 최근 것. 없으면 None(새로 붙는다)
 pub(crate) fn session_writer(session: &str) -> Option<SharedWriter> {
     ready_view(&OPEN.lock().unwrap(), session)
@@ -195,14 +211,7 @@ pub fn pty_open(
     let (seen, out) = (visible.clone(), gone.clone());
     let mut counter = Visible::default();
     let (master, writer, child) = spawn_pty(&command, cwd, cols, rows, move |b| {
-        // 글자 수는 문턱까지만 쌓고, 쫓겨남 문구는 끝까지 본다
-        let (n, kicked) = counter.scan(b);
-        if seen.load(Ordering::Relaxed) < VIEW_READY_VISIBLE {
-            seen.fetch_add(n, Ordering::Relaxed);
-        }
-        if kicked {
-            out.store(true, Ordering::Relaxed);
-        }
+        note_chunk(&mut counter, &seen, &out, b);
         on_data.send(InvokeResponseBody::Raw(b.to_vec())).is_ok()
     })?;
     let id = state.next.fetch_add(1, Ordering::SeqCst) + 1;
@@ -297,6 +306,17 @@ pub(crate) fn reap(mut child: Box<dyn Child + Send + Sync>) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn 읽기가_끝난_보기는_고르지_않는다() {
+        use super::*;
+        let (seen, gone) = (AtomicUsize::new(0), AtomicBool::new(false));
+        let mut c = Visible::default();
+        note_chunk(&mut c, &seen, &gone, "가".repeat(VIEW_READY_VISIBLE).as_bytes());
+        assert!(!gone.load(Ordering::Relaxed));
+        note_chunk(&mut c, &seen, &gone, b""); // attach 가 끝남
+        assert!(gone.load(Ordering::Relaxed), "끝난 보기에 쓰면 글이 오류 없이 사라진다");
+    }
     use super::{attach_line, session_of};
 
     /// 받은 바이트를 모아 두는 가짜 pty 쓰기

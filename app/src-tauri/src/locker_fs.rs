@@ -175,7 +175,7 @@ pub fn decide(real: &Path, len: u64, ctx: &Ctx) -> Home {
         return Home::Link;
     }
     let h = canon(ctx.home);
-    let transient = ["Downloads", "Desktop", "Pictures/Screenshots"].iter().any(|d| real.starts_with(h.join(d)) || real.starts_with(ctx.home.join(d)));
+    let transient = ["Downloads", "Desktop", "Pictures/Screenshots"].iter().any(|d| real.starts_with(join_rel(&h, d)) || real.starts_with(join_rel(ctx.home, d)));
     if transient {
         Home::Copy
     } else {
@@ -206,11 +206,23 @@ pub fn sub_dir(owner: &Path, rel: &str) -> Result<PathBuf, String> {
     Ok(p)
 }
 
+/// 이사하며 원본을 잠깐 치워 두는 이름 — copy_verified 조각(.<이름><PART>)과 달라야 한다. 같으면 윈도우에서 바로가기 대신 복사하는 길(link)이
+/// 그 조각 자리를 비우며 치워 둔 원본을 지우고, give 가 되돌리며 놓인 사본·프로젝트 사본까지 지워 파일이 통째로 사라졌다(2026-10-21 리뷰)
+fn held(file: &Path) -> PathBuf {
+    let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    file.with_file_name(format!(".{name}.held{PART}"))
+}
+
+/// copy_verified 가 dest 옆에 쓰는 조각
+fn part_of(dest: &Path) -> PathBuf {
+    let name = dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    dest.with_file_name(format!(".{name}{PART}"))
+}
+
 /// 복사 → 크기 확인 → 진짜 이름으로. 실패하면 조각을 치우고 원본은 그대로.
 /// 조각은 새로 만들 때만 연다(create_new = O_EXCL — 그 자리에 심어 둔 링크를 따라가지 않는다), 놓을 땐 덮어쓰지 않는다(place_new)
 pub fn copy_verified(src: &Path, dest: &Path) -> Result<(), String> {
-    let name = dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let part = dest.with_file_name(format!(".{name}{PART}"));
+    let part = part_of(dest);
     if std::fs::symlink_metadata(&part).is_ok() {
         std::fs::remove_file(&part).map_err(es)?;
     }
@@ -977,6 +989,12 @@ pub fn restore_max(file: &Path, n: usize, max: u64) -> Result<(), String> {
 /// 이사 간 자리 — <프로젝트>/assets/보관함/
 pub const GIVE_DIR: &str = "assets/보관함";
 
+/// "a/b" 를 조각마다 붙인다 — 윈도우 canonicalize 가 준 \\?\ 경로에선 '/' 가 구분자가 아니라서 join("assets/보관함") 이
+/// 이름이 'assets/보관함' 인 폴더 하나가 돼 만들기가 실패했다(2026-10-21 리뷰)
+pub(crate) fn join_rel(base: &Path, rel: &str) -> PathBuf {
+    rel.split('/').filter(|s| !s.is_empty()).fold(base.to_path_buf(), |p, s| p.join(s))
+}
+
 fn project_ok(ctx: &Ctx, project: &Path) -> Result<PathBuf, String> {
     if !plain_abs(project) || !project.is_dir() {
         return Err(format!("없는 프로젝트 폴더: {}", project.display()));
@@ -999,7 +1017,7 @@ pub fn give(ctx: &Ctx, file: &Path, project: &Path) -> Result<PathBuf, String> {
         return Err(format!("보관함 안 파일만 이사해: {}", file.display()));
     }
     let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let dir = proj.join(GIVE_DIR);
+    let dir = join_rel(&proj, GIVE_DIR);
     // 프로젝트 안 assets·보관함 자리가 링크면(받아 온 저장소) 그 링크를 따라 밖에 쓰게 된다 — 거절
     for p in [proj.join("assets"), dir.clone()] {
         if std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()) {
@@ -1034,7 +1052,7 @@ pub fn give(ctx: &Ctx, file: &Path, project: &Path) -> Result<PathBuf, String> {
     let to = unique(&dir, &name, true);
     copy_verified(file, &to)?;
     // 옛 자리를 잠깐 숨겨 두고 별칭을 놓는다 — 별칭이 안 되면 되돌린다
-    let hold = file.with_file_name(format!(".{name}{PART}"));
+    let hold = held(file);
     std::fs::rename(file, &hold).map_err(es)?;
     // 바로가기를 못 만들면(윈도우 권한 — link 가 복사로 떨어짐) 집이 둘이 되니 되돌린다
     match link(&to, file) {

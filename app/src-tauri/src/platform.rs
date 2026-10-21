@@ -7,6 +7,9 @@ use std::process::{Child, Command};
 /// kill -0 은 좀비에도 성공해서 '앱으로 가져오기'가 좀비가 끝나길 10초 기다리다 실패했다(2026-10-05 아이맥 QA)
 #[cfg(unix)]
 pub fn pid_alive(pid: i32) -> bool {
+    if pid <= 0 {
+        return false; // 0 = 내 프로세스 그룹, -1 = 보낼 수 있는 모든 프로세스 — 한 프로세스가 아니다
+    }
     let exists = unsafe { libc::kill(pid, 0) == 0 };
     exists && !zombie(pid)
 }
@@ -71,7 +74,10 @@ pub fn spawn_reaped(cmd: &mut Command) -> std::io::Result<u32> {
 /// 끝내 달라고 부탁한다(맥 SIGTERM, 윈도우 taskkill — 강제 아님)
 #[cfg(unix)]
 pub fn terminate(pid: i32) {
-    unsafe { libc::kill(pid, libc::SIGTERM) };
+    // pid 0·음수는 kill(2) 에서 묶음 전체(-1 이면 내 계정의 모든 프로세스)다 — 프론트가 준 번호가 비었거나 틀려도 그 길로 안 간다(2026-10-21 리뷰)
+    if pid > 0 {
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+    }
 }
 #[cfg(windows)]
 pub fn terminate(pid: i32) {
@@ -668,6 +674,15 @@ mod tests {
         assert!(super::chrome_exe_candidates(|_| Some(String::new())).is_empty());
     }
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn 영_음수_pid_는_살아_있는_한_프로세스가_아니다() {
+        // kill(0/-1) 은 묶음 전체 — 넘겨받기에 빈 번호가 오면 '살아 있음'으로 보고 terminate(-1) 로 내 계정 프로세스 전체에 SIGTERM 이 갈 뻔했다
+        assert!(!pid_alive(0));
+        assert!(!pid_alive(-1));
+        assert!(pid_alive(std::process::id() as i32));
+    }
 
     #[test]
     fn 외부_프로그램은_platform_command_로만() {

@@ -67,7 +67,8 @@ export function buildInbox(
   for (const e of events) {
     if (e.type === 'send') tasks.set(e.task, { title: e.title ?? '', target: e.target ?? '' });
     const t = tasks.get(e.task);
-    if (t && e.type !== 'send') t.last = e;
+    // 넘기기(own)는 결정의 답이 아니다 — 결제 확인 카드가 handoff 한 번에 답 없이 사라졌다(2026-10-21 리뷰)
+    if (t && e.type !== 'send' && e.type !== 'own') t.last = e;
   }
   for (const [id, t] of tasks) {
     const e = t.last;

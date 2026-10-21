@@ -163,8 +163,9 @@ class Windows(unittest.TestCase):
 class Launcher(unittest.TestCase):
     """윈도우의 python3 는 마이크로소프트 스토어 대리 실행기라(종료 코드 49) #!/usr/bin/env python3 로는 도구가 전부 죽었다.
     맨 위를 sh 머리로 — 맥은 python3, 윈도우는 py -3 → python 중 실제로 도는 것. 파이썬에선 그냥 글자라 그대로 돈다"""
-    # *.py 는 도구가 import 하는 모듈(lesson_skill.py) — 직접 실행하지 않아 머리가 필요 없다
-    PY = [p for p in SCRIPTS.iterdir() if p.is_file() and p.name != 'voice-hint' and p.suffix != '.py']
+    # *.py 는 도구가 import 하는 모듈(lesson_skill.py) — 직접 실행하지 않아 머리가 필요 없다.
+    # *.sh 는 파이썬 없는 길(direct_nopy.sh, ADR 0011) — 처음부터 sh 라 파이썬 머리가 없다
+    PY = [p for p in SCRIPTS.iterdir() if p.is_file() and p.name != 'voice-hint' and p.suffix not in ('.py', '.sh')]
 
     def test_모든_파이썬_도구가_같은_머리(self):
         for p in self.PY:

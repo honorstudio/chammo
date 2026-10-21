@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampFont, dedupeMs, gotoOfNum, menuAction, onceAcross, onceWithin, shortcutFor } from './shortcuts';
+import { clampFont, dedupeMs, gotoOfNum, menuAction, onceAcross, onceWithin, shortcutFor, zoomTarget, frameZoomCmd } from './shortcuts';
 
 const k = (key: string, mods: { meta?: boolean; shift?: boolean; alt?: boolean; ctrl?: boolean } = {}) => ({
   key,
@@ -277,5 +277,30 @@ describe('⌘W 탭 닫기 · ⌘T 새 문서 · ⌘⇧W/⌘⇧T 옛 동작 · �
   });
   it('같은 누름이 메뉴·키 두 갈래로 와도 한 번(400ms)', () => {
     for (const t of ['closeTab', 'newDoc', 'goHome', 'goLocker'] as const) expect(dedupeMs({ type: t })).toBe(400);
+  });
+});
+
+// 2026-10-22 사용자 제보(윈도우 Ctrl +/- 로 채팅 글자가 안 바뀜) — 스페이스에 문서 탭이 열려 있으면 채팅 입력칸에서 눌러도 그 탭만 확대됐다.
+// 참모-2 정함: 포커스(없으면 마지막으로 누른 곳)가 채팅·터미널이면 그 글자, 탭이면 탭 확대, 둘 다 아니면 지금처럼 탭 먼저. 맥도 같은 규칙
+describe('⌘+ ⌘- ⌘0 은 어디를 보고 있나로', () => {
+  it('포커스가 채팅 열·터미널이면 글자 크기(탭이 열려 있어도)', () => {
+    expect(zoomTarget('chat', 'tab')).toBe('font');
+    expect(zoomTarget('term', 'none')).toBe('font');
+  });
+  it('포커스가 탭이면 탭', () => expect(zoomTarget('tab', 'chat')).toBe('tab'));
+  it('포커스가 어디도 아니면 마지막으로 누른 곳', () => {
+    expect(zoomTarget('none', 'chat')).toBe('font');
+    expect(zoomTarget('none', 'term')).toBe('font');
+    expect(zoomTarget('none', 'tab')).toBe('tab');
+  });
+  it('둘 다 모르면 지금처럼 탭 먼저(확대할 탭이 없으면 App 이 글자로)', () => expect(zoomTarget('none', 'none')).toBe('tab'));
+  it('iframe(html 탭)이 보낸 확대 키는 확대 셋만', () => {
+    expect(frameZoomCmd({ hodoc: 'zoom', c: 1 })).toBe(1);
+    expect(frameZoomCmd({ hodoc: 'zoom', c: -1 })).toBe(-1);
+    expect(frameZoomCmd({ hodoc: 'zoom', c: 0 })).toBe(0);
+    expect(frameZoomCmd({ hodoc: 'zoom', c: 'fit' })).toBeNull();
+    expect(frameZoomCmd({ hodoc: 'zoom', c: 5 })).toBeNull();
+    expect(frameZoomCmd({ hodoc: 'settings' })).toBeNull();
+    expect(frameZoomCmd(null)).toBeNull();
   });
 });

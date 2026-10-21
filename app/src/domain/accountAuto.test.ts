@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { afterSwitch, applyApi, changedKeys, fpOf, migrate, fmtUntil, markNudged, pinPatch, stuckOf, parseResets, readAuto, readWins, slotStatus, step, LEARN_MS, MIN_GAP_MS, PIN_THRESHOLD, type AutoState, type Input } from './accountAuto';
+import { afterSwitch, applyApi, changedKeys, fpOf, markDead, migrate, fmtUntil, markNudged, pinPatch, slotDead, stuckOf, parseResets, readAuto, readWins, slotStatus, step, LEARN_MS, MIN_GAP_MS, PIN_THRESHOLD, type AutoState, type Input } from './accountAuto';
 
 // 로컬 시각으로 — 22:20 같은 '다시 열리는 시각'을 사람 눈으로 맞춘다
 const at = (h: number, m = 0, d = 2, s = 0) => new Date(2026, 9, d, h, m, s).getTime();
@@ -589,5 +589,22 @@ describe('로그인 풀림 — 지금 칸 로그인이 죽으면 그 칸을 막�
     expect(stuckOf(acts)).toEqual([{ session: 's1', ts: Date.parse('2026-10-06T00:30:22Z'), auth: true }]);
     // 갱신 겹침은 칸 탓이 아니다
     expect(stuckOf([{ ...acts[0]!, activity: { auth: { ...acts[0]!.activity.auth, retry: true as const } } }])).toEqual([]);
+  });
+});
+
+describe('죽은 칸 — 바꾸기가 그 칸 탓으로 실패하면 다음 칸으로(2026-10-21 리뷰)', () => {
+  it('갱신 토큰이 죽은 칸을 적어 두면 다음 차례엔 그 뒤 칸을 고른다', () => {
+    const ids = ['b', 'c', 'a'];
+    const s0 = base({ slots: { b: { fp: WB }, c: { fp: at(9, 0, 5) }, a: { fp: WA } }, switchedAt: at(10) });
+    const full = usageA(100, at(22));
+    const p1 = tick(s0, at(18, 30), full, { ids, active: 'a' });
+    expect(p1.switchTo).toBe('b');
+    expect(slotDead('refresh:dead')).toBe(true);
+    expect(slotDead('noSlot')).toBe(true);
+    expect(slotDead('busy')).toBe(false);
+    const tried = afterSwitch(p1.state, at(18, 30)); // 훅은 바꾸기 전에 이걸 저장한다
+    expect(tick(tried, at(18, 31), full, { ids, active: 'a' }).switchTo).toBe('b'); // 안 적으면 또 그 죽은 칸
+    const p2 = tick(markDead(tried, 'b', at(18, 30)), at(18, 31), full, { ids, active: 'a' });
+    expect(p2.switchTo).toBe('c');
   });
 });

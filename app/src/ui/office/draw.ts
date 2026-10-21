@@ -1,7 +1,8 @@
 // 픽셀 사무실 그리기 — 아이소메트릭 도트. 시안 엔진(docs/design-drafts/pixel-office/body/office_engine.js)을 옮긴 것.
 // 한 프레임 = 벽 → 바닥 → (깊이 순) 책상·캐릭터·가구. 캐릭터는 다마고치 도트(ui/tama/sprites)에 스킨 색을 입힌다
 import type { BossReact, Delivery, Desk, Room } from '../../domain/office';
-import { deskProp, drawHat, lightScene, windowScene, WINDOW_SKY } from '../gacha/icons';
+import { deskProp, drawHat, lightScene, windowScene, windowSky } from '../gacha/icons';
+import { PACK } from '../gacha/packs';
 import { SPR } from '../tama/sprites';
 import type { Skin } from './skins';
 
@@ -70,7 +71,35 @@ export function transparentCells(name: string): Set<number> {
     for (let i = y + 1; i < h && !d; i++) d = solid(i, x);
     if (!(l && r && u && d)) out.add(k);
   }
+  capSlits(rows, out);
   return out;
+}
+/**
+ * 배에 난 세로 틈 메우기 — 다리 사이로 들어온 물이 네 방향 판정에서 '아래가 뚫림'으로 남아 몸통에 투명 줄을 팠다(2026-10-21 사용자 '도트 구멍').
+ * 한 줄에서 이어진 투명 칸 덩어리가 양 끝이 막혔고, 바로 위가 전부 막혔고, 한쪽 끝이라도 외곽선(#)이 아닌 몸통·무늬면 몸통으로 — 위에서 아래로 되풀이.
+ * 양 끝이 다 외곽선인 칸(다리 사이·체크무늬 다리)은 안 번진다
+ */
+function capSlits(rows: string[], out: Set<number>) {
+  const h = rows.length, w = rows[0]!.length;
+  const clear = (y: number, x: number) => rows[y]![x] === '.' && out.has(y * w + x);
+  const wall = (y: number, x: number) => y >= 0 && x >= 0 && y < h && x < w && !clear(y, x);
+  const inner = (y: number, x: number) => wall(y, x) && rows[y]![x] !== '#';
+  for (let changed = true; changed;) {
+    changed = false;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w;) {
+        if (!clear(y, x)) { x++; continue; }
+        let j = x;
+        while (j < w && clear(y, j)) j++;
+        const ups = Array.from({ length: j - x }, (_, k) => x + k);
+        if (x > 0 && j < w && wall(y, x - 1) && wall(y, j) && ups.every((c) => wall(y - 1, c)) && (inner(y, x - 1) || inner(y, j))) {
+          for (const c of ups) out.delete(y * w + c);
+          changed = true;
+        }
+        x = j;
+      }
+    }
+  }
 }
 function outside(name: string): Set<number> {
   const hit = MASK.get(name);
@@ -100,6 +129,9 @@ export function pet(b: Pick<Brush, 'rect'>, sk: Skin, name: string, x: number, y
     b.rect(x + (o.flip ? w - 1 - c : c), y + r, 1, 1, col);
   }));
 }
+/** 머리 꼭대기 줄 — 모자를 종마다 머리에 맞춰 씌운다(곰은 1). 작은 종에 모자가 허공에 떠 있었다(2026-10-21) */
+export const headTop = (name: string) => Math.max(0, (SPR[name] ?? SPR.egg!).findIndex((r) => /[^.]/.test(r)));
+const hatAt = (name: string, y: number) => y + headTop(name) - 1;
 const GLYPH: Record<string, string[]> = {
   '?': ['###', '..#', '.##', '.#.', '...', '.#.'],
   '!': ['.#.', '.#.', '.#.', '.#.', '...', '.#.'],
@@ -124,7 +156,8 @@ export type Poof = { id: string; gx: number; gy: number; age: number };
 export const POOF_MS = 1100;
 
 /** 뽑기로 얻어 장착한 것들(domain/gacha equip) + 펫 친구 위치 */
-export type Deco = { hat?: string; window?: string; fx?: string; dance?: boolean; cat?: { at: [number, number]; flip: boolean } | null; /** 모든 책상 위 소품 */ desk?: string; /** 방 조명 */ light?: string };
+export type Deco = { hat?: string; window?: string; fx?: string; dance?: boolean; cat?: { at: [number, number]; flip: boolean } | null; /** 모든 책상 위 소품 */ desk?: string; /** 방 조명 */ light?: string;
+  /** 반장 액션(팩 — 춤·커피는 dance·coffee 로 따로) */ action?: string; /** 고양이 말고 펫 친구들(팩) — 걷는 자리 */ pals?: { id: string; at: [number, number]; flip: boolean }[] };
 /** edit = 가구 놓기 — 바닥 칸 선을 보이고, 마우스가 올라간 칸을 칠한다(놓을 수 있으면 초록, 없으면 빨강) */
 /** ghost = 끄는 중인 가구 — 원래 자리에선 빼고 hover 칸에 반투명으로(못 놓는 칸이면 더 흐리게) */
 export type DrawOpts = { walker?: Delivery | null; poofs?: Poof[]; boss?: BossReact | null; deco?: Deco; edit?: { hover: [number, number] | null; ok: boolean; ghost?: string | null } };
@@ -148,7 +181,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, room: Room, sk: Skin, t:
   b.line(P(0, 0, WH), P(cols, 0, WH), sk.wallTop); b.line(P(0, 0, WH), P(0, rows, WH), sk.wallTop); b.line(P(0, 0), P(0, 0, WH), sk.wallTop);
   // 창문 — 창밖 풍경이 보이게 크게(사용자 2026-09-27: 작아서 안 보였다). 가로 세 칸 · 세로 두 칸 창살
   const [wa, wb] = [0.9, 4.3], [z0, z1] = [11, 40];
-  b.poly([P(wa, 0, z0), P(wb, 0, z0), P(wb, 0, z1), P(wa, 0, z1)], deco.window ? WINDOW_SKY[deco.window.slice(7)] ?? sk.sky : sk.sky);
+  b.poly([P(wa, 0, z0), P(wb, 0, z0), P(wb, 0, z1), P(wa, 0, z1)], deco.window ? windowSky(deco.window.slice(7)) ?? sk.sky : sk.sky);
   if (deco.window) windowScene(deco.window, t, (u, v, w, h, c) => { const [x, y] = P(wa + 0.08 + u * (wb - wa - 0.16), 0, z1 - 2 - v * (z1 - z0 - 4)); b.rect(x, y, w * 2, h * 2, c); });
   if (sk.stars && !deco.window) for (const [g, z] of [[0.4, 34], [1.3, 26], [2.1, 37], [2.9, 22]] as const) { const [x, y] = P(wa + g, 0, z); b.rect(x, y, 1, 1, '#ffffff'); }
   const m1 = wa + (wb - wa) / 3, m2 = wa + ((wb - wa) * 2) / 3, zm = (z0 + z1) / 2;
@@ -174,6 +207,8 @@ export function drawRoom(ctx: CanvasRenderingContext2D, room: Room, sk: Skin, t:
 
   const spots: Spot[] = [];
   const items: { k: number; f: () => void }[] = [];
+  // 스킨 장식(팩) — 벽 것은 지금, 바닥 것은 깊이 순서에 섞는다
+  for (const n of sk.scene ?? []) { const sc = PACK.scene[n]; if (!sc) continue; if (sc.k === undefined) sc.draw(b, P, sk, t, cols, rows); else items.push({ k: sc.k, f: () => sc.draw(b, P, sk, t, cols, rows) }); }
 
   room.desks.forEach((d, i) => items.push({
     k: d.gx + d.gy + 1.2 + d.w / 2,
@@ -199,7 +234,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, room: Room, sk: Skin, t:
       const hatching = poofs.some((p) => p.id === d.id && p.age < POOF_MS * 0.45);
       if (!d.empty && !hatching && walker?.awayId !== d.id) {
         pet(b, sk, d.spr, Math.round(px - 8), Math.round(py - 17 + bob), fill, { shut, flip: act === 'read' && Math.floor(t / 6) % 2 === 1 }); // 배달 나가면 자리가 빈다 · 읽을 땐 좌우를 본다
-        if (d.boss && deco.hat) drawHat(b, deco.hat, Math.round(px - 8), Math.round(py - 17 + bob));
+        if (d.boss && deco.hat) drawHat(b, deco.hat, Math.round(px - 8), hatAt(d.spr, Math.round(py - 17 + bob)));
       }
       box(d.gx, d.gy + 0.6, d.w, 0.55, 0, 9, sk.deskTop, sk.deskL, sk.deskR, sk.line);
       if (d.boss) {
@@ -238,7 +273,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, room: Room, sk: Skin, t:
         }
       } else if (d.st === 'asks') { if (t % 4 < 2) b.poly(scr(12, 18), sk.on[1]); }
       else if (d.st === 'done') { const [gx, gy] = P(mx + 0.14, my + 0.3, 17); glyph(b, 'ok', gx - 1, gy, sk.on[2]); }
-      const hx = Math.round(px), hy = Math.round(py - 22 + bob - (d.boss && deco.hat ? 5 : 0)); // 모자를 쓰면 말풍선을 모자 위로
+      const hx = Math.round(px), hy = hatAt(d.spr, Math.round(py - 22 + bob - (d.boss && deco.hat ? 5 : 0))); // 머리 꼭대기에 맞춰(작은 종은 낮게), 모자를 쓰면 모자 위로
       if (react && walker?.awayId !== d.id) {
         const bubble = (w: number, h: number) => { b.rect(hx - w / 2, hy - h, w, h, sk.paper); b.rect(hx - w / 2 + 1, hy - h - 1, w - 2, 1, sk.paper); b.rect(hx - 1, hy, 2, 2, sk.paper); };
         if (react === 'think') { bubble(13, 7); for (let k = 0; k < 1 + (Math.floor(t / 3) % 3); k++) b.rect(hx - 4 + k * 4, hy - 5, 2, 2, sk.line); }
@@ -258,6 +293,8 @@ export function drawRoom(ctx: CanvasRenderingContext2D, room: Room, sk: Skin, t:
         b.rect(hx - 4, hy - 9, 9, 9, sk.paper); b.rect(hx - 3, hy - 10, 7, 1, sk.paper); b.rect(hx - 1, hy, 2, 2, sk.paper);
         glyph(b, t % 6 < 4 ? '?' : '!', hx - 1, hy - 8, sk.line);
       }
+      // 반장 액션(팩)
+      if (d.boss && deco.action && walker?.awayId !== d.id) PACK.action[deco.action.slice(7)]?.boss(b, { hx, hy, px: Math.round(px), py: Math.round(py), t, fill, sk, idle: !react && !human });
       // 작업 중 소품 — 반장이 말풍선을 띄우는 동안엔 머리 위를 비운다
       if (act && !d.empty && walker?.awayId !== d.id) {
         const top = !react && !human; // 머리 위는 반장 말풍선·사람 필요 ! 가 먼저
@@ -327,6 +364,11 @@ export function drawRoom(ctx: CanvasRenderingContext2D, room: Room, sk: Skin, t:
     });
   }
 
+  for (const p of deco.pals ?? []) {
+    const w = PACK.friend[p.id.slice(7)];
+    if (w) items.push({ k: p.at[0] + p.at[1], f: () => { const [x, y] = P(p.at[0], p.at[1]); b.rect(Math.round(x) - 6, Math.round(y), 12, 1, 'rgba(0,0,0,.18)'); w.walk(b, Math.round(x), Math.round(y), p.flip, t, sk); } });
+  }
+
   // 서류 들고 걷는 참모(일을 시킨 순간)
   if (walker) {
     const [gx, gy] = walker.at;
@@ -338,7 +380,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, room: Room, sk: Skin, t:
         const [x, y] = P(gx, gy), hop = t % 2 ? -1 : 0;
         b.rect(x - 5, y - 1, 10, 2, 'rgba(0,0,0,.18)');
         pet(b, sk, walker.spr, Math.round(x - 8), Math.round(y - 16 + hop), fill, { flip: walker.flip });
-        if (deco.hat && room.desks.some((d) => d.boss && d.id === walker.awayId)) drawHat(b, deco.hat, Math.round(x - 8), Math.round(y - 16 + hop)); // 반장이 걸을 때만
+        if (deco.hat && room.desks.some((d) => d.boss && d.id === walker.awayId)) drawHat(b, deco.hat, Math.round(x - 8), hatAt(walker.spr, Math.round(y - 16 + hop))); // 반장이 걸을 때만
         if (!walker.back) { b.rect(x - 3, y - 21 + hop, 7, 5, sk.paper); b.rect(x - 2, y - 20 + hop, 5, 1, sk.grain); b.rect(x - 2, y - 18 + hop, 4, 1, sk.grain); }
       },
     });
@@ -393,9 +435,10 @@ function fxBurst(b: Brush, P: (gx: number, gy: number, z?: number) => Pt, sk: Sk
     const a = (n / 10) * Math.PI * 2, r = 4 + f * 16;
     if (id === 'fx.heart') { const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r * 0.6 - f * 10; b.rect(x, y, 2, 1, '#f49ab8'); b.rect(x - 1, y - 1, 1, 1, '#f49ab8'); b.rect(x + 2, y - 1, 1, 1, '#f49ab8'); b.rect(x, y + 1, 2, 1, '#f49ab8'); }
     else if (id === 'fx.petal') b.rect(cx + Math.cos(a + f * 3) * r, cy + Math.sin(a) * r * 0.5 + f * 12, 2, 1, n % 2 ? '#ffc6d9' : '#f49ab8');
+    else if (PACK.fx[id.slice(3)]) { if (n === 0) PACK.fx[id.slice(3)]!.burst(b, P, sk, gx, gy, f); }
     else { const c = ['#e0b94f', '#e5484d', '#5aa0e6', '#7cc48a'][n % 4]!; b.rect(cx + Math.cos(a) * r, cy - 6 + Math.sin(a) * r, 1, 1, c); if (f < 0.6) b.rect(cx + Math.cos(a) * r * 0.6, cy - 6 + Math.sin(a) * r * 0.6, 1, 1, c); }
   }
-  if (f < 0.35) b.rect(cx - 2, cy - 2, 4, 4, sk.paper);
+  if (f < 0.35 && !PACK.fx[id.slice(3)]) b.rect(cx - 2, cy - 2, 4, 4, sk.paper); // 팩 펑은 제 모양만
 }
 
 type BoxFn = (gx: number, gy: number, w: number, d: number, z: number, h: number, top: string, left: string, right: string, edge?: string) => void;
@@ -458,5 +501,6 @@ function furniture(b: Brush, P: (gx: number, gy: number, z?: number) => Pt, box:
       if (t % 10 < 3) b.rect(x - 3, y + 1, 1, 3, '#fff1a6');
       return;
     }
+    default: PACK.furn[id.slice(5)]?.room(b, P, box, sk, gx, gy, t);
   }
 }

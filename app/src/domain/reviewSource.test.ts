@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Check, OpenPr } from './review';
-import { needsView, parseDiff, parseHits, parseMerged, parseRepoMap, parseView, type Hit } from './reviewSource';
+import { needsView, parseDiff, parseHits, parseMerged, parseRepoMap, parseView, reviewOpen, type Hit } from './reviewSource';
 
 const map = { 'acme/acme-shop-platform': 'acme-shop-platform', 'acme/cookbook': 'Cookbook' };
 
@@ -97,5 +97,19 @@ describe('needsView — 상세를 다시 읽을 PR', () => {
   it('검사가 다 끝났으면(건너뜀 포함) 안 읽는다', () => {
     expect(needsView(pr([{ name: 'overflow', state: 'skip' }, { name: 'apps/mobile', state: 'pass' }, { name: 'sql', state: 'fail' }]), hit)).toBe(false);
     expect(needsView(pr([]), hit)).toBe(false);
+  });
+});
+
+describe('reviewOpen — 상세를 못 읽은 PR 도 review.json 에(2026-10-21 리뷰)', () => {
+  it('읽은 PR 은 gates 째, 못 읽은 PR 은 gates null·unread — 빠지면 "게이트 없음"으로 읽혀 묻지 않고 머지됐다', () => {
+    const hits: Hit[] = [
+      { key: 'o/a#1', repo: 'o/a', folder: 'a', number: 1, updatedAt: 'x' },
+      { key: 'o/a#2', repo: 'o/a', folder: 'a', number: 2, updatedAt: 'y' },
+    ];
+    const read = new Map([['o/a#1', { key: 'o/a#1', repo: 'o/a', number: 1, title: 't', url: 'u', gates: [] } as never]]);
+    expect(reviewOpen(hits, read)).toEqual([
+      { repo: 'o/a', number: 1, title: 't', url: 'u', gates: [] },
+      { repo: 'o/a', number: 2, gates: null, unread: true },
+    ]);
   });
 });

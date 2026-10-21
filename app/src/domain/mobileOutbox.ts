@@ -83,9 +83,9 @@ export function readDraft(s: Store | null, orch: string): Draft {
 export const writeDraft = (s: Store | null, orch: string, d: Draft) =>
   safeSet(s, draftKey(orch), d.text.trim() || d.files.length ? JSON.stringify(d) : null);
 
-/** 되살린 파일 이름표의 마지막 번호 — 다음에 붙이는 건 그다음 번호부터 */
+/** 되살린 파일 이름표의 마지막 번호 — 다음에 붙이는 건 그다음 번호부터. 지금 이름표는 #img1, 옛 초안은 @img1(전엔 @ 만 읽어 늘 0 — #img1 이 둘 생겼다) */
 export function labelCounts(files: { label: string }[]): { img: number; file: number } {
-  const max = (kind: string) => files.reduce((n, f) => Math.max(n, Number(new RegExp(`^@${kind}(\\d+)$`).exec(f.label)?.[1] ?? 0)), 0);
+  const max = (kind: string) => files.reduce((n, f) => Math.max(n, Number(new RegExp(`^[#@]${kind}(\\d+)$`).exec(f.label)?.[1] ?? 0)), 0);
   return { img: max('img'), file: max('file') };
 }
 

@@ -2,6 +2,7 @@
 // 시안 docs/design-drafts/pixel-office — 기본은 A 아늑한 방(나무)
 
 import { tr } from '../../i18n';
+import { PACK } from '../gacha/packs';
 
 export type Skin = {
   bg: string; floor: [string, string]; grain: string; wallL: string; wallR: string; wallTop: string;
@@ -13,6 +14,8 @@ export type Skin = {
   plate?: [string, string, string];
   /** 방 안에 날리는 것 */
   weather?: 'snow' | 'petal' | 'bubble' | 'ember' | 'leaf' | 'rain' | 'star' | 'confetti';
+  /** 방 장식(ui/gacha/packs scene 이름) — 밈·할로윈 스킨의 소품 */
+  scene?: string[];
 };
 
 export const SKINS: Record<string, Skin> = {
@@ -176,6 +179,9 @@ export const SKIN_NAMES: [string, string][] = [
   ['carnival', tr('카니발', 'Carnival')], ['igloo', tr('이글루', 'Igloo')], ['mushroom', tr('버섯 마을', 'Mushroom Village')], ['midnight', tr('한밤 도서관', 'Midnight Library')], ['dragon', tr('용의 둥지', "Dragon's Nest")], ['crystal', tr('수정 동굴', 'Crystal Cave')],
   ['heaven', tr('천국 계단', 'Stairway to Heaven')], ['blackhole', tr('블랙홀', 'Black Hole')], ['rainbowland', tr('무지개 나라', 'Rainbow Land')], ['goldmine', tr('금광', 'Gold Mine')],
 ];
+
+// 팩 스킨(할로윈·밈) — 색 묶음과 이름을 뒤에 붙인다
+for (const [k, v] of Object.entries(PACK.skin)) { SKINS[k] = v.skin; SKIN_NAMES.push([k, tr(v.ko, v.en)]); }
 
 export const DEFAULT_SKIN = 'wood';
 /** 처음부터 가진 스킨 — 나머지는 머지 가챠로 연다(사용자: 미리 다 열어주지 말 것) */

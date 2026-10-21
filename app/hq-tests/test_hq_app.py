@@ -132,6 +132,29 @@ class Send(unittest.TestCase):
             self.assertEqual(lines(d), [])
 
 
+class Answers(unittest.TestCase):
+    def test_겹친_부탁의_답이_한_칸을_덮어도_내_답을_받는다(self):
+        # browser-attach.txt 같은 한 칸만 읽으면 뒤 부탁 답이 덮어 앞 스크립트가 '앱이 답하지 않았어'로 끝났다(2026-10-21 코드 리뷰)
+        import threading, time
+        d = tempfile.mkdtemp()
+
+        def fake():
+            p = os.path.join(d, 'app.jsonl')
+            for _ in range(100):
+                if os.path.exists(p) and open(p, encoding='utf-8').read().strip():
+                    rid = json.loads(open(p, encoding='utf-8').read().splitlines()[-1])['id']
+                    os.makedirs(os.path.join(d, 'answers'), exist_ok=True)
+                    open(os.path.join(d, 'answers', f'browser-attach-{rid}.txt'), 'w', encoding='utf-8').write(f'#id {rid}\nmine\n')
+                    open(os.path.join(d, 'browser-attach.txt'), 'w', encoding='utf-8').write('#id other\ntheirs\n')
+                    return
+                time.sleep(0.02)
+        t = threading.Thread(target=fake); t.start()
+        got = app.ask_app(d, 'browser', {'verb': 'missing'}, 'browser-attach.txt', 3)
+        t.join()
+        self.assertEqual(got, (0, 'mine'))
+        self.assertEqual(os.listdir(os.path.join(d, 'answers')), [])
+
+
 class Harness(unittest.TestCase):
     """참모가 하네스를 글로 읽는다 — 앱이 엔진으로 훑어 <데이터>/harness.txt 에 적어 준다(2026-10-01 사용자 하니터)"""
 
@@ -188,6 +211,16 @@ class Project(unittest.TestCase):
     def cfg(self):
         with open(os.path.join(self.data, 'config.json')) as f:
             return json.load(f)
+
+    def test_설정_파일을_못_읽으면_고치지_않는다(self):
+        # 못 읽은 설정을 {} 로 보고 extraProjects 만 담아 써서 다른 칸(devRoot·features·계정)이 다 사라졌다(2026-10-21 리뷰)
+        p = os.path.join(self.data, 'config.json')
+        with open(p, 'w') as f:
+            f.write('{"devRoot": "~/dev", 깨짐')
+        r = run(self.data, 'project', 'add', os.path.join(self.home, 'automation/blog-bot/'), home=self.home)
+        self.assertNotEqual(r.returncode, 0)
+        with open(p) as f:
+            self.assertEqual(f.read(), '{"devRoot": "~/dev", 깨짐')
 
     def test_추가하면_설정에_쌓이고_다른_칸은_그대로(self):
         r = run(self.data, 'project', 'add', os.path.join(self.home, 'automation/blog-bot/'), home=self.home)

@@ -92,9 +92,7 @@ pub fn sheet_open(path: String, on: bool) {
 }
 
 pub fn answer(id: &str, body: &serde_json::Value) {
-    let file = crate::config::data_file("sheet.txt");
-    let tmp = file.with_extension("txt.tmp");
-    if std::fs::write(&tmp, format!("#id {id}\n{body}\n")).is_ok() { let _ = std::fs::rename(&tmp, &file); }
+    crate::appctl::write_answer("sheet", id, &body.to_string());
 }
 
 /// 열린 표로 넘긴 쓰기 — 표가 받았다(sheet_play_ack)고 하기 전까지 여기 둔다. ACK_WAIT 안에 안 받으면 파일 패치로 물러난다
@@ -164,12 +162,15 @@ pub fn get_text(book: &Book, range: &str) -> Result<String, String> {
 
 /// 안 열린 파일에 바로 쓰기 — 원본에서 그 칸만(저장 전 history). 수식 칸은 계산 결과 없이 쓰고 엑셀이 열 때 계산한다
 pub fn set_closed(path: &std::path::Path, puts: &[Put], keep: impl Fn(&std::path::Path)) -> Result<usize, String> {
+    // 도장을 읽는 데서부터 잡는다 — 방금 읽은 도장을 expected 로 넘기니, 잠금 없이는 동시에 온 둘이 다 검사를 지나 한쪽 고침이 사라졌다
+    let lock = crate::sheet_patch::file_lock(path);
+    let _one = lock.lock().unwrap_or_else(|e| e.into_inner());
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let book = read_book(&bytes)?;
     let first = book.sheets.first().ok_or("시트가 없어")?.name.clone();
     let ops: Vec<Op> = puts.iter().map(|p| Op::Cell(CellEdit { part: p.sheet.clone().unwrap_or_else(|| first.clone()), r: p.r, c: p.c, v: p.v.clone(), f: p.f.clone(), s: None, style: None })).collect();
     let stamp = crate::reader::stamp_of(path).ok_or("파일을 못 읽었어")?;
-    crate::sheet_patch::save(path, &ops, &stamp, keep)?;
+    crate::sheet_patch::save_locked(path, &ops, &stamp, keep)?;
     Ok(puts.len())
 }
 
@@ -250,6 +251,31 @@ mod tests {
         assert_eq!(get_text(&b, "B10:C10").unwrap(), "매출!B10\t42\n매출!C10\t\t=B10*2");
         // 차트 부품은 그대로
         assert_eq!(crate::sheet::unzip(&std::fs::read(&p).unwrap()).unwrap()["xl/charts/chart1.xml"], b"<chartSpace/>");
+    }
+
+    #[test]
+    fn 같은_파일에_동시에_온_칸_쓰기_둘_다_남는다() {
+        // 2026-10-21 리뷰: 두 set_closed 가 같은 원본을 읽고 나중에 바꿔 끼운 쪽이 앞 고침을 지웠다(둘 다 ok)
+        let d = std::env::temp_dir().join(format!("chammo-sheetcmd-race-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("동시.xlsx");
+        std::fs::write(&p, crate::sheet::tests::layout_book()).unwrap();
+        let ts: Vec<_> = [(1u32, 11), (2u32, 22)]
+            .into_iter()
+            .map(|(c, v)| {
+                let p = p.clone();
+                std::thread::spawn(move || {
+                    let put = vec![Put { sheet: Some("매출".into()), r: 9, c, v: Some(json!(v)), f: None }];
+                    set_closed(&p, &put, |_| std::thread::sleep(std::time::Duration::from_millis(300))).unwrap()
+                })
+            })
+            .collect();
+        for t in ts {
+            t.join().unwrap();
+        }
+        let b = read_book(&std::fs::read(&p).unwrap()).unwrap();
+        assert_eq!(get_text(&b, "B10:C10").unwrap(), "매출!B10\t11\n매출!C10\t22");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

@@ -121,6 +121,8 @@ describe('쓰던 글 — 참모마다 따로 기억', () => {
   });
   it('labelCounts — 되살린 파일 이름표 다음 번호부터(@img2 가 있으면 다음은 @img3)', () => {
     expect(labelCounts([{ label: '@img2' }, { label: '@file1' }, { label: '@img1' }])).toEqual({ img: 2, file: 1 });
+    // 지금 이름표는 #img1 — @ 만 읽어 되살린 뒤 붙인 그림이 다시 #img1 이 됐다(2026-10-21 리뷰)
+    expect(labelCounts([{ label: '#img1' }, { label: '#img2' }, { label: '#file1' }])).toEqual({ img: 2, file: 1 });
     expect(labelCounts([])).toEqual({ img: 0, file: 0 });
   });
 });

@@ -40,6 +40,30 @@ def fake_app(data, answer):
     return t, got
 
 
+class Answers(unittest.TestCase):
+    def test_겹친_부탁의_답이_한_칸을_덮어도_내_답을_받는다(self):
+        # 앱이 답을 한 칸(sheet.txt)에만 써서 뒤 부탁 답이 앞 답을 덮으면 앞 스크립트는 '앱이 답하지 않았어'로 끝났다(2026-10-21 리뷰)
+        d = tempfile.mkdtemp()
+
+        def app():
+            p = os.path.join(d, 'app.jsonl')
+            for _ in range(100):
+                if os.path.exists(p) and open(p, encoding='utf-8').read().strip():
+                    rid = json.loads(open(p, encoding='utf-8').read().splitlines()[-1])['id']
+                    os.makedirs(os.path.join(d, 'answers'), exist_ok=True)
+                    with open(os.path.join(d, 'answers', f'sheet-{rid}.txt'), 'w', encoding='utf-8') as f:
+                        f.write(f'#id {rid}\n{{"ok": true, "n": 1}}\n')
+                    with open(os.path.join(d, 'sheet.txt'), 'w', encoding='utf-8') as f:
+                        f.write('#id someone-else\n{"ok": true, "n": 2}\n')  # 곧바로 다른 부탁 답이 한 칸을 덮음
+                    return
+                time.sleep(0.02)
+        t = threading.Thread(target=app); t.start()
+        code, ans = sheet.ask(d, {'verb': 'get'}, 3)
+        t.join()
+        self.assertEqual((code, ans), (0, {'ok': True, 'n': 1}))
+        self.assertEqual(os.listdir(os.path.join(d, 'answers')), [], '읽은 답은 지운다')
+
+
 class Sheet(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()

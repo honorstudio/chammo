@@ -84,8 +84,14 @@ pub struct AppEnv {
     pub data_dir: String,
 }
 
+/// 메인 스레드 밖에서 — async 가 아닌 명령은 메인 스레드에서 돌아, 켤 때·설정 닫을 때마다 claude --version·git·(윈도우) claude.exe 되살리기
+/// 복사 동안 창이 굳었다(2026-10-21 리뷰)
 #[tauri::command]
-pub fn app_env() -> AppEnv {
+pub async fn app_env() -> Result<AppEnv, String> {
+    tauri::async_runtime::spawn_blocking(app_env_now).await.map_err(|e| e.to_string())
+}
+
+fn app_env_now() -> AppEnv {
     let home = crate::config::home();
     let c = crate::config::current();
     AppEnv {
@@ -214,6 +220,9 @@ fn wait_until(mut done: impl FnMut() -> bool, secs: u64) -> bool {
 #[tauri::command]
 pub async fn adopt_session(pid: i32, session_id: String, cwd: String, name: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if pid <= 0 {
+            return Err(format!("bad pid {pid}"));
+        }
         if alive(pid) {
             crate::platform::terminate(pid);
             if !wait_until(|| !alive(pid), 10) {
@@ -333,6 +342,9 @@ pub fn stop_blocking(id: &str, why: &str) -> Result<String, String> {
     log_action("stop", id, why);
     note_app_stop(id);
     let r = run(&["stop", id]).map(|s| s.trim().to_string());
+    if r.is_err() {
+        revived(Some(id)); // 못 껐다 — '앱이 끔' 기록이 남으면 살아 있는 세션을 10분 동안 꺼진 것처럼 다뤘다(2026-10-21 리뷰). 시도는 actions.log 에 남는다
+    }
     forget_agents();
     r
 }
@@ -535,13 +547,23 @@ pub fn read_chunk_with(path: &std::path::Path, from: Option<u64>, head: u64, min
 /// 채팅 보기용 대화 기록 이어 읽기. 파일이 없으면(아직 첫 지시 전) 빈 조각
 #[tauri::command]
 pub async fn read_transcript(session_id: String, from: Option<u64>) -> TranscriptChunk {
-    tauri::async_runtime::spawn_blocking(move || {
-        let empty = TranscriptChunk { text: String::new(), next: 0, reset: from.is_some(), start: 0 };
-        let Some(path) = transcript_path(&session_id) else { return empty };
-        read_chunk(&path, from).unwrap_or(empty)
-    })
-    .await
-    .unwrap_or(TranscriptChunk { text: String::new(), next: 0, reset: false, start: 0 })
+    tauri::async_runtime::spawn_blocking(move || chunk_or_keep(transcript_path(&session_id).as_deref(), from))
+        .await
+        .unwrap_or_else(|_| keep_at(from))
+}
+
+/// 못 읽었으면 그 자리 그대로(바뀐 것 없음) — 전엔 next 0 을 줘서, 다음 차례가 from 0 으로 상한 없이 기록 전체(참모 기록은 170MB)를
+/// 읽었고 JoinError 길은 지금 목록 위에 그 전체를 이어 붙여 말풍선이 다 두 번 보였다(2026-10-21 리뷰). 처음(from 없음)이면 빈 조각
+fn chunk_or_keep(path: Option<&std::path::Path>, from: Option<u64>) -> TranscriptChunk {
+    match path {
+        Some(p) => read_chunk(p, from).unwrap_or_else(|_| keep_at(from)),
+        None => keep_at(from), // 아직 첫 지시 전(파일 없음) — 나중에 생기면 그 자리부터
+    }
+}
+
+fn keep_at(from: Option<u64>) -> TranscriptChunk {
+    let at = from.unwrap_or(0);
+    TranscriptChunk { text: String::new(), next: at, reset: false, start: at }
 }
 
 /// 그 대화의 기록 파일(~/.claude/projects/<폴더>/<sessionId>.jsonl)
@@ -553,9 +575,11 @@ pub(crate) fn transcript_path(session_id: &str) -> Option<std::path::PathBuf> {
 
 /// 폰 대화 이어 읽기 — 처음은 가볍게(PHONE_*)
 pub fn read_transcript_phone(session_id: &str, from: Option<u64>) -> TranscriptChunk {
-    let empty = TranscriptChunk { text: String::new(), next: 0, reset: from.is_some(), start: 0 };
-    let Some(path) = transcript_path(session_id) else { return empty };
-    read_chunk_with(&path, from, PHONE_HEAD, PHONE_MIN_LINES, PHONE_MAX).unwrap_or(empty)
+    // 못 읽으면 그 자리 그대로 — 데스크톱(chunk_or_keep)과 같게. next 0 을 주면 다음 차례가 기록 전체를 읽고 말풍선이 두 번 붙었다(코드 리뷰)
+    match transcript_path(session_id) {
+        Some(p) => read_chunk_with(&p, from, PHONE_HEAD, PHONE_MIN_LINES, PHONE_MAX).unwrap_or_else(|_| keep_at(from)),
+        None => keep_at(from),
+    }
 }
 
 /// 폰 앞 대화 — before 앞 512KB 의 온전한 줄들(위로 올렸을 때)
@@ -995,11 +1019,20 @@ pub(crate) fn append_line(path: &std::path::Path, line: &str) {
     }
 }
 
+/// CHAMMO_NO_OS_NOTIFY=1 — OS 알림·폰 푸시를 안 보낸다(기록만). 시험 앱용: 번들 밖 실행 파일은 osascript 로 떨어져
+/// 사람 맥 알림 센터에 '스크립트 편집기' 아이콘으로 떴다(2026-10-21 첫 사용자 QA)
+pub fn os_notify_off(v: Option<&str>) -> bool {
+    v == Some("1")
+}
+
 /// macOS 알림. .app 으로 돌면 앱 이름·아이콘으로(notify_mac, 누르면 target 으로 이동),
 /// `tauri dev` 맨 실행 파일이면 osascript 로 대신한다(글자는 argv 로 넘겨 따옴표 이스케이프 문제를 피한다)
 #[tauri::command]
 pub fn notify(title: String, body: String, target: Option<String>) {
     log_out("notify", &format!("{title} — {body}"));
+    if os_notify_off(std::env::var("CHAMMO_NO_OS_NOTIFY").ok().as_deref()) {
+        return;
+    }
     // 폰 푸시도 같이 — 이 알림은 이미 domain/notify 정책·'참모 창 보고 있으면 안 보냄'을 거쳤다(ui/notifier)
     crate::push::send_all(&title, &body, target.as_deref().unwrap_or(""));
     if crate::notify_mac::send(&title, &body, target.as_deref().unwrap_or("")) { // 윈도우는 토스트(notify_other)
@@ -1025,7 +1058,16 @@ pub fn main_watched<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> bool {
 
 #[cfg(test)]
 mod watched_tests {
-    use super::watched;
+    use super::{os_notify_off, watched};
+
+    #[test]
+    fn 시험_앱은_스위치로_os_알림과_폰_푸시를_끈다() {
+        // 2026-10-21 첫 사용자 QA: 번들 밖 시험 앱 알림이 osascript 로 떨어져 사용자 맥 알림 센터에 '스크립트 편집기' 아이콘으로 줄줄이 떴다
+        assert!(os_notify_off(Some("1")));
+        assert!(!os_notify_off(None));
+        assert!(!os_notify_off(Some("0")));
+        assert!(!os_notify_off(Some("")));
+    }
     #[test]
     fn 보이고_최소화_안_됐고_앞에_있을_때만_보고_있다() {
         assert!(watched(true, false, true));
@@ -1562,13 +1604,18 @@ fn resume_steps(session_id: &str, id: Option<&str>, copy: bool, run: &mut dyn Fn
     let mut why = String::from("no short id to respawn");
     if !first.is_empty() {
         match run(&first) {
-            Ok((ok, text)) if ok && text.contains("respawned") => return Ok(text.trim().to_string()),
+            // 성공은 종료 코드로 — 글자("respawned")만 보면 CLI 문구가 바뀐 판에서 성공한 respawn 뒤에 같은 대화 복사본을 또 띄웠다(2026-10-21 리뷰).
+            // 실패는 1 로 끝난다(없는 번호 "No job matching …", 2.1.306 실측)
+            Ok((true, text)) => return Ok(text.trim().to_string()),
             Ok((_, text)) => why = text.trim().to_string(),
             Err(e) => why = e,
         }
     }
     if !copy {
         return Err(format!("respawn failed: {why}"));
+    }
+    if session_id.trim().is_empty() {
+        return Err(format!("respawn failed: {why} — no session id to resume from")); // `--resume ""` 로 엉뚱한 새 세션을 띄우지 않는다
     }
     // 이어서 켤 때도 권한 확인 없이 — 안 붙이면 daemon 재시작 뒤 되살린 세션이 auto 모드로 떠서
     // Bash 마다 사용자 승인을 기다렸다(2026-09-28, 사용자 요청 "항상 바이패스로 켜지게"). CLAUDE.md 원칙 3
@@ -1933,6 +1980,7 @@ fn attach_new(id: &str, write: impl FnOnce(&mut dyn std::io::Write, Option<&vt10
     // attach 가 벌써 끝났거나(없는 세션 — 오류 글만 찍고 나간다) 그 오류 글이 떴으면 누를 곳이 없다
     if matches!(child.try_wait(), Ok(Some(_))) || screen.contains("No job matching") {
         trace("exited");
+        crate::pty::reap(child); // 아직 안 끝났으면 거둔다 — 그냥 버리면 claude attach 가 좀비로 쌓였다
         close(master);
         return Err(crate::i18n::tr("세션에 붙지 못했어(없는 세션?)", "Couldn't attach (no such session?)").into());
     }
@@ -2059,14 +2107,27 @@ pub fn read_auto_allow() -> String {
 /// 작업 기록(tasks.jsonl)에 한 줄 — 결정 대기함의 '처리함·답함'(type answer). 프론트가 만든 JSON 한 줄이 맞는지만 보고 붙인다
 #[tauri::command]
 pub fn append_task_event(line: String) -> Result<(), String> {
-    use std::io::Write;
     serde_json::from_str::<serde_json::Value>(&line).map_err(|e| format!("JSON 아님: {e}"))?;
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(crate::config::data_file("tasks.jsonl"))
-        .map_err(|e| e.to_string())?;
-    writeln!(f, "{}", line.trim()).map_err(|e| e.to_string())
+    append_record(&crate::config::data_file("tasks.jsonl"), line.trim()).map_err(|e| e.to_string())
+}
+
+/// 줄 하나를 한 번의 쓰기로 덧붙인다(글과 줄바꿈을 따로 쓰면 그 사이에 scripts/task 줄이 끼어 두 줄이 한 줄로 붙어 둘 다 못 읽었다).
+/// 끝 줄이 반쪽(줄바꿈 없음)이면 줄바꿈부터 — 2026-10-21 리뷰
+pub(crate) fn append_record(path: &std::path::Path, line: &str) -> std::io::Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let mut f = std::fs::OpenOptions::new().create(true).read(true).append(true).open(path)?;
+    let mut buf = Vec::with_capacity(line.len() + 2);
+    if f.metadata()?.len() > 0 {
+        let mut last = [0u8; 1];
+        f.seek(SeekFrom::End(-1))?;
+        f.read_exact(&mut last)?;
+        if last[0] != b'\n' {
+            buf.push(b'\n');
+        }
+    }
+    buf.extend_from_slice(line.as_bytes());
+    buf.push(b'\n');
+    f.write_all(&buf)
 }
 
 /// ⌘+클릭한 링크 열기 — 웹 주소는 기본 브라우저, 파일은 기본 앱(macOS `open`).
@@ -2297,6 +2358,46 @@ mod tests {
         };
         assert!(super::resume_steps("sid-full", None, false, &mut never).is_err(), "번호가 없어 respawn 을 못 하면 자동 되살리기는 안 한다");
         assert!(calls.is_empty());
+    }
+    #[test]
+    fn 기록을_못_읽으면_자리를_그대로_둔다() {
+        // 실패 때 next 0 을 줘서 다음 차례가 기록 전체를 상한 없이 읽었다(2026-10-21 리뷰)
+        let gone = std::path::Path::new("/nonexistent/chammo/x.jsonl");
+        let c = super::chunk_or_keep(Some(gone), Some(5_000_000));
+        assert_eq!((c.next, c.reset, c.text.as_str()), (5_000_000, false, ""));
+        let c = super::chunk_or_keep(None, Some(42));
+        assert_eq!((c.next, c.reset), (42, false));
+        let c = super::chunk_or_keep(None, None);
+        assert_eq!((c.next, c.reset), (0, false));
+    }
+    #[test]
+    fn 작업_기록_덧붙이기는_반쪽_줄에_안_붙는다() {
+        let p = std::env::temp_dir().join(format!("chammo-append-{}.jsonl", std::process::id()));
+        std::fs::write(&p, r#"{"ts":"2026-10-21T09:0"#).unwrap(); // 쓰다 만 줄
+        super::append_record(&p, r#"{"type":"answer","task":"t1"}"#).unwrap();
+        super::append_record(&p, r#"{"type":"answer","task":"t2"}"#).unwrap();
+        let ok: Vec<serde_json::Value> = std::fs::read_to_string(&p).unwrap().lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+        assert_eq!(ok.iter().map(|v| v["task"].as_str().unwrap()).collect::<Vec<_>>(), vec!["t1", "t2"]);
+        let _ = std::fs::remove_file(&p);
+    }
+    #[test]
+    fn respawn_성공은_종료_코드로_빈_세션_id_로는_이어_띄우지_않는다() {
+        // 2026-10-21 리뷰: 성공 문구가 "respawned" 가 아니면(판마다 다를 수 있다) 성공한 respawn 뒤에 같은 대화 복사본을 또 띄웠다
+        let mut calls: Vec<String> = vec![];
+        let mut ok = |a: &[String]| -> Result<(bool, String), String> {
+            calls.push(a.join(" "));
+            Ok((true, "Restarted cafe0003".into()))
+        };
+        assert!(super::resume_steps("sid-full", Some("cafe0003"), true, &mut ok).is_ok());
+        assert_eq!(calls, vec!["respawn cafe0003"], "종료 코드 0 이면 이어 띄우기(복사본) 없음");
+        // 직접 답하기 카드는 sessionId 없이 부를 수 있다 — `--resume ""` 로 떨어지면 엉뚱한 새 세션
+        let mut calls: Vec<String> = vec![];
+        let mut fail = |a: &[String]| -> Result<(bool, String), String> {
+            calls.push(a.join(" "));
+            Ok((false, "No job matching 'cafe0003'".into()))
+        };
+        assert!(super::resume_steps("", Some("cafe0003"), true, &mut fail).is_err());
+        assert_eq!(calls, vec!["respawn cafe0003"]);
     }
 
     #[test]

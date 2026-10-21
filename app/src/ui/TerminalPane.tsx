@@ -88,15 +88,21 @@ type Props = {
   inject?: (api: PaneApi | null) => void;
   /** 세션에 붙어 있나 — attach 가 'Session … has exited.' 로 끝나면 reattaching, 오래 안 돌아오면 gone, 다시 붙으면 live(domain/attachExit) */
   onLink?: (s: LinkState) => void;
+  /** 세션에 붙은 게 아닌 명령(설정의 설치·믿기)이 끝났을 때 — 끝난 터미널이 그대로 남아 다음 할 일을 몰랐다 */
+  onExit?: () => void;
+  /** 열자마자 키보드를 이 터미널로 + 화면 안으로 — 첫 설정의 믿기·설치 터미널(누른 버튼은 꺼지며 포커스를 잃어 ↓·Enter 가 어디에도 안 갔다) */
+  autoFocus?: boolean;
 };
 
-export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls, fontSize, readOnly, onHeadClick, headDrag, linkBase, home, onFocus, note, onNoteClick, overlay, inject, onVoiceStop, headless, onLink }: Props) {
+export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls, fontSize, readOnly, onHeadClick, headDrag, linkBase, home, onFocus, note, onNoteClick, overlay, inject, onVoiceStop, headless, onLink, autoFocus, onExit }: Props) {
   const linkRef = useRef(onLink);
   linkRef.current = onLink;
   const voiceRef = useRef(onVoiceStop);
   voiceRef.current = onVoiceStop;
   const focusRef = useRef(onFocus);
   focusRef.current = onFocus;
+  const exitRef = useRef(onExit);
+  exitRef.current = onExit;
   const injectRef = useRef(inject);
   injectRef.current = inject;
   // 채팅 판 등이 덮여 있으면 끌어 놓은 파일을 넣고도 포커스는 그쪽 입력칸에 둔다(숨은 터미널로 타자가 새지 않게)
@@ -195,6 +201,10 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
       },
     });
     term.open(el);
+    // 첫 설정 터미널 — 사람이 바로 ↓·Enter 를 친다(2026-10-21 첫 사용자 QA)
+    // 다른 입력칸에 치는 중이면 안 뺏는다 — 설정 입력칸에 치다가 다음 설치 터미널이 열리면 타자가 그 명령으로 샜다(가지 검토)
+    const typingElsewhere = () => { const a = document.activeElement as HTMLElement | null; return !!a && !a.closest('.xterm') && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable); };
+    if (autoFocus && !readOnly && !typingElsewhere()) { term.focus(); root.current?.scrollIntoView({ block: 'nearest' }); }
     try {
       term.loadAddon(new WebglAddon());
     } catch {
@@ -309,7 +319,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
     let shown = false;
     void openPty(command, cwd, cols, rows, (bytes) => {
       // 빈 조각 = attach 가 끝남(Rust spawn_pty) — 끝 글을 못 알아봐도 이걸로 안다. 끝 글(exitWatcher)이 먼저 오면 그쪽으로
-      if (!bytes.length) { if (!disposed) onEnded(); return; }
+      if (!bytes.length) { if (!disposed) { onEnded(); if (!sid) exitRef.current?.(); } return; }
       term.write(bytes);
       if (!shown && !disposed) { shown = true; linkRef.current?.('live'); }
       const text = dec.decode(bytes, { stream: true });

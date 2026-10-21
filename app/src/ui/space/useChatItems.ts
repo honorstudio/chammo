@@ -12,7 +12,7 @@ const cache = new Map<string, { items: ChatItem[]; next?: number; start?: number
 export async function warmChat(sessionId: string, read: Read = readTranscript): Promise<void> {
   if (cache.has(sessionId)) return;
   const c = await shared(`chat:${sessionId}`, () => read(sessionId, undefined));
-  if (!cache.has(sessionId)) cache.set(sessionId, { items: parseChat(c.text), next: c.next, start: c.start });
+  if (!cache.has(sessionId)) cache.set(sessionId, { items: parseChat(c.text), next: c.next || undefined, start: c.start });
 }
 
 /** 처음 읽은 묶음의 첫 줄 자리 — 폰이 위로 올리면 그 앞을 거슬러 읽는다(ui/mobile/useEarlier) */
@@ -49,7 +49,7 @@ export function useChatItems(sessionId?: string, everyMs = 2000, read: Read = re
       // 처음 읽기는 미리 받기(warmChat)가 받는 중이면 그걸 같이 — 스플래시가 먼저 걷혀도 같은 기록을 두 번 안 받게
       read: (signal) => (next === undefined ? shared(`chat:${sessionId}`, () => read(sessionId, undefined, signal)) : read(sessionId, next, signal)),
       apply: (c) => {
-        next = c.next;
+        next = c.next || undefined; // 0 이면 다음에도 '처음'으로 — from 0 은 상한 없이 기록 전체를 읽는다(2026-10-21 코드 리뷰)
         const prev = cache.get(sessionId)?.items ?? [];
         const now = c.reset ? parseChat(c.text) : c.text ? appendChat(prev, c.text) : prev;
         cache.set(sessionId, { items: now, next, start: c.reset ? c.start : cache.get(sessionId)?.start });

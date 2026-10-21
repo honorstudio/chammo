@@ -447,3 +447,17 @@ fn pe_허용한_연결은_노드별_peer_줄_하나_다시_허용하면_바꿔_�
     assert!(st.check(&phone, now).is_some(), "폰은 그대로");
     assert!(st.add_peer("짧음", "x", "nX", now).is_err(), "열쇠는 16진 64자만");
 }
+
+#[test]
+fn 짝_목록_파일이_깨졌으면_덮어쓰지_않는다() {
+    // 깨진 파일을 빈 목록으로 읽고 새 짝을 더해 써서 모든 폰·다른 기기 줄이 영영 사라졌다(2026-10-21 리뷰)
+    let d = tmp("broken");
+    let f = d.join(FILE);
+    std::fs::write(&f, "[{\"id\": \"a1\", 깨짐").unwrap();
+    let st = Devices::open(&d);
+    let now = SystemTime::now();
+    let code = st.new_code(now).unwrap();
+    assert!(st.pair(&code, "iPhone", now).is_none(), "깨진 목록 위엔 짝을 더하지 않는다");
+    assert_eq!(std::fs::read_to_string(&f).unwrap(), "[{\"id\": \"a1\", 깨짐", "파일은 그대로 — 사람이 고칠 수 있게");
+    let _ = std::fs::remove_dir_all(&d);
+}

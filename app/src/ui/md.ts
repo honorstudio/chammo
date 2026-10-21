@@ -6,6 +6,8 @@ import { mdSafe } from '../domain/chat';
 import { docImgSrcOk } from '../domain/phoneFile';
 
 const FORBID_TAGS = ['style', 'iframe', 'object', 'embed', 'form', 'img'];
+/** 답 글이 앱 화면을 흉내 내지 못하게 — class·style·id 가 살아 있으면 '앱이 전함' 줄·승인 카드 모양을 그대로 그리거나 화면 전체를 덮었다(2026-10-21 리뷰) */
+export const SANITIZE = { FORBID_TAGS, FORBID_ATTR: ['style', 'class', 'id'], ALLOW_DATA_ATTR: false };
 // **굵게** 를 한글 바로 앞에서 닫으면(**"첫 참모"**를) CommonMark 규칙상 못 닫혀 별표가 남는다 — 앞뒤 글자를 안 따지는 굵게를 먼저 본다.
 // 전역 marked 를 바꾸지 않게 이 파일만의 인스턴스(Reader 는 기본 그대로)
 const md = new Marked({ async: false, breaks: true }, {
@@ -22,7 +24,7 @@ const md = new Marked({ async: false, breaks: true }, {
 export const mdParse = (text: string) => md.parse(mdSafe(text)) as string;
 
 /** 데스크톱 — 링크는 화면 쪽 클릭 처리(followLink)가 연다 */
-export const mdToHtml = (text: string) => DOMPurify.sanitize(mdParse(text), { FORBID_TAGS });
+export const mdToHtml = (text: string) => DOMPurify.sanitize(mdParse(text), SANITIZE);
 
 // 폰 — 링크는 새 탭 + rel=noopener noreferrer. 걸이(hook)는 폰 전용 인스턴스에만 건다(데스크톱 DOMPurify 는 그대로)
 let phone: ReturnType<typeof DOMPurify> | null = null;
@@ -36,7 +38,7 @@ export function mdToHtmlNewTab(text: string): string {
       }
     });
   }
-  return phone.sanitize(mdParse(text), { FORBID_TAGS, ADD_ATTR: ['target'] });
+  return phone.sanitize(mdParse(text), { ...SANITIZE, ADD_ATTR: ['target'] });
 }
 
 // 폰 문서 보기(md 파일) — 속 그림을 살린다. 단 상대 경로만(서버가 그 문서 덕에 열어 준다, 폰 보기 MdDoc) — 웹 그림·data: 는 지운다(폰 주소가 남에게 새지 않게)

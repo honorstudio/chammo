@@ -1,5 +1,5 @@
 """HQ 템플릿 scripts/task 테스트 (공개판): python3 -m unittest discover -s app/hq-tests"""
-import contextlib, datetime, importlib.machinery, importlib.util, io, json, os, pathlib, subprocess, sys, tempfile, unittest
+import contextlib, datetime, unittest.mock, importlib.machinery, importlib.util, io, json, os, pathlib, subprocess, sys, tempfile, unittest
 
 sys.dont_write_bytecode = True  # 템플릿 폴더에 __pycache__ 가 생기지 않게
 
@@ -344,6 +344,70 @@ class OrchRoles(unittest.TestCase):
                 task.handoff('alpha-shop', '두부')
             last = [json.loads(l) for l in open(task.LOG, encoding='utf-8')][-1]
         self.assertEqual((last['type'], last['from'], last['fromName']), ('own', 'bbbb0002', '참모-2'))
+
+
+
+class ReviewDeep(unittest.TestCase):
+    """2026-10-21 밤 리뷰 — 결제 관문 빈틈·교훈 칸 찾기·반쪽 줄 뒤 덧붙이기·git 없는 PC"""
+
+    def test_흔한_결제_말도_묻는다(self):
+        for t in ['아임포트 연동 마무리', 'Stripe 웹훅 붙이기', 'invoice 발행', 'in-app purchase test', 'PayPal 버튼', '토스페이먼츠 키 넣기',
+                  'payment_method 칼럼 추가', 'stripeCheckout 고치기', 'refundOrder 함수', 'charge_customer 부르기']:  # 코드 이름도(2026-10-21 코드 리뷰)
+            self.assertTrue(task.needs_confirm(t), t)
+
+    def test_in_charge_of_는_결제가_아니다(self):
+        for t in ['who is in charge of the migration', 'person in charge 칸 추가']:
+            self.assertFalse(task.needs_confirm(t), t)
+
+    def test_지시_파일_본문에_결제가_있으면_묻는다(self):
+        # 브라우저 판정은 지시에 적힌 계획 파일 본문까지 읽는데 결제 판정은 제목만 봤다
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, 'docs', 'plans'))
+            pathlib.Path(d, 'docs/plans/pay.md').write_text('# 계획\n1. 카드 결제 붙이기\n', encoding='utf-8')
+            pathlib.Path(d, 'docs/plans/ui.md').write_text('# 계획\n1. 버튼 색\n', encoding='utf-8')
+            self.assertTrue(task.payment_work('docs/plans/pay.md 대로 진행해', d))
+            self.assertFalse(task.payment_work('docs/plans/ui.md 대로 진행해', d))
+
+    def lesson_env(self, d, body):
+        task.LESSONS, task.DEV = os.path.join(d, 'lessons'), d
+        os.makedirs(os.path.join(d, 'p'))
+        subprocess.run(['git', 'init', '-q', os.path.join(d, 'p')], check=True)
+        pathlib.Path(d, 'p', '.gitignore').write_text('CLAUDE.local.md\n')
+        f = pathlib.Path(d, 'p', 'CLAUDE.local.md')
+        f.write_text(body, encoding='utf-8')
+        os.chmod(f, 0o600)
+        return f
+
+    def test_교훈_칸은_줄_머리로_찾는다(self):
+        # '### 교훈 메모' 안에서 '## 교훈' 을 잡아 계정 칸에 적었다
+        with tempfile.TemporaryDirectory() as d:
+            head = task.T('## 교훈', '## Lessons')
+            f = self.lesson_env(d, f'# 계정\n#{head} 메모(옛)\n- 계정 a\n\n## 미룬 일\n- x\n')
+            self.assertTrue(task.mirror_lesson('p', '새 교훈'))
+            body = f.read_text(encoding='utf-8')
+            self.assertIn(f'#{head} 메모(옛)\n- 계정 a\n\n## 미룬 일\n- x\n', body, '계정·미룬 일 칸은 그대로')
+            self.assertTrue(body.rstrip().endswith('- 새 교훈'), body)
+            self.assertEqual(os.stat(f).st_mode & 0o777, 0o600, '계정이 든 파일 — 권한을 넓히지 않는다')
+
+    def test_교훈_칸_끝에_붙인다(self):
+        with tempfile.TemporaryDirectory() as d:
+            head = task.T('## 교훈', '## Lessons')
+            f = self.lesson_env(d, f'# 계정\n- a\n\n{head} (확인된 것)\n- 하나\n\n## 미룬 일\n- x\n')
+            task.mirror_lesson('p', '둘')
+            self.assertEqual(f.read_text(encoding='utf-8'), f'# 계정\n- a\n\n{head} (확인된 것)\n- 하나\n- 둘\n\n## 미룬 일\n- x\n')
+
+    def test_git_이_없어도_죽지_않는다(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.lesson_env(d, '# x\n')
+            with unittest.mock.patch.object(task.subprocess, 'run', side_effect=FileNotFoundError('git')):
+                self.assertFalse(task.mirror_lesson('p', '교훈'))
+
+    def test_반쪽_줄_뒤에_덧붙여도_새_줄은_산다(self):
+        with tempfile.TemporaryDirectory() as d:
+            task.LOG = os.path.join(d, 'tasks.jsonl')
+            pathlib.Path(task.LOG).write_text('{"ts":"2026-10-21T09:0', encoding='utf-8')
+            task.append({'ts': 'x', 'type': 'note', 'task': 't1', 'note': 'n'})
+            self.assertEqual([e['task'] for e in task.read_events()], ['t1'])
 
 
 if __name__ == '__main__':

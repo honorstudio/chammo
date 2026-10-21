@@ -214,6 +214,9 @@ pub(crate) const GETS: &[&str] = &[
     "/api/peer-reply",
 ];
 pub(crate) const POSTS: &[&str] = &["/api/peer-say"];
+/// 사람 길(ADR 0011) — 이 앱 메인 창에서 사람이 친 말·누른 카드만 그 기기로(remote_human_*). allowed() 에 없어서 참모·스크립트(appctl·scripts/peer)는 못 쓴다.
+/// 받는 폰 서버는 peer 열쇠에 이 둘도 연다
+pub(crate) const HUMAN_POSTS: &[&str] = &["/api/peer-human", "/api/peer-direct-answer"];
 
 pub fn allowed(method: &str, path_q: &str) -> bool {
     // 머리 끼워 넣기(CR·LF)·공백·비ASCII 는 길째 거절 — 쿼리는 부르는 쪽이 encodeURIComponent 한다
@@ -244,6 +247,16 @@ pub fn load(dir: &Path) -> Vec<Saved> {
 pub fn save(dir: &Path, list: &[Saved]) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     crate::mobile_pair::write_private(&dir.join(FILE), &serde_json::to_string_pretty(list).map_err(std::io::Error::other)?)
+}
+
+/// 목록 고치기는 한 번에 하나 — 다시 읽고 고쳐 쓴다. 대신 보내기(call)가 앞에서 읽어 둔 목록을 망을 다녀온 뒤 통째로 저장해서
+/// 그사이 새로 이은 기기 줄을 지우거나 끊은 줄을 되살렸다(2026-10-21 리뷰). 이 파일은 앱만 쓴다(scripts 는 앱에 부탁)
+fn mutate(dir: &Path, f: impl FnOnce(&mut Vec<Saved>)) -> std::io::Result<()> {
+    static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut list = load(dir);
+    f(&mut list);
+    save(dir, &list)
 }
 
 /// 원격에 요청 하나 — 시험에선 가짜를 넣는다
@@ -279,17 +292,12 @@ pub fn pair(kc: &dyn Store, dir: &Path, peer: &TsPeer, code: &str, my_name: &str
     let token = serde_json::from_slice::<serde_json::Value>(&r.body).ok().and_then(|v| v["token"].as_str().map(str::to_string)).filter(|t| t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit()));
     let token = token.ok_or("그 기기가 준 열쇠 모양이 이상해요")?;
     kc.set(&service(), &peer.id, &Secret::new(token)).map_err(|e| format!("열쇠를 {STORE_WORD}에 못 넣었어요({e:?})"))?;
-    let mut list = load(dir);
-    list.retain(|s| s.id != peer.id);
-    list.push(Saved { id: peer.id.clone(), name: peer.name.clone(), ip: peer.ip, port: peer_port(), paired_at: now_ms(), last_ok: Some(now_ms()) });
-    save(dir, &list).map_err(|e| e.to_string())
+    upsert_saved(dir, &peer.id, &peer.name, peer.ip).map_err(|e| e.to_string())
 }
 
 pub fn unpair(kc: &dyn Store, dir: &Path, id: &str) -> Result<(), String> {
     kc.remove(&service(), id).map_err(|e| format!("{STORE_WORD} 칸을 못 지웠어요({e:?})"))?;
-    let mut list = load(dir);
-    list.retain(|s| s.id != id);
-    save(dir, &list).map_err(|e| e.to_string())
+    mutate(dir, |list| list.retain(|s| s.id != id)).map_err(|e| e.to_string())
 }
 
 /// 끊기 — 이 기기 열쇠 + 그 기기가 이 기기에 쓰던 줄(양방향으로 이었으니 끊기도 양쪽)
@@ -311,10 +319,10 @@ fn hex64(s: &str) -> bool {
 }
 
 fn upsert_saved(dir: &Path, id: &str, name: &str, ip: Ipv4Addr) -> std::io::Result<()> {
-    let mut list = load(dir);
-    list.retain(|s| s.id != id);
-    list.push(Saved { id: id.into(), name: name.into(), ip, port: peer_port(), paired_at: now_ms(), last_ok: Some(now_ms()) });
-    save(dir, &list)
+    mutate(dir, |list| {
+        list.retain(|s| s.id != id);
+        list.push(Saved { id: id.into(), name: name.into(), ip, port: peer_port(), paired_at: now_ms(), last_ok: Some(now_ms()) });
+    })
 }
 
 /// 받는 쪽 — 사람이 허용했고 요청한 기기가 받아 가는 순간: 열쇠 둘을 만들어 (그 기기가 이 기기에 쓸 것 → 기기 줄 해시, 이 기기가 그 기기에 쓸 것 → 키체인)
@@ -413,12 +421,25 @@ pub fn call(kc: &dyn Store, dir: &Path, id: &str, here: Option<Ipv4Addr>, method
     if !allowed(method, path) {
         return Err("그 길은 다른 기기로 못 보내요".into());
     }
+    call_any(kc, dir, id, here, method, path, body, send)
+}
+
+/// 사람 길(HUMAN_POSTS)만 — 메인 창의 사람 입력(remote_human_say·remote_direct_answer)에서만 부른다. allowed() 를 안 지나므로 appctl·scripts/peer 에선 못 닿는다
+pub fn call_human(kc: &dyn Store, dir: &Path, id: &str, here: Option<Ipv4Addr>, path: &str, body: &str, send: &SendFn) -> Result<CallOut, String> {
+    if !HUMAN_POSTS.contains(&path) {
+        return Err("사람 길이 아니에요".into());
+    }
+    call_any(kc, dir, id, here, "POST", path, Some(body), send)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn call_any(kc: &dyn Store, dir: &Path, id: &str, here: Option<Ipv4Addr>, method: &str, path: &str, body: Option<&str>, send: &SendFn) -> Result<CallOut, String> {
     if let Some(b) = body {
         if b.len() > MAX_SEND || serde_json::from_str::<serde_json::Value>(b).is_err() {
             return Err("보낼 몸통이 JSON 이 아니거나 너무 커요".into());
         }
     }
-    let mut list = load(dir);
+    let list = load(dir);
     let Some(i) = list.iter().position(|s| s.id == id) else { return Err("짝지은 기기가 아니에요".into()) };
     let ip = here.ok_or("테일넷에 그 기기가 안 보여요(꺼짐·지워짐·다른 계정)")?;
     let token = kc.get(&service(), id).map_err(|e| format!("{STORE_WORD}에서 열쇠를 못 읽었어요({e:?})"))?.ok_or("pair")?;
@@ -430,8 +451,12 @@ pub fn call(kc: &dyn Store, dir: &Path, id: &str, here: Option<Ipv4Addr>, method
     // 1분에 한 번만 파일에 — 마지막으로 닿은 때(끊겼을 때 '언제까지 봤나')
     let now = now_ms();
     if list[i].last_ok.is_none_or(|t| now.saturating_sub(t) > 60_000) {
-        list[i].last_ok = Some(now);
-        let _ = save(dir, &list);
+        // 그 줄의 시각만 — 망을 다녀오는 사이 바뀐 목록(새로 이은·끊은 기기)을 옛 목록으로 덮지 않는다
+        let _ = mutate(dir, |l| {
+            if let Some(s) = l.iter_mut().find(|s| s.id == id) {
+                s.last_ok = Some(now);
+            }
+        });
     }
     let binary = r.ctype.starts_with("application/octet-stream") || r.ctype.starts_with("image/");
     if binary {
@@ -631,9 +656,100 @@ pub fn call_now(id: &str, method: &str, path: &str, body: Option<&str>) -> Resul
     call(&keychain(), &data_dir(), id, here, method, path, body, &real_send(route))
 }
 
+/// 메인 창만 — 모드·리더·웹 페이지 창은 다른 기기 참모 길을 못 부른다
+fn main_only(w: &tauri::WebviewWindow) -> Result<(), String> {
+    if w.label() == "main" { Ok(()) } else { Err("main window only".into()) }
+}
+
 #[tauri::command]
-pub async fn remote_call(id: String, method: String, path: String, body: Option<String>) -> Result<CallOut, String> {
+pub async fn remote_call(window: tauri::WebviewWindow, id: String, method: String, path: String, body: Option<String>) -> Result<CallOut, String> {
+    main_only(&window)?;
     tauri::async_runtime::spawn_blocking(move || call_now(&id, &method, &path, body.as_deref())).await.map_err(|e| e.to_string())?
+}
+
+/// 사람 길 몸통 — 말(to·text) 또는 카드 답(id·pick)에 cid(새로)·ts(이 기기 시계)를 붙인다
+pub fn human_body(mut v: serde_json::Value, cid: &str, now: u64) -> Result<String, String> {
+    let o = v.as_object_mut().ok_or("bad body")?;
+    o.insert("cid".into(), cid.into());
+    o.insert("ts".into(), now.into());
+    Ok(v.to_string())
+}
+
+fn human_now(id: &str, path: &str, v: serde_json::Value) -> Result<serde_json::Value, String> {
+    let cid = format!("h-{}", crate::mobile_pair::random_hex(8).map_err(|e| e.to_string())?);
+    let body = human_body(v, &cid, now_ms())?;
+    let (route, peers) = route_and_peers()?;
+    let here = peers.iter().find(|p| p.id == id).map(|p| p.ip);
+    let r = call_human(&keychain(), &data_dir(), id, here, path, &body, &real_send(route))?;
+    let text = r.text.unwrap_or_default();
+    if !(200..300).contains(&r.status) {
+        return Err(if text.trim().is_empty() { format!("HTTP {}", r.status) } else { text });
+    }
+    Ok(serde_json::from_str(&text).unwrap_or(serde_json::Value::Null))
+}
+
+/// 그 기기 카드에 사람 답(이 앱 메인 창·이 기기 폰) — 사람 길로
+pub fn card_answer_now(id: &str, card: &str, pick: &crate::direct::Pick) -> Result<(), String> {
+    let pick = serde_json::to_value(pick).map_err(|e| e.to_string())?;
+    human_now(id, "/api/peer-direct-answer", serde_json::json!({ "id": card, "pick": pick })).map(|_| ())
+}
+
+/// 짝지은 기기마다 카드 기록 + 세션 목록 — 폰·데스크톱이 4초마다 묻으니 4초 묵힌다. 안 닿는 기기는 뺀다.
+/// 망을 부르는 동안 자물쇠를 쥐지 않는다 — 다른 요청은 기다리지 않고 지난 값을 받는다(멈춘 기기 10초에 줄줄이 묶이지 않게)
+pub fn cards_now() -> serde_json::Value {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static KEEP: std::sync::Mutex<Option<(std::time::Instant, serde_json::Value)>> = std::sync::Mutex::new(None);
+    static FETCHING: AtomicBool = AtomicBool::new(false);
+    let cached = || KEEP.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|(at, v)| (at.elapsed(), v.clone()));
+    if let Some((age, v)) = cached() {
+        if age < Duration::from_secs(4) {
+            return v;
+        }
+    }
+    if FETCHING.swap(true, Ordering::AcqRel) {
+        return cached().map(|(_, v)| v).unwrap_or_else(|| serde_json::json!([]));
+    }
+    // 중간에 패닉해도 다음 요청이 다시 받게 — 표시는 끝날 때 늘 내린다
+    struct Done;
+    impl Drop for Done {
+        fn drop(&mut self) {
+            FETCHING.store(false, Ordering::Release);
+        }
+    }
+    let _done = Done;
+    let list: Vec<serde_json::Value> = load(&data_dir())
+        .into_iter()
+        .filter_map(|d| {
+            let text = |p: &str| call_now(&d.id, "GET", p, None).ok().filter(|r| r.status == 200).and_then(|r| r.text);
+            let log = text("/api/direct")?;
+            Some(serde_json::json!({ "dev": d.id, "name": d.name, "log": log, "sessions": text("/api/sessions").unwrap_or_else(|| "[]".into()) }))
+        })
+        .collect();
+    let v = serde_json::Value::Array(list);
+    *KEEP.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), v.clone()));
+    v
+}
+
+/// 짝지은 기기들의 카드 기록(결정 대기함용) — 메인 창만
+#[tauri::command]
+pub async fn remote_cards(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
+    main_only(&window)?;
+    tauri::async_runtime::spawn_blocking(cards_now).await.map_err(|e| e.to_string())
+}
+
+/// 사람이 이 앱 메인 창 입력칸에서 다른 기기 참모에게 친 말(ADR 0011) — 그 기기엔 '사람 말(원격)'로 들어간다.
+/// 프론트는 진짜 입력(isTrusted 키·클릭)에서만 부른다. to = 그 기기 참모(세션 id·이름)
+#[tauri::command]
+pub async fn remote_human_say(window: tauri::WebviewWindow, id: String, to: String, text: String) -> Result<serde_json::Value, String> {
+    main_only(&window)?;
+    tauri::async_runtime::spawn_blocking(move || human_now(&id, "/api/peer-human", serde_json::json!({ "to": to, "text": text }))).await.map_err(|e| e.to_string())?
+}
+
+/// 사람이 이 앱(결정 대기함·채팅 카드)에서 그 기기 카드를 눌렀다 — 그 기기 세션엔 '사람이 <이 기기>에서 원격으로 눌렀어'
+#[tauri::command]
+pub async fn remote_direct_answer(window: tauri::WebviewWindow, id: String, card: String, pick: crate::direct::Pick) -> Result<(), String> {
+    main_only(&window)?;
+    tauri::async_runtime::spawn_blocking(move || card_answer_now(&id, &card, &pick)).await.map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]

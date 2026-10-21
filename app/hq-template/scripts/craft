@@ -971,7 +971,7 @@ def live_instances(ddir, app):
     for n in range(1, MAX_INSTANCES + 1):
         k = inst_key(app, n)
         st = load_state(ddir, k)
-        if st and pid_alive(st.get('pid')):
+        if inst_alive(st):
             out.append((k, st))
     return out
 
@@ -1009,7 +1009,7 @@ def claim_file(ddir, key):
 
 def _taken(ddir, key):
     st = load_state(ddir, key)
-    return bool(st and pid_alive(st.get('pid'))) or pid_alive(_read_json(claim_file(ddir, key)).get('pid'))
+    return inst_alive(st) or pid_alive(_read_json(claim_file(ddir, key)).get('pid'))
 
 
 @contextlib.contextmanager
@@ -1282,7 +1282,7 @@ def native_version(app_path):
 def install_native(app, get=fetch, run=subprocess.run, apps_dir=APPS_DIR, ddir=None, rel=None, busy=None):
     """최신 릴리스(rel 을 주면 그것) 맥 DMG → SHA256SUMS 대조 → 마운트 → 번들 id·공증(spctl)·판 확인 → <apps_dir>/<이름>.app(있던 건 바꿔 끼움).
     하나라도 안 맞으면 아무것도 안 깔고 CraftError. busy() 가 참이면(바꿔 끼우기 직전 — 받는 동안 사람이 켰다) BusyError"""
-    app = app_key(app)
+    app = app_key(base(app))  # 'gridcraft-2' 도(둘째 인스턴스의 처음 설치 길)
     rel = rel or latest(app, get, native=True)
     if not rel.get('dmg'):
         raise CraftError(f'{app} {rel["tag"]}: no macOS DMG in the release / 릴리스에 맥 DMG 가 없음')
@@ -1316,16 +1316,26 @@ def install_native(app, get=fetch, run=subprocess.run, apps_dir=APPS_DIR, ddir=N
             if busy and busy():
                 raise BusyError(f'{display(app)} is running / 떠 있음 — not replaced')
             dest = os.path.join(apps_dir, found[0])
-            new = dest + '.craft-new'
-            shutil.rmtree(new, ignore_errors=True)
+            new = tempfile.mkdtemp(prefix=found[0] + '.craft-new-', dir=apps_dir)  # 둘이 같이 깔아도 같은 자리에 안 쓴다
+            os.rmdir(new)
             cp = run(['ditto', src, new], capture_output=True, text=True)
             if cp.returncode != 0:  # 반쯤 쓰다 멈춤(디스크가 참 등) — 반쪽 앱으로 바꿔 끼우지 않는다
                 shutil.rmtree(new, ignore_errors=True)
                 raise CraftError(f'could not copy the app / 앱을 못 옮겼음 — {(cp.stderr or "").strip() or cp.returncode}')
             if not os.path.isdir(new):
                 shutil.copytree(src, new, symlinks=True)
-            shutil.rmtree(dest, ignore_errors=True)
-            os.rename(new, dest)
+            old = dest + '.craft-old'
+            shutil.rmtree(old, ignore_errors=True)
+            if os.path.exists(dest):
+                os.rename(dest, old)  # 지우고 옮기다 멈추면 앱이 없었다 — 옛 것은 새것이 자리 잡은 뒤에 지운다
+            try:
+                os.rename(new, dest)
+            except OSError:
+                shutil.rmtree(new, ignore_errors=True)
+                if os.path.exists(old):
+                    os.rename(old, dest)
+                raise
+            shutil.rmtree(old, ignore_errors=True)
             if ddir:  # 우리가 깐 것 — remove 는 이 기록에 있는 것만 지운다
                 recs = load_installs(ddir)
                 recs[app] = {'path': dest, 'ver': rel['ver'], 'at': time.strftime('%Y-%m-%d')}
@@ -1350,10 +1360,31 @@ def _replace(src, dst, tries=20):
 
 
 def _write_json(path, obj):
+    """임시 이름은 부를 때마다 다르게 — 늘 <파일>.tmp 면 둘이 같이 쓸 때(Chammo 끄기가 close 를 앱마다 같이 띄운다) 늦은 쪽 replace 가 FileNotFoundError"""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path + '.tmp', 'w', encoding='utf-8') as f:
-        json.dump(obj, f, ensure_ascii=False)
-    _replace(path + '.tmp', path)
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + '.', suffix='.tmp', dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(obj, f, ensure_ascii=False)
+        _replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
+
+
+def _copy_over(src, dest):
+    """사람 파일 자리에 돌려놓기 — 옆 임시 이름에 다 쓴 뒤 바꿔 끼운다(copy2 로 바로 쓰면 디스크가 차거나 멈출 때 원본이 잘린다)"""
+    dest = os.path.realpath(dest)  # 바로가기(심볼릭 링크)면 가리키는 파일을 바꾼다 — 링크를 파일로 바꿔 끼우지 않게
+    fd, tmp = tempfile.mkstemp(prefix='.' + os.path.basename(dest) + '.', suffix='.chammo', dir=os.path.dirname(dest) or '.')
+    os.close(fd)
+    try:
+        shutil.copy2(src, tmp)
+        _replace(tmp, dest)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
 
 
 def _read_json(path):
@@ -1487,7 +1518,7 @@ def auto_update(ddir, app, get=fetch, run=subprocess.run, apps_dir=APPS_DIR, run
     못 받거나 안 맞으면 옛 판 그대로 한 줄 — 확인이 안 맞은 판은 RELEASE_TTL 동안 다시 안 받는다(열 때마다 DMG 를 받지 않게).
     떠 있으면 한 줄만(끄고 다시 열면 바뀐다). (옛 판, 지금 판) 또는 None — 오류를 내지 않는다(열기를 막지 않게)"""
     st = load_state(ddir, app)
-    if st and pid_alive(st.get('pid')):
+    if inst_alive(st):
         return None  # 그 인스턴스가 떠 있다 — 이 open 은 보이기만(파일 열기 등), 묻지도 말하지도 않는다
     app = base(app)
     say = say or (lambda line: print(line, file=sys.stderr))
@@ -1590,6 +1621,12 @@ READS = {'ui.inspect', 'ui.screenshot', 'engine.commands', 'ui.menu.list', 'engi
 # 제자리 저장(file.save)·작업 폴더 안 저장은 사람 파일 자리로 돌려놓기 전이라 그대로 둔다. 가져오기(file.import)는 편집이다
 SAVE_AS_CMDS = {'file.saveAs', 'session.save', 'saveas'}
 OPEN_CMDS = {'file.open', 'session.open'}
+# 지금 문서가 바뀌는 명령 — 그 뒤엔 '연 파일 하나'가 지금 문서라는 보장이 없다(닫을 때 그 사람 파일 자리에 엉뚱한 문서를 썼다, 2026-10-21 리뷰)
+DOC_SWITCH_CMDS = {'file.new', 'document.new', 'file.close', 'document.close'}
+
+
+def doc_switch(method, cmd):
+    return method == 'app.new' or cmd in DOC_SWITCH_CMDS or cmd.endswith('.activate')
 
 
 def note_call(ddir, app, method, params):
@@ -1599,6 +1636,7 @@ def note_call(ddir, app, method, params):
     if method in READS or cmd.endswith('.inspect') or cmd.endswith('.list'):
         return
     st = load_status(ddir, app)
+    unknown = bool(st.get('docUnknown')) or doc_switch(method, cmd)
     inner = params.get('params') if isinstance(params.get('params'), dict) else {}
     # 경로 이름표는 abs_paths 와 같은 표(PATH_KEYS) — saveAs 가 out·dest 로 와도 저장으로 친다. 상대 경로는 부르는 쪽(abs_paths)이 이미 작업 폴더 기준으로 풀었다
     path = next((str(d[k]) for d in (params, inner) for k in d if k.lower() in PATH_KEYS and isinstance(d[k], str) and d[k]), '')
@@ -1610,12 +1648,15 @@ def note_call(ddir, app, method, params):
         st = {'last': f'saved / 저장 {path}'.strip(), 'dirty': False}
     elif method in ('app.open', 'file.open', 'ui.open') or cmd in OPEN_CMDS:
         st = {'last': f'opened / 열기 {path}'.strip(), 'dirty': False}
+        unknown = False  # 방금 연 것이 지금 문서
     else:
         name = '.'.join(cmd.split('.')[-2:]) if cmd else method
         inner = params.get('params') if isinstance(params.get('params'), dict) else ({k: v for k, v in params.items() if k != 'command'} if not cmd else {})
         args = ' '.join(f'{k} {v}' for k, v in inner.items() if isinstance(v, (int, float, str)))[:80]
         st = {'last': f'{name} {args}'.strip(), 'dirty': True}
     st['at'] = time.strftime('%H:%M:%S')
+    if unknown:
+        st['docUnknown'] = True
     try:
         _write_json(status_file(ddir, app), st)
     except OSError:
@@ -2383,7 +2424,12 @@ def open_file(ddir, app, path):
         raise CraftError(f'no such file / 파일 없음: {path}')
     work = st.get('work') or '.'
     name = os.path.basename(src)
-    shutil.copy2(src, os.path.join(work, name))
+    had = (st.get('sources') or {}).get(name)
+    if had and os.path.abspath(had) != src:  # 작업 폴더 사본을 덮고 돌려놓을 자리가 바뀌어 첫 파일에 한 일이 안 돌아갔다
+        raise CraftError(f'{name} from another folder is already open ({had}) — open this one in its own instance / 다른 폴더의 같은 이름 파일이 이미 열려 있음 — 따로 띄워서(scripts/craft open {base(app)} --native)')
+    here = os.path.join(work, name)
+    if not (os.path.exists(here) and os.path.samefile(src, here)):  # --work 가 그 파일 폴더면 복사할 것 없음(SameFileError)
+        shutil.copy2(src, here)
     method, params, back = open_call(app, work, name)
     c = Channel(st)
     try:
@@ -2401,7 +2447,13 @@ def open_file(ddir, app, path):
 
 def autosave(ddir, app, st):
     """닫기 전에 — 바뀐 게 있으면 그 앱 저장 명령으로 작업 폴더에 저장하고 원래 자리로 옮긴다. 옮긴 자리 목록(안 바뀌었으면 빈 목록)"""
-    if not _read_json(status_file(ddir, app)).get('dirty'):
+    # 개입 중이면 사람이 고쳤을 수 있다 — dirty 는 돌려받을 때만 적혀서, 개입 중에 닫으면 사람이 한 게 사라졌다
+    status = _read_json(status_file(ddir, app))
+    # 사람 화면에 띄운 포토(꺼내기·--here)는 사람이 창에서 직접 고친다 — dirty 는 참모 명령으로만 적혀서 닫을 때 사람이 한 게 사라졌다.
+    # 그 포토는 문서 기록(history)으로 본다: 연 것뿐이면 저장 안 함(보기만 한 JPEG 를 다시 저장해 재압축하지 않게), 더 있으면 저장
+    known = bool(status.get('dirty')) or bool(_read_json(takeover_file(ddir, app)).get('on'))
+    here_photo = bool(st.get('here')) and base(app) == 'photocraft' and not known
+    if not known and not here_photo:
         return []
     spec = NATIVE.get(base(app)) or {}
     if not spec.get('save'):
@@ -2413,13 +2465,18 @@ def autosave(ddir, app, st):
         if base(app) == 'photocraft':
             try:
                 doc = c.call('engine.execute', {'command': 'document.inspect'}) or {}
-            except CraftError:
-                return []  # 연 문서가 없다
+            except CraftError as e:
+                if 'no document' in str(e).lower():
+                    return []  # 연 문서가 없다
+                raise CraftError(f'could not read the open document / 연 문서를 못 읽음: {e}')  # 바쁨·시간 초과를 '저장할 것 없음'으로 넘기지 않는다
+            if here_photo and isinstance(doc.get('history'), list) and len(doc['history']) <= 1:
+                return []  # 연 뒤로 아무것도 안 했다
         else:
             # 다른 앱은 지금 문서 이름을 물을 길이 앱마다 달라 — 연 파일이 하나면 그 이름(돌려놓을 자리가 있으면 거기), 아니면 새 문서.
             # 둘 이상 열었으면 지금 문서가 어느 것인지 몰라 사람 파일 자리에 쓰지 않는다
             opened = st.get('opened') or list(st.get('sources') or {})  # 옛 상태 파일엔 opened 가 없다
-            doc = {'name': opened[0]} if len(opened) == 1 else {}
+            # 새 문서·문서 바꾸기 뒤면 지금 문서가 그 파일인지 모른다 — 사람 파일 자리 대신 새 파일로
+            doc = {'name': opened[0]} if len(opened) == 1 and not status.get('docUnknown') else {}
         ours = {r.get('path') for r in recent(ddir) if r.get('saved')}  # 우리가 저장해 둔 자리 — 다시 쓸 수 있다
         plan = close_plan(doc, st.get('sources') or {}, st.get('saveDir'), work, ours, spec.get('ext') or '.psd')
         for name, _ in plan:
@@ -2432,7 +2489,7 @@ def autosave(ddir, app, st):
         here = os.path.join(work, name)
         if os.path.abspath(dest) != os.path.abspath(here) and os.path.exists(here):
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            shutil.copy2(here, dest)
+            _copy_over(here, dest)
         if os.path.exists(dest):
             out.append(dest)
     # 사람이 연 원본은 우리가 쓴 게 아니다 — 옆 PSD·보관함 문서만 '우리 것'
@@ -2529,6 +2586,27 @@ def pid_alive(pid):
         return False
 
 
+def proc_exe(pid, run=subprocess.run):
+    """맥: 그 pid 의 실행 파일(ps comm) — 못 읽으면 None"""
+    try:
+        r = run(['ps', '-o', 'comm=', '-p', str(int(pid))], capture_output=True, text=True, timeout=5)
+    except (OSError, ValueError, TypeError, subprocess.TimeoutExpired):
+        return None
+    return (r.stdout or '').strip() or None
+
+
+def inst_alive(st, exe_of=proc_exe):
+    """그 상태 파일의 앱이 아직 떠 있나 — pid 가 살아 있고, 적어 둔 실행 파일(exe) 아래 프로세스일 때만. pid 만 보면 재부팅·번호 재사용 뒤
+    남의 프로세스를 '이미 떠 있음'으로 보고 열기를 막거나 close 가 그 프로세스를 껐다(2026-10-21 리뷰). 실행 파일을 못 읽으면 예전처럼 산 걸로"""
+    if not st or not pid_alive(st.get('pid')):
+        return False
+    want = st.get('exe')
+    if IS_WIN or not want:
+        return True
+    got = exe_of(st['pid'])
+    return got is None or os.path.realpath(got).startswith(os.path.realpath(want).rstrip('/') + '/')
+
+
 def find_pid(marker, wait=15):
     """띄운 앱 pid — 인자에 든 표(--control <포트|파일>)로 찾는다"""
     for _ in range(wait * 4):
@@ -2571,12 +2649,24 @@ def stop_app(ddir, app, st):
         c.close()
     except CraftError:
         pass
+    ours = inst_alive(st)  # 번호가 남에게 넘어간 옛 기록이면 신호를 보내지 않는다(그 프로세스는 우리 앱이 아니다)
     for _ in range(20):
-        if not pid_alive(st.get('pid')):
+        if not ours or not pid_alive(st.get('pid')):
             break
         time.sleep(0.25)
     else:
-        craft_win.os_.kill(st['pid']) if IS_WIN else os.kill(int(st['pid']), signal.SIGTERM)
+        if IS_WIN:
+            craft_win.os_.kill(st['pid'])
+        else:
+            with contextlib.suppress(OSError):
+                os.kill(int(st['pid']), signal.SIGTERM)
+            for _ in range(12):
+                if not pid_alive(st.get('pid')):
+                    break
+                time.sleep(0.25)
+            else:  # 저장 중·멈춘 앱이 SIGTERM 도 안 받으면 무인증 포트를 연 채 기록 없이 남았다
+                with contextlib.suppress(OSError):
+                    os.kill(int(st['pid']), signal.SIGKILL)
     drop_takeover(ddir, app)  # 앱이 꺼지면 개입도 끝 — 남으면 다시 띄운 앱에 참모 명령이 계속 막힌다
     drop_state(ddir, app)
 
@@ -2627,7 +2717,7 @@ def open_native_ctl(ddir, app, work=None, here=False, window=True):
         return craft_win.open_native_ctl(ddir, app, work, here, window)
     name = display(app)
     st = load_state(ddir, app)
-    if st and pid_alive(st.get('pid')):
+    if inst_alive(st):
         print(f'{name}: already open / 이미 떠 있음 — work / 작업 폴더: {st.get("work")}')
         if window and not here:
             window_line(ddir, 'open', app)  # 다시 열면 다시 보이게(앱을 다시 켰거나 탭을 닫았을 때)
@@ -2663,9 +2753,11 @@ def open_native_ctl(ddir, app, work=None, here=False, window=True):
         if subprocess.run(plan['argv'], capture_output=True, env=child_env()).returncode != 0:
             # 안 깔림 → 처음 한 번 릴리스 DMG 를 받아(SHA·공증·번들 id 확인) /Applications 에, 그다음 다시 띄운다
             print(f'{name}: installing the macOS app / 맥 앱 설치 중(처음 한 번)…', file=sys.stderr)
-            print(f'{name}: installed / 설치함 — {install_native(app, ddir=ddir)}', file=sys.stderr)
+            with slot_lock(ddir, base(app) + '.update'):  # 두 세션이 같이 처음 열어도 한 번만 받는다(auto_update 와 같은 자물쇠)
+                if not native_version(app_path(app)):  # 기다리는 동안 다른 세션이 깔았으면 받지 않는다
+                    print(f'{name}: installed / 설치함 — {install_native(base(app), ddir=ddir)}', file=sys.stderr)
             if subprocess.run(plan['argv'], capture_output=True, env=child_env()).returncode != 0:
-                return open_native(app)
+                return open_native(base(app))
         args = plan['argv'][plan['argv'].index('--args') + 1:]
         pid = find_pid('--control ' + args[args.index('--control') + 1])
         if not pid:
@@ -3013,7 +3105,13 @@ def eject(ddir, app, st):
     window_line(ddir, 'close', app)
     stop_app(ddir, app, st)
     open_native_ctl(ddir, app, st.get('work'), here=True, window=False)
-    c = Channel(load_state(ddir, app))
+    new = load_state(ddir, app) or {}
+    # 저장 자리(보관함)·주인은 그대로 — 새 상태엔 없어서 닫을 때 작업 폴더에만 남고 주인 없는 앱이 됐다
+    for k in ('saveDir', 'by'):
+        if st.get(k) and not new.get(k):
+            new[k] = st[k]
+    save_state(ddir, app, new)
+    c = Channel(new)
     try:
         c.call('app.open', save)
     finally:

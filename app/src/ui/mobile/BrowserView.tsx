@@ -42,7 +42,7 @@ export function BrowserView({ live }: { live: Live }) {
         try {
           const f = unpackFrame(await browserFrame(live.profile, seq.current));
           if (alive) setPullErr('');
-          if (alive && f && f.seq > seq.current) {
+          if (alive && f && f.seq !== seq.current) { // 일꾼이 다시 뜨면 순번이 0부터라 작아진다 — 다르면 새 그림
             seq.current = f.seq;
             const next = URL.createObjectURL(new Blob([f.jpeg as BlobPart], { type: 'image/jpeg' }));
             if (url.current) URL.revokeObjectURL(url.current);

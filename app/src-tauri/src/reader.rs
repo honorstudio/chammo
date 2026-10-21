@@ -214,7 +214,9 @@ pub fn respond(body: &[u8], mime: &str) -> Response<Vec<u8>> {
 /// HTML 끝에 한 줄 — 프레임 안에서 누른 Esc 를 앱(부모 창)에 넘긴다. 프레임은 다른 출처라 앱이 키를 못 듣는다
 /// (채팅 뷰 미리보기 모달이 Esc 로 안 닫혔다 — 2026-09-30 사용자)
 /// 앱이 보낸 확대 비율({hodocZoom})로 문서 자체를 zoom — 바깥에서 늘리면 흐려졌다(2026-09-30 사용자)
-const ESC_BRIDGE: &str = "<script>addEventListener('keydown',function(e){if(e.key==='Escape'&&parent!==window)parent.postMessage({hodoc:'esc'},'*')},true);addEventListener('message',function(e){var z=e.data&&e.data.hodocZoom;if(typeof z==='number'&&z>0)document.documentElement.style.zoom=String(z);var q=e.data&&e.data.hodocFind;if(typeof q==='string'&&q)hodocFlash(q);var pg=e.data&&e.data.hodocPage;if(typeof pg==='number'&&pg>0&&!(q&&q.length))hodocPageGo(pg)});function hodocPageGo(n){var ps=document.querySelectorAll('div.slide, .page, section.slide, .sheet');var el=ps[Math.min(n,ps.length)-1];if(!el)return;el.scrollIntoView({block:'start',behavior:'smooth'});hodocRing(function(){return el.getBoundingClientRect()},500)}function hodocRing(c0,wait){var my=window.__hodocN=(window.__hodocN||0)+1;document.querySelectorAll('.hodoc-ring').forEach(function(x){x.remove()});setTimeout(function(){if(window.__hodocN!==my)return;var st=document.getElementById('hodoc-st');if(!st){st=document.createElement('style');st.id='hodoc-st';st.textContent='::highlight(hodoc-flash){background:#ffd24d;color:#1a1a1a}.hodoc-ring{position:absolute;z-index:2147483647;pointer-events:none;border-radius:10px;box-shadow:0 0 0 2px #f0a020;animation:hodoc-ring 1.1s ease-out 3 forwards}@keyframes hodoc-ring{0%{box-shadow:0 0 0 2px #f0a020,0 0 0 0 rgba(240,160,32,.55)}70%{box-shadow:0 0 0 2px #f0a020,0 0 0 14px rgba(240,160,32,0)}100%{box-shadow:0 0 0 2px rgba(240,160,32,.6)}}';document.head.appendChild(st)}var c=typeof c0==='function'?c0():c0,d=document.createElement('div');d.className='hodoc-ring';d.style.cssText='left:'+(c.left+scrollX-6)+'px;top:'+(c.top+scrollY-4)+'px;width:'+(c.width+12)+'px;height:'+(c.height+8)+'px';document.body.appendChild(d);setTimeout(function(){d.remove();if(window.__hodocN===my&&window.CSS&&CSS.highlights)CSS.highlights.delete('hodoc-flash')},6000)},wait)}function hodocFlash(q){var w=document.createTreeWalker(document.body,4),ns=[],s='';for(var n=w.nextNode();n;n=w.nextNode()){ns.push([n,s.length]);s+=n.nodeValue}var l=s.toLowerCase(),k=q.toLowerCase().trim(),i=l.indexOf(k);if(i<0&&k.length>20){k=k.slice(0,20);i=l.indexOf(k)}if(i<0)return;function at(p){for(var j=ns.length-1;j>=0;j--)if(ns[j][1]<=p)return[ns[j][0],p-ns[j][1]]}var a=at(i),b=at(i+k.length),r=document.createRange();r.setStart(a[0],a[1]);r.setEnd(b[0],Math.min(b[1],b[0].nodeValue.length));var el=a[0].parentElement;el.scrollIntoView({block:'center',behavior:'smooth'});if(window.Highlight&&CSS.highlights)CSS.highlights.set('hodoc-flash',new Highlight(r));hodocRing(function(){return r.getBoundingClientRect()},450)}</script>";
+// 확대 셋(Ctrl/⌘ + = - 0, 숫자패드)만 부모에게 — iframe 에 포커스가 있으면 키가 앱에 안 와서(윈도우는 메뉴 가속키도 안 돎) html 탭 확대가 안 됐다.
+// 다른 단축키는 넘기지 않는다: 남의 html 이 흉내 내도 자기 확대만 바뀐다(2026-10-22 사용자 제보, 시험 ui/hodocZoomBridge.test.ts)
+const ESC_BRIDGE: &str = "<script>addEventListener('keydown',function(e){if(parent===window)return;if(e.key==='Escape')parent.postMessage({hodoc:'esc'},'*');if((e.ctrlKey||e.metaKey)&&!e.altKey){var c={Equal:1,NumpadAdd:1,Minus:-1,NumpadSubtract:-1,Digit0:0,Numpad0:0}[e.code];if(c!==undefined){e.preventDefault();parent.postMessage({hodoc:'zoom',c:c},'*')}}},true);addEventListener('message',function(e){var z=e.data&&e.data.hodocZoom;if(typeof z==='number'&&z>0)document.documentElement.style.zoom=String(z);var q=e.data&&e.data.hodocFind;if(typeof q==='string'&&q)hodocFlash(q);var pg=e.data&&e.data.hodocPage;if(typeof pg==='number'&&pg>0&&!(q&&q.length))hodocPageGo(pg)});function hodocPageGo(n){var ps=document.querySelectorAll('div.slide, .page, section.slide, .sheet');var el=ps[Math.min(n,ps.length)-1];if(!el)return;el.scrollIntoView({block:'start',behavior:'smooth'});hodocRing(function(){return el.getBoundingClientRect()},500)}function hodocRing(c0,wait){var my=window.__hodocN=(window.__hodocN||0)+1;document.querySelectorAll('.hodoc-ring').forEach(function(x){x.remove()});setTimeout(function(){if(window.__hodocN!==my)return;var st=document.getElementById('hodoc-st');if(!st){st=document.createElement('style');st.id='hodoc-st';st.textContent='::highlight(hodoc-flash){background:#ffd24d;color:#1a1a1a}.hodoc-ring{position:absolute;z-index:2147483647;pointer-events:none;border-radius:10px;box-shadow:0 0 0 2px #f0a020;animation:hodoc-ring 1.1s ease-out 3 forwards}@keyframes hodoc-ring{0%{box-shadow:0 0 0 2px #f0a020,0 0 0 0 rgba(240,160,32,.55)}70%{box-shadow:0 0 0 2px #f0a020,0 0 0 14px rgba(240,160,32,0)}100%{box-shadow:0 0 0 2px rgba(240,160,32,.6)}}';document.head.appendChild(st)}var c=typeof c0==='function'?c0():c0,d=document.createElement('div');d.className='hodoc-ring';d.style.cssText='left:'+(c.left+scrollX-6)+'px;top:'+(c.top+scrollY-4)+'px;width:'+(c.width+12)+'px;height:'+(c.height+8)+'px';document.body.appendChild(d);setTimeout(function(){d.remove();if(window.__hodocN===my&&window.CSS&&CSS.highlights)CSS.highlights.delete('hodoc-flash')},6000)},wait)}function hodocFlash(q){var w=document.createTreeWalker(document.body,4),ns=[],s='';for(var n=w.nextNode();n;n=w.nextNode()){ns.push([n,s.length]);s+=n.nodeValue}var l=s.toLowerCase(),k=q.toLowerCase().trim(),i=l.indexOf(k);if(i<0&&k.length>20){k=k.slice(0,20);i=l.indexOf(k)}if(i<0)return;function at(p){for(var j=ns.length-1;j>=0;j--)if(ns[j][1]<=p)return[ns[j][0],p-ns[j][1]]}var a=at(i),b=at(i+k.length),r=document.createRange();r.setStart(a[0],a[1]);r.setEnd(b[0],Math.min(b[1],b[0].nodeValue.length));var el=a[0].parentElement;el.scrollIntoView({block:'center',behavior:'smooth'});if(window.Highlight&&CSS.highlights)CSS.highlights.set('hodoc-flash',new Highlight(r));hodocRing(function(){return r.getBoundingClientRect()},450)}</script>";
 pub fn with_esc_bridge(body: &[u8]) -> Vec<u8> {
     let mut out = body.to_vec();
     out.extend_from_slice(ESC_BRIDGE.as_bytes());
@@ -561,10 +563,20 @@ fn write_checked(p: &Path, text: &str, expected: Option<&str>, keep: impl Fn(&Pa
         return Err(CHANGED_OUTSIDE.into());
     }
     keep(p);
-    let tmp = p.with_extension("chammo-tmp");
+    let tmp = tmp_beside(p);
     std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, p).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, p).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })?;
     stamp_of(p).ok_or_else(|| tr("파일을 못 읽었어", "Could not read the file").into())
+}
+
+/// 바꿔 끼우기용 옆 임시 파일 — 파일 이름 전체 + 쓸 때마다 다른 꼬리, 점으로 시작해 목록에 안 보이게.
+/// 전엔 확장자만 바꿔(회의록.chammo-tmp) 같은 폴더의 회의록.md·회의록.xlsx 가 같은 임시 파일을 써서 xlsx 자리에 글이 들어갈 수 있었다(2026-10-21 리뷰)
+pub(crate) fn tmp_beside(p: &Path) -> std::path::PathBuf {
+    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    p.with_file_name(format!(".{name}.chammo-{}", crate::tools::tmp_tag()))
 }
 
 /// 스페이스(리더 편집)에서 고친 md 저장 — 홈 안 이미 있는 md·txt 만. expected = 편집기가 마지막으로 본 파일 글(없으면 확인 없이).
@@ -1487,7 +1499,9 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&p).unwrap(), "새 글\n");
         assert_eq!(*kept.borrow(), 1, "덮기 전 판은 history 로");
         assert_eq!(Some(stamp), super::stamp_of(&p));
-        assert!(!d.join("a.chammo-tmp").exists());
+        let left: Vec<String> = std::fs::read_dir(&d).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(left, vec!["a.md".to_string()], "임시 파일이 안 남는다");
+        assert_ne!(super::tmp_beside(&d.join("회의록.md")), super::tmp_beside(&d.join("회의록.xlsx")), "확장자만 다른 파일끼리 임시 파일을 나눠 쓰지 않는다");
         // 알던 판을 안 주면(옛 부르는 쪽) 예전처럼 쓴다
         assert!(super::write_checked(&p, "또\n", None, |_| {}).is_ok());
         let _ = std::fs::remove_dir_all(&d);

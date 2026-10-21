@@ -160,17 +160,22 @@ export function phoneTrouble(screen: PhoneScreen | null | undefined, pullErr: st
   return s.kind === 'closed' ? closed : s.kind === 'fail' ? fail(screen.error) : null;
 }
 
-export type ScreenKind = 'ok' | 'checking' | 'closed' | 'fail';
+/** 붙고 지금 탭도 아는데 그림이 이만큼 안 오면 이유를 보인다 — 첫 장은 보통 1초 안, 일꾼이 2초마다 다시 찍는다(2026-10-21 첫 사용자 제보) */
+export const NO_FRAME_MS = 8000;
+
+export type ScreenKind = 'ok' | 'checking' | 'closed' | 'fail' | 'noframe';
 /**
  * 크게 보기 화면이 진짜 화면인가(2026-10-05 사용자 실사용 — 닫힌 브라우저의 마지막 화면이 '사진'처럼 남아 눌러도 안 먹었다).
  * closed = 브라우저가 닫힘(목록에서 빠짐·포트에 못 붙음·붙었는데 탭 0개 — 맥 크롬은 마지막 창을 닫아도 포트가 산다),
  * fail = 화면을 못 받음, checking = 지금 탭을 모름(UNSURE_MS 안이면 막지 않는다 — 친 건 Rust 가 버리고 띠로 알린다).
  * blocked = 입력을 막는다(보내 봐야 버려진다). why = '주소 확인 중' 대신 머리에 보일 이유. *Ms = 그 상태가 이어진 시간
  */
-export function browserScreen(x: { goneMs: number; error: string; attached: boolean; pages: number; emptyMs: number; current: boolean; unsureMs: number }): { kind: ScreenKind; why: string; blocked: boolean } {
+export function browserScreen(x: { goneMs: number; error: string; attached: boolean; pages: number; emptyMs: number; current: boolean; unsureMs: number; noFrameMs?: number }): { kind: ScreenKind; why: string; blocked: boolean } {
   const trouble = frameTrouble(x.error);
   if (x.goneMs >= GONE_MS || trouble === 'off' || (x.attached && x.pages === 0 && x.emptyMs >= EMPTY_MS)) return { kind: 'closed', why: tr('브라우저 닫힘', 'Browser closed'), blocked: true };
   if (trouble === 'fail') return { kind: 'fail', why: tr('화면 못 받음', 'No screen'), blocked: true };
+  // 그림이 안 오는 채 이유 없이 '화면 받는 중'만 보였다 — 다시 시도·크롬에서 보기로 넘어갈 수 있게
+  if (x.current && (x.noFrameMs ?? 0) >= NO_FRAME_MS) return { kind: 'noframe', why: tr('화면이 안 와요', 'No picture yet'), blocked: true };
   if (x.current) return { kind: 'ok', why: '', blocked: false };
   if (x.unsureMs < UNSURE_MS) return { kind: 'checking', why: '', blocked: false };
   return { kind: 'checking', why: x.attached ? tr('지금 탭을 못 찾음', 'No current tab') : tr('브라우저에 붙는 중', 'Connecting to the browser'), blocked: true };

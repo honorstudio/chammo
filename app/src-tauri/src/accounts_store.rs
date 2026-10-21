@@ -114,25 +114,13 @@ pub fn add_args(service: &str, account: &str, secret: &Secret, path: Option<&str
     a
 }
 
-/// security 명령 실행 — 시간 제한(넘으면 끄고 잠김으로)
-fn run_cli(args: &[String], path: Option<&str>, keep_out: bool) -> Result<Output, StoreError> {
+/// security 명령 실행 — 시간 제한(넘으면 끄고 잠김으로). 출력은 기다리는 동안 따로 비운다(platform::run_capped) — 전엔 끝나길 기다린 뒤에야
+/// 읽어서 로그인 덩어리가 파이프 버퍼(64KB)를 넘으면 security 가 쓰기에서 막혀 90초 뒤 '잠김'으로 실패했다(계정 LOCK 을 쥔 채, 2026-10-21 리뷰)
+fn run_cli(args: &[String], path: Option<&str>) -> Result<Output, StoreError> {
     let mut c = crate::platform::command("/usr/bin/security");
-    c.args(args).args(path).stdin(Stdio::null()).stderr(Stdio::piped());
-    c.stdout(if keep_out { Stdio::piped() } else { Stdio::null() });
-    let mut child = c.spawn().map_err(|e| StoreError::Failed(e.to_string()))?;
-    let end = Instant::now() + Duration::from_secs(90);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < end => std::thread::sleep(Duration::from_millis(30)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(StoreError::Locked);
-            }
-        }
-    }
-    child.wait_with_output().map_err(|e| StoreError::Failed(e.to_string()))
+    c.args(args).args(path);
+    crate::platform::run_capped(&mut c, Duration::from_secs(90))
+        .map_err(|e| if e.kind() == std::io::ErrorKind::TimedOut { StoreError::Locked } else { StoreError::Failed(e.to_string()) })
 }
 
 /// security 오류 — 값은 안 담는다(오류 글은 버리고 종료 코드만)
@@ -155,7 +143,7 @@ impl Keychain {
 
     fn cli_get(&self, service: &str, account: &str) -> Result<Option<Secret>, StoreError> {
         let args = ["find-generic-password", "-s", service, "-a", account, "-w"].map(String::from);
-        let out = run_cli(&args, self.path.as_deref(), true)?;
+        let out = run_cli(&args, self.path.as_deref())?;
         match out.status.code() {
             Some(0) => Ok(Some(Secret(decode_w(&String::from_utf8_lossy(&out.stdout))))),
             Some(CLI_NOT_FOUND) => Ok(None),
@@ -164,7 +152,7 @@ impl Keychain {
     }
 
     fn cli_set(&self, service: &str, account: &str, secret: &Secret) -> Result<(), StoreError> {
-        let out = run_cli(&add_args(service, account, secret, None), self.path.as_deref(), false)?;
+        let out = run_cli(&add_args(service, account, secret, None), self.path.as_deref())?;
         // 되읽어서 같아야 쓴 것이다
         match self.cli_get(service, account)? {
             Some(back) if back == *secret => Ok(()),
@@ -175,7 +163,7 @@ impl Keychain {
 
     fn cli_remove(&self, service: &str, account: &str) -> Result<(), StoreError> {
         let args = ["delete-generic-password", "-s", service, "-a", account].map(String::from);
-        let out = run_cli(&args, self.path.as_deref(), false)?;
+        let out = run_cli(&args, self.path.as_deref())?;
         match out.status.code() {
             Some(0) | Some(CLI_NOT_FOUND) => Ok(()),
             _ => Err(cli_fail(&out)),

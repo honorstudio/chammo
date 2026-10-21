@@ -40,7 +40,8 @@ export function winToMac(e: KeyLike): KeyLike | null {
   }
   if (letter) return null;
   if (digit) return mac(digit);
-  const sym: Record<string, string> = { Equal: '=', Minus: '-', Backquote: '`', Comma: ',' };
+  // 숫자패드 + - 0 도 글자 크기(맥은 메뉴 ⌘+ 가 받지만 윈도우는 이 길뿐 — 2026-10-22 사용자 제보)
+  const sym: Record<string, string> = { Equal: '=', Minus: '-', Backquote: '`', Comma: ',', NumpadAdd: '+', NumpadSubtract: '-', Numpad0: '0' };
   return sym[code] ? mac(sym[code]!) : null;
 }
 

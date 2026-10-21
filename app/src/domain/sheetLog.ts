@@ -160,3 +160,7 @@ export function compile(log: LogEntry[]): Record<string, unknown>[] {
 }
 
 export const blockedOf = (log: LogEntry[]) => [...new Set(log.filter((e) => e.k === 'blocked').map((e) => (e as { what: string }).what))];
+
+/** 지금 저장을 시작하면 안 되나 — 충돌·막힘·없어짐이거나 고친 게 없거나, 앞 저장이 아직 도는 중.
+ *  도는 중에 또 보내면 같은 옛 expected 로 두 쓰기가 같이 돌아 앞 고침이 파일에서 빠졌다(2026-10-21 리뷰) — 끝나면 남은 기록으로 다시 건다 */
+export const saveHeld = (state: string, logLen: number) => state === 'conflict' || state === 'blocked' || state === 'gone' || state === 'saving' || !logLen;
