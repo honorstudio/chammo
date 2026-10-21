@@ -9,9 +9,11 @@ description: 사진·벡터·PDF·문서·표·영상·소리 같은 편집 일�
 
 ## Craft 앱 — 사용자는 말만, 참모가 다룬다
 
-Craft 앱 13개(ArtCraft 오픈소스 — 맥 앱은 Chammo 용으로 빌드한 '참모 ○○', 웹판은 원본 그대로, **지금은 맥만**)는 맥 앱이 **조작 채널**(127.0.0.1)을 연다. 참모는 좌표를 누르지 않고
+Craft 앱 13개(ArtCraft 오픈소스 — 맥 앱은 Chammo 용으로 빌드한 '참모 ○○', 웹판은 원본 그대로, **맥·윈도우** — 윈도우는 참모 라이트만 준비 중)는 맥 앱이 **조작 채널**(127.0.0.1)을 연다. 참모는 좌표를 누르지 않고
 **명령 id** 를 보내고 답을 JSON 으로 받는다 — 메뉴로 할 수 있는 건 거의 다 명령으로 된다.
 **만들고 고치는 일은 언제나 맥 앱으로**(`open <앱> --native` + `run`/`do`) — 사용자가 스페이스 칸에서 만드는 걸 따라 보고 언제든 넘겨받는다. 프로젝트 세션이 띄워도 그 세션을 맡긴 참모 탭에 칸이 뜬다.
+
+**윈도우에서는**: 설치는 DMG·공증 대신 portable zip(체크섬·안의 앱 id·판 확인)을 %LOCALAPPDATA%\Programs\Chammo\<앱> 에 풀고, 앱은 화면 밖에서 뜬다(칸엔 찍은 그림, 1초 안팎으로 갱신). `cli`(창 없는 엔진)는 아직 없어 명령 찾기는 `do <앱> engine.commands`(PdfCraft 는 `ui.commands`)로. 한글 글꼴은 '맑은 고딕'. Python 3 가 있어야 돈다.
 
 1. **띄우기**: `scripts/craft open <앱> --native [--work <폴더>]` — 맥 앱을 따로 설정 폴더·무작위 포트로 띄운다. 가짜 화면이 있으면 그 화면에(사용자 화면을 안 가림 — PhotoCraft 말고는 뜬 뒤 옮겨서 몇 초 보일 수 있다). `--here` 면 사용자 화면에(사용자가 직접 만지고 싶을 때). 출력의 **작업 폴더**에 파일을 넣고 꺼낸다(PhotoCraft·VectorCraft 는 그 폴더 밖 파일을 거절. `do`/`run` 의 경로는 작업 폴더 기준 상대 경로로 써도 된다 — scripts/craft 가 작업 폴더 절대 경로로 바꿔 넘긴다). 안 깔려 있으면 처음 한 번 참모 앱 공개 릴리스(Chammo 저장소의 crafts-<날짜>)에서 DMG 를 받아 체크섬·번들 id·애플 공증을 맞춰 보고 /Applications 에 깐다(22~132MB, 하나라도 안 맞으면 안 깔고 멈춤 · 릴리스를 못 받으면 서랍에 '받을 수 없음') — 13개를 미리 다 깔지 않는다
 2. **명령 찾기**: `scripts/craft do <앱> engine.commands`(대부분 — id·params). 앱마다 다르다: PdfCraft 는 `do pdfcraft ui.commands`(메뉴 명령), SoundCraft 의 params 는 `scripts/craft cli soundcraft describe <id>`, GridCraft 는 `cli gridcraft commands --json`
@@ -35,7 +37,7 @@ scripts/show <작업 폴더>/a-edit.png
 | PhotoCraft | 사진(레이어·PSD) | 토큰 | `image.adjustments.*`·`layer.newAdjustmentLayer.*`·`app.open/save` |
 | WordCraft | 문서 | 키 | `text.insert`·`file.exportPng` |
 | PdfCraft | PDF | 토큰 | `run` 이 `ui.command`(메뉴 명령), `ui.state` |
-| GridCraft | 표 | 없음 | `cell.get`·`sheet.read`·`ui.edit.text` (엑셀 칸만이면 `scripts/sheet` 가 먼저) |
+| GridCraft | 표(엑셀) | 없음 | `range.setValues`·`formulas.autoSum`·`data.sort`·`data.removeDuplicates`·`insert.chart`·`home.bold`/`fillColor`/`numberFormat`/`borders`·`sheet.read` |
 | VectorCraft | 벡터 | 없음 | 도구·보기·`app.export` |
 | DesignCraft | 지면 | 없음 | `file.exportPdf`(PNG 내보내기 없음)·`view.*` |
 | DeckCraft | 발표 | 없음 | `slide.new` |
@@ -46,10 +48,12 @@ scripts/show <작업 폴더>/a-edit.png
 | SoundCraft | 오디오 | 없음 | 트랙·믹스 |
 | FigCraft | 화면 설계 | 없음 | `file.export`·`page.select` |
 
-- **시작 화면의 '열기' 단추는 누르지 않는다** — 맥 파일 창이 앱을 막아 조작 채널이 멎는다(원본 동작). 파일은 `open <앱> --native <파일>` 이나 `do <앱> app.open '{"path":…}'` 로. 참모 화면(FigCraft)은 `ui.click` 이 없고 `ui.mouse`
+- **엑셀 = 참모 표**: 표를 손보는 일(합계·계산식·정렬·중복 지우기·서식·차트·새 엑셀)은 칸이 적어도 `open gridcraft --native <파일>` + `run` — `sheet set` 여러 번·파이썬으로 대신하지 않는다(보기·몇 칸만 `scripts/show`·`scripts/sheet`). 정렬 `data.sort {"range":"A1:E15","header":true,"keys":[{"column":"A","order":"asc"}]}`, 합계 `cell.set {"cell":"E16","input":"=SUM(E2:E15)"}`, 차트 `insert.chart {"range":"G1:H4","type":"column","title":"…","at":"J2"}`. 색은 `home.fillColor`·`home.fontColor` 의 `"#RRGGBB"`(`home.formatCells` 의 style 색은 형식이 달라 실패). 새 엑셀은 파일 없이 `open gridcraft --native` → `range.setValues` → `do gridcraft app.save '{"path":"<절대 경로>.xlsx"}'`. 끝나면 `close`(사람 파일은 그 자리에 저장) 뒤 `scripts/show <파일>`
+- **시작 화면의 '열기' 단추는 누르지 않는다** — 맥 파일 창이 앱을 막아 조작 채널이 멎는다(원본 동작). 파일은 `open <앱> --native <파일>` 로(앱마다 여는 명령이 달라 거기서 맞춰 부른다 — 문서·화면·필름엔 `app.open` 이 없다. 그 앱 형식이 아닌 파일·가져온 영상·소리는 닫을 때 원본 대신 새 파일로 저장). 참모 화면(FigCraft)은 `ui.click` 이 없고 `ui.mouse`
 - **한글이 □ 로 나오면**: DesignCraft·FigCraft 는 기본 글꼴에 한글이 없다 — 글꼴을 `Apple SD Gothic Neo` 로(Design: `edit.selectAll` 뒤 `type.char {"fontFamily":…}`, Fig: `node.set {"fontFamily":…}`). GridCraft 는 PDF 내보내기만 □(xlsx·화면은 정상)
 - 명령이 실패하면 앱 문구 그대로 오류가 나온다(`unknown command …`) — 고쳐서 다시. 같은 명령이 세 번 실패하면 `ui.inspect` 로 상태(열린 대화상자 등)부터 본다
 - 대화창이 떠서 막히면 `scripts/craft dialog <앱>`(종류·글을 보여 준다) → `scripts/craft dialog <앱> close`(앱마다 다른 닫기 메서드를 알아서). 같은 앱은 **세션마다 따로** 뜬다(한 앱에 3개까지, 2·3번째는 `<앱>-2`·`<앱>-3` — `status` 에 주인 세션까지). `open` 이 내 것을 고르고 명령은 저절로 내 것으로 간다. 3개가 다 차 있으면 `open` 이 "대기 중 (N번째)"를 찍고 기다렸다 자리가 나면 이어서 띄운다(최대 30분, `--wait <초>`) — 끊지 말고 기다린다. 남의 인스턴스엔 안 쓴다("다른 세션이 쓰는 중" — 꼭 필요할 때만 `<앱>-2 --force`)
+- **보기는 저절로 따라간다** — 필름은 시간이 있는 명령(자르기·놓기·자막) 앞에 재생 위치가 그 시간으로, 표는 `cell`·`range` 가 화면 밖이면 그 칸까지 스크롤, 포토는 그릴 자리(`select.rect`·`shape.create`·`type.create`)가 안 보이면 캔버스가 그쪽으로. 보기 옮기기를 따로 보내지 않는다(같은 자리 연속이면 안 움직임, 끄기 `CHAMMO_CRAFT_VIEW=0`)
 - **사람이 개입하면**(칸의 개입 단추) 쓰기 명령(`run`·`do`)은 바로 실패한다(종료 코드 4, "사람이 개입함 — 스크립트 멈춤") — 스크립트는 거기서 멈춘다. 보기(`shot`·`ui.inspect`)는 된다. 돌려받으면 `[앱] … 돌려받음 — 사람이 바꾼 것 · 지금 문서 …(레이어 수·화면 png)` 한 줄이 온다 — **남은 스크립트를 스스로 다시 돌리지 말고** 그 상태를 보고 사람에게 다음을 묻는다. 이어서 하라면 남은 단계를 사람이 바꾼 걸 반영해 다시 짠다
 - 창을 숨기지 않는다(숨기면 그림이 멈추고 찍기가 옛 그림). 앱 창을 사용자 화면으로 옮기지 않는다 — 사용자가 직접 만지길 원하면 `close` 후 `--here` 로 다시
 - **닫기 = 묻지 않고 저장 후 닫기**: `close`(창의 닫기 단추도) 는 바뀐 게 있으면 저장한다 — 사람 파일로 열었으면 그 자리에 같은 형식 + 옆에 레이어 살린 PSD, 새 문서면 네 보관함 `Craft` 폴더에 PSD. 사용자가 "아까 그 사진 다시"면 `scripts/craft recent` 에서 찾아 `open photocraft --native <파일>`
@@ -60,10 +64,12 @@ scripts/show <작업 폴더>/a-edit.png
 
 ## Craft apps — the user talks, you drive
 
-The 13 Craft apps (ArtCraft open source — the macOS apps are the Chammo builds '참모 ○○', the web builds unchanged; **macOS only for now**) open a **control channel** (127.0.0.1) in the macOS app.
+The 13 Craft apps (ArtCraft open source — the macOS apps are the Chammo builds '참모 ○○', the web builds unchanged; **macOS and Windows** — on Windows all but Chammo Light) open a **control channel** (127.0.0.1) in the macOS app.
 You don't click coordinates: send a **command id** and get JSON back — nearly every menu item is a command.
 **Making or editing something always goes through the macOS app** (`open <app> --native` + `run`/`do`) — the user follows along in the space
 and can take over any time. A project session opening it gets its pane in the tab of the assistant that delegated the session.
+
+**On Windows**: install is a portable zip (checksum plus the app id/version inside, no notarization) unpacked to %LOCALAPPDATA%\Programs\Chammo\<app>, and the app runs off screen (the pane shows a picture refreshed about once a second). There is no `cli` yet — find commands with `do <app> engine.commands` (PdfCraft: `ui.commands`). Korean font: 'Malgun Gothic'. Needs Python 3.
 
 1. **Open**: `scripts/craft open <app> --native [--work <dir>]` — its own settings folder and a random port. With the agents screen
    it opens there, out of the user's way (apps other than PhotoCraft are moved there after they appear, so they may flash for a few seconds); `--here` puts it on the user's
@@ -73,7 +79,7 @@ and can take over any time. A project session opening it gets its pane in the ta
    and Apple notarization and installs it to /Applications (22–132 MB; any mismatch: nothing installed; release unreachable: 'unavailable' in the drawer). Don't install all 13 up front
 2. **Find commands**: `scripts/craft do <app> engine.commands` (most apps — ids and params). It differs per app: PdfCraft uses
    `do pdfcraft ui.commands` (menu commands), SoundCraft params come from `scripts/craft cli soundcraft describe <id>`, GridCraft from
-   `cli gridcraft commands --json`. Never click the start screen's Open button — the macOS file dialog blocks the app and the control channel stalls (original behaviour); open files with `open <app> --native <file>` or `do <app> app.open '{"path":…}'`. FigCraft has no `ui.click` — use `ui.mouse`. Korean shows as boxes in DesignCraft/FigCraft (default fonts) — set the font to `Apple SD Gothic Neo`
+   `cli gridcraft commands --json`. Never click the start screen's Open button — the macOS file dialog blocks the app and the control channel stalls (original behaviour); open files with `open <app> --native <file>` (it picks each app's open command — Word, Fig and Film have no `app.open`; a file not in the app's own format, or imported video/audio, is saved as a new file on close instead of over the original). FigCraft has no `ui.click` — use `ui.mouse`. Korean shows as boxes in DesignCraft/FigCraft (default fonts) — set the font to `Apple SD Gothic Neo`
 3. **Do**: `scripts/craft run <app> <command id> '<json params>'`; raw channel calls `scripts/craft do <app> <method> '<json>'`
    (`app.open`, `app.save`, `ui.inspect`, `ui.menu.invoke`)
 4. **Check**: `scripts/craft shot <app> --out <png>` and look at it; show results to the user with `scripts/show`
@@ -88,8 +94,14 @@ Disk space: install only what's used. `scripts/craft list` shows each app's size
 at the end of another report ("X unused for 30 days — remove it? (n MB)"). Only after the user agrees: `scripts/craft remove <app>` (downloads,
 the macOS app if Chammo installed it, settings and work folder → Trash; apps the user installed stay). Never remove on your own.
 
+**Excel = Chammo Grid**: reworking a table (totals, formulas, sorting, removing duplicates, formatting, charts, a new workbook) is `open gridcraft --native <file>` + `run`
+even for a few cells — not many `sheet set` calls or Python (only looking and a few cells use `scripts/show`/`scripts/sheet`). Sort `data.sort {"range":"A1:E15","header":true,"keys":[{"column":"A","order":"asc"}]}`,
+total `cell.set {"cell":"E16","input":"=SUM(E2:E15)"}`, chart `insert.chart {"range":"G1:H4","type":"column","title":"…","at":"J2"}`. Colors via `home.fillColor`/`home.fontColor` `"#RRGGBB"`
+(`home.formatCells` style colors use another shape and fail). New workbook: `open gridcraft --native` with no file → `range.setValues` → `do gridcraft app.save '{"path":"<absolute path>.xlsx"}'`.
+Then `close` (a person's file is saved back in place) and `scripts/show <file>`.
+
 Same table as above (app · what it does · auth · common commands). A failing command returns the app's own error — fix and retry; after
-three failures look at `ui.inspect` (an open dialog?) first. A dialog in the way → `scripts/craft dialog <app>` (kind, text) then `dialog <app> close` (whatever the app calls it). Each session gets **its own copy** of an app (up to 3 per app; the 2nd and 3rd are `<app>-2`/`<app>-3`, `status` shows the owner). `open` picks yours and commands go to yours by themselves. With all 3 taken, `open` prints "waiting (#N)" and opens by itself when one frees up (up to 30 min, `--wait <sec>`) — let it wait. Never write to someone else's copy ("in use by …"; `<app>-2 --force` only when you must). **When the person takes over** (the pane's Take over button), write commands (`run`, `do`) fail at once (exit code 4, "a person took over — script stopped") — your script stops there; reading (`shot`, `ui.inspect`) still works. On hand-back you get one line `[앱] … 돌려받음 — what the person changed · the document now (layer count, a screen png)` — **don't rerun the rest of the script on your own**: read that state and ask the person what next; if they say continue, re-plan the remaining steps around what they changed. Don't hide the window (it stops drawing). `close` (and the window's close
+three failures look at `ui.inspect` (an open dialog?) first. A dialog in the way → `scripts/craft dialog <app>` (kind, text) then `dialog <app> close` (whatever the app calls it). Each session gets **its own copy** of an app (up to 3 per app; the 2nd and 3rd are `<app>-2`/`<app>-3`, `status` shows the owner). `open` picks yours and commands go to yours by themselves. With all 3 taken, `open` prints "waiting (#N)" and opens by itself when one frees up (up to 30 min, `--wait <sec>`) — let it wait. Never write to someone else's copy ("in use by …"; `<app>-2 --force` only when you must). **The view follows by itself** — FilmCraft moves the playhead to a command's time (cut, place, caption), GridCraft scrolls to an off-screen `cell`/`range`, PhotoCraft pans the canvas to where `select.rect`/`shape.create`/`type.create` draws; don't send view moves yourself (`CHAMMO_CRAFT_VIEW=0` turns it off). **When the person takes over** (the pane's Take over button), write commands (`run`, `do`) fail at once (exit code 4, "a person took over — script stopped") — your script stops there; reading (`shot`, `ui.inspect`) still works. On hand-back you get one line `[앱] … 돌려받음 — what the person changed · the document now (layer count, a screen png)` — **don't rerun the rest of the script on your own**: read that state and ask the person what next; if they say continue, re-plan the remaining steps around what they changed. Don't hide the window (it stops drawing). `close` (and the window's close
 button) saves without asking when something changed — back to the person's file, or a .psd in your locker's `Craft` folder for a new
 document; `scripts/craft recent` lists them to pick up again. No macOS app,
 or the user wants it in the browser view → `scripts/craft open <app>` (web build in the space; no autosave, no CJK fonts).

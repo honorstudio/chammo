@@ -97,10 +97,36 @@ pub fn answer(id: &str, body: &serde_json::Value) {
     if std::fs::write(&tmp, format!("#id {id}\n{body}\n")).is_ok() { let _ = std::fs::rename(&tmp, &file); }
 }
 
+/// 열린 표로 넘긴 쓰기 — 표가 받았다(sheet_play_ack)고 하기 전까지 여기 둔다. ACK_WAIT 안에 안 받으면 파일 패치로 물러난다
+/// (표가 안 그려지고 있거나 eval 이 안 닿으면 scripts/sheet 가 영영 답을 못 받았다, 2026-10-21 실측)
+static SENT: Mutex<Option<HashMap<String, (std::path::PathBuf, Vec<Put>)>>> = Mutex::new(None);
+const ACK_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+fn park(id: &str, path: std::path::PathBuf, puts: Vec<Put>) {
+    if let Ok(mut g) = SENT.lock() { g.get_or_insert_with(HashMap::new).insert(id.to_string(), (path, puts)); }
+}
+
+fn claim(id: &str) -> Option<(std::path::PathBuf, Vec<Put>)> {
+    SENT.lock().ok().and_then(|mut g| g.as_mut().and_then(|m| m.remove(id)))
+}
+
+/// 표가 아직 안 받았으면 그 칸만 파일에 쓴다 — 받았으면 None(표가 쓰고 답한다)
+fn fall_back(id: &str) -> Option<Result<usize, String>> {
+    let (p, puts) = claim(id)?;
+    Some(set_closed(&p, &puts, |q| crate::reader::keep_history_as(q, "xlsx")))
+}
+
+/// 표가 쓰기를 받았다 — 이제 표가 칸마다 넣고 저장한 뒤 sheet_play_done 으로 답한다
+#[tauri::command]
+pub fn sheet_play_ack(id: String) {
+    claim(&id);
+}
+
 /// 표가 다 넣고 저장까지 했다(또는 못 했다) — 기다리는 scripts/sheet 에 답
 #[tauri::command]
 pub fn sheet_play_done(id: String, answer_json: String) {
     if !id_ok(&id) { return; }
+    claim(&id);
     let v = serde_json::from_str(&answer_json).unwrap_or_else(|_| serde_json::json!({ "ok": false, "error": "bad answer" }));
     answer(&id, &v);
 }
@@ -146,9 +172,9 @@ pub fn set_closed(path: &std::path::Path, puts: &[Put], keep: impl Fn(&std::path
     Ok(puts.len())
 }
 
-/// app.jsonl 의 sheet 줄 처리 — 열린 표가 있으면 표로(답은 표가 sheet_play_done 으로), 아니면 여기서 바로 답
+/// app.jsonl 의 sheet 줄 처리 — 열린 표가 있으면 표로(답은 표가 sheet_play_done 으로), 아니면 여기서 바로 답.
+/// 표로는 eval(window.__sheetPlay) — 이 앱은 capabilities 가 없어 웹 listen 이 막혀 있다(Craft 의 __craftSpace 와 같은 길)
 pub fn handle<R: tauri::Runtime>(app: &tauri::AppHandle<R>, req: Req) {
-    use tauri::Emitter;
     match req {
         Req::Get { id, path, range } => {
             let ans = sheet_file(&path).and_then(|p| std::fs::read(&p).map_err(|e| e.to_string())).and_then(|b| read_book(&b)).and_then(|b| get_text(&b, &range));
@@ -157,7 +183,12 @@ pub fn handle<R: tauri::Runtime>(app: &tauri::AppHandle<R>, req: Req) {
         Req::Set { id, path, puts, by } => {
             let p = match sheet_file(&path) { Ok(p) => p, Err(e) => return answer(&id, &serde_json::json!({ "ok": false, "error": e })) };
             if is_open(&p.to_string_lossy()) {
-                let _ = app.emit("sheet-play", serde_json::json!({ "id": id, "path": p.to_string_lossy(), "puts": puts, "by": by }));
+                park(&id, p.clone(), puts.clone());
+                crate::craft_window::to_main(app, "__sheetPlay", serde_json::json!({ "id": id, "path": p.to_string_lossy(), "puts": puts, "by": by }));
+                std::thread::sleep(ACK_WAIT); // handle 은 따로 스레드(appctl)
+                if let Some(r) = fall_back(&id) {
+                    answer(&id, &match r { Ok(n) => serde_json::json!({ "ok": true, "written": n, "shown": false }), Err(e) => serde_json::json!({ "ok": false, "error": e }) });
+                }
                 return;
             }
             let r = set_closed(&p, &puts, |q| crate::reader::keep_history_as(q, "xlsx"));
@@ -218,6 +249,35 @@ mod tests {
         assert_eq!(get_text(&b, "B10:C10").unwrap(), "매출!B10\t42\n매출!C10\t\t=B10*2");
         // 차트 부품은 그대로
         assert_eq!(crate::sheet::unzip(&std::fs::read(&p).unwrap()).unwrap()["xl/charts/chart1.xml"], b"<chartSpace/>");
+    }
+
+    #[test]
+    fn 표가_받았다고_하면_물러나지_않는다() {
+        park("ack-1", std::path::PathBuf::from("/없는/곳/a.xlsx"), vec![]);
+        sheet_play_ack("ack-1".into());
+        assert!(fall_back("ack-1").is_none(), "표가 받은 쓰기는 파일 패치로 또 쓰지 않는다");
+    }
+
+    #[test]
+    fn 표가_답이_없으면_파일에_그_칸만_쓴다() {
+        let d = std::env::temp_dir().join(format!("chammo-sheetplay-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("열림.xlsx");
+        std::fs::write(&p, crate::sheet::tests::layout_book()).unwrap();
+        park("miss-1", p.clone(), vec![Put { sheet: Some("매출".into()), r: 9, c: 1, v: Some(json!(7)), f: None }]);
+        assert_eq!(fall_back("miss-1"), Some(Ok(1)));
+        assert!(fall_back("miss-1").is_none(), "한 번만");
+        let b = read_book(&std::fs::read(&p).unwrap()).unwrap();
+        assert_eq!(get_text(&b, "B10").unwrap(), "매출!B10\t7");
+    }
+
+    #[test]
+    fn 열린_표로는_이벤트가_아니라_eval_로_보낸다() {
+        // capabilities 가 없어 웹 listen 이 막혀 있다(10/21 실측: 열린 표에 sheet set 하면 영영 답 없음) — Craft 와 같은 window.__* eval 길
+        let src = include_str!("sheet_cmd.rs");
+        let body = &src[src.find("pub fn handle<").unwrap()..src.find("#[cfg(test)]").unwrap()];
+        assert!(body.contains("to_main(app, \"__sheetPlay\""));
+        assert!(!body.contains(".emit("));
     }
 
     #[test]

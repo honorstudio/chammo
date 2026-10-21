@@ -4,14 +4,15 @@ import { composeSend } from '../../domain/space';
 import { assistant, tr } from '../../i18n';
 import { IconCheck, IconClose, IconSend } from '../Icons';
 import { IconButton } from '../kit/IconButton';
-import { markSent, removeComment, usePending } from './pending';
+import { markSent, removeComment, scopeTo, usePending } from './pending';
 
 /**
  * 오른쪽 아래 "보낼 것" — 고친 게 있으면 종이비행기가 떠서 살짝 날갯짓하고, 마우스를 올리면 그 자리에서 카드로 쫙 펼쳐진다
  * (무엇이 어떤 모양으로 갈지 + 줄 코멘트 + 한 줄 메모 + 보내기). 누르면 펼친 채 고정(메모 쓰는 중) — 2026-09-30 사용자 "구리다, 보내질 것처럼"
+ * path = 지금 보는 문서 — 그 문서 몫만 싣는다(다른 채팅·참모 스페이스에서 고친 것은 그 문서를 열었을 때 그쪽으로)
  */
-export function SendFab({ send, sendTo }: { send: (text: string) => Promise<void>; sendTo?: string }) {
-  const { docs, comments, sheets } = usePending();
+export function SendFab({ send, sendTo, path }: { send: (text: string) => Promise<void>; sendTo?: string; path: string | null }) {
+  const { docs, comments, sheets } = scopeTo(usePending(), path);
   const [hover, setHover] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [memo, setMemo] = useState('');
@@ -22,17 +23,17 @@ export function SendFab({ send, sendTo }: { send: (text: string) => Promise<void
   const lines = docs.reduce((k, p) => k + p.diff.added.length + p.diff.removed.length, 0);
   const cells = sheets.reduce((k, x) => k + x.pending.cells.length + x.pending.notes.length, 0);
   const count = lines + cells + comments.length;
-  if (!count && !pinned && !flown) return null;
+  if (!path) return null; // 보낼 게 없어도 둔다(흐리게) — 고친 것 없이 메모만 보낼 때(2026-10-21 사용자: 예전엔 남의 문서 변경이 있어야 떴다)
   const to = sendTo ?? assistant();
   const open = hover || pinned;
-  const preview = composeSend(docs, memo, comments, sheets);
+  const preview = composeSend(docs, memo, comments, sheets, path ?? undefined);
   const sendAll = async () => {
-    if (!preview) return;
+    if (!preview || !path) return;
     setSending(true); setErr('');
     try {
       await send(preview);
       void invoke('space_log_append', { line: JSON.stringify({ ts: new Date().toISOString(), who: 'user', kind: 'send', to, docs: [...docs.map((d) => d.path), ...sheets.map((x) => x.path)], comments: comments.length, memo: memo.trim() }) }).catch(() => {});
-      markSent();
+      markSent([path]);
       setMemo(''); setPinned(false); setHover(false);
       setFlown(true);
       window.setTimeout(() => setFlown(false), 900);

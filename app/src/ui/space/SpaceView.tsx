@@ -1276,10 +1276,9 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
           aria-label={tr('홈', 'Home')} title={`${tr('홈', 'Home')} ${keyLabel('⌘⇧H', IS_WIN)}`}><IconHome /></button>
         <button className={`lk-tab folder ${row.folderOn ? 'on' : ''}`} aria-pressed={row.folderOn} onClick={() => goFolder(lo)}
           data-locker-folder="" data-locker-drop="" aria-label={tr('보관함', 'Locker')} title={`${tr('보관함', 'Locker')} ${keyLabel('⌘⇧L', IS_WIN)}`}><IconFolder />{rootNew && <i className="lk-newdot" aria-label={tr('새 것 있음', 'New items')} />}</button>
-        {!IS_WIN && ( // Craft 는 지금 맥만 — 윈도우에선 서랍을 열면 스크립트 실행 오류 원문만 떴다(0.3.4 2차 검증)
+        {/* 윈도우도(2026-10-21) — 0.3.4 땐 Rust 가 scripts/craft 를 바로 띄워 오류 원문만 떴다, 이제 python 으로 부른다(craft_window::craft_cmd) */}
         <button className={`lk-tab folder ${pick === APPS_KEY ? 'on' : ''}`} aria-pressed={pick === APPS_KEY} onClick={() => setPick(APPS_KEY)}
           aria-label={tr('Craft 앱', 'Craft apps')} title={tr('Craft 앱 — 사진·영상·문서·표 편집기', 'Craft apps — photo, video, document and spreadsheet editors')}><IconApps /></button>
-        )}
         {dock.map((it) => {
           // Craft 독 아이콘 = 그 앱의 탭(글자 탭은 없다, 2026-10-19 사용자) — 누르면 그 칸, 지금 보는 앱은 선택 표시, 오른쪽 클릭 = 따로 창·꺼내기·끄기·최근 문서
           const title = dockTitle(it, craftWho(it.by));

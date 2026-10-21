@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { doingLine, handbackLine, handbackTargets, mirrorNote, saveState, takeButton, type CraftInfo } from './craftWin';
+import { doingLine, handbackLine, handbackTargets, mirrorNote, paneShotDue, saveState, takeButton, type CraftInfo } from './craftWin';
 
 const info = (o: Partial<CraftInfo> = {}): CraftInfo => ({ name: 'PhotoCraft', version: '0.9.0', pid: 4242, last: '', dirty: false, mirror: 'live', takeover: false, ...o });
 
@@ -56,5 +56,29 @@ describe('돌려받음 [앱] 줄 받는 참모(2026-10-19 — 회사 비서 탭�
     expect(handbackTargets(undefined, 'orch-c', 'orch-a')).toEqual(['orch-c', 'orch-a']);
     expect(handbackTargets('orch-a', '', 'orch-a')).toEqual(['orch-a']);
     expect(handbackTargets(undefined, undefined, undefined)).toEqual([]);
+  });
+});
+
+describe('윈도우 칸 그림(2026-10-21 — 비추기 대신 조작 채널 ui.screenshot)', () => {
+  const base = { mirror: 'shot', visible: true, docVisible: true, takeover: false, inFlight: false, lastAt: 0, now: 5000, last: 'a', shotLast: 'a' };
+  it('보는 중이면 1초에 한 번', () => {
+    expect(paneShotDue(base)).toBe(true);
+    expect(paneShotDue({ ...base, lastAt: 4500 })).toBe(false);
+    expect(paneShotDue({ ...base, lastAt: 4000 })).toBe(true);
+  });
+  it('참모가 방금 한 일이 바뀌면 1초를 안 기다린다(명령 직후 한 장)', () => {
+    expect(paneShotDue({ ...base, lastAt: 4800, last: 'cell.set B1' })).toBe(true);
+  });
+  it('안 보이면·창이 숨으면·개입 중이면·받는 중이면 안 받는다', () => {
+    expect(paneShotDue({ ...base, visible: false })).toBe(false);
+    expect(paneShotDue({ ...base, docVisible: false })).toBe(false);
+    expect(paneShotDue({ ...base, takeover: true })).toBe(false);
+    expect(paneShotDue({ ...base, inFlight: true, last: 'new' })).toBe(false);
+  });
+  it('맥(비추기)에선 안 받는다', () => {
+    expect(paneShotDue({ ...base, mirror: 'live' })).toBe(false);
+  });
+  it("'shot' 상태엔 칸 가운데 안내가 없다", () => {
+    expect(mirrorNote(info({ mirror: 'shot' }))).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { licenseLine, licenseRows, parseNotices, sizeText, splitRows, tileCorner, tileIcon, tileLetter, tileLoading, tileTitle, tileUnavailable, usedTotal, type DrawerRow } from './craftDrawer';
+import { licenseLine, licenseRows, parseNotices, sizeText, splitRows, tileCorner, tileIcon, tileLetter, tileLoading, tileTitle, tileUnavailable, usedLine, usedTotal, type DrawerRow } from './craftDrawer';
 
 const row = (o: Partial<DrawerRow> = {}): DrawerRow => ({ app: 'gridcraft', name: 'GridCraft', what: 'spreadsheets / 표 계산', installed: null, mine: false, size: 0, used: null, latest: '0.7.0', dmgSize: 24580153, icon: '', origName: 'GridCraft', repo: 'github.com/storytold/gridcraft', basedOn: null, chammo: false, ...o });
 
@@ -82,5 +82,13 @@ describe('라이선스 줄 글', () => {
   it('원본은 원본 그대로 + 깔린 판(없으면 새 판)', () => {
     expect(licenseLine(row({ chammo: false, installed: '0.8.0' }))).toBe('원본 그대로 0.8.0 · github.com/storytold/gridcraft');
     expect(licenseLine(row({ chammo: false, installed: null, latest: null }))).toBe('원본 그대로 · github.com/storytold/gridcraft');
+  });
+});
+
+describe('서랍 크기 줄은 그 기기 이름으로', () => {
+  it('맥은 이 맥, 윈도우는 이 PC', () => {
+    expect(usedLine(1024 * 1024 * 18, false)).toContain('이 맥에서');
+    expect(usedLine(1024 * 1024 * 18, true)).toContain('이 PC 에서');
+    expect(usedLine(0, true)).toContain('0MB');
   });
 });

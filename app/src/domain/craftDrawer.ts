@@ -28,6 +28,12 @@ export function splitRows(rows: DrawerRow[]): { have: DrawerRow[]; can: DrawerRo
 /** 이 맥에서 차지하는 크기(우리가 깐 것 + 설정·작업 폴더) */
 export const usedTotal = (rows: DrawerRow[]) => rows.reduce((a, r) => a + (r.size || 0), 0);
 
+/** 서랍 아래 크기 줄 — 그 기기 이름으로(맥·윈도우) */
+export const usedLine = (n: number, win: boolean) => {
+  const s = sizeText(n) || '0MB';
+  return win ? tr(`이 PC 에서 ${s}`, `${s} on this PC`) : tr(`이 맥에서 ${s}`, `${s} on this Mac`);
+};
+
 /** 올렸을 때 글 — 깔린 것: 판·크기·마지막 사용, 새 판이 있으면 알림 / 깔 수 있는 것: 판·받을 크기 */
 export function tileTitle(r: DrawerRow): string {
   const parts = [r.name, r.what];

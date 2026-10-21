@@ -36,8 +36,9 @@ export type LineComment = { path: string; quote: string; text: string };
 
 const cutQuote = (q: string) => { const t = q.replace(/\s+/g, ' ').trim(); return [...t].length > 40 ? `${[...t].slice(0, 40).join('')}…` : t; };
 
-/** 참모에게 보낼 글 — 문서마다 더한 줄(+)·뺀 줄(-)·줄 코멘트(> 인용 → 코멘트), 엑셀은 칸마다 처음 → 지금, 끝에 메모. 보낼 게 없으면 빈 글 */
-export function composeSend(docs: { path: string; diff: MdDiff }[], memo: string, comments: LineComment[] = [], sheets: { path: string; pending: SheetPending }[] = []): string {
+/** 참모에게 보낼 글 — 문서마다 더한 줄(+)·뺀 줄(-)·줄 코멘트(> 인용 → 코멘트), 엑셀은 칸마다 처음 → 지금, 끝에 메모. 보낼 게 없으면 빈 글.
+ *  about = 지금 보는 문서 — 메모만 보낼 때도 어느 문서 얘기인지 머리 줄을 단다 */
+export function composeSend(docs: { path: string; diff: MdDiff }[], memo: string, comments: LineComment[] = [], sheets: { path: string; pending: SheetPending }[] = [], about?: string): string {
   const out: string[] = [];
   for (const s of sheets) out.push(...sheetLines(s.path, s.pending));
   const paths = [...new Set([...docs.map((d) => d.path), ...comments.map((c) => c.path)])];
@@ -53,5 +54,6 @@ export function composeSend(docs: { path: string; diff: MdDiff }[], memo: string
   }
   const m = memo.trim();
   if (!out.length && !m) return '';
+  if (!out.length && about) out.push(`■ ${about.split('/').pop()} (${about})`);
   return ['[스페이스] 사용자가 고친 것', ...out, ...(m ? [`메모: ${m}`] : [])].join('\n');
 }

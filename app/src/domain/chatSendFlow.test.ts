@@ -15,10 +15,14 @@ const user = (text: string, at: number, parent?: string) => L({ type: 'user', uu
 const think = (at: number) => L({ type: 'assistant', uuid: `a${n++}`, timestamp: iso(T0 + at), message: { role: 'assistant', content: [{ type: 'thinking', thinking: '...' }] } });
 const queued = (text: string, at: number) => L({ type: 'attachment', uuid: `q${n++}`, timestamp: iso(T0 + at), attachment: { type: 'queued_command', prompt: text, origin: { kind: 'human' } } });
 const op = (operation: string, at: number, content?: string) => L({ type: 'queue-operation', operation, timestamp: iso(T0 + at), sessionId: 's', ...(content === undefined ? {} : { content }) });
+/** 2.1.305 기록 user 줄 모양 그대로(qa-036 시험 참모) — origin·promptSource 등이 붙는다 */
+const user305 = (text: string, at: number) => L({ parentUuid: null, isSidechain: false, promptId: `p${n}`, type: 'user', message: { role: 'user', content: text }, uuid: `u${n++}`, timestamp: iso(T0 + at),
+  permissionMode: 'bypassPermissions', origin: { kind: 'human' }, promptSource: 'typed', turnOrigin: 'human', sessionKind: 'bg', userType: 'external', entrypoint: 'cli', version: '2.1.305' });
 const peer = (text: string, at: number) => user(`<cross-session-message from="uds:/tmp/x.sock" from-name="demo">${text}</cross-session-message>`, at);
 
 type Step =
   | { send: string } // 채팅 보내기(앱이 친 [앱] 줄도 chat-pending 으로 같은 길)
+  | { typed: string; ago: number } // 앱이 다 친 뒤 알림(sendToSession) — 치기 시작한 때(ago ms 전)를 같이 넘긴다
   | { wait: number }
   | { log: string[] } // 세션 기록에 붙은 줄(기록 읽기 = appendChat + applyQueueOps)
   | { term: string } // 터미널 입력칸에 보이는 글
@@ -40,6 +44,7 @@ function run(steps: Step[]): void {
   steps.forEach((step, i) => {
     const where = `${i + 1}번째 ${JSON.stringify(step)}`;
     if ('send' in step) { s.pending.push(newPending(step.send, s.items, s.now)); s.lastSent = step.send; }
+    else if ('typed' in step) { s.pending.push(newPending(step.typed, s.items, s.now - step.ago)); s.lastSent = step.typed; }
     else if ('wait' in step) s.now += step.wait;
     else if ('log' in step) { const c = step.log.join('\n'); s.items = appendChat(s.items, c); s.queue = applyQueueOps(s.queue, c); }
     else if ('term' in step) s.term = step.term;
@@ -93,6 +98,8 @@ const FLOW: [string, Step[]][] = [
       { term: A }, { wait: 3000 }, { see: [`${A}=input/now`] }, { enter: null }]],
   ['[앱] 줄 — 앱이 참모 입력칸에 친 줄은 기록에 앱이 넘긴 줄(relay)로 잡혀도 간 것으로',
     [{ send: APP }, { wait: 2000 }, { log: [user(APP, 1000)] }, { see: [] }]],
+  ['[앱] 줄 — 다 치고(붙기 1.5초 + Enter 뒤 0.7초) 알리는 사이 기록이 먼저 읽혀도 간 말이다(2026-10-21 qa-036 6g, 돌려받음·브라우저 알림 줄)',
+    [{ wait: 2400 }, { log: [user305(APP, 2300)] }, { wait: 600 }, { typed: APP, ago: 3000 }, { see: [] }, { wait: LOST_AFTER }, { see: [] }]],
   ['[앱] 줄이 일하는 중 줄 섰다 들어감', [{ send: APP }, { wait: 2000 }, { log: [queued(APP, 30_000)] }, { see: [] }]],
   ['다른 세션이 같은 글을 보낸 건 내 말이 아니다 — 내 말은 그대로 남는다',
     [{ send: A }, { wait: 2000 }, { log: [peer(A, 1000)] }, { wait: LOST_AFTER }, { see: [`${A}=lost/again`] }]],

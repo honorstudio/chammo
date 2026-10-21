@@ -126,9 +126,26 @@ describe('pending — 고친 것 모아 두기는 키 하나에 가볍게', () =
     p.setBaseline(doc(1), body(1));
     p.setCurrent(doc(1), body(1) + '\n고침');
     vi.advanceTimersByTime(2000);
-    p.markSent();
+    p.markSent([doc(1)]);
     expect(saved()).toEqual({});
     expect(p.pendingNow().docs).toEqual([]);
+  });
+
+  // 2026-10-21 사용자·영상담당: lessons.md 에 메모만 적어 보냈는데 다른 채팅·참모 스페이스에서 고친 채 안 보낸 문서 4개가 같이 갔다
+  it('보내기는 지금 보는 문서만 — 다른 문서의 고친 것·코멘트는 안 실리고, 보낸 뒤에도 그대로 남는다', async () => {
+    const p = await load();
+    for (const i of [1, 2, 3]) { p.setBaseline(doc(i), body(i)); p.setCurrent(doc(i), body(i) + `\n고침 ${i}`); }
+    p.addComment({ path: doc(1), quote: '줄 1 가나다', text: '이 문서' });
+    p.addComment({ path: doc(2), quote: '줄 2 가나다', text: '남의 문서' });
+    const mine = p.scopeTo(p.pendingNow(), doc(1));
+    expect(mine.docs).toEqual([{ path: doc(1), diff: { added: ['고침 1'], removed: [] } }]);
+    expect(mine.comments.map((c) => c.text)).toEqual(['이 문서']);
+    expect(p.scopeTo(p.pendingNow(), null).docs).toEqual([]);
+    p.markSent([doc(1)]);
+    expect(p.pendingNow().docs.map((d) => d.path)).toEqual([doc(2), doc(3)]);
+    expect(p.pendingNow().comments.map((c) => c.text)).toEqual(['남의 문서']);
+    expect(Object.keys(saved()).sort()).toEqual([doc(2), doc(3)].sort());
+    expect(p.scopeTo(p.pendingNow(), doc(1)).docs).toEqual([]);
   });
 
   it('밖에서 들어온 변경은 기준에도 옮겨 사용자 줄만 남는다(차이도 새로 센다)', async () => {
@@ -199,7 +216,7 @@ describe('pending — 두 창(메인·리더)이 같은 기억을 나눠 쓴다'
     r.setCurrent(doc(4), 'a\n리더');
     r.addComment({ path: doc(4), quote: 'a', text: '여기' });
     flush(reader);
-    m.markSent();
+    m.markSent([doc(4)]);
     flush(main);
     expect(r.pendingNow().docs).toEqual([]);
     expect(r.pendingNow().comments).toEqual([]);

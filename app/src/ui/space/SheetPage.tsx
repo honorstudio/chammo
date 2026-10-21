@@ -44,6 +44,7 @@ export function SheetPage({ path, owner, where, onBack, tail, onAttach, attachTo
   const [err, setErr] = useState('');
   const [status, setStatus] = useState<{ s: SheetStatus; d?: string }>({ s: 'saved' });
   const [gen, setGen] = useState(0);
+  const [gridErr, setGridErr] = useState('');
   const [start, setStart] = useState<SheetView | undefined>();
   const control = useRef<SheetControl | null>(null);
   const reopen = (v?: SheetView) => { setStart(v); setGen((g) => g + 1); };
@@ -64,10 +65,14 @@ export function SheetPage({ path, owner, where, onBack, tail, onAttach, attachTo
         {status.s === 'saving' && <span className="cv-sheet-saving">{tr('저장 중', 'Saving')}</span>}
         <span className="cv-sp" />
         {charts > 0 && onPreview && <button className="cv-chip" onClick={onPreview} title={tr('차트는 원본 미리보기로 — 저장해도 파일엔 그대로 남아', 'Charts show in the original preview — saving keeps them')}>{tr(`차트 ${charts}개`, `${charts} chart${charts > 1 ? 's' : ''}`)}</button>}
+        {/* 같은 파일을 참모 표 칸으로 — 계산·정렬·서식·차트처럼 칸이 많이 바뀌는 일(2026-10-21 사용자 A안). 닫으면 그 자리에 저장 */}
+        <button className="cv-chip cv-sheet-grid" disabled={status.s === 'saving'} title={tr('같은 파일을 참모 표 칸에서 열기 — 닫으면 이 파일에 저장', 'Open this file in a Chammo Grid pane — saved back here on close')}
+          onClick={() => { setGridErr(''); void invoke('craft_open_file', { app: 'gridcraft', path }).catch((e) => setGridErr(String(e))); }}>{tr('참모 표로 열기', 'Open in Chammo Grid')}</button>
         {onAttach && <SendToOrch to={attachTo} onClick={onAttach} />}
         {onPin && <IconButton pressed={!!pinned} label={pinned ? tr('고정됨', 'Pinned') : tr('고정', 'Pin')} onClick={onPin}><IconPin /></IconButton>}
         {tail}
       </div>
+      {gridErr && <div className="cv-sheet-note" role="status"><span>{tr('참모 표로 못 열었어', "Couldn't open it in Chammo Grid")} — {gridErr}</span></div>}
       {note && (
         <div className="cv-sheet-note" role="status">
           <span>{note}</span>
@@ -89,7 +94,7 @@ export function SheetPage({ path, owner, where, onBack, tail, onAttach, attachTo
             </Suspense>
           )}
       </div>
-      {send && <SendFab send={send} sendTo={sendTo} />}
+      {send && <SendFab send={send} sendTo={sendTo} path={path} />}
     </div>
   );
 }

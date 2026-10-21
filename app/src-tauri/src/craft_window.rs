@@ -192,7 +192,11 @@ pub fn craft_space_place<R: Runtime>(handle: tauri::AppHandle<R>, app: String, r
     let pid = read_info(crate::config::data_dir(), &app).pid.ok_or("not open")?;
     let main = handle.get_webview_window("main").ok_or("no main window")?;
     #[cfg(not(target_os = "macos"))]
-    let _ = (main, pid, rect, vh, visible);
+    let _ = (main, pid, vh, visible);
+    // 윈도우 개입이 진짜 창을 놓을 자리(웹뷰 안 CSS 점) — 보이든 말든 늘. 개입 단추는 칸 머리줄에 있어 누를 땐 보인다,
+    // '보일 때만' 적었더니 안내 카드가 칸 위에 떠 있던 동안 한 번도 안 적혀 개입이 'no pane yet'(2026-10-21 윈도우 시험 PC)
+    #[cfg(not(target_os = "macos"))]
+    panes(|m| m.insert(app.clone(), rect));
     #[cfg(target_os = "macos")]
     let key = space_key(&app);
     #[cfg(target_os = "macos")]
@@ -221,6 +225,107 @@ pub fn jpeg_url(bytes: &[u8]) -> String {
         return String::new();
     }
     format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// PNG 바이트 → data URL(빈 바이트면 빈 글)
+pub fn png_url(bytes: &[u8]) -> String {
+    use base64::Engine;
+    if bytes.is_empty() {
+        return String::new();
+    }
+    format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// 윈도우 비추기 상태 — 비추기(ScreenCaptureKit) 대신 칸 그림(craft_pane_shot)이라 앱이 떠 있으면 늘 "shot"
+pub fn win_mirror(pid: Option<i32>) -> &'static str {
+    if pid.is_some() { "shot" } else { "stopped" }
+}
+
+/// 윈도우 칸 그림 — 그 Craft 앱 조작 채널에 ui.screenshot 을 보내 받은 PNG 를 data URL 로. 화면 밖 창도 그린다(2026-10-20 실측, 최소화는 안 됨).
+/// 웹이 보는 중에만 1초에 한 번 이하로 부른다(paneShotDue) — 받기마다 앱이 그림을 만들어서(그리드 2fps 한 코어 9~12%·포토 한 장 0.55초)
+#[tauri::command]
+pub fn craft_pane_shot(app: String) -> Result<String, String> {
+    display_name(&app).ok_or("unknown app")?;
+    let dir = crate::config::data_file("craft-native").join(&app);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("pane.app.png"); // scripts/craft 의 pane.png 와 따로 — 둘이 같이 써도 안 섞이게
+    let _ = std::fs::remove_file(&path);
+    let mut c = crate::craft_input::Conn::open(crate::config::data_dir(), &app)?;
+    c.timeout(std::time::Duration::from_secs(5)); // 그림이 안 오면(최소화 등) 칸은 앞 그림 그대로
+    let mut params = serde_json::json!({ "path": path.to_string_lossy() });
+    if app.starts_with("photocraft") {
+        params["focus"] = serde_json::json!(false); // PhotoCraft 는 기본으로 창을 앞으로 부른다
+    }
+    let res = c.call("ui.screenshot", params)?;
+    let bytes = std::fs::read(&path).ok().or_else(|| {
+        use base64::Engine;
+        ["png", "data", "base64", "image"].iter().find_map(|k| res[*k].as_str()).and_then(|b| base64::engine::general_purpose::STANDARD.decode(b.trim_start_matches("data:image/png;base64,")).ok())
+    });
+    let _ = std::fs::remove_file(&path);
+    Ok(png_url(&bytes.unwrap_or_default()))
+}
+
+/// 스페이스 탭 칸 자리(웹뷰 안 CSS 점) — 윈도우 개입이 진짜 창을 그 자리에 놓는다. 맥은 비추기 손잡이가 안다
+static PANES: Mutex<Option<HashMap<String, [f64; 4]>>> = Mutex::new(None);
+
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn panes<T>(f: impl FnOnce(&mut HashMap<String, [f64; 4]>) -> T) -> T {
+    let mut g = PANES.lock().unwrap_or_else(|e| e.into_inner());
+    f(g.get_or_insert_with(HashMap::new))
+}
+
+/// 칸 자리 → 조작 채널 ui.window.frame 좌표(논리 점) — inner = 웹뷰 안쪽 왼쪽 위(화면 실제 픽셀), scale = 그 창 배율
+pub fn pane_screen_frame(inner: (f64, f64), scale: f64, rect: [f64; 4]) -> [f64; 4] {
+    let s = if scale > 0.0 { scale } else { 1.0 };
+    [inner.0 / s + rect[0], inner.1 / s + rect[1], rect[2], rect[3]]
+}
+
+/// 돌려줄 자리 x(논리 점) — 화면들(실제 픽셀 왼쪽·폭) 중 가장 오른쪽 끝 밖으로 4000. scripts/craft craft_win.offscreen 과 같은 여유
+pub fn offscreen_x(monitors: &[(i32, u32)], scale: f64) -> f64 {
+    let s = if scale > 0.0 { scale } else { 1.0 };
+    let right = monitors.iter().map(|(x, w)| *x as f64 + *w as f64).fold(f64::NAN, f64::max);
+    (if right.is_nan() { 1920.0 } else { right / s }) + 4000.0
+}
+
+/// 윈도우 개입 — 진짜 앱 창을 칸 자리로(조작 채널 ui.window.frame) 옮기고 앞으로(ui.focus). Chammo 가 앞 창일 때(사람이 단추를 누른 직후)
+/// AllowSetForegroundWindow 로 그 앱이 스스로 앞으로 나올 수 있게 한다 — 안 그러면 작업 표시줄만 깜빡인다. 따로 창이면 그 창의 칸 자리
+#[cfg(windows)]
+fn win_takeover<R: Runtime>(handle: &tauri::AppHandle<R>, app: &str) -> Result<(), String> {
+    #[link(name = "user32")]
+    extern "system" {
+        fn AllowSetForegroundWindow(pid: u32) -> i32;
+    }
+    let pid = read_info(crate::config::data_dir(), app).pid.ok_or("not open")?;
+    let (win, rect) = match handle.get_webview_window(&label(app)) {
+        Some(w) => {
+            let s = w.inner_size().map_err(|e| e.to_string())?.to_logical::<f64>(w.scale_factor().unwrap_or(1.0));
+            (w, [0.0, TOP, s.width, (s.height - TOP - BOTTOM).max(100.0)])
+        }
+        None => (handle.get_webview_window("main").ok_or("no main window")?, panes(|m| m.get(app).copied()).ok_or("no pane yet")?),
+    };
+    let pos = win.inner_position().map_err(|e| e.to_string())?;
+    let f = pane_screen_frame((pos.x as f64, pos.y as f64), win.scale_factor().unwrap_or(1.0), rect);
+    unsafe { AllowSetForegroundWindow(pid as u32) };
+    let mut c = crate::craft_input::Conn::open(crate::config::data_dir(), app)?;
+    c.timeout(std::time::Duration::from_secs(5));
+    c.call("ui.window.frame", serde_json::json!({ "x": f[0], "y": f[1], "width": f[2], "height": f[3] }))?;
+    let _ = c.call("ui.focus", serde_json::json!({}));
+    Ok(())
+}
+
+/// 윈도우 돌려주기 — 진짜 앱 창을 다시 화면 밖으로, 사람이 개입한 칸(따로 창이면 그 창, 아니면 메인 창)을 앞으로
+#[cfg(windows)]
+fn win_handback<R: Runtime>(handle: &tauri::AppHandle<R>, app: &str) {
+    let Some(main) = handle.get_webview_window("main") else { return };
+    let scale = main.scale_factor().unwrap_or(1.0);
+    let mons: Vec<(i32, u32)> = main.available_monitors().unwrap_or_default().iter().map(|m| (m.position().x, m.size().width)).collect();
+    let x = offscreen_x(&mons, scale);
+    if let Ok(mut c) = crate::craft_input::Conn::open(crate::config::data_dir(), app) {
+        c.timeout(std::time::Duration::from_secs(5));
+        let _ = c.call("ui.window.frame", serde_json::json!({ "x": x, "y": 33.0, "width": 1360.0, "height": 820.0 }));
+    }
+    // 메인 창을 올리면 따로 창의 칸을 가린다(2026-10-21 윈도우 시험 PC)
+    let _ = handle.get_webview_window(&label(app)).unwrap_or(main).set_focus();
 }
 
 /// 스페이스 탭 칸의 마지막 프레임 — 팝오버가 칸을 덮어 비추기가 숨을 때 웹이 그 자리에 그림으로 깐다(검은 칸 대신, 2026-10-19 실사용)
@@ -260,9 +365,10 @@ fn space_detach<R: Runtime>(handle: &tauri::AppHandle<R>, app: &str) {
 }
 
 /// 자리 옮기기(머리줄 아이콘 하나) — "window": 스페이스에서 떼고 따로 창으로 / "space": 따로 창을 닫고 메인 창 스페이스 탭으로.
-/// 비추기는 한 곳만 — 옮기기 전에 앞 자리를 뗀다
+/// 비추기는 한 곳만 — 옮기기 전에 앞 자리를 뗀다.
+/// async 다 — 윈도우는 동기 명령 안에서 웹뷰 창을 만들면 교착된다(WebviewWindowBuilder 문서, 2026-10-21 윈도우 시험 PC: 따로 창이 빈 채로 멈추고 메인 창 JS 까지 멈춤)
 #[tauri::command]
-pub fn craft_move<R: Runtime>(handle: tauri::AppHandle<R>, app: String, to: String) -> Result<String, String> {
+pub async fn craft_move<R: Runtime>(handle: tauri::AppHandle<R>, app: String, to: String) -> Result<String, String> {
     display_name(&app).ok_or("unknown app")?;
     match to.as_str() {
         "window" => {
@@ -410,7 +516,9 @@ pub fn answer<R: Runtime>(app: &tauri::AppHandle<R>, req: &Req) -> String {
 pub fn craft_win_info(app: String) -> Result<Info, String> {
     display_name(&app).ok_or("unknown app")?;
     let mut info = read_info(crate::config::data_dir(), &app);
-    info.mirror = if !crate::craft_mirror::LINKED {
+    info.mirror = if cfg!(windows) {
+        win_mirror(info.pid).into()
+    } else if !crate::craft_mirror::LINKED {
         "not-built".into()
     } else {
         match mirror_of(&app) {
@@ -447,6 +555,19 @@ pub fn script() -> std::path::PathBuf {
     Path::new(&hq).join("scripts").join("craft")
 }
 
+/// scripts/craft 를 부르는 명령 — 윈도우는 확장자 없는 파이썬 파일을 바로 못 띄워서(0.3.4 서랍이 os error 원문) py -3 <스크립트>
+/// (platform::python — 콘솔 창 없이, PYTHONUTF8). 맥은 그대로 스크립트를
+pub fn craft_cmd() -> std::process::Command {
+    #[cfg(windows)]
+    {
+        let mut c = crate::platform::python();
+        c.arg(script());
+        c
+    }
+    #[cfg(not(windows))]
+    crate::platform::command(script())
+}
+
 /// 개입(사람이 직접)·돌려주기 — 비추기 칸 입력을 그 앱에 넘기거나 막고, scripts/craft takeover 가 문서 상태를 떠 둔다.
 /// 돌려주면 바뀐 것 한 줄을 메인 창에 'craft-handback' 으로 알린다(참모 입력칸에 [앱] 줄 — 화면엔 안 띄움)
 #[tauri::command]
@@ -457,9 +578,13 @@ pub fn craft_win_takeover<R: Runtime>(handle: tauri::AppHandle<R>, app: String, 
         let _ = handle.run_on_main_thread(move || crate::craft_mirror::set_input(&crate::craft_mirror::Handle(h), on, &key));
     }
     if on {
-        let script = script();
+        #[cfg(windows)]
+        if let Err(e) = win_takeover(&handle, &app) {
+            eprintln!("craft takeover {app}: {e}");
+        }
+        let mut cmd = craft_cmd();
         std::thread::spawn(move || {
-            let _ = crate::platform::command(&script).args(["takeover", &arg(&app), "on"]).output();
+            let _ = cmd.args(["takeover", &arg(&app), "on"]).output();
         });
     } else {
         handback(&handle, &app);
@@ -501,9 +626,11 @@ fn handback<R: Runtime>(handle: &tauri::AppHandle<R>, app: &str) {
     let name = read_info(crate::config::data_dir(), &app).name;
     // 이 인스턴스를 띄운 세션(scripts/craft 가 상태 파일 by 에 적는다) — 없으면 웹이 대표 참모에게
     let by = read_info(crate::config::data_dir(), &app).by;
-    let script = script();
+    let mut cmd = craft_cmd();
     std::thread::spawn(move || {
-        let out = crate::platform::command(&script).args(["takeover", &arg(&app), "off"]).output();
+        #[cfg(windows)]
+        win_handback(&handle, &app); // 진짜 창을 화면 밖으로 — 문서 차이를 뜨기 전에(사람 화면에 남지 않게)
+        let out = cmd.args(["takeover", &arg(&app), "off"]).output();
         let text = out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
         end_handback(&app);
         to_main(&handle, "__craftHandback", serde_json::json!({ "app": app, "name": name, "text": text, "by": by }));
@@ -533,7 +660,7 @@ pub fn restore_on_start<R: Runtime>(handle: &tauri::AppHandle<R>) {
 #[tauri::command]
 pub fn craft_win_act<R: Runtime>(handle: tauri::AppHandle<R>, app: String, act: String) -> Result<(), String> {
     let args = act_args(&app, &act).ok_or("unknown action")?;
-    crate::platform::command(&script()).args(&args).spawn().map_err(|e| e.to_string())?;
+    craft_cmd().args(&args).spawn().map_err(|e| e.to_string())?;
     if act == "close" {
         close(&handle, &app)?;
     }
@@ -554,6 +681,34 @@ mod tests {
         end_handback("othercraft");
         assert!(begin_handback("examplecraft"), "끝났으면 다음 회차는 된다");
         end_handback("examplecraft");
+    }
+
+    #[test]
+    fn 윈도우_칸_그림은_png_data_url_로() {
+        assert_eq!(png_url(b"PNG"), "data:image/png;base64,UE5H");
+        assert_eq!(png_url(b""), "", "못 찍었으면 빈 글 — 웹은 앞 그림을 그대로");
+    }
+
+    #[test]
+    fn 개입_자리는_웹뷰_안_칸_자리를_화면_논리_좌표로() {
+        // 웹뷰 안쪽 왼쪽 위가 화면 (200,100) 실제 픽셀, 배율 1.5 → 논리 좌표 + 칸 CSS 자리(조작 채널 ui.window.frame 이 받는 좌표)
+        let f = pane_screen_frame((200.0, 100.0), 1.5, [10.0, 40.0, 800.0, 600.0]);
+        assert!((f[0] - (200.0 / 1.5 + 10.0)).abs() < 1e-9 && (f[1] - (100.0 / 1.5 + 40.0)).abs() < 1e-9);
+        assert_eq!((f[2], f[3]), (800.0, 600.0));
+    }
+
+    #[test]
+    fn 돌려주면_가장_오른쪽_화면_밖으로() {
+        // 화면(실제 픽셀 왼쪽·폭)들 — 오른쪽 끝을 배율로 나눠 논리 좌표, 4000 더 밖(scripts/craft craft_win.offscreen 과 같은 여유)
+        assert_eq!(offscreen_x(&[(0, 1920), (1920, 1920)], 1.0), 3840.0 + 4000.0);
+        assert_eq!(offscreen_x(&[(-1920, 1920), (0, 2880)], 1.5), 2880.0 / 1.5 + 4000.0);
+        assert_eq!(offscreen_x(&[], 1.0), 1920.0 + 4000.0, "화면 목록을 못 읽으면 1920 화면 하나로");
+    }
+
+    #[test]
+    fn 윈도우는_비추기_대신_칸_그림_상태() {
+        assert_eq!(win_mirror(Some(42)), "shot");
+        assert_eq!(win_mirror(None), "stopped");
     }
 
     #[test]

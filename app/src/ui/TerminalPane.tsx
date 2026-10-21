@@ -11,7 +11,8 @@ import { IS_WIN } from '../domain/reader';
 import { modKey } from '../domain/keys';
 import { resizeAfterOpen } from '../domain/ptySize';
 import { followLink } from './followLink';
-import { closePty, openPty, openTarget, pttTarget, pttWatch, resizePty, typePty, writeClipboard, writePty } from '../data/tauri';
+import { appStoppedRecently, closePty, listSessionsRaw, openPty, openTarget, pttTarget, pttWatch, resizePty, typePty, writeClipboard, writePty } from '../data/tauri';
+import { attachedId, exitWatcher, kickWatcher, linkStep, listedAlive, REATTACH_POLL, type LinkState } from '../domain/attachExit';
 import { usePttLive } from './pttLive';
 import { pendingWrites } from '../domain/ptyWrites';
 import { imeNoSwallow, imeTrace } from './imeTrace';
@@ -85,9 +86,13 @@ type Props = {
   headless?: boolean;
   /** 이 창을 밖에서 다루는 손잡이 — 입력칸에 글자 넣기(메모 → 세션에 보내기)·포커스 되돌리기(메모판 닫을 때). 창이 닫히면 null */
   inject?: (api: PaneApi | null) => void;
+  /** 세션에 붙어 있나 — attach 가 'Session … has exited.' 로 끝나면 reattaching, 오래 안 돌아오면 gone, 다시 붙으면 live(domain/attachExit) */
+  onLink?: (s: LinkState) => void;
 };
 
-export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls, fontSize, readOnly, onHeadClick, headDrag, linkBase, home, onFocus, note, onNoteClick, overlay, inject, onVoiceStop, headless }: Props) {
+export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls, fontSize, readOnly, onHeadClick, headDrag, linkBase, home, onFocus, note, onNoteClick, overlay, inject, onVoiceStop, headless, onLink }: Props) {
+  const linkRef = useRef(onLink);
+  linkRef.current = onLink;
   const voiceRef = useRef(onVoiceStop);
   voiceRef.current = onVoiceStop;
   const focusRef = useRef(onFocus);
@@ -266,7 +271,50 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
     fit.fit();
     let cols = term.cols;
     let rows = term.rows;
-    void openPty(command, cwd, cols, rows, (bytes) => term.write(bytes)).then((n) => {
+    // 붙은 세션이 다른 데서 respawn·꺼지면 attach 만 'Session … has exited.' 로 끝나고 세션은 산다(2026-10-21 사용자 — 채팅이 죽은 보기에 쳐서 '보내는 중').
+    // 끝을 보면 목록을 몇 초마다 보고 살아 있으면 다시 붙는다(epoch). 꺼진 세션에 attach 하면 그 세션을 켜 버려서 살아 있을 때만
+    const sid = attachedId(command);
+    const ended = sid ? exitWatcher(sid) : null;
+    const kick = sid ? kickWatcher() : null;
+    let kicked = false;
+    const dec = new TextDecoder();
+    let relink: ReturnType<typeof setInterval> | undefined;
+    let endedOnce = false;
+    const onEnded = () => {
+      if (endedOnce || !sid) return;
+      endedOnce = true;
+      if (kicked) { linkRef.current?.('gone'); return; } // 윈도우: 다른 창에 쫓겨남 — 다시 붙으면 그 창을 또 쫓아낸다
+      const since = Date.now();
+      let asking = false;
+      let gone = false;
+      linkRef.current?.('reattaching');
+      term.write(`\r\n\x1b[2m${tr('[앱] 세션 연결이 끊겼어 — 살아 있으면 다시 붙어', '[app] Lost the session link — reattaching if it is still running')}\x1b[0m\r\n`);
+      let next = 0;
+      relink = setInterval(() => {
+        if (asking || disposed || Date.now() < next) return;
+        asking = true;
+        // 앱이 끈·지운 세션이면 안 붙는다 — 꺼진 세션에 attach 하면 그 세션이 다시 켜진다. 같이 쓰는 2.5초 목록은 끄기 전 모습일 수 있어 새로 읽는다
+        void Promise.all([appStoppedRecently().catch(() => null), listSessionsRaw(true).then((j) => listedAlive(j, sid!), () => null)]).then(([stopped, alive]) => {
+          asking = false;
+          if (disposed) return;
+          if (!stopped || stopped.includes(sid!)) { clearInterval(relink); if (!gone) { gone = true; linkRef.current?.('gone'); } return; }
+          const step = linkStep({ alive, since, now: Date.now() });
+          if (step === 'attach') { clearInterval(relink); setEpoch((e) => e + 1); return; }
+          if (step === 'gone') { next = Date.now() + 15_000; if (!gone) { gone = true; linkRef.current?.('gone'); } } // 굳은 뒤엔 드물게(새 목록은 claude 를 한 번 띄운다)
+        });
+      }, REATTACH_POLL);
+    };
+    // 화면이 오기 시작하면 붙은 것(live) — 그 전에 친 말은 붙기 전 attach 에 들어가 사라질 수 있어 SessionGrid 가 이때까지 기다린다
+    let shown = false;
+    void openPty(command, cwd, cols, rows, (bytes) => {
+      // 빈 조각 = attach 가 끝남(Rust spawn_pty) — 끝 글을 못 알아봐도 이걸로 안다. 끝 글(exitWatcher)이 먼저 오면 그쪽으로
+      if (!bytes.length) { if (!disposed) onEnded(); return; }
+      term.write(bytes);
+      if (!shown && !disposed) { shown = true; linkRef.current?.('live'); }
+      const text = dec.decode(bytes, { stream: true });
+      if (kick?.(text)) kicked = true;
+      if (ended?.(text)) onEnded();
+    }).then((n) => {
       if (disposed) { void closePty(n); return; }
       id = n;
       setPtyId(n);
@@ -308,6 +356,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
 
     return () => {
       disposed = true;
+      clearInterval(relink);
       pending.close();
       pathLinks.dispose();
       osc52.dispose();

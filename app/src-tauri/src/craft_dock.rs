@@ -189,7 +189,7 @@ pub fn craft_show<R: tauri::Runtime>(handle: tauri::AppHandle<R>, app: String) -
 pub fn craft_open_file(app: String, path: String) -> Result<(), String> {
     crate::craft_window::display_name(&app).ok_or("unknown app")?;
     unhide(&app);
-    crate::platform::command(crate::craft_window::script()).args(["open", &crate::craft_window::arg(&app), "--native", &path]).spawn().map(|_| ()).map_err(|e| e.to_string())
+    crate::craft_window::craft_cmd().args(["open", &crate::craft_window::arg(&app), "--native", &path]).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// 앱 서랍 줄(scripts/craft list --json) — 아이콘 자리를 PNG data URL 로 바꿔 웹에 그대로
@@ -214,7 +214,7 @@ pub async fn craft_apps(refresh: bool, fast: Option<bool>) -> Result<Vec<serde_j
     if fast == Some(true) {
         args.push("--fast");
     }
-    let out = crate::platform::command(crate::craft_window::script()).args(&args).output().map_err(|e| e.to_string())?;
+    let out = crate::craft_window::craft_cmd().args(&args).output().map_err(|e| e.to_string())?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
@@ -226,7 +226,7 @@ pub async fn craft_apps(refresh: bool, fast: Option<bool>) -> Result<Vec<serde_j
 pub fn craft_launch(app: String) -> Result<(), String> {
     crate::craft_window::display_name(&app).ok_or("unknown app")?;
     unhide(&app);
-    crate::platform::command(crate::craft_window::script()).args(["open", &app, "--native"]).spawn().map(|_| ()).map_err(|e| e.to_string())
+    crate::craft_window::craft_cmd().args(["open", &app, "--native"]).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// 서랍에서 지우기 — scripts/craft remove(우리가 깐 것만 휴지통으로). 떠 있으면 저장하고 끄고 칸도 닫은 뒤. 웹이 먼저 한 번 묻는다
@@ -237,11 +237,11 @@ pub async fn craft_remove<R: tauri::Runtime>(handle: tauri::AppHandle<R>, app: S
     // 같은 앱이 세션마다 떠 있으면 다 — 지우기는 앱째라
     for key in crate::craft_screen::running(crate::config::data_dir(), crate::platform::pid_alive) {
         if crate::craft_window::base(&key) == Some(base) {
-            let _ = crate::platform::command(crate::craft_window::script()).args(["close", &crate::craft_window::arg(&key)]).output();
+            let _ = crate::craft_window::craft_cmd().args(["close", &crate::craft_window::arg(&key)]).output();
             let _ = crate::craft_window::close(&handle, &key);
         }
     }
-    let out = crate::platform::command(crate::craft_window::script()).args(["remove", base]).output().map_err(|e| e.to_string())?;
+    let out = crate::craft_window::craft_cmd().args(["remove", base]).output().map_err(|e| e.to_string())?;
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)).trim().to_string();
     if out.status.success() { Ok(text) } else { Err(text) }
 }
@@ -255,7 +255,7 @@ pub fn watch_hidden() {
             unhide(&app);
             let alive = crate::craft_window::read_info(crate::config::data_dir(), &app).pid.is_some_and(crate::platform::pid_alive);
             if alive {
-                let _ = crate::platform::command(crate::craft_window::script()).args(["close", &crate::craft_window::arg(&app)]).spawn();
+                let _ = crate::craft_window::craft_cmd().args(["close", &crate::craft_window::arg(&app)]).spawn();
             }
         }
     });

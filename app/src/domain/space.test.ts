@@ -39,6 +39,11 @@ describe('composeSend — 참모에게 보낼 글(여러 문서를 모아서 한
     expect(t.split('\n')).toHaveLength(2 + 30 + 1);
     expect(t).toContain('… 5줄 더 — 파일에서 보기');
   });
+  it('메모만 보낼 땐 지금 보는 문서를 밝힌다(about) — 어느 문서 얘기인지 받는 쪽이 안다', () => {
+    expect(composeSend([], '꽤 정확해', [], [], '/a/lessons.md')).toBe(['[스페이스] 사용자가 고친 것', '■ lessons.md (/a/lessons.md)', '메모: 꽤 정확해'].join('\n'));
+    expect(composeSend([{ path: '/a/lessons.md', diff: { added: ['새 줄'], removed: [] } }], '메모', [], [], '/a/lessons.md').match(/■/g)).toHaveLength(1);
+    expect(composeSend([], '', [], [], '/a/lessons.md')).toBe('');
+  });
   it('보낼 게 없으면 빈 글', () => {
     expect(composeSend([{ path: '/a/x.md', diff: { added: [], removed: [] } }], '')).toBe('');
   });

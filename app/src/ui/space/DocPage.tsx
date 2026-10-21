@@ -131,7 +131,7 @@ export function DocPage({ lead, tail, where, attachTo, path, title, owner, pinne
             )}
         </div>
       </div>
-      <SendFab send={send} sendTo={sendTo} />
+      <SendFab send={send} sendTo={sendTo} path={path} />
     </div>
   );
 }

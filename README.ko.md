@@ -158,7 +158,7 @@ Windows 는 ⌘ 가 없어서 이렇게 바뀝니다 — ⌘+글자 → Ctrl+Shi
 | `hqDir` | 참모 세션 폴더 | `<데이터>/hq` |
 | `githubUser` | 리뷰·CI 에 쓰는 계정 | `gh api user` 에서 |
 | `ttsCommand` | 한 줄을 읽어 주는 명령 | macOS `say` |
-| `features` | `office`, `tama`, `gacha`, `review`, `voice`, `agentView`(세션 브라우저를 앱에서 보기), `autoRevive`(꺼진 세션을 알아서 다시 켜기), `computerUse`(세션이 화면을 조종), `animation`(`"auto"`·`"reduce"`·`"off"`) | `autoRevive`·`computerUse` 빼고 켜짐, `animation` 은 `"auto"` |
+| `features` | `office`, `tama`, `gacha`, `review`, `voice`, `agentView`(세션 브라우저를 앱에서 보기), `autoRevive`(재시작으로 꺼진 세션을 알아서 다시 켜기), `computerUse`(세션이 화면을 조종), `animation`(`"auto"`·`"reduce"`·`"off"`) | `autoRevive`·`computerUse` 빼고 켜짐, `animation` 은 `"auto"`. 이와 따로, Chammo 가 켜져 있는 동안 Chammo 에서 끄지 않은 참모가 사라지면 늘 같은 대화로 다시 켭니다(10분에 3번까지, 그 뒤엔 카드) — 끄려면 Chammo 에서 끄세요 |
 
 ## 개인정보
 
@@ -168,7 +168,7 @@ Chammo 는 내 컴퓨터 안에서만 돕니다. 서버도 계정도 사용 통�
 - **브라우저 설치**(설치를 누를 때) — Node.js·Chrome Beta·브라우저 도구를 공식 출처에서 받고, 체크섬이나 구글 서명이 맞을 때만 씁니다.
 - **계정 사용량**(계정을 저장했을 때만) — 각 계정의 5시간·주간 사용량을 그 계정 토큰으로 api.anthropic.com 에 묻습니다. Claude Code `/usage` 와 같은 요청입니다.
 - **계정 토큰 갱신** — 지금 로그인도 만료 전에 미리 갱신합니다: 남은 시간이 1시간 아래가 되면 Claude Code 와 같은 갱신 잠금을 잡고 그 refresh token 으로 platform.claude.com 에 한 번 보냅니다(계정을 하나만 써도, API 키 로그인이면 안 함). 서버가 429 로 막으면 계정 바꾸기·미리 갱신이 다 같이 1시간 쉬고(이어지면 2배씩 6시간까지), 만료 20분 안이면 한 번만 더 해 봅니다. 인터넷 오류는 10분 뒤 다시 합니다. 요청은 'Chammo/<버전>' 이름(User-Agent)으로 보냅니다. 계정을 둘 이상 저장했으면 쉬는 저장 계정 토큰도 만료 전에 미리 갱신해 둡니다(자동 전환을 켰을 때, 만료 2시간 안쪽인 계정 하나씩 20분에 한 번 넘지 않게). 미리 못 받은 계정은 바꿔 끼우기 직전에 갱신합니다. Claude Code 가 로그인을 이어 갈 때와 같은 갱신 요청입니다.
-- **Craft 앱**(맥, 앱 서랍을 열거나 참모가 열 때) — GitHub 의 Chammo Craft 릴리스 목록·체크섬·아이콘을 묻고(하루 캐시), 받을 땐 DMG 를 체크섬·번들 id·애플 공증이 맞을 때만 깝니다. 웹판·CLI 는 원작 ArtCraft(storytold) 저장소 릴리스에서 받습니다. 나에 대한 정보는 보내지 않습니다.
+- **Craft 앱**(맥·윈도우, 앱 서랍을 열거나 참모가 열 때) — GitHub 의 Chammo Craft 릴리스 목록·체크섬·아이콘을 묻고(하루 캐시), 받을 땐 DMG 를 체크섬·번들 id·애플 공증이 맞을 때만 깝니다(윈도우는 portable zip 을 체크섬과 안의 앱 id·판이 맞을 때만 %LOCALAPPDATA%\Programs\Chammo 에 풉니다 — 아직 코드 서명 없음, Python 3 필요). 웹판·CLI 는 원작 ArtCraft(storytold) 저장소 릴리스에서 받습니다. 나에 대한 정보는 보내지 않습니다.
 - **앱 업데이트**(새 버전 띠의 업데이트를 누를 때만) — GitHub 릴리스에서 `latest.json` 과 새 판 파일을 받고, 앱에 든 공개 키로 서명이 맞을 때만 깔고 다시 켭니다. 나에 대한 정보는 보내지 않습니다.
 - **폰 알림**(폰을 짝지었을 때만) — 제목과 한 줄이 종단 암호화되어 폰의 푸시 서비스를 거칩니다.
 - **다른 기기 참모**(같은 Tailscale 계정 기기와 연결했을 때만) — 연결 요청·허용, 참모끼리 넣는 말과 답(peer-say·reply)이 연결한 그 기기와 테일넷으로만 오가고, 연결은 양방향이라 두 기기가 서로의 세션 목록·대화·대기 카드도 읽을 수 있습니다(폰보다 좁아서 나 대신 치거나 카드를 누르지는 못함). 중계 서버는 없습니다.
@@ -181,7 +181,7 @@ Chammo 는 내 컴퓨터 안에서만 돕니다. 서버도 계정도 사용 통�
 - **초기 단계입니다.** 한 사람이 매일 쓰던 도구를 그대로 공개했습니다.
 - **Claude Code 의 문서화되지 않은 내부에 기댑니다** — 백그라운드 세션, `claude agents --json`, `claude attach`, 플러그인 화면 규약. Claude Code 2.1.280 이상의 2.1.x 에서 확인했습니다. 업데이트로 깨질 수 있고, 확인한 범위를 벗어나면 앱이 알려 줍니다.
 - **백그라운드 세션은 `--dangerously-skip-permissions` 로 돕니다.** 묻지 않고 실행합니다. Chammo 의 관문(결제·운영 변경·머지 관문)이 그 앞에 서 있지만, 그래도 괜찮은 프로젝트와 기기에서만 쓰세요.
-- **Windows 는 미리보기판입니다.** 아직 없는 것: 말하기 키, Supertonic, Office 파일 미리보기, 서명된 설치 파일.
+- **Windows 는 미리보기판입니다.** 아직 없는 것: 말하기 키, Supertonic, Office 파일 미리보기, 서명된 설치 파일, 참모 라이트, Craft CLI.
 
 ## 기여
 

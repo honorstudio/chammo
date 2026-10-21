@@ -2,6 +2,7 @@
 // 일하는 중 보낸 말이 '보내는 중'으로 10분 남고 실제론 안 갔다(2026-10-06 사용자). Claude Code 2.1.291 실측:
 // · 일하는 중 Enter = 줄 서기, 기록에 queue-operation enqueue(글) → dequeue(맨 앞, 글 없음)·remove(도중 흡수)·popAll(↑로 입력칸에 되돌림)
 // · 쉴 때 입력칸에 글이 있는데 Esc 두 번 = 입력칸 지우기(기록 0) · 막 보낸 말을 Esc 로 끊으면 그 말이 입력칸으로 되돌아온다
+import type { LinkState } from './attachExit';
 import { alreadySent, chatNorm, pendingLeft, sentByMe, type ChatItem } from './chat';
 
 export type QItem = { text: string; ts: number };
@@ -61,11 +62,13 @@ export function applyQueueOps(q: QueueState, chunk: string): QueueState {
 }
 
 export type PendingMsg = { text: string; at: number };
-/** sending = 막 보냄 · queued = Claude 대기열에서 차례 기다림 · input = 터미널 입력칸에 걸림 · lost = 어디에도 없음 */
-export type PendingState = 'sending' | 'queued' | 'input' | 'lost';
+/** sending = 막 보냄 · queued = Claude 대기열에서 차례 기다림 · input = 터미널 입력칸에 걸림 · lost = 어디에도 없음
+ *  · wait = 터미널 보기가 끊겨 다시 붙는 중 — 붙으면 앱이 친다(ui/SessionGrid typeAndSend, domain/paneLinks) */
+export type PendingState = 'sending' | 'queued' | 'input' | 'lost' | 'wait';
 /** 어디에도 안 보이면 이만큼 지나서 '안 갔음'으로 — 기록 읽기(1초)·대기열 기록이 늦게 와도 넘지 않게.
- *  user 줄·enqueue 줄은 UserPromptSubmit 훅이 끝난 뒤에 붙는다 — 부하 높던 날 훅이 18~21초 걸려 10초 땐 간 말이 '안 갔어요'로 떠 다시 보냈다(2026-10-10) */
-export const LOST_AFTER = 45_000;
+ *  user 줄·enqueue 줄은 UserPromptSubmit 훅이 끝난 뒤에 붙는다 — 부하 높던 날 훅이 18~21초 걸려 10초 땐 간 말이 '안 갔어요'로 떠 다시 보냈다(2026-10-10).
+ *  45초는 너무 길어 '보내는 중'이 끝없이 남는 것처럼 보였다 — 30초(2026-10-21 사용자, 훅 21초보다 넉넉히) */
+export const LOST_AFTER = 30_000;
 /** Enter 를 넣은 뒤 이만큼은 입력칸에 보여도 '치는 중'으로 본다 */
 const SETTLE = 1000;
 /** 같은 말에 Enter 를 다시 넣는 최대 횟수 */
@@ -81,15 +84,19 @@ const after = (items: QItem[], p: PendingMsg) => items.some((q) => q.ts >= p.at 
 export const resent = (p: PendingMsg & { since?: number }, now: number) => ({ text: p.text, at: now, since: p.since ?? p.at - 10_000 });
 
 /** 새로 보낸 말 — 맞출 기록은 보낸 때(10초 여유) 뒤, 그 사이 이미 들어온 같은 글 뒤부터. 방금 간 같은 말을 몇 초 뒤 또 보내면
- *  앞 말 기록에 짝지어져 이번 말이 안 가도 '보내는 중'도 '안 갔어요'도 없이 사라졌다(2026-10-11 bug-hunt 하네스) */
+ *  앞 말 기록에 짝지어져 이번 말이 안 가도 '보내는 중'도 '안 갔어요'도 없이 사라졌다(2026-10-11 bug-hunt 하네스).
+ *  now = 치기 시작한 때. 그 뒤 기록은 이번 말이다 — 앱 줄은 다 친 뒤에 알려서 그 사이 읽힌 제 기록을 '앞 말'로 건너뛰어 '안 갔어요'로 남았다(2026-10-21 qa-036) */
 export function newPending(text: string, items: ChatItem[], now: number): PendingMsg & { since: number } {
   const from = now - 10_000;
   const n = chatNorm(text);
-  const last = n ? Math.max(-Infinity, ...sentByMe(items).filter((i) => { const t = chatNorm(i.text); return (t === n || t.includes(n)) && Date.parse(i.ts) >= from; }).map((i) => Date.parse(i.ts))) : -Infinity;
+  const last = n ? Math.max(-Infinity, ...sentByMe(items).filter((i) => { const t = chatNorm(i.text), at = Date.parse(i.ts); return (t === n || t.includes(n)) && at >= from && at < now; }).map((i) => Date.parse(i.ts))) : -Infinity;
   return { text, at: now, since: Math.max(from, last + 1) };
 }
 
-export function pendingState(p: PendingMsg, c: { queue: QueueState; termText: string; now: number; enterWait: number }): PendingState {
+/** link = 그 세션 터미널 보기(domain/attachExit) — 끊긴 동안엔 화면 글(termText)이 죽은 화면이라 입력칸은 안 본다.
+ *  다시 붙는 중이면 wait(단추 없음 — 붙으면 앱이 친다), 끊김이 굳었으면(gone) 30초를 안 기다리고 바로 lost. 대기열에 이미 들어간 말은 그대로 queued */
+export function pendingState(p: PendingMsg, c: { queue: QueueState; termText: string; now: number; enterWait: number; link?: LinkState }): PendingState {
+  if (c.link && c.link !== 'live') return after(c.queue.waiting, p) ? 'queued' : c.link === 'gone' ? 'lost' : 'wait';
   const typed = p.at + c.enterWait;
   if (c.now < typed + SETTLE) return 'sending';
   const n = sq(p.text);
@@ -104,7 +111,7 @@ export const PENDING_MS = 3_600_000;
 export const waitingOf = <T extends PendingMsg & { since?: number }>(pending: T[], items: ChatItem[], now: number): T[] =>
   pendingLeft(pending, items, now).filter((p) => now - p.at < PENDING_MS);
 /** 말풍선 단추 — 보내는 중엔 없음, 안 갔어요면 다시 보내기, 대기 중·입력칸이면 지금 보내기(빼기는 대기열·입력칸 모양을 더 봐서 따로) */
-export const pendAct = (st: PendingState): 'again' | 'now' | null => (st === 'sending' ? null : st === 'lost' ? 'again' : 'now');
+export const pendAct = (st: PendingState): 'again' | 'now' | null => (st === 'sending' || st === 'wait' ? null : st === 'lost' ? 'again' : 'now');
 
 /** Enter 를 다시 넣을 말(tries 는 보낸 시각별 누른 횟수 — 같은 말을 나중에 또 보내도 새로 센다) — 입력칸이 그 말 하나뿐이고, 사람이 ↑로 되돌린 게 아니고, / 명령이 아니고, 덜 눌렀고, 친 지 2초 넘었을 때.
  *  일하는 중이어도 고른다 — 일하는 중 Enter 는 줄 서기라 안전하다(예전엔 쉴 때 한 번만 눌러서 일하는 중 걸린 말이 남았다) */

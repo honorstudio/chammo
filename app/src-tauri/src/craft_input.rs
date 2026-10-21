@@ -42,6 +42,11 @@ impl Conn {
         Ok(c)
     }
 
+    /// 읽기 시간 제한 — 기본 60초(긴 명령), 칸 그림·창 옮기기는 짧게
+    pub fn timeout(&mut self, d: std::time::Duration) {
+        let _ = self.w.set_read_timeout(Some(d));
+    }
+
     fn send(&mut self, mut req: Value) -> Result<Value, String> {
         self.id += 1;
         req["id"] = json!(self.id);

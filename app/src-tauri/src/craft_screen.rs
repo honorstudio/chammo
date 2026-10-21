@@ -130,7 +130,7 @@ pub fn running(data_dir: &std::path::Path, alive: impl Fn(i32) -> bool) -> Vec<S
 /// 그 pid 가 아직 그 앱인가 — 상태 파일의 exe(<앱>.app/Contents/MacOS)로 시작하는 실행 파일만. 옛 상태 파일(exe 없음)은 맥 앱 모양이면
 pub fn same_app(comm: &str, exe: Option<&str>) -> bool {
     match exe {
-        Some(e) if !e.is_empty() => comm.starts_with(e),
+        Some(e) if !e.is_empty() => comm.starts_with(e) || comm.to_lowercase().starts_with(&e.to_lowercase()), // 윈도우 경로는 대소문자가 섞여 온다
         _ => comm.contains(".app/Contents/MacOS/"),
     }
 }
@@ -160,17 +160,30 @@ pub fn exit_wait(dialog: bool, sigterm: bool) -> std::time::Duration {
     if dialog || sigterm { std::time::Duration::ZERO } else { std::time::Duration::from_secs(3) }
 }
 
+/// 그 pid 의 실행 파일 — 맥은 ps comm, 윈도우는 ps 가 없어 sysinfo(상태 파일 exe 와 대조 — same_app)
+fn proc_exe(pid: i64) -> String {
+    #[cfg(windows)]
+    {
+        use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+        let p = Pid::from_u32(pid as u32);
+        let mut s = System::new();
+        s.refresh_processes_specifics(ProcessesToUpdate::Some(&[p]), true, ProcessRefreshKind::nothing().with_exe(UpdateKind::Always));
+        s.process(p).and_then(|x| x.exe()).map(|e| e.to_string_lossy().into_owned()).unwrap_or_default()
+    }
+    #[cfg(not(windows))]
+    crate::platform::command("ps").args(["-o", "comm=", "-p", &pid.to_string()]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+}
+
 /// 떠 있는 Craft 앱마다 scripts/craft close|save 를 뒤에서 — 저장을 맡긴 앱 이름들(pid 가 다른 프로그램이면 뺀다)
 fn start_closing() -> Vec<(String, i32)> {
     let d = crate::config::data_dir();
-    let script = crate::craft_window::script();
     let mut out = vec![];
     for a in running(d, crate::platform::pid_alive) {
         let st: serde_json::Value = std::fs::read_to_string(d.join("craft-native").join(format!("{a}.json"))).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
         let Some(pid) = st["pid"].as_i64() else { continue };
-        let comm = crate::platform::command("ps").args(["-o", "comm=", "-p", &pid.to_string()]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+        let comm = proc_exe(pid);
         if let Some(verb) = exit_verb(&st, &comm) {
-            if crate::platform::command(&script).args([verb.to_string(), crate::craft_window::arg(&a)]).spawn().is_ok() {
+            if crate::craft_window::craft_cmd().args([verb.to_string(), crate::craft_window::arg(&a)]).spawn().is_ok() {
                 out.push((a, pid as i32));
             }
         }
@@ -292,6 +305,14 @@ pub fn watch_idle() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 윈도우는_exe_전체_경로로_대조_대소문자_무관() {
+        let e = r"C:\Users\Me\AppData\Local\Programs\Chammo\Grid\gridcraft.exe";
+        assert!(same_app(e, Some(e)));
+        assert!(same_app(&e.to_lowercase(), Some(e)), "sysinfo 경로와 상태 파일 경로의 대소문자가 달라도");
+        assert!(!same_app(r"C:\Windows\notepad.exe", Some(e)));
+    }
 
     #[test]
     fn 꺼질_때_저장_중인_앱은_도우미가_화면을_살려_둔다() {

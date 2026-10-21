@@ -2,7 +2,6 @@
 // 고친 것은 변경(mutation)마다 기록해 두었다가 1초 모아 Rust(write_sheet)로 — 원본 xlsx 에서 그 칸만 바뀐다
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
 import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets';
 import { UniverSheetsCorePreset } from '@univerjs/preset-sheets-core';
 import sheetsKo from '@univerjs/preset-sheets-core/locales/ko-KR';
@@ -14,6 +13,7 @@ import { toUniver, type SheetBook } from '../../domain/sheetBook';
 import { blockedOf, cellState, compile, fromCalc, fromMutation, type CellState, type LogCtx, type LogEntry } from '../../domain/sheetLog';
 import { conflicts } from '../../domain/sheetPending';
 import { cellChanges, plan, skipOf, typed, type Put } from '../../domain/sheetPlay';
+import { onSheetPlay } from './sheetPlayBus';
 import { OrchAvatar } from '../avatar/OrchAvatar';
 
 export type SheetStatus = 'saved' | 'dirty' | 'saving' | 'conflict' | 'gone' | 'blocked' | 'error';
@@ -214,10 +214,8 @@ export default function SheetGrid({ path, book, stamp, onStatus, onSaved, onRelo
         window.setTimeout(() => setCursor(null), 400);
       });
     };
-    let unlisten: (() => void) | null = null;
-    // 듣기 끄기가 던져도(이벤트 내부가 없는 하네스 등) 치우기 길은 끝까지 가야 한다
-    const safeOff = (f: () => void) => { try { f(); } catch { /* 이미 꺼짐 */ } };
-    void listen<{ id: string; path: string; puts: Put[]; by?: string }>('sheet-play', (ev) => { if (ev.payload.path === path) play(ev.payload); }).then((f) => { if (closed) safeOff(f); else unlisten = () => safeOff(f); }).catch(() => {});
+    // 받자마자 '받았어'(sheet_play_ack) — 안 하면 Rust 가 3초 뒤 파일에 바로 써 버린다
+    const unlisten = onSheetPlay(path, (p) => { void invoke('sheet_play_ack', { id: p.id }).catch(() => {}); play(p); });
     void invoke('sheet_open', { path, on: true }).catch(() => {});
     /** 밖(참모·세션)이 파일을 고쳤다 — 안 쓴 내 고침이 없으면 그대로 다시 읽고, 있으면 바깥 판 위에 내 칸만 얹는다.
      *  내가 고친 칸을 밖에서도 고쳤으면 충돌 띠(사용자 것도 바깥 것도 덮지 않는다 — 고르는 건 사용자) */
@@ -335,7 +333,7 @@ export default function SheetGrid({ path, book, stamp, onStatus, onSaved, onRelo
     (window as unknown as { __sheet?: unknown }).__sheet = { univerAPI, fwb, save: () => save(), log: () => log, play };
     return () => {
       closed = true;
-      unlisten?.();
+      unlisten();
       void invoke('sheet_open', { path, on: false }).catch(() => {});
       offBefore.dispose(); offAfter.dispose();
       window.clearInterval(watchTimer);

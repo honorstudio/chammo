@@ -5,7 +5,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import { tr } from '../../i18n';
 import { craftBase } from '../../domain/craftTab';
-import { sizeText, splitRows, tileCorner, tileIcon, tileLetter, tileLoading, tileTitle, tileUnavailable, usedTotal, type DrawerRow } from '../../domain/craftDrawer';
+import { sizeText, splitRows, tileCorner, tileIcon, tileLetter, tileLoading, tileTitle, tileUnavailable, usedLine, usedTotal, type DrawerRow } from '../../domain/craftDrawer';
+import { IS_WIN } from '../../domain/reader';
 import type { MenuItem } from '../OrchDialogs';
 import { IconPower, IconRefresh, IconTrash } from '../Icons';
 import './drawer.css';
@@ -93,7 +94,7 @@ export function CraftDrawer({ running: keys, openMenu }: { running: string[]; op
         <h1>{tr('Craft 앱', 'Craft apps')}</h1>
         {rows && <span className="cd-n">{rows.length}</span>}
         <span className="cd-sp" />
-        {rows && <span className="cd-used">{tr(`이 맥에서 ${sizeText(usedTotal(rows)) || '0MB'}`, `${sizeText(usedTotal(rows)) || '0MB'} on this Mac`)}</span>}
+        {rows && <span className="cd-used">{usedLine(usedTotal(rows), IS_WIN)}</span>}
         <button className="ib" aria-label={refreshLabel} title={refreshLabel} onClick={() => load(true)}><IconRefresh /></button>
       </div>
       {ask && (

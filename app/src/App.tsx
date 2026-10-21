@@ -106,6 +106,7 @@ import { inferRoles, parseRoles, roleHeir, type RoleMap } from './domain/orchRol
 import { setOrchRoleData, saveOrchRole, orchRoleOf, onOrchRolesSaved } from './ui/orchRoleStore';
 import { autoRestore, parseSnap, stepSnapshot, type LiveSnap, type SnapSession } from './domain/revive';
 import { useLostTriage } from './ui/useLostTriage';
+import { useOrchRevive } from './ui/useOrchRevive';
 import { useRoutineStalls } from './ui/useRoutineStalls';
 import { isHqOrch } from './domain/lostTriage';
 import { parseSpawnOutput } from './domain/adopt';
@@ -1111,10 +1112,25 @@ export default function App() {
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [homeResume, groups.orchestrators]);
+  // 참모가 앱이 끄지 않았는데 목록에서 사라지면 같은 대화로 다시 켠다(domain/orchRevive) — 사람은 껐다 켤 줄 모른다(2026-10-21 사용자).
+  // 보고 있던 참모였으면 홈에서 깨울 때처럼 뜨면 그 채팅으로 돌아간다
+  const lastFront = useRef<{ id?: string; prev?: string }>({});
+  if (groups.orchestrator?.id !== lastFront.current.id) lastFront.current = { id: groups.orchestrator?.id, prev: lastFront.current.id };
+  const reviving = useOrchRevive({
+    orchs: navOrchs, ready: snapReady && !!env, refresh,
+    revive: async (s) => {
+      markPending(s.sessionId);
+      markResuming(s.sessionId);
+      if (lastFront.current.prev === s.id || lastFront.current.id === s.id) setHomeResume(s.sessionId);
+      await resumeSession(s.cwd, s.sessionId, s.id).catch((e: unknown) => setError(tr(`${orchDisplay(s) || s.name} 다시 켜기 실패: ${String(e)}`, `Could not restart ${orchDisplay(s) || s.name}: ${String(e)}`)));
+    },
+  });
   // 깨우는·새로 켜는 동안 참모 채팅 입력칸 위 한 줄(2026-10-12 rail-wake) — 채팅은 뜰 때까지 앞 참모에 남아서, 그사이 친 말이 엉뚱한 참모로 가지 않게
   const wakeX = homeResume ? stopped.find((x) => x.sessionId === homeResume) : undefined;
   const wakeName = wakeX?.name ?? (creating && !arrivedOrch(creating, navOrchs) ? creating : undefined);
-  const wakeNote = wakeName ? <WakeNotice name={wakeName} label={wakeX ? orchDisplay(wakeX) || wakeName : wakeName.split(' · ').pop() ?? wakeName} waking={!!wakeX} /> : undefined;
+  const revivingX = reviving[0];
+  const wakeNote = wakeName ? <WakeNotice name={wakeName} label={wakeX ? orchDisplay(wakeX) || wakeName : wakeName.split(' · ').pop() ?? wakeName} waking={!!wakeX} />
+    : revivingX ? <WakeNotice name={revivingX.name} label={orchDisplay(revivingX) || revivingX.name} waking text={tr(`${orchDisplay(revivingX) || revivingX.name} — 꺼져서 다시 켜는 중`, `${orchDisplay(revivingX) || revivingX.name} stopped — restarting it`)} /* 이름이 '참모'면 '참모 참모가'로 겹쳤다(10/21 시험 앱) */ /> : undefined;
   // 위젯 '더보기'·단축키 — 화면을 옮기지 않고 지금 화면 위 모달로(같은 PetView). 전엔 채팅 뷰면 스페이스 펫 탭으로 넘어갔다(2026-10-10 사용자)
   openPetRef.current = () => setPetModal(true);
   useEffect(() => {

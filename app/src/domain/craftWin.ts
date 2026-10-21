@@ -4,7 +4,8 @@
  */
 import { assistant, josa, tr } from '../i18n';
 
-export type MirrorState = 'waiting' | 'live' | 'no-permission' | 'no-window' | 'stopped' | 'not-built';
+/** shot = 윈도우 — 비추기 대신 그 앱 조작 채널 그림(ui.screenshot)을 칸에 깐다(2026-10-21) */
+export type MirrorState = 'waiting' | 'live' | 'no-permission' | 'no-window' | 'stopped' | 'not-built' | 'shot';
 
 export interface CraftInfo {
   name: string;
@@ -36,6 +37,7 @@ export function doingLine(i: CraftInfo, who?: string): string {
 export function mirrorNote(i: CraftInfo): { text: string; settings: boolean } | null {
   switch (i.mirror) {
     case 'live':
+    case 'shot':
       return null;
     case 'waiting':
       return { text: tr('앱 화면을 비추는 중…', 'Mirroring the app…'), settings: false };
@@ -52,6 +54,13 @@ export function mirrorNote(i: CraftInfo): { text: string; settings: boolean } | 
     default:
       return { text: tr('비추기가 멈췄어 — 창을 닫았다 다시 열면 이어져.', 'Mirroring stopped — close and reopen this window.'), settings: false };
   }
+}
+
+/** 윈도우 칸 그림을 지금 받을까 — 보는 중(칸이 보이고 창이 보임)·개입 아님·받는 중 아님일 때, 1초에 한 번 또는 참모가 방금 한 일이 바뀌면 바로(명령 직후 한 장).
+ *  shotLast = 마지막 그림을 받을 때의 last. 화면 밖 창이라도 받기마다 앱이 그림을 만든다(그리드 2fps 한 코어 9~12%, 포토 한 장 0.55초) — 1fps 를 넘기지 않는다 */
+export function paneShotDue(s: { mirror: string; visible: boolean; docVisible: boolean; takeover: boolean; inFlight: boolean; lastAt: number; now: number; last: string; shotLast: string }): boolean {
+  if (s.mirror !== 'shot' || !s.visible || !s.docVisible || s.takeover || s.inFlight) return false;
+  return s.now - s.lastAt >= 1000 || s.last !== s.shotLast;
 }
 
 /** 화면 기록 권한 설정 화면 */

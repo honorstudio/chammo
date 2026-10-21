@@ -5,7 +5,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
 import { tr } from '../../i18n';
-import { doingLine, mirrorNote, saveState, takeButton, type CraftInfo } from '../../domain/craftWin';
+import { doingLine, mirrorNote, paneShotDue, saveState, takeButton, type CraftInfo } from '../../domain/craftWin';
+import { IS_WIN } from '../../domain/reader';
 import { boxOf, coveredAt, COVERS, sameBox, shown, wantStill, type Box } from '../../domain/craftTab';
 import { IconClose, IconDockIn, IconPower, IconSettings, IconWindowOut } from '../Icons';
 import { askPermission } from '../../data/tauri';
@@ -53,6 +54,29 @@ function useSpacePlace(app: string, on: boolean, stage: React.RefObject<HTMLElem
   return { elsewhere, still };
 }
 
+/** 윈도우 칸 그림 — 맥 비추기 대신 그 앱 조작 채널 그림(craft_pane_shot)을 보는 중에만 1초에 한 번 이하, 참모 일이 바뀌면 바로(paneShotDue) */
+function usePaneShot(app: string, info: CraftInfo, stage: React.RefObject<HTMLElement | null>) {
+  const [pic, setPic] = useState('');
+  const now = useRef(info);
+  now.current = info;
+  useEffect(() => {
+    if (!IS_WIN) return;
+    const r = { inFlight: false, lastAt: 0, shotLast: '\u0000' };
+    const t = setInterval(() => {
+      const i = now.current;
+      const el = stage.current;
+      const visible = !!el && shown(boxOf(el.getBoundingClientRect()), !!document.querySelector(COVERS));
+      if (!paneShotDue({ mirror: String(i.mirror), visible, docVisible: document.visibilityState === 'visible', takeover: i.takeover, inFlight: r.inFlight, lastAt: r.lastAt, now: Date.now(), last: i.last, shotLast: r.shotLast })) return;
+      r.inFlight = true;
+      r.lastAt = Date.now();
+      const last = i.last;
+      void invoke<string>('craft_pane_shot', { app }).then((u) => { if (u) setPic(u); r.shotLast = last; }, () => {}).finally(() => { r.inFlight = false; });
+    }, 250);
+    return () => clearInterval(t);
+  }, [app, stage]);
+  return pic;
+}
+
 /** app = 인스턴스 키('photocraft-2' 도), whoOf = 띄운 세션 id → 별명(스페이스만 — 따로 창은 세션 목록이 없어 대표 참모 이름) */
 export function CraftPane({ app, place, whoOf }: { app: string; place: 'space' | 'window'; whoOf?: (by?: string) => string | undefined }) {
   const [info, setInfo] = useState<CraftInfo>(EMPTY);
@@ -65,6 +89,7 @@ export function CraftPane({ app, place, whoOf }: { app: string; place: 'space' |
     const t = setInterval(tick, 1000);
     return () => { alive = false; clearInterval(t); };
   }, [app]);
+  const pic = usePaneShot(app, info, stage);
 
   const hide = () => void invoke('craft_hide', { app }).catch(() => {}); // 닫기 = 탭(창)만 닫기 — 앱은 독에 남는다
   // 끄기(v7 B1·B3) — 바뀐 게 있으면 저장하고 끈다, 누르면 '저장하고 끄는 중'(꺼지면 칸이 닫힌다)
@@ -92,7 +117,7 @@ export function CraftPane({ app, place, whoOf }: { app: string; place: 'space' |
     setInfo((i) => ({ ...i, takeover: false }));
     void invoke('craft_win_takeover', { app, on: false }).catch(() => {});
   };
-  const note = elsewhere ? null : mirrorNote(info);
+  const note = elsewhere ? null : info.mirror === 'shot' && !pic ? { text: tr('앱 화면을 받는 중…', 'Getting the app screen…'), settings: false } : mirrorNote(info);
   const who = whoOf?.(info.by);
   const move = () => void invoke('craft_move', { app, to: place === 'space' ? 'window' : 'space' }).catch(() => {});
   const moveLabel = place === 'space' ? tr('따로 창으로', 'Open in its own window') : tr('스페이스로 옮기기', 'Move into the space');
@@ -127,6 +152,7 @@ export function CraftPane({ app, place, whoOf }: { app: string; place: 'space' |
           </div>
         )}
       <main className="cw-stage" ref={stage}>
+        {pic && !elsewhere && <img className="cw-still cw-pane" src={pic} alt="" />}
         {still && !elsewhere && <img className="cw-still" src={still} alt="" />}
         {elsewhere && (
           <div className="cw-note">

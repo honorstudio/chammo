@@ -393,7 +393,7 @@ export function ReaderView({ surface, actions, send, sendTo }: { surface: string
         </div>
       )}
       <div className="rd-body" ref={body} data-path={s.active ?? undefined}>
-        {send && <SendFab send={send} sendTo={sendTo} />}
+        {send && <SendFab send={send} sendTo={sendTo} path={s.active} />}
         {s.active ? <Doc path={s.active} nonce={nonce} zoom={zoom} editing={!!editing[s.active]} /> : <div className="rd-empty">{tr(`파일을 여기에 끌어다 놓거나, ${assistant()}한테 "띄워줘"라고 해 — HTML 시안·PDF·마크다운·그림·영상`, `Drop a file here, or ask ${assistant()} to show one — HTML designs, PDFs, Markdown, images, videos`)}</div>}
       </div>
     </div>

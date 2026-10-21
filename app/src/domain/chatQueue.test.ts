@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyQueueOps, LOST_AFTER, autoEnterTarget, emptyQueue, ESC_GAP, escPlan, inputLeftover, keepAfterRemove, MINE_KEEP, mineForLeftover, pendingState, typeQueue, type QueueState } from './chatQueue';
+import { applyQueueOps, LOST_AFTER, autoEnterTarget, emptyQueue, ESC_GAP, escPlan, inputLeftover, keepAfterRemove, MINE_KEEP, mineForLeftover, pendAct, pendingState, typeQueue, type QueueState } from './chatQueue';
 import grid from '../ui/SessionGrid.tsx?raw';
 import pane from '../ui/TerminalPane.tsx?raw';
 import tauriTs from '../data/tauri.ts?raw';
@@ -104,6 +104,27 @@ describe('pendingState — 보낸 말이 지금 어디 있나', () => {
   it('기록·대기열·입력칸 어디에도 없으면 잠깐은 보내는 중, 그 뒤엔 안 갔음', () => {
     expect(pendingState({ text: '안녕', at: at(25) }, base)).toBe('sending');
     expect(pendingState({ text: '안녕', at: at(1) }, { ...base, now: at(1) + LOST_AFTER + 1000 })).toBe('lost');
+  });
+
+  it('보내는 중은 30초까지 — 그 뒤엔 전달 안 됨(2026-10-21 사용자: 끝없이 보내는 중으로 남았다)', () => {
+    expect(LOST_AFTER).toBe(30_000);
+  });
+
+  // 2026-10-21: 다른 참모가 claude respawn 하자 붙어 있던 터미널 보기가 'Session … has exited.' 로 끝났다 — 거기 친 말은 허공으로 갔다
+  it('터미널 보기가 다시 붙는 중이면 기다림(wait) — 단추 없이, 붙으면 앱이 친다(사람이 다시 보내면 두 번 간다)', () => {
+    const p = { text: '일러 드래그', at: at(1) };
+    expect(pendingState(p, { ...base, link: 'reattaching', now: at(1) + LOST_AFTER * 4 })).toBe('wait');
+    expect(pendAct('wait')).toBeNull();
+  });
+
+  it('세션이 없다(끊긴 채 안 돌아옴)면 30초를 안 기다리고 바로 전달 안 됨', () => {
+    expect(pendingState({ text: '안녕', at: at(29) }, { ...base, link: 'gone' })).toBe('lost');
+  });
+
+  it('끊겼어도 Claude 대기열에 이미 들어간 말은 대기 중 그대로', () => {
+    const queue = { waiting: [{ text: '안녕', ts: at(2) }], popped: [] };
+    expect(pendingState({ text: '안녕', at: at(1) }, { ...base, queue, link: 'reattaching' })).toBe('queued');
+    expect(pendingState({ text: '안녕', at: at(1) }, { ...base, queue, link: 'gone' })).toBe('queued');
   });
 });
 

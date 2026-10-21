@@ -48,8 +48,9 @@ describe('돌려받음 줄은 그 앱을 연 세션에도', () => {
   });
 });
 
-describe('Craft 는 지금 맥만', () => {
-  it('윈도우에선 탭 줄의 앱 서랍 단추를 숨긴다(0.3.4 2차 검증 — 열면 os error 원문)', () => {
-    expect(space).toMatch(/\{!IS_WIN && \( \/\/ Craft 는 지금 맥만[\s\S]{0,200}setPick\(APPS_KEY\)/);
+describe('Craft 서랍은 윈도우에도(2026-10-21 단계 3 — scripts/craft 윈도우 길)', () => {
+  it('탭 줄의 앱 서랍 단추를 윈도우에서도 보인다', () => {
+    expect(space).not.toMatch(/!IS_WIN && \( \/\/ Craft 는 지금 맥만/);
+    expect(space).toMatch(/onClick=\{\(\) => setPick\(APPS_KEY\)\}/);
   });
 });

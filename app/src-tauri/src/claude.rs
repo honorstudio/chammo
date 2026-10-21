@@ -299,9 +299,32 @@ pub async fn stop_session(id: String, why: Option<String>) -> Result<String, Str
         .map_err(|e| e.to_string())?
 }
 
+/// 앱이 끈·지운 세션과 그때 — 참모 되살리기(프론트 domain/orchRevive)가 사람이 끈 참모를 다시 켜지 않게(2026-10-21)
+static APP_STOPS: std::sync::Mutex<Vec<(String, std::time::Instant)>> = std::sync::Mutex::new(Vec::new());
+const STOP_KEEP: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// keep 안의 것만 남기고 그 번호들
+fn recent_stops(list: &mut Vec<(String, std::time::Instant)>, now: std::time::Instant, keep: std::time::Duration) -> Vec<String> {
+    list.retain(|(_, at)| now.saturating_duration_since(*at) < keep);
+    list.iter().map(|(id, _)| id.clone()).collect()
+}
+
+fn note_app_stop(id: &str) {
+    let mut g = APP_STOPS.lock().unwrap_or_else(|e| e.into_inner());
+    recent_stops(&mut g, std::time::Instant::now(), STOP_KEEP);
+    g.push((id.to_string(), std::time::Instant::now()));
+}
+
+/// 최근 10분 안에 앱(버튼·메뉴·폰·종료 창)이 끄거나 지운 세션 번호
+#[tauri::command]
+pub fn app_stopped_recently() -> Vec<String> {
+    recent_stops(&mut APP_STOPS.lock().unwrap_or_else(|e| e.into_inner()), std::time::Instant::now(), STOP_KEEP)
+}
+
 /// stop_session 의 몸통 — 폰 서버(참모 재우기)도 같은 길로
 pub fn stop_blocking(id: &str, why: &str) -> Result<String, String> {
     log_action("stop", id, why);
+    note_app_stop(id);
     let r = run(&["stop", id]).map(|s| s.trim().to_string());
     forget_agents();
     r
@@ -310,6 +333,7 @@ pub fn stop_blocking(id: &str, why: &str) -> Result<String, String> {
 /// remove_session 의 몸통 — 폰 서버(참모 제거)도 같은 길로. 꺼진 세션이면 stop 은 실패해도 넘어간다
 pub fn remove_blocking(id: &str, why: &str) -> Result<String, String> {
     log_action("rm", id, why);
+    note_app_stop(id);
     let _ = run(&["stop", id]);
     let r = run(&["rm", id]).map(|s| s.trim().to_string());
     forget_agents();
@@ -583,6 +607,19 @@ mod task_tests {
         let v = parse_tasks(&files);
         assert_eq!(v.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["2", "10"]);
         assert_eq!(v[0].active_form.as_deref(), Some("둘 하는 중"));
+    }
+}
+
+#[cfg(test)]
+mod stop_memo_tests {
+    #[test]
+    fn 앱이_끈_세션은_10분만_기억한다() {
+        let t0 = std::time::Instant::now();
+        let keep = std::time::Duration::from_secs(600);
+        let mut list = vec![("aaaaaaaa".to_string(), t0), ("bbbbbbbb".to_string(), t0 + std::time::Duration::from_secs(300))];
+        assert_eq!(super::recent_stops(&mut list, t0 + std::time::Duration::from_secs(60), keep), vec!["aaaaaaaa", "bbbbbbbb"]);
+        assert_eq!(super::recent_stops(&mut list, t0 + std::time::Duration::from_secs(601), keep), vec!["bbbbbbbb"], "10분 지난 건 빠진다");
+        assert_eq!(list.len(), 1, "지난 것은 목록에서도 지운다");
     }
 }
 

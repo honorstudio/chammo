@@ -147,11 +147,15 @@ pub(crate) fn spawn_pty(
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
 
     // pty 마다 읽기 스레드 하나 — 한 창이 출력을 쏟아도 다른 창이 안 밀린다
+    // 자식이 끝나면(읽기 끝) 빈 조각 하나로 알린다 — 터미널 보기가 붙은 세션이 respawn 되면 attach 만 끝나고 세션은 산다(2026-10-21, 프론트 TerminalPane 이 다시 붙는다)
     std::thread::spawn(move || {
         let mut buf = vec![0u8; 64 * 1024];
         loop {
             match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
+                Ok(0) | Err(_) => {
+                    let _ = on_data(&[]);
+                    break;
+                }
                 Ok(n) => {
                     if !on_data(&buf[..n]) {
                         break;
@@ -390,6 +394,26 @@ mod tests {
             st = stat_of(pid);
         }
         assert!(st.is_empty(), "닫은 뒤에도 프로세스가 남았다(상태 {st})");
+    }
+
+    // 2026-10-21: 붙은 세션이 respawn 되면 attach 가 끝나는데 끝 글(ESC 7·8 붙음)을 못 알아봐 보기가 죽은 채 남았다 —
+    // 자식이 끝나면 빈 조각 하나로 알린다(프론트 TerminalPane 이 다시 붙을지 본다)
+    #[cfg(unix)]
+    #[test]
+    fn 자식이_끝나면_빈_조각_하나로_알린다() {
+        let got = std::sync::Arc::new(std::sync::Mutex::new(Vec::<usize>::new()));
+        let g = got.clone();
+        let (master, writer, child) = super::spawn_pty("printf hi; exit 0", None, 80, 24, move |b| { g.lock().unwrap().push(b.len()); true }).unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !got.lock().unwrap().contains(&0) && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let lens = got.lock().unwrap().clone();
+        assert_eq!(lens.last(), Some(&0), "끝에 빈 조각 하나: {lens:?}");
+        assert_eq!(lens.iter().filter(|&&n| n == 0).count(), 1, "빈 조각은 한 번만");
+        super::reap(child);
+        drop(writer);
+        drop(master);
     }
 
     // 스스로 끝난 자식(사용자가 claude 를 /exit)도 닫을 때 거둔다

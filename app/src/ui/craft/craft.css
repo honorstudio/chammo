@@ -15,6 +15,8 @@ body { background: var(--surface); overflow: hidden; }
 .cw-btn:hover { background: var(--hover); }
 .cw-stage { flex: 1; min-height: 0; position: relative; background: #1e1e1e; display: flex; align-items: center; justify-content: center; }
 .cw-still { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
+/* 윈도우 칸 그림 — 앱 창(화면 밖) 크기가 칸과 달라 비율을 지킨다 */
+.cw-pane { object-fit: contain; }
 .cw-note { position: relative; max-width: 440px; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 18px 22px; border-radius: 12px; background: #26262c; color: #e6e6ec; font-size: 13px; line-height: 1.6; text-align: center; }
 .cw-doing { flex: none; height: 28px; box-sizing: border-box; display: flex; align-items: center; padding: 0 12px; font: 11.5px/1.5 "MesloLGS NF", ui-monospace, Menlo, Consolas, monospace; color: #c9c9d1; background: #18181c; white-space: nowrap; overflow: hidden; }
 .cw-doing.busy { color: #fff; }

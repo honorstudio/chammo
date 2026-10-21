@@ -11,6 +11,8 @@ import { screenDialog, type ScreenDialog } from '../../domain/screenDialog';
 import type { PickResult, PickWant } from './modelPickRun';
 import { builtinSlash, completeSlash, isMemoryCmd, matchSlash, slashQuery, type SlashItem } from '../../domain/slash';
 import { appendChat, chatBusy, chatEscStops, chatNorm, escUnsends, enterDelay, parseChat, clickFocusesInput, sentByMe, promptInput, sendControls, splitPaths, splitRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
+import type { LinkState } from '../../domain/attachExit';
+import { LINK_WAIT } from '../../domain/paneLinks';
 import { againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, mineForLeftover, newPending, pendAct, pendingState, resent, waitingOf, type PendingState, type QueueState } from '../../domain/chatQueue';
 import { mdToHtml } from '../md';
 import { openTarget, readSessionTasks, readTranscript, type SessionTask } from '../../data/tauri';
@@ -64,7 +66,7 @@ const drafts = draftStore((() => { try { return window.localStorage; } catch { r
  * 스페이스 모드의 채팅 보기(2026-09-30 사용자). 터미널(TUI)은 뒤에 그대로 붙어 있고, 이건 그 위에 덮는 판이다.
  * 읽기 = 대화 기록 이어 읽기, 쓰기 = 그 터미널 입력칸에 붙여넣고 Enter(send). 멈추기 = Esc
  */
-export function ChatView({ extra = [], fontSize, sessionId, state, send, interrupt, rawKeys, onTerminal, onInputFocus, focusRef, screen, submitTerminal, pasteImage, voiceStop = 0, sendQueuedNow, typeOnly, clearTerminal, paneId, ctx, modelInfo, pickModel, cwd, locker, notice }: {
+export function ChatView({ extra = [], fontSize, sessionId, state, send, interrupt, rawKeys, onTerminal, onInputFocus, focusRef, screen, submitTerminal, pasteImage, voiceStop = 0, sendQueuedNow, typeOnly, clearTerminal, paneId, ctx, modelInfo, pickModel, cwd, locker, notice, link }: {
   /** 대화 사이에 시각 순으로 끼울 것 — 직접 답하기 카드(useDirectCards)·보여 준 파일 카드(clip = 그려진 첫 말보다 앞이면 안 그림) */
   extra?: { ts: string; key: string; pin?: boolean; clip?: boolean; node: React.ReactNode }[];
   /** 글자 크기(⌘+/⌘−) — 바뀌면 입력칸 높이를 다시 잰다(채팅 글자가 이걸 따라 커진다, space.css --chat-k) */
@@ -81,6 +83,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   locker?: LockerOwner;
   /** 입력칸 바로 위 조용한 한 줄 — 참모를 깨우는 동안(뜨면 채팅이 그리로 넘어간다, 2026-10-12 rail-wake) */
   notice?: React.ReactNode;
+  /** 뒤 터미널 보기가 세션에 붙어 있나(TerminalPane onLink) — 끊긴 동안 보낸 말은 붙으면 앱이 친다(SessionGrid typeAndSend) */
+  link?: LinkState;
   state: string;
   send: (text: string) => void;
   interrupt: () => void;
@@ -324,13 +328,22 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   useEffect(() => {
     if (!paneId) return;
     const on = (e: Event) => {
-      const d = (e as CustomEvent<{ id: string; text: string }>).detail;
-      if (d?.id === paneId) { setPending((p) => [...p, newPending(d.text, itemsRef.current, Date.now())]); stick.current = true; }
+      const d = (e as CustomEvent<{ id: string; text: string; at?: number }>).detail;
+      if (d?.id === paneId) { setPending((p) => [...p, newPending(d.text, itemsRef.current, d.at ?? Date.now())]); stick.current = true; }
     };
     window.addEventListener('chat-pending', on);
     return () => window.removeEventListener('chat-pending', on);
   }, [paneId]);
 
+  // 다시 붙으면 끊긴 동안 보낸 말은 지금 친 것으로 — 그 말은 붙는 순간 쳐지는데 보낸 시각이 옛것이면 기록이 오기 전에 '전달 안 됨'이 떴다
+  const downAt = useRef<number | null>(null);
+  useEffect(() => {
+    if (link && link !== 'live') { downAt.current ??= Date.now(); return; }
+    const d = downAt.current;
+    downAt.current = null;
+    // 80초(LINK_WAIT)를 넘겨 끊겼으면 줄에서 기다리던 말은 이미 포기됐다 — 그대로 두면 '전달 안 됨'으로 남아 다시 보낼 수 있다
+    if (d != null) { const now = Date.now(); setPending((ps) => ps.map((p) => (p.at >= d - 1000 && now - p.at < LINK_WAIT ? resent(p, now) : p))); }
+  }, [link]);
   const waiting = useMemo(() => waitingOf(pending, items, Date.now()), [pending, items]);
   useEffect(() => { if (waiting.length !== pending.length) setPending(waiting); }, [waiting, pending.length]);
   // / 명령은 4초 뒤 지우는데(domain/chat pendingLeft) 기록이 안 바뀌면 다시 셀 일이 없다 — 시계로 한 번 더 센다
@@ -451,7 +464,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     return () => window.clearInterval(t);
   }, [waiting.length]);
   const enterWait = Math.max(0, ...waiting.map((p) => enterDelay(p.text.length, IS_WIN)));
-  const stateOf = new Map<number, PendingState>(waiting.map((p) => [p.at, pendingState(p, { queue, termText, now: Date.now(), enterWait })]));
+  const stateOf = new Map<number, PendingState>(waiting.map((p) => [p.at, pendingState(p, { queue, termText, now: Date.now(), enterWait, link })]));
   /** 지금 Esc 를 넘기면 방금 보낸 말이 거둬들여지나(domain/chat escUnsends) — 그땐 채팅 Esc·⌘Enter·지금 보내기가 Esc 를 안 넘긴다. ■ 멈춤 버튼은 그대로 */
   const unsendsNow = () => escUnsends(items, waiting.some((p) => stateOf.get(p.at) === 'sending'));
 
@@ -459,7 +472,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   // 일하는 중 Enter 는 줄 서기다. 예전엔 쉴 때 한 번만 눌러, 일하는 중 걸린 말은 '보내는 중'으로 10분 남았다(2026-10-06 사용자)
   const tries = useRef<Record<number, number>>({});
   const [tryN, setTryN] = useState(0);
-  const stuckTarget = state === 'blocked' || dialog || compacting ? null
+  const stuckTarget = state === 'blocked' || dialog || compacting || (link && link !== 'live') ? null
     : autoEnterTarget(waiting, { queue, termText, now: Date.now(), enterWait, tries: tries.current });
   useEffect(() => {
     if (!stuckTarget) return;
@@ -703,9 +716,10 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
                   sending: tr('보내는 중', 'Sending'),
                   queued: tr('대기 중 — 지금 일이 끝나면 가요', 'Queued — goes when the current step ends'),
                   input: tr('입력칸에 걸려 있어요', 'Stuck in the terminal input'),
-                  lost: tr('안 갔어요', 'Not sent'),
+                  lost: tr('전달 안 됨', 'Not delivered'),
+                  wait: tr('다시 붙는 중 — 붙으면 보내요', 'Reattaching — sends when it is back'),
                 }[st]}</span>
-                {pendAct(st) && (
+                {pendAct(st) && link !== 'gone' && ( /* 끊긴 채면 다시 보내도 줄에서 기다리다 붙는 순간 두 번 간다 — 안내 줄이 '다시 켜지면 다시 보내 줘' */
                   <span className="chat-pend-acts">
                     {pendAct(st) === 'again'
                       ? <IconButton size="s" tone="line" label={tr('다시 보내기', 'Send again')} onClick={() => act(p, 'again')}><IconRefresh /></IconButton>

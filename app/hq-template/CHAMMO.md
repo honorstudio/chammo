@@ -157,8 +157,8 @@ logins use the accounts already given, without asking (the person only when no a
 - **The user approved to you directly** (in your chat: "publish it") → that is their approval for that production step. Pass it on as
   `Approved by the person directly — <who>, <when>, <what>`; the session goes ahead without putting up another card. Only exactly what they
   approved — anything wider needs a card. **Payments always go through the card**, no exceptions.
-- **A SendMessage result asks "was it restarted?"** → the session may have restarted or ended. Check `claude agents --json` (listed? same id?
-  state) before sending again or telling the user anything.
+- **A SendMessage result asks "was it restarted?" or says "No agent named … reachable"** → the session may have restarted or ended. Check `claude agents --json` (listed? same id?
+  state) before sending again, running `respawn` or telling the user anything — respawning a live session cuts off the view showing it.
 - Open a session's **terminal (CLI)** only when the user says terminal/CLI — never as a way to get a card pressed.
 
 ## Another device's assistant — other Chammo on the same Tailscale account
@@ -193,11 +193,13 @@ To point at one spot, don't say "around line 264" — add it: `scripts/show <fil
 (most precise), `--page 3` (PDF/slides) or `--box x,y,w,h` (image area, 0–1). In the chat view the app scrolls there and flashes it (the terminal view's reader just opens the file).
 The user's **file locker** is a real folder per assistant (`~/Documents/Chammo/<assistant>/`, the same in Finder). To keep a result there: `scripts/locker add <file> --folder <a/b>`
 (`ls` lists it) — files from Downloads/Desktop are copied, project files become shortcuts. **Before handing a locker file to a project session, run `scripts/locker give <file…> <project folder>`** — it moves into the project; put the printed new path in your message (`back` undoes it).
-To read or change cells of an Excel file, use `scripts/sheet get <file> [Sheet!A1:C9]` and `scripts/sheet set <file> <Sheet!B3> <value|=formula> …`
-instead of rewriting the file yourself — it only touches those cells (charts and formatting stay), and if the file is open in the space the user
-watches your avatar move to each cell and type.
-Editing work (photo, video, vector, PDF, documents, spreadsheets…) goes to a **Craft app** (ArtCraft open source — Chammo builds of the macOS apps; macOS only for now) —
-open the `hq-craft` skill first. By default open the macOS app with its control channel (`scripts/craft open <app> --native`), drive it with commands
+Excel work splits by job. **Looking and a few cells** (show it, read a value they ask about, a typo, a couple of values) → `scripts/show <file>` (the sheet page),
+`scripts/sheet get <file> [Sheet!A1:C9]` and `scripts/sheet set <file> <Sheet!B3> <value|=formula> …` — only those cells change (charts and formatting stay), and with the page open
+the user watches your avatar type in each cell. **Reworking the table** (adding totals or formulas, sorting, removing duplicates, formatting, charts, a new workbook) goes to
+**Chammo Grid** even when it looks like few cells — `scripts/craft open gridcraft --native <file>`, then `run` (`hq-craft` skill); the user watches it in the pane and closing saves back
+to that file. Don't do this with many `sheet set` calls or Python (openpyxl) — the user sees nothing.
+Editing work (photo, video, vector, PDF, documents, spreadsheets…) goes to a **Craft app** (ArtCraft open source — Chammo builds; macOS and Windows, Windows without Light for now) —
+open the `hq-craft` skill first. By default open the app with its control channel (`scripts/craft open <app> --native`), drive it with commands
 yourself (`run`, `do`, `shot`, then `close`) and show only the result with `scripts/show`. The user watches it being made in the space —
 the windowless engine (`cli`) is only for batches nobody needs to watch. The web build (`scripts/craft open <app>`) has no autosave.
 

@@ -4,11 +4,12 @@ import { wakeNotice } from '../../domain/railRows';
 import { OrchAvatar } from '../avatar';
 
 /** name = 진짜 세션 이름(프사 찾기), label = 화면 이름, waking = 쉬는 참모 깨우기(아니면 새로 켜기) */
-export function WakeNotice({ name, label, waking }: { name: string; label: string; waking: boolean }) {
+/** text = 다른 글(꺼진 참모를 앱이 다시 켜는 중 — App useOrchRevive) */
+export function WakeNotice({ name, label, waking, text }: { name: string; label: string; waking: boolean; text?: string }) {
   return (
     <>
       <OrchAvatar name={name} size={18} state="off" phase="starting" color={orchColor(name)} label={label} />
-      <span>{wakeNotice(label, waking)}</span>
+      <span>{text ?? wakeNotice(label, waking)}</span>
     </>
   );
 }

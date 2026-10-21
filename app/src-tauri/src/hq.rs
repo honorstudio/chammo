@@ -35,6 +35,7 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "scripts/locker", body: include_str!("../../hq-template/scripts/locker"), exec: true },
     // Craft 앱(ArtCraft 오픈소스): 웹판 받기·SHA 대조·127.0.0.1 서빙·주소 미리보기 + 맥 앱을 조작 채널로 띄워 참모가 명령으로 — 앱은 안 거친다
     TemplateFile { path: "scripts/craft", body: include_str!("../../hq-template/scripts/craft"), exec: true },
+    TemplateFile { path: "scripts/craft_win.py", body: include_str!("../../hq-template/scripts/craft_win.py"), exec: false },
     // 다른 기기 참모에게 말 넣고 답 받기 — 앱(app.jsonl)을 거친다, 열쇠는 앱 키체인에만(ADR 0007)
     TemplateFile { path: "scripts/peer", body: include_str!("../../hq-template/scripts/peer"), exec: true },
     // scripts/task 가 import 하는 모듈(교훈 → 프로젝트 스킬) — 직접 실행하지 않는다

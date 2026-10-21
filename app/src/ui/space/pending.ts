@@ -117,15 +117,19 @@ export function addSheetLog(path: string, log: LogEntry[]) {
   touched.sheets.add(path);
   emit(!had && sheets.has(path) ? 'now' : 'later');
 }
-/** 보냈다 — 지금 모양이 새 기준, 코멘트는 비운다 */
-export function markSent() {
-  docs.forEach((d, p) => { if (dirty(d)) touched.docs.add(p); put(p, { baseline: d.current, current: d.current }); });
-  sheets.forEach((_, p) => touched.sheets.add(p));
-  sheets.clear();
-  comments.forEach((c) => { touched.added.delete(c.id); touched.removed.add(c.id); });
-  comments = [];
+/** 보냈다 — 보낸 문서(paths)만 지금 모양이 새 기준, 그 문서 코멘트만 비운다. 다른 문서(다른 채팅·참모 스페이스)의 고친 것은 그대로 */
+export function markSent(paths: string[]) {
+  const sent = new Set(paths);
+  docs.forEach((d, p) => { if (!sent.has(p)) return; if (dirty(d)) touched.docs.add(p); put(p, { baseline: d.current, current: d.current }); });
+  for (const p of sent) if (sheets.delete(p)) touched.sheets.add(p);
+  comments.filter((c) => sent.has(c.path)).forEach((c) => { touched.added.delete(c.id); touched.removed.add(c.id); });
+  comments = comments.filter((c) => !sent.has(c.path));
   emit('now');
 }
+type Pending = typeof state;
+/** 지금 보는 문서 몫만 — 보내기는 그 문서의 고친 것·코멘트만 싣는다(2026-10-21: 모음이 앱 전체에 하나라 다른 참모 문서 4개가 같이 갔다) */
+export const scopeTo = (p: Pending, path: string | null | undefined): Pending =>
+  ({ docs: p.docs.filter((d) => d.path === path), comments: p.comments.filter((c) => c.path === path), sheets: p.sheets.filter((x) => x.path === path) });
 /** 지금 보낼 것(시험·훅이 같이 읽는다) */
 export const pendingNow = () => state;
 /** 보낼 것 — 고친 문서들 + 줄 코멘트 */

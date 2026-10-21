@@ -55,7 +55,7 @@ describe('채팅 — 깨우는 동안 입력칸 위 한 줄', () => {
     const app = (await import('../../App.tsx?raw')).default;
     expect(chat.indexOf('{notice && <div className="chat-wake"')).toBeGreaterThan(0);
     expect(chat.indexOf('{notice && <div className="chat-wake"')).toBeLessThan(chat.indexOf('<div className="chat-input">'));
-    expect(grid).toMatch(/notice=\{chatNotice\}/);
+    expect(grid).toMatch(/notice=\{[^\n]*: chatNotice\}/); // 터미널 보기가 끊긴 동안만 그 안내(linkOf), 평소엔 chatNotice
     expect(app).toMatch(/chatNotice=\{wakeNote\}/);
     expect(app).toMatch(/<WakeNotice name=\{wakeName\}/); // 프사는 WakeNotice 안 — App 은 OrchAvatar 를 안 부른다(chat-head)
   });

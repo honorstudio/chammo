@@ -160,6 +160,8 @@ export const readOrchRoles = () => invoke<Record<string, { role: string; at: num
 export const setOrchRole = (name: string, role: string, fresh = false) => invoke<Record<string, { role: string; at: number; born?: number }>>('set_orch_role', { name, role, fresh });
 /** why = 누른 길 + 이름(<데이터>/actions.log 한 줄) — 누가 껐는지 나중에 가리려고 */
 export const stopSession = (id: string, why: string) => invoke<string>('stop_session', { id, why });
+/** 최근 10분 안에 앱이 끄거나 지운 세션 번호 — 참모 되살리기(domain/orchRevive)가 사람이 끈 참모는 안 켠다 */
+export const appStoppedRecently = () => invoke<string[]>('app_stopped_recently');
 /** 세션을 끄고 목록에서도 지운다(claude stop + rm). 대화 기록 파일은 남는다 */
 export const removeSession = (id: string, why: string) => invoke<string>('remove_session', { id, why });
 
@@ -240,10 +242,13 @@ export const readCtx = () => invoke<string[]>('read_ctx');
 /** 결정 대기함 답장·앱이 넘기는 줄([앱] …) — 세션에 잠깐 attach 해서 글자 + Enter.
  *  다 친 뒤 그 세션 채팅에 '보낸 말'로 알린다 — 모르는 글로 입력칸에 걸려 보이면 Enter 를 다시 넣지도, 간 뒤 지우지도 못했다(2026-10-10:
  *  참모 입력칸에 친 줄의 Enter 가 줄바꿈으로 먹혀 10분 걸려 있었다). 줄바꿈은 Rust 처럼 띄어쓰기로 */
-export const sendToSession = (id: string, text: string) =>
-  invoke<void>('send_to_session', { id, text }).then(() => {
-    window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id, text: text.replace(/[\r\n]/g, ' ') } }));
+/** 다 친 뒤 채팅에 '보낸 말'로 알린다 — 치기 시작한 때(at)를 같이: 붙고 치는 2~3초 사이 기록이 먼저 읽혀도 이번 말로 맞춘다(chatQueue newPending) */
+export const sendToSession = (id: string, text: string) => {
+  const at = Date.now();
+  return invoke<void>('send_to_session', { id, text }).then(() => {
+    window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id, text: text.replace(/[\r\n]/g, ' '), at } }));
   });
+};
 /** 작업 기록에 이벤트 한 줄 (answer 등) */
 export const appendTaskEvent = (ev: object) => invoke<void>('append_task_event', { line: JSON.stringify(ev) });
 

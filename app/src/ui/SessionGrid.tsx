@@ -7,6 +7,8 @@ import type { Session } from '../domain/session';
 import { pasteSequence } from '../domain/memo';
 import { enterDelay, typedChunks } from '../domain/chat';
 import { escPlan, typeQueue } from '../domain/chatQueue';
+import { LINK_WAIT, paneLinks } from '../domain/paneLinks';
+import type { LinkState } from '../domain/attachExit';
 import { AdoptCard } from './AdoptCard';
 import { statusKind } from '../domain/statusMark';
 import { sessionStatus, type ActivityStatus } from '../domain/status';
@@ -91,9 +93,14 @@ const escAt = new Map<string, number>();
 /** 채팅 보내기 — 사람이 치듯 조각으로 넣고 0.4초 쉬었다가 Enter(붙여넣기로 감싸면 긴 글이 "붙여넣은 글"로 간다, domain/chat typedChunks).
  *  앞 글을 아직 치는 중이면 그 Enter 뒤에 친다 — 0.4초 안에 두 번 보내면 두 글이 한 입력칸에 붙어 한 말로 갔다.
  *  enter=false 면 입력칸에 넣기만(빼고 남은 말 되돌려 놓기) */
-function typeAndSend(id: string, api: PaneApi | undefined, text: string, enter = true) {
-  if (!api) return;
-  void typing.push(id, () => api.type(typedChunks(text), enter ? enterDelay(text.length, IS_WIN) : undefined));
+/** 세션별 붙어 있는 보기 — 화면이 온(live) 뒤에만 넣고 끊기면(다시 붙는 중·참모를 다시 켜는 중) 뺀다.
+ *  친 말은 그때 붙어 있는 보기에 — 끊긴 동안 친 말은 다시 붙을 때까지 줄에서 기다린다. 예전엔 누른 순간의 손잡이로 죽은 보기에 쳐서 허공으로 갔다(2026-10-21) */
+const links = paneLinks<PaneApi>();
+function typeAndSend(id: string, text: string, enter = true) {
+  void typing.push(id, async () => {
+    const api = await links.wait(id, LINK_WAIT);
+    await api.type(typedChunks(text), enter ? enterDelay(text.length, IS_WIN) : undefined);
+  });
 }
 
 /** 입력칸 지우기(백스페이스 n개) — 앞 글을 치는 중이면 그 뒤에. 지운 뒤 칠 글은 typeAndSend 가 다시 이 뒤에 줄 선다 */
@@ -163,6 +170,8 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
   const [tab, setTab] = useState<string | null>(initialFocus ?? null);
   // 지구본 키 말하기가 끝난 창 — 채팅 판이 4초 뒤에도 받아 적은 글이 남아 있으면 대신 Enter(autoSubmit 이 가끔 안 보냈다)
   const [voiceStops, setVoiceStops] = useState<Record<string, number>>({});
+  // 창마다 세션에 붙어 있나(TerminalPane onLink) — 채팅 말풍선이 끊긴 동안 '다시 붙는 중', 끊김이 굳으면 바로 '전달 안 됨'
+  const [linkOf, setLinkOf] = useState<Record<string, LinkState>>({});
   const showTerm = (id: string, on: boolean) => setTermView((v) => { const n = new Set(v); if (on) n.add(id); else n.delete(id); return n; });
   // 메모판이 닫히면(⌘M·X·Esc·보내기 무엇이든) 그 창 터미널로 포커스를 돌려준다 — 안 그러면 창을 다시 눌러야 입력된다
   const memoWas = useRef<string | null>(null);
@@ -344,8 +353,12 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                       headless={!!headS}
                       note={memo?.note(s)}
                       onNoteClick={memo ? () => memo.onToggle(id) : undefined}
+                      onLink={(st) => {
+                        links.set(id, st === 'live' ? panes.current.get(id) ?? null : null);
+                        setLinkOf((m) => (m[id] === st ? m : { ...m, [id]: st }));
+                      }}
                       inject={(api) => {
-                        if (!api) { panes.current.delete(id); return; }
+                        if (!api) { panes.current.delete(id); links.set(id, null); return; }
                         panes.current.set(id, api);
                         if (want.current === id) focusNow(id); // 새로 붙은 창(화면 복귀·되돌리기)이 기다리던 창이면
                       }}
@@ -358,11 +371,12 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           ctx={ctxOf?.(s)}
                           modelInfo={modelOf?.(s)}
                           cwd={s.cwd}
-                          notice={chatNotice}
+                          notice={linkOf[id] === 'reattaching' || linkOf[id] === 'gone' ? <span>{linkOf[id] === 'gone' ? tr('세션이 꺼진 것 같아 — 다시 켜지면 안 간 말을 다시 보내 줘', 'The session seems to have stopped — send again once it is back') : tr('세션 연결이 끊겨서 다시 붙는 중 — 보낸 말은 붙으면 바로 가', 'Lost the session link — reattaching; your message goes as soon as it is back')}</span> : chatNotice}
+                          link={linkOf[id]}
                           pickModel={(want) => pickFor(id, s, want)}
                           state={s.state}
                           send={(text) => {
-                            typeAndSend(id, panes.current.get(id), text);
+                            typeAndSend(id, text);
                             last.current = id;
                             onFocusSession?.(id);
                           }}
@@ -378,7 +392,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           locker={chat ? { id, name: s.name || id } : undefined}
                           clearTerminal={(n) => clearInput(id, panes.current.get(id), n)}
                           sendQueuedNow={() => escOnce(id, panes.current.get(id))} // 멈추면 Claude 가 줄 선 말을 곧바로 보낸다(2026-09-30 시험 세션 실측)
-                          typeOnly={(text) => typeAndSend(id, panes.current.get(id), text, false)}
+                          typeOnly={(text) => typeAndSend(id, text, false)}
                           focusRef={(fn) => { if (fn) chatFocus.current.set(id, fn); else chatFocus.current.delete(id); }}
                         />
                       ) : null}{memo?.openId === id && memo.panel(s, (text) => panes.current.get(id)?.write(pasteSequence(text)))}</>}
