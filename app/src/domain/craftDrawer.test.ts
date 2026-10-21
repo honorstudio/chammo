@@ -13,7 +13,9 @@ describe('앱 서랍', () => {
   it('올렸을 때 — 깔린 건 판·크기·마지막 사용, 안 깐 건 받을 크기', () => {
     expect(tileTitle(row({ installed: '0.7.0', size: 79 * 1024 * 1024, used: '2026-10-15' }))).toBe('GridCraft · spreadsheets / 표 계산 · 0.7.0 · 79MB · 마지막 사용 2026-10-15');
     expect(tileTitle(row())).toBe('GridCraft · spreadsheets / 표 계산 · 0.7.0 · 받기 23MB');
-    expect(tileTitle(row({ installed: '0.6.0', latest: '0.7.0' }))).toContain('새 판 0.7.0');
+    expect(tileTitle(row({ installed: '0.6.0', latest: '0.7.0', newer: true }))).toContain('새 판 0.7.0');
+    // 깐 판이 더 새것(받아 둔 확인이 묵음·개발판)이면 '새 판'이 아니다 — 판 비교는 scripts/craft 가 숫자로(newer)
+    expect(tileTitle(row({ installed: '0.13.5', latest: '0.13.1', newer: false }))).not.toContain('새 판');
   });
 
   it('아이콘 — 받은 그림, 없으면 참모 포토는 Chammo 아이콘, 나머지는 빈 칸(첫 글자 판)', () => {
@@ -51,6 +53,10 @@ describe('서랍 칸 모서리(v7 A1) — 떠 있으면 끄기, 아니면 우리
     expect(tileCorner(row({ installed: '1.0', mine: false }), true)).toBe('quit');
     expect(tileCorner(row({ installed: '1.0', mine: true }), false)).toBe('remove');
     expect(tileCorner(row({ installed: '1.0', mine: false }), false)).toBeNull();
+  });
+  it('다른 참모가 쓰는 중이면 지우기를 안 띄운다 — 지우기는 모든 인스턴스를 끄고 앱째 지운다(2026-10-21 주인 가르기)', () => {
+    expect(tileCorner(row({ installed: '1.0', mine: true }), false, true)).toBeNull();
+    expect(tileCorner(row({ installed: '1.0', mine: true }), true, true)).toBe('quit');
   });
 });
 

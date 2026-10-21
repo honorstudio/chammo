@@ -209,6 +209,10 @@ pub fn craft_space_place<R: Runtime>(handle: tauri::AppHandle<R>, app: String, r
             None => {
                 let Ok(ns) = m2.ns_window() else { return };
                 let Some(h) = crate::craft_mirror::attach(ns as usize, pid, 0.0, 0.0) else { return };
+                let app = key.trim_start_matches("space:");
+                if crate::craft_mirror::attach_mode(app) {
+                    crate::craft_mirror::set_channel(&h, app);
+                }
                 handles(|m| m.insert(key.clone(), h.0));
                 h.0
             }
@@ -337,6 +341,10 @@ fn win_handback<R: Runtime>(handle: &tauri::AppHandle<R>, app: &str) {
 #[tauri::command]
 pub fn craft_space_still<R: Runtime>(handle: tauri::AppHandle<R>, app: String) -> Result<String, String> {
     display_name(&app).ok_or("unknown app")?;
+    // 붙이기 모드(시험)는 붙인 동안 비추기 받기를 멈춰서 마지막 프레임이 옛것 — 그 앱 조작 채널 그림 한 장(윈도우 칸 그림과 같은 길)
+    if crate::craft_mirror::attach_mode(&app) {
+        return pane_shot(&app);
+    }
     let Some(h) = handles(|m| m.get(&space_key(&app)).copied()) else { return Ok(String::new()) };
     let path = crate::config::data_file("craft-native").join(format!("{app}-still.jpg"));
     let _ = std::fs::remove_file(&path);
@@ -409,9 +417,16 @@ pub fn show_in_space<R: Runtime>(handle: &tauri::AppHandle<R>, app: &str, by: &s
     if !crate::reader::chat_view() {
         return open(handle, app);
     }
-    let name = read_info(crate::config::data_dir(), app).name;
-    to_main(handle, "__craftSpace", serde_json::json!({ "app": app, "name": name, "place": "space", "by": by }));
+    let info = read_info(crate::config::data_dir(), app);
+    let by = space_by(by, &info.by);
+    to_main(handle, "__craftSpace", serde_json::json!({ "app": app, "name": info.name, "place": "space", "by": by }));
     Ok("space".into())
+}
+
+/// 칸을 띄울 때 넘길 주인 세션 — 부른 쪽이 모르면(독 아이콘·따로 창 닫기·자리 옮기기) 그 인스턴스를 띄운 세션(상태 파일 by).
+/// 빈 글로 보내면 웹이 '지금 보는 참모'에 칸을 열어 남의 참모 앱이 내 탭에 붙었다(2026-10-21 주인 가르기)
+pub fn space_by<'a>(asked: &'a str, opener: &'a str) -> &'a str {
+    if asked.is_empty() { opener } else { asked }
 }
 
 /// 창을 띄우고(이미 있으면 앞으로) 비추기를 붙인다
@@ -450,6 +465,10 @@ fn attach_later<R: Runtime>(w: tauri::WebviewWindow<R>, pid: i32) {
     let _ = w.run_on_main_thread(move || {
         let Ok(ns) = w2.ns_window() else { return };
         if let Some(h) = crate::craft_mirror::attach(ns as usize, pid, TOP, BOTTOM) {
+            let app = w2.label().trim_start_matches(PREFIX);
+            if crate::craft_mirror::attach_mode(app) {
+                crate::craft_mirror::set_channel(&h, app);
+            }
             handles(|m| m.insert(w2.label().to_string(), h.0));
         }
     });
@@ -735,6 +754,13 @@ mod tests {
         std::fs::write(n.join("photocraft.takeover.json"), r#"{"on":true}"#).unwrap();
         assert!(taking_over(&d, "photocraft"));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 칸_주인은_부른_쪽이_모르면_띄운_세션() {
+        assert_eq!(space_by("", "ab12cd34"), "ab12cd34", "독 아이콘·따로 창 닫기 — 상태 파일 주인");
+        assert_eq!(space_by("ff00ee11", "ab12cd34"), "ff00ee11", "scripts/craft 가 넘긴 세션이 먼저");
+        assert_eq!(space_by("", ""), "", "사람이 연 것");
     }
 
     #[test]

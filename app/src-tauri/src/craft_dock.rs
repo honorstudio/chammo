@@ -47,6 +47,12 @@ pub fn should_close(hidden_secs: u64) -> bool {
     hidden_secs >= HIDE_CLOSE_SECS
 }
 
+/// 숨긴 앱을 지금 끌까 — 숨긴 지 10분 + 참모가 마지막으로 다룬 지(상태 파일 시각, 없으면 None)도 10분 + 사람 조작 중 아님.
+/// 칸을 다른 참모·인스턴스로 옮기면 숨김이 되는데, 그 앱을 쓰던 세션이 일하는 중에도 꺼졌다(2026-10-21 주인 가르기)
+pub fn due_close(hidden_secs: u64, idle_secs: Option<u64>, takeover: bool) -> bool {
+    should_close(hidden_secs) && idle_secs.is_none_or(should_close) && !takeover
+}
+
 static HIDDEN: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
 
 fn hidden<T>(f: impl FnOnce(&mut HashMap<String, Instant>) -> T) -> T {
@@ -223,10 +229,17 @@ pub async fn craft_apps(refresh: bool, fast: Option<bool>) -> Result<Vec<serde_j
 
 /// 서랍에서 앱 누르기 — 깔린 앱은 열고, 안 깐 앱은 처음 한 번 설치(체크섬·번들 id·애플 공증) 뒤 연다. 열리면 독 규칙대로 탭 줄에 붙는다
 #[tauri::command]
-pub fn craft_launch(app: String) -> Result<(), String> {
+pub fn craft_launch(app: String, key: Option<String>) -> Result<(), String> {
     crate::craft_window::display_name(&app).ok_or("unknown app")?;
-    unhide(&app);
-    crate::craft_window::craft_cmd().args(["open", &app, "--native"]).spawn().map(|_| ()).map_err(|e| e.to_string())
+    unhide(key.as_deref().unwrap_or(&app));
+    crate::craft_window::craft_cmd().args(launch_args(&app, key.as_deref())).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// 서랍 열기 인자 — key(그 앱의 빈 자리 인스턴스, 웹이 고른다)가 있으면 그 인스턴스만(첫 번째는 '-1'), 없거나 다른 앱이면 앱째.
+/// 앱째면 scripts/craft 가 떠 있는 첫 인스턴스를 다시 보여 줘서 남의 참모 앱을 가져왔다(2026-10-21 주인 가르기)
+pub fn launch_args(app: &str, key: Option<&str>) -> Vec<String> {
+    let one = key.filter(|k| crate::craft_window::base(k) == Some(app)).map(crate::craft_window::arg);
+    vec!["open".into(), one.unwrap_or_else(|| app.to_string()), "--native".into()]
 }
 
 /// 서랍에서 지우기 — scripts/craft remove(우리가 깐 것만 휴지통으로). 떠 있으면 저장하고 끄고 칸도 닫은 뒤. 웹이 먼저 한 번 묻는다
@@ -252,8 +265,16 @@ pub fn watch_hidden() {
         std::thread::sleep(std::time::Duration::from_secs(30));
         let due: Vec<String> = hidden(|m| m.iter().filter(|(_, t)| should_close(t.elapsed().as_secs())).map(|(a, _)| a.clone()).collect());
         for app in due {
+            let d = crate::config::data_dir();
+            let info = crate::craft_window::read_info(d, &app);
+            // 참모가 마지막으로 다룬 때 — run/do 가 상태 파일 lease 를(읽기 명령도), 편집이 .status.json 을 고친다. 둘 중 최근 것
+            let age = |f: String| std::fs::metadata(d.join("craft-native").join(f)).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|x| x.as_secs());
+            let idle = [age(format!("{app}.json")), age(format!("{app}.status.json"))].into_iter().flatten().min();
+            if !due_close(HIDE_CLOSE_SECS, idle, info.takeover) {
+                continue; // 숨긴 채로 두고 참모 일이 멎으면 다시 본다
+            }
             unhide(&app);
-            let alive = crate::craft_window::read_info(crate::config::data_dir(), &app).pid.is_some_and(crate::platform::pid_alive);
+            let alive = info.pid.is_some_and(crate::platform::pid_alive);
             if alive {
                 let _ = crate::craft_window::craft_cmd().args(["close", &crate::craft_window::arg(&app)]).spawn();
             }
@@ -277,6 +298,25 @@ mod tests {
     fn 숨긴_지_10분이면_끈다() {
         assert!(!should_close(599));
         assert!(should_close(600));
+    }
+
+    #[test]
+    fn 숨겨도_참모가_10분_안에_다뤘으면_안_끈다() {
+        // 2026-10-21 주인 가르기 — 다른 참모·인스턴스로 칸을 옮기면 숨김이 되는데, 그 앱을 쓰던 세션이 일하는 중에도 10분 뒤 꺼졌다
+        assert!(due_close(600, None, false), "참모 일 기록이 없으면 그대로 끈다");
+        assert!(due_close(900, Some(600), false));
+        assert!(!due_close(900, Some(30), false), "방금 참모가 다뤘다");
+        assert!(!due_close(599, None, false));
+        assert!(!due_close(900, None, true), "사람이 조작 중");
+    }
+
+    #[test]
+    fn 서랍_열기는_빈_자리_인스턴스로() {
+        assert_eq!(launch_args("gridcraft", None), vec!["open", "gridcraft", "--native"]);
+        assert_eq!(launch_args("gridcraft", Some("gridcraft")), vec!["open", "gridcraft-1", "--native"], "첫 번째는 -1 로 그 인스턴스만");
+        assert_eq!(launch_args("gridcraft", Some("gridcraft-3")), vec!["open", "gridcraft-3", "--native"]);
+        assert_eq!(launch_args("gridcraft", Some("photocraft-2")), vec!["open", "gridcraft", "--native"], "다른 앱 키는 버린다");
+        assert_eq!(launch_args("gridcraft", Some("gridcraft-9")), vec!["open", "gridcraft", "--native"]);
     }
 
     #[test]

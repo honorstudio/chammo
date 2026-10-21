@@ -3,17 +3,21 @@
 // 지우기는 우리가 깐 것만(마우스 올리면 휴지통 · 오른쪽 클릭), 한 번 묻고. 연 앱은 독 규칙대로 탭 줄에 붙는다
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
-import { tr } from '../../i18n';
+import { josa, tr } from '../../i18n';
 import { craftBase } from '../../domain/craftTab';
+import type { DrawerOpen } from '../../domain/craftDock';
 import { sizeText, splitRows, tileCorner, tileIcon, tileLetter, tileLoading, tileTitle, tileUnavailable, usedLine, usedTotal, type DrawerRow } from '../../domain/craftDrawer';
 import { IS_WIN } from '../../domain/reader';
 import type { MenuItem } from '../OrchDialogs';
 import { IconPower, IconRefresh, IconTrash } from '../Icons';
 import './drawer.css';
 
-/** running = 떠 있는 인스턴스 키('photocraft'·'photocraft-2' …) — 서랍 칸은 앱 하나라 앱으로 묶는다 */
-export function CraftDrawer({ running: keys, openMenu }: { running: string[]; openMenu?: (e: React.MouseEvent, items: MenuItem[]) => void }) {
+/** running = 이 참모의 떠 있는 인스턴스 키('photocraft'·'photocraft-2' …) — 서랍 칸은 앱 하나라 앱으로 묶는다.
+ *  open = 누른 앱을 어떻게 열지(domain/craftDock drawerOpen — 내 것 보이기 또는 빈 자리 키로 새로). 없으면 앱째 */
+export function CraftDrawer({ running: keys, all = keys, open, openMenu }: { running: string[]; all?: string[]; open?: (app: string) => DrawerOpen; openMenu?: (e: React.MouseEvent, items: MenuItem[]) => void }) {
   const running = keys.map(craftBase);
+  // 다른 참모 인스턴스가 떠 있나 — 지우기는 모든 인스턴스를 끄고 앱째 지워서 그땐 안 띄운다(내 것만 끄기는 그대로)
+  const others = (app: string) => all.filter((k) => craftBase(k) === app).length > keys.filter((k) => craftBase(k) === app).length;
   const [rows, setRows] = useState<DrawerRow[] | null>(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState<Record<string, number>>({}); // 설치·여는 중(앱 → 누른 때)
@@ -37,8 +41,11 @@ export function CraftDrawer({ running: keys, openMenu }: { running: string[]; op
   const launch = (r: DrawerRow) => {
     const no = tileUnavailable(r);
     if (no) { setErr(no); return; } // 받을 수 없는 칸 — 설치를 걸지 않고 까닭 한 줄
+    const how = open?.(r.app);
+    if (how && 'show' in how) { void invoke('craft_show', { app: how.show }).catch((e) => setErr(String(e))); return; }
+    if (how && 'full' in how) { setErr(tr(`${josa(r.name, '은', '는')} 다른 참모들이 셋 다 쓰는 중이에요 — 하나가 끝나면 다시 눌러 주세요`, `All three ${r.name} windows are in use by other assistants — try again when one finishes`)); return; }
     setBusy((b) => ({ ...b, [r.app]: Date.now() }));
-    void invoke('craft_launch', { app: r.app }).catch((e) => setErr(String(e)));
+    void invoke('craft_launch', { app: r.app, key: how?.key ?? null }).catch((e) => setErr(String(e)));
   };
   const remove = (r: DrawerRow) => {
     setAsk(null);
@@ -49,7 +56,7 @@ export function CraftDrawer({ running: keys, openMenu }: { running: string[]; op
     e.preventDefault();
     openMenu(e, [
       ...(tileUnavailable(r) ? [] : [{ label: r.installed ? tr('열기', 'Open') : tr('받아서 열기', 'Download and open'), run: () => launch(r) }]),
-      ...(r.mine ? [{ label: tr('지우기 — 휴지통으로', 'Remove — to the Trash'), danger: true, sep: true, run: () => setAsk(r) }] : []),
+      ...(r.mine && !others(r.app) ? [{ label: tr('지우기 — 휴지통으로', 'Remove — to the Trash'), danger: true, sep: true, run: () => setAsk(r) }] : []),
     ]);
   };
   // 끄기(v7 A1) — 떠 있는 앱은 올리면 전원, 누르면 저장하고 끈다(독 오른쪽 클릭 '끄기'와 같은 길)
@@ -65,7 +72,7 @@ export function CraftDrawer({ running: keys, openMenu }: { running: string[]; op
     if (tileLoading(r, !full)) return skTile(r.app);
     const working = r.app in busy;
     const on = running.includes(r.app);
-    const corner = tileCorner(r, on);
+    const corner = tileCorner(r, on, others(r.app));
     const quitting = stopping.includes(r.app);
     const no = tileUnavailable(r);
     return (

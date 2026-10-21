@@ -19,6 +19,12 @@ export function onSheetPlay(path: string, fn: (p: SheetPlay) => void): () => voi
   };
 }
 
+/** 받자마자 '받았어'(sheet_play_ack) — 3초를 넘겨 Rust 가 이미 파일에 썼다(false)면 안 칠한다. 묻기가 실패하면 Rust 가 받았는지 몰라
+ *  예전처럼 칠한다 — 안 칠하면 받아 놓고 아무도 답 안 하는 수가 있다(두 번째 리뷰) */
+export async function ackThenPlay(ack: () => Promise<boolean>, play: () => void): Promise<void> {
+  if (await ack().catch(() => true)) play();
+}
+
 /** window 에 받는 자리를 단다 — 받은 표가 있으면 true(없으면 Rust 가 3초 뒤 파일 패치로 물러난다) */
 export function installSheetPlay(w: { __sheetPlay?: (p: SheetPlay) => boolean }) {
   w.__sheetPlay = (p) => {

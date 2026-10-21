@@ -29,3 +29,30 @@ export const dockLetter = (it: DockItem) => (it.name.trim()[0] ?? '?').toUpperCa
 
 /** 최근 문서 메뉴 줄 — 파일 이름만(경로는 title) */
 export const recentLabel = (path: string) => path.split('/').pop() || path;
+
+/** 인스턴스 주인 참모(2026-10-21 사용자) — 띄운 세션(by)을 맡은 참모(참모가 직접 띄웠으면 그 참모, ownerOfBy = showOwner) →
+ *  그 칸이 놓인 참모(사람이 연 것·주인 모르는 세션, placed — 지금 참모 목록 orchIds 에 있을 때만, 꺼진 참모 것이면 어느 독에도 안 보였다) →
+ *  null(아무 참모에게나 보인다). 칸·독·서랍은 주인 참모 스페이스에만 */
+export function craftOwnerOf(by: string | undefined, key: string, ownerOfBy: (by: string) => string | null, placed: (key: string) => string | undefined, orchIds?: string[]): string | null {
+  const p = placed(key);
+  return (by ? ownerOfBy(by) : null) ?? (p && (!orchIds || orchIds.includes(p)) ? p : null);
+}
+
+/** 이 참모 독에 보일 것 — 내 것 + 주인 없는 것. 참모 탭 없이(참모 0) 보는 중이면 다. 참모가 여럿일 때 남의 앱이 모든 참모 독에 떴다 */
+export function dockFor<T extends { app: string }>(items: T[], orch: string | undefined, ownerOf: (it: T) => string | null): T[] {
+  if (!orch) return items;
+  return items.filter((it) => { const o = ownerOf(it); return !o || o === orch; });
+}
+
+export type DrawerOpen = { show: string } | { launch: string; key: string } | { full: true };
+
+/** 서랍에서 앱을 누르면 — 이 참모 독에 그 앱이 떠 있으면 그것을 보이고(show), 없으면 빈 자리 인스턴스로 새로(launch + key),
+ *  셋 다 남이 쓰면 full(남의 것을 가져오지 않고 알린다). running = 떠 있는 모든 인스턴스 키, mine = 이 참모 독의 키.
+ *  예전엔 서랍이 늘 '떠 있는 첫 인스턴스'를 다시 보여 줘서 남의 참모 앱을 가져왔다 — 사람은 같은 앱을 따로 못 띄웠다 */
+export function drawerOpen(app: string, running: string[], mine: string[]): DrawerOpen {
+  const base = (k: string) => k.replace(/-[23]$/, '');
+  const own = mine.find((k) => base(k) === app);
+  if (own) return { show: own };
+  const key = [app, `${app}-2`, `${app}-3`].find((k) => !running.includes(k));
+  return key ? { launch: app, key } : { full: true };
+}

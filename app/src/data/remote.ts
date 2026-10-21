@@ -22,6 +22,8 @@ export type RemoteDevice = {
   paired: boolean;
   /** hello 를 모르는 옛판 — 보기·채팅은 되지만 그 기기 업데이트 권함 */
   old: boolean;
+  /** 그 기기가 연결 요청을 받을 수 있다고 했나(hello link, 0.3.8~) — 옛 맥은 없어도 받는다 */
+  link: boolean;
   version: string | null;
   lastOk: number | null;
 };

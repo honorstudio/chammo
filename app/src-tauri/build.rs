@@ -13,7 +13,10 @@ fn craft_mirror() {
         return;
     }
     let src = manifest_dir().join("../../tools/craft-mirror/mirror.swift");
+    // 붙이기 층(attach.swift, 2026-10-21 시험) — 다른 앱 창을 칸 자리에. 앱 종류와 떼어 따로 둔다
+    let attach = manifest_dir().join("../../tools/craft-mirror/attach.swift");
     println!("cargo:rerun-if-changed={}", src.display());
+    println!("cargo:rerun-if-changed={}", attach.display());
     // 원본이 없는 건 swiftc 문제가 아니라 소스를 덜 담은 것 — 조용히 빼지 않고 멈춘다(0.3.4 공개본에 tools/ 가 빠져 비추기 없는 앱이 나올 뻔)
     assert!(src.exists(), "tools/craft-mirror/mirror.swift is missing — the export must include tools/craft-mirror");
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
@@ -21,6 +24,7 @@ fn craft_mirror() {
         .args(["-O", "-emit-library", "-static", "-parse-as-library", "-module-name", "CraftMirror", "-o"])
         .arg(out.join("libcraftmirror.a"))
         .arg(&src)
+        .arg(&attach)
         .status()
         .is_ok_and(|s| s.success());
     if !built {

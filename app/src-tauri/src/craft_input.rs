@@ -87,7 +87,8 @@ pub fn stroke_events(points: &[[f64; 2]], canvas: [f64; 4], center: [f64; 2], zo
 }
 
 /// 비추기가 넘길 수 있는 것(Swift 가 만드는 것) — 사람 입력 흉내 + 개입 때 진짜 창을 칸 자리로 옮기기(ui.window.frame)
-const ALLOWED: [&str; 6] = ["ui.click", "ui.move", "ui.key", "ui.type", "__stroke", "ui.window.frame"];
+/// ui.window.attach — 붙이기 모드(시험)가 진짜 창을 칸 자리·층으로(참모 표가 받는다)
+const ALLOWED: [&str; 7] = ["ui.click", "ui.move", "ui.key", "ui.type", "__stroke", "ui.window.frame", "ui.window.attach"];
 
 /// Swift 가 준 입력 한 줄 → 보낼 (method, params). "__stroke" 은 보기를 물어 ui.pointer 로
 pub fn translate(conn: &mut Conn, line: &str) -> Result<(String, Value), String> {
@@ -253,6 +254,8 @@ mod tests {
         let (m, _) = translate(&mut c, r#"{"method":"ui.click","params":{"x":3,"y":4}}"#).unwrap();
         assert_eq!(m, "ui.click", "그 밖은 그대로");
         assert!(translate(&mut c, r#"{"method":"app.save","params":{"path":"/x.psd"}}"#).is_err(), "입력 아닌 명령은 막는다");
+        let (m, p) = translate(&mut c, r#"{"method":"ui.window.attach","params":{"on":false}}"#).unwrap();
+        assert_eq!((m.as_str(), p["on"].as_bool()), ("ui.window.attach", Some(false)), "붙이기(시험)는 그대로");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

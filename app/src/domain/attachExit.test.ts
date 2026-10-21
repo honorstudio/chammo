@@ -71,15 +71,23 @@ describe('listedAlive — 목록에 살아 있나(다시 붙어도 되나)', () 
 
 describe('linkStep — 끊긴 터미널 보기를 어떻게 할까', () => {
   it('살아 있으면 다시 붙는다', () => {
-    expect(linkStep({ alive: true, since: 0, now: 1000 })).toBe('attach');
+    expect(linkStep({ alive: true, stoppedByApp: false, since: 0, now: 1000 })).toBe('attach');
   });
   it('안 보이면(꺼짐·되살리는 중) 기다리고, 오래 안 돌아오면 끊김(gone)으로 — 보내는 말은 바로 실패로 보인다', () => {
-    expect(linkStep({ alive: false, since: 0, now: 5000 })).toBe('wait');
-    expect(linkStep({ alive: null, since: 0, now: 5000 })).toBe('wait');
-    expect(linkStep({ alive: false, since: 0, now: REATTACH_GIVE_UP + 1 })).toBe('gone');
+    expect(linkStep({ alive: false, stoppedByApp: false, since: 0, now: 5000 })).toBe('wait');
+    expect(linkStep({ alive: null, stoppedByApp: false, since: 0, now: 5000 })).toBe('wait');
+    expect(linkStep({ alive: false, stoppedByApp: false, since: 0, now: REATTACH_GIVE_UP + 1 })).toBe('gone');
+  });
+  it('앱이 끈 세션이면 그만 — 다시 안 붙는다(꺼진 세션에 attach 하면 다시 켜진다)', () => {
+    expect(linkStep({ alive: true, stoppedByApp: true, since: 0, now: 1000 })).toBe('stopped');
+  });
+  it('앱이 껐는지 못 읽었으면(null) 모름 — 영구 포기도 붙기도 말고 다음 차례에 다시(0.3.6 리뷰)', () => {
+    expect(linkStep({ alive: true, stoppedByApp: null, since: 0, now: 1000 })).toBe('wait');
+    expect(linkStep({ alive: true, stoppedByApp: null, since: 0, now: REATTACH_GIVE_UP + 1 })).toBe('gone'); // 말풍선은 실패로 — 그래도 계속 본다
+    expect(linkStep({ alive: true, stoppedByApp: false, since: 0, now: REATTACH_GIVE_UP + 1 })).toBe('attach'); // 읽히면 붙는다
   });
   it('끊김 뒤에도 살아 돌아오면 다시 붙는다', () => {
-    expect(linkStep({ alive: true, since: 0, now: REATTACH_GIVE_UP * 3 })).toBe('attach');
+    expect(linkStep({ alive: true, stoppedByApp: false, since: 0, now: REATTACH_GIVE_UP * 3 })).toBe('attach');
   });
 });
 

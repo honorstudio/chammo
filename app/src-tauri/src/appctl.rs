@@ -312,7 +312,7 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                     });
                     continue;
                 }
-                // 다른 기기 참모(scripts/peer) — 찾기·짝짓기·말 넣기·답 읽기. 열쇠는 키체인에만, 답은 <데이터>/peer.txt
+                // 다른 기기 참모(scripts/peer) — 찾기·짝짓기·말 넣기·답 읽기. 열쇠는 키체인(윈도우 자격 증명 관리자)에만, 답은 <데이터>/peer.txt
                 if let Some(req) = crate::peer_cmd::request(&line) {
                     std::thread::spawn(move || {
                         let ans = crate::peer_cmd::answer(&req, &crate::peer_cmd::RealOps);

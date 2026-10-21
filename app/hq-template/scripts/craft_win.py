@@ -238,11 +238,11 @@ def latest(app, get):
     return pick_release(app, assets, sums, sums_url)
 
 
-def install(app, get=None, ddir=None):
-    """zip → SHA256SUMS 대조 → 임시 폴더에 풀기(밖으로 나가는 이름 거절) → chammo-app.json id·판·exe 확인 → 설치 자리에 바꿔 끼우기.
-    하나라도 안 맞으면 아무것도 안 깔고 CraftError"""
+def install(app, get=None, ddir=None, rel=None):
+    """zip(rel 을 주면 그것) → SHA256SUMS 대조 → 임시 폴더에 풀기(밖으로 나가는 이름 거절) → chammo-app.json id·판·exe 확인 → 설치 자리에 바꿔 끼우기.
+    하나라도 안 맞으면 아무것도 안 깔고 CraftError — 앱이 떠 있어 폴더를 못 옮기면 BusyError"""
     get = get or C.fetch
-    rel = latest(app, get)
+    rel = rel or latest(app, get)
     name = rel['pkg_name']
     data = get(rel['pkg'])
     want = C.parse_sums(get(rel['sums']).decode('utf-8', 'replace')).get(name)
@@ -271,7 +271,7 @@ def install(app, get=None, ddir=None):
             try:
                 os.rename(dest, old)
             except OSError as e:  # 앱이 떠 있으면 윈도우는 그 폴더를 못 옮긴다
-                raise C.CraftError(f'{C.display(app)} is running — close it first / 떠 있어서 못 바꿈 ({e})') from e
+                raise C.BusyError(f'{C.display(app)} is running — close it first / 떠 있어서 못 바꿈 ({e})') from e
         os.rename(src, dest)
         shutil.rmtree(old, ignore_errors=True)
     finally:

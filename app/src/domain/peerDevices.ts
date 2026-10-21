@@ -25,14 +25,14 @@ export type PeerView = {
 /** waiting = 이 기기가 그 기기에 연결을 요청하고 허용을 기다리는 중 */
 export function peerView(d: RemoteDevice, waiting: boolean): PeerView {
   const on = d.status === 'connected';
-  const win = d.os.toLowerCase() === 'windows';
+  // 0.3.7 까지 윈도우는 연결을 못 받았다(열쇠 저장소 없음) — 0.3.8 부터 hello 에 link. 맥은 0.3.2 부터 늘 받는다
+  const oldWin = d.os.toLowerCase() === 'windows' && !d.link;
   const extra = on ? d.version
     : waiting ? tr('그 기기에서 허용을 기다려요', 'Waiting for that device to allow')
     : d.status === 'offline' ? [tr('꺼져 있음', 'Offline'), d.lastOk ? tr(`마지막 ${stamp(d.lastOk)}`, `last ${stamp(d.lastOk)}`) : null].filter(Boolean).join(' · ')
-    : win ? tr('지금은 맥끼리만', 'Macs only for now')
-    : d.old ? tr('그 기기 업데이트 필요', 'Update that device')
+    : d.old || oldWin ? tr('그 기기 업데이트 필요', 'Update that device')
     : null;
-  const reachable = d.status === 'pair' && !win;
+  const reachable = d.status === 'pair' && !oldWin;
   return {
     word: on ? tr('연결됨', 'Connected') : tr('연결 안 됨', 'Not connected'),
     extra: extra || null,

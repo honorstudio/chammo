@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { peerView } from './peerDevices';
 import type { RemoteDevice } from '../data/remote';
 
-const D = (o: Partial<RemoteDevice>): RemoteDevice => ({ id: 'n1', name: 'office-imac', os: 'macOS', status: 'connected', paired: true, old: false, version: '0.3.2', lastOk: null, ...o });
+const D = (o: Partial<RemoteDevice>): RemoteDevice => ({ id: 'n1', name: 'office-imac', os: 'macOS', status: 'connected', paired: true, old: false, link: false, version: '0.3.2', lastOk: null, ...o });
 
 describe('peerView — 줄 상태는 연결됨 / 연결 안 됨 둘', () => {
   it('연결됨 · 판, 끊기만', () => {
@@ -24,7 +24,13 @@ describe('peerView — 줄 상태는 연결됨 / 연결 안 됨 둘', () => {
   it('옛 판은 연결 단추 없이 업데이트 권함 — 코드로만', () => {
     expect(peerView(D({ status: 'pair', paired: false, old: true, version: null }), false)).toEqual({ word: '연결 안 됨', extra: '그 기기 업데이트 필요', connect: false, unlink: false, code: true });
   });
-  it('윈도우 기기는 아직 받는 쪽이 못 돼서 맥끼리만', () => {
-    expect(peerView(D({ status: 'pair', paired: false, os: 'windows' }), false)).toEqual({ word: '연결 안 됨', extra: '지금은 맥끼리만', connect: false, unlink: false, code: false });
+  it('옛 윈도우(0.3.7 까지, link 없음)는 연결을 못 받아서 업데이트 권함 — 코드도 안 연다(그 기기가 답을 못 보낸다)', () => {
+    expect(peerView(D({ status: 'pair', paired: false, os: 'windows', version: '0.3.7' }), false)).toEqual({ word: '연결 안 됨', extra: '그 기기 업데이트 필요', connect: false, unlink: false, code: false });
+  });
+  it('0.3.8 윈도우(link)는 맥처럼 연결 단추', () => {
+    expect(peerView(D({ status: 'pair', paired: false, os: 'windows', version: '0.3.8', link: true }), false)).toEqual({ word: '연결 안 됨', extra: null, connect: true, unlink: false, code: true });
+  });
+  it('옛 코드로 한쪽만 짝지은 옛 윈도우가 끊기면 끊기만 — 업데이트 뒤 다시 연결', () => {
+    expect(peerView(D({ status: 'pair', paired: true, os: 'windows', version: '0.3.7' }), false)).toEqual({ word: '연결 안 됨', extra: '그 기기 업데이트 필요', connect: false, unlink: true, code: false });
   });
 });

@@ -82,6 +82,9 @@ mod takeover;
 mod takeover_note;
 mod direct;
 mod vdisplay;
+// 다른 기기 참모 짝 열쇠 — 윈도우 자격 증명 관리자(맥은 키체인)
+#[cfg_attr(not(windows), allow(dead_code))]
+mod wincred;
 mod webpage;
 mod project;
 mod trust;

@@ -297,8 +297,9 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
         void Promise.all([appStoppedRecently().catch(() => null), listSessionsRaw(true).then((j) => listedAlive(j, sid!), () => null)]).then(([stopped, alive]) => {
           asking = false;
           if (disposed) return;
-          if (!stopped || stopped.includes(sid!)) { clearInterval(relink); if (!gone) { gone = true; linkRef.current?.('gone'); } return; }
-          const step = linkStep({ alive, since, now: Date.now() });
+          const step = linkStep({ alive, stoppedByApp: stopped ? stopped.includes(sid!) : null, since, now: Date.now() });
+          // 앱이 끈 세션 — 붙지 않는다. 끈 기록(10분) 동안 남이 respawn 해 살아날 수 있어 영구 포기 말고 드물게 다시 본다(두 번째 리뷰)
+          if (step === 'stopped') { next = Date.now() + 60_000; if (!gone) { gone = true; linkRef.current?.('gone'); } return; }
           if (step === 'attach') { clearInterval(relink); setEpoch((e) => e + 1); return; }
           if (step === 'gone') { next = Date.now() + 15_000; if (!gone) { gone = true; linkRef.current?.('gone'); } } // 굳은 뒤엔 드물게(새 목록은 claude 를 한 번 띄운다)
         });

@@ -33,14 +33,17 @@ fn ok(status: u16, body: &str) -> Result<Response, NetErr> {
 
 #[test]
 fn md3_hello_답으로_참모가_있나_가른다() {
-    assert_eq!(presence(&ok(200, r#"{"app":"chammo","proto":1,"version":"0.2.6","os":"windows"}"#)), Presence::Chammo { proto: 1, version: "0.2.6".into() });
+    assert_eq!(presence(&ok(200, r#"{"app":"chammo","proto":1,"version":"0.2.6","os":"windows"}"#)), Presence::Chammo { proto: 1, version: "0.2.6".into(), link: false });
+    // 0.3.8 부터 받는 쪽이 될 수 있는 기기는 link:true — 없거나 이상한 값이면 false(옛 판)
+    assert_eq!(presence(&ok(200, r#"{"app":"chammo","proto":1,"version":"0.3.8","os":"windows","link":true}"#)), Presence::Chammo { proto: 1, version: "0.3.8".into(), link: true });
+    assert_eq!(presence(&ok(200, r#"{"app":"chammo","proto":1,"version":"0.3.8","link":"yes"}"#)), Presence::Chammo { proto: 1, version: "0.3.8".into(), link: false });
     assert_eq!(presence(&ok(401, "no key")), Presence::Old, "hello 없는 옛판은 열쇠 없음으로 답한다");
     assert_eq!(presence(&ok(200, r#"{"app":"other"}"#)), Presence::Absent);
     assert_eq!(presence(&ok(404, "nope")), Presence::Absent);
     assert_eq!(presence(&Err(NetErr::Refused)), Presence::Absent);
     assert_eq!(presence(&Err(NetErr::Timeout)), Presence::Absent);
     // 이상한 버전 글은 거른다(화면에 그대로 찍히지 않게)
-    assert_eq!(presence(&ok(200, r#"{"app":"chammo","proto":1,"version":"<img src=x>"}"#)), Presence::Chammo { proto: 1, version: String::new() });
+    assert_eq!(presence(&ok(200, r#"{"app":"chammo","proto":1,"version":"<img src=x>"}"#)), Presence::Chammo { proto: 1, version: String::new(), link: false });
 }
 
 fn peer(id: &str, online: bool) -> TsPeer {
@@ -56,9 +59,9 @@ fn md3_기기_칸_상태_합치기() {
     ];
     let peers = vec![peer("nA", true), peer("nB", true), peer("nNEW", true), peer("nOLD", true), peer("nNONE", true)];
     let probe = |id: &str| match id {
-        "nA" => Probe { hello: Presence::Chammo { proto: 1, version: "0.2.6".into() }, auth: Some(true) },
+        "nA" => Probe { hello: Presence::Chammo { proto: 1, version: "0.2.6".into(), link: false }, auth: Some(true) },
         "nB" => Probe { hello: Presence::Old, auth: Some(false) },
-        "nNEW" => Probe { hello: Presence::Chammo { proto: 1, version: "0.2.6".into() }, auth: None },
+        "nNEW" => Probe { hello: Presence::Chammo { proto: 1, version: "0.3.8".into(), link: true }, auth: None },
         "nOLD" => Probe { hello: Presence::Old, auth: None },
         _ => Probe { hello: Presence::Absent, auth: None },
     };
@@ -69,6 +72,8 @@ fn md3_기기_칸_상태_합치기() {
     assert!(v[3].old, "hello 없는 옛판 — 짝짓기는 되지만 업데이트 권함");
     assert_eq!(v[4].last_ok, Some(3), "끊긴 기기는 마지막으로 본 때");
     assert!(v[1].paired && !v[2].paired);
+    // 받는 쪽이 될 수 있나는 hello 의 link 그대로(옛 판·안 닿는 기기는 false)
+    assert_eq!(v.iter().map(|d| d.link).collect::<Vec<_>>(), [false, false, true, false, false]);
 }
 
 #[test]
@@ -477,7 +482,7 @@ fn pe_거절_시간_끝_옛_판_다른_계정은_이유만_남기고_아무것�
         assert!(e.contains(want), "{want}: {e}");
         assert!(kc.val(SERVICE, "nBOX").is_none() && lines.list().is_empty() && load(&dir).is_empty());
     }
-    for (code, body, want) in [(404, "not found", "옛 판"), (403, "not your device", "같은 테일스케일 계정"), (403, "unconfirmed", "확인"), (429, "too many", "잦"), (501, "unsupported", "맥")] {
+    for (code, body, want) in [(404, "not found", "옛 판"), (403, "not your device", "같은 테일스케일 계정"), (403, "unconfirmed", "확인"), (429, "too many", "잦"), (501, "unsupported", "업데이트")] {
         let dir = tmp("connect-req");
         let (kc, lines, asks) = (Fake::default(), crate::mobile_pair::Devices::memory(), crate::peer_ask::Asks::default());
         let mut w = wire(&asks, &[(200, r#"{"state":"wait"}"#)]);
@@ -523,4 +528,15 @@ fn pe_키체인_칸_이름은_본판_고정_개발판만_바꿀_수_있다() {
     assert_eq!(service_from(Some("Chammo remote peer test"), true), "Chammo remote peer test");
     assert_eq!(service_from(Some("  "), true), SERVICE);
     assert_eq!(service_from(None, true), SERVICE);
+}
+
+#[test]
+fn pe_맥과_윈도우는_연결을_받는_쪽이_된다() {
+    // 0.3.7 까지 윈도우는 열쇠 저장소가 없어 501 — 이제 자격 증명 관리자로 받는다
+    assert!(can_link("macos"));
+    assert!(can_link("windows"));
+    assert!(!can_link("linux") && !can_link(""));
+    assert_eq!(can_link(std::env::consts::OS), cfg!(any(target_os = "macos", windows)));
+    use crate::peer_ask::LinkEnv;
+    assert_eq!(RealLink.supported(), cfg!(any(target_os = "macos", windows)), "진짜 받는 쪽도 같은 규칙");
 }

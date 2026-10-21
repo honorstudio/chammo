@@ -2422,8 +2422,10 @@ fn md1_hello_는_열쇠_없이_앱_표시만_준다() {
     assert_eq!(v["proto"], PROTO);
     assert!(v["version"].as_str().is_some_and(|s| !s.is_empty()));
     assert!(v["os"].as_str().is_some());
+    // 연결을 받는 쪽이 될 수 있나 — 이 기기 link_env 그대로(가짜 바깥은 기본 '못 받음')
+    assert_eq!(v["link"], false);
     let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
-    assert_eq!(keys.len(), 4, "{keys:?}");
+    assert_eq!(keys.len(), 5, "{keys:?}");
     assert!(f.calls().is_empty(), "맥 쪽 일은 안 부른다");
     // 문지기(Host·funnel)는 그대로, POST 는 안 받는다
     assert_eq!(run(set(get("/api/hello"), "host", Some("evil.com:47123"))).0, 403);

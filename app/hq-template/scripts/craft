@@ -15,6 +15,9 @@ Craft 앱(ArtCraft 오픈소스)을 고치지 않은 원본 그대로 앱 안에
                                        window). Not installed → the first time it downloads the release DMG, checks SHA256SUMS,
                                        the bundle id and Apple notarization, and installs it to /Applications (any mismatch: nothing
                                        installed) / 맥 앱을 조작 채널과 함께 — 없으면 처음 한 번 DMG 를 맞춰 보고 설치
+                                     An app Chammo installed that is not running is updated first when the release has a newer
+                                       version (same checks; release checked every 6 h; offline or a failed check → the old version
+                                       opens, one line) / 우리가 깐 앱이 꺼져 있고 새 판이 있으면 열기 전에 바꾼다(못 받으면 옛 판)
   scripts/craft run <app> <command id> ['<json params>']  — one app command (menu item), reply as JSON / 앱 명령 하나
   scripts/craft do <app> <method> ['<json>']              — a raw control-channel call (app.open, ui.inspect …) / 채널 명령 그대로
   scripts/craft shot <app> [--out <png>]  ·  close <app>  ·  status   — window picture / save if changed, then quit (closes the port) / what's open
@@ -86,6 +89,10 @@ class FetchError(CraftError):
     pass
 
 
+class BusyError(CraftError):
+    """앱이 떠 있어서 못 바꿈 — 저절로 새 판(auto_update)은 이걸 실패로 치지 않는다(끄고 다시 열면 바뀐다)"""
+
+
 def data_dir(home=None, env=None, exists=os.path.isdir):
     """데이터 폴더 — 앱(config.rs)·scripts/show 와 같은 규칙: $CHAMMO_HOME → ~/.chammo → 단 ~/.chammo 가 없고 ~/.honor-orchestrator 가 있으면 그것"""
     home = home or os.path.expanduser('~')
@@ -96,7 +103,7 @@ def data_dir(home=None, env=None, exists=os.path.isdir):
     return old if not exists(new) and exists(old) else new
 
 
-def fetch(url):
+def fetch(url, timeout=120):
     """주소 → 바이트(리다이렉트 따라감). 실패는 FetchError. 절대 경로면 그 파일(CHAMMO_CRAFT_LOCAL 릴리스)"""
     if os.path.isabs(url):
         try:
@@ -106,7 +113,7 @@ def fetch(url):
             raise FetchError(f'{url} — {e}') from e
     req = urllib.request.Request(url, headers={'User-Agent': 'Chammo-craft', 'Accept': '*/*'})
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read()
     except (urllib.error.URLError, OSError) as e:
         raise FetchError(f'{url} — {e}') from e
@@ -369,9 +376,13 @@ def pick_icon(paths):
     return None
 
 
+RELEASE_TTL = 6 * 3600  # 새 판 확인을 묵히는 시간 — 서랍·open 의 저절로 새 판이 같이 쓴다(그 사이엔 GitHub 에 안 묻는다)
+
+
 def release_info(ddir, app, get=fetch, refresh=False, offline=False):
-    """새 판·DMG 크기 — <데이터>/craft-native/releases.json 에 하루 묵혀 둔다(13개를 열 때마다 GitHub 에 묻지 않게). 못 받으면 None.
-    offline = 받아 둔 것만(묵었어도) — 서랍이 먼저 그릴 때(v8 A2). 못 받았고 받아 둔 것도 없으면 {'error': 까닭 한 줄}"""
+    """새 판·DMG 크기 — <데이터>/craft-native/releases.json 에 6시간 묵혀 둔다(13개를 열 때마다 GitHub 에 묻지 않게). 못 받으면 None.
+    offline = 받아 둔 것만(묵었어도) — 서랍이 먼저 그릴 때(v8 A2). 못 받았고 받아 둔 것도 없으면 {'error': 까닭 한 줄},
+    받아 둔 게 있으면 그것에 stale=True(다시 물었는데 못 받음 — 오프라인)"""
     if app in LOCAL:  # 로컬 DMG — 묵히지 않고 바로(새 판이 같은 자리에 쌓인다)
         try:
             return local_latest(app, LOCAL[app])
@@ -380,12 +391,12 @@ def release_info(ddir, app, get=fetch, refresh=False, offline=False):
     p = os.path.join(ddir, 'craft-native', 'releases.json')
     cache = _read_json(p)
     hit = cache.get(app)
-    if offline or (hit and not refresh and time.time() - hit.get('at', 0) < 86400):
+    if offline or (hit and not refresh and time.time() - hit.get('at', 0) < RELEASE_TTL):
         return hit
     try:
         rel = latest(app, get, native=True)
     except (CraftError, FetchError, ValueError, KeyError) as e:
-        return hit or {'error': str(e)}
+        return dict(hit, stale=True) if hit else {'error': str(e)}
     cache[app] = {'ver': rel['ver'], 'tag': rel['tag'], 'dmg_size': rel.get('dmg_size'), 'at': time.time()}
     _write_json(p, cache)
     return cache[app]
@@ -519,6 +530,7 @@ def drawer_rows(ddir, root, apps_dir=APPS_DIR, get=fetch, refresh=False, icons=T
         rel = release_info(ddir, k, get, refresh, offline=fast) or {}
         rows.append({'app': k, 'name': display(k), 'what': what, 'installed': ver, 'mine': mine, 'size': size, 'used': used.get(k),
                      'latest': rel.get('ver'), 'dmgSize': rel.get('dmg_size'), 'unavailable': None if ver else rel.get('error'),
+                     'newer': bool(ver and rel.get('ver') and ver_key(rel['ver']) > ver_key(ver)),
                      'icon': icon_file(ddir, k, apps_dir, rel.get('tag'), get) if icons else None,
                      'origName': APPS[k][0], 'repo': f'github.com/{OWNER}/{k}', 'basedOn': based_on(where) if ver else None,
                      'chammo': bundle_id(k).startswith('app.chammo.')})
@@ -1267,11 +1279,11 @@ def native_version(app_path):
         return None
 
 
-def install_native(app, get=fetch, run=subprocess.run, apps_dir=APPS_DIR, ddir=None):
-    """최신 릴리스 맥 DMG → SHA256SUMS 대조 → 마운트 → 번들 id·공증(spctl) 확인 → <apps_dir>/<이름>.app(있던 건 바꿔 끼움).
-    하나라도 안 맞으면 아무것도 안 깔고 CraftError"""
+def install_native(app, get=fetch, run=subprocess.run, apps_dir=APPS_DIR, ddir=None, rel=None, busy=None):
+    """최신 릴리스(rel 을 주면 그것) 맥 DMG → SHA256SUMS 대조 → 마운트 → 번들 id·공증(spctl)·판 확인 → <apps_dir>/<이름>.app(있던 건 바꿔 끼움).
+    하나라도 안 맞으면 아무것도 안 깔고 CraftError. busy() 가 참이면(바꿔 끼우기 직전 — 받는 동안 사람이 켰다) BusyError"""
     app = app_key(app)
-    rel = latest(app, get, native=True)
+    rel = rel or latest(app, get, native=True)
     if not rel.get('dmg'):
         raise CraftError(f'{app} {rel["tag"]}: no macOS DMG in the release / 릴리스에 맥 DMG 가 없음')
     dname = rel['dmg'].rsplit('/', 1)[-1]
@@ -1298,10 +1310,18 @@ def install_native(app, get=fetch, run=subprocess.run, apps_dir=APPS_DIR, ddir=N
             gk = run(['spctl', '-a', '-t', 'exec', '-vv', src], capture_output=True, text=True)
             if gk.returncode != 0 or 'Notarized Developer ID' not in (gk.stderr or '') + (gk.stdout or ''):
                 raise CraftError('not notarized by Apple / 애플 공증이 아님 — not installed')
+            got = native_version(src)
+            if got != rel['ver']:  # 파일 이름 판과 다르면 — 깔면 열 때마다 '새 판'으로 또 받는다
+                raise CraftError(f'version {got} ≠ {rel["ver"]} in the file name / 판이 파일 이름과 다름 — not installed')
+            if busy and busy():
+                raise BusyError(f'{display(app)} is running / 떠 있음 — not replaced')
             dest = os.path.join(apps_dir, found[0])
             new = dest + '.craft-new'
             shutil.rmtree(new, ignore_errors=True)
-            run(['ditto', src, new], capture_output=True)
+            cp = run(['ditto', src, new], capture_output=True, text=True)
+            if cp.returncode != 0:  # 반쯤 쓰다 멈춤(디스크가 참 등) — 반쪽 앱으로 바꿔 끼우지 않는다
+                shutil.rmtree(new, ignore_errors=True)
+                raise CraftError(f'could not copy the app / 앱을 못 옮겼음 — {(cp.stderr or "").strip() or cp.returncode}')
             if not os.path.isdir(new):
                 shutil.copytree(src, new, symlinks=True)
             shutil.rmtree(dest, ignore_errors=True)
@@ -1437,9 +1457,95 @@ def update_native(app, get=fetch, run=subprocess.run, apps_dir=APPS_DIR, ddir=No
     if ver_key(ver) <= ver_key(old):
         return old, old
     if subprocess.run(['pgrep', '-f', dest + '/Contents/MacOS/'], capture_output=True).returncode == 0:
-        raise CraftError(f'{display(app)} is running — close it first / 떠 있음, 끄고 다시 (scripts/craft close {app})')
+        raise BusyError(f'{display(app)} is running — close it first / 떠 있음, 끄고 다시 (scripts/craft close {app})')
     install_native(app, get, run, apps_dir, ddir)
     return old, native_version(dest)
+
+
+def installed_id(path):
+    """깔린 앱의 번들 id(맥 Info.plist) — 윈도우는 chammo-app.json 의 id, 없으면 None"""
+    if IS_WIN:
+        return (craft_win.info(path) or {}).get('id')
+    import plistlib
+    try:
+        with open(os.path.join(path, 'Contents', 'Info.plist'), 'rb') as f:
+            return plistlib.load(f).get('CFBundleIdentifier')
+    except (OSError, ValueError):
+        return None
+
+
+def app_running(ddir, app, apps_dir=APPS_DIR):
+    """그 앱이 어디서든 떠 있나 — 맥은 그 자리 실행 파일(사람이 띄운 것도), 윈도우는 우리가 띄운 인스턴스(사람이 띄운 건 바꿔 끼우기가 막힌다)"""
+    if IS_WIN:
+        return bool(live_instances(ddir, app))
+    return subprocess.run(['pgrep', '-f', app_path(app, apps_dir) + '/Contents/MacOS/'], capture_output=True).returncode == 0
+
+
+def auto_update(ddir, app, get=fetch, run=subprocess.run, apps_dir=APPS_DIR, running=None, say=None, now=time.time):
+    """open --native 때 저절로 새 판 — 우리가 깐 참모 앱(설치 기록·같은 자리·같은 번들 id)이 꺼져 있고 릴리스가 더 새것이면 띄우기 전에 받아 바꾼다.
+    확인은 설치와 같다(SHA256SUMS·번들 id·공증·판). 릴리스 확인은 RELEASE_TTL 묵힌 것, 못 물으면(오프라인) 그냥 둔다.
+    못 받거나 안 맞으면 옛 판 그대로 한 줄 — 확인이 안 맞은 판은 RELEASE_TTL 동안 다시 안 받는다(열 때마다 DMG 를 받지 않게).
+    떠 있으면 한 줄만(끄고 다시 열면 바뀐다). (옛 판, 지금 판) 또는 None — 오류를 내지 않는다(열기를 막지 않게)"""
+    st = load_state(ddir, app)
+    if st and pid_alive(st.get('pid')):
+        return None  # 그 인스턴스가 떠 있다 — 이 open 은 보이기만(파일 열기 등), 묻지도 말하지도 않는다
+    app = base(app)
+    say = say or (lambda line: print(line, file=sys.stderr))
+    running = running or (lambda: app_running(ddir, app, apps_dir))
+    dest = app_path(app, apps_dir)
+    rec = load_installs(ddir).get(app) or {}
+    if not native_version(dest) or rec.get('path') != dest or installed_id(dest) != bundle_id(app):
+        return None  # 안 깔림(처음 설치 길) · 사람이 깐 앱 · 다른 앱
+    quick = (lambda u: fetch(u, timeout=15)) if get is fetch else get  # 묻기는 짧게 — 네트워크가 멈춰 있어도 열기가 오래 안 막히게
+    name, failed_p = display(app), os.path.join(ddir, 'craft-native', 'update-failed.json')
+    try:
+        with slot_lock(ddir, app + '.update'):  # 두 인스턴스를 같이 열어도 한 번만 받는다
+            old = native_version(dest)  # 기다리는 동안 다른 스크립트가 바꿨을 수 있다
+            info = release_info(ddir, app, quick) or {}
+            new = info.get('ver')
+            if info.get('stale') or not new or not old or ver_key(new) <= ver_key(old):
+                return None
+            miss = _read_json(failed_p).get(app) or {}
+            if miss.get('ver') == new and now() - miss.get('at', 0) < RELEASE_TTL:
+                return None
+            if running():
+                say(f'{name}: new version {new} — running, so {old} stays; quit and reopen to update / 새 판 {new} 있음 — 떠 있어서 {old} 그대로(끄고 다시 열면 바뀜)')
+                return None
+            try:
+                rel = latest(app, quick, native=True)  # 받을 주소 — 막 물었으면 이 프로세스가 기억한 것(_CRAFTS)
+            except CraftError as e:
+                say(f'{name}: could not get {new} — opening {old} / 새 판 {new} 을 못 받아 옛 판 {old} 로 엶 — {str(e).rsplit(" — ", 1)[-1]}')
+                return None
+            new = rel['ver']
+            if ver_key(new) <= ver_key(old):
+                return None
+            say(f'{name}: updating {old} → {new} before opening / 새 판 {new} 받는 중(지금 {old})…')
+            try:
+                if IS_WIN:
+                    craft_win.install(app, get, ddir=ddir, rel=rel)
+                else:
+                    install_native(app, get, run, apps_dir, ddir, rel=rel, busy=running)
+            except BusyError:
+                say(f'{name}: started while downloading — {old} stays / 받는 동안 켜져서 {old} 그대로(끄고 다시 열면 바뀜)')
+                return None
+            except FetchError as e:
+                say(f'{name}: could not download {new} — opening {old} / 새 판 {new} 을 못 받아 옛 판 {old} 로 엶 — {str(e).rsplit(" — ", 1)[-1]}')
+                return None
+            except CraftError as e:  # 확인이 안 맞음·못 옮김 — 이 판은 한동안 다시 안 받는다
+                fails = _read_json(failed_p)
+                fails[app] = {'ver': new, 'at': now(), 'why': str(e)}
+                _write_json(failed_p, fails)
+                say(f'{name}: could not install {new} — opening {old} / 새 판 {new} 을 깔지 못해 옛 판 {old} 로 엶 — {e}')
+                return None
+            fails = _read_json(failed_p)
+            if fails.pop(app, None) is not None:
+                _write_json(failed_p, fails)
+            got = native_version(dest)
+            say(f'{name}: updated {old} → {got} / 새 판으로 바꿈')
+            return old, got
+    except (CraftError, OSError, ValueError, KeyError, TypeError) as e:  # 뜻밖의 것 — 옛 판으로 연다
+        say(f'{name}: update check failed — opening as is / 새 판 확인 실패, 그대로 엶 — {e}')
+        return None
 
 
 # ── Chammo 따로 창과 잇기: 창 열기·닫기 줄(app.jsonl) + 머리줄이 읽는 마지막 일·저장 상태(<앱>.status.json) ──
@@ -1494,10 +1600,12 @@ def note_call(ddir, app, method, params):
         return
     st = load_status(ddir, app)
     inner = params.get('params') if isinstance(params.get('params'), dict) else {}
-    path = params.get('path') or inner.get('path') or ''
+    # 경로 이름표는 abs_paths 와 같은 표(PATH_KEYS) — saveAs 가 out·dest 로 와도 저장으로 친다. 상대 경로는 부르는 쪽(abs_paths)이 이미 작업 폴더 기준으로 풀었다
+    path = next((str(d[k]) for d in (params, inner) for k in d if k.lower() in PATH_KEYS and isinstance(d[k], str) and d[k]), '')
     # 엔진 명령으로 저장·열기도 같다 — 워드 file.saveAs 뒤에도 dirty 가 남아 닫을 때 보관함에 untitled.docx 가 한 벌 더 생겼다(QA 0.3.6)
     work = os.path.abspath((load_state(ddir, app) or {}).get('work') or '.') if cmd in SAVE_AS_CMDS else ''
-    saved_out = bool(work and path) and not os.path.abspath(path).startswith(work + os.sep)
+    # 윈도우는 대소문자를 안 가린다(C:\Work ~ c:\work) — normcase 로 맞대야 작업 폴더 안 저장을 '밖'으로 안 본다
+    saved_out = bool(work and path) and not os.path.normcase(os.path.abspath(path)).startswith(os.path.normcase(work) + os.sep)
     if method in ('app.save', 'file.save') or saved_out:
         st = {'last': f'saved / 저장 {path}'.strip(), 'dirty': False}
     elif method in ('app.open', 'file.open', 'ui.open') or cmd in OPEN_CMDS:
@@ -2111,10 +2219,29 @@ def change_summary(before, after):
     out += [f"시트 '{n}' 지움" for n in bs]
     u0, u1 = before.get('undo') or [], after.get('undo') or []
     if isinstance(u0, list) and isinstance(u1, list) and u1 != u0:
-        # 최근 것이 앞(앱이 20개까지) — 앞에 새로 붙은 것 수
-        k = next((i for i in range(1, len(u1) + 1) if u1[i:] == u0[:len(u1) - i]), len(u1))
-        out.append(f'작업 +{k}(' + ', '.join(str(e) for e in u1[:k]) + ')')
+        new, undone = undo_diff(u0, u1)
+        if new:
+            out.append(f'작업 +{new}(' + ', '.join(str(e) for e in u1[:new]) + ')')
+        if undone:
+            out.append(f'실행 취소 {undone}(' + ', '.join(str(e) for e in u0[:undone]) + ')')
     return ' · '.join(out) or '바뀐 것 없음'
+
+
+def undo_diff(u0, u1):
+    """되돌리기 목록 전후(최근 것이 앞) → (새로 한 일 수, 사람이 실행 취소한 수). 앞에서 j 개를 취소하고 i 개를 새로 했으면
+    u1[i:] 가 u0[j:] 와 이어진다(새것이 들어와 목록이 안 줄었으면 상한에 밀려 끝까지 안 닿아도 된다 — 상한 값은 앱마다라 모른다). 가장 적게 바뀐 설명을 고른다 —
+    줄어든 목록의 남은 항목을 새 작업으로 세던 것(0.3.6 리뷰 '작업 +2(b, c)')"""
+    best = (len(u1), len(u0))
+    for i in range(len(u1) + 1):
+        rest = u1[i:]
+        for j in range(len(u0) + 1):
+            if i + j >= sum(best):
+                break
+            seg = u0[j:j + len(rest)]
+            if seg == rest and (j + len(rest) == len(u0) or (i > 0 and len(u1) >= len(u0))):
+                best = (i, j)
+                break
+    return best
 
 
 # ── 닫기 = 묻지 않고 저장 후 닫기(2026-10-16 결정) ──
@@ -2947,6 +3074,7 @@ def main(argv):
                 f = open_file_arg(rest)
                 app, claimed = open_slot(ddir, app, opener_id(), chosen, wait)  # 이제부터 app = 인스턴스 키
                 try:
+                    auto_update(ddir, app)  # 우리가 깐 앱이 꺼져 있고 릴리스가 더 새것이면 먼저 바꾼다(실패하면 옛 판 그대로)
                     rc = open_native_ctl(ddir, app, work, '--here' in rest)
                 finally:
                     if claimed:

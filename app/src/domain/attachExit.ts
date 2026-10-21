@@ -68,8 +68,11 @@ export const REATTACH_POLL = 2500;
 
 export type LinkState = 'live' | 'reattaching' | 'gone';
 
-/** 끊긴 뒤 한 번 볼 때마다 — 살아 있으면 다시 붙고, 아니면 기다리다 오래되면 끊김으로(그래도 계속 본다) */
-export function linkStep(o: { alive: boolean | null; since: number; now: number }): 'attach' | 'wait' | 'gone' {
-  if (o.alive) return 'attach';
+/** 끊긴 뒤 한 번 볼 때마다 — 앱이 끈 세션이면 그만(stopped), 살아 있으면 다시 붙고, 아니면 기다리다 오래되면 끊김으로(그래도 계속 본다).
+ *  stoppedByApp = 앱이 끈·지운 세션인가(Rust app_stopped_recently), null = 못 읽음(모름) — 꺼진 세션에 attach 하면 다시 켜지니 붙지 않고,
+ *  영구 포기도 않고 다음 차례에 다시 묻는다(못 읽은 걸 '앱이 껐다'로 쳐서 영영 안 붙었다, 0.3.6 리뷰) */
+export function linkStep(o: { alive: boolean | null; stoppedByApp: boolean | null; since: number; now: number }): 'attach' | 'wait' | 'gone' | 'stopped' {
+  if (o.stoppedByApp) return 'stopped';
+  if (o.alive && o.stoppedByApp === false) return 'attach';
   return o.now - o.since > REATTACH_GIVE_UP ? 'gone' : 'wait';
 }

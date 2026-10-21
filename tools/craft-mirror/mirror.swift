@@ -119,6 +119,7 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
         // 먼저 앱 창을 칸 크기로 — 그다음 그 크기로 받는다
         srcFrame = fitSource(to: view.bounds.size) ?? w.frame
         let filter = SCContentFilter(desktopIndependentWindow: w)
+        capFilter = filter
         scale = CGFloat(filter.pointPixelScale)
         let cfg = config(srcFrame.size, slow: false)
         let s = SCStream(filter: filter, configuration: cfg, delegate: self)
@@ -129,7 +130,7 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
         stream = s
         s.startCapture { [weak self] err in
             // 받기가 시작되기 전에 칸 크기가 바뀌었으면(새 창이 기본 크기로 커질 때) 그 맞추기는 건너뛰었다 — 한 번 더
-            DispatchQueue.main.async { self?.status = err == nil ? 1 : 2; if err == nil { self?.scheduleFit(); self?.watchDrift() } }
+            DispatchQueue.main.async { self?.status = err == nil ? 1 : 2; if err == nil { self?.scheduleFit(); self?.watchDrift(); self?.startAttach() } }
         }
     }
 
@@ -178,7 +179,7 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
     func setRate(slow s: Bool) {
         slow = s
         guard let st = stream else { return }
-        st.updateConfiguration(config(srcFrame.size, slow: s), completionHandler: nil)
+        st.updateConfiguration(config(srcFrame.size, slow: s || attachedNow), completionHandler: nil)  // 붙인 동안엔 밑 비추기는 느리게만
     }
 
     func stream(_ s: SCStream, didStopWithError error: Error) {
@@ -216,6 +217,7 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
         hostHidden = !visible || r.width < 40 || r.height < 40
         if hostHidden { view.isHidden = true } else if view.layer?.contents != nil { view.isHidden = false }
         updatePause()
+        attacher?.shown = !hostHidden
     }
 
     /// 마지막 프레임을 JPEG 로 — 덮개(팝오버)가 칸을 덮어 비추기를 숨길 때 웹이 그 자리에 그림으로 깐다(검은 칸 대신)
@@ -235,6 +237,10 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
     var handing = false      // 개입 — 진짜 창을 사람 화면 칸 자리에 넘겨준 동안
     var homeFrame: CGRect?   // 돌려놓을 자리(Craft 가짜 화면)
     var homeScale: CGFloat?  // 돌려놓을 때 받기 배율
+    var attacher: Attacher?  // 붙이기 모드(시험) — 진짜 창을 칸 자리에
+    var attachHome: CGRect?  // 붙이기 전 자리(Craft 가짜 화면) — 뗄 때 돌려놓는다
+    var capFilter: SCContentFilter?  // 받기를 다시 만들 때(붙이기 모드는 붙인 동안 받기를 버린다)
+    var stopping = false
     var moveObs: NSObjectProtocol?
     func watchDrift() {
         driftTimer?.invalidate()
@@ -249,7 +255,7 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func checkDrift() {
-        guard status == 1, !paused, !view.isHidden, !handing else { return }
+        guard status == 1, !paused, !view.isHidden, !handing, !attachedNow else { return }
         guard let cur = Mirror.cgFrame(pid) else { return }
         // Craft 화면 배율이 바뀌었으면(Chammo 창이 1배·2배 화면을 오갈 때) 받기 픽셀도 — 안 바꾸면 그림이 작게·흐리게 그려진다
         if let sc = Mirror.screenScale(cur), sc != scale, let s = stream {
@@ -270,6 +276,7 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
     func scheduleFit() {
         driftTries = 0  // 칸 크기가 바뀌었다 — 다시 세 번까지
         if handing { moveToStage(); return }  // 넘겨준 동안엔 진짜 창이 칸을 따라간다
+        if attachedNow { return }  // 붙인 동안엔 진짜 창이 칸 자리·크기(Attacher 가 옮긴다)
         fitWork?.cancel()
         let w = DispatchWorkItem { [weak self] in self?.refit() }
         fitWork = w
@@ -277,7 +284,7 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func refit() {
-        guard status == 1, let s = stream else { return }
+        guard status == 1, !attachedNow, let s = stream else { return }  // 붙인 동안엔 창이 칸 자리 — 가짜 화면 왼쪽 위로 끌고 가지 않게
         guard let f = fitSource(to: view.bounds.size) else { return }
         srcFrame = f
         canvas = nil  // 창 크기가 바뀌면 캔버스 자리도 바뀐다 — 다음 누를 때 다시
@@ -558,6 +565,9 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stop() {
+        stopping = true
+        attacher?.stop()  // 붙인 창을 떼어 Craft 화면으로
+        attacher = nil
         if handing { handoff(false) }  // 칸이 사라지면 넘겨준 창도 Craft 화면으로 돌려놓는다
         fitWork?.cancel()
         driftTimer?.invalidate()
@@ -753,6 +763,16 @@ extension Mirror {
     /// (Chammo 는 활성이 아니라 ⌘W·⌘K 같은 앱 단축키가 가로챌 수 없다). 비추기는 밑에서 계속 — 사람이 채팅을 눌러 Chammo 가 앞으로 와도 칸엔 같은 그림.
     /// 끄기: 원래 자리(Craft 가짜 화면)로 되돌리고 Chammo 를 다시 활성
     func handoff(_ on: Bool) {
+        if let a = attacher {
+            // 붙인 동안엔 진짜 창이 이미 칸 자리 — 개입 = 입력 잠금 풀기 + 그 앱 앞으로, 돌려주기 = 잠그고 Chammo 앞으로
+            a.lock = !on
+            if on {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.activateApp() }
+            } else if ProcessInfo.processInfo.environment["CHAMMO_CRAFT_NO_ACTIVATE"] != "1" {
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            return
+        }
         if on {
             guard !handing, status == 1 else { return }
             homeFrame = Mirror.cgFrame(pid)
@@ -877,5 +897,59 @@ public func craftMirrorDebugEvent(_ win: UnsafeMutableRawPointer?, _ gx: Double,
         w.sendEvent(e)
     } else if kind == 4, let chars, let e = NSEvent.keyEvent(with: .keyDown, location: loc, modifierFlags: [], timestamp: t, windowNumber: w.windowNumber, context: nil, characters: String(cString: chars), charactersIgnoringModifiers: String(cString: chars), isARepeat: false, keyCode: 0) {
         w.sendEvent(e)
+    }
+}
+
+// 붙이기 모드(시험, CHAMMO_CRAFT_ATTACH=1) — 칸이 보이는 동안 진짜 앱 창을 칸 자리에(attach.swift Attacher), 비추기는 밑에서 느리게(덮일 때 깔 그림)
+extension Mirror {
+    static let attachMode = ProcessInfo.processInfo.environment["CHAMMO_CRAFT_ATTACH"] == "1"
+
+    var attachedNow: Bool { attacher?.last?.visible == true }
+
+    func startAttach() {
+        // 명령 길(inputCB)은 Rust 가 ui.window.attach 를 아는 앱(참모 표)에만 미리 건다 — 모르는 앱에 붙였다고 치면 refit·개입이 꺼졌다(리뷰)
+        guard Mirror.attachMode, attacher == nil, pid > 0, inputCB != nil else { return }
+        // 원래 자리(Craft 가짜 화면)는 붙이기 전에 한 번만 — 떼고 곧바로 다시 붙이면 아직 칸 자리에 있는 창을 원래 자리로 잡았다(리뷰)
+        attachHome = Mirror.cgFrame(pid)
+        attacher = Attacher(view: view, pid: pid, shown: !hostHidden) { [weak self] s in self?.attachSink(s) }
+    }
+
+    /// 참모 앱 쪽 — 조작 채널 ui.window.attach(자리·층·잠금), 뗄 땐 원래 자리(Craft 가짜 화면)로 ui.window.frame
+    func attachSink(_ s: AttachState) {
+        if s.visible {
+            send("ui.window.attach", ["on": true, "x": s.rect.minX, "y": s.rect.minY, "width": s.rect.width, "height": s.rect.height,
+                                      "parent": s.parent, "front": s.front, "lock": s.lock])
+            let resized = s.rect.size != srcFrame.size
+            srcFrame = s.rect  // 참모 손 자리도 칸 자리 기준으로
+            _ = resized
+            dropStream()
+        } else {
+            send("ui.window.attach", ["on": false])
+            if let h = attachHome {
+                send("ui.window.frame", ["x": h.minX.rounded(), "y": h.minY.rounded(), "width": h.width.rounded(), "height": h.height.rounded()])
+                srcFrame = h
+            }
+            remakeStream()
+        }
+    }
+}
+
+// 붙인 동안엔 받기(SCStream)를 아예 버린다 — 멈추기(stopCapture)만으론 맥이 그 창 신호등 자리에 '화면 기록 중' 알약(보라색)을 계속 그렸다(10/21 사용자 실측 25초).
+// 덮일 때 깔 그림은 Rust 가 앱 ui.screenshot 한 장으로(craft_space_still), 떼면 같은 창으로 다시 만든다
+extension Mirror {
+    func dropStream() {
+        guard let s = stream else { return }
+        if !paused { s.stopCapture(completionHandler: nil) }
+        stream = nil
+        paused = false
+    }
+
+    func remakeStream() {
+        guard !stopping, stream == nil, let f = capFilter else { return }
+        let s = SCStream(filter: f, configuration: config(srcFrame.size, slow: slow), delegate: self)
+        guard (try? s.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "chammo.craft-mirror.frames"))) != nil else { return }
+        stream = s
+        paused = false
+        s.startCapture { [weak self] _ in DispatchQueue.main.async { self?.updatePause() } }
     }
 }

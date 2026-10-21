@@ -1,10 +1,9 @@
 // 설정 > 폰과 메신저 > 다른 기기 참모 — 같은 테일스케일 계정 기기의 Chammo 와 잇기(ADR 0007).
 // 0.3.2: 같은 계정 기기는 목록에 바로 뜨고 '연결'을 누르면 그 기기에 허용 카드가 뜬다 → 그쪽 사람이 허용하면 양쪽이 이어진다.
-// 코드(그 기기 설정 > 폰의 연결 코드)는 대피로 — 옛 판이거나 되묻기가 안 닿을 때. 열쇠는 이 기기 키체인에만. 참모끼리 말은 scripts/peer 로
+// 코드(그 기기 설정 > 폰의 연결 코드)는 대피로 — 옛 판이거나 되묻기가 안 닿을 때. 열쇠는 이 기기 키체인(윈도우는 자격 증명 관리자)에만. 참모끼리 말은 scripts/peer 로
 import { useEffect, useState } from 'react';
 import { remoteConnect, remoteConnectCancel, remoteDevices, remotePair, remoteUnpair, type RemoteDevice } from '../data/remote';
 import { peerView } from '../domain/peerDevices';
-import { IS_WIN } from '../domain/reader';
 import { IconRefresh, IconUnlink } from './Icons';
 import { IconButton } from './kit/IconButton';
 import { tr } from '../i18n';
@@ -20,7 +19,6 @@ export function PeerSection({ title }: { title: string }) {
   const [code, setCode] = useState('');
 
   const load = () => {
-    if (IS_WIN) return;
     setBusy(true);
     void remoteDevices().then((o) => { setList(o.devices); setErr(null); }, (e: unknown) => { setList([]); setErr(String(e)); }).finally(() => setBusy(false));
   };
@@ -38,15 +36,6 @@ export function PeerSection({ title }: { title: string }) {
       if (!m.includes('취소')) setErr(`${d.name}: ${m}`);
     }).finally(() => setWaiting((w) => w.filter((x) => x !== d.id)));
   };
-
-  if (IS_WIN) {
-    return (
-      <section className="su-sec">
-        <div className="su-sec-head"><h2>{title}</h2></div>
-        <p className="su-hint">{tr('다른 기기 참모는 지금 맥끼리만 이어져요', 'Linking with other devices works between Macs for now')}</p>
-      </section>
-    );
-  }
 
   return (
     <section className="su-sec">

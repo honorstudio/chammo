@@ -41,9 +41,9 @@ import { useShowLog } from './useShowLog';
 import { CraftPane } from '../craft/CraftPane';
 import { CraftDrawer } from '../craft/CraftDrawer';
 import { APPS_KEY } from '../../domain/craftDrawer';
-import { setCraftOwner } from '../craftOwner';
-import { craftAppOf, craftKey, craftBase, leftCraft } from '../../domain/craftTab';
-import { dockLetter, dockNo, dockTitle, recentLabel, type DockItem } from '../../domain/craftDock';
+import { craftOwner, forgetCraftOwner, setCraftOwner } from '../craftOwner';
+import { craftAppOf, craftGone, craftKey, craftBase, dropCraftEverywhere, GONE_TICKS, leftCraft } from '../../domain/craftTab';
+import { craftOwnerOf, dockFor, dockLetter, dockNo, dockTitle, drawerOpen, recentLabel, type DockItem } from '../../domain/craftDock';
 import { CHAT_FILE_OPEN, imageFile } from '../chat/openChatFile';
 import { cardMoves } from '../../domain/chatFiles';
 import { attachToChat } from '../fileDrop';
@@ -452,9 +452,57 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
   const craftNames = useRef(new Map<string, string>());
   // Craft 독 — 떠 있는 Craft 앱(2초마다). 떠 있는 게 없으면 빈 목록이라 아이콘도 없다
   const [dock, setDock] = useState<DockItem[]>([]);
+  // 꺼진 앱 칸 — 모든 참모 탭 줄·보던 화면에서 거두고 지금 참모 줄도 닫는다. 지금 참모 줄만 닫아서 안 보던 참모로 돌아오면 칸이 남았다(2026-10-21 사용자)
+  const dropCraft = useRef((_key: string, _goneFor?: number) => {});
+  dropCraft.current = (key: string, goneFor = 0) => {
+    forgetCraftOwner(craftAppOf(key), Date.now(), goneFor);
+    dropCraftEverywhere(key, holds.current, screens.current);
+    setLkHold((h) => {
+      if (!h || !h.tabs.includes(key)) return h;
+      const r = closeTab(h, key, now.current.pick);
+      if (r.pick) setPick(r.pick, 'craft');
+      return r.hold;
+    });
+  };
+  // 인스턴스 주인 참모(2026-10-21 사용자) — 띄운 세션을 맡은 참모 → 칸이 놓인 참모 → 없음(아무 참모). 칸·독·서랍은 주인 참모 스페이스에만
+  const craftOwnerOfKey = (by: string | undefined, app: string) => craftOwnerOf(by, app, (b) => showOwner(b, orchIds, holders), craftOwner, orchIds);
+  // 띄운 세션으로 주인이 정해진 칸이 다른 참모 탭 줄에 있으면 거둔다(넘겨받기·주인 없을 때 남이 연 칸) — 한 인스턴스가 두 참모에 붙어 있었다
+  const strayCraft = useRef((_it: DockItem) => {});
+  strayCraft.current = (it: DockItem) => {
+    const o = it.by ? showOwner(it.by, orchIds, holders) : null;
+    if (!o) return;
+    const key = craftKey(it.app);
+    const stray = (!!lkHold && lkHold.orch !== o && lkHold.tabs.includes(key)) || [...holds.current].some(([k, h]) => k !== o && h.tabs.includes(key));
+    if (!stray) return;
+    dropCraftEverywhere(key, holds.current, screens.current, o);
+    // 주인 참모 탭 줄로 옮긴다(띄운 세션의 주인이 늦게 정해졌을 때 — 거두기만 하면 보던 칸이 그냥 사라졌다, 리뷰). __craftSpace 의 queue 길과 같게 + 프사 점
+    const owner = orchs.find((x) => x.id === o);
+    if (owner && o !== now.current.view && !holds.current.get(o)?.tabs.includes(key)) {
+      const sv = screens.current.get(o) ?? { pick: homeOf(owner), sheet: [] };
+      screens.current.set(o, { ...sv, pick: key, modal: null });
+      holds.current.set(o, openTab(holds.current.get(o) ?? null, o, sv.pick, key));
+      setNewFor((x) => (x.has(o) ? x : new Set(x).add(o)));
+    }
+    setLkHold((h) => {
+      if (!h || h.orch === o || !h.tabs.includes(key)) return h;
+      const r = closeTab(h, key, now.current.pick);
+      if (r.pick) setPick(r.pick, 'craft');
+      return r.hold;
+    });
+  };
+  const dockSeen = useRef<Record<string, number>>({});
   useEffect(() => {
     let alive = true;
-    const tick = () => void invoke<DockItem[]>('craft_dock').then((d) => { if (!alive) return; d.forEach((it) => craftNames.current.set(it.app, it.name)); setDock((old) => (JSON.stringify(old) === JSON.stringify(d) ? old : d)); }, () => {});
+    const tick = () => void invoke<DockItem[]>('craft_dock').then((d) => {
+      if (!alive) return;
+      d.forEach((it) => craftNames.current.set(it.app, it.name));
+      setDock((old) => (JSON.stringify(old) === JSON.stringify(d) ? old : d));
+      // 보이던 앱이 사라지면 꺼짐 — 사람이 앱을 직접 끄거나 죽으면 closed 알림이 안 온다
+      const r = craftGone(dockSeen.current, d.map((it) => it.app));
+      dockSeen.current = r.track;
+      r.gone.forEach((a) => dropCraft.current(craftKey(a), GONE_TICKS * 2000)); // 그만큼 전부터 안 보였다 — 그 뒤에 적힌 주인은 같은 키의 새 인스턴스 것
+      d.forEach((it) => strayCraft.current(it));
+    }, () => {});
     tick();
     const t = setInterval(tick, 2000);
     return () => { alive = false; clearInterval(t); };
@@ -471,7 +519,11 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
       if (place === 'space') {
         // 띄운 세션(by)을 맡긴 참모 탭에 — show 와 같은 주인 판단. 서랍·셸에서 띄웠으면 지금 보는 참모 → 대표(2026-10-19 사람이 보면서 따라가게)
         const v = now.current.view ?? null;
-        const t = craftTarget(showOwner(by ?? '', orchIds, holders), v && orchs.some((o) => o.id === v) ? v : undefined, nav.chat, chatOrch?.id ?? orchs[0]?.id);
+        const owner = craftOwnerOf(by, app, (b) => showOwner(b, orchIds, holders), craftOwner, orchIds);
+        const t = craftTarget(owner, v && orchs.some((o) => o.id === v) ? v : undefined, nav.chat, chatOrch?.id ?? orchs[0]?.id);
+        // 놓인 참모를 기억 — 주인을 알거나 세션이 띄웠으면(주인 모르는 세션도 그 칸이 놓인 참모 것). 사람이 연 것(by 없음)을 재시작 때 되살릴 땐
+        // 안 적는다: 다 그때 보던 참모 것으로 박혔다(리뷰). 그 칸을 보게 되면 아래 pick 효과가 그 참모로 적는다
+        if ((owner || by) && t.to) setCraftOwner(app, t.to);
         if (t.queue) { // 다른 참모 몫 — 보던 화면은 그대로, 그 참모 탭 줄 끝에 넣고 프사에 점(show-queued 와 같은 길)
           const o = orchs.find((x) => x.id === t.to)!;
           const sv = screens.current.get(t.to!) ?? { pick: homeOf(o), sheet: [] };
@@ -487,7 +539,9 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
         setModal(null);
         setLkHold((h) => openTab(h, to, now.current.pick, key));
         setPick(key, 'craft');
-      } else if (place === 'closed' || place === 'hidden') { // 꺼짐·숨김 — 탭을 닫는다(숨김이면 독 아이콘은 남는다)
+      } else if (place === 'closed') { // 꺼짐 — 모든 참모 탭 줄에서
+        dropCraft.current(key);
+      } else if (place === 'hidden') { // 숨김 — 지금 탭만 닫는다(독 아이콘은 남는다)
         setLkHold((h) => {
           if (!h || !h.tabs.includes(key)) return h;
           const r = closeTab(h, key, now.current.pick);
@@ -1254,6 +1308,7 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
   }, []);
   useWheelZoom(() => (canZoomRef.current ? document.querySelector('.space .cv-main') : null), (dir, at) => zoomRef.current(dir, at));
   // 탭 줄 — 맨 왼쪽 고정 탭 둘(홈 집 · 보관함 폴더, 닫기 없음), 그 뒤로 연 파일. 연 탭이 없어도 늘 보인다(2026-10-12 사용자 — 나무 머리 켜기가 설정 토글로 착각됐다)
+  const myDock = (orchId: string | undefined) => dockFor(dock, orchId, (it) => craftOwnerOfKey(it.by, it.app));
   const lockerTabs = (lo: Session, rootNew = false) => {
     const row = tabRow(lkHold, lo.id, pick);
     const h = lkHold && lkHold.orch === lo.id ? lkHold : null;
@@ -1279,10 +1334,11 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
         {/* 윈도우도(2026-10-21) — 0.3.4 땐 Rust 가 scripts/craft 를 바로 띄워 오류 원문만 떴다, 이제 python 으로 부른다(craft_window::craft_cmd) */}
         <button className={`lk-tab folder ${pick === APPS_KEY ? 'on' : ''}`} aria-pressed={pick === APPS_KEY} onClick={() => setPick(APPS_KEY)}
           aria-label={tr('Craft 앱', 'Craft apps')} title={tr('Craft 앱 — 사진·영상·문서·표 편집기', 'Craft apps — photo, video, document and spreadsheet editors')}><IconApps /></button>
-        {dock.map((it) => {
-          // Craft 독 아이콘 = 그 앱의 탭(글자 탭은 없다, 2026-10-19 사용자) — 누르면 그 칸, 지금 보는 앱은 선택 표시, 오른쪽 클릭 = 따로 창·꺼내기·끄기·최근 문서
+        {myDock(lo.id).map((it, _i, mine) => {
+          // Craft 독 아이콘 = 그 앱의 탭(글자 탭은 없다, 2026-10-19 사용자) — 누르면 그 칸, 지금 보는 앱은 선택 표시, 오른쪽 클릭 = 따로 창·꺼내기·끄기·최근 문서.
+          // 이 참모 것만(주인 없는 것 포함) — 남의 참모 앱은 그 참모 독에(2026-10-21 사용자)
           const title = dockTitle(it, craftWho(it.by));
-          const no = dockNo(dock, it);
+          const no = dockNo(mine, it);
           const on = pick === craftKey(it.app);
           const menu = act ? (e: React.MouseEvent) => act.openMenu(e, [
             { label: tr('따로 창으로', 'Open in its own window'), run: () => void invoke('craft_move', { app: it.app, to: 'window' }).catch(() => {}) },
@@ -1436,7 +1492,14 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
     ));
   } else if (pick === APPS_KEY) {
     // 앱 서랍 — 13개 Craft 앱 아이콘 격자(v3 덱 1)
-    const page = <div className="lk-doc-body"><CraftDrawer running={dock.map((d) => d.app)} openMenu={act?.openMenu} /></div>;
+    // 서랍도 이 참모 것만 — 켜짐 점·끄기는 내 인스턴스, 누르면 내 것을 보이거나 빈 자리에 새로(남의 참모 앱을 가져오지 않는다)
+    const mine = myDock(lockerOrch?.id).map((d) => d.app);
+    // key = 참모 — 서랍을 연 채 참모를 바꾸면 '여는 중'이 다른 참모 서랍에 남았다(리뷰)
+    const page = <div className="lk-doc-body"><CraftDrawer key={lockerOrch?.id ?? ''} running={mine} all={dock.map((d) => d.app)} open={(app) => {
+      const r = drawerOpen(app, dock.map((d) => d.app), mine);
+      if ('key' in r && lockerOrch) setCraftOwner(r.key, lockerOrch.id); // 누른 참모가 주인 — 뜨는 사이 다른 참모로 옮겨도 그 참모 탭 줄에
+      return r;
+    }} openMenu={act?.openMenu} /></div>;
     main = lockerOrch ? lockerFrame(lockerOrch, <>{lockerTabs(lockerOrch, !!lockerSide?.rootNew)}{page}</>) : page;
   } else if (pick.startsWith('k:')) {
     // Craft 탭 — 칸은 비워 두고 네이티브 비추기가 그 위에(CraftPane 이 자리·보이는지를 알린다)

@@ -13,7 +13,7 @@ import { toUniver, type SheetBook } from '../../domain/sheetBook';
 import { blockedOf, cellState, compile, fromCalc, fromMutation, type CellState, type LogCtx, type LogEntry } from '../../domain/sheetLog';
 import { conflicts } from '../../domain/sheetPending';
 import { cellChanges, plan, skipOf, typed, type Put } from '../../domain/sheetPlay';
-import { onSheetPlay } from './sheetPlayBus';
+import { ackThenPlay, onSheetPlay } from './sheetPlayBus';
 import { OrchAvatar } from '../avatar/OrchAvatar';
 
 export type SheetStatus = 'saved' | 'dirty' | 'saving' | 'conflict' | 'gone' | 'blocked' | 'error';
@@ -214,8 +214,8 @@ export default function SheetGrid({ path, book, stamp, onStatus, onSaved, onRelo
         window.setTimeout(() => setCursor(null), 400);
       });
     };
-    // 받자마자 '받았어'(sheet_play_ack) — 안 하면 Rust 가 3초 뒤 파일에 바로 써 버린다
-    const unlisten = onSheetPlay(path, (p) => { void invoke('sheet_play_ack', { id: p.id }).catch(() => {}); play(p); });
+    // 받자마자 '받았어'(sheet_play_ack) — 안 하면 Rust 가 3초 뒤 파일에 바로 써 버린다. 늦었으면(Rust 가 이미 썼다) 칠하지 않는다
+    const unlisten = onSheetPlay(path, (p) => void ackThenPlay(() => invoke<boolean>('sheet_play_ack', { id: p.id }), () => play(p)));
     void invoke('sheet_open', { path, on: true }).catch(() => {});
     /** 밖(참모·세션)이 파일을 고쳤다 — 안 쓴 내 고침이 없으면 그대로 다시 읽고, 있으면 바깥 판 위에 내 칸만 얹는다.
      *  내가 고친 칸을 밖에서도 고쳤으면 충돌 띠(사용자 것도 바깥 것도 덮지 않는다 — 고르는 건 사용자) */

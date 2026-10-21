@@ -117,9 +117,10 @@ fn fall_back(id: &str) -> Option<Result<usize, String>> {
 }
 
 /// 표가 쓰기를 받았다 — 이제 표가 칸마다 넣고 저장한 뒤 sheet_play_done 으로 답한다
+/// 아직 기다리던 쓰기면 true — ACK_WAIT 를 넘겨 이미 파일 패치로 물러났으면 false(표는 칠하지 말 것 — 두 번 적용·충돌 띠·답 덮어쓰기, 0.3.6 리뷰)
 #[tauri::command]
-pub fn sheet_play_ack(id: String) {
-    claim(&id);
+pub fn sheet_play_ack(id: String) -> bool {
+    claim(&id).is_some()
 }
 
 /// 표가 다 넣고 저장까지 했다(또는 못 했다) — 기다리는 scripts/sheet 에 답
@@ -249,6 +250,18 @@ mod tests {
         assert_eq!(get_text(&b, "B10:C10").unwrap(), "매출!B10\t42\n매출!C10\t\t=B10*2");
         // 차트 부품은 그대로
         assert_eq!(crate::sheet::unzip(&std::fs::read(&p).unwrap()).unwrap()["xl/charts/chart1.xml"], b"<chartSpace/>");
+    }
+
+    #[test]
+    fn 늦게_온_받았어는_거절한다() {
+        // 0.3.6 리뷰: ACK_WAIT(3초) 뒤에 온 ack — Rust 는 이미 파일을 패치하고 답했다. 표가 또 칠하고 sheet_play_done 을 부르면
+        // 두 번 적용·충돌 띠·답 파일 덮어쓰기. 늦었으면 false 로 돌려줘 표가 건너뛰게 한다
+        park("ack-late", std::path::PathBuf::from("/없는/곳/a.xlsx"), vec![]);
+        assert!(fall_back("ack-late").is_some(), "3초 안에 안 받아 물러났다");
+        assert!(!sheet_play_ack("ack-late".into()), "늦은 받았어 — 표는 칠하지 않는다");
+        park("ack-ok", std::path::PathBuf::from("/없는/곳/a.xlsx"), vec![]);
+        assert!(sheet_play_ack("ack-ok".into()), "기다리는 중이었다 — 표가 칠한다");
+        assert!(fall_back("ack-ok").is_none());
     }
 
     #[test]

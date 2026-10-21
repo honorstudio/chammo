@@ -1378,12 +1378,13 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         }
         return resp;
     }
-    // 다른 기기 참모가 '여기 참모가 있나·말이 통하나'만 묻는다 — 열쇠 없이, 앱 표시·약속 번호·버전·OS 만(이름·경로·세션은 없음)
+    // 다른 기기 참모가 '여기 참모가 있나·말이 통하나'만 묻는다 — 열쇠 없이, 앱 표시·약속 번호·버전·OS·받기 가능만(이름·경로·세션은 없음)
     if req.path == "/api/hello" {
         if !is_get {
             return Resp::text(405, "method not allowed");
         }
-        return Resp::json(&serde_json::json!({ "app": "chammo", "proto": PROTO, "version": env!("CARGO_PKG_VERSION"), "os": std::env::consts::OS }));
+        // link = 연결 요청(코드 없이)을 받을 수 있나 — 0.3.7 까지 윈도우는 못 받아서, 요청하는 쪽 화면이 이걸로 '연결' 단추를 연다
+        return Resp::json(&serde_json::json!({ "app": "chammo", "proto": PROTO, "version": env!("CARGO_PKG_VERSION"), "os": std::env::consts::OS, "link": be.link_env().supported() }));
     }
     // 짝짓기 — 코드가 열쇠라 토큰 없이. 같은 출처 JSON 만, 토큰은 응답 몸으로(쿠키 없음) → 페이지가 localStorage 에
     if req.path == "/api/pair" {

@@ -1,7 +1,7 @@
 //! 다른 기기의 참모와 잇기 — 같은 테일스케일 계정 기기의 폰 서버에 '참모 손님'으로(ADR 0007).
 //! 원격 기기는 자기 폰 서버(mobile_http.rs, 47123)를 그대로 쓰고, 이 앱은 그 서버의 '손님'이 된다(docs/research/2026-10-06-multi-device.md).
 //! - 기기 찾기: 이 맥 `tailscale status --json` 의 같은 계정 피어(태그·공유 노드 빼고) × `/api/hello`
-//! - 신원: 처음 한 번 그 기기 설정의 연결 코드로 짝짓기(peer 줄) → 기기 열쇠는 키체인에만, 목록 파일엔 열쇠 없이
+//! - 신원: 처음 한 번 그 기기 설정의 연결 코드로 짝짓기(peer 줄) → 기기 열쇠는 키체인(윈도우는 자격 증명 관리자, wincred.rs)에만, 목록 파일엔 열쇠 없이
 //! - 대신 보내기: 허용한 길만(보기·이름표 붙는 말 넣기·답 읽기), 응답은 상한·JSON 확인 뒤 화면으로. 원격이 보낸 것은 남의 글이다 —
 //!   이 맥 파일·명령 길(파일 열기·셸)로 절대 흘려보내지 않는다(그런 길은 허용 목록에 없다)
 use crate::accounts_store::{Secret, Store};
@@ -13,6 +13,14 @@ use std::time::Duration;
 
 /// 키체인 칸 서비스 이름 — 계정 = 기기의 테일스케일 노드 ID
 pub const SERVICE: &str = "Chammo remote peer";
+/// 열쇠 저장소 이름(사람이 읽는 오류 글)
+const STORE_WORD: &str = if cfg!(windows) { "자격 증명 관리자" } else { "키체인" };
+
+/// 연결을 받는 쪽·요청하는 쪽이 될 수 있는 OS — 짝 열쇠를 둘 저장소가 있는 곳(맥 키체인·윈도우 자격 증명 관리자)
+pub fn can_link(os: &str) -> bool {
+    matches!(os, "macos" | "windows")
+}
+
 pub const FILE: &str = "remote-peers.json";
 const PORT: u16 = 47123;
 
@@ -79,13 +87,16 @@ pub struct DeviceView {
     pub paired: bool,
     /// hello 를 모르는 옛판 — 짝짓기·보기·채팅은 되지만 업데이트 권함
     pub old: bool,
+    /// 그 기기가 연결을 받는 쪽이 될 수 있다고 했나(hello link, 0.3.8~). 옛 맥은 없어도 받는다 — 화면이 OS 와 같이 본다
+    pub link: bool,
     pub version: Option<String>,
     pub last_ok: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Presence {
-    Chammo { proto: u32, version: String },
+    /// link = 연결 요청을 받을 수 있다고 했나(0.3.8~)
+    Chammo { proto: u32, version: String, link: bool },
     /// 열쇠 없음(401)으로 답함 — hello 없는 옛 Chammo
     Old,
     Absent,
@@ -161,7 +172,7 @@ pub fn presence(r: &Result<Response, NetErr>) -> Presence {
             }
             let ver = v["version"].as_str().unwrap_or("");
             let version = if ver.len() <= 32 && ver.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+')) { ver.to_string() } else { String::new() };
-            Presence::Chammo { proto: v["proto"].as_u64().unwrap_or(0) as u32, version }
+            Presence::Chammo { proto: v["proto"].as_u64().unwrap_or(0) as u32, version, link: v["link"] == true }
         }
         Ok(resp) if resp.status == 401 => Presence::Old,
         _ => Presence::Absent,
@@ -174,10 +185,10 @@ pub fn merge(peers: &[TsPeer], saved: &[Saved], probe: impl Fn(&str) -> Probe) -
     for p in peers {
         let s = saved.iter().find(|s| s.id == p.id);
         let pr = probe(&p.id);
-        let (old, version) = match &pr.hello {
-            Presence::Chammo { version, .. } => (false, Some(version.clone()).filter(|v| !v.is_empty())),
-            Presence::Old => (true, None),
-            Presence::Absent => (false, None),
+        let (old, version, link) = match &pr.hello {
+            Presence::Chammo { version, link, .. } => (false, Some(version.clone()).filter(|v| !v.is_empty()), *link),
+            Presence::Old => (true, None, false),
+            Presence::Absent => (false, None, false),
         };
         let status = match (s.is_some(), &pr.hello, pr.auth) {
             (true, _, Some(true)) => "connected",
@@ -186,11 +197,11 @@ pub fn merge(peers: &[TsPeer], saved: &[Saved], probe: impl Fn(&str) -> Probe) -
             (false, Presence::Absent, _) => continue,
             (false, _, _) => "pair",
         };
-        out.push(DeviceView { id: p.id.clone(), name: p.name.clone(), os: p.os.clone(), status, paired: s.is_some(), old, version, last_ok: s.and_then(|s| s.last_ok) });
+        out.push(DeviceView { id: p.id.clone(), name: p.name.clone(), os: p.os.clone(), status, paired: s.is_some(), old, link, version, last_ok: s.and_then(|s| s.last_ok) });
     }
     // 짝지었는데 테일넷 목록에서 사라진 기기(지워졌거나 이름이 바뀜) — 끊김으로 남긴다
     for s in saved.iter().filter(|s| !peers.iter().any(|p| p.id == s.id)) {
-        out.push(DeviceView { id: s.id.clone(), name: s.name.clone(), os: String::new(), status: "offline", paired: true, old: false, version: None, last_ok: s.last_ok });
+        out.push(DeviceView { id: s.id.clone(), name: s.name.clone(), os: String::new(), status: "offline", paired: true, old: false, link: false, version: None, last_ok: s.last_ok });
     }
     out
 }
@@ -267,7 +278,7 @@ pub fn pair(kc: &dyn Store, dir: &Path, peer: &TsPeer, code: &str, my_name: &str
     }
     let token = serde_json::from_slice::<serde_json::Value>(&r.body).ok().and_then(|v| v["token"].as_str().map(str::to_string)).filter(|t| t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit()));
     let token = token.ok_or("그 기기가 준 열쇠 모양이 이상해요")?;
-    kc.set(&service(), &peer.id, &Secret::new(token)).map_err(|e| format!("열쇠를 키체인에 못 넣었어요({e:?})"))?;
+    kc.set(&service(), &peer.id, &Secret::new(token)).map_err(|e| format!("열쇠를 {STORE_WORD}에 못 넣었어요({e:?})"))?;
     let mut list = load(dir);
     list.retain(|s| s.id != peer.id);
     list.push(Saved { id: peer.id.clone(), name: peer.name.clone(), ip: peer.ip, port: peer_port(), paired_at: now_ms(), last_ok: Some(now_ms()) });
@@ -275,7 +286,7 @@ pub fn pair(kc: &dyn Store, dir: &Path, peer: &TsPeer, code: &str, my_name: &str
 }
 
 pub fn unpair(kc: &dyn Store, dir: &Path, id: &str) -> Result<(), String> {
-    kc.remove(&service(), id).map_err(|e| format!("키체인 칸을 못 지웠어요({e:?})"))?;
+    kc.remove(&service(), id).map_err(|e| format!("{STORE_WORD} 칸을 못 지웠어요({e:?})"))?;
     let mut list = load(dir);
     list.retain(|s| s.id != id);
     save(dir, &list).map_err(|e| e.to_string())
@@ -314,7 +325,7 @@ pub fn accept(kc: &dyn Store, dir: &Path, lines: &crate::mobile_pair::Devices, p
     lines.add_peer(&token, &format!("참모 · {}", p.name), &p.id, std::time::SystemTime::now()).map_err(|e| e.to_string())?;
     if let Err(e) = kc.set(&service(), &p.id, &Secret::new(back.clone())) {
         let _ = lines.remove_node(&p.id);
-        return Err(format!("열쇠를 키체인에 못 넣었어요({e:?})"));
+        return Err(format!("열쇠를 {STORE_WORD}에 못 넣었어요({e:?})"));
     }
     if let Err(e) = upsert_saved(dir, &p.id, &p.name, p.ip) {
         let _ = lines.remove_node(&p.id);
@@ -344,7 +355,7 @@ fn connect_inner(l: &Link, me_id: &str, peer: &TsPeer, req: &str, send: &SendFn,
         403 if text.starts_with("unconfirmed") => return Err("그 기기가 이 기기를 확인하지 못했어요 — 두 기기 다 Chammo 를 켜 두고 다시".into()),
         403 => return Err("같은 테일스케일 계정 기기끼리만 이어져요".into()),
         429 => return Err("연결 요청이 너무 잦아요 — 10분쯤 뒤에 다시".into()),
-        501 => return Err("그 기기는 아직 연결을 받을 수 없어요(지금은 맥끼리만)".into()),
+        501 => return Err("그 기기 Chammo 가 옛 판이라 연결을 못 받아요 — 그 기기를 업데이트해 주세요".into()),
         s => return Err(format!("그 기기가 연결 요청을 못 받았어요({s})")),
     }
     let end = now() + crate::peer_ask::TTL_MS + crate::peer_ask::PICKUP_MS;
@@ -379,7 +390,7 @@ fn keep(l: &Link, peer: &TsPeer, token: &str, back: &str) -> Result<(), String> 
     if !hex64(token) || !hex64(back) || token == back {
         return Err("그 기기가 준 열쇠 모양이 이상해요".into());
     }
-    l.kc.set(&service(), &peer.id, &Secret::new(token.to_string())).map_err(|e| format!("열쇠를 키체인에 못 넣었어요({e:?})"))?;
+    l.kc.set(&service(), &peer.id, &Secret::new(token.to_string())).map_err(|e| format!("열쇠를 {STORE_WORD}에 못 넣었어요({e:?})"))?;
     if let Err(e) = l.lines.add_peer(back, &format!("참모 · {}", peer.name), &peer.id, std::time::SystemTime::now()) {
         let _ = l.kc.remove(&service(), &peer.id);
         return Err(e.to_string());
@@ -410,7 +421,7 @@ pub fn call(kc: &dyn Store, dir: &Path, id: &str, here: Option<Ipv4Addr>, method
     let mut list = load(dir);
     let Some(i) = list.iter().position(|s| s.id == id) else { return Err("짝지은 기기가 아니에요".into()) };
     let ip = here.ok_or("테일넷에 그 기기가 안 보여요(꺼짐·지워짐·다른 계정)")?;
-    let token = kc.get(&service(), id).map_err(|e| format!("키체인을 못 읽었어요({e:?})"))?.ok_or("pair")?;
+    let token = kc.get(&service(), id).map_err(|e| format!("{STORE_WORD}에서 열쇠를 못 읽었어요({e:?})"))?.ok_or("pair")?;
     let t = Target { ip, port: list[i].port };
     let r = send(&t, &Request { method, path, body: body.map(str::as_bytes), token: Some(token.expose()) }, CALL_WAIT, MAX_BODY).map_err(|e| net_word(&e))?;
     if r.status == 401 {
@@ -432,9 +443,16 @@ pub fn call(kc: &dyn Store, dir: &Path, id: &str, here: Option<Ipv4Addr>, method
 
 // ── 앱에 붙이는 길(실제 망·키체인·tailscale) ─────────────────────────────
 
+#[cfg(not(windows))]
 fn keychain() -> crate::accounts_store::Keychain {
     // 창은 안 띄운다 — 개발판을 다시 빌드하면 서명이 바뀌어 못 읽는데(교훈), 그땐 '다시 짝짓기'로 보인다
     crate::accounts_store::Keychain { path: None, unlock: None, quiet: true, cli_service: None }
+}
+
+/// 윈도우는 키체인 대신 자격 증명 관리자(창 없음)
+#[cfg(windows)]
+fn keychain() -> crate::wincred::WinCred {
+    crate::wincred::WinCred
 }
 
 fn ps() -> String {
@@ -532,12 +550,12 @@ pub async fn remote_unpair(id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || unpair_now(&id)).await.map_err(|e| e.to_string())?
 }
 
-/// 연결 요청을 받는 쪽 진짜 바깥 — 맥만(열쇠를 키체인에 둔다). 윈도우는 '못 받음'(501)
+/// 연결 요청을 받는 쪽 진짜 바깥 — 맥(키체인)·윈도우(자격 증명 관리자). 그 밖은 '못 받음'(501)
 pub struct RealLink;
 
 impl crate::peer_ask::LinkEnv for RealLink {
     fn supported(&self) -> bool {
-        cfg!(target_os = "macos")
+        can_link(std::env::consts::OS)
     }
     fn lookup(&self, node: &str) -> Option<crate::peer_ask::LinkPeer> {
         let (_, json) = tailnet().ok()?;
@@ -563,8 +581,8 @@ impl crate::peer_ask::LinkEnv for RealLink {
 
 /// 연결(실제 테일넷·키체인) — 앱 화면 '연결'과 scripts/peer connect 가 같이 쓴다. 허용될 때까지(최대 6분) 붙잡는다
 pub fn connect_now(id: &str) -> Result<(), String> {
-    if !cfg!(target_os = "macos") {
-        return Err("다른 기기 참모 연결은 지금 맥끼리만 돼요".into());
+    if !can_link(std::env::consts::OS) {
+        return Err("다른 기기 참모 연결은 맥·윈도우에서만 돼요".into());
     }
     // 그 기기가 이 기기 폰 서버로 되물어 확인하고, 이어진 뒤엔 그 기기 참모도 이리로 말을 넣는다
     if !crate::mobile::server_running() {

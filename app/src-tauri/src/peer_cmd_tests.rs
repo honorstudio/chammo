@@ -3,7 +3,7 @@ use crate::remote::{CallOut, DeviceView, DevicesOut};
 use std::cell::RefCell;
 
 fn dev(id: &str, name: &str, status: &'static str) -> DeviceView {
-    DeviceView { id: id.into(), name: name.into(), os: "macOS".into(), status, paired: status != "pair", old: false, version: Some("0.3.2".into()), last_ok: None }
+    DeviceView { id: id.into(), name: name.into(), os: "macOS".into(), status, paired: status != "pair", old: false, link: true, version: Some("0.3.2".into()), last_ok: None }
 }
 
 #[derive(Default)]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boxOf, coveredAt, craftAppOf, craftKey, sameBox, shown, wantStill, leftCraft } from './craftTab';
+import { boxOf, coveredAt, craftAppOf, craftGone, craftKey, dropCraftEverywhere, sameBox, shown, wantStill, leftCraft } from './craftTab';
 
 describe('Craft 스페이스 탭', () => {
   it('탭 열쇠 k:<앱>', () => {
@@ -51,5 +51,66 @@ describe('Craft 글자 탭 없이 — 다른 탭으로 옮기면 숨기기(2026-
     expect(leftCraft('k:vectorcraft', 'k:vectorcraft')).toBeNull();
     expect(leftCraft('/a/b.md', 'k:vectorcraft')).toBeNull();
     expect(leftCraft('k:@apps', '/a/b.md')).toBeNull();
+  });
+});
+
+// 2026-10-21 사용자 실기(.shots/stale-craft-pane.png): 참모 A 스페이스에 참모 벡터 칸이 떠 있는데 그 앱이 B 를 보는 동안 꺼지고 A 로 돌아오면
+// 칸이 '비추기가 멈췄어' + '앱이 꺼져 있어' 로 남았다 — 꺼짐 처리가 지금 보는 참모 탭 줄만 고쳤다. 앱이 여럿이면 겹쳐 쌓였다
+describe('craftGone — 독에서 보이던 앱이 두 번 연속 사라지면 꺼짐(사람이 끄기·죽음처럼 closed 알림이 안 오는 길까지)', () => {
+  it('보이던 앱이 한 번 빠지면 기다리고, 두 번째에 꺼짐 한 번', () => {
+    let r = craftGone({}, ['vectorcraft', 'photocraft']);
+    expect(r.gone).toEqual([]);
+    r = craftGone(r.track, ['photocraft']);
+    expect(r.gone).toEqual([]); // 한 번 빠짐 — 독 읽기가 잠깐 비어도 안 닫는다
+    r = craftGone(r.track, ['photocraft']);
+    expect(r.gone).toEqual(['vectorcraft']);
+    expect(craftGone(r.track, ['photocraft']).gone).toEqual([]); // 한 번만
+  });
+  it('다시 보이면 처음부터, 본 적 없는 앱은 꺼짐이 아니다', () => {
+    let r = craftGone({ vectorcraft: 0 }, []);
+    r = craftGone(r.track, ['vectorcraft']);
+    r = craftGone(r.track, []);
+    expect(r.gone).toEqual([]);
+    expect(craftGone({}, []).gone).toEqual([]);
+  });
+});
+
+describe('dropCraftEverywhere — 꺼진 앱 칸을 모든 참모 탭 줄·보던 화면에서 거둔다', () => {
+  const k = craftKey('vectorcraft'), p = craftKey('photocraft');
+  it('안 보던 참모 A 의 탭 줄과 보던 화면(그 칸)까지 — 돌아와도 다시 안 그린다', () => {
+    const saved = new Map([['A', { orch: 'A', back: 'l:A', tabs: ['/x/a.md', k] }], ['B', { orch: 'B', back: 'l:B', tabs: [k, p] }]]);
+    const screens = new Map([['A', { pick: k, modal: null }], ['B', { pick: p, modal: null }]]);
+    dropCraftEverywhere(k, saved, screens);
+    expect(saved.get('A')!.tabs).toEqual(['/x/a.md']);
+    expect(screens.get('A')!.pick).toBe('d:/x/a.md'); // 남은 마지막 탭으로
+    expect(saved.get('B')!.tabs).toEqual([p]);
+    expect(screens.get('B')!.pick).toBe(p); // 다른 걸 보던 참모는 그대로
+  });
+  it('여러 앱이 꺼지면 다 — 탭이 없으면 보관함 자리(back)로', () => {
+    const saved = new Map([['B', { orch: 'B', back: 'l:B', tabs: [k, p] }]]);
+    const screens = new Map([['B', { pick: k, modal: null }]]);
+    dropCraftEverywhere(k, saved, screens);
+    dropCraftEverywhere(p, saved, screens);
+    expect(saved.get('B')!.tabs).toEqual([]);
+    expect(screens.get('B')!.pick).toBe('l:B');
+  });
+  it('탭 줄엔 없는데 보던 화면만 그 칸이면(다른 참모 몫으로 들어온 것) 홈으로', () => {
+    const saved = new Map<string, { orch: string; back: string; tabs: string[] }>();
+    const screens = new Map([['C', { pick: k, modal: null }]]);
+    dropCraftEverywhere(k, saved, screens);
+    expect(screens.get('C')!.pick).toBe('');
+  });
+});
+
+describe('dropCraftEverywhere keep — 주인이 정해지면 다른 참모 탭 줄에서만 거둔다', () => {
+  const k = craftKey('gridcraft-2');
+  it('keep 참모 줄·화면은 그대로', () => {
+    const saved = new Map([['A', { orch: 'A', back: 'l:A', tabs: [k] }], ['B', { orch: 'B', back: 'l:B', tabs: [k] }]]);
+    const screens = new Map([['A', { pick: k, modal: null }], ['B', { pick: k, modal: null }]]);
+    dropCraftEverywhere(k, saved, screens, 'B');
+    expect(saved.get('A')!.tabs).toEqual([]);
+    expect(screens.get('A')!.pick).toBe('l:A');
+    expect(saved.get('B')!.tabs).toEqual([k]);
+    expect(screens.get('B')!.pick).toBe(k);
   });
 });

@@ -1582,7 +1582,7 @@ dependencies = [
 
 [[package]]
 name = "honor-orchestrator"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -1614,6 +1614,7 @@ dependencies = [
  "tauri-winrt-notification",
  "tungstenite",
  "vt100",
+ "windows-sys 0.61.2",
  "zip 8.6.0",
 ]
 

@@ -117,6 +117,28 @@ pub fn set_input(h: &Handle, on: bool, app: &str) {
     let _ = (h, on, app);
 }
 
+/// 비추기가 그 앱 조작 채널로 명령을 보낼 길만 건다(입력 잠금은 그대로) — 붙이기 모드(CHAMMO_CRAFT_ATTACH)는 개입 전부터 창을 옮긴다
+pub fn set_channel(h: &Handle, app: &str) {
+    #[cfg(craft_mirror)]
+    unsafe {
+        let ctx = Box::into_raw(Box::new(app.to_string())) as *mut std::ffi::c_void;
+        craft_mirror_set_input(h.0 as *mut _, crate::craft_input::on_input, ctx);
+    }
+    #[cfg(not(craft_mirror))]
+    let _ = (h, app);
+}
+
+/// 붙이기 모드로 이 앱을 붙일까(시험) — env 가 켜져 있고 ui.window.attach 를 아는 앱(참모 표)만. 켜져 있을 때만 set_channel 을 미리 건다
+/// (모르는 앱에 길을 걸면 비추기가 붙었다고 치고 refit·개입을 꺼서 망가졌다, 리뷰)
+pub fn attach_mode(app: &str) -> bool {
+    std::env::var("CHAMMO_CRAFT_ATTACH").as_deref() == Ok("1") && attach_app(app)
+}
+
+/// ui.window.attach 를 받는 참모 앱 — 지금은 참모 표만(chammo-grid feature/window-attach)
+pub fn attach_app(app: &str) -> bool {
+    crate::craft_window::base(app) == Some("gridcraft")
+}
+
 /// 받기를 멈추고 뷰를 뗀다 — 메인 스레드에서만
 pub fn detach(h: Handle) {
     #[cfg(craft_mirror)]
@@ -130,6 +152,12 @@ pub fn detach(h: Handle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 붙이기는_받는_앱만() {
+        assert!(attach_app("gridcraft") && attach_app("gridcraft-3"));
+        assert!(!attach_app("photocraft") && !attach_app("vectorcraft-2"));
+    }
 
     #[test]
     fn 상태_번호는_swift_와_같다() {

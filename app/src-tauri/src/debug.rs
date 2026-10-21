@@ -93,8 +93,19 @@ fn aside_of<R: Runtime>(w: &tauri::WebviewWindow<R>) -> Option<((i32, i32), Opti
         ((m.position().x as f64 / s) as i32, (m.position().y as f64 / s) as i32, (m.size().width as f64 / s) as u32, (m.size().height as f64 / s) as u32)
     };
     let list: Vec<_> = ms.iter().map(|m| { let (x, y, w, h) = lg(m); (x, y, w, h, m.name().is_some_and(|n| n == crate::vdisplay::NAME || n == crate::craft_screen::NAME)) }).collect();
+    // CHAMMO_DEV_WINDOW=x,y — 그 자리(논리 점)에. 외장 모니터가 있으면 옆 화면이 사람이 쓰는 맥북 화면이라 가짜 화면 좌표를 직접 준다
+    // (잠긴 화면에선 가짜 화면 이름을 못 읽고 AX 로도 못 옮긴다, 2026-10-21)
+    if let Some((x, y)) = std::env::var("CHAMMO_DEV_WINDOW").ok().and_then(|v| dev_spot(&v)) {
+        return Some(((x, y), None));
+    }
     let (spot, at) = aside_spot(&list, 1.0);
     Some((spot, at.map(|i| (list[i].2, list[i].3))))
+}
+
+/// CHAMMO_DEV_WINDOW 의 "x,y" — 아니면 None
+pub fn dev_spot(v: &str) -> Option<(i32, i32)> {
+    let (x, y) = v.split_once(',')?;
+    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
 }
 
 pub fn place_dev_window<R: Runtime>(app: &tauri::AppHandle<R>) {
@@ -135,6 +146,12 @@ mod pick_log_tests {
 #[cfg(test)]
 mod aside_tests {
     use super::aside_spot;
+    #[test]
+    fn 개발판_창_자리는_x_y_로_줄_수_있다() {
+        assert_eq!(super::dev_spot("-2890,1440"), Some((-2890, 1440)));
+        assert_eq!(super::dev_spot("main"), None);
+        assert_eq!(super::dev_spot("1,x"), None);
+    }
     #[test]
     fn 외장_모니터가_있으면_주_화면_아닌_진짜_화면() {
         // 주 화면(0,0 1920x1080) + 왼쪽 맥북 + 가짜 화면

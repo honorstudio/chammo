@@ -5,6 +5,8 @@ import { tr } from '../i18n';
 export type DrawerRow = {
   app: string; name: string; what: string; installed: string | null; mine: boolean; size: number; used: string | null;
   latest: string | null; dmgSize: number | null; icon: string;
+  /** 깔린 판보다 릴리스가 더 새것(숫자로 견줌 — scripts/craft). 우리가 깐 앱은 다음에 열 때 저절로 바뀐다 */
+  newer?: boolean;
   /** 라이선스 창 — 원작(ArtCraft) 이름·저장소, 참모 앱이면 원작 판(Info.plist ChammoBasedOn) */
   origName: string; repo: string; basedOn: string | null; chammo: boolean;
   /** 안 깔렸는데 받을 수 없을 때 까닭 한 줄(공개 릴리스를 못 받음·릴리스에 없음) — 모르면 비움 */
@@ -41,7 +43,7 @@ export function tileTitle(r: DrawerRow): string {
     parts.push(r.installed);
     if (r.size) parts.push(sizeText(r.size));
     parts.push(r.used ? tr(`마지막 사용 ${r.used}`, `last used ${r.used}`) : tr('아직 안 씀', 'not used yet'));
-    if (r.latest && r.latest !== r.installed) parts.push(tr(`새 판 ${r.latest}`, `new ${r.latest}`));
+    if (r.newer && r.latest) parts.push(tr(`새 판 ${r.latest}`, `new ${r.latest}`));
   } else if (tileUnavailable(r)) {
     parts.push(tr(`받을 수 없음 — ${r.unavailable}`, `unavailable — ${r.unavailable}`));
   } else {
@@ -61,9 +63,10 @@ export const tileIcon = (r: DrawerRow) => r.icon || (r.app === 'photocraft' ? '/
 export const tileLetter = (r: DrawerRow) => (r.name.trim().replace(/^참모\s+/, '')[0] ?? '?').toUpperCase();
 
 /** 칸 오른쪽 위 모서리(v7 A1, 마우스를 올리면) — 떠 있으면 끄기(지우기 대신 — 떠 있는 앱은 못 지운다), 안 떠 있고 우리가 깐 건 지우기 */
-export function tileCorner(r: DrawerRow, running: boolean): 'quit' | 'remove' | null {
+export function tileCorner(r: DrawerRow, running: boolean, elsewhere = false): 'quit' | 'remove' | null {
   if (running) return 'quit';
-  return r.mine ? 'remove' : null;
+  // 다른 참모가 쓰는 중(elsewhere) — 서랍은 내 인스턴스만 켜짐으로 보여서 '안 떠 있음'으로 보였고, 지우기는 모든 인스턴스를 끄고 앱째 지운다(2026-10-21 리뷰)
+  return r.mine && !elsewhere ? 'remove' : null;
 }
 
 /** 불러오는 동안 자리표시로 둘 칸 — 깔렸거나 판을 아는(로컬 DMG·받아 둔) 앱은 바로, 저장소에서 받아야 하는 칸만(v8 A2) */
