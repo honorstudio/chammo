@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boxOf, coveredAt, craftAppOf, craftGone, craftKey, dropCraftEverywhere, sameBox, shown, wantStill, leftCraft } from './craftTab';
+import { boxOf, coveredAt, popOverlaps, craftAppOf, craftGone, craftKey, dropCraftEverywhere, sameBox, shown, wantStill, leftCraft } from './craftTab';
 
 describe('Craft 스페이스 탭', () => {
   it('탭 열쇠 k:<앱>', () => {
@@ -112,5 +112,13 @@ describe('dropCraftEverywhere keep — 주인이 정해지면 다른 참모 탭 
     expect(screens.get('A')!.pick).toBe('l:A');
     expect(saved.get('B')!.tabs).toEqual([k]);
     expect(screens.get('B')!.pick).toBe(k);
+  });
+
+  it('칸 구석만 살짝 덮는 팝오버(위 막대 계정 메뉴)도 덮임 — 9점 훑기는 구석을 못 봐서 계정 목록이 참모 포토 칸 밑에 깔렸다(2026-10-22 사용자)', () => {
+    const pane: [number, number, number, number] = [260, 120, 900, 700];
+    expect(popOverlaps(pane, [[48, 40, 300, 250]])).toBe(true); // 계정 메뉴가 칸 왼쪽 위 구석에 걸침
+    expect(popOverlaps(pane, [[1200, 40, 200, 200]])).toBe(false); // 칸 밖 팝오버
+    expect(popOverlaps(pane, [[0, 0, 0, 0]])).toBe(false); // 숨은(크기 0) 팝오버
+    expect(popOverlaps(pane, [])).toBe(false);
   });
 });

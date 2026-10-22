@@ -45,4 +45,10 @@ describe('다른 기기 참모 줄 — 폰과 묶지 않고 칸 이름은 참모
     expect(g[0]).toMatchObject({ group: 'a', name: '참모 · my-mac', kinds: ['peer'] });
     expect(kindLabels(g[0]!.name, g[0]!.kinds)).toEqual(['다른 기기 참모']);
   });
+  it('peer 줄만 보관함 보여 주기 값이 있다(없으면 켬, 끈 줄은 false) — 폰 줄엔 없다', () => {
+    const g = phoneGroups([row({ id: 'a', peer: true, lastSeen: 9 }), row({ id: 'c', peer: true, locker: false, lastSeen: 8 }), row({ id: 'b' })]);
+    expect(g.find((x) => x.group === 'a')!.locker).toBe(true);
+    expect(g.find((x) => x.group === 'c')!.locker).toBe(false);
+    expect('locker' in g.find((x) => x.group === 'b')!).toBe(false);
+  });
 });

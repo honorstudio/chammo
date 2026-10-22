@@ -52,7 +52,9 @@ describe('고른 프사 ↔ 채팅 카드 이음 윤곽', () => {
     expect(space).toMatch(/\.och-card \{[^}]*border-radius: 12px;[^}]*overflow: hidden;[^}]*background: var\(--surface\)/);
   });
   it('스페이스가 채팅이 있을 때 고른 프사 색으로 윤곽을 그린다', () => {
-    expect(view).toMatch(/\{rail\}\{chat\}\n[^\n]*\n\s*\{chat && <ChatLink color=\{railList\.find\(\(a\) => a\.on\)\?\.color\} \/>\}/);
+    expect(view).toMatch(/\{rail\}\{chat\}\n[^\n]*\n\s*\{chat && <ChatLink color=\{linkColor\} \/>\}/);
+    // 이음 색 = 고른 프사 색(다른 기기를 보는 중이면 그 기기 참모 색, peer-panel)
+    expect(view).toContain('const linkColor = far ? far.color : railList.find((a) => a.on)?.color;');
   });
   it('윤곽 = 참모 색(--orch-solid) 2px 선 하나, 누르기는 통과', () => {
     expect(css).toMatch(/\.chat-link \{[^}]*pointer-events: none/);

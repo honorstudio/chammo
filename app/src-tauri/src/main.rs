@@ -591,6 +591,8 @@ fn main() {
             remote::remote_connect_cancel,
             remote::remote_call,
             remote::remote_human_say,
+            remote::remote_saved,
+            mobile::mobile_device_locker,
             remote::remote_direct_answer,
             remote::remote_cards,
             agent_browser::agent_lives,

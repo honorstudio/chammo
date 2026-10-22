@@ -52,6 +52,7 @@ import { installFreshBuild } from './freshBuild';
 import { Notice } from './Notice';
 import { PhoneLoginCard } from './PhoneLogin';
 import { preloadFirstScreen } from './bootPreload';
+import { PhoneFar, useFarDevices, type FarPick } from './PhoneFar';
 
 const ORCH_KEY = 'm.orch';
 const NO_LIVES: Live[] = [];
@@ -66,12 +67,12 @@ const forgetEnv = () => { try { localStorage.removeItem(ENV_KEY); } catch { /* �
 const sameEnv = (a: MobileEnv | null, b: MobileEnv) => !!a && JSON.stringify(a) === JSON.stringify(b);
 
 type View = 'dash' | 'routines' | 'sessions';
-type SpaceProps = { orch: Session; orchs: Session[]; sessions: Session[]; events: TaskEvent[]; waiting: Waiting[]; waitSent: WaitSent; ask: { lead: string; q: string } | null; ctx: Record<string, Ctx>; env: MobileEnv; snap: Snap; setSnap: (s: Snap) => void; onPick: (id: string) => void; onStopped: (id: string) => void; wake: Wake; lives: Live[]; push: Push; view: View; setView: (v: View) => void; vp: Viewport; stateAt: number; lines: Record<string, string> };
+type SpaceProps = { far?: { devices: FarPick[]; onPick: (d: FarPick) => void }; orch: Session; orchs: Session[]; sessions: Session[]; events: TaskEvent[]; waiting: Waiting[]; waitSent: WaitSent; ask: { lead: string; q: string } | null; ctx: Record<string, Ctx>; env: MobileEnv; snap: Snap; setSnap: (s: Snap) => void; onPick: (id: string) => void; onStopped: (id: string) => void; wake: Wake; lives: Live[]; push: Push; view: View; setView: (v: View) => void; vp: Viewport; stateAt: number; lines: Record<string, string> };
 
 /** 입력칸 최대 높이 — 7줄(16px 글자 기준 176px)과 보이는 화면 26%(반 시트의 40%) 중 작은 쪽 */
 const inputMax = (h: number) => Math.min(176, Math.round(h * 0.26));
 
-function OrchSpace({ orch, orchs, sessions, events, waiting, waitSent, ask, ctx, env, snap, setSnap, onPick, onStopped, wake, lives, push, view, setView, vp, stateAt, lines }: SpaceProps) {
+function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask, ctx, env, snap, setSnap, onPick, onStopped, wake, lives, push, view, setView, vp, stateAt, lines }: SpaceProps) {
   const [picker, setPicker] = useState(false);
   const chat = useMobileChat(orch, snap === 'peek' ? 10_000 : 2000, stateAt);
   const [routinesRaw] = useMemoPoll('routines', routinesList, 30_000, '[]');
@@ -132,7 +133,7 @@ function OrchSpace({ orch, orchs, sessions, events, waiting, waitSent, ask, ctx,
       </ChatSheet>
       {fileOpen && <FileView path={fileOpen.path} title={titleOf(fileOpen.path)} at={fileOpen.at} orch={orch.id} onClose={() => setFileOpen(null)} />}
       {picker && (
-        <OrchPicker title={env.assistantName} env={env} wake={wake} onStopped={onStopped} orchs={orchs} current={orch.id} ctx={ctx} waiting={waiting} sent={waitSent} lines={lines}
+        <OrchPicker far={far} title={env.assistantName} env={env} wake={wake} onStopped={onStopped} orchs={orchs} current={orch.id} ctx={ctx} waiting={waiting} sent={waitSent} lines={lines}
           onClose={() => setPicker(false)}
           onPick={(id) => { setPicker(false); onPick(id); }} />
       )}
@@ -175,6 +176,9 @@ export function MobileApp() {
   const [pick, setPick] = useState<string | null>(saved);
   const [snap, setSnap] = useState<Snap>('peek');
   const [noKey, setNoKey] = useState(false);
+  // 다른 기기 보기(peer-panel) — 기억하지 않는다(새로 열면 늘 이 맥)
+  const [far, setFar] = useState<FarPick | null>(null);
+  const farDevs = useFarDevices();
   const taskLog = usePoll(readTaskLog, 5000, '');
   const events = useMemo(() => parseTaskLog(taskLog), [taskLog]);
   const { asks, lines } = useOrchAsks(orchs);
@@ -333,11 +337,18 @@ export function MobileApp() {
   const want = view === 'routines' ? routineOrch(orchs, pick) : pick;
   const orch = orchs.find((s) => s.id === want) ?? orchs[0];
   if (!orch?.sessionId) return cover(<div ref={frame} className="m-app" style={{ top: vp.top, height: vp.h }}><WakeHome env={env} orchs={orchs} wake={wake} /></div>);
+  if (far) {
+    return cover(
+      <div ref={frame} className="m-app" style={{ top: vp.top, height: vp.h }}>
+        <PhoneFar key={far.id} t={far} devices={farDevs} onPick={setFar} vp={vp} />
+      </div>,
+    );
+  }
   return cover(
     // 키보드가 올라오면 보이는 영역에 화면 틀을 맞춘다 — 입력줄이 키보드 바로 위, 대화 목록은 그 위에 남는다
     <div ref={frame} className="m-app" style={{ top: vp.top, height: vp.h }}>
       {error && <div className="m-error m-top-err">{error}</div>}
-      <OrchSpace key={orch.id} orch={orch} orchs={orchs} sessions={sessions} events={events} waiting={waiting} waitSent={waitSent} ask={asks[orch.id] ?? null} ctx={ctx} env={env} snap={snap} setSnap={setSnap} vp={vp} stateAt={stateAt} lines={lines}
+      <OrchSpace key={orch.id} far={farDevs.length ? { devices: farDevs, onPick: setFar } : undefined} orch={orch} orchs={orchs} sessions={sessions} events={events} waiting={waiting} waitSent={waitSent} ask={asks[orch.id] ?? null} ctx={ctx} env={env} snap={snap} setSnap={setSnap} vp={vp} stateAt={stateAt} lines={lines}
         view={view} setView={setView} onPick={go} onStopped={stopped} wake={wake} lives={lives} push={push} />
     </div>,
   );

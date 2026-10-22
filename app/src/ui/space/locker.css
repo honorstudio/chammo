@@ -196,7 +196,13 @@
 /* 보관함 자리 전체 — 가운데(+ 문서 탭) 위, 활동 줄 아래 */
 .lk-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .lk-center { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.lk-tabs { flex: none; height: 38px; display: flex; align-items: flex-end; gap: 2px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; }
+.lk-tabs { flex: none; height: 38px; display: flex; align-items: flex-end; gap: 2px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); overflow: hidden; }
+/* 홈·보관함·앱 오른쪽 — 독·파일 탭만 가로 스크롤. 막대는 숨긴다(맥 '항상 보기'면 17px 가 38px 줄을 먹어 탭이 위로 밀렸다, 2026-10-22). 휠·흐림은 TabStrip */
+.lk-tabs-scroll { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: flex-end; gap: 2px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.lk-tabs-scroll::-webkit-scrollbar { display: none; }
+.lk-tabs-scroll.fade-l { -webkit-mask-image: linear-gradient(90deg, transparent, #000 24px); mask-image: linear-gradient(90deg, transparent, #000 24px); }
+.lk-tabs-scroll.fade-r { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); }
+.lk-tabs-scroll.fade-l.fade-r { -webkit-mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent); mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent); }
 .lk-tab { all: unset; box-sizing: border-box; cursor: pointer; height: 31px; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 12px; border-radius: 8px 8px 0 0; font-size: 12.5px; color: var(--text-2); white-space: nowrap; max-width: 220px; }
 .lk-tab.home, .lk-tab.folder { position: relative; flex: none; padding: 0 11px; }
 .lk-tab.home.on svg, .lk-tab.folder.on svg { color: var(--text); }

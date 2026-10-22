@@ -96,6 +96,27 @@ export const {
   getEnv, readTranscript, readTranscriptBefore, readTasksSince, routinesList, readUsage, readLoad, readDirect, directAnswer, taskAnswer,
   sendTextToSession, sendStatus, interruptSession, listStoppedOrchs, readTails, listBrowsers, browserFrame, readPins, readOrder, readRoles,
 } = api;
+/** 짝지은 다른 기기(peer-panel) — 폰은 이 맥만 안다. 그 기기 읽기는 이 맥이 대신(/api/peer-get, 허용 목록은 맥이 다시 본다), 쓰기 길은 없다 */
+const viaMac = (dev: string, path: string) => `/api/peer-get?dev=${encodeURIComponent(dev)}&path=${encodeURIComponent(path)}`;
+const farApis = new Map<string, ReturnType<typeof makeApi>>();
+export function farApi(dev: string): ReturnType<typeof makeApi> {
+  let a = farApis.get(dev);
+  if (!a) {
+    a = makeApi({
+      text: (path, signal) => getText(viaMac(dev, path), signal),
+      json: <T>(path: string, signal?: AbortSignal) => getJson<T>(viaMac(dev, path), signal),
+      post: () => Promise.reject(new Error('read only')),
+      bytes: (path) => call(viaMac(dev, path)).then((r) => r.arrayBuffer()),
+    });
+    farApis.set(dev, a);
+  }
+  return a;
+}
+/** 짝지은 기기 이름들(끊긴 기기도) — 하나도 없으면 폰 기기 줄이 안 뜬다 */
+export const farDevices = () => getJson<{ id: string; name: string }[]>('/api/peer-devices');
+/** 사람이 폰에서 친 말 → 그 기기 참모(사람 길 — 그 기기엔 '사람 말 · 원격'). 진짜 누름 직후에만 부른다 */
+export const farHumanSay = (dev: string, to: string, text: string) => post<{ id?: string }>('/api/peer-human-say', { dev, to, text });
+
 /** `claude agents --json` 원문(+컨텍스트) — 3초마다 받는다. 안 바뀌었으면 맥이 글 없이 꼬리표만 준다(domain/tagTail).
  *  다른 기기 참모(remote)는 판이 다를 수 있어 since 없이 그대로(peerApi) — 폰은 화면과 서버가 늘 같은 판 */
 export const listSessionsRaw = makeTagTail((since, signal) => getText(`/api/sessions?since=${encodeURIComponent(since)}`, signal).then(parseTagChunk));

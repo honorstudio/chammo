@@ -27,6 +27,14 @@ export function coveredAt(b: Box, top: (x: number, y: number) => unknown, inside
 
 export type Box = [number, number, number, number];
 
+/** 떠 있는 팝오버(위 막대 계정 메뉴·결정 대기함·보관함·다른 기기 목록·대화상자) — 칸과 겹치면 덮임으로 친다.
+ *  9점 훑기는 칸 구석만 살짝 덮는 팝오버를 못 봐서 계정 목록이 참모 포토 칸 밑에 깔렸다(2026-10-22 사용자) */
+export const POPS = '.acct-pop, .inbox-pop, .far-pop, .lk-pop, [role=dialog]';
+
+/** 팝오버 상자 중 하나라도 칸과 겹치나(크기 0 = 숨은 것은 빼고) */
+export const popOverlaps = (pane: Box, pops: Box[]): boolean =>
+  pops.some((p) => p[2] > 0 && p[3] > 0 && p[0] < pane[0] + pane[2] && pane[0] < p[0] + p[2] && p[1] < pane[1] + pane[3] && pane[1] < p[1] + p[3]);
+
 /** 칸 자리(CSS 점, 웹뷰 왼쪽 위 기준) — 정수로 맞춰 같은 자리면 다시 안 보낸다 */
 export const boxOf = (r: { left: number; top: number; width: number; height: number }): Box => [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
 export const sameBox = (a: Box | null, b: Box) => !!a && a.every((v, i) => v === b[i]);

@@ -429,5 +429,7 @@ export const mobileApi = {
   pairNew: () => invoke<PairQr>('mobile_pair_new'),
   /** 폰 하나 끊기 — group 을 주면 그 폰의 사파리·홈 화면 앱 둘 다 */
   removeDevice: (id: string) => invoke<MobileStatus>('mobile_device_remove', { id }),
+  /** 다른 기기 참모 줄 — 그 기기에 보관함 목록을 보여 줄지(끄면 그 기기 보관함 칸이 '껐어요') */
+  deviceLocker: (id: string, on: boolean) => invoke<MobileStatus>('mobile_device_locker', { id, on }),
   clearDevices: () => invoke<MobileStatus>('mobile_devices_clear'),
 };

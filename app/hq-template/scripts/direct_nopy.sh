@@ -22,10 +22,11 @@ grep -Eq '"language" *: *"en"' "$DATA/config.json" 2>/dev/null && EN=1
 T() { if [ "$EN" = 1 ]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
 die() { printf '%s\n' "$1" >&2; exit "${2:-2}"; }
 
-usage() {
-  die "$(T 'scripts/direct ask "<질문>" [--kind pay|send|delete|ops|login|other] [--amount] [--detail] [--what] [--yes] [--no] [--option …] · done <id> "<결과>" · cancel <id> · status <id> · list' \
-           'scripts/direct ask "<question>" [--kind pay|send|delete|ops|login|other] [--amount] [--detail] [--what] [--yes] [--no] [--option …] · done <id> "<result>" · cancel <id> · status <id> · list')"
+usage_text() {
+  T 'scripts/direct ask "<질문>" [--kind pay|send|delete|ops|login|other] [--amount] [--detail] [--what] [--yes] [--no] [--option …] · done <id> "<결과>" · cancel <id> · status <id> · list' \
+           'scripts/direct ask "<question>" [--kind pay|send|delete|ops|login|other] [--amount] [--detail] [--what] [--yes] [--no] [--option …] · done <id> "<result>" · cancel <id> · status <id> · list'
 }
+usage() { die "$(usage_text)"; }
 
 # JSON 글 — 역슬래시·따옴표·줄바꿈·탭은 이스케이프, 그 밖의 제어 글자는 뺀다. 바이트 그대로 지나가니 UTF-8 은 안 깨진다
 js() {
@@ -71,22 +72,43 @@ has_type() { printf '%s\n' "$1" | grep -Eq "\"type\": ?\"$2\""; }
 # 칸 하나(보여 주기용) — 이스케이프된 따옴표(\")도 넘어가고, 보일 땐 \" → " · \n → 띄어쓰기
 field() { printf '%s\n' "$1" | sed -En "s/.*\"$2\": ?\"(([^\"\\\\]|\\\\.)*)\".*/\1/p" | head -n 1 | sed -e 's/\\"/"/g' -e 's/\\n/ /g' -e 's/\\\\/\\/g'; }
 
+# 카드 상태 — 파이썬판 card_view·앱 domain/directAsk·Rust direct::check 와 같은 순서 규칙: wait · answered · done · closed(거둠) · old(지난 질문).
+# 같은 세션의 뒤 ask 가 오면 답 전 카드는 지난 질문 — 결제(pay)·연결 요청(link)은 안 밀린다(2026-10-22 아이맥 001)
 state_of() {
   rs=$(rows_of "$1")
   ask=$(printf '%s\n' "$rs" | grep -E '"type": ?"ask"' | head -n 1)
   [ -n "$ask" ] || return 1
-  st=wait
-  printf '%s\n' "$rs" | grep -Eq '"type": ?"answer"' && st=answered
-  printf '%s\n' "$rs" | grep -Eq '"type": ?"answer-failed"' && [ "$(printf '%s\n' "$rs" | grep -Ec '"type": ?"answer"')" -le "$(printf '%s\n' "$rs" | grep -Ec '"type": ?"answer-failed"')" ] && st=wait
-  printf '%s\n' "$rs" | grep -Eq '"type": ?"(done|cancel)"' && st=done
+  st=$(awk -v id="$1" '
+    function f(l, k,   s) { if (!match(l, "\"" k "\": ?\"[^\"]*\"")) return ""; s = substr(l, RSTART, RLENGTH); sub(/^"[^"]*": ?"/, "", s); return substr(s, 1, length(s) - 1) }
+    { t = f($0, "type"); i = f($0, "id") }
+    !on { if (t == "ask" && i == id) { on = 1; from = f($0, "from"); k = f($0, "kind"); stays = (k == "pay" || k == "link"); st = "wait" } next }
+    i == id && t == "answer" { ans = 1; next }
+    i == id && t == "answer-failed" { ans = 0; next }
+    i == id && t == "done" && st == "wait" { st = "done"; next }
+    i == id && t == "cancel" && st == "wait" { st = "closed"; next }
+    t == "ask" && !stays && !ans && st == "wait" && f($0, "from") == from { st = "old" }
+    END { if (st == "wait" && ans) st = "answered"; print st }' "$LOG")
   shown=$(printf '%s\n' "$rs" | grep -E '"type": ?"shown"' | head -n 1)
   return 0
+}
+
+# 글 앞부분 n 바이트 — 끝에 걸린 한글(여러 바이트) 반쪽은 뺀다
+head_text() {
+  printf '%s' "$1" | awk -v n="$2" '{ s = s (NR > 1 ? " " : "") $0 } END {
+    if (length(s) > n) {
+      s = substr(s, 1, n)
+      while (length(s) && substr(s, length(s)) >= "\200" && substr(s, length(s)) < "\300") s = substr(s, 1, length(s) - 1)
+      if (length(s) && substr(s, length(s)) >= "\300") s = substr(s, 1, length(s) - 1)
+    }
+    printf "%s", s
+  }'
 }
 
 status_text() {
   q=$(field "$ask" q | cut -c1-240)
   case $st in
-    wait) w=$(T '기다림' 'waiting') ;; answered) w=$(T '답함' 'answered') ;; *) w=$(T '처리됨' 'done') ;;
+    wait) w=$(T '기다림' 'waiting') ;; answered) w=$(T '답함' 'answered') ;; closed) w=$(T '거둠' 'withdrawn') ;;
+    old) w=$(T '지난 질문' 'replaced') ;; *) w=$(T '처리됨' 'done') ;;
   esac
   printf '%s · %s · %s · %s\n' "$1" "$(field "$ask" kind)" "$(field "$ask" from)" "$q"
   printf '%s\n' "$(T "상태: $w" "State: $w")"
@@ -98,6 +120,10 @@ status_text() {
 }
 
 [ $# -ge 1 ] || usage
+# --help·-h 는 어디 있든 도움말만 — ask --help 가 '--help' 를 질문으로 한 빈 카드를 띄웠다(2026-10-22 아이맥 002)
+for a in "$@"; do
+  case $a in --help|-h) usage_text; printf '\n'; exit 0 ;; esac
+done
 cmd=$1
 shift
 case $cmd in
@@ -113,7 +139,7 @@ case $cmd in
     n=0
     for i in $ids; do
       state_of "$i" || continue
-      [ "$st" = done ] && continue
+      case $st in wait|answered) ;; *) continue ;; esac
       [ $n -gt 0 ] && printf '\n'
       status_text "$i"
       n=$((n + 1))
@@ -147,6 +173,9 @@ fi
 [ $# -ge 1 ] || usage
 q=$1
 shift
+case $q in
+  -[A-Za-z]*|--[A-Za-z]*) die "$(T "질문이 먼저 와야 해 — \"$(head_text "$q" 40)\" 는 옵션이야: scripts/direct ask \"<질문>\" [--kind …]" "The question comes first — \"$(head_text "$q" 40)\" is an option: scripts/direct ask \"<question>\" [--kind …]")" ;;
+esac
 kind=other amount= detail= what= yes= no= opts= nopt=0
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || die "$(T "모르는 옵션: $1" "unknown option: $1")"
@@ -171,6 +200,16 @@ if [ -z "$yes" ]; then
   esac
 fi
 [ -n "$no" ] || no=$(T '거절' 'Decline')
+# 이 ask 로 지난 질문이 될 앞 카드 — 말없이 바꾸면 띄운 세션은 아직 떠 있다고 믿는다
+gone=
+for i in $(grep -E '"type": ?"ask"' "$LOG" 2>/dev/null | grep -E "\"from\": ?\"$who\"" | sed -n 's/.*"id": \{0,1\}"\([0-9a-f]\{8\}\)".*/\1/p'); do
+  state_of "$i" || continue
+  [ "$st" = wait ] || continue
+  case $(field "$ask" kind) in pay|link) continue ;; esac
+  g=$(head_text "$(field "$ask" q)" 90)
+  gone="$gone$(T "앞 카드($i·$g)를 지난 질문으로 바꿨어 — 그 카드는 대기함에서 빠지고 더 답할 수 없다" "Replaced the earlier card ($i·$g) — it leaves the inbox and can no longer be answered")
+"
+done
 cwd=$(pwd -W 2>/dev/null || pwd)
 id=$(new_id)
 case $id in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *) die "$(T '카드 번호를 못 만들었어' 'could not make a card id')" 1 ;; esac
@@ -179,6 +218,7 @@ row="{\"ts\":\"$(now)\",\"type\":\"ask\",\"id\":\"$id\",\"from\":\"$who\",\"cwd\
 [ -n "$detail" ] && row="$row,\"detail\":\"$(js "$detail")\""
 [ -n "$what" ] && row="$row,\"what\":\"$(js "$what")\""
 append "$row}"
+[ -n "$gone" ] && printf '%s' "$gone"
 
 # 앱이 카드를 그렸나 — 앱은 기록을 2초마다 읽고 보이면 shown 줄을 남긴다
 wait=${CHAMMO_DIRECT_WAIT-10}

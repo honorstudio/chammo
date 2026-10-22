@@ -26,12 +26,16 @@ import { WaitNote } from './WaitNote';
 import { askNote } from '../../domain/askNote';
 import { NewOrchForm, OffOrchList, useOffOrchs, WakeNotice, type Wake } from './OrchWake';
 import { HomeAppLink } from './HomeAppLink';
+import { FarPills, type FarPick } from './PhoneFar';
 import { AvatarRing, BottomSheet, IconBtn } from './kit';
 import { bodyColor, orchColor, useAvatars } from '../avatar';
 import { orchDot } from '../../domain/orchDot';
 import { useSubTails } from './useSubTails';
 
-type Props = { title: string; env: MobileEnv; wake: Wake; onStopped: (id: string) => void; orchs: Session[]; current: string | undefined; ctx: Record<string, Ctx>; waiting: Waiting[]; sent: WaitSent; lines: Record<string, string>; onPick: (id: string) => void; onClose: () => void };
+type FarProp = { devices: FarPick[]; onPick: (d: FarPick) => void };
+type Props = {
+  /** 다른 기기 알약 줄(peer-panel) — 짝지은 기기가 없으면 안 넘긴다 */
+  far?: FarProp; title: string; env: MobileEnv; wake: Wake; onStopped: (id: string) => void; orchs: Session[]; current: string | undefined; ctx: Record<string, Ctx>; waiting: Waiting[]; sent: WaitSent; lines: Record<string, string>; onPick: (id: string) => void; onClose: () => void };
 
 /** 답 기다림 카드에서 바로 답하기 — 그 참모 보낼 함으로(참모를 안 바꿔도 된다). 결정 대기함 물음은 무엇에 대한 답인지 붙고,
  *  맥 작업 기록에 answer 를 먼저 남긴 뒤 보낸다 — 카드는 누르자마자 숨고(기록이 실패하면 답을 채운 채 되돌림), 이미 답한 물음이면 안 보낸다.
@@ -72,7 +76,7 @@ const NO_ITEMS: never[] = [];
 
 const hm = (ts: string) => { const d = new Date(ts); return Number.isNaN(d.getTime()) ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
-export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, waiting, sent, lines, onPick, onClose }: Props) {
+export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, waiting, sent, lines, onPick, onClose, far }: Props) {
   const off = useOffOrchs(env, orchs);
   const { saved } = useAvatars(); // 고리 색 = 그 참모 색
   // 시트를 열 때 지난 켜기 결과는 지운다 — 시트를 닫아도 깨우기 상태는 앱에 남아서 옛 글이 다시 떴다
@@ -149,6 +153,8 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
     <>
       <BottomSheet label={`${title} 바꾸기`} title={`${title} 바꾸기`} onClose={onClose}
         actions={<IconBtn label={`새 ${title}`} onClick={() => setNaming(true)} disabled={naming}><IconPlus /></IconBtn>}>
+      {/* 다른 기기(peer-panel) — 짝지은 기기가 있을 때만 맨 위 알약 줄 */}
+      {far && <FarPills devices={far.devices} cur={null} onPick={(d) => { if (d) far.onPick(d); }} />}
       {removing && (
         <div className="m-sleep-card" role="alertdialog" aria-label="제거 확인">
           <div>{josa(removing.name, '을', '를')} 목록에서 제거할까요? 대화 기록 파일은 {machine()}에 남지만, 여기서 다시 깨울 수는 없어요.</div>

@@ -280,7 +280,7 @@ fn 상한을_넘으면_가장_오래_안_쓴_줄부터_뺀다() {
 }
 
 fn dev(id: &str, created: u64, last: Option<u64>) -> Device {
-    Device { id: id.into(), name: "iPhone".into(), hash: sha(id), created, last_seen: last, home: false, group: None, paired: None, peer: false, node: None }
+    Device { id: id.into(), name: "iPhone".into(), hash: sha(id), created, last_seen: last, home: false, group: None, paired: None, peer: false, node: None, no_locker: false }
 }
 
 #[test]

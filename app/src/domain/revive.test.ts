@@ -74,6 +74,55 @@ describe('stepSnapshot — 관리 프로그램 재시작으로 꺼진 세션 찾
   });
 });
 
+// 2026-10-22 아이맥 soak 005: claude stop 한 예약 세션이 live.json sessions 에 state idle 로 남아(goneAt 흔적) 읽는 쪽
+// (scripts/task·orch-roster·locker·모드·자리표)이 산 세션으로 셌다 — 흔적은 sessions 밖 gone 에 둔다
+describe('stepSnapshot — 사라진 세션 흔적은 sessions 가 아니라 gone', () => {
+  it('목록에서 빠진 세션은 sessions 에서 바로 빠지고 gone 에 남는다', () => {
+    let st = stepSnapshot(null, OLD, [bg('routine-soak-ping', 'r1'), bg('참모', 'b1')], OLD + 1000);
+    st = stepSnapshot(st, OLD, [bg('참모', 'b1')], OLD + 5000);
+    expect(st?.sessions.map((x) => x.name)).toEqual(['참모']);
+    expect(st?.gone?.map((x) => [x.name, x.goneAt])).toEqual([['routine-soak-ping', OLD + 5000]]);
+  });
+
+  it('흔적이 없으면 gone 칸을 안 쓴다(글이 그대로면 앱이 안 쓴다)', () => {
+    const st = stepSnapshot(null, OLD, [bg('참모', 'b1')], OLD);
+    expect(st && 'gone' in st).toBe(false);
+  });
+
+  it('흔적은 10분 지나면 gone 에서도 지운다', () => {
+    let st = stepSnapshot(null, OLD, [bg('a', 'a1')], OLD);
+    st = stepSnapshot(st, OLD, [], OLD + 1000);
+    st = stepSnapshot(st, OLD, [], OLD + 1000 + 11 * 60_000);
+    expect(st?.gone).toBeUndefined();
+    expect(st?.sessions).toEqual([]);
+  });
+
+  it('다시 살아나면 gone 에서 빠지고 sessions 로', () => {
+    let st = stepSnapshot(null, OLD, [bg('a', 'a1')], OLD);
+    st = stepSnapshot(st, OLD, [], OLD + 1000);
+    st = stepSnapshot(st, OLD, [bg('a', 'a1')], OLD + 2000);
+    expect(st?.sessions.map((x) => x.sessionId)).toEqual(['a1']);
+    expect(st?.gone).toBeUndefined();
+  });
+
+  it('옛 live.json(sessions 안 goneAt)도 다음 차례에 gone 으로 옮긴다', () => {
+    const prev = snap(OLD, [s('routine-soak-r5', 'r5', OLD + 1000), s('참모', 'b1')]);
+    const st = stepSnapshot(prev, OLD, [bg('참모', 'b1')], OLD + 2000);
+    expect(st?.sessions.map((x) => x.name)).toEqual(['참모']);
+    expect(st?.gone?.map((x) => [x.name, x.goneAt])).toEqual([['routine-soak-r5', OLD + 1000]]);
+  });
+
+  it('gone 에 있던 세션도 재시작 직전에 사라졌으면 꺼진 세션으로 잡는다', () => {
+    let st = stepSnapshot(null, OLD, [bg('acme-shop', 't1')], NEW - 60_000);
+    st = stepSnapshot(st, OLD, [], NEW - 55_000);
+    expect(st?.gone?.map((x) => x.name)).toEqual(['acme-shop']);
+    st = stepSnapshot(st, NEW, [], NEW + 3000);
+    expect(st?.lost.map((x) => x.name)).toEqual(['acme-shop']);
+    expect(st?.lost[0]).not.toHaveProperty('goneAt');
+    expect(st?.gone).toBeUndefined();
+  });
+});
+
 describe('parseSnap — live.json 읽기', () => {
   it('없거나 깨졌으면 null', () => {
     expect(parseSnap('')).toBeNull();
@@ -83,6 +132,11 @@ describe('parseSnap — live.json 읽기', () => {
   it('모양이 맞으면 그대로', () => {
     const st = snap(NEW, [s('todo-api', 'k1')], [s('acme-shop', 't1')]);
     expect(parseSnap(JSON.stringify(st))).toEqual(st);
+  });
+  it('gone 도 읽는다 — 배열이 아니면 버린다', () => {
+    const st = { ...snap(NEW, [s('todo-api', 'k1')]), gone: [s('b', 'b1', NEW)] };
+    expect(parseSnap(JSON.stringify(st))).toEqual(st);
+    expect(parseSnap(JSON.stringify({ ...snap(NEW, []), gone: 'x' }))).toEqual(snap(NEW, []));
   });
 });
 

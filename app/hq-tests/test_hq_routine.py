@@ -1085,7 +1085,7 @@ class WindowsScheduler(unittest.TestCase):
             rt.set_enabled('x', False, data=str(data), home=str(root), run=calls, win=True)
             self.assertEqual(calls.calls[-1], ['schtasks', '/Change', '/TN', 'Chammo\\x', '/DISABLE'])
             rt.remove('x', data=str(data), home=str(root), run=calls, win=True)
-            self.assertEqual(calls.calls[-1], ['schtasks', '/Delete', '/TN', 'Chammo\\x', '/F'])
+            self.assertIn(['schtasks', '/Delete', '/TN', 'Chammo\\x', '/F'], calls.calls)
 
 
 class WindowsSchedulerFails(unittest.TestCase):
@@ -1694,3 +1694,223 @@ class StaleCopyNotes(Ticker):
     def test_만들기_결과에_실행기를_적는다(self):
         out = self.new('blog')
         self.assertEqual(out['program'], '/usr/bin/python3')  # 시험엔 앱이 없다 → 파이썬
+
+
+class InFolder(unittest.TestCase):
+    """--in 폴더는 만들 때 본다 — 없는 폴더로 만들어 두면 사람이 자는 사이 첫 실행에서야 '실행 폴더를 못 찾아'로 깨졌다(2026-10-22 아이맥 soak 007).
+    이름만 주면 HQ 기준 상대 경로로 풀렸다 → devRoot/<이름>"""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(self.tmp.name)
+        self.home, self.data, self.dev = root, root / 'data', root / 'dev'
+        self.data.mkdir()
+        self.dev.mkdir()
+        (self.data / 'config.json').write_text(json.dumps({'devRoot': str(self.dev)}))
+        (root / '.claude.json').write_text(json.dumps({'projects': {}}))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def new(self, cwd, name='in-test'):
+        return rt.new(name, 'daily 05:00', 'echo', cwd=cwd, data=str(self.data), home=str(self.home), run=Calls(), claude='/bin/claude',
+                      python='/usr/bin/python3', uid=501, apps=[], allow_test=True)
+
+    def cfg(self, name='in-test'):
+        return json.loads((self.data / 'routines' / name / 'routine.json').read_text())
+
+    def test_없는_전체_경로는_거절하고_아무것도_안_만든다(self):
+        with self.assertRaises(ValueError) as e:
+            self.new('/no/such/dir')
+        self.assertIn('/no/such/dir', str(e.exception))
+        self.assertFalse((self.data / 'routines').exists())
+
+    def test_이름만_주면_devRoot_아래_프로젝트(self):
+        (self.dev / 'hangul-test').mkdir()
+        self.new('hangul-test')
+        self.assertEqual(self.cfg()['cwd'], str(self.dev / 'hangul-test'))
+
+    def test_이름만_줬는데_devRoot_에_없으면_거절(self):
+        with self.assertRaises(ValueError) as e:
+            self.new('hangul-test')
+        self.assertIn(str(self.dev / 'hangul-test'), str(e.exception))
+        self.assertFalse((self.data / 'routines').exists())
+
+    def test_이름만_주면_지금_폴더가_아니라_devRoot(self):
+        # 참모는 HQ 에서 부른다 — HQ 안에 같은 이름 폴더가 있어도 프로젝트는 devRoot 쪽
+        hq = self.home / 'hq'
+        (hq / 'proj').mkdir(parents=True)
+        (self.dev / 'proj').mkdir()
+        here = os.getcwd()
+        os.chdir(hq)
+        try:
+            self.new('proj')
+        finally:
+            os.chdir(here)
+        self.assertEqual(self.cfg()['cwd'], str(self.dev / 'proj'))
+
+    def test_devRoot_설정이_없으면_기본값_Developer(self):
+        (self.data / 'config.json').unlink()
+        (self.home / 'Developer' / 'p').mkdir(parents=True)
+        self.new('p')
+        self.assertEqual(self.cfg()['cwd'], str(self.home / 'Developer' / 'p'))
+
+    def test_있는_전체_경로·물결표는_그대로(self):
+        proj = self.home / '공백 폴더' / '프로젝트'
+        proj.mkdir(parents=True)
+        self.new(str(proj))
+        self.assertEqual(self.cfg()['cwd'], str(proj))
+        self.new('~/공백 폴더/프로젝트', name='tilde')
+        self.assertEqual(self.cfg('tilde')['cwd'], str(proj))  # ~ 는 넘겨받은 home 기준
+
+    def test_파일이면_거절(self):
+        f = self.dev / 'notes.txt'
+        f.write_text('x')
+        with self.assertRaises(ValueError):
+            self.new(str(f))
+        with self.assertRaises(ValueError):
+            self.new('notes.txt')
+        self.assertFalse((self.data / 'routines').exists())
+
+    def test_빈_값은_거절(self):
+        with self.assertRaises(ValueError):
+            self.new('  ')
+
+    def test_명령줄은_종료_코드_2_와_이유_한_줄(self):
+        os.environ['CHAMMO_HOME'] = str(self.data)
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                self.assertEqual(rt.main(['new', 'rel-test', '매일 05:00', 'echo 시험', '--in', '/no/such/dir']), 2)
+                self.assertEqual(rt.main(['new', 'rel-test2', '매일 05:00', 'echo 시험', '--in']), 2)  # 값 빠짐 — 전엔 IndexError
+        finally:
+            del os.environ['CHAMMO_HOME']
+        self.assertFalse((self.data / 'routines').exists())
+        first = err.getvalue().splitlines()[0]
+        self.assertIn('/no/such/dir', first)
+        self.assertEqual(out.getvalue(), '')
+
+
+class RemoveStopsSession(Lifecycle):
+    """지운 예약이 띄운 세션(routine-<이름>)은 같이 치운다 — 전엔 폴더만 지워 세션이 idle 로 계속 남았다(2026-10-22 아이맥 soak 005).
+    같은 이름 예약이 다른 데이터 폴더(시험 HQ·진짜)에도 있을 수 있어 이름만으로 고르지 않는다 — 이 예약 기록의 세션 번호·자기 폴더로"""
+
+    def agents(self, *rows):
+        return json.dumps([{'kind': 'background', 'status': 'idle', 'state': 'done', 'pid': 1, **r} for r in rows])
+
+    def remove(self, calls):
+        return rt.remove('blog-daily', data=str(self.data), home=str(self.home), run=calls, uid=501)
+
+    def rms(self, calls):
+        return [c[2] for c in calls.calls if c[1:2] == ['rm']]
+
+    def test_이_예약이_띄운_세션을_치운다(self):
+        self.new(Calls())
+        rt.run_now('blog-daily', data=str(self.data), run=Calls(), home=str(self.home))  # 1a2b3c4d 가 runs.jsonl 에
+        calls = Calls(agents=self.agents({'id': '1a2b3c4d', 'name': 'routine-blog-daily', 'cwd': '/elsewhere'}))
+        out = self.remove(calls)
+        self.assertEqual(self.rms(calls), ['1a2b3c4d'])
+        self.assertEqual(out, {'removed': 'blog-daily', 'stopped': ['1a2b3c4d']})
+        self.assertFalse((self.data / 'routines/blog-daily').exists())
+
+    def test_일하는_중이어도_치운다(self):
+        self.new(Calls())
+        rt.run_now('blog-daily', data=str(self.data), run=Calls(), home=str(self.home))
+        calls = Calls(agents=self.agents({'id': '1a2b3c4d', 'name': 'routine-blog-daily', 'status': 'busy', 'state': 'working'}))
+        self.assertEqual(self.remove(calls)['stopped'], ['1a2b3c4d'])  # 지운 예약은 보고할 곳도 없다
+
+    def test_자기_폴더에서_뜬_세션은_기록이_없어도_치운다(self):
+        # 띄우기가 시간 제한에 걸려 번호를 못 받았는데 세션은 뜬 경우 — 자기 폴더(<데이터>/routines/<이름>)는 이 데이터 폴더만의 것
+        self.new(Calls())
+        own = str(self.data / 'routines/blog-daily')
+        calls = Calls(agents=self.agents({'id': '9f9f9f9f', 'name': 'routine-blog-daily', 'cwd': own}))
+        self.assertEqual(self.remove(calls)['stopped'], ['9f9f9f9f'])
+
+    def test_다른_데이터_폴더의_같은_이름_세션은_안_건드린다(self):
+        self.new(Calls())
+        rt.run_now('blog-daily', data=str(self.data), run=Calls(), home=str(self.home))
+        calls = Calls(agents=self.agents(
+            {'id': '1a2b3c4d', 'name': 'routine-blog-daily'},
+            {'id': '77777777', 'name': 'routine-blog-daily', 'cwd': '/Users/me/.chammo/routines/blog-daily'},  # 진짜 쪽 같은 이름
+            {'id': '88888888', 'name': 'blog', 'cwd': str(self.data / 'routines/blog-daily')},  # 이름이 다른 세션
+        ))
+        self.remove(calls)
+        self.assertEqual(self.rms(calls), ['1a2b3c4d'])
+
+    def test_프로젝트_폴더_예약은_기록의_번호만(self):
+        proj = self.home / 'proj'
+        proj.mkdir()
+        self.new(Calls(), cwd=str(proj))
+        rt.run_now('blog-daily', data=str(self.data), run=Calls(), home=str(self.home))
+        calls = Calls(agents=self.agents({'id': '1a2b3c4d', 'name': 'routine-blog-daily', 'cwd': str(proj)},
+                                         {'id': '55555555', 'name': 'routine-blog-daily', 'cwd': str(proj)}))  # 같은 프로젝트를 쓰는 다른 데이터 폴더 예약
+        self.remove(calls)
+        self.assertEqual(self.rms(calls), ['1a2b3c4d'])
+
+    def test_세션이_없으면_stopped_는_비고_그대로_지운다(self):
+        self.new(Calls())
+        out = self.remove(Calls())
+        self.assertEqual(out, {'removed': 'blog-daily', 'stopped': []})
+        self.assertFalse((self.data / 'routines/blog-daily').exists())
+
+    def test_rm_이_멈추거나_실패해도_예약은_지우고_남은_번호를_알린다(self):
+        self.new(Calls())
+        rt.run_now('blog-daily', data=str(self.data), run=Calls(), home=str(self.home))
+        rows = self.agents({'id': '1a2b3c4d', 'name': 'routine-blog-daily'}, {'id': '2b2b2b2b', 'name': 'routine-blog-daily',
+                                                                              'cwd': str(self.data / 'routines/blog-daily')})
+
+        def run(argv, **kw):
+            if argv[1:3] == ['agents', '--json']:
+                return type('R', (), {'returncode': 0, 'stdout': rows, 'stderr': ''})()
+            if argv[1:2] == ['rm'] and argv[2] == '1a2b3c4d':
+                raise rt.subprocess.TimeoutExpired(argv, 60)
+            if argv[1:2] == ['rm']:
+                return type('R', (), {'returncode': 1, 'stdout': '', 'stderr': 'no such session'})()
+            return type('R', (), {'returncode': 0, 'stdout': '', 'stderr': ''})()
+        out = rt.remove('blog-daily', data=str(self.data), home=str(self.home), run=run, uid=501)
+        self.assertEqual((out['stopped'], out['left']), ([], ['1a2b3c4d', '2b2b2b2b']))
+        self.assertFalse((self.data / 'routines/blog-daily').exists())
+
+    def test_목록을_못_읽어도_지운다(self):
+        self.new(Calls())
+        out = self.remove(Calls(agents='not json'))
+        self.assertEqual(out['stopped'], [])
+        self.assertFalse((self.data / 'routines/blog-daily').exists())
+        self.new(Calls())
+        self.assertEqual(self.remove(Calls(agents='5'))['stopped'], [])  # 목록이 아닌 JSON
+        self.new(Calls())
+        self.assertEqual(self.remove(Calls(agents='{"id": "x"}'))['stopped'], [])
+
+    def test_설정이_깨져도_세션은_치운다(self):
+        self.new(Calls())
+        rt.run_now('blog-daily', data=str(self.data), run=Calls(), home=str(self.home))
+        (self.data / 'routines/blog-daily/routine.json').write_text('')
+        calls = Calls(agents=self.agents({'id': '1a2b3c4d', 'name': 'routine-blog-daily'}))
+        with unittest.mock.patch.object(rt.shutil, 'which', return_value='/bin/claude'):
+            self.assertEqual(self.remove(calls)['stopped'], ['1a2b3c4d'])
+
+    def test_claude_가_없어도_지운다(self):
+        self.new(Calls())
+
+        def run(argv, **kw):
+            if argv[1:2] in (['agents'], ['rm']):
+                raise FileNotFoundError(argv[0])
+            return type('R', (), {'returncode': 0, 'stdout': '', 'stderr': ''})()
+        out = rt.remove('blog-daily', data=str(self.data), home=str(self.home), run=run, uid=501)
+        self.assertEqual(out['stopped'], [])
+        self.assertFalse((self.data / 'routines/blog-daily').exists())
+
+    def test_예약을_먼저_지우고_세션은_그_뒤에(self):
+        # 앱이 60초에 끊어도 예약은 지워져 있게 — agents 를 부를 땐 폴더가 이미 없다
+        self.new(Calls())
+        rt.run_now('blog-daily', data=str(self.data), run=Calls(), home=str(self.home))
+        seen = []
+        rows = self.agents({'id': '1a2b3c4d', 'name': 'routine-blog-daily'})
+
+        def run(argv, **kw):
+            if argv[1:3] == ['agents', '--json']:
+                seen.append((self.data / 'routines/blog-daily').exists())
+                self.assertLessEqual(kw.get('timeout'), 20)
+                return type('R', (), {'returncode': 0, 'stdout': rows, 'stderr': ''})()
+            return type('R', (), {'returncode': 0, 'stdout': '', 'stderr': ''})()
+        self.assertEqual(rt.remove('blog-daily', data=str(self.data), home=str(self.home), run=run, uid=501)['stopped'], ['1a2b3c4d'])
+        self.assertEqual(seen, [False])

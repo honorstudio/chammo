@@ -50,6 +50,18 @@ pub trait Backend: Send + Sync {
     fn peer_card_answer(&self, _dev: &str, _id: &str, _pick: &crate::direct::Pick) -> Result<(), String> {
         Err("not supported".into())
     }
+    /// 폰이 이 기기를 거쳐 짝지은 기기를 읽는다(peer-panel) — 길은 remote::allowed 의 GET 만(부르는 쪽이 이미 걸렀다)
+    fn peer_get(&self, _dev: &str, _path: &str) -> Result<crate::remote::CallOut, String> {
+        Err("not supported".into())
+    }
+    /// 짝지은 기기 이름들 [{id, name}] — 폰 기기 줄(끊긴 기기도). 열쇠·주소는 안 싣는다
+    fn peer_devices(&self) -> serde_json::Value {
+        serde_json::json!([])
+    }
+    /// 폰에서 사람이 친 말을 짝지은 기기 참모에게 — 데스크톱 remote_human_say 와 같은 사람 길
+    fn peer_human_say(&self, _dev: &str, _to: &str, _text: &str) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
     /// 원격(짝지은 기기의 사람)이 누른 카드 답 — by = "remote:<기기>"
     fn direct_answer_by(&self, _id: &str, _pick: &crate::direct::Pick, _by: &str) -> Result<(), String> {
         Err("not supported".into())
@@ -664,8 +676,77 @@ fn text_resp(body: Vec<u8>) -> Resp {
     r
 }
 
+/// 다른 기기 참모가 보는 보관함(peer-panel) — 폰 목록과 같은 거름을 지난 것만, 경로 없이 이름·크기·때. 파일 열기 길은 없다.
+/// 이 기기 사람이 그 줄의 '보관함 보여 주기'를 껐으면 403
+fn peer_locker(req: &Req, gate: &Gate, be: &dyn Backend, dev: &str) -> Resp {
+    if !matches!(req.method.as_str(), "GET" | "HEAD") {
+        return Resp::text(405, "method not allowed");
+    }
+    if !gate.devices.list().iter().any(|d| d.id == dev && d.locker) {
+        return Resp::text(403, "locker not shared");
+    }
+    let full = locker_view(be);
+    let strip = |x: &serde_json::Value, keys: &[&str]| serde_json::Value::Object(keys.iter().filter_map(|k| x.get(*k).map(|v| (k.to_string(), v.clone()))).collect());
+    let list = |k: &str| full[k].as_array().cloned().unwrap_or_default();
+    let items: Vec<_> = list("items").iter().map(|i| strip(i, &["owner", "rel", "folder", "size", "mtime", "gone"])).collect();
+    // 폴더는 거름을 지난 파일이 든 것만 — 빈 폴더·민감한 파일만 든 폴더의 이름은 안 나간다
+    let shown = |f: &serde_json::Value| items.iter().any(|i| i["owner"] == f["owner"] && i["rel"].as_str().zip(f["name"].as_str()).is_some_and(|(r, n)| r.starts_with(&format!("{n}/"))));
+    let folders: Vec<_> = list("folders").iter().filter(|f| shown(f)).map(|f| strip(f, &["owner", "name"])).collect();
+    let owners: Vec<_> = full["dirs"].as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+    Resp::json(&serde_json::json!({ "items": items, "folders": folders, "owners": owners }))
+}
+
+/// 폰이 이 기기를 거쳐 짝지은 기기를 읽는다 — remote::allowed GET 만(참모 길과 같은 목록이라 넓어지지 않는다). 그 기기 응답 번호·글을 그대로
+fn phone_peer_get(req: &Req, be: &dyn Backend) -> Resp {
+    let dec = |k: &str| req.param(k).and_then(|v| percent_encoding::percent_decode_str(v).decode_utf8().ok()).map(|v| v.into_owned());
+    let (Some(dev), Some(path)) = (dec("dev"), dec("path")) else { return Resp::text(400, "bad request") };
+    if !crate::peer_ask::valid_node(&dev) {
+        return Resp::text(400, "bad dev");
+    }
+    if !crate::remote::allowed("GET", &path) {
+        return Resp::text(403, "not allowed");
+    }
+    match be.peer_get(&dev, &path) {
+        Ok(out) => match (out.text, out.b64) {
+            (_, Some(b)) => match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b) {
+                Ok(bytes) => Resp::new(out.status, "application/octet-stream", bytes),
+                Err(_) => Resp::text(502, "bad bytes"),
+            },
+            (t, None) => {
+                let t = t.unwrap_or_default();
+                let ct = if t.trim_start().starts_with(['{', '[']) { "application/json; charset=utf-8" } else { "text/plain; charset=utf-8" };
+                Resp::new(out.status, ct, t)
+            }
+        },
+        Err(e) => Resp::text(502, &e),
+    }
+}
+
+/// 폰에서 사람이 친 말 → 짝지은 기기 참모(사람 길). cid·ts 는 이 기기가 붙인다(몸통에 실어 오면 400)
+fn phone_peer_say(req: &Req, be: &dyn Backend) -> Resp {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct B {
+        dev: String,
+        to: String,
+        text: String,
+    }
+    let b: B = match body(req) { Ok(b) => b, Err(r) => return r };
+    if !crate::peer_ask::valid_node(&b.dev) || b.to.trim().is_empty() || b.to.chars().count() > 120 || b.text.trim().is_empty() || b.text.chars().count() > 4000 {
+        return Resp::text(400, "bad body");
+    }
+    match be.peer_human_say(&b.dev, b.to.trim(), &b.text) {
+        Ok(v) => Resp::json(&v),
+        Err(e) => Resp::text(502, &e),
+    }
+}
+
 /// 폰 보관함 — 진짜 폴더(locker_fs::phone_view)에서 폰이 열 수 있는 것(pick 이 Ok)만 줄째 넘긴다(통째로 넘기면 거름 밖 파일 이름이 샌다)
 fn locker_resp(be: &dyn Backend) -> Resp {
+    Resp::json(&locker_view(be))
+}
+
+fn locker_view(be: &dyn Backend) -> serde_json::Value {
     let allowed = allowed_of(be);
     let rules = mobile_files::Rules { data_dir: be.data_dir(), hq_dir: be.hq_dir(), home: PathBuf::from(crate::platform::home()) };
     let mut v = match be.locker_root() {
@@ -675,7 +756,7 @@ fn locker_resp(be: &dyn Backend) -> Resp {
     if let Some(items) = v.get_mut("items").and_then(|x| x.as_array_mut()) {
         items.retain(|i| i["path"].as_str().is_some_and(|p| matches!(mobile_files::pick(p, &allowed, &rules), Pick::Ok(_))));
     }
-    Resp::json(&v)
+    v
 }
 
 /// 폰이 읽어도 되는 경로 집합 — 보여 준 파일·지침서·starter(allowed_files) + 보관함에 넣은 파일
@@ -1040,8 +1121,8 @@ struct ModeNameBody {
 }
 
 /// 폰 홈·보관함 v1 에 더한 쓰기 길 — 같은 출처 문지기·head_check 몸통 목록·405 가 이 목록 하나를 본다
-const PHONE_POSTS: &[&str] = &["/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
-const PHONE_GETS: &[&str] = &["/api/modes", "/api/mode-view", "/api/mode-card"];
+const PHONE_POSTS: &[&str] = &["/api/peer-human-say", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
+const PHONE_GETS: &[&str] = &["/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices"];
 /// 폰 md 글 칸 저장만 몸통을 크게(글 512KB + JSON)
 const MAX_WRITE_BODY: usize = crate::locker_fs::MAX_PHONE_MD + 64 * 1024;
 
@@ -1561,7 +1642,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     }
     // 다른 기기 참모 열쇠(peer 줄)는 보기 + 이름표 붙는 말 넣기만 — 사람 길(이름표 없이 치기·카드 답)과 파일·계정·짝짓기 코드는 못 쓴다(ADR 0007)
     let peer = peer_of(req, gate);
-    let peer_path = matches!(req.path.as_str(), "/api/peer-say" | "/api/peer-reply" | "/api/peer-human" | "/api/peer-direct-answer");
+    let peer_path = matches!(req.path.as_str(), "/api/peer-say" | "/api/peer-reply" | "/api/peer-human" | "/api/peer-direct-answer" | "/api/peer-locker");
     match &peer {
         Some(_) if !peer_allowed(&req.method, &req.path) => return Resp::text(403, "not for a peer key"),
         None if peer_path => return Resp::text(403, "peer key only"),
@@ -1579,6 +1660,9 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         }
         if req.path == "/api/peer-direct-answer" {
             return peer_direct_answer(req, gate, be, dev, name);
+        }
+        if req.path == "/api/peer-locker" {
+            return peer_locker(req, gate, be, dev);
         }
     }
     // 홈 화면 앱 연결 코드 — 이미 연결된 기기(열쇠)가 새 일회용 코드를 받는다. 홈 화면 앱은 QR(카메라 → 사파리)로 못 열려서
@@ -2240,6 +2324,9 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Err(e) => Resp::text(409, &e),
             }
         }
+        ("GET", "/api/peer-get") => phone_peer_get(req, be),
+        ("GET", "/api/peer-devices") => Resp::json(&be.peer_devices()),
+        ("POST", "/api/peer-human-say") => phone_peer_say(req, be),
         // 짝지은 다른 기기의 카드(ADR 0011) — 폰이 이 기기를 거쳐 보고 누른다. peer 열쇠는 이 길이 허용 목록 밖이라 못 온다(403)
         ("GET", "/api/peer-cards") => Resp::json(&be.peer_cards()),
         ("POST", "/api/peer-card-answer") => {

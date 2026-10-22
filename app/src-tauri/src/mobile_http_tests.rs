@@ -74,6 +74,22 @@ impl Backend for Fake {
         self.log(format!("peer_card_answer {dev} {id} {pick:?}"));
         Ok(())
     }
+    fn peer_get(&self, dev: &str, path: &str) -> Result<crate::remote::CallOut, String> {
+        self.log(format!("peer_get {dev} {path}"));
+        match path {
+            "/api/peer-locker" => Ok(crate::remote::CallOut { status: 404, text: Some("not found".into()), b64: None }),
+            p if p.starts_with("/api/browser-frame") => Ok(crate::remote::CallOut { status: 200, text: None, b64: Some("AAEC".into()) }),
+            _ if dev == "nGone" => Err("그 기기에 안 닿아요".into()),
+            _ => Ok(crate::remote::CallOut { status: 200, text: Some(r#"[{"id":"r1"}]"#.into()), b64: None }),
+        }
+    }
+    fn peer_devices(&self) -> serde_json::Value {
+        serde_json::json!([{ "id": "nB", "name": "아이맥" }])
+    }
+    fn peer_human_say(&self, dev: &str, to: &str, text: &str) -> Result<serde_json::Value, String> {
+        self.log(format!("peer_human_say {dev} {to} {text}"));
+        Ok(serde_json::json!({ "id": to }))
+    }
     fn env(&self) -> serde_json::Value {
         serde_json::json!({ "assistantName": "참모" })
     }
@@ -3625,4 +3641,166 @@ fn hu_폰은_이_기기를_거쳐_다른_기기_카드를_보고_누른다() {
     assert_eq!(handle(&with_cookie(get("/api/peer-card-answer")), &g, &f).status, 405);
     assert!(head_check(&post("/api/peer-card-answer", "{}"), &g).is_none());
     assert_eq!(f.calls().len(), 2);
+}
+
+// ── 다른 기기 보기(peer-panel) — 보관함 목록(peer 열쇠) · 폰이 이 기기를 거쳐 읽기·사람 말(폰 열쇠) ─────────────────────
+
+/// 진짜 보관함 폴더 — 참모 '운영' 아래 보여 줄 파일 하나·민감한 이름 하나
+fn locker_fixture(name: &str) -> (PathBuf, PathBuf) {
+    let d = tmp(name);
+    let root = d.join("root");
+    let mine = root.join("운영");
+    std::fs::create_dir_all(mine.join("10월")).unwrap();
+    std::fs::write(mine.join(".chammo"), "s-1\n").unwrap();
+    std::fs::write(mine.join("10월/보고서.pdf"), b"%PDF-1.4").unwrap();
+    std::fs::write(mine.join("10월/api-key.txt"), "x").unwrap();
+    // 민감한 파일만 든 폴더·빈 폴더 — 이름도 나가면 안 된다
+    std::fs::create_dir_all(mine.join("거래처-홍길동")).unwrap();
+    std::fs::write(mine.join("거래처-홍길동/api-key.txt"), "x").unwrap();
+    std::fs::create_dir_all(mine.join("빈 폴더")).unwrap();
+    (d, root)
+}
+
+#[test]
+fn pv_peer_보관함은_이름_크기_때만_경로는_안_샌다() {
+    let (d, root) = locker_fixture("pv-locker");
+    let g = peer_gate("pv000001");
+    let f = Fake { locker: Some(root.clone()), data: d.join("data"), ..Default::default() };
+    let r = handle(&as_peer(get("/api/peer-locker")), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let raw = String::from_utf8_lossy(&r.body).to_string();
+    assert!(!raw.contains(root.to_str().unwrap()), "보관함 뿌리 경로가 샜다: {raw}");
+    assert!(!raw.contains(d.to_str().unwrap()), "{raw}");
+    assert!(!raw.contains("\"path\"") && !raw.contains("\"dirs\""), "{raw}");
+    let v = json_of(&r);
+    let items = v["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "민감한 이름은 이름째 빠진다: {raw}");
+    assert_eq!(items[0]["owner"], "운영");
+    assert_eq!(items[0]["rel"], "10월/보고서.pdf");
+    assert_eq!(items[0]["folder"], "10월");
+    assert_eq!(items[0]["size"], 8);
+    assert!(items[0]["mtime"].as_u64().is_some());
+    assert_eq!(v["owners"], serde_json::json!(["운영"]));
+    assert_eq!(v["folders"], serde_json::json!([{ "owner": "운영", "name": "10월" }]), "보여 준 파일이 든 폴더만");
+    assert!(!raw.contains("홍길동") && !raw.contains("빈 폴더"), "{raw}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn pv_보관함_보여_주기를_끄면_403_다시_켜면_200() {
+    let (d, root) = locker_fixture("pv-locker-off");
+    let g = peer_gate("pv000002");
+    let f = Fake { locker: Some(root), data: d.join("data"), ..Default::default() };
+    g.devices.set_locker("pv000002", false).unwrap();
+    let r = handle(&as_peer(get("/api/peer-locker")), &g, &f);
+    assert_eq!(r.status, 403);
+    assert_eq!(String::from_utf8_lossy(&r.body), "locker not shared");
+    assert!(!g.devices.list().iter().find(|x| x.id == "pv000002").unwrap().locker);
+    g.devices.set_locker("pv000002", true).unwrap();
+    assert_eq!(handle(&as_peer(get("/api/peer-locker")), &g, &f).status, 200);
+    // 폰 줄엔 끄기가 없다(폰은 원래 /api/locker 로 다 본다)
+    assert!(g.devices.set_locker("test0001", false).is_err());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn pv_보관함_목록은_peer_열쇠만_폰_없음_남의_열쇠_다른_계정은_못_본다() {
+    let (d, root) = locker_fixture("pv-locker-keys");
+    let mut g = peer_gate("pv000003");
+    let f = Fake { locker: Some(root), data: d.join("data"), ..Default::default() };
+    assert_eq!(handle(&with_cookie(get("/api/peer-locker")), &g, &f).status, 403, "폰 열쇠");
+    assert_eq!(handle(&get("/api/peer-locker"), &g, &f).status, 401, "열쇠 없음");
+    assert_eq!(handle(&set(get("/api/peer-locker"), "authorization", Some(&format!("Bearer {}", "ab".repeat(32)))), &g, &f).status, 401, "남의 열쇠");
+    assert_eq!(handle(&as_peer(post("/api/peer-locker", "{}")), &g, &f).status, 403, "peer 열쇠의 쓰기는 길 목록 밖");
+    g.owner = Some("me@example.com".into());
+    let other = set(as_peer(get("/api/peer-locker")), "tailscale-user-login", Some("you@example.com"));
+    assert_eq!(head_check(&other, &g).map(|r| r.status), Some(403), "다른 테일스케일 계정");
+    assert!(crate::remote::allowed("GET", "/api/peer-locker"), "보내는 쪽도 이 길을 부를 수 있다");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn pv_폰은_이_기기를_거쳐_허용된_읽기만_한다() {
+    let g = peer_gate("pv000004");
+    let f = Fake::default();
+    let r = handle(&with_cookie(get(&format!("/api/peer-get?dev=nB&path={}", enc("/api/transcript?id=s-1&from=3")))), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(String::from_utf8_lossy(&r.body), r#"[{"id":"r1"}]"#);
+    // 그 기기 응답 번호는 그대로(옛 판 = 404) · 그림(바이트)은 바이트로 · 안 닿으면 502
+    assert_eq!(handle(&with_cookie(get(&format!("/api/peer-get?dev=nB&path={}", enc("/api/peer-locker")))), &g, &f).status, 404);
+    let frame = handle(&with_cookie(get(&format!("/api/peer-get?dev=nB&path={}", enc("/api/browser-frame?profile=a&since=0")))), &g, &f);
+    assert_eq!((frame.status, frame.body.clone()), (200, vec![0, 1, 2]));
+    assert_eq!(ctype(&frame), "application/octet-stream");
+    assert_eq!(handle(&with_cookie(get(&format!("/api/peer-get?dev=nGone&path={}", enc("/api/sessions")))), &g, &f).status, 502);
+    assert_eq!(f.calls(), vec!["peer_get nB /api/transcript?id=s-1&from=3", "peer_get nB /api/peer-locker", "peer_get nB /api/browser-frame?profile=a&since=0", "peer_get nGone /api/sessions"]);
+    // 허용 목록 밖(파일·계정·자기 자신)·모양 틀림은 그 기기까지 안 간다
+    for p in ["/api/file?path=%2Fetc%2Fpasswd", "/api/accounts", "/api/locker", "/api/peer-get?dev=nB&path=%2Fapi%2Fsessions", "/api/peer-say", "api/sessions"] {
+        assert_eq!(handle(&with_cookie(get(&format!("/api/peer-get?dev=nB&path={}", enc(p)))), &g, &f).status, 403, "{p}");
+    }
+    assert_eq!(handle(&with_cookie(get("/api/peer-get?dev=n%20B&path=%2Fapi%2Fsessions")), &g, &f).status, 400);
+    assert_eq!(handle(&with_cookie(get("/api/peer-get?dev=nB")), &g, &f).status, 400);
+    assert_eq!(f.calls().len(), 4);
+}
+
+#[test]
+fn pv_폰_대신_읽기는_peer_열쇠_없음_남의_열쇠로는_안_된다() {
+    let g = peer_gate("pv000005");
+    let f = Fake::default();
+    let q = format!("/api/peer-get?dev=nB&path={}", enc("/api/sessions"));
+    assert_eq!(handle(&as_peer(get(&q)), &g, &f).status, 403, "다른 기기 참모가 이 기기를 거쳐 또 다른 기기를 못 읽게");
+    assert_eq!(handle(&get(&q), &g, &f).status, 401);
+    assert_eq!(handle(&set(get(&q), "authorization", Some(&format!("Bearer {}", "ab".repeat(32)))), &g, &f).status, 401);
+    assert_eq!(handle(&post("/api/peer-get", "{}"), &g, &f).status, 405);
+    assert!(!crate::remote::allowed("GET", "/api/peer-get"), "참모 길(scripts/peer)로도 못 부른다");
+    assert!(f.calls().is_empty());
+}
+
+#[test]
+fn pv_폰_사람_말은_이_기기를_거쳐_사람_길로() {
+    let g = peer_gate("pv000006");
+    let f = Fake::default();
+    let r = handle(&post("/api/peer-human-say", r#"{"dev":"nB","to":"aaaa0001","text":"그대로 둬"}"#), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(json_of(&r)["id"], "aaaa0001");
+    assert_eq!(f.calls(), vec!["peer_human_say nB aaaa0001 그대로 둬"]);
+    assert!(head_check(&post("/api/peer-human-say", "{}"), &g).is_none(), "몸통 길 목록에 있다");
+    // 열쇠: 다른 기기 참모·없음·남의 열쇠는 안 된다 / 출처·모양
+    let b = r#"{"dev":"nB","to":"aaaa0001","text":"x"}"#;
+    assert_eq!(handle(&as_peer(post("/api/peer-human-say", b)), &g, &f).status, 403);
+    assert_eq!(handle(&set(post("/api/peer-human-say", b), "authorization", None), &g, &f).status, 401);
+    assert_eq!(handle(&set(post("/api/peer-human-say", b), "authorization", Some(&format!("Bearer {}", "ab".repeat(32)))), &g, &f).status, 401);
+    assert_eq!(handle(&set(post("/api/peer-human-say", b), "origin", Some("http://evil.example")), &g, &f).status, 403);
+    assert_eq!(handle(&with_cookie(get("/api/peer-human-say")), &g, &f).status, 405);
+    let long = serde_json::json!({ "dev": "nB", "to": "aaaa0001", "text": "가".repeat(4001) }).to_string();
+    for bad in [r#"{"dev":"n B","to":"aaaa0001","text":"x"}"#, r#"{"dev":"nB","to":"","text":"x"}"#, r#"{"dev":"nB","to":"aaaa0001","text":"  "}"#, long.as_str(), r#"{"dev":"nB","to":"aaaa0001","text":"x","cid":"mine"}"#] {
+        assert_eq!(handle(&post("/api/peer-human-say", bad), &g, &f).status, 400, "{}", &bad[..bad.len().min(50)]);
+    }
+    assert!(!crate::remote::allowed("POST", "/api/peer-human-say"));
+    assert_eq!(f.calls().len(), 1);
+}
+
+#[test]
+fn pv_폰은_짝지은_기기_이름만_받는다() {
+    let g = peer_gate("pv000007");
+    let f = Fake::default();
+    let r = handle(&with_cookie(get("/api/peer-devices")), &g, &f);
+    assert_eq!(r.status, 200);
+    assert_eq!(json_of(&r), serde_json::json!([{ "id": "nB", "name": "아이맥" }]));
+    assert_eq!(handle(&as_peer(get("/api/peer-devices")), &g, &f).status, 403);
+    assert_eq!(handle(&get("/api/peer-devices"), &g, &f).status, 401);
+}
+
+#[test]
+fn pv_다시_허용해도_꺼_둔_보관함_보여_주기는_이어진다() {
+    let g = gate();
+    let now = std::time::SystemTime::now();
+    g.devices.add_peer(&"cd".repeat(32), "참모 · 아이맥", "nIMAC", now).unwrap();
+    let first = g.devices.list().into_iter().find(|d| d.peer).unwrap();
+    assert!(first.locker);
+    g.devices.set_locker(&first.id, false).unwrap();
+    g.devices.add_peer(&"ef".repeat(32), "참모 · 아이맥", "nIMAC", now).unwrap();
+    let again: Vec<_> = g.devices.list().into_iter().filter(|d| d.peer).collect();
+    assert_eq!(again.len(), 1, "같은 노드 줄은 바꿔 끼운다");
+    assert_ne!(again[0].id, first.id);
+    assert!(!again[0].locker, "사람이 꺼 둔 값이 몰래 다시 켜지면 안 된다");
 }

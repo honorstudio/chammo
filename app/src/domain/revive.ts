@@ -9,7 +9,10 @@ import { splitOrchName } from './orchLabel';
 import type { ActivityStatus } from './status';
 
 export type SnapSession = { sessionId: string; name: string; cwd: string; /** 짧은 번호 — 있으면 같은 번호로 되살린다(respawn) */ id?: string; /** 목록에서 사라진 때 — 멈추는 도중 먼저 빠지는 세션을 잡으려고 잠깐 들고 있는다 */ goneAt?: number; /** 마지막으로 봤을 때 일하는 중(쉬는 게 아님) — 꺼질 때 일하던 세션은 '끝남'으로 안 친다(lostTriage). 옛 기록엔 없음 */ busy?: boolean; /** 세션이 뜬 때(ms) — 이름이 같은 옛 세션 작업 기록을 거른다(lostTriage). 옛 기록엔 없음 */ startedAt?: number; /** 사이드바와 같은 판정(activityStatus)을 다섯 갈래로 — 기본 모드 '참모 상태'가 읽는다(모드는 대화 기록을 못 읽는다). 옛 기록엔 없음 */ state?: LiveState };
-export type LiveSnap = { daemon: number; sessions: SnapSession[]; lost: SnapSession[] };
+/** sessions = 지금 살아 있는 것만(읽는 쪽 scripts/task·orch-roster·locker·모드·자리표가 그대로 믿는다). gone = 막 사라진 흔적(goneAt) —
+ *  재시작 직전에 먼저 빠진 세션을 잡으려고 KEEP 동안만. 전엔 흔적이 sessions 에 마지막 state(idle) 그대로 섞여 claude stop 한 세션을
+ *  산 것으로 셌다(2026-10-22 아이맥 soak 005). 흔적이 없으면 칸을 안 쓴다 */
+export type LiveSnap = { daemon: number; sessions: SnapSession[]; lost: SnapSession[]; gone?: SnapSession[] };
 
 /** 세션 상태 다섯 갈래 — work 일함 · wait 띄운 일 기다림 · ask 사람 답·확인창·로그인 · idle 끝남·쉼 · unknown 모름 */
 export type LiveState = 'work' | 'wait' | 'ask' | 'idle' | 'unknown';
@@ -41,20 +44,22 @@ export function stepSnapshot(prev: LiveSnap | null, daemon: number | null, live:
   if (!prev) return { daemon, sessions: current, lost: [] };
 
   const stillLost = (s: SnapSession) => !aliveIds.has(s.sessionId) && !aliveNames.has(s.name);
+  // 옛 live.json 은 흔적(goneAt)을 sessions 안에 뒀다 — 같이 본다
+  const before = [...prev.sessions, ...(prev.gone ?? [])];
 
   if (prev.daemon !== daemon) {
-    const killed = prev.sessions.filter((s) => !s.goneAt || s.goneAt >= daemon - WINDOW).map(({ goneAt: _g, ...s }) => s);
+    const killed = before.filter((s) => !s.goneAt || s.goneAt >= daemon - WINDOW).map(({ goneAt: _g, ...s }) => s);
     const seen = new Set<string>();
     const lost = [...prev.lost, ...killed].filter((s) => stillLost(s) && !seen.has(s.sessionId) && seen.add(s.sessionId));
     return { daemon, sessions: current, lost };
   }
 
-  const gone = prev.sessions
+  const gone = before
     .filter((s) => !aliveIds.has(s.sessionId))
     .map((s) => ({ ...s, goneAt: s.goneAt ?? now }))
     .filter((s) => now - s.goneAt <= KEEP);
   // 이어서 켜서 되살아나면 sessionId 가 같고, 앱이 참모를 새로 띄우면 이름이 같다 — 둘 다 뺀다
-  return { daemon, sessions: [...current, ...gone], lost: prev.lost.filter(stillLost) };
+  return { daemon, sessions: current, lost: prev.lost.filter(stillLost), ...(gone.length ? { gone } : {}) };
 }
 
 /** live.json 글자 → 기록. 없거나 모양이 다르면 null (처음부터 다시 적는다) */
@@ -62,7 +67,7 @@ export function parseSnap(text: string): LiveSnap | null {
   try {
     const v = JSON.parse(text) as Partial<LiveSnap>;
     if (typeof v.daemon !== 'number' || !Array.isArray(v.sessions) || !Array.isArray(v.lost)) return null;
-    return { daemon: v.daemon, sessions: v.sessions, lost: v.lost };
+    return { daemon: v.daemon, sessions: v.sessions, lost: v.lost, ...(Array.isArray(v.gone) ? { gone: v.gone } : {}) };
   } catch {
     return null;
   }

@@ -74,5 +74,9 @@ export const remotePair = (id: string, code: string) => invoke<void>('remote_pai
 export const remoteUnpair = (id: string) => invoke<void>('remote_unpair', { id });
 /** 코드 없이 잇기 — 그 기기에 허용 카드를 띄우고 사람이 허용할 때까지 기다린다(최대 6분). 거절·5분·취소면 오류 글 */
 export const remoteConnect = (id: string) => invoke<void>('remote_connect', { id });
+/** 짝지은 기기 이름들(끊긴 기기도) — 파일 하나라 가볍다(띠 기기 단추) */
+export const remoteSaved = () => invoke<{ id: string; name: string }[]>('remote_saved');
+/** 그 기기 카드에 사람이 누른 답 — 사람 길(remote_direct_answer). 결정 대기함과 기기 보기 홈이 같이 쓴다 */
+export const remoteCardAnswer = (dev: string) => (card: string, pick: unknown) => invoke<void>('remote_direct_answer', { id: dev, card, pick });
 /** 기다리던 연결 거두기 */
 export const remoteConnectCancel = (id: string) => invoke<void>('remote_connect_cancel', { id });

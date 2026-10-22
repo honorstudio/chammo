@@ -57,6 +57,8 @@ export function directCards(log: string, env: Env): DirectCard[] {
       state: 'wait', lastTs: r.ts ?? '', until: str(r.until),
     };
     const isLink = kind === 'link' && c.from === LINK_FROM;
+    // 같은 세션 뒤 카드에 안 밀리는 카드 — 결제는 답·거둠·처리로만 끝(2026-10-22 아이맥 001), 연결 요청은 기기마다 따로. scripts/direct·Rust direct::check 와 같은 규칙
+    const stays = isLink || kind === 'pay';
     let failed = false;
     let ended: DirectState | null = null;
     for (const x of rows.slice(i + 1)) {
@@ -65,7 +67,7 @@ export function directCards(log: string, env: Env): DirectCard[] {
       else if (x.id === c.id && x.type === 'answer-failed') { c.answer = undefined; failed = true; }
       else if (x.id === c.id && x.type === 'done') { ended = 'done'; c.note = str(x.note); }
       else if (x.id === c.id && x.type === 'cancel') ended = 'closed';
-      else if (x.type === 'ask' && x.from === c.from && !c.answer && !ended && !isLink) ended = 'old';
+      else if (x.type === 'ask' && x.from === c.from && !c.answer && !ended && !stays) ended = 'old';
       else continue;
       if ((x.id === c.id || ended !== before) && x.ts && x.ts > c.lastTs) c.lastTs = x.ts;
     }

@@ -84,6 +84,7 @@ import { closeCurrentTab, closeTab, leaveFolder, newDocFolder, openReview, openT
 import { isCurationHtml } from '../../domain/curation';
 import { projectOf } from '../../domain/lockerLog';
 import { FileTab } from './FileTab';
+import { TabStrip } from './TabStrip';
 import { ActivityBar } from './ActivityBar';
 import { LockerPage, type CardActs, type ChipProject } from './LockerPage';
 import { lockerMenu } from '../../domain/lockerMenu';
@@ -141,13 +142,17 @@ function ViewSeg({ side, pet, office, onPick }: { side: SpaceSide; pet: boolean;
  * 채팅 뷰의 스페이스(큰 창 전체) — v10: 왼쪽 메뉴 트리(참모·프로젝트마다 대시보드 + 문서, 내 페이지),
  * 가운데 = 고른 것(대시보드 / 노션식 문서 / 세션 터미널). 참모·맡긴 세션이 띄운 파일은 위에 모달
  */
-export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [], orchOrder = [], pet, office, officeReq = null, onOfficeReq, onOfficeShown, harnitorReq = null, onHarnitorReq, onHarnitorShown, onHarnitorClosed, toolsReq = null, onToolsReq, onToolsShown, onToolsClosed, reviewReq = null, onReviewReq, onReviewShown, replayReq = null, onReplayReq, onReplayShown, replayPage, computerUse, orchs, stoppingIds, startingOrchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, orchHome, send, sendTo, live = {}, menuOpen = true, idle = [], stopped = [], orchCwd = '', onResume, onWakeOrch, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, reviewPage, ctxOf, onAddProject, onChatTab, helpers = [], loose = [], tasks, onMessage }: {
+export function SpaceView({ chat, railTop, far, fns, onReorderOrch, onMenuToggle, orchPins = [], orchOrder = [], pet, office, officeReq = null, onOfficeReq, onOfficeShown, harnitorReq = null, onHarnitorReq, onHarnitorShown, onHarnitorClosed, toolsReq = null, onToolsReq, onToolsShown, onToolsClosed, reviewReq = null, onReviewReq, onReviewShown, replayReq = null, onReplayReq, onReplayShown, replayPage, computerUse, orchs, stoppingIds, startingOrchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, orchHome, send, sendTo, live = {}, menuOpen = true, idle = [], stopped = [], orchCwd = '', onResume, onWakeOrch, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, reviewPage, ctxOf, onAddProject, onChatTab, helpers = [], loose = [], tasks, onMessage }: {
   /** 고정한 참모(대화 id, 고정한 순서) — 사이드바 줄 순서·압정 표시 */
   orchPins?: string[];
   /** 프사 띠에서 참모를 끌어 옮겼다(ids = 지금 순서, from 을 to 자리로) — 채팅 탭 끌기와 같은 길(App reorderOrchPanes) */
   onReorderOrch?: (ids: string[], from: string, to: string) => void;
   /** 채팅 칸(App) — 띠 바로 다음에 그린다(띠 | 채팅 | 스페이스, 2026-10-12 사용자 시안 v2 Q1 A) */
   chat?: React.ReactNode;
+  /** 띠 맨 위 다른 기기 단추(peer-panel) */
+  railTop?: React.ReactNode;
+  /** 다른 기기를 보는 중 — 띠·스페이스를 그 기기 것으로 바꿔 끼운다(이 맥 화면 상태는 그대로 두고 덮기만, 돌아오면 그대로) */
+  far?: { rail: React.ReactNode; main: React.ReactNode; color: string; none?: boolean; cut?: boolean };
   /** 띠 맨 아래 펼치기·접기(⌘B 와 같다) — 펼친 패널 = 넓은 띠(2026-10-12 패널 하나로 P1 A) */
   onMenuToggle?: () => void;
   /** 기록·음성·도구·하니터·리뷰 — 접힌 패널 둘째 세로줄(col), 펼친 패널 맨 아래 가로줄(row). 위 막대에서 옮겨 옴(2026-10-11 사용자 180.png) */
@@ -1163,8 +1168,9 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
       node: <OrchAvatar name={o.name || ''} size={32} state={stopping ? 'off' : avatarState(o, statusOf(o))} phase={stopping ? 'stopping' : undefined} woke={creatingSeen.current.has(o.name)} color={colorOf(o.name || '')} label={oname(o)} /> };
   };
   const railList = rows.map(railAvatar);
-  const rail = (
+  const railEl = (
     <OrchRail
+      top={railTop}
       avatars={railList}
       onPick={(id) => {
         const o = orchs.find((x) => x.id === id);
@@ -1195,6 +1201,9 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
       sched={routines ? { on: featureOf(pick) === 'r:', onToggle: () => featureTo('r:', 'toggle') } : undefined}
       onExpand={() => onMenuToggle?.()} />
   );
+  // 다른 기기를 보는 중이면 띠·이음 색이 그 기기 것(peer-panel) — 이 맥 띠는 안 그릴 뿐 상태는 그대로
+  const rail = far ? far.rail : railEl;
+  const linkColor = far ? far.color : railList.find((a) => a.on)?.color;
   // 홈 곁가지(옛 참모 대시보드에서 옮김, 패널 하나로 7) — 위 알림 = 닫히지 않은 일·주인 없는 일, 오른쪽 = 참모 할 일·결정·분신
   const homeHint = (o: Session) => {
     const un = tasks ? unclosedOf(tasks.orphaned, events, o.id, tasks.known) : [];
@@ -1334,6 +1343,8 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
         {/* 윈도우도(2026-10-21) — 0.3.4 땐 Rust 가 scripts/craft 를 바로 띄워 오류 원문만 떴다, 이제 python 으로 부른다(craft_window::craft_cmd) */}
         <button className={`lk-tab folder ${pick === APPS_KEY ? 'on' : ''}`} aria-pressed={pick === APPS_KEY} onClick={() => setPick(APPS_KEY)}
           aria-label={tr('Craft 앱', 'Craft apps')} title={tr('Craft 앱 — 사진·영상·문서·표 편집기', 'Craft apps — photo, video, document and spreadsheet editors')}><IconApps /></button>
+        {/* 홈·보관함·앱은 늘 왼쪽에 — 독·파일 탭만 스크롤(2026-10-22 사용자 "넘치면 고정 탭이 같이 밀려난다") */}
+        <TabStrip on={pick}>
         {myDock(lo.id).map((it, _i, mine) => {
           // Craft 독 아이콘 = 그 앱의 탭(글자 탭은 없다, 2026-10-19 사용자) — 누르면 그 칸, 지금 보는 앱은 선택 표시, 오른쪽 클릭 = 따로 창·꺼내기·끄기·최근 문서.
           // 이 참모 것만(주인 없는 것 포함) — 남의 참모 앱은 그 참모 독에(2026-10-21 사용자)
@@ -1392,6 +1403,7 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
           </span>
           );
         })}
+        </TabStrip>
       </nav>
     );
   };
@@ -1539,9 +1551,10 @@ export function SpaceView({ chat, fns, onReorderOrch, onMenuToggle, orchPins = [
       {/* 왼쪽은 띠만 — ⌘B 는 띠를 넓힐 뿐(패널 하나로 P1 A). 보관함 나무 칸은 없앴다(2026-10-12 사용자 '이제 필요 없겠다' — 홈·보관함 고정 탭 + 가운데 경로 줄) */}
       {rail}{chat}
       {/* 고른 프사 ↔ 채팅 카드 — 참모 색 윤곽선 하나(맞닿는 변만 열림) */}
-      {chat && <ChatLink color={railList.find((a) => a.on)?.color} />}
+      {chat && <ChatLink color={linkColor} />}
+      {far && far.main}
       {/* 기다리는 동안 옛 화면은 못 누른다 — 눌리면 옛 참모 보관함 자리가 박혀 다른 참모 기억으로 옮아 갔다(2026-10-13) */}
-      <main inert={held} className={`cv-main ${viewSeg && !hold ? 'has-viewseg' : ''}`}>
+      <main inert={held} hidden={!!far} className={`cv-main ${viewSeg && !hold ? 'has-viewseg' : ''}`}>
         {held ? shownMain.current : (shownMain.current = main)}
         {hold ? null : viewSeg}
         {/* 다른 참모가 띄운 것·시안 — 스페이스 가운데 아래 한 줄(채팅 칸에 걸치지 않게 main 안) */}

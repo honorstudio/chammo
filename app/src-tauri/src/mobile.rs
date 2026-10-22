@@ -989,6 +989,13 @@ pub fn mobile_device_remove(id: String) -> Result<MobileStatus, String> {
     Ok(status())
 }
 
+/// 다른 기기 참모 줄의 '보관함 보여 주기'(peer-panel) — 끄면 그 기기의 보관함 목록 길이 403
+#[tauri::command]
+pub fn mobile_device_locker(id: String, on: bool) -> Result<MobileStatus, String> {
+    devices().set_locker(&id, on).map_err(|e| e.to_string())?;
+    Ok(status())
+}
+
 /// 모든 기기 끊기(살아 있는 짝짓기 QR 도 죽인다)
 #[tauri::command]
 pub fn mobile_devices_clear() -> Result<MobileStatus, String> {
@@ -1237,6 +1244,15 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     }
     fn peer_card_answer(&self, dev: &str, id: &str, pick: &crate::direct::Pick) -> Result<(), String> {
         crate::remote::card_answer_now(dev, id, pick)
+    }
+    fn peer_devices(&self) -> serde_json::Value {
+        serde_json::Value::Array(crate::remote::remote_saved())
+    }
+    fn peer_get(&self, dev: &str, path: &str) -> Result<crate::remote::CallOut, String> {
+        crate::remote::call_now(dev, "GET", path, None)
+    }
+    fn peer_human_say(&self, dev: &str, to: &str, text: &str) -> Result<serde_json::Value, String> {
+        crate::remote::human_now(dev, "/api/peer-human", serde_json::json!({ "to": to, "text": text }))
     }
     fn interrupt(&self, id: &str) -> Result<(), String> {
         // 데스크톱 채팅 멈춤과 같은 Esc 한 글자 — 붙어서 넣고 뗀다. 글 치기와 차례를 지킨다(claude::interrupt_session)

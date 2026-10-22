@@ -48,8 +48,8 @@ pub fn check(log: &str, id: &str) -> Result<Value, Refuse> {
             return Err(Refuse::Closed);
         }
         // 연결 요청 카드는 기기마다 따로 — 둘이 같이 오면 앞 카드가 '지난 질문'이 돼 눌러도 안 됐다(같은 기기 새 요청은 peer_ask 가 옛 카드를 닫는다).
-        // 화면(domain/directAsk isLink)과 같은 규칙
-        if r["type"] == "ask" && r["from"] == ask["from"] && ask["kind"] != LINK_KIND {
+        // 결제 카드도 뒤 카드에 안 밀린다 — 답·거둠·처리로만 끝(2026-10-22 아이맥 001). 화면(domain/directAsk stays)과 같은 규칙
+        if r["type"] == "ask" && r["from"] == ask["from"] && ask["kind"] != LINK_KIND && ask["kind"] != "pay" {
             return Err(Refuse::Superseded);
         }
     }
@@ -301,10 +301,20 @@ mod tests {
         assert_eq!(check(&answered, "ab12cd34").unwrap_err(), Refuse::Answered, "폰·데스크톱 동시면 먼저 누른 것만");
         let done = format!("{ASK}\n{}", r#"{"type":"cancel","id":"ab12cd34"}"#);
         assert_eq!(check(&done, "ab12cd34").unwrap_err(), Refuse::Closed);
-        let newer = format!("{ASK}\n{}", r#"{"type":"ask","id":"ffff0000","from":"a1b2c3d4"}"#);
-        assert_eq!(check(&newer, "ab12cd34").unwrap_err(), Refuse::Superseded);
+        let newer = format!("{}\n{}", ASK.replace(r#""kind":"pay""#, r#""kind":"send""#), r#"{"type":"ask","id":"ffff0000","from":"a1b2c3d4"}"#);
+        assert_eq!(check(&newer, "ab12cd34").unwrap_err(), Refuse::Superseded, "결제 아닌 카드는 같은 세션 새 카드에 밀린다");
         let other = format!("{ASK}\n{}", r#"{"type":"ask","id":"eeee0000","from":"99999999"}"#);
         assert!(check(&other, "ab12cd34").is_ok(), "다른 세션 카드는 상관없음");
+    }
+
+    #[test]
+    fn 결제_카드는_같은_세션_뒤_카드에_안_밀린다() {
+        // 2026-10-22 아이맥 001 — 결제 카드 뒤에 다른 카드를 띄우면 결제 카드가 지난 질문으로 숨었다
+        let log = format!("{ASK}\n{}", r#"{"type":"ask","id":"ffff0000","from":"a1b2c3d4","kind":"other"}"#);
+        assert!(check(&log, "ab12cd34").is_ok(), "결제 카드는 아직 누를 수 있다");
+        let other = r#"{"type":"ask","id":"eeee0000","from":"a1b2c3d4","kind":"other"}"#;
+        let log = format!("{other}\n{ASK}");
+        assert_eq!(check(&log, "eeee0000").unwrap_err(), Refuse::Superseded, "결제 아닌 앞 카드는 그대로 지난 질문");
     }
 
     #[test]

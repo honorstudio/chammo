@@ -3,6 +3,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import { remoteCards, type PeerCardsRow, type RemoteCard } from '../domain/remoteCards';
+import { remoteCardAnswer } from '../data/remote';
 import { tr } from '../i18n';
 import { DirectCardView, type DirectPick } from './chat/DirectCard';
 
@@ -18,7 +19,7 @@ export function useRemoteCards() {
   }, []);
   const cards: RemoteCard[] = remoteCards(rows, Date.now());
   const key = (x: RemoteCard) => `${x.dev}:${x.card.id}`;
-  const answer = (dev: string) => (id: string, pick: DirectPick) => invoke<void>('remote_direct_answer', { id: dev, card: id, pick });
+  const answer = (dev: string) => (id: string, pick: DirectPick) => remoteCardAnswer(dev)(id, pick);
   const node = cards.length ? (
     <div className="inbox-direct" role="group" aria-label={tr('다른 기기 직접 답', 'Direct answers on other devices')}>
       {cards.map((x) => (

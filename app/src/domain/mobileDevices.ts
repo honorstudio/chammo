@@ -1,9 +1,9 @@
 // 설정 > 모바일 연결된 폰 목록 — 맥이 준 기기 줄(열쇠 하나 = 한 줄)을 폰 단위로 묶는다.
 // 한 폰에 사파리 탭과 홈 화면 앱은 저장 공간이 따로라 열쇠가 둘이다 — 묶음(group)은 맥이 증명으로만 붙인다(mobile_pair.rs)
-export type DeviceRow = { id: string; name: string; created: number; lastSeen: number | null; home: boolean; group: string; paired: number; peer?: boolean };
+export type DeviceRow = { id: string; name: string; created: number; lastSeen: number | null; home: boolean; group: string; paired: number; peer?: boolean; /** 다른 기기 참모 줄 — 그 기기에 보관함 목록을 보여 주나(peer-panel) */ locker?: boolean };
 /** peer = 다른 기기의 참모 앱이 붙은 열쇠(폰 아님) */
 export type Kind = 'browser' | 'home' | 'peer';
-export type PhoneGroup = { group: string; name: string; kinds: Kind[]; lastUsed: number };
+export type PhoneGroup = { group: string; name: string; kinds: Kind[]; lastUsed: number; /** 다른 기기 참모 줄만 — 보관함 보여 주기 */ locker?: boolean };
 
 const used = (r: DeviceRow) => r.lastSeen ?? r.created;
 
@@ -17,6 +17,7 @@ export function phoneGroups(rows: DeviceRow[]): PhoneGroup[] {
       name: (rs.find((r) => !r.home) ?? rs[0]!).name,
       kinds: rs.some((r) => r.peer) ? ['peer' as const] : (['browser', 'home'] as const).filter((k) => rs.some((r) => r.home === (k === 'home'))),
       lastUsed: Math.max(...rs.map(used)),
+      ...(rs.some((r) => r.peer) ? { locker: rs.every((r) => !r.peer || r.locker !== false) } : {}),
     }))
     .sort((a, b) => b.lastUsed - a.lastUsed);
 }

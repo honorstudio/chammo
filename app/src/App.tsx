@@ -135,6 +135,8 @@ import { spriteOf } from './ui/tama/lcd';
 import { Grip } from './ui/TaskPanel';
 import { IconClose, IconDownload, IconStack, IconTabs, IconUpdate } from './ui/Icons';
 import { RemoteChat, REMOTE_CHAT_EVENT, type RemoteChatTarget } from './ui/chat/RemoteChat';
+import { FAR_BLOCKED, FAR_NUM, FAR_PICK, farActive, useFarMode } from './ui/far/Far';
+import type { SettingsTab } from './domain/settingsTabs';
 import { useRemoteCards } from './ui/useRemoteCards';
 import { IconButton } from './ui/kit/IconButton';
 import type { TaskCard } from './domain/tasks';
@@ -277,6 +279,7 @@ export default function App() {
   const replayBefore = useRef<Selection | null>(null);
   const replayRef = useRef<(req: 'open' | 'close' | 'toggle') => void>(() => {});
   const [settingsStart, setSettingsStart] = useState<SetupStart | undefined>();
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>();
   useEffect(() => {
     const on = (e: Event) => { setSettingsStart((e as CustomEvent<SetupStart>).detail); setSettingsOpen(true); };
     window.addEventListener(OPEN_SETUP, on);
@@ -448,6 +451,9 @@ export default function App() {
   const lastZoomArea = useRef<ZoomArea>('none');
   runRef.current = (sc: Shortcut) => {
     // ⌘1~9: 스페이스면 채팅 탭 N번(참모 화면으로 가서), 아니면 예전 화면 이동(⌘1~4) — 2026-09-30 사용자
+    if (sc.type === 'num' && farActive()) { window.dispatchEvent(new CustomEvent(FAR_NUM, { detail: sc.n })); return; } // 다른 기기를 보는 중 — 그 기기 N번째 참모
+    // 그 기기를 보는 중엔 숨은 이 맥 화면에 먹는 단축키는 안 받는다 — ⌘⇧W 가 이 맥 세션을 끄는 창을 '그 기기 보는 중' 화면에 띄웠다(리뷰)
+    if (farActive() && FAR_BLOCKED.has(sc.type)) return;
     if (sc.type === 'num') {
       if (sc.n === 9 && tabZoomFn()?.('fit')) return; // 확대할 탭이 떠 있으면 ⌘9 = 맞춤(없으면 채팅 탭 9번) — 크롬 ⌘9 와 겹치지 않게 탭이 있을 때만
       if (!space) { const g = gotoOfNum(sc.n); if (g) runRef.current(g); return; }
@@ -509,6 +515,7 @@ export default function App() {
     else if (sc.type === 'tour') setTourOpen(true);
     else if (sc.type === 'harnitor') harnitorRef.current('toggle');
     else if (sc.type === 'licenses') setLicensesOpen(true);
+    else if (sc.type === 'farPick') window.dispatchEvent(new Event(FAR_PICK));
     else if (sc.type === 'quitAsk') { setQuitOpen(true); void invoke('app_quit_shown').catch(() => {}); } // 들었다고 Rust 에 — 못 들으면(웹 굳음) Rust 가 4초 뒤 앱만 끈다(quit.rs). 이미 떠 있어도 매번
     // 미리보기 모달이 떠 있으면 ⌘` 는 모달을 스페이스 가득으로(2026-09-30 사용자)
     else if (sc.type === 'maximizePane' && previewMaxFn()) previewMaxFn()!();
@@ -1060,6 +1067,8 @@ export default function App() {
   // 직접 답하기 카드도 결정 대기함에 — 새로 기다리는 카드가 생기면 드롭다운도 펼친다(어느 화면·탭을 보든 보이게)
   // 짝지은 다른 기기의 카드(ADR 0011) — 같은 종에, 새로 기다리면 같이 펼친다
   const remote = useRemoteCards();
+  // 다른 기기 보기(peer-panel) — 띠 맨 위 기기 단추·그 기기 띠·스페이스·맨 위 줄. 채팅 칸은 원격 채팅(remoteChat) 그대로
+  const farMode = useFarMode({ remoteChat, setRemoteChat, cards: remote.cards, fontSize, onConnect: () => { setSettingsTab('phone'); setSettingsOpen(true); } });
   const directWait = [...direct.inboxCards.filter(needsAnswer).map((c) => c.id), ...remote.cards.map((x) => `${x.dev}:${x.card.id}`)];
   const prevDirect = useRef<Set<string> | null>(null);
   // 상태까지 열쇠에 — 꺼짐→기다림(세션이 목록에 다시 나타남)도 새 카드처럼 펼친다(2026-10-05 사고 모양)
@@ -1502,7 +1511,7 @@ export default function App() {
       const lastOrch = focusedBy.current.get('orch-col');
       const spaceOrch = groups.orchestrators.find((x) => x.id === lastOrch) ?? groups.orchestrators[0];
       // 채팅 칸 — 띠 바로 옆(띠 | 채팅 | 스페이스, 2026-10-12 사용자 시안 v2 Q1 A): 머리 = 보이는 참모 이름·맡은 일 + 그 창 단추(칸 머리 줄과 한 줄로), 폭 손잡이는 오른쪽 가장자리
-      const chatCol = (groups.orchestrators.length > 0 || remoteChat) && <div className="office-chats left" style={{ flex: `0 0 ${chatWidth}px`, width: chatWidth, ['--chat-k' as string]: fontSize / DEFAULT_FONT }}>
+      const chatCol = (groups.orchestrators.length > 0 || remoteChat || farMode.far) && <div className="office-chats left" style={{ flex: `0 0 ${chatWidth}px`, width: chatWidth, ['--chat-k' as string]: fontSize / DEFAULT_FONT }}>
             <Grip side="right" width={chatWidth} onWidth={setChatWidth} min={280} max={900} />
             {/* 채팅 카드 — 띠의 고른 프사와 참모 색 윤곽 하나로 잇는다(SpaceView ChatLink, 2026-10-12 사용자 201.png). 손잡이는 카드 밖(가장자리) */}
             <div className="och-card">
@@ -1517,13 +1526,16 @@ export default function App() {
             <ChatVoice.Provider value={features.voice ? { on: voice, toggle: () => turnVoice(!voice) } : null}>
             <SessionGrid column chat={chatView} extraOf={(s) => [...direct.extraOf(s), ...takeoverExtra(s), ...fileExtra(s)]} ctxOf={ctxOf} modelOf={modelOf} sessions={groups.orchestrators} onReorder={reorderOrchPanes} pinnedIds={groups.orchestrators.filter((o) => o.sessionId && orchPins.includes(o.sessionId)).map((o) => o.id)} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => orchDisplay(s) || assistant()} subOf={(s) => orchRoleOf(s.name)?.text} {...gridFocus('orch-col')} onStop={(s, why) => closeSession(s, why)} layout={layoutOf('orch-col')} dispatch={dispatchFor('orch-col')} onMessage={onMessage} memo={memo} headSlot={chatHeadSlot} chatNotice={wakeNote} />
             </ChatVoice.Provider>
+            {/* 그 기기를 보는데 아직 고른 참모가 없다(읽는 중·그 기기에 참모 없음) — 이 맥 채팅이 비치지 않게 덮는다(잘못 친 말이 이 맥 참모로 가지 않게) */}
+            {farMode.far && !remoteChat && <div className="och-remote"><div className="far-empty"><b>{farMode.farView?.cut ? tr('그 기기에 안 닿아요', "Can't reach that device") : farMode.farView?.none ? tr('그 기기에 떠 있는 참모가 없어요', 'No assistant running on that device') : tr('그 기기 참모를 읽는 중…', 'Loading assistants on that device…')}</b></div></div>}
             {/* 다른 기기 참모(ADR 0011) — 내 참모 칸은 붙인 채(터미널 붙임이 안 끊기게) 그 위를 같은 모양 칸으로 덮는다 */}
             {remoteChat && (
               <div className="och-remote">
               <div className="space-chat-head">
                 <span className="sch-who">
                   <span className="sch-tx"><b className="sch-name">{remoteChat.name}</b><span className="sch-role">{tr(`원격 · ${remoteChat.devName}`, `Remote · ${remoteChat.devName}`)}</span></span>
-                  <span className="sch-ctl"><IconButton size="s" label={tr('내 참모로 돌아가기', 'Back to my assistants')} onClick={() => setRemoteChat(null)}><IconClose /></IconButton></span>
+                  {/* 기기를 보는 중엔 돌아가기가 맨 위 줄 '이 맥으로' 하나 */}
+                  {!farMode.far && <span className="sch-ctl"><IconButton size="s" label={tr('내 참모로 돌아가기', 'Back to my assistants')} onClick={() => setRemoteChat(null)}><IconClose /></IconButton></span>}
                 </span>
               </div>
                 <RemoteChat key={`${remoteChat.dev}:${remoteChat.agent}`} target={remoteChat} fontSize={fontSize} />
@@ -1532,9 +1544,12 @@ export default function App() {
             </div>
           </div>;
       main = (
+        <div className={`far-wrap ${farMode.far ? 'far-on' : ''}`}>
+        {farMode.bar}
+        {farMode.pop}
         <div className="office-mode space-mode">
           {/* 왼쪽 = 스페이스: 문서 + 지금 채팅 탭 참모가 잡고 있는 세션(터미널·보여 준 파일) — 2026-09-30 사용자, 리더는 터미널 뷰의 레거시 */}
-          <SpaceView chat={chatCol} pet={features.tama ? petNode : undefined} office={features.office ? officeCol : undefined} officeReq={officeReq} onOfficeReq={() => setOfficeReq(null)} onOfficeShown={setSpaceOffice}
+          <SpaceView chat={chatCol} railTop={farMode.railTop} far={farMode.farView} pet={features.tama ? petNode : undefined} office={features.office ? officeCol : undefined} officeReq={officeReq} onOfficeReq={() => setOfficeReq(null)} onOfficeShown={setSpaceOffice}
             harnitorReq={harnitorReq} onHarnitorReq={() => setHarnitorReq(null)} onHarnitorShown={setHarnitorOpen}
             onHarnitorClosed={() => { if (harnitorSwitched.current) { harnitorSwitched.current = false; setSpace(false); } }}
             toolsReq={toolsReq} onToolsReq={() => setToolsReq(null)} onToolsShown={setToolsOpen}
@@ -1570,6 +1585,7 @@ export default function App() {
               window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id: spaceOrch.id, text } }));
               await sendTextToSession(spaceOrch.id, text);
             }} />
+        </div>
         </div>
       );
     } else if (view === 'grid' && office && features.office) {
@@ -1733,7 +1749,7 @@ export default function App() {
   };
 
   const setup = config && (firstRun || settingsOpen) && (
-    <Setup key={settingsStart ?? ''} config={config} firstRun={firstRun} fontSize={fontSize} start={settingsStart} onClose={() => { setSettingsOpen(false); setSettingsStart(undefined); void getAppEnv().then(setEnv).catch(() => {}); /* 업데이트했으면 새 버전 번호로 */ }} />
+    <Setup key={settingsStart ?? ''} config={config} firstRun={firstRun} fontSize={fontSize} start={settingsStart} tab={settingsTab} onClose={() => { setSettingsOpen(false); setSettingsStart(undefined); setSettingsTab(undefined); void getAppEnv().then(setEnv).catch(() => {}); /* 업데이트했으면 새 버전 번호로 */ }} />
   );
   if (firstRun) return setup;
 

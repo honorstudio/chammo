@@ -208,5 +208,6 @@
 .peer-alt:disabled { opacity: .5; cursor: default; }
 .peer-on { color: var(--tag-done-ink); }
 .peer-agents { flex: 1 0 100%; display: flex; flex-direction: column; gap: 2px; }
+.peer-share { flex: 1 0 100%; display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); }
 .peer-agent { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; font-size: 13px; color: var(--text-2); }
 .peer-agent > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

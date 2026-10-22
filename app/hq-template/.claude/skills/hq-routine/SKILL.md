@@ -12,6 +12,7 @@ description: 매일·매주·N시간마다 하는 일이나 정한 날짜·시�
 사용자가 **주기적으로**("매일 아침 블로그 글 올려줘", "2시간마다 주문 확인해줘") 또는 **정한 때 한 번**("다음 주 화요일 9시에 광고 다시 켜 줘")
 하길 원하면 프로젝트 세션 대신 예약을 만든다(명령·파일 이름은 옛 이름 routine 그대로):
 `scripts/routine new <이름> "<일정>" "<매번 할 일>" [--in <프로젝트 폴더>]`.
+`--in` 은 있는 폴더만 — 전체 경로나 devRoot 안 프로젝트 이름(`--in shop-app` = `<devRoot>/shop-app`). 없으면 만들지 않고 종료 코드 2 와 이유 한 줄로 거절한다 — 그 줄을 보고 경로를 고쳐 다시 만든다.
 반복: `매일 09:00` · `평일 09:00` · `매주 월 09:00` · `30분마다` · `2시간마다` (영어도: `daily 09:00`, `every 2h`).
 한 번: `10/06 09:00` 또는 `2026-10-06 09:00`, 여러 번은 쉼표로 `10/06 09:00, 10/13 09:00`. 연도를 빼면 다가오는 날짜,
 이미 지난 날짜는 빠지고 다 지났으면 거절된다. 마지막 날짜가 돌고 보고하면 스스로 꺼지고 '끝남'으로 남는다 — 직접 지우지 않는다(기록이 남게).
@@ -19,7 +20,7 @@ description: 매일·매주·N시간마다 하는 일이나 정한 날짜·시�
 지침서가 `<데이터>/routines/<이름>/ROUTINE.md` 에 생긴다 — **열어서 구체적으로 채운다**(단계·어디 로그인하는지·무엇이 되면
 끝인지·무엇을 보고할지). 앱이 꺼져 있어도 macOS 가 정해진 때 깨우고, 매번 `routine-<이름>` 세션이 지침서대로 한 번 일한 뒤
 결과를 남긴다. 만들면 바로 `scripts/routine run <이름>` 으로 시험하고 `scripts/routine list` 로 결과를 본다 — 단 운영에 손대는 예약(광고·결제·실사용자 발송)은
-시험 실행하지 않고 `scripts/routine list` 로 걸린 것만 본다. 일시정지·재개·삭제도 같은 스크립트.
+시험 실행하지 않고 `scripts/routine list` 로 걸린 것만 본다. 일시정지·재개·삭제도 같은 스크립트 — 삭제(`remove`)는 그 예약이 띄운 `routine-<이름>` 세션도 치운다(`stopped`, 못 치운 건 `left`).
 앱 사이드바 "예약" 칸에 보인다 — 첫째 줄 이름·상태(도는 중 N분·끝 hh:mm·실패…), 둘째 줄 언제(다음 실행, 한 번짜리는 날짜·남은 횟수),
 끝난 한 번짜리는 접힌다. 누르면 지침서·지금 도는 화면·실행 기록.
 
@@ -31,6 +32,7 @@ When the user wants something done **on a schedule** ("post to the blog every mo
 2 hours") or **at a set time** ("turn the ads back on next Tuesday 9am"), make a scheduled job instead of a project session
 (the command and files keep the old name, routine):
 `scripts/routine new <name> "<schedule>" "<what to do each run>" [--in <project folder>]`.
+`--in` takes an existing folder only — a full path or a project name under devRoot (`--in shop-app` = `<devRoot>/shop-app`). A missing folder is refused with exit code 2 and one line saying why, and nothing is created — fix the path and make it again.
 Recurring: `daily 09:00`, `weekdays 09:00`, `weekly mon 09:00`, `every 30m`, `every 2h` (Korean works too: `매일 09:00`).
 One-off: `10/06 09:00` or `2026-10-06 09:00`; several with commas: `10/06 09:00, 10/13 09:00`. A date without a year is
 the next one; dates already past are dropped (all past = refused). After the last date runs and reports, the job turns
@@ -39,7 +41,8 @@ It writes the instructions to `<data>/routines/<name>/ROUTINE.md` — **open it 
 to log in, what "done" means, what to report). macOS wakes it on schedule even when the app is closed; each run
 starts a session `routine-<name>` that follows ROUTINE.md once and reports back. Try it right away with
 `scripts/routine run <name>` and check the result with `scripts/routine list` — except jobs that touch production
-(ads, payments, sends to real users): don't test-run those, check `scripts/routine list` instead. Pause/resume/remove the same way.
+(ads, payments, sends to real users): don't test-run those, check `scripts/routine list` instead. Pause/resume/remove the same way —
+`remove` also clears the `routine-<name>` sessions it started (`stopped`; any it couldn't are in `left`).
 They show up in the app sidebar under "Scheduled": name and state on the first line (running N min, done hh:mm, failed…),
 when on the second (next run, or the date and how many are left); finished one-offs fold away.
 If `new`/`list` print a line on stderr that runs use **the app's copy** (it differs from this script) or are **woken by python**, tell the

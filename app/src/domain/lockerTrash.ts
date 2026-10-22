@@ -23,12 +23,16 @@ export type TrashAsk = { text: string; blocked: string | null; choices: TrashCho
 const n = (x: number) => x.toLocaleString('en-US');
 const nameOf = (rel = '') => rel.slice(rel.lastIndexOf('/') + 1);
 
-export function trashAsk(p: TrashPlan): TrashAsk {
-  const blocked = p.blocked.length ? tr(`못 지우는 것 ${p.blocked.length}개는 뺐어`, `${p.blocked.length} protected item(s) left out`) : null;
+/** outside = 같이 골랐지만 보관함 밖이라 보내지 않는 것(기록 목록의 보여 준 프로젝트 파일) — 그 수도 알린다 */
+export function trashAsk(p: TrashPlan, outside = 0): TrashAsk {
+  const blocked = [
+    p.blocked.length ? tr(`못 지우는 것 ${p.blocked.length}개는 뺐어`, `${p.blocked.length} protected item(s) left out`) : '',
+    outside ? tr(`보관함 밖 ${outside}개는 그대로 둬`, `${outside} outside the locker stay as they are`) : '',
+  ].filter(Boolean).join(' · ') || null;
   const light = [...p.file_rels, ...p.empty_rels];
   const insideTxt = p.more ? tr(`${n(p.inside)}개 넘게`, `over ${n(p.inside)}`) : tr(`${n(p.inside)}개`, `${n(p.inside)}`);
   if (p.dirs === 0) {
-    const direct = p.files === 0 && p.empties > 0 && !p.blocked.length;
+    const direct = p.files === 0 && p.empties > 0 && !p.blocked.length && !outside;
     const parts = [p.files ? tr(`파일 ${p.files}개`, `${p.files} file(s)`) : '', p.empties ? tr(`빈 폴더 ${p.empties}개`, `${p.empties} empty folder(s)`) : ''].filter(Boolean);
     const choices: TrashChoice[] = light.length ? [{ key: 'all', label: tr(`${light.length}개를 휴지통으로`, `Move ${light.length} to Trash`), rels: light, pri: true }] : [];
     return { text: parts.join(', ') || tr('지울 수 있는 게 없어', 'Nothing can be removed'), blocked, choices, direct };

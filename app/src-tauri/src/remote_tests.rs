@@ -643,3 +643,4 @@ fn hu_실측_사람_길_한_바퀴() {
     eprintln!("⑥ peer-direct-answer → {}", st(call_human(&kc, &dir, &peer.id, here, "/api/peer-direct-answer", &ans, &send)));
     eprintln!("⑥ 같은 cid 다시 → {}", st(call_human(&kc, &dir, &peer.id, here, "/api/peer-direct-answer", &ans, &send)));
 }
+

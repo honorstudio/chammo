@@ -253,6 +253,13 @@ describe('⌘W 탭 닫기 · ⌘T 새 문서 · ⌘⇧W/⌘⇧T 옛 동작 · �
     expect(shortcutFor(k('ㅗ', { meta: true, shift: true }))).toEqual({ type: 'goHome' });
     expect(shortcutFor(k('ㅣ', { meta: true, shift: true }))).toEqual({ type: 'goLocker' });
   });
+  it('⌘⇧D → 다른 기기 목록(한글 ⌘⇧ㅇ·윈도우 Ctrl+Alt+D 도), ⇧ 없는 ⌘D 는 안 쓴다', () => {
+    expect(shortcutFor(k('D', { meta: true, shift: true }), false)).toEqual({ type: 'farPick' });
+    expect(shortcutFor(k('ㅇ', { meta: true, shift: true }), false)).toEqual({ type: 'farPick' });
+    expect(shortcutFor({ ...k('d', { ctrl: true, alt: true }), code: 'KeyD' }, true)).toEqual({ type: 'farPick' });
+    expect(shortcutFor(k('d', { meta: true }), false)).toBeNull();
+    expect(shortcutFor(k('D', { ctrl: true, shift: true }), false)).toBeNull(); // 맥 Ctrl 조합은 터미널 몫
+  });
   it('⇧ 없는 ⌘H·⌘L 은 앱이 안 쓴다(⌘H 는 macOS 숨기기)', () => {
     expect(shortcutFor(k('h', { meta: true }))).toBeNull();
     expect(shortcutFor(k('l', { meta: true }))).toBeNull();

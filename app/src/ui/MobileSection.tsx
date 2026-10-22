@@ -98,6 +98,12 @@ export function MobileSection({ title }: { title: string }) {
                   <b>{g.name}</b>
                   <span>{[tr(`마지막 ${day(g.lastUsed)}`, `Last ${day(g.lastUsed)}`), ...kindLabels(g.name, g.kinds, kindWords)].join(' · ')}</span>
                 </div>
+                {g.locker !== undefined && (
+                  <label className="peer-share">
+                    <input type="checkbox" role="switch" className="cfg-sw" checked={g.locker} disabled={busy} onChange={(e) => act(() => mobileApi.deviceLocker(g.group, e.target.checked))} />
+                    <span>{tr('보관함 보여 주기', 'Share my files list')}</span>
+                  </label>
+                )}
                 <button className="ib danger su-row-act" aria-label={tr(`${g.name} 끊기`, `Disconnect ${g.name}`)} title={tr('끊기', 'Disconnect')} disabled={busy} onClick={() => act(() => mobileApi.removeDevice(g.group))}><IconUnlink /></button>
               </div>
             ))}

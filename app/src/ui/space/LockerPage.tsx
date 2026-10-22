@@ -354,7 +354,7 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
   const dirs = kids.filter((e) => e.dir);
   const files = kids.filter((e) => !e.dir);
   const entryAt = (path: string) => (path.startsWith(`${dir}/`) ? entries.find((x) => `${dir}/${x.rel}` === path) : undefined);
-  // 여러 개 고르기(2026-10-12 사용자 "골라서 지우려는데 고르는 단추가 없다") — 기록은 바로가기·보내기만, 폴더 안은 옮기기·휴지통까지
+  // 여러 개 고르기(2026-10-12 사용자 "골라서 지우려는데 고르는 단추가 없다") — 기록은 바로가기·보내기·휴지통(보관함에 든 것만, 10-22), 폴더 안은 옮기기까지
   const where = place.kind === 'root' ? 'log' : 'dir';
   const pickables: { key: string; rel?: string; look: PickedLook }[] = place.kind === 'root'
     ? items.map((it) => { const e = entryAt(it.path); return { key: it.path, rel: e?.rel, look: { kind: 'file', inLocker: !!e, gone: !!e?.gone, ro: !!e?.ro } }; })
@@ -387,7 +387,7 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
     const k = trashKey({ key: e.key, meta: e.metaKey, ctrl: e.ctrlKey, alt: e.altKey, inBox: !!t && !!box.current?.contains(t), composing: e.isComposing, editable, asking: !!ask }, picked.map((x) => x.look), where);
     if (!k) return;
     e.preventDefault();
-    if (k === 'many') { askTrash(pickedRels); return; }
+    if (k === 'many') { askTrash(pickedRels, n - pickedRels.length); return; }
     const rel = picked[0]?.rel;
     if (rel && acts.onTrash) { acts.onTrash(rel); endPick(); } // 되돌리기 알림은 휴지통 결과(LOCKER_TRASHED)가 띄운다 — 고른 게 풀려야 보인다
   };
@@ -473,10 +473,10 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
   const aliasManyItems = () => folderItems(folders, (rel) => { acts.onAliasMany?.(pickedPaths, rel); endPick(); });
   const sendMany = () => { acts.onSendMany?.(pickedPaths); endPick(); };
   // 휴지통 — 먼저 센다. 빈 폴더(숨은 파일만)뿐이면 묻지 않고 바로, 아니면 실제 규모를 보이고 단추를 고르게
-  const askTrash = (rels: string[]) => {
+  const askTrash = (rels: string[], outside = 0) => {
     if (!acts.planTrash || !rels.length) return;
     void acts.planTrash(rels).then((p) => {
-      const a = trashAsk(p);
+      const a = trashAsk(p, outside);
       if (a.direct) { acts.onTrashMany?.(p.empty_rels, false); endPick(); return; }
       setAsk({ a, p });
     }, () => {});
@@ -497,7 +497,7 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
     send: acts.onSendMany && { run: sendMany, label: sendName ? tr(`${n}개 ${sendName}에게 보내기`, `Send ${n} to ${sendName}`) : tr(`${n}개 참모에게 보내기`, `Send ${n} to assistant`) },
     alias: acts.onAliasMany && { sub: aliasManyItems, label: tr(`${n}개 폴더에 바로가기`, `Add ${n} shortcuts to folder`) },
     move: acts.onMoveMany && { sub: moveManyItems, empty: tr('옮길 폴더가 없어', 'No folder to move to'), label: tr(`${n}개 옮기기`, `Move ${n} to`) },
-    trash: acts.onTrashMany && { run: () => askTrash(pickedRels), label: tr(`${n}개 휴지통으로…`, `Move ${n} to Trash…`) },
+    trash: acts.onTrashMany && { run: () => askTrash(pickedRels, n - pickedRels.length), label: tr(`${n}개 휴지통으로…`, `Move ${n} to Trash…`) },
   });
   const many = (key: string) => sel.keys.length > 1 && sel.keys.includes(key);
   // 우클릭 — 고른 묶음 밖이면 그 하나만 고른다(고를 수 있는 자리에서만)
@@ -523,7 +523,7 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
           {has('send') && acts.onSendMany && <SendToOrch to={acts.sendTo} onClick={sendMany} />}
           {has('alias') && acts.onAliasMany && <IconButton label={tr('폴더에 바로가기', 'Add shortcuts to folder')} onClick={(x) => act?.openMenu(x, aliasManyItems())}><IconFolderAlias /></IconButton>}
           {has('move') && acts.onMoveMany && <IconButton label={tr('폴더로 옮기기', 'Move to folder')} onClick={(x) => act?.openMenu(x, moveManyItems())}><IconFolderMove /></IconButton>}
-          {has('trash') && acts.onTrashMany && <IconButton label={tr('휴지통으로', 'Move to Trash')} onClick={() => askTrash(pickedRels)}><IconTrash /></IconButton>}
+          {has('trash') && acts.onTrashMany && <IconButton label={tr('휴지통으로', 'Move to Trash')} onClick={() => askTrash(pickedRels, n - pickedRels.length)}><IconTrash /></IconButton>}
           <IconButton label={tr('고른 것 풀기', 'Clear selection')} title={tr('고른 것 풀기 (Esc)', 'Clear selection (Esc)')} onClick={endPick}><IconClose /></IconButton>
         </>
       )}

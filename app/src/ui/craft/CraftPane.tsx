@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { tr } from '../../i18n';
 import { doingLine, mirrorNote, paneShotDue, saveState, takeButton, type CraftInfo } from '../../domain/craftWin';
 import { IS_WIN } from '../../domain/reader';
-import { boxOf, coveredAt, COVERS, sameBox, shown, wantStill, type Box } from '../../domain/craftTab';
+import { boxOf, coveredAt, COVERS, POPS, popOverlaps, sameBox, shown, wantStill, type Box } from '../../domain/craftTab';
 import { IconClose, IconDockIn, IconPower, IconSettings, IconWindowOut } from '../Icons';
 import { askPermission } from '../../data/tauri';
 import './craft.css';
@@ -32,7 +32,10 @@ function useSpacePlace(app: string, on: boolean, stage: React.RefObject<HTMLElem
       if (el) {
         const b = boxOf(el.getBoundingClientRect());
         // 9점 훑기는 6프레임마다(초당 10번) — 매 프레임은 아깝다
-        if (frame++ % 6 === 0) poked = coveredAt(b, (x, y) => document.elementFromPoint(x, y), (n) => n instanceof Node && el.contains(n));
+        if (frame++ % 6 === 0) {
+          const pops = [...document.querySelectorAll(POPS)].filter((p) => !el.contains(p)).map((p) => boxOf(p.getBoundingClientRect()));
+          poked = popOverlaps(b, pops) || coveredAt(b, (x, y) => document.elementFromPoint(x, y), (n) => n instanceof Node && el.contains(n));
+        }
         const covered = !!document.querySelector(COVERS) || poked;
         const v = shown(b, covered);
         const vh = window.innerHeight; // 맥 제목줄 밑 깔림 재기(webpage.rs content_origin 과 같은 이유)

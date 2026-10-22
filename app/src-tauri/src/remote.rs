@@ -211,7 +211,7 @@ pub fn merge(peers: &[TsPeer], saved: &[Saved], probe: impl Fn(&str) -> Probe) -
 pub(crate) const GETS: &[&str] = &[
     "/api/hello", "/api/env", "/api/sessions", "/api/stopped", "/api/transcript", "/api/tails", "/api/send-status", "/api/direct", "/api/tasks",
     "/api/browsers", "/api/browser-frame", "/api/avatars", "/api/usage", "/api/load", "/api/roles", "/api/pins", "/api/order", "/api/routines",
-    "/api/peer-reply",
+    "/api/peer-reply", "/api/peer-locker",
 ];
 pub(crate) const POSTS: &[&str] = &["/api/peer-say"];
 /// 사람 길(ADR 0011) — 이 앱 메인 창에서 사람이 친 말·누른 카드만 그 기기로(remote_human_*). allowed() 에 없어서 참모·스크립트(appctl·scripts/peer)는 못 쓴다.
@@ -553,6 +553,12 @@ pub fn devices_now() -> Result<DevicesOut, String> {
     }
 }
 
+/// 짝지은 기기(이름만) — 파일 하나 읽기라 가볍다. 띠의 기기 단추는 이게 하나라도 있을 때만 뜬다(끊긴 기기도 짝은 지은 것)
+#[tauri::command]
+pub fn remote_saved() -> Vec<serde_json::Value> {
+    load(&data_dir()).into_iter().map(|s| serde_json::json!({ "id": s.id, "name": s.name })).collect()
+}
+
 /// 짝짓기(실제 테일넷·키체인) — 앱 화면과 scripts/peer(appctl) 가 같이 쓴다
 pub fn pair_now(id: &str, code: &str) -> Result<(), String> {
     let (route, json) = tailnet()?;
@@ -675,7 +681,7 @@ pub fn human_body(mut v: serde_json::Value, cid: &str, now: u64) -> Result<Strin
     Ok(v.to_string())
 }
 
-fn human_now(id: &str, path: &str, v: serde_json::Value) -> Result<serde_json::Value, String> {
+pub(crate) fn human_now(id: &str, path: &str, v: serde_json::Value) -> Result<serde_json::Value, String> {
     let cid = format!("h-{}", crate::mobile_pair::random_hex(8).map_err(|e| e.to_string())?);
     let body = human_body(v, &cid, now_ms())?;
     let (route, peers) = route_and_peers()?;

@@ -32,6 +32,8 @@ type Props = {
   onClose: () => void;
   /** 열자마자 할 일 — 'update' = 점검 단계에서 Claude Code 업데이트를 바로 돌린다(새 버전 알림 띠의 버튼), 'python' = 파이썬 설치(앱 서랍) */
   start?: SetupStart;
+  /** 열 때 처음 탭 — 띠의 기기 목록 '기기 연결'은 폰과 메신저(다른 기기 참모)로 */
+  tab?: SettingsTab;
 };
 
 const reopen = () => {
@@ -101,7 +103,7 @@ const ANIM_HINT = (): Record<Animation, string> => ({
   off: tr('움직임 없이 바로 바뀌어요', 'Changes instantly, no motion'),
 });
 
-export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
+export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }: Props) {
   const [draft, setDraft] = useState<Config>(config);
   const set = <K extends keyof Config>(k: K, v: Config[K]) => setDraft((d) => ({ ...d, [k]: v }));
   const [check, setCheck] = useState<EnvCheck | null>(null);
@@ -654,7 +656,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start }: Props) {
   const sectionOf: Record<WizardStep, ReactNode> = { welcome: langSec, check: checkSec, basics: basicsSec, features: featSec, ready: readySec };
 
   // ---- 설정(첫 실행 아님) = 앱 창 안 모달 + 왼쪽 탭. 지금 탭만 그린다 — 안 보는 탭의 읽기(목소리 목록 등)가 열 때 안 돈다 ----
-  const [tab, setTab] = useState<SettingsTab>(firstTab(start));
+  const [tab, setTab] = useState<SettingsTab>(tab0 ?? firstTab(start));
   const [ver0, setVer0] = useState('');
   useEffect(() => { if (!firstRun) void appVersion().then(setVer0, () => {}); }, [firstRun]);
   const modal = useRef<HTMLDivElement>(null);

@@ -17,7 +17,7 @@ export function codeOf(key: string): string {
 
 /** 윈도우 키 입력 → 같은 뜻의 맥 키(⌘…). 앱 단축키가 아니면 null — 그 키는 터미널·입력칸 몫 */
 /** ⌘⇧글자로 쓰는 키 — 윈도우에선 Ctrl+Alt+글자 (Ctrl+Shift+글자는 ⇧ 없는 ⌘글자가 이미 차지) */
-export const SHIFT_LETTERS = 'EWTHL';
+export const SHIFT_LETTERS = 'EWTHLD';
 
 export function winToMac(e: KeyLike): KeyLike | null {
   if (!e.ctrlKey || e.metaKey) return null;

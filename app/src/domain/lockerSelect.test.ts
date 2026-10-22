@@ -88,8 +88,13 @@ describe('batchActs — 고른 묶음에 되는 동작', () => {
     expect(batchActs([{ ...file, ro: true }], { where: 'dir', folders: 1, phone: true })).toEqual(['send', 'alias']);
     expect(batchActs([file], { where: 'dir', folders: 1, phone: true })).toContain('trash');
   });
-  it('기록 목록 — 바로가기·보내기만(기록 줄은 안 지운다)', () => {
-    expect(batchActs([file, { kind: 'file', inLocker: false }], { where: 'log', folders: 1 })).toEqual(['send', 'alias']);
+  it('기록 목록 — 보관함에 든 파일이 하나라도 있으면 휴지통(2026-10-22 사용자 "여러 개 고르면 안 지워진다"), 옮기기는 없다', () => {
+    expect(batchActs([file, file], { where: 'log', folders: 1 })).toEqual(['send', 'alias', 'trash']);
+    // 보관함 밖(보여 준 프로젝트 파일)이 섞여도 — 밖의 것은 빼고 보관함 것만(확인 줄이 뺀 수를 말한다)
+    expect(batchActs([file, { kind: 'file', inLocker: false }], { where: 'log', folders: 1 })).toEqual(['send', 'alias', 'trash']);
+  });
+  it('기록 목록 — 보관함 밖만 골랐으면 휴지통 없음(기록 줄·프로젝트 파일은 안 지운다)', () => {
+    expect(batchActs([{ kind: 'file', inLocker: false }, { kind: 'file', inLocker: false }], { where: 'log', folders: 1 })).toEqual(['send', 'alias']);
   });
   it('폴더가 섞이면 보내기·바로가기는 없다, 연결 폴더 자체는 휴지통 대신 연결 풀기라 빠진다', () => {
     expect(batchActs([file, { kind: 'folder', inLocker: true }], { where: 'dir', folders: 2 })).toEqual(['move', 'trash']);
@@ -127,11 +132,16 @@ describe('trashKey — 보관함에서 고른 채 Backspace·Delete·⌘⌫ = �
     expect(trashKey(k, [file, folder], 'dir')).toBe('many');
     expect(trashKey(k, [folder], 'dir')).toBe('many');
   });
-  it('연결 폴더 자체·보관함 밖 기록·기록 목록 여럿은 안 지운다 — 연결은 연결 풀기로', () => {
+  it('연결 폴더 자체·보관함 밖 기록은 안 지운다 — 연결은 연결 풀기로', () => {
     expect(trashKey(k, [{ ...folder, linked: true }], 'dir')).toBeNull();
     expect(trashKey(k, [file, { ...folder, linked: true }], 'dir')).toBeNull();
     expect(trashKey(k, [{ ...file, inLocker: false }], 'log')).toBeNull();
-    expect(trashKey(k, [file, file], 'log')).toBeNull();
+    expect(trashKey(k, [{ ...file, inLocker: false }, { ...file, inLocker: false }], 'log')).toBeNull();
+  });
+  it('기록 목록 여럿도 묶음 흐름(2026-10-22 사용자 — 20개 골라 ⌫ 가 아무 일 없었다)', () => {
+    expect(trashKey(k, [file, file], 'log')).toBe('many');
+    expect(trashKey({ ...k, meta: true }, [file, file], 'log')).toBe('many');
+    expect(trashKey(k, [file, { ...file, inLocker: false }], 'log')).toBe('many');
   });
   it('고른 것 없음·입력칸(이름 바꾸기 칸)·한글 조합 중·보관함 밖 포커스·묻는 중·다른 키는 아무 일 없음', () => {
     expect(trashKey(k, [], 'dir')).toBeNull();

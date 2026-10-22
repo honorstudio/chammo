@@ -37,7 +37,7 @@ const centers = (nav: HTMLElement | null) => new Map([...(nav?.querySelectorAll<
 }));
 const still = () => !motionOn(); // 애니메이션 줄이기·끄기·OS 동작 줄이기(ui/calm)
 
-export function OrchRail({ avatars, onPick, onMenu, onRename, onMove, onNew, onExpand, expandLabel, fns, group, resting = [], sched, wide = false, groupNames, width = 240, onWidth, joined = false }: {
+export function OrchRail({ top, avatars, onPick, onMenu, onRename, onMove, onNew, onExpand, expandLabel, fns, group, resting = [], sched, wide = false, groupNames, width = 240, onWidth, joined = false }: {
   avatars: RailAvatar[];
   onPick: (id: string) => void;
   onMenu?: (e: React.MouseEvent, id: string) => void;
@@ -64,6 +64,8 @@ export function OrchRail({ avatars, onPick, onMenu, onRename, onMove, onNew, onE
   /** 펼친 띠 폭(191.png — 내용 폭으로 늘어나지 않게 고정) · 오른쪽 손잡이로 바꾸기(앱 전체 한 값) */
   width?: number;
   onWidth?: (w: number) => void;
+  /** 띠 맨 위 — 다른 기기 단추(짝지은 기기가 있을 때만, peer-panel) */
+  top?: React.ReactNode;
   /** 채팅 칸이 바로 옆(띠 | 채팅 | 스페이스) — 고른 프사 줄이 채팅 바탕과 이어진 면(고른 탭이 아래 내용과 붙듯, 2026-10-12 사용자) */
   joined?: boolean;
 }) {
@@ -263,6 +265,8 @@ export function OrchRail({ avatars, onPick, onMenu, onRename, onMove, onNew, onE
       {joined && join && <i className="lk-join" style={{ top: join.top, height: join.height }} aria-hidden="true" />}
       {wide && onWidth && <Grip side="right" width={width} onWidth={onWidth} min={200} max={360} />}
       {/* 접기·펼치기는 기능 줄과 따로 띠 맨 위(207.png — 기능 아이콘 사이에 끼어 이상했다) — 펼침은 오른쪽 끝, 접힘은 가운데. 창 모서리와도 멀다(206.png) */}
+      {top}
+      {top && <i className="far-sep" aria-hidden="true" />}
       <div className="rail-top">{fold}</div>
       {avatars.map((a, i) => {
         const shift = !drag ? 0 : a.id === drag.id ? drag.dy : tabShift(i, drag.from, drag.to, drag.step);

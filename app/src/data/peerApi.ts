@@ -77,6 +77,8 @@ export function makeApi(io: Io) {
     /** 참모 순서 — 데스크톱 채팅 탭에서 끌어 둔 순서(domain/orchOrder), 폰은 읽기만 */
     readOrder: () => io.text('/api/order'),
     readRoles: () => io.text('/api/roles'),
+    /** 그 기기 보관함 목록 — 다른 기기(peer 열쇠)만, 경로 없이 이름·크기·때(domain/farHome farLocker). 옛 판은 'not found', 끈 기기는 'locker not shared' */
+    readPeerLocker: () => io.json<unknown>('/api/peer-locker'),
   };
 }
 

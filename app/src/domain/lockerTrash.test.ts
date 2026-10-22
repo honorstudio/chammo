@@ -57,4 +57,15 @@ describe('trashAsk — 묶음 휴지통 확인', () => {
     expect(none.choices).toEqual([]);
     expect(none.direct).toBe(false);
   });
+
+  it('보관함 밖(기록에 보여 준 프로젝트 파일)을 같이 골랐으면 그 수를 알린다 — 그건 휴지통에 안 간다(2026-10-22)', () => {
+    const a = trashAsk(plan({ files: 3, file_rels: ['a', 'b', 'c'] }), 1);
+    expect(a.blocked).toBe('보관함 밖 1개는 그대로 둬');
+    expect(a.choices[0]).toMatchObject({ key: 'all', label: '3개를 휴지통으로', rels: ['a', 'b', 'c'] });
+    const both = trashAsk(plan({ files: 1, file_rels: ['a'], blocked: [{ rel: 'x', why: 'y' }] }), 2);
+    expect(both.blocked).toBe('못 지우는 것 1개는 뺐어 · 보관함 밖 2개는 그대로 둬');
+    // 빈 폴더만이어도 밖의 것이 섞였으면 바로 보내지 않고 한 번 보인다
+    expect(trashAsk(plan({ empties: 1, empty_rels: ['빈'] }), 1).direct).toBe(false);
+    expect(trashAsk(plan({ files: 1, file_rels: ['a'] }), 0).blocked).toBeNull();
+  });
 });

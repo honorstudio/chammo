@@ -289,6 +289,10 @@ export const IconInbox = () => (
 export const IconPeople = () => (
   <svg viewBox="0 0 16 16" {...P}><circle cx="6" cy="5.6" r="2.2" /><path d="M2.2 12.8c.4-2 1.9-3.2 3.8-3.2s3.4 1.2 3.8 3.2M10.6 3.6a2.1 2.1 0 0 1 0 4.1M11.6 9.8c1.2.4 2 1.4 2.2 3" /></svg>
 );
+/** 다른 기기: 모니터(화면 + 받침) — 띠의 기기 단추·보는 중 줄(peer-panel) */
+export const IconDevice = () => (
+  <svg viewBox="0 0 16 16" {...P}><rect x="1.8" y="2.6" width="12.4" height="8.4" rx="1.2" /><path d="M6 13.6h4M8 11v2.6" /></svg>
+);
 /** 예약: 달력 + 오른쪽 아래 작은 시계 — 기록(되감기 시계)과 덜 닮게(207.png) */
 export const IconCalendarClock = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M7.4 12.6H3.4a1.6 1.6 0 0 1-1.6-1.6V4.6A1.6 1.6 0 0 1 3.4 3h7.2a1.6 1.6 0 0 1 1.6 1.6v2.6M1.8 6.3h10.4M5 1.7v2.6M9 1.7v2.6" /><circle cx="11.5" cy="11.5" r="3.1" /><path d="M11.5 10.1v1.5l1 .7" /></svg>

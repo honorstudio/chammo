@@ -66,17 +66,22 @@ export function edgeScroll(y: number, top: number, bottom: number, zone = 40, ma
 export type PickedLook = { kind: 'file' | 'folder'; inLocker: boolean; linked?: boolean; ro?: boolean; gone?: boolean };
 export type BatchKey = Extract<LockerMenuKey, 'send' | 'alias' | 'move' | 'trash'>;
 
-/** 고른 묶음에 되는 동작 — 묶음 전부에 되는 것만. 기록 목록은 바로가기·보내기만(기록 줄은 안 지운다),
+/** 고른 묶음에 되는 동작 — 묶음 전부에 되는 것만. 기록 목록은 옮기기가 없고, 휴지통은 보관함에 든 파일이 하나라도 있으면
+ *  (보관함 밖 — 보여 준 프로젝트 파일 — 은 빼고 보관함 것만, 2026-10-22 사용자 "여러 개 고르면 안 지워진다"),
  *  연결 폴더 안쪽은 휴지통(맥 휴지통)만 열려 있고 옮기기는 없다, 폰은 연결 폴더 안 휴지통도 막는다 */
 export function batchActs(xs: PickedLook[], at: { where: 'dir' | 'log'; folders: number; phone?: boolean }): BatchKey[] {
   if (xs.length === 0) return [];
   const files = xs.every((x) => x.kind === 'file');
   const out: BatchKey[] = [];
+  const bin = (x: PickedLook) => x.inLocker && !x.linked && !(x.ro && at.phone);
   if (files && xs.every((x) => !x.gone)) out.push('send');
   if (files && at.folders > 0) out.push('alias');
-  if (at.where === 'log') return out;
+  if (at.where === 'log') {
+    if (xs.some(bin)) out.push('trash');
+    return out;
+  }
   if (xs.every((x) => x.inLocker && !x.ro)) out.push('move');
-  if (xs.every((x) => x.inLocker && !x.linked && !(x.ro && at.phone))) out.push('trash');
+  if (xs.every(bin)) out.push('trash');
   return out;
 }
 

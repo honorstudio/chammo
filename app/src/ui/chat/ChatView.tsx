@@ -66,7 +66,9 @@ const drafts = draftStore((() => { try { return window.localStorage; } catch { r
  * 스페이스 모드의 채팅 보기(2026-09-30 사용자). 터미널(TUI)은 뒤에 그대로 붙어 있고, 이건 그 위에 덮는 판이다.
  * 읽기 = 대화 기록 이어 읽기, 쓰기 = 그 터미널 입력칸에 붙여넣고 Enter(send). 멈추기 = Esc
  */
-export function ChatView({ extra = [], fontSize, sessionId, state, send, interrupt, rawKeys, onTerminal, onInputFocus, focusRef, screen, submitTerminal, pasteImage, voiceStop = 0, sendQueuedNow, typeOnly, clearTerminal, paneId, ctx, modelInfo, pickModel, cwd, locker, notice, link, remote = false, readFn }: {
+export function ChatView({ extra = [], fontSize, sessionId, state, send, interrupt, rawKeys, onTerminal, onInputFocus, focusRef, screen, submitTerminal, pasteImage, voiceStop = 0, sendQueuedNow, typeOnly, clearTerminal, paneId, ctx, modelInfo, pickModel, cwd, locker, notice, link, remote = false, readOnly = false, readFn }: {
+  /** 읽기만(다른 기기 프로젝트 세션 엿보기) — 입력칸·상태 줄 아래를 숨긴다 */
+  readOnly?: boolean;
   /** 다른 기기 참모 채팅(ADR 0011) — 뒤 터미널이 없다: 터미널·모델·/ 자동완성·보관함·그림 붙이기·멈춤·@ 멘션을 끈다 */
   remote?: boolean;
   /** 대화 기록 읽기 — 원격이면 그 기기 폰 서버(remoteApi), 없으면 이 기기 */
@@ -684,7 +686,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
 
   return (
     // tabIndex -1 — 글을 고른 채(입력칸으로 안 감)·말 목록을 누른 뒤에도 Esc 가 이 칸으로 온다
-    <div className={`chat ${dropHot ? 'drop-hot' : ''}`} ref={root} tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}
+    <div className={`chat ${dropHot ? 'drop-hot' : ''}${readOnly ? ' ro' : ''}`} ref={root} tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => { if (e.target !== input.current && escStops(e, false)) { e.preventDefault(); interrupt(); } }}
       // 창 아무 데나 눌러도 입력칸으로 — 쌓기 보기에서 급할 때 입력칸 찾아 누르기 어려웠다(2026-09-30 사용자). 글 고르기·버튼·링크는 그대로
       onMouseUp={(e) => { const t = e.target as HTMLElement; if (clickFocusesInput({ interactive: !!t.closest('button, a, input, textarea, select, summary, [contenteditable="true"], [role="button"]'), selected: window.getSelection()?.toString() ?? '' })) input.current?.focus(); }}

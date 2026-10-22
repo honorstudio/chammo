@@ -36,8 +36,14 @@ describe('directCards — 직접 답하기 카드 기록 → 카드와 상태', 
     const failed = [ask('c1', 'a1b2c3d4', T0), row({ type: 'answer', id: 'c1', ts: T0 }), row({ type: 'answer-failed', id: 'c1', ts: T0 })].join('\n');
     expect(directCards(failed, env())[0]!.state).toBe('failed');
     expect(directCards([ask('c1', 'a1b2c3d4', T0), row({ type: 'cancel', id: 'c1' })].join('\n'), env())[0]!.state).toBe('closed');
-    const two = [ask('c1', 'a1b2c3d4', T0), ask('c2', 'a1b2c3d4', '2026-10-03T06:05:00Z')].join('\n');
+    const two = [ask('c1', 'a1b2c3d4', T0, { kind: 'other' }), ask('c2', 'a1b2c3d4', '2026-10-03T06:05:00Z')].join('\n');
     expect(directCards(two, env()).map((c) => [c.id, c.state])).toEqual([['c1', 'old'], ['c2', 'wait']]);
+  });
+  it('결제 카드는 같은 세션 뒤 카드에 안 밀린다 — 답·거둠·처리로만 끝(2026-10-22 아이맥 001)', () => {
+    const t = (m: number) => `2026-10-03T06:0${m}:00Z`;
+    const log = [ask('p1', 'a1b2c3d4', T0), ask('o1', 'a1b2c3d4', t(1), { kind: 'other' }), ask('o2', 'a1b2c3d4', t(2), { kind: 'send' }), ask('p2', 'a1b2c3d4', t(3))].join('\n');
+    expect(directCards(log, env()).map((c) => [c.id, c.state])).toEqual([['p1', 'wait'], ['o1', 'old'], ['o2', 'old'], ['p2', 'wait']]);
+    expect(directCards([log, row({ type: 'cancel', id: 'p1', ts: t(4) })].join('\n'), env())[0]!.state).toBe('closed');
   });
   it('다른 세션 카드는 서로 상관없이 시간 순, 깨진 줄은 건너뜀', () => {
     const log = [ask('c2', 'e5f6a7b8', '2026-10-03T06:02:00Z'), 'nope', ask('c1', 'a1b2c3d4', T0)].join('\n');

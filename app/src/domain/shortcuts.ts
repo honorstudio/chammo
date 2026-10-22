@@ -38,6 +38,8 @@ export type Shortcut =
   | { type: 'selectAll' }
   /** ⌘[ ⌘] — 스페이스 뒤로(왔던 곳)·앞으로(2026-10-04 QA D2) */
   | { type: 'nav'; dir: -1 | 1 }
+  /** ⌘⇧D — 띠의 기기 목록 열고 닫기(다른 기기 보기, peer-panel) */
+  | { type: 'farPick' }
   /** 고른 채팅 탭(참모)을 왼쪽·오른쪽으로 한 칸 — 순서는 domain/orchOrder(2026-10-10 사용자) */
   | { type: 'moveTab'; dir: -1 | 1 };
 
@@ -49,7 +51,7 @@ export const gotoOfNum = (n: number): Shortcut | null => GOTO[n] ?? null;
 
 // 한글 입력 상태에선 같은 자리 키가 자모로 들어온다 — 영문 키로 바꿔 읽는다
 // ⌘⇧ 일 땐 쌍자음으로 온다(ㅆ=⇧ㅅ, ㅉ=⇧ㅈ, ㄸ=⇧ㄷ). ㅗ·ㅣ 는 ⇧ 를 눌러도 같은 글자라 아래에서 ⇧ 로 가른다
-const HANGUL_KEY: Record<string, string> = { ㅁ: 'a', ㅠ: 'b', ㅓ: 'j', ㅏ: 'k', ㅈ: 'w', ㅅ: 't', ㅡ: 'm', ㄷ: 'e', ㄸ: 'E', ㄹ: 'f', ㅆ: 'T', ㅉ: 'W', ㅗ: 'h', ㅣ: 'l' };
+const HANGUL_KEY: Record<string, string> = { ㅇ: 'd', ㅁ: 'a', ㅠ: 'b', ㅓ: 'j', ㅏ: 'k', ㅈ: 'w', ㅅ: 't', ㅡ: 'm', ㄷ: 'e', ㄸ: 'E', ㄹ: 'f', ㅆ: 'T', ㅉ: 'W', ㅗ: 'h', ㅣ: 'l' };
 
 /**
  * 탭 옮기기 — 크롬과 같은 ⌃⇧PageUp/PageDown(맥 자판은 fn+↑↓) + 맥 손에 맞는 ⌥⌘⇧←/→, 윈도우는 Ctrl+Alt+Shift+←/→.
@@ -84,7 +86,7 @@ export function shortcutFor(input: KeyLike, win = IS_WIN): Shortcut | null {
   const raw = HANGUL_KEY[e.key] ?? e.key;
   // ⌘⇧W·T·H·L — 글자가 소문자로 와도(한글 ㅗ·ㅣ) ⇧ 가 눌렸으면 대문자 칸, ⇧ 없는 ⌘H·⌘L 은 앱이 안 쓴다(⌘H 는 macOS 숨기기)
   // CapsLock 으로 대문자가 와도 ⇧ 가 없으면 ⇧ 없는 쪽 — 세션 끄기(⌘⇧W)가 CapsLock ⌘W 로 눌리면 안 된다
-  const key = raw.length === 1 && 'wthl'.includes(raw.toLowerCase()) ? (e.shiftKey ? raw.toUpperCase() : raw.toLowerCase()) : raw;
+  const key = raw.length === 1 && 'wthld'.includes(raw.toLowerCase()) ? (e.shiftKey ? raw.toUpperCase() : raw.toLowerCase()) : raw;
   switch (key) {
     case '=':
     case '+':
@@ -114,6 +116,8 @@ export function shortcutFor(input: KeyLike, win = IS_WIN): Shortcut | null {
       return { type: 'goHome' };
     case 'L':
       return { type: 'goLocker' };
+    case 'D':
+      return { type: 'farPick' }; // ⌘⇧D — 다른 기기 목록(⇧ 없는 ⌘D 는 앱이 안 쓴다)
     case 'm':
       return { type: 'memo' }; // 보고 있는 창 위에 그 프로젝트 메모
     case 'e':
