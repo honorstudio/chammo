@@ -78,7 +78,9 @@ export function DirectCardView({ c, name: given, project, profile, compact, onOp
         <div className={c.amount ? 'dc-muted' : 'dc-q'}>{c.amount ? [c.q, c.detail].filter(Boolean).join(' · ') : c.q}</div>
         {!c.amount && c.detail && <div className="dc-muted">{c.detail}</div>}
       </div>
-      {c.kind === 'link' ? (
+      {c.kind === 'link' && c.sub === 'phone' ? (
+        <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('그 QR 을 연 폰이 이 컴퓨터에 사람으로 닿아요 — 끊기는 설정 > 폰과 메신저', 'The phone that opened the QR reaches this computer as you — unlink in Settings > Phone & messenger')}</dd><dt>{c.no}</dt><dd>{tr('그 QR 코드가 죽어요', 'The QR code dies')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('10분 뒤 없던 일이 돼요', 'It lapses after 10 minutes')}</dd></dl>
+      ) : c.kind === 'link' ? (
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('두 기기 참모가 서로 말을 주고받아요 — 끊기는 설정 > 폰과 메신저', 'The assistants on both devices can talk — unlink in Settings > Phone & messenger')}</dd><dt>{c.no}</dt><dd>{tr('아무것도 안 생겨요', 'Nothing is created')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('5분 뒤 없던 일이 돼요', 'It lapses after 5 minutes')}</dd></dl>
       ) : c.kind === 'login' ? (
         <dl className="dc-if"><dt>{tr('하는 법', 'How')}</dt><dd>{tr('크게 보기에서 직접 로그인하고, 끝나면 다 했어', 'Sign in yourself in the big view, then press Done')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('세션은 여기서 기다려요', 'The session waits here')}</dd></dl>

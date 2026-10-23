@@ -307,7 +307,10 @@ pub fn send_all(title: &str, body: &str, target: &str) {
     if !crate::mobile::push_allowed(&dir) {
         return;
     }
-    let devices: Vec<String> = crate::mobile_pair::Devices::open(&dir).list().into_iter().map(|d| d.id).collect();
+    let pair = crate::mobile_pair::Devices::open(&dir);
+    let devices: Vec<String> = pair.list().into_iter().map(|d| d.id).collect();
+    // 중계로 짝지은 폰은 중계 VAPID 로 구독해서 이 컴퓨터 열쇠로는 못 보낸다 — 중계에 본문 없는 푸시를 부탁한다(ADR 0013)
+    crate::phone_relay::notify_phones(&dir, devices.iter().filter_map(|id| pair.relay_of(id)).collect());
     let subs = live_subs(&read_subs(&dir), &devices);
     if subs.is_empty() {
         return;

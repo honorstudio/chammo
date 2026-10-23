@@ -195,6 +195,8 @@ button { font: inherit; color: inherit; }
 .m-pick .m-picker-head { padding: 0 8px 4px 16px; min-height: 48px; }
 /* 위 4px — 맨 위 카드의 바깥 테두리(box-shadow 1px)·고른 줄 테두리가 스크롤 칸 위에서 안 잘리게(2026-10-11 재우기 카드) */
 .m-picker-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 8px; }
+/* 목록이 넘치면 overflow 가 걸린 줄(맨 위 기기 줄 overflow-x:auto)이 min-height 0 으로 납작해졌다 — 줄은 제 높이, 목록이 스크롤(2026-10-23) */
+.m-picker-list > * { flex-shrink: 0; }
 .m-orch-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .m-orch-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .m-orch-sub { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12.5px; color: var(--text-3); }
@@ -209,7 +211,7 @@ button { font: inherit; color: inherit; }
 .m-orch-top:has(.m-orch-role) .m-orch-name { flex: 0 1 auto; }
 .m-orch-role { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--text-3); }
 .m-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.m-chip { all: unset; box-sizing: border-box; min-height: 36px; padding: 0 14px; display: inline-flex; align-items: center; border-radius: 18px; font-size: 14px; color: var(--text-2); background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.m-chip { all: unset; box-sizing: border-box; min-height: 44px; padding: 0 14px; display: inline-flex; align-items: center; border-radius: 18px; font-size: 14px; color: var(--text-2); background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
 .m-chip.m-on { color: var(--accent-ink, #fff); background: var(--accent, #1d1d20); box-shadow: none; }
 .m-ctx { font-size: 12px; color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .m-ctx.m-hot { color: var(--danger-ink); font-weight: 700; }
@@ -412,6 +414,7 @@ button { font: inherit; color: inherit; }
 .m-new-row { display: flex; justify-content: flex-end; gap: 8px; }
 .m-home > .m-brand { align-self: flex-start; }
 .m-home { height: 100%; overflow-y: auto; padding: calc(env(safe-area-inset-top) + 24px) 16px calc(24px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 10px; }
+.m-home > * { flex-shrink: 0; }
 .m-home h1 { margin: 0; font-size: 24px; }
 .m-home > .m-send { align-self: flex-start; }
 
@@ -586,6 +589,10 @@ a.m-file { color: inherit; text-decoration: none; }
 
 /* 직접 답하기 카드 — 채팅 끝(카드 모양은 chat/directCard.css 를 같이 쓴다). 폰은 버튼을 엄지 크기로 */
 .m-direct { display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 12px; }
+/* 데스크톱과 같이 쓰는 카드(chat/DirectCard) — 폰에선 어디서나 누름 칸 44(다른 기기 카드·채팅 안 카드가 40·19였다, 2026-10-23) */
+.m-app .dc-btn { min-height: 44px; }
+.m-app .dc-link { min-height: 44px; display: inline-flex; align-items: center; }
+.m-app .dc-acts .dc-ib { width: 44px; height: 44px; }
 .m-direct .dc-row > * { max-width: none; }
 .m-direct .dc-btn { min-height: 46px; flex: 1 1 auto; }
 /* 왼쪽 버튼(고정) — 왼쪽→오른쪽으로 밀면 */
@@ -801,7 +808,7 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-speek-l { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
 .m-speek-l.w-me { color: var(--text); font-weight: 600; }
 .m-speek-l.w-tool { color: var(--text-3); }
-.m-speek-go { align-self: flex-end; margin-top: 4px; min-height: 40px; background: var(--surface); }
+.m-speek-go { align-self: flex-end; margin-top: 4px; min-height: 44px; background: var(--surface); }
 .m-todo { justify-content: flex-start; gap: 8px; padding: 0 12px 0 14px; background: var(--surface); border-radius: 14px; box-shadow: 0 0 0 1px var(--line); }
 .m-todo span { color: var(--text-2); font-weight: 600; }
 .m-todo b { color: var(--text); font-weight: 800; margin-left: 2px; font-variant-numeric: tabular-nums; }
@@ -812,12 +819,12 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-lk-tools { display: flex; align-items: center; gap: 2px; min-height: 48px; margin-right: -8px; }
 .m-lk-sp { flex: 1; }
 .m-lk-title { flex: 1; min-width: 0; font-size: 18px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.m-lk-seg { display: inline-flex; gap: 2px; margin-left: 4px; padding: 3px; border-radius: 12px; background: var(--tag-bg); }
-.m-lk-seg button { width: 44px; height: 38px; border: 0; border-radius: 9px; background: transparent; color: var(--text-3); display: inline-flex; align-items: center; justify-content: center; }
+.m-lk-seg { display: inline-flex; gap: 2px; margin-left: 4px; padding: 2px; border-radius: 12px; background: var(--tag-bg); }
+.m-lk-seg button { width: 44px; height: 44px; border: 0; border-radius: 9px; background: transparent; color: var(--text-3); display: inline-flex; align-items: center; justify-content: center; }
 .m-lk-seg button.m-on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, .10); }
 .m-lk-seg svg { width: 18px; height: 18px; }
 .m-lk-chips { flex-wrap: nowrap; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; }
-.m-lk-chips .m-chip { flex: none; gap: 8px; min-height: 40px; font-size: 13.5px; font-weight: 600; }
+.m-lk-chips .m-chip { flex: none; gap: 8px; min-height: 44px; font-size: 13.5px; font-weight: 600; }
 .m-lk-chips .m-chip.m-on .st-dot.st-done { border-color: var(--accent-ink); }
 .m-lk-more { color: var(--text-3) !important; font-weight: 500 !important; }
 .m-lk-phead { display: flex; align-items: center; gap: 9px; margin-top: 12px; font-size: 15px; }
@@ -917,17 +924,21 @@ a.m-file { color: inherit; text-decoration: none; }
 @media (prefers-reduced-motion: reduce) { .m-jump { animation: none; } }
 
 /* 다른 기기 보기(peer-panel, 시안 v2 M1~M3) — 그 기기를 보는 동안은 --tray 파란 면(왼쪽 색 띠 금지). 누르는 것은 44px */
+.m-far-sect { margin-top: 4px; }
 .m-far-pills { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none; }
 .m-far-pill { flex: none; position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 16px; border-radius: 22px; border: 1px solid var(--line); background: var(--surface); color: var(--text-2); font: 600 14px/1 inherit; }
 .m-far-pill.on { background: var(--text); border-color: var(--text); color: var(--surface); }
 .m-far-pill.far.on { background: var(--tray-ink); border-color: var(--tray-ink); color: var(--surface); }
 .m-far-wait { width: 8px; height: 8px; border-radius: 50%; background: var(--blocked); }
 .m-far { display: flex; flex-direction: column; }
-.m-far-bar { flex: none; display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 8px 0 14px; background: var(--tray); color: var(--tray-ink); font-size: 14px; }
+/* 맨 위 줄 — 홈 화면 앱은 화면 끝까지 그려서(viewport-fit=cover) 시계·노치 밑으로 들어갔다: 위 안전 영역만큼 줄 면을 늘린다 */
+.m-far-bar { flex: none; display: flex; align-items: center; gap: 6px; min-height: calc(44px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) 0 0 14px; background: var(--tray); color: var(--tray-ink); font-size: 14px; }
+.m-far-bar b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .m-far-bar svg { width: 16px; height: 16px; }
 .m-far-bar.cut { background: var(--surface-2); color: var(--text-3); }
-.m-far-back { margin-left: auto; min-height: 36px; min-width: 44px; padding: 0 14px; border-radius: 18px; border: 0; background: var(--tray-line); color: var(--tray-ink); font: 600 13px/1 inherit; }
-.m-far-bar.cut .m-far-back { background: var(--line); color: var(--text-2); }
+.m-far-back { flex: none; margin-left: auto; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border-radius: 22px; border: 0; background: none; color: var(--tray-ink); }
+.m-far-back svg { width: 18px; height: 18px; }
+.m-far-bar.cut .m-far-back { color: var(--text-2); }
 .m-far-hd { flex: none; display: flex; align-items: center; gap: 10px; padding: 10px 16px; }
 .m-far-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; text-align: left; }
 .m-far-tx b { font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -936,6 +947,7 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-far-tabs button { flex: 1; min-height: 44px; border: 0; background: none; color: var(--text-3); font: 600 14px/1 inherit; }
 .m-far-tabs button.on { color: var(--text); box-shadow: inset 0 -2px 0 var(--text); }
 .m-far-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px 120px; display: flex; flex-direction: column; gap: 12px; }
+.m-far-body > * { flex-shrink: 0; }
 .m-far-rows { display: flex; flex-direction: column; border-radius: 12px; box-shadow: 0 0 0 1px var(--line); overflow: hidden; }
 .m-far-cap { padding: 10px 12px 6px; font-size: 12px; font-weight: 700; color: var(--text-3); }
 .m-far-row { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 12px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--text-2); }
@@ -952,3 +964,42 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-far-orow.on { background: var(--surface-2); }
 .m-far-hint { display: block; padding: 10px 4px 0; font-size: 12.5px; }
 .m-far .m-input { background: var(--tray); box-shadow: 0 0 0 1px var(--tray-line); }
+
+/* 맨 아래 탭바 참모 | 팀(시안 v2 C, 팀 메신저) — 글자 탭 둘, 키보드가 뜨면 숨김. 탭바가 아래 안전 영역을 맡아 그 위 입력줄은 안전 영역을 또 두지 않는다 */
+.m-tabpage { position: absolute; left: 0; right: 0; top: 0; overflow: hidden; }
+.m-tabbar { position: absolute; left: 0; right: 0; bottom: 0; z-index: var(--z-panel); display: flex; min-height: 56px; padding-bottom: env(safe-area-inset-bottom); background: var(--surface); border-top: 1px solid var(--line); }
+.m-tabbar button { all: unset; flex: 1; min-height: 56px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 15px; font-weight: 600; color: var(--text-3); cursor: pointer; }
+.m-tabbar button.on { color: var(--text); font-weight: 750; }
+.m-tabbar .tmx-ur { position: static; }
+.m-tabbed .m-composer { padding-bottom: 0; }
+
+/* 팀 탭 */
+.m-team { height: 100%; display: flex; flex-direction: column; background: var(--surface); padding-top: env(safe-area-inset-top); }
+.m-team-head { display: flex; align-items: center; min-height: 56px; padding: 0 12px 0 16px; }
+.m-team-switch { all: unset; display: inline-flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; }
+.m-team-switch b { font-size: 20px; font-weight: 800; letter-spacing: -.01em; }
+.m-team-switch svg { width: 18px; height: 18px; color: var(--text-3); }
+.m-seg { display: flex; gap: 2px; margin: 0 16px 8px; padding: 3px; border-radius: 12px; background: var(--surface-2); }
+.m-seg button { all: unset; flex: 1; min-height: 40px; display: flex; align-items: center; justify-content: center; border-radius: 9px; font-size: 14px; font-weight: 600; color: var(--text-3); cursor: pointer; }
+.m-seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+.m-team-body { flex: 1; min-height: 0; overflow-y: auto; }
+.m-team .tmx-li { min-height: 60px; }
+.m-team-lk { margin: 4px 16px 16px; }
+.m-team-lk .tmx-lk-row { min-height: 52px; cursor: default; }
+.m-team-convo { padding-top: env(safe-area-inset-top); }
+.m-team-convo .tmx-convo { height: 100%; }
+.m-team-convo .tmx-head { min-height: 56px; padding-left: 4px; }
+.m-team-convo .tmx-comp textarea { font-size: 16px; } /* 16 아래면 iOS 가 확대한다 */
+.m-team-convo .tmx-hand { opacity: 1; pointer-events: auto; top: 100%; right: auto; left: 37px; margin-top: 6px; box-shadow: none; border: 1px solid var(--line); min-height: 32px; }
+.m-team-convo .tmx-row.picked { margin-bottom: 40px; }
+.m-team-convo .tmx-row:not(.picked) .tmx-hand { display: none; }
+.m-team-sheet { display: flex; flex-direction: column; gap: 8px; padding: 4px 16px 16px; }
+.m-ts-row { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 0 8px; border-radius: 12px; }
+.m-ts-row.on { background: var(--surface-2); }
+.m-ts-row .tmx-tx { flex: 1; display: flex; flex-direction: column; }
+.m-ts-row .tmx-tx span { font-size: 12px; color: var(--text-3); }
+.m-ts-ck svg { width: 18px; height: 18px; }
+.m-ts-act { all: unset; min-height: 48px; display: flex; align-items: center; padding: 0 8px; font-weight: 650; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); cursor: pointer; }
+.m-ts-sec { font-size: 12px; font-weight: 700; color: var(--text-3); margin-top: 4px; }
+.m-ts-make { display: flex; gap: 8px; }
+.m-ts-make input { flex: 1; min-height: 44px; border-radius: 10px; border: 1px solid var(--line-strong); padding: 0 12px; font: inherit; font-size: 16px; background: var(--surface); color: var(--text); }

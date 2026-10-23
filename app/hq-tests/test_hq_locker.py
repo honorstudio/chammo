@@ -160,6 +160,19 @@ class Cli(unittest.TestCase):
         self.assertEqual(self.run_('give', os.path.join(self.home, 'Downloads', '컷.png'), proj)[0], 1)
         self.assertEqual(self.run_('give', at, os.path.dirname(self.outside))[0], 1)
 
+    def test_데이터_폴더_안_프로젝트는_이유를_말하고_거절한다(self):
+        # soak 004 — devRoot 가 데이터 폴더 안이면 give 가 "can't use this as a project" 만 찍어 이유를 몰랐다
+        put(os.path.join(self.home, 'Downloads', '컷.png'), 'img')
+        self.run_('add', 'Downloads/컷.png')
+        at = os.path.join(self.mine, '컷.png')
+        proj = os.path.join(self.data, 'dev', 'soak-page')
+        os.makedirs(proj)
+        code, _, err = self.run_('give', at, proj)
+        self.assertEqual(code, 1)
+        self.assertIn('data folder', err)
+        self.assertIn('devRoot', err)
+        self.assertFalse(os.path.islink(at), '거절이면 보관함 파일은 제자리')
+
     def test_심어_둔_조각_링크를_안_따라간다(self):
         victim = os.path.join(self.home, 'Documents', '소중.txt')
         put(victim, '소중')

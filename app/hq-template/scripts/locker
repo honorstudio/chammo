@@ -249,7 +249,10 @@ def give(f, project, home, data, root):
     if not os.path.isabs(project) or not os.path.isdir(project):
         raise ValueError(f'no such project folder: {project}')
     proj = os.path.realpath(project)
-    if not within(proj, home) or proj == os.path.realpath(home) or within(proj, root) or within(proj, data):
+    if within(proj, data) and within(proj, home):
+        # 데이터 폴더 안은 앱 상태 자리라 보관함 파일을 못 둔다 — 이유를 말해야 참모가 사람에게 엉뚱한 걸 되묻지 않는다(soak 004)
+        raise ValueError(f"the project is inside the Chammo data folder, so files can't be given there — move the project (or devRoot) outside it / 데이터 폴더 안 프로젝트라 못 넘겨 — devRoot 를 데이터 폴더 밖으로: {project}")
+    if not within(proj, home) or proj == os.path.realpath(home) or within(proj, root):
         raise ValueError(f"can't use this as a project: {project}")
     if not os.path.isabs(f) or not exists_any(f) or not within(os.path.dirname(f), root):
         raise ValueError(f'only files in the locker can be given: {f}')

@@ -1,6 +1,6 @@
 [package]
 name = "honor-orchestrator"
-version = "0.3.12"
+version = "0.4.0"
 edition = "2021"
 license = "AGPL-3.0-only"
 
@@ -33,12 +33,16 @@ getrandom = "0.3"
 # 설정 화면의 접속 QR — svg 만(그림 크레이트 없이)
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # 세션 브라우저 앱에서 보기(agent_browser.rs) — 에이전트 크롬 CDP 웹소켓(동기 클라이언트 하나, TLS 없음) + 화면 프레임(base64 jpeg) 풀기. base64 는 이미 락에 있던 것
-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+# 팀 메신저 wss(team_relay_ws.rs) 도 같은 크레이트에 rustls 기능만 — rustls·ring 은 업데이터가 이미 끌고 온 판, 새로 붙는 건 webpki-roots 하나(ADR 0012)
+tungstenite = { version = "0.30.0", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 base64 = "0.22"
 # 폰 푸시(push.rs) — VAPID 서명(ES256)·몸통 암호화(RFC 8291: ECDH + HKDF + AES-128-GCM). 순수 러스트(RustCrypto), 보내기는 맥 curl 이라 TLS 크레이트는 안 더한다
 p256 = { version = "0.13", default-features = false, features = ["ecdh", "ecdsa", "std"] }
 hkdf = "0.12"
 aes-gcm = "0.10"
+# 팀 메신저 기기 열쇠(team_relay_keys.rs, 중계 서버 ADR 0002) — 요청 서명 Ed25519 + 종단 암호 봉투 X25519. 순수 러스트, 씨앗은 getrandom 으로 직접(rand 없이)
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "zeroize"] }
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets", "zeroize"] }
 # 스페이스 엑셀(sheet.rs, ADR 0004) — xlsx 는 zip. 압축은 이미 락에 있던 flate2 로만(기본 기능의 암호·bzip2·zstd 등은 뺀다)
 # xlsx 부품 XML 읽기 — 이미 락에 있던 것(plist 가 씀)
 quick-xml = "0.42"

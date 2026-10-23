@@ -1,0 +1,77 @@
+/* 참모 홈 '진행' 칸(ui/GoalProgress) — 데스크톱 스페이스 홈·폰 홈 같이. 색은 앱 상태 토큰만(파랑 일하는 중·노랑 답 기다림·초록 끝·빨간 빗금 경고).
+   토큰은 styles.css·mobile.css 둘 다에 있는 것만 쓴다(폰엔 --tray·--hover 가 없다). 왼쪽 색 띠 없음 */
+.gp { --gp-gap: 8px; flex: none; display: flex; flex-direction: column; gap: var(--gp-gap); padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); container-type: inline-size; }
+/* 데스크톱 홈(.hm)에선 모드 칸 자리를 다 먹지 않게 — 넘치면 칸 안에서 스크롤 */
+.hm > .gp { max-height: 45%; overflow-y: auto; }
+.gp-head { display: flex; align-items: baseline; gap: 10px; font-size: 13px; }
+.gp-num { font-variant-numeric: tabular-nums; font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.gp-num b { color: var(--text); font-weight: 600; }
+.gp-proj { font-size: 11px; font-weight: 700; color: var(--text-3); margin-top: 2px; }
+
+.gp-row { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.gp button.gp-line { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 14px minmax(80px, 150px) 1fr 52px 64px; gap: 10px; align-items: center; min-height: 28px; cursor: pointer; border-radius: 6px; font-size: 12.5px; color: var(--text-2); }
+.gp-line:focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
+.gp-chev { display: inline-flex; color: var(--text-3); transition: transform .15s; }
+.gp-chev svg { width: 12px; height: 12px; }
+.gp-line[aria-expanded="true"] .gp-chev { transform: rotate(90deg); }
+.gp-name { color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.gp-etc .gp-name { color: var(--text-2); font-weight: 500; }
+.gp-line .gp-num { text-align: right; }
+.gp-when { font-size: 11px; color: var(--text-3); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.gp-result { margin-left: 24px; font-size: 11.5px; color: var(--tag-done-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 조각 막대 — 칸 하나 = 일 하나 */
+.gp-bar { display: flex; gap: 2px; min-width: 0; }
+.gp-c { flex: 1 1 0; min-width: 3px; height: 8px; border-radius: 2.5px; background: var(--line-strong); position: relative; overflow: hidden; }
+.gp-done { background: var(--idle); }
+.gp-auto { background: var(--idle); opacity: .45; }
+.gp-ask { background: var(--blocked); }
+.gp-quiet, .gp-stop { background: repeating-linear-gradient(135deg, var(--danger-ink) 0 2px, transparent 2px 4px); box-shadow: inset 0 0 0 1px var(--danger-ink); }
+.gp-rest { background: var(--text-3); opacity: .55; }
+.gp-todo { background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.gp-c.gp-run { background: var(--tag-working); box-shadow: inset 0 0 0 1px var(--working); } /* 채움을 모를 때(폰)도 파랑으로 읽히게 */
+.gp-c.gp-run::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--gp-f, 0%); background: var(--working); }
+/* 일하는 중 — 칸 안을 지나가는 옅은 빛 하나(2.4초). 안 볼 때·동작 줄이기면 멈춤(paused.css) */
+.gp-c.gp-run::after { content: ""; position: absolute; inset: 0; width: 45%; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .55), transparent); animation: gp-flow 2.4s linear infinite; }
+@keyframes gp-flow { from { transform: translateX(-100%); } to { transform: translateX(230%); } }
+
+/* 펼친 일 목록 */
+.gp-jobs { margin-left: 24px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.gp-job { display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 4px 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--text-2); min-width: 0; }
+.gp-job:first-child { border-top: 0; }
+.gp-k { width: 10px; height: 10px; border-radius: 3px; flex: none; position: relative; overflow: hidden; }
+.gp-k.gp-run { background: var(--working); }
+.gp-jt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gp-js { font: 600 11px/1 ui-monospace, Menlo, monospace; color: var(--text-3); white-space: nowrap; max-width: 30%; overflow: hidden; text-overflow: ellipsis; }
+.gp-tag { flex: none; font-size: 11px; padding: 2px 7px; border-radius: 9px; background: var(--tag-bg); color: var(--text-3); white-space: nowrap; }
+.gp-t-done { background: var(--tag-done); color: var(--tag-done-ink); }
+.gp-t-ask { background: var(--tag-wait); color: var(--tag-wait-ink); }
+.gp-t-run { background: var(--tag-working); color: var(--tag-working-ink); }
+.gp-t-quiet { background: transparent; color: var(--danger-ink); box-shadow: inset 0 0 0 1px var(--danger-ink); }
+.gp-todo-line .gp-jt { color: var(--text-3); }
+
+/* 좁은 칸(폰) — 이름·숫자 한 줄, 막대는 그 아래 전체 폭 */
+@container (max-width: 460px) {
+  .gp button.gp-line { grid-template-columns: 14px 1fr auto auto; row-gap: 6px; min-height: 44px; }
+  .gp-bar { grid-column: 1 / -1; grid-row: 2; }
+  .gp-jobs, .gp-result { margin-left: 0; }
+  .gp-js { display: none; }
+  .gp-job { min-height: 44px; }
+}
+
+/* 끝난 조각이 사라질 때 — 꽉 찬 조각이 한 번 반짝이고(0.5초) 줄이 접히며 아래 줄이 당겨진다(0.45초).
+   기타 조각의 끝난 칸은 반짝인 뒤 폭이 0 으로 줄어 옆 칸이 당겨진다. 동작 줄이기면 페이드만 */
+.gp-leave { overflow: hidden; animation: gp-fold .45s .5s cubic-bezier(.4, 0, .2, 1) forwards; }
+.gp-leave .gp-c { animation: gp-flash .5s ease-out; }
+.gp-cleave { animation: gp-flash .5s ease-out, gp-shrink .45s .5s cubic-bezier(.4, 0, .2, 1) forwards; }
+@keyframes gp-flash { 35% { filter: brightness(1.75) saturate(1.2); transform: scaleY(1.35); } }
+@keyframes gp-fold { from { max-height: var(--gp-h, 60px); opacity: 1; } to { max-height: 0; opacity: 0; margin-top: calc(var(--gp-gap) * -1); } }
+@keyframes gp-shrink { to { flex-grow: 0; min-width: 0; margin-right: -2px; opacity: 0; } }
+@keyframes gp-fade { to { opacity: 0; } }
+@keyframes gp-cfade { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .gp-chev { transition: none; }
+  .gp-leave { animation: gp-fade .3s forwards; }
+  .gp-leave .gp-c { animation: none; }
+  .gp-cleave { animation: gp-cfade .3s forwards; }
+}

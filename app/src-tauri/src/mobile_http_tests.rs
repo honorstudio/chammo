@@ -10,7 +10,7 @@ const HQ: &str = "/Users/me/hq";
 const SID: &str = "f00d0002-0000-4000-8000-004027383810";
 
 #[derive(Default)]
-struct Fake {
+pub(crate) struct Fake {
     calls: Mutex<Vec<String>>,
     /// show.jsonl 꼬리로 돌려줄 글
     show: String,
@@ -39,7 +39,7 @@ struct Fake {
 }
 
 impl Fake {
-    fn calls(&self) -> Vec<String> {
+    pub(crate) fn calls(&self) -> Vec<String> {
         self.calls.lock().unwrap().clone()
     }
     fn log(&self, s: String) {
@@ -89,6 +89,26 @@ impl Backend for Fake {
     fn peer_human_say(&self, dev: &str, to: &str, text: &str) -> Result<serde_json::Value, String> {
         self.log(format!("peer_human_say {dev} {to} {text}"));
         Ok(serde_json::json!({ "id": to }))
+    }
+    fn team_feed(&self) -> serde_json::Value {
+        serde_json::json!({ "view": { "joined": true, "team": "모래알" }, "items": [] })
+    }
+    fn team_say(&self, to: &str, text: &str, cid: &str) -> Result<serde_json::Value, String> {
+        assert!(cid.starts_with("p-") && cid.len() <= 64 && cid.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'), "{cid}");
+        self.log(if cid.starts_with("p-abc") { format!("team_say {to} {text} {cid}") } else { format!("team_say {to} {text}") });
+        Ok(serde_json::json!({ "room": "r1", "seq": 3 }))
+    }
+    fn team_handoff(&self, to: &str, text: &str) -> Result<serde_json::Value, String> {
+        self.log(format!("team_handoff {to} {}", text.lines().count()));
+        Ok(serde_json::json!({ "to": "참모" }))
+    }
+    fn team_invite(&self) -> Result<serde_json::Value, String> {
+        self.log("team_invite".into());
+        Ok(serde_json::json!({ "link": "chammo://join?code=x" }))
+    }
+    fn team_create(&self, team: &str) -> Result<serde_json::Value, String> {
+        self.log(format!("team_create {team}"));
+        Ok(serde_json::json!({ "joined": true }))
     }
     fn env(&self) -> serde_json::Value {
         serde_json::json!({ "assistantName": "참모" })
@@ -368,6 +388,7 @@ fn gate() -> Gate {
         sends: Default::default(),
         tickets: Default::default(),
         owner: None,
+        team_says: Default::default(),
     }
 }
 
@@ -3803,4 +3824,132 @@ fn pv_다시_허용해도_꺼_둔_보관함_보여_주기는_이어진다() {
     assert_eq!(again.len(), 1, "같은 노드 줄은 바꿔 끼운다");
     assert_ne!(again[0].id, first.id);
     assert!(!again[0].locker, "사람이 꺼 둔 값이 몰래 다시 켜지면 안 된다");
+}
+
+// ── 중계 길 폰의 빠른 길(ADR 0013) — 입구 주소에만 CORS ──
+
+const WEB: &str = "https://phone.chammo.test";
+
+fn gate_web() -> Gate {
+    let mut g = gate();
+    g.origins.push(WEB.into());
+    g
+}
+
+#[test]
+fn preflight_only_for_the_phone_web_origin() {
+    let g = gate_web();
+    let be = Fake::default();
+    let pre = |origin: &str, path: &str| { let mut r = get(path); r.method = "OPTIONS".into(); set(r, "origin", Some(origin)) };
+    let r = handle(&pre(WEB, "/api/env"), &g, &be);
+    assert_eq!(r.status, 204);
+    assert!(r.headers.iter().any(|(k, v)| *k == "Access-Control-Allow-Origin" && v == WEB));
+    assert!(r.headers.iter().any(|(k, v)| *k == "Access-Control-Allow-Headers" && v.contains("authorization")));
+    assert_eq!(handle(&pre("https://evil.example", "/api/env"), &g, &be).status, 405);
+    assert_eq!(handle(&pre(WEB, "/"), &g, &be).status, 405);
+    // 입구 주소를 안 더한 서버(중계 안 씀)는 미리 묻기를 다 거절
+    assert_eq!(handle(&pre(WEB, "/api/env"), &gate(), &be).status, 405);
+}
+
+#[test]
+fn cors_origin_is_never_the_server_itself_or_plain_http() {
+    let g = gate_web();
+    assert_eq!(cors_origin(&set(get("/api/env"), "origin", Some(WEB)), &g).as_deref(), Some(WEB));
+    // 같은 출처(테일넷 https 자기 이름)·http 출처·모르는 출처엔 머리 없음(전처럼)
+    let mut same = set(get("/api/env"), "origin", Some(&format!("https://{TS}")));
+    same = set(same, "host", Some(TS));
+    assert_eq!(cors_origin(&same, &g), None);
+    assert_eq!(cors_origin(&set(get("/api/env"), "origin", Some(&format!("http://{HOST}"))), &g), None);
+    assert_eq!(cors_origin(&set(get("/api/env"), "origin", Some("https://evil.example")), &g), None);
+}
+
+#[test]
+fn phone_web_origin_passes_the_write_door_with_its_own_token() {
+    let g = gate_web();
+    let be = Fake::default();
+    let r = set(post("/api/direct-answer", r#"{"id":"ab12cd34","pick":{"pick":"yes"}}"#), "origin", Some(WEB));
+    assert!(head_check(&r, &g).is_none());
+    assert_eq!(handle(&r, &g, &be).status, 200);
+    // 열쇠가 없으면 출처가 맞아도 401
+    let mut no_key = r;
+    no_key.headers.retain(|(k, _)| k != "authorization");
+    assert_eq!(handle(&no_key, &g, &be).status, 401);
+}
+
+
+#[test]
+fn tm_폰_팀_메신저는_짝지은_폰만_읽고_쓰고_cid_는_이_기기가_p_를_붙인다() {
+    let g = peer_gate("tm000001");
+    let f = Fake::default();
+    let r = handle(&with_cookie(get("/api/team")), &g, &f);
+    assert_eq!(r.status, 200);
+    assert_eq!(json_of(&r)["view"]["team"], "모래알");
+    let r = handle(&post("/api/team-say", r#"{"to":"m2","text":"안녕"}"#), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(json_of(&r)["seq"], 3);
+    assert_eq!(handle(&post("/api/team-invite", "{}"), &g, &f).status, 200);
+    assert_eq!(handle(&post("/api/team-create", r#"{"team":" 모래알 "}"#), &g, &f).status, 200);
+    assert_eq!(f.calls(), vec!["team_say m2 안녕", "team_invite", "team_create 모래알"]);
+    for p in ["/api/team-say", "/api/team-invite", "/api/team-create"] {
+        assert!(head_check(&post(p, "{}"), &g).is_none(), "몸통 길 목록에 있다: {p}");
+        assert_eq!(handle(&set(post(p, "{}"), "origin", Some("http://evil.example")), &g, &f).status, 403, "{p}");
+        assert_eq!(handle(&set(post(p, "{}"), "authorization", None), &g, &f).status, 401, "{p}");
+        assert_eq!(handle(&as_peer(post(p, "{}")), &g, &f).status, 403, "다른 기기 참모 열쇠로는 안 된다: {p}");
+        assert_eq!(handle(&with_cookie(get(p)), &g, &f).status, 405, "{p}");
+    }
+    assert_eq!(handle(&as_peer(with_cookie(get("/api/team"))), &g, &f).status, 403);
+    let long = serde_json::json!({ "to": "m2", "text": "가".repeat(4001) }).to_string();
+    for bad in [r#"{"to":"","text":"x"}"#, r#"{"to":"m2","text":"  "}"#, long.as_str(), r#"{"to":"m2","text":"x","origin":"human"}"#] {
+        assert_eq!(handle(&post("/api/team-say", bad), &g, &f).status, 400, "{bad}");
+    }
+    assert_eq!(handle(&post("/api/team-create", r#"{"team":""}"#), &g, &f).status, 400);
+    assert_eq!(f.calls().len(), 3, "막힌 것은 뒤로 안 넘어간다");
+}
+
+#[test]
+fn tm_폰_넘기기는_team_handoff_길로만_짝지은_폰만() {
+    // 보안 검토 10-23: 폰 넘기기가 /api/send(space-send 기록에 앞 80자)로 가서 남의 말이 notify.log 에 남았다 — 본문 없는 기록 길로
+    let g = peer_gate("tm000002");
+    let f = Fake::default();
+    let r = handle(&post("/api/team-handoff", r#"{"to":"aaaa0001","text":"봐 줘\n\n[팀 사람 말 · 하린 · 팀 · team#1]\n› 안녕"}"#), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(f.calls(), vec!["team_handoff aaaa0001 4"]);
+    assert!(head_check(&post("/api/team-handoff", "{}"), &g).is_none());
+    assert_eq!(handle(&set(post("/api/team-handoff", "{}"), "origin", Some("http://evil.example")), &g, &f).status, 403);
+    assert_eq!(handle(&as_peer(post("/api/team-handoff", r#"{"to":"a","text":"x"}"#)), &g, &f).status, 403);
+    for bad in [r#"{"to":"","text":"x"}"#, r#"{"to":"a","text":" "}"#, r#"{"to":"a","text":"x","origin":"human"}"#] {
+        assert_eq!(handle(&post("/api/team-handoff", bad), &g, &f).status, 400, "{bad}");
+    }
+    assert_eq!(f.calls().len(), 1);
+}
+
+#[test]
+fn 보안_참모가_만든_짝짓기_코드는_카드를_안_누르면_api_pair_가_열쇠를_안_준다() {
+    let g = gate();
+    let f = Fake::default();
+    let code = g.devices.new_code_held("cardP", std::time::SystemTime::now()).unwrap();
+    let r = handle(&pair_post(&code), &g, &f);
+    assert_eq!(r.status, 403, "허용 전: 열쇠 없이 '허용을 눌러 줘'");
+    assert!(!String::from_utf8_lossy(&r.body).contains("token"));
+    assert!(String::from_utf8_lossy(&r.body).contains("허용"));
+    g.devices.decide_hold("cardP", true).unwrap();
+    let r = handle(&pair_post(&code), &g, &f);
+    assert_eq!(r.status, 200);
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["token"].as_str().map(str::len), Some(64));
+}
+
+#[test]
+fn tm_폰_팀_말_다시_보내기는_폰_cid_로_한_번만_분당_상한() {
+    // 되돌림 10-23: 폰이 다시 보내면 매번 새 cid 라 서버가 두 번 저장했다 — 폰이 cid 를 실어 오면 그걸로(서버가 같은 cid 는 한 번만), 분당 상한
+    let g = peer_gate("tm000003");
+    let f = Fake::default();
+    let r = handle(&post("/api/team-say", r#"{"to":"m2","text":"안녕","cid":"abc-123"}"#), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(f.calls().last().unwrap(), "team_say m2 안녕 p-abc-123", "폰 cid 는 p- 를 앞에 붙여 그대로");
+    assert_eq!(handle(&post("/api/team-say", r#"{"to":"m2","text":"x","cid":"../x"}"#), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/team-say", &format!(r#"{{"to":"m2","text":"x","cid":"{}"}}"#, "a".repeat(70))), &g, &f).status, 400);
+    for i in 1..TEAM_SAY_PER_MIN {
+        assert_eq!(handle(&post("/api/team-say", &format!(r#"{{"to":"m2","text":"{i}"}}"#)), &g, &f).status, 200, "{i}");
+    }
+    assert_eq!(handle(&post("/api/team-say", r#"{"to":"m2","text":"넘침"}"#), &g, &f).status, 429);
 }

@@ -111,6 +111,7 @@ describe('기기 연결 요청 카드(@link, 0.3.2) — 세션이 아니라 앱�
   const at = (iso: string) => ({ ...env(), now: Date.parse(iso) });
   it('세션 목록과 상관없이 5분 동안 기다림, 지나면 끝남', () => {
     expect(directCards(link(), at('2026-10-03T06:04:59Z'))[0]).toMatchObject({ state: 'wait', kind: 'link' });
+    expect(directCards(link({ sub: 'phone' }), at('2026-10-03T06:04:59Z'))[0]).toMatchObject({ state: 'wait', kind: 'link', sub: 'phone' });
     expect(directCards(link(), at('2026-10-03T06:05:01Z'))[0]!.state).toBe('closed');
   });
   it('답하면 처리됨(세션 입력을 기다리지 않는다), 앱이 남긴 결과 한 줄', () => {

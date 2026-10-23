@@ -4,6 +4,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const apphome = require('./apphome');
 
 // '~' 로 시작하면 홈으로 푼다 (환경변수에 ~ 를 그대로 적는 경우가 흔하다)
 function expandHome(p, home) {
@@ -14,14 +15,26 @@ function expandHome(p, home) {
 
 const isDir = (d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } };
 
-/** 앱 데이터 폴더 — app/hq-template/scripts/show 의 data_dir 과 같은 규칙 */
-function dataDir({ home = os.homedir(), env = process.env, exists = isDir } = {}) {
-  const fromEnv = (env.CHAMMO_HOME || '').trim();
-  if (fromEnv) return expandHome(fromEnv, home);
+let warned = false;
+
+/** 앱 데이터 폴더 — app/hq-template/scripts/show 의 data_dir 과 같은 규칙.
+ * CHAMMO_HOME 이 claude 데몬에서 물려받은 시험 폴더(그 앱은 꺼짐)면 기본 폴더로 — src/apphome.js. probe 를 안 주면 진짜 프로세스 표로 보되,
+ * env 를 따로 준 부름(시험)은 안 본다 */
+function dataDir({ home = os.homedir(), env = process.env, exists = isDir, probe } = {}) {
   const fresh = path.join(home, '.chammo');
   const legacy = path.join(home, '.honor-orchestrator');
-  return !exists(fresh) && exists(legacy) ? legacy : fresh;
+  const fallback = !exists(fresh) && exists(legacy) ? legacy : fresh;
+  const fromEnv = (env.CHAMMO_HOME || '').trim();
+  if (!fromEnv) return fallback;
+  const p = probe !== undefined ? probe : env === process.env ? (liveProbe ??= apphome.realProbe(env, home)) : null;
+  const { dir, warn } = apphome.decide({ value: fromEnv, dir: expandHome(fromEnv, home), fallback, probe: p });
+  if (warn && !warned && probe === undefined) {
+    warned = true;
+    console.error(warn); // stdout 은 MCP 통신 줄이라 stderr 로
+  }
+  return dir;
 }
+let liveProbe;
 
 /** 프로필·락 루트 = CHAMMO_BROWSER_HOME 또는 <데이터 폴더>/browser */
 function browserRoot(opts = {}) {

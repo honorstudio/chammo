@@ -17,6 +17,7 @@ mod accounts_store;
 mod accounts_usage;
 mod accounts_warm;
 mod claude_defaults;
+mod daemon_env;
 mod computer_use;
 mod browser_attach;
 mod browser_foreign;
@@ -63,6 +64,22 @@ mod peer_ask;
 mod peer_cmd;
 mod peer_human;
 mod peer_link;
+mod team_account;
+mod team_cmd;
+mod team_relay;
+mod team_relay_inbox;
+mod team_relay_keys;
+mod phone_tunnel;
+mod phone_relay_core;
+mod phone_relay;
+mod team_relay_ws;
+#[cfg(test)]
+mod team_test_util;
+mod team_ui;
+mod team_alert;
+mod team_window;
+#[cfg(test)]
+mod test_ports;
 mod phone_voice;
 mod remote;
 mod remote_net;
@@ -498,6 +515,8 @@ fn main() {
             dock_quit::install(app.handle());
             // 참모 scripts/app — 앱을 대신 조작(음성·기능·화면)
             appctl::watch(app.handle());
+            // 팀 메신저 — 팀이 있으면 방 연결 스레드(받은 말 → 내 참모)
+            team_relay_ws::ensure(config::data_dir());
             // 켜 두었던 참모 모드를 다시(호스트는 뒤에서)
             modes_host::boot(app.handle());
             // 덮개 닫힘 → 바로 프사·말하는 빛·오피스 멈춤(ui/attention). 3초마다 읽고 바뀔 때만 알림, 맥만
@@ -509,6 +528,7 @@ fn main() {
             tama::place(app);
             debug::place_dev_window(app.handle()); // 개발판은 작업 화면 말고 옆 화면에
             notify_mac::init(app.handle()); // 윈도우는 notify_other(토스트)
+            team_alert::init(app.handle());
             // 참모 scripts/new-project 가 쓸 프로젝트 하네스 템플릿
             let _ = project::export_templates(config::data_dir());
             // 사용량·세션별 대화 % 를 남기는 상태줄 — 새 HQ(주인 옛 폴더 말고)는 켤 때마다 설정에 박아 둔다(이미 깐 HQ 도 따라오게)
@@ -534,6 +554,9 @@ fn main() {
                     browser_fix::fix_all(data);
                 }
             });
+            // 세션은 claude 데몬 env 를 물려받는다 — 시험이 띄운 데몬이어도 진짜 세션이 앱 폴더를 쓰게 사용자 설정에 고정, 래퍼·scripts 용 산 앱 표식
+            daemon_env::write_mark(config::data_dir());
+            std::thread::spawn(daemon_env::pin_user_settings);
             // 루틴 스크립트 — launchd 와 앱 버튼이 부른다
             let _ = routines::export(config::data_dir());
             // 예약 깨우기를 이 앱 실행 파일 하나로(옛 예약별 python 항목은 내린다) — launchctl 이 느릴 수 있어 뒤에서
@@ -541,6 +564,8 @@ fn main() {
             std::thread::spawn(routines::install);
             // 모바일(폰 → 테일스케일) — 켜 둔 상태면 연다. 기본 꺼짐
             mobile::boot(app.handle());
+            // 테일스케일 없는 폰 — 중계 허브에 붙어 있기(ADR 0013)
+            phone_relay::boot(app.handle());
             messenger_cmd::boot();
             // 쉬는 계정 칸 토큰을 만료 전에 하나씩 새로 받아 둔다 — 바꾸는 순간 토큰 주소를 안 부르게(2026-10-15 429 로 바꾸기가 막힘)
             accounts_cmd::warm_start();
@@ -591,6 +616,26 @@ fn main() {
             remote::remote_connect_cancel,
             remote::remote_call,
             remote::remote_human_say,
+            team_cmd::team_status,
+            team_cmd::team_human_say,
+            team_ui::team_feed,
+            team_ui::team_ui_create,
+            team_ui::team_ui_join,
+            team_ui::team_ui_invite,
+            team_ui::team_handoff,
+            team_alert::team_viewing,
+            team_alert::team_alert_get,
+            team_alert::team_alert_set,
+            team_alert::team_sound_try,
+            team_window::team_window_open,
+            team_window::team_window_close,
+            team_window::team_window_state,
+            team_cmd::team_login,
+            team_cmd::team_account_refresh,
+            team_cmd::team_device_rename,
+            team_cmd::team_device_revoke,
+            team_cmd::team_logout,
+            team_cmd::team_account_delete,
             remote::remote_saved,
             mobile::mobile_device_locker,
             remote::remote_direct_answer,
@@ -674,6 +719,7 @@ fn main() {
             agent_browser::agent_permission,
             agent_browser::agent_fedcm,
             browser_foreign::foreign_browsers,
+            daemon_env::daemon_env_check,
             browser_attach::project_browser,
             browser_attach::project_browser_attach,
             browser_setup::browser_setup_state,
@@ -926,8 +972,15 @@ fn main() {
             tauri::WindowEvent::CloseRequested { .. } if craft_window::is_craft_window(window.label()) => craft_window::window_closed(window),
             // 주소 미리보기 창(⌘W 등)은 진짜로 닫고 상태를 비운다
             tauri::WindowEvent::CloseRequested { .. } if window.label() == webpage::LABEL => webpage::forget(),
+            // 메신저 따로 창은 진짜로 닫는다 = 메인 창에 붙이기(마지막 자리는 기억)
+            tauri::WindowEvent::CloseRequested { .. } if team_window::is_team_window(window.label()) => team_window::closed(window),
             // 미리보기 창이 붙은 창이 움직이면 따라간다(맥은 자식 창이 저절로 따라오지만 윈도우는 아니다)
-            tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => webpage::parent_moved(window),
+            tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                if team_window::is_team_window(window.label()) {
+                    team_window::moved(window);
+                }
+                webpage::parent_moved(window)
+            }
             // 앱 창 중 하나라도 앞인지 → 메인·다마고치 웹뷰의 window.__appFocus(ui/attention) — 안 보면 참모 프사를 멈춘다(2026-10-04 mac-perf).
             // 메인 웹뷰 blur 만 보면 앱 안 리더 창으로 옮겨도 '맨 앞 아님'이 된다
             tauri::WindowEvent::Focused(_) => app_focus_changed(window.app_handle()),

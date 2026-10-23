@@ -267,6 +267,19 @@ class SpawnTrust(unittest.TestCase):
     def runs(self):
         return [json.loads(l) for l in (self.data / 'routines/k-check/runs.jsonl').read_text().splitlines()]
 
+    def test_예약_폴더엔_데이터_폴더를_세션_설정에_고정한다(self):
+        # claude --bg 에 준 env 는 세션에 안 간다(데몬 env 를 받는다, 2026-10-23 실측) — 예약 폴더 settings.local.json 으로
+        loc = pathlib.Path(self.d) / '.claude/settings.local.json'
+        loc.parent.mkdir(parents=True, exist_ok=True)
+        loc.write_text(json.dumps({'permissions': {'allow': ['x']}, 'env': {'A': '1'}}))
+        rt.run_now('k-check', data=str(self.data), run=Calls(), home=str(self.home))
+        v = json.loads(loc.read_text())
+        self.assertEqual(v['env'], {'A': '1', 'CHAMMO_HOME': str(self.data)})
+        self.assertEqual(v['permissions'], {'allow': ['x']}, '다른 칸 그대로')
+        loc.write_text('{ broken')
+        rt.run_now('k-check', data=str(self.data), run=Calls(), home=str(self.home))
+        self.assertEqual(loc.read_text(), '{ broken', '깨진 파일은 안 건드린다')
+
     def test_지워진_믿음은_띄우기_전에_다시_적는다(self):
         self.clobber()
         calls = Calls()

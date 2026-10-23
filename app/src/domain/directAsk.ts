@@ -19,6 +19,8 @@ export type DirectCard = {
   lastTs: string;
   /** 이때가 지나면 끝(연결 요청 카드 — 5분) */
   until?: string;
+  /** 연결 카드 갈래 — 'phone' = 참모가 만든 폰 연결 QR 의 사람 허용(Rust direct::phone_pair_row) */
+  sub?: string;
 };
 type Env = {
   alive: (sid: string) => boolean;
@@ -54,7 +56,7 @@ export function directCards(log: string, env: Env): DirectCard[] {
       amount: str(r.amount), detail: str(r.detail), what: str(r.what),
       yes: str(r.yes) ?? tr('승인', 'Approve'), no: str(r.no) ?? tr('거절', 'Decline'),
       options: Array.isArray(r.options) ? r.options.filter((o): o is string => typeof o === 'string') : [],
-      state: 'wait', lastTs: r.ts ?? '', until: str(r.until),
+      state: 'wait', lastTs: r.ts ?? '', until: str(r.until), sub: str(r.sub),
     };
     const isLink = kind === 'link' && c.from === LINK_FROM;
     // 같은 세션 뒤 카드에 안 밀리는 카드 — 결제는 답·거둠·처리로만 끝(2026-10-22 아이맥 001), 연결 요청은 기기마다 따로. scripts/direct·Rust direct::check 와 같은 규칙

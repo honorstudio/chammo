@@ -20,6 +20,10 @@ export type TaskEvent = {
   project?: string;
   /** send 에만: 무엇을 시켰나 한 줄 */
   title?: string;
+  /** send 에만: 목표 이름표(`task send --goal "<목표>[:N]"`, 2026-10-23~) — 홈 진행 칸이 목표 조각으로 묶는다(domain/goalBar) */
+  goal?: string;
+  /** send 에만: 그 목표의 예정 일 수(:N) — 0/N 에서 시작 */
+  goalTotal?: number;
   note?: string;
   /** ask 에만: 답장 받을 세션(물어본 참모의 session id). 없으면 일을 받은 세션 */
   to?: string;

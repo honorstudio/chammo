@@ -52,6 +52,18 @@ pub(crate) struct Device {
     /// 다른 기기 참모 줄 — 이 기기 사람이 '보관함 보여 주기'를 껐다(peer-locker 403). 없으면 보여 준다
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     no_locker: bool,
+    /// 중계로 짝지은 폰(ADR 0013) — 중계 기기 id·폰 터널 열쇠(X25519). 이 줄이 지워지면 터널도 끝
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    relay: Option<Relay>,
+}
+
+/// 중계 묶음 — 공개 값만(비밀 없음)
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Relay {
+    /// 중계 서버가 이 폰에 준 기기 id(허브 틀의 from)
+    pub device: String,
+    /// 폰 터널 X25519 공개 열쇠 base64url
+    pub x: String,
 }
 
 impl Device {
@@ -159,9 +171,13 @@ struct Inner {
     mtime: Option<SystemTime>,
     /// (sha256(코드), 만료 시각, 낸 기기 id) — 지금 살아 있는 짝짓기 코드 하나. 맥 QR 은 낸 기기가 없다
     code: Option<(String, SystemTime, Option<String>)>,
+    /// 참모가 만든 코드(scripts/app phone pair)의 사람 허용 — (카드 id, 허용됨). 허용 전엔 맞는 코드여도 열쇠를 안 준다(보안 검토 10-23)
+    hold: Option<(String, bool)>,
     /// 지금 코드에 틀린 코드를 낸 횟수 — 기록만(MAX_FAILS 번째에 한 줄). 코드는 안 죽인다(128비트, 2026-10-21 리뷰 ④-6)
     fails: u32,
     flushed: Instant,
+    /// 파일 없는 시험용 — 끊을 중계 기기
+    revokes: Vec<String>,
 }
 
 pub struct Devices {
@@ -221,21 +237,21 @@ impl Devices {
     /// 시험용 — 파일 없이
     #[cfg(test)]
     pub fn memory() -> Devices {
-        Devices { path: None, inner: Mutex::new(Inner { list: Vec::new(), mtime: None, code: None, fails: 0, flushed: Instant::now() }) }
+        Devices { path: None, inner: Mutex::new(Inner { list: Vec::new(), mtime: None, code: None, hold: None, fails: 0, flushed: Instant::now(), revokes: Vec::new() }) }
     }
 
     /// 시험용 — 이미 짝지은 기기 하나(토큰을 알고 있는)
     #[cfg(test)]
     pub fn with_token(token: &str, name: &str) -> Devices {
         let d = Devices::memory();
-        d.inner.lock().unwrap().list.push(Device { id: "test0001".into(), name: name.into(), hash: sha(token), created: ms(SystemTime::now()), last_seen: None, home: false, group: None, paired: None, peer: false, node: None, no_locker: false });
+        d.inner.lock().unwrap().list.push(Device { id: "test0001".into(), name: name.into(), hash: sha(token), created: ms(SystemTime::now()), last_seen: None, home: false, group: None, paired: None, peer: false, node: None, no_locker: false, relay: None });
         d
     }
 
     /// 시험용 — 줄 하나 더(다른 기기 참모 peer 줄 등)
     #[cfg(test)]
     pub fn add_test(&self, id: &str, token: &str, name: &str, peer: bool) {
-        self.inner.lock().unwrap().list.push(Device { id: id.into(), name: name.into(), hash: sha(token), created: ms(SystemTime::now()), last_seen: None, home: false, group: None, paired: None, peer, node: None, no_locker: false });
+        self.inner.lock().unwrap().list.push(Device { id: id.into(), name: name.into(), hash: sha(token), created: ms(SystemTime::now()), last_seen: None, home: false, group: None, paired: None, peer, node: None, no_locker: false, relay: None });
     }
 
     /// 시험용 — 다음 check 가 마지막 접속을 파일에 적게
@@ -248,7 +264,7 @@ impl Devices {
     pub fn open(dir: &Path) -> Devices {
         let path = dir.join(FILE);
         let (list, mtime) = read_list(&path);
-        let d = Devices { path: Some(path), inner: Mutex::new(Inner { list, mtime, code: None, fails: 0, flushed: Instant::now() }) };
+        let d = Devices { path: Some(path), inner: Mutex::new(Inner { list, mtime, code: None, hold: None, fails: 0, flushed: Instant::now(), revokes: Vec::new() }) };
         // 켤 때 한 번 정리 — 지울 게 있을 때만 쓴다
         let now = ms(SystemTime::now());
         let mut g = d.inner.lock().unwrap();
@@ -274,14 +290,28 @@ impl Devices {
     }
 
     /// 바꾸기 — 잠금(flock)을 잡고 파일을 다시 읽어 그 위에 바꾼 뒤 쓴다(메모리 목록으로 통째 덮지 않는다)
+    /// 줄에서 사라진 중계 기기는 끊을 대기열에 — 끊기·모두 끊기·정리·열쇠 바꿔 끼우기 어느 길이든 여기를 지난다(보안 검토 C)
     fn mutate(&self, g: &mut Inner, f: impl FnOnce(&mut Vec<Device>)) -> std::io::Result<()> {
         let Some(p) = &self.path else {
+            let before = relays_of(&g.list);
             f(&mut g.list);
+            let gone = gone_relays(&before, &g.list);
+            for id in gone {
+                if !g.revokes.contains(&id) {
+                    g.revokes.push(id);
+                }
+            }
             return Ok(());
         };
         let _lock = FileLock::take(&p.with_extension("lock"))?;
         let (mut list, _) = read_list_checked(p)?;
+        let before = relays_of(&list);
         f(&mut list);
+        let gone = gone_relays(&before, &list);
+        // 대기열을 먼저 적는다 — 줄을 쓰고 대기열을 못 쓰면 끊을 기기를 잃는다(바꾸고 기록 순서 교훈)
+        if !gone.is_empty() {
+            edit_revoke_file(&revoke_path(p), |q| gone.into_iter().for_each(|id| if !q.contains(&id) { q.push(id) }))?;
+        }
         write_private(p, &serde_json::to_string_pretty(&list).unwrap_or_else(|_| "[]".into()))?;
         g.mtime = std::fs::metadata(p).and_then(|m| m.modified()).ok();
         g.list = list;
@@ -302,8 +332,38 @@ impl Devices {
         let code = random_hex(16)?;
         let mut g = self.inner.lock().unwrap();
         g.code = Some((sha(&code), now + PAIR_TTL, issuer));
+        g.hold = None;
         g.fails = 0;
         Ok(code)
+    }
+
+    /// 참모 길(appctl)이 만든 코드 — 카드(card)에서 사람이 허용해야 /api/pair 가 열쇠를 준다. 사람이 설정에서 새 QR 을 만들면 이 대기는 사라진다
+    pub fn new_code_held(&self, card: &str, now: SystemTime) -> std::io::Result<String> {
+        let code = self.issue(None, now)?;
+        self.inner.lock().unwrap().hold = Some((card.to_string(), false));
+        Ok(code)
+    }
+
+    /// 그 코드가 살아 있고 사람 허용을 기다리는 중인가 — 코드를 맞게 낸 쪽에만 '기다림'을 알린다
+    pub fn held(&self, code: &str, now: SystemTime) -> bool {
+        let g = self.inner.lock().unwrap();
+        matches!((&g.code, &g.hold), (Some((h, until, _)), Some((_, false))) if !code.is_empty() && ct_eq(sha(code).as_bytes(), h.as_bytes()) && now <= *until)
+    }
+
+    /// 카드 답 — 사람 길(direct::answer)만 부른다. 허용이면 그 코드가 열쇠를 줄 수 있고, 거절이면 코드를 죽인다
+    pub fn decide_hold(&self, card: &str, yes: bool) -> Result<(), String> {
+        let mut g = self.inner.lock().unwrap();
+        match &g.hold {
+            Some((c, false)) if c == card && g.code.is_some() => {}
+            _ => return Err(crate::i18n::tr("이 폰 연결 요청은 끝났어요(시간이 지났거나 새 QR 로 바뀌었어요)", "This phone link request is over").into()),
+        }
+        if yes {
+            g.hold = Some((card.to_string(), true));
+        } else {
+            g.hold = None;
+            g.code = None;
+        }
+        Ok(())
     }
 
     /// 시험용 — 옛 모양(새 브라우저 줄)
@@ -315,10 +375,82 @@ impl Devices {
     /// 코드가 살아 있으면 쓰고(한 번만) 기기 토큰(16진 64자)을 준다.
     /// 같은 폰으로 알아보면(옛 열쇠 증명·코드 낸 기기) 새 줄 대신 그 줄의 열쇠를 바꿔 끼운다 — 옛 열쇠는 그 순간 죽는다
     pub fn pair_with(&self, code: &str, p: &Pairing, now: SystemTime) -> Option<String> {
+        self.pair_inner(code, p, None, now)
+    }
+
+    /// 중계 두드리기로 짝짓기(ADR 0013) — 코드 규칙은 같고, 그 줄에 중계 묶음을 적는다
+    pub fn pair_relay(&self, code: &str, p: &Pairing, relay: Relay, now: SystemTime) -> Option<String> {
+        if p.peer {
+            return None;
+        }
+        self.pair_inner(code, p, Some(relay), now)
+    }
+
+    /// 코드가 살아 있나(쓰지 않고) — 중계에 기기를 들이기 전에 본다. 틀리면 틀린 횟수에 센다
+    pub fn code_alive(&self, code: &str, now: SystemTime) -> bool {
+        let mut g = self.inner.lock().unwrap();
+        // 참모가 만든 코드는 사람이 카드에서 허용하기 전엔 중계 두드리기로도 안 된다(pair_inner 와 같은 문)
+        if matches!(g.hold, Some((_, false))) {
+            return false;
+        }
+        let ok = !code.is_empty() && g.code.as_ref().is_some_and(|(h, until, _)| ct_eq(sha(code).as_bytes(), h.as_bytes()) && now <= *until);
+        if !ok {
+            g.fails += 1;
+        }
+        ok
+    }
+
+    /// 끊어야 할 중계 기기들(줄이 사라질 때 쌓인다, 보안 검토 C) — 컴퓨터 phone_relay 가 중계에 revoke 하고 지운다
+    pub fn pending_revokes(&self) -> Vec<String> {
+        match &self.path {
+            Some(p) => read_revokes(&revoke_path(p)),
+            None => self.inner.lock().unwrap().revokes.clone(),
+        }
+    }
+
+    /// 중계에서 끊었다(200·404) — 대기열에서 뺀다
+    pub fn revoked(&self, ids: &[String]) -> std::io::Result<()> {
+        self.edit_revokes(|q| q.retain(|x| !ids.contains(x)))
+    }
+
+    /// 줄 없이 생긴 중계 기기(짝짓기 마무리 실패로 남은 것)도 끊을 대상으로
+    pub fn queue_revoke(&self, id: &str) -> std::io::Result<()> {
+        let id = id.to_string();
+        self.edit_revokes(move |q| if !q.contains(&id) { q.push(id) })
+    }
+
+    fn edit_revokes(&self, f: impl FnOnce(&mut Vec<String>)) -> std::io::Result<()> {
+        let Some(p) = &self.path else {
+            f(&mut self.inner.lock().unwrap().revokes);
+            return Ok(());
+        };
+        let _lock = FileLock::take(&p.with_extension("lock"))?;
+        edit_revoke_file(&revoke_path(p), f)
+    }
+
+    /// 중계 기기 id → (줄 id, 폰 터널 열쇠) — 폰 줄만
+    pub fn relay_line(&self, relay_device: &str) -> Option<(String, String)> {
+        let mut g = self.inner.lock().unwrap();
+        self.reload_if_changed(&mut g);
+        g.list.iter().find(|d| !d.peer && d.relay.as_ref().is_some_and(|r| r.device == relay_device)).map(|d| (d.id.clone(), d.relay.as_ref().unwrap().x.clone()))
+    }
+
+    /// 줄 id → 중계 기기 id(푸시를 중계로 보낼 때)
+    pub fn relay_of(&self, id: &str) -> Option<String> {
+        let mut g = self.inner.lock().unwrap();
+        self.reload_if_changed(&mut g);
+        g.list.iter().find(|d| d.id == id).and_then(|d| d.relay.as_ref().map(|r| r.device.clone()))
+    }
+
+    fn pair_inner(&self, code: &str, p: &Pairing, relay: Option<Relay>, now: SystemTime) -> Option<String> {
         if code.is_empty() {
             return None;
         }
         let mut g = self.inner.lock().unwrap();
+        // 참모가 만든 코드는 사람이 카드에서 허용하기 전엔 맞는 코드여도 안 된다
+        if matches!(g.hold, Some((_, false))) {
+            return None;
+        }
         let (h, until, issuer) = g.code.clone()?;
         if !ct_eq(sha(code).as_bytes(), h.as_bytes()) || now > until {
             // 코드는 128비트라 맞히기는 못 한다 — 틀린 코드로 코드를 죽이면 남이 사람이 막 띄운 QR 을 연타로 죽일 수 있었다(2026-10-21 리뷰 ④-6). 세기만
@@ -329,6 +461,7 @@ impl Devices {
             return None;
         }
         g.code = None;
+        g.hold = None;
         let token = random_hex(32).ok()?;
         let new_id = random_hex(8).ok()?;
         let at = ms(now);
@@ -363,11 +496,14 @@ impl Devices {
                     d.name = name.clone();
                     d.paired = Some(at);
                     d.last_seen = Some(at);
+                    if relay.is_some() {
+                        d.relay = relay.clone();
+                    }
                     swapped = Some(format!("열쇠 바꿔 끼움 {} {}{}", short(&d.id), d.name, if d.home { HOME_SUFFIX } else { "" }));
                     d.id.clone()
                 }
                 None => {
-                    l.push(Device { id: new_id.clone(), name: name.clone(), hash: hash.clone(), created: at, last_seen: Some(at), home: p.home && !p.peer, group, paired: None, peer: p.peer, node: None, no_locker: false });
+                    l.push(Device { id: new_id.clone(), name: name.clone(), hash: hash.clone(), created: at, last_seen: Some(at), home: p.home && !p.peer, group, paired: None, peer: p.peer, node: None, no_locker: false, relay: relay.clone() });
                     new_id.clone()
                 }
             };
@@ -432,7 +568,7 @@ impl Devices {
             // 사람이 꺼 둔 '보관함 보여 주기'는 다시 허용해도 이어받는다(몰래 다시 켜지지 않게)
             let no_locker = l.iter().any(|d| d.peer && d.node.as_deref() == Some(node) && d.no_locker);
             l.retain(|d| !(d.peer && d.node.as_deref() == Some(node)));
-            l.push(Device { id: id.clone(), name: name.clone(), hash, created: at, last_seen: Some(at), home: false, group: None, paired: None, peer: true, node: Some(node.to_string()), no_locker });
+            l.push(Device { id: id.clone(), name: name.clone(), hash, created: at, last_seen: Some(at), home: false, group: None, paired: None, peer: true, node: Some(node.to_string()), no_locker, relay: None });
             gone = prune(l, at, Some(&id));
         })?;
         drop(g);
@@ -472,6 +608,34 @@ impl Devices {
         g.code = None;
         self.mutate(&mut g, |l| l.clear())
     }
+}
+
+fn relays_of(list: &[Device]) -> Vec<String> {
+    list.iter().filter_map(|d| d.relay.as_ref().map(|r| r.device.clone())).collect()
+}
+
+fn gone_relays(before: &[String], after: &[Device]) -> Vec<String> {
+    let now = relays_of(after);
+    before.iter().filter(|r| !now.contains(r)).cloned().collect()
+}
+
+/// 끊을 중계 기기 대기열 — mobile-devices.json 옆 relay-revoke.json(600)
+fn revoke_path(p: &Path) -> PathBuf {
+    p.with_file_name("relay-revoke.json")
+}
+
+fn read_revokes(p: &Path) -> Vec<String> {
+    std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+
+fn edit_revoke_file(p: &Path, f: impl FnOnce(&mut Vec<String>)) -> std::io::Result<()> {
+    let mut q = read_revokes(p);
+    let was = q.clone();
+    f(&mut q);
+    if q == was {
+        return Ok(());
+    }
+    write_private(p, &serde_json::to_string(&q).unwrap_or_else(|_| "[]".into()))
 }
 
 fn read_list(p: &Path) -> (Vec<Device>, Option<SystemTime>) {

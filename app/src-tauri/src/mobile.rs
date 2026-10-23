@@ -539,6 +539,19 @@ pub(crate) fn devices() -> Arc<crate::mobile_pair::Devices> {
     .clone()
 }
 
+/// 테일넷 https 로 떠 있으면 그 주소(https://<이름>.ts.net)
+fn direct_url() -> Option<String> {
+    let r = RUNNING.lock().ok()?;
+    let r = r.as_ref().filter(|r| r.https)?;
+    r.tailnet.dns.as_ref().map(|d| format!("https://{d}"))
+}
+
+/// 폰 중계 터널(phone_relay, ADR 0013)의 문지기·컴퓨터 쪽 일 — 테일넷 서버와 같은 기기 목록·보낸 말 기록, 받는 이름·출처만 터널 것
+pub(crate) fn relay_parts<R: tauri::Runtime>(app: &tauri::AppHandle<R>, web: &str) -> (Arc<Gate>, Arc<dyn Backend>) {
+    let gate = Gate { devices: devices(), hosts: vec![crate::phone_relay_core::RELAY_HOST.into()], origins: vec![web.to_string()], stops: Default::default(), sends: sends(), tickets: Default::default(), owner: None, team_says: Default::default() };
+    (Arc::new(gate), Arc::new(MacBackend { app: app.clone() }))
+}
+
 // ── 켜고 끄기 ────────────────────────────────────────────────
 
 fn on_path(dir: &Path) -> PathBuf {
@@ -682,7 +695,12 @@ fn start_locked<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), Stri
     let port = port();
     // 먼저 묶는다 — 포트를 못 잡으면 serve 도 걸지 않는다. 문지기는 https 이름까지 받아 두고, serve 를 못 걸면 그 이름으로 올 길이 없을 뿐
     let owner = tailscale_status(&t.socket).and_then(|st| st.login);
-    let gate = Gate { devices: devices(), hosts: hosts(&t, port, true), origins: origins(&t, port, true), stops: Default::default(), sends: sends(), tickets: Default::default(), owner };
+    // 중계 길 폰(공개 입구 주소)이 테일넷에 닿으면 직접 온다 — 그 출처만 CORS·쓰기 문에 더한다(ADR 0013 빠른 길)
+    let mut origins = origins(&t, port, true);
+    if let Some((web, _, _)) = crate::phone_relay::ready(crate::config::data_dir()) {
+        origins.push(web);
+    }
+    let gate = Gate { devices: devices(), hosts: hosts(&t, port, true), origins, stops: Default::default(), sends: sends(), tickets: Default::default(), owner, team_says: Default::default() };
     let be: Arc<dyn Backend> = Arc::new(MacBackend { app: app.clone() });
     let sock = t.socket.clone();
     let peers = Arc::new(Peers::new(allowed_peers(&t.ip, &t.peers), move || tailscale_status(&sock).map(|st| allowed_peers(&st.ip, &st.peers))));
@@ -901,6 +919,9 @@ pub struct MobileStatus {
     pub https_fix: Option<&'static str>,
     /// 짝지은 기기들(이름·만든 때·마지막 접속)
     pub devices: Vec<crate::mobile_pair::DeviceView>,
+    /// 테일스케일 없는 폰 길(중계, ADR 0013) — 켤 수 있나(계정·입구 주소)·허브에 붙었나
+    pub relay_ready: bool,
+    pub relay: crate::phone_relay::RelayStatus,
 }
 
 /// 짝짓기 QR — 이 화면(맥 앱)에서만 보인다. 10분 지나거나 한 번 쓰면 죽는다
@@ -935,6 +956,8 @@ fn status() -> MobileStatus {
         https_note: r.as_ref().and_then(|r| r.https_note.clone()),
         https_fix: r.as_ref().and_then(|r| r.https_fix.filter(|_| !r.https)),
         devices: devices().list(),
+        relay_ready: crate::phone_relay::ready(crate::config::data_dir()).is_some(),
+        relay: crate::phone_relay::status(),
     }
 }
 
@@ -970,13 +993,39 @@ pub async fn mobile_set<R: tauri::Runtime>(app: tauri::AppHandle<R>, on: bool) -
 /// 폰 연결 QR 새로 — https 를 걸었으면 그 주소(마이크 됨), 아니면 100.x 직접. 새로 만들면 옛 QR 은 죽는다
 #[tauri::command]
 pub fn mobile_pair_new() -> Result<PairQr, String> {
-    let r = RUNNING.lock().unwrap();
-    let r = r.as_ref().ok_or_else(|| crate::i18n::tr("모바일이 꺼져 있어요", "Mobile is off").to_string())?;
+    pair_qr(false)
+}
+
+/// scripts/app phone pair 의 답 — {ok, url, qrSvg, expires} 또는 {ok:false, error}. 코드가 든 답이라 받는 쪽은 부탁마다 따로인 600 칸에만 쓴다
+/// 참모 길이라 코드는 사람 허용 카드를 지나야 열쇠가 된다(보안 검토 10-23 — 클릭 없이 받은 코드로 curl 이 폰 열쇠 = 사람이 됐다)
+pub fn pair_answer() -> serde_json::Value {
+    match pair_qr(true) {
+        Ok(q) => serde_json::json!({ "ok": true, "url": q.url, "qrSvg": q.qr_svg, "expires": q.expires }),
+        Err(e) => serde_json::json!({ "ok": false, "error": e }),
+    }
+}
+
+/// held = 참모 길(appctl) — 데스크톱에 '이 폰을 연결할까요?' 카드를 띄우고, 사람이 허용해야 /api/pair·중계 두드리기가 열쇠를 준다.
+/// 중계를 쓸 수 있으면 늘 중계 QR — 폰에 테일스케일이 있으면 그 페이지가 테일넷 빠른 길을 먼저 쓴다(ADR 0013)
+fn pair_qr(held: bool) -> Result<PairQr, String> {
+    let relay = crate::phone_relay::ready(crate::config::data_dir());
+    let tailnet = RUNNING.lock().unwrap().as_ref().map(|r| (r.tailnet.dns.clone(), r.https, r.tailnet.ip, r.port));
+    if relay.is_none() && tailnet.is_none() {
+        return Err(crate::i18n::tr("모바일이 꺼져 있어요", "Mobile is off").to_string());
+    }
     let now = std::time::SystemTime::now();
-    let code = devices().new_code(now).map_err(|e| e.to_string())?;
-    let url = match (&r.tailnet.dns, r.https) {
-        (Some(d), true) => format!("https://{d}/?pair={code}"),
-        _ => format!("http://{}:{}/?pair={code}", r.tailnet.ip, r.port),
+    let code = if held {
+        let until = (now + crate::mobile_pair::PAIR_TTL).duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+        let card = crate::direct::ask_phone_pair(until)?;
+        devices().new_code_held(&card, now).map_err(|e| e.to_string())?
+    } else {
+        devices().new_code(now).map_err(|e| e.to_string())?
+    };
+    let url = match (&relay, tailnet) {
+        (Some((web, st, x)), _) => crate::phone_relay::qr_url(web, &code, st, x),
+        (None, Some((Some(d), true, _, _))) => format!("https://{d}/?pair={code}"),
+        (None, Some((_, _, ip, port))) => format!("http://{ip}:{port}/?pair={code}"),
+        (None, None) => return Err(crate::i18n::tr("모바일이 꺼져 있어요", "Mobile is off").to_string()),
     };
     let expires = (now + crate::mobile_pair::PAIR_TTL).duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
     Ok(PairQr { qr_svg: qr_svg(&url), url, expires })
@@ -985,6 +1034,7 @@ pub fn mobile_pair_new() -> Result<PairQr, String> {
 /// 기기 하나 끊기 — 그 폰은 다음 요청부터 401
 #[tauri::command]
 pub fn mobile_device_remove(id: String) -> Result<MobileStatus, String> {
+    // 중계로 짝지은 폰이면 중계 기기도 끊을 대기열에 들어간다(mobile_pair mutate — 묶음째·실패하면 다시, 보안 검토 C)
     devices().remove(&id).map_err(|e| e.to_string())?;
     Ok(status())
 }
@@ -1048,6 +1098,10 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
             "os": std::env::consts::OS,
             // 폰 프로필 창의 '기본' 목소리 — 설정이 Supertonic 이 아니면 null(참모마다 목소리를 못 바꾼다). 명령 원문은 안 낸다
             "voiceBase": crate::tts::base_voice(&home, &c.tts_command),
+            // 이 컴퓨터 이름 — 폰 기기 줄 첫 단추가 '이 맥' 대신 이 이름(짝지은 기기들 이름과 나란히, 2026-10-23 사용자 "무슨 뜻인지 안 읽혀")
+            "deviceName": device_name(),
+            // 테일넷 https 주소 — 중계 길 폰이 닿으면 먼저 쓰는 빠른 길(ADR 0013). 안 걸렸으면 null
+            "directUrl": direct_url(),
         })
     }
     fn sessions(&self) -> Result<String, String> {
@@ -1254,6 +1308,24 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     fn peer_human_say(&self, dev: &str, to: &str, text: &str) -> Result<serde_json::Value, String> {
         crate::remote::human_now(dev, "/api/peer-human", serde_json::json!({ "to": to, "text": text }))
     }
+    fn team_feed(&self) -> serde_json::Value {
+        crate::team_ui::feed(crate::config::data_dir(), 400)
+    }
+    fn team_say(&self, to: &str, text: &str, cid: &str) -> Result<serde_json::Value, String> {
+        // 폰 화면에서 사람이 친 말 — 짝지은 폰 열쇠로 들어온 /api/team-say 만 이 길을 부른다(사람 표)
+        let dir = crate::config::data_dir();
+        let room = crate::team_relay::open_dm(dir, &crate::team_relay_keys::store(), &crate::team_relay::Curl, to)?;
+        crate::team_relay_ws::send(dir, &room.id, cid, text, Some(crate::team_relay_ws::HumanProof::phone())).map(|seq| serde_json::json!({ "room": room.id, "seq": seq }))
+    }
+    fn team_handoff(&self, to: &str, text: &str) -> Result<serde_json::Value, String> {
+        crate::team_ui::handoff_send(to, text, false).map(|name| serde_json::json!({ "to": name }))
+    }
+    fn team_invite(&self) -> Result<serde_json::Value, String> {
+        crate::team_ui::phone_job("invite", serde_json::json!({}))
+    }
+    fn team_create(&self, team: &str) -> Result<serde_json::Value, String> {
+        crate::team_ui::phone_job("create", serde_json::json!({ "team": team }))
+    }
     fn interrupt(&self, id: &str) -> Result<(), String> {
         // 데스크톱 채팅 멈춤과 같은 Esc 한 글자 — 붙어서 넣고 뗀다. 글 치기와 차례를 지킨다(claude::interrupt_session)
         crate::claude::interrupt_session(id)
@@ -1340,6 +1412,31 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         #[allow(unreachable_code)]
         None
     }
+}
+
+/// 이 컴퓨터 이름 — 맥은 공유 설정의 컴퓨터 이름(scutil), 윈도우는 COMPUTERNAME. 앱이 도는 동안 한 번만 읽는다
+fn device_name() -> Option<String> {
+    static NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| {
+        #[cfg(target_os = "macos")]
+        let raw = crate::platform::run_capped(crate::platform::command("scutil").args(["--get", "ComputerName"]), Duration::from_secs(3))
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        #[cfg(windows)]
+        let raw = std::env::var("COMPUTERNAME").ok();
+        #[cfg(not(any(target_os = "macos", windows)))]
+        let raw: Option<String> = None;
+        raw.and_then(|s| clean_device_name(&s))
+    })
+    .clone()
+}
+
+/// 화면에 찍을 이름 — 제어 글자 빼고 앞뒤 공백 없이 40자까지, 비면 None(폰이 '이 맥'으로)
+fn clean_device_name(s: &str) -> Option<String> {
+    let t: String = s.trim().chars().filter(|c| !c.is_control()).take(40).collect();
+    let t = t.trim();
+    (!t.is_empty()).then(|| t.to_string())
 }
 
 #[cfg(test)]

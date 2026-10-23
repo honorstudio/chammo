@@ -12,6 +12,7 @@ pub const FILES: &[(&str, &str)] = &[
     ("bin/chammo-browser.js", include_str!("../../../tools/chammo-browser/bin/chammo-browser.js")),
     ("bin/chammo-browser-mcp.js", include_str!("../../../tools/chammo-browser/bin/chammo-browser-mcp.js")),
     ("src/paths.js", include_str!("../../../tools/chammo-browser/src/paths.js")),
+    ("src/apphome.js", include_str!("../../../tools/chammo-browser/src/apphome.js")),
     ("src/lock.js", include_str!("../../../tools/chammo-browser/src/lock.js")),
     ("src/relay.js", include_str!("../../../tools/chammo-browser/src/relay.js")),
     ("src/setup.js", include_str!("../../../tools/chammo-browser/src/setup.js")),

@@ -39,6 +39,15 @@ pub fn replay_on_start(content: &str, seen: Option<usize>, now: u64) -> Vec<Stri
         .collect()
 }
 
+/// 기록에 남길 줄 — 팀·다른 기기 부탁은 말 본문·초대 코드·짝짓기 코드가 들어 있어 action·verb·id 만(notify.log 는 진단에 붙어 나간다)
+pub(crate) fn log_line(line: &str) -> String {
+    let v: serde_json::Value = serde_json::from_str(line).unwrap_or_default();
+    if matches!(v["action"].as_str(), Some("team" | "peer")) {
+        return serde_json::json!({ "action": v["action"], "verb": v["arg"]["verb"], "id": v["id"] }).to_string();
+    }
+    line.chars().take(120).collect()
+}
+
 /// 스크립트(scripts/peer·sheet·craft·app 의 harness·browser-attach·mode)에 답 쓰기 — 옛 자리(<데이터>/<name>.txt, 한 칸)와 부탁마다 따로인 자리(<데이터>/answers/<name>-<id>.txt).
 /// 한 칸만 쓰면 둘이 겹칠 때 뒤 답이 앞 답을 덮어(임시 파일 이름도 같았다) 앞 스크립트는 '앱이 답하지 않았어'로 끝났고, 말은 이미 갔는데
 /// 실패로 보여 다시 보내면 두 번 갔다(2026-10-21 리뷰). 스크립트는 따로인 자리를 먼저 읽고 지운다
@@ -46,17 +55,33 @@ pub(crate) fn write_answer(name: &str, id: &str, text: &str) {
     write_answer_in(&crate::config::data_dir(), name, id, text)
 }
 
+/// 비밀이 실린 답(팀 — 초대 코드·받은 말) — 공용 칸(<name>.txt)엔 안 쓰고 부탁마다 따로인 자리만. 스크립트가 읽고 지운다
+pub(crate) fn write_private(name: &str, id: &str, text: &str) {
+    write_private_in(&crate::config::data_dir(), name, id, text)
+}
+
+pub(crate) fn write_private_in(dir: &std::path::Path, name: &str, id: &str, text: &str) {
+    put_answers(dir, name, id, text, false)
+}
+
 pub(crate) fn write_answer_in(dir: &std::path::Path, name: &str, id: &str, text: &str) {
+    put_answers(dir, name, id, text, true)
+}
+
+/// 답 파일은 600 — 같은 맥의 다른 사용자가 못 읽게(보안 검토 3-B)
+fn put_answers(dir: &std::path::Path, name: &str, id: &str, text: &str, shared: bool) {
     let body = format!("#id {id}\n{text}\n");
     let put = |file: std::path::PathBuf| {
         let mut n = file.file_name().unwrap_or_default().to_os_string();
         n.push(format!(".{}.tmp", crate::tools::tmp_tag()));
         let tmp = file.with_file_name(n);
-        if std::fs::write(&tmp, &body).is_ok() && std::fs::rename(&tmp, &file).is_err() {
+        if write_600(&tmp, &body).is_ok() && std::fs::rename(&tmp, &file).is_err() {
             let _ = std::fs::remove_file(&tmp);
         }
     };
-    put(dir.join(format!("{name}.txt")));
+    if shared {
+        put(dir.join(format!("{name}.txt")));
+    }
     if !id.is_empty() && id.len() <= 40 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         let d = dir.join("answers");
         if std::fs::create_dir_all(&d).is_ok() {
@@ -71,6 +96,18 @@ pub(crate) fn write_answer_in(dir: &std::path::Path, name: &str, id: &str, text:
             put(d.join(format!("{name}-{id}.txt")));
         }
     }
+}
+
+fn write_600(path: &std::path::Path, body: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
+    }
+    o.open(path)?.write_all(body.as_bytes())
 }
 
 /// 화면을 바꾸는 명령이면 숨어 있던 창도 앞으로(⌘W 로 숨겼을 수 있다). 음성·기능 켜기는 창을 안 띄운다
@@ -106,6 +143,16 @@ pub fn harness_request(line: &str) -> Option<(String, Option<String>)> {
     }
     let p = v.get("arg").and_then(|a| a.as_str()).map(str::trim).filter(|a| !a.is_empty()).map(str::to_owned);
     Some((id.to_string(), p))
+}
+
+/// 폰 연결 QR 요청(scripts/app phone pair) → id. 이 길은 코드 만들기뿐 — 모바일이 꺼져 있으면 답이 {ok:false}
+pub fn phone_request(line: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v.get("action")?.as_str()? != "phone" || v["arg"]["verb"].as_str()? != "pair" {
+        return None;
+    }
+    let id = v.get("id")?.as_str()?;
+    (!id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')).then(|| id.to_string())
 }
 
 /// 참모 브라우저 연결(scripts/app browser status|connect <폴더>) → (id, 동사, 폴더). 'need'(카드)는 화면 몫이라 여기선 안 받는다
@@ -263,7 +310,7 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
             }
             let _ = std::fs::write(&seen_file, offset.to_string());
             for line in std::mem::take(&mut pending) {
-                crate::claude::log_out("appctl", &line.chars().take(120).collect::<String>());
+                crate::claude::log_out("appctl", &log_line(&line));
                 if let Some((id, keys)) = keys_request(&line) {
                     std::thread::spawn(move || {
                         crate::claude::log_out("choice-keys", &format!("{id} start"));
@@ -297,6 +344,11 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                         let text = crate::harnitor::report_at(&crate::harnitor::home(), lang, project.as_deref());
                         write_answer("harness", &id, &text);
                     });
+                    continue;
+                }
+                // 폰 연결 QR — 설정 > 폰 의 '새 QR' 과 같은 코드를 클릭 없이. 코드가 실린 답이라 공용 칸 없이 부탁마다 따로인 600 칸에만(스크립트가 읽고 지운다)
+                if let Some(id) = phone_request(&line) {
+                    std::thread::spawn(move || write_private("phone", &id, &crate::mobile::pair_answer().to_string()));
                     continue;
                 }
                 // 참모 브라우저 연결 — HQ 는 데스크탑 권한이 막혀 있을 수 있어(#1) 앱이 대신 읽고 ~/.claude.json 에 적는다.
@@ -339,6 +391,14 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                     });
                     continue;
                 }
+                // 팀 메신저(scripts/team) — 만들기·초대·들어오기·말 보내기. 이 길은 늘 참모 말(origin agent), 답은 <데이터>/team.txt
+                if let Some(req) = crate::team_cmd::request(&line) {
+                    std::thread::spawn(move || {
+                        let ans = crate::team_cmd::answer(&req, crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_cmd::RealWire);
+                        write_private("team", &req.id, &ans.to_string());
+                    });
+                    continue;
+                }
                 // 참모 칸 읽기·쓰기(scripts/sheet) — 열린 표가 있으면 표로 보여 주며 넣고, 없으면 원본 패치. 답은 <데이터>/sheet.txt
                 if let Some(req) = crate::sheet_cmd::request(&line) {
                     let app = app.clone();
@@ -361,6 +421,42 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn 답_파일은_600_이고_팀_답은_공용_칸에_안_쓴다() {
+        // 보안 검토 3-B: 644 로 써서 team.txt 에 초대 코드·받은 말이 남았다
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("chammo-answers600-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        write_answer_in(&d, "peer", "aaaa1111", "{}");
+        for f in ["peer.txt", "answers/peer-aaaa1111.txt"] {
+            assert_eq!(std::fs::metadata(d.join(f)).unwrap().permissions().mode() & 0o777, 0o600, "{f}");
+        }
+        write_private_in(&d, "team", "bbbb2222", "{\"code\":\"SECRET\"}");
+        assert!(!d.join("team.txt").exists(), "팀 답은 공용 칸에 안 쓴다");
+        assert_eq!(std::fs::metadata(d.join("answers/team-bbbb2222.txt")).unwrap().permissions().mode() & 0o777, 0o600);
+        write_private_in(&d, "team", "../x", "y");
+        assert!(!d.join("x.txt").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+    #[test]
+    fn 폰_연결_부탁은_pair_만_받고_id_는_안전한_글자만() {
+        assert_eq!(phone_request(r#"{"action":"phone","arg":{"verb":"pair"},"id":"a1b2-c3"}"#), Some("a1b2-c3".into()));
+        assert_eq!(phone_request(r#"{"action":"phone","arg":{"verb":"clear"},"id":"a1"}"#), None, "pair 말고는 안 받는다");
+        assert_eq!(phone_request(r#"{"action":"phone","arg":{"verb":"pair"},"id":"../x"}"#), None);
+        assert_eq!(phone_request(r#"{"action":"phone","arg":{"verb":"pair"}}"#), None);
+        assert_eq!(phone_request(r#"{"action":"push","arg":{"verb":"pair"},"id":"a"}"#), None);
+    }
+
+    #[test]
+    fn 팀·다른_기기_부탁은_본문·코드_없이_기록한다() {
+        let join = r#"{"ts":"t","action":"team","arg":{"verb":"join","code":"SECRETCODE","me":"지수"},"id":"ab12"}"#;
+        assert_eq!(log_line(join), r#"{"action":"team","verb":"join","id":"ab12"}"#);
+        let say = r#"{"action":"team","arg":{"verb":"say","text":"비밀 회의 내용"},"id":"c"}"#;
+        assert!(!log_line(say).contains("비밀"));
+        assert!(!log_line(r#"{"action":"peer","arg":{"verb":"pair","code":"0123abcd"},"id":"d"}"#).contains("0123abcd"));
+        assert_eq!(log_line(r#"{"action":"voice","arg":"on"}"#), r#"{"action":"voice","arg":"on"}"#);
+    }
     #[test]
     fn 답은_부탁마다_따로인_자리에도_남는다() {
         // 한 칸(peer.txt)만 쓰면 겹친 두 부탁 중 앞 답이 덮여 앞 스크립트가 '앱이 답하지 않았어'로 끝났다(2026-10-21 리뷰)

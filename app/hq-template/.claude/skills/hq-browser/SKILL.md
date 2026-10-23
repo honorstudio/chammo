@@ -17,6 +17,7 @@ description: 브라우저 일(사이트 열기·눌러 보기·로그인 유지)
   그 프로젝트 대시보드의 **브라우저 연결** 버튼으로도 붙일 수 있고, 붙지 않은 세션에 브라우저 일을 보내면 `scripts/task send` 가
   알려 주고 결정 대기함에 카드를 올린다. 다른 브라우저(예: 저장소가 쓰던 헤드리스 브라우저)에서 한 로그인은 이어지지 않는다 —
   세션은 사용자가 그 프로젝트 `CLAUDE.local.md` 에 적어 둔 계정으로 묻지 않고 다시 로그인한다 — 계정을 못 찾거나 2단계 코드·패스키·캡차일 때만 `browser_ask_human` 이 사람에게 묻는다.
+  비밀번호는 MCP 도구 인자로 넘기지 말고 작은 로컬 스크립트가 그 파일에서 읽어 CDP 로 입력칸에 넣게 시킨다(아래 '크롬을 다루는 스크립트'). 사용자에게 비밀번호를 치게 하지 않는다 — 넘기는 건 2단계(앱 승인·문자 코드)와 계정을 못 찾을 때뿐, `browser_ask_human` 이 시간 초과면 턴을 끝내지 말고 다시 부르게 한다.
   데이터 폴더는 `D="${CHAMMO_HOME:-$HOME/.chammo}"`, 그 node 는 `N="$D/tools/bin/node"; [ -x "$N" ] || N=node`.
   안 깔려 있거나 세션이 브라우저가 없다고 하면 사용자에게 설정 → 기능 → 브라우저 자동화의 **설치**를 눌러 달라고 한다(없는 것만
   받는다 — Node·크롬 베타·부품, 관리자 암호 없음). `npx playwright install`·`browser_install` 도구는 직접 쓰지 않는다.
@@ -32,6 +33,7 @@ description: 브라우저 일(사이트 열기·눌러 보기·로그인 유지)
   도구 이름·프로필·스크립트 쓰는 법, 안 붙은 세션엔 '필요해지면 멈추고 알려') — 그대로 붙인다. 세션이 "브라우저 연결 필요"라고 하면 위 연결부터.
   지시를 파일(`지시.md`)로 넘기면 `send` 가 그 본문도 보고 브라우저 일이면 알린다. 안 붙은 프로젝트를 한 번에 보려면 `scripts/app browser missing`.
   세션이 앱 밖 크롬을 띄우면 앱이 맡긴 참모 입력칸에 `[앱] … 앱 밖 크롬` 한 줄을 넣는다 — 그 세션을 이 스킬대로 돌려놓는다.
+  그 크롬 프로필이 다른 데이터 폴더(시험 폴더) 밑이면 세션 잘못이 아니라 claude 데몬이 시험 환경으로 뜬 것이다(세션은 데몬 env 를 물려받는다) — `[앱] claude 데몬 … 다른 데이터 폴더` 줄이 함께 온다. 그 시험이 끝났으면 `claude daemon stop --any --keep-workers`(도는 세션은 남는다) 뒤 그 세션을 `claude respawn`.
 
 # English
 
@@ -46,7 +48,11 @@ description: 브라우저 일(사이트 열기·눌러 보기·로그인 유지)
   session to set up its own browser (it rightly refuses to change its MCP setup on someone else's behalf). The user can also
   press **Connect browser** on that project's dashboard, and `scripts/task send` warns you (and puts a card in the
   decision inbox) when you hand browser work to a session without it. Logins made in another browser — e.g. a headless
-  one the repo ships — don't carry over: the user signs in once more in this project's window (`browser_ask_human` asks).
+  one the repo ships — don't carry over: the session signs in again with the account the user saved in that project's
+  `CLAUDE.local.md`, without asking — the password goes in through a small local script that reads that file and types it
+  over CDP (see "A script that drives Chrome"), never as an MCP tool argument, and the user is never asked to type it. Only
+  2FA (app approval, SMS code, passkey, captcha) or a missing account goes to the person via `browser_ask_human`; if that
+  times out, the session calls it again instead of ending its turn.
   The data folder is `D="${CHAMMO_HOME:-$HOME/.chammo}"` and its node `N="$D/tools/bin/node"; [ -x "$N" ] || N=node`.
   Not installed, or a session says the browser is missing? Ask the user to press
   **Install** in Settings → Features → Browser automation (it fetches only what is missing: Node, Chrome Beta, parts — no
@@ -67,3 +73,4 @@ description: 브라우저 일(사이트 열기·눌러 보기·로그인 유지)
   When a session says "browser connection needed", connect it as above. If you hand the work over as a file (`plan.md`), `send` reads it too.
   All projects without one at once: `scripts/app browser missing`. If a session starts Chrome outside the app, the app puts an
   `[app] … outside the app` line in your input — bring that session back to the rules above.
+  If that Chrome's profile sits under another data folder (a test one), it's not the session's fault: the claude daemon was started with a test env (sessions inherit the daemon's env), and an `[app] The claude daemon … different data folder` line comes too. Once that test is done, `claude daemon stop --any --keep-workers` (running sessions stay), then `claude respawn` that session.

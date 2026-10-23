@@ -154,7 +154,7 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
       <BottomSheet label={`${title} 바꾸기`} title={`${title} 바꾸기`} onClose={onClose}
         actions={<IconBtn label={`새 ${title}`} onClick={() => setNaming(true)} disabled={naming}><IconPlus /></IconBtn>}>
       {/* 다른 기기(peer-panel) — 짝지은 기기가 있을 때만 맨 위 알약 줄 */}
-      {far && <FarPills devices={far.devices} cur={null} onPick={(d) => { if (d) far.onPick(d); }} />}
+      {far && <FarPills devices={far.devices} cur={null} self={env.deviceName} onPick={(d) => { if (d) far.onPick(d); }} />}
       {removing && (
         <div className="m-sleep-card" role="alertdialog" aria-label="제거 확인">
           <div>{josa(removing.name, '을', '를')} 목록에서 제거할까요? 대화 기록 파일은 {machine()}에 남지만, 여기서 다시 깨울 수는 없어요.</div>
@@ -201,6 +201,7 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
           <div className="m-sect">{title}</div>
         </>
       )}
+      {!waiting.length && far && <div className="m-sect">{title}</div>}
       {sorted.map((s) => {
         const pinned = !!s.sessionId && pins.includes(s.sessionId);
         const asking = waiting.some((w) => w.orch === s.id);

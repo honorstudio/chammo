@@ -150,6 +150,24 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
     const said = nl < 0 ? '' : raw.slice(nl + 1).trim();
     return nl >= 0 && raw.slice(0, nl).trim() === token && said ? said.slice(0, 500) : undefined;
   };
+  // 시간 초과로 남은 부름의 표 — 세션이 기다리지 않는 동안 사람이 '다 했어'를 누르면 앱이 세션을 깨우고(입력칸 [앱] 줄),
+  // 래퍼는 다음 부름·다음 도구 호출에서 그 .done 을 보고 카드를 치운다(2026-10-23 acme-shop — 시간 초과에 카드가 사라져 사람 일을 놓쳤다)
+  const tokenOf = () => (s.ask ? `${pid}:${s.ask.at}` : '');
+  /** .done 이 지금 부름 표와 같으면 지우고 true. 다른 표(지난 부름)도 지운다 */
+  const takeDone = () => {
+    let mark;
+    try { mark = fs.readFileSync(doneFile, 'utf8').trim(); } catch { return false; }
+    try { fs.rmSync(doneFile, { force: true }); } catch { /* 없음 */ }
+    return !!s.ask && mark === tokenOf();
+  };
+  /** 걸린 부름이 끝났다 — 카드를 치우고 사람이 적은 한마디를 돌려준다 */
+  const finish = (token) => {
+    s.ask = null;
+    flush();
+    const said = readSay(token);
+    if (said) return { ok: true, said, text: `사람이 이렇게 말하고 넘겼어: "${said}" — browser_snapshot 으로 지금 화면을 확인하고 그 말대로 이어서 해` };
+    return { ok: true, text: '사람이 다 했다고 했어 — browser_snapshot 으로 지금 화면을 확인하고 이어서 해' };
+  };
   // 사람이 앱 모달에서 연 파일 창 수 — 앱(agent_browser.rs)이 늘려 적는다. 플레이라이트도 같은 창을 '[File chooser]' 상태로 쌓아
   // 세션의 브라우저 도구가 'does not handle the modal state' 로 막혔다(QA N3) — 그만큼 다음 호출 앞에서 치운다
   const choosersFile = path.join(path.dirname(file), `${profile}.choosers`);
@@ -193,6 +211,11 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
     },
     onCall(name, args) {
       if (name !== 'browser_close') up = true;
+      // 시간 초과로 남은 부름을 사람이 끝냈다(앱이 세션을 깨웠다) — 카드를 치운다. 한마디는 앱이 깨우는 줄에 실었다
+      if (s.ask && !s.ask.waiting && fs.existsSync(doneFile)) {
+        const token = tokenOf();
+        if (takeDone()) { s.ask = null; readSay(token); }
+      }
       s.tool = toolLine(name, args);
       s.toolAt = now();
       s.busy = true;
@@ -227,10 +250,15 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
         return { ok: false, text: '브라우저가 꺼져 있어 — browser_navigate 로 그 페이지를 다시 열고 불러' };
       }
       if (first === 0) return { ok: false, text: NO_TAB };
-      try { fs.rmSync(doneFile, { force: true }); } catch { /* 없음 */ }
-      try { fs.rmSync(sayFile, { force: true }); } catch { /* 없음 */ }
-      s.ask = { reason: cut(String(reason || '사람이 해야 할 일').replace(/\s+/g, ' ').trim()).slice(0, 200), at: now() };
-      const token = `${pid}:${s.ask.at}`;
+      // 시간 초과로 남은 부름이 있으면 그 카드(at)를 이어 쓴다 — 새 알림이 안 쌓이고, 그새 사람이 끝냈으면 바로 돌아온다
+      const prev = s.ask && !s.ask.waiting ? s.ask.at : 0;
+      if (prev && takeDone()) return finish(tokenOf());
+      if (!prev) {
+        try { fs.rmSync(doneFile, { force: true }); } catch { /* 없음 */ }
+        try { fs.rmSync(sayFile, { force: true }); } catch { /* 없음 */ }
+      }
+      s.ask = { reason: cut(String(reason || '사람이 해야 할 일').replace(/\s+/g, ' ').trim()).slice(0, 200), at: prev || now(), waiting: true };
+      const token = tokenOf();
       flush();
       const until = Date.now() + timeoutMs;
       let probeAt = Date.now() + probeMs;
@@ -241,11 +269,7 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
           try { mark = fs.readFileSync(doneFile, 'utf8').trim(); } catch { /* 없음 */ }
           try { fs.rmSync(doneFile, { force: true }); } catch { /* 없음 */ }
           if (mark !== token) continue;
-          s.ask = null;
-          flush();
-          const said = readSay(token);
-          if (said) return { ok: true, said, text: `사람이 이렇게 말하고 넘겼어: "${said}" — browser_snapshot 으로 지금 화면을 확인하고 그 말대로 이어서 해` };
-          return { ok: true, text: '사람이 다 했다고 했어 — browser_snapshot 으로 지금 화면을 확인하고 이어서 해' };
+          return finish(token);
         }
         // 기다리는 동안 크롬이 닫히거나(browser_close) 죽으면 그만 — 앱은 죽은 브라우저를 못 보여 준다
         if (!up) return { ok: false, text: '기다리는 동안 브라우저가 닫혔어 — browser_navigate 로 다시 열고 불러' };
@@ -263,9 +287,16 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
           }
         }
       }
-      s.ask = null;
+      // 카드는 남긴다 — 사람이 끝내거나 브라우저가 닫힐 때까지. 기다리지 않는 중으로 적고 나서 .done 을 한 번 더 본다
+      // (앱은 .done 을 쓴 뒤 waiting 을 읽어 깨울지 정한다 — 이 순서면 둘 사이 틈에 '다 했어'가 사라지지 않는다)
+      s.ask = { ...s.ask, waiting: false };
       flush();
-      return { ok: false, timeout: true, text: '아직 사람이 안 끝냈어 — 기다리려면 browser_ask_human 을 다시 불러' };
+      if (takeDone()) return finish(token);
+      return { ok: false, timeout: true, text: '아직 사람이 안 끝냈어 — 턴을 끝내지 말고 browser_ask_human 을 다시 불러 기다려(카드는 그대로 떠 있다)' };
+    },
+    /** 시간 초과로 끝났지만 카드는 남은 부름이 있나 — 유휴 닫기를 미룬다(사람이 아직 그 브라우저로 일할 수 있다) */
+    pendingAsk() {
+      return !!s.ask;
     },
     /** 세션 도구가 사람 개입이 끝나길 기다리기 시작·끝 */
     held(on) {

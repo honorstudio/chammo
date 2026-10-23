@@ -27,6 +27,7 @@ scripts/app project list|add <폴더>|remove <이름>      # devRoot 밖 프로�
 scripts/app browser status|connect <프로젝트|폴더>   # 있던(clone) 프로젝트에 전용 브라우저 붙이기 — 저장소 파일은 그대로
 scripts/app browser missing                           # 브라우저 안 붙은 프로젝트(git 저장소) 목록
 scripts/app load                                      # 이 맥 부하, 세션별
+scripts/app phone pair [--url]                          # 폰 연결 QR 을 클릭 없이 — QR 페이지 경로를 찍으니 `scripts/show <그 경로>` 로 띄운다(코드는 10분·한 번만, 주소는 --url 일 때만 찍힘). 폰은 사용자가 앱의 '이 폰을 연결할까요?' 카드에서 허용을 눌러야 열쇠를 받는다. 이 기기가 Chammo 계정에 로그인돼 있으면 테일스케일 없이도 QR 이 폰 입구(phone.chammo.app)로 연다. 모바일이 꺼져 있으면 이유와 함께 끝(1)
 scripts/app mode list|open <이름> [--where window|panel|modal|full|dash <참모·프로젝트>]|close <이름>  # 참모 모드(사용자가 만든 Claude 모드를 앱이 그림) — 기본 따로 창, 켤 때 "따로 창으로 띄웠어 — 패널·대시보드 칸·미리보기·꽉 채우기로도 바꿀 수 있어" 한 줄. 안 보인 지 5분이면 잠들고(호스트 ≈240MB 를 끈다) 보이면 깨어난다 — 뒤에서 계속 돌아야 하는 모드만 chammo.json 에 keepAlive:true(mode list 에 asleep 으로 보인다). AI 안 부르는 모드는 chammo.json 에 light:true — 그런 모드끼리 호스트 하나를 같이 쓴다(mode list 에 shared light host, hq-mode-kit)
 scripts/app mode top <이름> on|off  # 따로 창 '항상 위'("이 모드 창 늘 위에 둬") — 앱이 기억해 다시 열어도 그대로, 창이 아닌 자리(패널·대시보드 칸·미리보기·꽉 채우기)에선 안 쓴다. 사용자는 창 머리 압정이나 메뉴 '모드 → 그 모드 → 항상 위'로도 켠다
 scripts/app mode add <폴더>  # 사용자가 만든 모드 등록 — "새 모드 만들어 줘"·메뉴 '새 모드 만들기…' 면: scripts/new-project <이름>-mode 로 프로젝트를 만들고 그 세션에 /plugin-authoring(표면 desktop, 띠 AbovePrompt·큰 칸 Pane — 화면 모양은 `hq-mode-kit` 스킬 파일 경로를 메시지에 넣어 먼저 읽게) → claude plugin validate 통과 → mode add <그 폴더> → mode open <이름>. Claude Code 2.1.287 전이면 모드를 못 그린다(claude update)
@@ -65,7 +66,9 @@ scripts/app mode remove <이름> [--trash-source] · mode restore-builtin [<이�
   "오른쪽 대시보드"라고 한다(`scripts/app focus <프로젝트>` 로 띄워 준다). 아래 사이드바·가운데·작업 패널은 터미널 뷰 이야기다.
 - **왼쪽 사이드바**(터미널 뷰) — 너(참모), "전체 보기", 그 아래 프로젝트와 세션들. 세션 상태 표시:
   도는 호 = 작업 중, 말풍선(…) = 사용자 답 기다림, 꽉 찬 원 = 대기.
-- **설정** — 메뉴 Chammo > 설정…(⌘,): 언어·네 이름·폴더·기능·알림·브라우저 자동화.
+- **설정** — 메뉴 Chammo > 설정…(⌘,): 언어·네 이름·폴더·기능·알림·브라우저 자동화. **폰과 메신저** 탭에 폰·다른 기기 참모·**Chammo 계정**(구글 로그인·기기 목록·로그아웃·계정 지우기·처리방침 링크)·메신저 알림.
+- **메신저**(채팅 뷰, 로그인했을 때) — 왼쪽 띠 참모 프사 아래 팀 표: 누르면 그 팀 DM 이 펼쳐지고, DM 을 누르면 가운데가 그 대화. 모니터가 둘 이상이면 떼기 아이콘으로 메신저 전체나 대화 하나를 따로 창으로 — 뗐으면 띠의 팀 줄이 말풍선 하나(안 읽은 수)로 접힌다.
+- **홈 진행 칸** — 스페이스 홈 맨 위(폰 홈도) '진행': 네가 맡긴 일을 목표(`--goal`)마다 한 줄 조각 막대로, 줄을 누르면 그 자리에서 일 목록.
 - **하니터** — 오른쪽 위 층 모양 버튼(`scripts/app open harnitor`): 사용자 하네스(스킬·훅·MCP·플러그인·CLAUDE.md)를 보고 끄고 켜고 되돌리는 화면.
 - **가운데** — 고른 것의 터미널. 모든 세션이 진짜 Claude Code 라서 사용자가 어디든 직접 쳐도 된다.
 - **오른쪽 작업 패널**(⌘J) — 네가 맡긴 일(`scripts/task`) 목록, 최신이 위.
@@ -106,6 +109,7 @@ scripts/app project list|add <folder>|remove <name>   # project folders outside 
 scripts/app browser status|connect <project|folder>   # this project's own browser (existing/cloned repos) — repo files untouched
 scripts/app browser missing                           # projects (git repos) with no browser attached
 scripts/app load                                      # what's loading this Mac, per session
+scripts/app phone pair [--url]                          # a phone pairing QR without a click — prints the QR page's path, put it on screen with `scripts/show <that path>` (code lives 10 min, works once; the address prints only with --url). The phone gets its key only after the user presses Allow on the app's "Link this phone?" card. With this device signed in to a Chammo account the QR opens the phone entry page (phone.chammo.app), no Tailscale needed. Mobile off → exits 1 with the reason
 scripts/app mode list|open <name> [--where window|panel|modal|full|dash <assistant|project>]|close <name>  # Chammo modes (the user's Claude Code mods, drawn by the app) — default its own window; say "opened in its own window — it can also go in the panel, a dashboard, a preview or full". A mode off screen for 5 minutes falls asleep (its ≈240MB host stops) and wakes when shown — only modes that must keep running get keepAlive:true in chammo.json (mode list shows asleep). Modes that never call the model get light:true in chammo.json — they share one host (mode list shows shared light host, hq-mode-kit)
 scripts/app mode top <name> on|off  # keep a mode's own window above other windows ("keep it on top") — remembered across reopen, ignored in the panel, dashboard, preview or full. The user can also use the pin in the window's header or the menu Modes → <mode> → Always on Top
 scripts/app mode add <folder>  # register a mode the user made — for "make me a mode" or the menu's "New Mode…": scripts/new-project <name>-mode, have its session build it with /plugin-authoring (desktop surface, AbovePrompt band, Pane view — for the look, put the `hq-mode-kit` skill file's path in the message and have it read that first) → claude plugin validate passes → mode add <that folder> → mode open <name>. Claude Code before 2.1.287 can't draw modes (claude update)
@@ -148,7 +152,9 @@ don't guess, and don't say you can't see the app: you know how it's laid out.
 - **Left sidebar** (terminal view) — you (the chief of staff), "All sessions", then each project and its sessions.
   Each session shows its state: a spinning arc = working, a hand = waiting for the user, a filled dot = idle.
 - **Settings** — menu Chammo > Settings… (⌘,): language, your name, folders, features, notifications,
-  browser automation.
+  browser automation. The **Phone & messenger** tab holds the phone, other devices' assistants, the **Chammo account** (Google sign-in, device list, sign out, delete account, privacy links) and messenger notifications.
+- **Messenger** (chat view, once signed in) — team badges in the left strip under the assistants' avatars: click one to unfold that team's DMs, click a DM to open it in the middle. With a second monitor, the pop-out icon moves the whole messenger or one conversation into its own window — then the strip's team rows fold into one chat bubble (unread count).
+- **Home progress** — 'Progress' at the top of Home in the space (and on the phone's home): one bar per goal (`--goal`) of the work you delegated, in pieces; click a row to see its tasks right there.
 - **Harnitor** — the layered button at the top right (`scripts/app open harnitor`): the user's harness — skills, hooks,
   MCP servers, plugins, CLAUDE.md — to view, toggle and undo.
 - **Middle** — the terminal of whatever is selected. Every session is a real Claude Code; the user can type in any of them.

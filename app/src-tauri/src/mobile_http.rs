@@ -62,6 +62,25 @@ pub trait Backend: Send + Sync {
     fn peer_human_say(&self, _dev: &str, _to: &str, _text: &str) -> Result<serde_json::Value, String> {
         Err("not supported".into())
     }
+    /// 팀 메신저(시안 v2 폰 C) — 팀 상태 + 받은 말(데스크톱 team_feed 와 같은 덩어리)
+    fn team_feed(&self) -> serde_json::Value {
+        serde_json::json!({ "view": null, "items": [] })
+    }
+    /// 폰에서 사람이 친 팀 말 — 사람 말(human)로. 데스크톱 team_human_say 와 같은 사람 표(HumanProof::phone)
+    fn team_say(&self, _to: &str, _text: &str, _cid: &str) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 폰 '내 참모에게 넘기기' — 데스크톱과 같은 team_ui::handoff_send(거른 글, 본문 없는 기록 길)
+    fn team_handoff(&self, _to: &str, _text: &str) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 폰 팀 시트 — 초대 링크 만들기·팀 만들기
+    fn team_invite(&self) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    fn team_create(&self, _team: &str) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
     /// 원격(짝지은 기기의 사람)이 누른 카드 답 — by = "remote:<기기>"
     fn direct_answer_by(&self, _id: &str, _pick: &crate::direct::Pick, _by: &str) -> Result<(), String> {
         Err("not supported".into())
@@ -246,7 +265,12 @@ pub struct Gate {
     pub tickets: std::sync::Mutex<std::collections::HashMap<String, (String, std::time::Instant)>>,
     /// 내 테일스케일 계정 — tailscale serve(https)가 붙이는 Tailscale-User-Login 이 다르면 거절. 모르면 None(안 본다)
     pub owner: Option<String>,
+    /// 폰 팀 말(/api/team-say) 보낸 때 — 1분에 TEAM_SAY_PER_MIN 번까지
+    pub team_says: std::sync::Mutex<Vec<std::time::Instant>>,
 }
+
+/// 폰 팀 말 분당 상한 — 다시 보내기 연타·잘못 도는 화면이 팀 방을 덮지 않게
+pub const TEAM_SAY_PER_MIN: usize = 20;
 
 /// 폰 화면(껍데기·api 응답) 공통 CSP — media-src 의 blob: 은 폰이 맥에서 받은 음성 소리를 틀 때만(data/phoneVoice). 그 밖의 곳으로는 안 열린다
 pub const PHONE_CSP: &str = "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
@@ -580,6 +604,14 @@ fn peer_reply(req: &Req, gate: &Gate, be: &dyn Backend, dev: &str) -> Resp {
     }
 }
 
+/// CORS 를 열어 줄 출처 — 요청 Origin 이 허용 목록에 있고 https 이며 이 서버 이름(Host)과 다른 곳(=중계 길 폰의 입구 주소)일 때만.
+/// 같은 출처 요청엔 머리를 안 단다(전처럼)
+pub fn cors_origin(req: &Req, gate: &Gate) -> Option<String> {
+    let o = req.header("origin")?;
+    let host = req.header("host").unwrap_or("");
+    (o.starts_with("https://") && gate.origins.iter().any(|a| a == o) && o.strip_prefix("https://") != Some(host)).then(|| o.to_string())
+}
+
 /// 쓰기 요청 — 출처가 같은 주소 목록이어야(없으면 거절), JSON 이어야(남의 페이지 form 은 JSON 을 못 보낸다)
 fn same_origin_write(req: &Req, gate: &Gate) -> bool {
     let origin_ok = req.header("origin").is_some_and(|o| gate.origins.iter().any(|a| a == o));
@@ -718,6 +750,66 @@ fn phone_peer_get(req: &Req, be: &dyn Backend) -> Resp {
                 Resp::new(out.status, ct, t)
             }
         },
+        Err(e) => Resp::text(502, &e),
+    }
+}
+
+/// 폰 팀 메신저 쓰기 — 말 보내기(사람 말, cid 는 이 기기가 붙인다)·초대 링크·팀 만들기. 몸통에 모르는 칸이 있으면 400
+fn phone_team(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct B {
+        #[serde(default)]
+        to: String,
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        team: String,
+        /// 폰이 붙인 말 id — 다시 보내면 같은 id(서버가 같은 cid 는 한 번만 저장한다). 없으면 이 기기가 만든다
+        #[serde(default)]
+        cid: String,
+    }
+    let b: B = match body(req) { Ok(b) => b, Err(r) => return r };
+    let r = match req.path.as_str() {
+        "/api/team-say" => {
+            if b.to.trim().is_empty() || b.to.chars().count() > 120 || b.text.trim().is_empty() || b.text.chars().count() > 4000 {
+                return Resp::text(400, "bad body");
+            }
+            if !b.cid.is_empty() && (b.cid.len() > 60 || !b.cid.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')) {
+                return Resp::text(400, "bad cid");
+            }
+            {
+                let now = std::time::Instant::now();
+                let mut t = gate.team_says.lock().unwrap_or_else(|e| e.into_inner());
+                t.retain(|x| now.duration_since(*x) < std::time::Duration::from_secs(60));
+                if t.len() >= TEAM_SAY_PER_MIN {
+                    return Resp::text(429, "too many — wait a minute");
+                }
+                t.push(now);
+            }
+            let cid = if b.cid.is_empty() {
+                static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+                format!("p-{ms:x}-{}", N.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+            } else {
+                format!("p-{}", b.cid)
+            };
+            be.team_say(b.to.trim(), &b.text, &cid)
+        }
+        "/api/team-handoff" => {
+            if b.to.trim().is_empty() || b.to.chars().count() > 120 || b.text.trim().is_empty() || b.text.chars().count() > 8000 {
+                return Resp::text(400, "bad body");
+            }
+            be.team_handoff(b.to.trim(), &b.text)
+        }
+        "/api/team-invite" => be.team_invite(),
+        _ => match crate::team_ui::name_ok(&b.team) {
+            Some(t) => be.team_create(&t),
+            None => return Resp::text(400, "bad team name"),
+        },
+    };
+    match r {
+        Ok(v) => Resp::json(&v),
         Err(e) => Resp::text(502, &e),
     }
 }
@@ -1121,8 +1213,8 @@ struct ModeNameBody {
 }
 
 /// 폰 홈·보관함 v1 에 더한 쓰기 길 — 같은 출처 문지기·head_check 몸통 목록·405 가 이 목록 하나를 본다
-const PHONE_POSTS: &[&str] = &["/api/peer-human-say", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
-const PHONE_GETS: &[&str] = &["/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices"];
+const PHONE_POSTS: &[&str] = &["/api/peer-human-say", "/api/team-say", "/api/team-invite", "/api/team-create", "/api/team-handoff", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
+const PHONE_GETS: &[&str] = &["/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team"];
 /// 폰 md 글 칸 저장만 몸통을 크게(글 512KB + JSON)
 const MAX_WRITE_BODY: usize = crate::locker_fs::MAX_PHONE_MD + 64 * 1024;
 
@@ -1581,6 +1673,17 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     if req.header("tailscale-funnel-request").is_some() {
         return Resp::text(403, "funnel");
     }
+    // 미리 묻기(CORS) — 허용 출처(중계 길 폰의 입구 주소)가 /api 를 직접 부를 때만. 그 밖엔 CORS 를 안 연다
+    if req.method == "OPTIONS" {
+        return match cors_origin(req, gate) {
+            Some(o) if req.path.starts_with("/api/") => Resp {
+                status: 204,
+                headers: vec![("Access-Control-Allow-Origin", o), ("Access-Control-Allow-Methods", "GET, POST".into()), ("Access-Control-Allow-Headers", "authorization, content-type, range".into()), ("Access-Control-Max-Age", "600".into()), ("Vary", "Origin".into())],
+                body: Vec::new(),
+            },
+            _ => Resp::text(405, "method not allowed"),
+        };
+    }
     let is_get = req.method == "GET" || req.method == "HEAD";
     if is_get && !req.path.starts_with("/api/") {
         // 화면 껍데기(html·js·css)는 열쇠 없이 — 비밀이 없다. 짝짓기 주소(?pair=)도 껍데기만 주고, 코드는 페이지가 POST /api/pair 로 낸다. 데이터는 전부 /api 뒤
@@ -1617,6 +1720,10 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             (true, None) => "참모".into(),
             (false, _) => crate::mobile_pair::device_name(req.header("user-agent").unwrap_or("")),
         };
+        // 참모가 만든 코드(scripts/app phone pair) — 사람이 데스크톱 카드에서 허용할 때까지 열쇠를 안 준다(보안 검토 10-23)
+        if gate.devices.held(&b.code, std::time::SystemTime::now()) {
+            return Resp::text(403, "컴퓨터 Chammo 에 뜬 '이 폰을 연결할까요?' 카드에서 허용을 누른 뒤 이 화면을 새로 고쳐 주세요");
+        }
         let p = crate::mobile_pair::Pairing { name: &name, home: b.home && !b.peer, prev: b.prev.as_deref(), peer: b.peer };
         return match gate.devices.pair_with(&b.code, &p, std::time::SystemTime::now()) {
             Some(token) => Resp::json(&serde_json::json!({ "token": token })),
@@ -2327,6 +2434,8 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         ("GET", "/api/peer-get") => phone_peer_get(req, be),
         ("GET", "/api/peer-devices") => Resp::json(&be.peer_devices()),
         ("POST", "/api/peer-human-say") => phone_peer_say(req, be),
+        ("GET", "/api/team") => Resp::json(&be.team_feed()),
+        ("POST", "/api/team-say" | "/api/team-invite" | "/api/team-create" | "/api/team-handoff") => phone_team(req, gate, be),
         // 짝지은 다른 기기의 카드(ADR 0011) — 폰이 이 기기를 거쳐 보고 누른다. peer 열쇠는 이 길이 허용 목록 밖이라 못 온다(403)
         ("GET", "/api/peer-cards") => Resp::json(&be.peer_cards()),
         ("POST", "/api/peer-card-answer") => {
@@ -2648,7 +2757,21 @@ impl TimedWrite for Vec<u8> {
     fn set_wtimeout(&mut self, _: Duration) {}
 }
 
-/// 응답 쓰기 — 모든 응답에 캐시 금지·끼워 넣기 금지·리퍼러 금지. CORS 헤더는 어떤 경우에도 내지 않는다
+/// 모든 응답에 붙는 공통 머리 — 캐시 금지·형식 추측 금지·리퍼러 금지·끼워 넣기 금지·CSP. 중계 터널 응답(phone_relay)도 같은 것을 단다.
+/// 자기 CSP·틀 규칙을 단 응답(html 시안 표 주소)엔 공통 것을 겹쳐 달지 않는다 — CSP 가 둘이면 둘 다 걸려 시안 스크립트가 막힌다
+pub fn std_headers(r: &Resp) -> Vec<(&'static str, String)> {
+    let own = |k: &str| r.headers.iter().any(|(n, _)| n.eq_ignore_ascii_case(k));
+    let mut v = vec![("Cache-Control", "no-store".to_string()), ("X-Content-Type-Options", "nosniff".into()), ("Referrer-Policy", "no-referrer".into())];
+    if !own("X-Frame-Options") {
+        v.push(("X-Frame-Options", "DENY".into()));
+    }
+    if !own("Content-Security-Policy") {
+        v.push(("Content-Security-Policy", PHONE_CSP.into()));
+    }
+    v
+}
+
+/// 응답 쓰기 — 모든 응답에 캐시 금지·끼워 넣기 금지·리퍼러 금지. CORS 머리는 중계 길 폰의 입구 주소에만(serve_conn 이 cors_origin 으로 붙인다)
 pub fn write_resp(s: &mut impl TimedWrite, r: &Resp, head_only: bool, deadline: std::time::Instant) -> std::io::Result<()> {
     write_resp_paced(s, r, head_only, deadline, Duration::MAX)
 }
@@ -2661,14 +2784,8 @@ pub fn write_resp_paced(s: &mut impl TimedWrite, r: &Resp, head_only: bool, dead
         out.push_str(&format!("{k}: {v}\r\n"));
     }
     out.push_str(&format!("Content-Length: {}\r\n", r.body.len()));
-    // 자기 CSP·틀 규칙을 단 응답(html 시안 표 주소)엔 공통 것을 겹쳐 달지 않는다 — CSP 가 둘이면 둘 다 걸려 시안 스크립트가 막힌다
-    let own = |k: &str| r.headers.iter().any(|(n, _)| n.eq_ignore_ascii_case(k));
-    out.push_str("Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n");
-    if !own("X-Frame-Options") {
-        out.push_str("X-Frame-Options: DENY\r\n");
-    }
-    if !own("Content-Security-Policy") {
-        out.push_str(&format!("Content-Security-Policy: {PHONE_CSP}\r\n"));
+    for (k, v) in std_headers(r) {
+        out.push_str(&format!("{k}: {v}\r\n"));
     }
     out.push_str("Connection: close\r\n\r\n");
     let head = out.into_bytes();
@@ -2708,6 +2825,7 @@ pub fn serve_conn_guarded<G: Send + 'static>(mut s: TcpStream, gate: std::sync::
     let (resp, head) = match read_req_checked(&mut s, deadline, |req| head_check(req, &gate)) {
         Ok(req) => {
             let head = req.method == "HEAD";
+            let cors = cors_origin(&req, &gate);
             // 맥 쪽 일(claude agents·예약 스크립트 등)은 따로 돌리고 시간 안에 안 끝나면 504 — 패닉도 500 으로
             let (tx, rx) = std::sync::mpsc::channel();
             let (g, b, held) = (gate.clone(), be.clone(), guard.take());
@@ -2716,7 +2834,12 @@ pub fn serve_conn_guarded<G: Send + 'static>(mut s: TcpStream, gate: std::sync::
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle(&req, &g, &*b))).unwrap_or_else(|_| Resp::text(500, "internal error"));
                 let _ = tx.send(r);
             });
-            (rx.recv_timeout(limit * 2).unwrap_or_else(|_| Resp::text(504, "mac side took too long")), head)
+            let mut r = rx.recv_timeout(limit * 2).unwrap_or_else(|_| Resp::text(504, "mac side took too long"));
+            if let Some(o) = cors.filter(|_| !r.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("Access-Control-Allow-Origin"))) {
+                r.headers.push(("Access-Control-Allow-Origin", o));
+                r.headers.push(("Vary", "Origin".into()));
+            }
+            (r, head)
         }
         Err(r) => (r, false),
     };
@@ -2731,4 +2854,4 @@ fn open_mac_kind(path: &str) -> bool {
 
 #[cfg(test)]
 #[path = "mobile_http_tests.rs"]
-mod tests;
+pub(crate) mod tests;

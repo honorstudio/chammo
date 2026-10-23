@@ -37,7 +37,7 @@ const centers = (nav: HTMLElement | null) => new Map([...(nav?.querySelectorAll<
 }));
 const still = () => !motionOn(); // 애니메이션 줄이기·끄기·OS 동작 줄이기(ui/calm)
 
-export function OrchRail({ top, avatars, onPick, onMenu, onRename, onMove, onNew, onExpand, expandLabel, fns, group, resting = [], sched, wide = false, groupNames, width = 240, onWidth, joined = false }: {
+export function OrchRail({ top, avatars, onPick, onMenu, onRename, onMove, onNew, onExpand, expandLabel, fns, group, resting = [], sched, wide = false, groupNames, width = 240, onWidth, joined = false, extra, extraOn }: {
   avatars: RailAvatar[];
   onPick: (id: string) => void;
   onMenu?: (e: React.MouseEvent, id: string) => void;
@@ -68,6 +68,10 @@ export function OrchRail({ top, avatars, onPick, onMenu, onRename, onMove, onNew
   top?: React.ReactNode;
   /** 채팅 칸이 바로 옆(띠 | 채팅 | 스페이스) — 고른 프사 줄이 채팅 바탕과 이어진 면(고른 탭이 아래 내용과 붙듯, 2026-10-12 사용자) */
   joined?: boolean;
+  /** 참모 아래 칸(메신저 팀 표·DM, ui/team/TeamRail) — 띠 바로 아래 형제로 그려 고른 자리 이음·호버 카드를 같이 쓴다 */
+  extra?: React.ReactNode;
+  /** extra 안에서 고른 칸(대화 열쇠) — 바뀌면 이음 면을 다시 잰다 */
+  extraOn?: string | null;
 }) {
   const speaking = useSpeaking();
   const grab = useRef<{ id: string; from: number; y: number; x: number; rects: { left: number; width: number }[]; lo: number; hi: number; on: boolean; to: number } | null>(null);
@@ -77,7 +81,8 @@ export function OrchRail({ top, avatars, onPick, onMenu, onRename, onMove, onNew
   // 끝내는 길은 finish 하나 — 놓기·웹뷰가 가져감(pointercancel)·Esc·창 포커스 잃음·버튼 안 눌린 움직임(교훈: pointerup 하나에 기대지 않기)
   const down = (id: string, i: number) => (e: React.PointerEvent<HTMLButtonElement>) => {
     if (e.button !== 0 || e.ctrlKey || avatars[i]!.phase) return; // 켜는 중·끄는 중 칸은 끌기·넣기 없음
-    const btns = [...(e.currentTarget.parentElement?.querySelectorAll<HTMLElement>(':scope > .lk-av') ?? [])];
+    // 참모 프사만 — 도우미 묶음·메신저 칸(.lk-av 를 같이 쓰는 형제)은 순서 바꾸기 자리에서 뺀다
+    const btns = [...(e.currentTarget.parentElement?.querySelectorAll<HTMLElement>(':scope > .lk-av:not(.grp):not(.tmx)') ?? [])];
     // 세로 띠 — 위·높이를 tabDrag 셈의 left·width 자리에 넣는다
     const rects = btns.map((b) => { const r = b.getBoundingClientRect(); return { left: r.top, width: r.height }; });
     const nPinned = avatars.filter((a) => a.pinned).length;
@@ -149,7 +154,7 @@ export function OrchRail({ top, avatars, onPick, onMenu, onRename, onMove, onNew
     measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
-  }, [joined, onId, wide, width, avatars.map((a) => a.id).join(' ')]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [joined, onId, extraOn, wide, width, avatars.map((a) => a.id).join(' ')]); // eslint-disable-line react-hooks/exhaustive-deps
   // 자리 옮김 — 끄기가 끝나 쉬는 참모 줄로 내려가거나, 깨우는 참모가 위 줄로 올라오거나, 한 칸이 빠져 아래 칸들이 당겨질 때 미끄러지게.
   // 줄 모양(열쇠:상태)이 바뀐 그리기에서만 — 폭 바꾸기·끌기·평소 갱신엔 안 움직인다. 처음 보이는 칸(새 참모 켜는 중)은 작게서 커지며 나타난다
   const sig = [...avatars.map((a) => `${a.flip ?? a.id}:${a.phase ?? 'live'}`), ...resting.map((r) => `r:${r.key}`)];
@@ -290,6 +295,7 @@ export function OrchRail({ top, avatars, onPick, onMenu, onRename, onMove, onNew
       )}
       {/* 새 참모 + — 넓어도 아이콘만(익숙한 동작, 아이콘+글자 줄 금지) */}
       {onNew && <IconButton size="l" className="rail-new" label={tr(`${assistant()} 하나 더`, `One more ${assistant()}`)} title="" data-tip={tr(`${assistant()} 하나 더`, `One more ${assistant()}`)} data-tip-key={keyLabel('⌘⇧T', IS_WIN)} onClick={onNew}><IconPlus /></IconButton>}
+      {extra}
       <span className="lk-sp" />
       {wide && resting.length > 0 && <span className="lk-cap">{tr(`쉬는 ${assistant()} ${resting.length}`, `Resting ${resting.length}`)}</span>}
       <div className="lk-rests">

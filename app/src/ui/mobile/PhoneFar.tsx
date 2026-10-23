@@ -7,7 +7,7 @@ import type { FarSession } from '../../domain/farHome';
 import { remoteCards, type PeerCardsRow } from '../../domain/remoteCards';
 import { OrchAvatar, orchColor } from '../avatar';
 import { DirectCardView } from '../chat/DirectCard';
-import { IconDevice } from '../Icons';
+import { IconClose, IconDevice } from '../Icons';
 import { josa, machine } from '../../i18n';
 import { chatLoaded, useChatItems } from '../space/useChatItems';
 import { ChatSheet } from './ChatSheet';
@@ -28,18 +28,24 @@ export function useFarDevices(): FarPick[] {
   return usePoll<FarPick[]>(() => farDevices().catch(() => []), 30_000, []);
 }
 
-/** 참모 시트 맨 위 기기 알약 줄 — 이 맥 + 짝지은 기기 */
-export function FarPills({ devices, cur, waitDevs, onPick }: { devices: FarPick[]; cur: string | null; waitDevs?: Set<string>; onPick: (d: FarPick | null) => void }) {
+/** 이 컴퓨터를 부르는 말 — 폰 서버가 준 컴퓨터 이름(짝지은 기기 이름과 나란히), 없으면(옛 서버) '이 맥'(2026-10-23 사용자 "무슨 뜻인지 안 읽혀") */
+export const selfDevice = (name?: string | null): string => name?.trim() || `이 ${machine()}`;
+
+/** 참모 시트 맨 위 기기 줄 — '기기' 제목 + 이 컴퓨터 + 짝지은 기기 */
+export function FarPills({ devices, cur, self, waitDevs, onPick }: { devices: FarPick[]; cur: string | null; self?: string | null; waitDevs?: Set<string>; onPick: (d: FarPick | null) => void }) {
   if (!devices.length) return null;
   return (
-    <div className="m-far-pills" role="group" aria-label="기기">
-      <button type="button" className={`m-far-pill ${cur ? '' : 'on'}`} onClick={() => onPick(null)}>{`이 ${machine()}`}</button>
-      {devices.map((d) => (
-        <button key={d.id} type="button" className={`m-far-pill far ${cur === d.id ? 'on' : ''}`} onClick={() => onPick(d)}>
-          {d.name}{waitDevs?.has(d.id) && <i className="m-far-wait" aria-label="결정 대기" />}
-        </button>
-      ))}
-    </div>
+    <>
+      <div className="m-sect m-far-sect">기기</div>
+      <div className="m-far-pills" role="group" aria-label="기기">
+        <button type="button" className={`m-far-pill ${cur ? '' : 'on'}`} onClick={() => onPick(null)}>{selfDevice(self)}</button>
+        {devices.map((d) => (
+          <button key={d.id} type="button" className={`m-far-pill far ${cur === d.id ? 'on' : ''}`} onClick={() => onPick(d)}>
+            {d.name}{waitDevs?.has(d.id) && <i className="m-far-wait" aria-label="결정 대기" />}
+          </button>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -52,7 +58,7 @@ function useFarPhone(dev: string) {
 }
 
 /** 그 기기를 보는 화면 — 맨 위 파란 줄 · 머리(참모) · 홈/보관함 · 채팅 시트(그 기기 참모에게 사람 말로) */
-export function PhoneFar({ t, devices, onPick, vp }: { t: FarPick; devices: FarPick[]; onPick: (d: FarPick | null) => void; vp: Viewport }) {
+export function PhoneFar({ t, devices, self, onPick, vp }: { t: FarPick; devices: FarPick[]; self?: string | null; onPick: (d: FarPick | null) => void; vp: Viewport }) {
   const { api, home, err, locker } = useFarPhone(t.id);
   const [agentId, setAgentId] = useState<string | null>(null);
   const agent = home?.assistants.find((a) => a.id === agentId) ?? home?.assistants[0];
@@ -90,7 +96,7 @@ export function PhoneFar({ t, devices, onPick, vp }: { t: FarPick; devices: FarP
       <SheetHostProvider kb={vp.kb}>
         <div className={`m-far-bar ${cut ? 'cut' : ''}`} role="status">
           <IconDevice /><b>{cut ? `${t.name} · 연결 끊김` : `${t.name} 보는 중`}</b>
-          <button type="button" className="m-far-back" onClick={() => onPick(null)}>{`이 ${machine()}`}</button>
+          <button type="button" className="m-far-back" onClick={() => onPick(null)} aria-label={`${josa(selfDevice(self), '으로', '로')} 돌아가기`} title={`${josa(selfDevice(self), '으로', '로')} 돌아가기`}><IconClose /></button>
         </div>
         <div className="m-far-hd">
           {agent && <OrchAvatar name={agent.name} size={36} state={avState(agent.dot)} color={orchColor(agent.name)} label={agent.name} />}
@@ -133,7 +139,7 @@ export function PhoneFar({ t, devices, onPick, vp }: { t: FarPick; devices: FarP
         </ChatSheet>
         {picker && (
           <BottomSheet label="참모 바꾸기" onClose={() => setPicker(false)} title={t.name}>
-            <FarPills devices={devices} cur={t.id} waitDevs={new Set(all.map((c) => c.dev))} onPick={(d) => { setPicker(false); onPick(d); }} />
+            <FarPills devices={devices} cur={t.id} self={self} waitDevs={new Set(all.map((c) => c.dev))} onPick={(d) => { setPicker(false); onPick(d); }} />
             {(home?.assistants ?? []).map((a) => (
               <button key={a.id} type="button" className={`m-far-orow ${agent?.id === a.id ? 'on' : ''}`} onClick={() => { setAgentId(a.id); setPicker(false); }}>
                 <OrchAvatar name={a.name} size={36} state={avState(a.dot)} color={orchColor(a.name)} label={a.name} />

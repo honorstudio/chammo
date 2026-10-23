@@ -528,6 +528,8 @@ fn phone_view_lists_every_owner_in_old_shape() {
     assert_eq!(get("cut.png")["path"], f.to_string_lossy().as_ref(), "별칭 줄은 진짜 파일 경로");
     assert_eq!(get("끊김.pdf")["gone"], true);
     assert_eq!(v["folders"], serde_json::json!([{ "owner": "운영", "name": "10월" }, { "owner": "운영", "name": "자료" }]));
+    // 주인 폴더 이름 → id(.chammo) — 폰 팀 탭이 이름이 아니라 id(team-<팀>)로 팀 폴더를 고른다(같은 이름의 참모 폴더와 안 섞이게)
+    assert_eq!(v["ids"]["운영"], owner_id_of_test(&d));
     let paths = phone_paths(&w.root, &w.home);
     assert!(paths.contains(&d.join("10월/보고서.pdf").to_string_lossy().into_owned()));
     assert!(paths.contains(&f.to_string_lossy().into_owned()), "별칭은 가리키는 진짜 파일로 허용");
@@ -1057,4 +1059,8 @@ fn windows_mixed_separators_are_plain_after_os_sep() {
     let mixed = r"C:\x\Chammo\o/자료/a.md";
     assert!(!plain_abs(Path::new(mixed)), "섞인 그대로는 정규형이 아니다");
     assert!(plain_abs(Path::new(&os_sep(mixed, true))));
+}
+
+fn owner_id_of_test(d: &Path) -> String {
+    std::fs::read_to_string(d.join(ID_FILE)).unwrap().trim().to_string()
 }

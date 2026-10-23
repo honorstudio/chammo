@@ -1016,7 +1016,10 @@ fn project_ok(ctx: &Ctx, project: &Path) -> Result<PathBuf, String> {
     }
     let p = canon(project);
     let home = canon(ctx.home);
-    if !p.starts_with(&home) || p == home || p.starts_with(canon(ctx.root)) || p.starts_with(canon(ctx.data)) {
+    if p.starts_with(&home) && p.starts_with(canon(ctx.data)) {
+        return Err(format!("데이터 폴더 안 프로젝트라 못 넘겨 — devRoot 를 데이터 폴더 밖으로: {}", project.display()));
+    }
+    if !p.starts_with(&home) || p == home || p.starts_with(canon(ctx.root)) {
         return Err(format!("프로젝트로 못 쓰는 자리: {}", project.display()));
     }
     Ok(p)
@@ -1142,9 +1145,13 @@ fn phone_entries(dir: &Path, home: &Path) -> Vec<Entry> {
 /// 폰 보관함 — 폰 화면이 받던 모양({items, hidden, folders}) 그대로, 진짜 폴더에서 만든다. 주인 = 참모 폴더 이름, 폴더 = 참모 폴더 안 자리(맨 위면 없음),
 /// 별칭 줄의 path 는 가리키는 진짜 파일
 pub fn phone_view(root: &Path, home: &Path) -> serde_json::Value {
-    let (mut items, mut folders, mut dirs) = (Vec::new(), Vec::new(), serde_json::Map::new());
+    let (mut items, mut folders, mut dirs, mut ids) = (Vec::new(), Vec::new(), serde_json::Map::new(), serde_json::Map::new());
     for (name, dir) in owners(root) {
         dirs.insert(name.clone(), serde_json::Value::String(dir.to_string_lossy().into_owned()));
+        // 주인 id(.chammo) — 폰 팀 탭이 팀 폴더를 이름이 아니라 id(team-<팀>)로 고른다
+        if let Some(id) = id_of(&dir) {
+            ids.insert(name.clone(), serde_json::Value::String(id));
+        }
         for e in phone_entries(&dir, home) {
             if e.dir {
                 // 맥 폴더 연결이면 linked·ro 를 더한다(아니면 옛 모양 그대로)
@@ -1174,7 +1181,7 @@ pub fn phone_view(root: &Path, home: &Path) -> serde_json::Value {
             }
         }
     }
-    serde_json::json!({ "items": items, "hidden": [], "folders": folders, "dirs": dirs })
+    serde_json::json!({ "items": items, "hidden": [], "folders": folders, "dirs": dirs, "ids": ids })
 }
 
 /// 폰이 부르는 참모 보관함(이름 = 참모 폴더 이름) — 있는 폴더만. 폰 쓰기 길은 새 참모 폴더를 만들지 않는다

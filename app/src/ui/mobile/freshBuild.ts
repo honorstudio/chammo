@@ -2,6 +2,9 @@
 // (2026-10-05 밀기 줄 비침을 고친 판을 깔고도 폰엔 옛 판 선이 그대로). 돌아올 때 맥 껍데기의 입구 파일 이름을 지금 페이지 것과 맞대 보고,
 // 바뀌었으면 한 번 새로 연다. 입력 초안은 저장소에 남는다(Composer writeDraft)
 import { RESUME_EVENT } from '../../domain/poller';
+import { readLink } from '../../phone-web/link';
+import { tunnelFor } from '../../phone-web/hub';
+import { fetchShell } from '../../phone-web/shell';
 
 const ENTRY = /src="\/assets\/(mobile-[A-Za-z0-9_-]{8}\.js)"/; // public/sw.js 의 ENTRY 와 같은 모양
 const AGAIN_MS = 60_000;
@@ -37,7 +40,9 @@ export function installFreshBuild() {
         const now = Date.now();
         if (!shouldReload({ page, server: entryOf(html), lastReload: last(), now })) return;
         try { sessionStorage.setItem(KEY, String(now)); } catch { /* 못 적어도 연다 — 다음 돌아옴까지는 다시 안 온다 */ }
-        location.replace('/');
+        // 중계 길은 / 를 서비스 워커가 받아 둔 껍데기로 준다 — 새 판 껍데기·화면 파일을 먼저 받아 두고 연다(ADR 0013)
+        const relay = readLink();
+        return (relay ? fetchShell(tunnelFor(relay), relay.relay) : Promise.resolve()).then(() => location.replace('/'));
       })
       .catch(() => {})
       .finally(() => { busy = false; });

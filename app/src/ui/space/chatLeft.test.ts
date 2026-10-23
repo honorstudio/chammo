@@ -54,7 +54,7 @@ describe('고른 프사 ↔ 채팅 카드 이음 윤곽', () => {
   it('스페이스가 채팅이 있을 때 고른 프사 색으로 윤곽을 그린다', () => {
     expect(view).toMatch(/\{rail\}\{chat\}\n[^\n]*\n\s*\{chat && <ChatLink color=\{linkColor\} \/>\}/);
     // 이음 색 = 고른 프사 색(다른 기기를 보는 중이면 그 기기 참모 색, peer-panel)
-    expect(view).toContain('const linkColor = far ? far.color : railList.find((a) => a.on)?.color;');
+    expect(view).toContain('const linkColor = far ? far.color : team?.railOn ? team.color : railList.find((a) => a.on)?.color;'); // 메신저 대화를 고르면 그 사람 색
   });
   it('윤곽 = 참모 색(--orch-solid) 2px 선 하나, 누르기는 통과', () => {
     expect(css).toMatch(/\.chat-link \{[^}]*pointer-events: none/);
@@ -72,7 +72,7 @@ describe('고른 프사 ↔ 채팅 카드 이음 윤곽', () => {
   it('자리는 offsetTop 으로 — 자리 옮김(FLIP)·끌기 중간 자리를 재지 않는다', () => {
     expect(link).not.toMatch(/getBoundingClientRect/);
     expect(rail).toMatch(/setJoin\(\{ top: on\.offsetTop, height: on\.offsetHeight \}\)/);
-    expect(rail).toMatch(/\[joined, onId, wide, width, avatars\.map\(\(a\) => a\.id\)\.join\(' '\)\]/); // 순서가 바뀌어도 이음 면이 따라간다
+    expect(rail).toMatch(/\[joined, onId, extraOn, wide, width, avatars\.map\(\(a\) => a\.id\)\.join\(' '\)\]/); // 순서가 바뀌어도 이음 면이 따라간다
   });
   it('왼쪽 색 띠 없음 — 카드·윤곽 규칙에 border-left 없음', () => {
     expect(css).not.toMatch(/\.chat-link[^{]*\{[^}]*border-left/);

@@ -7,6 +7,8 @@ Lessons → project skills, used by scripts/task.
 - 같은 이름으로 다시 group 하면 그 스킬에 덧붙는다(새 스킬 남발 방지)
 - 버리기(lesson-drop)만 결정 대기함 카드로 사람에게 묻고, 답이 오면 lesson-promote
 - 스킬 자리: <프로젝트>/.claude/skills/lesson-<주제>/SKILL.md — 커밋되지 않는 자리만(교훈에 계정 이름이 섞일 수 있다)
+- 공통(_common, --all)·앱 공통(_app, --app) 교훈은 모든/폰 앱 프로젝트 세션이 읽어야 해서 사용자 전역 ~/.claude/skills/lesson-common-<주제>·lesson-app-<주제>
+  (이름 앞자리로 우리가 만든 것만 건드린다. 첫 줄 안내는 프로젝트의 CLAUDE.local.md 대신 그 교훈 파일 맨 윗줄 — 교훈 줄('- ')이 아니라 지시에 두 번 안 붙는다)
 - 원본 줄은 지우지 않고 <데이터>/lessons/_archive/<프로젝트>.md 로, 만든 기록은 <데이터>/lessons/skills.jsonl
 - 계획: docs/plans/2026-10-06-self-learning.md (1단계)
 """
@@ -14,7 +16,11 @@ import contextlib, datetime, json, os, re, shutil, subprocess
 
 PREFIX = 'lesson-'
 NAME = re.compile(r'^[a-z0-9][a-z0-9-]{0,40}$')
-GLOBAL = ('_common', '_app')     # 여러 프로젝트에 붙는 칸 — 전역 스킬은 2단계(사람 확인 없이 안 쓴다)
+GLOBAL = ('_common', '_app')     # 여러 프로젝트에 붙는 칸 — 스킬은 사용자 전역 폴더(skills_home)에
+GLOBAL_PREFIX = {'_common': 'lesson-common-', '_app': 'lesson-app-'}   # 전역 스킬 이름 앞자리 — 이 앞자리 폴더만 우리 것
+ALIAS = {'--all': '_common', '--app': '_app'}                          # task lesson 과 같은 말
+APP_WHEN = '폰 앱 프로젝트(빌드·스토어·푸시)일 때'                       # 앱 공통 스킬 설명 머리 — 이 말이 있어야 그 일일 때만 열린다
+APP_KEY = '폰 앱 프로젝트'
 # 사람 답이 '하지 마'면 승격하지 않는다. 앱 '처리함' 은 치우기지 승인이 아니다
 NO = re.compile(r'그대로|아니|말자|말아|하지 ?마|안 ?(해|돼|묶)|처리함|다시|\bhandled\b|\bkeep\b|\bno\b|\bdon\'?t\b|\bredo\b', re.I)
 DROP = re.compile(r'버려|버리|빼|지워|\bdrop\b|\bdiscard\b', re.I)
@@ -27,13 +33,18 @@ SEND_HEAD = ('이 프로젝트 교훈 — 지시에 붙여: ', 'project lesson �
 
 class Env:
     """scripts/task 가 넘기는 것 — 경로와 기록 함수(주인 HQ 판·공개판 둘 다 같은 모양)"""
-    def __init__(self, lessons, dev, log, T, add_lesson, append, now, me=None, lesson_max=12):
+    def __init__(self, lessons, dev, log, T, add_lesson, append, now, me=None, lesson_max=12, skills_home=None):
         self.lessons, self.dev, self.log, self.T = lessons, dev, log, T
+        self.skills_home = skills_home or default_skills_home()   # 공통·앱 공통 스킬을 두는 사용자 전역 스킬 폴더
         self.add_lesson, self.append, self.now, self.me, self.lesson_max = add_lesson, append, now, me, lesson_max
 
 
 class Refuse(Exception):
     pass
+
+
+def default_skills_home():
+    return os.path.join(os.path.expanduser('~'), '.claude', 'skills')
 
 
 # ── 순수 함수 ──
@@ -55,13 +66,26 @@ def parse_picks(spec, n):
     return sorted(out)
 
 
-def skill_name(raw):
-    """'tauri-dev' → 'lesson-tauri-dev'. 영문 소문자·숫자·- 만"""
+def skill_name(raw, project=None):
+    """'tauri-dev' → 'lesson-tauri-dev'(공통이면 'lesson-common-tauri-dev', 앱 공통이면 'lesson-app-tauri-dev'). 영문 소문자·숫자·- 만"""
+    pre = GLOBAL_PREFIX.get(project, PREFIX)
     s = (raw or '').strip()
-    s = s[len(PREFIX):] if s.startswith(PREFIX) else s
+    s = s[len(pre):] if s.startswith(pre) else s
     if not NAME.fullmatch(s):
         raise ValueError(raw)
-    return PREFIX + s
+    return pre + s
+
+
+def label(T, project):
+    """사람에게 보이는 이름 — 공통 칸은 '공통'·'앱 공통'"""
+    return {'_common': T('공통', 'shared'), '_app': T('앱 공통', 'app-shared')}.get(project, project)
+
+
+def app_desc(project, desc):
+    """앱 공통 스킬은 폰 앱 프로젝트 일일 때만 열려야 한다 — 설명에 그 말이 없으면 머리에 붙인다"""
+    if project == '_app' and desc and APP_KEY not in desc:
+        return f'{APP_WHEN} — {desc}'
+    return desc
 
 
 def without_lesson(body, lesson):
@@ -206,6 +230,11 @@ def skill_lines(env, project):
 
 
 def _skill_dir(env, project, name):
+    if project in GLOBAL:
+        # 전역 폴더엔 남의 스킬이 많다 — 이름 앞자리가 맞는 것만 우리 자리
+        if not name.startswith(GLOBAL_PREFIX[project]):
+            raise Refuse(env.T(f'{name}: 전역 스킬 이름은 {GLOBAL_PREFIX[project]} 로 시작해야 해', f'{name}: a shared skill name must start with {GLOBAL_PREFIX[project]}'))
+        return os.path.join(env.skills_home, name)
     return os.path.join(env.dev, project, '.claude', 'skills', name)
 
 
@@ -252,9 +281,11 @@ def _unignore_lines(root):
 
 def skill_body(T, name, desc, project, lessons, src):
     head = f'---\nname: {name}\ndescription: {json.dumps(desc, ensure_ascii=False)}\n---\n\n'
-    intro = T(f'# {project} 교훈 — {name[len(PREFIX):]}\n\n지시마다 붙던 교훈 줄을 `scripts/task lesson-promote` 로 옮겨 온 것({src}). 확인된 함정 — 같은 벽에 두 번 안 박게.\n'
+    short = name[len(GLOBAL_PREFIX.get(project, PREFIX)):]
+    project = label(T, project)
+    intro = T(f'# {project} 교훈 — {short}\n\n지시마다 붙던 교훈 줄을 `scripts/task lesson-promote` 로 옮겨 온 것({src}). 확인된 함정 — 같은 벽에 두 번 안 박게.\n'
               f'틀린 줄을 발견하면 회신 끝에 "교훈: [스킬 {name} 정정] <고친 한 줄>" 로 알려 줘(본문은 사람이 확인하고 고친다).\n\n## 교훈\n',
-              f'# {project} lessons — {name[len(PREFIX):]}\n\nLesson lines that used to ride on every instruction, moved here by `scripts/task lesson-promote` ({src}). Confirmed pitfalls.\n'
+              f'# {project} lessons — {short}\n\nLesson lines that used to ride on every instruction, moved here by `scripts/task lesson-promote` ({src}). Confirmed pitfalls.\n'
               f'If a line turns out wrong, end your reply with "Lesson: [skill {name} fix] <corrected line>" (a person reviews and edits this file).\n\n## Lessons\n')
     return head + intro + ''.join(f'- {l}\n' for l in lessons)
 
@@ -309,7 +340,28 @@ def with_pointer(body, line):
     return '\n'.join(lines[:start + 1] + ([line] if line else []) + keep + lines[end:])
 
 
+FILE_POINTER = ('교훈 스킬 — ', 'lesson skills — ')
+
+
+def with_file_pointer(text, line):
+    """공통 교훈 파일 맨 윗줄의 스킬 안내를 line 으로 바꾼다(None 이면 뺀다). '- ' 줄이 아니라 교훈으로 안 읽힌다(지시에 두 번 안 붙고, 메모 창도 그대로 둔다)"""
+    lines = text.split('\n') if text else []
+    if lines and lines[0].startswith(FILE_POINTER):
+        lines = lines[1:]
+    out = '\n'.join(([line] if line else []) + lines)
+    return out if not out or out.endswith('\n') else out + '\n'
+
+
 def _sync_pointer(env, project):
+    """호출하는 쪽이 lessons_lock 을 쥐고 있어야 한다 — 공통은 교훈 파일 자체를 고친다"""
+    if project in GLOBAL:
+        path = os.path.join(env.lessons, f'{project}.md')
+        body = _read(path)
+        live = skill_lines(env, project)
+        nxt = with_file_pointer(body, live[0] if live else None)
+        if nxt != body:
+            _write(path, nxt)
+        return
     path = os.path.join(env.dev, project, 'CLAUDE.local.md')
     body = _read(path)
     if not body:
@@ -335,9 +387,8 @@ def _record(env, rec):
 
 def _check_project(env, project):
     T = env.T
-    if not project or project in GLOBAL or '/' in project or '..' in project:
-        raise Refuse(T(f'{project}: 프로젝트 교훈만 스킬로 묶어(공통·앱 공통 교훈은 아직 안 함)',
-                       f'{project}: only project lessons can become skills (shared lessons are not supported yet)'))
+    if not project or '/' in project or '..' in project:
+        raise Refuse(T(f'프로젝트 이름이 이상해: {project}', f'Bad project name: {project}'))
 
 
 # ── 명령 ──
@@ -347,8 +398,15 @@ def review(env, project):
     _check_project(env, project)
     lines = _lines(env, project)
     act = active_skills(env, project)
-    out = [T(f'{project} 교훈 {len(lines)}줄 · 지시마다 붙는 글 {send_chars(T, lines):,}자',
-             f'{project}: {len(lines)} lessons · {send_chars(T, lines):,} characters on every instruction')]
+    who = label(T, project)
+    out = [T(f'{who} 교훈 {len(lines)}줄 · 지시마다 붙는 글 {send_chars(T, lines):,}자',
+             f'{who}: {len(lines)} lessons · {send_chars(T, lines):,} characters on every instruction')]
+    if project in GLOBAL:
+        pre = os.path.join(env.skills_home, GLOBAL_PREFIX[project])
+        out.append(T(f'(사용자 전역 스킬 — {pre}<이름>. 모든 세션 목록에 보이니 설명은 "언제 열지"를 분명히'
+                     + (f' — 폰 앱 프로젝트가 아닌 세션엔 안 열리게 설명 머리에 "{APP_WHEN}" 가 저절로 붙는다' if project == '_app' else '') + ')',
+                     f'(shared skill in the user-wide skills folder — {pre}<name>. Every session lists it, so make the description say when to open it'
+                     + (f'; "{APP_WHEN}" is prefixed automatically so non-app sessions skip it' if project == '_app' else '') + ')'))
     if act:
         out.append(T('이미 묶은 스킬(같은 주제면 이 이름으로 덧붙여):', 'skills already made (same topic → reuse the name to append):'))
         out += [f'  {n} ({len(s["lines"])}줄) — {s["desc"]}' for n, s in act.items()]
@@ -368,17 +426,18 @@ def review(env, project):
         '- When done, tell the user only the one-line result each command prints last ("… say so to undo")\n'
         '- Finished to-dos and duplicates are discarded — only this goes to the user as a card: scripts/task lesson-drop <project> --lines 5,9 --why "<why discard>" → when the answer comes: lesson-promote <task id>\n'
         '- Undo: scripts/task lesson-restore <project> <name>'))
-    return '\n'.join(out)
+    text = '\n'.join(out)
+    return text.replace('<프로젝트>', project).replace('<project>', project) if project in GLOBAL else text
 
 
 def propose(env, project, raw_name, picks, desc):
     T = env.T
     _check_project(env, project)
     try:
-        name = skill_name(raw_name)
+        name = skill_name(raw_name, project)
     except ValueError:
         raise Refuse(T(f'스킬 이름이 이상해: {raw_name} — 영문 소문자·숫자·- 만(예: tauri-dev)', f'Bad skill name: {raw_name} — lowercase letters, digits and - only (e.g. tauri-dev)'))
-    desc = ' '.join((desc or '').split())
+    desc = app_desc(project, ' '.join((desc or '').split()))
     if not desc or len(desc) > 300:
         raise Refuse(T('--desc "<언제 열지>" 가 필요해(300자 안)', '--desc "<when to open it>" is required (under 300 characters)'))
     lines = _lines(env, project)
@@ -452,17 +511,18 @@ def _apply(env, project, name, desc, wanted, tid, drop):
     if not lessons:
         raise Refuse(T('고른 줄이 교훈 파일에 하나도 없어(이미 옮겼거나 지워짐)', 'None of the chosen lines are in the lesson file any more'))
     root = os.path.join(env.dev, project)
-    d = _skill_dir(env, project, name or 'x')
+    d = _skill_dir(env, project, name) if not drop else ''
     path = '' if drop else os.path.join(d, 'SKILL.md')
     stamp = env.now()[:10]
     appended = False
     if not drop:
-        if not os.path.isdir(root):
+        if project not in GLOBAL and not os.path.isdir(root):
             raise Refuse(T(f'프로젝트 폴더가 없어: {root}', f'Project folder not found: {root}'))
         act = active_skills(env, project)
         if os.path.exists(d) and name not in act:
             raise Refuse(T(f'{d} 는 우리가 만든 스킬이 아니야', f'{d} was not made by us'))
-        ensure_ignored(env, root, os.path.relpath(path, root))
+        if project not in GLOBAL:  # 전역 스킬 폴더는 프로젝트 git 이 아니다 — 이름 앞자리로 우리 것만 가린다
+            ensure_ignored(env, root, os.path.relpath(path, root))
         appended = name in act
         old = _skill_lessons(_read(path)) if appended else []
         _write(path, skill_body(T, name, desc, project, old + [l for l in lessons if l not in old], f'{stamp}, task {tid}'))
@@ -474,7 +534,8 @@ def _apply(env, project, name, desc, wanted, tid, drop):
     with lessons_lock(env.lessons):  # 잠근 채 다시 읽고 갈아 끼운다 — 그사이 덧붙인 줄이 남게(CLAUDE.local.md 고치기도 같은 잠금 안에서)
         text, _ = remove_lines(_read(src), lessons)
         _write(src, text)
-        _unmirror(env, project, lessons)
+        if project not in GLOBAL:
+            _unmirror(env, project, lessons)
         _sync_pointer(env, project)
     return lessons, path, len(gone), appended
 
@@ -518,7 +579,7 @@ def group(env, project, raw_name, picks, desc):
     T = env.T
     _check_project(env, project)
     try:
-        name = skill_name(raw_name)
+        name = skill_name(raw_name, project)
     except ValueError:
         raise Refuse(T(f'스킬 이름이 이상해: {raw_name} — 영문 소문자·숫자·- 만(예: tauri-dev)', f'Bad skill name: {raw_name} — lowercase letters, digits and - only (e.g. tauri-dev)'))
     lines = _lines(env, project)
@@ -527,7 +588,7 @@ def group(env, project, raw_name, picks, desc):
     except ValueError:
         raise Refuse(T(f'줄 번호가 이상해: {picks} — 1~{len(lines)} 사이, 예: 3,7,12-15', f'Bad line numbers: {picks} — 1 to {len(lines)}, e.g. 3,7,12-15'))
     act = active_skills(env, project)
-    desc = ' '.join((desc or '').split())
+    desc = app_desc(project, ' '.join((desc or '').split()))
     if name in act:
         desc = desc or act[name]['desc']
     elif not desc or len(desc) > 300:
@@ -540,8 +601,9 @@ def group(env, project, raw_name, picks, desc):
     tid = 'auto-' + datetime.datetime.now().strftime('%m%d-%H%M-') + os.urandom(2).hex()
     lessons, path, gone, appended = _apply(env, project, name, desc, [lines[i - 1] for i in nums], tid, False)
     detail = _result(env, project, lessons, path, gone, False)
-    report = T(f'{project} 교훈 {len(lessons)}줄을 {name} 스킬로 {"덧붙였어" if appended else "묶었어"} — 되돌리려면 말해',
-               f'{len(lessons)} {project} lessons {"appended to" if appended else "grouped into"} the {name} skill — say so to undo it')
+    who = label(T, project)
+    report = T(f'{who} 교훈 {len(lessons)}줄을 {name} 스킬로 {"덧붙였어" if appended else "묶었어"} — 되돌리려면 말해',
+               f'{len(lessons)} {who} lessons {"appended to" if appended else "grouped into"} the {name} skill — say so to undo it')
     return detail, report
 
 
@@ -579,7 +641,7 @@ def restore(env, project, raw_name):
     T = env.T
     _check_project(env, project)
     try:
-        name = skill_name(raw_name)
+        name = skill_name(raw_name, project)
     except ValueError:
         raise Refuse(T(f'스킬 이름이 이상해: {raw_name}', f'Bad skill name: {raw_name}'))
     act = active_skills(env, project)
@@ -595,7 +657,8 @@ def restore(env, project, raw_name):
         keep = os.path.join(env.lessons, '_archive', 'skills', project, f'{name}-{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}')
         os.makedirs(os.path.dirname(keep), exist_ok=True)
         shutil.move(d, keep)
-    _sync_pointer(env, project)
+    with lessons_lock(env.lessons):  # 공통은 교훈 파일 첫 줄을 고친다 — 덧붙이기와 겹치지 않게
+        _sync_pointer(env, project)
     _archive(env, project, T(f'{env.now()[:10]} ← {name} 되돌림', f'{env.now()[:10]} ← {name} restored'), [])
     return T(f'{name} 되돌림 — 교훈 {len(lessons)}줄이 다시 지시에 붙는다', f'{name} restored — {len(lessons)} lessons ride on instructions again')
 
@@ -610,8 +673,10 @@ def run(env, cmd, args):
     """scripts/task lesson-* 진입점 → 종료 코드. 출력은 stdout(결과)·stderr(거절 이유)"""
     import sys
     T = env.T
-    usage = T('쓰는 법: lesson-review <프로젝트> | lesson-group <프로젝트> <이름> --lines 3,7-9 --desc "<언제 열지>" | lesson-drop <프로젝트> --lines 5 [--why "<이유>"] | lesson-promote <task id> | lesson-restore <프로젝트> <이름> | (사람에게 먼저 묻고 싶을 때) lesson-propose <프로젝트> <이름> --lines … --desc …',
-              'usage: lesson-review <project> | lesson-group <project> <name> --lines 3,7-9 --desc "<when to open>" | lesson-drop <project> --lines 5 [--why "<reason>"] | lesson-promote <task id> | lesson-restore <project> <name> | (to ask the user first) lesson-propose <project> <name> --lines … --desc …')
+    if cmd != 'lesson-promote' and args:
+        args = [ALIAS.get(args[0], args[0])] + list(args[1:])   # --all → _common, --app → _app
+    usage = T('쓰는 법(프로젝트 자리에 --all·--app 도 된다): lesson-review <프로젝트> | lesson-group <프로젝트> <이름> --lines 3,7-9 --desc "<언제 열지>" | lesson-drop <프로젝트> --lines 5 [--why "<이유>"] | lesson-promote <task id> | lesson-restore <프로젝트> <이름> | (사람에게 먼저 묻고 싶을 때) lesson-propose <프로젝트> <이름> --lines … --desc …',
+              'usage (--all / --app work in place of a project): lesson-review <project> | lesson-group <project> <name> --lines 3,7-9 --desc "<when to open>" | lesson-drop <project> --lines 5 [--why "<reason>"] | lesson-promote <task id> | lesson-restore <project> <name> | (to ask the user first) lesson-propose <project> <name> --lines … --desc …')
 
     def opt(flag):
         return args[args.index(flag) + 1] if flag in args and args.index(flag) + 1 < len(args) else None

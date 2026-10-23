@@ -41,6 +41,7 @@ import { useSubTails } from './useSubTails';
 import { useMemoPoll } from './usePoll';
 import { Notice } from './Notice';
 import { machine } from '../../i18n';
+import { HomeProgress } from '../GoalProgress';
 
 const baseName = (p: string) => (p.startsWith('data:') ? '붙인 그림' : p.split('/').pop() ?? p);
 /** 위 칸 = 한 칸 목록(시안 docs/design-drafts/phone-tabs v2 A, 2026-10-11 사용자 — 탭 숫자 '일 6 · 할 일 6 · 결정 2'는 뜻을 몰랐다).
@@ -65,6 +66,7 @@ function TopList({ orch, events, sessions, waiting, direct, todo, onPeek, onPick
   const linesOf = (target: string) => { const sid = findTarget(sessions, target)?.sessionId; return sid && tails[sid] ? peekLines(summarizeTranscript(tails[sid]!)) : []; };
   return (
     <div className="m-top">
+      <HomeProgress orch={orch} events={events} sessions={sessions} />
       {l.need.length > 0 && (
         <div className="m-need" role="list" aria-label="나한테 필요">
           {l.need.map((r) => (

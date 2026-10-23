@@ -118,7 +118,7 @@ const chromeFound = own || picked.found;
 
 const ASK_TOOL = {
   name: 'browser_ask_human',
-  description: '사람이 브라우저에서 직접 해야 할 때만 부른다 — 로그인·2단계 인증·캡차·결제 승인처럼 대신 하면 안 되거나 못 하는 것. 지금 열린 브라우저를 사람 앱(Chammo)에 크게 띄우고 알린 뒤, 사람이 다 했다고 누를 때까지(최대 10분) 기다린다. 끝나면 browser_snapshot 으로 확인하고 이어서 한다. 비밀번호를 묻거나 대신 치지 않는다.',
+  description: '사람이 브라우저에서 직접 해야 할 때만 부른다 — 2단계 인증(문자 코드·폰 승인·패스키)·캡차·결제 승인, 그리고 어디서도 계정을 못 찾은 로그인처럼 대신 하면 안 되거나 못 하는 것. 저장된 계정이 있는 로그인은 사람 몫이 아니다 — 네가 한다. 지금 열린 브라우저를 사람 앱(Chammo)에 크게 띄우고 알린 뒤, 사람이 다 했다고 누를 때까지(최대 10분) 기다린다. 끝나면 browser_snapshot 으로 확인하고 이어서 한다. 시간 초과면 턴을 끝내지 말고 다시 불러 — 카드는 사람이 끝낼 때까지 떠 있고, 턴을 끝낸 뒤 사람이 끝내면 앱이 입력칸에 [앱] 줄로 깨운다. 저장된 계정이 있으면 사람에게 비밀번호를 치게 하지 말고 2단계 인증만 넘겨 — 아이디·비밀번호는 네가 넣고(값은 파일에서 읽는 스크립트로), 사람에게는 문자 코드·폰 승인·패스키·캡차만. 비밀번호를 묻거나 대화에 적지 않는다.',
   inputSchema: { type: 'object', properties: { reason: { type: 'string', description: '사람에게 보일 한 줄(무엇을 해 달라는지). 비밀번호·개인 정보는 적지 않는다' } }, required: ['reason'] },
 };
 
@@ -192,6 +192,8 @@ relay = createRelay({
   // 개입부터 본다 — claimClose 는 닫기로 정하면 '닫는 중' 표시를 남긴다
   canClose: () => {
     if (take && !take.canClose()) return false;
+    // 시간 초과로 남은 사람 부름 — 사람이 아직 그 브라우저로 로그인 중일 수 있다. 끝내거나 세션이 닫을 때까지 둔다(2026-10-23)
+    if (live && live.pendingAsk()) return false;
     try { return users.claimClose(paths.locksDir, profile); } catch { return false; }
   },
   // 사람이 개입 중이면 세션 도구를 돌려줄 때까지 붙잡는다 — 그동안 앱에 '세션이 기다리는 중'
@@ -203,7 +205,7 @@ relay = createRelay({
     return g.finally(() => live.held(false));
   },
   sendToChild: (line) => (share.active() ? share.send(line) : child.stdin.write(line + '\n')),
-  // 사람 부르기 — 로그인·2FA·캡차처럼 사람이 해야 할 때. 앱(세션 브라우저 앱에서 보기)이 크게 띄우고 알린다
+  // 사람 부르기 — 2FA·캡차·계정 없는 로그인처럼 사람이 해야 할 때. 앱(세션 브라우저 앱에서 보기)이 크게 띄우고 알린다
   extraTools: live ? [ASK_TOOL] : [],
   onLocalTool: (name, args) => {
     const blocked = guardTool(name, chromeFound);

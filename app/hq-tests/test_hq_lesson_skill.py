@@ -2,7 +2,7 @@
 python3 -m unittest discover -s app/hq-tests — 공개판 task 와, 원본 저장소면 주인 HQ 판(scripts/task)도 같이 본다"""
 import sys
 sys.dont_write_bytecode = True  # 템플릿 폴더에 __pycache__ 가 생기지 않게
-import contextlib, importlib.machinery, importlib.util, io, json, os, pathlib, subprocess, tempfile, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, pathlib, re, subprocess, tempfile, unittest
 from unittest import mock
 
 TMPL = pathlib.Path(__file__).resolve().parent.parent / 'hq-template' / 'scripts'
@@ -73,6 +73,13 @@ class Harness:
         d = self.tmp.name
         t = self.task
         self.saved = {k: getattr(t, k) for k in ('DATA', 'LESSONS', 'LOG', 'DEV', 'APPLOG')}
+        # 공통 교훈 스킬은 사용자 전역(~/.claude/skills)에 쓴다 — 가짜 HOME 으로 진짜 폴더가 절대 안 건드려지게
+        self.home = os.path.join(d, 'home')
+        os.makedirs(self.home)
+        home_patch = mock.patch.dict(os.environ, {'HOME': self.home, 'USERPROFILE': self.home})
+        home_patch.start()
+        self.addCleanup(home_patch.stop)
+        self.gskills = os.path.join(self.home, '.claude', 'skills')
         t.DATA = os.path.join(d, 'data')
         t.APPLOG = os.path.join(d, 'app.jsonl')  # 브라우저 카드가 진짜 앱 기록에 새지 않게
         # 진짜 claude agents 를 부르지 않는다
@@ -159,11 +166,6 @@ class Flow(Harness):
         self.assertIn(str(len(LESSONS)), out)
         self.assertEqual(read(os.path.join(self.task.LESSONS, 'proj.md')), before)
         self.assertFalse(os.path.exists(self.task.LOG))
-
-    def test_공통_교훈은_review_못_한다(self):
-        code, _, err = self.run_task('lesson-review', '_common')
-        self.assertEqual(code, 2)
-        self.assertTrue(err)
 
     # ── propose ──
 
@@ -506,6 +508,281 @@ class PrivateFlow(Flow, unittest.TestCase):
 
 class PublicFlow(Flow, unittest.TestCase):
     task = PUBLIC
+
+
+COMMON_LINES = [
+    '맥 셸 ls 별칭이 heredoc 뒤에 붙으면 120초 걸린다 — /bin/ls',
+    'zsh 는 따옴표 없는 $var 를 안 쪼갠다 — 배열이나 ${=var}',
+    '커밋 크기 훅은 Bash 명령 시작 때 스테이지 전체를 본다',
+    '헤드리스 크롬은 스크롤 막대를 숨긴다',
+    '워크트리 pnpm 은 node 24 로',
+    '사용자 캡처 시각은 .shots 복사 시각이 아니라 메시지 시각으로',
+    '개발판은 CHAMMO_NO_OS_NOTIFY=1 로 띄운다',
+]
+APP_LINES = [
+    'Android 13+ 새 설치는 알림 권한이 denied 로 온다',
+    'iOS 출시 빌드는 EAS 클라우드로',
+    'production 빌드부터 걸지 않는다',
+    'expo export 정적 빌드로 브라우저 점검',
+]
+
+
+class GlobalFlow(Harness):
+    """공통(_common)·앱 공통(_app) 교훈도 주제별 스킬로 묶는다 — 스킬은 사용자 전역 ~/.claude/skills/lesson-common-<주제>·lesson-app-<주제>"""
+
+    def setUp(self):
+        super().setUp()
+        for name, lines in (('_common', COMMON_LINES), ('_app', APP_LINES)):
+            with open(os.path.join(self.task.LESSONS, f'{name}.md'), 'w', encoding='utf-8') as f:
+                f.write(''.join(f'- {l}\n' for l in lines))
+
+    def cl(self, name='_common'):
+        return self.task._lines(name)
+
+    def cgroup(self, name='shell', lines='1-3', desc='셸·zsh·ls·heredoc·훅 크기', project='_common'):
+        args = ['lesson-group', project, name, '--lines', lines] + (['--desc', desc] if desc else [])
+        return self.run_task(*args)
+
+    def records(self):
+        return [json.loads(l) for l in read(os.path.join(self.task.LESSONS, 'skills.jsonl')).splitlines()]
+
+    def first_line(self, name='_common'):
+        return read(os.path.join(self.task.LESSONS, f'{name}.md')).splitlines()[0]
+
+    def test_가짜_HOME_만_쓴다(self):
+        self.assertEqual(os.path.expanduser('~'), self.home)
+        self.assertTrue(self.gskills.startswith(self.tmp.name))
+
+    def test_공통_review_는_번호를_보여_주고_아무것도_안_바꾼다(self):
+        before = read(os.path.join(self.task.LESSONS, '_common.md'))
+        for target in ('_common', '--all'):
+            code, out, err = self.run_task('lesson-review', target)
+            self.assertEqual(code, 0, err)
+            self.assertIn('1. ' + COMMON_LINES[0], out)
+            self.assertIn('5. ' + COMMON_LINES[4], out)
+            self.assertIn('lesson-group _common', out)      # 쓸 명령 그대로 보여 준다
+            self.assertIn(os.path.join(self.gskills, 'lesson-common-'), out)
+        self.assertEqual(read(os.path.join(self.task.LESSONS, '_common.md')), before)
+        self.assertFalse(os.path.exists(self.gskills))
+
+    def test_공통_group_은_전역_스킬로_묶고_첫_줄에_안내를_남긴다(self):
+        code, out, err = self.cgroup()
+        self.assertEqual(code, 0, err)
+        skill = os.path.join(self.gskills, 'lesson-common-shell', 'SKILL.md')
+        body = read(skill)
+        self.assertTrue(body.startswith('---\nname: lesson-common-shell\ndescription: "셸·zsh·ls·heredoc·훅 크기"\n---\n'), body[:120])
+        for l in COMMON_LINES[:3]:
+            self.assertIn(f'- {l}\n', body)
+        self.assertNotIn(COMMON_LINES[3], body)
+        self.assertEqual(self.cl(), COMMON_LINES[3:])
+        # 원본은 archive, 기록은 skills.jsonl(프로젝트 = _common)
+        self.assertIn(f'- {COMMON_LINES[0]}\n', read(os.path.join(self.task.LESSONS, '_archive', '_common.md')))
+        rec = self.records()[-1]
+        self.assertEqual((rec['action'], rec['skill'], rec['project']), ('promote', 'lesson-common-shell', '_common'))
+        # 프로젝트 교훈과 같은 모양 — 파일 첫 줄에 안내 한 줄(교훈 줄이 아니라서 지시에 두 번 안 붙는다)
+        first = self.first_line()
+        self.assertTrue(first.startswith('교훈 스킬 — 그 일이면 먼저 열어'), first)
+        self.assertIn('lesson-common-shell', first)
+        self.assertIn(self.gskills, first)
+        self.assertFalse(first.startswith('- '))
+        # 개발 폴더엔 아무것도 안 생긴다(공통 스킬은 전역)
+        self.assertFalse(os.path.exists(os.path.join(self.task.DEV, '_common')))
+        self.assertFalse(os.path.exists(os.path.join(self.root, '.claude', 'skills')))
+        # 사람에게 전할 한 줄
+        report = out.strip().splitlines()[-1]
+        self.assertIn('공통', report)
+        self.assertIn('3줄', report)
+        self.assertIn('lesson-common-shell', report)
+        self.assertIn('되돌리려면', report)
+        # 사람에게 묻지 않는다
+        self.assertFalse(os.path.exists(self.task.LOG))
+
+    def test_공통_스킬은_모든_프로젝트_지시에_한_줄로_붙고_묶은_줄은_안_붙는다(self):
+        self.cgroup()
+        _, _, err = self.run_task('send', 'proj', '버튼 색 바꾸기')
+        self.assertNotIn(COMMON_LINES[0], err)
+        self.assertIn(COMMON_LINES[3], err)              # 남은 공통 줄은 그대로
+        skill = [l for l in err.splitlines() if 'lesson-common-shell' in l]
+        self.assertEqual(len(skill), 1)
+        self.assertIn(os.path.join(self.gskills), skill[0])
+        self.assertIn('SKILL.md', skill[0])
+        self.assertIn('셸·zsh', skill[0])
+
+    def test_공통_안내는_다른_교훈을_적어도_첫_줄에_그대로_하나만(self):
+        self.cgroup()
+        self.run_task('lesson', '--all', '새 공통 교훈')
+        self.assertTrue(self.first_line().startswith('교훈 스킬 — '))
+        self.assertIn('새 공통 교훈', self.cl())
+        # 한 번 더 묶어도 안내는 하나, 이름이 늘어난다
+        self.cgroup(name='chrome', lines='1-3', desc='헤드리스 크롬·워크트리')
+        text = read(os.path.join(self.task.LESSONS, '_common.md'))
+        self.assertEqual(sum(1 for l in text.splitlines() if l.startswith('교훈 스킬 — ')), 1)
+        first = self.first_line()
+        self.assertIn('lesson-common-shell', first)
+        self.assertIn('lesson-common-chrome', first)
+        _, _, err = self.run_task('send', 'proj', 'x')
+        self.assertEqual(len([l for l in err.splitlines() if 'lesson-common-shell' in l]), 1)
+
+    def test_공통_같은_이름이면_덧붙고_desc_는_안_줘도_된다(self):
+        self.cgroup(lines='1-3')
+        code, out, err = self.cgroup(lines='1', desc=None)
+        self.assertEqual(code, 0, err)
+        body = read(os.path.join(self.gskills, 'lesson-common-shell', 'SKILL.md'))
+        for l in COMMON_LINES[:4]:
+            self.assertIn(f'- {l}\n', body)
+        self.assertIn('description: "셸·zsh·ls·heredoc·훅 크기"', body)
+        self.assertIn('덧붙', out.strip().splitlines()[-1])
+        self.assertEqual(self.cl(), COMMON_LINES[4:])
+
+    def test_공통_새_스킬은_3줄_미만이면_거절(self):
+        code, _, err = self.cgroup(lines='1-2')
+        self.assertEqual(code, 2)
+        self.assertEqual(self.cl(), COMMON_LINES)
+        self.assertFalse(os.path.exists(self.gskills))
+
+    def test_공통_restore_는_줄을_되돌리고_스킬과_첫_줄_안내를_치운다(self):
+        self.cgroup()
+        code, out, err = self.run_task('lesson-restore', '_common', 'shell')
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sorted(self.cl()), sorted(COMMON_LINES))
+        self.assertFalse(os.path.exists(os.path.join(self.gskills, 'lesson-common-shell')))
+        kept = os.path.join(self.task.LESSONS, '_archive', 'skills', '_common')
+        self.assertTrue(any(n.startswith('lesson-common-shell') for n in os.listdir(kept)))
+        self.assertNotIn('교훈 스킬', read(os.path.join(self.task.LESSONS, '_common.md')))
+        _, _, serr = self.run_task('send', 'proj', 'x')
+        self.assertIn(COMMON_LINES[0], serr)
+        self.assertNotIn('lesson-common-shell', serr)
+
+    def test_공통_restore_는_스킬이_둘이면_남은_스킬_안내는_유지(self):
+        self.cgroup()
+        self.cgroup(name='chrome', lines='1-3', desc='헤드리스 크롬')
+        self.run_task('lesson-restore', '_common', 'shell')
+        first = self.first_line()
+        self.assertIn('lesson-common-chrome', first)
+        self.assertNotIn('lesson-common-shell', first)
+
+    def test_공통_카드_흐름도_된다(self):
+        code, out, err = self.run_task('lesson-propose', '--all', 'shell', '--lines', '1-3', '--desc', '셸 함정')
+        self.assertEqual(code, 0, err)
+        tid = out.strip()
+        self.assertEqual(self.run_task('lesson-promote', tid)[0], 2)       # 사람 답 전
+        self.answer(tid, '묶어')
+        code, _, err = self.run_task('lesson-promote', tid)
+        self.assertEqual(code, 0, err)
+        self.assertTrue(os.path.isfile(os.path.join(self.gskills, 'lesson-common-shell', 'SKILL.md')))
+        self.assertEqual(self.cl(), COMMON_LINES[3:])
+        # 버리기 카드도 공통 칸에서
+        tid = self.run_task('lesson-drop', '_common', '--lines', '1')[1].strip()
+        self.answer(tid, '버려')
+        self.assertEqual(self.run_task('lesson-promote', tid)[0], 0)
+        self.assertEqual(self.cl(), COMMON_LINES[4:])
+        self.assertTrue(self.first_line().startswith('교훈 스킬 — '))
+
+    # ── 남의 스킬은 안 건드린다 ──
+
+    def test_남의_전역_스킬은_안_건드린다(self):
+        mine = os.path.join(self.gskills, 'lesson-common-shell')
+        others = {
+            os.path.join(self.gskills, 'troubleshooting', 'SKILL.md'): '남의 스킬',
+            os.path.join(self.gskills, 'lesson-x', 'SKILL.md'): '프로젝트용 이름의 남의 스킬',
+            os.path.join(self.gskills, 'lesson-app-zzz', 'SKILL.md'): '앱 이름의 남의 스킬',
+            os.path.join(mine, 'SKILL.md'): '사람이 직접 쓴 같은 이름 스킬',
+        }
+        for p, t in others.items():
+            os.makedirs(os.path.dirname(p))
+            with open(p, 'w', encoding='utf-8') as f:
+                f.write(t)
+        before_lessons = read(os.path.join(self.task.LESSONS, '_common.md'))
+        # 같은 이름의 남의 폴더가 있으면 덮어쓰지 않고 거절
+        code, _, err = self.cgroup()
+        self.assertEqual(code, 2)
+        self.assertIn('lesson-common-shell', err)
+        self.assertEqual(read(os.path.join(self.task.LESSONS, '_common.md')), before_lessons)
+        self.assertEqual(self.run_task('lesson-propose', '_common', 'shell', '--lines', '1-3', '--desc', 'd')[0], 2)
+        # 되돌리기도 우리가 만든 것만
+        for name in ('shell', 'x', 'zzz', 'troubleshooting'):
+            self.assertEqual(self.run_task('lesson-restore', '_common', name)[0], 2, name)
+        # 다른 이름으로 묶는 건 되고, 그래도 남의 것은 그대로
+        self.assertEqual(self.cgroup(name='other')[0], 0)
+        self.run_task('lesson-restore', '_common', 'other')
+        for p, t in others.items():
+            self.assertEqual(read(p), t, p)
+
+    def test_공통_스킬_이름은_앞자리가_고정이라_다른_폴더로_못_나간다(self):
+        for bad in ('../escape', 'a/b', 'Bad Name', ''):
+            self.assertEqual(self.cgroup(name=bad)[0], 2, bad)
+        # 접두를 직접 쳐도 한 번만 붙는다
+        self.assertEqual(self.cgroup(name='lesson-common-shell')[0], 0)
+        self.assertEqual(sorted(os.listdir(self.gskills)), ['lesson-common-shell'])
+
+    # ── 알림 ──
+
+    def test_공통_교훈이_많으면_묶으라는_길을_알려_준다(self):
+        for i in range(10):
+            self.run_task('lesson', '--all', f'공통 교훈 {i}')
+        _, _, err = self.run_task('lesson', '--all', '하나 더')
+        self.assertIn('lesson-review _common', err)
+        self.assertIn('lesson-group', err)
+
+
+@unittest.skipIf(PRIVATE is None, '주인 HQ 판 scripts/task 없음(공개본)')
+class PrivateGlobalFlow(GlobalFlow, unittest.TestCase):
+    task = PRIVATE
+
+    def make_app(self, name='phoneapp'):
+        root = os.path.join(self.task.DEV, name)
+        os.makedirs(root)
+        with open(os.path.join(root, 'app.json'), 'w') as f:
+            f.write('{}')
+        return name
+
+    def test_앱_공통_group_은_설명에_폰_앱_조건을_붙이고_lesson_app_으로(self):
+        code, out, err = self.run_task('lesson-group', '--app', 'build', '--lines', '1-3', '--desc', '푸시·EAS·스토어 빌드')
+        self.assertEqual(code, 0, err)
+        body = read(os.path.join(self.gskills, 'lesson-app-build', 'SKILL.md'))
+        desc = re.search(r'^description: (.*)$', body, re.M).group(1)
+        self.assertIn('폰 앱 프로젝트(빌드·스토어·푸시)일 때', json.loads(desc))
+        self.assertIn('푸시·EAS·스토어 빌드', json.loads(desc))
+        self.assertEqual(self.cl('_app'), APP_LINES[3:])
+        self.assertTrue(self.first_line('_app').startswith('교훈 스킬 — 그 일이면 먼저 열어'))
+        self.assertIn('lesson-app-build', self.first_line('_app'))
+        self.assertEqual(self.records()[-1]['project'], '_app')
+        self.assertEqual(self.cl(), COMMON_LINES)      # 공통은 안 건드림
+        self.assertIn('앱 공통', out.strip().splitlines()[-1])
+
+    def test_앱_공통_설명에_이미_조건이_있으면_두_번_안_붙인다(self):
+        self.run_task('lesson-group', '_app', 'build', '--lines', '1-3', '--desc', '폰 앱 프로젝트일 때 빌드')
+        body = read(os.path.join(self.gskills, 'lesson-app-build', 'SKILL.md'))
+        desc = json.loads(re.search(r'^description: (.*)$', body, re.M).group(1))
+        self.assertEqual(desc.count('폰 앱 프로젝트'), 1)
+
+    def test_앱_공통_스킬은_폰_앱_프로젝트_지시에만_붙는다(self):
+        self.run_task('lesson-group', '_app', 'build', '--lines', '1-3', '--desc', '푸시·EAS·스토어 빌드')
+        app = self.make_app()
+        _, _, err = self.run_task('send', app, '빌드해 줘')
+        self.assertTrue([l for l in err.splitlines() if 'lesson-app-build' in l])
+        self.assertNotIn(APP_LINES[0], err)
+        self.assertIn(APP_LINES[3], err)
+        _, _, err = self.run_task('send', 'proj', '버튼 색')
+        self.assertNotIn('lesson-app-build', err)
+        self.assertNotIn(APP_LINES[3], err)
+
+    def test_앱_공통_restore_와_남의_lesson_app_스킬(self):
+        keep = os.path.join(self.gskills, 'lesson-app-build')
+        os.makedirs(keep)
+        with open(os.path.join(keep, 'SKILL.md'), 'w') as f:
+            f.write('남의 것')
+        self.assertEqual(self.run_task('lesson-group', '_app', 'build', '--lines', '1-3', '--desc', 'd')[0], 2)
+        self.assertEqual(read(os.path.join(keep, 'SKILL.md')), '남의 것')
+        self.assertEqual(self.run_task('lesson-group', '_app', 'push', '--lines', '1-3', '--desc', 'd')[0], 0)
+        self.assertEqual(self.run_task('lesson-restore', '_app', 'push')[0], 0)
+        self.assertEqual(sorted(self.cl('_app')), sorted(APP_LINES))
+        self.assertEqual(read(os.path.join(keep, 'SKILL.md')), '남의 것')
+
+
+class PublicGlobalFlow(GlobalFlow, unittest.TestCase):
+    task = PUBLIC
+
 
 
 if __name__ == '__main__':

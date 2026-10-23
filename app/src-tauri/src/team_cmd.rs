@@ -1,0 +1,305 @@
+//! scripts/team — 참모가 팀 메신저를 쓴다(만들기·초대·들어오기·멤버·말 보내기·받은 말 읽기).
+//! HQ 스크립트는 app.jsonl 에 {action:"team", id, arg} 한 줄을 쓰고, 앱이 대신 해서 <데이터>/team.txt 에 답한다(scripts/peer 와 같은 길).
+//! 이 길로 보내는 말은 늘 origin agent — 사람 말(human)은 메인 창 명령 team_human_say 만(HumanProof)
+use crate::accounts_store::Store;
+use crate::team_relay::{self as relay, Http};
+use serde_json::{json, Value};
+use std::path::Path;
+
+pub struct TeamReq {
+    pub id: String,
+    pub verb: String,
+    pub arg: Value,
+}
+
+pub fn request(line: &str) -> Option<TeamReq> {
+    let v: Value = serde_json::from_str(line).ok()?;
+    if v.get("action")?.as_str()? != "team" {
+        return None;
+    }
+    let id = v.get("id")?.as_str()?;
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return None;
+    }
+    let verb = v["arg"]["verb"].as_str()?;
+    matches!(verb, "status" | "create" | "invite" | "join" | "members" | "say" | "inbox" | "deliver-to" | "forget" | "login" | "logout" | "devices" | "self-say").then(|| TeamReq { id: id.into(), verb: verb.into(), arg: v["arg"].clone() })
+}
+
+/// 망·소켓 — 시험에선 가짜
+pub trait Wire {
+    fn http(&self) -> &dyn Http;
+    /// 연결 스레드에 보내기 — 이 길은 사람 표가 없다(늘 agent)
+    fn send_agent(&self, dir: &Path, room: &str, cid: &str, body: &str) -> Result<u64, String>;
+    /// 팀이 생기면 연결을 띄운다
+    fn started(&self, dir: &Path);
+    /// 이 기기에서 팀을 잊으면 연결을 끈다
+    fn stopped(&self);
+    /// 로그인 때 여는 시스템 브라우저
+    fn opener(&self) -> &dyn crate::team_account::Opener;
+}
+
+/// scripts/team 이 비밀(말 본문·초대 코드)을 넘기는 자리 — <데이터>/team-in/<id>.json(600). app.jsonl 엔 id 만 남는다
+pub const HANDOFF_DIR: &str = "team-in";
+
+/// arg.in 이 있으면 건네기 파일을 읽어 arg 에 합치고 지운다. 이름은 영문·숫자만(폴더 밖으로 못 나가게)
+fn with_handoff(dir: &Path, arg: &Value) -> Result<Value, String> {
+    // 앱이 꺼져 있어 아무도 안 읽은 옛 건네기 파일은 한 시간 뒤 치운다
+    if let Ok(rd) = std::fs::read_dir(dir.join(HANDOFF_DIR)) {
+        for e in rd.flatten() {
+            if e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a.as_secs() > 3600) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    let Some(id) = arg.get("in").and_then(Value::as_str) else { return Ok(arg.clone()) };
+    if id.is_empty() || id.len() > 40 || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return Err("bad handoff id".into());
+    }
+    let f = dir.join(HANDOFF_DIR).join(format!("{id}.json"));
+    let text = std::fs::read_to_string(&f).map_err(|_| "건네기 파일이 없어(이미 읽었거나 지워짐)".to_string())?;
+    let _ = std::fs::remove_file(&f);
+    let extra: Value = serde_json::from_str(&text).map_err(|_| "건네기 파일이 JSON 이 아니야".to_string())?;
+    let mut out = arg.clone();
+    for k in ["text", "code"] {
+        if let Some(v) = extra.get(k).and_then(Value::as_str) {
+            out[k] = json!(v);
+        }
+    }
+    Ok(out)
+}
+
+fn fail(e: impl Into<String>) -> Value {
+    json!({ "ok": false, "error": e.into() })
+}
+
+fn cid_ok(c: &str) -> bool {
+    !c.is_empty() && c.len() <= 64 && c.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// 화면·폰에 나가는 상태 — 서버가 준 이름(팀·사람·기기)은 남의 글이라 받은 말 이름표와 같은 거름(제어 글자·[ ] < > 빼기, 이름표 흉내는 ?).
+/// 이 이름들이 넘기기 이름표·참모 입력칸까지 간다(보안 검토 10-23: 팀 이름의 \r 이 참모 입력칸에서 Enter 가 됐다)
+pub(crate) fn view(st: &relay::TeamState) -> Value {
+    use crate::team_relay_inbox::safe_name as clean;
+    let opt = |s: &str| if s.trim().is_empty() { String::new() } else { clean(s) };
+    json!({
+        "joined": st.joined(), "team": opt(&st.team_name), "teamId": st.team_id, "me": opt(&st.display_name), "device": opt(&st.device_name), "role": st.role,
+        "server": st.server, "deliverTo": st.deliver_to,
+        "account": st.account.as_ref().map(|a| json!({ "email": a.email, "name": opt(&a.name) })),
+        "devices": st.my_devices.iter().map(|d| json!({ "id": d.id, "name": clean(&d.name), "current": d.current })).collect::<Vec<_>>(),
+        "members": st.members.iter().map(|m| json!({ "id": m.id, "name": clean(&m.display_name), "role": m.role, "me": m.id == st.member_id })).collect::<Vec<_>>(),
+        "rooms": st.rooms.iter().map(|r| json!({ "id": r.id, "kind": r.kind, "peer": r.peer, "with": if r.kind == "self" { "self".to_string() } else { st.member_name(&r.peer).map(clean).unwrap_or_else(|| "?".into()) } })).collect::<Vec<_>>(),
+    })
+}
+
+/// 받은 말 끝 n 줄(남의 글 — 참모는 보여 주기만). 세션에 넘길 때와 같은 거름을 지난 글만 — 막은 말(forged)은 본문 없이,
+/// 제어 글자(ESC 등)·채움 글자는 빼고 줄머리 [ < 엔 › (보안 검토 1-B)
+pub fn inbox_tail(dir: &Path, n: usize) -> Vec<Value> {
+    use crate::peer_link::{body_lines, clean_name, forged, MAX_SAY};
+    let text = std::fs::read_to_string(dir.join(crate::team_relay_inbox::INBOX_FILE)).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(n)..]
+        .iter()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .map(|mut v| {
+            let raw = v["body"].as_str().unwrap_or("").to_string();
+            let blocked = v["note"] == "forged" || forged(&raw);
+            let body = if blocked { String::new() } else { body_lines(&raw.chars().take(MAX_SAY).collect::<String>()).map(|l| l.join("\n")).unwrap_or_default() };
+            v["body"] = json!(body);
+            if blocked {
+                v["note"] = json!("forged");
+            }
+            v["person"] = json!(clean_name(v["person"].as_str().unwrap_or("")));
+            v["deviceName"] = json!(clean_name(v["deviceName"].as_str().unwrap_or("")));
+            v
+        })
+        .collect()
+}
+
+pub fn answer(req: &TeamReq, dir: &Path, kc: &dyn Store, w: &dyn Wire) -> Value {
+    let arg = match with_handoff(dir, &req.arg) {
+        Ok(a) => a,
+        Err(e) => return fail(e),
+    };
+    let s = |k: &str| arg[k].as_str().unwrap_or("").trim().to_string();
+    let r = match req.verb.as_str() {
+        "status" => Ok(view(&relay::load_state(dir))),
+        "create" => relay::create(dir, kc, w.http(), &s("server"), &s("team"), &s("me"), &s("device")).map(|st| {
+            // 만들자마자 멤버(나) — 안 받으면 다음 이름 받기(5분)까지 화면 목록이 비었다(10-23 실측)
+            let st = relay::refresh_members(dir, kc, w.http()).unwrap_or(st);
+            w.started(dir);
+            view(&st)
+        }),
+        "join" => relay::join(dir, kc, w.http(), &s("server"), &s("code"), &s("me"), &s("device")).map(|st| {
+            // 들어오자마자 누가 있는지 — 실패해도 들어온 건 들어온 것
+            let st = relay::refresh_members(dir, kc, w.http()).unwrap_or(st);
+            w.started(dir);
+            view(&st)
+        }),
+        "invite" => relay::invite(dir, kc, w.http()).map(|i| json!({ "code": i.code, "expiresAt": i.expires_at, "link": i.link })),
+        "members" => relay::refresh_members(dir, kc, w.http()).map(|st| view(&st)),
+        "say" => {
+            let (to, text, cid) = (s("to"), arg["text"].as_str().unwrap_or("").to_string(), s("cid"));
+            if !cid_ok(&cid) {
+                return fail("bad cid");
+            }
+            if text.trim().is_empty() {
+                return fail("빈 말");
+            }
+            relay::open_dm(dir, kc, w.http(), &to).and_then(|room| {
+                w.started(dir);
+                w.send_agent(dir, &room.id, &cid, &text).map(|seq| json!({ "room": room.id, "seq": seq, "cid": cid }))
+            })
+        }
+        // 구글 로그인 — 사람 브라우저가 열리고 그 사람이 마칠 때까지(최대 10분) 기다린다
+        "login" => crate::team_account::login_with(dir, kc, w.http(), w.opener(), &s("server"), &s("device"), crate::team_account::LOGIN_WAIT).map(|st| {
+            w.started(dir);
+            view(&st)
+        }),
+        // 로그아웃은 이 기기 신원을 버린다 — 확인 표시(--yes)가 있어야
+        "logout" if arg["yes"] != true => Err("로그아웃은 사용자에게 먼저 묻고 --yes 로".into()),
+        "logout" => {
+            w.stopped();
+            crate::team_account::logout(dir, kc, w.http()).map(|_| json!({ "loggedOut": true }))
+        }
+        "devices" => crate::team_account::refresh_me(dir, kc, w.http()).map(|st| view(&st)),
+        "self-say" => {
+            let (text, cid) = (arg["text"].as_str().unwrap_or("").to_string(), s("cid"));
+            if !cid_ok(&cid) {
+                return fail("bad cid");
+            }
+            if text.trim().is_empty() {
+                return fail("빈 말");
+            }
+            relay::self_room(dir, kc, w.http()).and_then(|room| {
+                w.started(dir);
+                w.send_agent(dir, &room, &cid, &text).map(|seq| json!({ "room": room, "seq": seq, "cid": cid }))
+            })
+        }
+        "inbox" => Ok(json!({ "items": inbox_tail(dir, arg["n"].as_u64().unwrap_or(20).min(200) as usize) })),
+        "deliver-to" => relay::mutate(dir, |st| st.deliver_to = s("name")).map(|st| view(&st)),
+        // 이 기기에서만 잊는다(서버의 팀·기기 행은 그대로 — 시험 정리는 서버 쪽 스크립트로)
+        "forget" => {
+            w.stopped();
+            relay::forget_local(dir, kc).map(|t| json!({ "forgot": t }))
+        }
+        _ => Err("unknown verb".into()),
+    };
+    match r {
+        Ok(mut v) => {
+            v["ok"] = json!(true);
+            v
+        }
+        Err(e) => fail(e),
+    }
+}
+
+/// 실제 curl·연결 스레드
+pub struct RealWire;
+
+impl Wire for RealWire {
+    fn http(&self) -> &dyn Http {
+        &relay::Curl
+    }
+    fn send_agent(&self, dir: &Path, room: &str, cid: &str, body: &str) -> Result<u64, String> {
+        crate::team_relay_ws::send(dir, room, cid, body, None)
+    }
+    fn started(&self, dir: &Path) {
+        crate::team_relay_ws::ensure(dir);
+    }
+    fn stopped(&self) {
+        crate::team_relay_ws::stop();
+    }
+    fn opener(&self) -> &dyn crate::team_account::Opener {
+        &crate::team_account::SystemBrowser
+    }
+}
+
+// ── 메인 창 명령 ─────────────────────────────────────────────
+
+/// 팀 상태(화면용) — 메인 창만
+#[tauri::command]
+pub fn team_status(window: tauri::WebviewWindow) -> Result<Value, String> {
+    main_only(&window)?;
+    Ok(view(&relay::load_state(crate::config::data_dir())))
+}
+
+fn main_only(w: &tauri::WebviewWindow) -> Result<(), String> {
+    if w.label() == "main" { Ok(()) } else { Err("main window only".into()) }
+}
+
+/// 계정 일을 뒤 스레드에서 — 실제 키체인·curl, 끝나면 화면용 상태
+async fn account_job(f: impl FnOnce(&Path, &dyn Store, &dyn Http) -> Result<(), String> + Send + 'static) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = crate::config::data_dir();
+        f(dir, &crate::team_relay_keys::store(), &relay::Curl)?;
+        Ok(view(&relay::load_state(dir)))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 설정 > Chammo 계정: 구글 로그인(사람 브라우저, 최대 10분). server 는 처음 기기만(팀·로그인한 적 있으면 그 서버)
+#[tauri::command]
+pub async fn team_login(window: tauri::WebviewWindow, server: String, device: String) -> Result<Value, String> {
+    main_only(&window)?;
+    let device = if device.trim().is_empty() { crate::team_account::default_device_name() } else { device };
+    account_job(move |d, kc, h| {
+        crate::team_account::login_with(d, kc, h, &crate::team_account::SystemBrowser, &server, &device, crate::team_account::LOGIN_WAIT)?;
+        crate::team_relay_ws::ensure(d);
+        Ok(())
+    })
+    .await
+}
+
+/// 서버에서 계정·내 기기 다시 받기
+#[tauri::command]
+pub async fn team_account_refresh(window: tauri::WebviewWindow) -> Result<Value, String> {
+    main_only(&window)?;
+    account_job(|d, kc, h| crate::team_account::refresh_me(d, kc, h).map(|_| ())).await
+}
+
+#[tauri::command]
+pub async fn team_device_rename(window: tauri::WebviewWindow, id: String, name: String) -> Result<Value, String> {
+    main_only(&window)?;
+    account_job(move |d, kc, h| crate::team_account::rename_device(d, kc, h, &id, &name).map(|_| ())).await
+}
+
+#[tauri::command]
+pub async fn team_device_revoke(window: tauri::WebviewWindow, id: String) -> Result<Value, String> {
+    main_only(&window)?;
+    account_job(move |d, kc, h| crate::team_account::revoke_device(d, kc, h, &id).map(|_| ())).await
+}
+
+#[tauri::command]
+pub async fn team_logout(window: tauri::WebviewWindow) -> Result<Value, String> {
+    main_only(&window)?;
+    account_job(|d, kc, h| crate::team_account::logout(d, kc, h)).await
+}
+
+/// 계정 지우기 — confirm 은 사람이 친 계정 이메일 그대로
+#[tauri::command]
+pub async fn team_account_delete(window: tauri::WebviewWindow, confirm: String) -> Result<Value, String> {
+    main_only(&window)?;
+    account_job(move |d, kc, h| crate::team_account::delete_account(d, kc, h, &confirm)).await
+}
+
+/// 사람이 메인 창 입력칸에서 팀 사람에게 친 말 — 받는 쪽엔 '팀 사람 말'로 간다.
+/// 프런트는 진짜(isTrusted) 키·클릭 뒤 1.5초 안에서만 부른다(remoteChat sendAllowed 와 같은 문). 메신저 따로 창(team-*)도 같은 문
+#[tauri::command]
+pub async fn team_human_say(window: tauri::WebviewWindow, to: String, text: String, cid: String) -> Result<Value, String> {
+    let proof = crate::team_relay_ws::HumanProof::ui_window(&window)?;
+    if !cid_ok(&cid) || text.trim().is_empty() {
+        return Err("bad cid or empty".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = crate::config::data_dir();
+        let room = relay::open_dm(dir, &crate::team_relay_keys::store(), &relay::Curl, &to)?;
+        crate::team_relay_ws::send(dir, &room.id, &cid, &text, Some(proof)).map(|seq| json!({ "room": room.id, "seq": seq }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+#[path = "team_cmd_tests.rs"]
+mod tests;

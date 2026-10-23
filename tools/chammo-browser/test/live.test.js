@@ -162,7 +162,71 @@ test('사람 부르기 — 브라우저가 안 떠 있으면 바로 실패, 시�
   const r = await live.askHuman('x', { pollMs: 5, timeoutMs: 40 });
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.timeout, true);
-  assert.strictEqual(JSON.parse(fs.readFileSync(liveFile(root, 'acme'), 'utf8')).ask, null, '시간이 다 되면 표시를 지운다');
+  const ask = JSON.parse(fs.readFileSync(liveFile(root, 'acme'), 'utf8')).ask;
+  assert.ok(ask && ask.waiting === false, '시간이 다 돼도 카드는 남긴다 — 기다리지 않는 중(waiting:false)으로(2026-10-23 acme-shop)');
+  assert.match(r.text, /턴을 끝내지 말고/);
+});
+
+/** 시간 초과로 끝난 부름 하나 — 상태 파일 ask 는 남고 세션은 기다리지 않는다 */
+async function timedOut() {
+  const root = tmp();
+  const prof = path.join(root, 'profiles', 'acme');
+  fs.mkdirSync(prof, { recursive: true });
+  fs.writeFileSync(path.join(prof, 'DevToolsActivePort'), '5000\n/devtools/browser/abc\n');
+  let t = 7;
+  const live = createLive({ profile: 'acme', root, profileDir: prof, pid: 1, ppid: 2, now: () => t, probe: async () => true });
+  live.onCall('browser_navigate', { url: 'https://a.com/' });
+  const r = await live.askHuman('앱인토스 로그인', { pollMs: 5, timeoutMs: 30 });
+  assert.strictEqual(r.timeout, true);
+  t = 99; // 다음 부름은 다른 시각 — 그래도 같은 카드(at)를 이어 써야 한다
+  const state = () => JSON.parse(fs.readFileSync(liveFile(root, 'acme'), 'utf8'));
+  return { root, live, state, done: path.join(root, 'live', 'acme.done'), say: path.join(root, 'live', 'acme.say') };
+}
+
+test('시간 초과 뒤 다시 부르면 같은 카드(at)를 이어 쓴다 — 새 알림이 10분마다 쌓이지 않게', async () => {
+  const { live, state, done } = await timedOut();
+  assert.ok(live.pendingAsk(), '걸린 부름이 있다(유휴 닫기를 미룬다)');
+  const p = live.askHuman('앱인토스 로그인', { pollMs: 5, timeoutMs: 2000 });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(state().ask.at, 7);
+  assert.strictEqual(state().ask.waiting, true);
+  fs.writeFileSync(done, '1:7');
+  assert.strictEqual((await p).ok, true);
+  assert.strictEqual(state().ask, null);
+  assert.ok(!live.pendingAsk());
+});
+
+test('시간 초과 뒤 사람이 끝냈으면(.done 표가 맞음) 다시 불렀을 때 바로 끝났다고 — 한마디도 같이', async () => {
+  const { live, state, done, say } = await timedOut();
+  fs.writeFileSync(say, '1:7\n로그인했어');
+  fs.writeFileSync(done, '1:7');
+  const r = await live.askHuman('앱인토스 로그인', { pollMs: 5, timeoutMs: 50 });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.said, '로그인했어');
+  assert.strictEqual(state().ask, null);
+  assert.ok(!fs.existsSync(done) && !fs.existsSync(say));
+});
+
+test('시간 초과 뒤 사람이 끝냈으면 다음 아무 도구 호출(앱이 깨운 뒤 browser_snapshot)에서 카드를 치운다', async () => {
+  const { live, state, done, say } = await timedOut();
+  live.onCall('browser_snapshot', {});
+  assert.ok(state().ask, '아직 안 끝났으면 그대로');
+  fs.writeFileSync(done, '1:6'); // 지난 부름 표는 무시
+  live.onCall('browser_snapshot', {});
+  assert.ok(state().ask);
+  fs.writeFileSync(say, '1:7\n됐어');
+  fs.writeFileSync(done, '1:7');
+  live.onCall('browser_snapshot', {});
+  assert.strictEqual(state().ask, null);
+  assert.ok(!fs.existsSync(done) && !fs.existsSync(say), '앱이 깨우는 줄에 한마디를 실었으니 파일은 치운다');
+  assert.ok(!live.pendingAsk());
+});
+
+test('시간 초과로 남은 카드는 세션이 브라우저를 닫으면 같이 사라진다', async () => {
+  const { root, live } = await timedOut();
+  live.closed();
+  assert.ok(!live.pendingAsk());
+  assert.ok(!fs.existsSync(liveFile(root, 'acme')));
 });
 
 test('사람 파일 창 수 — 앱이 <live>/<프로필>.choosers 에 적은 수 중 아직 안 치운 만큼만, 닫으면 처음부터', () => {
@@ -342,4 +406,16 @@ test('탭 수 — /json/list 의 page 만 센다, 포트가 닫혔으면 false, 
   srv.close();
   await new Promise((r) => srv.once('close', r));
   assert.strictEqual(await pageCount(port), false);
+});
+
+test('browser_ask_human 설명 — 시간 초과면 다시 부르기, 저장된 계정이면 2단계만 넘기기 · 걸린 부름이면 유휴 닫기 미룸(2026-10-23 사용자)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'bin', 'chammo-browser-mcp.js'), 'utf8');
+  const desc = /name: 'browser_ask_human',\s*description: '([^']+)'/.exec(src)[1];
+  assert.ok(desc.includes('시간 초과면 턴을 끝내지 말고 다시 불러'), desc);
+  assert.ok(desc.includes('저장된 계정이 있으면 사람에게 비밀번호를 치게 하지 말고 2단계 인증만 넘겨'), desc);
+  // 첫머리만 읽어도 로그인을 통째로 사람에게 넘기지 않게 — 앞 문장에 '로그인·2단계' 나열이 없고 저장된 계정은 세션 몫(0.4.0 공개 2차 검증)
+  const head = desc.split('지금 열린 브라우저')[0];
+  assert.ok(!head.includes('로그인·2단계'), head);
+  assert.ok(head.includes('저장된 계정이 있는 로그인은 사람 몫이 아니다'), head);
+  assert.match(src, /canClose: \(\) => \{[^}]*live\.pendingAsk\(\)/);
 });

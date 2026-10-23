@@ -230,12 +230,13 @@ fn ask(addr: SocketAddr, raw: &str) -> String {
 
 #[test]
 fn 소켓으로_401_403_200() {
+    let _ports = crate::test_ports::lock();
     let key = "a".repeat(64);
     let probe = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = probe.local_addr().unwrap().port();
     drop(probe);
     let h = format!("127.0.0.1:{port}");
-    let (stop, addrs) = serve(&[format!("127.0.0.1:{port}").parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![format!("http://{h}")], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None }, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
+    let (stop, addrs) = serve(&[format!("127.0.0.1:{port}").parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![format!("http://{h}")], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default() }, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
     let addr = addrs[0];
     assert!(ask(addr, &format!("GET /api/sessions HTTP/1.1\r\nHost: {h}\r\n\r\n")).starts_with("HTTP/1.1 401"));
     assert!(ask(addr, &format!("GET /api/sessions HTTP/1.1\r\nHost: evil.com\r\nAuthorization: Bearer {key}\r\n\r\n")).starts_with("HTTP/1.1 403"));
@@ -251,12 +252,13 @@ fn 소켓으로_401_403_200() {
 // 2026-10-04 폰 첫 켜기 ③: 받는 고리가 연결이 없으면 50ms 씩 자서 요청마다 평균 25ms 를 더 기다렸다 — 들어오면 바로 받는다
 #[test]
 fn 쉬던_서버도_요청을_바로_받는다() {
+    let _ports = crate::test_ports::lock();
     let key = "c".repeat(64);
     let probe = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = probe.local_addr().unwrap().port();
     drop(probe);
     let h = format!("127.0.0.1:{port}");
-    let (stop, addrs) = serve(&[h.parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None }, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
+    let (stop, addrs) = serve(&[h.parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default() }, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
     let req = format!("GET /api/sessions HTTP/1.1\r\nHost: {h}\r\nAuthorization: Bearer {key}\r\n\r\n");
     let mut total = Duration::ZERO;
     for i in 0..20u64 {
@@ -324,12 +326,13 @@ impl Backend for Panicky {
 
 #[test]
 fn s1_처리_중_패닉이_20번_나도_서버는_계속_답한다() {
+    let _ports = crate::test_ports::lock();
     let key = "b".repeat(64);
     let probe = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = probe.local_addr().unwrap().port();
     drop(probe);
     let h = format!("127.0.0.1:{port}");
-    let (stop, addrs) = serve(&[h.parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None }, Arc::new(Panicky), Arc::new(Peers::new(vec![], || None))).unwrap();
+    let (stop, addrs) = serve(&[h.parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default() }, Arc::new(Panicky), Arc::new(Peers::new(vec![], || None))).unwrap();
     let addr = addrs[0];
     for _ in 0..(MAX_CONNS + 4) {
         let _ = ask(addr, &format!("GET /api/sessions HTTP/1.1\r\nHost: {h}\r\nAuthorization: Bearer {key}\r\n\r\n"));
@@ -489,11 +492,12 @@ fn w3_윈도우_0_2_4_가_걸어_둔_100x_serve_는_우리_것으로_보고_갈�
 
 #[test]
 fn w4_여러_주소에_묶고_하나라도_못_묶으면_다_푼다() {
+    let _ports = crate::test_ports::lock();
     let key = "b".repeat(64);
     let probe = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = probe.local_addr().unwrap().port();
     drop(probe);
-    let gate = |h: &str| Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.to_string(), format!("[::1]:{port}")], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None };
+    let gate = |h: &str| Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.to_string(), format!("[::1]:{port}")], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default() };
     let h = format!("127.0.0.1:{port}");
     let v6: SocketAddr = format!("[::1]:{port}").parse().unwrap();
     let (stop, addrs) = serve(&[h.parse().unwrap(), v6], gate(&h), Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
@@ -594,7 +598,7 @@ impl Keep for FakeKeep {
             stop.store(true, Ordering::Relaxed);
         }
         let t = self.next_net().ok_or("테일스케일 주소가 없어요")?;
-        let gate = Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&"d".repeat(64), "시험")), hosts: vec![], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None };
+        let gate = Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&"d".repeat(64), "시험")), hosts: vec![], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default() };
         let (stop, addrs) = serve(&["127.0.0.1:0".parse().unwrap()], gate, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).map_err(|e| e.to_string())?;
         self.up = Some((t, stop, addrs[0]));
         Ok(())
@@ -748,5 +752,29 @@ fn p4_켜_둔_채_https_인증서가_켜지면_다시_띄워_https_로_간다() 
     assert_eq!(k2.starts, 1);
     for (_, stop, _) in [k.up, k2.up].into_iter().flatten() {
         stop.store(true, Ordering::Relaxed);
+    }
+}
+
+#[test]
+fn device_name_is_trimmed_short_and_plain() {
+    // 폰 기기 줄 첫 단추 — '이 맥' 대신 이 컴퓨터 이름(2026-10-23). 제어 글자 빼고 40자까지, 비면 None(폰이 '이 맥'으로)
+    assert_eq!(clean_device_name("Studio Mac\n"), Some("Studio Mac".to_string()));
+    assert_eq!(clean_device_name("  홍길동의 iMac  "), Some("홍길동의 iMac".to_string()));
+    assert_eq!(clean_device_name("a\u{7}b"), Some("ab".to_string()));
+    assert_eq!(clean_device_name(" \n"), None);
+    assert_eq!(clean_device_name(&"가".repeat(60)).map(|s| s.chars().count()), Some(40));
+}
+
+#[test]
+fn pair_answer_has_a_code_url_or_a_reason() {
+    // scripts/app phone pair 의 답(개선-1) — 켜져 있으면 코드가 든 주소+QR, 꺼져 있으면 이유. 둘 다 아닌 반쪽 답이 없어야 스크립트가 읽는다
+    let a = pair_answer();
+    match a["ok"].as_bool() {
+        Some(true) => {
+            assert!(a["url"].as_str().is_some_and(|u| u.contains("?pair=")));
+            assert!(a["expires"].as_u64().is_some());
+        }
+        Some(false) => assert!(a["error"].as_str().is_some_and(|e| !e.is_empty())),
+        None => panic!("ok 가 없다: {a}"),
     }
 }

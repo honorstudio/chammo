@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ASK_EMPTY, askClose, askNotice, askOpen, askShown, askStep, askWaiting, openLive, pickLive, popupLabel, popupLine, popupNotice, popupStep, type AskState } from './agentAsk';
+import { ASK_EMPTY, askClose, askNotice, askWakeLine, askWakes, askOpen, askShown, askStep, askWaiting, openLive, pickLive, popupLabel, popupLine, popupNotice, popupStep, type AskState } from './agentAsk';
 import type { Live } from './agentBrowser';
 
 const live = (profile: string, o: Partial<Live> = {}): Live => ({ profile, pid: 10, sessionPid: 20, url: 'https://a.com/', title: 'A', tabs: [], tool: '', toolAt: 0, busy: false, ts: 0, ...o });
@@ -221,5 +221,21 @@ describe('popupStep — 모달을 안 보는 동안 뜬 패스키 창은 알림 
     expect(popupLabel(undefined)).toBe('크롬 창');
     expect(popupLine('passkey')).toContain('패스키');
     expect(popupLine('window')).not.toContain('패스키');
+  });
+});
+
+describe('askWakes — 시간 초과 뒤 사람이 끝낸 부름은 그 세션 입력칸에 [앱] 줄로 깨운다(2026-10-23 acme-shop)', () => {
+  const sessions = [{ id: 'calc-1', procPid: 20 }, { id: 'other', procPid: 30 }];
+  it('wake 가 찍힌 브라우저의 세션(procPid = sessionPid)에 한 줄', () => {
+    const w = askWakes([live('calc', { wake: { at: 700, say: null } }), asking('x', 5, { sessionPid: 30 })], sessions, []);
+    expect(w).toEqual([{ key: 'calc:10:700', id: 'calc-1', line: askWakeLine(null) }]);
+    expect(w[0]!.line).toBe('[앱] 사람이 브라우저 일을 끝냈어 — browser_snapshot 으로 확인하고 이어서 해');
+  });
+  it('이미 보낸 부름은 다시 안 보낸다 · 세션이 없으면(꺼짐) 건너뛴다', () => {
+    expect(askWakes([live('calc', { wake: { at: 700 } })], sessions, ['calc:10:700'])).toEqual([]);
+    expect(askWakes([live('calc', { sessionPid: 99, wake: { at: 700 } })], sessions, [])).toEqual([]);
+  });
+  it('사람이 같이 적은 한마디는 줄 끝에 — 한 줄로', () => {
+    expect(askWakeLine('로그인\n했어')).toBe('[앱] 사람이 브라우저 일을 끝냈어 — browser_snapshot 으로 확인하고 이어서 해 · 사람이 남긴 말: "로그인 했어"');
   });
 });

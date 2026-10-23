@@ -55,6 +55,11 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
                                                        folder stays unless --trash-source (macOS Trash, never deleted) — ask the
                                                        user first. A mode inside the data folder needs --trash-source
   scripts/app mode restore-builtin [<name>]            show hidden built-in modes again (all of them without a name)
+  scripts/app phone pair [--url]                       make a phone pairing QR (what Settings > Phone > "new QR" shows) without a click:
+                                                       writes a QR page and prints its path — put it on screen with scripts/show <that path>.
+                                                       The code lives 10 minutes and works once; the address (it holds the code) is printed only
+                                                       with --url. The phone gets its key only after the user presses Allow on the
+                                                       "Link this phone?" card in the app. Exit 1 = mobile is off or Chammo is closed
   scripts/app push "<title>" ["<one line>"]            push a notification to the user's phone (home-screen web app
                                                        with the bell on). Sent even while the user looks at the Mac.
                                                        Title + 60 chars only — no secrets. Exit 4 = no subscribed
@@ -348,6 +353,51 @@ def harness(data, project, wait):
     return ask_app(data, 'harness', project, 'harness.txt', wait)
 
 
+def phone_pair(data, show_url, wait):
+    """앱에 폰 연결 QR 을 부탁하고(코드는 비밀 — 앱이 부탁마다 따로인 600 칸에만 쓴다) QR 페이지를 홈 안에 만든다 → (종료 코드, 글)"""
+    code, body = ask_app(data, 'phone', {'verb': 'pair'}, 'phone.txt', wait)
+    if code:
+        return code, body
+    try:
+        r = json.loads(body)
+    except ValueError:
+        return 1, body
+    if not r.get('ok') or not r.get('url'):
+        return 1, str(r.get('error') or 'no code')
+    # 홈 안이어야 scripts/show 가 연다 — 잡 임시 폴더(세션이 끝나면 같이 지워진다), 없으면 데이터 폴더
+    base = os.path.join(os.environ.get('CLAUDE_JOB_DIR') or data, 'tmp' if os.environ.get('CLAUDE_JOB_DIR') else 'pair')
+    os.makedirs(base, exist_ok=True)
+    page = os.path.join(base, f'phone-pair-{uuid_hex()}.html')
+    qr = r.get('qrSvg') or ''
+    html = ('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>Phone pairing</title><body style="margin:0;display:grid;place-items:center;min-height:100vh;font:16px system-ui;background:#fff;color:#111">'
+            f'<main style="text-align:center;padding:24px"><div style="width:260px;margin:0 auto">{qr}</div>'
+            f'<p style="word-break:break-all;max-width:420px;font-size:12px;color:#555">{html_escape(r["url"])}</p></main>')
+    fd = os.open(page, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        f.write(html)
+    mins = ''
+    try:
+        left = int(r.get('expires', 0) / 1000 - time.time())
+        mins = f' (~{max(left, 0) // 60} min left / 약 {max(left, 0) // 60}분 남음)' if left > 0 else ''
+    except (TypeError, ValueError):
+        pass
+    lines = [f'QR page / QR 페이지: {page}', f'one-time code{mins} — put it on screen: scripts/show {page} / 한 번만 쓰는 코드 — 화면에 띄우기: scripts/show {page}']
+    lines.append("the user must press Allow on the app's \"Link this phone?\" card before the phone gets a key / 사용자가 앱의 '이 폰을 연결할까요?' 카드에서 허용을 눌러야 폰이 열쇠를 받아")
+    if show_url:
+        lines.append(r['url'])
+    return 0, '\n'.join(lines)
+
+
+def uuid_hex():
+    import uuid
+    return uuid.uuid4().hex[:10]
+
+
+def html_escape(t):
+    return str(t).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+
+
 def project_dir(data, home, arg):
     """프로젝트 이름(devRoot 아래·따로 추가한 것) 또는 폴더 → 폴더 절대 경로. 못 찾으면 None"""
     a = arg.strip()
@@ -476,6 +526,17 @@ def main(argv):
             f.write(json.dumps(line, ensure_ascii=False) + '\n')
         print(f'sent to the app / 앱에 넘김: push {arg["title"]}')
         return 0
+    if argv[:1] == ['phone']:
+        rest = argv[1:]
+        if rest not in (['pair'], ['pair', '--url']):
+            print(__doc__, file=sys.stderr); return 2
+        try:
+            wait = float(os.environ.get('CHAMMO_APP_WAIT', '') or 20)
+        except ValueError:
+            wait = 20
+        code, msg = phone_pair(data_dir(), len(rest) == 2, wait)
+        print(msg, file=sys.stdout if code == 0 else sys.stderr)
+        return code
     if argv[:1] == ['harness']:
         if len(argv) > 2:
             print(__doc__, file=sys.stderr); return 2

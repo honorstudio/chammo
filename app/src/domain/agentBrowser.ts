@@ -7,6 +7,8 @@ export type LiveTab = { index: number; title: string; url: string; current: bool
 export type Live = { profile: string; pid: number; sessionPid: number; url: string; title: string; tabs: LiveTab[]; tool: string; toolAt: number; busy: boolean; ts: number;
   /** 세션이 사람을 부름(browser_ask_human) — 앱이 크게 띄운다 */
   ask?: { reason: string; at: number } | null;
+  /** 세션이 안 기다리던 부름(시간 초과)을 사람이 끝냄 — 앱이 그 세션 입력칸에 [앱] 줄로 깨운다(Rust apply_wake 가 채움, ask 는 내려감) */
+  wake?: { at: number; say?: string | null } | null;
   /** 래퍼가 개입 때 세션 도구를 붙잡을 수 있다(없으면 스크립트 크롬·옛 래퍼 — 멈추지 못함) */
   gate?: boolean;
   /** 세션 도구가 사람이 돌려주길 기다리기 시작한 때(ms, 0 = 안 기다림) */

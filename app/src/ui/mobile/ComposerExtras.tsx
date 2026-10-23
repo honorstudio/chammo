@@ -70,16 +70,23 @@ export function VoiceMode() {
   const [on, , reload] = useMemoPoll('voice', readVoice, 30_000, false);
   const [now, setNow] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+  // 못 바꿨으면 한 줄(모델 칩과 같은 자리) — 예전엔 실패를 삼켜 눌러도 아무 일이 없어 보였다
+  const [err, setErr] = useState<string | null>(null);
   useEffect(() => { setNow(null); }, [on]);
+  useEffect(() => { if (!err) return; const t = window.setTimeout(() => setErr(null), 7000); return () => window.clearTimeout(t); }, [err]);
   const cur = now ?? on;
   const flip = () => {
     if (!cur) unlockAudio(); // 이 누름 안에서 오디오를 풀어 둔다 — 소리가 폰으로 올 수 있게(iOS 는 사람이 누르기 전엔 못 튼다)
     setBusy(true);
-    setVoiceMode(!cur).then((v) => { setNow(v); setPhoneVoice(v); reload(); }, () => {}).finally(() => setBusy(false));
+    setErr(null);
+    setVoiceMode(!cur).then((v) => { setNow(v); setPhoneVoice(v); reload(); }, () => setErr('음성 모드를 못 바꿨어요')).finally(() => setBusy(false));
   };
   return (
+    <>
+    {err && <span className="m-mfail" role="alert">{err}</span>}
     <button type="button" className={cur ? 'm-cbtn m-on' : 'm-cbtn'} disabled={busy} onClick={flip} aria-pressed={cur} aria-label={cur ? '음성 모드 켜짐 — 끄기' : '음성 모드 꺼짐 — 켜기'} title="음성 모드">
       <span className="m-cdot"><IconSpeaker /></span>
     </button>
+    </>
   );
 }

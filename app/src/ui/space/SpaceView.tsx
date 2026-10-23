@@ -54,6 +54,7 @@ import { orchRoleOf, useOrchRoleData } from '../orchRoleStore';
 import { NotePanel } from './NotePanel';
 import { ModeHome, ModeLayer, ModePanel, useModeRows } from '../mode/ModePanel';
 import { HomeView } from './HomeView';
+import { HomeProgress } from '../GoalProgress';
 import { setModeChatHere, setModeDashHere } from '../mode/modeBus';
 import type { NoteBase } from '../../domain/noteEdits';
 import { projectRoot } from '../../domain/spaceTree';
@@ -87,6 +88,7 @@ import { FileTab } from './FileTab';
 import { TabStrip } from './TabStrip';
 import { ActivityBar } from './ActivityBar';
 import { LockerPage, type CardActs, type ChipProject } from './LockerPage';
+import type { TeamSpace } from '../team/useTeamMode';
 import { lockerMenu } from '../../domain/lockerMenu';
 import { menuItems } from './lockerMenuItems';
 import { dotKind, worstDot, type DotKind } from '../../domain/dot';
@@ -142,7 +144,13 @@ function ViewSeg({ side, pet, office, onPick }: { side: SpaceSide; pet: boolean;
  * 채팅 뷰의 스페이스(큰 창 전체) — v10: 왼쪽 메뉴 트리(참모·프로젝트마다 대시보드 + 문서, 내 페이지),
  * 가운데 = 고른 것(대시보드 / 노션식 문서 / 세션 터미널). 참모·맡긴 세션이 띄운 파일은 위에 모달
  */
-export function SpaceView({ chat, railTop, far, fns, onReorderOrch, onMenuToggle, orchPins = [], orchOrder = [], pet, office, officeReq = null, onOfficeReq, onOfficeShown, harnitorReq = null, onHarnitorReq, onHarnitorShown, onHarnitorClosed, toolsReq = null, onToolsReq, onToolsShown, onToolsClosed, reviewReq = null, onReviewReq, onReviewShown, replayReq = null, onReplayReq, onReplayShown, replayPage, computerUse, orchs, stoppingIds, startingOrchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, orchHome, send, sendTo, live = {}, menuOpen = true, idle = [], stopped = [], orchCwd = '', onResume, onWakeOrch, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, reviewPage, ctxOf, onAddProject, onChatTab, helpers = [], loose = [], tasks, onMessage }: {
+/** 진행 칸 — 일하는 중 세션의 할 일 목록 끝난 비율(다 끝나면 Claude 가 목록을 지워 빈 목록 = 모름) */
+const sessionFill = (sessionId: string) => readSessionTasks(sessionId).then((t) => (t.length ? t.filter((x) => x.status === 'completed').length / t.length : undefined));
+
+/** 스페이스 팀 탭(팀 보관함) 자리 */
+const TEAM_KEY = 'tm:';
+
+export function SpaceView({ chat, railTop, far, team, fns, onReorderOrch, onMenuToggle, orchPins = [], orchOrder = [], pet, office, officeReq = null, onOfficeReq, onOfficeShown, harnitorReq = null, onHarnitorReq, onHarnitorShown, onHarnitorClosed, toolsReq = null, onToolsReq, onToolsShown, onToolsClosed, reviewReq = null, onReviewReq, onReviewShown, replayReq = null, onReplayReq, onReplayShown, replayPage, computerUse, orchs, stoppingIds, startingOrchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, orchHome, send, sendTo, live = {}, menuOpen = true, idle = [], stopped = [], orchCwd = '', onResume, onWakeOrch, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, reviewPage, ctxOf, onAddProject, onChatTab, helpers = [], loose = [], tasks, onMessage }: {
   /** 고정한 참모(대화 id, 고정한 순서) — 사이드바 줄 순서·압정 표시 */
   orchPins?: string[];
   /** 프사 띠에서 참모를 끌어 옮겼다(ids = 지금 순서, from 을 to 자리로) — 채팅 탭 끌기와 같은 길(App reorderOrchPanes) */
@@ -153,6 +161,8 @@ export function SpaceView({ chat, railTop, far, fns, onReorderOrch, onMenuToggle
   railTop?: React.ReactNode;
   /** 다른 기기를 보는 중 — 띠·스페이스를 그 기기 것으로 바꿔 끼운다(이 맥 화면 상태는 그대로 두고 덮기만, 돌아오면 그대로) */
   far?: { rail: React.ReactNode; main: React.ReactNode; color: string; none?: boolean; cut?: boolean };
+  /** 참모 메신저(ui/team/useTeamMode) — 띠 아래 팀 칸, 고른 대화(railOn)면 가운데가 그 대화라 참모 프사 고름을 내린다. space = 스페이스 팀 탭(팀 보관함, 고른 팀을 따라감) */
+  team?: { rail: React.ReactNode; railOn: string | null; color?: string; onLeave: () => void; space?: TeamSpace };
   /** 띠 맨 아래 펼치기·접기(⌘B 와 같다) — 펼친 패널 = 넓은 띠(2026-10-12 패널 하나로 P1 A) */
   onMenuToggle?: () => void;
   /** 기록·음성·도구·하니터·리뷰 — 접힌 패널 둘째 세로줄(col), 펼친 패널 맨 아래 가로줄(row). 위 막대에서 옮겨 옴(2026-10-11 사용자 180.png) */
@@ -284,6 +294,9 @@ export function SpaceView({ chat, railTop, far, fns, onReorderOrch, onMenuToggle
     if (r) { navs.current.set(navKey(), r.nav); setPickRaw(r.to); return; }
     if (dir < 0 && fallback && fallback !== cur) { navs.current.set(navKey(), { back: n.back, fwd: [cur, ...n.fwd] }); setPickRaw(fallback); }
   };
+  // 메신저 팀을 고를 때마다(nonce) 따라가기가 켜져 있으면 팀 탭으로(시안 v2 P2 — 고리로 끔)
+  const teamNonce = team?.space?.nonce ?? 0;
+  useEffect(() => { if (teamNonce > 0 && team?.space?.follow) setPick(TEAM_KEY, 'team'); }, [teamNonce]); // eslint-disable-line react-hooks/exhaustive-deps
   const followed = nav; // 채팅 탭이 바뀌면 아래 switchTo 가 옮긴다
   const orch = orchs.find((o) => o.id === followed.view) ?? chatOrch;
   // 채팅 탭마다 보던 화면을 기억한다 — 탭을 바꾸면 그 참모에서 마지막으로 보던 화면(처음이면 대시보드).
@@ -1163,7 +1176,7 @@ export function SpaceView({ chat, railTop, far, fns, onReorderOrch, onMenuToggle
     }
     const o = r.live;
     const stopping = r.phase === 'stopping';
-    return { id: o.id, label: oname(o), role: orchRoleOf(o.name || '')?.text, on: o.id === railOn, color: bodyColor(avatars, o.name || '', colorOf(o.name || '')), pinned: !!o.sessionId && orchPins.includes(o.sessionId), pip: stopping ? null : pip(o),
+    return { id: o.id, label: oname(o), role: orchRoleOf(o.name || '')?.text, on: o.id === railOn && !team?.railOn, color: bodyColor(avatars, o.name || '', colorOf(o.name || '')), pinned: !!o.sessionId && orchPins.includes(o.sessionId), pip: stopping ? null : pip(o),
       phase: stopping ? 'stopping' : undefined, phaseText: text, flip: r.key, flipAlt: `new:${o.name}`,
       node: <OrchAvatar name={o.name || ''} size={32} state={stopping ? 'off' : avatarState(o, statusOf(o))} phase={stopping ? 'stopping' : undefined} woke={creatingSeen.current.has(o.name)} color={colorOf(o.name || '')} label={oname(o)} /> };
   };
@@ -1172,9 +1185,12 @@ export function SpaceView({ chat, railTop, far, fns, onReorderOrch, onMenuToggle
     <OrchRail
       top={railTop}
       avatars={railList}
+      extra={team?.rail}
+      extraOn={team?.railOn}
       onPick={(id) => {
         const o = orchs.find((x) => x.id === id);
         if (!o) return;
+        team?.onLeave(); // 메신저 대화를 보던 중이면 가운데를 다시 이 참모 채팅으로
         // 지금 참모를 또 누르면 — 남의 보관함 자리가 박혀 있으면(옛 화면이 눌렸다) 이 참모 홈으로, 이 참모 탭 줄 문서·세션은 그대로(domain/lockerTabs reclickPick)
         if (id === now.current.view) { const to = reclickPick(lkHold, id, pick, homeOf(o)); if (to) setPick(to); }
         else switchTo(id, 'rail');
@@ -1203,7 +1219,7 @@ export function SpaceView({ chat, railTop, far, fns, onReorderOrch, onMenuToggle
   );
   // 다른 기기를 보는 중이면 띠·이음 색이 그 기기 것(peer-panel) — 이 맥 띠는 안 그릴 뿐 상태는 그대로
   const rail = far ? far.rail : railEl;
-  const linkColor = far ? far.color : railList.find((a) => a.on)?.color;
+  const linkColor = far ? far.color : team?.railOn ? team.color : railList.find((a) => a.on)?.color;
   // 홈 곁가지(옛 참모 대시보드에서 옮김, 패널 하나로 7) — 위 알림 = 닫히지 않은 일·주인 없는 일, 오른쪽 = 참모 할 일·결정·분신
   const homeHint = (o: Session) => {
     const un = tasks ? unclosedOf(tasks.orphaned, events, o.id, tasks.known) : [];
@@ -1343,6 +1359,8 @@ export function SpaceView({ chat, railTop, far, fns, onReorderOrch, onMenuToggle
         {/* 윈도우도(2026-10-21) — 0.3.4 땐 Rust 가 scripts/craft 를 바로 띄워 오류 원문만 떴다, 이제 python 으로 부른다(craft_window::craft_cmd) */}
         <button className={`lk-tab folder ${pick === APPS_KEY ? 'on' : ''}`} aria-pressed={pick === APPS_KEY} onClick={() => setPick(APPS_KEY)}
           aria-label={tr('Craft 앱', 'Craft apps')} title={tr('Craft 앱 — 사진·영상·문서·표 편집기', 'Craft apps — photo, video, document and spreadsheet editors')}><IconApps /></button>
+        {/* 팀 탭 — 메신저에서 고른 팀 보관함(시안 v2, 이름 글자). 고정 탭과 같이 왼쪽에 */}
+        {team?.space && <button className={`lk-tab tmx-ttab ${pick === TEAM_KEY ? 'on' : ''}`} aria-pressed={pick === TEAM_KEY} onClick={() => setPick(TEAM_KEY)} title={tr('팀 보관함', 'Team locker')}>{team.space.name}</button>}
         {/* 홈·보관함·앱은 늘 왼쪽에 — 독·파일 탭만 스크롤(2026-10-22 사용자 "넘치면 고정 탭이 같이 밀려난다") */}
         <TabStrip on={pick}>
         {myDock(lo.id).map((it, _i, mine) => {
@@ -1477,7 +1495,7 @@ export function SpaceView({ chat, railTop, far, fns, onReorderOrch, onMenuToggle
     const lo = lockerOrch;
     const ls = lockerSide;
     main = lo && ls && place.kind === 'home' ? lockerFrame(lo, (
-      <>{lockerTabs(lo, ls.rootNew)}<HomeView key={lo.id} hint={homeHint(lo)} aside={homeAside(lo)}
+      <>{lockerTabs(lo, ls.rootNew)}<HomeView key={lo.id} hint={homeHint(lo)} aside={homeAside(lo)} progress={<HomeProgress orch={lo} events={events} sessions={sessions} readFill={sessionFill} />}
         modes={<ModeHome rows={modeRows} keys={[lo.name || '', lo.id, lo.sessionId || '']} dash={lo.name || lo.id}
           onAsk={(t) => { const text = tr(`홈에 모드 하나 만들어 줘 — ${t}`, `Make a mode for my home — ${t}`); window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id: lo.id, text } })); void sendTextToSession(lo.id, text); }} />} /></>
     )) : lo && ls && place.kind !== 'home' ? lockerFrame(lo, (
@@ -1502,6 +1520,9 @@ export function SpaceView({ chat, railTop, far, fns, onReorderOrch, onMenuToggle
         <div className="lk-doc-body">{filePage(docPath, { where: pathLine(docPath, lockerTree.dir, home ?? ''), keepFor: lockerOrch.id })}</div>
       </>
     ));
+  } else if (pick === TEAM_KEY && team?.space) {
+    const page = <div className="lk-doc-body">{team.space.page((p) => setPick(`d:${p}`))}</div>;
+    main = lockerOrch ? lockerFrame(lockerOrch, <>{lockerTabs(lockerOrch, !!lockerSide?.rootNew)}{page}</>) : page;
   } else if (pick === APPS_KEY) {
     // 앱 서랍 — 13개 Craft 앱 아이콘 격자(v3 덱 1)
     // 서랍도 이 참모 것만 — 켜짐 점·끄기는 내 인스턴스, 누르면 내 것을 보이거나 빈 자리에 새로(남의 참모 앱을 가져오지 않는다)

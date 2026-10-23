@@ -12,7 +12,7 @@ export type LockerItem = {
   ro?: boolean;
 };
 /** dirs = 참모 폴더 이름 → 절대 경로(폰 서버만) */
-export type LockerView = { items: LockerItem[]; hidden: { owner: string; path: string }[]; folders: { owner: string; name: string; /** 맥 폴더 연결 폴더 자체 */ linked?: boolean; /** 연결 폴더 안쪽 폴더 */ ro?: boolean }[]; dirs?: Record<string, string> };
+export type LockerView = { items: LockerItem[]; hidden: { owner: string; path: string }[]; folders: { owner: string; name: string; /** 맥 폴더 연결 폴더 자체 */ linked?: boolean; /** 연결 폴더 안쪽 폴더 */ ro?: boolean }[]; dirs?: Record<string, string>; /** 폰 서버만 — 참모 폴더 이름 → 주인 id(.chammo, 팀 폴더는 team-<팀 id>) */ ids?: Record<string, string> };
 export const EMPTY_LOCKER: LockerView = { items: [], hidden: [], folders: [] };
 
 /** 폴더 열쇠 — recent(최근, 전부) · p:<프로젝트> · u:<내 폴더> · etc(기타) */

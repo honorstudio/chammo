@@ -3,6 +3,9 @@
 // 인증 = 이 기기 토큰을 localStorage 에 두고 Authorization: Bearer 로만(쿠키는 포트를 안 가려 같은 호스트 다른 포트 서버로 샌다 — 2026-10-02 재검토).
 // localStorage 는 출처(스킴+호스트+포트)마다 따로라 다른 포트·홈 화면 앱과 안 섞인다
 import { makeApi } from './peerApi';
+import { readLink } from '../phone-web/link';
+import { tunnelFor } from '../phone-web/hub';
+import { installProxy } from '../phone-web/proxy';
 import { makeTagTail, parseTagChunk } from '../domain/tagTail';
 export type { MobileEnv } from './peerApi';
 
@@ -53,12 +56,49 @@ export async function pair(code: string, home = false): Promise<void> {
   if (getToken() !== token) throw new Error(NO_STORAGE.replace(' 이 QR 은 아직 안 썼어요', ' 새 QR 이 필요해요'));
 }
 
+/** 중계 길(테일스케일 없는 폰, ADR 0013)이면 터널로, 아니면 이 주소(컴퓨터 폰 서버)로. 터널도 같은 Response 를 준다 */
+const relay = readLink();
+// 빠른 길 — 컴퓨터가 알려 준 테일넷 https 주소에 1.5초 안에 닿으면 그리로 직접(같은 토큰). 망 오류면 바로 터널로 돌아가고 1분 뒤 다시 본다
+const DIRECT_PROBE_MS = 1500;
+const DIRECT_RETRY_MS = 60_000;
+let direct: string | null = null;
+let directCheckedAt = 0;
+let directProbe: Promise<void> | null = null;
+async function probeDirect(): Promise<void> {
+  directCheckedAt = Date.now();
+  try {
+    const env = (await (await tunnelFor(relay!).fetch('/api/env', { headers: { authorization: `Bearer ${getToken() ?? ''}` } })).json()) as { directUrl?: unknown };
+    const url = typeof env.directUrl === 'string' && /^https:\/\/[a-z0-9.-]+\.ts\.net$/i.test(env.directUrl) ? env.directUrl : null;
+    if (!url) { direct = null; return; }
+    const r = await fetch(`${url}/api/hello`, { credentials: 'omit', cache: 'no-store', signal: AbortSignal.timeout(DIRECT_PROBE_MS) });
+    direct = r.ok ? url : null;
+  } catch {
+    direct = null;
+  }
+}
+const transport = async (path: string, init: RequestInit): Promise<Response> => {
+  if (!relay) return fetch(path, { credentials: 'omit', cache: 'no-store', ...init });
+  if (!directProbe && Date.now() - directCheckedAt > DIRECT_RETRY_MS) directProbe = probeDirect().finally(() => { directProbe = null; });
+  if (direct) {
+    try {
+      return await fetch(`${direct}${path}`, { credentials: 'omit', cache: 'no-store', ...init });
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') throw e;
+      direct = null; // 테일넷이 끊김 — 이번 요청부터 터널로
+      directCheckedAt = Date.now();
+    }
+  }
+  return tunnelFor(relay).fetch(path, init);
+};
+// 서비스 워커가 넘기는 iframe·소리·내려받기 요청도 이 창 터널로
+if (relay) installProxy(() => tunnelFor(relay));
+
 async function call(path: string, init?: RequestInit, retried = false): Promise<Response> {
   const token = getToken();
   if (!token) throw new NoKeyError();
   const headers = new Headers(init?.headers);
   headers.set('Authorization', `Bearer ${token}`);
-  const r = await fetch(path, { credentials: 'omit', cache: 'no-store', ...init, headers });
+  const r = await transport(path, { ...init, headers });
   if (r.status === 401) {
     // 그사이 다른 탭이 다시 짝지어 열쇠를 바꿔 끼웠으면(옛 열쇠는 맥이 바로 죽인다) 새 열쇠는 지우지 말고 한 번 더
     const now = getToken();
@@ -179,6 +219,23 @@ export const attachFile = (file: File) =>
   call(`/api/attach?name=${encodeURIComponent(file.name)}`, { method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file })
     .then((r) => r.json() as Promise<{ path: string }>);
 /** 파일 보관함 — 폰이 열 수 있는 것만(맥이 거름). 모양은 데스크톱 locker_read 와 같다 */
+// 팀 메신저(시안 v2 폰 C) — 지금은 이 맥 폰 서버를 거친다. 테일스케일 없는 중계 직접 연결(phone-relay)이 생기면 TeamPhoneApi 를 그쪽 것으로 바꿔 끼운다
+export type TeamPhoneApi = {
+  feed: () => Promise<import('./teamApi').TeamFeed>;
+  /** cid = 이 말의 id — 다시 보내면 같은 cid(서버가 한 번만 저장) */
+  say: (to: string, text: string, cid: string) => Promise<{ room: string; seq: number }>;
+  invite: () => Promise<{ link: string; expiresAt: number }>;
+  create: (team: string) => Promise<unknown>;
+  /** 내 참모에게 넘기기 — 맥이 거르고 본문 없는 기록 길로 친다(/api/send 아님) */
+  handoff: (to: string, text: string) => Promise<{ to: string }>;
+};
+export const teamViaMac: TeamPhoneApi = {
+  feed: () => getJson('/api/team'),
+  say: (to, text, cid) => post('/api/team-say', { to, text, cid }),
+  invite: () => post('/api/team-invite', {}),
+  create: (team) => post('/api/team-create', { team }),
+  handoff: (to, text) => post('/api/team-handoff', { to, text }),
+};
 export const readLocker = () => getJson<import('../domain/locker').LockerView>('/api/locker');
 /** 폰이 올린 첨부(attachFile 경로)를 그 참모 보관함에 — 맥이 보관함 복사본으로 옮겨 둔다 */
 export const lockerAdd = (owner: string, path: string) => post<{ path: string }>('/api/locker-add', { owner, path });

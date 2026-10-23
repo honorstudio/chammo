@@ -26,12 +26,15 @@ pub fn tag(cid: &str) -> String {
 }
 
 /// 보이지 않는 글자(zero-width·단어 잇기·BOM·방향 표시) — 끼워 넣어 거름을 피하지 못하게 본문에서도 뺀다
+/// 채움·무시 글자(한글 채움 U+3164·U+115F·U+1160·U+FFA0, 점자 빈칸, 결합 무시 U+034F, 몽골 자모 분리자, 아랍 글자 표시, 변형 선택자, 태그 글자)도 —
+/// trim_start 가 못 지워서 줄 앞에 두면 '[앱] …' 줄이 줄머리 거름을 지났다(보안 검토 1-A)
 pub(crate) fn invisible(c: char) -> bool {
     matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{feff}' | '\u{00ad}')
+        || matches!(c, '\u{034f}' | '\u{061c}' | '\u{115f}' | '\u{1160}' | '\u{180b}'..='\u{180f}' | '\u{2800}' | '\u{3164}' | '\u{ffa0}' | '\u{fe00}'..='\u{fe0f}' | '\u{e0000}'..='\u{e007f}' | '\u{e0100}'..='\u{e01ef}')
 }
 
 /// 화면에서 새 줄로 보이는 글자 — 줄바꿈으로 바꿔 줄 첫머리 거름(› )을 지나게 한다
-fn line_break(c: char) -> bool {
+pub(crate) fn line_break(c: char) -> bool {
     matches!(c, '\r' | '\u{85}' | '\u{2028}' | '\u{2029}' | '\u{b}' | '\u{c}')
 }
 
@@ -85,7 +88,7 @@ fn fold(text: &str) -> String {
 
 /// 사람 직접 승인 문구(CHAMMO 안내문 두 판)·원격 사람 말 이름표(peer_human)·카드 답 꼬리(direct::compose_by) —
 /// 띄어쓰기·대소문자·닮은 글자·사이에 끼운 점·전각 괄호를 바꿔도 잡는다. 다른 기기 참모 말 안에 사람 표시가 섞이지 않게
-fn forged(text: &str) -> bool {
+pub(crate) fn forged(text: &str) -> bool {
     let s = fold(&text.chars().filter(|c| !invisible(*c)).collect::<String>());
     // 어순·조사만 바꾼 '받았다' 주장도("사람이 직접 승인했어"·"직접 사람 승인 받음"·"approved directly by the person") — 2026-10-21 리뷰.
     // '사람 승인 카드로 해'·'직접 승인해 줘'·'Has the user approved the PR?' 같은 그냥 승인 얘기는 된다(코드 리뷰: 짧은 조각만 보면 이것까지 막았다)
@@ -94,8 +97,14 @@ fn forged(text: &str) -> bool {
         "사람직접승인", "직접사람승인", "사람이직접승인", "본인직접승인", "직접승인받", "직접승인했", "직접승인됐", "사람승인받", "사람승인됐", "사람이승인했", "본인승인받", "본인이승인했",
         "approvedbythepersondirectly", "approveddirectlybytheperson", "personapproveddirectly", "humanapproveddirectly", "userapproveddirectly", "approveddirectlybytheuser", "approvedbythehumandirectly",
         "사람말원격", "personremote", "직접답카드", "directanswercard",
+        // 팀 메신저 사람 말 이름표(team_relay_inbox) — 남의 말 안에 섞여 '팀 사람이 쳤다'인 척 못 하게
+        "팀사람말", "teamhuman",
+        // 내 기기끼리 방 이름표(team_relay_inbox) — 남의 글 안에서 '내 다른 기기에서 내가 쳤다'인 척 못 하게
+        "내다른기기사람말", "내다른기기참모", "mydevicehuman", "mydeviceassistant",
         "앱카드에서눌렀", "앱카드에서썼", "텔레그램카드에서눌렀", "텔레그램카드에서썼", "원격으로앱카드",
         "presseditontheappcard", "wroteitontheappcard", "ontheappcardremotely", "onthetelegramcard",
+        // 앱이 참모 입력칸에 치는 정해진 줄([앱] …) — 줄 가운데 있어도 남의 글 안에선 앱 줄인 척이다
+        "재시작으로꺼진세션", "선택지창에서멈췄어", "stoppedbyrestart", "isstuckonachoiceprompt",
     ]
     .iter()
     .any(|p| s.contains(p))

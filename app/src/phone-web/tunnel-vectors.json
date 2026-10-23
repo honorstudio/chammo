@@ -1,0 +1,21 @@
+{
+  "macSeed": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+  "phoneSeed": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk",
+  "macPub": "BB4YUy_UdUwC8wQdnHXOszuD_9gax85P6ILMscmLxYlupGwxHE4v9A3ZajZT5uRURdMt_khuztdcepDGoYiBwKM",
+  "phonePub": "BHE1-k_ZOgnc6Yu_aBtL_PUOfA1jVOYq-wv_KjQpYXhl7UwfAt25Aj7lalV-UV1qncZsEfIglg3llDNN9Yh3ZyQ",
+  "seal": {
+    "ephSeed": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws",
+    "iv": "DAwMDAwMDAwMDAwM",
+    "pt": "{\"code\":\"abc\"}",
+    "out": "BCCcMXtjeTXdPaHFT2NJXfsx-X0pPfCFcQMgWVyarLg_3eTGn8F6DHTCDMaSZi8EmJK6N6S6R9LHDNipmYY5H5sMDAwMDAwMDAwMDAzcRlecXunYDEXoP8fy7fcTooQyjdKjP6hdFk-OBm0"
+  },
+  "tunnel": {
+    "nP": "DQ0NDQ0NDQ0NDQ0NDQ0NDQ",
+    "nM": "Dg4ODg4ODg4ODg4ODg4ODg",
+    "reply": "AXsidiI6MSwibiI6IkRnNE9EZzRPRGc0T0RnNE9EZzRPRGciLCJjIjoiQWdBQUFBQUFBQUFBY2ZiXzkzSEdsck81ckU1emNuS1hxcXhVUS1tanpsNjFSZyJ9",
+    "m2p": "AgAAAAAAAAABYRDJT-sBDJMaMmBennqp9Mrv1T0neEWJ",
+    "m2pPt": "{\"id\":1}",
+    "p2m": "AgAAAAAAAAABCiLtri4QgCA6z2BHA3g4FHvm42pFPmNw",
+    "p2mPt": "{\"id\":2}"
+  }
+}

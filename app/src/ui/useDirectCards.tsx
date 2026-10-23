@@ -50,6 +50,8 @@ export function useDirectCards(everyone: Session[], acts: { session: Session; ac
       if (!needsAnswer(c) || told.current.has(c.id)) continue;
       told.current.add(c.id);
       notify(c, nameOf(c));
+      // 창이 가려지면 웹뷰가 그리기를 멈춰 'shown' 이 안 남는다 — 앱이 카드를 받고 알림까지 냈다는 줄은 남겨 direct ask 가 거짓 경고를 안 주게(soak 008)
+      void invoke('direct_shown', { id: c.id, place: 'notified' }).catch(() => {});
     }
   }, [cards]); // eslint-disable-line react-hooks/exhaustive-deps
 

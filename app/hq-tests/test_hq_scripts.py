@@ -27,6 +27,99 @@ class DataDir(unittest.TestCase):
             self.assertEqual(m.data_dir('/h', '', lambda p: True), '/h/.chammo')
 
 
+class DaemonInherited(unittest.TestCase):
+    """세션은 claude 데몬 env 를 받는다 — 시험이 띄운 데몬에서 물려받은 CHAMMO_HOME 이고 그 앱이 꺼졌으면 앱 폴더로(2026-10-23 아이맥 soak)"""
+    MODS = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.MODS = (load('direct'), load('routine'))
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = self.tmp.name
+        self.real = os.path.join(self.home, '.chammo')
+        self.soak = os.path.join(self.home, '.chammo-soak')
+        os.makedirs(self.real)
+        open(os.path.join(self.real, 'config.json'), 'w').write('{}')
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def live(self, m, inherited, alive, env=None):
+        """os.environ 의 CHAMMO_HOME 으로 부른 data_dir — 판단 조각은 바꿔 끼운다"""
+        old = (m._inherited, m._app_alive, getattr(m.data_dir, 'warned', False))
+        m._inherited, m._app_alive = (lambda *a: inherited), (lambda d: alive)
+        m.data_dir.warned = False
+        saved = os.environ.get('CHAMMO_HOME')
+        os.environ['CHAMMO_HOME'] = env or self.soak
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                return m.data_dir(self.home), err.getvalue()
+        finally:
+            m._inherited, m._app_alive, m.data_dir.warned = old
+            if saved is None:
+                os.environ.pop('CHAMMO_HOME', None)
+            else:
+                os.environ['CHAMMO_HOME'] = saved
+
+    def test_물려받았고_그_앱이_꺼졌으면_앱_폴더로_경고는_한_번(self):
+        for m in self.MODS:
+            got, err = self.live(m, True, False)
+            self.assertEqual(got, self.real, m.__name__)
+            self.assertIn('claude daemon stop --any --keep-workers', err)
+
+    def test_그_밖은_준_값_그대로(self):
+        for m in self.MODS:
+            self.assertEqual(self.live(m, False, False)[0], self.soak, '일부러 준 값')
+            self.assertEqual(self.live(m, True, True)[0], self.soak, '산 시험 앱')
+            os.remove(os.path.join(self.real, 'config.json'))
+            self.assertEqual(self.live(m, True, False)[0], self.soak, '기본 폴더에 앱이 없다')
+            open(os.path.join(self.real, 'config.json'), 'w').write('{}')
+
+    def test_env_를_따로_준_부름은_프로세스_표를_안_본다(self):
+        for m in self.MODS:
+            old = m._inherited
+            m._inherited = lambda *a: self.fail('env 를 준 부름에서 프로세스 표를 봤다')
+            try:
+                self.assertEqual(m.data_dir(self.home, self.soak, os.path.isdir), self.soak)
+            finally:
+                m._inherited = old
+
+    def test_조상_모두가_데몬과_같은_값이어야_물려받은_것(self):
+        cfg = os.path.join(self.home, 'cfg')
+        os.makedirs(cfg)
+        open(os.path.join(cfg, 'daemon.lock'), 'w').write('{"pid": 300}')
+        me = os.getpid()
+        here = os.getcwd()
+        os.chdir(self.home)  # cwd 위 프로젝트 설정(이 저장소 .claude)이 판단에 안 끼게
+        self.addCleanup(os.chdir, here)
+        for m in self.MODS:
+            def ps(*args, rows):
+                if args[0] == '-axo':
+                    return f'{me} 200\n200 300\n300 1\n'
+                return rows
+            same = f'200 claude bg-spare CHAMMO_HOME={self.soak}\n300 claude daemon run CHAMMO_HOME={self.soak} PATH=/b\n'
+            moved = f'200 /bin/zsh -c t CHAMMO_HOME={self.real}\n300 claude daemon run CHAMMO_HOME={self.soak}\n'
+            old = m._ps
+            try:
+                m._ps = lambda *a: ps(*a, rows=same)
+                self.assertTrue(m._inherited(self.soak, self.home, {'CLAUDE_CONFIG_DIR': cfg}))
+                self.assertFalse(m._inherited(self.real, self.home, {'CLAUDE_CONFIG_DIR': cfg}), '값이 다르다')
+                m._ps = lambda *a: ps(*a, rows=f'200 /bin/sh /x/probe.sh\n300 claude daemon run CHAMMO_HOME={self.soak}\n')
+                self.assertTrue(m._inherited(self.soak, self.home, {'CLAUDE_CONFIG_DIR': cfg}), '맥 /bin/sh 는 env 가 안 보인다 — 건너뛴다')
+                m._ps = lambda *a: ps(*a, rows=moved)
+                self.assertFalse(m._inherited(self.soak, self.home, {'CLAUDE_CONFIG_DIR': cfg}), '중간 셸이 다른 값 = 일부러 준 값')
+                self.assertFalse(m._inherited(self.soak, self.home, {'CLAUDE_CONFIG_DIR': self.home}), '데몬 기록 없음')
+                m._ps = lambda *a: ps(*a, rows=same)
+                open(os.path.join(cfg, 'settings.json'), 'w').write(json.dumps({'env': {'CHAMMO_HOME': self.real}}))
+                self.assertFalse(m._inherited(self.soak, self.home, {'CLAUDE_CONFIG_DIR': cfg}), '설정 고정이 있으면 세션 값은 그 값 — 물려받은 게 아니다')
+                os.remove(os.path.join(cfg, 'settings.json'))
+            finally:
+                m._ps = old
+
+
 class Say(unittest.TestCase):
     def test_음성_모드_파일(self):
         with tempfile.TemporaryDirectory() as d:

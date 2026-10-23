@@ -3,9 +3,11 @@
 // 그 아래 곁 줄(참모 할 일·결정 — 접을 수 있다 · 분신)
 import type { ReactNode } from 'react';
 
-export function HomeView({ modes, hint, aside }: { modes: ReactNode; hint?: ReactNode; aside?: ReactNode }) {
+// 맨 위 = 진행 칸(참모 맡은 일 목표 조각, ui/GoalProgress — 사용자 10-23 '홈 진행 칸만')
+export function HomeView({ modes, hint, aside, progress }: { modes: ReactNode; hint?: ReactNode; aside?: ReactNode; progress?: ReactNode }) {
   return (
     <div className="hm">
+      {progress}
       {hint}
       {aside && <div className="hm-side">{aside}</div>}
       <div className="hm-modes">{modes}</div>

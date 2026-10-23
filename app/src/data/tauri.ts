@@ -404,7 +404,7 @@ export const deleteAvatarFile = (key: string) => invoke<void>('avatar_delete', {
 /** 모바일(폰 → 테일스케일) — 켜고 끄기·짝짓기 QR·연결된 기기(Rust mobile.rs·mobile_pair.rs). 마스터 열쇠는 폰으로 안 나간다 */
 /** 기기 줄 하나 = 열쇠 하나(사파리·홈 화면 앱은 따로) — group 이 같으면 같은 폰(domain/mobileDevices) */
 export type MobileDevice = DeviceRow;
-export type MobileStatus = { on: boolean; running: boolean; bind: string | null; error: string | null; https: boolean; httpsNote: string | null; /** https 를 켜러 갈 곳(테일스케일 관리 화면) */ httpsFix: string | null; devices: MobileDevice[] };
+export type MobileStatus = { on: boolean; running: boolean; bind: string | null; error: string | null; https: boolean; httpsNote: string | null; /** https 를 켜러 갈 곳(테일스케일 관리 화면) */ httpsFix: string | null; devices: MobileDevice[]; /** 테일스케일 없는 폰 길(중계, ADR 0013) */ relayReady: boolean; relay: { on: boolean; connected: boolean; phones: number; error: string | null } };
 /** 짝짓기 QR — 10분 지나거나 한 번 쓰면 죽는다 */
 export type PairQr = { url: string; qrSvg: string | null; expires: number };
 /** 텔레그램(Rust messenger_cmd.rs) — 토큰은 키체인(윈도우는 600 파일), 짝짓기는 10분 한 번짜리 딥링크. 보안 판단은 Rust 에 */

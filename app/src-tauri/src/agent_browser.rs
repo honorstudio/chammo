@@ -72,6 +72,9 @@ pub struct Live {
     /// 그 창 종류 — "passkey"(확신할 때만) · "window"(모르면, 중립 '크롬 창') · ""(창 없음)
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub popup_kind: String,
+    /// 세션이 안 기다리는 부름(시간 초과)을 사람이 끝냄 {at, say} — 앱이 그 세션 입력칸에 [앱] 줄로 깨운다(apply_wake, 앱만 채운다)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wake: Option<serde_json::Value>,
 }
 
 /// 같이 쓰는 산 스크립트 수 — 명부 <locks>/<프로필>.users/<pid>(src/users.js). 세션 브라우저 도구가 같이 쓰는 칸(by=session, src/share.js)·
@@ -180,7 +183,7 @@ pub fn agent_lives() -> Vec<Live> {
         let Some(l) = std::fs::read_to_string(&p).ok().as_deref().and_then(parse_live) else { continue };
         match live_kind(&l, crate::platform::pid_alive, port_open) {
             LiveKind::Show => {
-                let mut l = with_takeover(l);
+                let mut l = with_takeover(with_wake(l));
                 l.popup_kind = popup_kind_now(&l.profile).to_string();
                 l.popup = !l.popup_kind.is_empty();
                 out.push(l);
@@ -193,6 +196,37 @@ pub fn agent_lives() -> Vec<Live> {
     }
     out.sort_by(|a, b| a.profile.cmp(&b.profile));
     out
+}
+
+/// 시간 초과로 남은 부름(ask.waiting:false — 세션이 도구로 안 기다림)을 사람이 끝냈다(.done 표 = 그 부름) → 카드를 내리고 wake 를 채운다.
+/// 래퍼는 다음 도구 호출·다음 부름에서 .done 을 치운다 — 그때까지 이렇게 가린다(2026-10-23 acme-shop — 끝낸 일을 세션이 몰랐다).
+/// say = .say 원문(첫 줄 부름 표, 나머지 사람이 적은 말) — 표가 같을 때만 싣는다
+pub fn apply_wake(l: &mut Live, done: Option<&str>, say: Option<&str>) {
+    l.wake = None;
+    let Some(a) = l.ask.as_ref() else { return };
+    let Some(at) = a.get("at").and_then(|x| x.as_u64()) else { return };
+    if a.get("waiting").and_then(|w| w.as_bool()) != Some(false) {
+        return;
+    }
+    let mark = format!("{}:{at}", l.pid);
+    if done.map(str::trim) != Some(mark.as_str()) {
+        return;
+    }
+    let said = say
+        .and_then(|t| t.split_once('\n'))
+        .filter(|(m, _)| m.trim() == mark)
+        .map(|(_, t)| t.trim().chars().take(500).collect::<String>())
+        .filter(|t| !t.is_empty());
+    l.ask = None;
+    l.wake = Some(serde_json::json!({ "at": at, "say": said }));
+}
+
+fn with_wake(mut l: Live) -> Live {
+    let waiting_off = l.ask.as_ref().is_some_and(|a| a.get("waiting").and_then(|w| w.as_bool()) == Some(false));
+    let read = |ext: &str| if waiting_off { std::fs::read_to_string(live_dir().join(format!("{}.{ext}", l.profile))).ok() } else { None };
+    let (done, say) = (read("done"), read("say"));
+    apply_wake(&mut l, done.as_deref(), say.as_deref());
+    l
 }
 
 /// 사람 개입 상태를 채운다 — 세션이 바뀐 개입은 치우고, 개입 중이면 앱이 살아 있다는 표시(래퍼가 3분 안 고쳐지면 푼다).
@@ -2151,6 +2185,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn 시간_초과로_남은_부름을_사람이_끝내면_카드를_내리고_세션을_깨운다() {
+        // 2026-10-23 acme-shop — 세션이 로그인 카드를 띄우고 턴을 끝낸 뒤(도구 10분 시간 초과) 사람이 끝내도 세션은 몰랐다
+        let base = r#"{"profile":"acme","pid":11,"sessionPid":22,"port":5000,"wsPath":"/devtools/browser/ab-12","ask":{"reason":"로그인","at":700,"waiting":false}}"#;
+        let mut l = parse_live(base).unwrap();
+        apply_wake(&mut l, None, None);
+        assert!(l.ask.is_some() && l.wake.is_none(), "아직 안 끝냈으면 카드 그대로");
+        apply_wake(&mut l, Some("11:699"), None);
+        assert!(l.ask.is_some() && l.wake.is_none(), "지난 부름 표는 무시");
+        apply_wake(&mut l, Some("11:700\n"), Some("11:700\n로그인했어"));
+        assert!(l.ask.is_none(), "끝냈으면 대기함·폰 카드를 내린다");
+        assert_eq!(l.wake, Some(serde_json::json!({ "at": 700, "say": "로그인했어" })));
+        // 세션이 기다리는 중이면(waiting:true) 래퍼가 도구 답으로 받는다 — 앱은 안 깨운다. 옛 래퍼(waiting 없음)도 그대로
+        for ask in [r#""waiting":true"#, r#""x":0"#] {
+            let mut w = parse_live(&base.replace(r#""waiting":false"#, ask)).unwrap();
+            apply_wake(&mut w, Some("11:700"), None);
+            assert!(w.ask.is_some() && w.wake.is_none(), "{ask}");
+        }
+        // 지난 부름 한마디는 안 싣는다 · 래퍼 파일이 wake 를 심어도 앱만 채운다
+        let mut o = parse_live(&base.replace(r#""ask""#, r#""wake":{"at":1},"ask""#)).unwrap();
+        apply_wake(&mut o, None, None);
+        assert!(o.wake.is_none(), "wake 는 앱이 .done 을 보고만 채운다");
+        apply_wake(&mut o, Some("11:700"), Some("11:6\n옛 말"));
+        assert_eq!(o.wake, Some(serde_json::json!({ "at": 700, "say": null })));
+    }
+
+    #[test]
     fn 그림이_없으면_다시_찍고_쌓이면_쉰다() {
         // 2026-10-21 첫 사용자 제보 — 사람 부르기 때 '화면 받는 중'에서 멈춤. 화면 받기는 페이지가 안 바뀌면 그림을 안 보내서
         // 붙을 때 한 장 찍기가 한 번 늦으면(1.5초) 가만히 있는 인증 화면은 영영 빈 칸이었다
@@ -2268,7 +2328,7 @@ mod tests {
         assert_eq!(popup_kind_str(Some(Kind::Passkey)), "passkey");
         assert_eq!(popup_kind_str(Some(Kind::Window)), "window");
         assert_eq!(popup_kind_str(None), "");
-        let mut l = Live { profile: "shop-app".into(), pid: 1, session_pid: 2, port: 3, ws_path: "/x".into(), url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None, scripts: 0, popup: false, popup_kind: String::new() };
+        let mut l = Live { profile: "shop-app".into(), pid: 1, session_pid: 2, port: 3, ws_path: "/x".into(), url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None, scripts: 0, popup: false, popup_kind: String::new(), wake: None };
         assert!(!serde_json::to_string(&l).unwrap().contains("popupKind"), "창이 없으면 칸도 없다");
         l.popup_kind = "window".into();
         assert!(serde_json::to_string(&l).unwrap().contains(r#""popupKind":"window""#));

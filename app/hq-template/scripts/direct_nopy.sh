@@ -88,7 +88,9 @@ state_of() {
     i == id && t == "cancel" && st == "wait" { st = "closed"; next }
     t == "ask" && !stays && !ans && st == "wait" && f($0, "from") == from { st = "old" }
     END { if (st == "wait" && ans) st = "answered"; print st }' "$LOG")
-  shown=$(printf '%s\n' "$rs" | grep -E '"type": ?"shown"' | head -n 1)
+  # shown = 화면에 그렸다는 줄, notified = 앱이 받고 알림만 낸 줄(창이 가려져 못 그린 때도 남는다, soak 008)
+  shown=$(printf '%s\n' "$rs" | grep -E '"type": ?"shown"' | grep -Ev '"where": ?"notified"' | head -n 1)
+  notified=$(printf '%s\n' "$rs" | grep -E '"type": ?"shown"' | grep -E '"where": ?"notified"' | head -n 1)
   return 0
 }
 
@@ -114,6 +116,8 @@ status_text() {
   printf '%s\n' "$(T "상태: $w" "State: $w")"
   if [ -n "$shown" ]; then
     printf '%s\n' "$(T "앱에 보임 — $(field "$shown" where)" "Shown in the app — $(field "$shown" where)")"
+  elif [ -n "$notified" ]; then
+    printf '%s\n' "$(T '앱이 카드를 받고 알림까지 냈어 — 창이 가려져 있어서 사람이 아직 못 봤을 수 있어' 'The app got the card and sent a notification — its window may be covered, so the person may not have seen it yet')"
   else
     printf '%s\n' "$(T '앱에 아직 안 보임 — 앱이 꺼졌거나 카드가 어느 화면에도 안 그려졌어' 'Not shown in the app yet — the app is off or no screen drew the card')"
   fi
@@ -132,7 +136,7 @@ case $cmd in
     case $1 in *[!0-9a-f]*|'') die "$1: $(T '그런 카드 없음' 'no such card')" ;; esac
     state_of "$1" || die "$1: $(T '그런 카드 없음' 'no such card')"
     status_text "$1"
-    [ "$st" = wait ] && [ -z "$shown" ] && exit 4
+    [ "$st" = wait ] && [ -z "$shown" ] && [ -z "$notified" ] && exit 4
     exit 0 ;;
   list)
     ids=$(grep -E '"type": ?"ask"' "$LOG" 2>/dev/null | sed -n 's/.*"id": \{0,1\}"\([0-9a-f]\{8\}\)".*/\1/p')
@@ -226,13 +230,17 @@ wait=${wait%%.*}
 case $wait in ''|*[!0-9]*) wait=10 ;; esac
 spent=0
 while [ "$wait" -gt 0 ]; do
-  if rows_of "$id" | grep -Eq '"type": ?"shown"'; then
+  if rows_of "$id" | grep -E '"type": ?"shown"' | grep -Evq '"where": ?"notified"'; then
     T '앱에 떴어' 'Shown in the app'; printf '\n'
     break
   fi
+  if rows_of "$id" | grep -Eq '"type": ?"shown"'; then
+    T '앱이 카드를 받고 알림까지 냈어 — 창이 가려져 있어서 사람이 아직 못 봤을 수 있어' 'The app got the card and sent a notification — its window may be covered, so the person may not have seen it yet'; printf '\n'
+    break
+  fi
   if [ $spent -ge "$wait" ]; then
-    T "주의: ${wait}초 안에 앱에 안 떴어 — 카드는 남아 있지만 사람이 못 볼 수 있다. 너에게 일을 준 세션(참모)에게 SendMessage 로 \"카드 $id 가 앱에 안 보임\"이라고 알리고 턴을 끝내라. 나중에 scripts/direct status $id 로 다시 볼 수 있다" \
-      "Warning: not shown in the app within ${wait}s — the card exists but the person may not see it. Tell the session that gave you this work (SendMessage: \"card $id is not showing in the app\"), then end your turn. Check later with scripts/direct status $id"
+    T "주의: ${wait}초 안에 앱이 카드를 받았다는 기록이 없어 — 앱이 꺼졌거나 바쁜 것 같아(켜져 있어도 창이 가려져 있으면 느릴 수 있어). 카드는 남아 있다. 너에게 일을 준 세션(참모)에게 SendMessage 로 \"카드 $id 에 앱이 받았다는 기록이 없음\"이라고 알리고 턴을 끝내라. 나중에 scripts/direct status $id 로 다시 볼 수 있다" \
+      "Warning: no record that the app received the card within ${wait}s — the app may be off or busy (if it is on, a covered window can be slow). The card exists. Tell the session that gave you this work (SendMessage: \"card $id has no sign the app received it\"), then end your turn. Check later with scripts/direct status $id"
     printf '\n'
     break
   fi

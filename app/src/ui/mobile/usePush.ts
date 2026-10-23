@@ -4,6 +4,14 @@ import { useEffect, useState } from 'react';
 import { getPushKey, pushSubscribe, pushUnsubscribe } from '../../data/web';
 import { autoResubscribe, b64urlBytes, pushError, pushSupport, type PushSupport } from '../../domain/mobilePush';
 import { isStandalone } from './standalone';
+import { readLink } from '../../phone-web/link';
+import { relayPushKey, relayPushSubscribe, relayPushUnsubscribe } from '../../phone-web/relayPush';
+
+// 중계 길 폰은 중계 VAPID 열쇠로 구독하고 중계에 맡긴다(본문 없는 '새 메시지', ADR 0013) — 컴퓨터 열쇠와 한 워커에 같이 못 건다
+const relay = readLink();
+const keyNow = () => (relay ? relayPushKey(relay) : getPushKey());
+const register = (s: PushSubscriptionJSON) => (relay ? relayPushSubscribe(relay, s) : pushSubscribe(s));
+const unregister = (endpoint: string) => (relay ? relayPushUnsubscribe(relay) : pushUnsubscribe(endpoint));
 
 const support = (): PushSupport => {
   if (typeof navigator === 'undefined') return 'unsupported';
@@ -24,9 +32,9 @@ const userOff = () => { try { return localStorage.getItem(OFF_KEY) === '1'; } ca
 const setUserOff = (v: boolean) => { try { if (v) localStorage.setItem(OFF_KEY, '1'); else localStorage.removeItem(OFF_KEY); } catch { /* 개인 정보 보호 모드 */ } };
 
 async function subscribeNow(reg: ServiceWorkerRegistration): Promise<PushSubscription> {
-  const key = await getPushKey();
+  const key = await keyNow();
   const s = (await reg.pushManager.getSubscription()) ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlBytes(key) as BufferSource }));
-  await pushSubscribe(s.toJSON());
+  await register(s.toJSON());
   return s;
 }
 
@@ -45,7 +53,7 @@ export function usePush() {
         const reg = await navigator.serviceWorker.register('/sw.js');
         await navigator.serviceWorker.ready;
         const s = await reg.pushManager.getSubscription();
-        if (s) { void pushSubscribe(s.toJSON()).catch(() => {}); if (alive) setOn(true); return; }
+        if (s) { void register(s.toJSON()).catch(() => {}); if (alive) setOn(true); return; }
         if (autoResubscribe({ can, permission: Notification.permission, hasSub: false, userOff: userOff() })) {
           await subscribeNow(reg);
           if (alive) setOn(true);
@@ -78,7 +86,7 @@ export function usePush() {
     setError(null);
     try {
       const s = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
-      if (s) { await pushUnsubscribe(s.endpoint).catch(() => {}); await s.unsubscribe(); }
+      if (s) { await unregister(s.endpoint).catch(() => {}); await s.unsubscribe(); }
       setUserOff(true);
       setOn(false);
     } catch (e) {

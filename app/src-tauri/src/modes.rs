@@ -144,9 +144,24 @@ pub fn hint(dir: &Path, name: &str, source: &str) -> Value {
     read(&dir.join(".claude-plugin/chammo.json"))
 }
 
+/// 앱 안 예시 모드의 제목 — 영어 UI 면 영어(chammo.json 은 한글 한 벌이라 여기서 바꾼다, soak 006). 내가 만든 모드 제목은 그대로
+pub fn localized_title<'a>(source: &str, name: &str, title: &'a str, lang: &str) -> &'a str {
+    if source != "example" || lang != "en" {
+        return title;
+    }
+    match name {
+        "home-calendar" => "Calendar",
+        "home-board" => "Board",
+        "home-todo" => "To-do",
+        "team-status" => "Team",
+        _ => title,
+    }
+}
+
 fn info(name: &str, dir: &Path, source: &'static str) -> ModeInfo {
     let hint = hint(dir, name, source);
     let title = hint.get("title").and_then(|t| t.as_str()).map(str::trim).filter(|t| !t.is_empty()).unwrap_or(name);
+    let title = localized_title(source, name, title, &crate::config::current().language);
     let w = hint.get("where").and_then(|w| w.as_str()).and_then(safe_where).unwrap_or("window");
     let keep_alive = hint.get("keepAlive").and_then(|k| k.as_bool()).unwrap_or(false);
     let light = hint.get("light").and_then(|k| k.as_bool()).unwrap_or(false);
@@ -228,8 +243,9 @@ pub fn host_args(plugin_dirs: &[PathBuf]) -> Vec<String> {
 }
 
 /// 호스트에 더 넘기는 환경 — 모드가 앱 데이터 폴더를 HOME 으로 짐작하지 않게(윈도우엔 HOME 이 없을 수 있다, 0.3.0)
-pub fn host_env(data: &Path) -> Vec<(&'static str, String)> {
-    vec![("CHAMMO_HOME", data.to_string_lossy().into_owned())]
+pub fn host_env(data: &Path, lang: &str) -> Vec<(&'static str, String)> {
+    // CHAMMO_LANG = 설정 언어 — 예시 모드가 $.env 로 읽어 영어 UI 에선 영어로 그린다(soak 006)
+    vec![("CHAMMO_HOME", data.to_string_lossy().into_owned()), ("CHAMMO_LANG", lang.to_string())]
 }
 
 // ── 더한 폴더: <데이터>/modes-added.json = ["/절대/경로", …] ──
@@ -1045,6 +1061,15 @@ mod tests {
     }
 
     #[test]
+    fn 영어_UI_면_예시_모드_제목만_영어_내_모드는_그대로() {
+        for (n, ko, en) in [("home-calendar", "달력", "Calendar"), ("home-board", "현황판", "Board"), ("home-todo", "할 일", "To-do"), ("team-status", "참모 상태", "Team")] {
+            assert_eq!(localized_title("example", n, ko, "en"), en);
+            assert_eq!(localized_title("example", n, ko, "ko"), ko);
+        }
+        assert_eq!(localized_title("folder", "home-todo", "내 할 일", "en"), "내 할 일", "내가 만든 모드는 제목을 안 바꾼다");
+    }
+
+    #[test]
     fn 홈_맛보기_예시_셋은_대시보드_칸_한글_이름() {
         let d = tmp("home-try");
         let got = discover(&d, &Value::Null);
@@ -1599,6 +1624,6 @@ mod tests {
     #[test]
     fn 호스트에_데이터_폴더를_넘긴다() {
         // 0.3.0 2차 — 참모 상태 모드가 HOME 으로 데이터 폴더를 찾았다(윈도우엔 HOME 이 없을 수 있다)
-        assert_eq!(host_env(Path::new("/d/.chammo")), vec![("CHAMMO_HOME", "/d/.chammo".to_string())]);
+        assert_eq!(host_env(Path::new("/d/.chammo"), "en"), vec![("CHAMMO_HOME", "/d/.chammo".to_string()), ("CHAMMO_LANG", "en".to_string())]);
     }
 }

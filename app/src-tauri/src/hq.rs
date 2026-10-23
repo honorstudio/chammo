@@ -39,6 +39,8 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "scripts/craft_win.py", body: include_str!("../../hq-template/scripts/craft_win.py"), exec: false },
     // 다른 기기 참모에게 말 넣고 답 받기 — 앱(app.jsonl)을 거친다, 열쇠는 앱 키체인에만(ADR 0007)
     TemplateFile { path: "scripts/peer", body: include_str!("../../hq-template/scripts/peer"), exec: true },
+    // 팀 메신저(중계 서버) — 앱(app.jsonl)을 거친다, 기기 열쇠는 앱 키체인에만, 이 길 말은 늘 참모 말(ADR 0012)
+    TemplateFile { path: "scripts/team", body: include_str!("../../hq-template/scripts/team"), exec: true },
     // scripts/task 가 import 하는 모듈(교훈 → 프로젝트 스킬) — 직접 실행하지 않는다
     TemplateFile { path: "scripts/lesson_skill.py", body: include_str!("../../hq-template/scripts/lesson_skill.py"), exec: false },
     TemplateFile { path: ".claude/skills/hq-browser/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-browser/SKILL.md"), exec: false },

@@ -136,6 +136,8 @@ import { Grip } from './ui/TaskPanel';
 import { IconClose, IconDownload, IconStack, IconTabs, IconUpdate } from './ui/Icons';
 import { RemoteChat, REMOTE_CHAT_EVENT, type RemoteChatTarget } from './ui/chat/RemoteChat';
 import { FAR_BLOCKED, FAR_NUM, FAR_PICK, farActive, useFarMode } from './ui/far/Far';
+import { useTeamMode } from './ui/team/useTeamMode';
+import { teamTarget } from './domain/teamChat';
 import type { SettingsTab } from './domain/settingsTabs';
 import { useRemoteCards } from './ui/useRemoteCards';
 import { IconButton } from './ui/kit/IconButton';
@@ -146,6 +148,8 @@ import { parseAllowLog, type AllowLog } from './domain/autoAllow';
 import { useAutoAllow } from './ui/useAutoAllow';
 import { useForwardQuestions } from './ui/useForwardQuestions';
 import { useForeignBrowsers } from './ui/useForeignBrowsers';
+import { useDaemonEnv } from './ui/useDaemonEnv';
+import { useAskWake } from './ui/useAskWake';
 import { useCraftHandback } from './ui/useCraftHandback';
 import { bornAfter, buildInbox, findTarget, freshItems, popoverOpen, replyBlocked, type InboxItem } from './domain/inbox';
 import { InboxPopover } from './ui/Inbox';
@@ -1049,7 +1053,10 @@ export default function App() {
     groups.orchestrators.map((o) => o.sessionId).filter((x): x is string => !!x), taskEvents, groups.orchestrators, sessions, heirOf, cards);
   // 앱 밖 크롬(직접 띄운 크롬·확장 중계)을 쓰는 세션 — 맡긴 참모에게 한 줄(2026-10-10 사용자 '참모 브라우저만')
   useForeignBrowsers(subSessions, groups.orchestrator, taskEvents, groups.orchestrators, sessions, heirOf);
+  // claude 데몬이 다른 데이터 폴더(시험 CHAMMO_HOME)로 떠 있으면 맨 앞 참모에게 한 줄 — 세션은 데몬 env 를 물려받는다(2026-10-23 아이맥)
+  useDaemonEnv(groups.orchestrator);
   useCraftHandback(groups.orchestrator);
+  useAskWake(agentLives, sessions);
   // 직접 답하기 카드 — 하위 세션이 본인 승인을 원하면 맡긴 참모 채팅에 카드(사람이 누르면 그 세션에 사람 말로)
   // 살아 있나·이름은 폴더로 거르기 전 전체 목록(allSessions)으로 — 워크트리로 들어가 사이드바에서 빠진 세션 카드가 꺼짐으로 숨었다(2026-10-05 아이맥)
   const direct = useDirectCards(allSessions, allActs, taskEvents, groups.orchestrators, groups.orchestrator, agentLives, (c, name) => notifyOnce({
@@ -1069,6 +1076,16 @@ export default function App() {
   const remote = useRemoteCards();
   // 다른 기기 보기(peer-panel) — 띠 맨 위 기기 단추·그 기기 띠·스페이스·맨 위 줄. 채팅 칸은 원격 채팅(remoteChat) 그대로
   const farMode = useFarMode({ remoteChat, setRemoteChat, cards: remote.cards, fontSize, onConnect: () => { setSettingsTab('phone'); setSettingsOpen(true); } });
+  // 참모 메신저(시안 v2) — 띠 팀 칸·가운데 대화·스페이스 팀 탭. '내 참모에게' 넘기기는 지금 채팅 칸 참모(스페이스 보내기와 같은 참모)
+  const teamMode = useTeamMode({
+    wide: sidebarOpen,
+    onLogin: () => { setSettingsTab('phone'); setSettingsOpen(true); },
+    handoff: () => {
+      const o = groups.orchestrators.find((x) => x.id === focusedBy.current.get('orch-col')) ?? groups.orchestrators[0];
+      // 보내기는 Rust team_handoff 한 길 — 글을 다시 거르고(CR·ESC 등) 기록엔 본문 없이(보안 검토 10-23)
+      return o ? { name: orchDisplay(o) || assistant(), send: async (text: string) => { await invoke<string>('team_handoff', { text, dry: false, to: o.id }); } } : undefined;
+    },
+  });
   const directWait = [...direct.inboxCards.filter(needsAnswer).map((c) => c.id), ...remote.cards.map((x) => `${x.dev}:${x.card.id}`)];
   const prevDirect = useRef<Set<string> | null>(null);
   // 상태까지 열쇠에 — 꺼짐→기다림(세션이 목록에 다시 나타남)도 새 카드처럼 펼친다(2026-10-05 사고 모양)
@@ -1256,7 +1273,11 @@ export default function App() {
   };
   // macOS 알림을 누르면 Rust(notify_mac)가 창을 앞으로 가져오고 window.__notifyClick('<갈 곳>') 을 부른다
   const noteClickRef = useRef<(t: string) => void>(() => {});
+  const teamOpenRef = useRef<(room: string) => void>(() => {});
+  teamOpenRef.current = teamMode.openRoom;
   noteClickRef.current = (raw) => {
+    const room = teamTarget(raw); // 팀 메신저 새 말(team_alert) — 그 대화로
+    if (room) { teamOpenRef.current(room); return; }
     const t = readNoteTarget(raw);
     if (t?.to === 'inbox') setInboxOpen(true);
     else if (t?.to === 'session') openTarget(t.id);
@@ -1511,7 +1532,7 @@ export default function App() {
       const lastOrch = focusedBy.current.get('orch-col');
       const spaceOrch = groups.orchestrators.find((x) => x.id === lastOrch) ?? groups.orchestrators[0];
       // 채팅 칸 — 띠 바로 옆(띠 | 채팅 | 스페이스, 2026-10-12 사용자 시안 v2 Q1 A): 머리 = 보이는 참모 이름·맡은 일 + 그 창 단추(칸 머리 줄과 한 줄로), 폭 손잡이는 오른쪽 가장자리
-      const chatCol = (groups.orchestrators.length > 0 || remoteChat || farMode.far) && <div className="office-chats left" style={{ flex: `0 0 ${chatWidth}px`, width: chatWidth, ['--chat-k' as string]: fontSize / DEFAULT_FONT }}>
+      const chatCol = (groups.orchestrators.length > 0 || remoteChat || farMode.far || teamMode.chat) && <div className="office-chats left" style={{ flex: `0 0 ${chatWidth}px`, width: chatWidth, ['--chat-k' as string]: fontSize / DEFAULT_FONT }}>
             <Grip side="right" width={chatWidth} onWidth={setChatWidth} min={280} max={900} />
             {/* 채팅 카드 — 띠의 고른 프사와 참모 색 윤곽 하나로 잇는다(SpaceView ChatLink, 2026-10-12 사용자 201.png). 손잡이는 카드 밖(가장자리) */}
             <div className="och-card">
@@ -1541,6 +1562,8 @@ export default function App() {
                 <RemoteChat key={`${remoteChat.dev}:${remoteChat.agent}`} target={remoteChat} fontSize={fontSize} />
               </div>
             )}
+            {/* 팀 메신저 대화(시안 v2 A) — 내 참모 칸은 붙인 채 위를 덮는다(원격 채팅과 같은 자리) */}
+            {teamMode.chat && !remoteChat && !farMode.far && <div className="och-remote">{teamMode.chat}</div>}
             </div>
           </div>;
       main = (
@@ -1549,7 +1572,8 @@ export default function App() {
         {farMode.pop}
         <div className="office-mode space-mode">
           {/* 왼쪽 = 스페이스: 문서 + 지금 채팅 탭 참모가 잡고 있는 세션(터미널·보여 준 파일) — 2026-09-30 사용자, 리더는 터미널 뷰의 레거시 */}
-          <SpaceView chat={chatCol} railTop={farMode.railTop} far={farMode.farView} pet={features.tama ? petNode : undefined} office={features.office ? officeCol : undefined} officeReq={officeReq} onOfficeReq={() => setOfficeReq(null)} onOfficeShown={setSpaceOffice}
+          {teamMode.pop}
+          <SpaceView chat={chatCol} railTop={farMode.railTop} far={farMode.farView} team={{ rail: teamMode.rail, railOn: teamMode.railOn, color: teamMode.color, onLeave: teamMode.leave, space: teamMode.space }} pet={features.tama ? petNode : undefined} office={features.office ? officeCol : undefined} officeReq={officeReq} onOfficeReq={() => setOfficeReq(null)} onOfficeShown={setSpaceOffice}
             harnitorReq={harnitorReq} onHarnitorReq={() => setHarnitorReq(null)} onHarnitorShown={setHarnitorOpen}
             onHarnitorClosed={() => { if (harnitorSwitched.current) { harnitorSwitched.current = false; setSpace(false); } }}
             toolsReq={toolsReq} onToolsReq={() => setToolsReq(null)} onToolsShown={setToolsOpen}

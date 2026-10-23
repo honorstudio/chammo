@@ -19,6 +19,7 @@
 :is(html.oa-paused, html.oa-calm) .sp-fab.live,
 :is(html.oa-paused, html.oa-calm) .su-checks .st-now .su-dot,
 :is(html.oa-paused, html.oa-calm) .su-bar.flow i,
+:is(html.oa-paused, html.oa-calm) .gp-c.gp-run::after,
 :is(html.oa-paused, html.oa-calm) .pane.pt-live .chat-input,
 :is(html.oa-paused, html.oa-calm) .tl-dot.checking,
 :is(html.oa-paused, html.oa-calm) .oa-st-work .oa-face,

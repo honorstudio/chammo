@@ -1,0 +1,10 @@
+# 폰 입구 호스팅 머리(Cloudflare 정적 파일) — 입구 화면만. 컴퓨터 화면(/)은 서비스 워커가 받아 둔 CSP 로 준다
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' https: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'
+/sw.js
+  Cache-Control: no-cache
+/config.json
+  Cache-Control: no-cache

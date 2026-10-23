@@ -15,13 +15,13 @@ import { edgeSwipe } from '../../domain/modeNav';
 import { closeOnOutside } from '../outsideClose';
 import { BottomSheet, IconBtn } from './kit';
 import { useMemoPoll } from './usePoll';
-import { machine } from '../../i18n';
+import { machine, tr } from '../../i18n';
 
 const EVERY = 10_000;
 // 폰에선 웹 주소만 새 탭으로 — 컴퓨터 파일(file:)은 폰이 못 연다. Client 칸(모드 화면 모듈)은 컴퓨터 앱에서만
 const ENV: ModeEnv = { open: (href) => { if (hrefOk(href) && /^https?:/i.test(href)) window.open(href, '_blank', 'noopener'); }, client: null };
-const TRY: Record<string, string> = { 'home-calendar': '달력', 'home-board': '현황판', 'home-todo': '할 일', 'team-status': '참모 상태' };
-const exampleTitle = (n: string) => TRY[n] ?? n;
+const TRY: Record<string, () => string> = { 'home-calendar': () => tr('달력', 'Calendar'), 'home-board': () => tr('현황판', 'Board'), 'home-todo': () => tr('할 일', 'To-do'), 'team-status': () => tr('참모 상태', 'Team') };
+const exampleTitle = (n: string) => TRY[n]?.() ?? n;
 
 type View = { note: string | null; tree: TNode | null };
 

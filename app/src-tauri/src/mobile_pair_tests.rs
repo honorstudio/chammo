@@ -280,7 +280,7 @@ fn 상한을_넘으면_가장_오래_안_쓴_줄부터_뺀다() {
 }
 
 fn dev(id: &str, created: u64, last: Option<u64>) -> Device {
-    Device { id: id.into(), name: "iPhone".into(), hash: sha(id), created, last_seen: last, home: false, group: None, paired: None, peer: false, node: None, no_locker: false }
+    Device { id: id.into(), name: "iPhone".into(), hash: sha(id), created, last_seen: last, home: false, group: None, paired: None, peer: false, node: None, no_locker: false, relay: None }
 }
 
 #[test]
@@ -453,4 +453,155 @@ fn 짝_목록_파일이_깨졌으면_덮어쓰지_않는다() {
     assert!(st.pair(&code, "iPhone", now).is_none(), "깨진 목록 위엔 짝을 더하지 않는다");
     assert_eq!(std::fs::read_to_string(&f).unwrap(), "[{\"id\": \"a1\", 깨짐", "파일은 그대로 — 사람이 고칠 수 있게");
     let _ = std::fs::remove_dir_all(&d);
+}
+
+// ── 중계 두드리기 짝짓기(ADR 0013) ──
+
+fn relay(dev: &str) -> Relay {
+    Relay { device: dev.into(), x: "eA".into() }
+}
+
+#[test]
+fn code_alive_does_not_spend_the_code() {
+    let st = Devices::memory();
+    let now = SystemTime::now();
+    let c = st.new_code(now).unwrap();
+    assert!(st.code_alive(&c, now));
+    assert!(st.code_alive(&c, now));
+    assert!(!st.code_alive("ffff", now));
+    assert!(!st.code_alive("", now));
+    assert!(!st.code_alive(&c, now + PAIR_TTL + Duration::from_secs(1)));
+    assert!(st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false }, relay("r1"), now).is_some());
+    assert!(!st.code_alive(&c, now));
+}
+
+#[test]
+fn pair_relay_binds_the_line_and_finds_it_by_relay_device() {
+    let st = Devices::memory();
+    let now = SystemTime::now();
+    let c = st.new_code(now).unwrap();
+    let tok = st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false }, relay("r1"), now).unwrap();
+    let id = st.check(&tok, now).unwrap();
+    assert_eq!(st.relay_line("r1"), Some((id.clone(), "eA".into())));
+    assert_eq!(st.relay_of(&id), Some("r1".into()));
+    assert_eq!(st.relay_line("r2"), None);
+    // 줄을 끊으면 터널 줄도 없다
+    st.remove(&id).unwrap();
+    assert_eq!(st.relay_line("r1"), None);
+}
+
+#[test]
+fn pair_relay_refuses_peer_and_reswap_keeps_one_line() {
+    let st = Devices::memory();
+    let now = SystemTime::now();
+    let c = st.new_code(now).unwrap();
+    assert!(st.pair_relay(&c, &Pairing { name: "참모", home: false, prev: None, peer: true }, relay("r1"), now).is_none());
+    let c = st.new_code(now).unwrap();
+    let t1 = st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false }, relay("r1"), now).unwrap();
+    // 같은 저장 공간이 다시 짝지으면(옛 열쇠 증명) 줄을 바꿔 끼우고 새 중계 묶음으로
+    let c = st.new_code(now).unwrap();
+    st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: Some(&t1), peer: false }, Relay { device: "r9".into(), x: "eQ".into() }, now).unwrap();
+    assert_eq!(st.list().len(), 1);
+    assert_eq!(st.relay_line("r1"), None);
+    assert_eq!(st.relay_line("r9").map(|x| x.1), Some("eQ".into()));
+}
+
+#[test]
+fn plain_pairing_keeps_relay_unset_and_old_files_still_load() {
+    let st = Devices::memory();
+    let now = SystemTime::now();
+    let c = st.new_code(now).unwrap();
+    let tok = st.pair(&c, "iPhone", now).unwrap();
+    assert_eq!(st.relay_of(&st.check(&tok, now).unwrap()), None);
+    let old: Vec<Device> = serde_json::from_str(r#"[{"id":"a","name":"iPhone","hash":"h","created":1}]"#).unwrap();
+    assert!(old[0].relay.is_none());
+}
+
+// ── 보안 검토 C — 줄이 사라지는 모든 길에서 중계 기기도 끊기(대기열) ──
+
+fn relay_pair(st: &Devices, dev: &str, prev: Option<&str>, now: SystemTime) -> String {
+    let c = st.new_code(now).unwrap();
+    st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev, peer: false }, relay(dev), now).unwrap()
+}
+
+#[test]
+fn removing_a_line_queues_its_relay_device_for_revoke() {
+    let d = tmp("revoke-remove");
+    let st = Devices::open(&d);
+    let now = SystemTime::now();
+    let t = relay_pair(&st, "r1", None, now);
+    let id = st.check(&t, now).unwrap();
+    assert!(st.pending_revokes().is_empty());
+    st.remove(&id).unwrap();
+    assert_eq!(st.pending_revokes(), vec!["r1".to_string()]);
+    // 다른 앱(같은 데이터 폴더)이 읽어도 보인다 — 파일에 남는다
+    assert_eq!(Devices::open(&d).pending_revokes(), vec!["r1".to_string()]);
+    st.revoked(&["r1".to_string()]).unwrap();
+    assert!(st.pending_revokes().is_empty());
+}
+
+#[test]
+fn clear_prune_and_key_swap_also_queue() {
+    let d = tmp("revoke-more");
+    let st = Devices::open(&d);
+    let now = SystemTime::now();
+    let t1 = relay_pair(&st, "r1", None, now);
+    // 같은 폰이 다시 짝지어 새 중계 기기(r2)로 바뀌면 옛 r1 은 끊을 대상
+    relay_pair(&st, "r2", Some(&t1), now);
+    assert_eq!(st.pending_revokes(), vec!["r1".to_string()]);
+    relay_pair(&st, "r3", None, now);
+    st.clear().unwrap();
+    let mut p = st.pending_revokes();
+    p.sort();
+    assert_eq!(p, vec!["r1".to_string(), "r2".to_string(), "r3".to_string()]);
+    // 30일 안 쓴 줄 정리도
+    let d2 = tmp("revoke-prune");
+    let old = SystemTime::now() - Duration::from_secs(40 * 24 * 3600);
+    let st2 = Devices::open(&d2);
+    relay_pair(&st2, "r9", None, old);
+    let fresh = st2.new_code(SystemTime::now()).unwrap();
+    st2.pair(&fresh, "iPad", SystemTime::now()).unwrap();
+    assert_eq!(st2.pending_revokes(), vec!["r9".to_string()]);
+}
+
+#[test]
+fn a_relay_device_that_never_got_a_line_can_be_queued() {
+    let d = tmp("revoke-orphan");
+    let st = Devices::open(&d);
+    st.queue_revoke("orphan").unwrap();
+    st.queue_revoke("orphan").unwrap();
+    assert_eq!(st.pending_revokes(), vec!["orphan".to_string()]);
+}
+
+
+#[test]
+fn 보안_참모가_만든_코드는_사람이_허용해야_열쇠를_준다() {
+    // 보안 검토 10-23: scripts/app phone pair(참모 길)로 받은 코드로 curl 이 /api/pair 를 부르면 폰 열쇠 = '사람'이 됐다
+    let st = Devices::memory();
+    let now = SystemTime::now();
+    let code = st.new_code_held("card1", now).unwrap();
+    assert!(st.held(&code, now), "허용 전엔 대기");
+    assert!(st.pair(&code, "curl", now).is_none(), "허용 전엔 열쇠 없음");
+    assert!(!st.held("0".repeat(32).as_str(), now), "틀린 코드는 대기 아님(코드를 모르면 아무것도 모른다)");
+    assert!(st.decide_hold("other", true).is_err(), "다른 카드 답은 안 먹는다");
+    st.decide_hold("card1", true).unwrap();
+    assert!(!st.held(&code, now));
+    assert!(st.pair(&code, "iPhone", now).is_some(), "허용 뒤엔 그 코드로 한 번");
+    assert!(st.decide_hold("card1", true).is_err(), "끝난 카드");
+}
+
+#[test]
+fn 보안_참모가_만든_코드를_거절하면_코드가_죽고_설정_qr_은_허용이_필요_없다() {
+    let st = Devices::memory();
+    let now = SystemTime::now();
+    let code = st.new_code_held("card2", now).unwrap();
+    st.decide_hold("card2", false).unwrap();
+    assert!(!st.held(&code, now));
+    assert!(st.pair(&code, "x", now).is_none(), "거절하면 코드 죽음");
+    // 사람이 설정에서 누른 QR 은 그대로 — 새 코드가 대기를 지운다
+    let held = st.new_code_held("card3", now).unwrap();
+    let open = st.new_code(now).unwrap();
+    assert!(st.pair(&held, "x", now).is_none());
+    assert!(st.pair(&open, "iPhone", now).is_some());
+    assert!(st.decide_hold("card3", true).is_err(), "덮인 대기 카드");
 }

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="theme-color" content="#f6f6f8" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#151518" media="(prefers-color-scheme: dark)" />
+    <meta name="apple-mobile-web-app-title" content="참모" />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+    <title>참모</title>
+    <style>
+      /* 폰 입구 — 컴퓨터 폰 화면(mobile.css)과 같은 바탕·글 색, 단추는 44px 이상 */
+      :root { --bg: #f6f6f8; --fg: #1b1b1f; --sub: #6b6b75; --line: #dcdce1; --pri: #2f6bff; --pri-fg: #fff; color-scheme: light dark; }
+      @media (prefers-color-scheme: dark) { :root { --bg: #151518; --fg: #ececf1; --sub: #9a9aa5; --line: #3d3d45; --pri: #5b8cff; --pri-fg: #fff; } }
+      html, body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+      #app { box-sizing: border-box; min-height: 100dvh; padding: max(48px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; max-width: 480px; margin: 0 auto; }
+      h1 { margin: 0; font-size: 24px; font-weight: 700; }
+      p { margin: 0 0 8px; color: var(--sub); word-break: keep-all; }
+      button { min-height: 48px; border-radius: 12px; border: 1px solid var(--line); background: transparent; color: var(--fg); font: inherit; font-weight: 600; }
+      button.pri { background: var(--pri); border-color: var(--pri); color: var(--pri-fg); }
+      .pw-spin { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--pri); animation: spin 0.9s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .pw-spin { animation: none; } }
+    </style>
+  </head>
+  <body>
+    <!-- 폰 입구(ADR 0013) — 짝짓기·컴퓨터 화면 받기·Chammo 계정. 컴퓨터 화면은 서비스 워커가 / 에 내준다 -->
+    <main id="app"></main>
+    <script type="module" src="/src/phone-web/main.ts"></script>
+  </body>
+</html>

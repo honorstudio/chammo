@@ -108,3 +108,23 @@ export function popupNotice(name: string, kind: PopupKind | undefined): { title:
 export function popupLine(kind: PopupKind | undefined): string {
   return kind === 'passkey' ? tr('크롬이 패스키 창을 띄웠어 — 여기엔 안 보여', 'Chrome opened a passkey window this view can’t show') : tr('크롬이 여기 안 보이는 창을 띄웠어', 'Chrome opened a window this view can’t show');
 }
+
+/** 사람이 끝낸 부름을 세션에 알리는 줄 — 사람이 같이 적은 한마디가 있으면 끝에(한 줄로) */
+export function askWakeLine(say?: string | null): string {
+  const base = tr('[앱] 사람이 브라우저 일을 끝냈어 — browser_snapshot 으로 확인하고 이어서 해', '[App] The person finished the browser task — check with browser_snapshot and continue');
+  const t = (say ?? '').replace(/\s+/g, ' ').trim();
+  return t ? `${base} · ${tr(`사람이 남긴 말: "${t}"`, `They said: "${t}"`)}` : base;
+}
+
+/**
+ * 시간 초과 뒤(세션이 턴을 끝낸 뒤) 사람이 '다 했어'를 누른 부름 — 그 세션(procPid = 래퍼의 sessionPid) 입력칸에 칠 줄.
+ * sent = 이미 보낸 키(프로필:래퍼:부름 시각) — 래퍼가 다음 도구 호출에서 .done 을 치울 때까지 목록에 wake 가 계속 보여서
+ */
+export function askWakes(lives: Live[], sessions: { id: string; procPid?: number }[], sent: string[]): { key: string; id: string; line: string }[] {
+  return lives.flatMap((l) => {
+    if (!l.wake) return [];
+    const key = `${l.profile}:${l.pid}:${l.wake.at}`;
+    const s = sessions.find((x) => x.procPid && x.procPid === l.sessionPid);
+    return s && !sent.includes(key) ? [{ key, id: s.id, line: askWakeLine(l.wake.say) }] : [];
+  });
+}

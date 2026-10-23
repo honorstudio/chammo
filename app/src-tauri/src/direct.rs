@@ -132,7 +132,11 @@ pub fn answer(id: &str, pick: &Pick, by: &str) -> Result<(), String> {
     // 다른 기기 연결 요청 카드(peer_ask) — 세션에 치지 않고 앱이 그 자리에서 허용·거절을 적는다
     if ask["kind"] == LINK_KIND {
         let yes = link_pick(pick, by).map_err(refuse_text)?;
-        crate::peer_ask::asks().decide(id, yes, crate::messenger_cmd::now_ms())?;
+        if ask["sub"] == PHONE_SUB {
+            crate::mobile::devices().decide_hold(id, yes)?;
+        } else {
+            crate::peer_ask::asks().decide(id, yes, crate::messenger_cmd::now_ms())?;
+        }
         let label = ask[if yes { "yes" } else { "no" }].as_str().unwrap_or_default();
         return append(&json!({ "ts": chrono_now(), "type": "answer", "id": id, "by": by, "pick": if yes { "yes" } else { "no" }, "label": label }));
     }
@@ -192,6 +196,26 @@ pub(crate) fn ask_link(p: &crate::peer_ask::LinkPeer, until_ms: u64) -> Result<S
     // 줄 하나 덧붙이기(O_APPEND)라 겹쳐도 안 깨지고, 두 번 답하기는 peer_ask::decide 가 막는다
     let id = crate::mobile_pair::random_hex(4).map_err(|e| e.to_string())?;
     append(&link_row(&id, p, until_ms, &chrono_now()))?;
+    Ok(id)
+}
+
+/// 참모가 만든 폰 연결 QR(scripts/app phone pair)의 사람 허용 카드 — 연결 요청 카드와 같은 판(kind link, from @link, 사람 길로만 답), sub = phone
+pub const PHONE_SUB: &str = "phone";
+pub fn phone_pair_row(id: &str, until_ms: u64, ts: &str) -> Value {
+    json!({
+        "ts": ts, "type": "ask", "id": id, "from": LINK_FROM, "cwd": "", "kind": LINK_KIND, "sub": PHONE_SUB,
+        "q": crate::i18n::tr("이 폰을 연결할까요? 참모가 폰 연결 QR 을 만들었어요", "Link this phone? An assistant made a phone link QR"),
+        "detail": crate::i18n::tr("허용하면 그 QR 을 연 폰이 이 컴퓨터에 사람으로 닿아요(카드 답·말 보내기). 내가 연 게 아니면 거절", "If allowed, the phone that opened the QR reaches this computer as you (card answers, messages). Decline if it wasn't you"),
+        "what": crate::i18n::tr("폰 연결 허용", "Allow phone link"),
+        "yes": crate::i18n::tr("허용", "Allow"), "no": crate::i18n::tr("거절", "Decline"), "options": [],
+        "until": iso_of_ms(until_ms),
+    })
+}
+
+/// 폰 연결 허용 카드 남기기 → 카드 id
+pub(crate) fn ask_phone_pair(until_ms: u64) -> Result<String, String> {
+    let id = crate::mobile_pair::random_hex(4).map_err(|e| e.to_string())?;
+    append(&phone_pair_row(&id, until_ms, &chrono_now()))?;
     Ok(id)
 }
 
@@ -386,6 +410,11 @@ mod tests {
         let again = format!("{ASK}\n{row}");
         assert_eq!(shown_row(&again, "ab12cd34", "chat:참모", t).unwrap(), None, "같은 자리는 또 안 쓴다");
         assert!(shown_row(&again, "ab12cd34", "inbox", t).unwrap().is_some(), "다른 자리는 쓴다");
+        // soak 008 — 앱이 알림을 낸 때 남기는 notified 줄이 있어도, 나중에 화면에 그린 줄은 따로 쓴다
+        let note = shown_row(ASK, "ab12cd34", "notified", t).unwrap().unwrap();
+        let after = format!("{ASK}\n{note}");
+        assert!(shown_row(&after, "ab12cd34", "chat:참모", t).unwrap().is_some());
+        assert_eq!(shown_row(&after, "ab12cd34", "notified", t).unwrap(), None);
         assert_eq!(shown_row(ASK, "zz", "inbox", t).unwrap_err(), Refuse::NotFound);
         let odd = shown_row(ASK, "ab12cd34", &format!("chat:\n{}", "가".repeat(100)), t).unwrap().unwrap();
         let w = odd["where"].as_str().unwrap();
@@ -424,6 +453,18 @@ mod tests {
         assert!(check(&log, "ab12cd34").is_ok());
         let done = format!("{r}\n{}", json!({ "type": "done", "id": "ab12cd34", "note": "연결됨" }));
         assert_eq!(check(&done, "ab12cd34").unwrap_err(), Refuse::Closed);
+    }
+
+    #[test]
+    fn 보안_폰_연결_허용_카드는_연결_요청_카드와_같은_판에_sub_phone_답은_사람_길만() {
+        let r = phone_pair_row("ab12cd99", 1_800_000_300_000, "2027-01-15T08:00:00Z");
+        assert_eq!((r["from"].as_str(), r["kind"].as_str(), r["sub"].as_str()), (Some(LINK_FROM), Some(LINK_KIND), Some(PHONE_SUB)));
+        assert!(r["q"].as_str().unwrap().contains("이 폰을 연결할까요"));
+        assert!(check(&format!("{r}"), "ab12cd99").is_ok());
+        // 참모 길(scripts/direct answer 등 by=세션)로는 허용 못 한다 — 앱·짝지은 폰 카드만
+        assert!(link_pick(&Pick::Yes, "desktop").is_ok());
+        assert!(link_pick(&Pick::Yes, "remote:nB").is_err());
+        assert!(link_pick(&Pick::Yes, "agent").is_err());
     }
 
     #[test]

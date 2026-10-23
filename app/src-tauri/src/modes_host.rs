@@ -149,7 +149,7 @@ fn start(key: &str, plugin_dirs: &[std::path::PathBuf], members: Vec<(String, St
     let err = std::fs::OpenOptions::new().create(true).append(true).open(&log).map(Stdio::from).unwrap_or_else(|_| Stdio::null());
     let spawned = crate::platform::command(crate::claude::claude_bin())
         .args(modes::host_args(plugin_dirs))
-        .envs(modes::host_env(crate::config::data_dir()))
+        .envs(modes::host_env(crate::config::data_dir(), &crate::config::current().language))
         .current_dir(run)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

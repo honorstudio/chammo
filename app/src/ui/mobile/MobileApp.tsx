@@ -1,8 +1,9 @@
 // 폰 화면 — 시안 A(겹친 시트): 바닥 = 지금 참모 대시보드, 위 = 채팅 시트(살짝·반·전체). 참모를 바꾸면 바닥과 시트가 같이 바뀐다
 // 상태는 이것만 위에 둔다(a-build-notes): orch(기억) · view(대시보드|예약) · snap. picker·taskFold 는 그 아래
 // 예약 판을 열면 시트는 예약 담당 참모로(domain/mobile routineOrch)
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { getEnv, listBrowsers, listSessionsRaw, NoKeyError, readShowLog, readTasksSince, routinesList, type MobileEnv } from '../../data/web';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { getEnv, listBrowsers, listSessionsRaw, NoKeyError, readShowLog, readTasksSince, routinesList, teamViaMac, type MobileEnv } from '../../data/web';
+import { PhoneTeam, usePhoneTeam } from './PhoneTeam';
 import { chatFiles, showOwnerOf, type ChatFile } from '../../domain/chatFiles';
 import { titleOf } from '../../domain/reader';
 import { FileView } from './FileView';
@@ -55,6 +56,7 @@ import { preloadFirstScreen } from './bootPreload';
 import { PhoneFar, useFarDevices, type FarPick } from './PhoneFar';
 
 const ORCH_KEY = 'm.orch';
+const TAB_KEY = 'm.tab';
 const NO_LIVES: Live[] = [];
 /** 작업 기록 — 5초마다 바뀐 줄만(예전엔 꼬리 512KB 통째로, 2026-10-08) */
 const readTaskLog = makeTaskTail(readTasksSince);
@@ -189,6 +191,13 @@ export function MobileApp() {
   const [error, setError] = useState<string | null>(null);
   const frame = useRef<HTMLDivElement>(null);
   const vp = useViewport(frame);
+  // 맨 아래 탭바 참모 | 팀(시안 v2 C) — 고른 탭은 기억, 키보드가 뜨면 탭바는 숨긴다
+  const [tab, setTabState] = useState<'orch' | 'team'>(() => { try { return localStorage.getItem(TAB_KEY) === 'team' ? 'team' : 'orch'; } catch { return 'orch'; } });
+  const setTab = (t: 'orch' | 'team') => { setTabState(t); try { localStorage.setItem(TAB_KEY, t); } catch { /* 이번만 */ } };
+  const team = usePhoneTeam(teamViaMac, tab === 'team');
+  const tabBar = useRef<HTMLElement>(null);
+  const [tabH, setTabH] = useState(0);
+  useLayoutEffect(() => { setTabH(vp.kb ? 0 : tabBar.current?.offsetHeight ?? 0); });
   const go = (id: string) => { remember(id); setPick(id); setView('dash'); setSnap('half'); };
   // 참모 깨우기 — 켜거나 만든 참모가 목록에 뜨면 그리로(참모 바꾸기 시트·참모가 없을 때 화면이 같이 쓴다)
   const wake = useWake(orchs, go);
@@ -340,16 +349,27 @@ export function MobileApp() {
   if (far) {
     return cover(
       <div ref={frame} className="m-app" style={{ top: vp.top, height: vp.h }}>
-        <PhoneFar key={far.id} t={far} devices={farDevs} onPick={setFar} vp={vp} />
+        <PhoneFar key={far.id} t={far} devices={farDevs} self={env.deviceName} onPick={setFar} vp={vp} />
       </div>,
     );
   }
+  const pageVp = { ...vp, h: vp.h - tabH };
   return cover(
     // 키보드가 올라오면 보이는 영역에 화면 틀을 맞춘다 — 입력줄이 키보드 바로 위, 대화 목록은 그 위에 남는다
-    <div ref={frame} className="m-app" style={{ top: vp.top, height: vp.h }}>
+    <div ref={frame} className={`m-app ${vp.kb ? '' : 'm-tabbed'}`} style={{ top: vp.top, height: vp.h }}>
       {error && <div className="m-error m-top-err">{error}</div>}
-      <OrchSpace key={orch.id} far={farDevs.length ? { devices: farDevs, onPick: setFar } : undefined} orch={orch} orchs={orchs} sessions={sessions} events={events} waiting={waiting} waitSent={waitSent} ask={asks[orch.id] ?? null} ctx={ctx} env={env} snap={snap} setSnap={setSnap} vp={vp} stateAt={stateAt} lines={lines}
-        view={view} setView={setView} onPick={go} onStopped={stopped} wake={wake} lives={lives} push={push} />
+      <div className="m-tabpage" style={{ height: pageVp.h }}>
+        {tab === 'team'
+          ? <PhoneTeam api={teamViaMac} t={team} orch={{ id: orch.id, name: orch.name || env.assistantName }} />
+          : <OrchSpace key={orch.id} far={farDevs.length ? { devices: farDevs, onPick: setFar } : undefined} orch={orch} orchs={orchs} sessions={sessions} events={events} waiting={waiting} waitSent={waitSent} ask={asks[orch.id] ?? null} ctx={ctx} env={env} snap={snap} setSnap={setSnap} vp={pageVp} stateAt={stateAt} lines={lines}
+            view={view} setView={setView} onPick={go} onStopped={stopped} wake={wake} lives={lives} push={push} />}
+      </div>
+      {!vp.kb && (
+        <nav ref={tabBar} className="m-tabbar" role="tablist" aria-label="화면">
+          <button role="tab" aria-selected={tab === 'orch'} className={tab === 'orch' ? 'on' : ''} onClick={() => setTab('orch')}>{env.assistantName}</button>
+          <button role="tab" aria-selected={tab === 'team'} className={tab === 'team' ? 'on' : ''} onClick={() => setTab('team')}>팀{team.unread > 0 && <i className="tmx-ur in">{team.unread > 99 ? '99+' : team.unread}</i>}</button>
+        </nav>
+      )}
     </div>,
   );
 }

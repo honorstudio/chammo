@@ -116,7 +116,7 @@ export default function PdfView({ path, zoom = 100, at, atKey, load }: { path: s
 
   return (
     <div className="pdfv" ref={box}>
-      {err ? <div className="pdfv-msg">{tr('PDF 를 못 열었어', "Couldn't open the PDF")} — {err}</div>
+      {err ? <div className="pdfv-msg" title={err}>{tr('PDF 를 못 열었어요', "Couldn't open the PDF")}</div>
         : !doc || !scale ? <div className="pdfv-msg">{tr('여는 중', 'Opening')}</div>
         : size.map((p, i) => (
           <div key={i} className="pdfv-page" data-page={i + 1} style={{ width: p.w * scale, height: p.h * scale }}>

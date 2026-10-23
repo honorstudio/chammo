@@ -62,7 +62,12 @@ export function MobileSection({ title }: { title: string }) {
           'Chat with your assistant and check sessions and routines from your phone. Reachable only over Tailscale (not even on the same Wi-Fi), and the phone must be signed in to the same Tailscale account as this computer (shared nodes, other accounts and tagged nodes are refused); scan a connect QR once per phone and it gets its own key. A QR works once, within 10 minutes.')}
       </p>
       {st && !st.on && <span className="su-hint">{tr('꺼져 있어요 — 오른쪽 위 단추로 켜요.', 'Off — turn it on with the button at the top right.')}</span>}
-      {st?.running && (
+      {st?.relayReady && st.on && (
+        <span className="su-hint">{st.relay.connected
+          ? tr(`테일스케일 없이도 연결돼요(Chammo 중계 · 내용은 종단 암호) — 지금 폰 ${st.relay.phones}대`, `Phones connect without Tailscale too (Chammo relay, end-to-end encrypted) — ${st.relay.phones} now`)
+          : tr(`중계에 붙는 중… ${st.relay.error ?? ''}`, `Connecting to the relay… ${st.relay.error ?? ''}`)}</span>
+      )}
+      {st?.on && (st.running || st.relayReady) && (
         <>
           {qr ? (
             <div className="su-mobile">
@@ -85,7 +90,7 @@ export function MobileSection({ title }: { title: string }) {
           ) : (
             <div className="su-inline"><button className="btn pri" onClick={newQr}>{tr('폰 연결 QR 만들기', 'Make connect QR')}</button></div>
           )}
-          {!st.https && (
+          {st.running && !st.https && !st.relayReady && (
             <>
               <span className="su-hint">{tr(`http 주소라 폰에서 홈 화면 앱 설치(안드로이드)·알림·마이크가 안 돼요. ${st.httpsNote ?? ''}`, `This is an http address, so the phone can't install the home-screen app (Android), get notifications or use the mic. ${st.httpsNote ?? ''}`)}</span>
               {st.httpsFix && <div className="su-inline"><button className="btn" onClick={() => void openTarget('url', st.httpsFix!).catch(() => {})}>{tr('테일스케일 관리 화면 열기', 'Open Tailscale admin')}</button></div>}
@@ -119,10 +124,10 @@ export function MobileSection({ title }: { title: string }) {
                 : <button className="btn" disabled={busy} onClick={() => setClearing(true)}>{tr('모두 끊기', 'Disconnect all')}</button>}
             </div>
           )}
-          <span className="su-hint">{tr(`묶은 곳 ${st.bind ?? ''}`, `Bound to ${st.bind ?? ''}`)}</span>
+          {st.running && <span className="su-hint">{tr(`묶은 곳 ${st.bind ?? ''}`, `Bound to ${st.bind ?? ''}`)}</span>}
         </>
       )}
-      {st?.on && !st.running && <div className="su-error">{st.error ?? tr('켜는 중…', 'Starting…')}</div>}
+      {st?.on && !st.running && !st.relayReady && <div className="su-error">{st.error ?? tr('켜는 중…', 'Starting…')}</div>}
       {err && <div className="su-error">{err}</div>}
     </section>
   );
