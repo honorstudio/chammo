@@ -11,9 +11,10 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
   scripts/app status                                   current settings as JSON (language, name, folders,
                                                        features, voice mode, browser automation)
   scripts/app voice on|off                             voice mode (the speaker button)
-  scripts/app feature office|tama|gacha|review|voice|autoRevive|computerUse on|off
+  scripts/app feature office|tama|gacha|review|voice|autoRevive|autoTidy|computerUse|usagePing on|off
                                                        turn a feature on/off (same as Settings > Features)
   scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home|harnitor|tools
+                                                       home = the Home dashboard in the chat view (terminal view: the assistant's screen)
   scripts/app close settings|office|reader|tasks|inbox|harnitor|tools|review
   scripts/app focus <session id|name|project>          show that project's dashboard (chat view: in the space — no terminal)
   scripts/app focus --terminal <session|project>       open its terminal (CLI) — only when the user asks for the terminal
@@ -55,7 +56,7 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
                                                        folder stays unless --trash-source (macOS Trash, never deleted) — ask the
                                                        user first. A mode inside the data folder needs --trash-source
   scripts/app mode restore-builtin [<name>]            show hidden built-in modes again (all of them without a name)
-  scripts/app phone pair [--url]                       make a phone pairing QR (what Settings > Phone > "new QR" shows) without a click:
+  scripts/app phone pair [--url]                       make a phone pairing QR (what Settings > Devices > Phone > "Make connect QR" shows) without a click:
                                                        writes a QR page and prints its path — put it on screen with scripts/show <that path>.
                                                        The code lives 10 minutes and works once; the address (it holds the code) is printed only
                                                        with --url. The phone gets its key only after the user presses Allow on the
@@ -70,7 +71,7 @@ line once; lines written while the app is closed are skipped.
 """
 import datetime, json, os, subprocess, sys, time
 
-FEATURES = ('office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'computerUse')
+FEATURES = ('office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'autoTidy', 'computerUse', 'usagePing')
 OFF_BY_DEFAULT = ('autoRevive', 'computerUse')  # 앱 기본값과 같게 — 무인 맥에서만 켠다 · 화면 조종은 사용자가 고른다
 OPEN = ('settings', 'tour', 'office', 'review', 'all', 'replay', 'load', 'reader', 'tasks', 'inbox', 'home', 'harnitor', 'tools')
 CLOSE = ('settings', 'office', 'reader', 'tasks', 'inbox', 'harnitor', 'tools', 'review')

@@ -1,0 +1,30 @@
+/* 픽셀 사무실 방(ui/office/OfficeView) — 데스크톱(styles.css)과 폰(mobile.css)이 같이 쓴다. OfficeView 가 불러온다.
+   색은 방 스킨 몫이라 토큰 대신 그대로, 강조(--accent)·층(--z-base)만 앱 토큰 */
+.office { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.office-room { position: relative; }
+.office-cv { display: block; image-rendering: pixelated; cursor: pointer; }
+.office-tag { all: unset; position: absolute; transform: translate(-50%, 0); font-size: 11px; font-weight: 600; line-height: 1.5; padding: 0 7px; border-radius: 999px; white-space: nowrap; cursor: pointer; }
+.office-tag.light { background: rgba(255, 255, 255, .9); color: #2a1c14; box-shadow: 0 1px 0 rgba(0, 0, 0, .08); }
+.office-tag.dark { background: rgba(20, 20, 40, .85); color: #e8e8ff; }
+.office-tag.lcd { background: #2c3a1c; color: #c4d0a0; }
+.office-tag.hot { outline: 2px solid var(--accent); }
+.office-tag:hover { filter: brightness(.95); }
+.office-tag.st-dim { opacity: .45; } /* 채팅 뷰: 지금 채팅 탭 참모가 시킨 세션만 진하게 */
+.office-tag.human { background: #d9462f; color: #fff; }
+.office-more { margin-left: 5px; font-weight: 800; opacity: .75; } /* 폰 방: 겹쳐 접힌 이름표 수(ui/office/tags) */
+.office-title { font-size: 9.5px; font-weight: 800; color: #c9921f; margin-right: 4px; letter-spacing: -.01em; } /* 반장 칭호(뽑기) — 이름 앞 금빛 글자 */
+.office-tag.dark .office-title, .office-tag.lcd .office-title { color: #ffd27a; } /* 사람 필요 — 세션 브라우저가 사람을 부름(빨간 ! 와 같은 색) */
+.office-say { position: absolute; transform: translate(-50%, -100%); z-index: calc(var(--z-base) + 3); background: #fff; color: #2a1c14; border: 2px solid #2a1c14; border-radius: 8px; padding: 3px 9px; font-size: 12px; font-weight: 700; white-space: nowrap; pointer-events: none; animation: sayin .25s cubic-bezier(.2, 1.4, .4, 1); }
+.office-say::after { content: ''; position: absolute; left: 50%; bottom: -8px; transform: translateX(-50%); border: 6px solid transparent; border-top-color: #2a1c14; }
+@keyframes sayin { from { transform: translate(-50%, -80%) scale(.7); opacity: 0; } }
+.office-tag .office-doing { display: block; font-size: 11px; font-weight: 600; opacity: .7; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; text-align: center; animation: doingflash 2.5s ease-out forwards; }
+/* 고른 캐릭터(폰) — 머리 둘레 고리 */
+.office-ring { position: absolute; width: 40px; height: 40px; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--working, #2f74e0); pointer-events: none; } /* z-index 없이 이름표보다 먼저 그린다 — 이름표 글이 고리 위로 */
+
+/* 사무실 코인 칸 (오른쪽 위) — 누르면 뽑기(데스크톱 상점·폰 뽑기 탭) */
+.office-coin { all: unset; position: absolute; top: 10px; right: 10px; z-index: calc(var(--z-base) + 2); display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; background: rgba(42, 28, 20, .85); color: #fff6e6; font-size: 12.5px; font-weight: 800; cursor: pointer; }
+.office-coin i { width: 12px; height: 12px; border-radius: 50%; background: #e0b94f; box-shadow: inset -2px -2px 0 #b3871f; }
+.office-coin em { font-style: normal; color: #ffc93c; margin-left: 2px; }
+.office-coin.gain { animation: coinpop .5s ease-out 2; }
+@keyframes coinpop { 50% { transform: scale(1.12); } }
+.office-coin:hover { background: rgba(42, 28, 20, .95); }

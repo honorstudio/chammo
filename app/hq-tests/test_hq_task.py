@@ -324,7 +324,7 @@ class OrchRoles(unittest.TestCase):
         seed = [{'ts': self.ago(20), 'type': 'send', 'task': 't1', 'target': 'alpha-shop', 'from': 'bbbb0002'}]
         err, _ = self.run_send('fix-cart', seed=seed, again=True)
         self.assertEqual(err.count('참모-2 · 두부'), 1, err)
-        self.assertIn('handoff', err)
+        self.assertIn('task handoff', err)
 
     def test_기록의_fromName_과_project_로도_찾는다(self):
         seed = [{'ts': self.ago(5), 'type': 'send', 'task': 't1', 'target': '사라진-세션', 'from': 'zzzz9999', 'fromName': '참모-2', 'project': 'alpha-shop'}]
@@ -338,14 +338,14 @@ class OrchRoles(unittest.TestCase):
         other_project = [{'ts': self.ago(2), 'type': 'send', 'task': 't4', 'target': 'beta', 'from': 'bbbb0002', 'project': 'beta-blog'}]
         for seed in (old, mine, gone, other_project):
             err, _ = self.run_send('alpha-shop', seed=seed)
-            self.assertNotIn('handoff', err, seed)
+            self.assertNotIn('task handoff', err, seed)
 
     def test_넘겨받은_일은_새_주인으로(self):
         # 두부가 맡긴 일을 뽀삐가 넘겨받았으면(own) 뽀삐 몫 — 겹침 아님
         seed = [{'ts': self.ago(5), 'type': 'send', 'task': 't1', 'target': 'alpha-shop', 'from': 'bbbb0002'},
                 {'ts': self.ago(4), 'type': 'own', 'task': 't1', 'from': 'aaaa0001'}]
         err, _ = self.run_send('alpha-shop', seed=seed)
-        self.assertNotIn('handoff', err)
+        self.assertNotIn('task handoff', err)
 
     def test_HQ_도우미에게_보낸_일은_프로젝트를_안_적는다(self):
         agents = self.AGENTS + [{'id': 'hhhh0007', 'name': 'sns-post', 'cwd': '/d/dev/hq'}]

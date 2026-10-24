@@ -393,3 +393,30 @@
 .lk-blocked { color: var(--muted); font-size: 12px; }
 .lk-sure { color: var(--danger-ink); background: var(--danger-bg); border-color: transparent; font-weight: 700; }
 .lk-sure:hover { background: color-mix(in srgb, var(--danger-ink) 16%, var(--danger-bg)); }
+
+/* 띠 RA(2026-10-24 사용자 시안 home-dash v1) — 맨 위 홈 · 잠든 참모 접힌 칸 하나 · 더보기 하나 · 펼침 창 */
+.lk-av.rail-home { color: var(--text-2); }
+.lk-av.rail-home svg { width: 20px; height: 20px; }
+.lk-av.rail-home.on { background: var(--surface); color: var(--text); box-shadow: inset 0 0 0 2px var(--accent); }
+.lk-strip.wide .lk-av.rail-home .lk-av-pic { width: 32px; height: 32px; }
+.lk-av.rest-fold { flex: none; flex-direction: column; gap: 2px; height: 46px; color: var(--text-3); }
+.lk-av.rest-fold.open { background: var(--hover); color: var(--text); }
+.rest-faces { display: flex; }
+.rest-faces > span { display: inline-flex; width: 13px; justify-content: center; opacity: .55; filter: grayscale(.7); }
+.rest-faces .oa { --oa-s: 16px !important; }
+.rest-n { font-size: 11px; font-weight: 600; line-height: 1; }
+.rail-fn.rail-more { position: relative; flex: none; }
+.rail-fn.rail-more.on { background: var(--hover); color: var(--text); }
+.rail-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--badge); box-shadow: 0 0 0 1.5px var(--pip-ring); }
+.rail-pop { position: fixed; left: 0; top: 0; z-index: calc(var(--z-popover) + 3); min-width: 200px; max-width: 280px; max-height: calc(100vh - 16px); overflow-y: auto; box-sizing: border-box; padding: 6px; border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: 0 12px 32px rgba(0, 0, 0, .18), 0 0 0 1px var(--line); }
+.rail-pop-h { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px 8px; font-size: 13px; }
+.rail-pop-h span { color: var(--text-3); font-size: 12px; }
+.rail-pop .lk-av.rest { width: 100%; height: 40px; justify-content: flex-start; gap: 10px; padding: 0 8px; border-radius: 8px; opacity: 1; filter: none; }
+.rail-pop .lk-av.rest .lk-av-pic { opacity: .5; filter: grayscale(.6); }
+.rail-pop .lk-av.rest:hover .lk-av-pic { opacity: 1; filter: none; }
+.rail-pop-fns { display: flex; gap: 4px; }
+.rail-pop-fns > .rail-fns { display: contents; }
+.rail-pop.k-more { min-width: 0; }
+.rail-pop-row { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 12px; width: 100%; min-height: 36px; padding: 0 10px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+.rail-pop-row:hover, .rail-pop-row:focus-visible { background: var(--hover); }
+.rail-pop-row kbd { margin-left: auto; font: inherit; font-size: 11px; color: var(--text-3); }

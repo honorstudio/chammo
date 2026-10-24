@@ -140,9 +140,9 @@ export const IconTools = () => (
 export const IconReview = () => (
   <svg viewBox="0 0 16 16" {...P}><circle cx="4.5" cy="3.5" r="1.6" /><circle cx="4.5" cy="12.5" r="1.6" /><circle cx="11.5" cy="12.5" r="1.6" /><path d="M4.5 5.1v5.8M11.5 10.9V6.5a2 2 0 0 0-2-2H7.4M9 2.9 7.4 4.5 9 6.1" /></svg>
 );
-/** 사무실: 아이소메트릭 책상 하나 */
+/** 사무실: 책상 앞에 앉은 모찌(얼굴 + 책상) — 아이소메트릭 상자는 사무실로 안 읽혔다(시안 phone-nav v1 I-4, 2026-10-24 사용자 "귀여운 거") */
 export const IconOffice = () => (
-  <svg viewBox="0 0 16 16" {...P}><path d="M8 3.5 14 6.5 8 9.5 2 6.5Z M2 6.5v3.5l6 3 6-3V6.5 M8 9.5V13" /></svg>
+  <svg viewBox="0 0 16 16" {...P}><path d="M3.4 10.6C3.6 6.6 5.6 4 8 4s4.4 2.6 4.6 6.6M1.5 10.6h13M3 10.6v3M13 10.6v3M6.4 7.6v1M9.6 7.6v1" /></svg>
 );
 /** 스페이스(대화 화면): 앞뒤로 겹친 말풍선 두 개 — 문서+말풍선은 한눈에 안 읽혔다(2026-09-30 사용자) */
 export const IconSpace = () => (
@@ -332,3 +332,49 @@ export const IconChevronUp = () => (
 export const IconChevronDown = () => (
   <svg viewBox="0 0 16 16" {...P} style={{ transform: 'rotate(90deg)' }}><path d="M6 3.8 10.2 8 6 12.2" /></svg>
 );
+
+/** 도트 아이콘 — '#' 칸을 1×1 면으로(16칸 격자, 가로로 이어진 칸은 한 네모). 게임 화면(폰 사무실 칩)용 */
+const Dots = ({ rows }: { rows: string[] }) => (
+  <svg viewBox="0 0 16 16" fill="currentColor" shapeRendering="crispEdges">
+    {rows.flatMap((r, y) => [...r.matchAll(/#+/g)].map((m) => <rect key={`${y}-${m.index}`} x={m.index} y={y} width={m[0].length} height="1" />))}
+  </svg>
+);
+/** 뽑기: 캡슐 뽑기 기계(둥근 유리 안 캡슐 둘 + 몸통 + 나오는 구멍) — 폰 사무실 칩 */
+export const IconGacha = () => (
+  <Dots rows={[
+    '',
+    '     ######',
+    '   ##      ##',
+    '  #  ##      #',
+    '  # ####  ## #',
+    '  #  ##  ####',
+    '  #       ## #',
+    '  ############',
+    '  ############',
+    '  ##        ##',
+    '  ##  ####  ##',
+    '  ##  #  #  ##',
+    '  ##  ####  ##',
+    '  ############',
+    '  ##        ##',
+  ]} />
+);
+/** 스킨: 옷걸이(꾸미기 — 방 스킨·모자·장식 입히기) — 폰 사무실 칩 */
+export const IconSkin = () => (
+  <Dots rows={[
+    '',
+    '       ###',
+    '      #   #',
+    '          #',
+    '         #',
+    '        #',
+    '       # #',
+    '      #   #',
+    '     #     #',
+    '    #       #',
+    '   #         #',
+    '  #           #',
+    '  #############',
+  ]} />
+);
+

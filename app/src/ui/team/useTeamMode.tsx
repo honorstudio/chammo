@@ -12,6 +12,7 @@ import { TeamLocker } from './TeamLocker';
 import { TeamRail } from './TeamRail';
 import { TeamStart } from './TeamStart';
 import { onTeamDock, useTeam } from './useTeam';
+import { tr } from '../../i18n';
 
 const FOLLOW_KEY = 'chammo.teamFollow';
 const readFollow = () => { try { return localStorage.getItem(FOLLOW_KEY) !== '0'; } catch { return true; } };
@@ -85,8 +86,10 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; onLogin: ()
         onTeam={() => { setOpen((x) => !x); setNonce((n) => n + 1); }} onPick={pick}
         onDetachAll={canDetach ? () => void teamWindowOpen('all', team ?? '') : undefined}
         onFront={() => void teamWindowOpen('all', team ?? '')}
-        onStart={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setPop((p) => (p ? null : { left: Math.round(r.right + 8), top: Math.round(r.top) })); }} />
+        onStart={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setPop((p) => (p ? null : { left: Math.round(r.right + 8), top: Math.round(r.top) })); }} noAdd />
     ),
+    // 팀 만들기·초대 — 팀 칸의 + 대신 참모 띠 + 메뉴에서(띠 RA '+ 하나', 2026-10-24 사용자). at = 띠 + 단추 오른쪽 위
+    add: { label: team ? tr('팀 초대', 'Invite to team') : tr('팀 만들기', 'Make a team'), open: (at: { x: number; y: number }) => setPop({ left: Math.round(at.x), top: Math.round(at.y) }) },
     chat: cur && view && feed ? (
       <TeamConvo key={cur.key} convo={cur} items={feed.items} team={view.team} myName={view.me} handed={data.handed} focused={focused}
         onRead={data.markRoom} onHanded={data.markHanded} onSent={data.refresh} handoff={handoff}

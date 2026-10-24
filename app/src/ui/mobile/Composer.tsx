@@ -2,6 +2,7 @@
 // 참모 프사(누르면 참모 바꾸기, 물음 숫자 점)는 늘 보인다 — 비었으면 오른쪽 아래, 글이 있으면 보내기(↑) 왼쪽 스피커 자리. 멈춤(■)은 일하는 중일 때만
 // 칩 옆 따로 한 칸(domain/phoneComposer composerSlots). 프사 둘레 = 그 참모 컨텍스트 고리(80% 넘으면 빨강, 시안 phone-dash v2 A), 일하는 중이면 파란 점
 // 붙인 것은 카드 안 맨 위 가로로 넘기는 썸네일 칩 + 글에 #img1·#file1 이름표(데스크톱 채팅과 같은 셈, 칩을 빼면 이름표도)
+// 말풍선 길게 누르기 '참조'(#chat1)·진행 칸 '참모에게 묻기'(#task1·#goal1)도 같은 칩 줄 — 보낼 땐 데스크톱과 같은 withRefs(2026-10-23 사용자 폰)
 // 버튼은 누르는 자리 44px·아이콘은 작게. 글 칸은 6줄(화면이 작으면 그보다 작게)까지 늘고 그 뒤로는 안에서 스크롤
 // 음성이 나오는 동안 참모 프사는 말하는 참모 프사·색으로 바뀌고 소리 크기대로 빛난다(speaker, ui/mobile/usePhoneSpeaker) — 다른 참모면 누르면 그 참모로
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
@@ -10,6 +11,9 @@ import { IconArrowUp, IconClose, IconPlus, IconStop } from '../Icons';
 import { composerSlots, textMaxH } from '../../domain/phoneComposer';
 import { dropLabel } from '../../domain/mobile';
 import { labelCounts, readDraft, writeDraft } from '../../domain/mobileOutbox';
+import { withRefs, type ChatRef } from '../../domain/chat';
+import { nextRefLabel } from '../../domain/refChips';
+import { useRefInbox } from '../refBus';
 import { storage } from './outbox';
 import { shrinkImage } from './shrink';
 import { useBlobUrl } from './useBlobUrl';
@@ -58,6 +62,9 @@ export function Composer({ avatar, orchName, waiting, placeholder, draftKey, max
   const [saved] = useState(() => readDraft(storage(), draftKey));
   const [draft, setDraft] = useState(saved.text);
   const [files, setFiles] = useState<Att[]>(saved.files);
+  const [refs, setRefs] = useState<ChatRef[]>(saved.refs ?? []);
+  const refsNow = useRef(refs);
+  refsNow.current = refs;
   const paths = files.map((f) => f.path);
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -66,7 +73,20 @@ export function Composer({ avatar, orchName, waiting, placeholder, draftKey, max
   // 이번 메시지에 붙인 그림·파일 수 — 붙인 게 비면 0 으로(데스크톱 ChatView 와 같은 셈)
   const count = useRef(labelCounts(saved.files));
   // 쓰는 대로 참모 칸에 기억 — 참모를 바꾸면 이 화면이 새로 그려진다(MobileApp OrchSpace key)
-  useEffect(() => writeDraft(storage(), draftKey, { text: draft, files: files.map(({ path, name, image, label }) => ({ path, name, image, label })) }), [draftKey, draft, files]);
+  useEffect(() => writeDraft(storage(), draftKey, { text: draft, files: files.map(({ path, name, image, label }) => ({ path, name, image, label })), refs }), [draftKey, draft, files, refs]);
+  // 이 참모 입력칸으로 온 참조 — 칩 줄에 넣고 글 끝에 이름표, 시트를 올려 바로 쓰게
+  useRefInbox(draftKey, (r) => {
+    const label = nextRefLabel(refsNow.current, r.kind);
+    refsNow.current = [...refsNow.current, { label, who: r.who, text: r.text }];
+    setRefs(refsNow.current);
+    setDraft((d) => `${d}${d && !/\s$/.test(d) ? ' ' : ''}${label} `);
+    onFocus();
+    requestAnimationFrame(() => box.current?.focus());
+  });
+  const dropRef = (label: string) => {
+    setRefs((x) => x.filter((y) => y.label !== label));
+    setDraft((d) => dropLabel(d, label));
+  };
   // 칩 썸네일(로컬 blob) — 빼거나 보내면 놓는다
   const urls = useRef(new Set<string>());
   const clear = () => {
@@ -147,9 +167,16 @@ export function Composer({ avatar, orchName, waiting, placeholder, draftKey, max
   return (
     <div className="m-composer">
       {err && <div className="m-error">{err}</div>}
-      <form className="m-input" onSubmit={(e) => { e.preventDefault(); if (send(draft, paths)) { setDraft(''); clear(); } }}>
-        {files.length > 0 && (
+      <form className="m-input" onSubmit={(e) => { e.preventDefault(); if (send(withRefs(draft, refs), paths)) { setDraft(''); clear(); setRefs([]); } }}>
+        {files.length + refs.length > 0 && (
           <div className="m-attached">
+            {refs.map((r) => (
+              <span key={r.label} className="m-att m-att-ref" title={r.text}>
+                <span className="m-att-label">{r.label}</span>
+                <span className="m-att-q">{r.text.replace(/\s+/g, ' ')}</span>
+                <button type="button" className="m-att-x" onClick={() => dropRef(r.label)} aria-label={`${r.label} 빼기`} title="빼기"><IconClose /></button>
+              </span>
+            ))}
             {files.map((f) => (
               <span key={f.path} className="m-att">
                 {f.image ? <AttPic a={f} /> : <span className="m-att-file">{f.name.split('.').pop()?.toUpperCase().slice(0, 4) || '파일'}</span>}

@@ -1,5 +1,5 @@
 // 폰 — 이 참모 채팅 끝에 직접 답하기 카드(데스크톱과 같은 카드·같은 문지기). 맥이 그 세션 입력칸에 사람 말로 친다
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { directAnswer, peerCardAnswer, readDirect, readPeerCards } from '../../data/web';
 import { remoteCards, type PeerCardsRow } from '../../domain/remoteCards';
 import { needsLook, placeDirect, stepSeen, type DirectCard, type Seen } from '../../domain/directAsk';
@@ -21,8 +21,10 @@ export function usePhoneDirect(orch: Session, orchs: Session[], sessions: Sessio
   }, [log, sessions, events, orchs, orch.id]);
 }
 
-export function DirectCards({ mine: all, sessions }: { mine: DirectCard[]; sessions: Session[] }) {
-  const [open, setOpen] = useState<string | null>(null);
+/** focus = 알림이 짚은 카드 id — 그 카드를 펼치고 반짝(data-card 로 굴려 온다) */
+export function DirectCards({ mine: all, sessions, focus }: { mine: DirectCard[]; sessions: Session[]; focus?: string }) {
+  const [open, setOpen] = useState<string | null>(focus ?? null);
+  useEffect(() => { if (focus) setOpen(focus); }, [focus]);
   const tidy = useDirectTidy(all);
   // 기다리는 카드만 크게, 끝난 건 한 줄로 5분(2026-10-05 — 처리된 카드 두 장이 채팅 아래를 크게 가렸다)
   const mine = all.filter((c) => tidy.show(c) !== 'hide');
@@ -34,7 +36,7 @@ export function DirectCards({ mine: all, sessions }: { mine: DirectCard[]; sessi
       {mine.map((c) => {
         const s = sessions.find((x) => x.id === c.from);
         if (!needsLook(c)) return <div key={c.id} className="dc-row"><DirectLine c={c} name={s?.name || c.from} onDismiss={() => tidy.hide(c)} /></div>;
-        return <div key={c.id} className="dc-row"><DirectCardView c={c} name={s?.name || c.from} project={s?.project ?? undefined} compact={picked ? c.id !== open : c.id !== first} onOpen={() => setOpen(c.id)} onAnswer={directAnswer} onDismiss={() => tidy.hide(c)} /></div>;
+        return <div key={c.id} className={c.id === focus ? 'dc-row m-jumped' : 'dc-row'} data-card={`d:${c.id}`}><DirectCardView c={c} name={s?.name || c.from} project={s?.project ?? undefined} compact={picked ? c.id !== open : c.id !== first} onOpen={() => setOpen(c.id)} onAnswer={directAnswer} onDismiss={() => tidy.hide(c)} /></div>;
       })}
     </div>
   );

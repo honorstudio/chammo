@@ -68,7 +68,7 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
   const handOver = () => {
     if (!handing || !handoff) return;
     const it = handing;
-    void handoff.send(handoffText(it, team, note)).then(() => { onHanded(it, handoff.name); setHanding(null); setNote(''); }, (e: unknown) => setErr(String(e)));
+    void handoff.send(handoffText(it, team, note)).then(() => { onHanded(it, handoff.name); setHanding(null); setNote(''); }, (e: unknown) => setErr(tr(`못 넘겼어요 — ${String(e)}`, `Not handed off — ${String(e)}`)));
   };
 
   let prevAt: number | null = null;

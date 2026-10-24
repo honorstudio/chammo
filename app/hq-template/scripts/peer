@@ -13,7 +13,7 @@ __doc__ = """Talk to the assistant on another device of the same Tailscale accou
   scripts/peer connect <device>                        first time only — a card pops up on that device; once the person there
                                                        presses Allow, both sides can talk (waits up to 6 min). No code needed
   scripts/peer pair <device> <code>                    fallback for an old version — the code comes from that device's
-                                                       Settings > Phone (or a phone already paired with it). The user reads it to you
+                                                       Settings > Devices > Phone (or a phone already paired with it). The user reads it to you
   scripts/peer unpair <device>                         forget the key on this device (the other device can also cut it there)
   scripts/peer say <device> <text|-> [--to <assistant>] [--wait <s>]
                                                        put one message in front of that device's assistant and wait for its

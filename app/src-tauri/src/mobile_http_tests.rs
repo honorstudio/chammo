@@ -36,6 +36,9 @@ pub(crate) struct Fake {
     home: Option<PathBuf>,
     /// 비서(aaaa0001) 대화 기록 원문 — 다른 기기 참모 답 찾기(peer-reply)
     tx: Mutex<String>,
+    /// 맥 앱(뽑기)이 답을 안 한다 — 시간 초과 시험 · 답이 이만큼 늦다(진행 중 막이 시험)
+    gacha_mute: bool,
+    gacha_slow: Duration,
 }
 
 impl Fake {
@@ -346,6 +349,14 @@ impl Backend for Fake {
         self.log(format!("set_voice {on}"));
         Ok(())
     }
+    fn gacha_op(&self, req: &serde_json::Value) -> Result<serde_json::Value, String> {
+        self.log(format!("gacha {req}"));
+        if self.gacha_mute {
+            return Err("timeout".into());
+        }
+        std::thread::sleep(self.gacha_slow);
+        Ok(serde_json::json!({ "ok": true, "view": { "coins": 1 } }))
+    }
     fn pick_model(&self, id: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
         self.log(format!("pick_model {id} {model:?} {effort:?}"));
         Ok(())
@@ -388,7 +399,7 @@ fn gate() -> Gate {
         sends: Default::default(),
         tickets: Default::default(),
         owner: None,
-        team_says: Default::default(),
+        team_says: Default::default(), gachas: Default::default(),
     }
 }
 
@@ -1144,7 +1155,7 @@ fn r1_짝짓기는_post_api_pair_가_토큰을_json_으로_주고_쿠키는_없�
     assert_eq!(again.status, 401);
     // 고칠 곳은 지금 설정 탭 이름으로, 윈도우 PC 에서도 맞게 — '맥 설정 > 폰'은 없는 탭이었다(QA 2차)
     let msg = String::from_utf8_lossy(&again.body);
-    assert!(msg.contains("폰과 메신저") && !msg.contains("맥 설정"), "{msg}");
+    assert!(msg.contains("기기 관리") && !msg.contains("맥 설정"), "{msg}");
     let c2 = g.devices.new_code(std::time::SystemTime::now()).unwrap();
     assert_eq!(handle(&set(pair_post(&c2), "origin", Some("http://evil.com")), &g, &f).status, 403);
     assert_eq!(head_check(&set(pair_post(&c2), "content-type", Some("text/plain")), &g).map(|r| r.status), Some(403));
@@ -3952,4 +3963,139 @@ fn tm_폰_팀_말_다시_보내기는_폰_cid_로_한_번만_분당_상한() {
         assert_eq!(handle(&post("/api/team-say", &format!(r#"{{"to":"m2","text":"{i}"}}"#)), &g, &f).status, 200, "{i}");
     }
     assert_eq!(handle(&post("/api/team-say", r#"{"to":"m2","text":"넘침"}"#), &g, &f).status, 429);
+}
+
+#[test]
+fn 폰은_마지막_알림_갈_곳을_묻는다() {
+    let d = tmp("push-last");
+    let f = Fake { data: d.join("data"), ..Default::default() };
+    std::fs::create_dir_all(d.join("data")).unwrap();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    crate::push::keep_last(&d.join("data"), "session:o1", now);
+    let r = handle(&with_cookie(get("/api/push-last")), &gate(), &f);
+    assert_eq!(r.status, 200);
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    assert_eq!(v["target"], "session:o1");
+    assert!(v["age"].as_u64().unwrap() < 5);
+    // 쿠키 없는 남은 못 본다
+    assert_ne!(handle(&get("/api/push-last"), &gate(), &f).status, 200);
+}
+
+/// 폰 사무실(시안 office-phone v1 A) — 맥 앱이 쓴 사무실 모양(office.json)을 읽기만. 아는 칸만 내보낸다
+fn office_get(f: &Fake, q: &str) -> (u16, String) {
+    let r = handle(&with_cookie(get(&format!("/api/office{q}"))), &gate(), f);
+    (r.status, String::from_utf8_lossy(&r.body).into_owned())
+}
+
+#[test]
+fn o1_사무실_모양은_아는_칸만_꼬리표로() {
+    let d = tmp("office");
+    let f = Fake { data: d.clone(), ..Default::default() };
+    // 아직 맥이 안 썼으면 빈 모양 — 폰은 기본 방으로 그린다
+    assert_eq!(office_get(&f, ""), (200, "{}".to_string()));
+    std::fs::write(
+        d.join("office.json"),
+        r#"{"v":1,"slots":["a1",null],"boss":"fire_cG","skin":"neon","furn":["furn.plant"],"placed":{"furn.plant":[1,2]},"deco":{"hat":"hat.cap"},"history":[{"x":1}],"coins":99}"#,
+    )
+    .unwrap();
+    let (s, body) = office_get(&f, "");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(s, 200);
+    assert_eq!((v["slots"][0].as_str(), v["boss"].as_str(), v["skin"].as_str(), v["placed"]["furn.plant"][1].as_u64(), v["deco"]["hat"].as_str()), (Some("a1"), Some("fire_cG"), Some("neon"), Some(2), Some("hat.cap")));
+    assert!(v.get("history").is_none() && v.get("coins").is_none(), "모르는 칸(뽑기 기록·코인)은 안 나간다: {body}");
+    // since — 안 바뀌었으면 머리 줄만
+    let (_, first) = office_get(&f, "?since=");
+    let (meta, rest) = first.split_once('\n').unwrap();
+    let tag = serde_json::from_str::<serde_json::Value>(meta).unwrap()["tag"].as_str().unwrap().to_string();
+    assert_eq!(rest, body);
+    let (_, again) = office_get(&f, &format!("?since={tag}"));
+    assert!(again.ends_with("\"same\":true}\n"), "{again}");
+    // 깨진 파일은 '없음'과 갈라 이유째
+    std::fs::write(d.join("office.json"), "{깨짐").unwrap();
+    assert_eq!(office_get(&f, "").0, 502);
+    // 문지기 그대로 — 열쇠 없으면 못 보고, 쓰기는 없다
+    assert_eq!(handle(&get("/api/office"), &gate(), &f).status, 401);
+    assert_eq!(handle(&post("/api/office", "{}"), &gate(), &f).status, 405);
+}
+
+/// 폰 뽑기·스킨(시안 phone-gacha v1 B) — 보기는 gacha.json 에서 필요한 칸만, 쓰기는 모양을 거른 '요청'만 맥 앱에 넘긴다
+fn gacha_get(f: &Fake) -> (u16, String) {
+    let r = handle(&with_cookie(get("/api/gacha")), &gate(), f);
+    (r.status, String::from_utf8_lossy(&r.body).into_owned())
+}
+
+#[test]
+fn g1_뽑기_보기는_필요한_칸만() {
+    let d = tmp("gacha-view");
+    let f = Fake { data: d.clone(), ..Default::default() };
+    assert_eq!(gacha_get(&f), (200, "{}".to_string()));
+    std::fs::write(
+        d.join("gacha.json"),
+        r#"{"coins":250,"since":1,"pity":7,"owned":{"skin.neon":2},"equip":{"skin":"skin.neon"},"fresh":["skin.neon"],"history":[{"t":1,"id":"skin.neon","dup":false}],"late":{"floor":1,"at":1,"keys":["k"]},"phoneDone":[{"rid":"x","results":[]}],"placed":{}}"#,
+    )
+    .unwrap();
+    let (s, body) = gacha_get(&f);
+    assert_eq!(s, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let mut keys: Vec<_> = v.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    assert_eq!(keys, ["coins", "equip", "fresh", "owned", "pity"], "{body}");
+    assert_eq!((v["coins"].as_u64(), v["owned"]["skin.neon"].as_u64()), (Some(250), Some(2)));
+    std::fs::write(d.join("gacha.json"), "{깨짐").unwrap();
+    assert_eq!(gacha_get(&f).0, 502);
+    // 문지기 그대로 — 열쇠 없으면 못 본다
+    assert_eq!(handle(&get("/api/gacha"), &gate(), &f).status, 401);
+}
+
+#[test]
+fn g2_뽑기_요청은_모양을_걸러_맥_앱으로() {
+    let f = Fake::default();
+    let run = |r: Req| handle(&r, &gate(), &f).status;
+    // 인증·출처
+    assert_eq!(run(set(post("/api/gacha", r#"{"rid":"abcd1234","op":"pull","n":1}"#), "authorization", None)), 401);
+    assert_eq!(run(set(post("/api/gacha", r#"{"rid":"abcd1234","op":"pull","n":1}"#), "origin", Some("https://evil.example"))), 403);
+    // 모르는 모양은 맥 앱까지 안 간다
+    for bad in [
+        r#"{"rid":"abcd1234","op":"pull","n":3}"#,
+        r#"{"rid":"abc","op":"pull","n":1}"#,
+        r#"{"rid":"abcd 1234","op":"pull","n":1}"#,
+        r#"{"rid":"abcd1234","op":"equip","slot":"furn","id":"furn.sofa"}"#,
+        r#"{"rid":"abcd1234","op":"equip","slot":"hat","id":"../x"}"#,
+        r#"{"rid":"abcd1234","op":"equip","slot":"hat"}"#,
+        r#"{"rid":"abcd1234","op":"coins","n":1}"#,
+        r#"[1]"#,
+    ] {
+        assert_eq!(run(post("/api/gacha", bad)), 400, "{bad}");
+    }
+    assert!(f.calls().iter().all(|c| !c.starts_with("gacha")), "{:?}", f.calls());
+    // 아는 모양은 아는 칸만 넘긴다(코인 같은 덧붙인 칸은 버림)
+    assert_eq!(run(post("/api/gacha", r#"{"rid":"abcd1234","op":"pull","n":10,"coins":99999}"#)), 200);
+    assert_eq!(run(post("/api/gacha", r#"{"rid":"abcd1235","op":"equip","slot":"skin","id":null}"#)), 200);
+    let calls: Vec<_> = f.calls().into_iter().filter(|c| c.starts_with("gacha")).collect();
+    assert_eq!(calls.len(), 2);
+    assert!(!calls[0].contains("coins"), "{}", calls[0]);
+    assert!(calls[1].contains(r#""id":null"#), "{}", calls[1]);
+    // 실제 서버는 몸통을 받기 전에 head_check 부터 — 새 쓰기 길이 거기서 404 로 막히지 않게
+    assert!(head_check(&post("/api/gacha", "{}"), &gate()).is_none());
+    assert_eq!(head_check(&set(post("/api/gacha", "{}"), "authorization", None), &gate()).map(|r| r.status), Some(401));
+}
+
+#[test]
+fn g3_맥_앱이_답이_없으면_504_자리는_풀린다() {
+    let f = Fake { gacha_mute: true, ..Default::default() };
+    assert_eq!(handle(&post("/api/gacha", r#"{"rid":"abcd1234","op":"pull","n":1}"#), &gate(), &f).status, 504);
+    // 504 뒤엔 그 기기 자리가 풀려서 다음 요청이 429 가 아니다
+    assert_eq!(handle(&post("/api/gacha", r#"{"rid":"abcd1234","op":"pull","n":1}"#), &gate(), &f).status, 504);
+}
+
+#[test]
+fn g4_한_기기는_뽑기_요청_하나만_진행_중이면_429() {
+    let f = std::sync::Arc::new(Fake { gacha_slow: Duration::from_millis(400), ..Default::default() });
+    let g = std::sync::Arc::new(gate());
+    let (f2, g2) = (f.clone(), g.clone());
+    let first = std::thread::spawn(move || handle(&post("/api/gacha", r#"{"rid":"abcd1234","op":"pull","n":1}"#), &g2, &*f2).status);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(handle(&post("/api/gacha", r#"{"rid":"abcd1235","op":"pull","n":1}"#), &g, &*f).status, 429);
+    assert_eq!(first.join().unwrap(), 200);
+    assert_eq!(handle(&post("/api/gacha", r#"{"rid":"abcd1236","op":"pull","n":1}"#), &g, &*f).status, 200);
 }

@@ -47,11 +47,11 @@ describe('부르는 이름은 참모 하나', () => {
     }
   });
 
-  it('폰 화면이 가리키는 설정 탭은 지금 이름(폰과 메신저) — 없는 \'모바일\' 탭을 안 가리킨다(QA 2차)', () => {
+  it('폰 화면이 가리키는 설정 탭은 지금 이름(기기 관리) — 없는 \'모바일\'·옛 \'폰과 메신저\' 탭을 안 가리킨다(QA 2차·10-24)', () => {
     const bad: string[] = [];
     for (const [f, src] of Object.entries(sources)) {
       noComments(src).split('\n').forEach((l, i) => {
-        if (/설정 (>|&gt;) 모바일/.test(l)) bad.push(`${f}:${i + 1}: ${l.trim().slice(0, 80)}`);
+        if (/설정 (>|&gt;) (모바일|폰과 메신저)/.test(l)) bad.push(`${f}:${i + 1}: ${l.trim().slice(0, 80)}`);
       });
     }
     expect(bad).toEqual([]);

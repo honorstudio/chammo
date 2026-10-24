@@ -9,7 +9,7 @@ export const OPEN = ['settings', 'tour', 'office', 'review', 'all', 'replay', 'l
 export type OpenWhat = (typeof OPEN)[number];
 export const CLOSE = ['settings', 'office', 'reader', 'tasks', 'inbox', 'harnitor', 'tools', 'review'] as const;
 export type CloseWhat = (typeof CLOSE)[number];
-const FEATURES: FeatureSwitch[] = ['office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'computerUse'];
+const FEATURES: FeatureSwitch[] = ['office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'autoTidy', 'computerUse', 'usagePing'];
 
 export type AppIntent =
   | { kind: 'voice'; on: boolean }
@@ -100,6 +100,9 @@ export function openShortcut(what: OpenWhat): Shortcut | null {
     default: return null;
   }
 }
+
+/** open home — 채팅 뷰면 홈 대시보드(띠 맨 위 집), 터미널 뷰엔 대시보드가 없어 openShortcut 대로 참모 화면 */
+export const opensHomeDash = (what: OpenWhat, chat: boolean) => what === 'home' && chat;
 
 /** 설정의 기능 하나만 바꾼 새 설정(원본은 그대로) — 설정 화면 저장과 같은 모양으로 write_config 에 넘긴다 */
 export const withFeature = <C extends { features: Features }>(c: C, name: FeatureSwitch, on: boolean): C => ({ ...c, features: { ...c.features, [name]: on } });

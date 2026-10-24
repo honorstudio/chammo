@@ -7,7 +7,7 @@ import type { Skin } from './skins';
 import { tr } from '../../i18n';
 
 /** 현황판 얼굴 — 사무실과 같은 도트·같은 색. 16칸 도트를 2배로 */
-function Face({ spr, fill, sk }: { spr: string; fill: string; sk: Skin }) {
+export function Face({ spr, fill, sk }: { spr: string; fill: string; sk: Skin }) {
   const cv = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const ctx = cv.current?.getContext('2d');

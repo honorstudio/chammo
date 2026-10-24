@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { autoResubscribe, b64urlBytes, goFrom, PUSH_HINT, pushError, pushSupport } from './mobilePush';
+import { autoResubscribe, b64urlBytes, goFrom, lastUsable, noteJump, PUSH_HINT, pushError, pushSupport } from './mobilePush';
+import type { Session } from './session';
 
 describe('pushSupport — 이 폰에서 웹 푸시를 켤 수 있나', () => {
   const base = { sw: true, push: true, notif: true, standalone: true, ios: true, permission: 'default', secure: true };
@@ -54,8 +55,8 @@ describe('autoResubscribe — 앱 업데이트·서비스 워커 갱신으로 �
 });
 
 describe('PUSH_HINT — 종을 눌렀는데 못 켤 때 까닭(QA 2차)', () => {
-  it('http 안내는 데스크톱 설정의 실제 탭 이름(폰과 메신저)을 가리킨다 — \'모바일\' 탭은 없다', () => {
-    expect(PUSH_HINT.insecure).toContain('폰과 메신저');
+  it('http 안내는 데스크톱 설정의 실제 탭 이름(기기 관리)을 가리킨다 — \'모바일\' 탭은 없다', () => {
+    expect(PUSH_HINT.insecure).toContain('기기 관리');
     expect(PUSH_HINT.insecure).not.toContain('설정 > 모바일');
   });
   it('막힘 안내는 브라우저 탭으로 연 경우(사이트 설정)도 말한다 — 홈 화면 앱이 아니면 설정 > 알림에 참모가 없다', () => {
@@ -72,5 +73,37 @@ describe('pushError — 브라우저가 준 영어 오류를 그대로 띄우지
   it('우리가 만든 한글 오류는 그대로, 모르는 오류는 우리말 앞머리 + 원문', () => {
     expect(pushError(new Error('알림을 허락해야 받을 수 있어요'))).toBe('알림을 허락해야 받을 수 있어요');
     expect(pushError(new Error('AbortError: boom'))).toMatch(/^알림을 못 켰어요 — /);
+  });
+});
+
+describe('noteJump — 눌린 알림 갈 곳 → 폰에서 할 일(2026-10-23 사용자: 앱만 열리고 보던 시트 그대로)', () => {
+  const o = (id: string, sessionId: string) => ({ id, sessionId, name: id }) as Session;
+  const orchs = [o('a1', 'aaaa-1111'), o('5e55a0d1', '5e55a0d1-7c2b-4f3e-9a10-2b8d4c6e0f13')];
+  it('참모 답 → 그 참모 채팅', () => {
+    expect(noteJump({ to: 'session', id: 'a1' }, orchs)).toEqual({ orch: 'a1' });
+  });
+  it('결정·직접 카드 → 그 참모 채팅의 그 카드(참모는 전체 대화 번호로 와도 찾는다)', () => {
+    expect(noteJump({ to: 'card', orch: '5e55a0d1-7c2b-4f3e-9a10-2b8d4c6e0f13', card: 'w:t1' }, orchs)).toEqual({ orch: '5e55a0d1', card: 'w:t1' });
+    expect(noteJump({ to: 'card', orch: 'a1', card: 'd:c9' }, orchs)).toEqual({ orch: 'a1', card: 'd:c9' });
+  });
+  it('팀 메시지 → 그 대화', () => {
+    expect(noteJump({ to: 'team', room: 'r1' }, orchs)).toEqual({ team: 'r1' });
+  });
+  it('결정 대기함(옛 갈 곳) → 답을 기다림 목록(참모 바꾸기 시트)', () => {
+    expect(noteJump({ to: 'inbox' }, orchs)).toEqual({ picker: true });
+  });
+  it('모르는 참모(꺼짐·하위 세션) → 할 일 없음(보던 화면 그대로)', () => {
+    expect(noteJump({ to: 'session', id: 'sub1' }, orchs)).toBeNull();
+    expect(noteJump({ to: 'card', orch: 'zz', card: 'w:t1' }, orchs)).toBeNull();
+  });
+});
+
+describe('lastUsable — 컴퓨터의 마지막 알림 갈 곳(latest)을 믿을 만한가', () => {
+  it('30분 안의 갈 곳만', () => {
+    expect(lastUsable({ target: 'session:a1', age: 12 })).toEqual({ to: 'session', id: 'a1' });
+    expect(lastUsable({ target: 'session:a1', age: 31 * 60 })).toBeNull();
+    expect(lastUsable({ target: '', age: 3 })).toBeNull();
+    expect(lastUsable({ target: 'latest', age: 3 })).toBeNull(); // 다시 latest 로 돌지 않게
+    expect(lastUsable({ target: 'session:a1', age: null })).toBeNull();
   });
 });

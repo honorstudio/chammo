@@ -1,4 +1,4 @@
-// 설정 > 폰과 메신저 > 메신저 알림 — 새 팀 말이 오면 OS 알림 + 알림음(Rust team_alert). 소리 켜고 끄기·고르기·미리 듣기.
+// 설정 > 메신저 > 메신저 알림 — 새 팀 말이 오면 OS 알림 + 알림음(Rust team_alert). 소리 켜고 끄기·고르기·미리 듣기.
 // 지금 보고 있는 대화엔 안 울린다(그 창이 앞일 때). 저장은 <데이터>/team-alert.json — 바꾸면 바로 쓴다
 import { useEffect, useState } from 'react';
 import { teamAlertGet, teamAlertSet, teamSoundTry, type TeamAlert } from '../../data/teamApi';

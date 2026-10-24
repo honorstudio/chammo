@@ -1,4 +1,4 @@
-// 설정 > 모바일 — 폰에서 참모를 여는 서버 켜기/끄기, 폰 연결 QR(10분 한 번짜리 짝짓기), 연결된 기기·끊기(Rust mobile.rs). 기본 꺼짐.
+// 설정 > 기기 관리 > 폰 — 폰에서 참모를 여는 서버 켜기/끄기, 폰 연결 QR(10분 한 번짜리 짝짓기), 연결된 기기·끊기(Rust mobile.rs). 기본 꺼짐.
 // 목록은 폰 단위 — 사파리·홈 화면 앱(열쇠 둘)을 한 줄로 묶고 칸은 작은 글로(domain/mobileDevices)
 import { useEffect, useState } from 'react';
 import { mobileApi, openTarget, writeClipboard, type MobileStatus, type PairQr } from '../data/tauri';
@@ -7,11 +7,13 @@ import { kindLabels, lastPaired, phoneGroups } from '../domain/mobileDevices';
 import { IconClose, IconPower, IconUnlink } from './Icons';
 import { IconButton } from './kit/IconButton';
 import { tr } from '../i18n';
+import { phoneReachHint } from './phoneReach';
 
 const day = (ms: number) => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 const left = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 
-export function MobileSection({ title }: { title: string }) {
+/** onAccount = 계정 탭으로(Chammo 계정 로그인 칸) */
+export function MobileSection({ title, onAccount }: { title: string; onAccount?: () => void }) {
   const [st, setSt] = useState<MobileStatus | null>(null);
   const [qr, setQr] = useState<PairQr | null>(null);
   // 홈 화면 앱용 — QR 주소의 코드 글자(복사해 에어드롭·메시지로 보내 앱에 붙여 넣는다)
@@ -43,6 +45,7 @@ export function MobileSection({ title }: { title: string }) {
     void f().then(setSt, (e: unknown) => setErr(String(e))).finally(() => setBusy(false));
   };
   const phones = phoneGroups(st?.devices ?? []);
+  const reach = st ? phoneReachHint(st.relayReady) : null;
   const kindWords = { safari: tr('사파리', 'Safari'), browser: tr('브라우저', 'Browser'), home: tr('홈 화면 앱', 'Home Screen app'), peer: tr('다른 기기 참모', 'Chammo on another device') };
   const newQr = () => {
     setErr(null);
@@ -58,13 +61,15 @@ export function MobileSection({ title }: { title: string }) {
         )}
       </div>
       <p className="su-hint">
-        {tr('폰에서 참모와 채팅하고 세션·예약을 봐요. 테일스케일로만 열리고(같은 와이파이에도 안 보임) 폰도 이 컴퓨터와 같은 테일스케일 계정으로 로그인해야 해요(공유받은 기기·다른 계정·태그 기기는 안 받아요). 폰마다 한 번 연결 QR 을 찍으면 그 폰만의 열쇠가 생겨요. QR 은 10분 안에 한 번만 쓸 수 있어요.',
-          'Chat with your assistant and check sessions and routines from your phone. Reachable only over Tailscale (not even on the same Wi-Fi), and the phone must be signed in to the same Tailscale account as this computer (shared nodes, other accounts and tagged nodes are refused); scan a connect QR once per phone and it gets its own key. A QR works once, within 10 minutes.')}
+        {tr('폰에서 참모와 채팅하고 세션·예약을 봐요. 폰마다 한 번 연결 QR 을 찍으면 그 폰만의 열쇠가 생겨요. QR 은 10분 안에 한 번만 쓸 수 있어요.',
+          'Chat with your assistant and check sessions and routines from your phone. Scan a connect QR once per phone and it gets its own key. A QR works once, within 10 minutes.')}
       </p>
+      {st && <span className="su-hint">{reach!.text}</span>}
+      {st && reach!.login && onAccount && <div className="su-inline"><button className="btn" onClick={onAccount}>{tr('Chammo 계정에 로그인', 'Sign in to Chammo account')}</button></div>}
       {st && !st.on && <span className="su-hint">{tr('꺼져 있어요 — 오른쪽 위 단추로 켜요.', 'Off — turn it on with the button at the top right.')}</span>}
       {st?.relayReady && st.on && (
         <span className="su-hint">{st.relay.connected
-          ? tr(`테일스케일 없이도 연결돼요(Chammo 중계 · 내용은 종단 암호) — 지금 폰 ${st.relay.phones}대`, `Phones connect without Tailscale too (Chammo relay, end-to-end encrypted) — ${st.relay.phones} now`)
+          ? tr(`중계 연결됨 — 지금 폰 ${st.relay.phones}대`, `Relay connected — ${st.relay.phones} phone(s) now`)
           : tr(`중계에 붙는 중… ${st.relay.error ?? ''}`, `Connecting to the relay… ${st.relay.error ?? ''}`)}</span>
       )}
       {st?.on && (st.running || st.relayReady) && (
@@ -98,9 +103,9 @@ export function MobileSection({ title }: { title: string }) {
           )}
           <div className="su-rows">
             {phones.map((g) => (
-              <div key={g.group} className="su-row">
+              <div key={g.group} className="su-row dev-row">
                 <div className="su-row-text">
-                  <b>{g.name}</b>
+                  <b title={g.name}>{g.name}</b>
                   <span>{[tr(`마지막 ${day(g.lastUsed)}`, `Last ${day(g.lastUsed)}`), ...kindLabels(g.name, g.kinds, kindWords)].join(' · ')}</span>
                 </div>
                 {g.locker !== undefined && (

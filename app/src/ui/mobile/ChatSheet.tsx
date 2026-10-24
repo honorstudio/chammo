@@ -5,14 +5,15 @@
 // 살짝에서 끌어올리는 동안엔 대화 칸도 그린다(domain/sheetGuard logShown) — 늘어난 시트가 입력줄 위로 비지 않게
 // 끌기·박힘 풀기·phone-layout.jsonl 진단은 공용 훅 useSheetDrag(아래 시트와 같은 것, 2026-10-11 시트 공용화)
 // 잰 살짝 높이는 .m-space 에 --m-peek-h 로 — 뒤 스크롤 칸 아래 여백이 따라간다
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { PEEK_H, type Snap } from '../../domain/mobile';
 import { chatModel, logShown } from '../../domain/sheetGuard';
 import { useSheetDrag } from './useSheetDrag';
 
-type Props = { snap: Snap; onSnap: (s: Snap) => void; peekLine: string; vh: number; kb: boolean; children: ReactNode; composer: ReactNode };
+type Props = { snap: Snap; onSnap: (s: Snap) => void; peekLine: string; vh: number; kb: boolean; children: ReactNode; composer: ReactNode;
+  /** 잠깐 숨김(폰 사무실 뽑기·스킨 시트가 열린 동안) — 빼지 않아서 입력 중 글·시트 자리·잰 높이가 그대로 */ hidden?: boolean };
 
-export function ChatSheet({ snap, onSnap, peekLine, vh, kb, children, composer }: Props) {
+export function ChatSheet({ snap, onSnap, peekLine, vh, kb, children, composer, hidden }: Props) {
   const [peekH, setPeekH] = useState(PEEK_H);
   const grab = useRef<HTMLDivElement>(null);
   const comp = useRef<HTMLDivElement>(null);
@@ -52,6 +53,8 @@ export function ChatSheet({ snap, onSnap, peekLine, vh, kb, children, composer }
     return () => ro.disconnect();
   }, [snap]);
 
+  // 숨길 때 입력칸에 포커스가 남아 있으면 놓는다 — 숨은 입력칸에 키보드가 떠 있지 않게
+  useEffect(() => { if (hidden && sheet?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur(); }, [hidden, sheet]);
   // 살짝 높이를 화면(.m-space)에 CSS 변수로 — 홈·세션·예약 스크롤 칸 아래 여백(.m-dash)이 따라가 마지막 칸이 시트에 안 가려진다
   useLayoutEffect(() => {
     const space = sheet?.closest<HTMLElement>('.m-space');
@@ -59,7 +62,7 @@ export function ChatSheet({ snap, onSnap, peekLine, vh, kb, children, composer }
   }, [sheet, peekH]);
 
   return (
-    <section ref={setSheet} className={`m-sheet m-snap-${snap}${kb ? ' m-kb' : ''}${drag !== null ? ' m-drag' : ''}`} style={{ top, transition: drag === null ? 'top .34s cubic-bezier(.22, 1.25, .36, 1)' : 'none' }}>
+    <section ref={setSheet} className={`m-sheet m-snap-${snap}${kb ? ' m-kb' : ''}${drag !== null ? ' m-drag' : ''}${hidden ? ' m-hide' : ''}`} aria-hidden={hidden || undefined} style={{ top, transition: drag === null ? 'top .34s cubic-bezier(.22, 1.25, .36, 1)' : 'none' }}>
       <div ref={grab} className="m-grab" data-grab {...grabProps}>
         <div className="m-handle" />
         {snap === 'peek' && <div className="m-peek">{peekLine || '아직 대화가 없어요'}</div>}

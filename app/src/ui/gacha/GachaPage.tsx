@@ -5,7 +5,9 @@ import { IconSkip } from '../Icons';
 import { brush } from '../office/draw';
 import { SubHead } from '../office/OfficeMenu';
 import { drawItem, scaled } from './icons';
-import { drawMachine, drawTen, idleKey, newShow, skipShow, stepParts, type Show } from './machine';
+import { newShow, skipShow, type Show } from './machine';
+import { useMachineLoop } from './MachineCanvas';
+import './parts.css';
 import { Stars } from './Stars';
 
 const RARITY: Rarity[] = ['흔함', '보통', '희귀', '전설'];
@@ -28,8 +30,8 @@ export function ItemIcon({ id, locked, big }: { id: string; locked?: boolean; bi
   return <canvas ref={cv} width={28} height={24} className={`gacha-icon ${big ? 'big' : ''}`} />;
 }
 
-/** 코인 버는 법 — 숫자는 domain/gacha COIN_RULES(계산과 같은 값, 테스트로 묶음). 못 뽑을 땐 펼쳐서 위에, 뽑을 수 있으면 접어서 */
-function HowToEarn({ open }: { open: boolean }) {
+/** 코인 버는 법(폰 뽑기 탭도) — 숫자는 domain/gacha COIN_RULES(계산과 같은 값, 테스트로 묶음). 못 뽑을 땐 펼쳐서 위에, 뽑을 수 있으면 접어서 */
+export function HowToEarn({ open }: { open: boolean }) {
   return (
     <details className="gacha-how" open={open}>
       <summary>{tr('코인 버는 법', 'How to earn coins')}</summary>
@@ -73,30 +75,7 @@ export function GachaPage({ file, draw, onClose, nav }: { file: GachaFile | null
     return () => ro.disconnect();
   }, [W, H]);
 
-  useEffect(() => {
-    const c = cv.current, ctx = c?.getContext('2d');
-    if (!c || !ctx) return;
-    const b = brush(ctx);
-    let id = 0;
-    /** 기다리는 기계를 마지막에 그린 박자 — 같으면 건너뛴다(상점 QA 19, 연출 중엔 매 프레임) */
-    let last = '';
-    const loop = (now: number) => {
-      id = requestAnimationFrame(loop);
-      const s = show.current;
-      const w = s?.kind === 'ten' ? 300 : 220, h = s?.kind === 'ten' ? 120 : 184;
-      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; last = ''; }
-      if (!s) {
-        const k = idleKey(now);
-        if (k === last) return;
-        last = k;
-      }
-      ctx.clearRect(0, 0, w, h);
-      if (s?.kind === 'ten') drawTen(b, w, h, s, now); else drawMachine(b, w, h, s, now);
-      if (s) stepParts(b, s.parts);
-    };
-    id = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(id);
-  }, []);
+  useMachineLoop(cv, show);
 
   const go = async (n: 1 | 10) => {
     if (busy.current || !file) return;

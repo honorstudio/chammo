@@ -63,12 +63,14 @@ test-run a job that touches production (ads, payments, sends to real users).
 
 ```
 id=$(scripts/task send <session id|name> "<what you asked, one line>")   # right before you send
-#   when one big request is split into several tasks, add --goal "<goal name>[:planned count]" — the app's home progress groups them
+#   when one big request is split into several tasks, add --goal "<goal name>[:total planned count, not the position]" — the app's home progress groups them
+scripts/task goal-done "<goal>"   # close the goal now (finished with fewer than planned) · plan changed: goal-total "<goal>" <N>
 scripts/task reply $id "<summary of the reply>
 Lesson: <each Lesson line from the reply>"                              # when a reply comes in — Lesson lines are recorded
 scripts/task done  $id "<result + proof: PR number, URL, log>"         # when it is finished
 scripts/task ask   $id "<what the user must decide>"                    # needs the user -> decision inbox
 scripts/task retry $id "<what failed>"                                  # sending one piece back
+scripts/task wait  $id "<what you wait for>" [--until <10/24 18:00|10/25|+3h>] [--on user] [--ask]  # the job is waiting on something outside (review, a booked date, a person's answer) — call this so the progress shows grey "waiting", not a red "quiet" warning; the next reply/done/retry/answer or a new send to the same session clears it (a wait whose --until date has not come stays through a send; it clears once the date passes)
 scripts/task handoff <session> <assistant>                              # handing a session to another assistant — the app moves it to that dashboard
 scripts/task lesson <project|--all> "<a confirmed lesson>"              # attached to future instructions
 scripts/task lesson-review <project|--all>                              # when lessons pile up — look at them, then group by topic with lesson-group (no card; reversible)
@@ -100,9 +102,13 @@ the app guesses from the last 7 days of `scripts/task send` ("mostly shop-app").
 - A request that isn't yours and matches another assistant's role → don't do it yourself: hand it over with SendMessage
   (their full name) and tell the user in one line ("handed to Design"). The role the user wrote is the rule; the last 7 days
   are a hint. If nobody fits or it's unclear, do it yourself.
+- Record the handover first: `h=$(scripts/task handover <assistant> "<the big job the user asked for, one line>")` (`--goal` if it has one),
+  and put `[handover $h]` on the first line of the SendMessage. Your progress gets one slot for it that fills as they go.
+- When work came to you as `[handover h-…]`, delegate it with `scripts/task send … --from-handover h-…` (the same `--goal` links on its own) — the split
+  tasks show in your progress, and their progress in the handing assistant's too. When all done, `scripts/task handover-done h-… "<result + proof>"`, then report back.
 - `@[<assistant name>]` in the user's message (an @mention from the chat input — the name in brackets is the exact SendMessage address)
   or `@<nickname>` means "pass this to them" → send it to that assistant with SendMessage (the bracketed name as is) and tell the user
-  in one line ("passed to Design"). `#img1`·`#file1`·`#chat1` are attached image, file and chat-bubble references — in `#file1 "…"` the whole quoted part is the path (text after it is not).
+  in one line ("passed to Design"). `#img1`·`#file1`·`#chat1` are attached image, file and chat-bubble references — in `#file1 "…"` the whole quoted part is the path (text after it is not). `#task1 "…"`·`#goal1 "…"` are a task and a goal from the progress panel — the quotes carry the task id, session and state, so look them up in the `scripts/task` log or that session and answer.
 - `send` warns when another assistant has also been delegating the same project lately — tell the user in one line, and to keep
   it with one assistant use `scripts/task handoff <session> <assistant>`.
 - Work handed to you goes back, when done, to the assistant who handed it over (SendMessage) — that assistant tells the user (in voice mode the one who got the work doesn't run `scripts/say`). When a result comes back to you, pass it on to the user.
@@ -122,6 +128,13 @@ summary and your recommendation, when it's theirs to decide (money, production, 
 When the app or the Mac restarts, sessions stop. Finished ones the app drops from the list quietly (the conversation is kept); for ones with work
 left it types a line into the input of the assistant who gave the work: `[app] stopped by restart: <name> (<id>) — was doing …`. Don't ask the user —
 decide yourself: if the work should continue, `claude respawn <id>` (same conversation, same id) and send the work again; if it was done, leave it.
+
+## Tidying finished sessions
+
+When a session's tasks are all done and it has been quiet for 2 hours (a day if nothing was ever delegated to it), the app types `[app] Session to tidy: <name> (<id>) — …` into your input (setting "Tidy sessions automatically").
+Tidy it without asking the user: have that session update its starter and roadmap and check the commit → `claude stop` → if its worktree is finished (PR merged, no changes, nothing waiting), move files outside git such as `.shots` to the main folder and `git worktree remove`.
+Helper and routine sessions (the line says "just stop it") have no starter — don't ask for an update, just `claude stop`.
+Tell the user one line with the result (the conversation is kept — `claude respawn` brings it back). If you see a reason not to stop it, leave it running — if a task was delegated to it, record why with `scripts/task wait <id>`; if not, leave it and tell the user one line.
 
 ## How you ask the user
 

@@ -1,13 +1,20 @@
 // 설정 모달 탭 — 항목을 메뉴별로 묶는다(2026-10-15 사용자 "메뉴별로 구분 지어서 탭 같은 형태로"). 이름은 i18n 이 붙는 ui 쪽에서
 import type { FeatureSwitch } from './config';
 
-export type SettingsTab = 'general' | 'agent' | 'features' | 'voice' | 'phone' | 'accounts' | 'browser' | 'tools';
+// 2026-10-24 사용자: '폰과 메신저'(phone)를 '기기 관리'(devices)·'메신저'(messenger) 둘로, Chammo 계정은 계정 탭 맨 위로
+export type SettingsTab = 'general' | 'agent' | 'features' | 'voice' | 'devices' | 'messenger' | 'accounts' | 'browser' | 'tools';
 
-const ALL: SettingsTab[] = ['general', 'agent', 'features', 'voice', 'phone', 'accounts', 'browser', 'tools'];
+const ALL: SettingsTab[] = ['general', 'agent', 'features', 'voice', 'devices', 'messenger', 'accounts', 'browser', 'tools'];
 
-/** 보이는 탭 — 윈도우는 계정 바꿔 끼우기(맥 키체인)가 없다 */
-export function settingsTabs(win: boolean): SettingsTab[] {
-  return win ? ALL.filter((t) => t !== 'accounts') : ALL;
+/** 보이는 탭 — 윈도우도 같다(계정 탭의 Claude 계정 바꿔 끼우기 칸만 맥 키체인이라 빠진다) */
+export function settingsTabs(_win: boolean): SettingsTab[] {
+  return ALL;
+}
+
+/** 밖에서 받은 탭 이름 → 탭. 옛 이름 phone 은 기기 관리로(옛 판 참모·저장된 길), 모르는 이름은 없음 */
+export function tabOf(name: string | undefined): SettingsTab | undefined {
+  if (name === 'phone') return 'devices';
+  return (ALL as string[]).includes(name ?? '') ? (name as SettingsTab) : undefined;
 }
 
 /** 켬·끔 기능이 사는 탭 */
@@ -18,8 +25,10 @@ export const FEATURE_TAB: Record<FeatureSwitch, SettingsTab> = {
   review: 'features',
   voice: 'voice',
   autoRevive: 'agent',
+  autoTidy: 'features',
   agentView: 'browser',
   computerUse: 'browser',
+  usagePing: 'features',
 };
 
 /** 설정을 열자마자 돌릴 점검 작업 — 'update' 새 버전 띠의 업데이트, 'python' 서랍의 파이썬 설치하기 */

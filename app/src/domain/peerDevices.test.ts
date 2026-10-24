@@ -1,4 +1,4 @@
-// 설정 > 폰과 메신저 > 다른 기기 참모 — 같은 테일스케일 계정 기기 줄의 작은 글과 할 수 있는 일(ADR 0007, 0.3.2 코드 없이 연결)
+// 설정 > 기기 관리 > 다른 기기 참모 — 같은 테일스케일 계정 기기 줄의 작은 글과 할 수 있는 일(ADR 0007, 0.3.2 코드 없이 연결)
 import { describe, expect, it } from 'vitest';
 import { peerView } from './peerDevices';
 import type { RemoteDevice } from '../data/remote';

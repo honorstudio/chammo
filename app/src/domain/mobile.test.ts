@@ -622,10 +622,10 @@ describe('참모 켜기·만들기 실패 글', () => {
 
 describe('결정 카드 답 — 한 번만(2026-10-06 사용자 폰에서 ㄱㄱ 세 번)', () => {
   const ask = { orch: 'o1', name: '참모-1', kind: 'ask' as const, ts: '2026-10-06T07:00:00Z', q: '배포할까?' };
-  const decide = { orch: 'o1', name: '참모-1', kind: 'decide' as const, ts: '2026-10-06T07:01:00Z', q: '머지할까?', taskId: '1006-1615-5e02' };
+  const decide = { orch: 'o1', name: '참모-1', kind: 'decide' as const, ts: '2026-10-06T07:01:00Z', q: '머지할까?', taskId: '1001-1100-ef56' };
   it('카드 열쇠 — 결정은 일 id, 참모 물음은 참모·시각(시트를 다시 열어도 같은 카드)', () => {
-    expect(waitKey(decide)).toBe('task:1006-1615-5e02');
-    expect(waitKey({ ...decide, ts: 'other' })).toBe('task:1006-1615-5e02');
+    expect(waitKey(decide)).toBe('task:1001-1100-ef56');
+    expect(waitKey({ ...decide, ts: 'other' })).toBe('task:1001-1100-ef56');
     expect(waitKey(ask)).toBe('ask:o1:2026-10-06T07:00:00Z');
     expect(waitKey(ask)).not.toBe(waitKey({ ...ask, ts: '2026-10-06T08:00:00Z' }));
   });

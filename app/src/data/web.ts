@@ -177,6 +177,11 @@ export const loginCode = (code: string) => post<unknown>('/api/login-code', { co
 export const loginCancel = () => post<unknown>('/api/login-cancel', {});
 /** scripts/show 기록 꼬리 — 대시보드 파일 카드(domain/dashboard dashFiles). 안 바뀌었으면 맥이 글 없이 꼬리표만 준다(domain/tagTail) */
 export const readShowLog = makeTagTail((since) => getText(`/api/shows?since=${encodeURIComponent(since)}`).then(parseTagChunk));
+/** 폰 사무실 모양(맥 앱이 쓴 office.json — 자리표·반장·스킨·가구·장식). 바뀔 때만 몸통(domain/phoneOffice parseOffice) */
+/** 폰 뽑기·스킨 — 보기(코인·가진 것·장착)와 요청(뽑기·장착, 굴리기는 맥 앱). 답 못 받으면 던진다(504 = 맥 앱이 답 없음) */
+export const readGachaView = (signal?: AbortSignal) => getText('/api/gacha', signal);
+export const gachaRequest = (req: import('../domain/phoneGacha').PhoneReq) => post<import('../domain/phoneGacha').PhoneReply>('/api/gacha', req);
+export const readOffice = makeTagTail((since, signal) => getText(`/api/office?since=${encodeURIComponent(since)}`, signal).then(parseTagChunk));
 /** 허용 집합 안의 파일 주소(서버가 고른 것만 열린다 — 보여 준 파일·예약 지침서·HQ starter). thumb = 그림 긴 변 480px JPEG */
 /** 썸네일 긴 변 — 작은 카드 360·큰 카드 720·오피스 첫 장 크게 1600 */
 export type ThumbSize = 360 | 720 | 1600;
@@ -299,6 +304,8 @@ export const browserInput = (profile: string, sessionPid: number, events: import
 
 /** 폰 푸시 — 맥 앱의 VAPID 공개 키, 이 기기 구독 넣기·빼기(구독은 열쇠의 기기에 묶인다) */
 export const getPushKey = () => getJson<{ key: string }>('/api/push-key').then((r) => r.key);
+/** 마지막 알림 갈 곳과 나이(초) — 눌린 알림의 갈 곳을 모를 때(중계 입구 푸시) */
+export const getPushLast = () => getJson<{ target: string; age: number | null }>('/api/push-last');
 export const pushSubscribe = (sub: PushSubscriptionJSON) => post<{ ok: true }>('/api/push-subscribe', sub).then(() => undefined);
 export const pushUnsubscribe = (endpoint: string) => post<{ ok: true }>('/api/push-unsubscribe', { endpoint }).then(() => undefined);
 

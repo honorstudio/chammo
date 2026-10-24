@@ -96,6 +96,16 @@ pub fn write_gacha(json: String) -> Result<(), String> {
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
+/// 폰 사무실 모양(자리표·반장·스킨·가구·장식 — domain/phoneOffice officeShape). 폰 서버 /api/office 가 읽기만 한다
+#[tauri::command]
+pub fn write_office(json: String) -> Result<(), String> {
+    let path = crate::config::data_file("office.json");
+    let tmp = path.with_extension("json.tmp");
+    std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}
+
 /// 다마고치 '대화' 먹이 — 대화 기록 한 줄이 사람이 직접 건 말이면 그 시각(ISO). 도구 결과·메타·슬래시 명령·앱이 넣은 [앱] 알림·
 /// 다른 세션이 보낸 말(peer)·작업 끝 알림은 빼고, origin.kind 가 human 인 user 줄만
 fn human_turn_ts(line: &str) -> Option<String> {

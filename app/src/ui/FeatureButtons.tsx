@@ -41,7 +41,8 @@ export function featureButton(id: BarItem, p: FeatureProps, cls: string, tip = f
 }
 
 /** 참모 패널 기능 줄 — 접힌 패널은 세로(둘째 줄), 펼친 패널은 맨 아래 가로 */
-export function FeatureRow({ items, p, dir }: { items: BarItem[]; p: FeatureProps; dir: 'col' | 'row' }) {
+/** titles = 띠 호버 카드 대신 기본 title(띠 밖 더보기 펼침 창 안, 띠 RA) */
+export function FeatureRow({ items, p, dir, titles = false }: { items: BarItem[]; p: FeatureProps; dir: 'col' | 'row'; titles?: boolean }) {
   if (!items.length) return null;
-  return <div className={`rail-fns ${dir}`} role="group" aria-label={tr('기능', 'Features')}>{items.map((id) => featureButton(id, p, 'rail-fn', true))}</div>;
+  return <div className={`rail-fns ${dir}`} role="group" aria-label={tr('기능', 'Features')}>{items.map((id) => featureButton(id, p, 'rail-fn', !titles))}</div>;
 }

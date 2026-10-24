@@ -9,7 +9,7 @@ const WAIT_MS = 60_000;
 const enc = new TextEncoder();
 
 export const KNOCK_ERRORS: Record<string, string> = {
-  code: '짝짓기 코드가 틀렸거나 10분이 지났어요 — 컴퓨터 Chammo 설정 > 폰과 메신저에서 QR 을 새로 만들어 주세요',
+  code: '짝짓기 코드가 틀렸거나 10분이 지났어요 — 컴퓨터 Chammo 설정 > 기기 관리에서 QR 을 새로 만들어 주세요',
   relay: '컴퓨터가 이 폰을 중계에 못 들였어요 — 컴퓨터가 Chammo 계정에 로그인돼 있는지 봐 주세요',
   offline: '컴퓨터 Chammo 가 꺼져 있어요 — 켜고 QR 을 다시 찍어 주세요',
   timeout: '컴퓨터가 답이 없어요 — 컴퓨터 Chammo 가 켜져 있는지 보고 다시 해 주세요',

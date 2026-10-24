@@ -21,8 +21,10 @@
 .su-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
 .su-row:first-child { border-top: 0; }
 .su-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.su-row-text b { font-size: 13px; }
-.su-row-text span { font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
+.su-row-text b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.su-row-text span { font-size: 12.5px; color: var(--text-2); line-height: 1.5; overflow-wrap: anywhere; }
+/* 기기 줄(폰·다른 기기 참모) — 설명은 두 줄까지, 넘치면 말줄임(긴 기기 이름·좁은 창) */
+.dev-row .su-row-text > span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .su-row-act { flex: 0 0 auto; }
 .su-mark { flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
 .su-mark.ok { background: var(--tag-done); color: var(--tag-done-ink); }
@@ -208,6 +210,7 @@
 .peer-alt:disabled { opacity: .5; cursor: default; }
 .peer-on { color: var(--tag-done-ink); }
 .peer-agents { flex: 1 0 100%; display: flex; flex-direction: column; gap: 2px; }
-.peer-share { flex: 1 0 100%; display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); }
+/* 보관함 보여 주기 토글 — 줄 오른쪽에 고정(1 0 100% 였을 때 안 접히는 줄에서 글 칸을 0 폭으로 눌렀다, 10-24) */
+.peer-share { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
 .peer-agent { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; font-size: 13px; color: var(--text-2); }
 .peer-agent > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

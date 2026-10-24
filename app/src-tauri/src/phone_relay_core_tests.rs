@@ -41,7 +41,7 @@ fn world() -> World {
     let c = devices.new_code(now).unwrap();
     let token = devices.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false }, Relay { device: "r1".into(), x: tun::b64(&px) }, now).unwrap();
     let line = devices.check(&token, now).unwrap();
-    let gate = Gate { devices, hosts: vec![RELAY_HOST.into()], origins: vec![WEB.into()], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default() };
+    let gate = Gate { devices, hosts: vec![RELAY_HOST.into()], origins: vec![WEB.into()], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default(), gachas: Default::default() };
     World { gate, lines: L { mac, lines: vec![("r1".into(), line.clone(), px)] }, phone, token, line, t: Tunnels::default() }
 }
 

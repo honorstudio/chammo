@@ -65,11 +65,27 @@ self.addEventListener('push', (e) => {
   e.waitUntil(self.registration.showNotification('참모', { body: '새 메시지', icon: '/assets/icon-192.png', tag: 'chammo' }));
 });
 
+// 알림을 누르면 — 열린 창이 있으면 앞으로 가져와 갈 곳을 알리고(받았다는 답을 기다린다), 답이 없으면(옛 판·멈춘 페이지) 그 창을 갈 곳 주소로 다시 연다.
+// 창이 없으면 새로 연다(?go=). 중계 푸시는 본문이 없어 갈 곳은 늘 latest — 앱이 컴퓨터에 마지막 알림 갈 곳을 묻는다(2026-10-23 결정 알림을 눌러도 보던 시트 그대로였다)
+const GO_ACK_MS = 2000;
+const goUrl = (t) => `/?go=${encodeURIComponent(t)}`;
+function tell(w, target) {
+  return new Promise((ok) => {
+    const ch = new MessageChannel();
+    const t = setTimeout(() => ok(false), GO_ACK_MS);
+    ch.port1.onmessage = () => { clearTimeout(t); ok(true); };
+    w.postMessage({ go: target }, [ch.port2]);
+  });
+}
+async function openTarget(target) {
+  const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  const w = wins.find((x) => x.focused) || wins[0];
+  if (!w) return self.clients.openWindow(goUrl(target));
+  try { await w.focus(); } catch { /* 앞으로 못 가져와도 알리기는 한다 */ }
+  if (await tell(w, target)) return;
+  try { await w.navigate(goUrl(target)); } catch { await self.clients.openWindow(goUrl(target)); }
+}
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  e.waitUntil((async () => {
-    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for (const w of wins) return w.focus();
-    return self.clients.openWindow('/');
-  })());
+  e.waitUntil(openTarget('latest'));
 });

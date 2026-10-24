@@ -117,7 +117,7 @@ function FarPeek({ dev, s, fontSize }: { dev: string; s: FarSession; fontSize?: 
 function FarLockerView({ name, locker }: { name: string; locker: FarData['locker'] }) {
   if (locker === null) return <div className="far-main"><span className="far-muted">{tr('읽는 중…', 'Loading…')}</span></div>;
   if (locker === 'old') return <div className="far-empty"><b>{tr(`${josa(name, '을', '를')} 업데이트해야 보여요`, `Update ${name} to see its files`)}</b><span>{tr('그 기기 판은 보관함 보기 전이에요. 채팅·세션은 지금도 돼요', 'That device is on an older version. Chat and sessions still work')}</span></div>;
-  if (locker === 'off') return <div className="far-empty"><b>{tr(`${name}에서 보관함 보여 주기를 껐어요`, `${name} turned off sharing its files`)}</b><span>{tr('그 기기 설정 > 폰과 메신저의 연결된 기기 줄에서 켤 수 있어요', 'Turn it on in that device’s Settings > Phone & messengers, on the connected-device row')}</span></div>;
+  if (locker === 'off') return <div className="far-empty"><b>{tr(`${name}에서 보관함 보여 주기를 껐어요`, `${name} turned off sharing its files`)}</b><span>{tr('그 기기 설정 > 기기 관리의 연결된 기기 줄에서 켤 수 있어요', 'Turn it on in that device’s Settings > Devices, on the connected-device row')}</span></div>;
   if (locker === 'err') return <div className="far-empty"><b>{tr('보관함을 못 읽었어요', 'Couldn’t read the files')}</b></div>;
   return (
     <div className="far-main">

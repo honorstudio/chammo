@@ -1,4 +1,4 @@
-// 설정 > 폰과 메신저 > Chammo 계정(중계 서버 ADR 0004) — 구글로 로그인해 내 기기끼리 잇는다. 지금 앱 모양(su-sec·su-row)만, 메신저 본 화면은 4단계.
+// 설정 > 계정 > Chammo 계정(맨 위)(중계 서버 ADR 0004) — 구글로 로그인해 내 기기끼리 잇는다. 지금 앱 모양(su-sec·su-row)만, 메신저 본 화면은 4단계.
 // 로그인은 사람 브라우저에서(앱이 127.0.0.1 로 돌려받는다), 열쇠는 이 기기 키체인(chammo-team)에만. 끊기·로그아웃·계정 지우기는 서버에서 먼저
 import { useEffect, useState } from 'react';
 import { teamAccountDelete, teamAccountRefresh, teamDeviceRename, teamDeviceRevoke, teamLogin, teamLogout, teamStatus, type TeamView } from '../data/teamApi';

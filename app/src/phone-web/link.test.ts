@@ -1,6 +1,6 @@
 // 짝짓기 QR 의 # 뒤 읽기 · 중계 서명 글 · 껍데기 받기 거름
 import { describe, expect, it } from 'vitest';
-import { parsePairHash } from './link';
+import { homeUrl, parsePairHash } from './link';
 import { signingText } from './relayClient';
 import { cssAssets, linkedAssets, shellCsp } from './shell';
 
@@ -41,5 +41,14 @@ describe('껍데기', () => {
     expect(c).toContain("connect-src 'self' https://relay.example wss://relay.example https://*.ts.net;");
     expect(c).toContain("default-src 'self'");
     expect(c).not.toContain('unsafe-eval');
+  });
+});
+
+describe('homeUrl — 입구에서 컴퓨터 화면으로 넘어갈 때 알림 갈 곳(?go=)만 들고 간다', () => {
+  it('go 만 남기고 나머지는 버린다', () => {
+    expect(homeUrl('?go=latest')).toBe('/?go=latest');
+    expect(homeUrl('?go=card%3Ao1%3Aw%3At1&x=1')).toBe('/?go=card%3Ao1%3Aw%3At1');
+    expect(homeUrl('')).toBe('/');
+    expect(homeUrl('?login=1')).toBe('/');
   });
 });

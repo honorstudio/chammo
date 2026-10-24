@@ -9,7 +9,16 @@ __doc__ = """Chammo task log — record what you delegate so the app's task pane
 Chammo 작업 기록 — 다른 세션에 시킨 일을 남기면 앱 오른쪽 작업 패널에 카드로 뜬다.
 
   scripts/task send   <session id|name> "<what you asked, one line>"   -> prints the task id
-                      [--goal "<goal>[:N]"]  groups it under a goal in the home progress (N = planned tasks, 0/N to start)
+                      [--goal "<goal>[:N]"]  groups it under a goal in the home progress (N = total planned tasks, not the position; 0/N to start)
+  scripts/task goal-done  "<goal>"          -> close the goal now (planned slots not sent are dropped) / 목표를 지금 닫는다
+  scripts/task goal-total "<goal>" <N>      -> change the total planned count / 전체 예정 개수를 바꾼다
+  scripts/task wait   <task id> "<what you wait for>" [--until <10/24 18:00|10/25|+3h>] [--on user|outside] [--ask]
+                      -> waiting on something outside (review, a booked date, a person's answer): the progress shows grey "waiting" (not a warning) with the reason.
+                      Cleared by the next reply/done/retry/answer, a new send to the same session, or when --until passes (a wait whose date has not come stays through a new send) (date only = end of that day; --on user = the user's part, --ask = also a decision-inbox card)
+                      / 일이 밖을 기다릴 때 — 진행 칸이 회색 '기다림'. 다음 send·reply·done·retry 가 오면 풀림
+  scripts/task handover <assistant> "<the job>" [--goal "<goal>"]  -> hand a job to another assistant; prints h-… (first line of the SendMessage: [handover h-…])
+                                            / 다른 참모에게 넘길 때 — 넘김 번호. 받은 참모가 send --from-handover h-… 로 쪼갠 일이 내 진행 칸에 이어진다
+  scripts/task handover-done <h-…> "<result>"  -> the handed job is done (either side) / 넘긴 큰 일을 끝낸다
   scripts/task reply  <task id> "<summary of the reply>"               -> 'Lesson: …' / '교훈: …' lines become project lessons
   scripts/task done   <task id> "<result, one line>"
   scripts/task note   <task id> "<progress note>"
@@ -767,6 +776,62 @@ def handoff(target, who):
     print(f'넘김: {target} → {o.get("name") or o["id"]}')
     return 0
 
+def _ts(e):
+    try:
+        return datetime.datetime.fromisoformat(str(e.get('ts', '')).replace('Z', '+00:00')).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def goal_state(events, goal, who, base, days=7):
+    """My tasks under that goal, counted like the app (domain/goalBar): planned = the largest :N, goal-total sets it then
+    이 참모가 그 목표로 보낸 일 — 앱 진행 칸과 같은 셈(예정 수는 :N 최댓값, goal-total 은 그때 값)
+    -> (sent, done, total, Ns)"""
+    cut = datetime.datetime.now(datetime.timezone.utc).timestamp() - days * 86400
+    mine = lambda e: (who and e.get('from') == who) or (base and e.get('fromName') == base)
+    sends, closed, finished, planned, ns = [], set(), set(), 0, set()
+    for e in sorted(events, key=_ts):
+        if _ts(e) < cut:
+            continue
+        t = e.get('type')
+        if t == 'done':
+            finished.add(e.get('task'))
+        if e.get('goal') != goal or not mine(e):
+            continue
+        if t in ('send', 'handover'):
+            sends.append(e.get('task'))
+            if e.get('goalTotal'):
+                ns.add(e['goalTotal']); planned = max(planned, e['goalTotal'])
+        elif t == 'goal-total':
+            planned = e.get('goalTotal') or 0
+        elif t == 'goal-done':
+            closed.update(sends)
+    done = sum(1 for x in sends if x in finished or x in closed)
+    return len(sends), done, max(len(sends), planned), ns
+
+
+def goal_mark(cmd, a):
+    """goal-done <goal> / goal-total <goal> <N>"""
+    goal = a[1].strip() if len(a) >= 2 else ''
+    if not goal or (cmd == 'goal-total' and (len(a) < 3 or not a[2].isdigit())):
+        print(T('쓰는 법: scripts/task goal-done "<목표>" | goal-total "<목표>" <전체 예정 개수>', 'Usage: scripts/task goal-done "<goal>" | goal-total "<goal>" <total planned count>'), file=sys.stderr); return 2
+    who = os.path.basename((os.environ.get('CLAUDE_JOB_DIR') or '').rstrip('/'))
+    base = orch_base(next((x.get('name') for x in load_agents() if who and x.get('id') == who), ''))
+    n, done, total, _ = goal_state(read_events(), goal, who, base)
+    if not n:
+        print(T(f"'{goal}' 로 보낸 내 일이 7일 안에 없어 — send --goal 때 이름 그대로 써", f"No task of yours under '{goal}' in the last 7 days — use the exact name from send --goal"), file=sys.stderr); return 2
+    ev = {'ts': now(), 'type': cmd, 'task': 'goal-' + datetime.datetime.now().strftime('%m%d-%H%M-') + secrets.token_hex(2), 'goal': goal}
+    if cmd == 'goal-total':
+        ev['goalTotal'] = int(a[2])
+    if who:
+        ev['from'] = who
+    if base:
+        ev['fromName'] = base
+    append(ev)
+    print(T(f'{goal} 닫음 — 보낸 {n}개 중 끝 {done}, 나머지도 닫힌 칸으로. 진행 칸에서 한 번 보이고 사라진다', f'{goal} closed — {done} of {n} sent were done, the rest close too. Shows once in the progress, then leaves') if cmd == 'goal-done' else T(f'{goal} 예정 {max(n, int(a[2]))}개로 — 지금 {done}/{max(n, int(a[2]))}', f'{goal} planned set to {max(n, int(a[2]))} — now {done}/{max(n, int(a[2]))}'))
+    return 0
+
+
 def take_goal(a):
     """send --goal "<goal>[:planned count]" (anywhere, or --goal=…) -> (rest, goal, planned). The app's home progress groups tasks by goal
     send --goal "<목표>[:예정 칸 수]" — 앱 홈 진행 칸이 목표 조각으로 묶는다"""
@@ -785,14 +850,178 @@ def take_goal(a):
     return rest, (goal or None), (total or None)
 
 
+def take_from_handover(a):
+    """send --from-handover h-… → (나머지 인자, 넘김 번호)"""
+    rest, hid, i = [], None, 0
+    while i < len(a):
+        if a[i] == '--from-handover' and i + 1 < len(a):
+            hid = a[i + 1].strip(); i += 2; continue
+        if a[i].startswith('--from-handover='):
+            hid = a[i][len('--from-handover='):].strip(); i += 1; continue
+        rest.append(a[i]); i += 1
+    return rest, hid or None
+
+
+def handovers_of(events):
+    """넘김 번호 → (넘김 사건, 끝났나)"""
+    hs, ended = {}, set()
+    for e in events:
+        if e.get('type') == 'handover' and e.get('task'):
+            hs[e['task']] = e
+        elif e.get('type') == 'done':
+            ended.add(e.get('task'))
+    return {k: (v, k in ended) for k, v in hs.items()}
+
+
+def handover_link(events, hid, goal, who, base, days=7):
+    """이 send 를 붙일 넘김 — 준 번호, 없으면 같은 목표의 내 앞 일이 붙은 넘김, 그다음 나에게 온 안 끝난 같은 목표 넘김(최근 것)"""
+    hs = handovers_of(events)
+    if hid:
+        return hid if hid in hs else None
+    if not goal:
+        return None
+    cut = datetime.datetime.now(datetime.timezone.utc).timestamp() - days * 86400
+    mine = lambda e: (who and e.get('from') == who) or (base and e.get('fromName') == base)
+    for e in sorted(events, key=_ts, reverse=True):
+        if _ts(e) < cut:
+            break
+        if e.get('type') == 'send' and e.get('goal') == goal and mine(e) and e.get('handover') in hs and not hs[e['handover']][1]:
+            return e['handover']
+    for k, (h, ended) in sorted(hs.items(), key=lambda kv: _ts(kv[1][0]), reverse=True):
+        if not ended and _ts(h) >= cut and h.get('goal') == goal and ((who and h.get('toId') == who) or (base and h.get('toName') == base)):
+            return k
+    return None
+
+
+def handover(a):
+    """handover <받는 참모> "<큰 일>" [--goal <목표>] — 넘긴 쪽 진행 칸에 큰 일 한 칸. 받은 쪽 send 가 --from-handover 로 이어 붙는다"""
+    a, goal, _ = take_goal(a)
+    if len(a) < 3 or not a[2].strip():
+        print(T('쓰는 법: scripts/task handover <받는 참모> "<큰 일 한 줄>" [--goal <목표>]', 'Usage: scripts/task handover <assistant> "<the job, one line>" [--goal <goal>]'), file=sys.stderr); return 2
+    agents = load_agents()
+    o = find_orch(a[1], agents)
+    who = os.path.basename((os.environ.get('CLAUDE_JOB_DIR') or '').rstrip('/'))
+    if not o:
+        print(T(f'{a[1]} 참모를 못 찾았어 — claude agents 의 이름·id·별명으로', f'No assistant named {a[1]} — use a name, id or nickname from claude agents'), file=sys.stderr); return 2
+    if not orch_base(o.get('name')):
+        print(T(f'{o.get("name") or a[1]} 은 참모가 아니야 — 프로젝트 세션엔 scripts/task send 로', f'{o.get("name") or a[1]} is not an assistant — use scripts/task send for project sessions'), file=sys.stderr); return 2
+    if who and o.get('id') == who:
+        print(T('나에게는 못 넘겨 — 받을 다른 참모 이름으로', 'You cannot hand it to yourself — name another assistant'), file=sys.stderr); return 2
+    name = o.get('name') or o['id']
+    hid = 'h-' + datetime.datetime.now().strftime('%m%d-%H%M-') + secrets.token_hex(2)
+    ev = {'ts': now(), 'type': 'handover', 'task': hid, 'target': name, 'toId': o['id'], 'toName': name.split(NICK_SEP)[0], 'title': a[2].strip()}
+    if goal:
+        ev['goal'] = goal
+    if who:
+        ev['from'] = who
+    base = orch_base(next((x.get('name') for x in agents if who and x.get('id') == who), ''))
+    if base:
+        ev['fromName'] = base
+    append(ev)
+    print(hid)
+    print(T(f'SendMessage 본문 첫 줄에: [넘김 {hid}] {a[2].strip()}', f'First line of the SendMessage: [handover {hid}] {a[2].strip()}'), file=sys.stderr)
+    print(T(f'SendMessage 끝에 붙여: 이 일을 프로젝트 세션에 맡길 땐 scripts/task send <세션> "<일>" --from-handover {hid} 로(같은 --goal 이면 저절로 붙는다) — '
+            f'넘긴 참모 진행 칸이 네 일들을 따라간다. 다 끝나면 scripts/task handover-done {hid} "<결과 + 증거>"',
+            f'Append to the SendMessage: when you give this to project sessions, use scripts/task send <session> "<task>" --from-handover {hid} '
+            f'(the same --goal links on its own) — the progress of whoever handed it follows your tasks. When it is all done: scripts/task handover-done {hid} "<result + proof>"'), file=sys.stderr)
+    return 0
+
+
+def handover_done(a):
+    """handover-done h-… "<결과>" — 받은 쪽·넘긴 쪽 누가 불러도 그 큰 일 칸이 끝난다"""
+    hs = handovers_of(read_events())
+    if len(a) < 3 or a[1] not in hs:
+        print(T(f'넘김 번호가 아니야: {a[1] if len(a) > 1 else ""!r} — [넘김 h-…] 줄의 번호 그대로', f'Not a handover id: {a[1] if len(a) > 1 else ""!r} — use the id from the [handover h-…] line'), file=sys.stderr); return 2
+    if not PROOF.search(a[2]) and not CANCELLED.search(a[2]):
+        print(T('결과에 증거가 없어 — PR 번호·주소·응답 코드·로그 중 하나를 적어 줘(이번 기록은 남김)', 'No proof in the result — add a PR number, URL, status code or log (recorded anyway)'), file=sys.stderr)
+    append({'ts': now(), 'type': 'done', 'task': a[1], 'note': a[2]})
+    print(T(f'넘김 {a[1]} 끝 — {hs[a[1]][0].get("title", "")}', f'Handover {a[1]} done — {hs[a[1]][0].get("title", "")}'))
+    return 0
+
+
+def parse_until(text, now_dt):
+    """--until 값 → 이때까지(로컬 시각). 'YYYY-MM-DD[ HH:MM]'·'M/D[ HH:MM]'·'HH:MM'(지났으면 내일)·'+3h'·'+2d'. 날짜만이면 그날 끝(23:59). 못 읽으면 None"""
+    t = (text or '').strip()
+    try:
+        m = re.fullmatch(r'\+(\d{1,3})([hd])', t)
+        if m:
+            return now_dt + datetime.timedelta(**{'hours' if m.group(2) == 'h' else 'days': int(m.group(1))})
+        m = re.fullmatch(r'(?:(\d{4})[-/])?(\d{1,2})[-/](\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?', t)
+        if m:
+            y, mo, d, hh, mm = m.groups()
+            hh, mm = (int(hh), int(mm)) if hh is not None else (23, 59)
+            if hh > 23 or mm > 59:
+                return None
+            out = datetime.datetime(int(y) if y else now_dt.year, int(mo), int(d), hh, mm)
+            if not y and out.date() < now_dt.date():
+                out = out.replace(year=out.year + 1)  # 지난 날짜는 내년
+            return out
+        m = re.fullmatch(r'(\d{1,2}):(\d{2})', t)
+        if m and int(m.group(1)) <= 23 and int(m.group(2)) <= 59:
+            out = now_dt.replace(hour=int(m.group(1)), minute=int(m.group(2)), second=0, microsecond=0)
+            return out if out > now_dt else out + datetime.timedelta(days=1)
+    except ValueError:
+        return None
+    return None
+
+
+def wait_mark(a):
+    """wait <일 번호> "<무엇을 기다림>" [--until <날짜·시각>] [--on user|outside] [--ask] — 그 칸을 진행 칸에서 '기다림'(경고 아님)으로.
+    다음 reply·done·retry·answer 나 같은 세션에 새 send 가 오거나 --until 이 지나면 풀린다. --ask = 사용자 몫이라 결정 대기함 카드도 같이"""
+    usage = T('쓰는 법: scripts/task wait <일 번호> "<무엇을 기다림>" [--until <10/24 18:00|10/25|+3h>] [--on user|outside] [--ask]',
+              'Usage: scripts/task wait <task id> "<what you wait for>" [--until <10/24 18:00|10/25|+3h>] [--on user|outside] [--ask]')
+    rest, until, on, ask, i = [], None, None, False, 1
+    while i < len(a):
+        if a[i] == '--until' and i + 1 < len(a):
+            until = a[i + 1]; i += 2; continue
+        if a[i].startswith('--until='):
+            until = a[i][len('--until='):]; i += 1; continue
+        if a[i] == '--on' and i + 1 < len(a):
+            on = a[i + 1]; i += 2; continue
+        if a[i].startswith('--on='):
+            on = a[i][len('--on='):]; i += 1; continue
+        if a[i] == '--ask':
+            ask = True; i += 1; continue
+        rest.append(a[i]); i += 1
+    if len(rest) != 2 or not rest[1].strip() or not TASK_ID.match(rest[0]):
+        print(usage, file=sys.stderr); return 2
+    tid, why = rest[0], rest[1].strip()
+    if on not in (None, 'user', 'outside'):
+        print(T(f'--on 은 user 나 outside 야: {on!r}', f'--on takes user or outside: {on!r}'), file=sys.stderr); return 2
+    if not any(e.get('task') == tid and e.get('type') in ('send', 'handover') for e in read_events()):
+        print(T(f'그런 일 번호가 기록에 없어: {tid} — scripts/task send 가 준 번호 그대로', f'No such task id in the log: {tid} — use the id scripts/task send printed'), file=sys.stderr); return 2
+    ev = {'ts': now(), 'type': 'wait', 'task': tid, 'note': why, 'on': 'user' if (ask or on == 'user') else 'outside'}
+    if until is not None:
+        when = parse_until(until, datetime.datetime.now())
+        if not when or when <= datetime.datetime.now():
+            print(T(f'--until 을 못 읽었거나 이미 지난 시각이야: {until!r} — 10/24 18:00 · 10/25(그날 끝까지) · 18:00 · +3h',
+                    f'--until is unreadable or already past: {until!r} — 10/24 18:00 · 10/25 (to end of day) · 18:00 · +3h'), file=sys.stderr); return 2
+        ev['until'] = when.astimezone().isoformat(timespec='seconds')
+    append(ev)
+    if ask:
+        ask_ev = {'ts': now(), 'type': 'ask', 'task': tid, 'note': why}
+        if os.environ.get('CLAUDE_CODE_SESSION_ID'):
+            ask_ev['to'] = os.environ['CLAUDE_CODE_SESSION_ID']
+        append(ask_ev)
+    elif ev['on'] == 'user':
+        print(T(f'사용자가 줄 것·정할 것이면 결정 대기함에도 올려: scripts/task wait {tid} "{why}" --ask (또는 scripts/task ask)',
+                f'If the user must give or decide it, put it in the decision inbox too: scripts/task wait {tid} "{why}" --ask (or scripts/task ask)'), file=sys.stderr)
+    print(T(f'{tid} 기다림 — {why}' + (f' ({ev["until"][:16].replace("T", " ")}까지)' if 'until' in ev else ''),
+            f'{tid} waiting — {why}' + (f' (until {ev["until"][:16].replace("T", " ")})' if 'until' in ev else '')))
+    print(T('(참모용 — 지시에 안 붙임) 다음 reply·done·retry·answer 나 같은 세션에 새 send 가 오면 풀려', '(for you, not the session) cleared by the next reply, done, retry, answer or a new send to the same session'), file=sys.stderr)
+    return 0
+
+
 def main(a):
     if not a or a[0] in ('-h', '--help'):
         print(__doc__); return 0
     cmd = a[0]
     me = os.environ.get('CLAUDE_CODE_SESSION_ID')
     goal = total = None
+    hid = None
     if cmd == 'send':
         a, goal, total = take_goal(a)
+        a, hid = take_from_handover(a)
     if cmd == 'send' and len(a) >= 3:
         left = open_tasks(a[1])
         if left:
@@ -822,8 +1051,29 @@ def main(a):
         if proj:
             ev['project'] = proj
         events_before = read_events()
+        link = handover_link(events_before, hid, goal, who, me_base)
+        if hid and not link:
+            print(T(f'넘김 {hid} 을 못 찾았어 — 이 일은 안 붙이고 보냄. [넘김 h-…] 줄의 번호 그대로', f'Handover {hid} not found — sent without linking. Use the id from the [handover h-…] line'), file=sys.stderr)
+        if link:
+            ev['handover'] = link
+            h = handovers_of(events_before)[link][0]
+            if not goal:
+                goal = ev['goal'] = h.get('goal') or h.get('title') or link
         append(ev)
         print(tid)
+        if link:
+            print(T(f"(참모용 — 지시에 안 붙임) 넘김 {link} '{h.get('title', '')}' 에 붙임 — 넘긴 참모 진행 칸이 따라간다. 다 끝나면 scripts/task handover-done {link} \"<결과>\"",
+                    f"(for you, not the session) linked to handover {link} '{h.get('title', '')}' — the assistant who handed it sees the progress. When it is all done: scripts/task handover-done {link} \"<result>\""), file=sys.stderr)
+        if orch_base(a[1]) or orch_base(tgt.get('name')):
+            print(T(f'참모에게 넘기는 일이면 scripts/task handover {a[1]} "<큰 일>" 로 — 받은 참모가 쪼갠 일이 네 진행 칸에 이어진다',
+                    f'Handing work to another assistant? Use scripts/task handover {a[1]} "<the job>" — their tasks then show in your progress'), file=sys.stderr)
+        if goal:
+            _, _, _, ns = goal_state(events_before, goal, who, me_base)
+            if total and ns and total not in ns:
+                big = max(ns | {total})
+                print(T(f"--goal 의 N 은 전체 예정 개수야 — 몇 번째가 아니야. '{goal}' 은 가장 큰 N 을 쓴다(지금 {big}, 고치려면 scripts/task goal-total '{goal}' <전체 수>)", f"N in --goal is the total planned count — not the position. '{goal}' counts the largest, {big} (fix it with scripts/task goal-total '{goal}' <count>)"), file=sys.stderr)
+            n, done, planned, _ = goal_state(events_before + [ev], goal, who, me_base)
+            print(T(f"(참모용 — 지시에 안 붙임) 진행 칸 {goal} {done}/{planned} — 다 끝나면 scripts/task goal-done '{goal}', 예정이 바뀌면 goal-total '{goal}' <전체 수>", f"(for you, not the session) progress {goal} {done}/{planned} — when it is all done: scripts/task goal-done '{goal}'; if the plan changes: goal-total '{goal}' <count>"), file=sys.stderr)
         project = project_of(a[1], agents) or a[1]
         if payment_work(a[2], tgt.get('cwd')):
             # the answer comes back to the assistant that asked (this session), not to the target
@@ -946,6 +1196,14 @@ def main(a):
             ev['to'] = me
         append(ev)
         return 0
+    if cmd in ('goal-done', 'goal-total'):
+        return goal_mark(cmd, a)
+    if cmd == 'wait':
+        return wait_mark(a)
+    if cmd == 'handover':
+        return handover(a)
+    if cmd == 'handover-done':
+        return handover_done(a)
     if cmd == 'handoff' and len(a) >= 3:
         return handoff(a[1], a[2])
     if cmd == 'list':

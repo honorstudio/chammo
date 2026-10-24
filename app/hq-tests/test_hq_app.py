@@ -57,6 +57,8 @@ class Parse(unittest.TestCase):
         self.assertEqual(app.parse(['open', 'harnitor']), ('open', 'harnitor'))
         # 무인 맥에서 '자동으로 다시 켜기' — 앱(appctl)은 받는데 스크립트가 몰라서 못 켰다(2026-10-05 아이맥)
         self.assertEqual(app.parse(['feature', 'autoRevive', 'on']), ('feature', 'autoRevive on'))
+        # 익명 사용 통계 끄기(설정 > 기능과 같다, 2026-10-24)
+        self.assertEqual(app.parse(['feature', 'usagePing', 'off']), ('feature', 'usagePing off'))
         self.assertEqual(app.parse(['close', 'harnitor']), ('close', 'harnitor'))
 
     def test_틀린_명령은_None(self):
@@ -74,7 +76,7 @@ class Status(unittest.TestCase):
             open(os.path.join(d, 'voice.json'), 'w').write('{"on":true}')
             s = app.status(d)
             self.assertEqual((s['language'], s['assistantName'], s['devRoot']), ('en', 'Max', '~/Projects'))
-            self.assertEqual(s['features'], {'office': False, 'tama': True, 'gacha': True, 'review': True, 'voice': True, 'autoRevive': False, 'computerUse': False})
+            self.assertEqual(s['features'], {'office': False, 'tama': True, 'gacha': True, 'review': True, 'voice': True, 'autoRevive': False, 'autoTidy': True, 'computerUse': False, 'usagePing': True})
             self.assertTrue(s['voiceMode'])
             self.assertFalse(s['browserAutomation'])
             pkg = os.path.join(d, 'tools/chammo-browser/node_modules/@playwright/mcp')

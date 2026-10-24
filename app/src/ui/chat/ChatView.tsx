@@ -36,6 +36,8 @@ import { CHAT_INSERT, PATH_MIME } from '../space/dragPath';
 import { OPEN_PAGE } from '../space/PageBlock';
 import { openChatFile } from './openChatFile';
 import { attachToChat } from '../fileDrop';
+import { useRefInbox } from '../refBus';
+import { nextRefLabel, type RefKind } from '../../domain/refChips';
 import { every } from '../poll';
 import './chat.css';
 
@@ -185,8 +187,12 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     refCount.current = topRef(d.refs);
   }, [paneId]);
   useEffect(() => { drafts.save(draftKey.current, { text: draft, refs }); }, [draft, refs]);
-  const addRef = (who: string, text: string) => {
-    const label = `${REF_PREFIX}chat${++refCount.current}`;
+  // 진행 칸의 일·목표(#task·#goal)도 같은 줄로 — 참모 id 로 날아온다(ui/refBus, 2026-10-23 사용자 폰). 연달아 와도 번호가 안 겹치게 지금 목록을 따로 든다
+  const refsNow = useRef(refs);
+  refsNow.current = refs;
+  const addRef = (who: string, text: string, kind: RefKind = 'chat') => {
+    const label = kind === 'chat' ? `${REF_PREFIX}chat${++refCount.current}` : nextRefLabel(refsNow.current, kind);
+    refsNow.current = [...refsNow.current, { label, who, text }];
     setRefs((r) => [...r, { label, who, text }]);
     setDraft((d) => `${d}${d && !/\s$/.test(d) ? ' ' : ''}${label} `);
     requestAnimationFrame(() => input.current?.focus());
@@ -195,6 +201,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const addRefNow = useRef(addRef);
   addRefNow.current = addRef;
   const stableRef = useCallback((who: string, text: string) => addRefNow.current(who, text), []);
+  useRefInbox(remote ? undefined : paneId, (r) => addRef(r.who, r.text, r.kind));
   const dropRef = (label: string) => {
     setRefs((r) => r.filter((x) => x.label !== label));
     setDraft((d) => d.replace(new RegExp(`${label}(?!\\d)\\s?`), ''));

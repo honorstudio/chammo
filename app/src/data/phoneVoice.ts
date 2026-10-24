@@ -5,6 +5,7 @@
 // 음성 모드가 켜진 채 첫 누름(또는 음성 단추 누름)에서 무음 파일을 틀어 풀어 둔다. 풀리기 전·막히면 ready=false 로 알려 맥이 소리를 낸다 — 소리가 사라지진 않는다.
 import { BEAT_MS, beatBody, cancelStep, isReady, pickItem, silentWav, type Ack, type AckKind, type Item, type PhoneSay } from '../domain/phoneVoice';
 import { voiceAudioBlob, voiceBeat } from './web';
+import { makeDuck, type AudioSessionLike } from '../domain/audioDuck';
 
 const BEAT_TIMEOUT_MS = 5000;
 const AUDIO_TIMEOUT_MS = 15000;
@@ -19,7 +20,9 @@ let sent: Ack | undefined; // 지금 가는 소식 — 못 가면 되돌린다
 let seenCancel: number | null = null;
 const handled = new Set<number>();
 const acks: Ack[] = [];
-let current: { id: number; url: string } | null = null;
+let current: { id: number; url: string; dk: number } | null = null;
+/** 말하는 동안만 다른 앱 소리를 잠깐 줄인다(audioSession transient) — 기본으로 틀면 듣던 음악·영상이 멈췄다(2026-10-23 사용자) */
+const duck = makeDuck(() => (typeof navigator === 'undefined' ? undefined : (navigator as { audioSession?: AudioSessionLike }).audioSession));
 let wired = false;
 /** 지금(또는 방금) 튼 소리 — 입력칸 참모 단추가 말하는 참모로 바뀐다(ui/mobile/usePhoneSpeaker) */
 let say: PhoneSay | null = null;
@@ -40,10 +43,11 @@ export function unlockAudio(): void {
   if (!a || unlocked) return;
   const url = URL.createObjectURL(new Blob([silentWav() as BlobPart], { type: 'audio/wav' }));
   a.src = url;
+  const dk = duck.begin('ambient'); // 무음 풀기는 섞어 튼다 — 듣던 음악이 이 순간 끊기지 않게
   a.play().then(
     () => { unlocked = true; beatSoon(); },
     () => { unlocked = false; },
-  ).finally(() => setTimeout(() => URL.revokeObjectURL(url), 2000));
+  ).finally(() => setTimeout(() => { URL.revokeObjectURL(url); duck.end(dk); }, 2000));
 }
 
 function touched() {
@@ -124,7 +128,7 @@ async function play(it: Item): Promise<void> {
     const blob = await voiceAudioBlob(id, ctl.signal);
     const url = URL.createObjectURL(blob);
     release();
-    current = { id, url };
+    current = { id, url, dk: duck.begin('transient') };
     a.onended = () => { if (current?.id === id) { ack(id, 'end'); release(); sayEnded(id); } };
     a.onerror = () => { if (current?.id === id) { ack(id, 'fail'); release(); sayEnded(id); } };
     a.src = url;
@@ -143,7 +147,12 @@ async function play(it: Item): Promise<void> {
 }
 
 function release() {
-  if (current) URL.revokeObjectURL(current.url);
+  if (current) {
+    URL.revokeObjectURL(current.url);
+    duck.end(current.dk);
+    // 잠금 화면 '지금 재생' 칸에 음악처럼 남지 않게
+    try { if (navigator.mediaSession) { navigator.mediaSession.metadata = null; navigator.mediaSession.playbackState = 'none'; } } catch { /* 없는 브라우저 */ }
+  }
   current = null;
 }
 /** 맥이 음성을 멈췄다 — 틀던 소리도 멈춘다 */

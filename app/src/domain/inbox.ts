@@ -3,6 +3,7 @@
 // 하위 세션이 물은 건 참모한테 한 말이라 뺀다 — 나한테 올릴지는 참모가 정한다(사용자 2026-09-27)
 import { tr } from '../i18n';
 import type { Activity } from './activity';
+import { cardTarget, type Note } from './notify';
 import type { Session } from './session';
 import type { ActivityStatus } from './status';
 import type { TaskEvent } from './tasks';
@@ -103,6 +104,18 @@ export function replyBlocked(item: InboxItem, sessions: Session[]): string | nul
   if (!s) return tr('세션이 없어 — 꺼진 세션이면 이어서 띄워줘', 'Session not found — if it stopped, resume it first');
   if (s.state === 'blocked') return tr('선택지·확인창에 멈춰 있어서 답장을 넣으면 메뉴가 잘못 골라질 수 있어 — 열어서 직접 골라줘', 'It is waiting on a prompt, so a reply could pick the wrong option — open it and choose yourself');
   return null;
+}
+
+/** 결정 알림 — 제목 앞에 물은 참모 별명(폰에선 끝에 홈 화면 앱 이름 'from 참모'가 붙어 누가 물었는지 몰랐다),
+ *  누르면 그 참모 채팅의 그 카드(폰 dashList 열쇠 w:<일 id>). 물은 참모를 못 찾으면 예전처럼 결정 대기함 */
+export function decideNote(i: InboxItem, sessions: Session[], nameOf: (s: Session) => string): Note {
+  const orch = i.toOrch ? findTarget(sessions, i.target) : undefined;
+  const who = orch ? nameOf(orch) : '';
+  return {
+    kind: 'decide', session: i.key, orch: false, body: i.text,
+    title: who ? tr(`${who} 결정 대기 — ${i.project}`, `${who}: decision needed — ${i.project}`) : tr(`결정 대기 — ${i.project}`, `Decision needed — ${i.project}`),
+    ...(orch && i.taskId ? { go: cardTarget(orch.id, `w:${i.taskId}`) } : {}),
+  };
 }
 
 /** 지난번 목록(열쇠들) 대비 새로 생긴 항목. 지난번이 없으면(앱을 막 켰을 때) 빈 목록 — 켜자마자 알림 폭탄 방지 */

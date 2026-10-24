@@ -37,11 +37,22 @@ export function usePhoneTeam(api: TeamPhoneApi, active: boolean) {
   return { feed, cs, unread: unreadTotal(cs), refresh, markRoom };
 }
 
-export function PhoneTeam({ api, t, orch }: { api: TeamPhoneApi; t: ReturnType<typeof usePhoneTeam>; orch: { id: string; name: string } }) {
+/** open = 팀 메시지 알림을 눌러 왔다 — 그 방 대화를 연다(대화 목록이 아직 없으면 받은 뒤에) */
+export function PhoneTeam({ api, t, orch, open }: { api: TeamPhoneApi; t: ReturnType<typeof usePhoneTeam>; orch: { id: string; name: string }; open?: { n: number; room: string } | null }) {
   const view = t.feed?.view ?? null;
   const [seg, setSeg] = useState<'chat' | 'locker'>('chat');
   const [sel, setSel] = useState<string | null>(null);
   const [sheet, setSheet] = useState(false);
+  const [opened, setOpened] = useState(0);
+  useEffect(() => {
+    if (!open || open.n === opened) return;
+    const c = t.cs.find((x) => x.room === open.room);
+    if (!c) return;
+    setOpened(open.n);
+    setSheet(false);
+    setSeg('chat');
+    setSel(c.key);
+  }, [open, t.cs, opened]);
   const [handed, setHanded] = useState<Record<string, string>>(() => load(HANDED_KEY, {}));
   const cur = t.cs.find((c) => c.key === sel) ?? null;
   // 같은 말을 2분 안에 다시 보내면(실패 뒤 다시 누름) 같은 cid — 맥·서버가 한 번만 저장한다
@@ -79,7 +90,7 @@ export function PhoneTeam({ api, t, orch }: { api: TeamPhoneApi; t: ReturnType<t
         </div>
       )}
       <div className="m-team-body">
-        {!view?.joined ? <div className="tmx-none">{`아직 팀이 없어요 — 위 팀 이름을 눌러 만들거나, ${machine()} 설정 > Chammo 계정에서 로그인해요`}</div>
+        {!view?.joined ? <div className="tmx-none">{`아직 팀이 없어요 — 위 팀 이름을 눌러 만들거나, ${machine()} 설정 > 계정에서 Chammo 계정에 로그인해요`}</div>
           : seg === 'chat' ? <div className="tmx-list"><TeamList convos={t.cs} sel={null} onPick={(c: Convo) => setSel(c.key)} /></div>
           : <PhoneTeamLocker teamId={view.teamId} />}
       </div>
@@ -115,11 +126,12 @@ function PhoneTeamLocker({ teamId }: { teamId: string }) {
 function TeamSheet({ api, t, onClose }: { api: TeamPhoneApi; t: ReturnType<typeof usePhoneTeam>; onClose: () => void }) {
   const view = t.feed?.view ?? null;
   const [link, setLink] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  /** 실패 — 화면엔 한국어 한 줄(msg), 원문은 이름표(raw) */
+  const [err, setErr] = useState<{ msg: string; raw: string } | null>(null);
   const [making, setMaking] = useState(false);
   const [name, setName] = useState('');
   const [copied, setCopied] = useState(false);
-  useEffect(() => { if (view?.joined && view.role === 'owner') void api.invite().then((l) => setLink(l.link), (e: unknown) => setErr(String(e))); }, [api, view?.joined, view?.role]);
+  useEffect(() => { if (view?.joined && view.role === 'owner') void api.invite().then((l) => setLink(l.link), (e: unknown) => setErr({ msg: '초대 링크를 못 만들었어요', raw: String(e) })); }, [api, view?.joined, view?.role]);
   return (
     <BottomSheet label="팀" title="팀" onClose={onClose}>
       <div className="m-team-sheet">
@@ -128,7 +140,7 @@ function TeamSheet({ api, t, onClose }: { api: TeamPhoneApi; t: ReturnType<typeo
         )}
         {!view?.joined && (making
           ? <div className="m-ts-make"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="팀 이름" aria-label="팀 이름" autoFocus />
-              <button className="tmx-btn pri" disabled={!name.trim()} onClick={() => void api.create(name).then(() => { t.refresh(); onClose(); }, (e: unknown) => setErr(String(e)))}>만들기</button></div>
+              <button className="tmx-btn pri" disabled={!name.trim()} onClick={() => void api.create(name).then(() => { t.refresh(); onClose(); }, (e: unknown) => setErr({ msg: '팀을 못 만들었어요', raw: String(e) }))}>만들기</button></div>
           : <button className="m-ts-act" onClick={() => setMaking(true)}>팀 만들기</button>)}
         {view?.joined && <span className="m-ts-sec">{view.team} 초대 링크</span>}
         {view?.joined && view.role !== 'owner' && <span className="tmx-hint">초대 링크는 팀장 기기에서 만들어요</span>}
@@ -141,7 +153,7 @@ function TeamSheet({ api, t, onClose }: { api: TeamPhoneApi; t: ReturnType<typeo
             <span className="tmx-hint">24시간 · 한 사람만 들어와요</span>
           </>
         )}
-        {err && <span className="tmx-hint" role="alert">{err}</span>}
+        {err && <span className="tmx-hint" role="alert" title={err.raw}>{err.msg}</span>}
       </div>
     </BottomSheet>
   );

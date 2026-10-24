@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { focusPlan, intentOf, openShortcut, parseAppLog, withFeature } from './appctl';
+import { focusPlan, intentOf, openShortcut, opensHomeDash, parseAppLog, withFeature } from './appctl';
 import { ALL_ON } from './config';
 import type { Session } from './session';
 
@@ -16,6 +16,7 @@ describe('intentOf — scripts/app 한 줄 → 앱이 할 일', () => {
     expect(intentOf({ action: 'feature', arg: 'autoRevive on' })).toEqual({ kind: 'feature', name: 'autoRevive', on: true });
     // 화면 조종 모든 프로젝트(2026-10-05)
     expect(intentOf({ action: 'feature', arg: 'computerUse on' })).toEqual({ kind: 'feature', name: 'computerUse', on: true });
+    expect(intentOf({ action: 'feature', arg: 'usagePing off' })).toEqual({ kind: 'feature', name: 'usagePing', on: false });
   });
 
   it('열기·닫기·세션으로 가기·다마고치', () => {
@@ -73,6 +74,13 @@ describe('openShortcut — 단축키와 같은 길로 가는 것', () => {
 
   it('토글인 것(리더·작업 패널·결정 대기함·리플레이)은 따로 연다', () => {
     for (const w of ['reader', 'tasks', 'inbox', 'replay'] as const) expect(openShortcut(w)).toBeNull();
+  });
+
+  // 0.4.1 2차 검증: 'open home' 이 홈 대시보드(띠 맨 위 집)가 아니라 참모 채팅으로 갔다 — 채팅 뷰면 홈 대시보드, 터미널 뷰엔 대시보드가 없어 참모로
+  it('채팅 뷰의 home 은 홈 대시보드 — 터미널 뷰·다른 화면은 아니다', () => {
+    expect(opensHomeDash('home', true)).toBe(true);
+    expect(opensHomeDash('home', false)).toBe(false);
+    expect(opensHomeDash('office', true)).toBe(false);
   });
 });
 

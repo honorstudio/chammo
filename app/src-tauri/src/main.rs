@@ -23,6 +23,7 @@ mod browser_attach;
 mod browser_foreign;
 mod config;
 mod craft_dock;
+mod tidy_git;
 mod dock_quit;
 mod craft_input;
 mod craft_mirror;
@@ -60,6 +61,7 @@ mod mobile_http;
 mod mobile_pair;
 mod mobile_sends;
 mod mobile_wake;
+mod phone_gacha;
 mod peer_ask;
 mod peer_cmd;
 mod peer_human;
@@ -145,6 +147,7 @@ mod modes;
 mod modes_host;
 mod modes_light;
 mod updater;
+mod usage_ping;
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder};
 use tauri::Manager;
@@ -571,6 +574,8 @@ fn main() {
             accounts_cmd::warm_start();
             // 지금 로그인을 만료 전에 미리·끈질기게 갱신한다(ADR 0008) — 토큰 주소가 막혀도 세션이 안 멈추게. 계정 풀과 상관없이 돈다
             accounts_cmd::keep_start();
+            // 익명 사용 신호 — 공개판·진짜 데이터 폴더·설정 켬일 때만 하루 한 번(usage_ping.rs)
+            usage_ping::start(app.config().identifier.clone(), app.package_info().name.clone(), app.package_info().version.to_string());
             if !config::data_dir().ends_with(".honor-orchestrator") {
                 let hq_dir = config::hq_dir(&config::home(), &config::current(), |k| std::env::var(k).ok());
                 if Path::new(&hq_dir).join("scripts/task").is_file() {
@@ -836,6 +841,7 @@ fn main() {
             reader::copy_asset,
             reader::read_show_log,
             claude::project_scan,
+            tidy_git::tidy_git,
             claude::notify,
             claude::main_watched,
             claude::speak,
@@ -867,6 +873,8 @@ fn main() {
             tama::read_tama,
             tama::read_gacha,
             tama::write_gacha,
+            tama::write_office,
+            phone_gacha::gacha_phone_reply,
             tama::write_tama,
             tama::tama_drag,
             tama::human_turns,

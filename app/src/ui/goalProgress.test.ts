@@ -4,6 +4,7 @@ import space from './space/SpaceView.tsx?raw';
 import home from './space/HomeView.tsx?raw';
 import dash from './mobile/OrchDash.tsx?raw';
 import comp from './GoalProgress.tsx?raw';
+import { waitWord } from './GoalProgress';
 
 // 사용자 10-23: 진행 막대는 홈 진행 칸에만(데스크톱 스페이스 홈 + 폰 홈), 사라질 땐 반짝 → 접힘, 동작 줄이기면 페이드만
 describe('진행 칸 — 홈에만, 사라짐 효과', () => {
@@ -28,3 +29,21 @@ describe('진행 칸 — 홈에만, 사라짐 효과', () => {
     expect(css).not.toMatch(/border-left\s*:/);
   });
 });
+
+// 사용자 10-23 저녁: 심사·예약·사람 답을 기다리는 칸이 빨간 '17시간 조용'이었다 — 기다림은 회색 점선, 사유 한 줄, 경고 빨강 아님
+describe('진행 칸 — 기다림', () => {
+  const d = (y: number, mo: number, da: number, h: number, mi: number) => new Date(y, mo - 1, da, h, mi).getTime();
+  it('사유 한 줄 — 밖이면 \'~ 기다림\', 사용자 몫이면 \'사용자 몫 · ~\', 날짜만 준 건 시각 없이', () => {
+    expect(waitWord({ why: '애플 심사', on: 'outside' })).toBe('애플 심사 기다림');
+    expect(waitWord({ why: '애플 심사 기다림', on: 'outside' })).toBe('애플 심사 기다림');
+    expect(waitWord({ why: '예약 날짜', on: 'outside', until: d(2026, 10, 24, 18, 0) })).toBe('예약 날짜 기다림 · 10/24 18:00까지');
+    expect(waitWord({ why: '예약 날짜', on: 'outside', until: d(2026, 10, 25, 23, 59) })).toBe('예약 날짜 기다림 · 10/25까지');
+    expect(waitWord({ why: '앱 비밀번호 4개', on: 'user' })).toBe('사용자 몫 · 앱 비밀번호 4개');
+  });
+  it('기다림 칸은 회색 점선 — 경고 빨강이 아니다', () => {
+    expect(css).toMatch(/\.gp-c\.gp-wait \{[^}]*dashed var\(--text-3\)/);
+    expect(css).not.toMatch(/\.gp-wait[^{]*\{[^}]*danger-ink/);
+    expect(comp).toMatch(/gp-waiting">\{tr\('기다림'/);
+  });
+});
+

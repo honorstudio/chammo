@@ -53,3 +53,6 @@ export function parsePairHash(hash: string): PairLink | null {
   if (!(u.protocol === 'https:' || (u.protocol === 'http:' && local)) || u.pathname !== '/' || u.search || u.hash || u.username) return null;
   return { code, mac, macX, relay: u.origin };
 }
+
+/** 컴퓨터 화면으로 넘어갈 주소 — 알림을 눌러 열렸으면(?go=) 갈 곳만 들고 간다(다른 쿼리는 버린다, 2026-10-23) */
+export const homeUrl = (search: string) => { const go = new URLSearchParams(search).get('go'); return go ? `/?go=${encodeURIComponent(go)}` : '/'; };

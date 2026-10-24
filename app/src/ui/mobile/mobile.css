@@ -1,6 +1,7 @@
 /* 폰 화면 — 시안 A(겹친 시트). 토큰은 앱 styles.css :root 그대로(데스크톱 CSS 는 안 불러온다 — 몸통 스타일이 섞인다).
    아이콘·이모지·왼쪽 색 띠 없음, 누르는 곳 44px 이상, 상태 클래스는 st- 접두 */
 :root {
+  --g-ink: #2a1c14; --g-gold: #ffc93c; --g-purple: #9a5fd6; /* 게임 말투(뽑기 결과 카드·사무실 시트) — 라이트·다크 같은 값 */
   --bg: #ececef; --panel: #f6f6f8; --surface: #fff; --surface-2: #f0f0f3; --line: #dcdce1; --line-strong: #c6c6cd;
   --text: #1d1d20; --text-2: #4a4a52; --text-3: #8a8a92; --accent: #d9622b; --accent-ink: #fff;
   --working: #2f74e0; --blocked: #c98a00; --idle: #1f9a62; --warn-bg: #fff4d6; --warn-ink: #7a5a00; --danger-ink: #a12a2a;
@@ -8,6 +9,7 @@
   --tag-done: #dcf2e6; --tag-done-ink: #17754a;
   --tray: #e3eaf7; --tray-line: #c6d3ec; --tray-ink: #1f4fb5; /* 다른 기기를 보는 중(데스크톱 styles.css 와 같은 값) */
   --ask-mix: 9%; --ask-ink-mix: 70%; /* 나한테 묻는 것 — 그 참모 색을 깔 비율(아래 '나한테 묻는 것' 규칙) */
+  --human: #d9462f; --human-bg: #fdeeea; --human-line: #f0b5a8; /* 사람 필요(사무실 이름표 빨강과 같은 색) */
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -18,6 +20,7 @@
     --tag-wait: #45380f; --tag-wait-ink: #f3d9a4; --tag-done: #173a2a; --tag-done-ink: #8fe0b4;
     --tray: #131a26; --tray-line: #243249; --tray-ink: #8fb4ff;
     --ask-mix: 18%; --ask-ink-mix: 50%;
+    --human: #ff7a62; --human-bg: #3a1a14; --human-line: #6e2e22;
     color-scheme: dark;
   }
 }
@@ -98,7 +101,8 @@ button { font: inherit; color: inherit; }
 /* 입력줄은 시트 바닥에 — 살짝에서 끌어올리는 동안 시트는 바닥까지 늘어나는데 입력줄이 손가락 따라 떠서 그 아래가 비었다(2026-10-12 사용자) */
 .m-comp-wrap { flex: none; margin-top: auto; }
 /* 붙인 것 — 한 줄 가로 넘기기(늘어나도 줄 수는 그대로) */
-.m-attached { display: flex; gap: 6px; overflow-x: auto; padding: 6px 10px 0; scrollbar-width: none; }
+/* 가로로 미는 줄은 네 쪽 3px 숨 쉴 틈 — 고른 칸 고리(box-shadow 2px)가 위아래·양끝에서 안 잘리게, 바깥 자리는 음수 여백으로 그대로(scrollRowRing.test) */
+.m-attached { display: flex; gap: 6px; overflow-x: auto; padding: 6px 10px 3px; margin-bottom: -3px; scrollbar-width: none; }
 .m-attached::-webkit-scrollbar { display: none; }
 .m-att {
   flex: none; display: inline-flex; align-items: center; gap: 6px; height: 44px; padding-left: 4px; border-radius: 10px;
@@ -111,7 +115,7 @@ button { font: inherit; color: inherit; }
 .m-att-x svg { width: 14px; height: 14px; }
 /* 입력창 = 두 줄 카드(시안 phone-dash K, 2026-10-11) — 위 = 글, 아래 = 버튼 줄. 한 덩어리 둥근 판(왼쪽 띠 없음) */
 .m-input { display: flex; flex-direction: column; margin: 6px 10px 10px; padding: 8px 6px 4px; border-radius: 24px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 4px 18px rgba(0, 0, 0, .06); }
-.m-input .m-attached { padding: 0 4px 6px; }
+.m-input .m-attached { padding: 3px 4px 6px; margin: -3px 0 0; }
 .m-input textarea {
   display: block; width: 100%; height: 34px; min-height: 34px; resize: none; padding: 5px 10px; line-height: 1.45;
   border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 16px; overflow-y: hidden;
@@ -353,7 +357,7 @@ button { font: inherit; color: inherit; }
 .m-prof-form { overflow-y: auto; min-height: 0; }
 /* 모양·눈·색·목소리 — 한 줄에 가로로 밀기(칸마다 44px 누름 자리) */
 .m-prof-lbl { padding: 6px 2px 0; font-size: 13px; color: var(--text-3); }
-.m-prof-row { display: flex; gap: 6px; overflow-x: auto; padding: 2px 24px 4px 2px; -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.m-prof-row { display: flex; gap: 6px; overflow-x: auto; padding: 3px 24px 4px 3px; margin: -1px 0 0 -1px; -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .m-prof-row::-webkit-scrollbar { display: none; }
 .m-prof-opt, .m-prof-sw { flex: none; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 12px; background: var(--surface-2); }
 .m-prof-opt.m-on, .m-prof-chip.m-on { box-shadow: inset 0 0 0 2px var(--text); }
@@ -526,7 +530,8 @@ input, textarea, select { font-size: max(16px, 1em); }
 .m-swipe-btn.m-danger, .m-send.m-danger { background: #d33b3b; color: #fff; }
 .m-swipe-front { position: relative; transition: transform .22s ease; will-change: transform; }
 .m-swipe-front > .m-orch { width: 100%; }
-.m-sleep-card { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line); font-size: 14px; }
+/* 줄 자리 확인(RowConfirm) — 참모 줄과 같은 모서리, 전체 테두리 */
+.m-row-confirm { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line); font-size: 14px; }
 .m-sleep-warn { color: var(--blocked); font-weight: 600; }
 /* 아이콘끼리는 붙여서 한 줄로, 맨 끝 아이콘은 글 칸 가장자리에 맞춘다(투명 누르는 자리 반만큼 밖으로) */
 .m-dash-row > .m-rt-btn.m-ico + .m-rt-btn.m-ico { margin-left: -6px; }
@@ -595,6 +600,10 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-app .dc-acts .dc-ib { width: 44px; height: 44px; }
 .m-direct .dc-row > * { max-width: none; }
 .m-direct .dc-btn { min-height: 46px; flex: 1 1 auto; }
+/* 알림을 눌러 온 카드 — 전체 테두리가 두 번 반짝(왼쪽 띠 금지), 그 뒤 옅은 테두리로 남는다 */
+.m-direct .m-jumped { border-radius: 14px; animation: m-jumped 1.2s ease-out 2; box-shadow: 0 0 0 2px color-mix(in srgb, var(--orch-solid, var(--accent)) 45%, transparent); }
+@keyframes m-jumped { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--orch-solid, var(--accent)) 80%, transparent); } 60% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--orch-solid, var(--accent)) 25%, transparent); } 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--orch-solid, var(--accent)) 45%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .m-direct .m-jumped { animation: none; } }
 /* 왼쪽 버튼(고정) — 왼쪽→오른쪽으로 밀면 */
 .m-swipe-start { right: auto; left: 0; }
 .m-swipe-btn.m-start:first-child { border-radius: 14px 0 0 14px; }
@@ -781,7 +790,7 @@ a.m-file { color: inherit; text-decoration: none; }
 
 /* 엑셀 표(읽기만) — 칸 주소(열 글자·행 번호)는 붙어 있고 표는 가로세로로 민다 */
 .m-xlsx { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-.m-xlsx-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.m-xlsx-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 3px; margin: -3px -3px -1px; }
 .m-xlsx-tabs button { all: unset; flex: none; min-height: 32px; padding: 0 12px; border-radius: 999px; font-size: 13px; color: var(--text-2); box-shadow: 0 0 0 1px var(--line); display: inline-flex; align-items: center; }
 .m-xlsx-tabs button.on { color: var(--text); font-weight: 600; background: color-mix(in srgb, var(--accent) 12%, transparent); box-shadow: none; }
 .m-xlsx-scroll { overflow: auto; max-height: 70vh; border-radius: 10px; box-shadow: 0 0 0 1px var(--line); -webkit-overflow-scrolling: touch; }
@@ -823,12 +832,12 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-lk-seg button { width: 44px; height: 44px; border: 0; border-radius: 9px; background: transparent; color: var(--text-3); display: inline-flex; align-items: center; justify-content: center; }
 .m-lk-seg button.m-on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, .10); }
 .m-lk-seg svg { width: 18px; height: 18px; }
-.m-lk-chips { flex-wrap: nowrap; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; }
+.m-lk-chips { flex-wrap: nowrap; overflow-x: auto; padding: 3px 3px 4px; margin: -1px -3px 0; scrollbar-width: none; }
 .m-lk-chips .m-chip { flex: none; gap: 8px; min-height: 44px; font-size: 13.5px; font-weight: 600; }
 .m-lk-chips .m-chip.m-on .st-dot.st-done { border-color: var(--accent-ink); }
 .m-lk-more { color: var(--text-3) !important; font-weight: 500 !important; }
 .m-lk-phead { display: flex; align-items: center; gap: 9px; margin-top: 12px; font-size: 15px; }
-.m-lk-folds { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 1px; }
+.m-lk-folds { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 3px; margin: -2px; }
 .m-lk-fold { position: relative; flex: none; width: 104px; height: 78px; padding: 26px 12px 8px; border: 0; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line); display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-start; text-align: left; }
 .m-lk-fold .tab { position: absolute; top: 11px; left: 12px; width: 26px; height: 8px; border-radius: 3px; background: var(--line); }
 .m-lk-fold b { font-size: 14px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -868,7 +877,7 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-mode-menu button:active { background: var(--surface-2); }
 .m-mode-menu button.warn { color: var(--danger-ink); }
 .m-mode-body .btn.mdv-back { min-height: 44px; padding: 0 14px 0 10px; border-color: transparent; background: var(--surface-2); }
-.m-mode-pills { flex: 1; min-width: 0; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.m-mode-pills { flex: 1; min-width: 0; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; padding: 3px; margin: -3px; }
 .m-mode-pills b { font-size: 14px; }
 .m-mode-pills button { flex: none; min-height: 44px; padding: 0 12px; border: 0; border-radius: 18px; background: transparent; font-size: 13.5px; font-weight: 600; color: var(--text-3); }
 .m-mode-pills button.m-on { background: var(--surface-2); color: var(--text); }
@@ -925,7 +934,7 @@ a.m-file { color: inherit; text-decoration: none; }
 
 /* 다른 기기 보기(peer-panel, 시안 v2 M1~M3) — 그 기기를 보는 동안은 --tray 파란 면(왼쪽 색 띠 금지). 누르는 것은 44px */
 .m-far-sect { margin-top: 4px; }
-.m-far-pills { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none; }
+.m-far-pills { display: flex; gap: 6px; overflow-x: auto; padding: 3px 3px 10px; margin: -1px -3px 0; scrollbar-width: none; }
 .m-far-pill { flex: none; position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 16px; border-radius: 22px; border: 1px solid var(--line); background: var(--surface); color: var(--text-2); font: 600 14px/1 inherit; }
 .m-far-pill.on { background: var(--text); border-color: var(--text); color: var(--surface); }
 .m-far-pill.far.on { background: var(--tray-ink); border-color: var(--tray-ink); color: var(--surface); }
@@ -980,7 +989,7 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-team-switch b { font-size: 20px; font-weight: 800; letter-spacing: -.01em; }
 .m-team-switch svg { width: 18px; height: 18px; color: var(--text-3); }
 .m-seg { display: flex; gap: 2px; margin: 0 16px 8px; padding: 3px; border-radius: 12px; background: var(--surface-2); }
-.m-seg button { all: unset; flex: 1; min-height: 40px; display: flex; align-items: center; justify-content: center; border-radius: 9px; font-size: 14px; font-weight: 600; color: var(--text-3); cursor: pointer; }
+.m-seg button { all: unset; flex: 1; min-height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 9px; font-size: 14px; font-weight: 600; color: var(--text-3); cursor: pointer; }
 .m-seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
 .m-team-body { flex: 1; min-height: 0; overflow-y: auto; }
 .m-team .tmx-li { min-height: 60px; }
@@ -989,6 +998,8 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-team-convo { padding-top: env(safe-area-inset-top); }
 .m-team-convo .tmx-convo { height: 100%; }
 .m-team-convo .tmx-head { min-height: 56px; padding-left: 4px; }
+.m-team-convo .tmx-head .kit-ib { width: 44px; height: 44px; } /* 데스크톱 kit 34 — 폰은 누름 칸 44 */
+.m-team-convo .tmx-head .kit-ib svg { width: 20px; height: 20px; }
 .m-team-convo .tmx-comp textarea { font-size: 16px; } /* 16 아래면 iOS 가 확대한다 */
 .m-team-convo .tmx-hand { opacity: 1; pointer-events: auto; top: 100%; right: auto; left: 37px; margin-top: 6px; box-shadow: none; border: 1px solid var(--line); min-height: 32px; }
 .m-team-convo .tmx-row.picked { margin-bottom: 40px; }
@@ -1003,3 +1014,183 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-ts-sec { font-size: 12px; font-weight: 700; color: var(--text-3); margin-top: 4px; }
 .m-ts-make { display: flex; gap: 8px; }
 .m-ts-make input { flex: 1; min-height: 44px; border-radius: 10px; border: 1px solid var(--line-strong); padding: 0 12px; font: inherit; font-size: 16px; background: var(--surface); color: var(--text); }
+
+/* 참조 칩(#chat1·#task1·#goal1) — 그림 대신 글 한 토막, 칩 줄이 가로로 넘어가니 폭은 잘라 둔다 */
+.m-att-ref { padding-left: 10px; max-width: 240px; }
+.m-att-q { min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); }
+/* 말풍선 길게 누르기 = 참조·복사 메뉴 — 사파리 글 고르기·말풍선 메뉴가 먼저 뜨지 않게(복사는 메뉴에 있다) */
+.m-bubble { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+/* 보낸 말 속 말풍선 참조 — 데스크톱 chat-quote 와 같은 모양(옅은 면, 왼쪽 띠 없음) */
+.m-quote { margin-top: 6px; padding: 6px 9px; border-radius: 10px; background: rgba(255, 255, 255, .16); font-size: 12.5px; }
+.m-quote-q { opacity: .85; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* 사무실(ui/mobile/PhoneOffice, 시안 office-phone v1 A) — 방은 폭에 꽉, 아래 세션 줄. 방 그림 CSS 는 ui/office/room.css 를 같이 쓴다 */
+.m-rt-dot { position: absolute; top: 6px; right: 6px; width: 9px; height: 9px; border-radius: 50%; background: var(--blocked); box-shadow: 0 0 0 2px var(--surface); }
+/* 사무실 한 화면(시안 office-fit v1 B, 2026-10-24) — 페이지 스크롤 없이 머리 + 무대(방 위 칩 · 방 · 참모 줄 · 반 시트)가 화면 높이를 나눠 쓴다.
+   닫혀 있으면 칩·방·참모 줄 한 덩어리를 가운데로(칩과 방 사이 빈 띠 없게), 시트가 열리면 방 칸이 남은 높이를 채우며 줄어 방이 통째로 보인다 */
+.m-office { display: flex; flex-direction: column; overflow: hidden; padding-left: 0; padding-right: 0; padding-bottom: calc(var(--m-peek-h, 144px) + 8px); }
+.m-office > .m-dash-head { flex: none; padding: 0 16px; }
+.m-office-stage { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; margin-top: 4px; border-radius: 0 0 20px 20px; }
+.m-office-chips { flex: none; display: flex; gap: 6px; padding: 8px 12px 4px; }
+.m-office-chips button { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 16px; border-radius: 22px; border: 1px solid var(--line); background: var(--surface); font-size: 14px; font-weight: 700; color: var(--text-2); }
+.m-office-chips button.m-on { background: var(--text); border-color: var(--text); color: var(--bg); }
+.m-office-chips b { font-size: 12px; padding: 0 6px; border-radius: 9px; background: var(--surface-2); color: var(--text-2); }
+.m-office-chips button.m-on b { background: color-mix(in srgb, var(--bg) 22%, transparent); color: var(--bg); }
+.m-office-room { position: relative; flex: 0 1 auto; min-height: 100px; }
+.m-office-stage.m-open .m-office-room { flex-grow: 1; }
+.m-office-room .office { height: 100%; overflow: visible; }
+.m-office .office-coin::before { content: ''; position: absolute; inset: -8px; } /* 코인 알약(29px)은 그대로, 누름 칸만 44 넘게 */
+/* 반 시트 — 내용만큼, 최대 무대 절반쯤(작은 폰은 칩·방 100·참모 줄 몫을 남기고). 안에서만 굴러간다 */
+.m-office-sheet { flex: none; display: flex; flex-direction: column; max-height: min(52%, calc(100% - 225px)); margin: 4px 8px 10px; border-radius: 20px; border: 3px solid var(--g-ink); background: var(--panel); box-shadow: 0 4px 0 var(--g-ink), 0 -4px 24px rgba(0, 0, 0, .25); overflow: hidden; animation: m-g-pop .36s cubic-bezier(.2, 1.5, .4, 1); }
+/* 시트 틀 = 뽑기 결과 카드 말투(3px 진한 갈색 + 아래 딱딱한 그림자), 열릴 때 튀어 오름(시안 office-fit v2 P2) */
+@keyframes m-g-pop { from { transform: translateY(28px) scale(.94); opacity: .4; } to { transform: none; opacity: 1; } }
+/* 뽑기·스킨이 열린 동안 아래 채팅창을 숨기고(ChatSheet hidden) 사무실은 홈 바까지 쓴다 — 시트가 그만큼 커진다(10-24 사용자) */
+.m-office.m-wide { padding-bottom: calc(env(safe-area-inset-bottom) + 8px); }
+.m-office.m-wide .m-office-sheet { max-height: min(62%, calc(100% - 225px)); }
+.m-sheet.m-hide { visibility: hidden; pointer-events: none; }
+.m-office-sheet-face { display: none; }
+.m-office-sheet-face .dock-face { width: 28px; height: 28px; border-radius: 14px; image-rendering: pixelated; vertical-align: middle; margin-right: 8px; }
+/* 작은 폰은 시트가 열리면 참모 줄을 숨기고 시트 머리에 지금 참모 얼굴(시안 P2) */
+@media (max-height: 740px) { .m-office-stage.m-open .m-talk { display: none; } .m-office-stage.m-open .m-office-sheet-face { display: inline-block; } .m-office-sheet { max-height: calc(100% - 165px); } }
+.m-office-sheet .m-picker-head { min-height: 44px; padding: 2px 4px 0 16px; font-size: 15px; }
+.m-office-panel { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 3px 0 8px; }
+.m-office-list { display: flex; flex-direction: column; gap: 6px; padding: 0 12px; }
+.m-office-row { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 4px 4px 4px 8px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); }
+.m-office-row .dock-face { width: 36px; height: 36px; border-radius: 8px; flex: none; image-rendering: pixelated; }
+.m-office-row.m-hum { background: var(--human-bg); border-color: var(--human-line); }
+.m-office-row.m-picked { box-shadow: 0 0 0 2px var(--working); border-color: transparent; }
+.m-office-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.m-office-mid b { font-size: 14.5px; }
+.m-office-mid em { font-style: normal; font-size: 12.5px; font-weight: 700; margin-left: 6px; }
+.m-office-mid small { font-size: 12.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-office .v-hum { color: var(--human); } .m-office .v-ask { color: var(--blocked); } .m-office .v-work { color: var(--working); } .m-office .v-rest { color: var(--text-3); }
+.m-office-row .m-office-go { width: 44px; padding: 0; border: 0; background: transparent; color: var(--text-2); }
+.m-office-row .m-office-go.m-on { border-radius: 50%; background: var(--working); color: #fff; }
+.m-office-rest { margin: 2px 6px; }
+.m-office-empty { text-align: center; margin: 4px 0 12px; }
+
+/* 사무실에서 참모 바꿔 말하기 — 방 아래 참모 줄, 지금 말하는 참모는 방 고리와 같은 파란 테 */
+.m-talk { flex: none; display: flex; gap: 6px; padding: 3px 12px 10px; overflow-x: auto; scrollbar-width: none; }
+.m-talk button { position: relative; flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px 0 5px; border-radius: 22px; border: 1px solid var(--line); background: var(--surface); font-size: 14px; font-weight: 700; color: var(--text-2); }
+.m-talk button.m-on { border-color: transparent; box-shadow: 0 0 0 2px var(--working); color: var(--text); }
+.m-talk button:not(.m-on) { padding: 0 5px; } /* 얼굴만 — 이름은 지금 참모만(시안 P), 나머지는 aria-label·title */
+.m-talk .dock-face { width: 32px; height: 32px; border-radius: 16px; flex: none; image-rendering: pixelated; }
+.m-talk-dot { position: absolute; top: 4px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--blocked); }
+/* 폰 뽑기·스킨(시안 phone-gacha v1 B) — 방 아래 칸 탭. 등급·뽑기 단추 색은 데스크톱 상점과 같은 값(스킨·도트 몫이라 토큰 아님) */
+.m-office-room { position: relative; }
+.m-office-tabs { display: flex; margin: 0 12px 10px; padding: 3px; border-radius: 12px; background: var(--surface-2); }
+.m-office-tabs button { flex: 1; min-height: 40px; border: 0; border-radius: 9px; background: transparent; font-size: 14px; font-weight: 700; color: var(--text-3); }
+.m-office-tabs button.m-on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, .18); }
+.m-room-arrow { position: absolute; top: 50%; margin-top: -22px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, .42); color: #fff; }
+.m-room-arrow.m-left { left: 8px; } .m-room-arrow.m-left svg { transform: scaleX(-1); }
+.m-room-arrow.m-right { right: 8px; }
+.m-room-try { position: absolute; left: 10px; top: 10px; padding: 4px 10px; border-radius: 12px; background: rgba(0, 0, 0, .5); color: #fff; font-size: 12px; font-weight: 700; pointer-events: none; }
+.m-gacha-over { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(8, 6, 18, .72); z-index: calc(var(--z-base) + 3); }
+.m-gacha-cv { width: min(78%, 300px); height: auto; image-rendering: pixelated; border-radius: 14px; box-shadow: 0 10px 40px rgba(0, 0, 0, .55); }
+.m-gacha-cv.ten { width: min(94%, 380px); }
+.m-gacha-skip { position: absolute; top: 8px; right: 8px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .12); color: #fff; }
+.m-gacha { display: flex; flex-direction: column; gap: 10px; padding: 0 12px 16px; }
+.m-gacha-wait { text-align: center; margin: 8px 0 16px; }
+.m-gacha-split { display: flex; gap: 12px; align-items: center; }
+.m-gacha-mini { flex: none; width: 160px; height: auto; image-rendering: pixelated; border-radius: 12px; }
+.m-gacha-side { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.m-gacha-pity, .m-gacha-next { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-3); }
+.m-gacha-next { padding: 4px 2px 0; color: var(--text-2); } .m-gacha-next b { color: var(--text); }
+.m-gacha-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.m-gacha-bar i { display: block; height: 100%; border-radius: 3px; background: #ffc93c; }
+.m-gacha-btn { min-height: 52px; padding: 6px 10px; border-radius: 12px; border: 2px solid #120d22; background: #e8743a; color: #fff; font-size: 15px; font-weight: 800; box-shadow: 0 4px 0 #120d22; }
+.m-gacha-btn.ten { background: #6d3aa6; }
+.m-gacha-btn small { display: block; font-size: 12px; font-weight: 600; opacity: .85; margin-top: 2px; }
+.m-gacha-btn:disabled { opacity: .42; }
+.m-gacha-btn:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 #120d22; }
+.m-gacha-how { padding: 10px 12px; border-radius: 12px; background: var(--surface); }
+.m-gacha-how .gacha-how summary { display: none; }
+.m-gacha-how ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.m-gacha-how li { display: flex; gap: 8px; font-size: 12.5px; color: var(--text-2); }
+.m-gacha-how li b { flex: 0 0 22px; text-align: right; color: #c99a16; }
+.m-gacha-how .dim { display: flex; flex-wrap: wrap; column-gap: 10px; margin-top: 6px; font-size: 12px; color: var(--text-3); }
+.m-gacha-err { margin: 0; font-size: 13px; color: var(--danger-ink); }
+.m-gacha-card { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 14px; background: #fff; color: #2a1c14; border: 3px solid #2a1c14; box-shadow: 0 4px 0 #2a1c14; }
+.m-gacha-card b { font-size: 16px; }
+.m-gacha-r { font-size: 12px; font-weight: 800; color: #fff; padding: 2px 8px; border-radius: 999px; background: #8a8a8a; }
+.m-gacha-r.r-보통 { background: #2f6fb0; } .m-gacha-r.r-희귀 { background: #6d3aa6; } .m-gacha-r.r-전설 { background: #d6931a; }
+.m-gacha-new { font-size: 12px; font-weight: 900; color: #e5484d; }
+.m-grow { flex: 1; }
+.m-gacha-wear { min-height: 44px; padding: 0 12px; border: 0; border-radius: 10px; background: #2a1c14; color: #fff; font-size: 13px; font-weight: 800; }
+.m-gacha-worn { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 800; color: #17754a; }
+.m-gacha-worn svg { width: 16px; height: 16px; }
+.m-gacha-sum { font-size: 13px; font-weight: 700; color: var(--text-2); margin-bottom: 6px; }
+.m-gacha-tenl { list-style: none; margin: -3px -3px 0; padding: 3px 3px 4px; display: flex; gap: 6px; overflow-x: auto; }
+.m-gacha-tenl li { flex: none; min-width: 72px; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); font-size: 12px; }
+.m-gacha-tenl li span { white-space: nowrap; max-width: 76px; overflow: hidden; text-overflow: ellipsis; }
+.m-office .r-흔함 { color: #8a8a8a; } .m-office .r-보통 { color: #3a86d0; } .m-office .r-희귀 { color: #9a5fd6; } .m-office .r-전설 { color: #d6931a; }
+.m-office .m-gacha-r { color: #fff; } /* 등급 글자색(위 줄)보다 뒤에 — 흔함 배지 글자가 회색 바탕에 묻혔다 */
+.m-skin-mini { display: block; width: 84px; height: auto; image-rendering: pixelated; border-radius: 6px; }
+.m-skin-none { width: 28px; height: 28px; border-radius: 50%; border: 2px dashed var(--line-strong); }
+/* 스킨·장식 칸 = 인벤토리 가방(시안 office-fit v2 G1, 2026-10-24 사용자) — 위 자리 슬롯은 그림만, 4줄 격자, 등급 빛, 바닥 줄 '장착' */
+.m-g1 { display: flex; flex-direction: column; gap: 8px; }
+.m-g1-slots { display: flex; gap: 6px; padding: 3px 12px; overflow-x: auto; scrollbar-width: none; }
+.m-g1-slots::-webkit-scrollbar { display: none; }
+.m-g1-slot { flex: none; width: 48px; height: 48px; padding: 4px; display: grid; place-items: center; border-radius: 10px; border: 2px solid var(--line-strong); background: var(--surface); }
+.m-g1-slot.m-on { border-color: var(--g-ink); background: var(--g-gold); box-shadow: 0 3px 0 var(--g-ink); }
+.m-g1-slot .gacha-icon.big { width: 34px; height: auto; image-rendering: pixelated; }
+.m-g1-slot .m-skin-mini { width: 38px; }
+.m-g1-sub { display: flex; align-items: baseline; justify-content: space-between; padding: 0 14px; } .m-g1-sub b { font-size: 15px; } .m-g1-sub span { font-size: 12.5px; color: var(--text-3); }
+.m-g1-none { margin: 4px 14px; }
+.m-g1-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 3px 12px 6px; }
+.m-g1-cell { position: relative; aspect-ratio: 1; min-width: 44px; padding: 6px; display: grid; place-items: center; border-radius: 10px; border: 2px solid color-mix(in srgb, var(--g-ink) 55%, var(--line)); background: var(--surface); box-shadow: inset 0 -4px 0 rgba(0, 0, 0, .12); }
+.m-g1-cell .gacha-icon.big { width: 44px; height: auto; image-rendering: pixelated; }
+.m-g1-cell .m-skin-mini { width: 100%; }
+.m-g1-cell.r-희귀 { border-color: var(--g-purple); }
+.m-g1-cell.r-전설 { border-color: var(--g-gold); animation: m-g-shine 1.8s ease-in-out infinite; }
+.m-g1-cell.m-on { border-color: var(--g-ink); background: color-mix(in srgb, var(--g-gold) 26%, var(--surface)); animation: m-g-bump .25s ease-out; }
+.m-g1-cell.m-worn::after { content: ''; position: absolute; right: 4px; top: 4px; width: 9px; height: 9px; border-radius: 2px; background: var(--idle); box-shadow: 0 0 0 2px var(--surface); }
+@keyframes m-g-shine { 0%, 100% { box-shadow: 0 0 0 2px var(--g-gold), 0 0 10px 1px color-mix(in srgb, var(--g-gold) 60%, transparent); } 50% { box-shadow: 0 0 0 2px var(--g-gold); } }
+@keyframes m-g-bump { 0% { transform: scale(.9); } 60% { transform: scale(1.06); } 100% { transform: none; } }
+.m-g-new { position: absolute; top: 3px; left: 4px; font-style: normal; font-size: 12px; line-height: 1.2; font-weight: 900; color: #fff; background: #e5484d; padding: 0 4px; border-radius: 3px; box-shadow: 0 1px 0 var(--g-ink); }
+.m-g-cnt { position: absolute; right: 4px; bottom: 2px; font-style: normal; font-size: 12px; font-weight: 800; color: var(--text); text-shadow: 0 1px 0 var(--panel); }
+.m-g-foot { position: sticky; bottom: -8px; z-index: calc(var(--z-base) + 1); display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--panel); border-top: 2px solid color-mix(in srgb, var(--g-ink) 30%, transparent); }
+.m-g-name { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 6px; font-size: 14px; white-space: nowrap; overflow: hidden; }
+.m-g-name small { font-size: 12px; color: var(--text-3); }
+.m-g-r { font-style: normal; font-size: 12px; font-weight: 800; padding: 1px 7px; border-radius: 999px; background: #8a8a8a; }
+.m-office .m-g-r.m-g-r { color: #fff; } /* .m-office .r-<등급> 글자색보다 세게 — 알약 바탕과 같은 색이 됐다 */
+.m-g-r.r-보통 { background: #3a86d0; } .m-g-r.r-희귀 { background: var(--g-purple); } .m-g-r.r-전설 { background: #d6931a; }
+.m-g-undo { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border: 2px solid var(--line-strong); border-radius: 12px; background: var(--surface); color: var(--text-2); }
+.m-g-undo svg { width: 20px; height: 20px; }
+.m-g-undo:disabled { opacity: .35; }
+.m-g-equip { flex: none; min-width: 96px; min-height: 48px; padding: 0 16px; border-radius: 12px; border: 3px solid var(--g-ink); background: #e8743a; color: #fff; font-size: 16px; font-weight: 900; box-shadow: 0 4px 0 var(--g-ink); }
+.m-g-equip:disabled { background: var(--surface-2); color: var(--text-3); box-shadow: 0 2px 0 var(--g-ink); transform: translateY(2px); }
+.m-g-equip:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 var(--g-ink); }
+/* 장착 반짝 — 방 위에 '장착!' 이 튀어 오르고 도트 별이 퍼짐(1초, PhoneOffice equipAt) */
+.m-office-room.m-equip::after { content: ''; position: absolute; left: 50%; top: 45%; width: 8px; height: 8px; margin: -4px; background: #fff; z-index: calc(var(--z-base) + 4); pointer-events: none;
+  box-shadow: -90px -40px 0 var(--g-gold), 80px -56px 0 #fff, 110px 24px 0 var(--g-gold), -120px 36px 0 #fff, 0 -96px 0 var(--g-gold), 30px 80px 0 #fff, -50px 90px 0 var(--g-gold), 130px -16px 0 #fff, -140px -10px 0 var(--g-gold), 60px 40px 0 #fff;
+  animation: m-g-spark 1s steps(5) forwards; }
+.m-office-room.m-equip::before { content: '장착!'; position: absolute; left: 50%; top: 38%; z-index: calc(var(--z-base) + 5); pointer-events: none; padding: 4px 14px; border-radius: 10px; border: 3px solid var(--g-ink); background: var(--g-gold); color: var(--g-ink); font-size: 18px; font-weight: 900; box-shadow: 0 4px 0 var(--g-ink); animation: m-g-say 1s cubic-bezier(.2, 1.6, .4, 1) forwards; }
+@keyframes m-g-spark { 0% { transform: scale(.7); opacity: 1; } 70% { opacity: 1; } 100% { transform: scale(1.5); opacity: 0; } }
+@keyframes m-g-say { 0% { transform: translate(-50%, 20px) scale(.6); opacity: 0; } 25% { transform: translate(-50%, 0) scale(1.1); opacity: 1; } 75% { transform: translate(-50%, -6px) scale(1); opacity: 1; } 100% { transform: translate(-50%, -16px) scale(1); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .m-office-sheet, .m-g1-cell, .m-office-room.m-equip::after, .m-office-room.m-equip::before { animation: none; } .m-office-room.m-equip::after { display: none; } .m-office-room.m-equip::before { transform: translateX(-50%); } }
+/* 방 위 아이콘 칩(뽑기·스킨) — 44×44 */
+.m-office-chips button.m-ico-chip { width: 44px; padding: 0; justify-content: center; }
+.m-office-chips button.m-ico-chip svg { width: 22px; height: 22px; }
+/* 머리 이름 두 줄까지(시안 phone-nav v1 B, 2026-10-24) — 단추가 고리·종·사무실·더보기로 줄어 긴 별명은 줄을 바꿔 다 보인다 */
+.m-dash-tt .m-dash-title.m-dash-title2 { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: keep-all; line-height: 1.15; }
+/* 더보기 시트·알림 시트 줄 — 글자 줄 + 오른쪽 숫자·꺾쇠(줄마다 아이콘 없음), 누르는 칸 56 */
+.m-mo-list { margin: 6px 0 10px; border-radius: 14px; background: var(--surface-2); overflow: hidden; }
+.m-mo-row { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 56px; padding: 0 16px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.m-mo-row + .m-mo-row { border-top: 1px solid var(--line); }
+.m-mo-row:active { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.m-mo-row:disabled { opacity: .5; }
+.m-mo-row > b { flex: none; font-size: 16px; font-weight: 650; color: var(--text); }
+.m-mo-row > svg { flex: none; width: 16px; height: 16px; color: var(--text-3); }
+.m-mo-right { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 6px; color: var(--text-3); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-mo-n { min-width: 22px; height: 22px; padding: 0 6px; box-sizing: border-box; border-radius: 11px; background: var(--working); color: #fff; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.m-mo-static { cursor: default; }
+.m-al-sec { margin: 10px 2px 4px; color: var(--text-3); font-size: 13px; font-weight: 650; }
+.m-al-wait { display: flex; flex-direction: column; gap: 8px; }
+.m-al-row { min-height: 60px; }
+.m-al-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--blocked); }
+.m-al-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.m-al-txt b { font-size: 15px; color: var(--text); }
+.m-al-txt span { color: var(--text-2); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-al-ago { flex: none; color: var(--text-3); font-size: 12px; }
+.m-al-empty { margin: 6px 2px 12px; }

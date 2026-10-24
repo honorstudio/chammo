@@ -108,11 +108,15 @@ pub struct Features {
     pub voice: bool,
     /// 재시작으로 꺼진 세션을 사람 없이 이어서 켜기(무인 기계용, domain/revive). 기본 끔 — 앱(TS)만 읽지만 여기 없으면 저장 때 버려졌다(2026-10-04)
     pub auto_revive: bool,
+    /// 세션 자동 정리 — 끝난 팀 세션을 맡긴 참모에게 알려 갱신·끄기·워크트리 정리를 시킨다(domain/autoTidy). 기본 켬 — 앱(TS)만 읽지만 여기 없으면 저장 때 버려진다
+    pub auto_tidy: bool,
     /// 세션 브라우저 앱에서 보기 — 참모 브라우저 래퍼가 이 값을 읽어 크롬 CDP 포트를 연다(tools/chammo-browser/src/live.js). 기본 켬
     pub agent_view: bool,
     /// 화면 조종(Claude Code 내장 MCP computer-use)을 앱이 아는 모든 프로젝트에서 켜기 — 켜면 빠진 프로젝트에 넣어 준다(computer_use.rs).
     /// 사용자 화면을 조종하는 기능이라 기본 끔, 마법사·설정에서 고른다(2026-10-05)
     pub computer_use: bool,
+    /// 익명 사용 통계 — 하루 한 번 무작위 설치 번호·판·OS·CPU·언어를 중계에 알린다(usage_ping.rs, 나라는 서버가 Cloudflare 로). 기본 켬, 설정 > 기능에서 끈다(2026-10-24 사용자)
+    pub usage_ping: bool,
     /// 애니메이션 "auto"(OS 동작 줄이기·맥 부하가 높으면 저절로 줄이기) | "reduce" | "off" — 앱(TS)만 읽는다(domain/animCalm).
     /// 여기 없으면 저장 때 사라진다(2026-10-12 사용자 "부하 심하면 애니메이션 때문에 끊긴다")
     pub animation: String,
@@ -120,7 +124,7 @@ pub struct Features {
 
 impl Default for Features {
     fn default() -> Self {
-        Features { office: true, tama: true, gacha: true, review: true, voice: true, auto_revive: false, agent_view: true, computer_use: false, animation: "auto".into() }
+        Features { office: true, tama: true, gacha: true, review: true, voice: true, auto_revive: false, auto_tidy: true, agent_view: true, computer_use: false, usage_ping: true, animation: "auto".into() }
     }
 }
 
@@ -150,6 +154,8 @@ pub struct Config {
     pub talk_key: String,
     /// 앱 밖에서도 말하기 키를 본다 — 손쉬운 사용 권한이 필요해서 켤 때만 묻는다
     pub talk_anywhere: bool,
+    /// 숨은 칸 — "internal" 이면 사용 신호를 내부 시험 기기로 따로 센다(usage_ping.rs). 화면엔 없다
+    pub ping_channel: String,
 }
 
 /// 시스템 언어(맥 ko_KR·윈도우 ko-KR 등) → 언어
@@ -180,6 +186,7 @@ pub fn default_config(home: &str, data: &Path, lang: &str, exists: impl Fn(&str)
         setup_done: false,
         talk_key: String::new(),
         talk_anywhere: false,
+        ping_channel: String::new(),
     }
 }
 
@@ -198,6 +205,7 @@ pub fn owner_config() -> Config {
         setup_done: true,
         talk_key: "fn".into(),
         talk_anywhere: true,
+        ping_channel: String::new(),
     }
 }
 
@@ -395,6 +403,8 @@ mod tests {
         assert!(!c.features.tama);
         assert!(c.features.office && c.features.gacha && c.features.review && c.features.voice);
         assert!(c.features.agent_view, "세션 브라우저 앱에서 보기는 기본 켬");
+        assert!(c.features.usage_ping, "익명 사용 통계는 기본 켬");
+        assert_eq!(c.ping_channel, "", "숨은 칸 pingChannel 은 비어 있으면 release");
         let off: Config = serde_json::from_str(r#"{"features":{"agentView":false}}"#).unwrap();
         assert!(!off.features.agent_view);
         assert!(serde_json::to_string(&off).unwrap().contains("\"agentView\":false"), "끈 값이 저장된다(래퍼가 읽는다)");

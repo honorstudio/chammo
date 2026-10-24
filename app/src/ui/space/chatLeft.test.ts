@@ -9,7 +9,8 @@ import chatCss from '../chat/chat.css?raw';
 // 2026-10-12 사용자(참모-2 전달, 시안 v2 Q1 A·Q2·Q3 추천대로): 채팅이 오른쪽이라 어느 참모 채팅인지 헷갈렸다 → 띠 | 채팅 | 스페이스.
 // 채팅 머리 = 그 참모 프사 + 이름 + 맡은 일(한 줄 말줄임), 고른 프사와 채팅 칸이 하나로 이어져 켜진 것처럼(고른 탭이 아래 내용과 붙듯)
 describe('채팅 칸 자리 A', () => {
-  it('스페이스는 띠 바로 다음에 채팅을 그린다', () => expect(view).toMatch(/\{rail\}\{chat\}/));
+  // 2026-10-24 홈 대시보드 — 홈을 보는 동안 채팅 칸은 숨기기만(자리 감싸개 display: contents)
+  it('스페이스는 띠 바로 다음에 채팅을 그린다', () => expect(view).toMatch(/\{rail\}\n[^\n]*\n\s*<div className="cv-chat-slot" hidden=\{atHomePick\}>\{chat\}<\/div>/));
   it('앱은 채팅 칸을 스페이스 안 자리로 넘긴다(오른쪽에 따로 안 그림)', () => {
     expect(app).toMatch(/chat=\{chatCol\}/);
     expect(app).toMatch(/className="office-chats left"/);
@@ -52,7 +53,7 @@ describe('고른 프사 ↔ 채팅 카드 이음 윤곽', () => {
     expect(space).toMatch(/\.och-card \{[^}]*border-radius: 12px;[^}]*overflow: hidden;[^}]*background: var\(--surface\)/);
   });
   it('스페이스가 채팅이 있을 때 고른 프사 색으로 윤곽을 그린다', () => {
-    expect(view).toMatch(/\{rail\}\{chat\}\n[^\n]*\n\s*\{chat && <ChatLink color=\{linkColor\} \/>\}/);
+    expect(view).toMatch(/\{chat\}<\/div>\n[^\n]*\n\s*\{chat && !atHomePick && <ChatLink color=\{linkColor\} \/>\}/);
     // 이음 색 = 고른 프사 색(다른 기기를 보는 중이면 그 기기 참모 색, peer-panel)
     expect(view).toContain('const linkColor = far ? far.color : team?.railOn ? team.color : railList.find((a) => a.on)?.color;'); // 메신저 대화를 고르면 그 사람 색
   });

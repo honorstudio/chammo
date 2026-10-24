@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { docImageUrl } from '../../data/web';
 import { csvRows, prettyJson, resolveRel } from '../../domain/phoneFile';
-import type { ShowAt } from '../../domain/showAt';
+import { atKey, type ShowAt } from '../../domain/showAt';
 import { flashWhenReady } from '../flash';
 import { mdDocToHtml } from '../md';
 import { machine } from '../../i18n';
@@ -11,22 +11,26 @@ import { machine } from '../../i18n';
 /** 한 번에 그릴 줄 — 넘으면 앞부분만(폰이 멈추지 않게) */
 const MAX_LINES = 5000;
 
-/** 줄 번호로 짚었으면 그 줄들에 표시를 달고 가운데로, 글로 짚었으면 글을 찾아 반짝 */
+/** 줄 번호로 짚었으면 그 줄들에 표시를 달고 가운데로, 글로 짚었으면 글을 찾아 반짝 — 열 때 한 번만.
+ *  다시 그려도(폴링·부모 렌더) 같은 곳이면 다시 안 간다 — 사람이 스크롤한 걸 끌어오지 않게. 효과는 열쇠(atKey)에만 걸고 최신 본문은 ref 로 읽는다 */
 function useLineFlash(root: React.RefObject<HTMLElement | null>, at: ShowAt | undefined, src: string, raw: boolean) {
+  const latest = useRef({ at, src, raw });
+  latest.current = { at, src, raw };
   useEffect(() => {
     const el = root.current;
-    if (!el || !at) return;
-    if (at.line && el.querySelector('[data-ln]')) {
-      const end = Math.max(at.line, at.lineEnd ?? at.line);
+    const { at: to, src: text, raw: plain } = latest.current;
+    if (!el || !to) return;
+    if (to.line && el.querySelector('[data-ln]')) {
+      const end = Math.max(to.line, to.lineEnd ?? to.line);
       const hit: Element[] = [];
-      for (let n = at.line; n <= end; n++) { const x = el.querySelector(`[data-ln="${n}"]`); if (x) hit.push(x); }
+      for (let n = to.line; n <= end; n++) { const x = el.querySelector(`[data-ln="${n}"]`); if (x) hit.push(x); }
       hit[0]?.scrollIntoView({ block: 'center' });
       hit.forEach((x) => x.classList.add('m-ln-hit'));
       const t = window.setTimeout(() => hit.forEach((x) => x.classList.remove('m-ln-hit')), 6000);
       return () => window.clearTimeout(t);
     }
-    return flashWhenReady(() => root.current, at, src, raw);
-  }, [root, at, src, raw]);
+    return flashWhenReady(() => root.current, to, text, plain);
+  }, [root, atKey(at)]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 export function CodeText({ text, json, at }: { text: string; json?: boolean; at?: ShowAt }) {

@@ -1,14 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { ALL_ON, type FeatureSwitch } from './config';
-import { FEATURE_TAB, firstTab, settingsEscCloses, settingsTabs } from './settingsTabs';
+import { FEATURE_TAB, firstTab, settingsEscCloses, settingsTabs, tabOf } from './settingsTabs';
 
 describe('설정 탭 묶음', () => {
-  it('맥은 여덟 탭, 이 순서', () => {
-    expect(settingsTabs(false)).toEqual(['general', 'agent', 'features', 'voice', 'phone', 'accounts', 'browser', 'tools']);
+  it('아홉 탭, 이 순서 — 폰과 메신저는 기기 관리·메신저 둘로(10-24)', () => {
+    expect(settingsTabs(false)).toEqual(['general', 'agent', 'features', 'voice', 'devices', 'messenger', 'accounts', 'browser', 'tools']);
   });
-  it('윈도우는 계정 탭이 없다(계정 바꿔 끼우기는 맥 키체인)', () => {
-    expect(settingsTabs(true)).not.toContain('accounts');
-    expect(settingsTabs(true)).toHaveLength(7);
+  it('윈도우도 계정 탭이 있다 — Chammo 계정이 거기 산다(Claude 계정 바꿔 끼우기만 맥 전용)', () => {
+    expect(settingsTabs(true)).toEqual(settingsTabs(false));
+  });
+  it('옛 탭 이름 phone 으로 열면 기기 관리로, 모르는 이름은 일반으로', () => {
+    expect(tabOf('phone')).toBe('devices');
+    expect(tabOf('messenger')).toBe('messenger');
+    expect(tabOf('accounts')).toBe('accounts');
+    expect(tabOf('nope')).toBeUndefined();
+    expect(tabOf(undefined)).toBeUndefined();
   });
   it('켬·끔 기능은 빠짐없이 어느 탭엔가 있다', () => {
     const keys = Object.keys(ALL_ON).filter((k) => k !== 'animation') as FeatureSwitch[];

@@ -1,8 +1,8 @@
 // 폰 화면 — 시안 A(겹친 시트): 바닥 = 지금 참모 대시보드, 위 = 채팅 시트(살짝·반·전체). 참모를 바꾸면 바닥과 시트가 같이 바뀐다
 // 상태는 이것만 위에 둔다(a-build-notes): orch(기억) · view(대시보드|예약) · snap. picker·taskFold 는 그 아래
 // 예약 판을 열면 시트는 예약 담당 참모로(domain/mobile routineOrch)
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { getEnv, listBrowsers, listSessionsRaw, NoKeyError, readShowLog, readTasksSince, routinesList, teamViaMac, type MobileEnv } from '../../data/web';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { getEnv, getPushLast, listBrowsers, listSessionsRaw, NoKeyError, readShowLog, readTasksSince, routinesList, teamViaMac, type MobileEnv } from '../../data/web';
 import { PhoneTeam, usePhoneTeam } from './PhoneTeam';
 import { chatFiles, showOwnerOf, type ChatFile } from '../../domain/chatFiles';
 import { titleOf } from '../../domain/reader';
@@ -19,6 +19,7 @@ import { groupByProject, parseAgents, type Session } from '../../domain/session'
 import { ChatSheet } from './ChatSheet';
 import { SheetHostProvider } from './kit';
 import { Composer } from './Composer';
+import { askRef } from '../refBus';
 import { ModelChipRow, VoiceMode } from './ComposerExtras';
 import { usePhoneVoice } from './usePhoneVoice';
 import { MessageList } from './MessageList';
@@ -26,10 +27,10 @@ import { DirectCards, PeerCards, usePhoneDirect } from './DirectCards';
 import { needsAnswer } from '../../domain/directAsk';
 import { lastLine } from './peek';
 import { OrchDash } from './OrchDash';
-import { OrchPicker } from './OrchPicker';
+import { OrchPicker, WaitCard } from './OrchPicker';
 import { RoutineBoard } from './RoutineBoard';
 import { usePush, type Push } from './usePush';
-import { goFrom } from '../../domain/mobilePush';
+import { goFrom, lastUsable, noteJump } from '../../domain/mobilePush';
 import type { NoteTarget } from '../../domain/notify';
 import { SessionsBoard } from './SessionsBoard';
 import { PairHelp } from './PairHelp';
@@ -68,14 +69,32 @@ const keepEnv = (e: MobileEnv) => { try { localStorage.setItem(ENV_KEY, JSON.str
 const forgetEnv = () => { try { localStorage.removeItem(ENV_KEY); } catch { /* 개인 정보 보호 모드 */ } };
 const sameEnv = (a: MobileEnv | null, b: MobileEnv) => !!a && JSON.stringify(a) === JSON.stringify(b);
 
-type View = 'dash' | 'routines' | 'sessions';
-type SpaceProps = { far?: { devices: FarPick[]; onPick: (d: FarPick) => void }; orch: Session; orchs: Session[]; sessions: Session[]; events: TaskEvent[]; waiting: Waiting[]; waitSent: WaitSent; ask: { lead: string; q: string } | null; ctx: Record<string, Ctx>; env: MobileEnv; snap: Snap; setSnap: (s: Snap) => void; onPick: (id: string) => void; onStopped: (id: string) => void; wake: Wake; lives: Live[]; push: Push; view: View; setView: (v: View) => void; vp: Viewport; stateAt: number; lines: Record<string, string> };
+type View = 'dash' | 'routines' | 'sessions' | 'office';
+/** 사무실(방 그림·도트 팩)은 열 때만 받는다 — 메인 묶음이 안 커지게 */
+const PhoneOffice = lazy(() => import('./PhoneOffice'));
+type SpaceProps = { far?: { devices: FarPick[]; onPick: (d: FarPick) => void }; orch: Session; orchs: Session[]; sessions: Session[]; events: TaskEvent[]; waiting: Waiting[]; waitSent: WaitSent; ask: { lead: string; q: string } | null; ctx: Record<string, Ctx>; env: MobileEnv; snap: Snap; setSnap: (s: Snap) => void; onPick: (id: string) => void; onTalk: (id: string) => void; onStopped: (id: string) => void; wake: Wake; lives: Live[]; push: Push; view: View; setView: (v: View) => void; vp: Viewport; stateAt: number; lines: Record<string, string>; jump: Jump | null };
+/** 눌린 알림이 시킨 것 — n 이 바뀔 때마다 한 번(같은 참모면 OrchSpace 가 그대로라 시트를 여기서 닫는다) */
+type Jump = { n: number; card?: string; picker?: boolean };
 
 /** 입력칸 최대 높이 — 7줄(16px 글자 기준 176px)과 보이는 화면 26%(반 시트의 40%) 중 작은 쪽 */
 const inputMax = (h: number) => Math.min(176, Math.round(h * 0.26));
 
-function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask, ctx, env, snap, setSnap, onPick, onStopped, wake, lives, push, view, setView, vp, stateAt, lines }: SpaceProps) {
+function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask, ctx, env, snap, setSnap, onPick, onTalk: talkTo, onStopped, wake, lives, push, view, setView, vp, stateAt, lines, jump }: SpaceProps) {
   const [picker, setPicker] = useState(false);
+  // 알림이 짚은 카드 — 결정(w:)은 채팅 끝에 그 카드를 따로, 직접 카드(d:)는 이미 채팅 끝에 있어 펼친다. 보던 시트·파일은 닫는다(2026-10-23)
+  const [jumped, setJumped] = useState<string | null>(null);
+  useEffect(() => {
+    if (!jump) return;
+    setPicker(!!jump.picker);
+    setFileOpen(null);
+    setJumped(jump.card ?? null);
+  }, [jump?.n]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!jumped) return;
+    const t = window.setTimeout(() => document.querySelector(`[data-card="${CSS.escape(jumped)}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 350); // 시트가 반쯤 올라온 뒤
+    return () => window.clearTimeout(t);
+  }, [jumped]);
+  const jumpedWait = jumped?.startsWith('w:') ? waiting.find((w) => w.kind === 'decide' && w.orch === orch.id && `w:${w.taskId}` === jumped) : undefined;
   const chat = useMobileChat(orch, snap === 'peek' ? 10_000 : 2000, stateAt);
   const [routinesRaw] = useMemoPoll('routines', routinesList, 30_000, '[]');
   const running = parseRoutines(routinesRaw).filter((r) => routineState(r, sessions) === 'running').length;
@@ -103,6 +122,8 @@ function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask,
     return chatFiles(showLog, orch.id, own).map((f) => (f.from ? { ...f, who: sessions.find((x) => x.id === f.from)?.name ?? f.from } : f));
   }, [showLog, orch.id, events, sessions, orchs]);
   const [fileOpen, setFileOpen] = useState<ChatFile | null>(null);
+  /** 사무실 뽑기·스킨 시트가 열린 동안 — 아래 채팅창을 숨겨 시트가 커진다(PhoneOffice onWide) */
+  const [wide, setWide] = useState(false);
   const askName = asking[0] ? sessions.find((s) => s.id === asking[0]!.from)?.name || asking[0].from : '';
   return (
     <div className="m-space" style={orchVars(color) as React.CSSProperties}>
@@ -112,9 +133,15 @@ function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask,
         ? <RoutineBoard sessions={sessions} onBack={() => setView('dash')} />
         : view === 'sessions'
         ? <SessionsBoard sessions={sessions} hqDir={env.hqDir} ctx={ctx} lives={lives} onBack={() => setView('dash')} />
-        : <OrchDash orch={orch} orchs={orchs} asking={waiting.some((w) => w.orch === orch.id)} sessions={sessions} ctx={ctx} items={chat.items} events={events} routinesRunning={running} onRoutines={() => setView('routines')} onSessions={() => setView('sessions')} hqDir={env.hqDir} voiceBase={env.voiceBase ?? null} lives={lives} push={push} showLog={showLog} showLoaded={showLoaded}
-            waiting={waiting} direct={direct} onPicker={() => setPicker(true)} onChat={() => setSnap('half')} onAsk={(t) => { chat.send(t); setSnap('half'); }} />}
+        : view === 'office'
+        ? <Suspense fallback={<p className="m-center">사무실 여는 중…</p>}>
+            <PhoneOffice sessions={sessions} orchs={orchs} hqDir={env.hqDir} lives={lives} onBack={() => setView('dash')} current={orch.id}
+              onTalk={(id) => { if (id !== orch.id) talkTo(id); }} onWide={setWide} />
+          </Suspense>
+        : <OrchDash orch={orch} orchs={orchs} asking={waiting.some((w) => w.orch === orch.id)} sessions={sessions} ctx={ctx} items={chat.items} events={events} routinesRunning={running} onRoutines={() => setView('routines')} onSessions={() => setView('sessions')} onOffice={() => setView('office')} hqDir={env.hqDir} voiceBase={env.voiceBase ?? null} lives={lives} push={push} showLog={showLog} showLoaded={showLoaded}
+            waiting={waiting} direct={direct} waitSent={waitSent} onPicker={() => setPicker(true)} onChat={() => setSnap('half')} onAsk={(t) => { chat.send(t); setSnap('half'); }} />}
       <ChatSheet
+        hidden={view === 'office' && wide}
         snap={snap}
         onSnap={setSnap}
         vh={vp.h}
@@ -128,9 +155,11 @@ function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask,
         }
       >
         {chat.error && <Notice text={chat.error} error onClose={() => chat.setError(null)} />}
-        <MessageList files={files} onOpenFile={setFileOpen} items={chat.items} earlier={chat.earlier} loading={chat.loading} stale={chat.stale} out={chat.out} onRetry={chat.retry} onDrop={chat.drop} live={chat.live} ask={ask} who={<MAvatar orch={orch} orchs={orchs} size={28} asking />} />
+        <MessageList files={files} onOpenFile={setFileOpen} items={chat.items} earlier={chat.earlier} loading={chat.loading} stale={chat.stale} out={chat.out} onRetry={chat.retry} onDrop={chat.drop} live={chat.live} ask={ask} who={<MAvatar orch={orch} orchs={orchs} size={28} asking />}
+          onRef={(who, text) => askRef(orch.id, { kind: 'chat', who, text })} />
         {/* 직접 답하기 카드 — 맡긴 세션이 본인 승인을 기다릴 때(채팅 끝, 입력칸 바로 위) */}
-        <DirectCards mine={direct} sessions={sessions} />
+        <DirectCards mine={direct} sessions={sessions} focus={jumped?.startsWith('d:') ? jumped.slice(2) : undefined} />
+        {jumpedWait && <div className="m-direct"><WaitCard w={jumpedWait} orchs={orchs} sent={waitSent} card={jumped!} /></div>}
         {orch.id === orchs[0]?.id && <PeerCards />}
       </ChatSheet>
       {fileOpen && <FileView path={fileOpen.path} title={titleOf(fileOpen.path)} at={fileOpen.at} orch={orch.id} onClose={() => setFileOpen(null)} />}
@@ -199,6 +228,8 @@ export function MobileApp() {
   const [tabH, setTabH] = useState(0);
   useLayoutEffect(() => { setTabH(vp.kb ? 0 : tabBar.current?.offsetHeight ?? 0); });
   const go = (id: string) => { remember(id); setPick(id); setView('dash'); setSnap('half'); };
+  // 사무실에서 참모 바꿔 말하기 — 화면·시트는 그대로, 폰 전체 지금 참모만(입력칸·채팅 시트·임시 글이 다 지금 참모에 묶여 있어 사무실을 나가도 방금 말한 참모)
+  const talkTo = (id: string) => { remember(id); setPick(id); };
   // 참모 깨우기 — 켜거나 만든 참모가 목록에 뜨면 그리로(참모 바꾸기 시트·참모가 없을 때 화면이 같이 쓴다)
   const wake = useWake(orchs, go);
   // 재운 참모 — 지금 보던 참모면 다른 켜진 참모로, 없으면 참모 없음 화면(목록이 비면 저절로)
@@ -213,16 +244,33 @@ export function MobileApp() {
   usePhoneVoice(); // 음성 모드가 켜져 있고 폰을 보고 있으면 소리는 폰에서(맥에 하트비트)
   // 알림을 눌러 열렸으면(?go=) 그 참모로 — 열려 있던 화면이면 서비스 워커가 알려 준다
   const [goTo, setGoTo] = useState<NoteTarget | null>(() => goFrom(location.search));
+  const [jump, setJump] = useState<Jump | null>(null);
+  const [teamRoom, setTeamRoom] = useState<{ n: number; room: string } | null>(null);
   useEffect(() => {
     if (goFrom(location.search)) history.replaceState(null, '', '/');
-    const on = (e: MessageEvent) => { const t = typeof e.data?.go === 'string' ? goFrom(`?go=${encodeURIComponent(e.data.go)}`) : null; if (t) setGoTo(t); };
+    // 받았다는 답(ports[0]) — 서비스 워커가 답을 못 받으면 이 창을 갈 곳 주소로 다시 연다(옛 판·멈춘 페이지)
+    const on = (e: MessageEvent) => {
+      if (typeof e.data?.go !== 'string') return;
+      e.ports?.[0]?.postMessage(true);
+      const t = goFrom(`?go=${encodeURIComponent(e.data.go)}`);
+      if (t) setGoTo(t);
+    };
     navigator.serviceWorker?.addEventListener('message', on);
     return () => navigator.serviceWorker?.removeEventListener('message', on);
   }, []);
   useEffect(() => {
-    if (!goTo || !orchs.length) return;
-    if (goTo.to === 'session' && orchs.some((o) => o.id === goTo.id)) go(goTo.id);
+    if (!goTo) return;
+    // 갈 곳을 모르는 알림(중계 입구 푸시) — 컴퓨터에 마지막 알림 갈 곳을 묻는다
+    if (goTo.to === 'latest') { getPushLast().then((r) => setGoTo(lastUsable(r)), () => setGoTo(null)); return; }
+    if (!orchs.length) return;
+    const j = noteJump(goTo, orchs);
     setGoTo(null);
+    if (!j) return;
+    setFar(null);
+    if (j.team) { setTab('team'); setTeamRoom({ n: Date.now(), room: j.team }); return; }
+    setTab('orch');
+    if (j.orch) go(j.orch);
+    setJump({ n: Date.now(), ...(j.card ? { card: j.card } : {}), ...(j.picker ? { picker: true } : {}) });
   }, [goTo, orchs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const poller = useRef<{ kick(): void } | null>(null);
@@ -360,9 +408,9 @@ export function MobileApp() {
       {error && <div className="m-error m-top-err">{error}</div>}
       <div className="m-tabpage" style={{ height: pageVp.h }}>
         {tab === 'team'
-          ? <PhoneTeam api={teamViaMac} t={team} orch={{ id: orch.id, name: orch.name || env.assistantName }} />
+          ? <PhoneTeam api={teamViaMac} t={team} orch={{ id: orch.id, name: orch.name || env.assistantName }} open={teamRoom} />
           : <OrchSpace key={orch.id} far={farDevs.length ? { devices: farDevs, onPick: setFar } : undefined} orch={orch} orchs={orchs} sessions={sessions} events={events} waiting={waiting} waitSent={waitSent} ask={asks[orch.id] ?? null} ctx={ctx} env={env} snap={snap} setSnap={setSnap} vp={pageVp} stateAt={stateAt} lines={lines}
-            view={view} setView={setView} onPick={go} onStopped={stopped} wake={wake} lives={lives} push={push} />}
+            view={view} setView={setView} onPick={go} onTalk={talkTo} onStopped={stopped} wake={wake} lives={lives} push={push} jump={jump} />}
       </div>
       {!vp.kb && (
         <nav ref={tabBar} className="m-tabbar" role="tablist" aria-label="화면">

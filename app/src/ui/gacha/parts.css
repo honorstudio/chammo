@@ -1,0 +1,12 @@
+/* 뽑기 조각(별·아이템 아이콘) — 데스크톱(styles.css)과 폰(mobile.css)이 같이 쓴다. Stars·GachaPage 가 불러온다 */
+.gacha-icon { display: block; width: 56px; height: 48px; image-rendering: pixelated; }
+.gacha-icon.big { width: 84px; height: 72px; }
+/* 별(ui/gacha/Stars) — 5×5 도트 */
+.stars { display: inline-flex; gap: 2px; }
+.star-pip { width: 11px; height: 11px; fill: #3a3350; }
+.star-pip.on { fill: #ffc93c; }
+.star-pip.pop { animation: starpop .6s cubic-bezier(.2, 1.6, .4, 1) .2s both; }
+@keyframes starpop { from { transform: scale(0); } 60% { transform: scale(1.6); } }
+.star-count { display: inline-flex; align-items: center; gap: 5px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; }
+.star-count i { font-style: normal; font-weight: 600; color: #a99fcc; }
+.star-count .star-pip { width: 14px; height: 14px; }

@@ -4,6 +4,7 @@
    멈춘 그림은 그 순간 모양 그대로(일하는 중·물어봄 표시는 색·모양으로 남는다), 다시 보면 이어서 돈다.
    CSS 어디든 infinite 애니메이션을 새로 만들면 여기 한 줄 — paused.test.ts 가 CSS 를 다 읽어 빠진 걸 잡는다. 프사 기본 자세(avatar.css)는 그쪽 규칙이 이긴다 */
 :is(html.oa-paused, html.oa-calm) .sm.working svg,
+:is(html.oa-paused, html.oa-calm) .m-g1-cell.r-전설,
 :is(html.oa-paused, html.oa-calm) .sm.waiting svg,
 :is(html.oa-paused, html.oa-calm) .spin,
 :is(html.oa-paused, html.oa-calm) .oa-ph-starting .oa-all,

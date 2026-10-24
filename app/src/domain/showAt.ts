@@ -18,6 +18,9 @@ export function parseAt(raw: unknown): ShowAt | undefined {
   return Object.keys(at).length ? at : undefined;
 }
 
+/** 같은 곳을 가리키는지 비교하는 열쇠 — 렌더마다 새로 만든 at 객체도 내용이 같으면 같다(효과가 객체 참조에 걸려 매번 다시 스크롤하던 것, 2026-10-23) */
+export const atKey = (at?: ShowAt): string => (at ? [at.line, at.lineEnd, at.find, at.page, at.box?.join(',')].map((v) => v ?? '').join('|') : '');
+
 /** 마크다운 한 줄에서 화면에 보이는 글 — 칸이 있으면 칸들 */
 function cells(line: string): string[] {
   let t = line.trim();

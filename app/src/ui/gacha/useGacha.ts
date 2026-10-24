@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { readGacha, writeGacha, type AppEnv } from '../../data/tauri';
 import { dayStartAt, earn, place, pull, seeItem, setSkin as setSkinOf, toggleEquip, type GachaFile, type PullResult } from '../../domain/gacha';
+import { phoneAnswer, type PhoneReply } from '../../domain/phoneGacha';
 import type { TamaEvent } from '../../domain/tama/pet';
 import { makeEditor } from './editor';
 
@@ -53,5 +54,12 @@ export function useGacha(env: AppEnv | null, feed: TamaEvent[]) {
   /** NEW 끄기만 — 도감에서 눌러 봄 */
   const see = useCallback(async (id: string) => { await change((f) => seeItem(f, id)); }, [change]);
 
-  return { file, gain, draw, equip, placeItem, setSkin, see };
+  /** 폰 요청(폰 서버 → window.__gachaPhone) — 데스크톱 뽑기·장착과 같은 한 줄에서. off = 이 맥에서 뽑기 기능을 꺼 둠 */
+  const phone = useCallback(async (raw: unknown, off: boolean): Promise<PhoneReply> => {
+    let reply: PhoneReply | null = null;
+    await change((f) => { const r = phoneAnswer(f, raw, off, Math.random, Date.now()); reply = r.reply; return r.file; });
+    return reply!;
+  }, [change]);
+
+  return { file, gain, draw, equip, placeItem, setSkin, see, phone };
 }

@@ -202,6 +202,8 @@ export type GachaFile = {
   fresh?: string[];
   /** 가구 놓기 — 칸 [gx, gy], null = 창고. 없으면 휴게실 자동 자리 */
   placed?: Record<string, [number, number] | null>;
+  /** 폰에서 온 뽑기 요청 중 처리한 최근 것(domain/phoneGacha) — 같은 요청 id 가 다시 와도 코인이 두 번 안 빠지게 결과째 */
+  phoneDone?: { rid: string; results: PullResult[] }[];
 };
 export type EquipKind = 'skin' | 'hat' | 'window' | 'fx' | 'action' | 'desk' | 'title' | 'light';
 const EQUIPPABLE: ItemKind[] = ['skin', 'hat', 'window', 'fx', 'action', 'desk', 'title', 'light'];
@@ -215,7 +217,9 @@ export function parseGacha(text: string, since: number): GachaFile {
     const l = v.late;
     const late = l && typeof l.floor === 'number' && typeof l.at === 'number' && Array.isArray(l.keys) ? l : undefined;
     const fresh = Array.isArray(v.fresh) ? v.fresh.filter((x): x is string => typeof x === 'string') : undefined;
-    return { ...EMPTY_GACHA, ...v, owned: v.owned ?? {}, history: v.history ?? [], equip: v.equip ?? {}, late, fresh } as GachaFile;
+    // 폰 요청 기록 — 모양이 틀리면 버린다(깨진 칸 하나로 폰 뽑기가 다 막히지 않게, 보안 리뷰 4)
+    const phoneDone = Array.isArray(v.phoneDone) ? v.phoneDone.filter((d) => !!d && typeof d === 'object' && typeof d.rid === 'string' && Array.isArray(d.results)) : undefined;
+    return { ...EMPTY_GACHA, ...v, owned: v.owned ?? {}, history: v.history ?? [], equip: v.equip ?? {}, late, fresh, phoneDone } as GachaFile;
   } catch {
     return { ...EMPTY_GACHA, since };
   }

@@ -8,7 +8,10 @@ export type TaskEvent = {
   ts: string;
   /** ask = 사용자 결정을 기다림(결정 대기함에 뜸), answer = 사용자가 답함 */
   /** own = 누가 시켰는지 안 남은 옛 일에 사용자가 주인 참모를 붙임(채팅 뷰 대시보드, from 에 그 참모) */
-  type: 'send' | 'reply' | 'done' | 'note' | 'ask' | 'answer' | 'own';
+  /** goal-done·goal-total = 참모가 목표를 지금 닫음·예정 수를 바꿈(`task goal-done|goal-total`, task 는 일이 아닌 goal-… 번호, 2026-10-23~) */
+  /** wait = 밖(심사·예약 날짜·사람 답)을 기다리는 중 — 진행 칸이 회색 '기다림'으로 본다(`task wait`, note 가 사유, 2026-10-23~). reply·done·retry·answer 나 같은 대상 새 send, until 이 지나면 풀린다 */
+  /** handover = 참모가 다른 참모에게 큰 일을 넘김(`task handover`, task 는 h-… 번호, done 이 오면 끝 — 2026-10-23~) */
+  type: 'send' | 'reply' | 'done' | 'note' | 'ask' | 'answer' | 'own' | 'goal-done' | 'goal-total' | 'handover' | 'wait';
   task: string;
   /** send: 대상 세션의 id 또는 이름. 그 뒤 이벤트에 있으면 대상을 그 세션으로 옮긴다(주인 잃은 일을 이어서 켰을 때) */
   target?: string;
@@ -20,10 +23,18 @@ export type TaskEvent = {
   project?: string;
   /** send 에만: 무엇을 시켰나 한 줄 */
   title?: string;
-  /** send 에만: 목표 이름표(`task send --goal "<목표>[:N]"`, 2026-10-23~) — 홈 진행 칸이 목표 조각으로 묶는다(domain/goalBar) */
+  /** send·goal-*: 목표 이름표(`task send --goal "<목표>[:N]"`, 2026-10-23~) — 홈 진행 칸이 목표 조각으로 묶는다(domain/goalBar) */
   goal?: string;
-  /** send 에만: 그 목표의 예정 일 수(:N) — 0/N 에서 시작 */
+  /** send·goal-total: 그 목표의 전체 예정 개수(:N, 몇 번째가 아님) — 0/N 에서 시작 */
   goalTotal?: number;
+  /** send 에만: 넘겨받은 일(h-…)을 쪼갠 일 — 넘긴 참모의 큰 일 칸이 이 일들의 진행을 따라간다(`send --from-handover`) */
+  handover?: string;
+  /** handover 에만: 받는 참모의 기본 이름·id(target 은 전체 이름) */
+  toName?: string;
+  toId?: string;
+  /** wait 에만: 이때까지 기다린다(ISO) · 누구 몫인가 — user = 사용자가 줄 것, outside = 심사·예약처럼 밖 */
+  until?: string;
+  on?: 'user' | 'outside';
   note?: string;
   /** ask 에만: 답장 받을 세션(물어본 참모의 session id). 없으면 일을 받은 세션 */
   to?: string;
@@ -115,10 +126,15 @@ const ORPHAN_DAYS = 7;
  * 끝난 카드가 끝없이 쌓여 급한 게 안 보이던 것(2026-09-27 사용자). 세션 없음을 끝난 일에 섞었더니
  * 재시작으로 죽은 일 3건이 묻혔다(2026-09-27) — 그래서 따로 뺀다
  */
-export function splitCards(cards: TaskCard[], now: number): { active: TaskCard[]; superseded: TaskCard[]; orphaned: TaskCard[]; doneToday: TaskCard[]; hidden: number } {
+/** '오늘'이 시작한 때 — 새벽 5시(밤샘 일은 전날로 친다). 작업 패널 '오늘 끝남'·홈 대시보드가 같이 쓴다 */
+export function workDayStart(now: number): number {
   const d = new Date(now);
   if (d.getHours() < 5) d.setDate(d.getDate() - 1);
-  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 5).getTime();
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 5).getTime();
+}
+
+export function splitCards(cards: TaskCard[], now: number): { active: TaskCard[]; superseded: TaskCard[]; orphaned: TaskCard[]; doneToday: TaskCard[]; hidden: number } {
+  const start = workDayStart(now);
   const open = cards.filter((c) => c.status !== 'done' && c.status !== 'gone');
   // 세션은 한 번에 한 가지 — 같은 세션에 더 새 일이 갔으면 앞의 안 닫힌 일은 '끝 기록 없는 일'(2026-09-29 사용자: 계속 쌓이기만)
   const newest = new Map<string, string>();

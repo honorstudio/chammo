@@ -301,12 +301,33 @@ fn post(v: &Vapid, s: &Sub, body: &[u8]) -> Result<u16, String> {
     String::from_utf8_lossy(&out.stdout).trim().parse::<u16>().map_err(|_| "no status".to_string())
 }
 
+/// 마지막 알림 갈 곳 — 중계 입구 푸시는 본문이 없어 폰 서비스 워커가 눌린 알림의 갈 곳을 모른다. 폰이 /api/push-last 로 묻는다(2026-10-23)
+const LAST: &str = "push-last.json";
+
+pub fn keep_last(dir: &Path, target: &str, now_ms: u64) {
+    let _ = std::fs::write(dir.join(LAST), serde_json::json!({ "target": target, "at": now_ms }).to_string());
+}
+
+/// { target, age(초) } — 기록이 없으면 빈 갈 곳·age null. 얼마나 오래된 걸 믿을지는 폰이 정한다
+pub fn last_target(dir: &Path, now_ms: u64) -> serde_json::Value {
+    let v: serde_json::Value = std::fs::read_to_string(dir.join(LAST)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    match (v["target"].as_str(), v["at"].as_u64()) {
+        (Some(t), Some(at)) => serde_json::json!({ "target": t, "age": now_ms.saturating_sub(at) / 1000 }),
+        _ => serde_json::json!({ "target": "", "age": null }),
+    }
+}
+
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
 /// 앱 알림이 나갈 때 — 모바일을 켜 뒀고 진짜 데이터 폴더일 때만, 지금 짝지은 기기의 구독마다(따로 도는 스레드에서)
 pub fn send_all(title: &str, body: &str, target: &str) {
     let dir = crate::config::data_dir().to_path_buf();
     if !crate::mobile::push_allowed(&dir) {
         return;
     }
+    keep_last(&dir, target, now_ms());
     let pair = crate::mobile_pair::Devices::open(&dir);
     let devices: Vec<String> = pair.list().into_iter().map(|d| d.id).collect();
     // 중계로 짝지은 폰은 중계 VAPID 로 구독해서 이 컴퓨터 열쇠로는 못 보낸다 — 중계에 본문 없는 푸시를 부탁한다(ADR 0013)

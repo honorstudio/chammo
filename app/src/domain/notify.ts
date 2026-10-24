@@ -6,8 +6,8 @@
 import { tr } from '../i18n';
 
 export type NoteKind = 'decide' | 'login' | 'allowFail' | 'asks' | 'blocked' | 'ctx' | 'accounts' | 'human' | 'lost';
-/** session = 알림을 묶는 단위(세션 id 등). orch = 참모 세션에서 난 일인가 */
-export type Note = { kind: NoteKind; session: string; orch: boolean; title: string; body: string };
+/** session = 알림을 묶는 단위(세션 id 등). orch = 참모 세션에서 난 일인가. go = 누르면 갈 곳을 따로 정할 때(noteTarget 글자) */
+export type Note = { kind: NoteKind; session: string; orch: boolean; title: string; body: string; go?: string };
 
 export const NOTIFY_GAP_MS = 2 * 60_000;
 
@@ -42,15 +42,25 @@ const waitingLabel = (w?: string): string => {
 /** 확인창 알림 본문 — 대화 기록의 옛 답 대신 무엇에 멈췄는지 */
 export const blockedBody = (waitingFor?: string) => tr(`${waitingLabel(waitingFor)}에서 멈췄어`, `Stopped at ${waitingLabel(waitingFor)}`);
 
-/** 알림을 누르면 갈 곳 — macOS 알림(userInfo)에 글자로 실어 보냈다가 눌리면 돌려받는다 */
-export type NoteTarget = { to: 'inbox' } | { to: 'session'; id: string };
+/** 알림을 누르면 갈 곳 — macOS 알림(userInfo)·폰 푸시(target)에 글자로 실어 보냈다가 눌리면 돌려받는다.
+ *  card = 그 참모 채팅의 그 카드(카드 열쇠는 폰 dashList 와 같은 w:<일 id>·d:<카드 id>), team = 팀 대화(team_alert),
+ *  latest = 갈 곳을 모르는 알림(중계 입구 푸시는 본문이 없다) — 컴퓨터에 마지막 알림 갈 곳을 묻는다 */
+export type NoteTarget = { to: 'inbox' } | { to: 'session'; id: string } | { to: 'card'; orch: string; card: string } | { to: 'team'; room: string } | { to: 'latest' };
 
-export const noteTarget = (n: Note) => (n.kind === 'decide' || n.kind === 'login' ? 'inbox' : `session:${n.session}`);
+export const cardTarget = (orch: string, card: string) => `card:${orch}:${card}`;
+
+export const noteTarget = (n: Note) => n.go ?? (n.kind === 'decide' || n.kind === 'login' ? 'inbox' : `session:${n.session}`);
 
 export function readNoteTarget(s: string): NoteTarget | null {
-  if (s === 'inbox') return { to: 'inbox' };
-  const id = s.startsWith('session:') ? s.slice('session:'.length) : '';
-  return id ? { to: 'session', id } : null;
+  if (s === 'inbox' || s === 'latest') return { to: s };
+  const [head, ...rest] = s.split(':');
+  const tail = rest.join(':');
+  if (head === 'session') return tail ? { to: 'session', id: tail } : null;
+  if (head === 'team') return tail ? { to: 'team', room: tail } : null;
+  if (head !== 'card') return null;
+  const [orch, ...card] = rest;
+  const key = card.join(':');
+  return orch && key && card[1] ? { to: 'card', orch, card: key } : null;
 }
 
 /** 참모 창을 보고 있나 — 맥은 웹 값(문서 포커스·안 숨김) 그대로. 윈도우 WebView2 는 최소화·다른 창 앞이어도 hasFocus()=true·hidden=false 라

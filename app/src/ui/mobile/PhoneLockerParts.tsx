@@ -9,8 +9,8 @@ import { BottomSheet } from './kit';
 /** 길게 누른 것 — 경로(기록·폴더 안 파일), 폴더 안 바로가기면 그 자리 rel */
 export type Held = { path: string; name: string; rel?: string; link?: boolean };
 
-/** 손가락으로 0.45초 — 메뉴. 움직이면(스크롤) 취소, 메뉴를 띄운 손은 떼도 열기로 안 친다 */
-function usePress(onOpen: () => void, onHold: () => void) {
+/** 손가락으로 0.45초 — 메뉴. 움직이면(스크롤) 취소, 메뉴를 띄운 손은 떼도 열기로 안 친다(말풍선 속 링크도 안 따라간다) */
+export function usePress(onOpen: () => void, onHold: () => void) {
   const t = useRef<number | undefined>(undefined);
   const at = useRef<{ x: number; y: number } | null>(null);
   const held = useRef(false);
@@ -21,7 +21,7 @@ function usePress(onOpen: () => void, onHold: () => void) {
     onPointerMove: (e: React.PointerEvent) => { if (at.current && Math.hypot(e.clientX - at.current.x, e.clientY - at.current.y) > 8) stop(); },
     onPointerUp: stop, onPointerCancel: stop, onPointerLeave: stop,
     onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
-    onClick: () => { if (held.current) { held.current = false; return; } onOpen(); },
+    onClick: (e: React.MouseEvent) => { if (held.current) { held.current = false; e.preventDefault(); return; } onOpen(); },
   };
 }
 

@@ -1,5 +1,6 @@
 import { MAX_STAR, nextStar, starOf } from '../../domain/gacha';
 import { tr } from '../../i18n';
+import './parts.css';
 
 // 직접 그린 7×7 도트 별 — 이모지·글자 ★ 대신(도감 도트 톤)
 const STAR = ['...#...', '..###..', '#######', '.#####.', '..###..', '.##.##.', '.#...#.'];

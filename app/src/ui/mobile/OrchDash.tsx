@@ -16,7 +16,7 @@ import type { Ctx } from '../../domain/ctx';
 import { dashFiles, type DashFile } from '../../domain/dashboard';
 import { dashList, type NeedRow } from '../../domain/dashList';
 import type { DirectCard } from '../../domain/directAsk';
-import { heldIds, orchTasks, phoneName, subStatus, type Waiting } from '../../domain/mobile';
+import { heldIds, orchTasks, phoneName, subStatus, type WaitSent, type Waiting } from '../../domain/mobile';
 import { summarizeTranscript } from '../../domain/activity';
 import { peekLines, phoneChips } from '../../domain/phoneLocker';
 import { projectsOf } from '../../domain/locker';
@@ -28,7 +28,14 @@ import { FileView } from './FileView';
 import { SessionPeek } from './SessionPeek';
 import { BrowserView } from './BrowserView';
 import { liveOf, type Live } from '../../domain/agentBrowser';
-import { IconBell, IconBellOff, IconCalendarClock, IconChevron, IconSessions } from '../Icons';
+import { IconBell, IconChevron, IconMore, IconOffice } from '../Icons';
+import { MoreSheet } from './MoreSheet';
+import { AlertsSheet } from './AlertsSheet';
+import { WaitCard } from './OrchPicker';
+import { DirectCards } from './DirectCards';
+import { needsAnswer } from '../../domain/directAsk';
+import { alertCount, recentAlerts } from '../../domain/phoneAlerts';
+import { officeDot as officeDotOf } from '../../domain/phoneOffice';
 import type { Push } from './usePush';
 import { PUSH_HINT } from '../../domain/mobilePush';
 import { HomeAppLink } from './HomeAppLink';
@@ -125,6 +132,8 @@ type Props = {
   onRoutines: () => void;
   /** 세션 판 — 하위 세션 목록·대화 보기 */
   onSessions: () => void;
+  /** 사무실(폰 사무실 A) — 머리 아이콘, 사람 필요·물어봄이면 점 */
+  onOffice: () => void;
   /** HQ 폴더 — docs/starter.md 의 할 일·최근 결정(데스크톱 대시보드 목록과 같은 것) */
   hqDir: string;
   /** 설정 목소리(Supertonic 일 때만) — 프로필 창 '기본' 목소리, null 이면 목소리 칸을 안 보인다 */
@@ -134,11 +143,13 @@ type Props = {
   showLoaded: boolean;
   /** 떠 있는 세션 브라우저 — 이 참모 것이면 대시보드 위에, 하위 세션 것은 그 세션 대화 위에 */
   lives: Live[];
-  /** 폰 알림(웹 푸시) 켜기·끄기 */
+  /** 폰 알림(웹 푸시) 켜기·끄기 — 더보기 시트 토글 */
   push: Push;
   /** 위 칸 '나한테 필요' — 사용자 답을 기다리는 것(waitingList)·이 참모 몫 직접 답하기 카드 */
   waiting: Waiting[];
   direct: DirectCard[];
+  /** 종 시트 '답 기다림' 카드의 보냄 표시(참모 시트 WaitCard 와 같은 저장소) */
+  waitSent: WaitSent;
   /** 참모가 물은 일(task ask)을 누르면 답하는 곳(참모 바꾸기 '답을 기다림'), 직접 답하기 카드를 누르면 채팅 시트 */
   onPicker: () => void;
   onChat: () => void;
@@ -148,12 +159,14 @@ type Props = {
 
 
 /** 홈 | 보관함 — 참모마다 마지막에 본 칸(데스크톱 1 '마지막에 본 줄'과 같은 규칙), 처음은 홈 */
+/** '다음 할 일' 짚는 곳 — 모듈 상수로(렌더마다 새 객체면 폴링 때마다 다시 그리는 걸로 읽혀 문서가 제자리로 끌려간다) */
+const TODO_AT = { find: '다음 할 일' };
 const TAB_KEY = 'm.dashTab';
 const loadTab = (id: string): 'home' | 'locker' => { try { return (JSON.parse(localStorage.getItem(TAB_KEY) ?? '{}') as Record<string, string>)[id] === 'locker' ? 'locker' : 'home'; } catch { return 'home'; } };
 
-export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunning, onRoutines, onSessions, hqDir, voiceBase, lives, push, showLog, waiting, direct, onPicker, onChat, onAsk }: Props) {
+export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunning, onRoutines, onSessions, onOffice, hqDir, voiceBase, lives, push, showLog, waiting, direct, waitSent, onPicker, onChat, onAsk }: Props) {
   const [pushHint, setPushHint] = useState<string | null>(null);
-  // 켜진 종을 누르면 바로 끄지 않고 묻는다 — 상태 표시로 보고 눌렀다가 꺼졌다(2026-10-03 18:54)
+  // 켜진 알림을 끄려면 바로 끄지 않고 묻는다 — 상태 표시로 보고 눌렀다가 꺼졌다(2026-10-03 18:54). 이제 더보기 시트 토글에서(종은 알림 보기)
   const [askOff, setAskOff] = useState(false);
   const bell = () => (push.can !== 'ok' ? setPushHint(PUSH_HINT[push.can] ?? '이 브라우저는 알림을 못 받아요') : push.on ? setAskOff(true) : push.enable());
   const myBrowser = liveOf(orch, lives);
@@ -164,6 +177,7 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
   useEffect(() => setTabState(loadTab(orch.id)), [orch.id]);
   const setTab = (t: 'home' | 'locker') => { setTabState(t); try { localStorage.setItem(TAB_KEY, JSON.stringify({ ...(JSON.parse(localStorage.getItem(TAB_KEY) ?? '{}') as object), [orch.id]: t })); } catch { /* 이번 실행만 */ } };
   const [peek, setPeek] = useState<Session | null>(null);
+  const officeDot = officeDotOf(sessions, hqDir, lives);
   const busySubs = sessions.filter((s) => s.kind === 'background' && !orchs.some((o) => o.id === s.id) && (s.state === 'working' || s.state === 'blocked')).length;
   // 화면을 오가도 마지막 값을 바로 — 뒤에서 새로 받는다(ui/mobile/memo). 파일 칸은 한 번도 못 받았을 때만 뼈대
   const [usage] = useMemoPoll('usage', readUsage, 30_000, '{}');
@@ -208,18 +222,26 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
   const left = headLeft(acctView, usage, now);
   const [profile, setProfile] = useState(false); // 머리 아바타 → 프로필 창(이름 바꾸기)
   const title = usePendingNicks(orchs).nameOf(orch);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const myWait = waiting.filter((w) => w.orch === orch.id);
+  const myCards = direct.filter(needsAnswer);
+  const bellN = alertCount(myWait.length, myCards.length);
+  const bellLabel = `알림${bellN > 0 ? ` — 답 기다림 ${bellN}` : ''}`;
+  const alertRows = useMemo(() => (alertsOpen ? recentAlerts(events, orch.id, Date.now()) : []), [alertsOpen, events, orch.id]);
 
   return (
     <div className="m-dash">
       <header className="m-dash-head">
-        {/* 한 줄 머리(시안 phone-dash H2) — 부하 = 이름 밑 점+숫자, 계정 = 남은 양 고리 버튼. 컨텍스트 고리는 입력창 참모 프사로 옮겼다(v2 A, 2026-10-11 사용자 "거슬림") */}
+        {/* 한 줄 머리(시안 phone-dash H2) — 부하 = 이름 밑 점+숫자, 계정 = 남은 양 고리 버튼. 컨텍스트 고리는 입력창 참모 프사로 옮겼다(v2 A, 2026-10-11 사용자 "거슬림").
+            오른쪽 = 고리·종·사무실·더보기(시안 phone-nav v1 B, 2026-10-24) — 이름은 두 줄까지 */}
         <div className="m-dash-row">
           <button type="button" className="m-dash-av" onClick={() => setProfile(true)}
             aria-label={`${title} 프로필`} title="프로필">
             <MAvatar orch={orch} orchs={orchs} size={36} asking={asking} />
           </button>
           <div className="m-dash-tt">
-            <div className="m-dash-title">{title}</div>
+            <div className="m-dash-title m-dash-title2">{title}</div>
             {chip && (
               <button type="button" className={`m-load-chip m-load-sub ${chip.cls}`} onClick={() => setLoadOpen(true)} aria-label={`${chip.aria} — 부하 보기`} title={`${machine()} 부하`}>
                 <span className="m-load-pill"><span className="m-load-dot" aria-hidden="true" />{chip.text}</span>
@@ -231,17 +253,17 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
               <UsageRing left={left} level={usageLevel(left)} />
             </button>
           )}
-          {push.can !== 'unsupported' && (
-            <button type="button" className={push.on ? 'm-rt-btn m-ico m-bell m-on' : 'm-rt-btn m-ico m-bell'} disabled={push.busy} onClick={bell}
-              aria-label={push.on ? '폰 알림 켜짐 — 끄기' : '폰 알림 꺼짐 — 켜기'} aria-pressed={push.on} title={push.on ? '폰 알림 켜짐' : '폰 알림 꺼짐'}>
-              {push.on ? <IconBell /> : <IconBellOff />}
-            </button>
-          )}
-          <button type="button" className="m-rt-btn m-ico" onClick={onSessions} aria-label={`세션${busySubs > 0 ? ` — 일하거나 묻는 세션 ${busySubs}` : ''}`} title="세션">
-            <IconSessions />{busySubs > 0 && <span className="m-rt-n">{busySubs}</span>}
+          {/* 종 = 알림 보기(시안 phone-nav v1 N, 2026-10-24) — 켜고 끄기는 더보기 안. 숫자 = 내 답을 기다리는 것 */}
+          <button type="button" className="m-rt-btn m-ico m-bell" onClick={() => setAlertsOpen(true)} aria-label={bellLabel} title="알림">
+            <IconBell />{bellN > 0 && <span className="m-rt-n">{bellN}</span>}
           </button>
-          <button type="button" className="m-rt-btn m-ico" onClick={onRoutines} aria-label={`예약${routinesRunning > 0 ? ` — 도는 중 ${routinesRunning}` : ''}`} title="예약">
-            <IconCalendarClock />{routinesRunning > 0 && <span className="m-rt-n">{routinesRunning}</span>}
+          <button type="button" className="m-rt-btn m-ico" onClick={onOffice} aria-label={`사무실${officeDot ? ' — 기다리는 세션 있음' : ''}`} title="사무실">
+            <IconOffice />{officeDot && <span className="m-rt-dot" aria-hidden="true" />}
+          </button>
+          {/* 더보기 = 세션·예약·계정·폰 알림(시안 phone-nav v1 B) — 줄마다 숫자는 시트 안, 단추엔 점 하나 */}
+          <button type="button" className="m-rt-btn m-ico" onClick={() => setMoreOpen(true)} title="더보기"
+            aria-label={`더보기${busySubs > 0 ? ` — 일하거나 묻는 세션 ${busySubs}` : ''}${routinesRunning > 0 ? ` — 도는 예약 ${routinesRunning}` : ''}`}>
+            <IconMore />{(busySubs > 0 || routinesRunning > 0) && <span className="m-rt-dot" aria-hidden="true" />}
           </button>
         </div>
       </header>
@@ -278,11 +300,16 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
         <PhoneLocker owner={owner} view={lockerView} shown={shown} projects={projects} chips={chips} whoOf={who} onReload={kickLocker} onUpload={upload}
           onOpen={(path, name) => setView({ path, ts: '', by: 'me', name, ...((p) => (p ? { at: p } : {}))(shown.find((f) => f.path === path)?.at) })} />
       )}
+      {moreOpen && <MoreSheet busy={busySubs} routines={routinesRunning} left={left} push={push} onSessions={onSessions} onRoutines={onRoutines}
+        onAccount={() => setAcctOpen(true)} onPush={bell} onClose={() => setMoreOpen(false)} />}
+      {alertsOpen && <AlertsSheet rows={alertRows} onClose={() => setAlertsOpen(false)}
+        nameOf={(t) => findTarget(sessions, t)?.name || t} onOpen={(r) => { const s = findTarget(sessions, r.target); if (s) setPeek(s); }}
+        waiting={myWait.length || direct.length ? <>{myWait.map((w) => <WaitCard key={w.taskId} w={w} orchs={orchs} sent={waitSent} />)}<DirectCards mine={direct} sessions={sessions} /></> : null} />}
       {acctOpen && <AccountSheet text={acct} onChanged={setAcctNow} onClose={() => setAcctOpen(false)} />}
       {loadOpen && <LoadSheet text={loadNow ?? loadText} onChanged={setLoadNow} onClose={() => setLoadOpen(false)} />}
       {profile && <ProfileSheet orch={orch} orchs={orchs} voiceBase={voiceBase} onClose={() => setProfile(false)} />}
       {peek && <SessionPeek s={peek} lives={lives} onClose={() => setPeek(null)} />}
-      {todoOpen && <FileView path={`${hqDir}/docs/starter.md`} title="다음 할 일" at={{ find: '다음 할 일' }} onClose={() => setTodoOpen(false)} />}
+      {todoOpen && <FileView path={`${hqDir}/docs/starter.md`} title="다음 할 일" at={TODO_AT} onClose={() => setTodoOpen(false)} />}
       {view && <FileView path={view.path} title={view.name ?? baseName(view.path)} at={view.at} orch={orch.id} onClose={() => setView(null)} />}
     </div>
   );

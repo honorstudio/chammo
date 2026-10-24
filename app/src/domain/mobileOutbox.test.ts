@@ -113,6 +113,14 @@ describe('쓰던 글 — 참모마다 따로 기억', () => {
     writeDraft(s, 'A', { text: ' ', files: [] });
     expect(s.m.size).toBe(0);
   });
+  it('말풍선·일·목표 참조(#chat1·#task1)도 같이 — 참조만 남아도 지우지 않는다(2026-10-23 사용자 폰)', () => {
+    const s = mem();
+    const r = { label: '#task1', who: '일', text: '로그인 (task t1, app, 끝)' };
+    writeDraft(s, 'A', { text: '', files: [], refs: [r] });
+    expect(readDraft(s, 'A')).toEqual({ text: '', files: [], refs: [r] });
+    writeDraft(s, 'A', { text: '', files: [], refs: [] });
+    expect(s.m.size).toBe(0);
+  });
   it('없거나 깨졌으면 빈 글', () => {
     const s = mem();
     s.setItem('m.draft.A', '[1,2');

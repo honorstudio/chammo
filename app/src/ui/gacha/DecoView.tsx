@@ -8,8 +8,8 @@ import { skinOf } from '../office/skins';
 import { ItemIcon } from './GachaPage';
 import { Stars } from './Stars';
 
-// 미리보기용 작은 방 — 반장 + 세 명
-const SAMPLE: Room = planRoom(
+// 미리보기용 작은 방 — 반장 + 세 명(폰 스킨 줄의 작은 방도)
+export const SAMPLE: Room = planRoom(
   [{ id: 'b', label: '', project: 'b', status: 'working', startedAt: 0 }],
   ['todo-api', 'acme-shop', 'pixel-blog'].map((p, i) => ({ id: p, label: '', project: p, status: i === 1 ? 'done' : 'working', startedAt: i })),
   'bear',

@@ -19,12 +19,13 @@ import { parsePins } from '../../domain/orchPins';
 import { orchSort } from '../../domain/orchOrder';
 import { useMemoPoll } from './usePoll';
 import { SwipeRow } from './SwipeRow';
+import { RowConfirm } from './RowConfirm';
 import { josa, machine } from '../../i18n';
 import { useOutbox } from './outbox';
 import { MAvatar } from './MAvatar';
 import { WaitNote } from './WaitNote';
 import { askNote } from '../../domain/askNote';
-import { NewOrchForm, OffOrchList, useOffOrchs, WakeNotice, type Wake } from './OrchWake';
+import { NewOrchForm, OffOrchList, refreshOff, useOffOrchs, WakeNotice, type Wake } from './OrchWake';
 import { HomeAppLink } from './HomeAppLink';
 import { FarPills, type FarPick } from './PhoneFar';
 import { AvatarRing, BottomSheet, IconBtn } from './kit';
@@ -75,6 +76,25 @@ const withLimit = <T,>(p: Promise<T>, ms: number) => Promise.race([p, new Promis
 const NO_ITEMS: never[] = [];
 
 const hm = (ts: string) => { const d = new Date(ts); return Number.isNaN(d.getTime()) ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+
+/** 답 기다림 카드 — 참모 바꾸기 시트 맨 위, 그리고 결정 알림을 눌러 온 그 참모 채팅 끝(card = 'w:<일 id>', 알림이 짚은 카드라 반짝) */
+export function WaitCard({ w, orchs, sent, onPick, card }: { w: Waiting; orchs: Session[]; sent: WaitSent; onPick?: (id: string) => void; card?: string }) {
+  const { saved } = useAvatars();
+  const o = orchs.find((x) => x.id === w.orch);
+  const n = phoneName(w.name, orchs);
+  // 카드 면 = 그 참모 색을 옅게(mobile.css '나한테 묻는 것'). 그 참모로 가기 = 머리줄 전체 + 오른쪽 화살표 — '그 참모로 가서 보기' 글 버튼은 뺐다(2026-10-11 사용자)
+  const head = <>{o && <MAvatar orch={o} orchs={orchs} size={28} asking />}<b>{n}</b><span className="m-muted m-sm">{hm(w.ts)}</span></>;
+  return (
+    <div className={card ? 'm-wait-card m-jumped' : 'm-wait-card'} data-card={card} style={orchVars(bodyColor(saved, w.name, orchColor(w.name))) as React.CSSProperties}>
+      {onPick
+        ? <button type="button" className="m-wait-top" onClick={() => onPick(w.orch)} aria-label={`${josa(n, '으로', '로')} 가기`} title={`${josa(n, '으로', '로')} 가기`}>{head}<IconChevron /></button>
+        : <div className="m-wait-top">{head}</div>}
+      {w.lead && <div className="m-muted m-sm">{w.lead}</div>}
+      <WaitNote q={w.q} />
+      <WaitReply w={w} name={n} sent={sent} />
+    </div>
+  );
+}
 
 export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, waiting, sent, lines, onPick, onClose, far }: Props) {
   const off = useOffOrchs(env, orchs);
@@ -139,6 +159,7 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
     try {
       await stopOrch(sleeping.id);
       onStopped(sleeping.id);
+      refreshOff();
       setSleeping(null);
     } catch (e) {
       const m = (e as Error).message;
@@ -147,6 +168,12 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
       setSleepBusy(false);
     }
   };
+  // 제거 확인 줄 — 켜진 줄·꺼진 줄 둘 다 그 줄 자리에(컴포넌트 말고 조각 — 그리기마다 새로 붙으면 다시 굴러간다)
+  const removeConfirm = (key: string) => removing && (
+    <RowConfirm key={key} label="제거 확인" q={`${josa(removing.name, '을', '를')} 목록에서 제거할까요?`} note={`대화 기록 파일은 ${machine()}에 남지만, 여기서 다시 깨울 수는 없어요.`}
+      warn={removing.working ? '지금 일하는 중이라 하던 게 끊겨요.' : undefined} err={removeErr} ok="제거" danger busy={removeBusy}
+      onOk={() => void doRemove()} onCancel={() => setRemoving(null)} />
+  );
   const [naming, setNaming] = useState(false);
   const taken = [...orchs, ...off.map((r) => r.off!)].map((s) => phoneName(s.name, orchs));
   return (
@@ -155,49 +182,13 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
         actions={<IconBtn label={`새 ${title}`} onClick={() => setNaming(true)} disabled={naming}><IconPlus /></IconBtn>}>
       {/* 다른 기기(peer-panel) — 짝지은 기기가 있을 때만 맨 위 알약 줄 */}
       {far && <FarPills devices={far.devices} cur={null} self={env.deviceName} onPick={(d) => { if (d) far.onPick(d); }} />}
-      {removing && (
-        <div className="m-sleep-card" role="alertdialog" aria-label="제거 확인">
-          <div>{josa(removing.name, '을', '를')} 목록에서 제거할까요? 대화 기록 파일은 {machine()}에 남지만, 여기서 다시 깨울 수는 없어요.</div>
-          {removing.working && <div className="m-sleep-warn">지금 일하는 중이라 하던 게 끊겨요.</div>}
-          {removeErr && <div className="m-error">{removeErr}</div>}
-          <div className="m-new-row">
-            <button type="button" className="m-btn" onClick={() => setRemoving(null)}>취소</button>
-            <button type="button" className="m-send m-danger" disabled={removeBusy} onClick={() => void doRemove()}>제거</button>
-          </div>
-        </div>
-      )}
-      {sleeping && (
-        <div className="m-sleep-card" role="alertdialog" aria-label="재우기 확인">
-          <div>{phoneName(sleeping.name, orchs)} 재울까요? 대화는 남고 나중에 '꺼져 있음'에서 다시 깨울 수 있어요.</div>
-          {sleeping.state === 'working' && <div className="m-sleep-warn">지금 일하는 중이라 하던 게 끊겨요.</div>}
-          {sleepErr && <div className="m-error">{sleepErr}</div>}
-          <div className="m-new-row">
-            <button type="button" className="m-btn" onClick={() => setSleeping(null)}>취소</button>
-            <button type="button" className="m-send" disabled={sleepBusy} onClick={() => void doSleep()}>재우기</button>
-          </div>
-        </div>
-      )}
       {naming && <NewOrchForm title={title} taken={taken} wake={wake} onDone={() => setNaming(false)} />}
       <WakeNotice wake={wake} />
       {wake.making && <div className="m-orch m-off" aria-busy="true"><span className="m-orch-text"><span className="m-orch-top"><span className="m-orch-name">{phoneName(wake.making, orchs)}</span><span className="m-muted m-sm">만드는 중…</span></span></span></div>}
       {waiting.length > 0 && (
         <>
           <div className="m-sect">답을 기다림 {waiting.length}</div>
-          {waiting.map((w) => {
-            const o = orchs.find((x) => x.id === w.orch);
-            const n = phoneName(w.name, orchs);
-            // 카드 면 = 그 참모 색을 옅게(mobile.css '나한테 묻는 것'). 그 참모로 가기 = 머리줄 전체 + 오른쪽 화살표 — '그 참모로 가서 보기' 글 버튼은 뺐다(2026-10-11 사용자)
-            return (
-              <div key={waitKey(w)} className="m-wait-card" style={orchVars(bodyColor(saved, w.name, orchColor(w.name))) as React.CSSProperties}>
-                <button type="button" className="m-wait-top" onClick={() => onPick(w.orch)} aria-label={`${josa(n, '으로', '로')} 가기`} title={`${josa(n, '으로', '로')} 가기`}>
-                  {o && <MAvatar orch={o} orchs={orchs} size={28} asking />}<b>{n}</b><span className="m-muted m-sm">{hm(w.ts)}</span><IconChevron />
-                </button>
-                {w.lead && <div className="m-muted m-sm">{w.lead}</div>}
-                <WaitNote q={w.q} />
-                <WaitReply w={w} name={n} sent={sent} />
-              </div>
-            );
-          })}
+          {waiting.map((w) => <WaitCard key={waitKey(w)} w={w} orchs={orchs} sent={sent} onPick={onPick} />)}
           <div className="m-sect">{title}</div>
         </>
       )}
@@ -208,6 +199,13 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
         const dot = orchDot(subStatus(s, tails, Date.now()), asking);
         const used = s.sessionId ? ctx[s.sessionId]?.used : undefined;
         const slot = lineSlot(lines[s.id]);
+        // 민 그 줄 자리에서 확인 — 맨 위 칸은 아래 줄을 밀었을 때 안 보였다(2026-10-23 사용자)
+        if (sleeping?.id === s.id) return (
+          <RowConfirm key={s.id} label="재우기 확인" q={`${nameOf(s)} 재울까요?`} note="대화는 남아서 '꺼져 있음'에서 다시 깨울 수 있어요."
+            warn={s.state === 'working' ? '지금 일하는 중이라 하던 게 끊겨요.' : undefined} err={sleepErr} ok="재우기" busy={sleepBusy}
+            onOk={() => void doSleep()} onCancel={() => setSleeping(null)} />
+        );
+        if (removing?.id === s.id) return removeConfirm(s.id);
         return (
           <SwipeRow key={s.id} id={s.id} openId={openId} setOpenId={setOpenId} onMenu={() => setMenu({ kind: 'live', s })} menuLabel={`${nameOf(s)} 메뉴`} actions={[
             { label: '재우기', icon: <IconPower />, onPress: () => { setSleepErr(null); setSleeping(s); } },
@@ -232,7 +230,8 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
       })}
       {orchs.length === 0 && <p className="m-muted">떠 있는 {title} 세션이 없어요</p>}
       <OffOrchList rows={off.filter((r) => !removedOff.has(r.off!.id))} orchs={orchs} wake={wake}
-        swipe={{ openId, setOpenId, onMenu: (r) => setMenu({ kind: 'off', r }), onRemove: (r) => { setRemoveErr(null); setRemoving({ id: r.off!.id, name: phoneName(r.off!.name, orchs), live: false, working: false }); } }} />
+        swipe={{ openId, setOpenId, onMenu: (r) => setMenu({ kind: 'off', r }), onRemove: (r) => { setRemoveErr(null); setRemoving({ id: r.off!.id, name: phoneName(r.off!.name, orchs), live: false, working: false }); },
+          confirm: (r) => removing?.id === r.off!.id ? removeConfirm(r.key) : null }} />
       <HomeAppLink />
       </BottomSheet>
       {menu && (() => {

@@ -150,3 +150,18 @@ fn 구독_파일을_못_읽으면_덮어쓰지_않는다() {
     unsubscribe(&d, "d2", "https://web.push.apple.com/a").unwrap();
     assert_eq!(read_subs(&d).len(), 1);
 }
+
+#[test]
+fn 마지막_알림_갈_곳은_새_것으로_덮고_나이를_준다() {
+    // 중계 입구 푸시는 본문이 없어 폰이 눌린 알림의 갈 곳을 모른다 — 컴퓨터가 마지막 알림 갈 곳을 들고 있다가 알려 준다(2026-10-23)
+    let d = std::env::temp_dir().join(format!("chammo-push-last-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    assert_eq!(last_target(&d, 1_000), serde_json::json!({ "target": "", "age": null }));
+    keep_last(&d, "card:o1:w:t1", 1_000);
+    assert_eq!(last_target(&d, 61_000), serde_json::json!({ "target": "card:o1:w:t1", "age": 60 }));
+    // 갈 곳 없는 알림(참모가 부른 푸시)도 덮는다 — 그보다 옛 알림의 갈 곳으로 엉뚱하게 가지 않게
+    keep_last(&d, "", 70_000);
+    assert_eq!(last_target(&d, 70_000)["target"], "");
+    let _ = std::fs::remove_dir_all(&d);
+}

@@ -1,6 +1,6 @@
 // 폰 참모 깨우기 — 데스크톱 오케스트레이터 홈(ui/space/OrchHome)을 폰에. 꺼진 참모 줄(프사·별명·마지막 때·하던 일)을 누르면
 // 그 대화만 다시 켜고(/api/respawn), 새 참모는 별명만 지어 보낸다(/api/spawn — 번호는 서버가). 켜진 참모가 목록에 뜨면 그리로 옮긴다
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { machine, tr } from '../../i18n';
 import { roleChips } from '../../domain/orchRoles';
 import { listStoppedOrchs, readTails, respawnOrch, spawnOrch, type MobileEnv } from '../../data/web';
@@ -13,6 +13,7 @@ import { IconResume, IconTrash } from '../Icons';
 import { useMemoPoll } from './usePoll';
 import { remember, remembered } from './memo';
 import { SwipeRow } from './SwipeRow';
+import { RowConfirm } from './RowConfirm';
 import { Notice } from './Notice';
 
 /** 꺼진 참모 줄 — 떠 있는 동안 15초마다(claude agents --all 은 가볍지 않다). 하던 일은 꼬리를 한 번씩.
@@ -43,6 +44,8 @@ export function useOffOrchs(env: MobileEnv, live: Session[]): HomeRow[] & { tail
 }
 export const OFF_TAILS = 'offTails';
 const OFF_REFRESH = 'm-off-refresh';
+/** 꺼진 목록을 15초 안 기다리고 바로 다시 받기 — 재운 줄이 '꺼져 있음'에 바로 내려앉게 */
+export const refreshOff = () => window.dispatchEvent(new Event(OFF_REFRESH));
 
 type Woke = { sessionId?: string; name?: string; at: number };
 /** 이만큼 지나도 목록에 안 뜨면 못 켠 걸로 */
@@ -117,25 +120,22 @@ function OffRow({ r, orchs, busy, disabled, onPress }: { r: HomeRow; orchs: Sess
 
 /** 꺼진 참모 목록 — 참모 바꾸기 시트 아래·참모가 하나도 없을 때. 줄을 누르면 '깨울까요?' 한 번 */
 /** swipe = 참모 바꾸기 시트에서 줄을 밀면 '깨우기'·'제거'(참모 없음 화면엔 없음) */
-export function OffOrchList({ rows, orchs, wake, swipe }: { rows: HomeRow[]; orchs: Session[]; wake: Wake; swipe?: { openId: string | null; setOpenId: (id: string | null) => void; onRemove: (r: HomeRow) => void; onMenu?: (r: HomeRow) => void } }) {
+export function OffOrchList({ rows, orchs, wake, swipe }: { rows: HomeRow[]; orchs: Session[]; wake: Wake; swipe?: { openId: string | null; setOpenId: (id: string | null) => void; onRemove: (r: HomeRow) => void; onMenu?: (r: HomeRow) => void; confirm?: (r: HomeRow) => ReactNode } }) {
   const [ask, setAsk] = useState<HomeRow | null>(null);
   if (!rows.length) return null;
   const nmOf = (r: HomeRow) => phoneName(r.off!.name, orchs);
   return (
     <>
       <div className="m-sect">꺼져 있음 {rows.length}</div>
-      {ask && (
-        <div className="m-sleep-card" role="alertdialog" aria-label="깨우기 확인">
-          <div>{nmOf(ask)} 깨울까요? 하던 대화 그대로 이어서 켜요.</div>
-          {ask.doing && <div className="m-muted m-sm">{ask.doing}</div>}
-          <div className="m-new-row">
-            <button type="button" className="m-btn" onClick={() => setAsk(null)}>취소</button>
-            <button type="button" className="m-send" disabled={!!wake.starting || !!wake.making} onClick={() => { const r = ask; setAsk(null); void wake.wake(r); }}>깨우기</button>
-          </div>
-        </div>
-      )}
       <div className="m-offlist">
         {rows.map((r) => {
+          // 확인은 그 줄 자리에(2026-10-23 사용자 — 머리 아래 칸은 아래 줄에서 안 보였다): 제거는 시트가, 깨우기는 여기서
+          const confirm = swipe?.confirm?.(r);
+          if (confirm) return confirm;
+          if (ask?.key === r.key) return (
+            <RowConfirm key={r.key} label="깨우기 확인" q={`${nmOf(r)} 깨울까요?`} note={r.doing || '하던 대화 그대로 이어서 켜요.'} ok="깨우기"
+              busy={!!wake.starting || !!wake.making} onOk={() => { setAsk(null); void wake.wake(r); }} onCancel={() => setAsk(null)} />
+          );
           const row = <OffRow key={r.key} r={r} orchs={orchs} busy={wake.starting === r.off!.sessionId} disabled={!!wake.starting || !!wake.making} onPress={() => setAsk(r)} />;
           if (!swipe) return row;
           return (

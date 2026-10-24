@@ -1,7 +1,7 @@
 // 폰 보낼 함·쓰던 글 — 참모를 바꾸면 채팅 화면이 새로 그려져(OrchSpace key) 컴포넌트 안에 두던 보내는 중 말풍선·쓰던 글이 날아갔다(2026-10-03 사용자).
 // 그래서 저장소(localStorage)에 둔다. 화면·통신 없음 — 저장소는 받아서 쓰고, 막혀 있으면(개인 정보 보호 모드) 조용히 빈 값
 import { josa, machine } from '../i18n';
-import { parseChat, pendingLeft, type ChatItem } from './chat';
+import { parseChat, pendingLeft, type ChatItem, type ChatRef } from './chat';
 import { newPending } from './chatQueue';
 
 export type Store = { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem(k: string): void };
@@ -67,21 +67,22 @@ export function settleOut(list: OutMsg[], session: string, items: ChatItem[], no
   return list.filter((m) => m.session !== session || left.has(m));
 }
 
-/** 쓰던 글 — 참모마다 따로. 붙인 파일은 맥에 이미 올라간 경로라 이름표와 같이 남긴다 */
+/** 쓰던 글 — 참모마다 따로. 붙인 파일은 맥에 이미 올라간 경로라 이름표와 같이 남긴다. refs = 말풍선·일·목표 참조(#chat1·#task1·#goal1) */
 export type DraftFile = { path: string; name: string; image: boolean; label: string };
-export type Draft = { text: string; files: DraftFile[] };
+export type Draft = { text: string; files: DraftFile[]; refs?: ChatRef[] };
 const draftKey = (orch: string) => `m.draft.${orch}`;
 
 export function readDraft(s: Store | null, orch: string): Draft {
   try {
     const d = JSON.parse(safeGet(s, draftKey(orch)) ?? 'null') as Draft | null;
-    return d && typeof d.text === 'string' && Array.isArray(d.files) ? { text: d.text, files: d.files } : { text: '', files: [] };
+    if (!d || typeof d.text !== 'string' || !Array.isArray(d.files)) return { text: '', files: [] };
+    return Array.isArray(d.refs) && d.refs.length ? { text: d.text, files: d.files, refs: d.refs } : { text: d.text, files: d.files };
   } catch {
     return { text: '', files: [] };
   }
 }
 export const writeDraft = (s: Store | null, orch: string, d: Draft) =>
-  safeSet(s, draftKey(orch), d.text.trim() || d.files.length ? JSON.stringify(d) : null);
+  safeSet(s, draftKey(orch), d.text.trim() || d.files.length || d.refs?.length ? JSON.stringify(d) : null);
 
 /** 되살린 파일 이름표의 마지막 번호 — 다음에 붙이는 건 그다음 번호부터. 지금 이름표는 #img1, 옛 초안은 @img1(전엔 @ 만 읽어 늘 0 — #img1 이 둘 생겼다) */
 export function labelCounts(files: { label: string }[]): { img: number; file: number } {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { bornAfter, buildInbox, findTarget, freshItems, gateReply, popoverOpen, replyBlocked, replyHint } from './inbox';
+import { bornAfter, buildInbox, decideNote, findTarget, freshItems, gateReply, popoverOpen, replyBlocked, replyHint } from './inbox';
 import type { Session } from './session';
 import type { ActivityStatus } from './status';
 import type { TaskEvent } from './tasks';
@@ -191,7 +191,7 @@ describe('영어 모드', () => {
 });
 
 describe('findTarget — 기록의 대상으로 지금 세션 찾기', () => {
-  const live = [{ ...s('aa11bb22', 'project-a'), name: 'crm', sessionId: 'aa11bb22-aaaa' }, { ...s('cc33dd44', 'hello-docs'), name: 'notes' }];
+  const live = [{ ...s('aa11bb22', 'project-a'), name: 'crm', sessionId: 'aa11bb22-aaaa' }, { ...s('cc33dd44', 'pet-diary'), name: 'notes' }];
   it('id·이름·전체 sessionId', () => {
     expect(findTarget(live, 'aa11bb22')?.id).toBe('aa11bb22');
     expect(findTarget(live, 'crm')?.id).toBe('aa11bb22');
@@ -201,5 +201,24 @@ describe('findTarget — 기록의 대상으로 지금 세션 찾기', () => {
     expect(findTarget(live, 'crm [aa11bb]')?.id).toBe('aa11bb22');
     expect(findTarget(live, 'crm [ee5566]')?.id).toBe('aa11bb22');
     expect(findTarget(live, 'gone [ee5566]')).toBeUndefined();
+  });
+});
+
+describe('decideNote — 결정 알림은 물은 참모 별명과 그 카드로(2026-10-23 폰 알림)', () => {
+  const orch = { ...s('5e55a0d1', 'honor-orchestrator'), sessionId: '5e55a0d1-7c2b-4f3e-9a10-2b8d4c6e0f13', name: '참모' };
+  const sub = s('p1', 'acme-platform');
+  const events = [ev('send', '1001-0900-ab12', '2026-10-23T10:00:00Z', { target: 'acme-platform' }), ev('ask', '1001-0900-ab12', '2026-10-23T11:07:43Z', { note: '운영에 올릴까?', to: orch.sessionId })];
+  it('참모가 올린 결정 — 제목 앞에 그 참모 별명, 누르면 그 참모 채팅의 그 카드(w:<일 id>)', () => {
+    const [item] = buildInbox([], events, new Set(), [orch, sub], () => false);
+    const n = decideNote(item!, [orch, sub], () => '기획');
+    expect(n.title).toBe('기획 결정 대기 — acme-platform');
+    expect(n.go).toBe(`card:${orch.id}:w:1001-0900-ab12`);
+    expect(n.kind).toBe('decide');
+  });
+  it('물은 참모를 못 찾으면(꺼짐·to 없음) 예전처럼 — 별명 없는 제목, 결정 대기함', () => {
+    const [item] = buildInbox([], [events[0]!, { ...events[1]!, to: undefined }], new Set(), [sub], () => false);
+    const n = decideNote(item!, [sub], () => '기획');
+    expect(n.title).toBe('결정 대기 — acme-platform');
+    expect(n.go).toBeUndefined();
   });
 });

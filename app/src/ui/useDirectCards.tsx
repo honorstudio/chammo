@@ -18,7 +18,7 @@ export type ChatExtra = { ts: string; key: string; pin?: boolean; clip?: boolean
  * onRespawn = 주인 세션이 꺼진 카드의 '다시 띄우기'(같은 번호)
  */
 export function useDirectCards(everyone: Session[], acts: { session: Session; activity: Activity }[], events: TaskEvent[], orchs: Session[], front: Session | undefined, lives: Live[],
-  notify: (c: DirectCard, name: string) => void, heir?: (s: Session) => Session | undefined, onRespawn?: (c: DirectCard) => Promise<void>) {
+  notify: (c: DirectCard, name: string, owner?: Session) => void, heir?: (s: Session) => Session | undefined, onRespawn?: (c: DirectCard) => Promise<void>) {
   const [log, setLog] = useState<string | null>(null); // null = 아직 한 번도 못 읽음
   const [open, setOpen] = useState<string | null>(null);
   const [inboxOpen, setInboxOpen] = useState<string | null>(null);
@@ -49,7 +49,7 @@ export function useDirectCards(everyone: Session[], acts: { session: Session; ac
     for (const c of cards) {
       if (!needsAnswer(c) || told.current.has(c.id)) continue;
       told.current.add(c.id);
-      notify(c, nameOf(c));
+      notify(c, nameOf(c), placed.find((p) => p.card.id === c.id)?.owner); // 주인 참모 — 알림을 누르면 그 참모 채팅의 이 카드로
       // 창이 가려지면 웹뷰가 그리기를 멈춰 'shown' 이 안 남는다 — 앱이 카드를 받고 알림까지 냈다는 줄은 남겨 direct ask 가 거짓 경고를 안 주게(soak 008)
       void invoke('direct_shown', { id: c.id, place: 'notified' }).catch(() => {});
     }

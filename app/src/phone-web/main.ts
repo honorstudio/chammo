@@ -3,7 +3,7 @@
 import { OfflineError, tunnelFor } from './hub';
 import { forgetKeys, phoneKeys } from './keys';
 import { knockPair } from './knock';
-import { readLink, saveLink, type RelayLink } from './link';
+import { homeUrl, readLink, saveLink, type RelayLink } from './link';
 import { planPair } from './pairPlan';
 import { call } from './relayClient';
 import { dropShell, fetchShell } from './shell';
@@ -62,7 +62,7 @@ async function open(link: RelayLink) {
   try {
     await worker();
     await fetchShell(tunnelFor(link), link.relay);
-    location.replace('/');
+    location.replace(homeUrl(location.search));
   } catch (e) {
     const off = e instanceof OfflineError;
     screen(off ? '컴퓨터가 꺼져 있어요' : '못 붙었어요', off ? `${link.macName ?? '컴퓨터'} Chammo 가 켜지면 저절로 붙어요.` : (e as Error).message, [{ label: '다시', primary: true, run: () => void open(link) }]);
@@ -71,7 +71,7 @@ async function open(link: RelayLink) {
 }
 
 const BAD: Record<string, string> = {
-  shape: '컴퓨터 Chammo 설정 > 폰과 메신저에서 QR 을 새로 만들어 찍어 주세요.',
+  shape: '컴퓨터 Chammo 설정 > 기기 관리에서 QR 을 새로 만들어 찍어 주세요.',
   relay: '이 QR 은 이 입구의 중계 서버를 쓰지 않아요 — 내 컴퓨터 Chammo 에서 만든 QR 인지 봐 주세요.',
   config: '입구 설정(중계 주소)이 없어요 — 관리자에게 알려 주세요.',
 };
@@ -158,7 +158,7 @@ async function main() {
     // 짝지은 폰 열쇠는 '폰' 기기라 로그인을 못 한다(중계 403, 보안 검토 B) — 짝짓기 전 폰만
     ...(relay && !acc && !link ? [{ label: 'Chammo 계정으로 로그인', run: () => void login(relay) }] : []),
   ];
-  screen('참모', `컴퓨터 Chammo 설정 > 폰과 메신저에서 QR 을 이 폰 카메라로 찍어 주세요.${acc?.email ? ` · Chammo 계정 ${acc.email}` : ''}`, buttons);
+  screen('참모', `컴퓨터 Chammo 설정 > 기기 관리에서 QR 을 이 폰 카메라로 찍어 주세요.${acc?.email ? ` · Chammo 계정 ${acc.email}` : ''}`, buttons);
 }
 
 // 이미 열린 입구에 QR 주소(# 만 다름)를 또 열면 페이지가 다시 안 읽힌다 — 다시 읽어 새 코드로

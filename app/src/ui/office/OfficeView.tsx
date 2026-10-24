@@ -5,8 +5,10 @@ import { titleText } from '../gacha/icons';
 import type { ActivityStatus } from '../../domain/status';
 import { drawRoom, POOF_MS, roomSize, type Deco, type Poof, type Spot } from './draw';
 import { skinOf } from './skins';
+import { fewTags } from './tags';
 import { tr } from '../../i18n';
 import { isAttended } from '../attention';
+import './room.css';
 
 const FRAME_MS = 120; // 도트 느낌 — 초당 8장쯤(펑이 너무 뚝뚝 끊기지 않게)
 
@@ -24,7 +26,15 @@ export type BossIn = { status: ActivityStatus; reply: { text: string; ts: number
  */
 export type EditMode = { drag: string | null; ok: (cell: [number, number]) => boolean; onPick: (id: string) => void; onDrop: (cell: [number, number] | null, e: PointerEvent) => void };
 
-export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen, coins, gain, onGacha, bossIn, deco, peek, dim }: { room: Room; skin?: string; /** 이름표를 옅게 할 세션(채팅 뷰: 지금 채팅 탭 참모가 시킨 것만 진하게) */ dim?: (id: string) => boolean; /** 아래에 덮이는 높이(가구 트레이) — 방을 그만큼 위로 올려 가리지 않게 */ bottom?: number; /** 왼쪽 위 메뉴 */ menu?: ReactNode; /** 이름표에 마우스를 올리면 띄울 미니 터미널(읽기 전용, 머리줄에 지금 하는 일). null 이면 안 띄움 */ peek?: (id: string, doing?: string) => ReactNode; edit?: EditMode; deliver?: (now: number) => Delivery | null; onOpen: (id: string) => void; /** 가챠 코인(오른쪽 위) — 누르면 뽑기 페이지 */ coins?: number; gain?: { n: number; at: number } | null; onGacha?: () => void; bossIn?: BossIn; /** 뽑기로 얻어 장착한 것 — 모자·창밖·펑 대신·춤. cat·coffee 는 펫 친구·커피 액션 */ deco?: Deco & { hasCat?: boolean; coffee?: boolean; /** 반장 이름표 앞 칭호(뽑기) */ title?: string; /** 고양이 말고 가진 펫 친구 id(팩) — 고양이와 시차를 두고 같은 길을 걷는다 */ palIds?: string[] } }) {
+/** 'width' = 칸 폭에 꽉(소수 배율), 'box' = 칸 폭·높이 둘 다에 맞춰(소수 배율 — 폰 사무실, 반 시트가 열려 칸이 낮아지면 방이 준다), 'int' = 정수 배율(도트가 안 번지게, 데스크톱) */
+export type Fit = 'int' | 'width' | 'box';
+export function fitScale(fit: Fit, cw: number, ch: number, W: number, H: number, bottom: number): number {
+  if (fit === 'width') return cw / W;
+  if (fit === 'box') return Math.max(0.1, Math.min(cw / W, ch / H));
+  return Math.max(1, Math.floor(Math.min((cw - 24) / W, (ch - 24 - bottom) / H)));
+}
+
+export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen, coins, gain, onGacha, bossIn, deco, peek, dim, fit = 'int', picked, tags = 'all' }: { room: Room; /** 'few' = 폰 방 — 사람 필요·물어봄·고른 것만 이름표, 겹치면 비키거나 +N, 하는 일 한 줄 없음(ui/office/tags) */ tags?: 'all' | 'few'; skin?: string; /** 배율 — Fit 참고 */ fit?: Fit; /** 고른 세션 — 그 캐릭터에 고리(폰: 누르면 고르고 아래 카드로 대화) */ picked?: string | null; /** 이름표를 옅게 할 세션(채팅 뷰: 지금 채팅 탭 참모가 시킨 것만 진하게) */ dim?: (id: string) => boolean; /** 아래에 덮이는 높이(가구 트레이) — 방을 그만큼 위로 올려 가리지 않게 */ bottom?: number; /** 왼쪽 위 메뉴 */ menu?: ReactNode; /** 이름표에 마우스를 올리면 띄울 미니 터미널(읽기 전용, 머리줄에 지금 하는 일). null 이면 안 띄움 */ peek?: (id: string, doing?: string) => ReactNode; edit?: EditMode; deliver?: (now: number) => Delivery | null; onOpen: (id: string) => void; /** 가챠 코인(오른쪽 위) — 누르면 뽑기 페이지 */ coins?: number; gain?: { n: number; at: number } | null; onGacha?: () => void; bossIn?: BossIn; /** 뽑기로 얻어 장착한 것 — 모자·창밖·펑 대신·춤. cat·coffee 는 펫 친구·커피 액션 */ deco?: Deco & { hasCat?: boolean; coffee?: boolean; /** 반장 이름표 앞 칭호(뽑기) */ title?: string; /** 고양이 말고 가진 펫 친구 id(팩) — 고양이와 시차를 두고 같은 길을 걷는다 */ palIds?: string[] } }) {
   const wrap = useRef<HTMLDivElement>(null);
   const cv = useRef<HTMLCanvasElement>(null);
   const [scale, setScale] = useState(3);
@@ -45,12 +55,12 @@ export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen
   useEffect(() => {
     const el = wrap.current;
     if (!el) return;
-    const fit = () => setScale(Math.max(1, Math.floor(Math.min((el.clientWidth - 24) / W, (el.clientHeight - 24 - bottom) / H))));
-    fit();
-    const ro = new ResizeObserver(fit);
+    const size = () => setScale(fitScale(fit, el.clientWidth, el.clientHeight, W, H, bottom));
+    size();
+    const ro = new ResizeObserver(size);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [W, H, bottom]);
+  }, [W, H, bottom, fit]);
 
   // 그리는 데 필요한 건 ref 로 — 세션 목록이 3초마다 바뀌어도 타이머를 다시 만들지 않는다
   const latest = useRef({ room, sk, deliver, bossIn, deco, edit, hover });
@@ -162,7 +172,21 @@ export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen
           const bs = spots.find((s) => room.desks.some((d) => d.boss && d.id === s.id));
           return bs ? <div className={`office-say ${react.mode}`} style={{ left: bs.hx * scale, top: (bs.hy - 22) * scale }}>{react.text}</div> : null;
         })()}
-        {spots.map((s) => (
+        {/* 고리는 이름표보다 먼저 — 옆 이름표 글을 고리 선이 긋지 않게(시험 17개) */}
+        {picked && (() => {
+          const s = spots.find((x) => x.id === picked);
+          return s ? <span className="office-ring" style={{ left: s.hx * scale, top: s.hy * scale }} /> : null;
+        })()}
+        {tags === 'few' && fewTags(spots, picked, scale, W * scale).map((t) => {
+          const s = spots.find((x) => x.id === t.id)!;
+          return (
+            <button key={s.id} className={`office-tag ${sk.label} ${s.human !== undefined ? 'human' : s.st === 'asks' ? 'hot' : ''}`} style={{ left: t.cx, top: t.top }}
+              aria-label={t.more ? `${s.label} 외 ${t.more}` : s.label} onClick={() => onOpen(s.id)}>
+              {s.label}{t.more > 0 && <span className="office-more">+{t.more}</span>}
+            </button>
+          );
+        })}
+        {tags === 'all' && spots.map((s) => (
           <button
             key={s.id}
             className={`office-tag ${sk.label} ${s.human !== undefined ? 'human' : s.st === 'asks' ? 'hot' : ''} ${s.human === undefined && dim?.(s.id) ? 'st-dim' : ''}`}

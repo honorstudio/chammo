@@ -16,8 +16,9 @@ description: 사용자가 앱 설정·화면을 바꿔 달라·켜져 있어?(sc
 ```
 scripts/app status                                    # X 켜져 있어? — 설정·기능·음성 모드·브라우저 자동화
 scripts/app voice on|off
-scripts/app feature office|tama|gacha|review|voice on|off   # 설정 > 기능과 같다
-scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home|harnitor|tools
+scripts/app feature office|tama|gacha|review|voice|autoTidy on|off   # 설정 > 기능과 같다 — autoTidy = 세션 자동 정리(끝난 세션을 [앱] 줄로 알림)
+scripts/app feature usagePing off                     # 익명 사용 통계 끄기 — 사용자가 끄라고 할 때만(하루 한 번 무작위 설치 번호·판·OS·CPU·언어·나라, 경로·이름·대화는 안 보냄)
+scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home|harnitor|tools   # home = 홈 대시보드(채팅 뷰, 터미널 뷰면 참모 화면)
 scripts/app close settings|office|reader|tasks|inbox|harnitor|tools|review
 scripts/app harness [<프로젝트>]                       # 사용자 하네스를 글로(스킬·MCP·훅·플러그인·진단)
 scripts/app focus <세션 id|이름|프로젝트>              # 그 프로젝트 대시보드(채팅 뷰면 스페이스에)
@@ -64,11 +65,13 @@ scripts/app mode remove <이름> [--trash-source] · mode restore-builtin [<이�
 - **보기가 둘이다 — 기본은 채팅 뷰**(위 막대 오른쪽 말풍선·터미널 단추로 바꾼다). 채팅 뷰는 왼쪽 띠가 참모 프사, 가운데가 네 채팅, 오른쪽 스페이스가
   홈·보관함·네 대시보드(네가 맡긴 세션과 진행)·세션 탭이다. **채팅 뷰엔 사이드바·작업 패널이 없다** — 세션 진행이 어디 보이냐고 하면
   "오른쪽 대시보드"라고 한다(`scripts/app focus <프로젝트>` 로 띄워 준다). 아래 사이드바·가운데·작업 패널은 터미널 뷰 이야기다.
+- **왼쪽 띠**(채팅 뷰) — 맨 위 집이 **홈 대시보드**(`scripts/app open home`): 참모 채팅 없이 전체 한눈에 — 숫자 넷(결정 대기·일하는 세션·오래 조용·오늘 끝남), 참모 타일, 결정 대기·오래 조용, 참모별 진행, 기기·도구, 오늘 끝난 것. 누르면 그 참모·세션·결정 대기함으로 간다.
+  그 아래 참모 프사, 쉬는(꺼진) 참모는 얼굴 겹친 한 칸(펼쳐서 깨운다), 예약·기능은 더보기 하나(볼 것 있으면 점), 맨 아래 + 하나(참모 하나 더·팀 만들기).
 - **왼쪽 사이드바**(터미널 뷰) — 너(참모), "전체 보기", 그 아래 프로젝트와 세션들. 세션 상태 표시:
   도는 호 = 작업 중, 말풍선(…) = 사용자 답 기다림, 꽉 찬 원 = 대기.
-- **설정** — 메뉴 Chammo > 설정…(⌘,): 언어·네 이름·폴더·기능·알림·브라우저 자동화. **폰과 메신저** 탭에 폰·다른 기기 참모·**Chammo 계정**(구글 로그인·기기 목록·로그아웃·계정 지우기·처리방침 링크)·메신저 알림.
+- **설정** — 메뉴 Chammo > 설정…(⌘,): 언어·네 이름·폴더·기능·알림·브라우저 자동화. **기기 관리** 탭에 폰 연결·다른 기기 참모, **메신저** 탭에 메신저 알림·텔레그램, **계정** 탭 맨 위에 **Chammo 계정**(구글 로그인·기기 목록·로그아웃·계정 지우기·처리방침 링크), 그 아래 Claude 계정(맥만).
 - **메신저**(채팅 뷰, 로그인했을 때) — 왼쪽 띠 참모 프사 아래 팀 표: 누르면 그 팀 DM 이 펼쳐지고, DM 을 누르면 가운데가 그 대화. 모니터가 둘 이상이면 떼기 아이콘으로 메신저 전체나 대화 하나를 따로 창으로 — 뗐으면 띠의 팀 줄이 말풍선 하나(안 읽은 수)로 접힌다.
-- **홈 진행 칸** — 스페이스 홈 맨 위(폰 홈도) '진행': 네가 맡긴 일을 목표(`--goal`)마다 한 줄 조각 막대로, 줄을 누르면 그 자리에서 일 목록.
+- **홈 진행 칸** — 스페이스 홈 맨 위(폰 홈도) '진행': 네가 맡긴 일을 목표(`--goal`)마다 한 줄 조각 막대로, 줄을 누르면 그 자리에서 일 목록. 보낸 일이 다 끝나고 2시간 새 일이 없으면 남은 예정 칸은 버리고 목표가 끝난다(바로 닫기 `scripts/task goal-done`), 이름표 없는 일은 하루 조용하면 접힌다. 다른 참모에게 넘긴 일(`scripts/task handover`)은 큰 일 한 칸이 받은 쪽 진행만큼 차고, 펼치면 '백엔드가 하는 중 — 2/5' 와 그쪽 일들, 받은 쪽 줄엔 '기획이 넘김'.
 - **하니터** — 오른쪽 위 층 모양 버튼(`scripts/app open harnitor`): 사용자 하네스(스킬·훅·MCP·플러그인·CLAUDE.md)를 보고 끄고 켜고 되돌리는 화면.
 - **가운데** — 고른 것의 터미널. 모든 세션이 진짜 Claude Code 라서 사용자가 어디든 직접 쳐도 된다.
 - **오른쪽 작업 패널**(⌘J) — 네가 맡긴 일(`scripts/task`) 목록, 최신이 위.
@@ -98,8 +101,9 @@ When the user asks to change something in the app — "turn on voice mode", "ope
 ```
 scripts/app status                                    # is X on? — settings, features, voice mode, browser automation
 scripts/app voice on|off
-scripts/app feature office|tama|gacha|review|voice on|off   # same as Settings > Features
-scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home|harnitor|tools
+scripts/app feature office|tama|gacha|review|voice|autoTidy on|off   # same as Settings > Features — autoTidy = tidy sessions automatically (an [app] line for finished sessions)
+scripts/app feature usagePing off                     # turn off anonymous usage statistics — only when the user asks (once a day: a random install ID, version, OS, CPU, language, country; never paths, names or chats)
+scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home|harnitor|tools   # home = the Home dashboard (chat view; in the terminal view, your screen)
 scripts/app close settings|office|reader|tasks|inbox|harnitor|tools|review
 scripts/app harness [<project>]                       # the user's harness as text (skills, MCP, hooks, plugins, findings)
 scripts/app focus <session id|name|project>           # that project's dashboard (chat view: in the space)
@@ -149,12 +153,14 @@ don't guess, and don't say you can't see the app: you know how it's laid out.
   avatars, your chat is in the middle and the space on the right holds Home, the Locker, your dashboard (the sessions you delegated to and their progress) and
   session tabs. **The chat view has no sidebar or task panel** — when the user asks where to see progress, say "your dashboard on the
   right" (open it with `scripts/app focus <project>`). The sidebar, middle and task panel below are the terminal view.
+- **Left strip** (chat view) — the house at the top is the **Home dashboard** (`scripts/app open home`): everything at a glance without an assistant's chat — four numbers (decisions waiting, sessions working, quiet too long, done today), assistant tiles, decisions waiting and quiet sessions, progress per assistant, devices and tools, what finished today. Clicking goes to that assistant, session or the decision inbox.
+  Below it the assistants' avatars, resting (stopped) assistants folded into one slot of overlapping faces (open it to wake one), routines and features under one More button (a dot when there's something to see), and one + at the bottom (another assistant, create a team).
 - **Left sidebar** (terminal view) — you (the chief of staff), "All sessions", then each project and its sessions.
   Each session shows its state: a spinning arc = working, a hand = waiting for the user, a filled dot = idle.
 - **Settings** — menu Chammo > Settings… (⌘,): language, your name, folders, features, notifications,
-  browser automation. The **Phone & messenger** tab holds the phone, other devices' assistants, the **Chammo account** (Google sign-in, device list, sign out, delete account, privacy links) and messenger notifications.
+  browser automation. The **Devices** tab holds phone pairing and other devices' assistants, the **Messenger** tab holds messenger notifications and Telegram, and the **Accounts** tab starts with the **Chammo account** (Google sign-in, device list, sign out, delete account, privacy links), with Claude accounts below it (Mac only).
 - **Messenger** (chat view, once signed in) — team badges in the left strip under the assistants' avatars: click one to unfold that team's DMs, click a DM to open it in the middle. With a second monitor, the pop-out icon moves the whole messenger or one conversation into its own window — then the strip's team rows fold into one chat bubble (unread count).
-- **Home progress** — 'Progress' at the top of Home in the space (and on the phone's home): one bar per goal (`--goal`) of the work you delegated, in pieces; click a row to see its tasks right there.
+- **Home progress** — 'Progress' at the top of Home in the space (and on the phone's home): one bar per goal (`--goal`) of the work you delegated, in pieces; click a row to see its tasks right there. Once every task sent is done and nothing new comes for 2 hours, unsent planned slots are dropped and the goal ends (close it now with `scripts/task goal-done`); untagged tasks fold away after a quiet day. Work handed to another assistant (`scripts/task handover`) is one slot that fills with their progress; expanded it shows 'Backend working — 2/5' and their tasks, and their row says who handed it over.
 - **Harnitor** — the layered button at the top right (`scripts/app open harnitor`): the user's harness — skills, hooks,
   MCP servers, plugins, CLAUDE.md — to view, toggle and undo.
 - **Middle** — the terminal of whatever is selected. Every session is a real Claude Code; the user can type in any of them.

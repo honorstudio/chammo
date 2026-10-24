@@ -437,16 +437,28 @@ export type ChatRef = { label: string; who: string; text: string };
 const REF_MAX = 600;
 const REF_HEAD = /^\[참조 ([#@]chat\d+) · ([^\]]*)\]$/;
 
-/** 보낼 글 = 쓴 글 + 글에 남아 있는 이름표의 인용 블록. 빈 줄은 빼고 600자에서 자른다 */
+/** #task1·#goal1 — 인용 블록 대신 이름표 뒤 따옴표 안으로 풀린다(#file1 "경로" 와 같은 꼴, 2026-10-23 사용자 폰) */
+const INLINE_REF = /^#(?:task|goal)\d+$/;
+const INLINE_MAX = 200;
+const inlineText = (t: string) => {
+  const flat = t.replace(/\s+/g, ' ').replace(/"/g, "'").trim();
+  return [...flat].length > INLINE_MAX ? `${[...flat].slice(0, INLINE_MAX).join('')}…` : flat;
+};
+
+/** 보낼 글 = 쓴 글 + 글에 남아 있는 이름표의 인용 블록. 빈 줄은 빼고 600자에서 자른다. 일·목표 이름표는 그 자리에 #task1 "…" */
 export function withRefs(text: string, refs: ChatRef[]): string {
-  const used = refs.filter((r) => new RegExp(`${r.label}(?!\\d)`).test(text));
+  const at = (r: ChatRef) => new RegExp(`${r.label}(?!\\d)`);
+  const used = refs.filter((r) => at(r).test(text));
   if (!used.length) return text;
+  for (const r of used.filter((x) => INLINE_REF.test(x.label))) text = text.replace(at(r), () => `${r.label} "${inlineText(r.text)}"`);
+  const blocks = used.filter((r) => !INLINE_REF.test(r.label));
+  if (!blocks.length) return text;
   const quote = (t: string) => {
     const flat = t.split('\n').filter((l) => l.trim()).join('\n');
     const cut = [...flat].length > REF_MAX ? `${[...flat].slice(0, REF_MAX).join('')}…` : flat;
     return cut.split('\n').map((l) => `> ${l}`).join('\n');
   };
-  return [text, ...used.map((r) => `[참조 ${r.label} · ${r.who}]\n${quote(r.text)}`)].join('\n\n');
+  return [text, ...blocks.map((r) => `[참조 ${r.label} · ${r.who}]\n${quote(r.text)}`)].join('\n\n');
 }
 
 /** 보낸 말풍선에서 본문과 참조 블록을 가른다 — withRefs 의 반대 */

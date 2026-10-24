@@ -12,7 +12,7 @@ import { railMoved } from '../../domain/railRows';
 import { wakeOnce } from '../../domain/railWake';
 import { orchVars } from '../../domain/orchTheme';
 import { assistant, tr } from '../../i18n';
-import { IconCalendarClock, IconChevron, IconPeople, IconPlus } from '../Icons';
+import { IconCalendarClock, IconChevron, IconHome, IconMore, IconPeople, IconPlus } from '../Icons';
 import { IconButton } from '../kit/IconButton';
 import { speakGlowRef, useSpeaking } from '../speakGlow';
 import { Grip } from '../TaskPanel';
@@ -37,7 +37,15 @@ const centers = (nav: HTMLElement | null) => new Map([...(nav?.querySelectorAll<
 }));
 const still = () => !motionOn(); // 애니메이션 줄이기·끄기·OS 동작 줄이기(ui/calm)
 
-export function OrchRail({ top, avatars, onPick, onMenu, onRename, onMove, onNew, onExpand, expandLabel, fns, group, resting = [], sched, wide = false, groupNames, width = 240, onWidth, joined = false, extra, extraOn }: {
+export function OrchRail({ home, onTeam, moreDot = false, popFns, top, avatars, onPick, onMenu, onRename, onMove, onNew, onExpand, expandLabel, fns, group, resting = [], sched, wide = false, groupNames, width = 240, onWidth, joined = false, extra, extraOn }: {
+  /** 띠 맨 위 홈 칸(띠 RA, 2026-10-24 사용자) — 참모 채팅 없는 전체 한눈에(오케스트레이터 홈). on = 지금 홈을 보는 중 */
+  home?: { on: boolean; onOpen: () => void };
+  /** + 메뉴의 둘째 줄 — 팀 만들기·초대(팀 칸의 + 를 여기로, + 하나). at = + 단추 오른쪽 위 */
+  onTeam?: { label: string; open: (at: { x: number; y: number }) => void };
+  /** 접힌 띠 더보기에 점 — 그 안에 볼 것이 있다(리뷰 수 등) */
+  moreDot?: boolean;
+  /** 더보기 펼침 안 기능 단추 — 기본 title 이 있는 판(띠 호버 카드가 안 닿는 자리). 없으면 fns */
+  popFns?: React.ReactNode;
   avatars: RailAvatar[];
   onPick: (id: string) => void;
   onMenu?: (e: React.MouseEvent, id: string) => void;
@@ -82,7 +90,7 @@ export function OrchRail({ top, avatars, onPick, onMenu, onRename, onMove, onNew
   const down = (id: string, i: number) => (e: React.PointerEvent<HTMLButtonElement>) => {
     if (e.button !== 0 || e.ctrlKey || avatars[i]!.phase) return; // 켜는 중·끄는 중 칸은 끌기·넣기 없음
     // 참모 프사만 — 도우미 묶음·메신저 칸(.lk-av 를 같이 쓰는 형제)은 순서 바꾸기 자리에서 뺀다
-    const btns = [...(e.currentTarget.parentElement?.querySelectorAll<HTMLElement>(':scope > .lk-av:not(.grp):not(.tmx)') ?? [])];
+    const btns = [...(e.currentTarget.parentElement?.querySelectorAll<HTMLElement>(':scope > .lk-av:not(.grp):not(.tmx):not(.rail-home):not(.rest-fold)') ?? [])];
     // 세로 띠 — 위·높이를 tabDrag 셈의 left·width 자리에 넣는다
     const rects = btns.map((b) => { const r = b.getBoundingClientRect(); return { left: r.top, width: r.height }; });
     const nPinned = avatars.filter((a) => a.pinned).length;
@@ -260,6 +268,37 @@ export function OrchRail({ top, avatars, onPick, onMenu, onRename, onMove, onNew
     woke.current = { key: r.key, at: w.at };
     if (w.wake) r.onWake();
   };
+  // 펼침 창(띠 RA) — 잠든 참모·더보기·+ 메뉴. 누른 칸 옆에, 칸 아래 끝(+ 는 위 끝)에 맞춘다
+  const [pop, setPop] = useState<{ kind: 'rest' | 'more' | 'new'; at: DOMRect; from: HTMLElement } | null>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const openPop = (kind: 'rest' | 'more' | 'new') => (e: React.MouseEvent<HTMLElement>) => {
+    const from = e.currentTarget;
+    hideTip();
+    setPop((p) => (p?.kind === kind ? null : { kind, at: from.getBoundingClientRect(), from }));
+  };
+  useLayoutEffect(() => {
+    const el = popRef.current;
+    if (!el || !pop) return;
+    const nav = navRef.current?.getBoundingClientRect();
+    const h = el.offsetHeight;
+    const top = pop.kind === 'new' || pop.at.top + h <= window.innerHeight - 8 ? pop.at.top : pop.at.bottom - h;
+    el.style.left = `${Math.round((nav?.right ?? pop.at.right) + 8)}px`;
+    el.style.top = `${Math.round(Math.max(8, Math.min(top, window.innerHeight - h - 8)))}px`;
+  }, [pop]);
+  // 펼침 창 닫기 — 바깥 누름(여는 칸은 빼고: 그 칸 click 이 토글한다)·Esc·창 포커스 잃음
+  useEffect(() => {
+    if (!pop) return;
+    const down = (e: PointerEvent) => { const t = e.target as Node; if (!popRef.current?.contains(t) && !pop.from.contains(t)) setPop(null); };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setPop(null); };
+    const blur = () => setPop(null);
+    document.addEventListener('pointerdown', down, true);
+    document.addEventListener('keydown', key);
+    window.addEventListener('blur', blur);
+    return () => { document.removeEventListener('pointerdown', down, true); document.removeEventListener('keydown', key); window.removeEventListener('blur', blur); };
+  }, [pop]);
+  const schedPop = sched && (
+    <button className={`rail-fn ${sched.on ? 'on' : ''}`} aria-pressed={sched.on} onClick={sched.onToggle} aria-label={tr('예약', 'Scheduled')} title={tr('예약', 'Scheduled')}><IconCalendarClock /></button>
+  );
   const schedBtn = sched && (
     <button className={`rail-fn ${sched.on ? 'on' : ''}`} aria-pressed={sched.on} onClick={sched.onToggle} aria-label={tr('예약', 'Scheduled')} data-tip={sched.on ? tr('예약 닫기', 'Close scheduled') : tr('예약', 'Scheduled')}><IconCalendarClock /></button>
   );
@@ -270,8 +309,14 @@ export function OrchRail({ top, avatars, onPick, onMenu, onRename, onMove, onNew
       {joined && join && <i className="lk-join" style={{ top: join.top, height: join.height }} aria-hidden="true" />}
       {wide && onWidth && <Grip side="right" width={width} onWidth={onWidth} min={200} max={360} />}
       {/* 접기·펼치기는 기능 줄과 따로 띠 맨 위(207.png — 기능 아이콘 사이에 끼어 이상했다) — 펼침은 오른쪽 끝, 접힘은 가운데. 창 모서리와도 멀다(206.png) */}
+      {home && (
+        <button className={`lk-av rail-home ${home.on ? 'on' : ''}`} onClick={home.onOpen} aria-current={home.on || undefined}
+          aria-label={tr('홈', 'Home')} data-tip={tr('홈', 'Home')} data-tip-sub={tr('전체 한눈에', 'Everything at a glance')}>
+          <span className="lk-av-pic"><IconHome /></span>
+        </button>
+      )}
       {top}
-      {top && <i className="far-sep" aria-hidden="true" />}
+      {(top || home) && <i className="far-sep" aria-hidden="true" />}
       <div className="rail-top">{fold}</div>
       {avatars.map((a, i) => {
         const shift = !drag ? 0 : a.id === drag.id ? drag.dy : tabShift(i, drag.from, drag.to, drag.step);
@@ -294,23 +339,63 @@ export function OrchRail({ top, avatars, onPick, onMenu, onRename, onMove, onNew
         </button>
       )}
       {/* 새 참모 + — 넓어도 아이콘만(익숙한 동작, 아이콘+글자 줄 금지) */}
-      {onNew && <IconButton size="l" className="rail-new" label={tr(`${assistant()} 하나 더`, `One more ${assistant()}`)} title="" data-tip={tr(`${assistant()} 하나 더`, `One more ${assistant()}`)} data-tip-key={keyLabel('⌘⇧T', IS_WIN)} onClick={onNew}><IconPlus /></IconButton>}
+      {onNew && <IconButton size="l" className="rail-new" label={tr(`${assistant()} 하나 더`, `One more ${assistant()}`)} title="" data-tip={tr(`${assistant()} 하나 더`, `One more ${assistant()}`)} data-tip-key={keyLabel('⌘⇧T', IS_WIN)} onClick={onTeam ? openPop('new') : onNew}><IconPlus /></IconButton>}
       {extra}
       <span className="lk-sp" />
       {wide && resting.length > 0 && <span className="lk-cap">{tr(`쉬는 ${assistant()} ${resting.length}`, `Resting ${resting.length}`)}</span>}
-      <div className="lk-rests">
+      {wide && resting.length > 0 && <div className="lk-rests">
         {resting.map((r) => (
           <button key={r.key} data-flip={r.key} className="lk-av rest" onPointerDown={(e) => { if (e.button === 0) pressed.current = r.key; }}
             onPointerUp={(e) => { if (e.button === 0 && !e.ctrlKey && pressed.current === r.key) wake(r); pressed.current = null; }}
             onClick={() => wake(r)} onContextMenu={r.onMenu} aria-label={tr(`${r.label} 깨우기`, `Resume ${r.label}`)}
             data-tip={r.label} data-tip-sub={tr('쉬는 중 — 누르면 깨움', 'Resting — click to resume')} data-tip-dot="off">{r.node}</button>
         ))}
-      </div>
+      </div>}
       {wide ? <div className="lk-foot">{schedBtn}{fns}</div> : (
         <>
-          {schedBtn && <div className="rail-fns col">{schedBtn}</div>}
-          {fns}
+          {/* 띠 RA(2026-10-24 사용자) — 잠든 참모는 얼굴 겹친 칸 하나, 예약·기능은 더보기 하나. 참모 10·잠든 5 에서도 안 넘친다 */}
+          {resting.length > 0 && (
+            <button className={`lk-av rest-fold ${pop?.kind === 'rest' ? 'open' : ''}`} onClick={openPop('rest')} aria-expanded={pop?.kind === 'rest'}
+              aria-label={tr(`쉬는 ${assistant()} ${resting.length}`, `Resting ${resting.length}`)} data-tip={tr(`쉬는 ${assistant()} ${resting.length}`, `Resting ${resting.length}`)} data-tip-sub={tr('누르면 목록', 'Click for the list')} data-tip-dot="off">
+              <span className="rest-faces" aria-hidden="true">{resting.slice(0, 3).map((r) => <span key={r.key}>{r.node}</span>)}</span>
+              <b className="rest-n">{resting.length}</b>
+            </button>
+          )}
+          {(schedBtn || fns) && (
+            <button className={`rail-fn rail-more ${pop?.kind === 'more' ? 'on' : ''}`} onClick={openPop('more')} aria-expanded={pop?.kind === 'more'}
+              aria-label={tr('더보기 — 예약·리플레이·도구·하니터·리뷰', 'More — scheduled, replay, tools, Harnitor, review')} data-tip={tr('더보기', 'More')} data-tip-sub={tr('예약·리플레이·도구·하니터·리뷰', 'Scheduled, replay, tools, Harnitor, review')}>
+              <IconMore />{moreDot && <i className="rail-dot" aria-hidden="true" />}
+            </button>
+          )}
         </>
+      )}
+      {pop && createPortal(
+        <div ref={popRef} className={`rail-pop k-${pop.kind}`} role="dialog" aria-label={pop.kind === 'rest' ? tr(`쉬는 ${assistant()}`, 'Resting') : pop.kind === 'more' ? tr('더보기', 'More') : tr('새로', 'New')}>
+          {pop?.kind === 'rest' && (
+            <>
+              <div className="rail-pop-h"><b>{tr(`쉬는 ${assistant()} ${resting.length}`, `Resting ${resting.length}`)}</b><span>{tr('누르면 깨움', 'Click to resume')}</span></div>
+              {resting.map((r) => (
+                <button key={r.key} className="lk-av rest" onPointerDown={(e) => { if (e.button === 0) pressed.current = r.key; }}
+                  onPointerUp={(e) => { if (e.button === 0 && !e.ctrlKey && pressed.current === r.key) { wake(r); setPop(null); } pressed.current = null; }}
+                  onClick={() => { wake(r); setPop(null); }} onContextMenu={r.onMenu} aria-label={tr(`${r.label} 깨우기`, `Resume ${r.label}`)}>
+                  <span className="lk-av-pic">{r.node}</span><span className="lk-av-tx"><b>{r.label}</b></span>
+                </button>
+              ))}
+            </>
+          )}
+          {pop?.kind === 'more' && <div className="rail-pop-fns" onClick={() => setPop(null)}>{schedPop}{popFns ?? fns}</div>}
+          {pop?.kind === 'new' && onTeam && (
+            <>
+              <button className="rail-pop-row" onClick={() => { setPop(null); onNew?.(); }}>
+                <span>{tr(`${assistant()} 하나 더`, `One more ${assistant()}`)}</span><kbd>{keyLabel('⌘⇧T', IS_WIN)}</kbd>
+              </button>
+              <button className="rail-pop-row" onClick={() => { const r = pop.at; setPop(null); onTeam.open({ x: r.right + 8, y: r.top }); }}>
+                <span>{onTeam.label}</span>
+              </button>
+            </>
+          )}
+        </div>,
+        document.body,
       )}
       {tip && !drag && createPortal(
         <div ref={tipEl} className={`rail-tip ${tip.jump ? 'jump' : ''}`} style={{ left: Math.round(tip.x) }} role="tooltip">

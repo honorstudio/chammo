@@ -236,7 +236,7 @@ fn 소켓으로_401_403_200() {
     let port = probe.local_addr().unwrap().port();
     drop(probe);
     let h = format!("127.0.0.1:{port}");
-    let (stop, addrs) = serve(&[format!("127.0.0.1:{port}").parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![format!("http://{h}")], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default() }, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
+    let (stop, addrs) = serve(&[format!("127.0.0.1:{port}").parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![format!("http://{h}")], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default(), gachas: Default::default() }, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
     let addr = addrs[0];
     assert!(ask(addr, &format!("GET /api/sessions HTTP/1.1\r\nHost: {h}\r\n\r\n")).starts_with("HTTP/1.1 401"));
     assert!(ask(addr, &format!("GET /api/sessions HTTP/1.1\r\nHost: evil.com\r\nAuthorization: Bearer {key}\r\n\r\n")).starts_with("HTTP/1.1 403"));
@@ -258,7 +258,7 @@ fn 쉬던_서버도_요청을_바로_받는다() {
     let port = probe.local_addr().unwrap().port();
     drop(probe);
     let h = format!("127.0.0.1:{port}");
-    let (stop, addrs) = serve(&[h.parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default() }, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
+    let (stop, addrs) = serve(&[h.parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default(), gachas: Default::default() }, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
     let req = format!("GET /api/sessions HTTP/1.1\r\nHost: {h}\r\nAuthorization: Bearer {key}\r\n\r\n");
     let mut total = Duration::ZERO;
     for i in 0..20u64 {
@@ -332,7 +332,7 @@ fn s1_처리_중_패닉이_20번_나도_서버는_계속_답한다() {
     let port = probe.local_addr().unwrap().port();
     drop(probe);
     let h = format!("127.0.0.1:{port}");
-    let (stop, addrs) = serve(&[h.parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default() }, Arc::new(Panicky), Arc::new(Peers::new(vec![], || None))).unwrap();
+    let (stop, addrs) = serve(&[h.parse().unwrap()], Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.clone()], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default(), gachas: Default::default() }, Arc::new(Panicky), Arc::new(Peers::new(vec![], || None))).unwrap();
     let addr = addrs[0];
     for _ in 0..(MAX_CONNS + 4) {
         let _ = ask(addr, &format!("GET /api/sessions HTTP/1.1\r\nHost: {h}\r\nAuthorization: Bearer {key}\r\n\r\n"));
@@ -497,7 +497,7 @@ fn w4_여러_주소에_묶고_하나라도_못_묶으면_다_푼다() {
     let probe = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = probe.local_addr().unwrap().port();
     drop(probe);
-    let gate = |h: &str| Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.to_string(), format!("[::1]:{port}")], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default() };
+    let gate = |h: &str| Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&key, "시험")), hosts: vec![h.to_string(), format!("[::1]:{port}")], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default(), gachas: Default::default() };
     let h = format!("127.0.0.1:{port}");
     let v6: SocketAddr = format!("[::1]:{port}").parse().unwrap();
     let (stop, addrs) = serve(&[h.parse().unwrap(), v6], gate(&h), Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).unwrap();
@@ -598,7 +598,7 @@ impl Keep for FakeKeep {
             stop.store(true, Ordering::Relaxed);
         }
         let t = self.next_net().ok_or("테일스케일 주소가 없어요")?;
-        let gate = Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&"d".repeat(64), "시험")), hosts: vec![], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default() };
+        let gate = Gate { devices: Arc::new(crate::mobile_pair::Devices::with_token(&"d".repeat(64), "시험")), hosts: vec![], origins: vec![], stops: Default::default(), sends: Default::default(), tickets: Default::default(), owner: None, team_says: Default::default(), gachas: Default::default() };
         let (stop, addrs) = serve(&["127.0.0.1:0".parse().unwrap()], gate, Arc::new(Stub), Arc::new(Peers::new(vec![], || None))).map_err(|e| e.to_string())?;
         self.up = Some((t, stop, addrs[0]));
         Ok(())

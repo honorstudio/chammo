@@ -1,4 +1,4 @@
-// 채팅 입력칸 이름표 두 갈래(2026-10-12 사용자) — @ = 참모 멘션, # = 그림·파일·말풍선 참조(#img1·#file1·#chat1).
+// 채팅 입력칸 이름표 두 갈래(2026-10-12 사용자) — @ = 참모 멘션, # = 그림·파일·말풍선·일·목표 참조(#img1·#file1·#chat1·#task1·#goal1).
 // 예전엔 그림 참조가 @img1 이었다 — 지난 대화 기록이 깨지지 않게 읽기는 @img1 도 받는다.
 // 멘션은 입력칸 글 그대로(@가나 담당)가 칩이고, 보낼 때 진짜 SendMessage 이름 @[참모-3 · 가나 담당] 으로 풀린다 —
 // 화면 이름은 띄어쓰기가 있고 별명만이라, 참모가 누구에게 전할지 헷갈리지 않게 대괄호로 묶는다
@@ -7,7 +7,7 @@ import { splitOrchName } from './orchLabel';
 /** 새로 쓰는 참조 이름표 머리 — #img1·#file1·#chat1 */
 export const REF_PREFIX = '#';
 /** 참조 이름표(새 # + 옛 @) */
-export const REF_TOKEN = /[#@](?:img|file|chat)\d+/;
+export const REF_TOKEN = /[#@](?:img|file|chat|task|goal)\d+/;
 
 /** @ 목록에 뜨는 참모 — name 은 진짜 세션 이름(SendMessage 주소), label 은 화면 이름 */
 export type MentionWho = { id: string; name: string; label: string; role?: string; off?: boolean };
@@ -77,7 +77,7 @@ export function expandMentions(text: string, who: MentionWho[]): string {
 export const sentMentionLabel = (name: string) => splitOrchName(name).nick ?? name;
 
 export type Token = string | { ref: string } | { mention: string } | { live: string };
-const SPLIT = /([#@](?:img|file|chat)\d+(?![\w])|@\[[^\]\n]{1,80}\])/;
+const SPLIT = /([#@](?:img|file|chat|task|goal)\d+(?![\w])|@\[[^\]\n]{1,80}\])/;
 
 /** 글 → 글 조각과 이름표 — 참조(#img1·옛 @img1), 보낸 멘션 @[이름]. who 를 주면 지금 로스터 멘션(입력칸)도 */
 export function splitTokens(text: string, who?: MentionWho[]): Token[] {

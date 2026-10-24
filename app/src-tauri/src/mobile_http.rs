@@ -224,6 +224,10 @@ pub trait Backend: Send + Sync {
     fn set_voice(&self, _on: bool) -> Result<(), String> {
         Err("unsupported".into())
     }
+    /// 폰 뽑기·장착 요청(phone_gacha::check 로 거른 것) — 맥 앱 화면 쪽이 굴리고 gacha.json 에 쓴 뒤 답(PhoneReply). 답이 없으면 Err("timeout")
+    fn gacha_op(&self, _req: &serde_json::Value) -> Result<serde_json::Value, String> {
+        Err("unsupported".into())
+    }
     /// 폰에서 음성 소리 틀기(phone_voice) — 하트비트 한 번(보고 있음·소리 소식)을 받고 가져갈 소리·멈춤 번호를 답한다 · 내놓은 소리 파일(wav)
     fn voice_beat(&self, _b: crate::phone_voice::Beat) -> serde_json::Value {
         serde_json::json!({ "item": null, "cancel": 0 })
@@ -267,6 +271,8 @@ pub struct Gate {
     pub owner: Option<String>,
     /// 폰 팀 말(/api/team-say) 보낸 때 — 1분에 TEAM_SAY_PER_MIN 번까지
     pub team_says: std::sync::Mutex<Vec<std::time::Instant>>,
+    /// 폰 뽑기 요청이 도는 기기 — 기기당 하나만(맥 앱이 멈춰도 서버 자리를 8초씩 여럿 잡지 않게, phone_gacha::begin)
+    pub gachas: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 /// 폰 팀 말 분당 상한 — 다시 보내기 연타·잘못 도는 화면이 팀 방을 덮지 않게
@@ -376,7 +382,7 @@ pub fn is_short_id(s: &str) -> bool {
     s.len() == 8 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// 작업 id — scripts/task 는 1006-1615-5e02, 옛 기록엔 report-fix 같은 이름도 있다. 글자·숫자·-·_ 만, 40자까지
+/// 작업 id — scripts/task 는 1001-1100-ef56, 옛 기록엔 report-fix 같은 이름도 있다. 글자·숫자·-·_ 만, 40자까지
 fn is_task_id(s: &str) -> bool {
     !s.is_empty() && s.len() <= 40 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
@@ -675,6 +681,20 @@ fn tagged(req: &Req, body: String) -> Resp {
     let same = req.param("since") == Some(tag.as_str());
     let body = if same { String::new() } else { body };
     Resp::new(200, "text/plain; charset=utf-8", format!("{}\n{body}", serde_json::json!({ "tag": tag, "same": same })))
+}
+
+/// 폰 사무실 모양 — 맥 앱이 쓴 office.json(ui/App, domain/phoneOffice officeShape)에서 아는 칸만. 아직 없으면 빈 모양(폰은 기본 방),
+/// 깨졌으면 '없음'과 갈라 이유째
+const OFFICE_KEYS: [&str; 6] = ["slots", "boss", "skin", "furn", "placed", "deco"];
+fn office_shape(data: &std::path::Path) -> Result<String, String> {
+    let raw = match std::fs::read_to_string(data.join("office.json")) {
+        Ok(r) => r,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok("{}".into()),
+        Err(e) => return Err(format!("office.json: {e}")),
+    };
+    let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| format!("office.json: {e}"))?;
+    let out: serde_json::Map<String, serde_json::Value> = OFFICE_KEYS.iter().filter_map(|k| v.get(*k).map(|x| (k.to_string(), x.clone()))).collect();
+    Ok(serde_json::Value::Object(out).to_string())
 }
 
 /// since 가 없으면 옛 폰 화면용 글 그대로
@@ -1213,8 +1233,8 @@ struct ModeNameBody {
 }
 
 /// 폰 홈·보관함 v1 에 더한 쓰기 길 — 같은 출처 문지기·head_check 몸통 목록·405 가 이 목록 하나를 본다
-const PHONE_POSTS: &[&str] = &["/api/peer-human-say", "/api/team-say", "/api/team-invite", "/api/team-create", "/api/team-handoff", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
-const PHONE_GETS: &[&str] = &["/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team"];
+const PHONE_POSTS: &[&str] = &["/api/gacha", "/api/peer-human-say", "/api/team-say", "/api/team-invite", "/api/team-create", "/api/team-handoff", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
+const PHONE_GETS: &[&str] = &["/api/gacha", "/api/office", "/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team"];
 /// 폰 md 글 칸 저장만 몸통을 크게(글 512KB + JSON)
 const MAX_WRITE_BODY: usize = crate::locker_fs::MAX_PHONE_MD + 64 * 1024;
 
@@ -1727,7 +1747,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         let p = crate::mobile_pair::Pairing { name: &name, home: b.home && !b.peer, prev: b.prev.as_deref(), peer: b.peer };
         return match gate.devices.pair_with(&b.code, &p, std::time::SystemTime::now()) {
             Some(token) => Resp::json(&serde_json::json!({ "token": token })),
-            None => Resp::text(401, "짝짓기 코드가 틀렸거나 10분이 지났어요 — 컴퓨터 Chammo 설정 > 폰과 메신저에서 QR 을 새로 만들어 주세요"),
+            None => Resp::text(401, "짝짓기 코드가 틀렸거나 10분이 지났어요 — 컴퓨터 Chammo 설정 > 기기 관리에서 QR 을 새로 만들어 주세요"),
         };
     }
     // 다른 기기 참모 연결(코드 없이, peer_ask) — 열쇠 없이 받지만 열쇠는 되묻기 + 이 기기 사람의 카드 허용을 지나야 생긴다
@@ -1800,6 +1820,16 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         ("GET", "/api/sessions") => match be.sessions() {
             Ok(s) if req.param("since").is_some() => tagged(req, with_ctx(&s, &be.ctx_files())),
             Ok(s) => Resp::raw_json(with_ctx(&s, &be.ctx_files())),
+            Err(e) => Resp::text(502, &e),
+        },
+        // 폰 뽑기·스킨 — 보기는 필요한 칸만, 쓰기는 거른 요청을 맥 앱에(굴리기·장착은 화면 쪽 한 줄)
+        ("GET", "/api/gacha") => match crate::phone_gacha::view(&be.data_dir()) {
+            Ok(s) => Resp::raw_json(s),
+            Err(e) => Resp::text(502, &e),
+        },
+        ("GET", "/api/office") => match office_shape(&be.data_dir()) {
+            Ok(s) if req.param("since").is_some() => tagged(req, s),
+            Ok(s) => Resp::raw_json(s),
             Err(e) => Resp::text(502, &e),
         },
         ("GET", "/api/transcript") => {
@@ -1945,6 +1975,17 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         }
         ("POST", "/api/send" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/voice-mode" | "/api/voice-beat" | "/api/model" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker-add" | "/api/peer-card-answer") if !same_origin_write(req, gate) => Resp::text(403, "bad origin"),
         ("POST", p) if PHONE_POSTS.contains(&p) && !same_origin_write(req, gate) => Resp::text(403, "bad origin"),
+        // 출처 문지기 뒤에 — 폰 뽑기·장착 요청
+        ("POST", "/api/gacha") => {
+            let v: serde_json::Value = match body(req) { Ok(v) => v, Err(r) => return r };
+            let Some(op) = crate::phone_gacha::check(&v) else { return Resp::text(400, "bad gacha request") };
+            let Some(_one) = crate::phone_gacha::begin(&gate.gachas, &device_of(req, gate).unwrap_or_default()) else { return Resp::text(429, "gacha request in progress") };
+            match be.gacha_op(&op) {
+                Ok(r) => Resp::json(&r),
+                Err(e) if e == "timeout" => Resp::text(504, "mac app did not answer"),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
         ("POST", "/api/locker-alias" | "/api/locker-unalias" | "/api/locker-new" | "/api/locker-mkdir" | "/api/locker-write") => locker_op(req, be),
         // 폰 홈 모드 카드 — 목록 · 한 칸 그리기(글자 칸 크기) · 누름 · 고른 모드 켜기·이 홈에서 끄기(대시보드 칸 자리 = 그 참모)
         ("GET", "/api/modes") => Resp::json(&be.modes()),
@@ -2098,6 +2139,8 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             Resp::json(&serde_json::json!({ "ok": true }))
         }
         // 폰 푸시 — 공개 키 받기, 이 기기 구독 넣기·빼기. 구독 주소는 알려진 푸시 서버 https 만(push::endpoint_ok)
+        // 눌린 알림의 갈 곳을 모를 때(중계 입구 푸시·갈 곳 없는 푸시) — 마지막 알림 갈 곳과 나이
+        ("GET", "/api/push-last") => Resp::json(&crate::push::last_target(&be.data_dir(), crate::push::now_ms())),
         ("GET", "/api/push-key") => match be.push_key() {
             Ok(k) => Resp::json(&serde_json::json!({ "key": k })),
             Err(e) => Resp::text(502, &e),
@@ -2582,7 +2625,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Err(e) => Resp::text(400, &e),
             }
         }
-        (_, "/api/env" | "/api/sessions" | "/api/transcript" | "/api/tasks" | "/api/routines" | "/api/usage" | "/api/load" | "/api/file" | "/api/shows" | "/api/avatars" | "/api/avatar" | "/api/avatar-image" | "/api/send" | "/api/attach" | "/api/routine" | "/api/interrupt" | "/api/stopped" | "/api/tails" | "/api/respawn" | "/api/spawn" | "/api/browsers" | "/api/browser-frame" | "/api/push-key" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/send-status" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/curation-state" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/direct" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/pins" | "/api/order" | "/api/role" | "/api/roles" | "/api/accounts" | "/api/account-switch" | "/api/account-auto" | "/api/voice" | "/api/voice-mode" | "/api/voice-beat" | "/api/voice-audio" | "/api/model" | "/api/login" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker" | "/api/locker-add" | "/api/peer-cards" | "/api/peer-card-answer") => {
+        (_, "/api/env" | "/api/sessions" | "/api/transcript" | "/api/tasks" | "/api/routines" | "/api/usage" | "/api/load" | "/api/file" | "/api/shows" | "/api/avatars" | "/api/avatar" | "/api/avatar-image" | "/api/send" | "/api/attach" | "/api/routine" | "/api/interrupt" | "/api/stopped" | "/api/tails" | "/api/respawn" | "/api/spawn" | "/api/browsers" | "/api/browser-frame" | "/api/push-key" | "/api/push-last" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/send-status" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/curation-state" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/direct" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/pins" | "/api/order" | "/api/role" | "/api/roles" | "/api/accounts" | "/api/account-switch" | "/api/account-auto" | "/api/voice" | "/api/voice-mode" | "/api/voice-beat" | "/api/voice-audio" | "/api/model" | "/api/login" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker" | "/api/locker-add" | "/api/peer-cards" | "/api/peer-card-answer") => {
             Resp::text(405, "method not allowed")
         }
         (_, p) if PHONE_POSTS.contains(&p) || PHONE_GETS.contains(&p) => Resp::text(405, "method not allowed"),

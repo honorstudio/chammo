@@ -8,7 +8,9 @@ import { IconChat, IconPlus, IconWindowOut } from '../Icons';
 import { Person, TeamMarkIcon, Unread } from './TeamFaces';
 import './team.css';
 
-export function TeamRail({ team, convos, sel, open, detached, unread, wide, onTeam, onPick, onDetachAll, onFront, onStart, dimmed }: {
+export function TeamRail({ team, convos, sel, open, detached, unread, wide, onTeam, onPick, onDetachAll, onFront, onStart, dimmed, noAdd = false }: {
+  /** 팀 만들기·초대 + 를 안 그린다 — 참모 띠 + 메뉴가 대신(띠 RA, 2026-10-24) */
+  noAdd?: boolean;
   /** 팀 이름(없으면 팀이 없다 — + 만) */
   team: string | null;
   convos: Convo[];
@@ -58,7 +60,7 @@ export function TeamRail({ team, convos, sel, open, detached, unread, wide, onTe
       {team && open && onDetachAll && (
         <button className="tmx-rail-out" onClick={onDetachAll} aria-label={tr('메신저 따로 창으로', 'Open the messenger in its own window')} data-tip={tr('메신저 따로 창으로', 'Messenger in its own window')}><IconWindowOut /></button>
       )}
-      <button className="tmx-rail-add" onClick={onStart} aria-label={team ? tr('팀 초대', 'Invite to team') : tr('팀 만들기', 'Make a team')} data-tip={team ? tr('팀 초대', 'Invite to team') : tr('팀 만들기', 'Make a team')}><IconPlus /></button>
+      {!noAdd && <button className="tmx-rail-add" onClick={onStart} aria-label={team ? tr('팀 초대', 'Invite to team') : tr('팀 만들기', 'Make a team')} data-tip={team ? tr('팀 초대', 'Invite to team') : tr('팀 만들기', 'Make a team')}><IconPlus /></button>}
     </>
   );
 }

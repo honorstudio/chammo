@@ -58,6 +58,8 @@ export type Config = {
   talkKey?: string;
   /** 앱 밖에서도 말하기 키를 본다(손쉬운 사용 권한) */
   talkAnywhere?: boolean;
+  /** 숨은 칸 — 'internal' 이면 사용 신호를 우리 시험 기기로 따로 센다(Rust usage_ping). 화면엔 없고 저장 때 그대로 지나간다 */
+  pingChannel?: string;
 };
 /** 설정 읽기 — 새 설치면 기본값(GitHub 아이디는 gh 로 채워 본다) */
 export const readConfig = () => invoke<Config>('read_config');
@@ -179,6 +181,9 @@ export const subagentTails = (sessionId: string, ids: string[]) => invoke<{ tool
 export const readTranscriptTails = (sessionIds: string[]) =>
   invoke<Record<string, string>>('read_transcript_tails', { sessionIds });
 
+/** 세션 폴더 git — 커밋 안 한 변경·main 에 안 들어간 커밋(세션 자동 정리, Rust tidy_git) */
+export const tidyGit = (dirs: string[]) => invoke<{ dir: string; dirty: boolean; unmerged: boolean }[]>('tidy_git', { dirs });
+
 /** dev 아래 프로젝트들의 CLAUDE.md·starter 상태 */
 export const projectScan = (devRoot: string) => invoke<import('../domain/status').ProjectDoc[]>('project_scan', { devRoot });
 
@@ -229,6 +234,10 @@ export const ciRuns = (devRoot: string, user: string, since: string) =>
 /** 머지 가챠 저장 파일 ~/.honor-orchestrator/gacha.json (없으면 '') */
 export const readGacha = () => invoke<string>('read_gacha');
 export const writeGacha = (json: string) => invoke<void>('write_gacha', { json });
+/** 폰 사무실 모양(office.json) — 폰 서버 /api/office 가 읽기만 */
+export const writeOffice = (json: string) => invoke<void>('write_office', { json });
+/** 폰 뽑기·장착 요청의 답 — 폰 서버가 그 대기표(key)로 기다린다(phone_gacha.rs) */
+export const gachaPhoneReply = (key: string, reply: unknown) => invoke<void>('gacha_phone_reply', { key, reply });
 
 /** 다마고치 저장 파일 ~/.honor-orchestrator/tama.json (없으면 '') */
 export const readTama = () => invoke<string>('read_tama');

@@ -548,7 +548,7 @@ fn direct_url() -> Option<String> {
 
 /// 폰 중계 터널(phone_relay, ADR 0013)의 문지기·컴퓨터 쪽 일 — 테일넷 서버와 같은 기기 목록·보낸 말 기록, 받는 이름·출처만 터널 것
 pub(crate) fn relay_parts<R: tauri::Runtime>(app: &tauri::AppHandle<R>, web: &str) -> (Arc<Gate>, Arc<dyn Backend>) {
-    let gate = Gate { devices: devices(), hosts: vec![crate::phone_relay_core::RELAY_HOST.into()], origins: vec![web.to_string()], stops: Default::default(), sends: sends(), tickets: Default::default(), owner: None, team_says: Default::default() };
+    let gate = Gate { devices: devices(), hosts: vec![crate::phone_relay_core::RELAY_HOST.into()], origins: vec![web.to_string()], stops: Default::default(), sends: sends(), tickets: Default::default(), owner: None, team_says: Default::default(), gachas: Default::default() };
     (Arc::new(gate), Arc::new(MacBackend { app: app.clone() }))
 }
 
@@ -700,7 +700,7 @@ fn start_locked<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), Stri
     if let Some((web, _, _)) = crate::phone_relay::ready(crate::config::data_dir()) {
         origins.push(web);
     }
-    let gate = Gate { devices: devices(), hosts: hosts(&t, port, true), origins, stops: Default::default(), sends: sends(), tickets: Default::default(), owner, team_says: Default::default() };
+    let gate = Gate { devices: devices(), hosts: hosts(&t, port, true), origins, stops: Default::default(), sends: sends(), tickets: Default::default(), owner, team_says: Default::default(), gachas: Default::default() };
     let be: Arc<dyn Backend> = Arc::new(MacBackend { app: app.clone() });
     let sock = t.socket.clone();
     let peers = Arc::new(Peers::new(allowed_peers(&t.ip, &t.peers), move || tailscale_status(&sock).map(|st| allowed_peers(&st.ip, &st.peers))));
@@ -1265,6 +1265,15 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     fn voice_audio(&self, id: u64) -> Option<Vec<u8>> {
         // 내놓은 소리(그 id)만 — 폰이 경로를 정하지 못한다
         std::fs::read(crate::phone_voice::audio_path(id)?).ok()
+    }
+    fn gacha_op(&self, req: &serde_json::Value) -> Result<serde_json::Value, String> {
+        use tauri::Manager;
+        // 맥 앱 화면 쪽(App.tsx window.__gachaPhone)이 useGacha 한 줄에서 굴리고 gacha_phone_reply 로 답한다
+        let w = self.app.get_webview_window("main").ok_or("앱 창이 없어요")?;
+        crate::phone_gacha::call(req.clone(), crate::phone_gacha::WAIT, |key, req| {
+            let line = serde_json::json!({ "key": key, "req": req });
+            w.eval(format!("window.__gachaPhone && window.__gachaPhone({line})")).map_err(|e| e.to_string())
+        })
     }
     fn pick_model(&self, id: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
         use tauri::Manager;

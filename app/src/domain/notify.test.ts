@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { blockedBody, nativeWhenFocused, NOTIFY_GAP_MS, noteKey, noteTarget, readNoteTarget, shouldNotify, wants, type Note } from './notify';
+import { blockedBody, cardTarget, nativeWhenFocused, NOTIFY_GAP_MS, noteKey, noteTarget, readNoteTarget, shouldNotify, wants, type Note } from './notify';
 
 describe('wants — 어떤 알림을 보내나 (사용자 2026-09-27 "필요한 것만")', () => {
   it('결정 대기(task ask·로그인 오류)·권한 창 자동 허용 실패는 늘 보낸다', () => {
@@ -62,12 +62,25 @@ describe('noteTarget — 알림을 누르면 어디로 (macOS 알림 userInfo �
   it('물어봄·확인창·자동 허용 실패·컨텍스트는 그 세션', () => {
     for (const kind of ['asks', 'blocked', 'allowFail', 'ctx'] as const) expect(noteTarget(n({ kind, session: 'abc' }))).toBe('session:abc');
   });
+  it('갈 곳(go)을 따로 주면 그것 — 결정·직접 카드는 그 카드가 있는 참모 채팅의 그 카드로(2026-10-23 폰 알림)', () => {
+    expect(noteTarget(n({ kind: 'decide', session: 'task:1:ts', go: cardTarget('5e55a0d1', 'w:1001-0900-ab12') }))).toBe('card:5e55a0d1:w:1001-0900-ab12');
+    expect(noteTarget(n({ kind: 'human', session: 'sub1', go: cardTarget('o1', 'd:card9') }))).toBe('card:o1:d:card9');
+  });
 });
 
 describe('readNoteTarget — 눌린 알림에서 돌아온 글자를 되읽기', () => {
   it('왕복', () => {
     expect(readNoteTarget('inbox')).toEqual({ to: 'inbox' });
     expect(readNoteTarget('session:abc')).toEqual({ to: 'session', id: 'abc' });
+    expect(readNoteTarget('card:5e55a0d1-ab30:w:1001-0900-ab12')).toEqual({ to: 'card', orch: '5e55a0d1-ab30', card: 'w:1001-0900-ab12' });
+    expect(readNoteTarget('team:room-1')).toEqual({ to: 'team', room: 'room-1' });
+    expect(readNoteTarget('latest')).toEqual({ to: 'latest' });
+  });
+  it('카드 갈 곳은 참모·카드가 다 있어야 — 하나라도 비면 null', () => {
+    expect(readNoteTarget('card:o1')).toBeNull();
+    expect(readNoteTarget('card::w:1')).toBeNull();
+    expect(readNoteTarget('card:o1:')).toBeNull();
+    expect(readNoteTarget('team:')).toBeNull();
   });
   it('모르는 글자·빈 세션은 null (그냥 창만 앞으로)', () => {
     expect(readNoteTarget('')).toBeNull();

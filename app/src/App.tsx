@@ -52,7 +52,7 @@ import { getAppEnv, listSessionsAllRaw, listSessionsRaw, readSay, writeVoiceMode
 import { freshReplies, fromOrchTurn, parseSay, pickSay, type ReplySeen } from './domain/voice';
 import { baseVoice, voiceFor } from './domain/avatar';
 import { avatarSnapshot, refreshAvatars, setAvatarTts } from './ui/avatar';
-import { blockedBody, readNoteTarget } from './domain/notify';
+import { blockedBody, cardTarget, readNoteTarget } from './domain/notify';
 import { notifyOnce } from './ui/notifier';
 import { AgentAskHost, browserMenu, browserOwnsKey, openAgentModal, PopupCards } from './ui/AgentBrowserModal';
 import { useDirectCards } from './ui/useDirectCards';
@@ -112,6 +112,7 @@ import { inferRoles, parseRoles, roleHeir, type RoleMap } from './domain/orchRol
 import { setOrchRoleData, saveOrchRole, orchRoleOf, onOrchRolesSaved } from './ui/orchRoleStore';
 import { autoRestore, parseSnap, stepSnapshot, type LiveSnap, type SnapSession } from './domain/revive';
 import { useLostTriage } from './ui/useLostTriage';
+import { useAutoTidy } from './ui/useAutoTidy';
 import { useOrchRevive } from './ui/useOrchRevive';
 import { useRoutineStalls } from './ui/useRoutineStalls';
 import { isHqOrch } from './domain/lostTriage';
@@ -120,6 +121,7 @@ import { OrphanActions } from './ui/Revive';
 import { OfficeView } from './ui/office/OfficeView';
 import { SpaceView } from './ui/space/SpaceView';
 import { OrchHome } from './ui/space/OrchHome';
+import { HomeDash, type HomeGo } from './ui/space/HomeDash';
 import { resumedOrch, showHome } from './domain/orchHome';
 import { OfficeDock } from './ui/office/OfficeDock';
 import { noteOf } from './domain/dock';
@@ -128,7 +130,9 @@ import { Shop } from './ui/gacha/Shop';
 import { FurnitureTray } from './ui/office/FurniturePanel';
 import { OfficeModal, OfficeTools, type OfficeTab } from './ui/office/OfficeMenu';
 import { useGacha } from './ui/gacha/useGacha';
+import { gachaBridge } from './ui/gacha/phoneBridge';
 import { EMPTY_GACHA, ownedOf, ownedSkins, skinOfFile } from './domain/gacha';
+import { gachaDeco, officeShape } from './domain/phoneOffice';
 import { workAct } from './domain/activity';
 import { canPlace, delivery, deliveryTail, placedCells, planRoom, seatSlots, stampSeen, withLounge, type Seat } from './domain/office';
 import { spriteOf } from './ui/tama/lcd';
@@ -151,15 +155,15 @@ import { useForeignBrowsers } from './ui/useForeignBrowsers';
 import { useDaemonEnv } from './ui/useDaemonEnv';
 import { useAskWake } from './ui/useAskWake';
 import { useCraftHandback } from './ui/useCraftHandback';
-import { bornAfter, buildInbox, findTarget, freshItems, popoverOpen, replyBlocked, type InboxItem } from './domain/inbox';
+import { bornAfter, buildInbox, decideNote, findTarget, freshItems, popoverOpen, replyBlocked, type InboxItem } from './domain/inbox';
 import { InboxPopover } from './ui/Inbox';
 import { ctxAlerts, parseCtx, type Ctx } from './domain/ctx';
 import { useReview } from './ui/useReview';
 import { ReviewPage } from './ui/ReviewPage';
 import { ReviewStrip } from './ui/ReviewStrip';
 import { splitOpen } from './domain/reviewSummary';
-import { focusPlan, intentOf, openShortcut, withFeature } from './domain/appctl';
-import { rebuildMenu, writeConfig } from './data/tauri';
+import { focusPlan, intentOf, openShortcut, opensHomeDash, withFeature } from './domain/appctl';
+import { gachaPhoneReply, rebuildMenu, writeConfig, writeOffice } from './data/tauri';
 import { useSpeakGlowPoll } from './ui/speakGlow';
 import { attachCommand } from './domain/termCommand';
 import { chatViewOf, type ChatView } from './domain/space';
@@ -1059,8 +1063,8 @@ export default function App() {
   useAskWake(agentLives, sessions);
   // 직접 답하기 카드 — 하위 세션이 본인 승인을 원하면 맡긴 참모 채팅에 카드(사람이 누르면 그 세션에 사람 말로)
   // 살아 있나·이름은 폴더로 거르기 전 전체 목록(allSessions)으로 — 워크트리로 들어가 사이드바에서 빠진 세션 카드가 꺼짐으로 숨었다(2026-10-05 아이맥)
-  const direct = useDirectCards(allSessions, allActs, taskEvents, groups.orchestrators, groups.orchestrator, agentLives, (c, name) => notifyOnce({
-    kind: 'human', session: c.from, orch: false,
+  const direct = useDirectCards(allSessions, allActs, taskEvents, groups.orchestrators, groups.orchestrator, agentLives, (c, name, owner) => notifyOnce({
+    kind: 'human', session: c.from, orch: false, ...(owner ? { go: cardTarget(owner.id, `d:${c.id}`) } : {}),
     title: tr(`${josa(name, '이', '가')} 네 답을 기다려`, `${name} needs your answer`),
     body: `${kindView(c.kind).word}${c.amount ? ` ${c.amount}` : ''} — ${c.q}`,
   }), heirOf, async (c) => {
@@ -1069,17 +1073,20 @@ export default function App() {
     await resumeSession(st?.cwd ?? c.cwd, st?.sessionId ?? '', c.from);
     refresh();
   });
+  // 세션 자동 정리 — 끝나고 조용한 팀 세션을 맡긴 참모에게 한 줄(갱신·끄기·워크트리 정리는 참모 몫, domain/autoTidy · 2026-10-23 사용자)
+  useAutoTidy({ on: features.autoTidy, subs: subSessions, helpers: groups.helpers, acts: allActs, events: taskEvents, asking: direct.inboxCards.filter(needsAnswer).map((c) => c.from),
+    front: groups.orchestrator, orchs: groups.orchestrators, sessions, heir: heirOf });
   const inbox = buildInbox(allActs, taskEvents, new Set(dismissed), sessions, (s) => orchIds.has(s.id), (s) => orchDisplay(s) || assistant()).filter((i) => !(i.kind === 'blocked' && picking.has(i.target ?? '')));
   // 새 결정이 생기면: 종 아래 드롭다운이 저절로 펼쳐짐 + macOS 알림. 개수는 상단 바 종·Dock 뱃지
   // 직접 답하기 카드도 결정 대기함에 — 새로 기다리는 카드가 생기면 드롭다운도 펼친다(어느 화면·탭을 보든 보이게)
   // 짝지은 다른 기기의 카드(ADR 0011) — 같은 종에, 새로 기다리면 같이 펼친다
   const remote = useRemoteCards();
   // 다른 기기 보기(peer-panel) — 띠 맨 위 기기 단추·그 기기 띠·스페이스·맨 위 줄. 채팅 칸은 원격 채팅(remoteChat) 그대로
-  const farMode = useFarMode({ remoteChat, setRemoteChat, cards: remote.cards, fontSize, onConnect: () => { setSettingsTab('phone'); setSettingsOpen(true); } });
+  const farMode = useFarMode({ remoteChat, setRemoteChat, cards: remote.cards, fontSize, onConnect: () => { setSettingsTab('devices'); setSettingsOpen(true); } });
   // 참모 메신저(시안 v2) — 띠 팀 칸·가운데 대화·스페이스 팀 탭. '내 참모에게' 넘기기는 지금 채팅 칸 참모(스페이스 보내기와 같은 참모)
   const teamMode = useTeamMode({
     wide: sidebarOpen,
-    onLogin: () => { setSettingsTab('phone'); setSettingsOpen(true); },
+    onLogin: () => { setSettingsTab('accounts'); setSettingsOpen(true); }, // Chammo 계정은 계정 탭 맨 위(10-24)
     handoff: () => {
       const o = groups.orchestrators.find((x) => x.id === focusedBy.current.get('orch-col')) ?? groups.orchestrators[0];
       // 보내기는 Rust team_handoff 한 길 — 글을 다시 거르고(CR·ESC 등) 기록엔 본문 없이(보안 검토 10-23)
@@ -1106,7 +1113,7 @@ export default function App() {
     prevInbox.current = new Set(inbox.map((i) => i.key));
     if (fresh.length) {
       // 참모 물어봄·확인창은 위에서 따로 알린다 — 여기선 결정(task ask)만. 로그인 풀림은 useLogin 이 한 번에 묶어서
-      for (const f of fresh.filter((x) => x.kind === 'decide' && bornAfter(x, APP_STARTED))) notifyOnce({ kind: 'decide', session: f.key, orch: false, title: tr(`결정 대기 — ${f.project}`, `Decision needed — ${f.project}`), body: f.text });
+      for (const f of fresh.filter((x) => x.kind === 'decide' && bornAfter(x, APP_STARTED))) notifyOnce(decideNote(f, sessions, (o) => orchDisplay(o) || assistant()));
     }
     void setBadge(inbox.length + direct.inboxCards.length + remote.cards.length + (login.need ? 1 : 0) + browserCount).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1281,6 +1288,8 @@ export default function App() {
     const t = readNoteTarget(raw);
     if (t?.to === 'inbox') setInboxOpen(true);
     else if (t?.to === 'session') openTarget(t.id);
+    // 그 카드 — 데스크톱은 그 참모로 가고, 결정(w:)은 결정 대기함을, 직접 카드(d:)는 그 참모 채팅 끝에 있다
+    else if (t?.to === 'card') { openTarget(t.orch); if (t.card.startsWith('w:')) setInboxOpen(true); }
   };
   useEffect(() => {
     const w = window as unknown as { __notifyClick?: (t: string) => void };
@@ -1333,7 +1342,8 @@ export default function App() {
     }
     else if (it.kind === 'open') {
       const sc = openShortcut(it.what);
-      if (sc) runRef.current(sc);
+      if (opensHomeDash(it.what, spaceShownRef.current)) spaceCmd('dash');
+      else if (sc) runRef.current(sc);
       else if (it.what === 'reader') setReaderOpen(true);
       else if (it.what === 'tasks') setTasksOpen(true);
       else if (it.what === 'inbox') setInboxOpen(true);
@@ -1403,6 +1413,18 @@ export default function App() {
   const officeSlots = seatSlots(seats, [...groups.orchestrators.slice(3).map((s) => s.id), ...activities.map((a) => a.session.id)]);
   const slotsKey = JSON.stringify(officeSlots);
   useEffect(() => { if (slotsKey !== JSON.stringify(seats)) setSeats(JSON.parse(slotsKey)); }, [slotsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 폰 사무실 모양(폰 서버 /api/office) — 자리표·반장·스킨·가구·장식이 바뀔 때만 office.json 에(domain/phoneOffice)
+  const tamaPet = tama.file?.pet;
+  const officeJson = gacha.file ? JSON.stringify(officeShape({ slots: officeSlots, boss: tamaPet ? spriteOf(tamaPet.egg, tamaPet.slot) : 'bear', skin: skinOfFile(gacha.file), furn: ownedOf(gacha.file, 'furn'), placed: gacha.file.placed ?? {}, deco: gachaDeco(gacha.file) })) : '';
+  useEffect(() => { if (officeJson) writeOffice(officeJson).catch(() => { /* 폰 사무실만 옛 모양 — 다음 바뀜에 다시 */ }); }, [officeJson]);
+  // 폰 뽑기·스킨(폰 서버 POST /api/gacha → phone_gacha.rs eval) — 굴리기·장착은 여기 useGacha 한 줄에서, 답은 대기표로 돌려준다
+  const gachaPhone = gacha.phone;
+  useEffect(() => {
+    const w = window as unknown as { __gachaPhone?: (m: { key: string; req: unknown }) => void };
+    const bridge = gachaBridge(gachaPhone, gachaPhoneReply, () => !featuresRef.current.gacha);
+    w.__gachaPhone = (m) => { void bridge(m); };
+    return () => { delete w.__gachaPhone; };
+  }, [gachaPhone]);
 
   activeGrid.current = null; // 격자를 그리는 갈래가 gridFocus 로 다시 채운다
   /** 예약(루틴) 화면 — 사이드바(터미널 뷰)와 채팅 뷰 스페이스가 같이 쓴다. removed: 지운 뒤 갈 곳 */
@@ -1465,7 +1487,7 @@ export default function App() {
       officeSlots,
       placedCells(ownedOf(g, 'furn'), g.placed), // 가구가 먼저 — 책상이 놓인 가구 칸을 건너뛴다
     ), ownedOf(g, 'furn'), g.placed);
-    const deco = { hat: g.equip.hat, window: g.equip.window, fx: g.equip.fx, desk: g.equip.desk, light: g.equip.light, title: g.equip.title, dance: g.equip.action === 'action.dance', coffee: g.equip.action === 'action.coffee', action: g.equip.action, hasCat: (g.owned['friend.cat'] ?? 0) > 0, palIds: ownedOf(g, 'friend').filter((id) => id !== 'friend.cat') };
+    const deco = gachaDeco(g);
     // 반장 반응 재료 — 참모의 마지막 턴 끝 답(중간 멘트 제외), 머지만큼(10코인 이상) 들어오면 만세
     const head = orchActs[0];
     const last = head?.activity.reply;
@@ -1520,6 +1542,21 @@ export default function App() {
       nameOf={(x) => orchDisplay(x)} colorOf={orchColor}
       onGo={onGo} onResume={resumeFromHome} onNew={env && !spawning ? () => setNaming(true) : undefined} />
   );
+  // 홈 대시보드(채팅 뷰 띠 맨 위 홈, 2026-10-24 사용자 HA) — 참모 채팅 없는 전체 한눈에. 결정 대기 = 위 종과 같은 물음·직접 카드
+  const homeDashNode = (go: HomeGo) => {
+    const orchOf = (t: string | undefined) => { const s = t ? findTarget(navOrchs, t) : undefined; return s && navOrchs.some((o) => o.id === s.id) ? s : undefined; };
+    const asks = [
+      ...direct.inboxCards.map((c) => ({ key: `d:${c.id}`, text: c.q, where: c.cwd.split('/').filter(Boolean).pop() ?? '', who: orchOf(c.from), pay: c.kind === 'pay' })),
+      ...inbox.map((i) => ({ key: i.key, text: i.text, where: [i.project, i.where].filter(Boolean).join(' · '), who: i.toOrch ? orchOf(i.target) : undefined })),
+    ];
+    const running = sessions.filter((x) => !orchIds.has(x.id) && !x.finished && statusOf(x) === 'working').length;
+    return (
+      <HomeDash go={go} orchs={navOrchs} nameOf={(x) => orchDisplay(x)} roleOf={(n) => orchRoleOf(n)?.text} colorOf={orchColor} lines={liveLines} statusOf={statusOf}
+        off={offOrchList} starting={resuming} onResume={resumeFromHome} events={taskEvents} sessions={sessions}
+        asks={asks} onAsks={() => setInboxOpen(true)} running={running} usage={barUsage} load={loadMon.sys ? { load1: loadMon.sys.load1, cores: loadMon.sys.cores } : undefined}
+        review={reviewConfirm} office={features.office ? officeCol(() => {}) : undefined} />
+    );
+  };
   if (selected.kind === 'orchHome' && !space) {
     main = <div className="orch">{homeNode(goHere)}</div>;
   } else if (selected.kind === 'orchestrator' || selected.kind === 'orchHome') {
@@ -1573,7 +1610,7 @@ export default function App() {
         <div className="office-mode space-mode">
           {/* 왼쪽 = 스페이스: 문서 + 지금 채팅 탭 참모가 잡고 있는 세션(터미널·보여 준 파일) — 2026-09-30 사용자, 리더는 터미널 뷰의 레거시 */}
           {teamMode.pop}
-          <SpaceView chat={chatCol} railTop={farMode.railTop} far={farMode.farView} team={{ rail: teamMode.rail, railOn: teamMode.railOn, color: teamMode.color, onLeave: teamMode.leave, space: teamMode.space }} pet={features.tama ? petNode : undefined} office={features.office ? officeCol : undefined} officeReq={officeReq} onOfficeReq={() => setOfficeReq(null)} onOfficeShown={setSpaceOffice}
+          <SpaceView chat={chatCol} railTop={farMode.railTop} far={farMode.farView} team={{ rail: teamMode.rail, railOn: teamMode.railOn, color: teamMode.color, onLeave: teamMode.leave, space: teamMode.space, add: teamMode.add }} pet={features.tama ? petNode : undefined} office={features.office ? officeCol : undefined} officeReq={officeReq} onOfficeReq={() => setOfficeReq(null)} onOfficeShown={setSpaceOffice}
             harnitorReq={harnitorReq} onHarnitorReq={() => setHarnitorReq(null)} onHarnitorShown={setHarnitorOpen}
             onHarnitorClosed={() => { if (harnitorSwitched.current) { harnitorSwitched.current = false; setSpace(false); } }}
             toolsReq={toolsReq} onToolsReq={() => setToolsReq(null)} onToolsShown={setToolsOpen}
@@ -1584,9 +1621,10 @@ export default function App() {
               const fp: FeatureProps = { voice, onVoice: () => turnVoice(!voice), replayOn: replayOpen, onReplay: () => replayRef.current('toggle'), tools: toolsOpen, onTools: () => toolsRef.current('toggle'),
                 harnitor: harnitorFloat || harnitorOpen, onHarnitor: () => harnitorRef.current('toggle'), review: { on: reviewOpen, confirm: reviewConfirm }, onReview: () => reviewRef.current('toggle') };
               const items = railItems(features);
-              return { col: <FeatureRow items={items} p={fp} dir="col" />, row: <FeatureRow items={items} p={fp} dir="row" /> };
+              return { col: <FeatureRow items={items} p={fp} dir="col" />, row: <FeatureRow items={items} p={fp} dir="row" />, pop: <FeatureRow items={items} p={fp} dir="row" titles />, dot: items.includes('review') && reviewConfirm > 0 };
             })()} onMenuToggle={() => setSidebarOpen((o) => !o)} orchOrder={orchOrder} stoppingIds={[...closing.keys()]} startingOrchs={creating && !arrivedOrch(creating, navOrchs) ? [...startingOrchs, creatingRow(creating, env?.orchestratorCwd ?? '')] : startingOrchs} projectSessions={groups.projects.flatMap((p) => p.sessions)} menuOpen={sidebarOpen}
             orchHome={homeNode}
+            homeDash={homeDashNode}
             idle={idleProjects.map((n) => ({ name: n, root: projectDir(n, env?.devRoot ?? '', env?.extraProjects ?? []) }))}
             stopped={resumable(stopped, sessions, pending)} orchCwd={env?.orchestratorCwd ?? ''}
             tasks={{ orphaned: splitCards(localCards, Date.now()).orphaned, known: knownSessions, canResume: (c) => !!orphanSession(c.target, stopped), onResume: resumeOrphan, onFinish: finishOrphan }}

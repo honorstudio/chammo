@@ -18,6 +18,7 @@ const NAME_WITH_ICON = new Set<string>([
   '/src/ui/AgentBrowserModal.tsx 다 했어', // 보낼 말이 있으면 종이비행기, 없으면 '다 했어' 글자 — 둘 중 하나만 나온다
   '/src/ui/space/OrchHome.tsx 켜는 중…', // 참모 줄 — 프사·이름·상태를 읽는 줄
   '/src/ui/space/UnclosedTasks.tsx 정리', // 닫히지 않은 일 N · 정리 + 펼침 화살표
+  '/src/ui/GoalProgress.tsx 기다림', // 진행 칸 목표 줄 — 이름·막대·숫자를 읽는 줄, 펼침 화살표 + 오른쪽 '기다림' 한 단어(상태 글)
   '/src/ui/space/OrchRail.tsx 도우미', // 넓은 띠 도우미 줄 — 아이콘은 동작이 아니라 묶음의 프사 자리(옆 참모 줄과 같은 줄), 글은 읽을 이름
 ]);
 

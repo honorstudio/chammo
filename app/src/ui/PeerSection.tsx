@@ -1,4 +1,4 @@
-// 설정 > 폰과 메신저 > 다른 기기 참모 — 같은 테일스케일 계정 기기의 Chammo 와 잇기(ADR 0007).
+// 설정 > 기기 관리 > 다른 기기 참모 — 같은 테일스케일 계정 기기의 Chammo 와 잇기(ADR 0007).
 // 0.3.2: 같은 계정 기기는 목록에 바로 뜨고 '연결'을 누르면 그 기기에 허용 카드가 뜬다 → 그쪽 사람이 허용하면 양쪽이 이어진다.
 // 코드(그 기기 설정 > 폰의 연결 코드)는 대피로 — 옛 판이거나 되묻기가 안 닿을 때. 열쇠는 이 기기 키체인(윈도우는 자격 증명 관리자)에만. 참모끼리 말은 scripts/peer 로
 import { useEffect, useState } from 'react';
@@ -67,9 +67,9 @@ export function PeerSection({ title }: { title: string }) {
           const wait = waiting.includes(d.id);
           const v = peerView(d, wait);
           return (
-            <div key={d.id} className="su-row peer-row">
+            <div key={d.id} className="su-row dev-row peer-row">
               <div className="su-row-text">
-                <b>{d.name}</b>
+                <b title={d.name}>{d.name}</b>
                 <span className={d.status === 'connected' ? 'peer-on' : undefined}>{v.extra ? `${v.word} · ${v.extra}` : v.word}</span>
               </div>
               {v.code && pairing !== d.id && (
@@ -95,7 +95,7 @@ export function PeerSection({ title }: { title: string }) {
                   <input autoFocus autoComplete="off" spellCheck={false} placeholder="0123 4567 89ab …" aria-label={tr(`${d.name} 연결 코드`, `${d.name} connect code`)}
                     value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && code.trim()) act(() => remotePair(d.id, code)); if (e.key === 'Escape') setPairing(null); }} />
                   <button className="btn pri" disabled={busy || !code.trim()} onClick={() => act(() => remotePair(d.id, code))}>{tr('짝짓기', 'Pair')}</button>
-                  <span className="su-hint">{tr('그 기기 설정 > 폰의 연결 코드', 'The connect code from that device’s Settings > Phone')}</span>
+                  <span className="su-hint">{tr('그 기기 설정 > 기기 관리 > 폰의 연결 코드', 'The connect code from that device’s Settings > Devices > Phone')}</span>
                 </div>
               )}
             </div>

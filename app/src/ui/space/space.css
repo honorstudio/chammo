@@ -1006,3 +1006,7 @@ html.cv-dragging, html.cv-dragging * { cursor: grabbing !important; user-select:
 .sch-tx { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
 .sch-name { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sch-role { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 홈 대시보드(띠 맨 위 홈, 2026-10-24) — 채팅 칸은 숨기기만: 자리 감싸개는 배치에 안 끼고(contents), 홈이면 통째로 감춘다 */
+.cv-chat-slot { display: contents; }
+.cv-chat-slot[hidden] { display: none; }

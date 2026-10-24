@@ -1,6 +1,10 @@
 // 말풍선 목록 — parseChat 결과를 그리는 얇은 목록(데스크톱 ChatView 는 tauri 의존이라 통째로 못 쓴다)
+// 내 말·참모 말풍선을 길게 누르면 '참조'(입력칸에 #chat1, 데스크톱과 같은 인용 블록)·'복사'(2026-10-23 사용자 — 글을 복사해 붙이고 있었다)
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { stripMarks, type ChatItem } from '../../domain/chat';
+import { splitRefs, stripMarks, type ChatItem } from '../../domain/chat';
+import { bubbleWho } from '../../domain/refChips';
+import { BottomSheet } from './kit';
+import { usePress } from './PhoneLockerParts';
 import { farFromBottom, jumpDot, nearBottom, phoneBubble, phoneName, stickBottom, wantEarlier, type PhoneAtt } from '../../domain/mobile';
 import type { OutMsg } from '../../domain/mobileOutbox';
 import { sentMentionLabel, splitTokens } from '../../domain/chatTokens';
@@ -36,16 +40,39 @@ function Thumb({ att }: { att: PhoneAtt }) {
   );
 }
 
-/** 내 말 — 폰에서 붙인 첨부 경로는 썸네일로(phoneBubble), 데스크톱에서 붙인 그림(data URL)도 같은 자리에 */
-function Mine({ text, images, pending }: { text: string; images?: string[]; pending?: boolean }) {
-  const { body, atts } = phoneBubble(text);
+type Press = ReturnType<typeof usePress>;
+type Hold = (who: string, text: string) => void;
+const noop = () => {};
+
+/** 내 말 — 폰에서 붙인 첨부 경로는 썸네일로(phoneBubble), 데스크톱에서 붙인 그림(data URL)도 같은 자리에. 말풍선 참조는 아래 인용으로(데스크톱과 같은 모양) */
+function Mine({ text, images, pending, press }: { text: string; images?: string[]; pending?: boolean; press?: Press }) {
+  const { body: said, refs } = splitRefs(text);
+  const { body, atts } = phoneBubble(said);
   const all: PhoneAtt[] = [...(images ?? []).map((src, i) => ({ path: src, label: `#img${i + 1}`, image: true })), ...atts];
   return (
-    <div className={pending ? 'm-bubble m-me m-pending' : 'm-bubble m-me'}>
+    <div className={pending ? 'm-bubble m-me m-pending' : 'm-bubble m-me'} {...press}>
       {all.length > 0 && <div className="m-pics">{all.map((a) => <Thumb key={a.path} att={a} />)}</div>}
       {mentionText(body)}
+      {refs.map((r) => <div key={r.label} className="m-quote"><b>{r.label}</b> {r.who}<div className="m-quote-q">{r.text}</div></div>)}
     </div>
   );
+}
+
+/** 복사 — 홈 화면 앱이 http 로 열리면 navigator.clipboard 가 없다(보안 출처 아님) → 숨은 글 칸으로 */
+function copyText(text: string) {
+  if (navigator.clipboard?.writeText) { void navigator.clipboard.writeText(text).catch(() => copyOld(text)); return; }
+  copyOld(text);
+}
+function copyOld(text: string) {
+  const t = document.createElement('textarea');
+  t.value = text;
+  t.setAttribute('readonly', '');
+  t.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+  document.body.appendChild(t);
+  t.select();
+  t.setSelectionRange(0, text.length);
+  try { document.execCommand('copy'); } catch { /* 못 하면 조용히 */ }
+  t.remove();
 }
 
 /** 데스크톱에서 보낸 멘션 @[참모-3 · 가나 담당] 은 화면 이름 @가나 담당 으로 */
@@ -66,10 +93,13 @@ function Outgoing({ m, onRetry, onDrop }: { m: OutMsg; onRetry: (id: string) => 
   );
 }
 
-function Bubble({ it }: { it: ChatItem }) {
-  if (it.kind === 'user') return <Mine text={it.text} images={it.images} />;
+function Bubble({ it, onHold }: { it: ChatItem; onHold?: Hold }) {
+  const mine = it.kind === 'user';
+  const press = usePress(noop, () => (it.kind === 'user' || it.kind === 'assistant') && onHold?.(bubbleWho(mine, it.ts), mine ? splitRefs(it.text).body : it.text));
+  const held = onHold ? press : undefined;
+  if (it.kind === 'user') return <Mine text={it.text} images={it.images} press={held} />;
   // 답은 마크다운으로 — DOMPurify 를 거친 HTML 만(ui/md.ts), 링크는 새 탭
-  if (it.kind === 'assistant') return <div className="m-bubble m-ai m-md" dangerouslySetInnerHTML={{ __html: md(it.text) }} />;
+  if (it.kind === 'assistant') return <div className="m-bubble m-ai m-md" dangerouslySetInnerHTML={{ __html: md(it.text) }} {...held} />;
   if (it.kind === 'tools') return <div className="m-tools">{it.tools.length === 1 ? `${it.tools[0]!.name} ${it.tools[0]!.target}` : `도구 ${it.tools.length}번`}</div>;
   if (it.kind === 'relay') return <div className="m-relay"><b>{phoneName(it.from, [])}</b> {it.text}</div>;
   return <div className="m-note">{it.text}</div>;
@@ -92,7 +122,9 @@ type LiveState = { busy: boolean; line: string; tools: number; secs: number };
 /** 처음엔 끝 말 이만큼만 그리고, 위로 올리면 더(그다음엔 서버에서 앞 대화를 거슬러) */
 const SHOW_STEP = 200;
 
-export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earlier, loading, stale, files, onOpenFile }: { items: ChatItem[]; out: OutMsg[]; onRetry: (id: string) => void; onDrop: (id: string) => void; live?: LiveState; ask?: { lead: string; q: string } | null; who?: ReactNode;
+export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earlier, loading, stale, files, onOpenFile, onRef }: { items: ChatItem[]; out: OutMsg[]; onRetry: (id: string) => void; onDrop: (id: string) => void; live?: LiveState; ask?: { lead: string; q: string } | null; who?: ReactNode;
+  /** 길게 누른 말풍선을 입력칸에 #chat 참조로 — 없으면 길게 누르기 메뉴도 없다 */
+  onRef?: Hold;
   /** 참모가 보여 준 파일(domain/chatFiles) — 그 시각 자리 말풍선 사이에 카드로. 그려진 첫 말보다 앞선 건 안 그린다(clip) */
   files?: ChatFile[];
   onOpenFile?: (f: ChatFile) => void;
@@ -103,6 +135,7 @@ export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earli
   /** 아직 한 번도 못 읽음 — 빈 목록 대신 '불러오는 중' */
   loading?: boolean }) {
   const [shown, setShown] = useState(SHOW_STEP);
+  const [held, setHeld] = useState<{ who: string; text: string } | null>(null);
   // 바닥 붙이기 — 바닥 근처를 보던 중이면 키보드가 올라와 목록이 줄어도(ResizeObserver)·새 말풍선이 와도 맨 아래로,
   // 내가 막 보냈으면 늘. 위로 올려 옛 글을 보는 중이면 그대로(2026-10-03 사용자 "한 번씩 가려져서 내려야 해")
   const log = useRef<HTMLDivElement>(null);
@@ -172,7 +205,7 @@ export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earli
         : earlier.done && <div className="m-note m-older">대화 처음이에요</div>)}
       {interleave([...(earlier?.items ?? []).map((it, i) => ({ it, ts: it.ts, k: `o-${it.id}-${i}` })), ...items.slice(-shown).map((it, i) => ({ it, ts: it.ts, k: `${it.id}-${i}` }))],
         (files ?? []).map((f) => ({ ...f, clip: true }))).map((x) => ('item' in x
-        ? <Bubble key={x.item.k} it={x.item.it} />
+        ? <Bubble key={x.item.k} it={x.item.it} onHold={onRef ? (w, t) => setHeld({ who: w, text: t }) : undefined} />
         : <ChatFileCard key={x.extra.key} f={x.extra} onOpen={(f) => onOpenFile?.(f)} />))}
       {loading && !items.length && <div className="m-note m-older">대화 불러오는 중…</div>}
       {out.map((m) => <Outgoing key={m.id} m={m} onRetry={onRetry} onDrop={onDrop} />)}
@@ -184,6 +217,16 @@ export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earli
           {ask.lead && <div className="m-muted m-sm">{ask.lead}</div>}
           <div className="m-ask-q">{ask.q}</div>
         </div>
+      )}
+      {held && onRef && (
+        <BottomSheet label={held.who} kind="card" title={held.who} armMs={450} onClose={() => setHeld(null)}>
+          {({ close, armed }) => (
+            <>
+              <button type="button" className="m-menu-item" onClick={() => { if (armed) { close(); onRef(held.who, held.text); } }}>참조</button>
+              <button type="button" className="m-menu-item" onClick={() => { if (armed) { close(); copyText(held.text); } }}>복사</button>
+            </>
+          )}
+        </BottomSheet>
       )}
       {away && (
         <div className="m-jump-at">

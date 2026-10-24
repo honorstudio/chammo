@@ -1,4 +1,4 @@
-// 설정 > 폰과 메신저 > 다른 기기 참모 — 같은 테일스케일 계정 기기 줄(Rust remote_devices)의 작은 글·할 일(ADR 0007).
+// 설정 > 기기 관리 > 다른 기기 참모 — 같은 테일스케일 계정 기기 줄(Rust remote_devices)의 작은 글·할 일(ADR 0007).
 // 0.3.2: 코드 없이 '연결' → 그 기기 사람이 카드에서 허용하면 양쪽이 이어진다. 코드는 대피로(옛 판·되묻기가 안 닿을 때)
 import type { RemoteDevice } from '../data/remote';
 import { tr } from '../i18n';

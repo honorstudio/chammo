@@ -19,6 +19,6 @@ describe('밀기 버튼 아이콘', () => {
   });
   it('제거는 누르면 바로 지우지 않고 글자 확인 카드를 띄운다', () => {
     expect(picker).toMatch(/label: '제거'[^}]*setRemoving\(/);
-    expect(picker).toMatch(/role="alertdialog" aria-label="제거 확인"/);
+    expect(picker).toMatch(/<RowConfirm [^>]*label="제거 확인"/); // 확인 줄은 그 줄 자리(RowConfirm, role=alertdialog)
   });
 });
