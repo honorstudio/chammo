@@ -15,8 +15,12 @@ export const tabPick = (key: string) => (keyIsPick(key) ? key : `d:${key}`);
 /** 시안 검토 탭 열쇠 — 화면 키와 같다(c:<경로>) */
 export const reviewKey = (path: string) => `c:${path}`;
 
-/** 그 참모 보관함에서 연 탭 — back = 폴더 탭을 누르면 돌아갈 보관함 자리(l:…). tabs = 파일 경로 또는 세션 s:<id> */
-export type LkHold = { orch: string; back: string; tabs: string[] };
+/** 그 참모 보관함에서 연 탭 — back = 폴더 탭을 누르면 돌아갈 보관함 자리(l:…). tabs = 파일 경로 또는 세션 s:<id>.
+ *  from = 탭마다 연 곳(화면 키) — 닫으면 거기로(팀 보관함 tm: 에서 연 파일은 팀 보관함으로, 10-26 사용자) */
+export type LkHold = { orch: string; back: string; tabs: string[]; from?: Record<string, string> };
+
+/** 남은 탭 몫만 */
+const keepFrom = (from: Record<string, string> | undefined, tabs: string[]) => Object.fromEntries(Object.entries(from ?? {}).filter(([k]) => tabs.includes(k)));
 
 export const MAX_TABS = 8;
 
@@ -24,8 +28,9 @@ export const MAX_TABS = 8;
 export function openTab(h: LkHold | null, orch: string, here: string, path: string): LkHold {
   const same = h && h.orch === orch ? h : null;
   const back = isFolderPick(here) ? here : same?.back ?? `l:${orch}`;
-  const tabs = same ? (same.tabs.includes(path) ? same.tabs : [...same.tabs, path]) : [path];
-  return { orch, back, tabs: tabs.slice(-MAX_TABS) };
+  const tabs = (same ? (same.tabs.includes(path) ? same.tabs : [...same.tabs, path]) : [path]).slice(-MAX_TABS);
+  const from = { ...same?.from, ...(!here || here === tabPick(path) ? {} : { [path]: here }) };
+  return { orch, back, tabs, from: keepFrom(from, tabs) };
 }
 
 /** 시안을 검토 탭으로 연다(fix/curation-space) — 창 전체를 덮던 검토 모드 대신 띄운 참모 탭 줄의 한 탭. 같은 시안의 html 탭(경로)이 있으면
@@ -35,7 +40,9 @@ export function openReview(h: LkHold | null, orch: string, here: string, path: s
   const same = h && h.orch === orch ? h : null;
   if (!same || !same.tabs.includes(path)) return openTab(h, orch, here, key);
   const tabs = same.tabs.includes(key) ? same.tabs.filter((x) => x !== path) : same.tabs.map((x) => (x === path ? key : x));
-  return { ...same, back: isFolderPick(here) ? here : same.back, tabs };
+  const was = same.from?.[path];
+  const from = { ...same.from, ...(was && !same.from?.[key] ? { [key]: was } : {}) };
+  return { ...same, back: isFolderPick(here) ? here : same.back, tabs, ...(same.from ? { from: keepFrom(from, tabs) } : {}) };
 }
 
 /** 지금 보는 참모(orch)·화면(pick)의 탭 줄 — 맨 왼쪽 고정 탭 둘(홈·보관함, 닫기 없음)이 있으니 늘 있다(2026-10-12 사용자).
@@ -47,13 +54,18 @@ export function tabRow(h: LkHold | null, orch: string, pick: string): TabRow {
   return { homeOn: pick === `l:${orch}#h`, folderOn: isFolderPick(pick), folderTo: same?.back ?? `l:${orch}`, tabs: (same?.tabs ?? []).map((path) => ({ path, on: path === cur })) };
 }
 
-/** 탭 닫기 — 보던 탭이면 마지막 탭으로(다 닫으면 폴더로), 아니면 화면 그대로(pick null) */
+/** 탭 닫기 — 보던 탭이면 연 곳으로(연 곳이 이미 닫힌 탭이면 마지막 탭, 다 닫으면 폴더로), 아니면 화면 그대로(pick null) */
 export function closeTab(h: LkHold, path: string, pick: string): { hold: LkHold; pick: string | null } {
   const tabs = h.tabs.filter((x) => x !== path);
-  const hold = { ...h, tabs };
+  const hold = { ...h, tabs, ...(h.from ? { from: keepFrom(h.from, tabs) } : {}) };
   if (pick !== tabPick(path)) return { hold, pick: null };
+  const from = h.from?.[path];
+  if (from && (!isTabKey(from) || tabs.some((t) => tabPick(t) === from))) return { hold, pick: from };
   return { hold, pick: tabs.length ? tabPick(tabs[tabs.length - 1]!) : h.back };
 }
+
+/** 탭 줄의 탭 화면 키인가(파일 d:·세션 s:·검토 c:·Craft k:) — 닫혔으면 돌아갈 곳이 못 된다 */
+const isTabKey = (pick: string) => pick.startsWith('d:') || keyIsPick(pick);
 
 /** ⌘W — 지금 보는 탭을 닫는다(2026-10-12 사용자). 보는 게 이 참모 탭 줄의 파일·문서·세션 탭이 아니면(홈·보관함 고정 탭, 탭 줄에 없는 화면) null = 아무것도 안 한다 */
 export function closeCurrentTab(h: LkHold | null, orch: string, pick: string): { hold: LkHold; pick: string | null } | null {

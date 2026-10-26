@@ -29,7 +29,7 @@ describe('queueShow — 다른 참모가 띄운 파일은 그 참모 탭 줄 새
   it('기억한 화면이 없으면 그 참모 홈에서 새 탭으로 — md 도 탭', () => {
     const r = queueShow(undefined, null, 'orch-b', 'l:orch-b#h', f);
     expect(r.screen).toEqual({ pick: 'd:/p/doc.md', modal: null, sheet: [], focus: undefined, scroll: undefined });
-    expect(r.hold).toEqual({ orch: 'orch-b', back: 'l:orch-b', tabs: ['/p/doc.md'] });
+    expect(r.hold).toEqual({ orch: 'orch-b', back: 'l:orch-b', tabs: ['/p/doc.md'], from: { '/p/doc.md': 'l:orch-b#h' } }); // 닫으면 홈으로
   });
   it('PDF·그림도 화면을 덮는 모달이 아니라 탭으로(2026-10-15 사용자 — 고객사D 제안서 PDF 가 창 전체를 덮었다)', () => {
     const r = queueShow({ pick: 'l:orch-b/dev/x', modal: null, scroll: 120 }, { orch: 'orch-b', back: 'l:orch-b', tabs: ['/p/a.md'] }, 'orch-b', 'l:orch-b#h', pdf);
@@ -44,7 +44,7 @@ describe('queueShow — 다른 참모가 띄운 파일은 그 참모 탭 줄 새
     expect(queueShow({ pick: 'l:orch-b#h', modal: pdf }, null, 'orch-b', 'l:orch-b#h', pdf).screen.modal).toBeNull();
   });
   it('남의 탭 줄(다른 참모 hold)은 건드리지 않고 그 참모 것으로 새로', () => {
-    expect(queueShow(undefined, { orch: 'orch-a', back: 'l:orch-a', tabs: ['/x'] }, 'orch-b', 'l:orch-b#h', pdf).hold).toEqual({ orch: 'orch-b', back: 'l:orch-b', tabs: ['/p/제안서.pdf'] });
+    expect(queueShow(undefined, { orch: 'orch-a', back: 'l:orch-a', tabs: ['/x'] }, 'orch-b', 'l:orch-b#h', pdf).hold).toEqual({ orch: 'orch-b', back: 'l:orch-b', tabs: ['/p/제안서.pdf'], from: { '/p/제안서.pdf': 'l:orch-b#h' } });
   });
   it('짚을 곳이 있으면 그 탭에 갔을 때 반짝이게 같이 넣는다', () => {
     const at = { line: 3, lineEnd: 4 };

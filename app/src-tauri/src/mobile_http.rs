@@ -42,6 +42,10 @@ pub trait Backend: Send + Sync {
     fn direct_answer(&self, _id: &str, _pick: &crate::direct::Pick) -> Result<(), String> {
         Err("not supported".into())
     }
+    /// 새 기기 허용 숫자 넣기(chammo-relay ADR 0007) — 폰이 허용 기기일 때. 숫자는 이 컴퓨터가 셈한다. op = open | ready | enter
+    fn device_number(&self, _dev: &str, _op: &str, _digits: &str) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
     /// 짝지은 다른 기기들의 카드 기록·세션 목록 — 폰 결정 대기함용 [{dev, name, log, sessions}]
     fn peer_cards(&self) -> serde_json::Value {
         serde_json::json!([])
@@ -1233,7 +1237,7 @@ struct ModeNameBody {
 }
 
 /// 폰 홈·보관함 v1 에 더한 쓰기 길 — 같은 출처 문지기·head_check 몸통 목록·405 가 이 목록 하나를 본다
-const PHONE_POSTS: &[&str] = &["/api/gacha", "/api/peer-human-say", "/api/team-say", "/api/team-invite", "/api/team-create", "/api/team-handoff", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
+const PHONE_POSTS: &[&str] = &["/api/device-number", "/api/gacha", "/api/peer-human-say", "/api/team-say", "/api/team-invite", "/api/team-create", "/api/team-handoff", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
 const PHONE_GETS: &[&str] = &["/api/gacha", "/api/office", "/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team"];
 /// 폰 md 글 칸 저장만 몸통을 크게(글 512KB + JSON)
 const MAX_WRITE_BODY: usize = crate::locker_fs::MAX_PHONE_MD + 64 * 1024;
@@ -2495,6 +2499,26 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             }
             match be.peer_card_answer(&b.dev, &b.id, &b.pick) {
                 Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+                Err(e) => Resp::text(409, &e),
+            }
+        }
+        // 새 기기 허용 숫자 넣기(chammo-relay ADR 0007, 시안 e2e-approve v1 폰 덱) — 카드 답과 같은 문(폰 열쇠·같은 출처)
+        ("POST", "/api/device-number") => {
+            #[derive(serde::Deserialize)]
+            struct B {
+                dev: String,
+                op: String,
+                #[serde(default)]
+                digits: String,
+            }
+            let b: B = match body(req) { Ok(b) => b, Err(r) => return r };
+            let dev_ok = !b.dev.is_empty() && b.dev.len() <= 64 && b.dev.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-');
+            let digits_ok = if b.op == "enter" { b.digits.len() == 6 && b.digits.bytes().all(|c| c.is_ascii_digit()) } else { b.digits.is_empty() };
+            if !dev_ok || !matches!(b.op.as_str(), "open" | "ready" | "enter" | "close" | "cut") || !digits_ok {
+                return Resp::text(400, "bad request");
+            }
+            match be.device_number(&b.dev, &b.op, &b.digits) {
+                Ok(v) => Resp::json(&v),
                 Err(e) => Resp::text(409, &e),
             }
         }

@@ -79,7 +79,7 @@ export function revealPane(s: Pick<PaneLayout, 'maximized' | 'collapsed'>, id: s
   return out;
 }
 
-/** ⌘₩ 대상 — 마지막으로 누른 창 → 입력 커서가 있는 창 → 첫 창. shown = 지금 이 격자에 보이는 창들 */
+/** ⌘⇧₩ 대상 — 마지막으로 누른 창 → 입력 커서가 있는 창 → 첫 창. shown = 지금 이 격자에 보이는 창들 */
 export function maxTarget(remembered: string | undefined, active: string | null, shown: string[]): string | null {
   if (remembered && shown.includes(remembered)) return remembered;
   if (active && shown.includes(active)) return active;

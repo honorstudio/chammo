@@ -6,14 +6,8 @@ export const DEFAULT_RELAY = 'https://relay.chammo.app';
 export const PRIVACY_URL = 'https://chammo.app/privacy';
 export const TERMS_URL = 'https://chammo.app/terms';
 export type TeamAccount = { email: string; name: string };
-export type TeamDevice = { id: string; name: string; current: boolean };
 
 export function deleteConfirmOk(a: TeamAccount, typed: string): boolean {
   const want = a.email || a.name;
   return !!want && typed === want;
-}
-
-/** 이 기기를 맨 위에. 이 기기는 끊기 대신 로그아웃으로 */
-export function accountRows(list: TeamDevice[]): (TeamDevice & { revoke: boolean })[] {
-  return [...list].sort((x, y) => Number(y.current) - Number(x.current)).map((d) => ({ ...d, revoke: !d.current }));
 }

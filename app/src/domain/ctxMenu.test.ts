@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { menuPos, menuStep, trailingClick } from './ctxMenu';
+import { menuPos, menuStep, opensOnClick, trailingClick } from './ctxMenu';
 
 // 앱 공용 오른쪽 클릭 메뉴(OrchDialogs ContextMenu) — 화면 밖으로 안 넘치게, 화살표로 오르내리기
 describe('menuPos — 누른 자리에서 화면 안으로', () => {
@@ -23,6 +23,7 @@ describe('menuPos — 누른 자리에서 화면 안으로', () => {
   });
 });
 
+// 팝오버(팀 설정·팀 만들기·초대) — 띠 칸 옆 자리에서 창 안으로 당긴다(10-25 사용자 캡처: 작은 창에서 '나가기' 줄이 창 밑으로)
 describe('menuStep — 화살표·Home·End', () => {
   it('아래·위는 끝에서 처음으로 돈다', () => {
     expect(menuStep(4, 0, 'ArrowDown')).toBe(1);
@@ -56,5 +57,14 @@ describe('trailingClick — 우클릭 뒤따라오는 click 인가(삼킨다)', 
   });
   it('조금 뒤 보통 click 은 그대로(메뉴 고르기·다른 곳 누르기)', () => {
     expect(trailingClick({ button: 0, ctrlKey: false }, 600)).toBe(false);
+  });
+});
+
+describe('opensOnClick — 줄 누름이 열기인가(오른쪽 클릭 = 메뉴만, 열기 0번)', () => {
+  it('왼쪽 단추 그냥 누름만 연다', () => expect(opensOnClick({ button: 0, ctrlKey: false })).toBe(true));
+  it('ctrl+클릭(맥 오른쪽 클릭)·오른쪽·가운데 단추는 안 연다', () => {
+    expect(opensOnClick({ button: 0, ctrlKey: true })).toBe(false);
+    expect(opensOnClick({ button: 2, ctrlKey: false })).toBe(false);
+    expect(opensOnClick({ button: 1, ctrlKey: false })).toBe(false);
   });
 });

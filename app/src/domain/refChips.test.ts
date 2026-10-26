@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { splitRefs, withRefs } from './chat';
 import { REF_TOKEN, splitTokens } from './chatTokens';
-import { bubbleWho, goalRefText, nextRefLabel, taskRefText } from './refChips';
+import { addRef, bubbleWho, goalRefText, nextRefLabel, taskRefText } from './refChips';
 
 // 2026-10-23 사용자(폰): 진행 칸의 일을 눌러 바로 참모에게 '이거 뭐야' — #task1·#goal1, 폰 말풍선도 #chat1
 describe('#task·#goal 참조 — 진행 칸의 일·목표를 참모가 바로 찾게', () => {
@@ -56,5 +56,27 @@ describe('말풍선 누구 — 폰·데스크톱 같은 이름(내 말 / 답 + �
     expect(bubbleWho(true, ts)).toBe('내 말 20:05');
     expect(bubbleWho(false, ts)).toBe('답 20:05');
     expect(bubbleWho(false, 'x')).toBe('답');
+  });
+});
+
+// 2026-10-26 사용자 제보(.shots/299) — 홈 대시보드 진행 칸 말풍선을 눌러도 입력칸에 아무것도 안 들어갔다. 홈 미니 대화도 같은 칩 줄
+describe('입력칸에 참조 하나 더하기 — addRef(홈 미니 대화)', () => {
+  const goal = { kind: 'goal' as const, who: '목표', text: '데모 앱 출시 (목표 0/1 끝 — 출시 task 1026-1 shop-app 기다림)' };
+  it('빈 입력칸 = 이름표 + 빈칸, 칩 하나', () => {
+    const r = addRef('', [], goal);
+    expect(r.draft).toBe('#goal1 ');
+    expect(r.refs).toEqual([{ label: '#goal1', who: '목표', text: goal.text }]);
+  });
+  it('쓰던 글 뒤에 띄어 붙고, 같은 종류는 다음 번호 — 일은 #task 따로', () => {
+    const a = addRef('이거 어떻게 돼', [], goal);
+    expect(a.draft).toBe('이거 어떻게 돼 #goal1 ');
+    const b = addRef(a.draft, a.refs, goal);
+    expect(b.draft).toBe('이거 어떻게 돼 #goal1 #goal2 ');
+    const c = addRef(b.draft, b.refs, { kind: 'task', who: '일', text: '출시 (task 1026-1, shop-app, 기다림)' });
+    expect(c.refs.map((x) => x.label)).toEqual(['#goal1', '#goal2', '#task1']);
+  });
+  it('보내면 진행 칸에서 끌어 넣을 때와 같은 꼴 — #goal1 "목표 이름·task id·세션·상태"', () => {
+    const a = addRef('', [], goal);
+    expect(withRefs(`${a.draft}뭐 기다려?`, a.refs)).toBe(`#goal1 "${goal.text}" 뭐 기다려?`);
   });
 });

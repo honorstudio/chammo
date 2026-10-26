@@ -3,6 +3,10 @@
 // 열린 모달은 안 바꾸고 새 부름은 줄에만(모달 머리에 표시), 바꾸는 건 사람이 눌러서. 줄 선 부름은 모달을 닫으면 띄운다
 import { tr } from '../i18n';
 import type { Live, PopupKind } from './agentBrowser';
+import { forwardTo } from './forwardQuestion';
+import { cardTarget } from './notify';
+import type { Session } from './session';
+import type { TaskEvent } from './tasks';
 
 /** 사람 부름 알림 글 — 제목에 부른 세션 이름(예전엔 '세션이 사람을 불러요'뿐이라 어느 세션인지 몰랐다), 본문은 이유 */
 export function askNotice(name: string, reason: string): { title: string; body: string } {
@@ -126,5 +130,29 @@ export function askWakes(lives: Live[], sessions: { id: string; procPid?: number
     const key = `${l.profile}:${l.pid}:${l.wake.at}`;
     const s = sessions.find((x) => x.procPid && x.procPid === l.sessionPid);
     return s && !sent.includes(key) ? [{ key, id: s.id, line: askWakeLine(l.wake.say) }] : [];
+  });
+}
+
+// ── 사람 부르기를 맡긴 참모 채팅·폰에(2026-10-24 트레이더 제보) ──
+// 예전엔 맥 모달 + 알림뿐이었다. 알림 갈 곳이 session:<프로필>(=session:project-t)이라 폰에서 눌러도 못 갔고,
+// 채팅·결정 대기함엔 카드가 없어 밖에 있는 사람은 놓쳤다. 받을 참모는 직접 답하기 카드와 같은 규칙(forwardTo)
+
+/** 사람 부르기 카드 열쇠 — 폰 dashList·알림 갈 곳의 w:·d: 와 같은 줄(b:<프로필>:<래퍼>) */
+export const askCardKey = (l: Pick<Live, 'profile' | 'pid'>) => `b:${l.profile}:${l.pid}`;
+/** 카드 열쇠 → 프로필·래퍼(b: 가 아니거나 모양이 다르면 null) — 알림을 누르면 그 브라우저 크게 보기로 */
+export function readAskCardKey(k: string): { profile: string; pid: number } | null {
+  const m = /^b:(.+):(\d+)$/.exec(k);
+  return m ? { profile: m[1]!, pid: Number(m[2]) } : null;
+}
+/** 알림을 누르면 갈 곳 — 그 참모 채팅의 그 부름 카드 */
+export const askTarget = (orch: string, l: Pick<Live, 'profile' | 'pid'>) => cardTarget(orch, askCardKey(l));
+
+export type AskPlaced = { live: Live; /** 부른 세션(래퍼의 부모 = procPid) — 못 찾으면 없음 */ session?: Session; /** 그 카드를 받을 참모 */ owner?: Session };
+
+/** 기다리는 부름마다 부른 세션과 받을 참모(먼저 부른 순). 세션을 못 찾아도 맨 앞 참모에게 — 아무 데도 안 보이는 것보다 낫다 */
+export function askPlaced(lives: Live[], everyone: Session[], events: TaskEvent[], orchs: Session[], front?: Session, heir?: (s: Session) => Session | undefined): AskPlaced[] {
+  return lives.filter((l) => l.ask).sort(byAt).map((live) => {
+    const session = everyone.find((s) => s.procPid && s.procPid === live.sessionPid);
+    return { live, session, owner: session ? forwardTo(session, events, orchs, everyone, front, heir) : front };
   });
 }

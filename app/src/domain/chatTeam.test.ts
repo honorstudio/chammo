@@ -19,6 +19,9 @@ describe('팀 말', () => {
   it('영어 이름표·줄 서 들어온 것도', () => {
     expect(parseChat(asUser('[Team assistant · Mina · device a1b2c3 · team#3]\nhi'))[0]).toMatchObject({ kind: 'relay', from: 'Team assistant · Mina · device a1b2c3' });
     expect(parseChat(asUser('[Team human · Mina · team#4]\nhi'))[0]).toMatchObject({ kind: 'relay', from: 'Team human · Mina' });
+    // 새 이름표(10-26 — '팀 참모'는 방 도우미 이름이 됐다)
+    expect(parseChat(asUser('[남의 참모 · 민아 · 기기 a1 · team#5]\nhi'))[0]).toMatchObject({ kind: 'relay', from: '남의 참모 · 민아 · 기기 a1' });
+    expect(parseChat(asUser("[Teammate's assistant · Mina · device a1 · team#6]\nhi"))[0]).toMatchObject({ kind: 'relay', from: "Teammate's assistant · Mina · device a1" });
     expect(parseChat(asQueued(agent))[0]).toMatchObject({ kind: 'relay' });
   });
   it('내가 보낸 말로 세지 않는다', () => {

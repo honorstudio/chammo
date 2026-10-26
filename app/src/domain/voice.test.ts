@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { freshReplies, fromOrchTurn, parseSay, pickSay, speakable, type ReplySeen, type Watch } from './voice';
-import { summarizeTranscript } from './activity';
+import { freshReplies, fromOrchTurn, heldNote, heldTarget, parseSay, pickSay, routeReply, speakable, takeHeld, talkedTo, type ReplySeen, type VoiceHeld, type Watch } from './voice';
+import { humanPrompt, summarizeTranscript } from './activity';
 
 describe('speakable — 참모 답을 소리 내 읽기 좋게', () => {
   it('마크다운 기호·코드 따옴표를 뺀다', () => {
@@ -211,4 +211,105 @@ describe('fromOrchTurn — 다른 참모가 보낸 말로만 깬 턴은 말하�
     expect(fromOrchTurn(r(['shop-app']))).toBe(false);
     expect(fromOrchTurn(r())).toBe(false);
   });
+});
+
+describe('음성은 말 건 참모만 — 다른 참모 답은 쌓고 짧은 한 줄(2026-10-25 사용자: 회사 비서에게 말했는데 개발 담당도 같이 읽었다)', () => {
+  const p = (ts: string) => ({ ts, text: '지시' });
+  describe('talkedTo — 사람이 마지막으로 직접 말한 참모 + 앞에 띄운 채팅 탭', () => {
+    it('사람 말이 가장 늦은 참모 하나', () => {
+      expect([...talkedTo([{ id: 'a', human: p('2026-10-25T07:00:00Z') }, { id: 'b', human: p('2026-10-25T07:05:00Z') }])]).toEqual(['b']);
+    });
+    it('앞에 띄운 탭도 말한다 — 둘이 다르면 둘 다', () => {
+      expect([...talkedTo([{ id: 'a', human: p('2026-10-25T07:00:00Z') }, { id: 'b' }], 'b')].sort()).toEqual(['a', 'b']);
+    });
+    it('사람 말이 없고 탭도 없으면 아무도 소리 내지 않는다', () => {
+      expect(talkedTo([{ id: 'a' }, { id: 'b' }]).size).toBe(0);
+    });
+    it('목록에 없는 탭 id 는 안 넣는다', () => {
+      expect(talkedTo([{ id: 'a' }], 'zz').size).toBe(0);
+    });
+  });
+
+  describe('humanPrompt — 앱·다른 참모가 입력칸에 친 줄은 사람 말이 아니다', () => {
+    it('앱 줄·자리표·다른 기기/팀 참모 줄은 아니다', () => {
+      for (const t of ['[앱] 정리할 세션: shop(ab12)', '[app] Session to tidy', '[자리표] 만료', '[다른 기기 참모 · 맥북 · peer#1] 안녕', '[Assistant on another device · laptop · peer#1] hi', '[팀 참모 · 민아 · 맥 · team#2] 해 줘', '[남의 참모 · 민아 · 맥 · team#2] 해 줘', "[Teammate's assistant · Mina · Mac · team#2] do it", '[팀 사람 말 · 민아 · team#3] 회의', '[Team human · Mina · team#4] hey', '[내 다른 기기 참모 · 아이맥 · self#4] 끝', '[My device assistant · iMac · self#4] done'])
+        expect(humanPrompt(t), t).toBe(false);
+    });
+    it('그냥 친 말·원격 사람 말·내 다른 기기 사람 말·텔레그램은 사람 말', () => {
+      for (const t of ['회사 비서야 이거 정리해', '[사람 말 · 원격 · 맥북에서 직접 · human#1] 해', '[Person · remote · typed on laptop · human#1] go', '[내 다른 기기 사람 말 · 아이맥 · self#5] 해', '[텔레그램] 빌드 됐어?'])
+        expect(humanPrompt(t), t).toBe(true);
+    });
+    it('대화 기록에서 사람 말(human)은 앱 줄에 덮이지 않는다', () => {
+      const j = (o: object) => JSON.stringify(o);
+      const a = summarizeTranscript([
+        j({ type: 'user', timestamp: '2026-10-25T07:00:00Z', message: { content: '이거 해 줘' } }),
+        j({ type: 'assistant', timestamp: '2026-10-25T07:01:00Z', message: { content: [{ type: 'text', text: '했어' }], stop_reason: 'end_turn' } }),
+        j({ type: 'user', timestamp: '2026-10-25T08:00:00Z', message: { content: '[앱] 정리할 세션: shop(ab12)' } }),
+      ].join('\n'));
+      expect(a.human?.ts).toBe('2026-10-25T07:00:00Z');
+      expect(a.prompt?.ts).toBe('2026-10-25T08:00:00Z'); // 지시(prompt)는 그대로 — 답 기다림 판단은 안 바뀐다
+    });
+  });
+
+  describe('routeReply — 말 건 참모면 읽고, 아니면 쌓고 알림 한 줄', () => {
+    const r = (id: string, text: string, asks = false, ts = '2026-10-25T07:10:00Z') => ({ id, name: id === 'dev' ? '개발 담당' : '회사 비서', text, asks, ts });
+    it('말 건 참모는 끝까지 읽는다', () => {
+      const out = routeReply({}, r('co', '회의록 정리했어'), new Set(['co']));
+      expect(out.speak).toBe('회의록 정리했어');
+      expect(out.note).toBeUndefined();
+      expect(out.held).toEqual({});
+    });
+    it('다른 참모 답은 소리로 안 읽고 쌓은 뒤 짧은 한 줄', () => {
+      const out = routeReply({}, r('dev', '쇼핑몰 배너 정리가 끝났어'), new Set(['co']));
+      expect(out.speak).toBeUndefined();
+      expect(out.note).toBe('개발 담당한테 새 답 있어.');
+      expect(out.held.dev?.texts).toEqual(['쇼핑몰 배너 정리가 끝났어']);
+    });
+    it('답이 질문이면 "물어볼 게 있대"를 붙인다', () => {
+      expect(routeReply({}, r('dev', '운영에 올려도 될까?', true), new Set(['co'])).note).toBe('개발 담당한테 새 답 있어, 물어볼 게 있대.');
+    });
+    it('이미 알린 참모가 또 답하면 한 줄을 되풀이하지 않는다 — 질문이 새로 생길 때만 다시', () => {
+      let h: VoiceHeld = routeReply({}, r('dev', '하나'), new Set()).held;
+      const two = routeReply(h, r('dev', '둘', false, '2026-10-25T07:11:00Z'), new Set());
+      expect(two.note).toBeUndefined();
+      h = two.held;
+      const three = routeReply(h, r('dev', '올려도 돼?', true, '2026-10-25T07:12:00Z'), new Set());
+      expect(three.note).toBe('개발 담당한테 새 답 있어, 물어볼 게 있대.');
+      expect(three.held.dev?.texts).toEqual(['하나', '둘', '올려도 돼?']);
+    });
+    it('말할 글이 비면 아무것도 안 한다', () => {
+      const out = routeReply({}, r('dev', '  '), new Set());
+      expect(out).toEqual({ held: {} });
+    });
+  });
+
+  describe('takeHeld — 그 참모 탭을 열거나 "○○ 거 읽어 줘" 하면 그때 읽기', () => {
+    it('쌓인 답을 이어 읽고 비운다(몰리면 마지막 세 개)', () => {
+      const held: VoiceHeld = { dev: { texts: ['하나', '둘', '셋', '넷'], asks: true, ts: 't' }, co: { texts: ['다른'], asks: false, ts: 't' } };
+      const out = takeHeld(held, 'dev');
+      expect(out.text).toBe('둘 셋 넷');
+      expect(Object.keys(out.held)).toEqual(['co']);
+    });
+    it('쌓인 게 없으면 글 없음', () => expect(takeHeld({}, 'dev')).toEqual({ held: {} }));
+  });
+
+  describe('heldNote — 영어', () => {
+    afterEach(() => setLang('ko'));
+    it('영어 모드면 영어로', () => {
+      setLang('en');
+      expect(heldNote('Dev', false)).toBe('New reply from Dev.');
+      expect(heldNote('Dev', true)).toBe('New reply from Dev — they have a question for you.');
+    });
+  });
+});
+
+describe('heldTarget — "개발 담당 거 읽어 줘"의 참모 찾기(별명·SendMessage 이름·번호·id)', () => {
+  const orchs = [{ id: 'aa11', name: '참모-5 · 개발 담당', display: '개발 담당' }, { id: 'bb22', name: '참모 · 회사 비서', display: '회사 비서' }];
+  it('별명·전체 이름·번호 이름·id 앞자리로 찾는다', () => {
+    expect(heldTarget('개발 담당', orchs)).toBe('aa11');
+    expect(heldTarget('참모-5 · 개발 담당', orchs)).toBe('aa11');
+    expect(heldTarget('참모-5', orchs)).toBe('aa11');
+    expect(heldTarget('bb2', orchs)).toBe('bb22');
+  });
+  it('없으면 undefined', () => expect(heldTarget('디자인', orchs)).toBeUndefined());
 });

@@ -567,6 +567,12 @@ pub fn saved_on(dir: &Path) -> bool {
     std::fs::read_to_string(on_path(dir)).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).is_some_and(|v| v["on"] == true)
 }
 
+/// 사람이 폰 연결을 끈 적이 있다(mobile.json {"on":false}) — 파일이 없으면(한 번도 안 건드림) 아니다.
+/// 로그인한 컴퓨터는 이게 아니면 중계 허브를 켠다(ADR 0014 — 넣기 없는 흐름의 전제)
+pub fn explicit_off(dir: &Path) -> bool {
+    std::fs::read_to_string(on_path(dir)).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).is_some_and(|v| v["on"] == false)
+}
+
 fn save_on(dir: &Path, on: bool) -> std::io::Result<()> {
     std::fs::write(on_path(dir), serde_json::json!({ "on": on }).to_string())
 }
@@ -922,6 +928,8 @@ pub struct MobileStatus {
     /// 테일스케일 없는 폰 길(중계, ADR 0013) — 켤 수 있나(계정·입구 주소)·허브에 붙었나
     pub relay_ready: bool,
     pub relay: crate::phone_relay::RelayStatus,
+    /// 사람이 폰 연결을 껐다 — 로그인해도 허브를 안 켠다(기기 관리에 '이 컴퓨터는 폰을 받지 않아요')
+    pub off: bool,
 }
 
 /// 짝짓기 QR — 이 화면(맥 앱)에서만 보인다. 10분 지나거나 한 번 쓰면 죽는다
@@ -958,6 +966,7 @@ fn status() -> MobileStatus {
         devices: devices().list(),
         relay_ready: crate::phone_relay::ready(crate::config::data_dir()).is_some(),
         relay: crate::phone_relay::status(),
+        off: explicit_off(crate::config::data_dir()),
     }
 }
 
@@ -994,6 +1003,30 @@ pub async fn mobile_set<R: tauri::Runtime>(app: tauri::AppHandle<R>, on: bool) -
 #[tauri::command]
 pub fn mobile_pair_new() -> Result<PairQr, String> {
     pair_qr(false)
+}
+
+/// 폰 추가 QR — 입구 주소만(비밀 없음, 2026-10-24). 카메라는 사파리로 여니 거기서 홈 화면에 추가하고, 홈 화면 앱에서 계정 로그인 → 이 컴퓨터 숫자 확인
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryQr {
+    pub url: String,
+    pub qr_svg: Option<String>,
+}
+
+#[tauri::command]
+pub fn phone_entry_qr() -> Result<EntryQr, String> {
+    let st = crate::team_relay::load_state(crate::config::data_dir());
+    let web = crate::team_relay::phone_web(&st).ok_or_else(|| crate::i18n::tr("폰 입구 주소가 없어요", "No phone entry address").to_string())?;
+    let url = crate::phone_relay::entry_url(&web);
+    Ok(EntryQr { qr_svg: qr_svg(&url), url })
+}
+
+/// scripts/app phone add 의 답 — {ok, url, qrSvg} 또는 {ok:false, error}. 비밀이 없는 주소다
+pub fn entry_answer() -> serde_json::Value {
+    match phone_entry_qr() {
+        Ok(q) => serde_json::json!({ "ok": true, "url": q.url, "qrSvg": q.qr_svg }),
+        Err(e) => serde_json::json!({ "ok": false, "error": e }),
+    }
 }
 
 /// scripts/app phone pair 의 답 — {ok, url, qrSvg, expires} 또는 {ok:false, error}. 코드가 든 답이라 받는 쪽은 부탁마다 따로인 600 칸에만 쓴다
@@ -1299,6 +1332,9 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     fn direct_answer(&self, id: &str, pick: &crate::direct::Pick) -> Result<(), String> {
         crate::direct::answer(id, pick, "phone")
     }
+    fn device_number(&self, dev: &str, op: &str, digits: &str) -> Result<serde_json::Value, String> {
+        crate::e2e_cmd::number_op(crate::config::data_dir(), dev, op, digits)
+    }
     fn direct_answer_by(&self, id: &str, pick: &crate::direct::Pick, by: &str) -> Result<(), String> {
         crate::direct::answer(id, pick, by)
     }
@@ -1323,8 +1359,13 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     fn team_say(&self, to: &str, text: &str, cid: &str) -> Result<serde_json::Value, String> {
         // 폰 화면에서 사람이 친 말 — 짝지은 폰 열쇠로 들어온 /api/team-say 만 이 길을 부른다(사람 표)
         let dir = crate::config::data_dir();
-        let room = crate::team_relay::open_dm(dir, &crate::team_relay_keys::store(), &crate::team_relay::Curl, to)?;
-        crate::team_relay_ws::send(dir, &room.id, cid, text, Some(crate::team_relay_ws::HumanProof::phone())).map(|seq| serde_json::json!({ "room": room.id, "seq": seq }))
+        // to = 상대 멤버 id(DM) 또는 'room:<방 id>'(단톡방·아는 방, chammo-relay team-rooms)
+        let room = match to.strip_prefix("room:") {
+            Some(r) if crate::team_relay::load_state(dir).rooms.iter().any(|x| x.id == r && x.kind != "self") => r.to_string(),
+            Some(_) => return Err("모르는 방".into()),
+            None => crate::team_relay::open_dm(dir, &crate::team_relay_keys::store(), &crate::team_relay::Curl, "", to)?.id,
+        };
+        crate::team_relay_ws::send(dir, &room, cid, text, Some(crate::team_relay_ws::HumanProof::phone())).map(|seq| serde_json::json!({ "room": room, "seq": seq }))
     }
     fn team_handoff(&self, to: &str, text: &str) -> Result<serde_json::Value, String> {
         crate::team_ui::handoff_send(to, text, false).map(|name| serde_json::json!({ "to": name }))

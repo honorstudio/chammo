@@ -12,7 +12,7 @@ describe('옛 대시보드·메뉴는 지웠다(패널 하나로 7)', () => {
 });
 
 describe('세션 탭', () => {
-  it('s:<id> 로 가면 탭 줄에 그 세션 탭이 생긴다', () => expect(view).toMatch(/if \(k\.startsWith\('s:'\) && now\.current\.view\) setLkHold\(\(h\) => openTab\(h, now\.current\.view!, now\.current\.pick, k\)\)/));
+  it('s:<id> 로 가면 탭 줄에 그 세션 탭이 생긴다', () => expect(view).toMatch(/if \(k\.startsWith\('s:'\) && view\) setLkHold\(\(h\) => openTab\(h, view, here, k\)\)/));
   it('세션 탭은 탭 줄 안 가운데(독·나무 그대로) — SessionPage', () => expect(view).toMatch(/<SessionPage /));
   it('세션 페이지 = 머리(점·이름·하는 일·경로) + 큰 터미널 + 오른쪽 할 일·최근 결정', () => {
     expect(page).toMatch(/className="sp-term"/);

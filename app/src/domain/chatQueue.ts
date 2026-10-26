@@ -126,8 +126,23 @@ export function pendingState(p: PendingMsg & { since?: number }, c: { queue: Que
   const n = sq(p.text);
   if (n && sq(c.termText).includes(n)) return 'input';
   if (after(c.queue.waiting, p)) return 'queued';
+  // 입력칸에 이 말의 토막만 보인다 — 긴 말을 치는 중이거나 입력칸 높이를 넘었다. 30초 넘게 그대로면 Enter 가 안 먹은 것: '안 갔어요 + 다시 보내기'면 입력칸에 두 벌로 붙는다
+  if (typingOf(c.termText, [p.text])) return c.now < typed + LOST_AFTER ? 'sending' : 'input';
   return c.now < typed + LOST_AFTER ? 'sending' : 'lost';
 }
+
+/** 입력칸 글이 아직 안 들어간 내 말의 한 토막이면 그 말. 긴 말은 치는 데 몇 초 걸리고 입력칸 높이를 넘으면 화면엔 토막만 보여
+ *  (2.1.310 시험 세션 실측 — 3,100자 치기 3~8초) 앱이 제 말을 '모르는 글'로 보고 입력칸 위 칸에 띄웠다 — 실패처럼 보였다(2026-10-26 사용자 301.png) */
+export function typingOf(termText: string, pending: string[]): string | null {
+  const raw = (x: string) => x.replace(/\s+/g, ''); // stuckInInput 처럼 — chatNorm 은 [Image #n] 을 지워 그림 붙은 입력칸도 내 말로 읽는다
+  const t = raw(termText);
+  if (!t) return null;
+  return pending.find((p) => raw(p).includes(t)) ?? null;
+}
+
+/** 말풍선 모양 — 일하는 중엔 '보내는 중'도 대기 중으로 보인다. 치는 몇 초와 Enter 뒤 훅이 도는 몇 초(기록이 아직 없다)에
+ *  흐린 '보내는 중'이 실패처럼 보였다(2026-10-26 사용자). 단추는 진짜 상태(pendAct)로 — 모양만 바꾼다 */
+export const pendLook = (st: PendingState, busy: boolean): PendingState => (st === 'sending' && busy ? 'queued' : st);
 
 /** 보낸 글 말풍선을 들고 있는 최대 시간 — 줄 선 말은 긴 일이 끝날 때까지 기다린다. 안 간 말은 사람이 빼거나 다시 보낼 때까지 남긴다 */
 export const PENDING_MS = 3_600_000;
@@ -198,9 +213,23 @@ export function keepAfterRemove(texts: string[], target: string): string[] {
   return i < 0 ? texts : [...texts.slice(0, i), ...texts.slice(i + 1)];
 }
 
-/** 세션별 앱 치기 줄 — 앞 것이 다 들어간(Enter 까지) 뒤에 다음 것. 실제 치기는 Rust pty_type 이 TYPE_LOCK 을 잡고 해서
- *  스페이스·카드 답장·폰이 치는 글과 한 입력칸에 섞이지 않는다(2026-10-06 fix/chat-ghost 남은 것).
- *  busyUntil = escPlan 의 typingUntil — 치는 중이면 무한, 끝났으면 끝난 때 + 100 */
+/** 치기 시간 넘김 — 줄은 다음 것으로 넘어가고 부르는 쪽은 입력을 되살린다 */
+export const TYPE_TIMEOUT_MSG = 'type timeout';
+
+function withTimeout(p: Promise<void>, ms: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(TYPE_TIMEOUT_MSG)), ms);
+    p.then(() => { clearTimeout(t); resolve(); }, (e: unknown) => { clearTimeout(t); reject(e instanceof Error ? e : new Error(String(e))); });
+  });
+}
+
+/** 못 보낸 말을 입력칸에 되살린다 — 비었으면 그 말, 그사이 새로 친 글이 있으면 덮지 않고 그 앞에 */
+export function restoreDraft(draft: string, text: string): string {
+  if (!draft.trim()) return text;
+  if (draft.includes(text)) return draft;
+  return `${text}\n${draft}`;
+}
+
 /** 채팅이 터미널 입력칸에 넣는 Enter 한 번 — 앱 치기 줄(typeQueue)에 올려 Rust 자물쇠(pty_type)로 친다.
  *  예전엔 pty 에 '\r' 을 바로 써서 카드 답·[앱] 줄·새 말을 치는 중간에 박혀 반만 보내졌다(2026-10-21 리뷰 ②-8).
  *  expect = 그 말이 입력칸에 그대로일 때만(칠 때 화면을 다시 본다 — 타이머가 본 화면은 0.4초 전 것이다). 입력칸 모양이 아니면(선택 창) 안 친다 */
@@ -216,15 +245,24 @@ export function enterTask(api: { type: (keys: string[]) => Promise<void>; screen
   };
 }
 
+/** 세션별 앱 치기 줄 — 앞 것이 다 들어간(Enter 까지) 뒤에 다음 것. 실제 치기는 Rust pty_type 이 TYPE_LOCK 을 잡고 해서
+ *  스페이스·카드 답장·폰이 치는 글과 한 입력칸에 섞이지 않는다(2026-10-06 fix/chat-ghost 남은 것).
+ *  busyUntil = escPlan 의 typingUntil — 치는 중이면 무한, 끝났으면 끝난 때 + 100 */
 export function typeQueue(now: () => number = Date.now) {
   const qs = new Map<string, { tail: Promise<void>; left: number; doneAt: number }>();
   return {
-    push(id: string, run: () => Promise<void>): Promise<void> {
+    /** 줄 끝에 세운다. 돌려주는 약속은 이 치기의 결과(실패면 거절) — 줄은 실패해도 다음 것을 친다.
+     *  timeoutMs 를 주면 그 안에 안 끝난 치기는 버리고 넘어간다 — 하나가 안 돌아오면 그 세션 줄이 영영 섰다(2026-10-24 윈도우) */
+    push(id: string, run: () => Promise<void>, timeoutMs?: number): Promise<void> {
       const q = qs.get(id) ?? { tail: Promise.resolve(), left: 0, doneAt: 0 };
       q.left += 1;
-      q.tail = q.tail.then(run).catch(() => { /* 창이 닫혔다 — 다음 것은 친다 */ }).then(() => { q.left -= 1; q.doneAt = now(); });
+      const step = q.tail.then(() => (timeoutMs === undefined ? run() : withTimeout(run(), timeoutMs)));
+      q.tail = step.catch(() => { /* 창이 닫혔다·시간 넘김 — 다음 것은 친다 */ }).then(() => { q.left -= 1; q.doneAt = now(); });
       qs.set(id, q);
-      return q.tail;
+      const out = q.tail.then(() => step);
+      // 결과를 안 받는 호출(void push — 지우기·Esc)도 있다 — 기본 처리기를 걸어 처리 안 된 거절이 안 나게. 받는 쪽은 그대로 거절을 받는다
+      out.catch(() => {});
+      return out;
     },
     busyUntil(id: string): number {
       const q = qs.get(id);

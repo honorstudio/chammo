@@ -266,6 +266,7 @@ pub fn win_accel(mac: &str) -> String {
         _ if letter => format!("Ctrl+Shift+{}", key.to_ascii_uppercase()),
         _ if key == "/" => "Ctrl+Shift+/".into(),
         _ if alt => format!("Ctrl+Alt+{key}"),
+        _ if shift => format!("Ctrl+Shift+{key}"),
         _ => format!("Ctrl+{key}"),
     }
 }
@@ -357,6 +358,24 @@ pub fn folder_dialog_script(prompt: &str, start: Option<&str>) -> String {
     )
 }
 
+/// 윈도우 파일 고르기 창(파워셸 OpenFileDialog) — 고른 경로를 UTF-8 로 한 줄에 하나, 취소면 빈 출력
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn file_dialog_script(prompt: &str, multiple: bool) -> String {
+    let q = |s: &str| format!("'{}'", s.replace('\'', "''"));
+    format!(
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; \
+         $d = New-Object System.Windows.Forms.OpenFileDialog; $d.Title = {}; $d.Multiselect = ${multiple}; \
+         if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{ $d.FileNames }}",
+        q(prompt)
+    )
+}
+
+/// 고르기 창(파워셸) 출력 — 줄마다 경로 하나, 빈 줄은 뺀다
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn dialog_paths(out: &str) -> Vec<String> {
+    out.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()
+}
+
 /// 오늘 날짜(YYYY-MM-DD, 이 컴퓨터 시간대) — 윈도우엔 date 명령이 없다(cmd 안의 date 는 입력을 기다린다)
 pub fn today() -> String {
     #[cfg(windows)]
@@ -425,10 +444,19 @@ pub fn toast_app_id(exe_dir: &str, identifier: &str, powershell: &str) -> String
 /// 시간 제한 있는 실행 — 넘으면 죽이고 TimedOut. 출력은 따로 읽는 스레드로(파이프가 차서 멈추지 않게).
 /// 모바일 서버가 부르는 외부 명령(claude agents·tailscale·예약 스크립트)이 멈추면 연결 자리가 안 풀렸다(2026-10-02 보안 재검토)
 pub fn run_capped(cmd: &mut Command, limit: std::time::Duration) -> std::io::Result<std::process::Output> {
+    run_capped_in(cmd, None, limit)
+}
+
+/// run_capped + 표준 입력으로 넣을 글(넣고 닫는다 — 긴 글을 명령 인자·ps 에 안 남기게)
+pub fn run_capped_input(cmd: &mut Command, input: &[u8], limit: std::time::Duration) -> std::io::Result<std::process::Output> {
+    run_capped_in(cmd, Some(input.to_vec()), limit)
+}
+
+fn run_capped_in(cmd: &mut Command, input: Option<Vec<u8>>, limit: std::time::Duration) -> std::io::Result<std::process::Output> {
     use std::io::Read;
     use std::process::Stdio;
     use std::sync::{Arc, Mutex};
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
     // 자기 프로세스 그룹으로 — 시간이 넘으면 손자까지 그룹째 죽인다(직계만 죽이면 손자가 남아 파이프를 쥐었다)
     #[cfg(unix)]
     {
@@ -436,6 +464,13 @@ pub fn run_capped(cmd: &mut Command, limit: std::time::Duration) -> std::io::Res
         cmd.process_group(0);
     }
     let mut child = cmd.spawn()?;
+    // 입력은 따로 스레드에서 넣고 닫는다 — 출력 파이프가 차서 서로 막히지 않게
+    if let (Some(data), Some(mut w)) = (input, child.stdin.take()) {
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = w.write_all(&data);
+        });
+    }
     // 출력은 버퍼에 이어 담는다 — 그룹을 벗어난 손자(데몬)가 파이프를 계속 쥐어도 기다림을 끊고 받은 데까지 돌려줄 수 있게
     let pipe = |r: Option<Box<dyn Read + Send>>| {
         let buf = Arc::new(Mutex::new(Vec::new()));
@@ -747,6 +782,26 @@ mod tests {
         assert!(!folder_dialog_script("x", None).contains("SelectedPath ="));
     }
 
+    // 10-26 운영 QA — 윈도우엔 파일 고르기 창이 없어 대화 '파일 붙이기'·팀 보관함 '+'·보관함 넣기가 'file chooser: mac only' 로 실패했다
+    #[test]
+    fn 윈도우_파일_고르기_창_스크립트() {
+        let sc = file_dialog_script("대화에 붙일 파일", true);
+        assert!(sc.contains("[Console]::OutputEncoding = [Text.Encoding]::UTF8"));
+        assert!(sc.contains("System.Windows.Forms.OpenFileDialog"));
+        assert!(sc.contains("$d.Title = '대화에 붙일 파일'"));
+        assert!(sc.contains("$d.Multiselect = $true"));
+        assert!(sc.contains("$d.FileNames")); // 여러 개면 한 줄에 하나
+        assert!(file_dialog_script("x", false).contains("$d.Multiselect = $false"));
+        assert!(file_dialog_script("it's", false).contains("$d.Title = 'it''s'"));
+    }
+
+    #[test]
+    fn 고르기_창_출력은_줄마다_경로_취소면_빈_목록() {
+        assert_eq!(dialog_paths("C:\\a\\가.txt\r\nC:\\b c\\d.png\r\n"), vec!["C:\\a\\가.txt".to_string(), "C:\\b c\\d.png".to_string()]);
+        assert!(dialog_paths("").is_empty());
+        assert!(dialog_paths("\r\n  \r\n").is_empty());
+    }
+
     #[test]
     fn 윈도우_클립보드는_utf16le_bom_없이() {
         // BOM 을 붙이면 clip.exe 가 그것까지 글자로 넣어 붙여넣은 글 맨 앞에 U+FEFF 가 남았다(윈도우 실측)
@@ -769,7 +824,8 @@ mod tests {
         assert_eq!(win_accel("Alt+CmdOrCtrl+2"), "Ctrl+Alt+2");
         assert_eq!(win_accel("CmdOrCtrl+/"), "Ctrl+Shift+/");
         assert_eq!(win_accel("CmdOrCtrl+="), "Ctrl+=");
-        assert_eq!(win_accel("CmdOrCtrl+`"), "Ctrl+`");
+        assert_eq!(win_accel("CmdOrCtrl+`"), "Ctrl+`"); // 홈 대시보드
+        assert_eq!(win_accel("CmdOrCtrl+Shift+`"), "Ctrl+Shift+`"); // 창 크게 — 기호 ⇧ 는 그대로(domain/keys)
         assert_eq!(win_accel("CmdOrCtrl+,"), "Ctrl+,");
         assert_eq!(win_accel("CmdOrCtrl+0"), "Ctrl+0");
         assert_eq!(win_accel("Ctrl+Tab"), "Ctrl+Tab"); // ⌘ 가 없는 건 그대로

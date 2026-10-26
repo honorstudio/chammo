@@ -59,6 +59,7 @@ pub fn preview(body: &str) -> String {
 /// 이 말에 알릴까 — 남이 보낸 새 말(참모에게 넘긴 것 = delivered)만. 내 다른 기기가 보낸 것·막은 말·옛 말·내 기기끼리 방은 아니다.
 /// views = 창마다 (보고 있는 방, 그 창이 앞인가). 그 방을 앞에 띄운 창이 있으면 안 울린다
 pub fn decide(rec: &Record, views: &[(String, bool)], set: &Settings) -> Option<Alert> {
+    // 단톡방 일반 말(room)·반응(react)은 안 울린다 — 안 읽은 수만(슬랙처럼). 나를 부른 단톡방 말은 delivered 라 울린다
     if rec.note != "delivered" || rec.kind == "self" {
         return None;
     }
@@ -98,9 +99,26 @@ pub fn on_record(rec: &Record) {
     }
 }
 
+/// 팀·방이 바뀌었다(team_changed 뒤 다시 받음) — 메신저 창이 15초 주기를 안 기다리고 다시 읽게. 알림·소리는 없다
+pub fn poke_state() {
+    if let Some(f) = STATE_HOOK.get() {
+        f();
+    }
+}
+
+static STATE_HOOK: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
+
 /// 앱이 뜰 때 한 번 — 창에 새 말을 알리고(다시 읽게), 알릴 말이면 알림·소리
 pub fn init<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     use tauri::Manager;
+    let a2 = app.clone();
+    let _ = STATE_HOOK.set(Box::new(move || {
+        for (l, w) in a2.webview_windows() {
+            if crate::team_ui::ui_window(&l) {
+                let _ = w.eval("window.__teamMsg && window.__teamMsg({ room: '', seq: 0, note: 'state' })");
+            }
+        }
+    }));
     let app = app.clone();
     let _ = HOOK.set(Box::new(move |rec: &Record| {
         let poke = serde_json::json!({ "room": rec.room, "seq": rec.seq, "note": rec.note });
@@ -109,6 +127,11 @@ pub fn init<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
             let _ = w.eval(format!("window.__teamMsg && window.__teamMsg({poke})"));
         }
         let vs: Vec<(String, bool)> = views().into_iter().map(|(l, room)| (room, wins.iter().find(|(x, _)| *x == l).is_some_and(|(_, w)| w.is_focused().unwrap_or(false) && w.is_visible().unwrap_or(false)))).collect();
+        // 방해 금지(내 프로필 상태) — 창에 새 말은 알리되 알림·소리는 안 낸다
+        if rec.note == "delivered" && crate::team_profile::dnd(crate::config::data_dir()) {
+            crate::claude::log_out("notify", &format!("팀 새 말 {} #{} — 방해 금지라 안 울림", rec.room.chars().take(8).collect::<String>(), rec.seq));
+            return;
+        }
         match decide(rec, &vs, &load(crate::config::data_dir())) {
             Some(a) => fire(&a, rec),
             // 보고 있는 대화라 안 울림 — 기록에 한 줄(왜 안 울렸는지 나중에 볼 수 있게, 본문 없이)

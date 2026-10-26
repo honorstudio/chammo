@@ -79,6 +79,8 @@ const A = '도메인 연결 어떻게 됐어?';
 const B = '그리고 시험도 돌려 줘';
 /** 그림 칩 이름표 + 줄바꿈(Shift+Enter) — 채팅 입력칸 글 그대로, 터미널엔 앞에 [Image #n] 이 붙어 있다 */
 const IMG = '#img1 \n고치는 중이지?';
+/** 2,500자 회의 메모 — 입력칸 높이를 넘어 화면엔 토막만 보인다 */
+const LONG = Array.from({ length: 50 }, (_, i) => `${i}. 회의 메모 줄 — 오늘 할 일과 다음 주 일정을 정리했어요`).join('\n');
 const APP = '[앱] demo / feature-x 세션(ab12cd34)이 2분째 답을 기다려 — 마지막 말: "시험 다 돌렸어"';
 
 const FLOW: [string, Step[]][] = [
@@ -94,6 +96,12 @@ const FLOW: [string, Step[]][] = [
   ['두 번 누름 — 이미 간 말을 입력칸 다시 보내기로 또 누르면 처음엔 막고, 곧 한 번 더면 보내고, 오래 지나 누르면 또 막는다',
     [{ send: A }, { wait: 3000 }, { log: [user(A, 300)] }, { see: [] }, { again: 'warn' }, { wait: 2000 }, { again: 'send' },
       { wait: DUP_CONFIRM + 1000 }, { again: 'warn' }]],
+  ['일하는 중 긴 말(2,500자) — 치는 동안 입력칸엔 토막만 보여도, Enter 뒤 훅이 도는 동안도 보내는 중이고, 줄 서면 대기 중, 도구가 끝나 흡수되면 사라진다(2026-10-26 사용자 301.png)',
+    [{ send: LONG }, { term: LONG.slice(0, 600) }, { wait: 3000 }, { see: [`${LONG}=sending`] }, { term: LONG.slice(1200, 1800) }, { wait: 3000 },
+      { see: [`${LONG}=sending`] }, { enter: null }, { term: '' }, { wait: 3000 }, { see: [`${LONG}=sending`] },
+      { log: [op('enqueue', 9000, LONG)] }, { see: [`${LONG}=queued/now`] }, { wait: 13_000 }, { log: [absorbed(22_000, LONG), queued(LONG, 22_000)] }, { see: [] }]],
+  ['긴 말의 Enter 가 안 먹어 토막이 입력칸에 그대로 — 30초 뒤 입력칸에 걸려 있어요 + 지금 보내기(다시 보내기면 입력칸에 두 벌로 붙는다)',
+    [{ send: LONG }, { term: LONG.slice(1200, 1800) }, { wait: LOST_AFTER + 1000 }, { see: [`${LONG}=input/now`] }]],
   ['일하는 중 — 줄 서면 대기 중 + 지금 보내기, 차례가 와 queued_command 로 들어가면 사라진다',
     [{ send: A }, { wait: 1500 }, { log: [op('enqueue', 600, A)] }, { see: [`${A}=queued/now`] }, { wait: 120_000 },
       { see: [`${A}=queued/now`] }, { log: [op('dequeue', 121_000), queued(A, 121_000)] }, { see: [] }]],

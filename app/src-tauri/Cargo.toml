@@ -1,6 +1,6 @@
 [package]
 name = "honor-orchestrator"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 license = "AGPL-3.0-only"
 
@@ -52,15 +52,19 @@ zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 # 앱 자동 업데이트(ADR 0005, updater.rs) — Rust 명령에서만 부른다(JS 플러그인·권한 파일 없음). 2.12+ 는 tauri ^2.12 를 요구해서 앱의 tauri 2.11 에 맞춘 판으로 고정
 tauri-plugin-updater = "=2.11.0"
+# 팀 초대 링크(chammo://join) 받기 — ADR 0015. 앱의 tauri 2.11·tauri-plugin 2.6 에 맞는 마지막 판으로 고정(2.5+ 는 tauri ^2.12)
+tauri-plugin-deep-link = "=2.4.10"
 
 # 알림을 앱 이름·아이콘으로(UNUserNotificationCenter). osascript 로 보내면 "스크립트 편집기" 로 묶이고 눌러도 앱이 안 열린다
 # 윈도우 알림(토스트) — Tauri 알림 플러그인이 윈도우에서 쓰는 것과 같은 크레이트
 [target.'cfg(windows)'.dependencies]
+# 윈도우는 chammo:// 를 누르면 새 프로세스가 뜬다 — 떠 있는 앱으로 넘기고 끈다(ADR 0015, deep-link 2.4.10 과 같은 줄)
+tauri-plugin-single-instance = "=2.4.5"
 tauri-winrt-notification = "0.7"
 # 부하 보기 — 윈도우엔 ps·sysctl 이 없다. 맥 ps 모양 글로 만들어 넘긴다(load.rs)
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
-# 다른 기기 참모 짝 열쇠 — 자격 증명 관리자(wincred.rs). 이미 락에 있던 판(tokio·mio 가 쓰는 0.61)에 기능만 더한다
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_UI_Shell", "Win32_Storage_FileSystem", "Win32_System_IO"] }
+# 다른 기기 참모 짝 열쇠 — 자격 증명 관리자(wincred.rs) · 팀 초대 클립보드 읽기(team_ui.rs). 이미 락에 있던 판(tokio·mio 가 쓰는 0.61)에 기능만 더한다
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_UI_Shell", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_DataExchange", "Win32_System_Memory"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

@@ -15,6 +15,7 @@ import { SendFab } from './SendFab';
 import { FindBar } from './FindBar';
 import type { ShowAt } from '../../domain/showAt';
 import { flashWhenReady } from '../flash';
+import { DocWidthButton, useDocWide } from '../docWide';
 
 // 편집기(BlockNote)는 문서를 열 때 불러온다
 const SpaceEditor = lazy(() => import('./SpaceEditor'));
@@ -78,14 +79,16 @@ export function DocPage({ lead, tail, where, attachTo, path, title, owner, pinne
     return () => { if (w.__docFind === mine) delete w.__docFind; };
   }, [shown]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => (at && text != null && !plain ? flashWhenReady(() => bodyRef.current?.querySelector<HTMLElement>('.bn-editor') ?? null, at, text, false, 25) : undefined), [atKey, text == null]); // eslint-disable-line react-hooks/exhaustive-deps
+  const wide = useDocWide();
   const h1 = (md: string) => md.match(/^#\s+(.+)$/m)?.[1]?.trim();
   return (
-    <div className="cv-doc">
+    <div className={wide ? 'cv-doc doc-wide' : 'cv-doc'}>
       <div className="cv-doc-bar">
         {lead}
         {where !== undefined ? <span className="cv-path" title={path}>{where}</span> /* 탭으로 연 것 — 이름은 탭에, 머리엔 어느 폴더인지만(2026-10-11 사용자) */
           : <span className="cv-crumb">{onBack ? <button className="cv-back" onClick={onBack} title={owner}><IconChevron />{owner}</button> : <span>{owner}</span>}<i>/</i><b>{title ?? docTitle(path)}</b></span>}
         <span className="cv-sp" />
+        <DocWidthButton />
         {onAttach && <SendToOrch to={attachTo} onClick={onAttach} />}
         {onPin && (
           <IconButton pressed={!!pinned} label={pinned ? tr('고정됨', 'Pinned') : tr('고정', 'Pin')} title={pinned ? tr('고정됨 — 누르면 풀기', 'Pinned — click to unpin') : tr('고정 — 새 세션에서도 메뉴에 남는다', 'Pin — stays in the menu for new sessions')} onClick={onPin}><IconPin /></IconButton>

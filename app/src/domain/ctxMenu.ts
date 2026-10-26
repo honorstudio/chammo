@@ -26,3 +26,6 @@ export function menuStep(n: number, i: number, key: string): number {
 export function trailingClick(e: { button: number; ctrlKey: boolean }, sinceMenuMs: number): boolean {
   return e.ctrlKey || e.button !== 0 || sinceMenuMs < 400;
 }
+
+/** 줄·카드 누름이 열기인가 — 왼쪽 단추만. 맥 ctrl+클릭(= 오른쪽 클릭)·오른쪽·가운데 단추는 메뉴 몫(10-26 사용자 "오른쪽 클릭하면 열기도 같이 돌아서 '폴더로 옮기기'를 못 써") */
+export const opensOnClick = (e: { button: number; ctrlKey: boolean }) => e.button === 0 && !e.ctrlKey;

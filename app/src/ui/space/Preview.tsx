@@ -140,7 +140,7 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
     return () => { delete w.__previewZoom; };
   }, []);
 
-  // ⌘` = 스페이스 가득(한 번 더 누르면 원래 크기) — 메뉴 단축키가 __previewMax 를 먼저 본다(2026-09-30 사용자)
+  // ⌘⇧` = 스페이스 가득(한 번 더 누르면 원래 크기) — 메뉴 단축키가 __previewMax 를 먼저 본다(2026-09-30 사용자)
   const [max, setMax] = useState(false);
   useEffect(() => {
     const w = window as unknown as { __previewMax?: () => void };
@@ -148,7 +148,7 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
     return () => { delete w.__previewMax; };
   }, []);
 
-  // 뜨는 자리 — 평소엔 채팅 열을 안 덮고 스페이스(메뉴+가운데) 위에만, ⌘`(가득)일 때만 채팅까지 덮는다(2026-09-30 사용자)
+  // 뜨는 자리 — 평소엔 채팅 열을 안 덮고 스페이스(메뉴+가운데) 위에만, ⌘⇧`(가득)일 때만 채팅까지 덮는다(2026-09-30 사용자)
   const [area, setArea] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   // 그리기 전에 재야 한다 — 처음 창 전체로 떴다가 스페이스 자리로 미끄러져 "점프"했다(2026-09-30 사용자). 움직임은 첫 자리 잡은 뒤부터
   const [placed, setPlaced] = useState(false);
@@ -208,7 +208,7 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
             </div>
           )}
           {onAttach && <SendToOrch to={attachTo} className="pv-attach" onClick={() => { onAttach(); onClose(); }} />}
-          <button className="pv-ic" onClick={() => setMax((m) => !m)} title={max ? tr('원래 크기 (⌘`)', 'Restore (⌘`)') : tr('가득 채우기 (⌘`)', 'Fill (⌘`)')} aria-label={max ? tr('원래 크기', 'Restore') : tr('가득 채우기', 'Fill')}>{max ? <IconRestore /> : <IconMaximize />}</button>
+          <button className="pv-ic" onClick={() => setMax((m) => !m)} title={max ? tr('원래 크기 (⌘⇧`)', 'Restore (⌘⇧`)') : tr('가득 채우기 (⌘⇧`)', 'Fill (⌘⇧`)')} aria-label={max ? tr('원래 크기', 'Restore') : tr('가득 채우기', 'Fill')}>{max ? <IconRestore /> : <IconMaximize />}</button>
           <button className="pv-ic" onClick={onClose} title={tr('닫기 (Esc)', 'Close (Esc)')} aria-label={tr('닫기', 'Close')}><IconClose /></button>
         </div>
         {askSend && (() => {

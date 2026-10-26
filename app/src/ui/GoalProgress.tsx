@@ -1,10 +1,10 @@
 // 참모 홈 맨 위 '진행' 칸 — 데스크톱 스페이스 홈과 폰 홈이 같이 쓴다(시안 docs/design-drafts/progress-bar v2, 사용자 10-23 확정: 홈에만).
 // 목표마다 한 줄(이름 · 조각 막대 · 끝/전체 · 마지막 기척), 줄을 누르면 그 자리에서 일 목록. 계산은 domain/goalBar.
 // 끝난 조각은 결과 한 줄과 남아 있다가 앱이 앞에 있고 그 줄이 4초 보이면 한 번 반짝이고 접히며 사라진다(동작 줄이기면 페이드만)
-// 줄 끝 말풍선 단추 = 참모에게 묻기 — 그 일(#task1)·목표(#goal1)가 이 참모 입력칸에 참조로 들어간다(2026-10-23 사용자 폰 '이게 뭐지?')
+// 줄 끝 말풍선 단추 = 참모에게 묻기 — 그 일(#task1)·목표(#goal1)가 이 참모 입력칸에 참조로 들어간다(2026-10-23 사용자 폰 '이게 뭐지?'). 홈 대시보드는 그 자리 미니 대화 입력칸(10-26)
 // 다른 참모에게 넘긴 큰 일 칸은 받은 쪽 진행만큼 채워지고, 펼치면 '백엔드가 하는 중 — 2/5' 와 받은 쪽 일 목록(읽기만). 받은 쪽 줄엔 '기획이 넘김'
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { goalBar, isEnded, type Cell, type CellState, type Goal, type Hand, type Wait } from '../domain/goalBar';
+import { goalBar, goalRows, isEnded, type Cell, type CellState, type Goal, type Hand, type Wait } from '../domain/goalBar';
 import { whenLabel } from '../domain/orchHome';
 import type { Session } from '../domain/session';
 import type { TaskEvent } from '../domain/tasks';
@@ -53,7 +53,7 @@ const refJob = (c: Cell, now: number): RefJob => ({ title: c.title, task: c.task
 /** 참모에게 묻기 — 데스크톱은 줄에 올리면 보이고, 폰(마우스 없음)은 늘 보인다. 누르는 자리는 폰 44px */
 function AskBtn({ what, onClick }: { what: 'task' | 'goal'; onClick: () => void }) {
   const label = what === 'task' ? tr('참모에게 묻기 — 이 일을 입력칸에 #참조로', 'Ask your assistant — put this task in the input') : tr('참모에게 묻기 — 이 목표를 입력칸에 #참조로', 'Ask your assistant — put this goal in the input');
-  return <button type="button" className="gp-ref" aria-label={label} title={label} onClick={onClick}><span className="gp-ref-dot" aria-hidden><IconChatSend /></span></button>;
+  return <button type="button" className="gp-ref" data-hpop="" aria-label={label} title={label} onClick={onClick}><span className="gp-ref-dot" aria-hidden><IconChatSend /></span></button>;
 }
 const tone = (s: CellState) => (s === 'auto' ? 'done' : s === 'stop' ? 'quiet' : s);
 
@@ -111,8 +111,8 @@ function useSeenWatch(units: string[], onSeen: (units: string[]) => void) {
   return ref;
 }
 
-function GoalRow({ g, now, open, onToggle, leaving, onLeave, onGone, onAsk }: {
-  g: Goal; now: number; open: boolean; onToggle: () => void; onAsk?: (r: RefAsk) => void;
+function GoalRow({ g, name, now, open, onToggle, leaving, onLeave, onGone, onAsk }: {
+  g: Goal; name: string; now: number; open: boolean; onToggle: () => void; onAsk?: (r: RefAsk) => void;
   leaving: Set<string>; onLeave: (units: string[]) => void; onGone: (units: string[]) => void;
 }) {
   const units = g.finished ? [g.unit!] : g.cells.filter((c) => c.unit).map((c) => c.unit!);
@@ -127,7 +127,6 @@ function GoalRow({ g, now, open, onToggle, leaving, onLeave, onGone, onAsk }: {
     const t = window.setTimeout(() => onGone(out), 1600);
     return () => window.clearTimeout(t);
   }, [going, leaving, g.unit]); // eslint-disable-line react-hooks/exhaustive-deps
-  const name = g.name || tr('기타', 'Other');
   const jobs = g.cells.filter((c) => c.state !== 'todo');
   const todo = g.cells.length - jobs.length;
   // 기다림만 남은 목표 — 줄 오른쪽 '기다림' 한 단어 + 사유 한 줄(첫 사유 + 나머지 개수)
@@ -210,17 +209,14 @@ export function GoalProgress({ bar, now, onSeen, onAsk }: { bar: ReturnType<type
   const toggle = (k: string) => setOpen((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const leave = (units: string[]) => setLeaving((p) => new Set([...p, ...units]));
   const gone = (units: string[]) => { setLeaving((p) => { const n = new Set(p); units.forEach((u) => n.delete(u)); return n; }); onSeen(units); };
-  let lastProject: string | undefined;
   return (
     <section className="gp" aria-label={tr('진행', 'Progress')}>
       <div className="gp-head"><b>{tr('진행', 'Progress')}</b><span className="gp-num"><b>{bar.done}</b> / {bar.total}</span></div>
-      {bar.goals.map((g) => {
-        const head = bar.byProject && g.project !== lastProject ? <div className="gp-proj">{g.project || tr('프로젝트 밖', 'No project')}</div> : null;
-        lastProject = g.project;
+      {goalRows(bar).map(({ goal: g, head, name }) => {
         return (
           <Fragment key={g.key}>
-            {head}
-            <GoalRow g={g} now={now} open={open.has(g.key)} onToggle={() => toggle(g.key)} leaving={leaving} onLeave={leave} onGone={gone} onAsk={onAsk} />
+            {head !== undefined && <div className="gp-proj">{head}</div>}
+            <GoalRow g={g} name={name} now={now} open={open.has(g.key)} onToggle={() => toggle(g.key)} leaving={leaving} onLeave={leave} onGone={gone} onAsk={onAsk} />
           </Fragment>
         );
       })}
@@ -229,7 +225,8 @@ export function GoalProgress({ bar, now, onSeen, onAsk }: { bar: ReturnType<type
 }
 
 /** 홈에 꽂는 진행 칸 한 벌 — 계산·봤음 기록까지 */
-export function HomeProgress(p: Parameters<typeof useGoalBar>[0]) {
+/** onAsk 를 안 주면 그 참모 입력칸으로(askRef) — 홈 대시보드는 그 자리 미니 대화로 받는다 */
+export function HomeProgress({ onAsk, ...p }: Parameters<typeof useGoalBar>[0] & { onAsk?: (r: RefAsk) => void }) {
   const { bar, now, mark } = useGoalBar(p);
-  return <GoalProgress bar={bar} now={now} onSeen={mark} onAsk={(r) => askRef(p.orch.id, r)} />;
+  return <GoalProgress bar={bar} now={now} onSeen={mark} onAsk={onAsk ?? ((r) => askRef(p.orch.id, r))} />;
 }

@@ -77,6 +77,37 @@ impl DeviceKeys {
         crate::phone_tunnel::agree(&self.tunnel_secret(), their).ok()
     }
 
+    /// 이 기기에만 두는 것(마지막 팀 보관함 목록 등)을 봉하는 대칭 열쇠 — 같은 씨앗에서 라벨만 다른 HKDF(키체인 칸을 늘리지 않는다)
+    pub(crate) fn local_key(&self, purpose: &str) -> [u8; 32] {
+        let h = hkdf::Hkdf::<Sha256>::new(Some(b"chammo-local/1"), &self.dh.to_bytes());
+        let mut k = [0u8; 32];
+        h.expand(purpose.as_bytes(), &mut k).expect("32");
+        k
+    }
+
+    /// 종단 암호 받는 열쇠(ECDH P-256, chammo-relay ADR 0007) — 터널 열쇠와 라벨이 다른 HKDF 로 같은 X25519 씨앗에서(키체인 칸을 늘리지 않는다)
+    pub(crate) fn e2e_secret(&self) -> p256::SecretKey {
+        let h = hkdf::Hkdf::<Sha256>::new(Some(b"chammo-e2e-p256/1"), &self.dh.to_bytes());
+        for i in 0u8.. {
+            let mut seed = [0u8; 32];
+            h.expand(&[b'k', i], &mut seed).expect("32");
+            if let Some(k) = crate::phone_tunnel::secret_from_seed(&seed) {
+                return k;
+            }
+        }
+        unreachable!()
+    }
+
+    /// 받는 열쇠 공개 점(65바이트 base64url) — 로그인 때 서버에 올리고 사슬 고리에 들어간다
+    pub fn e2e_public(&self) -> String {
+        B64.encode(crate::phone_tunnel::public_of(&self.e2e_secret()))
+    }
+
+    /// 서명 열쇠가 받는 열쇠를 '내 것'이라 묶은 서명 — 서버 chain.ts keysText 와 같은 글
+    pub fn e2e_key_sig(&self) -> String {
+        self.sign(&format!("chammo-device-keys/1\n{}\n{}", self.public(), self.e2e_public()))
+    }
+
     pub fn sign(&self, text: &str) -> String {
         B64.encode(self.sign.sign(text.as_bytes()).to_bytes())
     }

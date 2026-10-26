@@ -10,13 +10,14 @@ import chatCss from '../chat/chat.css?raw';
 // 채팅 머리 = 그 참모 프사 + 이름 + 맡은 일(한 줄 말줄임), 고른 프사와 채팅 칸이 하나로 이어져 켜진 것처럼(고른 탭이 아래 내용과 붙듯)
 describe('채팅 칸 자리 A', () => {
   // 2026-10-24 홈 대시보드 — 홈을 보는 동안 채팅 칸은 숨기기만(자리 감싸개 display: contents)
-  it('스페이스는 띠 바로 다음에 채팅을 그린다', () => expect(view).toMatch(/\{rail\}\n[^\n]*\n\s*<div className="cv-chat-slot" hidden=\{atHomePick\}>\{chat\}<\/div>/));
+  it('스페이스는 띠 바로 다음에 채팅을 그린다', () => expect(view).toMatch(/\{rail\}\n[^\n]*\n\s*<div className="cv-chat-slot" hidden=\{\(atHomePick && !teamOn\) \|\| \(teamOn && !!team\?\.fold\)\}>\{chat\}<\/div>/)); // 팀 모드는 홈 위에서도 팀 대화를 보인다(메신저를 접었으면 숨김)
   it('앱은 채팅 칸을 스페이스 안 자리로 넘긴다(오른쪽에 따로 안 그림)', () => {
     expect(app).toMatch(/chat=\{chatCol\}/);
     expect(app).toMatch(/className="office-chats left"/);
   });
-  it('폭 손잡이는 채팅 칸 오른쪽 가장자리 — 기억(officeChatWidth)·280~900 그대로', () => {
-    expect(app).toMatch(/<Grip side="right" width=\{chatWidth\} onWidth=\{setChatWidth\} min=\{280\} max=\{900\} \/>/);
+  it('폭 손잡이는 채팅 칸 오른쪽 가장자리 — 기억(officeChatWidth)·280~900 그대로(팀 모드면 대화 목록 폭을 더해 그리고 팀 대화 폭만 따로 기억)', () => {
+    expect(app).toContain('<Grip side="right" width={chatW} onWidth={(w) => (teamMode.chat ? teamMode.setConvo(w - teamMode.listW) : setChatWidth(w))} min={gripMin} max={gripMax} />');
+    expect(app).toContain(': [280, 900];');
   });
   // 프사는 같은 날 사용자가 뺐다('이중으로 보여 너무 많다') — 이름·맡은 일은 격자가 머리 자리에 올린다(chatHead.test.ts)
   it('채팅 머리 = 이름 + 맡은 일 자리(채팅 글자 대신)', () => {
@@ -48,12 +49,12 @@ import link from './ChatLink.tsx?raw';
 import chatLinkDomain from '../../domain/chatLink.ts?raw';
 describe('고른 프사 ↔ 채팅 카드 이음 윤곽', () => {
   it('채팅은 띠 바탕 위 둥근 카드 — 손잡이는 카드 밖', () => {
-    expect(app).toMatch(/<Grip side="right" width=\{chatWidth\}[^\n]*\n[^\n]*\n\s*<div className="och-card">/);
+    expect(app).toMatch(/<Grip side="right" width=\{chatW\}[^\n]*\n[^\n]*\n\s*<div className="och-card">/);
     expect(space).toMatch(/\.space-mode \.office-chats\.left \{ background: var\(--panel\); padding: 6px 6px 6px 0; \}/);
     expect(space).toMatch(/\.och-card \{[^}]*border-radius: 12px;[^}]*overflow: hidden;[^}]*background: var\(--surface\)/);
   });
   it('스페이스가 채팅이 있을 때 고른 프사 색으로 윤곽을 그린다', () => {
-    expect(view).toMatch(/\{chat\}<\/div>\n[^\n]*\n\s*\{chat && !atHomePick && <ChatLink color=\{linkColor\} \/>\}/);
+    expect(view).toMatch(/\{chat\}<\/div>\n[^\n]*\n\s*\{chat && \(!atHomePick \|\| teamOn\) && !\(teamOn && team\?\.fold\) && <ChatLink color=\{linkColor\} \/>\}/);
     // 이음 색 = 고른 프사 색(다른 기기를 보는 중이면 그 기기 참모 색, peer-panel)
     expect(view).toContain('const linkColor = far ? far.color : team?.railOn ? team.color : railList.find((a) => a.on)?.color;'); // 메신저 대화를 고르면 그 사람 색
   });

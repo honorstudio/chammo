@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cellState, ETC_FOLD_MS, GOAL_IDLE_MS, goalBar, prResult, QUIET_MS, type CellFacts } from './goalBar';
+import { cellState, ETC_FOLD_MS, GOAL_IDLE_MS, goalBar, goalRows, prResult, QUIET_MS, type CellFacts } from './goalBar';
 import type { Session } from './session';
 import type { TaskEvent } from './tasks';
 
@@ -429,5 +429,25 @@ describe('goalBar — 기다림(task wait)', () => {
   it('다른 일의 wait 는 안 번진다', () => {
     const b = view([send('a', 's-1', 5), send('b', 's-2', 5), wait('a', 4)]).goals[0]!.cells;
     expect(b.map((c) => c.state)).toEqual(['wait', 'quiet']);
+  });
+});
+
+// 처음 쓰는 사람의 참모는 --goal 을 잘 안 써서 진행 칸이 다 '기타' 한 줄이었다(2026-10-24 윈도우 공개판) — 목표 없는 일은 프로젝트마다 그 이름으로
+describe('목표 없는 일 — 프로젝트(없으면 세션 대상)별 줄, 프로젝트 이름이 줄 이름', () => {
+  it('프로젝트마다 한 줄 — 한 프로젝트만 맡아도 기타가 아니라 그 이름', () => {
+    const one = goalBar({ events: [send('a', 'web', 2, { project: 'shop' }), send('b', 'web', 1, { project: 'shop' })], sessions: [sess('web')], orch: ORCH, now: NOW, seen: new Set() });
+    expect(one.goals.map((g) => [g.name, g.label, g.cells.length])).toEqual([['', 'shop', 2]]);
+    const two = goalBar({ events: [send('a', 'web', 2, { project: 'shop' }), send('b', 'api', 1, { project: 'blog' }), send('c', 'web', 1, { goal: '출시', project: 'shop' })], sessions: [sess('web'), sess('api')], orch: ORCH, now: NOW, seen: new Set() });
+    expect(two.goals.map((g) => [g.project, g.name, g.label ?? ''])).toEqual([['blog', '', 'blog'], ['shop', '출시', ''], ['shop', '', 'shop']]);
+  });
+  it('기록에 프로젝트가 없으면 세션의 프로젝트, 그것도 없으면 세션 대상 이름', () => {
+    const b = goalBar({ events: [send('a', 'web', 2), send('b', 'ghost', 1)], sessions: [sess('web', { project: 'shop' })], orch: ORCH, now: NOW, seen: new Set() });
+    expect(b.goals.map((g) => g.label).sort()).toEqual(['ghost', 'shop']);
+  });
+  it('줄 이름 — 목표는 목표 이름, 목표 없는 줄은 프로젝트 이름, 같은 이름의 프로젝트 머리줄 밑이면 그 밖의 일', () => {
+    const b = goalBar({ events: [send('a', 'web', 2, { project: 'shop' }), send('b', 'api', 1, { project: 'blog' }), send('c', 'web', 1, { goal: '출시', project: 'shop' })], sessions: [sess('web'), sess('api')], orch: ORCH, now: NOW, seen: new Set() });
+    expect(goalRows(b).map((r) => [r.head ?? '', r.name])).toEqual([['', 'blog'], ['shop', '출시'], ['', '그 밖의 일']]);
+    const one = goalBar({ events: [send('a', 'web', 2, { project: 'shop' })], sessions: [sess('web')], orch: ORCH, now: NOW, seen: new Set() });
+    expect(goalRows(one).map((r) => [r.head ?? '', r.name])).toEqual([['', 'shop']]);
   });
 });

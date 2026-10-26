@@ -12,6 +12,14 @@ export function officePick(pick: string, want: 'office' | 'space' | 'toggle', be
   return go ? { pick: OFFICE, before: pick } : { pick: before || home, before: '' };
 }
 
+/** 홈에서 사무실을 켤 때 누구 기준 — 홈에서 마지막으로 다룬 참모(타일·미니 대화) → 지금 고른 참모 탭 → 첫 참모.
+ *  홈은 탭을 고르지 않아서, 앱이 처음 잡은 탭(첫 참모)으로 늘 켜졌다(2026-10-25 사용자) */
+export function homeOfficeOrch(touched: string | undefined, viewing: string | undefined, ids: string[]): string | undefined {
+  if (touched && ids.includes(touched)) return touched;
+  if (viewing && ids.includes(viewing)) return viewing;
+  return ids[0];
+}
+
 /** scripts/show 로 새로 뜬 것 — 사무실 밖이면 md 는 문서 페이지로, 그림·시안은 보던 화면 위 미리보기.
  *  사무실이면 사무실을 떠나지 않는다(오피스 A 1단계, 2026-10-04): 그림·시안은 사무실 위 미리보기, md 는 사무실 위 창(sheet).
  *  예전엔 대시보드로 넘어간 뒤 띄워서, 닫으면 사무실이 아니라 대시보드였다 */
@@ -32,6 +40,12 @@ export const sheetBack = (stack: string[]): string[] => stack.slice(0, -1);
 export function deskTarget(id: string, orchIds: string[], viewing: string): { sheet: string } | { tab: string } | null {
   if (!orchIds.includes(id)) return { sheet: `s:${id}` };
   return id === viewing ? null : { tab: id };
+}
+
+/** 홈 안에서 연 사무실의 책상(2026-10-25 사용자 "홈에서 누르면 홈 안에서") — 참모 책상은 그때 그 참모로(지금 탭 참모여도: 홈은 탭을 안 고른다),
+ *  세션 책상은 홈 안 사무실 위 창 */
+export function homeDeskTarget(id: string, orchIds: string[]): { orch: string } | { sheet: string } {
+  return orchIds.includes(id) ? { orch: id } : { sheet: `s:${id}` };
 }
 
 export type Side = 'office' | 'space';

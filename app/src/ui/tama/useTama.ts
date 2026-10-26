@@ -13,7 +13,7 @@ import type { TaskEvent } from '../../domain/tasks';
 import type { TamaEvent } from '../../domain/tama/pet';
 import { balanceFeed, parseCiRuns, parseCommitLog, taskEvents } from '../../domain/tama/sources';
 import { addDiary } from '../../domain/tama/diary';
-import { addWork, autoRetire, parseTamaFile, step, workMinutes, type TamaFile } from '../../domain/tama/store';
+import { addWork, autoRetire, parseTamaFile, step, workEvents, workMinutes, type TamaFile } from '../../domain/tama/store';
 
 const STEP_MS = 60_000;
 const COMMITS_MS = 5 * 60_000;   // git log 는 저장소 40개를 도니 5분에 한 번
@@ -28,7 +28,7 @@ export const WIDGET_POLL_MS = 1000;
 
 export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEvent[], routines: Routine[], orchs: Session[], onRequest: (kind: string) => void, prs: Reviewed[] | null = null) {
   const [file, setFile] = useState<TamaFile | null>(null);
-  // 먹이 사건(커밋·PR·CI·시킨 일) — 머지 가챠 코인도 같은 사건으로 센다(useGacha)
+  // 먹이 사건(커밋·PR·CI·시킨 일) + 일한 시간 칸 — 머지 가챠 코인도 같은 사건으로 센다(useGacha)
   const [feed, setFeed] = useState<TamaEvent[]>([]);
   const [widgetShown, setWidgetShown] = useState(false); // 처음 켤 땐 숨김 — 상단 바 미니나 메뉴로 연다
   const pending = useRef(0);
@@ -86,7 +86,8 @@ export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEven
       // 방치 벌은 약하게 — 나온 지 6시간 된 몬스터가 간식 하나를 훔쳐 먹는다(배 한 칸)
       if (mon.stolen && f.pet && !f.pet.dead) f = { ...f, pet: { ...f.pet, fedFull: Math.max(0, f.pet.fedFull - mon.stolen) } };
       const events = balanceFeed([...commits.current.events, ...ci.current.events, ...extra, ...slayEvents(mon.state)]);
-      if (alive) setFeed(events);
+      // 코인엔 세션이 일한 시간(닫힌 칸)도 — 펫은 step 이 칸을 따로 먹이니 events 엔 안 넣는다(2026-10-24 업무 사용자 코인)
+      if (alive) setFeed([...events, ...workEvents(f, now)]);
       if (f.pet && !f.pet.dead) f = autoRetire(step(f, events, now), now); // 끝 모습이 된 지 하루면 은퇴(세대 잇기)
       // 펫 일기 — 새벽 5시가 지나면 어제 한 장(먹인 참모는 이름으로). 켜자마자 첫 계산은 건너뛴다 —
       // 시킨 일·예약 기록이 아직 안 읽혀 빈 채로 어제 장이 박히면 다시 안 쓴다

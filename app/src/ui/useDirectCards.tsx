@@ -80,5 +80,7 @@ export function useDirectCards(everyone: Session[], acts: { session: Session; ac
       {inboxCards.map((c) => <div key={c.id} className="dc-row">{card(c, 'inbox', c.id !== inboxOpen, () => setInboxOpen(c.id))}</div>)}
     </div>
   ) : null;
-  return { cards, extraOf, inboxCards, inboxNode };
+  /** 카드 한 장 펼친 채로 — 홈 결정 펼침(그 자리에서 답, 결제도 이 카드 그대로 사람이 누른다) */
+  const cardNode = (c: DirectCard, place: string) => <div className="dc-row">{card(c, place, false, () => {})}</div>;
+  return { cards, extraOf, inboxCards, inboxNode, cardNode };
 }

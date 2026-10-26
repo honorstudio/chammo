@@ -94,3 +94,16 @@ fn 비밀_열쇠는_디버그_출력에_안_나온다() {
     assert!(s.contains(&k.public()));
     assert!(!s.contains("nWGx"), "비밀 씨앗 base64 가 찍히면 안 된다: {s}");
 }
+
+#[test]
+fn 종단_암호_받는_열쇠는_터널_열쇠와_다르고_늘_같으며_묶기_서명이_맞는다() {
+    use ed25519_dalek::Verifier;
+    let k = keys();
+    let e = k.e2e_public();
+    assert_eq!(B64.decode(&e).unwrap().len(), 65);
+    assert_ne!(e, k.tunnel_public(), "용도가 다른 열쇠는 라벨이 달라 갈린다");
+    assert_eq!(e, keys().e2e_public(), "같은 씨앗이면 같은 열쇠");
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(&B64.decode(k.public()).unwrap().try_into().unwrap()).unwrap();
+    let sig = ed25519_dalek::Signature::from_bytes(&B64.decode(k.e2e_key_sig()).unwrap().try_into().unwrap());
+    vk.verify(format!("chammo-device-keys/1\n{}\n{}", k.public(), e).as_bytes(), &sig).unwrap();
+}

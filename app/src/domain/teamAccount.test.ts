@@ -1,7 +1,7 @@
 // 설정 > Chammo 계정 — 화면 판단(순수 함수)
 import { describe, expect, it } from 'vitest';
 import { readmeEn, readmeKo } from '../ui/readmes';
-import { accountRows, deleteConfirmOk, PRIVACY_URL, TERMS_URL } from './teamAccount';
+import { deleteConfirmOk, PRIVACY_URL, TERMS_URL } from './teamAccount';
 
 describe('계정 지우기 확인', () => {
   it('계정 이메일을 그대로 쳐야(대소문자·앞뒤 빈칸도 그대로)', () => {
@@ -11,13 +11,6 @@ describe('계정 지우기 확인', () => {
   it('이메일이 없는 계정은 이름, 둘 다 없으면 못 지운다', () => {
     expect(deleteConfirmOk({ email: '', name: '지수' }, '지수')).toBe(true);
     expect(deleteConfirmOk({ email: '', name: '' }, '')).toBe(false);
-  });
-});
-
-describe('내 기기 줄', () => {
-  it('이 기기가 맨 위, 이 기기는 끊기 대신 로그아웃', () => {
-    const rows = accountRows([{ id: 'b', name: '아이맥', current: false }, { id: 'a', name: '맥북', current: true }]);
-    expect(rows.map((r) => [r.id, r.revoke])).toEqual([['a', false], ['b', true]]);
   });
 });
 

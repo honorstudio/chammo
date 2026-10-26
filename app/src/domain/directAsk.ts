@@ -19,8 +19,16 @@ export type DirectCard = {
   lastTs: string;
   /** 이때가 지나면 끝(연결 요청 카드 — 5분) */
   until?: string;
-  /** 연결 카드 갈래 — 'phone' = 참모가 만든 폰 연결 QR 의 사람 허용(Rust direct::phone_pair_row) */
+  /** 연결 카드 갈래 — 'phone' = 참모가 만든 폰 연결 QR 의 사람 허용(Rust direct::phone_pair_row) · 'device' = 새 기기 허용 · 'phone-link' = 폰 숫자 확인(ADR 0014) */
   sub?: string;
+  /** 폰 숫자 확인 카드의 6자리('892 263') — 크게 보여 폰 화면 숫자와 견주게 */
+  code?: string;
+  /** 새 기기 허용 카드의 그 기기 id(설정 기기 관리 줄이 이 카드로 답한다) */
+  dev?: string;
+  /** 보안 번호 카드(sub 'safety') — 그 사람 계정·갈래(바뀜·갈림)·이름. code 는 보안 번호 30자리 */
+  acct?: string; safety?: 'changed' | 'forked'; who?: string;
+  /** 갈림 카드 — '다시 받기'한 사슬로 띄운 카드인가(이때만 받아들이기) */
+  refetched?: boolean;
 };
 type Env = {
   alive: (sid: string) => boolean;
@@ -57,7 +65,9 @@ export function directCards(log: string, env: Env): DirectCard[] {
       yes: str(r.yes) ?? tr('승인', 'Approve'), no: str(r.no) ?? tr('거절', 'Decline'),
       options: Array.isArray(r.options) ? r.options.filter((o): o is string => typeof o === 'string') : [],
       state: 'wait', lastTs: r.ts ?? '', until: str(r.until), sub: str(r.sub),
+      code: (str(r.sub) === 'safety' ? /^(\d{5} ){5}\d{5}$/ : /^\d{3} \d{3}$/).test(str(r.code) ?? '') ? str(r.code) : undefined, dev: str(r.dev),
     };
+    if (c.sub === 'safety') Object.assign(c, { acct: str(r.acct), who: str(r.who), safety: r.safety === 'forked' ? 'forked' : 'changed', refetched: r.refetched === true });
     const isLink = kind === 'link' && c.from === LINK_FROM;
     // 같은 세션 뒤 카드에 안 밀리는 카드 — 결제는 답·거둠·처리로만 끝(2026-10-22 아이맥 001), 연결 요청은 기기마다 따로. scripts/direct·Rust direct::check 와 같은 규칙
     const stays = isLink || kind === 'pay';
@@ -175,6 +185,12 @@ export function dismiss(m: Dismissed, c: Pick<DirectCard, 'id' | 'lastTs'>): Dis
 
 /** 접힌 한 줄 — 무엇(위험 말·금액) · 결과 · 시각 */
 export function cardLine(c: DirectCard): { what: string; result: string; at: string } {
+  // 보안 번호 카드(시안 e2e-safety v1) — 받아들인 뒤·막아 둔 뒤 한 줄
+  if (c.sub === 'safety') {
+    const result = c.answer ? (c.answer.pick === 'yes' ? tr('새 보안 번호를 받아들였어요 · 멈췄던 말을 보냈어요', 'Accepted the new safety number · paused messages sent') : tr('막아 뒀어요 · 멤버 화면에서 다시 볼 수 있어요', 'Kept blocked · see it again in the member list'))
+      : tr('다른 곳에서 처리했어요', 'Handled elsewhere');
+    return { what: tr(`보안 번호${c.who ? ` · ${c.who}` : ''}`, `Safety number${c.who ? ` · ${c.who}` : ''}`), result, at: c.lastTs };
+  }
   const k = kindView(c.kind);
   const label = c.answer?.label ?? tr('직접 답', 'Answered');
   const result = c.state === 'done' ? c.note || tr('처리됨', 'Done')

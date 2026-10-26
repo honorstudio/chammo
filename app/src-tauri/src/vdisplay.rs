@@ -468,16 +468,38 @@ mod tests {
         if HELPER.is_empty() {
             return;
         }
-        let exe = std::env::temp_dir().join(format!("chammo-vdisplay-test-{}", std::process::id()));
-        std::fs::write(&exe, HELPER).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        let out = crate::platform::command(&exe).arg("--test").output().unwrap();
-        let _ = std::fs::remove_file(&exe);
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+        // 돌 때마다 새 실행 파일(pid 이름)을 쓰면 맥이 새 파일마다 검사(provenance·Gatekeeper)를 하는데, 그게 _dyld_start 에서
+        // 영영 안 풀린 적이 있다 — 도우미가 한 줄도 못 돌고 .output() 이 끝없이 기다려 cargo test 전체가 2시간 넘게 섰다(10-25 실측 둘).
+        // 고정 자리에 한 번 깔아 다시 쓰고(같으면 안 씀), 30초 안에 안 끝나면 죽이고 건너뛴다(코드 실패가 아니라 맥이 붙잡은 것)
+        let exe = std::env::temp_dir().join("chammo-vdisplay-selftest");
+        install_exe(&exe, HELPER).unwrap();
+        let log = std::env::temp_dir().join(format!("chammo-vdisplay-selftest-{}.out", std::process::id()));
+        let mut child = crate::platform::command(&exe)
+            .arg("--test")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&log).unwrap())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let t = std::time::Instant::now();
+        let status = loop {
+            if let Some(s) = child.try_wait().unwrap() {
+                break Some(s);
+            }
+            if t.elapsed() > std::time::Duration::from_secs(30) {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        let out = std::fs::read_to_string(&log).unwrap_or_default();
+        let _ = std::fs::remove_file(&log);
+        let Some(status) = status else {
+            eprintln!("도우미 --test 가 30초 안에 안 끝남 — 맥이 실행을 붙잡음(출력 {} 바이트), 건너뜀", out.len());
+            return;
+        };
+        assert!(status.success(), "{out}");
     }
 
     #[test]

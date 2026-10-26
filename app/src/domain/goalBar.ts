@@ -1,10 +1,12 @@
 // 참모 홈 진행 칸 — 참모마다 맡은 일 전체가 어디까지 왔나(시안 docs/design-drafts/progress-bar, 사용자 10-23 확정).
 // 참모·세션은 아무것도 따로 보고하지 않는다: 작업 기록(tasks.jsonl) + 세션 상태 + 세션 할 일 목록 비율만으로 계산(토큰 0).
-// 막대 = 목표 조각들(`scripts/task send --goal "<목표>[:예정 수]"`), 칸 하나 = send 한 건. 이름표 없는 일은 '기타' 조각.
+// 막대 = 목표 조각들(`scripts/task send --goal "<목표>[:예정 수]"`), 칸 하나 = send 한 건. 이름표 없는 일은 프로젝트(없으면 세션 대상)마다 한 조각 —
+// 줄 이름이 그 프로젝트다(처음 쓰는 사람의 참모는 --goal 을 잘 안 써서 다 '기타' 한 줄이었다, 2026-10-24).
 // 끝난 조각은 결과 한 줄과 함께 잠깐 남고, 한 번 보면·참모당 최근 3개를 넘으면·하루 지나면 빠진다(사용자 10-23)
 // 예정 칸을 못 채운 목표는 보낸 일이 다 끝나고 2시간 새 일이 없으면 끝, 참모가 `task goal-done`·`goal-total` 로 닫거나 고친다(사용자 10-23 폰)
 // 참모끼리 넘긴 일(`task handover`) — 넘긴 쪽엔 큰 일 한 칸이 받은 쪽 쪼갠 일들(`send --from-handover`)의 진행을 따라가고,
 // 받은 쪽 목표 줄엔 누가 넘겼는지(넘긴 쪽 칸엔 큰 일, 받은 쪽 칸엔 쪼갠 일)
+import { tr } from '../i18n';
 import { findTarget } from './inbox';
 import { splitOrchName } from './orchLabel';
 import type { Session } from './session';
@@ -72,12 +74,16 @@ export type Cell = {
   wait?: Wait;
   /** 일하는 중 칸 채움 0~1(세션 할 일 목록 끝난 비율) */
   fill?: number;
+  /** 기다리기로 한 날짜(until)가 지났는데 그 뒤로 기척이 없으면 그 날짜 — 오래 멈춘 목표 알림(domain/goalStall) */
+  overdue?: number;
   /** 끝난 이름표 없는 칸 — 사라짐 열쇠(봤음 기록) */
   unit?: string;
   endedAt?: number;
 };
 export type Goal = {
   key: string; name: string; project?: string; cells: Cell[];
+  /** 이름표 없는 일 줄 — 그 프로젝트(없으면 세션 대상) 이름 */
+  label?: string;
   /** 끝 칸(끝 + 앱이 닫음) / 전체 칸(예정 칸 수가 더 크면 그것) */
   done: number; total: number;
   finished: boolean;
@@ -201,7 +207,8 @@ function collect(o: Opts, nested: boolean) {
     const w = a.f.wait;
     const live = w && (w.until === undefined || now < w.until) ? w : undefined; // until 이 지난 기다림은 칸에 안 단다
     const at = w?.until && !live ? Math.max(a.f.lastAt, w.until) : a.f.lastAt;
-    const cell: Cell = { task: a.send.task, title: a.send.title ?? '', target: a.send.target ?? '', state, at, ...(live ? { wait: live } : {}), ...(fill !== undefined ? { fill } : {}) };
+    const overdue = w?.until && !live && a.f.lastAt <= w.until ? w.until : undefined;
+    const cell: Cell = { task: a.send.task, title: a.send.title ?? '', target: a.send.target ?? '', state, at, ...(live ? { wait: live } : {}), ...(overdue ? { overdue } : {}), ...(fill !== undefined ? { fill } : {}) };
     const project = a.send.type === 'handover' ? handCell(a, cell) : a.send.project ?? s?.project ?? '';
     if (isEnded(cell.state)) cell.endedAt ??= a.endAt ?? a.f.lastAt;
     return { a, cell, project };
@@ -209,12 +216,13 @@ function collect(o: Opts, nested: boolean) {
   const byProject = new Set(rows.map((r) => r.project).filter(Boolean)).size >= 2;
 
   // 목표마다 모으기 — 보낸 순
-  const groups = new Map<string, { name: string; project: string; first: number; rows: typeof rows }>();
+  const groups = new Map<string, { name: string; label: string; project: string; first: number; rows: typeof rows }>();
   for (const r of rows.sort((x, y) => Date.parse(x.a.send.ts) - Date.parse(y.a.send.ts))) {
-    // 목표는 프로젝트를 걸쳐도 한 조각(첫 일의 프로젝트 밑), 기타만 프로젝트마다
+    // 목표는 프로젝트를 걸쳐도 한 조각(첫 일의 프로젝트 밑), 이름표 없는 일은 프로젝트(없으면 세션 대상)마다
     const name = r.a.send.goal ?? (r.a.send.type === 'handover' ? r.a.send.title ?? '' : '');
-    const key = name ? `g|${name}` : `e|${byProject ? r.project : ''}`;
-    const g = groups.get(key) ?? { name, project: byProject ? r.project : '', first: Date.parse(r.a.send.ts), rows: [] };
+    const label = name ? '' : r.project || r.cell.target;
+    const key = name ? `g|${name}` : `e|${label}`;
+    const g = groups.get(key) ?? { name, label, project: byProject ? r.project : '', first: Date.parse(r.a.send.ts), rows: [] };
     g.rows.push(r);
     groups.set(key, g);
   }
@@ -244,7 +252,7 @@ function collect(o: Opts, nested: boolean) {
     const dropTodo = ended.length === cells.length && (closedAt >= lastSend || now - Math.max(lastSend, lastEnd) > GOAL_IDLE_MS);
     const total = dropTodo ? cells.length : Math.max(cells.length, planned);
     const open = cells.filter((c) => !isEnded(c.state));
-    const goal: Goal = { key, name: g.name, ...(byProject ? { project: g.project } : {}), cells, done: ended.length, total, finished: false, waiting: open.length > 0 && open.every((c) => c.state === 'wait'), lastAt: Math.max(...cells.map((c) => c.at ?? 0)) };
+    const goal: Goal = { key, name: g.name, ...(g.label ? { label: g.label } : {}), ...(byProject ? { project: g.project } : {}), cells, done: ended.length, total, finished: false, waiting: open.length > 0 && open.every((c) => c.state === 'wait'), lastAt: Math.max(...cells.map((c) => c.at ?? 0)) };
     const hands = [...new Set(g.rows.map((r) => r.a.send.handover).filter((x): x is string => !!x))];
     if (hands.length) {
       goal.hands = hands;
@@ -293,4 +301,19 @@ export function goalBar(o: Opts): GoalBar {
     if (todo > 0) g.cells = [...g.cells, ...Array.from({ length: todo }, (_, i): Cell => ({ task: `${g.key}#todo${i}`, title: '', target: '', state: 'todo' }))];
   }
   return { goals: shown, done: shown.reduce((n, g) => n + g.done, 0), total: shown.reduce((n, g) => n + g.total, 0), byProject };
+}
+
+/** 진행 칸 줄마다 머리줄·이름 — 프로젝트 머리줄은 묶을 때(byProject) 그 프로젝트에 목표가 있을 때만(목표 없는 일만 있으면 줄 이름이 곧 프로젝트).
+ *  머리줄 밑 이름표 없는 줄은 머리줄과 같은 이름이 되니 '그 밖의 일' */
+export function goalRows(bar: GoalBar): { goal: Goal; head?: string; name: string }[] {
+  const named = new Set(bar.goals.filter((g) => g.name).map((g) => g.project ?? ''));
+  let last: string | undefined;
+  return bar.goals.map((goal) => {
+    const p = goal.project ?? '';
+    const under = bar.byProject && named.has(p);
+    const head = under && p !== last ? p || tr('프로젝트 밖', 'No project') : undefined;
+    last = p;
+    const name = goal.name || (under ? tr('그 밖의 일', 'Other work') : goal.label || tr('기타', 'Other'));
+    return { goal, ...(head !== undefined ? { head } : {}), name };
+  });
 }

@@ -13,7 +13,7 @@ import { builtinSlash, completeSlash, isMemoryCmd, matchSlash, slashQuery, type 
 import { appendChat, chatBusy, chatEscStops, chatNorm, escUnsends, enterDelay, parseChat, pasteKind, clickFocusesInput, sentByMe, promptInput, sendControls, splitPaths, splitRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
 import type { LinkState } from '../../domain/attachExit';
 import { LINK_WAIT } from '../../domain/paneLinks';
-import { absorbedAt, absorbedLeft, againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, mineForLeftover, newPending, pendAct, pendingState, resent, waitingOf, type PendingState, type QueueState } from '../../domain/chatQueue';
+import { absorbedAt, absorbedLeft, againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, mineForLeftover, newPending, pendAct, pendingState, pendLook, resent, restoreDraft, typingOf, waitingOf, type PendingState, type QueueState } from '../../domain/chatQueue';
 import { mdToHtml } from '../md';
 import { openTarget, readSessionTasks, readTranscript, type SessionTask, type TranscriptChunk } from '../../data/tauri';
 import { modKey } from '../../domain/keys';
@@ -94,7 +94,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   /** 뒤 터미널 보기가 세션에 붙어 있나(TerminalPane onLink) — 끊긴 동안 보낸 말은 붙으면 앱이 친다(SessionGrid typeAndSend) */
   link?: LinkState;
   state: string;
-  send: (text: string) => void;
+  /** 보낸다 — 약속을 주면 못 보냈을 때(false) 입력칸에 되살리고 한 줄 알린다 */
+  send: (text: string) => void | Promise<boolean>;
   interrupt: () => void;
   /** 터미널에 키를 하나씩(선택 창 버튼) — 한꺼번에 넣으면 TUI 가 놓친다 */
   rawKeys?: (seq: string[]) => Promise<void>;
@@ -119,7 +120,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   typeOnly?: (text: string) => void;
   /** 입력칸에 포커스 — 지구본 키 말하기를 이 세션으로 */
   onInputFocus?: () => void;
-  /** 이 창에 포커스를 줄 때(⌘₩·세션으로 가기) 터미널 대신 입력칸으로 */
+  /** 이 창에 포커스를 줄 때(⌘⇧₩·세션으로 가기) 터미널 대신 입력칸으로 */
   focusRef?: (fn: (() => void) | null) => void;
 }) {
   const [items, setItems] = useState<ChatItem[]>([]);
@@ -277,7 +278,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     const onPaths = (e: Event) => {
       const paths = (e as CustomEvent<string[]>).detail ?? [];
       const chips = paths.map((p) => {
-        const it = { key: `${p}:${Date.now()}`, name: p.split('/').pop() ?? p, path: p };
+        const it = { key: `${p}:${Date.now()}`, name: p.split(/[\\/]/).pop() ?? p, path: p };
         return { path: p, label: /\.(png|jpe?g|gif|webp|heic)$/i.test(p) ? attach({ ...it, url: docUrl(p) }, 'img') : attach(it, 'file') };
       });
       // 터미널 입력칸엔 이름표 바로 뒤 따옴표 경로로(그림은 이스케이프 따로 한 조각) — 조각 사이는 Claude 가 앞 붙여넣기를 다 읽게 조금 쉬고
@@ -481,7 +482,10 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   }, [voiceStop]);
 
   const busy = chatBusy(state, items);
-  const ctl = sendControls(busy, draft, termText);
+  // 입력칸 글이 앱이 치고 있는(또는 높이를 넘어 토막만 보이는) 내 말이면 '입력칸에 들어가 있는 것'이 아니다 — 위 칸에 안 띄우고, 빈 채팅 Enter 로 보내지도 않는다(2026-10-26 사용자 301.png)
+  const inFlight = termText ? typingOf(termText, waiting.map((p) => p.text)) : null;
+  const termFree = inFlight ? '' : termText;
+  const ctl = sendControls(busy, draft, termFree);
 
   // 보낸 말이 지금 어디 있나 — 보내는 중·대기 중(Claude 대기열)·입력칸에 걸림·안 갔음(domain/chatQueue). 기록이 안 바뀌어도
   // '안 갔음'으로 넘어가게 보내는 중인 말이 있는 동안 1초마다 다시 센다
@@ -530,6 +534,21 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const [dupWarn, setDupWarn] = useState<{ text: string; at: number } | null>(null);
   // 그림 아닌 파일을 붙여넣었을 때 잠깐 띄우는 안내(domain/chat pasteKind)
   const [pasteFile, setPasteFile] = useState(false);
+  // 못 보낸 말 — 세션 치기가 거절되거나 시간을 넘겼다. 말풍선 대신 입력칸에 되살리고 한 줄 알린다(2026-10-24 윈도우 '어떤 말도 안 감')
+  const [sendFail, setSendFail] = useState(false);
+  useEffect(() => {
+    if (!sendFail) return;
+    const t = window.setTimeout(() => setSendFail(false), 8000);
+    return () => window.clearTimeout(t);
+  }, [sendFail]);
+  const sendWatched = (text: string, at: number) => {
+    void Promise.resolve(send(text)).then((ok) => {
+      if (ok !== false) return;
+      dropPending(at);
+      setDraft((d) => restoreDraft(d, text));
+      setSendFail(true);
+    });
+  };
   useEffect(() => {
     if (!pasteFile) return;
     const t = window.setTimeout(() => setPasteFile(false), 4000);
@@ -640,9 +659,9 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const submit = (now = false) => {
     // 멘션 칩(@가나 담당)은 진짜 SendMessage 이름 @[참모-3 · 가나 담당] 으로 풀어 보낸다 — 참모가 누구에게 전할지 헷갈리지 않게
     const text = withRefs(expandMentions(draft.trim(), who), refs);
-    if (!text && termText && dupBlocked(termText)) return;
+    if (!text && termFree && dupBlocked(termFree)) return;
     quietUntil.current = Date.now() + 1500;
-    if (!text && termText) { submitTerminal(termText); setPending((p) => [...p, newPending(termText, items, Date.now())]); stick.current = true; return; }
+    if (!text && termFree) { submitTerminal(termFree); setPending((p) => [...p, newPending(termFree, items, Date.now())]); stick.current = true; return; }
     if (!text) return;
     // /model·/effort 는 터미널 고르는 창 대신 칩으로 — 창은 보낸 Enter 가 바로 골라 기본값이 저장됐다(2026-10-01 시험)
     if (isMemoryCmd(text)) { setDraft(''); setSlashOff(''); openMemory(); return; }
@@ -653,6 +672,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       else void pickModel(mc.want);
       return;
     }
+    const at = Date.now();
     if (now) {
       // 끊고 바로 보내기 — 막 보낸 말을 Esc 로 끊으면 Claude 가 그 말을 입력칸에 되돌려 놓는다. 끊은 뒤 입력칸을 새로 읽어 정리하고 친다(리뷰)
       interrupt();
@@ -660,13 +680,13 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
         const s = screen?.();
         const t = s ? promptInput(s.lines, s.cursor) ?? '' : '';
         flushLeftover(t ? inputLeftover(t, knownRef.current) : null, t);
-        send(text);
+        sendWatched(text, at);
       }, 700);
     } else {
       flushLeftover();
-      send(text);
+      sendWatched(text, at);
     }
-    setPending((p) => [...p, newPending(text, items, Date.now())]);
+    setPending((p) => [...p, newPending(text, items, at)]);
     setDraft('');
     setRefs([]);
     refCount.current = 0;
@@ -739,21 +759,23 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
           : <div key={x.extra.key}>{x.extra.node}</div>))}
         {waiting.map((p) => {
           const st = stateOf.get(p.at) ?? 'sending';
+          const look = pendLook(st, busy); // 모양·글만 — 단추는 진짜 상태(st)로
           // 줄 선 말 빼기는 ↑(줄 선 말 전부 입력칸으로)를 쓰니, 대기열이 다 이 채팅이 보낸 말이고 입력칸이 빌 때만 —
           // 다른 세션 말까지 입력칸에 쏟아지고, 입력칸에 글이 있으면 ↑ 는 그 안에서 커서만 옮긴다
           const canDrop = st === 'input' ? !!leftover?.includes(p.text) // 모르는 글과 섞였으면 그 말만 뺄 수 없다 — 입력칸 줄의 빼기로
             : st !== 'queued' || (!!rawKeys && busy && !termText && queue.waiting.every((q) => waiting.some((w) => chatNorm(w.text) === chatNorm(q.text))));
           return (
             <div key={p.at} className="chat-row me">
-              <div className={`bubble me pending st-${st}`}>
+              <div className={`bubble me pending st-${look}`}>
                 <AtText text={splitRefs(p.text).body} />
                 <span className="chat-meta">{{
                   sending: tr('보내는 중', 'Sending'),
-                  queued: tr('대기 중 — 지금 도구가 끝나면 가요', 'Queued — goes in when the current tool finishes'), // 일하는 도중엔 도구 사이에 들어간다 — '일이 끝나면'은 안 간 것처럼 읽혔다(2026-10-21 사용자)
+                  // 일하는 도중엔 도구 사이에 들어간다 — '일이 끝나면'은 안 간 것처럼 읽혔다(2026-10-21 사용자), '보내는 중'은 실패처럼 보였다(2026-10-26 사용자)
+                  queued: tr('대기 중 · 참모가 지금 단계를 마치면 들어가요', 'Queued · goes in when the current step finishes'),
                   input: tr('입력칸에 걸려 있어요', 'Stuck in the terminal input'),
                   lost: tr('전달 안 됨', 'Not delivered'),
                   wait: tr('다시 붙는 중 — 붙으면 보내요', 'Reattaching — sends when it is back'),
-                }[st]}</span>
+                }[look]}</span>
                 {pendAct(st) && link !== 'gone' && ( /* 끊긴 채면 다시 보내도 줄에서 기다리다 붙는 순간 두 번 간다 — 안내 줄이 '다시 켜지면 다시 보내 줘' */
                   <span className="chat-pend-acts">
                     {pendAct(st) === 'again'
@@ -789,7 +811,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
           {ctx !== undefined && <CtxRing used={ctx} />}
         </div>
       )}
-      {((termText && !stuckInInput(waiting.map((p) => p.text), termText)) || attached.length > 0) && (
+      {((termFree && !stuckInInput(waiting.map((p) => p.text), termFree)) || attached.length > 0) && (
         <div className="chat-term" title={leftover
           ? tr('보냈다가 멈춰서 입력칸으로 돌아온 말 — 새 말을 보내면 지우고 보낸다', 'Came back to the input after an interrupt — cleared when you send a new message')
           : tr('터미널 입력칸에 들어가 있는 것 — 보내기(Enter)하면 같이 간다', 'Already in the terminal input — goes out with your next send')}>
@@ -813,6 +835,11 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       {pasteFile && (
         <div className="chat-hint chat-dup" role="status">
           <span>{tr('파일은 붙여넣기로 못 붙여요 — 채팅 칸에 끌어다 놓아 주세요', "Files can't be pasted — drag them into the chat instead")}</span>
+        </div>
+      )}
+      {sendFail && (
+        <div className="chat-hint chat-dup" role="alert">
+          <span>{tr('못 보냈어요 — 입력칸에 되돌려 놨어요. 다시 보내 주세요', "Couldn't send — it's back in the input, send it again")}</span>
         </div>
       )}
       {dupWarn && (

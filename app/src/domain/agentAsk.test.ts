@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { ASK_EMPTY, askClose, askNotice, askWakeLine, askWakes, askOpen, askShown, askStep, askWaiting, openLive, pickLive, popupLabel, popupLine, popupNotice, popupStep, type AskState } from './agentAsk';
-import type { Live } from './agentBrowser';
+import { ASK_EMPTY, askCardKey, readAskCardKey, askClose, askPlaced, askTarget, askNotice, askWakeLine, askWakes, askOpen, askShown, askStep, askWaiting, openLive, pickLive, popupLabel, popupLine, popupNotice, popupStep, type AskState } from './agentAsk';
+import { askName, type Live } from './agentBrowser';
+import { readNoteTarget } from './notify';
+import type { Session } from './session';
+import type { TaskEvent } from './tasks';
 
 const live = (profile: string, o: Partial<Live> = {}): Live => ({ profile, pid: 10, sessionPid: 20, url: 'https://a.com/', title: 'A', tabs: [], tool: '', toolAt: 0, busy: false, ts: 0, ...o });
 const asking = (profile: string, at: number, o: Partial<Live> = {}) => live(profile, { ask: { reason: '로그인', at }, ...o });
@@ -237,5 +240,39 @@ describe('askWakes — 시간 초과 뒤 사람이 끝낸 부름은 그 세션 �
   });
   it('사람이 같이 적은 한마디는 줄 끝에 — 한 줄로', () => {
     expect(askWakeLine('로그인\n했어')).toBe('[앱] 사람이 브라우저 일을 끝냈어 — browser_snapshot 으로 확인하고 이어서 해 · 사람이 남긴 말: "로그인 했어"');
+  });
+});
+
+// 2026-10-24 트레이더 제보 — 워크트리 도우미(binance-setup)의 사람 부르기가 폰 채팅·대기함에 안 떴다.
+// 알림 갈 곳이 session:<프로필>(=session:project-t)이라 폰이 눌러도 못 갔고, 채팅에 붙는 카드가 없었다
+describe('askPlaced·askTarget — 사람 부르기를 맡긴 참모 채팅에(워크트리 세션도)', () => {
+  const sess = (id: string, o: Partial<Session> = {}): Session => ({ id, name: id, cwd: `/d/${id}`, kind: 'background', state: 'idle', project: id, workspace: null, startedAt: 0, ...o });
+  const trader = sess('o7', { name: '참모-7 · 트레이더', cwd: '/hq', project: 'hq' });
+  const front = sess('o1', { name: '참모', cwd: '/hq', project: 'hq' });
+  const main = sess('m1', { name: 'project-t', cwd: '/d/project-t/.claude/worktrees/ops', project: 'project-t', workspace: 'ops' });
+  const helper = sess('h1', { name: 'binance-setup', cwd: '/d/project-t/.claude/worktrees/binance-secrets-ignore', project: 'project-t', workspace: 'binance-secrets-ignore', procPid: 77 });
+  const events: TaskEvent[] = [{ ts: '2026-10-24T01:00:00Z', type: 'send', task: 't1', target: 'm1', from: 'o7', fromName: '참모-7 · 트레이더' } as TaskEvent];
+  const everyone = [front, trader, main, helper];
+  const orchs = [front, trader];
+
+  it('task send 기록 없이 띄운 워크트리 도우미도 같은 프로젝트를 맡긴 참모(트레이더)에게', () => {
+    const r = askPlaced([asking('project-t', 5, { sessionPid: 77 })], everyone, events, orchs, front);
+    expect(r.map((p) => [p.live.profile, p.session?.id, p.owner?.id])).toEqual([['project-t', 'h1', 'o7']]);
+  });
+  it('부름이 없는 브라우저는 빼고, 세션을 못 찾은 부름은 맨 앞 참모에게(안 보이는 것보다 낫다)', () => {
+    const r = askPlaced([live('web'), asking('ghost', 6, { sessionPid: 999 })], everyone, events, orchs, front);
+    expect(r.map((p) => [p.live.profile, p.session, p.owner?.id])).toEqual([['ghost', undefined, 'o1']]);
+  });
+  it('알림 갈 곳 = 그 참모 채팅의 그 부름 카드 — 폰 readNoteTarget 이 읽는 card 모양', () => {
+    const l = asking('project-t', 5, { pid: 41 });
+    expect(askTarget('o7', l)).toBe('card:o7:b:project-t:41');
+    expect(readNoteTarget(askTarget('o7', l))).toEqual({ to: 'card', orch: 'o7', card: 'b:project-t:41' });
+    expect(askCardKey(l)).toBe('b:project-t:41');
+    expect(readAskCardKey('b:project-t:41')).toEqual({ profile: 'project-t', pid: 41 });
+    expect(readAskCardKey('d:abc')).toBeNull();
+    expect(readAskCardKey('b:project-t:')).toBeNull();
+  });
+  it('이름은 워크트리 폴더 말고 프로젝트 — "binance-secrets-ignore · binance-setup" 이 아니라 "project-t · binance-setup"', () => {
+    expect(askName(asking('project-t', 5, { sessionPid: 77 }), everyone)).toBe('project-t · binance-setup');
   });
 });

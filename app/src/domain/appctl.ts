@@ -13,6 +13,8 @@ const FEATURES: FeatureSwitch[] = ['office', 'tama', 'gacha', 'review', 'voice',
 
 export type AppIntent =
   | { kind: 'voice'; on: boolean }
+  /** 쌓아 둔 그 참모 답을 지금 읽기 — "개발 담당 거 읽어 줘"(scripts/app voice read, 음성은 말 건 참모만 읽는다 2026-10-25) */
+  | { kind: 'voiceRead'; target: string }
   | { kind: 'feature'; name: FeatureSwitch; on: boolean }
   | { kind: 'open'; what: OpenWhat }
   | { kind: 'close'; what: CloseWhat }
@@ -55,6 +57,7 @@ export function intentOf(line: unknown): AppIntent | null {
     const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
     return { kind: 'browserNeed', dir, session: str(o!.session), why: str(o!.why) };
   }
+  if (action === 'voice-read') return a ? { kind: 'voiceRead', target: a } : null;
   if (action === 'voice') {
     const on = onOff(a);
     return on === null ? null : { kind: 'voice', on };

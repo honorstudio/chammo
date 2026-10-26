@@ -467,6 +467,7 @@ pub fn open<R: Runtime>(app: &tauri::AppHandle<R>, name: &str, asked: Option<&st
     if let Some(e) = too_old() {
         return Err(e);
     }
+    crate::usage_counts::record_use("mode"); // 익명 사용 통계 — 모드 켠 횟수만
     // 참모는 짧은 이름·id 무엇을 받든 전체 이름으로 — 화면은 전체 이름으로 칸을 찾는다(10/13 '--where dash 참모-7' 이 칸에 안 떴다)
     let dash = match dash {
         Some(d) => Some(dash_name(d)?),

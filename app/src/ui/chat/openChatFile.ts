@@ -24,9 +24,13 @@ export function imageFile(src: string): Promise<string> {
   return p;
 }
 
+/** 메신저 따로 창 — 그 창의 팀 스페이스가 받는다(ui/team/useTeamMode alone 이 단다). 메인 창엔 없다 */
+export const fileHere: { open: ((path: string) => void) | null } = { open: null };
+
 export async function openChatFile(src: string, by: string, at?: ShowAt): Promise<void> {
   const path = await imageFile(src).catch(() => '');
   if (!path) return;
+  if (fileHere.open) { fileHere.open(path); return; }
   if (document.querySelector('.space-mode')) window.dispatchEvent(new CustomEvent(CHAT_FILE_OPEN, { detail: { path, by, ...(at ? { at } : {}) } }));
   else await invoke('reader_open', { paths: [path] }).catch(() => {});
 }

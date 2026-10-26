@@ -56,7 +56,7 @@ export function useFarMode(o: { remoteChat: RemoteChatTarget | null; setRemoteCh
   const chat = (a: FarSession, t = far) => {
     if (!t) return;
     agentOf.current.set(t.dev, a.id);
-    setRemoteChat({ dev: t.dev, devName: t.name, agent: a.id, name: a.name });
+    setRemoteChat({ dev: t.dev, devName: t.name, agent: a.id, name: a.name, version: status?.id === t.dev ? status.version ?? undefined : undefined });
   };
   // 설정에서 연 원격 채팅도 그 기기 보기로(입구는 띠가 주인, 설정은 대피로)
   useEffect(() => {

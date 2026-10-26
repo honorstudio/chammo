@@ -1,30 +1,30 @@
 // 설정 > 계정 > Chammo 계정(맨 위)(중계 서버 ADR 0004) — 구글로 로그인해 내 기기끼리 잇는다. 지금 앱 모양(su-sec·su-row)만, 메신저 본 화면은 4단계.
 // 로그인은 사람 브라우저에서(앱이 127.0.0.1 로 돌려받는다), 열쇠는 이 기기 키체인(chammo-team)에만. 끊기·로그아웃·계정 지우기는 서버에서 먼저
 import { useEffect, useState } from 'react';
-import { teamAccountDelete, teamAccountRefresh, teamDeviceRename, teamDeviceRevoke, teamLogin, teamLogout, teamStatus, type TeamView } from '../data/teamApi';
-import { accountRows, DEFAULT_RELAY, deleteConfirmOk, PRIVACY_URL, TERMS_URL } from '../domain/teamAccount';
+import { teamAccountDelete, teamAccountRefresh, teamLogin, teamStatus, type TeamView } from '../data/teamApi';
+import { DEFAULT_RELAY, deleteConfirmOk, PRIVACY_URL, TERMS_URL } from '../domain/teamAccount';
 import { openTarget } from '../data/tauri';
-import { IconPencil, IconRefresh, IconUnlink } from './Icons';
+import { IconRefresh } from './Icons';
 import { IconButton } from './kit/IconButton';
 import { tr } from '../i18n';
 
-export function TeamAccountSection({ title }: { title: string }) {
+/** onDevices = 기기 관리 탭으로(내 기기 목록·이 기기 빼기=로그아웃은 거기 한 곳, 10-24) */
+export function TeamAccountSection({ title, onDevices }: { title: string; onDevices?: () => void }) {
   const [v, setV] = useState<TeamView | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const [server, setServer] = useState(DEFAULT_RELAY);
-  const [renaming, setRenaming] = useState<string | null>(null);
-  const [newName, setNewName] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [typed, setTyped] = useState('');
-  const [sureOut, setSureOut] = useState(false);
+  // 중계 주소는 기본(relay.chammo.app) 그대로 쓰는 게 보통 — 칸은 '중계 서버 바꾸기'를 눌렀을 때만(10-24)
+  const [advanced, setAdvanced] = useState(false);
 
   useEffect(() => { void teamStatus().then(setV, (e: unknown) => setErr(String(e))); }, []);
   const act = (f: () => Promise<TeamView>) => {
     setBusy(true);
     setErr(null);
-    void f().then((x) => { setV(x); setRenaming(null); setDeleting(false); setTyped(''); setSureOut(false); }, (e: unknown) => setErr(String(e))).finally(() => setBusy(false));
+    void f().then((x) => { setV(x); setDeleting(false); setTyped(''); }, (e: unknown) => setErr(String(e))).finally(() => setBusy(false));
   };
   const login = () => {
     setWaiting(true);
@@ -43,11 +43,12 @@ export function TeamAccountSection({ title }: { title: string }) {
         <>
           <p className="su-hint">{tr('구글로 로그인하면 같은 계정 기기의 참모끼리 말할 수 있어요.', 'Sign in with Google so assistants on your devices can talk to each other.')}</p>
           <div className="su-inline">
-            {!v?.server && (
+            {advanced && !v?.server && (
               <input autoComplete="off" spellCheck={false} placeholder="https://…" aria-label={tr('중계 서버 주소', 'Relay server address')} value={server} onChange={(e) => setServer(e.target.value)} />
             )}
             <button className="btn pri" disabled={busy || waiting || (!v?.server && !server.trim())} onClick={login}>{tr('구글로 로그인', 'Sign in with Google')}</button>
           </div>
+          {!advanced && !v?.server && <div className="su-inline"><button className="peer-alt" onClick={() => setAdvanced(true)}>{tr('중계 서버 바꾸기', 'Change relay server')}</button></div>}
           {waiting && <span className="su-hint">{tr('브라우저에서 로그인을 마쳐 주세요', 'Finish signing in in the browser')}</span>}
         </>
       )}
@@ -55,29 +56,8 @@ export function TeamAccountSection({ title }: { title: string }) {
         <div className="su-rows">
           <div className="su-row">
             <div className="su-row-text"><b>{acc.name || acc.email}</b><span>{acc.email}</span></div>
-            {sureOut
-              ? <button className="btn danger su-row-act" disabled={busy} onClick={() => act(teamLogout)}>{tr('이 기기 로그아웃', 'Sign out this device')}</button>
-              : <button className="btn su-row-act" disabled={busy} onClick={() => setSureOut(true)}>{tr('로그아웃', 'Sign out')}</button>}
+            <button className="btn su-row-act" onClick={onDevices}>{tr('내 기기 보기', 'My devices')}</button>
           </div>
-          {accountRows(v?.devices ?? []).map((d) => (
-            <div key={d.id} className="su-row">
-              {renaming === d.id ? (
-                <div className="su-inline">
-                  <input autoFocus autoComplete="off" aria-label={tr('기기 이름', 'Device name')} value={newName} onChange={(e) => setNewName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && newName.trim()) act(() => teamDeviceRename(d.id, newName)); if (e.key === 'Escape') setRenaming(null); }} />
-                  <button className="btn pri" disabled={busy || !newName.trim()} onClick={() => act(() => teamDeviceRename(d.id, newName))}>{tr('저장', 'Save')}</button>
-                </div>
-              ) : (
-                <div className="su-row-text"><b>{d.name}</b>{d.current && <span>{tr('이 기기', 'This device')}</span>}</div>
-              )}
-              {renaming !== d.id && (
-                <IconButton size="m" tone="line" label={tr(`${d.name} 이름 바꾸기`, `Rename ${d.name}`)} disabled={busy} onClick={() => { setRenaming(d.id); setNewName(d.name); }}><IconPencil /></IconButton>
-              )}
-              {d.revoke && (
-                <button className="ib danger su-row-act" aria-label={tr(`${d.name} 끊기`, `Disconnect ${d.name}`)} title={tr('끊기', 'Disconnect')} disabled={busy} onClick={() => act(() => teamDeviceRevoke(d.id))}><IconUnlink /></button>
-              )}
-            </div>
-          ))}
           <div className="su-row">
             {deleting ? (
               <div className="su-inline">

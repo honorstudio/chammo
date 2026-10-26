@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deskTarget, navPick, OFFICE, officePick, rememberSide, sheetBack, sheetOpen, showPick, spaceView, startPick } from './spaceOffice';
+import { deskTarget, homeDeskTarget, homeOfficeOrch, navPick, OFFICE, officePick, rememberSide, sheetBack, sheetOpen, showPick, spaceView, startPick } from './spaceOffice';
 
 describe('officePick — 스페이스 머리 두 아이콘(사무실 / 스페이스)', () => {
   it('사무실을 켜면 보던 화면을 기억해 둔다', () => {
@@ -126,4 +126,28 @@ describe('navPick — 왼쪽 목록에서 참모 이름을 눌렀을 때(2026-10
     expect(navPick('d:/x.md', 'b', 'a', OFFICE)).toBe('d:/x.md');
     expect(navPick('s:p1', undefined, 'a', 'o:p1')).toBe('s:p1');
   });
+});
+
+// 2026-10-25 사용자 제보 — 홈에서 사무실을 켜면 늘 첫 번째 참모 기준이었다(홈은 탭을 안 고르니 앱이 처음 잡은 탭 그대로)
+describe('homeOfficeOrch — 홈에서 사무실을 켤 때 누구 기준', () => {
+  const ids = ['o1', 'o2', 'o3'];
+  it('홈에서 마지막으로 다룬 참모(타일 누름·미니 대화)', () => {
+    expect(homeOfficeOrch('o3', 'o1', ids)).toBe('o3');
+  });
+  it('홈에서 다룬 참모가 없으면 지금 고른 참모 탭', () => {
+    expect(homeOfficeOrch(undefined, 'o2', ids)).toBe('o2');
+  });
+  it('다룬 참모가 그새 꺼졌으면 지금 탭, 탭도 없으면 첫 참모', () => {
+    expect(homeOfficeOrch('gone', 'o2', ids)).toBe('o2');
+    expect(homeOfficeOrch(undefined, undefined, ids)).toBe('o1');
+    expect(homeOfficeOrch(undefined, 'gone', [])).toBeUndefined();
+  });
+});
+
+describe('homeDeskTarget — 홈 안에서 연 사무실의 책상 (2026-10-25 사용자 "홈에서 누르면 홈 안에서")', () => {
+  it('참모 책상은 그 참모로 — 지금 탭 참모여도(홈은 탭을 안 고른다)', () => {
+    expect(homeDeskTarget('o1', ['o1', 'o2'])).toEqual({ orch: 'o1' });
+    expect(homeDeskTarget('o2', ['o1', 'o2'])).toEqual({ orch: 'o2' });
+  });
+  it('세션 책상은 홈 안 사무실 위 창', () => expect(homeDeskTarget('s9', ['o1'])).toEqual({ sheet: 's:s9' }));
 });

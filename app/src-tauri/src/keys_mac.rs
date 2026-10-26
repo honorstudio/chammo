@@ -1,4 +1,5 @@
-//! 앱 전체 키 감시(NSEvent 로컬 모니터) — Ctrl+Tab·Ctrl+Shift+Tab 을 리더 탭 넘기기로.
+//! 앱 전체 키 감시(NSEvent 로컬 모니터) — Ctrl+Tab·Ctrl+Shift+Tab 을 리더 탭 넘기기로, ⌘`·⌘⇧` 를 홈·창 크게로.
+//! ⌘` 는 맥이 '같은 앱 창 돌기'로 쓰는 키라 메신저 따로 창이 떠 있으면 메뉴보다 창 돌기가 먼저일 수 있다 — 여기서 먼저 잡아 삼킨다(2026-10-25 사용자).
 //! 메뉴 단축키로 걸면 맥이 Ctrl+Tab 을 포커스 이동으로 먼저 가져가고, 문서 프레임(HTML·PDF) 안에 포커스가 있으면
 //! 웹뷰 키 입력으로도 못 받는다(2026-09-28 사용자 "컨트롤 탭 안 먹는다"). 여기선 창·프레임과 상관없이 먼저 본다
 
@@ -9,6 +10,8 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use tauri::{AppHandle, Runtime};
 
 const TAB: u16 = 48;
+/// ` 자리(한글 자판 ₩) — 입력기와 상관없이 같은 키 번호
+const GRAVE: u16 = 50;
 
 pub fn install<R: Runtime>(app: &AppHandle<R>) {
     let app = app.clone();
@@ -19,6 +22,11 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) {
         if ctrl_only && e.keyCode() == TAB {
             crate::route_menu(&app, if m.contains(NSEventModifierFlags::Shift) { "reader_prev" } else { "reader_next" });
             return std::ptr::null_mut(); // 삼킨다 — 터미널로 안 간다
+        }
+        let cmd_only = m.contains(NSEventModifierFlags::Command) && !m.contains(NSEventModifierFlags::Control) && !m.contains(NSEventModifierFlags::Option);
+        if cmd_only && e.keyCode() == GRAVE {
+            crate::route_menu(&app, if m.contains(NSEventModifierFlags::Shift) { "pane_max" } else { "home_toggle" });
+            return std::ptr::null_mut(); // 삼킨다 — 맥 창 돌기·메뉴·웹뷰 키 입력으로 두 번 안 간다
         }
         ev.as_ptr()
     });

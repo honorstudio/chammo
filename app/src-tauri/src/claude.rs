@@ -2320,6 +2320,8 @@ pub fn write_live_snap(json: String) -> Result<(), String> {
     let path = live_snap_path();
     let tmp = path.with_extension("json.tmp");
     std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    // 익명 사용 통계 — 새로 켠 세션 수·동시 참모 수만(이름·폴더는 안 센다)
+    crate::usage_counts::record_live(&std::fs::read_to_string(&path).unwrap_or_default(), &json);
     std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }

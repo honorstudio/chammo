@@ -41,7 +41,8 @@ export function OrchRail({ home, onTeam, moreDot = false, popFns, top, avatars, 
   /** 띠 맨 위 홈 칸(띠 RA, 2026-10-24 사용자) — 참모 채팅 없는 전체 한눈에(오케스트레이터 홈). on = 지금 홈을 보는 중 */
   home?: { on: boolean; onOpen: () => void };
   /** + 메뉴의 둘째 줄 — 팀 만들기·초대(팀 칸의 + 를 여기로, + 하나). at = + 단추 오른쪽 위 */
-  onTeam?: { label: string; open: (at: { x: number; y: number }) => void };
+  /** room = 팀이 있을 때 단톡방 만들기 줄 */
+  onTeam?: { label: string; open: () => void; room?: { label: string; open: () => void } };
   /** 접힌 띠 더보기에 점 — 그 안에 볼 것이 있다(리뷰 수 등) */
   moreDot?: boolean;
   /** 더보기 펼침 안 기능 단추 — 기본 title 이 있는 판(띠 호버 카드가 안 닿는 자리). 없으면 fns */
@@ -389,9 +390,14 @@ export function OrchRail({ home, onTeam, moreDot = false, popFns, top, avatars, 
               <button className="rail-pop-row" onClick={() => { setPop(null); onNew?.(); }}>
                 <span>{tr(`${assistant()} 하나 더`, `One more ${assistant()}`)}</span><kbd>{keyLabel('⌘⇧T', IS_WIN)}</kbd>
               </button>
-              <button className="rail-pop-row" onClick={() => { const r = pop.at; setPop(null); onTeam.open({ x: r.right + 8, y: r.top }); }}>
+              <button className="rail-pop-row" onClick={() => { setPop(null); onTeam.open(); }}>
                 <span>{onTeam.label}</span>
               </button>
+              {onTeam.room && (
+                <button className="rail-pop-row" onClick={() => { setPop(null); onTeam.room!.open(); }}>
+                  <span>{onTeam.room.label}</span>
+                </button>
+              )}
             </>
           )}
         </div>,

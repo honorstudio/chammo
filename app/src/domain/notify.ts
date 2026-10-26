@@ -42,6 +42,42 @@ const waitingLabel = (w?: string): string => {
 /** 확인창 알림 본문 — 대화 기록의 옛 답 대신 무엇에 멈췄는지 */
 export const blockedBody = (waitingFor?: string) => tr(`${waitingLabel(waitingFor)}에서 멈췄어`, `Stopped at ${waitingLabel(waitingFor)}`);
 
+// ── 자리 비움(2026-10-24 사용자가 밖에서 놓침) ──
+// 맥 창을 앞에 둔 채 자리를 비우면 '보고 있음'으로 쳐서 사람 필요 알림이 맥 알림도 폰 푸시도 안 나갔다.
+// 보고 있어 건너뛴 사람 필요 알림은 잠깐 붙들고, 맥 입력(키보드·마우스)이 그 뒤로 없거나 화면이 잠기면 보낸다
+
+/** 이만큼 맥 입력이 없으면 자리 비움(초) */
+export const AWAY_SECS = 150;
+/** 붙든 알림을 이보다 오래 들고 있지 않는다(초) — 오래된 부름을 뒤늦게 울리지 않게 */
+export const HOLD_MAX_SECS = 30 * 60;
+/** 자리 비움이면 폰으로도 보낼 사람 필요 알림 — 사람 부르기·직접 카드(human)·결정·물어봄·로그인. 컨텍스트·확인창 같은 건 앱 안만 */
+export const awayPush = (kind: NoteKind) => kind === 'human' || kind === 'decide' || kind === 'asks' || kind === 'login';
+/** 맥 입력 상태 — idle = 마지막 입력 뒤 초(모르면 null: 윈도우·읽기 실패), locked = 화면 잠김 */
+export type Idle = { idle: number | null; locked: boolean };
+
+/**
+ * 붙든 알림 하나(age = 붙든 지 초) — send 보낸다 · drop 버린다 · wait 더 본다.
+ * 잠김이면 보냄. 알림이 온 뒤 입력이 있었으면(idle < age) 사람이 맥 앞에서 앱 안 카드를 본 것 — 버림. 입력을 모르면 지금처럼 앱 안만
+ */
+export function awayStep(age: number, s: Idle): 'send' | 'drop' | 'wait' {
+  if (age > HOLD_MAX_SECS) return 'drop';
+  if (s.locked) return 'send';
+  if (s.idle === null || s.idle < age) return 'drop';
+  return s.idle >= AWAY_SECS ? 'send' : 'wait';
+}
+
+export type Held = { n: Note; at: number };
+export function heldStep(held: Held[], now: number, s: Idle): { send: Note[]; keep: Held[] } {
+  const send: Note[] = [];
+  const keep: Held[] = [];
+  for (const h of held) {
+    const d = awayStep(Math.max(0, (now - h.at) / 1000), s);
+    if (d === 'send') send.push(h.n);
+    else if (d === 'wait') keep.push(h);
+  }
+  return { send, keep };
+}
+
 /** 알림을 누르면 갈 곳 — macOS 알림(userInfo)·폰 푸시(target)에 글자로 실어 보냈다가 눌리면 돌려받는다.
  *  card = 그 참모 채팅의 그 카드(카드 열쇠는 폰 dashList 와 같은 w:<일 id>·d:<카드 id>), team = 팀 대화(team_alert),
  *  latest = 갈 곳을 모르는 알림(중계 입구 푸시는 본문이 없다) — 컴퓨터에 마지막 알림 갈 곳을 묻는다 */

@@ -64,6 +64,11 @@ export function addWork(f: TamaFile, t: number, minutes: number): TamaFile {
   return { ...f, work };
 }
 
+/** 일한 시간 칸 → 사건. 칸은 닫힌 뒤(칸 끝 시각)에 찍는다 — 채워지는 칸을 먼저 세면 그 뒤로 더해진 분이 사라진다.
+ *  now 를 주면 닫힌 칸만(코인은 한 번 센 사건을 다시 안 센다) */
+export const workEvents = (f: TamaFile, now = Infinity): TamaEvent[] =>
+  f.work.filter((w) => w.t + BIN <= now).map((w) => ({ t: w.t + BIN, type: 'work' as const, minutes: w.minutes }));
+
 /** 폴링 한 번 사이 세션들이 일한 분. 간격은 10초까지만 — 맥이 잠든 동안을 일한 시간으로 세지 않게 */
 export const workMinutes = (busy: number, elapsedMs: number) => (busy * Math.min(elapsedMs, 10_000)) / 60_000;
 
@@ -149,8 +154,8 @@ const peak = (p: Pet, t: number): Pet => (isFinal(p.slot) && p.peakAt === undefi
  */
 export function step(f: TamaFile, events: TamaEvent[], now: number): TamaFile {
   if (!f.pet) return f;
-  // 작업 칸은 닫힌 뒤(칸 끝 시각)에 먹인다 — 채워지는 중에 먹이면 그 뒤로 더해진 분이 사라진다
-  const all: TamaEvent[] = [...events, ...f.work.map((w) => ({ t: w.t + BIN, type: 'work' as const, minutes: w.minutes }))];
+  // 작업 칸은 닫힌 뒤(칸 끝 시각)에 먹인다 — advance 가 now 뒤 사건은 안 먹인다
+  const all: TamaEvent[] = [...events, ...workEvents(f)];
   let pet = f.pet;
   const stops = new Set<number>([now, ...STAGE_AT.map((x) => pet.bornAt + x)]);
   for (let t = Math.ceil(pet.updatedAt / 3_600_000) * 3_600_000; t < now; t += 3_600_000) stops.add(t);

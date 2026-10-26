@@ -41,6 +41,8 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "scripts/peer", body: include_str!("../../hq-template/scripts/peer"), exec: true },
     // 팀 메신저(중계 서버) — 앱(app.jsonl)을 거친다, 기기 열쇠는 앱 키체인에만, 이 길 말은 늘 참모 말(ADR 0012)
     TemplateFile { path: "scripts/team", body: include_str!("../../hq-template/scripts/team"), exec: true },
+    // 파이썬 없는 PC 의 팀 명령 — scripts/team 이 파이썬을 못 찾으면 이리로(direct_nopy.sh 와 같은 길)
+    TemplateFile { path: "scripts/team_nopy.sh", body: include_str!("../../hq-template/scripts/team_nopy.sh"), exec: true },
     // scripts/task 가 import 하는 모듈(교훈 → 프로젝트 스킬) — 직접 실행하지 않는다
     TemplateFile { path: "scripts/lesson_skill.py", body: include_str!("../../hq-template/scripts/lesson_skill.py"), exec: false },
     TemplateFile { path: ".claude/skills/hq-browser/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-browser/SKILL.md"), exec: false },

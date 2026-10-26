@@ -81,3 +81,12 @@ fn 보안_메신저_명령은_메신저_창에서만() {
         assert!(body.contains("crate::team_ui::ui_window(window.label())"), "{name} 에 창 확인이 없다");
     }
 }
+
+#[test]
+fn 단톡방_일반_말·반응은_안_울리고_부른_말은_울린다() {
+    let set = Settings::default();
+    let r = |note: &str| Record { room: "g1".into(), seq: 1, note: note.into(), kind: "team".into(), person: "민아".into(), origin: "human".into(), body: "x".into(), ..Default::default() };
+    assert!(decide(&r("room"), &[], &set).is_none());
+    assert!(decide(&r("react"), &[], &set).is_none());
+    assert!(decide(&r("delivered"), &[], &set).is_some());
+}

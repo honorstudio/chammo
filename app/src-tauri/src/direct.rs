@@ -100,6 +100,11 @@ fn log_path() -> std::path::PathBuf {
     crate::config::data_file("direct.jsonl")
 }
 
+/// 앱이 만드는 카드 줄 덧붙이기(기기 카드 — device_cards)
+pub(crate) fn append_row(row: &Value) -> Result<(), String> {
+    append(row)
+}
+
 fn append(row: &Value) -> Result<(), String> {
     use std::io::Write;
     let p = log_path();
@@ -134,6 +139,12 @@ pub fn answer(id: &str, pick: &Pick, by: &str) -> Result<(), String> {
         let yes = link_pick(pick, by).map_err(refuse_text)?;
         if ask["sub"] == PHONE_SUB {
             crate::mobile::devices().decide_hold(id, yes)?;
+        } else if ask["sub"] == crate::device_cards::DEVICE_SUB {
+            crate::device_cards::decide(&ask, yes)?;
+        } else if ask["sub"] == crate::e2e_cards::SAFETY_SUB {
+            crate::e2e_cards::decide(&ask, yes)?;
+        } else if ask["sub"] == crate::device_cards::PHONE_LINK_SUB {
+            crate::phone_relay::link_answer(id, yes)?;
         } else {
             crate::peer_ask::asks().decide(id, yes, crate::messenger_cmd::now_ms())?;
         }

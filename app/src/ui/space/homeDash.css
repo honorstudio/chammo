@@ -1,5 +1,7 @@
 /* 홈 대시보드(띠 맨 위 홈, 시안 home-dash v1 HA) — 앱 토큰만, 다크 그대로. 강조는 옅은 면·점(왼쪽 색 띠 없음) */
-.cv-dash.hd { overflow-y: auto; padding: 18px 22px 22px; box-sizing: border-box; gap: 14px; background: var(--bg); font-size: 13px; }
+/* 바깥(hd-wrap) = 스페이스 칸, 안(hd) = 굴러가는 홈. 기능 서랍은 바깥에 떠서 홈이 굴러도 제자리 */
+.cv-dash.hd-wrap { position: relative; overflow: hidden; background: var(--bg); }
+.hd { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 18px 22px 22px; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px; font-size: 13px; }
 .hd-top { display: flex; align-items: center; gap: 16px; min-height: 44px; flex-wrap: wrap; }
 .hd-top h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
 .hd-stats { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -16,6 +18,8 @@ button.hd-stat:not(:disabled):hover { background: var(--hover); }
 .hd-d.d-rest { background: transparent; border: 1.6px solid var(--text-3); }
 .hd-d.d-quiet { background: var(--danger-ink); }
 .hd-d.d-done { background: var(--idle); }
+.hd-d.d-stop { background: var(--danger-ink); box-shadow: 0 0 0 2px var(--danger-bg); }
+.hd-d.d-wait { background: transparent; border: 1.6px dashed var(--text-3); }
 .hd-meter { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); }
 .hd-bar { width: 72px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .hd-bar i { display: block; height: 100%; background: var(--idle); border-radius: 3px; }
@@ -25,11 +29,35 @@ button.hd-stat:not(:disabled):hover { background: var(--hover); }
 .hd-ring circle { fill: none; stroke: var(--line); stroke-width: 4; }
 .hd-ring circle.v { stroke: var(--working); stroke-linecap: round; transform: rotate(-90deg); transform-origin: center; }
 
-.hd-grid { display: grid; grid-template-columns: 1fr 1fr minmax(280px, .8fr); grid-template-areas: "orch orch ask" "gp gp dev" "done done office"; gap: 12px; align-items: start; }
-.hd-a-orch { grid-area: orch; } .hd-a-ask { grid-area: ask; align-self: stretch; } .hd-a-gp { grid-area: gp; } .hd-a-dev { grid-area: dev; } .hd-a-done { grid-area: done; align-self: stretch; } .hd-a-office { grid-area: office; }
-@container (max-width: 860px) {
-  .hd-grid { grid-template-columns: 1fr; grid-template-areas: "ask" "orch" "gp" "dev" "done" "office"; }
+/* 두 기둥 — 왼쪽 참모·프로젝트·진행·오늘 끝남, 오른쪽 결정 대기·기기·사무실(2026-10-25 사용자 home-projects A: 참모 줄 아래 프로젝트) */
+.hd-cols { display: flex; gap: 12px; align-items: flex-start; min-width: 0; }
+.hd-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.hd-colL { flex: 1 1 0; }
+.hd-colR { flex: 0 0 clamp(240px, 29%, 400px); }
+@container (max-width: 640px) {
+  .hd-cols { flex-direction: column; align-items: stretch; }
+  .hd-colR { flex: none; }
 }
+/* 창 맞춤(.fit) — 펼치기 전엔 홈이 창에 꽉 차 고정, 바깥 스크롤 없음. 칸들이 창 높이를 나눠 갖고 넘치는 건 칸 안에서(프로젝트는 '+N개 더').
+   줄을 펼치거나 '+N개 더'를 펼치면 .fit 이 빠져 그 칸이 늘어나고 홈이 굴러간다(2026-10-25 사용자 '홈이 화면 밖으로 넘침') */
+.hd.fit { overflow: hidden; }
+.hd.fit .hd-cols { flex: 1; min-height: 0; align-items: stretch; }
+.hd.fit .hd-col { min-height: 0; }
+.hd.fit .hd-col > * { flex: 0 1 auto; min-height: 0; overflow: hidden; }
+/* 참모 줄은 안 줄인다(많으면 칸 안에서 굴러감) · 오늘 끝남도 작아서 그대로 — 모자란 자리는 진행 칸이 먼저 내준다 */
+.hd.fit .hd-a-orch { flex-shrink: 0; max-height: 34%; }
+.hd.fit .hd-otiles { min-height: 0; overflow-y: auto; }
+.hd.fit .hd-a-proj { flex: 1 1 45%; min-height: 150px; }
+.hd.fit .hd-a-proj.shut { flex: none; min-height: 0; }
+/* 목록 높이는 칸이 정한다(내용 아님) — 그 높이로 줄 수를 잰다(fitRows) */
+.hd.fit .hd-plist { flex: 1 1 0; overflow: hidden; }
+/* 모자라면 진행 칸이 먼저 줄어든다(프로젝트 줄이 같은 일을 더 잘 보여 줌) */
+.hd.fit .hd-a-gp { flex-shrink: 6; overflow-y: auto; }
+.hd.fit .hd-a-done { flex-shrink: 0; max-height: 120px; }
+.hd.fit .hd-a-done .hd-chips { min-height: 0; overflow-y: auto; }
+.hd.fit .hd-a-ask { flex: 1 1 auto; overflow-y: auto; }
+.hd.fit .hd-a-dev { flex: none; }
+.hd.fit .hd-a-office { flex: 0 1 168px; min-height: 72px; height: auto; }
 .hd-card { background: var(--surface); border-radius: 14px; box-shadow: 0 0 0 1px var(--line); padding: 14px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .hd-h { display: flex; align-items: baseline; gap: 6px; font-size: 13px; }
 .hd-h span { color: var(--text-3); }
@@ -98,3 +126,117 @@ button.hd-stat:not(:disabled):hover { background: var(--hover); }
 .hd-office-go:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
 .hd-office-tag { position: absolute; right: 8px; bottom: 8px; width: 28px; height: 28px; border-radius: 8px; background: rgba(0, 0, 0, .5); color: #fff; display: flex; align-items: center; justify-content: center; }
 .hd-office-tag svg { width: 16px; height: 16px; }
+
+/* 그 자리에서 다루기(시안 home-inplace v1 A) — 띄움 창·펼침·서랍. 강조는 옅은 면·전체 테두리(왼쪽 색 띠 없음) */
+.hd-otile.on, .hd-quiet.on, .hd-tool.on { box-shadow: 0 0 0 2px var(--accent); }
+.hd-chip.on { background: var(--surface); box-shadow: 0 0 0 2px var(--accent); }
+.hd-ic { all: unset; flex: none; box-sizing: border-box; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--text-2); cursor: pointer; }
+.hd-ic:hover { background: var(--hover); color: var(--text); }
+.hd-ic:focus-visible, .hd-send:focus-visible, .hd-tbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hd-ic svg { width: 16px; height: 16px; }
+.hd-pop { position: absolute; z-index: calc(var(--z-panel) + 1); }
+.hd-pop > * { background: var(--surface); border-radius: 14px; box-shadow: 0 0 0 1px var(--line), 0 18px 48px rgba(0, 0, 0, .22); overflow: hidden; display: flex; flex-direction: column; }
+.hd-pop-head { display: flex; align-items: center; gap: 4px; padding: 8px 6px 8px 12px; border-bottom: 1px solid var(--line); min-height: 44px; box-sizing: border-box; }
+.hd-pop-head .hd-tx { margin-right: 4px; }
+
+/* 미니 대화 — 진짜 말풍선(.bubble) 그대로 */
+.hd-mini { height: 360px; }
+.hd-mini-list { position: relative; flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 12px; }
+.hd-mini-row { display: flex; } .hd-mini-row.me { justify-content: flex-end; }
+.hd-mini-row .bubble { font-size: 13px; line-height: 1.45; max-width: 86%; }
+.hd-mini-err { margin: 0 12px 6px; font-size: 12px; color: var(--danger-ink); }
+.hd-mini-in { display: flex; align-items: flex-end; gap: 6px; margin: 0 10px 10px; padding: 4px 4px 4px 12px; border-radius: 12px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); }
+.hd-mini-in textarea { flex: 1; min-width: 0; min-height: 32px; max-height: 96px; padding: 7px 0; border: 0; outline: 0; resize: none; background: transparent; color: var(--text); font: inherit; font-size: 13px; line-height: 1.35; field-sizing: content; }
+.hd-send { all: unset; flex: none; box-sizing: border-box; width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+.hd-send:disabled { opacity: .35; cursor: default; }
+.hd-send svg { width: 15px; height: 15px; }
+
+/* 결정 대기 — 카드 바로 아래 펼침(결정 대기함 줄·직접 카드 그대로) */
+.hd-askcell { display: flex; flex-direction: column; border-radius: 10px; }
+.hd-askcell.on { box-shadow: 0 0 0 2px var(--accent); }
+.hd-askcell.on .hd-ask { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.hd-askx { padding: 8px; border-radius: 0 0 10px 10px; background: var(--panel); }
+.hd-askx .inbox-item, .hd-askx .dc-card { margin: 0; }
+
+/* 세션 한눈 보기 */
+.hd-peek-tail { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px; max-height: 220px; overflow-y: auto; }
+.hd-peek-tail p { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.hd-peek-acts { display: flex; gap: 6px; padding: 0 12px 12px; }
+.hd-tbtn { all: unset; box-sizing: border-box; min-height: 36px; padding: 0 14px; border-radius: 10px; display: inline-flex; align-items: center; background: var(--surface); box-shadow: 0 0 0 1px var(--line); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.hd-tbtn:hover { background: var(--hover); }
+
+/* 오늘 끝남 — 칩 아래 결과 한 줄 */
+.hd-donex { display: flex; align-items: center; gap: 8px; margin-top: 4px; padding: 8px 6px 8px 12px; border-radius: 10px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); }
+.hd-donex p { margin: 2px 0 0; font-size: 12.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 기능 서랍 — 오른쪽, 홈은 왼쪽에 그대로(어둡게 안 함) */
+.hd-drawer { position: absolute; top: 0; right: 0; bottom: 0; z-index: calc(var(--z-panel) + 2); width: min(560px, 92%); display: flex; flex-direction: column; background: var(--bg); box-shadow: -1px 0 0 var(--line), -12px 0 32px rgba(0, 0, 0, .1); }
+.hd-drawer > .hd-pop-head { background: var(--surface); }
+.hd-drawer-in { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+/* 홈 안 사무실(2026-10-25 사용자) — 홈 칸을 통째로 덮고, 닫으면 홈 그대로. 사무실 위 창(.osh)은 이 안에 뜬다 */
+.hd-office-big { position: absolute; inset: 0; z-index: calc(var(--z-panel) + 2); display: flex; flex-direction: column; background: var(--bg); animation: osh-in .16s ease-out; }
+.hd-office-big > .hd-pop-head { background: var(--surface); }
+.hd-office-big-in { flex: 1; min-height: 0; display: flex; }
+@media (prefers-reduced-motion: reduce) { .hd-office-big { animation: none; } }
+
+/* 지금 돌아가는 프로젝트(시안 home-projects v1 A) — 한 줄 = 상태 점·이름·지금 하는 일·맡은 참모+세션·상태·때. 급한 줄은 옅은 면(왼쪽 색 띠 없음) */
+.hd-a-proj { container-type: inline-size; }
+.hd-ph { align-items: center; }
+.hd-pfold { all: unset; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin: -4px -2px -4px -6px; border-radius: 8px; cursor: pointer; }
+.hd-pfold:hover { background: var(--hover); }
+.hd-pmore svg { width: 14px; height: 14px; }
+.hd-pchev { display: inline-flex; color: var(--text-3); transition: transform .12s; }
+.hd-pchev svg { width: 14px; height: 14px; }
+.hd-pfold[aria-expanded="true"] .hd-pchev, .hd-prow[aria-expanded="true"] .hd-pchev { transform: rotate(90deg); }
+.hd-psum { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-2); }
+.hd-psum > span, .hd-pdone { display: inline-flex; align-items: center; gap: 6px; }
+.hd-pdone { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.hd-plist { display: flex; flex-direction: column; min-height: 0; }
+/* 줄 사이 선은 곧은 1px(줄 안쪽 여백만큼 들여서) — 둥근 칸에 그림자로 그으면 선 양끝이 모서리 따라 휘어 '옆·밑이 잘린 카드'처럼 보인다(2026-10-25 사용자 제보) */
+.hd-pcell { position: relative; border-radius: 10px; }
+.hd-pcell + .hd-pcell::before { content: ''; position: absolute; top: 0; left: 10px; right: 10px; height: 1px; background: var(--line); pointer-events: none; }
+.hd-pcell.hot .hd-prow { background: var(--panel); }
+/* 급한 줄이 붙어 있으면 한 덩어리 면으로 — 줄마다 둥글면 사이에 홈이 파여 카드가 잘린 것처럼 보인다 */
+.hd-pcell.hot + .hd-pcell.hot .hd-prow { border-top-left-radius: 0; border-top-right-radius: 0; }
+.hd-pcell.hot:has(+ .hd-pcell.hot) .hd-prow { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.hd-pcell.on { background: var(--surface); box-shadow: 0 0 0 2px var(--accent); margin: 2px 0; }
+.hd-pcell.on::before, .hd-pcell.on + .hd-pcell::before { display: none; }
+.hd-prow { all: unset; box-sizing: border-box; width: 100%; display: grid; grid-template-columns: 10px minmax(110px, 170px) minmax(0, 1fr) minmax(0, 220px) 84px 64px 14px; align-items: center; gap: 12px; min-height: 44px; padding: 0 10px; border-radius: 10px; cursor: pointer; }
+.hd-prow:hover { background: var(--hover); }
+.hd-prow:focus-visible, .hd-pfold:focus-visible, .hd-pmore:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 목록은 창 맞춤 때 overflow:hidden 이라 바깥 고리는 양옆이 먹힌다 — 줄·'+N개 더'는 안쪽으로 */
+.hd-prow:focus-visible, .hd-pmore:focus-visible { outline-offset: -2px; }
+.hd-pname { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hd-pline { color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hd-pwho { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; color: var(--text-2); }
+.hd-pface { flex: none; display: inline-flex; }
+.hd-pface + .hd-pface { margin-left: -8px; }
+.hd-pnick { flex: none; white-space: nowrap; }
+.hd-pses { min-width: 0; padding: 1px 6px; border-radius: 5px; background: var(--hover); color: var(--text-3); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hd-pst { justify-self: start; font-style: normal; font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+.hd-pst.s-stop { background: var(--danger-bg); color: var(--danger-ink); }
+.hd-pst.s-ask { background: var(--tag-wait); color: var(--tag-wait-ink); }
+.hd-pst.s-quiet { color: var(--danger-ink); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger-ink) 45%, transparent); }
+.hd-pst.s-run { background: color-mix(in srgb, var(--working) 14%, transparent); color: var(--working); }
+.hd-pst.s-wait, .hd-pst.s-rest { background: var(--hover); color: var(--text-2); }
+.hd-pst.s-done { color: var(--idle); }
+.hd-pwhen { text-align: right; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+@container (max-width: 820px) {
+  .hd-prow { grid-template-columns: 10px minmax(90px, 150px) minmax(0, 1fr) auto 84px auto 14px; }
+  .hd-pnick, .hd-pses { display: none; }
+}
+@container (max-width: 520px) {
+  .hd-prow { grid-template-columns: 10px minmax(0, 1fr) auto 84px auto 14px; }
+  .hd-pline { display: none; }
+}
+/* 펼친 줄 — 맡긴 일(급한 순) · 그 세션 대화 끝 · 맡은 참모에게 묻기·크게 열기 */
+.hd-prowx { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 16px; padding: 2px 12px 10px 32px; }
+.hd-ptasks { display: flex; flex-direction: column; min-width: 0; }
+.hd-ptask { display: flex; align-items: center; gap: 8px; min-height: 28px; font-size: 12.5px; min-width: 0; }
+.hd-ptask > span:first-of-type { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hd-ptail { min-width: 0; }
+.hd-ptail p { margin: 0 0 4px; font-size: 12.5px; line-height: 1.45; color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.hd-pacts { grid-column: 1 / -1; display: flex; justify-content: flex-end; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); }
+@container (max-width: 520px) { .hd-prowx { grid-template-columns: minmax(0, 1fr); padding-left: 12px; } }
+.hd-pmore { all: unset; box-sizing: border-box; align-self: flex-start; display: inline-flex; align-items: center; min-height: 36px; margin-top: 4px; padding: 0 12px; border-radius: 10px; font-size: 12.5px; font-weight: 600; color: var(--text-2); cursor: pointer; }
+.hd-pmore:hover { background: var(--hover); color: var(--text); }

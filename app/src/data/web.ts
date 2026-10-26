@@ -3,6 +3,7 @@
 // 인증 = 이 기기 토큰을 localStorage 에 두고 Authorization: Bearer 로만(쿠키는 포트를 안 가려 같은 호스트 다른 포트 서버로 샌다 — 2026-10-02 재검토).
 // localStorage 는 출처(스킴+호스트+포트)마다 따로라 다른 포트·홈 화면 앱과 안 섞인다
 import { makeApi } from './peerApi';
+import { parseCardOpen, type NumberApi } from '../domain/e2eNumber';
 import { readLink } from '../phone-web/link';
 import { tunnelFor } from '../phone-web/hub';
 import { installProxy } from '../phone-web/proxy';
@@ -164,6 +165,13 @@ export const listSessionsRaw = makeTagTail((since, signal) => getText(`/api/sess
 /** 계정 칸 — 이름·요금제·사용량·쉬는 때만(맥이 이메일·토큰을 안 낸다). 읽기는 domain/phoneAccounts readPhoneAccounts */
 /** 짝지은 다른 기기의 카드(ADR 0011) — 이 맥이 거쳐 읽고, 누른 답은 이 맥이 사람 길로 그 기기에 넘긴다 */
 export const readPeerCards = () => getJson<import('../domain/remoteCards').PeerCardsRow[]>('/api/peer-cards');
+/** 새 기기 허용 숫자 넣기(chammo-relay ADR 0007) — 숫자는 이 폰이 붙은 컴퓨터가 셈하고 폰은 넣기만 */
+export const phoneNumber: NumberApi = {
+  open: (dev) => post<unknown>('/api/device-number', { dev, op: 'open' }).then(parseCardOpen),
+  ready: (dev) => post<{ ready: boolean }>('/api/device-number', { dev, op: 'ready' }).then((v) => v.ready),
+  approve: (dev, digits) => post<{ ok: true; code: string }>('/api/device-number', { dev, op: 'enter', digits }).then((v) => v.code),
+  op: (dev, op) => post<{ ok: true }>('/api/device-number', { dev, op }).then(() => undefined),
+};
 export const peerCardAnswer = (dev: string) => (id: string, pick: unknown) => post<{ ok: true }>('/api/peer-card-answer', { dev, id, pick }).then(() => undefined);
 export const readAccounts = (signal?: AbortSignal) => getText('/api/accounts', signal);
 /** 이 계정으로 — 맥 키체인 로그인을 바꿔 끼우고 그 칸에 고정(데스크톱 '이 계정으로'와 같은 길). 답 = 바뀐 계정 칸 원문 */

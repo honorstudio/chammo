@@ -201,6 +201,8 @@ export const speakPreviewStop = (id: number) => invoke<void>('speak_preview_stop
 export const notify = (title: string, body: string, target: string) => invoke<void>('notify', { title, body, target });
 /** 메인 창을 보고 있나(보임·최소화 아님·앞) — 윈도우 알림 판단용 */
 export const mainWatched = () => invoke<boolean>('main_watched');
+/** 맥 마지막 입력 뒤 초·화면 잠김(Rust away.rs) — 자리 비움이면 사람 필요 알림을 폰으로도 */
+export const userIdle = () => invoke<import('../domain/notify').Idle>('user_idle');
 
 /** 꺼진 세션까지 포함한 `agents --json --all` 원문 */
 export const listSessionsAllRaw = () => invoke<string>('list_sessions_all');
@@ -413,9 +415,11 @@ export const deleteAvatarFile = (key: string) => invoke<void>('avatar_delete', {
 /** 모바일(폰 → 테일스케일) — 켜고 끄기·짝짓기 QR·연결된 기기(Rust mobile.rs·mobile_pair.rs). 마스터 열쇠는 폰으로 안 나간다 */
 /** 기기 줄 하나 = 열쇠 하나(사파리·홈 화면 앱은 따로) — group 이 같으면 같은 폰(domain/mobileDevices) */
 export type MobileDevice = DeviceRow;
-export type MobileStatus = { on: boolean; running: boolean; bind: string | null; error: string | null; https: boolean; httpsNote: string | null; /** https 를 켜러 갈 곳(테일스케일 관리 화면) */ httpsFix: string | null; devices: MobileDevice[]; /** 테일스케일 없는 폰 길(중계, ADR 0013) */ relayReady: boolean; relay: { on: boolean; connected: boolean; phones: number; error: string | null } };
+export type MobileStatus = { on: boolean; running: boolean; bind: string | null; error: string | null; https: boolean; httpsNote: string | null; /** https 를 켜러 갈 곳(테일스케일 관리 화면) */ httpsFix: string | null; devices: MobileDevice[]; /** 테일스케일 없는 폰 길(중계, ADR 0013) */ relayReady: boolean; relay: { on: boolean; connected: boolean; phones: number; error: string | null }; /** 사람이 폰 연결을 껐다 — 로그인해도 허브 안 켬(ADR 0014) */ off?: boolean };
 /** 짝짓기 QR — 10분 지나거나 한 번 쓰면 죽는다 */
 export type PairQr = { url: string; qrSvg: string | null; expires: number };
+/** 폰 추가 QR — 입구 주소만(비밀 없음). 폰은 홈 화면 앱에서 계정 로그인으로 붙는다(ADR 0014) */
+export type EntryQr = { url: string; qrSvg: string | null };
 /** 텔레그램(Rust messenger_cmd.rs) — 토큰은 키체인(윈도우는 600 파일), 짝짓기는 10분 한 번짜리 딥링크. 보안 판단은 Rust 에 */
 export type { MessengerView };
 export type MessengerLink = { link: string; qrSvg: string | null; expires: number };
@@ -436,9 +440,16 @@ export const mobileApi = {
   status: () => invoke<MobileStatus>('mobile_status'),
   set: (on: boolean) => invoke<MobileStatus>('mobile_set', { on }),
   pairNew: () => invoke<PairQr>('mobile_pair_new'),
+  entryQr: () => invoke<EntryQr>('phone_entry_qr'),
   /** 폰 하나 끊기 — group 을 주면 그 폰의 사파리·홈 화면 앱 둘 다 */
   removeDevice: (id: string) => invoke<MobileStatus>('mobile_device_remove', { id }),
   /** 다른 기기 참모 줄 — 그 기기에 보관함 목록을 보여 줄지(끄면 그 기기 보관함 칸이 '껐어요') */
   deviceLocker: (id: string, on: boolean) => invoke<MobileStatus>('mobile_device_locker', { id, on }),
   clearDevices: () => invoke<MobileStatus>('mobile_devices_clear'),
+};
+
+/** 익명 사용 통계 — 기능을 연 횟수·화면 오류 종류만 센다(Rust usage_counts, 설정에서 끄면 안 셈). 실패는 조용히 */
+export type UsageKind = 'office' | 'messenger' | 'craft' | 'webview';
+export const bumpUsage = (kind: UsageKind) => {
+  invoke<void>('usage_bump', { kind }).catch(() => {});
 };

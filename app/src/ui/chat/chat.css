@@ -14,6 +14,8 @@
 /* 보낸 말이 멈춰 있으면(대기·걸림·안 감) 흐리게 두지 않는다 — 버튼을 눌러야 한다(2026-10-06) */
 .bubble.pending:not(.st-sending):not(.st-wait) { opacity: 1; }
 .bubble.pending.st-input .chat-meta, .bubble.pending.st-lost .chat-meta { color: var(--warn-ink); }
+/* 대기 중 — 실패가 아니라 차례를 기다린다. 흐리게(opacity) 두면 실패처럼 보여서 회색 판 + 점선 테두리(자리 안 바뀌게 outline)로(2026-10-26 사용자) */
+.bubble.pending.st-queued { background: var(--surface-2); outline: 1px dashed var(--line); outline-offset: -1px; }
 .chat-pend-acts { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; }
 .chat-meta { display: block; margin-top: 2px; font-size: 11px; color: var(--text-3); }
 .bubble.md > :first-child { margin-top: 0; }

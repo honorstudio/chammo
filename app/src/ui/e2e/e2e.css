@@ -1,0 +1,40 @@
+/* 새 기기 허용 — 숫자 넣기(chammo-relay ADR 0007, 시안 docs/design-drafts/e2e-approve v1). 직접 답하기 카드 토큰 그대로, 더한 건 6칸 입력·대기 상자뿐 */
+.dc-pin { position: relative; display: flex; gap: 6px; justify-content: center; }
+.dc-pin span { box-sizing: border-box; width: 40px; height: 48px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); display: inline-flex; align-items: center; justify-content: center; font: 800 24px ui-monospace, Menlo, monospace; color: var(--text); }
+.dc-pin span.gap { width: 8px; border: 0; background: none; }
+.dc-pin span.cur { border: 2px solid var(--text); }
+.dc-pin.bad span:not(.gap) { border-color: color-mix(in srgb, var(--dc-red, #b42318) 60%, var(--line-strong)); background: color-mix(in srgb, var(--dc-red, #b42318) 5%, var(--surface)); }
+.dc-pin input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; font-size: 16px; cursor: text; }
+.dc-pin:focus-within span.cur { box-shadow: 0 0 0 2px color-mix(in srgb, var(--text) 18%, transparent); }
+.dc-hint { font-size: 12px; color: var(--text-3); text-align: center; }
+.nw-box { box-sizing: border-box; display: flex; flex-direction: column; gap: 14px; text-align: center; color: var(--text); }
+.nw-box h3 { margin: 0; font-size: 17px; }
+.nw-big { font: 800 44px/1.1 ui-monospace, Menlo, monospace; letter-spacing: .06em; padding: 14px 0; border-radius: 12px; background: var(--surface-2); font-variant-numeric: tabular-nums; }
+.nw-big.off { color: var(--text-3); }
+.nw-box p { margin: 0; font-size: 13px; color: var(--text-2); line-height: 1.55; }
+.nw-acts { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
+/* 기기 관리 줄 안에서 펼친 숫자 넣기 — 줄 아래로 넓게 */
+.su-row.dev-row:has(.dm-number) { flex-wrap: wrap; }
+.dm-number { display: flex; flex-direction: column; gap: 10px; flex-basis: 100%; padding-top: 8px; }
+/* 새 기기에 넣을 4자리(시안 v2) — 띄어 읽기 쉽게 */
+.dc-code.k4 { letter-spacing: .3em; }
+.dc-pin.k4 span { width: 52px; height: 60px; font-size: 30px; }
+/* 보안 번호(시안 e2e-safety v1) — 번호 판·멤버 줄 상태·대화 속 알림 */
+.sn { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 10px; padding: 12px; border-radius: 10px; background: var(--surface-2); font: 700 20px ui-monospace, Menlo, monospace; letter-spacing: .04em; text-align: center; font-variant-numeric: tabular-nums; color: var(--text); }
+.sn-who { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-3); }
+.sn-panel { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); }
+.sn-state { font-size: 12px; color: var(--text-3); }
+.ok-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #1f9a62; margin-right: 6px; vertical-align: middle; }
+.tmx-sys { display: flex; justify-content: center; }
+.tmx-pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font-size: 12.5px; background: color-mix(in srgb, var(--blocked, #c98a00) 14%, var(--surface)); color: color-mix(in srgb, var(--blocked, #c98a00) 70%, var(--text)); }
+.tmx-pill b { font-weight: 700; }
+.tmx-pill button { all: unset; cursor: pointer; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; min-height: 24px; }
+.tmx-pill button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; border-radius: 4px; }
+.tmx-e2e { align-self: center; max-width: 86%; font-size: 11.5px; border-radius: 10px; padding: 4px 10px; text-align: center; }
+.tmx-e2e.block { color: var(--tag-wait-ink, var(--text-2)); background: var(--tag-wait, var(--surface-2)); }
+.tmx-e2e.warn { color: color-mix(in srgb, var(--blocked, #c98a00) 70%, var(--text)); background: color-mix(in srgb, var(--blocked, #c98a00) 12%, var(--surface)); }
+.tmx-e2e-body { align-self: flex-start; margin-left: 37px; max-width: 70%; font-size: 13px; color: var(--text-2); border: 1px dashed var(--line-strong); border-radius: 12px; padding: 6px 10px; white-space: pre-wrap; }
+.tmx-bub.wait { opacity: .55; }
+.tmx-held { align-self: flex-end; font-size: 11.5px; color: var(--text-3); }
+.tmx-e2e { display: inline-flex; align-items: center; gap: 4px; }
+.tmx-e2e .tmx-e2e-open { margin-right: -4px; }

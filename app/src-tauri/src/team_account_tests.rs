@@ -285,7 +285,7 @@ fn logged(tag: &str) -> (std::path::PathBuf, Fake, FakeRelay) {
         s.team_id = "t1".into();
         s.member_id = "m1".into();
         s.account = Some(crate::team_relay::Account { id: "a1".into(), email: "me@example.com".into(), name: "지수".into() });
-        s.my_devices = vec![DeviceName { id: D7.into(), name: "맥북".into(), current: true }, DeviceName { id: D8.into(), name: "아이맥".into(), current: false }];
+        s.my_devices = vec![DeviceName { id: D7.into(), name: "맥북".into(), current: true, ..Default::default() }, DeviceName { id: D8.into(), name: "아이맥".into(), current: false, ..Default::default() }];
     })
     .unwrap();
     std::fs::write(d.join(crate::team_relay_inbox::INBOX_FILE), "{}\n").unwrap();
@@ -388,8 +388,8 @@ fn 로그인이_도는_동안엔_두_번째_로그인도_팀_만들기도_막는
     let kc = Fake::default();
     let r = FakeRelay::default();
     let b = FakeBrowser::new(&r, &[]);
-    assert!(login_with(&d, &kc, &r, &b, SERVER, "맥북", Duration::from_secs(1)).unwrap_err().contains("로그인 중"));
-    assert!(crate::team_relay::create(&d, &kc, &r, SERVER, "팀", "지수", "맥북").unwrap_err().contains("로그인 중"));
+    assert!(login_with(&d, &kc, &r, &b, SERVER, "맥북", Duration::from_secs(1)).unwrap_err().contains("로그인을 진행하고 있어요"));
+    assert!(crate::team_relay::create(&d, &kc, &r, SERVER, "팀", "지수", "맥북").is_err(), "로그인 중(사슬 전)엔 팀 만들기도 막힌다");
     assert!(r.seen.borrow().is_empty() && kc.items.borrow().is_empty(), "열쇠도 요청도 없음");
 }
 
@@ -419,4 +419,282 @@ fn 로그아웃과_겹친_뒤_스레드가_team_json_을_되살리지_않는다(
     }));
     assert!(crate::team_relay::sync_rooms(&d, &kc, &r).is_err());
     assert!(!d.join(crate::team_relay::STATE_FILE).exists());
+}
+
+// ── 기기 로그인(ADR 0014) — 대기·허용·목록 칸 ──
+
+#[test]
+fn 로그인_마침이_대기면_대기로_적고_내_상태만_본다() {
+    let _ports = crate::test_ports::lock();
+    let d = dir("pending-login");
+    let kc = Fake::default();
+    let r = FakeRelay::default();
+    begin_ok(&r, L1);
+    r.answer("/v0/auth/google/finish", 201, r#"{"accountId":"a1","deviceId":"d7","email":"me@example.com","name":"지수","status":"pending"}"#);
+    r.answer("/v0/me/self", 200, r#"{"status":"pending","pendingSince":1000,"autoAt":86401000,"computers":[]}"#);
+    let b = FakeBrowser::new(&r, &["login={mine}&code=GOOD"]);
+    let st = login_with(&d, &kc, &r, &b, SERVER, "맥북", Duration::from_secs(5)).unwrap();
+    assert!(st.pending, "허용 기다림");
+    assert_eq!(st.pending_auto_at, 86_401_000);
+    let seen = r.seen.borrow();
+    let fin = seen.iter().find(|(_, p, _, _)| p.ends_with("/finish")).unwrap();
+    let kind = serde_json::from_str::<serde_json::Value>(&fin.3).unwrap()["kind"].as_str().unwrap().to_string();
+    assert!(kind == "mac" || kind == "win", "컴퓨터 종류를 알린다: {kind}");
+    assert!(seen.iter().all(|(_, p, _, _)| !p.ends_with("/v0/me") && !p.ends_with("/v0/me/devices")), "대기 기기는 /v0/me/self 만");
+    // 종단 암호(chammo-relay ADR 0007) — 받는 열쇠·묶기 서명·봉인을 같이 싣고, nP 는 이 기기에만
+    let fb: serde_json::Value = serde_json::from_str(&fin.3).unwrap();
+    let k = crate::team_relay_keys::load(&kc, &st.key_account).unwrap().unwrap();
+    assert_eq!(fb["e2ePub"], k.e2e_public());
+    assert_eq!(fb["e2eSig"], k.e2e_key_sig());
+    let n_p = crate::e2e_state::load(&d).my_np;
+    let raw = |s: &str| base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, s).unwrap();
+    assert_eq!(fb["approveCommit"], crate::e2e_chain::approve_commit(&raw(&k.public()), &raw(&k.e2e_public()), &raw(&n_p)));
+    assert!(!fin.3.contains(&n_p), "nP 는 서버로 안 나간다");
+}
+
+#[test]
+fn 대기_기기는_허용되면_목록을_받는다() {
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("pending-refresh");
+    crate::team_relay::mutate(&d, |s| s.pending = true).unwrap();
+    r.answer("/v0/me/self", 200, r#"{"status":"pending","pendingSince":1000,"autoAt":5000,"computers":[]}"#);
+    let st = refresh_me(&d, &kc, &r).unwrap();
+    assert!(st.pending);
+    assert_eq!(r.seen.borrow().len(), 1);
+    r.answer("/v0/me/self", 200, r#"{"status":"approved","computers":[]}"#);
+    me_ok(&r, "[]");
+    let st = refresh_me(&d, &kc, &r).unwrap();
+    assert!(!st.pending, "허용됐다");
+    assert_eq!(st.my_devices.len(), 2);
+}
+
+#[test]
+fn 기기_목록에_종류·상태·마지막·요청_곳을_적는다() {
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("fields");
+    r.answer("/v0/me", 200, r#"{"account":{"id":"a1","email":"me@example.com","name":"지수"},"device":{"id":"d7","name":"맥북"},"teams":[]}"#);
+    r.answer("/v0/me/devices", 200, r#"{"devices":[
+      {"id":"d7","name":"맥북","kind":"mac","status":"approved","lastSeen":9000,"createdAt":1,"current":true},
+      {"id":"d9","name":"iPhone","kind":"phone","status":"pending","lastSeen":null,"createdAt":5,"current":false,"reqCountry":"KR","reqCity":"Seoul","pendingSince":5},
+      {"id":"da","name":"아이패드","kind":"phone","status":"approved","approvedBy":"auto","createdAt":7,"current":false},
+      {"id":"dx","name":"이상한","kind":"toaster","status":"weird","approvedBy":"robot","createdAt":6,"current":false},
+      {"id":"../x","name":"길","kind":"phone","status":"pending","createdAt":8,"current":false},
+      {"id":"db","name":"먼 미래","kind":"mac","status":"approved","lastSeen":99999999999999999,"pendingSince":18446744073709551615,"createdAt":9,"current":false}]}"#);
+    let st = refresh_me(&d, &kc, &r).unwrap();
+    let p = st.my_devices.iter().find(|x| x.id == "d9").unwrap();
+    assert_eq!((p.kind.as_str(), p.status.as_str(), p.req_city.as_str(), p.pending_since), ("phone", "pending", "Seoul", Some(5)));
+    assert_eq!(st.my_devices.iter().find(|x| x.id == "d7").unwrap().last_seen, Some(9000));
+    let x = st.my_devices.iter().find(|x| x.id == "dx").unwrap();
+    assert_eq!((x.kind.as_str(), x.status.as_str()), ("", "approved"), "모르는 종류는 비우고, 모르는 상태는 허용으로 본다(서버가 막는 쪽)");
+    assert_eq!(x.approved_by, "", "모르는 허용 주체는 비움");
+    assert_eq!(st.my_devices.iter().find(|x| x.id == "da").unwrap().approved_by, "auto", "24시간 자동 허용");
+    assert!(st.my_devices.iter().all(|x| x.id != "../x"), "모양이 틀린 기기 id 줄은 버린다(리뷰 5)");
+    assert_eq!(st.my_devices.iter().find(|x| x.id == "db").unwrap().last_seen, None, "말이 안 되는 시각은 버린다");
+}
+
+#[test]
+fn 허용·거절은_그_기기_길로만_보내고_목록을_다시_받는다() {
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("decide");
+    r.answer(&format!("/v0/me/devices/{D8}/approve"), 200, r#"{"ok":true}"#);
+    me_ok(&r, "[]");
+    decide_device(&d, &kc, &r, D8, true).unwrap();
+    r.answer(&format!("/v0/me/devices/{D8}/reject"), 409, r#"{"error":"not_pending","status":"rejected","approvedBy":null}"#);
+    me_ok(&r, "[]");
+    decide_device(&d, &kc, &r, D8, false).expect("다른 기기에서 먼저 같은 쪽(거절)으로 처리 — 실패가 아니다");
+    // 결과가 바란 쪽과 다르면 실제 결과를 말한다(서버 409 몸통) — 24시간 경계에서 거절이 늦으면 '자동으로 허용됐어요'
+    r.answer(&format!("/v0/me/devices/{D8}/reject"), 409, r#"{"error":"not_pending","status":"approved","approvedBy":"auto"}"#);
+    me_ok(&r, "[]");
+    let e = decide_device(&d, &kc, &r, D8, false).unwrap_err();
+    assert!(e.contains("자동으로 허용") && e.contains("빼기"), "{e}");
+    r.answer(&format!("/v0/me/devices/{D8}/reject"), 409, r#"{"error":"not_pending","status":"approved","approvedBy":"human"}"#);
+    me_ok(&r, "[]");
+    assert!(decide_device(&d, &kc, &r, D8, false).unwrap_err().contains("이미 허용"));
+    r.answer(&format!("/v0/me/devices/{D8}/approve"), 409, r#"{"error":"not_pending","status":"rejected"}"#);
+    me_ok(&r, "[]");
+    assert!(decide_device(&d, &kc, &r, D8, true).unwrap_err().contains("거절"));
+    let paths: Vec<String> = r.seen.borrow().iter().filter(|(m, _, _, _)| m == "POST").take(2).map(|(_, p, _, _)| p.clone()).collect();
+    assert_eq!(paths, vec![format!("/v0/me/devices/{D8}/approve"), format!("/v0/me/devices/{D8}/reject")]);
+    for bad in ["../me/delete", "x/approve", ""] {
+        assert!(decide_device(&d, &kc, &r, bad, true).is_err(), "{bad}");
+    }
+    assert!(decide_device(&d, &kc, &r, D7, true).is_err(), "이 기기 자신은 허용 못 한다");
+    crate::team_relay::mutate(&d, |s| s.pending = true).unwrap();
+    assert!(decide_device(&d, &kc, &r, D8, true).is_err(), "대기 중인 기기는 남을 허용 못 한다");
+}
+
+/// 로그인 필수(10-24 사용자) — 한 번 로그인하면 다시 켜도·서버가 잠깐 안 닿아도 그대로. 지우는 건 사람의 '이 기기 빼기'(logout)뿐
+#[test]
+fn 한_번_로그인하면_다시_켜도_망_오류에도_유지된다() {
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("persist");
+    // 다시 켠 것처럼 — 파일·키체인에서 다시 읽는다
+    let st = crate::team_relay::load_state(&d);
+    assert!(st.account.is_some() && st.registered());
+    assert!(crate::team_relay::device_keys(&kc, &st).is_ok(), "기기 열쇠는 키체인에 그대로");
+    // 서버가 잠깐 이상해도(5xx·401) 로그인을 지우지 않는다
+    r.answer("/v0/me", 503, r#"{"error":"down"}"#);
+    assert!(refresh_me(&d, &kc, &r).is_err());
+    r.answer("/v0/me", 401, r#"{"error":"unauthorized"}"#);
+    assert!(refresh_me(&d, &kc, &r).is_err());
+    let st = crate::team_relay::load_state(&d);
+    assert!(st.account.is_some(), "로그인 유지");
+    assert_eq!(st.my_devices.len(), 2, "목록도 그대로");
+}
+
+#[test]
+fn 로그인_마침의_거절_열쇠·대기_초과는_사람_말로() {
+    let _ports = crate::test_ports::lock();
+    for (code, body, want) in [(403, r#"{"error":"key_rejected"}"#, "거절"), (429, r#"{"error":"too_many_pending"}"#, "5")] {
+        let d = dir(&format!("finish-{code}"));
+        let kc = Fake::default();
+        let r = FakeRelay::default();
+        begin_ok(&r, L1);
+        r.answer("/v0/auth/google/finish", code, body);
+        let b = FakeBrowser::new(&r, &["login={mine}&code=GOOD"]);
+        let e = login_with(&d, &kc, &r, &b, SERVER, "맥북", Duration::from_secs(5)).unwrap_err();
+        assert!(e.contains(want), "{code}: {e}");
+    }
+}
+
+#[test]
+fn 허용_대기_기기는_빼기로_못_지운다_거절은_카드로() {
+    // 리뷰 2차 하③: 대기 기기 빼기 = 거절(서버 삭제) — 사람 손 길(카드)만
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("revoke-pending");
+    crate::team_relay::mutate(&d, |s| s.my_devices[1].status = "pending".into()).unwrap();
+    let e = revoke_device(&d, &kc, &r, D8).unwrap_err();
+    assert!(e.contains("카드"), "{e}");
+    assert!(r.seen.borrow().is_empty(), "서버에 안 보냈다");
+}
+
+#[test]
+fn 진짜_서버처럼_null_이_든_줄도_읽는다() {
+    // 10-24 로컬 중계 끝까지 시험에서 잡음: 서버는 reqCountry·reqCity·approvedBy·lastSeen·kind 를 null 로 준다 — 글자 칸이 null 에 걸려 목록이 통째로 비었다
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("nulls");
+    r.answer("/v0/me", 200, r#"{"account":{"id":"a1","email":"me@example.com","name":"지수"},"device":{"id":"d7","name":"맥북"},"teams":[]}"#);
+    r.answer("/v0/me/devices", 200, r#"{"devices":[{"id":"d7","name":"맥북","kind":"mac","status":"approved","lastSeen":null,"createdAt":1,"current":true,"reqCountry":null,"reqCity":null,"pendingSince":null,"approvedBy":null},{"id":"d8","name":null,"kind":null,"status":"pending","lastSeen":null,"createdAt":2,"current":false,"reqCountry":"KR","reqCity":null,"pendingSince":5,"approvedBy":null}]}"#);
+    let st = refresh_me(&d, &kc, &r).unwrap();
+    assert_eq!(st.my_devices.len(), 2, "{:?}", st.my_devices);
+    assert!(st.my_devices[1].pending());
+    assert_eq!(st.my_devices[1].req_country, "KR");
+    // 재리뷰 4: id 가 null 이거나 줄 모양이 아주 틀려도 그 줄만 버린다(목록 통째로 비지 않게) — 숫자 칸 null 은 0
+    r.answer("/v0/me", 200, r#"{"account":{"id":"a1","email":"me@example.com","name":"지수"},"device":{"id":"d7","name":"맥북"},"teams":[]}"#);
+    r.answer("/v0/me/devices", 200, r#"{"devices":[{"id":"d7","name":"맥북","createdAt":null,"current":true},{"id":null,"name":"x"},"엉뚱한 줄",{"id":"d9","name":"폰","kind":"phone","status":"pending","createdAt":3,"current":"yes"}]}"#);
+    let st = refresh_me(&d, &kc, &r).unwrap();
+    assert_eq!(st.my_devices.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), vec!["d7"], "{:?}", st.my_devices);
+    assert_eq!(st.my_devices[0].created_at, 0);
+}
+
+/// 이 기기(D7)와 D8 이 둘 다 든 계정 사슬을 믿는 상태로(chammo-relay ADR 0007)
+fn chain_with_d8(d: &std::path::Path, kc: &Fake) -> Vec<crate::e2e_chain::Link> {
+    use crate::e2e_chain::{link_hash, Link};
+    let st = crate::team_relay::load_state(d);
+    let k = crate::team_relay_keys::load(kc, &st.key_account).unwrap().unwrap();
+    let k8 = crate::team_relay_keys::DeviceKeys::from_seeds([8; 32], [9; 32]);
+    let gb = serde_json::json!({ "v": 1, "account": "a1", "seq": 0, "prev": "", "by": D7, "kind": "genesis", "device": D7, "edPub": k.public(), "e2ePub": k.e2e_public() }).to_string();
+    let g = Link { seq: 0, sig: k.sign(&format!("chammo-chain/1\n{gb}")), body: gb };
+    let ab = serde_json::json!({ "v": 1, "account": "a1", "seq": 1, "prev": link_hash(&g.body, &g.sig), "by": D7, "kind": "add", "device": D8, "edPub": k8.public(), "e2ePub": k8.e2e_public(), "selfSig": k8.e2e_key_sig() }).to_string();
+    let a = Link { seq: 1, sig: k.sign(&format!("chammo-chain/1\n{ab}")), body: ab };
+    crate::e2e_state::seed_trusted(d, "a1", vec![g.clone(), a.clone()]);
+    vec![g, a]
+}
+
+#[test]
+fn 참모_길은_사슬에_든_기기를_못_뺀다() {
+    // 리뷰 B 중간 7 — 남의 기기 사슬 빼기(remove)는 사람 카드 몫. scripts/team devices remove --yes 는 사슬 밖 기기만
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("agent-remove");
+    let links = chain_with_d8(&d, &kc);
+    r.answer("/v0/accounts/a1/chain", 200, &serde_json::json!({ "links": links }).to_string());
+    let e = revoke_device_agent(&d, &kc, &r, D8).unwrap_err();
+    assert!(e.contains("사람이"), "{e}");
+    assert!(!r.seen.borrow().iter().any(|(m, _, _, _)| m == "POST"), "끊기·고리 요청 없이");
+}
+
+#[test]
+fn 사슬_빼기_고리가_실패하면_끊기도_멈춘다() {
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("remove-fail");
+    let links = chain_with_d8(&d, &kc);
+    r.answer("/v0/accounts/a1/chain", 200, &serde_json::json!({ "links": links }).to_string());
+    r.answer("/v0/me/chain", 409, r#"{"error":"stale_head"}"#);
+    assert!(revoke_device(&d, &kc, &r, D8).is_err());
+    assert!(!r.seen.borrow().iter().any(|(_, p, _, _)| p.ends_with("/revoke")), "고리가 실패하면 끊지 않는다(사슬에 기기가 남는 것 막기)");
+}
+
+#[test]
+fn 공격_중_내_사슬이_바뀌어도_훔친_기기는_끊을_수_있다() {
+    // 2차 리뷰 높음 3(R5) — 바뀐 사슬에선 remove 고리가 늘 실패해 서버 끊기까지 막혔다
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("revoke-changed");
+    let links = chain_with_d8(&d, &kc);
+    let kz = crate::team_relay_keys::DeviceKeys::from_seeds([70; 32], [71; 32]);
+    let body = serde_json::json!({ "v": 1, "account": "a1", "seq": 2, "prev": crate::e2e_chain::link_hash(&links[1].body, &links[1].sig), "by": "dz", "kind": "reset", "device": "dz", "edPub": kz.public(), "e2ePub": kz.e2e_public() }).to_string();
+    let x = crate::e2e_chain::Link { seq: 2, sig: kz.sign(&format!("chammo-chain/1\n{body}")), body };
+    r.answer("/v0/accounts/a1/chain", 200, &serde_json::json!({ "links": [links[0].clone(), links[1].clone(), x] }).to_string());
+    r.answer(&format!("/v0/me/devices/{D8}/revoke"), 200, r#"{"ok":true}"#);
+    revoke_device(&d, &kc, &r, D8).unwrap();
+    assert!(r.seen.borrow().iter().any(|(_, p, _, _)| p.ends_with("/revoke")), "고리 없이도 끊는다");
+    assert!(!r.seen.borrow().iter().any(|(m, p, _, _)| m == "POST" && p == "/v0/me/chain"));
+}
+
+#[test]
+fn 공격_서버가_사슬_밖이라고_해도_참모_길은_내가_검증한_사슬로_막는다() {
+    // 3차 리뷰 중간(R6) — 참모 길이 서버 inChain 을 믿어, false 거짓말이면 사슬 기기를 뺐다
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("agent-lie");
+    let links = chain_with_d8(&d, &kc);
+    r.answer("/v0/me/devices", 200, &serde_json::json!({ "devices": [{ "id": D8, "name": "아이맥", "status": "approved", "inChain": false }] }).to_string());
+    r.answer("/v0/accounts/a1/chain", 200, &serde_json::json!({ "links": links }).to_string());
+    assert!(revoke_device_agent(&d, &kc, &r, D8).unwrap_err().contains("사람이"));
+    assert!(!r.seen.borrow().iter().any(|(m, _, _, _)| m == "POST"));
+}
+
+#[test]
+fn 참모_길은_사슬_밖_기기를_고리_없이_서버에서만_끊는다() {
+    // R6 — 참모·scripts 길은 사슬 고리를 안 쓴다
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("agent-outside");
+    let links = chain_with_d8(&d, &kc);
+    let other = "99999999-9999-4999-8999-999999999999";
+    r.answer("/v0/accounts/a1/chain", 200, &serde_json::json!({ "links": links }).to_string());
+    r.answer(&format!("/v0/me/devices/{other}/revoke"), 200, r#"{"ok":true}"#);
+    revoke_device_agent(&d, &kc, &r, other).unwrap();
+    assert!(r.seen.borrow().iter().any(|(_, p, _, _)| p.ends_with("/revoke")));
+    assert!(!r.seen.borrow().iter().any(|(_, p, _, _)| p == "/v0/me/chain"), "고리 없이");
+}
+
+#[test]
+fn 로그인_서버는_적은_것_이_기기_team_json_로그아웃_전에_쓰던_것_기본_순서() {
+    // QA 4(10-25) — '처음부터'(로그아웃 뒤 로그인)·첫 로그인이 기본 중계로 갔다
+    let d = std::env::temp_dir().join(format!("chammo-login-server-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    assert_eq!(login_server(&d, ""), crate::team_relay::DEFAULT_SERVER, "아무것도 없으면 기본");
+    crate::team_relay::mutate(&d, |s| s.server = "http://localhost:8797".into()).unwrap();
+    assert_eq!(login_server(&d, ""), "http://localhost:8797", "team.json 에 적힌 서버 먼저");
+    assert_eq!(login_server(&d, "https://relay.example.test"), "https://relay.example.test", "사람이 적은 서버가 이긴다");
+    // 로그아웃(forget_local) 뒤에도 쓰던 서버를 기억한다
+    crate::team_relay::forget_local(&d, &Fake::default()).unwrap();
+    assert_eq!(crate::team_relay::load_state(&d).server, "", "team.json 은 지워졌다");
+    assert_eq!(login_server(&d, ""), "http://localhost:8797", "로그아웃 전에 쓰던 서버");
+}
+
+#[test]
+fn 로그인_막힘_문구는_해요체_사람_말() {
+    // QA 7·11(10-25) — '이미 로그인돼 있어 — 다른 계정은 로그아웃 뒤에'(반말·막다른 길)
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("already-in");
+    struct Never;
+    impl Opener for Never {
+        fn open(&self, _: &str) -> Result<(), String> {
+            Err("열면 안 됨".into())
+        }
+    }
+    let e = login_with(&d, &kc, &r, &Never, "", "맥북", std::time::Duration::from_millis(10)).unwrap_err();
+    assert!(e.contains("이미 이 기기는 로그인돼 있어요"), "{e}");
+    let _turn = login_turn(&d).unwrap();
+    assert!(login_turn(&d).err().unwrap().contains("로그인을 진행하고 있어요"));
 }

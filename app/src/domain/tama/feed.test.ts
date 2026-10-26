@@ -101,9 +101,9 @@ describe('균형 — 개발자가 두 갈래로 먹여도 넘치지 않게 (bala
     const evs: TamaEvent[] = [{ t: at(28, 10), type: 'show', label: 'a.md' }, { t: at(28, 11), type: 'show', label: 'a.md' }, { t: at(28, 12), type: 'show', label: 'b.md' }];
     expect(extras(evs).map((e) => e.label)).toEqual(['a.md', 'b.md']);
   });
-  it('대화·문서 고침은 한 시간에 1번', () => {
-    const evs: TamaEvent[] = [0, 10, 59, 61].map((m) => ({ t: at(28, 10) + m * 60_000, type: 'talk' }));
-    expect(extras(evs).map((e) => e.t)).toEqual([at(28, 10), at(28, 11, 1)]);
+  it('대화·문서 고침은 10분에 1번(2026-10-24, 전엔 한 시간)', () => {
+    const evs: TamaEvent[] = [0, 5, 10, 19, 21].map((m) => ({ t: at(28, 10) + m * 60_000, type: 'talk' }));
+    expect(extras(evs).map((e) => e.t)).toEqual([at(28, 10), at(28, 10, 10), at(28, 10, 21)]);
   });
   it('커밋·PR 30분 안의 시킨 일·결과물은 같은 일 — 배·코인은 한 번(시킨 일 횟수는 센다)', () => {
     const evs: TamaEvent[] = [{ t: at(28, 10), type: 'commit', lines: 10, hasTest: false }, { t: at(28, 10, 20), type: 'task' }, { t: at(28, 10, 25), type: 'show' }, { t: at(28, 12), type: 'task' }];
@@ -113,9 +113,9 @@ describe('균형 — 개발자가 두 갈래로 먹여도 넘치지 않게 (bala
     expect(p.c.tasksDone).toBe(2);
     expect(p.c.shows).toBe(0);
   });
-  it('끝낸 일 먹이(커밋·PR 빼고)는 하루 합쳐 10번까지', () => {
-    const evs: TamaEvent[] = Array.from({ length: 14 }, (_, i) => ({ t: at(28, 6) + i * 61 * 60_000, type: i % 2 ? 'talk' : 'task' }));
-    expect(extras(evs)).toHaveLength(10);
+  it('끝낸 일 먹이(커밋·PR 빼고)는 하루 합쳐 40번까지(2026-10-24, 전엔 10)', () => {
+    const evs: TamaEvent[] = Array.from({ length: 44 }, (_, i) => ({ t: at(28, 6) + i * 11 * 60_000, type: i % 2 ? 'talk' : 'task' }));
+    expect(extras(evs)).toHaveLength(40);
   });
   it('메아리는 먹이지 않고 살아 있다는 표시만 — 배 0, 마지막 활동은 갱신', () => {
     const p = advance(hatch('wave', at(28, 9), 0.3), [{ t: at(28, 10), type: 'talk', echo: true }], at(28, 10, 1));

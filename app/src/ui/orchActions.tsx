@@ -33,7 +33,7 @@ export const useOrchActions = () => useContext(C);
 
 /** 우클릭 뒤따라오는 click 삼키기 — 맥 웹뷰는 우클릭(두 손가락·ctrl+클릭) 뒤에 click 을 하나 더 보내, 보관함 카드가 먼저 열리고
  *  메뉴가 그 위에 떴다(2026-10-12 191.png). 메뉴 밖으로 오는 것만(메뉴 고르기는 그대로), 1초 동안 */
-function swallowTrailingClick() {
+export function swallowTrailingClick() {
   const at = Date.now();
   const eat = (ev: MouseEvent) => {
     if ((ev.target as Element | null)?.closest?.('.od-menu')) return;

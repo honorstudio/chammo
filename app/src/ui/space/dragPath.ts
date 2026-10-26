@@ -6,11 +6,12 @@ import { attachToChat } from '../fileDrop';
 import { LOCKER_MOVE } from './useLocker';
 import { chatDropAt, lightChat } from './chatDrop';
 import { lostRelease } from './dragEnd';
+import { TEAM_LOCKER_MOVE, TEAM_LOCKER_OUT } from '../../domain/teamLocker';
 
 export const PATH_MIME = 'text/x-chammo-path'; // 옛 웹 끌기(남은 곳 호환)
 
-/** paths = 보관함에서 여럿 고른 채 그중 하나를 끈 묶음(2026-10-12) */
-export type DragPayload = { kind: 'path'; path: string } | { kind: 'paths'; paths: string[] } | { kind: 'text'; text: string };
+/** paths = 보관함에서 여럿 고른 채 그중 하나를 끈 묶음(2026-10-12) · team = 팀 보관함 파일(id — 풀기 전엔 경로가 없다, 10-26) */
+export type DragPayload = { kind: 'path'; path: string } | { kind: 'paths'; paths: string[] } | { kind: 'text'; text: string } | { kind: 'team'; team: string; ids: string[] };
 
 /** 채팅 입력칸에 글을 넣는 신호 — ChatView 가 받는다 */
 export const CHAT_INSERT = 'chat-insert';
@@ -18,13 +19,17 @@ export const CHAT_INSERT = 'chat-insert';
 /** 놓을 채팅 세션 — 채팅 칸(머리·대화 기록·입력칸·카드 여백) 어디든(chatDrop, 2026-10-12 사용자) */
 const chatAt = (x: number, y: number): string | null => chatDropAt(x, y)?.id ?? null;
 
-/** 보관함 폴더 나무의 한 줄(카드를 끌어 놓으면 그 폴더로) */
-function folderAt(x: number, y: number): HTMLElement | null {
-  return (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>('[data-locker-folder]') ?? null;
+/** 보관함 폴더 자리(카드를 끌어 놓으면 그 폴더로) — 참모 보관함 [data-locker-folder] · 팀 보관함 칩 [data-team-folder] */
+const LOCKER_FOLDER = '[data-locker-folder]';
+const TEAM_FOLDER = '[data-team-folder]';
+function folderAt(x: number, y: number, sel = LOCKER_FOLDER): HTMLElement | null {
+  return (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>(sel) ?? null;
 }
 
-/** 끌기 유령 표 + 놓을 채팅 칸 빛(칸 전체) — 스페이스 것 끌기와 띠 프사 끌기(@멘션 넣기)가 같이 쓴다. 놓으면 그 채팅 칸 세션(없으면 null) */
-export function dragGhost(label: string, folders: boolean) {
+/** 끌기 유령 표 + 놓을 채팅 칸 빛(칸 전체) — 스페이스 것 끌기와 띠 프사 끌기(@멘션 넣기)가 같이 쓴다. 놓으면 그 채팅 칸 세션(없으면 null).
+ *  folders = 빛낼 폴더 자리(true = 참모 보관함, 글 = 그 선택자) */
+export function dragGhost(label: string, folders: boolean | string) {
+  const fsel = typeof folders === 'string' ? folders : LOCKER_FOLDER;
   let ghost: HTMLDivElement | null = null;
   let hot: HTMLElement | null = null;
   const light = (el: HTMLElement | null) => { if (hot === el) return; hot?.classList.remove('drop-hot'); el?.classList.add('drop-hot'); hot = el; };
@@ -42,7 +47,7 @@ export function dragGhost(label: string, folders: boolean) {
       // 채팅 칸 위면 칸 전체(카드) 강조, 아니면 보관함 폴더 줄
       const chat = chatDropAt(x, y);
       lightChat(chat);
-      light(!chat && folders ? folderAt(x, y) : null);
+      light(!chat && folders ? folderAt(x, y, fsel) : null);
     },
     hide() {
       if (!ghost) return;
@@ -62,6 +67,7 @@ export const insertToChat = (id: string, text: string) => window.dispatchEvent(n
 function drop(id: string, p: DragPayload) {
   if (p.kind === 'path') attachToChat(id, [p.path]);
   else if (p.kind === 'paths') attachToChat(id, p.paths);
+  else if (p.kind === 'team') window.dispatchEvent(new CustomEvent(TEAM_LOCKER_OUT, { detail: { team: p.team, ids: p.ids, chat: id } }));
   else insertToChat(id, p.text);
 }
 
@@ -73,7 +79,7 @@ function start(e: React.PointerEvent, payload: DragPayload, label: string) {
   endActive?.();
   const x0 = e.clientX, y0 = e.clientY;
   const files = payload.kind === 'path' ? [payload.path] : payload.kind === 'paths' ? payload.paths : null;
-  const g = dragGhost(label, !!files);
+  const g = dragGhost(label, payload.kind === 'team' ? TEAM_FOLDER : !!files);
   // 끝내는 길은 여기 하나 — 놓기·웹뷰가 끌기를 가져감(pointercancel)·창 밖에서 놓기·Esc·창 포커스 잃음 모두 이리 온다.
   // pointerup 하나에만 기대면 놓음 신호가 안 올 때 표가 마우스를 영영 따라다닌다(2026-10-11 사용자)
   const finish = (at: PointerEvent | null) => {
@@ -93,6 +99,11 @@ function start(e: React.PointerEvent, payload: DragPayload, label: string) {
     if (!at) return; // 취소 — 아무 데도 안 놓는다
     const id = chatAt(at.clientX, at.clientY);
     if (id) drop(id, payload);
+    if (payload.kind === 'team') {
+      const chip = id ? undefined : folderAt(at.clientX, at.clientY, TEAM_FOLDER)?.dataset.teamFolder;
+      if (chip !== undefined) window.dispatchEvent(new CustomEvent(TEAM_LOCKER_MOVE, { detail: { team: payload.team, ids: payload.ids, folder: chip } }));
+      return;
+    }
     // 빈 글 = 보관함 맨 위(경로 줄 '보관함'·보관함 탭) — 거짓으로 거르면 맨 위로 못 옮겼다
     const folder = !id && files ? folderAt(at.clientX, at.clientY)?.dataset.lockerFolder : undefined;
     if (folder !== undefined) for (const path of files ?? []) window.dispatchEvent(new CustomEvent(LOCKER_MOVE, { detail: { path, folder } }));
@@ -122,6 +133,9 @@ export function dragProps(payload: DragPayload, label: string) {
 
 /** 파일·폴더 경로 끌기 */
 export const dragPath = (path: string) => dragProps({ kind: 'path', path }, path.split('/').pop() || path);
+
+/** 팀 보관함 파일 끌기(하나 또는 고른 묶음) — 폴더 칩에 놓으면 옮기기, 채팅 칸에 놓으면 그 채팅에 붙이기(TeamLocker 가 풀어서 붙인다) */
+export const dragTeam = (team: string, ids: string[], label: string) => dragProps({ kind: 'team', team, ids }, label);
 
 /** 여럿 고른 묶음 끌기 — 폴더에 놓으면 하나씩 옮기기 신호, 채팅에 놓으면 한꺼번에 붙인다. 하나면 dragPath 와 같다 */
 export const dragPaths = (paths: string[]) => (paths.length === 1 ? dragPath(paths[0]!) : dragProps({ kind: 'paths', paths }, tr(`${paths.length}개`, `${paths.length} items`)));

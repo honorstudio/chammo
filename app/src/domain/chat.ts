@@ -67,8 +67,8 @@ function relayOf(t: string): { from: string; text: string } | null {
   // 다른 기기 참모(ADR 0007) — 받는 폰 서버가 붙인 이름표. 꼬리표(peer#cid)는 답 찾기용이라 안 보인다
   const p = t.match(/^\[((?:다른 기기 참모|Assistant on another device) · [^\]\n]+?) · peer#[A-Za-z0-9_-]+\]\n?([\s\S]*)$/);
   if (p) return { from: p[1]!, text: p[2]!.trim() };
-  // 팀 메신저(team_relay_inbox) — 받는 Chammo 가 붙인 이름표. 사람 말이어도 남의 말이라 내 말풍선이 아니다(보안 검토 1-C)
-  const tm = t.match(/^\[((?:팀 참모|팀 사람 말|Team assistant|Team human) · [^\]\n]+?) · team#\d+\]\n?([\s\S]*)$/);
+  // 팀 메신저(team_relay_inbox) — 받는 Chammo 가 붙인 이름표. 사람 말이어도 남의 말이라 내 말풍선이 아니다(보안 검토 1-C). 팀 참모·Team assistant 는 10-26 전 옛 이름표
+  const tm = t.match(/^\[((?:남의 참모|팀 참모|팀 사람 말|Teammate's assistant|Team assistant|Team human) · [^\]\n]+?) · team#\d+\]\n?([\s\S]*)$/);
   if (tm) return { from: tm[1]!, text: tm[2]!.trim() };
   // 내 기기끼리 방(서버 ADR 0004) — 내 다른 기기에서 온 말도 이 채팅에선 보낸 쪽이 붙은 줄
   const sm = t.match(/^\[((?:내 다른 기기 참모|내 다른 기기 사람 말|My device assistant|My device human) · [^\]\n]+?) · self#\d+\]\n?([\s\S]*)$/);

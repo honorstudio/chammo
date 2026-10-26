@@ -10,6 +10,8 @@ pub struct FakeRelay {
     pub seen: RefCell<Vec<(String, String, Vec<(String, String)>, String)>>,
     /// (길 끝, 응답 코드, 응답 몸통)
     pub answers: RefCell<Vec<(String, u16, String)>>,
+    /// 늘 같은 답(방법, 길 끝, 코드, 몸통) — 줄 선 답이 없을 때만. 시험이 관심 없는 길(명부 고리 등)을 채운다
+    pub always: RefCell<Vec<(String, String, u16, String)>>,
     /// 등록된 기기 id → 공개 열쇠
     pub devices: RefCell<Vec<(String, String)>>,
     /// 요청을 받는 순간 부른다(길) — 그사이 바깥(로그아웃 등)이 바뀌는 때를 만들려고
@@ -20,6 +22,9 @@ pub struct FakeRelay {
 impl FakeRelay {
     pub fn answer(&self, path_end: &str, status: u16, body: &str) {
         self.answers.borrow_mut().push((path_end.into(), status, body.into()));
+    }
+    pub fn always(&self, method: &str, path_end: &str, status: u16, body: &str) {
+        self.always.borrow_mut().push((method.into(), path_end.into(), status, body.into()));
     }
     pub fn header<'a>(h: &'a [(String, String)], k: &str) -> Option<&'a str> {
         h.iter().find(|(n, _)| n.eq_ignore_ascii_case(k)).map(|(_, v)| v.as_str())
@@ -53,8 +58,13 @@ impl Http for FakeRelay {
             return Ok((401, r#"{"error":"unauthorized"}"#.into()));
         }
         let mut a = self.answers.borrow_mut();
-        let i = a.iter().position(|(p, _, _)| path.ends_with(p.as_str())).expect("준비 안 한 길");
-        let (_, st, b) = a.remove(i);
+        let (st, b) = match a.iter().position(|(p, _, _)| path.ends_with(p.as_str())) {
+            Some(i) => {
+                let (_, st, b) = a.remove(i);
+                (st, b)
+            }
+            None => self.always.borrow().iter().find(|(m, p, _, _)| m == method && path.ends_with(p.as_str())).map(|(_, _, st, b)| (*st, b.clone())).expect("준비 안 한 길"),
+        };
         // 진짜 서버처럼 — 로그인 마침이 새 기기를 만들면 그 열쇠를 그 기기 id 로 기억한다(다음 요청부터 기기 머리)
         if path.ends_with("/v0/auth/google/finish") && st == 201 {
             if let (Some(k), Some(d)) = (Self::header(headers, "X-Chammo-Key"), serde_json::from_str::<serde_json::Value>(&b).ok().and_then(|v| v["deviceId"].as_str().map(String::from))) {

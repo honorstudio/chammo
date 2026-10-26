@@ -194,6 +194,16 @@ class FolderTrustSkill(unittest.TestCase):
         self.assertIn('미리 사용자에게 믿기를 부탁하지 않는다', ko)
         self.assertIn("don't ask the user to trust it in advance", en)
 
+    # 2026-10-25: 전체 디스크 접근은 켜진 채(TCC 행 10-07 그대로)인데 옛 claude 데몬이 띄운 세션 줄기만 막혔다 —
+    # 참모가 사용자에게 설정을 다시 켜라고 했다. 막히면 먼저 이 세션이 지금 데몬 밑인지 보고, 아니면 respawn
+    def test_막히면_설정보다_respawn_먼저(self):
+        text = (SCRIPTS.parent / '.claude' / 'skills' / 'hq-folders' / 'SKILL.md').read_text(encoding='utf-8')
+        ko, en = text.split('# English')
+        for part in (ko, en):
+            self.assertIn('claude daemon run', part)
+            self.assertIn('claude respawn', part)
+            self.assertLess(part.index('claude respawn'), part.index('Privacy_AllFiles'))
+
 
 if __name__ == '__main__':
     unittest.main()
@@ -295,3 +305,25 @@ class ChoiceOnWindows(unittest.TestCase):
             line = json.loads(open(os.path.join(d, 'app.jsonl'), encoding='utf-8').read().strip())
             self.assertEqual(line['action'], 'keys')
             self.assertEqual(line['arg'], {'id': 'c0ffee12', 'keys': '\x1b[B\r'})
+
+
+class TeamNoPython(unittest.TestCase):
+    """파이썬 없는 PC 의 팀 명령(team_nopy.sh)도 안내문 이름 teamchat 을 받는다 — room 만 받아 usage 로 끝났다"""
+    def run_sh(self, d, *args):
+        env = {'PATH': '/usr/bin:/bin', 'HOME': d, 'CHAMMO_HOME': d, 'CHAMMO_TEAM_WAIT': '0'}  # 앱 없음 — 부탁만 쓰고 바로 끝
+        return subprocess.run(['sh', str(SCRIPTS / 'team_nopy.sh'), *args], env=env, capture_output=True, text=True, timeout=30)
+
+    def test_teamchat_은_room_과_같은_부탁(self):
+        with tempfile.TemporaryDirectory() as d:
+            for args, verb in ((['teamchat', 'list'], 'rooms'), (['room', 'list'], 'rooms'), (['teamchat', 'read', 'QA방', '5'], 'room-read')):
+                r = self.run_sh(d, *args)
+                self.assertEqual(r.returncode, 1, (args, r.stderr))  # 앱이 답하지 않음
+                line = json.loads(open(os.path.join(d, 'app.jsonl'), encoding='utf-8').read().splitlines()[-1])
+                self.assertEqual((line['action'], line['arg']['verb']), ('team', verb), args)
+
+    def test_모르는_teamchat_명령은_보내지_않고_usage(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = self.run_sh(d, 'teamchat', 'nope')
+            self.assertEqual(r.returncode, 2)
+            self.assertIn('teamchat', r.stderr)
+            self.assertFalse(os.path.exists(os.path.join(d, 'app.jsonl')))

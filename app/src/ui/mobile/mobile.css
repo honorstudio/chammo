@@ -594,6 +594,8 @@ a.m-file { color: inherit; text-decoration: none; }
 
 /* 직접 답하기 카드 — 채팅 끝(카드 모양은 chat/directCard.css 를 같이 쓴다). 폰은 버튼을 엄지 크기로 */
 .m-direct { display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 12px; }
+.m-direct .m-bask { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 14px; background: var(--warn-bg); color: var(--warn-ink); }
+.m-bask-who { font-size: 14px; }
 /* 데스크톱과 같이 쓰는 카드(chat/DirectCard) — 폰에선 어디서나 누름 칸 44(다른 기기 카드·채팅 안 카드가 40·19였다, 2026-10-23) */
 .m-app .dc-btn { min-height: 44px; }
 .m-app .dc-link { min-height: 44px; display: inline-flex; align-items: center; }

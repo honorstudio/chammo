@@ -37,8 +37,8 @@ export const tourSteps = ({ none = false }: { none?: boolean } = {}): TourStep[]
     {
       title: tr('모든 세션은 진짜 Claude Code', 'Every session is a real Claude Code'),
       body: tr(
-        '⌥⌘2 전체 보기에서 돌고 있는 세션을 한 화면에 봐요. 어느 창이든 직접 쳐서 끼어들어도 되고, ⌘₩ 로 크게 봤다가 되돌려요. PR 은 ⌥⌘3 리뷰에서 관문(DB·돈·보안)과 함께 봐요.',
-        'See every running session at once in All sessions (⌥⌘2). Type into any of them to step in; ⌘` maximizes and restores a pane. PRs and their gates (DB, money, security) are under Review (⌥⌘3).',
+        '⌥⌘2 전체 보기에서 돌고 있는 세션을 한 화면에 봐요. 어느 창이든 직접 쳐서 끼어들어도 되고, ⌘⇧₩ 로 크게 봤다가 되돌려요. PR 은 ⌥⌘3 리뷰에서 관문(DB·돈·보안)과 함께 봐요.',
+        'See every running session at once in All sessions (⌥⌘2). Type into any of them to step in; ⌘⇧` maximizes and restores a pane. PRs and their gates (DB, money, security) are under Review (⌥⌘3).',
       ),
     },
     {
@@ -54,7 +54,8 @@ export const tourSteps = ({ none = false }: { none?: boolean } = {}): TourStep[]
       keys: [
         [keyLabel('⌘1 ~ ⌘9', IS_WIN), tr('채팅 탭 이동 — 확대할 탭이 열려 있으면 ⌘9 는 맞춤', 'Switch chat tabs — with a zoomable tab open, ⌘9 fits it')],
         [keyLabel('⌥⌘1 · ⌥⌘2 · ⌥⌘3 · ⌥⌘4', IS_WIN), tr(`${a} · 전체 세션 · 리뷰 · 사무실`, `${a} · all sessions · review · office`)],
-        [keyLabel(tr('⌘₩', '⌘`'), IS_WIN), tr('보고 있는 창 크게 / 되돌리기', 'Maximize / restore the focused pane')],
+        [keyLabel(tr('⌘₩', '⌘`'), IS_WIN), tr('홈 대시보드 / 보던 화면', 'Home dashboard / back')],
+        [keyLabel(tr('⌘⇧₩', '⌘⇧`'), IS_WIN), tr('보고 있는 창 크게 / 되돌리기', 'Maximize / restore the focused pane')],
         [keyLabel('⌘W · ⌘T', IS_WIN), tr('열린 탭 닫기 · 새 문서', 'Close tab · new document')],
         [keyLabel('⌘⇧H · ⌘⇧L', IS_WIN), tr('홈 · 보관함 탭으로', 'Go to Home · Locker tab')],
         [keyLabel('⌘⇧T · ⌘⇧W', IS_WIN), tr('새 세션 · 보고 있는 세션 끄기', 'New session · stop the focused session')],

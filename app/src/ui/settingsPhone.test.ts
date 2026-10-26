@@ -74,7 +74,9 @@ describe('폰 설명 — 계정 로그인 여부로', () => {
 describe('기기 관리·메신저·계정 탭 (10-24 사용자 — 폰과 메신저를 둘로, Chammo 계정은 계정 탭)', () => {
   const body = (k: string) => (tsx['/src/ui/Setup.tsx'] ?? '').split('\n').find((l) => new RegExp(`^\\s*${k}: [<(]`).test(l)) ?? '';
   it('기기 관리 = 폰 연결·다른 기기 참모, 메신저 = 메신저 알림·텔레그램', () => {
-    expect(body('devices')).toMatch(/<MobileSection[^>]*>.*<PeerSection/);
+    // 기기 관리 = 계정 내 기기 한 목록, 폰 QR·테일넷 다른 기기 참모는 그 아래 접힘 대피로(ADR 0014)
+    expect(body('devices')).toContain('<DevicesSection');
+    expect(body('devices')).toMatch(/fallback=\{<><MobileSection.*<PeerSection/);
     expect(body('messenger')).toMatch(/<TeamSoundSection[^>]*>.*<MessengerSection/);
     expect(body('devices')).not.toContain('TeamAccountSection');
   });
@@ -85,5 +87,44 @@ describe('기기 관리·메신저·계정 탭 (10-24 사용자 — 폰과 메�
   });
   it('폰 설명의 로그인 단추는 계정 탭으로', () => {
     expect(body('devices')).toContain("onAccount={() => setTab('accounts')}");
+  });
+});
+
+describe('Chammo 계정 칸 — 중계 주소', () => {
+  it('중계 주소 입력칸은 기본 숨김 — 「중계 서버 바꾸기」를 눌렀을 때만(보통 사람에겐 필요 없는 글, 10-24)', () => {
+    const src = tsx['/src/ui/TeamAccountSection.tsx'] ?? '';
+    const at = src.indexOf("aria-label={tr('중계 서버 주소'");
+    expect(at).toBeGreaterThan(-1);
+    expect(src.slice(Math.max(0, at - 300), at)).toMatch(/\{advanced && !v\?\.server && \(/);
+  });
+});
+
+describe('폰 받지 않음(10-24) — 사람이 폰 연결을 끄면 기기 관리에 한 줄', () => {
+  it('기기 관리가 폰 상태의 off 를 보고 안내한다', () => {
+    const src = tsx['/src/ui/DevicesSection.tsx'] ?? '';
+    expect(src).toContain('setPhoneOff(!!m.off)');
+    expect(src).toContain('이 컴퓨터는 폰을 받지 않아요');
+  });
+});
+
+describe('폰 추가(10-24 사용자 — QR 찍으면 사파리로 열려 홈 화면 앱엔 아무것도 없다)', () => {
+  const dev = tsx['/src/ui/DevicesSection.tsx'] ?? '';
+  const mob = tsx['/src/ui/MobileSection.tsx'] ?? '';
+  it('내 기기의 폰 추가 QR 은 입구 주소만(phone_entry_qr) — 짝 코드 QR(pairNew)은 기기 관리 위쪽에 없다', () => {
+    expect(dev).toContain('mobileApi.entryQr()');
+    expect(dev).not.toContain('pairNew');
+    // 순서: 사파리에서 홈 화면에 추가 → 홈 화면 앱에서 로그인 → 이 컴퓨터 → 숫자
+    const steps = ['홈 화면에 추가', '홈 화면의 참모 앱', '구글 로그인', '이 컴퓨터', '숫자'];
+    // 앞 단계 뒤에서부터 찾는다 — 다른 줄(새 기기 허용 '숫자' 안내 등)에 같은 낱말이 있어도 순서만 본다
+    let pos = 0;
+    for (const w of steps) {
+      const i = dev.indexOf(w, pos);
+      expect(i, w).toBeGreaterThan(-1);
+      pos = i;
+    }
+  });
+  it('옛 짝짓기 QR(테일스케일 접힘)엔 사파리에서만 열린다는 경고 — 폰 앱은 위 폰 추가로', () => {
+    expect(mob).toContain('사파리에서만 열려');
+    expect(mob).toContain("'폰 추가'");
   });
 });

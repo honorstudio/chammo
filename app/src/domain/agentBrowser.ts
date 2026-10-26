@@ -122,10 +122,11 @@ export function paneStatus<S extends string>(status: S, live: Live | undefined):
 }
 
 /** 어느 세션 브라우저인지 — '프로젝트 · 세션 이름'(이름이 없거나 프로젝트와 같으면 프로젝트만), 세션을 못 찾으면 브라우저 프로필 */
-export function askName(live: Live, sessions: { procPid?: number; name?: string; cwd: string }[]): string {
+export function askName(live: Live, sessions: { procPid?: number; name?: string; cwd: string; project?: string }[]): string {
   const s = sessions.find((x) => x.procPid && x.procPid === live.sessionPid);
   if (!s) return live.profile;
-  const proj = s.cwd.replace(/\/+$/, '').split('/').pop() || live.profile;
+  // 워크트리 세션은 폴더 끝이 워크트리 이름이라 프로젝트(classifyWorkspace)부터 — 'binance-secrets-ignore · binance-setup' 으로 나왔다(2026-10-24)
+  const proj = s.project || s.cwd.replace(/\/+$/, '').split('/').pop() || live.profile;
   return s.name && s.name !== proj ? `${proj} · ${s.name}` : proj;
 }
 

@@ -41,10 +41,16 @@ pub async fn app_update_install(app: tauri::AppHandle, on_step: Channel<Step>) -
         return Err("off".into());
     }
     let up = app.updater().map_err(|e| e.to_string())?;
-    let Some(u) = up.check().await.map_err(|e| e.to_string())? else {
+    let Some(u) = up.check().await.map_err(|e| {
+        crate::usage_counts::record_crash("updater"); // 익명 사용 통계 — 종류 이름만
+        e.to_string()
+    })?
+    else {
         return Err("none".into());
     };
     let mut first = true;
+    let unpacking = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let unpack_mark = unpacking.clone();
     u.download_and_install(
         |got, total| {
             if first {
@@ -54,11 +60,17 @@ pub async fn app_update_install(app: tauri::AppHandle, on_step: Channel<Step>) -
             let _ = on_step.send(Step::Progress { got: got as u64 });
         },
         || {
+            unpack_mark.store(true, Ordering::Relaxed);
             let _ = on_step.send(Step::Installing);
         },
     )
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| {
+        // 익명 사용 통계 — 어느 단계에서 실패했나만(받기·풀기)
+        crate::usage_counts::record_update(Some(if unpacking.load(Ordering::Relaxed) { "unpack" } else { "download" }));
+        e.to_string()
+    })?;
+    crate::usage_counts::record_update(None);
     // 세션은 claude daemon 소속이라 앱이 다시 켜져도 안 죽는다
     app.restart()
 }

@@ -36,6 +36,7 @@ export function winToMac(e: KeyLike): KeyLike | null {
     if (code === 'BracketLeft' || code === 'BracketRight') return { ...mac(code === 'BracketLeft' ? '[' : ']'), code };
     if (code === 'Slash') return mac('/');
     if (code === 'Equal') return mac('+');
+    if (code === 'Backquote') return { ...mac('`', { shift: true }), code }; // Ctrl+Shift+` = 창 크게(Ctrl+` 는 홈)
     return null;
   }
   if (letter) return null;
@@ -56,7 +57,7 @@ export function keyLabel(text: string, win: boolean): string {
     if (/^\s$/.test(k)) return `Ctrl${k}`;
     if (/^[A-Za-z]$/.test(k)) return `Ctrl+${alt ? 'Alt+' : ''}Shift+${k.toUpperCase()}`;
     if (k === '/' || k === '[' || k === ']') return `Ctrl+Shift+${k}`;
-    if (k === '₩') return 'Ctrl+`';
+    if (k === '₩') return `Ctrl+${shift ? 'Shift+' : ''}\``;
     return `Ctrl+${alt ? 'Alt+' : ''}${shift ? 'Shift+' : ''}${k}`;
   });
 }

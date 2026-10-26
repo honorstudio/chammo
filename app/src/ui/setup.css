@@ -214,3 +214,25 @@
 .peer-share { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
 .peer-agent { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; font-size: 13px; color: var(--text-2); }
 .peer-agent > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 설정 > 기기 관리 — 계정 내 기기 한 목록(ADR 0014). 강조는 옅은 면·작은 점(왼쪽 띠 없음) */
+.dm-acct { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; border-radius: 10px; background: var(--hover); font-size: 12.5px; color: var(--text-2); }
+.dm-acct span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dm-me { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--tag-done); color: var(--tag-done-ink); font-size: 11.5px; font-weight: 600; vertical-align: 1px; }
+.dm-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); margin-right: 6px; vertical-align: 1px; }
+.dm-dot.on { background: var(--tag-done-ink); }
+.dm-dot.wait { background: var(--warn-ink, #c48a00); }
+.dm-wait { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 10px; background: var(--hover); font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
+.dm-wait b { font-size: 13px; color: var(--text); }
+.dm-confirm > span { flex: 1; min-width: 0; font-size: 13px; }
+.dm-fold-h { color: var(--text-2); }
+
+/* 로그인 필수 화면(10-24) — 앱 위를 덮는다 */
+.setup.lg-gate { display: flex; align-items: center; justify-content: center; padding: 24px; }
+.lg-box { width: min(440px, 100%); display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
+.lg-box h1 { margin: 6px 0 0; font-size: 22px; }
+.lg-box p { margin: 0; color: var(--text-2); font-size: 13.5px; line-height: 1.6; }
+.lg-acts { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+/* 다시 시작 화면 — 무엇이 바뀌는지 세 줄(계정 되찾기 갈래 ①) */
+.lg-list { margin: 0; padding: 12px 16px 12px 30px; text-align: left; color: var(--text-2); font-size: 13px; line-height: 1.6; background: var(--surface-2); border-radius: 10px; width: 100%; box-sizing: border-box; }
+.lg-go { min-width: 240px; }

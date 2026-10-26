@@ -6,9 +6,14 @@
 
 mod access;
 mod appctl;
+mod away;
+mod offmain;
+#[cfg(test)]
+mod offmain_scan;
 mod audio_out;
 mod avatar;
 mod claude;
+mod deep_link;
 mod claude_src;
 mod accounts;
 mod accounts_cmd;
@@ -68,13 +73,44 @@ mod peer_human;
 mod peer_link;
 mod team_account;
 mod team_cmd;
+mod team_locker;
+mod team_locker_app;
+mod team_locker_cmd;
+mod team_profile;
+mod team_profile_cmd;
+mod team_post;
+mod team_post_cmd;
+mod team_manage;
 mod team_relay;
+mod team_helper;
 mod team_relay_inbox;
 mod team_relay_keys;
 mod phone_tunnel;
+// 종단 암호 봉투 열쇠 감싸기(chammo-relay ADR 0007) — 단계 B 에서 봉투가 쓴다
+#[allow(dead_code)]
+mod e2e_hpke;
+#[allow(dead_code)]
+mod e2e_chain;
+#[allow(dead_code)]
+mod e2e_roster;
+#[allow(dead_code)]
+mod e2e_envelope;
+#[allow(dead_code)]
+mod e2e_state;
+#[allow(dead_code)]
+mod e2e_flow;
+#[allow(dead_code)]
+mod e2e_team;
+mod e2e_cmd;
+mod e2e_safety;
+mod e2e_cards;
+mod e2e_retry;
 mod phone_relay_core;
 mod phone_relay;
+mod device_link;
+mod device_cards;
 mod team_relay_ws;
+mod team_rooms;
 #[cfg(test)]
 mod team_test_util;
 mod team_ui;
@@ -147,6 +183,7 @@ mod modes;
 mod modes_host;
 mod modes_light;
 mod updater;
+mod usage_counts;
 mod usage_ping;
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder};
@@ -169,6 +206,13 @@ pub fn route_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>, id: &str) {
             return;
         }
         let _ = w.show();
+        // ⌘` 홈을 메신저 따로 창 같은 다른 창에서 눌렀으면 메인 창을 앞으로 꺼내고 홈을 켜기만(돌아가기 아님) — 2026-10-25 사용자
+        let id = if id == "home_toggle" && !w.is_focused().unwrap_or(false) {
+            let _ = w.set_focus();
+            "home_open"
+        } else {
+            id
+        };
         let _ = w.eval(format!("window.__menu && window.__menu({})", serde_json::to_string(id).unwrap_or_default()));
     }
 }
@@ -277,12 +321,13 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
         .item(&item("new_doc", tr("새 문서 (보고 있는 보관함 폴더)", "New Document (current locker folder)"), Some(&*platform::accel("CmdOrCtrl+T")))?)
         .item(&item("close_tab", tr("열린 탭 닫기", "Close Tab"), Some(&*platform::accel("CmdOrCtrl+W")))?)
         .separator()
+        .item(&item("home_toggle", tr("홈 대시보드 / 보던 화면", "Home Dashboard / Back"), Some(&*platform::accel("CmdOrCtrl+`")))?)
         .item(&item("go_home", tr("홈 탭으로", "Go to Home Tab"), Some(&*platform::accel("CmdOrCtrl+Shift+H")))?)
         .item(&item("go_locker", tr("보관함 탭으로", "Go to Locker Tab"), Some(&*platform::accel("CmdOrCtrl+Shift+L")))?)
         .separator()
         .item(&item("new_session", &new_label, Some(&*platform::accel("CmdOrCtrl+Shift+T")))?)
         .item(&item("close_pane", tr("보고 있는 세션 끄기", "Stop Focused Session"), Some(&*platform::accel("CmdOrCtrl+Shift+W")))?)
-        .item(&item("pane_max", tr("보고 있는 창 크게 / 되돌리기", "Maximize / Restore Focused Pane"), Some(&*platform::accel("CmdOrCtrl+`")))?)
+        .item(&item("pane_max", tr("보고 있는 창 크게 / 되돌리기", "Maximize / Restore Focused Pane"), Some(&*platform::accel("CmdOrCtrl+Shift+`")))?)
         .separator()
         .item(&item("memo", tr("메모 (보고 있는 창의 프로젝트)", "Notes (focused project)"), Some(&*platform::accel("CmdOrCtrl+M")))?)
         .build()?;
@@ -455,6 +500,12 @@ fn main() {
     if std::env::args().nth(1).as_deref() == Some(routines::TICK_FLAG) {
         std::process::exit(routines::tick_main());
     }
+    // 익명 사용 통계 — 앱이 죽은(panic) 횟수만 센다. 문구·위치는 안 담고, 원래 처리(기록·종료)는 그대로
+    let before = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        crate::usage_counts::record_crash("panic");
+        before(info);
+    }));
     // 창이 키를 받기 전에 — 길게 누르기가 악센트 창이 아니라 반복이 되게(Claude 음성 입력 스페이스 누르기)
     #[cfg(target_os = "macos")]
     keyrepeat::disable_press_and_hold();
@@ -464,7 +515,20 @@ fn main() {
     craft_window::drop_session_env();
     let ctx = tauri::generate_context!();
     // 자동 업데이트 — 공개판만(개인 앱은 엔드포인트를 비워 둠, updater.rs)
-    updater::attach(tauri::Builder::default(), &ctx)
+    let builder = tauri::Builder::default();
+    // 윈도우: chammo:// 를 누르거나 앱을 또 켜면 새 프로세스가 뜬다 — 떠 있는 앱으로 넘기고 끈다(맨 먼저 등록, ADR 0015)
+    #[cfg(windows)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        if argv.iter().any(|a| deep_link::invite_from_url(a).is_some()) {
+            deep_link::handle(app, argv);
+        } else if let Some(w) = app.get_webview_window("main") {
+            let _ = w.unminimize();
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+    }));
+    updater::attach(builder, &ctx)
+        .plugin(tauri_plugin_deep_link::init())
         .menu(|app| build_menu(app))
         // 앱 기능 메뉴를 누르면 메인 창 웹뷰의 window.__menu('<id>') 로 넘긴다 (권한 파일 없이 되는 eval)
         .on_menu_event(|app, e| {
@@ -485,7 +549,7 @@ fn main() {
                 return;
             }
             // 기본 항목(가리기·종료 등)은 macOS 가 알아서 한다 — 우리 항목만 넘긴다(안 그러면 '가리기' 뒤에 창이 다시 뜬다)
-            const OURS: &[&str] = &["licenses", "goto_orch", "goto_all", "goto_review", "goto_office", "reader_toggle", "reader_full", "reader_next", "reader_prev", "reader_close", "goto_tama", "open_dex", "sidebar", "tasks", "search", "font_up", "font_down", "font_reset", "new_session", "close_pane", "close_tab", "new_doc", "go_home", "go_locker", "pane_max", "widget_toggle", "memo", "settings", "harnitor", "tour", "app_quit_all", "select_all"];
+            const OURS: &[&str] = &["licenses", "goto_orch", "goto_all", "goto_review", "goto_office", "reader_toggle", "reader_full", "reader_next", "reader_prev", "reader_close", "goto_tama", "open_dex", "sidebar", "tasks", "search", "font_up", "font_down", "font_reset", "new_session", "close_pane", "close_tab", "new_doc", "go_home", "go_locker", "pane_max", "home_toggle", "widget_toggle", "memo", "settings", "harnitor", "tour", "app_quit_all", "select_all"];
             if !OURS.contains(&id.as_str()) {
                 return;
             }
@@ -499,6 +563,18 @@ fn main() {
         })
         .setup(|app| {
             wizard_menu(app.handle());
+            // 팀 초대 딥링크(chammo://join) — 꺼져 있다 켜진 거면 켠 주소, 떠 있으면 이벤트로(ADR 0015)
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                // 윈도우는 설치판이 등록하지만 옮긴 exe·개발판도 받게 사용자 레지스트리(HKCU)에 다시 적는다
+                #[cfg(windows)]
+                let _ = app.deep_link().register_all();
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    deep_link::handle(app.handle(), urls.into_iter().map(|u| u.to_string()));
+                }
+                let h = app.handle().clone();
+                app.deep_link().on_open_url(move |e| deep_link::handle(&h, e.urls().into_iter().map(|u| u.to_string())));
+            }
             // 파일 감시는 맨 먼저 — 아래 템플릿 쓰기가 윈도우에선 11초쯤 걸려 그 사이 들어온 요청(scripts/app·choice)이 건너뛰어졌다
             reader::watch(app.handle());
             // 화면 조종을 모든 프로젝트에 켜 뒀으면 그사이 생긴 프로젝트에 넣는다(~/.claude.json, 바뀔 때만 백업·쓰기)
@@ -569,6 +645,7 @@ fn main() {
             mobile::boot(app.handle());
             // 테일스케일 없는 폰 — 중계 허브에 붙어 있기(ADR 0013)
             phone_relay::boot(app.handle());
+            device_cards::boot();
             messenger_cmd::boot();
             // 쉬는 계정 칸 토큰을 만료 전에 하나씩 새로 받아 둔다 — 바꾸는 순간 토큰 주소를 안 부르게(2026-10-15 429 로 바꾸기가 막힘)
             accounts_cmd::warm_start();
@@ -613,7 +690,7 @@ fn main() {
         // 참모 모드 Client 방(모드 화면 모듈만 도는 빈 페이지) — 별도 출처 + CSP sandbox(modes.rs FRAME_CSP)
         .register_uri_scheme_protocol("modeframe", |ctx, req| if webpage::blocked(ctx.webview_label()) { forbidden() } else { modes::frame_response(req.uri().path()) })
         .manage(pty::Ptys::default())
-        .invoke_handler(no_web_preview(tauri::generate_handler![
+        .invoke_handler(no_web_preview(offmain::dispatch(tauri::generate_handler![
             remote::remote_devices,
             remote::remote_pair,
             remote::remote_unpair,
@@ -623,11 +700,55 @@ fn main() {
             remote::remote_human_say,
             team_cmd::team_status,
             team_cmd::team_human_say,
+            team_ui::team_ui_room_new,
+            team_ui::team_ui_room_set,
+            team_ui::team_ui_room_leave,
+            team_ui::team_ui_all_room,
+            team_ui::team_ui_room_info,
+            team_ui::team_ui_room_delete,
+            team_ui::team_pick_files,
+            e2e_cmd::e2e_self_number, e2e_cmd::e2e_renew, e2e_cmd::e2e_card_open, e2e_cmd::e2e_card_ready, e2e_cmd::e2e_card_approve, e2e_cmd::e2e_self_code, e2e_cmd::e2e_card_op, e2e_cmd::e2e_self_step, e2e_cmd::e2e_start_chain, e2e_cmd::e2e_reset_chain, e2e_cmd::e2e_safety_people, e2e_cmd::e2e_safety_verify, e2e_cmd::e2e_safety_unblock, e2e_cmd::e2e_safety_refetch,
+            usage_counts::usage_bump,
             team_ui::team_feed,
             team_ui::team_ui_create,
             team_ui::team_ui_join,
             team_ui::team_ui_invite,
+            deep_link::team_take_invite,
+            team_ui::team_clip_invite,
+            team_ui::team_ui_rename,
+            team_ui::team_ui_invites,
+            team_ui::team_ui_revoke_invites,
+            team_ui::team_ui_leave,
+            team_ui::team_ui_delete,
+            team_ui::team_ui_use,
+            team_ui::team_ui_remove,
+            team_ui::team_ui_make_owner,
             team_ui::team_handoff,
+            team_profile_cmd::team_profiles,
+            team_profile_cmd::team_profile_changed,
+            team_profile_cmd::team_profile_set,
+            team_profile_cmd::team_icon_set,
+            team_post_cmd::team_posts,
+            team_post_cmd::team_post_write,
+            team_post_cmd::team_post_pin,
+            team_post_cmd::team_post_remove,
+            team_locker_cmd::team_locker_list,
+            team_locker_cmd::team_locker_put,
+            team_locker_cmd::team_locker_poll,
+            team_locker_cmd::team_locker_dismiss,
+            team_locker_cmd::team_locker_open,
+            team_locker_cmd::team_locker_cached,
+            team_locker_cmd::team_locker_download,
+            team_locker_cmd::team_locker_mkdir,
+            team_locker_cmd::team_locker_folder,
+            team_locker_cmd::team_locker_save,
+            team_locker_cmd::team_locker_peek,
+            team_locker_cmd::team_locker_pick,
+            team_locker_cmd::team_locker_rename,
+            team_locker_cmd::team_locker_act,
+            team_locker_cmd::team_file_attach,
+            team_locker_cmd::team_file_open,
+            team_locker_cmd::team_file_save,
             team_alert::team_viewing,
             team_alert::team_alert_get,
             team_alert::team_alert_set,
@@ -733,6 +854,7 @@ fn main() {
             mobile::mobile_status,
             mobile::mobile_set,
             mobile::mobile_pair_new,
+            mobile::phone_entry_qr,
             messenger_cmd::messenger_status,
             messenger::set_orch_legacy,
             messenger_cmd::messenger_set_token,
@@ -844,6 +966,7 @@ fn main() {
             tidy_git::tidy_git,
             claude::notify,
             claude::main_watched,
+            away::user_idle,
             claude::speak,
             claude::speak_now_state,
             claude::speak_preview,
@@ -969,7 +1092,7 @@ fn main() {
             craft_dock::craft_apps,
             craft_dock::craft_launch,
             craft_dock::craft_remove,
-        ]))
+        ])))
         // ⌘W(창 닫기)로 앱이 통째로 꺼지지 않게 — 창만 숨기고, Dock 아이콘을 누르면 다시 보인다. 완전히 끄는 건 ⌘Q
         .on_window_event(|window, event| match event {
             // 떼어 낸 리더 창은 진짜로 닫는다(탭도 같이 — 크롬처럼)
@@ -998,8 +1121,8 @@ fn main() {
                 let _ = window.hide();
             }
             tauri::WindowEvent::CloseRequested { .. } if window.label() == "main" => window.app_handle().exit(0),
-            // 파일 끌어다 놓기 → 메인 창 웹뷰의 window.__drop(ui/fileDrop.ts)
-            tauri::WindowEvent::DragDrop(e) if window.label() == "main" => drop::forward(window, e),
+            // 파일 끌어다 놓기 → 그 창 웹뷰의 window.__drop — 메인 창(ui/fileDrop.ts)·메신저 따로 창(ui/team/teamDrop.ts, 메인만 넘겨서 따로 창엔 안 붙었다 10-26)
+            tauri::WindowEvent::DragDrop(e) if window.label() == "main" || team_window::is_team_window(window.label()) => drop::forward(window, e),
             // 리더 창에 파일을 놓으면 탭으로 연다
             tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) if window.label().starts_with("reader-") => {
                 reader::add_to(window.app_handle(), window.label(), paths.iter().map(|p| p.to_string_lossy().into_owned()).collect())

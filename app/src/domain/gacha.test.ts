@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setLang } from '../i18n';
-import { CATALOG, COIN_RULES, dexCatalog, EVENTS, liveEvent, pick, dayStartAt, earn, EMPTY_GACHA, starOf, starTotal, nextStar, softPay, ownedOf, ownedSkins, parseGacha, place, pull, rarityLabel, rollRarity, seeItem, setSkin, skinOfFile, toggleEquip, type GachaFile } from './gacha';
+import { CATALOG, COIN_RULES, dexCatalog, EVENTS, liveEvent, pick, dayStartAt, earn, EMPTY_GACHA, starOf, starTotal, nextStar, softPay, ownedOf, ownedSkins, parseGacha, place, pull, rarityLabel, rollRarity, seeItem, setSkin, skinOfFile, toggleEquip, WORK_MIN, type GachaFile } from './gacha';
 
 /** 한정 이벤트가 끝난 뒤 — 평소 풀만 나오게(날짜 따라 시험이 흔들리지 않게) */
 const NOV = new Date(2026, 10, 20, 12).getTime();
@@ -8,7 +8,7 @@ const rngOf = (...xs: number[]) => { let i = 0; return () => xs[i++ % xs.length]
 const withCoins = (coins: number, extra: Partial<GachaFile> = {}): GachaFile => ({ ...EMPTY_GACHA, coins, ...extra });
 
 describe('earn — 코인은 일한 만큼(다마고치 먹이와 같은 사건)', () => {
-  it('PR 머지 10 · 시킨 일 끝남 3 · CI 첫 통과 2 · 테스트 커밋 2 · +300줄 이하 커밋 1', () => {
+  it('PR 머지 10 · 시킨 일 끝남 5 · CI 첫 통과 2 · 테스트 커밋 2 · +300줄 이하 커밋 1', () => {
     const f = withCoins(0, { since: 0 });
     const r = earn(f, [
       { t: 10, type: 'pr' },
@@ -18,8 +18,8 @@ describe('earn — 코인은 일한 만큼(다마고치 먹이와 같은 사건)
       { t: 14, type: 'commit', lines: 120, hasTest: true },
       { t: 15, type: 'commit', lines: 900, hasTest: false },
     ], 100);
-    expect(r.gained).toBe(10 + 3 + 2 + (2 + 1) + 0);
-    expect(r.file.coins).toBe(18);
+    expect(r.gained).toBe(10 + 5 + 2 + (2 + 1) + 0);
+    expect(r.file.coins).toBe(20);
   });
 
   it('이미 센 사건(since 이전)은 다시 안 센다', () => {
@@ -50,8 +50,8 @@ describe('earn — 코인은 일한 만큼(다마고치 먹이와 같은 사건)
     expect(earn(old, [{ t: 900, type: 'show' }, { t: 950, type: 'talk' }], 2000).gained).toBe(0);
   });
 
-  it('일한 시간(work)은 코인이 아니다', () => {
-    expect(earn(withCoins(0, { since: 0 }), [{ t: 5, type: 'work', minutes: 30 }], 10).gained).toBe(0);
+  it('일한 시간(work)은 5분마다 1 — 30분 = 6 (2026-10-24, 전엔 0)', () => {
+    expect(earn(withCoins(0, { since: 0 }), [{ t: 5, type: 'work', minutes: 30 }], 10).gained).toBe(6);
   });
 
   // 늦게 읽힌 사건(2026-10-04 QA 1번) — 대화·시킨 일은 1분, 커밋은 5분, CI 는 10분마다 읽고 CI 는 시작 시각으로 찍힌다
@@ -375,11 +375,11 @@ describe('코인 버는 법 표 — 화면 글과 실제 계산이 같다', () =
     const val = Object.fromEntries(COIN_RULES.map(([n]) => [n, n]));
     expect(one({ t: 1, type: 'pr' })).toBe(val[10]);
     expect(one({ t: 1, type: 'show' })).toBe(val[10]);
-    expect(one({ t: 1, type: 'task' })).toBe(val[3]);
+    expect(one({ t: 1, type: 'task' })).toBe(val[5]);
     expect([one({ t: 1, type: 'ci', pass: true }), one({ t: 1, type: 'review' }), one({ t: 1, type: 'routine', pass: true }), one({ t: 1, type: 'commit', lines: 900, hasTest: true })]).toEqual([2, 2, 2, 2]);
-    expect([one({ t: 1, type: 'commit', lines: 300, hasTest: false }), one({ t: 1, type: 'talk' }), one({ t: 1, type: 'doc' })]).toEqual([1, 1, 1]);
+    expect([one({ t: 1, type: 'commit', lines: 300, hasTest: false }), one({ t: 1, type: 'talk' }), one({ t: 1, type: 'doc' }), one({ t: 1, type: 'work', minutes: WORK_MIN })]).toEqual([1, 1, 1, 1]);
     expect(one({ t: 1, type: 'slay', kind: 'slime', lv: 1 })).toBe(val[5]);
-    expect(COIN_RULES.map(([n]) => n)).toEqual([10, 5, 3, 2, 1]);
+    expect(COIN_RULES.map(([n]) => n)).toEqual([10, 5, 2, 1]);
   });
 });
 

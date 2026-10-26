@@ -605,3 +605,30 @@ fn 보안_참모가_만든_코드를_거절하면_코드가_죽고_설정_qr_은
     assert!(st.pair(&open, "iPhone", now).is_some());
     assert!(st.decide_hold("card3", true).is_err(), "덮인 대기 카드");
 }
+
+// ── 숫자 확인으로 묶기(ADR 0014) — 코드 없이, 사람이 컴퓨터 카드에서 허용한 뒤에만 부른다 ──
+
+#[test]
+fn pair_linked_needs_no_code_and_leaves_a_live_qr_alone() {
+    let st = Devices::memory();
+    let now = SystemTime::now();
+    let c = st.new_code(now).unwrap();
+    let tok = st.pair_linked(&Pairing { name: "iPhone", home: false, prev: None, peer: false }, relay("r1"), now).unwrap();
+    let id = st.check(&tok, now).unwrap();
+    assert_eq!(st.relay_of(&id), Some("r1".into()));
+    assert!(st.code_alive(&c, now), "떠 있던 QR 코드는 그대로");
+}
+
+#[test]
+fn pair_linked_same_relay_device_replaces_its_line_and_refuses_peer() {
+    let st = Devices::memory();
+    let now = SystemTime::now();
+    let t1 = st.pair_linked(&Pairing { name: "iPhone", home: false, prev: None, peer: false }, relay("r1"), now).unwrap();
+    let t2 = st.pair_linked(&Pairing { name: "iPhone", home: false, prev: None, peer: false }, Relay { device: "r1".into(), x: "eQ".into() }, now).unwrap();
+    assert_eq!(st.list().len(), 1, "같은 중계 기기를 다시 묶으면 그 줄을 바꿔 끼운다");
+    assert!(st.check(&t1, now).is_none(), "옛 토큰은 죽는다");
+    assert!(st.check(&t2, now).is_some());
+    assert_eq!(st.relay_line("r1").map(|x| x.1), Some("eQ".into()), "새 터널 열쇠");
+    assert!(st.pair_linked(&Pairing { name: "참모", home: false, prev: None, peer: true }, relay("r2"), now).is_none());
+    assert!(st.pair_linked(&Pairing { name: "x", home: false, prev: None, peer: false }, Relay { device: String::new(), x: "eA".into() }, now).is_none(), "중계 기기 id 없이는 안 묶는다");
+}

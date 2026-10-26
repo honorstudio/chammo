@@ -69,6 +69,10 @@ impl Backend for Fake {
         self.log(format!("direct_answer_by {id} {pick:?} {by}"));
         Ok(())
     }
+    fn device_number(&self, dev: &str, op: &str, digits: &str) -> Result<serde_json::Value, String> {
+        self.log(format!("device_number {dev} {op} {digits}"));
+        Ok(serde_json::json!({ "mode": "number" }))
+    }
     fn peer_cards(&self) -> serde_json::Value {
         self.log("peer_cards".into());
         serde_json::json!([{ "dev": "nB", "name": "참모 · 영상PC", "log": "", "sessions": "[]" }])
@@ -2112,6 +2116,34 @@ fn 폰_맥에서_열기는_문서_종류만_스크립트는_안_연다() {
         let f = Fake { show: show.clone(), data: d.join("data"), ..Default::default() };
         let body = serde_json::json!({ "path": p.to_string_lossy() }).to_string();
         assert_eq!(handle(&post("/api/open-mac", &body), &g, &f).status, want, "{}", p.display());
+    }
+}
+
+#[test]
+fn 새_기기_숫자_넣기는_카드_답과_같은_문() {
+    // chammo-relay ADR 0007 — 폰이 허용 기기일 때(시안 e2e-approve v1 폰 덱). 숫자는 컴퓨터가 셈하고 폰은 넣기만
+    assert!(head_check(&post("/api/device-number", ""), &gate()).is_none());
+    let ok = r#"{"dev":"5b1f0f2e-aaaa-bbbb-cccc-0123456789ab","op":"enter","digits":"482913"}"#;
+    let (s, f, r) = run(post("/api/device-number", ok));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(f.calls(), vec!["device_number 5b1f0f2e-aaaa-bbbb-cccc-0123456789ab enter 482913".to_string()]);
+    // 4자리를 띄운 카드 닫기·끊기(R7 A) — 숫자 없이
+    for op in ["close", "cut"] {
+        let (s, f, _) = run(post("/api/device-number", &format!(r#"{{"dev":"5b1f0f2e-aaaa-bbbb-cccc-0123456789ab","op":"{op}"}}"#)));
+        assert_eq!(s, 200);
+        assert_eq!(f.calls(), vec![format!("device_number 5b1f0f2e-aaaa-bbbb-cccc-0123456789ab {op} ")]);
+    }
+    for (r, want) in [
+        (set(post("/api/device-number", ok), "origin", Some("http://evil.com")), 403),
+        (set(post("/api/device-number", ok), "authorization", None), 401),
+        (post("/api/device-number", r#"{"dev":"../x","op":"open"}"#), 400),
+        (post("/api/device-number", r#"{"dev":"d1","op":"rm"}"#), 400),
+        (post("/api/device-number", r#"{"dev":"d1","op":"close","digits":"1"}"#), 400),
+        (post("/api/device-number", r#"{"dev":"d1","op":"enter","digits":"48a913"}"#), 400),
+    ] {
+        let (s, f, _) = run(r);
+        assert_eq!(s, want);
+        assert!(f.calls().iter().all(|c| !c.starts_with("device_number")));
     }
 }
 

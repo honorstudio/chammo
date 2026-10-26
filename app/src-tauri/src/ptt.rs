@@ -221,6 +221,7 @@ pub fn start(write: impl Fn(u32, &str) + Send + 'static, hush: impl Fn() + Send 
             let act = p.tick(ms());
             if act == Act::Start {
                 to = target();
+                crate::usage_counts::record_use("voice"); // 익명 사용 통계 — 말하기 횟수만
             }
             announce_live(&act, to);
             match act {

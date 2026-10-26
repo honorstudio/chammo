@@ -47,7 +47,7 @@ type Props = {
   focusRequest?: { id: string; n: number };
   /** focusRequest 를 처리했으면 — 부르는 쪽이 비운다(한 번만, 다시 그려질 때 또 돌지 않게) */
   onFocusRequestDone?: (n: number) => void;
-  /** 격자 이름(App 의 레이아웃 키) — ⌘₩ 가 지금 보이는 창을 DOM 에서 찾는다 */
+  /** 격자 이름(App 의 레이아웃 키) — ⌘⇧₩ 가 지금 보이는 창을 DOM 에서 찾는다 */
   gridId?: string;
   /** 끄기 — App 이 화면에서 먼저 치우고 뒤에서 끈다 */
   /** why = 누른 길(actions.log) */
@@ -96,11 +96,14 @@ const escAt = new Map<string, number>();
 /** 세션별 붙어 있는 보기 — 화면이 온(live) 뒤에만 넣고 끊기면(다시 붙는 중·참모를 다시 켜는 중) 뺀다.
  *  친 말은 그때 붙어 있는 보기에 — 끊긴 동안 친 말은 다시 붙을 때까지 줄에서 기다린다. 예전엔 누른 순간의 손잡이로 죽은 보기에 쳐서 허공으로 갔다(2026-10-21) */
 const links = paneLinks<PaneApi>();
-function typeAndSend(id: string, text: string, enter = true) {
-  void typing.push(id, async () => {
+/** 붙은 보기에 치는 데 쓰는 최대 — 긴 글도 몇 초면 끝난다. 넘기면 버리고 다음 말로(채팅은 입력을 되살린다, 2026-10-24 윈도우 '어떤 말도 안 감') */
+const TYPE_TIMEOUT = 30_000;
+/** 다 쳤으면 true, 못 쳤으면(보기가 안 붙음·치기 거절·시간 넘김) false */
+function typeAndSend(id: string, text: string, enter = true): Promise<boolean> {
+  return typing.push(id, async () => {
     const api = await links.wait(id, LINK_WAIT);
     await api.type(typedChunks(text), enter ? enterDelay(text.length, IS_WIN) : undefined);
-  });
+  }, LINK_WAIT + TYPE_TIMEOUT).then(() => true, () => false);
 }
 
 /** 입력칸 지우기(백스페이스 n개) — 앞 글을 치는 중이면 그 뒤에. 지운 뒤 칠 글은 typeAndSend 가 다시 이 뒤에 줄 선다 */
@@ -376,9 +379,10 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           pickModel={(want) => pickFor(id, s, want)}
                           state={s.state}
                           send={(text) => {
-                            typeAndSend(id, text);
+                            const sent = typeAndSend(id, text);
                             last.current = id;
                             onFocusSession?.(id);
+                            return sent;
                           }}
                           interrupt={() => escOnce(id, panes.current.get(id))}
                           rawKeys={async (seq) => { for (const k of seq) { panes.current.get(id)?.raw(k); await new Promise((r) => setTimeout(r, 120)); } }}
@@ -392,7 +396,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           locker={chat ? { id, name: s.name || id } : undefined}
                           clearTerminal={(n) => clearInput(id, panes.current.get(id), n)}
                           sendQueuedNow={() => escOnce(id, panes.current.get(id))} // 멈추면 Claude 가 줄 선 말을 곧바로 보낸다(2026-09-30 시험 세션 실측)
-                          typeOnly={(text) => typeAndSend(id, text, false)}
+                          typeOnly={(text) => void typeAndSend(id, text, false)}
                           focusRef={(fn) => { if (fn) chatFocus.current.set(id, fn); else chatFocus.current.delete(id); }}
                         />
                       ) : null}{memo?.openId === id && memo.panel(s, (text) => panes.current.get(id)?.write(pasteSequence(text)))}</>}

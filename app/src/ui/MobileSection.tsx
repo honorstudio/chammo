@@ -79,6 +79,7 @@ export function MobileSection({ title, onAccount }: { title: string; onAccount?:
               {qr.qrSvg && <img className="su-qr" alt={tr('폰 연결 QR', 'Connect QR')} src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr.qrSvg)}`} />}
               <div className="su-mobile-side">
                 <b>{tr(`${left(qr.expires - now)} 안에 폰 카메라로 찍어 주세요`, `Scan with the phone camera within ${left(qr.expires - now)}`)}</b>
+                <span className="su-hint">{tr("이 QR 은 사파리에서만 열려 홈 화면 앱엔 안 남아요 — 폰 앱은 위 내 기기의 '폰 추가'로 이어요.", "This QR opens only in Safari and isn't kept in the home-screen app — connect the phone app with 'Add phone' in My devices above.")}</span>
                 <span className="su-hint">{tr("한 번 쓰면 사라져요. 홈 화면에 붙인 앱은 QR 로 못 열려요 — 아래 코드를 그 앱의 '붙여넣기로 연결'에 넣거나, 연결된 사파리에서 '홈 화면 앱 연결'로 코드를 받아요.", "It disappears after one use. A home-screen app can't be opened by the QR — paste the code below into its 'Connect by pasting', or get a code from a connected Safari with 'Connect home-screen app'.")}</span>
                 {code && <code className="su-pair-code">{groupCode(code)}</code>}
                 <div className="su-inline">

@@ -48,10 +48,14 @@ describe('homeDash — 오늘 끝난 것', () => {
   const d = homeDash({ orchs: ORCHS, bars: {}, events: ev, asks: 0, running: 0, now: NOW });
   it('오늘(새벽 5시부터) done 만, 최근 먼저, 맡긴 참모·제목·세션은 send 에서', () => {
     expect(d.done).toEqual([
-      { task: 't2', title: '로그인', target: 'recipe', orch: 'o2', at: NOW - H },
-      { task: 't1', title: '결제 단추', target: 'shop', orch: 'o1', at: NOW - 5 * H },
+      { task: 't2', title: '로그인', target: 'recipe', orch: 'o2', at: NOW - H, result: '' },
+      { task: 't1', title: '결제 단추', target: 'shop', orch: 'o1', at: NOW - 5 * H, result: '#41' },
     ]);
     expect(d.counts.doneToday).toBe(2);
+  });
+  it('결과 한 줄 = 마지막 done 메모의 PR·주소(없으면 첫 줄) — 홈 칩을 누르면 칩 아래 그 줄(10-24 시안 home-inplace D)', () => {
+    const r = homeDash({ orchs: ORCHS, bars: {}, events: [...ev, { ts: at(0.5), type: 'done', task: 't2', note: '로그인 고침\n자세한 건 PR 에' }], asks: 0, running: 0, now: NOW });
+    expect(r.done.find((x) => x.task === 't2')!.result).toBe('로그인 고침');
   });
   it('done 이 두 번 찍혀도 한 줄(마지막 때)', () => {
     const twice = homeDash({ orchs: ORCHS, bars: {}, events: [...ev, { ts: at(0.5), type: 'done', task: 't1' }], asks: 0, running: 0, now: NOW });

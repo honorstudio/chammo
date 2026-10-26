@@ -132,6 +132,7 @@ pub fn check() -> EnvCheck {
     if let Some(bin) = c.claude_path.clone() {
         if let Some(o) = run_for(&bin, &["--version"], 10) {
             c.claude_version = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string();
+            crate::usage_counts::record_cc(&c.claude_version); // 익명 사용 통계 — 판 번호 글자만
         }
         c.logged_in = run_for(&bin, &["auth", "status"], 10).map(|o| parse_auth_status(&text(&o))).unwrap_or(false);
     }

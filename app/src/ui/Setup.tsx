@@ -10,6 +10,7 @@ import { TerminalPane } from './TerminalPane';
 import { FULL_DISK_URL, wizardAccess, type Access } from '../domain/access';
 import { AccountsSection } from './AccountsSection';
 import { MobileSection } from './MobileSection';
+import { DevicesSection } from './DevicesSection';
 import { PeerSection } from './PeerSection';
 import { TeamAccountSection } from './TeamAccountSection';
 import { TeamSoundSection } from './team/TeamSoundSection';
@@ -95,9 +96,9 @@ const features = (): [FeatureSwitch, string, string][] => [
   ['agentView', tr('세션 브라우저 앱에서 보기', 'Watch session browsers in the app'), tr(`세션이 브라우저를 쓰면 그 화면을 대시보드에 띄워요. 그동안 이 ${machine()}의 다른 프로그램도 그 크롬을 조종할 수 있는 틈이 생겨요 — 켜고 끈 건 세션을 새로 켜야 적용돼요`, `Shows what a session's browser is doing on its dashboard. While on, other programs on this ${machine()} could also control that Chrome — changes apply to sessions started afterwards`)],
   // 맥만 — Claude Code 내장 화면 조종(computer-use)은 맥에서만 준다
   ...(IS_WIN ? [] : [['computerUse', tr('화면 조종 모든 프로젝트', 'Screen control in all projects'), tr('세션이 이 맥 화면을 보고 클릭·입력할 수 있게(Claude Code computer-use) 모든 프로젝트에서 켜요. 쓸 때마다 앱별로 허락을 묻지만, 켜 두면 세션이 내 화면을 움직일 수 있어요 — 끄면 모든 프로젝트에서 빠져요', 'Lets sessions see and click on this Mac\'s screen (Claude Code computer-use) in every project. It still asks per app, but while on, sessions can move your screen — turning it off removes it from every project')] as [FeatureSwitch, string, string]]),
-  ['autoTidy', tr('세션 자동 정리', 'Tidy sessions automatically'), tr('일이 끝나고 조용한 세션을 참모가 문서 정리 뒤 꺼요 — 대화는 남아 다시 켤 수 있어요', 'Your assistant wraps up and stops sessions whose work is done and gone quiet — conversations are kept, so they can be resumed')],
+  ['autoTidy', tr('세션 자동 정리', 'Tidy sessions automatically'), tr('일이 끝나고 조용한 세션을 참모가 문서 정리 뒤 꺼요 — 대화는 남아 다시 켤 수 있어요. 오래 멈춘 목표도 참모가 확인해요', 'Your assistant wraps up and stops sessions whose work is done and gone quiet — conversations are kept, so they can be resumed. It also checks goals that have stalled')],
   // 익명 사용 신호(Rust usage_ping) — 무엇을 보내고 무엇을 안 보내는지 한 줄(2026-10-24 사용자 '기본 켬 + 끄기 + 알림')
-  ['usagePing', tr('익명 사용 통계', 'Anonymous usage statistics'), tr('하루 한 번 무작위 설치 번호·판·OS·CPU·언어·나라를 보내요 — 폴더·이름·대화는 안 보내요', 'Once a day: a random install ID, version, OS, CPU, language and country — never folders, names or chats')],
+  ['usagePing', tr('익명 사용 통계', 'Anonymous usage statistics'), tr('몇 대가 어떤 기능을 얼마나 쓰는지 개수만 보내요. 대화·파일은 안 보내요', 'Counts only — how many installs use which features. Never chats or files')],
   ['autoRevive', tr('자동으로 다시 켜기', 'Auto-resume'), tr(`${josa(machine(), '이', '가')} 재시작돼 꺼진 세션 중 일이 남은 것을 혼자 이어서 켜요 — 사람이 앞에 없는 ${machine()}용`, `Resumes sessions a restart stopped mid-work, on its own — for unattended ${machine()}s`)],
 ];
 
@@ -647,7 +648,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
             : tr(`시작하기를 누르면 HQ 폴더를 만들어요. 첫 화면에서 '새 ${name} 만들기'를 누르고 말을 걸어 보세요 — 예: "할 일 목록 웹페이지 하나 만들어 줘".`, `Press Get started to create the HQ folder. On the first screen, press 'Create a new ${name}' and talk to it — e.g. "make me a simple to-do list web page".`)}</p>
           <p className="su-hint">{tr(`${name}와 세션은 확인 없이 명령을 실행하는 모드로 돌아요 — 처음 띄울 때 한 번 동의를 물어요.`, `${name} and its sessions run commands without asking — you will be asked to agree once when the first one starts.`)}</p>
           {/* 첫 실행 한 줄 알림 — 이 단계를 지나야(setupDone) 사용 신호가 나간다(usage_ping.rs) */}
-          {draft.features.usagePing && <p className="su-hint">{tr('몇 대가 쓰는지 알려고 하루 한 번 익명 사용 통계(무작위 설치 번호·판·OS·CPU·언어·나라)를 보내요 — 설정 > 기능에서 끌 수 있어요.', 'To count how many people use Chammo, it sends anonymous usage statistics once a day (a random install ID, version, OS, CPU, language, country) — turn it off in Settings > Features.')}</p>}
+          {draft.features.usagePing && <p className="su-hint">{tr('하루 한 번 익명 사용 통계를 보내요 — 몇 대가 어떤 기능을 얼마나 쓰는지 개수만(대화·파일은 안 보내요). 설정 > 기능에서 끌 수 있어요.', 'Once a day Chammo sends anonymous usage statistics — counts only, how many installs use which features (never chats or files). Turn it off in Settings > Features.')}</p>}
           <dl className="su-sum">
             <dt>{tr('참모 이름', 'Assistant')}</dt><dd>{name}</dd>
             <dt>{tr('프로젝트 폴더', 'Projects')}</dt><dd>{draft.devRoot}</dd>
@@ -704,10 +705,10 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
     agent: <>{nameField}{hqField}{devField}{extrasField}{trustBlock}{switches(['autoRevive'])}</>,
     features: <>{axBlock}{screenBlock}{switches(['office', 'tama', 'gacha', 'review', 'autoTidy', 'usagePing'])}{animField}</>,
     voice: <>{notifyBlock}{switches(['voice'])}{ttsField}{talkField}</>,
-    devices: <><MobileSection title={tr('폰', 'Phone')} onAccount={() => setTab('accounts')} /><PeerSection title={tr('다른 기기 참모', 'Chammo on other devices')} /></>,
+    devices: <DevicesSection title={tr('내 기기', 'My devices')} onAccount={() => setTab('accounts')} fallback={<><MobileSection title={tr('폰', 'Phone')} onAccount={() => setTab('accounts')} /><PeerSection title={tr('다른 기기 참모', 'Chammo on other devices')} /></>} />,
     messenger: <><TeamSoundSection title={tr('메신저 알림', 'Messenger alerts')} /><MessengerSection title={tr('텔레그램', 'Telegram')} /></>,
     // Chammo 계정이 맨 위 — 폰 중계·내 기기·메신저가 다 이 계정에 걸린다. Claude 계정 바꿔 끼우기는 맥 키체인이라 윈도우엔 없다
-    accounts: (<><TeamAccountSection title={tr('Chammo 계정', 'Chammo account')} />{!IS_WIN && <AccountsSection title={tr('Claude 계정', 'Claude accounts')} claude={check?.claudePath} fontSize={fontSize} />}</>),
+    accounts: (<><TeamAccountSection title={tr('Chammo 계정', 'Chammo account')} onDevices={() => setTab('devices')} />{!IS_WIN && <AccountsSection title={tr('Claude 계정', 'Claude accounts')} claude={check?.claudePath} fontSize={fontSize} />}</>),
     browser: <>{browserBlock}{switches(['agentView', 'computerUse'])}</>,
     tools: <><div className="cfg-tools-head"><span className="su-hint">{tr(`Chammo 가 쓰는 도구가 이 ${machine()}에 있는지`, `Whether the tools Chammo uses are on this ${machine()}`)}</span>{recheckBtn}</div>{checkBody}</>,
   };

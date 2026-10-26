@@ -142,6 +142,8 @@ button.cv-empty:hover { color: var(--accent); }
 .tz-pct:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .cv-doc-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .cv-doc-body { max-width: 760px; margin: 0 auto; padding: 36px 40px 140px; }
+/* 넓게(기본, 2026-10-24 사용자 — 머리 토글 ui/docWide) — 창 폭을 따라가되 양옆 32px, 아주 넓은 화면에선 1200px 에서 멈춘다(줄이 끝없이 길어지지 않게). 좁게 = 위 760px */
+.cv-doc.doc-wide .cv-doc-body { max-width: 1200px; padding-inline: 32px; }
 .cv-doc-body .space-editor { font-size: 15px; }
 /* 글 파일(.txt) 편집칸 — 내용만큼 자라고(TextEditor), 스크롤은 md 문서처럼 바깥 .cv-doc-scroll 이 맡는다. 빈 아래쪽을 눌러도 칸이 잡히게 최소 높이 */
 .cv-text-area { display: block; width: 100%; box-sizing: border-box; min-height: 60vh; margin: 0; padding: 0; resize: none; overflow: hidden; border: 0; outline: 0; background: transparent; color: var(--text); font: 13.5px/1.7 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
@@ -205,7 +207,7 @@ button.cv-empty:hover { color: var(--accent); }
 .pv-image img { margin: auto; flex: none; box-shadow: 0 4px 20px rgba(0, 0, 0, .15); }
 .pv-image.fit { overflow: hidden; }
 .pv-image.fit img { max-width: 100%; max-height: 100%; object-fit: contain; }
-/* ⌘` 가득 채우기 — 여백·기억한 크기 없이 스페이스 전체 */
+/* ⌘⇧` 가득 채우기 — 여백·기억한 크기 없이 스페이스 전체 */
 .dash-preview.max { padding: 0; }
 .dash-preview.max .box { max-width: none; border-radius: 0; }
 .dash-preview .pv-ic { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--text-2); cursor: pointer; }

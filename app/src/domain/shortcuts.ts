@@ -30,6 +30,8 @@ export type Shortcut =
   | { type: 'readerClose' }
   | { type: 'settings' }
   | { type: 'maximizePane' }
+  /** ⌘`(한글 ⌘₩) — 홈 대시보드 켜기, 홈이면 보던 화면으로. open = 켜기만(다른 창에서 눌러 메인 창을 앞으로 꺼냈을 때) */
+  | { type: 'homeToggle'; open?: boolean }
   | { type: 'tour' }
   /** 하니터(하네스 보기·끄고 켜기) 열고 닫기 — 탑바 버튼·메뉴 */
   | { type: 'harnitor' }
@@ -83,6 +85,8 @@ export function shortcutFor(input: KeyLike, win = IS_WIN): Shortcut | null {
   if (!e.shiftKey && (e.code === 'BracketLeft' || e.code === 'BracketRight' || e.key === '[' || e.key === ']')) {
     return { type: 'nav', dir: e.code === 'BracketRight' || e.key === ']' ? 1 : -1 };
   }
+  // ⌘` = 홈, ⌘⇧` = 창 크게(2026-10-25 사용자) — ⇧ 를 누르면 글자가 ~ 로 바뀌어 와서 키 자리로도 본다
+  if (e.code === 'Backquote' || e.key === '`' || e.key === '₩' || (e.shiftKey && e.key === '~')) return e.shiftKey ? { type: 'maximizePane' } : { type: 'homeToggle' };
   const raw = HANGUL_KEY[e.key] ?? e.key;
   // ⌘⇧W·T·H·L — 글자가 소문자로 와도(한글 ㅗ·ㅣ) ⇧ 가 눌렸으면 대문자 칸, ⇧ 없는 ⌘H·⌘L 은 앱이 안 쓴다(⌘H 는 macOS 숨기기)
   // CapsLock 으로 대문자가 와도 ⇧ 가 없으면 ⇧ 없는 쪽 — 세션 끄기(⌘⇧W)가 CapsLock ⌘W 로 눌리면 안 된다
@@ -124,9 +128,6 @@ export function shortcutFor(input: KeyLike, win = IS_WIN): Shortcut | null {
       return { type: 'toggleReader' }; // 작업 패널 왼쪽 리더 패널
     case 'E':
       return { type: 'readerFull' }; // ⌘⇧E 리더 크게·작게
-    case '`':
-    case '₩':
-      return { type: 'maximizePane' }; // ⌘₩(한글 입력)·⌘` — 보고 있는 창 크게/되돌리기. ⌘Enter 는 채팅 '끊고 보내기'에 내줬다(2026-09-30 사용자)
     case '/':
       return { type: 'tour' }; // 둘러보기 다시 보기
     case ',':
@@ -168,6 +169,8 @@ const MENU: Record<string, Shortcut> = {
   reader_close: { type: 'readerClose' },
   settings: { type: 'settings' },
   pane_max: { type: 'maximizePane' },
+  home_toggle: { type: 'homeToggle' },
+  home_open: { type: 'homeToggle', open: true },
   select_all: { type: 'selectAll' },
   tour: { type: 'tour' },
   harnitor: { type: 'harnitor' },

@@ -9,21 +9,29 @@ import { cardLook } from '../../domain/locker';
 import { crumbsOf, givenBack, homeMark, kidsOf, linkState, readOnlyAt, userFolders, type LkEntry, type LkPlace } from '../../domain/lockerTree';
 import { lockerMenu, moveTargets } from '../../domain/lockerMenu';
 import { defaultView, logDays, type LockerViewMode, type LogItem } from '../../domain/lockerLog';
-import { bandBox, bandHits, batchActs, trashKey, batchMenu, edgeScroll, NO_SEL, pickAll, pickBand, pickClick, pickKeep, pickOne, type PickedLook, type Sel } from '../../domain/lockerSelect';
+import { batchActs, trashKey, batchMenu, type PickedLook } from '../../domain/lockerSelect';
 import type { DotKind } from '../../domain/dot';
 import { IconButton } from '../kit/IconButton';
 import { IconClose, IconDashboard, IconFolder, IconFolderAlias, IconFolderLink, IconFolderMove, IconFolderPlus, IconList, IconMaximize, IconMore, IconPlus, IconTrash } from '../Icons';
 import { SendToOrch, type OrchTo } from './SendToOrch';
+import { SortButton } from '../SortButton';
+import { readSortOf, sortList, type SortState } from '../../domain/sortList';
 import { useQlThumb } from './DashboardView';
 import { usePeek, useTrashUndo, type Ver } from './useLocker';
 import { trashAsk, type TrashAsk, type TrashPlan } from '../../domain/lockerTrash';
 import { dragPath, dragPaths } from './dragPath';
-import { lostRelease } from './dragEnd';
+import { usePick } from './usePick';
 import { folderItems, menuItems } from './lockerMenuItems';
 import { useOrchActions } from '../orchActions';
-import { areaSelectAll } from '../selectAll';
 import './tools.css';
 import './locker.css';
+
+/** 폴더 안 정렬 — 팀 보관함과 같은 단추(SortButton), 고른 건 기억 */
+const LK_SORTS = ['name', 'at', 'size'] as const;
+const LK_SORT_KEY = 'locker.sort.v1';
+const readLkSort = () => readSortOf(() => { try { return localStorage.getItem(LK_SORT_KEY); } catch { return null; } }, LK_SORTS);
+const saveLkSort = (v: SortState) => { try { localStorage.setItem(LK_SORT_KEY, JSON.stringify(v)); } catch { /* 이번 실행만 */ } };
+const lkVals = (e: LkEntry) => ({ name: e.name, at: e.mtime ?? 0, size: e.size ?? 0 });
 
 const when = (t: number) => {
   const d = new Date(t);
@@ -160,11 +168,11 @@ function Row({ path, name, ms, who, what, gone, onOpen, timeOnly, onRename, onMe
   const done = () => { const n = naming?.trim(); if (n && n !== name) onRename?.(n); setNaming(null); };
   const cells = (title: React.ReactNode) => (
     <>
-      <span className="lk-ltime">{ms ? (timeOnly ? hm(ms) : when(ms)) : ''}</span>
       <i className={`lk-tag t-${tag.toLowerCase()}`}>{tag}</i>
       {title}
       <span className="lk-lwho">{who ?? ''}</span>
       <span className="lk-lwhat">{gone ? tr('원본 없음', 'Original missing') : what ?? ''}</span>
+      <span className="lk-ltime">{ms ? (timeOnly ? hm(ms) : when(ms)) : ''}</span>
     </>
   );
   if (naming !== null) {
@@ -351,8 +359,9 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
   const cur = place.kind === 'root' && place.project ? chips.all.find((p) => p.root === place.project) : undefined;
   const items = place.kind !== 'root' ? [] : place.project ? log.filter((it) => it.project === (cur?.name ?? place.project!.split('/').pop())) : log;
   const kids = place.kind === 'dir' ? kidsOf(entries, place.rel) : [];
-  const dirs = kids.filter((e) => e.dir);
-  const files = kids.filter((e) => !e.dir);
+  const [sort, setSort] = useState(readLkSort);
+  const dirs = sortList(kids.filter((e) => e.dir), sort.key === 'size' ? { key: 'name', desc: false } : sort, lkVals);
+  const files = sortList(kids.filter((e) => !e.dir), sort, lkVals);
   const entryAt = (path: string) => (path.startsWith(`${dir}/`) ? entries.find((x) => `${dir}/${x.rel}` === path) : undefined);
   // 여러 개 고르기(2026-10-12 사용자 "골라서 지우려는데 고르는 단추가 없다") — 기록은 바로가기·보내기·휴지통(보관함에 든 것만, 10-22), 폴더 안은 옮기기까지
   const where = place.kind === 'root' ? 'log' : 'dir';
@@ -360,23 +369,13 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
     ? items.map((it) => { const e = entryAt(it.path); return { key: it.path, rel: e?.rel, look: { kind: 'file', inLocker: !!e, gone: !!e?.gone, ro: !!e?.ro } }; })
     : [...dirs, ...files].map((e) => ({ key: abs(e.rel), rel: e.rel, look: { kind: e.dir ? 'folder' : 'file', inLocker: true, linked: !!e.linked, ro: !!e.ro, gone: e.gone } }));
   const order = pickables.map((x) => x.key);
-  const orderKey = order.join('\n');
-  const [sel, setSel] = useState<Sel>(NO_SEL);
   // 휴지통 한 번 더 묻는 중 — Rust 가 센 실제 규모(파일·폴더·안에 든 항목)와 고를 단추
   const [ask, setAsk] = useState<{ a: TrashAsk; p: TrashPlan } | null>(null);
   const undo = useTrashUndo();
   const box = useRef<HTMLDivElement>(null);
-  const [band, setBand] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
-  const endPick = () => { setSel(NO_SEL); setAsk(null); };
-  useEffect(endPick, [vkey]); // 다른 자리로 가면 풀린다
-  useEffect(() => setSel((x) => pickKeep(x, order)), [orderKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  // ⌘A = 전부 — 앱 단축키(ui/selectAll)가 포커스가 보관함 안이면 이리 넘긴다. Esc = 풀기(입력칸 안·보관함 밖 포커스면 안 가로챈다)
-  const allRef = useRef(() => {});
-  allRef.current = () => { if (order.length) { setSel(pickAll(order)); setAsk(null); } };
-  useEffect(() => {
-    const el = box.current;
-    if (el) areaSelectAll.set(el, () => allRef.current());
-  });
+  // 고르기(⌘·⇧클릭·네모·⌘A·풀기)는 팀 보관함과 같은 훅(usePick) — 고른 게 바뀌면 묻던 휴지통 확인은 닫는다
+  const pick = usePick({ box, order, reset: vkey, skip: '[data-pick], button, input, textarea, a, [role=menu], .lk-selbar, .lk-head, .lk-chips, .lk-pop', touch: () => setAsk(null) });
+  const { sel, end: endPick, bandStart, band } = pick;
   // Backspace·Delete·⌘⌫ = 고른 것 휴지통(Finder 처럼, 2026-10-15 사용자) — 보관함 칸 안 포커스일 때만(domain/lockerSelect trashKey). 최신 고른 것은 keyRef 로
   const keyRef = useRef<(e: KeyboardEvent) => void>(() => {});
   keyRef.current = (e) => {
@@ -397,71 +396,11 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
     return () => window.removeEventListener('keydown', key);
   }, []);
   const pickOf = (key: string): Pick => ({
-    picked: sel.keys.includes(key),
-    press: (x) => {
-      const n = pickClick(sel, order, key, { meta: x.metaKey, shift: x.shiftKey });
-      if (!n) { if (sel.keys.length) endPick(); return false; } // 그냥 누름 = 열기(고른 건 풀린다)
-      x.preventDefault(); setSel(n); setAsk(null);
-      box.current?.focus({ preventScroll: true }); // 웹킷은 단추를 눌러도 포커스를 안 옮긴다 — 채팅 입력칸에 남으면 Backspace·Esc 가 보관함에 안 온다
-      return true;
-    },
+    picked: pick.picked(key),
+    press: (x) => pick.press(x, key),
     // 고른 묶음 안의 것을 끌면 묶음째(화면 순서), 밖이면 그 하나
-    drag: sel.keys.length > 1 && sel.keys.includes(key) ? dragPaths(order.filter((k) => sel.keys.includes(k))) : dragPath(key),
+    drag: pick.many(key) ? dragPaths(order.filter((k) => sel.keys.includes(k))) : dragPath(key),
   });
-  // 빈 곳에서 끌기 = 네모 선택(⌘ = 넣고 빼기). 카드·줄·단추 위에서 시작하면 그쪽 끌기·누름. 끝에 닿으면 저절로 스크롤, 안 움직이고 놓으면 = 빈 곳 클릭(풀기)
-  const bandStart = (e: React.PointerEvent) => {
-    const wrap = box.current;
-    if (!wrap || e.button !== 0 || e.ctrlKey || (e.target as HTMLElement).closest('[data-pick], button, input, textarea, a, [role=menu], .lk-selbar, .lk-head, .lk-chips, .lk-pop')) return;
-    if (e.clientX > wrap.getBoundingClientRect().right - (wrap.offsetWidth - wrap.clientWidth)) return; // 스크롤 막대
-    const toggle = e.metaKey;
-    const base = toggle ? sel : NO_SEL;
-    const at = (cx: number, cy: number) => { const r = wrap.getBoundingClientRect(); return { x: cx - r.left + wrap.scrollLeft, y: cy - r.top + wrap.scrollTop }; };
-    const p0 = at(e.clientX, e.clientY);
-    let last = { x: e.clientX, y: e.clientY };
-    let moved = false;
-    let raf = 0;
-    const lost = lostRelease(() => finish());
-    const draw = () => {
-      const p1 = at(last.x, last.y);
-      const b = bandBox(p0.x, p0.y, p1.x, p1.y);
-      setBand({ left: b.left, top: b.top, width: b.right - b.left, height: b.bottom - b.top });
-      const r = wrap.getBoundingClientRect();
-      const items = [...wrap.querySelectorAll<HTMLElement>('[data-pick]')].map((el) => {
-        const q = el.getBoundingClientRect();
-        return { key: el.dataset.pick!, box: { left: q.left - r.left + wrap.scrollLeft, top: q.top - r.top + wrap.scrollTop, right: q.right - r.left + wrap.scrollLeft, bottom: q.bottom - r.top + wrap.scrollTop } };
-      });
-      setSel(pickBand(base, bandHits(b, items), toggle));
-    };
-    const tick = () => {
-      const r = wrap.getBoundingClientRect();
-      const dy = edgeScroll(last.y, r.top, r.bottom);
-      if (dy) { const before = wrap.scrollTop; wrap.scrollTop += dy; if (wrap.scrollTop !== before) draw(); }
-      raf = requestAnimationFrame(tick);
-    };
-    const move = (ev: PointerEvent) => {
-      lost.move(ev.buttons); // 버튼 0 이어도 바로 끝내지 않는다 — 뗀 뒤에 처리된 끌기 사건일 수 있다(dragEnd)
-      last = { x: ev.clientX, y: ev.clientY };
-      if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 4) return;
-      if (!moved) { moved = true; setAsk(null); raf = requestAnimationFrame(tick); }
-      draw();
-    };
-    const finish = () => {
-      lost.stop();
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', finish);
-      window.removeEventListener('pointercancel', finish);
-      window.removeEventListener('blur', finish);
-      cancelAnimationFrame(raf);
-      setBand(null);
-      if (!moved && !toggle) endPick(); // 빈 곳 클릭 = 풀기
-    };
-    e.preventDefault(); // 글자 긁기 대신 네모
-    wrap.focus({ preventScroll: true }); // 막은 누름은 포커스도 안 옮긴다 — 채팅 입력칸에 남으면 ⌘A·Esc 가 보관함에 안 온다
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', finish);
-    window.addEventListener('pointercancel', finish);
-    window.addEventListener('blur', finish);
-  };
   const picked = pickables.filter((x) => sel.keys.includes(x.key));
   const bacts = batchActs(picked.map((x) => x.look), { where, folders: folders.length });
   const pickedPaths = picked.map((x) => x.key);
@@ -499,9 +438,9 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
     move: acts.onMoveMany && { sub: moveManyItems, empty: tr('옮길 폴더가 없어', 'No folder to move to'), label: tr(`${n}개 옮기기`, `Move ${n} to`) },
     trash: acts.onTrashMany && { run: () => askTrash(pickedRels, n - pickedRels.length), label: tr(`${n}개 휴지통으로…`, `Move ${n} to Trash…`) },
   });
-  const many = (key: string) => sel.keys.length > 1 && sel.keys.includes(key);
+  const many = pick.many;
   // 우클릭 — 고른 묶음 밖이면 그 하나만 고른다(고를 수 있는 자리에서만)
-  const pickRight = (key: string) => { if (order.includes(key)) { setSel((x) => pickOne(x, key)); setAsk(null); box.current?.focus({ preventScroll: true }); } };
+  const pickRight = pick.right;
   const has = (k: (typeof bacts)[number]) => bacts.includes(k);
   // 고른 것 동작 줄 — 아래에 붙는다. 익숙한 동작은 아이콘, 휴지통은 되돌리기 어려워 글자 단추로 한 번 더
   const selBar = (n > 0 || ask) && (
@@ -538,8 +477,7 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
       <IconButton label={tr('닫기', 'Close')} onClick={undo.hide}><IconClose /></IconButton>
     </div>
   );
-  // ⇧클릭이 글자를 긁지 않게
-  const noShiftSelect = (x: React.MouseEvent) => { if (x.shiftKey && (x.target as HTMLElement).closest('[data-pick]')) x.preventDefault(); };
+  const noShiftSelect = pick.noShiftSelect;
   const bandEl = band && <div className="lk-band" style={band} aria-hidden="true" />;
   // '옮기기' 다음 목록 — 맨 위(보관함) + 내 폴더(지금 자리·자기 안은 빼고)
   const moveItems = (rel: string) => moveTargets(rel, folders).map((t) => ({ label: t ? t.split('/').join(' › ') : tr('보관함(맨 위)', 'Locker (top)'), run: () => acts.onMove!(rel, t) }));
@@ -664,6 +602,7 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
         {!ro && <IconButton tone="line" label={tr('여기에 새 폴더', 'New folder here')} onClick={() => newFolder(place.rel)}><IconFolderPlus /></IconButton>}
         {connectBtn}
         <span className="lk-sp" />
+        {(files.length > 1 || dirs.length > 1) && <SortButton keys={LK_SORTS} value={sort} onChange={(x) => { setSort(x); saveLkSort(x); }} />}
         {viewSeg}
         {!ro && <AddMenu folder={place.rel} onNewDoc={onNewDoc} onChoose={onChoose} onConnect={onConnect} />}
       </header>

@@ -35,6 +35,11 @@ export function useChatStale(sessionId?: string): boolean {
   return !!sessionId && (stale.get(sessionId) ?? false);
 }
 
+/** 대화 끝 n 줄(한 줄로 편 글·마지막 도구 이름+대상) — 홈 세션 한눈 보기·프로젝트 줄 펼침 */
+export const tailLines = (items: ChatItem[], n: number): string[] =>
+  items.slice(-n).map((it) => (it.kind === 'tools' ? `${it.tools[it.tools.length - 1]!.name} ${it.tools[it.tools.length - 1]!.target}`.trim() : 'text' in it ? it.text : ''))
+    .map((t) => t.replace(/\s+/g, ' ').trim()).filter(Boolean);
+
 export function useChatItems(sessionId?: string, everyMs = 2000, read: Read = readTranscript): ChatItem[] {
   const [items, setItems] = useState<ChatItem[]>(() => (sessionId ? cache.get(sessionId)?.items ?? [] : []));
   const every = useRef(everyMs);

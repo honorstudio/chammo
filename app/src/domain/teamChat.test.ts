@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { convos, dayLabel, PEOPLE_COLORS, personColor, handoffText, lineOf, markRead, previewOf, roomItems, teamMark, teamTarget, unreadTotal, type TeamItem, type TeamMember, type TeamRoom } from './teamChat';
+import { atQuery, convos, dayLabel, fileSize, mentionList, mentionParts, mentionsMe, reactionsOf, roomConvos, sayTarget, PEOPLE_COLORS, personColor, handoffText, lineOf, markRead, previewOf, roomItems, teamMark, teamTarget, unreadTotal, type TeamItem, type TeamMember, type TeamRoom } from './teamChat';
 
 const it0 = (o: Partial<TeamItem>): TeamItem => ({ room: 'r1', seq: 1, member: 'm2', device: 'd2', person: '하린', origin: 'human', body: '안녕', at: 1000, deviceName: '아이맥', kind: 'team', note: 'delivered', ...o });
 const members: TeamMember[] = [
@@ -88,7 +88,7 @@ describe('내 참모에게 넘기기', () => {
   it('붙인 말이 비면 기본 한 줄, 참모 말은 기기까지', () => {
     const t = handoffText(it0({ origin: 'agent' }), '모래알', '  ');
     expect(t.startsWith('이 팀 말 봐 줘')).toBe(true);
-    expect(t).toContain('[팀 참모 · 하린 · 아이맥 · 모래알 · team#1]');
+    expect(t).toContain('[남의 참모 · 하린 · 아이맥 · 모래알 · team#1]');
   });
 });
 
@@ -113,5 +113,95 @@ describe('잡것', () => {
     expect(dayLabel(now - 3600_000, null, now)).toBe('오늘');
     expect(dayLabel(now - 60_000, now - 3600_000, now)).toBeNull();
     expect(dayLabel(now - 86_400_000, null, now)).toBe('어제');
+  });
+  it('종단 암호 표시 — 받지 않은 말은 까닭만, 바뀜·갈림은 경고 + 본문(참모에겐 안 넘김)', () => {
+    expect(lineOf(it0({ note: 'e2e-plain', body: '(암호 없이 온 말)' }), '지우')).toMatchObject({ kind: 'e2e', tone: 'block', body: '' });
+    expect(lineOf(it0({ note: 'e2e-changed', body: '결제해' }), '지우')).toMatchObject({ kind: 'e2e', tone: 'warn', body: '결제해' });
+    expect((lineOf(it0({ note: 'e2e-fork' }), '지우') as { text: string }).text).toContain('하린');
+    expect(previewOf(it0({ note: 'e2e-old' }))).toBe('받지 않은 말');
+  });
+  it('바뀜·갈림 말 본문은 접어 둔다 — 보기를 눌러야(6차 리뷰)', () => {
+    expect(lineOf(it0({ note: 'e2e-changed', body: '결제해' }), '지우')).toMatchObject({ kind: 'e2e', tone: 'warn', body: '결제해', folded: true });
+  });
+});
+
+describe('단톡방 목록(시안 msg-rooms A — 위 방, 아래 사람)', () => {
+  const g: TeamRoom[] = [...rooms, { id: 'g1', kind: 'group', peer: '', with: '디자인', name: '디자인', members: ['m1', 'm2', 'm3'] }, { id: 'g2', kind: 'group', peer: '', with: '조용한 방', name: '조용한 방', members: ['m1', 'm4'] }];
+  it('단톡방만, 최근 말 순 · 안 읽은 수 · 사람 수', () => {
+    const items = [it0({ room: 'g1', seq: 1, at: 5000 }), it0({ room: 'g1', seq: 2, at: 6000, note: 'sent', member: 'm1' })];
+    const rs = roomConvos(g, items, {});
+    expect(rs.map((r) => r.name)).toEqual(['디자인', '조용한 방']);
+    expect(rs[0]).toMatchObject({ kind: 'group', room: 'g1', key: 'room:g1', unread: 1, people: 3 });
+    expect(roomConvos(g, items, { g1: 2 })[0]!.unread).toBe(0);
+  });
+  it('DM 목록엔 단톡방이 안 섞인다', () => {
+    expect(convos(members, g, [], {}).every((c) => c.kind === 'dm')).toBe(true);
+  });
+  it('단톡방 보내기 주소는 room:<id>, DM 은 상대 멤버 id', () => {
+    expect(sayTarget(roomConvos(g, [], {})[0]!)).toBe('room:g1');
+    expect(sayTarget(convos(members, rooms, [], {}).find((c) => c.name === '하린')!)).toBe('m2');
+  });
+});
+
+describe('시안 msg-rooms v2 — 부르기·반응·팀 참모·파일', () => {
+  it('글을 부르기 조각으로 — 아는 이름만, 내 이름은 me', () => {
+    expect(mentionParts('@지수 이거 @민아님 봐 줘 @없는사람', ['지수', '민아'], '지수')).toEqual([
+      { t: 'mention', s: '@지수', me: true }, { t: 'text', s: ' 이거 ' }, { t: 'mention', s: '@민아', me: false }, { t: 'text', s: '님 봐 줘 @없는사람' },
+    ]);
+    expect(mentionsMe('@지수야 봐', '지수')).toBe(true);
+    expect(mentionsMe('@지수a 봐', '지수')).toBe(false);
+    expect(mentionsMe('지수 봐', '지수')).toBe(false);
+  });
+  it('긴 이름이 먼저 — @민아리 와 @민아 가 같이 있으면 @민아리', () => {
+    expect(mentionParts('@민아리 안녕', ['민아', '민아리'], '')[0]).toEqual({ t: 'mention', s: '@민아리', me: false });
+  });
+  it('부르기 목록 — 팀 참모가 맨 위, 사람 → 그 사람 참모 순, 친 글로 거른다, 나는 빼고', () => {
+    const ppl = [{ id: 'm1', name: '지우', me: true }, { id: 'm2', name: '하린', me: false }, { id: 'm3', name: '도윤', me: false }];
+    expect(mentionList('', ppl).map((x) => x.insert)).toEqual(['@팀참모', '@하린', '@도윤', '@하린의참모', '@도윤의참모']);
+    expect(mentionList('하', ppl).map((x) => x.insert)).toEqual(['@하린', '@하린의참모']);
+    expect(mentionList('팀', ppl)[0]!.kind).toBe('helper');
+  });
+  it('입력 중인 @ 조각 찾기 — 커서 앞 마지막 @ 부터 빈칸 전까지', () => {
+    expect(atQuery('안녕 @하', 5)).toEqual({ start: 3, q: '하' });
+    expect(atQuery('안녕 @하 ', 6)).toBeNull();
+    expect(atQuery('mail@x', 6)).toBeNull();
+  });
+  it('반응 접기 — 달기·떼기 차례대로, 사람마다 표식 하나씩, 내 것 표시', () => {
+    const r = (seq: number, member: string, mark: string, on: boolean, person = member) => it0({ seq, member, person, note: member === 'm1' ? 'sent' : 'delivered', body: '', react: { seq: 1, mark, on } });
+    const items = [it0({ seq: 1 }), r(2, 'm2', 'like', true, '하린'), r(3, 'm1', 'like', true, '지우'), r(4, 'm3', 'check', true, '도윤'), r(5, 'm3', 'check', false, '도윤')];
+    expect(reactionsOf(items, 'r1').get(1)).toEqual([{ mark: 'like', who: ['하린', '지우'], mine: true }]);
+    expect(roomItems(items, 'r1').map((x) => x.seq)).toEqual([1]);
+    expect(convos(members, rooms, items, {}).find((c) => c.room === 'r1')!.unread).toBe(1);
+  });
+  it('팀 참모 답은 "팀 참모 · 부른 사람"', () => {
+    const l = lineOf(it0({ origin: 'agent', via: 'helper', person: '민준' }), '지우');
+    expect(l).toMatchObject({ kind: 'agent', helper: true, name: '팀 참모', tag: '민준 부름' });
+  });
+  it('미리보기 — 파일만 보낸 말은 파일 이름', () => {
+    expect(previewOf(it0({ body: '', files: [{ id: 'f', name: '시안.pdf', size: 10 }] }))).toContain('시안.pdf');
+  });
+  it('파일 크기 글', () => {
+    expect([fileSize(900), fileSize(12_300), fileSize(5_300_000)]).toEqual(['900 B', '12 KB', '5.3 MB']);
+  });
+});
+
+import { withMyReacts } from './teamChat';
+// 10-26 사용자 "팀 쪽 지연" — 반응은 서버 왕복(약 2.4초)을 다 기다린 뒤에야 보였다. 누르면 바로 내 반응을 얹는다
+describe('반응 — 누르자마자 내 반응을 얹는다', () => {
+  const base = new Map([[1, [{ mark: 'like', who: ['하린'], mine: false }]]]);
+  it('달기 — 남이 단 반응에 나를 더하고(내 것), 없던 반응은 새로', () => {
+    const v = withMyReacts(base, [{ seq: 1, mark: 'like', on: true }, { seq: 2, mark: 'ok', on: true }], '사용자');
+    expect(v.get(1)).toEqual([{ mark: 'like', who: ['하린', '사용자'], mine: true }]);
+    expect(v.get(2)).toEqual([{ mark: 'ok', who: ['사용자'], mine: true }]);
+    expect(base.get(1)![0]!.who).toEqual(['하린']); // 받은 것은 안 건드린다(실패하면 그대로 되돌아가게)
+  });
+  it('떼기 — 내 것만 빼고, 아무도 안 남으면 그 반응이 사라진다', () => {
+    const mine = new Map([[1, [{ mark: 'like', who: ['하린', '사용자'], mine: true }, { mark: 'ok', who: ['사용자'], mine: true }]]]);
+    const v = withMyReacts(mine, [{ seq: 1, mark: 'like', on: false }, { seq: 1, mark: 'ok', on: false }], '사용자');
+    expect(v.get(1)).toEqual([{ mark: 'like', who: ['하린'], mine: false }]);
+  });
+  it('이미 서버 목록이 그렇게 됐으면 그대로(두 번 안 센다)', () => {
+    const mine = new Map([[1, [{ mark: 'like', who: ['하린', '사용자'], mine: true }]]]);
+    expect(withMyReacts(mine, [{ seq: 1, mark: 'like', on: true }], '사용자').get(1)).toEqual([{ mark: 'like', who: ['하린', '사용자'], mine: true }]);
   });
 });

@@ -162,7 +162,7 @@ impl Drop for LoginTurn {
 pub(crate) fn login_turn(dir: &Path) -> Result<LoginTurn, String> {
     let mut g = BUSY.lock().unwrap_or_else(|e| e.into_inner());
     if g.iter().any(|d| d == dir) {
-        return Err("이미 로그인 중이야 — 브라우저에서 마치거나 10분 뒤에".into());
+        return Err("이 기기에서 로그인을 진행하고 있어요 — 열린 브라우저에서 마치거나, 10분 뒤 다시 해 주세요".into());
     }
     g.push(dir.to_path_buf());
     Ok(LoginTurn(dir.to_path_buf()))
@@ -172,12 +172,26 @@ pub(crate) fn login_busy(dir: &Path) -> bool {
     BUSY.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|d| d == dir)
 }
 
+/// 로그인할 중계 — 사람이 적은 것 → 이 기기 team.json → 로그아웃 전에 쓰던 것(relay::LAST_SERVER_FILE) → 기본(QA 4: '처음부터'·첫 로그인이 기본 중계로 갔다)
+pub(crate) fn login_server(dir: &Path, arg: &str) -> String {
+    if !arg.trim().is_empty() {
+        return arg.trim().to_string();
+    }
+    let st = relay::load_state(dir);
+    if !st.server.trim().is_empty() {
+        return st.server;
+    }
+    let last = std::fs::read_to_string(dir.join(relay::LAST_SERVER_FILE)).unwrap_or_default();
+    relay::server_or_default(last.trim()).to_string()
+}
+
 /// 구글 로그인 — 브라우저를 열고 끝날 때까지 기다린다(최대 wait). 성공하면 계정·내 기기·서버에 있던 내 팀까지 채운 상태
 pub fn login_with(dir: &Path, kc: &dyn Store, http: &dyn Http, opener: &dyn Opener, server: &str, device_name: &str, wait: Duration) -> Result<TeamState, String> {
     let _turn = login_turn(dir)?;
     let st = relay::load_state(dir);
     if st.account.is_some() {
-        return Err("이미 로그인돼 있어 — 다른 계정은 로그아웃 뒤에".into());
+        // 밖(scripts/team login)에서 먼저 로그인한 때도 — 화면은 이 문구를 보면 상태를 다시 읽어 닫는다(QA 7)
+        return Err("이미 이 기기는 로그인돼 있어요 — 화면을 새로 볼게요. 다른 계정으로 바꾸려면 설정에서 로그아웃한 뒤에 해 주세요".into());
     }
     let device_name = device_name_ok(device_name).ok_or("기기 이름은 1~80자")?;
     let (server, k, created, device) = if st.registered() {
@@ -188,11 +202,13 @@ pub fn login_with(dir: &Path, kc: &dyn Store, http: &dyn Http, opener: &dyn Open
         }
         (here, relay::device_keys(kc, &st)?, None, Some(st.device_id.clone()))
     } else {
-        let server = relay::server_ok(relay::server_or_default(server)).ok_or("서버 주소는 https://… 로")?;
+        let server = relay::server_ok(&login_server(dir, server)).ok_or("서버 주소는 https://… 로")?;
         let (k, account) = keys::create(kc)?;
         (server, k, Some(account), None)
     };
-    let done = run(http, opener, &server, &k, device.as_deref(), &device_name, wait);
+    // 종단 암호 받는 열쇠·묶기 서명·봉인(chammo-relay ADR 0007) — nP 는 이 기기 e2e.json 에만
+    let e2e = crate::e2e_flow::login_fields(dir, &k)?;
+    let done = run(http, opener, &server, &k, device.as_deref(), &device_name, &e2e, wait);
     let v = match done {
         Ok(v) => v,
         Err(e) => {
@@ -212,6 +228,7 @@ pub fn login_with(dir: &Path, kc: &dyn Store, http: &dyn Http, opener: &dyn Open
         }
         st.device_name = device_name.clone();
         st.account = Some(Account { id: s("accountId"), email: s("email"), name: s("name") });
+        st.pending = v["status"] == "pending";
     })
     .map_err(|e| format!("{e} — 서버엔 로그인됨(기기 {})", s("deviceId")))?;
     let _ = refresh_me(dir, kc, http);
@@ -219,7 +236,7 @@ pub fn login_with(dir: &Path, kc: &dyn Store, http: &dyn Http, opener: &dyn Open
 }
 
 /// begin → 브라우저 → 루프백 결과 → finish. 돌려주는 값 = finish 응답
-fn run(http: &dyn Http, opener: &dyn Opener, server: &str, k: &DeviceKeys, device: Option<&str>, device_name: &str, wait: Duration) -> Result<Value, String> {
+fn run(http: &dyn Http, opener: &dyn Opener, server: &str, k: &DeviceKeys, device: Option<&str>, device_name: &str, e2e: &Value, wait: Duration) -> Result<Value, String> {
     let l = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("로그인 받을 자리를 못 열었어: {e}"))?;
     let port = l.local_addr().map_err(|e| e.to_string())?.port();
     let return_to = format!("http://127.0.0.1:{port}{RETURN_PATH}");
@@ -236,27 +253,49 @@ fn run(http: &dyn Http, opener: &dyn Opener, server: &str, k: &DeviceKeys, devic
     opener.open(url)?;
     let code = wait_result(&l, login, wait)?;
     drop(l);
-    let (st, v) = relay::call(http, server, k, device, "POST", "/v0/auth/google/finish", Some(&json!({ "loginId": login, "code": code, "deviceName": device_name })))?;
+    let (st, v) = relay::call(http, server, k, device, "POST", "/v0/auth/google/finish", Some(&{
+        let mut b = json!({ "loginId": login, "code": code, "deviceName": device_name, "kind": this_kind() });
+        b.as_object_mut().expect("객체").extend(e2e.as_object().cloned().unwrap_or_default());
+        b
+    }))?;
     match st {
         200 | 201 => Ok(v),
         409 => Err("이 기기는 다른 계정에 묶여 있어 — 로그아웃 뒤 다시".into()),
+        403 if v["error"] == "key_rejected" => Err("이 기기는 다른 기기에서 거절됐어 — 24시간 뒤 다시 로그인할 수 있어".into()),
+        429 => Err("계정에 허용을 기다리는 기기가 5개를 넘었어 — 다른 기기에서 먼저 허용하거나 거절해 줘".into()),
         _ => Err(relay::why(st, &v)),
     }
 }
 
-/// 서버에 있는 내 계정·내 기기·내 팀을 받아 적는다 — 팀이 없는 기기는 서버의 첫 팀을 이어받는다
+/// 서버에 있는 내 계정·내 기기·내 팀(전부)을 받아 적는다
 pub fn refresh_me(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<TeamState, String> {
     let st = relay::load_state(dir);
     if !st.registered() {
         return Err("아직 로그인 전이야".into());
     }
     let k = relay::device_keys(kc, &st)?;
+    // 허용을 기다리는 기기는 /v0/me/self 만 된다 — 허용됐으면 아래로 이어서 다 받는다
+    if st.pending {
+        let (code, me) = relay::call(http, &st.server, &k, Some(&st.device_id), "GET", "/v0/me/self", None)?;
+        if code != 200 {
+            return Err(relay::why(code, &me));
+        }
+        let auto = me["autoAt"].as_u64().unwrap_or(0);
+        let approved = me["status"] == "approved";
+        relay::mutate_if(dir, &st.device_id, |s| {
+            s.pending = !approved;
+            s.pending_auto_at = if approved { 0 } else { auto };
+        })?;
+        if !approved {
+            return Ok(relay::load_state(dir));
+        }
+    }
     let (code, me) = relay::call(http, &st.server, &k, Some(&st.device_id), "GET", "/v0/me", None)?;
     if code != 200 {
         return Err(relay::why(code, &me));
     }
     let (code, devs) = relay::call(http, &st.server, &k, Some(&st.device_id), "GET", "/v0/me/devices", None)?;
-    let devices: Vec<DeviceName> = if code == 200 { serde_json::from_value(devs["devices"].clone()).unwrap_or_default() } else { st.my_devices.clone() };
+    let devices: Vec<DeviceName> = if code == 200 { relay::device_rows(&devs["devices"]) } else { st.my_devices.clone() };
     let created = devs["devices"].as_array().and_then(|a| a.iter().find(|d| d["current"] == true)).and_then(|d| d["createdAt"].as_u64());
     relay::mutate_if(dir, &st.device_id, |s| {
         if let Some(a) = me["account"].as_object() {
@@ -266,14 +305,19 @@ pub fn refresh_me(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<TeamSta
         if let Some(n) = me["device"]["name"].as_str() {
             s.device_name = n.to_string();
         }
-        if !s.joined() {
-            if let Some(t) = me["teams"].as_array().and_then(|a| a.first()) {
-                let g = |k: &str| t[k].as_str().unwrap_or("").to_string();
-                s.team_id = g("teamId");
-                s.team_name = g("name");
-                s.member_id = g("memberId");
-                s.role = g("role");
+        // 서버가 아는 내 팀 전부 — 멤버 목록·표시 이름은 이미 받은 것을 남기고, 서버에 없는 팀(나감·빠짐·지워짐)과 그 방은 지운다
+        if let Some(list) = me["teams"].as_array() {
+            let ids: Vec<String> = list.iter().filter_map(|t| t["teamId"].as_str().map(String::from)).collect();
+            for gone in s.teams.iter().map(|t| t.id.clone()).filter(|id| !ids.contains(id)).collect::<Vec<_>>() {
+                s.drop_team(&gone);
             }
+            for t in list {
+                let g = |k: &str| t[k].as_str().unwrap_or("").to_string();
+                let old = s.teams.iter().find(|x| x.id == g("teamId")).cloned().unwrap_or_default();
+                s.put_team(relay::TeamEntry { id: g("teamId"), name: g("name"), member_id: g("memberId"), role: g("role"), ..old });
+            }
+            let cur = s.team_id.clone();
+            s.select_current(&cur);
         }
         s.my_devices = devices;
         if let Some(t) = created {
@@ -316,11 +360,79 @@ pub fn rename_device(dir: &Path, kc: &dyn Store, http: &dyn Http, id: &str, name
     })
 }
 
+/// 이 컴퓨터 종류 — 서버 기기 칸(kind)
+fn this_kind() -> &'static str {
+    if cfg!(windows) { "win" } else { "mac" }
+}
+
+/// 허용 대기 기기 허용·거절(ADR 0014) — 사람 손 길(결정 대기함의 기기 카드 답)에서만 부른다.
+/// 이미 처리(409, 다른 기기에서 먼저 누름)는 실패가 아니다. 이 기기 자신·허용을 기다리는 기기에선 안 보낸다
+pub fn decide_device(dir: &Path, kc: &dyn Store, http: &dyn Http, id: &str, yes: bool) -> Result<TeamState, String> {
+    device_id_ok(id)?;
+    let st = relay::load_state(dir);
+    if st.device_id == id {
+        return Err("이 기기는 스스로 허용하지 않아".into());
+    }
+    if st.pending {
+        return Err("이 기기도 아직 허용을 기다려 — 허용된 기기에서 눌러".into());
+    }
+    let (_, code, v) = me_call(dir, kc, http, &format!("/v0/me/devices/{id}/{}", if yes { "approve" } else { "reject" }), json!({}))?;
+    match code {
+        200 => {}
+        // 이미 처리됨 — 바란 쪽과 같으면 성공, 다르면 실제 결과를 말한다(서버 409 몸통 status·approvedBy)
+        409 => {
+            let _ = refresh_me(dir, kc, http);
+            return match (yes, v["status"].as_str().unwrap_or(""), v["approvedBy"].as_str().unwrap_or("")) {
+                (true, "approved", _) | (false, "rejected", _) => Ok(relay::load_state(dir)),
+                (false, "approved", "auto") => Err("24시간이 지나 자동으로 허용됐어요 — 끊으려면 기기 관리에서 그 기기를 빼기".into()),
+                (false, "approved", _) => Err("다른 기기에서 이미 허용했어요 — 끊으려면 기기 관리에서 그 기기를 빼기".into()),
+                (true, "rejected", _) => Err("다른 기기에서 이미 거절했어요".into()),
+                _ => Err(relay::why(code, &v)),
+            };
+        }
+        _ => return Err(relay::why(code, &v)),
+    }
+    refresh_me(dir, kc, http)
+}
+
+/// 참모 길(scripts/team devices remove --yes)의 기기 빼기 — 사슬에 든 기기는 사람 카드 몫이라 거절(리뷰 B 중간 7), 사슬 밖 기기만
+pub fn revoke_device_agent(dir: &Path, kc: &dyn Store, http: &dyn Http, id: &str) -> Result<TeamState, String> {
+    device_id_ok(id)?;
+    // R6 — 사슬에 든 기기인지는 서버 목록(inChain)이 아니라 내가 검증한 사슬로(새로 받아). 확인 못 하면 사람 몫
+    let st = relay::load_state(dir);
+    if let Some(acc) = st.account.as_ref().map(|a| a.id.clone()) {
+        use crate::e2e_state::Trust;
+        let pinned = crate::e2e_state::load(dir).pins.contains_key(&acc);
+        match crate::e2e_state::chain_of(dir, kc, http, &st, &acc, true)? {
+            Trust::Ok(c) if c.devices.contains_key(id) => return Err("그 기기는 종단 암호 사슬에 들어 있어 — 사람이 설정 > 기기 관리에서 빼야 해".into()),
+            Trust::Ok(_) => {}
+            Trust::NoChain if !pinned => {}
+            _ => return Err("내 기기 사슬을 확인하지 못했어 — 사람이 설정 > 기기 관리에서 빼야 해".into()),
+        }
+    }
+    // 참모 길은 사슬 고리를 안 쓴다 — 서버 끊기만
+    revoke_inner(dir, kc, http, id, false)
+}
+
 /// 내 다른 기기 끊기(잃은 기기). 이 기기 자신은 logout 으로
 pub fn revoke_device(dir: &Path, kc: &dyn Store, http: &dyn Http, id: &str) -> Result<TeamState, String> {
+    revoke_inner(dir, kc, http, id, true)
+}
+
+/// with_link = 사람 손 길(사슬 remove 고리 먼저, R5). 참모 길은 false(R6)
+fn revoke_inner(dir: &Path, kc: &dyn Store, http: &dyn Http, id: &str, with_link: bool) -> Result<TeamState, String> {
     device_id_ok(id)?;
-    if relay::load_state(dir).device_id == id {
+    let st = relay::load_state(dir);
+    if st.device_id == id {
         return Err("이 기기는 로그아웃으로 끊어".into());
+    }
+    // 허용 대기 기기를 빼는 건 거절이다 — 사람 손 길(카드)만(ADR 0014)
+    if st.my_devices.iter().any(|d| d.id == id && d.pending()) {
+        return Err("허용 대기 기기는 카드에서 허용·거절해 줘".into());
+    }
+    // 사슬에서도 뺀다(남들이 봉투에서 빼게, chammo-relay ADR 0007) — 실패하면 끊기도 멈춘다(끊긴 기기가 사슬에 남지 않게, 리뷰 B 중간 7)
+    if with_link {
+        crate::e2e_flow::remove_link(dir, kc, http, id).map_err(|e| format!("사슬에서 빼지 못해 끊기를 멈췄어: {e}"))?;
     }
     let (st, code, v) = me_call(dir, kc, http, &format!("/v0/me/devices/{id}/revoke"), json!({}))?;
     if code != 200 {
@@ -334,6 +446,9 @@ pub fn revoke_device(dir: &Path, kc: &dyn Store, http: &dyn Http, id: &str) -> R
 pub fn logout(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<(), String> {
     let id = relay::load_state(dir).device_id;
     device_id_ok(&id)?;
+    if let Err(e) = crate::e2e_flow::remove_link(dir, kc, http, &id) {
+        eprintln!("[기기] 사슬 빼기 고리 실패: {e}");
+    }
     let (st, code, v) = me_call(dir, kc, http, &format!("/v0/me/devices/{id}/revoke"), json!({}))?;
     match code {
         200 | 404 => {}

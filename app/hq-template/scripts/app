@@ -11,6 +11,9 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
   scripts/app status                                   current settings as JSON (language, name, folders,
                                                        features, voice mode, browser automation)
   scripts/app voice on|off                             voice mode (the speaker button)
+  scripts/app voice read <assistant>                   in voice mode only the assistant the user talks to is read aloud — other
+                                                       assistants' replies wait ("New reply from X"). Read X's waiting replies now
+                                                       (the user says "read X's"); the app reads them, keep your own say short
   scripts/app feature office|tama|gacha|review|voice|autoRevive|autoTidy|computerUse|usagePing on|off
                                                        turn a feature on/off (same as Settings > Features)
   scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home|harnitor|tools
@@ -56,7 +59,13 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
                                                        folder stays unless --trash-source (macOS Trash, never deleted) — ask the
                                                        user first. A mode inside the data folder needs --trash-source
   scripts/app mode restore-builtin [<name>]            show hidden built-in modes again (all of them without a name)
-  scripts/app phone pair [--url]                       make a phone pairing QR (what Settings > Devices > Phone > "Make connect QR" shows) without a click:
+  scripts/app phone add                                show "add a phone" — a QR of the phone entry address only (no code, no secret;
+                                                       what Settings > Devices > "Add phone" shows). Writes a QR page and prints its
+                                                       path — put it on screen with scripts/show <that path>. The phone opens it in Safari,
+                                                       adds it to the Home Screen, signs in with Google in the home-screen app, picks this
+                                                       computer and checks the number. Use this to add a phone. Exit 1 = Chammo is closed
+  scripts/app phone pair [--url]                       Tailscale fallback only — on iPhone a pairing QR opens in Safari and is NOT kept in
+                                                       the home-screen app; use phone add. Makes a phone pairing QR (what Settings > Devices > Phone > "Make connect QR" shows) without a click:
                                                        writes a QR page and prints its path — put it on screen with scripts/show <that path>.
                                                        The code lives 10 minutes and works once; the address (it holds the code) is printed only
                                                        with --url. The phone gets its key only after the user presses Allow on the
@@ -281,6 +290,9 @@ def parse(argv):
         return ('status', '')
     if a == 'voice' and len(rest) == 1 and rest[0] in ONOFF:
         return ('voice', rest[0])
+    # 쌓아 둔 다른 참모 답 읽기 — 음성은 말 건 참모만 읽는다(2026-10-25). 이름에 띄어쓰기가 있어도 된다("개발 담당")
+    if a == 'voice' and len(rest) >= 2 and rest[0] == 'read' and ' '.join(rest[1:]).strip():
+        return ('voice-read', ' '.join(rest[1:]).strip())
     if a == 'feature' and len(rest) == 2 and rest[0] in FEATURES and rest[1] in ONOFF:
         return ('feature', f'{rest[0]} {rest[1]}')
     if a == 'open' and len(rest) == 1 and rest[0] in OPEN:
@@ -303,6 +315,8 @@ def warning(st, action, arg):
     need = {('open', 'office'): 'office', ('open', 'review'): 'review', ('pet', 'show'): 'tama'}.get((action, arg))
     if need and not st['features'][need]:
         return f'{need} is turned off in Settings — the app will ignore this. Run: scripts/app feature {need} on'
+    if action == 'voice-read' and not st['voiceMode']:
+        return 'voice mode is off — nothing is read / 음성 모드가 꺼져 있어 — 읽을 게 없어'
     if (action, arg) == ('voice', 'on') and not st['features']['voice']:
         return 'the voice feature was off — the app turns it on too'
     return None
@@ -310,6 +324,7 @@ def warning(st, action, arg):
 
 DONE = {
     'voice': 'voice mode {arg}',
+    'voice-read': "reading {arg}'s waiting replies — the app reads them, keep your own scripts/say to a few words / {arg} 쌓인 답을 앱이 읽어 — 네 scripts/say 는 짧게",
     'feature': 'feature {arg}',
     'open': 'opening {arg}',
     'close': 'closing {arg}',
@@ -352,6 +367,32 @@ def ask_app(data, action, arg, out_name, wait):
 def harness(data, project, wait):
     """앱에 하네스 글을 부탁한다 — 엔진은 앱 안(하니터)에만 있다"""
     return ask_app(data, 'harness', project, 'harness.txt', wait)
+
+
+def phone_add(data, wait):
+    """폰 추가 — 입구 주소만 든 QR 페이지(비밀 없음, 10-24). 폰은 홈 화면 앱에서 계정 로그인으로 붙는다 → (종료 코드, 글)"""
+    code, body = ask_app(data, 'phone', {'verb': 'add'}, 'phone.txt', wait)
+    if code:
+        return code, body
+    try:
+        r = json.loads(body)
+    except ValueError:
+        return 1, body
+    if not r.get('ok') or not r.get('url'):
+        return 1, str(r.get('error') or 'no address')
+    base = os.path.join(os.environ.get('CLAUDE_JOB_DIR') or data, 'tmp' if os.environ.get('CLAUDE_JOB_DIR') else 'pair')
+    os.makedirs(base, exist_ok=True)
+    page = os.path.join(base, f'phone-add-{uuid_hex()}.html')
+    steps = '사파리(안드로이드는 크롬)에서 홈 화면에 추가 → 홈 화면의 참모 앱을 열고 구글 로그인 → 이 컴퓨터 고르기 → 양쪽 숫자 확인'
+    html = ('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>Add phone</title><body style="margin:0;display:grid;place-items:center;min-height:100vh;font:16px system-ui;background:#fff;color:#111">'
+            f'<main style="text-align:center;padding:24px"><div style="width:260px;margin:0 auto">{r.get("qrSvg") or ""}</div>'
+            f'<p style="font-weight:600">폰 카메라로 찍어 주세요</p><p style="max-width:420px;color:#555">{html_escape(steps)}</p>'
+            f'<p style="font-size:12px;color:#888">{html_escape(r["url"])}</p></main>')
+    with open(page, 'w', encoding='utf-8') as f:
+        f.write(html)
+    return 0, '\n'.join([f'QR page / QR 페이지: {page}', f'put it on screen / 화면에 띄우기: scripts/show {page}',
+                          'no secret in it — the phone signs in with Google in the home-screen app, then picks this computer / 비밀 없음 — 폰은 홈 화면 앱에서 구글 로그인 뒤 이 컴퓨터를 고른다'])
 
 
 def phone_pair(data, show_url, wait):
@@ -529,13 +570,13 @@ def main(argv):
         return 0
     if argv[:1] == ['phone']:
         rest = argv[1:]
-        if rest not in (['pair'], ['pair', '--url']):
+        if rest not in (['add'], ['pair'], ['pair', '--url']):
             print(__doc__, file=sys.stderr); return 2
         try:
             wait = float(os.environ.get('CHAMMO_APP_WAIT', '') or 20)
         except ValueError:
             wait = 20
-        code, msg = phone_pair(data_dir(), len(rest) == 2, wait)
+        code, msg = phone_add(data_dir(), wait) if rest == ['add'] else phone_pair(data_dir(), len(rest) == 2, wait)
         print(msg, file=sys.stdout if code == 0 else sys.stderr)
         return code
     if argv[:1] == ['harness']:

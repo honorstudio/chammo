@@ -8,6 +8,7 @@ import { docUrl, IS_WIN, isDocUrl, dropIndex, inStrip, kindOf, titleOf, type Doc
 import { FIT, IMAGE_STEPS, parseZoom, stepZoom, withZoom, zoomable, zoomLabel, zoomOf, type ZoomMap } from '../../domain/readerZoom';
 import { IconCheck, IconClose, IconNote, IconOpen, IconPencil, IconRefresh, IconZoomIn, IconZoomOut } from '../Icons';
 import { IconButton } from '../kit/IconButton';
+import { DocWidthButton, useDocWide } from '../docWide';
 import { selectAllHere } from '../selectAll';
 import { assistant, tr } from '../../i18n';
 import { getAppEnv, projectScan } from '../../data/tauri';
@@ -88,6 +89,7 @@ export function MdDoc({ path, md, zoom = 100 }: { path: string; md: string; zoom
   const withImgs = html.replace(/(<img\b[^>]*\bsrc=")([^"]+)"/gi, (_m, pre: string, src: string) => `${pre}${docFileUrl(src, dir)}"`);
   // ⌘ 를 누르고 있는 동안 경로(코드 글자)에 밑줄·손가락 — 누를 수 있다는 표시(터미널과 같게, 사용자 2026-09-28)
   const [cmd, setCmd] = useState(false);
+  const wide = useDocWide();
   useEffect(() => {
     const key = (e: KeyboardEvent) => setCmd(modKey(e, IS_WIN));
     const off = () => setCmd(false);
@@ -96,7 +98,7 @@ export function MdDoc({ path, md, zoom = 100 }: { path: string; md: string; zoom
     window.addEventListener('blur', off);
     return () => { window.removeEventListener('keydown', key); window.removeEventListener('keyup', key); window.removeEventListener('blur', off); };
   }, []);
-  return <div className={`rd-md ${cmd ? 'cmd' : ''}`} onMouseMove={(e) => { if (modKey(e, IS_WIN) !== cmd) setCmd(modKey(e, IS_WIN)); }} onClick={(e) => onDocClick(e, path)}><main style={zoom === 100 ? undefined : { zoom: zoom / 100 }} dangerouslySetInnerHTML={{ __html: withImgs }} /></div>;
+  return <div className={`rd-md ${wide ? 'doc-wide' : ''} ${cmd ? 'cmd' : ''}`} onMouseMove={(e) => { if (modKey(e, IS_WIN) !== cmd) setCmd(modKey(e, IS_WIN)); }} onClick={(e) => onDocClick(e, path)}><main style={zoom === 100 ? undefined : { zoom: zoom / 100 }} dangerouslySetInnerHTML={{ __html: withImgs }} /></div>;
 }
 
 /**
@@ -365,6 +367,8 @@ export function ReaderView({ surface, actions, send, sendTo }: { surface: string
               <button onClick={() => zoomBy.current(1)} title={tr('확대 (⌘+)', 'Zoom in (⌘+)')} aria-label={tr('확대', 'Zoom in')}><IconZoomIn /></button>
             </div>
           )}
+          {/* 넓게/좁게는 보기(MdDoc)에만 — 고치기(편집기)는 원래 폭 제한이 없다 */}
+          {kind === 'md' && !editing[s.active] && <DocWidthButton />}
           {kind === 'md' && s.active && (
             <button className={editing[s.active] ? 'on' : ''} onClick={() => { const p = s.active!; setEditing((e) => ({ ...e, [p]: !e[p] })); if (editing[p]) setNonce((n) => n + 1); }}
               aria-label={editing[s.active] ? tr('다 고침', 'Done') : tr('고치기', 'Edit')} aria-pressed={!!editing[s.active]}

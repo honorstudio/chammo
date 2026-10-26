@@ -900,6 +900,8 @@ button.ld-row:hover { background: var(--panel); }
 .od-menu button.danger { color: #d23f3f; }
 /* 다음 목록이 있는 줄(폴더 고르기·이전 판) — 오른쪽 작은 꺾쇠 */
 .od-menu button.more { display: flex; align-items: center; gap: 12px; }
+.od-menu button.on { display: flex; align-items: center; gap: 12px; font-weight: 600; }
+.od-menu button.on::after { content: ''; margin-left: auto; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .od-menu button.more::after { content: ''; margin-left: auto; width: 5px; height: 5px; border: solid var(--text-3); border-width: 1.5px 1.5px 0 0; transform: rotate(45deg); }
 .od-sep { flex: none; height: 1px; margin: 4px 8px; background: var(--line); }
 .od-menu-note { padding: 7px 12px; font-size: 12.5px; color: var(--text-3); }
@@ -945,6 +947,7 @@ button.ld-row:hover { background: var(--panel); }
 .login-card { background: var(--warn-bg); border: 1px solid var(--warn-ink); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .login-card-top { display: flex; align-items: center; gap: 8px; min-height: 32px; }
 .login-card-top b { flex: 1; min-width: 0; font-size: 13px; color: var(--text); }
+.browser-card-why { font-size: 12px; color: var(--text); overflow-wrap: anywhere; }
 .login-card-btn { height: 30px; padding: 0 12px; font-size: 12.5px; }
 .login-card-where { font-size: 12px; color: var(--warn-ink); overflow-wrap: anywhere; }
 .login-card-term { height: 240px; display: flex; margin-top: 4px; }

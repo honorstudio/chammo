@@ -61,7 +61,7 @@ describe('탭 확대 — SpaceView', () => {
   it('머리 단추는 지금 가운데에 떠 있는 탭에만, 세 페이지(md·엑셀·그 밖)가 배율을 받는다', () => {
     expect(view).toMatch(/const zoomUi = \(path: string\) => \(path === zoomPath && canZoom \? <TabZoomBar/);
     expect((view.match(/zoom=\{zoomOf\(path\)\}/g) ?? []).length).toBe(3);
-    expect(view).toMatch(/zoomUi=\{zoomUi\(path\)\}/);
+    expect(view).toMatch(/zoomUi=\{(<>\{)?zoomUi\(path\)\}/); // 팀 파일이면 뒤에 내려받기 단추(teamDl)가 붙는다
   });
 });
 

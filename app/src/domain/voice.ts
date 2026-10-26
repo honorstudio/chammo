@@ -97,3 +97,59 @@ export function freshReplies(seen: ReplySeen | null, list: Watch[]): { fresh: { 
 export function fromOrchTurn(reply: Line): boolean {
   return !!reply.woke?.length && reply.woke.every(orchestratorLike);
 }
+
+/**
+ * 지금 사용자가 말 건 참모 — 사람이 마지막으로 직접 말한(human) 참모와 앞에 띄운 채팅 탭. 음성은 이 참모들 답만 소리로 읽는다.
+ * 모든 참모 답을 다 읽어서 회사 비서에게 말했는데 하위 세션 회신으로 깬 개발 담당도 같이 읽었다(2026-10-25 사용자)
+ */
+export function talkedTo(list: { id: string; human?: Line }[], front?: string | null): Set<string> {
+  const out = new Set<string>();
+  const last = list.filter((x) => x.human?.ts).sort((a, b) => (a.human!.ts < b.human!.ts ? -1 : 1)).pop();
+  if (last) out.add(last.id);
+  if (front && list.some((x) => x.id === front)) out.add(front);
+  return out;
+}
+
+/** 소리로 안 읽고 쌓아 둔 다른 참모 답 — 참모 id → 읽을 글들·물어보는 답이 있나 */
+export type VoiceHeld = Record<string, { texts: string[]; asks: boolean; ts: string }>;
+
+const without = (held: VoiceHeld, id: string): VoiceHeld => {
+  const next = { ...held };
+  delete next[id];
+  return next;
+};
+
+/** 쌓을 때 한 줄 — "개발 담당한테 새 답 있어." 질문이면 "물어볼 게 있대"를 붙인다 */
+export const heldNote = (name: string, asks: boolean) =>
+  asks ? tr(`${name}한테 새 답 있어, 물어볼 게 있대.`, `New reply from ${name} — they have a question for you.`) : tr(`${name}한테 새 답 있어.`, `New reply from ${name}.`);
+
+/**
+ * 새 답 하나 — 말 건 참모면 그대로 읽고(speak), 아니면 쌓고 알림 한 줄(note). 같은 참모가 이미 쌓여 있으면
+ * 한 줄을 되풀이하지 않는다(질문이 새로 생길 때만 다시). 말 건 참모의 옛 쌓인 답은 새 답이 덮는다
+ */
+export function routeReply(held: VoiceHeld, r: { id: string; name: string; text: string; asks: boolean; ts: string }, speakers: Set<string>): { speak?: string; note?: string; held: VoiceHeld } {
+  const text = r.text.trim();
+  if (!text) return { held };
+  if (speakers.has(r.id)) {
+    return { speak: text, held: without(held, r.id) };
+  }
+  const prev = held[r.id];
+  const asks = !!prev?.asks || r.asks;
+  const next = { ...held, [r.id]: { texts: [...(prev?.texts ?? []), text], asks, ts: r.ts } };
+  return { ...(!prev || (r.asks && !prev.asks) ? { note: heldNote(r.name, asks) } : {}), held: next };
+}
+
+/** 쌓인 답 꺼내 읽기 — 그 참모 탭을 열거나 "○○ 거 읽어 줘"(scripts/app voice read). 몰려 있으면 마지막 세 개(pickSay 와 같은 이유) */
+export function takeHeld(held: VoiceHeld, id: string): { text?: string; held: VoiceHeld } {
+  const h = held[id];
+  if (!h) return { held };
+  return { text: h.texts.slice(-3).join(' '), held: without(held, id) };
+}
+
+/** scripts/app voice read <참모> 의 참모 — 화면 별명·SendMessage 이름(참모-5 · 개발 담당)·앞 번호 이름·id 앞자리 */
+export function heldTarget(target: string, orchs: { id: string; name: string; display: string }[]): string | undefined {
+  const t = target.trim().toLowerCase();
+  if (!t) return undefined;
+  const base = (n: string) => n.split(' · ')[0]!.trim().toLowerCase();
+  return (orchs.find((o) => o.display.toLowerCase() === t || o.name.toLowerCase() === t || base(o.name) === t) ?? orchs.find((o) => o.id.startsWith(t)))?.id;
+}

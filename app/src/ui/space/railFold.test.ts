@@ -19,7 +19,7 @@ describe('띠 RA — 맨 위 홈', () => {
     expect(rail).toMatch(/className=\{`lk-av rail-home \$\{home\.on \? 'on' : ''\}`\}[\s\S]*?aria-label=\{tr\('홈', 'Home'\)\}[\s\S]*?<IconHome \/>/);
   });
   it('스페이스가 홈 칸에 오케스트레이터 홈(oh:)을 잇는다', () => {
-    expect(view).toMatch(/home=\{\{ on: atHomePick, onOpen: \(\) => setPick\(HOME, 'home'\) \}\}/);
+    expect(view).toContain("home={{ on: atHomePick && !teamOn, onOpen: () => { team?.onLeave(); setPick(HOME, 'home'); } }}"); // 팀 모드에서 홈을 누르면 팀 모드를 끝내고
   });
 });
 
@@ -57,8 +57,8 @@ describe('띠 RA — 도구는 더보기 하나', () => {
 
 describe('띠 RA — + 하나', () => {
   it('팀 칸의 + 는 띠 + 메뉴 안으로(팀 칸엔 + 없음)', () => {
-    expect(teamRail).toMatch(/\{!noAdd && <button className="tmx-rail-add"/);
-    expect(teamMode).toMatch(/noAdd/);
+    expect(teamRail).not.toContain('tmx-rail-add'); // 팀 칸은 팀 표 하나(시안 team-space A)
+    expect(teamMode).toContain("label: team ? tr('팀 초대', 'Invite to team') : tr('팀 만들기', 'Make a team')");
   });
   it('+ 를 누르면 참모 하나 더 · 팀 만들기(팀이 있으면 팀 초대)', () => {
     const pop = rail.slice(rail.indexOf("pop?.kind === 'new'"));

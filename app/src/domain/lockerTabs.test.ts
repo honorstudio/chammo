@@ -4,7 +4,7 @@ import { closeTab, leaveFolder, openReview, openTab, pathLine, reclickPick, revi
 // 보관함 탭 줄(2026-10-11 사용자) — 맨 왼쪽 폴더 탭(=보관함)은 늘 고정, 파일은 종류 상관없이 탭으로
 describe('openTab — 보관함에서 파일을 열면 탭', () => {
   it('처음 열면 탭 하나, 돌아갈 곳 = 지금 보관함 자리', () => {
-    expect(openTab(null, 'a', 'l:a#d:10월', '/L/x.md')).toEqual({ orch: 'a', back: 'l:a#d:10월', tabs: ['/L/x.md'] });
+    expect(openTab(null, 'a', 'l:a#d:10월', '/L/x.md')).toEqual({ orch: 'a', back: 'l:a#d:10월', tabs: ['/L/x.md'], from: { '/L/x.md': 'l:a#d:10월' } });
   });
   it('그림·영상·html·pdf 도 같은 탭 줄에 쌓인다', () => {
     let h = openTab(null, 'a', 'l:a', '/L/x.md');
@@ -18,7 +18,7 @@ describe('openTab — 보관함에서 파일을 열면 탭', () => {
   });
   it('다른 참모 보관함에서 열면 그 참모 탭 줄로 새로', () => {
     const h = openTab(null, 'a', 'l:a', '/L/x.md');
-    expect(openTab(h, 'b', 'l:b', '/M/q.png')).toEqual({ orch: 'b', back: 'l:b', tabs: ['/M/q.png'] });
+    expect(openTab(h, 'b', 'l:b', '/M/q.png')).toEqual({ orch: 'b', back: 'l:b', tabs: ['/M/q.png'], from: { '/M/q.png': 'l:b' } });
   });
   it('8개 넘으면 오래된 것부터 닫힌다', () => {
     let h = openTab(null, 'a', 'l:a', '/L/0.md');
@@ -130,7 +130,7 @@ describe('tabRow — 홈(l:<참모>#h)에선 켜진 탭이 없다(홈·모드 v1
 describe('세션 탭(s:<id>)', () => {
   it('세션을 크게 열면 탭 줄 끝에 s:<id>, 돌아갈 보관함 자리는 그대로', () => {
     const h = openTab(null, 'a', 'l:a#d:자료', '/L/x.md');
-    expect(openTab(h, 'a', 'd:/L/x.md', 's:ses1')).toEqual({ orch: 'a', back: 'l:a#d:자료', tabs: ['/L/x.md', 's:ses1'] });
+    expect(openTab(h, 'a', 'd:/L/x.md', 's:ses1')).toEqual({ orch: 'a', back: 'l:a#d:자료', tabs: ['/L/x.md', 's:ses1'], from: { '/L/x.md': 'l:a#d:자료', 's:ses1': 'd:/L/x.md' } });
   });
   it('세션 화면이면 그 탭이 켜짐', () => {
     const h = { orch: 'a', back: 'l:a', tabs: ['/L/x.md', 's:ses1'] };
@@ -158,7 +158,7 @@ describe('시안 검토 탭(c:<경로>)', () => {
   it('띄운 시안은 탭 줄 끝에 검토 탭', () => {
     const h = openTab(null, 'a', 'l:a', '/L/x.md');
     expect(openReview(h, 'a', 'd:/L/x.md', '/L/v1.html').tabs).toEqual(['/L/x.md', 'c:/L/v1.html']);
-    expect(openReview(null, 'a', 'l:a#h', '/L/v1.html')).toEqual({ orch: 'a', back: 'l:a', tabs: ['c:/L/v1.html'] });
+    expect(openReview(null, 'a', 'l:a#h', '/L/v1.html')).toEqual({ orch: 'a', back: 'l:a', tabs: ['c:/L/v1.html'], from: { 'c:/L/v1.html': 'l:a#h' } });
   });
   it('같은 시안의 html 탭은 그 자리에서 검토 탭으로 바뀐다(둘이 나란히 남지 않는다)', () => {
     const h = { orch: 'a', back: 'l:a', tabs: ['/L/x.md', '/L/v1.html', '/L/y.png'] };
@@ -212,5 +212,43 @@ describe('reclickPick — 지금 참모를 또 누르면', () => {
   it('탭 줄에 없는 화면(닫힌 문서·기능 화면)은 예전처럼 홈으로', () => {
     expect(reclickPick(h, 'a', 'd:/L/gone.md', 'l:a#h')).toBe('l:a#h');
     expect(reclickPick(null, 'a', 't:/H/dev', 'l:a#h')).toBe('l:a#h');
+  });
+});
+
+// 닫으면 연 곳으로(10-26 사용자) — 팀 보관함 탭(tm:)에서 연 파일을 닫으면 참모 보관함이 아니라 팀 보관함으로
+describe('closeTab — 연 곳으로 돌아간다', () => {
+  it('팀 보관함 탭에서 연 파일을 닫으면 팀 보관함으로(폴더 탭이 갈 곳은 그대로 보관함)', () => {
+    const h = openTab(null, 'a', 'tm:', '/D/peek/t1/견적.pdf');
+    expect(h.back).toBe('l:a');
+    expect(tabRow(h, 'a', 'd:/D/peek/t1/견적.pdf').folderTo).toBe('l:a');
+    expect(closeTab(h, '/D/peek/t1/견적.pdf', 'd:/D/peek/t1/견적.pdf').pick).toBe('tm:');
+  });
+  it('다른 탭이 남아 있어도 연 곳으로', () => {
+    let h = openTab(null, 'a', 'l:a', '/L/x.md');
+    h = openTab(h, 'a', 'tm:', '/D/y.png');
+    expect(closeTab(h, '/D/y.png', 'd:/D/y.png').pick).toBe('tm:');
+    expect(closeTab(h, '/L/x.md', 'd:/L/x.md').pick).toBe('l:a');
+  });
+  it('연 곳이 닫힌 탭이면 예전처럼 마지막 탭(다 닫으면 폴더)', () => {
+    let h = openTab(null, 'a', 'l:a', '/L/x.md');
+    h = openTab(h, 'a', 'd:/L/x.md', '/L/y.md');
+    h = openTab(h, 'a', 'l:a', '/L/z.md');
+    expect(closeTab(h, '/L/y.md', 'd:/L/y.md').pick).toBe('d:/L/x.md'); // 연 탭이 아직 있다
+    const g = closeTab(h, '/L/x.md', 'd:/L/z.md').hold;
+    expect(closeTab(g, '/L/y.md', 'd:/L/y.md').pick).toBe('d:/L/z.md');
+  });
+  it('이미 열린 파일을 다른 곳에서 또 열면 연 곳이 바뀐다 · 닫으면 그 탭 몫은 지운다', () => {
+    let h = openTab(null, 'a', 'l:a', '/D/y.png');
+    h = openTab(h, 'a', 'tm:', '/D/y.png');
+    expect(h.from).toEqual({ '/D/y.png': 'tm:' });
+    expect(openTab(h, 'a', 'd:/D/y.png', '/D/y.png').from).toEqual({ '/D/y.png': 'tm:' }); // 제 탭에서 다시 눌러도 그대로
+    expect(closeTab(h, '/D/y.png', 'l:a').hold.from).toEqual({});
+  });
+  it('연 곳을 모르면(다른 참모 화면에서 옮겨 옴) 적지 않는다', () => {
+    expect(openTab(null, 'a', '', 'k:photocraft').from).toEqual({});
+  });
+  it('검토 탭으로 바뀌어도 연 곳은 따라간다', () => {
+    const h = openReview(openTab(null, 'a', 'tm:', '/D/s.html'), 'a', 'd:/D/s.html', '/D/s.html');
+    expect(closeTab(h, 'c:/D/s.html', 'c:/D/s.html').pick).toBe('tm:');
   });
 });

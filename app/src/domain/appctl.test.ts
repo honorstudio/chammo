@@ -7,6 +7,9 @@ describe('intentOf — scripts/app 한 줄 → 앱이 할 일', () => {
   it('음성 켜기·끄기', () => {
     expect(intentOf({ action: 'voice', arg: 'on' })).toEqual({ kind: 'voice', on: true });
     expect(intentOf({ action: 'voice', arg: 'off' })).toEqual({ kind: 'voice', on: false });
+    // 쌓아 둔 다른 참모 답 읽기("개발 담당 거 읽어 줘", 2026-10-25)
+    expect(intentOf({ action: 'voice-read', arg: '개발 담당' })).toEqual({ kind: 'voiceRead', target: '개발 담당' });
+    expect(intentOf({ action: 'voice-read', arg: '  ' })).toBeNull();
   });
 
   it('기능 켜기·끄기 — "이름 on|off"', () => {

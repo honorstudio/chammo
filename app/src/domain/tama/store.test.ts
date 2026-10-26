@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { hatch } from './pet';
-import { addWork, archive, EMPTY_FILE, fuse, parseTamaFile, pickEgg, restart, retrieve, step, workMinutes } from './store';
+import { addWork, archive, EMPTY_FILE, fuse, parseTamaFile, pickEgg, restart, retrieve, step, workEvents, workMinutes } from './store';
 
 const at = (d: number, h: number, m = 0) => new Date(2026, 8, d, h, m).getTime();
 
@@ -19,6 +19,15 @@ describe('addWork — 세션이 일한 시간을 10분 칸으로 모은다 (파�
   it('30일 지난 칸은 버린다', () => {
     const f = addWork({ ...EMPTY_FILE, work: [{ t: at(1, 10), minutes: 5 }] }, at(28 + 5, 10), 1);
     expect(f.work).toHaveLength(1);
+  });
+});
+
+describe('workEvents — 일한 시간 칸 → 사건(코인)', () => {
+  it('칸 끝 시각에 찍고, now 를 주면 닫힌 칸만 — 채워지는 칸을 먼저 세면 뒤에 더한 분이 사라진다', () => {
+    const f = { ...EMPTY_FILE, work: [{ t: at(28, 10), minutes: 8 }, { t: at(28, 10, 10), minutes: 3 }] };
+    expect(workEvents(f, at(28, 10, 15))).toEqual([{ t: at(28, 10, 10), type: 'work', minutes: 8 }]);
+    expect(workEvents(f, at(28, 10, 20))).toHaveLength(2);
+    expect(workEvents(f)).toHaveLength(2);
   });
 });
 

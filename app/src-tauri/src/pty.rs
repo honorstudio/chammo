@@ -326,7 +326,8 @@ pub fn pty_open(
     let (master, writer, child) = spawn_pty(&command, cwd, cols, rows, move |b| {
         feed_view(&probe, &mut counter, b);
         on_data.send(InvokeResponseBody::Raw(b.to_vec())).is_ok()
-    })?;
+    })
+    .inspect_err(|_| crate::usage_counts::record_crash("pty"))?; // 익명 사용 통계 — 종류 이름만
     let id = state.next.fetch_add(1, Ordering::SeqCst) + 1;
     let writer: SharedWriter = Arc::new(Mutex::new(writer));
     if let Some(session) = session_of(&command) {

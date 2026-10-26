@@ -145,14 +145,19 @@ pub fn harness_request(line: &str) -> Option<(String, Option<String>)> {
     Some((id.to_string(), p))
 }
 
-/// 폰 연결 QR 요청(scripts/app phone pair) → id. 이 길은 코드 만들기뿐 — 모바일이 꺼져 있으면 답이 {ok:false}
-pub fn phone_request(line: &str) -> Option<String> {
+/// 폰 QR 요청 → (id, 동사). pair = 옛 짝짓기 코드(scripts/app phone pair, 모바일이 꺼져 있으면 {ok:false}) · add = 입구 주소만(비밀 없음)
+pub fn phone_request(line: &str) -> Option<(String, &'static str)> {
     let v: serde_json::Value = serde_json::from_str(line).ok()?;
-    if v.get("action")?.as_str()? != "phone" || v["arg"]["verb"].as_str()? != "pair" {
+    if v.get("action")?.as_str()? != "phone" {
         return None;
     }
+    let verb = match v["arg"]["verb"].as_str()? {
+        "pair" => "pair",
+        "add" => "add",
+        _ => return None,
+    };
     let id = v.get("id")?.as_str()?;
-    (!id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')).then(|| id.to_string())
+    (!id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')).then(|| (id.to_string(), verb))
 }
 
 /// 참모 브라우저 연결(scripts/app browser status|connect <폴더>) → (id, 동사, 폴더). 'need'(카드)는 화면 몫이라 여기선 안 받는다
@@ -347,8 +352,9 @@ pub fn watch<R: Runtime>(app: &tauri::AppHandle<R>) {
                     continue;
                 }
                 // 폰 연결 QR — 설정 > 폰 의 '새 QR' 과 같은 코드를 클릭 없이. 코드가 실린 답이라 공용 칸 없이 부탁마다 따로인 600 칸에만(스크립트가 읽고 지운다)
-                if let Some(id) = phone_request(&line) {
-                    std::thread::spawn(move || write_private("phone", &id, &crate::mobile::pair_answer().to_string()));
+                if let Some((id, verb)) = phone_request(&line) {
+                    let ans = move || if verb == "add" { crate::mobile::entry_answer() } else { crate::mobile::pair_answer() };
+                    std::thread::spawn(move || write_private("phone", &id, &ans().to_string()));
                     continue;
                 }
                 // 참모 브라우저 연결 — HQ 는 데스크탑 권한이 막혀 있을 수 있어(#1) 앱이 대신 읽고 ~/.claude.json 에 적는다.
@@ -441,8 +447,9 @@ mod tests {
     }
     #[test]
     fn 폰_연결_부탁은_pair_만_받고_id_는_안전한_글자만() {
-        assert_eq!(phone_request(r#"{"action":"phone","arg":{"verb":"pair"},"id":"a1b2-c3"}"#), Some("a1b2-c3".into()));
-        assert_eq!(phone_request(r#"{"action":"phone","arg":{"verb":"clear"},"id":"a1"}"#), None, "pair 말고는 안 받는다");
+        assert_eq!(phone_request(r#"{"action":"phone","arg":{"verb":"pair"},"id":"a1b2-c3"}"#), Some(("a1b2-c3".into(), "pair")));
+        assert_eq!(phone_request(r#"{"action":"phone","arg":{"verb":"add"},"id":"a1"}"#), Some(("a1".into(), "add")));
+        assert_eq!(phone_request(r#"{"action":"phone","arg":{"verb":"clear"},"id":"a1"}"#), None, "pair·add 말고는 안 받는다");
         assert_eq!(phone_request(r#"{"action":"phone","arg":{"verb":"pair"},"id":"../x"}"#), None);
         assert_eq!(phone_request(r#"{"action":"phone","arg":{"verb":"pair"}}"#), None);
         assert_eq!(phone_request(r#"{"action":"push","arg":{"verb":"pair"},"id":"a"}"#), None);

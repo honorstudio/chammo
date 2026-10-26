@@ -1,6 +1,7 @@
 //! 익명 사용 신호 — 몇 대가 어느 나라·어떤 기기에서 Chammo 를 켜나(처리방침 chammo.app/privacy '익명 사용 통계', 서버는 chammo-relay /v0/ping).
 //! - 하루 한 번(켤 때, 켜 둔 채 날이 바뀌면 그때) `POST <중계>/v0/ping`. 날은 UTC — 서버가 하루 한 줄로 묶는 날과 같게
-//! - 몸통은 처리방침에 적은 여섯 칸만(id·v·os·arch·lang·ch). 데이터 폴더 경로·이름·세션은 절대 안 넣는다 — 시험이 키 목록을 고정
+//! - 몸통은 처리방침에 적은 여섯 칸(id·v·os·arch·lang·ch) + 시행일(START_V2)부터 v2 칸(개수와 정해 둔 이름만, usage_counts.rs).
+//!   데이터 폴더 경로·이름·세션·대화는 절대 안 넣는다 — 시험이 키 목록을 고정
 //! - 설치 번호는 32 hex 무작위, `<데이터>/ping.json`(600). 기록을 먼저 쓰고 보낸다 — 실패는 조용히, 다시 시도는 다음 날
 //! - 안 보냄: 설정 끔 · 개인판(식별자·이름이 공개판이 아님) · 디버그 빌드 · 시험 데이터 폴더(CHAMMO_HOME) · 첫 안내 전
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,14 @@ pub const PUBLIC_ID: &str = "app.chammo.desktop";
 pub const PUBLIC_NAME: &str = "Chammo";
 /// 몸통 칸 — 서버와의 약속. 늘리려면 chammo-relay 와 먼저 맞춘다
 pub const KEYS: [&str; 6] = ["id", "v", "os", "arch", "lang", "ch"];
+/// v2 칸 — 처리방침 '익명 사용 통계' 더한 항목(chammo.app/privacy). 서버가 정해 둔 칸만 받는다
+pub const V2_KEYS: [&str; 7] = ["on", "use", "sess", "crash", "cc", "upd", "up"];
+/// v2 칸 시행일(처리방침 게시 7일 뒤, UTC) — 이 날 전엔 여섯 칸만
+pub const START_V2: &str = "2026-11-01";
+
+pub fn v2_on(today: &str) -> bool {
+    today >= START_V2
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -132,6 +141,8 @@ pub struct Payload<'a> {
     pub arch: &'a str,
     pub lang: &'a str,
     pub ch: &'a str,
+    /// 켜 둔 기능 스위치 이름(usage_counts::on_list)
+    pub on: &'a [&'a str],
 }
 
 /// 관문 → 기록(설치 번호·오늘) 먼저 쓰기 → 보내기. send 는 (주소, 몸통 글) → 응답 코드
@@ -153,9 +164,19 @@ pub fn tick(dir: &Path, gate: &Gate, today: &str, p: &Payload, send: impl FnOnce
     if let Err(e) = save(dir, &st) {
         return Outcome::NoState(e);
     }
-    let b = body(&st.id, p.version, p.os, p.arch, p.lang, p.ch).to_string();
-    match send(p.url, &b) {
-        Ok(code) => Outcome::Sent(code),
+    let mut b = body(&st.id, p.version, p.os, p.arch, p.lang, p.ch);
+    // 시행일부터 v2 칸 — 실은 카운터는 서버가 받으면(2xx) 보낸 만큼 뺀다. 못 보내면 다음 날 같이
+    let counts = v2_on(today).then(|| crate::usage_counts::load(dir));
+    if let (Some(c), Some(o)) = (&counts, b.as_object_mut()) {
+        o.extend(crate::usage_counts::fields(c, p.on));
+    }
+    match send(p.url, &b.to_string()) {
+        Ok(code) => {
+            if let (Some(c), true) = (&counts, (200..300).contains(&code)) {
+                crate::usage_counts::sent(dir, c);
+            }
+            Outcome::Sent(code)
+        }
         Err(e) => Outcome::Failed(e),
     }
 }
@@ -213,12 +234,25 @@ pub fn start(identifier: String, product: String, version: String) {
                 test,
             };
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+            // 켜 둔 시간 — 바퀴마다(10분) 더한다. 끄면 세지 않는다
+            if gate.on {
+                crate::usage_counts::uptime(dir, every.as_secs());
+            }
             if before_start(&utc_day(now)) && !test {
                 std::thread::sleep(every);
                 continue;
             }
             if let Some(url) = url_for(dir) {
-                let p = Payload { url: &url, version: &version, os: os_name(), arch: std::env::consts::ARCH, lang: lang_of(&c.language), ch: channel_of(&c.ping_channel) };
+                let on = crate::usage_counts::on_list(&c.features);
+                let p = Payload {
+                    url: &url,
+                    version: &version,
+                    os: os_name(),
+                    arch: std::env::consts::ARCH,
+                    lang: lang_of(&c.language),
+                    ch: channel_of(&c.ping_channel),
+                    on: &on,
+                };
                 match tick(dir, &gate, &utc_day(now), &p, post) {
                     Outcome::Sent(code) => crate::claude::log_out("ping", &format!("sent {code}")),
                     Outcome::Failed(_) => crate::claude::log_out("ping", "failed — next day"),
@@ -254,7 +288,114 @@ mod tests {
     }
 
     fn payload() -> Payload<'static> {
-        Payload { url: "https://relay.chammo.app/v0/ping", version: "0.4.1", os: "mac", arch: "aarch64", lang: "ko", ch: "release" }
+        Payload { url: "https://relay.chammo.app/v0/ping", version: "0.4.1", os: "mac", arch: "aarch64", lang: "ko", ch: "release", on: &["office", "voice"] }
+    }
+
+    // ── v2 칸(처리방침 시행일 START_V2 부터) ──
+
+    #[test]
+    fn v2_칸_목록에_setup_은_없다() {
+        assert_eq!(V2_KEYS, ["on", "use", "sess", "crash", "cc", "upd", "up"]);
+    }
+
+    #[test]
+    fn v2_칸은_시행일부터() {
+        assert!(!v2_on("2026-10-31"));
+        assert!(v2_on(START_V2));
+        assert!(v2_on("2026-12-01"));
+    }
+
+    fn sent_body(d: &std::path::Path, day: &str, code: u16) -> (Outcome, Value) {
+        let mut seen = String::new();
+        let r = tick(d, &gate(), day, &payload(), |_, b| {
+            seen = b.to_string();
+            Ok(code)
+        });
+        (r, serde_json::from_str(&seen).unwrap_or(Value::Null))
+    }
+
+    #[test]
+    fn 시행일_전엔_여섯_칸_그대로_카운터도_그대로() {
+        let d = tmp("v2-before");
+        crate::usage_counts::used(&d, "office");
+        let (r, b) = sent_body(&d, "2026-10-31", 204);
+        assert_eq!(r, Outcome::Sent(204));
+        let keys: Vec<&str> = b.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(keys, KEYS);
+        assert_eq!(crate::usage_counts::load(&d).uses.get("office"), Some(&1), "안 실었으니 안 뺀다");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 시행일부터_v2_칸을_싣고_성공하면_보낸_만큼_뺀다() {
+        let d = tmp("v2-after");
+        crate::usage_counts::used(&d, "office");
+        crate::usage_counts::used(&d, "mode");
+        crate::usage_counts::session_started(&d, 1);
+        crate::usage_counts::note_cc(&d, "2.1.310 (Claude Code)");
+        let (r, b) = sent_body(&d, START_V2, 204);
+        assert_eq!(r, Outcome::Sent(204));
+        let keys: Vec<&str> = b.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(keys, [&KEYS[..], &V2_KEYS[..]].concat());
+        assert_eq!(b["use"], json!({ "office": 1, "mode": 1 }));
+        assert_eq!(b["on"], json!(["office", "voice"]));
+        assert_eq!(b["cc"], json!("2.1.310"));
+        assert!(b.get("setup").is_none(), "setup 은 안 싣는다");
+        assert!(!b.to_string().contains('/'), "{b}");
+        let c = crate::usage_counts::load(&d);
+        assert!(c.uses.is_empty() && c.started == 0, "{c:?}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 못_보내거나_서버가_거절하면_카운터를_남긴다() {
+        let d = tmp("v2-fail");
+        crate::usage_counts::used(&d, "phone");
+        let r = tick(&d, &gate(), START_V2, &payload(), |_, _| Err("timeout".into()));
+        assert_eq!(r, Outcome::Failed("timeout".into()));
+        assert_eq!(crate::usage_counts::load(&d).uses.get("phone"), Some(&1));
+        let (r, _) = sent_body(&d, "2026-11-02", 400);
+        assert_eq!(r, Outcome::Sent(400));
+        assert_eq!(crate::usage_counts::load(&d).uses.get("phone"), Some(&1), "400 이면 안 뺀다");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 끄면_새_칸도_안_나가고_카운터도_안_건드린다() {
+        let d = tmp("v2-off");
+        crate::usage_counts::used(&d, "craft");
+        let r = tick(&d, &Gate { on: false, ..gate() }, START_V2, &payload(), |_, _| panic!("보내면 안 됨"));
+        assert_eq!(r, Outcome::Blocked("off"));
+        assert_eq!(crate::usage_counts::load(&d).uses.get("craft"), Some(&1));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 칸이_다_차도_1kb_안() {
+        let d = tmp("v2-full");
+        for k in crate::usage_counts::USE_KEYS {
+            for _ in 0..1000 {
+                crate::usage_counts::used(&d, k);
+            }
+        }
+        for k in crate::usage_counts::CRASH_KINDS {
+            for _ in 0..100 {
+                crate::usage_counts::crashed(&d, k);
+            }
+        }
+        crate::usage_counts::agents_now(&d, 99);
+        crate::usage_counts::update_failed(&d, "restart");
+        crate::usage_counts::uptime(&d, 99 * 3600);
+        crate::usage_counts::note_cc(&d, "999.999.9999");
+        let all = crate::usage_counts::ON_KEYS;
+        let p = Payload { on: &all, ..payload() };
+        let mut seen = String::new();
+        tick(&d, &gate(), START_V2, &p, |_, b| {
+            seen = b.to_string();
+            Ok(204)
+        });
+        assert!(seen.len() < 1024, "{} 바이트", seen.len());
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

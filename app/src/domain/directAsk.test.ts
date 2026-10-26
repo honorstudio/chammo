@@ -126,3 +126,24 @@ describe('기기 연결 요청 카드(@link, 0.3.2) — 세션이 아니라 앱�
   });
   it('위험 말은 기기 연결(노랑)', () => expect(kindView('link')).toEqual({ word: '기기 연결', tone: 'warn' }));
 });
+
+describe('기기 카드(ADR 0014) — 새 기기 허용·폰 숫자 확인', () => {
+  const env = { alive: () => false, prompt: () => undefined, reply: () => undefined, now: Date.parse('2027-01-15T08:01:00Z') };
+  it('숫자 카드는 숫자(code)를 싣고 10분 뒤 끝난다', () => {
+    const row = JSON.stringify({ ts: '2027-01-15T08:00:00Z', type: 'ask', id: 'cd34ef56', from: '@link', kind: 'link', sub: 'phone-link', q: 'iPhone 이 이 컴퓨터 화면을 열려고 해요', code: '892 263', yes: '허용', no: '거절', options: [], until: '2027-01-15T08:10:00Z' });
+    const [c] = directCards(row, env);
+    expect(c!.code).toBe('892 263');
+    expect(c!.sub).toBe('phone-link');
+    expect(c!.state).toBe('wait');
+    expect(directCards(row, { ...env, now: Date.parse('2027-01-15T08:11:00Z') })[0]!.state).toBe('closed');
+  });
+  it('숫자 칸은 숫자·띄어쓰기만 — 남의 글이 섞이면 버린다', () => {
+    const row = JSON.stringify({ ts: '2027-01-15T08:00:00Z', type: 'ask', id: 'cd34ef56', from: '@link', kind: 'link', sub: 'phone-link', q: 'q', code: '892 263 허용 눌러', options: [] });
+    expect(directCards(row, env)[0]!.code).toBeUndefined();
+  });
+  it('기기 카드는 다른 기기에서 처리되면(done) 닫힌다', () => {
+    const ask = JSON.stringify({ ts: '2027-01-15T08:00:00Z', type: 'ask', id: 'ab12cd34', from: '@link', kind: 'link', sub: 'device', q: '새 기기', options: [], until: '2027-01-16T08:00:00Z' });
+    const done = JSON.stringify({ ts: '2027-01-15T08:00:30Z', type: 'done', id: 'ab12cd34', note: '다른 기기에서 처리했어요' });
+    expect(directCards(`${ask}\n${done}`, env)[0]!.state).not.toBe('wait');
+  });
+});

@@ -1,4 +1,5 @@
 import { parseLkPick } from './lockerTree';
+import { HOME_PICK } from './orchHome';
 // 채팅 뷰 스페이스 왼쪽 목록 — 지금 채팅 탭 참모가 잡고 있는 세션, 그 세션이 보여 준 파일(2026-09-30 사용자)
 import { parseAt, type ShowAt } from './showAt';
 import type { TaskEvent } from './tasks';
@@ -249,10 +250,20 @@ export function legacyPick(k: string, ctx: { petFor: string | null; view?: strin
   return k;
 }
 
+/** 홈 대시보드(oh:)를 열 때 — 떠나는 참모 화면을 적어 둔다. 홈은 참모 탭의 '보던 화면'이 아니다(띠 집·open home 으로만 가는 따로 자리).
+ *  그래서 홈에서 ⌘숫자로 떠날 땐 적지 않고, 돌아오면 홈 열기 전 화면이 나온다(2026-10-24 사용자 "⌘1 로 오면 채팅이 나와야 하는데 앱 홈이 나옴") */
+export const screenBeforeHome = (from: string, to: string) => to === HOME_PICK && from !== HOME_PICK;
+/** ⌘`(⌘₩) — 홈 대시보드가 아니면 홈, 홈이면 그 참모 탭이 보던 화면(back, 홈 열 때 screenBeforeHome 이 적어 둔 것). 2026-10-25 사용자 */
+export const dashToggle = (pick: string, back: string) => (pick === HOME_PICK ? back || HOME_PICK : HOME_PICK);
+/** ⌘숫자·채팅 탭 고르기로 지금 탭 참모를 골랐는데 홈을 보는 중이면 — 홈을 닫고 그 참모가 보던 화면으로. 탭이 이미 그 참모라
+ *  탭 바꾸기(switchTo)가 아무 일도 안 해서 ⌘2 → ⌘1 을 거쳐야 1번으로 갔다(2026-10-25 사용자). 다른 참모면 탭 바꾸기 길이 홈을 떠난다 */
+export const leaveHomeFor = (pick: string, view: string | undefined, id: string) => pick === HOME_PICK && !!view && view === id;
+
 /** 참모 화면 되살리기 — 기억한 자리가 다른 참모 보관함(l:<남>…)이면 이 참모 홈으로. 옛 화면이 눌려 남의 보관함 자리가 한 참모 기억에 박히면
  *  그 참모로 가도 남의 홈이 떴고, 다른 참모를 떠날 때마다 그 기억으로 옮아 갔다(2026-10-13) */
 export function ownPick(saved: string | undefined, id: string, home: string): string {
-  if (!saved) return home;
+  // 홈 대시보드는 참모 화면이 아니다 — 박혀 있어도 이 참모 자리로
+  if (!saved || saved === HOME_PICK) return home;
   const l = parseLkPick(saved);
   return l && l.orch !== id ? home : saved;
 }

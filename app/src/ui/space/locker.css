@@ -294,12 +294,12 @@
 .lk-phd span:not(.lk-dot) { color: var(--text-2); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lk-day { display: flex; flex-direction: column; gap: 10px; }
 .lk-list { display: flex; flex-direction: column; }
-.lk-lrow { all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: 52px 40px minmax(0, 1fr) minmax(0, 200px) minmax(0, 110px); align-items: center; gap: 10px; height: 36px; padding: 0 8px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.lk-lrow { all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: 40px minmax(0, 1fr) minmax(0, 200px) minmax(0, 110px) 84px; align-items: center; gap: 10px; height: 36px; padding: 0 8px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
 .lk-lrow:hover { background: var(--hover); }
 .lk-lrow.gone { cursor: default; opacity: .5; }
 .lk-lrow > b { font-weight: 600; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lk-lrow .lk-tag { position: static; justify-self: start; }
-.lk-ltime { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.lk-ltime { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--text-3); white-space: nowrap; text-align: right; overflow: hidden; }
 .lk-lwho, .lk-lwhat { color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lk-lwhat { color: var(--text-2); }
 .lk-add { position: relative; }

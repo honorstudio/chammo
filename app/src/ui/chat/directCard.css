@@ -20,6 +20,8 @@
 .dc-warn { background: color-mix(in srgb, var(--blocked) 18%, var(--surface)); color: color-mix(in srgb, var(--blocked) 70%, var(--text)); }
 .dc-plain { background: var(--surface-2); color: var(--text-2); }
 .dc-amount { font-size: 26px; font-weight: 800; letter-spacing: -.01em; }
+/* 폰 숫자 확인(ADR 0014) — 폰 화면 숫자와 눈으로 견주는 6자리 */
+.dc-code { font: 800 34px/1.1 ui-monospace, Menlo, monospace; letter-spacing: .06em; text-align: center; padding: 10px 0; border-radius: 10px; background: var(--surface-2, rgba(127,127,127,.12)); font-variant-numeric: tabular-nums; }
 .dc-q { font-size: 14px; font-weight: 600; }
 .dc-muted { font-size: 12px; color: var(--text-3); }
 .dc-if { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 0; font-size: 12.5px; color: var(--text-2); }

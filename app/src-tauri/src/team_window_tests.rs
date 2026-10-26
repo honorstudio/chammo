@@ -46,3 +46,13 @@ fn 작은_화면에선_창을_화면에_맞춘다() {
     let (x, _, w, h) = place(None, &[Screen { name: "작은".into(), x: 0, y: 0, w: 800, h: 600 }], (0, 0));
     assert!(w <= 760 && h <= 520 && x >= 0);
 }
+
+#[test]
+fn 떼기는_늘_팀_모드_전체_창_하나_방은_그_창에서_고른다() {
+    // 10-26 사용자 — 대화 하나만 뜬 창 말고 팀 모드와 같은 창. 방 열쇠도 team-all 한 창으로
+    assert_eq!(target("all"), ("all".to_string(), None));
+    assert_eq!(target("r-1_A"), ("all".to_string(), Some("r-1_A".to_string())));
+    assert_eq!(url_of(None), "messenger.html?c=all");
+    assert_eq!(url_of(Some("r-1_A")), "messenger.html?c=all&r=r-1_A");
+    assert_eq!(pick_js("r-1_A"), r#"window.__teamPick && window.__teamPick("r-1_A")"#);
+}

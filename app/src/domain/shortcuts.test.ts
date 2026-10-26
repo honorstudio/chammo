@@ -207,15 +207,28 @@ describe('하니터 — 메뉴 Chammo > 하니터(하네스)…, 탑바 버튼�
   it('토글이라 메뉴·키 두 갈래가 겹쳐도 한 번만(400ms)', () => expect(dedupeMs({ type: 'harnitor' })).toBe(400));
 });
 
-describe('⌘₩(⌘`) — 보고 있는 창 크게·되돌리기 (2026-09-30: ⌘Enter 는 채팅 끊고 보내기로)', () => {
-  it('한글 입력 상태의 ⌘₩', () => expect(shortcutFor(k('₩', { meta: true }))).toEqual({ type: 'maximizePane' }));
-  it('영문 입력 상태의 ⌘`', () => expect(shortcutFor(k('`', { meta: true }))).toEqual({ type: 'maximizePane' }));
-  it('⌘Enter 는 더 이상 창 크게가 아니다(채팅 입력칸 몫)', () => {
+describe('⌘₩(⌘`) = 홈 대시보드 켜기·돌아가기, ⌘⇧₩(⌘⇧`) = 보고 있는 창 크게·되돌리기 (2026-10-25 사용자)', () => {
+  it('한글 입력 상태의 ⌘₩·영문 ⌘` = 홈', () => {
+    expect(shortcutFor(k('₩', { meta: true }))).toEqual({ type: 'homeToggle' });
+    expect(shortcutFor(k('`', { meta: true }))).toEqual({ type: 'homeToggle' });
+  });
+  it('⌘⇧` = 창 크게 — ⇧ 를 누르면 글자가 ~ 로 바뀌어 와도 키 자리(Backquote)로', () => {
+    expect(shortcutFor(k('~', { meta: true, shift: true }))).toEqual({ type: 'maximizePane' });
+    expect(shortcutFor({ ...k('~', { meta: true, shift: true }), code: 'Backquote' })).toEqual({ type: 'maximizePane' });
+    expect(shortcutFor(k('₩', { meta: true, shift: true }))).toEqual({ type: 'maximizePane' });
+    expect(shortcutFor(k('`', { meta: true, shift: true }))).toEqual({ type: 'maximizePane' });
+  });
+  it('⌘Enter 는 창 크게가 아니다(채팅 입력칸 몫)', () => {
     expect(shortcutFor(k('Enter', { meta: true }))).toBeNull();
     expect(shortcutFor(k('Enter', { meta: true, shift: true }))).toBeNull();
   });
   it('⌥·⌃ 가 섞이면 안 잡는다(터미널 몫)', () => expect(shortcutFor(k('₩', { meta: true, alt: true }))).toBeNull());
-  it('메뉴 항목에서도 같은 동작', () => expect(menuAction('pane_max')).toEqual({ type: 'maximizePane' }));
+  it('메뉴 항목에서도 같은 동작 — 메신저 창 등 다른 창에서 누르면 메인 창을 앞으로(home_open = 켜기만)', () => {
+    expect(menuAction('home_toggle')).toEqual({ type: 'homeToggle' });
+    expect(menuAction('home_open')).toEqual({ type: 'homeToggle', open: true });
+    expect(menuAction('pane_max')).toEqual({ type: 'maximizePane' });
+  });
+  it('토글이라 메뉴·키 두 갈래가 겹쳐도 한 번만', () => expect(dedupeMs({ type: 'homeToggle' })).toBe(400));
 });
 
 describe('종료 — ⌘Q 는 Rust 가 독에서 빼고(웹뷰로 안 옴), ⌥⌘Q "완전히 종료"만 묻는다', () => {

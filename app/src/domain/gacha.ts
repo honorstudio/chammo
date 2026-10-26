@@ -4,7 +4,7 @@
 import { tr } from '../i18n';
 import type { TamaEvent } from './tama/pet';
 import { coinsOf } from './tama/monsters';
-import { DAY_EXTRA, SHOW_PER_DAY } from './tama/sources';
+import { DAY_EXTRA, SHOW_PER_DAY, TALK_GAP_MIN } from './tama/sources';
 import { desk, furn, fx, hat, light, move, pal, skin, title, view } from './catalog/names';
 import { HALLOWEEN } from './catalog/halloween';
 import { HOME } from './catalog/home';
@@ -225,23 +225,34 @@ export function parseGacha(text: string, since: number): GachaFile {
   }
 }
 
-/** 코인 버는 법(뽑기 화면 표) — coinsFor 와 같은 값이어야 한다(테스트가 맞춘다). 끝낸 일 상한은 tama/sources.balanceFeed */
+/** 일한 시간 — 세션이 일한 WORK_MIN 분마다 1(그날 안에서 나머지가 이어진다), 하루 WORK_DAY 까지 */
+export const WORK_MIN = 5;
+export const WORK_DAY = 60;
+/** 업무 몫(끝낸 일·일한 시간) 하루 상한 — 그날 커밋·머지·CI 로 먼저 번 만큼 줄고 BIZ_FLOOR 는 남는다.
+ *  코드 안 짜는 사람도 하루 뽑기 1~2번, 개발자는 두 갈래로 두 번 받지 않게(2026-10-24 사용자 "업무 보는 사람들 코인이 잘 안 쌓인다") */
+export const BIZ_DAY = 150;
+export const BIZ_FLOOR = 50;
+
+/** 코인 버는 법(뽑기 화면 표) — coinsFor 와 같은 값이어야 한다(테스트가 맞춘다). 끝낸 일 건수 상한은 tama/sources.balanceFeed, 코인 상한은 payOut */
 export const COIN_RULES: [number, string][] = [
   [10, tr('머지 · 결과물', 'Merge · result')],
-  [5, tr('장애 몬스터 처치(레벨 따라 15까지)', 'Beating a trouble monster (up to 15 by level)')],
-  [3, tr('시킨 일 끝남', 'Task done')],
+  [5, tr('시킨 일 끝남 · 장애 몬스터 처치(레벨 따라 15까지)', 'Task done · beating a trouble monster (up to 15 by level)')],
   [2, tr('CI 통과 · 검토 · 예약 · 테스트 든 커밋', 'CI pass · review · schedule · commit with tests')],
-  [1, tr('300줄 이하 커밋 · 대화 · 문서', 'Commit ≤300 lines · talk · doc')],
+  [1, tr(`300줄 이하 커밋 · 대화 · 문서 · 세션이 일한 ${WORK_MIN}분`, `Commit ≤300 lines · talk · doc · ${WORK_MIN} min of session work`)],
 ];
+
 /** 상한 — 구절마다 끊기지 않게 배열로 */
 export const COIN_LIMITS: string[] = [
   tr(`결과물 하루 ${SHOW_PER_DAY}`, `Results ${SHOW_PER_DAY}/day`),
-  tr('대화·문서 한 시간 1', 'Talk & docs 1/hour'),
-  tr(`커밋·머지·CI 말고는 하루 ${DAY_EXTRA}건까지`, `Besides commits, merges and CI: ${DAY_EXTRA}/day`),
+  tr(`대화·문서 ${TALK_GAP_MIN}분에 1`, `Talk & docs 1 per ${TALK_GAP_MIN} min`),
+  tr(`끝낸 일 하루 ${DAY_EXTRA}건 · 일한 시간 하루 ${WORK_DAY}`, `Finished work ${DAY_EXTRA}/day · session work ${WORK_DAY}/day`),
+  tr(`커밋·머지·CI 말고는 하루 ${BIZ_DAY}까지 — 커밋·머지·CI 로 번 만큼 줄고 ${BIZ_FLOOR}은 남는다`,
+    `Besides commits, merges and CI: ${BIZ_DAY}/day — less by what those earned, never below ${BIZ_FLOOR}`),
 ];
 
-/** 사건 하나의 코인 — 다마고치 먹이와 같은 '끝낸 일' 통. 마무리(머지·결과물) 10 · 시킨 일 끝남 3 · 검사 통과(CI·예약·시안 검토) 2
- *  · 테스트 커밋 2 · 작은 일(+300줄 이하 커밋·대화·문서 고침) 1. 메아리(같은 일 두 번·하루 상한 넘음, tama/sources.balanceFeed)는 0 */
+/** 사건 하나의 코인 — 다마고치 먹이와 같은 '끝낸 일' 통. 마무리(머지·결과물) 10 · 시킨 일 끝남 5 · 검사 통과(CI·예약·시안 검토) 2
+ *  · 테스트 커밋 2 · 작은 일(+300줄 이하 커밋·대화·문서 고침) 1. 메아리(같은 일 두 번·하루 상한 넘음, tama/sources.balanceFeed)는 0.
+ *  일한 시간은 나머지가 이어져서 여기 말고 payOut 이 센다 */
 function coinsFor(e: TamaEvent): number {
   if (e.echo) return 0;
   switch (e.type) {
@@ -250,12 +261,48 @@ function coinsFor(e: TamaEvent): number {
     case 'review': return 2;
     case 'talk': case 'doc': return 1;
     case 'pr': return 10;
-    case 'task': return 3;
+    case 'task': return 5;
     case 'ci': return e.pass ? 2 : 0;
     case 'commit': return (e.hasTest ? 2 : 0) + (e.lines <= 300 ? 1 : 0);
     case 'slay': return coinsOf(e.lv);
     default: return 0;
   }
+}
+
+const DEV = new Set<TamaEvent['type']>(['commit', 'pr', 'ci']);
+const WEEK = 7 * 86_400_000;
+/** 사건마다 실제 받을 코인 — 하루(새벽 5시~)씩 시각순으로 일한 시간 나머지·상한과 업무 몫을 센다.
+ *  업무 몫을 줄이는 개발 코인 = 그날 지금까지 번 것과 지난 7일 중 가장 최근 개발한 날 하루치 중 큰 것 —
+ *  아침에 세션 일한 시간이 커밋보다 먼저 쌓여 개발자가 업무 몫까지 다 받지 않게.
+ *  earn 이 받은 기록 전체로 매번 다시 세니 같은 기록이면 같은 값(이미 센 사건은 earn 의 키가 거른다).
+ *  커밋·CI 는 늦게 읽혀서 그 사이 업무 몫이 조금 더 나갈 수 있다 — 되돌려 빼지는 않는다 */
+function payOut(events: TamaEvent[]): Map<TamaEvent, number> {
+  const sorted = [...events].sort((a, b) => a.t - b.t);
+  const devOf = new Map<number, number>();
+  for (const e of sorted) if (DEV.has(e.type)) { const d = dayStartAt(e.t); devOf.set(d, (devOf.get(d) ?? 0) + coinsFor(e)); }
+  const devDays = [...devOf.keys()].filter((d) => devOf.get(d)! > 0);
+  const pay = new Map<TamaEvent, number>();
+  let day = -1, before = 0, dev = 0, biz = 0, carry = 0, work = 0;
+  for (const e of sorted) {
+    const d = dayStartAt(e.t);
+    if (d !== day) {
+      const last = devDays.filter((x) => x < d && d - x <= WEEK).pop();
+      day = d; before = last === undefined ? 0 : devOf.get(last)!; dev = biz = carry = work = 0;
+    }
+    let c = coinsFor(e);
+    if (e.type === 'work') {
+      carry += e.minutes;
+      const units = Math.floor(carry / WORK_MIN);
+      carry -= units * WORK_MIN;
+      c = Math.min(units, WORK_DAY - work);
+      work += c;
+    }
+    if (!c) continue;
+    if (DEV.has(e.type)) dev += c;
+    else if (e.type !== 'slay') { c = Math.max(0, Math.min(c, Math.max(BIZ_FLOOR, BIZ_DAY - Math.max(dev, before)) - biz)); biz += c; }
+    pay.set(e, c);
+  }
+  return pay;
 }
 
 /** 늦게 온 사건을 얼마나 기다리나 — 그보다 늦으면 안 센다(키를 무한히 쌓지 않게) */
@@ -282,6 +329,7 @@ export function earn(f: GachaFile, events: TamaEvent[], _now: number): { file: G
   let gained = 0, since = f.since;
   let today = f.today ?? { start: 0, raw: 0 };
   const added: string[] = [];
+  const pay = payOut(events);
   for (const e of events) {
     if (e.t <= floor) continue;
     const base = KIND[e.type] + e.t.toString(36);
@@ -291,7 +339,7 @@ export function earn(f: GachaFile, events: TamaEvent[], _now: number): { file: G
     if (seen.has(key)) continue;
     seen.add(key);
     added.push(key);
-    const c = coinsFor(e);
+    const c = pay.get(e) ?? 0;
     if (f.softCap && c) {
       const day = dayStartAt(e.t);
       if (day > today.start) today = { start: day, raw: 0 };

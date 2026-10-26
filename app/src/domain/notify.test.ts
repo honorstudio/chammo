@@ -132,3 +132,46 @@ describe('watching — 참모 창을 보고 있나', () => {
     expect(watching(true, { focus: true, hidden: false })).toBe(false);
   });
 });
+
+// 2026-10-24 사용자가 밖에 있을 때 놓침 — 맥 창을 앞에 둔 채 자리를 비우면 '보고 있음'으로 쳐서 사람 필요 알림이 폰 푸시까지 안 나갔다
+import { AWAY_SECS, awayPush, awayStep, heldStep, HOLD_MAX_SECS } from './notify';
+describe('자리 비움 — 보고 있어도 맥 입력이 없거나 잠겼으면 사람 필요 알림은 폰으로도', () => {
+  const at = (idle: number | null, locked = false) => ({ idle, locked });
+  it('사람 필요(사람 부르기·직접 카드·결정·물어봄·로그인)만 — 컨텍스트·확인창 같은 건 안 쏟아지게', () => {
+    for (const k of ['human', 'decide', 'asks', 'login'] as const) expect(awayPush(k)).toBe(true);
+    for (const k of ['ctx', 'blocked', 'allowFail', 'accounts', 'lost'] as const) expect(awayPush(k)).toBe(false);
+  });
+  it('보고 있음 — 막 만졌으면(입력 30초 전) 기다림, 자리 비움 시간을 넘으면 보낸다', () => {
+    expect(awayStep(0, at(30))).toBe('wait');
+    expect(awayStep(0, at(AWAY_SECS))).toBe('send');
+    expect(awayStep(0, at(AWAY_SECS + 600))).toBe('send');
+  });
+  it('화면 잠김이면 입력 시간과 상관없이 바로 보낸다', () => {
+    expect(awayStep(0, at(2, true))).toBe('send');
+    expect(awayStep(0, at(null, true))).toBe('send');
+  });
+  it('알림이 온 뒤 사람이 맥을 만졌으면(입력이 알림보다 나중) 앱에서 본 것 — 버린다', () => {
+    expect(awayStep(60, at(10))).toBe('drop');
+  });
+  it('알림이 온 뒤로 손을 안 댔으면 자리 비움 시간이 차는 대로 보낸다(오고 나서 자리를 떠난 경우)', () => {
+    expect(awayStep(60, at(100))).toBe('wait');
+    expect(awayStep(200, at(AWAY_SECS + 50))).toBe('send');
+  });
+  it('입력 시간을 모르면(윈도우·읽기 실패) 지금처럼 앱 안만 — 버린다', () => {
+    expect(awayStep(0, at(null))).toBe('drop');
+  });
+  it('붙든 지 오래된 건 보내지 않는다', () => {
+    expect(awayStep(HOLD_MAX_SECS + 1, at(HOLD_MAX_SECS + 100))).toBe('drop');
+  });
+  it('heldStep — 붙든 알림마다 갈라 보낼 것과 남길 것', () => {
+    const n = (session: string): Note => ({ kind: 'human', session, orch: false, title: 't', body: 'b' });
+    const now = 1_000_000;
+    const held = [{ n: n('a'), at: now - 60_000 }, { n: n('b'), at: now - 5_000 }];
+    const r = heldStep(held, now, at(50));
+    expect(r.send.map((x) => x.session)).toEqual([]);
+    expect(r.keep.map((x) => x.n.session)).toEqual(['b']); // a 는 온 뒤에 만졌다(60초 전 알림, 50초 전 입력) → 버림
+    const r2 = heldStep(r.keep, now + AWAY_SECS * 1000, at(AWAY_SECS + 5));
+    expect(r2.send.map((x) => x.session)).toEqual(['b']);
+    expect(r2.keep).toEqual([]);
+  });
+});

@@ -20,7 +20,7 @@ describe('진행 칸 참모에게 묻기', () => {
   it('일은 taskRefText(task id·세션·상태), 목표는 goalRefText 로 — 그 홈 참모 id 로 나른다', () => {
     expect(goal).toMatch(/kind: 'task'[^\n]*taskRefText\(refJob\(c, now\)\)/);
     expect(goal).toMatch(/kind: 'goal'[^\n]*goalRefText\(/);
-    expect(goal).toMatch(/onAsk=\{\(r\) => askRef\(p\.orch\.id, r\)\}/);
+    expect(goal).toMatch(/onAsk=\{onAsk \?\? \(\(r\) => askRef\(p\.orch\.id, r\)\)\}/);
   });
   it('데스크톱 입력칸은 자기 칸 id 로 받는다(원격 칸은 빼고)', () => {
     expect(chatView).toMatch(/useRefInbox\(remote \? undefined : paneId, \(r\) => addRef\(r\.who, r\.text, r\.kind\)\)/);

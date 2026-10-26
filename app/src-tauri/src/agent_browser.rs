@@ -819,10 +819,23 @@ fn choose_sheet(app: &tauri::AppHandle, multiple: bool, dirs: bool, msg: &'stati
         app.run_on_main_thread(move || open_sheet(win, multiple, dirs, msg, tx)).map_err(|e| e.to_string())?;
         rx.recv().map_err(|e| e.to_string())
     }
-    #[cfg(not(target_os = "macos"))]
+    // 윈도우 — 첫 실행 폴더 고르기(setup::pick_folder)와 같은 파워셸 창. 취소면 빈 목록(맥 시트와 같다)
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = app;
+        let script = if dirs { crate::platform::folder_dialog_script(msg, None) } else { crate::platform::file_dialog_script(msg, multiple) };
+        let out = crate::platform::command("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand", &crate::platform::encode_ps(&script)])
+            .creation_flags(0x0800_0000)
+            .output()
+            .map_err(|e| e.to_string())?;
+        Ok(crate::platform::dialog_paths(&String::from_utf8_lossy(&out.stdout)))
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = (app, multiple, dirs, msg);
-        Err("file chooser: mac only".into())
+        Err("file chooser: mac·windows only".into())
     }
 }
 

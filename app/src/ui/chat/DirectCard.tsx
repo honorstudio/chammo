@@ -5,6 +5,8 @@ import { josa, machine, tr } from '../../i18n';
 import { openAgentModal } from '../AgentBrowserModal';
 import { IconChevronUp, IconClose, IconMaximize, IconOpen } from '../Icons';
 import { IconButton } from '../kit/IconButton';
+import { desktopNumber, NumberEntry, outsideHint, useCardNumber, type NumberApi } from '../e2e/NumberEntry';
+import { SafetyCardBody } from '../e2e/Safety';
 import './directCard.css';
 
 type Pick = { pick: 'yes' } | { pick: 'no' } | { pick: 'option'; option: number } | { pick: 'text'; text: string };
@@ -23,9 +25,10 @@ export type DirectPick = Pick;
 const linkName = (c: DirectCard) => (c.kind === 'link' ? tr('참모 앱', 'Chammo') : null);
 const desktopAnswer = (id: string, pick: Pick) => invoke<void>('direct_answer', { id, pick });
 
-export function DirectCardView({ c, name: given, project, profile, compact, onOpen, onAnswer = desktopAnswer, place, onRespawn, onDismiss }: {
+export function DirectCardView({ c, name: given, project, profile, compact, onOpen, onAnswer = desktopAnswer, number = desktopNumber, place, onRespawn, onDismiss }: {
   c: DirectCard; name: string; project?: string; profile?: string; compact?: boolean; onOpen?: () => void;
   /** 폰은 폰 서버 길(/api/direct-answer) */ onAnswer?: (id: string, pick: Pick) => Promise<void>;
+  /** 새 기기 허용 숫자 넣기(chammo-relay ADR 0007) — 폰은 폰 서버 길 */ number?: NumberApi;
   /** 데스크톱: 이 카드가 실제로 화면에 보이면 기록에 '보임' 한 줄(어느 화면) — scripts/direct status 가 읽는다 */ place?: string;
   /** 주인 세션이 꺼진 카드 — 같은 번호로 다시 띄우기 / 닫기 */ onRespawn?: () => Promise<void>; onDismiss?: () => void;
 }) {
@@ -36,6 +39,11 @@ export function DirectCardView({ c, name: given, project, profile, compact, onOp
   const box = useRef<HTMLDivElement>(null);
   useShownMark(box, c.id, place);
   const k = kindView(c.kind);
+  // 새 기기 허용 카드 — 계정에 사슬이 있으면 숫자를 넣어야 허용(시안 e2e-approve v1), 없으면 예전처럼 누르기
+  const dev = c.kind === 'link' && c.sub === 'device' ? c.dev : undefined;
+  const num = useCardNumber(dev, number);
+  // 열쇠 있는 기기 카드는 숫자만 — 숫자 준비 전(wait)도 숫자 칸(10-25 QA: 누르기 화면이 떴다)
+  const numberMode = !!dev && (num.mode === 'number' || num.mode === 'code' || num.mode === 'wait');
   const answer = (e: React.MouseEvent, pick: Pick) => {
     if (!e.isTrusted || busy) return; // 사람 클릭만 — 스크립트가 만든 클릭은 무시
     setBusy(true);
@@ -67,6 +75,21 @@ export function DirectCardView({ c, name: given, project, profile, compact, onOp
       </div>
     );
   }
+  // 보안 번호 카드(시안 e2e-safety v1) — '번호 비교'를 연 뒤에야 받아들이기. 갈림은 빨간 카드
+  if (c.kind === 'link' && c.sub === 'safety') {
+    const hot = c.safety === 'forked';
+    return (
+      <div ref={box} className={`dc-card ${hot ? 'dc-hot' : ''}`} role="group" aria-label={tr(`${josa(name, '이', '가')} 네 답을 기다려`, `${name} needs your answer`)}>
+        <div className="dc-top">
+          <div className="dc-who">{who}<div><b>{name}</b><div className="dc-what">{c.what || tr('보안 번호', 'Safety number')}</div></div></div>
+          <span className={`dc-risk ${hot ? 'dc-danger' : 'dc-warn'}`}>{hot ? tr('위험', 'Risk') : tr('확인 필요', 'Check')}</span>
+        </div>
+        <div><div className="dc-q">{c.q}</div>{c.detail && <div className="dc-muted">{c.detail}</div>}</div>
+        <SafetyCardBody c={c} busy={busy} answer={(e, yes) => answer(e, { pick: yes ? 'yes' : 'no' })} />
+        {err && <div className="dc-err" role="alert">{err}</div>}
+      </div>
+    );
+  }
   return (
     <div ref={box} className={`dc-card ${danger ? 'dc-hot' : ''}`} role="group" aria-label={tr(`${josa(name, '이', '가')} 네 답을 기다려`, `${name} needs your answer`)}>
       <div className="dc-top">
@@ -78,7 +101,14 @@ export function DirectCardView({ c, name: given, project, profile, compact, onOp
         <div className={c.amount ? 'dc-muted' : 'dc-q'}>{c.amount ? [c.q, c.detail].filter(Boolean).join(' · ') : c.q}</div>
         {!c.amount && c.detail && <div className="dc-muted">{c.detail}</div>}
       </div>
-      {c.kind === 'link' && c.sub === 'phone' ? (
+      {c.kind === 'link' && c.sub === 'phone-link' && c.code && <div className="dc-code" aria-label={tr(`확인 숫자 ${c.code}`, `Check number ${c.code}`)}>{c.code}</div>}
+      {c.kind === 'link' && c.sub === 'phone-link' ? (
+        <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('폰 숫자와 같을 때만 — 그 폰이 이 컴퓨터에 사람으로 닿아요(카드 답·말 보내기)', 'Only if it matches the phone — that phone reaches this computer as you (card answers, messages)')}</dd><dt>{c.no}</dt><dd>{tr('숫자가 다르거나 내가 연 게 아니면', 'If the number differs or it wasn\'t you')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('10분 뒤 없던 일이 돼요', 'It lapses after 10 minutes')}</dd></dl>
+      ) : numberMode ? (
+        <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('새 기기 화면의 숫자와 같을 때만 — 내 기기가 되고 내 메시지를 읽어요', 'Only if it matches the new device — it becomes yours and can read your messages')}</dd><dt>{c.no}</dt><dd>{tr('그 기기는 로그아웃돼요', 'That device is signed out')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('24시간 뒤 접속은 열리지만 메시지는 못 읽어요', 'After 24 hours it can connect, but it can\'t read messages')}</dd></dl>
+      ) : c.kind === 'link' && c.sub === 'device' ? (
+        <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('그 기기가 내 기기가 돼요(메신저·내 기기끼리 말). 컴퓨터 화면을 여는 건 따로 숫자 확인', 'It becomes one of your devices (messenger, your devices talking). Opening a computer needs its own number check')}</dd><dt>{c.no}</dt><dd>{tr('그 기기는 로그아웃돼요', 'That device is signed out')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('24시간 뒤 저절로 허용돼요', 'Allowed automatically after 24 hours')}</dd></dl>
+      ) : c.kind === 'link' && c.sub === 'phone' ? (
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('그 QR 을 연 폰이 이 컴퓨터에 사람으로 닿아요 — 끊기는 설정 > 기기 관리', 'The phone that opened the QR reaches this computer as you — unlink in Settings > Devices')}</dd><dt>{c.no}</dt><dd>{tr('그 QR 코드가 죽어요', 'The QR code dies')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('10분 뒤 없던 일이 돼요', 'It lapses after 10 minutes')}</dd></dl>
       ) : c.kind === 'link' ? (
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('두 기기 참모가 서로 말을 주고받아요 — 끊기는 설정 > 기기 관리', 'The assistants on both devices can talk — unlink in Settings > Devices')}</dd><dt>{c.no}</dt><dd>{tr('아무것도 안 생겨요', 'Nothing is created')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('5분 뒤 없던 일이 돼요', 'It lapses after 5 minutes')}</dd></dl>
@@ -87,6 +117,7 @@ export function DirectCardView({ c, name: given, project, profile, compact, onOp
       ) : (
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('누르면 이 세션에 네 답으로 바로 전해요 — 세션이 이어서 해요', 'Sends your answer to this session — it carries on')}</dd><dt>{c.no}</dt><dd>{tr('하지 말라고 전해요', 'Tells it not to')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('세션은 여기서 기다려요 — 다른 일은 그대로 돌아요', 'The session waits — other work goes on')}</dd></dl>
       )}
+      {dev && num.mode === 'outside' ? <div className="dc-muted">{outsideHint()}</div> : numberMode && dev ? <NumberEntry dev={dev} api={number} ready={num.ready} code={num.code} decline={(e) => answer(e, { pick: 'no' })} /> : <>
       {c.options.length > 0 && (
         <div className="dc-opts">{c.options.map((o, i) => <button key={i} className="dc-btn dc-no" disabled={busy} onClick={(e) => answer(e, { pick: 'option', option: i })}>{o}</button>)}</div>
       )}
@@ -104,6 +135,7 @@ export function DirectCardView({ c, name: given, project, profile, compact, onOp
           <div className="dc-acts"><IconButton size="l" tone="line" className="dc-ib" label={tr('접기', 'Close')} onClick={() => setFree(null)}><IconChevronUp /></IconButton><button className="dc-btn dc-go" disabled={busy || !free.trim()} onClick={(e) => answer(e, { pick: 'text', text: free })}>{tr(`${name}에 보내기`, `Send to ${name}`)}</button></div>
         </div>
       )}
+      </>}
       {(err || c.state === 'failed') && <div className="dc-err" role="alert">{err || tr('못 보냈어요 — 다시 눌러 주세요', 'Not sent — press again')}</div>}
     </div>
   );

@@ -1,6 +1,6 @@
 // 홈 대시보드(참모 채팅 없는 전체 한눈에, 시안 docs/design-drafts/home-dash v1 HA — 사용자 10-24 고름) 숫자·칸.
 // 새로 기록하는 건 없다: 참모별 진행 칸(goalBar)의 칸 상태 + 작업 기록(tasks.jsonl)의 done 만으로
-import type { GoalBar } from './goalBar';
+import { prResult, type GoalBar } from './goalBar';
 import { workDayStart, type TaskEvent } from './tasks';
 
 export type HomeCounts = { asks: number; running: number; quiet: number; doneToday: number };
@@ -9,7 +9,7 @@ export type OrchTileCount = { id: string; run: number; ask: number; quiet: numbe
 /** 오래 조용 — 진행 칸의 quiet 칸(맡긴 참모·세션) */
 export type QuietRow = { orch: string; task: string; title: string; target: string; at?: number };
 /** 오늘 끝난 일 — orch 는 맡긴 참모(이 맥 참모가 아니면 없음) */
-export type DoneRow = { task: string; title: string; target: string; orch?: string; at: number };
+export type DoneRow = { task: string; title: string; target: string; orch?: string; at: number; /** 결과 한 줄 — 마지막 done 메모의 PR·주소(없으면 첫 줄), 홈 칩 아래 펼침 */ result: string };
 
 export function homeDash(o: {
   orchs: { id: string; name: string }[];
@@ -35,15 +35,16 @@ export function homeDash(o: {
   const ids = new Set(o.orchs.map((x) => x.id));
   const sends = new Map(o.events.filter((e) => e.type === 'send').map((e) => [e.task, e]));
   const ended = new Map<string, number>();
+  const notes = new Map<string, string>();
   for (const e of o.events) {
     if (e.type !== 'done') continue;
     const t = Date.parse(e.ts);
-    if (t >= start && t <= o.now) ended.set(e.task, Math.max(ended.get(e.task) ?? 0, t));
+    if (t >= start && t <= o.now && t >= (ended.get(e.task) ?? 0)) { ended.set(e.task, t); notes.set(e.task, e.note ?? ''); }
   }
   const done: DoneRow[] = [...ended].flatMap(([task, at]) => {
     const s = sends.get(task);
     if (!s) return [];
-    return [{ task, title: s.title ?? '', target: s.target ?? '', ...(s.from && ids.has(s.from) ? { orch: s.from } : {}), at }];
+    return [{ task, title: s.title ?? '', target: s.target ?? '', ...(s.from && ids.has(s.from) ? { orch: s.from } : {}), at, result: prResult(notes.get(task)) }];
   }).sort((a, b) => b.at - a.at);
 
   const q = [...quiet.values()];

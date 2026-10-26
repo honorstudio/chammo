@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readLocker, type TeamPhoneApi } from '../../data/web';
 import type { TeamFeed } from '../../data/teamApi';
 import { sendAllowed } from '../../domain/remoteChat';
-import { convos as buildConvos, markRead, unreadTotal, type Convo, type TeamItem } from '../../domain/teamChat';
+import { convos as buildConvos, roomConvos, markRead, unreadTotal, type Convo, type TeamItem } from '../../domain/teamChat';
 import type { LockerItem } from '../../domain/locker';
 import { IconCheck, IconChevronDown, IconCopy, IconShare } from '../Icons';
 import { TeamConvo } from '../team/TeamConvo';
@@ -33,8 +33,10 @@ export function usePhoneTeam(api: TeamPhoneApi, active: boolean) {
   }, [refresh, active]);
   const view = feed?.view?.joined ? feed.view : null;
   const cs = useMemo(() => (view ? buildConvos(view.members, view.rooms, feed?.items ?? [], read) : []), [view, feed, read]);
+  // 단톡방(보내기는 /api/team-say 의 room:<id> 주소) — 만들기·바꾸기는 데스크톱·참모에서
+  const rs = useMemo(() => (view ? roomConvos(view.rooms, feed?.items ?? [], read) : []), [view, feed, read]);
   const markRoom = (room: string) => setRead((r) => { const n = markRead(r, room, feed?.items ?? []); if (n !== r) keep(READ_KEY, n); return n; });
-  return { feed, cs, unread: unreadTotal(cs), refresh, markRoom };
+  return { feed, cs, rs, unread: unreadTotal([...rs, ...cs]), refresh, markRoom };
 }
 
 /** open = 팀 메시지 알림을 눌러 왔다 — 그 방 대화를 연다(대화 목록이 아직 없으면 받은 뒤에) */
@@ -46,7 +48,7 @@ export function PhoneTeam({ api, t, orch, open }: { api: TeamPhoneApi; t: Return
   const [opened, setOpened] = useState(0);
   useEffect(() => {
     if (!open || open.n === opened) return;
-    const c = t.cs.find((x) => x.room === open.room);
+    const c = [...t.rs, ...t.cs].find((x) => x.room === open.room);
     if (!c) return;
     setOpened(open.n);
     setSheet(false);
@@ -54,7 +56,7 @@ export function PhoneTeam({ api, t, orch, open }: { api: TeamPhoneApi; t: Return
     setSel(c.key);
   }, [open, t.cs, opened]);
   const [handed, setHanded] = useState<Record<string, string>>(() => load(HANDED_KEY, {}));
-  const cur = t.cs.find((c) => c.key === sel) ?? null;
+  const cur = [...t.rs, ...t.cs].find((c) => c.key === sel) ?? null;
   // 같은 말을 2분 안에 다시 보내면(실패 뒤 다시 누름) 같은 cid — 맥·서버가 한 번만 저장한다
   const lastCid = useRef<{ key: string; cid: string; at: number } | null>(null);
   const cidFor = (to: string, text: string) => {
@@ -69,7 +71,7 @@ export function PhoneTeam({ api, t, orch, open }: { api: TeamPhoneApi; t: Return
   if (cur && view && t.feed) {
     return (
       <div className="m-team m-team-convo">
-        <TeamConvo convo={cur} items={t.feed.items} team={view.team} myName={view.me} handed={handed} focused onRead={t.markRoom} onSent={t.refresh}
+        <TeamConvo convo={cur} items={t.feed.items} team={view.team} myName={view.me} handed={handed} focused onRead={t.markRoom} onSent={t.refresh} safety={t.feed.safety} held={t.feed.held} phone members={view.members}
           onHanded={(it: TeamItem, to: string) => setHanded((h) => { const n = { ...h, [`${it.room}:${it.seq}`]: to }; keep(HANDED_KEY, n); return n; })}
           handoff={{ name: orch.name.split(' · ').pop() || orch.name, send: (text) => api.handoff(orch.id, text).then(() => {}) }} say={say} viewing={() => {}} back={() => setSel(null)} />
       </div>
@@ -91,7 +93,7 @@ export function PhoneTeam({ api, t, orch, open }: { api: TeamPhoneApi; t: Return
       )}
       <div className="m-team-body">
         {!view?.joined ? <div className="tmx-none">{`아직 팀이 없어요 — 위 팀 이름을 눌러 만들거나, ${machine()} 설정 > 계정에서 Chammo 계정에 로그인해요`}</div>
-          : seg === 'chat' ? <div className="tmx-list"><TeamList convos={t.cs} sel={null} onPick={(c: Convo) => setSel(c.key)} /></div>
+          : seg === 'chat' ? <div className="tmx-list"><TeamList convos={t.cs} rooms={t.rs} sel={null} onPick={(c: Convo) => setSel(c.key)} /></div>
           : <PhoneTeamLocker teamId={view.teamId} />}
       </div>
       {sheet && <TeamSheet api={api} t={t} onClose={() => setSheet(false)} />}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addSpawned, ownPick, focusPick, focusTab, featureOf, featurePick, followChat, heldBy, holderMap, legacyPick, sidePick, newShows, orphanSends, showOwner, shownFiles, transcriptTargets } from './spaceNav';
+import { addSpawned, dashToggle, leaveHomeFor, ownPick, screenBeforeHome, focusPick, focusTab, featureOf, featurePick, followChat, heldBy, holderMap, legacyPick, sidePick, newShows, orphanSends, showOwner, shownFiles, transcriptTargets } from './spaceNav';
 import type { TaskEvent } from './tasks';
 
 const T = Date.parse('2026-09-30T04:00:00Z');
@@ -330,5 +330,34 @@ describe('ownPick — 참모 화면은 그 참모 것만', () => {
     expect(ownPick('s:abc', 'b', home)).toBe('s:abc');
     expect(ownPick(undefined, 'b', home)).toBe(home);
   });
+  it('홈 대시보드(oh:)는 참모 화면이 아니다 — 기억에 박혀 있어도 이 참모 자리로(⌘2→⌘1 이 홈으로 돌아왔다, 2026-10-24 사용자)', () => {
+    expect(ownPick('oh:', 'b', home)).toBe(home);
+  });
 });
 
+describe('screenBeforeHome — 홈을 열 때 떠나는 참모 화면을 적어 두고, 홈에선 덮어쓰지 않는다', () => {
+  it('참모 화면에서 홈으로 가면 그 화면을 적는다', () => {
+    expect(screenBeforeHome('l:a#d:docs', 'oh:')).toBe(true);
+  });
+  it('홈에서 떠날 땐(⌘숫자) 홈을 적지 않는다 — 홈 열기 전 화면이 남는다', () => {
+    expect(screenBeforeHome('oh:', 'l:b#h')).toBe(false);
+    expect(screenBeforeHome('oh:', 'oh:')).toBe(false);
+  });
+  it('홈과 상관없는 이동은 이 길이 아니다', () => {
+    expect(screenBeforeHome('l:a#h', 'd:/H/x.md')).toBe(false);
+  });
+});
+
+
+describe('dashToggle — ⌘`(⌘₩) 홈 대시보드 켜기·보던 화면으로 (2026-10-25 사용자)', () => {
+  it('홈이 아니면 홈으로', () => expect(dashToggle('l:a#d:docs', 'l:a#d:docs')).toBe('oh:'));
+  it('홈이면 그 참모 탭이 보던 화면으로', () => expect(dashToggle('oh:', 'l:a#d:docs')).toBe('l:a#d:docs'));
+  it('보던 화면이 없으면(참모 없음) 홈 그대로', () => expect(dashToggle('oh:', '')).toBe('oh:'));
+});
+
+describe('leaveHomeFor — 홈에서 ⌘숫자·탭 고르기로 지금 탭 참모를 고르면 홈을 닫는다 (2026-10-25 사용자 "⌘2 → ⌘1 을 거쳐야 1번")', () => {
+  it('홈을 보는 중 지금 탭 참모를 고르면 홈을 닫는다', () => expect(leaveHomeFor('oh:', 'a', 'a')).toBe(true));
+  it('홈에서 다른 참모를 고르면 탭 바꾸기 길(switchTo)이 한다', () => expect(leaveHomeFor('oh:', 'a', 'b')).toBe(false));
+  it('홈이 아니면 그대로(지금 참모를 또 고른 것)', () => expect(leaveHomeFor('l:a#h', 'a', 'a')).toBe(false));
+  it('보는 참모가 없으면 탭 바꾸기 길', () => expect(leaveHomeFor('oh:', undefined, 'a')).toBe(false));
+});

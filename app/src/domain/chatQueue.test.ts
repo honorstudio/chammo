@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { absorbedLeft, ABSORB_GRACE, applyQueueOps, LOST_AFTER, autoEnterTarget, emptyQueue, ESC_GAP, escPlan, inputLeftover, keepAfterRemove, MINE_KEEP, mineForLeftover, pendAct, pendingState, typeQueue, type QueueState } from './chatQueue';
+import { describe, expect, it, vi } from 'vitest';
+import { absorbedLeft, ABSORB_GRACE, applyQueueOps, LOST_AFTER, autoEnterTarget, emptyQueue, ESC_GAP, escPlan, inputLeftover, keepAfterRemove, MINE_KEEP, mineForLeftover, pendAct, pendingState, pendLook, restoreDraft, typeQueue, TYPE_TIMEOUT_MSG, typingOf, type QueueState } from './chatQueue';
+import chat from '../ui/chat/ChatView.tsx?raw';
 import grid from '../ui/SessionGrid.tsx?raw';
 import pane from '../ui/TerminalPane.tsx?raw';
 import tauriTs from '../data/tauri.ts?raw';
@@ -157,6 +158,49 @@ describe('pendingState — 보낸 말이 지금 어디 있나', () => {
   });
 });
 
+// 2026-10-26 사용자 301.png: 일하는 참모에게 2,500자 회의 메모를 보냈더니 말풍선은 흐린 '보내는 중', 입력칸 위엔 분홍 칸(× 단추)에 글 토막 —
+// 실패한 줄 알았다. 실제론 17:10:30 Claude 대기열에 들어가 13초 뒤 참모에게 갔다. 긴 말은 치는 데 몇 초 걸리고(시험 세션 2.1.310 실측 3~8초)
+// 입력칸 높이를 넘으면 화면엔 토막만 보여, 앱이 제 말을 '모르는 글'로 봤다
+const LONG = Array.from({ length: 40 }, (_, i) => `${i}. 회의 메모 줄 — 오늘 할 일과 다음 주 일정을 정리했어요`).join('\n');
+describe('typingOf — 입력칸 글이 아직 안 들어간 내 말의 토막인가', () => {
+  it('치는 중이라 앞부분만 들어온 말', () => {
+    expect(typingOf(LONG.slice(0, 120), [LONG])).toBe(LONG);
+  });
+  it('입력칸 높이를 넘어 가운데 토막만 보이는 긴 말 — 화면 줄 접힘(공백)은 무시', () => {
+    expect(typingOf(LONG.slice(800, 1100).replace(/ /g, '\n  '), ['다른 말', LONG])).toBe(LONG);
+  });
+  it('내 말에 없는 글(받아 적은 말·붙인 그림)은 아니다', () => {
+    expect(typingOf('지구본 키로 받아 적은 말', [LONG])).toBeNull();
+    expect(typingOf('[Image #3] 0. 회의 메모', [LONG])).toBeNull();
+    expect(typingOf('', [LONG])).toBeNull();
+  });
+});
+
+describe('pendingState — 입력칸에 내 말 토막만 보일 때(긴 말)', () => {
+  const base = { queue: emptyQueue, now: at(30), enterWait: 400 };
+  it('치는 중·Enter 직후엔 보내는 중 — 입력칸에 걸림도 안 갔어요도 아니다', () => {
+    expect(pendingState({ text: LONG, at: at(27) }, { ...base, termText: LONG.slice(0, 300) })).toBe('sending');
+  });
+  it('토막이 30초 넘게 그대로면 Enter 가 안 먹은 것 — 입력칸에 걸림(지금 보내기), 다시 쳐서 두 벌로 붙지 않게', () => {
+    expect(pendingState({ text: LONG, at: at(1) }, { ...base, termText: LONG.slice(500, 900), now: at(1) + LOST_AFTER + 1000 })).toBe('input');
+    expect(pendAct('input')).toBe('now');
+  });
+});
+
+describe('pendLook — 말풍선에 보일 모양', () => {
+  it('일하는 중엔 보내는 중도 대기 중으로 — Enter 뒤 훅이 도는 몇 초도 실패처럼 흐리지 않게', () => {
+    expect(pendLook('sending', true)).toBe('queued');
+    expect(pendLook('queued', true)).toBe('queued');
+  });
+  it('쉬는 세션은 그대로 — 곧 들어간다', () => {
+    expect(pendLook('sending', false)).toBe('sending');
+    expect(pendLook('queued', false)).toBe('queued');
+  });
+  it('걸림·안 갔어요·다시 붙는 중은 일하는 중이어도 그대로 보인다', () => {
+    for (const st of ['input', 'lost', 'wait'] as const) expect(pendLook(st, true)).toBe(st);
+  });
+});
+
 describe('autoEnterTarget — Enter 가 사라져 입력칸에 그대로 남은 말에만 Enter 를 다시', () => {
   const ctx = { queue: emptyQueue, now: at(30), enterWait: 400, tries: {} as Record<number, number> };
 
@@ -292,6 +336,43 @@ describe('typeQueue — 세션별 앱 치기 줄', () => {
     void q.push('s', async () => { throw new Error('pty gone'); });
     await q.push('s', async () => { log.push('b'); });
     expect(log).toEqual(['b']);
+  });
+  // 윈도우 끌어 놓기 뒤 '어떤 말도 안 감'(2026-10-24) — 치기 하나가 안 돌아오면 그 세션 줄이 영영 섰다. 시간이 지나면 버리고 다음 것을 친다
+  it('시간 안에 안 끝난 치기는 실패로 알리고 줄은 다음 것으로 넘어간다', async () => {
+    vi.useFakeTimers();
+    try {
+      const q = typeQueue(() => 0);
+      const log: string[] = [];
+      const stuck = q.push('s', () => new Promise<void>(() => { log.push('a'); }), 1000);
+      const next = q.push('s', async () => { log.push('b'); }, 1000);
+      const failed = stuck.then(() => 'ok', (e: Error) => e.message);
+      await vi.advanceTimersByTimeAsync(1001);
+      expect(await failed).toBe(TYPE_TIMEOUT_MSG);
+      await next;
+      expect(log).toEqual(['a', 'b']);
+      expect(q.busyUntil('s')).not.toBe(Infinity);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('실패한 치기는 push 가 거절로 돌려준다 — 부르는 쪽이 입력을 되살린다', async () => {
+    const q = typeQueue(() => 0);
+    await expect(q.push('s', async () => { throw new Error('pty gone'); })).rejects.toThrow('pty gone');
+    await expect(q.push('s', async () => {})).resolves.toBeUndefined();
+  });
+  it('못 보낸 말은 입력칸에 되살린다 — 그사이 사람이 새로 친 글은 덮지 않고 앞에 붙인다', () => {
+    expect(restoreDraft('', '안녕')).toBe('안녕');
+    expect(restoreDraft('  ', '안녕')).toBe('안녕');
+    expect(restoreDraft('새 글', '안녕')).toBe('안녕\n새 글');
+    expect(restoreDraft('안녕', '안녕')).toBe('안녕');
+  });
+  it('채팅 보내기 실패(치기 거절·시간 넘김)가 채팅 칸까지 닿는다 — 오류 한 줄 + 입력 되살림', () => {
+    expect(grid).toMatch(/LINK_WAIT \+ TYPE_TIMEOUT\)\.then\(\(\) => true, \(\) => false\)/);
+    expect(grid).toMatch(/const sent = typeAndSend\(id, text\);[\s\S]{0,240}return sent;/);
+    expect(chat).toMatch(/restoreDraft\(/);
+    expect(chat).toMatch(/sendFail &&/);
+    // 윈도우 경로(C:\\…\\a.png)도 칩 이름은 파일 이름만 — '/' 로만 잘라 전체 경로가 이름이 됐다
+    expect(chat).toMatch(/name: p\.split\(\/\[\\\\\/\]\/\)\.pop\(\)/);
   });
   it('채팅 치기·Esc·지우기는 창에 바로 쓰지 않고 잠그는 길(pty_type)로', () => {
     expect(grid).not.toMatch(/api\.raw\(/);

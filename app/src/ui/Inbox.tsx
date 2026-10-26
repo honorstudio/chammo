@@ -32,7 +32,8 @@ type Props = {
   directCount?: number;
 };
 
-function Row({ item, onReply, onOpen, onDismiss, blockedWhy }: { item: InboxItem } & Omit<Props, 'items' | 'direct' | 'login' | 'browser'>) {
+/** 물음 한 줄 — 결정 대기함과 홈 결정 펼침(그 자리에서 답장)이 같이 쓴다 */
+export function InboxRow({ item, onReply, onOpen, onDismiss, blockedWhy }: { item: InboxItem } & Pick<Props, 'onReply' | 'onOpen' | 'onDismiss' | 'blockedWhy'>) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
@@ -105,7 +106,7 @@ function Inbox(props: Props) {
       {props.login}
       {props.browser}
       {props.direct}
-      {props.items.map((it) => <Row key={it.key} item={it} {...props} />)}
+      {props.items.map((it) => <InboxRow key={it.key} item={it} {...props} />)}
     </div>
   );
 }

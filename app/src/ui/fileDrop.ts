@@ -2,6 +2,7 @@
 // 좌표는 웹뷰 안 좌표(macOS 는 포인트 단위라 clientX/Y 와 같다). 받을 수 있는 칸 = .pane[data-drop]
 import { invoke } from '@tauri-apps/api/core';
 import { dropText, paneAt } from '../domain/drop';
+import { teamDrop } from './team/teamDrop';
 import { LOCKER_CHAT_ATTACH, LOCKER_DROP } from './space/useLocker';
 import { chatDropAt, lightChat } from './space/chatDrop';
 
@@ -43,9 +44,12 @@ export function installFileDrop(): () => void {
     if (e.type === 'leave' || e.x === undefined || e.y === undefined) {
       overDoc?.dispatchEvent(new CustomEvent(DOC_OVER_EVENT, { detail: null }));
       overDoc = null;
+      teamDrop(e); // 메신저 대화 칸·팀 보관함 칸 강조도 끈다
       lightChat(null);
       return light(null);
     }
+    // 메신저 대화 칸·팀 보관함 칸 위면 그쪽으로(시안 msg-rooms v2 — 겹침은 TeamConvo, 보관함 올리기는 TeamLocker)
+    if (teamDrop(e)) { lightChat(null); return light(null); }
     // 채팅 칸 위면 어디든(머리·대화 기록·입력칸·여백) 칸 전체 강조, 놓으면 그 칸 세션 입력칸에(2026-10-12 사용자 — 입력창까지 옮겨야만 들어갔다)
     const chat = chatDropAt(e.x, e.y);
     lightChat(e.type === 'over' ? chat : null);

@@ -2,6 +2,7 @@
 import { Component, type ReactNode } from 'react';
 import { tr } from '../i18n';
 import { IconRefresh } from './Icons';
+import { bumpUsage } from '../data/tauri';
 
 type State = { err: string | null };
 
@@ -9,6 +10,10 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   state: State = { err: null };
   static getDerivedStateFromError(e: unknown): State {
     return { err: String(e instanceof Error ? e.message : e).slice(0, 300) };
+  }
+  // 익명 사용 통계 — 화면 오류 종류 이름만(문구는 안 보낸다)
+  componentDidCatch() {
+    bumpUsage('webview');
   }
   render() {
     if (this.state.err === null) return this.props.children;

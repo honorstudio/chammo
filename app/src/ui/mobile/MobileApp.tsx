@@ -23,7 +23,9 @@ import { askRef } from '../refBus';
 import { ModelChipRow, VoiceMode } from './ComposerExtras';
 import { usePhoneVoice } from './usePhoneVoice';
 import { MessageList } from './MessageList';
-import { DirectCards, PeerCards, usePhoneDirect } from './DirectCards';
+import { DirectCards, PeerCards, PhoneAskCards, usePhoneDirect } from './DirectCards';
+import { askPlaced } from '../../domain/agentAsk';
+import { askName as browserAskName } from '../../domain/agentBrowser';
 import { needsAnswer } from '../../domain/directAsk';
 import { lastLine } from './peek';
 import { OrchDash } from './OrchDash';
@@ -108,7 +110,9 @@ function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask,
   // 직접 답하기 카드 — 기다리는 게 새로 생기면 시트를 반쯤 열고, 접힌 줄에도 알린다(시트 안에만 두면 접혀서 안 보였다, 2026-10-03 QA)
   const direct = usePhoneDirect(orch, orchs, sessions, events);
   const asking = direct.filter(needsAnswer);
-  const askingN = asking.length;
+  // 사람 부르기(browser_ask_human) — 이 참모가 맡긴 세션 브라우저가 부르는 동안 채팅 끝 카드 + 접힌 줄(데스크톱과 같은 배치 askPlaced)
+  const browserAsks = useMemo(() => askPlaced(lives, sessions, events, orchs, orchs[0]).filter((p) => p.owner?.id === orch.id), [lives, sessions, events, orchs, orch.id]);
+  const askingN = asking.length + browserAsks.length;
   const prevAsk = useRef(0);
   useEffect(() => {
     if (askingN > prevAsk.current && snap === 'peek') setSnap('half');
@@ -124,7 +128,7 @@ function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask,
   const [fileOpen, setFileOpen] = useState<ChatFile | null>(null);
   /** 사무실 뽑기·스킨 시트가 열린 동안 — 아래 채팅창을 숨겨 시트가 커진다(PhoneOffice onWide) */
   const [wide, setWide] = useState(false);
-  const askName = asking[0] ? sessions.find((s) => s.id === asking[0]!.from)?.name || asking[0].from : '';
+  const askName = asking[0] ? sessions.find((s) => s.id === asking[0]!.from)?.name || asking[0].from : browserAsks[0] ? browserAskName(browserAsks[0].live, sessions) : '';
   return (
     <div className="m-space" style={orchVars(color) as React.CSSProperties}>
       {/* 시트 자리 — 이 아래 시트(BottomSheet)는 전부 틀 안 끝에 그려진다(키보드 위·참모 색) */}
@@ -158,6 +162,7 @@ function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask,
         <MessageList files={files} onOpenFile={setFileOpen} items={chat.items} earlier={chat.earlier} loading={chat.loading} stale={chat.stale} out={chat.out} onRetry={chat.retry} onDrop={chat.drop} live={chat.live} ask={ask} who={<MAvatar orch={orch} orchs={orchs} size={28} asking />}
           onRef={(who, text) => askRef(orch.id, { kind: 'chat', who, text })} />
         {/* 직접 답하기 카드 — 맡긴 세션이 본인 승인을 기다릴 때(채팅 끝, 입력칸 바로 위) */}
+        <PhoneAskCards asks={browserAsks} sessions={sessions} focus={jumped?.startsWith('b:') ? jumped : undefined} />
         <DirectCards mine={direct} sessions={sessions} focus={jumped?.startsWith('d:') ? jumped.slice(2) : undefined} />
         {jumpedWait && <div className="m-direct"><WaitCard w={jumpedWait} orchs={orchs} sent={waitSent} card={jumped!} /></div>}
         {orch.id === orchs[0]?.id && <PeerCards />}

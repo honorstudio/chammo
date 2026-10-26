@@ -162,6 +162,52 @@ describe('여럿 고른 채 끌기 — 묶음째', () => {
   });
 });
 
+// 2026-10-26 사용자 "드래그해서 잡는 것도 안 되네, 보관함이랑 성격이 다르네" — 팀 보관함은 웹 끌기(draggable)라 앱 창(Tauri)이 가로챘다.
+// 참모 보관함과 같은 포인터 끌기 길로: 폴더 칩에 놓으면 옮기기 신호, 채팅 칸에 놓으면 그 채팅에 붙일 신호(팀 파일은 풀어야 경로가 생긴다)
+describe('팀 보관함 파일 끌기 — 참모 보관함과 같은 길', () => {
+  const team = (ids: string[]) => import('./dragPath').then(({ dragTeam }) => (dragTeam('t1', ids, ids.length > 1 ? `${ids.length}개` : '견적서.pdf') as { onPointerDown: (e: unknown) => void }));
+  it('폴더 칩에 놓으면 그 팀 그 파일들 옮기기 신호(묶음째)', async () => {
+    const got: unknown[] = [];
+    win.addEventListener('team-locker-move', (e) => got.push((e as CustomEvent).detail));
+    const chip = { dataset: { teamFolder: '견적' }, classList: { add: () => undefined, remove: () => undefined } };
+    (document as unknown as { elementFromPoint: unknown }).elementFromPoint = () => ({ closest: (sel: string) => (sel.includes('data-team-folder') ? chip : null) });
+    (await team(['f1', 'f2'])).onPointerDown({ button: 0, clientX: 10, clientY: 10 });
+    move(40, 40);
+    expect(ghosts[0]!.textContent).toBe('2개');
+    fire('pointerup', { clientX: 40, clientY: 40 });
+    expect(got).toEqual([{ team: 't1', ids: ['f1', 'f2'], folder: '견적' }]);
+    expect(moves).toHaveLength(0); // 참모 보관함 옮기기 신호는 안 간다
+  });
+  it('전체 칩(빈 글)에 놓으면 맨 위로', async () => {
+    const got: { folder: string }[] = [];
+    win.addEventListener('team-locker-move', (e) => got.push((e as CustomEvent).detail));
+    const chip = { dataset: { teamFolder: '' }, classList: { add: () => undefined, remove: () => undefined } };
+    (document as unknown as { elementFromPoint: unknown }).elementFromPoint = () => ({ closest: (sel: string) => (sel.includes('data-team-folder') ? chip : null) });
+    (await team(['f1'])).onPointerDown({ button: 0, clientX: 10, clientY: 10 });
+    move(40, 40);
+    fire('pointerup', { clientX: 40, clientY: 40 });
+    expect(got.map((g) => g.folder)).toEqual(['']);
+  });
+  it('채팅 칸에 놓으면 그 채팅에 붙일 신호(바로 붙이지 않는다 — 풀어야 경로가 생긴다)', async () => {
+    const { attachToChat } = await import('../fileDrop');
+    const got: unknown[] = [];
+    win.addEventListener('team-locker-out', (e) => got.push((e as CustomEvent).detail));
+    (await team(['f1'])).onPointerDown({ button: 0, clientX: 10, clientY: 10 });
+    move(600, 40);
+    fire('pointerup', { clientX: 600, clientY: 40 });
+    expect(got).toEqual([{ team: 't1', ids: ['f1'], chat: 's-test' }]);
+    expect(attachToChat).not.toHaveBeenCalled();
+  });
+  it('오른쪽 클릭·ctrl+클릭은 끌기를 시작하지 않는다(메뉴 몫)', async () => {
+    const t = await team(['f1']);
+    t.onPointerDown({ button: 2, clientX: 10, clientY: 10 });
+    move(40, 40);
+    t.onPointerDown({ button: 0, ctrlKey: true, clientX: 10, clientY: 10 });
+    move(60, 60);
+    expect(ghosts).toHaveLength(0);
+  });
+});
+
 // 2026-10-12 사용자 "한참 들고 있다가 드롭해야 들어가고 빠르게 넣으면 안 들어가".
 // 원인 — WebKit(맥)은 마우스 사건의 buttons 를 앱이 그 사건을 처리하는 순간의 하드웨어 상태로 채운다. 앱이 조금(30ms)만 밀려도
 // 놓기 직전 끌기 사건이 buttons 0 으로 오고 바로 뒤에 진짜 pointerup 이 오는데, buttons 0 을 '이미 놓쳤다'로 보고 취소했다.

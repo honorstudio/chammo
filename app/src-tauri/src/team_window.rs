@@ -1,4 +1,5 @@
-//! 메신저 따로 창(시안 v2 C) — 메신저 전체(team-all) 또는 대화 하나(team-<방>)를 메인 창에서 떼어 낸다.
+//! 메신저 따로 창(시안 v2 C) — 메인 창 팀 모드와 같은 화면(team-all, 참모만 없이)을 떼어 낸다.
+//! 대화 하나만 떼어도 그 창에서 그 대화를 고른다(10-26 사용자 — 대화 하나만 뜬 창은 없앴다, 옛 열쇠 team-<방> 도 team-all 로)
 //! - 붙이기 = 창 머리 붙이기 아이콘(웹이 team_window_close) 또는 창 닫기 → 메인 창에 __teamDock 로 알린다
 //! - 자리는 하나만 기억(<데이터>/team-window.json: 열린 창 + 마지막 자리와 그 모니터 이름). 다음에 앱을 켜면 그 모니터가 있을 때만 다시 연다
 //! - 처음 떼면 메인 창이 없는 쪽 모니터 가운데, 모니터가 하나면 메인 창 위(웹은 모니터 하나면 떼기 아이콘을 숨긴다)
@@ -49,6 +50,24 @@ pub const DEFAULT_H: u32 = 680;
 /// 창 열쇠 — "all" 또는 방 id(영문·숫자·-_ 64자)
 pub fn key_ok(k: &str) -> bool {
     k == "all" || (!k.is_empty() && k.len() <= 64 && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+}
+
+/// 열 창과 고를 방 — 늘 팀 모드 창 하나("all"), 방 열쇠면 그 창에서 그 방을 고른다
+pub fn target(key: &str) -> (String, Option<String>) {
+    ("all".to_string(), (key != "all").then(|| key.to_string()))
+}
+
+/// 팀 모드 창 주소 — 방은 key_ok 를 지난 글자만이라 그대로 붙인다
+pub fn url_of(room: Option<&str>) -> String {
+    match room {
+        Some(r) => format!("messenger.html?c=all&r={r}"),
+        None => "messenger.html?c=all".to_string(),
+    }
+}
+
+/// 이미 떠 있는 창에 고를 방을 넘긴다(웹 useTeamMode 의 __teamPick)
+pub fn pick_js(room: &str) -> String {
+    format!("window.__teamPick && window.__teamPick({})", serde_json::Value::String(room.to_string()))
 }
 
 pub fn label(key: &str) -> String {
@@ -118,10 +137,14 @@ pub async fn team_window_open<R: Runtime>(app: tauri::AppHandle<R>, window: taur
     if !crate::team_ui::ui_window(window.label()) || !key_ok(&key) {
         return Err("bad".into());
     }
+    let (key, room) = target(&key);
     let lb = label(&key);
     if let Some(w) = app.get_webview_window(&lb) {
         let _ = w.show();
         let _ = w.set_focus();
+        if let Some(r) = room.as_deref() {
+            let _ = w.eval(pick_js(r));
+        }
         return Ok("shown".into());
     }
     let dir = crate::config::data_dir();
@@ -129,7 +152,7 @@ pub async fn team_window_open<R: Runtime>(app: tauri::AppHandle<R>, window: taur
     let main_at = app.get_webview_window("main").and_then(|m| Some(m.outer_position().ok()?.to_logical::<f64>(m.scale_factor().ok()?))).map(|p| (p.x as i32 + 40, p.y as i32 + 40)).unwrap_or((0, 0));
     let (x, y, w, h) = place(st.spot.as_ref(), &screens_of(&app), main_at);
     let title: String = title.chars().filter(|c| !c.is_control()).take(60).collect();
-    let win = tauri::WebviewWindowBuilder::new(&app, &lb, tauri::WebviewUrl::App(format!("messenger.html?c={key}").into()))
+    let win = tauri::WebviewWindowBuilder::new(&app, &lb, tauri::WebviewUrl::App(url_of(room.as_deref()).into()))
         .title(if title.is_empty() { crate::i18n::tr("메신저", "Messenger").to_string() } else { title })
         .inner_size(w as f64, h as f64)
         .position(x as f64, y as f64)
@@ -143,6 +166,8 @@ pub async fn team_window_open<R: Runtime>(app: tauri::AppHandle<R>, window: taur
     }
     let _ = win.show();
     let _ = win.set_focus();
+    // 옛 판이 적어 둔 방 창 열쇠는 지운다 — 이제 창은 team-all 하나
+    st.open.retain(|k| k == "all");
     if !st.open.contains(&key) {
         st.open.push(key.clone());
     }

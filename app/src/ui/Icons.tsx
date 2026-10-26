@@ -13,9 +13,17 @@ export const IconRestore = () => (
 export const IconApps = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M3.5 2.5h2.5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1ZM10 2.5h2.5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1ZM3.5 9H6a1 1 0 0 1 1 1v2.5a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1ZM10 9h2.5a1 1 0 0 1 1 1v2.5a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1Z" /></svg>
 );
-/** 따로 창으로: 뒤 창 하나가 앞으로 떨어져 나옴 */
+/** 오른쪽 칸 열기: 창 + 오른쪽 세로 칸(좁은 메신저 창의 팀 홈·보관함) */
+export const IconPanelRight = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M2.5 3.5h11v9h-11Z M9.5 3.5v9" /></svg>
+);
+/** 메신저 접기·펴기: 왼쪽 칸이 있는 창(IconPanelRight 거울) — 같은 아이콘, 이름(aria-label)으로 가른다 */
+export const IconPanelLeft = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M2.5 3.5h11v9h-11Z M6.5 3.5v9" /></svg>
+);
+/** 따로 창으로: 창(머리띠 줄) 모서리 밖으로 나가는 화살표 — 겹친 두 네모는 복사와 같아 헷갈렸다(10-26 283.png) */
 export const IconWindowOut = () => (
-  <svg viewBox="0 0 16 16" {...P}><path d="M5.5 5V3.5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H11M2.5 6.5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1Z" /></svg>
+  <svg viewBox="0 0 16 16" {...P}><path d="M7.5 2.5H3.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-4M2.5 5.5h4M10 2.5h3.5V6M13.5 2.5 8.5 7.5" /></svg>
 );
 /** 스페이스로: 옆 칸이 있는 창 안으로 들이는 화살표 */
 export const IconDockIn = () => (
@@ -49,6 +57,10 @@ export const IconBell = () => (
 /** 보내기: 위 화살표 — 폰 입력창 오른쪽 아래 동그라미(시안 phone-dash K) */
 export const IconArrowUp = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M8 13V3.2M3.8 7.4 8 3.2l4.2 4.2" /></svg>
+);
+/** 정렬: 내려가는 화살표 + 길이가 줄어드는 세 줄 */
+export const IconSort = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M4.4 2.8v10.4M2.2 11l2.2 2.2L6.6 11M8.6 4h5.2M8.6 8h3.6M8.6 12h2" /></svg>
 );
 /** 보내기: 꺾인 화살표(↵) — Enter 와 같은 일(2026-10-02 보내기 버튼 시안 방향 2) */
 export const IconEnter = () => (
@@ -184,6 +196,14 @@ export const IconZoomOut = () => (
 export const IconZoomIn = () => (
   <svg viewBox="0 0 16 16" {...P}><circle cx="7" cy="7" r="4.5" /><path d="M10.4 10.4L14 14M5 7h4M7 5v4" /></svg>
 );
+/** 문서 넓게: 가운데서 양옆 끝으로 벌어지는 화살표 */
+export const IconWidthWide = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M1.5 8h5M9.5 8h5M3.5 6L1.5 8l2 2M12.5 6l2 2-2 2" /></svg>
+);
+/** 문서 좁게: 양옆에서 가운데 줄로 모이는 화살표 */
+export const IconWidthNarrow = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M8 3.5v9M1.5 8h4.5M10 8h4.5M4 6l2 2-2 2M12 6l-2 2 2 2" /></svg>
+);
 /** 맞춤: 양쪽 벽 사이를 채우는 가로 화살표 */
 export const IconZoomFit = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M2.5 3v10M13.5 3v10M5.5 8h5M7.4 6.1L5.5 8l1.9 1.9M8.6 6.1L10.5 8 8.6 9.9" /></svg>
@@ -248,6 +268,10 @@ export const IconFolderAlias = () => (
 export const IconPerson = () => (
   <svg viewBox="0 0 16 16" {...P}><circle cx="8" cy="5.4" r="2.6" /><path d="M3 13.8c.6-2.6 2.6-4 5-4s4.4 1.4 5 4" /></svg>
 );
+/** 사진 바꾸기: 카메라(몸 + 렌즈) — 프로필 사진·팀 아이콘 */
+export const IconCamera = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M2.5 5.5a1 1 0 0 1 1-1h1.8l1-1.6h3.4l1 1.6h1.8a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1Z" /><circle cx="8" cy="8.4" r="2.2" /></svg>
+);
 /** 찾기: 돋보기 */
 export const IconSearch = () => (
   <svg viewBox="0 0 16 16" {...P}><circle cx="7" cy="7" r="4.5" /><path d="M10.4 10.4L14 14" /></svg>
@@ -279,10 +303,6 @@ export const IconPet = () => (
 /** 숨기기: 감은 눈(가로 곡선 + 속눈썹) — 꺼내 둔 크롬 창을 다시 숨긴다 */
 export const IconHide = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M2 7c1.6 2.2 3.6 3.3 6 3.3S12.4 9.2 14 7M4.2 9.2 3 11M8 10.4V12.6M11.8 9.2 13 11" /></svg>
-);
-/** 세션들: 겹친 두 칸(뒤 칸은 앞 칸에 가려 모서리만) */
-export const IconSessions = () => (
-  <svg viewBox="0 0 16 16" {...P}><rect x="2" y="5.5" width="9" height="8" rx="1.4" /><path d="M5 5.5V3.9A1.4 1.4 0 0 1 6.4 2.5h6.2A1.4 1.4 0 0 1 14 3.9v5.2a1.4 1.4 0 0 1-1.4 1.4H11" /></svg>
 );
 /** 예약: 시계 */
 /** 받은 것: 받은편지함 트레이 */
@@ -378,3 +398,30 @@ export const IconSkin = () => (
   ]} />
 );
 
+
+// ── 메신저 v2(시안 msg-rooms v2) — 붙이기·부르기·반응 ──
+/** 종단 암호: 자물쇠 */
+export const IconLock = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M4 7.5h8v6H4ZM5.5 7.5V5.5a2.5 2.5 0 0 1 5 0v2" /></svg>
+);
+/** 부르기: @ */
+export const IconAt = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M10.5 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0Zm0 0v1a1.8 1.8 0 0 0 3.5 0V8a6 6 0 1 0-2.4 4.8" /></svg>
+);
+/** 반응 달기: 웃는 얼굴 + */
+export const IconReactAdd = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M13 7.5A5.5 5.5 0 1 1 8.5 2.1M5.5 9.5s.9 1.3 2.5 1.3 2.5-1.3 2.5-1.3M6 6.2v.1M10 6.2v.1M12.5 1.5v3.5M10.75 3.25h3.5" /></svg>
+);
+/** 문서 파일 */
+export const IconDoc = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M4 1.5h5l3 3v10H4ZM9 1.5v3h3M6 8.5h4M6 11h4" /></svg>
+);
+const PR = { ...P, strokeWidth: 1.5 };
+/** 반응 표식 다섯 — 이모지 대신 직접 그린 SVG(Rust e2e_envelope::REACT_MARKS 와 같은 이름) */
+export const REACT_MARKS: { key: string; ko: string; en: string; icon: () => React.ReactElement }[] = [
+  { key: 'like', ko: '좋아요', en: 'Like', icon: () => <svg viewBox="0 0 16 16" {...PR}><path d="M5 7v6.5H2.8V7ZM5 7l2.6-4.6c.9 0 1.6.8 1.4 1.7L8.6 6h3.6a1.3 1.3 0 0 1 1.3 1.5l-.8 4.8a1.4 1.4 0 0 1-1.4 1.2H5" /></svg> },
+  { key: 'check', ko: '확인', en: 'Got it', icon: () => <svg viewBox="0 0 16 16" {...PR}><circle cx="8" cy="8" r="5.8" /><path d="m5.4 8.2 1.8 1.8 3.4-3.6" /></svg> },
+  { key: 'smile', ko: '웃음', en: 'Smile', icon: () => <svg viewBox="0 0 16 16" {...PR}><circle cx="8" cy="8" r="5.8" /><path d="M5.3 9.2s1 1.6 2.7 1.6 2.7-1.6 2.7-1.6M6 6.3v.1M10 6.3v.1" /></svg> },
+  { key: 'eyes', ko: '봤어요', en: 'Seen', icon: () => <svg viewBox="0 0 16 16" {...PR}><path d="M1.8 8S4.2 3.8 8 3.8 14.2 8 14.2 8 11.8 12.2 8 12.2 1.8 8 1.8 8Z" /><circle cx="8" cy="8" r="1.9" /></svg> },
+  { key: 'heart', ko: '하트', en: 'Heart', icon: () => <svg viewBox="0 0 16 16" {...PR}><path d="M8 13.3S2.3 10 2.3 6.2A2.9 2.9 0 0 1 8 5a2.9 2.9 0 0 1 5.7 1.2C13.7 10 8 13.3 8 13.3Z" /></svg> },
+];

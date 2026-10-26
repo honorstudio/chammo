@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ASK_EMPTY, askClose, askOpen, askShown, askStep, askWaiting, pickLive, popupLabel, popupLine, popupStep, type AskState } from '../domain/agentAsk';
+import { ASK_EMPTY, askCardKey, askClose, askOpen, askShown, askStep, askWaiting, pickLive, popupLabel, popupLine, popupStep, type AskPlaced, type AskState } from '../domain/agentAsk';
 import { afterUnpeek, controlOf, showsPicture, currentSite, ACTIVE_MS, fedcmChoices, fedcmLine, focusFailLine, peekStep, permLine, stuckLine, tabStrip, takeoverLine, type Live } from '../domain/agentBrowser';
 import { approach, escCancelsDialog, escClose, keyEvents, keyTarget, menuRoute, modsOf, pointIn, unfocusedKey, type InputEv } from '../domain/agentInput';
 import { tr } from '../i18n';
@@ -378,7 +378,8 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
 export function AgentAskHost({ lives, nameOf, notify, notifyPopup, onPopupCards }: {
   lives: Live[];
   nameOf: (l: Live) => string;
-  notify: (profile: string, reason: string, name: string) => void;
+  /** live = 부른 브라우저(알림 갈 곳 — 맡긴 참모 채팅의 그 부름 카드) */
+  notify: (profile: string, reason: string, name: string, live: Live) => void;
   /** 모달로 안 보는 브라우저에 크롬 자체 창이 새로 떴다 — 알림 한 번(kind = 패스키인지) */
   notifyPopup?: (profile: string, name: string, kind: Live['popupKind']) => void;
   /** 모달로 안 보는 브라우저의 크롬 자체 창들 — 결정 대기함 카드(PopupCards) */
@@ -403,7 +404,7 @@ export function AgentAskHost({ lives, nameOf, notify, notifyPopup, onPopupCards 
   useEffect(() => {
     const r = askStep(stRef.current, lives);
     update(() => r.state);
-    for (const l of r.notify) notify(l.profile, l.ask?.reason ?? '', nameOf(l));
+    for (const l of r.notify) notify(l.profile, l.ask?.reason ?? '', nameOf(l), l);
   }, [lives]); // eslint-disable-line react-hooks/exhaustive-deps
   // 크롬 자체 창 — 모달로 보는 브라우저는 모달이 맡고, 나머지는 알림 한 번 + 결정 대기함 카드
   const popKeys = useRef<string[]>([]);
@@ -440,6 +441,26 @@ export function PopupCards({ lives, nameOf }: { lives: Live[]; nameOf: (l: Live)
             <b>{tr(`${nameOf(l)} — ${popupLabel(l.popupKind)}이 떴어요`, `${nameOf(l)} — ${popupLabel(l.popupKind)}`)}</b>
             <IconButton tone="pri" label={tr('크롬에서 보기', 'Show in Chrome')} onClick={() => openAgentModal(l.profile, l.pid)}><IconOpen /></IconButton>
           </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+/**
+ * 사람 부르기 카드 — 맡긴 참모 채팅 맨 아래·결정 대기함(2026-10-24 트레이더: 모달·알림뿐이라 놓쳤다). 누르면 크게 보기 모달.
+ * 래퍼가 부름을 거두면(다 했어·시간 지나 브라우저 닫힘) 목록에서 빠져 카드도 내려간다
+ */
+export function AskCards({ asks, nameOf }: { asks: AskPlaced[]; nameOf: (l: Live) => string }) {
+  return (
+    <>
+      {asks.map(({ live: l }) => (
+        <div key={askCardKey(l)} data-card={askCardKey(l)} className="login-card browser-card" role="alert">
+          <div className="login-card-top">
+            <b>{tr(`${nameOf(l)} 세션이 사람을 불러요`, `${nameOf(l)} needs you`)}</b>
+            <IconButton tone="pri" label={tr('크게 보기', 'Open')} onClick={() => openAgentModal(l.profile, l.pid)}><IconOpen /></IconButton>
+          </div>
+          {l.ask?.reason && <div className="browser-card-why">{l.ask.reason}</div>}
         </div>
       ))}
     </>

@@ -24,7 +24,8 @@ describe('윈도우 키 → 맥 단축키로 읽기 — Ctrl+글자는 터미널
     expect(shortcutFor(k('+', 'Equal', { ctrl: true, shift: true }), true)).toEqual({ type: 'font', delta: 1 });
     expect(shortcutFor(k('-', 'Minus', { ctrl: true }), true)).toEqual({ type: 'font', delta: -1 });
     expect(shortcutFor(k('0', 'Digit0', { ctrl: true }), true)).toEqual({ type: 'fontReset' });
-    expect(shortcutFor(k('`', 'Backquote', { ctrl: true }), true)).toEqual({ type: 'maximizePane' });
+    expect(shortcutFor(k('`', 'Backquote', { ctrl: true }), true)).toEqual({ type: 'homeToggle' });
+    expect(shortcutFor(k('~', 'Backquote', { ctrl: true, shift: true }), true)).toEqual({ type: 'maximizePane' }); // Ctrl+Shift+` = 창 크게(2026-10-25)
     expect(shortcutFor(k(',', 'Comma', { ctrl: true }), true)).toEqual({ type: 'settings' });
   });
   it('Ctrl+Alt+숫자 = 화면 이동, Ctrl+Alt+E = 리더 크게, Ctrl+Shift+/ = 둘러보기', () => {
@@ -53,7 +54,8 @@ describe('화면 표기 — ⌘ 를 윈도우 키 이름으로', () => {
   it('글자는 Ctrl+Shift, 숫자·기호는 Ctrl', () => {
     expect(keyLabel('메모(⌘M)', true)).toBe('메모(Ctrl+Shift+M)');
     expect(keyLabel('작업 패널(⌘J) · ⌘1', true)).toBe('작업 패널(Ctrl+Shift+J) · Ctrl+1');
-    expect(keyLabel('⌘₩ 로 크게', true)).toBe('Ctrl+` 로 크게');
+    expect(keyLabel('⌘₩ 로 홈', true)).toBe('Ctrl+` 로 홈');
+    expect(keyLabel('⌘⇧₩ 로 크게', true)).toBe('Ctrl+Shift+` 로 크게');
     expect(keyLabel('⌘+ ⌘- ⌘0', true)).toBe('Ctrl++ Ctrl+- Ctrl+0');
   });
   it('⌥⌘숫자·⌘⇧E·⌘Enter·⌘클릭·⌘/·⌥⌘Q', () => {

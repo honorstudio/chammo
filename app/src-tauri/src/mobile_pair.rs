@@ -375,7 +375,7 @@ impl Devices {
     /// 코드가 살아 있으면 쓰고(한 번만) 기기 토큰(16진 64자)을 준다.
     /// 같은 폰으로 알아보면(옛 열쇠 증명·코드 낸 기기) 새 줄 대신 그 줄의 열쇠를 바꿔 끼운다 — 옛 열쇠는 그 순간 죽는다
     pub fn pair_with(&self, code: &str, p: &Pairing, now: SystemTime) -> Option<String> {
-        self.pair_inner(code, p, None, now)
+        self.pair_inner(Some(code), p, None, now)
     }
 
     /// 중계 두드리기로 짝짓기(ADR 0013) — 코드 규칙은 같고, 그 줄에 중계 묶음을 적는다
@@ -383,7 +383,16 @@ impl Devices {
         if p.peer {
             return None;
         }
-        self.pair_inner(code, p, Some(relay), now)
+        self.pair_inner(Some(code), p, Some(relay), now)
+    }
+
+    /// 숫자 확인으로 묶기(ADR 0014) — 코드 없이. 사람이 이 컴퓨터 카드에서 허용한 뒤에만(phone_relay::link_answer) 부른다.
+    /// 떠 있던 QR 코드는 건드리지 않고, 같은 중계 기기 줄이 있으면 그 줄을 바꿔 끼운다
+    pub fn pair_linked(&self, p: &Pairing, relay: Relay, now: SystemTime) -> Option<String> {
+        if p.peer || relay.device.is_empty() || relay.x.is_empty() {
+            return None;
+        }
+        self.pair_inner(None, p, Some(relay), now)
     }
 
     /// 코드가 살아 있나(쓰지 않고) — 중계에 기기를 들이기 전에 본다. 틀리면 틀린 횟수에 센다
@@ -442,26 +451,32 @@ impl Devices {
         g.list.iter().find(|d| d.id == id).and_then(|d| d.relay.as_ref().map(|r| r.device.clone()))
     }
 
-    fn pair_inner(&self, code: &str, p: &Pairing, relay: Option<Relay>, now: SystemTime) -> Option<String> {
-        if code.is_empty() {
-            return None;
-        }
+    /// code = None 은 숫자 확인으로 묶기(pair_linked) — 코드 문을 건너뛰고 떠 있는 코드도 그대로 둔다
+    fn pair_inner(&self, code: Option<&str>, p: &Pairing, relay: Option<Relay>, now: SystemTime) -> Option<String> {
         let mut g = self.inner.lock().unwrap();
-        // 참모가 만든 코드는 사람이 카드에서 허용하기 전엔 맞는 코드여도 안 된다
-        if matches!(g.hold, Some((_, false))) {
-            return None;
-        }
-        let (h, until, issuer) = g.code.clone()?;
-        if !ct_eq(sha(code).as_bytes(), h.as_bytes()) || now > until {
-            // 코드는 128비트라 맞히기는 못 한다 — 틀린 코드로 코드를 죽이면 남이 사람이 막 띄운 QR 을 연타로 죽일 수 있었다(2026-10-21 리뷰 ④-6). 세기만
-            g.fails += 1;
-            if g.fails == MAX_FAILS {
-                log_device(&format!("짝짓기 — 틀린 코드 {MAX_FAILS}번(코드는 그대로)"));
+        let mut issuer = None;
+        if let Some(code) = code {
+            if code.is_empty() {
+                return None;
             }
-            return None;
+            // 참모가 만든 코드는 사람이 카드에서 허용하기 전엔 맞는 코드여도 안 된다
+            if matches!(g.hold, Some((_, false))) {
+                return None;
+            }
+            let (h, until, who) = g.code.clone()?;
+            if !ct_eq(sha(code).as_bytes(), h.as_bytes()) || now > until {
+                // 코드는 128비트라 맞히기는 못 한다 — 틀린 코드로 코드를 죽이면 남이 사람이 막 띄운 QR 을 연타로 죽일 수 있었다(2026-10-21 리뷰 ④-6). 세기만
+                g.fails += 1;
+                if g.fails == MAX_FAILS {
+                    log_device(&format!("짝짓기 — 틀린 코드 {MAX_FAILS}번(코드는 그대로)"));
+                }
+                return None;
+            }
+            g.code = None;
+            g.hold = None;
+            issuer = who;
         }
-        g.code = None;
-        g.hold = None;
+        let linked = code.is_none();
         let token = random_hex(32).ok()?;
         let new_id = random_hex(8).ok()?;
         let at = ms(now);
@@ -474,6 +489,11 @@ impl Devices {
             // ① 같은 저장 공간의 옛 열쇠 — 같은 칸이면 그 줄, 다른 칸(베껴 온 저장 공간)이면 같은 폰으로 묶기만
             let mut target = None;
             let mut group = None;
+            // 숫자 확인으로 다시 묶는 폰 — 같은 중계 기기 줄을 바꿔 끼운다(같은 폰이 다시 숫자 확인)
+            if linked {
+                let dev = relay.as_ref().map(|r| r.device.as_str()).unwrap_or_default();
+                target = l.iter().position(|d| !d.peer && d.relay.as_ref().is_some_and(|r| r.device == dev));
+            }
             if let Some(i) = prev_hash.as_deref().and_then(|ph| find_hash(l, ph)).filter(|&i| l[i].peer == p.peer) {
                 if l[i].home == p.home {
                     target = Some(i);
