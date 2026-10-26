@@ -1,4 +1,4 @@
-import { josa, tr } from '../i18n';
+import { josa, machine, tr } from '../i18n';
 import { fmtUntil, readAuto, slotStatus, type SlotAuto } from './accountAuto';
 import type { Usage } from './usage';
 import { shq } from './setup';
@@ -214,16 +214,20 @@ export function reloginDone(v: AccountsView, id: string): boolean {
 export function accountError(code: string): string {
   const [k, ...rest] = code.split(':');
   const detail = rest.join(':');
+  const pc = machine() === 'PC'; // 윈도우 = 로그인 파일 + 자격 증명 관리자(맥 키체인 창 얘기가 아니다)
   switch (k) {
     case 'notLoggedIn': return tr('지금 Claude 에 로그인돼 있지 않아요. 로그인한 뒤 다시 해 주세요.', 'You are not signed in to Claude. Sign in and try again.');
     case 'noOauth': return tr('로그인 정보에 계정 표시(이메일)가 없어요. API 키로 쓰는 중이면 계정 칸을 쓸 수 없어요.', 'The sign-in has no account details (email). Accounts do not work with an API key.');
     case 'unknown': return tr('그 계정 칸이 없어요. 창을 닫았다 다시 열어 주세요.', 'That account is gone. Close and reopen this window.');
-    case 'noSlot': return tr('이 계정의 보관된 로그인이 키체인에 없어요. 빼고 다시 추가해 주세요.', 'The kept sign-in for this account is missing from the keychain. Remove it and add it again.');
+    case 'noSlot': return pc ? tr('이 계정의 보관된 로그인이 자격 증명 관리자에 없어요. 빼고 다시 추가해 주세요.', 'The kept sign-in for this account is missing from Credential Manager. Remove it and add it again.')
+      : tr('이 계정의 보관된 로그인이 키체인에 없어요. 빼고 다시 추가해 주세요.', 'The kept sign-in for this account is missing from the keychain. Remove it and add it again.');
     case 'noBackup': return tr('그 백업이 아직 없어요. 계정을 한 번이라도 바꿔야 생겨요.', 'That backup does not exist yet. It is made the first time you switch accounts.');
     case 'moved': return tr('그새 다른 곳에서 계정을 바꿔서 이번엔 안 바꿨어요.', 'The account was just changed elsewhere, so this switch was skipped.');
     case 'mismatch': return tr('로그인이 바뀌는 중인 것 같아요. 터미널 로그인이 끝난 뒤 다시 눌러 주세요.', 'The sign-in seems to be changing. Wait for the terminal sign-in to finish, then try again.');
-    case 'denied': return tr('맥이 키체인 사용 허용을 물었는데 거절됐거나 창이 닫혔어요. 다시 누르고, 뜨는 창에 맥 로그인 암호를 넣은 뒤 "항상 허용"을 눌러 주세요.', 'macOS asked to allow keychain access and it was denied or closed. Try again, enter your Mac login password in the window, and choose "Always Allow".');
-    case 'locked': return tr('키체인이 잠겼거나 허용을 거절했어요. 맥 잠금을 풀고 다시 해 주세요.', 'The keychain is locked or access was denied. Unlock your Mac and try again.');
+    case 'denied': if (pc) return tr('Claude 로그인 파일이나 자격 증명 관리자에 쓸 권한이 없어요. Chammo 를 다시 켠 뒤 해 주세요.', 'No permission to write the Claude sign-in file or Credential Manager. Restart Chammo and try again.');
+      return tr('맥이 키체인 사용 허용을 물었는데 거절됐거나 창이 닫혔어요. 다시 누르고, 뜨는 창에 맥 로그인 암호를 넣은 뒤 "항상 허용"을 눌러 주세요.', 'macOS asked to allow keychain access and it was denied or closed. Try again, enter your Mac login password in the window, and choose "Always Allow".');
+    case 'locked': if (pc) return tr('자격 증명 관리자를 못 열었어요. PC 에 로그인한 화면에서 다시 해 주세요.', 'Could not open Credential Manager. Try again from the signed-in desktop.');
+      return tr('키체인이 잠겼거나 허용을 거절했어요. 맥 잠금을 풀고 다시 해 주세요.', 'The keychain is locked or access was denied. Unlock your Mac and try again.');
     case 'busy': return tr('Claude Code 세션이 로그인을 갱신하는 중이라 이번엔 안 바꿨어요. 잠시 뒤 다시 해 주세요.', 'A Claude Code session is refreshing its sign-in, so the switch was skipped. Try again in a moment.');
     case 'refresh': if (detail === 'wait' || detail.startsWith('wait:')) {
       // 세 길이 같이 보는 쉬기(Rust token_rate) 안이라 서버를 안 불렀다 — 브라우저 로그인은 된다
@@ -236,7 +240,7 @@ export function accountError(code: string): string {
       const sec = Number(detail.slice(5));
       const ko = sec > 0 ? `${Math.ceil(sec / 60)}분` : '몇 분';
       const en = sec > 0 ? `${Math.ceil(sec / 60)} min` : 'a few minutes';
-      return tr(`Anthropic 쪽이 잠깐 요청을 막았어요(이 맥에서 요청이 많음) — 계정 문제는 아니에요. ${ko} 뒤 다시 해 주세요.`, `Anthropic is briefly limiting requests from this Mac — not a problem with the account. Try again in ${en}.`);
+      return tr(`Anthropic 쪽이 잠깐 요청을 막았어요(이 ${machine()}에서 요청이 많음) — 계정 문제는 아니에요. ${ko} 뒤 다시 해 주세요.`, `Anthropic is briefly limiting requests from this ${pc ? 'PC' : 'Mac'} — not a problem with the account. Try again in ${en}.`);
     }
     return detail === 'dead'
       ? tr('바꿀 계정의 로그인이 풀려 있어요(다른 곳에서 로그아웃했거나 다시 로그인함). 그 계정으로 로그인한 뒤 칸을 빼고 다시 추가해 주세요.', 'The sign-in kept for that account has expired (signed out or signed in again elsewhere). Sign in to it, then remove and add it again.')

@@ -91,9 +91,8 @@ fn ok_json(r: &CallOut) -> Option<Value> {
 }
 
 /// 원격 HQ 의 참모들 — /api/env hqDir 과 같은 폴더의 세션
-fn assistants(ops: &dyn PeerOps, id: &str) -> Vec<Value> {
+fn assistants(ops: &dyn PeerOps, id: &str, env: &Value) -> Vec<Value> {
     let norm = |p: &str| p.replace('\\', "/").trim_end_matches('/').to_lowercase();
-    let Some(env) = ops.call(id, "GET", "/api/env", None).ok().as_ref().and_then(ok_json) else { return Vec::new() };
     let hq = norm(env["hqDir"].as_str().unwrap_or(""));
     let Some(s) = ops.call(id, "GET", "/api/sessions", None).ok().as_ref().and_then(ok_json) else { return Vec::new() };
     s.as_array()
@@ -103,6 +102,15 @@ fn assistants(ops: &dyn PeerOps, id: &str) -> Vec<Value> {
                 .map(|x| json!({ "id": x["id"], "name": x["name"] }))
                 .collect()
         })
+        .unwrap_or_default()
+}
+
+/// 그 기기 Chammo 데이터 폴더별 로그인 계정(/api/env chammoAccounts, 0.4.3~) — 남의 글이라 글자·길이를 줄여서
+fn accounts(env: &Value) -> Vec<Value> {
+    let t = |v: &Value, n: usize| v.as_str().unwrap_or("").chars().filter(|c| !c.is_control() && !matches!(c, '<' | '>' | '"' | '\'' | '`')).take(n).collect::<String>();
+    env["chammoAccounts"]
+        .as_array()
+        .map(|a| a.iter().take(8).map(|x| json!({ "folder": t(&x["folder"], 64), "current": x["current"] == true, "email": t(&x["email"], 120), "name": t(&x["name"], 80) })).collect())
         .unwrap_or_default()
 }
 
@@ -118,7 +126,12 @@ pub fn answer(req: &PeerReq, ops: &dyn PeerOps) -> Value {
             .iter()
             .map(|d| {
                 let mut v = serde_json::to_value(d).unwrap_or_default();
-                v["assistants"] = if d.status == "connected" { Value::Array(assistants(ops, &d.id)) } else { json!([]) };
+                let env = if d.status == "connected" { ops.call(&d.id, "GET", "/api/env", None).ok().as_ref().and_then(ok_json) } else { None };
+                v["assistants"] = match &env {
+                    Some(e) => Value::Array(assistants(ops, &d.id, e)),
+                    None => json!([]),
+                };
+                v["accounts"] = Value::Array(env.as_ref().map(accounts).unwrap_or_default());
                 v
             })
             .collect();

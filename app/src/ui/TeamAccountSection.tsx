@@ -1,14 +1,14 @@
 // 설정 > 계정 > Chammo 계정(맨 위)(중계 서버 ADR 0004) — 구글로 로그인해 내 기기끼리 잇는다. 지금 앱 모양(su-sec·su-row)만, 메신저 본 화면은 4단계.
 // 로그인은 사람 브라우저에서(앱이 127.0.0.1 로 돌려받는다), 열쇠는 이 기기 키체인(chammo-team)에만. 끊기·로그아웃·계정 지우기는 서버에서 먼저
 import { useEffect, useState } from 'react';
-import { teamAccountDelete, teamAccountRefresh, teamLogin, teamStatus, type TeamView } from '../data/teamApi';
+import { teamAccountDelete, teamAccountRefresh, teamLogin, teamLogout, teamStatus, type TeamView } from '../data/teamApi';
 import { DEFAULT_RELAY, deleteConfirmOk, PRIVACY_URL, TERMS_URL } from '../domain/teamAccount';
 import { openTarget } from '../data/tauri';
 import { IconRefresh } from './Icons';
 import { IconButton } from './kit/IconButton';
 import { tr } from '../i18n';
 
-/** onDevices = 기기 관리 탭으로(내 기기 목록·이 기기 빼기=로그아웃은 거기 한 곳, 10-24) */
+/** onDevices = 기기 관리 탭으로(내 기기 목록). 이 기기 로그아웃은 여기에도 — 허용 대기·확인 중이면 기기 목록이 비어 거기 줄이 안 보였다(10-26 사용자 "로그아웃도 없고") */
 export function TeamAccountSection({ title, onDevices }: { title: string; onDevices?: () => void }) {
   const [v, setV] = useState<TeamView | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -16,6 +16,7 @@ export function TeamAccountSection({ title, onDevices }: { title: string; onDevi
   const [waiting, setWaiting] = useState(false);
   const [server, setServer] = useState(DEFAULT_RELAY);
   const [deleting, setDeleting] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const [typed, setTyped] = useState('');
   // 중계 주소는 기본(relay.chammo.app) 그대로 쓰는 게 보통 — 칸은 '중계 서버 바꾸기'를 눌렀을 때만(10-24)
   const [advanced, setAdvanced] = useState(false);
@@ -24,7 +25,7 @@ export function TeamAccountSection({ title, onDevices }: { title: string; onDevi
   const act = (f: () => Promise<TeamView>) => {
     setBusy(true);
     setErr(null);
-    void f().then((x) => { setV(x); setDeleting(false); setTyped(''); }, (e: unknown) => setErr(String(e))).finally(() => setBusy(false));
+    void f().then((x) => { setV(x); setDeleting(false); setLeaving(false); setTyped(''); }, (e: unknown) => setErr(String(e))).finally(() => setBusy(false));
   };
   const login = () => {
     setWaiting(true);
@@ -57,6 +58,17 @@ export function TeamAccountSection({ title, onDevices }: { title: string; onDevi
           <div className="su-row">
             <div className="su-row-text"><b>{acc.name || acc.email}</b><span>{acc.email}</span></div>
             <button className="btn su-row-act" onClick={onDevices}>{tr('내 기기 보기', 'My devices')}</button>
+          </div>
+          <div className="su-row">
+            {leaving ? (
+              <div className="su-inline">
+                <span className="su-hint">{tr('이 기기에서 로그아웃할까요? 다시 쓰려면 다시 로그인해요', 'Sign out of this device? Sign in again to use it')}</span>
+                <button className="btn danger" disabled={busy} onClick={(e) => { if (e.nativeEvent.isTrusted) act(teamLogout); }}>{tr('로그아웃', 'Sign out')}</button>
+                <button className="btn" disabled={busy} onClick={() => setLeaving(false)}>{tr('취소', 'Cancel')}</button>
+              </div>
+            ) : (
+              <button className="peer-alt" disabled={busy} onClick={() => setLeaving(true)}>{tr('이 기기 로그아웃', 'Sign out of this device')}</button>
+            )}
           </div>
           <div className="su-row">
             {deleting ? (

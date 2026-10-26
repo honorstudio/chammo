@@ -7,7 +7,8 @@ import { parseTaskChunk } from '../domain/taskTail';
 
 /** os = 붙은 컴퓨터(macos·windows·linux) — 폰 글이 '맥'/'PC'를 고른다. 0.2.5 이하 서버엔 없다 */
 /** voiceBase = 설정 목소리(Supertonic 일 때만, 아니면 null — 참모마다 목소리를 못 바꾼다). 0.2.5 이하 서버엔 없다 */
-export type MobileEnv = { assistantName: string; language: string; devRoot: string; extraProjects: string[]; hqDir: string; os?: string; voiceBase?: string | null; /** 이 컴퓨터 이름(폰 기기 줄 첫 단추) — 옛 서버는 없음 */ deviceName?: string | null };
+export type MobileEnv = { assistantName: string; language: string; devRoot: string; extraProjects: string[]; hqDir: string; os?: string; voiceBase?: string | null; /** 이 컴퓨터 이름(폰 기기 줄 첫 단추) — 옛 서버는 없음 */ deviceName?: string | null;
+  /** 그 컴퓨터의 Chammo 데이터 폴더별 로그인 계정(domain/chammoHere) — 0.4.3 아래는 없음 */ chammoAccounts?: { folder: string; current: boolean; email: string; name: string }[] };
 
 /** 운반 — 2xx 가 아니면 서버 글(없으면 HTTP 번호)을 메시지로 던진다(폰 서버의 'not working'·'too soon' 같은 글을 그대로 읽는다) */
 export type Io = {

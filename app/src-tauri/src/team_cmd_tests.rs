@@ -163,10 +163,46 @@ fn 계정_부탁도_받는다() {
     for v in ["login", "devices", "device-rename", "device-remove", "self-say"] {
         assert!(request(&line(json!({ "verb": v }))).is_some(), "{v}");
     }
-    // 로그아웃은 사람이 설정 > 기기 관리 '이 기기 빼기'로만(10-24 사용자), 허용은 카드로만(ADR 0014)
-    for v in ["logout", "approve", "device-approve", "reject"] {
+    // 허용은 카드로만(ADR 0014). 로그아웃은 10-26 참모 길도 열었다(사용자가 말했을 때만 --yes) — 대기 기기는 설정에 단추가 안 보였다
+    for v in ["approve", "device-approve", "reject"] {
         assert!(request(&line(json!({ "verb": v }))).is_none(), "{v}");
     }
+    assert!(request(&line(json!({ "verb": "logout" }))).is_some());
+}
+
+#[test]
+fn 로그아웃은_yes_없이는_안_하고_로그인_전이면_말한다() {
+    let d = dir("logout-cmd");
+    let v = answer(&request(&line(json!({ "verb": "logout" }))).unwrap(), &d, &Fake::default(), &FakeWire::default());
+    assert_eq!(v["ok"], false);
+    assert!(v["error"].as_str().unwrap().contains("--yes"), "{v}");
+    let v = answer(&request(&line(json!({ "verb": "logout", "yes": true }))).unwrap(), &d, &Fake::default(), &FakeWire::default());
+    assert_eq!(v["ok"], false);
+    assert!(v["error"].as_str().unwrap().contains("로그인 전"), "{v}");
+}
+
+#[test]
+fn 참모_길_로그아웃은_사슬에_든_기기는_못_뺀다() {
+    // 10-26 공격 리뷰: 팀원 말 프롬프트 주입으로 마지막 사슬 기기를 빼면 걸려 있던 탈취자 대기 기기가 허용돼 다시 시작한다
+    let d = dir("logout-inchain");
+    let kc = Fake::default();
+    let (k, acct) = crate::team_relay_keys::create(&kc).unwrap();
+    relay::mutate(&d, |s| {
+        s.server = "https://relay.test".into();
+        s.key_account = acct;
+        s.device_id = "77777777-7777-4777-8777-777777777777".into();
+        s.account = Some(relay::Account { id: "a1".into(), ..Default::default() });
+    })
+    .unwrap();
+    let dev = "77777777-7777-4777-8777-777777777777";
+    let body = json!({ "v": 1, "account": "a1", "seq": 0, "prev": "", "by": dev, "kind": "genesis", "device": dev, "edPub": k.public(), "e2ePub": k.e2e_public() }).to_string();
+    let g = crate::e2e_chain::Link { seq: 0, sig: k.sign(&format!("chammo-chain/1\n{body}")), body };
+    let head = crate::e2e_chain::link_hash(&g.body, &g.sig);
+    crate::e2e_state::pin_first(&d, "a1", vec![g], &head, 0, &head).unwrap();
+    let v = answer(&request(&line(json!({ "verb": "logout", "yes": true }))).unwrap(), &d, &kc, &FakeWire::default());
+    assert_eq!(v["ok"], false, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("사람이"), "{v}");
+    assert!(d.join(relay::STATE_FILE).exists(), "안 지웠다");
 }
 
 #[test]
@@ -201,7 +237,7 @@ fn 기기_빼기는_확인_표시가_있어야_하고_이_기기는_못_뺀다()
     assert_eq!(v["ok"], false, "--yes 없이: {v}");
     let v = answer(&request(&line(json!({ "verb": "device-remove", "device": "맥북", "yes": true }))).unwrap(), &d, &Fake::default(), &FakeWire::default());
     assert_eq!(v["ok"], false, "이 기기 자신: {v}");
-    assert!(v["error"].as_str().unwrap_or_default().contains("기기 관리"), "{v}");
+    assert!(v["error"].as_str().unwrap_or_default().contains("logout"), "이 기기는 로그아웃 길로: {v}");
     let v = answer(&request(&line(json!({ "verb": "device-remove", "device": me, "yes": true }))).unwrap(), &d, &Fake::default(), &FakeWire::default());
     assert_eq!(v["ok"], false, "id 로 불러도: {v}");
     let v = answer(&request(&line(json!({ "verb": "device-rename", "device": "없는 기기", "name": "x" }))).unwrap(), &d, &Fake::default(), &FakeWire::default());

@@ -5,7 +5,7 @@
 LC_ALL=C
 export LC_ALL
 
-USAGE='usage: scripts/team teamchat(=room) list | teamchat new <name> --with <a,b> [--team <t>] | teamchat say <chat> - | teamchat read <chat> [<n>] | teamchat set <chat> [--name <n>] [--add <a,b>] [--remove <c>] | teamchat leave <chat> --yes | status | create <team> --me <name> [--server <url>] [--device <d>] | invite [--team <t>] | join <link|code> --me <name> [--server <url>] [--device <d>] | members [--team <t>] | say <person> <text|-> [--team <t>] | use <team> | leave [--team <t>] --yes | kick <person> [--team <t>] --yes | role <person> owner|member [--team <t>] --yes | inbox [<n>] | deliver-to <assistant> | forget --yes | locker ls|put <file…>|get <name|id>|rm <name|id> [--folder <f>] [--to <dir>] [--trash] [--team <t>] | login [--server <url>] [--device <d>] | devices [rename <device> <name> | remove <device> --yes] | self-say <text|->'
+USAGE='usage: scripts/team teamchat(=room) list | teamchat new <name> --with <a,b> [--team <t>] | teamchat say <chat> - | teamchat read <chat> [<n>] | teamchat set <chat> [--name <n>] [--add <a,b>] [--remove <c>] | teamchat leave <chat> --yes | status | create <team> --me <name> [--server <url>] [--device <d>] | invite [--team <t>] | join <link|code> --me <name> [--server <url>] [--device <d>] | members [--team <t>] | say <person> <text|-> [--team <t>] | use <team> | leave [--team <t>] --yes | kick <person> [--team <t>] --yes | role <person> owner|member [--team <t>] --yes | inbox [<n>] | deliver-to <assistant> | forget --yes | logout --yes | locker ls|put <file…>|get <name|id>|rm <name|id> [--folder <f>] [--to <dir>] [--trash] [--team <t>] | login [--server <url>] [--device <d>] | devices [rename <device> <name> | remove <device> --yes] | self-say <text|->'
 
 die() { printf '%s\n' "$1" >&2; exit "${2:-2}"; }
 usage() { die "$USAGE"; }
@@ -174,6 +174,7 @@ case $verb in
       *) usage ;;
     esac ;;
   forget) [ $# -eq 0 ] && [ "$yes" = 1 ] || usage; ARG='"verb":"forget"' ;;
+  logout) [ $# -eq 0 ] && [ "$yes" = 1 ] || usage; ARG='"verb":"logout","yes":true' ;;
   deliver-to) [ $# -eq 1 ] || usage; ARG="\"verb\":\"deliver-to\",\"name\":$(q "$1")" ;;
   *) usage ;;
 esac
@@ -216,6 +217,7 @@ case $verb in
   invite) printf '%s\n' 'invite (one use, 24h) / 초대(한 번·24시간) — give this to the person / 이걸 그 사람에게:'; field link ;;
   say) printf 'sent / 보냄 — team#%s\n' "$(seq_of)" ;;
   self-say) printf 'sent / 보냄 — self#%s\n' "$(seq_of)" ;;
+  logout) printf '%s\n' 'signed out / 이 기기 로그아웃했어 — 다시 쓰려면 scripts/team login(사람이 브라우저에서 구글 로그인)' ;;
   room|teamchat) if [ "$sub" = say ]; then printf 'sent / 보냄 — team#%s\n' "$(seq_of)"; else printf '%s\n' "$BODY"; fi ;;
   locker) case $sub in
       get) field path ;;

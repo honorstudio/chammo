@@ -53,7 +53,7 @@ import { getAppEnv, listSessionsAllRaw, listSessionsRaw, readSay, writeVoiceMode
 import { freshReplies, fromOrchTurn, heldTarget, parseSay, pickSay, routeReply, takeHeld, talkedTo, type ReplySeen, type VoiceHeld } from './domain/voice';
 import { baseVoice, voiceFor } from './domain/avatar';
 import { avatarSnapshot, refreshAvatars, setAvatarTts } from './ui/avatar';
-import { blockedBody, cardTarget, readNoteTarget } from './domain/notify';
+import { blockedBody, cardTarget, cardToken, readNoteTarget } from './domain/notify';
 import { notifyOnce } from './ui/notifier';
 import { AgentAskHost, AskCards, browserMenu, browserOwnsKey, openAgentModal, PopupCards } from './ui/AgentBrowserModal';
 import { useDirectCards } from './ui/useDirectCards';
@@ -1101,7 +1101,7 @@ export default function App() {
   // 직접 답하기 카드 — 하위 세션이 본인 승인을 원하면 맡긴 참모 채팅에 카드(사람이 누르면 그 세션에 사람 말로)
   // 살아 있나·이름은 폴더로 거르기 전 전체 목록(allSessions)으로 — 워크트리로 들어가 사이드바에서 빠진 세션 카드가 꺼짐으로 숨었다(2026-10-05 아이맥)
   const direct = useDirectCards(allSessions, allActs, taskEvents, groups.orchestrators, groups.orchestrator, agentLives, (c, name, owner) => notifyOnce({
-    kind: 'human', session: c.from, orch: false, ...(owner ? { go: cardTarget(owner.id, `d:${c.id}`) } : {}),
+    kind: 'human', session: c.from, orch: false, ...(owner ? { go: cardTarget(owner.id, cardToken(c.id)) } : {}),
     title: tr(`${josa(name, '이', '가')} 네 답을 기다려`, `${name} needs your answer`),
     body: `${kindView(c.kind).word}${c.amount ? ` ${c.amount}` : ''} — ${c.q}`,
   }), heirOf, async (c) => {

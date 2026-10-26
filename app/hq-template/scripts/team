@@ -43,12 +43,13 @@ __doc__ = """Team messenger — talk with people on your team and their assistan
 Chammo account (Google sign-in) — links your own devices:
   scripts/team login [--server <https://…>] [--device <this device>]
                                                         opens the user's browser for Google sign-in and waits (up to 10 min) — the person signs in
+  scripts/team logout --yes                             sign this device out (also while it waits for approval) — only when the user asks
   scripts/team devices                                  this account and its devices (kind · waiting/allowed · last seen)
   scripts/team devices rename <device> <new name>       rename one of your devices (name or id) — only when the user asks
   scripts/team devices remove <device> --yes            remove another device from the account — only when the user asks
   scripts/team self-say - <<'EOF'                       talk to your assistants on your other signed-in devices (same heredoc as say)
 A new device waiting for approval is allowed only by the person, on a card in the app or a linked phone — never from here.
-Signing this device out is the person's own button (Settings > Devices > remove this device).
+Sign this device out with `logout --yes` only when the user asks — a device already in the account's device chain is refused there; then tell the user one line: Settings > Account > Sign out this device.
 
 Incoming team messages reach your assistant as "[Teammate's assistant · <person> · <device> · team#<seq>]" (old label: "[Team assistant · …]") or "[Team human · <person> · team#<seq>]".
 From your own other devices: "[My device assistant · <device> · self#<seq>]" / "[My device human · <device> · self#<seq>]".
@@ -58,7 +59,7 @@ Exit: 0 ok · 1 failed · 2 usage.
 """
 import datetime, json, os, platform, socket, sys, time, uuid
 
-USAGE = 'usage: scripts/team teamchat(=room) list | teamchat new <name> --with <a,b> [--team <t>] | teamchat say <chat> - | teamchat read <chat> [<n>] | teamchat set <chat> [--name <n>] [--add <a,b>] [--remove <c>] | teamchat leave <chat> --yes | status | create <team> --me <name> [--server <url>] [--device <d>] | invite [--team <t>] | join <link|code> --me <name> [--server <url>] [--device <d>] | members [--team <t>] | say <person> <text|-> [--team <t>] | use <team> | leave [--team <t>] --yes | kick <person> [--team <t>] --yes | role <person> owner|member [--team <t>] --yes | inbox [<n>] | deliver-to <assistant> | forget --yes | locker ls|put <file…>|get <name|id>|rm <name|id> [--folder <f>] [--to <dir>] [--trash] [--team <t>] | login [--server <url>] [--device <d>] | devices [rename <device> <name> | remove <device> --yes] | self-say <text|->'
+USAGE = 'usage: scripts/team teamchat(=room) list | teamchat new <name> --with <a,b> [--team <t>] | teamchat say <chat> - | teamchat read <chat> [<n>] | teamchat set <chat> [--name <n>] [--add <a,b>] [--remove <c>] | teamchat leave <chat> --yes | status | create <team> --me <name> [--server <url>] [--device <d>] | invite [--team <t>] | join <link|code> --me <name> [--server <url>] [--device <d>] | members [--team <t>] | say <person> <text|-> [--team <t>] | use <team> | leave [--team <t>] --yes | kick <person> [--team <t>] --yes | role <person> owner|member [--team <t>] --yes | inbox [<n>] | deliver-to <assistant> | forget --yes | logout --yes | locker ls|put <file…>|get <name|id>|rm <name|id> [--folder <f>] [--to <dir>] [--trash] [--team <t>] | login [--server <url>] [--device <d>] | devices [rename <device> <name> | remove <device> --yes] | self-say <text|->'
 
 
 def data_dir(home=None, env=None, exists=os.path.isdir):
@@ -156,6 +157,8 @@ def parse(argv):
         return None, USAGE
     if verb == 'forget' and not args and opts.get('yes'):
         return {'verb': 'forget'}, None
+    if verb == 'logout' and not args and opts.get('yes'):
+        return {'verb': 'logout', 'yes': True}, None
     if verb == 'deliver-to' and len(args) == 1:
         return {'verb': 'deliver-to', 'name': args[0]}, None
     return None, USAGE
@@ -370,6 +373,8 @@ def main(argv):
         print('moved to trash / 휴지통으로 옮겼어 (30일 뒤 지워져요 — 되살리기는 앱 팀 보관함 휴지통에서)')
     elif v == 'forget':
         print(f'forgot / 이 기기에서 잊었어: {ans.get("forgot")}')
+    elif v == 'logout':
+        print('signed out / 이 기기 로그아웃했어 — 다시 쓰려면 scripts/team login(사람이 브라우저에서 구글 로그인)')
     return 0
 
 

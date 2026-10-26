@@ -52,8 +52,23 @@ pub fn device_name_ok(s: &str) -> Option<String> {
     (!t.is_empty() && t.chars().count() <= 80).then_some(t)
 }
 
-/// 이 기기 이름 기본값 — 컴퓨터 이름(맥 'MacBook-Pro.local' → 'MacBook-Pro')
+/// 이 기기 이름 기본값 — 컴퓨터 이름(맥 'MacBook-Pro.local' → 'MacBook-Pro'), 시험 데이터 폴더면 뒤에 '(.chammo-team3)'
 pub fn default_device_name() -> String {
+    name_for_data(&host_name(), &crate::config::home(), crate::config::data_dir())
+}
+
+/// 같은 컴퓨터의 본판·시험판이 기기 관리에서 같은 이름으로 뜨지 않게 — 진짜 데이터 폴더가 아니면 폴더 이름을 붙인다(10-26 시험판이 남의 계정에 붙어 있었다)
+pub(crate) fn name_for_data(host: &str, home: &str, dir: &Path) -> String {
+    if crate::config::is_real_data(home, dir) {
+        return host.to_string();
+    }
+    let folder = dir.to_string_lossy().replace('\\', "/").trim_end_matches('/').rsplit('/').next().unwrap_or("").to_string();
+    let tail = format!(" ({folder})");
+    let room = 80usize.saturating_sub(tail.chars().count()).max(1);
+    format!("{}{tail}", host.chars().take(room).collect::<String>())
+}
+
+fn host_name() -> String {
     let mut buf = [0u8; 256];
     #[cfg(unix)]
     let raw = if unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) } == 0 {
@@ -235,6 +250,21 @@ pub fn login_with(dir: &Path, kc: &dyn Store, http: &dyn Http, opener: &dyn Open
     Ok(relay::load_state(dir))
 }
 
+/// 내 대기 상태(/v0/me/self)를 받아 적는다 — 허용됐으면 true
+fn self_approved(dir: &Path, http: &dyn Http, st: &TeamState, k: &DeviceKeys) -> Result<bool, String> {
+    let (code, me) = relay::call(http, &st.server, k, Some(&st.device_id), "GET", "/v0/me/self", None)?;
+    if code != 200 {
+        return Err(relay::why(code, &me));
+    }
+    let auto = me["autoAt"].as_u64().unwrap_or(0);
+    let approved = me["status"] == "approved";
+    relay::mutate_if(dir, &st.device_id, |s| {
+        s.pending = !approved;
+        s.pending_auto_at = if approved { 0 } else { auto };
+    })?;
+    Ok(approved)
+}
+
 /// begin → 브라우저 → 루프백 결과 → finish. 돌려주는 값 = finish 응답
 fn run(http: &dyn Http, opener: &dyn Opener, server: &str, k: &DeviceKeys, device: Option<&str>, device_name: &str, e2e: &Value, wait: Duration) -> Result<Value, String> {
     let l = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("로그인 받을 자리를 못 열었어: {e}"))?;
@@ -275,22 +305,15 @@ pub fn refresh_me(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<TeamSta
     }
     let k = relay::device_keys(kc, &st)?;
     // 허용을 기다리는 기기는 /v0/me/self 만 된다 — 허용됐으면 아래로 이어서 다 받는다
-    if st.pending {
-        let (code, me) = relay::call(http, &st.server, &k, Some(&st.device_id), "GET", "/v0/me/self", None)?;
-        if code != 200 {
-            return Err(relay::why(code, &me));
-        }
-        let auto = me["autoAt"].as_u64().unwrap_or(0);
-        let approved = me["status"] == "approved";
-        relay::mutate_if(dir, &st.device_id, |s| {
-            s.pending = !approved;
-            s.pending_auto_at = if approved { 0 } else { auto };
-        })?;
-        if !approved {
-            return Ok(relay::load_state(dir));
-        }
+    if st.pending && !self_approved(dir, http, &st, &k)? {
+        return Ok(relay::load_state(dir));
     }
     let (code, me) = relay::call(http, &st.server, &k, Some(&st.device_id), "GET", "/v0/me", None)?;
+    // 서버만 대기인 기기 — 옛 판(0.4.1)이 로그인해 team.json 에 대기가 안 적혔다(10-26 아이맥). 서버 말로 대기를 적는다
+    // 사슬에 든 기기는 서버 말만으로 대기로 안 바꾼다 — 대기 화면 '로그인 취소'로 스스로 사슬에서 빠지게 꾀지 못하게(10-26 공격 리뷰)
+    if code == 403 && me["error"] == "device_pending" && !st.pending && !crate::e2e_team::in_chain(dir, &st) && !self_approved(dir, http, &st, &k)? {
+        return Ok(relay::load_state(dir));
+    }
     if code != 200 {
         return Err(relay::why(code, &me));
     }
@@ -444,10 +467,21 @@ fn revoke_inner(dir: &Path, kc: &dyn Store, http: &dyn Http, id: &str, with_link
 /// 로그아웃 = 이 기기 끊기(서버) + 열쇠·상태 지우기. 다시 로그인하면 새 열쇠로 새 기기.
 /// 서버가 이미 끊긴 기기(401·404)라고 하면 그대로 지우고, 망이 안 닿으면 남긴다(서버엔 살아 있으니 다시 할 수 있게)
 pub fn logout(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<(), String> {
-    let id = relay::load_state(dir).device_id;
+    logout_with(dir, kc, http, true)
+}
+
+/// with_link = 사람 손 길(사슬 remove 고리 먼저, R5). 참모 길(scripts/team logout)은 false — 서버 끊기만(R6)
+pub fn logout_with(dir: &Path, kc: &dyn Store, http: &dyn Http, with_link: bool) -> Result<(), String> {
+    let st = relay::load_state(dir);
+    if !st.registered() {
+        return Err("로그인 전이야 — 로그아웃할 게 없어".into());
+    }
+    let id = st.device_id;
     device_id_ok(&id)?;
-    if let Err(e) = crate::e2e_flow::remove_link(dir, kc, http, &id) {
-        eprintln!("[기기] 사슬 빼기 고리 실패: {e}");
+    if with_link {
+        if let Err(e) = crate::e2e_flow::remove_link(dir, kc, http, &id) {
+            eprintln!("[기기] 사슬 빼기 고리 실패: {e}");
+        }
     }
     let (st, code, v) = me_call(dir, kc, http, &format!("/v0/me/devices/{id}/revoke"), json!({}))?;
     match code {

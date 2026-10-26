@@ -16,6 +16,7 @@ let skipped = false;
 let waitSeen = false;
 let startLater = false;
 let resetLater = false;
+let reloginLater = false;
 
 export function LoginGate() {
   const [v, setV] = useState<TeamView | null>(null);
@@ -45,7 +46,7 @@ export function LoginGate() {
     const t = window.setInterval(look, 3000);
     return () => window.clearInterval(t);
   }, [watching]);
-  const gate = codeDone ? 'code' : gateState(v, { offline, skipped, waitSeen, step, startLater, resetLater });
+  const gate = codeDone ? 'code' : gateState(v, { offline, skipped, waitSeen, step, startLater, resetLater, reloginLater });
   if (gate === 'none') return null;
   const start = (e: React.MouseEvent) => {
     if (!e.isTrusted || busy) return; // 사람 클릭만
@@ -103,6 +104,17 @@ export function LoginGate() {
             </div>
             {err && <div className="su-error">{err}</div>}
           </>
+        ) : gate === 'relogin' ? (
+          <>
+            {/* 봉인 없이 대기(옛 판에서 로그인)·사슬 기기 0 인 auto 기기 — 숫자가 영영 안 뜨거나 다시 시작이 막힌다. 다시 로그인하면 봉인을 같이 올리거나 바로 허용돼 다시 시작(10-26) */}
+            <h1>{tr('로그인을 한 번 더 해 주세요', 'Please sign in once more')}</h1>
+            <p>{tr('이 기기는 지금 상태로는 내 기기 확인을 마칠 수 없어요(예전 판에서 로그인했거나, 허용해 줄 내 기기가 다 로그아웃됐어요). 다시 로그인하면 숫자가 뜨거나 이 기기로 다시 시작할 수 있어요.', "This device can't finish the device check as it is (it signed in with an older version, or every device that could approve it signed out). Sign in again to get a number or start over on this device.")}</p>
+            <div className="lg-acts">
+              <button className="btn pri su-go" disabled={busy} onClick={() => out(true)}>{tr('다시 로그인', 'Sign in again')}</button>
+              <button className="btn su-go" disabled={busy} onClick={() => { reloginLater = true; bump((n) => n + 1); }}>{tr('나중에', 'Later')}</button>
+            </div>
+            {err && <div className="su-error">{err}</div>}
+          </>
         ) : gate === 'code' ? (
           <CodeEntry failed={step === 'failed'} onAgain={() => out(true)} onCancel={() => out(false)} onOk={() => setCodeDone(true)}
             onDone={() => { setCodeDone(false); setStep(''); look(); }} />
@@ -111,7 +123,10 @@ export function LoginGate() {
             {/* 숫자 넣기 허용(chammo-relay ADR 0007, 시안 e2e-approve v1) — 그동안 이 컴퓨터 참모는 그대로 쓴다 */}
             <NumberWait>
               <button className="btn pri" onClick={() => { waitSeen = true; bump((n) => n + 1); }}>{tr('계속 쓰기', 'Continue')}</button>
+              {/* 허용해 줄 기기가 없을 때(다 로그아웃됨)도 빠져나갈 길 — 대기 기기는 기기 목록이 비어 설정에서 로그아웃을 못 한다(10-26) */}
+              <button className="btn" disabled={busy} onClick={() => out(false)}>{tr('로그인 취소', 'Cancel sign-in')}</button>
             </NumberWait>
+            {err && <div className="su-error">{err}</div>}
           </>
         ) : gate === 'offline' ? (
           <>

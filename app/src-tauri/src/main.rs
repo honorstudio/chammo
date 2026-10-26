@@ -17,6 +17,7 @@ mod deep_link;
 mod claude_src;
 mod accounts;
 mod accounts_cmd;
+mod accounts_file;
 mod accounts_refresh;
 mod accounts_store;
 mod accounts_usage;
@@ -72,6 +73,7 @@ mod peer_cmd;
 mod peer_human;
 mod peer_link;
 mod team_account;
+mod chammo_here;
 mod team_cmd;
 mod team_locker;
 mod team_locker_app;
@@ -698,6 +700,7 @@ fn main() {
             remote::remote_connect_cancel,
             remote::remote_call,
             remote::remote_human_say,
+            remote::remote_logout_ask,
             team_cmd::team_status,
             team_cmd::team_human_say,
             team_ui::team_ui_room_new,
@@ -761,6 +764,7 @@ fn main() {
             team_cmd::team_device_rename,
             team_cmd::team_device_revoke,
             team_cmd::team_logout,
+            team_cmd::chammo_here,
             team_cmd::team_account_delete,
             remote::remote_saved,
             mobile::mobile_device_locker,
@@ -871,6 +875,7 @@ fn main() {
             notify_mac::notify_status,
             notify_mac::notify_request,
             notify_mac::notify_open_settings,
+            notify_mac::notify_withdraw,
             setup::tts_test,
             harnitor::harnitor_scan,
             harnitor::harnitor_scan_fast,

@@ -89,6 +89,19 @@ fn 기기_이름은_1에서_80자() {
     assert_eq!(device_name_ok(&"가".repeat(81)), None);
 }
 
+#[test]
+fn 시험_데이터_폴더면_기기_이름에_폴더를_붙인다() {
+    // 같은 맥의 본판·시험판이 같은 컴퓨터 이름으로 떠서 기기 관리에서 무엇이 시험판인지 몰랐다(10-26 시험판이 다른 사람 계정에 붙어 있었다)
+    let h = "/Users/me";
+    assert_eq!(name_for_data("iMac", h, Path::new("/Users/me/.chammo")), "iMac");
+    assert_eq!(name_for_data("iMac", h, Path::new("/Users/me/.honor-orchestrator")), "iMac");
+    assert_eq!(name_for_data("iMac", h, Path::new("/Users/me/.chammo-team3")), "iMac (.chammo-team3)");
+    assert_eq!(name_for_data("PC", "C:\\Users\\me", Path::new("C:\\Users\\me\\.chammo-qa")), "PC (.chammo-qa)");
+    // 80자를 넘으면 컴퓨터 이름을 줄여서라도 폴더는 남긴다
+    let long = name_for_data(&"m".repeat(90), h, Path::new("/Users/me/.chammo-recover"));
+    assert!(device_name_ok(&long).is_some() && long.ends_with(" (.chammo-recover)"), "{long}");
+}
+
 // ── 로그인 흐름 ──
 
 const SERVER: &str = "https://relay.test";
@@ -466,6 +479,55 @@ fn 대기_기기는_허용되면_목록을_받는다() {
     let st = refresh_me(&d, &kc, &r).unwrap();
     assert!(!st.pending, "허용됐다");
     assert_eq!(st.my_devices.len(), 2);
+}
+
+#[test]
+fn 옛_판에서_로그인해_서버만_대기인_기기도_대기로_알아챈다() {
+    // 10-26 아이맥: 0.4.1 이 로그인(서버는 pending)하고 0.4.2 로 다시 켜짐 — team.json 엔 pending 칸이 없어 관문 없이 모든 요청이 403 device_pending 이었다
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("pending-server-only");
+    r.answer("/v0/me", 403, r#"{"error":"device_pending"}"#);
+    r.answer("/v0/me/self", 200, r#"{"status":"pending","pendingSince":1000,"autoAt":5000,"computers":[]}"#);
+    let st = refresh_me(&d, &kc, &r).unwrap();
+    assert!(st.pending, "서버 말로 대기를 적는다");
+    assert_eq!(st.pending_auto_at, 5000);
+    assert_eq!(crate::e2e_flow::self_step(&d), "relogin", "봉인(nP)이 없는 대기 기기는 숫자를 못 띄운다 — 다시 로그인");
+    // 그사이 허용됐으면 대기로 적지 않는다
+    let (d, kc, r) = logged("pending-server-race");
+    r.answer("/v0/me", 403, r#"{"error":"device_pending"}"#);
+    r.answer("/v0/me/self", 200, r#"{"status":"approved","computers":[]}"#);
+    assert!(refresh_me(&d, &kc, &r).is_err());
+    assert!(!crate::team_relay::load_state(&d).pending);
+    // 공격 리뷰: 사슬에 든 기기는 서버가 대기라 해도 안 믿는다 — 대기 화면의 '로그인 취소'로 스스로 사슬에서 빠지게 꾀지 못하게
+    let (d, kc, r) = logged("pending-server-inchain");
+    let k = crate::team_relay::device_keys(&kc, &crate::team_relay::load_state(&d)).unwrap();
+    let body = serde_json::json!({ "v": 1, "account": "a1", "seq": 0, "prev": "", "by": D7, "kind": "genesis", "device": D7, "edPub": k.public(), "e2ePub": k.e2e_public() }).to_string();
+    let g = crate::e2e_chain::Link { seq: 0, sig: k.sign(&format!("chammo-chain/1\n{body}")), body };
+    let head = crate::e2e_chain::link_hash(&g.body, &g.sig);
+    crate::e2e_state::pin_first(&d, "a1", vec![g], &head, 0, &head).unwrap();
+    assert!(crate::e2e_team::in_chain(&d, &crate::team_relay::load_state(&d)), "시험 준비: 사슬에 든 기기");
+    r.answer("/v0/me", 403, r#"{"error":"device_pending"}"#);
+    r.answer("/v0/me/self", 200, r#"{"status":"pending","pendingSince":1000,"autoAt":5000,"computers":[]}"#);
+    assert!(refresh_me(&d, &kc, &r).is_err());
+    assert!(!crate::team_relay::load_state(&d).pending);
+    // 다른 403(폰·막힘)은 대기가 아니다
+    let (d, kc, r) = logged("pending-server-other");
+    r.answer("/v0/me", 403, r#"{"error":"forbidden"}"#);
+    assert!(refresh_me(&d, &kc, &r).is_err());
+    assert!(!crate::team_relay::load_state(&d).pending);
+    assert!(r.seen.borrow().iter().all(|(_, p, _, _)| !p.ends_with("/v0/me/self")));
+}
+
+#[test]
+fn 대기_기기는_로그아웃으로_자기를_빼고_다시_로그인할_수_있다() {
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("pending-logout");
+    crate::team_relay::mutate(&d, |s| s.pending = true).unwrap();
+    r.answer(&format!("/v0/me/devices/{D7}/revoke"), 200, r#"{"ok":true}"#);
+    logout(&d, &kc, &r).unwrap();
+    let seen = r.seen.borrow();
+    assert_eq!(seen.len(), 1, "대기 기기가 부를 수 있는 길(자기 빼기)만: {:?}", seen.iter().map(|x| &x.1).collect::<Vec<_>>());
+    assert!(!d.join(crate::team_relay::STATE_FILE).exists() && kc.items.borrow().is_empty());
 }
 
 #[test]

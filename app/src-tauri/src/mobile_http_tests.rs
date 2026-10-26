@@ -69,6 +69,10 @@ impl Backend for Fake {
         self.log(format!("direct_answer_by {id} {pick:?} {by}"));
         Ok(())
     }
+    fn logout_card(&self, from: &str) -> Result<String, String> {
+        self.log(format!("logout_card {from}"));
+        Ok("ab12cd34".into())
+    }
     fn device_number(&self, dev: &str, op: &str, digits: &str) -> Result<serde_json::Value, String> {
         self.log(format!("device_number {dev} {op} {digits}"));
         Ok(serde_json::json!({ "mode": "number" }))
@@ -4130,4 +4134,26 @@ fn g4_한_기기는_뽑기_요청_하나만_진행_중이면_429() {
     assert_eq!(handle(&post("/api/gacha", r#"{"rid":"abcd1235","op":"pull","n":1}"#), &g, &*f).status, 429);
     assert_eq!(first.join().unwrap(), 200);
     assert_eq!(handle(&post("/api/gacha", r#"{"rid":"abcd1236","op":"pull","n":1}"#), &g, &*f).status, 200);
+}
+
+#[test]
+fn hu_계정_로그아웃_요청은_사람_길로만_받아_이_기기_카드를_띄운다() {
+    // 10-26: 다른 기기에서 '이 PC 는 남의 계정에 붙어 있다'를 봐도 끊으려면 그 PC 에 가야 했다 — 그 기기 사람 확인 카드로
+    let g = peer_gate("hum00010");
+    let f = Fake::default();
+    let b = format!(r#"{{"cid":"hl-10","ts":{}}}"#, now_ms());
+    let r = handle(&as_peer(post("/api/peer-logout-ask", &b)), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(json_of(&r)["card"], "ab12cd34");
+    assert_eq!(f.calls(), vec!["logout_card 맥북"], "요청한 기기 이름은 짝지을 때 받은 이름");
+    assert_eq!(handle(&as_peer(post("/api/peer-logout-ask", &b)), &g, &f).status, 409, "같은 cid 재생");
+    assert_eq!(handle(&post("/api/peer-logout-ask", &format!(r#"{{"cid":"hl-10b","ts":{}}}"#, now_ms())), &g, &f).status, 403, "폰 열쇠로는 못 쓴다");
+    let extra = format!(r#"{{"cid":"hl-10c","ts":{},"yes":true}}"#, now_ms());
+    assert_eq!(handle(&as_peer(post("/api/peer-logout-ask", &extra)), &g, &f).status, 400, "모르는 칸");
+    assert_eq!(handle(&as_peer(get("/api/peer-logout-ask")), &g, &f).status, 403);
+    assert!(head_check(&as_peer(post("/api/peer-logout-ask", "{}")), &g).is_none());
+    assert_eq!(f.calls().len(), 1, "{:?}", f.calls());
+    // 참모 길(scripts/peer·appctl)은 못 보낸다 — 사람 길 목록에만
+    assert!(!crate::remote::allowed("POST", "/api/peer-logout-ask"));
+    assert!(crate::remote::HUMAN_POSTS.contains(&"/api/peer-logout-ask"));
 }

@@ -2,6 +2,7 @@
 // 사람 말(team_human_say)은 메인 창의 진짜(isTrusted) 키·클릭 뒤 1.5초 안에서만 — 다른 기기 참모 채팅(remoteChat)과 같은 문.
 // 참모·스크립트는 scripts/team(늘 참모 말)로만 보낸다
 import { invoke } from '@tauri-apps/api/core';
+import type { HereAccount } from '../domain/chammoHere';
 import { sendAllowed } from '../domain/remoteChat';
 import type { TeamAccount } from '../domain/teamAccount';
 import type { MyDevice } from '../domain/myDevices';
@@ -39,6 +40,8 @@ export const teamAccountRefresh = () => invoke<TeamView>('team_account_refresh')
 export const teamDeviceRename = (id: string, name: string) => invoke<TeamView>('team_device_rename', { id, name });
 export const teamDeviceRevoke = (id: string) => invoke<TeamView>('team_device_revoke', { id });
 export const teamLogout = () => invoke<TeamView>('team_logout');
+/** 이 컴퓨터의 Chammo 데이터 폴더별 로그인 계정(지금 앱 맨 앞) — 기기 관리 '이 컴퓨터의 다른 Chammo' */
+export const chammoHere = () => invoke<HereAccount[]>('chammo_here');
 export const teamAccountDelete = (confirm: string) => invoke<TeamView>('team_account_delete', { confirm });
 
 const newCid = () => `h-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;

@@ -4,7 +4,7 @@ import { ACCOUNTS_CHANGED, accountError, addState, moved, pinText, slotText, slo
 import { readAuto, slotStatus } from '../domain/accountAuto';
 import { pinActive, switchPinned } from './accountSwitch';
 import { setupCommand } from '../domain/setup';
-import { tr } from '../i18n';
+import { machine, tr } from '../i18n';
 import { TerminalPane } from './TerminalPane';
 import { IconChevronDown, IconChevronUp, IconClose, IconPlus } from './Icons';
 import { IconButton } from './kit/IconButton';
@@ -84,8 +84,8 @@ export function AccountsSection({ title, claude, fontSize }: { title: string; cl
     <section className="su-sec">
       <h2>{title}</h2>
       <p className="su-hint">{tr(
-        '계정을 여러 개 보관해 두고 바꿔 쓸 수 있어요. 세션·기록·스킬은 그대로이고 "누구 사용량으로 쓰나"만 바뀌어요. 로그인 정보는 맥 키체인에만 보관돼요.',
-        'Keep several accounts and switch between them. Sessions, history and skills stay the same — only whose usage is spent changes. Sign-ins are kept only in the macOS keychain.')}</p>
+        `계정을 여러 개 보관해 두고 바꿔 쓸 수 있어요. 세션·기록·스킬은 그대로이고 "누구 사용량으로 쓰나"만 바뀌어요. 로그인 정보는 ${machine() === 'PC' ? '이 PC 자격 증명 관리자' : '맥 키체인'}에만 보관돼요.`,
+        `Keep several accounts and switch between them. Sessions, history and skills stay the same — only whose usage is spent changes. Sign-ins are kept only in ${machine() === 'PC' ? "this PC's Credential Manager" : 'the macOS keychain'}.`)}</p>
       <p className="su-hint">{tr('바꿔도 MCP 로그인은 그대로예요.', 'MCP sign-ins stay as they are when you switch.')}</p>
       <div className="su-rows">
         {list.map((a, i) => {

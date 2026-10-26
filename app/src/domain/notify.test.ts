@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { blockedBody, cardTarget, nativeWhenFocused, NOTIFY_GAP_MS, noteKey, noteTarget, readNoteTarget, shouldNotify, wants, type Note } from './notify';
+import { blockedBody, cardTarget, cardToken, nativeWhenFocused, toWithdraw, NOTIFY_GAP_MS, noteKey, noteTarget, readNoteTarget, shouldNotify, wants, type Note } from './notify';
 
 describe('wants — 어떤 알림을 보내나 (사용자 2026-09-27 "필요한 것만")', () => {
   it('결정 대기(task ask·로그인 오류)·권한 창 자동 허용 실패는 늘 보낸다', () => {
@@ -173,5 +173,16 @@ describe('자리 비움 — 보고 있어도 맥 입력이 없거나 잠겼으�
     const r2 = heldStep(r.keep, now + AWAY_SECS * 1000, at(AWAY_SECS + 5));
     expect(r2.send.map((x) => x.session)).toEqual(['b']);
     expect(r2.keep).toEqual([]);
+  });
+});
+
+describe('카드가 닫히면 알림을 거둔다(10-26 "인증했으면 다른 기기 알림만 없어지면 된다")', () => {
+  it('알린 카드가 답·닫힘·사라짐이면 거둘 꼬리 — 아직 기다리는 카드·안 알린 카드는 그대로', () => {
+    const told = new Set(['a1', 'b2', 'c3']);
+    const cards = [{ id: 'a1', wait: true }, { id: 'b2', wait: false }, { id: 'z9', wait: false }];
+    expect(toWithdraw(told, cards, (c) => c.wait)).toEqual(['b2', 'c3']);
+  });
+  it('꼬리는 카드 알림 갈 곳의 끝과 맞는다', () => {
+    expect(cardTarget('orch-1', `d:${'ab12cd34'}`).endsWith(`:${cardToken('ab12cd34')}`)).toBe(true);
   });
 });

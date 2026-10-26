@@ -86,10 +86,10 @@ pub fn curl_args(url: &str) -> Vec<String> {
     ["-sS", "--max-time", "8", "-H", "@-", "-w", "\n%{http_code}", url].map(String::from).to_vec()
 }
 
-/// 한 번 묻기 — curl(macOS 기본)로. 토큰은 stdin 헤더로만
+/// 한 번 묻기 — curl(맥 기본·윈도우 System32)로. 토큰은 stdin 헤더로만
 pub fn fetch(url: &str, token: &str) -> (String, Option<Win>, Option<Win>) {
     let Some(h) = header_text(token) else { return ("noToken".into(), None, None) };
-    let mut c = crate::platform::command("/usr/bin/curl");
+    let mut c = crate::platform::command(crate::platform::curl());
     c.args(curl_args(url)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
     let Ok(mut child) = c.spawn() else { return ("fail".into(), None, None) };
     if let Some(mut si) = child.stdin.take() {

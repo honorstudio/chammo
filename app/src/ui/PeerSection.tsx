@@ -2,7 +2,9 @@
 // 0.3.2: 같은 계정 기기는 목록에 바로 뜨고 '연결'을 누르면 그 기기에 허용 카드가 뜬다 → 그쪽 사람이 허용하면 양쪽이 이어진다.
 // 코드(그 기기 설정 > 폰의 연결 코드)는 대피로 — 옛 판이거나 되묻기가 안 닿을 때. 열쇠는 이 기기 키체인(윈도우는 자격 증명 관리자)에만. 참모끼리 말은 scripts/peer 로
 import { useEffect, useState } from 'react';
-import { remoteApi, remoteConnect, remoteConnectCancel, remoteDevices, remotePair, remoteUnpair, type RemoteDevice } from '../data/remote';
+import { remoteApi, remoteConnect, remoteConnectCancel, remoteDevices, remoteLogoutAsk, remotePair, remoteUnpair, type RemoteDevice } from '../data/remote';
+import { teamStatus } from '../data/teamApi';
+import { peerAccount, type HereAccount } from '../domain/chammoHere';
 import { remoteAssistants, type RemoteAssistant } from '../domain/remoteChat';
 import { REMOTE_CHAT_EVENT, type RemoteChatTarget } from './chat/RemoteChat';
 import { peerView } from '../domain/peerDevices';
@@ -22,6 +24,11 @@ export function PeerSection({ title }: { title: string }) {
 
   // 이어진 기기의 참모들(ADR 0011) — 누르면 채팅 열이 그 참모로(사람이 친 말은 그 기기에 '사람 말(원격)'로 간다)
   const [agents, setAgents] = useState<Record<string, RemoteAssistant[]>>({});
+  // 그 기기 Chammo 가 어느 계정에 붙어 있나(그 기기 /api/env) — 내 계정과 다르면 표시하고 로그아웃 요청(그 기기 사람 확인 카드)
+  const [accts, setAccts] = useState<Record<string, HereAccount[] | undefined>>({});
+  const [mine, setMine] = useState('');
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => { void teamStatus().then((v) => setMine(v.account?.email ?? ''), () => {}); }, []);
   const load = () => {
     setBusy(true);
     void remoteDevices().then((o) => {
@@ -29,7 +36,10 @@ export function PeerSection({ title }: { title: string }) {
       setErr(null);
       for (const d of o.devices.filter((x) => x.status === 'connected')) {
         const api = remoteApi(d.id);
-        void Promise.all([api.getEnv(), api.listSessionsRaw()]).then(([env, raw]) => setAgents((m) => ({ ...m, [d.id]: remoteAssistants(raw, env.hqDir) })), () => {});
+        void Promise.all([api.getEnv(), api.listSessionsRaw()]).then(([env, raw]) => {
+          setAgents((m) => ({ ...m, [d.id]: remoteAssistants(raw, env.hqDir) }));
+          setAccts((m) => ({ ...m, [d.id]: env.chammoAccounts }));
+        }, () => {});
       }
     }, (e: unknown) => { setList([]); setErr(String(e)); }).finally(() => setBusy(false));
   };
@@ -42,6 +52,13 @@ export function PeerSection({ title }: { title: string }) {
     setBusy(true);
     setErr(null);
     void f().then(() => { setPairing(null); setCode(''); load(); }, (e: unknown) => { setErr(String(e)); setBusy(false); });
+  };
+  // 사람 클릭만 — 그 기기엔 카드만 뜨고 끊기는 그쪽 사람이 누를 때
+  const askLogout = (e: React.MouseEvent, d: RemoteDevice) => {
+    if (!e.nativeEvent.isTrusted || busy) return;
+    setErr(null);
+    setNote(null);
+    void remoteLogoutAsk(d.id).then(() => setNote(tr(`${d.name} 에 확인 카드를 띄웠어요 — 그 기기에서 '로그아웃'을 눌러야 끊겨요`, `A card is up on ${d.name} — it signs out only when someone presses Sign out there`)), (x: unknown) => setErr(`${d.name}: ${String(x)}`));
   };
   const connect = (d: RemoteDevice) => {
     setErr(null);
@@ -66,12 +83,16 @@ export function PeerSection({ title }: { title: string }) {
         {(list ?? []).map((d) => {
           const wait = waiting.includes(d.id);
           const v = peerView(d, wait);
+          const pa = d.status === 'connected' ? peerAccount(accts[d.id], mine) : null;
           return (
             <div key={d.id} className="su-row dev-row peer-row">
               <div className="su-row-text">
                 <b title={d.name}>{d.name}</b>
                 <span className={d.status === 'connected' ? 'peer-on' : undefined}>{v.extra ? `${v.word} · ${v.extra}` : v.word}</span>
+                {pa?.main && <span>{pa.main.signedIn ? tr(`${pa.main.who} 계정`, `${pa.main.who} account`) : tr('Chammo 계정 로그인 안 됨', 'Not signed in to Chammo')}{pa.main.other && <> · <span className="acct-st-out">{tr('다른 계정', 'Another account')}</span></>}</span>}
+                {pa?.others.map((o) => <span key={o.folder}>{o.folder} · {o.who}{o.other && <> · <span className="acct-st-out">{tr('다른 계정', 'Another account')}</span></>}</span>)}
               </div>
+              {pa?.main?.other && <button className="btn su-row-act" disabled={busy} onClick={(e) => askLogout(e, d)}>{tr('로그아웃 요청', 'Ask to sign out')}</button>}
               {v.code && pairing !== d.id && (
                 <button className="peer-alt" disabled={busy} onClick={() => { setPairing(d.id); setCode(''); }}>{tr('코드로', 'Use a code')}</button>
               )}
@@ -104,6 +125,7 @@ export function PeerSection({ title }: { title: string }) {
         {list && list.length === 0 && !err && <span className="su-hint">{tr('같은 계정에 참모가 있는 다른 기기가 없어요', 'No other device with Chammo on this account')}</span>}
         {!list && <span className="su-hint">{tr('찾는 중…', 'Looking…')}</span>}
       </div>
+      {note && <span className="su-hint">{note}</span>}
       {err && <div className="su-error">{err}</div>}
     </section>
   );

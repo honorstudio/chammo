@@ -1,14 +1,21 @@
 //! 계정 칸 — 화면이 부르는 명령. 로그인 칸 자리는 환경 변수로 바꿀 수 있다(시험 앱이 실제 Claude Code 로그인을 안 건드리게):
 //! CHAMMO_ACCOUNT_LIVE_SERVICE(키체인 서비스) · CHAMMO_ACCOUNT_CLAUDE_JSON(oauthAccount 파일) · CHAMMO_ACCOUNT_KEYCHAIN(키체인 파일)
 //! · CHAMMO_ACCOUNT_KEYCHAIN_PASSWORD(시험 키체인 비밀번호 — 없으면 시험 키체인이 잠겼을 때 사람 화면에 창이 뜬다)
+//! 윈도우: 로그인 칸 = .credentials.json 파일(accounts_file), 칸 = 자격 증명 관리자. 시험판은 CHAMMO_ACCOUNT_CREDENTIALS(로그인 파일)
+//! · CHAMMO_ACCOUNT_SLOT_TAG(칸 이름표 — 로그인 파일을 바꿨으면 안 줘도 "test")
 use crate::accounts::{self, Live, Pool};
-use crate::accounts_store::Keychain;
 use serde::Serialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 pub const LIVE_SERVICE: &str = "Claude Code-credentials";
+
+/// 로그인 칸·계정 칸 저장소 — 맥 = 키체인, 윈도우 = 로그인 파일 + 자격 증명 관리자
+#[cfg(not(windows))]
+pub type LiveStore = crate::accounts_store::Keychain;
+#[cfg(windows)]
+pub type LiveStore = crate::accounts_file::FileLive<crate::wincred::WinCred>;
 
 /// 바꿔 끼우기는 한 번에 하나만
 static LOCK: Mutex<()> = Mutex::new(());
@@ -176,6 +183,17 @@ pub fn live_paths(home: &Path, config_dir: Option<&str>, json_env: Option<&str>,
     Ok((service.unwrap_or(LIVE_SERVICE).to_string(), json))
 }
 
+/// 윈도우 로그인 칸 자리 — (로그인 파일, oauthAccount 파일). 윈도우 Claude Code 는 키체인이 없어 `<설정 폴더>/.credentials.json` 에 둔다.
+/// CLAUDE_CONFIG_DIR 면 .claude.json 도 그 폴더 안(Claude Code 와 같은 규칙). 시험판은 CHAMMO_ACCOUNT_CREDENTIALS·CHAMMO_ACCOUNT_CLAUDE_JSON
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn win_paths(home: &Path, config_dir: Option<&str>, json_env: Option<&str>, cred_env: Option<&str>) -> (PathBuf, PathBuf) {
+    let some = |s: Option<&str>| s.filter(|s| !s.is_empty()).map(PathBuf::from);
+    let dir = some(config_dir);
+    let cred = some(cred_env).unwrap_or_else(|| dir.clone().unwrap_or_else(|| home.join(".claude")).join(".credentials.json"));
+    let json = some(json_env).unwrap_or_else(|| dir.unwrap_or_else(|| home.to_path_buf()).join(".claude.json"));
+    (cred, json)
+}
+
 /// Claude Code 설정 폴더(갱신 잠금 자리). 시험 앱(로그인 칸 자리를 바꾼 것)은 CHAMMO_ACCOUNT_CLAUDE_DIR 를 줬을 때만 — 안 줬으면 진짜 ~/.claude 잠금을 안 건드린다
 pub fn claude_dir(home: &Path, config_dir: Option<&str>, dir_env: Option<&str>, service_env: Option<&str>) -> Option<PathBuf> {
     if let Some(d) = dir_env.filter(|s| !s.is_empty()) {
@@ -191,6 +209,7 @@ fn env(k: &str) -> Option<String> {
     std::env::var(k).ok()
 }
 
+#[cfg(not(windows))]
 fn paths() -> Result<(String, PathBuf), String> {
     if !cfg!(target_os = "macos") {
         return Err("macOnly".into());
@@ -198,12 +217,37 @@ fn paths() -> Result<(String, PathBuf), String> {
     live_paths(Path::new(&crate::config::home()), env("CLAUDE_CONFIG_DIR").as_deref(), env("CHAMMO_ACCOUNT_CLAUDE_JSON").as_deref(), env("CHAMMO_ACCOUNT_LIVE_SERVICE").as_deref())
 }
 
-fn setup() -> Result<(Keychain, Live, PathBuf), String> {
+#[cfg(windows)]
+fn win_live() -> (PathBuf, PathBuf) {
+    win_paths(Path::new(&crate::config::home()), env("CLAUDE_CONFIG_DIR").as_deref(), env("CHAMMO_ACCOUNT_CLAUDE_JSON").as_deref(), env("CHAMMO_ACCOUNT_CREDENTIALS").as_deref())
+}
+
+#[cfg(windows)]
+fn paths() -> Result<(String, PathBuf), String> {
+    Ok((LIVE_SERVICE.to_string(), win_live().1))
+}
+
+fn setup() -> Result<(LiveStore, Live, PathBuf), String> {
     setup_quiet(false)
 }
 
+/// 윈도우 — 창이 없는 저장소라 quiet 는 상관없다. 키체인 계정 이름도 없다(파일 하나)
+#[cfg(windows)]
+fn setup_quiet(_always_quiet: bool) -> Result<(LiveStore, Live, PathBuf), String> {
+    let (cred, claude_json) = win_live();
+    let cred_env = env("CHAMMO_ACCOUNT_CREDENTIALS").filter(|s| !s.is_empty());
+    // 시험판(로그인 파일을 바꿈)은 이름표 없이도 진짜 앱의 칸(자격 증명 관리자)과 안 섞이게
+    let tag = env("CHAMMO_ACCOUNT_SLOT_TAG").filter(|s| !s.is_empty()).or_else(|| cred_env.as_ref().map(|_| "test".to_string()));
+    let kc = crate::accounts_file::FileLive { service: LIVE_SERVICE.to_string(), file: cred, inner: crate::wincred::WinCred, tag };
+    let claude_dir = claude_dir(Path::new(&crate::config::home()), env("CLAUDE_CONFIG_DIR").as_deref(), env("CHAMMO_ACCOUNT_CLAUDE_DIR").as_deref(), cred_env.as_deref());
+    let live = Live { service: LIVE_SERVICE.to_string(), account: String::new(), claude_json, claude_dir, refresh: crate::accounts_refresh::refresh, owner: crate::accounts_refresh::owner };
+    Ok((kc, live, crate::config::data_file("accounts.json")))
+}
+
 /// always_quiet = 폰에서 — 사람이 맥 앞에 없으니 창 대신 오류로
-fn setup_quiet(always_quiet: bool) -> Result<(Keychain, Live, PathBuf), String> {
+#[cfg(not(windows))]
+fn setup_quiet(always_quiet: bool) -> Result<(LiveStore, Live, PathBuf), String> {
+    use crate::accounts_store::Keychain;
     let (service, claude_json) = paths()?;
     let keychain = env("CHAMMO_ACCOUNT_KEYCHAIN").filter(|s| !s.is_empty());
     // 시험 키체인 비밀번호 — 명령마다 잠금을 풀어 비밀번호 창이 안 뜨게(시험 키체인일 때만 쓴다)
@@ -223,6 +267,7 @@ fn setup_quiet(always_quiet: bool) -> Result<(Keychain, Live, PathBuf), String> 
 static ACCOUNT: Mutex<Option<(String, String)>> = Mutex::new(None);
 
 /// cell 에 같은 칸 이름의 기억이 있으면 그것, 없으면 read(있을 때만 기억 — 칸이 아직 없으면 로그인 뒤 다시 읽는다)
+#[cfg_attr(windows, allow(dead_code))]
 fn remembered(cell: &Mutex<Option<(String, String)>>, service: &str, read: impl FnOnce() -> Option<String>) -> Option<String> {
     let mut g = cell.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((s, a)) = g.as_ref() {
@@ -251,7 +296,7 @@ fn warm_tick() {
 
 /// 앱이 떠 있는 동안 5분마다(처음은 켜고 2분 뒤 — 켜는 일이 몰릴 때를 피해). 보낼지는 accounts_warm 이 정한다(칸 사이 20분·막히면 1시간)
 pub fn warm_start() {
-    if !cfg!(target_os = "macos") {
+    if !cfg!(any(target_os = "macos", windows)) {
         return;
     }
     std::thread::spawn(|| {
@@ -277,7 +322,7 @@ fn keep_tick() {
 
 /// 앱이 떠 있는 동안 1분마다(처음은 켜고 30초 뒤). 볼 때가 아니면 파일 하나만 읽고 끝난다 — 서버는 만료 60분 전부터, 막히면 10분마다
 pub fn keep_start() {
-    if !cfg!(target_os = "macos") {
+    if !cfg!(any(target_os = "macos", windows)) {
         return;
     }
     std::thread::spawn(|| {
@@ -298,7 +343,7 @@ pub fn login_keep_state() -> Option<&'static str> {
 /// 무거운 일(키체인)은 뒤에서, 한 번에 하나만
 async fn run<F>(f: F) -> Result<View, String>
 where
-    F: FnOnce(&Keychain, &Live, &Path) -> Result<(), accounts::Error> + Send + 'static,
+    F: FnOnce(&LiveStore, &Live, &Path) -> Result<(), accounts::Error> + Send + 'static,
 {
     tauri::async_runtime::spawn_blocking(move || {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -429,6 +474,17 @@ mod tests {
         assert_eq!(live_paths(h, None, Some("/tmp/c.json"), Some("Chammo test live")).unwrap(), ("Chammo test live".to_string(), PathBuf::from("/tmp/c.json")));
         assert_eq!(live_paths(h, Some("/x"), None, None).unwrap_err(), "configDir");
         assert!(live_paths(h, Some("/x"), None, Some("S")).is_ok());
+    }
+
+    #[test]
+    fn 윈도우_로그인_파일_자리() {
+        let h = Path::new("C:/Users/Me");
+        assert_eq!(win_paths(h, None, None, None), (PathBuf::from("C:/Users/Me/.claude/.credentials.json"), PathBuf::from("C:/Users/Me/.claude.json")));
+        // CLAUDE_CONFIG_DIR 면 둘 다 그 폴더 안 — 맥과 달리 칸 이름이 바뀌지 않아 막지 않는다
+        assert_eq!(win_paths(h, Some("D:/cc"), None, None), (PathBuf::from("D:/cc/.credentials.json"), PathBuf::from("D:/cc/.claude.json")));
+        // 시험판은 가짜 자리로
+        assert_eq!(win_paths(h, None, Some("C:/t/c.json"), Some("C:/t/cred.json")), (PathBuf::from("C:/t/cred.json"), PathBuf::from("C:/t/c.json")));
+        assert_eq!(win_paths(h, Some(""), Some(""), Some("")), win_paths(h, None, None, None));
     }
 
     #[test]

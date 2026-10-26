@@ -582,6 +582,11 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     c
 }
 
+/// curl — 맥은 기본 경로 그대로, 윈도우는 시스템 curl.exe(윈도우 10 1803+, PATH 의 System32)
+pub fn curl() -> &'static str {
+    if cfg!(target_os = "macos") { "/usr/bin/curl" } else { "curl" }
+}
+
 /// 지난 실행이 남긴 배치 파일인가(chammo-<다른 pid>-<n>.cmd)
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn stale_batch(name: &str, pid: u32) -> bool {

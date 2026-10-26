@@ -32,6 +32,17 @@ describe('로그인 필수(10-24 사용자) — 앱을 켜면 계정 로그인�
     expect(gateState(v({ account: true }), { step: 'reset', resetLater: true })).toBe('none');
     expect(gateState(v({ account: true, pending: true }), { step: 'reset' })).toBe('reset');
   });
+  it('봉인 없이 대기에 걸린 기기(옛 판 로그인)는 다시 로그인을 묻는다 — 대기 화면 대신, 나중에는 이번 실행만(10-26 아이맥)', () => {
+    expect(gateState(v({ account: true, pending: true }), { step: 'relogin' })).toBe('relogin');
+    expect(gateState(v({ account: true, pending: true }), { step: 'relogin', waitSeen: true }), '대기 안내를 봤어도').toBe('relogin');
+    expect(gateState(v({ account: true, pending: true }), { step: 'relogin', reloginLater: true })).toBe('none');
+    expect(watchGate(v({ account: true, pending: true }), 'relogin')).toBe(true);
+  });
+  it('허용됐지만 사슬 밖인 기기(24시간 자동 허용 등)는 숫자 대기 화면 — 사슬 기기 어디서든 확인받는다, 계속 쓰기는 이번 실행만(10-26)', () => {
+    expect(gateState(v({ account: true }), { step: 'outside' })).toBe('waiting');
+    expect(gateState(v({ account: true }), { step: 'outside', waitSeen: true })).toBe('none');
+    expect(watchGate(v({ account: true }), 'outside')).toBe(true);
+  });
   it('checking(ensure 전)은 문을 안 띄우고 정해질 때까지 다시 묻는다(1025 첫 기기 화면 안 뜸)', () => {
     expect(gateState(v({ account: true }), { step: 'checking' })).toBe('none');
     expect(watchGate(v({ account: true }), 'checking')).toBe(true);

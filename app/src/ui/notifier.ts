@@ -36,6 +36,11 @@ let held: Held[] = [];
 let timer: number | null = null;
 const HOLD_TICK_MS = 20_000;
 
+/** 붙들어 둔 알림 중 그 카드 것을 버린다 — 자리 비움 전에 다른 기기에서 처리됐으면 나중에 보내지 않게 */
+export function unhold(token: string) {
+  held = held.filter((h) => !(h.n.go ?? '').endsWith(`:${token}`));
+}
+
 function hold(n: Note) {
   const k = noteKey(n);
   if (!held.some((h) => noteKey(h.n) === k)) held.push({ n, at: Date.now() });

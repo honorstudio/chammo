@@ -54,6 +54,10 @@ pub struct E2eStore {
     pub no_chain: bool,
     /// 사슬 밖인데 안 끊긴 사슬 기기가 하나도 없다(ensure 가 적는다) — 로그인 화면이 '이 기기로 다시 시작'을 묻는다(계정 되찾기 갈래 ①)
     pub need_reset: bool,
+    /// 24시간 auto 기기인데 사슬 기기가 하나도 없다(ensure 가 적는다) — 로그인 화면이 '다시 로그인'을 묻는다(10-26)
+    pub relogin: bool,
+    /// 허용은 됐는데 사슬 밖 — 살아 있는 사슬 기기에서 숫자로 확인받아야 메시지를 읽는다(ensure 가 적는다, 10-26 어디서든 허용)
+    pub outside: bool,
     /// ensure 가 한 번이라도 끝났다 — 그 전엔 로그인 화면 단계가 checking(다시 묻기, 1025 첫 기기 화면 안 뜸)
     pub ensured: bool,
     /// 새 기기 쪽 — 숫자를 띄울 때 서버가 보여 준 내 계정 사슬(신원·머리, R7). 4자리 확인 봉투가 이 신원이어야 핀을 꽂는다
@@ -234,6 +238,8 @@ pub(crate) fn reset_self(dir: &Path, account: Option<&str>) -> Result<(), String
         s.confirm_failed = false;
         s.no_chain = false;
         s.need_reset = false;
+        s.outside = false;
+        s.relogin = false;
         s.ensured = false;
         s.my_sas = Default::default();
         s.my_np.clear();

@@ -76,7 +76,8 @@
 /* 붙인 그림 — 말풍선 썸네일(누르면 크게), 보내기 전 입력칸 위 썸네일 */
 .chat-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
 .chat-thumb { max-height: 96px; max-width: 160px; border-radius: 6px; cursor: pointer; display: block; }
-.chat-attach { display: inline-flex; gap: 4px; flex: 0 0 auto; }
+/* 붙인 파일이 많으면 칸 안에서 줄을 바꿔 쌓는다 — 안 바꾸면 칸 밖으로 뚫고 나갔다(10-26 사용자, #file 8개) */
+.chat-attach { display: inline-flex; flex-wrap: wrap; gap: 4px; flex: 0 1 auto; min-width: 0; max-height: 96px; overflow-y: auto; }
 .chat-attach img { height: 36px; max-width: 64px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line); }
 .chat-file { font-size: 11px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
 /* 할 일 칸 — 채팅 맨 위, 접었다 폈다 */

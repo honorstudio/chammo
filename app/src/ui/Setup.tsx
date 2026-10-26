@@ -707,8 +707,8 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
     voice: <>{notifyBlock}{switches(['voice'])}{ttsField}{talkField}</>,
     devices: <DevicesSection title={tr('내 기기', 'My devices')} onAccount={() => setTab('accounts')} fallback={<><MobileSection title={tr('폰', 'Phone')} onAccount={() => setTab('accounts')} /><PeerSection title={tr('다른 기기 참모', 'Chammo on other devices')} /></>} />,
     messenger: <><TeamSoundSection title={tr('메신저 알림', 'Messenger alerts')} /><MessengerSection title={tr('텔레그램', 'Telegram')} /></>,
-    // Chammo 계정이 맨 위 — 폰 중계·내 기기·메신저가 다 이 계정에 걸린다. Claude 계정 바꿔 끼우기는 맥 키체인이라 윈도우엔 없다
-    accounts: (<><TeamAccountSection title={tr('Chammo 계정', 'Chammo account')} onDevices={() => setTab('devices')} />{!IS_WIN && <AccountsSection title={tr('Claude 계정', 'Claude accounts')} claude={check?.claudePath} fontSize={fontSize} />}</>),
+    // Chammo 계정이 맨 위 — 폰 중계·내 기기·메신저가 다 이 계정에 걸린다. Claude 계정 바꿔 끼우기는 맥 = 키체인, 윈도우 = 로그인 파일 + 자격 증명 관리자
+    accounts: (<><TeamAccountSection title={tr('Chammo 계정', 'Chammo account')} onDevices={() => setTab('devices')} /><AccountsSection title={tr('Claude 계정', 'Claude accounts')} claude={check?.claudePath} fontSize={fontSize} /></>),
     browser: <>{browserBlock}{switches(['agentView', 'computerUse'])}</>,
     tools: <><div className="cfg-tools-head"><span className="su-hint">{tr(`Chammo 가 쓰는 도구가 이 ${machine()}에 있는지`, `Whether the tools Chammo uses are on this ${machine()}`)}</span>{recheckBtn}</div>{checkBody}</>,
   };

@@ -3,7 +3,8 @@
 // 테일넷으로 직접 잇기(폰 QR·다른 기기 참모)는 맨 아래 접힘 대피로
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { teamDeviceRename, teamDeviceRevoke, teamLogout, teamStatus, type TeamView } from '../data/teamApi';
+import { chammoHere, teamDeviceRename, teamDeviceRevoke, teamLogout, teamStatus, type TeamView } from '../data/teamApi';
+import { hereOthers, type HereAccount } from '../domain/chammoHere';
 import { mobileApi, type EntryQr } from '../data/tauri';
 import { directCards } from '../domain/directAsk';
 import { deviceCounts, deviceRows, pendingCardFor } from '../domain/myDevices';
@@ -30,14 +31,21 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
   const [phoneOff, setPhoneOff] = useState(false);
   // 폰 추가 QR — 입구 주소만. 카메라는 늘 사파리로 열어서, 짝 코드를 실으면 사파리가 써 버려 홈 화면 앱엔 안 남는다(10-24 사용자)
   const [entry, setEntry] = useState<EntryQr | null>(null);
+  // 이 컴퓨터의 다른 Chammo(시험판 데이터 폴더)가 어느 계정에 붙어 있나 — 홈 폴더를 읽어서 열 때·다시 받기 때만
+  const [here, setHere] = useState<HereAccount[]>([]);
+  const loadHere = () => void chammoHere().then(setHere, () => {});
+  // 로그인 화면 단계(Rust e2e_self_step) — outside(허용됐지만 사슬 밖)면 대기 기기처럼 숫자 칸을 여기서도 다시 본다
+  const [step, setStep] = useState('');
 
   const load = () => {
     void teamStatus().then(setV, (e: unknown) => setErr(String(e)));
     void invoke<string>('direct_log').then(setLog, () => {});
     void mobileApi.status().then((m) => setPhoneOff(!!m.off), () => {});
+    void invoke<string>('e2e_self_step').then(setStep, () => {});
   };
   useEffect(() => {
     load();
+    loadHere();
     // 다른 기기에서 허용·거절하면 앱이 목록을 다시 받는다(1분·알림) — 화면도 따라가게
     const t = window.setInterval(load, 5000);
     return () => window.clearInterval(t);
@@ -52,6 +60,7 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
   const list = v?.devices ?? [];
   const rows = deviceRows(list, Date.now());
   const n = deviceCounts(list);
+  const others = hereOthers(here, acc?.email ?? '');
   // 사람 클릭만 — 스크립트가 만든 클릭은 무시(카드와 같은 문)
   const decide = (e: React.MouseEvent, card: string, yes: boolean) => {
     if (!e.nativeEvent.isTrusted || busy) return;
@@ -63,7 +72,7 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
       <section className="su-sec">
         <div className="su-sec-head">
           <h2>{title}</h2>
-          {acc && <IconButton size="l" tone="line" label={tr('다시 받기', 'Refresh')} disabled={busy} onClick={load}><IconRefresh /></IconButton>}
+          {acc && <IconButton size="l" tone="line" label={tr('다시 받기', 'Refresh')} disabled={busy} onClick={() => { load(); loadHere(); }}><IconRefresh /></IconButton>}
         </div>
         {v && !acc && (
           <>
@@ -71,11 +80,14 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
             <div className="su-inline"><button className="btn pri" onClick={onAccount}>{tr('Chammo 계정에 로그인', 'Sign in to Chammo account')}</button></div>
           </>
         )}
-        {acc && v?.pending && (
+        {acc && (v?.pending || step === 'outside') && (
           <div className="dm-wait">
             {/* 숫자 넣기 허용(chammo-relay ADR 0007, 시안 e2e-approve v1) — 다른 기기에서 카드를 열면 숫자가 뜬다 */}
-            <NumberWait />
-            {v.pendingAutoAt ? <span>{tr(`${hm(v.pendingAutoAt)}까지 거절이 없으면 접속은 열리지만, 메시지는 숫자 확인 뒤에 읽어요.`, `If nobody declines by ${hm(v.pendingAutoAt)} it can connect, but messages need the number check.`)}</span> : null}
+            <NumberWait>
+              {/* 대기 기기는 기기 목록을 못 받아(403) 아래 줄의 로그아웃이 안 보인다 — 여기서 빠져나간다(10-26 아이맥) */}
+              <button className="btn" disabled={busy} onClick={(e) => { if (e.nativeEvent.isTrusted) act(() => teamLogout()); }}>{tr('로그인 취소', 'Cancel sign-in')}</button>
+            </NumberWait>
+            {v?.pendingAutoAt ? <span>{tr(`${hm(v.pendingAutoAt)}까지 거절이 없으면 접속은 열리지만, 메시지는 숫자 확인 뒤에 읽어요.`, `If nobody declines by ${hm(v.pendingAutoAt)} it can connect, but messages need the number check.`)}</span> : null}
           </div>
         )}
         {acc && !v?.pending && !phoneOff && (entry ? (
@@ -94,6 +106,16 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
         {acc && phoneOff && <span className="su-hint">{tr('이 컴퓨터는 폰을 받지 않아요 — 아래 테일스케일로 직접 잇기의 폰 연결을 켜면 받아요', 'This computer does not accept phones — turn on phone connection below to allow it')}</span>}
         {acc && (
           <>
+            {/* 기기 목록이 비었으면(허용 대기·확인 중 403) '이 기기' 줄의 로그아웃이 없다 — 따로 둔다(10-26 아이맥) */}
+            {!rows.some((r) => r.me) && (removing === 'self' ? (
+              <div className="su-row dev-row dm-confirm">
+                <span>{tr('이 기기에서 로그아웃할까요? 다시 쓰려면 다시 로그인해요', 'Sign out of this device? Sign in again to use it')}</span>
+                <button className="btn danger" disabled={busy} onClick={(e) => { if (e.nativeEvent.isTrusted) act(() => teamLogout()); }}>{tr('로그아웃', 'Sign out')}</button>
+                <button className="btn" onClick={() => setRemoving(null)}>{tr('취소', 'Cancel')}</button>
+              </div>
+            ) : (
+              <div className="su-inline"><button className="peer-alt" onClick={() => setRemoving('self')}>{tr('이 기기 로그아웃', 'Sign out of this device')}</button></div>
+            ))}
             <div className="dm-acct"><span>{tr(`${acc.email || acc.name} 계정`, `${acc.email || acc.name} account`)}</span><span>{tr(`폰 ${n.phones} · 컴퓨터 ${n.computers}`, `${n.phones} phone(s) · ${n.computers} computer(s)`)}</span></div>
             <div className="su-rows">
               {rows.map((r) => {
@@ -141,6 +163,22 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
                 );
               })}
             </div>
+          </>
+        )}
+        {others.length > 0 && (
+          <>
+            <div className="dm-acct"><span>{tr('이 컴퓨터의 다른 Chammo', 'Other Chammo on this computer')}</span><span>{tr('데이터 폴더별 계정', 'Account per data folder')}</span></div>
+            <div className="su-rows">
+              {others.map((o) => (
+                <div key={o.folder} className="su-row dev-row">
+                  <div className="su-row-text">
+                    <b title={o.folder}>{o.folder}</b>
+                    <span>{o.who}{o.other && <> · <span className="acct-st-out">{tr('다른 계정', 'Another account')}</span></>}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <span className="su-hint">{tr('끊으려면 그 계정 기기 관리에서 빼거나 그 앱을 켜서 로그아웃해요', "To disconnect, remove it in that account's device list or sign out in that app")}</span>
           </>
         )}
         {err && <div className="su-error">{err}</div>}

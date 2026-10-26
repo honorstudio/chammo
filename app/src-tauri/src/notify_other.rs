@@ -48,6 +48,10 @@ pub fn send(_title: &str, _body: &str, _target: &str) -> bool {
     false
 }
 
+/// 카드가 닫히면 알림 거두기 — 윈도우 토스트는 아직 못 거둔다(roadmap 부채, 10-26)
+#[tauri::command]
+pub fn notify_withdraw(_token: String) {}
+
 /// 윈도우 설정 > 알림을 통째로 껐나(HKCU …\PushNotifications ToastEnabled = 0)
 #[cfg(windows)]
 fn toasts_off() -> bool {

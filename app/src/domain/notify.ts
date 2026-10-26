@@ -85,6 +85,17 @@ export type NoteTarget = { to: 'inbox' } | { to: 'session'; id: string } | { to:
 
 export const cardTarget = (orch: string, card: string) => `card:${orch}:${card}`;
 
+/** 직접 답하기 카드 알림 갈 곳의 꼬리(cardTarget 의 card 칸) — 카드가 닫히면 이 꼬리로 알림 센터에서 거둔다(Rust notify_withdraw, 10-26) */
+export const cardToken = (id: string) => `d:${id}`;
+
+/** 알린 카드 중 이제 거둘 것 — 답했거나 닫혔거나(다른 기기에서 처리) 목록에서 사라짐 */
+export function toWithdraw<C extends { id: string }>(told: Set<string>, cards: C[], waiting: (c: C) => boolean): string[] {
+  return [...told].filter((id) => {
+    const c = cards.find((x) => x.id === id);
+    return !c || !waiting(c);
+  });
+}
+
 export const noteTarget = (n: Note) => n.go ?? (n.kind === 'decide' || n.kind === 'login' ? 'inbox' : `session:${n.session}`);
 
 export function readNoteTarget(s: string): NoteTarget | null {

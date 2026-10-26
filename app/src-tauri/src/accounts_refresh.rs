@@ -28,7 +28,7 @@ pub const PROFILE_URL: &str = "https://api.anthropic.com/api/oauth/profile";
 pub fn owner(o: &Value) -> Option<String> {
     let token = o.get("accessToken")?.as_str().filter(|t| !t.is_empty())?;
     let h = crate::accounts_usage::header_text(token)?;
-    let mut c = crate::platform::command("/usr/bin/curl");
+    let mut c = crate::platform::command(crate::platform::curl());
     c.args(["-sS", "--max-time", "4", "-H", "@-", "-w", "\n%{http_code}", PROFILE_URL]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
     let mut child = c.spawn().ok()?;
     if let Some(mut si) = child.stdin.take() {
@@ -113,11 +113,11 @@ pub fn apply(old: &Value, resp: &Value, now: i64) -> Option<Value> {
     Some(n)
 }
 
-/// 실제 갱신 — curl(macOS 기본)로, 몸통은 stdin 으로. 오류 글에 토큰은 안 넣는다. 시험 앱은 CHAMMO_ACCOUNT_TOKEN_URL 로 가짜 주소
+/// 실제 갱신 — curl(맥 기본·윈도우 System32)로, 몸통은 stdin 으로. 오류 글에 토큰은 안 넣는다. 시험 앱은 CHAMMO_ACCOUNT_TOKEN_URL 로 가짜 주소
 pub fn refresh(o: &Value) -> Result<Value, String> {
     let b = body(o).ok_or("noRefreshToken")?;
     let url = std::env::var("CHAMMO_ACCOUNT_TOKEN_URL").ok().filter(|u| !u.is_empty()).unwrap_or_else(|| TOKEN_URL.into());
-    let mut c = crate::platform::command("/usr/bin/curl");
+    let mut c = crate::platform::command(crate::platform::curl());
     let ua = format!("User-Agent: {}", user_agent());
     // 끝 줄 = 상태 코드 + 탭 + Retry-After 머리(curl 7.84+ %header, 맥 기본 8.x) — 429 면 언제 다시 할지
     c.args(["-sS", "--max-time", "20", "-X", "POST", "-H", "Content-Type: application/json", "-H", "Accept: application/json", "-H", &ua, "--data-binary", "@-", "-w", "\n%{http_code}\t%header{retry-after}", &url])
@@ -179,7 +179,15 @@ fn take(p: &Path) -> std::io::Result<bool> {
 }
 
 fn touch(p: &Path) {
-    if let Ok(f) = std::fs::File::open(p) {
+    // 윈도우는 폴더를 File::open 으로 못 연다 — 폴더 열기 표시(FILE_FLAG_BACKUP_SEMANTICS)와 속성 쓰기 권한(FILE_WRITE_ATTRIBUTES)으로
+    #[cfg(windows)]
+    let f = {
+        use std::os::windows::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new().access_mode(0x0100).custom_flags(0x0200_0000).open(p)
+    };
+    #[cfg(not(windows))]
+    let f = std::fs::File::open(p);
+    if let Ok(f) = f {
         let _ = f.set_modified(SystemTime::now());
     }
 }

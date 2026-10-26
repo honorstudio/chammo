@@ -321,6 +321,16 @@ class TeamNoPython(unittest.TestCase):
                 line = json.loads(open(os.path.join(d, 'app.jsonl'), encoding='utf-8').read().splitlines()[-1])
                 self.assertEqual((line['action'], line['arg']['verb']), ('team', verb), args)
 
+    def test_로그아웃은_yes_가_있어야_부탁한다(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = self.run_sh(d, 'logout')
+            self.assertEqual(r.returncode, 2)
+            self.assertFalse(os.path.exists(os.path.join(d, 'app.jsonl')))
+            r = self.run_sh(d, 'logout', '--yes')
+            self.assertEqual(r.returncode, 1, r.stderr)  # 앱이 답하지 않음
+            line = json.loads(open(os.path.join(d, 'app.jsonl'), encoding='utf-8').read().splitlines()[-1])
+            self.assertEqual(line['arg'], {'verb': 'logout', 'yes': True})
+
     def test_모르는_teamchat_명령은_보내지_않고_usage(self):
         with tempfile.TemporaryDirectory() as d:
             r = self.run_sh(d, 'teamchat', 'nope')

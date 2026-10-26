@@ -6,7 +6,7 @@ export type SettingsTab = 'general' | 'agent' | 'features' | 'voice' | 'devices'
 
 const ALL: SettingsTab[] = ['general', 'agent', 'features', 'voice', 'devices', 'messenger', 'accounts', 'browser', 'tools'];
 
-/** 보이는 탭 — 윈도우도 같다(계정 탭의 Claude 계정 바꿔 끼우기 칸만 맥 키체인이라 빠진다) */
+/** 보이는 탭 — 윈도우도 같다(Claude 계정 바꿔 끼우기는 윈도우에선 로그인 파일 + 자격 증명 관리자) */
 export function settingsTabs(_win: boolean): SettingsTab[] {
   return ALL;
 }

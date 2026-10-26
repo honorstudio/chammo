@@ -26,8 +26,24 @@ fn kind_word(k: &str) -> &'static str {
     }
 }
 
-/// 새 기기 허용 카드 줄 — 이름·도시는 서버가 준 남의 글이라 거른다
+/// 허용은 됐는데 사슬 밖인 컴퓨터(24시간 auto 등) — 받는 열쇠·봉인을 올렸으면 사슬 기기 어디서든 숫자로 '내 기기 확인'(10-26 어디서든 허용)
+pub fn outsider(d: &DeviceName) -> bool {
+    !d.pending() && !d.in_chain && !d.e2e_pub.is_empty() && !d.approve_commit.is_empty()
+}
+
+/// 새 기기 허용 카드 줄 — 이름·도시는 서버가 준 남의 글이라 거른다. 사슬 밖 허용 기기는 '내 기기 확인' 카드(기한 없음, 아니요 = 빼기)
 pub fn device_row(id: &str, d: &DeviceName, ts: &str) -> Value {
+    if outsider(d) {
+        let (name, kind) = (clean(&d.name, 64), kind_word(&d.kind));
+        return json!({
+            "ts": ts, "type": "ask", "id": id, "from": crate::direct::LINK_FROM, "cwd": "", "kind": crate::direct::LINK_KIND, "sub": DEVICE_SUB, "dev": d.id,
+            "q": crate::i18n::tr(&format!("{kind} {name} 를 내 기기로 확인할까요? 숫자를 넣으면 이 기기도 내 메시지를 읽어요"), &format!("Confirm {kind} {name} as your device? Enter its number and it can read your messages")),
+            "detail": crate::i18n::tr("이미 로그인된 기기예요 · 내가 쓰는 기기가 아니면 빼기", "Already signed in · Remove it if it isn't yours"),
+            "what": crate::i18n::tr("내 기기 확인", "Confirm my device"),
+            "yes": crate::i18n::tr("확인", "Confirm"), "no": crate::i18n::tr("빼기", "Remove"), "options": [],
+            "at": ts,
+        });
+    }
     let name = clean(&d.name, 64);
     let place = [clean(&d.req_city, 40), clean(&d.req_country, 40)].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(", ");
     let since = d.pending_since.unwrap_or(0);
@@ -89,11 +105,13 @@ fn open_cards(log: &str) -> HashMap<String, String> {
     m
 }
 
-/// 목록과 기록을 맞춘다 — 대기 기기마다 카드 하나, 대기가 아닌(허용·거절·삭제) 기기의 열린 카드는 닫기. 나 자신·내가 대기 중이면 안 띄운다
-pub fn plan(log: &str, devices: &[DeviceName], me_pending: bool) -> Plan {
+/// 목록과 기록을 맞춘다 — 대기 기기마다 카드 하나, 대기가 아닌(허용·거절·삭제) 기기의 열린 카드는 닫기. 나 자신·내가 대기 중이면 안 띄운다.
+/// me_in_chain 이면 사슬 밖 허용 컴퓨터에도 '내 기기 확인' 카드(사슬에 든 기기만 add 고리를 쓴다)
+pub fn plan(log: &str, devices: &[DeviceName], me_pending: bool, me_in_chain: bool) -> Plan {
     let cards = open_cards(log);
-    let open = if me_pending { Vec::new() } else { devices.iter().filter(|d| d.pending() && !d.current && !cards.contains_key(&d.id)).cloned().collect() };
-    let mut close: Vec<String> = cards.iter().filter(|(dev, _)| !devices.iter().any(|d| &d.id == *dev && d.pending())).map(|(_, c)| c.clone()).collect();
+    let wants = |d: &DeviceName| d.pending() || (me_in_chain && outsider(d));
+    let open = if me_pending { Vec::new() } else { devices.iter().filter(|d| wants(d) && !d.current && !cards.contains_key(&d.id)).cloned().collect() };
+    let mut close: Vec<String> = cards.iter().filter(|(dev, _)| !devices.iter().any(|d| &d.id == *dev && wants(d))).map(|(_, c)| c.clone()).collect();
     close.sort();
     Plan { open, close }
 }
@@ -111,7 +129,7 @@ pub fn sync(dir: &Path) {
         }
     }
     let log = crate::direct::direct_log();
-    let p = plan(&log, &st.my_devices, st.pending);
+    let p = plan(&log, &st.my_devices, st.pending, crate::e2e_team::in_chain(dir, &st));
     for d in &p.open {
         if let Ok(id) = crate::mobile_pair::random_hex(4) {
             if crate::direct::append_row(&device_row(&id, d, &crate::direct::chrono_now())).is_ok() {
@@ -144,7 +162,12 @@ pub fn decide(ask: &Value, yes: bool) -> Result<(), String> {
     }
     let dev = ask["dev"].as_str().ok_or("no device")?;
     let dir = crate::config::data_dir();
-    crate::team_account::decide_device(dir, &crate::team_relay_keys::store(), &relay::Curl, dev, yes).map(|_| ())
+    let kc = crate::team_relay_keys::store();
+    // 사슬 밖 허용 기기 카드 — 확인은 숫자로만(카드의 숫자 넣기 길), 아니요는 그 기기 빼기(대기가 아니라 거절이 없다)
+    if relay::load_state(dir).my_devices.iter().any(|d| d.id == dev && outsider(d)) {
+        return if yes { Err(crate::i18n::tr("숫자로 확인해 주세요 — 그 기기 화면의 숫자를 넣어요", "Confirm with the number shown on that device").into()) } else { crate::team_account::revoke_device(dir, &kc, &relay::Curl, dev).map(|_| ()) };
+    }
+    crate::team_account::decide_device(dir, &kc, &relay::Curl, dev, yes).map(|_| ())
 }
 
 static NUDGE: AtomicBool = AtomicBool::new(false);

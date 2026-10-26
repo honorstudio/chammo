@@ -28,6 +28,28 @@ pub fn target_of(request_id: &str) -> &str {
     request_id.rsplit_once('#').map_or("", |(t, _)| t)
 }
 
+/// 그 알림을 거둘까 — 갈 곳이 '…:<꼬리>' 로 끝나는 것만(카드 꼬리 d:<id>, 프론트 domain/notify cardToken)
+pub fn withdraws(request_id: &str, token: &str) -> bool {
+    !token.is_empty() && target_of(request_id).ends_with(&format!(":{token}"))
+}
+
+/// 카드가 다른 기기에서 처리돼 닫히면 그 카드 알림을 알림 센터에서 거둔다(10-26 "인증했으면 다른 기기 알림만 없어지면 된다").
+/// 번들이 아니면(dev 맨 실행 파일) 아무것도 안 한다 — osascript 알림은 거둘 수 없다
+#[tauri::command]
+pub fn notify_withdraw(token: String) {
+    if APP.get().is_none() || !token.chars().all(|c| c.is_ascii_alphanumeric() || c == ':' || c == '-') {
+        return;
+    }
+    let done = RcBlock::new(move |list: std::ptr::NonNull<objc2_foundation::NSArray<UNNotification>>| {
+        let list = unsafe { list.as_ref() };
+        let ids: Vec<objc2::rc::Retained<NSString>> = list.iter().map(|n| n.request().identifier()).filter(|id| withdraws(&id.to_string(), &token)).collect();
+        if !ids.is_empty() {
+            UNUserNotificationCenter::currentNotificationCenter().removeDeliveredNotificationsWithIdentifiers(&objc2_foundation::NSArray::from_retained_slice(&ids));
+        }
+    });
+    UNUserNotificationCenter::currentNotificationCenter().getDeliveredNotificationsWithCompletionHandler(&done);
+}
+
 /// .app 번들 안에서 돌고 있나 (번들 id 가 있고 경로가 .app)
 pub fn available() -> bool {
     let b = NSBundle::mainBundle();
@@ -127,6 +149,14 @@ pub fn send(title: &str, body: &str, target: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 거둘_알림은_그_카드_꼬리로_끝나는_것만() {
+        assert!(withdraws(&request_id("card:orch-1:d:ab12cd34", 5), "d:ab12cd34"));
+        assert!(!withdraws(&request_id("card:orch-1:d:ab12cd345", 5), "d:ab12cd34"), "꼬리가 더 긴 다른 카드");
+        assert!(!withdraws(&request_id("session:@link", 5), "d:ab12cd34"));
+        assert!(!withdraws(&request_id("card:orch-1:d:ab12cd34", 5), ""), "빈 꼬리는 다 거두지 않는다");
+    }
 
     #[test]
     fn 요청_id_에서_갈_곳을_되찾는다() {

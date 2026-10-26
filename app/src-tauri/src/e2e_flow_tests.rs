@@ -468,19 +468,44 @@ fn 사슬_기기가_살아_있거나_자동_허용_기기면_다시_시작하지
     r.answer("/v0/me/self/commit", 200, r#"{"ok":true}"#);
     assert_eq!(ensure(&d, &kc, &r).unwrap(), Status::Waiting);
     assert_ne!(self_step(&d), "reset");
+    // 허용된 사슬 밖 기기 — 살아 있는 사슬 기기에서 숫자로 확인받는 화면(10-26 '어디서든 허용')
+    assert_eq!(self_step(&d), "outside");
     r.answer("/v0/me/devices", 200, &alive);
     chain_answer(&r, std::slice::from_ref(&g));
     assert!(reset_chain(&d, &kc, &r).unwrap_err().contains("쓰는 내 기기"));
-    // 24시간 자동 허용 = 아무도 허용 안 한 기기 — 기다리기만
+}
+
+#[test]
+fn 자동_허용_기기는_사슬_기기가_하나도_없으면_다시_로그인을_묻는다() {
+    // 10-26 공격 리뷰 — auto 기기가 다시 시작하면 숨은 탈취자 기기가 신원을 가져갈 수 있어 서버가 막는다(auto_approved).
+    // 대신 갇히지 않게 '다시 로그인' — 로그아웃 뒤 다시 로그인하면 허용해 줄 기기 0 이라 바로 허용돼 다시 시작(relay ADR 0007 덧붙임)
     let r = FakeRelay::default();
-    let (d, kc, _, g, rows) = lost_all("reset-auto", &r, "auto");
+    let (d, kc, _, g, rows) = lost_all("relogin-auto", &r, "auto");
     r.answer("/v0/me/devices", 200, &rows);
     chain_answer(&r, std::slice::from_ref(&g));
-    r.answer("/v0/me/self/commit", 200, r#"{"ok":true}"#);
-    assert_eq!(ensure(&d, &kc, &r).unwrap(), Status::Waiting);
+    assert_eq!(ensure(&d, &kc, &r).unwrap(), Status::NeedRelogin);
+    assert_eq!(self_step(&d), "relogin");
+    assert!(!r.seen.borrow().iter().any(|(m, p, _, _)| m == "POST" && p == "/v0/me/self/commit"), "허용해 줄 기기가 없으니 봉인을 안 올린다");
     r.answer("/v0/me/devices", 200, &rows);
     assert!(reset_chain(&d, &kc, &r).unwrap_err().contains("자동 허용"));
     assert!(!r.seen.borrow().iter().any(|(m, p, _, _)| m == "POST" && p == "/v0/me/chain"));
+}
+
+#[test]
+fn 사슬에_들면_outside_가_풀린다() {
+    let r = FakeRelay::default();
+    let (d, kc, k, g, _) = lost_all("outside-done", &r, "auto");
+    let alive = json!({ "devices": [
+        { "id": "dOld", "name": "옛 맥", "status": "approved", "inChain": true },
+        { "id": "dB", "name": "새 맥", "current": true, "status": "approved", "approvedBy": "auto", "e2ePub": k.e2e_public(), "inChain": false }] }).to_string();
+    r.answer("/v0/me/devices", 200, &alive);
+    chain_answer(&r, std::slice::from_ref(&g));
+    r.answer("/v0/me/self/commit", 200, r#"{"ok":true}"#);
+    assert_eq!(ensure(&d, &kc, &r).unwrap(), Status::Waiting);
+    assert_eq!(self_step(&d), "outside", "auto 기기도 살아 있는 사슬 기기가 있으면 숫자로 확인받는다");
+    // 4자리 확인까지 끝나 핀이 꽂히면 화면 없음
+    e2e_state::mutate(&d, |s| { s.pins.insert("a1".into(), Default::default()); }).unwrap();
+    assert_eq!(self_step(&d), "");
 }
 
 #[test]
@@ -532,4 +557,21 @@ fn 남의_reset_으로_시작하는_사슬은_내_사슬로_처음_믿지_않는
     let st = crate::team_relay::load_state(&d);
     chain_answer(&r, &[g, er, add]);
     assert!(matches!(e2e_state::chain_of(&d, &kc, &r, &st, "a1", true).unwrap(), Trust::Unconfirmed(_)));
+}
+
+#[test]
+fn 봉인_없는_대기_기기는_relogin_봉인이_있으면_기다림() {
+    // 옛 판(0.4.1) 로그인은 받는 열쇠·봉인을 안 올렸고, 대기 기기는 /v0/me/e2e 도 막혀 숫자가 영영 안 뜬다(10-26 아이맥)
+    let r = FakeRelay::default();
+    let (d, _kc, k) = device("relogin", "dA", &r, true);
+    assert_eq!(self_step(&d), "relogin");
+    // 이 판 로그인은 봉인을 같이 올린다 — 평소 대기
+    login_fields(&d, &k).unwrap();
+    assert_eq!(self_step(&d), "");
+    // 4자리가 틀린 흐름이 먼저
+    e2e_state::mutate(&d, |s| { s.my_np.clear(); s.confirm_failed = true; }).unwrap();
+    assert_eq!(self_step(&d), "failed");
+    // 허용돼 핀이 꽂힌 뒤(nP 지워짐)엔 대기가 늦게 풀려도 relogin 이 아니다
+    e2e_state::mutate(&d, |s| { s.confirm_failed = false; s.pins.insert("a1".into(), Default::default()); }).unwrap();
+    assert_eq!(self_step(&d), "");
 }

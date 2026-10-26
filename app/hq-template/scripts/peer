@@ -9,6 +9,7 @@ __doc__ = """Talk to the assistant on another device of the same Tailscale accou
 같은 테일스케일 계정의 다른 기기 참모에게 앱을 거쳐 말을 넣고 답을 받는다.
 
   scripts/peer list                                    devices with Chammo on your tailnet: connected / not connected,
+                                                       the Chammo account it is signed in to (other data folders too)
                                                        and the assistants on each connected device
   scripts/peer connect <device>                        first time only — a card pops up on that device; once the person there
                                                        presses Allow, both sides can talk (waits up to 6 min). No code needed
@@ -134,6 +135,11 @@ def show_list(ans):
     word = {'connected': 'connected / 연결됨', 'pair': 'not connected / 연결 안 됨 — scripts/peer connect', 'offline': 'not connected (offline) / 연결 안 됨(꺼져 있음)'}
     for d in devs:
         print(f'- {d.get("name")} — {word.get(d.get("status"), d.get("status"))}' + (' (old version / 옛 판)' if d.get('old') else ''))
+        for a in d.get('accounts') or []:
+            who = a.get('email') or a.get('name') or ''
+            who = f'{who} ({a.get("name")})' if a.get('email') and a.get('name') else who
+            where = 'Chammo account / 계정' if a.get('current') else f'other data folder {a.get("folder")} / 다른 데이터 폴더'
+            print(f'    {where}: {who or "not signed in / 로그인 안 됨"}')
         for a in d.get('assistants') or []:
             print(f'    {a.get("name")} ({a.get("id")})')
 

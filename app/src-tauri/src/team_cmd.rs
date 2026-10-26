@@ -23,7 +23,7 @@ pub fn request(line: &str) -> Option<TeamReq> {
     }
     let verb = v["arg"]["verb"].as_str()?;
     // use·leave·kick·role 은 answer 에 있었는데 여기 빠져 앱이 버렸다(QA 5). leave·kick·role 은 answer 가 --yes(사용자 말) 없이는 안 한다
-    matches!(verb, "status" | "create" | "invite" | "join" | "members" | "use" | "leave" | "kick" | "role" | "say" | "inbox" | "deliver-to" | "forget" | "login" | "devices" | "device-rename" | "device-remove" | "self-say" | "rooms" | "room-new" | "room-set" | "room-leave" | "room-say" | "room-read" | "locker-ls" | "locker-put" | "locker-get" | "locker-rm").then(|| TeamReq { id: id.into(), verb: verb.into(), arg: v["arg"].clone() })
+    matches!(verb, "status" | "create" | "invite" | "join" | "members" | "use" | "leave" | "kick" | "role" | "say" | "inbox" | "deliver-to" | "forget" | "logout" | "login" | "devices" | "device-rename" | "device-remove" | "self-say" | "rooms" | "room-new" | "room-set" | "room-leave" | "room-say" | "room-read" | "locker-ls" | "locker-put" | "locker-get" | "locker-rm").then(|| TeamReq { id: id.into(), verb: verb.into(), arg: v["arg"].clone() })
 }
 
 /// 망·소켓 — 시험에선 가짜
@@ -205,11 +205,11 @@ pub fn answer(req: &TeamReq, dir: &Path, kc: &dyn Store, w: &dyn Wire) -> Value 
             view(&st)
         }),
         "devices" => crate::team_account::refresh_me(dir, kc, w.http()).map(|st| view(&st)),
-        // 내 기기 이름 바꾸기·빼기 — 사용자가 말했을 때만(안내문). 이 기기 빼기(=로그아웃)·새 기기 허용은 사람이 앱에서만(ADR 0014)
+        // 내 기기 이름 바꾸기·빼기 — 사용자가 말했을 때만(안내문). 이 기기 빼기는 logout 으로, 새 기기 허용은 사람이 앱에서만(ADR 0014)
         "device-rename" => my_device(dir, &s("device")).and_then(|id| crate::team_account::rename_device(dir, kc, w.http(), &id, &s("name"))).map(|st| view(&st)),
         "device-remove" if arg["yes"] != true => Err("기기 빼기는 사용자에게 먼저 묻고 --yes 로".into()),
         "device-remove" => match my_device(dir, &s("device")) {
-            Ok(id) if id == relay::load_state(dir).device_id => Err("이 기기는 사람이 설정 > 기기 관리에서 '이 기기 빼기'로만".into()),
+            Ok(id) if id == relay::load_state(dir).device_id => Err("이 기기는 scripts/team logout --yes 로(사용자가 말했을 때만)".into()),
             // 허용 대기 기기를 빼는 건 '거절'이다 — 사람만 카드에서(ADR 0014, 리뷰 2)
             Ok(id) if relay::load_state(dir).my_devices.iter().any(|d| d.id == id && d.pending()) => Err("허용 대기 기기는 사람이 카드에서 허용·거절해 — 여기선 못 빼".into()),
             Ok(id) => crate::team_account::revoke_device_agent(dir, kc, w.http(), &id).map(|st| view(&st)),
@@ -283,6 +283,15 @@ pub fn answer(req: &TeamReq, dir: &Path, kc: &dyn Store, w: &dyn Wire) -> Value 
         }
         "inbox" => Ok(json!({ "items": inbox_tail(dir, arg["n"].as_u64().unwrap_or(20).min(200) as usize) })),
         "deliver-to" => relay::mutate(dir, |st| st.deliver_to = s("name")).map(|st| view(&st)),
+        // 이 기기 로그아웃 — 사용자가 말했을 때만 --yes(안내문). 허용 대기·확인 중·기기 목록 403 이어도 된다(10-26 사용자 "로그아웃도 없고").
+        // 참모 길이라 사슬 고리는 안 쓴다(R6) — 서버 끊기만, 남들은 끊긴 기기를 목록에서 뺀다
+        "logout" if arg["yes"] != true => Err("로그아웃은 사용자에게 먼저 묻고 --yes 로".into()),
+        // 사슬에 든 기기는 사람만 — 프롬프트 주입으로 마지막 사슬 기기를 빼면 걸려 있던 탈취자 대기 기기가 허용된다(10-26 공격 리뷰, R6)
+        "logout" if crate::e2e_team::in_chain(dir, &relay::load_state(dir)) => Err("이 기기는 내 기기 사슬에 든 기기라 사람이 설정 > 계정에서 로그아웃해야 해".into()),
+        "logout" => {
+            w.stopped();
+            crate::team_account::logout_with(dir, kc, w.http(), false).map(|_| json!({ "loggedOut": true }))
+        }
         // 이 기기에서만 잊는다(서버의 팀·기기 행은 그대로 — 시험 정리는 서버 쪽 스크립트로)
         "forget" => {
             w.stopped();
@@ -380,6 +389,12 @@ pub async fn team_device_revoke(window: tauri::WebviewWindow, id: String) -> Res
 pub async fn team_logout(window: tauri::WebviewWindow) -> Result<Value, String> {
     main_only(&window)?;
     account_job(|d, kc, h| crate::team_account::logout(d, kc, h)).await
+}
+
+/// 이 컴퓨터의 Chammo 데이터 폴더별 로그인 계정(기기 관리 '이 컴퓨터의 다른 Chammo') — 홈 폴더를 읽어서 뒤 일꾼에서
+#[tauri::command]
+pub async fn chammo_here() -> Result<Vec<crate::chammo_here::HereAccount>, String> {
+    tauri::async_runtime::spawn_blocking(crate::chammo_here::here).await.map_err(|e| e.to_string())
 }
 
 /// 계정 지우기 — confirm 은 사람이 친 계정 이메일 그대로

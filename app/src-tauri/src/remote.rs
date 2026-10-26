@@ -216,7 +216,7 @@ pub(crate) const GETS: &[&str] = &[
 pub(crate) const POSTS: &[&str] = &["/api/peer-say"];
 /// 사람 길(ADR 0011) — 이 앱 메인 창에서 사람이 친 말·누른 카드만 그 기기로(remote_human_*). allowed() 에 없어서 참모·스크립트(appctl·scripts/peer)는 못 쓴다.
 /// 받는 폰 서버는 peer 열쇠에 이 둘도 연다
-pub(crate) const HUMAN_POSTS: &[&str] = &["/api/peer-human", "/api/peer-direct-answer"];
+pub(crate) const HUMAN_POSTS: &[&str] = &["/api/peer-human", "/api/peer-direct-answer", "/api/peer-logout-ask"];
 
 pub fn allowed(method: &str, path_q: &str) -> bool {
     // 머리 끼워 넣기(CR·LF)·공백·비ASCII 는 길째 거절 — 쿼리는 부르는 쪽이 encodeURIComponent 한다
@@ -756,6 +756,13 @@ pub async fn remote_human_say(window: tauri::WebviewWindow, id: String, to: Stri
 pub async fn remote_direct_answer(window: tauri::WebviewWindow, id: String, card: String, pick: crate::direct::Pick) -> Result<(), String> {
     main_only(&window)?;
     tauri::async_runtime::spawn_blocking(move || card_answer_now(&id, &card, &pick)).await.map_err(|e| e.to_string())?
+}
+
+/// 사람이 기기 관리 > 다른 기기 참모에서 '그 기기 계정 끊기'를 눌렀다 — 그 기기에 사람 확인 카드만 띄운다(끊기는 그쪽 사람이 누를 때). 카드 id
+#[tauri::command]
+pub async fn remote_logout_ask(window: tauri::WebviewWindow, id: String) -> Result<serde_json::Value, String> {
+    main_only(&window)?;
+    tauri::async_runtime::spawn_blocking(move || human_now(&id, "/api/peer-logout-ask", serde_json::json!({}))).await.map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]

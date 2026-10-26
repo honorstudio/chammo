@@ -163,6 +163,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const root = useRef<HTMLDivElement>(null);
   // 보내기 전 붙인 것 — 그림은 썸네일, 나머지 파일은 이름(터미널 입력칸엔 [Image #n]·경로로 들어가 있다)
   const [attached, setAttached] = useState<{ key: string; url?: string; name: string; label?: string; path?: string }[]>([]);
+  const attachedNow = useRef(attached);
+  attachedNow.current = attached;
   // 붙인 그림에 #img1 #img2 이름표 — 입력칸에도 넣어 어느 그림 얘기인지 쓸 수 있게(2026-09-30 사용자, 10-12 @ 는 참모 멘션이 가져가고 # 로)
   const imgCount = useRef(0); // 이번 메시지에 붙인 그림·파일 수 — 붙인 게 비면 0 으로
   const fileCount = useRef(0);
@@ -276,7 +278,11 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     const pane = root.current?.closest('.pane');
     if (!pane) return;
     const onPaths = (e: Event) => {
-      const paths = (e as CustomEvent<string[]>).detail ?? [];
+      // 같은 파일을 또 붙이면 새 번호를 안 매긴다 — 이미 붙은 이름표를 입력칸에 다시 쓰기만(2026-10-26 사용자 '같은 파일이면 하나')
+      const { fresh, again } = splitAttach(e as CustomEvent<string[]>, attachedNow.current);
+      again.forEach((label) => setDraft((d) => (d.includes(label) ? d : `${d}${d && !/\s$/.test(d) ? ' ' : ''}${label} `)));
+      const paths = fresh;
+      if (!paths.length) { e.preventDefault(); return; }
       const chips = paths.map((p) => {
         const it = { key: `${p}:${Date.now()}`, name: p.split(/[\\/]/).pop() ?? p, path: p };
         return { path: p, label: /\.(png|jpe?g|gif|webp|heic)$/i.test(p) ? attach({ ...it, url: docUrl(p) }, 'img') : attach(it, 'file') };
@@ -1067,4 +1073,17 @@ function CtxRing({ used }: { used: number }) {
       {tr(`남은 ${100 - u}%`, `${100 - u}% left`)}
     </span>
   );
+}
+
+/** 끌어 놓은 경로를 새로 붙일 것과 이미 붙은 것(그 이름표)으로 가른다 — 한 번에 같은 경로가 여럿 와도 하나만 */
+export function splitAttach(e: { detail?: string[] | null }, attached: { path?: string; label?: string }[]): { fresh: string[]; again: string[] } {
+  const have = new Map(attached.filter((a) => a.path && a.label).map((a) => [a.path as string, a.label as string]));
+  const fresh: string[] = [];
+  const again: string[] = [];
+  for (const p of e.detail ?? []) {
+    const old = have.get(p);
+    if (old) { if (!again.includes(old)) again.push(old); continue; }
+    if (!fresh.includes(p)) fresh.push(p);
+  }
+  return { fresh, again };
 }

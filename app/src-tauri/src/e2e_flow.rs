@@ -60,6 +60,8 @@ pub enum Status {
     NeedStart,
     /// 사슬 밖인데 안 끊긴 사슬 기기가 하나도 없다 — 허용해 줄 기기가 없으니 사람이 '이 기기로 다시 시작'을 눌러야 한다(계정 되찾기 갈래 ①)
     NeedReset,
+    /// 24시간 auto 허용 기기인데 사슬 기기가 하나도 없다 — 다시 시작은 서버가 막으니(숨은 탈취자 기기) 로그아웃 뒤 다시 로그인(10-26)
+    NeedRelogin,
 }
 
 fn post(dir: &Path, kc: &dyn Store, http: &dyn Http, path: &str, body: Value) -> Result<(u16, Value), String> {
@@ -97,17 +99,26 @@ pub fn ensure(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<Status, Str
         return Err("서버에 적힌 이 기기 받는 열쇠가 이 기기 열쇠와 달라 — 다시 로그인해 줘".into());
     }
     let trust = e2e_state::chain_of(dir, kc, http, &st, &acc, true)?;
-    // 허용해 줄 기기가 없다 — 서버 목록(끊긴 기기는 안 나온다)에 사슬 기기가 하나도 없고, 이 기기는 사람이 허용했거나 계정 첫 기기
+    // 허용해 줄 기기가 없다 — 서버 목록(끊긴 기기는 안 나온다)에 사슬 기기가 하나도 없고, 이 기기는 사람이 허용했거나 계정 첫 기기.
+    // 24시간 auto 기기는 다시 시작을 못 한다(숨은 탈취자 기기가 먼저 신원을 가져가지 않게, 10-26 공격 리뷰) — 다시 로그인을 묻는다
     let in_mine = matches!(&trust, Trust::Ok(c) | Trust::Unconfirmed(c) if c.devices.contains_key(&st.device_id));
-    let lost_all = matches!(trust, Trust::Ok(_) | Trust::Unconfirmed(_)) && !in_mine && me.approved_by != "auto" && !rows.iter().any(|d| d.in_chain);
+    let none_left = matches!(trust, Trust::Ok(_) | Trust::Unconfirmed(_)) && !in_mine && !rows.iter().any(|d| d.in_chain);
+    let lost_all = none_left && me.approved_by != "auto";
+    let relogin = none_left && me.approved_by == "auto";
     e2e_state::mutate(dir, |s| {
         s.no_chain = trust == Trust::NoChain;
         s.need_reset = lost_all;
+        s.relogin = relogin;
+        s.outside = false;
         s.ensured = true;
     })?;
     if lost_all {
         return Ok(Status::NeedReset);
     }
+    if relogin {
+        return Ok(Status::NeedRelogin);
+    }
+    let has_chain = matches!(&trust, Trust::Ok(_) | Trust::Unconfirmed(_));
     match trust {
         Trust::Ok(c) if c.devices.contains_key(&st.device_id) => return Ok(Status::InChain),
         Trust::Unconfirmed(c) if c.devices.contains_key(&st.device_id) => return Ok(Status::NeedCode),
@@ -123,6 +134,9 @@ pub fn ensure(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<Status, Str
             return Err(relay::why(code, &v));
         }
     }
+    // 허용된 사슬 밖 기기 — 사슬 기기 어디서든 '내 기기 확인' 카드가 뜨고, 이 기기는 숫자 대기 화면(10-26 어디서든 허용).
+    // 사슬 없는 계정의 auto 기기는 첫 기기가 시작할 때까지 화면 없이 기다린다
+    e2e_state::mutate(dir, |s| s.outside = has_chain)?;
     Ok(Status::Waiting)
 }
 
@@ -164,7 +178,7 @@ pub fn reset_chain(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<(), St
     let rows = my_rows(dir, kc, http)?;
     let me = rows.iter().find(|d| d.current).ok_or("내 기기 줄이 없어")?;
     if me.approved_by == "auto" {
-        return Err("24시간 자동 허용된 기기는 다시 시작할 수 없어 — 쓰던 기기에서 허용받아 줘".into());
+        return Err("24시간 자동 허용된 기기는 다시 시작할 수 없어 — 로그아웃 뒤 다시 로그인해 줘".into());
     }
     if rows.iter().any(|d| d.in_chain) {
         return Err("아직 쓰는 내 기기가 있어요 — 그 기기에서 허용받아 주세요".into());
@@ -233,13 +247,17 @@ pub fn my_number(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<Option<u
     Ok(Some(approve_sas(&acc, &st.device_id, &raw(&k.public())?, &raw(&k.e2e_public())?, &raw(&n_p)?, &raw(n_m)?, &sas.identity, &sas.head)))
 }
 
-/// 로그인 화면 단계 — checking(계정은 있는데 내 계정 핀이 없고 ensure 전 — 화면이 정해질 때까지 다시 묻는다) / start(사슬 없는 계정, '첫 기기' 단추, R8) / need(허용됐고 4자리를 넣어야, R7) / failed(4자리가 틀려 처음부터) / ""(할 것 없음). 망 안 씀
+/// 로그인 화면 단계 — relogin(봉인 없이 대기·사슬 기기 0 인 auto 기기 — 다시 로그인) / outside(허용됐지만 사슬 밖 — 숫자 대기) / checking(계정은 있는데 내 계정 핀이 없고 ensure 전 — 화면이 정해질 때까지 다시 묻는다) / start(사슬 없는 계정, '첫 기기' 단추, R8) / need(허용됐고 4자리를 넣어야, R7) / failed(4자리가 틀려 처음부터) / ""(할 것 없음). 망 안 씀
 pub fn self_step(dir: &Path) -> &'static str {
     let st = relay::load_state(dir);
     let Some(acc) = st.account.as_ref().map(|a| a.id.clone()) else { return "" };
     let s = e2e_state::load(dir);
     if s.confirm_failed {
         "failed"
+    } else if !s.pins.contains_key(&acc) && ((st.pending && s.my_np.is_empty()) || (!st.pending && s.relogin)) {
+        // 봉인(nP) 없이 대기 — 옛 판(0.4.1) 로그인은 받는 열쇠·봉인을 안 올렸고 대기 기기는 올릴 길도 없어 숫자가 영영 안 뜬다(10-26 아이맥),
+        // 또는 사슬 기기가 하나도 없는 auto 기기(다시 시작 금지) → 다시 로그인
+        "relogin"
     } else if !st.pending && s.no_chain && !s.pins.contains_key(&acc) {
         "start"
     } else if !st.pending && s.need_reset && !s.pins.contains_key(&acc) {
@@ -248,6 +266,8 @@ pub fn self_step(dir: &Path) -> &'static str {
         "checking"
     } else if !st.pending && !s.my_sas.identity.is_empty() && !s.pins.contains_key(&acc) {
         "need"
+    } else if !st.pending && s.outside && !s.pins.contains_key(&acc) {
+        "outside"
     } else {
         ""
     }

@@ -8,8 +8,10 @@ import { liveOf, type Live } from '../domain/agentBrowser';
 import { needsAnswer, needsLook, placeDirect, stepSeen, type DirectCard, type Seen } from '../domain/directAsk';
 import type { Session } from '../domain/session';
 import type { TaskEvent } from '../domain/tasks';
+import { cardToken, toWithdraw } from '../domain/notify';
 import { tr } from '../i18n';
 import { DirectCardView, DirectLine, useDirectTidy } from './chat/DirectCard';
+import { unhold } from './notifier';
 
 export type ChatExtra = { ts: string; key: string; pin?: boolean; clip?: boolean; node: ReactNode };
 
@@ -44,16 +46,27 @@ export function useDirectCards(everyone: Session[], acts: { session: Session; ac
   const tidy = useDirectTidy(cards);
   // 새로 기다리는 카드 알림 — 한 카드에 한 번. 처음 읽은 기록의 옛 카드는 안 알린다(첫 읽기 전 빈 목록으로 굳히지 않게 — 기록을 받은 뒤에 시작)
   const told = useRef<Set<string> | null>(null);
+  // 이번 실행에 알림을 낸 카드 — 닫히면 거둔다
+  const notified = useRef(new Set<string>());
   useEffect(() => {
     if (told.current === null) { if (log !== null) told.current = new Set(cards.map((c) => c.id)); return; }
     for (const c of cards) {
       if (!needsAnswer(c) || told.current.has(c.id)) continue;
       told.current.add(c.id);
       notify(c, nameOf(c), placed.find((p) => p.card.id === c.id)?.owner); // 주인 참모 — 알림을 누르면 그 참모 채팅의 이 카드로
+      notified.current.add(c.id);
       // 창이 가려지면 웹뷰가 그리기를 멈춰 'shown' 이 안 남는다 — 앱이 카드를 받고 알림까지 냈다는 줄은 남겨 direct ask 가 거짓 경고를 안 주게(soak 008)
       void invoke('direct_shown', { id: c.id, place: 'notified' }).catch(() => {});
     }
   }, [cards]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 알린 카드가 답·닫힘(다른 기기에서 처리)·사라지면 알림 센터·붙들어 둔 알림에서 거둔다(10-26 "인증했으면 다른 기기 알림만 없어지면 된다")
+  useEffect(() => {
+    for (const id of toWithdraw(notified.current, cards, needsAnswer)) {
+      notified.current.delete(id);
+      unhold(cardToken(id));
+      void invoke('notify_withdraw', { token: cardToken(id) }).catch(() => {});
+    }
+  }, [cards]);
 
   const nameOf = (c: DirectCard) => (c.kind === 'link' ? tr('참모 앱', 'Chammo') : everyone.find((x) => x.id === c.from)?.name || c.from);
   const card = (c: DirectCard, place: string, compact: boolean, onOpen: () => void) => {

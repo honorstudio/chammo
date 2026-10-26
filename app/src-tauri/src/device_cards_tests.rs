@@ -11,29 +11,29 @@ fn dev(id: &str, status: &str, current: bool) -> DeviceName {
 #[test]
 fn 대기_기기마다_카드_하나_이미_있으면_또_안_띄운다() {
     let devs = [dev(P1, "pending", false), dev(P2, "approved", false)];
-    let p = plan("", &devs, false);
+    let p = plan("", &devs, false, false);
     assert_eq!(p.open.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), vec![P1]);
     assert!(p.close.is_empty());
     let log = device_row("ab12cd34", &devs[0], "2027-01-15T08:00:00Z").to_string();
-    let p = plan(&log, &devs, false);
+    let p = plan(&log, &devs, false, false);
     assert!(p.open.is_empty(), "이미 열린 카드");
 }
 
 #[test]
 fn 다른_곳에서_처리되면_카드를_닫는다() {
     let log = device_row("ab12cd34", &dev(P1, "pending", false), "2027-01-15T08:00:00Z").to_string();
-    let p = plan(&log, &[dev(P1, "approved", false)], false);
+    let p = plan(&log, &[dev(P1, "approved", false)], false, false);
     assert_eq!(p.close, vec!["ab12cd34".to_string()], "허용됨");
-    let p = plan(&log, &[], false);
+    let p = plan(&log, &[], false, false);
     assert_eq!(p.close, vec!["ab12cd34".to_string()], "거절돼 목록에서 사라짐");
     let answered = format!("{log}\n{}", r#"{"type":"answer","id":"ab12cd34","pick":"yes"}"#);
-    assert!(plan(&answered, &[], false).close.is_empty(), "이미 답한 카드는 그대로 둔다");
+    assert!(plan(&answered, &[], false, false).close.is_empty(), "이미 답한 카드는 그대로 둔다");
 }
 
 #[test]
 fn 이_기기_자신이나_대기_중인_이_기기는_카드를_안_띄운다() {
-    assert!(plan("", &[dev(P1, "pending", true)], false).open.is_empty(), "나 자신");
-    let p = plan("", &[dev(P1, "pending", false)], true);
+    assert!(plan("", &[dev(P1, "pending", true)], false, false).open.is_empty(), "나 자신");
+    let p = plan("", &[dev(P1, "pending", false)], true, false);
     assert!(p.open.is_empty(), "나도 대기 중이면 남을 허용 못 한다");
 }
 
@@ -138,4 +138,36 @@ fn 허용_대기·4자리_단계엔_몇_초마다_확인한다() {
     assert_eq!(poll_every(false, false, false), Duration::from_secs(60), "평소");
     assert_eq!(poll_every(false, false, true), Duration::from_secs(300), "소켓이 붙어 있으면 알림이 바로 와서 5분");
     assert_eq!(poll_every(true, true, true), Duration::from_secs(5), "허용 대기·확인 중은 소켓이 있어도 5초");
+}
+
+fn outsider(id: &str) -> DeviceName {
+    DeviceName { id: id.into(), name: "윈도우".into(), kind: "win".into(), status: "approved".into(), approved_by: "auto".into(), e2e_pub: "E".into(), approve_commit: "C".into(), in_chain: false, ..Default::default() }
+}
+
+#[test]
+fn 사슬_밖_허용_컴퓨터도_사슬_기기에_내_기기_확인_카드가_뜬다() {
+    // 10-26 '어디서든 허용' — 카드가 대기 기기에만 떠서 auto 허용·사슬 밖 기기는 사슬에 들 길이 없었다
+    let devs = [outsider(P1)];
+    assert_eq!(plan("", &devs, false, true).open.len(), 1, "사슬에 든 이 기기에");
+    assert!(plan("", &devs, false, false).open.is_empty(), "사슬 밖인 이 기기는 확인을 못 해 안 띄운다");
+    let mut no_commit = outsider(P1);
+    no_commit.approve_commit.clear();
+    assert!(plan("", &[no_commit], false, true).open.is_empty(), "봉인을 안 올린 기기(옛 앱)는 숫자를 못 띄운다");
+    let mut keyless = outsider(P1);
+    keyless.e2e_pub.clear();
+    assert!(plan("", &[keyless], false, true).open.is_empty(), "받는 열쇠 없는 폰은 사슬 기기가 아니다");
+    let mut inside = outsider(P1);
+    inside.in_chain = true;
+    let log = device_row("ab12cd34", &devs[0], "2027-01-15T08:00:00Z").to_string();
+    assert_eq!(plan(&log, &[inside], false, true).close, vec!["ab12cd34".to_string()], "사슬에 들면 닫는다");
+    assert!(plan(&log, &devs, false, true).close.is_empty());
+}
+
+#[test]
+fn 내_기기_확인_카드는_새_기기_문구가_아니고_기한이_없다() {
+    let r = device_row("ab12cd34", &outsider(P1), "2027-01-15T08:00:00Z");
+    assert!(r["q"].as_str().unwrap().contains("확인"), "{}", r["q"]);
+    assert!(!r["q"].as_str().unwrap().contains("로그인했어요"));
+    assert!(r.get("until").is_none() || r["until"] == "", "24시간 자동 허용 기한이 없다: {}", r["until"]);
+    assert_eq!(r["no"], "빼기");
 }

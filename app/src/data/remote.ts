@@ -80,3 +80,5 @@ export const remoteSaved = () => invoke<{ id: string; name: string }[]>('remote_
 export const remoteCardAnswer = (dev: string) => (card: string, pick: unknown) => invoke<void>('remote_direct_answer', { id: dev, card, pick });
 /** 기다리던 연결 거두기 */
 export const remoteConnectCancel = (id: string) => invoke<void>('remote_connect_cancel', { id });
+/** 그 기기 Chammo 계정 로그아웃 요청 — 그 기기에 사람 확인 카드만 띄운다(끊기는 그쪽 사람이 '로그아웃'을 누를 때). 사람 클릭에서만 */
+export const remoteLogoutAsk = (id: string) => invoke<{ ok: boolean; card: string }>('remote_logout_ask', { id });

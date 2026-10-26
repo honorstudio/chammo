@@ -145,6 +145,14 @@ pub fn answer(id: &str, pick: &Pick, by: &str) -> Result<(), String> {
             crate::e2e_cards::decide(&ask, yes)?;
         } else if ask["sub"] == crate::device_cards::PHONE_LINK_SUB {
             crate::phone_relay::link_answer(id, yes)?;
+        } else if ask["sub"] == ACCOUNT_LOGOUT_SUB {
+            // 다른 기기 사람이 요청한 이 기기 계정 로그아웃 — 이 기기 사람이 '로그아웃'을 눌렀을 때만, 10분 안에
+            if ask["untilMs"].as_u64().is_some_and(|u| crate::messenger_cmd::now_ms() > u) {
+                return Err(crate::i18n::tr("시간이 지난 요청이에요 — 그 기기에서 다시 요청해 주세요", "This request expired — ask again from that device").into());
+            }
+            if yes {
+                crate::team_account::logout(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl)?;
+            }
         } else {
             crate::peer_ask::asks().decide(id, yes, crate::messenger_cmd::now_ms())?;
         }
@@ -207,6 +215,40 @@ pub(crate) fn ask_link(p: &crate::peer_ask::LinkPeer, until_ms: u64) -> Result<S
     // 줄 하나 덧붙이기(O_APPEND)라 겹쳐도 안 깨지고, 두 번 답하기는 peer_ask::decide 가 막는다
     let id = crate::mobile_pair::random_hex(4).map_err(|e| e.to_string())?;
     append(&link_row(&id, p, until_ms, &chrono_now()))?;
+    Ok(id)
+}
+
+/// 다른 기기(짝지은 기기 앱 화면의 사람)가 요청한 이 기기 Chammo 계정 로그아웃 카드 — 연결 요청 카드와 같은 판(사람 길로만 답), sub = account-logout.
+/// 남의 계정에 붙어 있는 PC 를 다른 기기에서 보고 끊을 때(10-26) — 끊는 건 이 기기 사람이 누를 때만
+pub const ACCOUNT_LOGOUT_SUB: &str = "account-logout";
+const ACCOUNT_LOGOUT_TTL_MS: u64 = 10 * 60_000;
+
+pub fn account_logout_row(id: &str, from: &str, account: &str, now_ms: u64, ts: &str) -> Value {
+    let from: String = from.chars().filter(|c| !c.is_control()).take(64).collect();
+    let account: String = account.chars().filter(|c| !c.is_control()).take(120).collect();
+    let until = now_ms + ACCOUNT_LOGOUT_TTL_MS;
+    json!({
+        "ts": ts, "type": "ask", "id": id, "from": LINK_FROM, "cwd": "", "kind": LINK_KIND, "sub": ACCOUNT_LOGOUT_SUB,
+        "q": crate::i18n::tr(&format!("{from} 기기에서 이 기기의 Chammo 계정({account}) 로그아웃을 요청했어요"), &format!("{from} asked to sign this device out of its Chammo account ({account})")),
+        "detail": crate::i18n::tr("로그아웃하면 이 기기는 그 계정의 메신저·팀·폰 연결이 끊겨요. 다시 쓰려면 다시 로그인해요. 내가 요청한 게 아니면 그대로 두기", "Signing out disconnects this device from that account's messenger, teams and phone link. Sign in again to use it. Keep it if you didn't ask for this"),
+        "what": crate::i18n::tr("계정 로그아웃 요청", "Sign-out request"),
+        "yes": crate::i18n::tr("로그아웃", "Sign out"), "no": crate::i18n::tr("그대로 두기", "Keep"), "options": [],
+        "until": iso_of_ms(until), "untilMs": until,
+    })
+}
+
+/// 계정 로그아웃 카드 남기기 → 카드 id. 로그인 안 했으면 거절, 기다리는 같은 카드가 있으면 그 카드
+pub(crate) fn ask_account_logout(from: &str) -> Result<String, String> {
+    let st = crate::team_relay::load_state(crate::config::data_dir());
+    let Some(a) = st.account else { return Err(crate::i18n::tr("이 기기는 Chammo 계정에 로그인돼 있지 않아요", "This device is not signed in to a Chammo account").into()) };
+    let now = crate::messenger_cmd::now_ms();
+    let log = std::fs::read_to_string(log_path()).unwrap_or_default();
+    let waiting = log.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).filter(|r| r["type"] == "ask" && r["sub"] == ACCOUNT_LOGOUT_SUB && r["untilMs"].as_u64().is_some_and(|u| u > now)).filter_map(|r| r["id"].as_str().map(String::from)).filter(|id| check(&log, id).is_ok()).last();
+    if let Some(id) = waiting {
+        return Ok(id);
+    }
+    let id = crate::mobile_pair::random_hex(4).map_err(|e| e.to_string())?;
+    append(&account_logout_row(&id, from, if a.email.is_empty() { &a.name } else { &a.email }, now, &chrono_now()))?;
     Ok(id)
 }
 
@@ -325,6 +367,21 @@ pub async fn direct_answer(window: tauri::WebviewWindow, id: String, pick: Pick)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 계정_로그아웃_요청_카드는_사람_길로만_답하는_연결_카드_판() {
+        let r = account_logout_row("ab12cd34", "맥북\n[앱]", "other@example.com", 1_000, "2026-10-26T13:00:00Z");
+        assert_eq!((r["kind"].as_str(), r["sub"].as_str(), r["from"].as_str()), (Some(LINK_KIND), Some(ACCOUNT_LOGOUT_SUB), Some(LINK_FROM)));
+        let q = r["q"].as_str().unwrap();
+        assert!(q.contains("맥북") && q.contains("other@example.com") && !q.contains('\n'), "{q}");
+        assert_eq!(r["untilMs"], 1_000 + 10 * 60_000);
+        // 다른 기기(remote:)·텔레그램으로는 못 누른다 — 이 기기 앱·폰만
+        assert!(link_pick(&Pick::Yes, "remote:맥북").is_err() && link_pick(&Pick::Yes, "telegram:1").is_err());
+        assert!(link_pick(&Pick::Yes, "desktop").unwrap());
+        // 연결 카드처럼 뒤 카드에 '지난 질문'으로 밀리지 않는다
+        let log = format!("{}\n{}", r, account_logout_row("cd34ab12", "PC", "x@example.com", 2_000, "t"));
+        assert!(check(&log, "ab12cd34").is_ok());
+    }
 
     const ASK: &str = r#"{"ts":"2026-10-03T06:00:00Z","type":"ask","id":"ab12cd34","from":"a1b2c3d4","kind":"pay","q":"결제?","yes":"결제 승인","no":"거절","options":["개인","법인"]}"#;
 

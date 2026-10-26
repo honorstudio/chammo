@@ -1135,6 +1135,8 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
             "deviceName": device_name(),
             // 테일넷 https 주소 — 중계 길 폰이 닿으면 먼저 쓰는 빠른 길(ADR 0013). 안 걸렸으면 null
             "directUrl": direct_url(),
+            // 이 컴퓨터의 Chammo 데이터 폴더별 로그인 계정 — 다른 기기 참모 목록이 '이 PC 는 어느 계정'을 보여 준다(폴더·이메일·이름만)
+            "chammoAccounts": crate::chammo_here::here(),
         })
     }
     fn sessions(&self) -> Result<String, String> {
@@ -1337,6 +1339,9 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     }
     fn direct_answer_by(&self, id: &str, pick: &crate::direct::Pick, by: &str) -> Result<(), String> {
         crate::direct::answer(id, pick, by)
+    }
+    fn logout_card(&self, from: &str) -> Result<String, String> {
+        crate::direct::ask_account_logout(from)
     }
     fn peer_cards(&self) -> serde_json::Value {
         crate::remote::cards_now()

@@ -74,7 +74,7 @@ fn 기기는_id_이름_대소문자_앞부분으로_찾고_애매하면_후보()
 fn 목록은_연결된_기기의_참모_이름까지() {
     let ops = Ops {
         answers: vec![
-            ("GET /api/env", 200, r#"{"hqDir":"/Users/x/hq","assistantName":"참모"}"#),
+            ("GET /api/env", 200, r#"{"hqDir":"/Users/x/hq","assistantName":"참모","chammoAccounts":[{"folder":".chammo","current":true,"email":"me@example.com","name":"나"},{"folder":".chammo-qa","current":false,"email":"other@example.com","name":"남<b>"}]}"#),
             ("GET /api/sessions", 200, r#"[{"id":"aaaa0001","cwd":"/Users/x/hq","name":"참모-1 · 개발"},{"id":"bbbb0002","cwd":"/Users/x/dev/shop","name":"shop"}]"#),
         ],
         ..Default::default()
@@ -85,6 +85,11 @@ fn 목록은_연결된_기기의_참모_이름까지() {
     let a = &v["devices"][0];
     assert_eq!((a["name"].as_str(), a["status"].as_str()), (Some("office-imac"), Some("connected")));
     assert_eq!(a["assistants"], serde_json::json!([{ "id": "aaaa0001", "name": "참모-1 · 개발" }]));
+    // 그 기기 Chammo 가 어느 계정으로 로그인했나(시험판 데이터 폴더도 따로) — 남의 글이라 짧게·꺾쇠 빼고
+    assert_eq!(a["accounts"], serde_json::json!([
+        { "folder": ".chammo", "current": true, "email": "me@example.com", "name": "나" },
+        { "folder": ".chammo-qa", "current": false, "email": "other@example.com", "name": "남b" }]));
+    assert_eq!(ops.calls.borrow().iter().filter(|c| c.contains("/api/env")).count(), 1, "env 는 한 번만");
     // 짝 안 지은 기기·꺼진 기기엔 묻지 않는다
     assert!(ops.calls.borrow().iter().all(|c| c.starts_with("nA ")), "{:?}", ops.calls.borrow());
 }
