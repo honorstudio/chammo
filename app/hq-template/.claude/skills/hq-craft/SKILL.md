@@ -15,7 +15,7 @@ Craft 앱 13개(ArtCraft 오픈소스 — 맥 앱은 Chammo 용으로 빌드한 
 
 **윈도우에서는**: 설치는 DMG·공증 대신 portable zip(체크섬·안의 앱 id·판 확인)을 %LOCALAPPDATA%\Programs\Chammo\<앱> 에 풀고, 앱은 화면 밖에서 뜬다(칸엔 찍은 그림, 1초 안팎으로 갱신). `cli`(창 없는 엔진)는 아직 없어 명령 찾기는 `do <앱> engine.commands`(PdfCraft 는 `ui.commands`)로. 한글 글꼴은 '맑은 고딕'. Python 3 가 있어야 돈다.
 
-1. **띄우기**: `scripts/craft open <앱> --native [--work <폴더>]` — 맥 앱을 따로 설정 폴더·무작위 포트로 띄운다. 가짜 화면이 있으면 그 화면에(사용자 화면을 안 가림 — PhotoCraft 말고는 뜬 뒤 옮겨서 몇 초 보일 수 있다). `--here` 면 사용자 화면에(사용자가 직접 만지고 싶을 때). 출력의 **작업 폴더**에 파일을 넣고 꺼낸다(PhotoCraft·VectorCraft 는 그 폴더 밖 파일을 거절. `do`/`run` 의 경로는 작업 폴더 기준 상대 경로로 써도 된다 — scripts/craft 가 작업 폴더 절대 경로로 바꿔 넘긴다). 안 깔려 있으면 처음 한 번 참모 앱 공개 릴리스(Chammo 저장소의 crafts-<날짜>)에서 DMG 를 받아 체크섬·번들 id·애플 공증을 맞춰 보고 /Applications 에 깐다(22~132MB, 하나라도 안 맞으면 안 깔고 멈춤 · 릴리스를 못 받으면 서랍에 '받을 수 없음') — 13개를 미리 다 깔지 않는다
+1. **띄우기**: `scripts/craft open <앱> --native [--work <폴더>]` — 맥 앱을 따로 설정 폴더·무작위 포트로 띄운다. 가짜 화면이 있으면 그 화면에(사용자 화면을 안 가림 — PhotoCraft 말고는 뜬 뒤 옮겨서 몇 초 보일 수 있다). `--here` 면 사용자 화면에(사용자가 직접 만지고 싶을 때). 출력의 **작업 폴더**에 파일을 넣고 꺼낸다(PhotoCraft·VectorCraft 는 그 폴더 밖 파일을 거절. `do`/`run` 의 경로는 작업 폴더 기준 상대 경로로 써도 된다 — scripts/craft 가 작업 폴더 절대 경로로 바꿔 넘긴다). 안 깔려 있으면 처음 한 번 참모 앱 공개 릴리스(Chammo 저장소의 crafts-<날짜>)에서 DMG 를 받아 체크섬·번들 id·애플 공증을 맞춰 보고 /Applications 에 깐다(22~132MB, 하나라도 안 맞으면 안 깔고 멈춤 · 릴리스를 못 받으면 서랍에 '받을 수 없음'). **기본 다섯(표·PDF·슬라이드·문서·벡터)은 앱이 첫 설정 뒤 미리 깐다**(`scripts/craft prefetch`, 설정 > 기능 '기본 참모 앱 미리 받기' · 5GB 아래면 건너뜀 · 사람이 지운 기본 앱은 다시 안 받음(다시 열거나 스위치를 껐다 켜면 받음) · `prefetch --status`) — 나머지 8개는 쓸 때
 2. **명령 찾기**: `scripts/craft do <앱> engine.commands`(대부분 — id·params). 앱마다 다르다: PdfCraft 는 `do pdfcraft ui.commands`(메뉴 명령), SoundCraft 의 params 는 `scripts/craft cli soundcraft describe <id>`, GridCraft 는 `cli gridcraft commands --json`
 3. **하기**: `scripts/craft run <앱> <명령 id> '<json params>'` · 채널 명령은 `scripts/craft do <앱> <method> '<json>'`(`app.open`·`app.save`·`ui.inspect`·`ui.menu.invoke`)
 4. **확인**: `scripts/craft shot <앱> --out <png>` 로 창을 찍어 직접 보고, 결과 파일은 `scripts/show` 로 사용자에게
@@ -48,6 +48,9 @@ scripts/show <작업 폴더>/a-edit.png
 | SoundCraft | 오디오 | 없음 | 트랙·믹스 |
 | FigCraft | 화면 설계 | 없음 | `file.export`·`page.select` |
 
+**어떤 파일은 어느 앱** — 사람이 앱에서 누를 때와 같은 표(앱 `domain/craftOpen`). 굵은 것은 스페이스가 그림 한 장밖에 못 보여 줘서 누르면 그 앱이 바로 열린다(`scripts/show` 도 그 앱으로 열라고 한 줄 알린다), 나머지는 미리보기가 기본이고 머리의 '참모 ○○로 열기'로 연다:
+참모 벡터 **.ai .eps .svgz .emf .wmf .afdesign** .svg · 참모 포토 **.psd .psb .kra .xcf** .png .jpg .webp .tif · 참모 캐드 **.dwg .dxf** · 참모 표 **.xlsb** .xlsx .xlsm .ods .csv · 참모 문서 .docx · 참모 슬라이드 .pptx · 참모 PDF .pdf · 참모 화면 **.fig** · 참모 디자인 **.designcraft** · 참모 필름 **.fcproj** .mp4 .mov · 참모 이펙트 **.ecproj** · 참모 사운드 **.scproj** .wav .mp3.
+안 깔린 앱(기본 다섯 말고 — 포토·필름·캐드 등)이 필요하면 묻지 말고 "참모 포토 설치하고 할게(306MB)"처럼 크기(`list --json` 의 dmgSize)와 한 줄 말한 뒤 `open <앱> --native <파일>` — 설치·확인은 그 명령이 한다(사람이 누른 길은 앱이 설치 확인 창을 한 번 띄운다).
 - **엑셀 = 참모 표**: 표를 손보는 일(합계·계산식·정렬·중복 지우기·서식·차트·새 엑셀)은 칸이 적어도 `open gridcraft --native <파일>` + `run` — `sheet set` 여러 번·파이썬으로 대신하지 않는다(보기·몇 칸만 `scripts/show`·`scripts/sheet`). 정렬 `data.sort {"range":"A1:E15","header":true,"keys":[{"column":"A","order":"asc"}]}`, 합계 `cell.set {"cell":"E16","input":"=SUM(E2:E15)"}`, 차트 `insert.chart {"range":"G1:H4","type":"column","title":"…","at":"J2"}`. 색은 `home.fillColor`·`home.fontColor` 의 `"#RRGGBB"`(`home.formatCells` 의 style 색은 형식이 달라 실패). 새 엑셀은 파일 없이 `open gridcraft --native` → `range.setValues` → `do gridcraft app.save '{"path":"<절대 경로>.xlsx"}'`. 끝나면 `close`(사람 파일은 그 자리에 저장) 뒤 `scripts/show <파일>`
 - **시작 화면의 '열기' 단추는 누르지 않는다** — 맥 파일 창이 앱을 막아 조작 채널이 멎는다(원본 동작). 파일은 `open <앱> --native <파일>` 로(앱마다 여는 명령이 달라 거기서 맞춰 부른다 — 문서·화면·필름엔 `app.open` 이 없다. 그 앱 형식이 아닌 파일·가져온 영상·소리는 닫을 때 원본 대신 새 파일로 저장). 참모 화면(FigCraft)은 `ui.click` 이 없고 `ui.mouse`
 - **한글이 □ 로 나오면**: DesignCraft·FigCraft 는 기본 글꼴에 한글이 없다 — 글꼴을 `Apple SD Gothic Neo` 로(Design: `edit.selectAll` 뒤 `type.char {"fontFamily":…}`, Fig: `node.set {"fontFamily":…}`). GridCraft 는 PDF 내보내기만 □(xlsx·화면은 정상)
@@ -57,7 +60,7 @@ scripts/show <작업 폴더>/a-edit.png
 - **사람이 개입하면**(칸의 개입 단추) 쓰기 명령(`run`·`do`)은 바로 실패한다(종료 코드 4, "사람이 개입함 — 스크립트 멈춤") — 스크립트는 거기서 멈춘다. 보기(`shot`·`ui.inspect`)는 된다. 돌려받으면 `[앱] … 돌려받음 — 사람이 바꾼 것 · 지금 문서 …(레이어 수·화면 png)` 한 줄이 온다 — **남은 스크립트를 스스로 다시 돌리지 말고** 그 상태를 보고 사람에게 다음을 묻는다. 이어서 하라면 남은 단계를 사람이 바꾼 걸 반영해 다시 짠다
 - 창을 숨기지 않는다(숨기면 그림이 멈추고 찍기가 옛 그림). 앱 창을 사용자 화면으로 옮기지 않는다 — 사용자가 직접 만지길 원하면 `close` 후 `--here` 로 다시
 - **닫기 = 묻지 않고 저장 후 닫기**: `close`(창의 닫기 단추도) 는 바뀐 게 있으면 저장한다 — 사람 파일로 열었으면 그 자리에 같은 형식 + 옆에 레이어 살린 PSD, 새 문서면 네 보관함 `Craft` 폴더에 PSD. 사용자가 "아까 그 사진 다시"면 `scripts/craft recent` 에서 찾아 `open photocraft --native <파일>`
-- **공간**: 필요한 것만 깔아 쓴다. `scripts/craft list` 에 앱마다 크기·마지막으로 쓴 날이 나온다 — 30일 넘게 안 쓴 게 있으면 다른 일 보고 끝에 "○○ 30일 안 썼는데 지울까?(n MB)" 한 줄만. **사용자가 좋다고 한 것만** `scripts/craft remove <앱>`(받은 것·우리가 깐 맥 앱·설정·작업 폴더 → 휴지통, 사용자가 직접 깐 앱은 안 지움). 혼자 지우지 않는다
+- **공간**: 필요한 것만 깔아 쓴다. `scripts/craft list` 에 앱마다 크기·마지막으로 쓴 날이 나온다 — 30일 넘게 안 쓴 게 있으면(기본 다섯 — 목록의 `[basic / 기본]` — 은 빼고) 다른 일 보고 끝에 "○○ 30일 안 썼는데 지울까?(n MB)" 한 줄만. **사용자가 좋다고 한 것만** `scripts/craft remove <앱>`(받은 것·우리가 깐 맥 앱·설정·작업 폴더 → 휴지통, 사용자가 직접 깐 앱은 안 지움). 혼자 지우지 않는다
 - 맥 앱이 없거나 사용자가 웹에서 보길 원하면 `scripts/craft open <앱>`(웹판, 스페이스) — 웹판은 자동 저장이 없고 한글 글꼴이 없다
 
 # English
@@ -76,7 +79,7 @@ and can take over any time. A project session opening it gets its pane in the ta
    screen (when they want to touch it). `open <app> --native <file>` copies a person's file in and, on close, saves it back there
    (same format + a layered .psd beside it). Otherwise put files into and take them from the printed **work folder** (PhotoCraft and VectorCraft refuse
    files outside it; paths in `do`/`run` may be relative to the work folder — scripts/craft turns them into absolute paths). Not installed → the first time it downloads the DMG from the Chammo apps release (the Chammo repo, crafts-<date>), checks the checksum, bundle id
-   and Apple notarization and installs it to /Applications (22–132 MB; any mismatch: nothing installed; release unreachable: 'unavailable' in the drawer). Don't install all 13 up front
+   and Apple notarization and installs it to /Applications (22–132 MB; any mismatch: nothing installed; release unreachable: 'unavailable' in the drawer). **The basic five (Grid, PDF, Deck, Word, Vector) are installed ahead by the app after setup** (`scripts/craft prefetch`, Settings > Features 'Install the basic Chammo apps ahead'; skipped under 5 GB free; one the person removed isn't fetched again until they open it or turn the switch off and on; `prefetch --status`) — the other 8 when needed
 2. **Find commands**: `scripts/craft do <app> engine.commands` (most apps — ids and params). It differs per app: PdfCraft uses
    `do pdfcraft ui.commands` (menu commands), SoundCraft params come from `scripts/craft cli soundcraft describe <id>`, GridCraft from
    `cli gridcraft commands --json`. Never click the start screen's Open button — the macOS file dialog blocks the app and the control channel stalls (original behaviour); open files with `open <app> --native <file>` (it picks each app's open command — Word, Fig and Film have no `app.open`; a file not in the app's own format, or imported video/audio, is saved as a new file on close instead of over the original). FigCraft has no `ui.click` — use `ui.mouse`. Korean shows as boxes in DesignCraft/FigCraft (default fonts) — set the font to `Apple SD Gothic Neo`
@@ -90,9 +93,13 @@ The windowless engine (`scripts/craft cli …`) is **only for work nobody needs 
 format conversion (`convert`), reading info (`info`). Don't build a result (a PSD, a laid-out document) with cli `serve`/`run` — nothing is visible
 until it ends (scripts/craft says so on stderr).
 
-Disk space: install only what's used. `scripts/craft list` shows each app's size and last use — if one hasn't been used for 30+ days, add one line
+Disk space: install only what's used. `scripts/craft list` shows each app's size and last use — if one hasn't been used for 30+ days (except the basic five — `[basic / 기본]` in the list), add one line
 at the end of another report ("X unused for 30 days — remove it? (n MB)"). Only after the user agrees: `scripts/craft remove <app>` (downloads,
 the macOS app if Chammo installed it, settings and work folder → Trash; apps the user installed stay). Never remove on your own.
+
+**Which file goes to which app** — the same table the app uses when the person clicks a file (`domain/craftOpen`). Bold ones the space can only show as one picture, so clicking opens the app right away (`scripts/show` says so in one line); the rest preview by default with 'Open in Chammo X' in the header:
+Chammo Vector **.ai .eps .svgz .emf .wmf .afdesign** .svg · Chammo Photo **.psd .psb .kra .xcf** .png .jpg .webp .tif · Chammo CAD **.dwg .dxf** · Chammo Grid **.xlsb** .xlsx .xlsm .ods .csv · Chammo Word .docx · Chammo Deck .pptx · Chammo PDF .pdf · Chammo Fig **.fig** · Chammo Design **.designcraft** · Chammo Film **.fcproj** .mp4 .mov · Chammo Effect **.ecproj** · Chammo Sound **.scproj** .wav .mp3.
+If it needs an app that isn't installed (not one of the basic five — Photo, Film, CAD …), don't ask — say "installing Chammo Photo for this (306 MB)" in one line with its size (`list --json` dmgSize), then `open <app> --native <file>`; that command installs and checks it (when the person clicks, the app asks once before installing).
 
 **Excel = Chammo Grid**: reworking a table (totals, formulas, sorting, removing duplicates, formatting, charts, a new workbook) is `open gridcraft --native <file>` + `run`
 even for a few cells — not many `sheet set` calls or Python (only looking and a few cells use `scripts/show`/`scripts/sheet`). Sort `data.sort {"range":"A1:E15","header":true,"keys":[{"column":"A","order":"asc"}]}`,

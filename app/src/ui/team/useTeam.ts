@@ -1,8 +1,10 @@
 // 메신저 읽기 — 팀 상태 + 받은 말(team_feed). Rust 가 새 말마다 window.__teamMsg 를 부르면 다시 읽고, 놓친 것은 15초 주기로.
-// 읽음(방마다 본 seq)은 localStorage — 메인 창과 메신저 따로 창이 같은 출처라 같이 본다(storage 사건으로 서로 맞춘다)
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { teamFeed, type TeamFeed } from '../../data/teamApi';
+// 읽음(방마다 본 seq)은 localStorage — 메인 창과 메신저 따로 창이 같은 출처라 같이 본다(storage 사건으로 서로 맞춘다).
+// 같은 계정 다른 기기(아이맥·폰)에서 읽은 것은 feed.reads 의 내 멤버 자리로 합친다 — 보고 있을 때만 중계에 올린다(chammo-relay ADR 0012)
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { teamFeed, teamMarkRead, type TeamFeed } from '../../data/teamApi';
 import { markRead, type TeamItem } from '../../domain/teamChat';
+import { looking, mergedRead, pushRead } from '../../domain/teamReads';
 import { every } from '../poll';
 
 type Poke = { room: string; seq: number; note: string };
@@ -39,7 +41,7 @@ export type TeamData = {
 export function useTeam(): TeamData {
   const [feed, setFeed] = useState<TeamFeed | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [read, setRead] = useState<Record<string, number>>(() => load(READ_KEY, {}));
+  const [local, setRead] = useState<Record<string, number>>(() => load(READ_KEY, {}));
   const [handed, setHanded] = useState<Record<string, string>>(() => load(HANDED_KEY, {}));
   const alive = useRef(true);
   const refresh = useCallback(() => {
@@ -58,6 +60,7 @@ export function useTeam(): TeamData {
     window.addEventListener('storage', sync);
     return () => { alive.current = false; stop(); msgSubs.delete(poke); window.removeEventListener('storage', sync); };
   }, [refresh]);
+  const read = useMemo(() => mergedRead(local, feed?.reads, feed?.view?.rooms ?? []), [local, feed]);
   const markRoom = useCallback((room: string) => {
     if (!room || !feed) return;
     setRead((r) => {
@@ -65,6 +68,10 @@ export function useTeam(): TeamData {
       if (n !== r) keep(READ_KEY, n);
       return n;
     });
+    // 중계엔 사람이 이 창을 보고 있을 때만(알림만 뜬 건 읽음 아님) — 같은 계정 다른 기기·상대 화면의 숫자가 바뀐다
+    const me = feed.view?.rooms?.find((r) => r.id === room)?.me ?? '';
+    const seq = me ? pushRead(room, feed.items, feed.reads?.[room] ?? {}, me, looking(document)) : null;
+    if (seq) void teamMarkRead(room, seq).catch(() => {});
   }, [feed]);
   const markHanded = useCallback((it: TeamItem, to: string) => {
     setHanded((h) => { const n = { ...h, [`${it.room}:${it.seq}`]: to }; keep(HANDED_KEY, n); return n; });

@@ -57,7 +57,7 @@ describe('메신저 따로 창 = 팀 모드 전체 창(참모만 없이)', () =>
 
 describe('따로 창 파일 끌어 놓기', () => {
   it('main.rs 가 메신저 따로 창(team-*)의 끌어 놓기도 넘긴다 — 메인 창만 넘겨서 따로 창엔 안 붙었다', () => {
-    expect(mainRs).toContain('tauri::WindowEvent::DragDrop(e) if window.label() == "main" || team_window::is_team_window(window.label()) => drop::forward(window, e)');
+    expect(mainRs).toContain('tauri::WindowEvent::DragDrop(e) if window.label() == "main" || window.label() == orch_bubble::LABEL || team_window::is_team_window(window.label()) => drop::forward(window, e)'); // 바탕 배지 대화창도(fix/bubble-pop)
   });
   it('팀 보관함 칸 끌어 놓기도 teamDrop 한 길 — 메인 창(fileDrop)·따로 창(messenger.tsx)이 같이', () => {
     expect(teamDrop).toContain("closest<HTMLElement>('[data-team-locker]')");

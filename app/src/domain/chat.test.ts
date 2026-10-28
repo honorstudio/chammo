@@ -108,10 +108,15 @@ describe('parseChat — 대화 기록을 말풍선 항목으로', () => {
       line({ type: 'attachment', uuid: 'q9', timestamp: 't-q9', attachment: { type: 'queued_command', prompt: '<cross-session-message from="x" from-name="crm">PR 올렸어</cross-session-message>', origin: { kind: 'agent' } } }),
     ].join('\n');
     expect(parseChat(t)).toEqual([
-      { kind: 'relay', id: 'o1', ts: 't-o1', from: 'demo-lab', text: '일 끝났어' },
+      { kind: 'relay', id: 'o1', ts: 't-o1', from: 'demo-lab', text: '일 끝났어', session: true },
       { kind: 'relay', id: 'a1', ts: 't-a1', from: '앱', text: 'ShopProject / webhook-svc / shop 세션(a1b2c3d4)이 2분째 답을 기다려 — 마지막 말: "…"' },
-      { kind: 'relay', id: 'q9', ts: 't-q9', from: 'crm', text: 'PR 올렸어' },
+      { kind: 'relay', id: 'q9', ts: 't-q9', from: 'crm', text: 'PR 올렸어', session: true },
     ]);
+  });
+
+  it('다른 참모가 보낸 말 — 본문 첫머리 서명(참모-8:)은 떼고, 머리 이름은 화면에서 별명으로(session 표시, 2026-10-28)', () => {
+    const t = user('p1', 'Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/s.sock" from-name="참모-8 · 디자인 담당" from-mode="bypass">\n참모-8: 운영 캡처 왔어\n</cross-session-message>');
+    expect(parseChat(t)).toEqual([{ kind: 'relay', id: 'p1', ts: 't-p1', from: '참모-8 · 디자인 담당', text: '운영 캡처 왔어', session: true }]);
   });
 
   it('일하는 중에 끼어든 사람 메시지(queued_command 첨부)도 사람 지시로', () => {

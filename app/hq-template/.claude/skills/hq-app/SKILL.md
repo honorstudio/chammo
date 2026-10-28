@@ -18,6 +18,8 @@ scripts/app status                                    # X 켜져 있어? — 설
 scripts/app voice on|off
 scripts/app feature office|tama|gacha|review|voice|autoTidy on|off   # 설정 > 기능과 같다 — autoTidy = 세션 자동 정리(끝난 세션을 [앱] 줄로 알림)
 scripts/app feature usagePing off                     # 익명 사용 통계 끄기 — 사용자가 끄라고 할 때만(하루 한 번 무작위 설치 번호·판·OS·CPU·언어·나라, 경로·이름·대화는 안 보냄)
+scripts/app feature craftBasics off                    # 기본 참모 앱 다섯 미리 받기 끄기 — 사용자가 끄라고 할 때만(디스크가 모자라다 등)
+scripts/app feature bubble|bubbleDesk on|off          # 떠 있는 참모 배지(창 밖 동그란 얼굴) · bubbleDesk = 앱을 내려도 배지만 바탕 화면에 — "배지 꺼 줘"는 bubble off
 scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home|harnitor|tools   # home = 홈 대시보드(채팅 뷰, 터미널 뷰면 참모 화면)
 scripts/app close settings|office|reader|tasks|inbox|harnitor|tools|review
 scripts/app harness [<프로젝트>]                       # 사용자 하네스를 글로(스킬·MCP·훅·플러그인·진단)
@@ -71,7 +73,7 @@ scripts/app mode remove <이름> [--trash-source] · mode restore-builtin [<이�
 - **왼쪽 사이드바**(터미널 뷰) — 너(참모), "전체 보기", 그 아래 프로젝트와 세션들. 세션 상태 표시:
   도는 호 = 작업 중, 말풍선(…) = 사용자 답 기다림, 꽉 찬 원 = 대기.
 - **설정** — 메뉴 Chammo > 설정…(⌘,): 언어·네 이름·폴더·기능·알림·브라우저 자동화. **기기 관리** 탭에 내 기기 목록·폰 추가(입구 주소 QR)·테일스케일 대피로(옛 폰 QR·다른 기기 참모), **메신저** 탭에 메신저 알림·텔레그램, **계정** 탭 맨 위에 **Chammo 계정**(구글 로그인·기기 목록·로그아웃·계정 지우기·처리방침 링크), 그 아래 Claude 계정(맥·윈도우).
-- **팀 모드**(채팅 뷰, 로그인했을 때) — 왼쪽 띠 참모 프사 아래 팀 표 하나(안 읽은 수 합). 누르면 화면 전체가 그 팀: 가운데 = 대화 목록(위 팀챗·아래 DM, 맨 아래 내 프로필)과 고른 대화, 오른쪽 = 팀 스페이스(탭 줄에 팀 홈·팀 보관함·연 파일, 끝 톱니 = 팀 설정). 목록 머리 아이콘으로 메신저 접기, 모니터가 둘 이상이면 따로 창으로 떼기. 띠의 참모 프사를 누르면 참모로 돌아간다.
+- **팀 모드**(채팅 뷰, 로그인했을 때) — 왼쪽 띠 참모 프사 아래 팀 표 하나(안 읽은 수 합). 누르면 화면 전체가 그 팀: 가운데 = 대화 목록(위 팀챗·아래 DM, 맨 아래 내 프로필)과 고른 대화, 오른쪽 = 팀 스페이스(탭 줄에 팀 홈·팀 보관함·연 파일, 끝 톱니 = 팀 설정). 목록 머리 아이콘으로 메신저 접기, 모니터가 둘 이상이면 따로 창으로 떼기. 띠의 참모 프사를 누르면 참모로 돌아간다. 사람 이름은 그 사람이 정한 프로필 이름(없으면 계정 이름) — `scripts/team` 도 같은 이름으로 찾는다.
   팀 만들기·초대는 띠 맨 아래 + — 만들면 바로 `https://chammo.app/join#…` 초대 링크와 복사. 받는 사람은 링크를 눌러 'Chammo 에서 열기'(앱이 초대 창을 채워 연다), 또는 + > '초대받았어요'에 붙여 넣기(복사해 둔 링크는 저절로 채워짐). 팀 이름 바꾸기·팀원 보기·빼기·팀장 넘기기·지난 초대 막기·나가기는 팀 설정(탭 줄 끝 톱니, 또는 팀 표 오른쪽 누르기 > 팀 설정).
 - **홈 진행 칸** — 스페이스 홈 맨 위(폰 홈도) '진행': 네가 맡긴 일을 목표(`--goal`)마다 한 줄 조각 막대로, 줄을 누르면 그 자리에서 일 목록. 보낸 일이 다 끝나고 2시간 새 일이 없으면 남은 예정 칸은 버리고 목표가 끝난다(바로 닫기 `scripts/task goal-done`), 이름표 없는 일은 하루 조용하면 접힌다. 다른 참모에게 넘긴 일(`scripts/task handover`)은 큰 일 한 칸이 받은 쪽 진행만큼 차고, 펼치면 '백엔드가 하는 중 — 2/5' 와 그쪽 일들, 받은 쪽 줄엔 '기획이 넘김'.
 - **하니터** — 오른쪽 위 층 모양 버튼(`scripts/app open harnitor`): 사용자 하네스(스킬·훅·MCP·플러그인·CLAUDE.md)를 보고 끄고 켜고 되돌리는 화면.
@@ -105,6 +107,8 @@ scripts/app status                                    # is X on? — settings, f
 scripts/app voice on|off
 scripts/app feature office|tama|gacha|review|voice|autoTidy on|off   # same as Settings > Features — autoTidy = tidy sessions automatically (an [app] line for finished sessions)
 scripts/app feature usagePing off                     # turn off anonymous usage statistics — only when the user asks (once a day: a random install ID, version, OS, CPU, language, country; never paths, names or chats)
+scripts/app feature craftBasics off                    # stop installing the basic five Chammo apps ahead — only when the user asks (short on disk etc.)
+scripts/app feature bubble|bubbleDesk on|off          # floating assistant badge (round face outside the window) · bubbleDesk = keep only the badge on the desktop when the app is hidden — "hide the badge" is bubble off
 scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home|harnitor|tools   # home = the Home dashboard (chat view; in the terminal view, your screen)
 scripts/app close settings|office|reader|tasks|inbox|harnitor|tools|review
 scripts/app harness [<project>]                       # the user's harness as text (skills, MCP, hooks, plugins, findings)
@@ -162,7 +166,7 @@ don't guess, and don't say you can't see the app: you know how it's laid out.
   Each session shows its state: a spinning arc = working, a hand = waiting for the user, a filled dot = idle.
 - **Settings** — menu Chammo > Settings… (⌘,): language, your name, folders, features, notifications,
   browser automation. The **Devices** tab holds my device list, Add phone (entry-address QR) and the Tailscale fallback (old phone QR, other devices' assistants), the **Messenger** tab holds messenger notifications and Telegram, and the **Accounts** tab starts with the **Chammo account** (Google sign-in, device list, sign out, delete account, privacy links), with Claude accounts below it (Mac and Windows).
-- **Team mode** (chat view, once signed in) — one team badge in the left strip under the assistants' avatars (its unread count adds up). Click it and the whole screen becomes that team: the middle has the conversation list (team chats on top, DMs below, your profile at the bottom) and the open conversation, the right is the team space (tabs for Team home, Team locker and open files; the gear at the end = Team settings). The icon in the list header collapses the messenger; with a second monitor it can pop out into its own window. Click an assistant's avatar in the strip to go back.
+- **Team mode** (chat view, once signed in) — one team badge in the left strip under the assistants' avatars (its unread count adds up). Click it and the whole screen becomes that team: the middle has the conversation list (team chats on top, DMs below, your profile at the bottom) and the open conversation, the right is the team space (tabs for Team home, Team locker and open files; the gear at the end = Team settings). The icon in the list header collapses the messenger; with a second monitor it can pop out into its own window. Click an assistant's avatar in the strip to go back. People show by the profile name they set (else their account name) — `scripts/team` finds them by the same name.
   Make a team or invite from the + at the bottom of the strip — making one shows an `https://chammo.app/join#…` invite link with copy. The invitee clicks the link and 'Open in Chammo' (the app opens the invite filled in), or pastes it under + > 'I got an invite' (a copied link fills in by itself). Renaming the team, members, removing someone, handing over owner, revoking old invites and leaving live in Team settings (the gear at the end of the tabs, or right-click the team badge > Team settings).
 - **Home progress** — 'Progress' at the top of Home in the space (and on the phone's home): one bar per goal (`--goal`) of the work you delegated, in pieces; click a row to see its tasks right there. Once every task sent is done and nothing new comes for 2 hours, unsent planned slots are dropped and the goal ends (close it now with `scripts/task goal-done`); untagged tasks fold away after a quiet day. Work handed to another assistant (`scripts/task handover`) is one slot that fills with their progress; expanded it shows 'Backend working — 2/5' and their tasks, and their row says who handed it over.
 - **Harnitor** — the layered button at the top right (`scripts/app open harnitor`): the user's harness — skills, hooks,

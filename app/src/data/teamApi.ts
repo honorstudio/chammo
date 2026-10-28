@@ -8,6 +8,9 @@ import type { TeamAccount } from '../domain/teamAccount';
 import type { MyDevice } from '../domain/myDevices';
 import type { TeamFile, TeamItem } from '../domain/teamChat';
 import type { SafetyPerson } from '../domain/e2eSafety';
+import type { Reads } from '../domain/teamReads';
+import { docUrl } from '../domain/reader';
+import { allFolders, thumbKind, type LockerView } from '../domain/teamLocker';
 
 export type TeamView = {
   joined: boolean;
@@ -19,8 +22,9 @@ export type TeamView = {
   server: string;
   deliverTo: string;
   members: { id: string; name: string; role: string; me: boolean; devices?: { id: string; name: string }[] }[];
-  /** 단톡방(group)은 with = 방 이름, members 도(Rust team_cmd::view). team = 그 방 팀(내 기기끼리 방은 빈 값) — 모든 팀 방이 한 목록에 온다 */
-  rooms: { id: string; kind: string; peer: string; with: string; team?: string; name?: string; members?: string[] }[];
+  /** 단톡방(group)은 with = 방 이름, members 도(Rust team_cmd::view). team = 그 방 팀(내 기기끼리 방은 빈 값) — 모든 팀 방이 한 목록에 온다.
+   *  me = 그 방 팀에서의 내 멤버 id(읽음 맞추기) */
+  rooms: { id: string; kind: string; peer: string; with: string; team?: string; name?: string; members?: string[]; me?: string }[];
   /** 내 팀들(Rust view teams) — 같은 이름 팀 가리기 등 */
   teams?: { id: string; name: string; role?: string; current?: boolean }[];
   /** 구글로 로그인한 기기면 그 계정(서버 ADR 0004) */
@@ -52,11 +56,11 @@ export function teamHumanSay(to: string, text: string, trustedAt: number, extra:
   const empty = !text.trim() && !extra.react && !extra.files?.length;
   if (!sendAllowed(trustedAt, now) || empty) return null;
   const room = to.startsWith('room:') ? to.slice(5) : null;
-  return invoke('team_human_say', { to: room ? '' : to, text, cid: newCid(), room, react: extra.react ?? null, files: extra.files?.length ? extra.files : null });
+  return invoke('team_human_say', { to: room ? '' : to, text, cid: newCid(), room, react: extra.react ?? null, files: extra.files?.length ? extra.files : null, re: extra.re ?? null });
 }
 
 /** 말에 딸린 것(시안 msg-rooms v2) — 반응 달기·떼기, 팀 보관함에 올린 파일 참조 */
-export type SayExtra = { react?: { seq: number; mark: string; on: boolean }; files?: TeamFile[] };
+export type SayExtra = { react?: { seq: number; mark: string; on: boolean }; files?: TeamFile[]; re?: number };
 
 // 채팅 붙이기 — 팀 보관함(team-locker 세션의 team_locker_cmd): 방 사람 기기마다 봉투로 올리고 FileRef 를 돌려준다
 export const teamFileAttach = (team: string, room: string, paths: string[]) => invoke<TeamFile[]>('team_file_attach', { team, room, paths });
@@ -64,6 +68,37 @@ export const teamFileAttach = (team: string, room: string, paths: string[]) => i
 export const teamFileOpen = (team: string, id: string, external = false) => invoke<string>('team_file_open', { team, id, external });
 /** 이 기기 팀 폴더(~/Documents/Chammo/<팀>/대화 파일)에 저장하고 파인더에서 보이기 — 받은 경로 */
 export const teamFileSave = (team: string, id: string) => invoke<string>('team_file_save', { team, id }).then((path) => invoke('locker_reveal', { path }).then(() => path));
+/** 썸네일 주소 — 말풍선·대화 파일 보기·팀 보관함 카드. 그림은 풀어 둔 그림 그대로, PDF 는 첫 장(QuickLook). 그 밖·너무 큰 건 null.
+ *  풀기(peek)는 파일마다 한 번만 — 대화 칸이 4초마다 다시 그려도 또 안 받는다. 그림이 안 열리면(오래돼 청소됨) forgetTeamThumb 로 다시 */
+const thumbs = new Map<string, Promise<string | null>>();
+const thumbKey = (team: string, id: string) => `${team}\n${id}`;
+export function teamFileThumb(team: string, id: string, name: string, size: number): Promise<string | null> {
+  const kind = thumbKind(name, size);
+  if (!kind || !team || !id) return Promise.resolve(null);
+  const k = thumbKey(team, id);
+  let p = thumbs.get(k);
+  if (!p) {
+    p = invoke<string>('team_locker_peek', { team, id })
+      .then((path) => (kind === 'pdf' ? invoke<string>('ql_thumb', { path }) : path))
+      .then((path) => docUrl(path));
+    p.catch(() => thumbs.delete(k));
+    thumbs.set(k, p);
+  }
+  return p;
+}
+export const forgetTeamThumb = (team: string, id: string) => { thumbs.delete(thumbKey(team, id)); };
+
+// 참모 보관함 파일 → 팀 보관함(ui/team/teamUpload) — 팀 보관함 화면이 안 떠 있어도 올린다(진행은 그 팀 보관함 화면 올리는 중 줄)
+/** 든 팀들(옛 판 화면 덩어리엔 teams 가 없으면 지금 팀 하나) */
+export const teamLockerTeams = () => teamStatus().then((v) => (v.teams?.length ? v.teams.map((t) => ({ id: t.id, name: t.name })) : v.joined ? [{ id: v.teamId, name: v.team }] : []));
+/** 그 팀 보관함 모든 폴더 경로(위 폴더 포함, 가나다) — 기기에 봉해 둔 마지막 목록부터(망 없이), 없으면 새로 받는다 */
+export const teamLockerFolders = async (team: string): Promise<string[]> => {
+  const v = (await invoke<LockerView | null>('team_locker_cached', { team }).catch(() => null)) ?? (await invoke<LockerView>('team_locker_list', { team }));
+  return allFolders(v.items);
+};
+export const teamLockerPut = (team: string, paths: string[], folder: string | null) => invoke('team_locker_put', { team, paths, folder });
+/** 입력칸 ⌘V — 맥 클립보드의 파인더 파일·그림을 붙일 경로로(그림은 데이터 폴더에 name.png). 글만이면 [] */
+export const teamClipFiles = (name: string) => invoke<string[]>('team_clip_files', { name });
 /** 앱 창에 붙는 파일 고르기 시트(NSOpenPanel) — 고른 경로들(취소면 []) */
 export const teamPickFiles = () => invoke<string[]>('team_pick_files');
 
@@ -82,15 +117,20 @@ export const teamRoomLeave = (room: string) => invoke<TeamView>('team_ui_room_le
 // ── 메신저 본 화면(시안 v2) — 메인 창·메신저 따로 창(team-*) ─────────────
 /** 보안 번호가 바뀌어 멈춘 말(Rust e2e_state::Held) — 받아들이면 보낸다 */
 export type HeldMsg = { room: string; cid: string; body: string; human: boolean; at: number; account: string };
-export type TeamFeed = { view: TeamView; items: TeamItem[]; safety?: SafetyPerson[]; held?: HeldMsg[] };
+/** reads = 방 → 멤버 → 읽은 seq(chammo-relay ADR 0012, 옛 앱 Rust 엔 없다) */
+export type TeamFeed = { view: TeamView; items: TeamItem[]; safety?: SafetyPerson[]; held?: HeldMsg[]; reads?: Reads };
 /** 보안 번호 '같아요'(확인됨)·막아 둔 카드 다시 띄우기 — 메인 창·메신저 창 */
 export const e2eSafetyVerify = (account: string) => invoke<void>('e2e_safety_verify', { account });
 export const e2eSafetyUnblock = (account: string) => invoke<void>('e2e_safety_unblock', { account });
+/** 저절로 받아들인 사람 막아 두기 — 대화 회색 줄 '번호 비교' 안에서만(사용자 10-29) */
+export const e2eSafetyBlock = (account: string) => invoke<void>('e2e_safety_block', { account });
 /** 갈린 사람 '다시 받기' — 서버에서 사슬을 새로 받아 그 번호로 카드를 다시 띄운다 */
 export const e2eSafetyRefetch = (account: string) => invoke<void>('e2e_safety_refetch', { account });
 /** 받아들이기·막아 두기 — 결정 대기함 카드 답과 같은 문(direct_answer, 메인 창만) */
 export const safetyAnswer = (card: string, yes: boolean) => invoke<void>('direct_answer', { id: card, pick: { pick: yes ? 'yes' : 'no' } });
 export const teamFeed = (n = 400) => invoke<TeamFeed>('team_feed', { n });
+/** 사람이 이 방을 seq 까지 봤다 — 보고 있을 때만(domain/teamReads looking). 같은 계정 다른 기기 안 읽음도 사라진다 */
+export const teamMarkRead = (room: string, seq: number) => invoke<void>('team_mark_read', { room, seq });
 export const teamCreate = (team: string, me = '') => invoke<TeamView>('team_ui_create', { team, me });
 export const teamJoin = (invite: string, me = '') => invoke<TeamView>('team_ui_join', { invite, me });
 export const teamInvite = () => invoke<{ code: string; expiresAt: number; link: string }>('team_ui_invite');

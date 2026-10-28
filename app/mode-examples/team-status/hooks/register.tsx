@@ -14,7 +14,7 @@ const PANE = 'team-status'
 const TITLE = '참모 상태'
 const POLL_MS = 5_000
 
-type Tile = { id: string; key: string; role: string; status: Status; look: Look }
+type Tile = { id: string; key: string; name: string; role: string; status: Status; look: Look }
 type Cached = { mtime: number; size: number; text: string }
 
 let home = ''
@@ -102,7 +102,7 @@ async function read($: EngineInterface, liveText: string): Promise<Tile[]> {
   const asking = openAsks(direct)
   return Promise.all(chammos.map(async (c) => {
     const avatar = await readIfChanged($, `${dataDir}/avatars/${c.key}.json`)
-    return { id: c.sessionId, key: c.key, role: c.role, status: statusOf(c.state, c.busy, asking.has(c.sessionId.slice(0, 8))), look: avatarOf(avatar, c.num) }
+    return { id: c.sessionId, key: c.key, name: c.name, role: c.role, status: statusOf(c.state, c.busy, asking.has(c.sessionId.slice(0, 8))), look: avatarOf(avatar, c.num) }
   }))
 }
 
@@ -174,7 +174,7 @@ export const register: Register = (on) => {
       const cells = tiles.map((t) => (
         <Box key={t.id} flexDirection="row" gap={1}>
           <Text color={t.status === 'ask' ? 'warning' : t.status === 'work' ? t.look.color : undefined} dimColor={t.status === 'rest' || t.status === 'unknown' || undefined}>{FACE_TEXT[t.status]}</Text>
-          {laid.show !== 'face' && <Text bold wrap="truncate-end">{t.key}</Text>}
+          {laid.show !== 'face' && <Text bold wrap="truncate-end">{t.name}</Text>}
           {laid.show === 'full' && t.role && <Box flexShrink={1}><Text dimColor wrap="truncate-end">{t.role}</Text></Box>}
         </Box>
       ))
@@ -193,7 +193,7 @@ export const register: Register = (on) => {
     return (
       <Box key="team" flexDirection="column" gap={bar ? 2 : 0}>
         {bar && <Box key="top" flexDirection="row" justifyContent="flex-end">{SkinBar(ui, SKINS, skin, (id) => void pickSkin($, id))}</Box>}
-        <Svg source={svg} alt={tiles.map((x) => `${x.key} ${STATUS_WORD[x.status]}`).join(' · ')} />
+        <Svg source={svg} alt={tiles.map((x) => `${x.name} ${STATUS_WORD[x.status]}`).join(' · ')} />
       </Box>
     )
   })

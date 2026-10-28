@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { attachedId, exitWatcher, KICK_WINDOW, kickedBeforeEnd, kickWatcher, listedAlive, linkStep, REATTACH_GIVE_UP } from './attachExit';
+import { attachedId, attachPhaseWatcher, exitWatcher, KICK_WINDOW, kickedBeforeEnd, kickWatcher, listedAlive, linkStep, REATTACH_GIVE_UP, UNLISTED_MAX } from './attachExit';
 
 // 2026-10-21 실측(Claude Code 2.1.305, 시험 세션): 붙어 있는 세션을 다른 곳에서 `claude respawn` 하면 붙은 attach 는
 // 아래 글을 찍고 끝난다 — 세션은 새 일꾼으로 계속 산다. 색·커서 코드가 문장 앞뒤에 붙어 온다
@@ -123,5 +123,76 @@ describe('kickedBeforeEnd — attach 가 끝나기 직전에 본 쫓겨남만(0.
   });
   it('못 봤으면 쫓겨남이 아니다', () => {
     expect(kickedBeforeEnd(null, 5_000)).toBe(false);
+  });
+});
+
+// 2026-10-27 실측(2.1.310, 시험 세션 일꾼을 SIGSTOP 한 채 attach — .shots/boot-storm/attach-stall.bin): 세션 화면 전에 attach 가
+// 제 안내 줄을 찍는다. 부팅 직후 부하 70 에서 사용자 참모 칸이 이 줄들만 되풀이했다 — 이 줄을 '붙음'으로 치면 화면이 오기 전에 말을 쳐서 날아갔다
+const MODES = '\x1b[?1049h\x1b[2J\x1b[H\x1b[?2004h\x1b[?2031h\x1b[?1004h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h';
+const ATTACHING = `${MODES}\r\n  \x1b[2mAttaching…\x1b[0m\r\n`;
+const REDRAW = '\x1b[2J\x1b[H\r\n  \x1b[2mWaiting for session to redraw… Ctrl+Z to detach\x1b[0m\r\n';
+const RESTART = '\x1b[2J\x1b[H\r\n  \x1b[2mSession not responding — restarting it…\x1b[0m\r\n\x1b_cc-detach-msg;ERESPAWNING: worker stalled, restarting\x1b\\\x1b[?1049l\r\x1b[2KSession not responding — restarting it…\r\x1b[2K';
+const SCREEN = '\x1b[?25l\x1b[2J\x1b[H\r\x1b[1B\x1b[38;2;215;119;87m ▐\x1b[48;2;0;0;0m▛███▛█\x1b[12G\x1b[39m\x1b[49m\x1b[1mClaude Code\x1b[24G\x1b[22m\x1b[38;2;153;153;153mv2.1.310\r\x1b[1B'
+  + '\x1b[38;2;153;153;153mHaiku 5.5 with high effort · Claude Max\r\x1b[3B\x1b[48;2;55;55;55m❯ \x1b[38;2;255;255;255m시험용이야. 아무 도구도 쓰지 말고 대기라고만 답해.\x1b[39m\r\x1b[2B⏺ 대기\r\n';
+
+describe('attachPhaseWatcher — attach 안내 줄과 진짜 세션 화면을 가른다', () => {
+  it('정상 — Attaching… 다음 바로 화면이 오면 ready', () => {
+    const w = attachPhaseWatcher();
+    expect(w(ATTACHING)).toBe('attaching');
+    expect(w(SCREEN)).toBe('ready');
+  });
+  it('일꾼이 멈춤 — 다시 그리기 기다림 → 응답 없어 다시 켬 → 다시 붙어 화면이 오면 ready', () => {
+    const w = attachPhaseWatcher();
+    expect(w(ATTACHING)).toBe('attaching');
+    expect(w(REDRAW)).toBeNull(); // 같은 '붙는 중'이라 바뀐 게 없다
+    expect(w(RESTART)).toBe('restarting');
+    expect(w('\r\x1b[2KSession not responding — restarting it…\r\x1b[2K')).toBeNull();
+    expect(w(ATTACHING)).toBe('attaching');
+    expect(w(SCREEN)).toBe('ready');
+  });
+  it('세션이 켜지는 중·계속 멈춤도 알아본다', () => {
+    const w = attachPhaseWatcher();
+    expect(w('\r\n  \x1b[2mSession is starting — it will appear once ready. Ctrl+Z to detach\x1b[0m\r\n')).toBe('starting');
+    expect(w('\r\n  \x1b[2mSession keeps stalling at startup.\x1b[0m\r\n')).toBe('stalled');
+  });
+  it('조각 경계에 안내 줄이 걸쳐도 — 안내 줄 토막을 화면으로 세지 않는다', () => {
+    const w = attachPhaseWatcher();
+    expect(w(`${MODES}\r\n  \x1b[2mAttach`)).toBe('attaching');
+    expect(w('ing…\x1b[0m\r\n\x1b[2J\x1b[H\r\n  \x1b[2mWaiting for session to re')).toBeNull();
+    expect(w('draw… Ctrl+Z to detach\x1b[0m\r\n')).toBeNull();
+    expect(w(SCREEN.slice(0, 60))).toBeNull(); // 아직 글이 모자라다
+    expect(w(SCREEN.slice(60))).toBe('ready');
+  });
+  it('안내 줄 없이 화면부터 오면(그려 둔 화면을 먼저 보냄) 바로 ready', () => {
+    expect(attachPhaseWatcher()(SCREEN)).toBe('ready');
+  });
+  it('ready 뒤엔 대화 화면에 같은 문장이 그려져도 그대로(소스 grep 결과 등)', () => {
+    const w = attachPhaseWatcher();
+    w(SCREEN);
+    expect(w('> grep "Session not responding — restarting it" daemon.ts\r\n')).toBeNull();
+  });
+  it('안내 줄 뒤 글이 짧아도 안내 줄 아닌 글이 많이 왔으면 화면 — 윈도우 ConPTY 가 다시 그리며 안내 줄을 화면 뒤에 내보내도 갇히지 않게(리뷰 1)', () => {
+    const w = attachPhaseWatcher();
+    expect(w(ATTACHING)).toBe('attaching');
+    const big = SCREEN.repeat(6);
+    expect(w(`${big}\r\n  \x1b[2mWaiting for session to redraw… Ctrl+Z to detach\x1b[0m\r\n`)).toBe('ready');
+  });
+  it('포커스 보고 메아리(^[[I)·Ctrl+Z 안내만으로는 화면이 아니다', () => {
+    const w = attachPhaseWatcher();
+    expect(w(ATTACHING)).toBe('attaching');
+    expect(w('^[[I^[[O^[[I')).toBeNull();
+  });
+});
+
+describe('linkStep — 목록을 못 읽은 건(맥이 바쁨) 꺼진 게 아니다', () => {
+  it('목록 시간 초과(alive null)가 이어져도 몇 분은 끊김(gone)으로 굳히지 않는다 — 보낸 말은 계속 기다린다', () => {
+    expect(linkStep({ alive: null, stoppedByApp: false, since: 0, now: REATTACH_GIVE_UP * 3 })).toBe('wait');
+    expect(linkStep({ alive: null, stoppedByApp: null, since: 0, now: UNLISTED_MAX - 1 })).toBe('wait');
+  });
+  it('그래도 UNLISTED_MAX 를 넘기면(옛 claude·로그인 풀림으로 영영 못 읽음) 끊김 — 말이 끝없이 줄에 묶이지 않게(리뷰 4)', () => {
+    expect(linkStep({ alive: null, stoppedByApp: false, since: 0, now: UNLISTED_MAX + 1 })).toBe('gone');
+  });
+  it('목록에 확실히 없으면(false) 그대로 오래 뒤 끊김', () => {
+    expect(linkStep({ alive: false, stoppedByApp: false, since: 0, now: REATTACH_GIVE_UP + 1 })).toBe('gone');
   });
 });

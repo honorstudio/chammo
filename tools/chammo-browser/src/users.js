@@ -1,12 +1,14 @@
 // 같은 프로필 크롬을 쓰는 스크립트 명부 — <locks>/<프로필>.users/<pid>.
 // 크롬 주인(스크립트 지킴이 또는 MCP 래퍼)은 명부에 산 pid 가 있는 동안 크롬을 닫지 않는다. 스크립트가 끝나거나 죽으면 pid 가 죽어 빠진다.
 // 닫기로 정하는 것(claimClose)과 같이 쓰기로 올리는 것(join)은 작은 자물쇠 안에서 — 닫히는 크롬 주소를 새 스크립트에 주지 않게.
-// 닫기로 정하면 <프로필>.closing 을 남긴다(주인 pid·시각). 주인이 죽었거나 30초 넘은 표시는 무시한다(닫기가 실패해 남은 것)
+// 닫기로 정하면 <프로필>.closing 을 남긴다(주인 pid·시각). 주인이 죽었거나 30초 넘은 표시는 무시한다(닫기가 실패해 남은 것).
+// 지킴이가 패스키로 크롬을 다시 띄울 때도 같은 표시를 남긴다(claimSwitch, 더 오래 — 프로필 풀림을 30초까지 기다린다)
 const fs = require('fs');
 const path = require('path');
 const lock = require('./lock');
 
 const CLOSING_MS = 30_000;
+const SWITCH_MS = 90_000;
 const usersDir = (lockDir, profile) => path.join(lockDir, `${profile}.users`);
 const closingFile = (lockDir, profile) => path.join(lockDir, `${profile}.closing`);
 
@@ -58,7 +60,7 @@ function alive(lockDir, profile, isAlive = lock.isAlive) {
 function closing(lockDir, profile, isAlive = lock.isAlive) {
   try {
     const c = JSON.parse(fs.readFileSync(closingFile(lockDir, profile), 'utf8'));
-    return Number.isInteger(c.pid) && isAlive(c.pid) && Date.now() - c.at < CLOSING_MS;
+    return Number.isInteger(c.pid) && isAlive(c.pid) && Date.now() - c.at < (c.ms || CLOSING_MS);
   } catch {
     return false;
   }
@@ -84,6 +86,16 @@ function claimClose(lockDir, profile, pid = process.pid) {
   });
 }
 
+/** 크롬을 다시 띄워도 되나 — ok(산 사용자)가 참이면 닫는 중 표시를 남기고 true. 확인과 표시가 한 자물쇠 안이라 그 사이 같이 쓰기가 끼지 못한다. 다 띄우면 clearClose */
+function claimSwitch(lockDir, profile, ok, pid = process.pid) {
+  return withMutex(lockDir, profile, () => {
+    if (!ok(alive(lockDir, profile))) return false;
+    fs.mkdirSync(lockDir, { recursive: true });
+    fs.writeFileSync(closingFile(lockDir, profile), JSON.stringify({ pid, at: Date.now(), ms: SWITCH_MS }));
+    return true;
+  });
+}
+
 function clearClose(lockDir, profile) {
   try { fs.unlinkSync(closingFile(lockDir, profile)); } catch { /* 없음 */ }
 }
@@ -94,4 +106,4 @@ function clear(lockDir, profile) {
   clearClose(lockDir, profile);
 }
 
-module.exports = { withMutex, add, remove, alive, closing, join, claimClose, clearClose, clear, usersDir };
+module.exports = { withMutex, add, remove, alive, closing, join, claimClose, claimSwitch, clearClose, clear, usersDir };

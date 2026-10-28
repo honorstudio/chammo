@@ -12,9 +12,13 @@ const PLAYWRIGHT_DISABLED = [
   'msForceBrowserSignIn', 'msEdgeUpdateLaunchServicesPreferredVersion',
 ];
 
-/** 맥이면 [--disable-features=플레이라이트 목록,MacAppCodeSignClone], 아니면 [] — 플레이라이트가 사용자 인자를 자기 것 뒤에 붙이니 이게 이긴다 */
+// 가짜 키체인 — 쿠키 암호 열쇠를 맥 로그인 키체인에서 안 꺼낸다. 플레이라이트도 기본으로 넣지만 거기에만 기대지 않는다:
+// ad-hoc 재서명 사본(Dock·⌘Tab 빼기, src/appcopy.js)을 이것 없이 띄우면 'Chrome Safe Storage' 키체인 창이 사람 화면에 떴다(2026-10-27 시험)
+const KEYCHAIN_ARGS = ['--use-mock-keychain', '--password-store=basic'];
+
+/** 맥이면 [--disable-features=플레이라이트 목록,MacAppCodeSignClone, 가짜 키체인], 아니면 [] — 플레이라이트가 사용자 인자를 자기 것 뒤에 붙이니 이게 이긴다 */
 function featureArgs(platform = process.platform) {
-  return platform === 'darwin' ? [`--disable-features=${[...PLAYWRIGHT_DISABLED, 'MacAppCodeSignClone'].join(',')}`] : [];
+  return platform === 'darwin' ? [`--disable-features=${[...PLAYWRIGHT_DISABLED, 'MacAppCodeSignClone'].join(',')}`, ...KEYCHAIN_ARGS] : [];
 }
 
-module.exports = { PLAYWRIGHT_DISABLED, featureArgs };
+module.exports = { PLAYWRIGHT_DISABLED, KEYCHAIN_ARGS, featureArgs };

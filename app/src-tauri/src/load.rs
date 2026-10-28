@@ -25,7 +25,8 @@ pub async fn load_sample() -> LoadRaw {
 fn sample() -> LoadRaw {
     LoadRaw {
         ps: out("/bin/ps", &["-axo", "pid=,ppid=,pcpu=,rss=,etime=,args="]),
-        sys: out("/usr/sbin/sysctl", &["-n", "hw.ncpu", "vm.loadavg", "vm.swapusage", "hw.memsize"]),
+        // 다섯째 줄 부팅 시각 — 부팅 직후엔 터미널 칸을 하나씩 붙인다(프론트 domain/busyGate)
+        sys: out("/usr/sbin/sysctl", &["-n", "hw.ncpu", "vm.loadavg", "vm.swapusage", "hw.memsize", "kern.boottime"]),
     }
 }
 

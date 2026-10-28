@@ -111,7 +111,7 @@ export function talkedTo(list: { id: string; human?: Line }[], front?: string | 
 }
 
 /** 소리로 안 읽고 쌓아 둔 다른 참모 답 — 참모 id → 읽을 글들·물어보는 답이 있나 */
-export type VoiceHeld = Record<string, { texts: string[]; asks: boolean; ts: string }>;
+export type VoiceHeld = Record<string, { texts: string[]; asks: boolean; ts: string; /** 한 줄 알림을 이미 했나 — 조용히 쌓인 것만이면 없음 */ noted?: boolean }>;
 
 const without = (held: VoiceHeld, id: string): VoiceHeld => {
   const next = { ...held };
@@ -124,10 +124,11 @@ export const heldNote = (name: string, asks: boolean) =>
   asks ? tr(`${name}한테 새 답 있어, 물어볼 게 있대.`, `New reply from ${name} — they have a question for you.`) : tr(`${name}한테 새 답 있어.`, `New reply from ${name}.`);
 
 /**
- * 새 답 하나 — 말 건 참모면 그대로 읽고(speak), 아니면 쌓고 알림 한 줄(note). 같은 참모가 이미 쌓여 있으면
- * 한 줄을 되풀이하지 않는다(질문이 새로 생길 때만 다시). 말 건 참모의 옛 쌓인 답은 새 답이 덮는다
+ * 새 답 하나 — 말 건 참모면 그대로 읽고(speak), 아니면 쌓는다. 알림 한 줄(note)은 사람이 깨운 턴(human)이거나 묻는 답일 때만 —
+ * 앱 줄·하위 세션 회신·깨운 말 모름으로 깬 턴은 조용히 쌓기만(10-28: 회사 비서가 넘긴 일의 디자인 담당 답을 "새 답 있어"로 알렸다).
+ * 같은 참모가 이미 알렸으면 한 줄을 되풀이하지 않는다(질문이 새로 생길 때만 다시). 말 건 참모의 옛 쌓인 답은 새 답이 덮는다
  */
-export function routeReply(held: VoiceHeld, r: { id: string; name: string; text: string; asks: boolean; ts: string }, speakers: Set<string>): { speak?: string; note?: string; held: VoiceHeld } {
+export function routeReply(held: VoiceHeld, r: { id: string; name: string; text: string; asks: boolean; ts: string; human?: boolean }, speakers: Set<string>): { speak?: string; note?: string; held: VoiceHeld } {
   const text = r.text.trim();
   if (!text) return { held };
   if (speakers.has(r.id)) {
@@ -135,8 +136,21 @@ export function routeReply(held: VoiceHeld, r: { id: string; name: string; text:
   }
   const prev = held[r.id];
   const asks = !!prev?.asks || r.asks;
-  const next = { ...held, [r.id]: { texts: [...(prev?.texts ?? []), text], asks, ts: r.ts } };
-  return { ...(!prev || (r.asks && !prev.asks) ? { note: heldNote(r.name, asks) } : {}), held: next };
+  const loud = r.asks || !!r.human;
+  const note = loud && (!prev?.noted || (r.asks && !prev.asks));
+  const next = { ...held, [r.id]: { texts: [...(prev?.texts ?? []), text], asks, ts: r.ts, noted: !!prev?.noted || loud } };
+  return { ...(note ? { note: heldNote(r.name, asks) } : {}), held: next };
+}
+
+/**
+ * 새 답 하나를 어떻게 — skip: 다른 참모가 보낸 말로만 깬 턴(그 참모에게 한 답, 쌓지도 않음) · speak: 말 건 참모 · hold: 쌓기(한 줄은 routeReply 가 가른다) ·
+ * deeper: 꼬리가 잘려 깨운 말을 모름 — 기록을 더 길게 읽어 다시 본다(말 건 참모도 — 참모끼리 턴이면 버리게). final = 이미 더 읽은 뒤라 모르면 말 건 참모는 읽고 나머지는 쌓기.
+ * giver = 이 참모가 일을 넘긴 참모의 말로 깬 턴인가(domain/handedAsk giverTurn) — 받은 쪽 질문을 모아 사람에게 묻는 턴이라 버리지 않는다(10-28)
+ */
+export function voiceTurn(reply: Line, speaker: boolean, final = false, giver: (r: Line) => boolean = () => false): 'skip' | 'speak' | 'hold' | 'deeper' {
+  if (fromOrchTurn(reply) && !giver(reply)) return 'skip';
+  if (reply.cut && !reply.byHuman && !final) return 'deeper';
+  return speaker ? 'speak' : 'hold';
 }
 
 /** 쌓인 답 꺼내 읽기 — 그 참모 탭을 열거나 "○○ 거 읽어 줘"(scripts/app voice read). 몰려 있으면 마지막 세 개(pickSay 와 같은 이유) */

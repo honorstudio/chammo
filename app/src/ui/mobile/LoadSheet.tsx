@@ -6,6 +6,7 @@ import { fmtDur } from '../../domain/load';
 import { readPhoneLoad, slotLine } from '../../domain/phoneLoad';
 import { machine } from '../../i18n';
 import { BottomSheet } from './kit';
+import { seenName } from '../../domain/session';
 
 const SLOT_NAME: Record<string, string> = { build: '빌드', ios: 'iOS 시뮬레이터', galaxy: '갤럭시' };
 
@@ -42,7 +43,7 @@ export function LoadSheet({ text, onChanged, onClose }: Props) {
           <div className="m-sect">세션</div>
           {v.sessions.map((s) => (
             <div key={`${s.name}/${s.project}`} className="m-load-row">
-              <span className="m-load-name"><b>{s.name}</b><span>{s.what ? `${s.project} · ${s.what}` : s.project}</span></span>
+              <span className="m-load-name"><b>{seenName(s.name)}</b><span>{s.what ? `${s.project} · ${s.what}` : s.project}</span></span>
               <span className={s.cpu >= 100 ? 'm-load-cpu m-hot' : 'm-load-cpu'}>{s.cpu}%</span>
               <span className="m-load-mem">{s.mem}</span>
             </div>

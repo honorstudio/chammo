@@ -57,6 +57,7 @@ export function allOut(v: AccountsView | null, now: number): string | null {
 export function slotText(st: ReturnType<typeof slotStatus>, now: number): string {
   if (st.kind === 'ok') return tr('쓸 수 있음', 'Available');
   if (st.kind === 'auth') return tr('로그인 필요', 'Sign-in needed'); // 시각으로 안 풀린다
+  if (st.kind === 'terms') return tr('약관 동의 필요', 'Terms to accept'); // claude.ai 에서 동의 → 약관 카드 [다시 시도]
 
   const when = fmtUntil(st.until, now);
   if (st.kind === 'week') return tr(`주간 소진 ~${when}`, `Weekly limit ~${when}`);
@@ -138,7 +139,7 @@ export function popRows(v: AccountsView | null, now: number): PopRow[] {
       five: fiveLeft,
       week: weekLeft,
       left: nums.length ? Math.min(...nums) : null,
-      stop: st.kind === 'ok' ? null : st.kind === 'auth' ? tr('로그인 필요', 'Sign-in needed') : `~${fmtUntil(st.until, now)}`,
+      stop: st.kind === 'ok' ? null : st.kind === 'auth' || st.kind === 'terms' ? slotText(st, now) : `~${fmtUntil(st.until, now)}`,
       note,
       title,
       tip,

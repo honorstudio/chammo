@@ -62,7 +62,8 @@ describe('mentionSpans·expandMentions — 입력칸 칩 자리와 보낼 글', 
   });
   it('보낸 이름은 말풍선에 화면 이름으로', () => {
     expect(sentMentionLabel('참모-3 · 가나 담당')).toBe('가나 담당');
-    expect(sentMentionLabel('참모-9')).toBe('참모-9');
+    expect(sentMentionLabel('참모-9')).toBe('참모'); // 별명 없는 참모도 번호는 안 보인다(2026-10-28)
+    expect(sentMentionLabel('shop-app-2')).toBe('shop-app-2'); // 프로젝트 세션 끝 번호는 이름의 일부
   });
 });
 

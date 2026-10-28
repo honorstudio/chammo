@@ -235,6 +235,14 @@ class ShowPoint(unittest.TestCase):
                 json.dump({'view': 'chat'}, f)
             self.assertIn('space', show.shown_where(d))
 
+    def test_craft_hint(self):
+        # .ai·.psd 처럼 그림 미리보기뿐인 형식 — 참모 앱으로 열라는 한 줄(사람이 앱에서 누르면 그 앱으로 열린다, 10-26)
+        h = show.craft_hint('/h/logo.AI')
+        self.assertIn('scripts/craft open vectorcraft --native "/h/logo.AI"', h)
+        self.assertIn('scripts/craft open photocraft', show.craft_hint('/h/a.psd'))
+        self.assertIsNone(show.craft_hint('/h/a.png'))  # 미리보기로 충분
+        self.assertIsNone(show.craft_hint('/h/a.xlsx'))
+
 
 class Windows(unittest.TestCase):
     """윈도우 참모도 같은 도구를 쓴다 — 유닉스 전용 모듈을 맨 위에서 불러오면 스크립트 전체가 죽는다(윈도우판)"""
@@ -337,3 +345,10 @@ class TeamNoPython(unittest.TestCase):
             self.assertEqual(r.returncode, 2)
             self.assertIn('teamchat', r.stderr)
             self.assertFalse(os.path.exists(os.path.join(d, 'app.jsonl')))
+
+
+class TeamSenderSession(unittest.TestCase):
+    """보낸 참모 세션 id 는 한 번만 싣는다 — 같은 줄+주석이 두 번 들어가 있었다(10-27 리뷰)"""
+    def test_세션_줄은_하나(self):
+        src = (SCRIPTS / 'team').read_text(encoding='utf-8')
+        self.assertEqual(src.count("arg['session'] = os.environ.get('CLAUDE_CODE_SESSION_ID', '')"), 1)

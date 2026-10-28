@@ -2,7 +2,7 @@
 // 예전엔 그림 참조가 @img1 이었다 — 지난 대화 기록이 깨지지 않게 읽기는 @img1 도 받는다.
 // 멘션은 입력칸 글 그대로(@가나 담당)가 칩이고, 보낼 때 진짜 SendMessage 이름 @[참모-3 · 가나 담당] 으로 풀린다 —
 // 화면 이름은 띄어쓰기가 있고 별명만이라, 참모가 누구에게 전할지 헷갈리지 않게 대괄호로 묶는다
-import { splitOrchName } from './orchLabel';
+import { seenName } from './session';
 
 /** 새로 쓰는 참조 이름표 머리 — #img1·#file1·#chat1 */
 export const REF_PREFIX = '#';
@@ -74,7 +74,7 @@ export function expandMentions(text: string, who: MentionWho[]): string {
 }
 
 /** 보낸 말 속 @[진짜 이름] → 말풍선 칩 글(별명이 있으면 별명) */
-export const sentMentionLabel = (name: string) => splitOrchName(name).nick ?? name;
+export const sentMentionLabel = (name: string) => seenName(name);
 
 export type Token = string | { ref: string } | { mention: string } | { live: string };
 const SPLIT = /([#@](?:img|file|chat|task|goal)\d+(?![\w])|@\[[^\]\n]{1,80}\])/;

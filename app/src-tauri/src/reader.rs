@@ -763,7 +763,9 @@ pub async fn page_doc(path: String) -> Result<String, String> {
         if let Some(m) = find() { if newer(&m) { return Ok(m.to_string_lossy().into_owned()); } }
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let out = crate::platform::command("/usr/bin/qlmanage").args(["-p", "-o"]).arg(&dir).arg(&p).output().map_err(|e| e.to_string())?;
+        // 시간 한도 — 멈춘 QuickLook 이 '미리보기 만드는 중'을 붙잡지 않게(ql_thumb 과 같은 일, 2026-10-29). 넘기면 반쯤 만든 폴더는 지운다
+        let out = crate::platform::run_capped(crate::platform::command("/usr/bin/qlmanage").args(["-p", "-o"]).arg(&dir).arg(&p), PAGE_DOC_LIMIT)
+            .map_err(|e| { let _ = std::fs::remove_dir_all(&dir); e.to_string() })?;
         find().map(|m| m.to_string_lossy().into_owned()).ok_or_else(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
     })
     .await
@@ -782,6 +784,63 @@ fn ql_dir(base: &std::path::Path, p: &std::path::Path) -> std::path::PathBuf {
     base.join(format!("{h:016x}"))
 }
 
+/// 변환기 한 번의 시간 한도 — 큰 엑셀·키노트 첫 장도 몇 초면 끝난다
+const THUMB_LIMIT: std::time::Duration = std::time::Duration::from_secs(20);
+/// 슬라이드·페이지 미리보기(page_doc) 한도 — 큰 발표 파일은 페이지마다 그려 더 걸린다
+const PAGE_DOC_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// 참모 벡터 엔진에 맡길 수 있는 확장자 — 그중 PostScript 로 된 것만 엔진으로(ps_scale), 나머지는 QuickLook
+fn vector_thumb(p: &Path) -> bool {
+    p.extension().and_then(|e| e.to_str()).is_some_and(|e| ["ai", "ait", "eps"].contains(&e.to_ascii_lowercase().as_str()))
+}
+
+/// 받아 둔 창 없는 엔진 중 최신 판 — scripts/craft ensure_cli 와 같은 자리(<craft>/<앱>/cli/<판>/<앱>-cli)·같은 순서(판은 숫자로).
+/// 안 받았으면 None — 미리보기 때문에 받지는 않는다(QuickLook 으로 넘어간다)
+fn craft_cli(root: &Path, app: &str) -> Option<PathBuf> {
+    let d = root.join(app).join("cli");
+    let exe = format!("{app}-cli");
+    let key = |v: &str| v.split('.').map(|x| x.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
+    std::fs::read_dir(&d).ok()?.flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|v| !v.starts_with('.') && d.join(v).join(&exe).is_file())
+        .max_by_key(|v| key(v))
+        .map(|v| d.join(v).join(exe))
+}
+
+/// PostScript 로 된 .ai·.eps(PDF 부분 없음 — QuickLook 이 못 그리고 영영 안 돌아온다)면 엔진으로 그릴 배율, PDF 로 된 .ai 는 None(QuickLook 이 그린다).
+/// 긴 변이 1600px 쯤(QuickLook -s 1600 과 같은 크기) — 고정 배율이면 1:1 간판 도면(1만 pt)이 2만 px 그림이 된다. 상자를 모르면 1배
+fn ps_scale(head: &[u8]) -> Option<f64> {
+    if !(head.starts_with(b"%!PS") || head.starts_with(&[0xC5, 0xD0, 0xD3, 0xC6])) {
+        return None;
+    }
+    let text = String::from_utf8_lossy(head);
+    let bbox = text.split(['\n', '\r']).find_map(|l| l.strip_prefix("%%BoundingBox:")).and_then(|r| {
+        let n: Vec<f64> = r.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+        (n.len() == 4).then(|| (n[2] - n[0]).abs().max((n[3] - n[1]).abs())).filter(|m| *m > 0.0)
+    });
+    Some(bbox.map_or(1.0, |m| (1600.0 / m).clamp(0.05, 4.0)))
+}
+
+/// 그림 한 장 — 길(변환기)을 차례대로 해 보고 그림(out)이 생긴 첫 길에서 제자리(png)로 옮긴다. 길마다 시간 한도:
+/// PDF 호환 없는 .ai 에서 qlmanage 가 몇 분째 안 돌아와 웹이 '미리보기 만드는 중'에 영영 멈췄다(2026-10-29 간판 제작도 .ai — 걸린 qlmanage 4개).
+/// out 은 부를 때마다 따로인 자리 — 대시보드 카드와 미리보기가 같은 파일을 같이 불러도 서로의 그림을 지우지 않게
+fn thumb_by(out: &Path, png: &Path, steps: Vec<std::process::Command>, limit: std::time::Duration) -> Result<(), String> {
+    let drawn = || out.metadata().is_ok_and(|m| m.len() > 0);
+    let mut why = Vec::new();
+    for mut c in steps {
+        match crate::platform::run_capped(&mut c, limit) {
+            Ok(_) if drawn() => return std::fs::rename(out, png).map_err(|e| e.to_string()),
+            Ok(o) => {
+                let s = String::from_utf8_lossy(if o.stderr.is_empty() { &o.stdout } else { &o.stderr }).trim().chars().take(200).collect::<String>();
+                why.push(if s.is_empty() { o.status.to_string() } else { s });
+            }
+            Err(e) => why.push(e.to_string()),
+        }
+        let _ = std::fs::remove_file(out); // 끊긴 길이 반쯤 쓴 그림·빈 그림
+    }
+    Err(format!("{} ({})", tr("미리보기를 못 만들었어", "Couldn't make a preview"), why.join(" / ")))
+}
+
 #[tauri::command]
 pub async fn ql_thumb(path: String) -> Result<String, String> {
     if !cfg!(target_os = "macos") {
@@ -792,12 +851,30 @@ pub async fn ql_thumb(path: String) -> Result<String, String> {
         let dir = ql_dir(&crate::config::data_file("ql"), &p);
         let _ = std::fs::create_dir_all(&dir);
         // 원본보다 새 그림이 이미 있으면 그대로(앱을 다시 켤 때마다 qlmanage 를 돌리지 않게)
-        let done = dir.join(format!("{}.png", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
-        let newer = |a: &std::path::Path, b: &std::path::Path| matches!((a.metadata().and_then(|m| m.modified()), b.metadata().and_then(|m| m.modified())), (Ok(x), Ok(y)) if x >= y);
-        if newer(&done, &p) { return Ok(done.to_string_lossy().into_owned()); }
-        let out = crate::platform::command("/usr/bin/qlmanage").args(["-t", "-s", "1600", "-o"]).arg(&dir).arg(&p).output().map_err(|e| e.to_string())?;
         let png = dir.join(format!("{}.png", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
-        if png.exists() { Ok(png.to_string_lossy().into_owned()) } else { Err(String::from_utf8_lossy(&out.stdout).trim().to_string()) }
+        let newer = |a: &std::path::Path, b: &std::path::Path| matches!((a.metadata().and_then(|m| m.modified()), b.metadata().and_then(|m| m.modified())), (Ok(x), Ok(y)) if x >= y);
+        if newer(&png, &p) { return Ok(png.to_string_lossy().into_owned()); }
+        // 부를 때마다 따로 그리는 자리 — 같은 파일을 동시에 불러도 서로 안 지운다(thumb_by)
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let work = dir.join(format!(".work-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+        let out = work.join(png.file_name().unwrap_or_default());
+        let mut steps = Vec::new();
+        let head = || { use std::io::Read; let mut b = Vec::new(); std::fs::File::open(&p).and_then(|f| f.take(64 * 1024).read_to_end(&mut b)).map(|_| b).unwrap_or_default() };
+        if let Some(scale) = vector_thumb(&p).then(|| ps_scale(&head())).flatten() {
+            if let Some(cli) = craft_cli(&crate::config::data_file("craft"), "vectorcraft") {
+                let mut c = crate::platform::command(cli);
+                c.arg("convert").arg(&p).arg(&out).args(["--scale", &format!("{scale:.3}")]);
+                steps.push(c);
+            }
+        }
+        // QuickLook 은 그림을 <work>/<원본 이름>.png 로 — 엔진과 같은 자리
+        let mut q = crate::platform::command("/usr/bin/qlmanage");
+        q.args(["-t", "-s", "1600", "-o"]).arg(&work).arg(&p);
+        steps.push(q);
+        let r = thumb_by(&out, &png, steps, THUMB_LIMIT);
+        let _ = std::fs::remove_dir_all(&work);
+        r.map(|_| png.to_string_lossy().into_owned())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1102,6 +1179,137 @@ mod ql_dir_tests {
         assert_ne!(a, b);
         assert_eq!(a, super::ql_dir(base, std::path::Path::new("/h/a/avatar/v2.html")));
         assert!(a.starts_with(base));
+    }
+}
+
+#[cfg(test)]
+mod thumb_tests {
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, Instant};
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("chammo-thumb-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+    fn sh(script: &str) -> std::process::Command {
+        let mut c = crate::platform::command("/bin/sh");
+        c.args(["-c", script]);
+        c
+    }
+    fn write_png(png: &Path) -> std::process::Command {
+        sh(&format!("printf png > '{}'", png.display()))
+    }
+
+    #[test]
+    fn 앞_길이_실패하면_다음_길로_그린다() {
+        let d = tmp("next");
+        let (out, png) = (d.join("work-1/간판 제작도.ai.png"), d.join("간판 제작도.ai.png"));
+        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+        assert!(super::thumb_by(&out, &png, vec![sh("exit 3"), write_png(&out)], Duration::from_secs(5)).is_ok());
+        assert_eq!(std::fs::read(&png).unwrap(), b"png", "그린 그림은 제자리로");
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn 그림이_생기면_뒤_길은_안_돌린다() {
+        let d = tmp("first");
+        let (out, png, mark) = (d.join("w.png"), d.join("a.ai.png"), d.join("mark"));
+        let later = sh(&format!("touch '{}'", mark.display()));
+        assert!(super::thumb_by(&out, &png, vec![write_png(&out), later], Duration::from_secs(5)).is_ok());
+        assert!(!mark.exists(), "QuickLook 까지 또 돌리지 않는다");
+    }
+
+    #[test]
+    fn 변환기가_멈추면_시간_한도에서_끊고_실패로_끝난다() {
+        // 2026-10-29 PostScript .ai 에서 qlmanage 가 몇 분째 안 돌아와 '미리보기 만드는 중'에 멈췄다
+        let d = tmp("hang");
+        let (out, png) = (d.join("w.png"), d.join("a.ai.png"));
+        let t = Instant::now();
+        let r = super::thumb_by(&out, &png, vec![sh("sleep 30"), sh("sleep 30")], Duration::from_millis(300));
+        assert!(r.is_err());
+        assert!(t.elapsed() < Duration::from_secs(5), "길마다 한도 — {:?}", t.elapsed());
+    }
+
+    #[test]
+    fn 그리는_동안_제자리_그림을_건드리지_않는다() {
+        // 대시보드 카드와 미리보기가 같은 파일을 같이 부른다 — 한쪽이 시작하며 다른 쪽이 막 그린 그림을 지우면 안 된다
+        let d = tmp("keep");
+        let (out, png) = (d.join("w.png"), d.join("a.ai.png"));
+        std::fs::write(&png, b"other").unwrap();
+        let check = sh(&format!("test \"$(cat '{}')\" = other && printf png > '{}'", png.display(), out.display()));
+        assert!(super::thumb_by(&out, &png, vec![check], Duration::from_secs(5)).is_ok());
+        assert_eq!(std::fs::read(&png).unwrap(), b"png");
+        // 다 실패하면 제자리는 그대로 — 원본보다 옛것이라 ql_thumb 이 내주지 않는다(newer)
+        std::fs::write(&png, b"old").unwrap();
+        assert!(super::thumb_by(&out, &png, vec![sh("exit 1")], Duration::from_secs(5)).is_err());
+        assert_eq!(std::fs::read(&png).unwrap(), b"old");
+    }
+
+    #[test]
+    fn 빈_그림은_그린_걸로_안_친다() {
+        let d = tmp("empty");
+        let (out, png) = (d.join("w.png"), d.join("a.ai.png"));
+        let empty = sh(&format!(": > '{}'", out.display()));
+        assert!(super::thumb_by(&out, &png, vec![empty], Duration::from_secs(5)).is_err());
+        assert!(!png.exists() && !out.exists());
+    }
+
+    #[test]
+    fn 포스트스크립트만_엔진으로_긴_변_1600px() {
+        // 참모 벡터가 쓴 간판 제작도 .ai — %!PS + %%BoundingBox: 44 56 1134 792 → 긴 변 1090pt
+        let ps = b"%!PS-Adobe-3.0\n%%Creator: VectorCraft 0.13.4\n%%BoundingBox: 44 56 1134 792\n";
+        assert!((super::ps_scale(ps).unwrap() - 1600.0 / 1090.0).abs() < 1e-9);
+        // 1:1 간판 도면(1만 pt)도 2만 px 그림을 만들지 않는다, 명함처럼 작은 건 4배까지
+        assert!((super::ps_scale(b"%!PS-Adobe-3.0 EPSF-3.0\r%%BoundingBox: 0 0 10035 3260\r").unwrap() - 1600.0 / 10035.0).abs() < 1e-9);
+        assert_eq!(super::ps_scale(b"%!PS\n%%BoundingBox: 0 0 100 50\n"), Some(4.0));
+        // 상자를 모르면 1배
+        assert_eq!(super::ps_scale(b"%!PS-Adobe-3.0\n%%BoundingBox: (atend)\n"), Some(1.0));
+        assert_eq!(super::ps_scale(b"%!PS-Adobe-3.0\n"), Some(1.0));
+        // DOS 머리 붙은 EPS 도 PostScript
+        assert_eq!(super::ps_scale(&[0xC5, 0xD0, 0xD3, 0xC6, 0, 0]), Some(1.0));
+        // PDF 로 된 .ai(일러스트레이터 기본)는 QuickLook 이 그린다
+        assert_eq!(super::ps_scale(b"%PDF-1.7\n%%BoundingBox: 0 0 10 10"), None);
+    }
+
+    #[test]
+    fn 받아_둔_엔진_중_최신_판을_고른다() {
+        // scripts/craft ensure_cli 와 같은 자리·같은 순서 — <craft>/<앱>/cli/<판>/<앱>-cli, 판은 숫자로(0.13 > 0.9)
+        let root = tmp("cli");
+        let cli = root.join("vectorcraft/cli");
+        for v in ["0.9.0", "0.13.1", "0.13.0"] {
+            std::fs::create_dir_all(cli.join(v)).unwrap();
+            std::fs::write(cli.join(v).join("vectorcraft-cli"), "").unwrap();
+        }
+        std::fs::create_dir_all(cli.join("0.14.0")).unwrap(); // 실행 파일 없는 판(받다 만 것)
+        std::fs::create_dir_all(cli.join(".tmp-x")).unwrap();
+        std::fs::write(cli.join(".tmp-x").join("vectorcraft-cli"), "").unwrap();
+        assert_eq!(super::craft_cli(&root, "vectorcraft"), Some(cli.join("0.13.1").join("vectorcraft-cli")));
+        assert_eq!(super::craft_cli(&root, "photocraft"), None, "안 받은 엔진은 없음 — 미리보기 때문에 받지 않는다");
+    }
+
+    /// 실측 — CHAMMO_HOME=<임시 폴더> CHAMMO_THUMB_SAMPLE=<.ai> cargo test --bin honor-orchestrator reader::thumb_tests::진짜_파일 -- --ignored --exact --nocapture
+    /// (<임시>/craft 를 진짜 craft 폴더로 링크하면 엔진 길, 없으면 QuickLook 길)
+    #[test]
+    #[ignore]
+    fn 진짜_파일_미리보기_실측() {
+        let Ok(f) = std::env::var("CHAMMO_THUMB_SAMPLE") else { return };
+        assert!(std::env::var("CHAMMO_HOME").is_ok(), "진짜 데이터 폴더에 그리지 않게 CHAMMO_HOME 을 준다");
+        let t = Instant::now();
+        let r = tauri::async_runtime::block_on(super::ql_thumb(f));
+        println!("ql_thumb {:?} → {r:?}", t.elapsed());
+        assert!(t.elapsed() < Duration::from_secs(45), "웹 한도(PREVIEW_WAIT_MS) 안에 답한다");
+    }
+
+    #[test]
+    fn 벡터_파일만_참모_벡터_엔진으로_먼저() {
+        for f in ["/h/간판.ai", "/h/x.AI", "/h/x.eps", "/h/x.ait"] {
+            assert!(super::vector_thumb(Path::new(f)), "{f}");
+        }
+        for f in ["/h/x.psd", "/h/x.key", "/h/ai", "/h/x.ai.zip"] {
+            assert!(!super::vector_thumb(Path::new(f)), "{f}");
+        }
     }
 }
 

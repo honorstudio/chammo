@@ -1,0 +1,44 @@
+// 팀 홈 판(ADR 0018) 배선 — 꾸미기는 팀장만·완료 때 한 판, 폰은 같은 판을 맥으로, 모드 칸은 데스크톱만, 링크는 웹 주소만 밖으로
+import { describe, expect, it } from 'vitest';
+import board from './HomeBoard.tsx?raw';
+import blocks from './HomeBlocks.tsx?raw';
+import modeBlock from './HomeModeBlock.tsx?raw';
+import home from './TeamHome.tsx?raw';
+import teamMode from './useTeamMode.tsx?raw';
+import phone from '../mobile/PhoneTeam.tsx?raw';
+import web from '../../data/web.ts?raw';
+import api from '../../data/teamHomeApi.ts?raw';
+
+describe('팀 홈 판 배선', () => {
+  it('꾸미기 아이콘은 팀장에게만, 판이 없으면 팀장만 템플릿 셋(팀원은 글 목록 그대로)', () => {
+    expect(board).toContain('board?.owner && saved && <IconButton label={tr(\'홈 꾸미기\'');
+    expect(board).toContain('{!home && board?.owner && <Start onBegin={begin} />}');
+    expect(board).toContain('{!home && fallback}');
+  });
+  it('완료 때만 올린다 — 바뀐 게 없으면 안 올리고, 올린 뒤 판을 다시 읽는다', () => {
+    expect(board).toContain('if (!dirty) return leave();');
+    expect(board).toContain('api.save(teamId, draft).then(() => { leave(); onSaved(); }');
+    expect(home).toContain('onSaved={() => loadHome(null)}');
+  });
+  it('끌기는 손잡이에서만(포인터 + 화살표 키), 꾸미는 동안 블록 안은 안 눌린다', () => {
+    expect(board).toContain('onPointerDown={(e) => down(e, b.id)}');
+    expect(board).toContain('onKeyDown={(e) => key(e, b.id, i)}');
+  });
+  it('데스크톱은 TeamHomeDesktop(모드 칸) — 폰은 판 길을 맥 폰 서버로, 모드 칸 없이', () => {
+    expect(teamMode).toContain('home={<TeamHomeDesktop ');
+    expect(phone).toContain('homeApi={homeApi} sources={homeSources} phone />');
+    expect(phone).not.toContain('HomeModeBlock');
+    expect(web).toContain("home: (team, rev) => getJson(`/api/team-home?team=${encodeURIComponent(team)}&rev=${rev}`)");
+    expect(web).toContain("homeSave: (team, home) => post('/api/team-home-save', { team, home })");
+    expect(api).toContain("invoke('team_home_save', { team, home })");
+  });
+  it('링크는 웹뷰가 따라가지 않고 열기 길로(데스크톱 = 기본 브라우저)', () => {
+    expect(blocks).toContain('onClick={(e) => { e.preventDefault(); d.openUrl(l.url); }}');
+    expect(api).toContain("openUrl: (url) => void openTarget('url', url)");
+  });
+  it('모드 칸 — 가벼운 모드만, 켜기는 사람이 누른 뒤, 대시보드 자리 team:<팀 id> 로', () => {
+    expect(modeBlock).toContain("st === 'heavy'");
+    expect(modeBlock).toContain("if (st !== 'start' || asked.current === mode) return;");
+    expect(modeBlock).toContain("place: 'dash', dash: `team:${teamId}`");
+  });
+});

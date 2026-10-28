@@ -3,7 +3,8 @@ import { CHAR_CSS, STATUS_WORD, character } from './avatar'
 import { BigNum, Label, Rule, Sky, moonAge, sunTimes, textW, type Layer } from './kit-svg'
 import type { Look, Status } from './model'
 
-export type Tile = { id: string; key: string; role: string; status: Status; look: Look }
+/** key = 기본 이름(캐릭터 흔들림 씨앗), name = 이름표(별명 — 앱과 같은 규칙) */
+export type Tile = { id: string; key: string; name: string; role: string; status: Status; look: Look }
 export type Clock = { year: number; month: number; day: number; hour: number; minute: number; weekday: number; utc: number }
 const WEEK = ['일', '월', '화', '수', '목', '금', '토']
 
@@ -32,7 +33,7 @@ export function gauge(tiles: Tile[], W: number, Hmax: number): Layer {
     const cy = top + s / 2
     return `<circle class="k-st ${t.status}" cx="${cx}" cy="${cy}" r="${s * 0.56}"/>`
       + character(t.look, t.status, t.key, cx - s / 2, top, s)
-      + Label(cx, top + s + 30, t.key, { size: 15, weight: 700, anchor: 'middle' })
+      + Label(cx, top + s + 30, cut(t.name, cw - 16, 15), { size: 15, weight: 700, anchor: 'middle' })
       + (role && t.role ? Label(cx, top + s + 50, cut(t.role, cw - 16, 12), { size: 12, cls: 'k-dim', anchor: 'middle' }) : '')
       + Label(cx, top + s + (role ? 72 : 50), STATUS_WORD[t.status], { size: 11, cls: `k-cap k-sw ${t.status}`, anchor: 'middle', weight: 700 })
   }).join('')
@@ -50,7 +51,7 @@ export function sky(tiles: Tile[], c: Clock, W: number, Hmax: number): Layer {
   const people = shown.map((t, i) => {
     const x = n === 1 ? W / 2 : W * (0.12 + (0.76 * i) / (n - 1)), y = sc.road(x)
     return character(t.look, t.status, t.key, x - size / 2, y - size * 0.86, size)
-      + Label(x, y + 18, t.key, { size: 12, weight: 700, anchor: 'middle', cls: 'k-lab' })
+      + Label(x, y + 18, cut(t.name, (W / n) - 8, 12), { size: 12, weight: 700, anchor: 'middle', cls: 'k-lab' })
   }).join('') + (more > 0 ? Label(W - 10, sc.road(W - 10) - 8, `+${more}`, { size: 12, weight: 700, anchor: 'end' }) : '')
   const work = count(tiles, 'work'), asks = count(tiles, 'ask')
   const big = wide ? 96 : 64, x0 = wide ? 44 : 20, y0 = (wide ? 28 : 16) + big * 0.78
@@ -67,7 +68,7 @@ export function cover(tiles: Tile[], c: Clock, W: number): Layer {
   const roster = (x: number, y: number, w: number, max: number) => tiles.slice(0, max).map((t, i) => {
     const yy = y + i * 54
     return character(t.look, t.status, t.key, x, yy, 40)
-      + Label(x + 54, yy + 26, t.key, { size: 20, cls: 'k-myeong' })
+      + Label(x + 54, yy + 26, cut(t.name, w * 0.55 - 54, 20), { size: 20, cls: 'k-myeong' })
       + Label(x + w, yy + 18, STATUS_WORD[t.status], { size: 11, cls: `k-cap k-sw ${t.status}`, anchor: 'end', weight: 700 })
       + (t.role ? Label(x + w, yy + 36, cut(t.role, w * 0.4, 12), { size: 12, cls: 'k-dim', anchor: 'end' }) : '')
       + Rule(x, yy + 48, x + w, 0.6, true)

@@ -235,7 +235,7 @@ fn 이름으로_고르고_목록_보기() {
     b.handle_batch(&[msg(3, ME, "그다음 이것도", NOW + 2000)], NOW + 2000);
     assert_eq!(b.env.typed.lock().unwrap()[1].0, "bbbbbbbb", "마지막으로 말한 참모가 기본");
     b.handle_batch(&[msg(4, ME, "/참모", NOW + 2000)], NOW + 2000);
-    assert!(sent(&tg).last().unwrap()["text"].as_str().unwrap().contains("참모-2 · 참모 업데이트 — 지금 받는 참모"));
+    assert!(sent(&tg).last().unwrap()["text"].as_str().unwrap().contains("· 참모 업데이트 — 지금 받는 참모")); // 목록엔 별명만(2026-10-28)
     b.handle_batch(&[msg(5, ME, "/참모-9 x", NOW + 2000)], NOW + 2000);
     assert!(sent(&tg).last().unwrap()["text"].as_str().unwrap().contains("참모-9 참모가 없어요"));
     assert_eq!(b.env.typed.lock().unwrap().len(), 2);

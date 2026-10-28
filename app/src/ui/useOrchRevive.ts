@@ -1,12 +1,13 @@
 // 참모가 앱이 끄지 않았는데 목록에서 사라지면 같은 대화로 다시 켠다 — 판단은 domain/orchRevive, 켜기는 App(resumeSession = claude respawn).
 // 3초마다 본다(목록 폴링과 같은 결). 연달아 죽어 멈추면 결정 대기함 카드 + 맥 알림 한 번, 그 참모가 다시 뜨면 카드를 닫는다
 import { useEffect, useRef, useState } from 'react';
-import { appendTaskEvent, appStoppedRecently, daemonStartedAt } from '../data/tauri';
+import { appendTaskEvent, appStoppedRecently, daemonStartedAt, daemonStoppedRecently } from '../data/tauri';
 import { emptyRevive, planRevive, reviveCard, type ReviveMemo, type ReviveOrch } from '../domain/orchRevive';
 import type { Session } from '../domain/session';
 import { taskId } from '../domain/reviewSummary';
 import { tr } from '../i18n';
 import { notifyOnce } from './notifier';
+import { busyNow } from './busyNow';
 
 const TICK = 3000;
 
@@ -38,7 +39,11 @@ export function useOrchRevive(o: {
         if (!stopped) return;
         const live = latest.current.orchs.filter((s) => s.kind === 'background' && s.sessionId).map((s) => ({ id: s.id, sessionId: s.sessionId!, name: s.name, cwd: s.cwd }));
         const alive = new Set(latest.current.all.map((s) => s.id));
-        const r = planRevive(memo.current, { live, now: Date.now(), daemon, stoppedByApp: (id) => stopped.includes(id), alive: (id) => alive.has(id) });
+        // 터미널·스크립트의 claude stop 은 앱이 모른다 — 사라진 참모가 있을 때만 daemon.log 를 본다(#6). 못 읽으면 예전처럼(빈 목록)
+        const gone = Object.keys(memo.current.seen).some((id) => !live.some((s) => s.id === id));
+        const outside = gone ? await daemonStoppedRecently().catch(() => [] as string[]) : [];
+        // 맥이 바쁘면 Claude Code 가 '응답 없음'으로 다시 켜는 중일 수 있다 — 겹쳐 켜지 않게 더 기다린다(domain/orchRevive BUSY_GONE_GRACE)
+        const r = planRevive(memo.current, { live, now: Date.now(), daemon, stoppedByApp: (id) => stopped.includes(id), stoppedOutside: (id) => outside.includes(id), alive: (id) => alive.has(id), busy: busyNow() !== 'ok' });
         memo.current = r.memo;
         const goneIds = new Set(Object.keys(r.memo.goneAt));
         setReviving((x) => {

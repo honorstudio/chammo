@@ -510,7 +510,7 @@ fn 단톡방_말은_명부의_방_사람이_보낸_것만_받는다() {
     let to = vec![Recipient { device: "d1".into(), e2e: k.e2e_public() }];
     let body = e2e_envelope::seal(&third, &meta, &inner, &to).unwrap();
     answer_chain(&r, "a1", std::slice::from_ref(&g1));
-    r.answer("/v0/teams/t1/log", 200, &json!({ "links": group_links(&k, &peer, &third) }).to_string());
+    r.always("GET", "/v0/teams/t1/log", 200, &json!({ "links": group_links(&k, &peer, &third) }).to_string());
     r.always("GET", "/v0/accounts/a2/chain", 200, &json!({ "links": [genesis("a2", &peer, "p1")] }).to_string());
     r.always("GET", "/v0/accounts/a3/chain", 200, &json!({ "links": [g3.clone()] }).to_string());
     let m = json!({ "room": "r2", "body": body, "from": { "device": "q1", "account": "a3" } });
@@ -748,4 +748,157 @@ fn 보관함_새_폴더는_사람_확인을_한_번만_한다() {
     let mut to: Vec<_> = posted["keys"].as_array().unwrap().iter().map(|e| e["d"].as_str().unwrap_or_default().to_string()).collect();
     to.sort();
     assert_eq!(to, vec!["d1", "p1"], "받는 기기는 새로 확인한 사람 목록 그대로(나·철수)");
+}
+
+#[test]
+fn 서버_머리_seq_가_u64_끝이어도_죽지_않고_새로_받는다() {
+    // 10-27 리뷰 — 서버가 준 머리 seq 로 seq + 1 을 셈해서 u64::MAX 면 디버그에서 오버플로 패닉(남의 서버 값)
+    let (d, kc, r, mine) = me("heads-max");
+    let st = relay::load_state(&d);
+    let p1 = other(2);
+    let g = genesis("a2", &p1, "p1");
+    answer_chain(&r, "a2", std::slice::from_ref(&g));
+    chain_of(&d, &kc, &r, &st, "a2", true).unwrap();
+    let h = Heads { log: Some((u64::MAX, "x".into())), chains: BTreeMap::from([("a2".to_string(), Some((u64::MAX, "x".to_string())))]) };
+    answer_chain(&r, "a2", std::slice::from_ref(&g));
+    assert!(matches!(chain_fresh(&d, &kc, &r, &st, "a2", Some(&h)).unwrap(), Trust::Ok(_)), "머리가 안 맞으면 새로 받아 그대로 믿는다");
+    let links = roster_links(&mine, &other(7));
+    super::mutate(&d, |s| {
+        s.rosters.insert("t1".into(), links.clone());
+    })
+    .unwrap();
+    r.answer("/v0/teams/t1/log", 200, &json!({ "links": links }).to_string());
+    r.always("GET", "/chain", 404, r#"{"error":"not_found"}"#); // 명부 사람 사슬 — 이 시험은 패닉 여부만
+    let _ = roster_with(&d, &kc, &r, &st, "t1", Some(&h)); // 패닉만 없으면 된다(명부 검증 결과는 이 시험 몫 아님)
+    let got = |p: &str| r.seen.borrow().iter().filter(|(m, path, _, _)| m == "GET" && path.ends_with(p)).count();
+    assert_eq!(got("/v0/accounts/a2/chain"), 2, "사슬은 캐시와 안 맞으니 새로");
+    assert_eq!(got("/v0/teams/t1/log"), 1, "명부도 새로");
+}
+
+// ── 지난 대화 건네받기(chammo-relay ADR 0007 R10) — 나는 새 기기 d1, 옛 기기 d0 가 사슬을 시작했고 d1 을 add ──
+
+/// (d0 열쇠, 사슬) — d1 은 사슬을 믿는 상태(숫자 확인 뒤)
+fn late_setup(d: &std::path::Path, r: &FakeRelay, k: &DeviceKeys) -> (DeviceKeys, Vec<Link>) {
+    let a = other(5);
+    let g = genesis("a1", &a, "d0");
+    let l1 = add("a1", &a, "d0", &g, k, "d1");
+    let links = vec![g, l1];
+    answer_chain(r, "a1", &links);
+    seed_trusted(d, "a1", links.clone());
+    (a, links)
+}
+
+/// d0 이 d1 이 들기 전에 내 기기끼리 방에 봉한 말 — 봉투 목록엔 to 만
+fn old_msg(a: &DeviceKeys, links: &[Link], cid: &str, to: &[(&DeviceKeys, &str)], at: u64) -> String {
+    let m = Meta { room: "rs".into(), cid: cid.into(), from: "d0".into(), head: link_hash(&links[0].body, &links[0].sig), ..Default::default() };
+    let to: Vec<Recipient> = to.iter().map(|(k, id)| Recipient { device: id.to_string(), e2e: k.e2e_public() }).collect();
+    e2e_envelope::seal(a, &m, &Inner { origin: "human".into(), text: "지난 회의록".into(), at, ..Default::default() }, &to).unwrap()
+}
+
+fn late_frame(body: &str, l: &e2e_envelope::Late, by: &str) -> Value {
+    json!({ "t": "late", "seq": 1, "room": "rs", "from": { "device": "d0", "account": "a1" }, "origin": "human", "body": body, "key": { "enc": l.enc, "w": l.w, "by": by } })
+}
+
+#[test]
+fn 옛_기기가_건넨_열쇠로_새_기기가_지난_말을_연다() {
+    let (d, kc, r, k) = me("late-open");
+    let (a, links) = late_setup(&d, &r, &k);
+    let at = now_ms() - 3600_000;
+    let body = old_msg(&a, &links, "c1", &[(&a, "d0")], at);
+    let st = relay::load_state(&d);
+    // 그냥 받으면 이 기기 몫이 없다
+    let plain = json!({ "t": "msg", "room": "rs", "from": { "device": "d0", "account": "a1" }, "origin": "human", "body": body });
+    assert_eq!(unwrap(&d, &kc, &r, &st, &plain), Unwrapped::Failed("NotForMe".into()));
+    let me_r = Recipient { device: "d1".into(), e2e: k.e2e_public() };
+    let l = e2e_envelope::rewrap(&a, "d0", &body, Some(&a.public()), &me_r).unwrap();
+    assert_eq!(unwrap(&d, &kc, &r, &st, &late_frame(&body, &l, "d0")), Unwrapped::Opened { text: "지난 회의록".into(), human: true, note: String::new(), at, extra: Default::default(), via: String::new() });
+    // 같은 걸 또 넣으면 되넣기로 걸린다
+    assert_eq!(unwrap(&d, &kc, &r, &st, &late_frame(&body, &l, "d0")), Unwrapped::Failed("replay".into()));
+}
+
+#[test]
+fn 공격_건넨_기기가_내_사슬이_아니거나_원래_내_계정이_받는_말이_아니면_안_연다() {
+    let (d, kc, r, k) = me("late-bad");
+    let (a, links) = late_setup(&d, &r, &k);
+    let st = relay::load_state(&d);
+    let me_r = Recipient { device: "d1".into(), e2e: k.e2e_public() };
+    // 건넨 기기라고 서버가 남의 기기 이름을 찍어 왔다
+    let body = old_msg(&a, &links, "c1", &[(&a, "d0")], now_ms());
+    let l = e2e_envelope::rewrap(&a, "d0", &body, Some(&a.public()), &me_r).unwrap();
+    assert_eq!(unwrap(&d, &kc, &r, &st, &late_frame(&body, &l, "x9")), Unwrapped::Failed("late-by".into()));
+    // 원래 봉투에 내 계정 기기가 하나도 없던 말(남이 남에게 보낸 말을 누가 열쇠째 넘김)
+    let x = other(7);
+    let body2 = old_msg(&a, &links, "c2", &[(&x, "x7")], now_ms());
+    let l2 = e2e_envelope::rewrap(&x, "x7", &body2, Some(&a.public()), &me_r).unwrap();
+    assert_eq!(unwrap(&d, &kc, &r, &st, &late_frame(&body2, &l2, "d0")), Unwrapped::Failed("late-not-mine".into()));
+    // msg 틀에 key 를 붙여 와도 건네받기로 안 연다
+    let mut f = late_frame(&body, &l, "d0");
+    f["t"] = json!("msg");
+    assert_eq!(unwrap(&d, &kc, &r, &st, &f), Unwrapped::Failed("NotForMe".into()));
+}
+
+#[test]
+fn 내_사슬을_믿기_전엔_건네받은_말도_안_연다() {
+    let (d, kc, r, k) = me("late-unconf");
+    let a = other(5);
+    let g = genesis("a1", &a, "d0");
+    let links = vec![g.clone(), add("a1", &a, "d0", &g, &k, "d1")];
+    answer_chain(&r, "a1", &links);
+    let body = old_msg(&a, &links, "c1", &[(&a, "d0")], now_ms());
+    let l = e2e_envelope::rewrap(&a, "d0", &body, Some(&a.public()), &Recipient { device: "d1".into(), e2e: k.e2e_public() }).unwrap();
+    answer_chain(&r, "a1", &links);
+    let st = relay::load_state(&d);
+    assert_eq!(unwrap(&d, &kc, &r, &st, &late_frame(&body, &l, "d0")), Unwrapped::Failed("unconfirmed".into()));
+}
+
+
+// ── 요청 수 상한(10-28 22:53 429) — 받은 말 하나마다 명부(/log)·사슬을 다시 받으면 다시 붙은 방의 밀린 말이 열쇠의 10분 300개를 다 먹는다 ──
+
+#[test]
+fn 받은_말_열_개를_풀어도_중계엔_처음_한_번만_묻는다() {
+    let (d, kc, r, k) = me("unwrap-burst");
+    let p2 = other(2);
+    let (g1, g2) = (genesis("a1", &k, "d1"), genesis("a2", &p2, "p1"));
+    r.always("GET", "/v0/accounts/a1/chain", 200, &json!({ "links": [g1] }).to_string());
+    r.always("GET", "/v0/accounts/a2/chain", 200, &json!({ "links": [g2.clone()] }).to_string());
+    r.always("GET", "/v0/teams/t1/log", 200, &json!({ "links": roster_links(&k, &p2) }).to_string());
+    let st = relay::load_state(&d);
+    for i in 0..10 {
+        let m = json!({ "room": "r1", "from": { "device": "p1", "account": "a2" }, "origin": "human", "body": sealed_from(&p2, "p1", &g2, "r1", &format!("b{i}"), "안녕", &k) });
+        assert!(matches!(unwrap(&d, &kc, &r, &st, &m), Unwrapped::Opened { .. }), "{i}번째");
+    }
+    let n = r.seen.borrow().len();
+    assert!(n <= 4, "말 열 개에 중계 요청 {n}개: {:?}", r.seen.borrow().iter().map(|(m, p, _, _)| format!("{m} {p}")).collect::<Vec<_>>());
+}
+
+#[test]
+fn 캐시_명부에_없는_새_사람_말은_한_번_새로_받아_열고_지어낸_보낸_이는_10초에_한_번만_묻는다() {
+    let (d, kc, r, k) = me("unwrap-newcomer");
+    let (p2, p3) = (other(2), other(3));
+    mutate(&d, |s| s.rooms.push(Room { id: "r3".into(), kind: "dm".into(), peer: "m3".into(), team: "t1".into(), ..Default::default() })).unwrap();
+    let (g1, g2, g3) = (genesis("a1", &k, "d1"), genesis("a2", &p2, "p1"), genesis("a3", &p3, "q1"));
+    r.always("GET", "/v0/accounts/a1/chain", 200, &json!({ "links": [g1] }).to_string());
+    r.always("GET", "/v0/accounts/a2/chain", 200, &json!({ "links": [g2.clone()] }).to_string());
+    r.always("GET", "/v0/accounts/a3/chain", 200, &json!({ "links": [g3.clone()] }).to_string());
+    let mut ls = roster_links(&k, &p2);
+    // 처음 명부(철수만)를 줄 서게 하고, 그 뒤엔 민수가 들어온 명부
+    r.answer("/v0/teams/t1/log", 200, &json!({ "links": ls }).to_string());
+    let st = relay::load_state(&d);
+    let m = json!({ "room": "r1", "from": { "device": "p1", "account": "a2" }, "origin": "human", "body": sealed_from(&p2, "p1", &g2, "r1", "c1", "안녕", &k) });
+    assert!(matches!(unwrap(&d, &kc, &r, &st, &m), Unwrapped::Opened { .. }));
+    let (_, pk3) = inv_pair("C3");
+    ls.push(next(&k, "d1", &ls, json!({ "kind": "invite", "invPub": pk3, "role": "member", "expires": 1 })));
+    ls.push(join_by(&p3, "q1", &ls, "C3", "m3", "a3", "민수"));
+    r.always("GET", "/v0/teams/t1/log", 200, &json!({ "links": ls }).to_string());
+    let m3 = json!({ "room": "r3", "from": { "device": "q1", "account": "a3" }, "origin": "human", "body": sealed_from(&p3, "q1", &g3, "r3", "c2", "나 왔어", &k) });
+    assert!(matches!(unwrap(&d, &kc, &r, &st, &m3), Unwrapped::Opened { ref text, .. } if text == "나 왔어"), "새 사람 말은 명부를 새로 받아 연다");
+    let logs = || r.seen.borrow().iter().filter(|(m, p, _, _)| m == "GET" && p.ends_with("/v0/teams/t1/log")).count();
+    assert_eq!(logs(), 2);
+    // 명부에 없는 계정이 r3 에 말을 쏟아도 10초 안엔 명부를 다시 안 받는다
+    let pz = other(60);
+    for i in 0..10 {
+        let z = json!({ "room": "r3", "from": { "device": "zz", "account": "az" }, "origin": "human", "body": sealed_from(&pz, "zz", &genesis("az", &pz, "zz"), "r3", &format!("z{i}"), "가짜", &k) });
+        assert_eq!(unwrap(&d, &kc, &r, &st, &z), Unwrapped::Failed("account".into()));
+    }
+    assert_eq!(logs(), 2, "지어낸 보낸 이로 명부 요청을 쏟게 하지 못한다");
 }

@@ -8,6 +8,8 @@ import { readLink } from '../phone-web/link';
 import { tunnelFor } from '../phone-web/hub';
 import { installProxy } from '../phone-web/proxy';
 import { makeTagTail, parseTagChunk } from '../domain/tagTail';
+import { READ_LIMIT_MS, readCheck } from '../domain/readLimit';
+import { PHONE_PART, partsOf, upId } from '../domain/teamPhoneUp';
 export type { MobileEnv } from './peerApi';
 
 /** 열쇠가 없거나 바뀌었다 — 맥 앱 설정의 QR(열쇠 든 주소)로 다시 열어야 한다 */
@@ -111,11 +113,18 @@ async function call(path: string, init?: RequestInit, retried = false): Promise<
   return r;
 }
 
-/** 글·JSON 받기 시간 제한 — 매달린 요청 하나가 받기 고리를 통째로 세웠다(2026-10-04, 백그라운드에서 돌아온 폰). signal = 부른 쪽이 끊을 때 */
-const READ_LIMIT_MS = 20_000;
+/** 글·JSON 받기 시간 제한 — 매달린 요청 하나가 받기 고리를 통째로 세웠다(2026-10-04, 백그라운드에서 돌아온 폰). signal = 부른 쪽이 끊을 때.
+ *  중계 길은 터널이 받고 있는 동안 더 기다린다(domain/readLimit) */
 async function timed<T>(path: string, signal: AbortSignal | undefined, body: (r: Response) => Promise<T>): Promise<T> {
   const c = new AbortController();
-  const t = setTimeout(() => c.abort(), READ_LIMIT_MS);
+  const t0 = Date.now();
+  let t: ReturnType<typeof setTimeout>;
+  const check = () => {
+    const v = readCheck({ elapsed: Date.now() - t0, sinceRx: relay && !direct ? Date.now() - tunnelFor(relay).lastRx : Infinity, relay: !!relay && !direct });
+    if (v === 'abort') c.abort(new DOMException('연결이 느려서 답을 못 받았어요 — 잠시 뒤 다시 받아요', 'AbortError'));
+    else t = setTimeout(check, v);
+  };
+  t = setTimeout(check, READ_LIMIT_MS);
   const stop = () => c.abort();
   signal?.addEventListener('abort', stop);
   try {
@@ -134,7 +143,7 @@ const post = <T>(path: string, body: object) =>
 /** 보기·채팅·대기함 길 — 다른 기기 참모(data/remote)와 같은 판을 fetch 로 */
 const api = makeApi({ text: getText, json: getJson, post, bytes: (path) => call(path).then((r) => r.arrayBuffer()) });
 export const {
-  getEnv, readTranscript, readTranscriptBefore, readTasksSince, routinesList, readUsage, readLoad, readDirect, directAnswer, taskAnswer,
+  getEnv, readTranscript, peekTranscript, readTranscriptBefore, readTasksSince, routinesList, readUsage, readLoad, readDirect, directAnswer, taskAnswer,
   sendTextToSession, sendStatus, interruptSession, listStoppedOrchs, readTails, listBrowsers, browserFrame, readPins, readOrder, readRoles,
 } = api;
 /** 짝지은 다른 기기(peer-panel) — 폰은 이 맥만 안다. 그 기기 읽기는 이 맥이 대신(/api/peer-get, 허용 목록은 맥이 다시 본다), 쓰기 길은 없다 */
@@ -168,6 +177,7 @@ export const readPeerCards = () => getJson<import('../domain/remoteCards').PeerC
 /** 새 기기 허용 숫자 넣기(chammo-relay ADR 0007) — 숫자는 이 폰이 붙은 컴퓨터가 셈하고 폰은 넣기만 */
 export const phoneNumber: NumberApi = {
   open: (dev) => post<unknown>('/api/device-number', { dev, op: 'open' }).then(parseCardOpen),
+  claim: (dev) => post<unknown>('/api/device-number', { dev, op: 'claim' }).then(parseCardOpen),
   ready: (dev) => post<{ ready: boolean }>('/api/device-number', { dev, op: 'ready' }).then((v) => v.ready),
   approve: (dev, digits) => post<{ ok: true; code: string }>('/api/device-number', { dev, op: 'enter', digits }).then((v) => v.code),
   op: (dev, op) => post<{ ok: true }>('/api/device-number', { dev, op }).then(() => undefined),
@@ -183,6 +193,7 @@ export const readLogin = (signal?: AbortSignal) => getText('/api/login', signal)
 export const loginStart = () => post<unknown>('/api/login-start', {});
 export const loginCode = (code: string) => post<unknown>('/api/login-code', { code });
 export const loginCancel = () => post<unknown>('/api/login-cancel', {});
+export const loginTermsRetry = () => post<unknown>('/api/login-terms-retry', {});
 /** scripts/show 기록 꼬리 — 대시보드 파일 카드(domain/dashboard dashFiles). 안 바뀌었으면 맥이 글 없이 꼬리표만 준다(domain/tagTail) */
 export const readShowLog = makeTagTail((since) => getText(`/api/shows?since=${encodeURIComponent(since)}`).then(parseTagChunk));
 /** 폰 사무실 모양(맥 앱이 쓴 office.json — 자리표·반장·스킨·가구·장식). 바뀔 때만 몸통(domain/phoneOffice parseOffice) */
@@ -194,6 +205,19 @@ export const readOffice = makeTagTail((since, signal) => getText(`/api/office?si
 /** 썸네일 긴 변 — 작은 카드 360·큰 카드 720·오피스 첫 장 크게 1600 */
 export type ThumbSize = 360 | 720 | 1600;
 export const fileUrl = (path: string, thumb = false, size?: ThumbSize) => `/api/file?path=${encodeURIComponent(path)}${thumb ? `&thumb=1${size ? `&size=${size}` : ''}` : ''}`;
+/** 대화 파일 썸네일 — 맥이 풀어 줄인 JPEG(원본은 안 준다). 그림·PDF 만, 그 밖은 서버가 415 → null */
+const teamThumbs = new Map<string, Promise<string | null>>();
+export function teamThumbBlob(team: string, id: string): Promise<string | null> {
+  // 파일마다 한 번만 받는다(대화를 다시 열어도 같은 blob 주소) — 실패는 잊어서 다음에 다시
+  const k = `${team}\n${id}`;
+  let p = teamThumbs.get(k);
+  if (!p) {
+    p = call(`/api/team-file-thumb?team=${encodeURIComponent(team)}&id=${encodeURIComponent(id)}&size=360`).then((r) => r.blob()).then((b) => URL.createObjectURL(b));
+    p.catch(() => teamThumbs.delete(k));
+    teamThumbs.set(k, p);
+  }
+  return p;
+}
 /** 그림·PDF 는 <img src> 가 토큰을 못 실으니 fetch(Bearer) 로 받아 blob 주소로 — 다 쓰면 URL.revokeObjectURL */
 export const fileBlobUrl = (path: string, thumb = false, size?: ThumbSize) => call(fileUrl(path, thumb, size)).then((r) => r.blob()).then((b) => URL.createObjectURL(b));
 /** 그림 보기 — 보기용(크거나 무거우면 맥이 JPEG 2560 으로 줄임) 또는 원본. w·h = 원본 크기(X-Image-Size), served = 받은 그림 가로 */
@@ -236,18 +260,84 @@ export const attachFile = (file: File) =>
 export type TeamPhoneApi = {
   feed: () => Promise<import('./teamApi').TeamFeed>;
   /** cid = 이 말의 id — 다시 보내면 같은 cid(서버가 한 번만 저장) */
-  say: (to: string, text: string, cid: string) => Promise<{ room: string; seq: number }>;
+  say: (to: string, text: string, cid: string, re?: number) => Promise<{ room: string; seq: number }>;
+  /** 팀 참모(ADR 0017) — 목록(확인한 판 같이)·보내기 직전 확인·이 맥이 부른 답 토큰 */
+  agents: (team: string) => Promise<import('../domain/teamAgent').AgentList>;
+  agentConfirm: (team: string, id: string) => Promise<unknown>;
+  agentUsage: (room: string) => Promise<Record<string, [string, number]>>;
+  /** 폰에서 만들기·고치기(시안 섞음 2 서랍) — 권한·이름 검사는 맥 */
+  agentSave: (team: string, def: import('../domain/teamAgent').AgentDef, origin?: string) => Promise<{ id: string }>;
+  agentRemove: (team: string, id: string) => Promise<unknown>;
+  agentTry: (team: string, room: string, def: import('../domain/teamAgent').AgentDef, ask: string, prev: [string, string][]) => Promise<import('./teamAgentApi').Tried>;
+  agentRefs: (team: string) => Promise<import('../domain/teamAgent').AgentRef[]>;
+  /** 사람이 폰에서 이 방을 seq 까지 봤다 — 같은 계정 읽음으로 중계에(chammo-relay ADR 0012) */
+  read: (room: string, seq: number) => Promise<unknown>;
   invite: () => Promise<{ link: string; expiresAt: number }>;
   create: (team: string) => Promise<unknown>;
   /** 내 참모에게 넘기기 — 맥이 거르고 본문 없는 기록 길로 친다(/api/send 아님) */
   handoff: (to: string, text: string) => Promise<{ to: string }>;
+  /** 프로필판(별명·사진·상태)·팀 홈 글판 — rev = 폰이 본 판, 그대로면 {same}(맥이 중계를 안 부른다) */
+  profiles: (team: string, rev: number) => Promise<import('../domain/teamProfile').ProfileBoard | { same: true }>;
+  posts: (team: string, rev: number) => Promise<import('../domain/teamPosts').PostBoard | { same: true }>;
+  /** 팀 홈 판(ADR 0018) — rev = 본 판, 그대로면 {same}. 꾸미기 완료(팀장)·블록 내용(누구나) — 권한은 맥이 본다 */
+  home: (team: string, rev: number) => Promise<import('../domain/teamHome').HomeBoard | { same: true }>;
+  homeSave: (team: string, home: import('../domain/teamHome').Home) => Promise<unknown>;
+  homeContent: (team: string, block: string, content: import('../domain/teamHome').ContentDraft) => Promise<unknown>;
+  /** 팀 홈 새 글(고치기·지우기는 데스크톱) — pin 은 팀장만, 고정만 실패하면 pinError */
+  post: (team: string, title: string, body: string, pin: boolean) => Promise<{ id: string; pinError?: string }>;
+  /** 팀 보관함(중계) — 데스크톱 TeamLocker 와 같은 목록 + 맥이 올리는 중인 줄. rev = 본 판, 그대로면 {same} */
+  locker: (team: string, rev: number) => Promise<PhoneTeamLocker | ({ same: true } & PhoneTeamUps)>;
+  /** 새 폴더·이름·옮기기·휴지통·되살리기(영구 지우기는 데스크톱) */
+  lockerOp: (op: PhoneLockerOp) => Promise<unknown>;
+  /** 올리기 — 조각으로 차례로(마지막 조각이면 맥이 팀 보관함에 올린다). sent = 맥에 보낸 바이트 */
+  lockerPut: (team: string, file: File, folder: string, sent?: (n: number) => void) => Promise<void>;
 };
+export type PhoneTeamUps = { uploads: { name: string; done: number; total: number; error: string }[] };
+export type PhoneTeamLocker = import('../domain/teamLocker').LockerView & PhoneTeamUps;
+export type PhoneLockerOp = { team: string } & (
+  | { op: 'mkdir'; folder: string }
+  | { op: 'rename'; id: string; name: string }
+  | { op: 'move'; id: string; folder: string }
+  | { op: 'trash' | 'restore'; id: string }
+  | { op: 'folder-rename'; from: string; to: string }
+  | { op: 'folder-trash'; from: string }
+);
+/** 조각 하나씩 — 앞 조각 답을 받은 뒤 다음(맥이 차례를 본다). 실패한 조각은 한 번 더(같은 조각은 맥이 한 번만 붙인다) */
+async function putTeamFile(team: string, file: File, folder: string, sent?: (n: number) => void): Promise<void> {
+  const n = partsOf(file.size);
+  if (n === null) throw new Error('too large');
+  const up = upId();
+  for (let i = 0; i < n; i++) {
+    const q = `team=${encodeURIComponent(team)}&up=${up}&part=${i}&last=${i === n - 1 ? 1 : 0}&name=${encodeURIComponent(file.name)}&folder=${encodeURIComponent(folder)}`;
+    const body = file.slice(i * PHONE_PART, (i + 1) * PHONE_PART);
+    const once = () => call(`/api/team-locker-put?${q}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body });
+    await once().catch(once);
+    sent?.(Math.min(file.size, (i + 1) * PHONE_PART));
+  }
+}
 export const teamViaMac: TeamPhoneApi = {
   feed: () => getJson('/api/team'),
-  say: (to, text, cid) => post('/api/team-say', { to, text, cid }),
+  say: (to, text, cid, re) => post('/api/team-say', re ? { to, text, cid, re } : { to, text, cid }),
+  agents: (team) => getJson(`/api/team-agents?team=${encodeURIComponent(team)}`),
+  agentConfirm: (team, id) => post('/api/team-agent-confirm', { team, id }),
+  agentUsage: (room) => getJson(`/api/team-agent-usage?room=${encodeURIComponent(room)}`),
+  agentSave: (team, def, origin) => post('/api/team-agent-save', origin ? { team, def, origin } : { team, def }),
+  agentRemove: (team, id) => post('/api/team-agent-remove', { team, id }),
+  agentTry: (team, room, def, ask, prev) => post('/api/team-agent-try', { team, room, def, ask, prev }),
+  agentRefs: (team) => getJson(`/api/team-agent-refs?team=${encodeURIComponent(team)}`),
+  read: (room, seq) => post('/api/team-read', { room, seq }),
   invite: () => post('/api/team-invite', {}),
   create: (team) => post('/api/team-create', { team }),
   handoff: (to, text) => post('/api/team-handoff', { to, text }),
+  profiles: (team, rev) => getJson(`/api/team-profiles?team=${encodeURIComponent(team)}&rev=${rev}`),
+  posts: (team, rev) => getJson(`/api/team-posts?team=${encodeURIComponent(team)}&rev=${rev}`),
+  post: (team, title, body, pin) => post('/api/team-post', { team, title, body, pin }),
+  home: (team, rev) => getJson(`/api/team-home?team=${encodeURIComponent(team)}&rev=${rev}`),
+  homeSave: (team, home) => post('/api/team-home-save', { team, home }),
+  homeContent: (team, block, content) => post('/api/team-home-content', { team, block, content }),
+  locker: (team, rev) => getJson(`/api/team-locker?team=${encodeURIComponent(team)}&rev=${rev}`),
+  lockerOp: (op) => post('/api/team-locker-op', op),
+  lockerPut: putTeamFile,
 };
 export const readLocker = () => getJson<import('../domain/locker').LockerView>('/api/locker');
 /** 폰이 올린 첨부(attachFile 경로)를 그 참모 보관함에 — 맥이 보관함 복사본으로 옮겨 둔다 */
@@ -262,8 +352,9 @@ export const lockerWrite = (owner: string, path: string, text: string, base?: st
 /** 폰 홈 모드 카드 — 목록 · 한 칸(상태 + 보이는 칸 트리, 크기는 글자 칸) · 누름 · 맛보기 예시 켜기(그 참모 홈에) */
 export type PhoneModeRow = { name: string; title: string; source: string; on: boolean; where: string; dash: string | null; alive: boolean; hidden?: boolean };
 export const readModes = () => getJson<PhoneModeRow[]>('/api/modes');
-export const readModeView = (name: string, columns: number, rows: number, signal?: AbortSignal) =>
-  getJson<{ state: { alive: boolean; ready: boolean; unsupported: boolean; status: string | null; error: string | null }; tree?: unknown }>(`/api/mode-view?name=${encodeURIComponent(name)}&columns=${columns}&rows=${rows}`, signal);
+/** scheme = 폰 화면 테마 — 모드 훅이 e.props.scheme 으로 받는다(#4) */
+export const readModeView = (name: string, columns: number, rows: number, scheme: 'light' | 'dark', signal?: AbortSignal) =>
+  getJson<{ state: { alive: boolean; ready: boolean; unsupported: boolean; status: string | null; error: string | null }; tree?: unknown }>(`/api/mode-view?name=${encodeURIComponent(name)}&columns=${columns}&rows=${rows}&scheme=${scheme}`, signal);
 export const modeAct = (name: string, act: object) => post<{ handled?: boolean }>('/api/mode-act', { name, act });
 export const modeOpen = (name: string, dash: string) => post<{ ok: true }>('/api/mode-open', { name, dash });
 /** 이 홈에서 끄기 — dash = 그 모드가 켜진 홈(목록의 dash 그대로), 맥이 그 홈에 켜진 것만 끈다 */

@@ -11,6 +11,7 @@ import { peerView } from '../domain/peerDevices';
 import { IconChat, IconRefresh, IconUnlink } from './Icons';
 import { IconButton } from './kit/IconButton';
 import { tr } from '../i18n';
+import { seenName } from '../domain/session';
 
 export function PeerSection({ title }: { title: string }) {
   const [list, setList] = useState<RemoteDevice[] | null>(null);
@@ -105,8 +106,8 @@ export function PeerSection({ title }: { title: string }) {
                 <div className="peer-agents">
                   {agents[d.id]!.map((a) => (
                     <div key={a.id} className="peer-agent">
-                      <span>{a.name || a.id}</span>
-                      <IconButton size="m" tone="line" label={tr(`${a.name || a.id}와 채팅`, `Chat with ${a.name || a.id}`)} onClick={() => chat(d, a)}><IconChat /></IconButton>
+                      <span>{seenName(a.name) || a.id}</span>
+                      <IconButton size="m" tone="line" label={tr(`${seenName(a.name) || a.id}와 채팅`, `Chat with ${seenName(a.name) || a.id}`)} onClick={() => chat(d, a)}><IconChat /></IconButton>
                     </div>
                   ))}
                 </div>

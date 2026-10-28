@@ -16,8 +16,12 @@ import { SafetyPanel, SafetyState } from '../e2e/Safety';
 import { atOf, MyProfileCard, TeamIconCard, usePick, type At } from './MyProfile';
 import { Person, TeamMarkIcon } from './TeamFaces';
 import { ProfilesCtx } from './useProfiles';
+import { AgentsSection } from './TeamAgents';
+import { TeamAgentEdit } from './TeamAgentEdit';
+import type { AgentList, AgentShown } from '../../domain/teamAgent';
 import './team.css';
 import './profile.css';
+import { seenName } from '../../domain/session';
 
 type Ask = { kind: 'leave' } | { kind: 'delete' } | { kind: 'remove'; id: string; name: string } | { kind: 'owner'; id: string; name: string };
 
@@ -52,6 +56,9 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
   const [showInvite, setShowInvite] = useState(false);
   const [more, setMore] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [mine, setMine] = useState<At | null>(null);
+  // 팀 참모 고치기(ADR 0017) — 같은 창이 두 칸으로 넓어진다(시안 design-v2 섞음 1). agentsKey 는 저장 뒤 목록 다시 받기
+  const [agentEdit, setAgentEdit] = useState<{ a: AgentShown | null; list: AgentList } | null>(null);
+  const [agentsKey, setAgentsKey] = useState(0);
   const [iconAt, setIconAt] = useState<At | null>(null);
   const [iconSrc, setIconSrc] = useState('');
   const iconBtn = useRef<HTMLButtonElement>(null);
@@ -96,6 +103,15 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
     ...(sp(r.id) ? [{ label: tr('보안 번호 보기', 'View safety number'), run: () => setNumberOf(r.id) }] : []),
     ...(r.canRemove ? [{ label: tr('팀에서 빼기', 'Remove'), danger: true, run: () => setAsk({ kind: 'remove', id: r.id, name: r.name }) }] : []),
   ];
+  if (agentEdit) {
+    return (
+      <div className="tmx-start tmx-set tma-wide">
+        <TeamAgentEdit team={view.teamId} list={agentEdit.list} editing={agentEdit.a} people={view.members.map((m) => m.name)}
+          rooms={view.rooms.filter((r) => (r.kind === 'group' || r.kind === 'dm') && (!r.team || r.team === view.teamId)).map((r) => ({ id: r.id, name: r.name || r.with }))}
+          onBack={() => setAgentEdit(null)} onSaved={() => { setAgentEdit(null); setAgentsKey((k) => k + 1); }} />
+      </div>
+    );
+  }
   return (
     <div className="tmx-start tmx-set">
       {pickIcon.input}
@@ -116,6 +132,8 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
         ) : <b className="tmx-set-v">{view.team}</b>}
       </div>
       {owner && board?.teamIcon && <div><button className="tmx-btn tmx-sm" disabled={busy} onClick={() => run(teamIconSet(view.teamId, ''), () => reload())}>{tr('팀 아이콘 지우기', 'Remove team icon')}</button></div>}
+
+      <AgentsSection key={agentsKey} team={view.teamId} onEdit={(a, list) => setAgentEdit({ a, list })} />
 
       <div className="tmp-sec">
         <span className="tmx-fl">{tr(`팀원 ${rows.length}`, `${rows.length} members`)}</span>
@@ -140,7 +158,7 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
       <ul className="tmx-set-ppl tmp-ppl">
         {rows.map((r) => {
           const l = lookOf(board, r.id, r.name);
-          const sub = statusLine(l) || [r.devices.join(' · '), r.me && view.deliverTo ? tr(`받는 참모 ${view.deliverTo}`, `assistant ${view.deliverTo}`) : ''].filter(Boolean).join(' · ');
+          const sub = statusLine(l) || [r.devices.join(' · '), r.me && view.deliverTo ? tr(`받는 참모 ${seenName(view.deliverTo)}`, `assistant ${seenName(view.deliverTo)}`) : ''].filter(Boolean).join(' · ');
           const items = rowMenu(r);
           const who = (
             <>

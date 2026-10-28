@@ -6,8 +6,10 @@ use crate::accounts_store::Store;
 use crate::team_relay_keys::{self as keys, DeviceKeys};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Mutex;
+use reqwest::redirect as hops;
 
 pub const STATE_FILE: &str = "team.json";
 
@@ -184,6 +186,28 @@ pub struct TeamState {
     pub pending: bool,
     /// 거절이 없으면 서버가 저절로 허용하는 때(ms)
     pub pending_auto_at: u64,
+    /// 계정 되찾기 기다림(relay ADR 0007 R9) — 서버 /v0/me·/v0/me/self 의 recover 를 그대로. 없으면 None
+    pub recover: Option<Recover>,
+}
+
+/// 기다리는 다시 시작 요청 하나 — 기기 이름·나라·도시는 서버가 준 남의 글(화면에서 거른다)
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Recover {
+    pub ready_at: u64,
+    /// 이 기기가 낸 요청
+    pub mine: bool,
+    pub device: String,
+    pub device_name: String,
+    pub place: String,
+}
+
+/// 서버 응답의 recover 칸 → Recover(없거나 null·모양이 틀리면 None)
+pub fn recover_of(v: &Value) -> Option<Recover> {
+    let r = v.get("recover").filter(|r| r["state"] == "waiting")?;
+    let s = |k: &str| r[k].as_str().unwrap_or("").to_string();
+    let place = [s("city"), s("country")].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join(", ");
+    Some(Recover { ready_at: r["readyAt"].as_u64()?, mine: r["mine"] == true, device: r["device"]["id"].as_str()?.to_string(), device_name: r["device"]["name"].as_str().unwrap_or("").to_string(), place })
 }
 
 impl TeamState {
@@ -311,12 +335,99 @@ pub(crate) fn curl_call(tmp: &Path, method: &str, url: &str, headers: &[(String,
     Ok((prog.to_string(), args, file))
 }
 
-/// 맥·윈도우 curl. 몸통은 stdin 으로, 머리는 600 임시 파일로(인자·ps 에 안 남게), 응답 끝에 코드 한 줄
+/// 지연 실측(fix/team-latency3) — 디버그·시험 빌드에서 CHAMMO_NET_TRACE=<파일> 이면 중계 요청마다 JSON 한 줄(시작 시각 ms·걸린 ms·방법·경로·코드).
+/// 경로만(서버·쿼리 뺌), 머리·몸통은 안 남긴다
+pub(crate) fn trace(method: &str, url: &str, began: std::time::Instant, code: u16, bytes: usize) {
+    if !cfg!(debug_assertions) && !cfg!(test) {
+        return;
+    }
+    let Some(file) = std::env::var_os("CHAMMO_NET_TRACE").filter(|f| !f.is_empty()) else { return };
+    let ms = began.elapsed().as_millis() as u64;
+    let path = url.split_once("://").map_or(url, |(_, r)| r.find('/').map_or("/", |i| &r[i..]));
+    let line = json!({ "start": now_ms().saturating_sub(ms), "ms": ms, "method": method, "path": path.split('?').next().unwrap_or(""), "code": code, "bytes": bytes, "thread": format!("{:?}", std::thread::current().id()) });
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file) {
+        use std::io::Write;
+        let _ = writeln!(f, "{line}");
+    }
+}
+
+// ── 연결 다시 쓰기(fix/team-latency3) — 요청마다 curl 을 띄우면 TCP+TLS 를 매번 다시 맺는다(운영 실측 새 연결 p50 0.19초 ↔ 다시 쓰기 0.09초).
+//    프로세스에 클라이언트 하나(업데이터가 이미 쓰는 reqwest). 리다이렉트 안 따라감·15초 한도는 curl 길과 같다.
+//    화면 명령은 spawn_blocking 실에서 부른다 — 거기선 blocking 클라이언트를 써도 된다(curl 을 띄워 기다리는 것과 같다).
+//    curl 로 가는 때: CHAMMO_HTTP_CURL=1(되돌리기·진단) · 연결 자체가 안 될 때 한 번 더 · 디버그 빌드에서 비동기 실 안이라 reqwest 가 패닉할 때 ──
+
+/// 예전 길(curl)만
+pub(crate) fn curl_only() -> bool {
+    std::env::var("CHAMMO_HTTP_CURL").is_ok_and(|v| v == "1")
+}
+
+/// 리다이렉트를 안 따라간다(서명한 요청이 다른 곳으로 새지 않게) — 그 모듈 이름 글자는 팀 모듈 승인 길 검사(team_relay_inbox_tests)에 걸려서 use 이름으로
+fn no_hops() -> hops::Policy {
+    hops::Policy::none()
+}
+
+fn pool() -> Option<&'static reqwest::blocking::Client> {
+    static C: std::sync::OnceLock<Option<reqwest::blocking::Client>> = std::sync::OnceLock::new();
+    C.get_or_init(|| {
+        // reqwest(rustls-no-provider)는 암호 제공자가 없으면 패닉 — 업데이터와 같이 ring 을 깔고(이미 있으면 그대로), 그래도 패닉이면 curl 로
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        }
+        std::panic::catch_unwind(|| {
+            reqwest::blocking::Client::builder()
+            .user_agent(concat!("Chammo/", env!("CARGO_PKG_VERSION")))
+            .timeout(std::time::Duration::from_secs(15))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .redirect(no_hops())
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .build()
+            .ok()
+        })
+        .ok()
+        .flatten()
+    })
+    .as_ref()
+}
+
+/// 다시 쓰는 연결로 한 번 — None 이면 curl 로(쓸 수 없거나 연결 자체가 안 됨: 요청이 안 나갔으니 같은 서명으로 다시 보내도 된다)
+pub(crate) fn pooled_send(method: &str, url: &str, headers: &[(String, String)], body: &[u8], ctype: &str, timeout: std::time::Duration) -> Option<Result<(u16, Vec<u8>), String>> {
+    if curl_only() {
+        return None;
+    }
+    let c = pool()?;
+    let m = reqwest::Method::from_bytes(method.as_bytes()).ok()?;
+    let mut rb = c.request(m, url).timeout(timeout);
+    for (k, v) in headers {
+        rb = rb.header(k.as_str(), v.as_str());
+    }
+    if !body.is_empty() {
+        rb = rb.header("Content-Type", ctype).body(body.to_vec());
+    }
+    // 디버그 빌드의 reqwest 는 비동기 실(런타임 일꾼) 안에서 부르면 패닉한다 — 그땐 curl 로(요청은 안 나갔다)
+    let sent = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| rb.send())).ok()?;
+    match sent {
+        Err(e) if e.is_connect() || e.is_builder() => None,
+        Err(e) => Some(Err(format!("중계 서버에 못 닿았어요: {e}"))),
+        Ok(r) => {
+            let code = r.status().as_u16();
+            Some(r.bytes().map(|b| (code, b.to_vec())).map_err(|e| format!("중계 서버 답을 못 읽었어요: {e}")))
+        }
+    }
+}
+
+/// 맥·윈도우 curl. 몸통은 stdin 으로, 머리는 600 임시 파일로(인자·ps 에 안 남게), 응답 끝에 코드 한 줄.
+/// 먼저 다시 쓰는 연결로(pooled_send), 못 쓰면 curl
 pub struct Curl;
 
 impl Http for Curl {
     fn send(&self, method: &str, url: &str, headers: &[(String, String)], body: &[u8]) -> Result<(u16, String), String> {
         use std::io::Write;
+        let began = std::time::Instant::now();
+        if let Some(r) = pooled_send(method, url, headers, body, "application/json", std::time::Duration::from_secs(15)) {
+            let (code, b) = r?;
+            trace(method, url, began, code, b.len());
+            return Ok((code, String::from_utf8_lossy(&b).into_owned()));
+        }
         let (prog, args, hfile) = curl_call(&std::env::temp_dir(), method, url, headers, !body.is_empty())?;
         struct Gone(std::path::PathBuf);
         impl Drop for Gone {
@@ -334,6 +445,7 @@ impl Http for Curl {
         let out = child.wait_with_output().map_err(|e| e.to_string())?;
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
         let (body, code) = text.rsplit_once('\n').unwrap_or(("", &text));
+        trace(method, url, began, code.trim().parse().unwrap_or(0), body.len());
         match code.trim().parse::<u16>() {
             Ok(0) | Err(_) => Err(format!("중계 서버에 못 닿았어요: {}", String::from_utf8_lossy(&out.stderr).trim())),
             Ok(c) => Ok((c, body.to_string())),
@@ -428,6 +540,51 @@ pub(crate) fn slow_down(key: &str, v: &Value, now: std::time::Instant) {
 
 pub(crate) const SLOW_DOWN: &str = "중계 서버가 요청이 너무 잦다고 잠시 쉬래요 — 1분쯤 뒤 저절로 다시 해요";
 
+// ── 사람 말 몫(10-28 22:53 429 — 사용자 맥에서 사람이 친 DM 이 '잠시 쉬래요'로 못 나감) — 서버는 열쇠마다 10분 칸에 nonce 300개(chammo-relay NONCE_CAP).
+//    앱이 같은 칸(10분 단위로 자른 시각)을 따라 세고, 배경 요청(목록·사슬·명부·소켓 다시 붙기·폴링)은 BG_CAP 에서 멈춰 나머지를 사람 말 보내기에 남긴다.
+//    사람 말(as_human 안)은 몫을 안 따지고 쉬는 중(SLOW)이어도 한 번 두드린다 — 칸이 막 넘어갔으면 바로 나간다 ──
+
+pub(crate) const BUCKET_MS: u64 = 10 * 60_000;
+/// 배경 요청 상한(칸마다) — 서버 300 중 100 은 사람 말 몫
+pub(crate) const BG_CAP: u32 = 200;
+static SPENT: Mutex<std::collections::BTreeMap<String, (u64, u32)>> = Mutex::new(std::collections::BTreeMap::new());
+
+thread_local! {
+    static HUMAN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// 사람이 직접 보내는 말 — 이 안에서 부른 서명 요청은 배경 몫·쉬는 중을 건너뛴다
+pub(crate) fn as_human<T>(f: impl FnOnce() -> T) -> T {
+    let was = HUMAN.with(|h| h.replace(true));
+    let r = f();
+    HUMAN.with(|h| h.set(was));
+    r
+}
+
+pub(crate) fn human_now() -> bool {
+    HUMAN.with(|h| h.get())
+}
+
+/// 서명 하나를 쓴다 — 배경 요청이 이 칸 몫을 다 썼으면 false(안 보낸다). 사람 말은 늘 true(세기만)
+pub(crate) fn spend(key: &str, now_ms: u64, human: bool) -> bool {
+    let b = now_ms / BUCKET_MS;
+    let mut m = SPENT.lock().unwrap_or_else(|e| e.into_inner());
+    let e = m.entry(key.to_string()).or_insert((b, 0));
+    if e.0 != b {
+        *e = (b, 0);
+    }
+    if !human && e.1 >= BG_CAP {
+        return false;
+    }
+    e.1 += 1;
+    true
+}
+
+/// 이 칸에 쓴 서명 수(시험·진단)
+pub(crate) fn spent(key: &str, now_ms: u64) -> u32 {
+    SPENT.lock().unwrap_or_else(|e| e.into_inner()).get(key).filter(|e| e.0 == now_ms / BUCKET_MS).map_or(0, |e| e.1)
+}
+
 /// 서명한 요청. device = 등록된 기기 id(없으면 공개 열쇠 머리 — 팀 만들기·들어오기)
 pub(crate) fn call(http: &dyn Http, server: &str, k: &DeviceKeys, device: Option<&str>, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value), String> {
     // 기기 id 는 머리값(curl 머리 파일)에 들어간다 — 줄바꿈 등으로 다른 머리를 끼우지 못하게(리뷰 10-23)
@@ -437,11 +594,16 @@ pub(crate) fn call(http: &dyn Http, server: &str, k: &DeviceKeys, device: Option
     // team.json 은 손으로 고칠 수 있는 파일 — 나가기 직전마다 다시 거른다(보안 검토 4-B)
     let server = server_ok(server).ok_or("team.json 의 서버 주소가 https 가 아니야")?;
     // 쉬는 중이면 서버에 안 닿고 같은 답 — 부르는 쪽은 진짜 429 와 똑같이 다룬다
-    if slow_left(&k.public(), std::time::Instant::now()).is_some() {
+    let human = human_now();
+    if !human && slow_left(&k.public(), std::time::Instant::now()).is_some() {
         return Ok((429, json!({ "error": "slow_down", "local": true })));
     }
+    let ts = now_ms();
+    if !spend(&k.public(), ts, human) {
+        return Ok((429, json!({ "error": "slow_down", "local": true, "budget": true })));
+    }
     let raw = body.map(|b| b.to_string()).unwrap_or_default();
-    let s = k.sign_request(method, path, raw.as_bytes(), now_ms(), &keys::new_nonce()?);
+    let s = k.sign_request(method, path, raw.as_bytes(), ts, &keys::new_nonce()?);
     let mut h = vec![("X-Chammo-Ts".to_string(), s.ts), ("X-Chammo-Nonce".to_string(), s.nonce), ("X-Chammo-Sig".to_string(), s.sig)];
     h.push(match device {
         Some(d) => ("X-Chammo-Device".into(), d.into()),
@@ -453,6 +615,24 @@ pub(crate) fn call(http: &dyn Http, server: &str, k: &DeviceKeys, device: Option
         slow_down(&k.public(), &v, std::time::Instant::now());
     }
     Ok((code, v))
+}
+
+/// 서버가 이 기기를 모를 때 열쇠 머리로 서명해 묻는 없는 길 — 서버는 등록된 열쇠면 401, 모르는 열쇠면 서명·시계를 통과해 404(chammo-relay index.ts)
+pub(crate) const KEY_PROBE: &str = "/v0/key-probe";
+
+pub(crate) const GONE: &str = "이 기기는 중계 서버에서 끊겼어(다른 기기에서 끊었거나 로그인 허용이 거절됨) — 다시 로그인해 줘";
+
+/// 기기 서명이 401 을 받은 뒤 — 서버가 이 열쇠를 아예 모르면(대기 중 거절로 지운 기기 등) 끊긴 기기로 적는다.
+/// 401 은 시계가 5분 넘게 틀려도 와서 그것만으론 못 가린다 — 404 가 와야 시계도 맞고 기기도 없는 것(10-28 윈도우 실측). 적었으면 true
+pub(crate) fn mark_if_gone(dir: &Path, http: &dyn Http, st: &TeamState, k: &DeviceKeys) -> bool {
+    if st.revoked {
+        return true;
+    }
+    if !matches!(call(http, &st.server, k, None, "GET", KEY_PROBE, None), Ok((404, _))) {
+        return false;
+    }
+    crate::claude::log_out("team", "중계 서버가 이 기기를 몰라 — 끊긴 기기로 적음(다시 로그인)");
+    mutate_if(dir, &st.device_id, |s| s.revoked = true).is_ok()
 }
 
 /// 서버 오류 → 사람이 읽는 이유
@@ -659,6 +839,9 @@ pub fn invite_in_text(text: &str) -> Option<String> {
 pub fn join(dir: &Path, kc: &dyn Store, http: &dyn Http, server: &str, invite: &str, display: &str, device: &str) -> Result<TeamState, String> {
     let (from_link, code) = parse_invite(invite);
     let server = if server.trim().is_empty() { from_link.unwrap_or_default() } else { server.to_string() };
+    if load_state(dir).revoked {
+        return Err(format!("{GONE} — 그다음 초대 링크를 다시 눌러 줘"));
+    }
     if code.is_empty() {
         return Err(crate::i18n::tr("초대 링크(또는 코드)를 못 읽었어 — 받은 https://chammo.app/join#… 링크를 그대로 붙여 줘", "Couldn't read the invite — paste the https://chammo.app/join#… link you got").into());
     }
@@ -682,18 +865,32 @@ pub fn refresh_members(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) 
     mutate_if(dir, &st.device_id, |s| s.put_team(TeamEntry { members, ..t }))
 }
 
-/// 사람 찾기(그 팀 안) — id, 이름(대소문자 무시), 하나뿐인 앞부분
-pub fn find_member<'a>(t: &'a TeamEntry, q: &str) -> Result<&'a Member, String> {
+/// 사람 이름표 — 프로필 이름이 있고 명부(계정) 이름과 다르면 '프로필 이름(계정 이름)', 아니면 계정 이름. 앱 화면은 프로필 이름을 쓴다(domain/teamProfile lookOf)
+pub fn label(account: &str, profile: Option<&str>) -> String {
+    match profile.map(str::trim).filter(|p| !p.is_empty() && *p != account.trim()) {
+        Some(p) => format!("{p}({account})"),
+        None => account.to_string(),
+    }
+}
+
+/// 사람 찾기(그 팀 안) — id, 계정 이름이나 프로필 이름(aka: 멤버 id → 프로필 이름, 대소문자 무시)이 정확히 맞는 게 먼저, 없으면 하나뿐인 앞부분.
+/// 둘 이상 맞으면 엉뚱한 사람에게 가지 않게 고르라고 한다(멤버 id 를 붙여)
+pub fn find_member<'a>(t: &'a TeamEntry, q: &str, aka: &BTreeMap<String, String>) -> Result<&'a Member, String> {
     let q = q.trim();
     let low = q.to_lowercase();
-    if let Some(m) = t.members.iter().find(|m| m.id == q || m.display_name.to_lowercase() == low) {
+    if let Some(m) = t.members.iter().find(|m| m.id == q) {
         return Ok(m);
     }
-    let hits: Vec<_> = t.members.iter().filter(|m| !low.is_empty() && m.display_name.to_lowercase().starts_with(&low)).collect();
+    let names = |m: &Member| [Some(m.display_name.to_lowercase()), aka.get(&m.id).map(|a| a.trim().to_lowercase())].into_iter().flatten().filter(|n| !n.is_empty()).collect::<Vec<_>>();
+    let shown = |m: &Member| label(&m.display_name, aka.get(&m.id).map(String::as_str));
+    let mut hits: Vec<&Member> = t.members.iter().filter(|m| names(m).contains(&low)).collect();
+    if hits.is_empty() && !low.is_empty() {
+        hits = t.members.iter().filter(|m| names(m).iter().any(|n| n.starts_with(&low))).collect();
+    }
     match hits.as_slice() {
         [m] => Ok(m),
-        [] => Err(format!("{} 팀에 그런 사람이 없어: {q} — {}", t.name, t.members.iter().map(|m| m.display_name.as_str()).collect::<Vec<_>>().join(", "))),
-        many => Err(format!("누구?: {}", many.iter().map(|m| m.display_name.as_str()).collect::<Vec<_>>().join(", "))),
+        [] => Err(format!("{} 팀에 그런 사람이 없어: {q} — {}", t.name, t.members.iter().map(shown).collect::<Vec<_>>().join(", "))),
+        many => Err(format!("누구?: {} — 멤버 id 로 골라 줘", many.iter().map(|m| format!("{} [{}]", shown(m), m.id)).collect::<Vec<_>>().join(", "))),
     }
 }
 
@@ -703,11 +900,13 @@ fn member_in(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, who: &str)
     let mut st = load_state(dir);
     let by_id = if team.trim().is_empty() { st.teams.iter().find(|t| t.members.iter().any(|m| m.id == who.trim())).map(|t| t.id.clone()) } else { None };
     let team = by_id.as_deref().unwrap_or(team);
-    if find_member(st.team(team)?, who).is_err() {
+    // 사용자는 프로필 이름으로 부른다(10-28 아이맥 참모 — 계정 이름만 봐서 못 찾았다)
+    let aka = crate::team_profile::cached_names(dir, kc, &st.team(team)?.id);
+    if find_member(st.team(team)?, who, &aka).is_err() {
         st = refresh_members(dir, kc, http, team)?;
     }
     let t = st.team(team)?.clone();
-    let m = find_member(&t, who)?.clone();
+    let m = find_member(&t, who, &aka)?.clone();
     Ok((st, t, m))
 }
 
@@ -745,8 +944,14 @@ pub fn sync_rooms(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<TeamSta
     if !st.registered() {
         return Err("아직 팀·로그인 전이야".into());
     }
+    if st.revoked {
+        return Err(GONE.into());
+    }
     let k = device_keys(kc, &st)?;
     let (code, v) = call(http, &st.server, &k, Some(&st.device_id), "GET", "/v0/me/rooms", None)?;
+    if code == 401 && mark_if_gone(dir, http, &st, &k) {
+        return Err(GONE.into());
+    }
     if code != 200 {
         return Err(why(code, &v));
     }
@@ -909,6 +1114,9 @@ pub fn forget_local(dir: &Path, kc: &dyn Store) -> Result<String, String> {
 /// 폰 허브 WebSocket 주소(주인 = 이 기기) — 서명은 쿼리로(서버 connectHub, ADR 0005)
 pub fn hub_url(st: &TeamState, k: &DeviceKeys, ts_ms: u64, nonce: &str) -> Result<String, String> {
     let path = format!("/v0/hubs/{}/ws", st.device_id);
+    if !spend(&k.public(), ts_ms, human_now()) {
+        return Err("서버 429 — 배경 요청 몫을 다 써서 잠시 쉬어요".into());
+    }
     let s = k.sign_request("GET", &path, b"", ts_ms, nonce);
     let base = server_ok(&st.server).ok_or("team.json 의 서버 주소가 https 가 아니야")?;
     let base = base.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1);
@@ -929,6 +1137,9 @@ fn phone_web_from(env: Option<String>, st: &TeamState) -> Option<String> {
 /// 방 WebSocket 주소 — 서명은 쿼리로(서버 connectRoom)
 pub fn ws_url(st: &TeamState, k: &DeviceKeys, room: &str, ts_ms: u64, nonce: &str) -> Result<String, String> {
     let path = format!("/v0/rooms/{room}/ws");
+    if !spend(&k.public(), ts_ms, human_now()) {
+        return Err("서버 429 — 배경 요청 몫을 다 써서 잠시 쉬어요".into());
+    }
     let s = k.sign_request("GET", &path, b"", ts_ms, nonce);
     let base = server_ok(&st.server).ok_or("team.json 의 서버 주소가 https 가 아니야")?;
     let base = base.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1);

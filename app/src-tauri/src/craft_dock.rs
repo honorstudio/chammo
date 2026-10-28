@@ -192,25 +192,42 @@ pub fn craft_show<R: tauri::Runtime>(handle: tauri::AppHandle<R>, app: String) -
 
 /// 최근 문서 열기 — scripts/craft open <앱> --native <파일>(떠 있으면 그 앱에서 연다). async = 파이썬 판정을 메인 스레드 밖에서
 #[tauri::command(async)]
-pub fn craft_open_file(app: String, path: String) -> Result<(), String> {
+pub fn craft_open_file<R: tauri::Runtime>(window: tauri::WebviewWindow<R>, app: String, path: String) -> Result<(), String> {
     crate::craft_window::display_name(&app).ok_or("unknown app")?;
     crate::platform::need_python()?;
     unhide(&app);
+    // 메신저 따로 창에서 눌렀으면 돌아오는 'open' 줄이 그 창 옆 따로 창으로(craft_window asker)
+    crate::craft_window::ask_from(&app, window.label());
     crate::craft_window::craft_cmd().args(["open", &crate::craft_window::arg(&app), "--native", &path]).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
-/// 앱 서랍 줄(scripts/craft list --json) — 아이콘 자리를 PNG data URL 로 바꿔 웹에 그대로
-pub fn drawer_from(json: &str) -> Vec<serde_json::Value> {
+/// 앱 서랍 줄(scripts/craft list --json) — 아이콘 자리를 PNG data URL 로 바꿔 웹에 그대로. 깨진 출력은 빈 목록이 아니라 오류로
+pub fn drawer_from(json: &str) -> Result<Vec<serde_json::Value>, String> {
     use base64::Engine;
-    let mut rows: Vec<serde_json::Value> = serde_json::from_str(json).unwrap_or_default();
+    let mut rows: Vec<serde_json::Value> = serde_json::from_str(json.trim()).map_err(|e| crate::i18n::tr(&format!("앱 목록을 못 읽었어요 — {e}"), &format!("Could not read the app list — {e}")).to_string())?;
     for r in rows.iter_mut() {
         let url = r["icon"].as_str().and_then(|p| std::fs::read(p).ok()).map(|b| format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(b))).unwrap_or_default();
         r["icon"] = serde_json::json!(url);
     }
-    rows
+    Ok(rows)
 }
 
-/// 앱 서랍 — 13개 앱(처음엔 아이콘·새 판을 받느라 10초 남짓, 그다음은 바로). refresh = 새 판 다시 확인
+/// scripts/craft list 가 실패했을 때 웹에 줄 한 줄 — stderr 가 비면(종료 코드만) 빈 오류로 서랍이 자리표시에 멈췄다(10-28)
+pub fn list_fail(stderr: &str, code: Option<i32>) -> String {
+    let t = stderr.trim();
+    if !t.is_empty() {
+        return t.to_string();
+    }
+    let code = code.map_or_else(|| "signal".to_string(), |c| c.to_string());
+    format!("scripts/craft list {} ({code})", crate::i18n::tr("실패", "failed"))
+}
+
+/// 서랍 목록 한도 — 네트워크 없이(fast)는 1초 안팎, 새 판 확인은 GitHub 를 기다린다(앱마다 최대 120초라 넘으면 끊고 한 줄 오류 + 다시 시도)
+const LIST_FAST_SECS: u64 = 15;
+const LIST_FULL_SECS: u64 = 60;
+
+/// 앱 서랍 — 13개 앱(처음엔 아이콘·새 판을 받느라 10초 남짓, 그다음은 바로). refresh = 새 판 다시 확인.
+/// 스크립트 기다리기는 막는 일이라 비동기 일꾼 밖(spawn_blocking)에서 시간 한도로 — 일꾼을 쥐고 기다리면 다른 명령이 밀렸다
 #[tauri::command]
 pub async fn craft_apps(refresh: bool, fast: Option<bool>) -> Result<Vec<serde_json::Value>, String> {
     let mut args = vec!["list", "--json"];
@@ -218,16 +235,25 @@ pub async fn craft_apps(refresh: bool, fast: Option<bool>) -> Result<Vec<serde_j
         args.push("--refresh");
     }
     // fast = 네트워크 없이(깔린 앱·로컬 DMG·받아 둔 것만) — 서랍이 먼저 그리고 받아야 하는 칸만 자리표시(v8 A2)
-    if fast == Some(true) {
+    let fast = fast == Some(true);
+    if fast {
         args.push("--fast");
     }
-    // 윈도우에 파이썬이 없으면 scripts/craft 를 못 돌린다 — 오류 원문(대리 실행기 안내·os error) 대신 웹이 설치 안내로 바꿀 표시
-    crate::platform::need_python()?;
-    let out = crate::craft_window::craft_cmd().args(&args).output().map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-    }
-    Ok(drawer_from(&String::from_utf8_lossy(&out.stdout)))
+    let limit = std::time::Duration::from_secs(if fast { LIST_FAST_SECS } else { LIST_FULL_SECS });
+    tauri::async_runtime::spawn_blocking(move || {
+        // 윈도우에 파이썬이 없으면 scripts/craft 를 못 돌린다 — 오류 원문(대리 실행기 안내·os error) 대신 웹이 설치 안내로 바꿀 표시
+        crate::platform::need_python()?;
+        let out = crate::platform::run_capped(crate::craft_window::craft_cmd().args(&args), limit).map_err(|e| match e.kind() {
+            std::io::ErrorKind::TimedOut => crate::i18n::tr(&format!("앱 목록이 {}초 넘게 안 와서 멈췄어요", limit.as_secs()), &format!("The app list took over {}s — stopped", limit.as_secs())).to_string(),
+            _ => e.to_string(),
+        })?;
+        if !out.status.success() {
+            return Err(list_fail(&String::from_utf8_lossy(&out.stderr), out.status.code()));
+        }
+        drawer_from(&String::from_utf8_lossy(&out.stdout))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 서랍에서 앱 누르기 — 깔린 앱은 열고, 안 깐 앱은 처음 한 번 설치(체크섬·번들 id·애플 공증) 뒤 연다. 열리면 독 규칙대로 탭 줄에 붙는다
@@ -246,6 +272,22 @@ pub fn craft_launch(app: String, key: Option<String>) -> Result<(), String> {
 pub fn launch_args(app: &str, key: Option<&str>) -> Vec<String> {
     let one = key.filter(|k| crate::craft_window::base(k) == Some(app)).map(crate::craft_window::arg);
     vec!["open".into(), one.unwrap_or_else(|| app.to_string()), "--native".into()]
+}
+
+/// 서랍 '받기' — 안 깐 앱을 깔기만 한다(scripts/craft install: open --native 와 같은 체크섬·번들 id·공증). 띄우지 않는다 —
+/// 여는 건 사람이 깔린 칸을 다시 누를 때(2026-10-28 사용자 "참모앱 설치하면 일단 자동으로 띄워주는 거 없어야함")
+#[tauri::command(async)]
+pub fn craft_install(app: String) -> Result<String, String> {
+    crate::craft_window::display_name(&app).ok_or("unknown app")?;
+    crate::platform::need_python()?;
+    let out = crate::craft_window::craft_cmd().args(install_args(&app)).output().map_err(|e| e.to_string())?;
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)).trim().to_string();
+    if out.status.success() { Ok(text) } else { Err(text) }
+}
+
+/// 받기 인자 — 앱째(인스턴스 키여도 앱으로), open 이 아니라 install
+pub fn install_args(app: &str) -> Vec<String> {
+    vec!["install".into(), crate::craft_window::base(app).unwrap_or(app).to_string()]
 }
 
 /// 서랍에서 지우기 — scripts/craft remove(우리가 깐 것만 휴지통으로). 떠 있으면 저장하고 끄고 칸도 닫은 뒤. 웹이 먼저 한 번 묻는다
@@ -317,6 +359,13 @@ mod tests {
     }
 
     #[test]
+    fn 서랍_받기는_깔기만_띄우지_않는다() {
+        assert_eq!(install_args("gridcraft"), vec!["install", "gridcraft"]);
+        assert_eq!(install_args("gridcraft-2"), vec!["install", "gridcraft"], "인스턴스 키여도 앱째");
+        assert!(!install_args("photocraft").contains(&"open".to_string()));
+    }
+
+    #[test]
     fn 서랍_열기는_빈_자리_인스턴스로() {
         assert_eq!(launch_args("gridcraft", None), vec!["open", "gridcraft", "--native"]);
         assert_eq!(launch_args("gridcraft", Some("gridcraft")), vec!["open", "gridcraft-1", "--native"], "첫 번째는 -1 로 그 인스턴스만");
@@ -359,11 +408,23 @@ mod tests {
         let png = d.join("g.png");
         std::fs::write(&png, b"PNG").unwrap();
         let json = serde_json::json!([{"app": "gridcraft", "icon": png}, {"app": "cadcraft", "icon": null}]).to_string();
-        let rows = drawer_from(&json);
+        let rows = drawer_from(&json).unwrap();
         assert_eq!(rows[0]["icon"], "data:image/png;base64,UE5H");
         assert_eq!(rows[1]["icon"], "", "못 구한 아이콘은 빈 칸 — 웹이 첫 글자 판으로");
-        assert!(drawer_from("not json").is_empty());
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 서랍_목록을_못_읽으면_빈_목록_대신_한_줄_오류() {
+        // 깨진 출력을 빈 목록으로 넘기면 서랍이 칸 하나 없이 '깔린 것'만 남았다 — 오류로(웹이 한 줄 + 다시 시도)
+        assert!(drawer_from("not json").is_err());
+        assert!(drawer_from("").is_err());
+        assert!(drawer_from("[]").unwrap().is_empty());
+        // 종료 코드만 있고 stderr 가 비면 웹이 빈 오류를 받아 자리표시에 멈췄다(10-28) — 늘 글이 있게
+        assert_eq!(list_fail("boom\n", Some(1)), "boom");
+        let e = list_fail("  ", Some(3));
+        assert!(e.contains("scripts/craft list") && e.contains('3'), "{e}");
+        assert!(!list_fail("", None).is_empty());
     }
 
     #[test]

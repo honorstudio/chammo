@@ -122,7 +122,7 @@ fn numbers(s: &str) -> Vec<(u64, &str)> {
 
 /// 읽을 수 있는 기록 — 보낸 말·받은 말(단톡방 일반 말은 room)·내 다른 기기 말·밀린 말·팀 참모 답. 못 연 말(e2e-*)·흉내 거른 말(forged)은 뺀다
 fn readable(note: &str) -> bool {
-    matches!(note, "sent" | "delivered" | "room" | "mine" | "history" | "rate-limited" | "age-unknown" | "helper" | "no-assistant")
+    matches!(note, "sent" | "delivered" | "human" | "to-human" | "room" | "mine" | "history" | "rate-limited" | "age-unknown" | "helper" | "no-assistant")
 }
 
 /// team-inbox.jsonl 에서 그 방, 부른 글(before) 앞, 범위 안의 글
@@ -405,13 +405,16 @@ impl Gate {
 
 /// 도구 0(--tools "") · 사용자·프로젝트 설정·훅·CLAUDE.md 0(--setting-sources "") · MCP 0 · 기록 안 남김
 pub fn run_args(model: &str) -> Vec<String> {
-    [
-        "-p", "--model", model, "--tools", "", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--output-format", "json", "--system-prompt",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .chain(std::iter::once(system_prompt()))
-    .collect()
+    run_args_with(model, "", &system_prompt())
+}
+
+/// 팀 참모(ADR 0017) — tools 는 "" 또는 "WebSearch" 만(team_agent::tools_of), 시스템 프롬프트는 안전 규칙 + 역할
+pub fn run_args_with(model: &str, tools: &str, system: &str) -> Vec<String> {
+    let tools = if tools == "WebSearch" { "WebSearch" } else { "" };
+    ["-p", "--model", model, "--tools", tools, "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--output-format", "json", "--system-prompt", system]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 /// 모델 — <데이터>/team-helper.json {"model":"sonnet"} 로만 바꾼다. 기본·모르는 값은 하이쿠(사용량 아끼기)
@@ -449,40 +452,102 @@ impl Drop for Leave<'_> {
 
 const RUN_LIMIT: std::time::Duration = std::time::Duration::from_secs(90);
 
-/// 사람이 방에 보낸 직후(team_relay_ws::send) — 멘션이면 뒤에서 한 번 답하고 바로 돌아온다
-pub fn on_sent(dir: &std::path::Path, room: &str, seq: u64, body: &str) {
+/// 사람이 방에 보낸 직후(team_relay_ws::send) — 멘션이면 뒤에서 한 번 답하고 바로 돌아온다. re = 이어 묻기(이은 팀 참모 답 seq)
+pub fn on_sent(dir: &std::path::Path, room: &str, seq: u64, body: &str, re: u64) {
+    use crate::team_agent_store::{self as store, Target};
     let st = crate::team_relay::load_state(dir);
     let Some(r) = st.rooms.iter().find(|r| r.id == room) else { return };
-    let Some(ask) = should_run(true, &r.kind, body) else { return };
+    if !matches!(r.kind.as_str(), "group" | "dm") {
+        return;
+    }
+    let Some(target) = store::resolve(body, &store::cached(dir, &r.team)) else { return };
+    // 처음·바뀐 뒤 판은 이 기기에서 확인해야 돈다(P2 — 화면이 보내기 전에 확인 장을 띄운다)
+    if let Target::Agent(a, _) = &target {
+        if crate::team_agent::needs_confirm(&store::seen(dir), a) {
+            return log("확인 안 한 판이라 안 돎");
+        }
+    }
     let caller = crate::team_relay_inbox::safe_name(st.teams.iter().find(|t| t.id == r.team).map(|t| t.display_name.as_str()).unwrap_or(&st.display_name));
-    let (dir, room) = (dir.to_path_buf(), room.to_string());
+    let (dir, room, team) = (dir.to_path_buf(), room.to_string(), r.team.clone());
     let now = now_ms();
     let entered = gate().enter(&room, now);
     if let Err(d) = entered {
         if gate().should_notice(d, now) {
-            std::thread::spawn(move || post(&dir, &room, &deny_notice(d, &caller)));
+            std::thread::spawn(move || post(&dir, &room, &deny_notice(d, &caller), Default::default(), None));
         }
         return log(&format!("부르기 막힘 {d:?}"));
     }
     std::thread::spawn(move || {
-        let text = {
+        let (text, extra, used) = {
             let _leave = Leave(&GATE);
-            answer(&dir, &room, seq, &ask, &caller)
+            match target {
+                Target::Base(ask) => {
+                    let (t, used, _) = answer(&dir, &room, seq, &ask, &caller, None);
+                    (t, crate::e2e_envelope::Extra::default(), used)
+                }
+                Target::Agent(a, ask) => {
+                    let (t, used, files) = answer(&dir, &room, seq, &ask, &caller, Some((&a, &team, re)));
+                    let files = attach(&dir, &team, &room, files);
+                    (t, crate::e2e_envelope::Extra { agent: a.id.clone(), by: a.def.name.clone(), re: seq, files, ..Default::default() }, used)
+                }
+            }
         };
-        post(&dir, &room, &text);
+        post(&dir, &room, &text, extra, used);
     });
 }
 
-/// 답 한 번 만들기 — 방 기록 읽기 → 범위·자르기 → claude -p(도구 0) → 거름. 실패도 방에 올릴 사람 말로
-fn answer(dir: &std::path::Path, room: &str, seq: u64, ask: &str, caller: &str) -> String {
+/// 붙일 파일 — 데이터 폴더 임시 자리에 써서 그 대화 파일로 올리고 지운다. 실패하면 조용히 빠진다(답 글은 그대로)
+fn attach(dir: &std::path::Path, team: &str, room: &str, files: Vec<(String, String)>) -> Vec<Value> {
+    let mut out = Vec::new();
+    for (name, body) in files {
+        let tmp = dir.join("team-helper").join("out");
+        if std::fs::create_dir_all(&tmp).is_err() {
+            continue;
+        }
+        let path = tmp.join(&name);
+        if std::fs::write(&path, body.as_bytes()).is_err() {
+            continue;
+        }
+        match crate::team_locker_app::put_file(dir, &crate::team_relay_keys::store(), &crate::team_relay::Curl, team, room, "file", &path) {
+            Ok(f) => out.push(serde_json::json!({ "id": f.id, "name": f.name, "size": f.size, "team": f.team, "room": f.room })),
+            Err(e) => log(&format!("파일 올리기 실패: {e}")),
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+    out
+}
+
+/// 붙일 파일 하나 — 이름·내용
+type Attach = (String, String);
+
+/// 답 한 번 만들기 — 방 기록 읽기 → 범위·자르기 → (팀 참모면 역할·자료·이전 문답) → claude -p → 파일 꺼내기 → 거름. 실패도 방에 올릴 사람 말로. (글, 쓴 토큰·모델, 붙일 파일)
+fn answer(dir: &std::path::Path, room: &str, seq: u64, ask: &str, caller: &str, agent: Option<(&crate::team_agent::Shown, &str, u64)>) -> (String, Option<(String, u64)>, Vec<Attach>) {
     let now = now_ms();
     let inbox = std::fs::read_to_string(dir.join(crate::team_relay_inbox::INBOX_FILE)).unwrap_or_default();
     let (lines, cut) = fit(pick_lines(&inbox, room, seq, &range_of(ask, now, midnight(now))));
     let nonce = crate::team_relay_keys::new_nonce().map(|n| n.chars().filter(char::is_ascii_alphanumeric).take(12).collect::<String>()).unwrap_or_else(|_| format!("{now:x}"));
-    let prompt = user_prompt(&lines, cut, ask, caller, &nonce);
-    let model = model_of(std::fs::read_to_string(dir.join(SETTINGS_FILE)).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["model"].as_str().map(String::from)).as_deref().unwrap_or(""));
+    let mut prompt = user_prompt(&lines, cut, ask, caller, &nonce);
+    let (model, tools, system) = match agent {
+        None => (model_of(std::fs::read_to_string(dir.join(SETTINGS_FILE)).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["model"].as_str().map(String::from)).as_deref().unwrap_or("")).to_string(), "", system_prompt()),
+        Some((a, team, re)) => {
+            let (kc, http) = (crate::team_relay_keys::store(), crate::team_relay::Curl);
+            let files: Vec<(String, Option<Vec<u8>>)> = a.def.refs.iter().map(|r| (r.name.clone(), crate::team_profile::bytes_of(dir, &kc, &http, team, &r.id).ok())).collect();
+            let (refs, skipped) = crate::team_agent::refs_block(&files, &nonce);
+            let prev = crate::team_agent::chain_block(&crate::team_agent::chain(&inbox, room, re, &a.id), &nonce);
+            for part in [refs, prev] {
+                if !part.is_empty() {
+                    prompt.push_str("\n\n");
+                    prompt.push_str(&part);
+                }
+            }
+            if skipped > 0 {
+                log(&format!("자료 {skipped}개 못 씀"));
+            }
+            (a.def.model.clone(), crate::team_agent::tools_of(&a.def), crate::team_agent::system_prompt(&a.def, &nonce))
+        }
+    };
     let started = std::time::Instant::now();
-    let outcome = run(dir, model, &prompt);
+    let (outcome, tokens) = run(dir, &model, tools, &system, &prompt);
     log(&format!("{model} {}줄 {}ms → {}", lines.len(), started.elapsed().as_millis(), match &outcome {
         Outcome::Reply(_) => "답",
         Outcome::Limit => "사용량 바닥",
@@ -490,40 +555,88 @@ fn answer(dir: &std::path::Path, room: &str, seq: u64, ask: &str, caller: &str) 
         Outcome::Slow => "시간 넘김",
         Outcome::Fail => "실패",
     }));
-    match outcome {
-        // 그 방에서 첫 답이면 맨 앞에 안내 한 줄(방 글이 부른 사람 Claude 로 간다는 것)
-        Outcome::Reply(t) => match clean_reply(&t) {
+    let used = (tokens > 0).then(|| (model.clone(), tokens));
+    let mut files: Vec<Attach> = Vec::new();
+    let text = match outcome {
+        // 파일 블록은 거름(줄머리 < → ›) 전에 꺼낸다 — 거른 뒤 꺼내면 표시가 깨져 › 줄이 남는다. 흉내 낸 파일은 버린다
+        Outcome::Reply(t) => match clean_reply(&{
+            let (rest, got) = match agent {
+                Some((a, _, _)) => crate::team_agent::take_files(&t, a.def.attach),
+                None => (t, Vec::new()),
+            };
+            files = got.into_iter().filter(|(_, body)| !forged(body)).collect();
+            rest
+        }) {
             Some(r) if needs_intro(&inbox, room) => with_intro(&r),
             Some(r) => r,
             None => crate::i18n::tr("답에 승인·이름표 흉내가 섞여서 올리지 않았어요", "The answer imitated an approval or a name tag, so I didn't post it").into(),
         },
         o => notice(o, caller),
+    };
+    (text, used, files)
+}
+
+/// 시험으로 불러 보기(만들기 화면) — 저장 안 한 정의로 이 기기 Claude 가 한 번 돌리고, 방엔 안 올린다. 동시 하나
+#[derive(serde::Serialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Tried {
+    pub text: String,
+    pub files: Vec<String>,
+    pub model: String,
+    pub tokens: u64,
+    pub ms: u64,
+}
+
+static TRYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn try_agent(dir: &std::path::Path, team: &str, room: &str, def: crate::team_agent::Def, ask: &str, prev: Vec<(String, String)>) -> Result<Tried, String> {
+    use std::sync::atomic::Ordering;
+    if TRYING.swap(true, Ordering::SeqCst) {
+        return Err(crate::i18n::tr("앞 시험이 아직 돌아요", "The previous test is still running").into());
     }
+    struct Done;
+    impl Drop for Done {
+        fn drop(&mut self) {
+            TRYING.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let _done = Done;
+    let def = crate::team_agent::clean(crate::team_agent::Def { t: "agent".into(), ..def });
+    let st = crate::team_relay::load_state(dir);
+    let caller = crate::team_relay_inbox::safe_name(st.teams.iter().find(|t| t.id == team).map(|t| t.display_name.as_str()).unwrap_or(&st.display_name));
+    let a = crate::team_agent::Shown { id: "try".into(), def, ..Default::default() };
+    // 이전 시험 문답은 사슬 대신 자료로 — 방 기록 끝(seq u64::MAX 앞 전부)을 읽는다
+    let started = std::time::Instant::now();
+    let ask_full = if prev.is_empty() { ask.to_string() } else { format!("{ask}\n\n{}", crate::team_agent::chain_block(&prev, "try")) };
+    let (text, used, files) = answer(dir, room, u64::MAX, &ask_full, &caller, Some((&a, team, 0)));
+    let (model, tokens) = used.unwrap_or((a.def.model.clone(), 0));
+    Ok(Tried { text, files: files.into_iter().map(|f| f.0).collect(), model, tokens, ms: started.elapsed().as_millis() as u64 })
 }
 
 /// 모델 설정 파일(<데이터>/team-helper.json) — 없으면 하이쿠
 pub const SETTINGS_FILE: &str = "team-helper.json";
 
-/// claude -p 한 번 — 빈 작업 폴더에서, 프롬프트는 표준 입력으로(ps·기록에 안 남게), 90초 넘으면 그룹째 끊는다
-fn run(dir: &std::path::Path, model: &str, prompt: &str) -> Outcome {
+/// claude -p 한 번 — 빈 작업 폴더에서, 프롬프트는 표준 입력으로(ps·기록에 안 남게), 90초 넘으면 그룹째 끊는다. (결과, 쓴 토큰)
+pub(crate) fn run(dir: &std::path::Path, model: &str, tools: &str, system: &str, prompt: &str) -> (Outcome, u64) {
     let work = dir.join("team-helper").join("run");
     if std::fs::create_dir_all(&work).is_err() {
-        return Outcome::Fail;
+        return (Outcome::Fail, 0);
     }
     let mut cmd = crate::platform::command(crate::claude::claude_bin());
-    cmd.args(run_args(model)).current_dir(&work);
+    cmd.args(run_args_with(model, tools, system)).current_dir(&work);
     match crate::platform::run_capped_input(&mut cmd, prompt.as_bytes(), RUN_LIMIT) {
         Ok(o) => {
             let out = String::from_utf8_lossy(&o.stdout);
-            if out.trim().is_empty() { classify(&String::from_utf8_lossy(&o.stderr)) } else { classify(&out) }
+            let tokens = serde_json::from_str::<Value>(out.trim()).map(|v| crate::team_agent::usage_of(&v)).unwrap_or(0);
+            (if out.trim().is_empty() { classify(&String::from_utf8_lossy(&o.stderr)) } else { classify(&out) }, tokens)
         }
-        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => Outcome::Slow,
-        Err(_) => Outcome::Fail,
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => (Outcome::Slow, 0),
+        Err(_) => (Outcome::Fail, 0),
     }
 }
 
-/// 방에 올리기 — 보통 말과 같은 봉투, via=helper
-fn post(dir: &std::path::Path, room: &str, text: &str) {
+/// 방에 올리기 — 보통 말과 같은 봉투, via=helper. 토큰은 이 기기(부른 사람)에만 적는다
+fn post(dir: &std::path::Path, room: &str, text: &str, extra: crate::e2e_envelope::Extra, used: Option<(String, u64)>) {
     if text.trim().is_empty() {
         return;
     }
@@ -531,8 +644,13 @@ fn post(dir: &std::path::Path, room: &str, text: &str) {
         Ok(n) => format!("helper-{}", n.chars().filter(char::is_ascii_alphanumeric).collect::<String>()),
         Err(e) => return log(&e),
     };
-    if let Err(e) = crate::team_relay_ws::send_helper(dir, room, &cid, text) {
-        log(&format!("답 올리기 실패: {e}"));
+    match crate::team_relay_ws::send_helper(dir, room, &cid, text, extra) {
+        Ok(seq) => {
+            if let Some((model, tokens)) = used {
+                crate::team_agent_store::usage_add(dir, room, seq, &model, tokens);
+            }
+        }
+        Err(e) => log(&format!("답 올리기 실패: {e}")),
     }
 }
 

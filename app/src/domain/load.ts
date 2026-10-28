@@ -4,7 +4,7 @@
 import { tr } from '../i18n';
 
 export type Proc = { pid: number; ppid: number; cpu: number; rssKb: number; etime: string; cmd: string };
-export type SysLoad = { cores: number; load1: number; load5: number; load15: number; swapUsedMb: number; swapTotalMb: number; memTotalMb: number };
+export type SysLoad = { cores: number; load1: number; load5: number; load15: number; swapUsedMb: number; swapTotalMb: number; memTotalMb: number; /** 부팅 시각(ms, kern.boottime) — 윈도우·옛 앱엔 없음 */ bootAt?: number };
 export type SessionLoad = { id: string; name: string; project: string; cpu: number; rssKb: number; top: Proc[] };
 export type Orphan = Proc & { count: number; claudePid: number };
 export type Bucket = { cpu: number; rssKb: number; top: Proc[] };
@@ -78,12 +78,13 @@ export function procLabel(cmd: string): string {
 
 /** sysctl -n hw.ncpu vm.loadavg vm.swapusage hw.memsize 네 줄 */
 export function parseSys(text: string): SysLoad | null {
-  const [ncpu, avg, swap, mem] = text.split('\n');
+  const [ncpu, avg, swap, mem, boot] = text.split('\n');
   const cores = Number(ncpu);
   const la = /\{\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)/.exec(avg ?? '');
   if (!cores || !la) return null;
   const sw = (k: string) => Number(new RegExp(`${k} = ([\\d.]+)M`).exec(swap ?? '')?.[1] ?? 0);
-  return { cores, load1: Number(la[1]), load5: Number(la[2]), load15: Number(la[3]), swapUsedMb: sw('used'), swapTotalMb: sw('total'), memTotalMb: Math.round(Number(mem ?? 0) / 1024 / 1024) };
+  const bootSec = /sec = (\d+)/.exec(boot ?? '')?.[1];
+  return { cores, load1: Number(la[1]), load5: Number(la[2]), load15: Number(la[3]), swapUsedMb: sw('used'), swapTotalMb: sw('total'), memTotalMb: Math.round(Number(mem ?? 0) / 1024 / 1024), ...(bootSec ? { bootAt: Number(bootSec) * 1000 } : {}) };
 }
 
 /** `ps -E -ww -o pid=,command= -p …` → pid → 그 프로세스를 띄운 Claude 세션 pid */

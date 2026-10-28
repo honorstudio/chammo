@@ -1,0 +1,58 @@
+/* 세션 브라우저 스페이스 칸(BrowserPane, 2026-10-27 인앱 브라우저 시안 A) — 클래스는 bp- 접두(전역 짧은 클래스와 안 겹치게).
+   가운데 .bp-screen 은 비워 두고 네이티브 비추기가 그 위에 얹힌다. 안내·마지막 그림은 비추기 밑(첫 그림 전·덮였을 때만 보인다) */
+.bp { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface); }
+.bp-bar { display: flex; align-items: center; gap: 4px; min-height: 36px; padding: 4px 6px 4px 8px; border-bottom: 1px solid var(--line); }
+/* 주소창 — 머리줄 가운데, 탭 칩보다 먼저(크롬처럼 읽을 주소는 글로) */
+.bp-addr { flex: 0 1 380px; min-width: 120px; height: 28px; box-sizing: border-box; padding: 0 10px; border: 1px solid var(--line); border-radius: 14px; background: color-mix(in srgb, var(--text) 4%, var(--surface)); color: var(--text); font: inherit; font-size: 12px; text-overflow: ellipsis; }
+.bp-addr:focus { outline: none; border-color: var(--accent); background: var(--surface); }
+.bp-addr::placeholder { color: var(--text-3); }
+.bp-tabs { flex: 1; min-width: 0; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+/* 탭 칩 = 탭 이름 + 그 탭 닫기 X(크롬처럼, 10-28). 면 색은 칩 통째에 */
+.bp-chip { flex: none; display: inline-flex; align-items: center; max-width: 220px; min-width: 0; border-radius: 6px; }
+.bp-chip:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.bp-chip.on { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.bp-tab { all: unset; box-sizing: border-box; min-width: 0; max-width: 196px; min-height: 28px; padding: 5px 2px 5px 10px; font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.bp-tab.on { color: var(--text); font-weight: 600; }
+.bp-tab-x { flex: none; width: 20px; height: 20px; margin-right: 4px; opacity: 0.6; }
+.bp-chip:hover .bp-tab-x, .bp-chip.on .bp-tab-x, .bp-tab-x:focus-visible { opacity: 1; }
+.bp-tab-x svg { width: 11px; height: 11px; }
+/* 대화상자가 떠 있는 탭 — 작은 점(왼쪽 띠 말고) */
+.bp-tab.dlg::after { content: ''; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--blocked); vertical-align: middle; }
+.bp-tab:focus-visible, .bp-follow:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.bp-follow { all: unset; padding: 5px 10px; border-radius: 6px; font-size: 12px; color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); cursor: pointer; white-space: nowrap; }
+.bp-screen { flex: 1; min-height: 0; position: relative; overflow: hidden; background: #1f1f23; }
+.bp-still { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+.bp-note { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; font-size: 13px; line-height: 1.6; color: #b4b4bd; }
+.bp-note span { max-width: 420px; }
+.bp-stat { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; }
+/* 사람이 쥔 동안 — 옅은 면 + 늘 보이는 '세션에 돌려주기'(칸을 눌러 저절로 켜진 개입도, 2026-10-28) */
+.bp-stat.mine { color: var(--text); background: color-mix(in srgb, #1f9a62 10%, var(--surface)); }
+.bp-stat .cv-btn.solid { flex: none; }
+.bp-signed .cv-btn { flex: none; }
+.bp-doing { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* 탭 줄 아이콘 — Craft 독(.lk-tab.dock)과 같은 자리, 세션 글자 배지는 오른쪽 아래 */
+.lk-tab.bdock { position: relative; flex: none; padding: 0 8px; }
+.lk-tab.bdock img { width: 22px; height: 22px; display: block; }
+.lk-bdock-letter { position: absolute; right: 1px; bottom: 1px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; display: grid; place-items: center; font-size: 11px; font-weight: 700; line-height: 1; color: var(--surface); background: var(--text-2); }
+.lk-bdock-dot { position: absolute; top: 5px; right: 4px; width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--panel, var(--surface)); }
+.lk-bdock-dot.agent { background: #4c8dff; }
+.lk-bdock-dot.human { background: #1f9a62; }
+.lk-bdock-dot.ask { background: var(--blocked); }
+/* 사람 차례 카드 — 칸과 아래 줄 사이(비추기 층 밖이라 겹치지 않는다). 강조는 옅은 면 색 + 점(왼쪽 띠 말고) */
+.bp-turn { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 10px 6px 12px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--blocked) 10%, var(--surface)); font-size: 13px; color: var(--text); }
+.bp-turn-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--blocked); }
+.bp-turn-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-turn-in { flex: 0 1 220px; min-width: 120px; height: 32px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
+.bp-turn .cv-btn { flex: none; min-height: 32px; }
+/* 다 했어 — 사람 차례를 끝내는 주 단추라 색 면·44px(10-28 사용자: 글자 단추라 못 찾았다) */
+/* 끄기 확인 한 줄의 끄기 단추 — 되돌리기 어려운 동작이라 글자 + 위험 색 */
+.bp-turn .cv-btn.danger { background: var(--danger-bg); color: var(--danger-ink); border-color: var(--danger-ink); }
+/* 탭 줄 브라우저 아이콘 — 보는 중이면 올렸을 때 오른쪽 위에 X(브라우저 끄기 — 앱 확인 창 뒤, 10-28 사용자). 누름 = 열기, 오른쪽 클릭 = 메뉴.
+   X 누름 자리는 24px(앱 아이콘 단추 규칙) — 보이는 동그라미는 그 안 18px */
+.lk-bdock-wrap { position: relative; flex: none; display: inline-flex; }
+.lk-bdock-x { position: absolute; top: -6px; right: -10px; z-index: calc(var(--z-base) + 1); width: 24px; height: 24px; min-width: 0; padding: 0; border-radius: 50%; background: none; box-shadow: none; opacity: 0; pointer-events: none; }
+.lk-bdock-x::before { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong, var(--line)); }
+.lk-bdock-x.kit-ib:hover:not(:disabled) { background: none; }
+.lk-bdock-x:hover::before { background: var(--danger-bg, var(--hover)); }
+.lk-bdock-x.kit-ib svg { position: relative; width: 10px; height: 10px; }
+.lk-bdock-wrap:hover .lk-bdock-x, .lk-bdock-x:focus-visible { opacity: 1; pointer-events: auto; }

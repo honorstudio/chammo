@@ -71,7 +71,15 @@ pub struct E2eStore {
     /// 보안 번호가 바뀌어 멈춘 말 — 받아들이면 보낸다(평문이라 7일 지나면·로그아웃하면 지운다)
     pub held: Vec<Held>,
     /// 갈린 사람을 '다시 받기'한 사슬(신원, 머리) — 갈림은 이걸로 셈한 번호를 견줬을 때만 받아들인다(6차 리뷰)
-    pub refetched: BTreeMap<String, (String, String)>,
+    pub refetched: BTreeMap<String, (String, String)>,    /// 지난 대화를 다 건넨 내 사슬 기기 → 그때(ms) — e2e_handover 가 다시 안 훑게(relay ADR 0007 R10)
+    pub handed: BTreeMap<String, u64>,
+    /// 건네주기가 실패(망·429·상한·옛 중계)해 물러선 때까지(ms)·이어진 실패 수 — 그 전엔 다시 안 훑는다
+    pub handover_after: u64,
+    pub handover_fails: u32,
+    /// 다 못 훑은 내 사슬 기기 → 방 → 이어 받을 자리(seq) — 바퀴가 상한에 걸려도 다음 바퀴가 거기서부터(못 싸는 말을 매번 처음부터 다시 받지 않게)
+    pub handover_at: BTreeMap<String, BTreeMap<String, u64>>,
+    /// 팀원 보안 번호가 바뀌어(다시 시작) 저절로 받아들인 때 — 대화 안 회색 줄('보안 번호가 바뀌었어요 · 번호 비교')이 그 자리에(사용자 10-29)
+    pub rekeyed: BTreeMap<String, u64>,
 }
 
 /// 멈춘 말 하나
@@ -201,6 +209,57 @@ pub fn chain_of(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, acc
     })
 }
 
+// ── 팀 머리(chammo-relay GET /v0/teams/:team/heads, 10-26 팀 지연 3차) — 캐시한 사슬·명부의 마지막 고리가 서버 머리와 같으면 다시 안 받는다.
+//    서버가 머리를 속여(새 고리를 숨겨) 봐야 사슬을 통째로 다시 받을 때 옛 사슬을 주는 것과 같은 범위다 — 검증·핀 견주기는 그대로 ──
+
+/// 명부 머리·계정마다 사슬 머리(seq, 마지막 고리 해시) — 사슬이 없는 계정은 None
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Heads {
+    pub log: Option<(u64, String)>,
+    pub chains: BTreeMap<String, Option<(u64, String)>>,
+}
+
+/// 머리 길이 없는 옛 중계(404) — 10분 기억해 매번 404 를 안 맞는다
+static NO_HEADS: Mutex<BTreeMap<String, std::time::Instant>> = Mutex::new(BTreeMap::new());
+const NO_HEADS_FOR: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// 시험은 실마다 가짜 중계가 따로라 기억도 실마다
+fn heads_key(server: &str) -> String {
+    if cfg!(test) { format!("{server}#{:?}", std::thread::current().id()) } else { server.to_string() }
+}
+
+fn head_of(v: &Value) -> Option<(u64, String)> {
+    Some((v["seq"].as_u64()?, v["hash"].as_str()?.to_string()))
+}
+
+/// 팀 머리 — 옛 중계·망 실패·모양이 틀리면 None(그땐 예전처럼 하나씩 받는다)
+pub(crate) fn heads(kc: &dyn Store, http: &dyn Http, st: &TeamState, team: &str) -> Option<Heads> {
+    let key = heads_key(&st.server);
+    if NO_HEADS.lock().unwrap_or_else(|e| e.into_inner()).get(&key).is_some_and(|t| t.elapsed() < NO_HEADS_FOR) {
+        return None;
+    }
+    let k = relay::device_keys(kc, st).ok()?;
+    let (code, v) = relay::call(http, &st.server, &k, Some(&st.device_id), "GET", &format!("/v0/teams/{team}/heads"), None).ok()?;
+    if code == 404 {
+        NO_HEADS.lock().unwrap_or_else(|e| e.into_inner()).insert(key, std::time::Instant::now());
+        return None;
+    }
+    if code != 200 {
+        return None;
+    }
+    let chains = v["chains"].as_object()?.iter().map(|(a, h)| (a.clone(), head_of(h))).collect();
+    Some(Heads { log: head_of(&v["log"]), chains })
+}
+
+/// 사슬을 새로 — 머리가 캐시한 사슬 끝과 같으면 캐시로(요청 없음). 머리가 없거나 다르면 chain_of(refresh).
+/// 머리 seq 는 서버 값이라 seq + 1 은 checked_add(u64 끝이면 넘쳐 패닉)
+fn chain_fresh(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, account: &str, h: Option<&Heads>) -> Result<Trust, String> {
+    let same = h.and_then(|h| h.chains.get(account)).and_then(|x| x.as_ref()).is_some_and(|(seq, hash)| {
+        load(dir).chains.get(account).is_some_and(|c| seq.checked_add(1) == Some(c.len() as u64) && c.last().is_some_and(|l| l.seq == *seq && e2e_chain::link_hash(&l.body, &l.sig) == *hash))
+    });
+    chain_of(dir, kc, http, st, account, !same)
+}
+
 /// 시험 준비 — 이 사슬을 믿은 상태로(캐시 + 핀)
 #[cfg(test)]
 pub(crate) fn seed_trusted(dir: &Path, account: &str, links: Vec<Link>) {
@@ -273,12 +332,55 @@ pub fn accept(dir: &Path, account: &str) -> Result<(), String> {
 
 /// 팀 명부 — 나오는 계정 사슬을 먼저 받아 검증한다(갈린 사슬이면 Err). 명부가 없거나 내 자리가 없으면 Err(R8 — 평문 전환기 없음)
 pub fn roster_of(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, team: &str) -> Result<Roster, String> {
-    let k = relay::device_keys(kc, st)?;
-    let (code, v) = relay::call(http, &st.server, &k, Some(&st.device_id), "GET", &format!("/v0/teams/{team}/log"), None)?;
-    if code != 200 {
-        return Err(relay::why(code, &v));
+    roster_with(dir, kc, http, st, team, None)
+}
+
+// ── 받는 길 명부(10-28 22:53 429) — 받은 말마다 /log 를 다시 받으면 다시 붙은 방의 밀린 말이 열쇠의 10분 300개를 다 먹는다.
+//    받을 땐 1분 안에 받은 명부를 다시 쓴다(빠진 사람 말이 그만큼 늦게 막힌다 — 보낼 땐 지금처럼 늘 새로). 캐시 명부에 보낸 이가 없거나
+//    봉투의 명부 머리를 모르면 새로 받되 10초에 한 번까지(지어낸 보낸 이로 요청을 쏟게 하지 못하게) ──
+
+static RECV_AT: Mutex<BTreeMap<String, std::time::Instant>> = Mutex::new(BTreeMap::new());
+const RECV_REUSE: std::time::Duration = std::time::Duration::from_secs(60);
+const RECV_FORCE_GAP: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// 받는 길 명부 기억을 지운다 — 다시 열기(e2e_retry)처럼 '이제 명부가 맞춰졌을' 때 첫 말이 새로 받게
+pub(crate) fn recv_forget(dir: &Path) {
+    let pre = format!("{}|", dir.display());
+    RECV_AT.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| !k.starts_with(&pre));
+}
+
+/// 받는 길 명부 — force 면 캐시가 1분 안이어도 새로(단 10초에 한 번). 새로 못 받는 사이엔 캐시 명부로
+pub(crate) fn roster_recv(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, team: &str, force: bool) -> Result<Roster, String> {
+    // 새로 받기는 따로 센다 — 막 받은 명부 바로 뒤에 온 새 사람 말도 한 번은 새로 받게
+    let key = format!("{}|{team}{}", dir.display(), if force { "|force" } else { "" });
+    let last = RECV_AT.lock().unwrap_or_else(|e| e.into_inner()).get(&key).copied();
+    let gap = if force { RECV_FORCE_GAP } else { RECV_REUSE };
+    let cached = load(dir).rosters.get(team).and_then(|c| c.last().map(|l| (l.seq, e2e_roster::team_hash(l))));
+    if let (Some(t), Some(head)) = (last, cached) {
+        if t.elapsed() < gap {
+            return roster_with(dir, kc, http, st, team, Some(&Heads { log: Some(head), chains: BTreeMap::new() }));
+        }
     }
-    let links: Vec<TLink> = serde_json::from_value(v["links"].clone()).map_err(|e| e.to_string())?;
+    RECV_AT.lock().unwrap_or_else(|e| e.into_inner()).insert(key, std::time::Instant::now());
+    roster_of(dir, kc, http, st, team)
+}
+
+/// roster_of — 팀 머리가 캐시한 명부 끝과 같으면 명부를 다시 안 받는다(검증은 그대로)
+pub(crate) fn roster_with(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, team: &str, h: Option<&Heads>) -> Result<Roster, String> {
+    let same = h.and_then(|h| h.log.as_ref()).and_then(|(seq, hash)| {
+        load(dir).rosters.get(team).filter(|c| seq.checked_add(1) == Some(c.len() as u64) && c.last().is_some_and(|l| l.seq == *seq && e2e_roster::team_hash(l) == *hash)).cloned()
+    });
+    let links: Vec<TLink> = match same {
+        Some(c) => c,
+        None => {
+            let k = relay::device_keys(kc, st)?;
+            let (code, v) = relay::call(http, &st.server, &k, Some(&st.device_id), "GET", &format!("/v0/teams/{team}/log"), None)?;
+            if code != 200 {
+                return Err(relay::why(code, &v));
+            }
+            serde_json::from_value(v["links"].clone()).map_err(|e| e.to_string())?
+        }
+    };
     if links.is_empty() {
         return Err(NO_ROSTER.into());
     }
@@ -348,9 +450,9 @@ fn recipients(c: &Chain) -> impl Iterator<Item = Recipient> + '_ {
 pub(crate) const NOT_READY: &str = "이 기기는 아직 종단 암호 준비 전이야 — 로그인·기기 허용을 먼저 마쳐 줘(보내지 않았어)";
 pub(crate) const MY_CHAIN_UNCONFIRMED: &str = "이 기기는 아직 4자리 확인 전이야 — 다른 내 기기에 뜬 4자리를 넣으면 보낼 수 있어";
 pub(crate) const MY_CHAIN_CHANGED: &str = "내 계정 기기 사슬이 바뀌었어(내가 안 한 다시 시작·갈림) — 확인 전엔 보내지도 허용하지도 않아";
-fn my_chain(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState) -> Result<Chain, String> {
+fn my_chain(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, h: Option<&Heads>) -> Result<Chain, String> {
     let acc = st.account.as_ref().map(|a| a.id.clone()).ok_or(NOT_READY)?;
-    match chain_of(dir, kc, http, st, &acc, true)? {
+    match chain_fresh(dir, kc, http, st, &acc, h)? {
         Trust::Ok(c) if c.devices.contains_key(&st.device_id) => Ok(c),
         Trust::Changed(_) | Trust::Forked => Err(MY_CHAIN_CHANGED.into()),
         // 사슬엔 들었는데 4자리 확인 전 — 서버가 보여 준 사슬로 봉하지 않는다(R7)
@@ -372,20 +474,22 @@ pub struct Audience {
 
 pub fn audience(dir: &Path, kc: &dyn Store, http: &dyn Http, room: &str) -> Result<Audience, String> {
     let st = relay::load_state(dir);
-    let mine = my_chain(dir, kc, http, &st)?;
     let r = st.rooms.iter().find(|r| r.id == room).cloned().ok_or("모르는 방")?;
+    // 팀 방이면 팀 머리 한 번 — 내 사슬·명부·상대 사슬이 그대로면 다시 안 받는다
+    let h = if r.kind == "self" { None } else { heads(kc, http, &st, &r.team) };
+    let mine = my_chain(dir, kc, http, &st, h.as_ref())?;
     let mut a = Audience { to: recipients(&mine).collect(), peers: BTreeMap::new(), roster: String::new(), head: mine.head() };
     if r.kind == "self" {
         return Ok(a);
     }
-    let roster = roster_of(dir, kc, http, &st, &r.team)?;
+    let roster = roster_with(dir, kc, http, &st, &r.team, h.as_ref())?;
     let my_acc = st.account.as_ref().map(|a| a.id.clone()).unwrap_or_default();
     if r.kind == "group" {
         // 단톡방 — 받을 사람은 서명된 명부의 방 사람(서버 방 목록이 아니라). 바뀜·갈림·준비 전인 사람은 그 사람만 빼고 보낸다(결정 5)
         let others: Vec<_> = group_peers(&roster, &st, &r)?.into_iter().filter(|p| p.account != my_acc).collect();
         let mut sent_to = 0;
         for peer in others.iter().filter(|p| p.confirmed) {
-            if let Trust::Ok(pc) = chain_of(dir, kc, http, &st, &peer.account, true)? {
+            if let Trust::Ok(pc) = chain_fresh(dir, kc, http, &st, &peer.account, h.as_ref())? {
                 a.to.extend(recipients(&pc));
                 a.peers.insert(peer.account.clone(), pc.head());
                 sent_to += 1;
@@ -400,7 +504,7 @@ pub fn audience(dir: &Path, kc: &dyn Store, http: &dyn Http, room: &str) -> Resu
             return Err(format!("{} 은(는) 팀 명부에서 빠졌어 — 보내지 않았어", peer.display_name));
         }
         // 상대 사슬도 새로 — 그 사람이 막 들인 기기까지 받게
-        match chain_of(dir, kc, http, &st, &peer.account, true)? {
+        match chain_fresh(dir, kc, http, &st, &peer.account, h.as_ref())? {
             Trust::Ok(pc) => {
                 a.to.extend(recipients(&pc));
                 a.peers.insert(peer.account.clone(), pc.head());
@@ -437,7 +541,14 @@ pub fn wrap_with(dir: &Path, kc: &dyn Store, http: &dyn Http, room: &str, cid: &
 
 /// 팀 참모 답(team_helper) — 참모 말(agent) + 안쪽 via=helper. 받는 사람 셈·봉투는 보통 말과 같다
 pub fn wrap_helper(dir: &Path, kc: &dyn Store, http: &dyn Http, room: &str, cid: &str, text: &str, at: u64) -> Result<String, String> {
-    seal_inner(dir, kc, http, room, cid, Inner { origin: "agent".into(), text: text.into(), at, via: "helper".into(), ..Default::default() })
+    wrap_helper_with(dir, kc, http, room, cid, text, at, Extra::default())
+}
+
+/// 팀 참모 답 + 딸린 것(참모 id·이름·이어 묻기·붙인 파일 — ADR 0017)
+#[allow(clippy::too_many_arguments)]
+pub fn wrap_helper_with(dir: &Path, kc: &dyn Store, http: &dyn Http, room: &str, cid: &str, text: &str, at: u64, extra: Extra) -> Result<String, String> {
+    extra.check()?;
+    seal_inner(dir, kc, http, room, cid, Inner { origin: "agent".into(), text: text.into(), at, via: "helper".into(), extra })
 }
 
 fn seal_inner(dir: &Path, kc: &dyn Store, http: &dyn Http, room: &str, cid: &str, inner: Inner) -> Result<String, String> {
@@ -496,8 +607,9 @@ pub(crate) fn add_signers(to: &mut BTreeMap<String, String>, more: &BTreeMap<Str
 }
 
 pub fn locker_people(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, team: &str) -> Result<LockerPeople, String> {
-    let mine = my_chain(dir, kc, http, st)?;
-    let roster = roster_of(dir, kc, http, st, team)?;
+    let h = heads(kc, http, st, team);
+    let mine = my_chain(dir, kc, http, st, h.as_ref())?;
+    let roster = roster_with(dir, kc, http, st, team, h.as_ref())?;
     let my_acc = st.account.as_ref().map(|a| a.id.clone()).unwrap_or_default();
     let mut p = LockerPeople { recipients: recipients(&mine).collect(), signers: mine.ever.clone(), ..Default::default() };
     for (member, m) in &roster.members {
@@ -505,7 +617,8 @@ pub fn locker_people(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState
         if m.account == my_acc {
             continue;
         }
-        match chain_of(dir, kc, http, st, &m.account, m.active)? {
+        let got = if m.active { chain_fresh(dir, kc, http, st, &m.account, h.as_ref())? } else { chain_of(dir, kc, http, st, &m.account, false)? };
+        match got {
             // 확인 전 멤버 — 받는 사람도 올린 사람 확인도 아니다(받아들이기 전, 계획 e2e-recover §9)
             Trust::Ok(_) if !m.confirmed => {
                 if m.active {
@@ -545,6 +658,16 @@ pub enum Unwrapped {
     Failed(String),
 }
 
+/// 건네받은 열쇠 — {t:"late", key:{enc, w, by}} 틀에서만(msg 틀에 붙은 key 는 안 본다)
+fn late_key(m: &Value) -> Option<(e2e_envelope::Late, String)> {
+    if m["t"] != "late" {
+        return None;
+    }
+    let k = &m["key"];
+    let s = |x: &str| k[x].as_str().unwrap_or("").to_string();
+    Some((e2e_envelope::Late { enc: s("enc"), w: s("w") }, s("by")))
+}
+
 /// 받기 — 서버가 찍은 보낸 기기·계정(m.from)과 봉투 머리가 같아야 한다
 pub fn unwrap(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, m: &Value) -> Unwrapped {
     unwrap_as(dir, kc, http, st, m, false)
@@ -574,22 +697,35 @@ fn unwrap_as(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, m: &Va
             return Unwrapped::Failed("account".into());
         }
     } else {
-        let roster = match roster_of(dir, kc, http, st, &r.team) {
+        let found = |roster: &Roster| {
+            // 단톡방은 명부의 방 사람 중 하나, DM 은 그 상대
+            let sender = if r.kind == "group" {
+                group_peers_any(roster, st, &r).ok().and_then(|ps| ps.into_iter().find(|p| p.account == account).cloned())
+            } else {
+                roster.members.get(&r.peer).filter(|p| p.active && p.account == account).cloned()
+            };
+            let head_ok = meta.roster.is_empty() || roster.hashes.contains(&meta.roster);
+            (sender, head_ok)
+        };
+        let mut roster = match roster_recv(dir, kc, http, st, &r.team, false) {
             Ok(x) => x,
             Err(e) => return Unwrapped::Failed(e),
         };
-        // 단톡방은 명부의 방 사람 중 하나, DM 은 그 상대
-        let sender = if r.kind == "group" {
-            group_peers_any(&roster, st, &r).ok().and_then(|ps| ps.into_iter().find(|p| p.account == account))
-        } else {
-            roster.members.get(&r.peer).filter(|p| p.active && p.account == account)
-        };
+        let (mut sender, mut head_ok) = found(&roster);
+        // 캐시 명부로 모르는 보낸 이·명부 머리 — 새 사람·새 고리일 수 있으니 새로 한 번
+        if (account != my_acc && sender.is_none()) || !head_ok {
+            if let Ok(x) = roster_recv(dir, kc, http, st, &r.team, true) {
+                roster = x;
+                (sender, head_ok) = found(&roster);
+            }
+        }
+        let sender = sender.as_ref();
         if account != my_acc && sender.is_none() {
             return Unwrapped::Failed("account".into());
         }
         // 확인 전 사람이 보냈거나 확인 전 방이면 받되 기록만(넘기지 않음) — 받아들이기 전(계획 e2e-recover §9 S13)
         doubtful = sender.is_some_and(|p| !p.confirmed) || (r.kind == "group" && roster.rooms.get(&r.id).is_some_and(|x| !x.confirmed));
-        roster_head_ok = meta.roster.is_empty() || roster.hashes.contains(&meta.roster);
+        roster_head_ok = head_ok;
     }
     // 같은 봉투를 새 seq 로 다시 넣기 거르기(리뷰 B 중간 6)
     let seen_key = format!("{device}|{}", meta.cid);
@@ -615,7 +751,25 @@ fn unwrap_as(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, m: &Va
         Ok(k) => k,
         Err(e) => return Unwrapped::Failed(e),
     };
-    let (meta, inner) = match e2e_envelope::open(&keys, &st.device_id, body, Some(&ed)) {
+    // 지난 대화 건네받기(R10) — late 틀에서만. 건넨 기기와 원래 받는 기기 중 하나가 내 사슬(한 번이라도 든 기기)이어야
+    let opened = match late_key(m) {
+        None => e2e_envelope::open(&keys, &st.device_id, body, Some(&ed)),
+        Some((l, by)) => {
+            let mine = |refresh| match chain_of(dir, kc, http, st, &my_acc, refresh) {
+                Ok(Trust::Ok(c)) => Some(c),
+                _ => None,
+            };
+            let Some(mc) = mine(false).filter(|c| c.ever.contains_key(&by)).or_else(|| mine(true)) else { return Unwrapped::Failed("late-chain".into()) };
+            if !mc.ever.contains_key(&by) {
+                return Unwrapped::Failed("late-by".into());
+            }
+            if !e2e_envelope::recipients(body).iter().any(|d| mc.ever.contains_key(d)) {
+                return Unwrapped::Failed("late-not-mine".into());
+            }
+            e2e_envelope::open_late(&keys, &st.device_id, body, Some(&ed), &l)
+        }
+    };
+    let (meta, inner) = match opened {
         Ok(x) => x,
         Err(e) => return Unwrapped::Failed(format!("{e:?}")),
     };

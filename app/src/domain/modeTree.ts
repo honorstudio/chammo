@@ -185,7 +185,7 @@ function textStyle(p: Record<string, unknown>): CSSProperties {
   if (c) s.color = c;
   const bg = colorOf(p.backgroundColor);
   if (bg) s.background = bg;
-  if (p.dimColor === true) s.color = 'var(--text-3)';
+  if (p.dimColor === true) s.color = 'var(--text-dim)';
   if (p.bold === true) s.fontWeight = 600;
   if (p.italic === true) s.fontStyle = 'italic';
   const deco = [p.underline === true && 'underline', p.strikethrough === true && 'line-through'].filter(Boolean).join(' ');
@@ -195,17 +195,18 @@ function textStyle(p: Record<string, unknown>): CSSProperties {
   return s;
 }
 
-// 테마 이름 → 앱 토큰, 터미널 색 이름 → 차분한 색. 그 밖은 #hex 만(이름표·url() 같은 건 버린다)
+// 테마 이름 → 앱 토큰, 터미널 색 이름 → 차분한 색. 그 밖은 #hex 만(이름표·url() 같은 건 버린다).
+// 흐린 글(dimColor·inactive·subtle·gray)은 --text-dim — 라이트·다크 모두 4.5:1 이상(#4). secondary = 테마를 따르는 중간 회색(--text-2)
 const THEME: Record<string, string> = {
-  text: 'var(--text)', inverseText: 'var(--surface)', inactive: 'var(--text-3)', subtle: 'var(--text-3)', suggestion: 'var(--working)',
+  text: 'var(--text)', inverseText: 'var(--surface)', inactive: 'var(--text-dim)', subtle: 'var(--text-dim)', secondary: 'var(--text-2)', suggestion: 'var(--working)',
   remember: 'var(--working)', success: 'var(--idle)', error: 'var(--danger-ink)', warning: 'var(--blocked)', merged: 'var(--working)',
   claude: '#d97757', permission: 'var(--working)', planMode: 'var(--idle)', autoAccept: 'var(--working)', promptBorder: 'var(--line-strong)',
   bashBorder: 'var(--line-strong)', ide: 'var(--working)', diffAdded: 'var(--idle)', diffRemoved: 'var(--danger-ink)',
-  diffAddedDimmed: 'var(--text-3)', diffRemovedDimmed: 'var(--text-3)', diffAddedWord: 'var(--idle)', diffRemovedWord: 'var(--danger-ink)',
+  diffAddedDimmed: 'var(--text-dim)', diffRemovedDimmed: 'var(--text-dim)', diffAddedWord: 'var(--idle)', diffRemovedWord: 'var(--danger-ink)',
 };
 const NAMED: Record<string, string> = {
   black: '#1d1d20', red: '#c0392b', green: '#1f9a62', yellow: '#b8860b', blue: '#2f74e0', magenta: '#9b4dca', cyan: '#138a9e', white: '#e7e7ea',
-  gray: '#8a8a92', grey: '#8a8a92', blackBright: '#4a4a52', redBright: '#e05545', greenBright: '#33b77a', yellowBright: '#e0a100',
+  gray: 'var(--text-dim)', grey: 'var(--text-dim)', blackBright: '#4a4a52', redBright: '#e05545', greenBright: '#33b77a', yellowBright: '#e0a100',
   blueBright: '#5b9bff', magentaBright: '#b77be0', cyanBright: '#2bb3c8', whiteBright: '#ffffff',
 };
 

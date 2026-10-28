@@ -44,7 +44,8 @@ export function DocPage({ lead, tail, where, attachTo, path, title, owner, pinne
   tail?: React.ReactNode;
   /** 보관함 탭으로 열었으면 — 뒤로 알약·이름 대신 작은 경로 한 줄(domain/lockerTabs pathLine) */
   where?: string;
-  onAttach?: () => void;
+  /** e = 누른 단추(팀 모드에선 그 자리에 참모 고르기) */
+  onAttach?: (e?: React.MouseEvent<HTMLElement>) => void;
   /** 붙일 참모(이름·색) — 보내기 단추 색 */
   attachTo?: OrchTo | null;
   path: string;

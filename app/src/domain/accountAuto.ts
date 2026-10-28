@@ -12,6 +12,11 @@
 //    고정 안 한 칸은 그대로 95%. 한도로 멈춘 세션엔 넘긴 뒤 '계속해'를 세션마다 한 번만
 //  · 로그인 풀림(2026-10-06): 바꾼 뒤 난 로그인 오류나 지금 로그인 토큰 사용량 401 → 그 칸을 'auth' 로 막고 넘긴다. 시각으로는 안 풀리고
 //    그 칸 토큰으로 물은 값이 ok 일 때 풀린다. 로그인 오류 세션 '이어서'는 여기 말고 domain/login(키체인이 바뀐 걸 보고) — 둘이 겹쳐 보내지 않게
+//  · 약관 동의 필요(2026-10-28): 바꾼 뒤 난 약관 오류 → 그 칸을 'terms' 로 막고 넘긴다. 사용량 주소는 약관과 상관없이 ok 라 그걸로는 안 풀리고
+//    사람이 약관 카드 [다시 시도]를 누를 때(clearTerms)만 풀린다 — 아직 동의 전이면 다시 오류가 나 또 막힌다
+//  · 약관·로그인 오류는 바꾼 뒤 TERMS_GRACE_MS 안이면 새 칸 탓으로 안 센다 — 돌던 세션은 바꾼 뒤에도 옛 토큰을 잠깐 쥔다(2026-10-28 실측:
+//    15:47:28 바꿈 → 4초 뒤 새로 시작한 턴도 옛 계정 약관 오류, 47초 뒤 정상). 그걸 새 칸 탓으로 세어 멀쩡한 계정 둘을 줄줄이 막았다.
+//    약관으로 막은 지 TERMS_CHAIN_MS 안에 다음 칸이 또 약관이면 넘기지 않고 멈춘다(카드 한 장 — 계정을 줄줄이 막지 않게)
 import type { Activity } from './activity';
 import type { Session } from './session';
 
@@ -21,18 +26,22 @@ export const PIN_THRESHOLD = 99;
 export const MIN_GAP_MS = 3 * 60_000;
 /** 로그인 풀림 막힘 — 시각으로는 안 풀린다(그 칸 토큰 사용량이 ok 일 때 applyApi 가 푼다). 숫자로 두는 건 저장 모양을 안 바꾸려고 */
 export const AUTH_BLOCK_MS = 30 * 24 * 60 * 60_000;
+/** 바꾼 뒤 이만큼 안에 난 약관·로그인 오류는 옛 계정 탓(돌던 세션의 옛 토큰) — 실측 47초, 넉넉히 */
+export const TERMS_GRACE_MS = 3 * 60_000;
+/** 약관으로 칸을 막은 지 이만큼 안에 다음 칸도 약관이면 줄줄이 막지 않고 멈춘다 */
+export const TERMS_CHAIN_MS = 15 * 60_000;
 /** 한도 오류인데 다시 열리는 시각을 모를 때 다시 볼 때까지 */
 export const UNKNOWN_RESET_MS = 60 * 60_000;
 /** 지문 배우기 — 모르는 지문 하나가 이만큼 오래, 이만큼 여러 번 혼자 보여야 */
 export const LEARN_MS = 2 * 60_000;
 export const LEARN_N = 3;
 /** 상태 모양 판 — 다르면 옛 기록(근거 없는 막힘)을 한 번 지운다 */
-export const STATE_V = 2;
+export const STATE_V = 3;
 /** '계속해' 기록을 이만큼 지나면 잊는다 */
 const NUDGE_KEEP_MS = 24 * 60 * 60_000;
 
 export type Win = { used: number; resetsAt: number };
-export type Why = 'five' | 'week' | 'limit' | 'auth';
+export type Why = 'five' | 'week' | 'limit' | 'auth' | 'terms';
 /** fp = 이 계정의 주간 창 시각(지문). blockFp = 막을 때의 지문 — 지금 지문과 다르면 그 막힘은 무효.
  *  openedAt = 막힘이 풀린 시각 — 그 전에 난 한도 오류는 이 칸 소진 신호가 아니다. authAt = 이 칸 토큰으로 물었더니 401·403 이던 시각 */
 export type SlotAuto = { fp?: number; five?: Win; week?: Win; seenAt?: number; blockedUntil?: number; why?: Why; blockFp?: number; openedAt?: number; authAt?: number };
@@ -52,7 +61,7 @@ export type AutoState = {
   learn: Learn | null;
 };
 /** 한도 오류로 멈춘 세션(마지막 줄이 그 오류). auth = 로그인 오류로 멈춤(막는 근거로만 — 계속해는 안 보낸다) */
-export type Stuck = { session: string; ts: number; resetsAt?: number; auth?: true };
+export type Stuck = { session: string; ts: number; resetsAt?: number; auth?: true; /** auth 중 약관 동의 필요 */ terms?: true };
 export type UsageAt = { json: string; at: number };
 export type Input = { now: number; ids: string[]; active: string | null; usage: UsageAt | null; stuck: Stuck[] };
 /** unpinned = 고정한 칸이 진짜 다 차서 넘기며 고정을 풀었다 — 사람에게 한 줄 알린다 */
@@ -80,7 +89,7 @@ export function readAuto(v: unknown): AutoState {
     const five = win(r.five), week = win(r.week);
     if (five) s.five = five;
     if (week) s.week = week;
-    if (r.why === 'five' || r.why === 'week' || r.why === 'limit' || r.why === 'auth') s.why = r.why;
+    if (r.why === 'five' || r.why === 'week' || r.why === 'limit' || r.why === 'auth' || r.why === 'terms') s.why = r.why;
     slots[id] = s;
   }
   const nudged: Record<string, number> = {};
@@ -229,9 +238,25 @@ function attribute(s: AutoState, ids: string[], active: string, u: UsageAt, now:
   }
 }
 
-/** 옛 판 기록은 막힘의 근거(지문)가 없다 — 한 번 지운다(2026-10-02 실전: 남의 주간 97% 로 막힌 칸). 묻기(applyApi)보다 먼저 */
+/** 약관으로 막은 시각(막힘은 그때부터 AUTH_BLOCK_MS) */
+const termsAt = (x: SlotAuto | undefined) => (x?.why === 'terms' && x.blockedUntil !== undefined ? x.blockedUntil - AUTH_BLOCK_MS : undefined);
+
+/** 옛 판 기록은 막힘의 근거(지문)가 없다 — 한 번 지운다(2026-10-02 실전: 남의 주간 97% 로 막힌 칸). 묻기(applyApi)보다 먼저.
+ *  v2 → v3: 약관 연쇄 오탐(2026-10-28)만 푼다 — 약관 막힘이 TERMS_CHAIN_MS 안에 줄줄이 있으면 맨 처음 것(진짜)만 남긴다 */
 export function migrate(prev: AutoState): AutoState {
-  return prev.v === STATE_V ? prev : { ...prev, v: STATE_V, slots: {}, allOutUntil: null, learn: null };
+  if (prev.v === STATE_V) return prev;
+  if (prev.v !== 2) return { ...prev, v: STATE_V, slots: {}, allOutUntil: null, learn: null };
+  const slots = { ...prev.slots };
+  const blocked = Object.keys(slots).filter((id) => termsAt(slots[id]) !== undefined).sort((a, b) => termsAt(slots[a])! - termsAt(slots[b])!);
+  let head: number | undefined;
+  for (const id of blocked) {
+    const t = termsAt(slots[id])!;
+    if (head !== undefined && t - head < TERMS_CHAIN_MS) {
+      const { blockedUntil: _b, why: _w, blockFp: _f, ...o } = slots[id]!;
+      slots[id] = { ...o, openedAt: t };
+    } else head = t;
+  }
+  return { ...prev, v: STATE_V, slots };
 }
 
 export function step(prev0: AutoState, inp: Input): Plan {
@@ -286,11 +311,17 @@ export function step(prev0: AutoState, inp: Input): Plan {
   const cur = (s.slots[active] ??= {});
   const since = Math.max(s.switchedAt ?? 0, cur.openedAt ?? 0);
   const hits = inp.stuck.filter((x) => x.ts > since);
-  const authHit = hits.some((x) => x.auth) || (cur.authAt !== undefined && cur.authAt > since);
-  if (cur.blockedUntil === undefined && authHit) {
-    // 로그인 풀림 — 한도와 달리 시각으로 안 풀린다
+  // 약관·로그인 오류는 문구에 계정이 없다 — 바꾼 직후 것은 돌던 세션의 옛 토큰 탓(위 TERMS_GRACE_MS)
+  const authSince = Math.max((s.switchedAt ?? 0) + TERMS_GRACE_MS, cur.openedAt ?? 0);
+  const authHits = inp.stuck.filter((x) => x.auth && x.ts > authSince);
+  // 바로 앞에 다른 칸을 약관으로 막았다 — 이 칸까지 막으면 연쇄. 넘기지 않고 멈춘다(사람이 카드로)
+  const chain = ids.some((id) => id !== active && (termsAt(s.slots[id]) ?? -Infinity) > now - TERMS_CHAIN_MS);
+  const termsHit = authHits.some((x) => x.terms) && !chain;
+  const authHit = authHits.some((x) => !x.terms) || (cur.authAt !== undefined && cur.authAt > since);
+  if (cur.blockedUntil === undefined && (authHit || termsHit)) {
+    // 로그인 풀림·약관 — 한도와 달리 시각으로 안 풀린다
     cur.blockedUntil = now + AUTH_BLOCK_MS;
-    cur.why = 'auth';
+    cur.why = authHit ? 'auth' : 'terms';
     delete cur.blockFp;
     if (s.pinned === active) s.pinned = null;
   }
@@ -319,7 +350,7 @@ export function step(prev0: AutoState, inp: Input): Plan {
   if (!usable(active)) {
     if (!avail.length) {
       // 로그인 필요 칸은 시각으로 안 풀린다 — 다 찼어 시각에서 빼고, 전부 로그인 필요면 알리지 않는다(로그인 카드가 맡는다)
-      const until = Math.min(...ids.map((id) => (s.slots[id]?.why === 'auth' ? Infinity : s.slots[id]?.blockedUntil ?? exhausted(s.slots[id], now)?.until ?? Infinity)));
+      const until = Math.min(...ids.map((id) => (s.slots[id]?.why === 'auth' || s.slots[id]?.why === 'terms' ? Infinity : s.slots[id]?.blockedUntil ?? exhausted(s.slots[id], now)?.until ?? Infinity)));
       if (until === Infinity) return none;
       const notify = s.allOutUntil !== until;
       s.allOutUntil = until;
@@ -359,6 +390,17 @@ export function markDead(s: AutoState, id: string, now: number): AutoState {
   return { ...s, slots: { ...s.slots, [id]: { ...s.slots[id], authAt: now } } };
 }
 
+/** 약관 카드 [다시 시도] — 약관으로 막힌 칸을 푼다(only 면 그 칸만, 한도·로그인 막힘은 그대로). 아직 동의 전이면 다음 오류에 또 막힌다 */
+export function clearTerms(s: AutoState, now: number, only?: string): AutoState {
+  const slots = { ...s.slots };
+  for (const [id, x] of Object.entries(slots)) {
+    if (x.why !== 'terms' || (only !== undefined && id !== only)) continue;
+    const { blockedUntil: _b, why: _w, blockFp: _f, ...o } = x;
+    slots[id] = { ...o, openedAt: now };
+  }
+  return { ...s, slots };
+}
+
 /** 저장할 것만 — 바뀐 윗단 키(null 이면 지우기). 통째로 쓰면 그새 설정에서 바꾼 키(자동 켜기 등)를 옛 값으로 덮는다 */
 export function changedKeys(before: AutoState, after: AutoState): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -375,7 +417,7 @@ export function stuckOf(acts: { session: Pick<Session, 'id' | 'kind' | 'state'>;
     if (au?.retry) return []; // 갱신 겹침 — 칸 탓 아님(domain/login 이 잠깐 뒤 이어서)
     if (au && a.session.kind === 'background' && a.session.state !== 'working') {
       const ts = Date.parse(au.ts);
-      return Number.isNaN(ts) ? [] : [{ session: a.session.id, ts, auth: true }];
+      return Number.isNaN(ts) ? [] : [{ session: a.session.id, ts, auth: true, ...(au.terms ? { terms: true as const } : {}) }];
     }
     const l = a.activity.limit;
     const ts = l ? Date.parse(l.ts) : NaN;

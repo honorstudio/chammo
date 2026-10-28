@@ -23,6 +23,10 @@ pub trait Backend: Send + Sync {
     fn hq_dir(&self) -> String;
     /// 대화 기록 이어 읽기 — 세션 id(UUID)로만 찾는다
     fn transcript(&self, session_id: &str, from: Option<u64>) -> serde_json::Value;
+    /// 참모 줄 살짝 보기(peek=1) — 작은 꼬리. 따로 안 두면 보통 읽기
+    fn transcript_peek(&self, session_id: &str, from: Option<u64>) -> serde_json::Value {
+        self.transcript(session_id, from)
+    }
     /// 앞 대화 거슬러 읽기 — before(줄 처음 자리) 앞의 온전한 줄들 {text, start}
     fn transcript_before(&self, session_id: &str, before: u64) -> serde_json::Value;
     fn tasks(&self) -> String;
@@ -78,6 +82,41 @@ pub trait Backend: Send + Sync {
     fn team_say(&self, _to: &str, _text: &str, _cid: &str) -> Result<serde_json::Value, String> {
         Err("not supported".into())
     }
+    /// 이어 묻기(re = 이은 팀 참모 답 seq, ADR 0017)를 실은 사람 말
+    fn team_say_re(&self, to: &str, text: &str, cid: &str, _re: u64) -> Result<serde_json::Value, String> {
+        self.team_say(to, text, cid)
+    }
+    /// 팀 참모 목록 + 이 기기가 확인한 판(데스크톱 team_agents 와 같은 길)
+    fn team_agents(&self, _team: &str) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 보내기 직전 확인 장에서 '확인하고 부르기'
+    fn team_agent_confirm(&self, _team: &str, _id: &str) -> Result<(), String> {
+        Err("not supported".into())
+    }
+    /// 팀 참모 만들기·고치기(origin = 참모 id) — 권한·이름 검사는 team_agent_store::save
+    fn team_agent_save(&self, _team: &str, _def: crate::team_agent::Def, _origin: Option<&str>) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    fn team_agent_remove(&self, _team: &str, _id: &str) -> Result<(), String> {
+        Err("not supported".into())
+    }
+    /// 시험으로 불러 보기(방엔 안 올림) — 맥 Claude 로
+    fn team_agent_try(&self, _team: &str, _room: &str, _def: crate::team_agent::Def, _ask: &str, _prev: Vec<(String, String)>) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 참고 자료로 고를 팀 보관함 글 파일 [{id,name}]
+    fn team_agent_refs(&self, _team: &str) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 그 방에서 이 맥(폰이 보낸 말도 맥이 부른다)이 부른 팀 참모 답의 토큰
+    fn team_agent_usage(&self, _room: &str) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 폰 읽음 — 데스크톱 team_mark_read 와 같은 길(team_ui::mark_read)
+    fn team_read(&self, _room: &str, _seq: u64) -> Result<(), String> {
+        Err("not supported".into())
+    }
     /// 폰 '내 참모에게 넘기기' — 데스크톱과 같은 team_ui::handoff_send(거른 글, 본문 없는 기록 길)
     fn team_handoff(&self, _to: &str, _text: &str) -> Result<serde_json::Value, String> {
         Err("not supported".into())
@@ -87,6 +126,46 @@ pub trait Backend: Send + Sync {
         Err("not supported".into())
     }
     fn team_create(&self, _team: &str) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 폰 팀 프로필판(별명·사진·상태) — seen = 폰이 본 판. 그 판 그대로면 {"same":true}(중계 안 부름)
+    fn team_profiles(&self, _team: &str, _seen: u64) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 폰 팀 홈 글판 — 프로필판과 같은 판 번호로 그대로면 {"same":true}
+    fn team_posts(&self, _team: &str, _seen: u64) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 폰 팀 홈 판(ADR 0018) — 글판과 같은 판 번호로 그대로면 {"same":true}
+    fn team_home(&self, _team: &str, _seen: u64) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 폰 꾸미기 완료 — 팀장 검사는 team_home_store::save_home
+    fn team_home_save(&self, _team: &str, _home: crate::team_home::Home) -> Result<(), String> {
+        Err("not supported".into())
+    }
+    /// 폰 블록 내용(링크·글 한 칸·진행 중) — 블록 검사는 team_home_store::save_content
+    fn team_home_content(&self, _team: &str, _block: &str, _c: crate::team_home::Content) -> Result<(), String> {
+        Err("not supported".into())
+    }
+    /// 폰 대화 파일 썸네일 — 이 맥이 풀어(팀 보관함 peek) 줄인 JPEG 만(원본은 안 준다). 그림·PDF 가 아니면 Err
+    fn team_file_thumb(&self, _team: &str, _id: &str, _size: u32) -> Result<Vec<u8>, String> {
+        Err("not supported".into())
+    }
+    /// 폰 팀 홈 새 글(고치기·지우기는 데스크톱) — pin 은 팀장만(Rust team_post::pin 이 다시 본다)
+    fn team_post(&self, _team: &str, _title: &str, _body: &str, _pin: bool) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 폰 팀 보관함 목록(중계 — 데스크톱 TeamLocker 와 같은 View + 올리는 중 줄) — seen = 폰이 본 판, 그대로면 {"same":true}
+    fn team_locker(&self, _team: &str, _seen: u64) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 폰 팀 보관함 바꾸기 — 새 폴더·이름·옮기기·휴지통·되살리기(데스크톱과 같은 team_locker_app 길). 모양은 phone_team_locker_op 이 봤다
+    fn team_locker_op(&self, _op: &TeamLockerOp) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 폰 올리기 조각 하나 — 마지막 조각이면 모은 파일을 팀 보관함에 올린다(뒤 스레드)
+    fn team_locker_part(&self, _p: &TeamLockerPart, _bytes: &[u8]) -> Result<serde_json::Value, String> {
         Err("not supported".into())
     }
     /// 원격(짝지은 기기의 사람)이 누른 카드 답 — by = "remote:<기기>"
@@ -151,7 +230,8 @@ pub trait Backend: Send + Sync {
     fn modes(&self) -> serde_json::Value {
         serde_json::json!([])
     }
-    fn mode_view(&self, _name: &str, _columns: u32, _rows: u32) -> Result<serde_json::Value, String> {
+    /// scheme = 폰 화면 테마('light'|'dark'), 모드 훅이 e.props.scheme 으로 받는다
+    fn mode_view(&self, _name: &str, _columns: u32, _rows: u32, _scheme: Option<&str>) -> Result<serde_json::Value, String> {
         Err("modes unavailable".into())
     }
     fn mode_act(&self, _name: &str, _act: &serde_json::Value) -> Result<serde_json::Value, String> {
@@ -258,6 +338,10 @@ pub trait Backend: Send + Sync {
         Err("unsupported".into())
     }
     fn login_cancel(&self) {}
+    /// 약관 카드 [다시 시도] — 데스크톱 단추와 같은 파일(login::terms_retry_mark)
+    fn login_terms_retry(&self) -> Result<(), String> {
+        Err("unsupported".into())
+    }
 }
 
 /// 이 서버 하나의 문지기 — 짝지은 기기들·받아 줄 주소(Host 헤더 값: "100.x.y.z:47123" 등)·쓰기를 받아 줄 출처(Origin).
@@ -799,6 +883,88 @@ fn phone_peer_get(req: &Req, be: &dyn Backend) -> Resp {
     }
 }
 
+/// 폰 읽음 — 사람이 폰에서 그 대화를 보고 있다(화면이 보일 때만 부른다). 같은 계정 읽음으로 중계에 올라간다(chammo-relay ADR 0012)
+fn phone_team_read(req: &Req, be: &dyn Backend) -> Resp {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct B {
+        room: String,
+        seq: u64,
+    }
+    let b: B = match body(req) { Ok(b) => b, Err(r) => return r };
+    if b.room.trim().is_empty() || b.room.len() > 80 || b.seq == 0 {
+        return Resp::text(400, "bad body");
+    }
+    match be.team_read(&b.room, b.seq) {
+        Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+        Err(e) => Resp::text(409, &e),
+    }
+}
+
+/// 폰 팀 참모 만들기·지우기·시험(ADR 0017) — 정의는 맥이 다시 고른다(team_agent::clean). 몸통에 모르는 칸이 있으면 400
+fn phone_team_agent(req: &Req, be: &dyn Backend) -> Resp {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct B {
+        team: String,
+        #[serde(default)]
+        def: crate::team_agent::Def,
+        #[serde(default)]
+        origin: String,
+        #[serde(default)]
+        id: String,
+        #[serde(default)]
+        room: String,
+        #[serde(default)]
+        ask: String,
+        #[serde(default)]
+        prev: Vec<(String, String)>,
+    }
+    let b: B = match body(req) { Ok(b) => b, Err(r) => return r };
+    let idish = |s: &str| s.is_empty() || (team_id_ok(s) && s.len() <= 64);
+    if !team_id_ok(&b.team) || !idish(&b.origin) || !idish(&b.id) || !idish(&b.room) || b.ask.chars().count() > 4000 || b.prev.len() > crate::team_agent::CHAIN_MAX {
+        return Resp::text(400, "bad body");
+    }
+    let r = match req.path.as_str() {
+        "/api/team-agent-save" => be.team_agent_save(&b.team, b.def, (!b.origin.is_empty()).then_some(b.origin.as_str())),
+        "/api/team-agent-remove" if !b.id.is_empty() => be.team_agent_remove(&b.team, &b.id).map(|()| serde_json::json!({ "ok": true })),
+        "/api/team-agent-try" => be.team_agent_try(&b.team, &b.room, b.def, &b.ask, b.prev),
+        _ => return Resp::text(400, "bad body"),
+    };
+    match r {
+        Ok(v) => Resp::json(&v),
+        Err(e) => Resp::text(409, &e),
+    }
+}
+
+/// 폰 팀 홈 판(ADR 0018) — 꾸미기 완료·블록 내용. 모르는 칸이 있으면 400, 판·내용 모양은 맥 저장 길이 다시 고른다
+fn phone_team_home(req: &Req, be: &dyn Backend) -> Resp {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct B {
+        team: String,
+        #[serde(default)]
+        home: Option<crate::team_home::Home>,
+        #[serde(default)]
+        block: String,
+        #[serde(default)]
+        content: Option<crate::team_home::Content>,
+    }
+    let b: B = match body(req) { Ok(b) => b, Err(r) => return r };
+    if !team_id_ok(&b.team) {
+        return Resp::text(400, "bad team");
+    }
+    let r = match (req.path.as_str(), b.home, b.content) {
+        ("/api/team-home-save", Some(h), None) => be.team_home_save(&b.team, h),
+        ("/api/team-home-content", None, Some(c)) if crate::team_home::block_id_ok(&b.block) => be.team_home_content(&b.team, &b.block, c),
+        _ => return Resp::text(400, "bad body"),
+    };
+    match r {
+        Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+        Err(e) => Resp::text(409, &e),
+    }
+}
+
 /// 폰 팀 메신저 쓰기 — 말 보내기(사람 말, cid 는 이 기기가 붙인다)·초대 링크·팀 만들기. 몸통에 모르는 칸이 있으면 400
 fn phone_team(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     #[derive(serde::Deserialize)]
@@ -813,9 +979,40 @@ fn phone_team(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         /// 폰이 붙인 말 id — 다시 보내면 같은 id(서버가 같은 cid 는 한 번만 저장한다). 없으면 이 기기가 만든다
         #[serde(default)]
         cid: String,
+        /// 팀 홈 글 — 제목·본문·고정(팀장만)
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        body: String,
+        #[serde(default)]
+        pin: bool,
+        /// 이어 묻기 — 이은 팀 참모 답 seq(ADR 0017)
+        #[serde(default)]
+        re: u64,
     }
     let b: B = match body(req) { Ok(b) => b, Err(r) => return r };
+    // 말 보내기·글 올리기는 같은 분당 상한을 나눠 쓴다(폰 하나가 팀에 쏟아붓지 않게)
+    let limited = || {
+        let now = std::time::Instant::now();
+        let mut t = gate.team_says.lock().unwrap_or_else(|e| e.into_inner());
+        t.retain(|x| now.duration_since(*x) < std::time::Duration::from_secs(60));
+        if t.len() >= TEAM_SAY_PER_MIN {
+            return true;
+        }
+        t.push(now);
+        false
+    };
     let r = match req.path.as_str() {
+        "/api/team-post" => {
+            let title = b.title.trim();
+            if !team_id_ok(&b.team) || title.is_empty() || title.chars().count() > crate::team_post::TITLE_MAX || b.body.chars().count() > crate::team_post::BODY_MAX {
+                return Resp::text(400, "bad body");
+            }
+            if limited() {
+                return Resp::text(429, "too many — wait a minute");
+            }
+            be.team_post(&b.team, title, &b.body, b.pin)
+        }
         "/api/team-say" => {
             if b.to.trim().is_empty() || b.to.chars().count() > 120 || b.text.trim().is_empty() || b.text.chars().count() > 4000 {
                 return Resp::text(400, "bad body");
@@ -823,14 +1020,8 @@ fn phone_team(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             if !b.cid.is_empty() && (b.cid.len() > 60 || !b.cid.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')) {
                 return Resp::text(400, "bad cid");
             }
-            {
-                let now = std::time::Instant::now();
-                let mut t = gate.team_says.lock().unwrap_or_else(|e| e.into_inner());
-                t.retain(|x| now.duration_since(*x) < std::time::Duration::from_secs(60));
-                if t.len() >= TEAM_SAY_PER_MIN {
-                    return Resp::text(429, "too many — wait a minute");
-                }
-                t.push(now);
+            if limited() {
+                return Resp::text(429, "too many — wait a minute");
             }
             let cid = if b.cid.is_empty() {
                 static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -839,7 +1030,7 @@ fn phone_team(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             } else {
                 format!("p-{}", b.cid)
             };
-            be.team_say(b.to.trim(), &b.text, &cid)
+            if b.re > 0 { be.team_say_re(b.to.trim(), &b.text, &cid, b.re) } else { be.team_say(b.to.trim(), &b.text, &cid) }
         }
         "/api/team-handoff" => {
             if b.to.trim().is_empty() || b.to.chars().count() > 120 || b.text.trim().is_empty() || b.text.chars().count() > 8000 {
@@ -857,6 +1048,96 @@ fn phone_team(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         Ok(v) => Resp::json(&v),
         Err(e) => Resp::text(502, &e),
     }
+}
+
+/// 폰 팀 보관함 바꾸기 몸통 — 영구 지우기(purge)는 없다(데스크톱 팀 보관함 휴지통에서만)
+#[derive(serde::Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct TeamLockerOp {
+    pub team: String,
+    pub op: String,
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub folder: String,
+    #[serde(default)]
+    pub from: String,
+    #[serde(default)]
+    pub to: String,
+}
+
+/// 폰 올리기 조각 하나(주소 쿼리) — 몸통은 조각 바이트 그대로
+#[derive(Debug)]
+pub struct TeamLockerPart {
+    pub team: String,
+    pub up: String,
+    pub part: u32,
+    pub last: bool,
+    pub name: String,
+    pub folder: String,
+}
+
+/// 팀 파일 id — 중계가 준 모양만
+fn locker_id_ok(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 128 && id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+}
+
+/// 파일 이름 한 조각 — 비지 않고, 경로 나눔·제어 글자 없이 200자까지(맥이 safe_file_name 으로 다시 거른다)
+fn locker_name_ok(n: &str) -> bool {
+    let n = n.trim();
+    !n.is_empty() && n.chars().count() <= 200 && n != "." && n != ".." && !n.chars().any(|c| c == '/' || c == '\\' || c.is_control())
+}
+
+/// 폴더 경로 'a/b' — 빈 글 = 맨 위. 조각마다 이름 규칙, 400바이트까지
+fn locker_folder_ok(f: &str) -> bool {
+    f.is_empty() || (f.len() <= 400 && f.split('/').all(locker_name_ok))
+}
+
+fn phone_team_locker_op(req: &Req, be: &dyn Backend) -> Resp {
+    let b: TeamLockerOp = match body(req) { Ok(b) => b, Err(r) => return r };
+    let ok = team_id_ok(&b.team)
+        && match b.op.as_str() {
+            "mkdir" => !b.folder.is_empty() && locker_folder_ok(&b.folder),
+            "rename" => locker_id_ok(&b.id) && locker_name_ok(&b.name),
+            "move" => locker_id_ok(&b.id) && locker_folder_ok(&b.folder),
+            "trash" | "restore" => locker_id_ok(&b.id),
+            "folder-rename" => !b.from.is_empty() && locker_folder_ok(&b.from) && !b.to.is_empty() && locker_folder_ok(&b.to),
+            "folder-trash" => !b.from.is_empty() && locker_folder_ok(&b.from),
+            _ => false,
+        };
+    if !ok {
+        return Resp::text(400, "bad locker op");
+    }
+    match be.team_locker_op(&b) {
+        Ok(v) => Resp::json(&v),
+        Err(e) => Resp::text(502, &e),
+    }
+}
+
+fn phone_team_locker_put(req: &Req, be: &dyn Backend) -> Resp {
+    let dec = |k: &str| req.param(k).and_then(|v| percent_encoding::percent_decode_str(v).decode_utf8().ok()).map(|c| c.into_owned());
+    let p = TeamLockerPart {
+        team: req.param("team").unwrap_or("").to_string(),
+        up: req.param("up").unwrap_or("").to_string(),
+        part: match req.param("part").and_then(|v| v.parse::<u32>().ok()) { Some(n) => n, None => return Resp::text(400, "bad part") },
+        last: req.param("last") == Some("1"),
+        name: dec("name").unwrap_or_default().trim().to_string(),
+        folder: dec("folder").unwrap_or_default(),
+    };
+    if !team_id_ok(&p.team) || !crate::team_phone_up::up_id_ok(&p.up) || !locker_name_ok(&p.name) || !locker_folder_ok(&p.folder) {
+        return Resp::text(400, "bad upload");
+    }
+    match be.team_locker_part(&p, &req.body) {
+        Ok(v) => Resp::json(&v),
+        Err(e) => Resp::text(409, &e),
+    }
+}
+
+/// 팀 id — 서버가 준 모양(영문·숫자·-·_)만. 빈 글('지금 팀')은 안 받는다: 폰이 본 팀과 맥의 지금 팀이 갈릴 수 있다
+fn team_id_ok(t: &str) -> bool {
+    !t.is_empty() && t.len() <= 80 && t.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
 }
 
 /// 폰에서 사람이 친 말 → 짝지은 기기 참모(사람 길). cid·ts 는 이 기기가 붙인다(몸통에 실어 오면 400)
@@ -1266,8 +1547,8 @@ struct ModeNameBody {
 }
 
 /// 폰 홈·보관함 v1 에 더한 쓰기 길 — 같은 출처 문지기·head_check 몸통 목록·405 가 이 목록 하나를 본다
-const PHONE_POSTS: &[&str] = &["/api/device-number", "/api/gacha", "/api/peer-human-say", "/api/team-say", "/api/team-invite", "/api/team-create", "/api/team-handoff", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
-const PHONE_GETS: &[&str] = &["/api/gacha", "/api/office", "/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team"];
+const PHONE_POSTS: &[&str] = &["/api/device-number", "/api/login-terms-retry", "/api/gacha", "/api/peer-human-say", "/api/team-say", "/api/team-read", "/api/team-invite", "/api/team-create", "/api/team-handoff", "/api/team-post", "/api/team-agent-confirm", "/api/team-agent-save", "/api/team-agent-remove", "/api/team-agent-try", "/api/team-home-save", "/api/team-home-content", "/api/team-locker-op", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
+const PHONE_GETS: &[&str] = &["/api/gacha", "/api/office", "/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team", "/api/team-profiles", "/api/team-posts", "/api/team-home", "/api/team-agents", "/api/team-agent-usage", "/api/team-agent-refs", "/api/team-file-thumb", "/api/team-locker", "/api/team-locker-put"];
 /// 폰 md 글 칸 저장만 몸통을 크게(글 512KB + JSON)
 const MAX_WRITE_BODY: usize = crate::locker_fs::MAX_PHONE_MD + 64 * 1024;
 
@@ -1882,7 +2163,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                     Err(_) => return Resp::text(400, "bad from"),
                 },
             };
-            Resp::json(&be.transcript(id, from))
+            Resp::json(&if req.param("peek") == Some("1") { be.transcript_peek(id, from) } else { be.transcript(id, from) })
         }
         // from(지난번 next)이 있으면 그 뒤 온전한 줄만 — 없으면 옛 폰 화면(캐시된 페이지)용 꼬리 글 그대로
         ("GET", "/api/tasks") => match req.param("from").map(str::parse::<u64>) {
@@ -2011,6 +2292,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         }
         ("POST", "/api/send" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/voice-mode" | "/api/voice-beat" | "/api/model" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker-add" | "/api/peer-card-answer") if !same_origin_write(req, gate) => Resp::text(403, "bad origin"),
         ("POST", p) if PHONE_POSTS.contains(&p) && !same_origin_write(req, gate) => Resp::text(403, "bad origin"),
+        ("POST", "/api/team-locker-put") if !same_origin_upload(req, gate) => Resp::text(403, "bad origin"),
         // 출처 문지기 뒤에 — 폰 뽑기·장착 요청
         ("POST", "/api/gacha") => {
             let v: serde_json::Value = match body(req) { Ok(v) => v, Err(r) => return r };
@@ -2039,7 +2321,8 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             if !mode_name_ok(name) {
                 return Resp::text(400, "bad name");
             }
-            match be.mode_view(name, c, r) {
+            let scheme = req.param("scheme").filter(|s| matches!(*s, "light" | "dark"));
+            match be.mode_view(name, c, r, scheme) {
                 Ok(v) => Resp::json(&v),
                 Err(e) => Resp::text(502, &e),
             }
@@ -2477,6 +2760,10 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             be.login_cancel();
             Resp::json(&serde_json::json!({ "ok": true }))
         }
+        ("POST", "/api/login-terms-retry") => match be.login_terms_retry() {
+            Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+            Err(e) => Resp::text(502, &e),
+        },
         ("GET", "/api/direct") => Resp::new(200, "text/plain; charset=utf-8", be.direct_log()),
         ("POST", "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry") => {
             #[derive(serde::Deserialize)]
@@ -2514,7 +2801,100 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         ("GET", "/api/peer-devices") => Resp::json(&be.peer_devices()),
         ("POST", "/api/peer-human-say") => phone_peer_say(req, be),
         ("GET", "/api/team") => Resp::json(&be.team_feed()),
-        ("POST", "/api/team-say" | "/api/team-invite" | "/api/team-create" | "/api/team-handoff") => phone_team(req, gate, be),
+        ("POST", "/api/team-say" | "/api/team-invite" | "/api/team-create" | "/api/team-handoff" | "/api/team-post") => phone_team(req, gate, be),
+        ("POST", "/api/team-read") => phone_team_read(req, be),
+        ("GET", "/api/team-locker") => {
+            let team = req.param("team").unwrap_or("");
+            let Some(seen) = req.param("rev").map_or(Some(0), |v| v.parse::<u64>().ok()) else { return Resp::text(400, "bad rev") };
+            if !team_id_ok(team) {
+                return Resp::text(400, "bad team");
+            }
+            match be.team_locker(team, seen) {
+                Ok(v) => Resp::json(&v),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
+        ("POST", "/api/team-locker-op") => phone_team_locker_op(req, be),
+        ("POST", "/api/team-locker-put") => phone_team_locker_put(req, be),
+        ("GET", "/api/team-agents") => {
+            let team = req.param("team").unwrap_or("");
+            if !team_id_ok(team) {
+                return Resp::text(400, "bad team");
+            }
+            match be.team_agents(team) {
+                Ok(v) => Resp::json(&v),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
+        ("GET", "/api/team-agent-usage") => {
+            let room = req.param("room").unwrap_or("");
+            if !team_id_ok(room) {
+                return Resp::text(400, "bad room");
+            }
+            match be.team_agent_usage(room) {
+                Ok(v) => Resp::json(&v),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
+        ("GET", "/api/team-agent-refs") => {
+            let team = req.param("team").unwrap_or("");
+            if !team_id_ok(team) {
+                return Resp::text(400, "bad team");
+            }
+            match be.team_agent_refs(team) {
+                Ok(v) => Resp::json(&v),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
+        ("POST", "/api/team-agent-save" | "/api/team-agent-remove" | "/api/team-agent-try") => phone_team_agent(req, be),
+        ("POST", "/api/team-home-save" | "/api/team-home-content") => phone_team_home(req, be),
+        ("POST", "/api/team-agent-confirm") => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct B {
+                team: String,
+                id: String,
+            }
+            let b: B = match body(req) { Ok(b) => b, Err(r) => return r };
+            if !team_id_ok(&b.team) || !team_id_ok(&b.id) || b.id.len() > 64 {
+                return Resp::text(400, "bad team or id");
+            }
+            match be.team_agent_confirm(&b.team, &b.id) {
+                Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+                Err(e) => Resp::text(409, &e),
+            }
+        }
+        ("GET", "/api/team-profiles" | "/api/team-posts" | "/api/team-home") => {
+            let team = req.param("team").unwrap_or("");
+            let Some(seen) = req.param("rev").map_or(Some(0), |v| v.parse::<u64>().ok()) else { return Resp::text(400, "bad rev") };
+            if !team_id_ok(team) {
+                return Resp::text(400, "bad team");
+            }
+            let r = match req.path.as_str() {
+                "/api/team-profiles" => be.team_profiles(team, seen),
+                "/api/team-home" => be.team_home(team, seen),
+                _ => be.team_posts(team, seen),
+            };
+            match r {
+                Ok(v) => Resp::json(&v),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
+        // 대화 말풍선·대화 파일 썸네일(10-28 사용자 빈 네모) — 맥이 풀어 줄인 JPEG 만. 팀·파일 id 는 모양만 보고 나머지(방 열쇠)는 맥 팀 보관함이 본다
+        ("GET", "/api/team-file-thumb") => {
+            let (team, id) = (req.param("team").unwrap_or(""), req.param("id").unwrap_or(""));
+            if !team_id_ok(team) || id.is_empty() || id.len() > 128 || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_') {
+                return Resp::text(400, "bad team or id");
+            }
+            match be.team_file_thumb(team, id, mobile_files::thumb_size(req.param("size"))) {
+                Ok(b) => {
+                    let mut r = Resp::new(200, "image/jpeg", b);
+                    r.headers.push(("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'".into()));
+                    r
+                }
+                Err(e) => Resp::text(415, &e),
+            }
+        }
         // 짝지은 다른 기기의 카드(ADR 0011) — 폰이 이 기기를 거쳐 보고 누른다. peer 열쇠는 이 길이 허용 목록 밖이라 못 온다(403)
         ("GET", "/api/peer-cards") => Resp::json(&be.peer_cards()),
         ("POST", "/api/peer-card-answer") => {
@@ -2546,7 +2926,7 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             let b: B = match body(req) { Ok(b) => b, Err(r) => return r };
             let dev_ok = !b.dev.is_empty() && b.dev.len() <= 64 && b.dev.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-');
             let digits_ok = if b.op == "enter" { b.digits.len() == 6 && b.digits.bytes().all(|c| c.is_ascii_digit()) } else { b.digits.is_empty() };
-            if !dev_ok || !matches!(b.op.as_str(), "open" | "ready" | "enter" | "close" | "cut") || !digits_ok {
+            if !dev_ok || !matches!(b.op.as_str(), "open" | "claim" | "ready" | "enter" | "close" | "cut") || !digits_ok {
                 return Resp::text(400, "bad request");
             }
             match be.device_number(&b.dev, &b.op, &b.digits) {
@@ -2739,7 +3119,7 @@ pub fn head_check(req: &Req, gate: &Gate) -> Option<Resp> {
     if req.method != "POST" && !has_body {
         return None;
     }
-    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/voice-mode" | "/api/voice-beat" | "/api/model" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker-add" | "/api/peer-say" | "/api/peer-human" | "/api/peer-direct-answer" | "/api/peer-logout-ask" | "/api/peer-card-answer" | "/api/link-request") && !PHONE_POSTS.contains(&req.path.as_str()) {
+    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/voice-mode" | "/api/voice-beat" | "/api/model" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker-add" | "/api/peer-say" | "/api/peer-human" | "/api/peer-direct-answer" | "/api/peer-logout-ask" | "/api/peer-card-answer" | "/api/link-request" | "/api/team-locker-put") && !PHONE_POSTS.contains(&req.path.as_str()) {
         return Some(Resp::text(404, "not found"));
     }
     // 짝짓기는 코드가 열쇠, 연결 요청은 되묻기와 사람 카드가 문 — 출처·JSON 만 본다
@@ -2749,8 +3129,22 @@ pub fn head_check(req: &Req, gate: &Gate) -> Option<Resp> {
     if !authed(req, gate) {
         return Some(Resp::text(401, "no key"));
     }
-    let origin_ok = if req.path == "/api/attach" { same_origin_upload(req, gate) } else { same_origin_write(req, gate) };
+    let origin_ok = if matches!(req.path.as_str(), "/api/attach" | "/api/team-locker-put") { same_origin_upload(req, gate) } else { same_origin_write(req, gate) };
     (!origin_ok).then(|| Resp::text(403, "bad origin"))
+}
+
+/// 몸통 한도 — 붙이기 20MB·팀 보관함 올리기 조각 4MB·md 저장·팀 홈 글, 나머지는 64KB
+fn body_cap(path: &str) -> usize {
+    match path {
+        "/api/attach" => mobile_files::MAX_ATTACH,
+        "/api/team-locker-put" => crate::team_phone_up::PART,
+        "/api/locker-write" => MAX_WRITE_BODY,
+        // 팀 홈 글 본문 2만 자(한글 3바이트)
+        "/api/team-post" => 128 * 1024,
+        // 팀 참모 지침 8천 자 + 시험 이전 문답
+        "/api/team-agent-save" | "/api/team-agent-try" => 128 * 1024,
+        _ => MAX_BODY,
+    }
 }
 
 /// 소켓에서 요청 하나 읽기 — 머리 16KB·몸 64KB(그림 10MB)·chunked 거절, check 가 통과해야 몸통을 읽는다, deadline 넘으면 408
@@ -2793,13 +3187,7 @@ pub fn read_req_checked(s: &mut impl TimedRead, deadline: std::time::Instant, ch
         None => 0,
         Some(v) => v.trim().parse::<usize>().map_err(|_| Resp::text(400, "bad length"))?,
     };
-    // 그림 올리기만 10MB, 나머지는 64KB
-    let cap = match req.path.as_str() {
-        "/api/attach" => mobile_files::MAX_ATTACH,
-        "/api/locker-write" => MAX_WRITE_BODY,
-        _ => MAX_BODY,
-    };
-    if len > cap {
+    if len > body_cap(&req.path) {
         return Err(Resp::text(413, "body too large"));
     }
     let deadline = body_deadline(deadline, len);

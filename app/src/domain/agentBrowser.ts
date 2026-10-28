@@ -1,6 +1,7 @@
 // 세션 브라우저 앱에서 보기(2026-10-03 사용자 "가보자") — 참모 브라우저 래퍼가 적은 상태(agent_lives)를 세션과 잇고,
 // 크게 보일지·탭 띠·프레임을 정한다. Rust agent_browser.rs 가 CDP 로 화면을 받는다
 import { tr } from '../i18n';
+import { seenName } from './session';
 
 export type LiveTab = { index: number; title: string; url: string; current: boolean };
 /** 래퍼 상태 파일 — 하는 일 한 줄(tool)엔 값이 없다(live.js toolLine) */
@@ -127,7 +128,7 @@ export function askName(live: Live, sessions: { procPid?: number; name?: string;
   if (!s) return live.profile;
   // 워크트리 세션은 폴더 끝이 워크트리 이름이라 프로젝트(classifyWorkspace)부터 — 'binance-secrets-ignore · binance-setup' 으로 나왔다(2026-10-24)
   const proj = s.project || s.cwd.replace(/\/+$/, '').split('/').pop() || live.profile;
-  return s.name && s.name !== proj ? `${proj} · ${s.name}` : proj;
+  return s.name && s.name !== proj ? `${proj} · ${seenName(s.name)}` : proj;
 }
 
 /**
@@ -177,12 +178,13 @@ export type ScreenKind = 'ok' | 'checking' | 'closed' | 'fail' | 'noframe';
  * fail = 화면을 못 받음, checking = 지금 탭을 모름(UNSURE_MS 안이면 막지 않는다 — 친 건 Rust 가 버리고 띠로 알린다).
  * blocked = 입력을 막는다(보내 봐야 버려진다). why = '주소 확인 중' 대신 머리에 보일 이유. *Ms = 그 상태가 이어진 시간
  */
-export function browserScreen(x: { goneMs: number; error: string; attached: boolean; pages: number; emptyMs: number; current: boolean; unsureMs: number; noFrameMs?: number }): { kind: ScreenKind; why: string; blocked: boolean } {
+export function browserScreen(x: { goneMs: number; error: string; attached: boolean; pages: number; emptyMs: number; current: boolean; unsureMs: number; noFrameMs?: number; hidden?: boolean }): { kind: ScreenKind; why: string; blocked: boolean } {
   const trouble = frameTrouble(x.error);
   if (x.goneMs >= GONE_MS || trouble === 'off' || (x.attached && x.pages === 0 && x.emptyMs >= EMPTY_MS)) return { kind: 'closed', why: tr('브라우저 닫힘', 'Browser closed'), blocked: true };
   if (trouble === 'fail') return { kind: 'fail', why: tr('화면 못 받음', 'No screen'), blocked: true };
-  // 그림이 안 오는 채 이유 없이 '화면 받는 중'만 보였다 — 다시 시도·크롬에서 보기로 넘어갈 수 있게
-  if (x.current && (x.noFrameMs ?? 0) >= NO_FRAME_MS) return { kind: 'noframe', why: tr('화면이 안 와요', 'No picture yet'), blocked: true };
+  // 그림이 안 오는 채 이유 없이 '화면 받는 중'만 보였다 — 다시 시도·크롬에서 보기로 넘어갈 수 있게.
+  // hidden = 앱이 크롬을 가려 둠(agent_tabs) — 정품 크롬은 가리면, 가짜 화면이 없으면(옛 macOS) 크롬이든 그림을 멈춘다(2026-10-26 PM 맥북, 아이맥 실측)
+  if (x.current && (x.noFrameMs ?? 0) >= NO_FRAME_MS) return { kind: 'noframe', why: x.hidden ? tr('가려 둔 크롬이 그림을 멈췄어요', 'Hidden Chrome stopped drawing') : tr('화면이 안 와요', 'No picture yet'), blocked: true };
   if (x.current) return { kind: 'ok', why: '', blocked: false };
   if (x.unsureMs < UNSURE_MS) return { kind: 'checking', why: '', blocked: false };
   return { kind: 'checking', why: x.attached ? tr('지금 탭을 못 찾음', 'No current tab') : tr('브라우저에 붙는 중', 'Connecting to the browser'), blocked: true };

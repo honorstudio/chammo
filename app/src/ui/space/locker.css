@@ -178,7 +178,8 @@
 .lk-crumb-i { display: inline-flex; align-items: center; gap: 4px; }
 .lk-fgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; }
 .lk-fcard { border-radius: var(--cv-r, 10px); }
-.lk-fcard.drop-hot, .lk-fcard.drop-over { box-shadow: inset 0 0 0 1.5px var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+/* 끌어 놓는 자리 빛 — 단추(.lk-fbtn)가 타일을 불투명 바탕으로 덮어서 타일이 아니라 단추에 칠한다(10-28 사용자 "폴더쪽에 옮길때 하이라이트 안 돼") */
+.lk-fcard.drop-hot .lk-fbtn, .lk-fcard.drop-over .lk-fbtn { box-shadow: 0 0 0 2px var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
 .lk-fbtn { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 0 12px; border-radius: var(--cv-r, 10px); background: var(--panel); box-shadow: 0 0 0 1px var(--line); font-size: 13px; }
 .lk-fbtn:hover { box-shadow: 0 0 0 1px var(--line-strong); }
 .lk-fbtn b { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -256,9 +257,13 @@
 
 /* 보관함 탭 안 미리보기(FileTab) — 그림·영상·html·pdf. 머리는 작은 경로 한 줄 + 보내기·크게 보기 */
 .cv-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-3); }
-.ft-body { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+.ft-body { position: relative; flex: 1; min-height: 0; display: flex; overflow: hidden; }
 .ft-body > .pv-video { max-height: none; height: 100%; }
 .ft-body > .rd-zoombox, .ft-body > .pv-image { flex: 1; }
+/* 그림 배율 — 작은 숫자 칩(눌리지 않는다), 넘칠 때만 끌 수 있어 손바닥 커서 */
+.pv-pct { position: absolute; right: 12px; bottom: 10px; padding: 1px 7px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
+.pv-image:not(.fit) img, .rd-image:not(.fit) img { cursor: grab; }
+.pv-image.panning img, .rd-image.panning img { cursor: grabbing; }
 .ft-text { flex: 1; margin: 0; padding: 16px 22px; overflow: auto; font-size: 12.5px; white-space: pre-wrap; }
 
 /* 참모 패널 — 접힌 패널 = 세로 두 줄(프사 띠 + 기능 줄), 펼친 패널(SpaceNav)은 맨 아래 가로 기능 줄(2026-10-11 사용자 180.png) */
@@ -420,3 +425,5 @@
 .rail-pop-row { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 12px; width: 100%; min-height: 36px; padding: 0 10px; border-radius: 8px; font-size: 13px; cursor: pointer; }
 .rail-pop-row:hover, .rail-pop-row:focus-visible { background: var(--hover); }
 .rail-pop-row kbd { margin-left: auto; font: inherit; font-size: 11px; color: var(--text-3); }
+/* 경로 칸에 끌어 놓기 — 참모 보관함·팀 보관함 같은 빛(dragPath drop-hot) */
+.lk-crumb button.drop-hot { box-shadow: inset 0 0 0 1.5px var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }

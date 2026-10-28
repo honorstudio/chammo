@@ -31,7 +31,7 @@ fn mock_google() -> String {
     std::env::var("CHAMMO_MOCK_GOOGLE").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "http://127.0.0.1:8790".into())
 }
 
-fn next_user(sub: &str, name: &str) {
+pub(crate) fn next_user(sub: &str, name: &str) {
     let ok = crate::platform::command("curl").args(["-s", "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST", &format!("{}/next-user", mock_google()), "--data"])
         .arg(json!({ "sub": sub, "email": format!("{sub}@example.com"), "name": name }).to_string())
         .output()
@@ -52,7 +52,7 @@ fn hop(url: &str, cookie: Option<&str>) -> (String, Option<String>) {
 }
 
 /// 사람 브라우저 대신 — start → 가짜 구글 → callback(쿠키) → 앱 루프백. 로그인이 루프백을 기다리는 동안 따라가야 해서 따로 실이
-struct Browser;
+pub(crate) struct Browser;
 impl Opener for Browser {
     fn open(&self, url: &str) -> Result<(), String> {
         let url = url.to_string();
@@ -249,7 +249,7 @@ fn 단톡방_종단_암호와_바로_알림() {
         other => panic!("철수가 못 풀었다: {other:?}"),
     }
     // ②-1 반응·파일 참조 — 봉투 안쪽에 실려 사용자가 그대로 받는다(v2)
-    let extra = crate::e2e_envelope::Extra { react: Some(crate::e2e_envelope::React { seq: 1, mark: "check".into(), on: true }), files: vec![json!({ "id": "f1", "name": "시안.pdf", "size": 1200 })] };
+    let extra = crate::e2e_envelope::Extra { react: Some(crate::e2e_envelope::React { seq: 1, mark: "check".into(), on: true }), files: vec![json!({ "id": "f1", "name": "시안.pdf", "size": 1200 })], ..Default::default() };
     let env = e2e_state::wrap_with(&dc, &kc, &Curl, &room.id, "g-r", "", true, now(), extra.clone()).expect("반응 봉투");
     assert_eq!(send(&mut wc, "g-r", &env)["t"], "sent");
     let got = read(&mut wa);
@@ -279,4 +279,57 @@ fn 단톡방_종단_암호와_바로_알림() {
     let devs: Vec<String> = serde_json::from_str::<Value>(&env).unwrap()["env"].as_array().unwrap().iter().map(|e| e["d"].as_str().unwrap().to_string()).collect();
     assert!(!devs.contains(&relay::load_state(&dc).device_id), "뺀 철수 기기는 다음 말부터 빠진다");
     eprintln!("끝 — 방 {} · 지연 합류 {join_ms}ms · 새 방 {room_ms}ms · 첫 DM {dm_ms}ms", room.id);
+}
+
+/// 허용 카드 자리(10-27 사용자) — 사슬 기기 둘(맥북·아이맥)에 새 윈도우. 그리기(open)만으로는 난수를 안 내고, 사람이 누른 기기(claim = card_open)만 쥔다.
+/// 늦게 누른 기기는 이유를 받고, 쥔 기기가 허용하면 다른 기기는 소켓 device_resolved 로 목록을 다시 받아 카드를 닫는다
+/// 돌리기: CHAMMO_E2E_LIVE=http://localhost:8803 CHAMMO_MOCK_GOOGLE=http://127.0.0.1:8804 cargo test e2e_flow::live::허용_카드 -- --ignored --nocapture
+#[test]
+#[ignore]
+fn 허용_카드는_그리기만으로_자리를_안_잡고_다른_기기_허용은_소켓으로_닫힌다() {
+    let Some(server) = base() else { return eprintln!("CHAMMO_E2E_LIVE 없음 — 건너뜀") };
+    let sub = format!("live-card-{}", now());
+    // 맥북(첫 기기) + 아이맥(숫자로 허용받아 사슬에 든 기기)
+    let (dm, km) = chained("card-mac", &server, &sub, "사용자");
+    let (di, ki) = login("card-imac", &server, &sub, "사용자");
+    let imac = relay::load_state(&di).device_id;
+    team_account::refresh_me(&dm, &km, &Curl).unwrap();
+    e2e_flow::card_open(&dm, &km, &Curl, &imac).unwrap();
+    e2e_flow::my_number(&di, &ki, &Curl).unwrap().expect("아이맥 숫자");
+    let n = e2e_flow::card_number(&dm, &km, &Curl, &imac).unwrap().expect("카드 숫자");
+    let k4 = e2e_flow::approve_with_number(&dm, &km, &Curl, &imac, &format!("{n:06}")).unwrap();
+    team_account::refresh_me(&di, &ki, &Curl).unwrap();
+    e2e_flow::confirm_code(&di, &ki, &Curl, &k4).unwrap();
+    assert_eq!(e2e_flow::ensure(&di, &ki, &Curl).unwrap(), Status::InChain);
+    // 새 윈도우 로그인 — 둘 다 목록을 받는다
+    let (dw, kw) = login("card-win", &server, &sub, "사용자");
+    let win = relay::load_state(&dw).device_id;
+    team_account::refresh_me(&dm, &km, &Curl).unwrap();
+    team_account::refresh_me(&di, &ki, &Curl).unwrap();
+    let row = |d: &PathBuf| relay::load_state(d).my_devices.into_iter().find(|x| x.id == win).unwrap();
+    // ① 두 기기가 카드를 그린다(open) — 갈래만, 중계엔 난수가 안 간다
+    assert_eq!(crate::e2e_cmd::card_open_json(&dm, &win).unwrap(), json!({ "mode": "number" }));
+    assert_eq!(crate::e2e_cmd::card_open_json(&di, &win).unwrap(), json!({ "mode": "number" }));
+    team_account::refresh_me(&dm, &km, &Curl).unwrap();
+    assert!(row(&dm).approve_nonce.is_empty(), "그리기만으로 자리를 잡으면 안 된다");
+    assert_eq!(e2e_flow::my_number(&dw, &kw, &Curl).unwrap(), None, "아무도 안 눌렀으니 새 기기 숫자도 없다");
+    // ② 사람이 아이맥 카드 칸을 눌렀다 — 아이맥이 쥔다. 맥북에서 늦게 누르면 이유가 온다
+    e2e_flow::card_open(&di, &ki, &Curl, &win).unwrap();
+    assert_eq!(crate::e2e_cmd::card_open_json(&di, &win).unwrap(), json!({ "mode": "number", "mine": true }));
+    let why = e2e_flow::card_open(&dm, &km, &Curl, &win).unwrap_err();
+    assert!(why.contains("다른 기기에서") && why.contains("숫자 다시"), "{why}");
+    // ③ 맥북은 내 기기끼리 방 소켓에 붙어 있고 카드가 열려 있다
+    let room = relay::self_room(&dm, &km, &Curl).unwrap();
+    let mut wm = sock(&dm, &km, &room);
+    let card = crate::device_cards::device_row("c1", &row(&dm), "2026-10-27T00:00:00Z").to_string();
+    assert!(crate::device_cards::plan(&card, &relay::load_state(&dm).my_devices, false, true).close.is_empty());
+    // ④ 아이맥에서 허용 → 맥북 소켓에 device_resolved → 목록을 다시 받으면 카드를 닫는다
+    let sas = e2e_flow::my_number(&dw, &kw, &Curl).unwrap().expect("새 기기 숫자");
+    assert_eq!(e2e_flow::card_number(&di, &ki, &Curl, &win).unwrap(), Some(sas));
+    let t0 = Instant::now();
+    e2e_flow::approve_with_number(&di, &ki, &Curl, &win, &format!("{sas:06}")).unwrap();
+    let ms = wait_for(&mut wm, "device_resolved", t0);
+    eprintln!("아이맥 허용 → 맥북 device_resolved {ms}ms");
+    team_account::refresh_me(&dm, &km, &Curl).unwrap();
+    assert_eq!(crate::device_cards::plan(&card, &relay::load_state(&dm).my_devices, false, true).close, vec!["c1".to_string()], "맥북 카드가 닫힌다");
 }

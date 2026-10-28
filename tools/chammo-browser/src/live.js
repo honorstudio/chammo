@@ -139,6 +139,8 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
   // 브라우저가 열려 있나 — 플레이라이트 도구를 부르면 열리고, 닫히면(closed) 끈다. 닫힌 뒤엔 크롬이 남긴 포트 파일이 있어도
   // 상태 파일을 안 쓴다 — 유휴 닫기 뒤 사람 부르기가 죽은 포트로 상태 파일을 다시 써서 앱이 '화면 받는 중'에 멈췄다(2026-10-05 QA 5)
   let up = false;
+  // 윈도우 보이는 창으로 다시 띄우는 중(src/winshow.js) — 크롬이 잠깐 없고 포트가 바뀐다. 그동안 사람 부름은 살아 있다고 본다
+  let switching = false;
   const doneFile = path.join(path.dirname(file), `${profile}.done`);
   // 사람이 '다 했어'와 같이 적은 한마디 — 첫 줄은 그 부름 표, 나머지가 말(앱 agent_ask_done 이 .done 보다 먼저 쓴다)
   const sayFile = path.join(path.dirname(file), `${profile}.say`);
@@ -153,6 +155,15 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
   // 시간 초과로 남은 부름의 표 — 세션이 기다리지 않는 동안 사람이 '다 했어'를 누르면 앱이 세션을 깨우고(입력칸 [앱] 줄),
   // 래퍼는 다음 부름·다음 도구 호출에서 그 .done 을 보고 카드를 치운다(2026-10-23 acme-shop — 시간 초과에 카드가 사라져 사람 일을 놓쳤다)
   const tokenOf = () => (s.ask ? `${pid}:${s.ask.at}` : '');
+  // 지금 부름 번호 — 다시 부르거나 거두면 늘어서 앞 부름의 기다림이 바로 물러난다(앞 부름이 .done 을 가로채고 끝날 때 빈 카드를 되살렸다, 2026-10-28)
+  let askGen = 0;
+  /** 걸린 부름을 거둔다 — 세션이 다른 브라우저 도구를 부르거나 그 부름을 취소했다(사람 차례 띠와 실제 차례가 따로 놀지 않게) */
+  const dropAsk = () => {
+    if (!s.ask) return false;
+    askGen += 1;
+    s.ask = null;
+    return true;
+  };
   /** .done 이 지금 부름 표와 같으면 지우고 true. 다른 표(지난 부름)도 지운다 */
   const takeDone = () => {
     let mark;
@@ -162,7 +173,7 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
   };
   /** 걸린 부름이 끝났다 — 카드를 치우고 사람이 적은 한마디를 돌려준다 */
   const finish = (token) => {
-    s.ask = null;
+    dropAsk();
     flush();
     const said = readSay(token);
     if (said) return { ok: true, said, text: `사람이 이렇게 말하고 넘겼어: "${said}" — browser_snapshot 으로 지금 화면을 확인하고 그 말대로 이어서 해` };
@@ -214,8 +225,10 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
       // 시간 초과로 남은 부름을 사람이 끝냈다(앱이 세션을 깨웠다) — 카드를 치운다. 한마디는 앱이 깨우는 줄에 실었다
       if (s.ask && !s.ask.waiting && fs.existsSync(doneFile)) {
         const token = tokenOf();
-        if (takeDone()) { s.ask = null; readSay(token); }
+        if (takeDone()) readSay(token);
       }
+      // 세션이 다시 브라우저를 쓴다 = 사람 차례가 끝났다 — 기다리던 부름(버려진 호출)도, 시간 초과로 남은 카드도 거둔다
+      dropAsk();
       s.tool = toolLine(name, args);
       s.toolAt = now();
       s.busy = true;
@@ -243,15 +256,23 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
       if (!port) return { ok: false, text: NOT_UP };
       // false = 죽음, 0 = 살았는데 탭 없음. 바쁜 맥에서 한 번 늦은 걸 죽음으로 보지 않게 한 번 더(2초).
       // 확인 실패면 포트 파일은 남긴다 — 살아 있는 크롬이면 다시 안 써 준다
-      const check = async () => { const r = await probe(port.port); return r === false ? probe(port.port, 2000) : r; };
+      // 포트는 물을 때마다 다시 읽는다 — 창을 바꾸면(윈도우) 새 크롬이 새 포트를 쓴다
+      const check = async () => {
+        if (switching) return 1;
+        const p = (readPort(profileDir) || port).port;
+        const r = await probe(p);
+        return r === false && !switching ? probe(p, 2000) : switching ? 1 : r;
+      };
       const first = await check();
       if (first === false) {
         gone(false);
         return { ok: false, text: '브라우저가 꺼져 있어 — browser_navigate 로 그 페이지를 다시 열고 불러' };
       }
       if (first === 0) return { ok: false, text: NO_TAB };
-      // 시간 초과로 남은 부름이 있으면 그 카드(at)를 이어 쓴다 — 새 알림이 안 쌓이고, 그새 사람이 끝냈으면 바로 돌아온다
-      const prev = s.ask && !s.ask.waiting ? s.ask.at : 0;
+      // 남은 부름이 있으면 그 카드(at)를 이어 쓴다 — 새 알림이 안 쌓이고, 그새 사람이 끝냈으면 바로 돌아온다.
+      // 아직 기다리는 앞 부름(세션이 버린 호출)은 번호가 바뀌어 물러난다
+      const prev = s.ask ? s.ask.at : 0;
+      const gen = ++askGen;
       if (prev && takeDone()) return finish(tokenOf());
       if (!prev) {
         try { fs.rmSync(doneFile, { force: true }); } catch { /* 없음 */ }
@@ -264,6 +285,7 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
       let probeAt = Date.now() + probeMs;
       while (Date.now() < until) {
         await new Promise((r) => setTimeout(r, pollMs));
+        if (gen !== askGen) return { ok: false, text: '이 부름은 거둬졌어 — 다시 부르거나 다른 도구를 불렀다' };
         if (fs.existsSync(doneFile)) {
           let mark = '';
           try { mark = fs.readFileSync(doneFile, 'utf8').trim(); } catch { /* 없음 */ }
@@ -281,7 +303,7 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
             return { ok: false, text: '기다리는 동안 브라우저가 꺼졌어 — browser_navigate 로 다시 열고 불러' };
           }
           if (r === 0) {
-            s.ask = null;
+            dropAsk();
             flush();
             return { ok: false, text: `기다리는 동안 ${NO_TAB}` };
           }
@@ -289,6 +311,7 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
       }
       // 카드는 남긴다 — 사람이 끝내거나 브라우저가 닫힐 때까지. 기다리지 않는 중으로 적고 나서 .done 을 한 번 더 본다
       // (앱은 .done 을 쓴 뒤 waiting 을 읽어 깨울지 정한다 — 이 순서면 둘 사이 틈에 '다 했어'가 사라지지 않는다)
+      if (gen !== askGen || !s.ask) return { ok: false, text: '이 부름은 거둬졌어 — 다시 부르거나 다른 도구를 불렀다' };
       s.ask = { ...s.ask, waiting: false };
       flush();
       if (takeDone()) return finish(token);
@@ -297,6 +320,22 @@ function createLive({ profile, root, profileDir, pid, ppid, now = Date.now, prob
     /** 시간 초과로 끝났지만 카드는 남은 부름이 있나 — 유휴 닫기를 미룬다(사람이 아직 그 브라우저로 일할 수 있다) */
     pendingAsk() {
       return !!s.ask;
+    },
+    /** 세션이 사람 부르기 호출을 취소했다(notifications/cancelled) — 카드를 거둔다 */
+    cancelAsk() {
+      if (dropAsk()) flush();
+    },
+    /** 이 래퍼는 '이번만 구글 크롬으로 열기'를 받는다(맥 ad-hoc 사본 + 구글 서명 원본을 안다, src/winshow.js SIGNED) */
+    signable() {
+      s.signable = true;
+    },
+    /** 창 바꾸기 시작·끝(윈도우 보이는 창으로 다시 띄우기·맥 구글 크롬으로) */
+    switching(on) {
+      switching = !!on;
+    },
+    /** 상태 파일을 지금 포트로 다시 쓴다(다시 띄운 뒤) */
+    refresh() {
+      flush();
     },
     /** 세션 도구가 사람 개입이 끝나길 기다리기 시작·끝 */
     held(on) {

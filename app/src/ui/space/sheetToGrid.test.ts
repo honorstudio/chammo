@@ -13,8 +13,8 @@ describe("엑셀 페이지 '참모 표로 열기'", () => {
     expect(btn).toMatch(/tr\('참모 표로 열기', 'Open in Chammo Grid'\)/);
     expect(btn).not.toMatch(/<Icon/);
   });
-  it('누르면 그 파일을 참모 표로 — craft_open_file(app gridcraft, path)', () => {
-    expect(page).toMatch(/invoke\('craft_open_file', \{ app: 'gridcraft', path \}\)/);
+  it('누르면 그 파일을 참모 표로 — openInCraft(안 깔렸으면 한 번 묻고 설치) → craft_open_file', () => {
+    expect(page).toMatch(/openInCraft\(path, 'gridcraft'\)/);
   });
   it('저장 중엔 못 누른다 — 고친 칸이 파일에 다 들어간 뒤 넘긴다', () => {
     expect(btn).toMatch(/disabled=\{status\.s === 'saving'/);

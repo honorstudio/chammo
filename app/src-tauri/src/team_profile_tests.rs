@@ -55,6 +55,7 @@ fn 바꾼_뒤_치울_내_옛_파일() {
         item("a1", "avatar", "photo.webp", "me", 1),
         item("a2", "avatar", "photo.webp", "me", 2),
         item("t1", "avatar", "team-icon.webp", "me", 1),
+        item("c1", "avatar", "team-cover.webp", "me", 1),
         item("x1", "profile", "profile.json", "other", 1),
     ];
     let mut old = stale(&items, "me", Slot::Profile, &["p2", "a2"]);
@@ -62,8 +63,10 @@ fn 바꾼_뒤_치울_내_옛_파일() {
     assert_eq!(old, vec!["p1"]);
     let mut photos = stale(&items, "me", Slot::Photo, &["a2"]);
     photos.sort();
-    assert_eq!(photos, vec!["a1"], "팀 아이콘은 사진 정리에서 안 지운다");
+    assert_eq!(photos, vec!["a1"], "팀 아이콘·커버는 사진 정리에서 안 지운다");
     assert_eq!(stale(&items, "me", Slot::TeamIcon, &[]), vec!["t1"]);
+    assert_eq!(stale(&items, "me", Slot::TeamCover, &[]), vec!["c1"]);
+    assert!(stale(&items, "me", Slot::TeamCover, &["c1"]).is_empty());
 }
 
 #[test]
@@ -107,4 +110,42 @@ fn 프로필판과_바꾸기는_봉투_더하기를_기다리지_않는다() {
     let code = src.split("#[cfg(test)]").next().unwrap();
     assert!(!code.contains("locker::list("), "list_split 으로");
     assert!(code.matches("locker::list_split(").count() >= 3, "프로필판·바꾸기·팀 아이콘");
+}
+
+#[test]
+fn 폰_같은_판_답은_알린_판을_알_때만() {
+    // 맥을 다시 켜면 알린 판(메모리)이 0 — 폰이 들고 온 판으로 '그대로'만 답하면 폰이 옛 판에 갇힌다
+    let team = "t-phone-same";
+    assert!(!phone_same(team, 7), "알린 판을 모르면 한 번 새로 읽는다");
+    crate::team_locker_app::nudge(team, 7);
+    assert!(phone_same(team, 7), "본 판 = 알린 판이면 그대로");
+    assert!(!phone_same(team, 0), "본 판이 없으면 늘 새로");
+    crate::team_locker_app::nudge(team, 8);
+    assert!(!phone_same(team, 7), "새 판이 알려졌으면 다시");
+}
+
+#[test]
+fn 프로필_이름은_사람마다_가장_새_프로필에서_빈_이름·못_읽은_건_뺀다() {
+    // 10-28 아이맥 참모: scripts/team 은 명부(계정) 이름만 알아서 사용자가 부르는 프로필 이름으로 사람을 못 찾았다
+    let items = vec![item("p1", "profile", "profile.json", "m1", 3), item("p2", "profile", "profile.json", "m1", 7), item("p3", "profile", "profile.json", "m2", 1), item("p4", "profile", "profile.json", "m3", 1)];
+    let body = |id: &str| match id {
+        "p1" => Some(r#"{"name":"옛 이름"}"#.as_bytes().to_vec()),
+        "p2" => Some(r#"{"name":" 도윤 "}"#.as_bytes().to_vec()),
+        "p3" => Some(br#"{"name":""}"#.to_vec()),
+        _ => None,
+    };
+    let got = names_from(&items, body);
+    assert_eq!(got.get("m1").map(String::as_str), Some("도윤"), "가장 새 프로필, 다듬은 이름");
+    assert!(!got.contains_key("m2"), "빈 이름 = 명부 이름 그대로");
+    assert!(!got.contains_key("m3"), "아직 안 푼 프로필은 망 없이 건너뛴다");
+}
+
+#[test]
+fn 캐시_프로필_이름은_망을_안_쓴다() {
+    // scripts/team status 가 기다리지 않게 — 봉해 둔 목록과 이미 푼 프로필만
+    let src = include_str!("team_profile.rs");
+    let body = &src[src.find("pub fn cached_names(").unwrap()..];
+    let body = &body[..body.find("\n}\n").unwrap()];
+    assert!(body.contains("locker::cached("), "{body}");
+    assert!(!body.contains("http") && !body.contains("bytes_of("), "{body}");
 }

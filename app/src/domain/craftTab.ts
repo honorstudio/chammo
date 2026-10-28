@@ -35,8 +35,13 @@ export const POPS = '.acct-pop, .inbox-pop, .far-pop, .lk-pop, [role=dialog]';
 export const popOverlaps = (pane: Box, pops: Box[]): boolean =>
   pops.some((p) => p[2] > 0 && p[3] > 0 && p[0] < pane[0] + pane[2] && pane[0] < p[0] + p[2] && p[1] < pane[1] + pane[3] && pane[1] < p[1] + p[3]);
 
-/** 칸 자리(CSS 점, 웹뷰 왼쪽 위 기준) — 정수로 맞춰 같은 자리면 다시 안 보낸다 */
-export const boxOf = (r: { left: number; top: number; width: number; height: number }): Box => [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+/** 칸 자리(CSS 점, 웹뷰 왼쪽 위 기준) — 기기 픽셀(dpr, 레티나면 0.5점)로 맞춰 같은 자리면 다시 안 보낸다.
+ *  정수로만 밀면 칸이 12.5점에 있을 때 비추기가 13점에서 시작해 칸 끝 1px 에 웹 바탕이 비쳤다(10-28 사용자) */
+export const boxOf = (r: { left: number; top: number; width: number; height: number }, dpr = 1): Box => {
+  const k = dpr >= 1 ? dpr : 1;
+  const q = (v: number) => Math.round(v * k) / k;
+  return [q(r.left), q(r.top), q(r.width), q(r.height)];
+};
 export const sameBox = (a: Box | null, b: Box) => !!a && a.every((v, i) => v === b[i]);
 
 /** 보이나 — 칸이 있고(접힌 패널 아님) 덮는 게 없을 때 */

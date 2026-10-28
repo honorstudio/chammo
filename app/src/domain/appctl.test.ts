@@ -20,6 +20,7 @@ describe('intentOf — scripts/app 한 줄 → 앱이 할 일', () => {
     // 화면 조종 모든 프로젝트(2026-10-05)
     expect(intentOf({ action: 'feature', arg: 'computerUse on' })).toEqual({ kind: 'feature', name: 'computerUse', on: true });
     expect(intentOf({ action: 'feature', arg: 'usagePing off' })).toEqual({ kind: 'feature', name: 'usagePing', on: false });
+    expect(intentOf({ action: 'feature', arg: 'craftBasics off' })).toEqual({ kind: 'feature', name: 'craftBasics', on: false });
   });
 
   it('열기·닫기·세션으로 가기·다마고치', () => {

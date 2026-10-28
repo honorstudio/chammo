@@ -71,3 +71,15 @@ fn 로그인한_컴퓨터는_허브를_늘_켜고_사람이_끄면_끈다() {
     assert!(!crate::mobile::explicit_off(&dir));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 허브 다시 붙기 — 1분 넘게 잘 붙어 있다 끊기면 처음부터 짧게. 전엔 앱이 켜진 뒤 끊긴 횟수가 쌓이기만 해서(성공해도 안 줄었다)
+/// 하루 몇 번 끊긴 뒤엔 망이 잠깐 튈 때마다 5분씩 허브에서 빠졌다 — 그동안 폰은 요청마다 'aborted'(2026-10-27)
+#[test]
+fn backoff_resets_after_a_healthy_connection() {
+    use std::time::Duration;
+    assert_eq!(next_fails(7, Some(Duration::from_secs(90))), 1);
+    assert_eq!(crate::team_relay_ws::backoff(next_fails(20, Some(Duration::from_secs(600)))), Duration::from_secs(4));
+    // 붙자마자 끊기거나 못 붙으면 늘어난다(허브가 거절하는 동안 두드리지 않게)
+    assert_eq!(next_fails(7, Some(Duration::from_secs(10))), 8);
+    assert_eq!(next_fails(3, None), 4);
+}

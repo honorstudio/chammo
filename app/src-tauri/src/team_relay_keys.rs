@@ -188,6 +188,9 @@ fn store_word(e: &StoreError) -> String {
 #[cfg(not(windows))]
 pub fn store() -> crate::accounts_store::Keychain {
     let path = std::env::var("CHAMMO_TEAM_KEYCHAIN").ok().filter(|s| !s.is_empty());
+    // 시험 실행 파일은 로그인 키체인을 절대 안 연다 — 시험 키체인 파일이 없으면 없는 파일(읽기는 창 없이 실패). 10-27 사용자 화면에 'chammo-team 비밀 정보' 암호 창이 떴다
+    #[cfg(test)]
+    let path = path.or_else(|| Some(std::env::temp_dir().join("chammo-no-login-keychain.keychain-db").to_string_lossy().into_owned()));
     let unlock = path.as_ref().and(std::env::var("CHAMMO_TEAM_KEYCHAIN_PASSWORD").ok());
     crate::accounts_store::Keychain { path, unlock, quiet: true, cli_service: None }
 }

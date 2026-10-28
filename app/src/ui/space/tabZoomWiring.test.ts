@@ -52,7 +52,7 @@ describe('탭 확대 — SpaceView', () => {
   it('그림 확대 기준점 — 핀치·휠은 커서 자리를 넘기고, 배율 바꾸기 직전 markAnchor·다시 그린 뒤 applyAnchor(탭·크게 보기·리더 같은 함수)', () => {
     expect(anchor).toMatch(/cb\.current\.step\(s, \{ x: e\.clientX, y: e\.clientY \}\)/);
     expect(view).toMatch(/markAnchor\(document\.querySelector<HTMLElement>\('\.space \.cv-main \.ft-body \.pv-image'\), at\)/);
-    expect(file).toMatch(/useLayoutEffect\(\(\) => applyAnchor\(imgBox\.current\), \[zoom\]\)/);
+    expect(file).toMatch(/useLayoutEffect\(\(\) => applyAnchor\(imgBox\.current\), \[z\]\)/);
     expect(preview).toMatch(/markAnchor\(imgBox\.current, at\)/);
     expect(preview).toMatch(/useLayoutEffect\(\(\) => applyAnchor\(imgBox\.current\), \[zoom\]\)/);
     expect(reader).toMatch(/markAnchor\(imgBox\(\), at\)/);
@@ -74,8 +74,10 @@ describe('탭 확대 — 각 페이지가 배율을 그린다', () => {
     expect(file).toMatch(/<HtmlFrame className="rd-frame" src=\{docUrl\(path\)\} zoom=\{zoom\}/);
     expect(file).toMatch(/<PdfView path=\{path\} zoom=\{zoom\} \/>/);
     expect(file).toMatch(/<OfficeDoc f=\{at\} zoom=\{zoom\}/);
-    expect(file).toMatch(/const sized = kind === 'image' && zoom !== FIT && natural > 0/);
-    expect(file).toMatch(/width: `\$\{natural \* zoom \/ 100\}px`/);
+    // 맞춤은 칸에 맞게(작은 그림은 키움) — 폭은 imageWidth(자연 폭, 배율, 맞춤 배율), 맞춤일 때만 fit(넘침 숨김) 클래스
+    expect(file).toMatch(/const \{ natural, fit, onLoad \} = useImageFit\(imgBox\)/);
+    expect(file).toMatch(/imageWidth\(natural, z, fit\)/);
+    expect(file).toMatch(/pv-image \$\{z === FIT \? 'fit' : ''\}/);
     expect(file).toMatch(/\{zoomUi\}/);
   });
 });

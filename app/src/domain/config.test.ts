@@ -35,11 +35,13 @@ describe('기능 켜기', () => {
     expect(featuresOf(null).computerUse).toBe(false);
     // 익명 사용 통계는 기본 켬 — 설정 > 기능에서 끈다(2026-10-24 사용자)
     expect(featuresOf(null).usagePing).toBe(true);
+    // 기본 참모 앱 다섯(표·PDF·슬라이드·문서·벡터) 미리 받기는 기본 켬 — 옛 설정 파일도(2026-10-26 사용자)
+    expect(featuresOf(null).craftBasics).toBe(true);
     expect(featuresOf({ features: { tama: false } })).toEqual({ ...ALL_ON, tama: false });
   });
 
   it('꺼 둔 기능의 단축키는 막는다', () => {
-    const off = { office: false, tama: false, gacha: false, review: false, voice: false, autoRevive: false, autoTidy: false, agentView: false, computerUse: false, usagePing: false, animation: 'auto' as const };
+    const off = { office: false, tama: false, gacha: false, review: false, voice: false, autoRevive: false, autoTidy: false, agentView: false, computerUse: false, usagePing: false, craftBasics: false, bubble: false, bubbleDesk: false, animation: 'auto' as const };
     expect(allowed({ type: 'goto', to: 'office' }, off)).toBe(false);
     expect(allowed({ type: 'goto', to: 'tama' }, off)).toBe(false);
     expect(allowed({ type: 'goto', to: 'review' }, off)).toBe(false);

@@ -4,7 +4,7 @@ import { marked } from 'marked';
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { modKey } from '../../domain/keys';
 import { curStep, DOC_SANDBOX, emptyStore } from '../../domain/curation';
-import { docUrl, IS_WIN, isDocUrl, dropIndex, inStrip, kindOf, titleOf, type DocKind, type Surface, docFileUrl } from '../../domain/reader';
+import { docUrl, IS_WIN, isDocUrl, dropIndex, inStrip, kindOf, titleOf, type DocKind, type Surface, docFileUrl, inTime, PREVIEW_WAIT_MS } from '../../domain/reader';
 import { FIT, IMAGE_STEPS, parseZoom, stepZoom, withZoom, zoomable, zoomLabel, zoomOf, type ZoomMap } from '../../domain/readerZoom';
 import { IconCheck, IconClose, IconNote, IconOpen, IconPencil, IconRefresh, IconZoomIn, IconZoomOut } from '../Icons';
 import { IconButton } from '../kit/IconButton';
@@ -19,7 +19,10 @@ import { SendFab } from '../space/SendFab';
 import { lastSaved } from '../space/docSave';
 import { WebPage } from '../WebPage';
 import { applyAnchor, markAnchor, useWheelZoom } from '../zoomAnchor';
+import { useImageFit, useImagePan } from '../imageFit';
+import { imageWidth, toggleFitActual } from '../../domain/imageFit';
 import type { BlockNoteEditor } from '@blocknote/core';
+import { CraftOpenChip, PreviewFail } from '../craft/openInCraft';
 
 // 스페이스 편집기(BlockNote)는 고칠 때만 불러온다 — 보기만 할 땐 무게를 안 싣는다
 const SpaceEditor = lazy(() => import('../space/SpaceEditor'));
@@ -120,7 +123,7 @@ export function frameStyle(kind: DocKind, z: number): React.CSSProperties | unde
 /** point = 짚어 보여 줄 곳(슬라이드 번호·찾을 글) — 페이지가 다 뜬 뒤에 페이지 안 다리에 넘긴다(시간을 정해 두고 보내면 늦게 뜨는 문서에서 사라졌다)
  *  record = 검토용 시안이면 그 경로 — 시안이 알려 오는 표시(cur-state)를 curation/ 에 적고, 칸을 새로 열면 거기서 되돌린다(불투명 출처라 시안 저장소는 칸과 함께 사라진다).
  *  샌드박스는 늘 DOC_SANDBOX(같은 출처 없음) — 부르는 쪽이 고르지 않는다 */
-export function HtmlFrame({ src, zoom, className, point, pointKey, record }: { src: string; zoom: number; className?: string; point?: { page?: number; find?: string }; pointKey?: string; record?: string }) {
+export function HtmlFrame({ src, zoom, className, point, pointKey, record, onLoad }: { src: string; zoom: number; className?: string; point?: { page?: number; find?: string }; pointKey?: string; record?: string; onLoad?: () => void }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const loaded = useRef(false);
   const post = () => ref.current?.contentWindow?.postMessage({ hodocZoom: zoom / 100 }, '*');
@@ -161,36 +164,40 @@ export function HtmlFrame({ src, zoom, className, point, pointKey, record }: { s
     // 닫히거나 다른 시안으로 바뀌면 기다리던 저장을 바로 — 표시하고 곧바로 Esc 로 닫아도 마지막 표시가 남게
     return () => { window.removeEventListener('message', on); flush(); };
   }, [record, src]);
-  return <iframe ref={ref} className={className} src={src} sandbox={DOC_SANDBOX} onLoad={() => { loaded.current = true; post(); window.setTimeout(aim, 150); }} />;
+  return <iframe ref={ref} className={className} src={src} sandbox={DOC_SANDBOX} onLoad={() => { loaded.current = true; post(); window.setTimeout(aim, 150); onLoad?.(); }} />;
 }
 
 /**
  * 소리·워드·그 밖의 파일(2026-09-30 사용자 "더 많은 확장자") — 소리는 재생, 워드·RTF 는 textutil 로 바꾼 글,
  * 엑셀·키노트·PSD 등은 QuickLook 이 그린 첫 장 그림. 어느 쪽이든 "기본 앱으로 열기"
  */
-export function ExtraDoc({ path, kind }: { path: string; kind: 'audio' | 'office' | 'other' }) {
+/** craft = 아래 줄에 '참모 ○○로 열기'(스페이스 탭은 머리에 따로 있어 false) */
+export function ExtraDoc({ path, kind, craft = true }: { path: string; kind: 'audio' | 'office' | 'other'; craft?: boolean }) {
   const [html, setHtml] = useState<string | null>(null);
   const [thumb, setThumb] = useState<string | null>(null);
   const [err, setErr] = useState('');
+  const [fail, setFail] = useState<string | null>(null);
   useEffect(() => {
-    setHtml(null); setThumb(null); setErr('');
-    if (kind === 'office') invoke<string>('office_html', { path }).then(setHtml, (e) => setErr(String(e)));
-    if (kind === 'other') invoke<string>('ql_thumb', { path }).then(setThumb, (e) => setErr(String(e) || tr('미리보기를 못 만들었어', "Couldn't make a preview")));
+    setHtml(null); setThumb(null); setErr(''); setFail(null);
+    let live = true;
+    if (kind === 'office') invoke<string>('office_html', { path }).then((h) => { if (live) setHtml(h); }, (e) => { if (live) setErr(String(e)); });
+    // 한도 안에서 — PDF 호환 없는 .ai 에서 답이 영영 안 와 '만드는 중'에 멈췄다(2026-10-29). 실패면 '못 만들었어 — 참모 벡터로 열기'
+    if (kind === 'other') inTime(invoke<string>('ql_thumb', { path }), PREVIEW_WAIT_MS).then((t) => { if (live) setThumb(t); }, (e) => { if (live) setFail(String(e)); });
+    return () => { live = false; };
   }, [path, kind]);
   const open = <IconButton size="s" tone="line" label={tr('기본 앱으로 열기', 'Open in default app')} onClick={() => void invoke('open_target', { kind: 'file', target: path }).catch(() => {})}><IconOpen /></IconButton>;
   return (
     <div className="rd-extra">
       {kind === 'audio' ? <audio src={docUrl(path)} controls autoPlay />
         : kind === 'office' ? (html == null ? <div className="rd-empty">{err || tr('바꾸는 중', 'Converting')}</div> : <iframe className="rd-frame" srcDoc={html} sandbox="" title={titleOf(path)} />)
-        : thumb ? <img src={docUrl(thumb)} alt={titleOf(path)} /> : <div className="rd-empty">{err || tr('미리보기 만드는 중', 'Making a preview')}</div>}
-      <div className="rd-extra-bar"><span>{titleOf(path)}</span>{open}</div>
+        : thumb ? <img src={docUrl(thumb)} alt={titleOf(path)} /> : fail != null ? <PreviewFail path={path} why={fail} /> : <div className="rd-empty">{tr('미리보기 만드는 중', 'Making a preview')}</div>}
+      <div className="rd-extra-bar"><span>{titleOf(path)}</span>{craft && fail == null && <CraftOpenChip path={path} />}{open}</div>
     </div>
   );
 }
 
-function Doc({ path, nonce, zoom, editing }: { path: string; nonce: number; zoom: number; editing?: boolean }) {
+function Doc({ path, nonce, zoom, editing, onImageToggle }: { path: string; nonce: number; zoom: number; editing?: boolean; onImageToggle?: (z: number, at: { x: number; y: number }) => void }) {
   const kind = kindOf(path);
-  const [natural, setNatural] = useState(0); // 그림 원래 폭(화면 픽셀) — % 기준
   const [text, setText] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
@@ -200,17 +207,19 @@ function Doc({ path, nonce, zoom, editing }: { path: string; nonce: number; zoom
     if (kind === 'md' || kind === 'text') invoke<string>('read_doc_text', { path }).then((t) => alive && setText(t), (e) => alive && setErr(String(e)));
     return () => { alive = false; };
   }, [path, kind, nonce]);
+  const imgBox = useRef<HTMLDivElement>(null);
+  const { natural, fit, onLoad } = useImageFit(imgBox); // 그림 원래 폭(화면 픽셀)·맞춤 배율 — % 기준
+  useImagePan(() => imgBox.current, (at) => onImageToggle?.(toggleFitActual(zoom, fit), at)); // 두 번 누르기 맞춤 ↔ 100%, 끌어서 이동
   if (err) return <div className="rd-empty">{tr('못 읽었어', "Couldn't read it")} — {err}</div>;
   if (kind === 'web') return <WebPage key={nonce} url={path} />;
   // HTML 시안: 스크립트는 돌되 앱과 다른 불투명 출처(DOC_SANDBOX + hodoc 머리글 sandbox)에서 — 앱 기능·홈 파일에 못 닿는다(2026-10-06)
   if (kind === 'html') return <div className="rd-zoombox"><HtmlFrame key={nonce} className="rd-frame" zoom={zoom} src={docUrl(path)} record={path} /></div>;
   if (kind === 'pdf') return <div className="rd-zoombox scroll"><iframe key={nonce} className="rd-frame" style={frameStyle(kind, zoom)} src={docUrl(path)} /></div>;
   if (kind === 'image') {
-    // 맞춤 = 창 안에 통째로(작은 그림은 원래 크기), 그 밖 = 실제 픽셀(레티나 2배 캡처는 절반 폭이 100%) × %
-    const sized = zoom !== FIT && natural > 0;
-    return <div className={`rd-image ${sized ? '' : 'fit'}`}><img key={nonce} src={docUrl(path)} alt={titleOf(path)}
-      onLoad={(e) => setNatural(e.currentTarget.naturalWidth / (window.devicePixelRatio || 1))}
-      style={sized ? { maxWidth: 'none', maxHeight: 'none', width: `${natural * zoom / 100}px` } : undefined} /></div>;
+    // 맞춤 = 창 안에 통째로(작은 그림은 칸에 맞게 키운다, 2026-10-28), 그 밖 = 실제 픽셀(레티나 2배 캡처는 절반 폭이 100%) × %
+    const width = imageWidth(natural, zoom, fit);
+    return <div className={`rd-image ${zoom === FIT ? 'fit' : ''}`} ref={imgBox}><img key={nonce} src={docUrl(path)} alt={titleOf(path)} draggable={false} onLoad={onLoad}
+      style={width ? { maxWidth: 'none', maxHeight: 'none', width: `${width}px` } : undefined} /></div>;
   }
   if (kind === 'audio' || kind === 'office' || kind === 'other') return <ExtraDoc key={nonce} path={path} kind={kind} />;
   if (kind === 'video') return <div className="rd-video"><video key={nonce} src={docUrl(path)} controls playsInline /></div>;
@@ -322,19 +331,21 @@ export function ReaderView({ surface, actions, send, sendTo }: { surface: string
   const imgBox = () => body.current?.querySelector<HTMLElement>('.rd-image');
   useLayoutEffect(() => applyAnchor(imgBox()), [zoom]);
   useWheelZoom(imgBox, (dir, at) => zoomBy.current(dir, at));
-  zoomBy.current = (dir, at) => {
-    if (!kind || !zoomable(kind)) return;
-    let z: number;
-    if (kind === 'image') {
-      markAnchor(imgBox(), at);
-      // 맞춤에서 누르면 지금 보이는 실제 비율에서 한 단계 — 맞춤이 37% 면 ⌘- 는 33%, ⌘+ 는 50%
-      const img = body.current?.querySelector('img');
-      const now = zoom !== FIT ? zoom : img?.naturalWidth ? Math.round(img.getBoundingClientRect().width / (img.naturalWidth / (window.devicePixelRatio || 1)) * 100) : 100;
-      z = dir === 0 ? FIT : stepZoom(now, dir, IMAGE_STEPS);
-    } else z = dir === 0 ? 100 : stepZoom(zoom, dir);
+  const setImageZoom = (z: number) => {
+    if (!kind) return;
     const next = withZoom(zooms, kind, z);
     setZooms(next);
     try { localStorage.setItem(ZOOM_KEY, JSON.stringify(next)); } catch { /* 저장 못 해도 이번엔 된다 */ }
+  };
+  zoomBy.current = (dir, at) => {
+    if (!kind || !zoomable(kind)) return;
+    if (kind === 'image') {
+      markAnchor(imgBox(), at);
+      // 맞춤에서 누르면 지금 보이는 실제 비율에서 한 단계 — 맞춤이 37% 면 ⌘- 는 33%, ⌘+ 는 50% (맞춤 그림은 칸에 맞춘 폭 그대로 그려져 있어 잰 값이 맞다)
+      const img = body.current?.querySelector('img');
+      const now = zoom !== FIT ? zoom : img?.naturalWidth ? Math.round(img.getBoundingClientRect().width / (img.naturalWidth / (window.devicePixelRatio || 1)) * 100) : 100;
+      setImageZoom(dir === 0 ? FIT : stepZoom(now, dir, IMAGE_STEPS));
+    } else setImageZoom(dir === 0 ? 100 : stepZoom(zoom, dir));
   };
   useEffect(() => {
     const w = window as unknown as { __readerZoom?: (dir: 1 | -1 | 0) => void };
@@ -398,7 +409,7 @@ export function ReaderView({ surface, actions, send, sendTo }: { surface: string
       )}
       <div className="rd-body" ref={body} data-path={s.active ?? undefined}>
         {send && <SendFab send={send} sendTo={sendTo} path={s.active} />}
-        {s.active ? <Doc path={s.active} nonce={nonce} zoom={zoom} editing={!!editing[s.active]} /> : <div className="rd-empty">{tr(`파일을 여기에 끌어다 놓거나, ${assistant()}한테 "띄워줘"라고 해 — HTML 시안·PDF·마크다운·그림·영상`, `Drop a file here, or ask ${assistant()} to show one — HTML designs, PDFs, Markdown, images, videos`)}</div>}
+        {s.active ? <Doc path={s.active} nonce={nonce} zoom={zoom} editing={!!editing[s.active]} onImageToggle={(z, at) => { markAnchor(imgBox(), at); setImageZoom(z); }} /> : <div className="rd-empty">{tr(`파일을 여기에 끌어다 놓거나, ${assistant()}한테 "띄워줘"라고 해 — HTML 시안·PDF·마크다운·그림·영상`, `Drop a file here, or ask ${assistant()} to show one — HTML designs, PDFs, Markdown, images, videos`)}</div>}
       </div>
     </div>
   );

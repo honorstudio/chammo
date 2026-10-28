@@ -674,8 +674,11 @@ class StallWatch(unittest.TestCase):
         rt.report('nightly-sync', 'ok', 'done', data=str(self.data), now=t0 + datetime.timedelta(minutes=2))
         self.transcript('aaaa1111', [('user', t0, 'go'), ('reply', t0 + datetime.timedelta(minutes=3), '하나는 멈췄어')])
         calls = Calls(agents=json.dumps([self.agent('aaaa1111')]))
-        self.assertEqual(self.tick(calls, t0 + datetime.timedelta(hours=20)), [])
-        self.assertNotIn(['/bin/claude', 'agents', '--json'], calls.calls)  # 열린 실행이 없으면 agents 도 안 부른다
+        # 멈춤 알림은 없고, 보고한 회차 세션이 남아 있으니 한 번 멈춘다(ReportedRun, 2026-10-28)
+        self.assertEqual(self.tick(calls, t0 + datetime.timedelta(hours=20)), [{'name': 'nightly-sync', 'tidied': 'aaaa1111'}])
+        again = Calls(agents=json.dumps([self.agent('aaaa1111')]))
+        self.assertEqual(self.tick(again, t0 + datetime.timedelta(hours=21)), [])
+        self.assertNotIn(['/bin/claude', 'agents', '--json'], again.calls)  # 열린 실행이 없고 정리도 했으면 agents 도 안 부른다
 
     def test_일하는_중이면_건드리지_않는다(self):
         t0 = self.stalled_on_refresh()
@@ -704,6 +707,57 @@ class StallWatch(unittest.TestCase):
         out = self.tick(calls, t0 + datetime.timedelta(minutes=5))
         self.assertEqual(out, [])
         self.assertEqual(self.spawns(calls), [])
+
+
+class ReportedRun(unittest.TestCase):
+    """보고(report)까지 한 회차 세션 — 2026-10-28 아이맥 매일 예약: 10/27 10:10 report fail 까지 했는데 그 세션이 claude agents 에
+    busy 로 남아 10/28 10:00 정기 회차가 'still running' 으로 건너뛰었다. 보고한 회차는 끝난 것 — 다음 회차를 막지 않고, 조금 뒤 tick 이 멈춘다"""
+    T = datetime.datetime(2026, 10, 6, 8, 0)
+    NOW, tearDown, started, agent, tick, runs = StallWatch.NOW, StallWatch.tearDown, StallWatch.started, StallWatch.agent, StallWatch.tick, StallWatch.runs
+
+    def setUp(self):
+        StallWatch.setUp(self)
+        self.started('old1', self.T - datetime.timedelta(minutes=10))
+        rt.report('nightly-sync', 'fail', '로그인 막힘', data=str(self.data), now=self.T)
+
+    def busy(self):
+        return Calls(agents=json.dumps([self.agent('old1', status='busy', state='working')]))
+
+    def stops(self, calls):
+        return [c for c in calls.calls if c[1:2] == ['stop']]
+
+    def test_보고한_회차_세션은_busy_여도_다음_회차를_막지_않는다(self):
+        calls = self.busy()
+        r = rt.run_now('nightly-sync', data=str(self.data), run=calls, scheduled=True, now=self.NOW + datetime.timedelta(days=1), home=str(self.home), win=False)
+        self.assertEqual(r.get('session'), '1a2b3c4d', r)
+        self.assertIn(['/bin/claude', 'rm', 'old1'], calls.calls)
+
+    def test_보고_안_한_busy_회차는_그대로_건너뛴다(self):
+        self.started('new1', self.T + datetime.timedelta(hours=1))
+        calls = Calls(agents=json.dumps([self.agent('new1', status='busy', state='working')]))
+        r = rt.run_now('nightly-sync', data=str(self.data), run=calls, scheduled=True, now=self.NOW + datetime.timedelta(days=1), home=str(self.home), win=False)
+        self.assertEqual(r, {'skipped': 'still running'})
+
+    def test_보고하고_조금_지나도_남은_세션은_tick_이_한_번_멈춘다(self):
+        early = self.busy()
+        self.tick(early, self.T + datetime.timedelta(minutes=rt.REPORTED_GRACE_MIN - 1))
+        self.assertEqual(self.stops(early), [], '보고 직후엔 마무리 말을 쓸 틈을 준다')
+        late = self.busy()
+        out = self.tick(late, self.T + datetime.timedelta(minutes=rt.REPORTED_GRACE_MIN + 1))
+        self.assertEqual(self.stops(late), [['/bin/claude', 'stop', 'old1']])
+        self.assertIn({'name': 'nightly-sync', 'tidied': 'old1'}, out)
+        again = self.busy()
+        self.tick(again, self.T + datetime.timedelta(minutes=rt.REPORTED_GRACE_MIN + 2))
+        self.assertEqual(again.calls, [], '한 번 멈춘 회차는 다시 안 본다(agents 도 안 부른다)')
+        self.assertEqual(self.runs()[-1]['event'], 'end', '기록 줄은 안 늘린다 — 앱은 마지막 줄로 성공·실패를 본다')
+
+    def test_이미_목록에_없으면_멈추지_않고_다시_안_본다(self):
+        gone = Calls(agents='[]')
+        self.tick(gone, self.T + datetime.timedelta(minutes=rt.REPORTED_GRACE_MIN + 1))
+        self.assertEqual(self.stops(gone), [])
+        again = Calls(agents='[]')
+        self.tick(again, self.T + datetime.timedelta(minutes=rt.REPORTED_GRACE_MIN + 2))
+        self.assertEqual(again.calls, [])
 
 
 class Killed(BaseException):

@@ -110,6 +110,8 @@ fn 받아들이기_전에_못_연_말을_받아들인_뒤_다시_열어_같은_�
     r.always("GET", "/v0/accounts/a2/chain", 200, &json!({ "links": [g2, x.clone()] }).to_string());
     // 서버 명부엔 철수 옛 자리(m2)만 — 새 기기 pz 는 사슬엔 있지만 DM 상대 m2 의 기기
     let m = msg(&pz, "pz", &x, 7, "나 다시 왔어", &k);
+    // 둘 — 캐시 명부에 보낸 이가 없으면 한 번 더 새로 받는다
+    r.answer("/v0/teams/t1/log", 200, &json!({ "links": [ls[0].clone()] }).to_string());
     r.answer("/v0/teams/t1/log", 200, &json!({ "links": [ls[0].clone()] }).to_string());
     let st = crate::team_relay::load_state(&d);
     let opened = crate::e2e_state::unwrap(&d, &kc, &r, &st, &m);

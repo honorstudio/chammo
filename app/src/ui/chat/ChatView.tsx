@@ -1,5 +1,5 @@
 import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { draftStore } from '../../domain/chatDraft';
+import { chatDrafts } from '../../data/drafts';
 import { interleave } from '../../domain/chatExtras';
 import { isCompacting } from '../../domain/compacting';
 import { ctxLevel } from '../../domain/ctx';
@@ -12,26 +12,29 @@ import type { PickResult, PickWant } from './modelPickRun';
 import { builtinSlash, completeSlash, isMemoryCmd, matchSlash, slashQuery, type SlashItem } from '../../domain/slash';
 import { appendChat, chatBusy, chatEscStops, chatNorm, escUnsends, enterDelay, parseChat, pasteKind, clickFocusesInput, sentByMe, promptInput, sendControls, splitPaths, splitRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
 import type { LinkState } from '../../domain/attachExit';
-import { LINK_WAIT } from '../../domain/paneLinks';
+import { HOLD_MAX } from '../../domain/paneLinks';
 import { absorbedAt, absorbedLeft, againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, mineForLeftover, newPending, pendAct, pendingState, pendLook, resent, restoreDraft, typingOf, waitingOf, type PendingState, type QueueState } from '../../domain/chatQueue';
 import { mdToHtml } from '../md';
+import { openWebLink } from '../followLink';
 import { openTarget, readSessionTasks, readTranscript, type SessionTask, type TranscriptChunk } from '../../data/tauri';
 import { modKey } from '../../domain/keys';
 import { docUrl, IS_WIN } from '../../domain/reader';
 import { DROP_EVENT, DROP_PATHS_EVENT } from '../fileDrop';
 import { chipPastes } from '../../domain/drop';
-import { assistant, tr } from '../../i18n';
+import { assistant, josa, tr } from '../../i18n';
+import { orchestratorLike, seenName } from '../../domain/session';
 import { IconChatSend, IconChevron, IconChevronDown, IconChevronUp, IconClose, IconEnter, IconFile, IconRefresh, IconSend, IconSpeaker, IconStop, IconTerminal } from '../Icons';
 import { ChatVoice } from './chatVoice';
 import { backdropStyle } from './backdrop';
 import { sameName, shotChoices } from '../../domain/lockerShots';
 import { expandMentions, lockerChoices, matchMentions, mentionPick, mentionQuery, mentionRoster, refQuery, REF_PREFIX, sentMentionLabel, splitTokens, type MentionWho } from '../../domain/chatTokens';
-import { orchDisplay, orchRoster, useOrchLabels } from '../orchLabels';
+import { orchDisplay, orchRoster, seenNow, useOrchLabels } from '../orchLabels';
 import { orchRoleOf, useOrchRoleData } from '../orchRoleStore';
 import { OrchAvatar } from '../avatar/OrchAvatar';
 import { orchColor } from '../../domain/avatar';
 import { lockerApi, useLockerTree, useRecentShots, type LockerOwner } from '../space/useLocker';
 import { IconButton } from '../kit/IconButton';
+import { JumpBottom } from '../kit/JumpBottom';
 import { CHAT_INSERT, PATH_MIME } from '../space/dragPath';
 import { OPEN_PAGE } from '../space/PageBlock';
 import { openChatFile } from './openChatFile';
@@ -39,11 +42,15 @@ import { attachToChat } from '../fileDrop';
 import { useRefInbox } from '../refBus';
 import { nextRefLabel, type RefKind } from '../../domain/refChips';
 import { every } from '../poll';
+import { echoOfSent, enterAction } from '../../domain/enterSend';
+import { chatPollMs, liveReply, liveShown } from '../../domain/chatLive';
 import './chat.css';
 
-const POLL_MS = 1000;
 /** 한 번에 그리는 항목 수 — 긴 대화는 "앞 대화 더 보기"로 늘린다 */
 const PAGE = 150;
+/** '쓰는 중' 말풍선 — 위로 밀린 줄까지 이만큼 더 본다(긴 답의 머리 ⏺ 를 찾게) · 일이 끝난 뒤 기록이 올 때까지 남겨 두는 시간 */
+const LIVE_BACK = 400;
+const LIVE_GRACE = 5000;
 
 // 답 마크다운 → HTML 은 한 번 바꾼 걸 기억한다 — 탭 창을 다 붙여 두니 앱이 다시 그릴 때마다 채팅 넷이 말풍선 수백 개를
 // 다시 바꿔서 탭 전환이 한참 걸렸다(2026-09-30 사용자)
@@ -62,7 +69,7 @@ const topRef = (refs: ChatRef[]) => Math.max(0, ...refs.map((r) => Number(r.labe
 // 쓰던 글은 세션마다 — 참모 탭을 옮겨도, 앱을 다시 켜도 남는다(2026-09-30 사용자: 1→2 옮기다 긴 글이 날아갔다)
 // 보내는 중인 말도 세션마다 — 탭을 옮겨 창이 새로 그려져도 "보내는 중"이 남고, 안 보내졌으면 다시 Enter 를 넣을 수 있게
 const pendingBy = new Map<string, { text: string; at: number; since?: number }[]>();
-const drafts = draftStore((() => { try { return window.localStorage; } catch { return undefined; } })());
+const drafts = chatDrafts;
 
 /**
  * 스페이스 모드의 채팅 보기(2026-09-30 사용자). 터미널(TUI)은 뒤에 그대로 붙어 있고, 이건 그 위에 덮는 판이다.
@@ -102,7 +109,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   /** 터미널로 보기 — 선택지·권한 창처럼 채팅에 안 그려지는 화면일 때 */
   onTerminal: () => void;
   /** 뒤 터미널 화면 — 입력칸에 들어간 글(지구본 키로 받아 적은 말)을 채팅에 보여 준다 */
-  screen?: () => { lines: string[]; cursor: [number, number] } | undefined;
+  screen?: (back?: number) => { lines: string[]; cursor: [number, number] } | undefined;
   /** 터미널 입력칸에 있는 글을 그대로 보낸다(Enter) */
   /** 터미널 입력칸에 Enter(앱 치기 줄 뒤에) — expect 면 칠 때 입력칸이 그 말 그대로일 때만(domain/chatQueue enterTask) */
   submitTerminal: (expect?: string) => void;
@@ -253,7 +260,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       pick: () => void lockerApi.choose(locker).then((r) => attachInstead((r?.added ?? []).map((a) => a.path)), () => {}) }] : []),
   ];
   const atItems: PopItem[] = atQ === null ? [] : matchMentions(who, atQ).map((w) => ({
-    key: `@${w.id}`, main: w.label, sub: w.role, off: w.off, title: w.name,
+    key: `@${w.id}`, main: w.label, sub: w.role, off: w.off, title: seenName(w.name),
     pic: <span className="chat-pop-pic"><OrchAvatar name={w.name} size={20} state={w.off ? 'off' : 'rest'} color={orchColor(w.name)} label={w.label} /></span>,
     pick: () => fillAt(mentionPick(draft, caret, w.label)),
   }));
@@ -298,6 +305,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     return () => pane.removeEventListener(DROP_PATHS_EVENT, onPaths);
   }, []);
   const input = useRef<HTMLTextAreaElement>(null);
+  // 방금 보낸 글 — 입력기가 비운 칸에 그 글을 통째로 되살리면 버린다(domain/enterSend, 10-28 팀 메신저 '해결해결')
+  const lastSent = useRef<{ text: string; at: number } | null>(null);
   const stick = useRef(true);
 
   useEffect(() => {
@@ -306,6 +315,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   }, [focusRef]);
 
   // 대화 기록 이어 읽기 — /clear 하면 sessionId 가 바뀌어 처음부터
+  const tickRef = useRef<(() => Promise<void>) | null>(null);
   useEffect(() => {
     setItems([]);
     setQueue(emptyQueue);
@@ -329,10 +339,16 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       }
       busy = false;
     };
+    tickRef.current = tick;
     void tick();
-    const stop = every(() => void tick(), POLL_MS);
-    return () => { alive = false; stop(); };
+    return () => { alive = false; tickRef.current = null; };
   }, [sessionId, readFn]);
+  // 답을 기다리는 동안엔 0.25초마다, 쉴 때는 1초(domain/chatLive) — 주기만 바꿔 건다, 읽던 자리는 그대로
+  const pollMs = chatPollMs({ working: state === 'working', waiting: pending.length > 0, lastKind: items[items.length - 1]?.kind });
+  useEffect(() => {
+    if (!sessionId) return;
+    return every(() => void tickRef.current?.(), pollMs);
+  }, [sessionId, readFn, pollMs]);
 
   // 할 일 목록(터미널의 "N tasks …") — 2초마다. 접기·펴기는 이 컴퓨터에 기억
   const [tasks, setTasks] = useState<SessionTask[]>([]);
@@ -364,8 +380,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     if (link && link !== 'live') { downAt.current ??= Date.now(); return; }
     const d = downAt.current;
     downAt.current = null;
-    // 80초(LINK_WAIT)를 넘겨 끊겼으면 줄에서 기다리던 말은 이미 포기됐다 — 그대로 두면 '전달 안 됨'으로 남아 다시 보낼 수 있다
-    if (d != null) { const now = Date.now(); setPending((ps) => ps.map((p) => (p.at >= d - 1000 && now - p.at < LINK_WAIT ? resent(p, now) : p))); }
+    // 붙는 중엔 HOLD_MAX 까지 줄에서 기다린다(SessionGrid typeAndSend) — 그보다 오래 끊겼으면 이미 포기됐다, 그대로 두면 '전달 안 됨'으로 남아 다시 보낼 수 있다
+    if (d != null) { const now = Date.now(); setPending((ps) => ps.map((p) => (p.at >= d - 1000 && now - p.at < HOLD_MAX ? resent(p, now) : p))); }
   }, [link]);
   const waiting = useMemo(() => waitingOf(pending, items, Date.now(), queue), [pending, items, queue]);
   // 기록에 들어간 것만 뺀다(그때 상태에서) — 렌더 때 계산한 waiting 으로 통째로 바꾸면 그사이 더한 새 말풍선이 지워졌다(2026-10-21 리뷰)
@@ -451,9 +467,22 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   // 보낸 직후엔 보낸 글이 터미널 입력칸을 잠깐 지나간다 — 그 사이엔 위 줄에 안 띄운다(번쩍였다, 2026-09-30 사용자)
   const quietUntil = useRef(0);
   const empties = useRef(0);
+  // 터미널에서 지금 쓰고 있는 답(domain/chatLive) — 기록엔 문단이 끝나야 써져서 그동안 맨 아래 '쓰는 중' 말풍선으로. 일이 끝나도 기록이 올 때까지 잠깐 둔다
+  const [live, setLive] = useState<string | null>(null);
+  const liveAt = useRef(0);
+  // 답을 기다리는 중 — 세션 상태(3초마다)보다 먼저 보낸 말·마지막 사람 말로도 안다(기록 읽기 주기와 같은 신호)
+  const answering = useRef(false);
+  answering.current = pollMs < 1000;
   useEffect(() => {
     if (!screen) return;
     const id = window.setInterval(() => {
+      const now = Date.now();
+      if (answering.current) {
+        const full = screen(LIVE_BACK);
+        const lv = full ? liveReply(full.lines) : null;
+        if (lv) liveAt.current = now;
+        setLive((prev) => (prev === lv ? prev : lv));
+      } else if (now - liveAt.current > LIVE_GRACE) setLive((prev) => (prev === null ? prev : null));
       const s = screen();
       const t = s && Date.now() >= quietUntil.current ? promptInput(s.lines, s.cursor) ?? '' : '';
       setTermText((prev) => (prev === t ? prev : t));
@@ -662,6 +691,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const lastTool = tail?.kind === 'tools' ? (() => { const t = tail.tools[tail.tools.length - 1]!; return `${t.name.replace(/^mcp__[^_]+(?:_[^_]+)*?__/, '')} ${t.target}`.trim(); })() : '';
   const shown = liveItems.length > limit ? liveItems.slice(liveItems.length - limit) : liveItems;
 
+  const submitNow = useRef<(now?: boolean) => void>(() => {});
   const submit = (now = false) => {
     // 멘션 칩(@가나 담당)은 진짜 SendMessage 이름 @[참모-3 · 가나 담당] 으로 풀어 보낸다 — 참모가 누구에게 전할지 헷갈리지 않게
     const text = withRefs(expandMentions(draft.trim(), who), refs);
@@ -694,20 +724,13 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     }
     setPending((p) => [...p, newPending(text, items, at)]);
     setDraft('');
+    lastSent.current = { text: draft.trim(), at };
     setRefs([]);
     refCount.current = 0;
     stick.current = true;
     requestAnimationFrame(() => input.current?.focus()); // send 가 터미널에 포커스를 준다 — 입력칸으로 되돌린다
   };
-
-  // 답 안 링크는 웹뷰가 따라가지 않게 — 웹 주소만 기본 브라우저로
-  const onLink = (e: React.MouseEvent) => {
-    const a = (e.target as HTMLElement).closest('a');
-    if (!a) return;
-    e.preventDefault();
-    const href = a.getAttribute('href') ?? '';
-    if (/^https?:\/\//i.test(href)) void openTarget('url', href).catch(() => {});
-  };
+  submitNow.current = submit;
 
   // Esc = 하던 일 멈추기 — 입력칸이든 채팅 칸 안(말 목록·버튼·글 고른 채)이든 같은 판단(domain/chat chatEscStops, 2026-10-15 사용자)
   const escOverlay = () => popOpen || slashOpen || !!memList || !!dialog
@@ -751,7 +774,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
           </div>
         );
       })()}
-      <div className="chat-list" ref={list} onClick={onLink}
+      <div className="chat-list" ref={list} onClick={openWebLink}
         // 맨 아래를 벗어났다는 판단은 사람이 움직였을 때만(휠·끌기·키). 그림이 늦게 그려지거나 칸이 나뉘며 저절로 움직인 스크롤을
         // "위로 올려 읽는 중"으로 읽어, 재시작 뒤 두 번째 창이 덜 내려간 채 열렸다(2026-09-30 사용자). 저절로 움직인 건 맨 아래 닿을 때만 반영
         onScroll={(e) => { const el = e.currentTarget; if (atBottom(el)) stick.current = true; const far = el.scrollHeight - el.scrollTop - el.clientHeight > 400; if (far !== away) setAway(far); }}
@@ -763,6 +786,10 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
         {interleave(shown, extra).map((x) => ('item' in x
           ? <Bubble key={`${x.item.kind}:${x.item.id}`} it={x.item} by={paneId ?? ''} onRef={stableRef} />
           : <div key={x.extra.key}>{x.extra.node}</div>))}
+        {live && !readOnly && !liveShown(live, items) && (
+          // 기록 말풍선과 같은 마크다운으로 — 바꿔 끼울 때 문단 간격이 안 튀게. 0.4초마다 바뀌는 글이라 md 기억(mdCache)엔 안 넣는다
+          <div className="chat-row"><div className="bubble md live"><div dangerouslySetInnerHTML={{ __html: mdToHtml(live) }} /><span className="chat-meta">{tr('쓰는 중', 'Writing')}</span></div></div>
+        )}
         {waiting.map((p) => {
           const st = stateOf.get(p.at) ?? 'sending';
           const look = pendLook(st, busy); // 모양·글만 — 단추는 진짜 상태(st)로
@@ -780,7 +807,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
                   queued: tr('대기 중 · 참모가 지금 단계를 마치면 들어가요', 'Queued · goes in when the current step finishes'),
                   input: tr('입력칸에 걸려 있어요', 'Stuck in the terminal input'),
                   lost: tr('전달 안 됨', 'Not delivered'),
-                  wait: tr('다시 붙는 중 — 붙으면 보내요', 'Reattaching — sends when it is back'),
+                  wait: tr('붙으면 보내요', 'Sends once attached'),
                 }[look]}</span>
                 {pendAct(st) && link !== 'gone' && ( /* 끊긴 채면 다시 보내도 줄에서 기다리다 붙는 순간 두 번 간다 — 안내 줄이 '다시 켜지면 다시 보내 줘' */
                   <span className="chat-pend-acts">
@@ -796,7 +823,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
         })}
         </div>
       </div>
-      {away && <button className="chat-bottom" onClick={toBottom} aria-label={tr('맨 아래로', 'Jump to latest')} title={tr('맨 아래로', 'Jump to latest')}><IconChevronDown /></button>}
+      {away && <JumpBottom className="chat-bottom" onClick={toBottom} />}
       {dialog && rawKeys && <ChatDialog d={dialog} keys={rawKeys} read={() => { const s = screen?.(); return s ? screenDialog(s.lines) : null; }} onTerminal={onTerminal} />}
       {/* 상태 줄 — 목록 끝에 두면 스크롤에 가려 작업 중인지 몰랐다(2026-09-30 사용자). 입력칸 바로 위에 늘 */}
       {(state === 'blocked' || busy || compacting || ctx !== undefined || modelInfo?.model) && (
@@ -913,7 +940,10 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
           value={draft}
           rows={1}
           placeholder={tr('메시지 — Enter 보내기, Shift+Enter 줄바꿈', 'Message — Enter to send, Shift+Enter for a new line')}
-          onChange={(e) => { setDraft(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); }}
+          onChange={(e) => {
+            if (echoOfSent(e.target.value, draft, lastSent.current, Date.now())) { lastSent.current = null; setDraft(''); return; }
+            setDraft(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length);
+          }}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
           onFocus={onInputFocus}
           onKeyDown={(e) => {
@@ -932,11 +962,14 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
               if (e.key === 'Escape') { e.preventDefault(); setSlashOff(draft); return; }
             }
             // Enter = 보내기(일하는 중이면 줄 서 있다가 중간에 들어간다), ⌘Enter = 끊고 바로 보내기(2026-09-30 사용자)
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+            // 입력기가 아직 글을 넣는 Enter(229 — 맥 웹뷰)는 다음 차례에, 그때의 submit 으로(domain/enterSend)
+            const enter = enterAction({ key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, shiftKey: e.shiftKey });
+            if (enter !== 'skip') {
               e.preventDefault();
               // 입력칸이 빈 채로 ⌘Enter + 줄 서 있는 말이 있으면 그 말을 바로(멈추면 Claude 가 곧바로 보낸다)
               // 보낸 말에 아직 답이 없으면 끊지 않고 그냥 보낸다 — Esc 가 앞 말을 거둬들여 참모에게 안 간다(domain/chat escUnsends)
               const cut = modKey(e, IS_WIN) && busy && !unsendsNow();
+              if (enter === 'defer') { window.setTimeout(() => submitNow.current(cut)); return; }
               if (cut && !draft.trim() && !termText && waiting.length) { sendQueuedNow(); return; }
               submit(cut);
             }
@@ -1000,7 +1033,7 @@ const Bubble = memo(function Bubble({ it, by, onRef }: { it: ChatItem; by: strin
   }
   if (it.kind === 'assistant') return <div className="chat-row"><div className="bubble md" dangerouslySetInnerHTML={{ __html: md(it.text) }} /><RefBtn onClick={() => onRef(tr(`답${hhmm(it.ts)}`, `Reply${hhmm(it.ts)}`), it.text)} /></div>;
   if (it.kind === 'note') return it.out ? <CmdOut name={it.text} out={it.out} /> : <div className="chat-note">{it.text}</div>;
-  if (it.kind === 'relay') return <div className="chat-row relay"><Relay from={it.from} text={it.text} /><RefBtn onClick={() => onRef(it.from === '앱' ? tr('앱이 전함', 'From the app') : tr(`${it.from} 세션`, it.from), it.text)} /></div>;
+  if (it.kind === 'relay') return <div className="chat-row relay"><Relay from={it.from} session={it.session} text={it.text} /><RefBtn onClick={() => onRef(it.from === '앱' ? tr('앱이 전함', 'From the app') : relaySender(it.from, it.session).label, it.text)} /></div>;
   const last = it.tools[it.tools.length - 1]!;
   return (
     <details className="chat-tools">
@@ -1047,17 +1080,28 @@ function atMarks(text: string, who: MentionWho[]) {
 /** 말풍선 글 — #img1·#file1 을 칩으로, 보낸 멘션 @[참모-3 · 가나 담당] 은 화면 이름 칩으로 */
 function AtText({ text }: { text: string }) {
   return <>{splitTokens(text).map((t, i) => (typeof t === 'string' ? t
-    : 'mention' in t ? <span key={i} className="at-chip at-who" title={t.mention}>@{sentMentionLabel(t.mention)}</span>
+    : 'mention' in t ? <span key={i} className="at-chip at-who" title={sentMentionLabel(t.mention)}>@{sentMentionLabel(t.mention)}</span>
     : <span key={i} className="at-chip">{'ref' in t ? t.ref : t.live}</span>))}</>;
+}
+
+/** 받은 말을 보낸 쪽 — 세션이 보낸 말은 진짜 이름(SendMessage 주소) 대신 화면 이름(참모는 별명, seenNow).
+ *  참모는 '디자인 담당이 보냄', 프로젝트 세션은 'shop-app 세션이 보냄'. 이름표 줄(다른 기기·팀)은 이름표 그대로 */
+function relaySender(from: string, session?: true): { label: string; head: string } {
+  if (!session) return { label: tr(`${from} 세션`, from), head: tr(`${from} 세션이 보냄`, `From ${from}`) };
+  const name = seenNow(from);
+  return orchestratorLike(from)
+    ? { label: name, head: tr(`${josa(name, '이', '가')} 보냄`, `From ${name}`) }
+    : { label: tr(`${name} 세션`, name), head: tr(`${name} 세션이 보냄`, `From ${name}`) };
 }
 
 /** 다른 세션이 보낸 말·앱이 넘긴 줄 — 가운데 카드, 보낸 쪽 이름. 길면 여섯 줄까지, 누르면 펼침.
  *  앱이 넘긴 줄([앱] …)은 사람에게 하는 말이 아니라 참모에게 가는 일이라 작은 회색 한 줄(알림 N1, 2026-10-11) */
-function Relay({ from, text }: { from: string; text: string }) {
+function Relay({ from, session, text }: { from: string; session?: true; text: string }) {
   const [open, setOpen] = useState(false);
+  const who = relaySender(from, session);
   return (
     <div className={`chat-relay ${from === '앱' ? 'app' : ''} ${open ? 'open' : ''}`} onClick={() => setOpen((o) => !o)} title={open ? tr('접기', 'Collapse') : tr('펼치기', 'Expand')}>
-      <div className="who">{from === '앱' ? tr('앱이 전함', 'From the app') : tr(`${from} 세션이 보냄`, `From ${from}`)}</div>
+      <div className="who">{from === '앱' ? tr('앱이 전함', 'From the app') : who.head}</div>
       <div className="body">{text}</div>
     </div>
   );

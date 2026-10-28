@@ -4,8 +4,8 @@ import { askCardKey, type AskPlaced } from '../../domain/agentAsk';
 import { askName } from '../../domain/agentBrowser';
 import { directAnswer, peerCardAnswer, phoneNumber, readDirect, readPeerCards } from '../../data/web';
 import { remoteCards, type PeerCardsRow } from '../../domain/remoteCards';
-import { needsLook, placeDirect, stepSeen, type DirectCard, type Seen } from '../../domain/directAsk';
-import type { Session } from '../../domain/session';
+import { needsLook, phoneOwns, placeDirect, stepSeen, type DirectCard, type Seen } from '../../domain/directAsk';
+import { seenName, type Session } from '../../domain/session';
 import type { TaskEvent } from '../../domain/tasks';
 import { DirectCardView, DirectLine, useDirectTidy } from '../chat/DirectCard';
 import { BrowserView } from './BrowserView';
@@ -19,8 +19,8 @@ export function usePhoneDirect(orch: Session, orchs: Session[], sessions: Sessio
     const now = Date.now();
     seen.current = stepSeen(seen.current, sessions.map((s) => s.id), now);
     // 폰은 세션 대화 기록을 안 읽는다 — 보냄까지, 세션이 done 을 남기면 처리됨
-    return placeDirect(log, { everyone: sessions, seen: seen.current, now, unknown: sessions.length === 0, events, orchs, front: orchs[0], prompt: () => undefined, reply: () => undefined })
-      .filter((p) => p.owner?.id === orch.id).map((p) => p.card);
+    return phoneOwns(placeDirect(log, { everyone: sessions, seen: seen.current, now, unknown: sessions.length === 0, events, orchs, front: orchs[0], prompt: () => undefined, reply: () => undefined })
+      , orch.id);
   }, [log, sessions, events, orchs, orch.id]);
 }
 
@@ -38,8 +38,8 @@ export function DirectCards({ mine: all, sessions, focus }: { mine: DirectCard[]
     <div className="m-direct">
       {mine.map((c) => {
         const s = sessions.find((x) => x.id === c.from);
-        if (!needsLook(c)) return <div key={c.id} className="dc-row"><DirectLine c={c} name={s?.name || c.from} onDismiss={() => tidy.hide(c)} /></div>;
-        return <div key={c.id} className={c.id === focus ? 'dc-row m-jumped' : 'dc-row'} data-card={`d:${c.id}`}><DirectCardView c={c} name={s?.name || c.from} project={s?.project ?? undefined} compact={picked ? c.id !== open : c.id !== first} onOpen={() => setOpen(c.id)} onAnswer={directAnswer} number={phoneNumber} onDismiss={() => tidy.hide(c)} /></div>;
+        if (!needsLook(c)) return <div key={c.id} className="dc-row"><DirectLine c={c} name={seenName(s?.name || c.from)} onDismiss={() => tidy.hide(c)} /></div>;
+        return <div key={c.id} className={c.id === focus ? 'dc-row m-jumped' : 'dc-row'} data-card={`d:${c.id}`}><DirectCardView c={c} name={seenName(s?.name || c.from)} project={s?.project ?? undefined} compact={picked ? c.id !== open : c.id !== first} onOpen={() => setOpen(c.id)} onAnswer={directAnswer} number={phoneNumber} onDismiss={() => tidy.hide(c)} /></div>;
       })}
     </div>
   );

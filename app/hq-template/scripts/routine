@@ -61,6 +61,7 @@ RETRY_WAIT = 5
 # (domain/login)는 Chammo 폴더 안 세션만 봐서 예약 폴더(<데이터>/routines/…)에서 뜬 세션은 못 봤다
 STALL_RETRY_MIN = 3  # 갱신 겹침 줄이 이만큼 묵어도 마지막이면 같은 예약을 한 번 다시 — Claude Code 말이 '1분 뒤 다시', 앱 이어서(1분 뒤)가 먼저
 STALL_ALERT_H = 3  # 보고 없이 이만큼 조용하면 'stall' 한 줄 — 앱이 참모에게 넘긴다
+REPORTED_GRACE_MIN = 10  # 보고(report) 뒤 마무리 말을 쓸 틈 — 지나도 목록에 남은 그 회차 세션은 tick 이 멈춘다(2026-10-28)
 STALL_LOOK_H = 48  # 이보다 오래된 시작은 안 본다 — 지워진 옛 세션 때문에 1분마다 agents 를 부르지 않게
 REFRESH_STALL = re.compile(r'could not refresh your login', re.I)
 # 진짜 로그인 풀림 — 앱 로그인 카드(hq-login) 몫이라 건드리지 않는다(앱 domain/activity isAuthError 와 같은 말)
@@ -785,7 +786,69 @@ def tick(data=None, now=None, run=subprocess.run, home=None, uid=None, sleep=tim
                 out.append({'name': name, **r})
         except Exception as e:
             out.append({'name': name, 'error': f'{type(e).__name__}: {e}'})
+    for name in _local_names(data):
+        if any(o['name'] == name for o in out):
+            continue
+        try:
+            r = _tidy(name, data, now, agents, run)
+            if r:
+                out.append({'name': name, **r})
+        except Exception as e:
+            out.append({'name': name, 'error': f'{type(e).__name__}: {e}'})
     return out
+
+
+def _reported(runs):
+    """보고(end)까지 한 회차들의 세션 번호 — end 는 바로 앞 start 의 것"""
+    out, cur = set(), None
+    for r in runs:
+        if r.get('event') == 'start':
+            cur = r.get('session')
+        elif r.get('event') == 'end' and cur:
+            out.add(cur)
+    return out
+
+
+def _last_reported(runs):
+    """마지막 회차가 보고까지 했으면 (세션 번호, 보고 시각), 아니면 (None, None)"""
+    for i in range(len(runs) - 1, -1, -1):
+        e = runs[i].get('event')
+        if e == 'end':
+            start = next((r for r in reversed(runs[:i]) if r.get('event') == 'start'), None)
+            if start and start.get('session'):
+                return start['session'], datetime.datetime.fromisoformat(runs[i]['ts'])
+            return None, None
+        if e == 'start':
+            return None, None
+    return None, None
+
+
+def _tidy(name, data, now, agents, run):
+    """보고한 회차 세션이 REPORTED_GRACE_MIN 지나도 목록에 남았으면 멈춘다(claude stop — 대화는 남는다, 다음 회차가 rm).
+    2026-10-28 아이맥: report fail 까지 한 세션이 busy 로 남아 다음 날 정기 회차가 'still running' 으로 건너뛰었다.
+    회차마다 한 번만 본다(tidied 표시) — 1분마다 agents 를 부르지 않게. 기록(runs.jsonl)엔 안 적는다(앱이 마지막 줄로 결과를 본다)"""
+    sid, ended = _last_reported(_runs(name, data))
+    if not sid or now - ended < datetime.timedelta(minutes=REPORTED_GRACE_MIN):
+        return None
+    mark = os.path.join(_paths(name, data)[0], 'tidied')
+    try:
+        with open(mark, encoding='utf-8') as f:
+            if f.read().strip() == sid:
+                return None
+    except OSError:
+        pass
+    cfg = _load(name, data)
+    if cfg['claude'] not in agents:
+        agents[cfg['claude']] = _agents(cfg['claude'], run)
+    here = any(isinstance(a, dict) and a.get('id') == sid for a in agents[cfg['claude']])
+    if here:
+        try:
+            run([cfg['claude'], 'stop', sid], capture_output=True, text=True, timeout=CLAUDE_TIMEOUT, **NOWIN)
+        except (OSError, subprocess.TimeoutExpired):
+            return None  # 다음 tick 이 다시 본다
+    with open(mark, 'w', encoding='utf-8') as f:
+        f.write(sid)
+    return {'tidied': sid} if here else None
 
 
 def _open_start(runs, now):
@@ -1122,8 +1185,10 @@ def _run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, hom
             return {'skipped': 'not due'}
     session = f'routine-{name}'
     mine = [a for a in _agents(cfg['claude'], run) if a.get('name') == session]
-    # 답은 끝났고 뒤 작업(Monitor·개발 서버)만 남은 세션은 state done + status busy — 앱 toState 처럼 끝난 것으로 본다
-    if any(a.get('status') == 'busy' and a.get('state') != 'done' for a in mine):
+    # 답은 끝났고 뒤 작업(Monitor·개발 서버)만 남은 세션은 state done + status busy — 앱 toState 처럼 끝난 것으로 본다.
+    # 보고(report)까지 한 회차 세션도 끝난 것 — busy 로 남아도 다음 회차를 막지 않는다(2026-10-28 아이맥 매일 예약)
+    done = _reported(_runs(name, data))
+    if any(a.get('status') == 'busy' and a.get('state') != 'done' and a.get('id') not in done for a in mine):
         _log(name, data, event='skip', reason='still running')
         return {'skipped': 'still running'}
     for a in mine:

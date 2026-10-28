@@ -31,6 +31,19 @@ pub fn base_of(name: &str) -> &str {
     name.split(" · ").next().unwrap_or(name).trim()
 }
 
+/// 사람에게 보일 참모 이름 — 별명(" · " 뒤), 없으면 기본 이름에서 끝 번호를 뺀 것(참모-3 → 참모). 앱 domain/session seenName 과 같은 셈(2026-10-28)
+pub fn shown_name(name: &str) -> String {
+    match name.split_once(" · ").map(|(_, n)| n.trim()).filter(|n| !n.is_empty()) {
+        Some(nick) => nick.to_string(),
+        None => {
+            let base = base_of(name);
+            let cut = base.trim_end_matches(|c: char| c.is_ascii_digit());
+            let cut = if cut.len() < base.len() { cut.trim_end_matches(['-', ' ']).trim() } else { base };
+            if cut.is_empty() { base.to_string() } else { cut.to_string() }
+        }
+    }
+}
+
 /// 열쇠로 쓸 수 있는 기본 이름 — 비지 않고, 짧고, 구분자·경로 글자·제어 글자 없음
 fn key_ok(base: &str) -> bool {
     !base.is_empty() && base.chars().count() <= 40 && !base.chars().any(|c| c.is_control() || matches!(c, '·' | '/' | '\\'))

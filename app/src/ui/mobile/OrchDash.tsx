@@ -20,7 +20,7 @@ import { heldIds, orchTasks, phoneName, subStatus, type WaitSent, type Waiting }
 import { summarizeTranscript } from '../../domain/activity';
 import { peekLines, phoneChips } from '../../domain/phoneLocker';
 import { projectsOf } from '../../domain/locker';
-import type { Session } from '../../domain/session';
+import { seenName, type Session } from '../../domain/session';
 import type { TaskEvent } from '../../domain/tasks';
 import type { ChatItem } from '../../domain/chat';
 import { findTarget } from '../../domain/inbox';
@@ -303,7 +303,7 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
       {moreOpen && <MoreSheet busy={busySubs} routines={routinesRunning} left={left} push={push} onSessions={onSessions} onRoutines={onRoutines}
         onAccount={() => setAcctOpen(true)} onPush={bell} onClose={() => setMoreOpen(false)} />}
       {alertsOpen && <AlertsSheet rows={alertRows} onClose={() => setAlertsOpen(false)}
-        nameOf={(t) => findTarget(sessions, t)?.name || t} onOpen={(r) => { const s = findTarget(sessions, r.target); if (s) setPeek(s); }}
+        nameOf={(t) => seenName(findTarget(sessions, t)?.name || t)} onOpen={(r) => { const s = findTarget(sessions, r.target); if (s) setPeek(s); }}
         waiting={myWait.length || direct.length ? <>{myWait.map((w) => <WaitCard key={w.taskId} w={w} orchs={orchs} sent={waitSent} />)}<DirectCards mine={direct} sessions={sessions} /></> : null} />}
       {acctOpen && <AccountSheet text={acct} onChanged={setAcctNow} onClose={() => setAcctOpen(false)} />}
       {loadOpen && <LoadSheet text={loadNow ?? loadText} onChanged={setLoadNow} onClose={() => setLoadOpen(false)} />}

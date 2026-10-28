@@ -142,6 +142,16 @@ fn 받는_열쇠가_없는_옛_기기는_올리고_사슬이_없으면_사람이
 }
 
 #[test]
+fn 서버가_끊은_기기는_로그인_화면이_다시_로그인을_띄운다() {
+    // 10-28 윈도우: 서버에서 지워진·끊긴 기기가 로그인된 채로 남아 문이 안 떴다
+    let r = FakeRelay::default();
+    let (d, _kc, _k) = device("revoked-step", "dR", &r, false);
+    assert_ne!(self_step(&d), "relogin");
+    mutate(&d, |s| s.revoked = true).unwrap();
+    assert_eq!(self_step(&d), "relogin");
+}
+
+#[test]
 fn 사슬이_이미_있거나_자동_허용_기기면_첫_기기로_시작하지_못한다() {
     let r = FakeRelay::default();
     let (d, kc, k) = device("start-refuse", "dA", &r, false);
@@ -574,4 +584,79 @@ fn 봉인_없는_대기_기기는_relogin_봉인이_있으면_기다림() {
     // 허용돼 핀이 꽂힌 뒤(nP 지워짐)엔 대기가 늦게 풀려도 relogin 이 아니다
     e2e_state::mutate(&d, |s| { s.confirm_failed = false; s.pins.insert("a1".into(), Default::default()); }).unwrap();
     assert_eq!(self_step(&d), "");
+}
+
+// ── 계정 되찾기 갈래 ②(relay ADR 0007 R9) — 잃은 맥(dOld)이 서버엔 사슬 기기로 살아 있고 새 맥 dB 는 대기 ──
+
+fn waiting_for(d: &std::path::Path, mine: bool, ready_in_ms: i64) {
+    let at = (now_ms() as i64 + ready_in_ms) as u64;
+    mutate(d, |s| s.recover = Some(crate::team_relay::Recover { ready_at: at, mine, device: if mine { "dB".into() } else { "dX".into() }, device_name: "새 맥".into(), place: "서울".into() })).unwrap();
+}
+
+#[test]
+fn 되찾기_코드는_서버가_준_8자리_모양일_때만_보여_준다() {
+    let r = FakeRelay::default();
+    let (d, kc, _) = device("rcv-code", "dB", &r, true);
+    r.answer("/v0/me/recover/code", 200, r#"{"code":"K7QM2XPA","expiresAt":99}"#);
+    assert_eq!(recover_code(&d, &kc, &r).unwrap(), ("K7QM2XPA".to_string(), 99));
+    // 서버가 엉뚱한 글(주소·긴 글)을 코드라고 주면 화면에 안 띄운다
+    r.answer("/v0/me/recover/code", 200, r#"{"code":"https://evil.test/x","expiresAt":99}"#);
+    assert!(recover_code(&d, &kc, &r).is_err());
+    r.answer("/v0/me/recover/code", 409, r#"{"error":"recover_open","readyAt":5}"#);
+    assert!(recover_code(&d, &kc, &r).is_err());
+}
+
+#[test]
+fn 되찾기_기다림·마치기_단계는_내_요청일_때만() {
+    let r = FakeRelay::default();
+    let (d, _, _) = device("rcv-step", "dB", &r, true);
+    waiting_for(&d, true, 3_600_000);
+    assert_eq!(self_step(&d), "recover-wait");
+    waiting_for(&d, true, -1000);
+    assert_eq!(self_step(&d), "recover-ready");
+    // 남의 요청(내 다른 기기 화면) — 이 기기 문은 그대로, 카드는 device_cards 몫
+    waiting_for(&d, false, -1000);
+    assert_ne!(self_step(&d), "recover-ready");
+}
+
+#[test]
+fn 다시_시작_마치기는_내_reset_을_서명해_보내고_바로_믿는다() {
+    let r = FakeRelay::default();
+    let (d, kc, k) = device("rcv-finish", "dB", &r, true);
+    let old = DeviceKeys::from_seeds([7; 32], [8; 32]);
+    let g = genesis(&old, "dOld");
+    waiting_for(&d, true, -1000);
+    chain_answer(&r, std::slice::from_ref(&g));
+    r.answer("/v0/me/recover/finish", 200, r#"{"seq":1,"revoked":1}"#);
+    let want = reset_link(&k, "dB", &g);
+    chain_answer(&r, &[g.clone(), want.clone()]);
+    recover_finish(&d, &kc, &r).unwrap();
+    let sent = last_body(&r, "/v0/me/recover/finish")["link"].clone();
+    assert_eq!(Link { seq: 1, body: sent["body"].as_str().unwrap().into(), sig: sent["sig"].as_str().unwrap().into() }, want);
+    let st = crate::team_relay::load_state(&d);
+    assert!(crate::e2e_team::in_chain(&d, &st), "내가 서명한 reset 이라 바로 믿는다");
+    assert!(!st.pending && st.recover.is_none());
+}
+
+#[test]
+fn 아직_48시간_전이거나_남의_요청이면_마치기를_안_보낸다() {
+    let r = FakeRelay::default();
+    let (d, kc, _) = device("rcv-early", "dB", &r, true);
+    waiting_for(&d, true, 3_600_000);
+    assert!(recover_finish(&d, &kc, &r).is_err());
+    waiting_for(&d, false, -1000);
+    assert!(recover_finish(&d, &kc, &r).is_err());
+    mutate(&d, |s| s.recover = None).unwrap();
+    assert!(recover_finish(&d, &kc, &r).is_err());
+    assert!(!r.seen.borrow().iter().any(|(_, p, _, _)| p == "/v0/me/recover/finish"));
+}
+
+#[test]
+fn 되찾기_취소는_서버에_보내고_기다림을_지운다() {
+    let r = FakeRelay::default();
+    let (d, kc, _) = device("rcv-cancel", "dB", &r, true);
+    waiting_for(&d, true, 3_600_000);
+    r.answer("/v0/me/recover/cancel", 200, r#"{"ok":true}"#);
+    recover_cancel(&d, &kc, &r).unwrap();
+    assert!(crate::team_relay::load_state(&d).recover.is_none());
 }

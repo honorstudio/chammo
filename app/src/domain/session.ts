@@ -1,7 +1,7 @@
 // `claude agents --json` 결과를 앱이 쓰는 세션 모델로. 순수 TS — 프레임워크·Tauri import 없음.
 import { assistant, tr } from '../i18n';
 import { fwd, pathKey } from './paths';
-import { splitOrchName } from './orchLabel';
+import { displayName, shownName, splitOrchName } from './orchLabel';
 
 export type SessionState = 'working' | 'blocked' | 'idle';
 export type SessionKind = 'background' | 'interactive';
@@ -61,6 +61,9 @@ function toState(raw: string | undefined): SessionState {
       return 'idle';
   }
 }
+
+/** 세션 한 줄의 상태 — 메인 칸(parseAgents)과 바탕 대화창이 같은 규칙. 끝냄(done)은 쉼 */
+export const agentState = (r: { state?: string; status?: string }): SessionState => (r.state === 'done' ? 'idle' : toState(r.status ?? r.state));
 
 const stripSlash = (p: string) => p.replace(/\/+$/, '');
 
@@ -146,7 +149,7 @@ export function parseAgents(json: string, devRoot: string, extras: string[] = []
       kind,
       // status(busy/idle)가 있으면 그게 실제 상태다. 가져온(--resume) 세션은 대기 중에도 state가 blocked로 나온다(실측 2026-09-26).
       // 단 state: done 이면 답은 끝난 것 — 뒤에서 감시·에이전트가 돌면 status 가 busy 로 남는다(2026-09-28, 음성이 참모 답을 못 읽음)
-      state: r.state === 'done' ? 'idle' : toState(r.status ?? r.state),
+      state: agentState(r),
       ...(r.state === 'done' ? { finished: true } : {}),
       startedAt: r.startedAt ?? 0,
       sessionId: r.sessionId,
@@ -179,6 +182,11 @@ const assistantBases = () => [...new Set([assistant(), LEGACY_ASSISTANT, ...DEFA
 export const isOrchestratorName = (name: string) => assistantBases().includes(splitOrchName(name).base);
 /** 비서 이름 꼴 — 참모·참모-2(⌘T), 옛 이름 참모·참모-2 */
 export const orchestratorLike = (name: string) => { const n = splitOrchName(name).base; return assistantBases().some((b) => n === b || new RegExp(`^${escapeRe(b)}-\\d+$`).test(n)); };
+
+/** 사람에게 보일 세션 이름 — 참모는 별명(없으면 번호 뺀 기본 이름, 같이 보이는 참모와 겹칠 때만 꼬리 — displayName), 그 밖은
+ *  별명만 떼고 그대로(프로젝트 끝 번호는 이름의 일부). 진짜 이름(참모-8 · 디자인 담당)은 SendMessage 주소라 속에서만(2026-10-28) */
+export const seenName = (name: string, roster: { name: string; label?: string }[] = []): string =>
+  orchestratorLike(name) ? displayName(name, undefined, roster) : shownName(name);
 
 /** 사이드바용: 이 앱 폴더의 세션(비서)은 따로, 나머지는 프로젝트별로. 순서는 들어온 대로 */
 export function groupByProject(

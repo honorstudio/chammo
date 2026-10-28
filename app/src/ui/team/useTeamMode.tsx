@@ -7,7 +7,11 @@ import { teamAllRoom, teamRoomSet, teamTakeInvite, teamUse, teamWindowClose, tea
 import { ALL_ROOM, allRoomPlan } from '../../domain/teamAllRoom';
 import { convos as buildConvos, roomConvos, unreadTotal, windowKey, type Convo } from '../../domain/teamChat';
 import { lookOf, namedConvos } from '../../domain/teamProfile';
-import { closeTeamTab, openTeamFile, pickTeamTab, teamTabsOf, type TeamTabs } from '../../domain/teamSpace';
+import { closeTeamTab, openTeamCraft, openTeamFile, pickTeamTab, roomFilesKey, teamTabsOf, type TeamTabs } from '../../domain/teamSpace';
+import { ReviseBar } from './ReviseBar';
+import { dropTeamKey } from '../../domain/teamCraft';
+import { craftAppOf, leftCraft } from '../../domain/craftTab';
+import { invoke } from '@tauri-apps/api/core';
 import { RoomCreate } from './RoomCreate';
 import { useRoomMenu } from './useRoomMenu';
 import { shownDms } from '../../domain/teamRoomMenu';
@@ -15,7 +19,7 @@ import { TeamDialog } from './TeamDialog';
 import { lockerApi } from '../space/useLocker';
 import { every } from '../poll';
 import { TeamConvo, type Handoff } from './TeamConvo';
-import { TeamHome } from './TeamHome';
+import { TeamHomeDesktop } from './HomeModeBlock';
 import { TeamList } from './TeamList';
 import { TeamLocker } from './TeamLocker';
 import { TeamRail } from './TeamRail';
@@ -36,8 +40,9 @@ import { IconButton } from '../kit/IconButton';
 const stored = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const keep = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* 이번 실행만 */ } };
 
-/** 스페이스가 팀 모드에 그리는 것 — file = 스페이스 파일 화면(filePage) */
-export type TeamSpace = { name: string; open: (path: string) => void; view: (file: (path: string) => React.ReactNode, onHide?: () => void) => React.ReactNode };
+/** 스페이스가 팀 모드에 그리는 것 — file = 스페이스 파일 화면(filePage), craft = 팀에서 연 참모 앱 칸(k:<앱>), dropCraft = 꺼짐·숨김 */
+export type TeamSpace = { name: string; open: (path: string) => void; craft: (key: string, src: string) => void; dropCraft: (key: string) => void;
+  view: (file: (path: string) => React.ReactNode, onHide?: () => void, tabName?: (key: string) => string | undefined) => React.ReactNode };
 
 /** alone = 메신저 따로 창(10-26 사용자 "팀 모드와 똑같이, 참모만 없이") — 늘 팀 모드, 창 다시 열기·딥링크 같은 메인 창 일은 안 한다, 누른 파일은 이 창 오른쪽 탭에.
  *  room = 따로 창을 열며 고를 방(대화 하나를 떼어도 이 창에서 그 대화를 고른다) */
@@ -151,6 +156,15 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
     fileHere.open = (p) => openRef.current(p);
     return () => { fileHere.open = null; };
   }, [alone]);
+  // 팀 칸 참모 앱 — 떠나면 숨기기(10분 뒤 저장·끄기), 들어오면 숨김 풀기(참모 칸 SpaceView 와 같은 규칙). 팀 모드를 떠나도 떠난 것
+  const craftHere = on && craftAppOf(tabs.cur) ? tabs.cur : '';
+  const prevCraft = useRef('');
+  useEffect(() => {
+    const gone = leftCraft(prevCraft.current, craftHere);
+    if (gone) void invoke('craft_leave', { app: gone }).catch(() => {});
+    if (craftHere && craftHere !== prevCraft.current) void invoke('craft_enter', { app: craftAppOf(craftHere) }).catch(() => {});
+    prevCraft.current = craftHere;
+  }, [craftHere]);
   const pick = (c: Convo) => {
     setSel(c.key);
     setSeed(null);
@@ -220,10 +234,11 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
             <MeCell me={lookOf(profiles.board, meId, view.me)} rosterName={view.me} sub={`${team} · ${view.role === 'owner' ? tr('팀장', 'owner') : tr('팀원', 'member')}`} onSaved={profiles.reload} />
           </div>
           <div className="tmc-main">
-            {cur ? <TeamConvo key={`${cur.key}:${seed?.n ?? 0}`} seed={seed?.text} convo={cur} items={feed.items} team={view.team} myName={view.me} handed={data.handed} focused={focused} safety={feed.safety} held={feed.held}
-              onRead={data.markRoom} onHanded={data.markHanded} onSent={data.refresh} handoff={handoff} people={names} teamId={view.teamId} members={view.members}
+            {cur ? <TeamConvo key={`${cur.key}:${seed?.n ?? 0}`} seed={seed?.text} onSeeded={() => setSeed((s) => (s?.text ? { ...s, text: '' } : s))} convo={cur} items={feed.items} team={view.team} myName={view.me} handed={data.handed} focused={focused} safety={feed.safety} held={feed.held}
+              onRead={data.markRoom} onHanded={data.markHanded} onSent={data.refresh} handoff={handoff} people={names} teamId={view.teamId} members={view.members} reads={feed.reads}
               onEditRoom={cur.kind === 'group' ? () => setPop({ kind: 'room', roomId: cur.room }) : undefined}
-              detach={canDetach && !alone ? () => toWindow(cur.room) : undefined} />
+              detach={canDetach && !alone ? () => toWindow(cur.room) : undefined}
+              onFiles={cur.room ? () => setTabs((t) => openTeamFile(t, roomFilesKey(cur.room))) : undefined} />
               : <div className="tmx-win-empty">{cs.length ? tr('대화를 고르면 여기에 열려요', 'Pick a chat to open it here') : tr('아직 대화가 없어요', 'No chats yet')}</div>}
           </div>
         </div>
@@ -232,11 +247,16 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
     space: team && view ? {
       name: team,
       open: (path: string) => { setOn(true); setTabs((t) => openTeamFile(t, path)); },
-      view: (file: (path: string) => React.ReactNode, onHide?: () => void) => (
+      craft: (key: string, src: string) => { setOn(true); setTabs((t) => openTeamCraft(t, key, src)); },
+      dropCraft: (key: string) => setTabsBy((m) => dropTeamKey(m, key)),
+      view: (file: (path: string) => React.ReactNode, onHide?: () => void, tabName?: (key: string) => string | undefined) => (
         <ProfilesCtx.Provider value={profiles}>
-          <TeamSpaceView tabs={tabs} onHide={onHide} onUnfold={fold ? showChat : undefined} onPick={(k) => setTabs((t) => pickTeamTab(t, k))} onClose={(p) => setTabs((t) => closeTeamTab(t, p))} file={file}
+          <TeamSpaceView tabs={tabs} tabName={tabName} revise={(p) => <ReviseBar key={p} path={p} team={view.teamId} me={view.me} />} onHide={onHide} onUnfold={fold ? showChat : undefined} onPick={(k) => setTabs((t) => pickTeamTab(t, k))} onClose={(p) => setTabs((t) => closeTeamTab(t, p))} file={file}
             onSettings={() => setPop({ kind: 'settings' })}
-            home={<TeamHome teamId={view.teamId} team={team} members={view.members} icon={profiles.board?.teamIcon || undefined}
+            roomName={(r) => cs.find((c) => c.room === r)?.name ?? tr('대화', 'Chat')}
+            roomFiles={(r) => <TeamLocker key={`room:${r}`} teamId={view.teamId} team={team} people={view.members.length} follow onFollow={() => {}} room={{ id: r, name: cs.find((c) => c.room === r)?.name ?? tr('대화', 'Chat') }}
+              onOpen={(p, dir) => (dir ? void lockerApi.reveal(p) : setTabs((t) => openTeamFile(t, p)))} />}
+            home={<TeamHomeDesktop teamId={view.teamId} team={team} members={view.members} icon={profiles.board?.teamIcon || undefined}
               onTalk={(text) => { const c = rooms[0] ?? cur; if (!c) return; setSel(c.key); showChat(); setSeed((s) => ({ text, n: (s?.n ?? 0) + 1 })); }} />}
             // 팀 설정은 탭 줄 끝 톱니라 보관함 머리 끝 자리는 비운다(빈 조각 — 없으면 옛 '팀 따라가기' 단추가 나온다)
             locker={<TeamLocker teamId={view.teamId} team={team} people={view.members.length} follow onFollow={() => {}} icon={profiles.board?.teamIcon || undefined}

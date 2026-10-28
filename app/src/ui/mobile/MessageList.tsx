@@ -101,7 +101,7 @@ function Bubble({ it, onHold }: { it: ChatItem; onHold?: Hold }) {
   // 답은 마크다운으로 — DOMPurify 를 거친 HTML 만(ui/md.ts), 링크는 새 탭
   if (it.kind === 'assistant') return <div className="m-bubble m-ai m-md" dangerouslySetInnerHTML={{ __html: md(it.text) }} {...held} />;
   if (it.kind === 'tools') return <div className="m-tools">{it.tools.length === 1 ? `${it.tools[0]!.name} ${it.tools[0]!.target}` : `도구 ${it.tools.length}번`}</div>;
-  if (it.kind === 'relay') return <div className="m-relay"><b>{phoneName(it.from, [])}</b> {it.text}</div>;
+  if (it.kind === 'relay') return <div className="m-relay"><b>{it.session ? phoneName(it.from, []) : it.from}</b> {it.text}</div>;
   return <div className="m-note">{it.text}</div>;
 }
 

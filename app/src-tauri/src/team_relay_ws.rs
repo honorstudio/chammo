@@ -47,7 +47,9 @@ pub enum Cmd {
     /// body = 이 기기에 남길 평문, wire = 방에 실을 종단 암호 봉투(평문 대체 없음, R8)
     Send { room: String, cid: String, body: String, wire: String, human: Option<HumanProof>, extra: crate::e2e_envelope::Extra, reply: Sender<Result<u64, String>> },
     /// 팀 참모 답(team_helper) — 서버엔 참모 말(agent), 기록엔 via=helper
-    SendHelper { room: String, cid: String, body: String, wire: String, reply: Sender<Result<u64, String>> },
+    SendHelper { room: String, cid: String, body: String, wire: String, extra: crate::e2e_envelope::Extra, reply: Sender<Result<u64, String>> },
+    /// 사람이 이 방을 여기까지 봤다(화면이 보고 있을 때만 — team_mark_read). 방마다 1초에 한 번까지 묶어 {t:"read"} 로
+    Read { room: String, seq: u64 },
     /// team.json 이 바뀌었다(방이 늘었다)
     Reload,
     Stop,
@@ -61,6 +63,8 @@ const READ_SLICE: Duration = Duration::from_millis(50);
 const PING_EVERY: Duration = Duration::from_secs(45);
 const DEAD_AFTER: Duration = Duration::from_secs(120);
 const SEND_WAIT: Duration = Duration::from_secs(15);
+/// 보낸 말을 실은 뒤 이만큼 아무것도 안 오면 그 소켓은 죽었다고 보고 다시 붙는다(2분 DEAD_AFTER 를 기다리면 보내기가 15초에 실패)
+const SEND_STALL: Duration = Duration::from_secs(5);
 /// 내 방 목록(GET /v0/me/rooms)을 다시 받는 주기 — 켤 때·연결이 끊긴 뒤·team_changed 를 받았을 때 바로, 그 밖엔 1분마다(놓친 알림 대비).
 /// 내 기기끼리 방 소켓이 붙어 있으면 team_changed 가 그리로 오니 5분(10-26 사고 뒤 — 기기 하나가 하루 1,440번 부르던 것)
 const DISCOVER_EVERY: Duration = Duration::from_secs(60);
@@ -82,10 +86,25 @@ pub fn self_live() -> bool {
 /// 서버가 team_changed(합류·나감·새 방·방 바뀜)를 밀었다 — 다음 방 찾기에서 사람·명부 이름도 5분을 안 기다리고 다시 받는다
 static NAMES_NOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// 보내고 서버 답(sent·error)을 기다리는 말 — 끊기면 다시 붙어 같은 cid 로 다시 싣는다(서버가 기기·cid 로 한 번만 저장)
+struct Pending {
+    room: String,
+    body: String,
+    wire: String,
+    origin: &'static str,
+    extra: crate::e2e_envelope::Extra,
+    reply: Sender<Result<u64, String>>,
+    /// 마지막으로 소켓에 실은 때 — 그 뒤로 아무것도 안 오면 반쯤 죽은 소켓
+    at: Instant,
+    by: Instant,
+}
+
 struct Conn {
     ws: Ws,
     last_rx: Instant,
     last_ping: Instant,
+    /// 끊겼다 다시 붙었으면 (끊긴 때, 붙는 데 실패한 번수, 지금까지 메운 말) — 밀린 말 끝(ready)에 한 줄 남긴다(윈도우 시험 PC 끊김 메우는 시간 재기)
+    refill: Option<(Instant, u32, u32)>,
 }
 
 pub struct Loop {
@@ -97,9 +116,8 @@ pub struct Loop {
     conns: HashMap<String, Conn>,
     /// 방 → (실패 횟수, 다음 시도 시각)
     retry: HashMap<String, (u32, Instant)>,
-    /// cid → (방, 본문, human|agent, 반응·파일, 답할 곳, 기한)
-    #[allow(clippy::type_complexity)]
-    pending: HashMap<String, (String, String, &'static str, crate::e2e_envelope::Extra, Sender<Result<u64, String>>, Instant)>,
+    /// cid → 답을 기다리는 보낸 말
+    pending: HashMap<String, Pending>,
     st: TeamState,
     discover: Option<Discover>,
     last_discover: Option<Instant>,
@@ -107,14 +125,28 @@ pub struct Loop {
     opener: Option<Opener>,
     /// 멤버마다 1분 안에 넘긴 시각 — 남이 말을 쏟아부어 내 참모 입력칸을 덮지 못하게(peer PER_MIN 과 같은 상한)
     rate: HashMap<String, Vec<u64>>,
+    /// 상한을 넘은 말 — 버리지 않고 사람마다 줄 세웠다가 자리가 나면 묶어서 넘긴다(team_relay_inbox::RateHold)
+    held: inbox::RateHold,
+    /// 상한 창(ms) — 1분, 시험만 줄인다
+    rate_window: u64,
     /// 서버가 이 기기를 끊었다(close 4001 — 다른 기기에서 끊기·로그아웃) — 다시 붙지 않는다
     revoked: bool,
+    /// 올릴 읽음(chammo-relay ADR 0012)
+    reads: crate::team_reads::Outbox,
+    /// 내 기기 방이 한 번이라도 붙었나·마지막으로 다시 붙어 기기 카드를 당긴 때 — 끊긴 틈의 기기 알림을 메우려고
+    self_was_up: bool,
+    self_nudged: Option<Instant>,
+    /// 방마다 끊긴 때 — 다시 붙음 기록용
+    dropped: HashMap<String, Instant>,
 }
+
+/// 내 기기 방이 다시 붙어 기기 카드를 당기는 건 이만큼에 한 번 — 소켓이 출렁여도 목록 요청이 쌓이지 않게
+const SELF_RENUDGE: Duration = Duration::from_secs(60);
 
 impl Loop {
     pub fn new(dir: PathBuf, keys: DeviceKeys, sink: Sink, rx: Receiver<Cmd>) -> Loop {
         let st = team_relay::load_state(&dir);
-        Loop { dir, keys, sink, rx, tick: Duration::from_millis(200), conns: HashMap::new(), retry: HashMap::new(), pending: HashMap::new(), st, discover: None, last_discover: None, rate: HashMap::new(), revoked: false, #[cfg(test)] opener: None }
+        Loop { dir, keys, sink, rx, tick: Duration::from_millis(200), conns: HashMap::new(), retry: HashMap::new(), pending: HashMap::new(), st, discover: None, last_discover: None, rate: HashMap::new(), held: inbox::RateHold::default(), rate_window: 60_000, revoked: false, reads: Default::default(), self_was_up: false, self_nudged: None, dropped: HashMap::new(), #[cfg(test)] opener: None }
     }
 
     #[cfg(test)]
@@ -152,6 +184,12 @@ impl Loop {
         }
     }
 
+    #[cfg(test)]
+    pub fn with_rate_window(mut self, ms: u64) -> Loop {
+        self.rate_window = ms;
+        self
+    }
+
     pub fn with_tick(mut self, t: Duration) -> Loop {
         self.tick = t;
         self
@@ -166,8 +204,9 @@ impl Loop {
                         return;
                     }
                     Cmd::Reload => self.st = team_relay::load_state(&self.dir),
+                    Cmd::Read { room, seq } => self.reads.want(&room, seq),
                     Cmd::Send { room, cid, body, wire, human, extra, reply } => self.send(room, cid, body, wire, if human.is_some() { "human" } else { "agent" }, extra, reply),
-                    Cmd::SendHelper { room, cid, body, wire, reply } => self.send(room, cid, body, wire, "helper", Default::default(), reply),
+                    Cmd::SendHelper { room, cid, body, wire, extra, reply } => self.send(room, cid, body, wire, "helper", extra, reply),
                 }
             }
             self.maybe_discover();
@@ -180,14 +219,18 @@ impl Loop {
             for room in rooms {
                 self.pump(&room);
             }
+            self.flush_reads();
             let now = Instant::now();
-            self.pending.retain(|_, (_, _, _, _, tx, by)| {
-                let alive = *by > now;
+            self.pending.retain(|_, p| {
+                let alive = p.by > now;
                 if !alive {
-                    let _ = tx.send(Err("중계 서버가 15초 안에 답하지 않았어 — 같은 cid 로 다시 보내면 한 번만 저장된다".into()));
+                    let _ = p.reply.send(Err("중계 서버가 15초 안에 답하지 않았어 — 같은 cid 로 다시 보내면 한 번만 저장된다".into()));
                 }
                 alive
             });
+            for text in self.held.ready_in(&mut self.rate, now_ms(), self.rate_window) {
+                (self.sink)(text);
+            }
             if self.conns.is_empty() {
                 std::thread::sleep(self.tick);
             }
@@ -199,12 +242,39 @@ impl Loop {
         if self.retry.get(room).is_some_and(|(_, at)| *at > now) {
             return;
         }
-        match connect(&self.st, &self.keys, room) {
+        // 사람 말이 답을 기다리면 다시 붙기도 사람 몫으로
+        let human = self.pending.values().any(|p| p.room == room && p.origin == "human");
+        let c = if human { team_relay::as_human(|| connect(&self.st, &self.keys, room)) } else { connect(&self.st, &self.keys, room) };
+        match c {
             Ok(ws) => {
+                if self.st.rooms.iter().any(|r| r.id == room && r.kind == "self") {
+                    // 다시 붙었다 — 끊긴 틈에 온 device_pending·device_resolved 는 사라졌으니 목록을 한 번 다시 받는다(10-28 윈도우: 카드가 10분 늦게 닫힘).
+                    // 처음 붙을 땐 켤 때 바퀴가 이미 받는다
+                    if self.self_was_up && self.self_nudged.is_none_or(|t| t.elapsed() >= SELF_RENUDGE) {
+                        crate::device_cards::nudge();
+                        self.self_nudged = Some(now);
+                    }
+                    self.self_was_up = true;
+                }
+                let fails = self.retry.get(room).map_or(0, |(f, _)| *f);
+                let refill = self.dropped.remove(room).map(|at| (at, fails, 0));
                 self.retry.remove(room);
-                self.conns.insert(room.to_string(), Conn { ws, last_rx: now, last_ping: now });
+                self.conns.insert(room.to_string(), Conn { ws, last_rx: now, last_ping: now, refill });
+                // 끊기기 전에 실었는데 답을 못 받은 말 — 보낸 차례대로 같은 cid 로 다시(서버에 이미 있으면 그 seq 로 답한다)
+                let mut again: Vec<(Instant, String, Value)> = self.pending.iter().filter(|(_, p)| p.room == room).map(|(cid, p)| (p.by, cid.clone(), wire_send(cid, &p.wire, p.origin))).collect();
+                again.sort_by_key(|x| x.0);
+                for (_, cid, v) in again {
+                    if let Some(p) = self.pending.get_mut(&cid) {
+                        p.at = Instant::now();
+                    }
+                    self.out(room, v);
+                }
             }
             Err(e) => {
+                // 서버가 이 열쇠 칸이 찼다고 했다 — 다른 배경 요청도 같이 쉬게(서버 Retry-After 60초)
+                if e.contains("429") {
+                    team_relay::slow_down(&self.keys.public(), &serde_json::Value::Null, now);
+                }
                 let fails = self.retry.get(room).map_or(0, |(f, _)| f + 1);
                 self.retry.insert(room.to_string(), (fails, now + backoff(fails)));
                 log(&format!("방 {} 연결 실패({fails}): {e}", short(room)));
@@ -216,9 +286,12 @@ impl Loop {
         if let Some(mut c) = self.conns.remove(room) {
             let _ = c.ws.close(None);
         }
-        self.retry.insert(room.to_string(), (0, Instant::now() + backoff(0)));
+        // 답을 기다리는 말이 있으면 물러서지 않고 바로 다시 붙는다(답 기한 15초 안에)
+        let waiting = self.pending.values().any(|p| p.room == room);
+        self.retry.insert(room.to_string(), (0, Instant::now() + if waiting { Duration::ZERO } else { backoff(0) }));
         // 끊긴 뒤엔 방 목록부터 다시(그사이 방이 늘었거나 내가 빠졌을 수 있다)
         self.last_discover = None;
+        self.dropped.entry(room.to_string()).or_insert_with(Instant::now);
         log(&format!("방 {} 끊김: {why}", short(room)));
     }
 
@@ -230,6 +303,11 @@ impl Loop {
             if now.duration_since(c.last_rx) > DEAD_AFTER {
                 return self.drop_conn(room, "2분 동안 아무것도 안 옴");
             }
+            let last_rx = c.last_rx;
+            if self.pending.values().any(|p| p.room == room && p.at > last_rx && now.duration_since(p.at) > SEND_STALL) {
+                return self.drop_conn(room, "보낸 말에 5초 동안 아무 답 없음");
+            }
+            let Some(c) = self.conns.get_mut(room) else { return };
             if now.duration_since(c.last_ping) > PING_EVERY {
                 c.last_ping = now;
                 if let Err(e) = c.ws.send(Message::Ping(Vec::new().into())) {
@@ -270,6 +348,27 @@ impl Loop {
         }
     }
 
+    /// 묶어 둔 읽음 올리기 — 붙은 방만(안 붙은 방은 붙은 뒤 다음 바퀴에)
+    fn flush_reads(&mut self) {
+        let now = Instant::now();
+        for (room, seq) in self.reads.due(now, crate::team_reads::EVERY) {
+            if !self.conns.contains_key(&room) {
+                continue;
+            }
+            self.out(&room, json!({ "t": "read", "seq": seq }));
+            if self.conns.contains_key(&room) {
+                self.reads.sent(&room, seq, now);
+            }
+        }
+    }
+
+    /// 받은 읽음 합치기 — 올랐으면 창이 다시 읽게
+    fn got_reads(&self, room: &str, got: &[(String, u64)]) {
+        if crate::team_reads::merge(&self.dir, room, got) {
+            crate::team_alert::poke_state();
+        }
+    }
+
     fn out(&mut self, room: &str, v: Value) {
         if let Some(c) = self.conns.get_mut(room) {
             if let Err(e) = c.ws.send(Message::text(v.to_string())) {
@@ -281,7 +380,13 @@ impl Loop {
     fn handle(&mut self, room: &str, v: &Value) {
         match v["t"].as_str().unwrap_or("") {
             // 계정 기기 알림(ADR 0014) — 내용은 안 믿고 목록을 다시 받게만 당긴다(카드는 목록으로 맞춘다)
-            "device_pending" | "device_resolved" => crate::device_cards::nudge(),
+            // 계정 되찾기 요청이 생김·끝남(relay ADR 0007 R9) — 내용은 안 믿고 /v0/me 를 다시 받아 카드를 맞춘다
+            "device_pending" | "recover_pending" | "recover_resolved" => crate::device_cards::nudge(),
+            // 허용·거절·빼기 — 사슬이 바뀌었을 수 있어 방 찾기(ensure·건네주기)를 바로 돌린다
+            "device_resolved" => {
+                crate::device_cards::nudge();
+                self.last_discover = None;
+            }
             // 팀 보관함 바뀜(chammo-relay ADR 0009) — 판 번호만, 화면이 목록을 다시 받는다
             "locker" => crate::team_locker_app::nudge(v["team"].as_str().unwrap_or(""), v["rev"].as_u64().unwrap_or(0)),
             // 팀이 바뀜(합류·나감·새 방·방 바뀜, chammo-relay team-rooms) — 내용은 안 믿고 방 목록·사람을 바로 다시 받는다(qa-invite 원인 2·첫 DM 60초)
@@ -292,13 +397,21 @@ impl Loop {
                 crate::team_locker_app::forget_people(v["team"].as_str().unwrap_or(""));
             }
             "msg" => {
+                if let Some(r) = self.conns.get_mut(room).and_then(|c| c.refill.as_mut()) {
+                    r.2 += 1;
+                }
                 // 봉투를 푼다(평문은 안 받는다, R8) — 못 풀거나 바뀐/갈린 사슬이면 기록만
                 let opened = self.open(v);
                 let (mut act, mut rec) = inbox::with_e2e(&self.st, inbox::last_seen(&self.dir, room), v, &opened);
                 let Some(seq) = v["seq"].as_u64() else { return };
-                if matches!(act, Action::Deliver(_)) && !crate::peer_link::allow_in(&mut self.rate, if rec.member.is_empty() { &rec.device } else { &rec.member }, now_ms()) {
-                    rec.note = "rate-limited".into();
-                    act = Action::Blocked("rate".into());
+                // 상한을 넘었으면(또는 이 사람 몫이 이미 줄 서 있으면 — 차례가 안 뒤집히게) 줄 세운다. 자리가 나면 run 이 묶어 넘긴다
+                let who = if rec.member.is_empty() { rec.device.clone() } else { rec.member.clone() };
+                if let Action::Deliver(text) = &act {
+                    if self.held.has(&who) || !crate::peer_link::allow_in_window(&mut self.rate, &who, now_ms(), self.rate_window) {
+                        self.held.push(&who, text.clone());
+                        rec.note = "rate-limited".into();
+                        act = Action::Blocked("rate".into());
+                    }
                 }
                 if act != Action::Skip {
                     // 기록 먼저 — 넘기다 앱이 꺼져도 화면엔 남는다
@@ -322,9 +435,40 @@ impl Loop {
                     (self.sink)(text);
                 }
             }
-            "ready" if v["more"] == true => self.out(room, json!({ "t": "pull" })),
+            // 지난 대화 건네받기(chammo-relay ADR 0007 R10) — 내 다른 기기가 이 기기 몫으로 다시 봉한 지난 말. 같은 자리에 기록만, 참모에겐 안 넘긴다
+            "late" => {
+                let Some(seq) = v["seq"].as_u64() else { return };
+                let opened = self.open(v);
+                if let Some(rec) = crate::e2e_retry::late_record(&self.st, v, &opened).filter(|_| matches!(opened, crate::e2e_state::Unwrapped::Opened { .. })) {
+                    match inbox::append(&self.dir, &rec) {
+                        Ok(()) => crate::team_alert::poke_state(),
+                        Err(e) => log(&format!("건네받은 말 기록 실패: {e}")),
+                    }
+                } else if crate::e2e_retry::worth_keeping(&opened) {
+                    // 내 사슬을 아직 못 믿는 등 — 남겨 두고 받아들인 뒤 다시 연다
+                    if let Err(e) = crate::e2e_retry::keep(&self.dir, v, "e2e-fail") {
+                        log(&format!("건네받은 봉투 보관 실패: {e}"));
+                    }
+                }
+                self.out(room, json!({ "t": "late_ack", "seq": seq }));
+            }
+            // 읽음(chammo-relay ADR 0012) — 붙을 때 한 벌, 그 뒤 오를 때마다 한 줄. 옛 중계엔 없다
+            "ready" => {
+                self.got_reads(room, &crate::team_reads::from_ready(v));
+                if v["more"] == true {
+                    self.out(room, json!({ "t": "pull" }));
+                } else if let Some((at, fails, n)) = self.conns.get_mut(room).and_then(|c| c.refill.take()) {
+                    // 밀린 말 끝 — 다시 붙은 방이면 걸린 시간·메운 말 수 한 줄(윈도우 시험 PC 끊김 메우는 시간 재기)
+                    log(&format!("방 {} 다시 붙음: 끊긴 지 {:.1}초(붙기 실패 {fails}번), 메운 말 {n}개", short(room), at.elapsed().as_secs_f64()));
+                }
+            }
+            "read" => {
+                if let Some(r) = crate::team_reads::from_read(v) {
+                    self.got_reads(room, &[r]);
+                }
+            }
             "sent" | "error" => {
-                let Some((rm, body, origin, extra, tx, _)) = v["cid"].as_str().and_then(|c| self.pending.remove(c)) else { return };
+                let Some(Pending { room: rm, body, origin, extra, reply: tx, .. }) = v["cid"].as_str().and_then(|c| self.pending.remove(c)) else { return };
                 if let Some(seq) = v["seq"].as_u64().filter(|_| v["t"] == "sent") {
                     let me = &self.st;
                     let own = me.rooms.iter().any(|r| r.id == rm && r.kind == "self");
@@ -375,9 +519,16 @@ impl Loop {
             let _ = reply.send(Err("방에 못 붙었어(중계 서버·망 확인)".into()));
             return;
         }
-        self.pending.insert(cid.clone(), (room.clone(), body.clone(), origin, extra, reply, Instant::now() + SEND_WAIT));
-        self.out(&room, json!({ "t": "send", "cid": cid, "body": wire, "origin": if origin == "human" { "human" } else { "agent" } }));
+        let now = Instant::now();
+        let v = wire_send(&cid, &wire, origin);
+        self.pending.insert(cid, Pending { room: room.clone(), body, wire, origin, extra, reply, at: now, by: now + SEND_WAIT });
+        self.out(&room, v);
     }
+}
+
+/// 방에 싣는 send 틀 — 팀 참모 답(helper)도 서버엔 agent
+fn wire_send(cid: &str, wire: &str, origin: &str) -> Value {
+    json!({ "t": "send", "cid": cid, "body": wire, "origin": if origin == "human" { "human" } else { "agent" } })
 }
 
 /// 방 하나에 붙기 — TCP 는 직접(시간 제한), TLS·업그레이드는 tungstenite(rustls). 읽기는 짧게 끊어 돌아 가며 읽는다
@@ -485,6 +636,8 @@ pub fn ensure(dir: &Path) {
                 if let Err(e) = crate::e2e_flow::ensure(&dd, &kc, &team_relay::Curl) {
                     log(&format!("종단 암호 준비 실패: {e}"));
                 }
+                // 숫자로 막 들인 내 기기가 있으면 지난 말 열쇠를 저절로 건넨다(relay ADR 0007 R10, 뒤에서)
+                crate::e2e_handover::kick(&dd);
             }
         }
         if pushed {
@@ -510,7 +663,9 @@ fn deliver_now(dir: &Path, text: &str) {
     let until = Instant::now() + BLOCKED_WAIT;
     loop {
         let sessions = crate::claude::agents_json().unwrap_or_default();
-        let Some(id) = inbox::assistant(&st, &sessions, &hq, &crate::config::assistant_name()) else {
+        // '@참모-2'·'@별명'으로 부른 참모가 있으면 그 참모, 아니면 받는 참모(deliverTo, 비면 설정 참모 이름)
+        let name = crate::config::assistant_name();
+        let Some(id) = inbox::called(&sessions, &hq, &name, text).or_else(|| inbox::assistant(&st, &sessions, &hq, &name)) else {
             return log("받은 팀 말을 넘길 참모 세션이 없어 — 기록에만 남김");
         };
         // 입력칸에 사람이 반쯤 친 글은 치기 길이 치워 두고(Ctrl+S) 치지만, 선택 창은 글자가 답으로 눌리니 줄 세운다
@@ -525,6 +680,13 @@ fn deliver_now(dir: &Path, text: &str) {
             log(&format!("참모에게 못 넘김: {e}"));
         }
         return;
+    }
+}
+
+/// 읽음 올리기 맡기기 — 답을 안 기다린다(스레드가 안 떠 있으면 다음에 볼 때 다시 넘어온다)
+pub fn read(room: &str, seq: u64) {
+    if let Some(tx) = TX.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        let _ = tx.send(Cmd::Read { room: room.into(), seq });
     }
 }
 
@@ -544,7 +706,10 @@ pub fn send(dir: &Path, room: &str, cid: &str, body: &str, human: Option<HumanPr
 pub fn send_with(dir: &Path, room: &str, cid: &str, body: &str, human: Option<HumanProof>, extra: crate::e2e_envelope::Extra) -> Result<u64, String> {
     ensure(dir);
     // 종단 암호(ADR 0007 R8) — 봉투만. 준비 전·명부 없음·보안 번호 바뀜·갈림이면 여기서 막힌다(평문으로 안 내려간다)
-    let wire = match crate::e2e_state::wrap_with(dir, &crate::team_relay_keys::store(), &team_relay::Curl, room, cid, body, human.is_some(), now_ms(), extra.clone()) {
+    // 사람 말은 배경 요청 몫과 따로(team_relay::as_human) — 폴링이 칸을 채워도 사람이 친 말은 나간다
+    let seal = || crate::e2e_state::wrap_with(dir, &crate::team_relay_keys::store(), &team_relay::Curl, room, cid, body, human.is_some(), now_ms(), extra.clone());
+    let sealed = if human.is_some() { team_relay::as_human(seal) } else { seal() };
+    let wire = match sealed {
         Ok(w) => w,
         Err(e) => {
             // 상대 보안 번호가 바뀜·갈림이라 막혔으면 말을 멈춰 두고 카드를 당긴다 — 사람이 받아들이면 보낸다(시안 e2e-safety v1)
@@ -557,21 +722,22 @@ pub fn send_with(dir: &Path, room: &str, cid: &str, body: &str, human: Option<Hu
         }
     };
     let by_human = human.is_some();
+    let re = extra.re;
     let (rtx, rrx) = std::sync::mpsc::channel();
     let seq = dispatch(Cmd::Send { room: room.into(), cid: cid.into(), body: body.into(), wire, human, extra, reply: rtx }, rrx)?;
-    // 사람이 @팀참모 로 불렀으면 이 기기(멘션 글을 만든 기기)만 한 번 답한다 — 받는 기기는 안 돈다
+    // 사람이 @팀참모·@<팀 참모 이름> 으로 불렀으면 이 기기(멘션 글을 만든 기기)만 한 번 답한다 — 받는 기기는 안 돈다
     if by_human {
-        crate::team_helper::on_sent(dir, room, seq, body);
+        crate::team_helper::on_sent(dir, room, seq, body, re);
     }
     Ok(seq)
 }
 
 /// 팀 참모 답 보내기 — 보통 말과 같은 봉투(받는 사람 셈 그대로), 안쪽 via=helper·바깥 agent
-pub fn send_helper(dir: &Path, room: &str, cid: &str, body: &str) -> Result<u64, String> {
+pub fn send_helper(dir: &Path, room: &str, cid: &str, body: &str, extra: crate::e2e_envelope::Extra) -> Result<u64, String> {
     ensure(dir);
-    let wire = crate::e2e_state::wrap_helper(dir, &crate::team_relay_keys::store(), &team_relay::Curl, room, cid, body, now_ms())?;
+    let wire = crate::e2e_state::wrap_helper_with(dir, &crate::team_relay_keys::store(), &team_relay::Curl, room, cid, body, now_ms(), extra.clone())?;
     let (rtx, rrx) = std::sync::mpsc::channel();
-    dispatch(Cmd::SendHelper { room: room.into(), cid: cid.into(), body: body.into(), wire, reply: rtx }, rrx)
+    dispatch(Cmd::SendHelper { room: room.into(), cid: cid.into(), body: body.into(), wire, extra, reply: rtx }, rrx)
 }
 
 fn dispatch(cmd: Cmd, rrx: Receiver<Result<u64, String>>) -> Result<u64, String> {

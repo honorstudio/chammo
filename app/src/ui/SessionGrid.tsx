@@ -3,12 +3,14 @@ import { createPortal } from 'react-dom';
 import { gridShape } from '../domain/adopt';
 import { resizeTracks, tracksFor } from '../domain/gridSizing';
 import { chatHeadPane, paneToFocus, visiblePanes, type LayoutAction, type PaneLayout } from '../domain/paneLayout';
-import type { Session } from '../domain/session';
+import { orchestratorLike, type Session } from '../domain/session';
 import { pasteSequence } from '../domain/memo';
 import { enterDelay, typedChunks } from '../domain/chat';
 import { enterTask, escPlan, typeQueue } from '../domain/chatQueue';
-import { LINK_WAIT, paneLinks } from '../domain/paneLinks';
-import type { LinkState } from '../domain/attachExit';
+import { HOLD_MAX, LINK_WAIT, paneLinks } from '../domain/paneLinks';
+import { linkNotice, slowLinks } from '../domain/busyGate';
+import { useBusy } from './busyNow';
+import type { AttachPhase, LinkState } from '../domain/attachExit';
 import { AdoptCard } from './AdoptCard';
 import { statusKind } from '../domain/statusMark';
 import { sessionStatus, type ActivityStatus } from '../domain/status';
@@ -96,14 +98,20 @@ const escAt = new Map<string, number>();
 /** 세션별 붙어 있는 보기 — 화면이 온(live) 뒤에만 넣고 끊기면(다시 붙는 중·참모를 다시 켜는 중) 뺀다.
  *  친 말은 그때 붙어 있는 보기에 — 끊긴 동안 친 말은 다시 붙을 때까지 줄에서 기다린다. 예전엔 누른 순간의 손잡이로 죽은 보기에 쳐서 허공으로 갔다(2026-10-21) */
 const links = paneLinks<PaneApi>();
+/** 칸마다 지금 붙음 상태 — 붙는 중이면 치기가 LINK_WAIT 를 넘겨도 기다린다(HOLD_MAX) */
+const linkNow = new Map<string, LinkState>();
 /** 붙은 보기에 치는 데 쓰는 최대 — 긴 글도 몇 초면 끝난다. 넘기면 버리고 다음 말로(채팅은 입력을 되살린다, 2026-10-24 윈도우 '어떤 말도 안 감') */
 const TYPE_TIMEOUT = 30_000;
 /** 다 쳤으면 true, 못 쳤으면(보기가 안 붙음·치기 거절·시간 넘김) false */
 function typeAndSend(id: string, text: string, enter = true): Promise<boolean> {
   return typing.push(id, async () => {
-    const api = await links.wait(id, LINK_WAIT);
+    // 끊김이 굳은 칸이면 바로 실패 — 앞 말만 drop 되고 줄 뒤 말은 80초 기다리다 세션이 돌아오면 몰래 쳐졌다(리뷰)
+    if (linkNow.get(id) === 'gone') throw new Error('pane gone');
+    const from = Date.now();
+    // 아직 붙는 중이면(attach 안내 줄뿐·맥이 바빠 목록을 못 읽음) 더 기다린다 — 80초에 버려 '전달 안 됨'이 떴다(2026-10-26 부팅 직후). 끊김이 굳으면 drop 으로 바로 놓인다
+    const api = await links.wait(id, LINK_WAIT, () => { const st = linkNow.get(id); return (st === 'attaching' || st === 'reattaching') && Date.now() - from < HOLD_MAX; });
     await api.type(typedChunks(text), enter ? enterDelay(text.length, IS_WIN) : undefined);
-  }, LINK_WAIT + TYPE_TIMEOUT).then(() => true, () => false);
+  }, HOLD_MAX + LINK_WAIT + TYPE_TIMEOUT).then(() => true, () => false);
 }
 
 /** 입력칸 지우기(백스페이스 n개) — 앞 글을 치는 중이면 그 뒤에. 지운 뒤 칠 글은 typeAndSend 가 다시 이 뒤에 줄 선다 */
@@ -160,7 +168,32 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
   if (import.meta.env.DEV) (window as unknown as { __panes?: unknown }).__panes = panes.current;
   // 채팅 판: 터미널로 돌려 본 창들, 창마다 채팅 입력칸 포커스
   const [termView, setTermView] = useState<Set<string>>(() => new Set());
-  const chatOn = (id: string) => !!chat && !termView.has(id);
+  // 창마다 세션에 붙어 있나(TerminalPane onLink) — 채팅 말풍선이 끊긴 동안 '다시 붙는 중', 끊김이 굳으면 바로 '전달 안 됨'
+  const [linkOf, setLinkOf] = useState<Record<string, LinkState>>({});
+  const [linkWhy, setLinkWhy] = useState<Record<string, AttachPhase | 'unlisted' | undefined>>({});
+  const busy = useBusy();
+  // 붙는 중이 1.5초를 넘긴 칸 — 한가한 맥에서 0.3초면 붙는데 그때마다 안내·채팅 덮개가 깜빡였다(리뷰). 칸마다 시작 시각을 기억(slowLinks)
+  const [slowLink, setSlowLink] = useState<Record<string, boolean>>({});
+  const linkSince = useRef(new Map<string, number>());
+  useEffect(() => {
+    const up = Object.keys(slowLink).filter((id) => slowLink[id] && linkOf[id] === 'live');
+    if (up.length) setSlowLink((m) => { const n = { ...m }; up.forEach((id) => delete n[id]); return n; });
+    // 화면이 오면 붙는 중에 고른 터미널도 풀린다(다음 끊김엔 다시 채팅+안내)
+    if (Object.keys(linkOf).some((id) => linkOf[id] === 'live')) setTermNow((v) => (Object.keys(linkOf).some((id) => linkOf[id] === 'live' && v.has(id)) ? new Set([...v].filter((id) => linkOf[id] !== 'live')) : v));
+    let t: number | undefined;
+    const tick = () => {
+      const { slow, wait } = slowLinks(linkOf, linkSince.current, Date.now());
+      const now = slow.filter((id) => linkNow.get(id) !== 'live');
+      if (now.length) setSlowLink((m) => (now.every((id) => m[id]) ? m : { ...m, ...Object.fromEntries(now.map((id) => [id, true])) }));
+      if (wait !== null) t = window.setTimeout(tick, wait);
+    };
+    tick();
+    return () => window.clearTimeout(t);
+  }, [linkOf]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 붙는 중에 사람이 고른 터미널 — 채팅으로 덮지 않는다(화면을 끝내 못 알아봐도 사람이 터미널로 갈 수 있게, 리뷰)
+  const [termNow, setTermNow] = useState<Set<string>>(() => new Set());
+  // 터미널로 돌려 봤어도 세션 화면이 오기 전(붙는 중·끊김)엔 채팅과 사람 말 안내로 — 'Attaching… ^[[I' 같은 attach 글만 떠 있었다(2026-10-26)
+  const chatOn = (id: string) => !!chat && (!termView.has(id) || (!!slowLink[id] && linkOf[id] !== 'live' && !termNow.has(id)));
   const chatFocus = useRef(new Map<string, () => void>());
   // 채팅 판이면 입력칸, 아니면 터미널. `f?.() ?? 터미널` 로 쓰면 입력칸 focus() 가 undefined 를 돌려줘 뒤에 숨은 터미널이
   // 포커스를 다시 가져갔다 — 탭을 바꿔도 입력칸에 커서가 안 갔다(2026-09-30 사용자)
@@ -173,8 +206,6 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
   const [tab, setTab] = useState<string | null>(initialFocus ?? null);
   // 지구본 키 말하기가 끝난 창 — 채팅 판이 4초 뒤에도 받아 적은 글이 남아 있으면 대신 Enter(autoSubmit 이 가끔 안 보냈다)
   const [voiceStops, setVoiceStops] = useState<Record<string, number>>({});
-  // 창마다 세션에 붙어 있나(TerminalPane onLink) — 채팅 말풍선이 끊긴 동안 '다시 붙는 중', 끊김이 굳으면 바로 '전달 안 됨'
-  const [linkOf, setLinkOf] = useState<Record<string, LinkState>>({});
   const showTerm = (id: string, on: boolean) => setTermView((v) => { const n = new Set(v); if (on) n.add(id); else n.delete(id); return n; });
   // 메모판이 닫히면(⌘M·X·Esc·보내기 무엇이든) 그 창 터미널로 포커스를 돌려준다 — 안 그러면 창을 다시 눌러야 입력된다
   const memoWas = useRef<string | null>(null);
@@ -215,6 +246,13 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
     onFocusRequestDone?.(n);
   }, [focusRequest?.n]); // eslint-disable-line react-hooks/exhaustive-deps
   const byId = new Map(sessions.map((s) => [s.id, s]));
+  // 채팅 칸 위 한 줄 — 붙는 중·끊김을 사람 말로(domain/busyGate linkNotice). 참모 칸이면 '참모'
+  const noticeOf = (id: string, s: Session) => {
+    if (linkOf[id] === 'attaching' && !slowLink[id]) return null;
+    const why = linkWhy[id];
+    const text = linkNotice({ link: linkOf[id], phase: why === 'unlisted' ? undefined : why, listUnknown: why === 'unlisted', busy, who: orchestratorLike(s.name) ? tr('참모', 'the assistant') : undefined });
+    return text ? <span>{text}</span> : null;
+  };
   const { saved: avatars } = useAvatars();
   /** 참모 색 — 프사에서 고른 색, 없으면 순서 색(사이드바와 같은 순서) */
   const colorOfOrch = (x: Session) => bodyColor(avatars, x.name || '', orchColor(x.name || ''));
@@ -315,7 +353,12 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
     return chat && s.kind === 'background' ? (
       <>
         <button className="ib" aria-label={chatOn(id) ? tr('터미널 화면으로', 'Show the terminal') : tr('채팅 화면으로', 'Show the chat')} title={chatOn(id) ? tr('터미널 화면으로', 'Show the terminal') : tr('채팅 화면으로', 'Show the chat')}
-          onClick={() => { showTerm(id, chatOn(id)); requestAnimationFrame(() => focusPane(id)); }}>
+          onClick={() => {
+            const toTerm = chatOn(id);
+            showTerm(id, toTerm);
+            setTermNow((v) => { const n = new Set(v); if (toTerm && linkOf[id] !== 'live') n.add(id); else n.delete(id); return n; });
+            requestAnimationFrame(() => focusPane(id));
+          }}>
           {chatOn(id) ? <IconTerminal /> : <IconChat />}
         </button>
         {controls}
@@ -356,12 +399,15 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                       headless={!!headS}
                       note={memo?.note(s)}
                       onNoteClick={memo ? () => memo.onToggle(id) : undefined}
-                      onLink={(st) => {
+                      onLink={(st, why) => {
+                        linkNow.set(id, st);
                         links.set(id, st === 'live' ? panes.current.get(id) ?? null : null);
+                        if (st === 'gone') links.drop(id);
                         setLinkOf((m) => (m[id] === st ? m : { ...m, [id]: st }));
+                        setLinkWhy((m) => (m[id] === why ? m : { ...m, [id]: why }));
                       }}
                       inject={(api) => {
-                        if (!api) { panes.current.delete(id); links.set(id, null); return; }
+                        if (!api) { panes.current.delete(id); links.set(id, null); linkNow.delete(id); return; }
                         panes.current.set(id, api);
                         if (want.current === id) focusNow(id); // 새로 붙은 창(화면 복귀·되돌리기)이 기다리던 창이면
                       }}
@@ -374,7 +420,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           ctx={ctxOf?.(s)}
                           modelInfo={modelOf?.(s)}
                           cwd={s.cwd}
-                          notice={linkOf[id] === 'reattaching' || linkOf[id] === 'gone' ? <span>{linkOf[id] === 'gone' ? tr('세션이 꺼진 것 같아 — 다시 켜지면 안 간 말을 다시 보내 줘', 'The session seems to have stopped — send again once it is back') : tr('세션 연결이 끊겨서 다시 붙는 중 — 보낸 말은 붙으면 바로 가', 'Lost the session link — reattaching; your message goes as soon as it is back')}</span> : chatNotice}
+                          notice={noticeOf(id, s) ?? chatNotice}
                           link={linkOf[id]}
                           pickModel={(want) => pickFor(id, s, want)}
                           state={s.state}
@@ -388,7 +434,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           rawKeys={async (seq) => { for (const k of seq) { panes.current.get(id)?.raw(k); await new Promise((r) => setTimeout(r, 120)); } }}
                           onTerminal={() => showTerm(id, true)}
                           onInputFocus={() => panes.current.get(id)?.claimPtt()}
-                          screen={() => panes.current.get(id)?.screen()}
+                          screen={(back) => panes.current.get(id)?.screen(back)}
                           submitTerminal={(expect) => { const api = panes.current.get(id); if (api) void typing.push(id, enterTask(api, expect)); }}
                           pasteImage={() => panes.current.get(id)?.raw('\x16')}
                           voiceStop={voiceStops[id] ?? 0}

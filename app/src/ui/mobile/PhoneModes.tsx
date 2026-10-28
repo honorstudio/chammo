@@ -9,6 +9,7 @@ import { ModeCardArt, useModeCard } from '../mode/ModeCardArt';
 import { openInTurn, pickDiff, pickGroups, type PickItem } from '../../domain/homeModes';
 import { dashModes, phoneCells, hrefOk, normalize, type Act, type TNode } from '../../domain/modeTree';
 import { ModeEnvCtx, Node, type Drafts, type ModeEnv } from '../mode/ModeTree';
+import { useScheme } from '../scheme';
 import '../mode/mode.css';
 import { IconCheck, IconHide, IconMaximize, IconMore, IconSend, IconTrash } from '../Icons';
 import { edgeSwipe } from '../../domain/modeNav';
@@ -16,6 +17,7 @@ import { closeOnOutside } from '../outsideClose';
 import { BottomSheet, IconBtn } from './kit';
 import { useMemoPoll } from './usePoll';
 import { machine, tr } from '../../i18n';
+import { seenName } from '../../domain/session';
 
 const EVERY = 10_000;
 // 폰에선 웹 주소만 새 탭으로 — 컴퓨터 파일(file:)은 폰이 못 연다. Client 칸(모드 화면 모듈)은 컴퓨터 앱에서만
@@ -39,6 +41,8 @@ function ModeBody({ name, full = false }: { name: string; full?: boolean }) {
   const drafts = useRef<Drafts>(new Map()).current;
   const [v, setV] = useState<View>({ note: '불러오는 중', tree: null });
   const kick = useRef<() => void>(() => {});
+  // 폰 화면 테마를 모드에 넘긴다 — 바뀌면 다시 받는다(#4)
+  const scheme = useScheme();
   useEffect(() => {
     let alive = true;
     let timer: number | undefined;
@@ -51,7 +55,7 @@ function ModeBody({ name, full = false }: { name: string; full?: boolean }) {
       const inner = innerOf(el);
       const c = phoneCells(inner.w, full ? inner.h : null);
       ctl = new AbortController();
-      readModeView(name, c.columns, c.rows, ctl.signal).then((r) => {
+      readModeView(name, c.columns, c.rows, scheme, ctl.signal).then((r) => {
         if (!alive) return;
         const st = r.state;
         const note = st.unsupported ? '이 Claude Code 판에선 모드를 못 그려요' : st.error ? `모드가 멈췄어 — ${machine()}에서 다시 켜 줘` : !st.ready ? '모드 켜는 중' : null;
@@ -64,7 +68,7 @@ function ModeBody({ name, full = false }: { name: string; full?: boolean }) {
     const vis = () => { if (document.visibilityState === 'visible') load(); };
     document.addEventListener('visibilitychange', vis);
     return () => { alive = false; window.clearTimeout(timer); ctl?.abort(); document.removeEventListener('visibilitychange', vis); };
-  }, [name, full]);
+  }, [name, full, scheme]);
   // 누름 — 모드가 다시 그리라고 하면 바로 다시 받는다(데스크톱 밀림이 폰엔 안 오니 늘)
   const act = (a: Act) => void modeAct(name, a).finally(() => kick.current());
   // 칸 왼쪽 끝에서 오른쪽으로 밀기 = 모드가 그린 뒤로 단추 누르기(없으면 아무것도 안 함)
@@ -109,7 +113,7 @@ function RowArt({ name }: { name: string }) {
 }
 
 const elsewhereText = (e: NonNullable<PickItem['elsewhere']>) =>
-  e.where === 'dash' && e.dash ? `${e.dash.split(' · ').pop()} 홈에 켜짐` : e.where === 'panel' ? '패널에 켜짐' : e.where === 'window' ? '따로 창에 켜짐' : '다른 자리에 켜짐';
+  e.where === 'dash' && e.dash ? `${seenName(e.dash)} 홈에 켜짐` : e.where === 'panel' ? '패널에 켜짐' : e.where === 'window' ? '따로 창에 켜짐' : '다른 자리에 켜짐';
 
 /** 고르기 목록(데스크톱 ModePick 과 같은 것) — 줄을 눌러 체크 → 켜기(차례로) · 체크 빼면 이 홈에서 끄기. 데스크톱 앱이 켜고 끈다.
  *  줄 끝 단추 = 지우기(기본 모드는 숨기기, 내가 등록한 것은 제거 — 원본 폴더 휴지통·데이터 폴더 모드는 데스크톱 관리에서) + 되돌리기 토스트 */

@@ -139,8 +139,11 @@ impl World {
     }
 }
 
+/// 시험마다 다른 자리 — 같은 tag 를 쓰는 시험이 나란히 돌면 서로 지웠다(three 의 'fold', 10-28)
 fn tmp(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("chammo-locker-{tag}-{}", std::process::id()));
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let d = std::env::temp_dir().join(format!("chammo-locker-{tag}-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d
@@ -199,6 +202,24 @@ fn 올린_파일을_팀원이_받아_같은_바이트로_연다() {
     // 같은 이름이 있으면 겹치지 않게
     let again = download(&nb, "t1", &f, &o, &dir.join("받음"), &mut |_, _| {}).unwrap();
     assert_eq!(again.file_name().unwrap(), "보고서 2.pdf");
+}
+
+#[cfg(unix)]
+#[test]
+fn 바로가기_파일은_가리키는_진짜_내용을_올린다() {
+    // 10-28 사용자: 참모 보관함 바로가기(회의록 md)를 팀 보관함에 올림 — 링크 자체가 아니라 그 파일 내용이 가야 한다
+    let w = world();
+    let dir = tmp("link");
+    let real = write(&dir, "원본.md", "# 회의록 원본".as_bytes());
+    let link = dir.join("바로가기.md");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let r = upload(&w.net("dA"), &Me { keys: &w.a, device: "dA" }, &w.people.recipients, "t1", "", "file", "", &link, "바로가기.md", &mut |_, _| {}).unwrap();
+    let nb = w.net("dB");
+    let f = find(&nb, &r.id);
+    let o = open_file(&Me { keys: &w.b, device: "dB" }, &w.people, "t1", &f).unwrap();
+    let out = download(&nb, "t1", &f, &o, &dir.join("받음"), &mut |_, _| {}).unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), std::fs::read(&real).unwrap());
+    assert!(!std::fs::symlink_metadata(&out).unwrap().file_type().is_symlink());
 }
 
 #[test]
@@ -294,6 +315,8 @@ fn 이름_바꾸기는_바꾼_기기_서명으로_열리고_휴지통_되살리�
     assert_eq!(o.meta.name, "-..-etc-새 이름.txt", "경로 글자·앞 점은 이름에 못 들어간다");
     assert_eq!(o.meta.folder, "견적");
     assert_eq!((safe_folder("  "), safe_folder("a/b"), safe_folder("대화 파일")), (String::new(), "a-b".to_string(), "대화 파일 2".to_string()));
+    rename(&nb, &bme, "t1", &find(&nb, &r.id), &open_file(&bme, &w.people, "t1", &find(&nb, &r.id)).unwrap(), None, Some("견적/10월")).unwrap();
+    assert_eq!(open_file(&bme, &w.people, "t1", &find(&nb, &r.id)).unwrap().meta.folder, "견적/10월", "폴더 안 폴더로 옮긴다");
     act(&nb, "t1", &r.id, "trash").unwrap();
     assert_eq!(find(&nb, &r.id).state, "trash");
     act(&nb, "t1", &r.id, "restore").unwrap();
@@ -329,7 +352,7 @@ fn 빈_폴더는_표시_줄_하나로_남고_서버는_폴더_이름을_모른�
     assert_eq!((f.kind.as_str(), f.size, f.parts), ("file", 16, 1), "0바이트 — 사용량은 태그 16바이트");
     let o = open_file(&Me { keys: &w.b, device: "dB" }, &w.people, "t1", &f).unwrap();
     assert!(o.meta.dir);
-    assert_eq!((o.meta.folder.as_str(), o.meta.name.as_str(), o.meta.size), ("계약-서류", "", 0));
+    assert_eq!((o.meta.folder.as_str(), o.meta.name.as_str(), o.meta.size), ("계약/서류", "", 0), "빗금 = 폴더 안 폴더");
     assert!(mkdir(&w.net("dA"), &me, &w.people.recipients, "t1", "  ").is_err(), "빈 이름은 폴더가 아니다");
 }
 
@@ -373,4 +396,57 @@ fn 폴더_지우기는_안의_파일과_표시_줄을_휴지통으로_다른_건
     let nb = w.net("dB");
     assert_eq!((find(&nb, &a).state.as_str(), find(&nb, &m).state.as_str(), find(&nb, &b).state.as_str()), ("trash", "trash", "live"));
     assert!(remove_folder(&nb, "t1", &pairs, "").is_err(), "맨 위는 폴더가 아니다");
+}
+
+#[test]
+fn 폴더_경로는_칸마다_다듬고_대화_파일_자리와_너무_긴_경로는_막는다() {
+    assert_eq!(safe_path(" 계약 / ../서류 //10월/ "), "계약/서류/10월", "빈 칸·앞 점은 빠지고 칸마다 이름 규칙");
+    assert_eq!(safe_path("대화 파일/a"), "대화 파일 2/a", "맨 위 첫 칸만 대화 파일 자리를 피한다");
+    assert_eq!(safe_path("a/대화 파일"), "a/대화 파일");
+    assert_eq!(safe_path("a\\b"), "a-b", "역빗금은 칸 나눔이 아니다");
+    assert!(path_ok(&"가".repeat(FOLDER_MAX)).is_ok());
+    assert!(path_ok(&"가".repeat(FOLDER_MAX + 1)).is_err(), "봉한 meta 4096자 상한 안에 들게");
+    assert_eq!((parent_of("a/b/c"), parent_of("a")), ("a/b", ""));
+    assert!(under("a/b", "a") && under("a", "a") && !under("ab", "a") && !under("a", ""));
+}
+
+/// 견적/a.txt · 견적/10월/c.txt · 견적/10월 표시 줄 · 견적표/d.txt(이름이 비슷한 옆 폴더)
+fn nested(w: &World) -> (String, String, String, String) {
+    let dir = tmp("nest");
+    let me = Me { keys: &w.a, device: "dA" };
+    let n = w.net("dA");
+    let a = upload(&n, &me, &w.people.recipients, "t1", "", "file", "견적", &write(&dir, "a.txt", b"a"), "a.txt", &mut |_, _| {}).unwrap();
+    let c = upload(&n, &me, &w.people.recipients, "t1", "", "file", "견적/10월", &write(&dir, "c.txt", b"c"), "c.txt", &mut |_, _| {}).unwrap();
+    let m = mkdir(&n, &me, &w.people.recipients, "t1", "견적/10월").unwrap();
+    let d = upload(&n, &me, &w.people.recipients, "t1", "", "file", "견적표", &write(&dir, "d.txt", b"d"), "d.txt", &mut |_, _| {}).unwrap();
+    (a.id, c.id, m.id, d.id)
+}
+
+#[test]
+fn 폴더_이름_바꾸기_옮기기는_안쪽_폴더까지_같이_간다() {
+    let w = world();
+    let (a, c, m, d) = nested(&w);
+    let list = opened(&w, "dB", &w.b);
+    let pairs: Vec<_> = list.iter().map(|(f, o)| (f, o)).collect();
+    let me = Me { keys: &w.b, device: "dB" };
+    assert_eq!(rename_folder(&w.net("dB"), &me, "t1", &pairs, "견적", "보관/계약").unwrap(), 3);
+    let after = opened(&w, "dA", &w.a);
+    let folder = |id: &str| after.iter().find(|(f, _)| f.id == id).unwrap().1.meta.folder.clone();
+    assert_eq!((folder(&a), folder(&c), folder(&m), folder(&d)), ("보관/계약".into(), "보관/계약/10월".into(), "보관/계약/10월".into(), "견적표".into()));
+    let list = opened(&w, "dB", &w.b);
+    let pairs: Vec<_> = list.iter().map(|(f, o)| (f, o)).collect();
+    let e = rename_folder(&w.net("dB"), &me, "t1", &pairs, "보관", "보관/계약/안").unwrap_err();
+    assert!(e.contains("자기 안"), "자기 안으로는 못 옮긴다: {e}");
+}
+
+#[test]
+fn 폴더_지우기는_안쪽_폴더까지_휴지통으로_옆_폴더는_그대로() {
+    let w = world();
+    let (a, c, m, d) = nested(&w);
+    let list = opened(&w, "dB", &w.b);
+    let pairs: Vec<_> = list.iter().map(|(f, o)| (f, o)).collect();
+    assert_eq!(remove_folder(&w.net("dB"), "t1", &pairs, "견적").unwrap(), 3);
+    let nb = w.net("dB");
+    let st = |id: &str| find(&nb, id).state;
+    assert_eq!((st(&a), st(&c), st(&m), st(&d)), ("trash".into(), "trash".into(), "trash".into(), "live".into()));
 }

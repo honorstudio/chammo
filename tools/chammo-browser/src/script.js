@@ -19,6 +19,7 @@ const { placement, chromeLaunch, chromeArgs } = require('./window');
 const { askApp } = require('./place-at-launch');
 const { minimizePulledIn } = require('./minimize');
 const { sessionChrome } = require('./appcopy');
+const { createHoldCall, startHoldPasskey } = require('./hold-passkey');
 
 const CLI = path.join(__dirname, '..', 'bin', 'chammo-browser.js');
 const DEFAULT_WAIT = 120_000;
@@ -53,14 +54,16 @@ function parseArgs(argv) {
 /** ps 한 줄 → [부모 pid, 이름] (맥·리눅스). 못 읽으면 null */
 function psOf(pid) {
   if (process.platform === 'win32') return null;
-  const r = spawnSync('/bin/ps', ['-o', 'ppid=,comm=', '-p', String(pid)], { encoding: 'utf8', timeout: 2000 });
+  const r = spawnSync('/bin/ps', ['-ww', '-o', 'ppid=,args=', '-p', String(pid)], { encoding: 'utf8', timeout: 2000 });
   const m = /^\s*(\d+)\s+(.+?)\s*$/.exec(r.stdout || '');
   return m ? [Number(m[1]), m[2]] : null;
 }
 
 /**
  * 앱이 이 크롬을 어느 세션 것으로 보일지 — 세션 프로세스 pid(= claude agents --json 의 pid, 앱 procPid).
- * Claude Code 가 도구 명령에 주는 CLAUDE_PID 가 먼저, 없으면 조상 중 이름이 claude 인 것. 못 찾으면 0(세션 칸엔 안 붙는다)
+ * Claude Code 가 도구 명령에 주는 CLAUDE_PID 가 먼저, 없으면 조상 중 claude 세션. 못 찾으면 0(세션 칸엔 안 붙는다).
+ * 세션 = 이름이 claude 이거나 claude respawn 으로 다시 뜬 버전 파일(…/claude/versions/2.1.312 --resume …) — 그 위 pty 호스트(--bg-pty-host)·daemon 은
+ * 이름이 claude 여도 세션이 아니다(10-29 다시 뜬 세션을 건너뛰고 호스트 pid 를 잡아 앱이 주인을 못 찾았다). 인자로 가르니 ps 는 args 로 읽는다
  */
 function sessionPid({ env = process.env, start = process.ppid, ps = psOf } = {}) {
   if (/^\d{1,10}$/.test(String(env.CLAUDE_PID || ''))) return Number(env.CLAUDE_PID);
@@ -68,7 +71,7 @@ function sessionPid({ env = process.env, start = process.ppid, ps = psOf } = {})
   for (let i = 0; i < 20 && pid > 1; i++) {
     const row = ps(pid);
     if (!row) return 0;
-    if (/(^|\/)claude( |$)/.test(row[1])) return pid;
+    if (/(^|\/)claude( |$)|\/claude\/versions\/\d[^/\s]*( |$)/.test(row[1]) && !/(^|\s)(--)?bg-pty-host(\s|$)|(^|\/)claude daemon(\s|$)/.test(row[1])) return pid;
     pid = row[0];
   }
   return 0;
@@ -245,36 +248,71 @@ async function hold(o, { out = (r) => process.stdout.write(`${JSON.stringify(r)}
     if (live) live.reset();
     else fs.rmSync(portFile, { force: true }); // 지난 크롬이 남긴 포트로 엉뚱한 주소를 알리지 않게
     const { chromium } = playwrightCore();
-    ctx = await chromium.launchPersistentContext(profileDir, {
-      ...(picked.executablePath ? { executablePath: picked.executablePath } : { channel }),
-      headless: !!o.headless,
-      viewport: null, // 크롬 창 그대로 — 지킴이가 화면 크기를 흉내 내면 스크립트 페이지에도 걸린다
-      args: chromeArgs(place.pos, true, place.size),
-    });
+    let switching = false; // 패스키 전환으로 다시 띄우는 중 — 그동안 크롬 닫힘은 끝이 아니다
+    let current = null; // 마지막으로 적은 탭 — 다시 띄울 주소
+    // 앱 화면 상태 — 페이지 이동마다 지금 주소·탭(MCP 래퍼가 도구 응답으로 적는 것과 같은 모양)
+    const titles = new WeakMap();
+    const report = async (page) => {
+      if (closing || switching) return;
+      current = page;
+      titles.set(page, await page.title().catch(() => ''));
+      live.onCall('script', { url: page.url() });
+      live.onResult('script', { content: [{ type: 'text', text: `- Page URL: ${page.url()}\n- Page Title: ${titles.get(page)}\n${tabsText(ctx.pages(), page, titles)}` }] });
+    };
+    const watch = (page) => {
+      // 다른 손님(세션 도구·CDP)이 주소를 주고 연 탭은 첫 이동이 감시 전에 끝날 수 있다 — 뜬 뒤 한 번 적는다
+      page.waitForLoadState('domcontentloaded').then(() => report(page), () => {});
+      page.on('framenavigated', (f) => { if (f === page.mainFrame()) report(page).catch(() => {}); });
+      page.on('close', () => { const p = ctx.pages()[0]; if (p) report(p).catch(() => {}); });
+    };
+    // 크롬 띄우기 — 처음, 그리고 패스키 전환(src/hold-passkey.js)으로 구글 서명 원본 ↔ ad-hoc 사본
+    async function open(exe, inject) {
+      ctx = await chromium.launchPersistentContext(profileDir, {
+        ...(exe ? { executablePath: exe } : { channel }),
+        headless: !!o.headless,
+        viewport: null, // 크롬 창 그대로 — 지킴이가 화면 크기를 흉내 내면 스크립트 페이지에도 걸린다
+        args: chromeArgs(place.pos, true, place.size),
+        // ad-hoc 사본이면 Dock·⌘Tab 빼기 dylib(src/appcopy.js) — 이 크롬에만
+        ...(inject ? { env: { ...process.env, DYLD_INSERT_LIBRARIES: inject } } : {}),
+      });
+      const port = await waitPort(profileDir, 15_000);
+      if (!port) throw new Error('크롬이 CDP 포트를 안 알려 줬어요');
+      ctx.on('close', () => { if (!switching) shutdown('크롬이 닫힘'); });
+      if (place.offPos && live) for (const ms of [0, 1500, 4000]) setTimeout(() => minimizePulledIn(port, place.offPos).catch(() => {}), ms).unref();
+      if (live) {
+        ctx.pages().forEach(watch);
+        ctx.on('page', watch);
+      }
+      return port;
+    }
+    const port = await open(picked.executablePath, picked.inject);
     channelMod.remember(profileDir, channel);
-    const port = await waitPort(profileDir, 15_000);
-    if (!port) throw new Error('크롬이 CDP 포트를 안 알려 줬어요');
-    out({ ok: true, wsEndpoint: wsOf(port), shared: false, holder: process.pid, profile, channel, ...(pick.warn ? { warn: pick.warn } : {}) });
 
-    ctx.on('close', () => shutdown('크롬이 닫힘'));
-    if (place.offPos && live) for (const ms of [0, 1500, 4000]) setTimeout(() => minimizePulledIn(port, place.offPos).catch(() => {}), ms).unref();
+    // 맥 패스키 — ad-hoc 사본이면 MCP 래퍼처럼 구글 서명 원본으로 바꿨다 돌아온다(서랍에서 혼자 쥔 크롬일 때만, src/hold-passkey.js)
+    if (live && picked.inject && picked.signed && !o.headless) {
+      const liveDir = path.join(paths.ROOT, 'live');
+      const call = createHoldCall({
+        tabs: () => { const ps = ctx.pages(); return tabsText(ps, ps.includes(current) ? current : ps[0], titles); },
+        close: async () => { switching = true; await ctx.close(); fs.rmSync(portFile, { force: true }); },
+        open: async (url) => {
+          const signed = fs.existsSync(path.join(liveDir, `${profile}.signed-want`));
+          try {
+            await open(signed ? picked.signed : picked.executablePath, signed ? null : picked.inject);
+          } catch (e) {
+            switching = false;
+            shutdown(`다시 띄우기 실패: ${e.message.split('\n')[0]}`);
+            throw e;
+          }
+          switching = false;
+          const page = ctx.pages()[0] || (await ctx.newPage());
+          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => {});
+        },
+      });
+      startHoldPasskey({ profile, profileDir, owner, lockDir, dataDir: paths.dataDir(), liveDir, live, call, log });
+    }
+    // 주소는 패스키 감시를 붙인 뒤에 알린다 — 손님이 받자마자 연 페이지의 부름도 보게
+    out({ ok: true, wsEndpoint: wsOf(port), shared: false, holder: process.pid, profile, channel, ...(pick.warn ? { warn: pick.warn } : {}) });
     if (live) {
-      // 앱 화면 상태 — 페이지 이동마다 지금 주소·탭(MCP 래퍼가 도구 응답으로 적는 것과 같은 모양)
-      const titles = new WeakMap();
-      const report = async (page) => {
-        if (closing) return;
-        titles.set(page, await page.title().catch(() => ''));
-        live.onCall('script', { url: page.url() });
-        live.onResult('script', { content: [{ type: 'text', text: `- Page URL: ${page.url()}\n- Page Title: ${titles.get(page)}\n${tabsText(ctx.pages(), page, titles)}` }] });
-      };
-      const watch = (page) => {
-        // 다른 손님(세션 도구·CDP)이 주소를 주고 연 탭은 첫 이동이 감시 전에 끝날 수 있다 — 뜬 뒤 한 번 적는다
-        page.waitForLoadState('domcontentloaded').then(() => report(page), () => {});
-        page.on('framenavigated', (f) => { if (f === page.mainFrame()) report(page).catch(() => {}); });
-        page.on('close', () => { const p = ctx.pages()[0]; if (p) report(p).catch(() => {}); });
-      };
-      ctx.pages().forEach(watch);
-      ctx.on('page', watch);
       live.onCall('script', {});
       live.onResult('script', { content: [] });
     }

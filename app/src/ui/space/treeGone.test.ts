@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import view from './SpaceView.tsx?raw';
 import page from './LockerPage.tsx?raw';
 import items from './lockerMenuItems.ts?raw';
+import tile from './FolderTile.tsx?raw';
 
 // 2026-10-12 사용자 "나무 칸(참모 이름 머리 + 폴더 줄)은 이제 필요 없겠다" — 홈·보관함 고정 탭이 그 일을 한다.
 // 길 찾기는 표준 파일 앱처럼 가운데 경로 줄(보관함 › 자료 › 10월) + 폴더 카드, 옮기기는 끌기(폴더 카드·경로 칸) + 우클릭 '옮기기'
@@ -17,7 +18,8 @@ describe('나무 칸 없음 → 경로 줄', () => {
   it('경로 칸 = 누르면 거기로, 끌어 놓으면 그 폴더로(data-locker-folder·drop), 끝에 새 폴더 +', () => {
     // 읽기 전용 칸(맥 폴더 연결 안)만 빼고 — drop() 이 data-locker-folder·drop 을 건다
     expect(page).toMatch(/'data-locker-folder': r, 'data-locker-drop': r/);
-    expect(page).toMatch(/\{\.\.\.drop\(c\.rel\)\}/);
+    expect(page).toContain('dropOf={drop}'); // 경로 줄은 팀 보관함과 같은 조각(PathCrumbs)
+    expect(tile).toMatch(/\{\.\.\.dropOf\(c\.key\)\}/);
     expect(page).toMatch(/label=\{tr\('여기에 새 폴더', 'New folder here'\)\}/);
   });
   it('우클릭 옮기기 → 폴더 고르기(moveTargets)', () => {

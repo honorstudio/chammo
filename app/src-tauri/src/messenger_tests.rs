@@ -174,7 +174,10 @@ fn 참모_이름_가리기() {
     assert!(find_orch(&list, "아틀라스-9").is_none());
     assert_eq!(default_orch(&list, Some("아틀라스-2"), "아틀라스").unwrap().id, "bbbbbbbb");
     assert_eq!(default_orch(&list, Some("아틀라스-7"), "아틀라스").unwrap().id, "aaaaaaaa", "꺼진 참모면 기본 이름");
-    assert!(list_text(&list, list.get(1)).contains("아틀라스-2 · 참모 업데이트 — 지금 받는 참모"));
+    // 목록엔 별명(/별명 으로 부를 수 있다) — 번호 이름은 안 보인다(2026-10-28). 별명 없는 참모는 기본 이름이 부르는 열쇠라 그대로
+    let t = list_text(&list, list.get(1));
+    assert!(t.contains("· 참모 업데이트 — 지금 받는 참모"), "{t}");
+    assert!(!t.contains("아틀라스-2"), "{t}");
 }
 
 #[test]

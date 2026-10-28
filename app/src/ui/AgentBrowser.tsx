@@ -60,7 +60,7 @@ export function useAgentFrame(profile: string, interval: number) {
 }
 
 /** 화면이 진짜인가(domain browserScreen) — 목록에서 빠진·탭 0개·지금 탭 모름이 얼마나 이어졌는지 세서 넘긴다. gone = 모달이 목록에서 빠진 브라우저를 붙든 채 */
-export function useBrowserScreen(t: { error: string; attached: boolean; pages: CdpPage[]; current: string | null; now: number }, gone = false, hasFrame = true) {
+export function useBrowserScreen(t: { error: string; attached: boolean; pages: CdpPage[]; current: string | null; now: number; hidden?: boolean }, gone = false, hasFrame = true) {
   const since = useRef<{ gone: number | null; empty: number | null; unsure: number | null; noframe: number | null }>({ gone: null, empty: null, unsure: null, noframe: null });
   const s = since.current;
   const age = (k: 'gone' | 'empty' | 'unsure' | 'noframe', on: boolean) => {
@@ -74,7 +74,7 @@ export function useBrowserScreen(t: { error: string; attached: boolean; pages: C
     goneMs: age('gone', gone), error: t.error, attached: t.attached, pages: t.pages.length, emptyMs: age('empty', empty),
     current: !!t.current, unsureMs: age('unsure', !t.current && !t.error && !gone),
     // 붙고 탭도 아는데 그림이 한 장도 없다 — 오래가면 이유·다시 시도·크롬에서 보기(2026-10-21 첫 사용자 제보)
-    noFrameMs: age('noframe', t.attached && !!t.current && !hasFrame && !t.error && !gone),
+    noFrameMs: age('noframe', t.attached && !!t.current && !hasFrame && !t.error && !gone), hidden: t.hidden,
   });
 }
 
@@ -109,7 +109,7 @@ export function useAgentTabs(profile: string, every = 1000) {
   // dialog = 지금 탭 대화상자, dialogTabs = 대화상자가 떠 있는 탭들, stuck = 지금 탭이 멈춤(답이 안 들어감·앱이 모르는 대화상자 — 크롬에서 보기로 푼다)
   // error = 화면 받기 실패 이유(Rust 일꾼) — 다시 붙으면 지워진다. attached = 일꾼이 붙어 탭 목록을 읽음(그런데 탭 0개면 닫힘)
   // popup = 크롬이 이 그림 밖에 사람을 부를 자기 창을 띄움(패스키·Touch ID·폰 QR·권한) — 크롬에서 보기로 꺼내야 보인다. popupKind = 패스키인지
-  const [t, setT] = useState<{ pages: CdpPage[]; current: string | null; pinned: boolean; shown: boolean; dialog: AgentDialog | null; dialogTabs: string[]; stuck: boolean; chooser: string | null; reopened: boolean; dropped: number; error: string; attached: boolean; popup: boolean; popupKind?: PopupKind; wrapperDialog: WrapperDialog | null; permission: PagePermission | null; fedcm: FedcmDialog | null; framed?: boolean }>({ pages: [], current: null, pinned: false, shown: false, dialog: null, dialogTabs: [], stuck: false, chooser: null, reopened: false, dropped: 0, error: '', attached: false, popup: false, wrapperDialog: null, permission: null, fedcm: null });
+  const [t, setT] = useState<{ pages: CdpPage[]; current: string | null; pinned: boolean; shown: boolean; dialog: AgentDialog | null; dialogTabs: string[]; stuck: boolean; chooser: string | null; reopened: boolean; dropped: number; error: string; attached: boolean; popup: boolean; popupKind?: PopupKind; wrapperDialog: WrapperDialog | null; permission: PagePermission | null; fedcm: FedcmDialog | null; framed?: boolean; hidden?: boolean; headless?: boolean; desk?: boolean; signed?: boolean; signable?: boolean; signedAuto?: boolean }>({ pages: [], current: null, pinned: false, shown: false, dialog: null, dialogTabs: [], stuck: false, chooser: null, reopened: false, dropped: 0, error: '', attached: false, popup: false, wrapperDialog: null, permission: null, fedcm: null });
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     let alive = true;

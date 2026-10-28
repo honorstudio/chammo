@@ -1,13 +1,14 @@
 // 폰 화면 판단 — 예약 담당 참모, 세션 목록에 붙은 컨텍스트, 그림 붙여 보내기 글. 화면·통신 없음
 import { josa, machine, tr } from '../i18n';
 import { askView, summarizeTranscript } from './activity';
+import { chatWoke, handedTurn } from './handedAsk';
 import { chatBusy, splitPaths, type ChatItem } from './chat';
 import { parseCtx, type Ctx } from './ctx';
 import { chipPastes } from './drop';
 import { findTarget } from './inbox';
 import type { Session } from './session';
-import { displayName, shownName, splitOrchName, withNick } from './orchLabel';
-import { groupByProject, orchestratorLike } from './session';
+import { splitOrchName, withNick } from './orchLabel';
+import { groupByProject, seenName } from './session';
 import { homeRows, resumedOrch, type HomeRow } from './orchHome';
 import { heldBy, holderMap } from './spaceNav';
 import { parseStopped, resumable, stoppedOrchs } from './stopped';
@@ -109,23 +110,24 @@ export function usageText(json: string, now: number): string {
 }
 
 /** 그 참모가 사용자에게 묻고 멈췄나 — 마지막 말이 묻는 답(asksUser)이고 일하는 중이 아니면 결론·질문(askView, 결정 대기함과 같은 판단) */
-export function orchAsk(items: ChatItem[], state: Session['state']): { ts: string; lead: string; q: string } | null {
+export function orchAsk(items: ChatItem[], state: Session['state']): { ts: string; lead: string; q: string; woke?: string[] } | null {
   if (state === 'working') return null;
   const last = [...items].reverse().find((it) => it.kind === 'user' || it.kind === 'assistant');
   if (last?.kind !== 'assistant' || !asksUser(last.text)) return null;
-  return { ts: last.ts, ...askView(last.text) };
+  const woke = chatWoke(items); // 전부 다른 세션 말일 때만 — activity reply.woke 와 같은 꼴
+  return { ts: last.ts, ...askView(last.text), ...(woke?.every(Boolean) ? { woke } : {}) };
 }
 
 /** taskId = decide 의 작업 id — 폰에서 답하면 그 일에 answer 를 남겨 카드가 빠진다(/api/task-answer) */
 export type Waiting = { orch: string; name: string; kind: 'ask' | 'blocked' | 'decide'; ts: string; q: string; lead?: string; taskId?: string };
 
 /** 사용자 답을 기다리는 것 — 참모 답 끝 질문(asks: 참모 id → orchAsk) · 확인창·선택지에서 멈춤 · scripts/task ask(답 받을 참모 = to). 최근 위.
- *  하위 세션 물음은 참모가 대신 답하니 넣지 않는다(시안 v3 전제) */
-export function waitingList(orchs: Session[], asks: Record<string, { ts: string; lead: string; q: string } | null>, events: TaskEvent[]): Waiting[] {
+ *  하위 세션 물음은 참모가 대신 답하니 넣지 않는다(시안 v3 전제). 일을 넘긴 참모의 말로 깬 턴의 물음은 그 참모 몫이라 뺀다(데스크톱과 같은 판단 handedTurn, 10-28) */
+export function waitingList(orchs: Session[], asks: Record<string, { ts: string; lead: string; q: string; woke?: string[] } | null>, events: TaskEvent[], now = Date.now()): Waiting[] {
   const out: Waiting[] = [];
   for (const o of orchs) {
     const a = asks[o.id];
-    if (a) out.push({ orch: o.id, name: o.name, kind: 'ask', ts: a.ts, q: a.q, ...(a.lead ? { lead: a.lead } : {}) });
+    if (a && !handedTurn(a.woke, o.name, events, now)) out.push({ orch: o.id, name: o.name, kind: 'ask', ts: a.ts, q: a.q, ...(a.lead ? { lead: a.lead } : {}) });
     if (o.state === 'blocked') out.push({ orch: o.id, name: o.name, kind: 'blocked', ts: '', q: `확인창·선택지에서 멈춰 있어요 — ${machine()}에서 열어 골라 주세요` });
   }
   const last = new Map<string, TaskEvent>();
@@ -285,7 +287,7 @@ export const closeOnRelease = (dy: number, v: number) => (v <= -0.5 ? false : v 
 /** 폰 화면에 보일 이름 — 참모는 번호 없이(데스크톱 orchDisplay 와 같은 displayName, 별명이 겹치면 꼬리), 별명 없는 참모는 비서 이름.
  *  참모가 아닌 세션은 별명만 떼고 그대로(프로젝트 끝 번호는 이름의 일부). 폰엔 데스크톱 별명 저장소(localStorage)가 없어 진짜 이름에 실린 별명을 쓴다 */
 export function phoneName(name: string, orchs: { name: string }[]): string {
-  return orchestratorLike(name) ? displayName(name, undefined, orchs) : shownName(name);
+  return seenName(name, orchs);
 }
 
 /** 폰에서 바꾼 이름(id → 별명, 빈 글 = 처음 이름) — 맥이 쉬는 때 /rename 으로 진짜 이름에 실을 때까지 폰엔 바로 새 이름 */
@@ -416,6 +418,14 @@ export const nearBottom = (scrollHeight: number, scrollTop: number, clientHeight
 
 /** 목록이 줄거나(키보드) 말풍선이 늘 때 바닥에 붙일까 — 바닥 근처를 보던 중이었거나 내가 막 보냈으면. 옛 글을 보는 중이면 그대로(2026-10-03 사용자) */
 export const stickBottom = (o: { wasNear: boolean; sentMine: boolean }) => o.wasNear || o.sentMine;
+
+/** 칸 크기가 바뀌어 글줄이 다시 감길 때 둘 scrollTop — 맨 아래를 보던 중이면 맨 아래, 올려 읽던 중이면 읽던 말(anchor: 칸 위에서 떨어진 거리
+ *  was → now)이 밀린 만큼만 같이 민다. 그대로면 null(안 건드림). 맥 웹뷰는 크롬의 스크롤 고정(overflow-anchor)이 없다(팀챗 10-28 사용자) */
+export const keepTop = (o: { near: boolean; scrollTop: number; scrollHeight: number; clientHeight: number; anchor?: { was: number; now: number } }): number | null => {
+  if (o.near) return Math.max(0, o.scrollHeight - o.clientHeight);
+  if (!o.anchor || o.anchor.now === o.anchor.was) return null;
+  return o.scrollTop + o.anchor.now - o.anchor.was;
+};
 
 /** '맨 아래로' 버튼을 띄울까 — 데스크톱 채팅(ChatView)과 같은 기준, 바닥에서 400px 넘게 올려 읽는 중일 때만 */
 export const farFromBottom = (scrollHeight: number, scrollTop: number, clientHeight: number) => scrollHeight - scrollTop - clientHeight > 400;

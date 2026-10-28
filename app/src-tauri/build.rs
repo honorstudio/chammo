@@ -1,5 +1,6 @@
 fn main() {
     vdisplay_helper();
+    accessory_dylib();
     craft_mirror();
     tauri_build::build()
 }
@@ -15,8 +16,11 @@ fn craft_mirror() {
     let src = manifest_dir().join("../../tools/craft-mirror/mirror.swift");
     // 붙이기 층(attach.swift, 2026-10-21 시험) — 다른 앱 창을 칸 자리에. 앱 종류와 떼어 따로 둔다
     let attach = manifest_dir().join("../../tools/craft-mirror/attach.swift");
+    // 세션 브라우저 비추기(browser.swift, 2026-10-27 인앱 브라우저 A) — 같은 정적 라이브러리에
+    let browser = manifest_dir().join("../../tools/craft-mirror/browser.swift");
     println!("cargo:rerun-if-changed={}", src.display());
     println!("cargo:rerun-if-changed={}", attach.display());
+    println!("cargo:rerun-if-changed={}", browser.display());
     // 원본이 없는 건 swiftc 문제가 아니라 소스를 덜 담은 것 — 조용히 빼지 않고 멈춘다(0.3.4 공개본에 tools/ 가 빠져 비추기 없는 앱이 나올 뻔)
     assert!(src.exists(), "tools/craft-mirror/mirror.swift is missing — the export must include tools/craft-mirror");
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
@@ -25,6 +29,7 @@ fn craft_mirror() {
         .arg(out.join("libcraftmirror.a"))
         .arg(&src)
         .arg(&attach)
+        .arg(&browser)
         .status()
         .is_ok_and(|s| s.success());
     if !built {
@@ -60,9 +65,12 @@ fn vdisplay_helper() {
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("chammo-vdisplay");
     let mac = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
     assert!(!mac || src.join("main.swift").exists(), "tools/chammo-vdisplay is missing — the export must include tools/chammo-vdisplay");
+    // 최소 macOS 를 앱(arm64 11.0)에 맞춘다 — 안 주면 빌드한 맥 판(26)이 박혀 macOS 26 에만 있는 Swift 라이브러리
+    // (libswift_DarwinFoundation2)를 꼭 불러서, 옛 macOS 에선 도우미가 dyld 에서 죽고 가짜 화면이 조용히 없었다(2026-10-26 PM 맥북)
+    let arch = if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64") { "x86_64" } else { "arm64" };
     let built = mac
         && std::process::Command::new("swiftc")
-            .args(["-O", "-import-objc-header"])
+            .args(["-O", "-target", &format!("{arch}-apple-macos11.0"), "-import-objc-header"])
             .arg(src.join("bridge.h"))
             .arg(src.join("place.swift"))
             .arg(src.join("main.swift"))
@@ -72,6 +80,35 @@ fn vdisplay_helper() {
             .status()
             .is_ok_and(|s| s.success());
     if !built {
+        let _ = std::fs::write(&out, []);
+    }
+}
+
+/// 세션 크롬 Dock·⌘Tab 빼기 dylib(tools/chammo-browser/native/accessory.m) — 맥이면 clang 으로 OUT_DIR 에(accessory.rs 가 include_bytes).
+/// 실패하면 빈 파일 — 앱은 그 파일을 안 풀고, 래퍼는 사본을 구글 서명 그대로 띄운다(Dock 에 보일 뿐)
+fn accessory_dylib() {
+    let src = manifest_dir().join("../../tools/chammo-browser/native/accessory.m");
+    println!("cargo:rerun-if-changed={}", src.display());
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("chammo-accessory.dylib");
+    let mac = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
+    // 없으면 경고만 — 공유 CARGO_TARGET_DIR 에선 다른 워크트리가 이 빌드 스크립트를 재사용해 그 워크트리 소스엔 없는 이 파일로 패닉했다(10-27).
+    // 공개본 누락은 scripts/release-check 가 실행 파일에 dylib 가 들었는지로 본다
+    if mac && !src.exists() {
+        println!("cargo:warning=tools/chammo-browser/native/accessory.m is missing — session Chrome will show in the Dock");
+    }
+    // 최소 macOS 를 앱(11.0)에 — vdisplay 도우미와 같은 까닭
+    let arch = if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64") { "x86_64" } else { "arm64" };
+    let built = mac
+        && std::process::Command::new("clang")
+            .args(["-dynamiclib", "-fobjc-arc", "-O2", "-target", &format!("{arch}-apple-macos11.0"), "-framework", "AppKit", "-o"])
+            .arg(&out)
+            .arg(&src)
+            .status()
+            .is_ok_and(|s| s.success());
+    if !built {
+        if mac {
+            println!("cargo:warning=chammo-accessory.dylib did not build — session Chrome will show in the Dock");
+        }
         let _ = std::fs::write(&out, []);
     }
 }

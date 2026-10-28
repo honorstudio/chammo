@@ -59,6 +59,8 @@ class Parse(unittest.TestCase):
         self.assertEqual(app.parse(['feature', 'autoRevive', 'on']), ('feature', 'autoRevive on'))
         # 익명 사용 통계 끄기(설정 > 기능과 같다, 2026-10-24)
         self.assertEqual(app.parse(['feature', 'usagePing', 'off']), ('feature', 'usagePing off'))
+        # 기본 참모 앱 미리 받기 끄기(설정 > 기능과 같다, 2026-10-26)
+        self.assertEqual(app.parse(['feature', 'craftBasics', 'off']), ('feature', 'craftBasics off'))
         self.assertEqual(app.parse(['close', 'harnitor']), ('close', 'harnitor'))
 
     def test_틀린_명령은_None(self):
@@ -76,7 +78,7 @@ class Status(unittest.TestCase):
             open(os.path.join(d, 'voice.json'), 'w').write('{"on":true}')
             s = app.status(d)
             self.assertEqual((s['language'], s['assistantName'], s['devRoot']), ('en', 'Max', '~/Projects'))
-            self.assertEqual(s['features'], {'office': False, 'tama': True, 'gacha': True, 'review': True, 'voice': True, 'autoRevive': False, 'autoTidy': True, 'computerUse': False, 'usagePing': True})
+            self.assertEqual(s['features'], {'office': False, 'tama': True, 'gacha': True, 'review': True, 'voice': True, 'autoRevive': False, 'autoTidy': True, 'computerUse': False, 'usagePing': True, 'craftBasics': True, 'bubble': True, 'bubbleDesk': True})
             self.assertTrue(s['voiceMode'])
             self.assertFalse(s['browserAutomation'])
             pkg = os.path.join(d, 'tools/chammo-browser/node_modules/@playwright/mcp')

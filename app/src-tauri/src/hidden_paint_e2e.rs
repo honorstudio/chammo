@@ -39,7 +39,7 @@ fn hidden_paint_e2e() {
         let mut l = t.lines();
         Some((l.next()?.trim().parse::<u16>().ok()?, l.next()?.trim().to_string()))
     });
-    let live = Live { profile: profile.clone(), pid: 1, session_pid: 1, port, ws_path: ws, url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None, scripts: 0, popup: false, popup_kind: String::new(), wake: None };
+    let live = Live { profile: profile.clone(), pid: 1, session_pid: 1, port, ws_path: ws, url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None, scripts: 0, popup: false, popup_kind: String::new(), wake: None, signable: false };
     let pid = wait_for("크롬 pid", 10, || chrome_pid(port));
 
     let mut owner = Cdp { ws: wait_for("주인 연결", 10, || connect(&live).ok()), next: 0 };

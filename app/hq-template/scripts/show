@@ -35,6 +35,23 @@ def data_dir(home=None, env=None, exists=os.path.isdir):
 
 
 LOG = os.path.join(data_dir(), 'show.jsonl')
+# 스페이스가 그림 한 장(QuickLook)밖에 못 보여 주는 형식 → 그 형식을 여는 참모 앱(app/src/domain/craftOpen craftFirstExts 와 같아야 한다 — 시험이 견준다).
+# 사람이 앱에서 누르면 참모 앱으로 열리는 것들 — show 는 미리보기만 띄우고, 보고 고치려면 craft 로 열라고 한 줄
+CRAFT_FIRST = {'ai': 'vectorcraft', 'ait': 'vectorcraft', 'eps': 'vectorcraft', 'svgz': 'vectorcraft', 'af': 'vectorcraft', 'afdesign': 'vectorcraft',
+               'afpub': 'vectorcraft', 'emf': 'vectorcraft', 'wmf': 'vectorcraft', 'vectorcraft': 'vectorcraft', 'vctemplate': 'vectorcraft',
+               'dwg': 'cadcraft', 'dxf': 'cadcraft', 'psd': 'photocraft', 'psb': 'photocraft', 'kra': 'photocraft', 'ora': 'photocraft', 'xcf': 'photocraft',
+               'xlsb': 'gridcraft', 'fig': 'figcraft', 'figcraft': 'figcraft', 'designcraft': 'designcraft', 'fcproj': 'filmcraft', 'ecproj': 'effectcraft',
+               'scproj': 'soundcraft', 'scraft': 'soundcraft'}
+
+
+def craft_hint(real):
+    """참모 앱이 맞는 형식이면 stderr 에 낼 한 줄, 아니면 None"""
+    app = CRAFT_FIRST.get(os.path.splitext(real)[1].lower().lstrip('.'))
+    if not app:
+        return None
+    return (f'preview picture only — to see/edit it as it is, open it in the Chammo app: scripts/craft open {app} --native "{real}" '
+            f'(not installed → say you will install it, then go on) / 그림 미리보기뿐 — 제대로 보거나 고치려면 참모 앱으로: scripts/craft open {app} --native …'
+            f'(안 깔렸으면 설치한다고 말하고 진행)')
 HOME = os.path.realpath(os.path.expanduser('~'))
 
 
@@ -126,6 +143,9 @@ def main(argv):
         with open(LOG, 'a', encoding='utf-8') as f:
             f.write(json.dumps(record(real, os.environ, os.getcwd(), datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), at), ensure_ascii=False) + '\n')
         print(f'{shown_where(os.path.dirname(LOG))}: {real}' + (f'  (spot / 짚음: {json.dumps(at, ensure_ascii=False)})' if at else ''))
+        hint = craft_hint(real)
+        if hint:
+            print(hint, file=sys.stderr)
     return 1 if bad else 0
 
 

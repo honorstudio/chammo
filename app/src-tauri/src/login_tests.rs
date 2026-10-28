@@ -206,3 +206,15 @@ fn 처음이거나_값을_못_읽으면_고친_시각_그대로_예전처럼() {
     assert_eq!(login_at_step(Some(prev), Some(200), || None).1, Some(200), "못 읽으면 예전 판단(고친 시각)");
     assert_eq!(login_at_step(Some(prev), None, || Some(7)), (Some(prev), None), "칸을 못 보면 모름, 기억은 둔다");
 }
+
+#[test]
+fn 약관_다시_시도_시각은_파일_하나() {
+    let dir = std::env::temp_dir().join(format!("chammo-terms-retry-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    assert_eq!(terms_retry_read(&dir), None);
+    terms_retry_mark(&dir, 1_793_000_000_000).unwrap();
+    assert_eq!(terms_retry_read(&dir), Some(1_793_000_000_000));
+    std::fs::write(dir.join(TERMS_RETRY_FILE), "깨짐").unwrap();
+    assert_eq!(terms_retry_read(&dir), None);
+    let _ = std::fs::remove_dir_all(&dir);
+}

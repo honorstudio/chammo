@@ -7,7 +7,7 @@ import { openChatFile } from './openChatFile';
 
 export function ChatFileCard({ f, by }: { f: ChatFile; by: string }) {
   const where = atLine(f.at);
-  const open = () => void openChatFile(f.path, by, f.at);
+  const open = () => void openChatFile(f.path, by, f.at, !!f.at); // 짚은 곳이 있으면 미리보기(참모 앱은 그 자리를 모른다)
   return (
     <div className="chat-row">
       <button type="button" className="chat-filecard" onClick={open} title={f.path}>

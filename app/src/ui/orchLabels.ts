@@ -1,6 +1,7 @@
 // 참모 별명 저장소 — 세션 id 별, 이 컴퓨터에만(localStorage). 메뉴·탭·대시보드가 같이 읽는다
 import { useSyncExternalStore } from 'react';
 import { cleanLabel, displayName } from '../domain/orchLabel';
+import { seenName } from '../domain/session';
 
 const KEY = 'orchLabels';
 let labels: Record<string, string> = (() => { try { return JSON.parse(localStorage.getItem(KEY) ?? '{}') as Record<string, string>; } catch { return {}; } })();
@@ -15,6 +16,8 @@ export function setOrchLabel(id: string, raw: string) {
   subs.forEach((f) => f());
 }
 export const orchLabel = (id: string): string | undefined => labels[id];
+/** 지금 별명 전부(짧은 번호 → 별명) — live.json 에 같이 적는다(기본 모드 '참모 상태'가 읽는다, domain/revive) */
+export const orchLabelsNow = (): Readonly<Record<string, string>> => labels;
 /** 별명이 바뀌면 다시 그린다 */
 export function useOrchLabels(): Record<string, string> {
   return useSyncExternalStore((f) => { subs.add(f); return () => { subs.delete(f); }; }, () => labels);
@@ -35,3 +38,8 @@ export const orchRoster = () => roster;
 /** 화면에 보일 참모 이름 — 번호 없이(domain/orchLabel displayName). 진짜 이름은 SendMessage 주소라 안에서만 */
 export const orchDisplay = (s: { id: string; name: string }): string =>
   displayName(s.name, labels[s.id], roster.map((r) => ({ name: r.name, label: labels[r.id] })));
+/** 진짜 이름만 아는 자리(받은 말 머리·기록의 보낸 참모) — 같이 보이는 참모면 orchDisplay(앱 별명까지), 아니면 seenName */
+export const seenNow = (name: string): string => {
+  const r = roster.find((x) => x.name === name);
+  return r ? orchDisplay(r) : seenName(name, roster.map((x) => ({ name: x.name, label: labels[x.id] })));
+};

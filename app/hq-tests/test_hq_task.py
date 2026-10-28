@@ -456,3 +456,40 @@ class ReviewDeep(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class HandedAsk(unittest.TestCase):
+    """넘겨받은 참모의 질문은 결정 대기함 대신 넘긴 참모에게 — 둘이 따로 물어 사람이 같은 걸 두 번 답했다"""
+    AGENTS = [{'id': 'orchaaaa', 'name': 'Chammo · Planner'}, {'id': 'orchbbbb', 'name': 'Chammo-2 · Backend'}]
+
+    def run_task(self, args, who, lang='ko'):
+        out, err = io.StringIO(), io.StringIO()
+        with unittest.mock.patch.dict(os.environ, {'CLAUDE_JOB_DIR': f'/h/.claude/jobs/{who}'}), unittest.mock.patch.object(task, 'load_agents', lambda: self.AGENTS), \
+                unittest.mock.patch.object(task, 'LANG', lang), unittest.mock.patch.object(task, 'orch_base', lambda n: (n or '').split(' · ')[0] if (n or '').startswith('Chammo') else None), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = task.main(args)
+        return code, out.getvalue(), err.getvalue()
+
+    def setUp(self):
+        self.d = tempfile.TemporaryDirectory()
+        self.old = task.LOG
+        task.LOG = os.path.join(self.d.name, 'tasks.jsonl')
+
+    def tearDown(self):
+        task.LOG = self.old
+        self.d.cleanup()
+
+    def asks(self):
+        with open(task.LOG, encoding='utf-8') as f:
+            return [json.loads(l) for l in f if '"ask"' in l]
+
+    def test_받은_쪽은_코드_4_넘긴_쪽은_그대로(self):
+        hid = self.run_task(['handover', 'Backend', 'new login'], 'orchaaaa')[1].strip()
+        sub = self.run_task(['send', 'web', 'login form', '--from-handover', hid], 'orchbbbb')[1].strip()
+        code, _, err = self.run_task(['ask', sub, 'copy A or B?'], 'orchbbbb', lang='en')
+        self.assertEqual(code, 4)
+        self.assertIn('SendMessage(to: "Chammo · Planner")', err)
+        self.assertIn('do not ask the user', err)
+        self.assertEqual(self.asks(), [])
+        self.assertEqual(self.run_task(['ask', hid, 'gathered: copy A or B?'], 'orchaaaa')[0], 0)
+        self.assertEqual(len(self.asks()), 1)

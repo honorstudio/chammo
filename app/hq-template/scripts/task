@@ -23,6 +23,7 @@ Chammo 작업 기록 — 다른 세션에 시킨 일을 남기면 앱 오른쪽 
   scripts/task done   <task id> "<result, one line>"
   scripts/task note   <task id> "<progress note>"
   scripts/task ask    <task id> "<what the user must decide>"          -> shows in the app's decision inbox
+                                         (a job handed to you — h-… or split from one — exits 4 instead: ask whoever handed it, by SendMessage)
   scripts/task answer <task id> "<what the user decided>"              -> leaves the inbox (the app writes this)
   scripts/task list                                                    -> recent events
   scripts/task lesson <project|--all> "<a confirmed lesson>"           -> attached next time you delegate there (--all = every project);
@@ -939,6 +940,40 @@ def handover_done(a):
     return 0
 
 
+def handed_by(tid, events, who, base):
+    """이 일이 넘겨받은 일이고 부르는 참모가 받은 쪽이면 그 넘김 사건 — 넘김 번호(h-…)나 그걸 쪼갠 send(--from-handover). 넘긴 쪽이 묻는 건 None"""
+    hs = handovers_of(events)
+    me = lambda e, i, n: (who and e.get(i) == who) or (base and e.get(n) == base)
+    if tid in hs:
+        return hs[tid][0] if me(hs[tid][0], 'toId', 'toName') else None
+    s = next((e for e in events if e.get('type') == 'send' and e.get('task') == tid and e.get('handover') in hs), None)
+    if not s or me(hs[s['handover']][0], 'from', 'fromName'):
+        return None
+    return hs[s['handover']][0]
+
+
+def handed_stop(h, agents):
+    """받은 참모의 질문은 결정 대기함 대신 넘긴 참모에게 — 둘이 따로 물어 사람이 같은 걸 두 번 답했다(2026-10-28). 종료 코드 4"""
+    giver = next((x.get('name') for x in agents if h.get('from') and x.get('id') == h['from']), '') or h.get('fromName') or '?'
+    print(T(f'이 일은 {giver} 가 넘긴 일({h["task"]})이야 — 사람에게 묻지 말고 SendMessage(to: "{giver}")로 [무엇 때문에 / 선택지 / 추천] 을 보내. '
+            f'넘긴 참모가 모아서 사람에게 한 번 묻고 답을 돌려준다(결정 대기함엔 안 올렸어). 결제만 예외 — scripts/direct ask --kind pay 로 카드',
+            f'{giver} handed you this job ({h["task"]}) — do not ask the user; SendMessage(to: "{giver}") with [why / options / your pick]. '
+            f'They gather the questions, ask the user once and send the answer back (nothing went to Decisions). Payments are the exception — card via scripts/direct ask --kind pay'),
+          file=sys.stderr)
+    return 4
+
+
+def handed_check(tid, note):
+    """ask·wait --ask 앞 — 결제 말이 아니고 넘겨받은 일이면 그 넘김 사건"""
+    events = read_events()
+    if needs_confirm(note) or not any(e.get('task') == tid and (e.get('type') == 'handover' or e.get('handover')) for e in events):
+        return None, []  # 넘김과 상관없는 일엔 세션 목록(claude agents)을 안 부른다
+    agents = load_agents()
+    who = os.path.basename((os.environ.get('CLAUDE_JOB_DIR') or '').rstrip('/'))
+    base = orch_base(next((x.get('name') for x in agents if who and x.get('id') == who), ''))
+    return handed_by(tid, events, who, base), agents
+
+
 def parse_until(text, now_dt):
     """--until 값 → 이때까지(로컬 시각). 'YYYY-MM-DD[ HH:MM]'·'M/D[ HH:MM]'·'HH:MM'(지났으면 내일)·'+3h'·'+2d'. 날짜만이면 그날 끝(23:59). 못 읽으면 None"""
     t = (text or '').strip()
@@ -998,6 +1033,9 @@ def wait_mark(a):
                     f'--until is unreadable or already past: {until!r} — 10/24 18:00 · 10/25 (to end of day) · 18:00 · +3h'), file=sys.stderr); return 2
         ev['until'] = when.astimezone().isoformat(timespec='seconds')
     append(ev)
+    handed, agents = handed_check(tid, why) if ask else (None, [])
+    if handed:  # 기다림은 남기고 질문은 넘긴 참모에게
+        return handed_stop(handed, agents)
     if ask:
         ask_ev = {'ts': now(), 'type': 'ask', 'task': tid, 'note': why}
         if os.environ.get('CLAUDE_CODE_SESSION_ID'):
@@ -1194,6 +1232,10 @@ def main(a):
     if cmd == 'done' and len(a) >= 3 and not PROOF.search(a[2]) and not CANCELLED.search(a[2]):
         print(T('done 에 증거가 없어 — "했다"만으론 몰라. PR 번호·주소·응답 코드·로그 중 하나를 확인해 적어 줘(이번 기록은 남김)',
                 'No proof in this done note — "did it" alone does not tell. Check and add one of: PR number, URL, status code, log (this entry is kept)'), file=sys.stderr)
+    if cmd == 'ask' and len(a) >= 3:
+        handed, agents = handed_check(a[1], a[2])
+        if handed:
+            return handed_stop(handed, agents)
     if cmd in ('reply', 'done', 'note', 'ask', 'answer') and len(a) >= 3:
         ev = {'ts': now(), 'type': cmd, 'task': a[1], 'note': a[2]}
         if cmd == 'ask' and me:

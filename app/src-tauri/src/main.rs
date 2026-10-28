@@ -8,6 +8,7 @@ mod access;
 mod appctl;
 mod away;
 mod offmain;
+mod orch_bubble;
 #[cfg(test)]
 mod offmain_scan;
 mod audio_out;
@@ -28,15 +29,24 @@ mod computer_use;
 mod browser_attach;
 mod browser_foreign;
 mod config;
+mod craft_basics;
 mod craft_dock;
 mod tidy_git;
 mod dock_quit;
 mod craft_input;
+mod accessory;
+mod browser_pane;
+mod win_desk;
+#[cfg(windows)]
+mod browser_pane_win;
+#[cfg(windows)]
+mod win_jpeg;
 mod craft_mirror;
 mod craft_screen;
 mod craft_window;
 mod harnitor;
 mod hq;
+mod hq_browser;
 mod i18n;
 mod reader;
 #[cfg(target_os = "macos")]
@@ -78,13 +88,21 @@ mod team_cmd;
 mod team_locker;
 mod team_locker_app;
 mod team_locker_cmd;
+mod team_revise;
 mod team_profile;
 mod team_profile_cmd;
+mod team_home;
+mod team_home_cmd;
+mod team_home_store;
 mod team_post;
 mod team_post_cmd;
+mod team_phone_up;
 mod team_manage;
 mod team_relay;
 mod team_helper;
+mod team_agent;
+mod team_agent_store;
+mod team_agent_cmd;
 mod team_relay_inbox;
 mod team_relay_keys;
 mod phone_tunnel;
@@ -106,12 +124,14 @@ mod e2e_team;
 mod e2e_cmd;
 mod e2e_safety;
 mod e2e_cards;
+mod e2e_handover;
 mod e2e_retry;
 mod phone_relay_core;
 mod phone_relay;
 mod device_link;
 mod device_cards;
 mod team_relay_ws;
+mod team_reads;
 mod team_rooms;
 #[cfg(test)]
 mod team_test_util;
@@ -123,6 +143,7 @@ mod test_ports;
 mod phone_voice;
 mod remote;
 mod remote_net;
+mod drafts;
 mod orch_pins;
 mod orch_roles;
 mod push;
@@ -202,11 +223,19 @@ pub fn route_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>, id: &str) {
             return;
         }
     }
-    if let Some(w) = app.get_webview_window("main") {
-        // ⌘A 는 보고 있는 창 안의 일 — 다른 창(도감 등)에서 눌렀으면 메인 창을 끌어오지 않는다
-        if id == "select_all" && !w.is_focused().unwrap_or(false) {
+    // ⌘A 는 보고 있는 창 안의 일 — 다른 창(메신저 따로 창·모드 창)에서 눌렀으면 그 창에서 고르고 메인 창을 끌어오지 않는다
+    if id == "select_all" {
+        let wins = app.webview_windows();
+        let focus: Vec<(&str, bool)> = wins.iter().map(|(l, w)| (l.as_str(), w.is_focused().unwrap_or(false))).collect();
+        if let Some(other) = select_all_other(&focus).and_then(|l| wins.get(l)) {
+            let _ = other.eval(OTHER_SELECT_ALL);
             return;
         }
+        if !focus.contains(&("main", true)) {
+            return;
+        }
+    }
+    if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         // ⌘` 홈을 메신저 따로 창 같은 다른 창에서 눌렀으면 메인 창을 앞으로 꺼내고 홈을 켜기만(돌아가기 아님) — 2026-10-25 사용자
         let id = if id == "home_toggle" && !w.is_focused().unwrap_or(false) {
@@ -218,6 +247,14 @@ pub fn route_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>, id: &str) {
         let _ = w.eval(format!("window.__menu && window.__menu({})", serde_json::to_string(id).unwrap_or_default()));
     }
 }
+
+/// ⌘A 를 받을 메인 창 밖의 앞 창 — 메인 창(App.tsx)·리더 창(__readerKey)은 제 길이 있다
+fn select_all_other<'a>(wins: &[(&'a str, bool)]) -> Option<&'a str> {
+    wins.iter().find(|(l, focused)| *focused && *l != "main" && !l.starts_with("reader-")).map(|(l, _)| *l)
+}
+
+/// 그 창 화면이 __menu 를 달았으면 그걸로(메신저 창), 아니면 지금 칸이 글칸일 때만 그 칸 전체 선택(화면 전체를 잡지 않게)
+const OTHER_SELECT_ALL: &str = "window.__menu ? window.__menu(\"select_all\") : (() => { const a = document.activeElement; if (a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement) a.select(); else if (a && a.isContentEditable) document.execCommand('selectAll'); })()";
 
 /// 메뉴에 쓰는 앱 이름 — 공개판 Chammo, 개인 빌드 Chammo Dev(tauri.private.json productName)
 fn quit_label(en: bool, name: &str) -> String {
@@ -585,6 +622,8 @@ fn main() {
             std::thread::spawn(|| { browser_attach::reassert(); });
             // 세션 크롬 가리기 지킴이(세션 브라우저 앱에서 보기) + 크롬 자체 창(패스키) 보기 — 앱이 떠 있을 때만 가려진다
             agent_browser::watch_hidden();
+            // 세션 크롬 Dock·⌘Tab 빼기 dylib 를 데이터 폴더에 — 래퍼가 있으면 사본을 재서명하고 넣는다
+            std::thread::spawn(accessory::install);
             // 가상 모니터 — 세션 크롬을 눈에 안 보이는 화면에. 켤 때는 안 띄우고 세션 크롬이 뜰 때만(want), 2분 비면 내린다
             vdisplay::watch_idle();
             craft_mirror::debug_event_watch(app.handle());
@@ -594,6 +633,7 @@ fn main() {
             craft_screen::watch_scale(app.handle());
             quit::watch_sigterm(app.handle());
             dock_quit::install(app.handle());
+            orch_bubble::watch(app.handle());
             // 참모 scripts/app — 앱을 대신 조작(음성·기능·화면)
             appctl::watch(app.handle());
             // 팀 메신저 — 팀이 있으면 방 연결 스레드(받은 말 → 내 참모)
@@ -653,6 +693,8 @@ fn main() {
             accounts_cmd::warm_start();
             // 지금 로그인을 만료 전에 미리·끈질기게 갱신한다(ADR 0008) — 토큰 주소가 막혀도 세션이 안 멈추게. 계정 풀과 상관없이 돈다
             accounts_cmd::keep_start();
+            // 기본 참모 앱 다섯 — 첫 설정 뒤 뒤에서 한 번(craft_basics.rs)
+            craft_basics::start();
             // 익명 사용 신호 — 공개판·진짜 데이터 폴더·설정 켬일 때만 하루 한 번(usage_ping.rs)
             usage_ping::start(app.config().identifier.clone(), app.package_info().name.clone(), app.package_info().version.to_string());
             if !config::data_dir().ends_with(".honor-orchestrator") {
@@ -710,9 +752,15 @@ fn main() {
             team_ui::team_ui_room_info,
             team_ui::team_ui_room_delete,
             team_ui::team_pick_files,
-            e2e_cmd::e2e_self_number, e2e_cmd::e2e_renew, e2e_cmd::e2e_card_open, e2e_cmd::e2e_card_ready, e2e_cmd::e2e_card_approve, e2e_cmd::e2e_self_code, e2e_cmd::e2e_card_op, e2e_cmd::e2e_self_step, e2e_cmd::e2e_start_chain, e2e_cmd::e2e_reset_chain, e2e_cmd::e2e_safety_people, e2e_cmd::e2e_safety_verify, e2e_cmd::e2e_safety_unblock, e2e_cmd::e2e_safety_refetch,
+            team_ui::team_clip_files,
+            team_ui::drag_out,
+            team_ui::drag_hover,
+            team_ui::drag_out_team,
+            team_ui::drag_back,
+            e2e_cmd::e2e_self_number, e2e_cmd::e2e_renew, e2e_cmd::e2e_card_open, e2e_cmd::e2e_card_claim, e2e_cmd::e2e_card_ready, e2e_cmd::e2e_card_approve, e2e_cmd::e2e_self_code, e2e_cmd::e2e_card_op, e2e_cmd::e2e_self_step, e2e_cmd::e2e_start_chain, e2e_cmd::e2e_reset_chain, e2e_cmd::e2e_recover_code, e2e_cmd::e2e_recover_cancel, e2e_cmd::e2e_recover_finish, e2e_cmd::e2e_recover_state, e2e_cmd::e2e_recover_open, e2e_cmd::e2e_safety_people, e2e_cmd::e2e_safety_verify, e2e_cmd::e2e_safety_unblock, e2e_cmd::e2e_safety_block, e2e_cmd::e2e_safety_refetch,
             usage_counts::usage_bump,
             team_ui::team_feed,
+            team_ui::team_mark_read,
             team_ui::team_ui_create,
             team_ui::team_ui_join,
             team_ui::team_ui_invite,
@@ -732,14 +780,41 @@ fn main() {
             team_profile_cmd::team_profile_set,
             team_profile_cmd::team_icon_set,
             team_post_cmd::team_posts,
+            team_home_cmd::team_home,
+            team_home_cmd::team_home_save,
+            team_home_cmd::team_home_content,
+            team_home_cmd::team_home_cover,
             team_post_cmd::team_post_write,
             team_post_cmd::team_post_pin,
             team_post_cmd::team_post_remove,
+            team_agent_cmd::team_agents,
+            team_agent_cmd::team_agents_cached,
+            team_agent_cmd::team_agent_save,
+            team_agent_cmd::team_agent_remove,
+            team_agent_cmd::team_agent_confirm,
+            team_agent_cmd::team_agent_usage,
+            team_agent_cmd::team_agent_try,
             team_locker_cmd::team_locker_list,
             team_locker_cmd::team_locker_put,
             team_locker_cmd::team_locker_poll,
             team_locker_cmd::team_locker_dismiss,
             team_locker_cmd::team_locker_open,
+            team_locker_cmd::team_locker_give,
+            orch_bubble::orch_bubble_main,
+            orch_bubble::bubble_screens,
+            orch_bubble::bubble_place,
+            orch_bubble::bubble_reveal,
+            orch_bubble::bubble_wanted,
+            orch_bubble::bubble_face,
+            orch_bubble::bubble_drag,
+            orch_bubble::bubble_send,
+            orch_bubble::bubble_hot,
+            orch_bubble::bubble_keys,
+            orch_bubble::bubble_screen,
+            orch_bubble::bubble_appctl,
+            team_locker_cmd::team_peek_give,
+            team_locker_cmd::team_peek_state,
+            team_locker_cmd::team_peek_revise,
             team_locker_cmd::team_locker_cached,
             team_locker_cmd::team_locker_download,
             team_locker_cmd::team_locker_mkdir,
@@ -778,6 +853,15 @@ fn main() {
             agent_browser::agent_focus,
             agent_browser::agent_peek,
             agent_browser::agent_hide,
+            agent_browser::agent_signed,
+            browser_pane::browser_pane_place,
+            browser_pane::browser_pane_still,
+            browser_pane::browser_pane_detach,
+            browser_pane::browser_pane_input,
+            agent_browser::agent_close_browser,
+            hq_browser::hq_browser_open,
+            hq_browser::hq_browser_profile,
+            agent_browser::agent_close_tab,
             agent_browser::agent_input,
             agent_browser::agent_takeover,
             agent_browser::agent_handback,
@@ -811,6 +895,7 @@ fn main() {
             login::login_probe,
             accounts_cmd::login_keep_state,
             login::login_save,
+            login::login_terms_retry,
             hq::create_hq,
             hq::folder_status,
             hq::make_dir,
@@ -903,6 +988,7 @@ fn main() {
             claude::stop_session,
             claude::remove_session,
             claude::app_stopped_recently,
+            claude::daemon_stopped_recently,
             claude::read_tasks_since,
             claude::read_transcript_tails,
             claude::read_transcript,
@@ -922,6 +1008,8 @@ fn main() {
             reader::save_attach,
             reader::save_curation,
             reader::save_curation_state,
+            drafts::drafts_read,
+            drafts::drafts_write,
             orch_pins::read_orch_pins,
             orch_pins::set_orch_pin,
             orch_pins::read_orch_order,
@@ -1096,6 +1184,7 @@ fn main() {
             craft_dock::craft_open_file,
             craft_dock::craft_apps,
             craft_dock::craft_launch,
+            craft_dock::craft_install,
             craft_dock::craft_remove,
         ])))
         // ⌘W(창 닫기)로 앱이 통째로 꺼지지 않게 — 창만 숨기고, Dock 아이콘을 누르면 다시 보인다. 완전히 끄는 건 ⌘Q
@@ -1115,6 +1204,14 @@ fn main() {
                 if team_window::is_team_window(window.label()) {
                     team_window::moved(window);
                 }
+                // 세션 브라우저 칸(윈도우는 앱 창이 소유한 떠 있는 창)도 따라간다
+                #[cfg(windows)]
+                if window.label() == "main" {
+                    browser_pane_win::follow();
+                }
+                if window.label() == orch_bubble::LABEL {
+                    orch_bubble::moved(window.app_handle());
+                }
                 webpage::parent_moved(window)
             }
             // 앱 창 중 하나라도 앞인지 → 메인·다마고치 웹뷰의 window.__appFocus(ui/attention) — 안 보면 참모 프사를 멈춘다(2026-10-04 mac-perf).
@@ -1127,7 +1224,7 @@ fn main() {
             }
             tauri::WindowEvent::CloseRequested { .. } if window.label() == "main" => window.app_handle().exit(0),
             // 파일 끌어다 놓기 → 그 창 웹뷰의 window.__drop — 메인 창(ui/fileDrop.ts)·메신저 따로 창(ui/team/teamDrop.ts, 메인만 넘겨서 따로 창엔 안 붙었다 10-26)
-            tauri::WindowEvent::DragDrop(e) if window.label() == "main" || team_window::is_team_window(window.label()) => drop::forward(window, e),
+            tauri::WindowEvent::DragDrop(e) if window.label() == "main" || window.label() == orch_bubble::LABEL || team_window::is_team_window(window.label()) => drop::forward(window, e),
             // 리더 창에 파일을 놓으면 탭으로 연다
             tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) if window.label().starts_with("reader-") => {
                 reader::add_to(window.app_handle(), window.label(), paths.iter().map(|p| p.to_string_lossy().into_owned()).collect())
@@ -1192,6 +1289,21 @@ mod conf_tests {
         assert_eq!(super::quit_label(true, "Chammo"), "Close Chammo (sessions keep running)");
         assert_eq!(super::about_label(false, "Chammo Dev"), "Chammo Dev 정보");
         assert_eq!(super::about_label(true, "Chammo"), "About Chammo");
+    }
+
+    // 2026-10-29 사용자: 메신저 따로 창(team-all) 입력칸에서 ⌘A 가 안 먹었다 — 전체 선택은 앱이 만든 메뉴 항목(⌘A)이라 키를 메뉴가 먼저 먹는데
+    // route_menu 가 메인 창이 앞이 아니면 버렸다(⌘C·⌘V·⌘X·⌘Z 는 맥 기본 항목이라 앞 창에 그대로 갔다)
+    #[test]
+    fn 전체_선택은_보고_있는_따로_창으로() {
+        assert_eq!(super::select_all_other(&[("main", false), ("team-all", true)]), Some("team-all"));
+        assert_eq!(super::select_all_other(&[("main", false), ("mode-board", true)]), Some("mode-board"));
+        // 메인 창이 앞이면 메인 길(App.tsx __menu), 리더 창은 그 앞 길(__readerKey), 아무 창도 앞이 아니면 아무것도
+        assert_eq!(super::select_all_other(&[("main", true), ("team-all", false)]), None);
+        assert_eq!(super::select_all_other(&[("main", false), ("reader-1", true)]), None);
+        assert_eq!(super::select_all_other(&[("main", false), ("team-all", false)]), None);
+        // 그 창 화면이 __menu 를 달았으면 그걸로(메신저 창 = 앱과 같은 selectAllHere), 없으면 글칸만 전체 선택
+        assert!(super::OTHER_SELECT_ALL.starts_with("window.__menu ? window.__menu(\"select_all\")"));
+        assert!(super::OTHER_SELECT_ALL.contains(".select()") && super::OTHER_SELECT_ALL.contains("execCommand('selectAll')"));
     }
 
     // 윈도우 muda 는 About(Some(메타데이터)) 일 때만 창을 띄운다 — None 이면 'Chammo 정보'가 무반응이었다(0.2.5 윈도우 QA)

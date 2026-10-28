@@ -1,7 +1,7 @@
 // 보안 번호 받아들이기(시안 docs/design-drafts/e2e-safety v1, chammo-relay ADR 0007 결정 2·5) — 결정 대기함 카드 몸통·번호 판·멤버 줄 패널.
 // 받아들이기·막아 두기는 카드 답(direct_answer — 메인 창·짝지은 폰)으로만. '같아요'(확인됨)·카드 다시 띄우기는 메신저 창 명령
 import { useState } from 'react';
-import { e2eSafetyRefetch, e2eSafetyUnblock, e2eSafetyVerify, safetyAnswer } from '../../data/teamApi';
+import { e2eSafetyBlock, e2eSafetyRefetch, e2eSafetyUnblock, e2eSafetyVerify, safetyAnswer } from '../../data/teamApi';
 import type { DirectCard } from '../../domain/directAsk';
 import { needsRefetch, safetyGroups, safetyLabel, type SafetyPerson } from '../../domain/e2eSafety';
 import { tr } from '../../i18n';
@@ -90,8 +90,10 @@ export function SafetyPanel({ p, teamName, onDone, readOnly }: { p: SafetyPerson
       <div className="dc-muted" style={{ textAlign: 'center' }}>{tr(`${p.name} 화면의 번호와 같은지 만나서나 전화로 견줘요`, `Compare it with ${p.name}'s screen in person or on a call`)}</div>
       {readOnly ? <div className="dc-muted" style={{ textAlign: 'center' }}>{changed ? tr('받아들이기·막아 두기는 결정 대기함 카드에서 해요', 'Accept or block from the card in your inbox') : tr('같다고 표시하는 건 컴퓨터 앱 팀 설정에서 해요', 'Mark it as the same in the desktop app team settings')}</div> : (
       <div className="dc-acts">
+        {/* 바뀌어 저절로 받아들인 사람(사용자 10-29) — 견줘 보고 다르면 여기서만 막아 둔다 */}
+        {!changed && (p.rekeyedAt ?? 0) > 0 && <button className="dc-btn dc-no" disabled={busy} onClick={(e) => run(e, () => e2eSafetyBlock(p.account))}>{tr('다르면 막아 두기', 'Different — block')}</button>}
         {!changed && <button className="dc-btn dc-go" disabled={busy} onClick={(e) => run(e, () => e2eSafetyVerify(p.account))}>{p.state === 'verified' ? tr('다시 견줬어요', 'Compared again') : tr('같아요', 'Same')}</button>}
-        {changed && p.blocked && <button className="dc-btn dc-no" disabled={busy} onClick={(e) => run(e, () => e2eSafetyUnblock(p.account))}>{tr('카드 다시 띄우기', 'Show the card again')}</button>}
+        {changed && p.blocked && <button className="dc-btn dc-no" disabled={busy} onClick={(e) => run(e, () => e2eSafetyUnblock(p.account))}>{(p.rekeyedAt ?? 0) > 0 ? tr('다시 받아들이기', 'Accept again') : tr('카드 다시 띄우기', 'Show the card again')}</button>}
         {changed && !p.blocked && needsRefetch(p) && <button className="dc-btn dc-no" disabled={busy} onClick={(e) => run(e, () => e2eSafetyRefetch(p.account))}>{tr('다시 받기', 'Fetch again')}</button>}
         {changed && !p.blocked && p.card && !needsRefetch(p) && (
           <>

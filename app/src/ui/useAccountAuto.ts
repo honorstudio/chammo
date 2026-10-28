@@ -1,7 +1,9 @@
 // 계정 자동 전환 실행 — 판단은 domain/accountAuto.step. App 이 계정 보기를 15초마다 새로 읽을 때마다 한 번 돈다.
 // 순서: 계정 보기를 새로 읽음(App 이 넘긴 건 바뀌기 전 것일 수 있다 — 옛 상태로 판단하면 새 계정을 옛 값으로 막는다) → 판단
 // → (바꿀 거면) 바로 앞에서 한 번 더 읽어 그새 사람이 바꿨으면 이번엔 안 함 → 키체인 바꾸기 → 그다음에 멈춘 세션에 '계속해'
-// (순서가 바뀌면 옛 계정으로 다시 부딪힌다) → 상태 저장 → 화면 갱신 신호. 토큰은 여기 안 온다(Rust 가 키체인에서 바로 바꿔 끼운다)
+// (순서가 바뀌면 옛 계정으로 다시 부딪힌다) → 상태 저장 → 화면 갱신 신호.
+// 저장 직전에 한 번 더 읽어 그새 남(사람이 파일을 고침·약관 [다시 시도]·설정)이 상태를 바꿨으면 이번 차례는 안 쓴다 —
+// slots 는 통째로 쓰여서, 몇 초 전에 읽은 값으로 쓰면 방금 푼 막힘을 되덮는다(2026-10-28 실전). 토큰은 여기 안 온다(Rust 가 키체인에서 바로 바꿔 끼운다)
 import { useEffect, useRef } from 'react';
 import { accountsApi, sendToSession, speak } from '../data/tauri';
 import { accountError, ACCOUNTS_CHANGED, switchFailure, type AccountsView } from '../domain/accounts';
@@ -37,6 +39,8 @@ export function useAccountAuto(accounts: AccountsView | null, acts: SessionActiv
         const v = await accountsApi.view();
         if (!v.accounts.length) return;
         let before = readAuto(v.auto);
+        let seen = JSON.stringify(v.auto ?? null); // 마지막으로 본(또는 내가 쓴) 저장 상태
+        const moved = async () => JSON.stringify((await accountsApi.view()).auto ?? null) !== seen;
         const usage = await accountsApi.usageAt().catch(() => null);
         const ids = v.accounts.map((a) => a.id);
         // 계정 토큰으로 바로 묻기(주인이 확실한 값) — 상태줄 값은 지문으로 가리는 보조
@@ -63,13 +67,14 @@ export function useAccountAuto(accounts: AccountsView | null, acts: SessionActiv
           state = afterSwitch(state, Date.now());
           await accountsApi.autoPatch(changedKeys(before, state));
           before = state;
+          seen = JSON.stringify((await accountsApi.view()).auto ?? null);
           try {
             await accountsApi.switchTo(plan.switchTo, v.active);
           } catch (e: unknown) {
             if (String(e) === 'moved') return; // 다시 읽은 뒤 그 몇 ms 사이에 폰·사람이 먼저 바꿨다 — 그 선택을 둔다
             const f = switchFailure(String(e), rateNoted.current);
             const dead = slotDead(String(e));
-            if (dead) { // 그 칸을 막아 두고 곧 다음 칸으로 — 같은 죽은 칸을 5분마다 고르지 않게
+            if (dead && !(await moved())) { // 그 칸을 막아 두고 곧 다음 칸으로 — 같은 죽은 칸을 5분마다 고르지 않게
               state = markDead(state, plan.switchTo, Date.now());
               await accountsApi.autoPatch(changedKeys(before, state)).catch(() => {});
               before = state;
@@ -84,7 +89,8 @@ export function useAccountAuto(accounts: AccountsView | null, acts: SessionActiv
           asked.current.live = 0; // 다음 차례(화면 갱신 신호로 바로 온다)에 새 계정 사용량을 바로 묻는다
           // 고정한 계정이 진짜 다 차서 고정이 풀렸다 — 사람이 일부러 고른 거라 한 줄 알린다
           if (plan.unpinned) notifyOnce({ kind: 'accounts', session: 'accounts-unpinned', orch: false, title: tr('고정 계정이 다 차서 넘겼어', 'Pinned account used up'), body: tr(`${name(v.active)} → ${name(plan.switchTo)} · 고정은 풀렸어`, `${name(v.active)} → ${name(plan.switchTo)} · unpinned`) });
-          if (voiceRef.current && plan.why !== 'back') void speak(tr(`${name(v.active)} 계정이 다 차서 ${name(plan.switchTo)} 계정으로 넘겼어`, `${name(v.active)} is used up — switched to ${name(plan.switchTo)}`)).catch(() => {});
+          if (voiceRef.current && plan.why === 'terms') void speak(tr(`${name(v.active)} 계정이 약관 동의가 필요해서 ${name(plan.switchTo)} 계정으로 넘겼어. 결정 대기함 카드에서 claude.ai 를 열어 동의해 줘`, `${name(v.active)} needs to accept the new terms — switched to ${name(plan.switchTo)}. Open claude.ai from the card in Decisions to accept`)).catch(() => {});
+          else if (voiceRef.current && plan.why !== 'back') void speak(tr(`${name(v.active)} 계정이 다 차서 ${name(plan.switchTo)} 계정으로 넘겼어`, `${name(v.active)} is used up — switched to ${name(plan.switchTo)}`)).catch(() => {});
         }
         // 키체인을 바꾼 다음에 깨운다. 못 보낸 세션은 표시하지 않아 다음 차례에 다시
         const sent: string[] = [];
@@ -100,7 +106,9 @@ export function useAccountAuto(accounts: AccountsView | null, acts: SessionActiv
           notifyOnce({ kind: 'accounts', session: 'accounts-all-out', orch: false, title: tr('계정이 다 찼어', 'All accounts are used up'), body: tr(`가장 먼저 풀리는 때: ${when}`, `First to reopen: ${when}`) });
           if (voiceRef.current) void speak(tr(`계정이 다 찼어. ${when}에 풀려`, `All accounts are used up. First reopens at ${when}`)).catch(() => {});
         }
-        const ch = changedKeys(before, state);
+        let ch = changedKeys(before, state);
+        // 그새 남이 바꿨으면 '계속해' 보낸 기록만 — 남은 판단은 다음 차례에 새 상태로
+        if (Object.keys(ch).length && (await moved())) ch = 'nudged' in ch ? { nudged: ch.nudged } : {};
         if (Object.keys(ch).length) {
           await accountsApi.autoPatch(ch);
           switched = true; // 막대·설정 칸이 새 값을 바로 읽게(바뀐 게 없으면 신호도 없다 — 되풀이 안 됨)

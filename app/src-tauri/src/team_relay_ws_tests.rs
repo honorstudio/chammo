@@ -84,7 +84,7 @@ fn run(d: &Path) -> Run {
 }
 
 #[test]
-fn 붙으면_밀린_말을_받아_이름표_붙여_넘기고_ack_한다() {
+fn 붙으면_밀린_말을_받아_기록하고_ack_하고_팀_말은_참모에게_안_넘긴다() {
     let _ports = crate::test_ports::lock();
     let d = dir("backlog");
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -97,11 +97,11 @@ fn 붙으면_밀린_말을_받아_이름표_붙여_넘기고_ack_한다() {
     assert_eq!(next_json(&mut ws), json!({ "t": "ack", "seq": 1 }));
     assert_eq!(next_json(&mut ws), json!({ "t": "ack", "seq": 2 }));
     assert_eq!(next_json(&mut ws), json!({ "t": "ack", "seq": 3 }));
-    assert_eq!(r.got.recv_timeout(Duration::from_secs(3)).unwrap(), "[남의 참모 · 민아 · 기기 dev-00 · team#2]\n회의 몇 시?");
-    assert!(r.got.recv_timeout(Duration::from_millis(300)).is_err(), "내 다른 기기 말은 참모에게 안 간다");
+    assert!(r.got.recv_timeout(Duration::from_millis(500)).is_err(), "팀 말(10-28)·내 다른 기기가 팀에 보낸 말은 참모에게 안 간다");
     assert_eq!(crate::team_relay_inbox::last_seen(&d, "r1"), 3);
     let inbox = std::fs::read_to_string(d.join(crate::team_relay_inbox::INBOX_FILE)).unwrap();
-    assert_eq!(inbox.lines().count(), 2, "받은 것 둘(넘긴 것·내 것) 기록: {inbox}");
+    assert_eq!(inbox.lines().count(), 2, "받은 것 둘(남의 말·내 것) 기록: {inbox}");
+    assert!(inbox.contains("\"note\":\"to-human\"") && inbox.contains("\"note\":\"mine\""), "{inbox}");
     let _ = r.tx.send(Cmd::Stop);
 }
 
@@ -114,13 +114,15 @@ fn 끊기면_다시_붙어_다음_seq_부터_받는다() {
     let r = run(&d);
     let (mut ws, _) = accept(&l, vec![msg(1, "m2", "agent", "첫 말")]);
     assert_eq!(next_json(&mut ws), json!({ "t": "ack", "seq": 1 }));
-    assert!(r.got.recv_timeout(Duration::from_secs(3)).unwrap().ends_with("첫 말"));
     drop(ws); // 서버가 끊음
-    // 서버가 ack 를 못 받았다고 치고 1 을 또 보내도 한 번만 넘긴다
-    let (mut ws, _) = accept(&l, vec![msg(1, "m2", "agent", "첫 말"), msg(2, "m2", "human", "둘째")]);
+    // 서버가 ack 를 못 받았다고 치고 1 을 또 보내도 한 번만 적는다
+    let (mut ws, _) = accept(&l, vec![msg(1, "m2", "agent", "첫 말"), msg(2, "m2", "human", "@참모 둘째")]);
     assert_eq!(next_json(&mut ws), json!({ "t": "ack", "seq": 1 }));
     assert_eq!(next_json(&mut ws), json!({ "t": "ack", "seq": 2 }));
-    assert_eq!(r.got.recv_timeout(Duration::from_secs(3)).unwrap(), "[팀 사람 말 · 민아 · team#2]\n둘째");
+    let inbox = std::fs::read_to_string(d.join(crate::team_relay_inbox::INBOX_FILE)).unwrap();
+    assert_eq!(inbox.lines().count(), 2, "seq 1 은 한 번만: {inbox}");
+    assert_eq!(crate::team_relay_inbox::last_seen(&d, "r1"), 2);
+    assert!(r.got.recv_timeout(Duration::from_millis(300)).is_err());
     let _ = r.tx.send(Cmd::Stop);
 }
 
@@ -174,6 +176,7 @@ fn 켤_때_방을_찾아_새_방에도_붙는다() {
     let _ports = crate::test_ports::lock();
     // 받는 쪽은 방을 먼저 연 적이 없어도 — 켤 때 찾은 방(남이 연 DM)에 붙어 밀린 말을 받는다
     let d = dir("discover");
+    let seen = d.clone();
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     seed(&d, l.local_addr().unwrap().port());
     crate::team_relay::mutate(&d, |s| s.rooms.clear()).unwrap();
@@ -190,31 +193,70 @@ fn 켤_때_방을_찾아_새_방에도_붙는다() {
     });
     let (mut ws, _) = accept(&l, vec![msg(1, "m2", "agent", "먼저 보낸 말")]);
     assert_eq!(next_json(&mut ws), json!({ "t": "ack", "seq": 1 }));
-    assert!(got.recv_timeout(Duration::from_secs(3)).unwrap().ends_with("먼저 보낸 말"));
+    assert!(std::fs::read_to_string(seen.join(crate::team_relay_inbox::INBOX_FILE)).unwrap().contains("먼저 보낸 말"), "찾은 방 말을 받아 적는다");
+    assert!(got.recv_timeout(Duration::from_millis(300)).is_err(), "팀 말은 참모에게 안 간다");
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1, "5분 안엔 한 번만");
     let _ = tx.send(Cmd::Stop);
 }
 
 #[test]
-fn 한_사람이_1분에_6번_넘게_보내면_넘기지_않고_기록만() {
+fn 한_사람이_1분에_6번_넘게_보내면_나머지는_줄_세웠다가_묶어서_넘긴다() {
     let _ports = crate::test_ports::lock();
-    // 보안 검토 1-E: 남이 말을 쏟아부으면 내 참모 입력칸이 그 말로 덮였다 — peer PER_MIN 과 같은 상한
+    // 보안 검토 1-E: 남이 말을 쏟아부으면 내 참모 입력칸이 그 말로 덮였다 — peer PER_MIN 과 같은 상한.
+    // 10-28 아이맥: 상한에 걸린 말은 조용히 버려졌다(#32~#36) — 이제 줄 세웠다가 창이 비면 한 번에 묶어 넘긴다
     let d = dir("rate");
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     seed(&d, l.local_addr().unwrap().port());
-    let r = run(&d);
+    // 참모에게 가는 건 내 기기끼리 방 말뿐(팀 말은 10-28 부터 안 간다) — 같은 방을 내 기기끼리 방으로
+    crate::team_relay::mutate(&d, |s| s.rooms[0].kind = "self".into()).unwrap();
+    let (tx, rx) = mpsc::channel();
+    let (gtx, got_rx) = mpsc::channel();
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        Loop::new(d2, keys(), Box::new(move |t: String| { let _ = gtx.send(t); }), rx).with_tick(Duration::from_millis(20)).with_opener(opened()).with_rate_window(1_500).run();
+    });
     let backlog: Vec<_> = (1..=8).map(|i| msg(i, "m2", "agent", &format!("말 {i}"))).collect();
     let (mut ws, _) = accept(&l, backlog);
     for i in 1..=8 {
         assert_eq!(next_json(&mut ws), json!({ "t": "ack", "seq": i }));
     }
-    let mut got = 0;
-    while r.got.recv_timeout(Duration::from_millis(500)).is_ok() {
-        got += 1;
+    let mut got = Vec::new();
+    while let Ok(t) = got_rx.recv_timeout(Duration::from_millis(300)) {
+        got.push(t);
     }
-    assert_eq!(got, 6);
+    assert_eq!(got.len(), 6, "{got:?}");
     let inbox = std::fs::read_to_string(d.join(crate::team_relay_inbox::INBOX_FILE)).unwrap();
     assert_eq!(inbox.matches("\"note\":\"rate-limited\"").count(), 2, "{inbox}");
+    let late = got_rx.recv_timeout(Duration::from_secs(5)).expect("창이 비면 묶어서 넘긴다");
+    assert!(late.starts_with("[앱] ") && late.contains("2개"), "{late}");
+    assert!(late.find("말 7").unwrap() < late.find("말 8").unwrap(), "{late}");
+    assert!(got_rx.recv_timeout(Duration::from_millis(300)).is_err(), "묶음은 한 번만");
+    let _ = tx.send(Cmd::Stop);
+}
+
+#[test]
+fn 내_기기_방이_다시_붙으면_기기_카드를_한_번_당긴다() {
+    // 10-28 윈도우 — 방 소켓이 한 시간에 몇 번씩 끊겼다 붙는데, 그 틈에 온 기기 알림(device_resolved)은 사라지고
+    // 붙어 있다고 5분 폴링이라 다른 기기에서 처리한 허용 카드가 10분 늦게 닫혔다
+    let _ports = crate::test_ports::lock();
+    let d = dir("self-renudge");
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    seed(&d, l.local_addr().unwrap().port());
+    crate::team_relay::mutate(&d, |s| s.rooms = vec![Room { id: "s1".into(), kind: "self".into(), ..Default::default() }]).unwrap();
+    let _ = crate::device_cards::take_nudge();
+    let r = run(&d);
+    let (ws, _) = accept(&l, vec![]);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!crate::device_cards::take_nudge(), "처음 붙을 땐 켤 때 바퀴가 이미 목록을 받는다");
+    drop(ws);
+    let (_ws, _) = accept(&l, vec![]);
+    let until = Instant::now() + Duration::from_secs(3);
+    let mut got = false;
+    while Instant::now() < until && !got {
+        got = crate::device_cards::take_nudge();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(got, "끊긴 틈에 놓친 기기 알림 — 다시 붙으면 목록을 다시 받는다");
     let _ = r.tx.send(Cmd::Stop);
 }
 
@@ -270,6 +312,86 @@ fn 다시_붙는_간격은_늘어나되_5분을_안_넘는다() {
     assert_eq!(backoff(1), Duration::from_secs(4));
     assert_eq!(backoff(3), Duration::from_secs(16));
     assert_eq!(backoff(20), Duration::from_secs(300));
+}
+
+/// 붙은 방(r1)에 참모 말 하나 보내기 — 답 받을 곳을 돌려준다
+fn send_once(r: &Run, cid: &str) -> mpsc::Receiver<Result<u64, String>> {
+    let (rtx, rrx) = mpsc::channel();
+    r.tx.send(Cmd::Send { room: "r1".into(), cid: cid.into(), body: "회의 3시".into(), wire: "봉투".into(), human: None, extra: Default::default(), reply: rtx }).unwrap();
+    rrx
+}
+
+#[test]
+fn 보낸_직후_끊기면_다시_붙어_같은_cid_로_다시_보낸다() {
+    let _ports = crate::test_ports::lock();
+    // 10-28 윈도우 시험 PC·맥: 중계(Cloudflare) 소켓이 방마다 한 시간쯤에 한 번 끊긴다 — 그 순간 보낸 말이 15초 뒤 실패로 끝나지 않게
+    let d = dir("resend");
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    seed(&d, l.local_addr().unwrap().port());
+    let r = run(&d);
+    let (mut ws, _) = accept(&l, vec![]);
+    let rrx = send_once(&r, "c1");
+    assert_eq!(next_json(&mut ws)["cid"], "c1");
+    std::thread::sleep(Duration::from_millis(5));
+    let rrx2 = send_once(&r, "c0"); // 이름 차례와 보낸 차례를 다르게
+    assert_eq!(next_json(&mut ws)["cid"], "c0");
+    drop(ws); // 답 없이 끊김(서버엔 저장됐을 수도 있다 — 같은 cid 면 서버가 한 번만 저장)
+    let t0 = Instant::now();
+    let (mut ws, _) = accept(&l, vec![]);
+    assert!(t0.elapsed() < Duration::from_secs(1), "보낼 말이 있으면 물러서기 없이 바로 다시 붙는다: {:?}", t0.elapsed());
+    assert_eq!(next_json(&mut ws), json!({ "t": "send", "cid": "c1", "body": "봉투", "origin": "agent" }), "같은 cid·같은 봉투로, 보낸 차례대로 다시");
+    assert_eq!(next_json(&mut ws)["cid"], "c0");
+    ws.send(tungstenite::Message::text(json!({ "t": "sent", "cid": "c1", "seq": 4 }).to_string())).unwrap();
+    ws.send(tungstenite::Message::text(json!({ "t": "sent", "cid": "c0", "seq": 5 }).to_string())).unwrap();
+    assert_eq!(rrx.recv_timeout(Duration::from_secs(3)).unwrap(), Ok(4));
+    assert_eq!(rrx2.recv_timeout(Duration::from_secs(3)).unwrap(), Ok(5));
+    let inbox = std::fs::read_to_string(d.join(crate::team_relay_inbox::INBOX_FILE)).unwrap();
+    assert_eq!(inbox.matches("\"note\":\"sent\"").count(), 2, "보낸 기록은 말마다 한 줄: {inbox}");
+    let _ = r.tx.send(Cmd::Stop);
+}
+
+#[test]
+fn 보낸_말에_답도_없고_끊김도_안_오면_다시_붙어_보낸다() {
+    let _ports = crate::test_ports::lock();
+    // 반쯤 죽은 소켓(맥 '2분 동안 아무것도 안 옴' 5번) — 2분을 기다리면 보내기는 15초에 실패한다
+    let d = dir("stall");
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    seed(&d, l.local_addr().unwrap().port());
+    let r = run(&d);
+    let (mut old, _) = accept(&l, vec![]);
+    let rrx = send_once(&r, "c9");
+    assert_eq!(next_json(&mut old)["cid"], "c9");
+    // old 는 열어 둔 채 아무 답도 안 한다
+    let t0 = Instant::now();
+    let (mut ws, _) = accept(&l, vec![]);
+    assert!(t0.elapsed() < Duration::from_secs(10), "{:?}", t0.elapsed());
+    assert_eq!(next_json(&mut ws)["cid"], "c9");
+    ws.send(tungstenite::Message::text(json!({ "t": "sent", "cid": "c9", "seq": 5 }).to_string())).unwrap();
+    assert_eq!(rrx.recv_timeout(Duration::from_secs(3)).unwrap(), Ok(5));
+    drop(old);
+    let _ = r.tx.send(Cmd::Stop);
+}
+
+#[test]
+fn 답이_빠른_방은_다시_붙지_않는다() {
+    let _ports = crate::test_ports::lock();
+    // 멈춤 감지가 멀쩡한 연결을 끊지 않게 — 답이 오면 그 말은 끝
+    let d = dir("nostall");
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    seed(&d, l.local_addr().unwrap().port());
+    let r = run(&d);
+    let (mut ws, _) = accept(&l, vec![]);
+    let rrx = send_once(&r, "c1");
+    assert_eq!(next_json(&mut ws)["cid"], "c1");
+    ws.send(tungstenite::Message::text(json!({ "t": "sent", "cid": "c1", "seq": 2 }).to_string())).unwrap();
+    assert_eq!(rrx.recv_timeout(Duration::from_secs(3)).unwrap(), Ok(2));
+    l.set_nonblocking(true).unwrap();
+    let until = Instant::now() + Duration::from_secs(7);
+    while Instant::now() < until {
+        assert!(l.accept().is_err(), "멀쩡한 방이 다시 붙었다");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = r.tx.send(Cmd::Stop);
 }
 
 /// 운영 중계 서버 실측 — 두 신원(데이터 폴더 둘, 열쇠는 메모리)으로 팀 만들기 → 초대 → DM 왕복 → 꺼진 동안 쌓인 말 이어받기.
@@ -367,4 +489,71 @@ fn 새_방이_생기면_이름을_바로_다시_받는다() {
     assert!(names_due(&["a".into()], &[r("a"), r("b")]));
     assert!(!names_due(&["a".into(), "b".into()], &[r("a"), r("b")]));
     assert!(!names_due(&["a".into()], &[]));
+}
+
+#[test]
+fn 팀_말은_어떤_모양이든_참모에게_0건_기록·ack_는_한다() {
+    let _ports = crate::test_ports::lock();
+    let d = dir("no-call");
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    seed(&d, l.local_addr().unwrap().port());
+    let r = run(&d);
+    let bodies = ["회의록 받았어?", "@참모 정리해 줘", "@지수의참모 부탁", "@지수 @참모 봐", "@Chammo hi"];
+    let backlog: Vec<_> = bodies.iter().enumerate().flat_map(|(i, b)| [msg(2 * i as u64 + 1, "m2", "agent", b), msg(2 * i as u64 + 2, "m2", "human", b)]).collect();
+    let (mut ws, _) = accept(&l, backlog);
+    for seq in 1..=(2 * bodies.len() as u64) {
+        assert_eq!(next_json(&mut ws), json!({ "t": "ack", "seq": seq }));
+    }
+    assert!(r.got.recv_timeout(Duration::from_millis(500)).is_err(), "참모 입력칸에 0건");
+    let inbox = std::fs::read_to_string(d.join(crate::team_relay_inbox::INBOX_FILE)).unwrap();
+    assert_eq!(inbox.lines().count(), 2 * bodies.len(), "화면·알림엔 다 남는다");
+    assert!(!inbox.contains("\"note\":\"delivered\""), "{inbox}");
+    let _ = r.tx.send(Cmd::Stop);
+}
+
+#[test]
+fn 읽음은_ready_와_read_틀로_받아_합치고_내_읽음은_묶어서_올린다() {
+    let _ports = crate::test_ports::lock();
+    let d = dir("reads");
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    seed(&d, l.local_addr().unwrap().port());
+    let r = run(&d);
+    let (s, _) = l.accept().unwrap();
+    // 안 오면 영영 기다리지 말고 깨지게
+    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let mut ws = tungstenite::accept(s).unwrap();
+    ws.send(tungstenite::Message::text(json!({ "t": "ready", "upto": 4, "more": false, "reads": { "m2": 2, "m1": 1 } }).to_string())).unwrap();
+    // 다른 사람(민아)이 더 읽음 · 같은 계정 다른 기기에서 내가 읽음
+    ws.send(tungstenite::Message::text(json!({ "t": "read", "room": "r1", "member": "m2", "seq": 4 }).to_string())).unwrap();
+    let until = Instant::now() + Duration::from_secs(3);
+    while crate::team_reads::load(&d).get("r1").and_then(|m| m.get("m2")).copied() != Some(4) {
+        assert!(Instant::now() < until, "read 틀이 안 합쳐짐: {:?}", crate::team_reads::load(&d));
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(crate::team_reads::load(&d)["r1"]["m1"], 1);
+    // 화면이 내가 본 자리를 연달아 넘겨도 방엔 가장 큰 것 하나
+    r.tx.send(Cmd::Read { room: "r1".into(), seq: 3 }).unwrap();
+    r.tx.send(Cmd::Read { room: "r1".into(), seq: 4 }).unwrap();
+    assert_eq!(next_json(&mut ws), json!({ "t": "read", "seq": 4 }));
+    let _ = r.tx.send(Cmd::Stop);
+}
+
+#[test]
+fn 건네받은_지난_말은_같은_자리에_기록만_하고_참모에겐_안_넘기고_late_ack_한다() {
+    let _ports = crate::test_ports::lock();
+    let d = dir("late");
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    seed(&d, l.local_addr().unwrap().port());
+    crate::team_relay_inbox::mark_seen(&d, "r1", 4).unwrap();
+    let r = run(&d);
+    let mut late = msg(2, "m2", "human", "지난 회의록");
+    late["t"] = json!("late");
+    late["key"] = json!({ "enc": "e", "w": "w", "by": "d0" });
+    let (mut ws, _) = accept(&l, vec![late]);
+    assert_eq!(next_json(&mut ws), json!({ "t": "late_ack", "seq": 2 }));
+    assert!(r.got.recv_timeout(Duration::from_millis(300)).is_err(), "늦게 연 말은 참모에게 안 간다");
+    let inbox = std::fs::read_to_string(d.join(crate::team_relay_inbox::INBOX_FILE)).unwrap();
+    assert!(inbox.contains("지난 회의록") && inbox.contains("\"note\":\"late\"") && inbox.contains("\"seq\":2"), "{inbox}");
+    assert_eq!(crate::team_relay_inbox::last_seen(&d, "r1"), 4, "받은 자리(seq)는 앞으로만");
+    let _ = r.tx.send(Cmd::Stop);
 }

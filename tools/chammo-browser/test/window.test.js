@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { windowPosition, offsetFor, chromeArgs } = require('../src/window');
+const { windowPosition, offsetFor, chromeArgs, AUTOMATION_ARG } = require('../src/window');
 
 // 코코아 좌표(왼쪽 아래 원점, y 위로). screens[0] = 주 화면
 const MAIN = [0, 0, 1920, 1080];
@@ -36,8 +36,8 @@ test('화면 정보가 없으면 null', () => {
 });
 
 test('크롬 인자: 경고 띠를 숨기는 --test-type, 자리가 있으면 --window-position', () => {
-  assert.deepStrictEqual(chromeArgs([10, -20], false, null, 'linux'), ['--test-type', '--window-position=10,-20']);
-  assert.deepStrictEqual(chromeArgs(null, false, null, 'linux'), ['--test-type']);
+  assert.deepStrictEqual(chromeArgs([10, -20], false, null, 'linux'), ['--test-type', AUTOMATION_ARG, '--window-position=10,-20']);
+  assert.deepStrictEqual(chromeArgs(null, false, null, 'linux'), ['--test-type', AUTOMATION_ARG]);
 });
 
 const { windowSize } = require('../src/window');
@@ -55,7 +55,7 @@ test('크롬 창 크기 — 그 화면 안에 들어오게(오른쪽·아래 16p
 });
 
 test('크롬 인자 — 크기도 같이', () => {
-  assert.deepStrictEqual(chromeArgs([1, 2], false, [1400, 880], 'linux'), ['--test-type', '--window-position=1,2', '--window-size=1400,880']);
+  assert.deepStrictEqual(chromeArgs([1, 2], false, [1400, 880], 'linux'), ['--test-type', AUTOMATION_ARG, '--window-position=1,2', '--window-size=1400,880']);
 });
 
 const { virtualDisplay } = require('../src/window');
@@ -109,6 +109,30 @@ test('가상 모니터 — 목록에 Chammo agents 화면이 없거나 진짜 �
   // 이름이 없는 옛 목록(names 없음)이면 자리 파일 값 — 예전 동작
   const old = () => ({ screens: [LG, BOOK], main: LG });
   assert.deepStrictEqual(virtualDisplay(f, () => true, old), { pos: [-2910 + 24, 956 + 24], size: [1394, 852] });
+});
+
+// 10-28 '맥북 화면에 잠깐 떴다 사라짐' — 도우미는 화면을 만든 뒤 맥 기본 자리에 두었다가 모서리로 옮긴다. 옮기기 전 자리로 크롬을 띄우면 창이 갈 곳을 잃는다
+const { settledVd } = require('../src/window');
+test('가짜 화면 자리 — 자리 파일과 같으면 바로, 다르면 잠깐 뒤 다시 읽어 그대로일 때만', () => {
+  const d = fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'chammo-vd-'));
+  const f = pathx.join(d, 'vdisplay.json');
+  const AT = { pos: [-2910 + 24, 956 + 24], size: [1394, 852] };
+  let slept = 0;
+  const sleep = () => { slept++; };
+  // 도우미가 자리를 찍었고(앱이 자리 파일에) 지금 자리와 같다 — 기다리지 않는다
+  fsx.writeFileSync(f, JSON.stringify({ pid: 4242, bounds: [-2910, 956, 1440, 900] }));
+  assert.deepStrictEqual(settledVd(f, { alive: () => true, screens: layout(), sleep }), AT);
+  assert.strictEqual(slept, 0);
+  // 막 만들어 아직 자리 파일이 없다 — 한 번 쉬고 같은 자리면 쓴다
+  fsx.rmSync(f);
+  assert.deepStrictEqual(settledVd(f, { alive: () => true, screens: layout(), sleep }), AT);
+  assert.strictEqual(slept, 1);
+  // 쉬는 사이 모서리로 옮겨 갔다 — 이번엔 안 쓴다(다음 바퀴에 새 자리로)
+  const born = [-1470 - 1440, 124 + 956 - 900, 1440, 900]; // 맥이 맥북 옆에 붙여 둔 자리(코코아)
+  let n = 0;
+  const moving = () => (n++ === 0 ? layout({ screens: [LG, BOOK, born] })() : layout()());
+  assert.strictEqual(settledVd(f, { alive: () => true, screens: moving, sleep }), null);
+  assert.strictEqual(settledVd(f, { alive: () => true, screens: () => null, sleep }), null, '화면 목록도 자리 파일도 없다');
 });
 
 const { chromeChannel } = require('../src/window');

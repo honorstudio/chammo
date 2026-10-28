@@ -20,13 +20,13 @@ const SANS = '-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard
 const SERIF = '"Didot","Bodoni 72","Iowan Old Style",Georgia,"AppleMyungjo",serif'
 const MYEONG = '"AppleMyungjo","Nanum Myeongjo","Iowan Old Style",serif'
 
-// 스킨 변수(라이트 / 다크) — 층(g)마다 걸려서 사라지는 층과 나타나는 층이 서로 안 섞인다
+// 스킨 변수(라이트 / 다크) — 층(g)마다 걸려서 사라지는 층과 나타나는 층이 서로 안 섞인다. --dim 은 흰·회색 칸 모두 4.5:1 이상(WCAG AA)
 const VARS: Record<Skin, [string, string]> = {
-  gauge: ['--ink:#1d1d20;--dim:#8a8a92;--line:#e6e6eb;--surf:#fff;--a1:#2f74e0;--warm:#ff9f43;--red:#e5484d;--blue:#2f74e0',
-    '--ink:#e7e7ea;--dim:#83838c;--line:#2c2c33;--surf:#1b1b1f;--a1:#5b9bff;--warm:#ffb066;--red:#ff7b7f;--blue:#7aaeff'],
+  gauge: ['--ink:#1d1d20;--dim:#6a6a72;--line:#e6e6eb;--surf:#fff;--a1:#2f74e0;--warm:#ff9f43;--red:#e5484d;--blue:#2f74e0',
+    '--ink:#e7e7ea;--dim:#909098;--line:#2c2c33;--surf:#1b1b1f;--a1:#5b9bff;--warm:#ffb066;--red:#ff7b7f;--blue:#7aaeff'],
   sky: ['--ink:#fff;--dim:rgba(255,255,255,.82);--line:rgba(255,255,255,.35);--surf:#fff;--a1:#ffd27a;--warm:#ffd27a;--red:#ffb4a8;--blue:#cfe6ff',
     '--ink:#fff;--dim:rgba(255,255,255,.78);--line:rgba(255,255,255,.3);--surf:#fff;--a1:#ffd27a;--warm:#ffd27a;--red:#ffb4a8;--blue:#cfe6ff'],
-  cover: ['--ink:#1b1b1d;--dim:#7d7d84;--line:#1b1b1d;--surf:#fff;--a1:#c8102e;--warm:#c8102e;--red:#c8102e;--blue:#1b1b1d',
+  cover: ['--ink:#1b1b1d;--dim:#6b6a66;--line:#1b1b1d;--surf:#fff;--a1:#c8102e;--warm:#c8102e;--red:#c8102e;--blue:#1b1b1d',
     '--ink:#ecebe6;--dim:#8c8b86;--line:#ecebe6;--surf:#1b1b1f;--a1:#ff5a5f;--warm:#ff5a5f;--red:#ff5a5f;--blue:#ecebe6'],
 }
 

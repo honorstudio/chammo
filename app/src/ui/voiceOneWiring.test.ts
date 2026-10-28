@@ -5,8 +5,13 @@ import app from '../App.tsx?raw';
 describe('음성은 말 건 참모만 — App 이 새 답마다 거른다', () => {
   it('새 답은 talkedTo(사람이 마지막으로 말한 참모 + 앞 채팅 탭)로 가른 뒤 routeReply 로 — 읽기·한 줄·쌓기', () => {
     expect(app).toMatch(/const speakers = talkedTo\(orchActs\.map\(\(x\) => \(\{ id: x\.session\.id, human: x\.activity\.human \}\)\), front\)/);
-    expect(app).toMatch(/routeReply\(voiceHeld\.current, \{ id: s\.id, name: orchDisplay\(s\) \|\| assistant\(\), text: t, asks: !!f\.reply\.asks/);
+    expect(app).toMatch(/routeReply\(voiceHeld\.current, \{ id: s\.id, name: orchDisplay\(s\) \|\| assistant\(\), text: t, asks: !!reply\.asks, ts: reply\.ts, human: !!reply\.byHuman \}/);
     expect(app).toMatch(/if \(o\.note\) return speak\(o\.note, undefined, s\.id\);\n\s*return o\.speak \? speakAs\(s, o\.speak\) : undefined;/); // 읽는 건 routeReply 가 고른 것만
+  });
+  it('참모끼리 턴은 버리고, 꼬리가 잘려 깨운 말을 모르는 답은 기록을 더 길게 읽어 다시 가른다(10-28 디자인 담당)', () => {
+    expect(app).toMatch(/let how = voiceTurn\(reply, speakers\.has\(s\.id\), false, giver\);/);
+    expect(app).toMatch(/if \(how === 'deeper' && s\.sessionId\) \{[\s\S]{0,200}readTranscriptTails\(\[s\.sessionId\], DEEP_TAIL\)[\s\S]{0,300}how = voiceTurn\(reply, speakers\.has\(s\.id\), true, giver\);/);
+    expect(app).toMatch(/if \(how === 'skip'\) return undefined;/);
   });
   it('채팅 탭을 열면 쌓인 답을 읽고, scripts/app voice read 도 같은 길', () => {
     expect(app).toMatch(/useEffect\(\(\) => \{ if \(chatTab\) readHeld\(chatTab\); \}, \[chatTab\]\)/);

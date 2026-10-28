@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Activity } from '../domain/activity';
 import { liveOf, type Live } from '../domain/agentBrowser';
 import { needsAnswer, needsLook, placeDirect, stepSeen, type DirectCard, type Seen } from '../domain/directAsk';
-import type { Session } from '../domain/session';
+import { seenName, type Session } from '../domain/session';
 import type { TaskEvent } from '../domain/tasks';
 import { cardToken, toWithdraw } from '../domain/notify';
 import { tr } from '../i18n';
@@ -68,7 +68,7 @@ export function useDirectCards(everyone: Session[], acts: { session: Session; ac
     }
   }, [cards]);
 
-  const nameOf = (c: DirectCard) => (c.kind === 'link' ? tr('참모 앱', 'Chammo') : everyone.find((x) => x.id === c.from)?.name || c.from);
+  const nameOf = (c: DirectCard) => (c.kind === 'link' ? tr('참모 앱', 'Chammo') : seenName(everyone.find((x) => x.id === c.from)?.name || c.from));
   const card = (c: DirectCard, place: string, compact: boolean, onOpen: () => void) => {
     const s = everyone.find((x) => x.id === c.from);
     return <DirectCardView c={c} name={nameOf(c)} project={s?.project ?? undefined} profile={s ? liveOf(s, lives)?.profile : undefined} compact={compact} onOpen={onOpen}

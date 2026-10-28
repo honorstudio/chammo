@@ -40,6 +40,12 @@ class Roster(unittest.TestCase):
         self.assertIn('넘기고', out)
         self.assertNotIn('참모-9', out)  # HQ 밖 세션은 참모가 아니다
 
+    def test_다른_참모에게_보낼_땐_번호_서명을_안_붙인다(self):
+        # 받은 말 머리에 앱이 보낸 쪽 별명을 보여 준다 — 본문 첫머리 '참모-2:' 서명은 번호만 한 번 더 샜다(2026-10-28)
+        out = self.build()
+        self.assertIn('서명', out)
+        self.assertIn('번호 이름', out)
+
     def test_내_맡은_일도_싣는다(self):
         out = self.build(roles={'참모': {'role': '쇼핑몰 개발 — 앱 코드는 안 맡음', 'at': 1}})
         self.assertIn('너 = 참모 · 뽀삐 — 맡은 일: 쇼핑몰 개발 — 앱 코드는 안 맡음', out)

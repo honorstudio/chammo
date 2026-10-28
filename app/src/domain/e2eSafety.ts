@@ -9,6 +9,8 @@ export type SafetyPerson = {
   state: string; verifiedAt: number; blocked: boolean; number: string; card: string;
   /** 번호를 셈한 사슬 · 갈림을 '다시 받기'했나 */
   identity: string; head: string; refetched: boolean;
+  /** 보안 번호가 바뀌어 저절로 받아들인 때(ms, 0 = 없음) — 그 사람 대화에 회색 줄(사용자 10-29: 팀원 바뀜은 묻지 않는다) */
+  rekeyedAt?: number;
 };
 
 /** 갈림은 '다시 받기' 전엔 번호 비교·받아들이기가 없다(6차 리뷰 — 다시 받은 사슬의 번호를 견줘야) */
@@ -34,9 +36,30 @@ export function e2eLine(note: string, who: string): { tone: 'block' | 'warn'; te
     case 'e2e-plain': return { tone: 'block', text: tr(`${who}에게서 암호 없이 온 말 — 받지 않았어요(옛 판 앱일 수 있어요)`, `A message from ${who} without encryption — not accepted (maybe an old app)`) };
     case 'e2e-old': return { tone: 'block', text: tr('30일 넘게 지난 말이라 받지 않았어요 — 오래 꺼져 있던 기기의 밀린 말이거나 보낸 기기 시계가 틀렸을 수 있어요', 'Over 30 days old — not accepted (a long-offline device, or a wrong clock)') };
     case 'e2e-future': return { tone: 'block', text: tr('보낸 시각이 하루 넘게 미래인 말이라 받지 않았어요 — 보낸 기기 시계가 틀렸을 수 있어요', 'Dated more than a day in the future — not accepted (wrong clock?)') };
-    case 'e2e-fail': return { tone: 'block', text: tr('이 기기에서 못 연 암호 말이에요', "An encrypted message this device couldn't open") };
+    // 내 다른 기기가 열 수 있던 말이면 그 기기가 켜질 때 열쇠를 저절로 건네 같은 자리에 다시 보인다(relay ADR 0007 R10)
+    case 'e2e-fail': return { tone: 'block', text: tr('이 기기에서 못 연 암호 말이에요 — 열 수 있는 내 다른 기기가 켜지면 저절로 열려요', "An encrypted message this device couldn't open — it opens by itself once another device of yours that can read it is on") };
     case 'e2e-changed': return { tone: 'warn', text: tr(`보안 번호가 바뀐 ${who}의 말 — 확인 전엔 참모에게 안 넘겨요`, `From ${who}, whose safety number changed — not passed to assistants until you check`) };
     case 'e2e-fork': return { tone: 'warn', text: tr(`${who}의 기기 목록이 다르게 보일 때 온 말 — 확인 전엔 참모에게 안 넘겨요`, `From ${who} while their device list looks different — not passed to assistants until you check`) };
     default: return null;
   }
 }
+
+/** 이 대화(DM 상대·팀챗 사람) 중 보안 번호가 바뀌어 저절로 받아들인 사람 — 바뀐 때 순 */
+export function rekeyNotices(safety: SafetyPerson[] | undefined, members: string[]): SafetyPerson[] {
+  return (safety ?? []).filter((p) => (p.rekeyedAt ?? 0) > 0 && members.includes(p.member)).sort((a, b) => (a.rekeyedAt ?? 0) - (b.rekeyedAt ?? 0));
+}
+
+/** 회색 줄을 끼울 자리 — before[i] = i번째 말(시각 ats[i]) 앞에 올 줄, tail = 맨 끝(마지막 말보다 늦게 바뀜) */
+export function slotNotices<T extends { rekeyedAt?: number }>(ats: number[], notes: T[]): { before: T[][]; tail: T[] } {
+  const before: T[][] = ats.map(() => []);
+  const tail: T[] = [];
+  for (const n of notes) {
+    const i = ats.findIndex((at) => at > (n.rekeyedAt ?? 0));
+    if (i < 0) tail.push(n);
+    else before[i]!.push(n);
+  }
+  return { before, tail };
+}
+
+/** 회색 줄 글 */
+export const rekeyText = (name: string) => tr(`${name}의 보안 번호가 바뀌었어요`, `${name}'s safety number changed`);

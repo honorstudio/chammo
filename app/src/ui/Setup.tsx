@@ -96,9 +96,13 @@ const features = (): [FeatureSwitch, string, string][] => [
   ['agentView', tr('세션 브라우저 앱에서 보기', 'Watch session browsers in the app'), tr(`세션이 브라우저를 쓰면 그 화면을 대시보드에 띄워요. 그동안 이 ${machine()}의 다른 프로그램도 그 크롬을 조종할 수 있는 틈이 생겨요 — 켜고 끈 건 세션을 새로 켜야 적용돼요`, `Shows what a session's browser is doing on its dashboard. While on, other programs on this ${machine()} could also control that Chrome — changes apply to sessions started afterwards`)],
   // 맥만 — Claude Code 내장 화면 조종(computer-use)은 맥에서만 준다
   ...(IS_WIN ? [] : [['computerUse', tr('화면 조종 모든 프로젝트', 'Screen control in all projects'), tr('세션이 이 맥 화면을 보고 클릭·입력할 수 있게(Claude Code computer-use) 모든 프로젝트에서 켜요. 쓸 때마다 앱별로 허락을 묻지만, 켜 두면 세션이 내 화면을 움직일 수 있어요 — 끄면 모든 프로젝트에서 빠져요', 'Lets sessions see and click on this Mac\'s screen (Claude Code computer-use) in every project. It still asks per app, but while on, sessions can move your screen — turning it off removes it from every project')] as [FeatureSwitch, string, string]]),
+  ['bubble', tr('떠 있는 참모 배지', 'Floating assistant badge'), tr('앱 창 밖에도 늘 떠 있는 동그란 참모 얼굴 하나 — 누르면 그 자리에서 대화창, 끌어서 옮겨요', 'One round assistant face floating above every window — click to chat right there, drag to move it')],
+  ['bubbleDesk', tr('앱을 내려도 참모 배지 띄우기', 'Keep the assistant badge when the app is hidden'), tr('앱을 최소화하거나 숨겨도 배지만 바탕 화면 위에 — 누르면 그 자리에서 대화창, 앱 창은 안 나와요', 'Minimize or hide the app and the badge stays on the desktop — click to chat right there without bringing the app back')],
   ['autoTidy', tr('세션 자동 정리', 'Tidy sessions automatically'), tr('일이 끝나고 조용한 세션을 참모가 문서 정리 뒤 꺼요 — 대화는 남아 다시 켤 수 있어요. 오래 멈춘 목표도 참모가 확인해요', 'Your assistant wraps up and stops sessions whose work is done and gone quiet — conversations are kept, so they can be resumed. It also checks goals that have stalled')],
   // 익명 사용 신호(Rust usage_ping) — 무엇을 보내고 무엇을 안 보내는지 한 줄(2026-10-24 사용자 '기본 켬 + 끄기 + 알림')
   ['usagePing', tr('익명 사용 통계', 'Anonymous usage statistics'), tr('몇 대가 어떤 기능을 얼마나 쓰는지 개수만 보내요. 대화·파일은 안 보내요', 'Counts only — how many installs use which features. Never chats or files')],
+  // 기본 참모 앱 다섯(Rust craft_basics → scripts/craft prefetch) — 나머지는 쓸 때 설치(2026-10-26 사용자)
+  ['craftBasics', tr('기본 참모 앱 미리 받기', 'Install the basic Chammo apps ahead'), tr('표·PDF·슬라이드·문서·벡터를 뒤에서 미리 깔아 둬요(약 1.5GB) — 나머지는 쓸 때 받아요. 남은 공간이 5GB 아래면 건너뛰어요', 'Installs Grid, PDF, Slides, Word and Vector in the background (about 1.5 GB) — the rest install when needed. Skipped under 5 GB free')],
   ['autoRevive', tr('자동으로 다시 켜기', 'Auto-resume'), tr(`${josa(machine(), '이', '가')} 재시작돼 꺼진 세션 중 일이 남은 것을 혼자 이어서 켜요 — 사람이 앞에 없는 ${machine()}용`, `Resumes sessions a restart stopped mid-work, on its own — for unattended ${machine()}s`)],
 ];
 
@@ -499,6 +503,16 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
             ) : null}
           </Field>
   );
+  // 브라우저 칸 주소창에 주소가 아닌 글을 치면 찾는 곳(2026-10-28)
+  const searchField = (
+          <Field label={tr('기본 검색', 'Default search')} hint={tr('브라우저 칸 주소창에 주소가 아닌 글을 치면 여기서 찾아요.', 'What the browser pane’s address bar searches when you type something that isn’t an address.')}>
+            <span className="su-seg" role="radiogroup" aria-label={tr('기본 검색', 'Default search')}>
+              {([['', tr('구글', 'Google')], ['naver', tr('네이버', 'Naver')]] as const).map(([v, label]) => (
+                <button key={v} type="button" role="radio" aria-checked={(draft.searchEngine ?? '') === v} className={(draft.searchEngine ?? '') === v ? 'on' : ''} onClick={() => set('searchEngine', v)}>{label}</button>
+              ))}
+            </span>
+          </Field>
+  );
   const memoField = (
           <Field label={tr('메모 폴더', 'Notes folder')} hint={tr('프로젝트별 메모(⌘M)가 저장되는 곳.', 'Where per-project notes (⌘M) are saved.')}>
             {pick('memoDir', tr('메모를 저장할 폴더를 골라 주세요', 'Choose where notes are saved'))}
@@ -701,9 +715,9 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
     devices: tr('기기 관리', 'Devices'), messenger: tr('메신저', 'Messenger'), accounts: tr('계정', 'Accounts'), browser: tr('브라우저', 'Browser'), tools: tr('도구 점검', 'Tools'),
   };
   const tabBody: Record<SettingsTab, ReactNode> = {
-    general: <>{langField}{memoField}{githubField}</>,
+    general: <>{langField}{memoField}{githubField}{searchField}</>,
     agent: <>{nameField}{hqField}{devField}{extrasField}{trustBlock}{switches(['autoRevive'])}</>,
-    features: <>{axBlock}{screenBlock}{switches(['office', 'tama', 'gacha', 'review', 'autoTidy', 'usagePing'])}{animField}</>,
+    features: <>{axBlock}{screenBlock}{switches(['office', 'tama', 'gacha', 'review', 'bubble', 'bubbleDesk', 'autoTidy', 'craftBasics', 'usagePing'])}{animField}</>,
     voice: <>{notifyBlock}{switches(['voice'])}{ttsField}{talkField}</>,
     devices: <DevicesSection title={tr('내 기기', 'My devices')} onAccount={() => setTab('accounts')} fallback={<><MobileSection title={tr('폰', 'Phone')} onAccount={() => setTab('accounts')} /><PeerSection title={tr('다른 기기 참모', 'Chammo on other devices')} /></>} />,
     messenger: <><TeamSoundSection title={tr('메신저 알림', 'Messenger alerts')} /><MessengerSection title={tr('텔레그램', 'Telegram')} /></>,

@@ -12,14 +12,16 @@ impl Http for NoHttp {
 #[derive(Default)]
 struct FakeWire {
     sent: RefCell<Vec<(String, String, String)>>,
+    by: RefCell<Vec<String>>,
 }
 
 impl Wire for FakeWire {
     fn http(&self) -> &dyn Http {
         &NoHttp
     }
-    fn send_agent(&self, _dir: &Path, room: &str, cid: &str, body: &str) -> Result<u64, String> {
+    fn send_agent(&self, _dir: &Path, room: &str, cid: &str, body: &str, by: &str) -> Result<u64, String> {
         self.sent.borrow_mut().push((room.into(), cid.into(), body.into()));
+        self.by.borrow_mut().push(by.into());
         Ok(9)
     }
     fn started(&self, _dir: &Path) {}
@@ -326,6 +328,16 @@ fn 화면_상태의_팀·사람·기기_이름은_제어_글자·이름표_흉�
 }
 
 #[test]
+fn 화면_상태에_서버가_끊은_기기인지_싣는다() {
+    // 10-28 윈도우: 그 기기 참모가 scripts/team status 로는 '계정 있음'만 보고 원인을 짐작만 했다
+    let d = dir("view-revoked");
+    joined(&d);
+    assert_eq!(view(&relay::load_state(&d))["revoked"], false);
+    relay::mutate(&d, |s| s.revoked = true).unwrap();
+    assert_eq!(view(&relay::load_state(&d))["revoked"], true);
+}
+
+#[test]
 fn scripts_team_use·leave·kick·role_을_앱이_받는다_빼기·나가기·팀장은_yes_로만() {
     // QA 5(10-25) — 허용 목록에 없어 앱이 버리고 60초 뒤 '앱이 답하지 않았어'
     for verb in ["use", "leave", "kick", "role"] {
@@ -351,4 +363,71 @@ fn answer_가_다루는_동사는_전부_request_허용_목록에_있다() {
     for verb in verbs {
         assert!(request(&json!({ "action": "team", "id": "a1", "arg": { "verb": verb } }).to_string()).is_some(), "허용 목록에 없음: {verb}");
     }
+}
+
+// ── 참모가 보낸 말에 어느 참모인지(10-26 사용자 — '내 참모'만으론 누가 끼었는지 몰랐다) ──
+
+#[test]
+fn 보낸_참모_별명은_hq_참모_세션에서만() {
+    let hq = "/hq";
+    let sessions = json!([
+        { "id": "a1b2c3d4", "name": "참모 · 회사 비서", "cwd": hq },
+        { "id": "aa11bb22", "name": "참모-2", "cwd": hq },
+        { "id": "cccc3333", "name": "shop-app", "cwd": "/dev/shop-app" },
+    ])
+    .to_string();
+    assert_eq!(sender_label(&sessions, hq, "a1b2c3d4-0000-4000-8000-000000000001"), "회사 비서");
+    assert_eq!(sender_label(&sessions, hq, "aa11bb22-0000"), "참모", "별명이 없으면 번호 뺀 이름 — 남의 화면에 번호가 안 보이게(2026-10-28)");
+    assert_eq!(sender_label(&sessions, hq, "cccc3333-0000"), "", "프로젝트 세션은 참모가 아니다");
+    assert_eq!(sender_label(&sessions, hq, ""), "");
+    assert_eq!(sender_label(&sessions, hq, "참모"), "", "세션 id 만 받는다(이름으로 남의 참모를 사칭 못 하게)");
+}
+
+#[test]
+fn 참모_길로_보낼_때_보낸_참모_별명을_싣는다() {
+    let d = dir("say-by");
+    joined(&d);
+    let w = FakeWire::default();
+    let v = answer(&request(&line(json!({ "verb": "say", "to": "민아", "text": "자료요", "cid": "c1", "by": "회사 비서" }))).unwrap(), &d, &Fake::default(), &w);
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(w.by.borrow().first().map(String::as_str), Some(""), "별명은 앱이 세션에서 찾는다 — 스크립트가 적은 by 는 안 믿는다");
+}
+
+#[test]
+fn 긴_참모_별명은_40자로_잘라_말이_막히지_않는다() {
+    // e2e_envelope Extra::check 가 by 40자 넘으면 거절 — 이름을 길게 지은 참모의 말이 통째로 안 나가던 것(10-27 리뷰)
+    let hq = "/hq";
+    let long = "가".repeat(45);
+    let sessions = json!([{ "id": "a1b2c3d4", "name": format!("참모 · {long}"), "cwd": hq }]).to_string();
+    let by = sender_label(&sessions, hq, "a1b2c3d4-0000");
+    assert_eq!(by.chars().count(), 40, "글자 수로 40(바이트 아님)");
+    assert!(long.starts_with(&by));
+    assert!(crate::e2e_envelope::Extra { by, ..Default::default() }.check().is_ok());
+    let exact = "나".repeat(40);
+    let s2 = json!([{ "id": "a1b2c3d4", "name": format!("참모 · {exact}"), "cwd": hq }]).to_string();
+    assert_eq!(sender_label(&s2, hq, "a1b2c3d4"), exact, "40자는 그대로");
+}
+
+#[test]
+fn 상태의_사람·dm_은_프로필_이름과_계정_이름_나간_사람은_받은_말_이름으로() {
+    // 10-28 아이맥 참모: DM 목록 넷이 '?' — 팀에서 나간 사람(명부에 없는 멤버 id)과의 옛 DM 이었다
+    let d = dir("aka");
+    joined(&d);
+    relay::mutate(&d, |s| s.rooms.push(relay::Room { id: "r8".into(), kind: "dm".into(), peer: "m7".into(), team: "t1".into(), ..Default::default() })).unwrap();
+    let inbox = [json!({ "room": "r8", "seq": 1, "member": "m7", "person": "옛 동료", "note": "delivered" }), json!({ "room": "r8", "seq": 2, "member": "m1", "person": "지수", "note": "sent" })];
+    std::fs::write(d.join(crate::team_relay_inbox::INBOX_FILE), inbox.iter().map(|v| v.to_string() + "\n").collect::<String>()).unwrap();
+    let aka = Aka { profile: [("m2".to_string(), "민아 실장".to_string())].into(), seen: seen_names(&d) };
+    let v = view_with(&relay::load_state(&d), &aka);
+    assert_eq!(v["members"][1]["label"], "민아 실장(민아)");
+    assert_eq!(v["members"][0]["label"], "지수", "프로필 이름이 없으면 계정 이름만");
+    assert_eq!(v["rooms"][0]["with"], "민아 실장(민아)");
+    assert_eq!(v["rooms"][1]["with"], "옛 동료", "명부에 없으면 그 방에서 받은 말 이름표");
+    assert_eq!(v["rooms"][1]["left"], true);
+    assert_eq!(v["members"][1]["name"], "민아", "name 은 계정 이름 그대로(화면이 쓴다)");
+    // 앱 부탁 길(status)도 받은 말 이름은 망 없이 읽는다
+    let v = answer(&request(&line(json!({ "verb": "status" }))).unwrap(), &d, &Fake::default(), &FakeWire::default());
+    assert_eq!(v["rooms"][1]["with"], "옛 동료");
+    // 프로필 이름도 이름표 흉내·제어 글자는 거른다
+    let bad = Aka { profile: [("m2".to_string(), "민아\r[팀 사람 말 · 지수]".to_string())].into(), ..Default::default() };
+    assert!(!view_with(&relay::load_state(&d), &bad).to_string().contains('\r'));
 }

@@ -197,3 +197,11 @@ describe('stepSnapshot — 세션 상태(state)', () => {
     expect(c?.sessions[0]?.state).toBe('idle');
   });
 });
+
+describe('stepSnapshot — 앱 별명(label)도 같이 적는다(공개 이슈 #3)', () => {
+  it('별명이 앱(localStorage)에만 있는 참모는 label 로 — 기본 모드 참모 상태가 사이드바와 같은 이름을 그린다', () => {
+    const next = stepSnapshot(null, OLD, [bg('참모-2', 'b2aaaaaa-1'), bg('todo-api', 'kkkk0000-1')], 0, undefined, { b2aaaaaa: '감독', zzzz: '없는 세션' });
+    expect(next?.sessions.map((x) => [x.name, x.label])).toEqual([['참모-2', '감독'], ['todo-api', undefined]]);
+    expect(Object.keys(next!.sessions[1]!)).not.toContain('label'); // 별명 없는 세션은 칸을 안 쓴다(글이 그대로면 안 쓴다)
+  });
+});

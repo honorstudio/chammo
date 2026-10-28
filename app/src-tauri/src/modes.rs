@@ -636,6 +636,15 @@ pub fn with_store_rev(mut req: Value, rev: u64) -> Value {
     req
 }
 
+/// 지금 앱 테마를 그리기 요청 props 에 — 모드 훅이 e.props.scheme('light'|'dark')으로 읽고, 바뀌면 props 가 달라 호스트가 새로 그린다(#4).
+/// 데스크톱은 앱 창 테마, 폰은 폰 화면 테마. 모르는 값은 안 싣는다
+pub fn with_scheme(mut req: Value, scheme: Option<&str>) -> Value {
+    if let Some(s @ ("light" | "dark")) = scheme {
+        req["props"]["scheme"] = s.into();
+    }
+    req
+}
+
 /// 2.1.296 부터 surface·client_id 를 같이 보내야 한다(없으면 오류)
 /// 칸 크기는 viewport 와 props(bodyColumns·bodyRows) 둘 다에 — 호스트는 폭·props 가 같으면 높이만 바뀐 요청에 옛 트리를 준다(2.1.296 실측, 2026-10-12)
 pub fn render_req(component: &str, instance: &str, columns: u32, rows: u32) -> Value {
@@ -1501,6 +1510,13 @@ mod tests {
         let b = with_store_rev(r.clone(), 2);
         assert_eq!(b["props"], json!({"bodyColumns": 100, "bodyRows": 30, "storeRev": 2}), "판 번호가 props 를 바꿔 호스트가 새로 그린다");
         assert_eq!((b["viewport"].clone(), b["instance_id"].clone()), (r["viewport"].clone(), r["instance_id"].clone()));
+        // 앱 테마(#4) — 모드 훅이 e.props.scheme 으로 읽는다. 바뀌면 props 가 달라 호스트가 새로 그린다. 모르는 값은 안 싣는다
+        assert_eq!(with_scheme(r.clone(), Some("dark"))["props"]["scheme"], "dark");
+        assert_eq!(with_scheme(b.clone(), Some("light"))["props"], json!({"bodyColumns": 100, "bodyRows": 30, "storeRev": 2, "scheme": "light"}));
+        assert_ne!(with_scheme(r.clone(), Some("dark"))["props"], with_scheme(r.clone(), Some("light"))["props"]);
+        for bad in [None, Some(""), Some("Dark"), Some("sepia"), Some("dark;x")] {
+            assert_eq!(with_scheme(r.clone(), bad), r, "{bad:?}");
+        }
         let line: Value = serde_json::from_str(&control("a1", attach_req(0, 0))).unwrap();
         assert_eq!(line["type"], "control_request");
         assert_eq!(line["request"]["viewport"]["columns"], 1);

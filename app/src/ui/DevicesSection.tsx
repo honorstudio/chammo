@@ -203,5 +203,5 @@ function DeviceNumber({ dev, decide, busy, onDone }: { dev: string; decide: (e: 
   if (num.mode === 'click') {
     return <><button className="btn su-row-act" disabled={busy} onClick={(e) => decide(e, false)}>{tr('거절', 'Decline')}</button><button className="btn pri su-row-act" disabled={busy} onClick={(e) => decide(e, true)}>{tr('허용', 'Allow')}</button></>;
   }
-  return <div className="dm-number"><NumberEntry dev={dev} api={desktopNumber} ready={num.ready} code={num.code} decline={(e) => decide(e, false)} onDone={onDone} /></div>;
+  return <div className="dm-number"><NumberEntry dev={dev} api={desktopNumber} ready={num.ready} mine={num.mine} claim={num.claim} note={num.err} code={num.code} decline={(e) => decide(e, false)} onDone={onDone} /></div>;
 }

@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn 켜_둔_기능은_스위치_이름만_usage_ping_빼고() {
-        let f = crate::config::Features { office: true, voice: true, usage_ping: true, tama: false, gacha: false, review: false, auto_revive: false, auto_tidy: false, agent_view: true, computer_use: false, animation: "auto".into() };
+        let f = crate::config::Features { office: true, voice: true, usage_ping: true, tama: false, gacha: false, review: false, auto_revive: false, auto_tidy: false, agent_view: true, computer_use: false, craft_basics: true, bubble: true, bubble_desk: true, animation: "auto".into() };
         assert_eq!(on_list(&f), vec!["office", "voice", "agentView"]);
     }
 

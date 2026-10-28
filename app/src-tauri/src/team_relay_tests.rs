@@ -265,6 +265,45 @@ fn 내_방_목록으로_방을_찾고_내_기기끼리_방이_없으면_만든�
 }
 
 #[test]
+fn 서버가_지운_기기는_401_뒤_열쇠로_물어_끊김으로_적고_다시_안_묻는다() {
+    // 10-28 윈도우 실측: 로그인 허용 대기 중 거절돼 서버가 기기 줄을 지웠는데 앱은 로그인된 줄 알고 60초마다 401 — 초대 링크를 눌러도 못 들어왔다
+    let (d, kc, r) = logged_in("gone");
+    r.devices.borrow_mut().clear(); // 서버에 기기 줄 없음 → 기기 머리 요청은 401
+    r.answer(KEY_PROBE, 404, r#"{"error":"not_found"}"#); // 모르는 열쇠 + 시계 맞음(서명 통과)
+    let e = sync_rooms(&d, &kc, &r).unwrap_err();
+    assert!(e.contains("다시 로그인"), "{e}");
+    assert!(load_state(&d).revoked);
+    let probe = r.seen.borrow().iter().find(|(_, p, _, _)| p == KEY_PROBE).cloned().unwrap();
+    assert_eq!(probe.0, "GET");
+    assert!(FakeRelay::header(&probe.2, "X-Chammo-Device").is_none() && FakeRelay::header(&probe.2, "X-Chammo-Key").is_some(), "기기 머리 없이 열쇠 머리로");
+    // 끊긴 줄 알면 서버에 다시 안 묻는다(60초마다 401 을 안 쌓는다)
+    let n = r.seen.borrow().len();
+    assert!(sync_rooms(&d, &kc, &r).unwrap_err().contains("다시 로그인"));
+    assert_eq!(r.seen.borrow().len(), n);
+}
+
+#[test]
+fn 열쇠를_서버가_알거나_답이_애매하면_401_은_끊김이_아니다() {
+    // 시계가 5분 넘게 틀린 기기는 확인 요청도 401 — 끊김으로 적지 않고 옛 안내 그대로. 5xx·429·망 오류도 마찬가지
+    for (tag, code) in [("gone-401", 401), ("gone-500", 500), ("gone-429", 429)] {
+        let (d, kc, r) = logged_in(tag);
+        r.devices.borrow_mut().clear();
+        r.answer(KEY_PROBE, code, r#"{"error":"x"}"#);
+        assert!(sync_rooms(&d, &kc, &r).unwrap_err().contains("시계"), "{tag}");
+        assert!(!load_state(&d).revoked, "{tag}");
+    }
+}
+
+#[test]
+fn 끊긴_기기는_초대를_받으면_서버에_안_가고_다시_로그인을_말한다() {
+    let (d, kc, r) = logged_in("join-gone");
+    mutate(&d, |s| s.revoked = true).unwrap();
+    let e = join(&d, &kc, &r, "", "https://chammo.app/join#Ab-_9z", "민아", "윈도우").unwrap_err();
+    assert!(e.contains("다시 로그인") && e.contains("초대"), "{e}");
+    assert!(r.seen.borrow().is_empty());
+}
+
+#[test]
 fn 계정_없는_옛_기기는_내_기기끼리_방을_안_만든다() {
     let (d, kc, r) = joined("rooms-old");
     r.answer("/v0/me/rooms", 200, r#"{"rooms":[{"roomId":"r1","kind":"dm","teamId":"t1","memberIds":["m1","m2"]}]}"#);
@@ -397,4 +436,111 @@ fn 서버_409_는_까닭마다_사람_말로() {
     for e in ["link_required", "not_revealed", "stale_head", "no_commit", "busy", "something_new"] {
         assert!(!w(e).contains("이미 등록돼 있어"), "{e}: {}", w(e));
     }
+}
+
+#[test]
+fn 화면_명령처럼_spawn_blocking_실에서_두_번_보내면_연결_하나로() {
+    // fix/team-latency3 — 화면 명령은 tauri spawn_blocking 실에서 중계를 부른다. 거기서 다시 쓰는 연결이 실제로 다시 쓰이는지(연결 수로)
+    use std::io::{Read, Write};
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    let accepts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let a = accepts.clone();
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            a.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            std::thread::spawn(move || {
+                let mut s = s;
+                let mut buf = Vec::new();
+                let mut b = [0u8; 1024];
+                while let Ok(n) = s.read(&mut b) {
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&b[..n]);
+                    while let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        buf.drain(..i + 4);
+                        let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+                    }
+                }
+            });
+        }
+    });
+    let url = format!("http://127.0.0.1:{port}/v0/me");
+    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+    for _ in 0..2 {
+        let u = url.clone();
+        let got = rt.block_on(async move { tokio::task::spawn_blocking(move || pooled_send("GET", &u, &[], b"", "", std::time::Duration::from_secs(5))).await.unwrap() });
+        assert_eq!(got.expect("다시 쓰는 연결로 갔다").unwrap(), (200, b"ok".to_vec()));
+    }
+    assert_eq!(accepts.load(std::sync::atomic::Ordering::SeqCst), 1, "두 요청이 연결 하나를 같이 썼다");
+    // 비동기 실 안에서 불러도 앱이 죽지 않는다(디버그 빌드 reqwest 는 패닉 → curl 로)
+    let u = url.clone();
+    let _ = rt.block_on(async move { pooled_send("GET", &u, &[], b"", "", std::time::Duration::from_secs(5)) });
+    let src = include_str!("team_relay.rs");
+    assert!(src.contains(".redirect(no_hops())") && src.contains("hops::Policy::none()"), "curl 처럼 리다이렉트를 안 따라간다(서명한 요청이 다른 곳으로 새지 않게)");
+}
+
+#[test]
+fn 다시_쓰는_연결_클라이언트가_패닉_없이_만들어진다() {
+    // reqwest(rustls-no-provider)는 암호 제공자가 없으면 내부 실에서 패닉한다(10-27 실측 — 단위 시험이 클라이언트를 안 만들어 못 잡았다)
+    assert!(pool().is_some());
+}
+
+fn three() -> (TeamEntry, std::collections::BTreeMap<String, String>) {
+    let m = |id: &str, n: &str| Member { id: id.into(), display_name: n.into(), role: "member".into(), devices: vec![] };
+    let t = TeamEntry { id: "t1".into(), name: "샘플팀".into(), member_id: "m1".into(), members: vec![m("m1", "지수"), m("m2", "그늘"), m("m3", "Sky Lee"), m("m4", "도윤")], ..Default::default() };
+    // 프로필 이름 — m2 는 '도윤 대표', m3 는 m4 의 명부 이름과 같은 '도윤'(옛 기록·다른 팀에서 지은 이름)
+    let aka = [("m2", "도윤 대표"), ("m3", "도윤")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+    (t, aka)
+}
+
+#[test]
+fn 사람은_프로필_이름으로도_찾고_겹치면_고르라고_한다() {
+    // 10-28 아이맥 참모: 사용자가 부른 프로필 이름('○○ 대표님한테 DM')을 못 찾았다 — 명부 이름(계정 이름)만 봐서
+    let (t, aka) = three();
+    assert_eq!(find_member(&t, "도윤 대표", &aka).unwrap().id, "m2", "프로필 이름 정확히");
+    assert_eq!(find_member(&t, "그늘", &aka).unwrap().id, "m2", "명부 이름도 그대로");
+    assert_eq!(find_member(&t, "sky", &aka).unwrap().id, "m3", "하나뿐인 앞부분");
+    assert_eq!(find_member(&t, "m4", &aka).unwrap().id, "m4", "멤버 id");
+    let e = find_member(&t, "도윤", &aka).unwrap_err();
+    assert!(e.contains("누구") && e.contains("도윤(Sky Lee) [m3]") && e.contains("도윤 [m4]"), "겹치면 엉뚱한 사람에게 안 보내고 id 와 함께 고르라고: {e}");
+    let e = find_member(&t, "철수", &aka).unwrap_err();
+    assert!(e.contains("도윤 대표(그늘)"), "모를 땐 '프로필 이름(계정 이름)' 목록: {e}");
+}
+
+// ── 사람 말 몫(10-28 22:53 429) — 배경 요청이 칸 몫(BG_CAP)을 다 써도 사람 말은 나간다 ──
+
+#[test]
+fn 배경_요청은_칸마다_200개에서_멈추고_사람_말은_그_뒤에도_나간다() {
+    let key = "budget-test-key";
+    let t = 7 * BUCKET_MS + 1;
+    for _ in 0..BG_CAP {
+        assert!(spend(key, t, false));
+    }
+    assert!(!spend(key, t, false), "배경 201번째는 안 보낸다");
+    for _ in 0..100 {
+        assert!(spend(key, t, true), "사람 말 몫 100개");
+    }
+    assert_eq!(spent(key, t), BG_CAP + 100, "서버 칸(300)을 안 넘는다");
+    assert!(spend(key, t + BUCKET_MS, false), "다음 칸이면 다시");
+    assert!(!as_human(|| false) && !human_now(), "as_human 밖으로 새지 않는다");
+    assert!(as_human(human_now));
+}
+
+#[test]
+fn 배경_몫을_다_쓴_뒤엔_서버에_안_닿고_사람_말은_쉬는_중이어도_닿는다() {
+    let (d, kc, r) = (dir("budget-call"), crate::accounts_store::fake::Fake::default(), FakeRelay::default());
+    let (k, _) = crate::team_relay_keys::create(&kc).unwrap();
+    r.devices.borrow_mut().push(("d1".into(), k.public()));
+    r.always("GET", "/v0/me", 200, "{}");
+    let _ = &d;
+    let now = now_ms();
+    while spend(&k.public(), now, false) {}
+    let (c, v) = call(&r, "https://relay.test", &k, Some("d1"), "GET", "/v0/me", None).unwrap();
+    assert_eq!((c, v["budget"].as_bool()), (429, Some(true)));
+    assert_eq!(r.seen.borrow().len(), 0, "배경은 서버에 안 닿는다");
+    slow_down(&k.public(), &Value::Null, std::time::Instant::now());
+    let (c, _) = as_human(|| call(&r, "https://relay.test", &k, Some("d1"), "GET", "/v0/me", None)).unwrap();
+    assert_eq!(c, 200, "사람 말은 쉬는 중·몫 넘김이어도 한 번 두드린다");
 }

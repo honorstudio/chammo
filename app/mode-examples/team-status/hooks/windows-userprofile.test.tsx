@@ -42,6 +42,6 @@ test('윈도우: HOME·CHAMMO_HOME 이 없으면 USERPROFILE, 설정에 hqDir �
   fakeFs(on, fs)
   const ui = await $.ui.mount({ plugin: 'team-status', surface: 'desktop', ...PANE, ...at(90, 16) })
   await clock.settle()
-  expect(await alts(ui)).toEqual(['참모-2 일하는 중'])
+  expect(await alts(ui)).toEqual(['디자인 일하는 중'])
   await ui.unmount()
 })

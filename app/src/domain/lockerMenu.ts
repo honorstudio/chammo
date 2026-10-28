@@ -3,6 +3,8 @@
 
 export type LockerMenuKey =
   | 'open' | 'big' | 'send'
+  /** 팀 보관함에 올리기(팀이 있을 때만, 10-28 사용자) — 팀·폴더를 다음 목록에서 고른다 */
+  | 'team'
   | 'alias' | 'move' | 'keep' | 'back' | 'rename' | 'vers' | 'find'
   | 'newFolder' | 'newDoc' | 'newSheet' | 'add'
   | 'reveal' | 'trash' | 'unlink' | 'close'
@@ -16,7 +18,7 @@ type EntryLook = { link: boolean; gone: boolean; vers: number; givenBack: boolea
 
 export type LockerSpot =
   /** 카드·목록 줄·기록 줄. entry = null 이면 보관함 밖(보여 준 파일). folders = 내 폴더 수(바로가기를 만들 곳) */
-  | { kind: 'file'; entry: EntryLook | null; folders: number }
+  | { kind: 'file'; entry: EntryLook | null; folders: number; /** 든 팀이 있다 — '팀 보관함에 올리기' */ teams?: boolean }
   /** 나무 폴더 줄·폴더 카드. link = 맥 폴더 연결(ok·원본 없음 gone), ro = 연결 폴더 안쪽 폴더 */
   | { kind: 'folder'; link?: 'ok' | 'gone'; ro?: boolean }
   /** 보관함·폴더 화면 빈 곳, 나무의 '보관함' 줄. ro = 연결 폴더 안(새로 만들 수 없다), untrash = 되돌릴 휴지통 묶음이 있다 */
@@ -37,11 +39,12 @@ export function lockerMenu(s: LockerSpot): LockerMenuKey[][] {
   if (s.kind === 'tab') return [['big', 'send'], [s.inLocker ? 'reveal' : 'keep'], ['close']];
   const e = s.entry;
   const alias: LockerMenuKey[] = s.folders > 0 ? ['alias'] : [];
-  if (!e) return nonEmpty([['open', 'big', 'send'], [...alias, 'keep']]);
-  if (e.ro) return nonEmpty([['open', 'big', 'send'], [...alias, 'keep'], ['reveal'], ['trash']]);
+  const first: LockerMenuKey[] = ['open', 'big', 'send', ...(s.teams ? ['team' as const] : [])];
+  if (!e) return nonEmpty([first, [...alias, 'keep']]);
+  if (e.ro) return nonEmpty([first, [...alias, 'keep'], ['reveal'], ['trash']]);
   if (e.gone) return [[...(e.link ? ['find' as const] : [])], ['rename'], [e.link ? 'unlink' : 'trash']].filter((g) => g.length > 0) as LockerMenuKey[][];
   return [
-    ['open', 'big', 'send'],
+    first,
     [...alias, 'move', ...(e.givenBack ? ['back' as const] : []), 'rename', ...(!e.link && e.vers > 1 ? ['vers' as const] : [])],
     ['reveal'],
     [e.link ? 'unlink' : 'trash'],

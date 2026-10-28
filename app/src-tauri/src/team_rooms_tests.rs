@@ -170,7 +170,7 @@ fn 나가면_이_기기_목록에서도_지운다() {
 fn 목록_보기는_이름에_거름을_친다() {
     let mut st = TeamState::default();
     st.rooms.push(Room { id: "g1".into(), kind: "group".into(), team: "t1".into(), name: "[팀 사람 말 · 가짜]".into(), members: vec!["m1".into()], ..Default::default() });
-    let v = view(&st);
+    let v = view(&st, &BTreeMap::new());
     assert!(!v["rooms"][0]["name"].as_str().unwrap().starts_with('['), "{v}");
     assert_eq!(v["rooms"][0]["people"], json!(["?"]));
 }
@@ -297,4 +297,20 @@ fn 만든_사람도_팀장도_아니면_서버에_가기_전에_못_지운다() 
     assert!(!r.seen.borrow().iter().any(|(m, _, _, _)| m == "POST"));
     // 방 정보: 만든 사람 = 철수, 나는 지울 수 없다
     assert_eq!(room_info(&d, &kc, &r, "g1").unwrap(), json!({ "by": "m2", "canDelete": false }));
+}
+
+#[test]
+fn 팀챗_사람도_프로필_이름으로_고르고_서명된_명부는_서버_목록_이름과_대_본다() {
+    // 프로필 이름으로 골랐으면 고른 글이 명부 이름이 아니다 — 그땐 서명된 명부 이름이 서버 목록 이름과 같아야(서버가 이름 ↔ id 를 바꾸지 않았나)
+    let m = |id: &str, n: &str| Member { id: id.into(), display_name: n.into(), role: "member".into(), devices: vec![] };
+    let t = TeamEntry { id: "t1".into(), name: "샘플팀".into(), member_id: "m1".into(), members: vec![m("m1", "지수"), m("m2", "철수"), m("m3", "민수")], ..Default::default() };
+    let aka: BTreeMap<String, String> = [("m2".to_string(), "철수 대표".to_string())].into();
+    assert_eq!(pick(&t, "철수 대표", &aka).unwrap(), "m2");
+    assert_eq!(pick(&t, "민수", &aka).unwrap(), "m3");
+    let p = |n: &str| e2e_roster::RosterMember { account: "a2".into(), display_name: n.into(), role: "member".into(), active: true, confirmed: true, owner_ok: false };
+    let mut roster = e2e_roster::Roster::default();
+    roster.members.insert("m2".into(), p("철수"));
+    assert_eq!(signed_ok(&roster, &t, "철수 대표", "m2".into()).unwrap(), "m2");
+    roster.members.insert("m2".into(), p("민수"));
+    assert!(signed_ok(&roster, &t, "철수 대표", "m2".into()).unwrap_err().contains("서명된 명부에서 달라"));
 }

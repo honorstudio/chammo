@@ -31,7 +31,9 @@ fn send_to<R: Runtime>(app: &tauri::AppHandle<R>, label: &str, v: serde_json::Va
 pub fn forward<R: Runtime>(window: &Window<R>, e: &DragDropEvent) {
     let scale = if cfg!(windows) { window.scale_factor().unwrap_or(1.0) } else { 1.0 };
     let label = window.label();
-    send_to(window.app_handle(), if crate::team_ui::ui_window(label) { label } else { "main" }, payload(e, scale));
+    // 바탕 배지 대화창에 놓은 파일도 그 창으로(그 참모 대화창 입력에 붙인다)
+    let to = if crate::team_ui::ui_window(label) || label == crate::orch_bubble::LABEL { label } else { "main" };
+    send_to(window.app_handle(), to, payload(e, scale));
 }
 
 /// dev 검증용 — 사람 손 없이 드롭을 흉내 낸다. HONOR_ORCH_FAKE_DROP="x,y|경로|경로…" 면 12초 뒤 한 번.

@@ -65,3 +65,52 @@ describe('부르는 이름은 참모 하나', () => {
     expect(bad).toEqual([]);
   });
 });
+
+// 2026-10-28: 참모 진짜 이름('참모-8 · 디자인 담당')은 SendMessage 주소 — 사람에게 보이는 글엔 별명만(domain/session seenName·ui/orchLabels orchDisplay·seenNow).
+// 별명을 자리마다 직접 뽑거나(split(' · ').pop()) 진짜 이름을 그대로 그리던 자리가 다시 생기면 여기서 걸린다
+describe('참모 이름은 별명 먼저 — 번호 이름이 화면 글에 새지 않는다', () => {
+  it("별명을 자리마다 split(' · ') 로 뽑지 않는다 — 별명 없는 참모는 번호 이름이 샜다", () => {
+    const bad: string[] = [];
+    for (const [f, src] of Object.entries(sources)) {
+      if (f.endsWith('/domain/orchLabel.ts')) continue;
+      for (const m of noComments(src).matchAll(/\.split\(' · '\)\.pop\(\)/g)) bad.push(`${f}: ${m[0]}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('진짜 이름·기록 대상(target)을 그대로 그리던 자리', () => {
+    const LEAKS: [string, RegExp][] = [
+      ['ui/chat/ChatView.tsx', /'From the app'\) : tr\(`\$\{from\} 세션이 보냄|title: w\.name|title=\{t\.mention\}/],
+      ['ui/space/HomeDash.tsx', /<b>\{q\.target\}|<b>\{peekRow\.target\}|\$\{x\.target\} ·|\[x\.target,/],
+      ['ui/TaskPanel.tsx', /name=\{c\.target\}/],
+      ['ui/space/SpaceView.tsx', /\$\{o\.name \|\| '참모'\}/],
+      ['ui/tama/PetView.tsx', /label=\{o\.name\}/],
+      ['ui/tama/Widget.tsx', /— \$\{file\.keeper\.name\}/],
+      ['ui/avatar/OrchAvatar.tsx', /label \?\? key/],
+      ['App.tsx', /\{remoteChat\.name\}/],
+      ['ui/team/TeamSettings.tsx', /\$\{view\.deliverTo\}/],
+      ['ui/far/FarSpace.tsx', /<b>\{a\.name\}<\/b>|<b>\{o\.owner\}/],
+      ['ui/far/FarParts.tsx', /label=\{a\.name\}/],
+      ['ui/mobile/PhoneFar.tsx', /label=\{agent\.name\}|\{agent\?\.name|<span>\{f\.owner\}/],
+      ['ui/PeerSection.tsx', /\{a\.name \|\| a\.id\}|\$\{a\.name\}와/],
+      ['ui/LoadPage.tsx', /ld-name">\{s\.name\}/],
+      ['ui/mobile/LoadSheet.tsx', /<b>\{s\.name\}<\/b>/],
+      ['domain/agentBrowser.ts', /\$\{proj\} · \$\{s\.name\}/],
+      ['domain/remoteCards.ts', /\?\.name \|\| card\.from\}/],
+      ['domain/inbox.ts', /\?\.project \?\? t\.target;/],
+      ['domain/orphans.ts', /shownName\(/],
+      ['domain/orchRevive.ts', /nick \|\| s\.name/],
+      ['domain/goalBar.ts', /\|\| base \|\| full \|\|/],
+      ['domain/chatTokens.ts', /nick \?\? name/],
+      ['ui/useDirectCards.tsx', /: everyone\.find\(\(x\) => x\.id === c\.from\)\?\.name/],
+    ];
+    const bad: string[] = [];
+    for (const [file, re] of LEAKS) {
+      const src = sources[`/src/${file}`];
+      expect(src, file).toBeTypeOf('string');
+      const m = noComments(src!).match(re);
+      if (m) bad.push(`${file}: ${m[0]}`);
+    }
+    expect(bad).toEqual([]);
+  });
+});

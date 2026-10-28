@@ -19,6 +19,7 @@ import { usePoll } from './usePoll';
 import type { Viewport } from './useViewport';
 import type { Snap } from '../../domain/mobile';
 import type { OutMsg } from '../../domain/mobileOutbox';
+import { seenName } from '../../domain/session';
 
 export type FarPick = { id: string; name: string };
 const avState = (d: FarSession['dot']) => (d === 'run' ? 'work' : d === 'ask' ? 'ask' : 'rest');
@@ -99,8 +100,8 @@ export function PhoneFar({ t, devices, self, onPick, vp }: { t: FarPick; devices
           <button type="button" className="m-far-back" onClick={() => onPick(null)} aria-label={`${josa(selfDevice(self), '으로', '로')} 돌아가기`} title={`${josa(selfDevice(self), '으로', '로')} 돌아가기`}><IconClose /></button>
         </div>
         <div className="m-far-hd">
-          {agent && <OrchAvatar name={agent.name} size={36} state={avState(agent.dot)} color={orchColor(agent.name)} label={agent.name} />}
-          <div className="m-far-tx"><b>{agent?.name ?? t.name}</b><span>{agent ? `${t.name}${agent.doing ? ` · ${agent.doing}` : ''}` : cut ? '연결 끊김' : '읽는 중…'}</span></div>
+          {agent && <OrchAvatar name={agent.name} size={36} state={avState(agent.dot)} color={orchColor(agent.name)} label={seenName(agent.name)} />}
+          <div className="m-far-tx"><b>{agent ? seenName(agent.name) : t.name}</b><span>{agent ? `${t.name}${agent.doing ? ` · ${agent.doing}` : ''}` : cut ? '연결 끊김' : '읽는 중…'}</span></div>
         </div>
         <div className="m-far-tabs" role="tablist">
           <button type="button" role="tab" aria-selected={tab === 'home'} className={tab === 'home' ? 'on' : ''} onClick={() => setTab('home')}>홈</button>
@@ -127,15 +128,15 @@ export function PhoneFar({ t, devices, self, onPick, vp }: { t: FarPick; devices
             <PhoneFarLocker name={t.name} locker={locker} />
           )}
         </div>
-        <ChatSheet snap={snap} onSnap={setSnap} vh={vp.h} kb={vp.kb} peekLine={agent ? `${agent.name} · 사람 말로 가요` : t.name}
+        <ChatSheet snap={snap} onSnap={setSnap} vh={vp.h} kb={vp.kb} peekLine={agent ? `${seenName(agent.name)} · 사람 말로 가요` : t.name}
           composer={
-            <Composer avatar={agent ? <OrchAvatar name={agent.name} size={28} state={avState(agent.dot)} color={orchColor(agent.name)} label={agent.name} /> : <span />} orchName={agent?.name ?? t.name} waiting={0}
-              placeholder={agent ? `${agent.name}에게` : `${t.name} 참모를 고르세요`} maxInputH={Math.min(176, Math.round(vp.h * 0.26))} busy={false} stopping={false} onStop={() => {}}
+            <Composer avatar={agent ? <OrchAvatar name={agent.name} size={28} state={avState(agent.dot)} color={orchColor(agent.name)} label={seenName(agent.name)} /> : <span />} orchName={agent ? seenName(agent.name) : t.name} waiting={0}
+              placeholder={agent ? `${seenName(agent.name)}에게` : `${t.name} 참모를 고르세요`} maxInputH={Math.min(176, Math.round(vp.h * 0.26))} busy={false} stopping={false} onStop={() => {}}
               draftKey={`far:${t.id}:${agent?.id ?? ''}`} onChip={() => setPicker(true)} onFocus={() => snap === 'peek' && setSnap('half')} send={send} />
           }>
           {note && <Notice text={note} error onClose={() => setNote(null)} />}
           <MessageList items={items} out={out.filter((m) => m.session === agent?.id)} onRetry={retry} onDrop={drop} loading={!!agent?.sessionId && !chatLoaded(agent.sessionId)}
-            who={agent ? <OrchAvatar name={agent.name} size={28} state="ask" color={orchColor(agent.name)} label={agent.name} /> : undefined} />
+            who={agent ? <OrchAvatar name={agent.name} size={28} state="ask" color={orchColor(agent.name)} label={seenName(agent.name)} /> : undefined} />
         </ChatSheet>
         {picker && (
           <BottomSheet label="참모 바꾸기" onClose={() => setPicker(false)} title={t.name}>
@@ -166,7 +167,7 @@ function PhoneFarLocker({ name, locker }: { name: string; locker: FarLockerState
     <div className="m-far-rows">
       <span className="m-far-cap">보관함 · 읽기 전용</span>
       {files.map((f) => (
-        <div key={`${f.owner}/${f.rel}`} className="m-far-row"><span className="m-far-ext">{f.name.includes('.') ? f.name.split('.').pop()!.slice(0, 4).toUpperCase() : ''}</span><b>{f.name}</b><span>{f.owner}</span></div>
+        <div key={`${f.owner}/${f.rel}`} className="m-far-row"><span className="m-far-ext">{f.name.includes('.') ? f.name.split('.').pop()!.slice(0, 4).toUpperCase() : ''}</span><b>{f.name}</b><span>{seenName(f.owner)}</span></div>
       ))}
     </div>
   );

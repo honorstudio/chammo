@@ -3,7 +3,9 @@
 /** 허용 기기 쪽 숫자 넣기 길 — 데스크톱은 메인 창 명령, 폰은 폰 서버 /api/device-number. 숫자는 늘 컴퓨터가 셈한다 */
 export type NumberApi = {
   /** number 숫자 넣기 · wait 새 컴퓨터가 숫자 준비 전 · click 예전처럼 누르기(열쇠 없는 폰·사슬 전 계정만) · outside 이 기기가 사슬 밖이라 허용·거절 못 함(안내만) · code 허용했고 새 기기에 넣을 4자리를 띄우는 중(R7) */
-  open: (dev: string) => Promise<{ mode: CardMode; code: string }>;
+  open: (dev: string) => Promise<Opened>;
+  /** 사람이 숫자 칸을 눌렀다(진짜 클릭·키에서만) — 이때만 컴퓨터가 난수(nM)를 낸다. 다른 기기가 먼저 쥐었으면 그 이유로 거절 */
+  claim: (dev: string) => Promise<Opened>;
   ready: (dev: string) => Promise<boolean>;
   /** 허용 — 새 기기에 넣을 4자리를 돌려준다 */
   approve: (dev: string, digits: string) => Promise<string>;
@@ -11,13 +13,15 @@ export type NumberApi = {
   op: (dev: string, op: 'close' | 'cut') => Promise<void>;
 };
 export type CardMode = 'number' | 'click' | 'outside' | 'code' | 'wait';
+/** mine — 이 기기가 지금 봉인에 낸 난수를 쥐고 있다(숫자 준비를 물어도 된다) */
+export type Opened = { mode: CardMode; code: string; mine: boolean };
 
 const MODES: CardMode[] = ['number', 'click', 'outside', 'code', 'wait'];
 /** 허용 카드 열기 응답 읽기 — 계약 src/domain/e2eCardOpen.contract.json(Rust e2e_cmd::card_open_json). 모르는 모양은 누르기가 아니라 기다림 */
-export function parseCardOpen(raw: unknown): { mode: CardMode; code: string } {
-  const o = raw && typeof raw === 'object' ? (raw as { mode?: unknown; code?: unknown }) : {};
+export function parseCardOpen(raw: unknown): Opened {
+  const o = raw && typeof raw === 'object' ? (raw as { mode?: unknown; code?: unknown; mine?: unknown }) : {};
   const mode = MODES.includes(o.mode as CardMode) ? (o.mode as CardMode) : 'wait';
-  return { mode, code: typeof o.code === 'string' ? o.code : '' };
+  return { mode, code: typeof o.code === 'string' ? o.code : '', mine: o.mine === true };
 }
 
 /** 넣은 글에서 숫자만 6자리까지 */

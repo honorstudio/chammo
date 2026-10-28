@@ -1,7 +1,7 @@
 // 보안 번호 받아들이기·대화 속 종단 암호 표시(시안 e2e-safety v1, chammo-relay ADR 0007) — 화면 판단
 import { describe, expect, it } from 'vitest';
 import { cardLine, directCards } from './directAsk';
-import { e2eLine, needsRefetch, safetyGroups, safetyLabel, type SafetyPerson } from './e2eSafety';
+import { e2eLine, needsRefetch, rekeyNotices, safetyGroups, safetyLabel, slotNotices, type SafetyPerson } from './e2eSafety';
 
 const p = (o: Partial<SafetyPerson> = {}): SafetyPerson => ({ account: 'a2', team: 't1', member: 'm2', name: '철수', state: 'ok', verifiedAt: 0, blocked: false, number: '48291 07733 91024 66580 13907 52268', card: '', identity: 'I1', head: 'H1', refetched: false, ...o });
 
@@ -59,5 +59,18 @@ describe('대화 속 종단 암호 표시(기록 note 그대로)', () => {
   it('종단 암호 note 가 아니면 없음', () => {
     expect(e2eLine('delivered', '철수')).toBeNull();
     expect(e2eLine('forged', '철수')).toBeNull();
+  });
+});
+
+describe('팀원 보안 번호 바뀜 — 묻지 않고 대화에 회색 줄(사용자 10-29)', () => {
+  const p = (member: string, rekeyedAt: number) => ({ account: `a-${member}`, team: 't1', member, name: member, state: 'ok', verifiedAt: 0, blocked: false, number: '', card: '', identity: '', head: '', refetched: false, rekeyedAt });
+  it('이 대화 사람 중 바뀐 사람만, 바뀐 때 순', () => {
+    expect(rekeyNotices([p('m3', 30), p('m2', 20), p('m9', 10), p('m4', 0)], ['m2', 'm3', 'm4']).map((x) => x.member)).toEqual(['m2', 'm3']);
+    expect(rekeyNotices(undefined, ['m2'])).toEqual([]);
+  });
+  it('바뀐 때 뒤의 첫 말 앞에, 마지막 말보다 늦으면 맨 끝', () => {
+    const s = slotNotices([10, 20, 30], [p('m2', 15), p('m3', 99)]);
+    expect(s.before.map((b) => b.map((x) => x.member))).toEqual([[], ['m2'], []]);
+    expect(s.tail.map((x) => x.member)).toEqual(['m3']);
   });
 });

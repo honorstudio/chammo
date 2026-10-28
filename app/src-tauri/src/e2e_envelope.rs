@@ -56,6 +56,19 @@ pub struct Extra {
     pub react: Option<React>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<serde_json::Value>,
+    /// 보낸 참모 별명(참모 길로 보낸 말만 — '참모 · 회사 비서' 의 뒤). 비면 칸 없음(옛 판과 같은 모양)
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub by: String,
+    /// 팀 참모 답이면 그 참모 id(팀 보관함 첫 판 id — ADR 0017). 비면 칸 없음
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub agent: String,
+    /// 이어 묻기 — 사람 말이면 이은 팀 참모 답 seq, 팀 참모 답이면 부른 사람 말 seq. 0 이면 칸 없음
+    #[serde(skip_serializing_if = "is_zero")]
+    pub re: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -67,6 +80,9 @@ pub struct React {
     pub on: bool,
 }
 
+/// 보낸 참모 별명 최대 글자 수 — 보내는 쪽(team_cmd::sender_label)은 여기에 맞춰 자른다
+pub const BY_MAX: usize = 40;
+
 impl Extra {
     /// 모양 확인 — 모르는 표식·너무 많은 파일·파일 칸 모양이 틀리면 Err
     pub fn check(&self) -> Result<(), &'static str> {
@@ -77,6 +93,12 @@ impl Extra {
         }
         if self.files.len() > MAX_FILES || !self.files.iter().all(|f| f["id"].as_str().is_some_and(|x| !x.is_empty() && x.len() <= 80) && f["name"].as_str().is_some_and(|x| !x.is_empty() && x.chars().count() <= 200) && f["size"].is_u64()) {
             return Err("파일 칸 모양이 틀렸어");
+        }
+        if self.by.chars().count() > BY_MAX {
+            return Err("참모 별명이 너무 길어");
+        }
+        if !self.agent.is_empty() && !(self.agent.len() <= 64 && self.agent.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')) {
+            return Err("팀 참모 id 모양이 틀렸어");
         }
         Ok(())
     }
@@ -168,8 +190,28 @@ pub fn peek(body: &str) -> Option<Meta> {
     Some(Meta { room: s("room")?, cid: s("cid")?, from: s("from")?, head: s("head")?, peers, roster: s("roster").unwrap_or_default() })
 }
 
-/// 열기 — me = 이 기기 id, sender_ed = 보낸 기기의 서명 열쇠(보낸 사람 계정 사슬에서 고른 것. 모르면 None → Sig)
-pub fn open(keys: &DeviceKeys, me: &str, body: &str, sender_ed: Option<&str>) -> Result<(Meta, Inner), EnvErr> {
+/// 건네받은 열쇠(chammo-relay ADR 0007 R10 지난 대화 건네주기) — 원래 봉투 밖, 보낸 사람 서명 안의 kh 가 묶는다
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Late {
+    pub enc: String,
+    pub w: String,
+}
+
+/// 서명까지 확인한 봉투
+struct Checked {
+    m: Meta,
+    iv: String,
+    ct: String,
+    kh: String,
+    env: Vec<(String, String, String)>,
+}
+
+fn dec(s: &str) -> Result<Vec<u8>, EnvErr> {
+    B64.decode(s).map_err(|_| EnvErr::Shape)
+}
+
+/// 모양을 읽고 서명부터 — 서버가 머리·봉투를 바꿔치기했으면 여기서 끝
+fn checked(body: &str, sender_ed: Option<&str>) -> Result<Checked, EnvErr> {
     let v: Value = serde_json::from_str(body).map_err(|_| EnvErr::Shape)?;
     let m = peek(body).ok_or(EnvErr::Shape)?;
     let g = |k: &str| v[k].as_str().map(String::from).ok_or(EnvErr::Shape);
@@ -181,28 +223,79 @@ pub fn open(keys: &DeviceKeys, me: &str, body: &str, sender_ed: Option<&str>) ->
         .map(|e| Some((e["d"].as_str()?.to_string(), e["enc"].as_str()?.to_string(), e["w"].as_str()?.to_string())))
         .collect::<Option<_>>()
         .ok_or(EnvErr::Shape)?;
-    // 서명부터 — 서버가 머리·봉투를 바꿔치기했으면 여기서 끝
     let ed = sender_ed.ok_or(EnvErr::Sig)?;
     if !verify_sig(ed, &sig_text(&m, &kh, &ct, &iv, &env), &sig) {
         return Err(EnvErr::Sig);
     }
-    let (_, enc, w) = env.iter().find(|(d, _, _)| d == me).ok_or(EnvErr::NotForMe)?;
-    let dec = |s: &str| B64.decode(s).map_err(|_| EnvErr::Shape);
-    let k = e2e_hpke::open(&keys.e2e_secret(), &dec(enc)?, &info(&m.room, &m.cid, me), b"", &dec(w)?).map_err(|_| EnvErr::Open)?;
-    if k.len() != 32 || key_hash(&k) != kh {
+    Ok(Checked { m, iv, ct, kh, env })
+}
+
+/// me 몫 감싼 열쇠(enc, w)를 풀어 kh 와 대조
+fn content_key(keys: &DeviceKeys, me: &str, c: &Checked, enc: &str, w: &str) -> Result<Vec<u8>, EnvErr> {
+    let k = e2e_hpke::open(&keys.e2e_secret(), &dec(enc)?, &info(&c.m.room, &c.m.cid, me), b"", &dec(w)?).map_err(|_| EnvErr::Open)?;
+    if k.len() != 32 || key_hash(&k) != c.kh {
         return Err(EnvErr::Open);
     }
-    let iv = dec(&iv)?;
+    Ok(k)
+}
+
+fn decrypt(c: &Checked, k: &[u8]) -> Result<Inner, EnvErr> {
+    let iv = dec(&c.iv)?;
     if iv.len() != 12 {
         return Err(EnvErr::Shape);
     }
-    let pt = Aes256Gcm::new_from_slice(&k).map_err(|_| EnvErr::Open)?.decrypt(Nonce::from_slice(&iv), Payload { msg: &dec(&ct)?, aad: &content_aad(&m) }).map_err(|_| EnvErr::Open)?;
+    let pt = Aes256Gcm::new_from_slice(k).map_err(|_| EnvErr::Open)?.decrypt(Nonce::from_slice(&iv), Payload { msg: &dec(&c.ct)?, aad: &content_aad(&c.m) }).map_err(|_| EnvErr::Open)?;
     let mut inner: Inner = serde_json::from_slice(&pt).map_err(|_| EnvErr::Shape)?;
     // 사람 말은 정확히 human 일 때만(ADR 0002) — 받는 쪽은 바깥 origin 과 둘 다 볼 것
     if inner.origin != "human" {
         inner.origin = "agent".into();
     }
-    Ok((m, inner))
+    Ok(inner)
+}
+
+fn mine<'a>(c: &'a Checked, me: &str) -> Option<&'a (String, String, String)> {
+    c.env.iter().find(|(d, _, _)| d == me)
+}
+
+/// 열기 — me = 이 기기 id, sender_ed = 보낸 기기의 서명 열쇠(보낸 사람 계정 사슬에서 고른 것. 모르면 None → Sig)
+pub fn open(keys: &DeviceKeys, me: &str, body: &str, sender_ed: Option<&str>) -> Result<(Meta, Inner), EnvErr> {
+    let c = checked(body, sender_ed)?;
+    let (_, enc, w) = mine(&c, me).ok_or(EnvErr::NotForMe)?;
+    let k = content_key(keys, me, &c, enc, w)?;
+    let inner = decrypt(&c, &k)?;
+    Ok((c.m, inner))
+}
+
+/// 건네받은 열쇠로 열기 — 원래 서명·kh 는 그대로 본다. 봉투 목록에 제 몫이 있는 기기는 late 로 안 연다(Shape —
+/// 서버가 목록 몫과 다른 late 를 얹어 '한 말 두 내용'을 만드는 길을 닫는다. kh 가 막지만 길을 하나로)
+pub fn open_late(keys: &DeviceKeys, me: &str, body: &str, sender_ed: Option<&str>, late: &Late) -> Result<(Meta, Inner), EnvErr> {
+    let c = checked(body, sender_ed)?;
+    if mine(&c, me).is_some() {
+        return Err(EnvErr::Shape);
+    }
+    let k = content_key(keys, me, &c, &late.enc, &late.w)?;
+    let inner = decrypt(&c, &k)?;
+    Ok((c.m, inner))
+}
+
+/// 건네주기 — 내가 서명을 확인해 연 말의 k 를 to 몫으로 다시 봉한다(info 는 원래 봉투와 같은 방·cid·받는 기기).
+/// 내 몫이 없으면 NotForMe, to 가 이미 목록에 있으면 Key, 내용이 안 열리면 Open(깨진 말은 안 건넨다)
+pub fn rewrap(keys: &DeviceKeys, me: &str, body: &str, sender_ed: Option<&str>, to: &Recipient) -> Result<Late, EnvErr> {
+    let c = checked(body, sender_ed)?;
+    if mine(&c, &to.device).is_some() {
+        return Err(EnvErr::Key);
+    }
+    let (_, enc, w) = mine(&c, me).ok_or(EnvErr::NotForMe)?;
+    let k = content_key(keys, me, &c, enc, w)?;
+    decrypt(&c, &k)?;
+    let pk = B64.decode(&to.e2e).map_err(|_| EnvErr::Key)?;
+    let (enc, w) = e2e_hpke::seal(&pk, &info(&c.m.room, &c.m.cid, &to.device), b"", &k).map_err(|_| EnvErr::Key)?;
+    Ok(Late { enc: B64.encode(enc), w: B64.encode(w) })
+}
+
+/// 봉투 목록의 받는 기기 id(서명 확인 전 — 거르기용. 믿는 판단은 open_late 뒤에)
+pub fn recipients(body: &str) -> Vec<String> {
+    serde_json::from_str::<Value>(body).ok().and_then(|v| v["env"].as_array().map(|a| a.iter().filter_map(|e| e["d"].as_str().map(String::from)).collect())).unwrap_or_default()
 }
 
 #[cfg(test)]

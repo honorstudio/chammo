@@ -8,6 +8,7 @@ import { blinkWatch } from './blink';
 import { bindAttention } from '../attention';
 import './avatar.css';
 import { motionOn } from '../calm';
+import { seenName } from '../../domain/session';
 
 const STATE_WORD: Record<AvatarState, () => string> = {
   work: () => tr('일하는 중', 'Working'), rest: () => tr('쉼', 'Idle'), ask: () => tr('물어봄', 'Asking'), off: () => tr('꺼짐', 'Stopped'),
@@ -110,7 +111,7 @@ export function OrchAvatar({ name, size, state, color, label, preview, previewSr
   const showImage = av.kind === 'image' && src && !broken;
   const cls = avatarClasses({ image: !!showImage, state, transition: t, size, tone, phase }) + (fromStart.current ? ' oa-from-start' : '') + (className ? ` ${className}` : '');
   const style = { '--oa-s': `${size}px`, '--oa-body': fill, '--oa-d': `${j.delay.toFixed(2)}s`, '--oa-k': j.k.toFixed(3) } as React.CSSProperties;
-  const aria = `${label ?? key} · ${phase ? PHASE_WORD[phase]() : STATE_WORD[state]()}`;
+  const aria = `${label ?? seenName(name)} · ${phase ? PHASE_WORD[phase]() : STATE_WORD[state]()}`;
   return (
     <span ref={root} className={cls} style={style} role="img" aria-label={aria}>
       {showImage && av.kind === 'image'

@@ -8,7 +8,7 @@ import { EMPTY_MONSTERS, slayEvents, watch, type Watch } from '../../domain/tama
 import { keeperOf, routineFeed, showFeed, spaceFeed, talkFeed } from '../../domain/tama/signals';
 import { orchColor } from '../../domain/avatar';
 import { earnedBadges, unlockBadges } from '../../domain/tama/badges';
-import type { Session } from '../../domain/session';
+import { seenName, type Session } from '../../domain/session';
 import type { TaskEvent } from '../../domain/tasks';
 import type { TamaEvent } from '../../domain/tama/pet';
 import { balanceFeed, parseCiRuns, parseCommitLog, taskEvents } from '../../domain/tama/sources';
@@ -91,7 +91,7 @@ export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEven
       if (f.pet && !f.pet.dead) f = autoRetire(step(f, events, now), now); // 끝 모습이 된 지 하루면 은퇴(세대 잇기)
       // 펫 일기 — 새벽 5시가 지나면 어제 한 장(먹인 참모는 이름으로). 켜자마자 첫 계산은 건너뛴다 —
       // 시킨 일·예약 기록이 아직 안 읽혀 빈 채로 어제 장이 박히면 다시 안 쓴다
-      if (++runs > 1) f = addDiary(f, events, now, (id) => latest.current.orchs.find((o) => o.id === id)?.name ?? null);
+      if (++runs > 1) f = addDiary(f, events, now, (id) => seenName(latest.current.orchs.find((o) => o.id === id)?.name ?? '') || null);
       // 업적: 딴 것은 다마고치 화면에만 — macOS 알림은 안 보낸다(사용자 2026-09-27, domain/notify)
       f = unlockBadges(f, earnedBadges(f, commits.current.events, now), now).file;
       const ids = latest.current.orchs.map((o) => o.id);

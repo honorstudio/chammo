@@ -164,3 +164,38 @@ fn 다시_보내기에_실패한_멈춘_말은_목록으로_돌아간다() {
     put_back(&d, vec![h.clone()]).unwrap();
     assert_eq!(held(&d), vec![h]);
 }
+
+#[test]
+fn 저절로_받아들이기는_확인됨을_안_적고_바뀐_때를_적고_멈춘_말을_돌려준다() {
+    // 사용자 10-29 — 팀원 보안 번호 바뀜은 묻지 않고 받아들이고 대화에 회색 줄('보안 번호가 바뀌었어요 · 번호 비교')만
+    let (d, g2) = world("auto");
+    hold(&d, Held { room: "r1".into(), cid: "c1".into(), body: "안녕".into(), human: true, at: now_ms(), account: "a2".into() }).unwrap();
+    e2e_state::mutate(&d, |s| {
+        s.verified.insert("a2".into(), 1);
+    })
+    .unwrap();
+    changed(&d, &g2);
+    let p = person(&d, "a1", "a2").unwrap();
+    assert_eq!(p.state, "changed");
+    let out = auto_accept(&d, "a2", &p.identity, &p.head).unwrap();
+    assert_eq!(out.len(), 1, "멈춘 말을 돌려준다");
+    let after = person(&d, "a1", "a2").unwrap();
+    assert_eq!(after.state, "ok", "번호를 견준 건 아니라 확인됨이 아니다");
+    assert!(after.rekeyed_at > 0);
+    // 견주는 사이 또 바뀌면 그때 것만
+    assert!(auto_accept(&d, "a2", "다른", &p.head).is_err());
+}
+
+#[test]
+fn 저절로_받아들인_사람을_번호_비교에서_막아_두면_다시_바뀜으로_보내기가_멈춘다() {
+    let (d, g2) = world("autoblock");
+    changed(&d, &g2);
+    let p = person(&d, "a1", "a2").unwrap();
+    auto_accept(&d, "a2", &p.identity, &p.head).unwrap();
+    block_rekeyed(&d, "a2").unwrap();
+    let after = person(&d, "a1", "a2").unwrap();
+    assert_eq!((after.state.as_str(), after.blocked), ("changed", true));
+    // 저절로 받아들인 적 없는 사람은 이 길로 못 막는다(멀쩡한 사람을 '바뀜'으로 만들지 않게)
+    let (d2, _) = world("autoblock2");
+    assert!(block_rekeyed(&d2, "a2").is_err());
+}

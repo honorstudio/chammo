@@ -345,6 +345,7 @@ fn 로그아웃은_끊긴_줄_아는_기기만_401_에도_지우고_망이_안_�
     // 리뷰 3: 401 은 시계가 5분 넘게 틀려도 온다 — 서버가 4001 로 끊었다고 알린 기기(revoked)만 401 을 '이미 끊김'으로 본다
     let (d, kc, r) = logged("logout-401");
     r.answer(&format!("/v0/me/devices/{D7}/revoke"), 401, r#"{"error":"unauthorized"}"#);
+    r.answer(crate::team_relay::KEY_PROBE, 401, r#"{"error":"unauthorized"}"#); // 서버가 이 열쇠를 안다(또는 시계가 틀림)
     assert!(logout(&d, &kc, &r).unwrap_err().contains("forget"));
     assert!(d.join(crate::team_relay::STATE_FILE).exists() && !kc.items.borrow().is_empty(), "서버엔 살아 있을 수 있어 남긴다");
     crate::team_relay::mutate(&d, |s| s.revoked = true).unwrap();
@@ -360,6 +361,32 @@ fn 로그아웃은_끊긴_줄_아는_기기만_401_에도_지우고_망이_안_�
     let (d2, kc2, _r2) = logged("logout-down");
     assert!(logout(&d2, &kc2, &Down).is_err());
     assert!(d2.join(crate::team_relay::STATE_FILE).exists() && !kc2.items.borrow().is_empty(), "서버에서 안 끊겼으면 다시 할 수 있게 남긴다");
+}
+
+#[test]
+fn 서버가_지운_기기는_계정_새로고침에서_끊김으로_적히고_로그아웃이_된다() {
+    let _ports = crate::test_ports::lock();
+    // 10-28 윈도우: 허용 대기 중 거절돼 기기 줄이 지워진 기기 — '다시 로그인'은 로그아웃부터라 401 에 막히면 영영 못 빠져나왔다
+    let (d, kc, r) = logged("me-gone");
+    r.devices.borrow_mut().clear();
+    r.answer(crate::team_relay::KEY_PROBE, 404, r#"{"error":"not_found"}"#);
+    assert!(refresh_me(&d, &kc, &r).unwrap_err().contains("다시 로그인"));
+    assert!(crate::team_relay::load_state(&d).revoked);
+    logout(&d, &kc, &r).unwrap();
+    assert!(!d.join(crate::team_relay::STATE_FILE).exists() && kc.items.borrow().is_empty());
+    // 대기로 적힌 기기가 거절돼 지워져도(/v0/me/self 401) 같은 길
+    let (d3, kc3, r3) = logged("pending-gone");
+    crate::team_relay::mutate(&d3, |s| s.pending = true).unwrap();
+    r3.devices.borrow_mut().clear();
+    r3.answer(crate::team_relay::KEY_PROBE, 404, r#"{"error":"not_found"}"#);
+    assert!(refresh_me(&d3, &kc3, &r3).unwrap_err().contains("다시 로그인"));
+    assert!(crate::team_relay::load_state(&d3).revoked);
+    // 끊긴 줄 몰라도 로그아웃의 401 뒤 확인이 404 면 지운다
+    let (d2, kc2, r2) = logged("logout-gone");
+    r2.devices.borrow_mut().clear();
+    r2.answer(crate::team_relay::KEY_PROBE, 404, r#"{"error":"not_found"}"#);
+    logout(&d2, &kc2, &r2).unwrap();
+    assert!(!d2.join(crate::team_relay::STATE_FILE).exists() && kc2.items.borrow().is_empty());
 }
 
 #[test]
@@ -585,6 +612,16 @@ fn 허용·거절은_그_기기_길로만_보내고_목록을_다시_받는다()
     assert!(decide_device(&d, &kc, &r, D8, true).is_err(), "대기 중인 기기는 남을 허용 못 한다");
 }
 
+#[test]
+fn 허용이_서버에_들어갔으면_목록_다시_받기가_막혀도_성공() {
+    // 10-28 윈도우 — 중계가 '잠시 쉬래요'(429)인 동안 허용을 누르면 서버엔 허용이 들어갔는데 목록 받기 실패로 오류가 떠 카드가 그대로 남았다
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("decide-429");
+    r.answer(&format!("/v0/me/devices/{D8}/approve"), 200, r#"{"ok":true}"#);
+    r.answer("/v0/me", 429, r#"{"error":"rate_limited"}"#);
+    decide_device(&d, &kc, &r, D8, true).expect("허용은 됐다 — 목록은 다음 바퀴에 받는다");
+}
+
 /// 로그인 필수(10-24 사용자) — 한 번 로그인하면 다시 켜도·서버가 잠깐 안 닿아도 그대로. 지우는 건 사람의 '이 기기 빼기'(logout)뿐
 #[test]
 fn 한_번_로그인하면_다시_켜도_망_오류에도_유지된다() {
@@ -598,9 +635,10 @@ fn 한_번_로그인하면_다시_켜도_망_오류에도_유지된다() {
     r.answer("/v0/me", 503, r#"{"error":"down"}"#);
     assert!(refresh_me(&d, &kc, &r).is_err());
     r.answer("/v0/me", 401, r#"{"error":"unauthorized"}"#);
+    r.answer(crate::team_relay::KEY_PROBE, 401, r#"{"error":"unauthorized"}"#); // 서버가 이 열쇠를 안다 — 시계 탓일 수 있다
     assert!(refresh_me(&d, &kc, &r).is_err());
     let st = crate::team_relay::load_state(&d);
-    assert!(st.account.is_some(), "로그인 유지");
+    assert!(st.account.is_some() && !st.revoked, "로그인 유지");
     assert_eq!(st.my_devices.len(), 2, "목록도 그대로");
 }
 

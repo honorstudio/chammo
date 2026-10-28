@@ -10,6 +10,7 @@ import { DirectCardView, type DirectPick } from '../chat/DirectCard';
 import { IconBack, IconFolder, IconHome, IconRefresh } from '../Icons';
 import type { FarData, FarTarget } from './Far';
 import { avState } from './FarParts';
+import { seenName } from '../../domain/session';
 
 const size = (b: number) => (b < 1024 ? `${b}B` : b < 1024 * 1024 ? `${Math.round(b / 1024)}KB` : `${(b / 1024 / 1024).toFixed(1)}MB`);
 const when = (ms: number) => {
@@ -67,8 +68,8 @@ export function FarSpace({ t, data, status, cards, onAgent, agent, fontSize }: {
                 <div className="far-orchs">
                   {home.assistants.map((a) => (
                     <button key={a.id} className={`far-orch ${agent === a.id ? 'on' : ''}`} style={{ ['--c' as string]: orchColor(a.name) }} onClick={() => onAgent(a)}>
-                      <OrchAvatar name={a.name} size={32} state={avState(a.dot)} color={orchColor(a.name)} label={a.name} />
-                      <span className="far-tx"><b>{a.name}</b><span>{a.doing || (a.dot === 'rest' ? tr('쉼', 'Resting') : '')}</span></span>
+                      <OrchAvatar name={a.name} size={32} state={avState(a.dot)} color={orchColor(a.name)} label={seenName(a.name)} />
+                      <span className="far-tx"><b>{seenName(a.name)}</b><span>{a.doing || (a.dot === 'rest' ? tr('쉼', 'Resting') : '')}</span></span>
                       <i className={dotCls(a.dot)} aria-hidden="true" />
                     </button>
                   ))}
@@ -126,7 +127,7 @@ function FarLockerView({ name, locker }: { name: string; locker: FarData['locker
       <div className="far-rows">
         {locker.map((o) => (
           <div key={o.owner} className="far-group">
-            <div className="far-row head"><OrchAvatar name={o.owner} size={20} state="rest" color={orchColor(o.owner)} label={o.owner} /><b>{o.owner}</b><span className="far-muted">{tr(`파일 ${o.files.length}`, `${o.files.length} files`)}</span></div>
+            <div className="far-row head"><OrchAvatar name={o.owner} size={20} state="rest" color={orchColor(o.owner)} label={seenName(o.owner)} /><b>{seenName(o.owner)}</b><span className="far-muted">{tr(`파일 ${o.files.length}`, `${o.files.length} files`)}</span></div>
             {o.files.map((f) => (
               <div key={f.rel} className="far-row sub file" title={f.rel}>
                 <span className="far-ext">{ext(f.name)}</span><b>{f.name}</b>{f.folder && <span className="far-muted">{f.folder}</span>}<span className="far-sp" /><span className="far-t">{`${size(f.size)} · ${when(f.mtime)}`}</span>

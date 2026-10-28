@@ -4,6 +4,7 @@
 use crate::accounts_store::Store;
 use crate::team_relay::{self as relay, Http, Room, TeamEntry, TeamState};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// 한 방 사람 상한 — 서버 MAX_MEMBERS 와 같다
@@ -33,14 +34,15 @@ fn uuid4() -> Result<String, String> {
     Ok(format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32]))
 }
 
-/// 그 팀 사람 하나 — 멤버 id 그대로, 아니면 이름(대소문자 무시, 하나만 맞을 때)
-pub fn pick(t: &TeamEntry, who: &str) -> Result<String, String> {
+/// 그 팀 사람 하나 — 멤버 id 그대로, 아니면 계정 이름이나 프로필 이름(aka, 대소문자 무시, 하나만 맞을 때)
+pub fn pick(t: &TeamEntry, who: &str, aka: &BTreeMap<String, String>) -> Result<String, String> {
     let q = who.trim();
     if t.member_id == q || t.members.iter().any(|m| m.id == q) {
         return Ok(q.to_string());
     }
     let low = q.to_lowercase();
-    let hits: Vec<&relay::Member> = t.members.iter().filter(|m| m.display_name.trim().to_lowercase() == low).collect();
+    let named = |m: &relay::Member| m.display_name.trim().to_lowercase() == low || aka.get(&m.id).is_some_and(|a| a.trim().to_lowercase() == low);
+    let hits: Vec<&relay::Member> = t.members.iter().filter(|m| named(m)).collect();
     match hits.as_slice() {
         [m] => Ok(m.id.clone()),
         [] => Err(format!("{} 팀에 그런 사람이 없어: {q}", t.name)),
@@ -48,15 +50,16 @@ pub fn pick(t: &TeamEntry, who: &str) -> Result<String, String> {
     }
 }
 
-/// 방에 넣을 사람 — 서명된 명부에서 지금 팀 사람이어야, 이름으로 골랐으면 명부의 이름도 같아야(서버가 이름 ↔ 멤버 id 를 바꿔 엉뚱한 사람을 넣지 못하게,
-/// 이미 빠진 사람을 넣어 내 서명 고리가 명부 틀림이 되지 않게 — 공격 리뷰 6)
-fn pick_signed(roster: &crate::e2e_roster::Roster, t: &TeamEntry, who: &str) -> Result<String, String> {
-    signed_ok(roster, who, pick(t, who)?)
+/// 방에 넣을 사람 — 서명된 명부에서 지금 팀 사람이어야, 이름으로 골랐으면 명부의 이름도 서버 목록 이름과 같아야(서버가 이름 ↔ 멤버 id 를 바꿔 엉뚱한 사람을 넣지 못하게,
+/// 이미 빠진 사람을 넣어 내 서명 고리가 명부 틀림이 되지 않게 — 공격 리뷰 6). 프로필 이름으로 골라도 같은 대조(프로필 이름 ↔ 멤버 id 는 그 사람 기기 서명으로 연 보관함 파일에서 온다)
+fn pick_signed(roster: &crate::e2e_roster::Roster, t: &TeamEntry, who: &str, aka: &BTreeMap<String, String>) -> Result<String, String> {
+    signed_ok(roster, t, who, pick(t, who, aka)?)
 }
 
-fn signed_ok(roster: &crate::e2e_roster::Roster, who: &str, m: String) -> Result<String, String> {
+fn signed_ok(roster: &crate::e2e_roster::Roster, t: &TeamEntry, who: &str, m: String) -> Result<String, String> {
     let p = roster.members.get(&m).filter(|p| p.active).ok_or_else(|| format!("{} 은(는) 서명된 팀 명부에 없거나 빠졌어 — 방에 안 넣었어", who.trim()))?;
-    if m != who.trim() && p.display_name.trim().to_lowercase() != who.trim().to_lowercase() {
+    let listed = t.members.iter().find(|x| x.id == m).map(|x| x.display_name.trim().to_lowercase()).unwrap_or_default();
+    if m != who.trim() && p.display_name.trim().to_lowercase() != listed {
         return Err(format!("'{}' 이름이 서버 목록과 서명된 명부에서 달라 — 멤버 id 로 골라 줘", who.trim()));
     }
     Ok(m)
@@ -109,11 +112,12 @@ fn create_room_id(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, name:
     let t = st.team(team)?.clone();
     let name = crate::team_ui::name_ok(name).ok_or("방 이름은 1~40자")?;
     // 이름 고르기(망 없이)를 먼저 — 모르는 사람은 서버에 가기 전에 막는다. 그다음 서명된 명부로 한 번 더(공격 리뷰 6)
-    let picked: Vec<(String, String)> = people.iter().map(|p| pick(&t, p).map(|m| (p.clone(), m))).collect::<Result<_, _>>()?;
+    let aka = crate::team_profile::cached_names(dir, kc, &t.id);
+    let picked: Vec<(String, String)> = people.iter().map(|p| pick(&t, p, &aka).map(|m| (p.clone(), m))).collect::<Result<_, _>>()?;
     let roster = crate::e2e_state::roster_of(dir, kc, http, &st, &t.id)?;
     let mut members = vec![t.member_id.clone()];
     for (who, m) in picked {
-        let m = signed_ok(&roster, &who, m)?;
+        let m = signed_ok(&roster, &t, &who, m)?;
         if !members.contains(&m) {
             members.push(m);
         }
@@ -163,12 +167,13 @@ pub fn update_room(dir: &Path, kc: &dyn Store, http: &dyn Http, sel: &str, name:
         &cur.trusted_members
     };
     let mut members: Vec<String> = base.iter().filter(|m| roster.members.get(*m).is_some_and(|p| p.active)).cloned().collect();
+    let aka = crate::team_profile::cached_names(dir, kc, &t.id);
     for p in remove {
-        let m = pick(&t, p)?;
+        let m = pick(&t, p, &aka)?;
         members.retain(|x| *x != m);
     }
     for p in add {
-        let m = pick_signed(&roster, &t, p)?;
+        let m = pick_signed(&roster, &t, p, &aka)?;
         if !members.contains(&m) {
             members.push(m);
         }
@@ -235,8 +240,8 @@ pub fn delete_room(dir: &Path, kc: &dyn Store, http: &dyn Http, sel: &str) -> Re
     relay::mutate_if(dir, &st.device_id, move |s| s.rooms.retain(|x| x.id != id))
 }
 
-/// 화면·참모용 단톡방 목록 — 이름·사람 이름(남의 글이라 이름표 거름)
-pub fn view(st: &TeamState) -> Value {
+/// 화면·참모용 단톡방 목록 — 이름·사람 이름표(남의 글이라 이름표 거름, 프로필 이름이 있으면 '프로필 이름(계정 이름)')
+pub fn view(st: &TeamState, aka: &BTreeMap<String, String>) -> Value {
     use crate::team_relay_inbox::safe_name as clean;
     let rooms: Vec<Value> = st
         .rooms
@@ -244,7 +249,7 @@ pub fn view(st: &TeamState) -> Value {
         .filter(|r| r.kind == "group")
         .map(|r| {
             let team = st.teams.iter().find(|t| t.id == r.team);
-            let people: Vec<String> = r.members.iter().map(|m| st.member_name(m).map(clean).unwrap_or_else(|| "?".into())).collect();
+            let people: Vec<String> = r.members.iter().map(|m| st.member_name(m).map(|n| relay::label(&clean(n), aka.get(m).map(|p| clean(p)).as_deref())).unwrap_or_else(|| "?".into())).collect();
             json!({ "id": r.id, "name": clean(&r.name), "team": r.team, "teamName": team.map(|t| clean(&t.name)).unwrap_or_default(), "people": people, "members": r.members })
         })
         .collect();

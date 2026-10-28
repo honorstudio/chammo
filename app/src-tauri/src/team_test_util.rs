@@ -63,6 +63,8 @@ impl Http for FakeRelay {
                 let (_, st, b) = a.remove(i);
                 (st, b)
             }
+            // 팀 머리(/heads)는 준비 안 했으면 옛 중계처럼 404 — 머리 길이 없는 중계에서도 예전처럼 도는지 시험들이 그대로 본다
+            None if method == "GET" && path.ends_with("/heads") && !self.always.borrow().iter().any(|(m, p, _, _)| m == method && path.ends_with(p.as_str())) => (404, r#"{"error":"not_found"}"#.into()),
             None => self.always.borrow().iter().find(|(m, p, _, _)| m == method && path.ends_with(p.as_str())).map(|(_, _, st, b)| (*st, b.clone())).expect("준비 안 한 길"),
         };
         // 진짜 서버처럼 — 로그인 마침이 새 기기를 만들면 그 열쇠를 그 기기 id 로 기억한다(다음 요청부터 기기 머리)

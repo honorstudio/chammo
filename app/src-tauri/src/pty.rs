@@ -31,7 +31,8 @@ struct OpenView {
     kick: Arc<Kick>,
     /// 그 보기의 claude attach 프로세스 — 진짜 쫓겨나면 문구 0.5초 뒤 끝난다(윈도우 실측, EOF 는 40초 넘게 안 온다)
     pid: Option<u32>,
-    /// 윈도우만 — 이 보기 화면을 Rust 도 그려 둔다(vt100). 열린 보기로 칠 때 입력칸에 사람 글이 있나 보려고(②-1)
+    /// 이 보기 화면을 Rust 도 그려 둔다(vt100) — 윈도우는 열린 보기로 칠 때 입력칸에 사람 글이 있나 보려고(②-1),
+    /// 맥은 채팅 탭이 친 글이 입력칸에 다 보이면 바로 Enter 하려고(2026-10-28 chat-speed)
     screen: Option<Arc<Mutex<vt100::Parser>>>,
 }
 
@@ -319,8 +320,8 @@ pub fn pty_open(
     let visible = Arc::new(AtomicUsize::new(0));
     let gone = Arc::new(AtomicBool::new(false));
     let kick: Arc<Kick> = Default::default();
-    // 윈도우만 화면을 Rust 도 그린다 — 열린 보기로 칠 때 입력칸을 봐야 해서(맥은 새로 붙어 화면을 받는다)
-    let screen = (cfg!(windows) && session_of(&command).is_some()).then(|| Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 0))));
+    // 세션 보기는 화면을 Rust 도 그린다 — 윈도우는 열린 보기로 칠 때 입력칸을 보려고, 맥은 채팅 탭 Enter 를 글이 보이자마자 넣으려고
+    let screen = session_of(&command).is_some().then(|| Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 0))));
     let probe = OpenView { pty: 0, session: String::new(), writer: Arc::new(Mutex::new(Box::new(std::io::sink()))), visible: visible.clone(), gone: gone.clone(), kick: kick.clone(), pid: None, screen: screen.clone() };
     let mut counter = Visible::default();
     let (master, writer, child) = spawn_pty(&command, cwd, cols, rows, move |b| {
@@ -360,12 +361,29 @@ pub fn pty_write(state: State<Ptys>, id: u32, data: String) -> Result<(), String
 #[tauri::command]
 pub async fn pty_type(state: State<'_, Ptys>, id: u32, keys: Vec<String>, enter_ms: Option<u64>) -> Result<(), String> {
     let writer = state.map.lock().unwrap().get(&id).map(|p| p.writer.clone()).ok_or(crate::i18n::tr("없는 pty", "No such pty"))?;
+    let screen = OPEN.lock().unwrap().iter().find(|v| v.pty == id).and_then(|v| v.screen.clone());
     #[cfg(debug_assertions)]
     log_write(id, &format!("{}{}", keys.concat(), if enter_ms.is_some() { "\r" } else { "" }));
-    tauri::async_runtime::spawn_blocking(move || type_keys(&writer, &keys, enter_ms)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || type_keys_seen(&writer, &keys, enter_ms, screen.as_ref())).await.map_err(|e| e.to_string())?
 }
 
 pub(crate) fn type_keys(w: &SharedWriter, keys: &[String], enter_ms: Option<u64>) -> Result<(), String> {
+    type_keys_seen(w, keys, enter_ms, None)
+}
+
+/// 친 글 끝이 그 칸 입력칸에 보일 때까지(최대 ms) — 화면이 없거나 윈도우면 ms 그대로
+fn wait_echo(keys: &[String], ms: u64, screen: Option<&Arc<Mutex<vt100::Parser>>>) {
+    use std::time::Duration;
+    let tail = crate::claude::typed_echo(&keys.iter().map(|k| k.as_bytes().to_vec()).collect::<Vec<_>>());
+    match screen.filter(|_| !cfg!(windows) && !tail.is_empty()) {
+        Some(p) => _ = crate::claude::poll_until(Duration::from_millis(ms), || crate::claude::input_shows(p.lock().unwrap_or_else(|e| e.into_inner()).screen(), &tail)),
+        None => std::thread::sleep(Duration::from_millis(ms)),
+    }
+}
+
+/// type_keys + 그 칸 화면 — 맥은 친 글 끝이 입력칸에 보이면 enter_ms 를 다 안 기다리고 바로 Enter(실측: 보이기까지 0~14ms, 고정 0.4초였다).
+/// 안 보이면(붙여넣은 글로 접힘·화면 없음) 예전처럼 enter_ms. 윈도우는 가짜 콘솔이 글을 늦게 넘겨 예전 그대로
+pub(crate) fn type_keys_seen(w: &SharedWriter, keys: &[String], enter_ms: Option<u64>, screen: Option<&Arc<Mutex<vt100::Parser>>>) -> Result<(), String> {
     use std::time::Duration;
     let _turn = crate::claude::typing_turn();
     for k in keys {
@@ -373,7 +391,7 @@ pub(crate) fn type_keys(w: &SharedWriter, keys: &[String], enter_ms: Option<u64>
         std::thread::sleep(Duration::from_millis(6));
     }
     if let Some(ms) = enter_ms {
-        std::thread::sleep(Duration::from_millis(ms));
+        wait_echo(keys, ms, screen);
         w.lock().unwrap().write_all(b"\r").map_err(|e| e.to_string())?;
         // Enter 를 받기 전에 다음 글이 붙지 않게 잠깐 더 쥔다(JS 로 칠 때 앞 Enter 와 다음 글 사이 0.15초 그대로)
         std::thread::sleep(Duration::from_millis(150));
@@ -705,6 +723,38 @@ mod tests {
         std::thread::sleep(Duration::from_secs(1));
         super::reap(child);
         drop(master);
+    }
+
+    // 2026-10-28 chat-speed: 채팅 탭 보내기도 고정 0.4초 대신 친 글이 그 칸 화면 입력칸에 보이면 바로 Enter
+    #[cfg(not(windows))]
+    #[test]
+    fn 채팅_치기는_친_글이_화면에_보이면_바로_enter() {
+        use std::time::{Duration, Instant};
+        let got = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let w: super::SharedWriter = std::sync::Arc::new(std::sync::Mutex::new(Box::new(Sink(got.clone()))));
+        let rule = "─".repeat(40);
+        let painted = |input: &str| {
+            let p = std::sync::Arc::new(std::sync::Mutex::new(vt100::Parser::new(24, 80, 0)));
+            p.lock().unwrap().process(format!("⏺ 응\r\n{rule}\r\n❯\u{a0}{input}\r\n{rule}\r\n  main").as_bytes());
+            p
+        };
+        let keys = vec!["안녕 반가워".to_string(), "\x1b\r".to_string(), "둘째 줄도 있어".to_string()];
+        // 기다리기만 따로 잰다 — 치기 자물쇠(TYPE_LOCK)는 다른 시험이 쥐고 있을 수 있어 type_keys 로 재면 흔들린다
+        let shown = painted("안녕 반가워\r\n  둘째 줄도 있어");
+        let t = Instant::now();
+        super::wait_echo(&keys, 400, Some(&shown));
+        assert!(t.elapsed() < Duration::from_millis(100), "보이면 0.4초를 안 기다린다: {:?}", t.elapsed());
+        // 아직 안 보이면(접힌 붙여넣기·칸이 늦음) 예전처럼 enter_ms 까지
+        let t = Instant::now();
+        super::wait_echo(&keys, 400, Some(&painted("[Pasted text #1 +1 lines]")));
+        assert!(t.elapsed() >= Duration::from_millis(400), "{:?}", t.elapsed());
+        // 화면 없는 칸은 예전 그대로
+        let t = Instant::now();
+        super::wait_echo(&keys, 200, None);
+        assert!(t.elapsed() >= Duration::from_millis(200));
+        // 치기는 글 다음 Enter
+        super::type_keys_seen(&w, &keys, Some(400), Some(&shown)).unwrap();
+        assert!(got.lock().unwrap().ends_with("둘째 줄도 있어\r".as_bytes()));
     }
 
     // fix/chat-ghost 남은 것 ①: 채팅 치기(JS)는 TYPE_LOCK 을 안 잡아 스페이스·카드 답장(send_text_to_session)과 같은 순간이면

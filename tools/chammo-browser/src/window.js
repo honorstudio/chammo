@@ -71,11 +71,31 @@ function virtualDisplay(file, alive = pidAlive, screens = macScreens) {
 function vdBounds(file, alive = pidAlive, screens = macScreens) {
   const info = screens();
   if (info && Array.isArray(info.screens) && Array.isArray(info.names)) return namedScreen(info);
+  return fileBounds(file, alive);
+}
+
+/** 자리 파일 {pid, bounds} 의 네모 — 그 도우미가 살아 있을 때만 */
+function fileBounds(file, alive = pidAlive) {
   let v;
   try { v = JSON.parse(require('fs').readFileSync(file, 'utf8')); } catch { return null; }
   const b = v && Array.isArray(v.bounds) && v.bounds.length === 4 && v.bounds.every(Number.isFinite) ? v.bounds : null;
   if (!b || !Number.isInteger(v.pid) || !alive(v.pid)) return null;
   return b;
+}
+
+/**
+ * 자리 잡은 가짜 화면만 — 도우미는 화면을 만든 뒤 맥 기본 자리에 두었다가 모서리로 옮기고(place) 0.5초 뒤 자리를 찍는다(앱이 자리 파일에 적는다).
+ * 옮기기 전에 읽은 자리로 크롬을 띄우면 화면이 옮겨 간 뒤 창이 갈 곳을 잃어 맥이 사람 화면으로 끌어왔다(10-28 '맥북 화면에 잠깐 떴다 사라짐').
+ * 지금 자리가 자리 파일과 같으면 바로, 다르면 ms 뒤 다시 읽어 그대로일 때만
+ */
+function settledVd(file, { alive = pidAlive, screens = macScreens, sleep = sleepSync, ms = 700 } = {}) {
+  const a = virtualDisplay(file, alive, screens);
+  if (!a) return null;
+  const same = (x, y) => !!x && !!y && x.pos[0] === y.pos[0] && x.pos[1] === y.pos[1];
+  if (same(a, fit(fileBounds(file, alive)))) return a;
+  sleep(ms);
+  const b = virtualDisplay(file, alive, screens);
+  return same(a, b) ? b : null;
 }
 
 /** 화면 목록에서 가짜 화면을 크롬 좌표 [왼쪽, 위, 폭, 높이]로 — 없거나 다른 화면과 겹치면(면적이 생기면) null */
@@ -150,13 +170,16 @@ function macScreens() {
   }
 }
 
-// --test-type: 진짜 크롬이 Playwright 의 --disable-blink-features=AutomationControlled 에 띄우는
-// '지원되지 않는 명령줄 플래그' 경고 띠를 숨긴다. 그 플래그는 봇 탐지(navigator.webdriver)를 피하려는 것이라 빼지 않는다
+// --test-type: 진짜 크롬이 --disable-blink-features=AutomationControlled 에 띄우는 '지원되지 않는 명령줄 플래그' 경고 띠를 숨긴다.
+// AutomationControlled 끄기(navigator.webdriver false)는 우리가 직접 넣는다 — 플레이라이트 MCP 만 넣어 주고 스크립트 길(launchPersistentContext)엔 없어서
+// 앱 '참모 브라우저'가 webdriver true 로 떠 구글이 이메일 단계에서 /v3/signin/rejected 로 막았다(2026-10-29 실측). MCP 는 이게 있으면 또 안 넣는다
 // --remote-debugging-port=0: 세션 브라우저 앱에서 보기(src/live.js) — 크롬이 빈 포트를 골라 프로필 DevToolsActivePort 에 적는다.
 // 창 있는 크롬은 127.0.0.1 에만 열고, 웹 페이지(Origin 붙은 접속)는 크롬이 거절한다. playwright 는 -pipe 만 거절하고 -port 는 통과
 // 맥이면 code sign clone 끄기(src/features.js — 안 끄면 '앱 관리' 차단 알림이 앱 이름으로 뜬다)
+const AUTOMATION_ARG = '--disable-blink-features=AutomationControlled';
+
 function chromeArgs(pos, debugPort = false, size = null, platform = process.platform) {
-  const a = ['--test-type'];
+  const a = ['--test-type', AUTOMATION_ARG];
   if (pos) a.push(`--window-position=${pos[0]},${pos[1]}`);
   if (pos && size) a.push(`--window-size=${size[0]},${size[1]}`);
   if (debugPort) a.push('--remote-debugging-port=0');
@@ -196,12 +219,14 @@ function offscreenPosition(info) {
  * 그래도 없으면 화면 밖에(사용자 화면에 안 뜨게, 2026-10-03 맥북 하나일 때). 앱이 아예 없는 기계는 보이는 자리.
  * MCP 래퍼는 세션이 뜰 때 wait 0 으로 일단 정하고, 크롬이 실제로 뜰 때 place-at-launch.js 가 부탁·기다림으로 다시 정한다.
  * offPos = 화면 밖에 띄웠으면 그 자리(크롬이 끌어오면 minimize.js 가 최소화)
+ * 윈도우는 앱에서 보기가 켜졌고 앱이 있으면 숨은 데스크톱(desk) — 자리 0,0 은 spawn 바꾸기 표시이자 그 데스크톱 안 자리(src/windesk.js)
  */
-function placement({ profile, watchable, appHere, vdFile, mac = process.platform === 'darwin', wait = 6000, ask = null }) {
-  let vd = mac && watchable ? virtualDisplay(vdFile) : null;
+function placement({ profile, watchable, appHere, vdFile, mac = process.platform === 'darwin', win = process.platform === 'win32', wait = 6000, ask = null }) {
+  if (win && watchable && appHere) return { pos: [0, 0], size: [1280, 800], offPos: null, desk: true };
+  let vd = mac && watchable ? settledVd(vdFile) : null;
   if (!vd && mac && watchable && appHere && wait > 0) {
     if (ask) ask();
-    vd = waitVirtualDisplay(() => virtualDisplay(vdFile), { ms: wait });
+    vd = waitVirtualDisplay(() => settledVd(vdFile), { ms: wait });
   }
   const screens = mac && !vd ? { ...(macScreens() || {}), profile } : null;
   const offPos = mac && watchable && appHere && !vd ? offscreenPosition(screens) : null;
@@ -210,4 +235,4 @@ function placement({ profile, watchable, appHere, vdFile, mac = process.platform
   return { pos, size, offPos };
 }
 
-module.exports = { placement, offsetFor, windowPosition, windowSize, virtualDisplay, vdBounds, chromeChannel, chromeLaunch, chromeArgs, macScreens, waitVirtualDisplay, offscreenPosition };
+module.exports = { AUTOMATION_ARG, placement, offsetFor, windowPosition, windowSize, virtualDisplay, vdBounds, settledVd, chromeChannel, chromeLaunch, chromeArgs, macScreens, waitVirtualDisplay, offscreenPosition };

@@ -136,6 +136,13 @@ describe('2026-10-21 첫 사용자 제보 — 사람 부르기 때 \'화면 받�
     expect(browserScreen({ ...base, noFrameMs: NO_FRAME_MS })).toMatchObject({ kind: 'noframe', blocked: true });
     expect(browserScreen({ ...base, noFrameMs: NO_FRAME_MS }).why).not.toBe('');
   });
+  it('2026-10-26 PM 맥북 — 앱이 크롬을 가려 둔 채 그림이 없으면 가린 탓(정품 크롬·가짜 화면 없음): 그 까닭을 보인다(크롬에서 보기로 꺼내면 보임)', () => {
+    const why = browserScreen({ ...base, noFrameMs: NO_FRAME_MS, hidden: true }).why;
+    expect(why).toBe('가려 둔 크롬이 그림을 멈췄어요');
+    expect(browserScreen({ ...base, noFrameMs: NO_FRAME_MS, hidden: false }).why).toBe('화면이 안 와요');
+    // 그림이 오는 동안엔 가려져 있어도 막지 않는다(베타는 가려도 그린다)
+    expect(browserScreen({ ...base, noFrameMs: 0, hidden: true })).toEqual({ kind: 'ok', why: '', blocked: false });
+  });
   it('경계 — 조금 늦는 건 그대로 기다린다(첫 장은 보통 1초 안)', () => {
     expect(browserScreen({ ...base, noFrameMs: NO_FRAME_MS - 1 })).toEqual({ kind: 'ok', why: '', blocked: false });
     expect(browserScreen(base)).toEqual({ kind: 'ok', why: '', blocked: false });

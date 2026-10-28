@@ -1,5 +1,7 @@
 {
-  "_": "허용 카드 열기(e2e_card_open·/api/device-number open) 응답 — Rust e2e_cmd::card_open_json 이 내는 모양 그대로. Rust 시험·TS 시험이 둘 다 이 파일을 읽는다(10-25 QA: 데스크톱만 글자로 돌려줘 숫자 칸이 안 떴다)",
+  "_": "허용 카드 열기(e2e_card_open·/api/device-number open) 응답(claim 도 같은 모양) — Rust e2e_cmd::card_open_json 이 내는 모양 그대로. Rust 시험·TS 시험이 둘 다 이 파일을 읽는다(10-25 QA: 데스크톱만 글자로 돌려줘 숫자 칸이 안 떴다)",
   "click": { "mode": "click" },
-  "code": { "mode": "code", "code": "0420" }
+  "code": { "mode": "code", "code": "0420" },
+  "number": { "mode": "number" },
+  "number_mine": { "mode": "number", "mine": true }
 }

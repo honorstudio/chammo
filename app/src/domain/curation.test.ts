@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canCurSend, curSendState, curStep, DOC_SANDBOX, emptyStore, fromFrame, isCurationHtml, readCurSent, reviewEscCloses, writeCurSent } from './curation';
+import { canCurSend, curSendState, curStep, curZoomCmd, DOC_SANDBOX, emptyStore, fromFrame, isCurationHtml, readCurSent, reviewEscCloses, writeCurSent } from './curation';
 import htmlSheetSrc from '../ui/mobile/HtmlSheet.tsx?raw';
 import previewSrc from '../ui/space/Preview.tsx?raw';
 import curModeSrc from '../ui/space/CurationMode.tsx?raw';
@@ -130,5 +130,46 @@ describe('reviewEscCloses — Esc 로 검토 닫기', () => {
     expect(reviewEscCloses({ ...base, composing: true })).toBe(false);
     expect(reviewEscCloses({ ...base, overlay: true })).toBe(false);
     expect(reviewEscCloses({ ...base, key: 'Enter' })).toBe(false);
+  });
+});
+
+// 공개 이슈 #1(2026-10-27) — 카드를 누를 때마다 보드가 한 단계씩 작아졌다. 앱이 껍데기 알림(cur-state)마다 확대가 다르면 또 보내서,
+// 받은 확대를 곱하고(상대값) 맞춤 비율까지 곱해 알리는 손본 껍데기와 되먹임이 됐다. 알림 = 카드 누르기
+describe('curZoomCmd — 확대는 칸을 읽은 뒤 한 번만 맞춘다', () => {
+  // 손본 껍데기 흉내: 받은 z 를 지금 확대에 곱하고, 맞춤(0.8)까지 곱한 확대를 알린다. 받고 나선 따로 안 알린다(다음 클릭 알림에 실림)
+  const handMade = () => ({ user: 1, fit: 0.8, report() { return this.fit * this.user; }, zoom(z: number) { this.user *= z; } });
+  // 앱 쪽 흉내: 알린 확대가 바뀐 알림마다 curZoomCmd 를 묻고, 첫 알림 뒤로는 맞춘 것으로 본다(CurationMode 효과와 같은 순서)
+  const clickMany = (shell: { report(): number; zoom(z: number): void }, want: number, n: number) => {
+    let synced = false; let last: number | undefined; const seen: number[] = [];
+    for (let i = 0; i <= n; i++) {
+      const r = shell.report();
+      if (r !== last) { const z = curZoomCmd(r, want, synced); synced = true; if (z !== null) shell.zoom(z); }
+      last = r;
+      seen.push(Number(shell.report().toFixed(4)));
+    }
+    return seen;
+  };
+  it('손본 껍데기에서 카드를 열 번 눌러도 크기가 그대로다(처음 한 번 맞춘 뒤)', () => {
+    const seen = clickMany(handMade(), 0.9, 10);
+    expect(new Set(seen).size).toBe(1);
+    expect(seen[seen.length - 1]).toBeCloseTo(0.72, 4); // 맞춤 0.8 × 사람이 고른 90%
+  });
+  it('표준 껍데기(받은 값을 그대로 알림)는 한 번 보내고 맞는다', () => {
+    const std = { z: 1, report() { return this.z; }, zoom(z: number) { this.z = z; } };
+    expect(clickMany(std, 0.9, 5)).toEqual([0.9, 0.9, 0.9, 0.9, 0.9, 0.9]);
+  });
+  it('칸을 새로 읽은 뒤 첫 알림이 지금 확대와 다르면 보낸다 · 같으면 안 보낸다', () => {
+    expect(curZoomCmd(1, 0.9, false)).toBe(0.9);
+    expect(curZoomCmd(0.9, 0.9, false)).toBeNull();
+  });
+  it('맞춘 뒤엔 알린 확대가 달라도 다시 안 보낸다 — 사람이 확대를 바꿀 때만(zoomBy)', () => {
+    expect(curZoomCmd(0.648, 0.9, true)).toBeNull();
+  });
+  it('옛 껍데기(zoom 칸 없음)엔 안 보낸다 — 앱이 문서째 확대한다', () => {
+    expect(curZoomCmd(undefined, 0.9, false)).toBeNull();
+  });
+  it('시안 검토 화면은 알림이 올 때마다가 아니라 이 규칙으로 보낸다(알린 확대가 바뀔 때마다 보내던 효과를 되살리지 않게)', () => {
+    expect(curModeSrc).toMatch(/curZoomCmd\(shellZoom, zoom \/ 100, zoomSynced\.current\)/);
+    expect(curModeSrc).not.toMatch(/\[shellZoom, zoom\]/);
   });
 });

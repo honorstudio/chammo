@@ -82,6 +82,7 @@ function lockedMessage(profile, r) {
  * @param {(name:string, result:object) => void} [o.onCallEnd]    그 응답이 왔을 때
  * @param {object[]} [o.extraTools]  래퍼가 직접 맡는 도구 — tools/list 응답 끝에 더한다
  * @param {(name:string, args:object) => (Promise<object>|null)} [o.onLocalTool]  그 도구면 결과 Promise, 아니면 null(playwright 로)
+ * @param {(name:string) => void} [o.onLocalCancel]  세션이 도는 래퍼 도구 호출을 취소했다(notifications/cancelled)
  * @param {(name:string) => {name:string, arguments:object}[]} [o.beforeCall]  브라우저가 떠 있을 때 세션 호출 앞에 먼저 보낼 내부 호출들 —
  *   다 답할 때까지 세션 호출(과 뒤에 온 줄)을 잡아 둔다. 답은 세션에 안 보인다
  * @param {(name:string, args:object) => (Promise<{run:boolean, note?:string, isError?:boolean}>|null)} [o.gate]  세션 도구 호출 앞 문지기 —
@@ -95,7 +96,7 @@ function lockedMessage(profile, r) {
 function createRelay({
   profile, acquire, release, sendToChild, sendToClient,
   idleMs = 0, setTimer = setTimeout, clearTimer = clearTimeout, log = () => {},
-  onCallStart = () => {}, onCallEnd = () => {}, extraTools = [], onLocalTool = () => null, beforeCall = () => [],
+  onCallStart = () => {}, onCallEnd = () => {}, extraTools = [], onLocalTool = () => null, onLocalCancel = () => {}, beforeCall = () => [],
   canClose = () => true, gate = () => null, afterCall = () => null, transform = (_n, r) => r, afterMs = 1500,
   stillShared = () => true,
 }) {
@@ -117,6 +118,8 @@ function createRelay({
   const afterWait = new Map(); // 답을 기다리는 뒤따름 내부 호출 id → {onResult, go}
   let afterSeq = 0;
   const intWait = new Map(); // 래퍼가 스스로 보낸 내부 호출(callInternal) id → resolve
+  const kept = new Set(); // 닫아도 놓지 않는 내부 호출 id(callInternal keep)
+  const localCalls = new Map(); // 도는 래퍼 도구 요청 id → 이름(취소를 알리게)
   let intSeq = 0;
 
   function disarm() {
@@ -162,6 +165,13 @@ function createRelay({
     if (msg && msg.method === 'tools/list' && msg.id != null && extraTools.length) lists.add(msg.id);
     // 세션이 붙잡힌 호출을 취소했다(사람이 멈춤 등) — 돌려줘도 답하지 않는다
     if (msg && msg.method === 'notifications/cancelled' && msg.params && gated.delete(msg.params.requestId)) return;
+    // 래퍼 도구(사람 부르기)를 세션이 취소했다 — 래퍼가 기다림을 거두게(카드가 남아 사람 차례로 보였다, 2026-10-28)
+    if (msg && msg.method === 'notifications/cancelled' && msg.params && localCalls.has(msg.params.requestId)) {
+      const n = localCalls.get(msg.params.requestId);
+      localCalls.delete(msg.params.requestId);
+      onLocalCancel(n);
+      return;
+    }
     const isCall = msg && msg.method === 'tools/call' && msg.id != null;
     if (!isCall) return sendToChild(line);
 
@@ -197,7 +207,8 @@ function createRelay({
       cleared.delete(msg.id);
       disarm();
       localRunning += 1;
-      const settle = () => { localRunning -= 1; arm(); };
+      localCalls.set(msg.id, name);
+      const settle = () => { localRunning -= 1; localCalls.delete(msg.id); arm(); };
       const note = notes.get(msg.id);
       notes.delete(msg.id);
       Promise.resolve(local).finally(settle).then(
@@ -268,8 +279,9 @@ function createRelay({
       const name = pending.get(msg.id);
       pending.delete(msg.id);
       const succeeded = msg.result && !msg.result.isError;
+      const keepIt = kept.delete(msg.id);
       // 다른 호출이 아직 돌고 있으면 그게 브라우저를 다시 띄웠을 수 있다 → 보수적으로 유지
-      if (name === CLOSE_TOOL && held && succeeded && pending.size === 0) {
+      if (name === CLOSE_TOOL && held && succeeded && pending.size === 0 && !keepIt) {
         release();
         held = false;
         shared = false;
@@ -329,10 +341,12 @@ function createRelay({
    * 래퍼가 스스로 보내는 도구 호출(앱이 부탁한 대화상자 답 등) — 브라우저가 떠 있을 때만(락 없이 크롬을 띄우지 않게). 답은 세션에 안 보인다
    * @returns {Promise<object>} 결과(MCP result). 브라우저가 없으면 isError
    */
-  function callInternal(name, args = {}) {
+  // keep = 닫기여도 락·상태 파일을 놓지 않는다(윈도우 보이는 창으로 다시 띄우기 — 닫고 곧 다시 연다, src/winshow.js)
+  function callInternal(name, args = {}, { keep = false } = {}) {
     if (!held) return Promise.resolve({ content: [{ type: 'text', text: '브라우저가 떠 있지 않아요' }], isError: true });
     const id = `chammo-int-${++intSeq}`;
     internal.add(id);
+    if (keep) kept.add(id);
     pending.set(id, name);
     disarm();
     return new Promise((resolve) => {
@@ -341,7 +355,9 @@ function createRelay({
     });
   }
 
-  return { onClientLine, onChildLine, callInternal, holdsLock: () => held, sharing: () => shared };
+  // 세션이 보낸 도구가 child 에서 도는 중인가 — 래퍼 내부 호출·사람 부르기 기다림(로컬)·문지기에 붙잡힌 호출은 빼고(src/passkey.js 가 끝나길 기다렸다 크롬을 바꾼다)
+  const busy = () => [...pending.keys()].some((id) => !internal.has(id));
+  return { onClientLine, onChildLine, callInternal, busy, holdsLock: () => held, sharing: () => shared };
 }
 
 // 스트림 청크 → 완성된 줄 단위 콜백. 빈 줄은 버리고 CRLF 도 처리한다.

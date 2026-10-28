@@ -18,7 +18,7 @@ export function askNotice(name: string, reason: string): { title: string; body: 
 }
 
 /** 지금 크게 보기에 띄운 브라우저 — 프로필만으론 모자라다(세션이 끝나고 다른 세션 브라우저가 같은 프로필을 잡으면 입력이 그쪽으로 간다) */
-export type AskOpen = { profile: string; pid: number; sessionPid: number; /** 사람이 눌러 열었나 — 저절로 뜬 모달은 글칸 포커스를 안 가져간다(치던 채팅 글이 브라우저로 안 가게) */ byHuman: boolean };
+export type AskOpen = { profile: string; pid: number; sessionPid: number; /** 사람이 누른 카드가 놓인 참모(스페이스가 갈 곳, 없으면 독 주인) */ orch?: string; /** 사람이 눌러 열었나 — 저절로 뜬 모달은 글칸 포커스를 안 가져간다(치던 채팅 글이 브라우저로 안 가게) */ byHuman: boolean };
 /** seen = 이미 알린 부름, queue = 모달이 열려 있어서 아직 한 번도 못 띄운 부름(먼저 부른 순) */
 export type AskState = { open: AskOpen | null; seen: string[]; queue: string[] };
 export const ASK_EMPTY: AskState = { open: null, seen: [], queue: [] };
@@ -57,7 +57,7 @@ export function askStep(s: AskState, lives: Live[]): { state: AskState; notify: 
 }
 
 /** 사람이 눌러 연다(칸의 크게 보기·사람 필요, 모달 머리의 줄 선 부름) */
-export const askOpen = (s: AskState, l: Live): AskState => ({ ...s, open: openOf(l, true), queue: s.queue.filter((k) => !k.startsWith(`${l.profile}:${l.pid}:`)) });
+export const askOpen = (s: AskState, l: Live, orch?: string): AskState => ({ ...s, open: { ...openOf(l, true), ...(orch ? { orch } : {}) }, queue: s.queue.filter((k) => !k.startsWith(`${l.profile}:${l.pid}:`)) });
 /** 닫기 — 줄 선 부름이 있으면 그걸 띄운다. who 를 주면 그 브라우저가 열려 있을 때만(같은 닫기가 키·메뉴 두 갈래로 와도 다음 모달까지 안 닫게) */
 export const askClose = (s: AskState, lives: Live[], who?: { profile: string; pid: number }): AskState =>
   who && !(s.open?.profile === who.profile && s.open.pid === who.pid) ? s : { ...s, ...serve(null, s.queue, lives) };

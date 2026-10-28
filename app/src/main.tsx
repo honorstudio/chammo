@@ -45,6 +45,8 @@ const fonts = Promise.all([
 Promise.race([fonts, new Promise((r) => setTimeout(r, 1500))]).finally(async () => {
   // 설정 저장으로 창을 다시 읽었으면 지난번 터미널 칸(pty·claude attach)이 Rust 에 남아 있다 — 새 칸을 열기 전에 닫는다(2026-10-21 리뷰 ①-9)
   await import('./data/tauri').then((t) => t.closeMyPtys()).catch(() => {});
+  // 입력칸 쓰던 글(<데이터>/drafts.json) — 칸이 그려지며 바로 읽게 먼저
+  await import('./data/drafts').then((d) => d.loadDrafts()).catch(() => {});
   const { default: App } = await import('./App');
   createRoot(document.getElementById('root')!).render(
     <StrictMode>

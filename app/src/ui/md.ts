@@ -4,6 +4,7 @@ import { Marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { mdSafe } from '../domain/chat';
 import { docImgSrcOk } from '../domain/phoneFile';
+import { linkParts, webHref } from '../domain/links';
 
 const FORBID_TAGS = ['style', 'iframe', 'object', 'embed', 'form', 'img'];
 /** 답 글이 앱 화면을 흉내 내지 못하게 — class·style·id 가 살아 있으면 '앱이 전함' 줄·승인 카드 모양을 그대로 그리거나 화면 전체를 덮었다(2026-10-21 리뷰) */
@@ -25,6 +26,39 @@ export const mdParse = (text: string) => md.parse(mdSafe(text)) as string;
 
 /** 데스크톱 — 링크는 화면 쪽 클릭 처리(followLink)가 연다 */
 export const mdToHtml = (text: string) => DOMPurify.sanitize(mdParse(text), SANITIZE);
+
+/** 팀챗 참모 말 — 참모 채팅과 같은 마크다운·거름. 남의 글이라 링크는 웹 주소만 살리고(나머지는 글로) 실제 주소를 title 로 —
+ *  보이는 글이 주소와 달라도 올리면 어디로 가는지 보인다. 폰은 새 탭. 부르기(@이름)는 맨 글처럼 칩(코드·링크 안은 그대로) */
+export function mdToHtmlTeam(text: string, opt: { newTab: boolean; mention: (s: string) => { t: string; s: string; me?: boolean }[] }): string {
+  const frag = DOMPurify.sanitize(mdParse(text), { ...SANITIZE, RETURN_DOM_FRAGMENT: true });
+  for (const a of [...frag.querySelectorAll('a')]) {
+    // 맨 주소 자동 링크는 marked 가 바로 뒤 한글(조사)까지 주소로 잡는다 — 맨 글과 같은 자르기(linkParts)로 다시
+    const raw = a.textContent ?? '';
+    const cut = webHref(raw) ? linkParts(raw)[0] : undefined;
+    if (cut?.t === 'url' && cut.s !== raw) { a.textContent = cut.s; a.setAttribute('href', cut.s); a.after(raw.slice(cut.s.length)); }
+    const href = webHref(a.getAttribute('href'));
+    if (!href) { a.replaceWith(...a.childNodes); continue; }
+    a.setAttribute('title', href);
+    if (opt.newTab) { a.setAttribute('target', '_blank'); a.setAttribute('rel', 'noopener noreferrer'); }
+  }
+  const walk = document.createTreeWalker(frag, NodeFilter.SHOW_TEXT);
+  const texts: Text[] = [];
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) if (!n.parentElement?.closest('code, pre, a')) texts.push(n as Text);
+  for (const n of texts) {
+    const parts = opt.mention(n.data);
+    if (!parts.some((p) => p.t === 'mention')) continue;
+    n.replaceWith(...parts.map((p) => {
+      if (p.t !== 'mention') return p.s;
+      const el = document.createElement('span');
+      el.className = p.me ? 'tmx-mn me' : 'tmx-mn';
+      el.textContent = p.s;
+      return el;
+    }));
+  }
+  const box = document.createElement('div');
+  box.append(frag);
+  return box.innerHTML;
+}
 
 // 폰 — 링크는 새 탭 + rel=noopener noreferrer. 걸이(hook)는 폰 전용 인스턴스에만 건다(데스크톱 DOMPurify 는 그대로)
 let phone: ReturnType<typeof DOMPurify> | null = null;

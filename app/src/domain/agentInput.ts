@@ -6,7 +6,11 @@ export type InputEv =
   | { kind: 'mouse'; type: 'mouseMoved' | 'mousePressed' | 'mouseReleased' | 'mouseWheel'; x: number; y: number; button?: 'none' | 'left' | 'middle' | 'right'; clickCount?: number; deltaX?: number; deltaY?: number; modifiers?: number }
   | KeyEv
   | { kind: 'text'; text: string }
-  | { kind: 'nav'; action: 'reload' | 'back' | 'forward' };
+  /** 조합 중 글자 — 페이지 입력칸 그 자리에 밑줄 조합으로(Input.imeSetComposition, 빈 글 = 조합 걷기) */
+  | { kind: 'compose'; text: string }
+  | { kind: 'nav'; action: 'reload' | 'back' | 'forward' }
+  /** 칸 주소창 이동 — http·https 만(Rust web_url) */
+  | { kind: 'go'; url: string };
 
 type Box = { left: number; top: number; width: number; height: number };
 type Mods = { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean };

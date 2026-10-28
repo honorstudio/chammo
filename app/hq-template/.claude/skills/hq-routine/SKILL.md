@@ -19,7 +19,7 @@ description: 매일·매주·N시간마다 하는 일이나 정한 날짜·시�
 한 번짜리를 '매주'로 걸고 지우는 꼼수는 쓰지 않는다.
 지침서가 `<데이터>/routines/<이름>/ROUTINE.md` 에 생긴다 — **열어서 구체적으로 채운다**(단계·어디 로그인하는지·무엇이 되면
 끝인지·무엇을 보고할지). 앱이 꺼져 있어도 macOS 가 정해진 때 깨우고, 매번 `routine-<이름>` 세션이 지침서대로 한 번 일한 뒤
-결과를 남긴다. 만들면 바로 `scripts/routine run <이름>` 으로 시험하고 `scripts/routine list` 로 결과를 본다 — 단 운영에 손대는 예약(광고·결제·실사용자 발송)은
+결과를 남긴다(`report`). 보고한 회차는 끝난 것 — 그 세션이 목록에 busy 로 남아도 다음 회차를 막지 않고, 보고 10분 뒤 예약이 그 세션을 멈춘다(`claude stop`). 만들면 바로 `scripts/routine run <이름>` 으로 시험하고 `scripts/routine list` 로 결과를 본다 — 단 운영에 손대는 예약(광고·결제·실사용자 발송)은
 시험 실행하지 않고 `scripts/routine list` 로 걸린 것만 본다. 일시정지·재개·삭제도 같은 스크립트 — 삭제(`remove`)는 그 예약이 띄운 `routine-<이름>` 세션도 치운다(`stopped`, 못 치운 건 `left`).
 앱 사이드바 "예약" 칸에 보인다 — 첫째 줄 이름·상태(도는 중 N분·끝 hh:mm·실패…), 둘째 줄 언제(다음 실행, 한 번짜리는 날짜·남은 횟수),
 끝난 한 번짜리는 접힌다. 누르면 지침서·지금 도는 화면·실행 기록.
@@ -39,7 +39,8 @@ the next one; dates already past are dropped (all past = refused). After the las
 itself off and shows as "Finished" — don't remove it yourself, the history stays. Don't fake one-offs with a weekly schedule.
 It writes the instructions to `<data>/routines/<name>/ROUTINE.md` — **open it and make it concrete** (steps, where
 to log in, what "done" means, what to report). macOS wakes it on schedule even when the app is closed; each run
-starts a session `routine-<name>` that follows ROUTINE.md once and reports back. Try it right away with
+starts a session `routine-<name>` that follows ROUTINE.md once and reports back (`report`). A run that reported is over — if its session
+still shows as busy it doesn't block the next run, and 10 minutes after the report the scheduler stops it (`claude stop`). Try it right away with
 `scripts/routine run <name>` and check the result with `scripts/routine list` — except jobs that touch production
 (ads, payments, sends to real users): don't test-run those, check `scripts/routine list` instead. Pause/resume/remove the same way —
 `remove` also clears the `routine-<name>` sessions it started (`stopped`; any it couldn't are in `left`).

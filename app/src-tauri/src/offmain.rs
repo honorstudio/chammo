@@ -19,7 +19,7 @@ pub const READ: &[&str] = &[
     // 보관함(~/Documents/Chammo) 읽기
     "locker_peek", "locker_tree", "locker_versions", "locker_find", "locker_recent_shots", "locker_reveal",
     // ~/.claude·~/.claude.json(링크면 어디로든)
-    "accounts_view", "daemon_started_at", "claude_defaults_snapshot", "bypass_consent", "daemon_env_check",
+    "accounts_view", "daemon_started_at", "daemon_stopped_recently", "claude_defaults_snapshot", "bypass_consent", "daemon_env_check",
     // 화면이 넘긴 아무 경로·설정에 적힌 경로
     "open_target", "sheet_open", "tts_warm", "agent_drop_files", "read_memos",
     // portable-pty 가 부르는 스레드에서 cwd(devRoot 프로젝트)를 is_dir 로 본다

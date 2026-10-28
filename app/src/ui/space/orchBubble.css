@@ -1,0 +1,143 @@
+/* 떠 있는 참모 배지·대화창(OrchBubble.tsx, 시안 .shots/orch-bubble v1 A). 이름은 obb- 접두 — styles.css 짧은 전역 클래스(.sm·.side 등)와 안 겹치게 */
+
+/* 참모 채팅 칸 감싸기 — 평소엔 없는 것처럼(칸 모양 그대로) */
+.obb-host, .obb-body { display: contents; }
+.obb-head { display: none; }
+/* 대화창 — 참모 채팅 칸 그 자체가 떠 있는 창이 된다(붙임·입력 그대로) */
+.obb-host.obb-float {
+  display: flex; flex-direction: column; position: fixed; z-index: calc(var(--z-panel) + 4);
+  background: var(--surface); border-radius: 14px; overflow: hidden; visibility: visible; pointer-events: auto;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .22), 0 0 0 1px var(--line);
+}
+.obb-float > .obb-head { display: flex; align-items: center; gap: 6px; height: 44px; padding: 0 6px 0 10px; border-bottom: 1px solid var(--line); flex: none; }
+.obb-float > .obb-body { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.obb-float > .obb-body > * { flex: 1; min-height: 0; }
+
+/* 참모 채팅 칸이 숨는 화면(홈·메신저 접힘)에서 대화창을 열면 — 칸은 자리를 안 먹고 안 보이게, 떠 있는 창만 보인다 */
+.cv-chat-slot.obb-ghost > .office-chats { position: absolute; width: 0 !important; height: 0; flex: none !important; overflow: visible; visibility: hidden; pointer-events: none; }
+
+/* 배지 v3 N — 흰 동그라미 하나·얼굴 하나. 테두리 = 얼굴 참모 상태 색(일함 파랑·물어봄 노랑 물결·새 답 초록·쉼 회색) */
+.obb-badge {
+  position: fixed; z-index: calc(var(--z-panel) + 6); width: 52px; height: 52px; padding: 0; border: 0; border-radius: 50%;
+  display: grid; place-items: center; background: var(--surface); color: var(--text); cursor: grab; touch-action: none;
+}
+.obb-badge .obb-facein { pointer-events: none; }
+.obb-badge.obb-drag { cursor: grabbing; }
+.obb-badge.obb-drag .obb-ring { --obb-drop: 0 14px 30px rgba(0, 0, 0, .28); }
+.obb-badge:focus-visible { outline: 2px solid var(--orch-solid, var(--accent)); outline-offset: 6px; }
+.r-run { --rc: var(--working); } .r-ask { --rc: var(--blocked); } .r-new { --rc: var(--done, #2f9e6b); } .r-rest { --rc: var(--line-strong); }
+/* 고리는 정수 테두리(3px) — 2.5px 퍼짐 그림자는 웹킷 1배 화면에서 한쪽 2px·반대쪽 3px 로 반올림됐다(사용자 348, 10-28).
+   떨어지는 그림자도 배지가 아니라 고리 바깥에 — 배지에 두면 고리 안쪽 아래만 어두워 아래가 두꺼워 보인다.
+   고리는 흰 원에 1px 겹친다(inset = 테두리 - 1) — 같은 자리에 두면 고리 안쪽·원 가장자리가 둘 다 반투명이라 1배 화면에서 틈이 비쳤다(사용자 379). 얼굴 위 층 — 얼굴 안 움직이는 층(.oa-l 44px)이 합성 층이라
+   고리가 그 밑이면 투명 웹킷 창(바탕 배지)에서 고리 대각선에 네모 모서리가 남았다(사용자 363·18:30, 하네스 .shots/bubble-ring) */
+.obb-ring { --obb-drop: 0 6px 18px rgba(0, 0, 0, .2); position: absolute; z-index: calc(var(--z-base) + 1); inset: -2px; border: 3px solid var(--rc); border-radius: 50%; box-shadow: var(--obb-drop); pointer-events: none; transition: border-color .4s; }
+.obb-ring.r-ask { animation: obb-wave 1.6s ease-out infinite; }
+@keyframes obb-wave { 0% { box-shadow: var(--obb-drop), 0 0 0 0 color-mix(in srgb, var(--rc) 50%, transparent); } 100% { box-shadow: var(--obb-drop), 0 0 0 12px transparent; } }
+/* 얼굴은 원 안에만 — 배지·부채·머리 얼굴을 원으로 자른 칸에 둔다(투명 웹킷 창에서 얼굴 층 네모가 원 밖으로 안 나오게, 사용자 379) */
+.obb-clip { position: absolute; inset: 0; display: grid; place-items: center; border-radius: 50%; overflow: hidden; }
+/* 얼굴이 바뀌면 위에서 톡 */
+.obb-facein { display: grid; place-items: center; animation: obb-tok .42s cubic-bezier(.2, 1.5, .4, 1) both; }
+@keyframes obb-tok { from { opacity: 0; transform: translateY(-10px) scale(.7); } }
+.obb-dot { position: absolute; z-index: calc(var(--z-base) + 2); top: 1px; right: 1px; width: 12px; height: 12px; border-radius: 50%; background: var(--rc, var(--text)); box-shadow: 0 0 0 2px var(--surface); }
+.obb-dot { --rc: var(--done, #2f9e6b); }
+/* 숫자 알약 — 물어봄 N(노랑)·일함 N(파랑), 쉼은 안 센다 */
+.obb-counts { position: absolute; left: 50%; top: calc(100% + 5px); transform: translateX(-50%); display: flex; gap: 3px; white-space: nowrap; pointer-events: none; }
+.obb-cnt { display: inline-flex; align-items: center; gap: 4px; height: 16px; padding: 0 6px; border-radius: 8px; background: var(--surface); color: var(--text-2); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; box-shadow: 0 2px 6px rgba(0, 0, 0, .1), 0 0 0 1px var(--line); }
+.obb-cnt i { width: 6px; height: 6px; border-radius: 50%; background: var(--working); }
+.obb-cnt.c-ask { background: color-mix(in srgb, var(--blocked) 16%, var(--surface)); color: var(--text); box-shadow: 0 0 0 1px color-mix(in srgb, var(--blocked) 40%, transparent); }
+.obb-cnt.c-ask i { background: var(--blocked); }
+
+/* 부채 — 배지 가운데에서 화면 가운데 쪽 1/4 원. 이름은 올릴 때만 */
+.obb-fan { position: fixed; width: 0; height: 0; z-index: calc(var(--z-panel) + 7); }
+.obb-fo { position: absolute; left: -19px; top: -19px; width: 38px; height: 38px; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); display: grid; place-items: center; cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .18); animation: obb-fanin .32s cubic-bezier(.2, 1.4, .4, 1) both; }
+@keyframes obb-fanin { from { opacity: 0; scale: .4; } }
+.obb-fo:hover, .obb-fo:focus-visible { border: 2px solid var(--orch-solid, var(--text)); outline: none; z-index: calc(var(--z-base) + 1); }
+/* 접힘 — 펼칠 때 반대로 얼굴들이 배지 가운데로 빨려 들어가며 작아지고 흐려진다(바깥 얼굴부터 6ms 씩 엇갈림, 끝까지 FAN_OUT_MS 안).
+   곡선은 가속(.4,0,1,1) — 더 센 가속(.5,0,.9,.45)은 앞 80ms 가 거의 안 움직여 녹화로 보면 끝 5프레임에 몰려 다시 뚝처럼 보였다.
+   인라인 translate 를 덮어야 해서 !important. 접히는 동안은 안 눌린다 — 받는 자리도 이미 배지로 돌아갔다(10-28 밤 사용자 "뚝 끊겨") */
+.obb-fan.out { pointer-events: none; }
+.obb-fan.out .obb-fo { transform: translate(0, 0) !important; scale: .3; opacity: 0; animation: none;
+  transition: transform .18s cubic-bezier(.4, 0, 1, 1), scale .18s cubic-bezier(.4, 0, 1, 1), opacity .18s cubic-bezier(.4, 0, 1, 1); transition-delay: calc(var(--fo-back, 0) * 6ms); }
+.obb-fan.out .obb-more, .obd-name.out { opacity: 0; transition: opacity .12s ease-in; }
+@media (prefers-reduced-motion: reduce) { .obb-fan.out .obb-fo { transition: none; } }
+.obb-fd { position: absolute; top: -1px; right: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--rc); box-shadow: 0 0 0 2px var(--surface); }
+.obb-fn { position: absolute; top: calc(100% + 3px); left: 50%; transform: translateX(-50%); font-size: 11px; white-space: nowrap; background: var(--surface); color: var(--text); border-radius: 6px; padding: 1px 6px; box-shadow: 0 0 0 1px var(--line); opacity: 0; pointer-events: none; transition: opacity .15s; }
+.obb-fn.up { top: auto; bottom: calc(100% + 3px); }
+.obb-fo:hover .obb-fn, .obb-fo:focus-visible .obb-fn { opacity: 1; }
+.obb-fmore { font-size: 11.5px; font-weight: 750; color: var(--text-2); }
+/* '+N' — 나머지 참모 목록(급한 참모 먼저, 많으면 안에서 스크롤) */
+.obb-more { position: absolute; width: 210px; max-height: 240px; overflow: auto; background: var(--surface); border-radius: 12px; padding: 5px; box-shadow: 0 14px 34px rgba(0, 0, 0, .18), 0 0 0 1px var(--line); }
+.obb-mr { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; padding: 5px 7px; border-radius: 8px; font: inherit; font-size: 12.5px; color: var(--text); cursor: pointer; text-align: left; }
+.obb-mr:hover, .obb-mr:focus-visible { background: var(--surface-2, var(--hover)); outline: none; }
+.obb-mn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obb-ms { font-size: 11px; color: var(--text-3); }
+.obb-ms.r-ask, .obb-ms.r-new { color: var(--rc); font-weight: 700; }
+
+/* 대화창 머리 — 내 참모 얼굴 줄(누르면 그 참모 대화) + 키우기·참모 화면으로·접기 */
+/* 위아래 여백 합은 홀수 — 머리 44(아래 선 1) 안 가운데가 정수 픽셀(4px 2px 이면 y = 5.5 라 고리가 번졌다), 옆 4px = 고른 고리가 안 잘리게 */
+.obb-faces { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: 5px 4px 4px; }
+.obb-face { position: relative; flex: none; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: none; display: grid; place-items: center; cursor: pointer; }
+/* 고른 얼굴 고리 = 정수 테두리 한 겹 — 흰 2px + 색 3.5px 퍼짐 그림자 두 겹은 안쪽 가장자리가 겹쳐 흐린 안쪽 원이 하나 더 보였다(사용자 379) */
+.obb-face.on::after { content: ""; position: absolute; inset: -4px; border: 2px solid var(--orch-solid, var(--text)); border-radius: 50%; pointer-events: none; }
+.obb-face:focus-visible { outline: 2px solid var(--orch-solid, var(--accent)); outline-offset: 2px; }
+.obb-pip { position: absolute; z-index: calc(var(--z-base) + 1); top: -1px; right: -1px; width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 0 2px var(--surface); }
+.obb-pip.p-run { background: var(--working); }
+.obb-pip.p-ask { background: var(--blocked); }
+.obb-pip.p-new { background: var(--text); }
+.obb-tools { display: flex; gap: 2px; flex: none; }
+
+/* 바탕 배지 창(bubble.html, DeskBubble) — 창은 투명(Rust 가 이 창 웹뷰 배경만 끈다), 배지·부채만 보이고 대화창일 땐 창이 대화창(둥근 모서리) */
+html.obd-root, html.obd-root body, html.obd-root #root { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+.obd-wrap { position: absolute; inset: 0; }
+/* 무대 쪽이 바뀌어 창과 배지 자리를 같이 옮기는 동안(한 프레임 어긋남이 안 보이게) */
+.obd-wrap.hide { visibility: hidden; }
+.obd-badge.obb-badge { position: absolute; }
+html.obd-root .obb-fan { position: absolute; }
+/* 묻는 참모 배너 — 배지 옆, 누르면 그 참모 대화창(눌리는 버튼이라 pointer-events 를 막지 않는다) */
+.obd-peek { position: absolute; display: grid; grid-template-columns: 1fr auto; column-gap: 8px; align-items: center; min-height: 52px; box-sizing: border-box; padding: 7px 8px 7px 12px; border: 0; border-radius: 12px;
+  background: var(--surface); color: var(--text-2, var(--text)); font: inherit; font-size: 12px; line-height: 1.4; text-align: left; cursor: pointer; box-shadow: 0 6px 16px rgba(0, 0, 0, .16), 0 0 0 1px var(--line); }
+.obd-peek b { grid-column: 1; color: var(--text); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obd-peek span { grid-column: 1; }
+.obd-peek em { grid-column: 2; grid-row: 1 / span 2; font-style: normal; font-weight: 650; color: var(--text); background: color-mix(in srgb, var(--blocked) 18%, var(--surface)); border-radius: 8px; padding: 6px 10px; }
+.obd-peek:hover em, .obd-peek:focus-visible em { background: color-mix(in srgb, var(--blocked) 30%, var(--surface)); }
+.obd-peek:focus-visible { outline: 2px solid var(--blocked); outline-offset: 2px; }
+/* 열린 동안 창 = 배지 상자 + 대화창(popLayout) — 배지는 제자리(누르면 접기), 대화창은 창 안 자리에. 창 크기가 바뀌는 동안(from·gone)은 배지도 숨긴다 */
+.obd-open { position: absolute; inset: 0; }
+.obd-open.a-from .obd-wrap, .obd-open.a-gone .obd-wrap { visibility: hidden; }
+/* 테두리는 안쪽 정수 border(10-28 사용자 "테두리 획 안 보임") — 바깥 퍼짐 그림자(0 0 0 1px)는 맥 창이 대화창 가장자리에 딱 맞게 잘려 위·옆 1px 이 창 밖으로 잘렸고,
+   --line(#dcdce1)은 흰 창 위에서 거의 안 보였다. 투명 창이라 그림자도 못 깔아(합성 층 네모 자국) 진한 획 하나로 가른다 */
+.obd-pop { position: absolute; display: flex; flex-direction: column; box-sizing: border-box; background: var(--surface); border-radius: 14px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--text) 24%, var(--surface)); }
+.obd-head { cursor: grab; }
+/* 톡(10-28 사용자) — 배지 자리(transform-origin = 배지 쪽 변)에서 자라 나와 살짝 튀고, 접으면 그쪽으로 줄어든다. 창 크기는 접힌 동안(from·gone)에만 바뀐다 */
+.obd-pop.a-from, .obd-pop.a-out, .obd-pop.a-gone { opacity: 0; transform: scale(.18); }
+.obd-pop.a-in { opacity: 1; transform: none; transition: transform .32s cubic-bezier(.22, 1.28, .42, 1), opacity .12s ease-out; }
+.obd-pop.a-out { transition: transform .18s cubic-bezier(.5, 0, .9, .5), opacity .18s ease-in; }
+.obd-pop.a-gone, .obd-pop.a-from { transition: none; }
+.obd-pop.still { transition: none; }
+/* 접고 돌아온 배지 — 작게 톡 */
+.obd-back { animation: obd-back .26s cubic-bezier(.22, 1.4, .42, 1) both; }
+@keyframes obd-back { from { opacity: 0; transform: scale(.6); } }
+@media (prefers-reduced-motion: reduce) { .obd-pop, .obd-pop.a-in, .obd-pop.a-out { transition: none; } .obd-back { animation: none; } }
+.obd-pop > .obd-head { display: flex; align-items: center; gap: 6px; height: 44px; padding: 0 6px 0 10px; border-bottom: 1px solid var(--line); flex: none; }
+.obd-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.obd-body > .gridbox, .obd-body .grid, .obd-body .cell, .obd-body .pane { flex: 1; min-height: 0; height: 100%; }
+
+/* 별명 — 비활성 패널은 :hover 가 안 올 수 있어 Rust 가 넘긴 마우스 자리로 hot 을 붙인다(DeskBubble __bubbleMouse) */
+.obd-tip { position: absolute; z-index: calc(var(--z-popover) + 1); transform: translateX(-50%); white-space: nowrap; font-size: 11px; font-weight: 600; color: var(--text); background: var(--surface); border-radius: 6px; padding: 2px 7px; box-shadow: 0 2px 8px rgba(0, 0, 0, .14), 0 0 0 1px var(--line); pointer-events: none; }
+.obb-fo.hot .obb-fn { opacity: 1; }
+.obd-who { flex: none; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 650; color: var(--text); }
+.obd-name { position: absolute; transform: translate(-50%, -100%); white-space: nowrap; font-size: 11.5px; font-weight: 650; color: var(--text); background: var(--surface); border-radius: 7px; padding: 2px 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, .14), 0 0 0 1px var(--line); pointer-events: none; }
+.obd-name.down { transform: translate(-50%, 0); }
+/* 대화창 안 채팅 칸 — 메인 '고른 칸' 진한 테두리는 칸이 하나뿐인 대화창엔 필요 없다(테두리째 대화창 둘레로 보였다) */
+.obd-body .pane, .obd-body .pane:focus-within { border-color: transparent; box-shadow: none; border-radius: 0; }
+/* 바탕 배지 창은 투명 웹킷 — 얼굴(.oa)의 합성 층(will-change·isolation, 44px 네모)이 고리 그림자를 네모로 비워 고리 안쪽 대각선에 모서리가 비쳤다(사용자 363). 작은 창이라 층 없이 그려도 된다 */
+html.obd-root .oa { will-change: auto; isolation: auto; }
+/* 대화창 크기 손잡이 — 배지 반대쪽 두 변·그 모서리(DeskBubble farEdges). 보이지 않는 띠, 올리면 커서만 */
+.obd-grip { position: absolute; z-index: calc(var(--z-base) + 3); touch-action: none; }
+.obd-grip.g-x { top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.obd-grip.g-y { left: 0; right: 0; height: 6px; cursor: ns-resize; }
+.obd-grip.g-xy { width: 14px; height: 14px; z-index: calc(var(--z-base) + 4); }
+.obd-grip.g-x.left, .obd-grip.g-xy.left { left: 0; } .obd-grip.g-x.right, .obd-grip.g-xy.right { right: 0; }
+.obd-grip.g-y.top, .obd-grip.g-xy.top { top: 0; } .obd-grip.g-y.bottom, .obd-grip.g-xy.bottom { bottom: 0; }
+.obd-grip.g-xy.left.top, .obd-grip.g-xy.right.bottom { cursor: nwse-resize; } .obd-grip.g-xy.right.top, .obd-grip.g-xy.left.bottom { cursor: nesw-resize; }

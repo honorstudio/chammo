@@ -22,6 +22,16 @@ const TEXT = ['txt', 'log', 'json', 'jsonl', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'j
 const PAGE_DOC = [...OFFICE, 'ppt', 'pptx', 'pps', 'ppsx', 'odp', 'key', 'xls', 'xlsx', 'ods', 'numbers', 'pages'];
 export const pageDoc = (path: string) => PAGE_DOC.includes(path.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '');
 
+/** 미리보기 기다림 한도 — Rust 가 길마다 끊지만(그림 한 장 20초씩 두 길, page_doc 60초) 답이 아예 안 오면 '만드는 중'에 영영 멈췄다(2026-10-29 .ai) */
+export const PREVIEW_WAIT_MS = 45_000;
+export const PAGE_DOC_WAIT_MS = 70_000;
+export function inTime<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timed out')), ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e: unknown) => { clearTimeout(t); reject(e); });
+  });
+}
+
 /** 스페이스가 바로 고치는 엑셀(ADR 0004) */
 export const isSheet = (path: string) => /\.(xlsx|xlsm)$/i.test(path);
 /** 탭 안에서 글 그대로 고치는 파일(.txt) — 고칠 수 있는 확장자는 Rust reader.rs editable() 과 같은 표(editableExt.json) 하나를 읽는다.

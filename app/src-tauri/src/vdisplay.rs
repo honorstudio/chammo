@@ -48,6 +48,14 @@ pub fn on_visible(win: Rect, visible: &[Rect]) -> bool {
 /// 도우미가 만드는 가짜 화면 이름(tools/chammo-vdisplay main.swift desc.name) — 개발판 창 자리 고를 때 알아본다
 pub const NAME: &str = "Chammo agents";
 
+/// 점 크기 — 인앱 브라우저 칸(스페이스 칸 전체)이 들어가게. 레티나(2배)라 칸에 비출 때 글이 선명하다(2026-10-27 인앱 브라우저 A, 1배는 13px 글이 뭉갰다)
+pub const SIZE: (u32, u32) = (1920, 1200);
+
+/// 도우미 인자 — 레티나·크기(이름·번호는 도우미 기본 "Chammo agents"·0x4348)
+pub fn helper_args() -> Vec<String> {
+    vec!["--hidpi".into(), "--width".into(), SIZE.0.to_string(), "--height".into(), SIZE.1.to_string()]
+}
+
 /// 창이 가상 모니터 안에 다 들어 있나 — 아니면 세션 크롬을 그리로 옮긴다(agent_browser::rehome_all)
 pub fn inside(win: Rect, vd: Rect) -> bool {
     win.x >= vd.x && win.y >= vd.y && win.x + win.w <= vd.x + vd.w && win.y + win.h <= vd.y + vd.h
@@ -205,6 +213,27 @@ fn remove_mine(mine: Option<u32>) {
     }
 }
 
+/// 자리 파일을 다시 쓸 때인가 — 적힌 자리가 지금 진짜 자리와 다르면
+pub fn file_stale(written: Option<Rect>, live: Rect) -> bool {
+    written != Some(live)
+}
+
+/// 자리 파일의 bounds
+pub fn file_bounds(text: &str) -> Option<Rect> {
+    parse_line(text).map(|p| p.1)
+}
+
+/// 자리 파일을 지금 자리로 맞춘다(지킴이가 5초마다) — 내 도우미가 도는 동안만. 도우미가 자리를 찍은 순간 옛 가짜 화면과 겹쳐 있으면
+/// bounds() 가 None 이라 그때 못 적고, 맥이 화면을 옮긴 뒤엔 도우미가 다시 안 찍어 파일이 낡은 채였다(10-28 사용자 — 크롬이 어느 화면에도 없는 자리에 떴다)
+pub fn sync_file() {
+    let Some((pid, id)) = RUN.lock().ok().and_then(|g| g.as_ref().and_then(|r| r.bounds.map(|b| (r.child.id(), b.0)))) else { return };
+    let Some((live_id, live)) = bounds() else { return };
+    let written = std::fs::read_to_string(json_path()).ok().and_then(|t| file_bounds(&t));
+    if live_id == id && file_stale(written, live) {
+        write_json(pid, id, live);
+    }
+}
+
 fn write_json(pid: u32, id: u32, r: Rect) {
     let p = json_path();
     if let Some(dir) = p.parent() {
@@ -257,8 +286,33 @@ pub fn helper_exe() -> Option<std::path::PathBuf> {
     }
     let exe = crate::config::data_file("tools").join("chammo-vdisplay");
     install_exe(&exe, HELPER).ok()?;
-    // 이 macOS 에 비공개 API 가 있나 — 없으면(3) 조용히 앱 가리기만
-    crate::platform::command(&exe).arg("--probe").status().is_ok_and(|s| s.success()).then_some(exe)
+    // 이 macOS 에 비공개 API 가 있나 — 없으면(3) 앱 가리기만. 못 돌면 기록에 한 줄(한 번) — 조용히 넘겨서 옛 macOS 맥북의
+    // '화면이 안 와요'(도우미가 dyld 에서 죽음)를 기록으로 못 가렸다(2026-10-26 PM 맥북)
+    let out = crate::platform::command(&exe).arg("--probe").stdin(Stdio::null()).output();
+    if out.as_ref().is_ok_and(|o| o.status.success()) {
+        return Some(exe);
+    }
+    static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !TOLD.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        #[cfg(not(test))]
+        crate::claude::log_out("browser", &probe_line(&out));
+    }
+    None
+}
+
+/// 도우미가 못 돈 까닭 한 줄 — 종료 코드(3 = 비공개 API 없음)와 오류 첫 줄(dyld 'Library not loaded' 같은 것), 홈 경로는 ~ 로
+fn probe_line(out: &std::io::Result<std::process::Output>) -> String {
+    let why = match out {
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            let first = err.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+            format!("exit {} {first}", o.status.code().map_or("signal".into(), |c| c.to_string()))
+        }
+        Err(e) => e.to_string(),
+    };
+    let home = crate::config::home();
+    let why = if home.is_empty() { why } else { why.replace(&home, "~") };
+    format!("가짜 화면 도우미가 이 맥에서 안 돌아 — 세션 크롬을 가리면 그림이 멈출 수 있어 ({})", why.chars().take(200).collect::<String>())
 }
 
 /// 그 번호 화면의 지금 자리(다른 화면과 겹치면 None)
@@ -281,7 +335,7 @@ fn start() {
         // 살아 있는 주인이 없다 — 남은 파일은 낡은 것
         let _ = std::fs::remove_file(json_path());
         let Some(exe) = helper_exe() else { return };
-        let Ok(mut child) = crate::platform::command(&exe).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else { return };
+        let Ok(mut child) = crate::platform::command(&exe).args(helper_args()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else { return };
         let pid = child.id();
         let Some(out) = child.stdout.take() else { return };
         if let Ok(mut g) = RUN.lock() {
@@ -409,7 +463,19 @@ pub fn visible_displays() -> Vec<(Rect, bool)> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    #[test]
+    fn 자리_파일은_지금_자리와_다르면_다시_쓴다() {
+        // 10-28 사용자 — 새 가짜 화면이 뜰 때 옛 화면과 잠깐 겹쳐 지금 자리를 못 적어(-5310,2156) 맥이 옮긴 뒤(-3390,956)에도 낡은 채였다.
+        // 래퍼는 그 낡은 자리에 크롬을 띄워 창이 어느 화면에도 없었다
+        let live = super::Rect { x: -3390.0, y: 956.0, w: 1920.0, h: 1200.0 };
+        assert!(super::file_stale(None, live), "파일이 없다");
+        assert!(super::file_stale(Some(super::Rect { x: -5310.0, y: 2156.0, ..live }), live));
+        assert!(!super::file_stale(Some(live), live));
+        assert_eq!(super::file_bounds(r#"{"pid":1,"displayID":53,"bounds":[-5310.0,2156.0,1920.0,1200.0]}"#), Some(super::Rect { x: -5310.0, y: 2156.0, ..live }));
+        assert_eq!(super::file_bounds("{}"), None);
+    }
+
     #[test]
     #[cfg(unix)]
     fn 도우미를_바꿔_깔아도_도는_도우미는_옛_파일_그대로() {
@@ -433,6 +499,62 @@ mod tests {
         let _ = running.kill();
         let _ = running.wait();
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Mach-O 의 최소 macOS(LC_BUILD_VERSION minos, 0xMMmm00)와 불러오는 라이브러리(경로, 약하게?)
+    pub(crate) fn macho(b: &[u8]) -> (u32, Vec<(String, bool)>) {
+        let u = |o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+        assert_eq!(u(0), 0xfeed_facf, "64비트 Mach-O 여야");
+        let (mut minos, mut libs, mut p) = (0, vec![], 32);
+        for _ in 0..u(16) {
+            let (cmd, size) = (u(p), u(p + 4) as usize);
+            if cmd == 0x32 {
+                minos = u(p + 12);
+            }
+            if cmd == 0xc || cmd == 0x8000_0018 {
+                let name = &b[p + u(p + 8) as usize..p + size];
+                libs.push((String::from_utf8_lossy(name.split(|c| *c == 0).next().unwrap()).into_owned(), cmd != 0xc));
+            }
+            p += size;
+        }
+        (minos, libs)
+    }
+
+    #[test]
+    fn 도우미는_앱과_같은_옛_macOS_에서도_돈다() {
+        // 0.4.2 까지 도우미를 -target 없이 빌드해 빌드한 맥(26)이 최소 판으로 박혔고, macOS 26 에만 있는 libswift_DarwinFoundation2 를
+        // 꼭 불러서 옛 macOS 맥북에선 도우미가 dyld 에서 죽었다 → 가짜 화면 없음 → 세션 크롬이 최소화·가림 채 그림을 멈춰 '화면이 안 와요'(2026-10-26 PM 맥북)
+        if HELPER.is_empty() {
+            return;
+        }
+        let (minos, libs) = macho(HELPER);
+        assert!(minos <= 11 << 16, "도우미 최소 macOS 가 {}.{} — 앱(11.0)보다 높으면 옛 맥에서 안 돈다", minos >> 16, (minos >> 8) & 0xff);
+        let new: Vec<_> = libs.iter().filter(|(l, weak)| !weak && l.contains("_DarwinFoundation")).collect();
+        assert!(new.is_empty(), "옛 macOS 에 없는 라이브러리를 꼭 부른다: {new:?}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn 도우미가_못_돌면_까닭_한_줄() {
+        use std::os::unix::process::ExitStatusExt;
+        let home = crate::config::home();
+        let err = format!("\ndyld[123]: Library not loaded: /usr/lib/swift/libswift_DarwinFoundation2.dylib\n  Referenced from: {home}/.chammo/tools/chammo-vdisplay\n");
+        // dyld 가 죽이면 신호(SIGABRT)로 끝난다
+        let line = probe_line(&Ok(std::process::Output { status: std::process::ExitStatus::from_raw(6), stdout: vec![], stderr: err.into_bytes() }));
+        assert!(line.contains("signal") && line.contains("libswift_DarwinFoundation2"), "{line}");
+        assert!(!line.contains("Referenced"), "첫 줄만: {line}");
+        let line = probe_line(&Ok(std::process::Output { status: std::process::ExitStatus::from_raw(3 << 8), stdout: br#"{"available":false}"#.to_vec(), stderr: vec![] }));
+        assert!(line.contains("exit 3"), "{line}");
+    }
+
+    #[test]
+    fn 세션_크롬_화면은_레티나_큰_화면() {
+        // 칸 비추기(SCK)는 그 화면 픽셀 그대로 받는다 — 1배면 흐리고, 1440x900 이면 넓은 칸만큼 창을 못 키운다
+        let a = helper_args();
+        assert!(a.contains(&"--hidpi".to_string()));
+        assert_eq!(a, ["--hidpi", "--width", "1920", "--height", "1200"]);
+        // Craft 화면과 이름·번호가 같으면 맥이 앞 화면을 뺀다 — 세션 화면은 도우미 기본 이름·번호를 쓴다
+        assert!(!a.iter().any(|x| x == "--name" || x == "--vendor"));
     }
 
     #[test]

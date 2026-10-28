@@ -1191,6 +1191,9 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         // 폰은 처음을 가볍게 읽는다(끝 256KB~2MB) — 앞은 위로 올리면 transcript_before
         serde_json::to_value(crate::claude::read_transcript_phone(session_id, from)).unwrap_or_default()
     }
+    fn transcript_peek(&self, session_id: &str, from: Option<u64>) -> serde_json::Value {
+        serde_json::to_value(crate::claude::read_transcript_peek(session_id, from)).unwrap_or_default()
+    }
     fn transcript_mark(&self, id: &str) -> Option<(String, u64)> {
         let sid = crate::messenger_run::session_in_live(&std::fs::read_to_string(crate::config::data_file("live.json")).ok()?, id)?;
         let len = crate::claude::transcript_path(&sid).and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len());
@@ -1331,6 +1334,9 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     fn login_cancel(&self) {
         crate::login::flow_cancel();
     }
+    fn login_terms_retry(&self) -> Result<(), String> {
+        crate::login::terms_retry_mark(&self.data_dir(), crate::accounts_refresh::now_ms()).map_err(|e| e.to_string())
+    }
     fn direct_answer(&self, id: &str, pick: &crate::direct::Pick) -> Result<(), String> {
         crate::direct::answer(id, pick, "phone")
     }
@@ -1362,7 +1368,10 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         crate::team_ui::feed(crate::config::data_dir(), 400)
     }
     fn team_say(&self, to: &str, text: &str, cid: &str) -> Result<serde_json::Value, String> {
-        // 폰 화면에서 사람이 친 말 — 짝지은 폰 열쇠로 들어온 /api/team-say 만 이 길을 부른다(사람 표)
+        self.team_say_re(to, text, cid, 0)
+    }
+    fn team_say_re(&self, to: &str, text: &str, cid: &str, re: u64) -> Result<serde_json::Value, String> {
+        // 폰 화면에서 사람이 친 말 — 짝지은 폰 열쇠로 들어온 /api/team-say 만 이 길을 부른다(사람 표). re = 이어 묻기(이은 팀 참모 답 seq, ADR 0017)
         let dir = crate::config::data_dir();
         // to = 상대 멤버 id(DM) 또는 'room:<방 id>'(단톡방·아는 방, chammo-relay team-rooms)
         let room = match to.strip_prefix("room:") {
@@ -1370,7 +1379,52 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
             Some(_) => return Err("모르는 방".into()),
             None => crate::team_relay::open_dm(dir, &crate::team_relay_keys::store(), &crate::team_relay::Curl, "", to)?.id,
         };
-        crate::team_relay_ws::send(dir, &room, cid, text, Some(crate::team_relay_ws::HumanProof::phone())).map(|seq| serde_json::json!({ "room": room, "seq": seq }))
+        let extra = crate::e2e_envelope::Extra { re, ..Default::default() };
+        crate::team_relay_ws::send_with(dir, &room, cid, text, Some(crate::team_relay_ws::HumanProof::phone()), extra).map(|seq| serde_json::json!({ "room": room, "seq": seq }))
+    }
+    fn team_agents(&self, team: &str) -> Result<serde_json::Value, String> {
+        let (l, share) = crate::team_agent_store::list(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team)?;
+        share.spawn();
+        serde_json::to_value(l).map_err(|e| e.to_string())
+    }
+    fn team_agent_confirm(&self, team: &str, id: &str) -> Result<(), String> {
+        let dir = crate::config::data_dir();
+        let a = crate::team_agent_store::cached(dir, team).into_iter().find(|a| a.id == id).ok_or("그 팀 참모를 못 찾았어 — 목록을 다시 받아 줘")?;
+        crate::team_agent_store::confirm(dir, &a)
+    }
+    fn team_agent_save(&self, team: &str, def: crate::team_agent::Def, origin: Option<&str>) -> Result<serde_json::Value, String> {
+        let (id, share) = crate::team_agent_store::save(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team, def, origin)?;
+        share.spawn();
+        Ok(serde_json::json!({ "id": id }))
+    }
+    fn team_agent_remove(&self, team: &str, id: &str) -> Result<(), String> {
+        crate::team_agent_store::remove(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team, id)?.spawn();
+        Ok(())
+    }
+    fn team_agent_try(&self, team: &str, room: &str, def: crate::team_agent::Def, ask: &str, prev: Vec<(String, String)>) -> Result<serde_json::Value, String> {
+        serde_json::to_value(crate::team_helper::try_agent(crate::config::data_dir(), team, room, def, ask, prev)?).map_err(|e| e.to_string())
+    }
+    fn team_agent_refs(&self, team: &str) -> Result<serde_json::Value, String> {
+        let dir = crate::config::data_dir();
+        let (kc, http) = (crate::team_relay_keys::store(), crate::team_relay::Curl);
+        let v = match crate::team_locker_app::cached(dir, &kc, team) {
+            Some(v) => v,
+            None => crate::team_locker_app::list(dir, &kc, &http, team)?,
+        };
+        const TEXT: [&str; 6] = ["md", "txt", "csv", "tsv", "json", "markdown"];
+        let refs: Vec<serde_json::Value> = v
+            .items
+            .iter()
+            .filter(|i| !i.dir && i.why.is_empty() && i.state == "live" && (i.kind == "file" || i.kind.is_empty()) && i.room.is_empty() && TEXT.contains(&i.name.rsplit_once('.').map(|x| x.1.to_lowercase()).unwrap_or_default().as_str()))
+            .map(|i| serde_json::json!({ "id": i.id, "name": i.name }))
+            .collect();
+        Ok(serde_json::Value::Array(refs))
+    }
+    fn team_agent_usage(&self, room: &str) -> Result<serde_json::Value, String> {
+        serde_json::to_value(crate::team_agent_store::usage(crate::config::data_dir(), room)).map_err(|e| e.to_string())
+    }
+    fn team_read(&self, room: &str, seq: u64) -> Result<(), String> {
+        crate::team_ui::mark_read(crate::config::data_dir(), room, seq)
     }
     fn team_handoff(&self, to: &str, text: &str) -> Result<serde_json::Value, String> {
         crate::team_ui::handoff_send(to, text, false).map(|name| serde_json::json!({ "to": name }))
@@ -1380,6 +1434,109 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     }
     fn team_create(&self, team: &str) -> Result<serde_json::Value, String> {
         crate::team_ui::phone_job("create", serde_json::json!({ "team": team }))
+    }
+    fn team_profiles(&self, team: &str, seen: u64) -> Result<serde_json::Value, String> {
+        // 데스크톱 useProfiles 와 같은 길 — 본 판이 있고 소켓이 새 판을 안 알렸으면 중계를 안 부른다(폰은 4초마다 묻는다)
+        if crate::team_profile::phone_same(team, seen) {
+            return Ok(serde_json::json!({ "same": true }));
+        }
+        let b = crate::team_profile::board(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team)?;
+        serde_json::to_value(b).map_err(|e| e.to_string())
+    }
+    fn team_posts(&self, team: &str, seen: u64) -> Result<serde_json::Value, String> {
+        // 팀 홈 글도 보관함 판 번호 — 프로필판과 같은 바뀜 확인(데스크톱 TeamHome)
+        if crate::team_profile::phone_same(team, seen) {
+            return Ok(serde_json::json!({ "same": true }));
+        }
+        // 봉투 더하기는 뒤 스레드로 — 폰만 쓰는 맥에서도 나중에 든 사람이 옛 글을 연다
+        let (b, share) = crate::team_post::board_split(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team)?;
+        share.spawn();
+        serde_json::to_value(b).map_err(|e| e.to_string())
+    }
+    fn team_home(&self, team: &str, seen: u64) -> Result<serde_json::Value, String> {
+        // 팀 홈 판도 보관함 판 번호 — 글판과 같은 바뀜 확인
+        if crate::team_profile::phone_same(team, seen) {
+            return Ok(serde_json::json!({ "same": true }));
+        }
+        let (b, share) = crate::team_home_store::board(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team)?;
+        share.spawn();
+        serde_json::to_value(b).map_err(|e| e.to_string())
+    }
+    fn team_home_save(&self, team: &str, home: crate::team_home::Home) -> Result<(), String> {
+        crate::team_home_store::save_home(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team, home)?.spawn();
+        Ok(())
+    }
+    fn team_home_content(&self, team: &str, block: &str, c: crate::team_home::Content) -> Result<(), String> {
+        crate::team_home_store::save_content(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team, block, c)?.spawn();
+        Ok(())
+    }
+    fn team_file_thumb(&self, team: &str, id: &str, size: u32) -> Result<Vec<u8>, String> {
+        // 데스크톱 말풍선 썸네일과 같은 peek(50MB 까지, 데이터 폴더 team-locker-peek) — 그 방 열쇠가 없으면 여기서 막힌다
+        let p = crate::team_locker_app::peek(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team, id)?;
+        let out = match crate::mobile_files::kind_of(&p) {
+            crate::mobile_files::Kind::Image(_) | crate::mobile_files::Kind::Heic => self.jpeg(&p, Some(size)),
+            crate::mobile_files::Kind::Pdf => self.ql_thumb(&p, size),
+            _ => return Err("그림·PDF 만 썸네일".into()),
+        };
+        out.ok_or_else(|| "썸네일을 못 만들었어".into())
+    }
+    fn team_post(&self, team: &str, title: &str, body: &str, pin: bool) -> Result<serde_json::Value, String> {
+        let (dir, kc, http) = (crate::config::data_dir(), crate::team_relay_keys::store(), crate::team_relay::Curl);
+        let (id, share) = crate::team_post::write(dir, &kc, &http, team, title, body, None)?;
+        share.spawn();
+        // 고정은 팀장만 — 팀장이 아니면 team_post::pin 이 거절한다(글은 이미 올라갔으니 이유를 같이)
+        if pin {
+            match crate::team_post::pin(dir, &kc, &http, team, &id) {
+                Ok(share) => share.spawn(),
+                Err(e) => return Ok(serde_json::json!({ "id": id, "pinError": e })),
+            }
+        }
+        Ok(serde_json::json!({ "id": id }))
+    }
+    fn team_locker(&self, team: &str, seen: u64) -> Result<serde_json::Value, String> {
+        // 폰 팀 보관함 — 데스크톱 TeamLocker 와 같은 중계 목록. 본 판 그대로면 중계를 안 부른다(폰은 보관함을 보는 동안 4초마다)
+        let ups = phone_uploads(team);
+        if crate::team_profile::phone_same(team, seen) {
+            return Ok(serde_json::json!({ "same": true, "uploads": ups }));
+        }
+        let (v, share) = crate::team_locker_app::list_split(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team)?;
+        share.spawn();
+        let mut j = serde_json::to_value(v).map_err(|e| e.to_string())?;
+        j["uploads"] = ups;
+        Ok(j)
+    }
+    fn team_locker_op(&self, o: &crate::mobile_http::TeamLockerOp) -> Result<serde_json::Value, String> {
+        use crate::team_locker_app as app;
+        let (d, kc, h) = (crate::config::data_dir(), crate::team_relay_keys::store(), crate::team_relay::Curl);
+        let t = o.team.as_str();
+        match o.op.as_str() {
+            "mkdir" => app::mkdir(d, &kc, &h, t, &o.folder),
+            "rename" => app::rename(d, &kc, &h, t, &o.id, Some(o.name.trim()), None),
+            "move" => app::rename(d, &kc, &h, t, &o.id, None, Some(&o.folder)),
+            "trash" | "restore" => app::act(d, &kc, &h, t, &o.id, &o.op),
+            "folder-rename" => app::folder(d, &kc, &h, t, &o.from, Some(&o.to)).map(|_| ()),
+            "folder-trash" => app::folder(d, &kc, &h, t, &o.from, None).map(|_| ()),
+            _ => Err("모르는 일".into()),
+        }?;
+        Ok(serde_json::json!({ "ok": true }))
+    }
+    fn team_locker_part(&self, p: &crate::mobile_http::TeamLockerPart, bytes: &[u8]) -> Result<serde_json::Value, String> {
+        // 조각을 데이터 폴더에 이어 붙이고, 마지막이면 데스크톱 끌어 넣기와 같은 길로 뒤에서 올린다(진행은 목록의 uploads)
+        let root = crate::team_phone_up::root(crate::config::data_dir());
+        let have = crate::team_phone_up::add_part(&root, &p.up, p.part, p.last, bytes)?;
+        // 마무리는 한 번만 — 답을 잃은 폰이 마지막 조각을 다시 보내면 take_done 이 None(이미 올리는 중·올림), 앞 결과만 준다
+        if let Some(path) = p.last.then(|| crate::team_phone_up::take_done(&root, &p.up)).flatten() {
+            let (team, folder, name) = (p.team.clone(), p.folder.clone(), crate::team_locker::safe_file_name(&p.name));
+            std::thread::spawn(move || {
+                let (d, kc, h) = (crate::config::data_dir(), crate::team_relay_keys::store(), crate::team_relay::Curl);
+                let r = crate::team_locker_app::put_file_as(d, &kc, &h, &team, "", "file", &folder, &path, &name);
+                if let Err(e) = r {
+                    crate::claude::log_out("mobile", &format!("phone team upload failed: {e}"));
+                }
+                let _ = std::fs::remove_file(&path);
+            });
+        }
+        Ok(serde_json::json!({ "have": have }))
     }
     fn interrupt(&self, id: &str) -> Result<(), String> {
         // 데스크톱 채팅 멈춤과 같은 Esc 한 글자 — 붙어서 넣고 뗀다. 글 치기와 차례를 지킨다(claude::interrupt_session)
@@ -1401,8 +1558,8 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     fn modes(&self) -> serde_json::Value {
         crate::modes_host::phone_rows()
     }
-    fn mode_view(&self, name: &str, columns: u32, rows: u32) -> Result<serde_json::Value, String> {
-        crate::modes_host::phone_view(&self.app, name, columns, rows)
+    fn mode_view(&self, name: &str, columns: u32, rows: u32, scheme: Option<&str>) -> Result<serde_json::Value, String> {
+        crate::modes_host::phone_view(&self.app, name, columns, rows, scheme)
     }
     fn mode_act(&self, name: &str, act: &serde_json::Value) -> Result<serde_json::Value, String> {
         crate::modes_host::phone_act(name, act)
@@ -1497,3 +1654,9 @@ fn clean_device_name(s: &str) -> Option<String> {
 #[cfg(test)]
 #[path = "mobile_tests.rs"]
 mod tests;
+
+/// 폰에 보일 올리는 중 줄 — 사람 파일만, 맥 경로(local)는 빼고 이름·진행·오류만
+fn phone_uploads(team: &str) -> serde_json::Value {
+    let ups: Vec<_> = crate::team_locker_app::uploads(team).into_iter().filter(|u| u.room.is_empty()).map(|u| serde_json::json!({ "name": u.name, "done": u.done, "total": u.total, "error": u.error })).collect();
+    serde_json::Value::Array(ups)
+}

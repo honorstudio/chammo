@@ -5,7 +5,7 @@ import { craftTarget, keepScroll, queueShow, restoreTop, SCROLL_PANES, scrollKey
 import { dashFiles, ownBrowserLine, paneState, type DashFile } from '../../domain/dashboard';
 import { findTarget } from '../../domain/inbox';
 import { isSheet, kindOf, spacePage, titleOf } from '../../domain/reader';
-import type { Session } from '../../domain/session';
+import { seenName, type Session } from '../../domain/session';
 import { sameOrchSlot, stoppedOrchs } from '../../domain/stopped';
 import { foldAgents, pruneAgents, type SubAgent } from '../../domain/subAgents';
 import { addSpawned, dashToggle, leaveHomeFor, ownPick, screenBeforeHome, featureOf, featurePick, focusPick, focusTab, holderMap, legacyPick, newShows, sidePick, type FeatureKey, orphanSends, shownFiles, showOwner, transcriptTargets } from '../../domain/spaceNav';
@@ -39,12 +39,18 @@ import { Preview } from './Preview';
 import { CHAT_INSERT, dragPath } from './dragPath';
 import { useShowLog } from './useShowLog';
 import { CraftPane } from '../craft/CraftPane';
+import { BrowserPane } from './BrowserPane';
+import { browserDock, browserKey, browserOfPick, closeAsk, dockTitleOf, hqBrowserHome, paneTarget, stillClosed, wentAway, type BrowserDockItem } from '../../domain/browserDock';
+import { Confirm } from '../OrchDialogs';
 import { CraftDrawer } from '../craft/CraftDrawer';
-import { APPS_KEY } from '../../domain/craftDrawer';
+import { APPS_KEY, BROWSER_ICON_SMALL } from '../../domain/craftDrawer';
 import { craftOwner, forgetCraftOwner, setCraftOwner } from '../craftOwner';
 import { craftAppOf, craftGone, craftKey, craftBase, dropCraftEverywhere, GONE_TICKS, leftCraft } from '../../domain/craftTab';
+import { craftToTeam, fromTeamCraft } from '../../domain/teamCraft';
 import { craftOwnerOf, dockFor, dockLetter, dockNo, dockTitle, drawerOpen, recentLabel, type DockItem } from '../../domain/craftDock';
 import { CHAT_FILE_OPEN, imageFile } from '../chat/openChatFile';
+import { craftFirst } from '../../domain/craftOpen';
+import { openInCraft, sayCraftErr } from '../craft/openInCraft';
 import { cardMoves } from '../../domain/chatFiles';
 import { attachToChat } from '../fileDrop';
 import { StateMark } from './StateMark';
@@ -77,6 +83,9 @@ import { HOME_PICK as HOME } from '../../domain/orchHome';
 import type { HomeGo } from './HomeDash';
 import { IconClose, IconDashboard, IconDownload, IconFolder, IconHome, IconOffice, IconPet, IconApps } from '../Icons';
 import { isTeamCache } from '../../domain/teamLocker';
+import { attachWhenReady, publishRoster, useGivePath, type GiveReq } from '../team/teamGive';
+import { BubbleFloatCtx, publishFace, useOrchBubble, type BubbleOrch } from './OrchBubble';
+import { bubbleFace } from '../../domain/orchBubble';
 import { IconButton } from '../kit/IconButton';
 import { BrowserAttachButton } from '../BrowserAttach';
 import { every } from '../poll';
@@ -159,7 +168,7 @@ const sessionFill = (sessionId: string) => readSessionTasks(sessionId).then((t) 
 
 /** 스페이스 팀 탭(팀 보관함) 자리 */
 
-export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOrch, onMenuToggle, orchPins = [], orchOrder = [], pet, office, officeReq = null, onOfficeReq, onOfficeShown, harnitorReq = null, onHarnitorReq, onHarnitorShown, onHarnitorClosed, toolsReq = null, onToolsReq, onToolsShown, onToolsClosed, reviewReq = null, onReviewReq, onReviewShown, replayReq = null, onReplayReq, onReplayShown, replayPage, computerUse, orchs, stoppingIds, startingOrchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, orchHome, send, sendTo, live = {}, menuOpen = true, idle = [], stopped = [], orchCwd = '', onResume, onWakeOrch, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, reviewPage, ctxOf, onAddProject, onChatTab, helpers = [], loose = [], tasks, onMessage }: {
+export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOrch, onMenuToggle, orchPins = [], orchOrder = [], pet, office, officeReq = null, onOfficeReq, onOfficeShown, harnitorReq = null, onHarnitorReq, onHarnitorShown, onHarnitorClosed, toolsReq = null, onToolsReq, onToolsShown, onToolsClosed, reviewReq = null, onReviewReq, onReviewShown, replayReq = null, onReplayReq, onReplayShown, replayPage, computerUse, orchs, stoppingIds, startingOrchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, orchHome, send, sendTo, live = {}, menuOpen = true, idle = [], stopped = [], orchCwd = '', onResume, onWakeOrch, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, reviewPage, ctxOf, onAddProject, onChatTab, helpers = [], loose = [], tasks, onMessage, bubble }: {
   /** 고정한 참모(대화 id, 고정한 순서) — 사이드바 줄 순서·압정 표시 */
   orchPins?: string[];
   /** 프사 띠에서 참모를 끌어 옮겼다(ids = 지금 순서, from 을 to 자리로) — 채팅 탭 끌기와 같은 길(App reorderOrchPanes) */
@@ -261,6 +270,8 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   onOfficeReq?: () => void;
   /** 지금 탭에 사무실이 떠 있나(탑바 사무실 아이콘 켜짐) */
   onOfficeShown?: (on: boolean) => void;
+  /** 떠 있는 참모 배지(시안 orch-bubble A) — 없으면 바탕 배지가 그릴 얼굴을 안 적는다(설정 > 기능에서 끔) */
+  bubble?: { onHide: () => void } | null;
 }) {
   useOrchRoleData(); // 맡은 일이 바뀌면 대시보드 머리도 다시
   // 메뉴에서 보는 참모 — 채팅 탭을 바꾸면 따라오고, 메뉴에서 고르면 채팅 탭은 그대로(2026-09-30 사용자)
@@ -359,7 +370,10 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   // ⌘숫자·탭 고르기 — 홈을 보는 중 지금 탭 참모를 고르면 홈을 닫고 그 참모가 보던 화면으로(domain/spaceNav leaveHomeFor).
   // 받는 함수는 ref 로 늘 최신 — 귀는 한 번만 단다(매 그리기 다시 달면 같은 커밋에 탭 줄 효과가 쏜 사건이 떼어 둔 사이에 떨어진다)
   const onTabPick = useRef((_id: string) => {});
+  // 떠 있는 배지 대화창이 열린 동안 채팅 탭이 바뀌면(머리 얼굴·탭 보기 격자) 보던 화면(홈·팀)은 그대로 — 채팅 탭만
+  const quietTabs = useRef(false);
   onTabPick.current = (id: string) => {
+    if (quietTabs.current) { setNav((n) => (n.chat === id ? n : { ...n, chat: id })); return; }
     const o = orchs.find((x) => x.id === id);
     if (o && leaveHomeFor(now.current.pick, now.current.view, id)) {
       const to = ownPick(screens.current.get(id)?.pick, id, homeOf(o));
@@ -553,16 +567,19 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
     const t = setInterval(tick, 2000);
     return () => { alive = false; clearInterval(t); };
   }, []);
-  const craftLatest = useRef({ orchs, chatOrch, switchTo, orchIds, holders });
-  craftLatest.current = { orchs, chatOrch, switchTo, orchIds, holders }; // 구독은 한 번 — 참모 목록·바꾸기는 늘 최신으로(처음 렌더의 빈 목록을 붙잡지 않게)
+  const craftLatest = useRef({ orchs, chatOrch, switchTo, orchIds, holders, team });
+  craftLatest.current = { orchs, chatOrch, switchTo, orchIds, holders, team }; // 구독은 한 번 — 참모 목록·바꾸기는 늘 최신으로(처음 렌더의 빈 목록을 붙잡지 않게)
   useEffect(() => {
     // Rust 가 window.__craftSpace(...) 를 eval 로 부른다 — 이 앱은 capabilities 가 없어 이벤트 listen 이 막혀 있다(appctl 과 같은 길)
     const w = window as unknown as { __craftSpace?: (p: { app: string; name?: string; place: string; by?: string }) => void };
     w.__craftSpace = ({ app, name, place, by }) => {
-      const { orchs, chatOrch, switchTo, orchIds, holders } = craftLatest.current;
+      const { orchs, chatOrch, switchTo, orchIds, holders, team } = craftLatest.current;
       const key = craftKey(app);
       if (name) craftNames.current.set(app, name);
       if (place === 'space') {
+        // 팀 화면에서 연 것 — 팀 탭 줄에, 주인 참모 없이(domain/teamCraft). 팀 모드는 참모 고름을 그대로 두어 들어오기 직전 참모가 주인이 됐다(10-28 사용자)
+        const src = team?.on ? fromTeamCraft(app) : null;
+        if (team?.on && team.space && craftToTeam(true, src !== null, by)) { team.space.craft(key, src ?? ''); return; }
         // 띄운 세션(by)을 맡긴 참모 탭에 — show 와 같은 주인 판단. 서랍·셸에서 띄웠으면 지금 보는 참모 → 대표(2026-10-19 사람이 보면서 따라가게)
         const v = now.current.view ?? null;
         const owner = craftOwnerOf(by, app, (b) => showOwner(b, orchIds, holders), craftOwner, orchIds);
@@ -581,14 +598,17 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
         }
         const to = t.to;
         if (!to) { void invoke('craft_move', { app, to: 'window' }).catch(() => {}); return; } // 탭 줄을 둘 참모가 없으면 따로 창
+        if (team?.on) team.onLeave(); // 맡긴 세션이 띄운 칸 — 팀 모드면 참모 화면으로 돌아가 보여 준다(show 와 같은 길)
         const here = now.current.view === to ? now.current.pick : ''; // 다른 참모로 옮기면 연 곳은 없다(닫으면 예전처럼 마지막 탭)
         if (now.current.view !== to) switchTo(to, 'craft');
         setModal(null);
         setLkHold((h) => openTab(h, to, here, key));
         setPick(key, 'craft');
-      } else if (place === 'closed') { // 꺼짐 — 모든 참모 탭 줄에서
+      } else if (place === 'closed') { // 꺼짐 — 모든 참모·팀 탭 줄에서
         dropCraft.current(key);
-      } else if (place === 'hidden') { // 숨김 — 지금 탭만 닫는다(독 아이콘은 남는다)
+        team?.space?.dropCraft(key);
+      } else if (place === 'hidden') { // 숨김 — 지금 탭만 닫는다(독 아이콘은 남는다). 팀 칸이면 팀 탭 줄에서
+        team?.space?.dropCraft(key);
         setLkHold((h) => {
           if (!h || !h.tabs.includes(key)) return h;
           const r = closeTab(h, key, now.current.pick);
@@ -797,6 +817,8 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
     const s = findTarget(sessions, by);
     return s ? s.name || nameOf(s) : undefined;
   };
+  // 팀 칸의 참모 앱 — 주인 참모가 없어 이름표(whoOf)도 없다(domain/teamCraft). TeamSpace 가 lk-doc-body 로 감싼다
+  const craftPaneOf = (k: string) => <CraftPane key={k} app={craftAppOf(k)} place="space" />;
   const who = (id: string) => {
     if (id === 'me') return tr('나', 'You');
     const o = orchs.find((x) => x.id === id);
@@ -872,6 +894,21 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   const cardName = (s: Session) => (sideIds.has(s.id) && s.name ? s.name : nameOf(s));
   // 세션 브라우저(참모 브라우저 래퍼 상태) — 세션 칸·세션 화면·참모 대시보드가 브라우저 화면으로(2026-10-03 사용자)
   const lives = useAgentLives();
+  // 사람이 끈 브라우저(프로필 → 그 크롬 pid) — 래퍼가 알아채기 전에도 탭 줄·칸에서 바로 뺀다(domain/browserDock stillClosed)
+  const [closedB, setClosedB] = useState<Record<string, number>>({});
+  // 독 X 로 끌 브라우저 — 앱 확인 창을 띄운 동안(10-28 사용자 "닫으면 브라우저 자체가 닫히게, 대신 경고")
+  const [closingB, setClosingB] = useState<BrowserDockItem | null>(null);
+  const liveB = (profile: string) => lives.find((l) => l.profile === profile && !stillClosed(closedB, l));
+  const seenB = useRef<string | null>(null);
+  // 참모 브라우저 프로필(HQ 폴더 이름) — 세션 없이 띄운 것도 참모 독에(hq_browser)
+  const [hqB, setHqB] = useState<string | null>(null);
+  useEffect(() => { void invoke<string | null>('hq_browser_profile').then(setHqB, () => {}); }, []);
+  // 참모들이 나눠 쓰는 HQ 프로필 — 쥔 세션의 참모 독에만, 사람이 서랍에서 연 건 누른 참모 한 곳에 '내가 연 것'(domain/browserDock hqBrowserHome)
+  const [hqOpener, setHqOpener] = useState<string>();
+  const hqLive = hqB ? lives.find((l) => l.profile === hqB) : undefined;
+  const hqHome = hqBrowserHome(hqLive, orchs.map((o) => ({ id: o.id, own: liveOf(o, lives), held: heldBy(o).map((x) => liveOf(x, lives)) })), hqOpener);
+  const hqHomeOf = (lo: Session) => (!liveOf(lo, lives) && hqHome?.id === lo.id ? hqHome : null);
+  const ownLive = (lo: Session) => liveOf(lo, lives) ?? (hqHomeOf(lo) ? hqLive : undefined);
   const lineOf = (s: Session, name: string): DashLine => ({ id: s.id, name, ...paneState(s, live[s.id]), ...(live[s.id]?.st ? { st: live[s.id]!.st } : {}), line: live[s.id]?.line ?? '', tail: s.sessionId ? tails[s.sessionId] : undefined, browser: liveOf(s, lives) });
 
   const cur = pick.startsWith('s:') ? sessions.find((s) => s.id === pick.slice(2)) : undefined;
@@ -883,6 +920,10 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   };
   // 붙이기 받는 참모(지금 채팅 탭) — 보내기 단추가 그 참모 색 말풍선(채팅 칸과 같은 색, 프사에서 고른 색 먼저)
   const attachTo = chatOrch ? { name: oname(chatOrch), color: bodyColor(avatars, chatOrch.name || '', colorOf(chatOrch.name || '')) } : null;
+  // 팀 보관함·대화 파일에서 연 것(풀어 둔 평문)은 지금 채팅 탭 참모가 아니라 '내 참모에게 보내기' — 누른 자리에서 참모를 고른다(10-26 사용자 "누구한테 보낼지 정해져 있지 않다")
+  const teamGive = useGivePath((m) => onMessage?.(m));
+  const attachOf = (path: string) => (isTeamCache(path) ? (e?: React.MouseEvent<HTMLElement>) => teamGive.open(path, e) : () => attach(path));
+  const attachToOf = (path: string) => (isTeamCache(path) ? teamGive.to : attachTo);
   // 세션 칸의 진짜 터미널 — 직접 칠 수 있다(대화형 세션은 터미널 뷰에서만)
   const termOf = (id: string) => {
     const s = sessions.find((x) => x.id === id);
@@ -1018,6 +1059,12 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
     setTabZooms((m) => withTabZoom(m, zoomPath, nextTabZoom(zoomPath, z, cmd, { shown, fitTo })));
     return true;
   };
+  /** 그림 두 번 누르기 — 새 배율을 바로 적는다(누른 곳이 제자리에) */
+  const zoomTo = (path: string, z: number, at: { x: number; y: number }) => {
+    if (!tabZoomable(path) || kindOf(path) !== 'image') return;
+    markAnchor(document.querySelector<HTMLElement>('.space .cv-main .ft-body .pv-image'), at);
+    setTabZooms((m) => withTabZoom(m, path, z));
+  };
   const zoomUi = (path: string) => (path === zoomPath && canZoom ? <TabZoomBar z={zoomOf(path)} onCmd={(c) => zoomCmd(c)} /> : null);
   const docPage = (path: string, opt: { onBack?: (upKey: string) => void; tail?: React.ReactNode; where?: string; keepFor?: string }) => {
     const owner = orchs.find((o) => isPinned(o, path) || orchDocs(log, o.id, []).recent.includes(path));
@@ -1028,14 +1075,14 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
     const upName = owner ? oname(owner) : g ? g.name : path.split('/').slice(-2, -1)[0] ?? '';
     if (isSheet(path)) {
       return <SheetPage key={path} path={path} owner={upName} where={opt.where} onBack={opt.onBack ? () => opt.onBack!(upKey) : undefined} tail={<>{zoomUi(path)}{opt.tail}</>} zoom={zoomOf(path)}
-        pinned={owner ? isPinned(owner, path) : undefined} onPin={owner ? () => togglePin(owner, path) : undefined} onAttach={() => attach(path)} attachTo={attachTo}
+        pinned={owner ? isPinned(owner, path) : undefined} onPin={owner ? () => togglePin(owner, path) : undefined} onAttach={attachOf(path)} attachTo={attachToOf(path)}
         onPreview={() => setModal({ path, ts: new Date().toISOString(), by: '' })} send={send} sendTo={sendTo}
         whoOf={(by) => { const o = orchs.find((x) => x.id === showOwner(by, orchIds, holders)); return o ? { name: o.name, color: colorOf(o.name) } : null; }} />;
     }
     // 문서를 볼 땐 대시보드·사무실 토글을 안 띄운다 — 돌아가기는 왼쪽 '참모 이름' 알약(2026-10-03 사용자)
     const page = <DocPage key={path} path={path} where={opt.where} at={focus?.path === path ? focus.at : undefined} atKey={focus?.path === path ? focus.key : undefined} owner={upName} send={send} sendTo={sendTo} onBack={opt.onBack ? () => opt.onBack!(upKey) : undefined} tail={<>{zoomUi(path)}{opt.tail}</>} zoom={zoomOf(path)}
       pinned={owner ? isPinned(owner, path) : undefined} onPin={owner ? () => togglePin(owner, path) : undefined}
-      onTitle={(t) => { window.dispatchEvent(new CustomEvent(PAGE_TITLE, { detail: { path, title: t } })); }} onAttach={() => attach(path)} attachTo={attachTo}
+      onTitle={(t) => { window.dispatchEvent(new CustomEvent(PAGE_TITLE, { detail: { path, title: t } })); }} onAttach={attachOf(path)} attachTo={attachToOf(path)}
       onOpenPath={(p) => openFile(p)} />;
     // 가운데 문서는 참모마다 살려 둔다 — 바꿨다 돌아와도 편집기를 다시 안 만든다(움직이는 동안엔 null — 옛 화면이 덮여 있다)
     return opt.keepFor ? keep.slot(opt.keepFor, path, page, docKeepLimit(null)) : page;
@@ -1047,7 +1094,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   /** 가운데 파일 화면 — md·엑셀은 편집 페이지, 그 밖(그림·영상·html·pdf…)은 탭 안 미리보기 */
   const filePage = (path: string, opt: { onBack?: (upKey: string) => void; where?: string; keepFor?: string }) => (spacePage(path) ? docPage(path, { ...opt, tail: teamDl(path) }) : (
     <FileTab key={path} path={path} where={opt.where ?? pathLine(path, lockerTree.dir, home ?? '')} onBig={() => setModal({ path, ts: new Date().toISOString(), by: '' })}
-      onCuration={(p) => { if (now.current.pick === `d:${p}`) toCuration(p); }} onAttach={() => attach(path)} attachTo={attachTo} zoom={zoomOf(path)} zoomUi={<>{zoomUi(path)}{teamDl(path)}</>} />
+      onCuration={(p) => { if (now.current.pick === `d:${p}`) toCuration(p); }} onAttach={attachOf(path)} attachTo={attachToOf(path)} zoom={zoomOf(path)} zoomUi={<>{zoomUi(path)}{teamDl(path)}</>} onZoom={(z, at) => zoomTo(path, z, at)} />
   ));
   /** 세션 칸 속 — 진짜 터미널(브라우저 쓰면 브라우저 화면 + 아래 터미널) + 보여 준 파일. 스페이스 세션 화면과 사무실 위 창이 같은 것 */
   const sessionInner = (x: Session) => (
@@ -1066,6 +1113,25 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
       )}
     </>
   );
+  // 세션 브라우저 칸 열기(시안 A) — 사람 부름·'크게 보기'가 모달 대신 그 브라우저를 독에 둔 참모 스페이스 칸으로(AgentAskHost 가 부른다).
+  // 그 참모가 없으면 false — 모달로 물러난다. 구독은 한 번, 목록·바꾸기는 늘 최신으로
+  const paneLatest = useRef({ orchs, lives, heldBy, switchTo, team });
+  paneLatest.current = { orchs, lives, heldBy, switchTo, team };
+  useEffect(() => {
+    const w = window as unknown as { __browserPane?: (profile: string, dry?: boolean, orch?: string) => boolean };
+    // dry = 갈 수 있나만(모달이 그릴 때 — 한 프레임도 안 번쩍이게). orch = 눌린 카드가 놓인 참모(채팅 맨 아래 카드 — 독 규칙과 갈려도 그 참모 칸으로)
+    w.__browserPane = (profile, dry, orch) => {
+      const { orchs, lives, heldBy, switchTo, team } = paneLatest.current;
+      const to = paneTarget(profile, orchs.map((o) => ({ id: o.id, own: liveOf(o, lives), held: heldBy(o).map((x) => liveOf(x, lives)) })), orch);
+      if (!to || dry) return !!to;
+      if (team?.on) team.onLeave();
+      if (now.current.view !== to) switchTo(to, 'browser');
+      setModal(null);
+      setPick(browserKey(profile), 'browser');
+      return true;
+    };
+    return () => { delete w.__browserPane; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // 파일 보관함 v4(2026-10-11 사용자 "추천대로") — 참모마다 진짜 폴더(~/Documents/Chammo/<참모>, Rust locker_fs). 참모를 누르면 첫 화면.
   // 자리: l:<참모>(받은 것) · l:<참모>#d:<자리>(내 폴더) · l:<참모>#p:<뿌리>(프로젝트 폴더). 보관함에서 연 md·엑셀은 띠·나무 그대로 가운데 문서 탭
   const projectRoots = useMemo(() => [...groups.map((g) => ({ name: g.name, root: g.root })), ...idle], [groups, idle]);
@@ -1087,6 +1153,26 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   const lockerOrch = lockerOrchId ? orchs.find((x) => x.id === lockerOrchId) ?? null : null;
   // Craft 탭이 이 참모 스페이스에 떠 있다 — 돌려받음 [앱] 줄을 이 참모에게(ui/craftOwner)
   useEffect(() => { if (pick.startsWith('k:') && lockerOrch) setCraftOwner(craftAppOf(pick), lockerOrch.id); }, [pick, lockerOrch?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 브라우저가 꺼지면 칸은 바로 닫고 직전 탭(없으면 그 참모 홈)으로 — 빈 안내 칸에 남지 않게, 안내는 아래 한 줄만(10-28 사용자)
+  const leaveBrowser = (note: string) => {
+    seenB.current = null;
+    step(-1, lockerOrch ? lkPick(lockerOrch.id, { kind: 'home' }) : HOME);
+    setCurNote(note);
+  };
+  const closedBrowser = (profile: string, pid: number) => {
+    setClosedB((c) => ({ ...c, [profile]: pid }));
+    if (browserOfPick(now.current.pick) === profile) leaveBrowser(tr('브라우저를 껐어', 'Closed the browser'));
+  };
+  useEffect(() => {
+    const p = browserOfPick(pick);
+    if (p === null) { seenB.current = null; return; }
+    const present = !!liveB(p);
+    if (present) { seenB.current = p; return; }
+    if (!wentAway(seenB.current === p, present)) return;
+    // 2초 넘게 없을 때만 — 세션 크롬이 다시 뜨는 사이(목록에서 잠깐 빠짐)에 칸이 닫히지 않게
+    const t = window.setTimeout(() => leaveBrowser(tr('브라우저가 꺼졌어 — 세션이 다시 쓰면 탭 줄에 다시 생겨', 'The browser closed — it comes back in the tab row when the session uses it again')), 2000);
+    return () => window.clearTimeout(t);
+  }, [pick, lives, closedB]); // eslint-disable-line react-hooks/exhaustive-deps
   // Craft 글자 탭이 없다(독 아이콘이 탭, 2026-10-19 사용자) — 칸을 떠나면 숨기기(10분 뒤 저장·끄기), 들어오면 숨김 풀기
   const prevPick = useRef(pick);
   useEffect(() => {
@@ -1229,6 +1315,59 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
       node: <OrchAvatar name={o.name || ''} size={32} state={stopping ? 'off' : avatarState(o, statusOf(o))} phase={stopping ? 'stopping' : undefined} woke={creatingSeen.current.has(o.name)} color={colorOf(o.name || '')} label={oname(o)} /> };
   };
   const railList = rows.map(railAvatar);
+  // 내 참모에게(팀 보관함·메신저 @ 메뉴·넘기기) — 고를 참모 목록을 메신저 따로 창에도(세션 이름 = 프사, 별명). 켜는 중·끄는 중은 뺀다
+  useEffect(() => publishRoster(railList.flatMap((a) => {
+    const o = !a.phase ? orchs.find((x) => x.id === a.id) : undefined;
+    return o ? [{ id: o.id, owner: ownerKey(o), name: o.name || a.label, label: a.label, color: a.color, busy: a.pip === 'run', pip: a.pip ?? null }] : [];
+  })));
+  // 받기 — 팀 모드를 끄고 그 참모 채팅으로 바꾼 뒤 입력칸에 #file 칩 + 커서(보내기는 사람이). 따로 창에서 준 것은 Rust 가 이 창을 앞으로 가져와 부른다
+  const giveRef = useRef<(r: GiveReq) => void>(() => {});
+  giveRef.current = ({ orch: id, paths }) => {
+    if (!orchs.some((x) => x.id === id) || !paths?.length) return;
+    // 떠 있는 배지가 있으면 팀 화면은 그대로 두고 그 참모 대화창에 붙인다(시안 orch-bubble F, 10-28)
+    if (bubble && teamOn && !far) { bub.openWith(id); attachWhenReady(id, paths); return; }
+    team?.onLeave();
+    if (id !== now.current.view) switchTo(id, 'give');
+    if (id !== nav.chat) onChatTab?.(id);
+    attachWhenReady(id, paths);
+  };
+  useEffect(() => {
+    const w = window as unknown as { __teamGive?: (r: GiveReq) => void };
+    w.__teamGive = (r) => giveRef.current(r);
+    return () => { delete w.__teamGive; };
+  }, []);
+  // 참모 고르기 — 띠 프사 누름과 배지 대화창 '참모 화면으로'가 같은 길
+  const pickOrch = (id: string) => {
+    const o = orchs.find((x) => x.id === id);
+    if (!o) return;
+    team?.onLeave(); // 메신저 대화를 보던 중이면 가운데를 다시 이 참모 채팅으로
+    // 지금 참모를 또 누르면 — 남의 보관함 자리가 박혀 있으면(옛 화면이 눌렸다) 이 참모 홈으로, 이 참모 탭 줄 문서·세션은 그대로(domain/lockerTabs reclickPick)
+    if (id === now.current.view) { const to = pick === HOME ? ownPick(screens.current.get(id)?.pick, id, homeOf(o)) : reclickPick(lkHold, id, pick, homeOf(o)); if (to) setPick(to); }
+    else switchTo(id, 'rail');
+    if (id !== nav.chat) onChatTab?.(id);
+  };
+  // 앱 안 대화창(시안 orch-bubble F) — 참모 채팅 칸이 가려진 화면(팀 모드·홈)에서 놓은·준 파일은 그 칸이 대화창으로 뜬다. 배지는 바탕 배지 창 하나(DeskBubble)
+  const bubOrchs: BubbleOrch[] = railList.flatMap((a) => {
+    const o = !a.phase ? orchs.find((x) => x.id === a.id) : undefined;
+    if (!o) return [];
+    const av = (size: number) => <OrchAvatar name={o.name || ''} size={size} state={avatarState(o, statusOf(o))} color={colorOf(o.name || '')} label={a.label} />;
+    return [{ id: o.id, label: a.label, color: a.color, pip: a.pip, node: av(44), small: av(28) }];
+  });
+  const bub = useOrchBubble({ orchs: bubOrchs, face: bubbleFace(bubOrchs, nav.chat ?? chatOrch?.id), covered: teamOn || atHomePick, onPick: (id) => {
+      // 칸이 가려진 화면(팀 모드·홈)에선 채팅 탭만 — 보던 화면(홈)이 그 참모 화면으로 따라가지 않게 nav.chat 을 먼저 맞춘다(아래 'follow' 효과가 안 돈다)
+      if (teamOn || atHomePick) { setNav((n) => (n.chat === id ? n : { ...n, chat: id })); onChatTab?.(id); } else pickOrch(id);
+    }, onGo: pickOrch });
+  quietTabs.current = bub.open;
+  // 바탕 배지 창이 읽는 얼굴 · 바탕 배지 '앱에서 열기'는 Rust 가 메인 창을 앞으로 가져와 __orchGo 로 그 참모 화면
+  const faceId = bubble && chat && !far ? bubbleFace(bubOrchs, nav.chat ?? chatOrch?.id)?.id ?? null : null;
+  useEffect(() => publishFace(faceId), [faceId]);
+  const goRef = useRef(pickOrch);
+  goRef.current = pickOrch;
+  useEffect(() => {
+    const w = window as unknown as { __orchGo?: (r: { orch: string }) => void };
+    w.__orchGo = (r) => { if (r?.orch) goRef.current(r.orch); };
+    return () => { delete w.__orchGo; };
+  }, []);
   const railEl = (
     <OrchRail
       home={{ on: atHomePick && !teamOn, onOpen: () => { team?.onLeave(); setPick(HOME, 'home'); } }}
@@ -1237,15 +1376,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
       avatars={railList}
       extra={team?.rail}
       extraOn={team?.railOn}
-      onPick={(id) => {
-        const o = orchs.find((x) => x.id === id);
-        if (!o) return;
-        team?.onLeave(); // 메신저 대화를 보던 중이면 가운데를 다시 이 참모 채팅으로
-        // 지금 참모를 또 누르면 — 남의 보관함 자리가 박혀 있으면(옛 화면이 눌렸다) 이 참모 홈으로, 이 참모 탭 줄 문서·세션은 그대로(domain/lockerTabs reclickPick)
-        if (id === now.current.view) { const to = pick === HOME ? ownPick(screens.current.get(id)?.pick, id, homeOf(o)) : reclickPick(lkHold, id, pick, homeOf(o)); if (to) setPick(to); }
-        else switchTo(id, 'rail');
-        if (id !== nav.chat) onChatTab?.(id);
-      }}
+      onPick={pickOrch}
       onMenu={act ? (e, id) => { const o = orchs.find((x) => x.id === id); if (o) act.menu(e, o, colorOf(o.name || '')); } : undefined}
       onRename={act ? (id) => { const o = orchs.find((x) => x.id === id); if (o) act.askRename(o); } : undefined}
       onMove={onReorderOrch ? (from, to) => onReorderOrch(orchs.map((o) => o.id), from, to) : undefined}
@@ -1284,7 +1415,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
             {orphans.map((x) => (
               <div key={x.task} className="cv-orphan">
                 <b>{x.target}</b><span>{x.title ?? ''}</span><em>{new Date(x.ts).toTimeString().slice(0, 5)}</em>
-                <button onClick={() => void appendTaskEvent({ ts: new Date().toISOString(), type: 'own', task: x.task, from: o.id }).catch(() => {})}>{tr(`${o.name || '참모'} 일로`, `Claim for ${o.name || 'assistant'}`)}</button>
+                <button onClick={() => void appendTaskEvent({ ts: new Date().toISOString(), type: 'own', task: x.task, from: o.id }).catch(() => {})}>{tr(`${seenName(o.name) || '참모'} 일로`, `Claim for ${seenName(o.name) || 'assistant'}`)}</button>
                 <button onClick={() => void appendTaskEvent({ ts: new Date().toISOString(), type: 'done', task: x.task, note: tr('대시보드에서 정리', 'Tidied from dashboard') }).catch(() => {})}>{tr('끝난 걸로', 'Mark done')}</button>
               </div>
             ))}
@@ -1325,6 +1456,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   const lockerActs = (lo: Session): CardActs => ({
     // 무엇이든 탭으로 연다 — md·엑셀은 편집 페이지, 그림·영상·html·pdf 는 탭 안 미리보기(2026-10-11 사용자). 모달은 '띄워 보기'·탭의 '크게 보기'
     onOpen: (p) => void fetched(p).then(() => {
+      if (craftFirst(p)) { void openInCraft(p).catch(sayCraftErr); return; } // .ai·.psd·.dwg … 는 참모 앱으로(미리보기는 '띄워 보기', domain/craftOpen)
       if (!spacePage(p)) lockerOpened.current.set(p, Date.now());
       setLkHold((h) => openTab(h, lo.id, pick, p));
       setPick(`d:${p}`);
@@ -1432,6 +1564,26 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
               {it.dot && <i className={`lk-dock-dot ${it.dot}`} aria-hidden="true" />}
               {no && <b className="lk-dock-no" aria-hidden="true">{no}</b>}
             </button>
+          );
+        })}
+        {browserDock({ name: oname(lo), live: ownLive(lo), who: hqHomeOf(lo)?.who }, heldBy(lo).map((s) => ({ name: cardName(s), live: liveOf(s, lives) }))).filter((it) => !stillClosed(closedB, it.live)).map((it) => {
+          // 세션 브라우저 아이콘(2026-10-27 인앱 브라우저 시안 A) — 그 참모가 맡은 세션 것만, 세션 글자 배지. 누르면 스페이스 칸 전체가 그 브라우저.
+          // 보는 중이면 올렸을 때 X = 숨기기(크롬·세션은 그대로), 오른쪽 클릭 = 브라우저 끄기(10-28 사용자 "아예 닫는 게 너무 어렵다")
+          const title = dockTitleOf(it);
+          const on = pick === browserKey(it.profile);
+          const menu = act ? (e: React.MouseEvent) => act.openMenu(e, [
+            ...(on ? [] : [{ label: tr('열기', 'Open'), run: () => setPick(browserKey(it.profile)) }]),
+            { label: it.live.sessionPid > 0 ? tr('브라우저 끄기 — 세션이 다시 쓰면 새로 떠', 'Close the browser — it reopens when the session uses it') : tr('브라우저 끄기', 'Close the browser'), danger: true, sep: !on,
+              run: () => void invoke('agent_close_browser', { profile: it.profile }).then(() => closedBrowser(it.profile, it.pid), () => {}) },
+          ]) : undefined;
+          return (
+            <span key={`bdock-${it.profile}`} className={`lk-bdock-wrap ${on ? 'on' : ''}`}>
+              <button className={`lk-tab bdock ${on ? 'on' : ''}`} aria-pressed={on} aria-label={title} title={title} onClick={() => setPick(browserKey(it.profile))} onContextMenu={menu}>
+                <img src={BROWSER_ICON_SMALL} alt="" /><b className="lk-bdock-letter" aria-hidden="true">{it.letter}</b>
+                {it.dot && <i className={`lk-bdock-dot ${it.dot}`} aria-hidden="true" />}
+              </button>
+              {on && <IconButton size="s" className="lk-bdock-x" label={tr(`${it.name} 브라우저 닫기`, `Close the ${it.name} browser`)} onClick={() => setClosingB(it)}><IconClose /></IconButton>}
+            </span>
           );
         })}
         {row.tabs.map(({ path: p, on }) => {
@@ -1627,8 +1779,26 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
       const r = drawerOpen(app, dock.map((d) => d.app), mine);
       if ('key' in r && lockerOrch) setCraftOwner(r.key, lockerOrch.id); // 누른 참모가 주인 — 뜨는 사이 다른 참모로 옮겨도 그 참모 탭 줄에
       return r;
-    }} openMenu={act?.openMenu} /></div>;
+    }} openMenu={act?.openMenu} browser={IS_WIN ? undefined : {
+      on: !!hqB && !!liveB(hqB),
+      // 참모 브라우저 — 띄우고(떠 있으면 그대로) 그 칸으로. 이 참모 독에 아이콘이 생긴다
+      open: () => invoke<string>('hq_browser_open').then((p) => { setHqB(p); if (lockerOrch) setHqOpener(lockerOrch.id); setPick(browserKey(p)); }, (e: unknown) => setCurNote(tr(`참모 브라우저를 못 띄웠어 — ${String(e)}`, `Could not open the Chammo browser — ${String(e)}`))),
+    }} /></div>;
     main = lockerOrch ? lockerFrame(lockerOrch, <>{lockerTabs(lockerOrch, !!lockerSide?.rootNew)}{page}</>) : page;
+  } else if (browserOfPick(pick) !== null) {
+    // 세션 브라우저 칸(시안 A) — 칸은 비워 두고 네이티브 비추기가 그 위에(BrowserPane 이 자리·보이는지를 알린다). 숨기기 = 비추기만 떼고 홈으로
+    const profile = browserOfPick(pick)!;
+    const b = liveB(profile);
+    const owner = lockerOrch ? [lockerOrch, ...heldBy(lockerOrch)].find((s) => liveOf(s, lives)?.profile === profile) : undefined;
+    // 다른 참모가 쥔 HQ 브라우저를 서랍에서 연 것 · 세션 없이 띄운 것 — 보는 참모 이름을 달지 않는다
+    const holder = owner ?? orchs.find((o) => liveOf(o, lives)?.profile === profile);
+    const paneName = holder ? (orchs.includes(holder) ? oname(holder) : cardName(holder)) : profile === hqB ? tr('참모', 'Chammo') : profile;
+    const hide = () => { if (lockerOrch) goHome(lockerOrch); else step(-1); };
+    // 없으면 빈 칸 — 보던 게 꺼졌으면 위 효과가 곧 직전 탭으로 옮긴다
+    const pane = <div className="lk-doc-body">{b
+      ? <BrowserPane key={pick} live={b} name={paneName} onHide={hide} onClosed={closedBrowser} openMenu={act?.openMenu} />
+      : <div className="cv-blank" />}</div>;
+    main = lockerOrch ? lockerFrame(lockerOrch, <>{lockerTabs(lockerOrch, !!lockerSide?.rootNew)}{pane}</>) : pane;
   } else if (pick.startsWith('k:')) {
     // Craft 탭 — 칸은 비워 두고 네이티브 비추기가 그 위에(CraftPane 이 자리·보이는지를 알린다)
     const pane = <div className="lk-doc-body"><CraftPane key={pick} app={craftAppOf(pick)} place="space" whoOf={craftWho} /></div>;
@@ -1658,20 +1828,28 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   }
 
   // 팀 모드 — 스페이스 전체가 팀 것(팀 홈·팀 보관함·연 파일, 참모 탭 줄·독 없음). 참모 화면 고름(pick)은 그대로 두어 돌아오면 보던 곳
-  if (teamOn && team?.space) { main = team.space.view((p) => filePage(p, {})); framed = true; }
+  if (teamOn && team?.space) { main = team.space.view((p) => (craftAppOf(p) ? craftPaneOf(p) : filePage(p, {})), undefined, (k) => craftNames.current.get(craftAppOf(k))); framed = true; }
   // 보관함 밖 화면(세션·기능)도 그 참모 세션 독을 아래에 — 사무실·시안 검토·오케스트레이터 홈은 빼고
   const dockOrch = lockerOrch ?? orch;
   if (main && dockOrch && !framed && pick !== OFFICE && !atHome) main = lockerFrame(dockOrch, main);
 
+  const chatHid = (atHomePick && !teamOn) || (teamOn && !!team?.fold);
   return (
     <div className="space cv">
       {keep.host()}
       {/* 왼쪽은 띠만 — ⌘B 는 띠를 넓힐 뿐(패널 하나로 P1 A). 보관함 나무 칸은 없앴다(2026-10-12 사용자 '이제 필요 없겠다' — 홈·보관함 고정 탭 + 가운데 경로 줄) */}
       {rail}
       {/* 홈을 보는 동안·팀 모드에서 메신저를 접은 동안 채팅 칸은 숨기기만(터미널 붙임·입력 그대로) */}
-      <div className="cv-chat-slot" hidden={(atHomePick && !teamOn) || (teamOn && !!team?.fold)}>{chat}</div>
+      {/* 떠 있는 배지 대화창이 열리면 숨던 칸도 붙인 채 안 보이게만(obb-ghost) — 칸 안 참모 채팅이 떠 있는 창으로 뜬다 */}
+      <div className={`cv-chat-slot${chatHid && bub.open ? ' obb-ghost' : ''}`} hidden={chatHid && !bub.open}><BubbleFloatCtx.Provider value={bub.float}>{chat}</BubbleFloatCtx.Provider></div>
       {/* 고른 프사 ↔ 채팅 카드 — 참모 색 윤곽선 하나(맞닿는 변만 열림) */}
       {chat && (!atHomePick || teamOn) && !(teamOn && team?.fold) && <ChatLink color={linkColor} />}
+      {closingB && (() => {
+        const q = closeAsk(closingB);
+        const it = closingB;
+        return <Confirm title={q.title} body={q.body} ok={tr('닫기', 'Close')} danger onCancel={() => setClosingB(null)}
+          onOk={() => { setClosingB(null); void invoke('agent_close_browser', { profile: it.profile }).then(() => closedBrowser(it.profile, it.pid), () => {}); }} />;
+      })()}
       {far && far.main}
       {/* 기다리는 동안 옛 화면은 못 누른다 — 눌리면 옛 참모 보관함 자리가 박혀 다른 참모 기억으로 옮아 갔다(2026-10-13) */}
       <main inert={held} hidden={!!far} className={`cv-main ${viewSeg && !hold ? 'has-viewseg' : ''}`}>
@@ -1684,7 +1862,8 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
       {/* 참모 모드 — '스페이스 패널로' 켠 것은 오른쪽에, 미리보기·꽉 채우기는 스페이스 위에(따로 창이 기본) */}
       <ModePanel rows={modeRows} />
       <ModeLayer rows={modeRows} />
-      {modal && <Preview f={modal} onClose={() => setModal(null)} onAttach={() => attach(modal.path)} attachTo={attachTo} onSendText={send} onCuration={toCuration} />}
+      {teamGive.node}
+      {modal && <Preview f={modal} onClose={() => setModal(null)} onAttach={attachOf(modal.path)} attachTo={attachToOf(modal.path)} onSendText={send} onCuration={toCuration} />}
       {pick.startsWith('c:') && curBig && curationEl(pick.slice(2), true)}
     </div>
   );

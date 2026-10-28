@@ -19,7 +19,7 @@ export type DirectCard = {
   lastTs: string;
   /** 이때가 지나면 끝(연결 요청 카드 — 5분) */
   until?: string;
-  /** 연결 카드 갈래 — 'phone' = 참모가 만든 폰 연결 QR 의 사람 허용(Rust direct::phone_pair_row) · 'device' = 새 기기 허용 · 'phone-link' = 폰 숫자 확인(ADR 0014) */
+  /** 연결 카드 갈래 — 'phone' = 참모가 만든 폰 연결 QR 의 사람 허용(Rust direct::phone_pair_row) · 'device' = 새 기기 허용 · 'phone-link' = 폰 숫자 확인(ADR 0014) · 'recover' = 계정 다시 시작 요청(relay ADR 0007 R9, 예 = 취소) */
   sub?: string;
   /** 폰 숫자 확인 카드의 6자리('892 263') — 크게 보여 폰 화면 숫자와 견주게 */
   code?: string;
@@ -156,9 +156,16 @@ export function placeDirect(log: string, o: {
   const cards = directCards(log, { alive: o.unknown ? () => true : aliveIn(o.seen, o.now), prompt: o.prompt, reply: o.reply, now: o.now })
     .filter((c) => needsAnswer(c) || o.now - Date.parse(c.ts) < DAY);
   return cards.map((card) => {
+    // 앱이 낸 카드(기기·보안 번호·되찾기 — @link)는 일을 보낸 참모가 없다 — 맨 앞(보고 있던) 참모에게 넘기지 않고 결정 대기함에만(2026-10-29)
+    if (card.from === LINK_FROM) return { card };
     const s = o.everyone.find((x) => x.id === card.from) ?? ({ id: card.from, name: '', project: card.cwd.split('/').pop() ?? '' } as Session);
     return { card, owner: forwardTo(s, o.events, o.orchs, o.everyone, o.front, o.heir) };
   });
+}
+
+/** 폰 한 참모 채팅에 붙일 카드 — 그 참모 몫 + 연결 요청(세션이 아니라 앱이 묻는다, 폰은 대기함이 없어 맨 앞 참모 채팅에만 붙으면 못 봤다 — 2026-10-28) */
+export function phoneOwns(placed: Placed[], orchId: string): DirectCard[] {
+  return placed.filter((p) => p.owner?.id === orchId || (p.card.kind === 'link' && p.card.from === LINK_FROM)).map((p) => p.card);
 }
 
 /** 답·처리가 끝난 카드가 한 줄로 남는 시간(2026-10-05 사용자 — 처리된 카드 두 장이 폰 채팅을 크게 가렸다) */
@@ -199,4 +206,10 @@ export function cardLine(c: DirectCard): { what: string; result: string; at: str
     : c.state === 'closed' ? (c.kind === 'link' ? tr('시간이 지났어요', 'Timed out') : tr('세션이 거둬들였어요', 'Withdrawn'))
     : tr('지난 질문', 'Replaced');
   return { what: c.amount ? `${k.word} ${c.amount}` : k.word, result, at: c.lastTs };
+}
+
+/** 새로 기다리기 시작한 앱 카드(@link) — 화면 위 짧은 알림 한 줄(누르면 결정 대기함). prev 가 없으면(앱을 켠 첫 읽기) 아무것도 안 알린다 */
+export function freshAppCards(prev: Set<string> | null, cards: DirectCard[]): DirectCard[] {
+  if (prev === null) return [];
+  return cards.filter((c) => c.from === LINK_FROM && needsAnswer(c) && !prev.has(c.id));
 }

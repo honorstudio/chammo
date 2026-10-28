@@ -8,6 +8,13 @@ import type { RelayLink } from './link';
 const CHUNK = 128 * 1024; // Rust phone_relay_core::CHUNK 와 같게
 const CONNECT_MS = 10_000;
 const PASS = ['authorization', 'content-type', 'range', 'accept'];
+/** 기다리는 요청이 있는데 이만큼 아무것도 안 오면 중계에 한 번 물어보고(ping), 그 뒤 이만큼 더 조용하면 반열림으로 보고 끊는다.
+ *  셀룰러는 소켓이 열린 채 죽는다(닫힘도 안 옴) — 안 끊으면 iOS 가 몇 분 뒤 닫을 때까지 모든 요청이 'aborted' 로 끝났다(2026-10-27 사용자).
+ *  중계는 모르는 틀(ping)에 error 로 바로 답해서, 맥 일이 오래 걸려도 중계가 살아 있으면 안 끊는다 */
+const STALL_MS = 12_000;
+const PROBE_MS = 8_000;
+/** 맥에 응답 압축(gzip)을 부탁한다 — 대화 기록 JSON 이 4~5배 준다. 옛 맥은 무시하고, 압축한 답엔 같은 머리를 단다 */
+export const GZ = 'x-chammo-gz';
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
@@ -32,9 +39,44 @@ export class HubTunnel {
   ownerOn: boolean | null = null;
   onOwner: ((on: boolean) => void) | null = null;
 
-  constructor(private readonly link: RelayLink) {}
+  /** 마지막으로 뭐라도 받은 때(ms) — 받기 시간 한도(data/web.ts)가 '느리지만 오고 있나'를 본다 */
+  lastRx = 0;
+  private probedAt = 0;
+  private watch: ReturnType<typeof setInterval> | null = null;
+  private readonly stallMs: number;
+  private readonly probeMs: number;
+
+  constructor(private readonly link: RelayLink, opts: { stallMs?: number; probeMs?: number } = {}) {
+    this.stallMs = opts.stallMs ?? STALL_MS;
+    this.probeMs = opts.probeMs ?? PROBE_MS;
+  }
+
+  /** 기다리는 요청이 있을 때만 돈다 — 조용하면 ping, 그래도 조용하면 끊는다(다음 요청이 새로 붙는다) */
+  private guard() {
+    if (this.watch) return;
+    const tick = Math.max(20, Math.min(1000, this.stallMs / 4));
+    this.watch = setInterval(() => {
+      if (!this.waits.size || !this.ws) { this.stopGuard(); return; }
+      const now = Date.now();
+      const quiet = now - this.lastRx;
+      if (quiet < this.stallMs) { this.probedAt = 0; return; }
+      if (!this.probedAt) {
+        this.probedAt = now;
+        try { this.ws.send(JSON.stringify({ t: 'ping' })); } catch { /* 닫히는 중 */ }
+        return;
+      }
+      if (now - this.probedAt >= this.probeMs && this.lastRx < this.probedAt) this.fail(new TypeError('Load failed'));
+    }, tick);
+  }
+
+  private stopGuard() {
+    if (this.watch) clearInterval(this.watch);
+    this.watch = null;
+    this.probedAt = 0;
+  }
 
   private fail(e: unknown) {
+    this.stopGuard();
     for (const w of this.waits.values()) w.no(e);
     this.waits.clear();
     this.session = null;
@@ -66,6 +108,7 @@ export class HubTunnel {
       ws.onerror = () => done(new TypeError('허브에 못 붙었어요'));
       ws.onclose = () => { done(new TypeError('허브 연결이 끊겼어요')); if (this.ws === ws) this.fail(new TypeError('Load failed')); };
       ws.onmessage = (ev) => {
+        if (this.ws === ws) this.lastRx = Date.now();
         let m: { t?: string; on?: boolean; d?: string };
         try { m = JSON.parse(String(ev.data)); } catch { return; }
         if (m.t === 'owner') {
@@ -108,24 +151,35 @@ export class HubTunnel {
     let at = 0;
     for (const p of w.parts) { body.set(p, at); at += p.length; }
     const nobody = w.s === 204 || w.s === 304 || w.s < 200;
-    w.ok(new Response(nobody ? null : body, { status: w.s < 200 ? 502 : w.s, headers: w.h }));
+    const gz = w.h[GZ] === '1';
+    const h = { ...w.h };
+    delete h[GZ];
+    // 압축한 답 — 읽는 쪽(r.text()·json())이 풀린 글을 받게 스트림으로 푼다
+    const out = nobody ? null : gz ? new Blob([body]).stream().pipeThrough(new DecompressionStream('gzip')) : body;
+    w.ok(new Response(out, { status: w.s < 200 ? 502 : w.s, headers: h }));
   }
 
   /** fetch 와 같은 모양 — path 는 /api/…·/·/assets/… */
   async fetch(path: string, init: RequestInit = {}): Promise<Response> {
     const signal = init.signal;
-    if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+    const why = () => (signal?.reason instanceof DOMException ? signal.reason : new DOMException('aborted', 'AbortError'));
+    if (signal?.aborted) throw why();
     await this.ensure();
     const method = (init.method ?? 'GET').toUpperCase();
     const body = init.body == null ? new Uint8Array() : new Uint8Array(await new Response(init.body).arrayBuffer());
     const hs = new Headers(init.headers);
     const h: Record<string, string> = {};
     for (const k of PASS) { const v = hs.get(k); if (v !== null) h[k] = v; }
+    // 풀 줄 아는 브라우저만 부탁한다(iOS 16.4 아래는 DecompressionStream 이 없다)
+    if (typeof DecompressionStream === 'function') h[GZ] = '1';
     const id = this.nextId++;
     const res = new Promise<Response>((ok, no) => {
       this.waits.set(id, { ok, no, parts: [], n: 1, s: 0, h: {} });
-      signal?.addEventListener('abort', () => { if (this.waits.delete(id)) no(new DOMException('aborted', 'AbortError')); }, { once: true });
+      signal?.addEventListener('abort', () => { if (this.waits.delete(id)) no(why()); }, { once: true });
     });
+    // 조용한 동안은 지금부터 잰다 — 오래 쉬다 보낸 첫 요청이 바로 '먹통'으로 안 보이게
+    if (this.waits.size === 1) this.lastRx = Math.max(this.lastRx, Date.now());
+    this.guard();
     const n = Math.max(1, Math.ceil(body.length / CHUNK));
     for (let i = 0; i < n; i++) {
       const piece = body.subarray(i * CHUNK, (i + 1) * CHUNK);

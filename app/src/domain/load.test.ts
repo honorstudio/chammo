@@ -83,6 +83,15 @@ describe('parseSys — sysctl 네 줄', () => {
   it('못 읽으면 null', () => {
     expect(parseSys('')).toBeNull();
   });
+  it('다섯째 줄 kern.boottime 이 있으면 부팅 시각(ms) — 부팅 직후엔 attach 를 하나씩(domain/busyGate)', () => {
+    const s = parseSys('10\n{ 70.5 35.1 9.0 }\ntotal = 0.00M  used = 0.00M  free = 0.00M  (encrypted)\n25769803776\n{ sec = 1793026211, usec = 918347 } Mon Oct 26 23:50:11 2026');
+    expect(s?.bootAt).toBe(1793026211_000);
+    expect(s?.load1).toBe(70.5);
+  });
+  it('부팅 시각 줄이 없거나 이상하면 bootAt 없음(윈도우)', () => {
+    expect(parseSys('8\n{ 1.0 1.0 1.0 }\n\n0')?.bootAt).toBeUndefined();
+    expect(parseSys('8\n{ 1.0 1.0 1.0 }\n\n0\nnonsense')?.bootAt).toBeUndefined();
+  });
 });
 
 describe('parseClaudePids — ps -E 의 CLAUDE_PID', () => {

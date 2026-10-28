@@ -14,7 +14,7 @@ import { findTarget } from '../../domain/inbox';
 import { phoneGroups } from '../../domain/mobileDevices';
 import { whenLabel } from '../../domain/orchHome';
 import { addRef } from '../../domain/refChips';
-import type { Session } from '../../domain/session';
+import { seenName, type Session } from '../../domain/session';
 import type { FeatureKey } from '../../domain/spaceNav';
 import type { ActivityStatus } from '../../domain/status';
 import type { StoppedSession } from '../../domain/stopped';
@@ -348,7 +348,7 @@ export function HomeDash({ go, orchs, nameOf, roleOf, colorOf, lines, statusOf, 
             {orchs.filter((o) => bars[o.id]?.goals.length).map((o) => (
               <div key={o.id} className="hd-gpcell" data-pop={`gpc:${o.id}`}>
                 <button className="hd-gpwho" data-hpop="" data-pop={`gp:${o.id}`} onClick={() => flip({ kind: 'chat', id: o.id }, `gp:${o.id}`)}>{face(o, 18)}{nameOf(o)}</button>
-                <HomeProgress orch={{ id: o.id, name: o.name }} events={events} sessions={sessions} onAsk={(r) => askIn(o.id, r)} />
+                <HomeProgress orch={{ id: o.id, name: o.name }} events={events} sessions={sessions} onAsk={(r) => askIn(o.id, r)} place="dash" />
               </div>
             ))}
           </section>
@@ -359,8 +359,8 @@ export function HomeDash({ go, orchs, nameOf, roleOf, colorOf, lines, statusOf, 
                 {d.done.slice(0, 12).map((x) => {
                   const o = x.orch ? byId.get(x.orch) : undefined;
                   return (
-                    <button key={x.task} className={`hd-chip${isPop(pop, 'done', x.task) ? ' on' : ''}`} data-hpop="" aria-expanded={isPop(pop, 'done', x.task)} onClick={() => flip({ kind: 'done', id: x.task })} title={`${x.target} · ${x.title}`}>
-                      {o && face(o, 16)}<b>{x.title || x.target}</b><span>{new Date(x.at).toTimeString().slice(0, 5)}</span>
+                    <button key={x.task} className={`hd-chip${isPop(pop, 'done', x.task) ? ' on' : ''}`} data-hpop="" aria-expanded={isPop(pop, 'done', x.task)} onClick={() => flip({ kind: 'done', id: x.task })} title={`${seenName(x.target)} · ${x.title}`}>
+                      {o && face(o, 16)}<b>{x.title || seenName(x.target)}</b><span>{new Date(x.at).toTimeString().slice(0, 5)}</span>
                     </button>
                   );
                 })}
@@ -371,7 +371,7 @@ export function HomeDash({ go, orchs, nameOf, roleOf, colorOf, lines, statusOf, 
               if (!x) return null;
               return (
                 <div className="hd-donex" data-hpop="">
-                  <span className="hd-tx"><b>{x.title || x.target}</b><span>{[x.target, x.orch ? nameOf(byId.get(x.orch)!) : '', new Date(x.at).toTimeString().slice(0, 5)].filter(Boolean).join(' · ')}</span>{x.result && <p>{x.result}</p>}</span>
+                  <span className="hd-tx"><b>{x.title || seenName(x.target)}</b><span>{[seenName(x.target), x.orch ? nameOf(byId.get(x.orch)!) : '', new Date(x.at).toTimeString().slice(0, 5)].filter(Boolean).join(' · ')}</span>{x.result && <p>{x.result}</p>}</span>
                   <button className="hd-ic" onClick={() => go.session(x.target)} aria-label={tr('크게 열기', 'Open large')} title={tr('크게 열기', 'Open large')}><IconMaximize /></button>
                 </div>
               );
@@ -400,7 +400,7 @@ export function HomeDash({ go, orchs, nameOf, roleOf, colorOf, lines, statusOf, 
                 <div className="hd-h"><b>{tr('오래 조용', 'Quiet')}</b><span>{d.quiet.length}</span></div>
                 {d.quiet.slice(0, 4).map((q) => (
                   <button key={q.task} className={`hd-quiet${isPop(pop, 'peek', q.task) ? ' on' : ''}`} data-hpop="" data-pop={`peek:${q.task}`} aria-expanded={isPop(pop, 'peek', q.task)} onClick={() => flip({ kind: 'peek', id: q.task })} title={q.title}>
-                    <D d="quiet" /><b>{q.target}</b><span>{q.title}{q.at ? ` · ${whenLabel(q.at, now)}` : ''}</span>
+                    <D d="quiet" /><b>{seenName(q.target)}</b><span>{q.title}{q.at ? ` · ${whenLabel(q.at, now)}` : ''}</span>
                   </button>
                 ))}
               </>
@@ -440,7 +440,7 @@ export function HomeDash({ go, orchs, nameOf, roleOf, colorOf, lines, statusOf, 
         const o = byId.get(peekRow.orch);
         return (
           <Anchored root={root} at={at} w={400} side="right">
-            <Peek key={peekRow.task} s={s} head={<><b>{peekRow.target}</b><span><D d="quiet" />{[peekRow.title, peekRow.at ? whenLabel(peekRow.at, now) : ''].filter(Boolean).join(' · ')}</span></>}
+            <Peek key={peekRow.task} s={s} head={<><b>{seenName(peekRow.target)}</b><span><D d="quiet" />{[peekRow.title, peekRow.at ? whenLabel(peekRow.at, now) : ''].filter(Boolean).join(' · ')}</span></>}
               ask={o ? { name: nameOf(o), go: () => { flip({ kind: 'chat', id: o.id }); setDraft(tr(`${peekRow.target} 오래 조용한데 어떻게 돼 가?`, `${peekRow.target} has been quiet — how is it going?`)); } } : undefined}
               onBig={() => { close(); go.session(peekRow.target); }} onClose={close} />
           </Anchored>

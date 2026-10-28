@@ -11,6 +11,7 @@ import { openInTurn, pickDiff, pickGroups, type PickItem } from '../../domain/ho
 import type { ModeRow } from '../../domain/modeTree';
 import { ModeManage } from './ModeManage';
 import { ModeCardArt, useModeCard } from './ModeCardArt';
+import { seenName } from '../../domain/session';
 
 const loadCard = (name: string) => invoke('mode_card', { name });
 
@@ -42,7 +43,7 @@ export function TryFail() {
 
 /** 다른 자리에 켜졌으면 그 자리 한 마디 — 고르면 이리로 옮겨 온다 */
 const elsewhereText = (e: NonNullable<PickItem['elsewhere']>) =>
-  e.where === 'dash' && e.dash ? tr(`${e.dash.split(' · ').pop()} 홈에 켜짐`, `On ${e.dash}'s home`)
+  e.where === 'dash' && e.dash ? tr(`${seenName(e.dash)} 홈에 켜짐`, `On ${seenName(e.dash)}'s home`)
     : e.where === 'panel' ? tr('패널에 켜짐', 'On in the panel')
       : e.where === 'window' ? tr('따로 창에 켜짐', 'On in a window')
         : tr('다른 자리에 켜짐', 'On elsewhere');

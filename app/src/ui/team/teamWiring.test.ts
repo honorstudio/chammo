@@ -4,6 +4,7 @@ import convo from './TeamConvo.tsx?raw';
 import mode from './useTeamMode.tsx?raw';
 import rail from './TeamRail.tsx?raw';
 import orchRail from '../space/OrchRail.tsx?raw';
+import api from '../../data/teamApi.ts?raw';
 
 describe('메신저 연결', () => {
   it('보내기는 사람 문(teamHumanSay + 이 칸의 진짜 키·클릭 시각)만 — 앱이 저절로 보내는 길이 없다', () => {
@@ -37,17 +38,19 @@ import phone from '../mobile/PhoneTeam.tsx?raw';
 import web from '../../data/web.ts?raw';
 describe('폰 팀 탭', () => {
   it('폰 보내기도 진짜 누름 뒤 1.5초 문을 지나고, 읽기·쓰기는 TeamPhoneApi 하나로만(중계 직결로 갈아끼울 자리)', () => {
-    expect(phone).toContain('sendAllowed(at, Date.now()) && text.trim() ? api.say(to, text, cidFor(to, text)) : null');
+    expect(phone).toContain('sendAllowed(at, Date.now()) && text.trim() ? api.say(to, text, cidFor(to, text), extra?.re) : null');
     expect(phone).not.toMatch(/fetch\(|'\/api\/team/);
-    expect(web).toContain("say: (to, text, cid) => post('/api/team-say', { to, text, cid })");
+    expect(web).toContain("say: (to, text, cid, re) => post('/api/team-say', re ? { to, text, cid, re } : { to, text, cid })");
   });
 });
 
 import locker from './TeamLocker.tsx?raw';
+import page from '../space/LockerPage.tsx?raw';
 describe('팀 보관함(중계 R2)', () => {
   it('목록·올리기·열기는 team_locker_* 명령으로만, 끌어 넣기는 [data-team-locker] 칸', () => {
-    for (const c of ["'team_locker_list'", "'team_locker_put'", "'team_locker_poll'", "'team_locker_open'", "'team_locker_peek'"]) expect(locker).toContain(c);
-    expect(locker).toContain('data-team-locker={teamId}');
+    for (const c of ["'team_locker_list'", "'team_locker_put'", "'team_locker_poll'", "'team_locker_open'"]) expect(locker).toContain(c);
+    expect(api).toContain("'team_locker_peek'"); // 썸네일은 말풍선과 같은 teamApi 길
+    expect(locker).toContain('data-team-locker={room ? undefined : teamId}'); // 대화 파일 보기엔 파인더 놓기 자리가 없다(팀 전체에 올라가 버린다)
     expect(teamDropSrc).toContain("closest<HTMLElement>('[data-team-locker]')"); // 메인 창·따로 창이 같이 쓰는 teamDrop
   });
   it('영구 지우기는 Confirm 의 onOk 안에서만', () => {
@@ -68,7 +71,7 @@ describe('보안 10-23: 넘기기 세 길은 team_handoff(거름 + 본문 없는
     const appHand = app.slice(app.indexOf('const teamMode = useTeamMode('), app.indexOf('const teamMode = useTeamMode(') + 900);
     expect(appHand).toContain("invoke<string>('team_handoff'");
     expect(appHand).not.toContain('sendTextToSession');
-    expect(messenger).toContain("invoke<string>('team_handoff', { text, dry: false })");
+    expect(messenger).toContain("invoke<string>('team_handoff', { text, dry: false, to })");
     expect(phone).toContain('api.handoff(orch.id, text)');
     expect(phone).not.toContain('sendTextToSession');
     expect(web).toContain("handoff: (to, text) => post('/api/team-handoff', { to, text })");
@@ -76,9 +79,9 @@ describe('보안 10-23: 넘기기 세 길은 team_handoff(거름 + 본문 없는
 });
 
 describe('폰 팀 보관함', () => {
-  it('팀 폴더는 이름이 아니라 owner id(team-<팀 id>)로 고른다 — 같은 이름의 참모 폴더와 안 섞이게', () => {
-    expect(phone).toContain('`team-${teamId}`');
-    expect(phone).not.toContain('i.owner === team)');
+  it('참모 보관함(이름으로 고르던 팀 폴더)이 아니라 팀 id 로 중계 팀 보관함을 읽는다 — 같은 이름의 참모 폴더와 안 섞이게(10-28)', () => {
+    expect(phone).toContain('<PhoneTeamLocker api={api} teamId={view.teamId} />');
+    expect(phone).not.toContain('readLocker');
   });
 });
 
@@ -133,7 +136,8 @@ describe('팀 파일 열기 = 스페이스(10-26 사용자 292.png)', () => {
     expect(convo).toContain("tr('다른 앱으로 열기', 'Open with default app')");
   });
   it('대화 파일 풍선은 통째로 누르는 단추', () => {
-    expect(bits).toMatch(/<button[^>]*className=\{`tmx-file /);
+    expect(bits).toMatch(/<button[^>]*className=\{cls\}/);
+    expect(bits).toContain('const cls = `tmx-file ');
   });
   it('스페이스 탭 머리 — 팀 파일(풀어 둔 자리)이면 내려받기 아이콘', () => {
     expect(space).toContain('isTeamCache(path)');
@@ -144,18 +148,28 @@ describe('팀 파일 열기 = 스페이스(10-26 사용자 292.png)', () => {
 describe('폴더·정렬', () => {
   it('폴더 만들기·이름 바꾸기·지우기는 team_locker_* 명령, 지우기는 안에 파일이 있으면 확인 창', () => {
     for (const c of ["'team_locker_mkdir'", "'team_locker_folder'"]) expect(locker).toContain(c);
-    expect(locker).toContain('(f.n ? setRmFolder(f) : removeFolder(f.key))');
-    expect(locker).toMatch(/onOk=\{\(\) => \{ const f = rmFolder; setRmFolder\(null\); removeFolder\(f\.key\); \}\}/);
+    expect(locker).toContain('(f.n ? setRmFolder({ keys: [f.key], n: f.n }) : removeFolder(f.key))');
+    expect(locker).toContain('onOk={() => { const f = rmFolder; setRmFolder(null); f.keys.forEach(removeFolder); pick.end(); }}');
+  });
+  it('폴더는 참모 보관함과 같은 조각 — 폴더 타일(FolderTile)·경로 줄(PathCrumbs)·뒤로, 칩 거름 줄은 없다(10-28 사용자 "진짜 파인더처럼")', () => {
+    expect(locker).toContain("import { FolderTile, PathCrumbs } from '../space/FolderTile';");
+    expect(locker).toContain('<PathCrumbs root={tr(\'팀 보관함\', \'Team locker\')} crumbs={crumbsOf(place)} onGo={setPlace} dropOf={dropAt} back={place ? () => setPlace(parentOf(place)) : undefined} />');
+    expect(locker).toContain('onOpen={() => setPlace(f.key)}');
+    expect(locker).not.toContain("tr('전체', 'All')");
+    expect(page).toContain('<FolderTile ');
+    expect(page).toContain('<PathCrumbs ');
   });
   it('파일을 폴더 칩에 끌어다 놓으면 옮긴다 — 웹 끌기(draggable)는 앱 창(Tauri)이 가로채서 안 됐다(10-26 사용자), 참모 보관함과 같은 포인터 길', () => {
     expect(locker).not.toMatch(/draggable[:=]\s*true|onDragStart|onDrop=/);
     expect(locker).toContain('dragTeam(teamId, ids,');
-    expect(locker).toContain("'data-team-folder': f.key");
+    expect(locker).toContain("const dropAt = (key: string) => ({ 'data-team-folder': key });");
+    expect(locker).toContain('drop={dropAt(f.key)}');
+    expect(locker).toContain('drag: dragDir(f.key)'); // 폴더도 끌어서 다른 폴더로
     expect(locker).toContain('window.addEventListener(TEAM_LOCKER_MOVE, mv)');
   });
   it('고르기는 참모 보관함과 같은 훅(usePick) · 오른쪽 클릭은 뒤따르는 click 을 삼킨다(열기 0번)', () => {
     expect(locker).toContain("import { usePick } from '../space/usePick'");
-    for (const [from, to] of [['const onMenu = ', 'const blankMenu = '], ['const blankMenu = ', '// 폴더 —'], ['const chipMenu = ', 'const nameBox = ']] as const) {
+    for (const [from, to] of [['const onMenu = ', 'const blankMenu = '], ['const blankMenu = ', '// 폴더 —'], ['const folderMenu = ', 'const dropAt = ']] as const) {
       expect(locker.slice(locker.indexOf(from), locker.indexOf(to)), from).toContain('swallowTrailingClick();');
     }
     expect(locker).toContain('data-select-all=""');
@@ -164,7 +178,7 @@ describe('폴더·정렬', () => {
     expect(locker).toContain('if (pendRef.current.some((p) => p.key === key)) return false;');
     expect(locker).toContain('setNote(failText(op, String(e)))');
     expect(locker).toContain('withPending(v.items, pend.map((p) => p.op))');
-    expect(locker).toContain("if (shown && place && !folders.some((f) => f.key === place)) setPlace('');"); // 되돌아간 폴더에 갇히지 않게
+    expect(locker).toContain('while (up && !all.includes(up)) up = parentOf(up);'); // 되돌아간 폴더에 갇히지 않게 — 가장 가까운 위 폴더로
     for (const c of ["invoke('team_locker_mkdir'", "invoke('team_locker_folder'", "invoke('team_locker_rename'", "invoke('team_locker_act'"]) {
       const at = locker.indexOf(c);
       expect(at, c).toBeGreaterThan(0);
@@ -220,5 +234,133 @@ describe('기다리는 단추는 연타 한 번만·보내는 중 글(10-26 팀 
   it('방 만들기·바꾸기 단추는 보내는 중 글', () => {
     expect(roomCreate).toContain("if (!ok || busy) return;");
     expect(roomCreate).toContain("tr('만드는 중', 'Creating')");
+  });
+});
+
+import home from './TeamHome.tsx?raw';
+describe('폰 팀 프로필·팀 홈(10-26 사용자: 폰에 별명·사진·팀 홈이 없었다)', () => {
+  it('폰도 데스크톱과 같은 프로필 규칙 — ProfilesCtx 를 깔고 사람 대화 이름은 namedConvos, 판은 본 판 번호로 묻는다', () => {
+    expect(phone).toContain('<ProfilesCtx.Provider value={profiles}>');
+    expect(phone).toContain('namedConvos(');
+    expect(phone).toContain('api.profiles(teamId, rev.current)');
+    expect(web).toContain("profiles: (team, rev) => getJson(`/api/team-profiles?team=${encodeURIComponent(team)}&rev=${rev}`)");
+  });
+  it('폰 방 목록도 이 팀 방만(모든 팀 방이 한 목록으로 온다)', () => {
+    expect(phone).toContain('view.rooms.filter((r) => (r.team || view.teamId) === view.teamId)');
+  });
+  it('폰 팀 홈 = 데스크톱 TeamHome 그대로, 글 길만 폰 것(고치기·고정 바꾸기·지우기는 데스크톱)', () => {
+    expect(phone).toContain('<TeamHome ');
+    expect(phone).toMatch(/role="tab"[^\n]*seg === 'home'/);
+    expect(web).toContain("post: (team, title, body, pin) => post('/api/team-post', { team, title, body, pin })");
+    expect(home).toContain('api.pin && b?.owner');
+    expect(home).toContain('{api.remove && (cur.mine || b?.owner)');
+    expect(home).toContain('{api.edit && cur.mine');
+    expect(home).not.toMatch(/invoke\(/);
+  });
+});
+describe('폰 팀 탭 시트·팀 홈 이름', () => {
+  it('팀 탭도 시트 자리를 깐다 — 없으면 글쓰기 시트가 팀 홈(.tmh position:relative) 안에 갇혀 단추가 잘렸다', () => {
+    expect(phone).toContain('<SheetHostProvider kb={kb}>');
+    expect(mobileApp).toContain('<PhoneTeam kb={vp.kb}');
+  });
+  it('팀 홈 글쓴이도 프로필 별명(목록·대화와 같은 lookOf) — 색은 명부 이름', () => {
+    expect(home).toContain('lookOf(board, id, roster(id)).name');
+    expect(home).toContain('personColor(roster(id))');
+  });
+});
+import mobileApp from '../mobile/MobileApp.tsx?raw';
+describe('팀 홈 오류 문구', () => {
+  it('다시 읽기가 되면 읽기 실패만 지운다 — 고정만 실패한 쓰기 문구가 바로 다시 읽기에 지워져 안 보였다', () => {
+    expect(home).toContain("if (readErr.current) { readErr.current = false; setErr(''); }");
+    expect(home).toMatch(/readErr\.current = false; setErr\(postErr\('write'/);
+  });
+});
+
+describe('썸네일(10-28 사용자 "말풍선 그림이 빈 네모") — 말풍선에 썸네일 길이 아예 없었다', () => {
+  it('말풍선은 thumb 길로 그림·PDF 첫 장을 그린다 — 못 받으면 아이콘으로', () => {
+    expect(bits).toContain('thumbKind(f.name, f.size)');
+    expect(bits).toContain('<img src={src}');
+    expect(bits).toContain('onError={() => { forget(f); setSrc(null); }}');
+  });
+  it('데스크톱은 teamApi 로 감싼 peek(+PDF 는 QuickLook) — 대화 칸은 invoke 를 직접 안 부른다, 시험이 바꿔 끼운다', () => {
+    expect(api).toContain("invoke<string>('team_locker_peek', { team, id })");
+    expect(api).toContain("invoke<string>('ql_thumb', { path })");
+    expect(convo).toContain('thumb = teamFileThumb');
+    expect(convo).toContain('thumb={thumbOf}');
+  });
+  it('폰은 맥이 줄인 JPEG 길(/api/team-file-thumb) — 파일 열기·저장은 여전히 데스크톱만', () => {
+    expect(web).toContain('/api/team-file-thumb?team=');
+    expect(phone).toContain('thumb={teamThumbBlob}');
+  });
+  it('팀 보관함 카드도 같은 길 — PDF 첫 장까지', () => {
+    expect(locker).toContain('teamFileThumb(team, item.id, item.name');
+  });
+});
+
+describe('입력칸 ⌘V(10-28 사용자) — 파인더 파일 복사·스크린샷 복사가 첨부로', () => {
+  it('붙여넣기는 teamApi 로 감싼 맥 클립보드 읽기(team_clip_files) → 같은 attach 길, 글만이면 웹뷰 기본 붙여넣기', () => {
+    expect(api).toContain("invoke<string[]>('team_clip_files', { name })");
+    expect(convo).toContain('onPaste={(e) => {');
+    expect(convo).toContain('pasteTakes([...e.clipboardData.items]');
+    expect(convo).toContain('files.clip(pasteName(new Date()))');
+    expect(convo).toContain('clip: teamClipFiles');
+  });
+});
+
+describe('참모 보관함 → 팀 보관함(10-28 사용자 "끌어도 반응 없음")', () => {
+  it('카드 우클릭·묶음 메뉴에 팀 보관함에 올리기 — 든 팀이 있을 때만', async () => {
+    const lockerPage = (await import('../space/LockerPage.tsx?raw')).default;
+    expect(lockerPage).toContain('team: teams ? { sub: teamUploadSub([c.path], uploadApi, setTeamNote)');
+    expect(lockerPage).toContain('folders: folders.length, teams });');
+    expect(lockerPage).toContain('{undoBar || teamBar}');
+  });
+  it('팀 보관함 칸은 팀 id 를 달고(대화 파일 보기 포함) 끌어 놓은 경로를 그 폴더나 지금 폴더에 올린다 — 올린 뒤 알림 줄은 없다(10-28 사용자)', () => {
+    expect(locker).toContain('data-team-id={teamId}');
+    expect(locker).toContain('const to = d.folder !== undefined ? d.folder || null : folder;');
+    expect(locker).not.toContain('팀 모두에게 바로 보여요');
+    expect(locker).toContain('if (d0.note) { setNote(d0.note); return; }'); // 창 밖 놓기는 못 받은 때만 한 줄(10-28 사용자 '창 안에서만' 안내 줄 지움)
+  });
+});
+
+import useTeamSrc from './useTeam.ts?raw';
+describe('읽음(10-28 사용자 카톡처럼 · 같은 계정 기기끼리)', () => {
+  it('중계엔 사람이 보고 있을 때만 올린다 — 데스크톱은 포커스+보임(looking), 폰은 화면 보임', () => {
+    expect(useTeamSrc).toContain('looking(document)');
+    expect(useTeamSrc).toContain('teamMarkRead(room, seq)');
+    expect(phone).toContain("document.visibilityState === 'visible') : null;");
+    expect(phone).toContain('focused={shown}');
+    expect(web).toContain("read: (room, seq) => post('/api/team-read', { room, seq })");
+  });
+  it('내 안 읽음은 이 창 값과 다른 기기 값(feed.reads)을 합친다 — 메인·따로 창·폰', () => {
+    expect(useTeamSrc).toContain('mergedRead(local, feed?.reads');
+    expect(phone).toContain('mergedRead(local, feed?.reads');
+  });
+  it('말풍선 숫자는 메인·따로 창(useTeamMode)과 폰 모두 같은 TeamConvo 에 reads 로', () => {
+    expect(mode).toContain('reads={feed.reads}');
+    expect(phone).toContain('reads={t.feed.reads}');
+    expect(convo.match(/\{rd\}/g)?.length).toBe(3); // 내 풍선·남의 풍선·참모 말
+  });
+});
+
+import chatView from '../chat/ChatView.tsx?raw';
+import jumpSrc from '../kit/JumpBottom.tsx?raw';
+describe('팀챗 스크롤 — 맨 아래 붙어 있기·읽던 자리·맨 아래로 단추(10-28 사용자)', () => {
+  it('칸 크기(창·폭)와 글 높이(그림 로드)를 둘 다 지켜본다 — 스크롤 칸과 안쪽 글 칸', () => {
+    expect(convo).toContain('new ResizeObserver(');
+    expect(convo).toContain('ro.observe(el)');
+    expect(convo).toContain('ro.observe(inner.current)');
+    expect(convo).toContain('className="tmx-msgs-in" ref={inner}');
+    expect(convo).toContain('keepTop({ near: near.current');
+  });
+  it('새 말이 와도 올려 읽는 중이면 끌어내리지 않는다 — 대화를 바꾸거나 내가 보냈을 때만 무조건 맨 아래', () => {
+    expect(convo).not.toContain('el.scrollTop = el.scrollHeight; }, [convo.key, top, handing, sending.length]');
+    expect(convo).toContain('stickBottom({ wasNear: near.current, sentMine })');
+  });
+  it('맨 아래로 단추는 참모 채팅과 같은 조각(kit/JumpBottom) — 새 말 수는 숫자 배지', () => {
+    expect(chatView).toContain('<JumpBottom');
+    expect(chatView).not.toContain('<button className="chat-bottom"');
+    expect(convo).toContain('<JumpBottom');
+    expect(convo).toContain('n={unseen}');
+    expect(jumpSrc).toContain('<Badge n={n}');
   });
 });

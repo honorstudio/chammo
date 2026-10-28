@@ -35,6 +35,12 @@ pub const FILES: &[(&str, &str)] = &[
     ("src/share.js", include_str!("../../../tools/chammo-browser/src/share.js")),
     ("src/dialogs.js", include_str!("../../../tools/chammo-browser/src/dialogs.js")),
     ("src/survive.js", include_str!("../../../tools/chammo-browser/src/survive.js")),
+    ("src/windesk.js", include_str!("../../../tools/chammo-browser/src/windesk.js")),
+    ("src/winshow.js", include_str!("../../../tools/chammo-browser/src/winshow.js")),
+    ("src/wlog.js", include_str!("../../../tools/chammo-browser/src/wlog.js")),
+    ("src/passkey.js", include_str!("../../../tools/chammo-browser/src/passkey.js")),
+    ("src/hold-passkey.js", include_str!("../../../tools/chammo-browser/src/hold-passkey.js")),
+    ("src/passkey-auto.js", include_str!("../../../tools/chammo-browser/src/passkey-auto.js")),
 ];
 
 pub const MIN_NODE: u32 = 20;

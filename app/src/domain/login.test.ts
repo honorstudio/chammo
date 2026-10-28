@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionState } from './session';
-import { loggedOutSeen, emptyLogin, loginStep, needText, readKeep, readProbe, routineSessions, routineStalls, stalledOf, type LoginInput } from './login';
+import { TERMS_GRACE_MS } from './accountAuto';
+import { loggedOutSeen, emptyLogin, loginStep, needText, readKeep, readProbe, routineSessions, routineStalls, stalledOf, termsCards, termsKey, termsText, type LoginInput } from './login';
 
 const T0 = Date.parse('2026-10-06T00:30:22Z');
 const s = (session: string, ts: number, kind: 'background' | 'interactive' = 'background') => ({ session, name: session, ts, kind });
@@ -182,6 +183,10 @@ describe('readProbe — Rust login_probe 답', () => {
     expect(readProbe({ loggedIn: 'yes', credAt: 'x' })).toEqual({ loggedIn: null, credAt: null });
     expect(readProbe({ loggedIn: true, credAt: 1_790_000_000_000 })).toEqual({ loggedIn: true, credAt: 1_790_000_000_000 });
   });
+  it('약관 다시 시도 시각(termsRetryAt)은 숫자일 때만', () => {
+    expect(readProbe({ loggedIn: true, credAt: 1, termsRetryAt: 7 })).toEqual({ loggedIn: true, credAt: 1, termsRetryAt: 7 });
+    expect(readProbe({ loggedIn: true, credAt: 1, termsRetryAt: null })).toEqual({ loggedIn: true, credAt: 1 });
+  });
 });
 
 // 예약 폴더(<데이터>/routines/<이름>)에서 뜬 세션은 앱 세션 목록 밖이라 진짜 로그인 풀림으로 멈춰도 카드가 안 떴다 — 예약 tick 은 그걸 카드 몫으로 비킨다(roadmap 137행 ①)
@@ -246,5 +251,111 @@ describe('needText — 카드 글(짧게)', () => {
     expect(needText({ since: 1, sessions: [], machine: true })).toEqual({ title: 'Claude 로그인이 풀렸어요', where: '멈춘 곳: 이 맥' });
     // 멈춘 세션이 있으면 그게 먼저
     expect(needText({ since: 1, sessions: ['imac'], machine: true, keep: 'late' }).where).toBe('멈춘 곳: imac');
+  });
+});
+
+describe('loginStep — 약관 동의 필요(400, 2026-10-28)', () => {
+  const tm = (session: string, ts: number, kind: 'background' | 'interactive' = 'background') => ({ ...s(session, ts, kind), terms: true as const });
+
+  it('약관 멈춤은 로그인 카드에 안 섞는다 — 따로 terms 로, 이어서도 안 보낸다', () => {
+    const p = loginStep(emptyLogin(), inp({ stalled: [tm('hq', T0), s('imac', T0 + 1_000)], loginAt: T0 - 3600_000, loggedIn: true }));
+    expect(p.need).toEqual({ since: T0 + 1_000, sessions: ['imac'], machine: false });
+    expect(p.terms).toEqual({ since: T0, last: T0, sessions: ['hq'], ids: ['hq'] });
+    expect(p.nudge).toEqual([]);
+    expect(p.termsNudge).toEqual([]);
+  });
+
+  it('[다시 시도]를 누르면(termsRetryAt > 멈춘 시각) 멈춘 백그라운드 세션마다 한 번 이어서, 카드는 내린다', () => {
+    const a = loginStep(emptyLogin(), inp({ stalled: [tm('hq', T0)], loginAt: T0 - 3600_000, termsRetryAt: T0 + 30_000, now: T0 + 40_000 }));
+    expect(a.termsNudge).toEqual(['hq']);
+    expect(a.terms).toBeNull();
+    // 같은 다시 시도로는 두 번 안 보낸다
+    expect(loginStep(a.mem, inp({ stalled: [tm('hq', T0)], loginAt: T0 - 3600_000, termsRetryAt: T0 + 30_000, now: T0 + 50_000 })).termsNudge).toEqual([]);
+  });
+
+  it('다시 시도 뒤 또 약관 오류면(아직 동의 안 함) 다시 카드 — 다시 띄우기(respawn)는 안 한다', () => {
+    const a = loginStep(emptyLogin(), inp({ stalled: [tm('hq', T0)], loginAt: T0 - 3600_000, termsRetryAt: T0 + 30_000, now: T0 + 40_000 }));
+    const b = loginStep(a.mem, inp({ stalled: [tm('hq', T0 + 45_000)], loginAt: T0 - 3600_000, termsRetryAt: T0 + 30_000, okAt: T0 + 50_000, now: T0 + 60_000 }));
+    expect(b.terms).toEqual({ since: T0 + 45_000, last: T0 + 45_000, sessions: ['hq'], ids: ['hq'] });
+    expect(b.respawn).toEqual([]);
+    expect(b.termsNudge).toEqual([]);
+  });
+
+  it('계정 풀이 다른 계정으로 돌렸으면(로그인 칸이 새로 써짐) 다시 시도 없이도 이어서', () => {
+    const p = loginStep(emptyLogin(), inp({ stalled: [tm('hq', T0)], loginAt: T0 + 20_000, now: T0 + 30_000, loggedIn: true }));
+    expect(p.termsNudge).toEqual(['hq']);
+    expect(p.nudge).toEqual([]);
+    expect(p.terms).toBeNull();
+  });
+
+  it('터미널 세션은 사람이 친다 — 다시 시도 뒤엔 카드만 내린다', () => {
+    const p = loginStep(emptyLogin(), inp({ stalled: [tm('cli', T0, 'interactive')], termsRetryAt: T0 + 30_000, now: T0 + 40_000 }));
+    expect(p.termsNudge).toEqual([]);
+    expect(p.terms).toBeNull();
+  });
+
+  it('계정을 바꾼 직후(유예 안) 난 약관 멈춤은 옛 토큰 탓 — 카드 없이, 옛 토큰이 빠질 때(1분) 뒤 이어서 한 번(2026-10-28 15:47:32)', () => {
+    const sw = T0 + 20_000; // 15:47:28 바꿈 → 4초 뒤 새 턴도 옛 계정 약관 오류
+    const a = loginStep(emptyLogin(), inp({ stalled: [tm('hq', sw + 4_000)], loginAt: sw, now: sw + 10_000, loggedIn: true }));
+    expect(a.terms).toBeNull();
+    expect(a.termsNudge).toEqual([]);
+    const b = loginStep(a.mem, inp({ stalled: [tm('hq', sw + 4_000)], loginAt: sw, now: sw + 70_000, loggedIn: true }));
+    expect(b.termsNudge).toEqual(['hq']);
+    expect(loginStep(b.mem, inp({ stalled: [tm('hq', sw + 4_000)], loginAt: sw, now: sw + 80_000, loggedIn: true })).termsNudge).toEqual([]);
+    // 바꿀 때 보낸 이어서가 옛 토큰으로 또 멈춰도 간격(2분) 안 기다리고 1분 뒤 한 번 더 — 카드는 안 띄운다
+    const c = loginStep(b.mem, inp({ stalled: [tm('hq', sw + 72_000)], loginAt: sw, now: sw + 135_000, loggedIn: true }));
+    expect(c.terms).toBeNull();
+    expect(c.termsNudge).toEqual(['hq']);
+    // 유예가 지나 또 멈췄으면 진짜 — 카드
+    const late = sw + TERMS_GRACE_MS + 30_000;
+    expect(loginStep(b.mem, inp({ stalled: [tm('hq', late)], loginAt: sw, now: late + 5_000, loggedIn: true })).terms?.sessions).toEqual(['hq']);
+  });
+
+  it('stalledOf 가 약관 표시를 넘긴다', () => {
+    const st = stalledOf([{ session: { id: 'a', name: 'hq', kind: 'background', state: 'idle' as SessionState }, activity: { auth: { ts: '2026-10-06T00:30:22Z', text: 'x', terms: true } } }]);
+    expect(st).toEqual([{ session: 'a', name: 'hq', ts: T0, kind: 'background', terms: true }]);
+  });
+});
+
+describe('termsCards — 계정마다 카드 하나', () => {
+  const view = (auto: unknown, active = 'b') => ({ accounts: [{ id: 'a', name: 'main', email: 'a@x.com', plan: 'max' }, { id: 'b', name: 'new2', email: 'new2@x.com', plan: 'max' }], active, liveEmail: 'new2@x.com', livePlan: 'max', auto });
+
+  it('약관으로 막힌 칸마다 하나 — 멈춘 세션이 없어도(건너뛰는 중이라도) 남는다', () => {
+    expect(termsCards(null, view({ slots: { b: { blockedUntil: T0 + 1e9, why: 'terms' } } }, 'a'))).toEqual([{ id: 'b', email: 'new2@x.com', sessions: [] }]);
+  });
+
+  it('멈춘 세션은 지금 계정 카드에 붙는다 — 그 계정이 이미 막힌 칸이어도 카드는 하나', () => {
+    const v = view({ slots: { b: { blockedUntil: T0 + 1e9, why: 'terms' } } });
+    expect(termsCards({ since: T0, sessions: ['hq', 'web'] }, v)).toEqual([{ id: 'b', email: 'new2@x.com', sessions: ['hq', 'web'] }]);
+  });
+
+  it('자동 전환이 막힌 칸에서 다른 칸으로 막 넘긴 뒤(재기가 아직 새 로그인을 못 봄) 멈춤은 막힌 칸 카드에 — 넘겨 간 칸 이름으로 카드를 안 띄운다', () => {
+    const v = view({ slots: { b: { blockedUntil: T0 + 1e9, why: 'terms' } } }, 'a');
+    expect(termsCards({ since: T0, sessions: ['hq'] }, v)).toEqual([{ id: 'b', email: 'new2@x.com', sessions: ['hq'] }]);
+  });
+
+  it('막은 지 한참 뒤(유예 넘어) 멈춘 건 지금 계정 탓 — 지금 계정 카드에 붙는다(연쇄 멈춤: 넘긴 칸도 약관)', () => {
+    const blockedAt = T0;
+    const v = view({ slots: { b: { blockedUntil: blockedAt + 30 * 86_400_000, why: 'terms' } } }, 'a');
+    const t = { since: T0 + 600_000, last: T0 + 600_000, sessions: ['hq'], ids: ['s-hq'] };
+    expect(termsCards(t, v)).toEqual([{ id: 'b', email: 'new2@x.com', sessions: [] }, { id: 'a', email: 'a@x.com', sessions: ['hq'], sids: ['s-hq'] }]);
+    // 막은 직후 멈춤은 막힌 칸 카드에
+    expect(termsCards({ ...t, last: T0 + 5_000 }, v)).toEqual([{ id: 'b', email: 'new2@x.com', sessions: ['hq'], sids: ['s-hq'] }]);
+  });
+
+  it('계정 칸이 없으면 지금 로그인 이메일로, 그것도 모르면 이메일 없이', () => {
+    expect(termsCards({ since: T0, sessions: ['hq'] }, { accounts: [], active: null, liveEmail: 'me@x.com', livePlan: null })).toEqual([{ id: 'live', email: 'me@x.com', sessions: ['hq'] }]);
+    expect(termsCards({ since: T0, sessions: ['hq'] }, null)).toEqual([{ id: 'live', email: null, sessions: ['hq'] }]);
+    expect(termsCards(null, null)).toEqual([]);
+  });
+
+  it('닫기 키 — 같은 계정·같은 멈춘 곳이면 같은 카드, 멈춘 곳이 바뀌면 다른 카드(다시 뜬다)', () => {
+    const c = { id: 'b', email: 'x', sessions: ['hq'], sids: ['s1'] };
+    expect(termsKey({ ...c, email: 'y' })).toBe(termsKey(c));
+    expect(termsKey({ ...c, sessions: ['hq', 'web'] })).not.toBe(termsKey(c));
+  });
+
+  it('카드 글 — 이메일을 넣는다', () => {
+    expect(termsText({ id: 'b', email: 'new2@x.com', sessions: ['hq'] }).title).toContain('new2@x.com');
   });
 });

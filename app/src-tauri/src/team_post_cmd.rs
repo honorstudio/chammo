@@ -13,26 +13,32 @@ async fn job<T: Send + 'static>(f: impl FnOnce(&std::path::Path, &dyn crate::acc
 #[tauri::command]
 pub async fn team_posts(window: tauri::WebviewWindow, team: String) -> Result<Board, String> {
     ui_only(&window)?;
-    job(move |d, kc, h| post::board(d, kc, h, &team)).await
+    let (b, share) = job(move |d, kc, h| post::board_split(d, kc, h, &team)).await?;
+    share.spawn();
+    Ok(b)
 }
 
 /// 글 쓰기·고치기(origin = 고칠 글 id) — 글 id
 #[tauri::command]
 pub async fn team_post_write(window: tauri::WebviewWindow, team: String, title: String, body: String, origin: Option<String>) -> Result<String, String> {
     ui_only(&window)?;
-    job(move |d, kc, h| post::write(d, kc, h, &team, &title, &body, origin.as_deref())).await
+    let (id, share) = job(move |d, kc, h| post::write(d, kc, h, &team, &title, &body, origin.as_deref())).await?;
+    share.spawn();
+    Ok(id)
 }
 
 /// 고정·풀기(post 빈 글) — 팀장만
 #[tauri::command]
 pub async fn team_post_pin(window: tauri::WebviewWindow, team: String, post: String) -> Result<(), String> {
     ui_only(&window)?;
-    job(move |d, kc, h| post::pin(d, kc, h, &team, &post)).await
+    job(move |d, kc, h| post::pin(d, kc, h, &team, &post)).await?.spawn();
+    Ok(())
 }
 
 /// 글 지우기(휴지통) — 글쓴이·팀장만
 #[tauri::command]
 pub async fn team_post_remove(window: tauri::WebviewWindow, team: String, post: String) -> Result<(), String> {
     ui_only(&window)?;
-    job(move |d, kc, h| post::remove(d, kc, h, &team, &post)).await
+    job(move |d, kc, h| post::remove(d, kc, h, &team, &post)).await?.spawn();
+    Ok(())
 }

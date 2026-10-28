@@ -282,14 +282,14 @@ def build(me_sid, agents, roles, events, cfg, now):
     told = any(what(a['name']) for a in others)
     if en:
         out = (f'{name} roster: {me}Other {name}s: {rows}. The SendMessage address is the name exactly as written here (including the part after " · ");'
-               f' to the user, call them by that nickname, not the number.')
+               f' to the user, call them by that nickname, not the number. Do not sign messages to another {name} with your numbered name (the app shows your nickname above them).')
         if told:
             out += (f' When a request is not yours and matches what another {name} handles (its project name or kind of work appears in that line), do not do it yourself:'
                     f' hand it to that one with SendMessage and tell the user in one line ("handed to …"). What the user set is the rule, the last 7 days are a hint;'
                     f' if nobody fits or it is unclear, do it yourself.')
     else:
         out = (f'{name} 이름표: {me}다른 {name}: {rows}. SendMessage 주소는 여기 적힌 이름 그대로(" · " 뒤까지),'
-               f' 사용자에게 말할 땐(음성 포함) 번호 말고 " · " 뒤 별명으로 부른다.')
+               f' 사용자에게 말할 땐(음성 포함) 번호 말고 " · " 뒤 별명으로 부른다. 다른 {name}에게 보낼 땐 본문 앞에 번호 이름 서명을 붙이지 않는다(앱이 보낸 쪽 별명을 위에 보여 준다).')
         if told:
             out += (f' 일을 받으면: 네 맡은 일이 아니고 다른 {name} 맡은 일에 맞으면(그 줄에 요청의 프로젝트 이름이나 일 종류가 있으면) 직접 하지 말고'
                     f' 그 {name}에게 SendMessage 로 넘기고 사용자에게 "○○에게 넘겼어" 한 줄. 사람이 적은 맡은 일이 기준, 최근 7일은 참고.'

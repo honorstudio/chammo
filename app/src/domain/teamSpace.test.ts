@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { closeTeamTab, EMPTY_TEAM_TABS, openTeamFile, pickTeamTab, teamTabsOf, type TeamTabs } from './teamSpace';
+import { closeTeamTab, EMPTY_TEAM_TABS, openTeamFile, pickTeamTab, roomFilesKey, roomOfTab, teamTabsOf, type TeamTabs } from './teamSpace';
 
 describe('팀 스페이스 탭(시안 team-space A — 팀 홈·팀 보관함 + 연 파일)', () => {
   it('처음엔 팀 홈, 연 파일 없음', () => {
@@ -32,5 +32,18 @@ describe('팀 스페이스 탭(시안 team-space A — 팀 홈·팀 보관함 + 
     const m = new Map([['t1', { cur: 'locker', files: [] } as TeamTabs]]);
     expect(teamTabsOf(m, 't1').cur).toBe('locker');
     expect(teamTabsOf(m, 't2')).toEqual(EMPTY_TEAM_TABS);
+  });
+  it('대화 파일 보기 탭 — files:<방> 열쇠, 방 id 를 다시 꺼낸다(파일 경로·고정 탭은 방 없음)', () => {
+    expect(roomFilesKey('r1')).toBe('files:r1');
+    expect(roomOfTab('files:r1')).toBe('r1');
+    expect(roomOfTab('/d/files:r1.png')).toBe('');
+    expect(roomOfTab('locker')).toBe('');
+  });
+  it('대화 파일 보기에서 연 파일을 닫으면 그 대화 파일 보기로 — 그 보기를 먼저 닫았으면 홈', () => {
+    const t = openTeamFile(openTeamFile({ cur: 'home', files: [] }, roomFilesKey('r1')), '/d/a.png');
+    expect(t.files[1]).toEqual({ path: '/d/a.png', from: 'files:r1' });
+    expect(closeTeamTab(t, '/d/a.png').cur).toBe('files:r1');
+    const gone = closeTeamTab({ ...t, cur: '/d/a.png' }, 'files:r1');
+    expect(closeTeamTab(gone, '/d/a.png').cur).toBe('home');
   });
 });

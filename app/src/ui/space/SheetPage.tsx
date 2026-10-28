@@ -11,6 +11,7 @@ import { IconButton } from '../kit/IconButton';
 import type { SheetControl, SheetStatus, SheetView, SheetWho } from './SheetGrid';
 import { addSheetLog } from './pending';
 import { SendFab } from './SendFab';
+import { openInCraft } from '../craft/openInCraft';
 
 // 표(Univer)는 엑셀을 열 때 불러온다 — 11MB 라 앱 시작에 안 싣는다(ADR 0004)
 const SheetGrid = lazy(() => import('./SheetGrid'));
@@ -28,7 +29,8 @@ export function SheetPage({ path, owner, where, onBack, tail, onAttach, attachTo
   where?: string;
   onBack?: () => void;
   tail?: React.ReactNode;
-  onAttach?: () => void;
+  /** e = 누른 단추(팀 모드에선 그 자리에 참모 고르기) */
+  onAttach?: (e?: React.MouseEvent<HTMLElement>) => void;
   /** 붙일 참모(이름·색) — 보내기 단추 색 */
   attachTo?: OrchTo | null;
   pinned?: boolean;
@@ -68,7 +70,7 @@ export function SheetPage({ path, owner, where, onBack, tail, onAttach, attachTo
         {charts > 0 && onPreview && <button className="cv-chip" onClick={onPreview} title={tr('차트는 원본 미리보기로 — 저장해도 파일엔 그대로 남아', 'Charts show in the original preview — saving keeps them')}>{tr(`차트 ${charts}개`, `${charts} chart${charts > 1 ? 's' : ''}`)}</button>}
         {/* 같은 파일을 참모 표 칸으로 — 계산·정렬·서식·차트처럼 칸이 많이 바뀌는 일(2026-10-21 사용자 A안). 닫으면 그 자리에 저장 */}
         <button className="cv-chip cv-sheet-grid" disabled={status.s === 'saving'} title={tr('같은 파일을 참모 표 칸에서 열기 — 닫으면 이 파일에 저장', 'Open this file in a Chammo Grid pane — saved back here on close')}
-          onClick={() => { setGridErr(''); void invoke('craft_open_file', { app: 'gridcraft', path }).catch((e) => setGridErr(craftErr(e).text)); }}>{tr('참모 표로 열기', 'Open in Chammo Grid')}</button>
+          onClick={() => { setGridErr(''); void openInCraft(path, 'gridcraft').catch((e) => setGridErr(craftErr(e).text)); }}>{tr('참모 표로 열기', 'Open in Chammo Grid')}</button>
         {onAttach && <SendToOrch to={attachTo} onClick={onAttach} />}
         {onPin && <IconButton pressed={!!pinned} label={pinned ? tr('고정됨', 'Pinned') : tr('고정', 'Pin')} onClick={onPin}><IconPin /></IconButton>}
         {tail}

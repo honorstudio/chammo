@@ -1,0 +1,10 @@
+/* 참모 앱으로 열기 — 설치·여는 중 한 줄(창 아래 가운데) */
+.co-note { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: var(--z-toast); display: flex; align-items: center; gap: 8px;
+  max-width: min(560px, 90vw); padding: 8px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .12); font-size: 13px; }
+/* '참모 벡터로 열기' — 미리보기 머리·리더 아래 줄(스페이스 밖에서도 같은 모양이라 space.css .cv-chip 을 빌리지 않는다) */
+.co-chip { all: unset; flex: none; cursor: pointer; padding: 4px 10px; border-radius: 999px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); color: var(--text-2); font-size: 12px; white-space: nowrap; }
+.co-chip:hover { box-shadow: 0 0 0 1px var(--accent); color: var(--accent); }
+.co-chip:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+/* '미리보기를 못 만들었어 — 참모 벡터로 열기' 한 줄(리더 .rd-empty 가운데 자리) */
+.co-fail { gap: 8px; flex-wrap: wrap; }

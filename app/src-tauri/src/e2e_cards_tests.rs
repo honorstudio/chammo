@@ -1,24 +1,42 @@
 use super::*;
 
 fn who(acc: &str, state: &str, blocked: bool) -> Person {
-    Person { account: acc.into(), team: "t1".into(), member: "m2".into(), name: "철수".into(), state: state.into(), verified_at: 0, blocked, number: "48291 07733 91024 66580 13907 52268".into(), identity: "I1".into(), head: "H1".into(), refetched: false }
+    Person { account: acc.into(), team: "t1".into(), member: "m2".into(), name: "철수".into(), state: state.into(), verified_at: 0, blocked, number: "48291 07733 91024 66580 13907 52268".into(), identity: "I1".into(), head: "H1".into(), refetched: false, rekeyed_at: 0 }
 }
 
 #[test]
-fn 바뀜·갈림인_사람마다_카드_하나_이미_있거나_막아_두면_안_띄운다() {
-    let people = [who("a2", "changed", false), who("a3", "ok", false), who("a4", "forked", true), who("a5", "verified", false)];
+fn 보안_번호_바뀜은_카드를_안_띄우고_갈림만_띄운다_막아_두면_안_띄운다() {
+    // 사용자 10-29 "팀챗이라 메시지 보이는 건 허용이 필요 없다" — 바뀜(다시 시작)은 저절로 받아들이고 대화에 회색 줄만(auto_list)
+    let people = [who("a2", "changed", false), who("a3", "ok", false), who("a4", "forked", true), who("a5", "verified", false), who("a6", "forked", false)];
     let p = plan("", &people);
-    assert_eq!(p.open.iter().map(|x| x.account.as_str()).collect::<Vec<_>>(), vec!["a2"]);
-    let log = safety_row("ab12cd34", &people[0], "샘플팀", "2027-01-15T08:00:00Z").to_string();
+    assert_eq!(p.open.iter().map(|x| x.account.as_str()).collect::<Vec<_>>(), vec!["a6"]);
+    let log = safety_row("ab12cd34", &people[4], "샘플팀", "2027-01-15T08:00:00Z").to_string();
     assert!(plan(&log, &people).open.is_empty(), "이미 열린 카드");
-    assert_eq!(card_of(&log, "a2").as_deref(), Some("ab12cd34"));
+    assert_eq!(card_of(&log, "a6").as_deref(), Some("ab12cd34"));
+}
+
+#[test]
+fn 떠_있던_바뀜_카드는_닫고_저절로_받아들인다_지금_팀에_있는_사람만() {
+    let log = safety_row("ab12cd34", &who("a2", "changed", false), "샘플팀", "2027-01-15T08:00:00Z").to_string();
+    assert_eq!(plan(&log, &[who("a2", "changed", false)]).close, vec!["ab12cd34".to_string()]);
+    let mut left = who("a7", "changed", false);
+    left.member = "m7".into();
+    let people = [who("a2", "changed", false), who("a3", "changed", true), left, who("a4", "forked", false)];
+    let here: std::collections::BTreeSet<(String, String)> = [("t1".to_string(), "m2".to_string())].into();
+    // 나간 사람(m7)·막아 둔 사람·갈림은 저절로 받아들이지 않는다
+    assert_eq!(auto_list(&people, &here).iter().map(|x| x.account.as_str()).collect::<Vec<_>>(), vec!["a2"]);
+    // 나간 사람은 카드도 없다(갈림이어도)
+    let mut gone = who("a8", "forked", false);
+    gone.member = "m8".into();
+    assert!(plan("", &current_only(&[gone], &here)).open.is_empty());
 }
 
 #[test]
 fn 받아들여졌거나_막아_두면_열린_카드를_닫는다() {
     let log = safety_row("ab12cd34", &who("a2", "changed", false), "샘플팀", "2027-01-15T08:00:00Z").to_string();
+    let log = safety_row("ab12cd34", &who("a2", "forked", false), "샘플팀", "2027-01-15T08:00:00Z").to_string();
     assert_eq!(plan(&log, &[who("a2", "verified", false)]).close, vec!["ab12cd34".to_string()]);
-    assert_eq!(plan(&log, &[who("a2", "changed", true)]).close, vec!["ab12cd34".to_string()]);
+    assert_eq!(plan(&log, &[who("a2", "forked", true)]).close, vec!["ab12cd34".to_string()]);
     let answered = format!("{log}\n{}", r#"{"type":"answer","id":"ab12cd34","pick":"no"}"#);
     assert!(plan(&answered, &[who("a2", "changed", true)]).close.is_empty(), "이미 답한 카드는 그대로");
 }
@@ -48,8 +66,8 @@ fn 앱이_이번에_띄운_보안_번호_카드만_받는다() {
 
 #[test]
 fn 카드가_띄운_사슬이_지금과_다르면_닫고_새_번호로_다시_띄운다() {
-    // 6차 리뷰 — 견주는 사이 서버가 다른 reset 사슬을 보여 주면 옛 번호 카드로 받아들이면 안 된다
-    let shown = who("a2", "changed", false);
+    // 6차 리뷰 — 견주는 사이 서버가 다른 사슬을 보여 주면 옛 번호 카드로 받아들이면 안 된다(카드는 이제 갈림만, 10-29)
+    let shown = who("a2", "forked", false);
     let log = safety_row("ab12cd34", &shown, "샘플팀", "2027-01-15T08:00:00Z").to_string();
     assert!(plan(&log, &[shown.clone()]).close.is_empty() && plan(&log, &[shown.clone()]).open.is_empty(), "그대로면 그대로");
     let mut now = shown.clone();

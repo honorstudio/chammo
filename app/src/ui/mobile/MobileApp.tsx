@@ -15,7 +15,7 @@ import { useWaitSent } from './waitSent';
 import { parseTaskLog, type TaskEvent } from '../../domain/tasks';
 import { makeTaskTail } from '../../domain/taskTail';
 import { parseRoutines, routineState } from '../../domain/routine';
-import { groupByProject, parseAgents, type Session } from '../../domain/session';
+import { groupByProject, parseAgents, type Session, seenName } from '../../domain/session';
 import { ChatSheet } from './ChatSheet';
 import { SheetHostProvider } from './kit';
 import { Composer } from './Composer';
@@ -128,7 +128,7 @@ function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask,
   const [fileOpen, setFileOpen] = useState<ChatFile | null>(null);
   /** 사무실 뽑기·스킨 시트가 열린 동안 — 아래 채팅창을 숨겨 시트가 커진다(PhoneOffice onWide) */
   const [wide, setWide] = useState(false);
-  const askName = asking[0] ? sessions.find((s) => s.id === asking[0]!.from)?.name || asking[0].from : browserAsks[0] ? browserAskName(browserAsks[0].live, sessions) : '';
+  const askName = asking[0] ? seenName(sessions.find((s) => s.id === asking[0]!.from)?.name || asking[0].from) : browserAsks[0] ? browserAskName(browserAsks[0].live, sessions) : '';
   return (
     <div className="m-space" style={orchVars(color) as React.CSSProperties}>
       {/* 시트 자리 — 이 아래 시트(BottomSheet)는 전부 틀 안 끝에 그려진다(키보드 위·참모 색) */}
@@ -413,7 +413,7 @@ export function MobileApp() {
       {error && <div className="m-error m-top-err">{error}</div>}
       <div className="m-tabpage" style={{ height: pageVp.h }}>
         {tab === 'team'
-          ? <PhoneTeam api={teamViaMac} t={team} orch={{ id: orch.id, name: orch.name || env.assistantName }} open={teamRoom} />
+          ? <PhoneTeam kb={vp.kb} api={teamViaMac} t={team} orch={{ id: orch.id, name: orch.name || env.assistantName }} open={teamRoom} />
           : <OrchSpace key={orch.id} far={farDevs.length ? { devices: farDevs, onPick: setFar } : undefined} orch={orch} orchs={orchs} sessions={sessions} events={events} waiting={waiting} waitSent={waitSent} ask={asks[orch.id] ?? null} ctx={ctx} env={env} snap={snap} setSnap={setSnap} vp={pageVp} stateAt={stateAt} lines={lines}
             view={view} setView={setView} onPick={go} onTalk={talkTo} onStopped={stopped} wake={wake} lives={lives} push={push} jump={jump} />}
       </div>

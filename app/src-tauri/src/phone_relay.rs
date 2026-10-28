@@ -19,6 +19,13 @@ const PING_EVERY: Duration = Duration::from_secs(45);
 const DEAD_AFTER: Duration = Duration::from_secs(120);
 const CHECK_EVERY: Duration = Duration::from_secs(10);
 const MAX_WORKERS: usize = 8;
+/// 이만큼 붙어 있다 끊기면 '잘 돌던 연결' — 다시 붙기 기다림을 처음(4초)부터
+const HEALTHY: Duration = Duration::from_secs(60);
+
+/// 다음 다시 붙기 차례 수(team_relay_ws::backoff 에 넣는다). up = 이번에 붙어 있던 시간(못 붙었으면 None)
+fn next_fails(fails: u32, up: Option<Duration>) -> u32 {
+    if up.is_some_and(|d| d >= HEALTHY) { 1 } else { fails.saturating_add(1) }
+}
 
 /// 지금 상태 — 설정 화면이 읽는다
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -124,7 +131,8 @@ pub fn boot<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
             };
             let (gate, be) = crate::mobile::relay_parts(&app, &web);
             set_status(|s| { s.on = true; s.error = None; });
-            match run(&dir, &st, &web, keys, gate, be) {
+            let mut up = None;
+            match run(&dir, &st, &web, keys, gate, be, &mut up) {
                 Ok(()) => fails = 0,
                 Err(e) if e == "revoked" => {
                     log("서버가 이 기기를 끊었어 — 폰 중계 멈춤");
@@ -132,8 +140,11 @@ pub fn boot<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 }
                 Err(e) => {
                     set_status(|s| { s.connected = false; s.error = Some(e.clone()); });
-                    fails += 1;
-                    std::thread::sleep(crate::team_relay_ws::backoff(fails));
+                    fails = next_fails(fails, up.map(|t: Instant| t.elapsed()));
+                    let wait = crate::team_relay_ws::backoff(fails);
+                    // 끊긴 까닭·붙어 있던 시간을 남긴다 — 전엔 '허브에 붙음'만 남아 폰이 안 될 때 맥 쪽이 빠졌었는지 못 가렸다
+                    log(&format!("허브 끊김 — {e} · {}초 붙어 있었음 · {}초 뒤 다시", up.map_or(0, |t: Instant| t.elapsed().as_secs()), wait.as_secs()));
+                    std::thread::sleep(wait);
                 }
             }
         }
@@ -152,8 +163,9 @@ enum Out {
 }
 
 /// 붙어서 돌기 — 조건이 바뀌면 Ok 로 나온다
-fn run(dir: &Path, st: &TeamState, web: &str, keys: DeviceKeys, gate: Arc<Gate>, be: Arc<dyn Backend>) -> Result<(), String> {
+fn run(dir: &Path, st: &TeamState, web: &str, keys: DeviceKeys, gate: Arc<Gate>, be: Arc<dyn Backend>, up: &mut Option<Instant>) -> Result<(), String> {
     let mut ws = crate::team_relay_ws::connect_url(&team_relay::hub_url(st, &keys, now_ms(), &new_nonce()?)?)?;
+    *up = Some(Instant::now());
     log("허브에 붙음");
     set_status(|s| { s.connected = true; s.error = None; });
     let me_pub = tun::pubkey(&keys.tunnel_public()).map_err(|_| "열쇠 모양")?;
@@ -463,7 +475,7 @@ fn work(req: core::TReq, line: String, c: String, gate: &Arc<Gate>, be: &Arc<dyn
     std::thread::spawn(move || {
         let r = core::serve(&req, &line, &gate, &*be);
         busy.fetch_sub(1, Ordering::SeqCst);
-        let _ = tx.send(Out::Reply(c, core::resp_chunks(req.id, &r, head)));
+        let _ = tx.send(Out::Reply(c, core::reply_chunks(&req, &r)));
     });
 }
 

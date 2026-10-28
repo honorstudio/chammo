@@ -276,10 +276,8 @@ def install(app, get=None, ddir=None, rel=None):
         shutil.rmtree(old, ignore_errors=True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    if ddir:  # 우리가 깐 것 — remove 는 이 기록에 있는 것만 지운다
-        recs = C.load_installs(ddir)
-        recs[app] = {'path': dest, 'ver': rel['ver'], 'at': time.strftime('%Y-%m-%d')}
-        C._write_json(os.path.join(ddir, 'craft-native', 'installed.json'), recs)
+    if ddir:
+        C.record_install(ddir, app, dest, rel['ver'])
     return dest
 
 

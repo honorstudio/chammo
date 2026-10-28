@@ -1,11 +1,11 @@
 // 팀 보관함 기다리는 일(낙관적 반영) — 누르면 받은 목록 위에 바로 얹어 그리고, 서버 답이 오면 새 목록으로 갈아 끼운 뒤 뗀다.
 // 실패하면 떼기만 하면 받은 목록 그대로 되돌아간다(받은 목록은 안 건드린다). 10-26 사용자 298.png "폴더 만드는데 한참 — 하나 더 만들 뻔"
 import { tr } from '../i18n';
-import type { LockerItem } from './teamLocker';
+import { under, type LockerItem } from './teamLocker';
 
 export type LockerOp =
   | { k: 'mkdir'; folder: string }
-  /** 폴더 이름 바꾸기(to) · 지우기(to null — 안의 파일은 휴지통) */
+  /** 폴더 이름 바꾸기·옮기기(to = 새 경로 전체) · 지우기(to null — 안의 파일·안쪽 폴더는 휴지통) */
   | { k: 'folder'; from: string; to: string | null }
   /** 파일 이름 바꾸기·폴더로 옮기기(folder '' = 맨 위) */
   | { k: 'meta'; id: string; name?: string; folder?: string }
@@ -18,7 +18,8 @@ export function opKey(op: LockerOp): string {
   return `file:${op.id}`;
 }
 
-const inFolder = (i: LockerItem, f: string) => i.state === 'live' && !i.room && i.folder === f;
+/** 그 폴더나 안쪽(팀 보관함·살아 있는 것) */
+const inFolder = (i: LockerItem, f: string) => i.state === 'live' && !i.room && under(i.folder, f);
 
 /** 받은 목록 + 기다리는 일 → 그릴 목록과 '반영 중' 표시(줄 id·폴더 이름) */
 export function withPending(items: LockerItem[], ops: LockerOp[], now = Date.now()): { items: LockerItem[]; busy: Set<string>; busyFolders: Set<string> } {
@@ -33,7 +34,7 @@ export function withPending(items: LockerItem[], ops: LockerOp[], now = Date.now
       if (!out.some((i) => inFolder(i, f))) out.push({ id: `pending:${f}`, name: '', size: 0, cipher: 0, at: now, state: 'live', kind: 'file', room: '', folder: f, by: '', byMember: '', mine: true, why: '', deletedAt: null, dir: true });
     } else if (op.k === 'folder') {
       if (op.to) busyFolders.add(op.to);
-      for (const i of out) if (inFolder(i, op.from)) Object.assign(i, op.to ? { folder: op.to } : { state: 'trash', deletedAt: now });
+      for (const i of out) if (inFolder(i, op.from)) Object.assign(i, op.to ? { folder: op.to + i.folder.slice(op.from.length) } : { state: 'trash', deletedAt: now });
     } else if (op.k === 'meta') {
       busy.add(op.id);
       out = out.map((i) => (i.id === op.id ? { ...i, ...(op.name !== undefined ? { name: op.name } : {}), ...(op.folder !== undefined ? { folder: op.folder } : {}) } : i));

@@ -42,3 +42,45 @@ describe('paneLinks — 끊긴 터미널 보기가 다시 붙을 때까지 치�
     expect(l.get('a')).toBeUndefined();
   });
 });
+
+// 2026-10-26 부팅 직후 — 붙는 데 80초를 넘겨(데몬이 참모를 두 번 다시 켬) 기다리던 말이 '전달 안 됨'으로 버려졌다.
+// 칸이 아직 붙는 중이면(hold) 기다림을 늘리고, 끊김이 굳으면(drop) 바로 놓아 사람이 다시 보내도 두 번 안 가게
+describe('paneLinks — 붙는 중이면 더 기다리고, 굳으면 바로 놓는다', () => {
+  it('hold 가 참이면 시간을 넘겨도 계속 기다렸다 붙으면 친다', async () => {
+    vi.useFakeTimers();
+    try {
+      const l = paneLinks<string>();
+      let holding = true;
+      const p = l.wait('a', 5000, () => holding);
+      await vi.advanceTimersByTimeAsync(20_000);
+      l.set('a', 'late');
+      await expect(p).resolves.toBe('late');
+      holding = false;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('hold 가 거짓이 되면 다음 시한에 실패', async () => {
+    vi.useFakeTimers();
+    try {
+      const l = paneLinks<string>();
+      let holding = true;
+      const p = l.wait('a', 5000, () => holding);
+      const seen = p.catch((e: Error) => e.message);
+      await vi.advanceTimersByTimeAsync(6000);
+      holding = false;
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(await seen).toBe('pane detached');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('drop — 기다리던 말을 바로 놓는다(그 뒤 붙어도 안 친다)', async () => {
+    const l = paneLinks<string>();
+    const p = l.wait('a', 60_000, () => true);
+    l.drop('a');
+    await expect(p).rejects.toThrow('pane detached');
+    l.set('a', 'new');
+    await expect(l.wait('a', 10)).resolves.toBe('new');
+  });
+});

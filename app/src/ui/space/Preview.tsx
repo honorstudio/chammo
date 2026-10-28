@@ -3,7 +3,7 @@ import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 're
 import { createPortal } from 'react-dom';
 import type { DashFile } from '../../domain/dashboard';
 import { parseBox, resizeBox, type Box, type Edge } from '../../domain/previewBox';
-import { docUrl, kindOf, pageDoc } from '../../domain/reader';
+import { docUrl, inTime, kindOf, pageDoc, PAGE_DOC_WAIT_MS } from '../../domain/reader';
 import { FIT, IMAGE_STEPS, stepZoom, withZoom, zoomable, zoomLabel, zoomOf, type ZoomMap } from '../../domain/readerZoom';
 import { assistant, tr } from '../../i18n';
 import { sendPreview } from '../../domain/sendPreview';
@@ -16,6 +16,8 @@ import { webTitle } from '../../domain/webUrl';
 import { WebPage } from '../WebPage';
 import { SendToOrch, type OrchTo } from './SendToOrch';
 import { applyAnchor, markAnchor, useWheelZoom } from '../zoomAnchor';
+import { useImageFit, useImagePan } from '../imageFit';
+import { imageWidth, shownPercent, toggleFitActual } from '../../domain/imageFit';
 
 const fileName = (p: string) => (p.startsWith('data:') ? tr('붙인 그림', 'Attached image') : kindOf(p) === 'web' ? webTitle(p) : p.split('/').pop() ?? p);
 const BOX_KEY = 'previewBox';
@@ -26,7 +28,7 @@ const EDGES: Edge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
  * 스페이스 위 미리보기 — 페이지를 안 넘어간다. Esc·닫기·바깥 누르면 닫힘.
  * 가장자리를 끌어 크기 조절(기억, 제목 줄 두 번 누르면 꽉 채움), ⌘+ ⌘- ⌘0 은 리더처럼 확대(종류별 확대를 리더와 나눈다) — 2026-09-30 사용자
  */
-export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration }: { f: DashFile; onClose: () => void; /** 채팅에 붙이기 — 참모가 경로로 받아 읽는다 */ onAttach?: () => void; /** 붙일 참모(이름·색) */ attachTo?: OrchTo | null; /** 시안 속 "참모에게 보내기"(큐레이션 결과) — 지금 채팅 탭 참모에게 */ onSendText?: (text: string) => Promise<void>;
+export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration }: { f: DashFile; onClose: () => void; /** 채팅에 붙이기 — 참모가 경로로 받아 읽는다 */ onAttach?: (e?: React.MouseEvent<HTMLElement>) => void; /** 붙일 참모(이름·색) */ attachTo?: OrchTo | null; /** 시안 속 "참모에게 보내기"(큐레이션 결과) — 지금 채팅 탭 참모에게 */ onSendText?: (text: string) => Promise<void>;
   /** 검토용 시안이면 모달 대신 스페이스 전체 검토 모드로 */ onCuration?: (path: string, by?: string) => void }) {
   const kind = f.path.startsWith('data:') ? 'image' : kindOf(f.path);
   const [md, setMd] = useState<string | null>(null);
@@ -97,10 +99,10 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
   const [zooms, setZooms] = useState<ZoomMap>(loadZoom);
   const zoom = zoomOf(zooms, kind);
   const content = useRef<HTMLDivElement>(null);
-  const [natural, setNatural] = useState(0);
   const zoomBy = useRef<(dir: 1 | -1 | 0, at?: { x: number; y: number }) => void>(() => {});
   // 그림은 핀치·휠이면 커서 아래, 단추·키보드면 보던 가운데를 기준으로 확대(좌상단으로 커졌다, 2026-09-30·10-19 사용자) — ui/zoomAnchor
   const imgBox = useRef<HTMLDivElement>(null);
+  const { natural, fit, onLoad } = useImageFit(imgBox);
   // 짚어 보여 주기(scripts/show --line/--find/--box) — 글·마크다운은 그 곳으로 스크롤해 반짝, 웹 페이지는 페이지 안 다리에 부탁, 그림은 네모
   const at = f.at;
   useEffect(() => {
@@ -120,19 +122,19 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
     return () => { ro.disconnect(); window.clearTimeout(t); };
   }, [f.ts, natural, zoom]); // eslint-disable-line react-hooks/exhaustive-deps
   useLayoutEffect(() => applyAnchor(imgBox.current), [zoom]);
-  zoomBy.current = (dir, at) => {
-    if (!zoomable(kind)) return;
-    let z: number;
-    if (kind === 'image') {
-      markAnchor(imgBox.current, at);
-      const img = content.current?.querySelector('img');
-      const now = zoom !== FIT ? zoom : img?.naturalWidth ? Math.round(img.getBoundingClientRect().width / (img.naturalWidth / (window.devicePixelRatio || 1)) * 100) : 100;
-      z = dir === 0 ? FIT : stepZoom(now, dir, IMAGE_STEPS);
-    } else z = dir === 0 ? 100 : stepZoom(zoom, dir);
+  const setZoomTo = (z: number) => {
     const next = withZoom(zooms, kind, z);
     setZooms(next);
     try { localStorage.setItem(ZOOM_KEY, JSON.stringify(next)); } catch { /* 이번엔 된다 */ }
   };
+  zoomBy.current = (dir, at) => {
+    if (!zoomable(kind)) return;
+    if (kind === 'image') {
+      markAnchor(imgBox.current, at);
+      setZoomTo(dir === 0 ? FIT : stepZoom(Math.round(shownPercent(zoom, fit)), dir, IMAGE_STEPS));
+    } else setZoomTo(dir === 0 ? 100 : stepZoom(zoom, dir));
+  };
+  useImagePan(() => imgBox.current, (at) => { markAnchor(imgBox.current, at); setZoomTo(toggleFitActual(zoom, fit)); }); // 두 번 누르기: 맞춤 ↔ 100%, 끌어서 이동
   useWheelZoom(() => imgBox.current, (dir, at) => zoomBy.current(dir, at));
   useEffect(() => {
     const w = window as unknown as { __previewZoom?: (d: 1 | -1 | 0) => void };
@@ -192,7 +194,7 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
   };
   const fill = () => { setBox(null); saveBox(null); };
 
-  const sized = kind === 'image' && zoom !== FIT && natural > 0;
+  const width = kind === 'image' ? imageWidth(natural, zoom, fit) : undefined;
   // 채팅 패널 위까지 덮는다 — 스페이스 안에만 뜨면 좁았다(2026-09-30 사용자 "오케스트레이터 패널보다 위로")
   if (gate === 'check') return null;
   return createPortal(
@@ -234,8 +236,8 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
         )}
         <div className="content" ref={content}>
           {kind === 'web' ? <WebPage url={f.path} />
-            : kind === 'image' ? <div className={`pv-image ${sized ? '' : 'fit'}`} ref={imgBox}><img src={f.path.startsWith('data:') ? f.path : docUrl(f.path)} alt="" onLoad={(e) => setNatural(e.currentTarget.naturalWidth / (window.devicePixelRatio || 1))}
-              style={sized ? { maxWidth: 'none', maxHeight: 'none', width: `${natural * zoom / 100}px` } : undefined} />{boxAt && <span className="pv-box" style={boxAt} />}</div>
+            : kind === 'image' ? <div className={`pv-image ${zoom === FIT ? 'fit' : ''}`} ref={imgBox}><img src={f.path.startsWith('data:') ? f.path : docUrl(f.path)} alt="" draggable={false} onLoad={onLoad}
+              style={width ? { maxWidth: 'none', maxHeight: 'none', width: `${width}px` } : undefined} />{boxAt && <span className="pv-box" style={boxAt} />}</div>
             : kind === 'html' ? <div className="rd-zoombox"><HtmlFrame className="rd-frame" src={docUrl(f.path)} zoom={zoom} point={at} pointKey={f.ts} record={f.path} /></div>
             : kind === 'pdf' ? <Suspense fallback={<div className="dim">{tr('여는 중', 'Opening')}</div>}><PdfView path={f.path} zoom={zoom} at={f.at} atKey={f.ts} /></Suspense>
             : (kind === 'office' || kind === 'other') && pageDoc(f.path) ? <OfficeDoc f={f} zoom={zoom} fallback={kind} />
@@ -258,7 +260,7 @@ const PdfView = lazy(() => import('../reader/PdfView'));
 /** 파워포인트·워드·엑셀·키노트 — macOS QuickLook 미리보기(슬라이드마다 나뉜 HTML)로 그려 슬라이드 번호·글로 짚어 보여 준다. 못 만들면 예전 미리보기 */
 export function OfficeDoc({ f, zoom, fallback }: { f: DashFile; zoom: number; fallback: 'office' | 'other' }) {
   const [main, setMain] = useState<string | null | false>(null);
-  useEffect(() => { setMain(null); void invoke<string>('page_doc', { path: f.path }).then(setMain, () => setMain(false)); }, [f.path]);
+  useEffect(() => { setMain(null); void inTime(invoke<string>('page_doc', { path: f.path }), PAGE_DOC_WAIT_MS).then(setMain, () => setMain(false)); }, [f.path]);
   if (main === null) return <div className="dim">{tr('미리보기 만드는 중', 'Making a preview')}</div>;
   if (main === false) return <ExtraDoc path={f.path} kind={fallback} />;
   if (kindOf(main) === 'pdf') return <Suspense fallback={<div className="dim">{tr('여는 중', 'Opening')}</div>}><PdfView path={main} zoom={zoom} at={f.at} atKey={f.ts} /></Suspense>;

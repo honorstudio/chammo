@@ -14,7 +14,7 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
   scripts/app voice read <assistant>                   in voice mode only the assistant the user talks to is read aloud — other
                                                        assistants' replies wait ("New reply from X"). Read X's waiting replies now
                                                        (the user says "read X's"); the app reads them, keep your own say short
-  scripts/app feature office|tama|gacha|review|voice|autoRevive|autoTidy|computerUse|usagePing on|off
+  scripts/app feature office|tama|gacha|review|voice|autoRevive|autoTidy|computerUse|usagePing|craftBasics|bubble|bubbleDesk on|off
                                                        turn a feature on/off (same as Settings > Features)
   scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home|harnitor|tools
                                                        home = the Home dashboard in the chat view (terminal view: the assistant's screen)
@@ -80,7 +80,7 @@ line once; lines written while the app is closed are skipped.
 """
 import datetime, json, os, subprocess, sys, time
 
-FEATURES = ('office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'autoTidy', 'computerUse', 'usagePing')
+FEATURES = ('office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'autoTidy', 'computerUse', 'usagePing', 'craftBasics', 'bubble', 'bubbleDesk')
 OFF_BY_DEFAULT = ('autoRevive', 'computerUse')  # 앱 기본값과 같게 — 무인 맥에서만 켠다 · 화면 조종은 사용자가 고른다
 OPEN = ('settings', 'tour', 'office', 'review', 'all', 'replay', 'load', 'reader', 'tasks', 'inbox', 'home', 'harnitor', 'tools')
 CLOSE = ('settings', 'office', 'reader', 'tasks', 'inbox', 'harnitor', 'tools', 'review')

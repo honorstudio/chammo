@@ -23,6 +23,26 @@ test('세션 pid — CLAUDE_PID 가 먼저, 없으면 조상 중 claude', () => 
   assert.equal(s.sessionPid({ env: {}, start: 5, ps: (pid) => ({ 5: [4, 'python3'], 4: [1, '/Users/x/.local/bin/claude'] })[pid] }), 4);
 });
 
+// 2026-10-29 — claude respawn 으로 다시 뜬 세션은 이름이 claude 가 아니라 버전 파일(…/claude/versions/2.1.312 --resume …)이라 건너뛰고
+// 그 위 pty 호스트(…/MacOS/claude --bg-pty-host)를 세션으로 잡았다 — 앱이 주인을 못 찾아 모든 참모 탭 줄에 떴다
+test('세션 pid — 다시 뜬 세션(versions/<버전>)도, pty 호스트·daemon 은 세션이 아니다', () => {
+  const respawned = {
+    10: [9, 'node /x/run.js'],
+    9: [8, '/bin/zsh -c node /x/run.js'],
+    8: [7, '/Users/x/.local/share/claude/versions/2.1.312 --resume /Users/x/.claude/projects/p/0f0e0d0c.jsonl --dangerously-skip-permissions'],
+    7: [6, '/Users/x/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude --bg-pty-host /tmp/cc-daemon-501/a/b.pty.sock 200 50 -- /x'],
+    6: [1, '/Users/x/.local/bin/claude daemon run --json-path /Users/x/.claude/daemon.json'],
+  };
+  assert.equal(s.sessionPid({ env: {}, start: 10, ps: (pid) => respawned[pid] || null }), 8);
+  // 세션 없이 호스트·daemon 만 있는 사슬 — 엉뚱한 pid 대신 0(주인 모름)
+  const hostOnly = { 10: [7, 'node'], 7: respawned[7], 6: respawned[6] };
+  assert.equal(s.sessionPid({ env: {}, start: 10, ps: (pid) => hostOnly[pid] || null }), 0);
+  const spareHost = { 10: [7, 'node'], 7: [6, 'claude bg-pty-host --bg-pty-host /tmp/s.pty.sock 200 50 -- /x'], 6: respawned[6] };
+  assert.equal(s.sessionPid({ env: {}, start: 10, ps: (pid) => spareHost[pid] || null }), 0);
+  // 버전 폴더 이름만 비슷한 다른 프로그램은 아니다
+  assert.equal(s.sessionPid({ env: {}, start: 10, ps: (pid) => ({ 10: [1, '/opt/claude/versions-tool/run'] })[pid] || null }), 0);
+});
+
 function deps(over = {}) {
   const calls = { spawn: 0, join: [], sleeps: 0 };
   let t = 0;

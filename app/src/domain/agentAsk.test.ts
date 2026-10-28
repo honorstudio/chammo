@@ -276,3 +276,14 @@ describe('askPlaced·askTarget — 사람 부르기를 맡긴 참모 채팅에(�
     expect(askName(asking('project-t', 5, { sessionPid: 77 }), everyone)).toBe('project-t · binance-setup');
   });
 });
+
+describe('askOpen — 카드가 놓인 참모를 같이 기억(10-28 카드 누르면 스페이스가 그 참모 칸으로)', () => {
+  it('orch 를 주면 open.orch 에 남고, 안 주면 없다', () => {
+    expect(askOpen(ASK_EMPTY, live('web'), 'o1').open?.orch).toBe('o1');
+    expect(askOpen(ASK_EMPTY, live('web')).open?.orch).toBeUndefined();
+  });
+  it('저절로 뜬 부름(askStep)엔 참모 힌트가 없다 — 사람이 누른 것만 사용자 화면을 옮긴다', () => {
+    const r = askStep(ASK_EMPTY, [asking('web', 1)]);
+    expect(r.state.open?.orch).toBeUndefined();
+  });
+});

@@ -139,7 +139,7 @@ pub fn answer(id: &str, pick: &Pick, by: &str) -> Result<(), String> {
         let yes = link_pick(pick, by).map_err(refuse_text)?;
         if ask["sub"] == PHONE_SUB {
             crate::mobile::devices().decide_hold(id, yes)?;
-        } else if ask["sub"] == crate::device_cards::DEVICE_SUB {
+        } else if ask["sub"] == crate::device_cards::DEVICE_SUB || ask["sub"] == crate::device_cards::RECOVER_SUB {
             crate::device_cards::decide(&ask, yes)?;
         } else if ask["sub"] == crate::e2e_cards::SAFETY_SUB {
             crate::e2e_cards::decide(&ask, yes)?;

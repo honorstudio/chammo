@@ -10,6 +10,14 @@ export const emptyStore = (d?: Record<string, unknown> | null) =>
 /** 시안 칸이 보낸 message 인가 — 그 칸 창(contentWindow)일 때만. 다른 칸이 cur-state·curation·esc 를 흉내 내지 못하게(리더 Reader·폰 HtmlSheet 와 같은 규칙) */
 export const fromFrame = (e: MessageEvent, win: Window | null | undefined) => !!win && e.source === win;
 
+/** 껍데기가 알린 확대(cur-state zoom)를 보고 칸에 보낼 확대 — 없으면 null. 칸을 읽은 뒤 첫 알림(synced=false)이 지금 확대와 다를 때만 보내고,
+ *  그 뒤엔 사람이 확대를 바꿀 때만(zoomBy) 보낸다. 알림마다 다르면 또 보냈더니 받은 확대를 곱하거나 맞춤까지 곱해 알리는 손본 껍데기와
+ *  되먹임이 돼 카드를 누를 때마다(알림마다) 보드가 한 단계씩 작아졌다(공개 이슈 #1, 2026-10-27). 옛 껍데기(zoom 칸 없음)는 앱이 문서째 확대한다 */
+export function curZoomCmd(shell: number | undefined, want: number, synced: boolean): number | null {
+  if (shell === undefined || synced || Math.abs(shell - want) <= 0.001) return null;
+  return want;
+}
+
 /** 시안(HTML) 칸 샌드박스 — 폰처럼 앱과 다른 불투명 출처로 돈다. allow-same-origin 을 주면 시안 스크립트가 hodoc 으로 홈 폴더 아무 파일이나
  *  읽었다(2026-10-06 실측). 스크립트·확인 창(검토 틀 초기화·빈 결과 보내기 confirm)만. hodoc 응답 머리글(reader.rs DOC_CSP)도 같은 sandbox 를 건다 */
 export const DOC_SANDBOX = 'allow-scripts allow-modals';

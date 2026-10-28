@@ -8,13 +8,14 @@ import { tr } from '../../i18n';
 import { hostState, manageGroups, removeUndo, sizeText, trashChoice, type ManageRow, type Removed } from '../../domain/modeManage';
 import { IconChevronDown, IconChevronUp, IconClose } from '../Icons';
 import { IconButton } from '../kit/IconButton';
+import { seenName } from '../../domain/session';
 
 const sourceText = (s: ManageRow['source']) =>
   s === 'example' ? tr('기본', 'Built-in') : s === 'added' ? tr('내가 등록', 'Added by me') : s === 'folder' ? tr('데이터 폴더', 'Data folder') : tr('Claude 플러그인', 'Claude plugin');
 
 const placeText = (r: ManageRow) =>
   !r.on ? tr('꺼짐', 'Off')
-    : r.where === 'dash' && r.dash ? tr(`${r.dash.split(' · ').pop()} 홈`, `${r.dash}'s home`)
+    : r.where === 'dash' && r.dash ? tr(`${seenName(r.dash)} 홈`, `${seenName(r.dash)}'s home`)
       : r.where === 'panel' ? tr('스페이스 패널', 'Space panel') : r.where === 'modal' ? tr('미리보기', 'Preview') : r.where === 'full' ? tr('꽉 채우기', 'Full') : tr('따로 창', 'Window');
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));

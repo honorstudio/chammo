@@ -33,7 +33,7 @@ fn now_ms() -> u64 {
 
 /// 명부·사슬이 맞춰지면 열릴 수 있는 실패 — 평문·시각·되넣기·모양·내 몫 아님·서명·열기 실패는 영영 못 연다
 pub fn retryable(why: &str) -> bool {
-    !matches!(why, "plain" | "too-old" | "future" | "replay" | "shape" | "NotForMe" | "Shape" | "Open" | "Sig" | "Key")
+    !matches!(why, "plain" | "too-old" | "future" | "replay" | "shape" | "NotForMe" | "Shape" | "Open" | "Sig" | "Key" | "late-by" | "late-not-mine")
 }
 
 /// 남겨 둘 만한가 — 다시 열 수 있는 실패, 받아들이면 경고가 떨어질 말
@@ -75,6 +75,19 @@ pub fn keep(dir: &Path, m: &Value, shown: &str) -> Result<(), String> {
     save(dir, &list)
 }
 
+/// 늦게 연 말의 기록 줄 — 참모에게 넘기지 않고 화면에만(받아들이기 전 말·건네받은 지난 말이 한꺼번에 참모 입력칸으로 쏟아지지 않게).
+/// 같은 (방, seq) 로 붙으니 inbox_tail 이 그 자리를 마지막 내용으로 보인다. 건너뛸 말이면 None
+pub fn late_record(st: &relay::TeamState, m: &Value, opened: &Unwrapped) -> Option<inbox::Record> {
+    let (act, mut rec) = inbox::with_e2e(st, 0, m, opened);
+    if act == Action::Skip {
+        return None;
+    }
+    if matches!(rec.note.as_str(), "delivered" | "human" | "to-human") {
+        rec.note = "late".into();
+    }
+    Some(rec)
+}
+
 /// 남긴 봉투를 다시 연다 — 바꿔 쓴 기록 줄 수. 사람이 보안 번호를 받아들인 뒤·앱이 뜰 때 부른다
 pub fn retry(dir: &Path, kc: &dyn Store, http: &dyn Http) -> usize {
     let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -82,18 +95,13 @@ pub fn retry(dir: &Path, kc: &dyn Store, http: &dyn Http) -> usize {
     let now = now_ms();
     let mut left = vec![];
     let mut wrote = 0;
+    // 명부는 첫 말만 새로 받고 나머지는 그 명부로(말마다 받으면 300개가 그대로 요청 300개)
+    e2e_state::recv_forget(dir);
     for k in load(dir).into_iter().filter(|k| k.kept_at.saturating_add(KEEP_MS) >= now) {
         let opened = e2e_state::reopen(dir, kc, http, &st, &k.msg);
         match &opened {
             Unwrapped::Opened { note, .. } => {
-                let (act, mut rec) = inbox::with_e2e(&st, 0, &k.msg, &opened);
-                if act == Action::Skip {
-                    continue;
-                }
-                // 늦게 연 말 — 참모에게 넘기지 않고 화면에만(받아들이기 전 말이 한꺼번에 참모 입력칸으로 쏟아지지 않게)
-                if rec.note == "delivered" {
-                    rec.note = "late".into();
-                }
+                let Some(rec) = late_record(&st, &k.msg, &opened) else { continue };
                 if rec.note != k.shown && inbox::append(dir, &rec).is_ok() {
                     wrote += 1;
                 }

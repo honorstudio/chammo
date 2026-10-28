@@ -804,14 +804,14 @@ fn phone_touch<R: Runtime>(app: &tauri::AppHandle<R>, name: &str) {
 }
 
 /// 폰 한 칸 — 상태 + 보이는 칸(Pane) 트리. 띠(AbovePrompt)는 폰에 안 그린다
-pub fn phone_view<R: Runtime>(app: &tauri::AppHandle<R>, name: &str, columns: u32, lines: u32) -> Result<Value, String> {
+pub fn phone_view<R: Runtime>(app: &tauri::AppHandle<R>, name: &str, columns: u32, lines: u32, scheme: Option<&str>) -> Result<Value, String> {
     phone_touch(app, name);
     let Some(h) = host(name) else { return Ok(json!({"state": phone_state(&HostState::default())})) };
     let st = h.view(name);
     let mut out = json!({"state": phone_state(&st)});
     let id = st.shown.clone().or_else(|| st.panes.first().and_then(|p| p.get("id")).and_then(Value::as_str).map(str::to_string));
     if let (true, Some(id)) = (st.ready, id) {
-        let r = h.call(modes::with_store_rev(modes::render_req("Pane", &id, columns, lines), store_rev(name)), Duration::from_secs(10));
+        let r = h.call(modes::with_scheme(modes::with_store_rev(modes::render_req("Pane", &id, columns, lines), store_rev(name)), scheme), Duration::from_secs(10));
         touch(name);
         let r = r?;
         remember_card(name, &r);
@@ -1277,15 +1277,16 @@ pub fn mode_state(app: tauri::AppHandle, name: String) -> HostState {
     }
 }
 
-/// 한 칸 그리기 → {tree, …}. 칸 크기는 글자 칸 단위(화면이 잰다). 큰 칸(Pane)이면 고르기 카드 그림으로 남긴다(30초에 한 번)
+/// 한 칸 그리기 → {tree, …}. 칸 크기는 글자 칸 단위(화면이 잰다). 큰 칸(Pane)이면 고르기 카드 그림으로 남긴다(30초에 한 번).
+/// scheme = 지금 앱 테마(modes::with_scheme)
 #[tauri::command]
-pub async fn mode_render(name: String, component: String, instance: String, columns: u32, rows: u32) -> Result<Value, String> {
+pub async fn mode_render(name: String, component: String, instance: String, columns: u32, rows: u32, scheme: Option<String>) -> Result<Value, String> {
     let h = host(&name).ok_or("not running")?;
     if !matches!(component.as_str(), "Pane" | "AbovePrompt") {
         return Err("component".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let r = h.call(modes::with_store_rev(modes::render_req(&component, &instance, columns, rows), store_rev(&name)), Duration::from_secs(10));
+        let r = h.call(modes::with_scheme(modes::with_store_rev(modes::render_req(&component, &instance, columns, rows), store_rev(&name)), scheme.as_deref()), Duration::from_secs(10));
         touch(&name);
         let r = r?;
         if component == "Pane" {
@@ -1805,6 +1806,43 @@ export const register: Register = on => {
         }
         let _ = std::fs::remove_dir_all(&d);
         assert_eq!(got, Some((true, true, vec![PROBE.to_string()], true, false)), "넣기가 파일을 만들고, 감시가 고르고, 다시 그리면 밖에서 쓴 값만 보인다: {tree}");
+    }
+
+    // 앱 테마가 모드 훅에 닿는지(#4) — 그리기 요청 props.scheme 이 e.props.scheme 으로, 바꾸면 같은 크기여도 새로 그린다.
+    // cargo test --bin honor-orchestrator 진짜_claude_로_앱_테마가 -- --ignored 로
+    #[test]
+    #[ignore]
+    fn 진짜_claude_로_앱_테마가_모드_훅에_닿는다() {
+        const PROBE: &str = "chammo-scheme-probe";
+        let d = std::env::temp_dir().join(format!("chammo-modescheme-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let dir = d.join(PROBE);
+        for (rel, body) in [
+            (".claude-plugin/plugin.json", format!(r#"{{"name":"{PROBE}","version":"0.1.0","description":"scheme probe"}}"#)),
+            ("hooks/hooks.json", r#"{"modules":["./register.tsx"]}"#.to_string()),
+            ("hooks/register.tsx", r#"import type { Register } from 'claude-code'
+export const register: Register = on => {
+  on('session.start', async ($, e, next) => { void $.ui.open({ id: 'probe', title: 'probe' }); return next(e) })
+  on('ui.render', { component: 'Pane', requestId: 'probe' }, async ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>{'scheme=' + String((e.props as { scheme?: string }).scheme)}</Text>
+  })
+}
+"#.to_string()),
+        ] {
+            std::fs::create_dir_all(dir.join(rel).parent().unwrap()).unwrap();
+            std::fs::write(dir.join(rel), body).unwrap();
+        }
+        let h = start(PROBE, &[dir], vec![], &modes::run_dir(&d, PROBE), Arc::new(|_: &str, _: Value| {}));
+        assert!(h.st.lock().unwrap().ready, "{:?}", h.st.lock().unwrap());
+        std::thread::sleep(Duration::from_secs(1)); // 칸 열기
+        let draw = |s: Option<&str>| h.call(modes::with_scheme(modes::render_req("Pane", "probe", 60, 20), s), Duration::from_secs(10)).map(|r| r["tree"].to_string()).unwrap_or_default();
+        let (dark, light, none) = (draw(Some("dark")), draw(Some("light")), draw(None));
+        stop_host(&h, "test");
+        let _ = std::fs::remove_dir_all(&d);
+        assert!(dark.contains("scheme=dark"), "{dark}");
+        assert!(light.contains("scheme=light"), "같은 크기여도 테마가 바뀌면 새로 그린다: {light}");
+        assert!(none.contains("scheme=undefined"), "{none}");
     }
 
     // 같이 쓰는 호스트 실측(ADR 0006) — 맛보기 넷을 한 호스트에 올려 모드마다 제 칸만 보이고 그려지는지, 하나를 빼고 다시 띄우면 나머지가 사는지,

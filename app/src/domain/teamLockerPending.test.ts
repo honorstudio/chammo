@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { chips, inPlace, type LockerItem } from './teamLocker';
+import { inPlace, kidFolders, type LockerItem } from './teamLocker';
 import { failText, opKey, withPending, type LockerOp } from './teamLockerPending';
 
 const it0 = (o: Partial<LockerItem>): LockerItem => ({ id: 'x', name: 'a.pdf', size: 1, cipher: 17, at: 0, state: 'live', kind: 'file', room: '', folder: '', by: '사용자', byMember: 'm1', mine: false, why: '', deletedAt: null, ...o });
 
 // 10-26 사용자 298.png "폴더를 만드는데 한참 걸려서 하나 더 만들 뻔" — 누르면 바로 화면에(서버 답은 뒤에서), 실패하면 되돌린다
 describe('팀 보관함 기다리는 일 — 누르자마자 화면에', () => {
-  const base = [it0({ id: 'f1', folder: '견적' }), it0({ id: 'f2', folder: '견적' }), it0({ id: 'f3' }), it0({ id: 'm1', folder: '견적', dir: true, name: '' })];
+  const base = [it0({ id: 'f1', folder: '견적' }), it0({ id: 'f2', folder: '견적/10월' }), it0({ id: 'f3' }), it0({ id: 'm1', folder: '견적', dir: true, name: '' })];
+  const tiles = (xs: LockerItem[], at = '') => kidFolders(xs, at).map((f) => [f.key, f.n]);
 
   it('새 폴더 — 서버 답 전에도 칩이 생기고 만드는 중 표시', () => {
     const v = withPending(base, [{ k: 'mkdir', folder: '디자인' }]);
-    expect(chips(v.items).map((c) => c.key)).toEqual(['', '견적', '디자인']);
+    expect(tiles(v.items).map((t) => t[0])).toEqual(['견적', '디자인']);
     expect(v.busyFolders.has('디자인')).toBe(true);
   });
   it('새 폴더 — 서버 목록에 이미 그 폴더가 오면 하나만', () => {
@@ -18,14 +19,15 @@ describe('팀 보관함 기다리는 일 — 누르자마자 화면에', () => {
     const v = withPending(got, [{ k: 'mkdir', folder: '디자인' }]);
     expect(v.items.filter((i) => i.folder === '디자인')).toHaveLength(1);
   });
-  it('폴더 이름 바꾸기 — 안의 파일·표시 줄이 바로 새 폴더로', () => {
-    const v = withPending(base, [{ k: 'folder', from: '견적', to: '견적서' }]);
-    expect(chips(v.items)).toEqual([{ key: '', n: 3 }, { key: '견적서', n: 2 }]);
-    expect(v.busyFolders.has('견적서')).toBe(true);
+  it('폴더 이름 바꾸기·옮기기 — 안의 파일·안쪽 폴더·표시 줄이 바로 새 경로로', () => {
+    const v = withPending(base, [{ k: 'folder', from: '견적', to: '보관/견적서' }]);
+    expect(tiles(v.items)).toEqual([['보관', 2]]);
+    expect(tiles(v.items, '보관/견적서')).toEqual([['보관/견적서/10월', 1]]);
+    expect(v.busyFolders.has('보관/견적서')).toBe(true);
   });
-  it('폴더 지우기 — 안의 파일은 바로 휴지통 쪽으로, 칩은 사라진다', () => {
+  it('폴더 지우기 — 안의 파일·안쪽 폴더는 바로 휴지통 쪽으로, 타일은 사라진다', () => {
     const v = withPending(base, [{ k: 'folder', from: '견적', to: null }], 5);
-    expect(chips(v.items)).toEqual([{ key: '', n: 1 }]);
+    expect(tiles(v.items)).toEqual([]);
     expect(inPlace(v.items, '', true).map((i) => i.id).sort()).toEqual(['f1', 'f2']);
   });
   it('이름 바꾸기·옮기기 — 그 줄만 바뀌고 그 줄에 반영 중', () => {

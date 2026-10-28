@@ -9,7 +9,7 @@
 /* 말줄임 글(wrap truncate*) 안의 겹 Text 는 바깥 nowrap 을 따른다 — .mdv-text 의 pre-wrap 을 다시 걸어 두 줄로 감겼다(10/12) */
 .mdv-trunc .mdv-text { white-space: inherit; }
 .mdv-md { line-height: 1.55; overflow-wrap: anywhere; }
-.mdv-md.dim { color: var(--text-3); }
+.mdv-md.dim { color: var(--text-dim); }
 .mdv-md > :first-child { margin-top: 0; }
 .mdv-md > :last-child { margin-bottom: 0; }
 .mdv-md ul, .mdv-md ol { padding-left: 20px; }

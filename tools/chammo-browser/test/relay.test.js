@@ -401,3 +401,49 @@ test('닫기·실패한 호출 뒤엔 읽으러 가지 않는다', () => {
   assert.strictEqual(toChild.length, before + 1, '닫기 뒤 내부 읽기 없음');
   assert.ok(toClient.some((l) => l.includes('"id":2')));
 });
+
+// 2026-10-28 윈도우 '보이는 창으로 다시 띄우기'(src/winshow.js) — 래퍼가 스스로 닫고 다시 띄우는 동안 락·상태 파일·개입은 그대로
+test('내부 닫기(keep)는 락을 놓지 않는다 — 보통 닫기는 놓는다', async () => {
+  const dir = tmpLockDir();
+  let released = 0;
+  const { relay, toChild } = makeRelay(dir, process.pid, 'acme-shop', { release: () => { released += 1; lock.release('acme-shop', { lockDir: dir, pid: process.pid }); } });
+  relay.onClientLine(call(1, 'browser_navigate'));
+  relay.onChildLine(ok(1));
+  const p = relay.callInternal('browser_close', {}, { keep: true });
+  const id = JSON.parse(toChild[toChild.length - 1]).id;
+  relay.onChildLine(ok(id));
+  await p;
+  assert.strictEqual(released, 0);
+  assert.strictEqual(relay.holdsLock(), true);
+  const q = relay.callInternal('browser_close', {});
+  relay.onChildLine(ok(JSON.parse(toChild[toChild.length - 1]).id));
+  await q;
+  assert.strictEqual(released, 1, 'keep 없는 내부 닫기는 예전대로 놓는다');
+});
+
+test('래퍼 도구 — 세션이 그 호출을 취소하면(notifications/cancelled) onLocalCancel 로 알린다(사람 부름 카드를 거두게)', () => {
+  const dir = tmpLockDir();
+  const cancelled = [];
+  const { relay } = makeRelay(dir, process.pid, 'acme-shop', {
+    extraTools: [{ name: 'browser_ask_human', description: 'x', inputSchema: { type: 'object', properties: {} } }],
+    onLocalTool: (n) => (n === 'browser_ask_human' ? new Promise(() => {}) : null),
+    onLocalCancel: (n) => cancelled.push(n),
+  });
+  relay.onClientLine(rpc(5, 'tools/call', { name: 'browser_ask_human', arguments: {} }));
+  relay.onClientLine(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 9 } }));
+  assert.deepStrictEqual(cancelled, [], '모르는 요청은 무시');
+  relay.onClientLine(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 5 } }));
+  assert.deepStrictEqual(cancelled, ['browser_ask_human']);
+});
+
+// 2026-10-29 패스키 자동 — 세션 도구가 도는 중인지(래퍼 내부 호출·사람 부르기 기다림은 빼고)
+test('busy — 세션이 보낸 도구가 child 에서 도는 동안만 참', () => {
+  const sent = [];
+  const r = createRelay({ profile: 'p', acquire: () => ({ ok: true }), release: () => {}, sendToChild: (l) => sent.push(JSON.parse(l)), sendToClient: () => {}, idleMs: 0, log: () => {} });
+  assert.strictEqual(r.busy(), false);
+  r.onClientLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_click', arguments: {} } }));
+  assert.strictEqual(r.busy(), true);
+  r.callInternal('browser_tabs', {});
+  r.onChildLine(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { content: [] } }));
+  assert.strictEqual(r.busy(), false, '내부 호출은 세지 않는다');
+});

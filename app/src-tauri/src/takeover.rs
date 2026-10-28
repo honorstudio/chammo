@@ -25,11 +25,15 @@ pub struct Take {
     pub touched: u64,
     /// 패스키 꺼내기(agent_peek)가 저절로 켠 개입 — 다시 숨길 때 돌려준다(release_auto)
     pub auto: bool,
+    /// 스페이스 칸에서 누름·키로 저절로 켠 개입 — 손을 PANE_IDLE_MS 안 대면 돌려준다(start_pane)
+    pub pane: bool,
+    /// 마지막 손댐(누름·키·휠·페이지에서 본 사람 조작) — 마우스만 지나간 건 안 센다
+    pub acted: u64,
 }
 
 impl Take {
     fn new(pid: i32, at: u64, by: &str) -> Take {
-        Take { pid, at, by: by.into(), events: vec![], chrome_shown: false, touched: now_ms(), auto: false }
+        Take { pid, at, by: by.into(), events: vec![], chrome_shown: false, touched: now_ms(), auto: false, pane: false, acted: now_ms() }
     }
 }
 
@@ -37,6 +41,8 @@ impl Take {
 pub const IDLE_MS: u64 = 3 * 60_000;
 /// 크롬 창을 꺼내 둔 동안 — 사람이 크롬을 직접 만지면 앱이 못 봐서(Touch ID·긴 양식) 더 기다린다
 pub const IDLE_SHOWN_MS: u64 = 10 * 60_000;
+/// 칸을 눌러 저절로 켠 개입 — 손을 이만큼 안 대면 세션에 돌려준다(2026-10-28 사용자 '20초쯤')
+pub const PANE_IDLE_MS: u64 = 20_000;
 
 const MAX_EVENTS: usize = 300;
 
@@ -81,6 +87,12 @@ pub fn read_file(dir: &Path, profile: &str) -> Option<(i32, u64, String)> {
 pub fn start(dir: &Path, profile: &str, pid: i32, by: &str) -> Result<(), String> {
     let by = if by == "phone" { "phone" } else { "desktop" };
     if read_file(dir, profile).is_some_and(|(p, _, _)| p == pid) {
+        // 칸이 저절로 켠 개입을 사람이 '개입'으로 이어 받으면 사람 것(3분)
+        with(|m| {
+            if let Some(t) = m.get_mut(profile).filter(|t| t.pid == pid) {
+                t.pane = false;
+            }
+        });
         return Ok(());
     }
     let at = now_ms();
@@ -88,7 +100,7 @@ pub fn start(dir: &Path, profile: &str, pid: i32, by: &str) -> Result<(), String
     write_secure(&take_file(dir, profile), json!({ "pid": pid, "at": at, "by": by }).to_string().as_bytes())?;
     with(|m| {
         let keep = m.get(profile).filter(|t| t.pid == pid).cloned();
-        m.insert(profile.to_string(), keep.map(|t| Take { by: by.into(), touched: now_ms(), ..t }).unwrap_or(Take::new(pid, at, by)));
+        m.insert(profile.to_string(), keep.map(|t| Take { by: by.into(), touched: now_ms(), pane: false, ..t }).unwrap_or(Take::new(pid, at, by)));
     });
     Ok(())
 }
@@ -223,6 +235,31 @@ pub fn start_auto(dir: &Path, profile: &str, pid: i32) -> Result<(), String> {
     Ok(())
 }
 
+/// 칸에서 누름·키로 켜는 개입 — 이미 개입 중이 아니었을 때만 '칸이 켬'(손을 PANE_IDLE_MS 안 대면 돌려준다). 사람이 켠 개입은 그대로
+pub fn start_pane(dir: &Path, profile: &str, pid: i32) -> Result<(), String> {
+    if read_file(dir, profile).is_some_and(|(p, _, _)| p == pid) {
+        return Ok(());
+    }
+    start(dir, profile, pid, "desktop")?;
+    with(|m| {
+        if let Some(t) = m.get_mut(profile).filter(|t| t.pid == pid) {
+            t.pane = true;
+            t.acted = now_ms();
+        }
+    });
+    Ok(())
+}
+
+/// 사람이 칸에서 누르거나 쳤다(마우스 지나감 말고) — 칸이 켠 개입의 돌려주기 시계를 다시
+pub fn acted(profile: &str) {
+    with(|m| {
+        if let Some(t) = m.get_mut(profile) {
+            t.acted = now_ms();
+            t.touched = t.acted;
+        }
+    });
+}
+
 /// 사람이 그 개입을 이어 받았다('크롬에서 보기' 등) — 숨겨도 안 푼다
 pub fn set_manual(profile: &str) {
     with(|m| {
@@ -249,9 +286,16 @@ pub fn touched(profile: &str) {
 
 /// 사람 조작이 오래 없는 개입이면 그 래퍼 pid — 세션이 부른 동안(asking·ask 기록)은 안 푼다(래퍼가 부름 시간을 따로 잰다).
 /// 부름 중에 사람이 '개입'까지 누르면 기록의 by 가 desktop 으로 바뀌어서 지금 부르는 중인지(asking)를 따로 받는다
+/// 칸이 켠 개입(pane)은 손댐(acted)만 세어 PANE_IDLE_MS — 크롬 창을 꺼내 뒀으면 사람이 크롬을 직접 만질 수 있어 평소처럼
 pub fn idle_pid(profile: &str, now: u64, shown: bool, asking: bool) -> Option<i32> {
-    let limit = if shown { IDLE_SHOWN_MS } else { IDLE_MS };
-    with(|m| m.get(profile).filter(|t| !asking && t.by != "ask" && now.saturating_sub(t.touched) >= limit).map(|t| t.pid))
+    with(|m| {
+        m.get(profile)
+            .filter(|t| {
+                let (last, limit) = if shown { (t.touched, IDLE_SHOWN_MS) } else if t.pane { (t.acted, PANE_IDLE_MS) } else { (t.touched, IDLE_MS) };
+                !asking && t.by != "ask" && now.saturating_sub(last) >= limit
+            })
+            .map(|t| t.pid)
+    })
 }
 
 /// 크롬 창을 꺼냈다(개입 중일 때만 표시)
@@ -273,6 +317,7 @@ pub fn record(profile: &str, ev: Value) {
     with(|m| {
         if let Some(t) = m.get_mut(profile) {
             t.touched = now_ms();
+            t.acted = t.touched;
             if t.events.last() != Some(&ev) && t.events.len() < MAX_EVENTS {
                 t.events.push(ev);
             }
@@ -520,6 +565,48 @@ mod tests {
         // 부름이 끝나고 개입만 남으면 평소처럼 3분
         assert_eq!(idle_pid(p, now_ms() + IDLE_MS * 2, false, false), Some(52));
         with(|m| m.remove(p));
+    }
+
+    #[test]
+    fn 칸에서_저절로_켠_개입은_손을_20초_안_대면_돌려줄_차례다() {
+        // 2026-10-28 — 칸을 누르면 저절로 개입이 켜지는데 돌려주는 길이 안 보여 세션 도구가 몇 분씩 묶였다. 마우스만 올려 둔 건(touched) 손댐이 아니다
+        let d = dir();
+        let p = "t-pane";
+        start_pane(&d, p, 61).unwrap();
+        assert!(allows(&d, p, 61, false));
+        let t0 = with(|m| m[p].acted);
+        touched(p); // 마우스 지나감
+        assert_eq!(idle_pid(p, t0 + PANE_IDLE_MS - 1, false, false), None);
+        assert_eq!(idle_pid(p, t0 + PANE_IDLE_MS, false, false), Some(61));
+        assert_eq!(idle_pid(p, t0 + PANE_IDLE_MS, true, false), None, "크롬 창을 꺼내 둔 동안은 사람이 크롬을 직접 만질 수 있어 더 기다린다");
+        assert_eq!(idle_pid(p, t0 + PANE_IDLE_MS, false, true), None, "세션이 부르는 동안은 안 푼다");
+        // 누르거나 치면 시계가 다시 간다
+        with(|m| m.get_mut(p).unwrap().acted = 0);
+        acted(p);
+        assert!(idle_pid(p, now_ms() + PANE_IDLE_MS - 1000, false, false).is_none());
+        with(|m| m.get_mut(p).unwrap().acted = 0);
+        record(p, key("Tab"));
+        assert!(idle_pid(p, now_ms() + PANE_IDLE_MS - 1000, false, false).is_none());
+        hand_back_why(&d, p, 61, Some("idle")).unwrap();
+        assert!(read_file(&d, p).is_none());
+    }
+
+    #[test]
+    fn 사람이_직접_켠_개입은_칸_입력이_와도_20초로_안_바뀐다() {
+        let d = dir();
+        let p = "t-pane-manual";
+        start(&d, p, 62, "desktop").unwrap();
+        start_pane(&d, p, 62).unwrap();
+        let t0 = with(|m| m[p].touched);
+        assert_eq!(idle_pid(p, t0 + PANE_IDLE_MS, false, false), None);
+        // 칸이 켠 개입이라도 사람이 '개입'을 누르면 사람 것(3분)
+        let q = "t-pane-manual2";
+        start_pane(&d, q, 63).unwrap();
+        start(&d, q, 63, "desktop").unwrap();
+        let t1 = with(|m| m[q].touched);
+        assert_eq!(idle_pid(q, t1 + PANE_IDLE_MS, false, false), None);
+        hand_back(&d, p, 62).unwrap();
+        hand_back(&d, q, 63).unwrap();
     }
 
     #[test]

@@ -109,6 +109,42 @@ impl Backend for Fake {
         self.log(if cid.starts_with("p-abc") { format!("team_say {to} {text} {cid}") } else { format!("team_say {to} {text}") });
         Ok(serde_json::json!({ "room": "r1", "seq": 3 }))
     }
+    fn team_say_re(&self, to: &str, text: &str, _cid: &str, re: u64) -> Result<serde_json::Value, String> {
+        self.log(format!("team_say_re {to} {text} {re}"));
+        Ok(serde_json::json!({ "room": "r1", "seq": 8 }))
+    }
+    fn team_agents(&self, team: &str) -> Result<serde_json::Value, String> {
+        self.log(format!("team_agents {team}"));
+        Ok(serde_json::json!({ "team": team, "agents": [], "seen": {}, "owner": false, "me": "m1" }))
+    }
+    fn team_agent_confirm(&self, team: &str, id: &str) -> Result<(), String> {
+        self.log(format!("team_agent_confirm {team} {id}"));
+        Ok(())
+    }
+    fn team_agent_save(&self, team: &str, def: crate::team_agent::Def, origin: Option<&str>) -> Result<serde_json::Value, String> {
+        self.log(format!("team_agent_save {team} {} {}", def.name, origin.unwrap_or("-")));
+        Ok(serde_json::json!({ "id": "aaaaaaaaaaaaaaaa1" }))
+    }
+    fn team_agent_remove(&self, team: &str, id: &str) -> Result<(), String> {
+        self.log(format!("team_agent_remove {team} {id}"));
+        Ok(())
+    }
+    fn team_agent_try(&self, team: &str, room: &str, _def: crate::team_agent::Def, ask: &str, prev: Vec<(String, String)>) -> Result<serde_json::Value, String> {
+        self.log(format!("team_agent_try {team} {room} {ask} {}", prev.len()));
+        Ok(serde_json::json!({ "text": "정한 것", "files": [], "model": "sonnet", "tokens": 10, "ms": 5 }))
+    }
+    fn team_agent_refs(&self, team: &str) -> Result<serde_json::Value, String> {
+        self.log(format!("team_agent_refs {team}"));
+        Ok(serde_json::json!([{ "id": "cccccccccccccccc1", "name": "양식.md" }]))
+    }
+    fn team_agent_usage(&self, room: &str) -> Result<serde_json::Value, String> {
+        self.log(format!("team_agent_usage {room}"));
+        Ok(serde_json::json!({ "7": ["sonnet", 6200] }))
+    }
+    fn team_read(&self, room: &str, seq: u64) -> Result<(), String> {
+        self.log(format!("team_read {room} {seq}"));
+        if room == "모름" { Err("모르는 방".into()) } else { Ok(()) }
+    }
     fn team_handoff(&self, to: &str, text: &str) -> Result<serde_json::Value, String> {
         self.log(format!("team_handoff {to} {}", text.lines().count()));
         Ok(serde_json::json!({ "to": "참모" }))
@@ -120,6 +156,46 @@ impl Backend for Fake {
     fn team_create(&self, team: &str) -> Result<serde_json::Value, String> {
         self.log(format!("team_create {team}"));
         Ok(serde_json::json!({ "joined": true }))
+    }
+    fn team_profiles(&self, team: &str, seen: u64) -> Result<serde_json::Value, String> {
+        self.log(format!("team_profiles {team} {seen}"));
+        Ok(if seen == 7 { serde_json::json!({ "same": true }) } else { serde_json::json!({ "team": team, "rev": 7, "people": {}, "teamIcon": "" }) })
+    }
+    fn team_file_thumb(&self, team: &str, id: &str, size: u32) -> Result<Vec<u8>, String> {
+        self.log(format!("team_file_thumb {team} {id} {size}"));
+        if id == "nope" { Err("그림이 아니야".into()) } else { Ok(b"\xFF\xD8\xFFteam".to_vec()) }
+    }
+    fn team_posts(&self, team: &str, seen: u64) -> Result<serde_json::Value, String> {
+        self.log(format!("team_posts {team} {seen}"));
+        Ok(serde_json::json!({ "team": team, "rev": 3, "posts": [], "pinned": "", "owner": false }))
+    }
+    fn team_home(&self, team: &str, seen: u64) -> Result<serde_json::Value, String> {
+        self.log(format!("team_home {team} {seen}"));
+        Ok(if seen == 5 { serde_json::json!({ "same": true }) } else { serde_json::json!({ "team": team, "rev": 5, "home": null, "content": {}, "owner": true }) })
+    }
+    fn team_home_save(&self, team: &str, home: crate::team_home::Home) -> Result<(), String> {
+        self.log(format!("team_home_save {team} {}", home.blocks.iter().map(|b| b.k.as_str()).collect::<Vec<_>>().join(",")));
+        Ok(())
+    }
+    fn team_home_content(&self, team: &str, block: &str, c: crate::team_home::Content) -> Result<(), String> {
+        self.log(format!("team_home_content {team} {block} {}", c.note.title));
+        Ok(())
+    }
+    fn team_locker(&self, team: &str, seen: u64) -> Result<serde_json::Value, String> {
+        self.log(format!("team_locker {team} {seen}"));
+        Ok(if seen == 9 { serde_json::json!({ "same": true, "uploads": [] }) } else { serde_json::json!({ "rev": 9, "items": [], "uploads": [] }) })
+    }
+    fn team_locker_op(&self, o: &TeamLockerOp) -> Result<serde_json::Value, String> {
+        self.log(format!("team_locker_op {} {} id={} name={} folder={} from={} to={}", o.team, o.op, o.id, o.name, o.folder, o.from, o.to));
+        Ok(serde_json::json!({ "ok": true }))
+    }
+    fn team_locker_part(&self, p: &TeamLockerPart, bytes: &[u8]) -> Result<serde_json::Value, String> {
+        self.log(format!("team_locker_part {} {} {} {} {} {} {}", p.team, p.up, p.part, p.last, p.name, p.folder, bytes.len()));
+        Ok(serde_json::json!({ "have": bytes.len() }))
+    }
+    fn team_post(&self, team: &str, title: &str, body: &str, pin: bool) -> Result<serde_json::Value, String> {
+        self.log(format!("team_post {team} {title} {} {pin}", body.chars().count()));
+        Ok(serde_json::json!({ "id": "p1" }))
     }
     fn env(&self) -> serde_json::Value {
         serde_json::json!({ "assistantName": "참모" })
@@ -140,6 +216,10 @@ impl Backend for Fake {
     }
     fn transcript(&self, session_id: &str, from: Option<u64>) -> serde_json::Value {
         self.log(format!("transcript {session_id} {from:?}"));
+        serde_json::json!({ "text": "", "next": 0, "reset": true })
+    }
+    fn transcript_peek(&self, session_id: &str, from: Option<u64>) -> serde_json::Value {
+        self.log(format!("transcript_peek {session_id} {from:?}"));
         serde_json::json!({ "text": "", "next": 0, "reset": true })
     }
     fn transcript_before(&self, session_id: &str, before: u64) -> serde_json::Value {
@@ -218,8 +298,8 @@ impl Backend for Fake {
     fn modes(&self) -> serde_json::Value {
         serde_json::json!([{ "name": "home-calendar", "title": "달력", "on": true, "where": "dash", "dash": "운영", "alive": true }])
     }
-    fn mode_view(&self, name: &str, columns: u32, rows: u32) -> Result<serde_json::Value, String> {
-        self.log(format!("mode-view {name} {columns}x{rows}"));
+    fn mode_view(&self, name: &str, columns: u32, rows: u32, scheme: Option<&str>) -> Result<serde_json::Value, String> {
+        self.log(format!("mode-view {name} {columns}x{rows}{}", scheme.map(|s| format!(" {s}")).unwrap_or_default()));
         Ok(serde_json::json!({ "state": { "alive": true, "ready": true }, "tree": { "type": "Text", "children": ["10월"] } }))
     }
     fn mode_act(&self, name: &str, act: &serde_json::Value) -> Result<serde_json::Value, String> {
@@ -384,6 +464,10 @@ impl Backend for Fake {
     }
     fn login_cancel(&self) {
         self.log("login_cancel".into());
+    }
+    fn login_terms_retry(&self) -> Result<(), String> {
+        self.log("login_terms_retry".into());
+        Ok(())
     }
     fn browser_frame(&self, profile: &str, since: u64) -> Vec<u8> {
         self.log(format!("frame {profile} {since}"));
@@ -769,6 +853,19 @@ fn 대화_기록은_세션_id_로만() {
     let (_, f, _) = run(with_cookie(get(&format!("/api/transcript?id={SID}&path=/etc/passwd"))));
     assert_eq!(f.calls(), vec![format!("transcript {SID} None")]);
     assert_eq!(run(with_cookie(get(&format!("/api/transcript?id={SID}&from=-1")))).0, 400);
+}
+
+/// 참모 줄 판단(useOrchAsks)은 마지막 말만 본다 — peek=1 이면 작은 꼬리로(참모마다 256KB~2MB 를 받아 느린 셀룰러 첫 화면이 7MB 였다, 2026-10-27)
+#[test]
+fn 대화_기록_살짝_보기는_따로_읽는다() {
+    let (s, f, _) = run(with_cookie(get(&format!("/api/transcript?id={SID}&peek=1"))));
+    assert_eq!(s, 200);
+    assert_eq!(f.calls(), vec![format!("transcript_peek {SID} None")]);
+    let (_, f, _) = run(with_cookie(get(&format!("/api/transcript?id={SID}&peek=1&from=10"))));
+    assert_eq!(f.calls(), vec![format!("transcript_peek {SID} Some(10)")]);
+    // peek 이 1 이 아니면 보통 읽기
+    let (_, f, _) = run(with_cookie(get(&format!("/api/transcript?id={SID}&peek=0"))));
+    assert_eq!(f.calls(), vec![format!("transcript {SID} None")]);
 }
 
 #[test]
@@ -2132,7 +2229,8 @@ fn 새_기기_숫자_넣기는_카드_답과_같은_문() {
     assert_eq!(s, 200, "{}", String::from_utf8_lossy(&r.body));
     assert_eq!(f.calls(), vec!["device_number 5b1f0f2e-aaaa-bbbb-cccc-0123456789ab enter 482913".to_string()]);
     // 4자리를 띄운 카드 닫기·끊기(R7 A) — 숫자 없이
-    for op in ["close", "cut"] {
+    // claim — 폰에서 사람이 숫자 칸을 눌렀다(10-27: 그리기만으로는 컴퓨터가 nM 을 안 낸다)
+    for op in ["close", "cut", "claim"] {
         let (s, f, _) = run(post("/api/device-number", &format!(r#"{{"dev":"5b1f0f2e-aaaa-bbbb-cccc-0123456789ab","op":"{op}"}}"#)));
         assert_eq!(s, 200);
         assert_eq!(f.calls(), vec![format!("device_number 5b1f0f2e-aaaa-bbbb-cccc-0123456789ab {op} ")]);
@@ -2520,7 +2618,7 @@ fn 로그인_보기는_열쇠가_있어야_하고_쓰기는_같은_출처_json_�
     assert_eq!((st, f.calls()), (200, vec!["login_view".to_string()]));
     assert!(String::from_utf8_lossy(&r.body).contains("imac"));
     assert_eq!(run(post("/api/login", "{}")).0, 405);
-    for (path, body) in [("/api/login-start", "{}"), ("/api/login-code", r#"{"code":"abc#def"}"#), ("/api/login-cancel", "{}")] {
+    for (path, body) in [("/api/login-start", "{}"), ("/api/login-code", r#"{"code":"abc#def"}"#), ("/api/login-cancel", "{}"), ("/api/login-terms-retry", "{}")] {
         assert_eq!(run(set(post(path, body), "authorization", None)).0, 401, "{path}");
         assert_eq!(run(set(post(path, body), "origin", None)).0, 403, "{path}");
         assert_eq!(run(set(post(path, body), "origin", Some("http://evil.example"))).0, 403, "{path}");
@@ -3292,6 +3390,13 @@ fn 폰_모드_카드_길() {
     assert_eq!(s, 200);
     assert_eq!(json_of(&r)["tree"]["type"], "Text");
     assert_eq!(fk.calls(), vec!["mode-view home-calendar 44x16".to_string()]);
+    // 폰 화면 테마(#4) — 맞는 값만 모드까지, 모르는 값은 테마 없이(거절하지 않는다)
+    let (s, fk, _) = run(with_cookie(get("/api/mode-view?name=home-calendar&columns=44&rows=16&scheme=dark")));
+    assert_eq!(s, 200);
+    assert_eq!(fk.calls(), vec!["mode-view home-calendar 44x16 dark".to_string()]);
+    let (s, fk, _) = run(with_cookie(get("/api/mode-view?name=home-calendar&columns=44&rows=16&scheme=neon")));
+    assert_eq!(s, 200);
+    assert_eq!(fk.calls(), vec!["mode-view home-calendar 44x16".to_string()]);
     // 이상한 이름·크기는 맥까지 안 간다
     for q in ["name=../x&columns=44&rows=16", "name=home-calendar&columns=0&rows=16", "name=home-calendar&columns=44", "name=&columns=44&rows=16", "name=a&columns=9999&rows=1"] {
         let (s, fk, _) = run(with_cookie(get(&format!("/api/mode-view?{q}"))));
@@ -3954,6 +4059,96 @@ fn tm_폰_팀_메신저는_짝지은_폰만_읽고_쓰고_cid_는_이_기기가_
 }
 
 #[test]
+fn tm_폰_읽음은_짝지은_폰만_방과_seq_로_올린다() {
+    // 10-28 사용자: 아이맥에서 읽었으면 맥북·폰에서도 안 읽음이 사라져야 — 폰에서 읽은 것도 같은 계정 읽음으로 올린다
+    let g = peer_gate("tm000009");
+    let f = Fake::default();
+    let r = handle(&post("/api/team-read", r#"{"room":"r1","seq":7}"#), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(handle(&post("/api/team-read", r#"{"room":"모름","seq":7}"#), &g, &f).status, 409);
+    for bad in [r#"{"room":"","seq":1}"#, r#"{"room":"r1","seq":0}"#, r#"{"room":"r1","seq":-1}"#, r#"{"room":"r1"}"#, r#"{"room":"r1","seq":1,"member":"m9"}"#] {
+        assert_eq!(handle(&post("/api/team-read", bad), &g, &f).status, 400, "{bad}");
+    }
+    assert!(head_check(&post("/api/team-read", "{}"), &g).is_none(), "몸통 길 목록에 있다");
+    assert_eq!(handle(&set(post("/api/team-read", "{}"), "origin", Some("http://evil.example")), &g, &f).status, 403);
+    assert_eq!(handle(&set(post("/api/team-read", "{}"), "authorization", None), &g, &f).status, 401);
+    assert_eq!(handle(&as_peer(post("/api/team-read", "{}")), &g, &f).status, 403, "다른 기기 참모 열쇠로는 안 된다");
+    assert_eq!(handle(&with_cookie(get("/api/team-read")), &g, &f).status, 405);
+    assert_eq!(f.calls(), vec!["team_read r1 7", "team_read 모름 7"]);
+}
+
+#[test]
+fn tm_폰_팀_프로필판_글판은_짝지은_폰만_팀_id_와_본_판으로_읽는다() {
+    // 10-26 사용자: 폰에 별명·사진이 안 보이고 팀 홈이 없었다 — 폰 서버에 프로필판·글판 길이 없었다
+    let g = peer_gate("tm000004");
+    let f = Fake::default();
+    let r = handle(&with_cookie(get("/api/team-profiles?team=t-1&rev=0")), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(json_of(&r)["rev"], 7);
+    assert_eq!(json_of(&handle(&with_cookie(get("/api/team-profiles?team=t-1&rev=7")), &g, &f))["same"], true, "본 판 그대로면 몸통 없이");
+    assert_eq!(handle(&with_cookie(get("/api/team-posts?team=t-1")), &g, &f).status, 200, "rev 없으면 0");
+    assert_eq!(f.calls(), vec!["team_profiles t-1 0", "team_profiles t-1 7", "team_posts t-1 0"]);
+    for p in ["/api/team-profiles", "/api/team-posts"] {
+        // 팀 id 는 꼭(빈 글 = '지금 팀'이면 화면이 본 팀과 갈릴 수 있다)·모양만, 판은 숫자만
+        for q in ["", "?team=", "?team=a%2Fb", "?team=t-1&rev=x", &format!("?team={}", "a".repeat(81))] {
+            assert_eq!(handle(&with_cookie(get(&format!("{p}{q}"))), &g, &f).status, 400, "{p}{q}");
+        }
+        assert_eq!(handle(&as_peer(with_cookie(get(&format!("{p}?team=t-1")))), &g, &f).status, 403, "다른 기기 참모 열쇠로는 못 읽는다: {p}");
+        assert_eq!(handle(&set(with_cookie(get(&format!("{p}?team=t-1"))), "authorization", None), &g, &f).status, 401, "{p}");
+        assert_eq!(handle(&post(p, "{}"), &g, &f).status, 405, "{p}");
+    }
+    assert_eq!(f.calls().len(), 3, "막힌 것은 뒤로 안 넘어간다");
+}
+
+#[test]
+fn tm_폰_대화_파일_썸네일은_짝지은_폰만_jpeg_만_받는다() {
+    // 10-28 사용자: 대화 말풍선 그림이 빈 네모 — 폰은 팀 파일을 받는 길 자체가 없었다. 원본은 안 주고 맥이 줄인 JPEG 만
+    let g = peer_gate("tm000005");
+    let f = Fake::default();
+    let r = handle(&with_cookie(get("/api/team-file-thumb?team=t-1&id=AbC_d-9&size=360")), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(ctype(&r), "image/jpeg");
+    assert!(r.headers.iter().any(|(k, v)| *k == "Content-Security-Policy" && v.contains("sandbox")), "그림으로만");
+    assert_eq!(handle(&with_cookie(get("/api/team-file-thumb?team=t-1&id=AbC")), &g, &f).status, 200, "size 없으면 기본");
+    assert_eq!(handle(&with_cookie(get("/api/team-file-thumb?team=t-1&id=nope")), &g, &f).status, 415, "그림·PDF 가 아니면 못 줄인다");
+    let p = "/api/team-file-thumb";
+    for q in ["", "?team=t-1", "?id=AbC", "?team=t-1&id=a%2Fb", "?team=a%2Fb&id=AbC", &format!("?team=t-1&id={}", "a".repeat(129))] {
+        assert_eq!(handle(&with_cookie(get(&format!("{p}{q}"))), &g, &f).status, 400, "{q}");
+    }
+    assert_eq!(handle(&as_peer(with_cookie(get(&format!("{p}?team=t-1&id=AbC")))), &g, &f).status, 403, "다른 기기 참모 열쇠로는 못 받는다");
+    assert_eq!(handle(&set(with_cookie(get(&format!("{p}?team=t-1&id=AbC"))), "authorization", None), &g, &f).status, 401);
+    assert_eq!(handle(&post(p, "{}"), &g, &f).status, 405);
+    assert_eq!(f.calls().len(), 3, "막힌 것은 뒤로 안 넘어간다");
+}
+
+#[test]
+fn tm_폰_팀_홈_글쓰기는_새_글만_짝지은_폰만_분당_상한() {
+    let g = peer_gate("tm000005");
+    let f = Fake::default();
+    let r = handle(&post("/api/team-post", r#"{"team":"t-1","title":"  공지  ","body":"내일 쉬어요","pin":true}"#), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(json_of(&r)["id"], "p1");
+    assert_eq!(f.calls(), vec!["team_post t-1 공지 6 true"]);
+    assert!(head_check(&post("/api/team-post", "{}"), &g).is_none(), "몸통 길 목록에 있다");
+    assert_eq!(handle(&set(post("/api/team-post", "{}"), "origin", Some("http://evil.example")), &g, &f).status, 403);
+    assert_eq!(handle(&set(post("/api/team-post", "{}"), "authorization", None), &g, &f).status, 401);
+    assert_eq!(handle(&as_peer(post("/api/team-post", r#"{"team":"t-1","title":"x"}"#)), &g, &f).status, 403);
+    assert_eq!(handle(&with_cookie(get("/api/team-post")), &g, &f).status, 405);
+    let long_title = serde_json::json!({ "team": "t-1", "title": "가".repeat(121) }).to_string();
+    let long_body = serde_json::json!({ "team": "t-1", "title": "x", "body": "a".repeat(crate::team_post::BODY_MAX + 1) }).to_string();
+    // 고치기(origin)는 폰에서 안 한다 — 모르는 칸이면 400
+    for bad in [r#"{"team":"t-1","title":"  "}"#, r#"{"team":"","title":"x"}"#, r#"{"team":"a/b","title":"x"}"#, r#"{"team":"t-1","title":"x","origin":"p1"}"#, long_title.as_str(), long_body.as_str()] {
+        assert_eq!(handle(&post("/api/team-post", bad), &g, &f).status, 400, "{}", &bad[..bad.len().min(80)]);
+    }
+    assert_eq!(f.calls().len(), 1);
+    // 말 보내기와 같은 분당 상한을 나눠 쓴다
+    for i in 1..TEAM_SAY_PER_MIN {
+        assert_eq!(handle(&post("/api/team-post", &format!(r#"{{"team":"t-1","title":"{i}"}}"#)), &g, &f).status, 200, "{i}");
+    }
+    assert_eq!(handle(&post("/api/team-say", r#"{"to":"m2","text":"넘침"}"#), &g, &f).status, 429);
+}
+
+#[test]
 fn tm_폰_넘기기는_team_handoff_길로만_짝지은_폰만() {
     // 보안 검토 10-23: 폰 넘기기가 /api/send(space-send 기록에 앞 80자)로 가서 남의 말이 notify.log 에 남았다 — 본문 없는 기록 길로
     let g = peer_gate("tm000002");
@@ -4156,4 +4351,179 @@ fn hu_계정_로그아웃_요청은_사람_길로만_받아_이_기기_카드를
     // 참모 길(scripts/peer·appctl)은 못 보낸다 — 사람 길 목록에만
     assert!(!crate::remote::allowed("POST", "/api/peer-logout-ask"));
     assert!(crate::remote::HUMAN_POSTS.contains(&"/api/peer-logout-ask"));
+}
+
+fn put_req(q: &str, body: &[u8]) -> Req {
+    let mut r = post("/api/team-locker-put", "");
+    r.query = q.into();
+    r.body = body.to_vec();
+    set(r, "content-type", Some("application/octet-stream"))
+}
+
+#[test]
+fn tm_폰_팀_보관함_목록은_중계_목록을_본_판으로_읽는다() {
+    // 10-28 사용자 "모바일에서는 팀 보관함이 비어 있다" — 폰은 맥에 내려받은 팀 폴더(/api/locker)만 봐서 중계 목록이 안 보였다
+    let g = peer_gate("tm000006");
+    let f = Fake::default();
+    let r = handle(&with_cookie(get("/api/team-locker?team=t-1&rev=0")), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(json_of(&r)["rev"], 9);
+    assert_eq!(json_of(&handle(&with_cookie(get("/api/team-locker?team=t-1&rev=9")), &g, &f))["same"], true);
+    for q in ["", "?team=", "?team=a%2Fb", "?team=t-1&rev=x"] {
+        assert_eq!(handle(&with_cookie(get(&format!("/api/team-locker{q}"))), &g, &f).status, 400, "{q}");
+    }
+    assert_eq!(handle(&as_peer(with_cookie(get("/api/team-locker?team=t-1"))), &g, &f).status, 403, "다른 기기 참모 열쇠로는 못 읽는다");
+    assert_eq!(handle(&set(with_cookie(get("/api/team-locker?team=t-1")), "authorization", None), &g, &f).status, 401);
+    assert_eq!(handle(&post("/api/team-locker", "{}"), &g, &f).status, 405);
+    assert_eq!(f.calls(), vec!["team_locker t-1 0", "team_locker t-1 9"]);
+}
+
+#[test]
+fn tm_폰_팀_보관함_바꾸기는_정한_일만_모양을_보고_넘긴다() {
+    let g = peer_gate("tm000007");
+    let f = Fake::default();
+    let ok = [
+        r#"{"team":"t-1","op":"mkdir","folder":"사진/10월"}"#,
+        r#"{"team":"t-1","op":"rename","id":"AbC_d-9","name":"새 이름.png"}"#,
+        r#"{"team":"t-1","op":"move","id":"AbC_d-9","folder":""}"#,
+        r#"{"team":"t-1","op":"trash","id":"AbC_d-9"}"#,
+        r#"{"team":"t-1","op":"restore","id":"AbC_d-9"}"#,
+        r#"{"team":"t-1","op":"folder-rename","from":"사진","to":"사진2"}"#,
+        r#"{"team":"t-1","op":"folder-trash","from":"사진/10월"}"#,
+    ];
+    for b in ok {
+        let r = handle(&post("/api/team-locker-op", b), &g, &f);
+        assert_eq!(r.status, 200, "{b}: {}", String::from_utf8_lossy(&r.body));
+    }
+    assert_eq!(f.calls().len(), ok.len());
+    let n = f.calls().len();
+    let bad = [
+        r#"{"team":"t-1","op":"purge","id":"AbC"}"#, // 영구 지우기는 데스크톱 휴지통에서만
+        r#"{"team":"","op":"trash","id":"AbC"}"#,
+        r#"{"team":"t-1","op":"trash","id":"a/b"}"#,
+        r#"{"team":"t-1","op":"trash"}"#,
+        r#"{"team":"t-1","op":"rename","id":"AbC","name":"  "}"#,
+        r#"{"team":"t-1","op":"rename","id":"AbC","name":"a/b"}"#,
+        r#"{"team":"t-1","op":"mkdir","folder":""}"#,
+        r#"{"team":"t-1","op":"mkdir","folder":"a/../b"}"#,
+        r#"{"team":"t-1","op":"folder-rename","from":"","to":"x"}"#,
+        r#"{"team":"t-1","op":"trash","id":"AbC","extra":1}"#,
+    ];
+    for b in bad {
+        assert_eq!(handle(&post("/api/team-locker-op", b), &g, &f).status, 400, "{b}");
+    }
+    assert_eq!(f.calls().len(), n, "막힌 것은 뒤로 안 넘어간다");
+    assert!(head_check(&post("/api/team-locker-op", "{}"), &g).is_none(), "몸통 길 목록에 있다");
+    assert_eq!(handle(&set(post("/api/team-locker-op", ok[3]), "origin", Some("http://evil.example")), &g, &f).status, 403);
+    assert_eq!(handle(&set(post("/api/team-locker-op", ok[3]), "content-type", Some("text/plain")), &g, &f).status, 403, "JSON 만(남의 form 막기)");
+    assert_eq!(handle(&set(post("/api/team-locker-op", ok[3]), "authorization", None), &g, &f).status, 401);
+    assert_eq!(handle(&as_peer(post("/api/team-locker-op", ok[3])), &g, &f).status, 403);
+    assert_eq!(handle(&with_cookie(get("/api/team-locker-op")), &g, &f).status, 405);
+    assert_eq!(f.calls().len(), n);
+}
+
+#[test]
+fn tm_폰_팀_보관함_올리기는_조각으로_같은_출처만_한도_안() {
+    let g = peer_gate("tm000008");
+    let f = Fake::default();
+    let r = handle(&put_req("team=t-1&up=up-0001abcd&part=0&last=1&name=%EC%82%AC%EC%A7%84.jpg&folder=a%2Fb", b"\xFF\xD8\xFFjpg"), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(f.calls(), vec!["team_locker_part t-1 up-0001abcd 0 true 사진.jpg a/b 6"]);
+    for q in ["up=up-0001abcd&part=0&last=1&name=x", "team=t-1&up=../x&part=0&last=1&name=x", "team=t-1&up=up-0001abcd&part=x&last=1&name=x", "team=t-1&up=up-0001abcd&part=0&last=1&name=", "team=t-1&up=up-0001abcd&part=0&last=1&name=a%2Fb", "team=t-1&up=up-0001abcd&part=0&last=1&name=x&folder=..%2Fy"] {
+        assert_eq!(handle(&put_req(q, b"x"), &g, &f).status, 400, "{q}");
+    }
+    assert_eq!(f.calls().len(), 1);
+    let q = "team=t-1&up=up-0001abcd&part=0&last=1&name=x";
+    assert!(head_check(&put_req(q, b"x"), &g).is_none(), "몸통 길 목록에 있다");
+    assert_eq!(head_check(&set(put_req(q, b"x"), "origin", Some("http://evil.example")), &g).map(|r| r.status), Some(403), "몸통 읽기 전에 막는다");
+    assert_eq!(handle(&set(put_req(q, b"x"), "origin", Some("http://evil.example")), &g, &f).status, 403);
+    assert_eq!(handle(&set(put_req(q, b"x"), "content-type", Some("text/html")), &g, &f).status, 403, "남의 form 이 못 보내는 형식만");
+    assert_eq!(handle(&set(put_req(q, b"x"), "authorization", None), &g, &f).status, 401);
+    assert_eq!(handle(&as_peer(put_req(q, b"x")), &g, &f).status, 403);
+    assert_eq!(handle(&with_cookie(get("/api/team-locker-put")), &g, &f).status, 405);
+    assert_eq!(f.calls().len(), 1);
+    assert_eq!(body_cap("/api/team-locker-put"), crate::team_phone_up::PART, "조각 하나까지만 몸통으로");
+}
+
+#[test]
+fn tm_폰_팀_참모_목록·확인·토큰·이어_묻기() {
+    // ADR 0017 — 폰도 데스크톱과 같은 길: 목록(확인한 판 같이), 보내기 직전 확인, 부른 답 토큰, 이어 묻기 re
+    let g = peer_gate("tm000011");
+    let f = Fake::default();
+    let r = handle(&with_cookie(get("/api/team-agents?team=t-1")), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert!(json_of(&r)["agents"].is_array());
+    assert_eq!(handle(&with_cookie(get("/api/team-agents?team=../x")), &g, &f).status, 400);
+    let r = handle(&post("/api/team-agent-confirm", r#"{"team":"t-1","id":"aaaaaaaaaaaaaaaa1"}"#), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(f.calls().last().unwrap(), "team_agent_confirm t-1 aaaaaaaaaaaaaaaa1");
+    for bad in [r#"{"team":"t-1","id":"../x"}"#, r#"{"team":"","id":"aaaaaaaaaaaaaaaa1"}"#, r#"{"team":"t-1","id":"a","x":1}"#] {
+        assert_eq!(handle(&post("/api/team-agent-confirm", bad), &g, &f).status, 400, "{bad}");
+    }
+    assert!(head_check(&post("/api/team-agent-confirm", "{}"), &g).is_none(), "몸통 길 목록에 있다");
+    assert_eq!(handle(&as_peer(post("/api/team-agent-confirm", r#"{"team":"t-1","id":"aaaaaaaaaaaaaaaa1"}"#)), &g, &f).status, 403, "다른 기기 참모 열쇠로는 안 된다");
+    let r = handle(&with_cookie(get("/api/team-agent-usage?room=r1")), &g, &f);
+    assert_eq!(r.status, 200);
+    assert_eq!(json_of(&r)["7"][1], 6200);
+    assert_eq!(handle(&with_cookie(get("/api/team-agent-usage?room=")), &g, &f).status, 400);
+    let r = handle(&post("/api/team-say", r#"{"to":"room:r1","text":"@회의록 할 일만","re":7}"#), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(f.calls().last().unwrap(), "team_say_re room:r1 @회의록 할 일만 7");
+}
+
+#[test]
+fn tm_폰_팀_참모_만들기·지우기·시험·자료() {
+    // ADR 0017 폰 서랍(시안 섞음 2) — 데스크톱 명령과 같은 일을 맥이 한다. 권한(만든 사람·팀장)은 맥의 저장 길이 본다
+    let g = peer_gate("tm000012");
+    let f = Fake::default();
+    let def = r#"{"t":"agent","name":"회의록","guide":"정리","model":"sonnet"}"#;
+    let r = handle(&post("/api/team-agent-save", &format!(r#"{{"team":"t-1","def":{def}}}"#)), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(f.calls().last().unwrap(), "team_agent_save t-1 회의록 -");
+    let r = handle(&post("/api/team-agent-save", &format!(r#"{{"team":"t-1","def":{def},"origin":"aaaaaaaaaaaaaaaa1"}}"#)), &g, &f);
+    assert_eq!(r.status, 200);
+    assert_eq!(f.calls().last().unwrap(), "team_agent_save t-1 회의록 aaaaaaaaaaaaaaaa1");
+    assert_eq!(handle(&post("/api/team-agent-save", &format!(r#"{{"team":"../x","def":{def}}}"#)), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/team-agent-save", r#"{"team":"t-1","def":{},"origin":"../x"}"#), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/team-agent-remove", r#"{"team":"t-1","id":"aaaaaaaaaaaaaaaa1"}"#), &g, &f).status, 200);
+    assert_eq!(f.calls().last().unwrap(), "team_agent_remove t-1 aaaaaaaaaaaaaaaa1");
+    let r = handle(&post("/api/team-agent-try", &format!(r#"{{"team":"t-1","room":"r1","def":{def},"ask":"정리","prev":[["q","a"]]}}"#)), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(f.calls().last().unwrap(), "team_agent_try t-1 r1 정리 1");
+    let r = handle(&with_cookie(get("/api/team-agent-refs?team=t-1")), &g, &f);
+    assert_eq!(r.status, 200);
+    assert!(json_of(&r).is_array());
+    for p in ["/api/team-agent-save", "/api/team-agent-remove", "/api/team-agent-try"] {
+        assert!(head_check(&post(p, "{}"), &g).is_none(), "{p} 몸통 길 목록에 있다");
+        assert_eq!(handle(&as_peer(post(p, "{}")), &g, &f).status, 403, "{p} 다른 기기 참모 열쇠로는 안 된다");
+    }
+}
+
+#[test]
+fn tm_폰_팀_홈_판_읽기·꾸미기·블록_내용() {
+    // ADR 0018 폰 — 데스크톱과 같은 판을 맥이 읽고 쓴다. 팀장·블록 검사는 맥의 저장 길(team_home_store)이 본다
+    let g = peer_gate("tm000013");
+    let f = Fake::default();
+    let r = handle(&with_cookie(get("/api/team-home?team=t-1&rev=0")), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(json_of(&r)["rev"], 5);
+    assert_eq!(json_of(&handle(&with_cookie(get("/api/team-home?team=t-1&rev=5")), &g, &f))["same"], true);
+    for q in ["", "?team=", "?team=a%2Fb", "?team=t-1&rev=x"] {
+        assert_eq!(handle(&with_cookie(get(&format!("/api/team-home{q}"))), &g, &f).status, 400, "{q}");
+    }
+    let r = handle(&post("/api/team-home-save", r#"{"team":"t-1","home":{"t":"home","blocks":[{"id":"b1","k":"pin","w":"full"},{"id":"b2","k":"links","w":"half"}]}}"#), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(f.calls().last().unwrap(), "team_home_save t-1 pin,links");
+    let r = handle(&post("/api/team-home-content", r#"{"team":"t-1","block":"b2","content":{"note":{"title":"워크숍"}}}"#), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(f.calls().last().unwrap(), "team_home_content t-1 b2 워크숍");
+    assert_eq!(handle(&post("/api/team-home-save", r#"{"team":"../x","home":{}}"#), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/team-home-content", r#"{"team":"t-1","block":"a b","content":{}}"#), &g, &f).status, 400, "블록 id 모양");
+    assert_eq!(handle(&post("/api/team-home-save", r#"{"team":"t-1","home":{},"spy":1}"#), &g, &f).status, 400, "모르는 칸");
+    for p in ["/api/team-home-save", "/api/team-home-content"] {
+        assert!(head_check(&post(p, "{}"), &g).is_none(), "{p} 몸통 길 목록에 있다");
+        assert_eq!(handle(&as_peer(post(p, "{}")), &g, &f).status, 403, "{p} 다른 기기 참모 열쇠로는 안 된다");
+        assert_eq!(handle(&with_cookie(get(p)), &g, &f).status, 405, "{p}");
+    }
+    assert_eq!(handle(&as_peer(with_cookie(get("/api/team-home?team=t-1"))), &g, &f).status, 403);
 }

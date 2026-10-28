@@ -15,6 +15,12 @@ describe('Craft 스페이스 탭', () => {
     expect(sameBox(null, b)).toBe(false);
   });
 
+  it('레티나면 칸 자리를 기기 픽셀(0.5점)까지 — 정수로 밀면 칸 끝 1px 에 바탕이 비친다(10-28 사용자)', () => {
+    expect(boxOf({ left: 12.5, top: 80.25, width: 780.5, height: 694 }, 2)).toEqual([12.5, 80.5, 780.5, 694]);
+    expect(boxOf({ left: 12.5, top: 80.25, width: 780.5, height: 694 }, 1)).toEqual([13, 80, 781, 694]);
+    expect(boxOf({ left: 12.5, top: 0, width: 10, height: 10 }, 0)).toEqual([13, 0, 10, 10]);
+  });
+
   it('덮였거나 칸이 없으면 숨긴다', () => {
     expect(shown([0, 0, 900, 600], false)).toBe(true);
     expect(shown([0, 0, 900, 600], true)).toBe(false);

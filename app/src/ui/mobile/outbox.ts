@@ -23,7 +23,10 @@ function set(next: OutMsg[]) {
 const subscribe = (f: () => void) => { subs.add(f); return () => subs.delete(f); };
 const snapshot = () => list;
 
-async function deliver(id: string): Promise<{ ok: boolean; error?: string }> {
+/** 끊겨 답을 못 받은 말을 같은 id 로 한 번 더 보내기까지 — 그사이 터널이 먹통을 알아채고 새로 붙는다 */
+const RESEND_MS = 3000;
+
+async function deliver(id: string, again = false): Promise<{ ok: boolean; error?: string }> {
   const m = list.find((x) => x.id === id);
   if (!m) return { ok: false, error: '보낼 말이 없어요' };
   try {
@@ -33,7 +36,12 @@ async function deliver(id: string): Promise<{ ok: boolean; error?: string }> {
   } catch (e) {
     // 연결 오류(fetch 의 TypeError — 사파리 'Load failed')는 맥이 받았을 수 있다 → 보내는 중으로 두고 기록·send-status 로 가린다.
     // 맥이 거절한 것(4xx·5xx 글)만 바로 실패
-    if (e instanceof TypeError) { set(markOut(list, id, 'sent')); return { ok: true }; }
+    // 같은 말 id 라 한 번 더 보내도 맥은 한 번만 친다 — 느린 셀룰러 먹통 뒤 맥에 안 간 채 남던 말(2026-10-27). 그래도 끊기면 기록·send-status 로
+    if (e instanceof TypeError) {
+      set(markOut(list, id, 'sent'));
+      if (!again) setTimeout(() => { if (list.some((m) => m.id === id)) void deliver(id, true); }, RESEND_MS);
+      return { ok: true };
+    }
     set(markOut(list, id, 'failed', (e as Error).message));
     return { ok: false, error: (e as Error).message };
   }

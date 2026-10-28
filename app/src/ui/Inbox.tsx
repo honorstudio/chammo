@@ -22,8 +22,10 @@ type Props = {
   onReply: (item: InboxItem, text: string) => Promise<void>;
   onOpen: (target: string) => void;
   onDismiss: (item: InboxItem) => void;
-  /** 로그인 풀림 카드(ui/LoginCard) — 맨 위에, 하나 */
+  /** 로그인 풀림 카드(ui/LoginCard) — 맨 위에, 하나 + 약관 카드(계정마다) */
   login?: ReactNode;
+  /** login 안 카드 수 — 없으면 1 */
+  loginCount?: number;
   /** 브라우저 연결 카드(ui/BrowserAttach) — 로그인 카드 다음 */
   browser?: ReactNode;
   browserCount?: number;
@@ -101,7 +103,7 @@ function Inbox(props: Props) {
   return (
     <div className="inbox">
       <div className="tasks-sec inbox-head">
-        {tr('결정 대기', 'Decisions')} <span>{props.items.length + (props.directCount ?? 0) + (props.login ? 1 : 0) + (props.browserCount ?? 0)}</span>
+        {tr('결정 대기', 'Decisions')} <span>{props.items.length + (props.directCount ?? 0) + (props.login ? props.loginCount ?? 1 : 0) + (props.browserCount ?? 0)}</span>
       </div>
       {props.login}
       {props.browser}

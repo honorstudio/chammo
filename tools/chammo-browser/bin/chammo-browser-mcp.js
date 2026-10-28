@@ -21,6 +21,7 @@ const channelMod = require('../src/channel');
 const users = require('../src/users');
 const { createShare, scriptHolder } = require('../src/share');
 const { createDialogAnswer } = require('../src/dialogs');
+const { createWinShow, SIGNED } = require('../src/winshow');
 
 const profile = process.argv[2];
 if (!profile) {
@@ -33,6 +34,9 @@ if (badProfile) {
   console.error(`[chammo-browser-mcp] ${badProfile}`);
   process.exit(1);
 }
+
+// 세션 MCP 로그엔 래퍼 stderr 가 안 남는다 — 래퍼 줄을 <브라우저 루트>/run/<프로필>.log 에도(src/wlog.js)
+require('../src/wlog').attachLog({ file: require('path').join(paths.ROOT, 'run', `${profile}.log`) });
 
 const userDataDir = paths.profileDir(profile);
 fs.mkdirSync(userDataDir, { recursive: true });
@@ -89,7 +93,9 @@ if (!extra.some((a) => a === '--config' || a.startsWith('--config='))) {
   const appHere = fs.existsSync(require('path').join(paths.dataDir(), 'config.json'));
   // 지금은 기다리지 않고 정한다 — 앱은 가짜 화면을 필요할 때만 띄우니 세션마다 3초씩 기다리지 않게, 진짜 자리는 크롬이 뜰 때
   const place = placement({ profile, watchable, appHere, vdFile, mac, wait: 0 });
-  if (mac && watchable && appHere) placeEnv = JSON.stringify({ profile, vdFile, dataDir: paths.dataDir() });
+  if (mac && watchable && appHere) placeEnv = { profile, vdFile, dataDir: paths.dataDir() };
+  // 윈도우 — 숨은 데스크톱 실행기로 띄운다(src/windesk.js, 2026-10-28 인앱 브라우저 윈도우판)
+  if (place.desk) placeEnv = { profile, vdFile, dataDir: paths.dataDir(), desk: true, root: paths.ROOT, liveDir: require('path').join(paths.ROOT, 'live') };
   offPos = place.offPos;
   const { pos, size } = place;
   const configFile = require('path').join(paths.ROOT, 'run', `${profile}.json`);
@@ -113,8 +119,15 @@ const picked = own ? chromeLaunch() : sessionChrome(chromeLaunch(pick && pick.ch
 if (!own && picked.found) channelMod.remember(userDataDir, picked.channel || 'chrome');
 if (!own && picked.channel) configArgs.push('--browser', picked.channel);
 if (!own && picked.executablePath) configArgs.push('--executable-path', picked.executablePath);
+// ad-hoc 사본이면 띄울 때 Dock·⌘Tab 빼기 dylib 를 그 크롬에만(src/place-at-launch.js) — 자리 다시 정하기와 같은 spawn 훅
+// 구글 서명 원본(signed)도 같이 — 사람이 '이번만 구글 크롬으로 열기'를 누르면 그걸로 다시 띄운다(맥 패스키, src/winshow.js SIGNED)
+if (placeEnv && picked.inject) {
+  placeEnv.inject = { exe: picked.executablePath, dylib: picked.inject, signed: picked.signed };
+  if (picked.signed) placeEnv.liveDir = require('path').join(paths.ROOT, 'live');
+}
 // 크롬이 하나도 없으면 브라우저 도구를 '설치' 안내로 막는다(직접 고른 브라우저면 그대로). browser_install 은 늘 막는다(src/guard.js)
 const chromeFound = own || picked.found;
+console.error(`[chammo-browser-mcp] 시작 pid ${process.pid} · 크롬 ${picked.executablePath || picked.channel || '기본'}${placeEnv && placeEnv.inject && placeEnv.inject.signed ? ' · 구글 크롬 갈래 있음' : ''}`);
 
 const ASK_TOOL = {
   name: 'browser_ask_human',
@@ -126,14 +139,14 @@ const ASK_TOOL = {
 const SURVIVE = ['--require', require('path').join(__dirname, '..', 'src', 'survive.js'), ...(placeEnv ? ['--require', require('path').join(__dirname, '..', 'src', 'place-at-launch.js')] : [])];
 
 const child = spawn(process.execPath, [...SURVIVE, cli, '--user-data-dir', userDataDir, ...configArgs, ...extra], {
-  stdio: ['pipe', 'pipe', 'inherit'], // stdin/stdout 은 중계, stderr 는 그대로
+  stdio: ['pipe', 'pipe', 'pipe'], // stdin/stdout 은 중계, stderr 는 줄마다 래퍼 기록으로(place-at-launch 줄도 남게)
   windowsHide: true, // 윈도우: 콘솔 없는 부모 밑에서 검은 창이 안 뜨게(test/windows-hide.test.js)
-  ...(placeEnv ? { env: { ...process.env, CHAMMO_PLACE: placeEnv } } : {}),
+  ...(placeEnv ? { env: { ...process.env, CHAMMO_PLACE: JSON.stringify(placeEnv) } } : {}),
 });
 
 // 화면 밖에 띄운 크롬을 크롬·맥이 화면 안으로 끌어오면 최소화 — 포트가 생기면 몇 번(처음 창·곧 뜨는 창). 앱이 나중에 켜지면 가짜 화면으로 옮긴다
 // 자리는 크롬이 뜰 때 다시 정해진다 — 그때 화면 밖 자리·가짜 화면을 다시 읽어 가짜 화면 안 창은 두고 끌려온 창만
-if ((offPos || placeEnv) && live) {
+if ((offPos || (placeEnv && mac)) && live) {
   const started = Date.now();
   const tries = [0, 1500, 4000];
   const tick = setInterval(() => {
@@ -154,6 +167,8 @@ if ((offPos || placeEnv) && live) {
 // 스크립트 지킴이(chammo-browser launch)가 프로필을 쥐고 있으면 '사용 중' 오류 대신 그 크롬에 CDP 로 붙는 playwright 를 하나 더 띄워 같이 쓴다(src/share.js).
 // 앱 화면 상태 파일은 지킴이가 쓴다 — 같이 쓰는 동안 래퍼는 안 쓴다
 let relay = null;
+let winshow = null; // 윈도우 보이는 창으로 다시 띄우기(src/winshow.js) — 숨은 데스크톱으로 띄울 때만
+let passkey = null; // 맥 패스키 자동(src/passkey.js) — 구글 크롬 갈래가 있을 때만
 const share = createShare({
   readPort: () => liveMod.readPort(userDataDir),
   holderAlive: (pid) => lock.list({ lockDir: paths.locksDir }).some((l) => l.profile === profile && l.pid === pid && l.alive),
@@ -168,6 +183,12 @@ const share = createShare({
   onLine: (line) => relay.onChildLine(line),
 });
 const mine = () => !share.active(); // 지금 크롬이 내 것(래퍼가 띄운 것)인가
+/** 래퍼가 스스로 창을 바꿨으면(패스키) 그 꼬리를 이번 결과에 한 번 — 문지기 답(g)과 합친다 */
+function switchNote(g) {
+  const note = winshow ? winshow.takeNote() : '';
+  if (!note) return g;
+  return Promise.resolve(g || { run: true }).then((r) => ({ ...(r || { run: true }), note: [note, r && r.note].filter(Boolean).join('\n') }));
+}
 
 relay = createRelay({
   profile,
@@ -180,7 +201,7 @@ relay = createRelay({
   stillShared: () => share.still(),
   release: () => {
     if (share.active()) { share.stop(); secrets.reset(); return; } // 같이 쓰던 스크립트 크롬 — 놓기만(락·명부·상태 파일은 지킴이 것)
-    lock.release(profile, { lockDir: paths.locksDir }); users.clear(paths.locksDir, profile); if (live) live.closed(); if (take) take.reset(); secrets.reset();
+    lock.release(profile, { lockDir: paths.locksDir }); users.clear(paths.locksDir, profile); if (live) live.closed(); if (take) take.reset(); if (winshow) winshow.closed(); secrets.reset();
   }, // browser_close·유휴 닫기
   // 결과를 넘기기 직전 그 페이지 비밀번호 칸 값을 읽어 가린다(플레이라이트 snapshot 이 값을 그대로 보여 준다)
   afterCall: () => secrets.captureCall(),
@@ -198,11 +219,14 @@ relay = createRelay({
   },
   // 사람이 개입 중이면 세션 도구를 돌려줄 때까지 붙잡는다 — 그동안 앱에 '세션이 기다리는 중'
   gate: (n, a) => {
-    if (!take) return null;
+    // 창을 바꾸는 중이면 다 바꿀 때까지(src/winshow.js) — 그다음 개입 문지기. 래퍼가 스스로 바꿨으면(패스키) 그 뒤 첫 결과에 꼬리 한 번
+    const sw = winshow && winshow.hold();
+    if (sw) return sw.then(() => switchNote((take && take.gate(n, a)) || { run: true }));
+    if (!take) return switchNote(null);
     const g = take.gate(n, a);
-    if (!g || !take.active()) return g;
+    if (!g || !take.active()) return switchNote(g);
     live.held(true);
-    return g.finally(() => live.held(false));
+    return switchNote(g.finally(() => live.held(false)));
   },
   sendToChild: (line) => (share.active() ? share.send(line) : child.stdin.write(line + '\n')),
   // 사람 부르기 — 2FA·캡차·계정 없는 로그인처럼 사람이 해야 할 때. 앱(세션 브라우저 앱에서 보기)이 크게 띄우고 알린다
@@ -212,9 +236,14 @@ relay = createRelay({
     if (blocked) return Promise.resolve(blocked);
     // 사람이 '다 했어'를 누르면 앱이 적은 사람이 한 일 꼬리표를 대신 준다(없으면 원래 글) — snapshot 전까지 누르기는 막힌다
     return live && name === ASK_TOOL.name
-      ? live.askHuman(args && args.reason).then((r) => ({ content: [{ type: 'text', text: liveMod.askText(r, r.ok && take ? take.takeNote() : '') }], isError: !r.ok }))
+      ? live.askHuman(args && args.reason).then(async (r) => {
+        // 패스키 때문에 스스로 구글 크롬으로 바꿔 둔 채 사람이 '다 했어' — 참모 브라우저로 돌아온 뒤 돌려준다
+        if (r.ok && passkey) await passkey.humanDone().catch(() => {});
+        return { content: [{ type: 'text', text: liveMod.askText(r, r.ok && take ? take.takeNote() : '') }], isError: !r.ok };
+      })
       : null;
   },
+  onLocalCancel: (name) => { if (live && name === ASK_TOOL.name) live.cancelAsk(); },
   sendToClient: (line) => process.stdout.write(line + '\n'),
   // 사람이 앱 모달에서 연 파일 창(앱이 맥 파일 창으로 처리)이 플레이라이트에도 '[File chooser]' 로 쌓여 세션 도구를 막았다(QA N3) —
   // 그만큼 파일 없는 browser_file_upload(= 그 상태만 치움, 페이지엔 아무것도 안 함)를 먼저 보낸다
@@ -230,6 +259,38 @@ relay = createRelay({
     };
   })(),
 });
+// 윈도우 숨은 데스크톱 크롬 — 사람 차례 OS 창이 필요하면 앱이 부탁해 같은 프로필을 보이는 데스크톱에 다시 띄운다(src/winshow.js)
+if (live && placeEnv && placeEnv.desk) {
+  winshow = createWinShow({ liveDir: placeEnv.liveDir, profile, pid: process.pid, call: relay.callInternal, live, log: (m) => console.error(m) });
+  setInterval(() => { winshow.tick().catch(() => {}); }, 700).unref();
+}
+// 맥 패스키 탈출구 — 앱이 <live>/<프로필>.signed 를 쓰면 같은 프로필을 구글 서명 원본으로(되돌리면 ad-hoc 사본으로) 다시 띄운다.
+// 닫은 크롬이 프로필 잠금(SingletonLock)을 놓기 전에 열면 둘째 크롬이 '기존 세션에서 여는 중'으로 조용히 끝난다 — 놓을 때까지 기다린다(src/hold-passkey.js waitProfileFree)
+if (live && placeEnv && placeEnv.inject && placeEnv.inject.signed) {
+  const { waitProfileFree } = require('../src/hold-passkey');
+  const free = () => waitProfileFree(userDataDir, { log: (m) => console.error(m) });
+  winshow = createWinShow({ liveDir: placeEnv.liveDir, profile, pid: process.pid, call: relay.callInternal, live, names: SIGNED, beforeOpen: free, log: (m) => console.error(m) });
+  live.signable();
+  setInterval(() => { winshow.tick().catch(() => {}); }, 700).unref();
+}
+// 맥 패스키 자동 — 페이지가 패스키를 부르면 묻지 않고 구글 크롬으로, 성공 뒤 주소가 바뀌고 잠잠해지면(또는 사람 '다 했어') 돌아온다(src/passkey.js).
+// 같이 쓰는 스크립트 크롬은 래퍼가 다시 못 띄워 안 바꾼다. 바꾸는 동안엔 감시를 쉰다 — 다 바꾼 뒤 새 포트·갈래로 새로 붙는다
+if (winshow && live && placeEnv && placeEnv.inject && placeEnv.inject.signed) {
+  const pk = { ...require('../src/passkey'), ...require('../src/passkey-auto') };
+  let watch = null;
+  passkey = pk.createPasskeyAuto({ winshow, url: (t) => watch.url(t), canSwitch: () => mine() && relay.holdsLock(), idle: () => !relay.busy(), log: (m) => console.error(m) });
+  watch = pk.createPasskeyWatch({
+    readPort: () => (relay.holdsLock() && mine() ? liveMod.readPort(userDataDir) : null),
+    signed: () => winshow.shown(),
+    canHold: () => passkey.ready(),
+    onSignal: (phase, t) => { passkey.signal(phase, t).catch((e) => console.error(`[chammo-browser-mcp] 패스키 자동 실패: ${e.message}`)); },
+    log: (m) => console.error(m),
+  });
+  setInterval(() => {
+    if (!winshow.hold()) watch.tick();
+    passkey.tick().catch(() => {});
+  }, 1000).unref();
+}
 // 앱이 붙기 전에 뜬 대화상자 — 앱이 답을 부탁하면(<live>/<프로필>.dialog) 처음부터 붙은 playwright 로 대신 답한다(src/dialogs.js)
 if (live) {
   const dlg = createDialogAnswer({ liveDir: require('path').join(paths.ROOT, 'live'), profile, pid: process.pid, call: relay.callInternal, log: (m) => console.error(m) });
@@ -239,6 +300,7 @@ if (live) {
 process.stdin.on('data', createLineSplitter((line) => { share.remember(line); relay.onClientLine(line); }));
 process.stdin.on('end', () => child.stdin.end()); // Claude 가 끊으면 playwright 도 종료 흐름으로
 child.stdout.on('data', createLineSplitter(relay.onChildLine));
+child.stderr.on('data', createLineSplitter((l) => console.error(l)));
 child.stdin.on('error', () => { /* child 가 먼저 죽은 경우 — exit 핸들러가 정리 */ });
 
 // 락이 없을 때 release 는 no-lock/not-owner 로 끝나므로 남의 락을 건드리지 않는다

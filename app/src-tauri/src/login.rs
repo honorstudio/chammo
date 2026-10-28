@@ -24,6 +24,8 @@ pub struct Probe {
     pub logged_in: Option<bool>,
     /// 계정 로그인이 마지막으로 바뀐 시각(ms) — 로그인·토큰 갱신·계정 바꾸기. 같은 칸의 MCP 로그인만 바뀐 건 안 친다(login_at). 모르면 None
     pub cred_at: Option<i64>,
+    /// 약관 카드 [다시 시도]를 마지막으로 누른 시각(ms) — 데스크톱·폰 어디서 눌렀든(terms_retry_mark). 없으면 None
+    pub terms_retry_at: Option<i64>,
 }
 
 /// `security find-generic-password -s …`(값 없이 속성만) 출력의 mdat → ms. 예: `"mdat"<timedate>=0x3230… "20261005204344Z\000"`
@@ -134,7 +136,11 @@ pub fn login_at() -> Option<i64> {
 /// 맥 로그인 상태 — 화면이 로그인 오류로 멈춘 세션을 볼 때 15초마다, 아니면 드물게 부른다
 #[tauri::command]
 pub async fn login_probe() -> Probe {
-    tauri::async_runtime::spawn_blocking(|| Probe { logged_in: crate::setup::auth_status(&crate::claude::claude_bin()), cred_at: login_at() })
+    tauri::async_runtime::spawn_blocking(|| Probe {
+        logged_in: crate::setup::auth_status(&crate::claude::claude_bin()),
+        cred_at: login_at(),
+        terms_retry_at: terms_retry_read(crate::config::data_dir()),
+    })
         .await
         .unwrap_or_default()
 }
@@ -146,6 +152,27 @@ pub fn login_save(json: String) -> Result<(), String> {
     let path = crate::config::data_file("login.json");
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json).and_then(|_| std::fs::rename(&tmp, &path)).map_err(|e| e.to_string())
+}
+
+/// 약관 동의 필요(domain/login terms) — 사람이 claude.ai 에서 동의한 뒤 [다시 시도]를 누른 시각. 화면이 재기(login_probe)에서 읽고
+/// 멈춘 세션에 이어서·계정 풀 약관 막힘 풀기를 한다. 폰은 /api/login-terms-retry 로 같은 파일을 쓴다
+pub const TERMS_RETRY_FILE: &str = "login-terms-retry";
+
+pub fn terms_retry_mark(dir: &std::path::Path, now_ms: i64) -> std::io::Result<()> {
+    let path = dir.join(TERMS_RETRY_FILE);
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, now_ms.to_string()).and_then(|_| std::fs::rename(&tmp, &path))
+}
+
+pub fn terms_retry_read(dir: &std::path::Path) -> Option<i64> {
+    std::fs::read_to_string(dir.join(TERMS_RETRY_FILE)).ok()?.trim().parse().ok()
+}
+
+/// at = 화면이 바로 카드를 내릴 때 쓴 시각 — 같은 값이어야 재기로 돌아온 시각을 새 누름으로 안 친다(이어서 두 번). 엉뚱하면(1분 넘게 어긋남) 지금
+#[tauri::command]
+pub fn login_terms_retry(at: i64) -> Result<(), String> {
+    let now = crate::accounts_refresh::now_ms();
+    terms_retry_mark(crate::config::data_dir(), if (at - now).abs() <= 60_000 { at } else { now }).map_err(|e| e.to_string())
 }
 
 // ---- 폰 로그인 흐름 ----

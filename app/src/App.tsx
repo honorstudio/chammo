@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { appRoots, closableByShortcut, groupByProject, isOrchestratorName, legacyAssistants, nextOrchestratorName, orchView, parseAgents, projectDir, sessionsToStop, toolsWay, withinRoots, type Session } from './domain/session';
+import { appRoots, closableByShortcut, groupByProject, isOrchestratorName, legacyAssistants, nextOrchestratorName, orchView, parseAgents, projectDir, seenName, sessionsToStop, toolsWay, withinRoots, type Session } from './domain/session';
 import { moveInOrder, orchSort, stepTarget } from './domain/orchOrder';
 import { askNotice, askPlaced, askTarget, popupNotice, readAskCardKey } from './domain/agentAsk';
 import { samePath } from './domain/paths';
@@ -8,7 +8,7 @@ import { accountsApi, readUsage, setOrchLegacy, todayCommits, type RepoToday, se
 import { ACCOUNTS_CHANGED, topLabel, usageOf, type AccountsView } from './domain/accounts';
 import { useAccountAuto } from './ui/useAccountAuto';
 import { useLogin } from './ui/useLogin';
-import { LoginCard } from './ui/LoginCard';
+import { LoginCard, TermsCards } from './ui/LoginCard';
 import { useBrowserNeeds } from './ui/BrowserAttach';
 import { dayStart, parseUsage, TODAY_COMMITS_MS, type Usage } from './domain/usage';
 import { FeatureRow, type FeatureProps } from './ui/FeatureButtons';
@@ -22,6 +22,7 @@ import { selectionWord } from './domain/viewNow';
 import { Setup } from './ui/Setup';
 import { Tour } from './ui/Tour';
 import { QuitDialog } from './ui/QuitDialog';
+import { CraftOpenAsk } from './ui/craft/openInCraft';
 import { LicensesDialog } from './ui/LicensesDialog';
 import { RoutinePage } from './ui/RoutinePage';
 import { isCloud, parseRoutines, routineItem, routineState, type Routine } from './domain/routine';
@@ -49,8 +50,8 @@ import { picking } from './ui/chat/modelPickRun';
 import { appUpdateInstall, openTarget as openLink } from './data/tauri';
 import { installNote, runInstall, type Phase as InstallPhase } from './domain/appInstall';
 import { assistant, getLang, josa, tr } from './i18n';
-import { getAppEnv, listSessionsAllRaw, listSessionsRaw, readSay, writeVoiceMode, speak, projectScan, readTasksSince, readTranscriptTails, spawnSession, type AppEnv } from './data/tauri';
-import { freshReplies, fromOrchTurn, heldTarget, parseSay, pickSay, routeReply, takeHeld, talkedTo, type ReplySeen, type VoiceHeld } from './domain/voice';
+import { getAppEnv, listSessionsAllRaw, listSessionsRaw, readSay, writeVoiceMode, speak, projectScan, readTasksSince, readTranscriptTails, DEEP_TAIL, spawnSession, type AppEnv } from './data/tauri';
+import { freshReplies, heldTarget, parseSay, pickSay, routeReply, takeHeld, talkedTo, voiceTurn, type ReplySeen, type VoiceHeld } from './domain/voice';
 import { baseVoice, voiceFor } from './domain/avatar';
 import { avatarSnapshot, refreshAvatars, setAvatarTts } from './ui/avatar';
 import { blockedBody, cardTarget, cardToken, readNoteTarget } from './domain/notify';
@@ -60,12 +61,13 @@ import { useDirectCards } from './ui/useDirectCards';
 import { useShowLog } from './ui/space/useShowLog';
 import { chatFiles, showOwnerOf, type ChatFile } from './domain/chatFiles';
 import { ChatFileCard } from './ui/chat/ChatFileCard';
-import { kindView, needsAnswer } from './domain/directAsk';
+import { freshAppCards, kindView, needsAnswer } from './domain/directAsk';
 import { useAgentLives } from './ui/AgentBrowser';
 import { every } from './ui/poll';
 import { askName, liveOf, takeoverLine, type Live } from './domain/agentBrowser';
 import { activityStatus, docBadges, liveLine, needsHarness, sessionStatus, settled, transitions, type ActivityStatus, type ProjectDoc } from './domain/status';
-import { summarizeTranscript, type Activity } from './domain/activity';
+import { summarizeTranscript, type Activity, type Line } from './domain/activity';
+import { giverTurn, quietHanded } from './domain/handedAsk';
 import { clampFont, DEFAULT_FONT, dedupeMs, frameZoomCmd, gotoOfNum, menuAction, onceAcross, onceWithin, shortcutFor, zoomTarget, type Shortcut, type ZoomArea } from './domain/shortcuts';
 import { foldTasks, splitCards, type TaskEvent } from './domain/tasks';
 import { makeTaskLog } from './domain/taskTail';
@@ -73,7 +75,7 @@ import { routineSessions, routineStalls } from './domain/login';
 import { TaskPanel, type SessionActivity } from './ui/TaskPanel';
 import { invoke } from '@tauri-apps/api/core';
 import { OrchActionsProvider, useOrchActions } from './ui/orchActions';
-import { orchDisplay, orchLabel, setOrchLabel, setOrchRoster, useOrchLabels } from './ui/orchLabels';
+import { orchDisplay, orchLabel, orchLabelsNow, setOrchLabel, setOrchRoster, useOrchLabels } from './ui/orchLabels';
 import { Confirm, NameNew } from './ui/OrchDialogs';
 import { consentBeforeSpawn, isDisclaimerError } from './domain/bypassConsent';
 import { dupRenames, labelRenames, nickProblem, renamesToSend, withNick, type RenameSent } from './domain/orchLabel';
@@ -143,6 +145,7 @@ import { IconClose, IconDownload, IconStack, IconTabs, IconUpdate } from './ui/I
 import { RemoteChat, REMOTE_CHAT_EVENT, type RemoteChatTarget } from './ui/chat/RemoteChat';
 import { FAR_BLOCKED, FAR_NUM, FAR_PICK, farActive, useFarMode } from './ui/far/Far';
 import { useTeamMode } from './ui/team/useTeamMode';
+import { FloatHost } from './ui/space/OrchBubble';
 import { CONVO as TEAM_CONVO } from './domain/teamLayout';
 import { teamTarget } from './domain/teamChat';
 import type { SettingsTab } from './domain/settingsTabs';
@@ -150,6 +153,8 @@ import { useRemoteCards } from './ui/useRemoteCards';
 import { IconButton } from './ui/kit/IconButton';
 import type { TaskCard } from './domain/tasks';
 import { sessionOrigins } from './data/tauri';
+import { BUSY_POLL, listErrorText } from './domain/busyGate';
+import { busyNow } from './ui/busyNow';
 import { appendTaskEvent, removeSession, daemonStartedAt, readOrchPins, setOrchPin, readOrchOrder, setOrchOrder, readOrchRoles, readLiveSnap, resumeSession, writeLiveSnap, newSession, readAutoAllow, readCtx, sendToSession, setBadge, stopSession, tamaWidget, writeClipboard } from './data/tauri';
 import { parseAllowLog, type AllowLog } from './domain/autoAllow';
 import { useAutoAllow } from './ui/useAutoAllow';
@@ -312,6 +317,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   // 목록 읽기가 낸 오류만 목록 읽기가 지운다 — 예전엔 폴링이 성공할 때마다 지워서 참모 띄우기 실패 같은 오류가 몇 초 만에 사라졌다(2026-10-03 QA 2번)
   const listFailed = useRef(false);
+  const listFails = useRef(0);
   // 세션 목록을 마지막으로 받은 때 — 한동안 안 오면 옛 상태를 믿지 않고 '모름'(domain/status LIST_STALE_MS)
   const listAt = useRef<number | undefined>(undefined);
   const [selected, setSelected] = useState<Selection>({ kind: 'orchestrator' });
@@ -429,6 +435,9 @@ export default function App() {
   };
   const [chatTab, setChatTab] = useState<string | null>(null);
   const [pending, setPending] = useState<Set<string>>(new Set());
+  // 앱 카드(@link — 기기·보안 번호·되찾기)가 새로 뜬 순간 화면 위 한 줄 — 참모 채팅엔 안 붙으니(10-29) 누르면 결정 대기함
+  const [appNote, setAppNote] = useState<string | null>(null);
+  const prevApp = useRef<Set<string> | null>(null);
   const [starting, setStarting] = useState<string[]>([]); // ⌘T로 띄우는 중인 세션 이름 — claude --bg 가 1초 남짓 걸린다
   // 끄는 중인 세션: claude stop 이 0.7초쯤 걸린다(실측) — 누르는 순간 화면에서 먼저 치우고 뒤에서 끈다
   const [closing, setClosing] = useState<Map<string, string>>(new Map());
@@ -648,7 +657,7 @@ export default function App() {
         if (snapRef.current === undefined) snapRef.current = parseSnap(await readLiveSnap());
         // 시작 시각을 먼저 받고 기록을 읽는다 — 기다리는 사이 꺼진 세션 처리(useLostTriage)가 지운 걸 옛 기록으로 되살리지 않게
         const daemon = await daemonStartedAt();
-        const snap = stepSnapshot(snapRef.current, daemon, live, Date.now(), statesRef.current);
+        const snap = stepSnapshot(snapRef.current, daemon, live, Date.now(), statesRef.current, orchLabelsNow());
         if (snap && JSON.stringify(snap) !== JSON.stringify(snapRef.current)) void writeLiveSnap(JSON.stringify(snap)).catch(() => {});
         snapRef.current = snap;
         setLost(snap?.lost ?? []);
@@ -665,11 +674,14 @@ export default function App() {
       }
       prevLive.current = liveIds;
       setCtx(parseCtx(await readCtx()));
+      listFails.current = 0;
       if (listFailed.current) { listFailed.current = false; setError(null); }
     } catch (e: unknown) {
-      // 옛 claude(--json 없음)나 로그인 풀림이 여기로 온다 — 숨기지 않고 배너로
-      listFailed.current = true;
-      setError(tr(`세션 목록 실패: ${String(e)}`, `Could not list sessions: ${String(e)}`));
+      // 옛 claude(--json 없음)나 로그인 풀림이 여기로 온다 — 숨기지 않고 배너로. 시간 초과는 한 번으론 안 띄우고 이어지면 사람 말로(domain/busyGate) —
+      // 부팅 직후 'command timed out' 띠만 떠서 무슨 일인지 몰랐다(2026-10-26). 실패해도 세션 목록은 그대로 둔다(꺼진 걸로 안 친다)
+      listFails.current += 1;
+      const text = listErrorText(String(e), listFails.current, busyNow());
+      if (text) { listFailed.current = true; setError(text); }
     }
   }, [env]);
   // 앞 차례가 안 끝났으면 겹쳐 부르지 않는다 — 맥이 바쁘면 agents 한 번이 3초를 넘겨 쌓였다. 폴링은 버리고, 사람이 부른 것(refresh)은 끝난 뒤 한 번 더
@@ -679,7 +691,13 @@ export default function App() {
   useEffect(() => {
     if (!env || firstRun) return; // 첫 실행 안내 중엔 claude 가 아직 없을 수 있다 — 끝나면 창을 다시 연다
     void gate(true);
-    const t = setInterval(() => void gate(false), POLL_MS);
+    // 맥이 바쁘면 10초에 한 번 — claude agents 한 번이 프로세스 하나라 3초마다 띄우면 부하를 더 올린다(사람이 부른 새로 고침은 그대로)
+    let polledAt = 0;
+    const t = setInterval(() => {
+      if (busyNow() !== 'ok' && Date.now() - polledAt < BUSY_POLL) return;
+      polledAt = Date.now();
+      void gate(false);
+    }, POLL_MS);
     return () => clearInterval(t);
   }, [env, gate, firstRun]);
 
@@ -897,7 +915,9 @@ export default function App() {
     });
   // 참모 세션까지 — 결정 대기·알림·인계는 참모도 본다(작업 패널 목록은 하위 세션만)
   const orchActs: SessionActivity[] = groups.orchestrators.map((s) => {
-    const a = s.sessionId ? activity[s.sessionId] : undefined;
+    const raw = s.sessionId ? activity[s.sessionId] : undefined;
+    // 일을 넘긴 참모의 말로 깬 턴의 끝 질문은 그 참모에게 한 말 — 결정 대기함·알림·'물어봄'에 안 띄운다(domain/handedAsk, 10-28)
+    const a = raw && quietHanded(raw, s.name, taskEvents, now);
     return { session: s, activity: a ?? {}, status: activityStatus(s.state, a, now, listAt.current) };
   });
   const allActs = [...orchActs, ...activities];
@@ -970,21 +990,32 @@ export default function App() {
     for (const f of r.fresh) {
       const x = orchActs.find((a) => a.session.id === f.id)!;
       const s = x.session;
-      // 참모가 음성용 말을 따로 넘겼으면(scripts/say) 그걸, 아니면 답 앞부분 + 끝 질문. 다른 참모가 보낸 말로만 깬 턴은 그 참모에게 한 답이라 안 읽는다
-      if (voiceRef.current && !fromOrchTurn(f.reply)) void readSay().catch(() => '').then((log) => {
+      // 참모가 음성용 말을 따로 넘겼으면(scripts/say) 그걸, 아니면 답 앞부분 + 끝 질문. 다른 참모가 보낸 말로만 깬 턴은 그 참모에게 한 답이라 안 읽는다.
+      // 꼬리(256KB)가 턴 중간에서 잘려 깨운 말을 모르면 기록을 더 길게 읽어 다시 가른다(10-28: 그림 읽기로 길어진 디자인 담당 턴이 사람 턴처럼 알려졌다)
+      if (voiceRef.current) void (async () => {
+        let reply = f.reply;
+        const giver = (r: Line) => giverTurn(r.woke, s.name, taskEvents, now); // 넘긴 쪽이 받은 쪽 질문으로 깬 턴은 사람에게 묻는 길 — 버리지 않는다
+        let how = voiceTurn(reply, speakers.has(s.id), false, giver);
+        if (how === 'deeper' && s.sessionId) {
+          const tail = (await readTranscriptTails([s.sessionId], DEEP_TAIL).catch(() => ({} as Record<string, string>)))[s.sessionId];
+          const again = tail ? summarizeTranscript(tail).reply : undefined;
+          if (again?.ts === reply.ts) reply = again;
+          how = voiceTurn(reply, speakers.has(s.id), true, giver);
+        }
+        if (how === 'skip') return undefined;
+        const log = await readSay().catch(() => '');
         // 앱을 켜기 전에 넘긴 말은 안 읽는다 — 켤 때마다 '이미 읽은 말' 기억이 비어 옛 말을 몰아 읽었다
         const since = [x.activity.prompt?.ts ?? '', appStartedAt.current].sort().pop()!;
         const p = pickSay(parseSay(log), [s.id, s.sessionId], since, spokenSay.current[s.id]);
         if (p) spokenSay.current[s.id] = p.last; // 읽은 말은 다음 답에서 다시 안 읽는다
-        return p?.text ?? f.reply.say;
-      }).then((t) => {
+        const t = p?.text ?? reply.say;
         if (!t) return undefined;
-        const o = routeReply(voiceHeld.current, { id: s.id, name: orchDisplay(s) || assistant(), text: t, asks: !!f.reply.asks, ts: f.reply.ts }, speakers);
+        const o = routeReply(voiceHeld.current, { id: s.id, name: orchDisplay(s) || assistant(), text: t, asks: !!reply.asks, ts: reply.ts, human: !!reply.byHuman }, speakers);
         voiceHeld.current = o.held;
         // 다른 참모 알림 한 줄은 기본 목소리로 — 말하던 것 뒤에 줄 선다(Rust 차례 잠금)
         if (o.note) return speak(o.note, undefined, s.id);
         return o.speak ? speakAs(s, o.speak) : undefined;
-      }).catch(() => {});
+      })().catch(() => {});
       if (f.reply.asks) notifyOnce({ kind: 'asks', session: s.id, orch: true, title: tr(`${orchDisplay(s) || assistant()} 답이 필요해`, `${orchDisplay(s) || assistant()} needs your answer`), body: f.reply.text });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1128,14 +1159,29 @@ export default function App() {
     handoff: () => {
       const o = groups.orchestrators.find((x) => x.id === focusedBy.current.get('orch-col')) ?? groups.orchestrators[0];
       // 보내기는 Rust team_handoff 한 길 — 글을 다시 거르고(CR·ESC 등) 기록엔 본문 없이(보안 검토 10-23)
-      return o ? { name: orchDisplay(o) || assistant(), send: async (text: string) => { await invoke<string>('team_handoff', { text, dry: false, to: o.id }); } } : undefined;
+      return o ? { name: orchDisplay(o) || assistant(), send: async (text: string, to?: string) => { await invoke<string>('team_handoff', { text, dry: false, to: to ?? o.id }); } } : undefined;
     },
   });
+  useEffect(() => {
+    const fresh = freshAppCards(prevApp.current, direct.inboxCards);
+    prevApp.current = new Set(direct.inboxCards.map((c) => c.id));
+    if (fresh.length) setAppNote(fresh[0]!.q);
+  }, [direct.inboxCards]);
+  // 몇 초 뒤 사라짐 — 위 효과는 렌더마다 돌아서 타이머는 알림 글에만 묶는다
+  useEffect(() => {
+    if (!appNote) return;
+    const t = window.setTimeout(() => setAppNote(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [appNote]);
   const directWait = [...direct.inboxCards.filter(needsAnswer).map((c) => c.id), ...remote.cards.map((x) => `${x.dev}:${x.card.id}`)];
   const prevDirect = useRef<Set<string> | null>(null);
   // 상태까지 열쇠에 — 꺼짐→기다림(세션이 목록에 다시 나타남)도 새 카드처럼 펼친다(2026-10-05 사고 모양)
-  const inboxKeys = `${inbox.map((i) => i.key).join('|')}#${direct.inboxCards.map((c) => `${c.id}:${c.state}`).join('|')}#${remote.keys}#${login.need?.since ?? ''}#${browserKeys}`;
+  const termsKeys = login.terms.map((c) => c.id).join('|');
+  const inboxKeys = `${inbox.map((i) => i.key).join('|')}#${direct.inboxCards.map((c) => `${c.id}:${c.state}`).join('|')}#${remote.keys}#${login.need?.since ?? ''}#${termsKeys}#${browserKeys}`;
   const prevLogin = useRef<number | null>(null);
+  const prevTerms = useRef('');
+  /** 로그인 카드 + 약관 카드(계정마다) */
+  const loginCount = (login.need ? 1 : 0) + login.terms.length;
   const prevBrowser = useRef('');
   useEffect(() => {
     const prev = prevInbox.current;
@@ -1143,17 +1189,19 @@ export default function App() {
     // 로그인 카드가 새로 생기면 펼친다(알림·음성은 useLogin 이 한 번)
     const newBrowser = browserKeys.split('|').some((k) => k && !prevBrowser.current.split('|').includes(k));
     prevBrowser.current = browserKeys;
-    const newDirect = newBrowser || directWait.some((id) => !prevDirect.current?.has(id)) || (login.need !== null && prevLogin.current !== login.need.since);
+    const newTerms = termsKeys.split('|').some((k) => k && !prevTerms.current.split('|').includes(k));
+    prevTerms.current = termsKeys;
+    const newDirect = newBrowser || newTerms || directWait.some((id) => !prevDirect.current?.has(id)) || (login.need !== null && prevLogin.current !== login.need.since);
     prevDirect.current = new Set(directWait);
     prevLogin.current = login.need?.since ?? null;
     // 결정 항목이 0이어도 카드가 남아 있으면 펼친 걸 닫지 않는다(popoverOpen 은 항목 0이면 닫는다)
-    setInboxOpen((o) => newDirect || popoverOpen(o, prev, inbox, { hold: settingsOpen || firstRun, askInView: spaceShownRef.current }) || (o && (direct.inboxCards.length + remote.cards.length > 0 || login.need !== null || browserCount > 0)));
+    setInboxOpen((o) => newDirect || popoverOpen(o, prev, inbox, { hold: settingsOpen || firstRun, askInView: spaceShownRef.current }) || (o && (direct.inboxCards.length + remote.cards.length + loginCount > 0 || browserCount > 0)));
     prevInbox.current = new Set(inbox.map((i) => i.key));
     if (fresh.length) {
       // 참모 물어봄·확인창은 위에서 따로 알린다 — 여기선 결정(task ask)만. 로그인 풀림은 useLogin 이 한 번에 묶어서
       for (const f of fresh.filter((x) => x.kind === 'decide' && bornAfter(x, APP_STARTED))) notifyOnce(decideNote(f, sessions, (o) => orchDisplay(o) || assistant()));
     }
-    void setBadge(inbox.length + direct.inboxCards.length + remote.cards.length + (login.need ? 1 : 0) + browserCount).catch(() => {});
+    void setBadge(inbox.length + direct.inboxCards.length + remote.cards.length + loginCount + browserCount).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inboxKeys]);
   const answerTask = (item: InboxItem, note: string) =>
@@ -1257,7 +1305,7 @@ export default function App() {
   const wakeX = homeResume ? stopped.find((x) => x.sessionId === homeResume) : undefined;
   const wakeName = wakeX?.name ?? (creating && !arrivedOrch(creating, navOrchs) ? creating : undefined);
   const revivingX = reviving[0];
-  const wakeNote = wakeName ? <WakeNotice name={wakeName} label={wakeX ? orchDisplay(wakeX) || wakeName : wakeName.split(' · ').pop() ?? wakeName} waking={!!wakeX} />
+  const wakeNote = wakeName ? <WakeNotice name={wakeName} label={wakeX ? orchDisplay(wakeX) || wakeName : seenName(wakeName)} waking={!!wakeX} />
     : revivingX ? <WakeNotice name={revivingX.name} label={orchDisplay(revivingX) || revivingX.name} waking text={tr(`${orchDisplay(revivingX) || revivingX.name} — 꺼져서 다시 켜는 중`, `${orchDisplay(revivingX) || revivingX.name} stopped — restarting it`)} /* 이름이 '참모'면 '참모 참모가'로 겹쳤다(10/21 시험 앱) */ /> : undefined;
   // 위젯 '더보기'·단축키 — 화면을 옮기지 않고 지금 화면 위 모달로(같은 PetView). 전엔 채팅 뷰면 스페이스 펫 탭으로 넘어갔다(2026-10-10 사용자)
   openPetRef.current = () => setPetModal(true);
@@ -1492,6 +1540,11 @@ export default function App() {
     const mine = askList.filter((p) => p.owner?.id === s.id);
     return mine.length ? [{ ts: new Date(mine[0]!.live.ask?.at ?? 0).toISOString(), key: 'browser-ask', pin: true, node: <div className="chat-row dc-row"><AskCards asks={mine} nameOf={(l) => askName(l, allSessions)} /></div> }] : [];
   };
+  // 약관 동의 카드 — 그 계정으로 멈춘 세션을 맡긴 참모(멈춘 게 참모 자신이면 그 참모) 채팅 끝에만. 멈춘 세션이 없으면(계정만 막힘) 결정 대기함·폰에만
+  const termsExtra = (s: Session) => {
+    const mine = login.terms.filter((c) => c.sids?.some((id) => fileOwner(id) === s.id));
+    return mine.length ? [{ ts: '9999-12-31T00:00:00.000Z', key: 'terms', pin: true, node: <div className="chat-row dc-row"><TermsCards cards={mine} onRetry={login.retryTerms} onClose={login.closeTerms} /></div> }] : [];
+  };
   const takeoverExtra = (s: Session) => {
     const b = s.finished ? undefined : liveOf(s, agentLives);
     const line = b ? takeoverLine(b) : null;
@@ -1640,7 +1693,7 @@ export default function App() {
               </span>
             </div>
             <ChatVoice.Provider value={features.voice ? { on: voice, toggle: () => turnVoice(!voice) } : null}>
-            <SessionGrid column chat={chatView} extraOf={(s) => [...direct.extraOf(s), ...askExtra(s), ...takeoverExtra(s), ...fileExtra(s)]} ctxOf={ctxOf} modelOf={modelOf} sessions={groups.orchestrators} onReorder={reorderOrchPanes} pinnedIds={groups.orchestrators.filter((o) => o.sessionId && orchPins.includes(o.sessionId)).map((o) => o.id)} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => orchDisplay(s) || assistant()} subOf={(s) => orchRoleOf(s.name)?.text} {...gridFocus('orch-col')} onStop={(s, why) => closeSession(s, why)} layout={layoutOf('orch-col')} dispatch={dispatchFor('orch-col')} onMessage={onMessage} memo={memo} headSlot={chatHeadSlot} chatNotice={wakeNote} />
+            <FloatHost>{(floating) => <SessionGrid column chat={floating ? 'tabs' : chatView} extraOf={(s) => [...direct.extraOf(s), ...askExtra(s), ...takeoverExtra(s), ...termsExtra(s), ...fileExtra(s)]} ctxOf={ctxOf} modelOf={modelOf} sessions={groups.orchestrators} onReorder={reorderOrchPanes} pinnedIds={groups.orchestrators.filter((o) => o.sessionId && orchPins.includes(o.sessionId)).map((o) => o.id)} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => orchDisplay(s) || assistant()} subOf={(s) => orchRoleOf(s.name)?.text} {...gridFocus('orch-col')} onStop={(s, why) => closeSession(s, why)} layout={layoutOf('orch-col')} dispatch={dispatchFor('orch-col')} onMessage={onMessage} memo={memo} headSlot={chatHeadSlot} chatNotice={wakeNote} />}</FloatHost>
             </ChatVoice.Provider>
             {/* 그 기기를 보는데 아직 고른 참모가 없다(읽는 중·그 기기에 참모 없음) — 이 맥 채팅이 비치지 않게 덮는다(잘못 친 말이 이 맥 참모로 가지 않게) */}
             {farMode.far && !remoteChat && <div className="och-remote"><div className="far-empty"><b>{farMode.farView?.cut ? tr('그 기기에 안 닿아요', "Can't reach that device") : farMode.farView?.none ? tr('그 기기에 떠 있는 참모가 없어요', 'No assistant running on that device') : tr('그 기기 참모를 읽는 중…', 'Loading assistants on that device…')}</b></div></div>}
@@ -1649,7 +1702,7 @@ export default function App() {
               <div className="och-remote">
               <div className="space-chat-head">
                 <span className="sch-who">
-                  <span className="sch-tx"><b className="sch-name">{remoteChat.name}</b><span className="sch-role">{tr(`원격 · ${remoteChat.devName}`, `Remote · ${remoteChat.devName}`)}</span></span>
+                  <span className="sch-tx"><b className="sch-name">{seenName(remoteChat.name)}</b><span className="sch-role">{tr(`원격 · ${remoteChat.devName}`, `Remote · ${remoteChat.devName}`)}</span></span>
                   {/* 기기를 보는 중엔 돌아가기가 맨 위 줄 '이 맥으로' 하나 */}
                   {!farMode.far && <span className="sch-ctl"><IconButton size="s" label={tr('내 참모로 돌아가기', 'Back to my assistants')} onClick={() => setRemoteChat(null)}><IconClose /></IconButton></span>}
                 </span>
@@ -1667,7 +1720,7 @@ export default function App() {
         {farMode.pop}
         <div className="office-mode space-mode">
           {/* 왼쪽 = 스페이스: 문서 + 지금 채팅 탭 참모가 잡고 있는 세션(터미널·보여 준 파일) — 2026-09-30 사용자, 리더는 터미널 뷰의 레거시 */}
-          <SpaceView chat={chatCol} railTop={farMode.railTop} far={farMode.farView} team={{ rail: teamMode.rail, railOn: teamMode.railOn, on: teamMode.on, color: teamMode.color, onLeave: teamMode.leave, space: teamMode.space, add: teamMode.add, fold: teamMode.fold }} pet={features.tama ? petNode : undefined} office={features.office ? officeCol : undefined} officeReq={officeReq} onOfficeReq={() => setOfficeReq(null)} onOfficeShown={setSpaceOffice}
+          <SpaceView chat={chatCol} bubble={features.bubble ? { onHide: () => saveFeature('bubble', false) } : null} railTop={farMode.railTop} far={farMode.farView} team={{ rail: teamMode.rail, railOn: teamMode.railOn, on: teamMode.on, color: teamMode.color, onLeave: teamMode.leave, space: teamMode.space, add: teamMode.add, fold: teamMode.fold }} pet={features.tama ? petNode : undefined} office={features.office ? officeCol : undefined} officeReq={officeReq} onOfficeReq={() => setOfficeReq(null)} onOfficeShown={setSpaceOffice}
             harnitorReq={harnitorReq} onHarnitorReq={() => setHarnitorReq(null)} onHarnitorShown={setHarnitorOpen}
             onHarnitorClosed={() => { if (harnitorSwitched.current) { harnitorSwitched.current = false; setSpace(false); } }}
             toolsReq={toolsReq} onToolsReq={() => setToolsReq(null)} onToolsShown={setToolsOpen}
@@ -1897,6 +1950,7 @@ export default function App() {
     }}
       notifyPopup={(profile, name, kind) => notifyOnce({ kind: 'human', session: profile, orch: false, ...popupNotice(name, kind) })} onPopupCards={setPopupCards} />
     {licensesOpen && <LicensesDialog onClose={() => setLicensesOpen(false)} />}
+    <CraftOpenAsk />
     {quitOpen && (() => {
       const mine = sessionsToStop(sessions, appRoots(env?.devRoot ?? '', env?.orchestratorCwd ?? '', env?.extraProjects ?? []));
       return (
@@ -1907,7 +1961,7 @@ export default function App() {
         }} />
       );
     })()}
-    <TopBar claude={bin} fontSize={fontSize} load={loadMon.sys ? { level: level(loadMon.sys), load1: loadMon.sys.load1, cores: loadMon.sys.cores, swapGb: loadMon.sys.swapUsedMb / 1024 } : undefined} loadOn={selected.kind === 'load'} onLoad={() => setSelected({ kind: 'load' })} features={features} usage={barUsage} usageAge={acctUsage?.age ?? null} account={topLabel(accounts)} accounts={accounts} onSettings={() => setSettingsOpen(true)} today={today} tama={{ file: tama.file, widgetShown: tama.widgetShown, onToggle: () => widgetToggleRef.current() }} replayOn={spaceShown ? replayOpen : selected.kind === 'replay'} onReplay={() => replayRef.current('toggle')} reader={readerOpen} onReader={() => setReaderOpen((o) => !o)} office={space ? spaceOffice : office} onOffice={() => { if (space) { setSelected({ kind: 'orchestrator' }); setOfficeReq(spaceShown ? 'toggle' : 'open'); return; } setOffice(!office); setSelected({ kind: 'orchestrator' }); }} space={space} onView={(chat) => { setSpace(chat); setSelected({ kind: 'orchestrator' }); }} inboxCount={inbox.length + direct.inboxCards.length + remote.cards.length + (login.need ? 1 : 0) + browserCount} onInbox={() => setInboxOpen((o) => !o)} harnitor={harnitorFloat || (spaceShown && harnitorOpen)} onHarnitor={() => harnitorRef.current('toggle')} tools={spaceShown ? toolsOpen : toolsFloat} onTools={() => toolsRef.current('toggle')} review={{ on: spaceShown ? reviewOpen : selected.kind === 'review', confirm: reviewConfirm }} onReview={() => reviewRef.current('toggle')} voice={voice} onVoice={() => turnVoice(!voice)} />
+    <TopBar claude={bin} fontSize={fontSize} load={loadMon.sys ? { level: level(loadMon.sys), load1: loadMon.sys.load1, cores: loadMon.sys.cores, swapGb: loadMon.sys.swapUsedMb / 1024 } : undefined} loadOn={selected.kind === 'load'} onLoad={() => setSelected({ kind: 'load' })} features={features} usage={barUsage} usageAge={acctUsage?.age ?? null} account={topLabel(accounts)} accounts={accounts} onSettings={() => setSettingsOpen(true)} today={today} tama={{ file: tama.file, widgetShown: tama.widgetShown, onToggle: () => widgetToggleRef.current() }} replayOn={spaceShown ? replayOpen : selected.kind === 'replay'} onReplay={() => replayRef.current('toggle')} reader={readerOpen} onReader={() => setReaderOpen((o) => !o)} office={space ? spaceOffice : office} onOffice={() => { if (space) { setSelected({ kind: 'orchestrator' }); setOfficeReq(spaceShown ? 'toggle' : 'open'); return; } setOffice(!office); setSelected({ kind: 'orchestrator' }); }} space={space} onView={(chat) => { setSpace(chat); setSelected({ kind: 'orchestrator' }); }} inboxCount={inbox.length + direct.inboxCards.length + remote.cards.length + loginCount + browserCount} onInbox={() => setInboxOpen((o) => !o)} harnitor={harnitorFloat || (spaceShown && harnitorOpen)} onHarnitor={() => harnitorRef.current('toggle')} tools={spaceShown ? toolsOpen : toolsFloat} onTools={() => toolsRef.current('toggle')} review={{ on: spaceShown ? reviewOpen : selected.kind === 'review', confirm: reviewConfirm }} onReview={() => reviewRef.current('toggle')} voice={voice} onVoice={() => turnVoice(!voice)} />
     <div className="app">
       {/* 채팅 뷰에선 세션 사이드바 대신 스페이스 메뉴(오케스트레이터·프로젝트 세션)가 ⌘B 자리 — 2026-09-30 사용자 */}
       {sidebarOpen && !spaceShown && <Sidebar
@@ -1932,8 +1986,9 @@ export default function App() {
       <div className="work">
       <div className="main">
         {/* 잠깐 떴다 사라지는 안내는 화면 위에 띄운다 — 줄로 끼면 세션을 띄우고 끌 때마다 화면 전체가 오르락내리락했다(2026-09-30 사용자) */}
-        {(starting.length > 0 || closing.size > 0) && (
+        {(starting.length > 0 || closing.size > 0 || appNote) && (
           <div className="toasts">
+            {appNote && <button className="banner quiet toast-go" onClick={() => { setAppNote(null); setInboxOpen(true); }}>{tr('참모 앱', 'Chammo')} · {appNote}</button>}
             {starting.length > 0 && <div className="banner quiet"><span className="spin" /> {tr('새 세션 띄우는 중', 'Starting new session')} · {starting.join(', ')}</div>}
             {closing.size > 0 && (
               <div className="banner quiet"><span className="spin" /> {tr('끄는 중', 'Stopping')} · {[...closing.values()].join(', ')} {tr('— 대화는 남아서 "꺼진 세션"에서 이어갈 수 있어', '— the conversation is kept; resume it from "Stopped sessions"')}</div>
@@ -2020,7 +2075,7 @@ export default function App() {
       return <ToolsFloat root={groups.orchestrators[0]?.cwd || env?.orchestratorCwd || roots[0]?.root || ''} roots={roots} sessions={sessions}
         computerUse={{ all: features.computerUse, setAll: (on) => saveFeature('computerUse', on) }} onClose={() => setToolsFloat(false)} />;
     })()}
-    <InboxPopover open={inboxOpen} onClose={() => setInboxOpen(false)} items={inbox} direct={direct.inboxNode || remote.node ? <>{direct.inboxNode}{remote.node}</> : null} directCount={direct.inboxCards.length + remote.cards.length} blockedWhy={(it) => replyBlocked(it, sessions)} onReply={replyItem} onOpen={openTarget} onDismiss={dismissItem} login={login.need ? <LoginCard need={login.need} claude={bin} fontSize={fontSize} /> : undefined} browser={browserNeeds.node || popupCards.length || askList.length ? <>{browserNeeds.node}<AskCards asks={askList} nameOf={(l) => askName(l, allSessions)} /><PopupCards lives={popupCards} nameOf={(l) => askName(l, allSessions)} /></> : undefined} browserCount={browserCount} />
+    <InboxPopover open={inboxOpen} onClose={() => setInboxOpen(false)} items={inbox} direct={direct.inboxNode || remote.node ? <>{direct.inboxNode}{remote.node}</> : null} directCount={direct.inboxCards.length + remote.cards.length} blockedWhy={(it) => replyBlocked(it, sessions)} onReply={replyItem} onOpen={openTarget} onDismiss={dismissItem} login={loginCount ? <>{login.need && <LoginCard need={login.need} claude={bin} fontSize={fontSize} />}<TermsCards cards={login.terms} onRetry={login.retryTerms} onClose={login.closeTerms} /></> : undefined} loginCount={loginCount} browser={browserNeeds.node || popupCards.length || askList.length ? <>{browserNeeds.node}<AskCards asks={askList} nameOf={(l) => askName(l, allSessions)} /><PopupCards lives={popupCards} nameOf={(l) => askName(l, allSessions)} /></> : undefined} browserCount={browserCount} />
     </div>
     </OrchActionsProvider>
   );

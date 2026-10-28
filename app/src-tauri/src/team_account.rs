@@ -253,6 +253,10 @@ pub fn login_with(dir: &Path, kc: &dyn Store, http: &dyn Http, opener: &dyn Open
 /// 내 대기 상태(/v0/me/self)를 받아 적는다 — 허용됐으면 true
 fn self_approved(dir: &Path, http: &dyn Http, st: &TeamState, k: &DeviceKeys) -> Result<bool, String> {
     let (code, me) = relay::call(http, &st.server, k, Some(&st.device_id), "GET", "/v0/me/self", None)?;
+    // 대기 중 거절되면 서버가 기기 줄을 지운다 — 대기 화면에 영영 머물지 않게 끊김으로
+    if code == 401 && relay::mark_if_gone(dir, http, st, k) {
+        return Err(relay::GONE.into());
+    }
     if code != 200 {
         return Err(relay::why(code, &me));
     }
@@ -261,6 +265,7 @@ fn self_approved(dir: &Path, http: &dyn Http, st: &TeamState, k: &DeviceKeys) ->
     relay::mutate_if(dir, &st.device_id, |s| {
         s.pending = !approved;
         s.pending_auto_at = if approved { 0 } else { auto };
+        s.recover = relay::recover_of(&me);
     })?;
     Ok(approved)
 }
@@ -314,6 +319,9 @@ pub fn refresh_me(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<TeamSta
     if code == 403 && me["error"] == "device_pending" && !st.pending && !crate::e2e_team::in_chain(dir, &st) && !self_approved(dir, http, &st, &k)? {
         return Ok(relay::load_state(dir));
     }
+    if code == 401 && relay::mark_if_gone(dir, http, &st, &k) {
+        return Err(relay::GONE.into());
+    }
     if code != 200 {
         return Err(relay::why(code, &me));
     }
@@ -328,6 +336,8 @@ pub fn refresh_me(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<TeamSta
         if let Some(n) = me["device"]["name"].as_str() {
             s.device_name = n.to_string();
         }
+        // 계정 되찾기 기다림 — 옛 중계는 칸이 없어 None
+        s.recover = relay::recover_of(&me);
         // 서버가 아는 내 팀 전부 — 멤버 목록·표시 이름은 이미 받은 것을 남기고, 서버에 없는 팀(나감·빠짐·지워짐)과 그 방은 지운다
         if let Some(list) = me["teams"].as_array() {
             let ids: Vec<String> = list.iter().filter_map(|t| t["teamId"].as_str().map(String::from)).collect();
@@ -415,7 +425,8 @@ pub fn decide_device(dir: &Path, kc: &dyn Store, http: &dyn Http, id: &str, yes:
         }
         _ => return Err(relay::why(code, &v)),
     }
-    refresh_me(dir, kc, http)
+    // 허용·거절은 서버에 들어갔다 — 목록 받기가 막혀도(429·끊김) 실패로 띄우지 않는다. 목록은 카드 바퀴가 다시 받는다(10-28 윈도우)
+    Ok(refresh_me(dir, kc, http).unwrap_or_else(|_| relay::load_state(dir)))
 }
 
 /// 참모 길(scripts/team devices remove --yes)의 기기 빼기 — 사슬에 든 기기는 사람 카드 몫이라 거절(리뷰 B 중간 7), 사슬 밖 기기만
@@ -487,7 +498,8 @@ pub fn logout_with(dir: &Path, kc: &dyn Store, http: &dyn Http, with_link: bool)
     match code {
         200 | 404 => {}
         // 401 은 시계가 5분 넘게 틀려도 온다 — 서버가 끊었다고 알린 기기(4001)만 '이미 끊김'으로 본다(리뷰 10-23)
-        401 if st.revoked => {}
+        // 서버가 이 열쇠를 아예 모르면(404 확인) 시계 탓이 아니다 — 지워진 기기라 로컬만 지운다(10-28 윈도우)
+        401 if st.revoked || relay::device_keys(kc, &st).is_ok_and(|k| relay::mark_if_gone(dir, http, &st, &k)) => {}
         401 => return Err("중계 서버가 이 기기 서명을 거절했어(시계가 틀렸거나 이미 끊김) — 다른 기기에서 끊긴 게 맞으면 scripts/team forget --yes".into()),
         _ => return Err(relay::why(code, &v)),
     }

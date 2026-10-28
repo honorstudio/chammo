@@ -3,7 +3,7 @@
 //! 참모·scripts/team·appctl 엔 길이 없다(device_cards_tests 의 길 시험). 받아들이면 그 사람 때문에 멈춘 말을 보낸다
 use crate::e2e_safety::{self, Person};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 pub const SAFETY_SUB: &str = "safety";
@@ -64,8 +64,23 @@ pub struct Plan {
     pub close: Vec<String>,
 }
 
+/// 카드는 갈림(서버가 사람마다 다른 기기 목록을 준다 — 공격 신호)만. 바뀜(다시 시작)은 저절로 받아들인다(auto_list, 사용자 10-29)
 fn needs_card(p: &Person) -> bool {
-    matches!(p.state.as_str(), "changed" | "forked") && !p.blocked
+    p.state == "forked" && !p.blocked
+}
+
+/// 지금 팀에 있는 사람(팀, 멤버 id) — 나간 사람은 사슬 바뀜을 따지지 않는다(카드·회색 줄 없음, 다시 들어오면 그때 처음 믿기 — 10-29)
+pub fn here(st: &crate::team_relay::TeamState) -> BTreeSet<(String, String)> {
+    st.teams.iter().flat_map(|t| t.members.iter().map(move |m| (t.id.clone(), m.id.clone()))).collect()
+}
+
+pub fn current_only(people: &[Person], here: &BTreeSet<(String, String)>) -> Vec<Person> {
+    people.iter().filter(|p| here.contains(&(p.team.clone(), p.member.clone()))).cloned().collect()
+}
+
+/// 저절로 받아들일 사람 — 지금 팀에 있고, 보안 번호가 바뀌었고(갈림 아님), 사람이 막아 두지 않았다
+pub fn auto_list(people: &[Person], here: &BTreeSet<(String, String)>) -> Vec<Person> {
+    current_only(people, here).into_iter().filter(|p| p.state == "changed" && !p.blocked).collect()
 }
 
 /// 바뀜·갈림이고 막아 두지 않은 사람마다 카드 하나. 받아들여 졌거나(ok) 막아 둔 사람의 열린 카드는 닫기.
@@ -88,7 +103,23 @@ pub fn sync(dir: &Path) {
             crate::direct::close_link(&c.id, crate::i18n::tr("새 카드로 다시 띄워요", "Shown again as a new card"));
         }
     }
-    let people = e2e_safety::people(dir, &me);
+    let here = here(&st);
+    let people = current_only(&e2e_safety::people(dir, &me), &here);
+    // 바뀜은 묻지 않고 받아들인다 — 그 사람 때문에 멈춘 말은 보내고, 못 연 말은 다시 연다
+    let mut took = false;
+    for x in auto_list(&people, &here) {
+        match e2e_safety::auto_accept(dir, &x.account, &x.identity, &x.head) {
+            Ok(held) => {
+                took = true;
+                send_held(dir, held);
+            }
+            Err(e) => eprintln!("[보안 번호] 저절로 받아들이기 못 함: {e}"),
+        }
+    }
+    if took {
+        crate::e2e_retry::retry(dir, &crate::team_relay_keys::store(), &crate::team_relay::Curl);
+    }
+    let people = current_only(&e2e_safety::people(dir, &me), &here);
     let p = plan(&crate::direct::direct_log(), &people);
     // 닫기 먼저 — 같은 사람의 새 카드(새 번호)가 옛 카드와 겹치지 않게
     for c in &p.close {
@@ -101,6 +132,21 @@ pub fn sync(dir: &Path) {
                 remember(&id);
             }
         }
+    }
+}
+
+/// 받아들인 뒤 멈춘 말 보내기 — 사람이 쳤던 말은 사람 말로(받아들임이 그 증거). 못 보낸 말은 목록으로 되돌린다(6차 리뷰)
+fn send_held(dir: &Path, held: Vec<crate::e2e_state::Held>) {
+    let mut back = vec![];
+    for h in held {
+        let proof = h.human.then(crate::team_relay_ws::HumanProof::accepted);
+        if let Err(e) = crate::team_relay_ws::send(dir, &h.room, &h.cid, &h.body, proof) {
+            eprintln!("[보안 번호] 멈춘 말 다시 보내기 실패: {e}");
+            back.push(h);
+        }
+    }
+    if let Err(e) = e2e_safety::put_back(dir, back) {
+        eprintln!("[보안 번호] 멈춘 말 되돌리기 실패: {e}");
     }
 }
 
@@ -135,16 +181,7 @@ pub fn decide(ask: &Value, yes: bool) -> Result<(), String> {
             return Err(e);
         }
     };
-    let mut back = vec![];
-    for h in held {
-        let proof = h.human.then(crate::team_relay_ws::HumanProof::accepted);
-        if let Err(e) = crate::team_relay_ws::send(dir, &h.room, &h.cid, &h.body, proof) {
-            eprintln!("[보안 번호] 멈춘 말 다시 보내기 실패: {e}");
-            back.push(h);
-        }
-    }
-    // 못 보낸 말은 목록으로 되돌린다(6차 리뷰)
-    e2e_safety::put_back(dir, back)?;
+    send_held(dir, held);
     // 받아들이기 전에 못 연·경고 붙은 말을 다시 연다(e2e_retry — 서명부터 다시)
     crate::e2e_retry::retry(dir, &crate::team_relay_keys::store(), &crate::team_relay::Curl);
     Ok(())

@@ -1,5 +1,6 @@
 //! 받은 팀 말 → 내 참모(중계 서버 ADR 0002 '참모 말은 사람 말·승인이 아니다').
-//! - 이름표는 받는 쪽(여기)만 붙인다: 참모 말 `[남의 참모 · <사람> · <기기> · team#<seq>]`, 사람 말 `[팀 사람 말 · <사람> · team#<seq>]`.
+//! - 팀 방 말은 내 참모 입력칸에 저절로 안 간다(10-28) — 기록·알림만, 넘기기는 사람이 말풍선에서(이름표 `[남의 참모 · …]`·`[팀 사람 말 · …]` 는 화면 handoffText 가 붙인다).
+//!   내 기기끼리 방 말만 이름표를 붙여 넘긴다: `[내 다른 기기 참모 · <기기> · self#<seq>]`·`[내 다른 기기 사람 말 · …]`.
 //!   (10-26 전엔 참모 말이 `[팀 참모 · …]` 였다 — '팀 참모'는 방 도우미(team_helper) 이름이 돼서 바꿨다. 옛 이름표도 앱·안내문은 남의 말로 읽는다)
 //!   사람 이름은 서버 멤버 목록(그 사람이 들어올 때 적은 이름 — 남의 글이라 거른다), 기기는 서버가 이름을 안 줘서 id 앞 6자
 //! - 본문은 peer_link 와 같은 거름: 줄 첫머리 [ < 엔 › , 승인 문구·카드 답 꼬리·사람 말 이름표 흉내는 사람 말이어도 안 넘긴다
@@ -44,7 +45,7 @@ pub struct Record {
     pub device_name: String,
     /// "self" = 내 기기끼리 방(서버 ADR 0004), 아니면 팀 방
     pub kind: String,
-    /// delivered | mine | forged | no-assistant | room | react | helper | …
+    /// delivered(내 기기끼리 방) | human(팀 사람 말 — 사람에게만) | to-human(남의 참모 말 — 사람에게만) | mine | forged | no-assistant | room | react | helper | …
     pub note: String,
     /// "helper" = 방에서 부른 팀 참모의 답(team_helper) — 화면은 이름 자리에 '팀 참모 · <person>'(person = 부른 사람). 비면 칸을 안 쓴다
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -52,10 +53,6 @@ pub struct Record {
     /// 반응·붙인 파일(봉투 안쪽 — 비면 칸 없음)
     #[serde(flatten)]
     pub extra: crate::e2e_envelope::Extra,
-}
-
-pub fn tag(seq: u64) -> String {
-    format!("team#{seq}")
 }
 
 /// 사람·기기 이름 — 이름표를 흉내 내거나 비면 ?
@@ -107,8 +104,10 @@ pub fn with_e2e(st: &TeamState, last: u64, m: &Value, opened: &crate::e2e_state:
         Unwrapped::Failed(_) => v["body"] = Value::from("(종단 암호 — 이 기기에서 못 연 말)"),
     }
     let (mut act, mut rec) = on_msg(st, last, &v);
-    if let Unwrapped::Opened { text, extra, .. } = opened {
+    if let Unwrapped::Opened { text, extra, human, .. } = opened {
         rec.extra = extra.clone();
+        // 참모 별명은 남의 글 — 이름표 흉내를 거르고, 사람 말엔 안 싣는다
+        rec.extra.by = if *human || extra.by.trim().is_empty() { String::new() } else { safe_name(&extra.by) };
         if extra.react.is_some() {
             // 반응은 화면 칩으로만 — 참모 입력칸·알림엔 안 간다
             rec.body = String::new();
@@ -195,15 +194,23 @@ pub fn on_msg(st: &TeamState, last: u64, m: &Value) -> (Action, Record) {
         rec.note = "history".into();
         return (Action::Blocked("history".into()), rec);
     }
-    // 단톡방 — 여럿이 말하는 방이라 내 참모 입력칸엔 '@내 이름'으로 부른 말만 넘긴다. 나머지는 기록·알림만(note room).
-    // '@팀참모'로 부른 글은 팀 참모가 답하니 안 넘긴다(team-helper 이음새)
-    if st.rooms.iter().any(|r| r.id == room && r.kind == "group") && (!mentions_me(st, room, &rec.body) || helper_call(&rec.body)) {
-        if forged(&rec.body) {
-            rec.note = "forged".into();
-            return (Action::Blocked("forged".into()), rec);
+    // 팀 메신저 말(남의 사람·그 사람 참모 — DM·팀챗·@내이름 무엇이든)은 내 참모 입력칸에 저절로 안 넣는다(10-28 사용자:
+    // "매번 모든 메시지를 보고 내 참모가 감지하라는 뜻이 아님" — 아이맥 참모가 사람끼리 DM 에 혼자 끼어 답했다).
+    // 사람에게만 보이고(기록·알림), 참모에겐 사람이 말풍선 '내 참모에게'로 고른 참모 하나에만 보낸다(team_ui::team_handoff).
+    // 표시: 단톡방 일반 말 room(안 울림) · 나를 부른 단톡방 말과 DM 사람 말 human · 남의 참모 말 to-human · 흉내 forged
+    if !own {
+        let group = st.rooms.iter().any(|r| r.id == room && r.kind == "group");
+        rec.note = if forged(&rec.body) {
+            "forged"
+        } else if group && (!mentions_me(st, room, &rec.body) || helper_call(&rec.body)) {
+            "room"
+        } else if rec.origin == "human" {
+            "human"
+        } else {
+            "to-human"
         }
-        rec.note = "room".into();
-        return (Action::Blocked("room".into()), rec);
+        .into();
+        return (Action::Blocked(rec.note.clone()), rec);
     }
     match compose(&rec) {
         Ok(t) => {
@@ -231,12 +238,17 @@ pub fn helper_call(body: &str) -> bool {
     t.starts_with(MENTION_KO) || t.get(..MENTION_EN.len()).is_some_and(|h| h.eq_ignore_ascii_case(MENTION_EN))
 }
 
-/// 이 방 팀에서 내 이름을 '@이름'으로 불렀나 — 이름 바로 뒤에 영문·숫자가 붙으면 다른 이름. 한글은 조사(님·아)가 붙어 가리지 못해 부름으로 본다
-pub fn mentions_me(st: &TeamState, room: &str, body: &str) -> bool {
+/// 이 방 팀에서 내 표시 이름(팀마다 다르다)
+fn my_name(st: &TeamState, room: &str) -> String {
     let team = st.rooms.iter().find(|r| r.id == room).map(|r| r.team.as_str()).unwrap_or("");
     let t = st.teams.iter().find(|t| t.id == team);
     let mine = t.map(|t| t.member_id.as_str()).unwrap_or(st.member_id.as_str());
-    let name = t.map(|t| t.display_name.trim().to_string()).filter(|n| !n.is_empty()).or_else(|| st.member_name(mine).map(|n| n.trim().to_string())).unwrap_or_default();
+    t.map(|t| t.display_name.trim().to_string()).filter(|n| !n.is_empty()).or_else(|| st.member_name(mine).map(|n| n.trim().to_string())).unwrap_or_default()
+}
+
+/// 이 방 팀에서 내 이름을 '@이름'으로 불렀나 — 이름 바로 뒤에 영문·숫자가 붙으면 다른 이름. 한글은 조사(님·아)가 붙어 가리지 못해 부름으로 본다
+pub fn mentions_me(st: &TeamState, room: &str, body: &str) -> bool {
+    let name = my_name(st, room);
     if name.is_empty() {
         return false;
     }
@@ -247,21 +259,82 @@ pub fn mentions_me(st: &TeamState, room: &str, body: &str) -> bool {
     })
 }
 
-/// 참모에게 칠 글 — 이름표 한 줄 + 거른 본문(길면 잘라서). 내 기기끼리 방도 같은 거름(승인 문구는 사람 말이어도 막음)
+/// 참모에게 칠 글 — 이름표 한 줄 + 거른 본문(길면 잘라서). 내 기기끼리 방 말만 온다(팀 방 말은 on_msg 가 막는다). 승인 문구는 사람 말이어도 막음
 pub fn compose(r: &Record) -> Result<String, SayErr> {
     if forged(&r.body) {
         return Err(SayErr::Forged);
     }
     let body = if r.body.chars().count() > MAX_SAY { format!("{}\n…(잘림)", r.body.chars().take(MAX_SAY - 20).collect::<String>()) } else { r.body.clone() };
     let lines = body_lines(&body)?;
-    let human = r.origin == "human";
-    let head = match (r.kind == "self", human) {
-        (true, false) => format!("[{} · {} · self#{}]", crate::i18n::tr("내 다른 기기 참모", "My device assistant"), r.device_name, r.seq),
-        (true, true) => format!("[{} · {} · self#{}]", crate::i18n::tr("내 다른 기기 사람 말", "My device human"), r.device_name, r.seq),
-        (false, true) => format!("[{} · {} · {}]", crate::i18n::tr("팀 사람 말", "Team human"), r.person, tag(r.seq)),
-        (false, false) => format!("[{} · {} · {} · {}]", crate::i18n::tr("남의 참모", "Teammate's assistant"), r.person, r.device_name, tag(r.seq)),
+    let head = if r.origin == "human" {
+        format!("[{} · {} · self#{}]", crate::i18n::tr("내 다른 기기 사람 말", "My device human"), r.device_name, r.seq)
+    } else {
+        format!("[{} · {} · self#{}]", crate::i18n::tr("내 다른 기기 참모", "My device assistant"), r.device_name, r.seq)
     };
     Ok(format!("{head}\n{}", lines.join("\n")))
+}
+
+/// 한 사람 몫으로 줄 세워 두는 말 수 — 넘친 건 기록에만 두고 묶음 머리에 개수를 적는다
+pub const HOLD_MAX: usize = 20;
+
+/// 1분 상한(peer PER_MIN)을 넘은 말 — 버리지 않고 사람마다 줄 세웠다가, 자리가 나면 한 번에 묶어 넘긴다(묶음 하나 = 상한 한 칸).
+/// 10-28 아이맥: 상한에 걸린 #32~#36 다섯 개가 기록에만 남고 참모 입력칸엔 조용히 안 들어갔다
+#[derive(Default)]
+pub struct RateHold {
+    /// 사람(멤버, 없으면 기기) → (넘길 글, 넘친 개수)
+    q: HashMap<String, (Vec<String>, usize)>,
+}
+
+impl RateHold {
+    pub fn push(&mut self, key: &str, text: String) {
+        let e = self.q.entry(key.to_string()).or_default();
+        if e.0.len() < HOLD_MAX {
+            e.0.push(text);
+        } else {
+            e.1 += 1;
+        }
+    }
+
+    /// 줄 선 말이 있나 — 있으면 새 말도 그 뒤에 선다(차례가 안 뒤집히게)
+    pub fn has(&self, key: &str) -> bool {
+        self.q.contains_key(key)
+    }
+
+    pub fn ready(&mut self, rate: &mut HashMap<String, Vec<u64>>, now: u64) -> Vec<String> {
+        self.ready_in(rate, now, 60_000)
+    }
+
+    /// 자리가 난 사람 몫을 묶음 하나씩 — window 는 시험이 줄여 쓴다
+    pub fn ready_in(&mut self, rate: &mut HashMap<String, Vec<u64>>, now: u64, window: u64) -> Vec<String> {
+        let keys: Vec<String> = self.q.keys().cloned().collect();
+        let mut out = Vec::new();
+        for k in keys {
+            if crate::peer_link::allow_in_window(rate, &k, now, window) {
+                if let Some((texts, over)) = self.q.remove(&k) {
+                    out.push(held_batch(&texts, over));
+                }
+            }
+        }
+        out
+    }
+}
+
+/// 묶음 — 머리 한 줄은 앱 말(사람 이름은 안 싣는다 — 남이 고른 이름이 앱 줄에 섞이지 않게), 그 아래는 받은 말 그대로(이름표째)
+fn held_batch(texts: &[String], over: usize) -> String {
+    let n = crate::peer_link::PER_MIN;
+    let mut head = crate::i18n::tr(
+        &format!("[앱] 같은 사람이 1분에 {n}개 넘게 보내서 늦게 묶어 넘겨 — {}개", texts.len()),
+        &format!("[App] Same sender went over {n} a minute — passing these on late, together: {}", texts.len()),
+    )
+    .to_string();
+    if over > 0 {
+        head.push_str(&crate::i18n::tr(&format!(" · 넘친 {over}개는 기록에만(scripts/team inbox)"), &format!(" · {over} more kept in the record only (scripts/team inbox)")));
+    }
+    format!("{head}
+
+{}", texts.join("
+
+"))
 }
 
 static SEEN_LOCK: Mutex<()> = Mutex::new(());
@@ -315,6 +388,38 @@ pub fn deliver(session: &str, text: &str) -> Result<(), String> {
     crate::claude::type_text_tagged(session, text, "team-deliver")
 }
 
+/// '@이름' 이 글에 있나 — 이름 바로 뒤가 영문·숫자면 다른 이름(@참모x), '-'·한글·공백(@참모-2·@참모님)은 부름.
+/// '@' 바로 앞이 영문·숫자면 이메일(x@a.com)이라 부름 아님
+fn at_name(body: &str, name: &str) -> bool {
+    let at = format!("@{name}");
+    body.match_indices(&at).any(|(i, _)| {
+        body[..i].chars().next_back().is_none_or(|c| !c.is_ascii_alphanumeric()) && body[i + at.len()..].chars().next().is_none_or(|c| !c.is_ascii_alphanumeric())
+    })
+}
+
+/// 넘길 글(이름표 줄 + 본문)에서 '@번호'·'@별명'으로 부른 HQ 참모 — 여럿이면 가장 긴 이름(@참모-2 가 @참모 를 이긴다). 이름표 줄(남의 이름)은 안 본다.
+/// 참모(앱이 참모로 치는 이름 — messenger::is_orch_name)만 — 남의 말 본문으로 도우미·예약 세션에 글을 넣지 않는다
+pub fn called(sessions_json: &str, hq: &str, assistant: &str, text: &str) -> Option<String> {
+    let body = text.split_once('\n').map(|(_, b)| b)?;
+    let v: Value = serde_json::from_str(sessions_json).ok()?;
+    let mut best: Option<(usize, String)> = None;
+    let orch = |a: &&Value| crate::platform::same_dir(a["cwd"].as_str().unwrap_or(""), hq) && crate::messenger::is_orch_name(a["name"].as_str().unwrap_or(""), assistant);
+    for a in v.as_array()?.iter().filter(orch) {
+        let name = a["name"].as_str().unwrap_or("");
+        let (num, nick) = name.split_once(" · ").unwrap_or((name, ""));
+        for n in [name, num, nick] {
+            if !n.trim().is_empty() && at_name(body, n) && best.as_ref().is_none_or(|(l, _)| n.len() > *l) {
+                best = Some((n.len(), a["id"].as_str().unwrap_or("").to_string()));
+            }
+        }
+    }
+    best.map(|(_, id)| id).filter(|id| !id.is_empty())
+}
+
 #[cfg(test)]
 #[path = "team_relay_inbox_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "team_call_live_tests.rs"]
+mod call_live;

@@ -57,6 +57,33 @@ export function findUrls(line: string): { text: string; start: number }[] {
   return [...line.matchAll(WEB_RE)].map((m) => ({ text: m[0].replace(/[.,:;!?)\]}>]+$/, ''), start: m.index! })).filter((m) => m.text.length > 'https://'.length);
 }
 
+/** 말풍선 링크로 열어도 되는 주소 — 웹 주소(http·https)만. javascript:·file:·data:·mailto:·상대 주소는 null(남의 글이 앱·파일을 열지 못하게) */
+export function webHref(href: string | null | undefined): string | null {
+  return href && /^https?:\/\/\S/i.test(href) ? href : null;
+}
+
+export type LinkPart = { t: 'text' | 'url'; s: string };
+/** 맨 글 속 웹 주소를 링크 조각으로 — 주소 바로 뒤에 붙은 한글(조사)·끝 문장부호는 떼고, 닫는 괄호는 짝이 없을 때만 뗀다 */
+export function linkParts(text: string): LinkPart[] {
+  const out: LinkPart[] = [];
+  let at = 0;
+  for (const m of text.matchAll(WEB_RE)) {
+    let u = m[0].replace(/[\u3131-\u318e\uac00-\ud7a3].*$/su, '');
+    for (;;) {
+      const t = u.replace(/[.,:;!?'"\]}>]+$/, '');
+      const open = (t.match(/\(/g) ?? []).length;
+      u = t.endsWith(')') && (t.match(/\)/g) ?? []).length > open ? t.slice(0, -1) : t;
+      if (u === t) break;
+    }
+    if (!webHref(u) || u.length <= 'https://'.length) continue;
+    if (m.index! > at) out.push({ t: 'text', s: text.slice(at, m.index) });
+    out.push({ t: 'url', s: u });
+    at = m.index! + u.length;
+  }
+  if (at < text.length) out.push({ t: 'text', s: text.slice(at) });
+  return out;
+}
+
 /** 한 줄에서 링크로 안 찍힌 파일 경로를 찾는다. URL 안쪽은 건너뛴다 */
 export function findPaths(line: string): { text: string; start: number }[] {
   const urls: [number, number][] = [];

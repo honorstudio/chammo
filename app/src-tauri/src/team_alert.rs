@@ -56,11 +56,11 @@ pub fn preview(body: &str) -> String {
     if one.chars().count() > 80 { format!("{}…", one.chars().take(79).collect::<String>()) } else { one }
 }
 
-/// 이 말에 알릴까 — 남이 보낸 새 말(참모에게 넘긴 것 = delivered)만. 내 다른 기기가 보낸 것·막은 말·옛 말·내 기기끼리 방은 아니다.
+/// 이 말에 알릴까 — 남이 보낸 새 말(참모에게 넘긴 것 = delivered, 참모를 안 부른 사람 말 = human)만. 내 다른 기기가 보낸 것·막은 말·옛 말·내 기기끼리 방은 아니다.
 /// views = 창마다 (보고 있는 방, 그 창이 앞인가). 그 방을 앞에 띄운 창이 있으면 안 울린다
 pub fn decide(rec: &Record, views: &[(String, bool)], set: &Settings) -> Option<Alert> {
     // 단톡방 일반 말(room)·반응(react)은 안 울린다 — 안 읽은 수만(슬랙처럼). 나를 부른 단톡방 말은 delivered 라 울린다
-    if rec.note != "delivered" || rec.kind == "self" {
+    if !alerting(&rec.note) || rec.kind == "self" {
         return None;
     }
     if views.iter().any(|(room, front)| *front && room == &rec.room) {
@@ -69,6 +69,11 @@ pub fn decide(rec: &Record, views: &[(String, bool)], set: &Settings) -> Option<
     let who = if rec.person.is_empty() { "?".to_string() } else { rec.person.clone() };
     let title = if rec.origin == "human" { who } else { crate::i18n::tr(&format!("{who}의 참모"), &format!("{who}'s assistant")).to_string() };
     Some(Alert { title, body: preview(&rec.body), target: format!("team:{}", rec.room), sound: set.sound.then(|| set.name.clone()) })
+}
+
+/// 알릴 말의 기록 표시 — 참모에게 넘긴 말·참모를 안 부른 사람 말(사람 몫이라 더 알려야 한다)·부름이 꺼져 사람에게만 온 남의 참모 말
+fn alerting(note: &str) -> bool {
+    matches!(note, "delivered" | "human" | "to-human")
 }
 
 // ── 앱에 붙이는 길 ─────────────────────────────────────────────
@@ -128,14 +133,14 @@ pub fn init<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         }
         let vs: Vec<(String, bool)> = views().into_iter().map(|(l, room)| (room, wins.iter().find(|(x, _)| *x == l).is_some_and(|(_, w)| w.is_focused().unwrap_or(false) && w.is_visible().unwrap_or(false)))).collect();
         // 방해 금지(내 프로필 상태) — 창에 새 말은 알리되 알림·소리는 안 낸다
-        if rec.note == "delivered" && crate::team_profile::dnd(crate::config::data_dir()) {
+        if alerting(&rec.note) && crate::team_profile::dnd(crate::config::data_dir()) {
             crate::claude::log_out("notify", &format!("팀 새 말 {} #{} — 방해 금지라 안 울림", rec.room.chars().take(8).collect::<String>(), rec.seq));
             return;
         }
         match decide(rec, &vs, &load(crate::config::data_dir())) {
             Some(a) => fire(&a, rec),
             // 보고 있는 대화라 안 울림 — 기록에 한 줄(왜 안 울렸는지 나중에 볼 수 있게, 본문 없이)
-            None if rec.note == "delivered" && rec.kind != "self" => crate::claude::log_out("notify", &format!("팀 새 말 {} #{} — 보는 중이라 안 울림", rec.room.chars().take(8).collect::<String>(), rec.seq)),
+            None if alerting(&rec.note) && rec.kind != "self" => crate::claude::log_out("notify", &format!("팀 새 말 {} #{} — 보는 중이라 안 울림", rec.room.chars().take(8).collect::<String>(), rec.seq)),
             None => {}
         }
     }));

@@ -4,8 +4,10 @@
 /** 일함 · 기다림(띄운 일) · 물음(사람 답 기다림 — 말풍선) · 쉼 · 모름 */
 export type Status = 'work' | 'wait' | 'ask' | 'rest' | 'unknown'
 
-export type LiveSession = { sessionId: string; name: string; cwd: string; busy: boolean; startedAt: number; state?: LiveState }
-export type Chammo = { sessionId: string; key: string; num: number; role: string; cwd: string; busy: boolean; state?: LiveState }
+/** label = 앱 별명(아직 진짜 이름에 안 실린 것 — 앱이 같이 쓴다) */
+export type LiveSession = { sessionId: string; name: string; cwd: string; busy: boolean; startedAt: number; state?: LiveState; label?: string }
+/** key = 기본 이름(참모-2 — 프사·맡은 일 열쇠), name = 이름표(앱 displayName 과 같은 규칙) */
+export type Chammo = { sessionId: string; key: string; num: number; name: string; role: string; cwd: string; busy: boolean; state?: LiveState }
 
 /** live.json(앱이 쓰는 세션 목록) → 세션들. 모양이 다른 줄은 버린다 */
 export function parseLive(text: string): LiveSession[] {
@@ -22,20 +24,21 @@ export function parseLive(text: string): LiveSession[] {
     if (!s || typeof s !== 'object') continue
     const o = s as Record<string, unknown>
     if (typeof o.sessionId !== 'string' || typeof o.name !== 'string' || typeof o.cwd !== 'string') continue
-    out.push({ sessionId: o.sessionId, name: o.name, cwd: o.cwd, busy: o.busy === true, startedAt: typeof o.startedAt === 'number' ? o.startedAt : 0, ...(typeof o.state === 'string' && LIVE_STATES.includes(o.state) ? { state: o.state as LiveState } : {}) })
+    out.push({ sessionId: o.sessionId, name: o.name, cwd: o.cwd, busy: o.busy === true, startedAt: typeof o.startedAt === 'number' ? o.startedAt : 0, ...(typeof o.state === 'string' && LIVE_STATES.includes(o.state) ? { state: o.state as LiveState } : {}), ...(typeof o.label === 'string' && o.label.trim() ? { label: o.label.trim() } : {}) })
   }
   return out
 }
 
-const NICK = ' · ' // 앱 orchLabel NICK_SEP — '참모-2 · 참모 업데이트'
+const NICK = ' · ' // 앱 orchLabel NICK_SEP — '참모-2 · 감독'(뒤는 별명, 2026-10-02 부터)
 const trimSlash = (p: string) => p.replace(/\/+$/, '')
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** 비서로 치는 이름 — 설정 이름(config assistantName) + 옛 이름 + 두 언어 기본 이름(앱 session.ts assistantBases) */
 export const assistantBases = (configured: string) => [...new Set([configured, '참모', '참모', 'Chammo'].filter(Boolean))]
 
-/** 참모 = HQ 폴더(워크트리 아님)에서 도는 비서 이름 세션 — '<이름>' 이나 '<이름>-N', 뒤에 ' · 맡은 일'(앱 orchestratorLike).
- *  그 밖 HQ 세션(예약·도우미)은 뺀다. 순서 = 앱 사이드바 순서(orch-order.json), 거기 없으면 번호순. 맡은 일이 이름에 없으면 orch-roles 의 첫 마디 */
+/** 참모 = HQ 폴더(워크트리 아님)에서 도는 비서 이름 세션 — '<이름>' 이나 '<이름>-N', 뒤에 ' · 별명'(앱 orchestratorLike).
+ *  그 밖 HQ 세션(예약·도우미)은 뺀다. 순서 = 앱 사이드바 순서(orch-order.json), 거기 없으면 번호순. 맡은 일 = orch-roles 의 첫 마디.
+ *  ' · ' 뒤를 맡은 일로 읽어 이름표에 '참모-N' 만 남았다(공개 이슈 #3) — 이름표는 앱 displayName 규칙(shownNames) */
 export function pickChammos(live: LiveSession[], o: { hqDir: string; assistants: string[]; order: string[]; roles?: Record<string, string> }): Chammo[] {
   const hq = trimSlash(o.hqDir)
   const re = new RegExp(`^((?:${o.assistants.map(escape).join('|')})(?:-(\\d+))?)(?:${escape(NICK)}(.*))?$`)
@@ -45,14 +48,33 @@ export function pickChammos(live: LiveSession[], o: { hqDir: string; assistants:
     const m = re.exec(s.name.normalize('NFC').trim())
     if (!m) continue
     const key = m[1]!
-    const role = (m[3] ?? '').trim() || firstPhrase(o.roles?.[key] ?? '')
-    out.push({ sessionId: s.sessionId, key, num: m[2] ? Number(m[2]) : 1, role, cwd: s.cwd, busy: s.busy, ...(s.state ? { state: s.state } : {}) })
+    const name = s.label ?? ((m[3] ?? '').trim() || stripNum(key))
+    out.push({ sessionId: s.sessionId, key, num: m[2] ? Number(m[2]) : 1, name, role: firstPhrase(o.roles?.[key] ?? ''), cwd: s.cwd, busy: s.busy, ...(s.state ? { state: s.state } : {}) })
   }
+  shownNames(out)
   const rank = (c: Chammo) => {
     const i = o.order.indexOf(c.sessionId)
     return i < 0 ? 1e6 + c.num : i
   }
   return out.sort((a, b) => rank(a) - rank(b))
+}
+
+// ── 이름표 — 앱 domain/orchLabel displayName 과 같은 규칙(모드는 앱 코드를 못 불러온다 — 앱 시험 orchLabelMode 가 둘을 견준다) ──
+
+/** 기본 이름에서 끝 번호를 뺀 이름(참모-3 → 참모) */
+const stripNum = (base: string) => base.replace(/[-\s]*\d+$/, '').trim() || base
+/** 꼬리 — 번호 대신 글자(2 → B) */
+const tail = (n: number) => String.fromCharCode(65 + ((n - 1) % 26))
+
+/** 같은 이름표가 둘 이상이면(대소문자 무시) 번호 있는 쪽에 짧은 꼬리 — '조사 C' */
+function shownNames(list: Chammo[]): void {
+  const plain = list.map((c) => c.name)
+  list.forEach((c, i) => {
+    const me = plain[i]!.toLowerCase()
+    if (!plain.some((p, j) => j !== i && p.toLowerCase() === me)) return
+    const num = c.key.match(/(\d+)$/)?.[1]
+    if (num) c.name = `${plain[i]} ${tail(Number(num))}`
+  })
 }
 
 /** orch-roles 의 긴 설명 → 첫 마디('—'·'(' 앞, 쉼표·마침표 앞) */

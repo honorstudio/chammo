@@ -54,7 +54,7 @@ export function phoneAccountRows(v: PhoneAccounts, now: number): PhoneAccountRow
     const five = sl?.five && sl.five.resetsAt > now ? sl.five : null;
     const week = sl?.week && sl.week.resetsAt > now ? sl.week : null;
     const soon = r.left == null ? null : five && r.five === r.left ? fmtUntil(five.resetsAt, now) : week ? weekText(week.resetsAt) : null;
-    return { id: r.id, name: r.name, on: r.on, pinned: r.pinned, pinHint: r.pinHint, five: r.five, week: r.week, left: r.left, soon, note: r.note, plan: v.accounts[i]!.plan, rest: st.kind === 'ok' ? null : st.kind === 'auth' ? '로그인 필요' : `${fmtUntil(st.until, now)}까지 쉬는 중` };
+    return { id: r.id, name: r.name, on: r.on, pinned: r.pinned, pinHint: r.pinHint, five: r.five, week: r.week, left: r.left, soon, note: r.note, plan: v.accounts[i]!.plan, rest: st.kind === 'ok' ? null : st.kind === 'auth' ? '로그인 필요' : st.kind === 'terms' ? '약관 동의 필요' : `${fmtUntil(st.until, now)}까지 쉬는 중` };
   });
 }
 

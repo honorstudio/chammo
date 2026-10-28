@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardTag, ctxFromAgents, heldIds, orchAsk, orchTasks, releaseSnap, routineOrch, rubberTop, sheetTop, closeOnRelease, dropLabel, keyboardOpen, frameAt, driftBias, ghostKeyboard, readViewport, diagLine, isTyping, liveWork, phoneBubble, usageText, waitingList, withAttachments, phoneName, offOrchRows, wokeOrch, waitAnswer, waitKey, shownWaiting, pruneWaitSent, dupAnswer, answerFail, sessionBoard, nearBottom, stickBottom, farFromBottom, jumpDot, shrinkPlan, withEarlier, wantEarlier, nextAfterStop, lineSlot, orchMenu, pendingName, prunePendingNicks, subTag, subStatus } from './mobile';
+import { cardTag, ctxFromAgents, heldIds, orchAsk, orchTasks, releaseSnap, routineOrch, rubberTop, sheetTop, closeOnRelease, dropLabel, keyboardOpen, frameAt, driftBias, ghostKeyboard, readViewport, diagLine, isTyping, liveWork, phoneBubble, usageText, waitingList, withAttachments, phoneName, offOrchRows, wokeOrch, waitAnswer, waitKey, shownWaiting, pruneWaitSent, dupAnswer, answerFail, sessionBoard, nearBottom, stickBottom, keepTop, farFromBottom, jumpDot, shrinkPlan, withEarlier, wantEarlier, nextAfterStop, lineSlot, orchMenu, pendingName, prunePendingNicks, subTag, subStatus } from './mobile';
 import type { Session } from './session';
 import { dashList } from './dashList';
 import type { ChatItem } from './chat';
@@ -488,6 +488,21 @@ describe('stickBottom — 대화 목록 바닥 붙이기(키보드·새 말풍�
     expect(stickBottom({ wasNear: true, sentMine: false })).toBe(true);
     expect(stickBottom({ wasNear: false, sentMine: false })).toBe(false);
     expect(stickBottom({ wasNear: false, sentMine: true })).toBe(true);
+  });
+});
+
+describe('keepTop — 칸 크기가 바뀌어 글줄이 다시 감길 때 어디를 보여 줄까(팀챗 10-28 사용자)', () => {
+  it('맨 아래를 보던 중이면 다시 맨 아래 — 창을 좁혀 글이 길어져도·높이를 줄여도', () => {
+    expect(keepTop({ near: true, scrollTop: 600, scrollHeight: 1400, clientHeight: 380 })).toBe(1020);
+    expect(keepTop({ near: true, scrollTop: 0, scrollHeight: 300, clientHeight: 380 })).toBe(0); // 글이 칸보다 짧으면 0
+  });
+  it('위로 올려 읽던 중이면 읽던 말이 같은 자리에 — 그 말이 밀린 만큼만 같이 민다', () => {
+    expect(keepTop({ near: false, scrollTop: 500, scrollHeight: 2400, clientHeight: 380, anchor: { was: 40, now: 260 } })).toBe(720);
+    expect(keepTop({ near: false, scrollTop: 500, scrollHeight: 2400, clientHeight: 380, anchor: { was: 40, now: -10 } })).toBe(450);
+  });
+  it('읽던 말이 그대로거나 잡은 말이 없으면 건드리지 않는다', () => {
+    expect(keepTop({ near: false, scrollTop: 500, scrollHeight: 2400, clientHeight: 380, anchor: { was: 40, now: 40 } })).toBeNull();
+    expect(keepTop({ near: false, scrollTop: 500, scrollHeight: 2400, clientHeight: 380 })).toBeNull();
   });
 });
 

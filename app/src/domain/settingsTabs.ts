@@ -29,6 +29,9 @@ export const FEATURE_TAB: Record<FeatureSwitch, SettingsTab> = {
   agentView: 'browser',
   computerUse: 'browser',
   usagePing: 'features',
+  craftBasics: 'features',
+  bubble: 'features',
+  bubbleDesk: 'features',
 };
 
 /** 설정을 열자마자 돌릴 점검 작업 — 'update' 새 버전 띠의 업데이트, 'python' 서랍의 파이썬 설치하기 */

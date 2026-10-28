@@ -40,6 +40,9 @@ export function makeApi(io: Io) {
     /** 대화 기록 이어 읽기 — 세션 id(UUID)로만 */
     readTranscript: (sessionId: string, from?: number, signal?: AbortSignal) =>
       io.json<TranscriptChunk>(`/api/transcript?id=${encodeURIComponent(sessionId)}${from === undefined ? '' : `&from=${from}`}`, signal),
+    /** 살짝 보기 — 마지막 말만 볼 때(참모 줄·물음). 처음만 작은 꼬리, 그 뒤는 늘어난 줄만. 옛 서버는 peek 을 모르고 보통 읽기로 준다 */
+    peekTranscript: (sessionId: string, from?: number) =>
+      io.json<TranscriptChunk>(`/api/transcript?id=${encodeURIComponent(sessionId)}&peek=1${from === undefined ? '' : `&from=${from}`}`),
     /** 앞 대화 — before(첫 줄 자리) 앞의 온전한 줄들. start = 그 첫 줄 자리(0 이면 대화 처음) */
     readTranscriptBefore: (sessionId: string, before: number) =>
       io.json<{ text: string; start: number }>(`/api/transcript?id=${encodeURIComponent(sessionId)}&before=${before}`),

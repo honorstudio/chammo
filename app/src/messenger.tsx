@@ -14,7 +14,10 @@ const q = new URLSearchParams(location.search);
 const c = q.get('c') ?? 'all';
 // 이 창에 놓은 파일은 대화 칸으로(Rust drop.rs 가 team-* 창이면 그 창에 넘긴다) — fileDrop 의 다른 칸(터미널·문서)은 이 창에 없다
 void import('./ui/team/teamDrop').then(({ teamDrop }) => { (window as unknown as { __drop?: (e: Parameters<typeof teamDrop>[0]) => void }).__drop = (e) => void teamDrop(e); });
-void import('./ui/team/MessengerApp').then(({ MessengerApp }) => {
+// ⌘A — 앱 메뉴 항목이라 Rust 가 이 창이 앞이면 __menu('select_all') 를 부른다(main.rs route_menu). 메인 창과 같은 규칙: 보고 있는 칸(입력칸·보관함)만
+(window as unknown as { __menu?: (id: string) => void }).__menu = (id) => { if (id === 'select_all') void import('./ui/selectAll').then((m) => m.selectAllHere(false, null)); };
+// 입력칸 쓰던 글(<데이터>/drafts.json)을 먼저 읽고 그린다
+void import('./data/drafts').then((d) => d.loadDrafts()).catch(() => {}).then(() => import('./ui/team/MessengerApp')).then(({ MessengerApp }) => {
   bumpUsage('messenger'); // 익명 사용 통계 — 창을 연 횟수만
   createRoot(document.getElementById('root')!).render(
     <StrictMode>

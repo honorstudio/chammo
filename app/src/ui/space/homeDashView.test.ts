@@ -162,7 +162,7 @@ describe('홈 진행 칸 말풍선 = 그 참모 미니 대화에 #참조', () =>
   const cell = dash.slice(dash.indexOf('<section className="hd-a-gp"'), dash.indexOf('</section>', dash.indexOf('<section className="hd-a-gp"')));
   it('진행 칸은 홈이 준 onAsk 로 — 미니 대화를 그 칸 아래 연다(대기열 askRef 아님)', () => {
     expect(cell).toMatch(/data-pop=\{`gpc:\$\{o\.id\}`\}/);
-    expect(cell).toMatch(/<HomeProgress orch=\{\{ id: o\.id, name: o\.name \}\} events=\{events\} sessions=\{sessions\} onAsk=\{\(r\) => askIn\(o\.id, r\)\} \/>/);
+    expect(cell).toMatch(/<HomeProgress orch=\{\{ id: o\.id, name: o\.name \}\} events=\{events\} sessions=\{sessions\} onAsk=\{\(r\) => askIn\(o\.id, r\)\} place=\"dash\" \/>/); // 접힘 기억은 홈 대시보드 자리 따로
     const fn = dash.slice(dash.indexOf('const askIn = '), dash.indexOf('\n', dash.indexOf('const askIn = ')));
     expect(fn).toMatch(/setPop\(\{ kind: 'chat', id \}\)/); // 열려 있어도 닫지 않는다(flipPop 아님)
     expect(fn).toMatch(/setAt\(`gpc:\$\{id\}`\)/);
@@ -185,7 +185,7 @@ describe('홈 진행 칸 말풍선 = 그 참모 미니 대화에 #참조', () =>
     expect(dash).toMatch(/const flip = [^\n]*setInbox\(null\);/);
   });
   it('홈 진행 칸은 onAsk 를 받을 수 있다(없으면 예전처럼 그 참모 입력칸으로 askRef)', () => {
-    expect(comp).toMatch(/export function HomeProgress\(\{ onAsk, \.\.\.p \}: Parameters<typeof useGoalBar>\[0\] & \{ onAsk\?: \(r: RefAsk\) => void \}\)/);
+    expect(comp).toMatch(/export function HomeProgress\(\{ onAsk, place = 'home', \.\.\.p \}: Parameters<typeof useGoalBar>\[0\] & \{ onAsk\?: \(r: RefAsk\) => void; place\?: 'home' \| 'dash' \}\)/);
     expect(comp).toMatch(/onAsk=\{onAsk \?\? \(\(r\) => askRef\(p\.orch\.id, r\)\)\}/);
   });
 });

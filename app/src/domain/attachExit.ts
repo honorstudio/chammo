@@ -65,14 +65,73 @@ export function listedAlive(agentsJson: string, id: string): boolean | null {
 export const REATTACH_GIVE_UP = 90_000;
 /** 끊긴 보기가 목록을 다시 보는 간격 */
 export const REATTACH_POLL = 2500;
+/** 목록을 못 읽는(alive null) 동안 끊김으로 안 굳히는 최대 */
+export const UNLISTED_MAX = 5 * 60_000;
 
-export type LinkState = 'live' | 'reattaching' | 'gone';
+/** live 세션 화면이 옴 · attaching 붙었는데 아직 Claude Code 안내 줄뿐(attachPhaseWatcher) · reattaching 끊겨서 목록을 보며 다시 붙을 때 기다림 · gone 끊김이 굳음 */
+export type LinkState = 'live' | 'attaching' | 'reattaching' | 'gone';
 
 /** 끊긴 뒤 한 번 볼 때마다 — 앱이 끈 세션이면 그만(stopped), 살아 있으면 다시 붙고, 아니면 기다리다 오래되면 끊김으로(그래도 계속 본다).
  *  stoppedByApp = 앱이 끈·지운 세션인가(Rust app_stopped_recently), null = 못 읽음(모름) — 꺼진 세션에 attach 하면 다시 켜지니 붙지 않고,
  *  영구 포기도 않고 다음 차례에 다시 묻는다(못 읽은 걸 '앱이 껐다'로 쳐서 영영 안 붙었다, 0.3.6 리뷰) */
 export function linkStep(o: { alive: boolean | null; stoppedByApp: boolean | null; since: number; now: number }): 'attach' | 'wait' | 'gone' | 'stopped' {
   if (o.stoppedByApp) return 'stopped';
+  // 목록을 못 읽음(맥이 바빠 claude agents 가 10초를 넘김) — 꺼진 게 아니다. 끊김으로 굳히면 보낸 말이 바로 '전달 안 됨'이 됐다(2026-10-26 부팅 직후).
+  // 다만 영영 못 읽으면(옛 claude·로그인 풀림) 말이 끝없이 줄에 묶이니 UNLISTED_MAX 까지만
+  if (o.alive === null && o.now - o.since < UNLISTED_MAX) return 'wait';
   if (o.alive && o.stoppedByApp === false) return 'attach';
   return o.now - o.since > REATTACH_GIVE_UP ? 'gone' : 'wait';
+}
+
+// 세션 화면 전에 attach 가 찍는 안내 줄(2.1.310 데몬 attach — 2026-10-27 일꾼을 SIGSTOP 하고 실측, .shots/boot-storm/attach-stall.bin).
+// 화면이 안 그려지면 데몬이 5~12초 뒤 '응답 없음'으로 그 세션을 죽였다 다시 켠다(attach stall respawn, 두 번까지 — 세 번째는 끈다).
+// 첫 글자를 '붙음'으로 쳤더니 이 줄만 떠 있는 동안 채팅 말을 쳐서, 다시 켜질 때 그 말이 날아갔다
+
+/** 붙는 단계 — queued 앱이 차례를 기다림(domain/busyGate) · attaching 붙는 중 · starting 세션이 켜지는 중 · restarting 응답 없어 데몬이 다시 켬 · stalled 계속 멈춰 데몬이 끔 · ready 세션 화면이 옴 */
+export type AttachPhase = 'queued' | 'attaching' | 'starting' | 'restarting' | 'stalled' | 'ready';
+
+const NOTES: [string, AttachPhase][] = [
+  ['Session keeps stalling at startup', 'stalled'],
+  ['Session not responding \u2014 restarting it\u2026', 'restarting'],
+  ['Session is starting \u2014 it will appear once ready', 'starting'],
+  ['Waiting for session to redraw\u2026', 'attaching'],
+  ['Attaching\u2026', 'attaching'],
+];
+// eslint-disable-next-line no-control-regex
+const APC = /\x1b_[^\x07\x1b]*(?:\x07|\x1b\\)/g;
+/** 안내 줄 뒤에 이만큼 글자가 보이면 세션 화면 — 안내 줄은 한 줄, 진짜 화면은 배너·입력칸만 해도 수백 자 */
+export const READY_CHARS = 40;
+/** 안내 줄을 다 빼고도 이만큼 글자가 왔으면 화면 — 안내 줄이 화면 뒤에 다시 그려져도(윈도우 ConPTY) 갇히지 않게 */
+export const BULK_CHARS = 400;
+const visibleLen = (t: string) => [...t.replace(/Ctrl\+Z to detach|\^\[\[[IO]/g, '').replace(/\s+/g, '')].length;
+
+/** 보이는 글 끝이 안내 줄의 앞토막이면 그 길이(조각 경계에 걸친 'Attach') */
+const notePrefixAt = (t: string) => {
+  let n = 0;
+  for (const [note] of NOTES) for (let k = Math.min(note.length - 1, t.length); k >= 3; k--) if (t.endsWith(note.slice(0, k))) { n = Math.max(n, k); break; }
+  return n;
+};
+
+/** attach 출력을 이어 받아 단계가 바뀌면 그 단계, 아니면 null. ready 를 한 번 내면 그 뒤로는 안 본다(대화 화면에 같은 문장이 그려져도) */
+export function attachPhaseWatcher(): (chunk: string) => AttachPhase | null {
+  let raw = '';
+  let phase: AttachPhase | null = null;
+  return (chunk) => {
+    if (phase === 'ready') return null;
+    raw = (raw + chunk).slice(-8000);
+    const vis = raw.replace(APC, '').replace(ESC, '');
+    let at = -1;
+    let found: AttachPhase | null = null;
+    for (const [note, ph] of NOTES) {
+      const i = vis.lastIndexOf(note);
+      if (i >= 0 && i + note.length > at) { at = i + note.length; found = ph; }
+    }
+    let rest = at >= 0 ? vis.slice(at) : vis;
+    rest = rest.slice(0, rest.length - notePrefixAt(rest));
+    const bulk = visibleLen(NOTES.reduce((t, [note]) => t.split(note).join(''), vis));
+    const next = visibleLen(rest) >= READY_CHARS || bulk >= BULK_CHARS ? 'ready' : found ?? (at < 0 && vis.trim() ? 'attaching' : phase);
+    if (next === phase) return null;
+    phase = next;
+    return next;
+  };
 }

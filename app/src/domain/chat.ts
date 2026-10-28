@@ -3,6 +3,7 @@
 
 import { toolTarget } from './activity';
 import { quotePath } from './drop';
+import { dropSig } from './orchLabel';
 
 export type ChatTool = { name: string; target: string };
 export type ChatItem =
@@ -12,7 +13,7 @@ export type ChatItem =
   /** 슬래시 명령 — 말풍선 대신 작은 줄. out = 명령 결과(/context·/cost 등, 색 코드 뺀 글) */
   | { kind: 'note'; id: string; ts: string; text: string; out?: string }
   /** 다른 세션이 보낸 말·앱이 넘긴 줄 — 가운데 카드(from = 보낸 쪽). 사용자 말풍선처럼 보였다(2026-09-30) */
-  | { kind: 'relay'; id: string; ts: string; from: string; text: string };
+  | { kind: 'relay'; id: string; ts: string; from: string; text: string; /** from = 보낸 세션의 진짜 이름 — 화면엔 seenName 으로 */ session?: true };
 
 type Block = { type?: string; text?: string; name?: string; input?: Record<string, unknown>; source?: { type?: string; media_type?: string; data?: string } };
 type Rec = { type?: string; subtype?: string; content?: unknown; uuid?: string; parentUuid?: string | null; timestamp?: string; isMeta?: boolean; isSidechain?: boolean; isCompactSummary?: boolean; message?: { content?: unknown };
@@ -62,7 +63,7 @@ const HUMAN_REMOTE = /^\[(?:사람 말 · 원격 · [^\]\n]+?에서 직접|Perso
 export const humanBody = (t: string) => (HUMAN_REMOTE.test(t) ? t.replace(HUMAN_REMOTE, '').replace(/^› (?=[[<［＜])/gm, '') : t);
 
 /** 다른 세션이 보낸 말(<cross-session-message from-name=…>)·앱이 넘긴 줄([앱] …) → 보낸 쪽과 본문 */
-function relayOf(t: string): { from: string; text: string } | null {
+function relayOf(t: string): { from: string; text: string; session?: true } | null {
   if (t.startsWith('[앱] ')) return { from: '앱', text: t.replace(/^\[앱\]\s*/, '').trim() };
   // 다른 기기 참모(ADR 0007) — 받는 폰 서버가 붙인 이름표. 꼬리표(peer#cid)는 답 찾기용이라 안 보인다
   const p = t.match(/^\[((?:다른 기기 참모|Assistant on another device) · [^\]\n]+?) · peer#[A-Za-z0-9_-]+\]\n?([\s\S]*)$/);
@@ -74,7 +75,7 @@ function relayOf(t: string): { from: string; text: string } | null {
   const sm = t.match(/^\[((?:내 다른 기기 참모|내 다른 기기 사람 말|My device assistant|My device human) · [^\]\n]+?) · self#\d+\]\n?([\s\S]*)$/);
   if (sm) return { from: sm[1]!, text: sm[2]!.trim() };
   const m = t.match(/<cross-session-message\b[^>]*?from-name="([^"]*)"[^>]*>([\s\S]*?)<\/cross-session-message>/);
-  return m ? { from: m[1]!, text: m[2]!.trim() } : null;
+  return m ? { from: m[1]!, text: dropSig(m[2]!.trim(), m[1]!), session: true } : null;
 }
 
 /** 터미널 색·굵기 코드(ESC[…m) — 채팅에선 뺀다 */

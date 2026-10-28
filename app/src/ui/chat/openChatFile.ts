@@ -2,6 +2,8 @@
 // 참모가 띄운 파일 카드·말풍선에 붙은 그림(#img1)·파일(#file1)이 같이 쓴다(2026-10-19 사용자 "스페이스에서 열리는 게 맞는 액션")
 import { invoke } from '@tauri-apps/api/core';
 import type { ShowAt } from '../../domain/showAt';
+import { craftFirst } from '../../domain/craftOpen';
+import { openInCraft, sayCraftErr } from '../craft/openInCraft';
 
 /** 스페이스에 열기 신호 — detail = { path, at, by(띄운 참모 id) } */
 export const CHAT_FILE_OPEN = 'chat-file-open';
@@ -27,9 +29,11 @@ export function imageFile(src: string): Promise<string> {
 /** 메신저 따로 창 — 그 창의 팀 스페이스가 받는다(ui/team/useTeamMode alone 이 단다). 메인 창엔 없다 */
 export const fileHere: { open: ((path: string) => void) | null } = { open: null };
 
-export async function openChatFile(src: string, by: string, at?: ShowAt): Promise<void> {
+/** preview = 편집 앱이 맞는 형식(.ai·.psd …)도 미리보기로 — 아니면 그런 파일은 참모 앱으로 연다(domain/craftOpen, 10-26 사용자) */
+export async function openChatFile(src: string, by: string, at?: ShowAt, preview = false): Promise<void> {
   const path = await imageFile(src).catch(() => '');
   if (!path) return;
+  if (!preview && craftFirst(path)) { await openInCraft(path).catch(sayCraftErr); return; }
   if (fileHere.open) { fileHere.open(path); return; }
   if (document.querySelector('.space-mode')) window.dispatchEvent(new CustomEvent(CHAT_FILE_OPEN, { detail: { path, by, ...(at ? { at } : {}) } }));
   else await invoke('reader_open', { paths: [path] }).catch(() => {});

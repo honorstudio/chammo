@@ -8,6 +8,30 @@
 .gp-num b { color: var(--text); font-weight: 600; }
 .gp-proj { font-size: 11px; font-weight: 700; color: var(--text-3); margin-top: 2px; }
 
+/* 접기(머리줄 끝 단추) — 접히면 머리줄 한 줄에 목표마다 블록. 블록 사이만 2px, 블록 안 상태 조각끼리는 붙인다(줄 막대와 같은 색 규칙) */
+.gp-head { align-items: center; min-height: 28px; }
+.gp-head .gp-num { flex: none; }
+.gp-sp { flex: 1; }
+.gp button.gp-foldbtn { all: unset; box-sizing: border-box; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin: -4px -6px -4px 0; border-radius: 6px; color: var(--text-3); cursor: pointer; }
+.gp .gp-foldbtn svg { width: 14px; height: 14px; }
+.gp .gp-foldbtn:focus-visible { outline: 2px solid var(--working); outline-offset: 1px; }
+.gp-fold { flex: 1; min-width: 0; display: flex; gap: 2px; }
+.gp button.gp-blk { all: unset; box-sizing: border-box; flex: 1 1 0; min-width: 6px; display: flex; align-items: center; height: 28px; cursor: pointer; }
+.gp .gp-blk:focus-visible { outline: 2px solid var(--working); outline-offset: 1px; border-radius: 3px; }
+.gp-blk-in { flex: 1; display: flex; height: 10px; border-radius: 3px; overflow: hidden; transition: transform .12s; }
+@media (hover: hover) { /* 폰은 누른 뒤에도 hover 가 남는다 */
+  .gp .gp-foldbtn:hover { color: var(--text); background: var(--surface-2); }
+  .gp .gp-blk:hover .gp-blk-in { transform: scaleY(1.3); }
+}
+.gp-fp { flex: 1 1 0; min-width: 0; height: 100%; }
+.gp-fp.gp-run { background: var(--working); }
+.gp-fp.gp-wait { box-sizing: border-box; background: transparent; border: 1px dashed var(--text-3); }
+/* 말풍선 — 칸이 스크롤 칸이라 화면 기준으로 띄운다 */
+.gp-tip { position: fixed; z-index: var(--z-popover); transform: translate(-50%, -100%); display: inline-flex; align-items: baseline; gap: 8px; max-width: 260px; padding: 5px 9px; border-radius: 7px; background: var(--text); color: var(--surface); font-size: 12px; font-weight: 600; white-space: nowrap; pointer-events: none; box-shadow: 0 4px 14px rgba(0, 0, 0, .18); }
+.gp-tip.gp-below { transform: translate(-50%, 0); }
+.gp-tip .gp-num, .gp-tip .gp-num b { color: inherit; opacity: .8; }
+.gp-tip .gp-num b { opacity: 1; }
+
 .gp-row { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .gp button.gp-line { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 14px minmax(80px, 150px) 1fr 52px 64px; gap: 10px; align-items: center; min-height: 28px; cursor: pointer; border-radius: 6px; font-size: 12.5px; color: var(--text-2); }
 .gp-line:focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
@@ -74,12 +98,20 @@
   .gp-hand-box { padding-left: 18px; }
   .gp-job { min-height: 44px; }
 }
+@media (hover: none) {
+  .gp button.gp-foldbtn { width: 44px; height: 44px; margin: -10px -12px -10px 0; }
+  .gp button.gp-blk { height: 44px; }
+  .gp-head { min-height: 44px; }
+}
 
 /* 끝난 조각이 사라질 때 — 꽉 찬 조각이 한 번 반짝이고(0.5초) 줄이 접히며 아래 줄이 당겨진다(0.45초).
    기타 조각의 끝난 칸은 반짝인 뒤 폭이 0 으로 줄어 옆 칸이 당겨진다. 동작 줄이기면 페이드만 */
 .gp-leave { overflow: hidden; animation: gp-fold .45s .5s cubic-bezier(.4, 0, .2, 1) forwards; }
 .gp-leave .gp-c { animation: gp-flash .5s ease-out; }
 .gp-cleave { animation: gp-flash .5s ease-out, gp-shrink .45s .5s cubic-bezier(.4, 0, .2, 1) forwards; }
+/* 접힌 막대 블록 — 단추라 all: unset 을 이기려 한 겹 더, 반짝은 안쪽 막대에 */
+.gp button.gp-blk.gp-cleave { animation: gp-shrink .45s .5s cubic-bezier(.4, 0, .2, 1) forwards; }
+.gp-cleave .gp-blk-in { animation: gp-flash .5s ease-out; }
 @keyframes gp-flash { 35% { filter: brightness(1.75) saturate(1.2); transform: scaleY(1.35); } }
 @keyframes gp-fold { from { max-height: var(--gp-h, 60px); opacity: 1; } to { max-height: 0; opacity: 0; margin-top: calc(var(--gp-gap) * -1); } }
 @keyframes gp-shrink { to { flex-grow: 0; min-width: 0; margin-right: -2px; opacity: 0; } }
@@ -87,9 +119,12 @@
 @keyframes gp-cfade { to { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   .gp-chev { transition: none; }
+  .gp-blk-in { transition: none; }
   .gp-leave { animation: gp-fade .3s forwards; }
   .gp-leave .gp-c { animation: none; }
   .gp-cleave { animation: gp-cfade .3s forwards; }
+  .gp button.gp-blk.gp-cleave { animation: gp-cfade .3s forwards; }
+  .gp-cleave .gp-blk-in { animation: none; }
 }
 
 /* 참모에게 묻기(줄 끝 말풍선, gp-ask 는 답 기다림 칸 이름이라 gp-ref) — 참모 색 동그라미. 데스크톱은 줄에 올리거나 고를 때만, 폰(마우스 없음)은 늘. 폰 누름 칸 44px */

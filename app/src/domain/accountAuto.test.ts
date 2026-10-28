@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { afterSwitch, applyApi, changedKeys, fpOf, markDead, migrate, fmtUntil, markNudged, pinPatch, slotDead, stuckOf, parseResets, readAuto, readWins, slotStatus, step, LEARN_MS, MIN_GAP_MS, PIN_THRESHOLD, type AutoState, type Input } from './accountAuto';
+import { afterSwitch, applyApi, changedKeys, clearTerms, fpOf, AUTH_BLOCK_MS, STATE_V, TERMS_GRACE_MS, TERMS_CHAIN_MS, markDead, migrate, fmtUntil, markNudged, pinPatch, slotDead, stuckOf, parseResets, readAuto, readWins, slotStatus, step, LEARN_MS, MIN_GAP_MS, PIN_THRESHOLD, type AutoState, type Input } from './accountAuto';
 
 // 로컬 시각으로 — 22:20 같은 '다시 열리는 시각'을 사람 눈으로 맞춘다
 const at = (h: number, m = 0, d = 2, s = 0) => new Date(2026, 9, d, h, m, s).getTime();
@@ -55,7 +55,7 @@ describe('step — 2026-10-02 실측 재현: 두 계정 값이 번갈아 찍혀�
   it('옛 판 기록(근거 없는 막힘)은 한 번 지운다', () => {
     const old = readAuto({ on: true, slots: { b: { week: { used: 97, resetsAt: WA }, blockedUntil: WA, why: 'week' }, a: { blockedUntil: WA } }, allOutUntil: WA });
     const p = tick(old, at(19), null);
-    expect(p.state.v).toBe(2);
+    expect(p.state.v).toBe(STATE_V);
     expect(p.state.slots.b).toEqual({});
     expect(p.state.slots.a).toBeUndefined();
     expect(p.allOut).toBeNull();
@@ -589,6 +589,120 @@ describe('로그인 풀림 — 지금 칸 로그인이 죽으면 그 칸을 막�
     expect(stuckOf(acts)).toEqual([{ session: 's1', ts: Date.parse('2026-10-06T00:30:22Z'), auth: true }]);
     // 갱신 겹침은 칸 탓이 아니다
     expect(stuckOf([{ ...acts[0]!, activity: { auth: { ...acts[0]!.activity.auth, retry: true as const } } }])).toEqual([]);
+  });
+});
+
+describe('약관 동의 필요 — 그 칸은 동의할 때까지 건너뛴다(2026-10-28)', () => {
+  const termsStuck = (ts: number) => [{ session: 's1', ts, auth: true as const, terms: true as const }];
+
+  it('바꾼 뒤에 난 약관 오류 → 그 칸을 terms 로 막고 다음 칸으로. 계속해는 안 보낸다(이어서는 domain/login)', () => {
+    const p = tick(base({ switchedAt: at(17) }), at(18, 30), null, { stuck: termsStuck(at(18, 20)) });
+    expect(p.switchTo).toBe('a');
+    expect(p.why).toBe('terms');
+    expect(p.state.slots.b?.why).toBe('terms');
+    expect(p.nudge).toEqual([]);
+    expect(slotStatus(p.state.slots.b, at(19)).kind).toBe('terms');
+  });
+
+  it('그 칸 토큰 사용량이 ok 여도 안 풀린다(약관은 사용량 주소가 안 막는다) — 다시 시도(clearTerms)로만', () => {
+    const blocked = tick(base({ switchedAt: at(17) }), at(18, 30), null, { stuck: termsStuck(at(18, 20)) }).state;
+    const s = applyApi(blocked, [{ who: 'b', status: 'ok', five: { used: 5, resetsAt: at(22) }, week: { used: 5, resetsAt: WB } }], IDS, at(19));
+    expect(s.slots.b?.why).toBe('terms');
+    const c = clearTerms(s, at(19, 5));
+    expect(c.slots.b?.why).toBeUndefined();
+    expect(c.slots.b?.blockedUntil).toBeUndefined();
+    expect(c.slots.b?.openedAt).toBe(at(19, 5)); // 그 전에 난 약관 오류로 다시 막지 않게
+    // 다시 시도 뒤 앞 칸으로 돌아간다(간격 뒤)
+    expect(tick({ ...c, switchedAt: at(18, 30) }, at(19, 10), null, { active: 'a' }).switchTo).toBe('b');
+  });
+
+  it('다시 시도는 약관 막힘만 푼다 — 한도·로그인 막힘은 그대로', () => {
+    const s = base({ slots: { b: { fp: WB, blockedUntil: at(22), why: 'five', blockFp: WB }, a: { fp: WA, blockedUntil: at(23), why: 'auth' } } });
+    expect(clearTerms(s, at(19)).slots).toEqual(s.slots);
+  });
+
+  it('모든 칸이 약관·로그인이면 다 찼어 알림은 안 낸다(카드 몫)', () => {
+    const s = base({ switchedAt: at(17), slots: { b: { fp: WB }, a: { fp: WA, blockedUntil: at(18, 0, 30), why: 'terms' } } });
+    const p = tick(s, at(18, 30), null, { stuck: termsStuck(at(18, 20)) });
+    expect(p.switchTo).toBeNull();
+    expect(p.allOut).toBeNull();
+  });
+
+  it('readAuto 가 why terms 를 읽고, stuckOf 가 약관 표시를 넘긴다', () => {
+    expect(readAuto({ v: 2, slots: { b: { why: 'terms', blockedUntil: 9 } } }).slots.b).toEqual({ why: 'terms', blockedUntil: 9 });
+    const acts = [{ session: { id: 's1', kind: 'background' as const, state: 'idle' as const }, activity: { auth: { ts: '2026-10-06T00:30:22Z', text: 'x', terms: true as const } } }];
+    expect(stuckOf(acts)).toEqual([{ session: 's1', ts: Date.parse('2026-10-06T00:30:22Z'), auth: true, terms: true }]);
+  });
+});
+
+describe('약관 연쇄 오탐 — 2026-10-28 15:47 실측 재현(바꾼 뒤 돌던 세션이 옛 토큰으로 낸 약관 오류)', () => {
+  // 순서: o·d = 멀쩡한 계정, y = 진짜 미동의 계정. 사람이 y 를 손으로 골랐다
+  const ids = ['o', 'd', 'y'];
+  const t = (m: number, s = 0) => at(15, m, 28, s);
+  const terms = (session: string, ts: number) => ({ session, ts, auth: true as const, terms: true as const });
+  const s0 = (): AutoState => ({ ...readAuto({ v: STATE_V }), pinned: 'y', switchedAt: t(40), slots: { o: { fp: WB }, d: { fp: WA }, y: { fp: at(9, 0, 5) } } });
+
+  it('15:47:13 y 의 진짜 약관 오류 → y 를 막고 o 로. 15:47:32·57 옛 토큰 오류로는 o 를 안 막는다', () => {
+    const p1 = step(s0(), { now: t(47, 20), ids, active: 'y', usage: null, stuck: [terms('hq', t(47, 13))] });
+    expect(p1.switchTo).toBe('o');
+    expect(p1.state.slots.y?.why).toBe('terms');
+    const sw = afterSwitch(p1.state, t(47, 28));
+    const stuck = [terms('hq', t(47, 32)), terms('wt', t(47, 32)), terms('x', t(47, 57))];
+    const p2 = step(sw, { now: t(48), ids, active: 'o', usage: null, stuck });
+    expect(p2.switchTo).toBeNull();
+    expect(p2.state.slots.o?.blockedUntil).toBeUndefined();
+    // 몇 분이 지나도 그 옛 줄로는 안 막는다
+    const p3 = step(p2.state, { now: t(55), ids, active: 'o', usage: null, stuck });
+    expect(p3.switchTo).toBeNull();
+    expect(p3.state.slots.o?.why).toBeUndefined();
+  });
+
+  it('바꾼 뒤 유예가 지나 새로 난 약관 오류는 그 칸 탓 — 단 바로 앞 칸이 약관으로 막힌 지 얼마 안 됐으면 줄줄이 막지 않고 멈춘다', () => {
+    const sw = afterSwitch(step(s0(), { now: t(47, 20), ids, active: 'y', usage: null, stuck: [terms('hq', t(47, 13))] }).state, t(47, 28));
+    const late = t(47, 28) + TERMS_GRACE_MS + 60_000;
+    const p = step(sw, { now: late + 5000, ids, active: 'o', usage: null, stuck: [terms('hq', late)] });
+    expect(p.switchTo).toBeNull(); // 연쇄 — 사람에게(카드)
+    expect(p.state.slots.o?.blockedUntil).toBeUndefined();
+    // 앞 칸 막힘이 오래된 뒤면(연쇄 아님) 그 칸을 막고 넘긴다
+    const later = t(47, 13) + TERMS_CHAIN_MS + 60_000;
+    const q = step(sw, { now: later + 5000, ids, active: 'o', usage: null, stuck: [terms('hq', later)] });
+    expect(q.state.slots.o?.why).toBe('terms');
+    expect(q.switchTo).toBe('d');
+  });
+
+  it('로그인 오류도 바꾼 직후 유예 안이면 새 칸 탓이 아니다', () => {
+    const s = { ...s0(), pinned: null, switchedAt: t(47, 28), slots: { o: { fp: WB }, d: { fp: WA }, y: { fp: at(9, 0, 5) } } };
+    const p = step(s, { now: t(48), ids, active: 'o', usage: null, stuck: [{ session: 'hq', ts: t(47, 40), auth: true }] });
+    expect(p.state.slots.o?.why).toBeUndefined();
+  });
+
+  it('clearTerms(id) 는 그 칸만 푼다', () => {
+    const s: AutoState = { ...s0(), slots: { o: { why: 'terms', blockedUntil: t(50) + AUTH_BLOCK_MS }, y: { why: 'terms', blockedUntil: t(47) + AUTH_BLOCK_MS } } };
+    const c = clearTerms(s, t(52), 'o');
+    expect(c.slots.o?.why).toBeUndefined();
+    expect(c.slots.o?.openedAt).toBe(t(52));
+    expect(c.slots.y?.why).toBe('terms');
+  });
+
+  it('옛 판(v2) 기록 되살리기 — 연쇄로 막힌 뒤 칸들만 풀고 맨 처음 막힌 칸(진짜)은 남긴다. 다른 기록은 그대로', () => {
+    // 15:51 실제 accounts.json 모양 그대로(숫자만)
+    const v2: AutoState = { ...readAuto({ v: 2 }), switchedAt: 1793170048192, slots: {
+      o: { fp: 1793484000000, blockedUntil: 1795762048182, why: 'terms', week: { used: 23, resetsAt: 1793483999736 } },
+      d: { fp: 1793412000000, blockedUntil: 1795762077524, openedAt: 1792478835428, why: 'terms' },
+      t: { fp: 1793257200000, week: { used: 99, resetsAt: 1793257200191 } },
+      y: { fp: 1793293200000, blockedUntil: 1795762033126, why: 'terms' },
+    } };
+    const m = migrate(v2);
+    expect(m.v).toBe(STATE_V);
+    expect(m.slots.y?.why).toBe('terms');
+    expect(m.slots.o?.why).toBeUndefined();
+    expect(m.slots.o?.blockedUntil).toBeUndefined();
+    expect(m.slots.d?.why).toBeUndefined();
+    expect(m.slots.o?.fp).toBe(1793484000000);
+    expect(m.slots.t).toEqual(v2.slots.t);
+    expect(m.switchedAt).toBe(v2.switchedAt);
+    // 그보다 옛 판은 예전처럼 통째로 지운다
+    expect(migrate({ ...v2, v: 1 }).slots).toEqual({});
   });
 });
 

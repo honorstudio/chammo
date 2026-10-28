@@ -313,3 +313,61 @@ fn held_code_refused_by_human_is_dead_for_knock() {
     w.gate.devices.decide_hold("card2", false).unwrap();
     assert!(!w.gate.devices.code_alive(&code, SystemTime::now()));
 }
+
+/// 폰이 부탁한 압축(x-chammo-gz) — 2026-10-27 느린 셀룰러: 대화 기록 JSON 1.4MB 가 터널에서 2.4MB 라 20초 한도에 걸렸다
+fn treq(h: &[(&str, &str)], method: &str) -> TReq {
+    TReq { id: 9, method: method.into(), path: "/api/transcript".into(), headers: h.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), body: vec![] }
+}
+
+fn body_of(ch: &[Vec<u8>]) -> (Value, Vec<u8>) {
+    let first: Value = serde_json::from_slice(&ch[0]).unwrap();
+    let mut b = vec![];
+    for c in ch {
+        let v: Value = serde_json::from_slice(c).unwrap();
+        b.extend(tun::unb64(v["b"].as_str().unwrap()).unwrap());
+    }
+    (first["h"].clone(), b)
+}
+
+#[test]
+fn asked_gzip_compresses_text_answers_and_marks_them() {
+    use std::io::Read;
+    let text = "{\"text\":\"대화 한 줄 — 도구 결과\\n\"}".repeat(20_000).into_bytes();
+    let r = Resp { status: 200, headers: vec![("Content-Type", "application/json".into())], body: text.clone() };
+    let ch = reply_chunks(&treq(&[("x-chammo-gz", "1")], "GET"), &r);
+    let (h, b) = body_of(&ch);
+    assert_eq!(h["x-chammo-gz"].as_str(), Some("1"));
+    assert!(b.len() * 4 < text.len(), "{} vs {}", b.len(), text.len());
+    let mut out = vec![];
+    flate2::read::GzDecoder::new(&b[..]).read_to_end(&mut out).unwrap();
+    assert_eq!(out, text);
+}
+
+#[test]
+fn gzip_only_when_asked_and_worth_it() {
+    let json = |n: usize| Resp { status: 200, headers: vec![("Content-Type", "application/json".into())], body: vec![b'a'; n] };
+    let plain = |req: &TReq, r: &Resp| {
+        let (h, b) = body_of(&reply_chunks(req, r));
+        h.get("x-chammo-gz").is_none() && b == r.body
+    };
+    // 옛 폰(부탁 없음)·작은 답·HEAD·이미 압축된 그림·나눠 받기(Range)·200 아닌 답은 그대로
+    assert!(plain(&treq(&[], "GET"), &json(50_000)));
+    assert!(plain(&treq(&[("x-chammo-gz", "1")], "GET"), &json(500)));
+    assert!(plain(&treq(&[("x-chammo-gz", "1"), ("range", "bytes=0-99")], "GET"), &json(50_000)));
+    let jpg = Resp { status: 200, headers: vec![("Content-Type", "image/jpeg".into())], body: vec![7; 50_000] };
+    assert!(plain(&treq(&[("x-chammo-gz", "1")], "GET"), &jpg));
+    let partial = Resp { status: 206, ..json(50_000) };
+    assert!(plain(&treq(&[("x-chammo-gz", "1")], "GET"), &partial));
+    let head = reply_chunks(&treq(&[("x-chammo-gz", "1")], "HEAD"), &json(50_000));
+    assert_eq!(body_of(&head).1.len(), 0);
+}
+
+#[test]
+fn gzip_request_header_passes_the_tunnel() {
+    let mut w = world();
+    let mut s = connect(&mut w, "c1");
+    let f = req_frames(&mut s, 3, "GET", "/api/env", json!({ "x-chammo-gz": "1", "x-other": "no" }), &[]);
+    let Ev::Run(t) = &w.t.on_frame(&w.lines, "r1", "c1", &f[0])[0] else { panic!() };
+    assert!(t.headers.iter().any(|(k, v)| k == "x-chammo-gz" && v == "1"));
+    assert!(!t.headers.iter().any(|(k, _)| k == "x-other"));
+}

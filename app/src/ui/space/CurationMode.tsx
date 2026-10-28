@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
-import { fromFrame, reviewEscCloses } from '../../domain/curation';
+import { curZoomCmd, fromFrame, reviewEscCloses } from '../../domain/curation';
 import { orchVars } from '../../domain/orchTheme';
 import { docUrl } from '../../domain/reader';
 import { tr } from '../../i18n';
@@ -82,6 +82,7 @@ export function CurationMode({ path, onClose, onSend, sendTo, color, big = false
     const z = d === 0 ? 100 : stepZoom(zoom, d);
     setZoom(z);
     try { localStorage.setItem(CUR_ZOOM_KEY, String(z)); } catch { /* 이번엔 된다 */ }
+    if (st?.zoom !== undefined) cmd({ cmd: 'zoom', z: z / 100 });
   };
   // 메뉴 ⌘+ ⌘- ⌘0 은 App 이 __previewZoom 부터 본다 — 검토 모드가 떠 있으면 여기로
   useEffect(() => {
@@ -90,9 +91,17 @@ export function CurationMode({ path, onClose, onSend, sendTo, color, big = false
     w.__previewZoom = mine;
     return () => { if (w.__previewZoom === mine) delete w.__previewZoom; };
   }, []);
-  // 껍데기가 알려 온 확대와 다르면 보낸다 — 시안을 다시 읽어도(새로 고침) 따라간다
+  // 칸을 읽은 뒤 껍데기 첫 알림에 한 번만 맞춘다 — 알림(카드 누르기)마다 또 보내면 손본 껍데기에서 보드가 한 단계씩 작아졌다(domain/curation curZoomCmd).
+  // 시안을 다시 읽으면(새로 고침 — 두 번째 load 부터) 그 자리에서 한 번 더 보낸다
+  const zoomSynced = useRef(false);
+  const loads = useRef(0);
   const shellZoom = st?.zoom;
-  useEffect(() => { if (shellZoom !== undefined && Math.abs(shellZoom - zoom / 100) > 0.001) cmd({ cmd: 'zoom', z: zoom / 100 }); }, [shellZoom, zoom]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const z = curZoomCmd(shellZoom, zoom / 100, zoomSynced.current);
+    if (shellZoom !== undefined) zoomSynced.current = true;
+    if (z !== null) cmd({ cmd: 'zoom', z });
+  }, [shellZoom]); // eslint-disable-line react-hooks/exhaustive-deps
+  const reloaded = () => { if (loads.current++ > 0 && st?.zoom !== undefined) cmd({ cmd: 'zoom', z: zoom / 100 }); };
 
   const total = st?.total ?? 0;
   const done = st?.done ?? 0;
@@ -139,7 +148,7 @@ export function CurationMode({ path, onClose, onSend, sendTo, color, big = false
       <div className="cur-mode-body">
         {/* 왼쪽 시안 목차는 뺐다 — 오른쪽 카드 목록이 시안별로 묶여 겹쳤고, 가운데 시안이 좁아졌다(2026-09-30 사용자) */}
         <div className="cur-mode-stage">
-          <HtmlFrame className="rd-frame" src={docUrl(path)} zoom={st && st.zoom === undefined ? zoom : 100} record={path} />
+          <HtmlFrame className="rd-frame" src={docUrl(path)} zoom={st && st.zoom === undefined ? zoom : 100} record={path} onLoad={reloaded} />
         </div>
         {/* 오른쪽 표시 목록은 뺐다 — 블록을 누르면 그 자리에 고르는 창이 떠서, 목록까지 마우스를 옮기지 않는다(2026-10-01 사용자). 시안 자리도 넓어진다 */}
       </div>

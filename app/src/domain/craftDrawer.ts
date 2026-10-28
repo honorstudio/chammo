@@ -11,6 +11,8 @@ export type DrawerRow = {
   origName: string; repo: string; basedOn: string | null; chammo: boolean;
   /** 안 깔렸는데 받을 수 없을 때 까닭 한 줄(공개 릴리스를 못 받음·릴리스에 없음) — 모르면 비움 */
   unavailable?: string | null;
+  /** 미리 깔아 두는 기본 다섯(표·PDF·슬라이드·문서·벡터 — scripts/craft BASICS) · 지금 뒤에서 받는 중(prefetch) */
+  basic?: boolean; prefetching?: boolean;
 };
 
 export const APPS_KEY = 'k:@apps';
@@ -21,8 +23,43 @@ export const NO_PYTHON = 'no-python';
 /** 서랍·참모 앱 열기 오류 → 파이썬이 없으면 설치 안내 한 줄(원문은 일반 사용자가 못 읽는다), 그 밖은 원문 그대로 */
 export function craftErr(e: unknown): { python: boolean; text: string } {
   const t = (e instanceof Error ? e.message : String(e ?? '')).trim();
-  return t === NO_PYTHON ? { python: true, text: tr('참모 앱을 쓰려면 파이썬 3 이 필요해요', 'Chammo apps need Python 3') } : { python: false, text: t };
+  if (t === NO_PYTHON) return { python: true, text: tr('참모 앱을 쓰려면 파이썬 3 이 필요해요', 'Chammo apps need Python 3') };
+  // 빈 오류(종료 코드만)면 서랍이 오류 줄도 목록도 없이 자리표시에 멈췄다(10-28) — 한 줄은 꼭
+  return { python: false, text: t || tr('앱 목록을 못 읽었어요', 'Could not read the app list') };
 }
+
+/** 서랍 기억(10-28 사용자 '계속 로딩해야 할 이유가 있나') — 칸을 떠나면 서랍이 지워져 열 때마다 scripts/craft 를 새로 띄우고 기다렸다.
+ *  마지막 목록을 이번 실행은 메모리, 앱을 다시 켜도 남게 저장소에(막혀 있으면 메모리만) — 열면 바로 그리고 뒤에서 새로 읽는다 */
+export const DRAWER_MEMO_KEY = 'craftDrawer:rows';
+type Store = Pick<Storage, 'getItem' | 'setItem'>;
+export function drawerMemo(store?: Store) {
+  let mem: DrawerRow[] | null = null;
+  return {
+    load(): DrawerRow[] | null {
+      if (mem) return mem;
+      try {
+        const v: unknown = JSON.parse(store?.getItem(DRAWER_MEMO_KEY) ?? 'null');
+        if (Array.isArray(v) && v.length && v.every((r) => r && typeof r.app === 'string' && typeof r.name === 'string')) mem = v as DrawerRow[];
+      } catch { /* 깨진 기록은 없는 것으로 */ }
+      return mem;
+    },
+    save(rows: DrawerRow[]) {
+      mem = rows;
+      try { store?.setItem(DRAWER_MEMO_KEY, JSON.stringify(rows)); } catch { /* 저장소가 막혔으면 메모리만 */ }
+    },
+  };
+}
+
+/** 새로 읽은 목록 — 안 바뀐 칸은 옛 것 그대로(하나도 안 바뀌었으면 옛 배열째 — 다시 그리지 않게) */
+export function mergeRows(old: DrawerRow[] | null, next: DrawerRow[]): DrawerRow[] {
+  if (!old) return next;
+  const was = new Map(old.map((r) => [r.app, r]));
+  const out = next.map((r) => { const o = was.get(r.app); return o && JSON.stringify(o) === JSON.stringify(r) ? o : r; });
+  return out.length === old.length && out.every((r, i) => r === old[i]) ? old : out;
+}
+
+/** 서랍 본문 — 목록이 있으면 목록(오류는 위에 한 줄), 없고 오류면 오류 한 줄 + 다시 시도, 둘 다 없을 때(처음 읽는 중)만 자리표시 */
+export const drawerView = (rows: DrawerRow[] | null, err: string): 'rows' | 'error' | 'skeleton' => (rows ? 'rows' : err ? 'error' : 'skeleton');
 
 /** 사람이 읽는 크기 */
 export function sizeText(n: number | null | undefined): string {
@@ -47,7 +84,8 @@ export const usedLine = (n: number, win: boolean) => {
 
 /** 올렸을 때 글 — 깔린 것: 판·크기·마지막 사용, 새 판이 있으면 알림 / 깔 수 있는 것: 판·받을 크기 */
 export function tileTitle(r: DrawerRow): string {
-  const parts = [r.name, r.what];
+  const parts = [r.name, r.what, r.basic ? tr('기본 앱', 'basic app') : ''];
+  if (r.prefetching) parts.push(tr('미리 받는 중', 'installing ahead'));
   if (r.installed) {
     parts.push(r.installed);
     if (r.size) parts.push(sizeText(r.size));
@@ -62,11 +100,18 @@ export function tileTitle(r: DrawerRow): string {
   return parts.filter(Boolean).join(' · ');
 }
 
+/** 기본 앱을 뒤에서 받는 중인 칸이 있나 — 서랍이 그동안 목록을 다시 읽는다 */
+export const prefetchingAny = (rows: DrawerRow[]): boolean => rows.some((r) => r.prefetching);
+
 /** 받을 수 없는 칸이면 그 까닭(깔린 앱은 그대로 쓰니 null) */
 export const tileUnavailable = (r: DrawerRow): string | null => (!r.installed && r.unavailable) || null;
 
 /** 아이콘 — 받은 그림, 못 구했으면 참모 포토는 Chammo 아이콘(우리 앱이라), 나머지는 빈 칸(첫 글자 판) */
 export const tileIcon = (r: DrawerRow) => r.icon || (r.app === 'photocraft' ? '/assets/icon-192.png' : '');
+
+/** 참모 브라우저 아이콘(10-28 시안 A) — 사본 번들 아이콘(tools/chammo-browser/assets/browser-icon.svg)과 같은 그림, 작은 판은 32px 이하용 */
+export const BROWSER_ICON = '/assets/chammo-browser.svg';
+export const BROWSER_ICON_SMALL = '/assets/chammo-browser-small.svg';
 
 /** 아이콘을 못 구했을 때 — 이름 첫 글자(참모 앱은 '참모' 뒤 — 13개가 다 '참'이면 칸이 안 갈린다) */
 export const tileLetter = (r: DrawerRow) => (r.name.trim().replace(/^참모\s+/, '')[0] ?? '?').toUpperCase();

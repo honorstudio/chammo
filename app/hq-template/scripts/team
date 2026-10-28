@@ -32,7 +32,8 @@ __doc__ = """Team messenger — talk with people on your team and their assistan
   scripts/team teamchat read <chat> [<n>]               last n lines of a team chat (default 20)
   scripts/team teamchat set <chat> [--name <n>] [--add <a,b>] [--remove <c>]   rename / add / remove people
   scripts/team teamchat leave <chat> --yes              leave a team chat — ask the user first
-                                                        In team chats your assistant only gets lines that call you by name (@<your name>)
+                                                        Team messages never reach your assistant on their own — the person picks one in the app
+                                                        ('To my assistant') and sends it; never answer in a team chat or DM unless asked
   scripts/team deliver-to <assistant>                   which of your assistants gets incoming team messages (default: the main one)
   scripts/team locker ls [--trash] [--team <t>]         team locker files (name [id] · who · size) and usage — encrypted on this device, shared with the team
   scripts/team locker put <file…> [--folder <f>] [--team <t>]  upload files to the team locker (everyone on the team sees them at once)
@@ -247,7 +248,9 @@ def show_status(a):
     acc = a.get('account')
     if acc:
         print(f'account / 계정: {acc.get("name") or ""} <{acc.get("email") or ""}>')
-        if a.get('pending'):
+        if a.get('revoked'):
+            print('this device was disconnected on the relay (another device removed it or declined its sign-in) — sign in again in the app / 이 기기는 중계 서버에서 끊겼어(다른 기기가 끊었거나 로그인 허용을 거절) — 앱에서 다시 로그인해야 해')
+        elif a.get('pending'):
             print('this device is waiting for approval on another device / 이 기기는 다른 기기의 허용을 기다려')
         kinds = {'mac': 'Mac', 'win': 'Windows', 'phone': 'phone / 폰'}
         for d in a.get('devices') or []:
@@ -268,10 +271,12 @@ def show_status(a):
         print('teams / 팀들: ' + ', '.join(f'{t.get("name")} ({t.get("role")})' + (' ← now / 지금' if t.get('current') else '') for t in teams))
     print(f'team / 팀: {a.get("team") or a.get("teamId")} — me / 나: {a.get("me")} ({a.get("role")}) · device / 기기: {a.get("device")}')
     for m in a.get('members') or []:
-        print(f'- {m.get("name")}' + (' (me / 나)' if m.get('me') else '') + (' · owner' if m.get('role') == 'owner' else ''))
+        print(f'- {m.get("label") or m.get("name")}' + (' (me / 나)' if m.get('me') else '') + (' · owner' if m.get('role') == 'owner' else ''))
     rooms = a.get('rooms') or []
     if rooms:
-        print('DM: ' + ', '.join(r.get('with', '?') for r in rooms))
+        print('DM: ' + ', '.join(r.get('with', '?') + (' (left / 나감)' if r.get('left') else '') for r in rooms))
+    if any(m.get('label') and m.get('label') != m.get('name') for m in a.get('members') or []):
+        print('names / 이름: profile name (account name) — say·teamchat·kick take either / 프로필 이름(계정 이름) — 어느 쪽으로 불러도 찾아')
     if a.get('deliverTo'):
         print(f'incoming goes to / 받은 말은: {a["deliverTo"]}')
 
@@ -319,6 +324,8 @@ def main(argv):
         if arg['text'].strip() == '-':
             arg['text'] = sys.stdin.read().strip('\n')
         arg['cid'] = 'tc-' + uuid.uuid4().hex[:12]
+        # 보낸 참모 — 앱이 이 세션 id 로 HQ 참모 별명을 찾아 말에 싣는다(화면에 '내 참모 · 회사 비서')
+        arg['session'] = os.environ.get('CLAUDE_CODE_SESSION_ID', '')
     if arg['verb'] == 'login':
         print('opening the browser — the person signs in with Google there / 브라우저를 열었어 — 그 사람이 구글로 로그인해', file=sys.stderr)
     # 로그인은 사람이 브라우저에서 마칠 때까지(앱이 10분 기다린다)

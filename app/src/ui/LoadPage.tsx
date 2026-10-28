@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { loadKill } from '../data/tauri';
 import { fmtDur, fmtMem, level, parseEtime, procLabel, type LoadReport, type Proc, type SysLoad } from '../domain/load';
 import { tr } from '../i18n';
+import { seenName } from '../domain/session';
 
 type Props = {
   sys: SysLoad | null;
@@ -62,7 +63,7 @@ export function LoadPage({ sys, report, onOpen, onKilled }: Props) {
             <div className="ld-row ld-th"><span>{tr('세션', 'Session')}</span><span>CPU</span><span>{tr('메모리', 'Memory')}</span><span>{tr('무엇이 먹나', 'What is using it')}</span></div>
             {report.sessions.map((s) => (
               <button type="button" key={s.id} className="ld-row" onClick={() => onOpen(s.id)} title={tr('그 세션으로 가기', 'Go to that session')}>
-                <span className="ld-name">{s.name}{s.project && s.project !== s.name && <span className="ld-dim"> · {s.project}</span>}</span>
+                <span className="ld-name">{seenName(s.name)}{s.project && s.project !== s.name && <span className="ld-dim"> · {s.project}</span>}</span>
                 <span className="ld-num">{pct(s.cpu)}</span>
                 <span className="ld-num">{fmtMem(s.rssKb)}</span>
                 <Top list={s.top} />

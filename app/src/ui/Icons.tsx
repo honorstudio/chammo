@@ -325,6 +325,10 @@ export const IconCalendarClock = () => (
 export const IconBack = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M13 8H3.5M7.3 4.2 3.5 8l3.8 3.8" /></svg>
 );
+/** 앞으로: 뒤로(IconBack)의 거울 — 세션 브라우저 칸 머리줄 */
+export const IconForward = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M3 8h9.5M8.7 4.2 12.5 8l-3.8 3.8" /></svg>
+);
 /** 알림 꺼짐: 종에 사선 */
 export const IconBellOff = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M4 11.5V7.2a4 4 0 0 1 6.2-3.3M12 7v4.5l1.2 1.3H2.8M6.5 14a1.6 1.6 0 0 0 3 0M2.5 2.5l11 11" /></svg>
@@ -425,3 +429,11 @@ export const REACT_MARKS: { key: string; ko: string; en: string; icon: () => Rea
   { key: 'eyes', ko: '봤어요', en: 'Seen', icon: () => <svg viewBox="0 0 16 16" {...PR}><path d="M1.8 8S4.2 3.8 8 3.8 14.2 8 14.2 8 11.8 12.2 8 12.2 1.8 8 1.8 8Z" /><circle cx="8" cy="8" r="1.9" /></svg> },
   { key: 'heart', ko: '하트', en: 'Heart', icon: () => <svg viewBox="0 0 16 16" {...PR}><path d="M8 13.3S2.3 10 2.3 6.2A2.9 2.9 0 0 1 8 5a2.9 2.9 0 0 1 5.7 1.2C13.7 10 8 13.3 8 13.3Z" /></svg> },
 ];
+/** 끌어 옮기는 손잡이: 점 두 줄 세 칸 */
+export const IconGrip = () => (
+  <svg viewBox="0 0 16 16" fill="currentColor" stroke="none"><circle cx="6" cy="4" r="1.2" /><circle cx="10" cy="4" r="1.2" /><circle cx="6" cy="8" r="1.2" /><circle cx="10" cy="8" r="1.2" /><circle cx="6" cy="12" r="1.2" /><circle cx="10" cy="12" r="1.2" /></svg>
+);
+/** 되돌리기: 왼쪽으로 돌아가는 화살표 */
+export const IconUndo = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M5.5 3.5L2.5 6.5l3 3" /><path d="M2.5 6.5h7a3.5 3.5 0 0 1 0 7H7" /></svg>
+);

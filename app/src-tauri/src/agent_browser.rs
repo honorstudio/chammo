@@ -75,6 +75,9 @@ pub struct Live {
     /// 세션이 안 기다리는 부름(시간 초과)을 사람이 끝냄 {at, say} — 앱이 그 세션 입력칸에 [앱] 줄로 깨운다(apply_wake, 앱만 채운다)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wake: Option<serde_json::Value>,
+    /// 래퍼가 '이번만 구글 크롬으로 열기'를 받는다(맥 ad-hoc 사본 + 구글 서명 원본을 안다, win_desk::ask_signed) — 옛 래퍼·스크립트 크롬은 없음
+    #[serde(default)]
+    pub signable: bool,
 }
 
 /// 같이 쓰는 산 스크립트 수 — 명부 <locks>/<프로필>.users/<pid>(src/users.js). 세션 브라우저 도구가 같이 쓰는 칸(by=session, src/share.js)·
@@ -95,7 +98,12 @@ pub fn parse_live(text: &str) -> Option<Live> {
     let l: Live = serde_json::from_str(text).ok()?;
     let ws_ok = l.ws_path.strip_prefix("/devtools/browser/").is_some_and(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
     let profile_ok = !l.profile.is_empty() && !l.profile.starts_with('.') && !l.profile.contains(['/', '\\', '\0']);
-    (l.port > 0 && ws_ok && profile_ok && l.pid > 0).then_some(l)
+    let mut l = (l.port > 0 && ws_ok && profile_ok && l.pid > 0).then_some(l)?;
+    // 표(at) 없는 부름은 없는 것 — 옛 래퍼가 겹친 부름 끝에 {waiting:false} 만 남겨 '사람 차례 — undefined' 띠가 서고 '다 했어'가 안 먹었다(2026-10-28)
+    if l.ask.as_ref().is_some_and(|a| a.get("at").and_then(|v| v.as_u64()).is_none()) {
+        l.ask = None;
+    }
+    Some(l)
 }
 
 pub fn live_dir() -> PathBuf {
@@ -167,6 +175,11 @@ pub fn live_kind(l: &Live, alive: impl Fn(i32) -> bool, open: impl Fn(u16) -> bo
     } else {
         LiveKind::Show
     }
+}
+
+/// 그 프로필 크롬이 떠 있나(목록에 보일 것) — 참모 브라우저가 새로 띄울지 볼 때
+pub fn live_up(profile: &str) -> bool {
+    read_live(profile).is_some_and(|l| live_kind(&l, crate::platform::pid_alive, port_open) == LiveKind::Show)
 }
 
 /// 지금 떠 있는 세션 브라우저들 — 래퍼가 죽었으면(비정상 종료) 그 파일을 치우고, 크롬만 꺼졌으면 빼고 보여 준다
@@ -282,6 +295,14 @@ pub fn agent_handback(profile: String, pid: i32) -> Result<(), String> {
         return Err("bad profile".into());
     }
     crate::takeover::hand_back(&live_dir(), &profile, pid)?;
+    // 윈도우 — 돌려주면 보이는 창도 숨은 데스크톱으로(사람 손이 끝났다)
+    if cfg!(target_os = "windows") && crate::win_desk::shown(&live_dir(), &profile, pid) {
+        crate::win_desk::ask(&live_dir(), &profile, pid, false, None)?;
+    }
+    // 맥 — 패스키로 구글 크롬에 바꿔 뒀으면 참모 브라우저(ad-hoc 사본)로. 쿠키는 프로필에 남아 로그인이 그대로다
+    if crate::win_desk::signed_on(&live_dir(), &profile, pid) {
+        crate::win_desk::ask_signed(&live_dir(), &profile, pid, false, None)?;
+    }
     #[cfg(not(test))]
     crate::claude::log_out("browser", &format!("사람 개입 돌려줌 ({profile})"));
     Ok(())
@@ -349,6 +370,9 @@ pub fn pack_frame(seq: u64, jpeg: &[u8]) -> Vec<u8> {
 
 /// 권한 감시 스크립트(agent_perm.js)가 부르는 바인딩 — 일꾼이 붙은 탭에만 넣는다
 const PERM_BINDING: &str = "__chammoPerm";
+/// 참모 커서(2026-10-27 인앱 브라우저 A, spike A4) — 페이지의 진짜 누름(isTrusted pointerdown) 좌표를 앱에. 사람 입력 직후가 아니면 참모 것
+const PTR_BINDING: &str = "__chammoPtr";
+const PTR_JS: &str = "addEventListener('pointerdown',e=>{if(e.isTrusted&&window.__chammoPtr)__chammoPtr(JSON.stringify({x:e.clientX,y:e.clientY}))},true)";
 const PERM_JS: &str = include_str!("agent_perm.js");
 /// 모달에 띄울 권한 — 감시 스크립트가 이만큼 기다린 뒤 크롬에 넘긴다(그 뒤 버튼은 소용없다)
 const PERM_TTL: Duration = Duration::from_secs(60);
@@ -400,6 +424,19 @@ struct View {
     attached: bool,
     /// 일꾼이 끝났다(크롬 닫힘·연결 끊김) — 다음 물음에 새로 띄운다
     done: bool,
+    /// 스페이스 칸(SCK 비추기)이 원하는 페이지 크기와 마지막으로 물은 때 — 일꾼이 지금 탭 창을 재고 맞춘다(browser_pane)
+    pane: Option<crate::browser_pane::Want>,
+    pane_seen: Option<Instant>,
+    /// 지금 탭 창 모양(자리·툴바·페이지 크기) — 칸이 그 창을 받는다
+    geom: Option<crate::browser_pane::Geom>,
+    /// 헤드리스 크롬(가짜 화면 없는 맥, 6단계) — 칸은 창을 못 비추니 screencast 그림을 칸에 그린다
+    headless: bool,
+    /// 스페이스 칸이 screencast 그림을 받는다(pane_cast) — 헤드리스이거나, 비출 수 없는 창(가린·accessory 아닌 크롬)
+    cast: bool,
+    /// 칸 SCK 가 한 장도 못 받은 크롬 pid(pane_blind) — 크롬이 다시 뜨면(pid 바뀜) 다시 비춰 본다
+    blind_pid: Option<i32>,
+    /// 그림 칸이 새로 붙었다(pane_reattached) — 일꾼이 지금 탭을 한 장 새로 찍는다
+    resnap: bool,
     /// 마지막 실패 이유 — 다시 붙는 동안에도 남기고, 붙으면 지운다(모달이 이유를 보여 준다)
     error: String,
     /// 실패로 끝난 때 — RETRY 동안은 다시 안 붙는다
@@ -444,8 +481,9 @@ pub fn keep_running(idle: Duration, has_dialog: bool, holding: bool) -> bool {
 fn touch(profile: &str) -> Arc<Mutex<View>> {
     with_workers(|ws| {
         let mut last_error = String::new();
+        let mut blind_pid = None;
         if let Some(w) = ws.get(profile) {
-            let (done, failed_at, error) = w.view.lock().map(|v| (v.done, v.failed_at, v.error.clone())).unwrap_or((true, None, String::new()));
+            let (done, failed_at, error, blind) = w.view.lock().map(|v| (v.done, v.failed_at, v.error.clone(), v.blind_pid)).unwrap_or((true, None, String::new(), None));
             if reuse_worker(done, failed_at, Instant::now()) {
                 if !done {
                     *w.seen.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
@@ -453,9 +491,11 @@ fn touch(profile: &str) -> Arc<Mutex<View>> {
                 return w.view.clone();
             }
             last_error = error;
+            blind_pid = blind;
         }
         // 다시 붙는 동안에도 지난 이유를 남긴다 — 붙으면 run 이 지운다(안 남기면 2초마다 이유와 '화면 받는 중'이 번갈아 보인다)
-        let view = View { error: last_error, ..View::default() };
+        // SCK 가 못 받은 크롬도 기억한다 — 일꾼이 다시 뜰 때마다 2초씩 까만 칸이 안 되게
+        let view = View { error: last_error, blind_pid, ..View::default() };
         let w = Worker { view: Arc::new(Mutex::new(view)), seen: Arc::new(Mutex::new(Instant::now())), stop: Arc::new(AtomicBool::new(false)) };
         let (view, seen, stop, p) = (w.view.clone(), w.seen.clone(), w.stop.clone(), profile.to_string());
         std::thread::spawn(move || {
@@ -475,6 +515,122 @@ fn touch(profile: &str) -> Arc<Mutex<View>> {
     })
 }
 
+/// 그림을 묻는 칸(모달·세션 칸·폰)이 마지막으로 물은 때 — 스페이스 칸(SCK)은 탭만 묻고 그림은 안 물어서 그동안 screencast 를 안 켠다
+static CAST: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
+
+fn cast_idle(profile: &str) -> Duration {
+    CAST.lock().ok().and_then(|g| g.as_ref().and_then(|m| m.get(profile).map(|t| t.elapsed()))).unwrap_or(Duration::MAX)
+}
+
+/// 칸이 SCK 대신 screencast 그림을 받을지 — 헤드리스(비출 창 없음)이거나, 지킴이가 가려 둘 크롬(accessory 아님·창이 가짜 화면 밖)이면.
+/// 가린 창은 SCK 가 한 장도 못 받아 까만 칸이었다(10-28 naver-demo — 사본이 구글 서명 그대로라 accessory dylib 가 안 들었다)
+pub fn pane_cast(headless: bool, mirrorable: bool) -> bool {
+    headless || !mirrorable
+}
+
+/// 비출 수 있나 — 지킴이가 가리지 않고 두는 크롬이고, 그 크롬(pid)을 SCK 가 '한 장도 못 받음'으로 알리지 않았으면
+pub fn mirrorable(keep_shown: bool, blind_pid: Option<i32>, pid: i32) -> bool {
+    keep_shown && blind_pid != Some(pid)
+}
+
+/// 그림 칸 손잡이가 새로 붙었다(browser_pane::reattached) — 마지막 그림(지금 탭 것일 때만)을 돌려주고 일꾼에게 새로 한 장 찍게 한다
+pub fn pane_reattached(profile: &str) -> Option<(Vec<u8>, crate::agent_input::Meta)> {
+    let w = with_workers(|ws| ws.get(profile).map(|w| w.view.clone()))?;
+    let mut v = w.lock().ok()?;
+    v.resnap = true;
+    (v.framed && !v.jpeg.is_empty()).then(|| (v.jpeg.clone(), v.meta))
+}
+
+/// 칸 SCK 가 그 크롬을 2초째 한 장도 못 받았다(browser_mirror_blind) — 그 크롬이 떠 있는 동안 칸은 그림 길로
+pub fn pane_blind(profile: &str, pid: i32) {
+    if let Some(w) = with_workers(|ws| ws.get(profile).map(|w| w.view.clone())) {
+        if let Ok(mut v) = w.lock() {
+            v.blind_pid = Some(pid);
+        }
+    }
+}
+
+/// 스페이스 칸이 원하는 페이지 크기를 알리고 (크롬 pid, 지금 탭 창 모양, screencast 로 받나)를 받는다 — 브라우저가 없으면 None. 일꾼을 깨운다(탭·대화상자)
+pub fn pane_geom(profile: &str, w: f64, h: f64, visible: bool) -> Option<(i32, Option<crate::browser_pane::Geom>, bool)> {
+    let live = read_live(profile)?;
+    // 윈도우는 칸이 크롬 pid 를 안 쓰고(숨은 데스크톱이라 늘 그림 길, win_desk) 래퍼 pid 를 손잡이 열쇠로. 맥은 lsof·SingletonLock 으로 크롬 pid
+    let win = cfg!(target_os = "windows");
+    let pid = if win { live.pid } else { chrome_pid(live.port)? };
+    // 창 목록(CG)은 일꾼 자물쇠 밖에서
+    let keep = !win && keep_shown(pid);
+    let view = touch(profile);
+    let mut v = view.lock().unwrap_or_else(|e| e.into_inner());
+    v.cast = pane_cast(crate::win_desk::frames_pane(v.headless), mirrorable(keep, v.blind_pid, pid));
+    mark_pane(&mut v, w, h, visible, Instant::now());
+    Some((pid, v.geom, v.cast))
+}
+
+/// 칸이 보는 중이라고 적는다 — 보일 때만(덮였거나 앱 창이 숨었으면 안 적어서 3초 뒤 그림 받기·크기 맞추기가 멈춘다, 10-28 자원 실측).
+/// 안 보이는 칸이 0.5초마다 자리를 알려도 screencast 가 계속 돌았다
+fn mark_pane(v: &mut View, w: f64, h: f64, visible: bool, now: Instant) {
+    if !visible {
+        return;
+    }
+    if v.pane.is_none_or(|p| (p.w - w).abs() > 0.5 || (p.h - h).abs() > 0.5) {
+        v.pane = Some(crate::browser_pane::Want { w, h, at: now });
+    }
+    v.pane_seen = Some(now);
+}
+
+/// 스페이스 칸에서 사람이 넣은 입력 — 개입이 아니면 누름·휠·키에 저절로 개입부터(browser_pane::pane_step), 그다음 모달과 같은 길(agent_input).
+/// 입력 대상은 칸이 보는 지금 탭(일꾼이 아는 탭·주소) — 아직 모르면 버린다
+pub fn pane_input(profile: &str, events: Vec<crate::agent_input::InputEv>) -> Result<(), String> {
+    let live = read_live(profile).ok_or("no live browser")?;
+    let allowed = crate::takeover::allows(&live_dir(), profile, live.pid, live.ask.is_some());
+    match crate::browser_pane::pane_step(allowed, &events) {
+        crate::browser_pane::Step::Drop => return Ok(()),
+        crate::browser_pane::Step::Start => {
+            // 칸이 켠 개입 — 손을 20초 안 대면 앱이 세션에 돌려준다(takeover::PANE_IDLE_MS, 2026-10-28)
+            crate::takeover::start_pane(&live_dir(), profile, live.pid)?;
+            #[cfg(not(test))]
+            crate::claude::log_out("browser", &format!("사람 개입 저절로 시작 — 칸에서 입력 ({profile})"));
+        }
+        crate::browser_pane::Step::Go => {}
+    }
+    if crate::browser_pane::hands_on(&events) {
+        crate::takeover::acted(profile);
+    }
+    let expect = with_workers(|ws| {
+        let w = ws.get(profile)?;
+        let v = w.view.lock().ok()?;
+        let t = v.current.clone()?;
+        let url = v.pages.iter().find(|p| p.id == t)?.url.clone();
+        Some(Expect { target: t, url })
+    });
+    agent_input(profile.to_string(), live.pid, expect, events);
+    Ok(())
+}
+
+/// 사람이 브라우저 끄기(시안 A — 칸 더보기 맨 안쪽 하나). 크롬만 닫는다 — 세션은 그대로, 다음 브라우저 도구가 새로 띄운다(래퍼가 닫힘을 안다)
+#[tauri::command(async)]
+pub fn agent_close_browser(profile: String) -> Result<(), String> {
+    let live = read_live(&profile).ok_or("no live browser")?;
+    let mut cdp = Cdp { ws: connect(&live)?, next: 0 };
+    cdp.send("Browser.close", serde_json::json!({}), None)?;
+    #[cfg(not(test))]
+    crate::claude::log_out("browser", &format!("사람이 세션 브라우저를 껐어 ({profile})"));
+    Ok(())
+}
+
+/// 이번만 구글 크롬으로 열기(on)·참모 브라우저로 돌아가기(맥 패스키 탈출구, 2026-10-28 사용자) — ad-hoc 사본(Dock 숨김·SCK 칸)엔 맥 플랫폼 패스키가 없다.
+/// 래퍼가 같은 프로필을 구글 서명 원본(그동안 Dock 에 보이고 칸은 그림 길)이나 ad-hoc 사본으로 지금 주소만 다시 연다. 개입은 웹이 먼저 잡는다
+#[tauri::command(async)]
+pub fn agent_signed(profile: String, on: bool) -> Result<(), String> {
+    let live = read_live(&profile).ok_or("no live browser")?;
+    if !live.signable {
+        return Err("this browser can't switch".into());
+    }
+    crate::win_desk::ask_signed(&live_dir(), &profile, live.pid, on, None)?;
+    #[cfg(not(test))]
+    crate::claude::log_out("browser", &format!("{} ({profile})", if on { "구글 크롬으로 다시 띄움 — 패스키" } else { "참모 브라우저로 되돌림" }));
+    Ok(())
+}
+
 /// 화면 한 장 — since 보다 새 프레임이 있으면 [순번][jpeg], 없으면 빈 것. 묻는 동안만 받는다
 #[tauri::command]
 pub fn agent_frame(profile: String, since: u64) -> tauri::ipc::Response {
@@ -483,6 +639,9 @@ pub fn agent_frame(profile: String, since: u64) -> tauri::ipc::Response {
 
 /// agent_frame 의 몸통 — 폰 서버(mobile.rs)도 같은 일꾼에서 받는다
 pub fn frame_bytes(profile: &str, since: u64) -> Vec<u8> {
+    if let Ok(mut g) = CAST.lock() {
+        g.get_or_insert_with(HashMap::new).insert(profile.to_string(), Instant::now());
+    }
     let view = touch(profile);
     let v = view.lock().unwrap_or_else(|e| e.into_inner());
     if frame_due(v.seq, since, v.jpeg.is_empty()) { pack_frame(v.seq, &v.jpeg) } else { vec![] }
@@ -588,6 +747,18 @@ pub struct Tabs {
     wrapper_dialog: Option<serde_json::Value>,
     /// 지금 탭 그림이 왔나 — 칸이 앞 탭 그림을 지금 것으로 안 치게(domain showsPicture)
     framed: bool,
+    /// 앱이 세션 크롬을 가려 뒀다 — 그림이 안 오면 십중팔구 이 때문: 정품 크롬(155)은 가리면 가짜 화면 위에서도, 가짜 화면이 없으면
+    /// (옛 macOS 에서 도우미가 못 돎) 크롬이든 최소화·가림 채 그림을 멈춘다(2026-10-26 PM 맥북, 아이맥 실측). 모달이 그 까닭을 보인다
+    hidden: bool,
+    /// 헤드리스로 도는 중 — 칸 더보기에 회색 한 줄, '크롬에서 보기' 없음(시안 A '헤드리스는 더보기에만')
+    headless: bool,
+    /// 윈도우 숨은 데스크톱에서 도는 중 — 칸 더보기에 회색 한 줄, '크롬에서 보기' = 보이는 창으로 다시 띄우기(win_desk)
+    desk: bool,
+    /// 맥 — 패스키로 구글 크롬에 바꿔 둠(칸 더보기 '참모 브라우저로 돌아가기'), signable = 바꿀 수 있는 래퍼(더보기 '이번만 구글 크롬으로 열기')
+    signed: bool,
+    signable: bool,
+    /// 래퍼가 패스키를 보고 스스로 바꿨다(칸 '패스키 때문에 크롬 창에서 열었어' — 끝나면 저절로 돌아온다)
+    signed_auto: bool,
 }
 
 /// 탭 띠 — CDP 로 본 탭들과 지금 보여 주는 탭
@@ -596,7 +767,17 @@ pub struct Tabs {
 pub fn agent_tabs(profile: String) -> Tabs {
     // 크롬 pid 찾기는 화면 자물쇠(view) 잡기 전에 — 쥔 채 찾으면 그동안 그림(agent_frame, 메인 스레드)이 같은 자물쇠에서 멈춘다
     let live = read_live(&profile);
-    let shown = live.as_ref().and_then(|l| chrome_pid(l.port)).is_some_and(|p| still_shown(self::shown().contains(&p), app_window::hidden(p)));
+    let pid = live.as_ref().and_then(|l| chrome_pid(l.port));
+    // 윈도우 = 래퍼가 보이는 데스크톱에 다시 띄워 뒀나(win_desk), 맥 = 꺼낸 크롬 표
+    let shown = if cfg!(target_os = "windows") {
+        live.as_ref().is_some_and(|l| crate::win_desk::shown(&live_dir(), &profile, l.pid))
+    } else {
+        pid.is_some_and(|p| still_shown(self::shown().contains(&p), app_window::hidden(p)))
+    };
+    let hidden = !shown && pid.is_some_and(|p| app_window::hidden(p) == Some(true));
+    let signable = live.as_ref().is_some_and(|l| l.signable);
+    let signed = live.as_ref().is_some_and(|l| crate::win_desk::signed_on(&live_dir(), &profile, l.pid));
+    let signed_auto = signed && live.as_ref().is_some_and(|l| crate::win_desk::signed_auto(&live_dir(), &profile, l.pid));
     let view = touch(&profile);
     let v = view.lock().unwrap_or_else(|e| e.into_inner());
     let wrapper_dialog = live.as_ref().and_then(|l| crate::takeover::dialog_done(&live_dir(), &profile, l.pid));
@@ -606,7 +787,7 @@ pub fn agent_tabs(profile: String) -> Tabs {
     let dialog = v.current.as_ref().and_then(|c| v.dialogs.get(c)).cloned();
     let dialog_tabs = v.pages.iter().filter(|p| v.dialogs.contains_key(&p.id)).map(|p| p.id.clone()).collect();
     let stuck = v.current.is_some() && v.stuck == v.current && dialog.is_none();
-    Tabs { pages: v.pages.clone(), current: v.current.clone(), pinned: v.pinned.is_some(), error: v.error.clone(), attached: v.attached, dialog, dialog_tabs, stuck, shown, chooser, reopened, dropped: v.dropped, popup: popup_now(&profile), popup_kind: popup_kind_now(&profile).to_string(), permission: perm_of(&v), fedcm: fedcm_of(&v), wrapper_dialog, framed: v.framed }
+    Tabs { pages: v.pages.clone(), current: v.current.clone(), pinned: v.pinned.is_some(), error: v.error.clone(), attached: v.attached, dialog, dialog_tabs, stuck, shown, chooser, reopened, dropped: v.dropped, popup: popup_now(&profile), popup_kind: popup_kind_now(&profile).to_string(), permission: perm_of(&v), fedcm: fedcm_of(&v), wrapper_dialog, framed: v.framed, hidden, headless: v.headless, desk: crate::win_desk::on_hidden_desk(v.headless, shown), signed, signable, signed_auto }
 }
 
 /// 멈춘 탭(앱이 붙기 전에 뜬 대화상자) 답을 래퍼에 부탁 — 그 래퍼가 세션 도구를 붙잡는 래퍼(gate)일 때만. 사람 조작으로 센다
@@ -639,6 +820,39 @@ pub fn agent_retry(profile: String) {
 /// 다시 시도가 도는 일꾼을 끊을까 — 대화상자를 쥐고 있지 않을 때만
 pub fn retry_restarts(done: bool, has_dialog: bool) -> bool {
     !done && !has_dialog
+}
+
+/// 탭을 닫으면 빈 탭을 먼저 열어야 하나 — 그 탭이 마지막 페이지 탭이면(칸이 '탭 0개'가 되고 맥 크롬은 창이 다 닫혀도 포트만 산다)
+pub fn close_needs_blank(pages: &[Page], target: &str) -> bool {
+    pages.iter().all(|p| p.id == target)
+}
+
+/// 칸 탭 칩의 X(2026-10-28 사용자 — 브라우저의 X 는 탭 닫기) — 그 탭을 닫는다(Target.closeTarget). 마지막 탭이면 빈 탭을 하나 남긴다.
+/// 사람 조작이라 개입(human_ok)일 때만 — 칸은 누르기 전에 개입부터 켠다(세션 도구는 래퍼가 붙잡는다). 이미 닫힌 탭이면 그냥 끝
+#[tauri::command(async)]
+pub fn agent_close_tab(profile: String, pid: i32, target: String) -> Result<(), String> {
+    if !human_ok(&profile, pid) {
+        return Err("not in takeover".into());
+    }
+    crate::takeover::touched(&profile);
+    let live = read_live(&profile).ok_or("no live browser")?;
+    let mut cdp = Cdp { ws: connect(&live)?, next: 0 };
+    let got = cdp.call("Target.getTargets", serde_json::json!({}), None, |_| {})?;
+    let pages: Vec<Page> = got["targetInfos"].as_array().cloned().unwrap_or_default().iter().filter_map(page_of).collect();
+    if pages.iter().any(|p| p.id == target) {
+        if close_needs_blank(&pages, &target) {
+            cdp.call("Target.createTarget", serde_json::json!({ "url": "about:blank" }), None, |_| {})?;
+        }
+        cdp.call("Target.closeTarget", serde_json::json!({ "targetId": target }), None, |_| {})?;
+    }
+    let _ = cdp.ws.close(None);
+    // 골라 둔 탭이었으면 다시 따라가기로
+    let view = touch(&profile);
+    let mut v = view.lock().unwrap_or_else(|e| e.into_inner());
+    if v.pinned.as_deref() == Some(target.as_str()) {
+        v.pinned = None;
+    }
+    Ok(())
 }
 
 /// 띠에서 탭을 골라 보기(에이전트 조작엔 안 끼어든다). None = 다시 알아서 따라가기
@@ -918,6 +1132,14 @@ pub fn agent_ask_done(profile: String, pid: i32, at: Option<u64>, say: Option<St
     if let Some(body) = say_body(&mark, say.as_deref()) {
         crate::takeover::write_secure(&live_dir().join(format!("{profile}.say")), body.as_bytes())?;
     }
+    // 윈도우에서 보이는 창으로 꺼내 뒀으면 — 래퍼가 숨은 데스크톱으로 되돌린 뒤 '다 했어' 표를 남긴다(세션이 숨은 크롬에서 이어 가게, win_desk)
+    if cfg!(target_os = "windows") && crate::win_desk::shown(&live_dir(), &profile, pid) {
+        return crate::win_desk::ask(&live_dir(), &profile, pid, false, Some(&mark));
+    }
+    // 맥 구글 크롬(패스키 탈출구)도 같은 순서 — ad-hoc 사본으로 되돌린 뒤 '다 했어' 표
+    if crate::win_desk::signed_on(&live_dir(), &profile, pid) {
+        return crate::win_desk::ask_signed(&live_dir(), &profile, pid, false, Some(&mark));
+    }
     let f = live_dir().join(format!("{profile}.done"));
     std::fs::write(&f, mark.as_bytes()).map_err(|e| e.to_string())?;
     #[cfg(unix)]
@@ -987,14 +1209,73 @@ impl Cdp {
     }
 }
 
+/// 사이트가 띄운 창(openerId 있는 page)들 — 처음 붙을 때 목록에서. 칸을 열기 전에 이미 떠 있던 로그인 팝업도 열려 있는 동안 보여 준다(10-29 inapp_newwin_e2e).
+/// 처음 붙을 땐 여는 쪽과 말을 주고받는 창(canAccessOpener — 로그인·결제 팝업)만: target=_blank 탭(noopener 기본, 10-29 실측 false)은 세션이 예전에 연 채 남은 것일 수 있다
+fn opened_by_site(infos: &[serde_json::Value]) -> Vec<String> {
+    infos
+        .iter()
+        .filter(|t| t["type"] == "page" && t["openerId"].as_str().is_some_and(|o| !o.is_empty()) && t["canAccessOpener"] == true)
+        .filter_map(|t| t["targetId"].as_str().map(str::to_string))
+        .collect()
+}
+
 fn page_of(info: &serde_json::Value) -> Option<Page> {
     (info["type"] == "page").then(|| Page { id: info["targetId"].as_str().unwrap_or_default().into(), url: info["url"].as_str().unwrap_or_default().into(), title: info["title"].as_str().unwrap_or_default().into() })
+}
+
+/// 스페이스 칸 한 바퀴 — 지금 탭 창 자리·툴바·페이지 크기를 재고(대화상자에 막힌 페이지는 0.3초만 기다림), 맞출 때면 창 크기를 칸에.
+/// 창은 가짜 화면 안일 때만 옮긴다 — 사람이 꺼내 본 창·옮기는 중인 창은 그대로
+fn pane_tick(cdp: &mut Cdp, view: &Arc<Mutex<View>>, st: &mut St, target: &str, session: &str, want: crate::browser_pane::Want, live: &Live) {
+    let mut buf = vec![];
+    let win = cdp.call_for("Browser.getWindowForTarget", serde_json::json!({ "targetId": target }), None, Duration::from_secs(1), |m| buf.push(m.clone()));
+    let js = serde_json::json!({ "expression": "[innerWidth, innerHeight, outerWidth, outerHeight]", "returnByValue": true });
+    let ev = cdp.call_for("Runtime.evaluate", js, Some(session), Duration::from_millis(300), |m| buf.push(m.clone()));
+    for m in buf {
+        on_event(&m, view, st);
+    }
+    let (Ok(w), Ok(e)) = (win, ev) else { return };
+    let b = &w["bounds"];
+    let n: Vec<f64> = e["result"]["value"].as_array().map(|a| a.iter().filter_map(|x| x.as_f64()).collect()).unwrap_or_default();
+    let num = |k: &str| b[k].as_f64().unwrap_or(0.0);
+    if n.len() != 4 || num("width") <= 0.0 {
+        return;
+    }
+    let g = crate::browser_pane::Geom { id: w["windowId"].as_i64().unwrap_or(0), win: [num("left"), num("top"), num("width"), num("height")], top: num("height") - n[1], inner: [n[0], n[1]] };
+    if let Ok(mut v) = view.lock() {
+        v.geom = Some(g);
+        // 화면을 안 받는 칸(SCK)이라 입력 좌표 환산·참모 커서에 쓸 페이지 크기를 여기서
+        if !st.casting {
+            v.meta = crate::agent_input::Meta { w: n[0], h: n[1] };
+        }
+    }
+    let shown = chrome_pid(live.port).is_some_and(|p| shown().contains(&p));
+    if b["windowState"] != "normal" || st.resized_for == Some((want.w, want.h)) || !crate::browser_pane::resize_due(want, &g, live.busy, shown, Instant::now()) {
+        return;
+    }
+    let r = crate::vdisplay::Rect { x: g.win[0], y: g.win[1], w: g.win[2], h: g.win[3] };
+    // 헤드리스는 화면이 없다 — 제자리에서 크기만(넉넉한 한도). 창 있는 크롬은 가짜 화면 안일 때만
+    // 윈도우 숨은 데스크톱도 가짜 화면이 없다 — 제자리에서 크기만
+    let vd = if crate::win_desk::frames_pane(st.headless) { crate::vdisplay::Rect { w: 3840.0, h: 2400.0, ..r } } else {
+        let Some((_, vd)) = crate::vdisplay::bounds() else { return };
+        if !crate::vdisplay::inside(r, vd) {
+            return;
+        }
+        vd
+    };
+    let f = crate::browser_pane::fit_bounds(want, &g, vd);
+    st.resized_for = Some((want.w, want.h));
+    let bounds = serde_json::json!({ "left": f[0], "top": f[1], "width": f[2], "height": f[3] });
+    let _ = cdp.call("Browser.setWindowBounds", serde_json::json!({ "windowId": g.id, "bounds": bounds }), None, |m| {
+        let _ = m;
+    });
 }
 
 /// 일꾼이 붙어 있는 동안의 상태
 #[derive(Default)]
 struct St {
     profile: String,
+    /// 지금 걸어 둔 사건 기다림(read_wait)
+    read_wait: Duration,
     pages: Vec<Page>,
     last_changed: Option<String>,
     /// 지금 보여 주는 탭과 그 세션
@@ -1015,6 +1296,11 @@ struct St {
     /// 답을 기다리는 한 장 찍기(요청 번호, 그때 탭)와 마지막으로 보낸 때 — 늦게 온 답도 그 탭이 그대로면 쓴다(resnap_due)
     snaps: Vec<(u64, String, Instant)>,
     snap_at: Option<Instant>,
+    /// 마지막으로 창 크기를 맞춘 칸 크기 — 크롬이 거절해도(최소 크기) 0.5초마다 다시 안 보내게
+    resized_for: Option<(f64, f64)>,
+    headless: bool,
+    /// 지금 화면 받기가 칸 그림용(온 크기·q80)으로 켜졌나 — 칸 길이 바뀌면 다시 켠다
+    cast_hi: bool,
 }
 
 /// 그림 없이 이만큼 지나면 한 장 다시 찍는다
@@ -1040,7 +1326,11 @@ pub fn resnap_due(framed: bool, last: Option<Instant>, pending: usize, now: Inst
     !framed && pending < SNAPS_MAX && last.is_none_or(|t| now.duration_since(t) >= RESNAP)
 }
 
-fn screencast_params() -> serde_json::Value {
+fn screencast_params(pane: bool) -> serde_json::Value {
+    // 칸 그림(헤드리스·가린 크롬)은 칸에 그대로 그린다 — 2배(--force-device-scale-factor=2·레티나 가짜 화면) 그대로·q80(spike 3절: 60fps·선명, 크롬 CPU 100% 안팎이 대가)
+    if pane {
+        return serde_json::json!({ "format": "jpeg", "quality": 80, "everyNthFrame": 1 });
+    }
     serde_json::json!({ "format": "jpeg", "quality": 60, "maxWidth": 1280, "maxHeight": 800, "everyNthFrame": 1 })
 }
 
@@ -1060,6 +1350,10 @@ fn on_event(m: &serde_json::Value, view: &Arc<Mutex<View>>, st: &mut St) {
             if let Some(jpeg) = m["result"]["data"].as_str().and_then(|d| base64::engine::general_purpose::STANDARD.decode(d).ok()).filter(|j| !j.is_empty()) {
                 if let Ok(mut v) = view.lock() {
                     v.seq += 1;
+                    // 그림 받는 칸(헤드리스·가린 크롬) — 네이티브 칸에 바로(웹으로 60장을 밀면 무겁다)
+                    if v.cast && v.pane_seen.is_some_and(|x| x.elapsed() <= IDLE) {
+                        crate::browser_pane::push_frame(&st.profile, jpeg.clone(), v.meta);
+                    }
                     v.jpeg = jpeg;
                 }
                 st.framed = true;
@@ -1113,7 +1407,8 @@ fn on_event(m: &serde_json::Value, view: &Arc<Mutex<View>>, st: &mut St) {
                         crate::takeover::record(&st.profile, ev);
                     }
                 }
-                if !known && m["method"] == "Target.targetCreated" && !st.profile.is_empty() {
+                // 윈도우 보이는 창으로 바꾸는 동안 래퍼가 닫고 여는 탭은 사람 일이 아니다(win_desk::switching)
+                if !known && m["method"] == "Target.targetCreated" && !st.profile.is_empty() && !crate::win_desk::switching() {
                     crate::takeover::record(&st.profile, crate::takeover_note::tab_opened(&p.url));
                 }
                 st.pages.retain(|x| x.id != p.id);
@@ -1122,7 +1417,7 @@ fn on_event(m: &serde_json::Value, view: &Arc<Mutex<View>>, st: &mut St) {
         }
         "Target.targetDestroyed" => {
             let gone = m["params"]["targetId"].as_str().unwrap_or_default().to_string();
-            if let Some(p) = st.pages.iter().find(|x| x.id == gone) {
+            if let Some(p) = st.pages.iter().find(|x| x.id == gone).filter(|_| !crate::win_desk::switching()) {
                 crate::takeover::record(&st.profile, crate::takeover_note::tab_closed(&p.url));
             }
             st.pages.retain(|x| x.id != gone);
@@ -1135,6 +1430,16 @@ fn on_event(m: &serde_json::Value, view: &Arc<Mutex<View>>, st: &mut St) {
                 v.fedcm.remove(&gone);
                 if v.stuck.as_ref() == Some(&gone) {
                     v.stuck = None;
+                }
+            }
+        }
+        "Runtime.bindingCalled" if m["params"]["name"] == PTR_BINDING => {
+            // 지금 보는 탭의 누름만 — 사람이 칸에서 막 누른 것(앱이 보낸 것)은 빼고
+            if m["sessionId"].as_str() == st.session.as_deref() {
+                let p: serde_json::Value = m["params"]["payload"].as_str().and_then(|t| serde_json::from_str(t).ok()).unwrap_or_default();
+                let (human_at, meta) = view.lock().map(|v| (v.human_at, v.meta)).unwrap_or((None, Default::default()));
+                if let (true, Some((rx, ry))) = (crate::browser_pane::agent_press(human_at, Instant::now()), crate::browser_pane::cursor_ratio(p["x"].as_f64().unwrap_or(f64::NAN), p["y"].as_f64().unwrap_or(f64::NAN), meta)) {
+                    crate::browser_pane::show_cursor(&st.profile, rx, ry);
                 }
             }
         }
@@ -1201,11 +1506,15 @@ fn on_event(m: &serde_json::Value, view: &Arc<Mutex<View>>, st: &mut St) {
                 st.framed = true;
                 if let Ok(mut v) = view.lock() {
                     v.seq += 1;
-                    v.jpeg = jpeg;
+                    // 그림 받는 칸(헤드리스·가린 크롬) — 네이티브 칸에 바로(웹으로 60장을 밀면 무겁다)
                     let md = &m["params"]["metadata"];
                     if let (Some(w), Some(h)) = (md["deviceWidth"].as_f64(), md["deviceHeight"].as_f64()) {
                         v.meta = crate::agent_input::Meta { w, h };
                     }
+                    if v.cast && v.pane_seen.is_some_and(|x| x.elapsed() <= IDLE) {
+                        crate::browser_pane::push_frame(&st.profile, jpeg.clone(), v.meta);
+                    }
+                    v.jpeg = jpeg;
                 }
             }
             if let Some(n) = m["params"]["sessionId"].as_i64() {
@@ -1265,9 +1574,16 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
     let mut live = read_live(profile).ok_or("no live browser")?;
     let mut cdp = Cdp { ws: connect(&live)?, next: 0 };
     let mut st = St { profile: profile.to_string(), ..St::default() };
+    // 헤드리스인가 — 크롬이 제품 이름에 적는다(HeadlessChrome/…). 래퍼가 가짜 화면을 못 받으면 헤드리스로 띄운다(place-at-launch headlessArgs)
+    st.headless = cdp.call("Browser.getVersion", serde_json::json!({}), None, |_| {}).is_ok_and(|v| crate::browser_pane::is_headless(v["product"].as_str().unwrap_or_default(), v["userAgent"].as_str().unwrap_or_default()));
+    if let Ok(mut v) = view.lock() {
+        v.headless = st.headless;
+    }
     cdp.call("Target.setDiscoverTargets", serde_json::json!({ "discover": true }), None, |_| {})?;
     let got = cdp.call("Target.getTargets", serde_json::json!({}), None, |_| {})?;
-    for t in got["targetInfos"].as_array().cloned().unwrap_or_default() {
+    let infos = got["targetInfos"].as_array().cloned().unwrap_or_default();
+    st.popups = opened_by_site(&infos);
+    for t in infos {
         if let Some(p) = page_of(&t) {
             st.pages.push(p);
         }
@@ -1286,7 +1602,10 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
         if stop.load(Ordering::Relaxed) || !keep_running(idle, has_dialog, crate::takeover::holding(profile)) {
             break;
         }
-        let watching = idle <= IDLE;
+        // 헤드리스·가린 크롬은 스페이스 칸도 그림을 받아야 한다(비출 창이 없거나 SCK 가 못 받는다)
+        let pane_cast = view.lock().is_ok_and(|v| v.cast && v.pane_seen.is_some_and(|x| x.elapsed() <= IDLE));
+        let watching = idle <= IDLE && (cast_idle(profile) <= IDLE || pane_cast);
+        let hi = st.headless || pane_cast;
         // 0.5초마다 래퍼 상태를 다시 읽고(지금 탭이 바뀌었나) 보여 줄 탭을 고른다
         if checked.elapsed() >= Duration::from_millis(500) {
             checked = Instant::now();
@@ -1342,6 +1661,9 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
                             // 위치·알림 권한 감시 — 숨긴 크롬 말풍선 대신 모달에서(agent_perm.js). 바인딩은 Runtime 을 켜야 페이지에 보인다(2026-10-09 실측)
                             let _ = cdp.send("Runtime.enable", serde_json::json!({}), Some(&s));
                             let _ = cdp.send("Runtime.addBinding", serde_json::json!({ "name": PERM_BINDING }), Some(&s));
+                            let _ = cdp.send("Runtime.addBinding", serde_json::json!({ "name": PTR_BINDING }), Some(&s));
+                            let _ = cdp.send("Page.addScriptToEvaluateOnNewDocument", serde_json::json!({ "source": PTR_JS }), Some(&s));
+                            let _ = cdp.send("Runtime.evaluate", serde_json::json!({ "expression": PTR_JS }), Some(&s));
                             let _ = cdp.send("Page.addScriptToEvaluateOnNewDocument", serde_json::json!({ "source": PERM_JS }), Some(&s));
                             let _ = cdp.send("Runtime.evaluate", serde_json::json!({ "expression": PERM_JS }), Some(&s));
                             // 구글 등 '…로 계속'(FedCM) 계정 고르기 — 크롬 자체 창이라 그림에 안 찍힌다. 켜 두면 dialogShown 으로 계정 목록이 온다(2026-10-10)
@@ -1352,8 +1674,9 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
                     };
                     st.session = Some(s.clone());
                     if watching {
-                        cdp.send("Page.startScreencast", screencast_params(), Some(&s))?;
+                        cdp.send("Page.startScreencast", screencast_params(hi), Some(&s))?;
                         st.casting = true;
+                        st.cast_hi = hi;
                     }
                     // 이 일꾼이 모르는 대화상자(붙기 전에 뜬 것)에 막혔는지 — 답이 안 오면 멈춘 탭으로 알린다
                     let known = view.lock().is_ok_and(|v| v.dialogs.contains_key(&t));
@@ -1363,18 +1686,37 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
                     snap(&mut cdp, &s, &mut st);
                 }
             }
+            // 스페이스 칸이 보는 중이면 지금 탭 창을 재고, 세션 도구가 안 돌 때 칸 크기로 맞춘다
+            if let (Some(t), Some(s)) = (st.target.clone(), st.session.clone()) {
+                let want = view.lock().ok().and_then(|v| v.pane.filter(|_| v.pane_seen.is_some_and(|x| x.elapsed() <= IDLE)));
+                if let Some(want) = want {
+                    pane_tick(&mut cdp, view, &mut st, &t, &s, want, &live);
+                }
+            }
             // 아무도 안 보는데 대화상자 때문에 붙어 있는 동안은 화면을 안 받는다(CPU·대역폭) — 다시 보면 다시 받는다
             if let Some(s) = st.session.clone() {
+                // 칸 길이 바뀌면(SCK ↔ 그림) 받기 설정이 달라서 다시 켠다
+                if watching && st.casting && st.cast_hi != hi {
+                    let _ = cdp.send("Page.stopScreencast", serde_json::json!({}), Some(&s));
+                    st.casting = false;
+                }
                 if watching != st.casting {
-                    let (m, p) = if watching { ("Page.startScreencast", screencast_params()) } else { ("Page.stopScreencast", serde_json::json!({})) };
+                    let (m, p) = if watching { ("Page.startScreencast", screencast_params(hi)) } else { ("Page.stopScreencast", serde_json::json!({})) };
                     let _ = cdp.send(m, p, Some(&s));
                     st.casting = watching;
+                    st.cast_hi = hi;
                     if watching {
                         // 안 보는 동안 화면이 바뀌었을 수 있다 — 새로 받을 때까지 그림 없음으로 보고 다시 찍는다
                         st.framed = false;
                         st.snaps.clear();
                         snap(&mut cdp, &s, &mut st);
                     }
+                }
+                // 그림 칸이 새로 붙었다 — 화면이 안 바뀌면 screencast 가 프레임을 안 보내니 한 장 새로(답이 오면 칸에 민다)
+                if view.lock().is_ok_and(|mut v| std::mem::take(&mut v.resnap)) && st.casting {
+                    st.framed = false;
+                    st.snaps.clear();
+                    snap(&mut cdp, &s, &mut st);
                 }
                 // 보는 중인데 그림이 아직 한 장도 없다 — 붙을 때 찍은 한 장이 빠졌으면 화면이 안 바뀌는 동안 영영 빈 칸이다
                 prune_snaps(&mut st.snaps, Instant::now());
@@ -1394,6 +1736,11 @@ fn run(profile: &str, view: &Arc<Mutex<View>>, seen: &Arc<Mutex<Instant>>, stop:
                     v.stuck = Some(p.1.clone());
                 }
             }
+        }
+        let wait = read_wait(view.lock().ok().and_then(|v| v.human_at), Instant::now());
+        if wait != st.read_wait {
+            let _ = cdp.ws.get_ref().set_read_timeout(Some(wait));
+            st.read_wait = wait;
         }
         if let Some(m) = cdp.recv()? {
             on_event(&m, view, &mut st);
@@ -1540,6 +1887,12 @@ fn set_bounds(cdp: &mut Cdp, id: i64, r: crate::vdisplay::Rect) {
 pub async fn agent_focus(profile: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let live = read_live(&profile).ok_or("no live browser")?;
+        // 윈도우 — 숨은 데스크톱 창은 못 옮긴다. 래퍼가 같은 프로필을 보이는 데스크톱에 다시 띄운다(win_desk)
+        if cfg!(target_os = "windows") {
+            human_touch(&profile, &live, false)?;
+            crate::win_desk::let_front();
+            return crate::win_desk::ask(&live_dir(), &profile, live.pid, true, None);
+        }
         let pid = chrome_pid(live.port).ok_or("chrome not found")?;
         let fresh = mark_shown(pid);
         let r = focus_windows(&profile, &live);
@@ -1623,6 +1976,21 @@ pub fn still_shown(in_list: bool, hidden: Option<bool>) -> bool {
 /// 가릴지 — 기능이 켜져 있고 '크롬에서 보기'로 연 크롬이 아니면
 pub fn should_hide(feature_on: bool, shown: &[i32], pid: i32) -> bool {
     feature_on && !shown.contains(&pid)
+}
+
+/// 가리지 않고 둘지(2026-10-27 인앱 브라우저 A) — accessory dylib 가 든 크롬(Dock·⌘Tab 에 없음)이고 가짜 화면이 있고 창이 다 그 안이면.
+/// 칸은 SCK 로 그 창을 받아서 가리면 한 장도 안 온다. 창이 하나라도 밖이면(새 창이 주 화면에 뜸·가짜 화면이 바뀜) 지금처럼 가리고 옮긴다
+pub fn stay_shown(accessory: Option<bool>, vd: Option<crate::vdisplay::Rect>, wins: &[crate::vdisplay::Rect], visible: &[crate::vdisplay::Rect]) -> bool {
+    let (Some(true), Some(vd)) = (accessory, vd) else { return false };
+    let real: Vec<_> = wins.iter().filter(|w| w.w >= 2.0 && w.h >= 2.0).collect();
+    !real.is_empty() && real.iter().all(|w| vd.contains(w.x + w.w / 2.0, w.y + w.h / 2.0) && !crate::vdisplay::on_visible(**w, visible))
+}
+
+/// 지금 그 크롬을 가리지 않고 둘지 — 창 자리는 CGWindowList(가린 창도 나온다)
+fn keep_shown(pid: i32) -> bool {
+    let visible: Vec<_> = crate::vdisplay::visible_displays().into_iter().map(|d| d.0).collect();
+    let wins: Vec<_> = crate::chrome_popup::windows(pid).into_iter().map(|w| crate::vdisplay::Rect { x: w.rect.x, y: w.rect.y, w: w.rect.w, h: w.rect.h }).collect();
+    stay_shown(app_window::accessory(pid), crate::vdisplay::bounds().map(|b| b.1), &wins, &visible)
 }
 
 /// 못 찾은 포트 — 크롬이 꺼진 칸은 1초마다 lsof(수 초)를 다시 돌려 앱이 멈췄다. 15초는 다시 안 찾는다
@@ -1720,13 +2088,14 @@ fn shown() -> Vec<i32> {
     SHOWN.lock().map(|v| v.clone()).unwrap_or_default()
 }
 
-/// 꺼낸 크롬 표 달기 — 새로 달았으면 참
+/// 꺼낸 크롬 표 달기 — 새로 달았으면 참. 꺼낸 동안은 보통 앱으로(Dock·⌘Tab 에 보여 사람이 돌아올 길이 있게, accessory dylib 가 든 크롬만 듣는다)
 fn mark_shown(pid: i32) -> bool {
     let Ok(mut v) = SHOWN.lock() else { return false };
     if v.contains(&pid) {
         return false;
     }
     v.push(pid);
+    crate::accessory::set_regular(pid, true);
     true
 }
 
@@ -1734,6 +2103,7 @@ fn unmark_shown(pid: i32) {
     if let Ok(mut v) = SHOWN.lock() {
         v.retain(|p| *p != pid);
     }
+    crate::accessory::set_regular(pid, false);
     if let Ok(mut v) = PEEKED.lock() {
         v.retain(|p| p.1 != pid);
     }
@@ -1747,6 +2117,10 @@ mod app_window {
     }
     pub fn hidden(pid: i32) -> Option<bool> {
         app(pid).map(|a| a.isHidden())
+    }
+    /// accessory dylib 가 든 크롬인가(Dock·⌘Tab 에 없음) — '크롬에서 보기' 동안은 보통 앱이라 거짓
+    pub fn accessory(pid: i32) -> Option<bool> {
+        app(pid).map(|a| a.activationPolicy() == objc2_app_kit::NSApplicationActivationPolicy::Accessory)
     }
     pub fn hide(pid: i32) {
         if let Some(a) = app(pid) {
@@ -1773,9 +2147,18 @@ mod app_window {
     pub fn hidden(_pid: i32) -> Option<bool> {
         None
     }
+    pub fn accessory(_pid: i32) -> Option<bool> {
+        None
+    }
     pub fn hide(_pid: i32) {}
     pub fn unhide(_pid: i32) {}
     pub fn show(_pid: i32) {}
+}
+
+/// 일꾼이 크롬 사건을 기다리는 시간 — 사람이 칸·모달을 막 만졌으면(10초) 짧게. 입력 대기열은 이 기다림이 끝나야 나가서
+/// SCK 칸(그림 사건이 없음)에선 키마다 0.25초까지 늦었다(10-28 사용자 "한글 칠 때 딜레이"). 평소엔 그대로 길게(바퀴 돌기 줄이기)
+pub fn read_wait(human_at: Option<Instant>, now: Instant) -> Duration {
+    if human_at.is_some_and(|t| now.saturating_duration_since(t) < Duration::from_secs(10)) { Duration::from_millis(8) } else { Duration::from_millis(250) }
 }
 
 /// 지킴이 한 바퀴의 쉼 — 세션 브라우저가 있으면 0.3초(새 탭·창으로 크롬이 스스로 보이면 곧 가린다), 없으면 1초
@@ -1803,6 +2186,8 @@ pub fn kick_once(busy: &'static AtomicBool, f: impl FnOnce() + Send + 'static) -
 
 /// 팝업 검사가 도는 중
 static POPUP_BUSY: AtomicBool = AtomicBool::new(false);
+/// 창 데려오기 확인이 도는 중
+static REHOME_BUSY: AtomicBool = AtomicBool::new(false);
 
 /// 지킴이 — 세션 크롬이 보이면 가리고(0.3초), 크롬 자체 창을 본다(1초, 맥만, 따로 띄워 가리기를 붙잡지 않는다). 예전엔 두 루프가 각자 agent_lives 를 불렀다(2026-10-11 perf 6번)
 pub fn watch_hidden() {
@@ -1810,6 +2195,7 @@ pub fn watch_hidden() {
         // 꺼낸 표가 있는데 가려진 크롬 — 처음 본 때
         let mut seen: HashMap<i32, Instant> = HashMap::new();
         let mut popup_at: Option<Instant> = None;
+        let mut rehome_at: Option<Instant> = None;
         let mut has = false;
         loop {
             std::thread::sleep(watch_sleep(has));
@@ -1820,6 +2206,13 @@ pub fn watch_hidden() {
                 crate::vdisplay::want();
             }
             hide_tick(&lives, &mut seen);
+            // 가짜 화면 밖·최소화된 창 데려오기 + 자리 파일 맞추기(5초) — 크롬이 스스로 보일 때·화면이 바뀔 때만 데려오던 것이 한 번 놓치면 그대로였다(10-28)
+            if cfg!(target_os = "macos") && has && rehome_check_due(rehome_at, Instant::now()) && kick_once(&REHOME_BUSY, || {
+                crate::vdisplay::sync_file();
+                rehome_all();
+            }) {
+                rehome_at = Some(Instant::now());
+            }
             if cfg!(target_os = "macos") && popup_due(popup_at, Instant::now()) {
                 let l = lives.clone();
                 if kick_once(&POPUP_BUSY, move || popup_tick(&l)) {
@@ -1850,7 +2243,17 @@ fn hide_tick(lives: &[Live], seen: &mut HashMap<i32, Instant>) {
             continue;
         }
         seen.remove(&pid);
-        if should_hide(on, &sh, pid) && app_window::hidden(pid) == Some(false) {
+        if !should_hide(on, &sh, pid) {
+            continue;
+        }
+        // 가짜 화면 위 accessory 크롬은 가리지 않는다 — 가려져 있으면 푼다(칸 비추기가 받게)
+        if keep_shown(pid) {
+            if app_window::hidden(pid) == Some(true) {
+                app_window::unhide(pid);
+            }
+            continue;
+        }
+        if app_window::hidden(pid) == Some(false) {
             app_window::hide(pid);
             // 크롬이 스스로 다시 보였다(새 탭·팝업) — 가상 모니터 밖에 있던 창이면 다음엔 안 보이게 그리로
             std::thread::spawn(move || rehome_pid(pid));
@@ -1885,9 +2288,11 @@ fn rehome(live: &Live) -> Result<(), String> {
 fn rehome_into(live: &Live, vd: crate::vdisplay::Rect) -> Result<(), String> {
     let pid = chrome_pid(live.port);
     let mut cdp = Cdp { ws: connect(live)?, next: 0 };
+    let ver = cdp.call("Browser.getVersion", serde_json::json!({}), None, |_| {}).unwrap_or_default();
+    let headless = crate::browser_pane::is_headless(ver["product"].as_str().unwrap_or(""), ver["userAgent"].as_str().unwrap_or(""));
     let mut moved = false;
     for (id, win, state) in chrome_windows(&mut cdp)? {
-        if state == "normal" && crate::vdisplay::inside(win, vd) {
+        if !needs_home(&state, win, vd, headless) {
             continue;
         }
         // 옮기기 직전에 다시 본다 — 그새 '크롬에서 보기'로 꺼냈으면 되돌리지 않는다(지킴이가 꺼내기 전에 시작한 이 일이 꺼낸 창을 끌고 갔다)
@@ -1907,11 +2312,24 @@ fn rehome_into(live: &Live, vd: crate::vdisplay::Rect) -> Result<(), String> {
                 std::thread::sleep(Duration::from_millis(50));
             }
             std::thread::sleep(Duration::from_millis(300));
-            app_window::hide(p);
+            if !keep_shown(p) {
+                app_window::hide(p);
+            }
         }
     }
     let _ = cdp.ws.close(None);
     Ok(())
+}
+
+/// 데려올 창인가 — 보통 상태로 가짜 화면 안이 아니면. 최소화한 창은 가짜 화면 안이어도 Dock 에 썸네일로 보였다(10-28 사용자).
+/// 헤드리스는 화면이 없다 — 칸 크기로 제자리에서 맞춘 창(browser_pane)을 옮기지 않는다
+pub fn needs_home(state: &str, win: crate::vdisplay::Rect, vd: crate::vdisplay::Rect, headless: bool) -> bool {
+    !headless && (state != "normal" || !crate::vdisplay::inside(win, vd))
+}
+
+/// 세션 크롬 창 다시 데려오기 확인 — 5초마다. 가짜 화면이 바뀐 순간(새 화면이 옛 화면과 잠깐 겹침)을 놓쳐도 곧 데려온다
+pub fn rehome_check_due(last: Option<Instant>, now: Instant) -> bool {
+    last.is_none_or(|t| now.duration_since(t) >= Duration::from_secs(5))
 }
 
 /// 옮긴 뒤 깨울지 — 가린 채 창을 옮긴 정품 크롬(154)은 그림이 멈추고 되돌려도 그대로였다(2026-10-10 프로젝트P 세션 '화면 받는 중',
@@ -1926,13 +2344,23 @@ fn wake_after_move(moved: bool, hidden: Option<bool>, wins: &[Win], vd: crate::v
 pub async fn agent_hide(profile: String, auto: Option<bool>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let Some(live) = read_live(&profile) else { return Ok(()) };
+        // 윈도우 — 보이는 창이면 숨은 데스크톱으로 다시 띄운다(win_desk)
+        if cfg!(target_os = "windows") {
+            if crate::win_desk::shown(&live_dir(), &profile, live.pid) {
+                crate::win_desk::ask(&live_dir(), &profile, live.pid, false, None)?;
+            }
+            crate::takeover::release_auto(&live_dir(), &profile, live.pid);
+            return Ok(());
+        }
         let Some(pid) = chrome_pid(live.port) else { return Ok(()) };
         if auto == Some(true) && !may_auto_hide(held(&profile, pid).is_some(), popup_fresh(&live, pid)) {
             return Err("popup still open".into());
         }
         unmark_shown(pid);
         let _ = rehome(&live); // 창 전부(팝업까지) 가짜 화면으로
-        app_window::hide(pid);
+        if !keep_shown(pid) {
+            app_window::hide(pid);
+        }
         // 패스키 꺼내기가 켠 개입이면 같이 돌려준다 — 안 그러면 오탐·아무것도 안 한 날 세션 도구가 계속 묶였다(2026-10-10 19:45)
         if crate::takeover::release_auto(&live_dir(), &profile, live.pid) {
             #[cfg(not(test))]
@@ -2198,6 +2626,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn 표_없는_부름은_없는_것으로_본다() {
+        // 2026-10-28 — 옛 래퍼가 겹친 부름 끝에 ask 를 {waiting:false} 로만 남겨 앱 띠가 '사람 차례 — undefined', 다 했어는 표가 없어 안 먹었다
+        let base = r#"{"profile":"acme","pid":11,"sessionPid":22,"port":5000,"wsPath":"/devtools/browser/ab-12","ask":{"waiting":false}}"#;
+        assert!(parse_live(base).unwrap().ask.is_none());
+        assert!(parse_live(&base.replace(r#"{"waiting":false}"#, r#"{"reason":"x","at":"7"}"#)).unwrap().ask.is_none(), "표가 숫자가 아니면 없는 것");
+        assert!(parse_live(&base.replace(r#"{"waiting":false}"#, r#"{"at":7}"#)).unwrap().ask.is_some(), "이유가 비어도 표가 있으면 부름");
+    }
+
+    #[test]
     fn 시간_초과로_남은_부름을_사람이_끝내면_카드를_내리고_세션을_깨운다() {
         // 2026-10-23 acme-shop — 세션이 로그인 카드를 띄우고 턴을 끝낸 뒤(도구 10분 시간 초과) 사람이 끝내도 세션은 몰랐다
         let base = r#"{"profile":"acme","pid":11,"sessionPid":22,"port":5000,"wsPath":"/devtools/browser/ab-12","ask":{"reason":"로그인","at":700,"waiting":false}}"#;
@@ -2293,6 +2730,25 @@ mod tests {
     }
 
     #[test]
+    fn 마지막_탭을_닫을_땐_빈_탭을_먼저() {
+        let p = |id: &str| Page { id: id.into(), url: String::new(), title: String::new() };
+        assert!(close_needs_blank(&[p("a")], "a"));
+        assert!(!close_needs_blank(&[p("a"), p("b")], "a"));
+        assert!(close_needs_blank(&[], "a"), "이미 다 닫혔으면 — 호출 쪽이 '없는 탭'으로 먼저 거른다");
+    }
+
+    #[test]
+    fn 비출_수_없는_크롬은_칸이_그림을_받는다() {
+        assert!(!pane_cast(false, true), "가짜 화면 위 accessory 크롬 — SCK 로 비춘다");
+        assert!(pane_cast(false, false), "가린 크롬(구글 서명 그대로 — accessory 아님) — SCK 는 한 장도 못 받는다");
+        assert!(pane_cast(true, false), "헤드리스");
+        assert!(mirrorable(true, None, 7));
+        assert!(!mirrorable(true, Some(7), 7), "SCK 가 2초째 0장 — 그림 길로");
+        assert!(mirrorable(true, Some(7), 8), "크롬이 다시 떴으면 다시 비춰 본다");
+        assert!(!mirrorable(false, None, 7), "지킴이가 가리는 크롬");
+    }
+
+    #[test]
     fn 저절로_숨기기는_크롬_창이_다_닫힌_게_확실할_때만() {
         use crate::chrome_popup::Kind;
         assert!(may_auto_hide(false, Some(None)), "꺼낼 때 본 창이 닫혔고 지금도 없다");
@@ -2305,6 +2761,15 @@ mod tests {
     #[test]
     fn 지킴이는_브라우저가_있을_때만_촘촘히_팝업은_1초마다() {
         // 0.3초·1초 두 루프가 각자 agent_lives(폴더·pid·TCP)를 부르던 것을 하나로(2026-10-11 perf 6번)
+        let now = Instant::now();
+        let mut v = View::default();
+        mark_pane(&mut v, 800.0, 600.0, false, now);
+        assert!(v.pane_seen.is_none() && v.pane.is_none(), "안 보이는 칸은 보는 중이 아니다 — 그림 받기가 멈춘다");
+        mark_pane(&mut v, 800.0, 600.0, true, now);
+        assert!(v.pane_seen == Some(now) && v.pane.is_some_and(|p| p.w == 800.0));
+        assert_eq!(read_wait(None, now), Duration::from_millis(250), "아무도 안 만지면 길게");
+        assert_eq!(read_wait(Some(now - Duration::from_secs(2)), now), Duration::from_millis(8), "사람이 치는 중이면 입력이 바로 나가게");
+        assert_eq!(read_wait(Some(now - Duration::from_secs(11)), now), Duration::from_millis(250));
         assert_eq!(watch_sleep(true), Duration::from_millis(300));
         assert_eq!(watch_sleep(false), Duration::from_secs(1), "세션 브라우저가 없으면 쉰다");
         let t0 = Instant::now();
@@ -2341,7 +2806,7 @@ mod tests {
         assert_eq!(popup_kind_str(Some(Kind::Passkey)), "passkey");
         assert_eq!(popup_kind_str(Some(Kind::Window)), "window");
         assert_eq!(popup_kind_str(None), "");
-        let mut l = Live { profile: "shop-app".into(), pid: 1, session_pid: 2, port: 3, ws_path: "/x".into(), url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None, scripts: 0, popup: false, popup_kind: String::new(), wake: None };
+        let mut l = Live { profile: "shop-app".into(), pid: 1, session_pid: 2, port: 3, ws_path: "/x".into(), url: String::new(), title: String::new(), tabs: vec![], tool: String::new(), tool_at: 0, busy: false, ts: 0, ask: None, gate: false, held: 0, takeover: None, scripts: 0, popup: false, popup_kind: String::new(), wake: None, signable: false };
         assert!(!serde_json::to_string(&l).unwrap().contains("popupKind"), "창이 없으면 칸도 없다");
         l.popup_kind = "window".into();
         assert!(serde_json::to_string(&l).unwrap().contains(r#""popupKind":"window""#));
@@ -2518,6 +2983,23 @@ mod tests {
         assert_eq!(pick_target(&ps, "https://a.com/", None, Some("a"), Some("c"), Some("b")).as_deref(), Some("c"));
     }
 
+    // 10-29 fix/passkey-auto(inapp_newwin_e2e before=true 실패) — 칸을 열기 전에 이미 떠 있던 사이트 창(세션이 혼자 로그인 팝업을 띄운 뒤 사람을 부름)도
+    // 처음 붙을 때 목록의 openerId 로 '사이트가 띄운 창'에 넣는다. 사람이 연 탭(opener 없음)·페이지 아닌 것은 빼고, 순서는 목록 그대로(마지막이 보인다)
+    #[test]
+    fn 처음_붙을_때_이미_떠_있던_사이트_창() {
+        let infos = serde_json::json!([
+            { "targetId": "a", "type": "page", "url": "https://a.com/" },
+            { "targetId": "p1", "type": "page", "url": "https://idp.com/oauth", "openerId": "a", "canAccessOpener": true },
+            // target=_blank 링크(noopener 기본) — 세션이 예전에 연 채 남은 탭일 수 있어 처음 붙을 땐 세션 지금 탭을 안 가린다
+            { "targetId": "t", "type": "page", "url": "https://docs.com/", "openerId": "a", "canAccessOpener": false },
+            { "targetId": "w", "type": "service_worker", "url": "https://a.com/sw.js", "openerId": "a" },
+            { "targetId": "n", "type": "page", "url": "https://b.com/", "openerId": "" },
+            { "targetId": "p2", "type": "page", "url": "https://pay.com/", "openerId": "p1", "canAccessOpener": true }
+        ]);
+        assert_eq!(opened_by_site(infos.as_array().unwrap()), vec!["p1".to_string(), "p2".to_string()]);
+        assert!(opened_by_site(&[]).is_empty());
+    }
+
     #[test]
     fn 탭_목록_맞추기는_순서를_지킨다() {
         let mut ps = vec![page("a", "u1"), page("b", "u2"), page("c", "u3")];
@@ -2561,6 +3043,46 @@ mod tests {
         assert!(should_hide(true, &[6], 5));
         // 기능을 끄면 지금처럼 보이는 창 그대로
         assert!(!should_hide(false, &[], 5));
+    }
+
+    #[test]
+    fn 가짜_화면_위_accessory_크롬은_안_가린다() {
+        // 2026-10-27 인앱 브라우저 A — 칸은 SCK 로 그 창을 받는다(가리면 0장). Dock·⌘Tab 은 dylib(accessory)가 빼고 창은 가짜 화면이라 사용자 눈엔 없다
+        use crate::vdisplay::Rect;
+        let vd = Rect { x: -2910.0, y: 956.0, w: 1440.0, h: 900.0 };
+        let mac = [Rect { x: 0.0, y: 0.0, w: 1512.0, h: 982.0 }];
+        let on_vd = [Rect { x: -2860.0, y: 1000.0, w: 900.0, h: 600.0 }, Rect { x: -2800.0, y: 1030.0, w: 600.0, h: 100.0 }];
+        assert!(stay_shown(Some(true), Some(vd), &on_vd, &mac));
+        // 창 하나라도 사용자 화면 위면(새 창이 주 화면에 떴다) 지금처럼 가리고 가짜 화면으로
+        let leaked = [on_vd[0], Rect { x: 100.0, y: 100.0, w: 800.0, h: 600.0 }];
+        assert!(!stay_shown(Some(true), Some(vd), &leaked, &mac));
+        // dylib 없는 크롬(Dock·⌘Tab 에 보임)·가짜 화면 없음·정책 모름이면 지금처럼 가린다
+        assert!(!stay_shown(Some(false), Some(vd), &on_vd, &mac));
+        assert!(!stay_shown(Some(true), None, &on_vd, &mac));
+        assert!(!stay_shown(None, Some(vd), &on_vd, &mac));
+        // 창이 아직 없으면(막 뜨는 중) 판단 보류 — 가린다(예전과 같게)
+        assert!(!stay_shown(Some(true), Some(vd), &[], &mac));
+        // 가짜 화면이 지워진 뒤 어느 화면도 아닌 좌표에 남은 창은 사용자 눈에 없다 — 그래도 가짜 화면 안이 아니면 옮겨야 하니 가린다
+        let lost = [Rect { x: 1944.0, y: 1110.0, w: 900.0, h: 600.0 }];
+        assert!(!stay_shown(Some(true), Some(vd), &lost, &mac));
+    }
+
+    #[test]
+    fn 최소화되거나_가짜_화면_밖인_창은_데려온다() {
+        // 10-28 사용자 — 세션 크롬 창이 최소화된 채 어느 화면에도 없는 자리(-5286,2186)에 남아 Dock 에 썸네일이 보였고,
+        // 칸 크기 맞추기도 '보통 상태 아님'으로 건너뛰어 1배 1400x880 그림을 칸에 늘려 그렸다(흐림)
+        use crate::vdisplay::Rect;
+        let vd = Rect { x: -3390.0, y: 956.0, w: 1920.0, h: 1200.0 };
+        let on = Rect { x: -3366.0, y: 1004.0, w: 1400.0, h: 880.0 };
+        assert!(!needs_home("normal", on, vd, false));
+        assert!(needs_home("minimized", on, vd, false), "가짜 화면 안이어도 최소화면 Dock 에 보인다");
+        assert!(needs_home("normal", Rect { x: -5286.0, y: 2186.0, ..on }, vd, false), "어느 화면도 아닌 자리");
+        assert!(!needs_home("minimized", Rect { x: 0.0, y: 0.0, ..on }, vd, true), "헤드리스는 화면이 없다 — 칸 크기로 맞춘 창을 옮기지 않는다");
+        // 5초마다 한 번
+        let now = Instant::now();
+        assert!(rehome_check_due(None, now));
+        assert!(!rehome_check_due(Some(now - Duration::from_secs(2)), now));
+        assert!(rehome_check_due(Some(now - Duration::from_secs(5)), now));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { freshReplies, fromOrchTurn, heldNote, heldTarget, parseSay, pickSay, routeReply, speakable, takeHeld, talkedTo, type ReplySeen, type VoiceHeld, type Watch } from './voice';
+import { freshReplies, fromOrchTurn, heldNote, heldTarget, parseSay, pickSay, routeReply, speakable, takeHeld, talkedTo, voiceTurn, type ReplySeen, type VoiceHeld, type Watch } from './voice';
 import { humanPrompt, summarizeTranscript } from './activity';
 
 describe('speakable — 참모 답을 소리 내 읽기 좋게', () => {
@@ -251,22 +251,28 @@ describe('음성은 말 건 참모만 — 다른 참모 답은 쌓고 짧은 한
     });
   });
 
-  describe('routeReply — 말 건 참모면 읽고, 아니면 쌓고 알림 한 줄', () => {
-    const r = (id: string, text: string, asks = false, ts = '2026-10-25T07:10:00Z') => ({ id, name: id === 'dev' ? '개발 담당' : '회사 비서', text, asks, ts });
+  describe('routeReply — 말 건 참모면 읽고, 아니면 쌓고 — 한 줄 알림은 사람이 깨운 턴이거나 묻는 답일 때만', () => {
+    const r = (id: string, text: string, asks = false, ts = '2026-10-25T07:10:00Z', human = true) => ({ id, name: id === 'dev' ? '개발 담당' : '회사 비서', text, asks, ts, human });
     it('말 건 참모는 끝까지 읽는다', () => {
       const out = routeReply({}, r('co', '회의록 정리했어'), new Set(['co']));
       expect(out.speak).toBe('회의록 정리했어');
       expect(out.note).toBeUndefined();
       expect(out.held).toEqual({});
     });
-    it('다른 참모 답은 소리로 안 읽고 쌓은 뒤 짧은 한 줄', () => {
+    it('다른 참모 답(사람이 깨운 턴)은 소리로 안 읽고 쌓은 뒤 짧은 한 줄', () => {
       const out = routeReply({}, r('dev', '쇼핑몰 배너 정리가 끝났어'), new Set(['co']));
       expect(out.speak).toBeUndefined();
       expect(out.note).toBe('개발 담당한테 새 답 있어.');
       expect(out.held.dev?.texts).toEqual(['쇼핑몰 배너 정리가 끝났어']);
     });
-    it('답이 질문이면 "물어볼 게 있대"를 붙인다', () => {
-      expect(routeReply({}, r('dev', '운영에 올려도 될까?', true), new Set(['co'])).note).toBe('개발 담당한테 새 답 있어, 물어볼 게 있대.');
+    it('재현: 사람이 깨운 턴이 아니면(앱 줄·하위 세션 회신·깨운 말 모름) 한 줄도 없이 조용히 쌓기만(10-28 "디자인 담당한테 새 답 있어")', () => {
+      const out = routeReply({}, r('dev', '로고 웹용 파일 뽑았어', false, '2026-10-28T08:09:45Z', false), new Set(['co']));
+      expect(out.speak).toBeUndefined();
+      expect(out.note).toBeUndefined();
+      expect(out.held.dev?.texts).toEqual(['로고 웹용 파일 뽑았어']);
+    });
+    it('답이 질문이면 사람이 안 깨운 턴이어도 "물어볼 게 있대"', () => {
+      expect(routeReply({}, r('dev', '운영에 올려도 될까?', true, undefined, false), new Set(['co'])).note).toBe('개발 담당한테 새 답 있어, 물어볼 게 있대.');
     });
     it('이미 알린 참모가 또 답하면 한 줄을 되풀이하지 않는다 — 질문이 새로 생길 때만 다시', () => {
       let h: VoiceHeld = routeReply({}, r('dev', '하나'), new Set()).held;
@@ -277,9 +283,42 @@ describe('음성은 말 건 참모만 — 다른 참모 답은 쌓고 짧은 한
       expect(three.note).toBe('개발 담당한테 새 답 있어, 물어볼 게 있대.');
       expect(three.held.dev?.texts).toEqual(['하나', '둘', '올려도 돼?']);
     });
+    it('조용히 쌓인 참모에게 사람이 깨운 답이 오면 그때 한 줄', () => {
+      const h = routeReply({}, r('dev', '하나', false, 't1', false), new Set()).held;
+      expect(routeReply(h, r('dev', '둘', false, 't2', true), new Set()).note).toBe('개발 담당한테 새 답 있어.');
+    });
     it('말할 글이 비면 아무것도 안 한다', () => {
       const out = routeReply({}, r('dev', '  '), new Set());
       expect(out).toEqual({ held: {} });
+    });
+  });
+
+  describe('voiceTurn — 새 답 하나를 어떻게: 참모끼리 턴은 버리고, 말 건 참모는 읽고, 나머지는 쌓기', () => {
+    const rep = (o: object = {}) => ({ ts: 't', text: '답', ...o });
+    it('다른 참모가 보낸 말로만 깬 턴은 말 건 참모여도 버린다', () => {
+      expect(voiceTurn(rep({ woke: ['참모 · 회사 비서'] }), true)).toBe('skip');
+      expect(voiceTurn(rep({ woke: ['참모 · 회사 비서'] }), false)).toBe('skip');
+    });
+    it('말 건 참모는 읽는다 — 꼬리가 잘렸으면 먼저 더 읽어 보고, 더 읽고도 모르면 읽는다(스크린샷 붙인 사람 말 한 줄이 60만 바이트)', () => {
+      expect(voiceTurn(rep(), true)).toBe('speak');
+      expect(voiceTurn(rep({ cut: true }), true)).toBe('deeper');
+      expect(voiceTurn(rep({ cut: true }), true, true)).toBe('speak');
+      expect(voiceTurn(rep({ cut: true, byHuman: true }), true)).toBe('speak');
+    });
+    it('말 안 건 참모 + 깨운 말 모름 = 더 읽어 봐야 함(deeper) — 사람이 친 말이 보였으면 아니다', () => {
+      expect(voiceTurn(rep({ cut: true }), false)).toBe('deeper');
+      expect(voiceTurn(rep({ cut: true, byHuman: true }), false)).toBe('hold');
+      expect(voiceTurn(rep(), false)).toBe('hold');
+    });
+    it('더 읽고도 모르면(final) 쌓기만', () => {
+      expect(voiceTurn(rep({ cut: true }), false, true)).toBe('hold');
+    });
+    // 넘긴 쪽이 받은 쪽 보고·질문으로 깬 턴은 사람에게 모아 묻는 길 — 버리지 않는다(handover-ask 와 맞춤, 10-28). giver = 그 판단(domain/handedAsk giverTurn)
+    it('이 참모가 일을 넘긴 참모의 말로 깬 턴은 버리지 않는다 — 말 건 참모면 읽고 아니면 쌓기', () => {
+      const giver = () => true;
+      expect(voiceTurn(rep({ woke: ['참모-8 · 영업 담당'], asks: true }), true, false, giver)).toBe('speak');
+      expect(voiceTurn(rep({ woke: ['참모-8 · 영업 담당'], asks: true }), false, false, giver)).toBe('hold');
+      expect(voiceTurn(rep({ woke: ['참모-8 · 영업 담당'] }), true, false, () => false)).toBe('skip');
     });
   });
 

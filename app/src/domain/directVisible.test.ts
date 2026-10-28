@@ -3,7 +3,7 @@
 // 이름·번호·경로는 가짜, 모양은 그날 기록 그대로
 import { describe, expect, it } from 'vitest';
 import { interleave } from './chatExtras';
-import { cardShow, directCards, GONE_GRACE_MS, needsLook, placeDirect, stepSeen, type Seen } from './directAsk';
+import { cardShow, directCards, freshAppCards, GONE_GRACE_MS, needsLook, phoneOwns, placeDirect, stepSeen, type Seen } from './directAsk';
 import { parseAgents, withinRoots } from './session';
 import type { TaskEvent } from './tasks';
 
@@ -107,5 +107,41 @@ describe('채팅에 끼우기 — 기다리는 카드는 물은 시각 자리 �
   it('보이는 말보다 앞선 끝난 한 줄은 맨 위(전과 같음)', () => {
     const out = interleave(msgs.slice(1), [{ ts: '2026-10-05T01:00:00Z', key: 'early' }]).map((x) => ('item' in x ? x.item.id : x.extra.key));
     expect(out).toEqual(['early', 'm2', 'm3']);
+  });
+});
+
+// 2026-10-28 사용자 — 폰에서 다른 참모 채팅을 보고 있으면 '새 기기 허용' 카드가 안 보였다(맨 앞 참모 채팅에만 붙음)
+describe('폰 — 연결 요청 카드는 보고 있는 참모 채팅 어디서든', () => {
+  const LINK = JSON.stringify({ ts: ASK_TS, type: 'ask', id: 'b0b0b0b0', from: '@link', cwd: '', kind: 'link', sub: 'device', dev: 'd1', q: '새 기기 허용?', yes: '허용', no: '거절', options: [] });
+  it('연결 요청은 맨 앞이 아닌 참모에게도, 세션 카드는 주인에게만', () => {
+    const everyone = parseAgents(raw(ORCH, ORCH2, BLOG), DEV, EXTRAS);
+    const orchs = everyone.filter((s) => s.cwd === HQ);
+    const now = T_ASK + 5_000;
+    const placed = placeDirect(`${LOG}\n${LINK}`, { everyone, seen: stepSeen({}, everyone.map((s) => s.id), now), now, ...noAct, events: [SEND], orchs, front: orchs[0] });
+    expect(phoneOwns(placed, 'ee55ff66').map((c) => c.id)).toEqual(['b0b0b0b0']);
+    expect(phoneOwns(placed, 'aa11bb22').map((c) => c.id).sort()).toEqual(['b0b0b0b0', 'c0ffee01']);
+  });
+});
+
+// 2026-10-29 — 앱이 낸 카드(@link)가 보던 참모(맨 앞) 채팅에 붙었다
+describe('데스크톱 — 앱이 낸 카드는 어느 참모 채팅에도 안 붙는다(결정 대기함에만)', () => {
+  const LINK = JSON.stringify({ ts: ASK_TS, type: 'ask', id: 'b0b0b0b0', from: '@link', cwd: '', kind: 'link', sub: 'safety', acct: 'a2', q: '보안 번호가 바뀌었어요', yes: '받아들이기', no: '막아 두기', options: [] });
+  it('@link 카드는 주인 없음, 세션 카드는 그대로 주인에게', () => {
+    const everyone = parseAgents(raw(ORCH, ORCH2, BLOG), DEV, EXTRAS);
+    const orchs = everyone.filter((s) => s.cwd === HQ);
+    const now = T_ASK + 5_000;
+    const placed = placeDirect(`${LOG}\n${LINK}`, { everyone, seen: stepSeen({}, everyone.map((s) => s.id), now), now, ...noAct, events: [SEND], orchs, front: orchs[0] });
+    expect(placed.find((p) => p.card.id === 'b0b0b0b0')?.owner).toBeUndefined();
+    expect(placed.find((p) => p.card.id === 'c0ffee01')?.owner?.id).toBe('aa11bb22');
+  });
+});
+
+describe('앱 카드가 새로 뜨면 화면 위 짧은 알림 — 결정 대기함으로', () => {
+  const LINK = JSON.stringify({ ts: ASK_TS, type: 'ask', id: 'b0b0b0b0', from: '@link', cwd: '', kind: 'link', sub: 'device', dev: 'd1', q: '새 기기 허용?', yes: '허용', no: '거절', options: [] });
+  it('새로 기다리는 @link 카드만, 앱을 켠 첫 읽기·세션 카드는 안 알린다', () => {
+    const cards = directCards(`${LOG}\n${LINK}`, { alive: () => true, prompt: () => undefined, reply: () => undefined, now: T_ASK + 5_000 });
+    expect(freshAppCards(null, cards)).toEqual([]);
+    expect(freshAppCards(new Set(), cards).map((c) => c.id)).toEqual(['b0b0b0b0']);
+    expect(freshAppCards(new Set(['b0b0b0b0']), cards)).toEqual([]);
   });
 });

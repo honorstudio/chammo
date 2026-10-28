@@ -214,6 +214,16 @@ describe('auth — 로그인이 풀려 멈춘 세션(2026-10-06 아이맥 참모
     expect(a.auth?.ts).toBe('2026-10-06T00:30:31.8Z');
   });
 
+  it('약관 동의 필요(400) — 로그인 풀림과 같은 갈래, terms 표시(실측 2026-10-28 원문 · error unknown)', () => {
+    const t = "API Error: 400 We've updated our Consumer Terms and Privacy Policy. You'll need to accept them in claude.ai with the email in /status to continue.";
+    expect(summarizeTranscript(err('t', t, 'unknown')).auth).toEqual({ ts: 't', text: t, terms: true });
+    // 문구가 조금 바뀌어도
+    expect(summarizeTranscript(err('t', 'API Error: 400 Please accept them in claude.ai to continue')).auth?.terms).toBe(true);
+    expect(summarizeTranscript(err('t', 'API Error: 400 Our Consumer Terms changed')).auth?.terms).toBe(true);
+    // API 오류 줄이 아니면(답에 인용) 아니다
+    expect(summarizeTranscript(JSON.stringify({ type: 'assistant', timestamp: 't', message: { content: [{ type: 'text', text: t }] } })).auth).toBeUndefined();
+  });
+
   it('그 뒤에 정상 답이 오면 풀린 것이다', () => {
     const ok = JSON.stringify({ type: 'assistant', timestamp: '2026-10-06T00:31:39Z', message: { content: [{ type: 'text', text: '클론했어' }] } });
     expect(summarizeTranscript([err('2026-10-06T00:30:22Z', 'Login expired · Please run /login', 'authentication_failed'), ok].join('\n')).auth).toBeUndefined();
@@ -336,5 +346,53 @@ describe('reply.woke — 그 턴을 깨운 말이 전부 다른 세션 메시지
   it('하위 세션 회신으로 깬 턴은 그 이름 그대로(말할지는 음성 쪽이 이름으로 가른다)', () => {
     const t = [peer('t1', 'shop-app'), end('t2', 'PR 올라왔어.')].join('\n');
     expect(summarizeTranscript(t).reply?.woke).toEqual(['shop-app']);
+  });
+});
+
+describe('reply.cut·byHuman — 꼬리(256KB)가 턴 중간에서 잘렸나·사람이 깨운 턴인가(음성: 말 안 건 참모 소리, 10-28 사용자)', () => {
+  const peer = (ts: string, from: string) => user(ts, `Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/a.sock" from-name="${from}" from-mode="bypass">\n봐 줘\n</cross-session-message>`, { isMeta: true, origin: { kind: 'peer' } });
+  const tool = (ts: string) => line({ type: 'assistant', timestamp: ts, message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'x1', name: 'Read', input: { file_path: '/a.png' } }] } });
+  const result = (ts: string) => user(ts, [{ type: 'tool_result', tool_use_id: 'x1', content: 'ok' }]);
+  const image = (ts: string) => user(ts, '[Image: original 3699x1889, displayed at 2000x1021.]', { isMeta: true });
+  const end = (ts: string, text: string) => line({ type: 'assistant', timestamp: ts, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text }] } });
+  const broken = '{"type":"user","message":{"content":[{"type":"tool_result","content":"iVBORw0KGgo'; // 잘린 첫 줄
+
+  it('재현: 그림 읽기로 길어진 턴 — 깨운 참모 말이 꼬리 밖이면 cut(깨운 말 모름), woke 없음', () => {
+    const t = [broken, tool('t2'), result('t3'), image('t4'), tool('t5'), result('t6'), end('t7', '로고 열어 봤어.')].join('\n');
+    const r = summarizeTranscript(t).reply!;
+    expect(r.cut).toBe(true);
+    expect(r.woke).toBeUndefined();
+    expect(r.byHuman).toBeUndefined();
+  });
+  it('같은 턴을 처음부터 읽으면 cut 없이 woke = 보낸 참모', () => {
+    const t = [end('t0', '앞 턴'), peer('t1', '참모 · 회사 비서'), tool('t2'), result('t3'), image('t4'), end('t7', '로고 열어 봤어.')].join('\n');
+    const r = summarizeTranscript(t).reply!;
+    expect(r.cut).toBeUndefined();
+    expect(r.woke).toEqual(['참모 · 회사 비서']);
+  });
+  it('잘린 꼬리라도 앞 턴이 끝난 게 보이면 다음 턴 시작은 안다', () => {
+    const t = [broken, end('t1', '앞 턴'), user('t2', '이거 해 줘'), end('t3', '했어.')].join('\n');
+    expect(summarizeTranscript(t).reply).toMatchObject({ byHuman: true });
+    expect(summarizeTranscript(t).reply?.cut).toBeUndefined();
+  });
+  it('잘린 꼬리라도 턴 중간에 사람이 친 말이 보이면 사람 턴', () => {
+    const t = [broken, tool('t2'), result('t3'), user('t4', '그거 말고 이거'), end('t5', '바꿨어.')].join('\n');
+    expect(summarizeTranscript(t).reply).toMatchObject({ byHuman: true });
+    expect(summarizeTranscript(t).reply?.cut).toBeUndefined();
+  });
+  it('첫 줄이 온전하면(파일 처음부터) 시작을 안다 — 사람이 띄운 첫 턴', () => {
+    const t = [user('t1', '안녕'), end('t2', '응.')].join('\n');
+    expect(summarizeTranscript(t).reply).toMatchObject({ byHuman: true });
+  });
+  it('[앱] 줄·하위 세션 회신·끝 알림으로 깬 턴은 사람 턴이 아니다', () => {
+    for (const w of [user('t1', '[앱] 정리할 세션: shop(ab12)'), peer('t1', 'shop-app'), user('t1', '<task-notification><task-id>b1</task-id><status>completed</status></task-notification>')]) {
+      const r = summarizeTranscript([end('t0', '앞'), w, end('t2', '했어.')].join('\n')).reply!;
+      expect(r.byHuman, w.slice(0, 60)).toBeUndefined();
+      expect(r.cut).toBeUndefined();
+    }
+  });
+  it('압축 요약·중단 줄은 사람 말(human)이 아니다 — 고객사D 담당이 사람 말 건 참모로 셌다', () => {
+    const t = [user('t1', '이거 해'), end('t2', '응'), user('t3', 'This session is being continued from a previous conversation that ran out of context.'), user('t4', '[Request interrupted by user for tool use]')].join('\n');
+    expect(summarizeTranscript(t).human?.ts).toBe('t1');
   });
 });

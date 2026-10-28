@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- 참모 브라우저 아이콘 작은 크기용(32px 이하 — 스페이스 칸 머리) — 10-28 고른 시안 A(남색 #34466e · 창), 맥 여백 없는 512 판.
+       참모 앱 가족 규칙 C(craft-apps scripts/icon_svg.py)의 작은 판 -->
+  <defs>
+    <linearGradient id="w" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e9eef6"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#w)"/>
+  <g transform="translate(-14 22) scale(10.2)"><path d="M20 7C27 7 31 11.5 32.2 17.5C33.2 22.5 36.5 25 36 29C35.4 33.5 29 34.5 20 34.5C11 34.5 4.6 33.5 4 29C3.5 25 6.8 22.5 7.8 17.5C9 11.5 13 7 20 7Z" fill="#34466e"/><ellipse cx="13.70" cy="22.5" rx="2.6" ry="3.8" fill="#fff"/><ellipse cx="26.30" cy="22.5" rx="2.6" ry="3.8" fill="#fff"/></g>
+  <rect x="262" y="262" width="214" height="214" rx="50" fill="#34466e" stroke="#ffffff" stroke-width="18"/>
+  <g transform="translate(289 289) scale(1.6)"><rect x="10" y="14" width="80" height="72" rx="12" fill="none" stroke="#ffffff" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 40H90" fill="none" stroke="#ffffff" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/></g>
+  <rect x="0.6" y="0.6" width="510.8" height="510.8" rx="111.4" fill="none" stroke="#000" stroke-opacity=".06" stroke-width="1.2"/>
+</svg>

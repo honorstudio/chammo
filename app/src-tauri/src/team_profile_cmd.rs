@@ -11,7 +11,7 @@ async fn job<T: Send + 'static>(f: impl FnOnce(&std::path::Path, &dyn crate::acc
 }
 
 /// 화면이 보내는 그림 — data URL 또는 base64(잘라서 만든 webp)
-fn image(b64: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn image(b64: &str) -> Result<Vec<u8>, String> {
     let raw = b64.split_once(";base64,").map_or(b64, |(_, b)| b);
     base64::engine::general_purpose::STANDARD.decode(raw.trim()).map_err(|_| "그림을 못 읽었어".to_string())
 }

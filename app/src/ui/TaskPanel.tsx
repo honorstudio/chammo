@@ -1,5 +1,5 @@
 import type { Activity } from '../domain/activity';
-import type { Session } from '../domain/session';
+import { seenName, type Session } from '../domain/session';
 import { statusWord, type ActivityStatus } from '../domain/status';
 import { splitCards, taskTags, type TaskCard } from '../domain/tasks';
 import { useRef, useState, type ReactNode } from 'react';
@@ -121,13 +121,13 @@ export function TaskPanel({ width, onWidth, cards, activities, onOpen, top, bott
         <Sec title={tr('진행 중', 'In progress')} count={active.length} />
         {active.length === 0 && <div className="tempty">{tr(`${assistant()}가 시킨 일 중 안 끝난 게 없어`, `Nothing ${assistant()} delegated is still open`)}</div>}
         {active.map((c) => (
-          <Row key={c.id} dot={c.status} name={c.target} line={c.title} sub={c.note} when={hm(c.updatedAt)} tags={taskTags(c)} onClick={() => onOpen(c.target)} />
+          <Row key={c.id} dot={c.status} name={seenName(c.target)} line={c.title} sub={c.note} when={hm(c.updatedAt)} tags={taskTags(c)} onClick={() => onOpen(c.target)} />
         ))}
 
         {/* 같은 세션에 더 새 일이 가서 넘어간 일 — 회신 받고 끝 기록만 안 남은 것들(2026-09-29 사용자: 계속 쌓이기만) */}
         {superseded.length > 0 && <Sec title={tr('끝 기록 없는 일', 'Not marked done')} count={superseded.length} open={showOld} onToggle={() => setShowOld((v) => !v)} />}
         {showOld && superseded.map((c) => (
-          <Row key={c.id} dot={c.status} name={c.target} line={c.title} sub={c.note} when={hm(c.updatedAt)} onClick={() => onOpen(c.target)} dim />
+          <Row key={c.id} dot={c.status} name={seenName(c.target)} line={c.title} sub={c.note} when={hm(c.updatedAt)} onClick={() => onOpen(c.target)} dim />
         ))}
         {showOld && superseded.length > 0 && onFinishMany && (
           <div className="revive-acts"><button className="mini" onClick={() => onFinishMany(superseded)}>{tr(`${superseded.length}개 모두 끝난 걸로`, `Mark all ${superseded.length} done`)}</button></div>
@@ -136,7 +136,7 @@ export function TaskPanel({ width, onWidth, cards, activities, onOpen, top, bott
         {orphaned.length > 0 && <Sec title={tr('주인 잃은 일', 'Orphaned tasks')} count={orphaned.length} tone="hot" />}
         {orphaned.map((c) => (
           <div key={c.id} className="orphan">
-            <Row dot={c.status} name={c.target} line={c.title} sub={c.note} when={hm(c.updatedAt)} tags={taskTags(c)} onClick={() => onOpen(c.target)} />
+            <Row dot={c.status} name={seenName(c.target)} line={c.title} sub={c.note} when={hm(c.updatedAt)} tags={taskTags(c)} onClick={() => onOpen(c.target)} />
             {orphanActions?.(c)}
           </div>
         ))}
@@ -148,7 +148,7 @@ export function TaskPanel({ width, onWidth, cards, activities, onOpen, top, bott
 
         <Sec title={tr('오늘 끝난 일', 'Done today')} count={doneToday.length} open={showDone} onToggle={() => setShowDone((v) => !v)} />
         {showDone && doneToday.map((c) => (
-          <Row key={c.id} dot={c.status} name={c.target} line={c.title} sub={c.note} when={hm(c.updatedAt)} onClick={() => onOpen(c.target)} dim />
+          <Row key={c.id} dot={c.status} name={seenName(c.target)} line={c.title} sub={c.note} when={hm(c.updatedAt)} onClick={() => onOpen(c.target)} dim />
         ))}
         {showDone && hidden > 0 && <div className="tempty">{tr(`어제 이전에 끝났거나 오래된 ${hidden}개는 숨김`, `${hidden} older items hidden`)}</div>}
 

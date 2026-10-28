@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { assistant, setAssistant, setLang } from '../i18n';
 import appSrc from '../App.tsx?raw';
-import { appRoots, classifyWorkspace, closableByShortcut, groupByProject, projectDir, isOrchestratorName, nextOrchestratorName, orchView, parseAgents, type Session, toolsWay, withinRoots, sessionsToStop } from './session';
+import { agentState, appRoots, classifyWorkspace, closableByShortcut, groupByProject, projectDir, isOrchestratorName, nextOrchestratorName, orchView, parseAgents, seenName, type Session, toolsWay, withinRoots, sessionsToStop } from './session';
 
 afterEach(() => { setLang('ko'); setAssistant(null); });
 
@@ -463,5 +463,30 @@ describe('언어를 바꿔도 참모는 참모 — 기본 이름이 참모↔Cha
     setLang('ko');
     expect(isOrchestratorName('Chammo')).toBe(true);
     expect(groupByProject(parseAgents(JSON.stringify([{ id: 'c', cwd: hq, kind: 'background', state: 'working', name: 'Chammo-2 · Dev' }]), DEV), hq).helpers).toEqual([]);
+  });
+});
+
+describe('agentState — 세션 한 줄의 상태(메인 칸·바탕 대화창이 같은 규칙)', () => {
+  it('선택지·권한 창(status waiting)은 물어봄, 일하면 일함, 끝냄(done)·쉼은 쉼', () => {
+    expect(agentState({ status: 'waiting', state: 'blocked' })).toBe('blocked');
+    expect(agentState({ status: 'busy' })).toBe('working');
+    expect(agentState({ state: 'working' })).toBe('working');
+    expect(agentState({ status: 'idle', state: 'done' })).toBe('idle');
+    expect(agentState({})).toBe('idle');
+  });
+});
+
+describe('seenName — 사람에게 보일 세션 이름(참모는 별명 먼저, 번호는 안 보이게 — 2026-10-28)', () => {
+  it('참모는 별명만, 별명이 없으면 번호 뺀 기본 이름', () => {
+    expect(seenName('참모-8 · 디자인 담당')).toBe('디자인 담당');
+    expect(seenName('참모 · 회사 비서')).toBe('회사 비서');
+    expect(seenName('참모-3')).toBe('참모');
+  });
+  it('같이 보이는 참모와 이름이 겹칠 때만 꼬리(displayName 과 같은 셈)', () => {
+    expect(seenName('참모-3', [{ name: '참모-3' }, { name: '참모' }])).toBe('참모 C');
+  });
+  it('프로젝트 세션은 끝 번호가 이름의 일부 — 그대로(별명이 붙었으면 별명)', () => {
+    expect(seenName('shop-app-2')).toBe('shop-app-2');
+    expect(seenName('cart-lab')).toBe('cart-lab');
   });
 });

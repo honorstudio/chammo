@@ -90,3 +90,16 @@ fn 단톡방_일반_말·반응은_안_울리고_부른_말은_울린다() {
     assert!(decide(&r("react"), &[], &set).is_none());
     assert!(decide(&r("delivered"), &[], &set).is_some());
 }
+
+#[test]
+fn 참모를_안_부른_사람_말도_알린다() {
+    // 사람 말은 이제 참모에게 안 넘긴다(note human) — 그래도 사람에겐 알려야 한다
+    let a = decide(&rec("human", "human"), &[], &Settings::default()).unwrap();
+    assert_eq!(a.title, "하린");
+}
+
+#[test]
+fn 부름이_꺼져_사람에게만_온_남의_참모_말도_알린다() {
+    // 10-28: 꺼짐(기본)에선 남의 참모 말이 내 참모에게 안 가고 사람에게만(note to-human) — 사람이 봐야 하니 울린다
+    assert_eq!(decide(&rec("to-human", "agent"), &[], &Settings::default()).unwrap().title, "하린의 참모");
+}

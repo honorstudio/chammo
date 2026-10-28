@@ -19,7 +19,11 @@ const MAX_REQ: usize = crate::mobile_files::MAX_ATTACH + 1024 * 1024;
 /// 한 연결에 모으는 중인 요청 수 상한
 const MAX_PARTS: usize = 16;
 /// 터널로 넘기는 요청 머리 — 그 밖은 버린다(Host·Origin 은 이쪽이 정한다)
-const PASS_HEADERS: &[&str] = &["authorization", "content-type", "range", "accept"];
+const PASS_HEADERS: &[&str] = &["authorization", "content-type", "range", "accept", GZ];
+/// 폰이 응답 압축을 부탁하는 머리(phone-web/hub.ts GZ) — 압축한 답에도 같은 머리를 단다. 옛 폰은 안 보내서 그대로 간다
+pub const GZ: &str = "x-chammo-gz";
+/// 이보다 작은 답은 압축 안 한다(머리값이 더 든다)
+const GZ_MIN: usize = 1024;
 
 /// 이 컴퓨터가 아는 중계 폰 줄과 열쇠 — 시험은 가짜
 pub trait Lines {
@@ -182,6 +186,27 @@ pub fn resp_chunks(id: u64, r: &Resp, head_only: bool) -> Vec<Vec<u8>> {
             m.to_string().into_bytes()
         })
         .collect()
+}
+
+/// 응답 조각 — 폰이 부탁했고(GZ) 글 답이면 gzip 해서. 대화 기록 JSON 이 4~5배 준다(2026-10-27 느린 셀룰러: 1.4MB 가 터널에서 2.4MB 라 20초 한도에 걸렸다).
+/// 그림·나눠 받기(Range)·200 아닌 답·HEAD 는 그대로
+pub fn reply_chunks(req: &TReq, r: &Resp) -> Vec<Vec<u8>> {
+    let head = req.method == "HEAD";
+    let asked = req.headers.iter().any(|(k, v)| k == GZ && v == "1") && !req.headers.iter().any(|(k, _)| k == "range");
+    let texty = r.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("content-type")).is_some_and(|(_, v)| {
+        let v = v.to_ascii_lowercase();
+        v.starts_with("text/") || ["json", "javascript", "xml", "svg"].iter().any(|x| v.contains(x))
+    });
+    if head || !asked || !texty || r.status != 200 || r.body.len() < GZ_MIN {
+        return resp_chunks(req.id, r, head);
+    }
+    use std::io::Write;
+    let mut z = flate2::write::GzEncoder::new(Vec::with_capacity(r.body.len() / 3), flate2::Compression::new(6));
+    let Some(body) = z.write_all(&r.body).ok().and_then(|_| z.finish().ok()) else { return resp_chunks(req.id, r, head) };
+    // 길이는 압축 전 값이라 뺀다(폰이 풀어서 읽는다)
+    let mut headers: Vec<_> = r.headers.iter().filter(|(k, _)| !k.eq_ignore_ascii_case("content-length")).cloned().collect();
+    headers.push((GZ, "1".into()));
+    resp_chunks(req.id, &Resp { status: r.status, headers, body }, false)
 }
 
 fn text(status: u16, t: &str) -> Resp {

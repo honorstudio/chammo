@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cleanLabel, displayName, dupRenames, labelRenames, nickProblem, RENAME_MAX, RENAME_RETRY_MS, renamesToSend, renameTo, shownName, splitOrchName, withNick, nickChange } from './orchLabel';
+import { cleanLabel, displayName, dropSig, dupRenames, labelRenames, nickProblem, RENAME_MAX, RENAME_RETRY_MS, renamesToSend, renameTo, shownName, splitOrchName, withNick, nickChange } from './orchLabel';
 
 describe('cleanLabel — 참모 별명(개발·디자인 등, 사용자 마음대로. 비우면 설정 이름으로 돌아감)', () => {
   it('앞뒤 공백을 떼고 24자까지, 비었으면 null(설정 이름)', () => {
@@ -153,5 +153,20 @@ describe('nickChange — 프로필 창 이름 칸: 바뀌었을 때만 바꿀 �
     expect(nickChange('참모 업데이트', ' 참모 고치기')).toBe('참모 고치기');
     expect(nickChange('참모 업데이트', '')).toBe('');
     expect(nickChange('', '디자인')).toBe('디자인');
+  });
+});
+
+describe('dropSig — 다른 참모가 본문 첫머리에 단 서명(머리에 보낸 쪽이 이미 보인다, 2026-10-28)', () => {
+  it('번호 이름·전체 이름·별명 서명을 뗀다', () => {
+    expect(dropSig('참모-8: 운영 캡처 왔어', '참모-8 · 디자인 담당')).toBe('운영 캡처 왔어');
+    expect(dropSig('참모-8 · 디자인 담당: 운영 캡처 왔어', '참모-8 · 디자인 담당')).toBe('운영 캡처 왔어');
+    expect(dropSig('디자인 담당 : 다 했어', '참모-8 · 디자인 담당')).toBe('다 했어');
+    expect(dropSig('[참모-8] 다 했어', '참모-8 · 디자인 담당')).toBe('다 했어');
+    expect(dropSig('참모-3:\n줄바꿈 뒤 본문', '참모-3')).toBe('줄바꿈 뒤 본문');
+  });
+  it('서명이 아니면 그대로 — 이름으로 시작하는 문장·다른 사람 이름', () => {
+    expect(dropSig('참모-8 쪽 일은 끝났어', '참모-8 · 디자인 담당')).toBe('참모-8 쪽 일은 끝났어');
+    expect(dropSig('참모-2: 이건 남의 서명', '참모-8 · 디자인 담당')).toBe('참모-2: 이건 남의 서명');
+    expect(dropSig('참모-8:', '참모-8')).toBe('참모-8:'); // 서명만 있고 본문이 없으면 지우지 않는다
   });
 });

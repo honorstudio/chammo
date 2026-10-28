@@ -9,7 +9,7 @@
 import { tr } from '../i18n';
 import { findTarget } from './inbox';
 import { splitOrchName } from './orchLabel';
-import type { Session } from './session';
+import { seenName, type Session } from './session';
 import type { TaskEvent } from './tasks';
 
 const H = 3600_000;
@@ -119,9 +119,12 @@ function mine(events: TaskEvent[], orch: { id: string; name: string }) {
 
 const tsOf = (e: TaskEvent) => Date.parse(e.ts);
 
-/** 참모를 화면에 부르는 말 — 별명, 없으면 기본 이름 */
-const orchLabel = (sessions: Session[], base?: string, full?: string) =>
-  (full && splitOrchName(full).nick) || (base && sessions.map((s) => splitOrchName(s.name)).find((n) => n.base === base)?.nick) || base || full || '';
+/** 참모를 화면에 부르는 말 — 별명 있는 이름 먼저(기록의 전체 이름 → 지금 그 번호의 세션), 없으면 번호 뺀 기본 이름(seenName) */
+const orchLabel = (sessions: Session[], base?: string, full?: string) => {
+  const live = base ? sessions.find((s) => splitOrchName(s.name).base === base)?.name : undefined;
+  const n = [full, live].find((x) => x && splitOrchName(x).nick) ?? full ?? live ?? base;
+  return n ? seenName(n) : '';
+};
 
 type Opts = {
   events: TaskEvent[]; sessions: Session[]; orch: { id: string; name: string }; now: number;
@@ -220,7 +223,7 @@ function collect(o: Opts, nested: boolean) {
   for (const r of rows.sort((x, y) => Date.parse(x.a.send.ts) - Date.parse(y.a.send.ts))) {
     // 목표는 프로젝트를 걸쳐도 한 조각(첫 일의 프로젝트 밑), 이름표 없는 일은 프로젝트(없으면 세션 대상)마다
     const name = r.a.send.goal ?? (r.a.send.type === 'handover' ? r.a.send.title ?? '' : '');
-    const label = name ? '' : r.project || r.cell.target;
+    const label = name ? '' : r.project || seenName(r.cell.target);
     const key = name ? `g|${name}` : `e|${label}`;
     const g = groups.get(key) ?? { name, label, project: byProject ? r.project : '', first: Date.parse(r.a.send.ts), rows: [] };
     g.rows.push(r);

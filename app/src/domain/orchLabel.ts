@@ -63,6 +63,21 @@ export function displayName(name: string, label?: string, roster: { name: string
   return num ? `${me} ${tail(Number(num))}` : me;
 }
 
+/**
+ * 다른 참모가 본문 첫머리에 단 서명('참모-8: '·'참모-8 · 디자인 담당: '·'[참모-8] '·'디자인 담당: ')을 뗀다 — 받은 말 머리에
+ * 보낸 쪽(별명)이 이미 보여서 번호 이름만 한 번 더 새던 자리(2026-10-28). 보낸 쪽 이름이 아니거나 뒤에 본문이 없으면 그대로
+ */
+export function dropSig(text: string, from: string): string {
+  const { base, nick } = splitOrchName(from);
+  const names = [...new Set([from, base, nick].filter((n): n is string => !!n))].sort((a, b) => b.length - a.length);
+  for (const n of names) {
+    const rest = text.startsWith(`[${n}]`) ? text.slice(n.length + 2).match(/^\s*([\s\S]+)$/)
+      : text.startsWith(n) ? text.slice(n.length).match(/^\s*[:：]\s*([\s\S]+)$/) : null;
+    if (rest) return rest[1]!;
+  }
+  return text;
+}
+
 /** 새 참모 별명 검사 — 빈칸·이미 있는 이름·구분자(·)는 안 된다. 괜찮으면 null */
 export function nickProblem(raw: string, existing: string[]): string | null {
   const n = cleanLabel(raw);

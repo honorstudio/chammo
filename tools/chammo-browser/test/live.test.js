@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { parseResult, toolLine, readPort, enabled, createLive, liveFile, askText } = require('../src/live');
-const { chromeArgs } = require('../src/window');
+const { chromeArgs, AUTOMATION_ARG } = require('../src/window');
 const { portOpen, pageCount } = require('../src/live');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'chammo-live-'));
@@ -60,9 +60,9 @@ test('기능 스위치 — 설정에 없으면 켬, agentView:false 면 끔, 설
 });
 
 test('크롬 인자 — 켜면 빈 포트(0). 창 있는 크롬은 127.0.0.1 에만 연다(실측은 lsof)', () => {
-  assert.deepStrictEqual(chromeArgs(null, true, null, 'linux'), ['--test-type', '--remote-debugging-port=0']);
-  assert.deepStrictEqual(chromeArgs(null, false, null, 'linux'), ['--test-type']);
-  assert.deepStrictEqual(chromeArgs([1, 2], false, null, 'linux'), ['--test-type', '--window-position=1,2']);
+  assert.deepStrictEqual(chromeArgs(null, true, null, 'linux'), ['--test-type', AUTOMATION_ARG, '--remote-debugging-port=0']);
+  assert.deepStrictEqual(chromeArgs(null, false, null, 'linux'), ['--test-type', AUTOMATION_ARG]);
+  assert.deepStrictEqual(chromeArgs([1, 2], false, null, 'linux'), ['--test-type', AUTOMATION_ARG, '--window-position=1,2']);
 });
 
 test('상태 파일 — 도구 호출·응답마다 600 권한으로, 포트를 알 때만, 닫으면 지운다', () => {
@@ -86,6 +86,10 @@ test('상태 파일 — 도구 호출·응답마다 600 권한으로, 포트를 
   assert.strictEqual(fs.statSync(path.dirname(file)).mode & 0o777, 0o700);
   live.onCall('browser_click', { element: '다음' });
   assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).busy, true);
+  // 패스키 탈출구(2026-10-28) — 구글 크롬으로 바꿀 수 있는 래퍼만 표를 단다(앱 ⋯ 메뉴가 이걸 보고 단추를 보인다)
+  live.signable();
+  live.onCall('browser_click', { element: '다음' });
+  assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).signable, true);
   live.closed();
   assert.ok(!fs.existsSync(file));
   live.closed(); // 두 번 불러도 괜찮다
@@ -209,11 +213,6 @@ test('시간 초과 뒤 사람이 끝냈으면(.done 표가 맞음) 다시 불�
 
 test('시간 초과 뒤 사람이 끝냈으면 다음 아무 도구 호출(앱이 깨운 뒤 browser_snapshot)에서 카드를 치운다', async () => {
   const { live, state, done, say } = await timedOut();
-  live.onCall('browser_snapshot', {});
-  assert.ok(state().ask, '아직 안 끝났으면 그대로');
-  fs.writeFileSync(done, '1:6'); // 지난 부름 표는 무시
-  live.onCall('browser_snapshot', {});
-  assert.ok(state().ask);
   fs.writeFileSync(say, '1:7\n됐어');
   fs.writeFileSync(done, '1:7');
   live.onCall('browser_snapshot', {});
@@ -418,4 +417,92 @@ test('browser_ask_human 설명 — 시간 초과면 다시 부르기, 저장된 
   assert.ok(!head.includes('로그인·2단계'), head);
   assert.ok(head.includes('저장된 계정이 있는 로그인은 사람 몫이 아니다'), head);
   assert.match(src, /canClose: \(\) => \{[^}]*live\.pendingAsk\(\)/);
+});
+
+// 2026-10-28 윈도우 보이는 창으로 다시 띄우기(src/winshow.js) — 바꾸는 동안 크롬이 잠깐 없고 포트가 바뀐다.
+// 사람 부름이 그 틈을 '브라우저 꺼짐'으로 끝내면 사람 차례가 날아간다 → 바꾸는 중엔 살아 있다고 보고, 다 바꾼 뒤엔 새 포트로 묻는다
+test('사람 부르기 — 창을 바꾸는 동안은 꺼짐으로 안 끝나고, 새 포트를 상태 파일에 다시 적는다', async () => {
+  const root = tmp();
+  const prof = path.join(root, 'profiles', 'acme');
+  fs.mkdirSync(prof, { recursive: true });
+  fs.writeFileSync(path.join(prof, 'DevToolsActivePort'), '5000\n/devtools/browser/abc\n');
+  const asked = [];
+  const live = createLive({ profile: 'acme', root, profileDir: prof, pid: 1, ppid: 2, now: () => 7, probe: async (port) => { asked.push(port); return port === 6000 ? 1 : false; } });
+  live.onCall('browser_navigate', { url: 'https://a.com/' });
+  live.switching(true);
+  const p = live.askHuman('패스키', { pollMs: 5, timeoutMs: 2000, probeMs: 10 });
+  await new Promise((r) => setTimeout(r, 60));
+  assert.deepStrictEqual(asked, [], '바꾸는 중엔 안 묻는다');
+  fs.writeFileSync(path.join(prof, 'DevToolsActivePort'), '6000\n/devtools/browser/new\n');
+  live.switching(false);
+  live.refresh();
+  assert.strictEqual(JSON.parse(fs.readFileSync(liveFile(root, 'acme'), 'utf8')).port, 6000);
+  await new Promise((r) => setTimeout(r, 60));
+  assert.ok(asked.length > 0 && asked.every((x) => x === 6000), '새 포트로 묻는다');
+  fs.writeFileSync(path.join(root, 'live', 'acme.done'), '1:7');
+  assert.strictEqual((await p).ok, true);
+});
+
+// 2026-10-28 — 세션이 첫 부름을 버리고(Esc·시간 한도) 다시 불러 래퍼 안에서 부름 두 개가 같이 돌았다. 옛 부름이 '다 했어' 표를 먼저 읽어 지우고,
+// 10분 뒤 옛 부름이 끝나며 ask 를 {waiting:false}(이유·표 없음)로 되살려 앱에 '사람 차례 — undefined' 띠가 남고 '다 했어'가 안 먹었다
+test('사람 부르기 — 다시 부르면 앞 부름은 바로 물러나고, 다 했어 표를 가로채지 않으며, 끝난 뒤 빈 카드를 되살리지 않는다', async () => {
+  const root = tmp();
+  const prof = path.join(root, 'profiles', 'acme');
+  fs.mkdirSync(prof, { recursive: true });
+  fs.writeFileSync(path.join(prof, 'DevToolsActivePort'), PORT_FILE);
+  let t = 7;
+  const live = createLive({ profile: 'acme', root, profileDir: prof, pid: 1, ppid: 2, now: () => t, probe: async () => true });
+  live.onCall('browser_navigate', { url: 'https://a.com/' });
+  const state = () => JSON.parse(fs.readFileSync(liveFile(root, 'acme'), 'utf8'));
+  const p1 = live.askHuman('로그인', { pollMs: 5, timeoutMs: 300 });
+  await new Promise((r) => setTimeout(r, 20));
+  t = 99;
+  const p2 = live.askHuman('로그인 다시', { pollMs: 5, timeoutMs: 2000 });
+  const r1 = await p1;
+  assert.strictEqual(r1.ok, false, '앞 부름은 물러난다');
+  assert.strictEqual(state().ask.at, 7, '같은 카드(at)를 이어 쓴다 — 앱이 보던 표가 그대로 맞다');
+  assert.strictEqual(state().ask.reason, '로그인 다시');
+  fs.writeFileSync(path.join(root, 'live', 'acme.done'), '1:7');
+  assert.strictEqual((await p2).ok, true);
+  await new Promise((r) => setTimeout(r, 350)); // 앞 부름의 시간 한도가 지나도
+  assert.strictEqual(state().ask, null, '빈 카드({waiting:false})가 되살아나지 않는다');
+});
+
+test('사람 부르기 — 기다리는 중에 세션이 다른 브라우저 도구를 부르면 카드를 거두고 그 부름은 끝난다(띠와 실제 차례가 따로 놀지 않게)', async () => {
+  const root = tmp();
+  const prof = path.join(root, 'profiles', 'acme');
+  fs.mkdirSync(prof, { recursive: true });
+  fs.writeFileSync(path.join(prof, 'DevToolsActivePort'), PORT_FILE);
+  const live = createLive({ profile: 'acme', root, profileDir: prof, pid: 1, ppid: 2, now: () => 7, probe: async () => true });
+  live.onCall('browser_navigate', { url: 'https://a.com/' });
+  const state = () => JSON.parse(fs.readFileSync(liveFile(root, 'acme'), 'utf8'));
+  const p = live.askHuman('로그인', { pollMs: 5, timeoutMs: 2000 });
+  await new Promise((r) => setTimeout(r, 20));
+  live.onCall('browser_run_code', {});
+  assert.strictEqual(state().ask, null, '세션이 다시 하는 중 — 띠는 바로 내려간다');
+  assert.ok(!live.pendingAsk());
+  const t0 = Date.now();
+  assert.strictEqual((await p).ok, false);
+  assert.ok(Date.now() - t0 < 500);
+});
+
+test('사람 부르기 — 세션이 그 호출을 취소하면(cancelAsk) 카드를 거둔다', async () => {
+  const root = tmp();
+  const prof = path.join(root, 'profiles', 'acme');
+  fs.mkdirSync(prof, { recursive: true });
+  fs.writeFileSync(path.join(prof, 'DevToolsActivePort'), PORT_FILE);
+  const live = createLive({ profile: 'acme', root, profileDir: prof, pid: 1, ppid: 2, now: () => 7, probe: async () => true });
+  live.onCall('browser_navigate', { url: 'https://a.com/' });
+  const p = live.askHuman('로그인', { pollMs: 5, timeoutMs: 2000 });
+  await new Promise((r) => setTimeout(r, 20));
+  live.cancelAsk();
+  assert.strictEqual(JSON.parse(fs.readFileSync(liveFile(root, 'acme'), 'utf8')).ask, null);
+  assert.strictEqual((await p).ok, false);
+});
+
+test('시간 초과로 남은 카드도 세션이 다른 브라우저 도구를 부르면 내려간다', async () => {
+  const { live, state } = await timedOut();
+  live.onCall('browser_snapshot', {});
+  assert.strictEqual(state().ask, null);
+  assert.ok(!live.pendingAsk());
 });

@@ -288,6 +288,11 @@ describe('goalBar — 참모끼리 넘긴 일', () => {
   const view = (orch: typeof SEC, events: TaskEvent[], sessions: Session[] = [], now = NOW) =>
     goalBar({ events, sessions: [...roster, ...sessions], orch, now, seen: new Set() });
 
+  it('받는 참모가 별명이 없어도 번호 이름은 안 보인다 — 번호 뺀 기본 이름(2026-10-28)', () => {
+    const g = goalBar({ events: [hand('h-1', 0.5, { target: '참모-7', toName: '참모-7' })], sessions: [...roster, sess('참모-7', { id: 'o7' })], orch: SEC, now: NOW, seen: new Set() }).goals;
+    expect(g[0]!.cells[0]!.hand!.to).toBe('참모');
+  });
+
   it('넘긴 쪽엔 큰 일 한 줄 — 목표가 없으면 큰 일 이름으로, 받은 쪽이 시작 전이면 쉬는 중', () => {
     const g = view(SEC, [hand('h-1', 0.5)]).goals;
     expect(g.map((x) => [x.name, x.done, x.total])).toEqual([['로그인 화면 새로', 0, 1]]);

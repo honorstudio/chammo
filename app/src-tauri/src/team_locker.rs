@@ -40,7 +40,7 @@ pub struct Meta {
     pub name: String,
     pub size: u64,
     pub at: u64,
-    /// 팀 보관함 폴더(한 단계, 빈 글 = 맨 위) — 이름과 같이 봉한다
+    /// 팀 보관함 폴더 경로('계약/10월', 빈 글 = 맨 위) — 이름과 같이 봉한다. 옛 앱(0.4.3)은 한 단계만 썼다 — 그 폴더는 그대로 맨 위 폴더
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub folder: String,
     /// 빈 폴더 표시 줄(0바이트, 이름 없음) — 폴더 이름이 서버에 안 보이게 봉한 meta 안에만. 보통 파일은 안 싣는다(옛 앱과 같은 모양)
@@ -151,7 +151,7 @@ pub fn safe_file_name(name: &str) -> String {
     crate::locker_fs::safe_name(name, "파일")
 }
 
-/// 폴더 이름 — 한 단계만(빗금은 -), 빈 글 = 맨 위. '대화 파일'은 화면이 따로 쓰는 이름이라 못 쓴다
+/// 한 단계 이름(빗금은 -) — 팀 이름 폴더 같은 것. 팀 보관함 폴더 경로는 safe_path. '대화 파일'은 화면이 따로 쓰는 이름이라 못 쓴다
 pub fn safe_folder(name: &str) -> String {
     let t = name.trim();
     if t.is_empty() {
@@ -159,6 +159,39 @@ pub fn safe_folder(name: &str) -> String {
     }
     let f = crate::locker_fs::safe_name(t, "");
     if f == CHAT_FOLDER { format!("{f} 2") } else { f }
+}
+
+/// 폴더 경로 글자 상한 — 봉한 meta 암호문이 중계 상한(base64 4096자) 안에 들게(한글 3바이트 × 400 + 이름 120자)
+pub const FOLDER_MAX: usize = 400;
+
+/// 폴더 경로 — 빗금으로 나눈 칸마다 이름 규칙(경로 글자·앞 점 빼기), 빈 칸은 빠진다. 빈 글 = 맨 위.
+/// 맨 위 첫 칸만 '대화 파일'을 피한다(내려받기 폴더에서 대화 파일 자리와 겹치지 않게)
+pub fn safe_path(path: &str) -> String {
+    let parts: Vec<String> = path.split('/').map(|p| crate::locker_fs::safe_name(p.trim(), "")).filter(|p| !p.is_empty()).collect();
+    parts
+        .into_iter()
+        .enumerate()
+        .map(|(i, p)| if i == 0 && p == CHAT_FOLDER { format!("{p} 2") } else { p })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// 다듬은 경로가 상한 안인가
+pub fn path_ok(path: &str) -> Result<(), String> {
+    if path.chars().count() > FOLDER_MAX {
+        return Err(format!("폴더 경로가 너무 길어 — {FOLDER_MAX}자 안으로"));
+    }
+    Ok(())
+}
+
+/// 위 폴더 — 'a/b/c' → 'a/b', 'a' → 맨 위
+pub fn parent_of(path: &str) -> &str {
+    path.rsplit_once('/').map(|(p, _)| p).unwrap_or("")
+}
+
+/// path 가 folder 이거나 그 안인가(맨 위는 폴더가 아니다)
+pub fn under(path: &str, folder: &str) -> bool {
+    !folder.is_empty() && (path == folder || path.strip_prefix(folder).is_some_and(|r| r.starts_with('/')))
 }
 
 /// 대화 파일 묶음 이름(화면·내려받기 폴더)
@@ -289,6 +322,7 @@ fn ok(code: u16, v: Value, want: u16) -> Result<Value, String> {
     if code == want { Ok(v) } else { Err(why(code, &v)) }
 }
 
+#[derive(Clone)]
 pub struct Listing {
     pub rev: u64,
     pub usage: Usage,
@@ -311,13 +345,16 @@ pub fn fetch_list(net: &dyn Net, team: &str) -> Result<Listing, String> {
 pub fn upload(net: &dyn Net, me: &Me, to: &[Recipient], team: &str, room: &str, kind: &str, folder: &str, path: &Path, name: &str, progress: &mut dyn FnMut(u64, u64)) -> Result<FileRef, String> {
     let mut file = std::fs::File::open(path).map_err(|e| format!("파일을 못 열었어: {e}"))?;
     let plain = file.metadata().map_err(|e| e.to_string())?.len();
-    let meta = Meta { name: safe_file_name(name), size: plain, at: now_ms(), folder: safe_folder(folder), dir: false };
+    let folder = safe_path(folder);
+    path_ok(&folder)?;
+    let meta = Meta { name: safe_file_name(name), size: plain, at: now_ms(), folder, dir: false };
     send(net, me, to, team, room, kind, meta, &mut file, progress)
 }
 
 /// 빈 폴더 만들기 — 0바이트 표시 줄 하나(봉한 meta 의 dir·folder). 서버엔 16바이트 암호문 줄로만 보인다
 pub fn mkdir(net: &dyn Net, me: &Me, to: &[Recipient], team: &str, folder: &str) -> Result<FileRef, String> {
-    let folder = safe_folder(folder);
+    let folder = safe_path(folder);
+    path_ok(&folder)?;
     if folder.is_empty() {
         return Err("폴더 이름이 비었어".into());
     }
@@ -445,33 +482,39 @@ pub fn share_keys(net: &dyn Net, team: &str, opened: &[(&RemoteFile, &Opened)], 
 pub fn rename(net: &dyn Net, me: &Me, team: &str, f: &RemoteFile, o: &Opened, new_name: Option<&str>, folder: Option<&str>) -> Result<(), String> {
     let room = f.room.as_deref().unwrap_or("");
     let name = new_name.map(safe_file_name).unwrap_or_else(|| o.meta.name.clone());
-    let folder = folder.map(safe_folder).unwrap_or_else(|| o.meta.folder.clone());
+    let folder = folder.map(safe_path).unwrap_or_else(|| o.meta.folder.clone());
+    path_ok(&folder)?;
     let (iv, ct) = seal_meta(&o.k, team, room, &f.id, &Meta { name, folder, ..o.meta.clone() });
     let sig = me.keys.sign(&meta_sig_text(team, room, &f.id, me.device, &f.kh, &iv, &ct));
     let (c, v) = net.call("POST", &format!("/v0/teams/{team}/locker/files/{}/meta", f.id), Some(&json!({ "meta": { "iv": iv, "ct": ct }, "metaSig": sig })))?;
     ok(c, v, 200).map(|_| ())
 }
 
-/// 폴더 안(팀 보관함·살아 있는 것) — 대화 파일·휴지통은 폴더가 아니다
+/// 폴더 안(팀 보관함·살아 있는 것, 안쪽 폴더까지) — 대화 파일·휴지통은 폴더가 아니다
 fn in_folder<'a>(opened: &'a [(&'a RemoteFile, &'a Opened)], folder: &'a str) -> impl Iterator<Item = &'a (&'a RemoteFile, &'a Opened)> {
-    opened.iter().filter(move |(f, o)| f.kind == "file" && f.state == "live" && f.room.as_deref().unwrap_or("").is_empty() && o.meta.folder == folder)
+    opened.iter().filter(move |(f, o)| f.kind == "file" && f.state == "live" && f.room.as_deref().unwrap_or("").is_empty() && under(&o.meta.folder, folder))
 }
 
-/// 폴더 이름 바꾸기 — 그 폴더 파일·표시 줄의 meta 를 새 폴더로(이 기기 서명). 바꾼 수
+/// 폴더 이름 바꾸기·옮기기 — to = 새 경로 전체('보관/계약'). 그 폴더와 안쪽 폴더의 파일·표시 줄 meta 를 새 경로로(이 기기 서명). 바꾼 수
 pub fn rename_folder(net: &dyn Net, me: &Me, team: &str, opened: &[(&RemoteFile, &Opened)], from: &str, to: &str) -> Result<usize, String> {
-    let to = safe_folder(to);
+    let to = safe_path(to);
     if from.is_empty() || to.is_empty() {
         return Err("폴더 이름이 비었어".into());
     }
+    if under(&to, from) && to != from {
+        return Err("폴더를 자기 안으로는 못 옮겨".into());
+    }
     let mut n = 0;
     for (f, o) in in_folder(opened, from) {
-        rename(net, me, team, f, o, None, Some(&to))?;
+        let moved = format!("{to}{}", &o.meta.folder[from.len()..]);
+        path_ok(&moved)?;
+        rename(net, me, team, f, o, None, Some(&moved))?;
         n += 1;
     }
     Ok(n)
 }
 
-/// 폴더 지우기 — 안의 파일과 표시 줄을 휴지통으로(30일 안 되살리기). 옮긴 수
+/// 폴더 지우기 — 안의 파일·안쪽 폴더·표시 줄을 휴지통으로(30일 안 되살리기). 옮긴 수
 pub fn remove_folder(net: &dyn Net, team: &str, opened: &[(&RemoteFile, &Opened)], folder: &str) -> Result<usize, String> {
     if folder.is_empty() {
         return Err("맨 위는 지울 수 없어".into());

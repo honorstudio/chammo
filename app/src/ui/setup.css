@@ -235,4 +235,7 @@
 .lg-acts { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 /* 다시 시작 화면 — 무엇이 바뀌는지 세 줄(계정 되찾기 갈래 ①) */
 .lg-list { margin: 0; padding: 12px 16px 12px 30px; text-align: left; color: var(--text-2); font-size: 13px; line-height: 1.6; background: var(--surface-2); border-radius: 10px; width: 100%; box-sizing: border-box; }
+/* 숫자 대기 아래 글자 링크 — 되찾기(갈래 ②)로. 눌리는 높이는 44px */
+.lg-link { min-height: 44px; padding: 0 12px; border: 0; background: none; color: var(--text-2); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.lg-link:focus-visible { outline: 2px solid var(--accent, #2a78d6); outline-offset: 2px; border-radius: 6px; }
 .lg-go { min-width: 240px; }

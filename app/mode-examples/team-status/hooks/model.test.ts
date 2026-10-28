@@ -25,7 +25,7 @@ test('live.json — 세션 목록만 뽑고 깨진 줄은 버린다', () => {
   expect(parseLive('not json')).toEqual([])
 })
 
-test('참모 = HQ 폴더의 참모-N · 맡은 일 세션만, 앱 순서대로', () => {
+test('참모 = HQ 폴더의 참모-N · 별명 세션만, 앱 순서대로', () => {
   const live = [
     { sessionId: 's5', name: '참모-5 · 개발 담당', cwd: HQ, busy: true, startedAt: 1 },
     { sessionId: 's2', name: '참모-2 · 참모 업데이트', cwd: HQ, busy: false, startedAt: 1 },
@@ -35,7 +35,7 @@ test('참모 = HQ 폴더의 참모-N · 맡은 일 세션만, 앱 순서대로',
     { sessionId: 's8', name: '참모-8 · 가나 담당', cwd: `${HQ}/`, busy: false, startedAt: 1 },
   ]
   const got = pickChammos(live, { hqDir: HQ, assistants: assistantBases('참모'), order: ['s2'] })
-  expect(got.map((c) => [c.key, c.role])).toEqual([['참모-2', '참모 업데이트'], ['참모-5', '개발 담당'], ['참모-8', '가나 담당']])
+  expect(got.map((c) => [c.key, c.name, c.role])).toEqual([['참모-2', '참모 업데이트', ''], ['참모-5', '개발 담당', ''], ['참모-8', '가나 담당', '']])
   expect(got[0]!.num).toBe(2)
 })
 
@@ -48,10 +48,10 @@ test('비서 이름 — 설정 이름·옛 이름 참모·참모·Chammo, 번호
     { sessionId: 'e', name: '참모-x', cwd: HQ, busy: false, startedAt: 1 },
   ]
   const got = pickChammos(live, { hqDir: HQ, assistants: assistantBases('홍길동'), order: [] })
-  expect(got.map((c) => [c.key, c.num, c.role])).toEqual([['참모', 1, ''], ['참모-3', 3, '디자인'], ['홍길동-4', 4, '회계'], ['참모-10', 10, '정리']])
+  expect(got.map((c) => [c.key, c.num, c.name])).toEqual([['참모', 1, '참모'], ['참모-3', 3, '디자인'], ['홍길동-4', 4, '회계'], ['참모-10', 10, '정리']])
 })
 
-test('맡은 일이 이름에 없으면 orch-roles 의 첫 마디로', () => {
+test('맡은 일은 orch-roles 의 첫 마디로', () => {
   const live = [{ sessionId: 's4', name: '참모-4', cwd: HQ, busy: false, startedAt: 1 }]
   const got = pickChammos(live, { hqDir: HQ, assistants: assistantBases('참모'), order: [], roles: { '참모-4': '정리·문서 — 앱 코드는 다른 참모 몫' } })
   expect(got[0]!.role).toBe('정리·문서')
@@ -118,4 +118,34 @@ test('칸 맞추기 — 넓으면 큰 얼굴+이름+맡은 일, 좁으면 얼굴
   // 터미널은 한 줄에 하나(얼굴 글 + 이름), 줄이 모자라면 이름만
   expect(fit('terminal', 80, 10, 4).show).toBe('full')
   expect(fit('terminal', 12, 10, 4).show).toBe('face')
+})
+
+// 공개 이슈 #3 — 앱은 ' · ' 뒤를 별명으로 쓴다(앱 domain/orchLabel NICK_SEP·displayName, 2026-10-02). 이름표도 앱과 같은 규칙
+test('이름표 = 앱 규칙 — 별명이 있으면 별명, 없으면 번호 뺀 기본 이름, 겹치면 꼬리 글자. 맡은 일은 orch-roles 에서만', () => {
+  const live = [
+    { sessionId: 'a2', name: '어시스턴트-2 · 감독', cwd: HQ, busy: false, startedAt: 1 },
+    { sessionId: 'a3', name: '어시스턴트-3 · 조사', cwd: HQ, busy: false, startedAt: 1 },
+    { sessionId: 'a1', name: '어시스턴트', cwd: HQ, busy: false, startedAt: 1 },
+    { sessionId: 'a4', name: '어시스턴트-4', cwd: HQ, busy: false, startedAt: 1 },
+  ]
+  const got = pickChammos(live, { hqDir: HQ, assistants: assistantBases('어시스턴트'), order: ['a2', 'a3', 'a1', 'a4'], roles: { '어시스턴트-2': '현장 감독 — 촬영 일정까지', '어시스턴트-4': '정리' } })
+  expect(got.map((c) => [c.key, c.name, c.role])).toEqual([
+    ['어시스턴트-2', '감독', '현장 감독'],
+    ['어시스턴트-3', '조사', ''],
+    ['어시스턴트', '어시스턴트', ''],
+    ['어시스턴트-4', '어시스턴트 D', '정리'],
+  ])
+})
+
+test('이름표 — 앱 별명이 아직 진짜 이름에 안 실렸으면 live.json label(앱이 같이 쓴다)이 이긴다, 겹치면(대소문자 무시) 꼬리', () => {
+  const live = parseLive(JSON.stringify({ daemon: 1, sessions: [
+    { sessionId: 'b5', name: '참모-5 · 옛 별명', cwd: HQ, busy: false, startedAt: 1, label: '새 별명' },
+    { sessionId: 'b6', name: '참모-6', cwd: HQ, busy: false, startedAt: 1, label: 'Design' },
+    { sessionId: 'b3', name: '참모-3 · design', cwd: HQ, busy: false, startedAt: 1 },
+    { sessionId: 'b7', name: '참모-7 · 운영', cwd: HQ, busy: false, startedAt: 1, label: 7 },
+  ] }))
+  expect(live[0]!.label).toBe('새 별명')
+  expect(live[3]!.label).toBeUndefined()
+  const got = pickChammos(live, { hqDir: HQ, assistants: assistantBases('참모'), order: ['b5', 'b6', 'b3', 'b7'] })
+  expect(got.map((c) => c.name)).toEqual(['새 별명', 'Design F', 'design C', '운영'])
 })

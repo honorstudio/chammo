@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { emptyRevive, GONE_GRACE, MAX_TRIES, planRevive, reviveCard, TRY_WINDOW, type ReviveMemo } from './orchRevive';
+import { BUSY_GONE_GRACE, emptyRevive, GONE_GRACE, MAX_TRIES, planRevive, reviveCard, TRY_WINDOW, type ReviveMemo } from './orchRevive';
 
 const orch = (id: string, name = `참모-${id}`) => ({ id, sessionId: `${id}-full`, name, cwd: '/hq' });
 const A = orch('aaaaaaaa', '참모-2 · 참모 업데이트');
 const B = orch('bbbbbbbb', '참모 · 회사 비서');
-const base = { daemon: 100, stoppedByApp: () => false, alive: () => false };
+const base = { daemon: 100, stoppedByApp: () => false, stoppedOutside: () => false, alive: () => false };
 
 /** 폴링 한 번 — 살아 있는 참모 목록을 넣고 다음 기억·할 일을 받는다 */
 const poll = (m: ReviveMemo, live: typeof A[], now: number, o: Partial<Parameters<typeof planRevive>[1]> = {}) => planRevive(m, { ...base, live, now, ...o });
@@ -57,6 +57,32 @@ describe('planRevive — 참모가 앱이 끄지 않았는데 목록에서 사�
     const r = poll(m, [], 3000 + GONE_GRACE, { stoppedByApp: (id) => id === A.id });
     expect(r.revive).toEqual([]);
     expect(poll(r.memo, [], 3000 + GONE_GRACE * 5).revive).toEqual([]);
+  });
+
+  it('재현(#6): 앱 밖에서 claude stop 으로 끈 참모(daemon.log settled killed)도 다시 켜지 않고 잊는다', () => {
+    let m = poll(emptyRevive, [A, B], 0).memo;
+    const stoppedOutside = (id: string) => id === A.id;
+    m = poll(m, [B], 3000, { stoppedOutside }).memo;
+    const r = poll(m, [B], 3000 + GONE_GRACE, { stoppedOutside });
+    expect(r.revive).toEqual([]);
+    expect(r.memo.seen[A.id]).toBeUndefined();
+    // 기록이 10분 지나 사라져도 이미 잊었으니 켜지 않는다 — 사람이 다시 켜면 그때부터 다시 본다
+    expect(poll(r.memo, [B], 3000 + TRY_WINDOW * 2).revive).toEqual([]);
+    expect(poll(r.memo, [A, B], 3000 + TRY_WINDOW * 2).memo.seen[A.id]).toBeDefined();
+  });
+
+  it('끈 기록이 늦게 와도(사라진 뒤 GONE_GRACE 안) 켜지 않는다 — 기록은 사라지고 1초 안에 적힌다(실측 0.7초)', () => {
+    let m = poll(emptyRevive, [A], 0).memo;
+    m = poll(m, [], 3000).memo; // 아직 기록 없음
+    const r = poll(m, [], 3000 + GONE_GRACE, { stoppedOutside: (id) => id === A.id });
+    expect(r.revive).toEqual([]);
+  });
+
+  it('앱 밖에서 끈 다른 참모 기록은 이 참모 판단에 안 끼어든다 — 갑자기 죽은 참모는 그대로 켠다', () => {
+    let m = poll(emptyRevive, [A, B], 0).memo;
+    const stoppedOutside = (id: string) => id === B.id;
+    m = poll(m, [], 3000, { stoppedOutside }).memo;
+    expect(poll(m, [], 3000 + GONE_GRACE, { stoppedOutside }).revive.map((x) => x.id)).toEqual([A.id]);
   });
 
   it('관리 프로그램(daemon)이 다시 켜져 꺼진 것은 재시작 복구 몫 — 여기선 손대지 않는다', () => {
@@ -139,5 +165,24 @@ describe('reviveCard — 멈췄을 때 결정 대기함 카드(작업 기록 sen
     expect(String(ask.note)).toContain('참모 업데이트');
     expect(String(ask.note)).toContain(String(MAX_TRIES));
     expect(String(reviveCard(orch('cccccccc', '참모'), 't', 'r2')[1].note)).not.toContain('참모 참모');
+  });
+});
+
+// 2026-10-26 부팅 직후: 데몬이 '응답 없음'으로 참모를 다시 켜는 동안 목록에서 잠깐 빠지면, 10초 만에 앱도 또 켜서 다시 켜기가 겹쳤다.
+// 맥이 바쁘면 참모가 돌아올 틈을 더 준다
+describe('planRevive — 맥이 바쁘면 다시 켜기를 늦춘다', () => {
+  it('바쁘면 GONE_GRACE 로는 안 켜고 BUSY_GONE_GRACE 가 지나야', () => {
+    let m = poll(emptyRevive, [A], 0, { busy: true }).memo;
+    m = poll(m, [], 3000, { busy: true }).memo;
+    expect(poll(m, [], 3000 + GONE_GRACE + 1, { busy: true }).revive).toEqual([]);
+    expect(poll(m, [], 3000 + BUSY_GONE_GRACE + 1, { busy: true }).revive.map((x) => x.id)).toEqual([A.id]);
+  });
+  it('바쁜 동안 다시 켜기 사이도 넓힌다 — 30초마다 또 켜지 않게', () => {
+    let m = poll(emptyRevive, [A], 0, { busy: true }).memo;
+    m = poll(m, [], 1000, { busy: true }).memo;
+    const r = poll(m, [], 1000 + BUSY_GONE_GRACE + 1, { busy: true });
+    expect(r.revive.length).toBe(1);
+    expect(poll(r.memo, [], 1000 + BUSY_GONE_GRACE + 1 + 31_000, { busy: true }).revive).toEqual([]);
+    expect(poll(r.memo, [], 1000 + BUSY_GONE_GRACE + 1 + BUSY_GONE_GRACE + 1, { busy: true }).revive.length).toBe(1);
   });
 });

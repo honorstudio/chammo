@@ -60,6 +60,8 @@ export type Config = {
   talkAnywhere?: boolean;
   /** 숨은 칸 — 'internal' 이면 사용 신호를 우리 시험 기기로 따로 센다(Rust usage_ping). 화면엔 없고 저장 때 그대로 지나간다 */
   pingChannel?: string;
+  /** 브라우저 칸 주소창 기본 검색 — '' 구글 · 'naver' 네이버 */
+  searchEngine?: string;
 };
 /** 설정 읽기 — 새 설치면 기본값(GitHub 아이디는 gh 로 채워 본다) */
 export const readConfig = () => invoke<Config>('read_config');
@@ -167,6 +169,8 @@ export const setOrchRole = (name: string, role: string, fresh = false) => invoke
 export const stopSession = (id: string, why: string) => invoke<string>('stop_session', { id, why });
 /** 최근 10분 안에 앱이 끄거나 지운 세션 번호 — 참모 되살리기(domain/orchRevive)가 사람이 끈 참모는 안 켠다 */
 export const appStoppedRecently = () => invoke<string[]>('app_stopped_recently');
+/** 최근 10분 안에 앱 밖(터미널·스크립트)에서 claude stop 으로 꺼진 세션 번호 — daemon.log(#6). 못 읽으면 빈 목록 */
+export const daemonStoppedRecently = () => invoke<string[]>('daemon_stopped_recently');
 /** 세션을 끄고 목록에서도 지운다(claude stop + rm). 대화 기록 파일은 남는다 */
 export const removeSession = (id: string, why: string) => invoke<string>('remove_session', { id, why });
 
@@ -178,8 +182,11 @@ export const readTasksSince = (from: number | undefined, id: string | undefined)
 export const spawnLines = (sessionId: string, from: number) => invoke<{ lines: string[]; next: number } | null>('spawn_lines', { sessionId, from });
 /** 참모가 띄운 분신(Agent) 기록 꼬리 — ids = Agent 호출 tool_use id */
 export const subagentTails = (sessionId: string, ids: string[]) => invoke<{ toolUseId: string; agentId: string; mtime: number; tail: string }[]>('subagent_tails', { sessionId, ids });
-export const readTranscriptTails = (sessionIds: string[]) =>
-  invoke<Record<string, string>>('read_transcript_tails', { sessionIds });
+/** tail = 끝에서 몇 바이트(없으면 256KB) — 음성이 깨운 말을 못 찾을 때만 길게(DEEP_TAIL) */
+export const readTranscriptTails = (sessionIds: string[], tail?: number) =>
+  invoke<Record<string, string>>('read_transcript_tails', { sessionIds, tail });
+/** 깨운 말이 꼬리 밖일 때 다시 읽는 길이 — 그림 읽기 몇 번이면 256KB 가 2분 치였다(10-28 디자인 담당). 말 안 건 참모 답 하나에 한 번만 */
+export const DEEP_TAIL = 8 * 1024 * 1024;
 
 /** 세션 폴더 git — 커밋 안 한 변경·main 에 안 들어간 커밋(세션 자동 정리, Rust tidy_git) */
 export const tidyGit = (dirs: string[]) => invoke<{ dir: string; dirty: boolean; unmerged: boolean }[]>('tidy_git', { dirs });
@@ -383,6 +390,8 @@ export const loadSave = (json: string) => invoke<void>('load_save', { json });
 /** 로그인 풀림(login.rs) — 맥 로그인 상태(auth status + 로그인 칸 고친 시각) · 화면 판단을 폰에(<데이터>/login.json) */
 export const loginProbe = () => invoke<unknown>('login_probe');
 export const loginSave = (json: string) => invoke<void>('login_save', { json });
+/** 약관 카드 [다시 시도] — 누른 시각을 <데이터>/login-terms-retry 에(폰도 같은 파일). 재기(login_probe)가 termsRetryAt 으로 돌려준다 */
+export const loginTermsRetry = (at: number) => invoke<void>('login_terms_retry', { at });
 /** 지금 로그인 미리 갱신(login_keep) — 'dead'·'late'·null. 해석은 domain/login.readKeep */
 export const loginKeepState = () => invoke<unknown>('login_keep_state');
 

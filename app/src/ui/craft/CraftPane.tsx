@@ -7,54 +7,22 @@ import { useEffect, useRef, useState } from 'react';
 import { tr } from '../../i18n';
 import { doingLine, mirrorNote, paneShotDue, saveState, takeButton, type CraftInfo } from '../../domain/craftWin';
 import { IS_WIN } from '../../domain/reader';
-import { boxOf, coveredAt, COVERS, POPS, popOverlaps, sameBox, shown, wantStill, type Box } from '../../domain/craftTab';
+import { boxOf, COVERS, shown } from '../../domain/craftTab';
+import { usePanePlace } from '../space/panePlace';
 import { IconClose, IconDockIn, IconPower, IconSettings, IconWindowOut } from '../Icons';
 import { askPermission } from '../../data/tauri';
 import './craft.css';
 
 const EMPTY: CraftInfo = { name: '', version: '', pid: null, last: '', dirty: false, mirror: 'waiting', takeover: false, place: '' };
 
-/** 스페이스 탭 칸 자리 알리기 — 답이 "window" 면 따로 창에 떠 있다(여긴 안내만).
- *  덮이면(팝오버) 비추기는 숨고 받기를 멈추니, 그 자리에 마지막 프레임을 그림으로 깐다(still) — 검은 칸 대신 */
+/** 스페이스 탭 칸 자리 알리기 — 답이 "window" 면 따로 창에 떠 있다(여긴 안내만). 몸통은 세션 브라우저 칸과 같이 쓴다(ui/space/panePlace) */
 function useSpacePlace(app: string, on: boolean, stage: React.RefObject<HTMLElement | null>) {
-  const [elsewhere, setElsewhere] = useState(false);
-  const [still, setStill] = useState('');
-  useEffect(() => {
-    if (!on) return;
-    let last: Box | null = null;
-    let vis: boolean | null = null;
-    let lastVh = 0;
-    let frame = 0;
-    let poked = false;
-    let id = 0;
-    const tick = () => {
-      const el = stage.current;
-      if (el) {
-        const b = boxOf(el.getBoundingClientRect());
-        // 9점 훑기는 6프레임마다(초당 10번) — 매 프레임은 아깝다
-        if (frame++ % 6 === 0) {
-          const pops = [...document.querySelectorAll(POPS)].filter((p) => !el.contains(p)).map((p) => boxOf(p.getBoundingClientRect()));
-          poked = popOverlaps(b, pops) || coveredAt(b, (x, y) => document.elementFromPoint(x, y), (n) => n instanceof Node && el.contains(n));
-        }
-        const covered = !!document.querySelector(COVERS) || poked;
-        const v = shown(b, covered);
-        const vh = window.innerHeight; // 맥 제목줄 밑 깔림 재기(webpage.rs content_origin 과 같은 이유)
-        if (!sameBox(last, b) || v !== vis || vh !== lastVh) {
-          last = b;
-          vis = v;
-          lastVh = vh;
-          void invoke<string>('craft_space_place', { app, rect: b, vh, visible: v }).then((r) => setElsewhere(r === 'window'), () => {});
-          if (wantStill(b, covered)) void invoke<string>('craft_space_still', { app }).then((u) => { if (u) setStill(u); }, () => {});
-        }
-      }
-      id = requestAnimationFrame(tick);
-    };
-    id = requestAnimationFrame(tick);
-    // 따로 창이 닫히면 다시 붙도록 가끔 자리를 다시 보낸다
-    const again = setInterval(() => { last = null; }, 1500);
-    return () => { cancelAnimationFrame(id); clearInterval(again); void invoke('craft_space_detach', { app }).catch(() => {}); };
-  }, [app, on, stage]);
-  return { elsewhere, still };
+  const { answer, still } = usePanePlace(on, stage, {
+    place: (rect, vh, visible) => invoke<string>('craft_space_place', { app, rect, vh, visible }),
+    still: () => invoke<string>('craft_space_still', { app }),
+    detach: () => void invoke('craft_space_detach', { app }).catch(() => {}),
+  }, app);
+  return { elsewhere: answer === 'window', still };
 }
 
 /** 윈도우 칸 그림 — 맥 비추기 대신 그 앱 조작 채널 그림(craft_pane_shot)을 보는 중에만 1초에 한 번 이하, 참모 일이 바뀌면 바로(paneShotDue) */

@@ -1,6 +1,6 @@
 // 닫히지 않은 일 — 맡긴 세션이 꺼졌는데 끝(done) 표시가 없는 일. 작업 패널 '주인 잃은 일'로 쌓이던 것을
 // 그 일을 맡긴 참모 대시보드 안 한 줄로 옮긴다(2026-10-02 사용자: 왜 쌓이는지·누구 것인지 모르겠다)
-import { shownName } from './orchLabel';
+import { seenName } from './session';
 import { owners } from './spaceNav';
 import type { TaskCard, TaskEvent } from './tasks';
 
@@ -26,5 +26,5 @@ export function unclosedOf(orphaned: TaskCard[], events: TaskEvent[], orchId: st
 /** 닫히지 않은 일 줄에 보일 대상 — 세션 id·세션 번호로 맡긴 일도 그 세션 이름으로, 참모면 별명만 */
 export function targetLabel(target: string, known: KnownSession[]): string {
   const k = known.find((x) => x.id === target || x.name === target || x.sessionId === target);
-  return shownName(k?.name ?? target);
+  return seenName(k?.name ?? target);
 }

@@ -1,8 +1,9 @@
-// 참모마다 '사용자에게 묻고 멈췄나' — 대화 기록을 이어 읽어(처음만 꼬리, 그 뒤는 새로 붙은 것만) 15초마다 판단. 일하는 중인 참모는 안 읽는다.
+// 참모마다 '사용자에게 묻고 멈췄나' — 대화 기록을 이어 읽어(처음만 작은 꼬리 = 살짝 보기, 그 뒤는 새로 붙은 것만) 15초마다 판단. 일하는 중인 참모는 안 읽는다.
+// 마지막 말만 보면 돼서 살짝 보기(32KB~) — 채팅 첫 읽기(256KB~2MB)를 참모마다 받아 느린 셀룰러 첫 화면이 7MB 였다(2026-10-27)
 // 읽은 김에 참모 바꾸기 줄의 상태 한 줄(orchLine)도 — 일하는 중이면 '일하는 중'만
 import { makePoller, RESUME_EVENT, RESUME_LATER_MS } from '../../domain/poller';
 import { useEffect, useRef, useState } from 'react';
-import { readTranscript } from '../../data/web';
+import { peekTranscript } from '../../data/web';
 import { appendChat, parseChat, type ChatItem } from '../../domain/chat';
 import { orchAsk } from '../../domain/mobile';
 import type { Session } from '../../domain/session';
@@ -25,7 +26,7 @@ export function useOrchAsks(orchs: Session[]): { asks: Record<string, Ask>; line
         if (!o.sessionId || o.state === 'working') { out[o.id] = null; ln[o.id] = o.state === 'working' ? '일하는 중' : ''; continue; }
         try {
           const had = mem.current.get(o.sessionId);
-          const c = await readTranscript(o.sessionId, had?.next);
+          const c = await peekTranscript(o.sessionId, had?.next);
           const items = c.reset ? parseChat(c.text) : c.text ? appendChat(had?.items ?? [], c.text) : had?.items ?? [];
           mem.current.set(o.sessionId, { items, next: c.next || undefined }); // 0 이면 다음에도 '처음'으로(from 0 은 기록 전체를 읽는다)
           out[o.id] = orchAsk(items, o.state);

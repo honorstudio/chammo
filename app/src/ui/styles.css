@@ -20,6 +20,8 @@
   --text: #1d1d20;
   --text-2: #4a4a52;
   --text-3: #8a8a92;
+  /* 모드 안 흐린 글(dimColor·inactive·gray) — 모드 칸 바탕 넷(surface·surface-2·panel·bg)에서 4.5:1 이상(#4). 앱 크롬의 --text-3 은 그대로 */
+  --text-dim: #6a6a72;
   /* 앱 기본 강조는 무채색 — 색은 참모 색(프사·그 참모 채팅 칸)과 상태색(--working·--blocked·--idle·위험)만(2026-10-02 사용자 "기본 UI 는 블랙·화이트로") */
   --accent: #1d1d20;
   --accent-ink: #ffffff;
@@ -59,6 +61,7 @@
     --text: #e7e7ea;
     --text-2: #b4b4bb;
     --text-3: #83838c;
+    --text-dim: #909098;
     --working: #5b9bff;
     --blocked: #e0a100;
     --idle: #33b77a;
@@ -947,12 +950,24 @@ button.ld-row:hover { background: var(--panel); }
 .login-card { background: var(--warn-bg); border: 1px solid var(--warn-ink); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .login-card-top { display: flex; align-items: center; gap: 8px; min-height: 32px; }
 .login-card-top b { flex: 1; min-width: 0; font-size: 13px; color: var(--text); }
+.browser-card-ask { cursor: pointer; }
+.browser-card-ask:focus-visible { outline: 2px solid var(--warn-ink); outline-offset: 2px; }
 .browser-card-why { font-size: 12px; color: var(--text); overflow-wrap: anywhere; }
-.login-card-btn { height: 30px; padding: 0 12px; font-size: 12.5px; }
+.login-card-btn { height: 30px; padding: 0 12px; font-size: 12.5px; white-space: nowrap; flex: none; }
 .login-card-where { font-size: 12px; color: var(--warn-ink); overflow-wrap: anywhere; }
 .login-card-term { height: 240px; display: flex; margin-top: 4px; }
+.terms-card-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.terms-cards { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .login-card-term > .pane { flex: 1; }
 
 /* NEW 자리 — 버튼마다 all: unset 이 position 을 지워서 파일 끝에 둔다 */
 button.has-new { position: relative; }
 button.has-new::after { content: ''; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: #ffd34d; }
+/* 끄는 중 — 따라다니는 이름표(dragPath). 메신저 따로 창도 다른 창에서 끌어 오는 표를 그려서 모든 창이 읽는 여기에 둔다 */
+.cv-drag-ghost { position: fixed; left: 0; top: 0; z-index: var(--z-drag); pointer-events: none; max-width: 260px; padding: 5px 10px; border-radius: 8px; background: var(--text); color: var(--surface); font: 600 12px/1.3 -apple-system, "Apple SD Gothic Neo", sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 8px 22px rgba(0, 0, 0, .25); }
+html.cv-dragging, html.cv-dragging * { cursor: grabbing !important; user-select: none !important; }
+/* 못 놓는 자리 — 이름 아래에 이유 한 줄(강조 대신) */
+.cv-drag-ghost.no { max-width: 380px; white-space: pre-line; background: var(--surface); color: var(--text); border: 1px solid var(--line); }
+/* 앱 카드가 새로 뜬 순간 한 줄(누르면 결정 대기함) — 토스트 칸은 클릭을 통과시키니 이 단추만 받는다. 손가락 44px */
+.toasts .toast-go { pointer-events: auto; min-height: 44px; padding: 0 14px; background: var(--surface, var(--bg)); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.toasts .toast-go:focus-visible { outline: 2px solid var(--accent, #2a78d6); outline-offset: 2px; }

@@ -187,3 +187,33 @@ describe('윈도우 경로(C:\\… · C:/…)도 링크로 — 터미널 Ctrl+�
     expect(resolveLink('c:/x/a.ts:7', '/base', '/h')).toEqual({ kind: 'file', target: 'c:/x/a.ts', line: 7 });
   });
 });
+
+import { linkParts, webHref } from './links';
+describe('webHref — 말풍선 링크는 웹 주소만(10-28 사용자 팀챗 링크, 남의 글이라 좁게)', () => {
+  it('http·https 만 그대로', () => {
+    expect(webHref('https://chammo.app/join#abc')).toBe('https://chammo.app/join#abc');
+    expect(webHref('HTTP://example.com')).toBe('HTTP://example.com');
+  });
+  it('javascript:·file:·data:·mailto:·상대 주소·빈 값은 안 연다', () => {
+    for (const h of ['javascript:alert(1)', ' javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,x', 'mailto:a@b.c', '/etc/passwd', '../x', '', null, 'https://']) expect(webHref(h)).toBeNull();
+  });
+});
+
+describe('linkParts — 맨 글 속 웹 주소를 링크 조각으로', () => {
+  it('주소 앞뒤 글은 그대로, 끝 문장부호는 뗀다', () => {
+    expect(linkParts('여기 봐 https://a.com/x?y=1. 끝')).toEqual([{ t: 'text', s: '여기 봐 ' }, { t: 'url', s: 'https://a.com/x?y=1' }, { t: 'text', s: '. 끝' }]);
+  });
+  it('주소 바로 뒤에 붙은 한글 조사는 주소가 아니다', () => {
+    expect(linkParts('https://chammo.app에서 받아')).toEqual([{ t: 'url', s: 'https://chammo.app' }, { t: 'text', s: '에서 받아' }]);
+  });
+  it('주소 속 괄호는 짝이 맞으면 남기고, 글을 닫는 괄호는 뗀다', () => {
+    expect(linkParts('(https://ko.wikipedia.org/wiki/A_(B)) 참고').filter((p) => p.t === 'url').map((p) => p.s)).toEqual(['https://ko.wikipedia.org/wiki/A_(B)']);
+  });
+  it('여러 개·줄바꿈', () => {
+    expect(linkParts('a http://x.io\nhttps://y.io b').filter((p) => p.t === 'url').map((p) => p.s)).toEqual(['http://x.io', 'https://y.io']);
+  });
+  it('주소 없으면 글 하나, javascript: 는 링크가 아니다', () => {
+    expect(linkParts('javascript:alert(1) 그냥 글')).toEqual([{ t: 'text', s: 'javascript:alert(1) 그냥 글' }]);
+    expect(linkParts('')).toEqual([]);
+  });
+});

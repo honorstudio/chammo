@@ -107,3 +107,16 @@ fn 종단_암호_받는_열쇠는_터널_열쇠와_다르고_늘_같으며_묶�
     let sig = ed25519_dalek::Signature::from_bytes(&B64.decode(k.e2e_key_sig()).unwrap().try_into().unwrap());
     vk.verify(format!("chammo-device-keys/1\n{}\n{}", k.public(), e).as_bytes(), &sig).unwrap();
 }
+
+#[cfg(not(windows))]
+#[test]
+fn 시험에선_로그인_키체인을_안_연다() {
+    // 10-27 — 카드 숫자 시험이 store() 로 진짜 키체인의 chammo-team 을 읽으려 해 사용자 화면에 암호 창이 떴다
+    if std::env::var("CHAMMO_TEAM_KEYCHAIN").is_ok_and(|s| !s.is_empty()) {
+        return;
+    }
+    let k = super::store();
+    let p = k.path.clone().expect("시험 store() 는 늘 키체인 파일을 가리킨다");
+    assert!(!p.contains("login.keychain"), "{p}");
+    assert!(!std::path::Path::new(&p).exists(), "없는 파일이라 읽기는 창 없이 실패");
+}

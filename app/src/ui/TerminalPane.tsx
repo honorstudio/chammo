@@ -13,7 +13,9 @@ import { modKey } from '../domain/keys';
 import { resizeAfterOpen } from '../domain/ptySize';
 import { followLink } from './followLink';
 import { appStoppedRecently, closePty, listSessionsRaw, openPty, openTarget, pttTarget, pttWatch, resizePty, typePty, writeClipboard, writePty } from '../data/tauri';
-import { attachedId, exitWatcher, kickedBeforeEnd, kickWatcher, linkStep, listedAlive, REATTACH_POLL, type LinkState } from '../domain/attachExit';
+import { attachedId, attachPhaseWatcher, exitWatcher, kickedBeforeEnd, kickWatcher, linkStep, listedAlive, REATTACH_POLL, type AttachPhase, type LinkState } from '../domain/attachExit';
+import { reattachEvery } from '../domain/busyGate';
+import { busyNow, turns } from './busyNow';
 import { usePttLive } from './pttLive';
 import { pendingWrites } from '../domain/ptyWrites';
 import { imeNoSwallow, imeTrace } from './imeTrace';
@@ -50,7 +52,7 @@ export const TERM_FONT = termFont(IS_WIN);
  *  claimPtt = 지구본 키 말하기를 이 창으로(채팅 입력칸에 포커스가 가면 터미널이 포커스를 안 받아서),
  *  screen = 지금 보이는 줄들 + 커서(칸, 줄) — 채팅 판이 입력칸 글을 읽는다 */
 /** type = 앱이 치는 글(채팅 보내기·Esc·지우기) — 다른 치기 길과 같은 자물쇠로(Rust pty_type). raw 는 사람이 친 키처럼 바로 */
-export type PaneApi = { write: (data: string) => void; raw: (data: string) => void; type: (keys: string[], enterMs?: number) => Promise<void>; focus: () => void; claimPtt: () => void; screen: () => { lines: string[]; cursor: [number, number] } };
+export type PaneApi = { write: (data: string) => void; raw: (data: string) => void; type: (keys: string[], enterMs?: number) => Promise<void>; focus: () => void; claimPtt: () => void; screen: (back?: number) => { lines: string[]; cursor: [number, number] } };
 
 type Props = {
   /** pty 에서 돌릴 셸 명령. `exec '<claude>' attach <id>` 처럼 절대 경로로 */
@@ -85,7 +87,8 @@ type Props = {
   /** 이 창을 밖에서 다루는 손잡이 — 입력칸에 글자 넣기(메모 → 세션에 보내기)·포커스 되돌리기(메모판 닫을 때). 창이 닫히면 null */
   inject?: (api: PaneApi | null) => void;
   /** 세션에 붙어 있나 — attach 가 'Session … has exited.' 로 끝나면 reattaching, 오래 안 돌아오면 gone, 다시 붙으면 live(domain/attachExit) */
-  onLink?: (s: LinkState) => void;
+  /** why = 붙는 단계(attaching 일 때)·'unlisted'(끊긴 채 목록을 못 읽음 — 맥이 바쁨) */
+  onLink?: (s: LinkState, why?: AttachPhase | 'unlisted') => void;
   /** 세션에 붙은 게 아닌 명령(설정의 설치·믿기)이 끝났을 때 — 끝난 터미널이 그대로 남아 다음 할 일을 몰랐다 */
   /** 터미널이 끝남 — screen = 끝날 때 버퍼 끝 글(200줄, 믿기 터미널이 왜 끝났는지 가른다) */
   onExit?: (screen: string) => void;
@@ -212,10 +215,13 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
 
     let id: number | null = null;
     let disposed = false;
+    let stopTurn = () => {};
     // 번호를 받기 전에 쓴 것(윈도우 가짜 콘솔의 첫 "커서 어디?" 답 등)은 모아 뒀다가 보낸다 — domain/ptyWrites
     const pending = pendingWrites((n, d) => void writePty(n, d));
     const write = (d: string) => pending.write(d);
-    term.onData((d) => { imeTrace?.('xterm', { d: seqShape(d) }); write(d); });
+    // 세션 화면이 오기 전(attach 안내 줄뿐)엔 포커스 보고(ESC [ I·O)를 안 보낸다 — attach 가 아직 날 입력을 받기 전이라 터미널이 '^[[I' 로 메아리쳤다(2026-10-26 부팅 직후 캡처)
+    let screenUp = false;
+    term.onData((d) => { if (!screenUp && (d === '\x1b[I' || d === '\x1b[O')) return; imeTrace?.('xterm', { d: seqShape(d) }); write(d); });
     injectRef.current?.({ write: (d) => { write(d); term.focus(); }, raw: write,
       // 번호를 받기 전(창이 막 열림)엔 자물쇠 길이 없다 — 모아 둔 쓰기로 넣고 Enter 시간만큼 기다린다
       type: (keys, enterMs) => (id != null ? typePty(id, keys, enterMs) : new Promise<void>((done) => {
@@ -224,10 +230,11 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
         setTimeout(() => { write('\r'); done(); }, enterMs);
       })),
       focus: () => term.focus(), claimPtt: () => { if (!readOnly && id != null) void pttTarget(id); },
-      screen: () => {
+      // back = 위로 밀린 줄도 그만큼 더(쓰는 중 답의 머리 '⏺' 가 화면 위로 밀려도 찾게) — cursor 는 back 이 없을 때만 줄 번호가 맞다
+      screen: (back = 0) => {
         const b = term.buffer.active;
         const lines: string[] = [];
-        for (let y = 0; y < term.rows; y++) lines.push(b.getLine(b.baseY + y)?.translateToString(true) ?? '');
+        for (let y = -Math.min(back, b.baseY); y < term.rows; y++) lines.push(b.getLine(b.baseY + y)?.translateToString(true) ?? '');
         return { lines, cursor: [b.cursorX, b.cursorY] };
       } });
     // Claude 화면에서 드래그해 선택하면 Claude 가 OSC 52 로 "클립보드에 넣어라"를 보낸다 (domain/clipboard)
@@ -302,13 +309,28 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
       relink = setInterval(() => {
         if (asking || disposed || Date.now() < next) return;
         asking = true;
-        // 앱이 끈·지운 세션이면 안 붙는다 — 꺼진 세션에 attach 하면 그 세션이 다시 켜진다. 같이 쓰는 2.5초 목록은 끄기 전 모습일 수 있어 새로 읽는다
-        void Promise.all([appStoppedRecently().catch(() => null), listSessionsRaw(true).then((j) => listedAlive(j, sid!), () => null)]).then(([stopped, alive]) => {
+        // 맥이 바쁘면 10초마다, 같이 쓰는 목록으로 — 칸마다 2.5초마다 claude agents 를 새로 띄워 부하를 더 올렸다(2026-10-26 부팅 직후)
+        const busy = busyNow();
+        next = Date.now() + reattachEvery(busy) - REATTACH_POLL;
+        // 앱이 끈·지운 세션이면 안 붙는다 — 꺼진 세션에 attach 하면 그 세션이 다시 켜진다. 같이 쓰는 2.5초 목록은 끄기 전 모습일 수 있어 한가할 땐 새로 읽는다
+        void Promise.all([appStoppedRecently().catch(() => null), listSessionsRaw(busy === 'ok').then((j) => listedAlive(j, sid!), () => null)]).then(([stopped, alive]) => {
           asking = false;
           if (disposed) return;
+          if (!gone) linkRef.current?.('reattaching', alive === null ? 'unlisted' : undefined);
           const step = linkStep({ alive, stoppedByApp: stopped ? stopped.includes(sid!) : null, since, now: Date.now() });
           // 앱이 끈 세션 — 붙지 않는다. 끈 기록(10분) 동안 남이 respawn 해 살아날 수 있어 영구 포기 말고 드물게 다시 본다(두 번째 리뷰)
           if (step === 'stopped') { next = Date.now() + 60_000; if (!gone) { gone = true; linkRef.current?.('gone'); } return; }
+          // 바쁠 땐 같이 쓰는 목록(최대 2.5초 묵음)으로 봤다 — 붙기 직전엔 새로 한 번 더(남이 claude stop 한 세션에 attach 하면 다시 켜진다, 리뷰)
+          if (step === 'attach' && busy !== 'ok') {
+            asking = true;
+            void listSessionsRaw(true).then((j) => listedAlive(j, sid!), () => null).then((sure) => {
+              asking = false;
+              if (disposed || !sure) return;
+              clearInterval(relink);
+              setEpoch((e) => e + 1);
+            });
+            return;
+          }
           if (step === 'attach') { clearInterval(relink); setEpoch((e) => e + 1); return; }
           if (step === 'gone') { next = Date.now() + 15_000; if (!gone) { gone = true; linkRef.current?.('gone'); } } // 굳은 뒤엔 드물게(새 목록은 claude 를 한 번 띄운다)
         });
@@ -323,28 +345,48 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
       for (let y = Math.max(0, b.length - 200); y < b.length; y++) lines.push(b.getLine(y)?.translateToString(true) ?? '');
       return lines.join('\n');
     };
-    void openPty(command, cwd, cols, rows, (bytes) => {
-      // 빈 조각 = attach 가 끝남(Rust spawn_pty) — 끝 글을 못 알아봐도 이걸로 안다. 끝 글(exitWatcher)이 먼저 오면 그쪽으로
-      if (!bytes.length) { if (!disposed) { onEnded(); if (!sid) exitRef.current?.(tailText()); } return; }
-      term.write(bytes);
-      if (!shown && !disposed) { shown = true; linkRef.current?.('live'); }
-      const text = dec.decode(bytes, { stream: true });
-      if (kick?.(text)) kickedAt = Date.now();
-      if (ended?.(text)) onEnded();
-    }).then((n) => {
-      if (disposed) { void closePty(n); return; }
-      id = n;
-      setPtyId(n);
-      pending.open(n);
-      if (!readOnly && document.activeElement === term.textarea) void pttTarget(n);
-      // 여는 사이 레이아웃이 자리 잡으며 크기가 바뀌었으면(앱을 막 켰을 때) 그 크기를 지금 알린다 — 안 그러면 버려진다
-      fit.fit();
-      const next = resizeAfterOpen({ cols, rows }, { cols: term.cols, rows: term.rows });
-      if (next) { cols = next.cols; rows = next.rows; void resizePty(n, cols, rows); }
-    }, (e: unknown) => {
-      // 못 열면 칸에 한 줄 — 아무 안내 없이 검은 칸으로 남았다(2026-10-11 bug-hunt)
-      if (!disposed) term.write(`\r\n\x1b[31m${tr('터미널을 못 열었어요', 'Could not open the terminal')}: ${String(e)}\x1b[0m\r\n`);
-    });
+    // attach 는 Claude Code 안내 줄(Attaching…·Waiting for session to redraw…)이 먼저 온다 — 세션 화면이 와야 붙은 것(domain/attachExit).
+    // 맥이 바쁘면 칸들이 차례로 붙는다(ui/busyNow turns) — 한꺼번에 붙자 데몬이 '응답 없음'으로 일하던 참모를 두 번 다시 켰다(2026-10-26)
+    const phaseOf = sid ? attachPhaseWatcher() : null;
+    const turnAbort = new AbortController();
+    let release: (() => void) | null = null;
+    const letGo = () => { release?.(); release = null; };
+    // 차례를 잠깐(0.4초) 넘게 기다릴 때만 '차례로 붙이는 중' — 바로 받으면 안내 없이 붙는다
+    const queuedNote = sid ? setTimeout(() => { if (!disposed) linkRef.current?.('attaching', 'queued'); }, 400) : undefined;
+    stopTurn = () => { clearTimeout(queuedNote); turnAbort.abort(); letGo(); };
+    void (sid ? turns.take(turnAbort.signal) : Promise.resolve(null)).then((r) => {
+      clearTimeout(queuedNote);
+      if (disposed) { r?.(); return; }
+      release = r;
+      return openPty(command, cwd, cols, rows, (bytes) => {
+        // 빈 조각 = attach 가 끝남(Rust spawn_pty) — 끝 글을 못 알아봐도 이걸로 안다. 끝 글(exitWatcher)이 먼저 오면 그쪽으로
+        if (!bytes.length) letGo(); // 끝났으면 다음 칸 차례로
+        if (!bytes.length) { if (!disposed) { onEnded(); if (!sid) exitRef.current?.(tailText()); } return; }
+        term.write(bytes);
+        const text = dec.decode(bytes, { stream: true });
+        if (!shown && !disposed) {
+          const ph = phaseOf ? phaseOf(text) : 'ready';
+          if (ph === 'ready') { shown = true; screenUp = true; letGo(); linkRef.current?.('live'); }
+          else if (ph) linkRef.current?.('attaching', ph);
+        }
+        if (kick?.(text)) kickedAt = Date.now();
+        if (ended?.(text)) onEnded();
+      }).then((n) => {
+        if (disposed) { void closePty(n); return; }
+        id = n;
+        setPtyId(n);
+        pending.open(n);
+        if (!readOnly && document.activeElement === term.textarea) void pttTarget(n);
+        // 여는 사이 레이아웃이 자리 잡으며 크기가 바뀌었으면(앱을 막 켰을 때) 그 크기를 지금 알린다 — 안 그러면 버려진다
+        fit.fit();
+        const next = resizeAfterOpen({ cols, rows }, { cols: term.cols, rows: term.rows });
+        if (next) { cols = next.cols; rows = next.rows; void resizePty(n, cols, rows); }
+      }, (e: unknown) => {
+        // 못 열면 칸에 한 줄 — 아무 안내 없이 검은 칸으로 남았다(2026-10-11 bug-hunt)
+        letGo();
+        if (!disposed) term.write(`\r\n\x1b[31m${tr('터미널을 못 열었어요', 'Could not open the terminal')}: ${String(e)}\x1b[0m\r\n`);
+      });
+    }, () => { /* 차례를 기다리다 칸이 닫힘 */ });
 
     const refit = () => {
       if (disposed) return;
@@ -373,6 +415,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
 
     return () => {
       disposed = true;
+      stopTurn();
       clearInterval(relink);
       pending.close();
       pathLinks.dispose();

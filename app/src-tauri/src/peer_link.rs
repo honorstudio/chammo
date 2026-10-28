@@ -154,8 +154,13 @@ pub fn compose(device: &str, who: &str, cid: &str, text: &str) -> Result<String,
 
 /// 1분 창 안의 횟수 — 넘으면 false(그때는 적지 않는다)
 pub fn allow_in(m: &mut HashMap<String, Vec<u64>>, device: &str, now: u64) -> bool {
+    allow_in_window(m, device, now, 60_000)
+}
+
+/// window(ms) 안에 PER_MIN 번까지 — 시험이 창을 줄여 쓴다(team_relay_ws)
+pub fn allow_in_window(m: &mut HashMap<String, Vec<u64>>, device: &str, now: u64, window: u64) -> bool {
     let v = m.entry(device.to_string()).or_default();
-    v.retain(|t| now.saturating_sub(*t) < 60_000);
+    v.retain(|t| now.saturating_sub(*t) < window);
     if v.len() >= PER_MIN {
         return false;
     }

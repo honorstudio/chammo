@@ -117,6 +117,13 @@ pub struct Features {
     pub computer_use: bool,
     /// 익명 사용 통계 — 하루 한 번 무작위 설치 번호·판·OS·CPU·언어를 중계에 알린다(usage_ping.rs, 나라는 서버가 Cloudflare 로). 기본 켬, 설정 > 기능에서 끈다(2026-10-24 사용자)
     pub usage_ping: bool,
+    /// 기본 참모 앱 미리 받기 — 첫 설정 뒤(쓰던 사람은 다음 켤 때) 표·PDF·슬라이드·문서·벡터를 뒤에서 깐다(craft_basics.rs → scripts/craft prefetch).
+    /// 기본 켬, 설정 > 기능에서 끈다. 나머지 8개는 쓸 때 설치(2026-10-26 사용자)
+    pub craft_basics: bool,
+    /// 떠 있는 참모 배지(OrchBubble — 앱 어느 화면에서든 누르면 참모 대화창, 시안 orch-bubble A). 기본 켬 — 앱(TS)만 읽지만 여기 없으면 저장 때 버려진다(2026-10-28 사용자)
+    pub bubble: bool,
+    /// 앱을 내려도(최소화·⌘H·창 닫기) 참모 배지를 바탕 위에(orch_bubble.rs watch). 기본 켬, bubble 을 끄면 같이 안 뜬다(2026-10-28 사용자)
+    pub bubble_desk: bool,
     /// 애니메이션 "auto"(OS 동작 줄이기·맥 부하가 높으면 저절로 줄이기) | "reduce" | "off" — 앱(TS)만 읽는다(domain/animCalm).
     /// 여기 없으면 저장 때 사라진다(2026-10-12 사용자 "부하 심하면 애니메이션 때문에 끊긴다")
     pub animation: String,
@@ -124,7 +131,7 @@ pub struct Features {
 
 impl Default for Features {
     fn default() -> Self {
-        Features { office: true, tama: true, gacha: true, review: true, voice: true, auto_revive: false, auto_tidy: true, agent_view: true, computer_use: false, usage_ping: true, animation: "auto".into() }
+        Features { office: true, tama: true, gacha: true, review: true, voice: true, auto_revive: false, auto_tidy: true, agent_view: true, computer_use: false, usage_ping: true, craft_basics: true, bubble: true, bubble_desk: true, animation: "auto".into() }
     }
 }
 
@@ -156,6 +163,8 @@ pub struct Config {
     pub talk_anywhere: bool,
     /// 숨은 칸 — "internal" 이면 사용 신호를 내부 시험 기기로 따로 센다(usage_ping.rs). 화면엔 없다
     pub ping_channel: String,
+    /// 브라우저 칸 주소창 기본 검색 — "" 구글 · "naver" 네이버(2026-10-28)
+    pub search_engine: String,
 }
 
 /// 시스템 언어(맥 ko_KR·윈도우 ko-KR 등) → 언어
@@ -187,6 +196,7 @@ pub fn default_config(home: &str, data: &Path, lang: &str, exists: impl Fn(&str)
         talk_key: String::new(),
         talk_anywhere: false,
         ping_channel: String::new(),
+        search_engine: String::new(),
     }
 }
 
@@ -206,6 +216,7 @@ pub fn owner_config() -> Config {
         talk_key: "fn".into(),
         talk_anywhere: true,
         ping_channel: String::new(),
+        search_engine: String::new(),
     }
 }
 
@@ -350,6 +361,7 @@ pub fn reload_config() -> Config {
 #[tauri::command]
 pub fn write_config<R: tauri::Runtime>(app: tauri::AppHandle<R>, config: Config) -> Result<(), String> {
     let was = current().features.computer_use;
+    let basics_was = current().features.craft_basics;
     write_file(&config)?;
     #[cfg(target_os = "macos")]
     {
@@ -360,8 +372,13 @@ pub fn write_config<R: tauri::Runtime>(app: tauri::AppHandle<R>, config: Config)
     #[cfg(not(target_os = "macos"))]
     let _ = &app;
     let now = config.features.computer_use;
+    let basics_on = crate::craft_basics::turned_on(basics_was, config.features.craft_basics);
     if let Ok(mut g) = CURRENT.write() {
         *g = Some(config);
+    }
+    // 기본 참모 앱 미리 받기를 다시 켰다 — 사람이 지운 기본 앱도 다시 받는다(craft_basics.rs)
+    if basics_on {
+        crate::craft_basics::reset_now();
     }
     // 화면 조종 — 바꿨으면 모든 프로젝트에 넣거나 빼고, 켜 둔 채 저장이면 새로 생긴 프로젝트(따로 둔 폴더 추가 등)에만
     std::thread::spawn(move || {

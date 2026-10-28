@@ -28,7 +28,11 @@ description: 참모 모드(Chammo 가 그리는 Claude Code 모드)를 새로 �
 | Text | `bold` `dimColor` `italic` `underline` `strikethrough` `inverse` `color` `backgroundColor` `wrap`(wrap·truncate·truncate-middle·truncate-end) | `size` 같은 글자 크기 |
 | 둘 다 | | 지어낸 이름 전부 — `variant` `tone` `data-*` `aria-*` |
 
-색 이름: `success` `warning` `error` `suggestion`(파랑) `inactive`(흐림) `text` `inverseText`, 터미널 색 이름(`red` `blue`…), `#hex`. 다크 모드는 앱이 맞춘다.
+색 이름: `success` `warning` `error` `suggestion`(파랑) `inactive`(흐림) `secondary`(중간 회색) `text` `inverseText`, 터미널 색 이름(`red` `blue`…), `#hex`. 다크 모드는 앱이 맞춘다.
+흐린 글(`dimColor`·`inactive`·`subtle`·`gray`)은 라이트·다크 모두 흰·회색 칸에서 4.5:1 이상으로 그려진다 — 글을 흐리게 하려고 `#hex` 회색을 직접 쓰지 않는다(다크 모드를 못 따라간다).
+
+**앱 테마 알기** — 그리기 요청마다 `e.props.scheme` 에 지금 테마(`'light'`|`'dark'`)가 온다(데스크톱은 앱 테마, 폰은 폰 화면 테마). 바뀌면 앱이 다시 그리게 한다. 색 이름 밖의 브랜드 색을 Text·Box 에 쓸 땐 이 값으로 고른다 —
+`const dark = (e.props as { scheme?: string }).scheme === 'dark'` · `color={dark ? '#ff5a5f' : '#c8102e'}`. 값이 없으면(옛 앱·시험 엔진) 라이트로 본다.
 
 ## 크기 단위
 
@@ -209,7 +213,11 @@ The mode project's session can't read this file — when you send it work, **put
 | Text | `bold` `dimColor` `italic` `underline` `strikethrough` `inverse` `color` `backgroundColor` `wrap` (wrap, truncate, truncate-middle, truncate-end) | font sizes like `size` |
 | Both | | any invented name — `variant` `tone` `data-*` `aria-*` |
 
-Color names: `success` `warning` `error` `suggestion` (blue) `inactive` (dim) `text` `inverseText`, terminal color names (`red`, `blue`…), `#hex`. Dark mode follows the app.
+Color names: `success` `warning` `error` `suggestion` (blue) `inactive` (dim) `secondary` (mid gray) `text` `inverseText`, terminal color names (`red`, `blue`…), `#hex`. Dark mode follows the app.
+Dim text (`dimColor`, `inactive`, `subtle`, `gray`) is drawn at 4.5:1 or more on white and gray panes in both light and dark — don't dim text with a `#hex` gray yourself (it won't follow dark mode).
+
+**Knowing the app theme** — every render request carries the current theme in `e.props.scheme` (`'light'`|`'dark'`; the app theme on desktop, the phone's screen theme on the phone). When it changes, the app asks for a fresh render. For brand colors outside the color names on Text/Box, pick by it —
+`const dark = (e.props as { scheme?: string }).scheme === 'dark'` · `color={dark ? '#ff5a5f' : '#c8102e'}`. If it's missing (older app, test engine), treat it as light.
 
 ## Units
 

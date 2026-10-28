@@ -15,6 +15,8 @@ pub const NOTE_MAX: usize = 40;
 /// 잘라서 올리는 그림(256px webp) 넉넉히
 pub const IMAGE_MAX: usize = 512 * 1024;
 const TEAM_ICON: &str = "team-icon";
+/// 팀 홈 커버 사진(ADR 0018) — 팀 아이콘처럼 팀장만, 판(home.json)의 cover 가 가리킨다
+const TEAM_COVER: &str = "team-cover";
 const PHOTO: &str = "photo";
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -73,6 +75,11 @@ pub fn latest_profiles(items: &[Item]) -> BTreeMap<String, &Item> {
     out
 }
 
+/// 사람마다 프로필 이름(멤버 id → 이름) — read 는 파일 id 로 푼 프로필 글. 빈 이름(명부 이름 그대로)·못 읽은 건 뺀다
+pub fn names_from(items: &[Item], read: impl Fn(&str) -> Option<Vec<u8>>) -> BTreeMap<String, String> {
+    latest_profiles(items).into_iter().filter_map(|(m, i)| read(&i.id).and_then(|b| decode(&b).ok()).filter(|p| !p.name.is_empty()).map(|p| (m, p.name))).collect()
+}
+
 /// 팀 아이콘 — 팀장이 올린 team-icon.* 중 가장 새 것(팀원이 올린 같은 이름은 무시)
 pub fn team_icon<'a>(items: &'a [Item], owners: &[String]) -> Option<&'a Item> {
     items.iter().filter(|i| i.kind == "avatar" && usable(i) && stem(&i.name) == TEAM_ICON && owners.contains(&i.by_member)).max_by_key(|i| i.at)
@@ -83,6 +90,7 @@ pub enum Slot {
     Profile,
     Photo,
     TeamIcon,
+    TeamCover,
 }
 
 /// 바꾼 뒤 치울 옛 파일 — 그 자리(slot)의 내 파일 중 keep 이 아닌 것. 팀 아이콘은 팀장 누구 것이든(팀장은 남의 파일도 지울 수 있다)
@@ -92,11 +100,16 @@ pub fn stale<'a>(items: &'a [Item], me: &str, slot: Slot, keep: &[&str]) -> Vec<
         .filter(|i| i.deleted_at.is_none() && !keep.contains(&i.id.as_str()))
         .filter(|i| match slot {
             Slot::Profile => i.kind == "profile" && i.by_member == me,
-            Slot::Photo => i.kind == "avatar" && i.by_member == me && stem(&i.name) != TEAM_ICON,
+            Slot::Photo => i.kind == "avatar" && i.by_member == me && stem(&i.name) != TEAM_ICON && stem(&i.name) != TEAM_COVER,
             Slot::TeamIcon => i.kind == "avatar" && stem(&i.name) == TEAM_ICON,
+            Slot::TeamCover => i.kind == "avatar" && stem(&i.name) == TEAM_COVER,
         })
         .map(|i| i.id.as_str())
         .collect()
+}
+
+pub fn is_team_cover(name: &str) -> bool {
+    stem(name) == TEAM_COVER
 }
 
 /// 같은 팀 다른 사람 이름으로는 못 바꾼다 — 남인 척 막기(대소문자·앞뒤 빈칸 무시)
@@ -128,7 +141,7 @@ pub fn data_url(b: &[u8]) -> Option<String> {
     image_mime(b).map(|m| format!("data:{m};base64,{}", base64::engine::general_purpose::STANDARD.encode(b)))
 }
 
-fn ext(mime: &str) -> &'static str {
+pub(crate) fn ext(mime: &str) -> &'static str {
     match mime {
         "image/webp" => "webp",
         "image/png" => "png",
@@ -180,6 +193,13 @@ pub(crate) fn bytes_of(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, 
     Ok(b)
 }
 
+/// 팀 하나의 프로필 이름 — 봉해 둔 마지막 보관함 목록과 이미 푼 프로필만 읽는다(scripts/team 이 망을 기다리지 않게).
+/// 앱이 팀 화면을 그릴 때마다 채운다 — 아직 못 푼 사람은 명부 이름만 쓴다
+pub fn cached_names(dir: &Path, kc: &dyn Store, team: &str) -> BTreeMap<String, String> {
+    let Some(v) = locker::cached(dir, kc, team) else { return BTreeMap::new() };
+    names_from(&v.items, |id| file_id_ok(id).then(|| std::fs::read(cache_dir(dir).join(id)).ok()).flatten())
+}
+
 fn team_entry(dir: &Path, team: &str) -> Result<team_relay::TeamEntry, String> {
     team_relay::load_state(dir).team(team).cloned()
 }
@@ -224,7 +244,7 @@ pub(crate) fn put(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, kind:
     r
 }
 
-fn checked_image(b: &[u8]) -> Result<&'static str, String> {
+pub(crate) fn checked_image(b: &[u8]) -> Result<&'static str, String> {
     if b.len() > IMAGE_MAX {
         return Err("그림이 너무 커(512KB 까지)".into());
     }
@@ -337,6 +357,13 @@ pub fn dnd(dir: &Path) -> bool {
 /// 프로필판을 다시 읽어야 하나 — 소켓이 알린 판이 화면이 본 판보다 새로우면
 pub fn changed(team: &str, seen: u64) -> bool {
     changed_at(team, seen, std::time::Instant::now())
+}
+
+/// 폰(/api/team-profiles·team-posts ?rev=)에 '그대로'로 답해도 되나 — 본 판이 있고, 소켓이 알린 판을 알고(맥을 다시 켜면 0 이라 모름), 그보다 새 판이 없을 때만.
+/// 물러서기(changed_at)는 안 본다 — 물러서는 동안 폰이 옛 판이면 '그대로'가 아니라 다시 읽어 실패 이유를 받는다(목록이 물러서는 중엔 중계를 안 부른다)
+pub fn phone_same(team: &str, seen: u64) -> bool {
+    let told = locker::told(team);
+    seen > 0 && told != 0 && told <= seen
 }
 
 /// 목록이 실패해 물러서는 중이면 false — 실패하면 본 판이 0 에 머물러 3초마다 영영 다시 읽었다(10-26 사고)

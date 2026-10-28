@@ -89,3 +89,32 @@ fn 글_전체는_첫_판과_고친_판() {
     all.sort();
     assert_eq!(all, vec!["aaaaaaaaaaaaaaaa1", "aaaaaaaaaaaaaaaa2"]);
 }
+
+#[test]
+fn 팀_홈_글판은_봉투_더하기를_기다리지_않는다() {
+    // 10-26 실측(fix/team-latency3) — 글판이 list() 라서 누가 새로 든 뒤 첫 팀 홈이 파일마다 봉투 더하기(11파일 = 요청 23개, 운영 약 10.7초)를 기다렸다.
+    // 글판·쓰기·고정·지우기는 목록만, 봉투 더하기는 화면 명령이 뒤 스레드로(팀 보관함 화면과 같은 길)
+    let src = include_str!("team_post.rs");
+    let code = src.split("#[cfg(test)]").next().unwrap();
+    assert!(!code.contains("locker::list("), "list_split 으로");
+    assert!(code.contains("locker::list_split("));
+    let cmd = include_str!("team_post_cmd.rs");
+    assert!(cmd.contains("share.spawn()"), "글판 명령은 봉투 더하기를 뒤 스레드로(ShareJob::spawn)");
+}
+
+#[test]
+fn 글판·쓰기·고정·지우기는_봉투_더하기_일을_버리지_않는다() {
+    // 10-27 리뷰 — board() 가 board_split 의 ShareJob 을, 쓰기·고정·지우기가 read() 의 job 을 버려서
+    // 폰(/api/team-posts)·글 쓰기만 쓰는 사람 쪽에선 나중에 든 사람이 옛 글을 영영 못 열었다
+    let src = include_str!("team_post.rs");
+    let code = src.split("#[cfg(test)]").next().unwrap();
+    assert!(!code.contains(", _) = read("), "read() 의 job 을 버리지 않는다");
+    assert!(!code.contains("|(b, _)| b"), "board_split 의 job 을 버리지 않는다");
+    let cmd = include_str!("team_post_cmd.rs");
+    assert!(cmd.matches(".spawn()").count() >= 4, "글판·쓰기·고정·지우기 명령 모두 뒤 스레드로");
+    let mobile = include_str!("mobile.rs");
+    let posts = mobile.split("fn team_posts(").nth(1).unwrap().split("\n    fn ").next().unwrap();
+    assert!(posts.contains("board_split(") && posts.contains(".spawn()"), "폰 글판도 봉투 더하기를 뒤 스레드로");
+    let post = mobile.split("fn team_post(").nth(1).unwrap().split("\n    fn ").next().unwrap();
+    assert!(post.matches(".spawn()").count() >= 2, "폰 새 글·고정도");
+}

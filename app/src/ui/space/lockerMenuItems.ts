@@ -9,6 +9,7 @@ const LABEL: Record<LockerMenuKey, () => string> = {
   open: () => tr('열기', 'Open'),
   big: () => tr('크게 보기', 'Open large'),
   send: () => tr('참모에게 보내기', 'Send to assistant'),
+  team: () => tr('팀 보관함에 올리기', 'Upload to team locker'),
   alias: () => tr('폴더에 바로가기', 'Add shortcut to folder'),
   move: () => tr('옮기기', 'Move to'),
   keep: () => tr('보관함에 넣기', 'Keep in the locker'),

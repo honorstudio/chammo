@@ -233,6 +233,11 @@ fn repo_of(dir: &Path) -> (Option<Value>, Vec<Value>) {
 
 /// 래퍼를 띄울 node — 맥은 앱이 고른 node 링크(<데이터>/tools/bin/node, 바꿔도 링크만 고치면 따라온다), 윈도우는 고른 node
 fn node_cmd(data: &Path) -> Option<String> {
+    node_for(data)
+}
+
+/// 래퍼를 띄울 node(참모 브라우저도 같은 것, hq_browser)
+pub fn node_for(data: &Path) -> Option<String> {
     let p = if cfg!(windows) { crate::browser_setup::chosen_node(data)?.0 } else { crate::browser_fix::node_link(data) };
     std::fs::metadata(&p).ok()?;
     Some(p.to_string_lossy().into_owned())

@@ -200,6 +200,69 @@ pub fn reset_chain(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<(), St
     e2e_state::mutate(dir, |s| s.need_reset = false)
 }
 
+// ── 계정 되찾기 갈래 ②(relay ADR 0007 R9) — 잃은 기기가 서버엔 살아 있을 때. 새 기기 8자리 → 사람이 웹에 손으로 → 48시간 → 여기서 마치기 ──
+
+/// 혼동 글자 뺀 32자 8자리(relay recover.ts ALPHA) — 서버가 엉뚱한 글(주소 등)을 코드라고 줘도 화면에 안 띄운다
+fn code_ok(c: &str) -> bool {
+    c.len() == 8 && c.bytes().all(|b| b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789".contains(&b))
+}
+
+/// 새 기기 화면의 요청 코드 — (코드, 끝나는 때 ms). 화면 명령(사람 손 길)에서만
+pub fn recover_code(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<(String, u64), String> {
+    let (code, v) = post(dir, kc, http, "/v0/me/recover/code", json!({}))?;
+    if code != 200 {
+        return Err(if v["error"] == "recover_open" { crate::i18n::tr("이미 기다리는 다시 시작 요청이 있어요", "A restart request is already pending").into() } else { relay::why(code, &v) });
+    }
+    let c = v["code"].as_str().unwrap_or("");
+    if !code_ok(c) {
+        return Err("서버가 준 코드 모양이 틀렸어".into());
+    }
+    Ok((c.to_string(), v["expiresAt"].as_u64().unwrap_or(0)))
+}
+
+/// 기다리는 요청 취소 — 내 요청이면 내가 그만두기, 남의 요청이면 '내가 아니에요'(서버가 7일 새 요청을 막는다). 화면·카드 사람 손 길에서만
+pub fn recover_cancel(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<(), String> {
+    let (code, v) = post(dir, kc, http, "/v0/me/recover/cancel", json!({}))?;
+    // 이미 끝났거나 다른 곳에서 취소됨(404·409) — 같은 결과
+    if code != 200 && code != 404 && code != 409 {
+        return Err(relay::why(code, &v));
+    }
+    let id = relay::load_state(dir).device_id;
+    relay::mutate_if(dir, &id, |s| s.recover = None).map(|_| ())
+}
+
+/// 48시간이 찼다 — 사람이 '다시 시작 마치기'를 눌렀다. reset 고리를 이 기기가 서명해 서버 batch(옛 컴퓨터 끊기·허용·reset)에. 화면 명령에서만
+pub fn recover_finish(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<(), String> {
+    let st = relay::load_state(dir);
+    let acc = st.account.as_ref().map(|a| a.id.clone()).ok_or("로그인 전이야")?;
+    let r = st.recover.clone().filter(|r| r.mine).ok_or_else(|| crate::i18n::tr("기다리는 내 다시 시작 요청이 없어요", "No restart request from this device").to_string())?;
+    if r.ready_at > now_ms() {
+        return Err(crate::i18n::tr("아직 기다리는 중이에요", "Still waiting").into());
+    }
+    let k = relay::device_keys(kc, &st)?;
+    let (_, c) = fetch_chain(dir, kc, http, &acc)?;
+    let body = json!({ "v": 1, "account": acc, "seq": c.hashes.len() as u64, "prev": c.head(), "by": st.device_id, "kind": "reset", "device": st.device_id, "edPub": k.public(), "e2ePub": k.e2e_public() }).to_string();
+    let link = json!({ "body": body, "sig": k.sign(&format!("chammo-chain/1\n{body}")) });
+    let (code, v) = post(dir, kc, http, "/v0/me/recover/finish", json!({ "link": link }))?;
+    if code != 200 {
+        return Err(match (code, v["error"].as_str()) {
+            (409, Some("stale_head")) => crate::i18n::tr("그새 기기 목록이 바뀌었어요 — 다시 눌러 주세요", "The device list just changed — press again").into(),
+            (409, Some("no_request" | "not_waiting")) | (410, _) => crate::i18n::tr("요청이 취소됐거나 기한이 지났어요 — 처음부터 다시 해 주세요", "The request was cancelled or expired — start again").into(),
+            _ => relay::why(code, &v),
+        });
+    }
+    relay::mutate_if(dir, &st.device_id, |s| {
+        s.pending = false;
+        s.recover = None;
+    })?;
+    // 내가 서명한 reset 이라 바로 믿는다(e2e_state::chain_of — 신원 고리가 내 열쇠)
+    e2e_state::chain_of(dir, kc, http, &st, &acc, true)?;
+    e2e_state::mutate(dir, |s| {
+        s.need_reset = false;
+        s.outside = false;
+    })
+}
+
 /// '숫자 다시' — 새 봉인(nM·nP 가 비워진다). 새 기기 화면 단추
 pub fn renew(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<(), String> {
     let st = relay::load_state(dir);
@@ -252,6 +315,14 @@ pub fn self_step(dir: &Path) -> &'static str {
     let st = relay::load_state(dir);
     let Some(acc) = st.account.as_ref().map(|a| a.id.clone()) else { return "" };
     let s = e2e_state::load(dir);
+    // 서버가 이 기기를 끊었거나 지웠다(4001·열쇠 확인 404) — 로그인돼 보여도 아무것도 안 되니 다시 로그인(10-28 윈도우)
+    if st.revoked {
+        return "relogin";
+    }
+    // 이 기기가 낸 다시 시작 요청 — 기다림·마치기(relay ADR 0007 R9). 숫자 대기보다 앞(잃은 기기는 숫자를 띄울 수 없다)
+    if let Some(r) = st.recover.as_ref().filter(|r| r.mine && !s.pins.contains_key(&acc)) {
+        return if r.ready_at <= now_ms() { "recover-ready" } else { "recover-wait" };
+    }
     if s.confirm_failed {
         "failed"
     } else if !s.pins.contains_key(&acc) && ((st.pending && s.my_np.is_empty()) || (!st.pending && s.relogin)) {
@@ -357,7 +428,7 @@ pub fn confirm_code(dir: &Path, kc: &dyn Store, http: &dyn Http, typed: &str) ->
     })
 }
 
-/// 허용 기기 쪽 — 사람이 카드를 열었다: 이 기기가 nM 을 뽑아 낸다(카드 하나에 하나, 다른 카드가 먼저면 busy)
+/// 허용 기기 쪽 — 사람이 카드 숫자 칸을 눌렀다(e2e_cmd claim): 이 기기가 nM 을 뽑아 낸다(카드 하나에 하나, 다른 카드가 먼저면 busy)
 pub fn card_open(dir: &Path, kc: &dyn Store, http: &dyn Http, target: &str) -> Result<(), String> {
     // nM 을 내기 전에 새 기기 봉인·열쇠를 적어 둔다 — 그 뒤 서버가 바꿔 보여 주면 숫자를 안 낸다(R4)
     let t = target_row(dir, kc, http, target)?;
@@ -381,7 +452,7 @@ pub fn card_open(dir: &Path, kc: &dyn Store, http: &dyn Http, target: &str) -> R
             s.card_nm.insert(target.into(), n_m);
             s.card_seen.insert(target.into(), seen);
         }),
-        409 if v["error"] == "busy" => Err("다른 기기에서 이 기기를 확인하고 있어 — 그 카드로".into()),
+        409 if v["error"] == "busy" => Err("다른 기기에서 이 기기를 확인하고 있어요 — 그 기기 카드로 하거나, 새 기기에서 '숫자 다시'를 누른 뒤 여기 칸을 다시 눌러 주세요".into()),
         _ => Err(relay::why(code, &v)),
     }
 }

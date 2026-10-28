@@ -22,6 +22,16 @@ describe('readPhoneLogin — 맥 /api/login 답', () => {
   });
 });
 
+describe('readPhoneLogin — 약관 카드(2026-10-28)', () => {
+  it('need.terms 를 계정마다 옮기고, 로그인 판단이 없어도(약관만) 읽는다', () => {
+    const v = readPhoneLogin(JSON.stringify({ need: { terms: [{ id: 'b', email: 'b@x.com', sessions: ['hq'] }, { id: 7 }], at: 9 }, flow: { state: 'idle' } }));
+    expect(v.need).toBeNull();
+    expect(v.terms).toEqual([{ id: 'b', email: 'b@x.com', sessions: ['hq'] }]);
+    expect(readPhoneLogin(JSON.stringify({ need: { terms: [{ id: 'live', email: null, sessions: [] }] } })).terms).toEqual([{ id: 'live', email: null, sessions: [] }]);
+    expect('terms' in readPhoneLogin(JSON.stringify({ need: null })) ).toBe(false);
+  });
+});
+
 describe('showCard — 홈 맨 위 카드', () => {
   it('로그인 필요거나 폰 로그인이 도는 중이면', () => {
     const idle = { state: 'idle' as const, url: null, error: null };

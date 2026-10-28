@@ -108,6 +108,8 @@ export function DirectCardView({ c, name: given, project, profile, compact, onOp
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('새 기기 화면의 숫자와 같을 때만 — 내 기기가 되고 내 메시지를 읽어요', 'Only if it matches the new device — it becomes yours and can read your messages')}</dd><dt>{c.no}</dt><dd>{tr('그 기기는 로그아웃돼요', 'That device is signed out')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{c.until ? tr('24시간 뒤 접속은 열리지만 메시지는 못 읽어요', 'After 24 hours it can connect, but it can\'t read messages') : tr('그 기기는 메시지를 못 읽은 채로 남아요', 'That device stays unable to read messages')}</dd></dl>
       ) : c.kind === 'link' && c.sub === 'device' ? (
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('그 기기가 내 기기가 돼요(메신저·내 기기끼리 말). 컴퓨터 화면을 여는 건 따로 숫자 확인', 'It becomes one of your devices (messenger, your devices talking). Opening a computer needs its own number check')}</dd><dt>{c.no}</dt><dd>{tr('그 기기는 로그아웃돼요', 'That device is signed out')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('24시간 뒤 저절로 허용돼요', 'Allowed automatically after 24 hours')}</dd></dl>
+      ) : c.kind === 'link' && c.sub === 'recover' ? (
+        <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('요청이 취소되고 7일 동안 새 요청을 막아요 — 이 기기를 쓰는 사람이 주인이니까요', 'The request is cancelled and new ones are blocked for 7 days — whoever holds this device is the owner')}</dd><dt>{c.no}</dt><dd>{tr('카드만 닫혀요 — 내가 했다면 여기서 그 기기 숫자로 허용하는 게 나아요(대화가 이어져요)', 'Only the card closes — if it was you, approving that device with its number here is better (chats carry over)')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('기다림이 끝나면 이 기기는 로그아웃되고 그 기기가 계정을 이어요', 'When the wait ends this device is signed out and that device takes over')}</dd></dl>
       ) : c.kind === 'link' && c.sub === 'phone' ? (
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('그 QR 을 연 폰이 이 컴퓨터에 사람으로 닿아요 — 끊기는 설정 > 기기 관리', 'The phone that opened the QR reaches this computer as you — unlink in Settings > Devices')}</dd><dt>{c.no}</dt><dd>{tr('그 QR 코드가 죽어요', 'The QR code dies')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('10분 뒤 없던 일이 돼요', 'It lapses after 10 minutes')}</dd></dl>
       ) : c.kind === 'link' ? (
@@ -117,7 +119,7 @@ export function DirectCardView({ c, name: given, project, profile, compact, onOp
       ) : (
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('누르면 이 세션에 네 답으로 바로 전해요 — 세션이 이어서 해요', 'Sends your answer to this session — it carries on')}</dd><dt>{c.no}</dt><dd>{tr('하지 말라고 전해요', 'Tells it not to')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('세션은 여기서 기다려요 — 다른 일은 그대로 돌아요', 'The session waits — other work goes on')}</dd></dl>
       )}
-      {dev && num.mode === 'outside' ? <div className="dc-muted">{outsideHint()}</div> : numberMode && dev ? <NumberEntry dev={dev} api={number} ready={num.ready} code={num.code} decline={(e) => answer(e, { pick: 'no' })} /> : <>
+      {dev && num.mode === 'outside' ? <div className="dc-muted">{outsideHint()}</div> : numberMode && dev ? <NumberEntry dev={dev} api={number} ready={num.ready} mine={num.mine} claim={num.claim} note={num.err} code={num.code} decline={(e) => answer(e, { pick: 'no' })} /> : <>
       {c.options.length > 0 && (
         <div className="dc-opts">{c.options.map((o, i) => <button key={i} className="dc-btn dc-no" disabled={busy} onClick={(e) => answer(e, { pick: 'option', option: i })}>{o}</button>)}</div>
       )}

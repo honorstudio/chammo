@@ -12,7 +12,7 @@ import space from './TeamSpace.tsx?raw';
 
 describe('팀 설정·내 프로필 연결', () => {
   it('팀 설정은 팀 스페이스 탭 줄 끝 톱니 하나 — 보관함 머리 끝 자리는 비우고, 고리 단추(284.png)·따라가기 스위치는 없다(시안 team-space A)', () => {
-    expect(locker).toContain('{tail ?? '); // 보관함 머리 끝 자리(team-locker 가 연 칸)
+    expect(locker).toContain('room ? null : tail ?? '); // 보관함 머리 끝 자리(team-locker 가 연 칸)
     expect(mode).toContain('tail={<></>}');
     expect(space).toContain("label={tr('팀 설정', 'Team settings')}");
     expect(mode).not.toContain('follow={{');
@@ -34,6 +34,8 @@ describe('팀 설정·내 프로필 연결', () => {
   it('대화 칸·목록 얼굴도 멤버 id 로(사진·상태), DM 머리 둘째 줄은 상태 줄, 방해 금지면 입력칸 위 한 줄', () => {
     expect(convo).toContain('<PersonOf member={convo.peer}');
     expect(convo).toContain('<PersonOf member={it.member}');
+    expect(convo).toContain("lookOf(board, member, roster).name"); // 말 위 보낸 사람 이름도 프로필 별명(목록·머리와 같게, 10-26 Karina)
+    expect(convo).toContain('lineOf(it, myName, group ? \'\' : convo.name, nameOf,');
     expect(convo).not.toMatch(/<Person /);
     expect(list).not.toMatch(/<Person /);
     expect(convo).toContain('{dnd && <div className="tmp-dnd"');

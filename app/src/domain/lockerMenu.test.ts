@@ -99,3 +99,16 @@ describe('lockerMenu — 맥 폴더 연결', () => {
     expect(flat(lockerMenu({ kind: 'file', entry: { ...own, ro: true }, folders: 0 }))).not.toContain('alias');
   });
 });
+
+describe('팀 보관함에 올리기(10-28 사용자 "참모 보관함 파일을 팀 보관함으로 못 옮긴다")', () => {
+  const own = { link: false, gone: false, vers: 1, givenBack: false };
+  it('든 팀이 있으면 파일 첫 줄 보내기 다음에 — 바로가기도(원본 내용이 올라간다)', () => {
+    expect(lockerMenu({ kind: 'file', entry: own, folders: 0, teams: true })[0]).toEqual(['open', 'big', 'send', 'team']);
+    expect(lockerMenu({ kind: 'file', entry: { ...own, link: true }, folders: 0, teams: true })[0]).toEqual(['open', 'big', 'send', 'team']);
+    expect(lockerMenu({ kind: 'file', entry: null, folders: 0, teams: true })[0]).toEqual(['open', 'big', 'send', 'team']);
+  });
+  it('팀이 없거나 원본이 없는 바로가기면 없다', () => {
+    expect(lockerMenu({ kind: 'file', entry: own, folders: 0 }).flat()).not.toContain('team');
+    expect(lockerMenu({ kind: 'file', entry: { ...own, link: true, gone: true }, folders: 0, teams: true }).flat()).not.toContain('team');
+  });
+});

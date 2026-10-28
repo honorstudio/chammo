@@ -18,6 +18,7 @@ import { MonsterNow, MonsterTab } from './MonsterTab';
 import { spriteOf } from './lcd';
 import { Sprite as Lcd } from './Sprite';
 import './pet.css';
+import { seenName } from '../../domain/session';
 
 const SLOTS: Slot[] = ['egg', 'i1', 'i2', 'r1', 'r2', 'cG', 'cD', 'cA', 'cT', 'cM', 'cS', 'cN', 'cX', 'p1', 'p2', 'p3', 'm1', 'm2'];
 const FUSED: [Slot, Egg][] = [['jA', 'fire'], ['jB', 'leaf']];
@@ -125,7 +126,7 @@ export function PetView({ file, apply, feed, who, coins, shop }: Props) {
               return (
                 <li key={`${e.t}:${i}`}>
                   <time>{hhmm(e.t)}</time>
-                  <span className="pv-by">{o && <OrchAvatar name={o.name} size={16} state="rest" color={o.color} label={o.name} />}</span>
+                  <span className="pv-by">{o && <OrchAvatar name={o.name} size={16} state="rest" color={o.color} label={seenName(o.name)} />}</span>
                   <span className="pv-what">{e.label ?? KIND[e.type]()}</span>
                   <em>{KIND[e.type]()}</em>
                 </li>

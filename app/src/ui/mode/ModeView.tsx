@@ -8,6 +8,7 @@ import { openTarget } from '../../data/tauri';
 import { hrefOk } from '../../domain/modeTree';
 import { ModeEnvCtx, Node, type Drafts, type ModeEnv } from './ModeTree';
 import { ClientSlot, ModeCtx } from './ModeClient';
+import { useScheme } from '../scheme';
 
 // 앱에서 — 링크는 맥 기본 앱으로, Client 칸은 별도 주소 방
 const ENV: ModeEnv = {
@@ -41,6 +42,9 @@ export function ModeView({ name, compact }: { name: string; /** 패널 — 머�
   const tabRef = useRef(tab);
   const paneId = useRef<string | null>(null);
   tabRef.current = tab;
+  // 지금 앱 테마 — 그리기 요청에 실어 모드 훅이 e.props.scheme 으로 안다(#4)
+  const scheme = useScheme();
+  const schemeRef = useRef(scheme);
 
   const readState = useCallback(() => invoke<HostState>('mode_state', { name }).then(setSt, () => {}), [name]);
 
@@ -54,7 +58,7 @@ export function ModeView({ name, compact }: { name: string; /** 패널 — 머�
     const id = tabRef.current ?? s.shown ?? s.panes?.[0]?.id ?? null;
     type Drawn = { node: TNode; hashes: Record<string, string> };
     const one = (component: string, instance: string) =>
-      invoke<{ tree?: unknown; client_modules?: Record<string, string>; hooked?: boolean }>('mode_render', { name, component, instance, columns, rows })
+      invoke<{ tree?: unknown; client_modules?: Record<string, string>; hooked?: boolean }>('mode_render', { name, component, instance, columns, rows, scheme: schemeRef.current })
         .then((r): Drawn => {
           if (component === 'AbovePrompt' && r?.hooked === false) bandOff.current = true;
           return { node: normalize(r?.tree), hashes: r?.client_modules ?? {} };
@@ -106,6 +110,13 @@ export function ModeView({ name, compact }: { name: string; /** 패널 — 머�
     redraw();
     return () => window.removeEventListener(MODE_EVENT, on);
   }, [name, redraw, readState]);
+
+  // 테마가 바뀌면 띠·칸을 새 테마로 다시 그린다 — props 가 달라져 호스트도 옛 트리를 안 준다
+  useEffect(() => {
+    if (schemeRef.current === scheme) return;
+    schemeRef.current = scheme;
+    redraw();
+  }, [scheme, redraw]);
 
   // 이 칸이 보이나 — 재워도 되는 모드(keepAlive:false)는 보는 칸이 다 사라진 지 5분이면 앱이 재우고, 다시 보이면 깨운다(modes_host sweep)
   useEffect(() => {

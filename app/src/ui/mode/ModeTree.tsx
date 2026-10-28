@@ -74,7 +74,7 @@ export function Node({ n, onAct, drafts }: { n: TNode; onAct: (a: Act) => void; 
       }
       const body = n.kids.length ? <Kids kids={n.kids} onAct={onAct} drafts={drafts} /> : n.label;
       return (
-        <button className={n.plain ? 'mdv-plain' : `btn ${n.primary ? 'pri' : ''}`} disabled={!a} style={n.dim ? { opacity: 0.6 } : undefined} onClick={() => a && onAct(a)}>
+        <button className={n.plain ? 'mdv-plain' : `btn ${n.primary ? 'pri' : ''}`} disabled={!a} style={n.dim ? (n.primary ? { opacity: 0.6 } : { color: 'var(--text-dim)' }) : undefined} onClick={() => a && onAct(a)}>
           {body}
         </button>
       );

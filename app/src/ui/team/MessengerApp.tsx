@@ -16,6 +16,7 @@ import { TeamMarkIcon } from './TeamFaces';
 import { TeamFile } from './TeamFile';
 import { teamMenu } from './TeamSettings';
 import { useTeamMode } from './useTeamMode';
+import { CraftOpenAsk } from '../craft/openInCraft';
 import './team.css';
 
 /** 이 창의 오른쪽 클릭은 웹뷰 기본 메뉴(다시 로드·요소 검사) 대신 — 글 칸·고른 글 위에서만 기본(붙여넣기·복사). 팀 아이콘은 우리 메뉴(10-24 사용자) */
@@ -31,11 +32,11 @@ function useQuietMenu() {
   }, []);
 }
 
-/** 넘길 내 참모(받은 팀 말을 받는 그 참모) — 한 번 묻고, 보내기는 team_handoff 한 길 */
+/** 넘길 내 참모(고른 참모 to, 없으면 받은 팀 말을 받는 그 참모) — 한 번 묻고, 보내기는 team_handoff 한 길 */
 function useHandoff(): Handoff | undefined {
   const [handTo, setHandTo] = useState('');
   useEffect(() => { void invoke<string>('team_handoff', { text: '', dry: true }).then(setHandTo, () => {}); }, []);
-  return handTo ? { name: handTo, send: (text) => invoke<string>('team_handoff', { text, dry: false }).then(() => {}) } : undefined;
+  return handTo ? { name: handTo, send: (text, to) => invoke<string>('team_handoff', { text, dry: false, to }).then(() => {}) } : undefined;
 }
 
 /** win = 주소 c(늘 'all', 옛 판은 방 id) · room = 주소 r(고를 방) */
@@ -66,13 +67,23 @@ function MessengerTeam({ room }: { room: string }) {
   if (files !== seenFiles) { setSeenFiles(files); if (files > seenFiles) setSide(true); }
   useEffect(() => { document.title = view?.team || tr('메신저', 'Messenger'); }, [view?.team]);
   const showSide = !narrow || side;
+  // 크게 보기 — 오른쪽 칸을 창 전체로(대화·팀 표 줄을 잠깐 내린다). 다시 누르거나 Esc·다른 탭이면 되돌림(10-28 사용자 "크게 봐야 하는 경우")
+  const [big, setBig] = useState(false);
+  useEffect(() => setBig(false), [tm.tabs.cur]);
+  useEffect(() => {
+    if (!big) return;
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') setBig(false); };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, [big]);
   // 대화 칸 폭을 정해 두는 건 팀 칸이 옆에 같이 있을 때만(좁은 창·팀 없음은 가운데가 창 전체)
   const sized = !narrow && !!tm.space && !!tm.chat;
   const chatW = TEAM_LIST_W + fit.convo;
   const team = view?.joined ? view.team : '';
   const send = (text: string) => (handoff ? handoff.send(text) : Promise.reject(new Error(tr('넘길 참모가 없어요', 'No assistant to hand to'))));
   return (
-    <div className={`tmx-win tmw ${narrow ? 'tmw-narrow' : ''} ${showSide ? 'tmw-open' : ''} ${folded ? 'tmw-fold' : ''}`}>
+    <div className={`tmx-win tmw ${narrow ? 'tmw-narrow' : ''} ${showSide ? 'tmw-open' : ''} ${folded ? 'tmw-fold' : ''} ${big ? 'tmw-big' : ''}`}>
+      <CraftOpenAsk />
       <nav className="tmx-win-teams" aria-label={tr('팀', 'Teams')}>
         {view?.joined && (
           <button aria-label={view.team} title={view.team} aria-haspopup="menu"
@@ -91,9 +102,10 @@ function MessengerTeam({ room }: { room: string }) {
           {tm.chat ?? <div className="tmx-win-main"><div className="tmx-win-empty">{view ? tr('아직 든 팀이 없어요 — + 로 팀을 만들거나 초대 링크로 들어와요', 'No team yet — make one with + or join with an invite link') : tr('불러오는 중…', 'Loading…')}</div></div>}
         </div>
       )}
-      {showSide && tm.space && <div className="tmw-side">{tm.space.view((p) => <TeamFile path={p} team={team} send={send} />, narrow ? () => setSide(false) : undefined)}</div>}
+      {showSide && tm.space && <div className="tmw-side">{tm.space.view((p) => <TeamFile path={p} team={team} send={send} big={big} onBig={() => setBig((b) => !b)} />, narrow ? () => setSide(false) : undefined)}</div>}
       {tm.pop}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={teamMenu(view, (kind) => tm.openPop(kind), (t) => void teamUse(t).then(() => tm.data.refresh(), () => {}))} onClose={() => setMenu(null)} />}
     </div>
   );
 }
+

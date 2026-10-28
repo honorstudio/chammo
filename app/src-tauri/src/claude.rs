@@ -349,6 +349,56 @@ pub fn app_stopped_recently() -> Vec<String> {
     recent_stops(&mut APP_STOPS.lock().unwrap_or_else(|e| e.into_inner()), std::time::Instant::now(), STOP_KEEP)
 }
 
+/// daemon.log 글 → keep 안에 `claude stop` 으로 꺼진 세션 번호(마지막 소식이 `settled <id> (killed)`).
+/// 앱 밖(터미널·스크립트)에서 끈 참모도 되살리기가 '사람이 끈 것'으로 보게(#6). 앱이 끈 것도 같은 줄이 남는다(stop_blocking 도 claude stop).
+/// 데몬이 '응답 없음'으로 죽였다 켜면 바로 claimed-spare 가 붙고, 오래 놀아서 정리(retire)한 것은 끈 게 아니다 — 둘 다 뺀다
+pub(crate) fn parse_daemon_stops(text: &str, now_ms: i64, keep_ms: i64) -> Vec<String> {
+    let mut last: std::collections::BTreeMap<&str, Option<i64>> = std::collections::BTreeMap::new();
+    let mut retired: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for line in text.lines() {
+        let Some((ts, rest)) = line.strip_prefix('[').and_then(|l| l.split_once("] [bg] bg ")) else { continue };
+        let Some((what, rest)) = rest.split_once(' ') else { continue };
+        let id = rest.get(..8).unwrap_or("");
+        if !id.chars().all(|c| c.is_ascii_hexdigit()) || id.len() != 8 || !matches!(rest.as_bytes().get(8), Some(b' ' | b':')) {
+            continue;
+        }
+        match what {
+            "settled" if rest[8..].starts_with(" (killed)") && !retired.contains(id) => {
+                let Some(at) = crate::accounts_usage::iso_ms(ts) else { continue };
+                last.insert(id, Some(at));
+            }
+            "settled" | "claimed-spare" | "spawned" => {
+                last.insert(id, None);
+                retired.remove(id);
+            }
+            "retire" => {
+                retired.insert(id);
+                last.insert(id, None);
+            }
+            _ => {}
+        }
+    }
+    last.into_iter().filter_map(|(id, at)| at.filter(|at| now_ms - at < keep_ms).map(|_| id.to_string())).collect()
+}
+
+/// 최근 10분 안에 `claude stop` 으로 꺼진 세션 번호 — ~/.claude/daemon.log 끝 256KB 만 읽는다. 못 읽으면 빈 목록(예전처럼)
+#[tauri::command]
+pub fn daemon_stopped_recently() -> Vec<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(std::path::Path::new(&crate::platform::home()).join(".claude").join("daemon.log")) else { return vec![] };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let from = len.saturating_sub(256 * 1024);
+    let mut buf = Vec::new();
+    if f.seek(SeekFrom::Start(from)).is_err() || f.read_to_end(&mut buf).is_err() {
+        return vec![];
+    }
+    let text = String::from_utf8_lossy(&buf);
+    // 중간부터 읽었으면 잘린 첫 줄은 버린다
+    let text = if from > 0 { text.split_once('\n').map_or("", |(_, t)| t) } else { &text };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+    parse_daemon_stops(text, now, STOP_KEEP.as_millis() as i64)
+}
+
 /// stop_session 의 몸통 — 폰 서버(참모 재우기)도 같은 길로
 pub fn stop_blocking(id: &str, why: &str) -> Result<String, String> {
     log_action("stop", id, why);
@@ -437,11 +487,17 @@ pub async fn read_tasks_since(from: Option<u64>, id: Option<String>) -> TasksChu
         .unwrap_or(TasksChunk { text: String::new(), next: 0, reset: true, id: String::new() })
 }
 
-/// 세션 대화 기록의 꼬리(마지막 256KB). 기록은 `~/.claude/projects/<폴더>/<sessionId>.jsonl`.
-/// 파싱은 프론트 domain/activity.ts. 없는 세션은 결과에서 빠진다
+/// 세션 대화 기록의 꼬리(마지막 256KB, tail 을 주면 그만큼 — 16MB 까지). 기록은 `~/.claude/projects/<폴더>/<sessionId>.jsonl`.
+/// 파싱은 프론트 domain/activity.ts. 없는 세션은 결과에서 빠진다. 길게는 음성이 턴을 깨운 말을 못 찾을 때만(DEEP_TAIL, 10-28)
 #[tauri::command]
-pub async fn read_transcript_tails(session_ids: Vec<String>) -> std::collections::HashMap<String, String> {
-    tauri::async_runtime::spawn_blocking(move || transcript_tails(&session_ids, 256 * 1024)).await.unwrap_or_default()
+pub async fn read_transcript_tails(session_ids: Vec<String>, tail: Option<u64>) -> std::collections::HashMap<String, String> {
+    let tail = tail_len(tail);
+    tauri::async_runtime::spawn_blocking(move || transcript_tails(&session_ids, tail)).await.unwrap_or_default()
+}
+
+/// 꼬리 길이 — 없거나 0 이면 256KB, 16MB 넘게는 안 읽는다(10초마다 도는 길이라 실수로 큰 값을 줘도 버티게)
+pub(crate) fn tail_len(tail: Option<u64>) -> u64 {
+    tail.filter(|&t| t > 0).unwrap_or(256 * 1024).min(16 * 1024 * 1024)
 }
 
 /// 대화 기록 꼬리 tail 바이트씩 — 폰 서버는 더 짧게 읽는다(꺼진 참모가 하던 일 한 줄이면 된다)
@@ -483,6 +539,11 @@ pub const PHONE_MIN_LINES: usize = 60;
 pub const PHONE_MAX: u64 = 2 * 1024 * 1024;
 /// 위로 올렸을 때 한 번에 거슬러 읽는 양
 pub const PHONE_BEFORE: u64 = 512 * 1024;
+/// 폰 참모 줄 살짝 보기(마지막 말·물음 판단) — 끝 32KB 부터 줄 8개까지, 512KB 까지만. 참모마다 PHONE_HEAD(256KB~2MB)를 받아
+/// 느린 셀룰러 첫 화면이 7MB 였다(2026-10-27)
+pub const PEEK_HEAD: u64 = 32 * 1024;
+pub const PEEK_MIN_LINES: usize = 8;
+pub const PEEK_MAX: u64 = 512 * 1024;
 
 /// 거슬러 읽은 앞 대화 — start 부터 before 까지의 온전한 줄들
 #[derive(Serialize, Debug, PartialEq)]
@@ -580,9 +641,22 @@ fn keep_at(from: Option<u64>) -> TranscriptChunk {
 
 /// 그 대화의 기록 파일(~/.claude/projects/<폴더>/<sessionId>.jsonl)
 pub(crate) fn transcript_path(session_id: &str) -> Option<std::path::PathBuf> {
-    let home = crate::platform::home();
-    let rd = std::fs::read_dir(format!("{home}/.claude/projects")).ok()?;
-    rd.flatten().map(|e| e.path().join(format!("{session_id}.jsonl"))).find(|p| p.exists())
+    static FOUND: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, std::path::PathBuf>>> = std::sync::LazyLock::new(Default::default);
+    transcript_in(std::path::Path::new(&format!("{}/.claude/projects", crate::platform::home())), session_id, &FOUND)
+}
+
+/// 찾은 자리는 기억한다 — 채팅이 일하는 동안 0.25초마다 읽는데 매번 폴더 수백 개를 뒤졌다(718개 ~3ms, 2026-10-28). 기억한 자리에 없으면 다시 찾는다
+pub(crate) fn transcript_in(base: &std::path::Path, session_id: &str, found: &std::sync::Mutex<std::collections::HashMap<String, std::path::PathBuf>>) -> Option<std::path::PathBuf> {
+    if let Some(p) = found.lock().unwrap_or_else(|e| e.into_inner()).get(session_id).filter(|p| p.exists()) {
+        return Some(p.clone());
+    }
+    let p = std::fs::read_dir(base).ok()?.flatten().map(|e| e.path().join(format!("{session_id}.jsonl"))).find(|p| p.exists());
+    let mut map = found.lock().unwrap_or_else(|e| e.into_inner());
+    match &p {
+        Some(p) => _ = map.insert(session_id.to_string(), p.clone()),
+        None => _ = map.remove(session_id),
+    }
+    p
 }
 
 /// 폰 대화 이어 읽기 — 처음은 가볍게(PHONE_*)
@@ -590,6 +664,14 @@ pub fn read_transcript_phone(session_id: &str, from: Option<u64>) -> TranscriptC
     // 못 읽으면 그 자리 그대로 — 데스크톱(chunk_or_keep)과 같게. next 0 을 주면 다음 차례가 기록 전체를 읽고 말풍선이 두 번 붙었다(코드 리뷰)
     match transcript_path(session_id) {
         Some(p) => read_chunk_with(&p, from, PHONE_HEAD, PHONE_MIN_LINES, PHONE_MAX).unwrap_or_else(|_| keep_at(from)),
+        None => keep_at(from),
+    }
+}
+
+/// 폰 참모 줄 살짝 보기 — 처음만 작은 꼬리, 그 뒤는 늘어난 줄만(read_transcript_phone 과 같은 이어 읽기)
+pub fn read_transcript_peek(session_id: &str, from: Option<u64>) -> TranscriptChunk {
+    match transcript_path(session_id) {
+        Some(p) => read_chunk_with(&p, from, PEEK_HEAD, PEEK_MIN_LINES, PEEK_MAX).unwrap_or_else(|_| keep_at(from)),
         None => keep_at(from),
     }
 }
@@ -655,6 +737,45 @@ mod task_tests {
 
 #[cfg(test)]
 mod stop_memo_tests {
+    /// daemon.log 실측 줄 모양(2.1.312, 2026-10-28) — 끄기는 `settled <id> (killed)`, 그 밖 꺼짐은 done·crashed·failed
+    const LOG: &str = "[2026-10-28T15:00:00.000Z] [bg] bg claimed-spare aaaaaaaa (shell)
+[2026-10-28T15:00:01.000Z] [bg] bg claimed-spare bbbbbbbb (shell)
+[2026-10-28T15:00:02.000Z] [bg] bg claimed-spare cccccccc (shell)
+[2026-10-28T15:00:03.000Z] [bg] bg claimed-spare dddddddd (shell)
+[2026-10-28T15:01:00.000Z] [bg] bg settled aaaaaaaa (killed)
+[2026-10-28T15:01:00.000Z] [bg] bg settled bbbbbbbb (crashed): SIGKILL (137) before init
+[2026-10-28T15:01:00.000Z] [bg] bg settled cccccccc (killed)
+[2026-10-28T15:01:00.080Z] [bg] bg claimed-spare cccccccc (respawn)
+[2026-10-28T15:01:01.000Z] [bg] bg retire dddddddd: idle-prompt, idle 8h
+[2026-10-28T15:01:01.200Z] [bg] bg settled dddddddd (killed)
+";
+    fn at(iso: &str) -> i64 {
+        crate::accounts_usage::iso_ms(iso).unwrap()
+    }
+    #[test]
+    fn claude_stop_으로_끈_세션만_고른다() {
+        let now = at("2026-10-28T15:02:00Z");
+        // a: 끔 / b: 죽음(crashed) / c: 데몬이 '응답 없음'으로 죽였다 바로 다시 켬 / d: 데몬이 오래 놀아서 정리(retire)
+        assert_eq!(super::parse_daemon_stops(LOG, now, 600_000), vec!["aaaaaaaa"]);
+    }
+    #[test]
+    fn 끈_뒤_다시_켜진_세션은_빠진다() {
+        let log = format!("{LOG}[2026-10-28T15:01:30.000Z] [bg] bg claimed-spare aaaaaaaa (respawn)\n");
+        assert!(super::parse_daemon_stops(&log, at("2026-10-28T15:02:00Z"), 600_000).is_empty());
+        let log = format!("{LOG}[2026-10-28T15:01:30.000Z] [bg] bg spawned aaaaaaaa (fleet)\n");
+        assert!(super::parse_daemon_stops(&log, at("2026-10-28T15:02:00Z"), 600_000).is_empty());
+    }
+    #[test]
+    fn 끈_기록은_10분만_본다() {
+        assert_eq!(super::parse_daemon_stops(LOG, at("2026-10-28T15:10:59Z"), 600_000), vec!["aaaaaaaa"]);
+        assert!(super::parse_daemon_stops(LOG, at("2026-10-28T15:11:01Z"), 600_000).is_empty());
+    }
+    #[test]
+    fn 깨진_줄과_모르는_모양은_넘어간다() {
+        let log = "aed] [bg] bg settled aaaaaaaa (killed)\n[깨진 시각] [bg] bg settled bbbbbbbb (killed)\n[2026-10-28T15:01:00.000Z] [bg] bg settled 1234 (killed)\n[2026-10-28T15:01:00.000Z] [bg] bg settled zzzzzzzz (killed)\n[2026-10-28T15:01:00.000Z] [supervisor] settled eeeeeeee (killed)\n";
+        assert!(super::parse_daemon_stops(log, at("2026-10-28T15:02:00Z"), 600_000).is_empty());
+        assert!(super::parse_daemon_stops("", 0, 600_000).is_empty());
+    }
     #[test]
     fn 앱이_끈_세션은_10분만_기억한다() {
         let t0 = std::time::Instant::now();
@@ -918,6 +1039,21 @@ mod chat_tests {
         let c = read_chunk_with(&p, None, PHONE_HEAD, PHONE_MIN_LINES, PHONE_MAX).unwrap();
         assert!(c.text.len() as u64 <= PHONE_HEAD, "{}", c.text.len());
         assert!(c.text.lines().count() >= PHONE_MIN_LINES);
+    }
+
+    #[test]
+    fn 참모_줄_살짝_보기는_더_가볍게() {
+        // 마지막 말 한두 개만 보면 된다 — 줄이 고르면 32KB 안, 끝 줄이 크면 줄 몇 개가 될 때까지만 넓힌다(512KB 까지)
+        let line = format!("{{\"x\":\"{}\"}}\n", "a".repeat(1000));
+        let p = file("peek", line.repeat(3000).as_bytes());
+        let c = read_chunk_with(&p, None, PEEK_HEAD, PEEK_MIN_LINES, PEEK_MAX).unwrap();
+        assert!(c.text.len() as u64 <= PEEK_HEAD, "{}", c.text.len());
+        assert!(c.text.lines().count() >= PEEK_MIN_LINES);
+        let big = format!("{{\"y\":\"{}\"}}\n", "b".repeat(200_000));
+        let p = file("peek-big", [line.repeat(50), big.repeat(3)].concat().as_bytes());
+        let c = read_chunk_with(&p, None, PEEK_HEAD, PEEK_MIN_LINES, PEEK_MAX).unwrap();
+        assert!(c.text.len() as u64 <= PEEK_MAX, "{}", c.text.len());
+        assert!(c.text.len() as u64 > PEEK_HEAD);
     }
 
     #[test]
@@ -1897,7 +2033,7 @@ fn with_attach(id: &str, keys: Option<&[u8]>) -> Result<String, String> {
     if cfg!(windows) && keys.is_none() && crate::pty::session_has_view(id) {
         return Err(crate::i18n::tr("터미널 보기가 붙어 있어 화면을 따로 못 읽어", "A terminal view is attached — can't read the screen separately").into());
     }
-    attach_do(id, |w, _| {
+    attach_do(id, |w, _, _| {
         if let Some(k) = keys {
             // 화살표·글자는 하나씩 조금 쉬어 가며 — 한꺼번에 넣으면 TUI 가 놓칠 수 있다
             for chunk in k.split_inclusive(|&b| b == b'\r' || b == b'~' || b == b'A' || b == b'B') {
@@ -1961,17 +2097,62 @@ pub(crate) fn type_text_tagged(id: &str, text: &str, tag: &str) -> Result<(), St
 /// 입력칸('─' 줄 바로 아래 '❯' 줄부터 다음 '─' 줄 앞까지)에 사람이 친 글이 있나 — 빈 칸 안내 글(Try "…")은 없는 것으로.
 /// 입력칸을 못 찾아도 없는 것으로: 치워 두기(Ctrl+S)는 빈 칸이면 치워 둔 글을 꺼내 와서 오히려 섞인다
 pub(crate) fn input_has_text(screen: &vt100::Screen) -> bool {
+    let Some(body) = input_lines(screen) else { return false };
+    !(body.is_empty() || (body.len() == 1 && body[0].starts_with("Try \"") && body[0].ends_with('"')))
+}
+
+/// 입력칸 본문 줄들(앞뒤 공백·빈 줄 뺀) — 입력칸을 못 찾으면 None(선택 창·아직 안 그려진 화면)
+fn input_lines(screen: &vt100::Screen) -> Option<Vec<String>> {
     let (_, cols) = screen.size();
     let lines: Vec<String> = screen.rows(0, cols).collect();
     // 입력칸과 테두리는 맨 앞 칸부터 — 들여 쓴 확인 창 줄(' ❯ 1. Yes')은 입력칸이 아니다
     let border = |l: &str| l.starts_with('─');
-    let Some(i) = (1..lines.len()).rev().find(|&i| lines[i].starts_with('❯') && border(&lines[i - 1])) else { return false };
-    let body: Vec<&str> = std::iter::once(lines[i].trim_start_matches('❯'))
-        .chain(lines[i + 1..].iter().take_while(|l| !border(l)).map(String::as_str))
-        .map(|l| l.trim_matches(|c: char| c.is_whitespace() || c == '\u{a0}'))
-        .filter(|l| !l.is_empty())
-        .collect();
-    !(body.is_empty() || (body.len() == 1 && body[0].starts_with("Try \"") && body[0].ends_with('"')))
+    let i = (1..lines.len()).rev().find(|&i| lines[i].starts_with('❯') && border(&lines[i - 1]))?;
+    Some(
+        std::iter::once(lines[i].trim_start_matches('❯'))
+            .chain(lines[i + 1..].iter().take_while(|l| !border(l)).map(String::as_str))
+            .map(|l| l.trim_matches(|c: char| c.is_whitespace() || c == '\u{a0}').to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
+    )
+}
+
+/// 친 글 전체(줄 사이 Alt+Enter·공백 뺀) — 입력칸이 이걸로 끝나면 글이 다 들어간 것. 빈 글이면 화면으로 못 본다("").
+/// 끝 몇 글자만 보면 끝말이 앞줄에도 있는 글('A 확인해줘\n확인해줘')은 첫 줄만 그려졌을 때 Enter 가 나갔다(0.4.4 리뷰)
+pub(crate) fn typed_echo(segs: &[Vec<u8>]) -> String {
+    String::from_utf8_lossy(&segs.concat()).chars().filter(|&c| !c.is_whitespace() && c != '\x1b').collect()
+}
+
+/// 입력칸 글(공백 빼고)이 친 글 전체로 끝나나 — 칸 폭에서 꺾인 줄도 이어서 본다. 붙여넣은 글로 접힘·화면보다 긴 글·입력칸 없음은 안 보인 것(최대 대기 뒤 Enter)
+pub(crate) fn input_shows(screen: &vt100::Screen, echo: &str) -> bool {
+    !echo.is_empty() && input_lines(screen).is_some_and(|b| b.concat().chars().filter(|c| !c.is_whitespace()).collect::<String>().ends_with(echo))
+}
+
+/// 새로 붙은 화면에 칠 수 있나 — 입력칸이 보이면 바로. 입력칸 없는 화면(선택 창 등)은 예전처럼 1.5초 지나 글자가 있으면.
+/// attach 가 먼저 찍는 제 안내 줄은 입력칸이 아니라 그동안은 안 친다(그때 친 말은 날아간다, 2026-10-27)
+pub(crate) fn attach_ready(screen: &vt100::Screen, waited: std::time::Duration) -> bool {
+    input_lines(screen).is_some() || (waited >= ATTACH_SETTLE && screen_ready(&screen.contents()))
+}
+
+/// 입력칸이 안 보일 때 예전처럼 기다리는 시간
+const ATTACH_SETTLE: std::time::Duration = std::time::Duration::from_millis(1500);
+/// 친 글이 입력칸에 보이기를 기다리는 최대(예전 고정 대기) — 넘기면 그냥 Enter
+const ENTER_MAX: std::time::Duration = std::time::Duration::from_millis(400);
+/// Enter 뒤 입력칸이 비기를 기다리는 최대(예전 고정 대기) — 비면 바로 뗀다
+const SENT_MAX: std::time::Duration = std::time::Duration::from_millis(700);
+
+/// ok 가 참이 될 때까지 10ms 마다 — 되면 true, max 를 넘기면 false(위 wait_until 은 0.3초 간격·초 단위라 화면 보기엔 굵다)
+pub(crate) fn poll_until(max: std::time::Duration, mut ok: impl FnMut() -> bool) -> bool {
+    let t = std::time::Instant::now();
+    loop {
+        if ok() {
+            return true;
+        }
+        if t.elapsed() >= max {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 
 /// 세션에 글을 치는 일은 한 번에 하나 — 둘이 겹치면 한 입력칸에 섞여 들어간다
@@ -1986,7 +2167,8 @@ pub(crate) fn typing_turn() -> std::sync::MutexGuard<'static, ()> {
 fn attach_type_segs(id: &str, segs: &[Vec<u8>]) -> Result<(), String> {
     use std::time::Duration;
     let _turn = typing_turn();
-    attach_do(id, |w, screen| {
+    let tail = typed_echo(segs);
+    attach_do(id, |w, screen, look| {
         // 사람이 입력칸에 반쯤 친 글이 있으면 치워 두고(Ctrl+S) 친다 — 보내면 Claude Code 가 그 글을 되돌려 놓는다(일하는 중 줄 서기여도).
         // 안 그러면 그 글 뒤에 붙어 Enter 로 같이 나갔다(2026-09-28 부채, 2026-10-09 실측)
         if screen.is_some_and(input_has_text) {
@@ -1998,9 +2180,23 @@ fn attach_type_segs(id: &str, segs: &[Vec<u8>]) -> Result<(), String> {
             w.write_all(chunk)?;
             std::thread::sleep(Duration::from_millis(5));
         }
-        std::thread::sleep(Duration::from_millis(400));
+        // 친 글이 입력칸에 다 보이면 바로 Enter — 고정 0.4초였다(2026-10-28 chat-speed 실측: 글이 보이기까지 0~14ms).
+        // 화면을 못 보면(윈도우 열린 보기·빈 글) 예전 그대로
+        let look = look.filter(|_| !tail.is_empty());
+        let seen = match look {
+            Some(f) => poll_until(ENTER_MAX, || input_shows(&f(), &tail)),
+            None => {
+                std::thread::sleep(ENTER_MAX);
+                false
+            }
+        };
         w.write_all(b"\r")?;
-        std::thread::sleep(Duration::from_millis(700));
+        // 그 글이 입력칸에서 빠지면(세션이 Enter 를 받음) 바로 뗀다. 글이 보인 걸 못 봤으면 Enter 를 받았는지도 모르니 예전처럼 0.7초 —
+        // 너무 일찍 떼면 attach 가 Enter 를 넘기기 전에 끝난다
+        match look.filter(|_| seen) {
+            Some(f) => _ = poll_until(SENT_MAX, || !input_shows(&f(), &tail)),
+            None => std::thread::sleep(SENT_MAX),
+        }
         Ok(())
     })
     .map(|_| ())
@@ -2012,15 +2208,18 @@ pub fn interrupt_session(id: &str) -> Result<(), String> {
     with_attach(id, Some(b"\x1b")).map(|_| ())
 }
 
-/// attach 를 붙여 화면을 읽고 write 로 키를 넣은 뒤 뗀다 — write 는 붙은 화면을 같이 받는다(윈도우 열린 보기로 쓸 땐 None)
-fn attach_do(id: &str, write: impl FnOnce(&mut dyn std::io::Write, Option<&vt100::Screen>) -> std::io::Result<()>) -> Result<String, String> {
+/// 붙은 화면을 그때그때 다시 보는 손잡이 — 새로 붙었을 때만(열린 보기는 None)
+type Look<'a> = Option<&'a dyn Fn() -> vt100::Screen>;
+
+/// attach 를 붙여 화면을 읽고 write 로 키를 넣은 뒤 뗀다 — write 는 붙은 화면(윈도우 열린 보기로 쓸 땐 None)과 지금 화면 보기(Look)를 같이 받는다
+fn attach_do(id: &str, write: impl FnOnce(&mut dyn std::io::Write, Option<&vt100::Screen>, Look) -> std::io::Result<()>) -> Result<String, String> {
     // 윈도우: 앱이 이 세션 터미널 보기를 열어 두었으면 거기에 바로 쓴다 — 새로 붙으면 그 창이 쫓겨나고(세션당 한 창) 붙는 데 20초 걸렸다.
     // 화면 글자는 없으니 빈 글로 돌려준다(권한 창 자동 허용의 화면 읽기는 with_attach 가 따로 막는다)
     if cfg!(windows) {
         if let Some((w, screen)) = crate::pty::session_writer(id) {
             log_out("attach", &format!("{id} via-open-terminal"));
             // 조각마다 자물쇠(①-1), 화면은 Rust 가 그려 둔 그 보기 화면(②-1 — 입력칸에 사람 글이 있으면 치워 두기)
-            return crate::pty::write_view(&w, screen.as_ref(), write).map(|_| String::new()).map_err(|e| e.to_string());
+            return crate::pty::write_view(&w, screen.as_ref(), |w, s| write(w, s, None)).map(|_| String::new()).map_err(|e| e.to_string());
         }
         // 열린 보기가 화면을 못 받았으면(가짜 콘솔이 멈춤) 거기 쓰면 허공에 간다 — 새로 붙는다
         if crate::pty::session_has_view(id) {
@@ -2031,7 +2230,7 @@ fn attach_do(id: &str, write: impl FnOnce(&mut dyn std::io::Write, Option<&vt100
 }
 
 /// 새로 붙어서(claude attach) 화면을 읽고 키를 넣은 뒤 뗀다
-fn attach_new(id: &str, write: impl FnOnce(&mut dyn std::io::Write, Option<&vt100::Screen>) -> std::io::Result<()>) -> Result<String, String> {
+fn attach_new(id: &str, write: impl FnOnce(&mut dyn std::io::Write, Option<&vt100::Screen>, Look) -> std::io::Result<()>) -> Result<String, String> {
     use std::io::Write;
     use std::ops::Not;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -2094,17 +2293,26 @@ fn attach_new(id: &str, write: impl FnOnce(&mut dyn std::io::Write, Option<&vt10
         let _ = master.resize(portable_pty::PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
         trace("resized");
     }
-    // 화면이 붙을 때까지 — 1.5초 기다리고, 글자가 아직 없으면 조금씩 더(최대 8초)
-    std::thread::sleep(Duration::from_millis(1500));
-    let started = std::time::Instant::now();
-    // 윈도우는 더 길게(25초) — 보이는 콘솔에서도 attach 가 그리기까지 6초쯤 걸렸고 cmd·백신 검사까지 얹힌다. 2초마다 받은 바이트를 남긴다
-    let limit = Duration::from_millis(if cfg!(windows) { 25_000 } else { 6_500 });
-    let mut next_note = Duration::from_secs(2);
-    while screen_ready(&parser.lock().unwrap().screen().contents()).not() && started.elapsed() < limit {
-        std::thread::sleep(Duration::from_millis(250));
-        if started.elapsed() >= next_note {
-            trace(&format!("wait {}s bytes {}", next_note.as_secs(), got.load(Ordering::Relaxed)));
-            next_note += Duration::from_secs(2);
+    if cfg!(windows) {
+        // 화면이 붙을 때까지 — 1.5초 기다리고, 글자가 아직 없으면 조금씩 더
+        std::thread::sleep(ATTACH_SETTLE);
+        let started = std::time::Instant::now();
+        // 윈도우는 길게(25초) — 보이는 콘솔에서도 attach 가 그리기까지 6초쯤 걸렸고 cmd·백신 검사까지 얹힌다. 2초마다 받은 바이트를 남긴다
+        let limit = Duration::from_millis(25_000);
+        let mut next_note = Duration::from_secs(2);
+        while screen_ready(&parser.lock().unwrap().screen().contents()).not() && started.elapsed() < limit {
+            std::thread::sleep(Duration::from_millis(250));
+            if started.elapsed() >= next_note {
+                trace(&format!("wait {}s bytes {}", next_note.as_secs(), got.load(Ordering::Relaxed)));
+                next_note += Duration::from_secs(2);
+            }
+        }
+    } else {
+        // 맥: 입력칸이 보이면 바로(실측 수백 ms) — 예전엔 늘 1.5초를 먼저 쉬었다. 입력칸 없는 화면은 예전처럼 1.5초 뒤 글자가 있으면(최대 8초)
+        let started = std::time::Instant::now();
+        let limit = ATTACH_SETTLE + Duration::from_millis(6_500);
+        while !attach_ready(parser.lock().unwrap().screen(), started.elapsed()) && started.elapsed() < limit {
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
     let screen = parser.lock().unwrap().screen().contents();
@@ -2129,8 +2337,9 @@ fn attach_new(id: &str, write: impl FnOnce(&mut dyn std::io::Write, Option<&vt10
     }
     trace("write");
     let shown = parser.lock().unwrap().screen().clone();
+    let look = || parser.lock().unwrap().screen().clone();
     let r = match slot.lock().unwrap().0.as_mut() {
-        Some(w) => write(&mut **w, Some(&shown)).map_err(|e| e.to_string()),
+        Some(w) => write(&mut **w, Some(&shown), Some(&look)).map_err(|e| e.to_string()),
         None => Err("no writer".into()),
     };
     trace("kill");
@@ -2416,6 +2625,13 @@ mod speak_tests {
 mod tests {
     use super::{action_line, input_has_text, live_has, parse_daemon_started_at, resolve_claude_bin, revive_args, user_path};
     #[test]
+    fn 꼬리_길이_기본은_256kb_길게는_16mb_까지() {
+        assert_eq!(super::tail_len(None), 256 * 1024);
+        assert_eq!(super::tail_len(Some(0)), 256 * 1024);
+        assert_eq!(super::tail_len(Some(8 * 1024 * 1024)), 8 * 1024 * 1024);
+        assert_eq!(super::tail_len(Some(u64::MAX)), 16 * 1024 * 1024);
+    }
+    #[test]
     fn 입력칸에_사람이_친_글이_있나() {
         // 2026-10-09 실측(2.1.295): 입력칸은 '─' 줄 바로 아래 '❯\u{a0}' 줄. 빈 칸의 안내 글(Try "…")은 흐림(ESC[2m)인데 vt100 은 흐림을 안 읽어 글 모양으로 가른다
         let screen = |bytes: &str| {
@@ -2433,6 +2649,154 @@ mod tests {
         // 여러 줄 글 — 둘째 줄에만 글이 있어도
         assert!(input_has_text(screen(&format!("{top}❯\u{a0}\r\n  둘째 줄{bottom}")).screen()));
         assert!(!input_has_text(screen(&format!("{top} ❯ 1. Yes\r\n   2. No{bottom}")).screen()), "들여 쓴 확인 창 줄");
+    }
+
+    #[test]
+    fn 친_글_끝이_입력칸에_보이면_enter() {
+        // 2026-10-28 chat-speed: 고정 0.4초 대신 친 글이 입력칸에 다 들어간 걸 화면으로 보고 바로 Enter
+        let screen = |bytes: &str| {
+            let mut p = vt100::Parser::new(40, 120, 0);
+            p.process(bytes.as_bytes());
+            p
+        };
+        let top = "──────── chat-speed ─\r\n";
+        let bottom = "\r\n────────\r\n  main · Haiku";
+        let segs = super::typed_segs("첫 줄은 짧게\n둘째 줄 끝은   여기까지야");
+        let tail = super::typed_echo(&segs);
+        assert_eq!(tail, "첫줄은짧게둘째줄끝은여기까지야", "친 글 전체, 줄 사이·공백 빼고");
+        let shown = screen(&format!("{top}❯\u{a0}첫 줄은 짧게\r\n  둘째 줄 끝은   여기까지야{bottom}"));
+        assert!(super::input_shows(shown.screen(), &tail));
+        // 칸 폭에서 꺾여도(공백 자리에서 줄이 바뀜) 보인 걸로
+        let wrapped = screen(&format!("{top}❯\u{a0}첫 줄은 짧게\r\n  둘째 줄 끝은\r\n  여기까지야{bottom}"));
+        assert!(super::input_shows(wrapped.screen(), &tail));
+        // 아직 다 안 들어옴·붙여넣은 글로 접힘·입력칸 없음(선택 창) — 안 보인 걸로(최대 대기 뒤 Enter)
+        let half = screen(&format!("{top}❯\u{a0}첫 줄은 짧게\r\n  둘째 줄 끝은 여기{bottom}"));
+        assert!(!super::input_shows(half.screen(), &tail));
+        let pasted = screen(&format!("{top}❯\u{a0}[Pasted text #1 +2 lines]{bottom}"));
+        assert!(!super::input_shows(pasted.screen(), &tail));
+        assert!(!super::input_shows(screen("❯ 1. Yes\r\n  2. No").screen(), &tail));
+        // 지난 대화에 같은 글이 있어도 입력칸만 본다 — 보낸 뒤 칸이 비면 '보내짐'
+        let sent = screen(&format!("❯ 둘째 줄 끝은 여기까지야\r\n⏺ 응\r\n{top}❯\u{a0}{bottom}"));
+        assert!(!super::input_shows(sent.screen(), &tail));
+        // 빈 글·줄바꿈만이면 꼬리 없음 — 화면으로 못 보니 예전 고정 대기
+        assert_eq!(super::typed_echo(&super::typed_segs("  \n ")), "");
+        // 짧은 글은 통째로
+        assert_eq!(super::typed_echo(&super::typed_segs("응")), "응");
+        // 0.4.4 리뷰 — 끝말이 앞줄에도 있으면 첫 줄만 그려졌을 때 Enter 가 나가 나머지가 입력칸에 남았다
+        for text in ["A 확인해줘\n확인해줘", "다 했어\n다 했어"] {
+            let tail = super::typed_echo(&super::typed_segs(text));
+            let first = text.split('\n').next().unwrap();
+            let early = screen(&format!("{top}❯\u{a0}{first}{bottom}"));
+            assert!(!super::input_shows(early.screen(), &tail), "첫 줄만 그려진 화면: {text}");
+            let all = screen(&format!("{top}❯\u{a0}{}{bottom}", text.replace('\n', "\r\n  ")));
+            assert!(super::input_shows(all.screen(), &tail), "다 그려진 화면: {text}");
+        }
+    }
+
+    #[test]
+    fn 붙자마자_입력칸이_보이면_바로_친다() {
+        use std::time::Duration;
+        let screen = |bytes: &str| {
+            let mut p = vt100::Parser::new(40, 120, 0);
+            p.process(bytes.as_bytes());
+            p
+        };
+        let ms = Duration::from_millis;
+        let boxed = screen("⏺ 안녕\r\n──────── s ─\r\n❯\u{a0}\r\n────────\r\n  main");
+        assert!(super::attach_ready(boxed.screen(), ms(30)), "입력칸이 보이면 1.5초 안 기다린다");
+        // attach 가 먼저 찍는 제 안내 줄(20글자 넘음)은 세션 화면이 아니다 — 그동안 친 말은 날아간다(2026-10-27)
+        let banner = screen("Attaching to session 1a2b3c4d (probe-a) — press ctrl+b d to detach");
+        assert!(!super::attach_ready(banner.screen(), ms(300)));
+        // 입력칸 없는 화면(선택 창)은 예전 그대로 1.5초 뒤 글자가 있으면
+        let dialog = screen("Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No, and tell Claude what to do differently");
+        assert!(!super::attach_ready(dialog.screen(), ms(1499)));
+        assert!(super::attach_ready(dialog.screen(), ms(1500)));
+        assert!(!super::attach_ready(screen("").screen(), ms(5000)), "빈 화면엔 안 친다");
+    }
+
+    #[test]
+    fn 기다리기는_되면_바로_끝나고_안_되면_최대까지() {
+        use std::time::{Duration, Instant};
+        let t = Instant::now();
+        let mut n = 0;
+        assert!(super::poll_until(Duration::from_millis(400), || { n += 1; n >= 3 }));
+        assert!(t.elapsed() < Duration::from_millis(100), "{:?}", t.elapsed());
+        let t = Instant::now();
+        assert!(!super::poll_until(Duration::from_millis(120), || false));
+        let e = t.elapsed();
+        assert!(e >= Duration::from_millis(120) && e < Duration::from_millis(250), "{e:?}");
+    }
+
+    #[test]
+    fn 기록_파일_자리는_기억했다가_없어지면_다시_찾는다() {
+        // 채팅이 0.25초마다 읽는데 매번 ~/.claude/projects 폴더 718개를 뒤졌다(한 번 ~3ms, 2026-10-28 chat-speed 실측)
+        let base = std::env::temp_dir().join(format!("chammo-tp-{}", std::process::id()));
+        let (a, b) = (base.join("proj-a"), base.join("proj-b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let cache = std::sync::Mutex::new(std::collections::HashMap::new());
+        assert_eq!(super::transcript_in(&base, "s1", &cache), None, "아직 첫 지시 전");
+        std::fs::write(a.join("s1.jsonl"), "{}\n").unwrap();
+        assert_eq!(super::transcript_in(&base, "s1", &cache), Some(a.join("s1.jsonl")));
+        assert_eq!(cache.lock().unwrap().get("s1"), Some(&a.join("s1.jsonl")), "찾은 자리는 기억");
+        // 옮겨지면(폴더 이름이 바뀜) 기억한 자리가 없으니 다시 찾는다
+        std::fs::rename(a.join("s1.jsonl"), b.join("s1.jsonl")).unwrap();
+        assert_eq!(super::transcript_in(&base, "s1", &cache), Some(b.join("s1.jsonl")));
+        std::fs::remove_file(b.join("s1.jsonl")).unwrap();
+        assert_eq!(super::transcript_in(&base, "s1", &cache), None);
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    // 실측(진짜 세션 필요, 2026-10-28 chat-speed): 앱 보내기 길(type_text_tagged = 배지 대화창·폰·스페이스)로 5번 — 돌아온 시각·기록에 사람 말이 써진 시각(ms)
+    // CHATSPEED_ID=<짧은 id> CHATSPEED_SID=<대화 id> CHAMMO_HOME=<시험 폴더> cargo test --bin honor-orchestrator claude::tests::실측_보내기_시간 -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn 실측_보내기_시간() {
+        use std::time::{Duration, Instant};
+        let id = std::env::var("CHATSPEED_ID").expect("CHATSPEED_ID");
+        let path = super::transcript_path(&std::env::var("CHATSPEED_SID").expect("CHATSPEED_SID")).expect("기록 파일");
+        for i in 0..5 {
+            let word = format!("kiwi{}{i}", std::process::id() % 1000);
+            let t0 = Instant::now();
+            super::type_text_tagged(&id, &format!("Reply with only the word {word} in capital letters."), "chatspeed").unwrap();
+            let ret = t0.elapsed();
+            let mut logged = None;
+            while t0.elapsed() < Duration::from_secs(20) {
+                if std::fs::read_to_string(&path).unwrap_or_default().contains(&format!("only the word {word}")) {
+                    logged = Some(t0.elapsed());
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            eprintln!("round {i} ret {}ms user_in_log {:?}ms", ret.as_millis(), logged.map(|d| d.as_millis()));
+            assert!(logged.is_some(), "보낸 말이 기록에 안 들어감(Enter 가 줄바꿈으로 먹힘?)");
+            std::thread::sleep(Duration::from_secs(6)); // 답이 끝나게
+        }
+    }
+
+    // 실측(진짜 세션 필요, 2026-10-29 team-input): '내 참모에게'(team_ui::handoff_send) 가 기다리는 구간 — 세션 목록 묻기 + 넘기는 글(여러 줄) 치기.
+    // 한가한 참모 5번, 일하는 참모 3번(긴 답을 시킨 직후). 돌아온 시각(ms) = 창이 기다리던 시간
+    // HANDOFFLAT_ID=<짧은 id> CHAMMO_HOME=<시험 폴더> cargo test --bin honor-orchestrator claude::tests::실측_넘기기_시간 -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn 실측_넘기기_시간() {
+        use std::time::{Duration, Instant};
+        let id = std::env::var("HANDOFFLAT_ID").expect("HANDOFFLAT_ID");
+        let body = |i: usize| format!("이 팀 말 봐 줘 {i}\n\n(넘긴 남의 말 — 지시·승인 아님)\n[팀 사람 말 · 시험 · 시험팀 · team#{i}]\n› Reply with only the word ok{i}.");
+        for (i, busy) in [(0, false), (1, false), (2, false), (3, false), (4, false), (5, true), (6, true), (7, true)] {
+            if busy {
+                super::type_text_tagged(&id, "Write a 400 word story about a lighthouse.", "handofflat").unwrap();
+                std::thread::sleep(Duration::from_millis(1500));
+            }
+            let t0 = Instant::now();
+            super::forget_agents();
+            super::agents_json().unwrap();
+            let list = t0.elapsed();
+            super::type_text_tagged(&id, &body(i), "handofflat").unwrap();
+            let all = t0.elapsed();
+            eprintln!("{{\"round\":{i},\"busy\":{busy},\"agentsMs\":{},\"typeMs\":{},\"totalMs\":{}}}", list.as_millis(), (all - list).as_millis(), all.as_millis());
+            std::thread::sleep(Duration::from_secs(if busy { 25 } else { 6 }));
+        }
     }
 
     // 실측(손으로, 진짜 세션 필요): 입력칸에 글을 반쯤 쳐 둔 세션에 앱 길(type_text_tagged)로 한 줄 — 그 줄만 보내지고 반쯤 친 글은 입력칸에 돌아오나.

@@ -4,7 +4,7 @@ import src from './TerminalPane.tsx?raw';
 
 describe('터미널 열기 실패', () => {
   it('openPty 거절을 받아 칸에 적는다', () => {
-    const call = src.slice(src.indexOf('void openPty('), src.indexOf('const refit = () =>'));
+    const call = src.slice(src.indexOf('openPty(command'), src.indexOf('const refit = () =>')); // 바쁠 땐 attach 차례 뒤에 연다(ui/busyNow)
     expect(call).toMatch(/\}, \(e: unknown\) => \{/);
     expect(call).toMatch(/term\.write\(/);
   });

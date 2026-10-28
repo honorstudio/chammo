@@ -7,6 +7,7 @@ import { OrchAvatar, orchColor } from '../avatar';
 import { IconDevice } from '../Icons';
 import type { FarTarget } from './Far';
 import './far.css';
+import { seenName } from '../../domain/session';
 
 export const avState = (d: FarDot) => (d === 'run' ? 'work' : d === 'ask' ? 'ask' : 'rest');
 
@@ -76,8 +77,8 @@ export function FarRail({ button, assistants, on, onPick }: { button: React.Reac
       {button}
       <i className="far-sep" />
       {assistants.map((a) => (
-        <button key={a.id} className={`lk-av ${on === a.id ? 'on' : ''}`} style={{ ['--orch-solid' as string]: orchColor(a.name) }} onClick={() => onPick(a)} aria-label={a.name} aria-current={on === a.id || undefined} data-tip={a.name}>
-          <span className="lk-av-pic"><OrchAvatar name={a.name} size={32} state={avState(a.dot)} color={orchColor(a.name)} label={a.name} />{a.dot !== 'rest' && <i className={`lk-pip p-${a.dot === 'ask' ? 'ask' : 'run'}`} aria-hidden="true" />}</span>
+        <button key={a.id} className={`lk-av ${on === a.id ? 'on' : ''}`} style={{ ['--orch-solid' as string]: orchColor(a.name) }} onClick={() => onPick(a)} aria-label={seenName(a.name)} aria-current={on === a.id || undefined} data-tip={seenName(a.name)}>
+          <span className="lk-av-pic"><OrchAvatar name={a.name} size={32} state={avState(a.dot)} color={orchColor(a.name)} label={seenName(a.name)} />{a.dot !== 'rest' && <i className={`lk-pip p-${a.dot === 'ask' ? 'ask' : 'run'}`} aria-hidden="true" />}</span>
         </button>
       ))}
     </nav>

@@ -13,6 +13,7 @@ import { assistant, tr } from '../../i18n';
 import { IconBox, IconMinimize, IconMore } from '../Icons';
 import { pressDown, pressMove, type Press } from './press';
 import { OrchAvatar } from '../avatar/OrchAvatar';
+import { seenName } from '../../domain/session';
 
 const DOT = 5;
 const TICK_MS = 480;
@@ -119,7 +120,7 @@ export function Widget() {
         )}
       </div>
       <div className="tw-bar">
-        {file.keeper && <span className="tw-keeper" title={tr(`돌보는 ${assistant()} — ${file.keeper.name}`, `Caretaker — ${file.keeper.name}`)}><OrchAvatar name={file.keeper.name} size={18} state={file.busy ? 'work' : 'rest'} color={file.keeper.color} /></span>}
+        {file.keeper && <span className="tw-keeper" title={tr(`돌보는 ${assistant()} — ${seenName(file.keeper.name)}`, `Caretaker — ${seenName(file.keeper.name)}`)}><OrchAvatar name={file.keeper.name} size={18} state={file.busy ? 'work' : 'rest'} color={file.keeper.color} /></span>}
         <b>{pet && !pet.dead ? nameOf(pet.egg, pet.slot) : tr('다마고치', 'Pet')}</b>
         {foe && pet && !pet.dead
           ? <span className="dim" title={`${MONSTER_NAME[foe.kind]()} — ${monsterWhy(foe)}`}>{MONSTER_SHORT[foe.kind]()} Lv.{foe.lv}</span>

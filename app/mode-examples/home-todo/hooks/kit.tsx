@@ -1,7 +1,7 @@
 // 참모 모드 디자인 키트 — 모드 hooks/ 에 복사해 `import { Chip, Card, … } from './kit'` 로 쓴다(Chammo hq-mode-kit 스킬).
 // 모드 호스트는 모르는 속성이 하나라도 있으면 트리를 통째로 버린다(engine) — 그래서 이 함수들은 호스트가 받는 속성만 조합한다.
 // Chammo 데스크톱은 그 조합을 보고 앱 모양(알약·카드·구분선·막대)으로 그리고, 터미널은 같은 속성을 그대로 그린다.
-// 첫 인자 ui = $.ui.resolve(e) 가 준 요소 묶음. 색(tone)은 success·warning·error·suggestion·inactive·text, 터미널 색 이름, #hex
+// 첫 인자 ui = $.ui.resolve(e) 가 준 요소 묶음. 색(tone)은 success·warning·error·suggestion·inactive·secondary·text, 터미널 색 이름, #hex
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type UI = { Box: any; Text: any; Button?: any; Markdown?: any }
 type Kids = any

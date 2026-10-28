@@ -5,6 +5,7 @@ import { ASK_EMPTY, askCardKey, askClose, askOpen, askShown, askStep, askWaiting
 import { afterUnpeek, controlOf, showsPicture, currentSite, ACTIVE_MS, fedcmChoices, fedcmLine, focusFailLine, peekStep, permLine, stuckLine, tabStrip, takeoverLine, type Live } from '../domain/agentBrowser';
 import { approach, escCancelsDialog, escClose, keyEvents, keyTarget, menuRoute, modsOf, pointIn, unfocusedKey, type InputEv } from '../domain/agentInput';
 import { tr } from '../i18n';
+import { useTypeField } from './typeField';
 import { FrameView, useAgentFrame, useAgentTabs, useBrowserScreen } from './AgentBrowser';
 import { AGENT_DROP_EVENT } from './fileDrop';
 import { IconClose, IconMore, IconOpen, IconSend } from './Icons';
@@ -12,7 +13,7 @@ import { IconButton } from './kit/IconButton';
 
 const OPEN_EVENT = 'agent-browser-open';
 /** 그 세션 브라우저를 크게 보기(앱 맨 위 AgentAskHost 가 띄운다) — pid = 그 칸의 래퍼(같은 프로필을 둘이 쥘 수 있다) */
-export const openAgentModal = (profile: string, pid?: number) => window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: { profile, pid } }));
+export const openAgentModal = (profile: string, pid?: number, orch?: string) => window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: { profile, pid, orch } }));
 
 const CLOSE_EVENT = 'agent-browser-close';
 /** 마지막으로 브라우저가 키를 가져간 때 — 같은 누름이 메뉴바로 늦게 와도(⌘W 로 모달이 닫힌 뒤) 앱이 세션을 끄지 않게 */
@@ -88,6 +89,8 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
   const pid = live.pid; // 모달은 브라우저(프로필:래퍼)마다 새로 그린다(AgentAskHost key) — 한 모달 안에선 안 바뀐다
   const img = useRef<HTMLImageElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
+  // 글은 글칸 값의 차이만 — 칸(BrowserPane)과 같은 길(ui/typeField)
+  const typing = useTypeField(field, (evs) => sendIf(blocked, prof.current, pid, expect.current, evs));
   /** 사람이 이 모달을 마지막으로 만진 때 — 눌러 열었으면 연 때부터(패스키 자동 꺼내기는 사람이 쓰는 중일 때만) */
   const humanAt = useRef(focus ? Date.now() : 0);
   const [prompt, setPrompt] = useState<string | null>(null);
@@ -142,6 +145,7 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
     let escAt = 0;
     const stop = (e: KeyboardEvent) => { e.preventDefault(); e.stopPropagation(); };
     const on = (e: KeyboardEvent) => {
+      if (owns() && (e.isComposing || e.keyCode === 229)) { const pre = typing.pre(e); if (pre === 'stop') stop(e); return; }
       if (e.isComposing || e.keyCode === 229) return;
       // 페이지 대화상자가 떠 있으면 Esc 는 그 대화상자 취소 — 모달을 닫으면 대화상자만 남아 페이지가 굳었다(QA N7·B6)
       if (escCancelsDialog(e, !!dialogKey.current)) { stop(e); keyAt = Date.now(); dialogKey.current?.(false); return; }
@@ -156,8 +160,11 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
         if (escClose(escAt, now)) { stop(e); close.current(); return; }
         escAt = now;
       }
+      const pre = typing.pre(e);
+      if (pre === 'done') return;
+      if (pre === 'stop') { stop(e); return; }
       const k = keyEvents(e);
-      if (k) { stop(e); sendIf(blocked, prof.current, pid, expect.current, k); }
+      if (k) { stop(e); typing.key(k); }
     };
     const shut = () => close.current();
     window.addEventListener('keydown', on, true);
@@ -337,22 +344,15 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
           </div>
         )}
         <div className={`abm-screen ${scr.blocked ? 'abm-blocked' : ''}`} ref={screen}
-          onPointerDown={(e) => { e.preventDefault(); if (blocked.current) return; field.current?.focus(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); mouse('mousePressed', e); }}
+          onPointerDown={(e) => { e.preventDefault(); if (blocked.current) return; typing.clicked(); field.current?.focus(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); mouse('mousePressed', e); }}
           onPointerUp={(e) => mouse('mouseReleased', e)}
           onPointerMove={(e) => { const t = performance.now(); if (t - lastMove.current < 30) return; lastMove.current = t; mouse('mouseMoved', e); }}
           onWheel={(e) => { const p = at(e); if (p) sendIf(blocked, live.profile, pid, expect.current, [{ kind: 'mouse', type: 'mouseWheel', x: p.x, y: p.y, deltaX: e.deltaX, deltaY: e.deltaY, modifiers: modsOf(e) }]); }}
           onContextMenu={(e) => e.preventDefault()}>
           <FrameView profile={live.profile} src={src} scr={scr} error={error} alt={live.title || live.url} imgRef={img} onShow={showChrome} />
-          {/* 숨은 글칸 — 글자를 받아 insertText 로. 값은 보내자마자 비운다(남기지 않는다) */}
+          {/* 숨은 글칸 — 글칸 값의 차이만 페이지로(조합 중 글자는 페이지에 미리). Enter·화살표·떠날 때 비운다 */}
           <textarea ref={field} className="abm-field" readOnly={scr.blocked || !canCtl} aria-label={tr('세션 브라우저에 입력', 'Type into the session browser')} autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
-            onInput={(e) => {
-              const t = e.currentTarget;
-              if ((e.nativeEvent as InputEvent).isComposing) return;
-              if (t.value) sendIf(blocked, live.profile, pid, expect.current, [{ kind: 'text', text: t.value }]);
-              t.value = '';
-            }}
-            onCompositionEnd={(e) => { const v = e.data || e.currentTarget.value; if (v) sendIf(blocked, live.profile, pid, expect.current, [{ kind: 'text', text: v }]); e.currentTarget.value = ''; }}
-            onPaste={(e) => { e.preventDefault(); const v = e.clipboardData.getData('text'); if (v) sendIf(blocked, live.profile, pid, expect.current, [{ kind: 'text', text: v }]); }} />
+            {...typing.props} />
         </div>
         {dialog && (
           <div className="abm-dialog" role="alertdialog" aria-label={tr('페이지 대화상자', 'Page dialog')}>
@@ -369,6 +369,9 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
     document.body,
   );
 }
+
+/** 스페이스의 세션 브라우저 칸 열기(SpaceView) — 채팅 뷰일 때만 있다 */
+const paneFn = () => (window as unknown as { __browserPane?: (profile: string, dry?: boolean, orch?: string) => boolean }).__browserPane;
 
 /**
  * 세션이 사람을 부르면(browser_ask_human → 상태 파일 ask) 그 세션 브라우저를 크게 띄우고 알린다(창을 보고 있으면 앱 안만 — notify 'human').
@@ -391,12 +394,14 @@ export function AgentAskHost({ lives, nameOf, notify, notifyPopup, onPopupCards 
   const update = (f: (s: AskState) => AskState) => { stRef.current = f(stRef.current); setSt(stRef.current); };
   const livesRef = useRef(lives);
   livesRef.current = lives;
+  // 사람이 누를 때마다 +1 — 이미 열린(스페이스로 못 가 모달로 물러난) 브라우저를 다시 눌러도 스페이스 이동을 다시 시도(열림 값이 그대로라 효과가 안 돌았다)
+  const [pressN, setPressN] = useState(0);
   // 브라우저 칸의 '크게 보기'·'사람 필요' — 모달은 여기 하나만(칸마다 띄우면 같은 세션 칸이 둘일 때 겹쳤다, 2026-10-03 실측)
   useEffect(() => {
     const on = (e: Event) => {
-      const d = (e as CustomEvent<{ profile: string; pid?: number }>).detail;
+      const d = (e as CustomEvent<{ profile: string; pid?: number; orch?: string }>).detail;
       const l = pickLive(livesRef.current, d.profile, d.pid);
-      if (l) update((s) => askOpen(s, l));
+      if (l) { update((s) => askOpen(s, l, d.orch)); setPressN((n) => n + 1); }
     };
     window.addEventListener(OPEN_EVENT, on);
     return () => window.removeEventListener(OPEN_EVENT, on);
@@ -417,11 +422,17 @@ export function AgentAskHost({ lives, nameOf, notify, notifyPopup, onPopupCards 
     const k = r.cards.map((l) => `${l.profile}:${l.pid}:${l.popupKind ?? ''}`).join('|');
     if (k !== cardKeys.current) { cardKeys.current = k; onPopupCards?.(r.cards); }
   }, [lives, st.open]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 스페이스가 있으면(채팅 뷰) 모달 대신 그 브라우저를 독에 둔 참모의 스페이스 칸으로(시안 A — 사람 차례는 그 자리 카드). 그 참모가 없으면 모달 그대로
+  useEffect(() => {
+    const o = st.open;
+    const l = o && livesRef.current.find((x) => x.profile === o.profile && x.pid === o.pid);
+    if (l && paneFn()?.(l.profile, false, st.open?.orch)) update((s) => askClose(s, livesRef.current, l));
+  }, [st.open?.profile, st.open?.pid, pressN]); // eslint-disable-line react-hooks/exhaustive-deps
   // 목록에서 빠진 동안은 마지막 것을 붙든다 — 모달은 저절로 안 닫고 gone 으로 '닫혔어' 덮개를 그린다(입력은 막는다)
   const last = useRef<Live | undefined>(undefined);
   const { live, gone } = askShown(st, lives, last.current);
   if (live && !gone) last.current = live;
-  if (!live || !st.open) return null;
+  if (!live || !st.open || paneFn()?.(live.profile, true, st.open.orch)) return null;
   // key = 브라우저가 바뀌면 모달을 새로(글칸·대화상자 입력이 옛 브라우저 것과 안 섞이게)
   return <AgentBrowserModal key={`${live.profile}:${live.pid}`} live={live} gone={gone} name={nameOf(live)} focus={st.open.byHuman}
     waiting={askWaiting(st, lives).map((l) => ({ live: l, name: nameOf(l) }))}
@@ -454,15 +465,20 @@ export function PopupCards({ lives, nameOf }: { lives: Live[]; nameOf: (l: Live)
 export function AskCards({ asks, nameOf }: { asks: AskPlaced[]; nameOf: (l: Live) => string }) {
   return (
     <>
-      {asks.map(({ live: l }) => (
-        <div key={askCardKey(l)} data-card={askCardKey(l)} className="login-card browser-card" role="alert">
-          <div className="login-card-top">
-            <b>{tr(`${nameOf(l)} 세션이 사람을 불러요`, `${nameOf(l)} needs you`)}</b>
-            <IconButton tone="pri" label={tr('크게 보기', 'Open')} onClick={() => openAgentModal(l.profile, l.pid)}><IconOpen /></IconButton>
+      {asks.map(({ live: l, owner }) => {
+        // 본문 어디를 눌러도 열린다(10-28 사용자 "카드를 눌렀을 때 스페이스가 안 바뀜" — 오른쪽 위 단추만 눌렸다). 카드가 놓인 참모 칸으로
+        const open = () => openAgentModal(l.profile, l.pid, owner?.id);
+        return (
+          <div key={askCardKey(l)} data-card={askCardKey(l)} className="login-card browser-card browser-card-ask" role="alert" tabIndex={0} onClick={open}
+            onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(); } }}>
+            <div className="login-card-top">
+              <b>{tr(`${nameOf(l)} 세션이 사람을 불러요`, `${nameOf(l)} needs you`)}</b>
+              <IconButton tone="pri" label={tr('크게 보기', 'Open')} onClick={(e) => { e.stopPropagation(); open(); }}><IconOpen /></IconButton>
+            </div>
+            {l.ask?.reason && <div className="browser-card-why">{l.ask.reason}</div>}
           </div>
-          {l.ask?.reason && <div className="browser-card-why">{l.ask.reason}</div>}
-        </div>
-      ))}
+        );
+      })}
     </>
   );
 }

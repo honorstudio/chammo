@@ -5,7 +5,12 @@
 //  · 이어서 뒤 또 같은 오류: 다른 세션이 그 로그인 뒤 정상 답을 냈으면(자격은 멀쩡) 그 세션만 한 번 다시 띄우고, 아니면 다시 로그인 필요
 //  · 고쳐지기 전엔 '이어서'를 보내지 않는다 — 아이맥 2026-10-06 00:30:31, 보낸 즉시 또 'Login expired'
 //  · 지금 로그인 미리 갱신(Rust login_keep, ADR 0008)이 만료 15분 전까지 못 받았거나(late) 갱신 토큰이 죽었으면(dead) 세션이 멈추기 전에 같은 카드
+//  · 약관 동의 필요(400, 2026-10-28): 로그인은 멀쩡해 로그인 카드에 안 섞는다(terms). 사람이 claude.ai 에서 동의하고 [다시 시도](termsRetryAt)하거나
+//    계정 풀이 다른 계정으로 돌리면(loginAt) 그때 이어서 한 번. 다시 띄우기는 안 한다 — 자격 탓이 아니라 그 계정 동의 탓.
+//    바꾼 직후(TERMS_GRACE_MS 안) 멈춘 건 돌던 세션의 옛 토큰 탓(2026-10-28 15:47:32) — 카드 없이 RETRY_MS 뒤 이어서 한 번
 import { machine, tr } from '../i18n';
+import { AUTH_BLOCK_MS, readAuto, TERMS_GRACE_MS } from './accountAuto';
+import type { AccountsView } from './accounts';
 import type { Activity } from './activity';
 import { fwd } from './paths';
 import { withinRoots, type Session } from './session';
@@ -20,7 +25,8 @@ export const STALE_MS = 6 * 3600_000;
 const KEEP_MS = 60 * 60_000;
 
 /** retry = 갱신 겹침(로그인 멀쩡) — 카드 없이 RETRY_MS 뒤 이어서 한 번 */
-export type Stalled = { session: string; name: string; ts: number; kind: 'background' | 'interactive'; retry?: true };
+/** terms = 약관 동의 필요로 멈춤(activity.auth.terms) */
+export type Stalled = { session: string; name: string; ts: number; kind: 'background' | 'interactive'; retry?: true; terms?: true };
 /** 갱신 겹침은 "Try again in a minute" — 그만큼 기다렸다 이어서 */
 export const RETRY_MS = 60_000;
 /** 갱신 겹침 이어서는 멈춤 한 번(풀릴 때까지)에 세 번까지 — 넘으면 락이 안 풀린 것, 카드로 사람에게 */
@@ -41,11 +47,15 @@ export type LoginInput = {
   okAt: number | null;
   /** 지금 로그인 미리 갱신(Rust login_keep_state) — late = 만료 15분 안인데 못 받음, dead = 갱신 토큰이 죽음. 없으면 잘 되는 중 */
   keep?: Keep | null;
+  /** 사람이 약관 카드의 [다시 시도]를 누른 가장 늦은 시각 — 그 전에 멈춘 약관 세션에 이어서 한 번. 없으면 null */
+  termsRetryAt?: number | null;
 };
 export type Keep = 'dead' | 'late';
 export type LoginNeed = { since: number; sessions: string[]; machine: boolean; keep?: Keep };
-/** nudge = 로그인 뒤 이어서, retry = 갱신 겹침 뒤 이어서(말이 다르다), respawn = 다시 띄우기 */
-export type LoginPlan = { mem: LoginMem; need: LoginNeed | null; nudge: string[]; retry: string[]; respawn: string[] };
+/** 약관 동의를 기다리는 멈춤 — sessions = 이름, ids = 세션 id(채팅 카드를 그 세션을 맡긴 참모에게만), last = 가장 늦은 멈춤 */
+export type TermsStall = { since: number; last?: number; sessions: string[]; ids?: string[] };
+/** nudge = 로그인 뒤 이어서, retry = 갱신 겹침 뒤 이어서(말이 다르다), respawn = 다시 띄우기, termsNudge = 약관 다시 시도·계정 바뀜 뒤 이어서 */
+export type LoginPlan = { mem: LoginMem; need: LoginNeed | null; nudge: string[]; retry: string[]; respawn: string[]; terms: TermsStall | null; termsNudge: string[] };
 
 export const emptyLogin = (): LoginMem => ({ nudged: {}, respawned: {}, retries: {}, machineSince: null });
 
@@ -55,7 +65,7 @@ export function loginStep(prev: LoginMem, inp: LoginInput): LoginPlan {
   const keep = (m: Record<string, Mark>) => Object.fromEntries(Object.entries(m).filter(([id, v]) => live.has(id) || now - v.at < KEEP_MS));
   const retries = Object.fromEntries(Object.entries(prev.retries ?? {}).filter(([id]) => live.has(id)));
   const mem: LoginMem = { nudged: keep(prev.nudged), respawned: keep(prev.respawned), retries, machineSince: prev.machineSince };
-  const nudge: string[] = [], retry: string[] = [], respawn: string[] = [], waiting: Stalled[] = [];
+  const nudge: string[] = [], retry: string[] = [], respawn: string[] = [], waiting: Stalled[] = [], termsNudge: string[] = [], termsWaiting: Stalled[] = [];
 
   for (const s of inp.stalled) {
     if (s.retry) {
@@ -68,6 +78,23 @@ export function loginStep(prev: LoginMem, inp: LoginInput): LoginPlan {
         retry.push(s.session);
         mem.nudged[s.session] = { cred: s.ts, at: now };
         retries[s.session] = (retries[s.session] ?? 0) + 1;
+      }
+      continue;
+    }
+    if (s.terms) {
+      const byRetry = (inp.termsRetryAt ?? -Infinity) > s.ts;
+      const fix0 = Math.max(loginAt ?? -Infinity, inp.termsRetryAt ?? -Infinity);
+      // 계정을 바꾼 직후 멈춤 = 옛 토큰 — 이 멈춤 하나에 이어서 한 번(cred = 멈춘 시각)
+      const oldToken = fix0 <= s.ts && loginAt !== null && s.ts - loginAt < TERMS_GRACE_MS;
+      const fixAt = oldToken ? s.ts : fix0;
+      if (fix0 <= s.ts && !oldToken) { termsWaiting.push(s); continue; }
+      if (s.kind !== 'background' || now - s.ts > STALE_MS || now - fixAt < (oldToken ? RETRY_MS : SETTLE_MS)) continue;
+      const n = mem.nudged[s.session];
+      // 사람이 누른 다시 시도는 간격 없이 — 키체인 갱신이 잦아서 두는 간격(NUDGE_GAP_MS)은 계정 바뀜에만
+      // 옛 토큰 멈춤도 간격 없이 — 바꾼 직후 보낸 이어서가 옛 토큰으로 또 멈춘 것(멈춘 시각마다 한 번, 유예 안이라 몇 번 안 된다)
+      if (n?.cred !== fixAt && (!n || byRetry || oldToken || now - n.at >= NUDGE_GAP_MS)) {
+        termsNudge.push(s.session);
+        mem.nudged[s.session] = { cred: fixAt, at: now };
       }
       continue;
     }
@@ -102,15 +129,54 @@ export function loginStep(prev: LoginMem, inp: LoginInput): LoginPlan {
   const need: LoginNeed | null = waiting.length || machine
     ? { since: Math.min(...waiting.map((x) => x.ts), mem.machineSince ?? Infinity), sessions: waiting.map((x) => x.name), machine, ...(ks ? { keep: ks } : {}) }
     : null;
-  return { mem, need, nudge, retry, respawn };
+  const terms = termsWaiting.length ? { since: Math.min(...termsWaiting.map((x) => x.ts)), last: Math.max(...termsWaiting.map((x) => x.ts)), sessions: termsWaiting.map((x) => x.name), ids: termsWaiting.map((x) => x.session) } : null;
+  return { mem, need, nudge, retry, respawn, terms, termsNudge };
 }
+
+/** 약관 카드 — 계정마다 하나. 약관으로 막힌 칸(자동 전환이 건너뛰는 중이라 멈춘 세션이 없어도 남는다) + 멈춘 세션은 지금 계정 카드에.
+ *  id = 계정 칸 id(칸이 없으면 'live'), email 을 모르면 null */
+export type TermsCard = { id: string; email: string | null; sessions: string[]; /** 멈춘 세션 id — 채팅 카드는 이 세션을 맡긴 참모에게만 */ sids?: string[] };
+export function termsCards(t: TermsStall | null, v: AccountsView | null): TermsCard[] {
+  const auto = readAuto(v?.auto);
+  const out: TermsCard[] = (v?.accounts ?? [])
+    .filter((a) => auto.slots[a.id]?.why === 'terms' && auto.slots[a.id]?.blockedUntil !== undefined)
+    .map((a) => ({ id: a.id, email: a.email || null, sessions: [] }));
+  if (!t) return out;
+  // 막힌 칸이 있으면 멈춤은 그 칸 탓 — 자동 전환이 막 다른 칸으로 넘겼어도(재기가 새 로그인을 보기 전 15초) 넘겨 간 칸 이름으로 카드를 안 띄운다.
+  // 단 마지막 칸을 막은 지 유예가 지나 멈췄으면 지금 계정 탓(연쇄라 자동 전환이 넘기지 않고 멈춘 것)
+  const at = (id: string) => (auto.slots[id]?.blockedUntil ?? 0) - AUTH_BLOCK_MS;
+  const newest = out.reduce<TermsCard | undefined>((m, c) => (!m || at(c.id) > at(m.id) ? c : m), undefined);
+  const after = t.last !== undefined && newest !== undefined && t.last > at(newest.id) + TERMS_GRACE_MS;
+  const id = out.find((c) => c.id === v?.active)?.id ?? (after ? undefined : newest?.id) ?? v?.active ?? 'live';
+  const sids = t.ids?.length ? { sids: t.ids } : {};
+  const hit = out.find((c) => c.id === id);
+  if (hit) Object.assign(hit, { sessions: t.sessions }, sids);
+  else out.push({ id, email: v?.accounts.find((a) => a.id === id)?.email || v?.liveEmail || null, sessions: t.sessions, ...sids });
+  return out;
+}
+
+/** 닫은 카드 기억 키 — 계정·멈춘 곳이 바뀌면 다른 카드라 다시 뜬다 */
+export const termsKey = (c: TermsCard) => JSON.stringify([c.id, c.sessions]);
+
+/** 약관 카드 글 — 동의는 사람이 claude.ai 에서 그 계정으로 */
+export function termsText(c: TermsCard): { title: string; where: string } {
+  return {
+    title: c.email ? tr(`${c.email} 계정이 Claude 새 약관 동의가 필요해요`, `${c.email} needs to accept Claude's new terms`) : tr('지금 계정이 Claude 새 약관 동의가 필요해요', "Your current account needs to accept Claude's new terms"),
+    where: c.sessions.length
+      ? tr(`멈춘 곳: ${c.sessions.join(' · ')} — claude.ai 에 이 계정으로 들어가 약관 창이 뜨면 동의, 안 뜨면 이미 된 거예요 — 다시 시도`, `Stopped: ${c.sessions.join(' · ')} — open claude.ai with this account and accept the terms if asked (no prompt means it's done), then retry`)
+      : tr('동의할 때까지 이 계정은 건너뛰어요 — claude.ai 에 이 계정으로 들어가 약관 창이 뜨면 동의, 안 뜨면 이미 된 거예요 — 다시 시도', 'This account is skipped until then — open claude.ai with this account and accept the terms if asked (no prompt means it\'s done), then retry'),
+  };
+}
+
+/** 약관 다시 시도·계정 바뀜 뒤 이어서 보낼 말 */
+export const termsResumedMsg = () => tr('약관 동의로 멈췄던 일 — 동의했거나 다른 계정으로 돌렸어. 하던 데서 이어서 해줘.', 'The work that stopped on the terms notice — the terms were accepted or another account took over. Please continue where you left off.');
 
 /** 로그인 오류로 멈춘 세션 — 일하는 중이면 아니다(이어서를 받아 도는 중). 시각을 못 읽으면 뺀다 */
 export function stalledOf(acts: { session: Pick<Session, 'id' | 'name' | 'kind' | 'state'>; activity: Pick<Activity, 'auth'> }[]): Stalled[] {
   return acts.flatMap(({ session: x, activity: a }) => {
     const ts = a.auth ? Date.parse(a.auth.ts) : NaN;
     if (!a.auth || Number.isNaN(ts) || x.state === 'working') return [];
-    return [{ session: x.id, name: x.name, ts, kind: x.kind === 'background' ? 'background' : 'interactive', ...(a.auth.retry ? { retry: true } : {}) } as Stalled];
+    return [{ session: x.id, name: x.name, ts, kind: x.kind === 'background' ? 'background' : 'interactive', ...(a.auth.retry ? { retry: true } : {}), ...(a.auth.terms ? { terms: true } : {}) } as Stalled];
   });
 }
 
@@ -146,12 +212,24 @@ export function loggedOutSeen(falses: number, v: boolean | null): { falses: numb
 }
 
 /** Rust login_probe 답 — 모양이 깨졌으면 모름 */
-export function readProbe(v: unknown): { loggedIn: boolean | null; credAt: number | null } {
-  const o = (v && typeof v === 'object' ? v : {}) as { loggedIn?: unknown; credAt?: unknown };
+export function readProbe(v: unknown): { loggedIn: boolean | null; credAt: number | null; termsRetryAt?: number } {
+  const o = (v && typeof v === 'object' ? v : {}) as { loggedIn?: unknown; credAt?: unknown; termsRetryAt?: unknown };
   return {
     loggedIn: typeof o.loggedIn === 'boolean' ? o.loggedIn : null,
     credAt: typeof o.credAt === 'number' && Number.isFinite(o.credAt) ? o.credAt : null,
+    ...(typeof o.termsRetryAt === 'number' && Number.isFinite(o.termsRetryAt) ? { termsRetryAt: o.termsRetryAt } : {}),
   };
+}
+
+/** 약관 카드 줄(login.json terms·폰) — 모양이 깨진 줄은 버린다 */
+export function readTermsCards(v: unknown): TermsCard[] {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((x): TermsCard[] => {
+    const o = (x ?? {}) as { id?: unknown; email?: unknown; sessions?: unknown; sids?: unknown };
+    if (typeof o.id !== 'string' || !Array.isArray(o.sessions)) return [];
+    const sids = Array.isArray(o.sids) ? { sids: o.sids.filter((s): s is string => typeof s === 'string') } : {};
+    return [{ id: o.id, email: typeof o.email === 'string' ? o.email : null, sessions: o.sessions.filter((s): s is string => typeof s === 'string'), ...sids }];
+  });
 }
 
 /** Rust login_keep_state 답 — dead·late 만 */

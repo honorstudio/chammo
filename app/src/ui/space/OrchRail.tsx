@@ -326,7 +326,7 @@ export function OrchRail({ home, onTeam, moreDot = false, popFns, top, avatars, 
             style={{ ...orchVars(a.color), ...(shift ? { transform: `translateY(${shift}px)` } : {}) } as React.CSSProperties}
             onPointerDown={down(a.id, i)} onClick={() => { if (!dragged.current && !a.phase) onPick(a.id); }}
             onDoubleClick={onRename && !a.phase ? () => onRename(a.id) : undefined} onContextMenu={onMenu && !a.phase ? (e) => onMenu(e, a.id) : (e) => e.preventDefault()}
-            aria-label={a.phaseText ? `${a.label} · ${a.phaseText}` : a.label} aria-current={a.on || undefined} aria-busy={a.phase ? true : undefined} data-flip={a.flip ?? a.id} data-flip-alt={a.flipAlt}
+            aria-label={a.phaseText ? `${a.label} · ${a.phaseText}` : a.label} aria-current={a.on || undefined} aria-busy={a.phase ? true : undefined} data-flip={a.flip ?? a.id} data-flip-alt={a.flipAlt} data-orch-drop={a.phase ? undefined : a.id}
             data-tip={a.label} data-tip-sub={a.phaseText ?? a.role} data-tip-dot={a.phase === 'stopping' ? 'off' : a.phase ? 'rest' : dotOfPip(a.pip)} data-tip-color={a.color} data-tip-key={i < 9 && !a.phase ? keyLabel(`⌘${i + 1}`, IS_WIN) : undefined}>
             <span className="lk-av-pic">{a.node}{a.pip && !a.phase && <i className={`lk-pip p-${a.pip}`} aria-hidden="true" />}{a.phase && <i className={`lk-ph-dot ph-${a.phase}`} aria-hidden="true" />}</span>
             {wide && <span className="lk-av-tx"><b>{a.label}</b>{(a.phaseText ?? a.role) && <span className={a.phaseText ? 'lk-ph-tx' : undefined}>{a.phaseText ?? a.role}</span>}</span>}

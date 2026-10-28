@@ -4,7 +4,7 @@
 import { tr } from '../i18n';
 import type { Activity } from './activity';
 import { cardTarget, type Note } from './notify';
-import type { Session } from './session';
+import { seenName, type Session } from './session';
 import type { ActivityStatus } from './status';
 import type { TaskEvent } from './tasks';
 
@@ -91,7 +91,7 @@ export function buildInbox(
     if (!e || !e.note) continue;
     if (e.type === 'ask') {
       // 프로젝트는 일을 받은 세션 쪽 — 답장 받을 참모(to)가 아니라
-      const project = findTarget(sessions, t.target)?.project ?? t.target;
+      const project = findTarget(sessions, t.target)?.project ?? seenName(t.target);
       out.push({ key: `task:${id}:${e.ts}`, kind: 'decide', project, where: t.title, text: e.note, ts: e.ts, target: e.to || t.target, taskId: id, toOrch: !!e.to, ...(GATE.test(e.note) ? { gate: true } : {}) });
     }
   }

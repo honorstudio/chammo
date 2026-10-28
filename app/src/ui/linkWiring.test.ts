@@ -16,7 +16,7 @@ describe('끊긴 터미널 보기 — 다시 붙기·기다렸다 치기·말풍
   });
 
   it('SessionGrid 는 누른 순간의 손잡이가 아니라 붙어 있는 보기를 기다렸다 친다', () => {
-    expect(grid).toMatch(/await links\.wait\(id, LINK_WAIT\)/);
+    expect(grid).toMatch(/await links\.wait\(id, LINK_WAIT[,)]/); // 붙는 중이면 더 기다리는 hold 가 붙을 수 있다(2026-10-27 boot-storm)
     expect(grid).not.toMatch(/typeAndSend\(id, panes\.current\.get\(id\)/);
     expect(grid).toMatch(/links\.set\(id, st === 'live'/);
   });
@@ -38,5 +38,9 @@ describe('꺼진 참모 다시 켜기 — App 이 판단(domain/orchRevive)을 �
   it('앱이 끈 목록을 못 읽으면 판단하지 않는다 — 사람이 끈 참모를 켜지 않게', () => {
     expect(revive).toMatch(/if \(!stopped\) return;/);
     expect(revive).toMatch(/stoppedByApp: \(id\) => stopped\.includes\(id\)/);
+  });
+  it('앱 밖에서 claude stop 으로 끈 참모(daemon.log)도 넘긴다 — 못 읽으면 빈 목록(예전처럼 켠다)(#6)', () => {
+    expect(revive).toMatch(/daemonStoppedRecently\(\)\.catch\(\(\) => \[\] as string\[\]\)/);
+    expect(revive).toMatch(/stoppedOutside: \(id\) => outside\.includes\(id\)/);
   });
 });

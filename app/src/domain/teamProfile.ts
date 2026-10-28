@@ -25,6 +25,13 @@ export function namedConvos<T extends { peer: string; name: string; kind?: strin
   return cs.map((c) => (c.kind === 'group' || !c.peer ? c : { ...c, name: lookOf(board, c.peer, c.name).name }));
 }
 
+/** 폰 판 받기(/api/team-profiles·team-posts ?rev=본 판) — {same} 이면 아는 판 그대로, 다른 팀 판(팀을 바꾼 사이 늦게 온 답)은 버린다 */
+export function keepBoard<B extends { team: string }>(prev: B | null, got: B | { same: true }, team?: string): B | null {
+  if ('same' in got) return prev;
+  if (team !== undefined && got.team !== team) return prev;
+  return got;
+}
+
 export const statusName =(s: Status) => (s === 'free' ? tr('대화 가능', 'Available') : s === 'away' ? tr('자리 비움', 'Away') : tr('방해 금지', 'Do not disturb'));
 
 /** 이름 아래 한 줄 — '자리 비움 · 점심 다녀올게요' */

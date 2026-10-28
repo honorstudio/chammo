@@ -25,7 +25,7 @@
 .cd-ask { display: flex; align-items: center; gap: 8px; padding: 10px 12px; margin-bottom: 8px; border-radius: 10px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); font-size: 12.5px; }
 .cd-btn { height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: var(--surface); color: var(--text); font-size: 12.5px; cursor: pointer; box-shadow: 0 0 0 1px var(--line); }
 .cd-btn.danger, .cd-btn.pri { background: var(--text); color: var(--surface); box-shadow: none; }
-.cd-err { margin: 8px 0; color: var(--danger, #d83b3b); font-size: 12.5px; white-space: pre-wrap; }
+.cd-err { display: flex; align-items: center; gap: 6px; margin: 8px 0; color: var(--danger, #d83b3b); font-size: 12.5px; white-space: pre-wrap; }
 .cd-wait { margin-top: 30px; color: var(--text-2); font-size: 13px; }
 .cd-run { position: absolute; top: 2px; right: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--idle, #1f9a62); box-shadow: 0 0 0 2px var(--surface); }
 .cd-quit:hover { color: var(--danger, #d83b3b); }

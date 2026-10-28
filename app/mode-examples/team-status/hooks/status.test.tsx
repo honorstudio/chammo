@@ -45,12 +45,14 @@ function world(): Fs {
     { sessionId: 'r1', name: 'routine-nightly-check', cwd: HQ, busy: false, startedAt: 1 },
     { sessionId: 'w1', name: 'mode-showcase', cwd: `${HQ}/.claude/worktrees/mode-showcase`, busy: true, startedAt: 1 },
   ] }))
+  // ' · ' 뒤는 별명(앱 orchLabel) — 맡은 일은 orch-roles 에서만(공개 이슈 #3)
+  put(`${DATA}/orch-roles.json`, JSON.stringify({ '참모-5': { role: '다른 프로젝트 개발 — 참모 앱은 안 맡음' }, '참모-7': { role: '돈 계산' } }))
   put(`${DATA}/orch-order.json`, JSON.stringify(['s2aaaaaa-1', 's5bbbbbb-1', 's7cccccc-1', 's8dddddd-1']))
   put(`${DATA}/avatars/참모-2.json`, JSON.stringify({ kind: 'preset', shape: 'mochi', eyes: 'pill', color: '#2f74e0' }))
   return fs
 }
 
-// 데스크톱은 참모 모두를 Svg 한 장에 — alt 가 '참모-2 기다리는 중 · 참모-5 일하는 중 · …'
+// 데스크톱은 참모 모두를 Svg 한 장에 — alt 가 '참모 업데이트 기다리는 중 · 개발 담당 일하는 중 · …'(이름표 = 별명)
 const alts = async (ui: { findAll: (q: { type: string }) => Promise<{ props: Record<string, unknown> }[]> }) => (await ui.findAll({ type: 'Svg' })).flatMap((s) => String(s.props.alt).split(' · '))
 const svgOf = async (ui: { find: (q: { type: string }) => Promise<{ props: Record<string, unknown> } | undefined> }) => String((await ui.find({ type: 'Svg' }))?.props.source ?? '')
 
@@ -63,11 +65,12 @@ test('desktop: 참모 넷을 캐릭터로 — 도우미 세션은 빼고, 상태
   await clock.settle()
   expect(runs).toEqual([])
 
-  expect(await alts(ui)).toEqual(['참모-2 기다리는 중', '참모-5 일하는 중', '참모-7 답 기다림', '참모-8 쉬는 중'])
+  expect(await alts(ui)).toEqual(['참모 업데이트 기다리는 중', '개발 담당 일하는 중', '회계 답 기다림', '가나 담당 쉬는 중'])
   expect((await ui.findAll({ type: 'Svg' })).length).toBe(1) // 참모가 여럿이어도 그림은 한 장(움직이는 그림이 여럿이면 그만큼 다시 그린다)
   const s = await svgOf(ui)
-  expect(s).toContain('>참모-2</text>')
-  expect(s).toContain('개발 담당')
+  expect(s).toContain('>참모 업데이트</text>')
+  expect(s).not.toContain('>참모-2</text>') // 번호 이름은 안 보인다(앱 사이드바와 같게)
+  expect(s).toContain('다른 프로젝트 개발') // 맡은 일(orch-roles 첫 마디)
   expect(s).not.toMatch(/routine|mode-showcase/)
   // 호스트가 받는 트리(모르는 속성이면 drawn 이 거절된다)
   await expect(ui.drawn()).resolves.toBeDefined()
@@ -105,7 +108,7 @@ test('desktop: 칸이 작으면 이름·맡은 일을 빼고 캐릭터만', asyn
   const ui = await $.ui.mount({ plugin: 'team-status', surface: 'desktop', ...PANE, ...at(24, 4) })
   await clock.settle()
   expect((await alts(ui)).length).toBe(4)
-  expect(await svgOf(ui)).not.toContain('개발 담당') // 작으면 맡은 일은 뺀다
+  expect(await svgOf(ui)).not.toContain('다른 프로젝트 개발') // 작으면 맡은 일은 뺀다
   await expect(ui.drawn()).resolves.toBeDefined()
   await ui.unmount()
 })
@@ -118,8 +121,8 @@ test('terminal: 그림 대신 얼굴 글 + 이름 + 맡은 일', async ($, on) =
   const ui = await $.ui.mount({ plugin: 'team-status', surface: 'terminal', ...PANE, ...at(80, 10) })
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: '(°o°)?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^참모-7$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '회계' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^회계$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '돈 계산' })).toBeDefined()
   await expect(ui.drawn()).resolves.toBeDefined()
   await ui.unmount()
 })
@@ -133,7 +136,7 @@ test('결정 대기함에 열린 카드가 있으면 손바닥', async ($, on) =
   fakeFs(on, fs)
   const ui = await $.ui.mount({ plugin: 'team-status', surface: 'desktop', ...PANE, ...at(90, 16) })
   await clock.settle()
-  expect((await alts(ui))[3]).toBe('참모-8 답 기다림')
+  expect((await alts(ui))[3]).toBe('가나 담당 답 기다림')
   await ui.unmount()
 })
 
@@ -147,14 +150,14 @@ test('폴링 — live.json 이 안 바뀌면 다시 안 그리고, state 가 바
   await clock.settle()
   await clock.advance(5_000)
   await clock.settle()
-  expect((await alts(ui))[3]).toBe('참모-8 쉬는 중')
+  expect((await alts(ui))[3]).toBe('가나 담당 쉬는 중')
   // 참모-8 이 새 지시를 받아 일하기 시작 — 앱이 state 를 바꿔 쓴다
   const live = JSON.parse(fs.get(`${DATA}/live.json`)!.text) as { sessions: { busy: boolean; state: string }[] }
   Object.assign(live.sessions[3]!, { busy: true, state: 'work' })
   fs.set(`${DATA}/live.json`, { text: JSON.stringify(live), mtime: 2 })
   await clock.advance(5_000)
   await clock.settle()
-  expect((await alts(ui))[3]).toBe('참모-8 일하는 중')
+  expect((await alts(ui))[3]).toBe('가나 담당 일하는 중')
   expect(runs).toEqual([])
   await ui.unmount()
 })

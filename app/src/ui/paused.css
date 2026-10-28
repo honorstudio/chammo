@@ -53,6 +53,7 @@
 :is(html.oa-paused, html.oa-calm) .cur-send-wrap:is(:hover, :focus-within, .has)::before,
 :is(html.oa-paused, html.oa-calm) .cur-send.sending .cur-send-ring,
 :is(html.oa-paused, html.oa-calm) .cur-send.sending .cur-send-plane svg,
+:is(html.oa-paused, html.oa-calm) .obb-ring.r-ask,
 :is(html.oa-paused, html.oa-calm) .cv-avb.run { animation-play-state: paused !important; }
 
 /* 애니메이션 끄기(ui/calm 의 oa-still) — 움직임·전환 0. 키프레임은 끝 모양으로 바로 가서(1ms·한 번) 나타나기 애니메이션이 투명한 채로 남지 않는다.

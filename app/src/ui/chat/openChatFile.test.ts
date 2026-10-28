@@ -74,7 +74,7 @@ describe('누르는 곳 — 말풍선 그림·파일, 파일 카드가 같은 �
     expect(chat).toMatch(/<Bubble [^>]*by=\{paneId \?\? ''\}/);
   });
   it('참모가 띄운 파일 카드도 같은 함수를 쓴다(새로 안 만든다)', () => {
-    expect(card).toMatch(/openChatFile\(f\.path, by, f\.at\)/);
+    expect(card).toMatch(/openChatFile\(f\.path, by, f\.at, !!f\.at\)/); // 짚은 곳이 있으면 미리보기(참모 앱은 자리를 모른다)
     expect(card).not.toMatch(/new CustomEvent/);
   });
   it('스페이스는 같은 신호를 받고, 붙이기(attach)도 같은 저장 함수를 쓴다', () => {

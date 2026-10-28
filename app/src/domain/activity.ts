@@ -7,12 +7,12 @@ import { speakable } from './voice';
 /** asks: 자르기 전 전체 답으로 판단한 '사용자에게 묻는가'(text 는 화면용으로 잘린 것). say: 음성 모드로 읽을 글(domain/voice).
  *  midTurn: 도구를 부르기 전 중간 멘트("먼저 찾아볼게") — 턴 끝 답이 아니라 읽지·알리지 않는다
  *  turnEnd: 턴 끝 답(stop_reason end_turn) — 세션 상태가 계속 작업 중으로 나와도 답이 끝난 걸 안다(백그라운드 job 참모) */
-export type Line = { ts: string; text: string; /** 답 끝 200자 — 넘길 때 끝의 질문·요청이 보이게(text 는 앞에서 자른다) */ tail?: string; asks?: boolean; say?: string; midTurn?: boolean; turnEnd?: boolean; /** 그 턴을 깨운 말이 전부 다른 세션 메시지였으면 보낸 이름들(from-name) — 참모끼리 넘긴 턴은 소리로 안 읽는다(domain/voice fromOrchTurn) */ woke?: string[]; /** 물어볼 때만 — 결정 대기함용 결론·질문(askView) */ ask?: AskView };
+export type Line = { ts: string; text: string; /** 답 끝 200자 — 넘길 때 끝의 질문·요청이 보이게(text 는 앞에서 자른다) */ tail?: string; asks?: boolean; say?: string; midTurn?: boolean; turnEnd?: boolean; /** 그 턴을 깨운 말이 전부 다른 세션 메시지였으면 보낸 이름들(from-name) — 참모끼리 넘긴 턴은 소리로 안 읽는다(domain/voice fromOrchTurn) */ woke?: string[]; /** 그 턴을 사람이 직접 친 말(humanPrompt)이 깨웠다 — 턴 중간에 친 말도. 말 안 건 참모의 '새 답 있어' 한 줄은 이때·묻는 답일 때만(domain/voice routeReply) */ byHuman?: true; /** 꼬리(256KB)가 이 턴 중간에서 잘려 깨운 말을 모른다 — 그림 읽기로 길어진 턴에서 다른 참모가 깨운 턴을 사람 턴처럼 알렸다(10-28 사용자, domain/voice voiceTurn) */ cut?: true; /** 물어볼 때만 — 결정 대기함용 결론·질문(askView) */ ask?: AskView };
 /** tool = 마지막으로 부른 도구(사무실 행동·머리 위 한 줄) */
 export type Tool = { name: string; target: string; ts: string };
 /** messaged = 마지막으로 SendMessage 를 부른 시각 — 이미 참모에게 보고했는지(참모 기록이 커서 거기선 못 찾았다, 2026-09-30) */
 /** peer = 다른 세션이 SendMessage 로 건 마지막 말(본문만) — meta 줄이라 prompt(사람 지시)엔 안 든다. 참모 홈 '하던 일'(domain/orchHome) */
-export type Activity = { prompt?: Line; /** 사람이 직접 한 마지막 말(humanPrompt) — 앱([앱] 줄)·다른 기기·팀 참모가 입력칸에 친 줄은 빼고. 음성은 사람이 마지막으로 말 건 참모만 읽는다(domain/voice talkedTo) */ human?: Line; peer?: Line; reply?: Line; tool?: Tool; messaged?: string; /** 사용 한도 오류로 멈춤 — 그 오류 줄이 마지막(뒤에 새 줄이 없음)일 때만 */ limit?: { ts: string; text: string }; /** 로그인이 풀려 멈춤 — 그 오류 줄이 마지막일 때만(limit 과 같은 규칙). retry = 갱신 겹침(로그인 풀림 아님 — 잠깐 뒤 다시) */ auth?: { ts: string; text: string; retry?: true }; /** 마지막 대화 줄(user·assistant·attachment) 시각 — 글 없는 도구 줄·다른 세션 메시지·작업 알림까지. 답보다 늦으면 그 뒤 턴이 돌던 중(lostTriage) */ lastAt?: string; /** 마지막 user·assistant 줄 시각(attachment 빼고) — 턴 끝 답보다 늦으면 그 뒤 새 턴이 돈다(끝 알림·새 지시·도구 줄, domain/status) */ lastMsgAt?: string; /** 띄우고 끝 알림을 아직 못 받은 백그라운드 일 수(Bash·에이전트·Monitor·깨우기 예약) — 꺼진 세션이 무언가를 기다리던 중이었나(lostTriage). 0 이면 없음 */ waitingOn?: number; /** 깨우기 예약(ScheduleWakeup)을 걸고 아직 안 깨어남 — 쉬는 세션이 진짜 기다리는 유일한 것(백그라운드 일은 살아 있으면 agents 가 working, domain/status) */ wake?: true; /** 마지막 답 턴에 실린 컨텍스트 토큰(입력+캐시 읽기+캐시 만들기)과 모델 — 상태줄 파일이 없는 대화의 컨텍스트 %(domain/orchHome) */ tokens?: number; model?: string };
+export type Activity = { prompt?: Line; /** 사람이 직접 한 마지막 말(humanPrompt) — 앱([앱] 줄)·다른 기기·팀 참모가 입력칸에 친 줄은 빼고. 음성은 사람이 마지막으로 말 건 참모만 읽는다(domain/voice talkedTo) */ human?: Line; peer?: Line; reply?: Line; tool?: Tool; messaged?: string; /** 사용 한도 오류로 멈춤 — 그 오류 줄이 마지막(뒤에 새 줄이 없음)일 때만 */ limit?: { ts: string; text: string }; /** 로그인이 풀려 멈춤 — 그 오류 줄이 마지막일 때만(limit 과 같은 규칙). retry = 갱신 겹침(로그인 풀림 아님 — 잠깐 뒤 다시) */ auth?: { ts: string; text: string; retry?: true; /** 약관 동의 필요(400) — 로그인은 멀쩡, 그 계정으로 claude.ai 에서 동의해야 풀린다(isTermsError) */ terms?: true }; /** 마지막 대화 줄(user·assistant·attachment) 시각 — 글 없는 도구 줄·다른 세션 메시지·작업 알림까지. 답보다 늦으면 그 뒤 턴이 돌던 중(lostTriage) */ lastAt?: string; /** 마지막 user·assistant 줄 시각(attachment 빼고) — 턴 끝 답보다 늦으면 그 뒤 새 턴이 돈다(끝 알림·새 지시·도구 줄, domain/status) */ lastMsgAt?: string; /** 띄우고 끝 알림을 아직 못 받은 백그라운드 일 수(Bash·에이전트·Monitor·깨우기 예약) — 꺼진 세션이 무언가를 기다리던 중이었나(lostTriage). 0 이면 없음 */ waitingOn?: number; /** 깨우기 예약(ScheduleWakeup)을 걸고 아직 안 깨어남 — 쉬는 세션이 진짜 기다리는 유일한 것(백그라운드 일은 살아 있으면 agents 가 working, domain/status) */ wake?: true; /** 마지막 답 턴에 실린 컨텍스트 토큰(입력+캐시 읽기+캐시 만들기)과 모델 — 상태줄 파일이 없는 대화의 컨텍스트 %(domain/orchHome) */ tokens?: number; model?: string };
 
 /** 사용 한도 오류 줄인가 — API 오류 줄(isApiErrorMessage)이면서 오류 종류가 rate_limit 류이거나 글에 "hit your … limit".
  *  문구가 바뀐 적이 있어 둘 중 하나만 맞아도 잡는다. 일시적 429·529·과부하는 Claude Code 가 다시 시도하니 아니다(2026-10-02) */
@@ -30,6 +30,12 @@ export function isAuthError(d: { isApiErrorMessage?: boolean; error?: string }, 
   if (d.isApiErrorMessage !== true) return false;
   if (/another claude code process is refreshing|try again in a minute/i.test(text)) return false;
   return d.error === 'authentication_failed' || /please run \/login|login expired|not logged in|oauth token has expired|invalid api key/i.test(text);
+}
+
+/** 계정이 claude.ai 새 약관에 아직 동의 안 한 줄 — "API Error: 400 We've updated our Consumer Terms and Privacy Policy. You'll need to accept them in claude.ai
+ *  with the email in /status to continue."(실측 2026-10-28 · error unknown). 문구 일부만 바뀌어도 잡게 둘 중 하나 */
+export function isTermsError(d: { isApiErrorMessage?: boolean }, text: string): boolean {
+  return d.isApiErrorMessage === true && /consumer terms|accept them in claude\.ai/i.test(text);
 }
 
 /** 토큰 갱신이 세션끼리 겹친 줄 — "Could not refresh your login because another … · Try again in a minute"(server_error).
@@ -56,8 +62,9 @@ const squash = (s: string) => {
 
 // 사람이 친 지시가 아닌 것: 슬래시 명령·훅 주입(<…>로 시작), 다른 세션이 보낸 메시지
 // 붙여넣은 글(<pasted_content …>)은 사람이 보낸 것 — 훅 주입으로 치면 지시 시각이 옛것으로 남는다(2026-09-28)
-/** 입력칸에 들어오지만 사람 말이 아닌 줄의 머리 — 앱 줄·자리표·다른 기기 참모·팀 메신저(사람 말 · 원격·내 다른 기기 사람 말·텔레그램은 사람 말) */
-const NOT_HUMAN = ['[앱]', '[app]', '[자리표]', '[slot]', '[다른 기기 참모', '[Assistant on another device', '[남의 참모', "[Teammate's assistant", '[팀 참모', '[Team assistant', '[팀 사람 말', '[Team human', '[내 다른 기기 참모', '[My device assistant'];
+/** 입력칸에 들어오지만 사람 말이 아닌 줄의 머리 — 앱 줄·자리표·다른 기기 참모·팀 메신저(사람 말 · 원격·내 다른 기기 사람 말·텔레그램은 사람 말).
+ *  압축 요약·중단 줄도 — 압축된 고객사D 담당이 사람이 마지막으로 말 건 참모로 셌다(10-28) */
+const NOT_HUMAN = ['[앱]', '[app]', '[자리표]', '[slot]', 'This session is being continued from a previous conversation', '[Request interrupted by user', '[다른 기기 참모', '[Assistant on another device', '[남의 참모', "[Teammate's assistant", '[팀 참모', '[Team assistant', '[팀 사람 말', '[Team human', '[내 다른 기기 참모', '[My device assistant'];
 export const humanPrompt = (t: string) => !NOT_HUMAN.some((h) => t.trimStart().startsWith(h));
 
 const isInjected = (t: string) => (t.startsWith('<') && !t.startsWith('<pasted_content')) || t.startsWith('Another Claude session sent a message');
@@ -89,10 +96,19 @@ export function summarizeTranscript(tail: string): Activity {
   let wake = false; // 깨우기 예약을 걸고 아직 안 깨어남
   // 이 턴을 깨운 말 — 턴이 끝난 뒤(closed) 첫 답 줄 전까지 온 user 줄. 다른 세션 메시지면 보낸 이름, 사람 말·끝 알림·깨우기는 ''
   let woke: string[] = [];
+  let byHuman = false; // 이 턴을 깨운 말(또는 턴 중간에 친 말)에 사람 말이 있나
   let closed = true;
   let collecting = false;
+  // 꼬리 첫 줄이 깨졌으면 파일 중간에서 잘린 것 — 지금 턴이 언제 시작했는지(깨운 말) 모른다. 앞 턴이 끝나는 게 보이면 그다음 턴부턴 안다
+  let first = true;
+  let cut = false;
+  let turnCut = false;
   for (const raw of tail.split('\n')) {
     if (!raw.trim()) continue;
+    if (first) {
+      first = false;
+      try { JSON.parse(raw); } catch { cut = true; closed = false; }
+    }
     let d: { type?: string; timestamp?: string; isMeta?: boolean; origin?: { kind?: string }; isApiErrorMessage?: boolean; error?: string; content?: unknown; toolUseResult?: unknown; message?: { content?: unknown; stop_reason?: string; model?: string; usage?: Record<string, unknown> } };
     try {
       d = JSON.parse(raw);
@@ -129,14 +145,16 @@ export function summarizeTranscript(tail: string): Activity {
     }
     const text = textOf(d.message?.content).trim();
     if (d.type === 'user' && text && !onlyToolResults(d.message?.content)) {
-      if (closed) { woke = []; closed = false; collecting = true; }
+      if (closed) { woke = []; byHuman = false; closed = false; collecting = true; }
       const peer = d.origin?.kind === 'peer';
       // 턴 중간에 끼어든 meta 줄(스킬 본문 등)은 깨운 말이 아니다 — 사람 말은 언제 와도 사람이 말 건 턴
       if (collecting || (!d.isMeta && !isInjected(text))) woke.push(...(peer ? (fromNames(text).length ? fromNames(text) : ['']) : ['']));
+      if (!peer && !d.isMeta && !isInjected(text) && humanPrompt(text)) byHuman = true;
     }
-    if (d.type === 'assistant') { collecting = false; closed = d.message?.stop_reason !== 'tool_use'; }
+    if (d.type === 'assistant') { collecting = false; closed = d.message?.stop_reason !== 'tool_use'; turnCut = cut; if (closed) cut = false; } // 이 답 줄의 턴이 잘렸나 — 끝난 턴이면 다음 턴부턴 시작이 보인다
     if (!text) continue;
     if (d.type === 'assistant' && isLimitError(d, text)) out.limit = { ts, text: text.slice(0, MAX) }; // 답으로도 그대로 남긴다(대시보드에 보이게)
+    else if (d.type === 'assistant' && isTermsError(d, text)) out.auth = { ts, text: text.slice(0, MAX), terms: true };
     else if (d.type === 'assistant' && isAuthError(d, text)) out.auth = { ts, text: text.slice(0, MAX) };
     else if (d.type === 'assistant' && isRefreshStall(d, text)) out.auth = { ts, text: text.slice(0, MAX), retry: true };
     if (d.type === 'user' && !d.isMeta && !isInjected(text)) {
@@ -151,6 +169,8 @@ export function summarizeTranscript(tail: string): Activity {
       if (d.message?.stop_reason === 'tool_use') out.reply.midTurn = true;
       if (d.message?.stop_reason === 'end_turn') out.reply.turnEnd = true;
       if (woke.length && woke.every(Boolean)) out.reply.woke = [...woke];
+      if (byHuman) out.reply.byHuman = true;
+      else if (turnCut) out.reply.cut = true;
     }
   }
   const n = waiting.size + (wake ? 1 : 0);

@@ -242,17 +242,31 @@ fn 실패_뒤엔_1분부터_두_배씩_15분까지_물러서고_새_판이_오�
 }
 
 #[test]
+fn 물러서는_중에도_폰이_옛_판이면_같다고_안_한다() {
+    // 10-27 리뷰 — phone_same 이 !changed_at 이라 물러서는 동안(changed_at = false) 알린 판이 폰 본 판보다 새로워도 {same:true}
+    let w = World::new("phone-backoff", true);
+    let now = Instant::now();
+    nudge(&w.team, 5);
+    let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, now).map(|_| ()).unwrap_err();
+    let later = now + Duration::from_secs(30);
+    assert!(crate::team_locker_app::backing_off(&w.team, later));
+    assert!(!crate::team_profile::phone_same(&w.team, 3), "폰 본 판(3) < 알린 판(5) — 그대로라고 하면 안 된다");
+    assert!(crate::team_profile::phone_same(&w.team, 5), "본 판 = 알린 판이면 그대로");
+    assert!(crate::team_profile::phone_same(&w.team, 6), "본 판이 더 새로우면(맥 재시작 뒤 알린 판이 다시 쌓일 때) 그대로");
+}
+
+#[test]
 fn 팀이_바뀌면_사람_목록을_새로_받는다() {
     let w = World::new("tc", false);
     let now = Instant::now();
     let logs = |w: &World| w.by_path().get("GET /v0/teams/:t/log").copied().unwrap_or(0);
-    list_split_at(&w.d, &w.kc, &w.r, &w.team, now).unwrap();
-    list_split_at(&w.d, &w.kc, &w.r, &w.team, now + Duration::from_secs(300)).unwrap();
+    let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, now).unwrap();
+    let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, now + Duration::from_secs(300)).unwrap();
     assert_eq!(logs(&w), 1, "5분 안엔 캐시");
     forget_people(&w.team); // 소켓 team_changed
-    list_split_at(&w.d, &w.kc, &w.r, &w.team, now + Duration::from_secs(301)).unwrap();
+    let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, now + Duration::from_secs(301)).unwrap();
     assert_eq!(logs(&w), 2, "팀이 바뀌면 바로 새로");
-    list_split_at(&w.d, &w.kc, &w.r, &w.team, now + Duration::from_secs(301 + 600)).unwrap();
+    let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, now + Duration::from_secs(301 + 600)).unwrap();
     assert_eq!(logs(&w), 3, "10분 지나면 새로(놓친 사슬 바뀜 대비)");
 }
 
@@ -314,4 +328,156 @@ fn 보관함이_10분마다_바뀌는_한_시간_요청_수_상한() {
     eprintln!("10분마다 바뀜 1시간: {n}번 {:?}", w.by_path());
     // 바뀔 때마다 화면 셋이 목록을 한 번씩(3) + 사람 목록 다시 확인은 10분에 한 번(명부 1 + 사슬 2) + 방 찾기 12 + 기기 카드 24
     assert!(n <= 90, "10분마다 바뀌는 한 시간에 {n}번 {:?}", w.by_path());
+}
+
+#[test]
+fn 목록_기억이_없을_때_썸네일_열기가_여럿이어도_목록은_한_번() {
+    // 10-26 실측(fix/team-latency3) — 앱을 막 켜면 봉해 둔 마지막 목록이 바로 떠서 카드 썸네일(peek)이 목록 기억 없이 먼저 불린다.
+    // 썸네일마다 크기 보려고 목록 한 번 + 열려고 또 한 번이라 사진 셋 = 목록 여섯(요청 14개, 운영 약 7초)이었다
+    let w = World::new("thumbs", false);
+    forget(&w.team);
+    forget_people(&w.team);
+    let id = w.file["id"].as_str().unwrap().to_string();
+    let lists = |w: &World| w.by_path().get("GET /v0/teams/:t/locker").copied().unwrap_or(0);
+    for _ in 0..3 {
+        let (_, _, _, f, o) = find(&w.d, &w.kc, &w.r, &w.team, &id).unwrap();
+        assert_eq!((f.id.as_str(), o.meta.name.as_str()), (id.as_str(), "견적서.pdf"));
+    }
+    assert_eq!(lists(&w), 1, "목록은 한 번 받아 기억 {:?}", w.by_path());
+    // 크기 확인도 같은 길로 — 미리보기가 목록을 따로 안 받는다(조각 받기는 curl 이라 가짜 중계로는 끝까지 못 돌린다)
+    let src = include_str!("team_locker_app.rs");
+    let peek_src = src.split("pub fn peek(").nth(1).unwrap().split("\n}\n").next().unwrap();
+    assert!(!peek_src.contains("fetch_list"), "peek 은 find(기억 채우기)로 크기를 본다");
+    // 누가 바꿔서 판이 오르면 기억은 버리고 한 번 새로
+    w.bump();
+    find(&w.d, &w.kc, &w.r, &w.team, &id).unwrap();
+    find(&w.d, &w.kc, &w.r, &w.team, &id).unwrap();
+    assert_eq!(lists(&w), 2, "새 판엔 한 번만 새로 {:?}", w.by_path());
+    // 없는 파일은 예전처럼 '없어'
+    assert!(find(&w.d, &w.kc, &w.r, &w.team, "nooooooooooooooooooo").unwrap_err().contains("없어"));
+}
+
+#[test]
+fn 알린_판보다_옛_목록을_받아도_방금_받은_목록으로_찾는다() {
+    // 10-27 리뷰 — 소켓이 알린 판(9) > 서버가 준 목록 판(1)이면 기억(recall)이 None 이라 같은 find 가 목록을 한 번 더 받았다
+    let w = World::new("stale-list", false);
+    forget(&w.team);
+    forget_people(&w.team);
+    nudge(&w.team, 9);
+    let id = w.file["id"].as_str().unwrap().to_string();
+    let lists = |w: &World| w.by_path().get("GET /v0/teams/:t/locker").copied().unwrap_or(0);
+    let (_, _, _, f, o) = find(&w.d, &w.kc, &w.r, &w.team, &id).unwrap();
+    assert_eq!((f.id.as_str(), o.meta.name.as_str()), (id.as_str(), "견적서.pdf"));
+    assert_eq!(lists(&w), 1, "목록 한 번으로 찾는다 {:?}", w.by_path());
+    assert!(find(&w.d, &w.kc, &w.r, &w.team, "nooooooooooooooooooo").unwrap_err().contains("없어"), "없는 파일은 그대로 '없어'");
+}
+
+/// 가짜 중계가 지금 주는 명부·사슬로 만든 팀 머리(진짜 중계 GET /heads 와 같은 모양)
+fn heads_now(w: &World) -> Value {
+    let body = |path: &str| -> Value { serde_json::from_str(&w.r.always.borrow().iter().find(|(m, p, _, _)| m == "GET" && p == path).unwrap().3).unwrap() };
+    let log: Vec<TLink> = serde_json::from_value(body(&format!("/v0/teams/{}/log", w.team))["links"].clone()).unwrap();
+    let last = log.last().unwrap();
+    let ch = |acc: &str| {
+        let l: Vec<Link> = serde_json::from_value(body(&format!("/v0/accounts/{acc}/chain"))["links"].clone()).unwrap();
+        let x = l.last().unwrap();
+        json!({ "seq": x.seq, "hash": crate::e2e_chain::link_hash(&x.body, &x.sig) })
+    };
+    json!({ "log": { "seq": last.seq, "hash": team_hash(last) }, "chains": { "a1": ch("a1"), "a2": ch("a2") } })
+}
+
+#[test]
+fn 팀_머리가_캐시와_같으면_사슬과_명부를_다시_안_받는다() {
+    // 10-26 실측(fix/team-latency3) — 올리기·보내기마다 내 사슬·명부·사람마다 사슬을 차례로 받았다(3명 팀 4요청). 머리 한 번이면 된다
+    let w = World::new("heads", false);
+    let path = format!("/v0/teams/{}/heads", w.team);
+    w.r.always("GET", &path, 200, &heads_now(&w).to_string());
+    let now = Instant::now();
+    let st = relay::load_state(&w.d);
+    people_cached(&w.d, &w.kc, &w.r, &st, &w.team, true, now).unwrap(); // 처음 — 철수 사슬·명부는 캐시에 없어 받는다
+    let first = w.by_path();
+    people_cached(&w.d, &w.kc, &w.r, &st, &w.team, true, now).unwrap();
+    let second = w.by_path();
+    let diff = |k: &str| second.get(k).copied().unwrap_or(0) - first.get(k).copied().unwrap_or(0);
+    assert_eq!((diff("GET /v0/teams/:t/heads"), diff("GET /v0/accounts/a1/chain"), diff("GET /v0/accounts/a2/chain"), diff("GET /v0/teams/:t/log")), (1, 0, 0, 0), "머리 하나로 끝 {second:?}");
+    // 철수가 기기를 들였다(머리가 다르다) — 철수 사슬만 새로
+    let mut h = heads_now(&w);
+    h["chains"]["a2"]["seq"] = json!(1);
+    w.r.always.borrow_mut().retain(|(_, p, _, _)| *p != path);
+    w.r.always("GET", &path, 200, &h.to_string());
+    people_cached(&w.d, &w.kc, &w.r, &st, &w.team, true, now).unwrap();
+    let third = w.by_path();
+    assert_eq!(third["GET /v0/accounts/a2/chain"] - second["GET /v0/accounts/a2/chain"], 1, "바뀐 사람 사슬은 새로 {third:?}");
+    assert_eq!(third.get("GET /v0/accounts/a1/chain"), second.get("GET /v0/accounts/a1/chain"), "안 바뀐 내 사슬은 그대로");
+}
+
+#[test]
+fn 머리_길이_없는_옛_중계에선_예전처럼_받고_404_는_한_번만() {
+    let w = World::new("noheads", false);
+    let now = Instant::now();
+    let st = relay::load_state(&w.d);
+    let a = people_cached(&w.d, &w.kc, &w.r, &st, &w.team, true, now).unwrap();
+    let b = people_cached(&w.d, &w.kc, &w.r, &st, &w.team, true, now).unwrap();
+    assert_eq!(a.0.recipients.len(), b.0.recipients.len());
+    let m = w.by_path();
+    assert_eq!(m.get("GET /v0/teams/:t/heads").copied().unwrap_or(0), 1, "옛 중계라는 답은 기억 {m:?}");
+    // 예전 길 그대로 — 처음엔 명부 검증용으로 한 번(캐시 없음) + 받는 사람 셈으로 한 번, 두 번째엔 받는 사람 셈으로 한 번
+    assert_eq!((m["GET /v0/accounts/a2/chain"], m["GET /v0/teams/:t/log"]), (3, 2), "머리가 없으면 예전처럼 늘 새로 {m:?}");
+}
+
+#[test]
+fn 화면이_본_판과_견주면_다른_화면이_목록을_받아도_바뀜을_놓치지_않는다() {
+    let w = World::new("since", false);
+    let now = Instant::now();
+    let (v, _) = list_split_at(&w.d, &w.kc, &w.r, &w.team, now).unwrap();
+    let mine = v.rev;
+    assert!(!changed_since_at(&w.team, mine, now), "본 판 그대로면 안 받는다");
+    w.bump();
+    // 다른 화면(팀 홈·대화 파일 보기)이 먼저 목록을 받아 마지막 판이 올라간다
+    let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, now);
+    assert!(!changed_at(&w.team, now), "마지막 목록 판으로 보면 이 화면은 놓친다(옛 길)");
+    assert!(changed_since_at(&w.team, mine, now), "자기가 본 판과 견주면 안 놓친다");
+    forget_people(&w.team);
+}
+
+// ── 목록 같이 쓰기(10-28 23:07~23:12 실측: 이 맥 앱 GET /locker 4분 반에 579번) ──
+
+fn lists(w: &World) -> usize {
+    w.by_path().get("GET /v0/teams/:t/locker").copied().unwrap_or(0)
+}
+
+#[test]
+fn 화면_다섯이_같은_때_목록을_불러도_망으론_한_번() {
+    let w = World::new("share-list", false);
+    let base = Instant::now();
+    for _ in 0..5 {
+        let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, base);
+    }
+    assert_eq!(lists(&w), 1, "{:?}", w.by_path());
+    // 소켓이 새 판을 알리면 한 번 새로
+    w.bump();
+    let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, base + Duration::from_secs(3));
+    let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, base + Duration::from_secs(3));
+    assert_eq!(lists(&w), 2);
+}
+
+#[test]
+fn 알린_판이_목록_판보다_앞서_안_맞아도_20초에_한_번만_받는다() {
+    let w = World::new("stuck-rev", false);
+    let base = Instant::now();
+    nudge(&w.team, 99); // 서버 목록은 판 1 — 끝내 안 맞는다
+    for t in 0..=120u64 {
+        let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, base + Duration::from_secs(t));
+    }
+    let n = lists(&w);
+    assert!(n <= 7, "2분에 목록 {n}번(1초마다 부름) {:?}", w.by_path());
+}
+
+#[test]
+fn 내가_보관함을_바꾸면_다음_목록은_바로_새로() {
+    let w = World::new("write-forget", false);
+    let base = Instant::now();
+    let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, base);
+    forget_listing(&format!("/v0/teams/{}/locker/files/x/trash", w.team));
+    let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, base);
+    assert_eq!(lists(&w), 2);
 }

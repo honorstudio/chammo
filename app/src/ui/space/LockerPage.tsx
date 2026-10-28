@@ -12,7 +12,7 @@ import { defaultView, logDays, type LockerViewMode, type LogItem } from '../../d
 import { batchActs, trashKey, batchMenu, type PickedLook } from '../../domain/lockerSelect';
 import type { DotKind } from '../../domain/dot';
 import { IconButton } from '../kit/IconButton';
-import { IconClose, IconDashboard, IconFolder, IconFolderAlias, IconFolderLink, IconFolderMove, IconFolderPlus, IconList, IconMaximize, IconMore, IconPlus, IconTrash } from '../Icons';
+import { IconClose, IconDashboard, IconFolderAlias, IconFolderLink, IconFolderMove, IconFolderPlus, IconList, IconMaximize, IconMore, IconPlus, IconTrash } from '../Icons';
 import { SendToOrch, type OrchTo } from './SendToOrch';
 import { SortButton } from '../SortButton';
 import { readSortOf, sortList, type SortState } from '../../domain/sortList';
@@ -21,8 +21,11 @@ import { usePeek, useTrashUndo, type Ver } from './useLocker';
 import { trashAsk, type TrashAsk, type TrashPlan } from '../../domain/lockerTrash';
 import { dragPath, dragPaths } from './dragPath';
 import { usePick } from './usePick';
+import { FolderTile, PathCrumbs } from './FolderTile';
 import { folderItems, menuItems } from './lockerMenuItems';
 import { useOrchActions } from '../orchActions';
+import { teamLockerTeams } from '../../data/teamApi';
+import { teamUploadSub, uploadApi } from '../team/teamUpload';
 import './tools.css';
 import './locker.css';
 
@@ -132,26 +135,15 @@ function Card({ c, mark, acts, onMenu, pick }: { c: CardItem; mark: string | nul
 }
 
 function FolderCard({ e, dir, count, onPlace, onRename, onMenu, fresh, pick }: { e: LkEntry; dir: string; count: number; onPlace: (p: LkPlace) => void; onRename?: (rel: string, name: string) => void; onMenu?: OnMenu; /** 방금 만든 폴더 — 바로 이름 칸 */ fresh?: boolean; pick?: Pick }) {
-  const [naming, setNaming] = useState<string | null>(fresh ? e.name : null);
-  const done = () => { const n = naming?.trim(); if (n && n !== e.name) onRename?.(e.rel, n); setNaming(null); };
   const link = linkState(e);
   // 연결 폴더·그 안쪽은 읽기 전용이라 끌어 놓는 자리가 아니다
-  const drop = e.linked || e.ro ? {} : { 'data-locker-folder': e.rel, 'data-locker-drop': e.rel };
-  const Ic = e.linked ? IconFolderLink : IconFolder;
+  // data-locker-path = 끄는 폴더 자신·그 안엔 빛·놓기가 없게(dragPath selfOrInside)
+  const drop = e.linked || e.ro ? {} : { 'data-locker-folder': e.rel, 'data-locker-drop': e.rel, 'data-locker-path': `${dir}/${e.rel}` };
   return (
-    <div className={`lk-fcard ${link === 'gone' ? 'gone' : ''} ${pick?.picked ? 'picked' : ''}`} data-pick={pick ? `${dir}/${e.rel}` : undefined} {...drop} onContextMenu={onMenu ? (x) => onMenu(x, () => setNaming(e.name)) : undefined}>
-      {naming !== null ? (
-        <div className="lk-fbtn">
-          <span className="lk-fic"><Ic /></span>
-          <input className="lk-rename" autoFocus value={naming} aria-label={tr('폴더 이름 바꾸기', 'Rename folder')} onChange={(x) => setNaming(x.target.value)} onBlur={done}
-            onKeyDown={(x) => { if (x.key === 'Enter' && !x.nativeEvent.isComposing) done(); if (x.key === 'Escape') setNaming(null); }} />
-        </div>
-      ) : (
-        <button className="lk-fbtn" {...(pick?.drag ?? dragPath(`${dir}/${e.rel}`))} onClick={(x) => { if (!pick?.press(x)) onPlace({ kind: 'dir', rel: e.rel }); }} title={e.rel}>
-          <span className="lk-fic"><Ic /></span><b>{e.name}</b>{link === 'gone' ? <em className="lk-badge warn">{tr('원본 없음', 'Original missing')}</em> : <span className="lk-count">{count}</span>}
-        </button>
-      )}
-    </div>
+    <FolderTile name={e.name} title={e.rel} cls={link === 'gone' ? 'gone' : undefined} icon={e.linked ? <IconFolderLink /> : undefined} drop={drop}
+      pick={{ picked: !!pick?.picked, press: (x) => !!pick?.press(x), drag: pick?.drag ?? dragPath(`${dir}/${e.rel}`) }} pickKey={pick ? `${dir}/${e.rel}` : undefined} fresh={fresh}
+      tail={link === 'gone' ? <em className="lk-badge warn">{tr('원본 없음', 'Original missing')}</em> : <span className="lk-count">{count}</span>}
+      onOpen={() => onPlace({ kind: 'dir', rel: e.rel })} onRename={onRename && ((n) => onRename(e.rel, n))} onMenu={onMenu} />
   );
 }
 
@@ -193,22 +185,10 @@ function Row({ path, name, ms, who, what, gone, onOpen, timeOnly, onRename, onMe
 }
 
 /** 경로 줄(2026-10-12 나무 칸을 없앴다) — 보관함 › 자료 › 10월. 칸을 누르면 거기로, 카드를 끌어 놓으면 그 폴더로(data-locker-folder),
- *  파인더에서 놓아도 그 폴더(data-locker-drop) */
-function Crumbs({ rel, count, onPlace, ro }: { rel: string; count: number; onPlace: (p: LkPlace) => void; /** 그 칸이 읽기 전용(연결 폴더 안)인가 — 끌어 놓는 자리에서 뺀다 */ ro?: (rel: string) => boolean }) {
-  const crumbs = crumbsOf(rel);
-  const drop = (r: string) => (ro?.(r) ? {} : { 'data-locker-folder': r, 'data-locker-drop': r });
-  return (
-    <nav className="lk-crumb" aria-label={tr('경로', 'Path')}>
-      <button className={rel ? '' : 'cur'} data-locker-folder="" data-locker-drop="" onClick={() => onPlace({ kind: 'root' })}>{tr('보관함', 'Locker')}</button>
-      {crumbs.map((c, i) => (
-        <span key={c.rel} className="lk-crumb-i">
-          <span aria-hidden="true">›</span>
-          <button className={i === crumbs.length - 1 ? 'cur' : ''} {...drop(c.rel)} onClick={() => onPlace({ kind: 'dir', rel: c.rel })} title={c.name}>{c.name}</button>
-        </span>
-      ))}
-      <span className="lk-count">{count}</span>
-    </nav>
-  );
+ *  파인더에서 놓아도 그 폴더(data-locker-drop). 팀 보관함과 같은 조각(PathCrumbs) */
+function Crumbs({ dir, rel, count, onPlace, ro }: { dir: string; rel: string; count: number; onPlace: (p: LkPlace) => void; /** 그 칸이 읽기 전용(연결 폴더 안)인가 — 끌어 놓는 자리에서 뺀다 */ ro?: (rel: string) => boolean }) {
+  const drop = (r: string) => (r && ro?.(r) ? {} : { 'data-locker-folder': r, 'data-locker-drop': r, 'data-locker-path': r ? `${dir}/${r}` : dir });
+  return <PathCrumbs root={tr('보관함', 'Locker')} crumbs={crumbsOf(rel).map((c) => ({ key: c.rel, name: c.name }))} count={count} dropOf={drop} onGo={(r) => onPlace(r ? { kind: 'dir', rel: r } : { kind: 'root' })} />;
 }
 
 /** 머리 + — 새 문서(md)·새 엑셀(xlsx)·파일 넣기(홈·모드 ⑦). 지금 보는 폴더에 만들고 바로 탭으로 */
@@ -372,6 +352,15 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
   // 휴지통 한 번 더 묻는 중 — Rust 가 센 실제 규모(파일·폴더·안에 든 항목)와 고를 단추
   const [ask, setAsk] = useState<{ a: TrashAsk; p: TrashPlan } | null>(null);
   const undo = useTrashUndo();
+  // 팀 보관함에 올리기 — 든 팀이 있을 때만 메뉴에(10-28 사용자 "참모 보관함 파일을 팀 보관함으로 못 옮긴다"), 올린 뒤 한 줄(팀 모두에게 보인다)
+  const [teams, setTeams] = useState(false);
+  useEffect(() => { void teamLockerTeams().then((t) => setTeams(t.length > 0), () => {}); }, []);
+  const [teamNote, setTeamNote] = useState('');
+  useEffect(() => {
+    if (!teamNote) return;
+    const t = window.setTimeout(() => setTeamNote(''), 6000);
+    return () => window.clearTimeout(t);
+  }, [teamNote]);
   const box = useRef<HTMLDivElement>(null);
   // 고르기(⌘·⇧클릭·네모·⌘A·풀기)는 팀 보관함과 같은 훅(usePick) — 고른 게 바뀌면 묻던 휴지통 확인은 닫는다
   const pick = usePick({ box, order, reset: vkey, skip: '[data-pick], button, input, textarea, a, [role=menu], .lk-selbar, .lk-head, .lk-chips, .lk-pop', touch: () => setAsk(null) });
@@ -432,8 +421,9 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
     endPick();
   };
   const sendName = acts.sendTo?.name;
-  const batchItems = () => menuItems(batchMenu(bacts), {
+  const batchItems = () => menuItems(batchMenu(bacts).map((g) => (g.includes('send') && teams ? [...g, 'team' as const] : g)), {
     send: acts.onSendMany && { run: sendMany, label: sendName ? tr(`${n}개 ${sendName}에게 보내기`, `Send ${n} to ${sendName}`) : tr(`${n}개 참모에게 보내기`, `Send ${n} to assistant`) },
+    team: teams ? { sub: teamUploadSub(pickedPaths, uploadApi, (t) => { setTeamNote(t); endPick(); }), label: tr(`${n}개 팀 보관함에 올리기`, `Upload ${n} to team locker`), empty: tr('든 팀이 없어요', 'No team') } : undefined,
     alias: acts.onAliasMany && { sub: aliasManyItems, label: tr(`${n}개 폴더에 바로가기`, `Add ${n} shortcuts to folder`) },
     move: acts.onMoveMany && { sub: moveManyItems, empty: tr('옮길 폴더가 없어', 'No folder to move to'), label: tr(`${n}개 옮기기`, `Move ${n} to`) },
     trash: acts.onTrashMany && { run: () => askTrash(pickedRels, n - pickedRels.length), label: tr(`${n}개 휴지통으로…`, `Move ${n} to Trash…`) },
@@ -469,6 +459,14 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
     </div>
   );
   // 휴지통 직후 — 되돌리기(맥 휴지통에서 그 묶음을 원래 자리로). 지나가도 빈 곳 메뉴 '휴지통 되돌리기'
+  // 팀 보관함에 올린 뒤 한 줄 — 고른 것 줄·휴지통 묻기가 없을 때
+  const teamBar = teamNote && !ask && n === 0 && (
+    <div className="lk-selbar lk-undo" role="status">
+      <span className="lk-ask"><b>{teamNote}</b></span>
+      <span className="lk-sp" />
+      <IconButton label={tr('닫기', 'Close')} onClick={() => setTeamNote('')}><IconClose /></IconButton>
+    </div>
+  );
   const undoBar = undo.toast !== null && !ask && n === 0 && (
     <div className="lk-selbar lk-undo" role="status">
       <span className="lk-ask"><b>{tr(`${undo.toast}개를 휴지통으로 옮겼어`, `Moved ${undo.toast} to Trash`)}</b></span>
@@ -485,11 +483,12 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
     if (many(c.path)) { act.openMenu(ev, batchItems()); return; }
     pickRight(c.path);
     const e = c.entry;
-    const keys = lockerMenu({ kind: 'file', entry: e ? { link: !!e.link, gone: c.gone, vers: e.vers, givenBack: givenBack(e), ro: !!e.ro } : null, folders: folders.length });
+    const keys = lockerMenu({ kind: 'file', entry: e ? { link: !!e.link, gone: c.gone, vers: e.vers, givenBack: givenBack(e), ro: !!e.ro } : null, folders: folders.length, teams });
     act.openMenu(ev, menuItems(keys, {
       open: { run: () => acts.onOpen(c.path) },
       big: acts.onFloat && { run: () => acts.onFloat!(c.path) },
       send: { run: () => acts.onSend(c.path), label: acts.sendTo?.name ? tr(`${acts.sendTo.name}에게 보내기`, `Send to ${acts.sendTo.name}`) : undefined },
+      team: teams ? { sub: teamUploadSub([c.path], uploadApi, setTeamNote), empty: tr('든 팀이 없어요', 'No team') } : undefined,
       alias: acts.onAlias && { sub: () => folderItems(folders, (rel) => acts.onAlias!(c.path, rel)) },
       move: e && acts.onMove && { sub: () => moveItems(e.rel), empty: tr('옮길 폴더가 없어', 'No folder to move to') },
       keep: acts.onKeep && { run: () => acts.onKeep!(c.path) },
@@ -570,7 +569,7 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
     return (
       <div className="lk-page-wrap" tabIndex={-1} data-select-all="" ref={box} data-locker-drop="" onContextMenu={blankMenu} onMouseDown={noShiftSelect} onPointerDown={bandStart}>
         <header className="lk-head">
-          <Crumbs rel="" count={items.length} onPlace={onPlace} />
+          <Crumbs dir={dir} rel="" count={items.length} onPlace={onPlace} />
           <IconButton tone="line" label={tr('여기에 새 폴더', 'New folder here')} onClick={() => newFolder('')}><IconFolderPlus /></IconButton>
           {connectBtn}
           <span className="lk-sp" />
@@ -591,14 +590,14 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
         ) : logItems(items)}
         {bandEl}
         {selBar}
-        {undoBar}
+        {undoBar || teamBar}
       </div>
     );
   }
   return (
     <div className="lk-page-wrap" tabIndex={-1} data-select-all="" ref={box} data-locker-drop={ro ? undefined : place.rel} onContextMenu={blankMenu} onMouseDown={noShiftSelect} onPointerDown={bandStart}>
       <header className="lk-head">
-        <Crumbs rel={place.rel} count={files.length} onPlace={onPlace} ro={roAt} />
+        <Crumbs dir={dir} rel={place.rel} count={files.length} onPlace={onPlace} ro={roAt} />
         {!ro && <IconButton tone="line" label={tr('여기에 새 폴더', 'New folder here')} onClick={() => newFolder(place.rel)}><IconFolderPlus /></IconButton>}
         {connectBtn}
         <span className="lk-sp" />
@@ -623,7 +622,7 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
       )}
       {bandEl}
       {selBar}
-      {undoBar}
+      {undoBar || teamBar}
     </div>
   );
 }

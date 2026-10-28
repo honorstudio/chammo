@@ -9,7 +9,7 @@ import { notifyOnce } from './notifier';
 import { summarizeTranscript } from '../domain/activity';
 import { forgetLost, lastDoing, planNotices, restartNotice, triageLost } from '../domain/lostTriage';
 import type { LiveSnap, SnapSession } from '../domain/revive';
-import type { Session } from '../domain/session';
+import { seenName, type Session } from '../domain/session';
 import type { TaskEvent } from '../domain/tasks';
 
 const RETRY_MS = 30_000;
@@ -81,7 +81,7 @@ export function useLostTriage(o: {
             await c.update((s) => ({ ...s, lost: [...s.lost, ...go.filter((x) => !s.lost.some((y) => y.sessionId === x.sessionId))] }));
             if (k < MAX_FAILS) window.setTimeout(() => setTick((v) => v + 1), RETRY_MS * k + 500);
             else notifyOnce({ kind: 'lost', session: n.to.id, orch: false, title: tr('재시작으로 꺼진 세션을 참모에게 못 알렸어요', 'Could not tell your assistant about stopped sessions'),
-              body: tr(`${go.map((x) => x.name || x.sessionId.slice(0, 8)).join(', ')} — 이어서 할지 직접 봐 주세요`, `${go.map((x) => x.name || x.sessionId.slice(0, 8)).join(', ')} — check whether to continue`) });
+              body: tr(`${go.map((x) => seenName(x.name) || x.sessionId.slice(0, 8)).join(', ')} — 이어서 할지 직접 봐 주세요`, `${go.map((x) => seenName(x.name) || x.sessionId.slice(0, 8)).join(', ')} — check whether to continue`) });
           }
         }
       } finally {

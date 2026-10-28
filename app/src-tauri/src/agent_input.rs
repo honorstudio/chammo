@@ -41,8 +41,18 @@ pub enum InputEv {
         commands: Vec<String>,
     },
     Text { text: String },
+    /// 조합 중 글자 — 페이지 입력칸 그 자리에 밑줄 조합으로(빈 글 = 조합 걷기). 끝나면 Text 가 조합을 바꿔 넣는다(크롬 ImeCommitText)
+    Compose { text: String },
     /// ⌘R·⌘[·⌘] — 새로고침·뒤로·앞으로
     Nav { action: String },
+    /// 칸 주소창 이동(2026-10-28) — http·https 만
+    Go { url: String },
+}
+
+/// 주소창이 갈 수 있는 주소인가 — http·https, 공백·제어 문자 없이, 4KB 까지(javascript:·file:·chrome: 은 웹 domain/address 가 검색어로 바꾼다)
+pub fn web_url(u: &str) -> bool {
+    let l = u.to_ascii_lowercase();
+    (l.starts_with("https://") || l.starts_with("http://")) && u.len() <= 4096 && u.len() > 8 && !u.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
 /// 지금 화면 프레임의 페이지 크기(CSS px) — screencastFrame metadata.deviceWidth/Height
@@ -93,6 +103,15 @@ pub fn to_cdp(ev: &InputEv, meta: Meta) -> Option<(&'static str, Value)> {
             Some(("Input.dispatchKeyEvent", p))
         }
         InputEv::Text { text } => (!text.is_empty() && text.len() <= MAX_TEXT).then(|| ("Input.insertText", json!({ "text": text }))),
+        InputEv::Compose { text } => {
+            // 조합은 한두 글자 — 길면 이상한 것
+            if text.chars().count() > 32 {
+                return None;
+            }
+            let end = text.encode_utf16().count();
+            Some(("Input.imeSetComposition", json!({ "text": text, "selectionStart": end, "selectionEnd": end })))
+        }
+        InputEv::Go { url } => web_url(url).then(|| ("Page.navigate", json!({ "url": url }))),
         InputEv::Nav { action } => match action.as_str() {
             "reload" => Some(("Page.reload", json!({}))),
             "back" => Some(("Runtime.evaluate", json!({ "expression": "history.back()" }))),
@@ -125,7 +144,7 @@ pub fn chooser_by_human(human_at: Option<std::time::Instant>, now: std::time::In
 pub fn acts(evs: &[InputEv]) -> bool {
     evs.iter().any(|e| match e {
         InputEv::Mouse { ty, .. } => ty == "mousePressed" || ty == "mouseReleased",
-        InputEv::Key { .. } | InputEv::Text { .. } | InputEv::Nav { .. } => true,
+        InputEv::Key { .. } | InputEv::Text { .. } | InputEv::Compose { .. } | InputEv::Nav { .. } | InputEv::Go { .. } => true,
     })
 }
 
@@ -213,6 +232,30 @@ mod tests {
         assert!(chooser_by_human(Some(now - std::time::Duration::from_millis(800)), now));
         assert!(!chooser_by_human(Some(now - std::time::Duration::from_secs(5)), now), "세션이 누른 파일 창은 플레이라이트 몫");
         assert!(!chooser_by_human(None, now));
+    }
+
+    #[test]
+    fn 조합_중_글자는_페이지에_조합으로() {
+        let (m, p) = to_cdp(&ev(r#"{"kind":"compose","text":"브"}"#), M).unwrap();
+        assert_eq!(m, "Input.imeSetComposition");
+        assert_eq!((p["text"].as_str(), p["selectionStart"].as_u64(), p["selectionEnd"].as_u64()), (Some("브"), Some(1), Some(1)), "커서는 조합 끝(UTF-16)");
+        let (_, p) = to_cdp(&ev(r#"{"kind":"compose","text":"a😀"}"#), M).unwrap();
+        assert_eq!(p["selectionStart"].as_u64(), Some(3));
+        let (_, p) = to_cdp(&ev(r#"{"kind":"compose","text":""}"#), M).unwrap();
+        assert_eq!(p["text"].as_str(), Some(""), "빈 조합 = 걷기");
+        assert!(to_cdp(&InputEv::Compose { text: "가".repeat(100) }, M).is_none(), "조합이 이렇게 길 리 없다");
+        assert!(acts(&[ev(r#"{"kind":"compose","text":"ㄱ"}"#)]), "조합도 사람 손");
+    }
+
+    #[test]
+    fn 주소창은_http_https_만() {
+        let (m, p) = to_cdp(&ev(r#"{"kind":"go","url":"https://www.naver.com/"}"#), M).unwrap();
+        assert_eq!((m, p["url"].as_str()), ("Page.navigate", Some("https://www.naver.com/")));
+        assert!(to_cdp(&ev(r#"{"kind":"go","url":"http://localhost:3000/"}"#), M).is_some());
+        for bad in ["javascript:alert(1)", "file:///etc/passwd", "chrome://settings", "https://a b.com", "https://", "data:text/html,x"] {
+            assert!(to_cdp(&InputEv::Go { url: bad.into() }, M).is_none(), "{bad}");
+        }
+        assert!(acts(&[ev(r#"{"kind":"go","url":"https://a.com/"}"#)]), "사람이 이동 = 개입");
     }
 
     #[test]

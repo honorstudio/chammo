@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { menuPos, menuStep } from '../domain/ctxMenu';
 import { createPortal } from 'react-dom';
 import { closeOnOutside } from './outsideClose';
@@ -96,7 +96,7 @@ export function Rename({ current, fallback, role: role0, onSave, onCancel }: { c
 
 /** 메뉴 한 줄 — sub 가 있으면 누를 때 그 자리에서 다음 목록으로 바뀐다(폴더 고르기·이전 판 같은 것, empty = 비었을 때 한 줄).
  *  sep = 위에 가는 줄(묶음 나누기) */
-export type MenuItem = { label: string; danger?: boolean; run?: () => void; sub?: () => MenuItem[] | Promise<MenuItem[]>; empty?: string; sep?: boolean; title?: string; /** 고른 것(정렬 기준처럼 하나 고르기) — 오른쪽 점 */ checked?: boolean };
+export type MenuItem = { label: string; /** 글 대신 그릴 줄(참모 고르기 — 프사 + 이름, team/OrchPick). label 은 열쇠·하위 목록 머리 */ node?: ReactNode; danger?: boolean; run?: () => void; sub?: () => MenuItem[] | Promise<MenuItem[]>; empty?: string; sep?: boolean; title?: string; /** 고른 것(정렬 기준처럼 하나 고르기) — 오른쪽 점 */ checked?: boolean };
 
 /** 오른쪽 클릭 메뉴(앱 공용) — 누른 자리에, 창 밖으로 넘치면 왼쪽·위로 펼친다. 바깥을 누르거나 Esc 면 닫힘.
  *  ↑↓·Home·End 로 오르내리고 Enter 로 고른다, 다음 목록에선 ← 로 돌아간다 */
@@ -146,7 +146,7 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
         <Fragment key={`${i}:${it.label}`}>
           {it.sep && i > 0 && <i className="od-sep" role="separator" />}
           <button role="menuitem" className={[it.danger ? 'danger' : '', it.sub ? 'more' : '', it.checked ? 'on' : ''].filter(Boolean).join(' ')} title={it.title} aria-haspopup={it.sub ? 'menu' : undefined} aria-current={it.checked || undefined}
-            onMouseEnter={(e) => e.currentTarget.focus({ preventScroll: true })} onClick={() => void open(it)}>{it.label}</button>
+            onMouseEnter={(e) => e.currentTarget.focus({ preventScroll: true })} onClick={() => void open(it)}>{it.node ?? it.label}</button>
         </Fragment>
       ))}
     </div>,

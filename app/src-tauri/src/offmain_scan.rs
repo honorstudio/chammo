@@ -267,16 +267,22 @@ const MAIN_OK: &[&str] = &[
     "pty::log_write", "usage_counts::load", "usage_counts::save",
     // <데이터>/… 상태 파일
     "avatar::read_all_in", "avatar::save_in", "avatar::delete_in", "lessons::read_lessons", "lessons::write_lessons", "load::load_save",
-    "login::login_save", "login_keep::load_keep", "review::write_review_state", "remote::load", "tts::supertonic_status",
+    "login::login_save", "login::login_terms_retry", "login_keep::load_keep", "review::write_review_state", "remote::load", "tts::supertonic_status",
     "tama::read_tama", "tama::write_tama", "tama::read_gacha", "tama::write_gacha", "tama::write_office", "tama::read_space_log",
     "orch_pins::read_order", "orch_pins::read_pins", "orch_pins::set_pin", "orch_pins::write_order", "orch_roles::read_roles", "orch_roles::write_roles",
+    // 입력칸 쓰던 글 <데이터>/drafts.json
+    "drafts::load", "drafts::write",
     "reader::with_store", "reader::changed", "reader::read_curation_state", "reader::save_curation", "reader::save_curation_state",
     "reader::save_attach", "reader::set_view_mode", "reader::space_log_append",
     "direct::append", "direct::direct_log", "direct::direct_shown", "appctl::put_answers",
     "team_alert::load", "team_alert::save", "team_window::load", "team_window::save", "team_cmd::inbox_tail", "team_relay::load_state", "e2e_state::load",
+    // 읽음 자리 <데이터>/team-reads.json(chammo-relay ADR 0012)
+    "team_reads::load", "team_reads::merge",
     "mobile::devices", "mobile::explicit_off", "mobile::saved_on", "mobile_pair::read_list", "push::keep_last", "push::read_subs",
     // 브라우저 개입 기록 <데이터>/browser/live
     "agent_browser::read_live", "agent_browser::agent_ask_done", "takeover::read_file", "takeover::start", "takeover::ask_dialog", "takeover::hand_back_why",
+    // 윈도우 보이는 창 요청·꺼냄 표시 <데이터>/browser/live/<프로필>.show·.shown, 맥 구글 크롬 .signed·.signed-on(win_desk)
+    "win_desk::ask", "win_desk::shown", "win_desk::ask_signed", "win_desk::signed_on", "win_desk::ask_to", "win_desk::mark_of",
     // Craft 상태 <데이터>/craft-native
     "craft_window::read_info", "craft_window::craft_space_still", "craft_screen::start_closing",
     // 크롬 앱 자리(/Applications) 확인 — 보호 폴더 아님

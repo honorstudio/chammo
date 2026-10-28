@@ -3,12 +3,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import { teamLogin, teamLogout, teamStatus, type TeamView } from '../data/teamApi';
-import { alreadyIn, gateState, offlineError, watchGate } from '../domain/loginGate';
+import { alreadyIn, gateState, lookEvery, offlineError, watchGate } from '../domain/loginGate';
 import { tr } from '../i18n';
 import { BrandMark } from './avatar';
 import { IconRefresh } from './Icons';
 import { IconButton } from './kit/IconButton';
 import { CodeEntry, NumberWait } from './e2e/NumberWait';
+import { RecoverLost, RecoverReady, RecoverWait } from './e2e/Recover';
 import './setup.css';
 
 // 이번 실행 동안만 — 앱을 다시 켜면 다시 묻는다
@@ -17,6 +18,7 @@ let waitSeen = false;
 let startLater = false;
 let resetLater = false;
 let reloginLater = false;
+let recoverLater = false;
 
 export function LoginGate() {
   const [v, setV] = useState<TeamView | null>(null);
@@ -29,6 +31,8 @@ export function LoginGate() {
   const [codeDone, setCodeDone] = useState(false);
   // 계정이 생긴 뒤 단계를 읽었나 — 상태를 먼저 읽고 그다음 단계를 읽어, 로그인 전에 읽은 빈 단계로 감시를 멈추지 않게(10-26 아이맥)
   const [fresh, setFresh] = useState(false);
+  // 숫자 대기에서 '허용해 줄 기기가 없어요'를 눌렀다 — 되찾기 화면(갈래 ②)
+  const [lost, setLost] = useState(false);
   const look = () => {
     void teamStatus().then(
       (t) => {
@@ -39,14 +43,13 @@ export function LoginGate() {
     );
   };
   useEffect(look, []);
-  // 허용 대기·4자리 단계 동안만 상태를 다시 본다(허용되면 4자리 화면으로 넘어가게)
+  // 허용 대기·4자리 단계 동안은 자주(허용되면 4자리 화면으로 넘어가게), 아닐 때도 가끔(서버가 이 기기를 지우거나 끊으면 다시 로그인 문)
   const watching = watchGate(v, step, fresh);
   useEffect(() => {
-    if (!watching) return;
-    const t = window.setInterval(look, 3000);
+    const t = window.setInterval(look, lookEvery(watching));
     return () => window.clearInterval(t);
   }, [watching]);
-  const gate = codeDone ? 'code' : gateState(v, { offline, skipped, waitSeen, step, startLater, resetLater, reloginLater });
+  const gate = codeDone ? 'code' : gateState(v, { offline, skipped, waitSeen, step, startLater, resetLater, reloginLater, recoverLater });
   if (gate === 'none') return null;
   const start = (e: React.MouseEvent) => {
     if (!e.isTrusted || busy) return; // 사람 클릭만
@@ -108,7 +111,7 @@ export function LoginGate() {
           <>
             {/* 봉인 없이 대기(옛 판에서 로그인)·사슬 기기 0 인 auto 기기 — 숫자가 영영 안 뜨거나 다시 시작이 막힌다. 다시 로그인하면 봉인을 같이 올리거나 바로 허용돼 다시 시작(10-26) */}
             <h1>{tr('로그인을 한 번 더 해 주세요', 'Please sign in once more')}</h1>
-            <p>{tr('이 기기는 지금 상태로는 내 기기 확인을 마칠 수 없어요(예전 판에서 로그인했거나, 허용해 줄 내 기기가 다 로그아웃됐어요). 다시 로그인하면 숫자가 뜨거나 이 기기로 다시 시작할 수 있어요.', "This device can't finish the device check as it is (it signed in with an older version, or every device that could approve it signed out). Sign in again to get a number or start over on this device.")}</p>
+            <p>{tr('이 기기는 지금 상태로는 계정을 쓸 수 없어요(다른 기기에서 이 기기를 끊었거나 로그인 허용이 거절됐어요, 또는 예전 판에서 로그인했거나 허용해 줄 내 기기가 다 로그아웃됐어요). 다시 로그인하면 숫자가 뜨거나 이 기기로 다시 시작할 수 있어요.', "This device can't use the account as it is (another device disconnected it or declined its sign-in, or it signed in with an older version, or every device that could approve it signed out). Sign in again to get a number or start over on this device.")}</p>
             <div className="lg-acts">
               <button className="btn pri su-go" disabled={busy} onClick={() => out(true)}>{tr('다시 로그인', 'Sign in again')}</button>
               <button className="btn su-go" disabled={busy} onClick={() => { reloginLater = true; bump((n) => n + 1); }}>{tr('나중에', 'Later')}</button>
@@ -118,6 +121,12 @@ export function LoginGate() {
         ) : gate === 'code' ? (
           <CodeEntry failed={step === 'failed'} onAgain={() => out(true)} onCancel={() => out(false)} onOk={() => setCodeDone(true)}
             onDone={() => { setCodeDone(false); setStep(''); look(); }} />
+        ) : gate === 'recoverWait' ? (
+          <RecoverWait onLater={() => { recoverLater = true; bump((n) => n + 1); }} onChanged={look} />
+        ) : gate === 'recoverReady' ? (
+          <RecoverReady onLater={() => { recoverLater = true; bump((n) => n + 1); }} onDone={() => { setLost(false); look(); }} />
+        ) : gate === 'waiting' && lost ? (
+          <RecoverLost onBack={() => setLost(false)} />
         ) : gate === 'waiting' ? (
           <>
             {/* 숫자 넣기 허용(chammo-relay ADR 0007, 시안 e2e-approve v1) — 그동안 이 컴퓨터 참모는 그대로 쓴다 */}
@@ -126,6 +135,8 @@ export function LoginGate() {
               {/* 허용해 줄 기기가 없을 때(다 로그아웃됨)도 빠져나갈 길 — 대기 기기는 기기 목록이 비어 설정에서 로그아웃을 못 한다(10-26) */}
               <button className="btn" disabled={busy} onClick={() => out(false)}>{tr('로그인 취소', 'Cancel sign-in')}</button>
             </NumberWait>
+            {/* 옛 기기를 잃었으면 — 계정 되찾기 갈래 ②(chammo-relay ADR 0007 R9) */}
+            <button className="lg-link" onClick={() => setLost(true)}>{tr('허용해 줄 기기가 없어요', 'No device to approve this one')}</button>
             {err && <div className="su-error">{err}</div>}
           </>
         ) : gate === 'offline' ? (

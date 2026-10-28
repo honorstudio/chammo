@@ -2,8 +2,8 @@
 // 맥이 pty 로 claude auth login 을 띄우고(BROWSER 막음) → 주소를 이 폰에서 열어 로그인 → 페이지가 보여 준 코드를 붙여 넣으면 맥이 pty 에 한 줄.
 // 비밀번호·2FA 는 사람이 브라우저에서. 코드 값은 화면 상태에만 잠깐 있고 저장하지 않는다. 해석은 domain/phoneLogin
 import { useEffect, useState } from 'react';
-import { loginCancel, loginCode, loginStart, readLogin } from '../../data/web';
-import { needText } from '../../domain/login';
+import { loginCancel, loginCode, loginStart, loginTermsRetry, readLogin } from '../../data/web';
+import { needText, termsText, type TermsCard } from '../../domain/login';
 import { flowText, readPhoneLogin, showCard, type PhoneLogin } from '../../domain/phoneLogin';
 import { IconClose, IconSend } from '../Icons';
 import { BottomSheet, useSheet } from './kit';
@@ -14,10 +14,12 @@ export function PhoneLoginCard() {
   const [text, , kick] = useMemoPoll('login', readLogin, 15_000, '');
   const [open, setOpen] = useState(false);
   const v = readPhoneLogin(text);
-  if (!showCard(v) && !open) return null;
+  const terms = v.terms ?? [];
+  if (!showCard(v) && !open) return terms.length ? <PhoneTermsCards cards={terms} onDone={kick} /> : null;
   const t = v.need ? needText(v.need) : null;
   return (
     <>
+      <PhoneTermsCards cards={terms} onDone={kick} />
       <div className="m-login" role="alert">
         <div className="m-login-mid">
           <b>{t?.title ?? 'Claude 로그인이 풀렸어요'}</b>
@@ -28,6 +30,32 @@ export function PhoneLoginCard() {
       {open && <LoginSheet first={v} onClose={() => { setOpen(false); kick(); }} />}
     </>
   );
+}
+
+/** 약관 동의 카드 — 계정마다 하나. 이 폰 브라우저로 claude.ai 를 열어 그 계정으로 동의(사람이 직접) → [다시 시도] 는 맥이 멈춘 세션을 이어서 */
+function PhoneTermsCards({ cards, onDone }: { cards: TermsCard[]; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const retry = () => {
+    setBusy(true);
+    setErr(null);
+    loginTermsRetry().then(onDone, () => setErr(`${machine()}에 못 닿았어요. 다시 해 주세요`)).finally(() => setBusy(false));
+  };
+  return <>{cards.map((c) => {
+    const t = termsText(c);
+    return (
+      <div key={c.id} className="m-login m-terms" role="alert">
+        <div className="m-login-mid">
+          <b>{t.title}</b>
+          <span>{err ?? t.where}</span>
+        </div>
+        <div className="m-terms-acts">
+          <a className="m-btn m-login-btn" href="https://claude.ai" target="_blank" rel="noopener noreferrer">claude.ai 열기</a>
+          <button type="button" className="m-btn m-login-btn" disabled={busy} onClick={retry}>다시 시도</button>
+        </div>
+      </div>
+    );
+  })}</>;
 }
 
 function LoginSheet({ first, onClose }: { first: PhoneLogin; onClose: () => void }) {

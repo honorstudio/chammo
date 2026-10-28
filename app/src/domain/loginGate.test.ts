@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { alreadyIn, gateState, offlineError, watchGate } from './loginGate';
+import { alreadyIn, gateState, lookEvery, offlineError, watchGate } from './loginGate';
 
 const v = (o: { account?: boolean; pending?: boolean } = {}) => ({ account: o.account ? { email: 'a@b.c', name: 'a' } : null, pending: !!o.pending });
 
@@ -31,6 +31,12 @@ describe('로그인 필수(10-24 사용자) — 앱을 켜면 계정 로그인�
     expect(gateState(v({ account: true }), { step: 'reset' })).toBe('reset');
     expect(gateState(v({ account: true }), { step: 'reset', resetLater: true })).toBe('none');
     expect(gateState(v({ account: true, pending: true }), { step: 'reset' })).toBe('reset');
+  });
+  it('이 기기가 낸 다시 시작 요청은 기다림 화면(나중에는 이번 실행만), 48시간이 차면 마치기 화면(갈래 ②)', () => {
+    expect(gateState(v({ account: true, pending: true }), { step: 'recover-wait' })).toBe('recoverWait');
+    expect(gateState(v({ account: true, pending: true }), { step: 'recover-wait', recoverLater: true })).toBe('none');
+    expect(gateState(v({ account: true }), { step: 'recover-ready' })).toBe('recoverReady');
+    expect(gateState(v({ account: true }), { step: 'recover-ready', recoverLater: true })).toBe('none');
   });
   it('봉인 없이 대기에 걸린 기기(옛 판 로그인)는 다시 로그인을 묻는다 — 대기 화면 대신, 나중에는 이번 실행만(10-26 아이맥)', () => {
     expect(gateState(v({ account: true, pending: true }), { step: 'relogin' })).toBe('relogin');
@@ -74,5 +80,15 @@ describe('로그인 필수(10-24 사용자) — 앱을 켜면 계정 로그인�
     expect(offlineError('중계 서버가 이상한 로그인 주소를 줬어 — 열지 않았어')).toBe(false);
     expect(offlineError('서버 503')).toBe(true);
     expect(offlineError('로그인을 기다리다 시간이 지났어')).toBe(false);
+  });
+});
+
+describe('로그인된 뒤에도 가끔 다시 본다 — 서버가 이 기기를 지우거나 끊으면 다시 로그인 문(10-28 윈도우)', () => {
+  it('지켜볼 때는 3초, 아닐 때도 1분마다(상태·단계는 로컬 파일이라 망 요청이 없다)', () => {
+    expect(lookEvery(true)).toBe(3_000);
+    expect(lookEvery(false)).toBe(60_000);
+  });
+  it('끊긴 기기(Rust 단계 relogin)는 계정이 있어도 다시 로그인 문', () => {
+    expect(gateState(v({ account: true }), { step: 'relogin' })).toBe('relogin');
   });
 });

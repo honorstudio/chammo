@@ -133,11 +133,12 @@ struct Ctx {
     v: locker::View,
 }
 
-fn read(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) -> Result<(Ctx, Vec<(Item, Doc)>), String> {
+/// 목록만 — 나중에 든 사람 몫 봉투 더하기(ShareJob)는 기다리지 않는다(10-26 실측: 누가 든 뒤 첫 팀 홈이 요청 23개·약 10.7초를 기다렸다)
+fn read(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) -> Result<(Ctx, Vec<(Item, Doc)>, locker::ShareJob), String> {
     let t = team_relay::load_state(dir).team(team).cloned()?;
-    let v = locker::list(dir, kc, http, &t.id)?;
+    let (v, job) = locker::list_split(dir, kc, http, &t.id)?;
     let docs = v.items.iter().filter(|i| i.kind == "post" && usable(i)).filter_map(|i| team_profile::bytes_of(dir, kc, http, &t.id, &i.id).ok().and_then(|b| decode(&b).ok()).map(|d| (i.clone(), d))).collect();
-    Ok((Ctx { t, v }, docs))
+    Ok((Ctx { t, v }, docs, job))
 }
 
 fn owners(t: &team_relay::TeamEntry) -> Vec<String> {
@@ -148,21 +149,21 @@ fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
-/// 팀 홈 글판
-pub fn board(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) -> Result<Board, String> {
-    let (c, docs) = read(dir, kc, http, team)?;
+/// 팀 홈 글판 + 봉투 더하기 일 — 부르는 쪽(화면·폰 명령)은 글판을 먼저 돌려주고 일은 job.spawn() 으로(팀 보관함 화면과 같은 길)
+pub fn board_split(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) -> Result<(Board, locker::ShareJob), String> {
+    let (c, docs, job) = read(dir, kc, http, team)?;
     let pairs: Vec<(&Item, Doc)> = docs.iter().map(|(i, d)| (i, d.clone())).collect();
     let (posts, pinned) = fold(&pairs, &owners(&c.t), &c.t.member_id);
-    Ok(Board { team: c.t.id.clone(), rev: c.v.rev, posts, pinned, owner: c.t.role == "owner" })
+    Ok((Board { team: c.t.id.clone(), rev: c.v.rev, posts, pinned, owner: c.t.role == "owner" }, job))
 }
 
-/// 글 쓰기·고치기(origin = 고칠 글 id) — 고치기는 글쓴이만. 돌려주는 건 글 id
-pub fn write(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, title: &str, body: &str, origin: Option<&str>) -> Result<String, String> {
+/// 글 쓰기·고치기(origin = 고칠 글 id) — 고치기는 글쓴이만. 돌려주는 건 글 id + 봉투 더하기 일(쓰기·고정·지우기 모두 — 부르는 쪽이 spawn)
+pub fn write(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, title: &str, body: &str, origin: Option<&str>) -> Result<(String, locker::ShareJob), String> {
     let title = one_line(title, TITLE_MAX);
     if title.is_empty() {
         return Err("제목이 비었어".into());
     }
-    let (c, docs) = read(dir, kc, http, team)?;
+    let (c, docs, job) = read(dir, kc, http, team)?;
     let pairs: Vec<(&Item, Doc)> = docs.iter().map(|(i, d)| (i, d.clone())).collect();
     let (posts, _) = fold(&pairs, &owners(&c.t), &c.t.member_id);
     let created = match origin {
@@ -182,12 +183,12 @@ pub fn write(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, title: &st
             let _ = locker::act(dir, kc, http, &c.t.id, old, "purge");
         }
     }
-    Ok(origin.map_or(id, str::to_string))
+    Ok((origin.map_or(id, str::to_string), job))
 }
 
 /// 고정·풀기(post 빈 글) — 팀장만. 내 옛 고정 기록은 치운다
-pub fn pin(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, post: &str) -> Result<(), String> {
-    let (c, docs) = read(dir, kc, http, team)?;
+pub fn pin(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, post: &str) -> Result<locker::ShareJob, String> {
+    let (c, docs, job) = read(dir, kc, http, team)?;
     if c.t.role != "owner" {
         return Err("고정 공지는 팀장만".into());
     }
@@ -199,12 +200,12 @@ pub fn pin(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, post: &str) 
     for (i, _) in docs.iter().filter(|(i, d)| d.t == "pin" && i.by_member == c.t.member_id && i.id != id) {
         let _ = locker::act(dir, kc, http, &c.t.id, &i.id, "purge");
     }
-    Ok(())
+    Ok(job)
 }
 
 /// 글 지우기(휴지통 30일) — 글쓴이·팀장만
-pub fn remove(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, post: &str) -> Result<(), String> {
-    let (c, docs) = read(dir, kc, http, team)?;
+pub fn remove(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, post: &str) -> Result<locker::ShareJob, String> {
+    let (c, docs, job) = read(dir, kc, http, team)?;
     let pairs: Vec<(&Item, Doc)> = docs.iter().map(|(i, d)| (i, d.clone())).collect();
     let (posts, _) = fold(&pairs, &owners(&c.t), &c.t.member_id);
     let p = posts.iter().find(|p| p.id == post).ok_or("지울 글이 없어")?;
@@ -214,9 +215,13 @@ pub fn remove(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, post: &st
     for id in versions_of(&pairs, post) {
         locker::act(dir, kc, http, &c.t.id, id, "trash")?;
     }
-    Ok(())
+    Ok(job)
 }
 
 #[cfg(test)]
 #[path = "team_post_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "team_latency_live_tests.rs"]
+mod latency_live;

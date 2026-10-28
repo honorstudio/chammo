@@ -474,7 +474,7 @@ pub fn list_text(list: &[Orch], current: Option<&Orch>) -> String {
     let mut lines = vec![if crate::i18n::is_en() { format!("{} assistant(s)", list.len()) } else { format!("참모 {}명", list.len()) }];
     for o in list {
         let now = current.is_some_and(|c| c.id == o.id);
-        lines.push(format!("· {}{}", o.name, if now { crate::i18n::tr(" — 지금 받는 참모", " — current") } else { "" }));
+        lines.push(format!("· {}{}", o.label(), if now { crate::i18n::tr(" — 지금 받는 참모", " — current") } else { "" }));
     }
     lines.push(crate::i18n::tr("/이름 글 로 보내면 그 참모에게 가요", "Send /name text to reach that one").into());
     lines.join("\n")

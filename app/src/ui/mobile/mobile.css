@@ -3,7 +3,7 @@
 :root {
   --g-ink: #2a1c14; --g-gold: #ffc93c; --g-purple: #9a5fd6; /* 게임 말투(뽑기 결과 카드·사무실 시트) — 라이트·다크 같은 값 */
   --bg: #ececef; --panel: #f6f6f8; --surface: #fff; --surface-2: #f0f0f3; --line: #dcdce1; --line-strong: #c6c6cd;
-  --text: #1d1d20; --text-2: #4a4a52; --text-3: #8a8a92; --accent: #d9622b; --accent-ink: #fff;
+  --text: #1d1d20; --text-2: #4a4a52; --text-3: #8a8a92; --text-dim: #6a6a72; --accent: #d9622b; --accent-ink: #fff;
   --working: #2f74e0; --blocked: #c98a00; --idle: #1f9a62; --warn-bg: #fff4d6; --warn-ink: #7a5a00; --danger-ink: #a12a2a;
   --tag-bg: #ececef; --tag-working: #dde8fb; --tag-working-ink: #1f4fb5; --tag-wait: #fff1cc; --tag-wait-ink: #7a5a00;
   --tag-done: #dcf2e6; --tag-done-ink: #17754a;
@@ -15,7 +15,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0e0e10; --panel: #151518; --surface: #1b1b1f; --surface-2: #222227; --line: #2a2a30; --line-strong: #3d3d45;
-    --text: #e7e7ea; --text-2: #b4b4bb; --text-3: #83838c; --working: #5b9bff; --blocked: #e0a100; --idle: #33b77a;
+    --text: #e7e7ea; --text-2: #b4b4bb; --text-3: #83838c; --text-dim: #909098; --working: #5b9bff; --blocked: #e0a100; --idle: #33b77a;
     --warn-bg: #3a2e10; --warn-ink: #f3d9a4; --danger-ink: #ffb4b4; --tag-bg: #2a2a30; --tag-working: #1c2f52; --tag-working-ink: #9cc0ff;
     --tag-wait: #45380f; --tag-wait-ink: #f3d9a4; --tag-done: #173a2a; --tag-done-ink: #8fe0b4;
     --tray: #131a26; --tray-line: #243249; --tray-ink: #8fb4ff;
@@ -753,6 +753,9 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-login-mid b { font-size: 14.5px; color: var(--text); }
 .m-login-mid span { font-size: 12.5px; color: var(--warn-ink); overflow-wrap: anywhere; }
 .m-login-btn { flex: none; background: var(--surface); }
+.m-terms { flex-direction: column; align-items: stretch; }
+.m-terms-acts { display: flex; gap: 8px; }
+.m-terms-acts .m-login-btn { flex: 1; min-height: 44px; color: var(--text); display: flex; align-items: center; justify-content: center; text-decoration: none; }
 .m-login-steps { gap: 12px; }
 .m-login-go { display: flex; align-items: center; justify-content: center; align-self: stretch; text-decoration: none; }
 .m-login-code { display: flex; gap: 8px; align-items: center; }
@@ -996,6 +999,19 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-team-body { flex: 1; min-height: 0; overflow-y: auto; }
 .m-team .tmx-li { min-height: 60px; }
 .m-team-lk { margin: 4px 16px 16px; }
+/* 팀 홈(데스크톱 TeamHome 그대로) — 폰 여백·누름 칸 44, 글 줄 52 */
+.m-team-home .tmh { padding: 8px 16px 24px; overflow: visible; }
+.m-team-home .tmh-head .tmx-tm, .m-team-home .tmh-head b { display: none; } /* 팀 표·이름은 위 팀 머리에 이미 */
+.m-team-home .kit-ib { width: 44px; height: 44px; }
+.m-team-home .kit-ib svg { width: 20px; height: 20px; }
+.m-team-home .tmh-post { min-height: 52px; align-items: center; }
+.m-team-home .tmh-pin { padding: 14px 16px; }
+.m-team-home .tmh-read h1 { font-size: 20px; }
+.m-team-home .tmh-body { font-size: 15px; }
+/* 글쓰기 시트 — 시트 폭 그대로, 입력은 16px(아이폰이 확대하지 않게) */
+.m-team-sheet-home .tmh-compose { width: 100%; padding: 4px 16px 16px; }
+.m-team-sheet-home .tmh-title, .m-team-sheet-home .tmh-text { font-size: 16px; }
+.m-team-sheet-home .tmx-btn { height: 44px; }
 .m-team-lk .tmx-lk-row { min-height: 52px; cursor: default; }
 .m-team-convo { padding-top: env(safe-area-inset-top); }
 .m-team-convo .tmx-convo { height: 100%; }
@@ -1196,3 +1212,14 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-al-txt span { color: var(--text-2); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m-al-ago { flex: none; color: var(--text-3); font-size: 12px; }
 .m-al-empty { margin: 6px 2px 12px; }
+/* 폰 팀 보관함 폴더 — 맥 팀 보관함과 같은 폴더 타일·경로 줄(FolderTile), 손가락 크기만 키운다 */
+.m-team-lk-wrap > .lk-crumb { margin: 8px 12px 0; }
+/* 팀 보관함 머리 — 쓴 양(또는 휴지통) · 이 폴더 ⋯ · 휴지통 · 더하기(누름 칸 44) */
+.m-tlk-bar { display: flex; align-items: center; gap: 2px; min-height: 48px; padding: 0 8px 0 16px; }
+.m-tlk-use { font-size: 13px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-tlk-title { font-size: 15px; }
+.m-tlk-sp { flex: 1; }
+.m-tlk-note { display: block; margin: 4px 16px 0; }
+.m-tlk-ask { margin: 4px 0 12px; font-size: 15px; color: var(--text-2); line-height: 1.5; }
+.m-team-lk-folders { margin: 8px 16px 0; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.m-team-lk-folders .lk-fbtn { min-height: 48px; font-size: 14px; }

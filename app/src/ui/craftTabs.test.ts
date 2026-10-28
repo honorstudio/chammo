@@ -81,6 +81,12 @@ describe('참모 앱은 주인 참모 스페이스에만', () => {
     expect(space).toMatch(/drawerOpen\(app, dock\.map\(\(d\) => d\.app\), mine\)/);
     expect(drawer).toMatch(/invoke\('craft_launch', \{ app: r\.app, key: how\?\.key \?\? null \}\)/);
   });
+  // 2026-10-28 사용자 "참모앱 설치하면 일단 자동으로 띄워주는 거 없어야함" — 안 깐 칸은 깔기만, 다 깔리면 '깔린 것'으로 옮기기만
+  it('서랍 받기는 깔기만(craft_install) · 띄우지 않는다', () => {
+    expect(drawer).toMatch(/if \(!r\.installed\) \{ get\(r\); return; \}/);
+    expect(drawer).toMatch(/invoke<string>\('craft_install', \{ app: r\.app \}\)/);
+    expect(drawer).not.toMatch(/받아서 열기/);
+  });
   it('Rust 는 부른 쪽이 주인을 모르면 상태 파일 주인(space_by)', () => {
     expect(win).toMatch(/let by = space_by\(by, &info\.by\);/);
   });

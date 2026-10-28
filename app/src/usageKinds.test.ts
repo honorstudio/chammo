@@ -15,8 +15,10 @@ describe('익명 사용 통계 이름', () => {
     expect(list('CRASH_KINDS')).toContain('webview');
   });
 
-  it('켜 둔 기능 목록은 설정 스위치 전부에서 익명 사용 통계·애니메이션만 뺀 것', () => {
-    const switches = Object.keys(ALL_ON).filter((k) => k !== 'usagePing' && k !== 'animation');
+  // craftBasics(기본 참모 앱 미리 받기)도 뺀다 — 보내는 칸을 늘리면 처리방침 항목이 바뀐다
+  // bubble(떠 있는 참모 배지, 10-28)도 뺀다 — 같은 이유
+  it('켜 둔 기능 목록은 설정 스위치 전부에서 익명 사용 통계·기본 앱 미리 받기·떠 있는 배지·애니메이션만 뺀 것', () => {
+    const switches = Object.keys(ALL_ON).filter((k) => k !== 'usagePing' && k !== 'craftBasics' && k !== 'bubble' && k !== 'bubbleDesk' && k !== 'animation');
     expect(list('ON_KEYS')).toEqual(switches);
   });
 });

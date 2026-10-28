@@ -27,6 +27,8 @@ pub struct Person {
     pub head: String,
     /// 갈림 — 이 사슬을 '다시 받기'로 받았나(받은 뒤에만 받아들이기)
     pub refetched: bool,
+    /// 보안 번호가 바뀌어 저절로 받아들인 때(ms, 없으면 0) — 그 사람 대화에 회색 줄
+    pub rekeyed_at: u64,
 }
 
 /// 멈춘 말 기한 — 평문이 오래 남지 않게
@@ -67,7 +69,8 @@ fn person_in(s: &E2eStore, my_acc: &str, acc: &str) -> Option<Person> {
         "ok" => "ok",
         other => other,
     };
-    Some(Person { account: acc.into(), team, member, name, state: state.into(), verified_at, blocked: s.blocked.contains(acc), number, identity, head, refetched })
+    let rekeyed_at = s.rekeyed.get(acc).copied().unwrap_or(0);
+    Some(Person { account: acc.into(), team, member, name, state: state.into(), verified_at, blocked: s.blocked.contains(acc), number, identity, head, refetched, rekeyed_at })
 }
 
 /// 내 계정 말고 핀이 있는(명부에서 만난) 사람들
@@ -96,6 +99,16 @@ pub(crate) const NEW_CARD: &str = "번호를 견주는 사이 그 사람 기기 
 /// 받아들이기(카드 답에서만) — 카드에 띄운 그 사슬(신원·머리)이 지금 캐시와 같을 때만 새 핀으로(6차 리뷰: 견주는 사이 바꿔치기),
 /// 갈림은 '다시 받기'한 그 사슬일 때만. 확인됨으로 적고, 그 사람 때문에 멈춘 말을 돌려준다(부르는 쪽이 보낸다)
 pub(crate) fn accept(dir: &Path, acc: &str, identity: &str, head: &str) -> Result<Vec<Held>, String> {
+    take(dir, acc, identity, head, true)
+}
+
+/// 저절로 받아들이기 — 팀원 보안 번호 바뀜(다시 시작)은 묻지 않는다(사용자 10-29 "팀챗이라 메시지 보이는 건 허용이 필요 없다").
+/// 번호를 견준 게 아니라 확인됨은 지우고, 바뀐 때를 적어 그 사람 대화에 회색 줄. 갈림(서버가 사람마다 다른 목록)은 여기 안 온다
+pub(crate) fn auto_accept(dir: &Path, acc: &str, identity: &str, head: &str) -> Result<Vec<Held>, String> {
+    take(dir, acc, identity, head, false)
+}
+
+fn take(dir: &Path, acc: &str, identity: &str, head: &str, by_person: bool) -> Result<Vec<Held>, String> {
     let s = e2e_state::load(dir);
     if chain_id(&s, acc).as_ref().map(|(i, h)| (i.as_str(), h.as_str())) != Some((identity, head)) {
         return Err(NEW_CARD.into());
@@ -107,7 +120,12 @@ pub(crate) fn accept(dir: &Path, acc: &str, identity: &str, head: &str) -> Resul
     // 받아들였으니 보관함 사람 목록·실패 물러서기를 지운다 — 바로 다시 읽게
     crate::team_locker_app::forget_people("");
     e2e_state::mutate(dir, |s| {
-        s.verified.insert(acc.into(), now_ms());
+        if by_person {
+            s.verified.insert(acc.into(), now_ms());
+        } else {
+            s.verified.remove(acc);
+            s.rekeyed.insert(acc.into(), now_ms());
+        }
         s.blocked.remove(acc);
         s.refetched.remove(acc);
         let (mine, rest): (Vec<Held>, Vec<Held>) = std::mem::take(&mut s.held).into_iter().partition(|h| h.account == acc);
@@ -121,6 +139,20 @@ pub(crate) fn block(dir: &Path, acc: &str) -> Result<(), String> {
     e2e_state::mutate(dir, |s| {
         s.blocked.insert(acc.into());
     })
+}
+
+/// 저절로 받아들인 사람을 번호 비교에서 '막아 두기' — 다시 바뀜으로 돌려 보내기를 멈춘다(저절로 받아들이기는 막아 둔 사람을 건너뛴다).
+/// 저절로 받아들인 적 있는 사람만(멀쩡한 사람을 이 길로 바뀜으로 만들지 않게). 풀기는 unblock
+pub fn block_rekeyed(dir: &Path, acc: &str) -> Result<(), String> {
+    e2e_state::mutate(dir, |s| {
+        if !s.rekeyed.contains_key(acc) {
+            return Err("보안 번호가 바뀐 적 없는 사람이야".to_string());
+        }
+        let Some(p) = s.pins.get_mut(acc) else { return Err("그 사람 핀이 없어".to_string()) };
+        p.state = "changed".into();
+        s.blocked.insert(acc.into());
+        Ok(())
+    })?
 }
 
 /// 멤버 화면 '카드 다시 띄우기' — 막아 둔 걸 풀어 결정 대기함에 카드가 다시 뜨게

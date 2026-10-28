@@ -5,6 +5,7 @@ import type { ModeRow } from '../domain/modeTree';
 import { attribute, envCandidates, parseClaudePids, parsePs, parseSys, summarize, type LoadReport, type SysLoad } from '../domain/load';
 import type { Session } from '../domain/session';
 import { every } from './poll';
+import { feedBusy } from './busyNow';
 import { feedLoad } from './calm';
 
 /**
@@ -32,6 +33,7 @@ export function useLoad(mine: Session[], others: Session[], fast: boolean) {
       setSys(s);
       setReport(r);
       feedLoad(s); // 애니메이션 자동 줄이기 — 이 부하 주기를 그대로 쓴다(새로 재지 않는다, ui/calm)
+      feedBusy(s); // 바쁘면 터미널 칸을 하나씩 붙인다(ui/busyNow, 2026-10-26 부팅 직후 재시작 폭주)
       if (s) void loadSave(JSON.stringify(summarize(s, r, new Date()), null, 2)).catch(() => {});
     } catch {
       // 다음 주기에 다시 — 부하 칸이 잠깐 비는 것뿐

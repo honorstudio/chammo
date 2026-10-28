@@ -55,3 +55,21 @@ describe('사진 자르기 계산', () => {
     expect(clampOffset({ w: 400, h: 200 }, 200, 1, { x: -500, y: -30 })).toEqual({ x: -100, y: 0 });
   });
 });
+
+import { keepBoard } from './teamProfile';
+describe('폰 판 받기 — 본 판 그대로면 몸통 없이(same)', () => {
+  const b = { team: 't', rev: 3, people: {}, teamIcon: '' };
+  it('same 이면 아는 판 그대로, 새 판이면 바꾼다', () => {
+    expect(keepBoard(b, { same: true })).toBe(b);
+    const n = { ...b, rev: 4 };
+    expect(keepBoard(b, n)).toBe(n);
+    expect(keepBoard(null, n)).toBe(n);
+  });
+  it('아는 판이 없는데 same 이면 없음 — 다음엔 rev 0 으로 다시', () => {
+    expect(keepBoard(null, { same: true })).toBeNull();
+  });
+  it('다른 팀 판이 오면(팀을 바꾼 사이 늦게 온 답) 버린다', () => {
+    expect(keepBoard(b, { ...b, team: 'u', rev: 9 }, 't')).toBe(b);
+    expect(keepBoard(null, { ...b, team: 'u' }, 't')).toBeNull();
+  });
+});

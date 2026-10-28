@@ -1,6 +1,7 @@
 // 팀 모드(시안 team-space v1 A, 10-26 사용자 "추천대로") — DOM 없이 소스로 지키는 규칙(앱 테스트엔 jsdom 이 없다)
 import { describe, expect, it } from 'vitest';
 import mode from './useTeamMode.tsx?raw';
+import convoSrc from './TeamConvo.tsx?raw';
 import rail from './TeamRail.tsx?raw';
 import space from './TeamSpace.tsx?raw';
 import view from '../space/SpaceView.tsx?raw';
@@ -22,14 +23,30 @@ describe('팀 모드 = 띠에서 고른 것이 화면 전체의 주인', () => {
     expect(mode).toContain('<TeamList convos={shownDms(people, roomMenu.hidden)} rooms={rooms}');
     expect(mode).toContain('<TeamConvo key={`${cur.key}:${seed?.n ?? 0}`} seed={seed?.text}'); // 팀 홈 글 '대화로' — 입력칸 첫 글
   });
+  it('팀 홈 글 \'대화로\' 첫 글은 한 번만 — 넣은 뒤 비워서 참모 화면 다녀오기·팀 모드 다시 켜기·따로 창에서 다시 안 들어간다(10-26 사용자)', () => {
+    // 번호(n)는 그대로 두고 글만 비운다 — 번호를 바꾸면 대화 칸이 다시 붙어 막 넣은 글이 지워진다
+    expect(mode).toContain('onSeeded={() => setSeed((s) => (s?.text ? { ...s, text: \'\' } : s))}');
+    expect(convoSrc).toContain('useEffect(() => { if (seed) onSeeded?.(); }, []);');
+  });
   it('팀 스페이스 탭 줄 = 팀 홈·팀 보관함·연 파일 + 팀 설정 — Craft·참모 보관함 탭은 없다', () => {
     expect(space).toContain('<IconHome />');
     expect(space).toContain('<IconFolder />');
     expect(space).toContain('<IconSettings />');
     expect(space).not.toMatch(/IconApps|APPS_KEY|CraftPane|craft_/);
   });
+  it('팀 칸 참모 앱 — 열면 팀 모드로 그 탭, 떠나면 숨기고(10분 뒤 저장·끄기) 들어오면 숨김을 푼다(참모 칸과 같은 규칙)', () => {
+    expect(mode).toContain('craft: (key: string, src: string) => { setOn(true); setTabs((t) => openTeamCraft(t, key, src)); },');
+    expect(mode).toContain('dropCraft: (key: string) => setTabsBy((m) => dropTeamKey(m, key)),');
+    expect(mode).toContain("const gone = leftCraft(prevCraft.current, craftHere);");
+    expect(mode).toContain("void invoke('craft_enter', { app: craftAppOf(craftHere) })");
+    expect(teamSpace).toContain('tabName?.(path) ?? nameOf(path)'); // 탭 이름 = 앱 이름(열쇠 k:… 글자 말고)
+  });
+  it('팀 탭의 고친 팀 파일 — 수정본 올리기 단추(누를 때만, 메인 창·메신저 창 같이)', () => {
+    expect(teamSpace).toContain('{revise && reviseSrc(tabs) && revise(reviseSrc(tabs))}');
+    expect(mode).toContain('revise={(p) => <ReviseBar key={p} path={p} team={view.teamId} me={view.me} />}');
+  });
   it('스페이스는 팀 모드면 팀 것만 그린다(참모 탭 줄·독 없음), 참모 탭 줄엔 팀 탭이 없다', () => {
-    expect(view).toContain('if (teamOn && team?.space) { main = team.space.view((p) => filePage(p, {})); framed = true; }');
+    expect(view).toContain('if (teamOn && team?.space) { main = team.space.view((p) => (craftAppOf(p) ? craftPaneOf(p) : filePage(p, {})), undefined, (k) => craftNames.current.get(craftAppOf(k))); framed = true; }');
     expect(view).not.toContain('tmx-ttab');
     expect(view).not.toContain("'tm:'");
   });
@@ -54,13 +71,14 @@ describe('팀 홈 글·고정 공지(시안 team-space H)', () => {
     expect(home).not.toMatch(/invoke\(/);
   });
   it('고정 공지 단추·스위치는 팀장만, 고치기는 글쓴이만, 지우기는 글쓴이·팀장', () => {
-    expect(home).toContain('{b?.owner && <IconButton label={b.pinned === cur.id');
+    // 글 길에 그 일이 있을 때만(폰 글 길엔 고치기·고정 바꾸기·지우기가 없다)
+    expect(home).toContain('{api.pin && b?.owner && <IconButton label={b.pinned === cur.id');
     expect(home).toContain('{b?.owner && <label className="tmp-sw tmh-sw">');
-    expect(home).toContain("{cur.mine && <IconButton label={tr('고치기', 'Edit')}");
-    expect(home).toContain('{(cur.mine || b?.owner) && <IconButton');
+    expect(home).toContain("{api.edit && cur.mine && <IconButton label={tr('고치기', 'Edit')}");
+    expect(home).toContain('{api.remove && (cur.mine || b?.owner) && <IconButton');
   });
   it('지우기는 Confirm 의 onOk 안에서만', () => {
-    const at = home.indexOf('teamPostRemove(teamId');
+    const at = home.indexOf('api.remove!(teamId');
     expect(at).toBeGreaterThan(0);
     expect(home.slice(Math.max(0, at - 300), at)).toContain('onOk=');
   });
@@ -132,7 +150,8 @@ describe('메신저 접기 — 팀 홈·보관함만 크게(10-26 사용자)', (
     expect(teamSpace).toContain('<IconPanelLeft />');
   });
   it('메인 창은 채팅 칸을 숨기기만(참모 터미널 붙임 그대로) — 지우지 않는다', () => {
-    expect(view).toContain('hidden={(atHomePick && !teamOn) || (teamOn && !!team?.fold)}');
+    expect(view).toContain('const chatHid = (atHomePick && !teamOn) || (teamOn && !!team?.fold);');
+    expect(view).toContain('hidden={chatHid && !bub.open}'); // 떠 있는 배지 대화창이 열린 동안만 숨기지 않고 안 보이게(obb-ghost)
     expect(app).toContain('fold: teamMode.fold }}');
   });
   it('따로 창은 접으면 가운데를 안 그리고 오른쪽 칸이 창 전체', () => {
@@ -147,5 +166,33 @@ describe('좁은 팀 보관함 칸 — 이름이 "20..."으로 잘리고 머리 
   });
   it('좁으면(컨테이너 쿼리) 올린 사람·시각·크기를 이름 아래 줄로', () => {
     expect(css).toMatch(/@container \(max-width: \d+px\) \{[^@]*\.tmx-lk-row/);
+  });
+});
+
+describe('대화 파일은 대화 안에서(10-28 사용자 "디엠 한 거는 팀 보관함에 들어가면 안 되고 디엠 보관함이 따로")', () => {
+  it('대화 머리 폴더 아이콘 하나 → 스페이스에 그 방 대화 파일 보기 탭(files:<방>)', () => {
+    expect(convoSrc).toContain("{onFiles && <IconButton label={tr('이 대화 파일', 'Files in this chat')} onClick={onFiles}><IconFolder /></IconButton>}");
+    expect(mode).toContain('onFiles={cur.room ? () => setTabs((t) => openTeamFile(t, roomFilesKey(cur.room))) : undefined}');
+  });
+  it('그 탭은 TeamLocker 를 room 모드로 — 같은 고르기·끌기·우클릭(폴더로 복사)을 그대로 쓴다', () => {
+    expect(mode).toContain('roomFiles={(r) => <TeamLocker key={`room:${r}`}');
+    expect(mode).toContain('room={{ id: r, name:');
+    expect(space).toContain('roomOfTab(cur) && roomFiles ?');
+  });
+});
+
+import teamFile from './TeamFile.tsx?raw';
+import fileTab from '../space/FileTab.tsx?raw';
+describe('메신저 따로 창 — 크게 보기는 그 창 안에서(10-28 사용자 "크게 봐야 하는 경우")', () => {
+  it('\'크게 보기\' = 오른쪽 칸을 창 전체로, 다시 누르면 되돌림 — 리더 창을 따로 안 띄운다', () => {
+    expect(teamFile).not.toContain("invoke('reader_open'");
+    expect(messenger).toContain("tm.space.view((p) => <TeamFile path={p} team={team} send={send} big={big} onBig={() => setBig((b) => !b)} />");
+    expect(messenger).toContain("${big ? 'tmw-big' : ''}");
+    expect(css).toContain('.tmw.tmw-big .tmw-chat, .tmw.tmw-big .tmx-win-teams { display: none; }');
+    expect(fileTab).toContain("{big ? <IconRestore /> : <IconMaximize />}");
+  });
+  it('보던 탭이 바뀌면·Esc 면 원래 크기로', () => {
+    expect(messenger).toContain('useEffect(() => setBig(false), [tm.tabs.cur]);');
+    expect(messenger).toContain("if (e.key === 'Escape') setBig(false);");
   });
 });

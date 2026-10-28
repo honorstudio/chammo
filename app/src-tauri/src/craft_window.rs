@@ -429,6 +429,72 @@ pub fn space_by<'a>(asked: &'a str, opener: &'a str) -> &'a str {
     if asked.is_empty() { opener } else { asked }
 }
 
+// ── 메신저 따로 창에서 연 참모 앱(10-28 사용자, B) — 메인 창 스페이스 칸 대신 그 메신저 창 옆 Craft 따로 창으로.
+// 열기는 craft_open_file → scripts/craft → app.jsonl 'open' 줄로 돌아온다 — 누가 열었나를 앱별로 잠깐 기억해 둔다(설치하고 여는 3분+) ──
+
+/// 앱(기본 이름) → (연 메신저 창 이름, 연 때)
+static ASKED: Mutex<Option<HashMap<String, (String, std::time::Instant)>>> = Mutex::new(None);
+const ASKED_TTL: std::time::Duration = std::time::Duration::from_secs(200);
+
+/// 그 창에서 열기를 눌렀다 — 메인 창이 아닌 앱 창(메신저 따로 창)만 기억
+pub fn asked_by(m: &mut HashMap<String, (String, std::time::Instant)>, app: &str, label: &str, at: std::time::Instant) {
+    let k = base(app).unwrap_or(app).to_string();
+    if label != "main" && crate::team_ui::ui_window(label) {
+        m.insert(k, (label.to_string(), at));
+    } else {
+        m.remove(&k); // 메인 창에서 다시 열었으면 앞서 메신저 창에서 누른 표시는 버린다(설치 취소 뒤 등)
+    }
+}
+
+/// 'open' 줄이 왔다 — 사람이 메신저 창에서 연 것(띄운 세션 없음)이면 그 창 이름. 한 번 쓰면 지운다
+pub fn asked_take(m: &mut HashMap<String, (String, std::time::Instant)>, key: &str, by: &str, now: std::time::Instant) -> Option<String> {
+    if !by.is_empty() {
+        return None;
+    }
+    let (label, at) = m.remove(base(key).unwrap_or(key))?;
+    (now.saturating_duration_since(at) <= ASKED_TTL).then_some(label)
+}
+
+pub fn ask_from(app: &str, label: &str) {
+    let mut g = ASKED.lock().unwrap_or_else(|e| e.into_inner());
+    asked_by(g.get_or_insert_with(HashMap::new), app, label, std::time::Instant::now());
+}
+
+fn asker(key: &str, by: &str) -> Option<String> {
+    let mut g = ASKED.lock().unwrap_or_else(|e| e.into_inner());
+    asked_take(g.get_or_insert_with(HashMap::new), key, by, std::time::Instant::now())
+}
+
+/// 새 따로 창 왼쪽 위 — 메신저 창(x, y, 폭, 높이) 오른쪽 → 왼쪽 → 그 모니터 가운데(조금 아래로 겹쳐), 모니터 안으로(논리 좌표)
+pub fn beside(msg: (f64, f64, f64, f64), mon: (f64, f64, f64, f64), size: (f64, f64)) -> (f64, f64) {
+    let (mx, my, mw, mh) = mon;
+    let (x, y) = if msg.0 + msg.2 + size.0 <= mx + mw {
+        (msg.0 + msg.2, msg.1)
+    } else if msg.0 - size.0 >= mx {
+        (msg.0 - size.0, msg.1)
+    } else {
+        (mx + ((mw - size.0) / 2.0).max(0.0), msg.1 + 40.0)
+    };
+    (x, y.min(my + mh - size.1).max(my))
+}
+
+/// 메신저 창에서 연 참모 앱 — 그 창 옆 따로 창(처음 띄울 때만 자리를 옮긴다, 이미 떠 있으면 앞으로)
+fn open_beside<R: Runtime>(app: &tauri::AppHandle<R>, key: &str, asker: &str) -> Result<String, String> {
+    let r = open(app, key)?;
+    let (Some(w), Some(m)) = (app.get_webview_window(&label(key)), app.get_webview_window(asker)) else { return Ok(r) };
+    if r == "opened" {
+        let lg = |s: f64, p: tauri::PhysicalPosition<i32>, z: tauri::PhysicalSize<u32>| (p.x as f64 / s, p.y as f64 / s, z.width as f64 / s, z.height as f64 / s);
+        let s = m.scale_factor().unwrap_or(1.0);
+        if let (Ok(p), Ok(z), Ok(Some(mon)), Ok(wz)) = (m.outer_position(), m.outer_size(), m.current_monitor(), w.outer_size()) {
+            let ms = mon.scale_factor();
+            let at = beside(lg(s, p, z), lg(ms, *mon.position(), *mon.size()), (wz.width as f64 / w.scale_factor().unwrap_or(1.0), wz.height as f64 / w.scale_factor().unwrap_or(1.0)));
+            let _ = w.set_position(tauri::LogicalPosition::new(at.0, at.1));
+        }
+    }
+    let _ = w.set_focus();
+    Ok(r)
+}
+
 /// 창을 띄우고(이미 있으면 앞으로) 비추기를 붙인다
 pub fn open<R: Runtime>(app: &tauri::AppHandle<R>, key: &str) -> Result<String, String> {
     display_name(key).ok_or("unknown app")?;
@@ -522,7 +588,11 @@ pub fn answer<R: Runtime>(app: &tauri::AppHandle<R>, req: &Req) -> String {
     let r = match req.verb.as_str() {
         "point" => point(app, &req.app, &req.names, &req.label, req.hold),
         // 기본 자리는 스페이스 탭, "window" 는 따로 창(머리줄 옮기기와 같은 길)
-        "open" => show_in_space(app, &req.app, &req.by),
+        // 메신저 따로 창에서 사람이 연 것이면 그 창 옆 따로 창(메인 창으로 안 튀고 참모에도 안 붙는다, 10-28 사용자 B)
+        "open" => match asker(&req.app, &req.by) {
+            Some(lb) => open_beside(app, &req.app, &lb),
+            None => show_in_space(app, &req.app, &req.by),
+        },
         "window" => open(app, &req.app),
         // 띄우기 전에 레티나 화면부터 — 답은 자리(scripts/craft 는 screen.json 을 본다)
         "screen" => crate::craft_screen::ensure().map(|r| format!("screen {} {} {} {}", r.x, r.y, r.w, r.h)),
@@ -698,6 +768,38 @@ pub fn craft_win_act<R: Runtime>(handle: tauri::AppHandle<R>, app: String, act: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 메신저_따로_창에서_연_참모_앱은_그_창_옆_따로_창으로() {
+        // 10-28 사용자(B): 따로 창에서 연 .ai 가 메인 창으로 튀고 '지금 보는 참모' 칸에 붙었다 — 연 메신저 창 옆 Craft 따로 창에
+        let at = std::time::Instant::now();
+        let mut m = std::collections::HashMap::new();
+        asked_by(&mut m, "vectorcraft", "team-all", at);
+        assert_eq!(asked_take(&mut m, "vectorcraft-2", "", at + std::time::Duration::from_secs(5)).as_deref(), Some("team-all"), "같은 앱 2번째 인스턴스 키로 와도");
+        assert_eq!(asked_take(&mut m, "vectorcraft", "", at), None, "한 번만");
+        asked_by(&mut m, "vectorcraft", "team-all", at);
+        assert_eq!(asked_take(&mut m, "vectorcraft", "ab12cd34", at), None, "맡긴 세션이 띄운 건 그 세션 몫");
+        asked_by(&mut m, "photocraft", "team-all", at);
+        assert_eq!(asked_take(&mut m, "photocraft", "", at + std::time::Duration::from_secs(201)), None, "설치 3분 넘게 지난 표시는 버린다");
+        asked_by(&mut m, "pdfcraft", "main", at);
+        assert_eq!(asked_take(&mut m, "pdfcraft", "", at), None, "메인 창에서 연 건 예전 길(스페이스 칸)");
+        asked_by(&mut m, "gridcraft", "team-all", at);
+        asked_by(&mut m, "gridcraft", "main", at);
+        assert_eq!(asked_take(&mut m, "gridcraft", "", at), None, "메신저에서 누른 뒤 메인 창에서 다시 열면 메인 창 길");
+    }
+
+    #[test]
+    fn 따로_창_자리는_메신저_창_옆_같은_모니터_안() {
+        let mon = (0.0, 0.0, 2560.0, 1440.0);
+        // 오른쪽에 자리가 있으면 오른쪽에 붙여
+        assert_eq!(beside((100.0, 100.0, 700.0, 800.0), mon, (1200.0, 900.0)), (800.0, 100.0));
+        // 오른쪽이 모자라면 왼쪽에
+        assert_eq!(beside((1500.0, 100.0, 700.0, 800.0), mon, (1200.0, 900.0)), (300.0, 100.0));
+        // 양쪽 다 모자라면 모니터 가운데에 겹쳐
+        assert_eq!(beside((600.0, 100.0, 1400.0, 800.0), mon, (1600.0, 900.0)), (480.0, 140.0));
+        // 아래로 넘치면 모니터 안으로 끌어올린다(음수 자리 모니터도)
+        assert_eq!(beside((-1900.0, 900.0, 600.0, 500.0), (-1920.0, 0.0, 1920.0, 1080.0), (1000.0, 700.0)), (-1300.0, 380.0));
+    }
 
     #[test]
     fn 돌려주기는_한_회차에_한_번만() {
