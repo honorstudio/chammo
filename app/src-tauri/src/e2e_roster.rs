@@ -30,8 +30,42 @@ pub struct RosterMember {
     pub active: bool,
     /// 믿는 사슬로 확인한 들어옴(과 확인된 초대) — 아니면 받아들이기 전까지 받는 사람에서 뺀다
     pub confirmed: bool,
-    /// 팀장 자리가 확인된 고리로 생겼나 — 아니면 그 사람 팀장 일(초대·올림)은 확인 전
+    /// 팀장·매니저 자리가 확인된 고리로 생겼나 — 아니면 그 사람 권한 일(초대·올림·빼기)은 확인 전
     pub owner_ok: bool,
+    /// 매니저 권한(relay ADR 0014) — 비면 팀원(팀장은 role owner). 정렬·중복 없음, all 은 혼자
+    pub perms: Vec<String>,
+}
+
+/// 매니저 권한 항목(relay src/perms.ts ITEMS 와 같은 차례)
+pub const ITEMS: &[&str] = &["agents", "files", "invite", "kick", "look", "posts"];
+
+/// 순위 — 팀장 3 > 전체 권한 매니저 2 > 매니저 1 > 팀원 0 (relay perms.ts rank)
+pub fn rank(m: &RosterMember) -> u8 {
+    if m.role == "owner" {
+        3
+    } else if m.perms.iter().any(|p| p == "all") {
+        2
+    } else {
+        u8::from(!m.perms.is_empty())
+    }
+}
+
+/// 그 항목을 할 수 있나 — 팀장·전체 권한은 다
+pub fn has(m: &RosterMember, item: &str) -> bool {
+    rank(m) >= 2 || m.perms.iter().any(|p| p == item)
+}
+
+/// 고리의 권한 배열 — 한 가지 모양(비지 않음·정렬·중복 없음·아는 항목, all 은 혼자)일 때만
+fn canon_perms(v: &Value) -> Option<Vec<String>> {
+    let a: Vec<String> = v.as_array()?.iter().map(|x| x.as_str().map(String::from)).collect::<Option<_>>()?;
+    if a.is_empty() {
+        return None;
+    }
+    if a.iter().any(|x| x == "all") {
+        return (a.len() == 1).then_some(a);
+    }
+    let ok = a.iter().all(|x| ITEMS.contains(&x.as_str())) && a.windows(2).all(|w| w[0] < w[1]);
+    ok.then_some(a)
 }
 
 /// 단톡방 하나 — 이름과 방 사람(멤버 id). 팀에서 빠진 사람은 받는 기기를 셀 때 active 로 거른다
@@ -65,6 +99,18 @@ impl Roster {
     }
     pub fn active(&self) -> impl Iterator<Item = (&String, &RosterMember)> {
         self.members.iter().filter(|(_, m)| m.active)
+    }
+
+    /// 지금 팀장 — 팀장 자리가 확인된 고리로 생겼고(owner_ok) 그 사람 자리도 확인된(confirmed) 활성 멤버 id.
+    /// 팀장만 올릴 수 있는 것(고정·아이콘·홈 판·참모 정의)을 남이 올린 것으로 받아들일 때와 내가 팀장 일을 할 수 있나 볼 때는
+    /// 서버 members 응답의 role 이 아니라 이걸로만 센다(relay ADR 0014 R14 — team_owners)
+    pub fn owner_ids(&self) -> Vec<String> {
+        self.active().filter(|(_, m)| m.role == "owner" && m.owner_ok && m.confirmed).map(|(id, _)| id.clone()).collect()
+    }
+
+    /// 그 항목을 할 수 있는 확인된 사람(팀장·전체 권한·그 항목 매니저) — 받는 거름은 이걸로(relay ADR 0014 R14)
+    pub fn holders(&self, item: &str) -> Vec<String> {
+        self.active().filter(|(_, m)| has(m, item) && m.owner_ok && m.confirmed).map(|(id, _)| id.clone()).collect()
     }
 }
 
@@ -132,16 +178,18 @@ pub fn verify_two(team: &str, links: &[TLink], trusted: &BTreeMap<String, Chain>
         // R3(핀 뒤는 지금 기기만)는 믿음 쪽(trusted_by)에만 — 뺀 기기가 쓴 고리는 확인 전이 될 뿐
         let signed_by = |a: &str| signed_by(loose, a, &by, &text, &l.sig, false);
         let trusted_by = |a: &str| trusted_by(trusted, a, &by, &text, &l.sig, now);
-        // 팀장 계정 중 그 기기를 가진 계정이 서명했나(구조) / 확인된 팀장이 믿는 기기로 서명했나(믿음)
-        let owner_signed = |r: &Roster| -> Result<bool, RosterErr> {
-            for (_, m) in r.active().filter(|(_, m)| m.role == "owner") {
-                if signed_by(&m.account)? {
-                    return Ok(true);
+        // 서명한 멤버(그 기기를 가진 계정의 지금 자리) — 팀장은 사슬이 꼭 있어야(없으면 받아 오라고), 그 밖은 사슬이 없으면 서명자 아님
+        let signer = |r: &Roster| -> Result<Option<String>, RosterErr> {
+            for (id, m) in r.active() {
+                let yes = if m.role == "owner" { signed_by(&m.account)? } else { signed_by(&m.account).unwrap_or(false) };
+                if yes {
+                    return Ok(Some(id.clone()));
                 }
             }
-            Ok(false)
+            Ok(None)
         };
-        let owner_trusted = |r: &Roster| r.active().any(|(_, m)| m.role == "owner" && m.owner_ok && m.confirmed && trusted_by(&m.account));
+        // 그 서명자의 권한이 확인됐나(owner_trusted 의 일반화)
+        let auth_trusted = |m: &RosterMember| m.owner_ok && m.confirmed && trusted_by(&m.account);
         match kind.as_str() {
             "team" => {
                 if n != 0 || !signed_by(&s("account"))? {
@@ -150,14 +198,16 @@ pub fn verify_two(team: &str, links: &[TLink], trusted: &BTreeMap<String, Chain>
                 r.name = s("name");
                 // 자리는 그 계정 사슬 기기가 직접 서명한 고리에서만(ADR 0007 R1) — 만든 사람 자리만(옮기기 목록 없음, R8)
                 let ok = trusted_by(&s("account"));
-                r.members.insert(s("member"), RosterMember { account: s("account"), display_name: s("displayName"), role: "owner".into(), active: true, confirmed: ok, owner_ok: ok });
+                r.members.insert(s("member"), RosterMember { account: s("account"), display_name: s("displayName"), role: "owner".into(), active: true, confirmed: ok, owner_ok: ok, perms: vec![] });
             }
             "invite" => {
                 // 같은 초대 열쇠를 다시 올려 '안 씀'으로 되돌리지 못하게(공격 리뷰 7)
-                if n == 0 || !owner_signed(&r)? || s("invPub").is_empty() || invites.contains_key(&s("invPub")) {
+                // 팀장 또는 invite 매니저(relay ADR 0014)
+                let who = signer(&r)?.and_then(|id| r.members.get(&id).cloned());
+                if n == 0 || !who.as_ref().is_some_and(|m| has(m, "invite")) || s("invPub").is_empty() || invites.contains_key(&s("invPub")) {
                     return bad("invite");
                 }
-                invites.insert(s("invPub"), (false, owner_trusted(&r)));
+                invites.insert(s("invPub"), (false, who.as_ref().is_some_and(|m| auth_trusted(m))));
             }
             "join" => {
                 let inv = s("invPub");
@@ -169,27 +219,85 @@ pub fn verify_two(team: &str, links: &[TLink], trusted: &BTreeMap<String, Chain>
                 // 확인 전 초대(확인 전 팀장이 냄)로 들어온 사람도 확인 전 — 서버가 지어낸 팀장 초대로 가짜 사람을 믿게 하지 못하게
                 let ok = trusted_by(&s("account")) && invites[&inv].1;
                 invites.insert(inv, (true, false));
-                r.members.insert(s("member"), RosterMember { account: s("account"), display_name: s("displayName"), role: "member".into(), active: true, confirmed: ok, owner_ok: false });
+                r.members.insert(s("member"), RosterMember { account: s("account"), display_name: s("displayName"), role: "member".into(), active: true, confirmed: ok, owner_ok: false, perms: vec![] });
             }
             "role" | "remove" => {
                 let target = s("member");
-                if !owner_signed(&r)? || !r.members.get(&target).is_some_and(|m| m.active) {
-                    return bad("owner-op");
-                }
-                let ok = owner_trusted(&r);
-                let m = r.members.get_mut(&target).expect("방금 봤다");
-                if kind == "role" {
-                    if !matches!(s("role").as_str(), "owner" | "member") {
-                        return bad("role");
+                let Some(tm) = r.members.get(&target).filter(|m| m.active).cloned() else { return bad("owner-op") };
+                let Some(sid) = signer(&r)? else { return bad("owner-op") };
+                let sm = r.members[&sid].clone();
+                let owners = r.active().filter(|(_, m)| m.role == "owner").count();
+                let co_owner = sm.role == "owner" && tm.role == "owner" && sid != target && owners > 1;
+                let ok = auth_trusted(&sm);
+                if kind == "remove" {
+                    // kick + 나보다 낮은 사람(P3) — 옛 팀은 팀장이 다른 팀장도
+                    if sid == target || !has(&sm, "kick") || !(co_owner || rank(&sm) > rank(&tm)) {
+                        return bad("owner-op");
                     }
-                    m.role = s("role");
-                    // 올림은 확인된 팀장이 확인된 사람을 올렸을 때만 팀장 일이 확인됨(확인 전 사람 세탁 막기, 공격 리뷰 1), 내림은 늘 반영
-                    m.owner_ok = m.role == "owner" && ok && m.confirmed;
-                } else {
-                    // 빼기는 누가 서명했든 반영 — 받는 사람이 줄어드는 쪽(기밀이 가용성보다 먼저). 확인 전 서명이면 의심으로 남긴다
-                    m.active = false;
+                    // 빼기는 반영 — 받는 사람이 줄어드는 쪽(기밀이 가용성보다 먼저). 확인 전 서명이면 의심으로 남긴다
+                    r.members.get_mut(&target).expect("있다").active = false;
                     if !ok {
                         r.doubts.push(target.clone());
+                    }
+                } else if s("role") == "owner" {
+                    let from = s("from");
+                    if !from.is_empty() {
+                        // 팀장 넘기기(relay ADR 0014 결정 4) — 넘기는 팀장 본인이 서명, 받는 사람 = 팀장, 넘긴 사람 = 전체 권한
+                        if from != sid || sm.role != "owner" || tm.role == "owner" {
+                            return bad("owner-op");
+                        }
+                        let m = r.members.get_mut(&target).expect("있다");
+                        m.role = "owner".into();
+                        m.perms = vec![];
+                        m.owner_ok = ok && m.confirmed;
+                        let f = r.members.get_mut(&sid).expect("있다");
+                        f.role = "member".into();
+                        f.perms = vec!["all".into()];
+                    } else {
+                        // 옛 고리(팀장 여럿이던 때의 올림) — 팀장이 서명했으면 그대로
+                        if sm.role != "owner" {
+                            return bad("owner-op");
+                        }
+                        let m = r.members.get_mut(&target).expect("있다");
+                        m.role = "owner".into();
+                        m.perms = vec![];
+                        // 올림은 확인된 팀장이 확인된 사람을 올렸을 때만 팀장 일이 확인됨(확인 전 사람 세탁 막기, 공격 리뷰 1)
+                        m.owner_ok = ok && m.confirmed;
+                    }
+                } else {
+                    let next = match s("role").as_str() {
+                        "manager" => match canon_perms(&b["perms"]) {
+                            Some(p) => p,
+                            None => return bad("role"),
+                        },
+                        "member" if b.get("perms").is_none() => vec![],
+                        _ => return bad("role"),
+                    };
+                    let nm = RosterMember { role: "member".into(), perms: next.clone(), ..tm.clone() };
+                    let allowed = if sid == target {
+                        // 자기는 낮추기만(P4) — 옛 팀의 팀장 자기 내림은 다른 팀장이 있을 때
+                        if tm.role == "owner" {
+                            owners > 1
+                        } else {
+                            rank(&nm) < rank(&tm) || (rank(&nm) == rank(&tm) && next.iter().all(|p| tm.perms.contains(p)))
+                        }
+                    } else {
+                        // 사람을 바꾸는 건 전체 권한 이상(P2), 나보다 낮은 사람만(P1), 전체 권한 깃발은 팀장만
+                        rank(&sm) >= 2 && (co_owner || rank(&sm) > rank(&tm)) && (sm.role == "owner" || rank(&nm) < 2)
+                    };
+                    if !allowed {
+                        return bad("owner-op");
+                    }
+                    let up = rank(&nm) > rank(&tm) || next.iter().any(|p| !tm.perms.contains(p));
+                    let m = r.members.get_mut(&target).expect("있다");
+                    m.role = "member".into();
+                    m.perms = next;
+                    // 올림은 확인된 권한자가 확인된 사람에게 줬을 때만 확인됨, 내림은 늘 반영(그 사람 확인 상태 그대로)
+                    if up {
+                        m.owner_ok = ok && m.confirmed;
+                    }
+                    if m.perms.is_empty() {
+                        m.owner_ok = false;
                     }
                 }
             }
@@ -211,8 +319,10 @@ pub fn verify_two(team: &str, links: &[TLink], trusted: &BTreeMap<String, Chain>
                 let list: Vec<String> = b["members"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
                 let me_ok = r.members.get(&me).is_some_and(|m| m.active && m.account == s("account"));
                 let all_in = list.iter().all(|m| r.members.get(m).is_some_and(|x| x.active)) && list.iter().collect::<BTreeSet<_>>().len() == list.len();
+                // 팀장·전체 권한은 안 든 방도 지운다(사람 0명 고리, relay ADR 0014 P5)
+                let admin = list.is_empty() && r.members.get(&me).is_some_and(|m| rank(m) >= 2);
                 let may = match r.rooms.get(&id) {
-                    Some(old) => old.members.contains(&me),
+                    Some(old) => old.members.contains(&me) || admin,
                     None => list.contains(&me),
                 };
                 if id.is_empty() || s("name").trim().is_empty() || !me_ok || !all_in || !may || !signed_by(&s("account"))? {

@@ -71,6 +71,11 @@ export const UNLISTED_MAX = 5 * 60_000;
 /** live 세션 화면이 옴 · attaching 붙었는데 아직 Claude Code 안내 줄뿐(attachPhaseWatcher) · reattaching 끊겨서 목록을 보며 다시 붙을 때 기다림 · gone 끊김이 굳음 */
 export type LinkState = 'live' | 'attaching' | 'reattaching' | 'gone';
 
+/** 채팅이 칸에 칠 때 — 끊김이 굳었으면 실패, 다만 다른 창에 쫓겨난 끊김(윈도우 세션당 한 창)은 세션이 살아 있으니 되찾아(retake) 보낸다.
+ *  예전엔 쫓겨나면 영영 'gone' 이라 터미널 뷰를 열어 칸이 새로 붙을 때까지 말이 하나도 안 갔다(2026-10-30 윈도우 '다시 보내도 안 감', 시험 PC 재현 0/3) */
+export const sendOnLink = (link: LinkState | undefined, kicked: boolean): 'go' | 'retake' | 'fail' =>
+  link !== 'gone' ? 'go' : kicked ? 'retake' : 'fail';
+
 /** 끊긴 뒤 한 번 볼 때마다 — 앱이 끈 세션이면 그만(stopped), 살아 있으면 다시 붙고, 아니면 기다리다 오래되면 끊김으로(그래도 계속 본다).
  *  stoppedByApp = 앱이 끈·지운 세션인가(Rust app_stopped_recently), null = 못 읽음(모름) — 꺼진 세션에 attach 하면 다시 켜지니 붙지 않고,
  *  영구 포기도 않고 다음 차례에 다시 묻는다(못 읽은 걸 '앱이 껐다'로 쳐서 영영 안 붙었다, 0.3.6 리뷰) */

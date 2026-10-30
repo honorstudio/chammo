@@ -217,7 +217,8 @@ pub fn room_info(dir: &Path, kc: &dyn Store, http: &dyn Http, sel: &str) -> Resu
     let t = st.team(&r.team)?;
     let roster = crate::e2e_state::roster_of(dir, kc, http, &st, &r.team)?;
     let by = roster.rooms.get(&r.id).map(|x| x.by.clone()).unwrap_or_default();
-    Ok(json!({ "by": by, "canDelete": t.role == "owner" || by == t.member_id }))
+    // 팀장은 서명된 명부로(relay ADR 0014 R14) — 서버 members 의 role 이 아니다
+    Ok(json!({ "by": by, "canDelete": crate::team_owners::has(&roster.holders("all"), &t.member_id) || by == t.member_id }))
 }
 
 /// 지우기 — 사람 0명 고리(서버가 방 말까지 지운다, chammo-relay rooms.ts). 만든 사람·팀장만(서버도 본다). 모두의 목록에서 사라진다
@@ -227,8 +228,8 @@ pub fn delete_room(dir: &Path, kc: &dyn Store, http: &dyn Http, sel: &str) -> Re
     let t = st.team(&r.team)?.clone();
     let roster = crate::e2e_state::roster_of(dir, kc, http, &st, &r.team)?;
     let cur = roster.rooms.get(&r.id).ok_or("이 팀챗은 서명된 팀 명부에 없어 — 지우지 않았어")?;
-    if t.role != "owner" && cur.by != t.member_id {
-        return Err("팀챗은 만든 사람이나 팀장만 지울 수 있어".into());
+    if !crate::team_owners::has(&roster.holders("all"), &t.member_id) && cur.by != t.member_id {
+        return Err("팀챗은 만든 사람이나 팀장·전체 권한 매니저만 지울 수 있어".into());
     }
     let link = crate::e2e_team::room_link(dir, kc, http, &t.id, &r.id, &cur.name, &[])?;
     let k = relay::device_keys(kc, &st)?;

@@ -87,7 +87,7 @@ export function HarnitorPanel({ onClose, float = false, restore, onView }: { onC
     <div className={`hn-panel ${float ? 'float' : ''}`}>
       <header className="hn-top">
         <b className="hn-title">{tr('하니터', 'Harnitor')}</b>
-        <span className="hn-sub">{tr('하네스 — 스킬·훅·MCP·플러그인 보기·끄고 켜기·되돌리기. 바꾼 건 새로 켜는 세션부터 먹어요', 'Your harness — skills, hooks, MCP, plugins: view, toggle, undo. Changes apply to newly started sessions')}</span>
+        <span className="hn-sub">{tr('스킬·훅·MCP·플러그인을 보고 끄고 켜요. 바꾼 설정은 새로 켜는 세션부터 적용돼요', 'View and toggle skills, hooks, MCP and plugins. Changes apply to newly started sessions')}</span>
         <span className="hn-sp" />
         <IconButton tone="line" className="hn-close" label={tr('닫기', 'Close')} title={tr('닫기 (Esc)', 'Close (Esc)')} onClick={onClose}><IconClose /></IconButton>
       </header>

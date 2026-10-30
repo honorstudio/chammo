@@ -82,3 +82,9 @@ button.tmp-who { cursor: pointer; }
 /* 대화 칸 위 방해 금지 한 줄(S) */
 .tmp-dnd { margin: 0 12px 4px; font-size: 12px; color: var(--tag-wait-ink); background: var(--tag-wait); border-radius: 9px; padding: 5px 10px; }
 .tmx-win-list > .tmx-list { flex: 1; }
+/* 매니저 권한 칩(relay ADR 0014, 시안 .shots/team-roles/mock.html.png) — 그 줄 아래, 누르면 바로 저장 */
+.tmp-ppl li.open { background: var(--surface-2, rgba(127,127,127,.08)); border-radius: 9px; }
+.tmp-ppl li.tmp-perm { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 8px 40px; }
+.tmp-chip { font: inherit; font-size: 12px; min-height: 28px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line-strong); background: transparent; color: var(--text-2); cursor: pointer; }
+.tmp-chip.on { background: var(--text); border-color: var(--text); color: var(--bg, #fff); }
+.tmp-chip:disabled { opacity: .4; cursor: default; }

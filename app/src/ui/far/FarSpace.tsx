@@ -136,7 +136,7 @@ function FarLockerView({ name, locker }: { name: string; locker: FarData['locker
           </div>
         ))}
       </div>
-      <span className="far-muted small">{tr(`파일 열기는 다음 판에서 — 지금은 ${name} 참모에게 "그 파일 보여 줘"라고 하면 그 기기 앱에 떠요`, `Opening files comes later — ask the assistant on ${name} to show it there`)}</span>
+      <span className="far-muted small">{tr(`파일 열기는 다음 버전에서 지원해요. 지금은 ${name} 참모에게 "그 파일 보여 줘"라고 하면 그 기기 앱에 떠요`, `Opening files comes in a later version. For now, ask the assistant on ${name} to show it there`)}</span>
     </div>
   );
 }

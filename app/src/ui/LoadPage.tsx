@@ -73,7 +73,7 @@ export function LoadPage({ sys, report, onOpen, onKilled }: Props) {
         </section>
         <section className="ld-sec">
           <h3>{tr(`주인 없는 프로세스 · ${report.orphans.length}`, `Left behind · ${report.orphans.length}`)}</h3>
-          <p className="ld-dim">{tr('세션은 끝났는데 남아 있는 것 — 개발 서버·시뮬레이터·브라우저 등. Claude 가 띄운 것만 끌 수 있어요.', 'Still running after their session ended — dev servers, simulators, browsers. Only things Claude started can be stopped.')}</p>
+          <p className="ld-dim">{tr('세션이 끝났는데 남아 있는 것들이에요(개발 서버, 시뮬레이터, 브라우저 등). Claude가 띄운 것만 끌 수 있어요', 'Still running after their session ended (dev servers, simulators, browsers). Only things Claude started can be stopped.')}</p>
           {report.orphans.length === 0 ? <div className="ld-dim ld-pad">{tr('없어요', 'None')}</div> : (
             <div className="ld-rows">
               {report.orphans.map((o) => (
@@ -93,7 +93,7 @@ export function LoadPage({ sys, report, onOpen, onKilled }: Props) {
         {report.modes.length > 0 && (
           <section className="ld-sec">
             <h3>{tr(`켜진 모드 · ${report.modes.length}`, `Modes on · ${report.modes.length}`)}</h3>
-            <p className="ld-dim">{tr('모드 하나당 Claude 프로세스 하나 — 안 쓰는 모드는 메뉴바 모드에서 끄면 메모리가 돌아와요.', 'Each mode runs one Claude process — turn off modes you are not using (Modes menu) to free the memory.')}</p>
+            <p className="ld-dim">{tr('모드 하나에 Claude 프로세스 하나가 돌아요. 안 쓰는 모드는 메뉴바 모드에서 끄면 메모리가 돌아와요', 'Each mode runs one Claude process. Turn off modes you are not using (Modes menu) to free the memory.')}</p>
             <div className="ld-rows">
               {report.modes.map((m) => (
                 <div key={m.name} className="ld-row ld-static"><span className="ld-name">{m.name}</span><span className="ld-num">{pct(m.cpu)}</span><span className="ld-num">{fmtMem(m.rssKb)}</span><span /></div>

@@ -140,6 +140,18 @@ pub trait Backend: Send + Sync {
     fn team_home(&self, _team: &str, _seen: u64) -> Result<serde_json::Value, String> {
         Err("not supported".into())
     }
+    /// 폰 팀 캘린더(relay ADR 0011) — fresh 가 아니면 이 맥 기억·봉한 캐시(망 안 씀, 처음이면 따라잡기), fresh 면 따라잡기
+    fn team_cal(&self, _team: &str, _fresh: bool) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 폰이 1초마다 — 바뀐 번호·다시 받아야 함(망 안 씀)
+    fn team_cal_poll(&self, _team: &str) -> serde_json::Value {
+        serde_json::json!({ "ver": 0, "stale": false })
+    }
+    /// 폰 일정 쓰기 — base = 고치기 시작한 판, data None = 지우기
+    fn team_cal_put(&self, _team: &str, _id: &str, _base: u64, _before: Option<serde_json::Value>, _data: Option<serde_json::Value>, _restore: bool) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
     /// 폰 꾸미기 완료 — 팀장 검사는 team_home_store::save_home
     fn team_home_save(&self, _team: &str, _home: crate::team_home::Home) -> Result<(), String> {
         Err("not supported".into())
@@ -937,6 +949,32 @@ fn phone_team_agent(req: &Req, be: &dyn Backend) -> Resp {
     }
 }
 
+/// 폰 팀 캘린더 쓰기(relay ADR 0011) — 모르는 칸은 400, 내용 검사·봉하기·판 맞추기는 맥 기록장(team_app_store::write)
+fn phone_team_cal_put(req: &Req, be: &dyn Backend) -> Resp {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct B {
+        team: String,
+        id: String,
+        base: u64,
+        #[serde(default)]
+        before: Option<serde_json::Value>,
+        #[serde(default)]
+        data: Option<serde_json::Value>,
+        #[serde(default)]
+        restore: bool,
+    }
+    let b: B = match body(req) { Ok(b) => b, Err(r) => return r };
+    let id_ok = !b.id.is_empty() && b.id.len() <= 64 && b.id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_');
+    if !team_id_ok(&b.team) || !id_ok || b.data.as_ref().is_some_and(|d| !d.is_object()) {
+        return Resp::text(400, "bad body");
+    }
+    match be.team_cal_put(&b.team, &b.id, b.base, b.before, b.data, b.restore) {
+        Ok(v) => Resp::json(&v),
+        Err(e) => Resp::text(409, &e),
+    }
+}
+
 /// 폰 팀 홈 판(ADR 0018) — 꾸미기 완료·블록 내용. 모르는 칸이 있으면 400, 판·내용 모양은 맥 저장 길이 다시 고른다
 fn phone_team_home(req: &Req, be: &dyn Backend) -> Resp {
     #[derive(serde::Deserialize)]
@@ -1483,8 +1521,10 @@ fn account_id_ok(id: &str) -> bool {
 pub const ACCOUNT_GAP: Duration = Duration::from_secs(4);
 /// 모델 칩 — 앱 runModelPick 이 결과를 기다리고 기본값을 되돌리는 동안(최대 20초)은 겹치지 않게, 폰 연타만 막는 짧은 틈
 pub const MODEL_GAP: Duration = Duration::from_secs(3);
-/// 모델 칩이 고를 수 있는 값 — domain/modelPick MODEL_CHOICES·LEVELS 와 같은 목록
-const MODEL_ALIASES: &[&str] = &["opus", "sonnet", "haiku"];
+/// 모델 칩이 고를 수 있는 값 — 모델은 전체 id 모양만(목록은 앱 domain/modelPick 이 다시 거른다), 단계는 LEVELS 와 같은 목록
+fn model_id_ok(m: &str) -> bool {
+    m.strip_prefix("claude-").is_some_and(|r| !r.is_empty() && r.len() <= 40 && r.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
+}
 const EFFORT_LEVELS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 
 #[derive(Deserialize)]
@@ -1547,8 +1587,8 @@ struct ModeNameBody {
 }
 
 /// 폰 홈·보관함 v1 에 더한 쓰기 길 — 같은 출처 문지기·head_check 몸통 목록·405 가 이 목록 하나를 본다
-const PHONE_POSTS: &[&str] = &["/api/device-number", "/api/login-terms-retry", "/api/gacha", "/api/peer-human-say", "/api/team-say", "/api/team-read", "/api/team-invite", "/api/team-create", "/api/team-handoff", "/api/team-post", "/api/team-agent-confirm", "/api/team-agent-save", "/api/team-agent-remove", "/api/team-agent-try", "/api/team-home-save", "/api/team-home-content", "/api/team-locker-op", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
-const PHONE_GETS: &[&str] = &["/api/gacha", "/api/office", "/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team", "/api/team-profiles", "/api/team-posts", "/api/team-home", "/api/team-agents", "/api/team-agent-usage", "/api/team-agent-refs", "/api/team-file-thumb", "/api/team-locker", "/api/team-locker-put"];
+const PHONE_POSTS: &[&str] = &["/api/device-number", "/api/login-terms-retry", "/api/gacha", "/api/peer-human-say", "/api/team-say", "/api/team-read", "/api/team-invite", "/api/team-create", "/api/team-handoff", "/api/team-post", "/api/team-agent-confirm", "/api/team-agent-save", "/api/team-agent-remove", "/api/team-agent-try", "/api/team-home-save", "/api/team-home-content", "/api/team-cal-put", "/api/team-locker-op", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
+const PHONE_GETS: &[&str] = &["/api/gacha", "/api/office", "/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team", "/api/team-profiles", "/api/team-posts", "/api/team-home", "/api/team-cal", "/api/team-cal-poll", "/api/team-agents", "/api/team-agent-usage", "/api/team-agent-refs", "/api/team-file-thumb", "/api/team-locker", "/api/team-locker-put"];
 /// 폰 md 글 칸 저장만 몸통을 크게(글 512KB + JSON)
 const MAX_WRITE_BODY: usize = crate::locker_fs::MAX_PHONE_MD + 64 * 1024;
 
@@ -1997,8 +2037,21 @@ fn session_busy(sessions_json: &str, id: &str) -> bool {
     state != "done" && a["status"].as_str().map_or(state == "working", |st| st == "busy")
 }
 
+/// 폰에서 사람이 누른 팀 쓰기(말·글·홈·보관함·팀 참모·초대·만들기) — 배경 몫(BG_CAP)에 안 막히게 사람 몫으로 돈다(10-30 데스크톱 '잠시 쉬래요'와 같은 길).
+/// 목록·읽기(GET)는 폰이 저절로 다시 부르니 배경 그대로
+pub(crate) fn team_human_post(method: &str, path: &str) -> bool {
+    method == "POST" && path.starts_with("/api/team-")
+}
+
 /// 문지기 — 순서: 주소(Host) → 화면 파일·열쇠 주소 → 열쇠 → 길(허용 목록) → 쓰기면 출처
 pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
+    if team_human_post(&req.method, &req.path) {
+        return crate::team_relay::as_human(|| gated(req, gate, be));
+    }
+    gated(req, gate, be)
+}
+
+fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     // DNS 리바인딩: 남의 이름으로 이 포트에 온 요청은 무엇이든 거절
     if !req.header("host").is_some_and(|h| gate.hosts.iter().any(|a| a == h)) {
         return Resp::text(403, "bad host");
@@ -2677,10 +2730,10 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Err(e) => Resp::text(502, &e),
             }
         }
-        // 모델·에포트 — 비서(HQ) 세션만, 별칭·단계 목록 안 값만, 연달아는 한 번(앞 것이 기본값을 되돌리는 동안 겹치면 둘째가 바뀐 값을 원래 값으로 뜬다)
+        // 모델·에포트 — 비서(HQ) 세션만, 전체 id·단계 목록 안 값만, 연달아는 한 번(앞 것이 기본값을 되돌리는 동안 겹치면 둘째가 바뀐 값을 원래 값으로 뜬다)
         ("POST", "/api/model") => {
             let b: ModelBody = match body(req) { Ok(b) => b, Err(r) => return r };
-            let model_ok = b.model.as_deref().is_none_or(|m| MODEL_ALIASES.contains(&m));
+            let model_ok = b.model.as_deref().is_none_or(model_id_ok);
             let effort_ok = b.effort.as_deref().is_none_or(|e| EFFORT_LEVELS.contains(&e));
             if !is_short_id(&b.id) || !model_ok || !effort_ok || (b.model.is_none() && b.effort.is_none()) {
                 return Resp::text(400, "bad pick");
@@ -2848,6 +2901,20 @@ pub fn handle(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         }
         ("POST", "/api/team-agent-save" | "/api/team-agent-remove" | "/api/team-agent-try") => phone_team_agent(req, be),
         ("POST", "/api/team-home-save" | "/api/team-home-content") => phone_team_home(req, be),
+        ("GET", "/api/team-cal" | "/api/team-cal-poll") => {
+            let team = req.param("team").unwrap_or("");
+            if !team_id_ok(team) {
+                return Resp::text(400, "bad team");
+            }
+            if req.path == "/api/team-cal-poll" {
+                return Resp::json(&be.team_cal_poll(team));
+            }
+            match be.team_cal(team, req.param("fresh") == Some("1")) {
+                Ok(v) => Resp::json(&v),
+                Err(e) => Resp::text(502, &e),
+            }
+        }
+        ("POST", "/api/team-cal-put") => phone_team_cal_put(req, be),
         ("POST", "/api/team-agent-confirm") => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]

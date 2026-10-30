@@ -308,6 +308,14 @@ describe('누르기 = 대화창, 올리기 = 부채, 끌기 = 옮기기 — 비�
     expect(desk).toContain("void invoke('bubble_hot', hits).catch(() => {});");
     expect(rust).toContain('w.set_ignore_cursor_events(pass)');
   });
+  it('윈도우도 맥처럼 — 창·WebView2 바탕 투명(흰·검은 네모 없게), 커서를 읽어 원 밖 클릭을 뒤로(10-30 사용자 "윈도우에선 네모가 잡힘")', () => {
+    // 맥은 panelize 가 창·웹뷰 바탕을 끈다. 윈도우는 tauri transparent 가 창(DWM)·WebView2 바탕(0,0,0,0)을 같이 끈다
+    expect(rust).toMatch(/#\[cfg\(not\(target_os = "macos"\)\)\]\s*let b = b\.focusable\(false\)\.transparent\(true\);/);
+    // 맥 커서(CGEvent)는 논리 점, 윈도우 GetCursorPos 는 물리 px — 창 배율로 나눠 rect_of 와 같은 단위로
+    expect(rust).toContain('GetCursorPos(&mut pt)');
+    expect(rust).toContain('phys_to_logical((pt.x, pt.y), k)');
+    expect(rust).not.toContain('커서를 못 읽는 곳(윈도우)');
+  });
 });
 
 describe('누가 누구인지 — 별명(10-28 사용자 "호버하면 이름 정도는(별명)")', () => {

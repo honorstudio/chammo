@@ -12,6 +12,7 @@ import { addSpawned, dashToggle, leaveHomeFor, ownPick, screenBeforeHome, featur
 import { orchDocs, pinPaths, projectGroups, remapPins } from '../../domain/spaceTree';
 import { holdRelease, spaceSwapDelay } from '../../domain/switchHold';
 import { docKeepLimit } from '../../domain/docKeep';
+import { folderChip } from '../../domain/drop';
 import { useDocKeep } from './docKeep';
 import { termTail } from '../../domain/termTail';
 import { starterLists } from '../../domain/starterLists';
@@ -1036,8 +1037,9 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   /** 문서 화면 — 스페이스 가운데(d:)와 사무실 위 창이 같은 것을 쓴다. onBack = 뒤로(upKey = 위 칸), tail = 머리 끝(창의 크게·닫기) */
   /** 가운데 문서의 위 칸 — ⌘[ 가 기록이 없을 때 문서 뒤로 버튼과 같은 곳으로 */
   const docUp = useRef('');
-  // 탭 확대 — 지금 가운데에 떠 있는 파일 탭(모달이 떠 있으면 모달이 받는다). 머리 단추는 가운데 탭에만(사무실 위 창엔 없다)
-  const zoomPath = pick.startsWith('d:') && !modal ? pick.slice(2) : '';
+  // 탭 확대 — 지금 가운데에 떠 있는 파일 탭(모달이 떠 있으면 모달이 받는다). 머리 단추는 가운데 탭에만(사무실 위 창엔 없다).
+  // 팀 모드면 팀 스페이스에서 보던 탭(10-30 사용자 — 팀챗 미리보기엔 확대 칸이 없었다)
+  const zoomPath = modal ? '' : team?.on && team.space ? team.space.cur : pick.startsWith('d:') ? pick.slice(2) : '';
   const canZoom = !!zoomPath && tabZoomable(zoomPath);
   const zoomOf = (path: string) => tabZoomOf(tabZooms, path);
   /** 한 명령 — 처리했으면 true(아니면 App 이 터미널 글자 크기로) */
@@ -1196,8 +1198,8 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
     if (migrated.current || !orchs.length || !lockerTree.started) return;
     migrated.current = true;
     void lockerApi.migrate(orchs.map((o) => ({ key: ownerKey(o), id: o.id, name: ownerKey(o) }))).then((r) => {
-      if (r.pages) onMessage?.(tr(`내 페이지 ${r.pages}개를 보관함 '페이지' 폴더로 옮겼어 — 옛 자리는 데이터 폴더 pages.bak 에 그대로 남겨 뒀어`, `Moved ${r.pages} pages into the locker's 'Pages' folder — the old folder stays as pages.bak`));
-      if (r.shots) onMessage?.(tr("스크린샷 폴더를 보관함에 '스크린샷'으로 연결했어 — 새로 찍으면 바로 떠. 필요 없으면 연결 풀기(원본은 그대로)", "Linked your screenshots folder as 'Screenshots' in the locker — new shots show up right away. Unlink any time (the originals stay)"));
+      if (r.pages) onMessage?.(tr(`내 페이지 ${r.pages}개를 보관함 '페이지' 폴더로 옮겼어요. 옛 위치는 데이터 폴더의 pages.bak에 그대로 있어요`, `Moved ${r.pages} pages into the locker's 'Pages' folder. The old folder stays as pages.bak`));
+      if (r.shots) onMessage?.(tr("스크린샷 폴더를 보관함에 '스크린샷'으로 연결했어요. 새로 찍으면 바로 보여요. 필요 없으면 연결을 풀 수 있어요(원본은 그대로)", "Linked your screenshots folder as 'Screenshots' in the locker. New shots show up right away. You can unlink any time (the originals stay)"));
       if (r.inbox) onMessage?.(tr(`'받은 것'을 없애고 안에 있던 ${r.inbox}개를 보관함 맨 위로 옮겼어 — 주고받은 기록에 그대로 보여`, `Removed 'Received' and moved its ${r.inbox} items to the top of the locker`));
       if (r.moved || r.gone) onMessage?.(tr(`보관함을 진짜 폴더로 옮겼어 — ${r.moved}개${r.gone ? `, 원본이 없어 못 옮긴 것 ${r.gone}개` : ''}`, `Moved the locker into real folders — ${r.moved}${r.gone ? `, ${r.gone} missing originals` : ''}`));
     }, () => {});
@@ -1375,7 +1377,6 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
       top={railTop}
       avatars={railList}
       extra={team?.rail}
-      extraOn={team?.railOn}
       onPick={pickOrch}
       onMenu={act ? (e, id) => { const o = orchs.find((x) => x.id === id); if (o) act.menu(e, o, colorOf(o.name || '')); } : undefined}
       onRename={act ? (id) => { const o = orchs.find((x) => x.id === id); if (o) act.askRename(o); } : undefined}
@@ -1411,7 +1412,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
         {orphans.length > 0 && (
           <div className="cv-orphans">
             <div className="cv-orphans-head"><b>{tr(`누가 시켰는지 모르는 일 ${orphans.length}`, `${orphans.length} tasks with no owner`)}</b>
-              <span>{tr(`기록에 시킨 ${josa(assistant(), '이', '가')} 안 남은 옛 일이야 — 이 ${assistant()} 것으로 붙이거나 끝난 걸로 정리해 줘`, 'Old tasks with no recorded owner — claim them or mark done')}</span></div>
+              <span>{tr(`맡긴 ${josa(assistant(), '이', '가')} 기록에 없는 옛 일이에요. 이 ${assistant()} 일로 붙이거나 끝난 걸로 정리하세요`, 'Old tasks with no recorded owner — claim them or mark done')}</span></div>
             {orphans.map((x) => (
               <div key={x.task} className="cv-orphan">
                 <b>{x.target}</b><span>{x.title ?? ''}</span><em>{new Date(x.ts).toTimeString().slice(0, 5)}</em>
@@ -1478,6 +1479,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
     onReconnect: (rel) => void lockerApi.reconnect(lockerOwner(lo), rel).catch(lockerFail),
     onDisconnect: (rel) => void lockerApi.disconnect(lockerOwner(lo), rel).catch(lockerFail),
     onSendMany: (ps) => void Promise.all(ps.map(fetched)).then(() => { if (chatOrch) attachToChat(chatOrch.id, ps); }),
+    onSendFolder: (p) => attach(folderChip(p)),
     onAliasMany: (ps, folder) => void lockerApi.aliasMany(lockerOwner(lo), ps, folder).catch(lockerFail),
     onMoveMany: (rels, to) => void lockerApi.moveMany(lockerOwner(lo), rels, to).catch(lockerFail),
     onTrashMany: (rels, foldersOk) => void lockerApi.trashMany(lockerOwner(lo), rels, foldersOk).catch(lockerFail),

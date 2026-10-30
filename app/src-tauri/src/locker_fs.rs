@@ -1555,11 +1555,21 @@ pub async fn locker_fetch(path: String) -> Result<bool, String> {
     .map_err(|e| e.to_string())?
 }
 
-/// 파인더로 꺼내기 — 보관함 안 자리(별칭이면 가리키는 진짜 파일)를 파인더에서 골라 보여 준다
+/// 보관함 안 자리(읽기만 되는 별칭 포함)인가 — 끌어 내보내기(shown_share::drag_native)가 본다
+pub(crate) fn locker_path_ok(path: &str) -> bool {
+    in_root_ro(&app_ctx(), path).is_ok()
+}
+
+/// 파인더로 꺼내기 — 보관함 안 자리(별칭이면 가리키는 진짜 파일)를 파인더에서 골라 보여 준다.
+/// 보관함 밖이면 미리보기·채팅 파일 카드에 띄운 파일(shown_share 거름)만(2026-10-30)
 #[tauri::command]
 pub fn locker_reveal(path: String) -> Result<(), String> {
     let a = app_ctx();
-    let p = in_root_ro(&a, &path)?;
+    let p = match in_root_ro(&a, &path) {
+        Ok(p) => p,
+        Err(_) if crate::shown_share::shown_now(&path) => PathBuf::from(&path),
+        Err(e) => return Err(e),
+    };
     let at = if std::fs::read_link(&p).is_ok() && p.exists() { canon(&p) } else { p };
     #[cfg(target_os = "macos")]
     let r = crate::platform::command("open").arg("-R").arg(&at).status();

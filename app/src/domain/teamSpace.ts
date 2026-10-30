@@ -1,7 +1,7 @@
-// 팀 스페이스 탭(시안 team-space v1 A, 10-26 사용자 "추천대로") — 팀 모드 오른쪽은 팀 홈·팀 보관함 두 고정 탭 + 연 파일 탭.
+// 팀 스페이스 탭(시안 team-space v1 A, 10-26 사용자 "추천대로") — 팀 모드 오른쪽은 팀 홈·팀 보관함·팀 캘린더(relay ADR 0011) 고정 탭 + 연 파일 탭.
 // 참모 탭 줄(lockerTabs)과 섞이지 않게 팀마다 따로 들고, 보던 파일 탭을 닫으면 그 파일을 연 곳(홈·보관함·대화 파일 보기)으로 돌아간다.
 // 대화 파일 보기(DM·팀챗에 붙인 파일, 10-28 사용자 "디엠 보관함이 따로")도 연 파일처럼 탭 하나 — 열쇠 files:<방 id>
-export type TeamFixed = 'home' | 'locker';
+export type TeamFixed = 'home' | 'locker' | 'cal';
 /** from = 연 곳 — 고정 탭이나 대화 파일 보기 열쇠 · src = 참모 앱 탭(k:<앱>)이 연 팀 파일(수정본 올리기, domain/teamRevise) */
 export type TeamTabs = { cur: string; files: { path: string; from: string; src?: string }[] };
 
@@ -12,7 +12,7 @@ export const roomOfTab = (k: string) => (k.startsWith(ROOM_FILES) ? k.slice(ROOM
 
 export const EMPTY_TEAM_TABS: TeamTabs = { cur: 'home', files: [] };
 
-const isFixed = (k: string): k is TeamFixed => k === 'home' || k === 'locker';
+const isFixed = (k: string): k is TeamFixed => k === 'home' || k === 'locker' || k === 'cal';
 
 export function openTeamFile(t: TeamTabs, path: string): TeamTabs {
   if (t.files.some((f) => f.path === path)) return { ...t, cur: path };

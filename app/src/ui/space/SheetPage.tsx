@@ -56,8 +56,8 @@ export function SheetPage({ path, owner, where, onBack, tail, onAttach, attachTo
     void invoke<{ book: SheetBook; stamp: string }>('read_sheet_book', { path }).then(setOpened, (e) => setErr(String(e)));
   }, [path, gen]);
   const charts = opened?.book.sheets.reduce((n, s) => n + s.charts, 0) ?? 0;
-  const note = status.s === 'blocked' ? tr(`${status.d ?? '이 조작'}은 아직 원본에 저장 못 해 — 되돌리기(⌘Z)로 돌리거나 다시 열어 줘`, `Can't save "${status.d ?? 'this'}" to the file yet — undo (⌘Z) or reopen`)
-    : status.s === 'conflict' ? tr(`밖에서도 같은 곳을 고쳤어(${status.d ?? ''}) — 내가 고친 건 아직 안 썼어`, `It was also changed outside (${status.d ?? ''}) — your edits are not written yet`)
+  const note = status.s === 'blocked' ? tr(`${status.d ?? '이 조작'}은 아직 원본에 저장할 수 없어요. ⌘Z로 되돌리거나 다시 열어 주세요`, `Can't save "${status.d ?? 'this'}" to the file yet. Undo (⌘Z) or reopen`)
+    : status.s === 'conflict' ? tr(`다른 곳에서도 같은 부분을 고쳤어요(${status.d ?? ''}). 내가 고친 내용은 아직 저장 전이에요`, `It was also changed elsewhere (${status.d ?? ''}). Your edits are not written yet`)
     : status.s === 'gone' ? tr('파일이 없어졌거나 이름이 바뀌었어 — 고친 건 아직 안 썼어', 'The file was removed or renamed — your edits are not written')
     : status.s === 'error' ? `${tr('저장 못 했어', "Couldn't save")} — ${status.d ?? ''}` : '';
   return (

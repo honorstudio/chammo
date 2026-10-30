@@ -49,7 +49,7 @@ export function ProjectBar({ project, cwd, count, onDone, needsHarness }: Props)
       <span className="sp" />
       <BrowserAttachButton dir={cwd} running={count} className="btn" onDone={onDone} />
       {needsHarness && (
-        <button className="btn pri" disabled={busy} onClick={() => void harness()} title={tr('CLAUDE.md·docs/starter.md·docs/roadmap.md 를 깐다 — 있는 파일은 안 덮는다', 'Adds CLAUDE.md, docs/starter.md, docs/roadmap.md — never overwrites existing files')}>
+        <button className="btn pri" disabled={busy} onClick={() => void harness()} title={tr('CLAUDE.md, docs/starter.md, docs/roadmap.md를 깔아요. 있는 파일은 덮어쓰지 않아요', 'Adds CLAUDE.md, docs/starter.md, docs/roadmap.md. Never overwrites existing files')}>
           {tr('하네스 깔기', 'Set up harness')}
         </button>
       )}

@@ -34,7 +34,7 @@ export function HomeModeBlock({ teamId, block, mode, editing }: { teamId: string
     <>
       <div className="hb-bh">{mode ? title : tr('참모 모드', 'Chammo mode')}<span className="hb-mtag">{tr('모드', 'Mode')}</span><span className="hb-sp" /></div>
       {editing ? <div className="hb-none">{mode ? tr('꾸미기를 마치면 여기에 그려져요', 'Shown here after you finish') : tr('오른쪽 위에서 꽂을 모드를 골라요', 'Pick a mode at the top right')}</div>
-        : st === 'empty' ? <div className="hb-none">{tr('아직 꽂은 모드가 없어요', 'No mode placed yet')}</div>
+        : st === 'empty' ? <div className="hb-none">{tr('아직 꽂은 모드가 없어요. 참모에게 "이런 화면 만들어 줘"라고 하거나, 메뉴 모드 > 새 모드 만들기…를 눌러 보세요', 'No mode placed yet. Ask your assistant to build the screen you want, or choose Modes > New Mode… in the menu')}</div>
         : st === 'missing' ? <div className="hb-none">{tr(`이 기기엔 없는 모드예요 — ${mode}`, `This mode isn't on this device — ${mode}`)}</div>
         : st === 'heavy' ? <div className="hb-none">{tr('가벼운 모드만 팀 홈에 보여요', 'Only light modes show on the team home')}</div>
         : st === 'ask' ? (

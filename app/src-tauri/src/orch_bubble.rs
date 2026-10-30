@@ -201,7 +201,7 @@ pub fn hit(p: (f64, f64), rects: &[[f64; 4]]) -> bool {
     rects.iter().any(|r| p.0 >= r[0] && p.1 >= r[1] && p.0 < r[0] + r[2] && p.1 < r[1] + r[3])
 }
 
-/// 마우스 따라가기(40ms) — 받는 자리 밖이면 클릭을 바탕으로 넘기고, 올림 자리에 들고 나면 화면에 __bubbleHover. 커서를 못 읽는 곳(윈도우)은 아무것도 안 바꾼다
+/// 마우스 따라가기(40ms) — 받는 자리 밖이면 클릭을 바탕으로 넘기고, 올림 자리에 들고 나면 화면에 __bubbleHover
 fn track(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let (mut through, mut over, mut at) = (false, false, None::<(i32, i32)>);
@@ -212,7 +212,8 @@ fn track(app: tauri::AppHandle) {
                 std::thread::sleep(Duration::from_millis(300));
                 continue;
             }
-            let (Some(m), Some(win)) = (mouse(), rect_of(&w)) else { continue };
+            let (Some(win), Ok(k)) = (rect_of(&w), w.scale_factor()) else { continue };
+            let Some(m) = mouse(k) else { continue };
             let p = local(m, &win);
             let hot = HOT.lock().unwrap_or_else(|e| e.into_inner()).clone();
             let pass = !p.is_some_and(|p| hot.is_empty() || hit(p, &hot));
@@ -236,8 +237,14 @@ fn track(app: tauri::AppHandle) {
     });
 }
 
-/// 전역 마우스 점 — 디버그 빌드는 CHAMMO_BUBBLE_FAKE_MOUSE 파일("x,y")로 대신(시험이 사람 커서를 안 움직이게)
-fn mouse() -> Option<(f64, f64)> {
+/// 물리 px 점 → 창 배율(k)로 나눈 논리 점 — rect_of 와 같은 단위(창 물리 자리 / k)라 local 에 그대로 넣는다
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn phys_to_logical(p: (i32, i32), k: f64) -> (f64, f64) {
+    (p.0 as f64 / k, p.1 as f64 / k)
+}
+
+/// 전역 마우스 점(rect_of 와 같은 단위, k = 배지 창 배율) — 디버그 빌드는 CHAMMO_BUBBLE_FAKE_MOUSE 파일("x,y")로 대신(시험이 사람 커서를 안 움직이게)
+fn mouse(k: f64) -> Option<(f64, f64)> {
     if cfg!(debug_assertions) {
         if let Ok(f) = std::env::var("CHAMMO_BUBBLE_FAKE_MOUSE") {
             let t = std::fs::read_to_string(f).ok()?;
@@ -245,7 +252,23 @@ fn mouse() -> Option<(f64, f64)> {
             return Some((x.trim().parse().ok()?, y.trim().parse().ok()?));
         }
     }
-    crate::vdisplay::cursor()
+    // 맥: CGEvent 자리가 이미 논리 점
+    #[cfg(target_os = "macos")]
+    {
+        let _ = k;
+        crate::vdisplay::cursor()
+    }
+    // 윈도우: GetCursorPos 는 물리 px(앱이 모니터별 DPI 인식) — 창 배율로 나눈다
+    #[cfg(windows)]
+    {
+        let mut pt = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
+        (unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt) } != 0).then(|| phys_to_logical((pt.x, pt.y), k))
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = k;
+        None
+    }
 }
 
 /// 바탕 대화창에서 보내기 — 폰 보내기(/api/send)와 같은 길·같은 범위: 참모(HQ 폴더 세션)에게만, 제어 문자 빼고, 8,000자까지
@@ -397,8 +420,9 @@ fn show(app: &tauri::AppHandle) {
         .focused(false)
         .accept_first_mouse(true)
         .visible(false);
+    // 윈도우: 창(DWM)·WebView2 바탕을 투명하게 — 맥은 panelize 가 끈다. 안 끄면 배지 둘레가 창 크기만큼 흰·검은 네모로 보였다(10-30 사용자)
     #[cfg(not(target_os = "macos"))]
-    let b = b.focusable(false);
+    let b = b.focusable(false).transparent(true);
     match b.build() {
         Ok(w) => {
             panelize(app, &w);
@@ -538,6 +562,16 @@ mod tests {
         assert_eq!(local((110.0, 250.0), &w), Some((10.0, 50.0)));
         assert_eq!(local((99.0, 250.0), &w), None);
         assert_eq!(local((150.0, 308.5), &w), None);
+    }
+
+    #[test]
+    fn 윈도우_물리_커서는_창_배율로_나눠_창_안_점과_맞춘다() {
+        // 150% 화면 — 창 물리 (1500,750) 108x108 = 논리 (1000,500) 72x72. 물리 커서 (1530,780) 은 창 안 (20,20)
+        let k = 1.5;
+        let w = Screen { id: String::new(), x: 1500.0 / k, y: 750.0 / k, w: 108.0 / k, h: 108.0 / k };
+        assert_eq!(local(phys_to_logical((1530, 780), k), &w), Some((20.0, 20.0)));
+        assert_eq!(local(phys_to_logical((1499, 780), k), &w), None);
+        assert_eq!(phys_to_logical((-300, 40), 1.0), (-300.0, 40.0)); // 왼쪽 모니터는 음수
     }
 
     #[test]

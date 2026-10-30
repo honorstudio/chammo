@@ -52,6 +52,15 @@ export function parseLatestApp(rel: unknown, win: boolean): LatestApp | null {
   return { version: r.tag_name.replace(/^v/, ''), url, page: r.html_url };
 }
 
+/** 업데이터(Rust app_update_check)가 latest.json 에서 본 새 판을 띠에 합친다 — 띠와 업데이트 버튼이 같은 곳을 보게.
+ *  GitHub API 는 IP 당 시간 60번이라 사무실·회사 망에선 막혀 띠가 영영 안 뜰 수 있다(latest.json 은 한도 없음). 더 새 쪽을 쓰고, 같으면 API 의 설치 파일 주소 */
+export function withFeed(api: LatestApp | null, feed: string | null): LatestApp | null {
+  const v = feed ? parts(feed)?.join('.') : undefined;
+  if (!v || (api && cmpVer(v, api.version) <= 0)) return api;
+  const page = `https://github.com/honorstudio/chammo/releases/tag/v${v}`;
+  return { version: v, url: page, page };
+}
+
 /** 이 앱보다 새 Chammo 가 있으면 그 정보, 아니면 null */
 export const appUpdate = (cur: string, latest: LatestApp | null): LatestApp | null =>
   latest && cmpVer(cur, latest.version) < 0 ? latest : null;

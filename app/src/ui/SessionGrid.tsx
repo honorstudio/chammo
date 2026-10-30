@@ -10,7 +10,7 @@ import { enterTask, escPlan, typeQueue } from '../domain/chatQueue';
 import { HOLD_MAX, LINK_WAIT, paneLinks } from '../domain/paneLinks';
 import { linkNotice, slowLinks } from '../domain/busyGate';
 import { useBusy } from './busyNow';
-import type { AttachPhase, LinkState } from '../domain/attachExit';
+import { sendOnLink, type AttachPhase, type LinkState } from '../domain/attachExit';
 import { AdoptCard } from './AdoptCard';
 import { statusKind } from '../domain/statusMark';
 import { sessionStatus, type ActivityStatus } from '../domain/status';
@@ -100,13 +100,18 @@ const escAt = new Map<string, number>();
 const links = paneLinks<PaneApi>();
 /** 칸마다 지금 붙음 상태 — 붙는 중이면 치기가 LINK_WAIT 를 넘겨도 기다린다(HOLD_MAX) */
 const linkNow = new Map<string, LinkState>();
+/** 다른 창에 쫓겨난 칸을 되찾는 손잡이(TerminalPane onLink 'kicked') — 사람이 그 칸으로 보낼 때 부른다 */
+const retakes = new Map<string, () => void>();
 /** 붙은 보기에 치는 데 쓰는 최대 — 긴 글도 몇 초면 끝난다. 넘기면 버리고 다음 말로(채팅은 입력을 되살린다, 2026-10-24 윈도우 '어떤 말도 안 감') */
 const TYPE_TIMEOUT = 30_000;
 /** 다 쳤으면 true, 못 쳤으면(보기가 안 붙음·치기 거절·시간 넘김) false */
 function typeAndSend(id: string, text: string, enter = true): Promise<boolean> {
   return typing.push(id, async () => {
-    // 끊김이 굳은 칸이면 바로 실패 — 앞 말만 drop 되고 줄 뒤 말은 80초 기다리다 세션이 돌아오면 몰래 쳐졌다(리뷰)
-    if (linkNow.get(id) === 'gone') throw new Error('pane gone');
+    // 끊김이 굳은 칸이면 바로 실패 — 앞 말만 drop 되고 줄 뒤 말은 80초 기다리다 세션이 돌아오면 몰래 쳐졌다(리뷰).
+    // 다른 창에 쫓겨난 칸(윈도우)은 세션이 살아 있다 — 다시 붙여 되찾고 붙을 때까지 기다린다(2026-10-30 '다시 보내도 안 감')
+    const plan = sendOnLink(linkNow.get(id), retakes.has(id));
+    if (plan === 'fail') throw new Error('pane gone');
+    if (plan === 'retake') { const again = retakes.get(id)!; retakes.delete(id); linkNow.set(id, 'attaching'); again(); }
     const from = Date.now();
     // 아직 붙는 중이면(attach 안내 줄뿐·맥이 바빠 목록을 못 읽음) 더 기다린다 — 80초에 버려 '전달 안 됨'이 떴다(2026-10-26 부팅 직후). 끊김이 굳으면 drop 으로 바로 놓인다
     const api = await links.wait(id, LINK_WAIT, () => { const st = linkNow.get(id); return (st === 'attaching' || st === 'reattaching') && Date.now() - from < HOLD_MAX; });
@@ -170,7 +175,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
   const [termView, setTermView] = useState<Set<string>>(() => new Set());
   // 창마다 세션에 붙어 있나(TerminalPane onLink) — 채팅 말풍선이 끊긴 동안 '다시 붙는 중', 끊김이 굳으면 바로 '전달 안 됨'
   const [linkOf, setLinkOf] = useState<Record<string, LinkState>>({});
-  const [linkWhy, setLinkWhy] = useState<Record<string, AttachPhase | 'unlisted' | undefined>>({});
+  const [linkWhy, setLinkWhy] = useState<Record<string, AttachPhase | 'unlisted' | 'kicked' | undefined>>({});
   const busy = useBusy();
   // 붙는 중이 1.5초를 넘긴 칸 — 한가한 맥에서 0.3초면 붙는데 그때마다 안내·채팅 덮개가 깜빡였다(리뷰). 칸마다 시작 시각을 기억(slowLinks)
   const [slowLink, setSlowLink] = useState<Record<string, boolean>>({});
@@ -250,7 +255,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
   const noticeOf = (id: string, s: Session) => {
     if (linkOf[id] === 'attaching' && !slowLink[id]) return null;
     const why = linkWhy[id];
-    const text = linkNotice({ link: linkOf[id], phase: why === 'unlisted' ? undefined : why, listUnknown: why === 'unlisted', busy, who: orchestratorLike(s.name) ? tr('참모', 'the assistant') : undefined });
+    const text = linkNotice({ link: linkOf[id], phase: why === 'unlisted' || why === 'kicked' ? undefined : why, listUnknown: why === 'unlisted', kicked: why === 'kicked', busy, who: orchestratorLike(s.name) ? tr('참모', 'the assistant') : undefined });
     return text ? <span>{text}</span> : null;
   };
   const { saved: avatars } = useAvatars();
@@ -399,8 +404,9 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                       headless={!!headS}
                       note={memo?.note(s)}
                       onNoteClick={memo ? () => memo.onToggle(id) : undefined}
-                      onLink={(st, why) => {
+                      onLink={(st, why, retake) => {
                         linkNow.set(id, st);
+                        if (st === 'gone' && why === 'kicked' && retake) retakes.set(id, retake); else retakes.delete(id);
                         links.set(id, st === 'live' ? panes.current.get(id) ?? null : null);
                         if (st === 'gone') links.drop(id);
                         setLinkOf((m) => (m[id] === st ? m : { ...m, [id]: st }));

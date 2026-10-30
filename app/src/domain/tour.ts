@@ -50,7 +50,7 @@ export const tourSteps = ({ none = false }: { none?: boolean } = {}): TourStep[]
     },
     {
       title: tr('단축키', 'Shortcuts'),
-      body: tr('설정은 메뉴 Chammo > 설정…(⌘,). 층 모양 버튼(채팅 뷰는 왼쪽 아래, 터미널 뷰는 오른쪽 위)은 하니터 — 스킬·훅·MCP·플러그인을 보고 끄고 켜요. 이 안내는 ⌘/ 로 다시 볼 수 있어요.', 'Settings: Chammo > Settings… (⌘,). The layered button (bottom left in the chat view, top right in the terminal view) opens Harnitor — view and toggle skills, hooks, MCP and plugins. Open this tour again with ⌘/.'),
+      body: tr('설정은 메뉴 Chammo > 설정…(⌘,)이에요. 층 모양 버튼(채팅 뷰는 왼쪽 아래, 터미널 뷰는 오른쪽 위)은 하니터예요. 스킬·훅·MCP·플러그인을 보고 켜고 꺼요. 이 안내는 ⌘/로 다시 봐요', 'Settings: Chammo > Settings… (⌘,). The layered button (bottom left in the chat view, top right in the terminal view) opens Harnitor. View and toggle skills, hooks, MCP and plugins there. Open this tour again with ⌘/.'),
       keys: [
         [keyLabel('⌘1 ~ ⌘9', IS_WIN), tr('채팅 탭 이동 — 확대할 탭이 열려 있으면 ⌘9 는 맞춤', 'Switch chat tabs — with a zoomable tab open, ⌘9 fits it')],
         [keyLabel('⌥⌘1 · ⌥⌘2 · ⌥⌘3 · ⌥⌘4', IS_WIN), tr(`${a} · 전체 세션 · 리뷰 · 사무실`, `${a} · all sessions · review · office`)],

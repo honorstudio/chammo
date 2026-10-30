@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { MEMO_STALE_MS, needFetch, teamViewMemo } from './teamViewMemo';
+import { MEMO_STALE_MS, needFetch, placeMemo, teamViewMemo } from './teamViewMemo';
 
 const src = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
 
@@ -31,6 +31,21 @@ describe('팀 화면 기억(teamViewMemo) — 탭을 바꿔 다시 붙어도 바
   });
 });
 
+describe('기억 바뀜 알림 — 띠 팀 칸이 팀 홈에서 저장한 팀 색을 바로 따라간다(10-29 사용자)', () => {
+  it('새 판을 넣으면 그 팀 이름으로 알리고, 옛 판으로 안 덮으면 안 알린다', () => {
+    const m = teamViewMemo<{ rev: number }>();
+    const got: string[] = [];
+    const off = m.on((t) => got.push(t));
+    m.put('t1', { rev: 2 });
+    m.put('t1', { rev: 1 }); // 늦게 온 옛 판 — 기억도 알림도 그대로
+    m.put('t2', { rev: 1 });
+    expect(got).toEqual(['t1', 't2']);
+    off();
+    m.put('t1', { rev: 3 });
+    expect(got).toEqual(['t1', 't2']);
+  });
+});
+
 describe('배선 — 팀 홈·팀 보관함이 기억을 쓴다', () => {
   const locker = src('../ui/team/TeamLocker.tsx');
   const home = src('../ui/team/TeamHome.tsx');
@@ -50,5 +65,30 @@ describe('배선 — 팀 홈·팀 보관함이 기억을 쓴다', () => {
     expect(home).toContain('boardMemo.get(teamId)');
     expect(home).toContain('boardMemo.put(');
     expect(home).not.toMatch(/setB\(null\);\s*\n\s*setOpen\(null\);/);
+  });
+});
+
+// 10-30 사용자: 팀 보관함 '회사소개' 폴더에서 파일을 열고 그 탭을 닫으면 보관함 홈(맨 위)으로 갔다 — 열기 전 그 폴더로.
+// 팀 스페이스는 탭을 바꾸면 보관함 화면이 통째로 내려가서(TeamSpace 가 고른 탭만 그린다) 보던 폴더(place)가 '' 로 다시 시작했다
+describe('팀 보관함 보던 폴더 기억(placeMemo) — 파일 탭을 닫고 돌아와도 그 폴더', () => {
+  it('팀·대화 파일 보기마다 따로, 맨 위(빈 글)는 지운다', () => {
+    const m = placeMemo();
+    expect(m.get('t1')).toBe('');
+    m.put('t1', '회사소개');
+    m.put('t1:room-a', '견적');
+    expect(m.get('t1')).toBe('회사소개');
+    expect(m.get('t1:room-a')).toBe('견적');
+    expect(m.get('t2')).toBe('');
+    m.put('t1', '');
+    expect(m.get('t1')).toBe('');
+  });
+  it('배선: 보관함은 다시 붙을 때 기억한 폴더로 시작하고(맨 위로 비우지 않는다), 폴더를 옮길 때마다 기억한다', () => {
+    const locker = src('../ui/team/TeamLocker.tsx');
+    expect(locker).toMatch(/useState\(\(\) => placeOf\.get\(placeKey\)\)/);
+    expect(locker).not.toMatch(/setPlace\(''\); setTrash/);
+    expect(locker).toMatch(/placeOf\.put\(placeKey, place\)/);
+    // 팀을 바꾸는 렌더의 앞 팀 폴더가 새 팀 칸에 안 써지게 — 그 팀 칸에 맞춘 뒤부터
+    expect(locker).toMatch(/if \(placeFor\.current === placeKey\) placeOf\.put/);
+    expect(locker).toMatch(/placeFor\.current = placeKey; setPlace\(placeOf\.get\(placeKey\)\)/);
   });
 });

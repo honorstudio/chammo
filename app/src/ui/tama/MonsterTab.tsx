@@ -42,7 +42,7 @@ export function MonsterTab({ monsters }: { monsters?: Monsters }) {
           </div>
         ))}
       </div>
-      {log.length === 0 ? <div className="pv-blank">{tr('아직 만난 몬스터가 없어 — CI 연속 빨강·멈춘 세션·오래 열린 PR 이 나타나면 여기 남아', 'No monsters yet — red CI streaks, stuck sessions and stale PRs show up here')}</div> : (
+      {log.length === 0 ? <div className="pv-blank">{tr('아직 만난 몬스터가 없어. CI가 계속 빨갛거나 세션이 멈추거나 PR이 오래 열려 있으면 여기에 나타나', 'No monsters yet. Red CI streaks, stuck sessions and stale PRs show up here')}</div> : (
         <ul className="pv-graves">
           {[...log].reverse().slice(0, 20).map((l, i) => (
             <li key={i}><b>{MONSTER_NAME[l.kind]()} Lv.{l.lv}</b><span>{l.where} · {when(l.end)} · {l.fled ? tr('도망감', 'Got away') : tr(`처치 +${coinsOf(l.lv)}`, `Beaten +${coinsOf(l.lv)}`)}</span></li>

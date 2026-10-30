@@ -51,7 +51,7 @@ describe('topLabel — 위쪽 막대 계정 이름', () => {
     expect(topLabel(view())).toEqual({ name: '작은 것', title: '지금 계정: 작은 것 · b@x.com · Max 5x', known: true });
   });
   it('칸에 없는 로그인이면 이메일 앞부분', () => {
-    expect(topLabel(view({ active: null, liveEmail: 'c@x.com', livePlan: null }))).toEqual({ name: 'c', title: '칸에 없는 로그인: c@x.com — 설정 > 계정에서 보관할 수 있어요', known: false });
+    expect(topLabel(view({ active: null, liveEmail: 'c@x.com', livePlan: null }))).toEqual({ name: 'c', title: '목록에 없는 로그인: c@x.com. 설정 > 계정에서 보관할 수 있어요', known: false });
   });
 });
 
@@ -78,7 +78,7 @@ describe('accountError — 오류 이름을 글로', () => {
   });
   // 2026-10-15 17:0x 실제 — 갱신 주소가 이 맥 IP 를 잠깐 막아(429) '새로 받지 못했어요(http429)'가 떴다. 계정 문제가 아니다
   it('갱신 429(rate) — 계정 문제가 아니라고, 몇 분 뒤에 다시', () => {
-    expect(accountError('refresh:rate:600')).toBe('Anthropic 쪽이 잠깐 요청을 막았어요(이 맥에서 요청이 많음) — 계정 문제는 아니에요. 10분 뒤 다시 해 주세요.');
+    expect(accountError('refresh:rate:600')).toBe('Anthropic이 잠깐 요청을 막았어요. 이 맥에서 요청이 많았어요. 계정 문제는 아니에요. 10분 뒤에 다시 해 주세요.');
     expect(accountError('refresh:rate:90')).toContain('2분 뒤');
     expect(accountError('refresh:rate')).toContain('몇 분 뒤');
     expect(accountError('refresh:rate')).not.toContain('http429');

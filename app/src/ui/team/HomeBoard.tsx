@@ -32,7 +32,7 @@ const toCover = (src: string) => new Promise<string>((ok, no) => {
     const webp = c.toDataURL('image/webp', 0.82);
     ok(webp.startsWith('data:image/webp') ? webp : c.toDataURL('image/jpeg', 0.85));
   };
-  i.onerror = () => no(new Error(tr('이 그림은 못 열어요 — png·jpeg·webp 로', "Can't open this image — use png, jpeg or webp")));
+  i.onerror = () => no(new Error(tr('열 수 없는 그림이에요. png, jpeg, webp만 돼요', "Can't open this image. Use png, jpeg or webp")));
   i.src = src;
 });
 
@@ -74,7 +74,7 @@ function AddList({ blocks, onAdd }: { blocks: HomeBlock[]; onAdd: (k: BlockKind)
   );
 }
 
-export function HomeBoard({ teamId, team, icon, people, board, phone, api, renderBlock, modeChoices, nameOf, onWrite, onSaved, Dialog, fallback }: {
+export function HomeBoard({ teamId, team, icon, people, board, phone, api, renderBlock, modeChoices, nameOf, onWrite, onSaved, Dialog, fallback, below }: {
   teamId: string; team: string; icon?: string; people: number;
   board: Board | null; phone?: boolean; api: HomeApi;
   renderBlock: (b: HomeBlock, editing: boolean) => ReactNode;
@@ -86,6 +86,8 @@ export function HomeBoard({ teamId, team, icon, people, board, phone, api, rende
   Dialog: HomeDialog;
   /** 판이 없을 때 — 팀원은 이것만(지금 팀 홈 글 목록), 팀장은 템플릿 셋 아래 */
   fallback: ReactNode;
+  /** 판에 글 목록 칸이 없을 때 판 끝에 붙일 글 타일 — 올린 글이 어디에도 안 보이지 않게(공개 이슈 #9) */
+  below?: ReactNode;
 }) {
   const [draft, setDraft] = useState<Home | null>(null);
   const [past, setPast] = useState<Home[]>([]);
@@ -189,6 +191,7 @@ export function HomeBoard({ teamId, team, icon, people, board, phone, api, rende
         {home && !draft && (
           <div className="hb-grid">
             {home.blocks.map((b) => <div key={b.id} className={`hb-b ${b.k} ${b.w === 'full' ? 'full' : ''}`}>{renderBlock(b, false)}</div>)}
+            {below && <div className="hb-b posts full">{below}</div>}
           </div>
         )}
         {draft && phone && (

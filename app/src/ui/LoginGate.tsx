@@ -84,7 +84,7 @@ export function LoginGate() {
           <>
             {/* 계정 기기 사슬 시작(chammo-relay ADR 0007 R8) — 서버 말만 믿고 스스로 시작하지 않는다. 사람이 '첫 기기'를 고른다 */}
             <h1>{tr('이 기기가 이 계정의 첫 기기예요?', 'Is this the first device on this account?')}</h1>
-            <p>{tr('메신저는 종단 암호로만 써요. 이 기기에서 계정의 기기 묶음을 시작해요 — 이미 쓰던 기기가 있으면 누르지 말고, 그 기기에서 허용받아요.', 'Messages are end-to-end encrypted only. This starts your account\'s device group here — if you already use another device, don\'t press this; get approved on that device instead.')}</p>
+            <p>{tr('메신저는 종단 암호로만 써요. 이 기기에서 계정의 기기 묶음을 새로 시작해요. 쓰던 기기가 있으면 누르지 말고 그 기기에서 허용받으세요', 'Messages are end-to-end encrypted only. This starts your account\'s device group here. If you already use another device, don\'t press this; get approved on that device instead.')}</p>
             <div className="lg-acts">
               <button className="btn pri su-go" disabled={busy} onClick={start}>{tr('첫 기기로 시작', 'Start as first device')}</button>
               <button className="btn su-go" disabled={busy} onClick={() => { startLater = true; bump((n) => n + 1); }}>{tr('나중에', 'Later')}</button>
@@ -111,7 +111,7 @@ export function LoginGate() {
           <>
             {/* 봉인 없이 대기(옛 판에서 로그인)·사슬 기기 0 인 auto 기기 — 숫자가 영영 안 뜨거나 다시 시작이 막힌다. 다시 로그인하면 봉인을 같이 올리거나 바로 허용돼 다시 시작(10-26) */}
             <h1>{tr('로그인을 한 번 더 해 주세요', 'Please sign in once more')}</h1>
-            <p>{tr('이 기기는 지금 상태로는 계정을 쓸 수 없어요(다른 기기에서 이 기기를 끊었거나 로그인 허용이 거절됐어요, 또는 예전 판에서 로그인했거나 허용해 줄 내 기기가 다 로그아웃됐어요). 다시 로그인하면 숫자가 뜨거나 이 기기로 다시 시작할 수 있어요.', "This device can't use the account as it is (another device disconnected it or declined its sign-in, or it signed in with an older version, or every device that could approve it signed out). Sign in again to get a number or start over on this device.")}</p>
+            <p>{tr('이 기기는 지금 계정을 쓸 수 없어요. 다른 기기에서 끊었거나, 허용이 거절됐거나, 옛 버전으로 로그인했거나, 허용해 줄 기기가 모두 로그아웃됐을 수 있어요. 다시 로그인하면 숫자가 뜨거나 이 기기에서 새로 시작할 수 있어요.', "This device can't use the account right now. Another device may have disconnected it or declined its sign-in, it may have signed in with an older version, or every device that could approve it may have signed out. Sign in again to get a number or start over on this device.")}</p>
             <div className="lg-acts">
               <button className="btn pri su-go" disabled={busy} onClick={() => out(true)}>{tr('다시 로그인', 'Sign in again')}</button>
               <button className="btn su-go" disabled={busy} onClick={() => { reloginLater = true; bump((n) => n + 1); }}>{tr('나중에', 'Later')}</button>
@@ -151,7 +151,7 @@ export function LoginGate() {
         ) : (
           <>
             <h1>{tr('Chammo 계정으로 시작해요', 'Start with your Chammo account')}</h1>
-            <p>{tr('폰·다른 컴퓨터·메신저가 이 계정으로 이어져요. 한 번 로그인하면 앱을 다시 켜도 계속 유지돼요.', 'Your phone, other computers and messenger connect through this account. Sign in once and it stays signed in.')}</p>
+            <p>{tr('폰·다른 컴퓨터·메신저가 이 계정으로 연결돼요. 한 번 로그인하면 앱을 다시 켜도 유지돼요', 'Your phone, other computers and messenger connect through this account. Sign in once and it stays signed in.')}</p>
             <button className="btn pri su-go lg-go" disabled={busy} onClick={login}>{busy ? tr('브라우저에서 로그인을 마쳐 주세요', 'Finish signing in in the browser') : tr('구글로 로그인', 'Sign in with Google')}</button>
             {err && <div className="su-error">{err}</div>}
           </>

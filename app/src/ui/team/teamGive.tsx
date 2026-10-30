@@ -59,6 +59,12 @@ export async function giveIn(d: { team: string; ids: string[]; to: string }, ros
 }
 if (typeof window !== 'undefined') window.addEventListener(TEAM_GIVE_IN, (e) => { const d = (e as CustomEvent<{ team: string; ids: string[]; to: string }>).detail; if (d) void giveIn(d).catch(() => {}); });
 
+/** 팀 보관함 폴더째(안의 파일 ids) 그 참모에게 — 칩은 폴더 하나(끝 /, 2026-10-30) */
+export async function giveFolder(team: string, folder: string, ids: string[], o: RosterOrch): Promise<void> {
+  if (!ids.length) return;
+  here(o.id, [await invoke<string>('team_locker_give_folder', { team, folder, ids, orch: o.id, name: o.owner })]);
+}
+
 /** 스페이스에 풀어 둔 팀 파일(경로)을 그 참모에게 */
 export async function givePath(path: string, o: RosterOrch): Promise<void> {
   here(o.id, [await invoke<string>('team_peek_give', { path, orch: o.id, name: o.owner })]);

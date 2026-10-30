@@ -481,3 +481,32 @@ fn 내가_보관함을_바꾸면_다음_목록은_바로_새로() {
     let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, base);
     assert_eq!(lists(&w), 2);
 }
+
+// ── 팀 앱 열쇠(0.4.5 리뷰 7 — 캘린더 sync·쓰기마다 보관함 전체 목록 + 사람 목록을 받았다) ──
+
+#[test]
+fn 팀_앱_열쇠는_기억해_두고_보관함_목록을_매번_안_받는다() {
+    let w = World::new("appkeys", false);
+    forget(&w.team);
+    forget_people(&w.team);
+    let base = Instant::now();
+    // 캘린더 sync 넷(30초 간격) — 사이에 다른 사람이 보관함에 파일을 올림(앱 열쇠와 상관없음)
+    for i in 0..4u64 {
+        if i == 2 {
+            w.bump();
+        }
+        let _ = app_keys_at(&w.d, &w.kc, &w.r, &w.team, false, base + Duration::from_secs(30 * i)).unwrap();
+    }
+    eprintln!("팀 앱 열쇠 넷: 요청 {}번 {:?}", w.count(), w.by_path());
+    assert_eq!(lists(&w), 1, "목록은 처음 한 번 {:?}", w.by_path());
+    // 팀이 바뀌면(소켓 team_changed → forget_people) 새로, 쓸 열쇠를 못 고르면(fresh) 새로
+    forget_people(&w.team);
+    let _ = app_keys_at(&w.d, &w.kc, &w.r, &w.team, false, base + Duration::from_secs(150)).unwrap();
+    assert_eq!(lists(&w), 2, "팀이 바뀌면 새로 {:?}", w.by_path());
+    let _ = app_keys_at(&w.d, &w.kc, &w.r, &w.team, true, base + Duration::from_secs(180)).unwrap();
+    assert_eq!(lists(&w), 3, "fresh 면 새로 {:?}", w.by_path());
+    // 10분 지나면 새로
+    let _ = app_keys_at(&w.d, &w.kc, &w.r, &w.team, false, base + Duration::from_secs(180 + 11 * 60)).unwrap();
+    assert_eq!(lists(&w), 4, "10분 지나면 새로 {:?}", w.by_path());
+    forget_people(&w.team);
+}

@@ -1131,11 +1131,11 @@ export default function App() {
   useAskWake(agentLives, sessions);
   // 직접 답하기 카드 — 하위 세션이 본인 승인을 원하면 맡긴 참모 채팅에 카드(사람이 누르면 그 세션에 사람 말로)
   // 살아 있나·이름은 폴더로 거르기 전 전체 목록(allSessions)으로 — 워크트리로 들어가 사이드바에서 빠진 세션 카드가 꺼짐으로 숨었다(2026-10-05 아이맥)
-  const direct = useDirectCards(allSessions, allActs, taskEvents, groups.orchestrators, groups.orchestrator, agentLives, (c, name, owner) => notifyOnce({
+  const direct = useDirectCards(allSessions, allActs, taskEvents, groups.orchestrators, agentLives, (c, name, owner) => notifyOnce({
     kind: 'human', session: c.from, orch: false, ...(owner ? { go: cardTarget(owner.id, cardToken(c.id)) } : {}),
     title: tr(`${josa(name, '이', '가')} 네 답을 기다려`, `${name} needs your answer`),
     body: `${kindView(c.kind).word}${c.amount ? ` ${c.amount}` : ''} — ${c.q}`,
-  }), heirOf, async (c) => {
+  }), async (c) => {
     // 주인 세션이 꺼진 카드 — 같은 번호로 다시 띄운다(꺼진 목록에 있으면 그 폴더·대화 번호로)
     const st = stopped.find((x) => x.id === c.from);
     await resumeSession(st?.cwd ?? c.cwd, st?.sessionId ?? '', c.from);
@@ -1163,10 +1163,11 @@ export default function App() {
     },
   });
   useEffect(() => {
-    const fresh = freshAppCards(prevApp.current, direct.inboxCards);
+    if (!direct.ready) return; // 기록을 읽기 전 빈 목록으로 굳히면 앱을 켤 때 옛 카드가 새 카드로 알려진다
+    const fresh = freshAppCards(prevApp.current, direct.placed);
     prevApp.current = new Set(direct.inboxCards.map((c) => c.id));
-    if (fresh.length) setAppNote(fresh[0]!.q);
-  }, [direct.inboxCards]);
+    if (fresh.length) setAppNote(`${direct.nameOf(fresh[0]!)} · ${fresh[0]!.q}`);
+  }, [direct.inboxCards]); // eslint-disable-line react-hooks/exhaustive-deps
   // 몇 초 뒤 사라짐 — 위 효과는 렌더마다 돌아서 타이머는 알림 글에만 묶는다
   useEffect(() => {
     if (!appNote) return;
@@ -1927,7 +1928,7 @@ export default function App() {
     <OrchActionsProvider pins={orchPins} onPin={pinOrch} onNick={wantNick} onStop={(s, why) => closeSession(s, why)} onRemove={(id) => { markPending(stopped.find((x) => x.id === id)?.sessionId ?? id); void removeSession(id, `menu ${stopped.find((x) => x.id === id)?.name ?? ''}`).then(() => refresh(), (e: unknown) => setError(tr(`지우기 실패: ${String(e)}`, `Remove failed: ${String(e)}`))); }}>
       {consentAsk && <Confirm
         title={tr('확인 없이 실행하는 모드에 동의', 'Allow running without confirmations')}
-        body={tr(`${assistant()}와 세션은 Claude Code 를 확인 없이 실행하는 모드(${SKIP_FLAG})로 돌려요. Claude Code 의 경고 그대로:\n· 위험할 수 있는 명령도 묻지 않고 실행해요.\n· Claude Code 는 인터넷이 제한되고 쉽게 되돌릴 수 있는 격리 환경(컨테이너·가상 머신)에서만 쓰라고 권해요.\n· 이 모드에서 생긴 일의 책임은 동의한 사람에게 있어요.\n${assistant()}에게는 결제·운영 앞에서 먼저 묻게 지시하지만, 완전히 막아 주지는 않아요. 동의하면 이 컴퓨터의 Claude Code 설정에 적혀서, 터미널에서 켜는 Claude Code 도 이 경고를 다시 띄우지 않아요.`,
+        body={tr(`${assistant()}와 세션은 Claude Code를 확인 없이 실행하는 모드(${SKIP_FLAG})로 돌아요. Claude Code의 경고예요.\n· 위험한 명령도 묻지 않고 실행해요.\n· 인터넷이 제한되고 쉽게 되돌릴 수 있는 환경(컨테이너·가상 머신)에서만 쓰라고 권해요.\n· 이 모드에서 생긴 일은 동의한 사람 책임이에요.\n${assistant()}에게 결제·운영 전엔 먼저 물으라고 시키지만, 완전히 막진 못해요. 동의하면 이 컴퓨터의 Claude Code 설정에 기록돼요. 터미널에서 켜는 Claude Code도 이 경고를 다시 띄우지 않아요.`,
           `${assistant()} and its sessions run Claude Code in Bypass Permissions mode (${SKIP_FLAG}). Claude Code's own warning:\n· Claude Code will not ask for your approval before running potentially dangerous commands.\n· This mode should only be used in a sandboxed container/VM that has restricted internet access and can easily be restored if damaged.\n· By proceeding, you accept all responsibility for actions taken while running in Bypass Permissions mode.\n${assistant()} is instructed to ask before payments and production changes, but that is not a guarantee. Agreeing records this in this computer's Claude Code settings, so Claude Code started from a terminal won't show this warning again either.`)}
         ok={tr('동의', 'Agree')}
         onCancel={() => setConsentAsk(null)}
@@ -1988,7 +1989,7 @@ export default function App() {
         {/* 잠깐 떴다 사라지는 안내는 화면 위에 띄운다 — 줄로 끼면 세션을 띄우고 끌 때마다 화면 전체가 오르락내리락했다(2026-09-30 사용자) */}
         {(starting.length > 0 || closing.size > 0 || appNote) && (
           <div className="toasts">
-            {appNote && <button className="banner quiet toast-go" onClick={() => { setAppNote(null); setInboxOpen(true); }}>{tr('참모 앱', 'Chammo')} · {appNote}</button>}
+            {appNote && <button className="banner quiet toast-go" onClick={() => { setAppNote(null); setInboxOpen(true); }}>{appNote}</button>}
             {starting.length > 0 && <div className="banner quiet"><span className="spin" /> {tr('새 세션 띄우는 중', 'Starting new session')} · {starting.join(', ')}</div>}
             {closing.size > 0 && (
               <div className="banner quiet"><span className="spin" /> {tr('끄는 중', 'Stopping')} · {[...closing.values()].join(', ')} {tr('— 대화는 남아서 "꺼진 세션"에서 이어갈 수 있어', '— the conversation is kept; resume it from "Stopped sessions"')}</div>

@@ -1799,8 +1799,9 @@ def load_status(ddir, app):
 
 READS = {'ui.inspect', 'ui.screenshot', 'engine.commands', 'ui.menu.list', 'engine.journal', 'ui.state', 'ui.commands', 'jobs.list', 'session.inspect'}
 # 엔진 '다른 이름 저장'(NATIVE save) — 작업 폴더 밖 자리로 저장했으면 지금 문서는 거기 있다(닫을 때 또 저장할 것 없음).
-# 제자리 저장(file.save)·작업 폴더 안 저장은 사람 파일 자리로 돌려놓기 전이라 그대로 둔다. 가져오기(file.import)는 편집이다
-SAVE_AS_CMDS = {'file.saveAs', 'session.save', 'saveas'}
+# 제자리 저장(경로 없는 file.save)·작업 폴더 안 저장은 사람 파일 자리로 돌려놓기 전이라 그대로 둔다. 가져오기(file.import)는 편집이다.
+# file.save·document.save 도 밖 경로를 주면 다른 이름 저장이다 — 엔진 명령 file.save(밖) 뒤에도 dirty 가 남았다(공개 이슈 #7)
+SAVE_AS_CMDS = {'file.saveAs', 'session.save', 'saveas', 'file.save', 'document.save'}
 OPEN_CMDS = {'file.open', 'session.open'}
 # 지금 문서가 바뀌는 명령 — 그 뒤엔 '연 파일 하나'가 지금 문서라는 보장이 없다(닫을 때 그 사람 파일 자리에 엉뚱한 문서를 썼다, 2026-10-21 리뷰)
 DOC_SWITCH_CMDS = {'file.new', 'document.new', 'file.close', 'document.close'}
@@ -1810,11 +1811,21 @@ def doc_switch(method, cmd):
     return method == 'app.new' or cmd in DOC_SWITCH_CMDS or cmd.endswith('.activate')
 
 
+# 문서를 안 바꾸는 엔진 명령 — 슬라이드 미리 그리기(PNG 를 돌려줌)·자동 복구 기록
+NO_CHANGE_CMDS = {'file.render', 'file.recovery.save'}
+
+
+def is_export(method, cmd):
+    """내보내기(file.export·file.exportPng·app.export·layer.quickExportAsPng…) — 문서는 그대로 두고 사본만 쓴다. 저장 뒤 내보내기를 '바뀜'으로 봐서
+    닫을 때 보관함에 untitled 사본이 또 생겼다(공개 이슈 #7). 끝 이름에 export 낱말이 있을 때만 — export.queue.add 같은 편집은 아니다"""
+    return 'export' in _hand_words((cmd or method).split('.')[-1])
+
+
 def note_call(ddir, app, method, params):
-    """참모가 보낸 채널 명령 하나 → 아래 줄 글·저장 상태. 읽기만 하는 건 안 건드린다"""
+    """참모가 보낸 채널 명령 하나 → 아래 줄 글·저장 상태. 읽기만 하는 것·내보내기는 안 건드린다"""
     params = params or {}
     cmd = params.get('command') or params.get('id') or ''
-    if method in READS or cmd.endswith('.inspect') or cmd.endswith('.list'):
+    if method in READS or cmd.endswith('.inspect') or cmd.endswith('.list') or cmd in NO_CHANGE_CMDS or is_export(method, cmd):
         return
     st = load_status(ddir, app)
     unknown = bool(st.get('docUnknown')) or doc_switch(method, cmd)

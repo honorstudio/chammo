@@ -96,6 +96,16 @@ switch (cmd) {
     }, (e) => fail(e.message));
     break;
   }
+  case 'login': {
+    // 사이트 로그인 — CLAUDE.local.md 칸의 계정을 이 프로필 크롬에 친다. 종료 0 됨 · 1 오류 · 2 바쁨 · 3 사람 차례 · 4 계정 칸 없음 · 5 사이트가 안 받음(src/login.js)
+    const login = require('../src/login');
+    let o;
+    try { o = login.parseArgs(process.argv.slice(3)); } catch (e) { console.error(e.message); process.exit(1); }
+    const bad = paths.checkProfile(o.profile);
+    if (bad) { console.error(bad); process.exit(1); }
+    login.runLogin(o).then((r) => process.exit(r.code), (e) => { console.error(e.message); process.exit(1); });
+    break;
+  }
   case 'release': {
     // 그 스크립트가 다 썼다 — 명부에서 빼면 마지막 사용자일 때 지킴이가 1초 안에 크롬을 닫고 락을 돌려준다
     const p = profileArg('chammo-browser release <프로필> [--owner <pid>]');
@@ -128,6 +138,9 @@ switch (cmd) {
                                        스크립트용 크롬 — 락·앱 화면 연결까지 하고 CDP 주소를 한 줄 JSON 으로.
                                        주인(--owner, 기본 부른 프로세스)이 끝나면 저절로 닫고 락을 돌려준다
   chammo-browser release <프로필> [--owner <pid>]   다 썼다(마지막이면 크롬을 닫는다)
+  chammo-browser login <프로필> <로그인 주소> [--account <칸 이름>] [--from <CLAUDE.local.md>] [--done <주소 조각>] [--wait <초>]
+                                       사이트 로그인 — 계정 칸(제목 + '아이디:'·'비밀번호:')에서 읽어 친다. 값은 출력에 안 남는다.
+                                       종료 0 됨 · 3 사람 차례(2단계·패스키·캡차) · 4 계정 칸 없음 · 5 사이트가 안 받음(다시 치지 않음)
 
 저장 위치: ${paths.ROOT}
   (CHAMMO_BROWSER_HOME > $CHAMMO_HOME/browser > ~/.chammo/browser)`);

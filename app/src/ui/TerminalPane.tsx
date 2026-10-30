@@ -87,8 +87,8 @@ type Props = {
   /** 이 창을 밖에서 다루는 손잡이 — 입력칸에 글자 넣기(메모 → 세션에 보내기)·포커스 되돌리기(메모판 닫을 때). 창이 닫히면 null */
   inject?: (api: PaneApi | null) => void;
   /** 세션에 붙어 있나 — attach 가 'Session … has exited.' 로 끝나면 reattaching, 오래 안 돌아오면 gone, 다시 붙으면 live(domain/attachExit) */
-  /** why = 붙는 단계(attaching 일 때)·'unlisted'(끊긴 채 목록을 못 읽음 — 맥이 바쁨) */
-  onLink?: (s: LinkState, why?: AttachPhase | 'unlisted') => void;
+  /** why = 붙는 단계(attaching 일 때)·'unlisted'(끊긴 채 목록을 못 읽음 — 맥이 바쁨)·'kicked'(다른 창에 쫓겨남 — retake 를 부르면 다시 붙어 되찾는다) */
+  onLink?: (s: LinkState, why?: AttachPhase | 'unlisted' | 'kicked', retake?: () => void) => void;
   /** 세션에 붙은 게 아닌 명령(설정의 설치·믿기)이 끝났을 때 — 끝난 터미널이 그대로 남아 다음 할 일을 몰랐다 */
   /** 터미널이 끝남 — screen = 끝날 때 버퍼 끝 글(200줄, 믿기 터미널이 왜 끝났는지 가른다) */
   onExit?: (screen: string) => void;
@@ -299,7 +299,8 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
     const onEnded = () => {
       if (endedOnce || !sid) return;
       endedOnce = true;
-      if (kickedBeforeEnd(kickedAt, Date.now())) { linkRef.current?.('gone'); return; } // 윈도우: 다른 창에 쫓겨남 — 다시 붙으면 그 창을 또 쫓아낸다
+      // 윈도우: 다른 창에 쫓겨남 — 저절로 다시 붙으면 그 창을 또 쫓아낸다. 사람이 이 칸으로 보낼 때만 되찾는다(SessionGrid typeAndSend)
+      if (kickedBeforeEnd(kickedAt, Date.now())) { linkRef.current?.('gone', 'kicked', () => setEpoch((e) => e + 1)); return; }
       const since = Date.now();
       let asking = false;
       let gone = false;

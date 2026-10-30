@@ -37,7 +37,7 @@ const centers = (nav: HTMLElement | null) => new Map([...(nav?.querySelectorAll<
 }));
 const still = () => !motionOn(); // 애니메이션 줄이기·끄기·OS 동작 줄이기(ui/calm)
 
-export function OrchRail({ home, onTeam, moreDot = false, popFns, top, avatars, onPick, onMenu, onRename, onMove, onNew, onExpand, expandLabel, fns, group, resting = [], sched, wide = false, groupNames, width = 240, onWidth, joined = false, extra, extraOn }: {
+export function OrchRail({ home, onTeam, moreDot = false, popFns, top, avatars, onPick, onMenu, onRename, onMove, onNew, onExpand, expandLabel, fns, group, resting = [], sched, wide = false, groupNames, width = 240, onWidth, joined = false, extra }: {
   /** 띠 맨 위 홈 칸(띠 RA, 2026-10-24 사용자) — 참모 채팅 없는 전체 한눈에(오케스트레이터 홈). on = 지금 홈을 보는 중 */
   home?: { on: boolean; onOpen: () => void };
   /** + 메뉴의 둘째 줄 — 팀 만들기·초대(팀 칸의 + 를 여기로, + 하나). at = + 단추 오른쪽 위 */
@@ -75,12 +75,10 @@ export function OrchRail({ home, onTeam, moreDot = false, popFns, top, avatars, 
   onWidth?: (w: number) => void;
   /** 띠 맨 위 — 다른 기기 단추(짝지은 기기가 있을 때만, peer-panel) */
   top?: React.ReactNode;
-  /** 채팅 칸이 바로 옆(띠 | 채팅 | 스페이스) — 고른 프사 줄이 채팅 바탕과 이어진 면(고른 탭이 아래 내용과 붙듯, 2026-10-12 사용자) */
+  /** 채팅 칸이 바로 옆(띠 | 채팅 | 스페이스) — 띠 경계선을 안쪽 그림자로(이음 면은 2026-10-29 사용자가 걷었다 — 고른 표시는 그림 둘레 테두리 하나) */
   joined?: boolean;
-  /** 참모 아래 칸(메신저 팀 표·DM, ui/team/TeamRail) — 띠 바로 아래 형제로 그려 고른 자리 이음·호버 카드를 같이 쓴다 */
+  /** 참모 아래 칸(메신저 팀 표·DM, ui/team/TeamRail) — 띠 바로 아래 형제로 그려 고른 표시·호버 카드를 같이 쓴다 */
   extra?: React.ReactNode;
-  /** extra 안에서 고른 칸(대화 열쇠) — 바뀌면 이음 면을 다시 잰다 */
-  extraOn?: string | null;
 }) {
   const speaking = useSpeaking();
   const grab = useRef<{ id: string; from: number; y: number; x: number; rects: { left: number; width: number }[]; lo: number; hi: number; on: boolean; to: number } | null>(null);
@@ -150,20 +148,7 @@ export function OrchRail({ home, onTeam, moreDot = false, popFns, top, avatars, 
     addEventListener('keydown', key);
     addEventListener('blur', cancel);
   };
-  // 이어진 면 — 고른 프사 줄 자리(띠 안 위치)를 재서 채팅 바탕 면을 깐다. 바꾸면 그 자리로 짧게 옮겨 간다(CSS 전환)
   const navRef = useRef<HTMLElement>(null);
-  const [join, setJoin] = useState<{ top: number; height: number } | null>(null);
-  const onId = avatars.find((a) => a.on)?.id;
-  useLayoutEffect(() => {
-    const nav = navRef.current;
-    const on = nav?.querySelector<HTMLElement>('.lk-av.on');
-    if (!joined || !nav || !on) { setJoin(null); return; }
-    // offsetTop — 자리 옮김(FLIP)·끌기 transform 중에 재도 제자리(getBoundingClientRect 는 움직이는 중간 자리를 줬다). 순서가 바뀌어도 다시 잰다
-    const measure = () => setJoin({ top: on.offsetTop, height: on.offsetHeight });
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, [joined, onId, extraOn, wide, width, avatars.map((a) => a.id).join(' ')]); // eslint-disable-line react-hooks/exhaustive-deps
   // 자리 옮김 — 끄기가 끝나 쉬는 참모 줄로 내려가거나, 깨우는 참모가 위 줄로 올라오거나, 한 칸이 빠져 아래 칸들이 당겨질 때 미끄러지게.
   // 줄 모양(열쇠:상태)이 바뀐 그리기에서만 — 폭 바꾸기·끌기·평소 갱신엔 안 움직인다. 처음 보이는 칸(새 참모 켜는 중)은 작게서 커지며 나타난다
   const sig = [...avatars.map((a) => `${a.flip ?? a.id}:${a.phase ?? 'live'}`), ...resting.map((r) => `r:${r.key}`)];
@@ -307,7 +292,6 @@ export function OrchRail({ home, onTeam, moreDot = false, popFns, top, avatars, 
   return (
     <nav ref={navRef} className={`lk-strip ${wide ? 'wide' : ''} ${joined ? 'joined' : ''}`} style={wide ? { width, flexBasis: width } : undefined} aria-label={tr('참모', 'Assistants')} data-dragging={drag ? true : undefined}
       onPointerOver={over} onPointerLeave={leave}>
-      {joined && join && <i className="lk-join" style={{ top: join.top, height: join.height }} aria-hidden="true" />}
       {wide && onWidth && <Grip side="right" width={width} onWidth={onWidth} min={200} max={360} />}
       {/* 접기·펼치기는 기능 줄과 따로 띠 맨 위(207.png — 기능 아이콘 사이에 끼어 이상했다) — 펼침은 오른쪽 끝, 접힘은 가운데. 창 모서리와도 멀다(206.png) */}
       {home && (
@@ -364,7 +348,7 @@ export function OrchRail({ home, onTeam, moreDot = false, popFns, top, avatars, 
           )}
           {(schedBtn || fns) && (
             <button className={`rail-fn rail-more ${pop?.kind === 'more' ? 'on' : ''}`} onClick={openPop('more')} aria-expanded={pop?.kind === 'more'}
-              aria-label={tr('더보기 — 예약·리플레이·도구·하니터·리뷰', 'More — scheduled, replay, tools, Harnitor, review')} data-tip={tr('더보기', 'More')} data-tip-sub={tr('예약·리플레이·도구·하니터·리뷰', 'Scheduled, replay, tools, Harnitor, review')}>
+              aria-label={tr('더보기', 'More')} data-tip={tr('더보기', 'More')} data-tip-sub={tr('예약·리플레이·도구·하니터·리뷰', 'Scheduled, replay, tools, Harnitor, review')}>
               <IconMore />{moreDot && <i className="rail-dot" aria-hidden="true" />}
             </button>
           )}

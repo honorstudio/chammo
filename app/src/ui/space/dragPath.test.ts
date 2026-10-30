@@ -609,3 +609,55 @@ describe('창 틀 기준 자리 → 이 창 안 자리', () => {
     expect(seen.at(-1)).toEqual([380, 318]);
   });
 });
+
+// 2026-10-30 사용자 "파인더에서 열거나, 이 상태에서 드래그해서 전달하고 싶어" — 미리보기·채팅 파일 카드는 창 밖으로 나가는 순간 맥 끌기(drag_native)로 넘긴다
+describe('바깥 앱으로 끌기(dragOut) — 창을 벗어나면 맥 끌기 세션으로', () => {
+  const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+  const out = (x: number, sx: number, sy: number) => fire('pointermove', { clientX: x, clientY: 40, screenX: sx, screenY: sy, buttons: 1 });
+  async function beginOut(path = '/u/발주.png') {
+    const { dragOut } = await import('./dragPath');
+    (dragOut(path) as { onPointerDown: (e: unknown) => void }).onPointerDown({ button: 0, clientX: 10, clientY: 10 });
+  }
+  beforeEach(() => { invoked.length = 0; answer.v = true; Object.assign(win, { innerWidth: 800, innerHeight: 600 }); });
+
+  it('창 밖으로 나가면 그 파일로 drag_native 를 한 번 부르고, 넘겼으면 이 창 끌기는 끝난다', async () => {
+    await beginOut();
+    move(40, 40);
+    out(-50, 300, 140);
+    out(-80, 270, 140);
+    await flush();
+    expect(invoked.filter((c) => c.cmd === 'drag_native')).toEqual([{ cmd: 'drag_native', args: { paths: ['/u/발주.png'] } }]);
+    expect(over()).toBe(true);
+    // 놓음은 맥이 받는다 — 이 창 끌기는 이미 끝나 창 사이 놓기(drag_out)를 또 안 부른다
+    fire('pointerup', { clientX: -80, clientY: 40, screenX: 270, screenY: 140 });
+    await flush();
+    expect(invoked.map((c) => c.cmd)).not.toContain('drag_out');
+  });
+  it('창 안에서만 끌면 맥 끌기를 안 부른다 — 채팅 칸에 놓기는 그대로', async () => {
+    await beginOut();
+    move(40, 40);
+    move(600, 40);
+    fire('pointerup', { clientX: 600, clientY: 40 });
+    await flush();
+    expect(invoked.map((c) => c.cmd)).not.toContain('drag_native');
+  });
+  it('맥 끌기를 못 하면(false) 하던 창 사이 끌기로 이어 간다', async () => {
+    answer.v = false;
+    await beginOut();
+    move(40, 40);
+    out(-50, 300, 140);
+    await flush();
+    expect(live()).toBe(true);
+    fire('pointerup', { clientX: -50, clientY: 40, screenX: 300, screenY: 140 });
+    await flush();
+    expect(invoked.map((c) => c.cmd)).toContain('drag_out');
+  });
+  it('보관함 카드 끌기(dragPath)는 창 밖에서도 맥 끌기를 안 부른다 — 창 사이 놓기 그대로', async () => {
+    await begin('/u/a.md');
+    move(40, 40);
+    out(-50, 300, 140);
+    fire('pointerup', { clientX: -50, clientY: 40, screenX: 300, screenY: 140 });
+    await flush();
+    expect(invoked.map((c) => c.cmd)).not.toContain('drag_native');
+  });
+});

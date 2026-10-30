@@ -19,7 +19,7 @@ describe('팀 참모 화면', () => {
     expect(edit).toContain('api.tryRun(team, room, def, t, prev)');
   });
   it('늘 꺼진 것(명령·쓰기·내 파일·발송)은 고를 칸이 없고 잠금 줄로만 보인다', () => {
-    expect(edit).toContain('늘 꺼짐');
+    expect(edit).toContain('항상 꺼져 있어요');
     for (const k of ['bash', 'Bash', 'WebFetch', 'write:', 'shell']) expect(edit).not.toContain(k);
   });
   it('화면은 invoke 를 직접 부르지 않는다(teamAgentApi 만)', () => {

@@ -69,7 +69,7 @@ export function DirectCardView({ c, name: given, project, profile, compact, onOp
           {onDismiss && <button className="dc-x" aria-label={tr('닫기', 'Dismiss')} title={tr('닫기', 'Dismiss')} onClick={onDismiss}><IconClose /></button>}
         </div>
         <div className="dc-q">{c.q}</div>
-        <div className="dc-muted">{tr(`${hm24(c.ts)}에 물었는데 답하기 전에 세션이 꺼졌어요 — 다시 띄우면 이어서 답할 수 있어요`, `Asked at ${hm24(c.ts)}, but the session ended before an answer — restart it to answer`)}</div>
+        <div className="dc-muted">{tr(`${hm24(c.ts)}에 물었는데 답을 받기 전에 세션이 꺼졌어요. 다시 켜면 이어서 답할 수 있어요`, `Asked at ${hm24(c.ts)}, but the session ended before an answer. Restart it to answer`)}</div>
         {onRespawn && <div className="dc-acts"><button className="dc-btn dc-go" disabled={busy} onClick={respawn}>{tr('다시 띄우기', 'Restart session')}</button></div>}
         {err && <div className="dc-err" role="alert">{err}</div>}
       </div>
@@ -103,13 +103,13 @@ export function DirectCardView({ c, name: given, project, profile, compact, onOp
       </div>
       {c.kind === 'link' && c.sub === 'phone-link' && c.code && <div className="dc-code" aria-label={tr(`확인 숫자 ${c.code}`, `Check number ${c.code}`)}>{c.code}</div>}
       {c.kind === 'link' && c.sub === 'phone-link' ? (
-        <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('폰 숫자와 같을 때만 — 그 폰이 이 컴퓨터에 사람으로 닿아요(카드 답·말 보내기)', 'Only if it matches the phone — that phone reaches this computer as you (card answers, messages)')}</dd><dt>{c.no}</dt><dd>{tr('숫자가 다르거나 내가 연 게 아니면', 'If the number differs or it wasn\'t you')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('10분 뒤 없던 일이 돼요', 'It lapses after 10 minutes')}</dd></dl>
+        <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('폰에 뜬 숫자와 같을 때만 허용하세요. 허용하면 그 폰이 나처럼 이 컴퓨터에 카드 답과 메시지를 보낼 수 있어요', 'Approve only if it matches the number on the phone. That phone will then reach this computer as you (card answers, messages)')}</dd><dt>{c.no}</dt><dd>{tr('숫자가 다르거나 내가 연 게 아니면', 'If the number differs or it wasn\'t you')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('10분 뒤 없던 일이 돼요', 'It lapses after 10 minutes')}</dd></dl>
       ) : numberMode ? (
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('새 기기 화면의 숫자와 같을 때만 — 내 기기가 되고 내 메시지를 읽어요', 'Only if it matches the new device — it becomes yours and can read your messages')}</dd><dt>{c.no}</dt><dd>{tr('그 기기는 로그아웃돼요', 'That device is signed out')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{c.until ? tr('24시간 뒤 접속은 열리지만 메시지는 못 읽어요', 'After 24 hours it can connect, but it can\'t read messages') : tr('그 기기는 메시지를 못 읽은 채로 남아요', 'That device stays unable to read messages')}</dd></dl>
       ) : c.kind === 'link' && c.sub === 'device' ? (
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('그 기기가 내 기기가 돼요(메신저·내 기기끼리 말). 컴퓨터 화면을 여는 건 따로 숫자 확인', 'It becomes one of your devices (messenger, your devices talking). Opening a computer needs its own number check')}</dd><dt>{c.no}</dt><dd>{tr('그 기기는 로그아웃돼요', 'That device is signed out')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('24시간 뒤 저절로 허용돼요', 'Allowed automatically after 24 hours')}</dd></dl>
       ) : c.kind === 'link' && c.sub === 'recover' ? (
-        <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('요청이 취소되고 7일 동안 새 요청을 막아요 — 이 기기를 쓰는 사람이 주인이니까요', 'The request is cancelled and new ones are blocked for 7 days — whoever holds this device is the owner')}</dd><dt>{c.no}</dt><dd>{tr('카드만 닫혀요 — 내가 했다면 여기서 그 기기 숫자로 허용하는 게 나아요(대화가 이어져요)', 'Only the card closes — if it was you, approving that device with its number here is better (chats carry over)')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('기다림이 끝나면 이 기기는 로그아웃되고 그 기기가 계정을 이어요', 'When the wait ends this device is signed out and that device takes over')}</dd></dl>
+        <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('요청이 취소되고 7일 동안 새 요청을 막아요 — 이 기기를 쓰는 사람이 주인이니까요', 'The request is cancelled and new ones are blocked for 7 days — whoever holds this device is the owner')}</dd><dt>{c.no}</dt><dd>{tr('카드만 닫혀요. 내가 연 기기라면 숫자로 허용하세요. 대화가 이어져요', 'Only the card closes. If it was you, approve that device with its number here. Chats carry over')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('기다림이 끝나면 이 기기는 로그아웃되고 그 기기가 계정을 이어요', 'When the wait ends this device is signed out and that device takes over')}</dd></dl>
       ) : c.kind === 'link' && c.sub === 'phone' ? (
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('그 QR 을 연 폰이 이 컴퓨터에 사람으로 닿아요 — 끊기는 설정 > 기기 관리', 'The phone that opened the QR reaches this computer as you — unlink in Settings > Devices')}</dd><dt>{c.no}</dt><dd>{tr('그 QR 코드가 죽어요', 'The QR code dies')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('10분 뒤 없던 일이 돼요', 'It lapses after 10 minutes')}</dd></dl>
       ) : c.kind === 'link' ? (

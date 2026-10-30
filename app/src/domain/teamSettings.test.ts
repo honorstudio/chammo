@@ -1,6 +1,6 @@
 // 팀 설정(메신저 머리 톱니·팀 아이콘 메뉴) — 화면 판단(순수 함수)
 import { describe, expect, it } from 'vitest';
-import { canDeleteTeam, deleteAsk, leaveNote, memberRows, menuFor, quietContextMenu, switchTargets } from './teamSettings';
+import { canDeleteTeam, deleteAsk, leaveNote, memberRows, menuFor, PERM_CHIPS, quietContextMenu, switchTargets } from './teamSettings';
 
 const m = (id: string, role: string, me = false, devices: { id: string; name: string }[] = []) => ({ id, name: id, role, me, devices });
 
@@ -56,5 +56,31 @@ describe('메신저 창 오른쪽 클릭', () => {
     expect(switchTargets({ teamId: 't2', teams: [{ id: 't1', name: 'QA팀' }, { id: 't2', name: 'QA팀2' }] })).toEqual([{ id: 't1', label: 'QA팀' }]);
     expect(switchTargets({ teamId: 't2', teams: [{ id: 'aaaa1111', name: 'ACME' }, { id: 't2', name: 'ACME' }] })).toEqual([{ id: 'aaaa1111', label: 'ACME(…1111)' }]);
     expect(switchTargets({ teamId: 't1' })).toEqual([]);
+  });
+});
+
+describe('매니저 권한(relay ADR 0014)', () => {
+  const p = (id: string, perms: string[], me = false) => ({ id, name: id, role: 'manager', perms, me, devices: [] });
+  it('줄마다 매니저·전체 권한 표시와 권한', () => {
+    const rows = memberRows({ role: 'owner', members: [m('o', 'owner', true), p('a', ['invite', 'kick']), p('f', ['all']), m('x', 'member')] });
+    expect(rows.map((r) => r.badge)).toEqual(['owner', 'manager', 'all', '']);
+    expect(rows.find((r) => r.id === 'a')?.perms).toEqual(['invite', 'kick']);
+  });
+  it('팀장은 누구든 권한·넘기기·빼기, 전체 권한 칩도', () => {
+    const rows = memberRows({ role: 'owner', members: [m('o', 'owner', true), p('f', ['all']), m('x', 'member')] });
+    expect(rows.filter((r) => !r.me).map((r) => [r.canPerms, r.canAll, r.canTransfer, r.canRemove])).toEqual([[true, true, true, true], [true, true, true, true]]);
+  });
+  it('전체 권한은 아래 사람만 — 전체 칩·넘기기는 못, 팀장·다른 전체 권한 줄은 아무것도', () => {
+    const rows = memberRows({ role: 'manager', members: [p('f', ['all'], true), m('o', 'owner'), p('f2', ['all']), p('g', ['posts']), m('x', 'member')] });
+    const of = (id: string) => rows.find((r) => r.id === id)!;
+    expect([of('o').canPerms, of('o').canRemove, of('f2').canPerms, of('f2').canRemove]).toEqual([false, false, false, false]);
+    expect([of('g').canPerms, of('g').canAll, of('g').canTransfer, of('g').canRemove]).toEqual([true, false, false, true]);
+  });
+  it('kick 매니저는 팀원만 빼고 권한은 못 바꾼다', () => {
+    const rows = memberRows({ role: 'manager', members: [p('k', ['kick'], true), p('g', ['posts']), m('x', 'member')] });
+    expect(rows.filter((r) => !r.me).map((r) => [r.id, r.canPerms, r.canRemove])).toEqual([['g', false, false], ['x', false, true]]);
+  });
+  it('권한 칩 차례·이름 — 전체 먼저', () => {
+    expect(PERM_CHIPS.map((c) => c.key)).toEqual(['all', 'invite', 'kick', 'posts', 'look', 'files', 'agents']);
   });
 });

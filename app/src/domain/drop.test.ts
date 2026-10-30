@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dropText, paneAt, shellEscape, docDropBlocks, dropSlot, chatCellAt, quotePath, chipPastes } from './drop';
+import { dropText, paneAt, shellEscape, docDropBlocks, dropSlot, chatCellAt, quotePath, chipPastes, folderChip, isFolderChip, chipName } from './drop';
 
 describe('shellEscape — iTerm 처럼 경로를 백슬래시로 이스케이프', () => {
   it('평범한 경로는 그대로', () => {
@@ -153,4 +153,24 @@ describe('chatCellAt — 채팅 칸 안 어디에 놓아도 받을 세션', () =
     expect(chatCellAt(two, 100, 805)).toBe('b');
   });
   it('받을 칸이 없으면 null', () => expect(chatCellAt([], 1, 1)).toBeNull());
+});
+
+describe('폴더 칩 — 끝 / 가 폴더 표시(2026-10-30 사용자 "이 폴더"를 참모에게)', () => {
+  it('folderChip 은 끝에 / 하나만', () => {
+    expect(folderChip('/H/Documents/Chammo/가나/인앱')).toBe('/H/Documents/Chammo/가나/인앱/');
+    expect(folderChip('/H/a/')).toBe('/H/a/');
+  });
+  it('isFolderChip — 끝 / 만 폴더, 파일·루트 / 는 아님', () => {
+    expect(isFolderChip('/H/a/인앱/')).toBe(true);
+    expect(isFolderChip('/H/a/인앱.mp4')).toBe(false);
+    expect(isFolderChip('/')).toBe(false);
+  });
+  it('chipName — 폴더도 마지막 이름', () => {
+    expect(chipName('/H/a/10월 보고/')).toBe('10월 보고');
+    expect(chipName('/H/a/b.md')).toBe('b.md');
+    expect(chipName('C:\\Users\\me\\a.png')).toBe('a.png');
+  });
+  it('참모가 받는 글 = #file 이름표 + 따옴표 안 폴더 경로(끝 / 로 폴더임이 보인다)', () => {
+    expect(chipPastes([{ path: folderChip('/H/Chammo/가나/10월 보고'), label: '#file1' }])).toEqual(['#file1 "/H/Chammo/가나/10월 보고/" ']);
+  });
 });

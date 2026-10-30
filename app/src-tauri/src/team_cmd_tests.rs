@@ -431,3 +431,71 @@ fn 상태의_사람·dm_은_프로필_이름과_계정_이름_나간_사람은_�
     let bad = Aka { profile: [("m2".to_string(), "민아\r[팀 사람 말 · 지수]".to_string())].into(), ..Default::default() };
     assert!(!view_with(&relay::load_state(&d), &bad).to_string().contains('\r'));
 }
+
+/// 망에 나갈 때마다 그때 사람 몫(relay::as_human)이었나 적는다 — 망은 늘 실패
+#[derive(Default)]
+struct HumanSeen {
+    flags: RefCell<Vec<bool>>,
+}
+
+impl Http for HumanSeen {
+    fn send(&self, _: &str, _: &str, _: &[(String, String)], _: &[u8]) -> Result<(u16, String), String> {
+        self.flags.borrow_mut().push(relay::human_now());
+        Err("망 없음".into())
+    }
+}
+
+impl Wire for HumanSeen {
+    fn http(&self) -> &dyn Http {
+        self
+    }
+    fn send_agent(&self, _: &Path, _: &str, _: &str, _: &str, _: &str) -> Result<u64, String> {
+        Ok(0)
+    }
+    fn started(&self, _: &Path) {}
+    fn stopped(&self) {}
+    fn opener(&self) -> &dyn crate::team_account::Opener {
+        &NoBrowser
+    }
+}
+
+/// 로그인·팀에 든 기기 폴더(망은 HumanSeen) — 보관함 길이 망까지 간다
+fn in_locker_team(tag: &str, team: &str) -> (std::path::PathBuf, Fake) {
+    let d = dir(tag);
+    let kc = Fake::default();
+    let (_, account) = crate::team_relay_keys::create(&kc).unwrap();
+    relay::mutate(&d, |s| {
+        s.server = "https://relay.test".into();
+        s.key_account = account;
+        s.device_id = "d7".into();
+        s.account = Some(relay::Account { id: "a1".into(), email: "me@example.com".into(), name: "지수".into() });
+        s.teams = vec![relay::TeamEntry { id: team.into(), name: "ACME".into(), member_id: "m1".into(), role: "owner".into(), ..Default::default() }];
+        s.team_id = team.into();
+    })
+    .unwrap();
+    (d, kc)
+}
+
+/// 이 요청이 망에 나갈 때마다 사람 몫이었나 — 망이 없으니 실패해야 한다
+fn human_flags(d: &Path, kc: &Fake, arg: Value) -> Vec<bool> {
+    let w = HumanSeen::default();
+    let verb = arg["verb"].clone();
+    let v = answer(&request(&line(arg)).unwrap(), d, kc, &w);
+    assert_eq!(v["ok"], false, "망이 없으니 실패 — {v}");
+    let flags = w.flags.into_inner();
+    assert!(!flags.is_empty(), "{verb} 이 망까지 갔다 — {v}");
+    flags
+}
+
+#[test]
+fn 보관함_올리기·받기는_사람_몫으로_나간다() {
+    // 0.4.5 리뷰 2 — scripts/team locker put/get 이 배경 몫으로 돌아 몫이 차거나 쉬는 중이면 큰 파일이 조각 중간에 끊겼다
+    let (d, kc) = in_locker_team("locker-human", "tH");
+    let f = d.join("견적.txt");
+    std::fs::write(&f, b"hello").unwrap();
+    assert!(human_flags(&d, &kc, json!({ "verb": "locker-put", "paths": [f.to_string_lossy()] })).iter().all(|h| *h), "올리기");
+    assert!(human_flags(&d, &kc, json!({ "verb": "locker-get", "file": "견적.txt" })).iter().all(|h| *h), "받기");
+    // 보기(목록)는 배경 그대로 — 참모 길 전체를 사람 몫으로 넓히지 않는다(목록 실패는 팀마다 잠깐 기억되니 다른 팀으로)
+    let (d2, kc2) = in_locker_team("locker-bg", "tB");
+    assert!(human_flags(&d2, &kc2, json!({ "verb": "locker-ls" })).iter().all(|h| !*h), "보기는 배경");
+}

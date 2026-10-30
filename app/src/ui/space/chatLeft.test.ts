@@ -34,17 +34,11 @@ describe('채팅 칸 자리 A', () => {
   });
 });
 
-describe('고른 프사 ↔ 채팅 이어진 면', () => {
-  it('띠가 고른 줄에 채팅 바탕 면(lk-join)을 깔고 경계를 그 높이만큼 덮는다', () => {
-    expect(rail).toMatch(/joined && join && <i className="lk-join"/);
-    expect(css).toMatch(/\.lk-join \{[^}]*right: 0;[^}]*background: var\(--surface\)/);
-    expect(css).toMatch(/\.lk-strip\.joined \{ border-right: 0; box-shadow: inset -1px 0 0 var\(--line\); \}/); // 경계선은 안쪽 그림자 — 이음 면이 그 높이만큼 덮는다
+// 이음 면(lk-join)은 2026-10-29 사용자가 걷었다(399.png '흰 면 하이라이트') — 고른 표시는 그림 둘레 색 테두리 하나(railPick.test.ts)
+describe('띠 경계', () => {
+  it('이어진 띠는 경계선을 안쪽 그림자로', () => {
+    expect(css).toMatch(/\.lk-strip\.joined \{ border-right: 0; box-shadow: inset -1px 0 0 var\(--line\); \}/);
   });
-  it('바꿀 땐 짧게 옮겨 간다(140ms), 줄인 움직임이면 바로', () => {
-    expect(css).toMatch(/\.lk-join \{[^}]*transition: top \.14s ease-out, height \.14s ease-out/);
-    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{ \.lk-join \{ transition: none; \} \}/);
-  });
-  it('왼쪽 색 띠 없음', () => expect(css).not.toMatch(/\.lk-join[^{]*\{[^}]*border-left/));
 });
 
 // 2026-10-12 사용자 201.png: 이음 면만으론 약하다 → 고른 프사 칸과 채팅 칸을 참모 색 윤곽선 하나로(탭이 내용과 붙은 모양, 맞닿는 변만 열림)
@@ -76,8 +70,6 @@ describe('고른 프사 ↔ 채팅 카드 이음 윤곽', () => {
   });
   it('자리는 offsetTop 으로 — 자리 옮김(FLIP)·끌기 중간 자리를 재지 않는다', () => {
     expect(link).not.toMatch(/getBoundingClientRect/);
-    expect(rail).toMatch(/setJoin\(\{ top: on\.offsetTop, height: on\.offsetHeight \}\)/);
-    expect(rail).toMatch(/\[joined, onId, extraOn, wide, width, avatars\.map\(\(a\) => a\.id\)\.join\(' '\)\]/); // 순서가 바뀌어도 이음 면이 따라간다
   });
   it('왼쪽 색 띠 없음 — 카드·윤곽 규칙에 border-left 없음', () => {
     expect(css).not.toMatch(/\.chat-link[^{]*\{[^}]*border-left/);

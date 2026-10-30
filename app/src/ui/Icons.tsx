@@ -244,6 +244,10 @@ export const IconPinOff = () => (
 export const IconFolder = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M1.8 4.2a1 1 0 0 1 1-1h3.4l1.4 1.6h5.6a1 1 0 0 1 1 1v6.9a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1Z" /></svg>
 );
+/** 파인더에서 보기: 폴더 + 오른쪽 아래 돋보기 */
+export const IconReveal = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M7 12.8H2.8a1 1 0 0 1-1-1V4.2a1 1 0 0 1 1-1h3.4l1.4 1.6h5.6a1 1 0 0 1 1 1v1.4" /><circle cx="11" cy="10.6" r="2.2" /><path d="M12.6 12.2 14.3 13.9" /></svg>
+);
 /** 홈: 집(지붕 + 몸 + 문) */
 export const IconHome = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M2.2 7.4 8 2.6l5.8 4.8M3.8 6.2v7.2h8.4V6.2M6.6 13.4V10h2.8v3.4" /></svg>
@@ -320,6 +324,18 @@ export const IconDevice = () => (
 /** 예약: 달력 + 오른쪽 아래 작은 시계 — 기록(되감기 시계)과 덜 닮게(207.png) */
 export const IconCalendarClock = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M7.4 12.6H3.4a1.6 1.6 0 0 1-1.6-1.6V4.6A1.6 1.6 0 0 1 3.4 3h7.2a1.6 1.6 0 0 1 1.6 1.6v2.6M1.8 6.3h10.4M5 1.7v2.6M9 1.7v2.6" /><circle cx="11.5" cy="11.5" r="3.1" /><path d="M11.5 10.1v1.5l1 .7" /></svg>
+);
+/** 달력: 위 고리 둘 + 칸 점(팀 캘린더 탭·블록) */
+export const IconCalendar = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M3.4 3h9.2a1.4 1.4 0 0 1 1.4 1.4v8.2a1.4 1.4 0 0 1-1.4 1.4H3.4A1.4 1.4 0 0 1 2 12.6V4.4A1.4 1.4 0 0 1 3.4 3ZM2 6.6h12M5.2 1.8v2.4M10.8 1.8v2.4M5 9.3h1.2M7.4 9.3h1.2M9.8 9.3H11M5 11.5h1.2M7.4 11.5h1.2" /></svg>
+);
+/** 반복: 위아래로 도는 화살표 둘 */
+export const IconRepeat = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M3 7V6a2 2 0 0 1 2-2h7.5M10.5 2l2 2-2 2M13 9v1a2 2 0 0 1-2 2H3.5M5.5 14l-2-2 2-2" /></svg>
+);
+/** 장소: 지도 핀(물방울 + 가운데 점) */
+export const IconPlace = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M8 14.2s4.6-4.1 4.6-7.6a4.6 4.6 0 0 0-9.2 0C3.4 10.1 8 14.2 8 14.2Z" /><circle cx="8" cy="6.6" r="1.6" /></svg>
 );
 /** 뒤로: 왼쪽 화살표 */
 export const IconBack = () => (

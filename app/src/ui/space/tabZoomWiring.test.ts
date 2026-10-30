@@ -7,6 +7,7 @@ import file from './FileTab.tsx?raw';
 import bar from './TabZoomBar.tsx?raw';
 import anchor from '../zoomAnchor.ts?raw';
 import preview from './Preview.tsx?raw';
+import team from '../team/useTeamMode.tsx?raw';
 import reader from '../reader/Reader.tsx?raw';
 import icons from '../Icons.tsx?raw';
 import css from './space.css?raw';
@@ -38,7 +39,7 @@ describe('탭 확대 — SpaceView', () => {
     expect(view).toMatch(/withTabZoom\(m, zoomPath, nextTabZoom\(zoomPath, z, cmd,/);
   });
   it('가운데 파일 탭(d:)이고 모달이 안 떠 있을 때만 받는다 — 아니면 false 로 돌려 글자 크기로', () => {
-    expect(view).toMatch(/const zoomPath = pick\.startsWith\('d:'\) && !modal \? pick\.slice\(2\) : ''/);
+    expect(view).toMatch(/const zoomPath = modal \? '' : team\?\.on && team\.space \? team\.space\.cur : pick\.startsWith\('d:'\) \? pick\.slice\(2\) : ''/);
     expect(view).toMatch(/if \(!canZoom\) return false;/);
   });
   it('window.__tabZoom 을 걸고, 휠(⌘·Ctrl·Alt)·사파리 핀치는 기본 동작을 막고(passive false) capture 로 받는다', () => {
@@ -98,5 +99,17 @@ describe('탭 확대 — 안내 글', () => {
     expect(tour).toMatch(/⌘\+ · ⌘- · ⌘0/);
     expect(tour).toMatch(/⌘9 는 맞춤/); // ⌘9 는 채팅 탭 줄에 한 번만(2026-10-22 QA 22)
     for (const d of [readmeKo, readmeEn, skill]) expect(d).toMatch(/⌘9/);
+  });
+});
+
+// 2026-10-30 사용자(참모-2 전달, team-space.png): 팀챗 스페이스 미리보기엔 확대 칸이 없었다 — 확대 탭이 참모 탭(d:)만 봐서.
+// 팀 모드면 팀 스페이스에서 보던 탭(cur)이 확대 탭 — 같은 TabZoomBar·같은 zoomUi(따로 짜지 않는다)
+describe('탭 확대 — 팀 스페이스도', () => {
+  it('팀 스페이스가 보던 탭(cur)을 알려 준다', () => {
+    expect(team).toMatch(/cur: string;/);
+    expect(team).toMatch(/cur: tabs\.cur,/);
+  });
+  it('팀 모드면 그 탭이 확대 탭 — 참모 탭(d:)이 아니어도', () => {
+    expect(view).toMatch(/const zoomPath = modal \? '' : team\?\.on && team\.space \? team\.space\.cur : pick\.startsWith\('d:'\) \? pick\.slice\(2\) : '';/);
   });
 });

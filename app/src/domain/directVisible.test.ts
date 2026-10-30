@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { interleave } from './chatExtras';
 import { cardShow, directCards, freshAppCards, GONE_GRACE_MS, needsLook, phoneOwns, placeDirect, stepSeen, type Seen } from './directAsk';
+import { forwardTo, sentBy } from './forwardQuestion';
 import { parseAgents, withinRoots } from './session';
 import type { TaskEvent } from './tasks';
 
@@ -23,12 +24,12 @@ const LOG = JSON.stringify({ ts: ASK_TS, type: 'ask', id: 'c0ffee01', from: 'cc3
 const SEND: TaskEvent = { ts: '2026-10-05T05:10:00+00:00', type: 'send', task: 't1', target: 'blog', from: 'aa11bb22', fromName: '참모' };
 const noAct = { prompt: () => undefined, reply: () => undefined };
 
-const place = (agents: object[], o: { events?: TaskEvent[]; seen?: Seen; now?: number; front?: 'first' | 'none' } = {}) => {
+const place = (agents: object[], o: { events?: TaskEvent[]; seen?: Seen; now?: number } = {}) => {
   const everyone = parseAgents(raw(...agents), DEV, EXTRAS);
   const orchs = everyone.filter((s) => s.cwd === HQ);
   const now = o.now ?? T_ASK + 5_000;
   const seen = stepSeen(o.seen ?? {}, everyone.map((s) => s.id), now);
-  return placeDirect(LOG, { everyone, seen, now, ...noAct, events: o.events ?? [SEND], orchs, front: o.front === 'none' ? undefined : orchs[0] });
+  return placeDirect(LOG, { everyone, seen, now, ...noAct, events: o.events ?? [SEND], orchs });
 };
 
 describe('그날 재현 — 워크트리에 들어간 세션의 카드', () => {
@@ -77,20 +78,20 @@ describe('재시작 — 같은 번호로 되살아나는 사이 잠깐 빠져도
 });
 
 describe('기다리는 카드는 어떤 경우에도 숨지 않는다', () => {
-  const cases: { name: string; agents: object[]; events: TaskEvent[]; front: 'first' | 'none' }[] = [
-    { name: '워크트리 세션 + 이름 send', agents: [ORCH, BLOG], events: [SEND], front: 'first' },
-    { name: 'send 없음', agents: [ORCH, BLOG], events: [], front: 'first' },
-    { name: '보낸 참모가 꺼짐', agents: [ORCH2, BLOG], events: [SEND], front: 'first' },
-    { name: '참모가 하나도 없음', agents: [BLOG], events: [SEND], front: 'none' },
-    { name: '세션이 목록에서 빠짐(꺼짐)', agents: [ORCH], events: [SEND], front: 'first' },
+  // owned = 일 기록으로 주인을 정할 수 있나 — 못 정하면 어느 참모 채팅에도 안 붙고 결정 대기함에만(2026-10-29)
+  const cases: { name: string; agents: object[]; events: TaskEvent[]; owned: boolean }[] = [
+    { name: '워크트리 세션 + 이름 send', agents: [ORCH, BLOG], events: [SEND], owned: true },
+    { name: 'send 없음', agents: [ORCH, BLOG], events: [], owned: false },
+    { name: '보낸 참모가 꺼짐', agents: [ORCH2, BLOG], events: [SEND], owned: false },
+    { name: '참모가 하나도 없음', agents: [BLOG], events: [SEND], owned: false },
+    { name: '세션이 목록에서 빠짐(꺼짐)', agents: [ORCH], events: [SEND], owned: false },
   ];
   for (const c of cases) {
     it(c.name, () => {
-      const [p] = place(c.agents, { events: c.events, front: c.front, now: T_ASK + 6 * 3600_000 });
+      const [p] = place(c.agents, { events: c.events, now: T_ASK + 6 * 3600_000 });
       // 결정 대기함(상단 종)은 늘 받는다 — 어느 화면·참모를 보든
       expect(cardShow(p!.card, T_ASK + 6 * 3600_000, {})).toBe('full');
-      // 참모가 하나라도 살아 있으면 그 참모 채팅에도
-      if (c.front === 'first') expect(p!.owner).toBeDefined();
+      expect(!!p!.owner).toBe(c.owned);
     });
   }
 });
@@ -117,7 +118,7 @@ describe('폰 — 연결 요청 카드는 보고 있는 참모 채팅 어디서�
     const everyone = parseAgents(raw(ORCH, ORCH2, BLOG), DEV, EXTRAS);
     const orchs = everyone.filter((s) => s.cwd === HQ);
     const now = T_ASK + 5_000;
-    const placed = placeDirect(`${LOG}\n${LINK}`, { everyone, seen: stepSeen({}, everyone.map((s) => s.id), now), now, ...noAct, events: [SEND], orchs, front: orchs[0] });
+    const placed = placeDirect(`${LOG}\n${LINK}`, { everyone, seen: stepSeen({}, everyone.map((s) => s.id), now), now, ...noAct, events: [SEND], orchs });
     expect(phoneOwns(placed, 'ee55ff66').map((c) => c.id)).toEqual(['b0b0b0b0']);
     expect(phoneOwns(placed, 'aa11bb22').map((c) => c.id).sort()).toEqual(['b0b0b0b0', 'c0ffee01']);
   });
@@ -130,7 +131,7 @@ describe('데스크톱 — 앱이 낸 카드는 어느 참모 채팅에도 안 �
     const everyone = parseAgents(raw(ORCH, ORCH2, BLOG), DEV, EXTRAS);
     const orchs = everyone.filter((s) => s.cwd === HQ);
     const now = T_ASK + 5_000;
-    const placed = placeDirect(`${LOG}\n${LINK}`, { everyone, seen: stepSeen({}, everyone.map((s) => s.id), now), now, ...noAct, events: [SEND], orchs, front: orchs[0] });
+    const placed = placeDirect(`${LOG}\n${LINK}`, { everyone, seen: stepSeen({}, everyone.map((s) => s.id), now), now, ...noAct, events: [SEND], orchs });
     expect(placed.find((p) => p.card.id === 'b0b0b0b0')?.owner).toBeUndefined();
     expect(placed.find((p) => p.card.id === 'c0ffee01')?.owner?.id).toBe('aa11bb22');
   });
@@ -138,10 +139,71 @@ describe('데스크톱 — 앱이 낸 카드는 어느 참모 채팅에도 안 �
 
 describe('앱 카드가 새로 뜨면 화면 위 짧은 알림 — 결정 대기함으로', () => {
   const LINK = JSON.stringify({ ts: ASK_TS, type: 'ask', id: 'b0b0b0b0', from: '@link', cwd: '', kind: 'link', sub: 'device', dev: 'd1', q: '새 기기 허용?', yes: '허용', no: '거절', options: [] });
-  it('새로 기다리는 @link 카드만, 앱을 켠 첫 읽기·세션 카드는 안 알린다', () => {
-    const cards = directCards(`${LOG}\n${LINK}`, { alive: () => true, prompt: () => undefined, reply: () => undefined, now: T_ASK + 5_000 });
-    expect(freshAppCards(null, cards)).toEqual([]);
-    expect(freshAppCards(new Set(), cards).map((c) => c.id)).toEqual(['b0b0b0b0']);
-    expect(freshAppCards(new Set(['b0b0b0b0']), cards)).toEqual([]);
+  it('새로 기다리는 @link 카드만, 앱을 켠 첫 읽기·주인 있는 세션 카드는 안 알린다', () => {
+    const placed = place([ORCH, BLOG]).concat(placeDirect(LINK, { everyone: [], seen: {}, now: T_ASK + 5_000, unknown: true, ...noAct, events: [], orchs: [] }));
+    expect(freshAppCards(null, placed)).toEqual([]);
+    expect(freshAppCards(new Set(), placed).map((c) => c.id)).toEqual(['b0b0b0b0']);
+    expect(freshAppCards(new Set(['b0b0b0b0']), placed)).toEqual([]);
+  });
+});
+
+// 2026-10-29 — 참모가 scripts/task send 없이 띄운 도우미는 일 기록이 없었다.
+// 그 카드가 맡은 일 짐작(heir)·맨 앞 참모로 떨어져 엉뚱한 참모 채팅에 처리 줄이 붙었다
+describe('주인을 일 기록으로 못 정한 카드 — 짐작으로 참모 채팅에 안 붙인다', () => {
+  const SEC = { ...ORCH, pid: 5, id: '5ec5ec00', sessionId: '5ec5ec00-0000', name: '참모-3' }; // 맨 앞(폰 orchs[0]) 자리의 참모
+  const HELPER = { pid: 4, id: 'e9e9e9e9', cwd: HQ, kind: 'background', startedAt: 3, sessionId: 'e9e9e9e9-0000', name: '사이트-확인', status: 'idle', state: 'working' };
+  const SHOP = { pid: 6, id: '5a0b0001', cwd: `${DEV}/shop`, kind: 'background', startedAt: 4, sessionId: '5a0b0001-0000', name: 'shop', status: 'idle', state: 'working' };
+  const SHOP2 = { ...SHOP, pid: 7, id: '5a0b0002', sessionId: '5a0b0002-0000', name: 'shop-2' };
+  const ask = (id: string, from: string, ts = ASK_TS) => JSON.stringify({ ts, type: 'ask', id, from, cwd: HQ, q: '폰에 뜬 확인 눌러 줘', kind: 'other', yes: '승인', no: '거절', options: [] });
+  const done = (id: string) => JSON.stringify({ ts: '2026-01-01T09:01:00+00:00', type: 'done', id, note: '확인, 이어감' });
+  const now = T_ASK + 90_000;
+  const setup = (log: string, events: TaskEvent[]) => {
+    const everyone = parseAgents(raw(SEC, ORCH, ORCH2, HELPER, SHOP, SHOP2), DEV, EXTRAS);
+    const orchs = everyone.filter((s) => s.cwd === HQ && s.id !== HELPER.id);
+    return { everyone, orchs, placed: placeDirect(log, { everyone, seen: stepSeen({}, everyone.map((s) => s.id), now), now, ...noAct, events, orchs }) };
+  };
+  const helperSend: TaskEvent = { ts: '2026-01-01T08:59:00+00:00', type: 'send', task: 't9', target: '사이트-확인', from: 'ee55ff66', fromName: '참모-2' };
+
+  it('원인: 옛 길(forwardTo)은 기록이 없으면 맨 앞 참모로 짐작한다 — 주인 확정(sentBy)은 없다', () => {
+    const { everyone, orchs } = setup('', []);
+    const helper = everyone.find((s) => s.id === HELPER.id)!;
+    expect(forwardTo(helper, [], orchs, everyone, orchs[0])?.id).toBe('5ec5ec00');
+    expect(sentBy(helper, [], orchs, everyone)).toBeUndefined();
+  });
+  it('기록 없는 도우미 카드 — 주인 없음(데스크톱은 결정 대기함 + 화면 위 한 줄)', () => {
+    const { placed } = setup(ask('c0c0c0c1', HELPER.id), []);
+    expect(placed[0]!.owner).toBeUndefined();
+    expect(freshAppCards(new Set(), placed).map((c) => c.id)).toEqual(['c0c0c0c1']);
+  });
+  it('참모가 띄우기 전에 task send 로 이름을 기록했으면 그 참모 채팅으로(알림 줄은 없음)', () => {
+    const { placed } = setup(ask('c0c0c0c1', HELPER.id), [helperSend]);
+    expect(placed[0]!.owner?.id).toBe('ee55ff66');
+    expect(freshAppCards(new Set(), placed)).toEqual([]);
+  });
+  it('넘겨받은 일(own)이면 새 주인', () => {
+    const own: TaskEvent = { ts: '2026-01-01T08:59:30+00:00', type: 'own', task: 't9', from: 'aa11bb22', fromName: '참모' };
+    expect(setup(ask('c0c0c0c1', HELPER.id), [helperSend, own]).placed[0]!.owner?.id).toBe('aa11bb22');
+  });
+  it('보낸 참모가 꺼졌으면 짐작하지 않는다', () => {
+    const gone: TaskEvent = { ...helperSend, from: 'dead0000', fromName: '참모-9' };
+    expect(setup(ask('c0c0c0c1', HELPER.id), [gone]).placed[0]!.owner).toBeUndefined();
+  });
+  it('같은 프로젝트의 다른 세션에 보낸 기록은 짐작이다 — 주인 아님', () => {
+    const toShop: TaskEvent = { ts: '2026-01-01T08:50:00+00:00', type: 'send', task: 't8', target: 'shop', from: 'ee55ff66', fromName: '참모-2' };
+    const { everyone, orchs, placed } = setup(ask('5a0bca00', SHOP2.id), [toShop]);
+    expect(forwardTo(everyone.find((s) => s.id === SHOP2.id)!, [toShop], orchs, everyone)?.id).toBe('ee55ff66'); // 멈춤 알림 같은 다른 길은 그대로
+    expect(placed[0]!.owner).toBeUndefined();
+  });
+  it('폰 — 주인 없는 기다리는 카드는 보고 있는 참모 채팅 어디서든', () => {
+    const { placed } = setup(ask('c0c0c0c1', HELPER.id), []);
+    for (const o of ['5ec5ec00', 'aa11bb22', 'ee55ff66']) expect(phoneOwns(placed, o).map((c) => c.id)).toEqual(['c0c0c0c1']);
+  });
+  it('폰 — 처리된 한 줄은 주인 확정 카드만(주인 없는 건 어느 채팅에도 안 남는다)', () => {
+    const log = [ask('c0c0c0c1', HELPER.id), done('c0c0c0c1'), ask('c0c0c0c2', SHOP.id, '2026-01-01T09:00:30+00:00'), done('c0c0c0c2')].join('\n');
+    const toShop: TaskEvent = { ts: '2026-01-01T08:50:00+00:00', type: 'send', task: 't8', target: 'shop', from: 'ee55ff66', fromName: '참모-2' };
+    const { placed } = setup(log, [toShop]);
+    expect(placed.map((p) => p.card.state)).toEqual(['done', 'done']);
+    expect(phoneOwns(placed, '5ec5ec00')).toEqual([]);
+    expect(phoneOwns(placed, 'ee55ff66').map((c) => c.id)).toEqual(['c0c0c0c2']);
   });
 });

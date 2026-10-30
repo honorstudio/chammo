@@ -4,6 +4,7 @@ import type { FeatureSwitch, Features } from './config';
 import type { Session } from './session';
 import type { Shortcut } from './shortcuts';
 import { findTarget } from './inbox';
+import { isModelId } from './modelPick';
 
 export const OPEN = ['settings', 'tour', 'office', 'review', 'all', 'replay', 'load', 'reader', 'tasks', 'inbox', 'home', 'harnitor', 'tools'] as const;
 export type OpenWhat = (typeof OPEN)[number];
@@ -26,9 +27,8 @@ export type AppIntent =
   /** 브라우저 일인데 그 프로젝트에 이 프로젝트 브라우저가 없다 — 결정 대기함 [연결] 카드(task send·scripts/app browser need, GitHub #2) */
   | { kind: 'browserNeed'; dir: string; session: string; why: string }
   /** 폰(폰 서버 /api/model)이 고른 참모 모델·에포트 — 데스크톱 칩과 같은 runModelPick 으로(SessionGrid) */
-  | { kind: 'modelPick'; id: string; want: { model?: 'opus' | 'sonnet' | 'haiku'; effort?: string } };
+  | { kind: 'modelPick'; id: string; want: { model?: string; effort?: string } };
 
-const MODEL_ALIASES = ['opus', 'sonnet', 'haiku'] as const;
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 const onOff = (v: string | undefined) => (v === 'on' ? true : v === 'off' ? false : null);
@@ -45,7 +45,7 @@ export function intentOf(line: unknown): AppIntent | null {
   if (action === 'model-pick') {
     const o = arg as { id?: unknown; model?: unknown; effort?: unknown } | null;
     if (!o || typeof o !== 'object' || typeof o.id !== 'string' || !o.id) return null;
-    const model = MODEL_ALIASES.find((m) => m === o.model);
+    const model = isModelId(o.model) ? o.model : undefined; // 칩 목록의 전체 id 만(domain/modelPick)
     const effort = EFFORT_LEVELS.find((e) => e === o.effort);
     if ((o.model != null && !model) || (o.effort != null && !effort) || (!model && !effort)) return null;
     return { kind: 'modelPick', id: o.id, want: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) } };

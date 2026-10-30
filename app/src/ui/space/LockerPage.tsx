@@ -86,6 +86,8 @@ export type CardActs = {
   onDisconnect?: (rel: string) => void;
   /** 여러 개 고른 묶음(2026-10-12 사용자) — 채팅 입력칸에 한꺼번에 · 폴더에 바로가기 · 옮기기 · 휴지통(연결 폴더 안은 맥 휴지통) */
   onSendMany?: (paths: string[]) => void;
+  /** 지금 연 폴더째 참모에게 — 폴더 머리줄(2026-10-30 사용자 '이 폴더'), 입력칸에 폴더 칩 */
+  onSendFolder?: (path: string) => void;
   onAliasMany?: (paths: string[], folder: string) => void;
   onMoveMany?: (rels: string[], to: string) => void;
   /** foldersOk = 안에 든 것이 있는 폴더까지(화면이 '폴더 n개(안에 k개)'를 따로 확인받았다) */
@@ -600,6 +602,7 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
         <Crumbs dir={dir} rel={place.rel} count={files.length} onPlace={onPlace} ro={roAt} />
         {!ro && <IconButton tone="line" label={tr('여기에 새 폴더', 'New folder here')} onClick={() => newFolder(place.rel)}><IconFolderPlus /></IconButton>}
         {connectBtn}
+        {acts.onSendFolder && !entries.find((x) => x.rel === here)?.gone && <SendToOrch to={acts.sendTo} onClick={() => acts.onSendFolder!(abs(here))} />}
         <span className="lk-sp" />
         {(files.length > 1 || dirs.length > 1) && <SortButton keys={LK_SORTS} value={sort} onChange={(x) => { setSort(x); saveLkSort(x); }} />}
         {viewSeg}

@@ -490,7 +490,7 @@ fn pe_거절_시간_끝_옛_판_다른_계정은_이유만_남기고_아무것�
     for (st, want) in [
         ((200, r#"{"state":"no"}"#), "거절"),
         ((200, r#"{"state":"expired"}"#), "5분"),
-        ((404, "no such request"), "잊었"),
+        ((404, "no such request"), "기억하지"),
         ((200, r#"{"state":"yes","token":"짧음","back":"x"}"#), "열쇠 모양"),
     ] {
         let dir = tmp("connect-no");
@@ -500,7 +500,7 @@ fn pe_거절_시간_끝_옛_판_다른_계정은_이유만_남기고_아무것�
         assert!(e.contains(want), "{want}: {e}");
         assert!(kc.val(SERVICE, "nBOX").is_none() && lines.list().is_empty() && load(&dir).is_empty());
     }
-    for (code, body, want) in [(404, "not found", "옛 판"), (403, "not your device", "같은 테일스케일 계정"), (403, "unconfirmed", "확인"), (429, "too many", "잦"), (501, "unsupported", "업데이트")] {
+    for (code, body, want) in [(404, "not found", "옛 버전"), (403, "not your device", "같은 테일스케일 계정"), (403, "unconfirmed", "확인"), (429, "too many", "잦"), (501, "unsupported", "업데이트")] {
         let dir = tmp("connect-req");
         let (kc, lines, asks) = (Fake::default(), crate::mobile_pair::Devices::memory(), crate::peer_ask::Asks::default());
         let mut w = wire(&asks, &[(200, r#"{"state":"wait"}"#)]);

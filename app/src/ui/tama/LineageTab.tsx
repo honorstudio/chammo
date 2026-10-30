@@ -17,7 +17,7 @@ export function QuirkChips({ quirks }: { quirks: Quirk[] }) {
 }
 
 export function LineageTab({ lineage, pet, heir }: { lineage: Ancestor[]; pet: Pet | null; heir: Quirk[] }) {
-  if (!lineage.length) return <div className="pv-blank">{tr('아직 은퇴한 애가 없어 — 궁극체가 되고 하루 지나면 은퇴하고, 다음 알이 버릇을 물려받아', 'No one has retired yet — a day after reaching its final form it retires, and the next egg inherits a habit')}</div>;
+  if (!lineage.length) return <div className="pv-blank">{tr('아직 은퇴한 애가 없어. 궁극체가 되고 하루가 지나면 은퇴하고, 다음 알이 버릇을 물려받아', 'No one has retired yet. A day after reaching its final form it retires, and the next egg inherits a habit')}</div>;
   return (
     <ol className="pv-lineage">
       {lineage.map((a, i) => (

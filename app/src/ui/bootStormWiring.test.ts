@@ -21,11 +21,14 @@ describe('부팅 폭주 — 화면이 판단에 이어져 있다', () => {
   it('TerminalPane: 끊긴 칸은 바쁘면 느리게·같이 쓰는 목록으로 다시 본다', () => {
     expect(pane).toMatch(/reattachEvery\(busy\)/);
     expect(pane).toMatch(/listSessionsRaw\(busy === 'ok'\)/);
+    expect(pane).toMatch(/linkRef\.current\?\.\('gone', 'kicked', \(\) => setEpoch/); // 쫓겨난 칸은 저절로 안 붙고, 보낼 때 되찾을 손잡이를 넘긴다
     expect(pane).toMatch(/step === 'attach' && busy !== 'ok'[\s\S]{0,200}listSessionsRaw\(true\)/); // 붙기 직전엔 새로
   });
   it('SessionGrid: 붙는 중엔 터미널로 돌려 봤어도 채팅+안내, 굳은 끊김은 기다리던 말을 놓는다', () => {
     expect(grid).toMatch(/linkOf\[id\] !== 'live' && !termNow\.has\(id\)/); // 붙는 중 사람이 고른 터미널은 덮지 않는다
-    expect(grid).toMatch(/if \(linkNow\.get\(id\) === 'gone'\) throw/); // 굳은 끊김 뒤 줄 선 말도 바로 실패
+    expect(grid).toMatch(/sendOnLink\(linkNow\.get\(id\), retakes\.has\(id\)\)/); // 굳은 끊김 뒤 줄 선 말도 바로 실패 — 쫓겨난 칸만 되찾기
+    expect(grid).toMatch(/if \(plan === 'fail'\) throw/);
+    expect(grid).toMatch(/if \(st === 'gone' && why === 'kicked' && retake\) retakes\.set\(id, retake\)/);
     expect(grid).toMatch(/linkNow\.delete\(id\)/);
     expect(grid).toMatch(/linkOf\[id\] === 'attaching' && !slowLink\[id\]\) return null/); // 한가할 땐 깜빡이지 않게
     expect(grid).toMatch(/if \(st === 'gone'\) links\.drop\(id\)/);

@@ -208,6 +208,16 @@ pub fn phone_attach(p: &Path, data_dir: &Path) -> bool {
 
 /// 요청 경로가 집합 안(또는 폰이 올린 첨부)이고, 어느 단계도 링크가 아니며 ../ 가 없나
 pub fn pick(requested: &str, allowed: &[String], rules: &Rules) -> Pick {
+    pick_in(requested, allowed, rules, shareable)
+}
+
+/// 맥 화면에서 사람이 건네는 파일(파인더에서 보기·바깥으로 끌기, shown_share) — pick 과 같되 형식은 안 가린다(.ai·.psd·.zip 발주 파일도).
+/// 집합·링크·../·점 폴더·데이터 폴더·비밀 이름 거름은 그대로
+pub fn pick_local(requested: &str, allowed: &[String], rules: &Rules) -> Pick {
+    pick_in(requested, allowed, rules, place_ok)
+}
+
+fn pick_in(requested: &str, allowed: &[String], rules: &Rules, shareable: fn(&Path, &Rules) -> bool) -> Pick {
     let listed = allowed.iter().any(|a| a == requested) || phone_attach(Path::new(requested), &rules.data_dir);
     if !Path::new(requested).is_absolute() || !listed {
         return Pick::Forbidden;

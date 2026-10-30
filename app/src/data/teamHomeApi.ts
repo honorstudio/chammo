@@ -2,12 +2,16 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ContentDraft, Home, HomeApi, HomeBoard, HomeSources } from '../domain/teamHome';
 import type { LockerView } from '../domain/teamLocker';
+import { teamViewMemo } from '../domain/teamViewMemo';
 import { openTeamFile } from '../ui/team/openTeamFile';
 import { openTarget } from './tauri';
 import { teamAgents, teamAgentsCached } from './teamAgentApi';
 import { teamProfileChanged } from './teamProfileApi';
 
 export const teamHome = (team: string) => invoke<HomeBoard>('team_home', { team });
+
+/** 팀 홈 판 기억(창 메모리) — 팀 홈 화면과 띠 팀 칸(팀 색)이 같이 읽는다. 팀 홈에서 저장해 다시 읽으면 띠가 바로 따라간다 */
+export const homeMemo = teamViewMemo<HomeBoard>();
 
 /** 데스크톱 판 길 — 글판과 같은 판 번호로 보관함이 바뀌었을 때만 다시 읽는다 */
 export const desktopHome: HomeApi = {

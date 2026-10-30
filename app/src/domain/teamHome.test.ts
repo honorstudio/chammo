@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BLOCKS_MAX, addBlock, blankContent, canAdd, changedLine, dropAt, fromTemplate, goalFix, homeSame, linkProblem, moveBlock, removeBlock, setWidth, teamColor, TEMPLATES, TEAM_COLORS,
+  BLOCKS_MAX, addBlock, blankContent, canAdd, changedLine, dropAt, fromTemplate, goalFix, homeColor, homeSame, linkProblem, moveBlock, postPlaces, removeBlock, setWidth, teamColor, TEMPLATES, TEAM_COLORS,
   type Home, type HomeBlock,
 } from './teamHome';
 
@@ -8,18 +8,37 @@ const b = (id: string, k: HomeBlock['k'], w: HomeBlock['w'] = 'half'): HomeBlock
 const home = (blocks: HomeBlock[]): Home => ({ t: 'home', color: 0, blurb: '', cover: '', blocks, at: 0 });
 
 describe('팀 홈 템플릿 셋(ADR 0018 9)', () => {
-  it('기본·프로젝트팀·운영팀 — 시안 T 구성 그대로', () => {
+  it('기본·프로젝트팀·운영팀 — 시안 T 구성에 셋 다 글 목록(운영팀은 빠져 있어서 올린 글이 안 보였다, 공개 이슈 #9)', () => {
     const ks = (key: string) => fromTemplate(key as never, () => 'x').blocks.map((x) => x.k);
     expect(TEMPLATES.map((t) => t.key)).toEqual(['basic', 'project', 'ops']);
-    expect(ks('basic')).toEqual(['pin', 'members', 'files', 'posts']);
-    expect(ks('project')).toEqual(['goals', 'files', 'agents', 'links', 'posts']);
-    expect(ks('ops')).toEqual(['pin', 'mode', 'members', 'agents', 'links']);
+    // 팀 캘린더 블록(relay ADR 0011 · 10-30 다시 맞춤) — 기본·프로젝트팀에 기본으로
+    expect(ks('basic')).toEqual(['pin', 'cal', 'members', 'files', 'posts']);
+    expect(ks('project')).toEqual(['cal', 'goals', 'files', 'agents', 'links', 'posts']);
+    expect(ks('ops')).toEqual(['pin', 'mode', 'members', 'agents', 'links', 'posts']);
+    for (const t of TEMPLATES) expect(t.ks).toContain('posts');
   });
   it('블록 id 는 판 안에서 겹치지 않는다', () => {
     let n = 0;
     const h = fromTemplate('ops', () => `b${n++}`);
     expect(new Set(h.blocks.map((x) => x.id)).size).toBe(h.blocks.length);
     expect(h.blocks.find((x) => x.k === 'mode')).toMatchObject({ w: 'full', mode: '' });
+  });
+});
+
+describe('글이 보일 자리 — 칸 구성과 상관없이 올린 글은 어딘가에 보인다(공개 이슈 #9)', () => {
+  it('판이 없으면 글 목록 판 그대로(따로 그릴 것 없음)', () => {
+    expect(postPlaces(null)).toEqual({ pinInList: false, listBelow: false });
+  });
+  it('글 목록·고정 공지 칸이 다 있으면 따로 그릴 것 없음', () => {
+    expect(postPlaces(home([b('a', 'pin', 'full'), b('d', 'posts', 'full')]))).toEqual({ pinInList: false, listBelow: false });
+  });
+  it('글 목록 칸이 없으면 판 아래에 글 — 팀원이 올린 글이 어디에도 안 보였다', () => {
+    expect(postPlaces(home([b('a', 'pin', 'full'), b('m', 'mode', 'full'), b('b', 'members'), b('f', 'files'), b('l', 'links')]))).toEqual({ pinInList: false, listBelow: true });
+  });
+  it('고정 공지 칸이 없으면 고정한 글도 글 목록 맨 앞에 — 프로젝트팀 판은 고정해도 안 보였다', () => {
+    expect(postPlaces(fromTemplate('project'))).toEqual({ pinInList: true, listBelow: false });
+    expect(postPlaces(home([b('b', 'members')]))).toEqual({ pinInList: true, listBelow: true });
+    expect(postPlaces(home([]))).toEqual({ pinInList: true, listBelow: true });
   });
 });
 
@@ -138,4 +157,18 @@ describe('커버 사진 자르기 — 가운데 3:1', () => {
     expect(coverCrop(3000, 600)).toEqual({ sx: 600, sy: 0, sw: 1800, sh: 600 });
     expect(coverCrop(1200, 1200)).toEqual({ sx: 0, sy: 400, sw: 1200, sh: 400 });
   });
+});
+
+describe('팀 색 — 팀 홈 판에서 팀장이 고른 색(띠 팀 칸 고른 테두리가 따라간다, 10-29 사용자)', () => {
+  const board = (home: { color: number } | null) => ({ team: 't1', rev: 1, home: home && { t: 'home' as const, color: home.color, blurb: '', cover: '', blocks: [], at: 1 }, by: '', content: {}, cover: '', owner: true, me: '' });
+  it('판이 있으면 그 색', () => {
+    expect(homeColor(board({ color: 6 }))).toBe(TEAM_COLORS[6]);
+    expect(homeColor(board({ color: 0 }))).toBe(TEAM_COLORS[0]);
+  });
+  it('판이 없거나 아직 못 읽었으면 없음 — 띠는 지금 색(이름 색)을 쓴다', () => {
+    expect(homeColor(board(null))).toBeUndefined();
+    expect(homeColor(null)).toBeUndefined();
+    expect(homeColor(undefined)).toBeUndefined();
+  });
+  it('모르는 번호는 첫 색(팀 홈 머리와 같은 규칙)', () => expect(homeColor(board({ color: 42 }))).toBe(TEAM_COLORS[0]));
 });

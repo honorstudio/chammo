@@ -1,5 +1,6 @@
 //! 팀 보관함·대화 파일 화면 명령 — 메인 창·메신저 창(team-*)만. 사용자 폴더(끌어 넣은 파일·~/Documents/Chammo)를 건드려서
 //! 전부 async + spawn_blocking(메인 스레드에서 열면 맥 권한 창이 앱을 세운다 — offmain)
+use crate::team_relay::{human_job, bg_job};
 use crate::team_locker::FileRef;
 use crate::team_locker_app::{self as app, View};
 use serde_json::{json, Value};
@@ -7,10 +8,6 @@ use std::path::{Path, PathBuf};
 
 fn ui_only(w: &tauri::WebviewWindow) -> Result<(), String> {
     if crate::team_ui::ui_window(w.label()) { Ok(()) } else { Err("messenger windows only".into()) }
-}
-
-async fn job<T: Send + 'static>(f: impl FnOnce(&Path, &dyn crate::accounts_store::Store, &dyn crate::team_relay::Http) -> Result<T, String> + Send + 'static) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(move || f(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl)).await.map_err(|e| e.to_string())?
 }
 
 /// 끌어 넣은 경로 — 절대 경로 파일만, 한 번에 50개까지
@@ -25,7 +22,7 @@ fn files(paths: Vec<String>) -> Result<Vec<PathBuf>, String> {
 #[tauri::command]
 pub async fn team_locker_list(window: tauri::WebviewWindow, team: String) -> Result<View, String> {
     ui_only(&window)?;
-    let (v, share) = job(move |d, kc, h| app::list_split(d, kc, h, &team)).await?;
+    let (v, share) = bg_job(move |d, kc, h| app::list_split(d, kc, h, &team)).await?;
     share.spawn();
     Ok(v)
 }
@@ -34,7 +31,7 @@ pub async fn team_locker_list(window: tauri::WebviewWindow, team: String) -> Res
 #[tauri::command]
 pub async fn team_locker_cached(window: tauri::WebviewWindow, team: String) -> Result<Option<View>, String> {
     ui_only(&window)?;
-    job(move |d, kc, _| Ok(app::cached(d, kc, &team))).await
+    bg_job(move |d, kc, _| Ok(app::cached(d, kc, &team))).await
 }
 
 /// 끌어 넣기 — 뒤에서 하나씩 올리고 바로 돌아간다(진행은 team_locker_poll)
@@ -43,11 +40,14 @@ pub async fn team_locker_put(window: tauri::WebviewWindow, team: String, paths: 
     ui_only(&window)?;
     let paths = files(paths)?;
     let folder = folder.unwrap_or_default();
+    // 사람이 끌어 넣은 파일 — 배경 몫에 안 막히게 사람 몫으로(team_relay::as_human)
     std::thread::spawn(move || {
         let (d, kc, h) = (crate::config::data_dir(), crate::team_relay_keys::store(), crate::team_relay::Curl);
-        for p in paths {
-            let _ = app::put_file_in(d, &kc, &h, &team, "", "file", &folder, &p);
-        }
+        crate::team_relay::as_human(|| {
+            for p in paths {
+                let _ = app::put_file_in(d, &kc, &h, &team, "", "file", &folder, &p);
+            }
+        });
     });
     Ok(())
 }
@@ -76,7 +76,7 @@ pub fn team_locker_dismiss(window: tauri::WebviewWindow, local: String) -> Resul
 #[tauri::command]
 pub async fn team_locker_open(window: tauri::WebviewWindow, team: String, id: String, external: Option<bool>) -> Result<String, String> {
     ui_only(&window)?;
-    job(move |d, kc, h| {
+    human_job(move |d, kc, h| {
         let p = app::view(d, kc, h, &team, &id)?;
         if external.unwrap_or(false) {
             crate::platform::open_path(&p.to_string_lossy()).map_err(|e| format!("못 열었어: {e}"))?;
@@ -95,7 +95,7 @@ pub async fn team_locker_give(app_handle: tauri::AppHandle, window: tauri::Webvi
         return Err("파일은 한 번에 1~50개".into());
     }
     let who = orch.clone();
-    let paths = job(move |d, kc, h| {
+    let paths = human_job(move |d, kc, h| {
         let root = crate::locker_fs::app_ctx().root;
         ids.iter().map(|id| app::give(d, kc, h, &team, id, &root, &who, &name).map(|p| p.to_string_lossy().into_owned())).collect::<Result<Vec<_>, _>>()
     })
@@ -104,12 +104,26 @@ pub async fn team_locker_give(app_handle: tauri::AppHandle, window: tauri::Webvi
     Ok(paths)
 }
 
+/// 팀 보관함 폴더 머리줄의 '내 참모에게' — 폴더째(안의 파일 ids) 그 참모 팀 자리에 풀고 그 폴더 경로(끝 / = 폴더 칩) 하나를 붙인다
+#[tauri::command]
+pub async fn team_locker_give_folder(app_handle: tauri::AppHandle, window: tauri::WebviewWindow, team: String, folder: String, ids: Vec<String>, orch: String, name: String) -> Result<String, String> {
+    ui_only(&window)?;
+    if ids.len() > 200 {
+        return Err("폴더째는 파일 200개까지".into());
+    }
+    let who = orch.clone();
+    let p = human_job(move |d, kc, h| app::give_folder(d, kc, h, &team, &folder, &ids, &crate::locker_fs::app_ctx().root, &who, &name)).await?;
+    let p = format!("{}/", p.to_string_lossy());
+    tell_give(&app_handle, &window, &orch, std::slice::from_ref(&p));
+    Ok(p)
+}
+
 /// 스페이스 팀 파일 탭의 '내 참모에게' — 풀어 둔 팀 파일(경로)을 그 참모 팀 자리에 복사한 경로. 알리는 길은 위와 같다
 #[tauri::command]
 pub async fn team_peek_give(app_handle: tauri::AppHandle, window: tauri::WebviewWindow, path: String, orch: String, name: String) -> Result<String, String> {
     ui_only(&window)?;
     let who = orch.clone();
-    let p = job(move |d, _, _| app::give_path(d, Path::new(&path), &crate::locker_fs::app_ctx().root, &who, &name)).await?.to_string_lossy().into_owned();
+    let p = human_job(move |d, _, _| app::give_path(d, Path::new(&path), &crate::locker_fs::app_ctx().root, &who, &name)).await?.to_string_lossy().into_owned();
     tell_give(&app_handle, &window, &orch, std::slice::from_ref(&p));
     Ok(p)
 }
@@ -153,21 +167,21 @@ pub async fn team_locker_download(window: tauri::WebviewWindow, path: String) ->
 #[tauri::command]
 pub async fn team_locker_mkdir(window: tauri::WebviewWindow, team: String, folder: String) -> Result<(), String> {
     ui_only(&window)?;
-    job(move |d, kc, h| app::mkdir(d, kc, h, &team, &folder)).await
+    human_job(move |d, kc, h| app::mkdir(d, kc, h, &team, &folder)).await
 }
 
 /// 폴더 이름 바꾸기(to) · 지우기(to 없음 — 안의 파일은 휴지통으로). 옮긴 수
 #[tauri::command]
 pub async fn team_locker_folder(window: tauri::WebviewWindow, team: String, from: String, to: Option<String>) -> Result<usize, String> {
     ui_only(&window)?;
-    job(move |d, kc, h| app::folder(d, kc, h, &team, &from, to.as_deref())).await
+    human_job(move |d, kc, h| app::folder(d, kc, h, &team, &from, to.as_deref())).await
 }
 
 /// 미리보기·썸네일용으로 받기(데이터 폴더) — 받은 경로
 #[tauri::command]
 pub async fn team_locker_peek(window: tauri::WebviewWindow, team: String, id: String) -> Result<String, String> {
     ui_only(&window)?;
-    job(move |d, kc, h| app::peek(d, kc, h, &team, &id).map(|p| p.to_string_lossy().into_owned())).await
+    bg_job(move |d, kc, h| app::peek(d, kc, h, &team, &id).map(|p| p.to_string_lossy().into_owned())).await
 }
 
 /// + 단추 — 파일 창(앱 창에 붙는 시트)으로 골라 올린다. 고른 개수
@@ -188,14 +202,14 @@ pub async fn team_locker_pick(app_handle: tauri::AppHandle, window: tauri::Webvi
 #[tauri::command]
 pub async fn team_locker_save(window: tauri::WebviewWindow, team: String, id: String) -> Result<String, String> {
     ui_only(&window)?;
-    job(move |d, kc, h| app::fetch(d, kc, h, &team, &id).map(|p| p.to_string_lossy().into_owned())).await
+    human_job(move |d, kc, h| app::fetch(d, kc, h, &team, &id).map(|p| p.to_string_lossy().into_owned())).await
 }
 
 /// 팀 탭에 연 풀어 둔 파일 — 사람이 고쳐 저장했나(받은 그대로와 지문이 다른가)와 원본(팀 id·파일 id). 팀 파일이 아니면 edited false
 #[tauri::command]
 pub async fn team_peek_state(window: tauri::WebviewWindow, path: String) -> Result<Value, String> {
     ui_only(&window)?;
-    job(move |d, _, _| {
+    bg_job(move |d, _, _| {
         let Ok((tid, real)) = crate::team_revise::in_peek(d, Path::new(&path)) else { return Ok(json!({ "edited": false })) };
         let cache: std::collections::BTreeMap<String, String> = std::fs::read_to_string(d.join(app::CACHE)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
         let id = crate::team_revise::source_id(&cache, &real).or_else(|| crate::team_revise::source_id(&cache, Path::new(&path)));
@@ -211,7 +225,7 @@ pub async fn team_peek_revise(window: tauri::WebviewWindow, team: String, path: 
     if !crate::team_revise::name_ok(&name) {
         return Err("수정본 이름이 이상해".into());
     }
-    job(move |d, kc, h| {
+    human_job(move |d, kc, h| {
         let (tid, real) = crate::team_revise::in_peek(d, Path::new(&path))?;
         if tid != team {
             return Err("이 팀 파일이 아니야".into());
@@ -239,14 +253,14 @@ pub async fn team_peek_revise(window: tauri::WebviewWindow, team: String, path: 
 #[tauri::command]
 pub async fn team_locker_rename(window: tauri::WebviewWindow, team: String, id: String, name: Option<String>, folder: Option<String>) -> Result<(), String> {
     ui_only(&window)?;
-    job(move |d, kc, h| app::rename(d, kc, h, &team, &id, name.as_deref(), folder.as_deref())).await
+    human_job(move |d, kc, h| app::rename(d, kc, h, &team, &id, name.as_deref(), folder.as_deref())).await
 }
 
 /// trash | restore | purge
 #[tauri::command]
 pub async fn team_locker_act(window: tauri::WebviewWindow, team: String, id: String, verb: String) -> Result<(), String> {
     ui_only(&window)?;
-    job(move |d, kc, h| app::act(d, kc, h, &team, &id, &verb)).await
+    human_job(move |d, kc, h| app::act(d, kc, h, &team, &id, &verb)).await
 }
 
 /// 채팅 붙이기 — 그 방 사람 기기마다 봉투로 올리고 참조를 돌려준다(메시지 봉투 안쪽 files 에 싣는다)
@@ -257,7 +271,7 @@ pub async fn team_file_attach(window: tauri::WebviewWindow, team: String, room: 
         return Err("방이 비었어".into());
     }
     let paths = files(paths)?;
-    job(move |d, kc, h| paths.iter().map(|p| app::put_file(d, kc, h, &team, &room, "file", p)).collect()).await
+    human_job(move |d, kc, h| paths.iter().map(|p| app::put_file(d, kc, h, &team, &room, "file", p)).collect()).await
 }
 
 /// 받은 파일 열기(대화 파일 풍선) — 보관함 열기와 같은 길

@@ -1,4 +1,5 @@
 //! 팀 홈 판 화면 명령(ADR 0018) — 메인 창·메신저 창(team-*)만. 네트워크라 전부 async + spawn_blocking(team_post_cmd 와 같은 모양)
+use crate::team_relay::{human_job, bg_job};
 use crate::team_home::{Content, Home};
 use crate::team_home_store::{self as store, Board};
 
@@ -6,15 +7,11 @@ fn ui_only(w: &tauri::WebviewWindow) -> Result<(), String> {
     if crate::team_ui::ui_window(w.label()) { Ok(()) } else { Err("messenger windows only".into()) }
 }
 
-async fn job<T: Send + 'static>(f: impl FnOnce(&std::path::Path, &dyn crate::accounts_store::Store, &dyn crate::team_relay::Http) -> Result<T, String> + Send + 'static) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(move || f(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl)).await.map_err(|e| e.to_string())?
-}
-
 /// 팀 하나의 홈 판 + 블록 내용 + 커버
 #[tauri::command]
 pub async fn team_home(window: tauri::WebviewWindow, team: String) -> Result<Board, String> {
     ui_only(&window)?;
-    let (b, share) = job(move |d, kc, h| store::board(d, kc, h, &team)).await?;
+    let (b, share) = bg_job(move |d, kc, h| store::board(d, kc, h, &team)).await?;
     share.spawn();
     Ok(b)
 }
@@ -23,7 +20,7 @@ pub async fn team_home(window: tauri::WebviewWindow, team: String) -> Result<Boa
 #[tauri::command]
 pub async fn team_home_save(window: tauri::WebviewWindow, team: String, home: Home) -> Result<(), String> {
     ui_only(&window)?;
-    job(move |d, kc, h| store::save_home(d, kc, h, &team, home)).await?.spawn();
+    human_job(move |d, kc, h| store::save_home(d, kc, h, &team, home)).await?.spawn();
     Ok(())
 }
 
@@ -31,7 +28,7 @@ pub async fn team_home_save(window: tauri::WebviewWindow, team: String, home: Ho
 #[tauri::command]
 pub async fn team_home_content(window: tauri::WebviewWindow, team: String, block: String, content: Content) -> Result<(), String> {
     ui_only(&window)?;
-    job(move |d, kc, h| store::save_content(d, kc, h, &team, &block, content)).await?.spawn();
+    human_job(move |d, kc, h| store::save_content(d, kc, h, &team, &block, content)).await?.spawn();
     Ok(())
 }
 
@@ -40,5 +37,5 @@ pub async fn team_home_content(window: tauri::WebviewWindow, team: String, block
 pub async fn team_home_cover(window: tauri::WebviewWindow, team: String, image: String) -> Result<String, String> {
     ui_only(&window)?;
     let b = crate::team_profile_cmd::image(&image)?;
-    job(move |d, kc, h| store::upload_cover(d, kc, h, &team, &b)).await
+    human_job(move |d, kc, h| store::upload_cover(d, kc, h, &team, &b)).await
 }

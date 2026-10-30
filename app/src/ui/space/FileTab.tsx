@@ -5,7 +5,7 @@ import { imageWidth, shownPercent, toggleFitActual } from '../../domain/imageFit
 import { docUrl, kindOf, pageDoc } from '../../domain/reader';
 import { isCurationHtml } from '../../domain/curation';
 import { tr } from '../../i18n';
-import { IconMaximize, IconRestore } from '../Icons';
+import { IconMaximize, IconReveal, IconRestore } from '../Icons';
 import { IconButton } from '../kit/IconButton';
 import { ExtraDoc, HtmlFrame } from '../reader/Reader';
 import { OfficeDoc } from './Preview';
@@ -14,6 +14,9 @@ import { WebPage } from '../WebPage';
 import { CraftOpenChip } from '../craft/openInCraft';
 import { applyAnchor, markAnchor, useWheelZoom } from '../zoomAnchor';
 import { useImageFit, useImagePan } from '../imageFit';
+import { dragOut } from './dragPath';
+import { lockerApi } from './useLocker';
+import { isTeamCache } from '../../domain/teamLocker';
 
 const PdfView = lazy(() => import('../reader/PdfView'));
 
@@ -65,20 +68,29 @@ export function FileTab({ path, where, attachTo, onAttach, onBig, big = false, o
   useLayoutEffect(() => applyAnchor(imgBox.current), [z]);
   useImagePan(() => imgBox.current, (at) => zoomTo(toggleFitActual(z, fit), at));
   useWheelZoom(() => (own ? imgBox.current : null), (dir, at) => zoomTo(stepZoom(Math.round(shownPercent(z, fit)), dir, IMAGE_STEPS), at));
+  // 그림을 끌면 바깥 앱으로(창 밖이면 맥 끌기, 10-30 사용자) — 칸이 넘치면 끌기는 그림 이동(useImagePan) 몫
+  const out = dragOut(path);
+  const imgOut = (e: React.PointerEvent) => {
+    const b = imgBox.current;
+    if (b && (b.scrollWidth > b.clientWidth + 1 || b.scrollHeight > b.clientHeight + 1)) return;
+    out.onPointerDown?.(e);
+  };
   return (
     <div className="cv-doc cv-filetab">
       {kind !== 'web' && <div className="cv-doc-bar">
-        <span className="cv-path" title={path}>{where}</span>
+        <span className="cv-path" title={tr('끌어서 파인더·카톡·메일로', 'Drag to Finder, chat or mail')} {...dragOut(path)}>{where}</span>
         <span className="cv-sp" />
         {zoomUi}
         <CraftOpenChip path={path} />
+        {/* 팀 파일(데이터 폴더에 풀어 둔 평문)은 파인더로 안 연다 — 머리 내려받기가 다운로드 폴더에 꺼낸다 */}
+        {!isTeamCache(path) && <IconButton label={tr('파인더에서 보기', 'Show in Finder')} onClick={() => void lockerApi.reveal(path).catch(() => {})}><IconReveal /></IconButton>}
         {onAttach && <SendToOrch to={attachTo} onClick={onAttach} />}
         <IconButton label={big ? tr('원래 크기로', 'Restore size') : tr('크게 보기', 'Open large')} title={big ? tr('원래 크기로', 'Restore size') : tr('크게 보기 — 확대·가득 채우기', 'Open large — zoom and fill')} onClick={onBig}>{big ? <IconRestore /> : <IconMaximize />}</IconButton>
       </div>}
       <div className="ft-body">
         {gate ? null
           : kind === 'web' ? <WebPage url={path} />
-          : kind === 'image' ? <><div className={`pv-image ${z === FIT ? 'fit' : ''}`} ref={imgBox}><img src={docUrl(path)} alt="" draggable={false} onLoad={onLoad}
+          : kind === 'image' ? <><div className={`pv-image ${z === FIT ? 'fit' : ''}`} ref={imgBox} onPointerDown={imgOut}><img src={docUrl(path)} alt="" draggable={false} onLoad={onLoad}
             style={width ? { maxWidth: 'none', maxHeight: 'none', width: `${width}px` } : undefined} /></div>
             {natural > 0 && <span className="pv-pct" aria-hidden>{Math.round(shownPercent(z, fit))}%</span>}</>
           : kind === 'video' ? <video className="pv-video" src={docUrl(path)} controls playsInline />

@@ -61,7 +61,7 @@ export function Crop({ src, square = false, onDone, onCancel }: { src: string; s
   useEffect(() => {
     const i = new Image();
     i.onload = () => setImg(i);
-    i.onerror = () => setErr(tr('이 그림은 못 열어요 — png·jpeg·webp 로', "Can't open this image — use png, jpeg or webp"));
+    i.onerror = () => setErr(tr('열 수 없는 그림이에요. png, jpeg, webp만 돼요', "Can't open this image. Use png, jpeg or webp"));
     i.src = src;
   }, [src]);
   const size = img ? { w: img.naturalWidth, h: img.naturalHeight } : null;

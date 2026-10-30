@@ -2033,6 +2033,9 @@ fn with_attach(id: &str, keys: Option<&[u8]>) -> Result<String, String> {
     if cfg!(windows) && keys.is_none() && crate::pty::session_has_view(id) {
         return Err(crate::i18n::tr("터미널 보기가 붙어 있어 화면을 따로 못 읽어", "A terminal view is attached — can't read the screen separately").into());
     }
+    if keys.is_some() {
+        crate::pty::settle_view(id);
+    }
     attach_do(id, |w, _, _| {
         if let Some(k) = keys {
             // 화살표·글자는 하나씩 조금 쉬어 가며 — 한꺼번에 넣으면 TUI 가 놓칠 수 있다
@@ -2166,6 +2169,7 @@ pub(crate) fn typing_turn() -> std::sync::MutexGuard<'static, ()> {
 
 fn attach_type_segs(id: &str, segs: &[Vec<u8>]) -> Result<(), String> {
     use std::time::Duration;
+    crate::pty::settle_view(id); // 자물쇠 잡기 전에 — 기다리는 동안 다른 칸 치기를 막지 않게
     let _turn = typing_turn();
     let tail = typed_echo(segs);
     attach_do(id, |w, screen, look| {

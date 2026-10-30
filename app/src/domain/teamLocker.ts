@@ -104,6 +104,9 @@ export function inPlace(items: LockerItem[], place: string, trash = false): Lock
     .sort((a, b) => b.at - a.at);
 }
 
+/** 폴더째 내 참모에게 — 그 폴더와 안쪽 폴더의 살아 있는 팀 파일(대화 파일·폴더 표시 줄 빼고). 맨 위는 폴더가 아니라 빈 목록 */
+export const folderFiles = (items: LockerItem[], folder: string): LockerItem[] => items.filter((i) => shown(i) && !i.room && !i.dir && i.state === 'live' && under(i.folder, folder));
+
 /** 대화 파일 보기 — 그 방(DM·팀챗)에 붙인 파일만, trash 면 그 방 휴지통. 새것 먼저 */
 export function inRoom(items: LockerItem[], room: string, trash = false): LockerItem[] {
   if (!room) return [];

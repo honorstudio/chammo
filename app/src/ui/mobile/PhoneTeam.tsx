@@ -17,10 +17,13 @@ import { TeamConvo } from '../team/TeamConvo';
 import { draftStore } from '../../domain/chatDraft';
 import { TeamMarkIcon } from '../team/TeamFaces';
 import { TeamHome, type HomeDialog } from '../team/TeamHome';
+import { TeamCal } from '../team/TeamCal';
+import { CalBlock } from '../team/CalBlock';
 import { TeamList } from '../team/TeamList';
 import { ProfilesCtx, type Profiles } from '../team/useProfiles';
 import { BottomSheet, SheetHostProvider } from './BottomSheet';
 import { IconBtn } from './kit';
+import { BetaTag } from '../kit/BetaTag';
 import { PhoneTeamLocker } from './PhoneTeamLocker';
 import { machine } from '../../i18n';
 import '../team/team.css';
@@ -122,7 +125,7 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
     files: (team) => api.locker(team, 0).then((v) => ('items' in v ? v.items : [])),
     openUrl: (url) => { window.open(url, '_blank', 'noopener'); },
   }), [api]);
-  const [seg, setSeg] = useState<'chat' | 'home' | 'locker'>('chat');
+  const [seg, setSeg] = useState<'chat' | 'home' | 'cal' | 'locker'>('chat');
   const [sel, setSel] = useState<string | null>(null);
   // 폰 화면이 보일 때만 읽음(잠금·다른 앱으로 간 동안 온 말은 돌아와 보일 때 읽음)
   const [shown, setShown] = useState(() => document.visibilityState === 'visible');
@@ -201,18 +204,22 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
           {view?.joined ? <><TeamMarkIcon name={view.team} size={30} img={profiles.board?.teamIcon || undefined} /><b>{view.team}</b></> : <b>팀</b>}
           <IconChevronDown />
         </button>
+        <BetaTag className="m-team-beta" />
       </header>
       {view?.joined && (
         <div className="m-seg" role="tablist">
           <button role="tab" aria-selected={seg === 'chat'} className={seg === 'chat' ? 'on' : ''} onClick={() => setSeg('chat')}>대화</button>
           <button role="tab" aria-selected={seg === 'home'} className={seg === 'home' ? 'on' : ''} onClick={() => setSeg('home')}>팀 홈</button>
+          <button role="tab" aria-selected={seg === 'cal'} className={seg === 'cal' ? 'on' : ''} onClick={() => setSeg('cal')}>캘린더</button>
           <button role="tab" aria-selected={seg === 'locker'} className={seg === 'locker' ? 'on' : ''} onClick={() => setSeg('locker')}>보관함</button>
         </div>
       )}
       <div className="m-team-body">
         {!view?.joined ? <div className="tmx-none">{`아직 팀이 없어요 — 위 팀 이름을 눌러 만들거나, ${machine()} 설정 > 계정에서 Chammo 계정에 로그인해요`}</div>
           : seg === 'chat' ? <div className="tmx-list"><TeamList convos={cs} rooms={t.rs} sel={null} onPick={(c: Convo) => setSel(c.key)} /></div>
-          : seg === 'home' ? <div className="m-team-home"><TeamHome teamId={view.teamId} team={view.team} members={view.members} icon={profiles.board?.teamIcon || undefined} api={posts} Dialog={HomeSheet} homeApi={homeApi} sources={homeSources} phone /></div>
+          : seg === 'home' ? <div className="m-team-home"><TeamHome teamId={view.teamId} team={view.team} members={view.members} icon={profiles.board?.teamIcon || undefined} api={posts} Dialog={HomeSheet} homeApi={homeApi} sources={homeSources} phone
+              calBlock={(_b, editing) => <CalBlock teamId={view.teamId} wide={false} editing={editing} api={api.cal} onOpen={() => setSeg('cal')} />} /></div>
+          : seg === 'cal' ? <div className="m-team-cal"><TeamCal key={view.teamId} teamId={view.teamId} members={view.members} api={api.cal} Dialog={HomeSheet} phone /></div>
           : <PhoneTeamLocker api={api} teamId={view.teamId} />}
       </div>
       {sheet && <TeamSheet api={api} t={t} onClose={() => setSheet(false)} onAgents={() => { setSheet(false); setAgentPage({ key: 0 }); }} />}

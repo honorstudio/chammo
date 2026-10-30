@@ -374,7 +374,7 @@ fn https_on(t: &Tailnet, port: u16) -> Result<(), String> {
             serve_took(&tailscale(t, &["serve", "status", "--json"])?, dns, t, port, cfg!(windows))
         }
         ServeState::Funnel => Err(format!("{dns} 가 funnel 로 인터넷에 열려 있어요")),
-        ServeState::Other(what) => Err(format!("{dns}:443 에 다른 serve 설정이 있어 건드리지 않았어요 ({what})")),
+        ServeState::Other(what) => Err(format!("{dns}:443 에 다른 serve 설정이 있어서 그대로 뒀어요 ({what})")),
         ServeState::Free => {
             tailscale(t, &["serve", "--bg", "--https=443", &target])?;
             serve_took(&tailscale(t, &["serve", "status", "--json"])?, dns, t, port, cfg!(windows))
@@ -1462,6 +1462,26 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         share.spawn();
         serde_json::to_value(b).map_err(|e| e.to_string())
     }
+    fn team_cal(&self, team: &str, fresh: bool) -> Result<serde_json::Value, String> {
+        let (d, kc) = (crate::config::data_dir(), crate::team_relay_keys::store());
+        let s = match (fresh, crate::team_app_store::load(d, &kc, team, crate::team_app::APP_CAL)) {
+            (false, Some(s)) => s,
+            _ => {
+                let (s, share) = crate::team_app_store::sync(d, &kc, &crate::team_relay::Curl, team, crate::team_app::APP_CAL)?;
+                share.spawn();
+                s
+            }
+        };
+        serde_json::to_value(s).map_err(|e| e.to_string())
+    }
+    fn team_cal_poll(&self, team: &str) -> serde_json::Value {
+        let d = crate::config::data_dir();
+        serde_json::json!({ "ver": crate::team_app_store::ver(d, team, crate::team_app::APP_CAL), "stale": crate::team_app_store::stale(d, team, crate::team_app::APP_CAL) })
+    }
+    fn team_cal_put(&self, team: &str, id: &str, base: u64, before: Option<serde_json::Value>, data: Option<serde_json::Value>, restore: bool) -> Result<serde_json::Value, String> {
+        let w = crate::team_app_store::write(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team, crate::team_app::APP_CAL, id, base, before, data, restore)?;
+        serde_json::to_value(w).map_err(|e| e.to_string())
+    }
     fn team_home_save(&self, team: &str, home: crate::team_home::Home) -> Result<(), String> {
         crate::team_home_store::save_home(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team, home)?.spawn();
         Ok(())
@@ -1527,9 +1547,10 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         // 마무리는 한 번만 — 답을 잃은 폰이 마지막 조각을 다시 보내면 take_done 이 None(이미 올리는 중·올림), 앞 결과만 준다
         if let Some(path) = p.last.then(|| crate::team_phone_up::take_done(&root, &p.up)).flatten() {
             let (team, folder, name) = (p.team.clone(), p.folder.clone(), crate::team_locker::safe_file_name(&p.name));
+            // 폰에서 사람이 올린 파일 — 데스크톱 끌어 넣기처럼 사람 몫으로(배경 몫에 안 막힌다)
             std::thread::spawn(move || {
                 let (d, kc, h) = (crate::config::data_dir(), crate::team_relay_keys::store(), crate::team_relay::Curl);
-                let r = crate::team_locker_app::put_file_as(d, &kc, &h, &team, "", "file", &folder, &path, &name);
+                let r = crate::team_relay::as_human(|| crate::team_locker_app::put_file_as(d, &kc, &h, &team, "", "file", &folder, &path, &name));
                 if let Err(e) = r {
                     crate::claude::log_out("mobile", &format!("phone team upload failed: {e}"));
                 }

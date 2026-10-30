@@ -12,7 +12,7 @@ pub const BLURB_MAX: usize = 80;
 pub const NOTE_MAX: usize = 2_000;
 pub const COLORS: u8 = 8;
 /// 블록 종류(ADR 0018 8) — 모르는 k 는 버린다(옛 앱은 새 블록을 그냥 안 그린다)
-pub const KINDS: &[&str] = &["pin", "posts", "members", "agents", "files", "links", "note", "goals", "mode"];
+pub const KINDS: &[&str] = &["pin", "posts", "members", "agents", "files", "links", "note", "goals", "mode", "cal"];
 const NAME_MAX: usize = 40;
 const TITLE_MAX: usize = 60;
 const URL_MAX: usize = 500;

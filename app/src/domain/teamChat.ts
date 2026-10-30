@@ -212,7 +212,7 @@ export type Line =
  *  nameOf = 보낸 사람 이름을 프로필 별명으로(teamProfile lookOf — 목록·머리와 같은 이름, 없으면 명부 이름) */
 /** followUp = 그 seq 사람 말이 이어 묻기였나(팀 참모 답 꼬리에 '이어서') */
 export function lineOf(it: TeamItem, myName: string, peerName = '', nameOf?: (member: string, roster: string) => string, followUp?: (questionSeq: number) => boolean): Line {
-  if (it.note === 'forged') return { kind: 'blocked', seq: it.seq, at: it.at, text: tr(`${it.person || '?'}의 말 하나를 막았어요 — 승인·이름표를 흉내 낸 글`, `Blocked a message from ${it.person || '?'} — it imitated an approval or a label`) };
+  if (it.note === 'forged') return { kind: 'blocked', seq: it.seq, at: it.at, text: tr(`${it.person || '?'}의 메시지 하나를 막았어요. 승인이나 이름표를 흉내 낸 글이에요`, `Blocked a message from ${it.person || '?'}. It imitated an approval or a label`) };
   const mine = isMine(it);
   const roster = mine ? myName : it.person && it.person !== '?' ? it.person : peerName || '?';
   const who = !mine && nameOf && it.member ? nameOf(it.member, roster) : roster;

@@ -322,3 +322,66 @@ fn 풀어_둔_자리_밖이나_팀_폴더로는_경로_주기를_거절한다() 
     std::fs::write(other.join("b.txt"), b"b").unwrap();
     assert!(give_path(&d, &other.join("b.txt"), &root, "o1", "참모").is_err(), "내 팀이 아닌 자리");
 }
+
+#[test]
+fn 조각_서명은_배경이면_배경_몫_안에서만_사람이_누른_올리기·받기는_늘() {
+    // 썸네일 받기(배경)가 조각마다 서명을 써도 몫을 안 따져 사람 몫까지 먹었다(10-30)
+    let kc = crate::accounts_store::fake::Fake::default();
+    let (k, _) = crate::team_relay_keys::create(&kc).unwrap();
+    let net = RelayNet { http: &relay::Curl, server: "https://relay.test".into(), device: "d1".into(), keys: &k };
+    while relay::take(&k.public(), relay::now_ms(), "GET", "/v0/me") {}
+    assert_eq!(net.signed("GET", "/v0/teams/t1/locker/f1/0").unwrap_err(), relay::SLOW_DOWN);
+    assert!(relay::as_human(|| net.signed("GET", "/v0/teams/t1/locker/f1/0")).is_ok());
+    relay::slow_down(&k.public(), &Value::Null, std::time::Instant::now());
+    assert!(relay::as_human(|| net.signed("PUT", "/v0/teams/t1/locker/f1/0")).is_ok(), "쉬는 중이어도 사람 동작은 한 번 두드린다");
+}
+
+// ── 폴더째 내 참모에게(2026-10-30 사용자 — 보관함 폴더 머리줄 '이 폴더') ──
+
+fn memo_in(id: &str, folder: &str, name: &str) -> (RemoteFile, core::Opened) {
+    let (f, mut o) = memo_file(id, 77, 5, name);
+    o.meta.folder = folder.into();
+    (f, o)
+}
+
+// 팀 id 는 이 시험만 — 보관함 기억(MEMO)은 팀 id 로만 잡혀서, 같은 "tV" 를 쓰는 옆 시험이 동시에 remember 하면 g1·g2 가 지워져 중계로 갔다(0.4.5 release-check)
+#[test]
+fn 팀_폴더째_주면_참모_팀_자리에_같은_폴더_모양으로_풀고_그_폴더_경로() {
+    let (d, kc, r) = in_team("give-folder");
+    relay::mutate(&d, |s| {
+        s.team_name = "ACME".into();
+        s.teams[0].id = "tGive".into();
+        s.team_id = "tGive".into();
+    })
+    .unwrap();
+    remember("tGive", 1, &[memo_in("g1", "주간회의", "a.md"), memo_in("g2", "주간회의/지난 회의", "b.md"), memo_in("g3", "주간회의 사본", "c.md")]);
+    let root = d.join("Chammo");
+    let base = give_dir(&crate::locker_fs::owner_dir(&root, "o1", "참모").unwrap(), "ACME", "tGive");
+    // 같은 판을 전에 풀어 둔 자리 — 중계 없이 그대로(fetch_to 기억)
+    let mut cache = serde_json::Map::new();
+    for (id, rel) in [("g1", "주간회의/a.md"), ("g2", "주간회의/지난 회의/b.md")] {
+        std::fs::create_dir_all(base.join(rel).parent().unwrap()).unwrap();
+        std::fs::write(base.join(rel), b"hello").unwrap();
+        cache.insert(format!("{id}:77:{}", base.display()), json!(base.join(rel).to_string_lossy()));
+    }
+    std::fs::write(d.join(CACHE), Value::Object(cache).to_string()).unwrap();
+    let ids = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let got = give_folder(&d, &kc, &r, "tGive", "주간회의", &ids(&["g1", "g2"]), &root, "o1", "참모").unwrap();
+    assert_eq!(got, base.join("주간회의"));
+    assert!(got.join("a.md").is_file() && got.join("지난 회의/b.md").is_file());
+    // 그 폴더 밖 파일(이름이 비슷한 옆 폴더)이 섞이면 아무것도 안 준다
+    assert!(give_folder(&d, &kc, &r, "tGive", "주간회의", &ids(&["g1", "g3"]), &root, "o1", "참모").is_err());
+    assert!(!base.join("주간회의 사본").exists(), "확인 전에 풀지 않는다");
+}
+
+#[test]
+fn 팀_폴더째_주기는_맨_위_빈_목록_팀_폴더_참모를_거절() {
+    let (d, kc, r) = in_team("give-folder-bad");
+    remember("tV", 1, &[memo_in("g1", "주간회의", "a.md")]);
+    let root = d.join("Chammo");
+    let one = vec!["g1".to_string()];
+    assert!(give_folder(&d, &kc, &r, "tV", "", &one, &root, "o1", "참모").is_err(), "맨 위는 폴더가 아니다");
+    assert!(give_folder(&d, &kc, &r, "tV", "주간회의", &[], &root, "o1", "참모").is_err(), "빈 폴더");
+    assert!(give_folder(&d, &kc, &r, "tV", "주간회의", &one, &root, "team-tV", "참모").is_err(), "팀 폴더는 참모가 아니다");
+    assert!(!root.join("참모").exists(), "거절하면 참모 폴더도 안 만든다");
+}

@@ -17,10 +17,19 @@ description: 브라우저 일(사이트 열기·눌러 보기·로그인 유지)
   그 프로젝트 대시보드의 **브라우저 연결** 버튼으로도 붙일 수 있고, 붙지 않은 세션에 브라우저 일을 보내면 `scripts/task send` 가
   알려 주고 결정 대기함에 카드를 올린다. 다른 브라우저(예: 저장소가 쓰던 헤드리스 브라우저)에서 한 로그인은 이어지지 않는다 —
   세션은 사용자가 그 프로젝트 `CLAUDE.local.md` 에 적어 둔 계정으로 묻지 않고 다시 로그인한다 — 계정을 못 찾거나 2단계 코드·패스키·캡차일 때만 `browser_ask_human` 이 사람에게 묻는다.
-  비밀번호는 MCP 도구 인자로 넘기지 말고 작은 로컬 스크립트가 그 파일에서 읽어 CDP 로 입력칸에 넣게 시킨다(아래 '크롬을 다루는 스크립트'). 사용자에게 비밀번호를 치게 하지 않는다 — 넘기는 건 2단계(앱 승인·문자 코드)와 계정을 못 찾을 때뿐, `browser_ask_human` 이 시간 초과면 턴을 끝내지 말고 다시 부르게 한다.
+  비밀번호는 MCP 도구 인자로 넘기지 말고 로그인 명령이 그 파일에서 읽어 넣게 한다(아래 '사이트 로그인'). 사용자에게 비밀번호를 치게 하지 않는다 — 넘기는 건 2단계(앱 승인·문자 코드)와 계정을 못 찾을 때뿐, `browser_ask_human` 이 시간 초과면 턴을 끝내지 말고 다시 부르게 한다.
   데이터 폴더는 `D="${CHAMMO_HOME:-$HOME/.chammo}"`, 그 node 는 `N="$D/tools/bin/node"; [ -x "$N" ] || N=node`.
   안 깔려 있거나 세션이 브라우저가 없다고 하면 사용자에게 설정 → 기능 → 브라우저 자동화의 **설치**를 눌러 달라고 한다(없는 것만
   받는다 — Node·크롬 베타·부품, 관리자 암호 없음). `npx playwright install`·`browser_install` 도구는 직접 쓰지 않는다.
+- **사이트 로그인**(네이버·구글·쇼핑몰 관리자 등): 세션이 "못 한다"·"비밀번호를 칠 수 없다"며 사람에게 넘기기 전에 이 순서를 따르게 한다.
+  ① 계정은 그 프로젝트의 gitignore 된 `CLAUDE.local.md` 칸 — 제목에 사이트 이름, 아래에 `- 아이디: …`·`- 비밀번호: …`·`- 로그인 주소: https://…` 세 줄.
+  명령은 칸의 로그인 주소와 **등록 도메인이 같은 곳에만** 친다 — 서브도메인(nid.naver.com·www.naver.com)은 같은 사이트, 다른 도메인이면 부른 주소든 넘어간 화면이든 치기 직전에 멈추고 5. 주소 줄이 없으면 제목에 그 사이트 영문 이름(`naver`)이나 도메인(`naver.com`)이 낱말째 있어야 한다.
+  사용자가 그 파일에 직접 한 번 적는다 — 채팅으로 비밀번호를 받지 않는다(받았으면 그 칸에 옮겨 적고 대화엔 다시 쓰지 않는다).
+  ② 세션은 비밀번호를 도구 인자로 넘기거나 치지 않고 이 명령을 돌린다: `"$N" "$D/tools/chammo-browser/bin/chammo-browser.js" login <프로필> <로그인 주소> --account "<칸 제목의 한 단어>"`
+  — 스크립트가 칸에서 읽어 그 프로필 크롬(세션 브라우저와 같은 크롬)에 치고, '로그인 상태 유지'는 켜고 'IP 보안'은 끄고, 값은 출력·기록에 안 남긴다. 세션 브라우저 도구가 있으면 먼저 `browser_navigate` 로 그 주소를 열어 둔다.
+  ③ 종료 0 = 됨(로그인은 프로필에 남는다) · 3 = 사람 차례(2단계 코드·폰 승인·패스키·캡차) — 세션 브라우저가 떠 있으면 탭을 두고 나오니 `browser_ask_human`, 아니면 명령이 직접 결정 대기함 카드(`direct ask --kind login`)를 띄우고 기다린다
+  · 4 = 칸이 없음 — 그때만 사람에게 칸을 채워 달라거나 한 번 직접 로그인해 달라고 한다 · 5 = 사이트가 안 받음 — 다시 치지 않는다(잠김 막기), 계정이 맞는지 한 줄로 알린다. 5 에 '다른 사이트'가 찍히면 그 주소로 다시 돌리지 않는다 — 칸의 주소가 맞는지 사람에게 한 줄.
+  사람 기기에서만 나오는 것(2단계·패스키·캡차)만 사람 몫이다. 패스키는 앱이 구글 서명 크롬으로 저절로 바꿔 띄운다.
 - **스크립트로 크롬을 몰 때**(node·python Playwright·puppeteer — 발행 스크립트 같은 것): 세션에 크롬을 직접 띄우지 말라고 일러 준다
   (`chromium.launch*` 금지) — 앱 화면에 안 보이고 프로필 잠금도 없어 다른 세션이 같은 프로필을 열면 꼬인다. chammo-browser 에서 받아 CDP 로 붙는다:
   node 는 `const { launch } = require(D + '/tools/chammo-browser'); const { context, release } = await launch('<프로필>');` →
@@ -49,14 +58,23 @@ description: 브라우저 일(사이트 열기·눌러 보기·로그인 유지)
   press **Connect browser** on that project's dashboard, and `scripts/task send` warns you (and puts a card in the
   decision inbox) when you hand browser work to a session without it. Logins made in another browser — e.g. a headless
   one the repo ships — don't carry over: the session signs in again with the account the user saved in that project's
-  `CLAUDE.local.md`, without asking — the password goes in through a small local script that reads that file and types it
-  over CDP (see "A script that drives Chrome"), never as an MCP tool argument, and the user is never asked to type it. Only
+  `CLAUDE.local.md`, without asking — the password goes in through the login command, which reads that file and types it
+  over CDP (see "Signing in to a site"), never as an MCP tool argument, and the user is never asked to type it. Only
   2FA (app approval, SMS code, passkey, captcha) or a missing account goes to the person via `browser_ask_human`; if that
   times out, the session calls it again instead of ending its turn.
   The data folder is `D="${CHAMMO_HOME:-$HOME/.chammo}"` and its node `N="$D/tools/bin/node"; [ -x "$N" ] || N=node`.
   Not installed, or a session says the browser is missing? Ask the user to press
   **Install** in Settings → Features → Browser automation (it fetches only what is missing: Node, Chrome Beta, parts — no
   admin password). Never run `npx playwright install` or the `browser_install` tool yourself.
+- **Signing in to a site** (Naver, Google, a shop admin…): before a session says "I can't" or "I can't type passwords" and hands it to the person, have it follow this order.
+  ① The account lives in that project's git-ignored `CLAUDE.local.md` — a heading with the site name, then three lines `- ID: …`, `- Password: …` and `- Login URL: https://…` (Korean keys work too).
+  The command types only where the **registrable domain matches** the section's login URL — subdomains (nid.naver.com, www.naver.com) count as the same site; any other domain, whether the URL it was given or a page it got redirected to, stops it right before typing with 5. Without a URL line the heading must contain the site's name (`naver`) or domain (`naver.com`) as a whole word.
+  The user writes it into that file once — never take a password over chat (if one arrives, move it into that section and don't write it in the conversation again).
+  ② The session never passes or types the password as a tool argument; it runs: `"$N" "$D/tools/chammo-browser/bin/chammo-browser.js" login <profile> <login URL> --account "<a word from the heading>"`
+  — the script reads the section and types into that profile's Chrome (the same one the session's browser uses), turns "stay signed in" on and "IP security" off, and keeps the values out of output and logs. If the session has browser tools, open the URL with `browser_navigate` first.
+  ③ Exit 0 = signed in (the login stays in the profile) · 3 = the person's turn (2FA code, phone approval, passkey, captcha) — with the session's browser open it leaves the tab there, so call `browser_ask_human`; otherwise it puts up a decision-inbox card itself (`direct ask --kind login`) and waits
+  · 4 = no such section — only then ask the person to fill it or sign in once themselves · 5 = the site refused — it does not try again (no lockouts); tell the person in one line to check the account. If 5 says "different site", don't rerun it on that URL — ask the person in one line whether the section's URL is right.
+  Only what comes from the person's own device (2FA, passkey, captcha) is theirs. For passkeys the app switches to the Google-signed Chrome by itself.
 - **A script that drives Chrome** (node/python Playwright, puppeteer — e.g. a publishing job): tell the session it must not launch
   Chrome itself (`chromium.launch*`) — that browser doesn't show in the app and takes no profile lock, so another session can open the
   same profile and corrupt it. Get the browser from chammo-browser and attach over CDP:

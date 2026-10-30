@@ -107,7 +107,10 @@ impl DeviceName {
 pub struct Member {
     pub id: String,
     pub display_name: String,
+    /// owner | manager | member — 서버 값이라 화면 표시용. 권한 판정은 명부(team_owners)
     pub role: String,
+    /// 매니저 권한(서버 값, 표시용)
+    pub perms: Vec<String>,
     pub devices: Vec<DeviceName>,
 }
 
@@ -344,7 +347,20 @@ pub(crate) fn trace(method: &str, url: &str, began: std::time::Instant, code: u1
     let Some(file) = std::env::var_os("CHAMMO_NET_TRACE").filter(|f| !f.is_empty()) else { return };
     let ms = began.elapsed().as_millis() as u64;
     let path = url.split_once("://").map_or(url, |(_, r)| r.find('/').map_or("/", |i| &r[i..]));
-    let line = json!({ "start": now_ms().saturating_sub(ms), "ms": ms, "method": method, "path": path.split('?').next().unwrap_or(""), "code": code, "bytes": bytes, "thread": format!("{:?}", std::thread::current().id()) });
+    let line = json!({ "start": now_ms().saturating_sub(ms), "ms": ms, "method": method, "path": path.split('?').next().unwrap_or(""), "code": code, "bytes": bytes, "human": human_now(), "thread": format!("{:?}", std::thread::current().id()) });
+    trace_line(&file, &line);
+}
+
+/// 배경 몫에 막혀 서버에 안 간 요청(local) — 경로별 셈을 앱 밖에서 잴 때 보낸 것과 같이 센다
+fn trace_local(method: &str, path: &str) {
+    if !cfg!(debug_assertions) && !cfg!(test) {
+        return;
+    }
+    let Some(file) = std::env::var_os("CHAMMO_NET_TRACE").filter(|f| !f.is_empty()) else { return };
+    trace_line(&file, &json!({ "start": now_ms(), "ms": 0, "method": method, "path": path.split('?').next().unwrap_or(""), "code": 429, "local": true, "human": false }));
+}
+
+fn trace_line(file: &std::ffi::OsStr, line: &Value) {
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file) {
         use std::io::Write;
         let _ = writeln!(f, "{line}");
@@ -518,7 +534,7 @@ pub fn mutate(dir: &Path, f: impl FnOnce(&mut TeamState)) -> Result<TeamState, S
     Ok(st)
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
@@ -565,6 +581,25 @@ pub(crate) fn human_now() -> bool {
     HUMAN.with(|h| h.get())
 }
 
+async fn ui_job<T: Send + 'static>(human: bool, f: impl FnOnce(&Path, &dyn crate::accounts_store::Store, &dyn Http) -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let go = || f(crate::config::data_dir(), &crate::team_relay_keys::store(), &Curl);
+        if human { as_human(go) } else { go() }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 화면 명령 입구 — 사람이 눌러야 불리는 팀 동작(만들기·고치기·지우기·올리기…). 배경 몫·쉬는 중에 안 막힌다(10-30 팀챗 만들기가 '잠시 쉬래요')
+pub(crate) async fn human_job<T: Send + 'static>(f: impl FnOnce(&Path, &dyn crate::accounts_store::Store, &dyn Http) -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    ui_job(true, f).await
+}
+
+/// 화면 명령 입구 — 화면 열 때·몇 초마다 저절로 부르는 목록 받기. 배경 몫(BG_CAP)을 센다
+pub(crate) async fn bg_job<T: Send + 'static>(f: impl FnOnce(&Path, &dyn crate::accounts_store::Store, &dyn Http) -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    ui_job(false, f).await
+}
+
 /// 서명 하나를 쓴다 — 배경 요청이 이 칸 몫을 다 썼으면 false(안 보낸다). 사람 말은 늘 true(세기만)
 pub(crate) fn spend(key: &str, now_ms: u64, human: bool) -> bool {
     let b = now_ms / BUCKET_MS;
@@ -578,6 +613,61 @@ pub(crate) fn spend(key: &str, now_ms: u64, human: bool) -> bool {
     }
     e.1 += 1;
     true
+}
+
+// ── 몫 진단(10-30 '잠시 쉬래요' — 무엇이 배경 200 을 먹나) — 칸마다 열쇠별로 경로 셈. 메서드·뭉갠 경로(id 칸은 *)·사람/배경·횟수만,
+//    비밀값·본문 없음. 배경이 칸 몫을 처음 넘은 때 notify.log 에 한 줄(운영판에서도 그때 무엇이 몰렸는지 본다) ──
+
+static TALLY: Mutex<std::collections::BTreeMap<String, Tally>> = Mutex::new(std::collections::BTreeMap::new());
+
+#[derive(Default)]
+struct Tally {
+    bucket: u64,
+    paths: std::collections::BTreeMap<String, u32>,
+    told: bool,
+}
+
+/// 경로 모양 — 글자·하이픈만인 칸(teams·locker·key-probe)과 판(v0)만 남기고 나머지(id·조각 번호)는 *
+pub(crate) fn path_shape(path: &str) -> String {
+    let keep = |s: &str| s.bytes().all(|b| b.is_ascii_lowercase() || b == b'-') || (s.len() <= 3 && s.starts_with('v') && s[1..].bytes().all(|b| b.is_ascii_digit()));
+    path.split('?').next().unwrap_or("").split('/').map(|s| if keep(s) { s } else { "*" }).collect::<Vec<_>>().join("/")
+}
+
+/// 서명 하나를 셌다(sent = 보냈다, 아니면 배경 몫에 막혔다). 배경이 이 칸에서 처음 막힌 때 남길 한 줄
+pub(crate) fn tally(key: &str, now_ms: u64, method: &str, path: &str, human: bool, sent: bool) -> Option<String> {
+    let b = now_ms / BUCKET_MS;
+    let mut m = TALLY.lock().unwrap_or_else(|e| e.into_inner());
+    let t = m.entry(key.to_string()).or_default();
+    if t.bucket != b {
+        *t = Tally { bucket: b, ..Default::default() };
+    }
+    let who = if human { "사람 " } else if sent { "" } else { "막힘 " };
+    *t.paths.entry(format!("{who}{method} {}", path_shape(path))).or_default() += 1;
+    if sent || human || t.told {
+        return None;
+    }
+    t.told = true;
+    let mut rows: Vec<(&String, &u32)> = t.paths.iter().collect();
+    rows.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+    let top: Vec<String> = rows.iter().take(12).map(|(k, n)| format!("{k} {n}")).collect();
+    Some(format!("배경 요청이 10분 몫 {BG_CAP}개를 다 썼어 — 경로별: {}", top.join(" · ")))
+}
+
+/// 서명 하나 — 몫(spend)을 따지고 경로 셈(tally)에 남긴다. false = 배경 몫을 다 써서 안 보낸다
+pub(crate) fn take(key: &str, ts: u64, method: &str, path: &str) -> bool {
+    let human = human_now();
+    let ok = spend(key, ts, human);
+    if let Some(line) = tally(key, ts, method, path, human, ok) {
+        // cargo test 는 데이터 폴더를 안 줘 진짜 notify.log 에 쓴다 — 시험에선 tally 가 돌려준 줄만 본다
+        #[cfg(not(test))]
+        crate::claude::log_out("team", &line);
+        #[cfg(test)]
+        let _ = line;
+    }
+    if !ok {
+        trace_local(method, path);
+    }
+    ok
 }
 
 /// 이 칸에 쓴 서명 수(시험·진단)
@@ -599,7 +689,7 @@ pub(crate) fn call(http: &dyn Http, server: &str, k: &DeviceKeys, device: Option
         return Ok((429, json!({ "error": "slow_down", "local": true })));
     }
     let ts = now_ms();
-    if !spend(&k.public(), ts, human) {
+    if !take(&k.public(), ts, method, path) {
         return Ok((429, json!({ "error": "slow_down", "local": true, "budget": true })));
     }
     let raw = body.map(|b| b.to_string()).unwrap_or_default();
@@ -631,6 +721,8 @@ pub(crate) fn mark_if_gone(dir: &Path, http: &dyn Http, st: &TeamState, k: &Devi
     if !matches!(call(http, &st.server, k, None, "GET", KEY_PROBE, None), Ok((404, _))) {
         return false;
     }
+    // cargo test 는 데이터 폴더를 안 줘 진짜 notify.log 에 썼다 — 10-30 그 줄을 보고 사용자 기기가 끊긴 줄 알 뻔했다
+    #[cfg(not(test))]
     crate::claude::log_out("team", "중계 서버가 이 기기를 몰라 — 끊긴 기기로 적음(다시 로그인)");
     mutate_if(dir, &st.device_id, |s| s.revoked = true).is_ok()
 }
@@ -639,7 +731,12 @@ pub(crate) fn mark_if_gone(dir: &Path, http: &dyn Http, st: &TeamState, k: &Devi
 pub(crate) fn why(code: u16, v: &Value) -> String {
     match (code, v["error"].as_str().unwrap_or("")) {
         (401, _) => "중계 서버가 서명을 거절했어(이 기기 시계가 5분 넘게 틀렸거나 기기가 끊겼어)".into(),
-        (403, _) => "그 팀·방의 권한이 없어(초대·빼기·팀장 바꾸기는 팀장 기기만)".into(),
+        (400, "roles_off") => "중계 서버가 아직 매니저 권한을 안 켰어 — 팀 기기가 다 새 판이 된 뒤 켜요".into(),
+        (400, "use_transfer") => "팀장은 '팀장 넘기기'로만 바꿔".into(),
+        (403, "owner_only") => "전체 권한은 팀장만 주고 뺏어".into(),
+        (403, "rank") => "같거나 높은 사람의 권한은 못 바꿔".into(),
+        (409, "transfer_first") => "다른 사람이 있는 팀의 팀장이라 계정을 못 지워 — 먼저 팀장을 넘기거나 팀을 지워".into(),
+        (403, _) => "그 팀·방의 권한이 없어(초대·빼기·역할은 팀장이나 그 권한을 받은 매니저만)".into(),
         (409, "last_owner") => "마지막 팀장이라 안 돼 — 다른 사람을 팀장으로 올린 뒤에".into(),
         (409, "already_member") => "이미 그 팀에 있어".into(),
         (404, "member_not_found") => "그 사람이 팀에 없어".into(),
@@ -1058,13 +1155,65 @@ pub fn set_role(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, who: &s
     if code != 200 {
         return Err(why(code, &v));
     }
+    after_role(dir, kc, http, &t)
+}
+
+/// 역할이 바뀐 뒤 — 멤버 목록을 다시 받고 내 역할도 팀 기록에
+fn after_role(dir: &Path, kc: &dyn Store, http: &dyn Http, t: &TeamEntry) -> Result<TeamState, String> {
     let st = refresh_members(dir, kc, http, &t.id)?;
-    // 내 역할이 바뀌었으면 내 팀 기록에도
     let mine = st.team(&t.id)?.members.iter().find(|x| x.id == t.member_id).map(|x| x.role.clone());
     match mine {
         Some(r) => mutate_if(dir, &st.device_id, |s| s.put_team(TeamEntry { role: r, ..s.team(&t.id).cloned().unwrap_or_default() })),
         None => Ok(st),
     }
+}
+
+/// 매니저 임명·권한 바꾸기 — perms 가 비면 팀원으로(relay ADR 0014). 권한은 한 가지 모양(정렬·중복 없음, all 은 혼자)으로 고리에 싣는다
+pub fn set_perms(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, who: &str, perms: &[String]) -> Result<TeamState, String> {
+    let mut p: Vec<String> = perms.to_vec();
+    if p.iter().any(|x| x == "all") {
+        p = vec!["all".into()];
+    } else {
+        p.sort();
+        p.dedup();
+    }
+    if p.iter().any(|x| x != "all" && !crate::e2e_roster::ITEMS.contains(&x.as_str())) {
+        return Err(format!("모르는 권한이야 — {}", crate::e2e_roster::ITEMS.join(", ")));
+    }
+    let (st, t, m) = member_in(dir, kc, http, team, who)?;
+    let k = device_keys(kc, &st)?;
+    let role = if p.is_empty() { "member" } else { "manager" };
+    let mut f = json!({ "kind": "role", "member": m.id, "role": role });
+    let mut body = json!({ "role": role });
+    if !p.is_empty() {
+        f["perms"] = json!(p);
+        body["perms"] = json!(p);
+    }
+    if let Some(link) = crate::e2e_team::link_for(dir, kc, http, &t.id, f)? {
+        body["link"] = link;
+    }
+    let (code, v) = call(http, &st.server, &k, Some(&st.device_id), "POST", &format!("/v0/teams/{}/members/{}/role", t.id, m.id), Some(&body))?;
+    if code != 200 {
+        return Err(why(code, &v));
+    }
+    after_role(dir, kc, http, &t)
+}
+
+/// 팀장 넘기기 — 받는 사람 = 팀장, 나 = 전체 권한 매니저, 한 고리(from = 나). 스위치가 꺼진 옛 서버면 예전 '팀장으로 올리기'
+pub fn transfer_owner(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, who: &str) -> Result<TeamState, String> {
+    let (st, t, m) = member_in(dir, kc, http, team, who)?;
+    let k = device_keys(kc, &st)?;
+    let link = crate::e2e_team::link_for(dir, kc, http, &t.id, json!({ "kind": "role", "member": m.id, "role": "owner", "from": t.member_id }))?;
+    let (code, v) = call(http, &st.server, &k, Some(&st.device_id), "POST", &format!("/v0/teams/{}/transfer", t.id), Some(&json!({ "member": m.id, "link": link })))?;
+    if code == 400 && v["error"] == "roles_off" {
+        // 옛 서버(스위치 꺼짐) — 받는 사람을 팀장으로 올린 뒤 나는 팀원으로 내려온다(팀장이 둘로 남지 않게, 손 시험 ⑤ 10-30)
+        set_role(dir, kc, http, team, &m.id, "owner")?;
+        return set_role(dir, kc, http, team, &t.member_id, "member");
+    }
+    if code != 200 {
+        return Err(why(code, &v));
+    }
+    after_role(dir, kc, http, &t)
 }
 
 /// 다음 명령의 기본 팀 고르기(서버는 안 부름)
@@ -1114,9 +1263,10 @@ pub fn forget_local(dir: &Path, kc: &dyn Store) -> Result<String, String> {
 /// 폰 허브 WebSocket 주소(주인 = 이 기기) — 서명은 쿼리로(서버 connectHub, ADR 0005)
 pub fn hub_url(st: &TeamState, k: &DeviceKeys, ts_ms: u64, nonce: &str) -> Result<String, String> {
     let path = format!("/v0/hubs/{}/ws", st.device_id);
-    if !spend(&k.public(), ts_ms, human_now()) {
+    if !take(&k.public(), ts_ms, "GET", &path) {
         return Err("서버 429 — 배경 요청 몫을 다 써서 잠시 쉬어요".into());
     }
+    trace("GET", &path, std::time::Instant::now(), 101, 0);
     let s = k.sign_request("GET", &path, b"", ts_ms, nonce);
     let base = server_ok(&st.server).ok_or("team.json 의 서버 주소가 https 가 아니야")?;
     let base = base.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1);
@@ -1137,9 +1287,10 @@ fn phone_web_from(env: Option<String>, st: &TeamState) -> Option<String> {
 /// 방 WebSocket 주소 — 서명은 쿼리로(서버 connectRoom)
 pub fn ws_url(st: &TeamState, k: &DeviceKeys, room: &str, ts_ms: u64, nonce: &str) -> Result<String, String> {
     let path = format!("/v0/rooms/{room}/ws");
-    if !spend(&k.public(), ts_ms, human_now()) {
+    if !take(&k.public(), ts_ms, "GET", &path) {
         return Err("서버 429 — 배경 요청 몫을 다 써서 잠시 쉬어요".into());
     }
+    trace("GET", &path, std::time::Instant::now(), 101, 0);
     let s = k.sign_request("GET", &path, b"", ts_ms, nonce);
     let base = server_ok(&st.server).ok_or("team.json 의 서버 주소가 https 가 아니야")?;
     let base = base.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1);

@@ -27,7 +27,7 @@ export function NumberWait({ children }: { children?: ReactNode }) {
       <h3>{n === null ? tr('허용을 기다려요', 'Waiting for approval') : tr('내 다른 기기에서 숫자를 넣어 주세요', 'Enter this number on your other device')}</h3>
       <div className={`nw-big${n === null ? ' off' : ''}`} aria-live="polite" aria-label={n === null ? tr('아직 숫자 없음', 'No number yet') : tr(`확인 숫자 ${fmtSas(n)}`, `Check number ${fmtSas(n)}`)}>{n === null ? '––– –––' : fmtSas(n)}</div>
       <p>{n === null
-        ? tr('로그인해 둔 내 다른 기기(맥·윈도우·폰)에 이 기기 카드가 떴어요. 어느 기기든 카드를 열면 여기 숫자가 떠요', 'A card for this device appeared on your other signed-in devices (Mac, Windows or phone). Open it on any of them and a number shows here')
+        ? tr('로그인해 둔 내 다른 기기(맥·윈도우·폰)에 이 기기 카드가 떴어요. 아무 기기에서나 카드를 열면 여기에 숫자가 떠요', 'A card for this device appeared on your other signed-in devices (Mac, Windows or phone). Open it on any of them and a number shows here')
         : tr('카드를 연 그 기기에 넣어요', 'Type it into the card on the device where you opened it')}</p>
       <div className="nw-acts">
         {n !== null && <button className="btn" disabled={busy} onClick={renew}>{tr('숫자 다시', 'New number')}</button>}
@@ -66,7 +66,7 @@ export function CodeEntry({ failed, onAgain, onCancel, onOk, onDone }: {
     return (
       <div className="nw-box">
         <div className="dc-mini"><span className="dc-av" aria-hidden="true">C</span><div className="dc-t"><b>{tr('이 기기가 내 기기가 됐어요', 'This device is now yours')}</b>
-          <div className="dc-muted">{tr(`두 기기 모두 확인함 · ${doneAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })} · 이제 내 메시지를 읽어요`, 'Both devices checked · you can read your messages now')}</div></div></div>
+          <div className="dc-muted">{tr(`두 기기 확인이 끝났어요 (${doneAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}). 이제 메시지를 읽을 수 있어요`, 'Both devices checked. You can read your messages now')}</div></div></div>
         <div className="nw-acts"><button className="btn pri" onClick={onDone}>{tr('계속 쓰기', 'Continue')}</button></div>
       </div>
     );

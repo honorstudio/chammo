@@ -114,7 +114,7 @@ export function MemoPanel({ project, items, onAdd, onSend, onCopy, onRemove, onC
           ref={input}
           className="inp"
           rows={3}
-          placeholder={tr('새 메모 — Enter 저장 · ⌥Enter 줄바꿈 · Esc 닫기', 'New note — Enter to save · ⌥Enter for new line · Esc to close')}
+          placeholder={tr('Enter 저장 · ⌥Enter 줄바꿈 · Esc 닫기', 'Enter to save · ⌥Enter for new line · Esc to close')}
           value={text}
           disabled={busy}
           onChange={(e) => setText(e.target.value)}
@@ -170,7 +170,7 @@ function LessonList({ project, lessons, onRemove, onPromote, onGroup }: {
       <div className="lesson-note dim">{tr(`${josa(assistant(), '이', '가')} 이 프로젝트에 일을 시킬 때 지시 끝에 붙는 것. 끝난 할 일·중복은 지워 줘`, 'Attached to the end of every instruction sent to this project. Delete finished to-dos and duplicates')}</div>
       {onGroup && shouldGroup(project, lessons.mine.length) && (
         <div className="lesson-group">
-          <button className="mini" title={tr(`주제별로 묶어 필요할 때만 열리는 스킬로 — ${josa(assistant(), '이', '가')} 알아서 묶고 한 줄로 알려`, `Group by topic into skills that open only when needed — ${assistant()} does it and tells you in one line`)} onClick={onGroup}>
+          <button className="mini" title={tr(`주제별로 묶어 필요할 때만 여는 스킬로 만들어요. ${josa(assistant(), '이', '가')} 알아서 묶고 한 줄로 알려요`, `Group by topic into skills that open only when needed. ${assistant()} does it and tells you in one line`)} onClick={onGroup}>
             {tr('스킬로 묶기', 'Group into skills')}
           </button>
         </div>

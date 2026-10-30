@@ -70,7 +70,7 @@ export function CraftDrawer({ running: keys, all = keys, open, openMenu, browser
     if (!r.installed) { get(r); return; }
     const how = open?.(r.app);
     if (how && 'show' in how) { void invoke('craft_show', { app: how.show }).catch((e) => setErr(String(e))); return; }
-    if (how && 'full' in how) { setErr(tr(`${josa(r.name, '은', '는')} 다른 참모들이 셋 다 쓰는 중이에요 — 하나가 끝나면 다시 눌러 주세요`, `All three ${r.name} windows are in use by other assistants — try again when one finishes`)); return; }
+    if (how && 'full' in how) { setErr(tr(`${josa(r.name, '은', '는')} 다른 참모들이 셋 다 쓰고 있어요. 하나가 끝나면 다시 눌러 주세요`, `All three ${r.name} windows are in use by other assistants — try again when one finishes`)); return; }
     setBusy((b) => ({ ...b, [r.app]: Date.now() }));
     void invoke('craft_launch', { app: r.app, key: how?.key ?? null }).catch((e) => { setBusy((b) => Object.fromEntries(Object.entries(b).filter(([a]) => a !== r.app))); fail(e); });
   };
@@ -149,8 +149,8 @@ export function CraftDrawer({ running: keys, all = keys, open, openMenu, browser
       {ask && (
         <div className="cd-ask">
           <span>{running.includes(ask.app)
-            ? tr(`${ask.name} 지울까? 떠 있어서 저장하고 끈 뒤 앱·받은 것·설정·작업 폴더를 휴지통으로(되살릴 수 있어)`, `Remove ${ask.name}? It's open — it will be saved and closed, then the app, downloads, settings and work folder go to the Trash (recoverable)`)
-            : tr(`${ask.name} 지울까? 앱·받은 것·설정·작업 폴더를 휴지통으로(되살릴 수 있어)`, `Remove ${ask.name}? The app, downloads, settings and work folder go to the Trash (recoverable)`)}</span>
+            ? tr(`${ask.name} 지울까? 열려 있으면 저장하고 끈 뒤, 앱·받은 파일·설정·작업 폴더를 휴지통으로 보내요(되살릴 수 있어요)`, `Remove ${ask.name}? It's open — it will be saved and closed, then the app, downloads, settings and work folder go to the Trash (recoverable)`)
+            : tr(`${ask.name} 지울까? 앱·받은 파일·설정·작업 폴더를 휴지통으로 보내요(되살릴 수 있어요)`, `Remove ${ask.name}? The app, downloads, settings and work folder go to the Trash (recoverable)`)}</span>
           <span className="cd-sp" />
           <button className="cd-btn" onClick={() => setAsk(null)}>{tr('취소', 'Cancel')}</button>
           <button className="cd-btn danger" onClick={() => remove(ask)}>{tr('지우기', 'Remove')}</button>

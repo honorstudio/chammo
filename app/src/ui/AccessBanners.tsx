@@ -36,7 +36,7 @@ export function AccessBanners({ access, copies, home, accessDismissed, copiesDis
         if (!n) return null;
         const lines = [
           ...(n.running.length ? [tr(`Chammo 가 또 떠 있어요: ${n.running.join(', ')} — 하나만 남기고 꺼 주세요.`, `Another Chammo is running: ${n.running.join(', ')} — quit all but one.`)] : []),
-          ...(n.installed.length ? [tr(`Chammo 가 여러 벌 깔려 있어요: ${n.installed.join(', ')} — 안 쓰는 건 지워 주세요(맥 권한이 섞여요).`, `More than one Chammo is installed: ${n.installed.join(', ')} — delete the ones you don't use (macOS permissions get mixed up).`)] : []),
+          ...(n.installed.length ? [tr(`Chammo가 여러 개 설치돼 있어요: ${n.installed.join(', ')}. 안 쓰는 건 지워 주세요. 맥 권한이 섞여요`, `More than one Chammo is installed: ${n.installed.join(', ')}. Delete the ones you don't use. macOS permissions get mixed up`)] : []),
           ...(n.fromDmg ? [tr('디스크 이미지에서 바로 켰어요 — 응용 프로그램 폴더로 옮겨서 켜 주세요.', 'Chammo is running from the disk image — move it to Applications and open it from there.')] : []),
         ];
         return (

@@ -19,20 +19,19 @@ pub struct RelayNet<'a> {
     pub keys: &'a DeviceKeys,
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
-}
-
 impl RelayNet<'_> {
     /// 조각 요청 서명 — 빈 본문으로(ADR 0009 결정 7). (주소, 머리)
     fn signed(&self, method: &str, path: &str) -> Result<(String, Vec<(String, String)>), String> {
         let server = relay::server_ok(&self.server).ok_or("team.json 의 서버 주소가 https 가 아니야")?;
-        if relay::slow_left(&self.keys.public(), std::time::Instant::now()).is_some() {
+        // 쉬는 중이면 배경(썸네일 받기 등)은 안 보낸다 — 사람이 누른 올리기·받기는 relay::call 처럼 한 번 두드린다
+        if !relay::human_now() && relay::slow_left(&self.keys.public(), std::time::Instant::now()).is_some() {
             return Err(relay::SLOW_DOWN.into());
         }
-        // 조각 요청도 서버 nonce 칸을 쓴다 — 세기만(사람이 올리고 받는 파일이라 막지 않는다)
-        let ts = now_ms();
-        relay::spend(&self.keys.public(), ts, true);
+        // 조각 요청도 서버 nonce 칸을 쓴다 — 사람이 누른 올리기·받기는 세기만, 배경(썸네일 받기 등)은 배경 몫 안에서만
+        let ts = relay::now_ms();
+        if !relay::take(&self.keys.public(), ts, method, path) {
+            return Err(relay::SLOW_DOWN.into());
+        }
         let s = self.keys.sign_request(method, path, b"", ts, &new_nonce()?);
         let h = vec![("X-Chammo-Ts".to_string(), s.ts), ("X-Chammo-Nonce".to_string(), s.nonce), ("X-Chammo-Sig".to_string(), s.sig), ("X-Chammo-Device".to_string(), self.device.clone())];
         Ok((format!("{server}{path}"), h))
@@ -422,6 +421,42 @@ fn list_split_net(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, k
     Ok((v, ShareJob { team, opened }))
 }
 
+/// 팀 앱 열쇠(chammo-relay ADR 0011) — 보관함 목록을 받아 kind appkey 줄을 연 것(파일 열쇠 k) + 받는 기기·서명 기기.
+/// 목록을 받는 김에 나중에 든 사람 몫 봉투 더하기(ShareJob)도 돌려준다 — 새로 든 사람이 앱 열쇠를 받는 길이 이것
+/// appkey 줄과 그 파일 열쇠
+pub(crate) type KeyFiles = Vec<(RemoteFile, [u8; 32])>;
+
+pub(crate) fn app_keys(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, fresh: bool) -> Result<(KeyFiles, People, ShareJob), String> {
+    app_keys_at(dir, kc, http, team, fresh, std::time::Instant::now())
+}
+
+/// 팀 앱 열쇠 기억 — 캘린더 sync·쓰기마다 보관함 전체 목록을 받지 않게(0.4.5 리뷰). (데이터 폴더|팀) → (받은 때, appkey 줄, 사람).
+/// 팀이 바뀌면(forget_people)·10분 지나면·부르는 쪽이 fresh(못 연 열쇠·쓸 열쇠 없음)면 새로 — 새로 받을 때만 봉투 더하기(ShareJob)가 돈다
+static APP_KEYS: Mutex<BTreeMap<String, (std::time::Instant, KeyFiles, People)>> = Mutex::new(BTreeMap::new());
+
+pub(crate) fn app_keys_at(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, fresh: bool, now: std::time::Instant) -> Result<(KeyFiles, People, ShareJob), String> {
+    let (tid, _) = team_of(&relay::load_state(dir), team)?;
+    let key = format!("{}|{tid}", dir.display());
+    if !fresh {
+        if let Some((at, keys, p)) = APP_KEYS.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+            if people_fresh(now.saturating_duration_since(*at)) {
+                return Ok((keys.clone(), p.clone(), ShareJob { team: tid, opened: vec![] }));
+            }
+        }
+    }
+    let (_, job) = list_split_at(dir, kc, http, team, now)?;
+    let (st, _) = ctx(dir, kc)?;
+    let keys: Vec<_> = job.opened.iter().filter(|(f, _)| f.kind == "appkey" && f.state == "live" && f.room.as_deref().unwrap_or("").is_empty()).map(|(f, o)| (f.clone(), o.k)).collect();
+    let (p, _) = people_cached(dir, kc, http, &st, &tid, false, now)?;
+    APP_KEYS.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (now, keys.clone(), p.clone()));
+    Ok((keys, p, job))
+}
+
+#[cfg(test)]
+pub(crate) fn seed_app_keys(dir: &Path, tid: &str, keys: KeyFiles, p: People) {
+    APP_KEYS.lock().unwrap_or_else(|e| e.into_inner()).insert(format!("{}|{tid}", dir.display()), (std::time::Instant::now(), keys, p));
+}
+
 // ── 사람 목록 캐시 — 사슬·명부 검증이 중계를 사람 수만큼 부른다(목록·썸네일·열기마다). 10분 다시 쓰고, 그 전에라도
 //    팀이 바뀌었으면(소켓 team_changed — 합류·나감·빼기)·사람이 보안 번호를 받아들였으면 지우고, 모르는 서명 기기가 보이면 바로 새로.
 //    10분은 놓친 사슬 바뀜(그 사람이 새 기기를 들임 — 서버가 team_changed 를 안 민다) 대비 ──
@@ -435,12 +470,14 @@ pub(crate) fn people_fresh(age: std::time::Duration) -> bool {
     age < std::time::Duration::from_secs(10 * 60)
 }
 
-/// 팀이 바뀜(소켓 team_changed)·보안 번호 받아들이기 — 사람 목록·방 받는 기기·실패 물러서기를 지운다(빈 팀 = 전부)
+/// 팀이 바뀜(소켓 team_changed)·보안 번호 받아들이기 — 사람 목록·방 받는 기기·실패 물러서기·팀 앱 열쇠를 지운다(빈 팀 = 전부)
 pub fn forget_people(team: &str) {
     let all = team.is_empty();
     PEOPLE.lock().unwrap_or_else(|e| e.into_inner()).retain(|t, _| !all && t != team);
     ROOMS.lock().unwrap_or_else(|e| e.into_inner()).retain(|(t, _), _| !all && t != team);
     FAILS.lock().unwrap_or_else(|e| e.into_inner()).retain(|t, _| !all && t != team);
+    let end = format!("|{team}");
+    APP_KEYS.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| !all && !k.ends_with(&end));
 }
 
 /// 대화 파일 받는 기기 — fresh 가 아니면 캐시(사람 목록과 같은 수명). 못 셈하면 빈 목록(그 방 파일은 이번엔 안 더한다)
@@ -827,6 +864,32 @@ pub fn give(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str, r
     let (tid, tname) = team_of(&st, team)?;
     let owner = crate::locker_fs::owner_dir(root, orch, name)?;
     fetch_to(dir, kc, http, &tid, id, &give_dir(&owner, &tname, &tid))
+}
+
+/// 폴더째 내 참모에게(2026-10-30) — 그 폴더(안쪽까지) 파일을 참모 팀 자리에 같은 폴더 모양으로 풀고 그 폴더 경로. 파일 id 는 화면이 고르고(folderFiles)
+/// 여기서는 하나라도 그 폴더 밖·대화 파일·폴더 표시 줄이면 풀기 전에 통째로 거절한다
+pub fn give_folder(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, folder: &str, ids: &[String], root: &Path, orch: &str, name: &str) -> Result<PathBuf, String> {
+    if orch.starts_with("team-") {
+        return Err("참모 보관함에만 줄 수 있어".into());
+    }
+    let want = core::safe_path(folder);
+    if want.is_empty() || ids.is_empty() {
+        return Err("파일이 든 팀 폴더만 줄 수 있어".into());
+    }
+    let st = relay::load_state(dir);
+    let (tid, tname) = team_of(&st, team)?;
+    for id in ids {
+        let (_, _, _, f, o) = find(dir, kc, http, &tid, id)?;
+        let at = core::safe_path(&o.meta.folder);
+        if o.meta.dir || f.room.as_deref().is_some_and(|r| !r.is_empty()) || !(at == want || at.starts_with(&format!("{want}/"))) {
+            return Err(format!("그 폴더 파일이 아니야: {}", o.meta.name));
+        }
+    }
+    let base = give_dir(&crate::locker_fs::owner_dir(root, orch, name)?, &tname, &tid);
+    for id in ids {
+        fetch_to(dir, kc, http, &tid, id, &base)?;
+    }
+    Ok(base.join(want))
 }
 
 /// 스페이스 팀 파일 탭의 '내 참모에게' — 풀어 둔 자리(team-locker-peek/<팀>/…) 안 파일만 그 참모 팀 자리(같은 팀 폴더)에 복사한 경로.

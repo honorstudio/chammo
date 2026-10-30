@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appUpdate, claudeBehind, claudeUpdateNote, cmpVer, parseLatestApp, reachableLatest, verLabel } from './updates';
+import { appUpdate, claudeBehind, claudeUpdateNote, cmpVer, parseLatestApp, reachableLatest, verLabel, withFeed } from './updates';
 
 describe('cmpVer — 버전 비교', () => {
   it('앞 v·뒤 꼬리 무시, 숫자로', () => {
@@ -53,6 +53,31 @@ describe('appUpdate — 이 앱보다 새 Chammo 가 있으면', () => {
     expect(appUpdate('0.2.3', latest)).toBeNull();
     expect(appUpdate('0.2.4', latest)).toBeNull();
     expect(appUpdate('0.2.2', null)).toBeNull();
+  });
+});
+
+describe('withFeed — 업데이터가 latest.json 에서 본 새 판을 띠에 합친다', () => {
+  const api = { version: '0.4.4', url: 'https://github.com/x/Chammo_0.4.4_x64-setup.exe', page: 'https://github.com/honorstudio/chammo/releases/tag/v0.4.4' };
+  const tag = (v: string) => `https://github.com/honorstudio/chammo/releases/tag/v${v}`;
+  it('GitHub API 를 못 읽어도(요청 한도·막힘) latest.json 이 새 판을 알면 띠가 뜬다', () => {
+    expect(withFeed(null, '0.4.99')).toEqual({ version: '0.4.99', url: tag('0.4.99'), page: tag('0.4.99') });
+    expect(appUpdate('0.4.4', withFeed(null, '0.4.99'))?.version).toBe('0.4.99');
+  });
+  it('latest.json 이 API 보다 새것이면 그 판, 받기 링크는 그 판 릴리스 페이지', () => {
+    expect(withFeed(api, '0.4.5')).toEqual({ version: '0.4.5', url: tag('0.4.5'), page: tag('0.4.5') });
+  });
+  it('같은 판이면 API 가 준 그 기기 설치 파일 주소를 그대로 쓴다', () => {
+    expect(withFeed(api, '0.4.4')).toBe(api);
+    expect(withFeed(api, 'v0.4.4')).toBe(api);
+  });
+  it('API 가 더 새것이면 API(latest.json 이 아직 안 올라온 사이)', () => {
+    expect(withFeed({ ...api, version: '0.4.6' }, '0.4.5')!.version).toBe('0.4.6');
+  });
+  it('latest.json 이 새 판이 없다고 하거나 못 읽은 번호면 API 만', () => {
+    expect(withFeed(api, null)).toBe(api);
+    expect(withFeed(null, null)).toBeNull();
+    expect(withFeed(null, 'garbage')).toBeNull();
+    expect(withFeed(api, 'garbage')).toBe(api);
   });
 });
 

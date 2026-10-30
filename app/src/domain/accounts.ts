@@ -41,7 +41,7 @@ export function topLabel(v: AccountsView | null): { name: string; title: string;
   if (!v.liveEmail) return { name: tr('로그인 없음', 'Signed out'), title: tr('Claude 에 로그인돼 있지 않아요', 'Not signed in to Claude'), known: false };
   return {
     name: v.liveEmail.split('@')[0] || v.liveEmail,
-    title: tr(`칸에 없는 로그인: ${v.liveEmail} — 설정 > 계정에서 보관할 수 있어요`, `Sign-in not in your list: ${v.liveEmail} — keep it in Settings > Accounts`),
+    title: tr(`목록에 없는 로그인: ${v.liveEmail}. 설정 > 계정에서 보관할 수 있어요`, `Sign-in not in your list: ${v.liveEmail}. Keep it in Settings > Accounts`),
     known: false,
   };
 }
@@ -241,7 +241,7 @@ export function accountError(code: string): string {
       const sec = Number(detail.slice(5));
       const ko = sec > 0 ? `${Math.ceil(sec / 60)}분` : '몇 분';
       const en = sec > 0 ? `${Math.ceil(sec / 60)} min` : 'a few minutes';
-      return tr(`Anthropic 쪽이 잠깐 요청을 막았어요(이 ${machine()}에서 요청이 많음) — 계정 문제는 아니에요. ${ko} 뒤 다시 해 주세요.`, `Anthropic is briefly limiting requests from this ${pc ? 'PC' : 'Mac'} — not a problem with the account. Try again in ${en}.`);
+      return tr(`Anthropic이 잠깐 요청을 막았어요. 이 ${machine()}에서 요청이 많았어요. 계정 문제는 아니에요. ${ko} 뒤에 다시 해 주세요.`, `Anthropic is briefly limiting requests from this ${pc ? 'PC' : 'Mac'}. It's not a problem with the account. Try again in ${en}.`);
     }
     return detail === 'dead'
       ? tr('바꿀 계정의 로그인이 풀려 있어요(다른 곳에서 로그아웃했거나 다시 로그인함). 그 계정으로 로그인한 뒤 칸을 빼고 다시 추가해 주세요.', 'The sign-in kept for that account has expired (signed out or signed in again elsewhere). Sign in to it, then remove and add it again.')

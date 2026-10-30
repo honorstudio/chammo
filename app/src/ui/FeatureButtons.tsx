@@ -25,9 +25,9 @@ export function featureButton(id: BarItem, p: FeatureProps, cls: string, tip = f
     case 'voice': return <button key="voice" className={c(p.voice)} {...t(p.voice
       ? tr(`음성 모드 켜짐 — ${assistant()}가 답하면 소리로 읽어줘 (눌러서 끄기)`, `Voice mode on — ${assistant()}'s replies are read aloud (click to turn off)`)
       : tr(`음성 모드 — ${assistant()} 답을 소리로 (눌러서 켜기)`, `Voice mode — read ${assistant()}'s replies aloud (click to turn on)`), tr('음성 모드', 'Voice mode'))} aria-label={tr('음성 모드', 'Voice mode')} aria-pressed={p.voice} onClick={p.onVoice}><IconSpeaker /></button>;
-    case 'tools': return <button key="tools" className={c(p.tools)} {...t(p.tools ? tr('도구 닫기', 'Close tools') : tr('도구 — MCP·플러그인·스킬 보고 끄고 켜기', 'Tools — see and toggle MCP, plugins and skills'), tr('도구', 'Tools'))} aria-label={tr('도구', 'Tools')} aria-pressed={p.tools} onClick={p.onTools}><IconTools /></button>;
+    case 'tools': return <button key="tools" className={c(p.tools)} {...t(p.tools ? tr('도구 닫기', 'Close tools') : tr('도구', 'Tools'), tr('도구', 'Tools'))} aria-label={tr('도구', 'Tools')} aria-pressed={p.tools} onClick={p.onTools}><IconTools /></button>;
     // 하니터: 설정 버튼 자리 — 설정은 메뉴 Chammo > 설정…(⌘,)으로만(2026-10-01 사용자)
-    case 'harnitor': return <button key="harnitor" className={c(p.harnitor)} {...t(p.harnitor ? tr('하니터 닫기', 'Close Harnitor') : tr('하니터 — 스킬·훅·MCP·플러그인 보기·끄고 켜기', 'Harnitor — view and toggle skills, hooks, MCP, plugins'), tr('하니터', 'Harnitor'))} aria-label={tr('하니터', 'Harnitor')} aria-pressed={p.harnitor} onClick={p.onHarnitor}><IconHarness /></button>;
+    case 'harnitor': return <button key="harnitor" className={c(p.harnitor)} {...t(p.harnitor ? tr('하니터 닫기', 'Close Harnitor') : tr('하니터', 'Harnitor'), tr('하니터', 'Harnitor'))} aria-label={tr('하니터', 'Harnitor')} aria-pressed={p.harnitor} onClick={p.onHarnitor}><IconHarness /></button>;
     // 리뷰(PR) — 숫자는 머지 전에 볼 것이 있을 때만
     case 'review': return (
       <button key="review" className={c(p.review.on, 'rv-btn')} {...t(p.review.on ? tr('리뷰 닫기', 'Close review') : p.review.confirm ? tr(`리뷰 — 머지 전에 볼 것 ${p.review.confirm}개`, `Review — ${p.review.confirm} to check before merging`) : tr('리뷰', 'Review'), p.review.confirm ? tr(`리뷰 — 볼 것 ${p.review.confirm}`, `Review — ${p.review.confirm} to check`) : tr('리뷰', 'Review'))}

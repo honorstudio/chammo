@@ -340,10 +340,14 @@ def browser_rule(link):
     prof = (link[1] if link else None) or T('<프로필>', '<profile>')
     return T(f'브라우저는 이 프로젝트 브라우저만 — 세션 도구는 {tools}. 스크립트(node·python)는 크롬을 직접 띄우지 말고 require(\'{d}/tools/chammo-browser\').launch(\'{prof}\') 로 받거나 '
              f'"{d}/tools/bin/node" "{d}/tools/chammo-browser/bin/chammo-browser.js" launch {prof} --owner <pid> 의 wsEndpoint 로 connectOverCDP. '
-             f'chromium.launch·launchPersistentContext·channel:\'chrome\' 직접 띄우기와 크롬 확장(claude-in-chrome·--extension) 금지 — 앱 화면에 안 보이고 프로필이 꼬인다. ' + stop,
+             f'chromium.launch·launchPersistentContext·channel:\'chrome\' 직접 띄우기와 크롬 확장(claude-in-chrome·--extension) 금지 — 앱 화면에 안 보이고 프로필이 꼬인다. '
+             f'사이트 로그인은 비밀번호를 도구 인자로 넘기거나 직접 치지 말고 "{d}/tools/bin/node" "{d}/tools/chammo-browser/bin/chammo-browser.js" login {prof} <로그인 주소> --account "<칸 제목의 한 단어>" — '
+             f'이 폴더 CLAUDE.local.md 칸(제목에 사이트 이름, - 아이디:·- 비밀번호:)에서 읽어 친다. "못 한다"고 하기 전에 이것부터 — 종료 3 = 2단계·패스키·캡차(세션 브라우저면 browser_ask_human), 4 = 칸 없음(그때만 사람), 5 = 사이트가 안 받음(다시 치지 마). ' + stop,
              f'Browser = this project\'s browser only — session tools {tools}. Scripts (node/python) must not start Chrome: get it with require(\'{d}/tools/chammo-browser\').launch(\'{prof}\') or '
              f'connectOverCDP to the wsEndpoint from "{d}/tools/bin/node" "{d}/tools/chammo-browser/bin/chammo-browser.js" launch {prof} --owner <pid>. '
-             f'No chromium.launch / launchPersistentContext / channel:\'chrome\' and no Chrome extension (claude-in-chrome, --extension) — it does not show in the app and corrupts profiles. ' + stop)
+             f'No chromium.launch / launchPersistentContext / channel:\'chrome\' and no Chrome extension (claude-in-chrome, --extension) — it does not show in the app and corrupts profiles. '
+             f'To sign in to a site, never pass or type the password as a tool argument: run "{d}/tools/bin/node" "{d}/tools/chammo-browser/bin/chammo-browser.js" login {prof} <login URL> --account "<a word from the heading>" — '
+             f'it reads the section in this folder\'s CLAUDE.local.md (a heading with the site name, - ID: and - Password:) and types it. Do this before saying you can\'t — exit 3 = 2FA/passkey/captcha (with the session browser, browser_ask_human), 4 = no section (only then the person), 5 = the site refused (don\'t retry). ' + stop)
 
 
 def browser_card(root, sid, why):

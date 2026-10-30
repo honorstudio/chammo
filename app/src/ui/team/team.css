@@ -11,7 +11,7 @@
 
 /* 띠 — 팀 표 하나(.lk-strip 바로 아래 칸이라 띠의 고른 자리 이음·호버 카드를 그대로 쓴다). 누르면 팀 모드(시안 team-space A) */
 .lk-strip .tmx-rail-team { flex: 0 0 auto; }
-.lk-strip .tmx-rail-team .lk-av-pic { display: inline-flex; align-items: center; justify-content: center; }
+.lk-strip .tmx-rail-team .lk-av-pic { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; } /* 고른 테두리가 참모 칸과 같은 크기 */
 .lk-strip:not(.wide) .tmx-rail-team { align-self: center; }
 
 /* 팀 모드 가운데 — 대화 목록 | 대화(채팅 칸을 목록 폭만큼 넓힌다) */
@@ -135,6 +135,9 @@
 .tmx-list { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
 .tmx-list-h { display: flex; align-items: center; gap: 4px; height: 52px; padding: 0 10px 0 16px; flex: 0 0 auto; }
 .tmx-list-h b { flex: 1; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 팀 이름 옆 Beta(BetaTag) — 이름이 길면 이름만 줄어든다 */
+.tmx-list-ht { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.tmx-list-ht b { flex: 0 1 auto; min-width: 0; }
 .tmx-li { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 6px 12px 6px 14px; margin: 0 6px; border-radius: 10px; border: 0; background: transparent; font: inherit; color: var(--text); text-align: left; cursor: pointer; }
 .tmx-li:hover { background: var(--hover); }
 .tmx-li.on { background: var(--surface); box-shadow: var(--cv-shadow, 0 0 0 1px var(--line)); }
@@ -227,6 +230,8 @@
 }
 .tlk-bar { width: 64px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
 .tlk-bar i { display: block; height: 100%; background: var(--accent, #2f7a57); }
+/* 경로 줄 — 팀 보관함 › 폴더 바로 옆에 '내 참모에게 보내기'(폴더째, 2026-10-30) */
+.tlk-path { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tlk-chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .tlk-chip { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border: 0; border-radius: 9px; background: var(--surface-2); color: var(--text-2); font: inherit; font-size: 12.5px; cursor: pointer; }
 .tlk-chip svg { width: 14px; height: 14px; }

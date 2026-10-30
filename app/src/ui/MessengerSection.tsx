@@ -56,8 +56,8 @@ export function MessengerSection({ title }: { title: string }) {
         )}
       </div>
       <p className="su-hint">
-        {tr('텔레그램에서 참모와 말해요. 연결한 내 계정의 1:1 대화만 받고, 결제·보내기·삭제·운영 카드는 알림만 가요 — 승인은 앱·폰에서.',
-          'Talk to your assistant from Telegram. Only 1:1 chats from your linked account are accepted; payment, send, delete and production cards arrive as notices only — approve them in the app or on the phone.')}
+        {tr('텔레그램에서 참모와 대화해요. 연결한 내 계정의 1:1 대화만 받아요. 결제·보내기·삭제·운영 카드는 알림만 가요. 승인은 앱이나 폰에서 해요',
+          'Talk to your assistant from Telegram. Only 1:1 chats from your linked account are accepted. Payment, send, delete and production cards arrive as notices only. Approve them in the app or on the phone.')}
       </p>
 
       {stage === 'token' && (
@@ -96,7 +96,7 @@ export function MessengerSection({ title }: { title: string }) {
 
       {stage === 'confirm' && st?.pending && (
         <div className="tg-confirm">
-          <span className="su-hint">{tr('텔레그램에서 시작을 누른 계정이에요. 내 계정이 맞을 때만 연결해요 — 이 계정은 이 맥의 참모에게 말할 수 있어요.', 'This account pressed Start in Telegram. Link it only if it is yours — it will be able to talk to the assistant on this Mac.')}</span>
+          <span className="su-hint">{tr('텔레그램에서 시작을 누른 계정이에요. 내 계정일 때만 연결하세요. 연결하면 이 맥의 참모에게 말을 걸 수 있어요', 'This account pressed Start in Telegram. Link it only if it is yours. It will be able to talk to the assistant on this Mac.')}</span>
           <div className="su-row">
             <div className="su-row-text">
               <b>{st.pending.name}</b>
@@ -122,8 +122,8 @@ export function MessengerSection({ title }: { title: string }) {
 
       {st?.hasToken && (
         <span className="su-hint">
-          {tr('봇 대화는 종단 암호화가 아니라 텔레그램 서버에 남아요 — 비밀번호·키는 치지 마세요. 텔레그램 2단계 인증을 켜 두세요. 잃어버렸으면 텔레그램에서 /잠금.',
-            'Bot chats are not end-to-end encrypted and stay on Telegram servers — never type passwords or keys. Turn on Telegram two-step verification. Lost the phone? Send /lock.')}
+          {tr('봇 대화는 종단 암호화가 아니라 텔레그램 서버에 남아요. 비밀번호·키는 치지 마세요. 텔레그램 2단계 인증을 켜 두세요. 폰을 잃어버렸다면 텔레그램에서 /잠금을 보내세요',
+            'Bot chats are not end-to-end encrypted and stay on Telegram servers. Never type passwords or keys. Turn on Telegram two-step verification. Lost the phone? Send /lock.')}
           {st.tokenFile && tr(' 이 PC 는 키체인이 없어 토큰을 데이터 폴더 파일(나만 읽기)에 둬요.', ' This PC keeps the token in a data-folder file readable only by you (no keychain).')}
         </span>
       )}

@@ -4,21 +4,22 @@ import { closeOnOutside } from '../outsideClose';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { tr } from '../../i18n';
-import { effortChoices, familyOf, MODEL_CHOICES, modelChip } from '../../domain/modelPick';
+import { effortChoices, isModel, MODEL_CHOICES, modelChip, OTHER_MODELS } from '../../domain/modelPick';
+import { IconMore } from '../Icons';
 import type { PickResult, PickWant } from './modelPickRun';
 
-const POP_W = 300;
+const POP_W = 344;
 
 export type ModelInfo = { model?: string; modelId?: string; effort?: string };
 
 export function ModelChip({ info, pick, locked, lockedWhy, openSignal = 0 }: { info?: ModelInfo; pick: (want: PickWant) => Promise<PickResult>; locked?: boolean; lockedWhy?: string; /** 늘어나면 메뉴를 연다(채팅에 /model 만 쳤을 때) */ openSignal?: number }) {
   const [open, setOpen] = useState(false);
+  const [more, setMore] = useState(false); // '그 밖' 모델 줄 펼침
   const [asked, setAsked] = useState(false); // 바꾸는 중 — 값이 바뀌거나 6초가 지날 때까지
   const [fail, setFail] = useState<string | null>(null);
   const btn = useRef<HTMLButtonElement>(null);
   const [at, setAt] = useState<{ bottom: number; left: number } | null>(null);
   const label = modelChip(info);
-  const family = familyOf(info?.modelId ?? info?.model);
   const key = `${info?.model ?? ''}|${info?.effort ?? ''}`;
 
   useEffect(() => { setAsked(false); }, [key]);
@@ -40,14 +41,20 @@ export function ModelChip({ info, pick, locked, lockedWhy, openSignal = 0 }: { i
       // 칩 오른쪽 끝에 맞추되 창 밖으로 안 나가게(채팅 패널이 좁아도)
       setAt({ bottom: window.innerHeight - r.top + 6, left: Math.max(8, Math.min(r.right - POP_W, window.innerWidth - POP_W - 8)) });
     }
+    setMore(false);
     setOpen((o) => !o);
   }
   const go = (want: PickWant) => {
     setOpen(false); setFail(null); setAsked(true);
     void pick(want).then((r) => { if (!r.ok) { setAsked(false); setFail(r.why); } else if (r.same) setAsked(false); });
   };
-  const efforts = effortChoices(family);
-  const curModel = family === 'other' ? '' : family;
+  const efforts = effortChoices(info);
+  // 지금 모델이 '그 밖'(옛 판·Fable)이면 펼친 채로 — 칸이 안 보이면 4.8 로 떨어진 걸 모른다(2026-10-29 사용자)
+  const showOther = more || OTHER_MODELS.some((m) => isModel(info, m.id));
+  const modelBtn = (m: { id: string; label: string }) => {
+    const sel = isModel(info, m.id);
+    return <button key={m.id} role="menuitemradio" aria-checked={sel} className={sel ? 'sel' : ''} onClick={() => !sel && go({ model: m.id })}>{m.label}</button>;
+  };
   return (
     <>
       <button ref={btn} className={`mc-chip ${open ? 'on' : ''}`} onClick={toggle} disabled={locked || asked}
@@ -57,10 +64,10 @@ export function ModelChip({ info, pick, locked, lockedWhy, openSignal = 0 }: { i
       {open && at && createPortal(
         <div className="mc-pop" style={{ bottom: at.bottom, left: at.left, width: POP_W }} role="menu">
           <div className="mc-row"><span className="mc-h">{tr('모델', 'Model')}</span>
-            {MODEL_CHOICES.map((m) => (
-              <button key={m.alias} role="menuitemradio" aria-checked={curModel === m.alias} className={curModel === m.alias ? 'sel' : ''} onClick={() => curModel !== m.alias && go({ model: m.alias })}>{m.label}</button>
-            ))}
+            {MODEL_CHOICES.map(modelBtn)}
+            <button className={`mc-more${showOther ? ' on' : ''}`} aria-expanded={showOther} aria-label={tr('다른 모델', 'Other models')} title={tr('다른 모델', 'Other models')} onClick={() => setMore((v) => !v)}><IconMore /></button>
           </div>
+          {showOther && <div className="mc-row mc-other">{OTHER_MODELS.map(modelBtn)}</div>}
           {efforts.length > 0 && (
             <div className="mc-row"><span className="mc-h">{tr('에포트', 'Effort')}</span>
               {efforts.map((e) => (

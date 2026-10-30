@@ -41,6 +41,7 @@ pub const FILES: &[(&str, &str)] = &[
     ("src/passkey.js", include_str!("../../../tools/chammo-browser/src/passkey.js")),
     ("src/hold-passkey.js", include_str!("../../../tools/chammo-browser/src/hold-passkey.js")),
     ("src/passkey-auto.js", include_str!("../../../tools/chammo-browser/src/passkey-auto.js")),
+    ("src/login.js", include_str!("../../../tools/chammo-browser/src/login.js")),
 ];
 
 pub const MIN_NODE: u32 = 20;

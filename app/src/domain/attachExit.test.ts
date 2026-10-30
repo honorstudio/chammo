@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { attachedId, attachPhaseWatcher, exitWatcher, KICK_WINDOW, kickedBeforeEnd, kickWatcher, listedAlive, linkStep, REATTACH_GIVE_UP, UNLISTED_MAX } from './attachExit';
+import { attachedId, attachPhaseWatcher, exitWatcher, KICK_WINDOW, kickedBeforeEnd, kickWatcher, listedAlive, linkStep, REATTACH_GIVE_UP, sendOnLink, UNLISTED_MAX } from './attachExit';
 
 // 2026-10-21 실측(Claude Code 2.1.305, 시험 세션): 붙어 있는 세션을 다른 곳에서 `claude respawn` 하면 붙은 attach 는
 // 아래 글을 찍고 끝난다 — 세션은 새 일꾼으로 계속 산다. 색·커서 코드가 문장 앞뒤에 붙어 온다
@@ -194,5 +194,20 @@ describe('linkStep — 목록을 못 읽은 건(맥이 바쁨) 꺼진 게 아니
   });
   it('목록에 확실히 없으면(false) 그대로 오래 뒤 끊김', () => {
     expect(linkStep({ alive: false, stoppedByApp: false, since: 0, now: REATTACH_GIVE_UP + 1 })).toBe('gone');
+  });
+});
+
+describe('sendOnLink — 채팅이 칸에 칠 때 끊김이면 어떻게', () => {
+  it('붙어 있거나 붙는 중이면 그대로(붙는 중은 기다린다)', () => {
+    expect(sendOnLink('live', false)).toBe('go');
+    expect(sendOnLink(undefined, false)).toBe('go');
+    expect(sendOnLink('attaching', false)).toBe('go');
+    expect(sendOnLink('reattaching', false)).toBe('go');
+  });
+  it('다른 창에 쫓겨난 칸이면 되찾아 보낸다 — 윈도우는 세션당 한 창이라, 그대로 두면 터미널 뷰를 열 때까지 말이 다 안 갔다(2026-10-30 윈도우)', () => {
+    expect(sendOnLink('gone', true)).toBe('retake');
+  });
+  it('세션이 꺼져 굳은 끊김이면 실패 — 꺼진 세션에 붙으면 그 세션이 다시 켜진다', () => {
+    expect(sendOnLink('gone', false)).toBe('fail');
   });
 });

@@ -56,3 +56,20 @@ describe('따로 창 → 메인 창 참모로 끌어 놓기(10-28 사용자)', (
     expect(mainRs).toContain('team_ui::drag_back,');
   });
 });
+
+// 지금 연 폴더째 참모에게(2026-10-30 사용자 '보관함 › 인앱' 같은 폴더를 채팅 아이콘 하나로)
+import lockerPage from '../space/LockerPage.tsx?raw';
+describe('폴더 머리줄 — 이 폴더를 참모에게', () => {
+  it('참모 보관함: 폴더 안 머리줄에만(맨 위엔 없다) 같은 SendToOrch, 누르면 지금 채팅 참모 입력칸에 폴더 칩(끝 /)', () => {
+    const [rootView, dirView] = lockerPage.split("  if (place.kind === 'root') {")[1]!.split('\n  return (\n');
+    expect(rootView).not.toContain('onSendFolder');
+    expect(dirView).toContain('<SendToOrch to={acts.sendTo} onClick={() => acts.onSendFolder!(abs(here))} />');
+    expect(space).toContain('onSendFolder: (p) => attach(folderChip(p)),');
+  });
+  it('팀 보관함: 폴더 안 머리줄에 참모 고르기 → 폴더째 풀어 그 폴더 경로 하나(파일 칩 여럿이 아니라)', () => {
+    expect(locker).toContain('giveFolder(teamId, folder, folderFiles(shown?.items ?? [], folder).map((x) => x.id), o)');
+    expect(locker).toContain('{folderHas && <SendToOrch size="s"');
+    expect(give).toContain("invoke<string>('team_locker_give_folder', { team, folder, ids, orch: o.id, name: o.owner })");
+    expect(mainRs).toContain('team_locker_cmd::team_locker_give_folder,');
+  });
+});

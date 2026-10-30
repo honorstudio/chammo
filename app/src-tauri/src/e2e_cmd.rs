@@ -1,6 +1,6 @@
 //! 종단 암호 허용 화면 명령(chammo-relay ADR 0007, 시안 docs/design-drafts/e2e-approve v1) — 다 메인 창 전용.
 //! 카드 열기·숫자 넣어 허용은 사람 손 길: 프런트는 진짜(isTrusted) 클릭·입력에서만 부른다. scripts/team·참모 길엔 없다
-use crate::team_relay::{self as relay, Curl};
+use crate::team_relay::{self as relay, bg_job, human_job, Curl};
 
 fn main_only(w: &tauri::WebviewWindow) -> Result<(), String> {
     if w.label() == "main" { Ok(()) } else { Err("main window only".into()) }
@@ -9,10 +9,6 @@ fn main_only(w: &tauri::WebviewWindow) -> Result<(), String> {
 /// 메인 창·메신저 따로 창(team-*) — 팀 설정·대화 칸이 뜨는 우리 창(사람 화면)
 fn ui_only(w: &tauri::WebviewWindow) -> Result<(), String> {
     if crate::team_ui::ui_window(w.label()) { Ok(()) } else { Err("messenger windows only".into()) }
-}
-
-async fn job<T: Send + 'static>(f: impl FnOnce(&std::path::Path) -> Result<T, String> + Send + 'static) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(move || f(crate::config::data_dir())).await.map_err(|e| e.to_string())?
 }
 
 /// 허용 카드 갈래 — number(이 기기가 사슬에 있고 새 기기가 봉인을 올림) / wait(이 기기가 사슬에 있는데 새 컴퓨터가 아직 봉인 전 — 숫자를 기다린다)
@@ -239,42 +235,42 @@ pub fn number_op(dir: &std::path::Path, dev: &str, op: &str, digits: &str) -> Re
 #[tauri::command]
 pub async fn e2e_self_number(window: tauri::WebviewWindow) -> Result<Option<u32>, String> {
     main_only(&window)?;
-    job(|d| crate::e2e_flow::my_number(d, &crate::team_relay_keys::store(), &Curl)).await
+    bg_job(|d, _, _| crate::e2e_flow::my_number(d, &crate::team_relay_keys::store(), &Curl)).await
 }
 
 /// 새 기기 쪽 '숫자 다시'
 #[tauri::command]
 pub async fn e2e_renew(window: tauri::WebviewWindow) -> Result<(), String> {
     main_only(&window)?;
-    job(|d| crate::e2e_flow::renew(d, &crate::team_relay_keys::store(), &Curl)).await
+    human_job(|d, _, _| crate::e2e_flow::renew(d, &crate::team_relay_keys::store(), &Curl)).await
 }
 
 /// 허용 기기 쪽 — 카드를 그렸다. 갈래만 본다(망 안 씀) — nM 은 e2e_card_claim
 #[tauri::command]
 pub async fn e2e_card_open(window: tauri::WebviewWindow, dev: String) -> Result<serde_json::Value, String> {
     main_only(&window)?;
-    job(move |d| card_open_json(d, &dev)).await
+    bg_job(move |d, _, _| card_open_json(d, &dev)).await
 }
 
 /// 허용 기기 쪽 — 사람이 숫자 칸을 눌렀다(진짜 클릭·키에서만). 이 기기가 nM 을 낸다 — 다른 기기가 먼저면 그 이유를 Err 로
 #[tauri::command]
 pub async fn e2e_card_claim(window: tauri::WebviewWindow, dev: String) -> Result<serde_json::Value, String> {
     main_only(&window)?;
-    job(move |d| number_op(d, &dev, "claim", "")).await
+    human_job(move |d, _, _| number_op(d, &dev, "claim", "")).await
 }
 
 /// 허용 기기 쪽 — 새 기기 화면에 숫자가 떴으면 Some(이 기기만 셈한다 — 화면엔 안 보이고 넣은 값과 견주기만)
 #[tauri::command]
 pub async fn e2e_card_ready(window: tauri::WebviewWindow, dev: String) -> Result<bool, String> {
     main_only(&window)?;
-    job(move |d| number_op(d, &dev, "ready", "").map(|v| v["ready"] == true)).await
+    bg_job(move |d, _, _| number_op(d, &dev, "ready", "").map(|v| v["ready"] == true)).await
 }
 
 /// 허용 기기 쪽 — 사람이 넣은 6자리로 허용. 새 기기에 넣을 4자리를 돌려준다(R7)
 #[tauri::command]
 pub async fn e2e_card_approve(window: tauri::WebviewWindow, dev: String, digits: String) -> Result<String, String> {
     main_only(&window)?;
-    job(move |d| number_op(d, &dev, "enter", &digits).map(|v| v["code"].as_str().unwrap_or("").to_string())).await
+    human_job(move |d, _, _| number_op(d, &dev, "enter", &digits).map(|v| v["code"].as_str().unwrap_or("").to_string())).await
 }
 
 /// 허용 기기 쪽 — 4자리 카드 닫기(close)·끊기(cut). 사람 클릭에서만
@@ -284,21 +280,21 @@ pub async fn e2e_card_op(window: tauri::WebviewWindow, dev: String, op: String) 
     if !matches!(op.as_str(), "close" | "cut") {
         return Err("bad op".into());
     }
-    job(move |d| number_op(d, &dev, &op, "").map(|_| ())).await
+    human_job(move |d, _, _| number_op(d, &dev, &op, "").map(|_| ())).await
 }
 
 /// 보안 번호 — 팀 사람들 상태·번호·열린 카드(멤버 화면·대화 '확인'). 받아들이기·막아 두기는 여기 없다(카드 답 direct_answer 로만)
 #[tauri::command]
 pub async fn e2e_safety_people(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
     main_only(&window)?;
-    job(|d| Ok(crate::e2e_safety::view(d))).await
+    bg_job(|d, _, _| Ok(crate::e2e_safety::view(d))).await
 }
 
 /// 멤버 화면 '같아요' — 번호를 견줬다(핀이 ok 인 사람만 확인됨 표시). 사람 클릭에서만
 #[tauri::command]
 pub async fn e2e_safety_verify(window: tauri::WebviewWindow, account: String) -> Result<(), String> {
     ui_only(&window)?;
-    job(move |d| {
+    human_job(move |d, _, _| {
         let me = crate::team_relay::load_state(d).account.map(|a| a.id).ok_or("로그인 전이야")?;
         crate::e2e_safety::verify(d, &me, &account)
     })
@@ -309,7 +305,7 @@ pub async fn e2e_safety_verify(window: tauri::WebviewWindow, account: String) ->
 #[tauri::command]
 pub async fn e2e_safety_refetch(window: tauri::WebviewWindow, account: String) -> Result<(), String> {
     ui_only(&window)?;
-    job(move |d| {
+    human_job(move |d, _, _| {
         let st = crate::team_relay::load_state(d);
         crate::e2e_state::chain_of(d, &crate::team_relay_keys::store(), &Curl, &st, &account, true)?;
         crate::e2e_safety::mark_refetched(d, &account)?;
@@ -323,14 +319,14 @@ pub async fn e2e_safety_refetch(window: tauri::WebviewWindow, account: String) -
 #[tauri::command]
 pub async fn e2e_safety_block(window: tauri::WebviewWindow, account: String) -> Result<(), String> {
     ui_only(&window)?;
-    job(move |d| crate::e2e_safety::block_rekeyed(d, &account)).await
+    human_job(move |d, _, _| crate::e2e_safety::block_rekeyed(d, &account)).await
 }
 
 /// 멤버 화면 '카드 다시 띄우기' — 막아 둔 사람의 카드를 결정 대기함에 다시
 #[tauri::command]
 pub async fn e2e_safety_unblock(window: tauri::WebviewWindow, account: String) -> Result<(), String> {
     ui_only(&window)?;
-    job(move |d| {
+    human_job(move |d, _, _| {
         crate::e2e_safety::unblock(d, &account)?;
         crate::e2e_cards::sync(d);
         Ok(())
@@ -342,42 +338,42 @@ pub async fn e2e_safety_unblock(window: tauri::WebviewWindow, account: String) -
 #[tauri::command]
 pub async fn e2e_start_chain(window: tauri::WebviewWindow) -> Result<(), String> {
     main_only(&window)?;
-    job(|d| crate::e2e_flow::start_chain(d, &crate::team_relay_keys::store(), &Curl)).await
+    human_job(|d, _, _| crate::e2e_flow::start_chain(d, &crate::team_relay_keys::store(), &Curl)).await
 }
 
 /// 사람이 '이 기기로 다시 시작'을 눌렀다 — 허용해 줄 사슬 기기가 하나도 없을 때(계정 되찾기 갈래 ①). 메인 창 사람 클릭에서만
 #[tauri::command]
 pub async fn e2e_reset_chain(window: tauri::WebviewWindow) -> Result<(), String> {
     main_only(&window)?;
-    job(|d| crate::e2e_flow::reset_chain(d, &crate::team_relay_keys::store(), &Curl)).await
+    human_job(|d, _, _| crate::e2e_flow::reset_chain(d, &crate::team_relay_keys::store(), &Curl)).await
 }
 
 /// 계정 되찾기 갈래 ②(relay ADR 0007 R9) — 새 기기 화면의 8자리 요청 코드. 메인 창 사람 클릭에서만
 #[tauri::command]
 pub async fn e2e_recover_code(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
     main_only(&window)?;
-    job(|d| crate::e2e_flow::recover_code(d, &crate::team_relay_keys::store(), &Curl).map(|(code, until)| serde_json::json!({ "code": code, "expiresAt": until }))).await
+    human_job(|d, _, _| crate::e2e_flow::recover_code(d, &crate::team_relay_keys::store(), &Curl).map(|(code, until)| serde_json::json!({ "code": code, "expiresAt": until }))).await
 }
 
 /// 기다리는 다시 시작 요청 취소(이 기기 화면에서). 메인 창 사람 클릭에서만 — 내 다른 기기는 결정 대기함 카드로
 #[tauri::command]
 pub async fn e2e_recover_cancel(window: tauri::WebviewWindow) -> Result<(), String> {
     main_only(&window)?;
-    job(|d| crate::e2e_flow::recover_cancel(d, &crate::team_relay_keys::store(), &Curl)).await
+    human_job(|d, _, _| crate::e2e_flow::recover_cancel(d, &crate::team_relay_keys::store(), &Curl)).await
 }
 
 /// 48시간이 찼다 — '다시 시작 마치기'. 메인 창 사람 클릭에서만
 #[tauri::command]
 pub async fn e2e_recover_finish(window: tauri::WebviewWindow) -> Result<(), String> {
     main_only(&window)?;
-    job(|d| crate::e2e_flow::recover_finish(d, &crate::team_relay_keys::store(), &Curl)).await
+    human_job(|d, _, _| crate::e2e_flow::recover_finish(d, &crate::team_relay_keys::store(), &Curl)).await
 }
 
 /// 되찾기 페이지를 시스템 브라우저로 — 이 기기 중계 주소의 /recover 만(코드는 주소에 싣지 않는다, 사람이 손으로 옮긴다)
 #[tauri::command]
 pub async fn e2e_recover_open(window: tauri::WebviewWindow) -> Result<(), String> {
     main_only(&window)?;
-    job(|d| {
+    human_job(|d, _, _| {
         let server = crate::team_relay::load_state(d).server;
         if !server.starts_with("https://") && !cfg!(debug_assertions) {
             return Err("중계 주소가 https 가 아니에요".into());
@@ -391,19 +387,19 @@ pub async fn e2e_recover_open(window: tauri::WebviewWindow) -> Result<(), String
 #[tauri::command]
 pub async fn e2e_recover_state(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
     main_only(&window)?;
-    job(|d| Ok(serde_json::to_value(crate::team_relay::load_state(d).recover.filter(|r| r.mine)).unwrap_or_default())).await
+    bg_job(|d, _, _| Ok(serde_json::to_value(crate::team_relay::load_state(d).recover.filter(|r| r.mine)).unwrap_or_default())).await
 }
 
 /// 로그인 화면 단계 — start / reset / need / failed / ""
 #[tauri::command]
 pub async fn e2e_self_step(window: tauri::WebviewWindow) -> Result<String, String> {
     main_only(&window)?;
-    job(|d| Ok(crate::e2e_flow::self_step(d).to_string())).await
+    bg_job(|d, _, _| Ok(crate::e2e_flow::self_step(d).to_string())).await
 }
 
 /// 새 기기 쪽 — 다른 기기에 뜬 4자리를 넣는다(R7). 틀리면 그 흐름은 끝
 #[tauri::command]
 pub async fn e2e_self_code(window: tauri::WebviewWindow, code: String) -> Result<(), String> {
     main_only(&window)?;
-    job(move |d| crate::e2e_flow::confirm_code(d, &crate::team_relay_keys::store(), &Curl, &code)).await
+    human_job(move |d, _, _| crate::e2e_flow::confirm_code(d, &crate::team_relay_keys::store(), &Curl, &code)).await
 }

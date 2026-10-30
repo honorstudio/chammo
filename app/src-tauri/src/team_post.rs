@@ -4,6 +4,7 @@
 //! - 고정: 팀장이 올린 pin 기록(origin = 글 id, 빈 글 = 풀기) 중 가장 새 것 하나 — 남의 글을 고쳐 올리지 않는다
 use crate::accounts_store::Store;
 use crate::team_locker_app::{self as locker, Item};
+use crate::team_owners;
 use crate::team_profile;
 use crate::team_relay::{self, Http};
 use serde::{Deserialize, Serialize};
@@ -130,19 +131,18 @@ pub struct Board {
 
 struct Ctx {
     t: team_relay::TeamEntry,
+    /// 서명된 명부가 말하는 팀장(relay ADR 0014 R14) — 서버 members 의 role 이 아니다
+    owners: Vec<String>,
     v: locker::View,
 }
 
 /// 목록만 — 나중에 든 사람 몫 봉투 더하기(ShareJob)는 기다리지 않는다(10-26 실측: 누가 든 뒤 첫 팀 홈이 요청 23개·약 10.7초를 기다렸다)
 fn read(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) -> Result<(Ctx, Vec<(Item, Doc)>, locker::ShareJob), String> {
     let t = team_relay::load_state(dir).team(team).cloned()?;
+    let owners = team_owners::holders(dir, kc, http, &t.id, "posts");
     let (v, job) = locker::list_split(dir, kc, http, &t.id)?;
     let docs = v.items.iter().filter(|i| i.kind == "post" && usable(i)).filter_map(|i| team_profile::bytes_of(dir, kc, http, &t.id, &i.id).ok().and_then(|b| decode(&b).ok()).map(|d| (i.clone(), d))).collect();
-    Ok((Ctx { t, v }, docs, job))
-}
-
-fn owners(t: &team_relay::TeamEntry) -> Vec<String> {
-    t.members.iter().filter(|m| m.role == "owner").map(|m| m.id.clone()).collect()
+    Ok((Ctx { t, owners, v }, docs, job))
 }
 
 fn now_ms() -> u64 {
@@ -153,8 +153,8 @@ fn now_ms() -> u64 {
 pub fn board_split(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) -> Result<(Board, locker::ShareJob), String> {
     let (c, docs, job) = read(dir, kc, http, team)?;
     let pairs: Vec<(&Item, Doc)> = docs.iter().map(|(i, d)| (i, d.clone())).collect();
-    let (posts, pinned) = fold(&pairs, &owners(&c.t), &c.t.member_id);
-    Ok((Board { team: c.t.id.clone(), rev: c.v.rev, posts, pinned, owner: c.t.role == "owner" }, job))
+    let (posts, pinned) = fold(&pairs, &c.owners, &c.t.member_id);
+    Ok((Board { team: c.t.id.clone(), rev: c.v.rev, posts, pinned, owner: team_owners::has(&c.owners, &c.t.member_id) }, job))
 }
 
 /// 글 쓰기·고치기(origin = 고칠 글 id) — 고치기는 글쓴이만. 돌려주는 건 글 id + 봉투 더하기 일(쓰기·고정·지우기 모두 — 부르는 쪽이 spawn)
@@ -165,7 +165,7 @@ pub fn write(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, title: &st
     }
     let (c, docs, job) = read(dir, kc, http, team)?;
     let pairs: Vec<(&Item, Doc)> = docs.iter().map(|(i, d)| (i, d.clone())).collect();
-    let (posts, _) = fold(&pairs, &owners(&c.t), &c.t.member_id);
+    let (posts, _) = fold(&pairs, &c.owners, &c.t.member_id);
     let created = match origin {
         Some(o) => {
             let p = posts.iter().find(|p| p.id == o).ok_or("고칠 글이 없어")?;
@@ -189,8 +189,8 @@ pub fn write(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, title: &st
 /// 고정·풀기(post 빈 글) — 팀장만. 내 옛 고정 기록은 치운다
 pub fn pin(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, post: &str) -> Result<locker::ShareJob, String> {
     let (c, docs, job) = read(dir, kc, http, team)?;
-    if c.t.role != "owner" {
-        return Err("고정 공지는 팀장만".into());
+    if !team_owners::has(&c.owners, &c.t.member_id) {
+        return Err("고정 공지는 팀장이나 글 고정 권한 매니저만".into());
     }
     if !post.is_empty() && !id_ok(post) {
         return Err("글 id 모양이 아니야".into());
@@ -207,10 +207,10 @@ pub fn pin(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, post: &str) 
 pub fn remove(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, post: &str) -> Result<locker::ShareJob, String> {
     let (c, docs, job) = read(dir, kc, http, team)?;
     let pairs: Vec<(&Item, Doc)> = docs.iter().map(|(i, d)| (i, d.clone())).collect();
-    let (posts, _) = fold(&pairs, &owners(&c.t), &c.t.member_id);
+    let (posts, _) = fold(&pairs, &c.owners, &c.t.member_id);
     let p = posts.iter().find(|p| p.id == post).ok_or("지울 글이 없어")?;
-    if !p.mine && c.t.role != "owner" {
-        return Err("남의 글은 팀장만 지워".into());
+    if !p.mine && !team_owners::has(&c.owners, &c.t.member_id) {
+        return Err("남의 글은 팀장이나 글 고정 권한 매니저만 지워".into());
     }
     for id in versions_of(&pairs, post) {
         locker::act(dir, kc, http, &c.t.id, id, "trash")?;

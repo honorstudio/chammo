@@ -32,7 +32,7 @@ fn me(tag: &str, r: &FakeRelay) -> (std::path::PathBuf, Fake, DeviceKeys) {
     let kc = Fake::default();
     let (k, key_acct) = crate::team_relay_keys::create(&kc).unwrap();
     r.devices.borrow_mut().push(("o1".into(), k.public()));
-    let m = |id: &str, n: &str| Member { id: id.into(), display_name: n.into(), role: "member".into(), devices: vec![] };
+    let m = |id: &str, n: &str| Member { id: id.into(), display_name: n.into(), role: "member".into(), perms: vec![], devices: vec![] };
     mutate(&d, |s| {
         s.server = "https://relay.test".into();
         s.key_account = key_acct;
@@ -180,7 +180,7 @@ fn 공격_서버가_이름과_멤버_id_를_바꿔_보여도_서명된_명부와
     // 공격 리뷰 6 — 서버 목록에서 '철수' 이름을 민수(m3) id 에 붙임 → 내가 '철수'를 넣으면 민수가 방에 들어가 받게 되던 길
     let r = FakeRelay::default();
     let (d, kc, k) = me("swap", &r);
-    let m = |id: &str, n: &str| Member { id: id.into(), display_name: n.into(), role: "member".into(), devices: vec![] };
+    let m = |id: &str, n: &str| Member { id: id.into(), display_name: n.into(), role: "member".into(), perms: vec![], devices: vec![] };
     mutate(&d, |s| {
         s.put_team(TeamEntry { id: "t1".into(), name: "샘플팀".into(), member_id: "m1".into(), role: "owner".into(), display_name: "사용자".into(), members: vec![m("m1", "사용자"), m("m3", "철수")] });
         s.select_current("t1");
@@ -280,18 +280,19 @@ fn 팀장은_팀챗을_지우고_지운_고리는_받는_쪽_명부가_받는다
 
 #[test]
 fn 만든_사람도_팀장도_아니면_서버에_가기_전에_못_지운다() {
+    // 서버 값(me() 의 role owner)은 나를 팀장이라 하지만 서명된 명부에선 철수(m2)가 팀장이 되고 내가 팀원으로 내려갔다 — 명부가 이긴다(relay ADR 0014 R14)
     let r = FakeRelay::default();
     let (d, kc, k) = me("del-no", &r);
     mutate(&d, |s| {
-        if let Some(t) = s.teams.iter_mut().find(|t| t.id == "t1") {
-            t.role = "member".into();
-        }
-        s.role = "member".into();
         s.rooms.push(Room { id: "g1".into(), kind: "group".into(), team: "t1".into(), name: "디자인".into(), members: vec!["m1".into(), "m2".into(), "m3".into()], ..Default::default() });
     })
     .unwrap();
     answer_chains(&r, &k);
-    r.always("GET", "/v0/teams/t1/log", 200, &json!({ "links": room_by_m2(&k) }).to_string());
+    let mut ls = roster(&k);
+    ls.push(tl(&k, "o1", 5, &team_hash(ls.last().unwrap()), json!({ "kind": "role", "member": "m2", "role": "owner" })));
+    ls.push(tl(&other(2), "c1", 6, &team_hash(ls.last().unwrap()), json!({ "kind": "role", "member": "m1", "role": "member" })));
+    ls.push(tl(&other(2), "c1", 7, &team_hash(ls.last().unwrap()), json!({ "kind": "room", "room": "g1", "name": "디자인", "members": ["m1", "m2", "m3"], "member": "m2", "account": "a2" })));
+    r.always("GET", "/v0/teams/t1/log", 200, &json!({ "links": ls }).to_string());
     let e = delete_room(&d, &kc, &r, "g1").unwrap_err();
     assert!(e.contains("만든 사람"), "{e}");
     assert!(!r.seen.borrow().iter().any(|(m, _, _, _)| m == "POST"));
@@ -302,15 +303,50 @@ fn 만든_사람도_팀장도_아니면_서버에_가기_전에_못_지운다() 
 #[test]
 fn 팀챗_사람도_프로필_이름으로_고르고_서명된_명부는_서버_목록_이름과_대_본다() {
     // 프로필 이름으로 골랐으면 고른 글이 명부 이름이 아니다 — 그땐 서명된 명부 이름이 서버 목록 이름과 같아야(서버가 이름 ↔ id 를 바꾸지 않았나)
-    let m = |id: &str, n: &str| Member { id: id.into(), display_name: n.into(), role: "member".into(), devices: vec![] };
+    let m = |id: &str, n: &str| Member { id: id.into(), display_name: n.into(), role: "member".into(), perms: vec![], devices: vec![] };
     let t = TeamEntry { id: "t1".into(), name: "샘플팀".into(), member_id: "m1".into(), members: vec![m("m1", "지수"), m("m2", "철수"), m("m3", "민수")], ..Default::default() };
     let aka: BTreeMap<String, String> = [("m2".to_string(), "철수 대표".to_string())].into();
     assert_eq!(pick(&t, "철수 대표", &aka).unwrap(), "m2");
     assert_eq!(pick(&t, "민수", &aka).unwrap(), "m3");
-    let p = |n: &str| e2e_roster::RosterMember { account: "a2".into(), display_name: n.into(), role: "member".into(), active: true, confirmed: true, owner_ok: false };
+    let p = |n: &str| e2e_roster::RosterMember { account: "a2".into(), display_name: n.into(), role: "member".into(), active: true, confirmed: true, owner_ok: false, perms: vec![] };
     let mut roster = e2e_roster::Roster::default();
     roster.members.insert("m2".into(), p("철수"));
     assert_eq!(signed_ok(&roster, &t, "철수 대표", "m2".into()).unwrap(), "m2");
     roster.members.insert("m2".into(), p("민수"));
     assert!(signed_ok(&roster, &t, "철수 대표", "m2".into()).unwrap_err().contains("서명된 명부에서 달라"));
+}
+
+// ── 10-30 사용자: 팀챗 만들기 [만들기] → '잠시 쉬래요'. 운영 중계엔 요청이 거의 없었다 — 앱 안 배경 몫(BG_CAP)이 사람 동작을 막았다 ──
+
+#[test]
+fn 배경_몫을_다_쓴_뒤에도_사람이_누른_팀챗_만들기는_서버에_닿는다() {
+    let r = FakeRelay::default();
+    let (d, kc, k) = me("budget", &r);
+    let ls = roster(&k);
+    answer_chains(&r, &k);
+    r.always("GET", "/v0/teams/t1/log", 200, &json!({ "links": ls }).to_string());
+    r.answer("/v0/teams/t1/rooms", 201, "{}");
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    while relay::spend(&k.public(), now, false) {}
+    let e = create_room(&d, &kc, &r, "t1", "디자인", &["철수".into()]).unwrap_err();
+    assert_eq!(e, relay::SLOW_DOWN, "배경으로 세면 서버에 안 닿고 쉬래요 — 10-30 에 사람이 본 것");
+    assert!(r.seen.borrow().is_empty());
+    let room = relay::as_human(|| create_room(&d, &kc, &r, "t1", "디자인", &["철수".into()])).unwrap();
+    assert_eq!(room.members, vec!["m1", "m2"]);
+    // 쉬는 중(서버가 진짜 429 를 준 뒤)이어도 사람 동작은 한 번 두드린다
+    relay::slow_down(&k.public(), &Value::Null, std::time::Instant::now());
+    r.answer("/v0/teams/t1/rooms", 201, "{}");
+    assert!(relay::as_human(|| create_room(&d, &kc, &r, "t1", "둘", &["민수".into()])).is_ok());
+}
+
+#[test]
+fn 쉬래요_문구는_서버가_진짜_429_를_줄_때만() {
+    let r = FakeRelay::default();
+    let (d, kc, k) = me("real429", &r);
+    answer_chains(&r, &k);
+    r.always("GET", "/v0/teams/t1/log", 200, &json!({ "links": roster(&k) }).to_string());
+    r.answer("/v0/teams/t1/rooms", 429, r#"{"error":"slow_down","retryAfter":60}"#);
+    let e = relay::as_human(|| create_room(&d, &kc, &r, "t1", "디자인", &["철수".into()])).unwrap_err();
+    assert_eq!(e, relay::SLOW_DOWN);
+    assert!(r.seen.borrow().iter().any(|(m, p, _, _)| m == "POST" && p == "/v0/teams/t1/rooms"), "서버에 닿은 뒤의 429");
 }

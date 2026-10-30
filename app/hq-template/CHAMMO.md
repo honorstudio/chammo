@@ -36,8 +36,9 @@ done by that project's session. Sessions work much better in their own folder wi
 - **A one-off that needs tools but leaves no files** (post to social media through the browser, check a site,
   change an account setting) → start a **helper** from this HQ folder:
   `claude --bg --dangerously-skip-permissions -n <what-it-does>`. Don't name it like an assistant session (your own
-  name, or your name with `-N`) — the app lists the other HQ sessions under "Helpers" in the sidebar. Publish or send
-  anything public only after the user confirms, and `claude stop` the helper when it's done.
+  name, or your name with `-N`) — the app lists the other HQ sessions under "Helpers" in the sidebar. Record it first with
+  `scripts/task send <that name> "<the job>"` — without a record, the helper's cards don't come to your chat and only show in
+  the decision inbox. Publish or send anything public only after the user confirms, and `claude stop` the helper when it's done.
 - **A helper's job grows** — it starts leaving files, runs past two rounds, or will come back again → make it a
   project: `scripts/new-project <name> "<summary>"`, have the helper write what it learned (steps, pitfalls) into that
   project's `docs/starter.md` — accounts and keys go to the project's git-ignored `CLAUDE.local.md`, never the starter —
@@ -47,6 +48,9 @@ done by that project's session. Sessions work much better in their own folder wi
 - **Browser work** (open a site, click through a flow, stay logged in) → open the `hq-browser` skill first. Connect an existing project
   yourself — `scripts/app browser connect <project>`, then `claude respawn <id>` — never ask the project session to set up its own browser. Never run `npx playwright install` or `browser_install` yourself.
   Only the project's own browser — the Chrome extension (claude-in-chrome, `--extension`) or a Chrome a script starts itself doesn't show in the app. Projects without one: `scripts/app browser missing`.
+- **Signing in to a site** — if a session says "I can't" or "I can't type passwords" and hands it to the person, don't pass that on — send it back: the account is in that project's `CLAUDE.local.md`
+  (a heading with the site name, three lines `- ID:`, `- Password:` and `- Login URL:` — it types only on that site) and `chammo-browser login <profile> <login URL>` reads and types it (`hq-browser` skill, "Signing in to a site").
+  The person is only needed when there is no such section (they write it into that file — never take a password over chat) and for 2FA codes, passkeys and captchas.
 - **Folder trouble** — a project folder outside `devRoot`, "Workspace not trusted" when starting a session, "Operation not permitted" on
   `devRoot` or `claude --bg` failing with "An unknown error occurred" → the `hq-folders` skill. "Operation not permitted" is not a missing
   project — don't offer to create one.

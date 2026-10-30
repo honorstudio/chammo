@@ -12,10 +12,11 @@ describe('띠 상태 점 — 얼굴을 덜 가리게', () => {
     expect(pip).toMatch(/width: 8px; height: 8px;/);
     expect(pip).toMatch(/top: -3px; right: -3px;/);
   });
-  it('둘레 고리는 띠 바탕색 1.5px — 자리마다 바탕(고른 줄·펼친 띠)을 따른다', () => {
+  // 2026-10-29 사용자: 고른 줄 면(흰 이음 면·펼친 띠 회색 면)을 걷어 고른 줄도 띠 바탕 — 고리는 어디서나 띠 바탕색(railPick.test.ts)
+  it('둘레 고리는 띠 바탕색 1.5px — 고른 줄도 면이 없어 같은 색', () => {
     expect(pip).toMatch(/box-shadow: 0 0 0 1\.5px var\(--pip-ring\)/);
     expect(rule('.lk-strip')).toMatch(/--pip-ring: var\(--panel\)/);
-    expect(css).toMatch(/\.lk-strip\.joined \.lk-av\.on \{[^}]*--pip-ring: var\(--surface\)/);
+    expect(css).not.toMatch(/\.lk-av\.on \{[^}]*--pip-ring/);
   });
   it('쉼은 빈 고리 그대로(바탕색 속 + 안쪽 고리)', () => {
     expect(rule('.lk-pip.p-rest')).toMatch(/background: var\(--pip-ring\); box-shadow: 0 0 0 1\.5px var\(--pip-ring\), inset 0 0 0 1\.6px var\(--text-3\)/);

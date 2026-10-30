@@ -1,14 +1,15 @@
-// 모델·에포트 바꾸기 실행 — 그 세션 터미널에 `/model sonnet`·`/effort high` 를 쳐서 바꾸고(목록 화면을 안 읽는다),
+// 모델·에포트 바꾸기 실행 — 그 세션 터미널에 `/model claude-sonnet-5-5`(전체 id)·`/effort high` 를 쳐서 바꾸고(목록 화면을 안 읽는다),
 // 대화가 길면 뜨는 "Switch model?" 확인 창에선 예(1)를 누른다. 이 명령들은 "새 세션 기본값"까지 ~/.claude/settings.json 에 적어서
 // 치기 전에 기본값 칸을 떠 두고 끝나면 되돌린다 — 돌고 있는 세션은 되돌려도 바꾼 값을 쓴다(2026-10-01 실측).
 // 예전엔 /model 고르는 창을 화살표로 맞췄는데 창이 열린 채 남으면 채팅이 통째로 사라졌고, 실패 때 누른 Esc 가 하던 일을 끊었다.
 // 이제 Esc 는 확인 창이나 고르는 창이 화면에 있을 때만 누른다
 import { tr } from '../../i18n';
-import { commandResult, familyOf, parsePicker, switchConfirm } from '../../domain/modelPick';
+import { commandResult, isModel, parsePicker, switchConfirm } from '../../domain/modelPick';
 import { promptInput } from '../../domain/chat';
 
 export type PickApi = { raw: (data: string) => void; screen: () => { lines: string[]; cursor?: [number, number] } | undefined };
-export type PickWant = { model?: 'opus' | 'sonnet' | 'haiku'; effort?: string };
+/** model = 전체 id(domain/modelPick MODEL_CHOICES·OTHER_MODELS) */
+export type PickWant = { model?: string; effort?: string };
 export type PickResult = { ok: true; same?: boolean } | { ok: false; why: string; screen?: string[] };
 /** Claude 기본값 칸 떠 두기·되돌리기(앱은 Rust 명령, 시험은 가짜) */
 export type Defaults = { snapshot: () => Promise<string>; restore: (snap: string) => Promise<boolean> };
@@ -35,7 +36,7 @@ export function runModelPick(api: PickApi, want: PickWant, o: Opts): Promise<Pic
 const matches = (cmd: string, i: Info | undefined) => {
   const [, kind, v] = cmd.split(/[/ ]/);
   if (!i) return false;
-  return kind === 'model' ? familyOf(i.modelId ?? i.model) === v : i.effort === v;
+  return kind === 'model' ? isModel(i, v!) : i.effort === v; // 판까지 — 계열만 보면 Opus 4.8 에서 Opus 5.5 를 '이미 그 값'으로 봤다
 };
 
 async function runOne(api: PickApi, want: PickWant, o: Opts): Promise<PickResult> {

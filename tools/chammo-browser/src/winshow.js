@@ -30,9 +30,16 @@ const SIGNED = { req: 'signed', mark: 'signed-on', want: 'signed-want' };
  * @param {() => boolean} [o.claim]  다시 띄워도 되나 — 서랍 지킴이는 같이 쓰는 손님이 없을 때만(그 확인과 같이 쓰기 막기 표시를 한 번에, src/users.js claimSwitch)
  * @param {() => void} [o.release]  다 띄운 뒤 claim 이 남긴 표시를 푼다
  */
-function createWinShow({ liveDir, profile, pid, call, live, names = WIN, beforeOpen = async () => {}, claim = () => true, release = () => {}, now = Date.now, log = () => {} }) {
+function createWinShow({ liveDir, profile, pid, call, live, names = WIN, beforeOpen = async () => {}, claim = () => true, release = () => {}, alive = require('./lock').isAlive, now = Date.now, log = () => {} }) {
   const req = path.join(liveDir, `${profile}.${names.req}`);
   const mark = path.join(liveDir, `${profile}.${names.mark}`);
+  // 죽은 래퍼가 남긴 표는 뜰 때 치운다 — 앱은 pid 로 거르지만 사람·세션이 파일을 보고 '구글 크롬으로 바뀌어 있다'로 잘못 읽었다(10-30, 10-29 래퍼 표).
+  // 산 다른 래퍼(같은 프로필을 아직 쥔 중) 표는 둔다
+  try {
+    let owner = null;
+    try { owner = JSON.parse(fs.readFileSync(mark, 'utf8')).pid; } catch (e) { if (e.code === 'ENOENT') throw e; }
+    if (owner !== pid && !(Number.isInteger(owner) && owner > 0 && alive(owner))) fs.rmSync(mark, { force: true });
+  } catch { /* 표 없음 */ }
   const wantFile = path.join(liveDir, `${profile}.${names.want}`);
   const doneFile = path.join(liveDir, `${profile}.done`);
   let shown = false;

@@ -488,7 +488,7 @@ fn 다시_쓰는_연결_클라이언트가_패닉_없이_만들어진다() {
 }
 
 fn three() -> (TeamEntry, std::collections::BTreeMap<String, String>) {
-    let m = |id: &str, n: &str| Member { id: id.into(), display_name: n.into(), role: "member".into(), devices: vec![] };
+    let m = |id: &str, n: &str| Member { id: id.into(), display_name: n.into(), role: "member".into(), perms: vec![], devices: vec![] };
     let t = TeamEntry { id: "t1".into(), name: "샘플팀".into(), member_id: "m1".into(), members: vec![m("m1", "지수"), m("m2", "그늘"), m("m3", "Sky Lee"), m("m4", "도윤")], ..Default::default() };
     // 프로필 이름 — m2 는 '도윤 대표', m3 는 m4 의 명부 이름과 같은 '도윤'(옛 기록·다른 팀에서 지은 이름)
     let aka = [("m2", "도윤 대표"), ("m3", "도윤")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
@@ -543,4 +543,104 @@ fn 배경_몫을_다_쓴_뒤엔_서버에_안_닿고_사람_말은_쉬는_중이
     slow_down(&k.public(), &Value::Null, std::time::Instant::now());
     let (c, _) = as_human(|| call(&r, "https://relay.test", &k, Some("d1"), "GET", "/v0/me", None)).unwrap();
     assert_eq!(c, 200, "사람 말은 쉬는 중·몫 넘김이어도 한 번 두드린다");
+}
+
+// ── 사람이 누른 팀 동작(10-30 팀챗 만들기가 '잠시 쉬래요') — 화면 명령은 뒤 스레드 입구 두 개(human_job·bg_job)로만 중계를 부른다.
+//    목록·폴링(화면 열 때·몇 초마다 저절로)만 bg_job, 나머지는 사람이 눌러야 불리는 것이라 human_job ──
+
+/// 저절로 불리는 화면 명령 — 배경 몫(BG_CAP)을 센다
+const BG_CMDS: &[&str] = &[
+    "team_agents",
+    "team_agents_cached",
+    "team_agent_usage",
+    "team_home",
+    "team_cal",
+    "team_cal_cached",
+    "team_locker_list",
+    "team_locker_cached",
+    "team_locker_peek",
+    "team_peek_state",
+    "team_posts",
+    "team_profiles",
+    "team_ui_invites",
+    "team_ui_all_room",
+    "e2e_self_number",
+    "e2e_card_ready",
+    "e2e_card_open",
+    "e2e_safety_people",
+    "e2e_recover_state",
+    "e2e_self_step",
+];
+
+const CMD_SRC: &[(&str, &str)] = &[
+    ("team_ui.rs", include_str!("team_ui.rs")),
+    ("team_cmd.rs", include_str!("team_cmd.rs")),
+    ("team_locker_cmd.rs", include_str!("team_locker_cmd.rs")),
+    ("team_home_cmd.rs", include_str!("team_home_cmd.rs")),
+    ("team_app_cmd.rs", include_str!("team_app_cmd.rs")),
+    ("team_post_cmd.rs", include_str!("team_post_cmd.rs")),
+    ("team_profile_cmd.rs", include_str!("team_profile_cmd.rs")),
+    ("team_agent_cmd.rs", include_str!("team_agent_cmd.rs")),
+    ("e2e_cmd.rs", include_str!("e2e_cmd.rs")),
+];
+
+/// (파일, 명령 이름, 몸통)
+fn commands() -> Vec<(&'static str, String, String)> {
+    let mut out = vec![];
+    for (file, src) in CMD_SRC {
+        for part in src.split("#[tauri::command]").skip(1) {
+            let at = part.find("fn ").unwrap() + 3;
+            let name: String = part[at..].chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            let body = part[..part.find("\n}\n").unwrap_or(part.len())].to_string();
+            out.push((*file, name, body));
+        }
+    }
+    out
+}
+
+#[test]
+fn 사람이_누른_팀_명령은_human_job_저절로_불리는_목록만_bg_job() {
+    let cmds = commands();
+    assert!(cmds.len() > 50, "명령을 못 읽었어: {}", cmds.len());
+    for name in BG_CMDS {
+        let (_, _, body) = cmds.iter().find(|(_, n, _)| n == name).unwrap_or_else(|| panic!("{name} 이 없어 — 목록을 고쳐"));
+        assert!(body.contains("bg_job("), "{name} 은 저절로 불려 bg_job 으로");
+    }
+    for (file, name, body) in &cmds {
+        if body.contains("bg_job(") {
+            assert!(BG_CMDS.contains(&name.as_str()), "{file} {name}: 사람이 누르는 명령이 배경 몫을 센다 — human_job 으로(저절로 불리면 BG_CMDS 에)");
+        }
+        assert!(!body.contains("spawn_blocking") || !body.contains("relay::Curl") && !body.contains("team_relay_keys::store"), "{file} {name}: 중계는 human_job·bg_job 으로만");
+    }
+    // 입구를 모듈마다 따로 두지 않는다 — 진짜 curl 을 쥐는 곳은 사람 입구(as_human) 안뿐
+    for (file, src) in CMD_SRC {
+        assert!(!src.contains("async fn job") && !src.contains("async fn manage"), "{file}: 뒤 스레드 입구를 따로 두지 마 — team_relay::human_job·bg_job");
+        for (i, _) in src.match_indices("relay::Curl") {
+            let from = src[..i].rfind("\n}\n").unwrap_or(0);
+            let to = i + src[i..].find("\n}\n").unwrap_or(src.len() - i);
+            let chunk = &src[from..to];
+            assert!(chunk.contains("as_human") || chunk.contains("impl Wire for RealWire"), "{file}: 입구 밖에서 relay::Curl 을 쥔다 —\n{chunk}");
+        }
+    }
+}
+
+#[test]
+fn 경로_모양은_id_칸을_뭉갠다() {
+    assert_eq!(path_shape("/v0/teams/7f3c-9a1e-44b2/locker/f_9Ab/0?x=1"), "/v0/teams/*/locker/*/*");
+    assert_eq!(path_shape("/v0/me/self"), "/v0/me/self");
+    assert_eq!(path_shape("/v0/key-probe"), "/v0/key-probe");
+}
+
+#[test]
+fn 배경이_처음_막힌_때_경로별_셈_한_줄만() {
+    let (key, t) = ("tally-test-key", 9 * BUCKET_MS + 5);
+    for _ in 0..3 {
+        assert_eq!(tally(key, t, "GET", "/v0/teams/abc123/locker", false, true), None);
+    }
+    assert_eq!(tally(key, t, "POST", "/v0/teams/abc123/rooms", true, true), None, "사람 동작은 줄을 안 남긴다");
+    let line = tally(key, t, "GET", "/v0/teams/abc123/posts", false, false).expect("처음 막힘");
+    assert!(line.contains("GET /v0/teams/*/locker 3") && line.contains("사람 POST /v0/teams/*/rooms 1") && line.contains("막힘 GET /v0/teams/*/posts 1"), "{line}");
+    assert!(!line.contains("abc123"), "id 는 안 남긴다: {line}");
+    assert_eq!(tally(key, t, "GET", "/v0/teams/abc123/posts", false, false), None, "칸마다 한 번");
+    assert!(tally(key, t + BUCKET_MS, "GET", "/v0/me", false, false).unwrap().contains("막힘 GET /v0/me 1"), "다음 칸은 새로 센다");
 }

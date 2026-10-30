@@ -2,10 +2,10 @@
 // 글은 팀 보관함 봉투 길(kind post, Rust team_post) — 서버엔 평문 없음. 고정은 팀장만, 댓글 없이 '대화로'(팀챗 입력칸에 제목 한 줄).
 // 고정 공지·글 목록은 판의 블록으로 그리고(판이 없으면 지금 그대로), 글 읽기·쓰기 창은 판과 상관없이 여기서
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { desktopHome, desktopSources } from '../../data/teamHomeApi';
+import { desktopHome, desktopSources, homeMemo } from '../../data/teamHomeApi';
 import { desktopPosts } from '../../data/teamPostApi';
 import type { AgentShown } from '../../domain/teamAgent';
-import type { HomeApi, HomeBlock, HomeBoard as Board, HomeSources } from '../../domain/teamHome';
+import { postPlaces, type HomeApi, type HomeBlock, type HomeBoard as Board, type HomeSources } from '../../domain/teamHome';
 import type { LockerItem } from '../../domain/teamLocker';
 import { personColor, stamp } from '../../domain/teamChat';
 import { homeOf, pinFailed, postErr, quoteOf, type Post, type PostApi, type PostBoard } from '../../domain/teamPosts';
@@ -30,13 +30,12 @@ const keepSeen = (team: string, s: Set<string>) => { try { const all = JSON.pars
 /** 팀마다 마지막 글판 — 보관함 탭을 갔다 오면 화면이 내려가서, 없으면 다시 붙을 때마다 '불러오는 중'에 목록 전체를 다시 받았다(10-28 사용자).
  *  데스크톱·폰이 같은 TeamHome 이라 둘 다 이 창 메모리에만 */
 const boardMemo = teamViewMemo<PostBoard>();
-const homeMemo = teamViewMemo<Board>();
 
 type Draft = { origin?: string; title: string; body: string; pin: boolean };
 /** 글쓰기 겹창 — 데스크톱은 창 가운데 TeamDialog, 폰은 아래 시트(kit BottomSheet) */
 export type HomeDialog = (p: { label: string; onClose: () => void; children: React.ReactNode }) => React.ReactNode;
 
-export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPosts, Dialog = TeamDialog, homeApi = desktopHome, sources = desktopSources, phone, modeChoices, modeBlock }: {
+export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPosts, Dialog = TeamDialog, homeApi = desktopHome, sources = desktopSources, phone, modeChoices, modeBlock, calBlock }: {
   teamId: string;
   team: string;
   members: { id: string; name: string }[];
@@ -53,6 +52,8 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
   /** 모드 칸(데스크톱만 — 이 기기 가벼운 모드). 없으면 모드 칸은 한 줄 안내 */
   modeChoices?: ModeChoice[];
   modeBlock?: (b: HomeBlock, editing: boolean) => React.ReactNode;
+  /** 팀 캘린더 칸(relay ADR 0011) — 데스크톱·폰이 각자 길로 */
+  calBlock?: (b: HomeBlock, editing: boolean) => React.ReactNode;
 }) {
   const [b, setB] = useState<PostBoard | null>(null);
   const [err, setErr] = useState('');
@@ -158,6 +159,8 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
   };
 
   const h = b ? homeOf(b, seen) : null;
+  const places = postPlaces(hb?.home ?? null);
+  const shown = h ? (places.pinInList && h.pinned ? [h.pinned, ...h.list] : h.list) : [];
   const cur = open && b ? b.posts.find((x) => x.id === open) ?? null : null;
   const meta = (p: Post) => `${nameOf(p.by)} · ${stamp(p.created, Date.now())}${p.edited ? tr(' · 고침', ' · edited') : ''}`;
 
@@ -169,9 +172,9 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
       <span className="hb-pm">{meta(h.pinned)}</span>
     </button>
   ) : null;
-  const list = h && h.list.length > 0 ? (
+  const list = h && shown.length > 0 ? (
     <div className="tmh-list">
-      {h.list.map((p) => (
+      {shown.map((p) => (
         <button key={p.id} className={`tmh-post ${h.unread.has(p.id) ? 'unread' : ''}`} onClick={() => read(p)}>
           {face(p.by)}
           <span className="tmh-tx"><b>{p.title}{h.unread.has(p.id) && <i className="tmh-new" aria-label={tr('안 읽음', 'Unread')} />}</b><span>{p.body.split('\n')[0]}</span></span>
@@ -195,6 +198,7 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
   const block = (x: HomeBlock, editing: boolean): React.ReactNode => {
     if (x.k === 'pin') return pinBox && !editing ? pinBox : <div className="hb-ph"><IconPin />{tr('고정 공지', 'Pinned notice')}{!editing && <span className="hb-s2">{tr(' · 팀장이 글을 고정하면 여기에', ' · Shows the post the owner pins')}</span>}</div>;
     if (x.k === 'posts') return <><div className="hb-bh">{tr('글', 'Posts')}</div>{editing ? null : list ?? (postState && <div className="tmh-empty">{postState}</div>)}</>;
+    if (x.k === 'cal') return calBlock ? calBlock(x, editing) : <><div className="hb-bh">{tr('팀 캘린더', 'Team calendar')}</div><div className="hb-none">{tr('캘린더 탭에서 봐요', 'Open the calendar tab')}</div></>;
     if (x.k === 'mode') return modeBlock ? modeBlock(x, editing) : <><div className="hb-bh">{tr('참모 모드', 'Chammo mode')}</div><div className="hb-none">{tr('모드 칸은 맥 앱에서 보여요', 'Mode blocks show in the Mac app')}</div></>;
     return <DataBlock b={x} d={data} editing={editing} />;
   };
@@ -220,6 +224,7 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
         <HomeBoard teamId={teamId} team={team} icon={icon} people={members.length} board={hb} phone={phone} api={homeApi} modeChoices={modeChoices}
           nameOf={nameOf} onWrite={() => setDraft({ title: '', body: '', pin: false })} onSaved={() => loadHome(null)} Dialog={Dialog}
           renderBlock={(x, editing) => block(x, editing)}
+          below={places.listBelow && list ? <><div className="hb-bh">{tr('글', 'Posts')}</div>{list}</> : null}
           fallback={<>{err && <div className="tmh-err" role="alert">{err}</div>}{postList}</>} />
       )}
       {draft && (

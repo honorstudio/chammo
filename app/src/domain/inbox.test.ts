@@ -15,7 +15,7 @@ describe('buildInbox — 나한테 온 것만 한 칸에', () => {
     const items = buildInbox([act(s('a', 'todo-api'), 'asks', 'PR 올렸어. 머지할까?'), act(s('b', 'crm', 'crm'), 'blocked'), act(s('c', 'acme-shop'), 'done', '끝났어')], [], new Set(), [], () => true);
     expect(items.map((i) => [i.kind, i.project, i.where, i.text])).toEqual([
       ['ask', 'todo-api', '', 'PR 올렸어. 머지할까?'],
-      ['blocked', 'crm', 'crm', '확인창·선택지에서 멈춰 있어 — 열어서 골라줘'],
+      ['blocked', 'crm', 'crm', '확인창에서 멈춰 있어. 열어서 골라줘'],
     ]);
   });
 

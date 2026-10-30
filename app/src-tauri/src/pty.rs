@@ -34,6 +34,8 @@ struct OpenView {
     /// 이 보기 화면을 Rust 도 그려 둔다(vt100) — 윈도우는 열린 보기로 칠 때 입력칸에 사람 글이 있나 보려고(②-1),
     /// 맥은 채팅 탭이 친 글이 입력칸에 다 보이면 바로 Enter 하려고(2026-10-28 chat-speed)
     screen: Option<Arc<Mutex<vt100::Parser>>>,
+    /// 연 때 — 막 연 보기는 입력칸이 보여야 키를 받는다(takes_keys)
+    opened: std::time::Instant,
 }
 
 /// 열린 터미널 보기가 어느 세션에 붙어 있나 — 윈도우는 claude attach 가 세션당 한 창만 붙게 해서,
@@ -187,6 +189,66 @@ pub(crate) fn session_writer(session: &str) -> Option<(SharedWriter, Option<Arc<
     ready_view(&OPEN.lock().unwrap(), session)
 }
 
+/// 열린 보기가 붙는 중(화면 200자 전)이면 다 붙을 때까지 이만큼은 기다린다 — 윈도우는 attach 가 붙기까지 20초 걸린 적도 있다
+pub(crate) const VIEW_SETTLE: std::time::Duration = std::time::Duration::from_secs(25);
+
+/// 윈도우: 세션에 키를 넣기 전 — 열린 보기가 아직 붙는 중이면 다 붙을 때까지 기다린다(그동안 attach_do 가 새로 붙으면 그 보기가 쫓겨난다).
+/// 세션당 한 창이라 채팅 칸이 막 다시 붙는 순간 [앱] 줄·팀 말·답장이 끼면 채팅 칸이 쫓겨나 말이 다 안 갔다(2026-10-30 윈도우 시험 PC 재현 10/10)
+pub(crate) fn settle_view(session: &str) {
+    if cfg!(windows) {
+        _ = wait_view(VIEW_SETTLE, std::time::Duration::from_millis(100), || keys_view(&OPEN.lock().unwrap(), session), || session_has_view(session));
+    }
+}
+
+/// 키를 받을 수 있는 열린 보기 — 글자 수(ready_view)에 더해 화면이 입력을 받을 모양이어야(takes_keys)
+fn keys_view(open: &[OpenView], session: &str) -> Option<()> {
+    let v = open.iter().rev().find(|v| v.session == session && !dead(v) && v.visible.load(Ordering::Relaxed) >= VIEW_READY_VISIBLE)?;
+    view_takes_keys(v).then_some(())
+}
+
+fn view_takes_keys(v: &OpenView) -> bool {
+    match &v.screen {
+        Some(p) => takes_keys(Some(p.lock().unwrap_or_else(|e| e.into_inner()).screen()), v.opened.elapsed()),
+        None => takes_keys(None, v.opened.elapsed()),
+    }
+}
+
+/// 이 칸(pty)이 지금 키를 받나 — 세션 보기가 아니면(설정·로그인 터미널) None
+fn pty_takes_keys(open: &[OpenView], pty: u32) -> Option<bool> {
+    open.iter().find(|v| v.pty == pty).map(view_takes_keys)
+}
+
+/// 윈도우: 채팅이 칸에 치기 전 — 막 (다시) 붙은 세션 보기면 키를 받을 때까지 기다린다. 앱은 화면이 오면 '붙음'으로 보고 바로 치는데
+/// 그 순간 attach 는 아직 입력을 못 받아, 되찾자마자 친 말이 사라져 '전달 안 됨·다시 보내기'로 남았다(2026-10-30)
+fn settle_pty(pty: u32) {
+    if cfg!(windows) {
+        _ = wait_view(VIEW_SETTLE, std::time::Duration::from_millis(100), || (pty_takes_keys(&OPEN.lock().unwrap(), pty) != Some(false)).then_some(()), || true);
+    }
+}
+
+/// 이 보기가 지금 키를 받나 — 연 지 VIEW_FRESH 가 지났고, 입력칸이 보이거나 화면에 글자가 있으면(attach_new 의 attach_ready 와 같은 기준).
+/// 200자만 보고 쓰면 attach 안내 줄(Attaching…)뿐이거나 막 열린 보기에 친 글이 사라진다. 화면을 안 그리는 보기는 글자 수로만
+pub(crate) fn takes_keys(screen: Option<&vt100::Screen>, age: std::time::Duration) -> bool {
+    screen.is_none_or(|s| age >= VIEW_FRESH && crate::claude::attach_ready(s, age))
+}
+
+/// 막 연 보기는 입력칸이 보여도 이만큼은 키를 안 넣는다 — 0.6~1초에 친 [앱] 줄이 사라졌다(2026-10-30 윈도우 시험 PC, 1.5초부터는 다 들어감)
+pub(crate) const VIEW_FRESH: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// ready 가 값을 줄 때까지 tick 마다 — 열린 보기가 없으면(opening 거짓) 바로, max 를 넘기면 None(가짜 콘솔이 멈춘 보기)
+pub(crate) fn wait_view<T>(max: std::time::Duration, tick: std::time::Duration, mut ready: impl FnMut() -> Option<T>, mut opening: impl FnMut() -> bool) -> Option<T> {
+    let t = std::time::Instant::now();
+    loop {
+        if let Some(v) = ready() {
+            return Some(v);
+        }
+        if !opening() || t.elapsed() >= max {
+            return None;
+        }
+        std::thread::sleep(tick);
+    }
+}
+
 /// 이 세션에 열린 터미널 보기가 있나(화면이 왔든 아직이든) — 화면만 읽으려고 새로 붙으면 열린 보기가 쫓겨난다
 pub(crate) fn session_has_view(session: &str) -> bool {
     has_view(&OPEN.lock().unwrap(), session)
@@ -322,7 +384,7 @@ pub fn pty_open(
     let kick: Arc<Kick> = Default::default();
     // 세션 보기는 화면을 Rust 도 그린다 — 윈도우는 열린 보기로 칠 때 입력칸을 보려고, 맥은 채팅 탭 Enter 를 글이 보이자마자 넣으려고
     let screen = session_of(&command).is_some().then(|| Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 0))));
-    let probe = OpenView { pty: 0, session: String::new(), writer: Arc::new(Mutex::new(Box::new(std::io::sink()))), visible: visible.clone(), gone: gone.clone(), kick: kick.clone(), pid: None, screen: screen.clone() };
+    let probe = OpenView { pty: 0, session: String::new(), writer: Arc::new(Mutex::new(Box::new(std::io::sink()))), visible: visible.clone(), gone: gone.clone(), kick: kick.clone(), pid: None, screen: screen.clone(), opened: std::time::Instant::now() };
     let mut counter = Visible::default();
     let (master, writer, child) = spawn_pty(&command, cwd, cols, rows, move |b| {
         feed_view(&probe, &mut counter, b);
@@ -333,7 +395,7 @@ pub fn pty_open(
     let writer: SharedWriter = Arc::new(Mutex::new(writer));
     if let Some(session) = session_of(&command) {
         let pid = child.process_id();
-        OPEN.lock().unwrap().push(OpenView { pty: id, session, writer: writer.clone(), visible, gone, kick, pid, screen });
+        OPEN.lock().unwrap().push(OpenView { pty: id, session, writer: writer.clone(), visible, gone, kick, pid, screen, opened: std::time::Instant::now() });
     }
     state.map.lock().unwrap().insert(id, Pty { master, writer, child, owner: webview.label().to_string() });
     Ok(id)
@@ -364,7 +426,12 @@ pub async fn pty_type(state: State<'_, Ptys>, id: u32, keys: Vec<String>, enter_
     let screen = OPEN.lock().unwrap().iter().find(|v| v.pty == id).and_then(|v| v.screen.clone());
     #[cfg(debug_assertions)]
     log_write(id, &format!("{}{}", keys.concat(), if enter_ms.is_some() { "\r" } else { "" }));
-    tauri::async_runtime::spawn_blocking(move || type_keys_seen(&writer, &keys, enter_ms, screen.as_ref())).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        settle_pty(id); // 자물쇠(type_keys_seen) 잡기 전에 — 기다리는 동안 다른 칸 치기를 막지 않게
+        type_keys_seen(&writer, &keys, enter_ms, screen.as_ref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 pub(crate) fn type_keys(w: &SharedWriter, keys: &[String], enter_ms: Option<u64>) -> Result<(), String> {
@@ -484,6 +551,72 @@ pub(crate) fn reap(mut child: Box<dyn Child + Send + Sync>) {
 mod tests {
 
     #[test]
+    fn 붙는_중인_보기는_다_붙을_때까지_기다려_그_보기를_쓴다() {
+        // 윈도우는 세션당 한 창 — 채팅 칸이 붙는 중(화면 200자 전)에 앱 전달이 새로 붙으면 채팅 칸이 쫓겨나 말이 다 안 갔다(2026-10-30)
+        use std::cell::Cell;
+        use std::time::Duration;
+        let polls = Cell::new(0);
+        let got = super::wait_view(Duration::from_secs(5), Duration::from_millis(1), || {
+            polls.set(polls.get() + 1);
+            (polls.get() >= 3).then_some(7)
+        }, || true);
+        assert_eq!(got, Some(7));
+        assert_eq!(polls.get(), 3);
+    }
+
+    #[test]
+    fn 열린_보기는_입력칸이_보여야_키를_받는다() {
+        // 200자를 받아도 attach 안내 줄뿐이거나 막 열린 보기면 아직 입력을 안 받는다 — 그때 친 [앱] 줄이 조용히 사라졌다(2026-10-30 고친 판 첫 재측정 10/10)
+        use std::time::Duration;
+        let screen = |bytes: &str| {
+            let mut p = vt100::Parser::new(40, 120, 0);
+            p.process(bytes.as_bytes());
+            p
+        };
+        let banner = screen("Attaching to session 1a2b3c4d (probe-a) — press ctrl+b d to detach\r\nWaiting for session to redraw…");
+        assert!(!super::takes_keys(Some(banner.screen()), Duration::from_millis(300)));
+        let boxed = screen("⏺ 안녕\r\n──────── s ─\r\n❯\u{a0}\r\n────────\r\n  main");
+        // 입력칸이 그려져도 연 지 1초 안쪽엔 attach 가 아직 입력을 못 받았다(시험 PC 실측: 0.6~1초에 친 줄 10/10 사라짐, 1.5초부터 다 들어감)
+        assert!(!super::takes_keys(Some(boxed.screen()), Duration::from_millis(900)));
+        assert!(super::takes_keys(Some(boxed.screen()), super::VIEW_FRESH));
+        // 오래 열려 있던 보기의 선택 창 — 입력칸이 없어도 바로(선택지 답 키가 1.5초씩 늦지 않게)
+        let dialog = screen("Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No");
+        assert!(super::takes_keys(Some(dialog.screen()), Duration::from_secs(60)));
+        assert!(super::takes_keys(None, Duration::ZERO), "화면을 안 그리는 보기는 예전처럼 글자 수로만");
+    }
+
+    #[test]
+    fn 막_다시_붙은_칸에는_채팅도_바로_안_친다() {
+        // 쫓겨난 칸을 되찾자마자(붙음) 친 채팅 말이 사라져 '전달 안 됨·다시 보내기'로 남았다(2026-10-30 시험판 3/3) — pty_type 도 같은 기준으로 기다린다
+        use std::time::{Duration, Instant};
+        let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut fresh = view_for("s1", buf.clone(), true);
+        fresh.pty = 7;
+        fresh.screen.as_ref().unwrap().lock().unwrap().process("──── s ─\r\n❯\u{a0}\r\n────\r\n".as_bytes());
+        assert_eq!(super::pty_takes_keys(std::slice::from_ref(&fresh), 7), Some(false), "연 지 얼마 안 됐으면 기다린다");
+        fresh.opened = Instant::now().checked_sub(Duration::from_secs(5)).unwrap();
+        assert_eq!(super::pty_takes_keys(std::slice::from_ref(&fresh), 7), Some(true));
+        assert_eq!(super::pty_takes_keys(std::slice::from_ref(&fresh), 8), None, "세션 보기가 아닌 칸(설정·로그인 터미널)은 안 기다린다");
+    }
+
+    #[test]
+    fn 열린_보기가_없으면_안_기다린다() {
+        use std::time::{Duration, Instant};
+        let t = Instant::now();
+        assert_eq!(super::wait_view(Duration::from_secs(5), Duration::from_millis(50), || None::<u8>, || false), None);
+        assert!(t.elapsed() < Duration::from_millis(40), "보기가 없으면 바로 새로 붙는다");
+    }
+
+    #[test]
+    fn 끝내_안_붙는_보기는_놓고_새로_붙게_한다() {
+        // 가짜 콘솔이 멈춘 보기(첫 ESC[6n 답 못 받음)는 영영 화면이 안 온다 — 한도까지만 기다린다
+        use std::time::{Duration, Instant};
+        let t = Instant::now();
+        assert_eq!(super::wait_view(Duration::from_millis(30), Duration::from_millis(5), || None::<u8>, || true), None);
+        assert!(t.elapsed() >= Duration::from_millis(30));
+    }
+
+    #[test]
     fn 받는_쪽이_끝나도_출력은_끝까지_비운다() {
         // 끝남(빈 조각)이 먼저 간 뒤에도 파이프를 안 비우면 윈도우 ConPTY 출력이 차서 master 놓기(ClosePseudoConsole)가 안 돌아온다(QA 2차 검토)
         use super::*;
@@ -577,6 +710,7 @@ mod tests {
             kick: Default::default(),
             pid: None,
             screen: screen.then(|| Arc::new(Mutex::new(vt100::Parser::new(24, 80, 0)))),
+            opened: std::time::Instant::now(),
         }
     }
 
@@ -664,7 +798,7 @@ mod tests {
         let open = |id: u32, owner: &str| {
             let (master, writer, child) = spawn_pty("exec sleep 30", None, 80, 24, |_| true).unwrap();
             let writer: SharedWriter = Arc::new(Mutex::new(writer));
-            OPEN.lock().unwrap().push(OpenView { pty: id, session: format!("close-owned-{id}"), writer: writer.clone(), visible: Arc::new(AtomicUsize::new(0)), gone: Arc::new(AtomicBool::new(false)), kick: Default::default(), pid: None, screen: None });
+            OPEN.lock().unwrap().push(OpenView { pty: id, session: format!("close-owned-{id}"), writer: writer.clone(), visible: Arc::new(AtomicUsize::new(0)), gone: Arc::new(AtomicBool::new(false)), kick: Default::default(), pid: None, screen: None, opened: std::time::Instant::now() });
             let pid = child.process_id().unwrap() as i32;
             state.map.lock().unwrap().insert(id, Pty { master, writer, child, owner: owner.into() });
             pid
@@ -846,7 +980,7 @@ mod tests {
 
     fn view(pty: u32, session: &str, visible: usize) -> super::OpenView {
         let w: Box<dyn std::io::Write + Send> = Box::new(Vec::<u8>::new());
-        super::OpenView { pty, session: session.into(), writer: std::sync::Arc::new(std::sync::Mutex::new(w)), visible: std::sync::Arc::new(visible.into()), gone: Default::default(), kick: Default::default(), pid: None, screen: None }
+        super::OpenView { pty, session: session.into(), writer: std::sync::Arc::new(std::sync::Mutex::new(w)), visible: std::sync::Arc::new(visible.into()), gone: Default::default(), kick: Default::default(), pid: None, screen: None, opened: std::time::Instant::now() }
     }
 
     fn kicked(v: super::OpenView) -> super::OpenView {

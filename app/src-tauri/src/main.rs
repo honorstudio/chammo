@@ -91,9 +91,13 @@ mod team_locker_cmd;
 mod team_revise;
 mod team_profile;
 mod team_profile_cmd;
+mod team_app;
+mod team_app_cmd;
+mod team_app_store;
 mod team_home;
 mod team_home_cmd;
 mod team_home_store;
+mod team_owners;
 mod team_post;
 mod team_post_cmd;
 mod team_phone_up;
@@ -136,6 +140,7 @@ mod team_rooms;
 #[cfg(test)]
 mod team_test_util;
 mod team_ui;
+mod shown_share;
 mod team_alert;
 mod team_window;
 #[cfg(test)]
@@ -754,6 +759,7 @@ fn main() {
             team_ui::team_pick_files,
             team_ui::team_clip_files,
             team_ui::drag_out,
+            shown_share::drag_native,
             team_ui::drag_hover,
             team_ui::drag_out_team,
             team_ui::drag_back,
@@ -773,13 +779,18 @@ fn main() {
             team_ui::team_ui_delete,
             team_ui::team_ui_use,
             team_ui::team_ui_remove,
-            team_ui::team_ui_make_owner,
+            team_ui::team_ui_transfer,
+            team_ui::team_ui_set_perms,
             team_ui::team_handoff,
             team_profile_cmd::team_profiles,
             team_profile_cmd::team_profile_changed,
             team_profile_cmd::team_profile_set,
             team_profile_cmd::team_icon_set,
             team_post_cmd::team_posts,
+            team_app_cmd::team_cal_cached,
+            team_app_cmd::team_cal,
+            team_app_cmd::team_cal_poll,
+            team_app_cmd::team_cal_put,
             team_home_cmd::team_home,
             team_home_cmd::team_home_save,
             team_home_cmd::team_home_content,
@@ -800,6 +811,7 @@ fn main() {
             team_locker_cmd::team_locker_dismiss,
             team_locker_cmd::team_locker_open,
             team_locker_cmd::team_locker_give,
+            team_locker_cmd::team_locker_give_folder,
             orch_bubble::orch_bubble_main,
             orch_bubble::bubble_screens,
             orch_bubble::bubble_place,
@@ -902,6 +914,7 @@ fn main() {
             setup::check_env,
             claude_src::claude_source,
             setup::app_version,
+            updater::app_update_check,
             updater::app_update_install,
             debug::pick_log,
             debug::space_trace,

@@ -1,4 +1,4 @@
-// 직접 답하기 카드 — <데이터>/direct.jsonl 을 2초마다 읽어 참모별로 나눈다(그 세션을 맡긴 참모 채팅에, forwardTo 와 같은 규칙).
+// 직접 답하기 카드 — <데이터>/direct.jsonl 을 2초마다 읽어 참모별로 나눈다(그 세션에 일을 보낸 참모 채팅에 — 기록이 없으면 대기함에만, domain placeDirect).
 // 사람 답이 필요한 카드는 그 참모 채팅 맨 아래 + 결정 대기함(상단 종)에 늘 — 어느 화면·탭을 보든, 받을 참모가 없어도 보이게(2026-10-05 아이맥 사고).
 // 새로 기다리는 카드가 생기면 알린다(human — 앱을 보고 있으면 앱 안만)
 import { invoke } from '@tauri-apps/api/core';
@@ -19,8 +19,8 @@ export type ChatExtra = { ts: string; key: string; pin?: boolean; clip?: boolean
  * everyone = 폴더로 거르기 전 전체 세션 목록(agents --json) — 워크트리로 들어가 사이드바에서 빠진 세션도 살아 있다.
  * onRespawn = 주인 세션이 꺼진 카드의 '다시 띄우기'(같은 번호)
  */
-export function useDirectCards(everyone: Session[], acts: { session: Session; activity: Activity }[], events: TaskEvent[], orchs: Session[], front: Session | undefined, lives: Live[],
-  notify: (c: DirectCard, name: string, owner?: Session) => void, heir?: (s: Session) => Session | undefined, onRespawn?: (c: DirectCard) => Promise<void>) {
+export function useDirectCards(everyone: Session[], acts: { session: Session; activity: Activity }[], events: TaskEvent[], orchs: Session[], lives: Live[],
+  notify: (c: DirectCard, name: string, owner?: Session) => void, onRespawn?: (c: DirectCard) => Promise<void>) {
   const [log, setLog] = useState<string | null>(null); // null = 아직 한 번도 못 읽음
   const [open, setOpen] = useState<string | null>(null);
   const [inboxOpen, setInboxOpen] = useState<string | null>(null);
@@ -37,11 +37,11 @@ export function useDirectCards(everyone: Session[], acts: { session: Session; ac
     seen.current = stepSeen(seen.current, everyone.map((s) => s.id), now); // 목록을 새로 읽을 때마다(everyone 이 바뀔 때) — 재시작 유예를 시간으로 잰다
     const act = new Map(acts.map((a) => [a.session.id, a.activity]));
     return placeDirect(log ?? '', {
-      everyone, seen: seen.current, now, events, orchs, front, heir, unknown: everyone.length === 0, // 첫 목록 전
+      everyone, seen: seen.current, now, events, orchs, unknown: everyone.length === 0, // 첫 목록 전
       prompt: (sid) => act.get(sid)?.prompt,
       reply: (sid) => act.get(sid)?.reply,
     });
-  }, [log, everyone, acts, events, orchs, front, heir]);
+  }, [log, everyone, acts, events, orchs]);
   const cards = useMemo(() => placed.map((p) => p.card), [placed]);
   const tidy = useDirectTidy(cards);
   // 새로 기다리는 카드 알림 — 한 카드에 한 번. 처음 읽은 기록의 옛 카드는 안 알린다(첫 읽기 전 빈 목록으로 굳히지 않게 — 기록을 받은 뒤에 시작)
@@ -95,5 +95,6 @@ export function useDirectCards(everyone: Session[], acts: { session: Session; ac
   ) : null;
   /** 카드 한 장 펼친 채로 — 홈 결정 펼침(그 자리에서 답, 결제도 이 카드 그대로 사람이 누른다) */
   const cardNode = (c: DirectCard, place: string) => <div className="dc-row">{card(c, place, false, () => {})}</div>;
-  return { cards, extraOf, inboxCards, inboxNode, cardNode };
+  /** ready = 기록을 한 번이라도 읽었나 — 그 전 빈 목록으로 '처음 본 카드'를 굳히지 않게 */
+  return { cards, placed, ready: log !== null, nameOf, extraOf, inboxCards, inboxNode, cardNode };
 }

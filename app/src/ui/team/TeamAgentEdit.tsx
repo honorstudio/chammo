@@ -114,7 +114,7 @@ export function TeamAgentEdit({ team, list, editing, people, rooms, onBack, onSa
           {files !== null && files.length === 0 && <span className="tmx-hint">{tr('팀 보관함에 글 파일(md·txt·csv)이 아직 없어요', 'No text files (md·txt·csv) in the team locker yet')}</span>}
           <label className="tmp-sw tma-sw"><span><b>{tr('답에 파일 붙이기', 'Attach files to answers')}</b><i>{tr('md·csv 한 개', 'One md or csv file')}</i></span>
             <input type="checkbox" role="switch" disabled={ro} checked={def.attach} onChange={(e) => set({ attach: e.target.checked })} /></label>
-          <span className="tmx-hint tma-lock">{tr('명령 실행 · 파일 쓰기 · 내 컴퓨터 파일 · 발송은 늘 꺼짐', 'Running commands, writing files, files on your computer and sending are always off')}</span>
+          <span className="tmx-hint tma-lock">{tr('명령 실행, 파일 쓰기, 내 컴퓨터 파일 접근, 발송은 항상 꺼져 있어요', 'Running commands, writing files, accessing files on your computer and sending are always off')}</span>
           <span className="tmx-fl">{tr('모델 · 고칠 수 있는 사람', 'Model · who can edit')}</span>
           <div className="tma-chips">
             {(['haiku', 'sonnet'] as const).map((m) => <button key={m} className="tma-chip" disabled={ro} aria-pressed={def.model === m} onClick={() => set({ model: m })}>{modelLabel(m)}</button>)}
@@ -122,7 +122,7 @@ export function TeamAgentEdit({ team, list, editing, people, rooms, onBack, onSa
             <button className="tma-chip" disabled={ro} aria-pressed={def.editors === 'owner'} onClick={() => set({ editors: 'owner' })}>{tr('팀장만', 'Owners only')}</button>
           </div>
           <span className="tmx-hint">{tr(`부를 때마다 대략 ${tokensLabel(estimate(def, refBytes))} 토큰 · 부른 사람 사용량`, `About ${tokensLabel(estimate(def, refBytes))} tokens per call · from the caller's usage`)}</span>
-          {ro && <span className="tmx-hint">{tr('만든 사람·팀장만 고칠 수 있어요 — 시험은 돼요', 'Only the creator and owners can edit — you can still test')}</span>}
+          {ro && <span className="tmx-hint">{tr('만든 사람과 팀장만 고칠 수 있어요. 시험은 누구나 해 볼 수 있어요', 'Only the creator and owners can edit. Anyone can still test.')}</span>}
           {editing?.canEdit && <div className="tma-acts tma-left"><button className="tmx-btn danger tmx-sm" disabled={busy} onClick={() => setAsk('remove')}>{tr('팀 참모 지우기', 'Delete team agent')}</button></div>}
           {err && <span className="tmx-hint" role="alert">{err}</span>}
         </div>

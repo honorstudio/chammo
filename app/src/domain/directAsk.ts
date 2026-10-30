@@ -1,7 +1,7 @@
 // 직접 답하기 카드(2026-10-03) — 하위 세션이 scripts/direct ask 로 남긴 카드(<데이터>/direct.jsonl)를 상태와 함께 읽는다.
 // 사람이 카드에서 누르면 앱(Rust direct.rs)이 그 세션 입력칸에 사람 말로 친다. 여기는 보여 줄 상태만 가린다
 import { tr } from '../i18n';
-import { forwardTo } from './forwardQuestion';
+import { sentBy } from './forwardQuestion';
 import type { Session } from './session';
 import type { TaskEvent } from './tasks';
 
@@ -144,14 +144,15 @@ const DAY = 24 * 3600_000;
 export type Placed = { card: DirectCard; /** 그 카드를 채팅에 받을 참모(없으면 결정 대기함에만) */ owner?: Session };
 
 /**
- * 데스크톱 카드와 받을 참모 — everyone 은 폴더로 거르기 전 전체 목록. 받을 참모는 하위 세션 질문과 같은 규칙(forwardTo):
- * 그 세션에 일을 보낸 참모 → 같은 프로젝트를 맡긴 참모 → 맡은 일 → 맨 앞 참모. 끝난 영수증은 하루만
+ * 데스크톱 카드와 받을 참모 — everyone 은 폴더로 거르기 전 전체 목록. 받을 참모는 일 기록으로 확정한 주인만(sentBy — 그 세션에 일을 보낸 참모, 넘겨받았으면 새 주인).
+ * 기록이 없으면(참모가 task send 없이 띄운 도우미 등) 주인 없음 — 어느 참모 채팅에도 안 붙고 결정 대기함 + 화면 위 한 줄(앱 카드와 같은 길).
+ * 맡은 일·맨 앞 참모로 짐작하면 엉뚱한 참모 채팅에 붙었다(2026-10-29). 끝난 영수증은 하루만
  */
 export function placeDirect(log: string, o: {
   everyone: Session[]; seen: Seen; now: number;
   /** 세션 목록을 아직 못 읽음 — 꺼짐으로 단정하지 않는다(앱을 켤 때) */ unknown?: boolean;
   prompt: Env['prompt']; reply: Env['reply'];
-  events: TaskEvent[]; orchs: Session[]; front?: Session; heir?: (s: Session) => Session | undefined;
+  events: TaskEvent[]; orchs: Session[];
 }): Placed[] {
   const cards = directCards(log, { alive: o.unknown ? () => true : aliveIn(o.seen, o.now), prompt: o.prompt, reply: o.reply, now: o.now })
     .filter((c) => needsAnswer(c) || o.now - Date.parse(c.ts) < DAY);
@@ -159,13 +160,16 @@ export function placeDirect(log: string, o: {
     // 앱이 낸 카드(기기·보안 번호·되찾기 — @link)는 일을 보낸 참모가 없다 — 맨 앞(보고 있던) 참모에게 넘기지 않고 결정 대기함에만(2026-10-29)
     if (card.from === LINK_FROM) return { card };
     const s = o.everyone.find((x) => x.id === card.from) ?? ({ id: card.from, name: '', project: card.cwd.split('/').pop() ?? '' } as Session);
-    return { card, owner: forwardTo(s, o.events, o.orchs, o.everyone, o.front, o.heir) };
+    return { card, owner: sentBy(s, o.events, o.orchs, o.everyone) };
   });
 }
 
-/** 폰 한 참모 채팅에 붙일 카드 — 그 참모 몫 + 연결 요청(세션이 아니라 앱이 묻는다, 폰은 대기함이 없어 맨 앞 참모 채팅에만 붙으면 못 봤다 — 2026-10-28) */
+/**
+ * 폰 한 참모 채팅에 붙일 카드 — 그 참모 몫 + 주인 없는 카드(앱 연결 요청·기록 없는 세션)는 봐야 하는 동안 보고 있는 참모 채팅 어디서든.
+ * 폰은 대기함이 없어 맨 앞 참모 채팅에만 붙으면 못 봤다(2026-10-28). 처리된 한 줄은 주인 확정 카드만 — 주인 없는 영수증이 보던 참모 채팅에 남았다(2026-10-29)
+ */
 export function phoneOwns(placed: Placed[], orchId: string): DirectCard[] {
-  return placed.filter((p) => p.owner?.id === orchId || (p.card.kind === 'link' && p.card.from === LINK_FROM)).map((p) => p.card);
+  return placed.filter((p) => (p.owner ? p.owner.id === orchId : needsLook(p.card))).map((p) => p.card);
 }
 
 /** 답·처리가 끝난 카드가 한 줄로 남는 시간(2026-10-05 사용자 — 처리된 카드 두 장이 폰 채팅을 크게 가렸다) */
@@ -208,8 +212,8 @@ export function cardLine(c: DirectCard): { what: string; result: string; at: str
   return { what: c.amount ? `${k.word} ${c.amount}` : k.word, result, at: c.lastTs };
 }
 
-/** 새로 기다리기 시작한 앱 카드(@link) — 화면 위 짧은 알림 한 줄(누르면 결정 대기함). prev 가 없으면(앱을 켠 첫 읽기) 아무것도 안 알린다 */
-export function freshAppCards(prev: Set<string> | null, cards: DirectCard[]): DirectCard[] {
+/** 새로 기다리기 시작한 주인 없는 카드(앱 카드 @link·기록 없는 세션) — 화면 위 짧은 알림 한 줄(누르면 결정 대기함). prev 가 없으면(앱을 켠 첫 읽기) 아무것도 안 알린다 */
+export function freshAppCards(prev: Set<string> | null, placed: Placed[]): DirectCard[] {
   if (prev === null) return [];
-  return cards.filter((c) => c.from === LINK_FROM && needsAnswer(c) && !prev.has(c.id));
+  return placed.filter((p) => !p.owner && needsAnswer(p.card) && !prev.has(p.card.id)).map((p) => p.card);
 }

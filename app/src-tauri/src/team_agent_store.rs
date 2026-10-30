@@ -2,6 +2,7 @@
 use crate::accounts_store::Store;
 use crate::team_agent::{self as agent, Confirmed, Def, Seen, Shown};
 use crate::team_locker_app::{self as locker, Item};
+use crate::team_owners;
 use crate::team_relay::{self, Http};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -115,14 +116,12 @@ fn usable(i: &Item) -> bool {
     i.why.is_empty() && i.deleted_at.is_none() && i.state != "trash" && i.state != "uploading"
 }
 
-fn owners(t: &team_relay::TeamEntry) -> Vec<String> {
-    t.members.iter().filter(|m| m.role == "owner").map(|m| m.id.clone()).collect()
-}
-
-type Read = (team_relay::TeamEntry, Vec<(Item, Def)>, locker::ShareJob);
+/// (팀, 서명된 명부가 말하는 팀장 — relay ADR 0014 R14, 서버 members 의 role 이 아니다, 판들, 봉투 더하기 일)
+type Read = (team_relay::TeamEntry, Vec<String>, Vec<(Item, Def)>, locker::ShareJob);
 
 fn read(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) -> Result<Read, String> {
     let t = team_relay::load_state(dir).team(team).cloned()?;
+    let owners = team_owners::holders(dir, kc, http, &t.id, "agents");
     let (v, job) = locker::list_split(dir, kc, http, &t.id)?;
     let docs = v
         .items
@@ -130,20 +129,20 @@ fn read(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) -> Result<Read,
         .filter(|i| i.kind == "post" && i.name == "agent.json" && usable(i))
         .filter_map(|i| crate::team_profile::bytes_of(dir, kc, http, &t.id, &i.id).ok().and_then(|b| agent::decode(&b).ok()).filter(|d| d.t == "agent").map(|d| (i.clone(), d)))
         .collect();
-    Ok((t, docs, job))
+    Ok((t, owners, docs, job))
 }
 
-fn folded(t: &team_relay::TeamEntry, docs: &[(Item, Def)]) -> Vec<Shown> {
+fn folded(t: &team_relay::TeamEntry, owners: &[String], docs: &[(Item, Def)]) -> Vec<Shown> {
     let pairs: Vec<(&Item, Def)> = docs.iter().map(|(i, d)| (i, d.clone())).collect();
-    agent::fold(&pairs, &owners(t), &t.member_id)
+    agent::fold(&pairs, owners, &t.member_id)
 }
 
 /// 팀 참모 목록 — 받은 김에 캐시도 갈아 둔다
 pub fn list(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) -> Result<(List, locker::ShareJob), String> {
-    let (t, docs, job) = read(dir, kc, http, team)?;
-    let agents = folded(&t, &docs);
+    let (t, owners, docs, job) = read(dir, kc, http, team)?;
+    let agents = folded(&t, &owners, &docs);
     save_cache(dir, &t.id, &agents);
-    Ok((List { team: t.id.clone(), agents, seen: seen(dir), owner: t.role == "owner", me: t.member_id.clone() }, job))
+    Ok((List { team: t.id.clone(), agents, seen: seen(dir), owner: team_owners::has(&owners, &t.member_id), me: t.member_id.clone() }, job))
 }
 
 fn now_ms() -> u64 {
@@ -152,8 +151,8 @@ fn now_ms() -> u64 {
 
 /// 만들기·고치기(origin = 참모 id) — 이름 규칙·겹침, 고치기는 만든 사람(editors both)·팀장만. 돌려주는 건 참모 id
 pub fn save(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, draft: Def, origin: Option<&str>) -> Result<(String, locker::ShareJob), String> {
-    let (t, docs, job) = read(dir, kc, http, team)?;
-    let agents = folded(&t, &docs);
+    let (t, owners, docs, job) = read(dir, kc, http, team)?;
+    let agents = folded(&t, &owners, &docs);
     let mut d = agent::clean(Def { t: "agent".into(), ..draft });
     let people: Vec<String> = t.members.iter().map(|m| m.display_name.clone()).collect();
     agent::name_free(&d.name, origin.unwrap_or(""), &people, &agents)?;
@@ -162,7 +161,7 @@ pub fn save(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, draft: Def,
         Some(o) => {
             let cur = agents.iter().find(|a| a.id == o).ok_or("고칠 팀 참모가 없어")?;
             if !cur.can_edit {
-                return Err("이 팀 참모는 만든 사람·팀장만 고쳐".into());
+                return Err("이 팀 참모는 만든 사람·팀장·팀 참모 권한 매니저만 고쳐".into());
             }
             d.origin = o.into();
             d.created = cur.def.created;
@@ -190,11 +189,11 @@ fn put(dir: &Path, kc: &dyn Store, http: &dyn Http, t: &team_relay::TeamEntry, d
 
 /// 지우기 — gone 판을 같은 권한 규칙으로 올린다(받는 기기마다 목록에서 뺀다)
 pub fn remove(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str) -> Result<locker::ShareJob, String> {
-    let (t, docs, job) = read(dir, kc, http, team)?;
-    let agents = folded(&t, &docs);
+    let (t, owners, docs, job) = read(dir, kc, http, team)?;
+    let agents = folded(&t, &owners, &docs);
     let cur = agents.iter().find(|a| a.id == id).ok_or("지울 팀 참모가 없어")?;
     if !cur.can_edit {
-        return Err("이 팀 참모는 만든 사람·팀장만 지워".into());
+        return Err("이 팀 참모는 만든 사람·팀장·팀 참모 권한 매니저만 지워".into());
     }
     let d = Def { gone: true, origin: id.into(), at: now_ms(), ..cur.def.clone() };
     put(dir, kc, http, &t, &docs, d, Some(id))?;

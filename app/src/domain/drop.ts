@@ -35,6 +35,12 @@ export function quotePath(path: string): string {
   return `"${inner}"`;
 }
 
+/** 폴더 칩 — 경로 끝 / 가 폴더 표시(칩 아이콘, 참모가 읽는 따옴표 경로 둘 다). 보관함·팀 보관함 머리줄 '이 폴더 보내기'가 붙인다(2026-10-30 사용자) */
+export const folderChip = (p: string) => (p.endsWith('/') ? p : `${p}/`);
+export const isFolderChip = (p: string) => p.length > 1 && p.endsWith('/');
+/** 칩 이름 — 폴더(끝 /)도 마지막 이름 */
+export const chipName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
+
 /** Claude Code 가 붙여넣은 경로를 [Image #n] 으로 바꾸는 확장자(2.1.303) */
 const CLAUDE_IMAGE = /\.(png|jpe?g|gif|webp)$/i;
 

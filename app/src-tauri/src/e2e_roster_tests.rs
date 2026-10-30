@@ -18,7 +18,7 @@ fn chain(account: &str, d: &DeviceKeys, id: &str) -> Chain {
     e2e_chain::verify(account, &[l]).unwrap()
 }
 
-/// 사용자(a1, 기기 o1)·철수(a2, 기기 c1)·모르는 사람(a9, 기기 x1)
+/// 하늘(a1, 기기 o1)·철수(a2, 기기 c1)·모르는 사람(a9, 기기 x1)
 fn chains() -> BTreeMap<String, Chain> {
     BTreeMap::from([("a1".into(), chain("a1", &k(1), "o1")), ("a2".into(), chain("a2", &k(2), "c1")), ("a9".into(), chain("a9", &k(9), "x1"))])
 }
@@ -34,9 +34,9 @@ fn code_key(code: &str) -> SigningKey {
     SigningKey::from_bytes(&invite_seed(code))
 }
 
-/// 팀 시작(사용자) → 초대 → 철수 들어옴
+/// 팀 시작(하늘) → 초대 → 철수 들어옴
 fn base() -> Vec<TLink> {
-    let t = tl(&k(1), "o1", 0, "", json!({ "kind": "team", "name": "샘플팀", "member": "m1", "account": "a1", "displayName": "사용자" }));
+    let t = tl(&k(1), "o1", 0, "", json!({ "kind": "team", "name": "샘플팀", "member": "m1", "account": "a1", "displayName": "하늘" }));
     let inv = code_key("CODE-1");
     let pubk = B64.encode(inv.verifying_key().as_bytes());
     let i = tl(&k(1), "o1", 1, &team_hash(&t), json!({ "kind": "invite", "invPub": pubk, "role": "member", "expires": 9 }));
@@ -56,7 +56,7 @@ fn 시작·초대·들어옴으로_멤버를_낸다() {
     let r = verify("t1", &base(), &chains()).unwrap();
     assert_eq!(r.name, "샘플팀");
     let got: Vec<_> = r.active().map(|(id, m)| (id.as_str(), m.account.as_str(), m.display_name.as_str(), m.role.as_str())).collect();
-    assert_eq!(got, vec![("m1", "a1", "사용자", "owner"), ("m2", "a2", "철수", "member")]);
+    assert_eq!(got, vec![("m1", "a1", "하늘", "owner"), ("m2", "a2", "철수", "member")]);
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn 팀장만_초대·역할·빼기를_서명한다_가짜_팀장_불가() {
     // 철수(멤버)가 자기를 팀장으로
     ls.push(tl(&k(2), "c1", 3, &team_hash(&ls[2]), json!({ "kind": "role", "member": "m2", "role": "owner" })));
     assert_eq!(verify("t1", &ls, &chains()), Err(RosterErr::Bad(3, "owner-op")));
-    // 사용자(팀장)이 올리면 된다 → 그 뒤엔 철수도 팀장 일을 한다
+    // 하늘(팀장)이 올리면 된다 → 그 뒤엔 철수도 팀장 일을 한다
     let mut ls = base();
     ls.push(tl(&k(1), "o1", 3, &team_hash(&ls[2]), json!({ "kind": "role", "member": "m2", "role": "owner" })));
     ls.push(tl(&k(2), "c1", 4, &team_hash(&ls[3]), json!({ "kind": "remove", "member": "m1" })));
@@ -125,7 +125,7 @@ fn 사슬이_없는_계정이_나오면_받아_오라고_알린다() {
 #[test]
 fn 기존_팀_옮기기_목록_보증과_차례_틀림() {
     let t = tl(&k(1), "o1", 0, "", json!({ "kind": "team", "name": "옛 팀", "member": "m1", "account": "a1", "members": [
-        { "member": "m1", "account": "a1", "displayName": "사용자", "role": "owner" },
+        { "member": "m1", "account": "a1", "displayName": "하늘", "role": "owner" },
         { "member": "m2", "account": "a2", "displayName": "철수", "role": "member" } ] }));
     let r = verify("t1", std::slice::from_ref(&t), &chains()).unwrap();
     assert_eq!(r.active().map(|(m, _)| m.as_str()).collect::<Vec<_>>(), vec!["m1"], "옮기기 목록은 자리를 안 만든다(R1)");
@@ -135,7 +135,7 @@ fn 기존_팀_옮기기_목록_보증과_차례_틀림() {
 
 // ── 단톡방(room 고리, 계획 2026-10-26 team-rooms) — 방 사람·이름은 명부에서만 ──
 
-/// 사용자(m1)이 고리 at 에 방 r1 을 만든다
+/// 하늘(m1)이 고리 at 에 방 r1 을 만든다
 fn room(by: &DeviceKeys, by_id: &str, member: &str, account: &str, ls: &[TLink], name: &str, members: &[&str]) -> TLink {
     let prev = team_hash(ls.last().unwrap());
     tl(by, by_id, ls.len() as u64, &prev, json!({ "kind": "room", "room": "r1", "name": name, "members": members, "member": member, "account": account }))
@@ -147,7 +147,7 @@ fn 방_만들기·바꾸기는_명부에서_방_사람을_낸다() {
     ls.push(room(&k(1), "o1", "m1", "a1", &ls, "디자인", &["m1", "m2"]));
     let r = verify("t1", &ls, &chains()).unwrap();
     assert_eq!(r.rooms["r1"], RosterRoom { name: "디자인".into(), members: vec!["m1".into(), "m2".into()], confirmed: true, trusted_members: vec!["m1".into(), "m2".into()], by: "m1".into() });
-    // 철수(방 사람)가 이름을 바꾸고 사용자을 뺀다
+    // 철수(방 사람)가 이름을 바꾸고 하늘을 뺀다
     ls.push(room(&k(2), "c1", "m2", "a2", &ls, "디자인 2", &["m2"]));
     let r = verify("t1", &ls, &chains()).unwrap();
     assert_eq!(r.rooms["r1"].name, "디자인 2");
@@ -164,11 +164,11 @@ fn 방_밖_사람·남의_계정·모르는_멤버·만든_사람_빠짐은_거�
     let mut ls = base();
     ls.push(room(&k(1), "o1", "m1", "a1", &ls, "x", &["m1", "m9"]));
     assert_eq!(verify("t1", &ls, &chains()), Err(RosterErr::Bad(3, "room")));
-    // 남의 멤버 자리로 서명(사용자 기기가 m2 라고)
+    // 남의 멤버 자리로 서명(하늘 기기가 m2 라고)
     let mut ls = base();
     ls.push(room(&k(1), "o1", "m2", "a2", &ls, "x", &["m1", "m2"]));
     assert_eq!(verify("t1", &ls, &chains()), Err(RosterErr::Bad(3, "room")));
-    // 방에 없는 사람이 바꾸기 — 사용자만 있는 방을 철수가 고침
+    // 방에 없는 사람이 바꾸기 — 하늘만 있는 방을 철수가 고침
     let mut ls = base();
     ls.push(room(&k(1), "o1", "m1", "a1", &ls, "x", &["m1"]));
     ls.push(room(&k(2), "c1", "m2", "a2", &ls, "뺏기", &["m2"]));
@@ -206,7 +206,7 @@ fn loose_a2() -> BTreeMap<String, Chain> {
     c
 }
 
-/// 사용자(팀장 a1)이 기기 o1 을 잃고 o2 로 다시 시작
+/// 하늘(팀장 a1)이 기기 o1 을 잃고 o2 로 다시 시작
 fn loose_a1() -> BTreeMap<String, Chain> {
     let mut c = chains();
     c.insert("a1".into(), reset_chain("a1", &k(1), "o1", &k(4), "o2"));
@@ -286,7 +286,7 @@ fn 확인_전_멤버가_만든_방은_확인_전() {
 
 #[test]
 fn 확인_전_멤버가_고친_방은_확인_전으로() {
-    // 사용자가 만든 방(사용자·철수) — 철수가 다시 들어온 뒤 그 방에 들게 사용자가 고침(확인됨) → 확인 전 철수가 모르는 사람 끼우기
+    // 하늘이 만든 방(하늘·철수) — 철수가 다시 들어온 뒤 그 방에 들게 하늘이 고침(확인됨) → 확인 전 철수가 모르는 사람 끼우기
     let mut ls = rejoined();
     let (i, _) = invite(&k(1), "o1", &ls, "CODE-9");
     ls.push(i);
@@ -447,4 +447,170 @@ fn 같은_초대_열쇠를_다시_올리면_명부_틀림() {
     let pk = serde_json::from_str::<Value>(&ls[1].body).unwrap()["invPub"].as_str().unwrap().to_string();
     ls.push(op(&k(1), "o1", &ls, json!({ "kind": "invite", "invPub": pk, "role": "member", "expires": 9 })));
     assert_eq!(verify("t1", &ls, &chains()), Err(RosterErr::Bad(3, "invite")));
+}
+
+#[test]
+fn 팀장_목록은_확인된_자리의_확인된_팀장만_낸다() {
+    // 시작한 하늘만
+    assert_eq!(verify("t1", &base(), &chains()).unwrap().owner_ids(), vec!["m1"]);
+    // 하늘이 철수를 올리면 둘
+    let mut ls = base();
+    ls.push(op(&k(1), "o1", &ls, json!({ "kind": "role", "member": "m2", "role": "owner" })));
+    assert_eq!(verify("t1", &ls, &chains()).unwrap().owner_ids(), vec!["m1", "m2"]);
+    // 철수를 다시 팀원으로 내리면 철수는 빠진다
+    let mut down = ls.clone();
+    down.push(op(&k(1), "o1", &down, json!({ "kind": "role", "member": "m2", "role": "member" })));
+    assert_eq!(verify("t1", &down, &chains()).unwrap().owner_ids(), vec!["m1"]);
+    // 팀에서 빠진 팀장은 팀장이 아니다(구조는 role 이 owner 로 남아도)
+    let mut gone = ls.clone();
+    gone.push(op(&k(1), "o1", &gone, json!({ "kind": "remove", "member": "m2" })));
+    let r = verify("t1", &gone, &chains()).unwrap();
+    assert_eq!(r.members["m2"].role, "owner");
+    assert_eq!(r.owner_ids(), vec!["m1"]);
+}
+
+#[test]
+fn 확인_전_팀장이_올린_팀장은_팀장_목록에_없다() {
+    // S9 — 다시 시작한 하늘(o2)이 아직 받아들이기 전 철수를 올림: 구조는 owner 지만 팀장 일은 확인 전이라 목록에 없다
+    let mut ls = base();
+    ls.push(op(&k(4), "o2", &ls, json!({ "kind": "role", "member": "m2", "role": "owner" })));
+    let r = verify_two("t1", &ls, &chains(), &loose_a1(), None).unwrap();
+    assert_eq!(r.members["m2"].role, "owner");
+    assert_eq!(r.owner_ids(), vec!["m1"], "m1 은 옛 고리로 확인됨, 철수는 확인 전이 올려서 아님");
+}
+
+// ── 팀 권한 새 판(relay ADR 0014) — 매니저·권한·넘기기 ──
+
+/// 하늘(팀장 m1) · 철수(m2) · 민수(m9, 기기 x1) — 셋
+fn three() -> Vec<TLink> {
+    let mut ls = base();
+    let (i, _) = invite(&k(1), "o1", &ls, "CODE-9");
+    ls.push(i);
+    ls.push(join(&k(9), "x1", &ls, "CODE-9", "m9", "a9", "민수"));
+    ls
+}
+
+fn role(by: &DeviceKeys, by_id: &str, ls: &[TLink], who: &str, f: Value) -> TLink {
+    let mut b = json!({ "kind": "role", "member": who });
+    b.as_object_mut().unwrap().extend(f.as_object().unwrap().clone());
+    op(by, by_id, ls, b)
+}
+
+#[test]
+fn 팀장이_매니저를_임명하면_그_권한을_가진다() {
+    let mut ls = three();
+    ls.push(role(&k(1), "o1", &ls, "m2", json!({ "role": "manager", "perms": ["invite", "kick"] })));
+    let r = verify("t1", &ls, &chains()).unwrap();
+    assert_eq!(r.members["m2"].perms, vec!["invite", "kick"]);
+    assert_eq!(r.holders("invite"), vec!["m1", "m2"]);
+    assert_eq!(r.holders("posts"), vec!["m1"]);
+    assert_eq!(r.owner_ids(), vec!["m1"], "매니저는 팀장이 아니다");
+}
+
+#[test]
+fn 매니저는_자기_권한_안에서만_서명한다() {
+    let mut ls = three();
+    ls.push(role(&k(1), "o1", &ls, "m2", json!({ "role": "manager", "perms": ["invite", "kick"] })));
+    // 초대 권한으로 초대 → 새 사람이 들어온다
+    let (i, _) = invite(&k(2), "c1", &ls, "CODE-M");
+    let mut a = ls.clone();
+    a.push(i);
+    a.push(join(&k(3), "c3", &a, "CODE-M", "m3", "a2x", "영희"));
+    let mut cs = chains();
+    cs.insert("a2x".into(), chain("a2x", &k(3), "c3"));
+    assert!(verify("t1", &a, &cs).unwrap().members["m3"].active);
+    // kick 으로 팀원(민수) 빼기는 되고, 권한 밖(역할 바꾸기)은 명부 틀림
+    let mut b = ls.clone();
+    b.push(op(&k(2), "c1", &b, json!({ "kind": "remove", "member": "m9" })));
+    assert!(!verify("t1", &b, &chains()).unwrap().members["m9"].active);
+    let mut c = ls.clone();
+    c.push(role(&k(2), "c1", &c, "m9", json!({ "role": "manager", "perms": ["posts"] })));
+    assert_eq!(verify("t1", &c, &chains()), Err(RosterErr::Bad(6, "owner-op")));
+    // 권한 없는 팀원(민수)의 초대는 틀림
+    let (i2, _) = invite(&k(9), "x1", &ls, "CODE-X");
+    let mut d = ls.clone();
+    d.push(i2);
+    assert_eq!(verify("t1", &d, &chains()), Err(RosterErr::Bad(6, "invite")));
+}
+
+#[test]
+fn 전체_권한은_깃발을_못_주고_같은_순위를_못_건드린다() {
+    let mut ls = three();
+    ls.push(role(&k(1), "o1", &ls, "m2", json!({ "role": "manager", "perms": ["all"] })));
+    ls.push(role(&k(1), "o1", &ls, "m9", json!({ "role": "manager", "perms": ["all"] })));
+    let mut a = ls.clone();
+    a.push(role(&k(2), "c1", &a, "m9", json!({ "role": "member" })));
+    assert_eq!(verify("t1", &a, &chains()), Err(RosterErr::Bad(7, "owner-op")), "전체 권한끼리 못 낮춤");
+    let mut b = base();
+    b.push(role(&k(1), "o1", &b, "m2", json!({ "role": "manager", "perms": ["all"] })));
+    let (i, _) = invite(&k(1), "o1", &b, "CODE-9");
+    b.push(i);
+    b.push(join(&k(9), "x1", &b, "CODE-9", "m9", "a9", "민수"));
+    let mut ok = b.clone();
+    ok.push(role(&k(2), "c1", &ok, "m9", json!({ "role": "manager", "perms": ["posts"] })));
+    assert_eq!(verify("t1", &ok, &chains()).unwrap().members["m9"].perms, vec!["posts"], "아래 사람은 바꾼다");
+    b.push(role(&k(2), "c1", &b, "m9", json!({ "role": "manager", "perms": ["all"] })));
+    assert_eq!(verify("t1", &b, &chains()), Err(RosterErr::Bad(6, "owner-op")), "깃발은 팀장만");
+}
+
+#[test]
+fn 권한_모양이_한_가지가_아니면_틀림() {
+    let mut ls = three();
+    ls.push(role(&k(1), "o1", &ls, "m2", json!({ "role": "manager", "perms": ["kick", "invite"] })));
+    assert_eq!(verify("t1", &ls, &chains()), Err(RosterErr::Bad(5, "role")));
+}
+
+#[test]
+fn 팀장_넘기기는_넘긴_사람이_서명하고_옛_팀장은_전체_권한() {
+    let mut ls = three();
+    ls.push(role(&k(1), "o1", &ls, "m2", json!({ "role": "owner", "from": "m1" })));
+    let r = verify("t1", &ls, &chains()).unwrap();
+    assert_eq!(r.owner_ids(), vec!["m2"]);
+    assert_eq!((r.members["m1"].role.as_str(), r.members["m1"].perms.clone()), ("member", vec!["all".to_string()]));
+    assert_eq!(r.holders("files"), vec!["m1", "m2"]);
+    // 넘긴 사람이 from 과 다르면 틀림
+    let mut bad = three();
+    bad.push(role(&k(1), "o1", &bad, "m2", json!({ "role": "owner", "from": "m9" })));
+    assert!(verify("t1", &bad, &chains()).is_err());
+}
+
+#[test]
+fn 옛_고리는_그대로_통과한다_팀장_올림·팀장_자기_내림() {
+    let mut ls = three();
+    ls.push(role(&k(1), "o1", &ls, "m2", json!({ "role": "owner" })));
+    ls.push(role(&k(1), "o1", &ls, "m1", json!({ "role": "member" })));
+    let r = verify("t1", &ls, &chains()).unwrap();
+    assert_eq!(r.owner_ids(), vec!["m2"]);
+}
+
+#[test]
+fn 확인_전_팀장이_임명한_매니저는_권한이_확인_전() {
+    let mut ls = base();
+    ls.push(role(&k(4), "o2", &ls, "m2", json!({ "role": "manager", "perms": ["posts"] })));
+    let r = verify_two("t1", &ls, &chains(), &loose_a1(), None).unwrap();
+    assert_eq!(r.members["m2"].perms, vec!["posts"], "구조는 임명");
+    assert_eq!(r.holders("posts"), vec!["m1"], "확인 전 팀장이 줬으니 권한은 확인 전");
+}
+
+#[test]
+fn 전체_권한은_안_든_방도_지운다_팀원은_못() {
+    let mut ls = three();
+    ls.push(room(&k(1), "o1", "m1", "a1", &ls, "디자인", &["m1", "m9"]));
+    let id = ls.last().map(|l| serde_json::from_str::<Value>(&l.body).unwrap()["room"].as_str().unwrap().to_string()).unwrap();
+    let wipe = |by: &DeviceKeys, by_id: &str, m: &str, a: &str, ls: &[TLink]| op(by, by_id, ls, json!({ "kind": "room", "room": id, "name": "디자인", "members": [], "member": m, "account": a }));
+    let mut no = ls.clone();
+    no.push(wipe(&k(2), "c1", "m2", "a2", &no));
+    assert!(verify("t1", &no, &chains()).is_err(), "방 밖 팀원");
+    ls.push(role(&k(1), "o1", &ls, "m2", json!({ "role": "manager", "perms": ["all"] })));
+    ls.push(wipe(&k(2), "c1", "m2", "a2", &ls));
+    assert!(verify("t1", &ls, &chains()).unwrap().rooms[&id].members.is_empty());
+}
+
+#[test]
+fn kick_매니저는_같은_순위_매니저를_못_뺀다() {
+    let mut ls = three();
+    ls.push(role(&k(1), "o1", &ls, "m2", json!({ "role": "manager", "perms": ["kick"] })));
+    ls.push(role(&k(1), "o1", &ls, "m9", json!({ "role": "manager", "perms": ["posts"] })));
+    ls.push(op(&k(2), "c1", &ls, json!({ "kind": "remove", "member": "m9" })));
+    assert_eq!(verify("t1", &ls, &chains()), Err(RosterErr::Bad(7, "owner-op")));
 }

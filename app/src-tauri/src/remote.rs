@@ -285,7 +285,7 @@ pub fn pair(kc: &dyn Store, dir: &Path, peer: &TsPeer, code: &str, my_name: &str
     }
     match r.status {
         200 => {}
-        401 => return Err("연결 코드가 틀렸거나 10분이 지났어요 — 그 기기에서 새 코드를 만들어 주세요".into()),
+        401 => return Err("연결 코드가 틀렸거나 10분이 지났어요. 그 기기에서 새 코드를 만들어 주세요".into()),
         403 => return Err("그 기기가 연결을 막았어요(주소가 안 맞음)".into()),
         s => return Err(format!("그 기기가 짝짓기를 못 했어요({s})")),
     }
@@ -359,11 +359,11 @@ fn connect_inner(l: &Link, me_id: &str, peer: &TsPeer, req: &str, send: &SendFn,
     let text = String::from_utf8_lossy(&r.body).trim().to_string();
     match r.status {
         200..=299 => {}
-        404 => return Err("그 기기 Chammo 가 옛 판이에요 — 그 기기를 업데이트하거나 '코드로'로 이어 주세요".into()),
-        403 if text.starts_with("unconfirmed") => return Err("그 기기가 이 기기를 확인하지 못했어요 — 두 기기 다 Chammo 를 켜 두고 다시".into()),
+        404 => return Err("그 기기의 Chammo가 옛 버전이에요. 업데이트하거나 '코드로' 연결해 주세요".into()),
+        403 if text.starts_with("unconfirmed") => return Err("그 기기가 이 기기를 확인하지 못했어요. 두 기기 모두 Chammo를 켜 두고 다시 해 주세요".into()),
         403 => return Err("같은 테일스케일 계정 기기끼리만 이어져요".into()),
         429 => return Err("연결 요청이 너무 잦아요 — 10분쯤 뒤에 다시".into()),
-        501 => return Err("그 기기 Chammo 가 옛 판이라 연결을 못 받아요 — 그 기기를 업데이트해 주세요".into()),
+        501 => return Err("그 기기의 Chammo가 옛 버전이라 연결을 받을 수 없어요. 그 기기를 업데이트해 주세요".into()),
         s => return Err(format!("그 기기가 연결 요청을 못 받았어요({s})")),
     }
     let end = now() + crate::peer_ask::TTL_MS + crate::peer_ask::PICKUP_MS;
@@ -378,7 +378,7 @@ fn connect_inner(l: &Link, me_id: &str, peer: &TsPeer, req: &str, send: &SendFn,
         // 한 번 못 닿는 건 넘긴다(절전에서 깨는 중) — 다음 바퀴에 다시
         if let Ok(r) = send(&t, &Request { method: "GET", path: &path, body: None, token: None }, HELLO_WAIT, 4096) {
             if r.status == 404 {
-                return Err("그 기기가 이 요청을 잊었어요(그 기기 앱이 다시 켜졌나요?) — 다시 연결해 주세요".into());
+                return Err("그 기기가 이 요청을 기억하지 못해요. 앱이 다시 켜졌을 수 있어요. 다시 연결해 주세요".into());
             }
             let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap_or_default();
             match (r.status, v["state"].as_str().unwrap_or("")) {
@@ -617,7 +617,7 @@ pub fn connect_now(id: &str) -> Result<(), String> {
     }
     // 그 기기가 이 기기 폰 서버로 되물어 확인하고, 이어진 뒤엔 그 기기 참모도 이리로 말을 넣는다
     if !crate::mobile::server_running() {
-        return Err("이 기기 설정 > 폰을 먼저 켜 주세요 — 그 기기가 이 기기에 되물어 확인해요".into());
+        return Err("이 기기의 설정 > 폰을 먼저 켜 주세요. 그 기기가 이 기기에 확인을 요청해요".into());
     }
     let (route, json) = tailnet()?;
     let (_, peers) = same_user_peers(&json).ok_or("테일스케일이 꺼져 있거나 로그인 전이에요")?;

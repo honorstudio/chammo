@@ -177,19 +177,19 @@ export default function SpaceEditor({ md, docPath, onReady, onChange, onEditor, 
     <div className="space-editor" ref={box}>
       {sync.state === 'conflict' && (
         <div className="cv-doc-sync" role="alert">
-          <span>{tr('밖에서도 이 문서를 고쳤어요 — 같은 곳을 둘 다 고쳐서 저장을 멈췄어요. 고르지 않은 판은 기록(history)에 남아요.', 'This document was also changed outside — both sides edited the same part, so saving is paused. The version you do not pick is kept in history.')}</span>
+          <span>{tr('다른 곳에서도 이 문서를 고쳤어요. 같은 부분이 겹쳐서 저장을 멈췄어요. 고르지 않은 쪽은 기록에 남아요.', 'This document was also changed elsewhere. Both sides edited the same part, so saving is paused. The version you do not pick is kept in history.')}</span>
           <button onClick={() => void sync.takeTheirs()}>{tr('바깥 판 불러오기', 'Load the outside version')}</button>
           <button className="solid" onClick={() => void sync.keepMine()}>{tr('내 판으로 저장', 'Save my version')}</button>
         </div>
       )}
       {sync.state === 'gone' && (
         <div className="cv-doc-sync" role="alert">
-          <span>{tr('이 파일이 지워졌거나 이름이 바뀌었어요 — 여기서 고친 건 저장되지 않아요(마지막 판은 기록에 남겨요).', 'This file was deleted or renamed — edits here are not saved (the last version is kept in history).')}</span>
+          <span>{tr('파일이 지워졌거나 이름이 바뀌었어요. 여기서 고친 내용은 저장되지 않아요(마지막 내용은 기록에 남아요).', 'This file was deleted or renamed. Edits here are not saved (the last version is kept in history).')}</span>
         </div>
       )}
       {sync.state === 'unreadable' && (
         <div className="cv-doc-sync" role="alert">
-          <span>{tr('밖에서 이 파일을 UTF-8 이 아닌 글(EUC-KR 등)로 저장해 못 읽어요 — UTF-8 로 다시 저장될 때까지 여기서 고친 건 저장되지 않아요.', 'This file was saved outside in a non-UTF-8 encoding and cannot be read — edits here are not saved until it is saved as UTF-8 again.')}</span>
+          <span>{tr('다른 곳에서 이 파일을 UTF-8이 아닌 형식(EUC-KR 등)으로 저장해서 읽을 수 없어요. UTF-8로 다시 저장되기 전까지 여기서 고친 내용은 저장되지 않아요.', 'This file was saved elsewhere in a non-UTF-8 encoding and cannot be read. Edits here are not saved until it is saved as UTF-8 again.')}</span>
         </div>
       )}
       {line !== null && <div className="sp-drop-line" style={{ top: line }} />}

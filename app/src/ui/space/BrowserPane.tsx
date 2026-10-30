@@ -3,9 +3,9 @@
 // 칸은 비워 두고 비추기가 그 위에 얹힌다(Craft 칸과 같은 길, ui/space/panePlace). 숨기기 = 비추기만 떼기 — 크롬·세션은 그대로(끄는 건 참모·세션)
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { tabStrip, type Live } from '../../domain/agentBrowser';
+import { afterUnpeek, peekStep, tabStrip, type Live } from '../../domain/agentBrowser';
 import { keyEvents, keyTarget, type InputEv } from '../../domain/agentInput';
-import { closeWay, deskOffer, paneMenuKeys, paneStatus, signedLine, turnCard, turnCardAfterDone, type PaneMenuKey } from '../../domain/browserDock';
+import { closeWay, deskOffer, paneMenuKeys, paneStatus, signedAutoPeek, signedLine, turnCard, turnCardAfterDone, type PaneMenuKey } from '../../domain/browserDock';
 import { IS_WIN } from '../../domain/reader';
 import { handBack, takeOver } from '../AgentBrowserModal';
 import { askPermission, readConfig } from '../../data/tauri';
@@ -27,7 +27,7 @@ type Menu = (e: React.MouseEvent, items: MenuItem[]) => void;
 export function paneNote(answer: string): { text: string; settings: boolean } | null {
   switch (answer) {
     case 'live': return null;
-    case 'no-permission': return { text: tr('화면 기록 권한이 한 번 필요해 — 이 브라우저 창 하나만 찍는다. 허용한 뒤 Chammo 를 다시 켜야 해(맥 규칙).', 'Screen Recording permission is needed once — only this browser window is captured. Restart Chammo after allowing it (a macOS rule).'), settings: true };
+    case 'no-permission': return { text: tr('화면 기록 권한이 한 번 필요해요. 이 브라우저 창만 찍어요. 허용한 뒤 Chammo를 다시 켜 주세요(맥 규칙)', 'Screen Recording permission is needed once. Only this browser window is captured. Restart Chammo after allowing it (a macOS rule).'), settings: true };
     case 'no-window': return { text: tr('브라우저 창을 못 찾았어 — 세션이 다시 쓰면 이어져', 'Could not find the browser window — it resumes when the session uses it again'), settings: false };
     case 'stopped': return { text: tr('브라우저 화면이 멈췄어 — 다시 붙는 중', 'The browser screen stopped — reconnecting'), settings: false };
     default: return { text: tr('브라우저 화면 받는 중…', 'Connecting to the browser…'), settings: false };
@@ -99,6 +99,30 @@ export function BrowserPane({ live, name, onHide, onClosed, openMenu }: { live: 
   const card = turnCardAfterDone(turnCard(live, { dialog: t.dialog, chooser: t.chooser }, mac), live.ask?.at, sentAt);
   const signedNow = signedLine(mac);
   const signed = (on: boolean) => void (on ? mine() : Promise.resolve()).then(() => invoke('agent_signed', { profile, on })).catch(() => {});
+  // 패스키로 바꾼 구글 크롬의 Touch ID 시트는 숨은 크롬 창에 붙어 칸 그림 밖이다(10-30 사용자) — 모달과 같은 길로 크롬 창을 사람 화면에 작게 꺼내고(agent_peek),
+  // 시트가 닫히거나 페이지가 넘어가면 다시 숨긴다(agent_hide auto — 시트가 아직 떠 있으면 Rust 가 거절해 꺼낸 채). 래퍼가 패스키 때문에 바꾼 동안만
+  const [peeked, setPeeked] = useState<{ url: string | undefined } | null>(null);
+  const [peekFailed, setPeekFailed] = useState(false);
+  const peekBusy = useRef(false);
+  const popupNow = t.popup || !!live.popup;
+  useEffect(() => { if (!popupNow) setPeekFailed(false); }, [popupNow]);
+  useEffect(() => {
+    if (peekBusy.current) return;
+    const step = peekStep({ popup: popupNow, shown: t.shown, peeked, failed: peekFailed, active: signedAutoPeek(mac), url });
+    if (step === 'peek') {
+      peekBusy.current = true;
+      void invoke('agent_peek', { profile })
+        .then(() => { setPeeked({ url }); t.setShown(true); }, () => setPeekFailed(true))
+        .finally(() => { peekBusy.current = false; });
+    } else if (step === 'unpeek') {
+      peekBusy.current = true;
+      const at = url;
+      void invoke('agent_hide', { profile, auto: true })
+        .then(() => true, () => false)
+        .then((hidden) => { setPeeked((p) => afterUnpeek(hidden, p, at)); if (hidden) t.setShown(false); })
+        .finally(() => { peekBusy.current = false; });
+    }
+  }); // 1초마다 오는 탭 상태(t)마다 다시 본다 — 모달은 따로 1초 tick
   const [say, setSay] = useState('');
   const [prompt, setPrompt] = useState('');
   useEffect(() => { setSay(''); setPrompt(''); }, [card?.kind, card?.text]);
@@ -209,7 +233,7 @@ export function BrowserPane({ live, name, onHide, onClosed, openMenu }: { live: 
             {deskOffer(card, win) && <button className="cv-btn" onClick={showChrome} title={tr('패스키·Windows Hello·파일 창처럼 창이 필요할 때', 'When a passkey, Windows Hello or file window is needed')}>{tr('보이는 창에서 열기', 'Open in a visible window')}</button>}
             <button className="cv-btn solid" onClick={done} title={tr('세션에 돌려주기', 'Hand back to the session')}>{tr('다 했어', 'Done')}</button>
           </>}
-          {(card.kind === 'passkey' || card.kind === 'window') && <button className="cv-btn solid" onClick={showChrome}>{tr('크롬 창 꺼내기', 'Open Chrome window')}</button>}
+          {(card.kind === 'passkey' || card.kind === 'window') && !t.shown && <button className="cv-btn solid" onClick={showChrome}>{tr('크롬 창 꺼내기', 'Open Chrome window')}</button>}
         </div>
       )}
       {signedNow && (

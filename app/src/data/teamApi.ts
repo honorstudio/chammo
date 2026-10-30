@@ -21,7 +21,8 @@ export type TeamView = {
   role: string;
   server: string;
   deliverTo: string;
-  members: { id: string; name: string; role: string; me: boolean; devices?: { id: string; name: string }[] }[];
+  /** role = owner | manager | member(서버 값, 표시용) · perms = 매니저 권한 */
+  members: { id: string; name: string; role: string; perms?: string[]; me: boolean; devices?: { id: string; name: string }[] }[];
   /** 단톡방(group)은 with = 방 이름, members 도(Rust team_cmd::view). team = 그 방 팀(내 기기끼리 방은 빈 값) — 모든 팀 방이 한 목록에 온다.
    *  me = 그 방 팀에서의 내 멤버 id(읽음 맞추기) */
   rooms: { id: string; kind: string; peer: string; with: string; team?: string; name?: string; members?: string[]; me?: string }[];
@@ -146,7 +147,10 @@ export const teamUse = (team: string) => invoke<TeamView>('team_ui_use', { team 
 /** 팀 지우기(팀장) — 확인 창 뒤에만. 되돌릴 수 없다 */
 export const teamDelete = (team: string) => invoke<TeamView>('team_ui_delete', { team });
 export const teamRemove = (team: string, member: string) => invoke<TeamView>('team_ui_remove', { team, member });
-export const teamMakeOwner = (team: string, member: string) => invoke<TeamView>('team_ui_make_owner', { team, member });
+/** 팀장 넘기기 — 받는 사람이 팀장, 나는 전체 권한 매니저(relay ADR 0014) */
+export const teamTransfer = (team: string, member: string) => invoke<TeamView>('team_ui_transfer', { team, member });
+/** 매니저 권한 — 빈 목록 = 팀원으로 */
+export const teamSetPerms = (team: string, member: string, perms: string[]) => invoke<TeamView>('team_ui_set_perms', { team, member, perms });
 /** 클립보드에 받은 초대 링크가 있으면 그 링크만(원문은 Rust 가 안 넘긴다) — '초대받았어요'를 누를 때 */
 export const teamClipInvite = () => invoke<string | null>('team_clip_invite');
 /** chammo://join 으로 앱이 열렸을 때 기다리던 초대(한 번만 가져간다, ADR 0015) */

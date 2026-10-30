@@ -214,7 +214,8 @@ pub fn board(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) -> Result<
         let photo = if p.photo.is_empty() { String::new() } else { bytes_of(dir, kc, http, &t.id, &p.photo).ok().and_then(|b| data_url(&b)).unwrap_or_default() };
         people.insert(member, Shown { name: p.name, status: p.status, note: p.note, photo, at: p.at });
     }
-    let owners: Vec<String> = t.members.iter().filter(|m| m.role == "owner").map(|m| m.id.clone()).collect();
+    // 팀장은 서명된 명부가 말하는 사람만(relay ADR 0014 R14) — 서버 members 의 role 로 팀 아이콘 올린 사람을 가리지 않는다
+    let owners = crate::team_owners::holders(dir, kc, http, &t.id, "look");
     let team_icon = team_icon(&v.items, &owners).and_then(|i| bytes_of(dir, kc, http, &t.id, &i.id).ok()).and_then(|b| data_url(&b)).unwrap_or_default();
     Ok(Board { team: t.id, rev: v.rev, people, team_icon })
 }
@@ -326,8 +327,8 @@ fn set_one(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, c: &Change) 
 /// 팀 아이콘 바꾸기·지우기 — 팀장만
 pub fn set_team_icon(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, image: Option<&[u8]>) -> Result<(), String> {
     let t = team_entry(dir, team)?;
-    if t.role != "owner" {
-        return Err("팀 아이콘은 팀장만 바꿔".into());
+    if !crate::team_owners::has(&crate::team_owners::holders(dir, kc, http, &t.id, "look"), &t.member_id) {
+        return Err("팀 아이콘은 팀장이나 꾸미기 권한 매니저만 바꿔".into());
     }
     let (v, _) = locker::list_split(dir, kc, http, &t.id)?;
     let keep = match image {

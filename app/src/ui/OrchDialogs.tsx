@@ -55,7 +55,7 @@ export function NameNew({ baseName, color, check, onMake, onCancel }: { baseName
             <OrchAvatar name={realName} size={56} state="rest" color={color} label={label} /><span className="oa-change" aria-hidden="true">{tr('바꾸기', 'Change')}</span>
           </button>
         </div>
-        <input ref={input} value={v} onChange={(e) => setV(e.target.value)} maxLength={24} placeholder={tr(`별명 — 예: 개발·디자인, 비우면 ${baseName}`, `Nickname — e.g. Dev, Design; empty = ${baseName}`)} aria-label={tr('별명', 'Nickname')} aria-invalid={tried && !!problem}
+        <input ref={input} value={v} onChange={(e) => setV(e.target.value)} maxLength={24} placeholder={tr(`별명 (예: 개발, 디자인). 비우면 ${baseName}`, `Nickname (e.g. Dev, Design). Empty = ${baseName}`)} aria-label={tr('별명', 'Nickname')} aria-invalid={tried && !!problem}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) make(); if (e.key === 'Escape') { e.stopPropagation(); onCancel(); } }} />
         {tried && problem && <p className="od-err" role="alert">{problem}</p>}
         <RoleField value={role} onChange={setRole} onEnter={make} onEscape={onCancel} />

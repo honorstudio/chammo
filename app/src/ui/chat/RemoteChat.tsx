@@ -17,7 +17,7 @@ const noop = () => {};
 
 export function RemoteChat({ target, fontSize }: { target: RemoteChatTarget; fontSize?: number }) {
   const { dev, agent } = target;
-  const tooOld = tr(`${target.devName} Chammo 판이 낮아 말 걸기가 안 돼요 — 그 기기를 업데이트해 주세요`, `${target.devName} is on an older Chammo that can't take messages — please update it`);
+  const tooOld = tr(`${target.devName}의 Chammo가 옛 버전이라 말을 걸 수 없어요. 그 기기를 업데이트해 주세요`, `${target.devName} is on an older Chammo that can't take messages — please update it`);
   const api = remoteApi(dev);
   const [sid, setSid] = useState<string | undefined>();
   const [state, setState] = useState('idle');

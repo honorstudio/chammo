@@ -372,7 +372,7 @@ describe('typeQueue — 세션별 앱 치기 줄', () => {
     expect(chat).toMatch(/restoreDraft\(/);
     expect(chat).toMatch(/sendFail &&/);
     // 윈도우 경로(C:\\…\\a.png)도 칩 이름은 파일 이름만 — '/' 로만 잘라 전체 경로가 이름이 됐다
-    expect(chat).toMatch(/name: p\.split\(\/\[\\\\\/\]\/\)\.pop\(\)/);
+    expect(chat).toContain('name: chipName(p)'); // 윈도우 경로는 drop.test chipName 이 지킨다
   });
   it('채팅 치기·Esc·지우기는 창에 바로 쓰지 않고 잠그는 길(pty_type)로', () => {
     expect(grid).not.toMatch(/api\.raw\(/);

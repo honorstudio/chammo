@@ -114,7 +114,7 @@ describe('폰 추가(10-24 사용자 — QR 찍으면 사파리로 열려 홈 �
     expect(dev).toContain('mobileApi.entryQr()');
     expect(dev).not.toContain('pairNew');
     // 순서: 사파리에서 홈 화면에 추가 → 홈 화면 앱에서 로그인 → 이 컴퓨터 → 숫자
-    const steps = ['홈 화면에 추가', '홈 화면의 참모 앱', '구글 로그인', '이 컴퓨터', '숫자'];
+    const steps = ['홈 화면에 추가', '앱을 열어', '구글로 로그인', '이 컴퓨터', '숫자'];
     // 앞 단계 뒤에서부터 찾는다 — 다른 줄(새 기기 허용 '숫자' 안내 등)에 같은 낱말이 있어도 순서만 본다
     let pos = 0;
     for (const w of steps) {

@@ -61,7 +61,7 @@ export function MobileSection({ title, onAccount }: { title: string; onAccount?:
         )}
       </div>
       <p className="su-hint">
-        {tr('폰에서 참모와 채팅하고 세션·예약을 봐요. 폰마다 한 번 연결 QR 을 찍으면 그 폰만의 열쇠가 생겨요. QR 은 10분 안에 한 번만 쓸 수 있어요.',
+        {tr('폰에서 참모와 채팅하고 세션·예약을 봐요. 폰마다 연결 QR을 한 번 찍으면 그 폰 전용 열쇠가 생겨요. QR은 10분 안에 한 번만 써요',
           'Chat with your assistant and check sessions and routines from your phone. Scan a connect QR once per phone and it gets its own key. A QR works once, within 10 minutes.')}
       </p>
       {st && <span className="su-hint">{reach!.text}</span>}
@@ -79,8 +79,8 @@ export function MobileSection({ title, onAccount }: { title: string; onAccount?:
               {qr.qrSvg && <img className="su-qr" alt={tr('폰 연결 QR', 'Connect QR')} src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr.qrSvg)}`} />}
               <div className="su-mobile-side">
                 <b>{tr(`${left(qr.expires - now)} 안에 폰 카메라로 찍어 주세요`, `Scan with the phone camera within ${left(qr.expires - now)}`)}</b>
-                <span className="su-hint">{tr("이 QR 은 사파리에서만 열려 홈 화면 앱엔 안 남아요 — 폰 앱은 위 내 기기의 '폰 추가'로 이어요.", "This QR opens only in Safari and isn't kept in the home-screen app — connect the phone app with 'Add phone' in My devices above.")}</span>
-                <span className="su-hint">{tr("한 번 쓰면 사라져요. 홈 화면에 붙인 앱은 QR 로 못 열려요 — 아래 코드를 그 앱의 '붙여넣기로 연결'에 넣거나, 연결된 사파리에서 '홈 화면 앱 연결'로 코드를 받아요.", "It disappears after one use. A home-screen app can't be opened by the QR — paste the code below into its 'Connect by pasting', or get a code from a connected Safari with 'Connect home-screen app'.")}</span>
+                <span className="su-hint">{tr("이 QR은 사파리에서만 열려요. 폰 앱은 위 내 기기의 '폰 추가'로 연결하세요", "This QR opens only in Safari. Connect the phone app with 'Add phone' in My devices above.")}</span>
+                <span className="su-hint">{tr("한 번 쓰면 사라져요. 홈 화면 앱은 QR로 못 열어요. 아래 코드를 앱의 '붙여넣기로 연결'에 넣거나, 연결된 사파리의 '홈 화면 앱 연결'에서 코드를 받으세요", "It disappears after one use. A home-screen app can't open the QR. Paste the code below into its 'Connect by pasting', or get a code from a connected Safari with 'Connect home-screen app'.")}</span>
                 {code && <code className="su-pair-code">{groupCode(code)}</code>}
                 <div className="su-inline">
                   <button className="btn" onClick={() => void writeClipboard(qr.url).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500); })}>
@@ -98,7 +98,7 @@ export function MobileSection({ title, onAccount }: { title: string; onAccount?:
           )}
           {st.running && !st.https && !st.relayReady && (
             <>
-              <span className="su-hint">{tr(`http 주소라 폰에서 홈 화면 앱 설치(안드로이드)·알림·마이크가 안 돼요. ${st.httpsNote ?? ''}`, `This is an http address, so the phone can't install the home-screen app (Android), get notifications or use the mic. ${st.httpsNote ?? ''}`)}</span>
+              <span className="su-hint">{tr(`http 주소라서 폰에서 홈 화면 앱 설치(안드로이드)·알림·마이크를 쓸 수 없어요. ${st.httpsNote ?? ''}`, `This is an http address, so the phone can't install the home-screen app (Android), get notifications or use the mic. ${st.httpsNote ?? ''}`)}</span>
               {st.httpsFix && <div className="su-inline"><button className="btn" onClick={() => void openTarget('url', st.httpsFix!).catch(() => {})}>{tr('테일스케일 관리 화면 열기', 'Open Tailscale admin')}</button></div>}
             </>
           )}

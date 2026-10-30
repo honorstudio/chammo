@@ -5,7 +5,7 @@
 
 import { tr } from '../i18n';
 
-export type Family = 'opus' | 'sonnet' | 'haiku' | 'other';
+export type Family = 'opus' | 'sonnet' | 'haiku' | 'fable' | 'other';
 
 /** 모델 id(claude-opus-5-5)나 표시 이름(Opus 5.5 (1M context))에서 계열 */
 export function familyOf(name?: string): Family {
@@ -13,23 +13,63 @@ export function familyOf(name?: string): Family {
   if (n.includes('opus')) return 'opus';
   if (n.includes('sonnet')) return 'sonnet';
   if (n.includes('haiku')) return 'haiku';
+  if (n.includes('fable')) return 'fable';
   return 'other';
 }
 
-/** 별칭은 항상 그 계열의 최신 모델로 풀린다 */
-export const MODEL_CHOICES: { alias: 'opus' | 'sonnet' | 'haiku'; label: string }[] = [
-  { alias: 'opus', label: 'Opus' },
-  { alias: 'sonnet', label: 'Sonnet' },
-  { alias: 'haiku', label: 'Haiku' },
+export type ModelOpt = { id: string; label: string };
+type Info = { model?: string; modelId?: string };
+
+/** 칩 첫 줄 — 계열마다 가장 새 판. 전체 id 로 친다(`/model claude-opus-5-5`): 별칭은 Claude Code 판마다 풀리는 곳이 달라
+ *  (10-01 엔 haiku = 4.5) 칩 글과 어긋났고, 계열만 보면 안전 분류기가 세션을 Opus 4.8 로 떨어뜨려도 "이미 Opus" 라며 안 바꿨다(2026-10-29 사용자).
+ *  목록은 Claude Code 2.1.312 /model 창 그대로(.shots/model-pick/picker-2.1.312.txt) — 새 판이 나오면 여기와 OTHER_MODELS 를 고친다 */
+export const MODEL_CHOICES: (ModelOpt & { alias: 'opus' | 'sonnet' | 'haiku' })[] = [
+  { alias: 'opus', id: 'claude-opus-5-5', label: 'Opus 5.5' },
+  { alias: 'sonnet', id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
+  { alias: 'haiku', id: 'claude-haiku-5-5', label: 'Haiku 5.5' },
 ];
+
+/** '그 밖' 접기 — /model 창의 나머지 줄 순서 그대로 */
+export const OTHER_MODELS: ModelOpt[] = [
+  { id: 'claude-fable-5-1', label: 'Fable 5.1' },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5' },
+  { id: 'claude-opus-5', label: 'Opus 5' },
+  { id: 'claude-fable-5', label: 'Fable 5' },
+  { id: 'claude-opus-4-8', label: 'Opus 4.8' },
+  { id: 'claude-opus-4-7', label: 'Opus 4.7' },
+  { id: 'claude-opus-4-6', label: 'Opus 4.6' },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+];
+
+const ALL_MODELS: ModelOpt[] = [...MODEL_CHOICES, ...OTHER_MODELS];
+/** 채팅에서 친 별칭 — 칩 칸의 전체 id 로 */
+const ALIASES: Record<string, string> = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5', fable: 'claude-fable-5-1' };
+
+/** 칩이 칠 수 있는 id 인가(폰 요청·채팅 명령 검사) */
+export const isModelId = (v: unknown): v is string => ALL_MODELS.some((m) => m.id === v);
+
+/** 지금 모델이 그 칸인가 — 판까지 같아야. id 는 날짜 꼬리(-20251001)·[1m] 만 같은 모델로, id 가 없으면 표시 이름(괄호 꼬리 뗀 것)으로 */
+export function isModel(info: Info | undefined, id: string): boolean {
+  if (info?.modelId) {
+    const rest = info.modelId.slice(id.length);
+    return info.modelId.startsWith(id) && (rest === '' || /^(-\d{8}|\[)/.test(rest));
+  }
+  const label = ALL_MODELS.find((m) => m.id === id)?.label;
+  return !!label && (info?.model ?? '').replace(/\s*\(.*\)\s*$/, '').trim() === label;
+}
+
+/** 지금 모델의 칸 — 목록에 없으면 undefined */
+export const modelOf = (info?: Info): ModelOpt | undefined => ALL_MODELS.find((m) => isModel(info, m.id));
 
 export type EffortChoice = { level: string; disabled: boolean; why?: string };
 
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-/** 이 모델에서 고를 수 있는 에포트 단계. 하이쿠·모르는 모델은 에포트를 안 만진다(빈 배열) */
-export function effortChoices(family: Family): EffortChoice[] {
-  if (family !== 'opus' && family !== 'sonnet') return [];
+/** 이 모델에서 고를 수 있는 에포트 단계. Haiku 4.5("Effort not supported", 2026-10-29 실측)·모르는 모델은 에포트를 안 만진다(빈 배열) */
+export function effortChoices(info?: Info): EffortChoice[] {
+  const family = familyOf(info?.modelId ?? info?.model);
+  if (family === 'other' || isModel(info, 'claude-haiku-4-5')) return [];
   // 소넷 xhigh 는 막던 것을 풀었다 — 고를 수 있고 안내만 남긴다(공개판 사용자에겐 제약이었다, 2026-10-01 사용자)
   return LEVELS.map((level) => (family === 'sonnet' && level === 'xhigh'
     ? { level, disabled: false, why: tr('소넷 xhigh 는 토큰을 많이 쓰는 데 비해 high 보다 크게 낫지 않을 수 있어요', 'Sonnet at xhigh uses many more tokens and may not beat high by much') }
@@ -42,11 +82,11 @@ export function modelChip(c?: { model?: string; effort?: string }): string | nul
   return c.effort ? `${c.model} · ${c.effort}` : c.model;
 }
 
-/** 폰 입력창 칩 — "Opus · high". 판 번호는 빼고(시트 머리에서만), 모르는 모델은 첫 낱말. 값이 없으면 null */
+/** 폰 입력창 칩 — 가장 새 판이면 "Opus · high"(판 번호는 시트 머리에서만), 옛 판·그 밖이면 "Opus 4.8 · high"(떨어진 걸 알아보게),
+ *  모르는 모델은 첫 낱말. 값이 없으면 null */
 export function modelChipShort(c?: { model?: string; modelId?: string; effort?: string }): string | null {
   if (!c?.model) return null;
-  const f = familyOf(c.modelId ?? c.model);
-  const name = MODEL_CHOICES.find((m) => m.alias === f)?.label ?? c.model.split(/\s+/)[0]!;
+  const name = MODEL_CHOICES.find((m) => isModel(c, m.id))?.label.split(' ')[0] ?? modelOf(c)?.label ?? c.model.split(/\s+/)[0]!;
   return c.effort ? `${name} · ${c.effort}` : name;
 }
 
@@ -74,8 +114,7 @@ export function parsePicker(lines: string[]): PickerView | null {
 
 /** 커서를 그 계열(이름 있는 첫 줄 — Default 줄 말고)로 옮길 화살표. 목록에 없으면 null */
 export function modelMoves(v: PickerView, family: 'opus' | 'sonnet' | 'haiku'): ('UP' | 'DOWN')[] | null {
-  const label = MODEL_CHOICES.find((m) => m.alias === family)!.label.toLowerCase();
-  const at = v.rows.findIndex((r) => r.name.toLowerCase().startsWith(`${label} `) || r.name.toLowerCase() === label);
+  const at = v.rows.findIndex((r) => r.name.toLowerCase().startsWith(`${family} `) || r.name.toLowerCase() === family);
   if (at < 0) return null;
   const d = at - v.cursor;
   return Array<'UP' | 'DOWN'>(Math.abs(d)).fill(d > 0 ? 'DOWN' : 'UP');
@@ -112,13 +151,13 @@ export function commandResult(lines: string[], cmd: string): { ok: boolean; text
 
 /** 채팅에서 친 /model·/effort — 칩으로 돌린다(open = 칩 메뉴 열기, want = 그 값으로 바꾸기). 아니면 null(그대로 보낸다).
  *  터미널의 /model 고르는 창은 보낸 Enter 가 창을 바로 골라 지금 모델이 기본값으로 저장됐다(2026-10-01 시험) */
-export function modelCommand(text: string): { open: true } | { want: { model?: 'opus' | 'sonnet' | 'haiku'; effort?: string } } | null {
+export function modelCommand(text: string): { open: true } | { want: { model?: string; effort?: string } } | null {
   const t = text.trim();
   if (t.includes('\n')) return null;
   const m = t.match(/^\/(model|effort)(?:\s+(\S+))?$/i);
   if (!m) return null;
   const arg = m[2]?.toLowerCase();
   if (!arg) return { open: true };
-  if (m[1]!.toLowerCase() === 'model') return MODEL_CHOICES.some((c) => c.alias === arg) ? { want: { model: arg as 'opus' | 'sonnet' | 'haiku' } } : null;
-  return ['low', 'medium', 'high', 'xhigh', 'max'].includes(arg) ? { want: { effort: arg } } : null;
+  if (m[1]!.toLowerCase() === 'model') { const id = ALIASES[arg] ?? arg; return isModelId(id) ? { want: { model: id } } : null; }
+  return LEVELS.includes(arg) ? { want: { effort: arg } } : null;
 }

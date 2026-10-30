@@ -249,7 +249,8 @@ if (typeof window !== 'undefined') {
 /** 지금 끌고 있는 것을 끝내는 함수 — 한 번에 하나만(새로 누르면 먼저 것을 끝낸다) */
 let endActive: (() => void) | null = null;
 
-function start(e: React.PointerEvent, payload: DragPayload, label: string) {
+/** native = 창 밖으로 나가는 순간 맥 끌기 세션(drag_native)으로 넘긴다 — 파인더·카톡·메일이 받는다(미리보기·채팅 파일 카드, 10-30 사용자) */
+function start(e: React.PointerEvent, payload: DragPayload, label: string, native = false) {
   if (e.button !== 0 || e.ctrlKey) return; // 우클릭·맥 ctrl+클릭은 끌기가 아니다(메뉴)
   endActive?.();
   const x0 = e.clientX, y0 = e.clientY;
@@ -257,6 +258,8 @@ function start(e: React.PointerEvent, payload: DragPayload, label: string) {
   const g = dragGhost(label, payload.kind === 'team' ? TEAM_SPOTS : !!files, false, selfOf(payload));
   // 참모 보관함 파일·팀 파일이 창을 넘는다 — 창 밖이면 그 자리 다른 창에 지나감을 알린다(팀 파일은 받는 창이 참모 자리만 빛낸다)
   const hover = files ? hoverOut(label) : payload.kind === 'team' ? hoverOut(label, undefined, true) : null;
+  // 맥 끌기 — 'try' 아직 · 'wait' 답 기다림(그사이 지나감 안 보냄) · 'off' 못 넘김(하던 창 사이 끌기로)
+  let out: 'try' | 'wait' | 'off' = native && files ? 'try' : 'off';
   // 끝내는 길은 여기 하나 — 놓기·웹뷰가 끌기를 가져감(pointercancel)·창 밖에서 놓기·Esc·창 포커스 잃음 모두 이리 온다.
   // pointerup 하나에만 기대면 놓음 신호가 안 올 때 표가 마우스를 영영 따라다닌다(2026-10-11 사용자)
   const finish = (at: PointerEvent | null) => {
@@ -301,8 +304,12 @@ function start(e: React.PointerEvent, payload: DragPayload, label: string) {
     if (hover) {
       const away = outside(ev.clientX, ev.clientY);
       g.away(away);
-      if (away) hover.at(ev.screenX, ev.screenY);
-      else hover.end();
+      if (away && out === 'try') {
+        out = 'wait';
+        void invoke<boolean>('drag_native', { paths: files }).then((ok) => { if (ok) cancel(); else out = 'off'; }, () => { out = 'off'; });
+      }
+      if (away && out === 'off') hover.at(ev.screenX, ev.screenY);
+      else if (!away) hover.end();
     }
   };
   endActive = cancel;
@@ -317,6 +324,12 @@ function start(e: React.PointerEvent, payload: DragPayload, label: string) {
 export function dragProps(payload: DragPayload, label: string) {
   if (payload.kind === 'path' && payload.path.startsWith('data:')) return {};
   return { onPointerDown: (e: React.PointerEvent) => start(e, payload, label) };
+}
+
+/** 창 밖이면 맥 끌기로 넘기는 파일 끌기 — 창 안에선 dragPath 와 같다(채팅 칸에 놓으면 붙이기) */
+export function dragOut(path: string) {
+  if (path.startsWith('data:')) return {};
+  return { onPointerDown: (e: React.PointerEvent) => start(e, { kind: 'path', path }, path.split('/').pop() || path, true) };
 }
 
 /** 파일·폴더 경로 끌기 */

@@ -100,7 +100,7 @@ export function ModePick({ rows, keys, dash, onAsk, onDone, variant }: {
         </>
       ) : cards(g.examples)}
       <div className="mdv-try-say">
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={tr('말로 새 모드 만들기 — 예: 거래처별 미수금', 'Describe a new mode — e.g. unpaid invoices by client')}
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={tr('어떤 화면이 필요한지 말해 보세요. 예: 거래처별 미수금', 'Tell your assistant what screen you need, e.g. unpaid invoices by client')}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) ask(); }} aria-label={tr('만들 모드 말하기', 'Describe a mode')} />
         <IconButton label={tr('참모에게 보내기', 'Send to the assistant')} onClick={ask} disabled={!text.trim()}><IconSend /></IconButton>
       </div>
@@ -116,8 +116,8 @@ export function ModePick({ rows, keys, dash, onAsk, onDone, variant }: {
 export function ModeTry({ rows, keys, dash, onAsk }: { rows: ModeRow[]; keys: string[]; dash: string; onAsk: (text: string) => void }) {
   const [manage, setManage] = useState(false);
   return (
-    <section className="mdv-try" aria-label={tr('모드 만들어 보기', 'Try a mode')}>
-      <h3>{tr('모드 만들어 보기', 'Try a mode')}<IconButton label={tr('모드 관리', 'Manage modes')} onClick={() => setManage(true)}><IconSettings /></IconButton></h3>
+    <section className="mdv-try" aria-label={tr('모드 만들기', 'Make a mode')}>
+      <h3>{tr('모드 만들기', 'Make a mode')}<IconButton label={tr('모드 관리', 'Manage modes')} onClick={() => setManage(true)}><IconSettings /></IconButton></h3>
       {manage && <ModeSheet rows={rows} keys={keys} dash={dash} onAsk={onAsk} onClose={() => setManage(false)} start="manage" />}
       <p>{tr('골라서 켜. 내 식으로 고치는 건 참모에게 말하면 돼.', 'Pick and open. To change one, just ask.')}</p>
       <ModePick rows={rows} keys={keys} dash={dash} onAsk={onAsk} variant="empty" />

@@ -1,13 +1,17 @@
 // 띠의 팀 칸(시안 team-space v1 A) — 참모 프사 아래 팀 표 하나. 누르면 팀 모드(화면 전체가 팀), 안 읽은 수는 팀 표 하나에 합친다.
-// 방·DM 프사를 띠에 펼치지 않는다 — 목록은 팀 모드 가운데(TeamList). 칸은 띠(.lk-strip) 바로 아래 형제 — 고른 자리 이음(.lk-av.on)·호버 카드(data-tip)를 그대로 쓴다
+// 방·DM 프사를 띠에 펼치지 않는다 — 목록은 팀 모드 가운데(TeamList). 칸은 띠(.lk-strip) 바로 아래 형제 — 고른 표시(.lk-av.on)·호버 카드(data-tip)를 그대로 쓴다
+// 고른 표시는 참모 칸과 같은 그림 둘레 테두리 하나, 색만 팀 색(팀 홈에서 고른 색, 없으면 이름 색 — 10-29 사용자)
 import { tr } from '../../i18n';
+import { teamMark } from '../../domain/teamChat';
 import { TeamMarkIcon } from './TeamFaces';
 import './team.css';
 
-export function TeamRail({ icon, team, chats, on, unread, wide, onTeam, onMenu }: {
+export function TeamRail({ icon, team, color, chats, on, unread, wide, onTeam, onMenu }: {
   /** 팀 아이콘 그림(data URL, 팀 설정에서 팀장이 바꾼다) */
   icon?: string;
   team: string;
+  /** 팀 색(팀 홈 판) — 없으면 이름 색 */
+  color?: string;
   /** 대화 수(넓은 띠 둘째 줄) */
   chats: number;
   /** 팀 모드 — 고른 칸 표시 */
@@ -23,8 +27,9 @@ export function TeamRail({ icon, team, chats, on, unread, wide, onTeam, onMenu }
     <>
       <i className="far-sep" aria-hidden="true" />
       <button className={`lk-av tmx tmx-rail-team ${on ? 'on' : ''}`} onClick={onTeam} onContextMenu={onMenu ? (e) => { e.preventDefault(); onMenu(e); } : undefined}
-        aria-current={on || undefined} aria-label={unread ? tr(`${team} — 안 읽은 말 ${unread}`, `${team} — ${unread} unread`) : team} data-tip={team} data-tip-sub={sub}>
-        <span className="lk-av-pic"><TeamMarkIcon name={team} size={30} on={on} badge={unread} img={icon} /></span>
+        aria-current={on || undefined} aria-label={unread ? tr(`${team} — 안 읽은 말 ${unread}`, `${team} — ${unread} unread`) : team} data-tip={team} data-tip-sub={sub}
+        style={{ '--rail-on': color ?? teamMark(team).color } as React.CSSProperties}>
+        <span className="lk-av-pic"><TeamMarkIcon name={team} size={30} badge={unread} img={icon} /></span>
         {wide && <span className="lk-av-tx"><b>{team}</b><span>{sub}</span></span>}
       </button>
     </>

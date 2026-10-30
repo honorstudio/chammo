@@ -335,6 +335,8 @@ export const accountsApi = {
 export const appVersion = () => invoke<string>('app_version');
 /** 이 claude 의 설치 길과 그 길로 받을 수 있는 최신 판(winget·brew) */
 export const claudeSource = (path: string) => invoke<import('../domain/updates').ClaudeSource>('claude_source', { path });
+/** latest.json(업데이터와 같은 곳)에 이 기기용 새 판이 있으면 그 번호, 없으면 null. 업데이터 없는 판(개인 앱)은 거절 'off' */
+export const appUpdateCheck = () => invoke<string | null>('app_update_check');
 /** 자동 업데이트(ADR 0005) — 받기·서명 확인·설치 뒤 Rust 가 앱을 다시 켠다. 안 되면 거절 글('off'·'none'·오류) */
 export const appUpdateInstall = (onStep: (s: AppInstallStep) => void) => {
   const ch = new Channel<AppInstallStep>();

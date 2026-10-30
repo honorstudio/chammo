@@ -84,8 +84,8 @@ export function AccountsSection({ title, claude, fontSize }: { title: string; cl
     <section className="su-sec">
       <h2>{title}</h2>
       <p className="su-hint">{tr(
-        `계정을 여러 개 보관해 두고 바꿔 쓸 수 있어요. 세션·기록·스킬은 그대로이고 "누구 사용량으로 쓰나"만 바뀌어요. 로그인 정보는 ${machine() === 'PC' ? '이 PC 자격 증명 관리자' : '맥 키체인'}에만 보관돼요.`,
-        `Keep several accounts and switch between them. Sessions, history and skills stay the same — only whose usage is spent changes. Sign-ins are kept only in ${machine() === 'PC' ? "this PC's Credential Manager" : 'the macOS keychain'}.`)}</p>
+        `계정을 여러 개 보관해 두고 바꿔 쓸 수 있어요. 세션·기록·스킬은 그대로고, 사용량을 어느 계정으로 쓰는지만 바뀌어요. 로그인 정보는 ${machine() === 'PC' ? '이 PC 자격 증명 관리자' : '맥 키체인'}에만 저장돼요.`,
+        `Keep several accounts and switch between them. Sessions, history and skills stay the same; only whose usage is spent changes. Sign-ins are kept only in ${machine() === 'PC' ? "this PC's Credential Manager" : 'the macOS keychain'}.`)}</p>
       <p className="su-hint">{tr('바꿔도 MCP 로그인은 그대로예요.', 'MCP sign-ins stay as they are when you switch.')}</p>
       <div className="su-rows">
         {list.map((a, i) => {
@@ -131,7 +131,7 @@ export function AccountsSection({ title, claude, fontSize }: { title: string; cl
       {list.length > 0 && <>
         <label className="su-check acct-auto">
           <input type="checkbox" checked={auto.on} disabled={busy} onChange={(e) => void act(() => accountsApi.autoPatch({ on: e.target.checked }))} />
-          {tr('자동 전환 — 쓸 수 있는 계정 중 위에 있는 것부터 쓰고, 5시간·주간이 95% 차면 다음 계정으로, 다시 열리면 돌아와요', 'Auto-switch — use the top available account first, move on at 95% of the 5-hour or weekly limit, and come back when it reopens')}
+          {tr('자동 전환: 위에 있는 계정부터 쓰다가 5시간·주간 한도가 95%가 되면 다음 계정으로 넘어가요. 다시 열리면 돌아와요', 'Auto-switch: use the top available account first, move on at 95% of the 5-hour or weekly limit, and come back when it reopens')}
         </label>
         <div className="su-row acct-restore">
           <div className="su-row-text"><span>{tr('로그인이 꼬였을 때 — 바꾸기 전에 남겨 둔 로그인으로 되돌려요', 'If sign-in got tangled — go back to the sign-in kept before a switch')}</span></div>
@@ -153,7 +153,7 @@ export function AccountsSection({ title, claude, fontSize }: { title: string; cl
         ? <IconButton size="l" tone="line" className="su-add-wide" label={tr('계정 추가', 'Add account')} disabled={busy} onClick={() => void startAdd()}><IconPlus /></IconButton>
         : (
           <div className="su-rows">
-            <div className="su-hint">{tr('아래 터미널에서 브라우저가 열려요. 새로 쓸 계정으로 로그인하고 돌아오면 보관 버튼이 켜져요. 지금 로그인은 이미 목록에 보관해 뒀어요.', 'A browser opens from the terminal below. Sign in with the new account and come back — the Keep button lights up. Your current sign-in is already kept.')}</div>
+            <div className="su-hint">{tr('아래 터미널에서 브라우저가 열려요. 새 계정으로 로그인하고 돌아오면 보관 버튼이 켜져요. 지금 계정은 이미 목록에 있어요', 'A browser opens from the terminal below. Sign in with the new account and come back. The Keep button lights up. Your current sign-in is already kept.')}</div>
             <div className="su-term">
               <TerminalPane key="acct-login" command={setupCommand('login', { claude }, tr('끝났어요. 아래의 보관 버튼을 눌러 주세요.', 'Done. Press Keep below.'))}
                 title={tr('계정 추가 — Claude 로그인', 'Add account — Claude sign-in')} subtitle={tr('이 창에 바로 입력할 수 있어요', 'You can type in this window')} fontSize={fontSize}

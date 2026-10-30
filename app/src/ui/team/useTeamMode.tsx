@@ -22,6 +22,8 @@ import { TeamConvo, type Handoff } from './TeamConvo';
 import { TeamHomeDesktop } from './HomeModeBlock';
 import { TeamList } from './TeamList';
 import { TeamLocker } from './TeamLocker';
+import { TeamCal } from './TeamCal';
+import { CalBlock } from './CalBlock';
 import { TeamRail } from './TeamRail';
 import { TeamSettings, teamMenu } from './TeamSettings';
 import { TeamSpace as TeamSpaceView } from './TeamSpace';
@@ -30,18 +32,23 @@ import { MeCell } from './MyProfile';
 import { ContextMenu } from '../OrchDialogs';
 import { onTeamDock, useTeam } from './useTeam';
 import { ProfilesCtx, useProfiles } from './useProfiles';
+import { useTeamColor } from './useTeamColor';
 import { tr } from '../../i18n';
 import { IconDockIn, IconPanelLeft, IconWindowOut } from '../Icons';
 import { CONVO, TEAM_LIST_W, clampConvo, convoKey, foldKey } from '../../domain/teamLayout';
 import { fileHere } from '../chat/openChatFile';
 import { IconButton } from '../kit/IconButton';
+import { BetaTag } from '../kit/BetaTag';
 
 /** 이 컴퓨터에만 기억한 값 — 막혀 있으면 없음 */
 const stored = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const keep = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* 이번 실행만 */ } };
 
 /** 스페이스가 팀 모드에 그리는 것 — file = 스페이스 파일 화면(filePage), craft = 팀에서 연 참모 앱 칸(k:<앱>), dropCraft = 꺼짐·숨김 */
-export type TeamSpace = { name: string; open: (path: string) => void; craft: (key: string, src: string) => void; dropCraft: (key: string) => void;
+export type TeamSpace = { name: string;
+  /** 보던 탭(홈·보관함·파일 경로·k:<앱>) — 스페이스 탭 확대가 이 탭을 본다(10-30) */
+  cur: string;
+  open: (path: string) => void; craft: (key: string, src: string) => void; dropCraft: (key: string) => void;
   view: (file: (path: string) => React.ReactNode, onHide?: () => void, tabName?: (key: string) => string | undefined) => React.ReactNode };
 
 /** alone = 메신저 따로 창(10-26 사용자 "팀 모드와 똑같이, 참모만 없이") — 늘 팀 모드, 창 다시 열기·딥링크 같은 메인 창 일은 안 한다, 누른 파일은 이 창 오른쪽 탭에.
@@ -92,6 +99,7 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
   const names = useMemo(() => Object.fromEntries((view?.members ?? []).map((m) => [m.id, m.name])), [view]);
   const detached = shown.includes('all');
   const teamId = view?.joined ? view.teamId : '';
+  const tint = useTeamColor(teamId, profiles.board?.rev ?? 0);
   const tabs = teamTabsOf(tabsBy, teamId);
   const setTabs = (f: (t: TeamTabs) => TeamTabs) => setTabsBy((m) => new Map(m).set(teamId, f(teamTabsOf(m, teamId))));
 
@@ -210,7 +218,7 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
     tabs,
     icon: profiles.board?.teamIcon || undefined,
     rail: team ? (
-      <ProfilesCtx.Provider value={profiles}><TeamRail icon={profiles.board?.teamIcon || undefined} team={team} chats={cs.length} on={on} unread={unreadTotal(cs)} wide={o.wide}
+      <ProfilesCtx.Provider value={profiles}><TeamRail icon={profiles.board?.teamIcon || undefined} team={team} color={tint} chats={cs.length} on={on} unread={unreadTotal(cs)} wide={o.wide}
         onTeam={() => setOn(true)}
         onMenu={(e) => setMenu({ x: e.clientX, y: e.clientY })} /></ProfilesCtx.Provider>
     ) : null,
@@ -224,7 +232,7 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
       <ProfilesCtx.Provider value={profiles}>
         <div className="tmc" style={{ ['--tmc-list' as string]: `${TEAM_LIST_W}px` }}>
           <div className="tmc-list">
-            <div className="tmx-list-h"><b>{team}</b>
+            <div className="tmx-list-h"><span className="tmx-list-ht"><b>{team}</b><BetaTag /></span>
               <IconButton label={tr('메신저 접기', 'Collapse the messenger')} onClick={() => setFold(true)}><IconPanelLeft /></IconButton>
               {alone ? <IconButton label={tr('앱에 붙이기', 'Dock into the app')} onClick={() => void teamWindowClose('all')}><IconDockIn /></IconButton>
                 : canDetach && <IconButton label={tr('메신저 따로 창으로', 'Open the messenger in its own window')} onClick={() => toWindow()}><IconWindowOut /></IconButton>}
@@ -246,6 +254,7 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
     ) : null,
     space: team && view ? {
       name: team,
+      cur: tabs.cur,
       open: (path: string) => { setOn(true); setTabs((t) => openTeamFile(t, path)); },
       craft: (key: string, src: string) => { setOn(true); setTabs((t) => openTeamCraft(t, key, src)); },
       dropCraft: (key: string) => setTabsBy((m) => dropTeamKey(m, key)),
@@ -256,7 +265,9 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
             roomName={(r) => cs.find((c) => c.room === r)?.name ?? tr('대화', 'Chat')}
             roomFiles={(r) => <TeamLocker key={`room:${r}`} teamId={view.teamId} team={team} people={view.members.length} follow onFollow={() => {}} room={{ id: r, name: cs.find((c) => c.room === r)?.name ?? tr('대화', 'Chat') }}
               onOpen={(p, dir) => (dir ? void lockerApi.reveal(p) : setTabs((t) => openTeamFile(t, p)))} />}
+            cal={<TeamCal key={view.teamId} teamId={view.teamId} members={view.members} />}
             home={<TeamHomeDesktop teamId={view.teamId} team={team} members={view.members} icon={profiles.board?.teamIcon || undefined}
+              calBlock={(b, editing) => <CalBlock key={view.teamId} teamId={view.teamId} wide={b.w === 'full'} editing={editing} onOpen={() => setTabs((t) => pickTeamTab(t, 'cal'))} />}
               onTalk={(text) => { const c = rooms[0] ?? cur; if (!c) return; setSel(c.key); showChat(); setSeed((s) => ({ text, n: (s?.n ?? 0) + 1 })); }} />}
             // 팀 설정은 탭 줄 끝 톱니라 보관함 머리 끝 자리는 비운다(빈 조각 — 없으면 옛 '팀 따라가기' 단추가 나온다)
             locker={<TeamLocker teamId={view.teamId} team={team} people={view.members.length} follow onFollow={() => {}} icon={profiles.board?.teamIcon || undefined}

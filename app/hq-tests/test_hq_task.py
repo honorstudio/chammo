@@ -119,6 +119,17 @@ class Send(unittest.TestCase):
         self.assertEqual([e['type'] for e in events], ['send', 'ask'])
 
 
+class BrowserLogin(unittest.TestCase):
+    # 2026-10-29 다른 기기 세션이 사이트 로그인을 "못 한다"며 사람에게 넘겼다 — 브라우저가 붙은 세션엔 로그인 명령을 같이 준다
+    def test_붙은_세션엔_로그인_명령(self):
+        line = task.browser_rule(('playwright', 'shop'))
+        self.assertIn('chammo-browser.js" login shop <로그인 주소>', line.replace("'", '"'))
+        self.assertIn('CLAUDE.local.md', line)
+
+    def test_안_붙은_세션엔_없다(self):
+        self.assertNotIn(' login ', task.browser_rule(False))
+
+
 class OpenTasks(unittest.TestCase):
     def test_only_open_tasks_of_that_session(self):
         with tempfile.TemporaryDirectory() as d:

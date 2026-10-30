@@ -4,6 +4,8 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IconButton } from './IconButton';
 import { Badge } from './Badge';
+import { BetaTag } from './BetaTag';
+import { setLang } from '../../i18n';
 import kitCss from './kit.css?raw';
 
 const svg = createElement('svg', { viewBox: '0 0 16 16' });
@@ -58,5 +60,22 @@ describe('kit.css', () => {
     for (const m of kitCss.matchAll(/font-size:\s*([\d.]+)px/g)) expect(Number(m[1])).toBeGreaterThanOrEqual(11);
     expect(kitCss).not.toMatch(/z-index:\s*\d/);
     expect(kitCss).not.toMatch(/border-left:\s*[2-9]px/);
+  });
+});
+
+describe('BetaTag', () => {
+  it("유료 예정 기능 표시는 'Beta' 한 단어 — 한·영 같고, 풍선·누름 동작 없이 작은 표시만(10-29 사용자)", () => {
+    for (const l of ['ko', 'en'] as const) {
+      setLang(l);
+      try {
+        const html = renderToStaticMarkup(createElement(BetaTag, { className: 'x-1' }));
+        expect(html).toBe('<span class="kit-beta x-1" role="note" aria-label="Beta">Beta</span>');
+      } finally { setLang('ko'); }
+    }
+  });
+
+  it('작은 알약 — 풍선(tip)·누름 모양 없음', () => {
+    expect(kitCss).toMatch(/\.kit-beta\s*\{[^}]*border-radius:\s*999px/);
+    expect(kitCss).not.toMatch(/kit-beta-tip|\.kit-beta\.open|kit-beta:hover/);
   });
 });

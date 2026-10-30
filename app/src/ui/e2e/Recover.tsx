@@ -69,7 +69,7 @@ export function RecoverWait({ onLater, onChanged }: { onLater: () => void; onCha
   return (
     <div className="nw-box">
       <h3>{readyAt ? tr(`다시 시작까지 ${h}시간`, `${h}h until restart`) : tr('다시 시작을 기다려요', 'Waiting to restart')}</h3>
-      <p>{tr('그동안 옛 기기를 찾으면 그 기기로 허용하세요 — 대화가 이어져요. 내 다른 기기에도 요청이 보여서 거기서 취소할 수 있어요.', 'If you find your old device meanwhile, approve there — your chats carry over. Your other devices see the request too and can cancel it.')}</p>
+      <p>{tr('그 사이 옛 기기를 찾으면 그 기기에서 허용하세요. 대화가 이어져요. 요청은 내 다른 기기에도 보이고, 거기서 취소할 수 있어요', 'If you find your old device meanwhile, approve there. Your chats carry over. Your other devices see the request too and can cancel it.')}</p>
       <div className="nw-acts">
         <button className="btn" disabled={busy} onClick={cancel}>{tr('요청 취소', 'Cancel request')}</button>
         <button className="btn pri" disabled={busy} onClick={onLater}>{tr('계속 쓰기', 'Continue')}</button>

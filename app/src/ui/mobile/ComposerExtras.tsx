@@ -2,10 +2,10 @@
 // 칩 글·에포트 목록은 데스크톱 채팅 칩과 같은 domain/modelPick, 바꾸기는 맥 앱이 같은 runModelPick 으로(새 세션 기본값은 되돌린다)
 import { useEffect, useState } from 'react';
 import { pickOrchModel, readVoice, setVoiceMode } from '../../data/web';
-import { effortChoices, familyOf, MODEL_CHOICES, modelChip, modelChipShort } from '../../domain/modelPick';
+import { effortChoices, isModel, MODEL_CHOICES, modelChip, modelChipShort, OTHER_MODELS } from '../../domain/modelPick';
 import { pickState } from '../../domain/phoneComposer';
 import type { Ctx } from '../../domain/ctx';
-import { IconSpeaker } from '../Icons';
+import { IconMore, IconSpeaker } from '../Icons';
 import { useMemoPoll } from './usePoll';
 import { setPhoneVoice, unlockAudio } from '../../data/phoneVoice';
 import { machine } from '../../i18n';
@@ -16,6 +16,7 @@ const keyOf = (c?: Ctx) => `${c?.model ?? ''}|${c?.effort ?? ''}`;
 /** 모델 칩 — 칩은 일하는 중에도 그대로(바꾸기는 일하는 중에도 바로 먹는다, 데스크톱 칩과 같다) */
 export function ModelChipRow({ orchId, info }: { orchId: string; info?: Ctx }) {
   const [open, setOpen] = useState(false);
+  const [more, setMore] = useState(false); // '그 밖' 모델 줄 펼침
   const [asked, setAsked] = useState<{ key: string; at: number } | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [err, setErr] = useState<string | null>(null);
@@ -25,13 +26,17 @@ export function ModelChipRow({ orchId, info }: { orchId: string; info?: Ctx }) {
   useEffect(() => { if (st !== 'wait') return; const t = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(t); }, [st]);
   useEffect(() => { if (st === 'idle' && asked) setAsked(null); if (st === 'fail') { setAsked(null); setErr(`안 바뀌었어요 — ${machine()} 앱에 이 참모 창이 열려 있어야 해요`); } }, [st]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!err) return; const t = window.setTimeout(() => setErr(null), 7000); return () => window.clearTimeout(t); }, [err]);
-  const go = (want: { model?: 'opus' | 'sonnet' | 'haiku'; effort?: string }) => {
-    setOpen(false); setErr(null);
+  const go = (want: { model?: string; effort?: string }) => {
+    setOpen(false); setMore(false); setErr(null);
     setAsked({ key: keyOf(info), at: Date.now() }); setNow(Date.now());
     pickOrchModel(orchId, want).catch((e: Error) => { setAsked(null); setErr(e.message === 'too soon' ? '방금 바꿨어요 — 잠깐 뒤에' : `못 바꿨어요: ${e.message}`); });
   };
-  const family = familyOf(info?.modelId ?? info?.model);
-  const efforts = effortChoices(family);
+  const efforts = effortChoices(info);
+  const showOther = more || OTHER_MODELS.some((m) => isModel(info, m.id)); // 지금 모델이 '그 밖'이면 펼친 채로
+  const modelBtn = (m: { id: string; label: string }) => {
+    const sel = isModel(info, m.id);
+    return <button key={m.id} type="button" role="radio" aria-checked={sel} className={`m-prof-chip${sel ? ' m-on' : ''}`} onClick={() => !sel && go({ model: m.id })}>{m.label}</button>;
+  };
   return (
     <>
       {label && (
@@ -41,13 +46,13 @@ export function ModelChipRow({ orchId, info }: { orchId: string; info?: Ctx }) {
       )}
       {err && <span className="m-mfail" role="alert">{err}</span>}
       {open && (
-        <BottomSheet label="모델·에포트" title={label} onClose={() => setOpen(false)}>
+        <BottomSheet label="모델·에포트" title={label} onClose={() => { setOpen(false); setMore(false); }}>
           <div className="m-prof-lbl">모델</div>
           <div className="m-prof-row" role="radiogroup" aria-label="모델">
-            {MODEL_CHOICES.map((m) => (
-              <button key={m.alias} type="button" role="radio" aria-checked={family === m.alias} className={`m-prof-chip${family === m.alias ? ' m-on' : ''}`} onClick={() => family !== m.alias && go({ model: m.alias })}>{m.label}</button>
-            ))}
+            {MODEL_CHOICES.map(modelBtn)}
+            <button type="button" className="m-prof-chip m-mmore" aria-expanded={showOther} aria-label="다른 모델" onClick={() => setMore((v) => !v)}><IconMore /></button>
           </div>
+          {showOther && <div className="m-prof-row m-wrap" role="radiogroup" aria-label="다른 모델">{OTHER_MODELS.map(modelBtn)}</div>}
           {efforts.length > 0 && (
             <>
               <div className="m-prof-lbl">에포트</div>

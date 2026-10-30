@@ -9,13 +9,14 @@
 // room 을 주면 '대화 파일 보기' — 그 DM·팀챗에 붙인 파일만(팀 보관함엔 안 섞는다, 10-28 사용자 "디엠은 그 사용자랑만"). 폴더 칩은 놓으면 복사하는 자리로만
 import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
-import { allFolders, crumbsOf, dirId, dirOfId, kidFolders, moveTargets, parentOf, renamedPath, dropPlan, lockerUps, extOf, thumbKind, TEAM_LOCKER_DROP, TEAM_LOCKER_MOVE, TEAM_LOCKER_OUT, fmtBytes, inPlace, inRoom, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerSort, type LockerUpload, type LockerView } from '../../domain/teamLocker';
+import { allFolders, folderFiles, crumbsOf, dirId, dirOfId, kidFolders, moveTargets, parentOf, renamedPath, dropPlan, lockerUps, extOf, thumbKind, TEAM_LOCKER_DROP, TEAM_LOCKER_MOVE, TEAM_LOCKER_OUT, fmtBytes, inPlace, inRoom, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerSort, type LockerUpload, type LockerView } from '../../domain/teamLocker';
 import { failText, opKey, withPending, type LockerOp } from '../../domain/teamLockerPending';
-import { needFetch, teamViewMemo } from '../../domain/teamViewMemo';
+import { needFetch, placeMemo, teamViewMemo } from '../../domain/teamViewMemo';
 import { opensOnClick } from '../../domain/ctxMenu';
 import { tr } from '../../i18n';
 import { IconChatSend, IconClose, IconDashboard, IconFolderMove, IconFolderPlus, IconLink, IconList, IconPlus, IconTrash } from '../Icons';
 import { IconButton } from '../kit/IconButton';
+import { BetaTag } from '../kit/BetaTag';
 import { Confirm, ContextMenu, type MenuItem } from '../OrchDialogs';
 import { swallowTrailingClick } from '../orchActions';
 import { attachToChat } from '../fileDrop';
@@ -23,10 +24,11 @@ import { forgetTeamThumb, teamFileThumb } from '../../data/teamApi';
 import { dragTeam } from '../space/dragPath';
 import { usePick } from '../space/usePick';
 import { FolderTile, PathCrumbs } from '../space/FolderTile';
+import { SendToOrch } from '../space/SendToOrch';
 import { TeamMarkIcon } from './TeamFaces';
 import { openTeamFile, type TeamOpenHow } from './openTeamFile';
 import { altOpen } from '../../domain/craftOpen';
-import { GIVE_LABEL, giveIds, giveItems, giveMenu, useRoster } from './teamGive';
+import { GIVE_LABEL, giveFolder, giveIds, giveItems, giveMenu, useRoster } from './teamGive';
 import { splitTeamDrop, type RosterOrch } from '../../domain/teamGive';
 import { TEAM_DROP_EVENT } from './teamDrop';
 import { SortButton } from '../SortButton';
@@ -39,6 +41,8 @@ export const teamOwner = (teamId: string, team: string) => ({ id: `team-${teamId
 
 /** 팀마다 마지막 목록 — 팀 홈 탭을 갔다 오거나(화면이 내려간다) 대화 파일 탭을 열어도 바로 그린다. 같은 팀이면 대화 파일 보기와 나눠 쓴다(방 거르기는 화면에서) */
 const lockerMemo = teamViewMemo<LockerView>();
+/** 보던 폴더 — 파일 탭을 닫고 보관함이 다시 붙어도 그 폴더로(10-30 사용자) */
+const placeOf = placeMemo();
 
 const VIEW_KEY = 'teamLocker.view.v1';
 const readView = (): 'list' | 'cards' => { try { return localStorage.getItem(VIEW_KEY) === 'cards' ? 'cards' : 'list'; } catch { return 'list'; } };
@@ -80,7 +84,11 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
   const [v, setV] = useState<LockerView | null>(null);
   const [err, setErr] = useState('');
   const [ups, setUps] = useState<LockerUpload[]>([]);
-  const [place, setPlace] = useState('');
+  const placeKey = room ? `${teamId}:${room.id}` : teamId;
+  const [place, setPlace] = useState(() => placeOf.get(placeKey));
+  // 팀을 바꾸는 렌더엔 place 가 아직 앞 팀 것 — 그 팀 칸에 맞춘 뒤(아래 열기 효과)부터 적는다
+  const placeFor = useRef(placeKey);
+  useEffect(() => { if (placeFor.current === placeKey) placeOf.put(placeKey, place); }, [placeKey, place]);
   const [trash, setTrash] = useState(false);
   const [mode, setMode] = useState<'list' | 'cards'>(readView);
   const [sort, setSort] = useState<LockerSort>(() => readSort(() => localStorage.getItem(SORT_KEY)));
@@ -121,7 +129,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
   // 망은 기억이 없거나 오래됐을 때만 바로 — 기억이 있으면 아래 확인이 소켓이 알린 판과 견줘 바뀌었을 때만 받는다(10-28 사용자 "매번 새로 로드")
   useEffect(() => {
     const m = lockerMemo.get(teamId);
-    setV(m?.v ?? null); setPlace(''); setTrash(false); setPend([]); setUndone(null);
+    setV(m?.v ?? null); placeFor.current = placeKey; setPlace(placeOf.get(placeKey)); setTrash(false); setPend([]); setUndone(null);
     if (!m) void invoke<LockerView | null>('team_locker_cached', { team: teamId }).then((c) => { if (c && cur.current === teamId) setV((x) => x ?? c); }, () => {});
     if (needFetch(m, 0)) void load();
   }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -234,11 +242,19 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
       .finally(() => setOpening((x) => { const n = new Set(x); go.forEach((id) => n.delete(id)); return n; }));
   };
   /** 아이콘 단추 — 누른 자리 아래에 참모 고르기 */
-  const pickOrch = (e: MouseEvent, ids: string[]) => {
+  const menuAt = (e: MouseEvent, run: (o: RosterOrch) => void) => {
     e.stopPropagation();
     const r = e.currentTarget.getBoundingClientRect();
-    const list = giveItems(roster, (o) => { give(ids, o); pick.end(); });
+    const list = giveItems(roster, run);
     setMenu({ x: Math.round(r.left), y: Math.round(r.bottom + 4), items: list.length ? list : [{ label: tr('켜져 있는 참모가 없어요', 'No assistant is running') }] });
+  };
+  const pickOrch = (e: MouseEvent, ids: string[]) => menuAt(e, (o) => { give(ids, o); pick.end(); });
+  // 지금 연 폴더째(안쪽까지) — 그 참모 팀 자리에 같은 폴더 모양으로 풀고 폴더 칩 하나(2026-10-30 사용자 '이 폴더')
+  const folderHas = !!folder && folderFiles(shown?.items ?? [], folder).length > 0;
+  const giveHere = (o: RosterOrch) => {
+    if (!folder) return;
+    void giveFolder(teamId, folder, folderFiles(shown?.items ?? [], folder).map((x) => x.id), o)
+      .catch((e: unknown) => setNote(tr(`${o.label}에게 못 보냈어요 — ${String(e)}`, `Couldn't send to ${o.label} — ${String(e)}`)));
   };
   const rename = (id: string, args: { name?: string; folder?: string }) => run({ k: 'meta', id, ...args }, () => invoke('team_locker_rename', { team: teamId, id, ...args }));
   const verb = (id: string, what: 'trash' | 'restore' | 'purge') => run({ k: 'act', id, verb: what }, () => invoke('team_locker_act', { team: teamId, id, verb: what }));
@@ -472,6 +488,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
           <TeamMarkIcon name={room ? room.name : team} size={34} img={room ? undefined : icon} />
           <span className="tmx-head-tx"><b>{room ? room.name : team}</b><span>{trash ? tr('휴지통 · 30일 뒤 지워져요', 'Trash · cleared after 30 days') : room ? tr('대화 파일 · 이 대화 사람만 봐요', 'Chat files · only people in this chat') : tr(`팀 보관함 · 사람 ${people}`, `Team locker · ${people} people`)}
             {pend.length > 0 ? <i className="tlk-sync" role="status">{tr('보내는 중', 'Saving')}</i> : busyList && v?.cached && <i className="tlk-sync" role="status">{tr('새로 받는 중', 'Updating')}</i>}</span></span>
+          {!room && <BetaTag className="tlk-beta" />}
           {use && !room && (
             <span className="tlk-use" title={tr(`팀 보관함 ${fmtBytes(v!.usage.used)} 사용 · 한도 ${fmtBytes(v!.usage.limit)}(좌석 ${v!.usage.seats} × 10GB)`, `${fmtBytes(v!.usage.used)} used of ${fmtBytes(v!.usage.limit)} (${v!.usage.seats} seats × 10GB)`)}>
               <span className="tlk-bar"><i style={{ width: `${Math.max(use.ratio * 100, use.ratio > 0 ? 3 : 0)}%` }} /></span>{use.text}
@@ -497,6 +514,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
           // 경로 줄 — 팀 보관함 › 견적 › 10월(참모 보관함과 같은 조각). 칸을 누르면 거기로, 끌어 놓으면 그 폴더로
           <div className="tlk-path">
             <PathCrumbs root={tr('팀 보관함', 'Team locker')} crumbs={crumbsOf(place)} onGo={setPlace} dropOf={dropAt} back={place ? () => setPlace(parentOf(place)) : undefined} />
+            {folderHas && <SendToOrch size="s" to={{ name: tr('내 참모', 'my assistant'), color: '' }} onClick={(e) => menuAt(e, giveHere)} />}
           </div>
         )}
 

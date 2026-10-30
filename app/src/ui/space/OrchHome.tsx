@@ -90,7 +90,7 @@ export function OrchHome({ live, off, ctx, lines, starting, ready, creating, wai
   const wait = waiting.length > 0 && (
     <div className="oh-wait" role="status" title={waiting.map((s) => s.name || s.cwd.split('/').filter(Boolean).pop()).join(', ')}>
       <IconPause />
-      <span>{tr(`재시작으로 멈춘 일 ${waiting.length}개 — ${josa(assistant(), '을', '를')} 켜면 이어서 맡아요`, `${waiting.length} paused by a restart — start ${assistant()} to pick them up`)}</span>
+      <span>{tr(`재시작으로 멈춘 일이 ${waiting.length}개 있어요. ${josa(assistant(), '을', '를')} 켜면 이어서 맡아요`, `${waiting.length} paused by a restart. Start ${assistant()} to pick them up`)}</span>
     </div>
   );
   const making = creating && !live.some((x) => x.name === creating) ? (

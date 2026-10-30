@@ -33,6 +33,18 @@ pub enum Step {
     Installing,
 }
 
+/// latest.json 에 이 기기용 새 판이 있으면 그 번호, 없으면 None — 띠가 업데이트 버튼과 같은 곳을 본다.
+/// 웹뷰는 github.com 의 latest.json 을 못 읽어서(CORS 없음) 띠는 GitHub API(IP 당 시간 60번)만 봤다 — 사무실 망에서 막히면 띠가 안 떴다
+#[tauri::command]
+pub async fn app_update_check(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    if !ON.load(Ordering::Relaxed) {
+        return Err("off".into());
+    }
+    let up = app.updater().map_err(|e| e.to_string())?;
+    up.check().await.map(|u| u.map(|u| u.version)).map_err(|e| e.to_string())
+}
+
 /// 받기 → 서명 확인 → 설치 → 다시 켜기. 돌려주는 Err 글은 화면이 링크로 떨어질 때 같이 적는다
 #[tauri::command]
 pub async fn app_update_install(app: tauri::AppHandle, on_step: Channel<Step>) -> Result<(), String> {

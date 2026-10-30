@@ -38,7 +38,7 @@ export function useCardNumber(dev: string | undefined, api: NumberApi) {
 }
 
 /** 이 기기가 사슬 밖일 때 — 버튼 대신 안내(누르면 403 만 뜨던 것, 리뷰 B 회귀) */
-export const outsideHint = () => tr('이 기기는 아직 숫자 확인 전이라 허용·거절할 수 없어요 — 처음 시작한 기기나 숫자 확인을 마친 기기에서', 'This device has not been verified yet, so it cannot allow or decline — use the first device or one that finished the number check');
+export const outsideHint = () => tr('이 기기는 아직 숫자 확인 전이라 허용·거절할 수 없어요. 처음 시작한 기기나 확인을 마친 기기에서 해 주세요', 'This device has not been verified yet, so it cannot allow or decline. Use the first device or one that finished the number check.');
 
 export function NumberEntry({ dev, api, ready, mine = true, claim, note = '', decline, onDone, code: shown = '' }: {
   dev: string; api: NumberApi; ready: boolean;

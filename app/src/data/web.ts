@@ -283,6 +283,8 @@ export type TeamPhoneApi = {
   home: (team: string, rev: number) => Promise<import('../domain/teamHome').HomeBoard | { same: true }>;
   homeSave: (team: string, home: import('../domain/teamHome').Home) => Promise<unknown>;
   homeContent: (team: string, block: string, content: import('../domain/teamHome').ContentDraft) => Promise<unknown>;
+  /** 팀 캘린더(relay ADR 0011) — 같은 기록장을 맥이 읽고 쓴다(봉하기·판 맞추기는 맥) */
+  cal: import('./teamCalApi').CalApi;
   /** 팀 홈 새 글(고치기·지우기는 데스크톱) — pin 은 팀장만, 고정만 실패하면 pinError */
   post: (team: string, title: string, body: string, pin: boolean) => Promise<{ id: string; pinError?: string }>;
   /** 팀 보관함(중계) — 데스크톱 TeamLocker 와 같은 목록 + 맥이 올리는 중인 줄. rev = 본 판, 그대로면 {same} */
@@ -335,6 +337,12 @@ export const teamViaMac: TeamPhoneApi = {
   home: (team, rev) => getJson(`/api/team-home?team=${encodeURIComponent(team)}&rev=${rev}`),
   homeSave: (team, home) => post('/api/team-home-save', { team, home }),
   homeContent: (team, block, content) => post('/api/team-home-content', { team, block, content }),
+  cal: {
+    cached: (team) => getJson(`/api/team-cal?team=${encodeURIComponent(team)}`),
+    sync: (team) => getJson(`/api/team-cal?team=${encodeURIComponent(team)}&fresh=1`),
+    poll: (team) => getJson(`/api/team-cal-poll?team=${encodeURIComponent(team)}`),
+    put: (team, id, base, before, data, restore) => post('/api/team-cal-put', { team, id, base, before, data, restore: !!restore }),
+  },
   locker: (team, rev) => getJson(`/api/team-locker?team=${encodeURIComponent(team)}&rev=${rev}`),
   lockerOp: (op) => post('/api/team-locker-op', op),
   lockerPut: putTeamFile,
@@ -426,4 +434,4 @@ export const voiceBeat = (body: object, signal?: AbortSignal, keepalive = false)
   call('/api/voice-beat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal, keepalive }).then((r) => r.json() as Promise<import('../domain/phoneVoice').BeatReply>);
 export const voiceAudioBlob = (id: number, signal?: AbortSignal) => call(`/api/voice-audio?id=${id}`, { signal }).then((r) => r.blob());
 /** 참모 모델·에포트 바꾸기 — 맥 앱이 데스크톱 칩과 같은 길로 친다(새 세션 기본값은 되돌림). 새 값은 상태줄(ctx)로 */
-export const pickOrchModel = (id: string, want: { model?: 'opus' | 'sonnet' | 'haiku'; effort?: string }) => post<{ ok: true }>('/api/model', { id, ...want }).then(() => undefined);
+export const pickOrchModel = (id: string, want: { model?: string; effort?: string }) => post<{ ok: true }>('/api/model', { id, ...want }).then(() => undefined);

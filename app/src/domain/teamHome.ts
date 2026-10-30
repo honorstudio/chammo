@@ -4,7 +4,7 @@ import { stamp } from './teamChat';
 import type { AgentShown } from './teamAgent';
 import type { LockerItem } from './teamLocker';
 
-export type BlockKind = 'pin' | 'posts' | 'members' | 'agents' | 'files' | 'links' | 'note' | 'goals' | 'mode';
+export type BlockKind = 'pin' | 'posts' | 'members' | 'agents' | 'files' | 'links' | 'note' | 'goals' | 'mode' | 'cal';
 export type Width = 'half' | 'full';
 export type HomeBlock = { id: string; k: BlockKind; w: Width; mode?: string };
 export type Home = { t: 'home'; color: number; blurb: string; cover: string; blocks: HomeBlock[]; at: number };
@@ -41,6 +41,8 @@ export const NOTE_MAX = 2000;
 /** 팀 색 — 앱 사람 색과 겹치지 않는 차분한 여덟 */
 export const TEAM_COLORS = ['#5a4fcf', '#2563eb', '#0f766e', '#2f9e6b', '#c2410c', '#b45309', '#be185d', '#475569'] as const;
 export const teamColor = (i: number) => TEAM_COLORS[i] ?? TEAM_COLORS[0];
+/** 팀 홈 판의 팀 색 — 판이 없거나 아직 못 읽었으면 없음(띠 팀 칸은 이름 색을 쓴다) */
+export const homeColor = (b: HomeBoard | null | undefined): string | undefined => (b?.home ? teamColor(b.home.color) : undefined);
 
 type Spec = { k: BlockKind; w: Width; one: boolean; group: 'news' | 'work'; name: () => string; hint: () => string };
 /** 블록 모음 v1(ADR 0018 8) — 서랍 순서. one = 한 판에 하나 */
@@ -49,6 +51,7 @@ export const BLOCKS: Spec[] = [
   { k: 'posts', w: 'full', one: true, group: 'news', name: () => tr('글 목록', 'Posts'), hint: () => tr('팀 홈 글', 'Team home posts') },
   { k: 'note', w: 'half', one: false, group: 'news', name: () => tr('글 한 칸', 'Note'), hint: () => tr('짧은 글 — 누구나 고침', 'A short note anyone can edit') },
   { k: 'links', w: 'half', one: false, group: 'news', name: () => tr('링크 모음', 'Links'), hint: () => tr('자주 여는 주소', 'Addresses the team opens often') },
+  { k: 'cal', w: 'half', one: true, group: 'work', name: () => tr('팀 캘린더', 'Team calendar'), hint: () => tr('다가오는 일정 — 넓히면 이번 주', 'Upcoming — this week when wide') },
   { k: 'members', w: 'half', one: true, group: 'work', name: () => tr('팀원', 'Members'), hint: () => tr('지금 상태', 'Who is around') },
   { k: 'goals', w: 'half', one: false, group: 'work', name: () => tr('진행 중', 'In progress'), hint: () => tr('손으로 적는 목표 막대', 'Goal bars the team updates') },
   { k: 'files', w: 'half', one: true, group: 'work', name: () => tr('최근 파일', 'Recent files'), hint: () => tr('팀 보관함', 'Team locker') },
@@ -59,10 +62,18 @@ export const specOf = (k: BlockKind) => BLOCKS.find((s) => s.k === k)!;
 
 export type TemplateKey = 'basic' | 'project' | 'ops';
 export const TEMPLATES: { key: TemplateKey; name: () => string; ks: BlockKind[] }[] = [
-  { key: 'basic', name: () => tr('기본', 'Basic'), ks: ['pin', 'members', 'files', 'posts'] },
-  { key: 'project', name: () => tr('프로젝트팀', 'Project team'), ks: ['goals', 'files', 'agents', 'links', 'posts'] },
-  { key: 'ops', name: () => tr('운영팀', 'Operations team'), ks: ['pin', 'mode', 'members', 'agents', 'links'] },
+  { key: 'basic', name: () => tr('기본', 'Basic'), ks: ['pin', 'cal', 'members', 'files', 'posts'] },
+  { key: 'project', name: () => tr('프로젝트팀', 'Project team'), ks: ['cal', 'goals', 'files', 'agents', 'links', 'posts'] },
+  { key: 'ops', name: () => tr('운영팀', 'Operations team'), ks: ['pin', 'mode', 'members', 'agents', 'links', 'posts'] },
 ];
+
+/** 글이 보일 자리 — 칸 구성과 상관없이 올린 글은 어딘가에 보여야 한다(팀원이 올린 글이 글 목록 칸 없는 판에서 사라졌다, 공개 이슈 #9).
+ *  pinInList = 고정 공지 칸이 없어 고정한 글도 목록 맨 앞에 · listBelow = 글 목록 칸이 없어 판 아래에 글 타일. 판이 없으면 글 목록 판이 통째로 그려진다 */
+export function postPlaces(home: Home | null): { pinInList: boolean; listBelow: boolean } {
+  if (!home) return { pinInList: false, listBelow: false };
+  const has = (k: BlockKind) => home.blocks.some((b) => b.k === k);
+  return { pinInList: !has('pin'), listBelow: !has('posts') };
+}
 
 /** 판 안에서 안 겹치는 짧은 id — Rust block_id_ok(1~24자 글자·숫자·-_) */
 export const newBlockId = () => `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;

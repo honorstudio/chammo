@@ -11,6 +11,7 @@ import { deviceCounts, deviceRows, pendingCardFor } from '../domain/myDevices';
 import { tr } from '../i18n';
 import { IconChevronDown, IconChevronUp, IconClose, IconPencil, IconRefresh, IconUnlink } from './Icons';
 import { IconButton } from './kit/IconButton';
+import { BetaTag } from './kit/BetaTag';
 import { desktopNumber, NumberEntry, outsideHint, useCardNumber } from './e2e/NumberEntry';
 import { NumberWait } from './e2e/NumberWait';
 
@@ -71,12 +72,12 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
     <>
       <section className="su-sec">
         <div className="su-sec-head">
-          <h2>{title}</h2>
+          <div className="su-title"><h2>{title}</h2><BetaTag /></div>
           {acc && <IconButton size="l" tone="line" label={tr('다시 받기', 'Refresh')} disabled={busy} onClick={() => { load(); loadHere(); }}><IconRefresh /></IconButton>}
         </div>
         {v && !acc && (
           <>
-            <p className="su-hint">{tr('Chammo 계정에 로그인하면 컴퓨터·폰이 한 목록에 들어와요 — 다른 기기도 같은 계정으로 로그인하면 돼요.', 'Sign in to your Chammo account and your computers and phones show up here — sign in with the same account on each device.')}</p>
+            <p className="su-hint">{tr('Chammo 계정으로 로그인하면 컴퓨터와 폰이 한 목록에 모여요. 다른 기기도 같은 계정으로 로그인하세요', 'Sign in to your Chammo account and your computers and phones show up here. Sign in with the same account on each device.')}</p>
             <div className="su-inline"><button className="btn pri" onClick={onAccount}>{tr('Chammo 계정에 로그인', 'Sign in to Chammo account')}</button></div>
           </>
         )}
@@ -95,8 +96,8 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
             {entry.qrSvg && <img className="su-qr" alt={tr('폰 추가 QR', 'Add phone QR')} src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(entry.qrSvg)}`} />}
             <div className="su-mobile-side">
               <b>{tr('폰 카메라로 찍어 주세요', 'Scan with the phone camera')}</b>
-              <span className="su-hint">{tr('사파리(안드로이드는 크롬)에서 홈 화면에 추가 → 홈 화면의 참모 앱을 열고 구글 로그인 → 이 컴퓨터 고르기 → 양쪽 숫자 확인',
-                'Add to Home Screen in Safari (Chrome on Android) → open the Chammo app on the home screen and sign in with Google → pick this computer → check the number on both')}</span>
+              <span className="su-hint">{tr('홈 화면에 추가(사파리, 안드로이드는 크롬)한 뒤 앱을 열어 구글로 로그인하고, 이 컴퓨터를 고르세요. 양쪽에 뜬 숫자가 같은지 확인해요',
+                'Add to Home Screen (Safari, or Chrome on Android), open the app and sign in with Google, then pick this computer. Check the number matches on both')}</span>
               <div className="su-inline"><IconButton size="l" tone="line" label={tr('닫기', 'Close')} onClick={() => setEntry(null)}><IconClose /></IconButton></div>
             </div>
           </div>
@@ -185,10 +186,10 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
       </section>
       <section className="su-sec">
         <div className="su-sec-head">
-          <h2 className="dm-fold-h">{tr('테일스케일로 직접 잇기', 'Connect directly over Tailscale')}</h2>
+          <div className="su-title"><h2 className="dm-fold-h">{tr('테일스케일로 직접 잇기', 'Connect directly over Tailscale')}</h2><BetaTag /></div>
           <IconButton size="l" tone="line" label={fold ? tr('접기', 'Collapse') : tr('펼치기', 'Expand')} pressed={fold} onClick={() => setFold(!fold)}>{fold ? <IconChevronUp /> : <IconChevronDown />}</IconButton>
         </div>
-        {!fold && <span className="su-hint">{tr('계정 없이 쓰거나 옛 판 기기와 잇는 길 — 폰 연결 QR·같은 테일넷 다른 기기 참모', 'Without an account or with older versions — phone QR and Chammo on your tailnet')}</span>}
+        {!fold && <span className="su-hint">{tr('계정 없이, 또는 옛 버전 기기와 연결해요(폰 QR, 같은 테일넷의 다른 기기)', 'Without an account, or with older versions: phone QR and Chammo on your tailnet')}</span>}
       </section>
       {fold && fallback}
     </>

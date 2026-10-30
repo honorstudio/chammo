@@ -10,25 +10,42 @@ import { splitOrchName } from './orchLabel';
 
 export const GRACE_MS = 30_000;
 
+type Ledger = { sends: TaskEvent[]; ownerOf: (task: string) => Session | undefined };
+
+/** 일 기록 — 최근 send 부터, 일마다 살아 있는 주인(handoff 면 새 주인) */
+function ledger(events: TaskEvent[], orchs: Session[]): Ledger {
+  // 번호가 먼저, 참모가 --resume 으로 번호가 바뀌어 없으면 기록의 이름(fromName)과 같은 기본 이름의 참모
+  const own = new Map<string, { id: string; name?: string }>();
+  for (const e of events) if ((e.type === 'send' || e.type === 'own') && e.from) own.set(e.task, { id: e.from, name: e.fromName });
+  const base = (n: string) => splitOrchName(n).base;
+  const ownerOf = (task: string) => {
+    const o = own.get(task);
+    return o && (orchs.find((x) => x.id === o.id) ?? (o.name ? orchs.find((x) => base(x.name) === base(o.name!)) : undefined));
+  };
+  return { sends: events.filter((e) => e.type === 'send' && e.target).reverse(), ownerOf }; // 기록은 덧붙이는 순서 = 최근이 뒤
+}
+
+const lastSender = (l: Ledger, sub: Session, sessions: Session[]) => {
+  const last = l.sends.find((e) => findTarget(sessions, e.target)?.id === sub.id);
+  return last && l.ownerOf(last.task);
+};
+
+/** 그 세션에 마지막으로 일을 보낸(넘겨받았으면 새 주인) 살아 있는 참모 — 일 기록으로 확정한 주인. 못 정하면 undefined(짐작은 forwardTo) */
+export const sentBy = (sub: Session, events: TaskEvent[], orchs: Session[], sessions: Session[]): Session | undefined =>
+  lastSender(ledger(events, orchs), sub, sessions);
+
 /**
  * 멈춘 하위 세션을 받을 참모 — 그 세션에 마지막으로 일을 보낸(넘겨받았으면 새 주인) 참모 → 같은 프로젝트를 최근에 맡긴 참모 → 맡은 일로 고른 참모(heir) → 맨 앞 참모.
  * 꺼진 참모는 건너뛴다. 맨 앞 참모에게만 보내서 개발 담당 세션 알림이 참모 업데이트에게 갔다(2026-10-03)
  */
 export function forwardTo(sub: Session, events: TaskEvent[], orchs: Session[], sessions: Session[], front?: Session, heir?: (sub: Session) => Session | undefined): Session | undefined {
-  // 일마다 주인(handoff 면 새 주인) — 번호가 먼저, 참모가 --resume 으로 번호가 바뀌어 없으면 기록의 이름(fromName)과 같은 기본 이름의 참모
-  const own = new Map<string, { id: string; name?: string }>();
-  for (const e of events) if ((e.type === 'send' || e.type === 'own') && e.from) own.set(e.task, { id: e.from, name: e.fromName });
-  const base = (n: string) => splitOrchName(n).base;
-  const alive = (o?: { id: string; name?: string }) =>
-    o && (orchs.find((x) => x.id === o.id) ?? (o.name ? orchs.find((x) => base(x.name) === base(o.name!)) : undefined));
-  const sends = events.filter((e) => e.type === 'send' && e.target).reverse(); // 기록은 덧붙이는 순서 = 최근이 뒤
-  const last = sends.find((e) => findTarget(sessions, e.target)?.id === sub.id);
-  const mine = last && alive(own.get(last.task));
+  const l = ledger(events, orchs);
+  const mine = lastSender(l, sub, sessions);
   if (mine) return mine;
   if (sub.project) {
-    for (const e of sends) {
+    for (const e of l.sends) {
       const t = findTarget(sessions, e.target);
-      const o = t && t.project === sub.project && !orchs.includes(t) ? alive(own.get(e.task)) : undefined;
+      const o = t && t.project === sub.project && !orchs.includes(t) ? l.ownerOf(e.task) : undefined;
       if (o) return o;
     }
   }

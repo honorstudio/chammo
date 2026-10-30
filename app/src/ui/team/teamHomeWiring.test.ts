@@ -15,6 +15,12 @@ describe('팀 홈 판 배선', () => {
     expect(board).toContain('{!home && board?.owner && <Start onBegin={begin} />}');
     expect(board).toContain('{!home && fallback}');
   });
+  it('글 칸이 없는 판도 올린 글을 보인다 — 판 아래 글 타일, 고정 칸이 없으면 고정 글도 목록에(공개 이슈 #9)', () => {
+    expect(home).toContain('const places = postPlaces(hb?.home ?? null);');
+    expect(home).toContain('places.pinInList && h.pinned ? [h.pinned, ...h.list] : h.list');
+    expect(home).toContain('below={places.listBelow && list ?');
+    expect(board).toContain("{below && <div className=\"hb-b posts full\">{below}</div>}");
+  });
   it('완료 때만 올린다 — 바뀐 게 없으면 안 올리고, 올린 뒤 판을 다시 읽는다', () => {
     expect(board).toContain('if (!dirty) return leave();');
     expect(board).toContain('api.save(teamId, draft).then(() => { leave(); onSaved(); }');
@@ -26,7 +32,9 @@ describe('팀 홈 판 배선', () => {
   });
   it('데스크톱은 TeamHomeDesktop(모드 칸) — 폰은 판 길을 맥 폰 서버로, 모드 칸 없이', () => {
     expect(teamMode).toContain('home={<TeamHomeDesktop ');
-    expect(phone).toContain('homeApi={homeApi} sources={homeSources} phone />');
+    expect(phone).toContain('homeApi={homeApi} sources={homeSources} phone\n');
+    // 폰 캘린더 칸은 반 폭 목록 하나(폰은 한 줄 쌓기), 머리 아이콘 = 캘린더 칸으로
+    expect(phone).toContain("calBlock={(_b, editing) => <CalBlock teamId={view.teamId} wide={false} editing={editing} api={api.cal} onOpen={() => setSeg('cal')} />}");
     expect(phone).not.toContain('HomeModeBlock');
     expect(web).toContain("home: (team, rev) => getJson(`/api/team-home?team=${encodeURIComponent(team)}&rev=${rev}`)");
     expect(web).toContain("homeSave: (team, home) => post('/api/team-home-save', { team, home })");

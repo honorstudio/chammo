@@ -265,3 +265,19 @@ test('래퍼 스스로 되돌리기(request false)도 막히면 기억했다가 
   assert.deepStrictEqual(r.calls, []);
   assert.strictEqual(r.ws.shown(), false);
 });
+
+test('죽은 래퍼가 남긴 꺼냄·구글 크롬 표는 뜰 때 치운다 — 산 다른 래퍼 표·내 표는 둔다(10-30 묵은 .signed-on 이 판정을 흐렸다)', () => {
+  const { SIGNED } = require('../src/winshow');
+  const liveDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chammo-winshow-'));
+  const mark = path.join(liveDir, 'shop.signed-on');
+  const make = (alive) => createWinShow({ liveDir, profile: 'shop', pid: 4242, call: async () => ({}), live: { switching() {}, refresh() {} }, names: SIGNED, alive, log: () => {} });
+  fs.writeFileSync(mark, JSON.stringify({ pid: 37429, at: 1, auto: true }));
+  make((p) => p !== 37429);
+  assert.strictEqual(fs.existsSync(mark), false, '죽은 pid 의 표');
+  fs.writeFileSync(mark, JSON.stringify({ pid: 5151, at: 1 }));
+  make(() => true);
+  assert.ok(fs.existsSync(mark), '산 다른 래퍼(같은 프로필을 쥔 중) 표는 그대로');
+  fs.writeFileSync(mark, '깨진 글');
+  make(() => true);
+  assert.strictEqual(fs.existsSync(mark), false, '읽을 수 없는 표');
+});

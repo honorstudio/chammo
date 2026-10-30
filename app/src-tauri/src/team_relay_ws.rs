@@ -389,6 +389,8 @@ impl Loop {
             }
             // 팀 보관함 바뀜(chammo-relay ADR 0009) — 판 번호만, 화면이 목록을 다시 받는다
             "locker" => crate::team_locker_app::nudge(v["team"].as_str().unwrap_or(""), v["rev"].as_u64().unwrap_or(0)),
+            // 팀 앱 기록째(chammo-relay ADR 0011) — 서명·열쇠를 확인해 기록장에 바로 반영, 화면은 poll 번호로 다시 그린다
+            "app" => crate::team_app_store::push(&self.dir, v),
             // 팀이 바뀜(합류·나감·새 방·방 바뀜, chammo-relay team-rooms) — 내용은 안 믿고 방 목록·사람을 바로 다시 받는다(qa-invite 원인 2·첫 DM 60초)
             "team_changed" => {
                 NAMES_NOW.store(true, std::sync::atomic::Ordering::SeqCst);

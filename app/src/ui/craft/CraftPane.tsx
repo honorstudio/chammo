@@ -115,7 +115,7 @@ export function CraftPane({ app, place, whoOf }: { app: string; place: 'space' |
       {/* 칸 안에 두면 위에 얹힌 비추기 층에 가린다 — 머리줄 아래 띠로(칸이 그만큼 줄고 비추기가 다시 맞춘다) */}
       {needAx && (
           <div className="cw-axbar">
-            <span>{tr('직접 손대려면 손쉬운 사용 허용이 한 번 필요해요 — 시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용에서 Chammo 를 켜면 바로 이어져요', 'Taking over needs Accessibility once — turn on Chammo in System Settings > Privacy & Security > Accessibility and it continues right away')}</span>
+            <span>{tr('직접 만지려면 손쉬운 사용 허용이 한 번 필요해요. 시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용에서 Chammo를 켜면 바로 이어져요', 'Taking over needs Accessibility once. Turn on Chammo in System Settings > Privacy & Security > Accessibility and it continues right away')}</span>
             <span className="cw-ax-acts">
               <button className="ib" aria-label={tr('설정 열기', 'Open Settings')} title={tr('맥 설정 열기 — 손쉬운 사용', 'Open macOS Settings — Accessibility')} onClick={() => void askPermission('ax').catch(() => {})}><IconSettings /></button>
               <button className="ib" aria-label={tr('닫기', 'Close')} title={tr('닫기', 'Close')} onClick={() => setNeedAx(false)}><IconClose /></button>

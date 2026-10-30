@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { browserDock, browserKey, browserOfPick, closeAsk, closeWay, deskOffer, dockTitleOf, hqBrowserHome, paneMenuKeys, paneStatus, browserOwner, paneTarget, signedLine, stillClosed, turnCard, turnCardAfterDone, wentAway } from './browserDock';
-import type { Live } from './agentBrowser';
+import { browserDock, browserKey, browserOfPick, closeAsk, closeWay, deskOffer, dockTitleOf, hqBrowserHome, paneMenuKeys, paneStatus, browserOwner, paneTarget, signedAutoPeek, signedLine, stillClosed, turnCard, turnCardAfterDone, wentAway } from './browserDock';
+import { peekStep, type Live } from './agentBrowser';
 
 const live = (o: Partial<Live> = {}): Live => ({ profile: 'shop-app', pid: 10, sessionPid: 100, url: 'http://localhost:3000/admin', title: '주문 — shop-app', tabs: [], tool: '', toolAt: 0, busy: false, ts: 0, ...o });
 
@@ -248,5 +248,30 @@ describe('hqBrowserHome — 참모들이 나눠 쓰는 HQ 프로필 브라우저
     expect(dockTitleOf(un!)).toBe('참모 브라우저 · 주인 모름 · 주문 — shop-app');
     expect(closeAsk(un!).title).toBe('참모가 사용 중이에요');
     for (const x of [me!, un!]) expect([dockTitleOf(x), closeAsk(x).title].join()).not.toContain('참모 업데이트');
+  });
+});
+
+// 2026-10-30 사용자 — 구글 크롬으로 바꾼 뒤 Touch ID 시트가 숨은 크롬 창에 붙어 칸에서 안 보였다. 래퍼가 패스키 때문에 바꾼 동안(auto)엔
+// 사람이 칸을 만지지 않았어도 모달처럼 크롬 창을 작게 꺼낸다. 사람이 고른 구글 크롬·안 바꾼 사본은 지금처럼 단추만
+describe('패스키로 바꾼 구글 크롬 — 시트 꺼내기', () => {
+  it('래퍼가 패스키 때문에 바꾼 동안만 저절로 꺼낸다', () => {
+    expect(signedAutoPeek({ signable: true, signed: true, auto: true })).toBe(true);
+    expect(signedAutoPeek({ signable: true, signed: true })).toBe(false);
+    expect(signedAutoPeek({ signable: true, signed: false, auto: true })).toBe(false);
+    expect(signedAutoPeek(undefined)).toBe(false);
+  });
+  // 10-30 실측(pk-test, webauthn.io) — 서명 크롬 패스키 창은 크롬 pid 의 448x300 창('문제가 발생했습니다')으로 가짜 화면 위 가려진 창 안 위 83 에 떠서
+  // 이름으로 패스키라고 못 가르고 '크롬 창'(window)으로 잡혔다. 바꾼 까닭이 패스키라 종류와 상관없이 꺼내고 띠도 패스키로
+  it('실측 모양 — 가려진 크롬 창(window 종류)도 사람 손 없이 꺼낸다, 사람이 고른 구글 크롬은 안 꺼낸다', () => {
+    const at = { popup: true, shown: false, peeked: null, failed: false, url: 'https://accounts.google.com/v3/signin/challenge/pk' };
+    expect(peekStep({ ...at, active: signedAutoPeek({ signable: true, signed: true, auto: true }) })).toBe('peek');
+    expect(peekStep({ ...at, active: signedAutoPeek({ signable: true, signed: true }) })).toBeNull();
+    const c = turnCard(live({ popup: true, popupKind: 'window' }), { dialog: null, chooser: null }, { signable: true, signed: true, auto: true });
+    expect(c).toEqual({ kind: 'passkey', text: '패스키 — 크롬 창에서 Touch ID' });
+    expect(turnCard(live({ popup: true, popupKind: 'window' }), { dialog: null, chooser: null }, { signable: true, signed: true })?.kind).toBe('window');
+  });
+  it('띠 한 줄은 크롬 창에서 Touch ID', () => {
+    const c = turnCard(live({ popup: true, popupKind: 'passkey' }), { dialog: null, chooser: null }, { signable: true, signed: true, auto: true });
+    expect(c?.text).toBe('패스키 — 크롬 창에서 Touch ID');
   });
 });

@@ -44,7 +44,7 @@ export function QuitDialog({ running, dock, onQuit, onCancel }: { running: numbe
         <h2>{dock ? tr('끄는 중', 'Quitting') : tr('세션까지 모두 끄고 종료할까요?', 'Stop all sessions and quit?')}</h2>
         {dock ? <p>{tr('Craft 앱이 바뀐 걸 저장하면 바로 꺼져요. 세션은 계속 돌아요.', 'Quits as soon as the Craft apps save their changes. Sessions keep running.')}</p> : <p>
           {running
-            ? tr(`Chammo 가 다루는 세션 ${running}개를 끄고 앱을 닫아요. 대화는 남아서 나중에 "꺼진 세션"에서 이어서 켤 수 있어요. 세션은 두고 앱만 다시 켜려면 '앱만 종료'.`, `Stops the ${running} sessions Chammo manages and quits. Conversations are kept — resume them later from "Stopped sessions". To restart only the app and keep sessions running, choose 'Quit app only'.`)
+            ? tr(`Chammo가 다루는 세션 ${running}개를 끄고 앱을 닫아요. 대화는 남아서 "꺼진 세션"에서 다시 켤 수 있어요. 세션은 두고 앱만 다시 켜려면 '앱만 종료'를 누르세요`, `Stops the ${running} sessions Chammo manages and quits. Conversations are kept; resume them later from "Stopped sessions". To restart only the app and keep sessions running, choose 'Quit app only'.`)
             : tr('돌고 있는 세션이 없어요. 앱을 닫아요.', 'No sessions are running. The app will quit.')}
         </p>}
         {saving ? (

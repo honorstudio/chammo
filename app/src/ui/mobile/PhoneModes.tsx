@@ -176,7 +176,7 @@ function PhonePick({ rows, keys, dash, onDone, onAsk, onChange }: { rows: PhoneM
       {g.own.length > 0 && <><h4>내가 만든 것</h4>{list(g.own)}<h4>참모 모드</h4></>}
       {list(g.examples)}
       <div className="m-mode-say">
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="말로 새 모드 만들기" aria-label="만들 모드 말하기"
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="어떤 화면이 필요한지 말해 보세요" aria-label="만들 모드 말하기"
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) ask(); }} />
         <IconBtn label="참모에게 보내기" onClick={ask} disabled={!text.trim()}><IconSend /></IconBtn>
       </div>

@@ -30,7 +30,7 @@ export function LicensesDialog({ onClose }: { onClose: () => void }) {
           <h2>{tr('오픈소스 라이선스', 'Open-source licenses')}</h2>
           <button className="ib" aria-label={closeLabel} title={closeLabel} onClick={onClose}><IconClose /></button>
         </div>
-        <p className="lic-sub">{tr("Craft 앱은 ArtCraft(github.com/storytold) 오픈소스 — 원작 이름·로고는 ArtCraft Team 상표. '참모 ○○' 는 우리가 빌드한 판", "The Craft apps are ArtCraft (github.com/storytold) open source — original names and logos are ArtCraft Team trademarks. 'Chammo …' apps are our builds")}</p>
+        <p className="lic-sub">{tr("Craft 앱은 오픈소스 ArtCraft(github.com/storytold)를 바탕으로 해요. 원작 이름과 로고는 ArtCraft Team의 상표예요. '참모 ○○'는 우리가 빌드한 버전이에요", "The Craft apps are built on the open-source ArtCraft (github.com/storytold). Original names and logos are ArtCraft Team trademarks. 'Chammo …' apps are our builds")}</p>
         <div className="lic-list">
           {(rows ? licenseRows(rows) : []).map((r) => (
             <div key={r.app} className="lic-row">

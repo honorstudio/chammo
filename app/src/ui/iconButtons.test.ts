@@ -20,6 +20,7 @@ const NAME_WITH_ICON = new Set<string>([
   '/src/ui/space/UnclosedTasks.tsx 정리', // 닫히지 않은 일 N · 정리 + 펼침 화살표
   '/src/ui/GoalProgress.tsx 기다림', // 진행 칸 목표 줄 — 이름·막대·숫자를 읽는 줄, 펼침 화살표 + 오른쪽 '기다림' 한 단어(상태 글)
   '/src/ui/space/OrchRail.tsx 도우미', // 넓은 띠 도우미 줄 — 아이콘은 동작이 아니라 묶음의 프사 자리(옆 참모 줄과 같은 줄), 글은 읽을 이름
+  '/src/ui/team/TeamCal.tsx 종일', // 팀 캘린더 목록 줄 — 시각·제목을 읽는 줄, 고리 아이콘은 반복 일정 표시(동작 아님)
 ]);
 
 /** <button …>자식</button> 을 찾는다 — 여는 태그 안 {…}·'…' 의 > 는 건너뛴다 */

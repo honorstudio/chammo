@@ -80,17 +80,25 @@ export function turnCard(l: Live, t: { dialog: { type: string; message: string }
   if (t.dialog) return { kind: 'dialog', text: t.dialog.message || tr('페이지가 확인을 기다려', 'The page is waiting for you'), prompt: t.dialog.type === 'prompt' };
   if (l.ask) return { kind: 'ask', text: l.ask.reason ?? '' };
   if (t.chooser) return { kind: 'file', text: tr('올릴 파일을 골라 줘 — 앱 창에 붙은 창에서', 'Pick the file to upload — in the sheet on the app window') };
-  if (l.popup && l.popupKind === 'passkey' && (mac?.signed || (mac && !mac.signable))) {
+  // 래퍼가 패스키 때문에 바꾼 동안(auto)은 크롬 창이 뜨면 패스키다 — 창 이름('문제가 발생했습니다' 등)으로는 못 가를 때가 있다(10-30 실측)
+  if (l.popup && (l.popupKind === 'passkey' || signedAutoPeek(mac)) && (mac?.signed || (mac && !mac.signable))) {
     // 구글 서명 크롬(재서명 사본에서 바꿔 둔 동안, 또는 끄는 스위치 CHAMMO_BROWSER_ACCESSORY=0 의 서명 사본 — signable 아님) — 맥 암호 앱 패스키가 된다(2026-10-29 실측 uvpa=true).
     // 재서명 사본은 래퍼·서랍 지킴이 둘 다 signable 을 적는다(10-29 fix/dock-hide-back — 지킴이가 안 적어 서랍 사본이 'Touch ID 됨'으로 틀렸다). 패스키 창은 칸 그림 밖이라 크롬 창을 꺼내서
-    return { kind: 'passkey', text: tr('패스키 — 크롬 창을 꺼내 Touch ID 나 암호 앱으로 해 줘', 'Passkey — open the Chrome window and use Touch ID or Passwords') };
+    // 래퍼가 패스키 때문에 바꾼 동안(auto)은 칸이 크롬 창을 저절로 꺼낸다(signedAutoPeek) — 띠는 어디서 하는지만
+    return { kind: 'passkey', text: mac?.auto ? tr('패스키 — 크롬 창에서 Touch ID', 'Passkey — use Touch ID in the Chrome window') : tr('패스키 — 크롬 창을 꺼내 Touch ID 나 암호 앱으로 해 줘', 'Passkey — open the Chrome window and use Touch ID or Passwords') };
   }
   if (l.popup && l.popupKind === 'passkey') {
     // Dock 숨기기 재서명 사본(기본)은 맥 '암호' 앱 패스키를 못 쓴다 — 보통은 래퍼·지킴이가 구글 크롬으로 저절로 바꾸고, 못 바꿀 때(같이 쓰는 손님) 크롬 창을 꺼내 휴대폰 QR·보안 키로
-    return { kind: 'passkey', text: tr('패스키 — 크롬 창을 꺼내 휴대폰 QR 이나 보안 키로 해 줘(맥 암호 앱 패스키는 이 크롬에선 안 돼)', 'Passkey — open the Chrome window and use your phone (QR) or a security key (Mac Passwords passkeys don’t work in this Chrome)') };
+    return { kind: 'passkey', text: tr('패스키는 크롬 창을 열어 휴대폰 QR이나 보안 키로 해 줘. 맥 암호 앱 패스키는 이 크롬에서 안 돼', 'Passkey: open the Chrome window and use your phone (QR) or a security key. Mac Passwords passkeys don’t work in this Chrome') };
   }
   if (l.popup) return { kind: 'window', text: tr('크롬이 자기 창을 띄웠어 — 꺼내서 봐 줘', 'Chrome opened its own window — open it to answer') };
   return null;
+}
+
+/** 칸이 크롬 자체 창(Touch ID 시트)을 저절로 꺼낼까 — 래퍼가 패스키 때문에 구글 크롬으로 바꾼 동안만(2026-10-30 사용자: 시트가 숨은 크롬 창에 붙어 안 보였다).
+ *  모달은 사람이 만지는 중일 때 꺼내지만(peekStep active) 이때는 패스키 말고 할 일이 없어 바로. 사람이 고른 구글 크롬은 단추로 */
+export function signedAutoPeek(mac?: SignedState): boolean {
+  return !!mac?.signed && !!mac.auto;
 }
 
 /** 구글 크롬으로 바꿔 둔 동안 칸 한 줄(2026-10-29 패스키 자동) — 래퍼가 패스키를 보고 스스로 바꿨으면(auto) 까닭을, 사람이 고른 것이면 지금 상태를. 옆에 돌아오기 단추 */

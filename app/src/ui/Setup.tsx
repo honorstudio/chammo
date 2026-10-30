@@ -93,17 +93,17 @@ const features = (): [FeatureSwitch, string, string][] => [
   ['gacha', tr('뽑기', 'Gacha'), tr('머지·커밋으로 모은 코인으로 사무실 꾸미기', 'Decorate the office with coins earned from merges and commits')],
   ['review', tr('PR 리뷰', 'PR review'), tr('열린 PR 과 머지 전에 볼 것을 모아 보여 줘요 (gh 필요)', 'Collects open PRs and what to check before merging (needs gh)')],
   ['voice', tr('음성 모드', 'Voice mode'), tr('채팅에 음성 모드 단추를 보여 줘요 — 그 단추를 켜면 참모의 답을 소리로 읽어 줘요', "Shows the voice mode button in chat — turn that on to hear the assistant's replies")],
-  ['agentView', tr('세션 브라우저 앱에서 보기', 'Watch session browsers in the app'), tr(`세션이 브라우저를 쓰면 그 화면을 대시보드에 띄워요. 그동안 이 ${machine()}의 다른 프로그램도 그 크롬을 조종할 수 있는 틈이 생겨요 — 켜고 끈 건 세션을 새로 켜야 적용돼요`, `Shows what a session's browser is doing on its dashboard. While on, other programs on this ${machine()} could also control that Chrome — changes apply to sessions started afterwards`)],
+  ['agentView', tr('세션 브라우저 앱에서 보기', 'Watch session browsers in the app'), tr(`세션이 브라우저를 쓰면 그 화면을 대시보드에 띄워요. 켜 둔 동안 이 ${machine()}의 다른 프로그램도 그 크롬을 조종할 수 있어요. 바꾼 설정은 새로 켜는 세션부터 적용돼요`, `Shows what a session's browser is doing on its dashboard. While on, other programs on this ${machine()} could also control that Chrome. Changes apply to sessions started afterwards`)],
   // 맥만 — Claude Code 내장 화면 조종(computer-use)은 맥에서만 준다
-  ...(IS_WIN ? [] : [['computerUse', tr('화면 조종 모든 프로젝트', 'Screen control in all projects'), tr('세션이 이 맥 화면을 보고 클릭·입력할 수 있게(Claude Code computer-use) 모든 프로젝트에서 켜요. 쓸 때마다 앱별로 허락을 묻지만, 켜 두면 세션이 내 화면을 움직일 수 있어요 — 끄면 모든 프로젝트에서 빠져요', 'Lets sessions see and click on this Mac\'s screen (Claude Code computer-use) in every project. It still asks per app, but while on, sessions can move your screen — turning it off removes it from every project')] as [FeatureSwitch, string, string]]),
-  ['bubble', tr('떠 있는 참모 배지', 'Floating assistant badge'), tr('앱 창 밖에도 늘 떠 있는 동그란 참모 얼굴 하나 — 누르면 그 자리에서 대화창, 끌어서 옮겨요', 'One round assistant face floating above every window — click to chat right there, drag to move it')],
-  ['bubbleDesk', tr('앱을 내려도 참모 배지 띄우기', 'Keep the assistant badge when the app is hidden'), tr('앱을 최소화하거나 숨겨도 배지만 바탕 화면 위에 — 누르면 그 자리에서 대화창, 앱 창은 안 나와요', 'Minimize or hide the app and the badge stays on the desktop — click to chat right there without bringing the app back')],
-  ['autoTidy', tr('세션 자동 정리', 'Tidy sessions automatically'), tr('일이 끝나고 조용한 세션을 참모가 문서 정리 뒤 꺼요 — 대화는 남아 다시 켤 수 있어요. 오래 멈춘 목표도 참모가 확인해요', 'Your assistant wraps up and stops sessions whose work is done and gone quiet — conversations are kept, so they can be resumed. It also checks goals that have stalled')],
+  ...(IS_WIN ? [] : [['computerUse', tr('화면 조종 모든 프로젝트', 'Screen control in all projects'), tr('세션이 이 맥 화면을 보고 클릭·입력할 수 있어요(Claude Code computer-use). 모든 프로젝트에 적용돼요. 앱마다 허락을 묻지만, 켜 두면 세션이 화면을 움직일 수 있어요. 끄면 모두 빠져요', 'Lets sessions see, click and type on this Mac\'s screen (Claude Code computer-use), in every project. It asks per app, but while on, sessions can move your screen. Turning it off removes it everywhere')] as [FeatureSwitch, string, string]]),
+  ['bubble', tr('떠 있는 참모 배지', 'Floating assistant badge'), tr('앱 밖에도 늘 떠 있는 동그란 참모 얼굴이에요. 누르면 대화창이 열리고, 끌어서 옮겨요', 'One round assistant face floating above every window. Click to chat right there, drag to move it')],
+  ['bubbleDesk', tr('앱을 내려도 참모 배지 띄우기', 'Keep the assistant badge when the app is hidden'), tr('앱을 최소화하거나 숨겨도 배지는 바탕 화면에 남아요. 누르면 앱 창 없이 대화창만 열려요', 'Minimize or hide the app and the badge stays on the desktop. Click to chat without bringing the app back')],
+  ['autoTidy', tr('세션 자동 정리', 'Tidy sessions automatically'), tr('일이 끝나고 조용한 세션은 참모가 문서를 정리한 뒤 꺼요. 대화는 남아서 다시 켤 수 있어요. 오래 멈춘 목표도 참모가 챙겨요', 'Your assistant tidies up and stops sessions whose work is done and gone quiet. Conversations are kept, so they can be resumed. It also keeps an eye on goals that have stalled')],
   // 익명 사용 신호(Rust usage_ping) — 무엇을 보내고 무엇을 안 보내는지 한 줄(2026-10-24 사용자 '기본 켬 + 끄기 + 알림')
   ['usagePing', tr('익명 사용 통계', 'Anonymous usage statistics'), tr('몇 대가 어떤 기능을 얼마나 쓰는지 개수만 보내요. 대화·파일은 안 보내요', 'Counts only — how many installs use which features. Never chats or files')],
   // 기본 참모 앱 다섯(Rust craft_basics → scripts/craft prefetch) — 나머지는 쓸 때 설치(2026-10-26 사용자)
-  ['craftBasics', tr('기본 참모 앱 미리 받기', 'Install the basic Chammo apps ahead'), tr('표·PDF·슬라이드·문서·벡터를 뒤에서 미리 깔아 둬요(약 1.5GB) — 나머지는 쓸 때 받아요. 남은 공간이 5GB 아래면 건너뛰어요', 'Installs Grid, PDF, Slides, Word and Vector in the background (about 1.5 GB) — the rest install when needed. Skipped under 5 GB free')],
-  ['autoRevive', tr('자동으로 다시 켜기', 'Auto-resume'), tr(`${josa(machine(), '이', '가')} 재시작돼 꺼진 세션 중 일이 남은 것을 혼자 이어서 켜요 — 사람이 앞에 없는 ${machine()}용`, `Resumes sessions a restart stopped mid-work, on its own — for unattended ${machine()}s`)],
+  ['craftBasics', tr('기본 참모 앱 미리 받기', 'Install the basic Chammo apps ahead'), tr('표·PDF·슬라이드·문서·벡터를 미리 깔아 둬요(약 1.5GB). 나머지는 쓸 때 받아요. 남은 공간이 5GB보다 적으면 건너뛰어요', 'Pre-installs Grid, PDF, Slides, Word and Vector in the background (about 1.5 GB). The rest install when you use them. Skipped if under 5 GB is free')],
+  ['autoRevive', tr('자동으로 다시 켜기', 'Auto-resume'), tr(`재시작으로 꺼진 세션 중 일이 남은 건 알아서 다시 켜요. 사람이 없는 ${machine()}용이에요`, `Resumes sessions a restart stopped mid-work, on its own. For unattended ${machine()}s`)],
 ];
 
 const ANIM_CHOICES = (): [Animation, string][] => [['auto', tr('자동', 'Auto')], ['reduce', tr('줄이기', 'Reduce')], ['off', tr('끄기', 'Off')]];
@@ -300,7 +300,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
     try {
       const r = await createHq(draft.hqDir, false, [draft.devRoot, ...(draft.extraProjects ?? [])]);
       setNote(r.kept.length
-        ? tr(`HQ 를 만들었어요 — 새 파일 ${r.written.length}개, 이미 있던 ${r.kept.length}개는 그대로 뒀어요.`, `HQ is ready — ${r.written.length} new files; ${r.kept.length} existing files were left as they were.`)
+        ? tr(`HQ를 만들었어요. 새 파일 ${r.written.length}개, 있던 파일 ${r.kept.length}개는 그대로 뒀어요.`, `HQ is ready. ${r.written.length} new files; ${r.kept.length} existing files were left as they were.`)
         : tr(`HQ 를 만들었어요 — 파일 ${r.written.length}개.`, `HQ is ready — ${r.written.length} files.`));
       setHq(await folderStatus(draft.hqDir));
     } catch (e: unknown) {
@@ -345,7 +345,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
   };
   const claudeRow = !check ? null : check.claudePath ? (
     fit === 'old' ? (
-      <Row state="need" title="Claude Code" text={tr(`설치돼 있는데 옛 버전이에요 (${ver}). Chammo 는 2.1.280 이상이 필요해요 — 버튼을 누르면 아래 터미널에서 최신으로 올려요.`, `Installed, but old (${ver}). Chammo needs 2.1.280 or later — the button updates it to the latest in the terminal below.`)}>
+      <Row state="need" title="Claude Code" text={tr(`설치돼 있지만 옛 버전이에요(${ver}). 2.1.280 이상이 필요해요. 누르면 아래 터미널에서 최신으로 올려요.`, `Installed, but old (${ver}). Chammo needs 2.1.280 or later. The button updates it to the latest in the terminal below.`)}>
         <button className="btn pri" onClick={() => run('update')}>{tr('업데이트', 'Update')}</button>
       </Row>
     ) : (
@@ -388,21 +388,21 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
               {check.clt
                 ? <Row state="ok" title={IS_WIN ? 'git' : tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={tr('있어요.', 'Installed.')} />
                 : <Row state="need" title={IS_WIN ? 'git' : tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={IS_WIN ? (gitStillMissing({ win: IS_WIN, tried: tried.includes('clt'), running: task === 'clt', ok: check.clt })
-                    ? tr('git 은 깔려 있는데 Chammo 가 못 찾고 있어요 — Chammo 를 완전히 껐다 켜 주세요.', 'git is installed but Chammo cannot find it — quit Chammo completely and open it again.')
+                    ? tr('git은 있는데 Chammo가 못 찾아요. Chammo를 완전히 껐다 켜 주세요.', 'git is installed but Chammo can\'t find it. Quit Chammo completely and open it again.')
                     : tr('git 이 필요해요. 누르면 winget 으로 설치해요 — 몇 분 걸려요.', 'git is required. The button installs it with winget — it takes a few minutes.')) : tr('git 이 들어 있는 Apple 도구예요. 누르면 macOS 설치 창이 떠요 — 설치에 몇 분 걸려요.', "Apple's tools that include git. The button opens the macOS installer — it takes a few minutes.")}>
                     <button className="btn pri" onClick={() => run('clt')}>{tr('설치하기', 'Install')}</button>
                   </Row>}
               {IS_WIN && (check.python !== false
                 ? <Row state="ok" title={tr('파이썬 3', 'Python 3')} text={tr('있어요.', 'Installed.')} />
                 : <Row state="need" title={tr('파이썬 3', 'Python 3')} text={gitStillMissing({ win: IS_WIN, tried: tried.includes('python'), running: task === 'python', ok: false })
-                    ? tr('파이썬은 깔려 있는데 Chammo 가 못 찾고 있어요 — Chammo 를 완전히 껐다 켜 주세요.', 'Python is installed but Chammo cannot find it — quit Chammo completely and open it again.')
-                    : tr('파이썬 3 이 필요해요 — 참모 도구와 참모 앱이 써요. 누르면 winget 으로 설치해요 — 몇 분 걸려요.', 'Python 3 is required — the assistant tools and Chammo apps use it. The button installs it with winget — it takes a few minutes.')}>
+                    ? tr('파이썬은 있는데 Chammo가 못 찾아요. Chammo를 완전히 껐다 켜 주세요.', 'Python is installed but Chammo can\'t find it. Quit Chammo completely and open it again.')
+                    : tr('참모 도구와 앱에 파이썬 3이 필요해요. 누르면 winget으로 설치해요. 몇 분 걸려요.', 'Python 3 is required by the assistant tools and Chammo apps. The button installs it with winget. It takes a few minutes.')}>
                     <button className="btn pri" onClick={() => run('python')}>{tr('설치하기', 'Install')}</button>
                   </Row>)}
               {ghRow(check) === 'ok'
                 ? <Row state="ok" title={tr('GitHub CLI (선택)', 'GitHub CLI (optional)')} text={tr(`${check.ghUser} 로 로그인돼 있어요.`, `Signed in as ${check.ghUser}.`)} />
                 : ghRow(check) !== 'install'
-                  ? <Row state="opt" title={tr('GitHub CLI (선택)', 'GitHub CLI (optional)')} text={ghRow(check) === 'relogin' ? tr('로그인이 풀렸어요(토큰 만료·취소) — 다시 로그인해 주세요. PR 리뷰에만 필요해요.', 'The sign-in expired (token invalid) — sign in again. Only needed for PR review.') : tr('설치돼 있지만 로그인 전이에요. PR 리뷰에만 필요해요.', 'Installed but not signed in. Only needed for PR review.')}>
+                  ? <Row state="opt" title={tr('GitHub CLI (선택)', 'GitHub CLI (optional)')} text={ghRow(check) === 'relogin' ? tr('로그인이 풀렸어요. 다시 로그인해 주세요. PR 리뷰에만 필요해요.', 'The sign-in expired. Sign in again. Only needed for PR review.') : tr('설치돼 있지만 로그인 전이에요. PR 리뷰에만 필요해요.', 'Installed but not signed in. Only needed for PR review.')}>
                       <button className="btn" onClick={() => run('ghLogin')}>{ghRow(check) === 'relogin' ? tr('다시 로그인', 'Sign in again') : tr('로그인하기', 'Sign in')}</button>
                     </Row>
                   : <Row state="opt" title={tr('GitHub CLI (선택)', 'GitHub CLI (optional)')} text={tr('선택 — PR 리뷰에만 필요해요. 없어도 나머지는 다 돼요.', 'Optional — only needed for PR review. Everything else works without it.')}>
@@ -475,7 +475,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
           <Field label={tr('HQ 폴더', 'HQ folder')} hint={hq?.hqReady
             ? tr(`준비됐어요. ${name}가 여기서 일해요.`, `Ready. ${name} works from here.`)
             : <>{tr(`${name}가 일하는 폴더예요. 안내문(CLAUDE.md)과 도구(scripts)를 넣어 만들어요.`, `The folder ${name} works from. It gets a guide (CLAUDE.md) and tools (scripts).`)} <button type="button" className="btn su-mini" onClick={() => void makeHq()}>{tr('HQ 만들기', 'Create HQ')}</button></>}>
-            {pick('hqDir', tr('HQ 로 쓸 폴더를 골라 주세요 — 새 폴더를 만들어 골라도 돼요', 'Choose a folder for HQ — you can make a new one here'))}
+            {pick('hqDir', tr('HQ로 쓸 폴더를 골라 주세요. 새 폴더를 만들어도 돼요', 'Choose a folder for HQ. You can make a new one here'))}
           </Field>
   );
   const githubField = (
@@ -488,7 +488,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
           /* 말하기 키는 맥 전용(ptt.rs 가 macOS 이벤트 탭) — 윈도우판은 아직 없다 */
           !IS_WIN && <Field label={tr('말하기 키', 'Talk key')}
             hint={draft.talkKey === 'fn'
-              ? <>{tr('누르고 말하면 세션 입력칸에 받아 적어요. 다른 키와 같이 누르면(fn+화살표 등) 말하기로 안 봐요. 맥 설정의 "🌐 키를 누르면"을 "아무것도 안 함"으로 두세요 — 안 그러면 한/영 전환·받아쓰기와 겹쳐요.', 'Hold and speak to dictate into the session input. Pressing it with another key (fn+arrows, etc.) doesn\'t count. Set macOS "Press 🌐 key to" to "Do Nothing" — otherwise it clashes with input switching and dictation.')} <IconButton tone="line" className="su-inline" label={tr('키보드 설정 열기', 'Open Keyboard settings')} onClick={() => void openTarget('url', 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension').catch(() => {})}><IconSettings /></IconButton></>
+              ? <>{tr('누르고 말하면 입력칸에 받아 적어요. 다른 키와 같이 누르면(fn+화살표 등) 말하기로 안 봐요. 맥 설정의 "🌐 키를 누르면"은 "아무것도 안 함"으로 두세요. 한/영 전환·받아쓰기와 겹쳐요.', 'Hold and speak to dictate into the session input. Pressing it with another key (fn+arrows, etc.) doesn\'t count. Set macOS "Press 🌐 key to" to "Do Nothing". Otherwise it clashes with input switching and dictation.')} <IconButton tone="line" className="su-inline" label={tr('키보드 설정 열기', 'Open Keyboard settings')} onClick={() => void openTarget('url', 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension').catch(() => {})}><IconSettings /></IconButton></>
               : draft.talkKey === 'right-option'
                 ? tr('오른쪽 ⌥ 를 누르고 말하면 세션 입력칸에 받아 적어요. 다른 키와 같이 누르면 말하기로 안 봐요.', 'Hold right ⌥ and speak to dictate into the session input. Pressing it with another key doesn\'t count.')
                 : tr('키를 누르고 말하면 세션 입력칸에 받아 적는 기능이에요. 꺼 두면 아무 키도 가로채지 않아요.', 'Hold a key and speak to dictate into the session input. Off means no key is watched.')}>
@@ -520,10 +520,10 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
   );
   const trustBlock = (
           <div className="su-rows su-trust">
-            <div className="su-hint">{tr('Claude Code 는 처음 보는 폴더에서 일하기 전에 "이 폴더를 믿나요?"를 한 번 물어요. 두 폴더를 한 번씩 믿어 주세요 — 프로젝트 폴더를 믿으면 그 안의 프로젝트는 따로 안 물어요.', 'Before working in a new folder, Claude Code asks once whether you trust it. Trust these two folders once — trusting the projects folder covers every project inside it.')}</div>
+            <div className="su-hint">{tr('Claude Code는 처음 보는 폴더에서 일하기 전에 "이 폴더를 믿나요?"를 한 번 물어요. 폴더 두 개를 한 번씩 믿어 주세요. 프로젝트 폴더를 믿으면 안의 프로젝트는 다시 안 물어요.', 'Before working in a new folder, Claude Code asks once whether you trust it. Trust these two folders once. Trusting the projects folder covers every project inside it.')}</div>
             {(['dev', 'hq'] as const).map((w) => (
               <Row key={w} state={trust[w] ? 'ok' : 'need'} title={w === 'dev' ? tr('프로젝트 폴더 믿기', 'Trust the projects folder') : tr('HQ 폴더 믿기', 'Trust the HQ folder')}
-                text={trust[w] ? tr('믿는 폴더예요.', 'Trusted.') : tr('누르면 아래에 터미널이 열려요. 질문이 나오면 아래 화살표(↓)로 "Yes, I trust this folder"를 고르고 Enter — 창은 저절로 닫혀요.', 'The button opens a terminal below. When asked, press the down arrow (↓) to pick "Yes, I trust this folder", then Enter — the window closes by itself.')}>
+                text={trust[w] ? tr('믿는 폴더예요.', 'Trusted.') : tr('누르면 아래에 터미널이 열려요. 질문이 나오면 ↓로 "Yes, I trust this folder"를 골라 Enter. 창은 저절로 닫혀요.', 'The button opens a terminal below. When asked, press ↓ to pick "Yes, I trust this folder", then Enter. The window closes by itself.')}>
                 {!trust[w] && <button className="btn pri" disabled={!!trusting} onClick={() => void startTrust(w)}>{tr('믿기', 'Trust')}</button>}
               </Row>
             ))}
@@ -572,7 +572,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
               <div className="su-rows">
                 <Row state={a.state} title={tr('손쉬운 사용', 'Accessibility')}
                   text={a.state === 'ok' ? tr('켜져 있어요. Craft 앱에 직접 손대기(개입)와 다른 앱 위 말하기 키가 돼요.', 'On. Taking over a Craft app and the talk key over other apps work.')
-                    : tr('꺼져 있어요. 시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용에서 Chammo 를 켜 주세요 — Craft 앱에 직접 손대기(개입)에 필요해요. 나중에 해도 돼요.', 'Off. Turn on Chammo in System Settings > Privacy & Security > Accessibility — needed to take over a Craft app. You can do this later.')}>
+                    : tr('꺼져 있어요. 시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용에서 Chammo를 켜 주세요. Craft 앱을 직접 만지려면 필요해요. 나중에 해도 돼요.', 'Off. Turn on Chammo in System Settings > Privacy & Security > Accessibility. It\'s needed to take over a Craft app. You can do this later.')}>
                   {a.action === 'settings' && <IconButton size="l" tone="line" label={tr('설정 열기', 'Open Settings')} title={tr('맥 설정 열기 — 손쉬운 사용', 'Open macOS Settings — Accessibility')} onClick={() => void askPermission('ax').catch(() => {})}><IconSettings /></IconButton>}
                 </Row>
               </div>
@@ -584,7 +584,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
               <div className="su-rows">
                 <Row state={a.state} title={tr('화면 기록', 'Screen Recording')}
                   text={a.state === 'ok' ? tr('켜져 있어요. Craft 앱 창을 칸에 비춰 보여 줘요.', 'On. Craft app windows show in their pane.')
-                    : tr('꺼져 있어요. 시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 Chammo 를 켜고 Chammo 를 다시 켜 주세요 — Craft 앱이 만드는 걸 칸에서 보려면 필요해요. 그 앱 창 하나만 찍어요.', 'Off. Turn on Chammo in System Settings > Privacy & Security > Screen & System Audio Recording, then restart Chammo — needed to watch Craft apps in their pane. Only that app window is captured.')}>
+                    : tr('꺼져 있어요. 시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 Chammo를 켜고 앱을 다시 켜 주세요. Craft 앱 작업을 칸에서 보려면 필요해요. 그 앱 창만 찍어요.', 'Off. Turn on Chammo in System Settings > Privacy & Security > Screen & System Audio Recording, then restart Chammo. It\'s needed to watch Craft apps in their pane. Only that app window is captured.')}>
                   {a.action === 'settings' && <IconButton size="l" tone="line" label={tr('설정 열기', 'Open Settings')} title={tr('맥 설정 열기 — 화면 기록', 'Open macOS Settings — Screen Recording')} onClick={() => void askPermission('screen').catch(() => {})}><IconSettings /></IconButton>}
                 </Row>
               </div>
@@ -658,11 +658,11 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
           <h2>{tr('준비 끝', 'All set')}</h2>
           {/* HQ 는 3단계 '믿기'에서 이미 만들어졌으면 또 만든다고 하지 않는다(윈도우 QA 31), 예는 '새로 만들어 줘' 꼴 — 새 프로젝트 폴더는 비어 있다(QA 11) */}
           <p className="su-hint">{hq?.hqReady
-            ? tr(`시작하기를 누르면 첫 화면이 떠요. '새 ${name} 만들기'를 누르고 말을 걸어 보세요 — 예: "할 일 목록 웹페이지 하나 만들어 줘".`, `Press Get started for the first screen. Press 'Create a new ${name}' and talk to it — e.g. "make me a simple to-do list web page".`)
-            : tr(`시작하기를 누르면 HQ 폴더를 만들어요. 첫 화면에서 '새 ${name} 만들기'를 누르고 말을 걸어 보세요 — 예: "할 일 목록 웹페이지 하나 만들어 줘".`, `Press Get started to create the HQ folder. On the first screen, press 'Create a new ${name}' and talk to it — e.g. "make me a simple to-do list web page".`)}</p>
-          <p className="su-hint">{tr(`${name}와 세션은 확인 없이 명령을 실행하는 모드로 돌아요 — 처음 띄울 때 한 번 동의를 물어요.`, `${name} and its sessions run commands without asking — you will be asked to agree once when the first one starts.`)}</p>
+            ? tr(`시작하기를 누르면 첫 화면이 떠요. '새 ${name} 만들기'를 눌러 말을 걸어 보세요. 예: "할 일 목록 웹페이지 하나 만들어 줘"`, `Press Get started for the first screen. Press 'Create a new ${name}' and talk to it. For example: "make me a simple to-do list web page"`)
+            : tr(`시작하기를 누르면 HQ 폴더를 만들어요. 첫 화면에서 '새 ${name} 만들기'를 눌러 말을 걸어 보세요. 예: "할 일 목록 웹페이지 하나 만들어 줘"`, `Press Get started to create the HQ folder. On the first screen, press 'Create a new ${name}' and talk to it. For example: "make me a simple to-do list web page"`)}</p>
+          <p className="su-hint">{tr(`${name}와 세션은 확인 없이 명령을 실행해요. 처음 띄울 때 한 번 동의를 받아요.`, `${name} and its sessions run commands without asking. You will be asked to agree once when the first one starts.`)}</p>
           {/* 첫 실행 한 줄 알림 — 이 단계를 지나야(setupDone) 사용 신호가 나간다(usage_ping.rs) */}
-          {draft.features.usagePing && <p className="su-hint">{tr('하루 한 번 익명 사용 통계를 보내요 — 몇 대가 어떤 기능을 얼마나 쓰는지 개수만(대화·파일은 안 보내요). 설정 > 기능에서 끌 수 있어요.', 'Once a day Chammo sends anonymous usage statistics — counts only, how many installs use which features (never chats or files). Turn it off in Settings > Features.')}</p>}
+          {draft.features.usagePing && <p className="su-hint">{tr('하루 한 번 익명 사용 통계를 보내요. 어떤 기능을 몇 대가 쓰는지 개수만 보내고, 대화·파일은 안 보내요. 설정 > 기능에서 끌 수 있어요.', 'Once a day Chammo sends anonymous usage statistics: counts only, never chats or files. Turn it off in Settings > Features.')}</p>}
           <dl className="su-sum">
             <dt>{tr('참모 이름', 'Assistant')}</dt><dd>{name}</dd>
             <dt>{tr('프로젝트 폴더', 'Projects')}</dt><dd>{draft.devRoot}</dd>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allFolders, crumbsOf, dirId, dropPlan, lockerUps, kidFolders, moveTargets, renamedPath, fmtBytes, inPlace, inRoom, thumbKind, isTeamCache, opensInSpace, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerUpload } from './teamLocker';
+import { allFolders, folderFiles, crumbsOf, dirId, dropPlan, lockerUps, kidFolders, moveTargets, renamedPath, fmtBytes, inPlace, inRoom, thumbKind, isTeamCache, opensInSpace, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerUpload } from './teamLocker';
 
 const it0 = (o: Partial<LockerItem>): LockerItem => ({ id: 'x', name: 'a.pdf', size: 1, cipher: 17, at: 0, state: 'live', kind: 'file', room: '', folder: '', by: '사용자', byMember: 'm1', mine: false, why: '', deletedAt: null, ...o });
 
@@ -173,5 +173,23 @@ describe('썸네일 — 대화 말풍선·대화 파일 보기·팀 보관함 �
     expect(thumbKind('a.png', 20 * 1024 ** 2 + 1)).toBeNull();
     expect(thumbKind('a.pdf', 50 * 1024 ** 2 + 1)).toBeNull();
     expect(thumbKind('a.png', 0)).toBe('image');
+  });
+});
+
+describe('folderFiles — 팀 폴더째 내 참모에게(2026-10-30)', () => {
+  const xs = [
+    it0({ id: 'a', folder: '주간회의' }),
+    it0({ id: 'b', folder: '주간회의/지난 회의' }),
+    it0({ id: 'c', folder: '주간회의 사본' }),
+    it0({ id: 'd', folder: '주간회의', state: 'trash' }),
+    it0({ id: 'e', folder: '주간회의', room: 'g0' }),
+    it0({ id: 'dir:주간회의', folder: '주간회의', dir: true, name: '' }),
+    it0({ id: 'f', folder: '' }),
+  ];
+  it('그 폴더와 안쪽 폴더의 살아 있는 팀 파일만 — 이름이 비슷한 옆 폴더·휴지통·대화 파일·폴더 표시 줄은 뺀다', () => {
+    expect(folderFiles(xs, '주간회의').map((x) => x.id)).toEqual(['a', 'b']);
+  });
+  it('맨 위(빈 글)는 폴더가 아니라 빈 목록', () => {
+    expect(folderFiles(xs, '')).toEqual([]);
   });
 });

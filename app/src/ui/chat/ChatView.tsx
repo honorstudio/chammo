@@ -20,10 +20,10 @@ import { openTarget, readSessionTasks, readTranscript, type SessionTask, type Tr
 import { modKey } from '../../domain/keys';
 import { docUrl, IS_WIN } from '../../domain/reader';
 import { DROP_EVENT, DROP_PATHS_EVENT } from '../fileDrop';
-import { chipPastes } from '../../domain/drop';
+import { chipName, chipPastes, isFolderChip } from '../../domain/drop';
 import { assistant, josa, tr } from '../../i18n';
 import { orchestratorLike, seenName } from '../../domain/session';
-import { IconChatSend, IconChevron, IconChevronDown, IconChevronUp, IconClose, IconEnter, IconFile, IconRefresh, IconSend, IconSpeaker, IconStop, IconTerminal } from '../Icons';
+import { IconChatSend, IconChevron, IconChevronDown, IconChevronUp, IconClose, IconEnter, IconFile, IconFolder, IconRefresh, IconSend, IconSpeaker, IconStop, IconTerminal } from '../Icons';
 import { ChatVoice } from './chatVoice';
 import { backdropStyle } from './backdrop';
 import { sameName, shotChoices } from '../../domain/lockerShots';
@@ -43,14 +43,13 @@ import { useRefInbox } from '../refBus';
 import { nextRefLabel, type RefKind } from '../../domain/refChips';
 import { every } from '../poll';
 import { echoOfSent, enterAction } from '../../domain/enterSend';
-import { chatPollMs, liveReply, liveShown } from '../../domain/chatLive';
+import { chatPollMs, liveReply, liveStep, liveView, NO_LIVE } from '../../domain/chatLive';
 import './chat.css';
 
 /** 한 번에 그리는 항목 수 — 긴 대화는 "앞 대화 더 보기"로 늘린다 */
 const PAGE = 150;
-/** '쓰는 중' 말풍선 — 위로 밀린 줄까지 이만큼 더 본다(긴 답의 머리 ⏺ 를 찾게) · 일이 끝난 뒤 기록이 올 때까지 남겨 두는 시간 */
+/** '쓰는 중' 말풍선 — 위로 밀린 줄까지 이만큼 더 본다(긴 답의 머리 ⏺ 를 찾게) */
 const LIVE_BACK = 400;
-const LIVE_GRACE = 5000;
 
 // 답 마크다운 → HTML 은 한 번 바꾼 걸 기억한다 — 탭 창을 다 붙여 두니 앱이 다시 그릴 때마다 채팅 넷이 말풍선 수백 개를
 // 다시 바꿔서 탭 전환이 한참 걸렸다(2026-09-30 사용자)
@@ -134,6 +133,10 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   /** 이벤트·타이머 안에서 지금 기록 — 새 말풍선이 방금 간 같은 글 뒤부터 맞추게(newPending) */
   const itemsRef = useRef(items);
   itemsRef.current = items;
+  // 터미널에서 지금 쓰고 있는 답(domain/chatLive) — 기록엔 문단이 끝나야 써져서 그동안 맨 아래 '쓰는 중' 말풍선으로.
+  // 그 글이 기록에 들어올 때까지 붙잡는다(화면에서 잠깐 안 읽혀도) — 비었다가 갑자기 나타났다(2026-10-29 사용자)
+  const hold = useRef(NO_LIVE);
+  const [live, setLive] = useState<string[]>(NO_LIVE.blocks);
   /** Claude 대기열(기록의 queue-operation) — 보낸 말이 줄 서 있나 */
   const [queue, setQueue] = useState<QueueState>(emptyQueue);
   const [limit, setLimit] = useState(PAGE);
@@ -291,7 +294,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       const paths = fresh;
       if (!paths.length) { e.preventDefault(); return; }
       const chips = paths.map((p) => {
-        const it = { key: `${p}:${Date.now()}`, name: p.split(/[\\/]/).pop() ?? p, path: p };
+        const it = { key: `${p}:${Date.now()}`, name: chipName(p), path: p };
         return { path: p, label: /\.(png|jpe?g|gif|webp|heic)$/i.test(p) ? attach({ ...it, url: docUrl(p) }, 'img') : attach(it, 'file') };
       });
       // 터미널 입력칸엔 이름표 바로 뒤 따옴표 경로로(그림은 이스케이프 따로 한 조각) — 조각 사이는 Claude 가 앞 붙여넣기를 다 읽게 조금 쉬고
@@ -318,6 +321,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const tickRef = useRef<(() => Promise<void>) | null>(null);
   useEffect(() => {
     setItems([]);
+    hold.current = NO_LIVE;
+    setLive(NO_LIVE.blocks);
     setQueue(emptyQueue);
     setLimit(PAGE);
     if (!sessionId) return;
@@ -467,22 +472,15 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   // 보낸 직후엔 보낸 글이 터미널 입력칸을 잠깐 지나간다 — 그 사이엔 위 줄에 안 띄운다(번쩍였다, 2026-09-30 사용자)
   const quietUntil = useRef(0);
   const empties = useRef(0);
-  // 터미널에서 지금 쓰고 있는 답(domain/chatLive) — 기록엔 문단이 끝나야 써져서 그동안 맨 아래 '쓰는 중' 말풍선으로. 일이 끝나도 기록이 올 때까지 잠깐 둔다
-  const [live, setLive] = useState<string | null>(null);
-  const liveAt = useRef(0);
   // 답을 기다리는 중 — 세션 상태(3초마다)보다 먼저 보낸 말·마지막 사람 말로도 안다(기록 읽기 주기와 같은 신호)
   const answering = useRef(false);
   answering.current = pollMs < 1000;
   useEffect(() => {
     if (!screen) return;
     const id = window.setInterval(() => {
-      const now = Date.now();
-      if (answering.current) {
-        const full = screen(LIVE_BACK);
-        const lv = full ? liveReply(full.lines) : null;
-        if (lv) liveAt.current = now;
-        setLive((prev) => (prev === lv ? prev : lv));
-      } else if (now - liveAt.current > LIVE_GRACE) setLive((prev) => (prev === null ? prev : null));
+      const full = answering.current ? screen(LIVE_BACK) : undefined;
+      hold.current = liveStep(hold.current, { now: Date.now(), answering: answering.current, text: full ? liveReply(full.lines) : null, items: itemsRef.current });
+      setLive(hold.current.blocks); // 글이 그대로면 같은 배열 — 다시 안 그린다
       const s = screen();
       const t = s && Date.now() >= quietUntil.current ? promptInput(s.lines, s.cursor) ?? '' : '';
       setTermText((prev) => (prev === t ? prev : t));
@@ -786,10 +784,11 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
         {interleave(shown, extra).map((x) => ('item' in x
           ? <Bubble key={`${x.item.kind}:${x.item.id}`} it={x.item} by={paneId ?? ''} onRef={stableRef} />
           : <div key={x.extra.key}>{x.extra.node}</div>))}
-        {live && !readOnly && !liveShown(live, items) && (
-          // 기록 말풍선과 같은 마크다운으로 — 바꿔 끼울 때 문단 간격이 안 튀게. 0.4초마다 바뀌는 글이라 md 기억(mdCache)엔 안 넣는다
-          <div className="chat-row"><div className="bubble md live"><div dangerouslySetInnerHTML={{ __html: mdToHtml(live) }} /><span className="chat-meta">{tr('쓰는 중', 'Writing')}</span></div></div>
-        )}
+        {!readOnly && liveView({ blocks: live }, items).map((t, i, all) => (
+          // 기록 말풍선과 같은 마크다운으로 — 바꿔 끼울 때 문단 간격이 안 튀게. 0.4초마다 바뀌는 글이라 md 기억(mdCache)엔 안 넣는다.
+          // 기록이 오면 같은 그림에서 기록 말풍선이 이 자리에 들어온다(liveView 가 거름)
+          <div key={`live:${i}`} className="chat-row"><div className="bubble md live"><div dangerouslySetInnerHTML={{ __html: mdToHtml(t) }} />{i === all.length - 1 && <span className="chat-meta">{tr('쓰는 중', 'Writing')}</span>}</div></div>
+        ))}
         {waiting.map((p) => {
           const st = stateOf.get(p.at) ?? 'sending';
           const look = pendLook(st, busy); // 모양·글만 — 단추는 진짜 상태(st)로
@@ -852,7 +851,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
             <span className="chat-attach">
               {attached.map((a) => (a.url
                 ? <span key={a.key} className="chat-att"><img src={a.url} alt={a.name} title={a.name} />{a.label && <em>{a.label}</em>}</span>
-                : <span key={a.key} className="chat-file" title={a.path ?? a.name}><IconFile />{a.label ?? a.name}</span>))}
+                : <span key={a.key} className="chat-file" title={a.path ?? a.name}>{a.path && isFolderChip(a.path) ? <IconFolder /> : <IconFile />}{a.label ?? a.name}</span>))}
             </span>
           )}
           {/* 그림은 썸네일로 보이니 [Image #n] 표시는 빼고, 남은 글(지구본 키로 받아 적은 말 등)만 */}

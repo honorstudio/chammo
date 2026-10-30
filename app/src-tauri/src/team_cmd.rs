@@ -157,7 +157,7 @@ pub(crate) fn view_with(st: &relay::TeamState, aka: &Aka) -> Value {
         "devices": st.my_devices.iter().map(|d| json!({ "id": d.id, "name": clean(&d.name), "current": d.current, "kind": d.kind, "status": d.status, "lastSeen": d.last_seen, "reqCity": opt(&d.req_city), "reqCountry": opt(&d.req_country), "pendingSince": d.pending_since, "approvedBy": d.approved_by })).collect::<Vec<_>>(),
         "pending": st.pending, "pendingAutoAt": st.pending_auto_at, "revoked": st.revoked,
         "teams": st.teams.iter().map(|t| json!({ "id": t.id, "name": opt(&t.name), "role": t.role, "me": opt(&t.display_name), "current": t.id == st.team_id })).collect::<Vec<_>>(),
-        "members": st.members.iter().map(|m| json!({ "id": m.id, "name": clean(&m.display_name), "label": aka.label(&m.display_name, &m.id), "role": m.role, "me": m.id == st.member_id, "devices": m.devices.iter().map(|d| json!({ "id": d.id, "name": clean(&d.name) })).collect::<Vec<_>>() })).collect::<Vec<_>>(),
+        "members": st.members.iter().map(|m| json!({ "id": m.id, "name": clean(&m.display_name), "label": aka.label(&m.display_name, &m.id), "role": m.role, "perms": m.perms, "me": m.id == st.member_id, "devices": m.devices.iter().map(|d| json!({ "id": d.id, "name": clean(&d.name) })).collect::<Vec<_>>() })).collect::<Vec<_>>(),
         "rooms": st.rooms.iter().map(|r| {
             let (with, left) = match r.kind.as_str() { "self" => ("self".to_string(), false), "group" => (clean(&r.name), false), _ => dm_with(&r.peer) };
             json!({ "id": r.id, "kind": r.kind, "peer": r.peer, "team": r.team, "with": with, "left": left, "members": r.members, "me": crate::team_reads::my_member(st, &r.id) })
@@ -239,7 +239,14 @@ pub fn answer(req: &TeamReq, dir: &Path, kc: &dyn Store, w: &dyn Wire) -> Value 
         "leave" | "kick" | "role" if arg["yes"] != true => Err("나가기·빼기·팀장 바꾸기는 사용자에게 먼저 묻고 --yes 로".into()),
         "leave" => relay::leave(dir, kc, w.http(), &s("team")).map(|st| shown(&st)),
         "kick" => relay::remove_member(dir, kc, w.http(), &s("team"), &s("who")).map(|st| shown(&st)),
-        "role" => relay::set_role(dir, kc, w.http(), &s("team"), &s("who"), &s("role")).map(|st| shown(&st)),
+        // 팀장 넘기기·권한 올리기는 앱 화면의 사람 입력에서만(relay ADR 0014 P8 — 참모 말은 사람 말이 아니다). 참모 길은 팀원으로 내리기만
+        "role" => {
+            if s("role") == "owner" {
+                Err("팀장 넘기기는 앱 팀 설정 화면에서만 해요".into())
+            } else {
+                relay::set_role(dir, kc, w.http(), &s("team"), &s("who"), &s("role")).map(|st| shown(&st))
+            }
+        }
         "say" => {
             let (to, text, cid) = (s("to"), arg["text"].as_str().unwrap_or("").to_string(), s("cid"));
             if !cid_ok(&cid) {
@@ -289,13 +296,16 @@ pub fn answer(req: &TeamReq, dir: &Path, kc: &dyn Store, w: &dyn Wire) -> Value 
             if paths.is_empty() || paths.len() > 50 {
                 return fail("파일은 한 번에 1~50개");
             }
-            paths.iter().map(|p| crate::team_locker_app::put_file_in(dir, kc, w.http(), &s("team"), "", "file", &s("folder"), p)).collect::<Result<Vec<_>, _>>().map(|f| json!({ "files": f }))
+            // 사람이 시킨 올리기·받기는 사람 몫으로(relay::as_human) — 배경 몫이 차거나 쉬는 중이면 큰 파일이 조각 중간에 끊겼다(0.4.5 리뷰 2). 보기·휴지통은 배경 그대로
+            relay::as_human(|| paths.iter().map(|p| crate::team_locker_app::put_file_in(dir, kc, w.http(), &s("team"), "", "file", &s("folder"), p)).collect::<Result<Vec<_>, _>>().map(|f| json!({ "files": f })))
         }
-        "locker-get" => crate::team_locker_app::list(dir, kc, w.http(), &s("team")).and_then(|v| crate::team_locker_app::resolve(&v, &s("file"))).and_then(|id| {
-            let to = s("to");
-            let t = std::time::Instant::now(); // 받기만 잰 ms — 목록에서 연 파일은 다시 안 받아 짧다(10-26)
-            let p = if to.is_empty() { crate::team_locker_app::fetch(dir, kc, w.http(), &s("team"), &id) } else { crate::team_locker_app::fetch_to(dir, kc, w.http(), &s("team"), &id, Path::new(&to)) }?;
-            Ok(json!({ "path": p, "ms": t.elapsed().as_millis() as u64 }))
+        "locker-get" => relay::as_human(|| {
+            crate::team_locker_app::list(dir, kc, w.http(), &s("team")).and_then(|v| crate::team_locker_app::resolve(&v, &s("file"))).and_then(|id| {
+                let to = s("to");
+                let t = std::time::Instant::now(); // 받기만 잰 ms — 목록에서 연 파일은 다시 안 받아 짧다(10-26)
+                let p = if to.is_empty() { crate::team_locker_app::fetch(dir, kc, w.http(), &s("team"), &id) } else { crate::team_locker_app::fetch_to(dir, kc, w.http(), &s("team"), &id, Path::new(&to)) }?;
+                Ok(json!({ "path": p, "ms": t.elapsed().as_millis() as u64 }))
+            })
         }),
         "locker-rm" => crate::team_locker_app::list(dir, kc, w.http(), &s("team"))
             .and_then(|v| crate::team_locker_app::resolve(&v, &s("file")))
@@ -406,15 +416,13 @@ fn main_only(w: &tauri::WebviewWindow) -> Result<(), String> {
     if w.label() == "main" { Ok(()) } else { Err("main window only".into()) }
 }
 
-/// 계정 일을 뒤 스레드에서 — 실제 키체인·curl, 끝나면 화면용 상태
+/// 계정 일(사람이 누른 것)을 뒤 스레드에서 — 실제 키체인·curl, 끝나면 화면용 상태
 async fn account_job(f: impl FnOnce(&Path, &dyn Store, &dyn Http) -> Result<(), String> + Send + 'static) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let dir = crate::config::data_dir();
-        f(dir, &crate::team_relay_keys::store(), &relay::Curl)?;
+    relay::human_job(move |dir, kc, h| {
+        f(dir, kc, h)?;
         Ok(view(&relay::load_state(dir)))
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// 설정 > Chammo 계정: 구글 로그인(사람 브라우저, 최대 10분). server 는 처음 기기만(팀·로그인한 적 있으면 그 서버)
@@ -483,17 +491,16 @@ pub async fn team_human_say(window: tauri::WebviewWindow, to: String, text: Stri
     if !cid_ok(&cid) || empty {
         return Err("bad cid or empty".into());
     }
-    tauri::async_runtime::spawn_blocking(move || {
-        let dir = crate::config::data_dir();
+    // 처음 DM(방 열기)도 사람이 친 말의 일부 — 배경 몫에 안 막힌다
+    relay::human_job(move |dir, kc, h| {
         let room = match room.filter(|r| !r.is_empty()) {
             Some(r) if relay::load_state(dir).rooms.iter().any(|x| x.id == r && x.kind != "self") => r,
             Some(_) => return Err("모르는 방".to_string()),
-            None => relay::open_dm(dir, &crate::team_relay_keys::store(), &relay::Curl, "", &to)?.id,
+            None => relay::open_dm(dir, kc, h, "", &to)?.id,
         };
         crate::team_relay_ws::send_with(dir, &room, &cid, &text, Some(proof), extra).map(|seq| json!({ "room": room, "seq": seq }))
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]

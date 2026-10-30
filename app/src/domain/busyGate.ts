@@ -85,16 +85,19 @@ export function slowLinks(link: Record<string, LinkState>, since: Map<string, nu
 const busyLead = (b: Busy) => (b === 'boot' ? tr('맥이 막 켜져 바빠서 ', 'The Mac just started and is busy, so ') : b === 'busy' ? tr('맥이 바빠서 ', 'The Mac is busy, so ') : '');
 
 /** 채팅 칸 위 한 줄 — 붙어 있으면 null. who = '참모'·'세션' */
-export function linkNotice(o: { link: LinkState | undefined; phase?: AttachPhase; listUnknown?: boolean; busy: Busy; who?: string }): string | null {
+export function linkNotice(o: { link: LinkState | undefined; phase?: AttachPhase; listUnknown?: boolean; kicked?: boolean; busy: Busy; who?: string }): string | null {
   const who = o.who ?? tr('세션', 'the session');
   const then = tr('보낸 말은 붙으면 보낼게', 'your message goes once it is back');
   switch (o.link) {
     case undefined: case 'live': return null;
-    case 'gone': return tr('세션이 꺼진 것 같아 — 다시 켜지면 안 간 말을 다시 보내 줘', 'The session seems to have stopped — send again once it is back');
+    case 'gone':
+      // 다른 창에 쫓겨남(윈도우) — 세션은 산다. 보내면 칸이 되찾는다(attachExit sendOnLink)
+      if (o.kicked) return tr(`윈도우는 ${who} 연결이 한 번에 한 곳만 돼서 다른 창이 열면 끊겨 — 그냥 말을 보내면 여기로 다시 붙어서 가`, `Windows allows one connection per ${who} at a time, so another window can drop this one — just send, and it reconnects here`);
+      return tr('세션이 꺼진 것 같아 — 다시 켜지면 안 간 말을 다시 보내 줘', 'The session seems to have stopped — send again once it is back');
     case 'reattaching':
       if (!o.listUnknown) return tr('세션 연결이 끊겨서 다시 붙는 중 — 보낸 말은 붙으면 바로 가', 'Lost the session link — reattaching; your message goes as soon as it is back');
       return o.busy === 'ok'
-        ? tr(`Claude Code 관리 프로그램이 응답이 없어 세션 목록을 못 읽는 중 — ${then}`, `Claude Code is not answering, so the session list is unreadable — ${then}`)
+        ? tr(`Claude Code가 응답하지 않아 세션 목록을 못 읽고 있어요. ${then}`, `Claude Code is not answering, so the session list is unreadable. ${then}`)
         : `${busyLead(o.busy)}${tr(`세션 목록을 못 읽는 중 — ${then}`, `the session list is not coming back yet — ${then}`)}`;
     case 'attaching':
       switch (o.phase) {

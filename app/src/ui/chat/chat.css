@@ -10,8 +10,10 @@
 .bubble { max-width: 88%; padding: 8px 12px; border-radius: 12px; background: var(--surface-2); color: var(--text); overflow-wrap: anywhere; }
 .bubble.me { background: color-mix(in srgb, var(--orch, var(--accent)) 14%, var(--surface)); white-space: pre-wrap; border-bottom-right-radius: 4px; }
 .bubble.md { border-bottom-left-radius: 4px; }
-/* 쓰는 중(터미널에서 흘러나오는 글) — 기록 말풍선으로 바뀌기 전, 조금 흐리게 */
-.bubble.live { opacity: .75; }
+/* 쓰는 중(터미널에서 흘러나오는 글) — 기록 말풍선으로 바뀌기 전, 조금 흐리게.
+   '쓰는 중'은 말풍선 밖 오른쪽(기록 말풍선의 인용 단추 자리)에 띄워 높이를 안 먹는다 — 바꿔 끼울 때 한 줄씩 줄어 튀었다(2026-10-29) */
+.bubble.live { opacity: .75; position: relative; }
+.bubble.live > .chat-meta { position: absolute; left: calc(100% + 6px); bottom: 0; margin: 0; white-space: nowrap; }
 .bubble.live > div > :first-child { margin-top: 0; }
 .bubble.live > div > :last-child { margin-bottom: 0; }
 .bubble.pending { opacity: .6; }
@@ -147,6 +149,11 @@
 .mc-row button:hover:not(:disabled):not(.sel) { background: var(--line); color: var(--text); }
 .mc-row button.sel { background: var(--orch-solid, var(--accent)); color: var(--orch-ink, #fff); cursor: default; }
 .mc-row button:disabled { opacity: .4; cursor: not-allowed; }
+.mc-row .mc-more { display: inline-flex; align-items: center; justify-content: center; width: 28px; padding: 0; }
+.mc-row .mc-more svg { width: 16px; height: 16px; }
+.mc-row .mc-more.on { background: var(--line); color: var(--text); }
+.mc-other { padding-left: 48px; } /* .mc-h 폭 + 틈 — 줄이 넘어가도 모델 칸 밑에 맞춘다 */
+.mc-other button { padding: 3px 8px; min-height: 26px; font-size: 11.5px; }
 .mc-fail { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: #c0392b; }
 .mc-note { font-size: 11px; line-height: 1.4; color: var(--text-3); }
 /* 그림 이름표 #img1 */
@@ -258,6 +265,7 @@
 .chat-filecard:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
 .chat-filecard-th { position: relative; height: 140px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--panel); border-bottom: 1px solid var(--line); }
 .chat-filecard-th img { width: 100%; height: 100%; object-fit: cover; object-position: top center; }
+.chat-filecard img { -webkit-user-drag: none; } /* 웹뷰 그림 끌기가 우리 끌기(dragOut)를 가로채지 않게 */
 .chat-filecard-name { padding: 8px 12px 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chat-filecard-name:last-child { padding-bottom: 9px; }
 .chat-filecard-at { padding: 1px 12px 9px; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

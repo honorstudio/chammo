@@ -7,7 +7,10 @@ import { docUrl, inTime, kindOf, pageDoc, PAGE_DOC_WAIT_MS } from '../../domain/
 import { FIT, IMAGE_STEPS, stepZoom, withZoom, zoomable, zoomLabel, zoomOf, type ZoomMap } from '../../domain/readerZoom';
 import { assistant, tr } from '../../i18n';
 import { sendPreview } from '../../domain/sendPreview';
-import { IconCheck, IconClose, IconMaximize, IconRefresh, IconRestore, IconSend, IconZoomIn, IconZoomOut } from '../Icons';
+import { IconCheck, IconClose, IconMaximize, IconRefresh, IconRestore, IconReveal, IconSend, IconZoomIn, IconZoomOut } from '../Icons';
+import { dragOut } from './dragPath';
+import { lockerApi } from './useLocker';
+import { isTeamCache } from '../../domain/teamLocker';
 import { Confirm } from '../OrchDialogs';
 import { ExtraDoc, frameStyle, HtmlFrame, loadZoom, MdDoc, ZOOM_KEY } from '../reader/Reader';
 import { flashWhenReady } from '../flash';
@@ -195,13 +198,15 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
   const fill = () => { setBox(null); saveBox(null); };
 
   const width = kind === 'image' ? imageWidth(natural, zoom, fit) : undefined;
+  // 진짜 파일(주소·붙인 그림 data URL·팀 파일 평문이 아닌 것) — 이름을 끌면 바깥 앱으로, 머리 '파인더에서 보기'(10-30 사용자)
+  const file = kind !== 'web' && !f.path.startsWith('data:') && !isTeamCache(f.path);
   // 채팅 패널 위까지 덮는다 — 스페이스 안에만 뜨면 좁았다(2026-09-30 사용자 "오케스트레이터 패널보다 위로")
   if (gate === 'check') return null;
   return createPortal(
     <div className={`dash-preview ${max ? 'max' : ''} ${placed ? 'placed' : ''}`} ref={wrap} onClick={onClose} style={!max && area ? { inset: 'auto', left: area.left, top: area.top, width: area.width, height: area.height } : undefined}>
       <div className={`box ${box && !max ? 'sized' : ''}`} ref={boxEl} style={box && !max ? { width: box.w, height: box.h } : undefined} onClick={(e) => e.stopPropagation()}>
         <div className="bar" onDoubleClick={fill} title={tr('가장자리를 끌어 크기 조절 · 두 번 누르면 꽉 채움', 'Drag an edge to resize · double-click to fill')}>
-          <b>{fileName(f.path)}</b><span className="sp" />
+          <b {...(file ? dragOut(f.path) : {})}>{fileName(f.path)}</b><span className="sp" />
           {zoomable(kind) && (
             <div className="rd-zoom">
               <button onClick={() => zoomBy.current(-1)} title={tr('축소 (⌘-)', 'Zoom out (⌘-)')} aria-label={tr('축소', 'Zoom out')}><IconZoomOut /></button>
@@ -209,6 +214,7 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
               <button onClick={() => zoomBy.current(1)} title={tr('확대 (⌘+)', 'Zoom in (⌘+)')} aria-label={tr('확대', 'Zoom in')}><IconZoomIn /></button>
             </div>
           )}
+          {file && <button className="pv-ic" onClick={() => void lockerApi.reveal(f.path).catch(() => {})} title={tr('파인더에서 보기', 'Show in Finder')} aria-label={tr('파인더에서 보기', 'Show in Finder')}><IconReveal /></button>}
           {onAttach && <SendToOrch to={attachTo} className="pv-attach" onClick={() => { onAttach(); onClose(); }} />}
           <button className="pv-ic" onClick={() => setMax((m) => !m)} title={max ? tr('원래 크기 (⌘⇧`)', 'Restore (⌘⇧`)') : tr('가득 채우기 (⌘⇧`)', 'Fill (⌘⇧`)')} aria-label={max ? tr('원래 크기', 'Restore') : tr('가득 채우기', 'Fill')}>{max ? <IconRestore /> : <IconMaximize />}</button>
           <button className="pv-ic" onClick={onClose} title={tr('닫기 (Esc)', 'Close (Esc)')} aria-label={tr('닫기', 'Close')}><IconClose /></button>

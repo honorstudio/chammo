@@ -120,3 +120,60 @@ fn 팀장_바꾸기는_명부가_있으면_고리를_같이_싣는다() {
     assert_eq!(v["role"], "owner");
     assert!(v["link"]["body"].as_str().unwrap().contains("\"kind\":\"role\""));
 }
+
+// ── 팀 권한 새 판(relay ADR 0014) ──
+
+fn with_log(tag: &str, r: &FakeRelay) -> (std::path::PathBuf, Fake) {
+    let (od, okc, _) = device(tag, "o1", "a1", "m1", r);
+    let members = json!({ "members": [{ "id": "m1", "displayName": "사용자", "role": "owner" }, { "id": "m2", "displayName": "철수", "role": "member" }] }).to_string();
+    r.answer("/v0/teams/t1/log", 201, "{}");
+    after_create(&od, &okc, r, "t1", "m1", "사용자", "샘플팀").unwrap();
+    r.always("GET", "/v0/teams/t1/members", 200, &members);
+    r.always("GET", "/v0/teams/t1/log", 200, &json!({ "links": posted(r) }).to_string());
+    (od, okc)
+}
+
+fn sent(r: &FakeRelay, path: &str) -> Value {
+    let seen = r.seen.borrow();
+    let (_, _, _, b) = seen.iter().rev().find(|(m, p, _, _)| m == "POST" && p == path).expect("보냈다");
+    serde_json::from_str(b).unwrap()
+}
+
+#[test]
+fn 매니저_권한은_한_가지_모양으로_고리와_함께() {
+    let r = FakeRelay::default();
+    let (od, okc) = with_log("perms", &r);
+    r.answer("/v0/teams/t1/members/m2/role", 200, r#"{"ok":true}"#);
+    crate::team_relay::set_perms(&od, &okc, &r, "t1", "철수", &["kick".into(), "invite".into(), "kick".into()]).unwrap();
+    let v = sent(&r, "/v0/teams/t1/members/m2/role");
+    assert_eq!((v["role"].clone(), v["perms"].clone()), (json!("manager"), json!(["invite", "kick"])));
+    let b: Value = serde_json::from_str(v["link"]["body"].as_str().unwrap()).unwrap();
+    assert_eq!((b["role"].clone(), b["perms"].clone()), (json!("manager"), json!(["invite", "kick"])));
+    // 빈 목록 = 팀원으로 — perms 칸 없이
+    r.answer("/v0/teams/t1/members/m2/role", 200, r#"{"ok":true}"#);
+    crate::team_relay::set_perms(&od, &okc, &r, "t1", "철수", &[]).unwrap();
+    let v = sent(&r, "/v0/teams/t1/members/m2/role");
+    assert_eq!(v["role"], "member");
+    assert!(v.get("perms").is_none() && !v["link"]["body"].as_str().unwrap().contains("perms"));
+    assert!(crate::team_relay::set_perms(&od, &okc, &r, "t1", "철수", &["delete_team".into()]).is_err());
+}
+
+#[test]
+fn 팀장_넘기기는_from_을_실어_보내고_옛_서버면_예전_팀장_올리기로() {
+    let r = FakeRelay::default();
+    let (od, okc) = with_log("transfer", &r);
+    r.answer("/v0/teams/t1/transfer", 200, r#"{"ok":true}"#);
+    crate::team_relay::transfer_owner(&od, &okc, &r, "t1", "철수").unwrap();
+    let v = sent(&r, "/v0/teams/t1/transfer");
+    assert_eq!(v["member"], "m2");
+    let b: Value = serde_json::from_str(v["link"]["body"].as_str().unwrap()).unwrap();
+    assert_eq!((b["kind"].clone(), b["role"].clone(), b["from"].clone()), (json!("role"), json!("owner"), json!("m1")));
+    // 스위치 꺼진 서버 — 예전 길(팀장 올리기)로
+    r.answer("/v0/teams/t1/transfer", 400, r#"{"error":"roles_off"}"#);
+    r.answer("/v0/teams/t1/members/m2/role", 200, r#"{"ok":true}"#);
+    r.answer("/v0/teams/t1/members/m1/role", 200, r#"{"ok":true}"#);
+    crate::team_relay::transfer_owner(&od, &okc, &r, "t1", "철수").unwrap();
+    assert_eq!(sent(&r, "/v0/teams/t1/members/m2/role")["role"], "owner");
+    // '넘기기'라서 나는 내려온다 — 팀장이 둘로 남지 않게(손 시험 ⑤, 10-30)
+    assert_eq!(sent(&r, "/v0/teams/t1/members/m1/role")["role"], "member");
+}

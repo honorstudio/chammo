@@ -43,8 +43,8 @@ export function mirrorNote(i: CraftInfo): { text: string; settings: boolean } | 
       return { text: tr('앱 화면을 비추는 중…', 'Mirroring the app…'), settings: false };
     case 'no-permission':
       return {
-        text: tr('화면 기록 권한이 한 번 필요해 — 이 앱 창 하나만 찍고 다른 화면은 안 본다. 허용한 뒤 Chammo 를 다시 켜야 해(맥 규칙).',
-          'Screen Recording permission is needed once — only this app window is captured. Restart Chammo after allowing it (a macOS rule).'),
+        text: tr('화면 기록 권한이 한 번 필요해요. 이 앱 창만 찍고 다른 화면은 안 봐요. 허용한 뒤 Chammo를 다시 켜 주세요(맥 규칙)',
+          'Screen Recording permission is needed once. Only this app window is captured. Restart Chammo after allowing it (a macOS rule).'),
         settings: true,
       };
     case 'no-window':

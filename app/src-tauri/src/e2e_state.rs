@@ -365,6 +365,12 @@ pub(crate) fn roster_recv(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &Team
     roster_of(dir, kc, http, st, team)
 }
 
+/// 마지막으로 확인해 둔 명부(디스크 캐시) — 망 없이 다시 검증만(사슬도 캐시가 맞으면 망에 안 간다). 캐시가 없으면 NO_ROSTER
+pub(crate) fn roster_cached(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, team: &str) -> Result<Roster, String> {
+    let head = load(dir).rosters.get(team).and_then(|c| c.last().map(|l| (l.seq, e2e_roster::team_hash(l)))).ok_or(NO_ROSTER)?;
+    roster_with(dir, kc, http, st, team, Some(&Heads { log: Some(head), chains: BTreeMap::new() }))
+}
+
 /// roster_of — 팀 머리가 캐시한 명부 끝과 같으면 명부를 다시 안 받는다(검증은 그대로)
 pub(crate) fn roster_with(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, team: &str, h: Option<&Heads>) -> Result<Roster, String> {
     let same = h.and_then(|h| h.log.as_ref()).and_then(|(seq, hash)| {

@@ -17,9 +17,9 @@ describe('팀 설정·내 프로필 연결', () => {
     expect(space).toContain("label={tr('팀 설정', 'Team settings')}");
     expect(mode).not.toContain('follow={{');
   });
-  it('초대 링크는 사람 칸 머리 이름표 단추, 팀 아이콘 바꾸기는 팀장만', () => {
-    expect(settings).toContain("{owner && <button className=\"tmx-btn tmx-sm\" aria-expanded={showInvite}");
-    expect(settings).toContain('disabled={!owner || busy} onClick={pickIcon.open}');
+  it('초대 링크는 사람 칸 머리 이름표 단추(invite 권한), 팀 아이콘 바꾸기는 팀장·look 권한만(relay ADR 0014)', () => {
+    expect(settings).toContain("{canInvite && <button className=\"tmx-btn tmx-sm\" aria-expanded={showInvite}");
+    expect(settings).toContain('disabled={!canLook || busy} onClick={pickIcon.open}');
   });
   it('프로필 저장은 data/teamProfileApi 로만 — 화면이 invoke 를 직접 부르지 않는다', () => {
     expect(profile).not.toMatch(/invoke\(/);

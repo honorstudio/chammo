@@ -163,7 +163,7 @@ export function termsText(c: TermsCard): { title: string; where: string } {
   return {
     title: c.email ? tr(`${c.email} 계정이 Claude 새 약관 동의가 필요해요`, `${c.email} needs to accept Claude's new terms`) : tr('지금 계정이 Claude 새 약관 동의가 필요해요', "Your current account needs to accept Claude's new terms"),
     where: c.sessions.length
-      ? tr(`멈춘 곳: ${c.sessions.join(' · ')} — claude.ai 에 이 계정으로 들어가 약관 창이 뜨면 동의, 안 뜨면 이미 된 거예요 — 다시 시도`, `Stopped: ${c.sessions.join(' · ')} — open claude.ai with this account and accept the terms if asked (no prompt means it's done), then retry`)
+      ? tr(`멈춘 곳: ${c.sessions.join(' · ')}. claude.ai에 이 계정으로 들어가 약관 창이 뜨면 동의하세요. 안 뜨면 이미 동의한 거예요. 그다음 다시 시도하세요`, `Stopped: ${c.sessions.join(' · ')}. Open claude.ai with this account and accept the terms if asked (no prompt means it's done), then retry`)
       : tr('동의할 때까지 이 계정은 건너뛰어요 — claude.ai 에 이 계정으로 들어가 약관 창이 뜨면 동의, 안 뜨면 이미 된 거예요 — 다시 시도', 'This account is skipped until then — open claude.ai with this account and accept the terms if asked (no prompt means it\'s done), then retry'),
   };
 }

@@ -196,7 +196,7 @@ export function canNext(step: WizardStep, check: EnvCheck | null, trust?: Trust,
 export function nextWhy(step: WizardStep, check: EnvCheck | null, trust: Trust | undefined, access: Access | null, win: boolean): string | null {
   if (canNext(step, check, trust, access) || step === 'ready' || step === 'welcome' || step === 'features') return null;
   if (step === 'check') return win
-    ? tr('위의 Claude Code 설치·로그인과 git·파이썬 3 이 끝나면 다음으로 갈 수 있어요.', 'Finish installing and signing in to Claude Code, plus git and Python 3, to continue.')
+    ? tr('Claude Code, git, 파이썬 3 설치와 로그인을 마치면 다음으로 갈 수 있어요.', 'Finish installing and signing in to Claude Code, git and Python 3 to continue.')
     : tr('위의 Claude Code 설치·로그인과 명령줄 도구가 끝나면 다음으로 갈 수 있어요.', 'Finish installing and signing in to Claude Code, and the Command Line Tools, to continue.');
   if (wizardAccess(access).block) return tr('프로젝트 폴더를 열 수 없어요 — 위 프로젝트 폴더 칸의 안내부터 해 주세요.', 'The projects folder cannot be opened — follow the note under Projects folder first.');
   return tr('위 두 폴더를 「믿기」로 믿으면 다음으로 갈 수 있어요.', 'Trust the two folders above to continue.');
@@ -206,7 +206,7 @@ export function nextWhy(step: WizardStep, check: EnvCheck | null, trust: Trust |
  *  'Yes 를 골라'라고 해 사람이 같은 걸 되풀이했다(2026-10-22 첫 사용자 QA 7). 터미널은 닫히니 마지막 줄을 같이 보인다 */
 export function trustExitNote(screen: string): string {
   if (/trust this folder|Quick safety check|Do you trust/i.test(screen))
-    return tr('믿지 않고 끝났어요 — 믿기를 다시 누르고 ↓ 로 "Yes, I trust this folder"를 고른 뒤 Enter 를 눌러 주세요.', 'It ended without trusting — press Trust again, pick "Yes, I trust this folder" with ↓, then Enter.');
+    return tr('폴더를 믿지 않고 끝났어요. 믿기를 다시 눌러 ↓로 "Yes, I trust this folder"를 고르고 Enter를 눌러 주세요.', 'It ended without trusting. Press Trust again, pick "Yes, I trust this folder" with ↓, then Enter.');
   const last = screen.split('\n').map((l) => l.trim()).filter(Boolean).pop()?.slice(0, 120) ?? '';
   if (/log ?in|not logged|api key|auth/i.test(screen))
     return tr(`Claude 가 질문 전에 끝났어요 — 로그인이 필요해요. 위 점검에서 로그인을 마친 뒤 믿기를 다시 눌러 주세요.${last ? ` (${last})` : ''}`, `Claude ended before asking — it needs a sign-in. Finish signing in above, then press Trust again.${last ? ` (${last})` : ''}`);

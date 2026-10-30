@@ -19,7 +19,7 @@ export function usePhoneDirect(orch: Session, orchs: Session[], sessions: Sessio
     const now = Date.now();
     seen.current = stepSeen(seen.current, sessions.map((s) => s.id), now);
     // 폰은 세션 대화 기록을 안 읽는다 — 보냄까지, 세션이 done 을 남기면 처리됨
-    return phoneOwns(placeDirect(log, { everyone: sessions, seen: seen.current, now, unknown: sessions.length === 0, events, orchs, front: orchs[0], prompt: () => undefined, reply: () => undefined })
+    return phoneOwns(placeDirect(log, { everyone: sessions, seen: seen.current, now, unknown: sessions.length === 0, events, orchs, prompt: () => undefined, reply: () => undefined })
       , orch.id);
   }, [log, sessions, events, orchs, orch.id]);
 }

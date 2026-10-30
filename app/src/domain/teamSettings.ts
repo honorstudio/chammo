@@ -1,21 +1,57 @@
 import { tr } from '../i18n';
 // 팀 설정(메신저 머리 톱니·팀 아이콘 메뉴) — 화면 판단. 서버 길: chammo-relay teams.ts(이름·초대)·membership.ts(나가기·빼기)
 
-type Member = { id: string; name: string; role: string; me: boolean; devices?: { id: string; name: string }[] };
+type Member = { id: string; name: string; role: string; perms?: string[]; me: boolean; devices?: { id: string; name: string }[] };
 
 /** 팀 아이콘(왼쪽·오른쪽 누르기) 메뉴 */
 export function menuFor(v: { joined: boolean } | null): ('invite' | 'settings' | 'make')[] {
   return v?.joined ? ['invite', 'settings'] : ['make'];
 }
 
-export type MemberRow = { id: string; name: string; me: boolean; owner: boolean; devices: string[]; canRemove: boolean };
+export type MemberRow = {
+  id: string; name: string; me: boolean; owner: boolean; devices: string[]; canRemove: boolean;
+  /** 표시 — owner 팀장 · all 전체 권한 · manager 매니저 · '' 팀원 */
+  badge: 'owner' | 'all' | 'manager' | '';
+  perms: string[];
+  /** 그 사람 권한 칩을 바꿀 수 있나 · 전체 칩까지(팀장만) · 팀장 넘기기(팀장만) */
+  canPerms: boolean; canAll: boolean; canTransfer: boolean;
+};
 
-/** 팀원 줄 — 나를 맨 위로. 팀장만 남(나 말고)을 뺄 수 있다 — 마지막 팀장은 서버가 막는다(409 last_owner) */
+/** 매니저 권한 칩(relay ADR 0014 항목) — 전체 먼저 */
+export const PERM_CHIPS: { key: string; ko: string; en: string }[] = [
+  { key: 'all', ko: '전체', en: 'All' },
+  { key: 'invite', ko: '초대', en: 'Invite' },
+  { key: 'kick', ko: '내보내기', en: 'Remove' },
+  { key: 'posts', ko: '글 고정', en: 'Posts' },
+  { key: 'look', ko: '꾸미기', en: 'Look' },
+  { key: 'files', ko: '파일 정리', en: 'Files' },
+  { key: 'agents', ko: '팀 참모', en: 'Agents' },
+];
+
+/** 순위 — 팀장 3 · 전체 권한 2 · 매니저 1 · 팀원 0 (relay src/perms.ts rank). 화면 판단만 — 실제로 막는 건 서버·명부 */
+const rankOf = (x: { role: string; perms?: string[] }) => (x.role === 'owner' ? 3 : x.perms?.includes('all') ? 2 : x.perms?.length ? 1 : 0);
+
+/** 팀원 줄 — 나를 맨 위로. 빼기 = 팀장이거나 kick 권한 + 나보다 낮은 사람(마지막 팀장은 서버가 409), 권한 바꾸기 = 전체 권한 이상 + 나보다 낮은 사람 */
 export function memberRows(v: { role: string; members: Member[] }): MemberRow[] {
+  const me = v.members.find((x) => x.me);
+  const mine = { role: v.role, perms: me?.perms ?? [] };
+  const myRank = rankOf(mine);
   const owner = v.role === 'owner';
   return [...v.members]
     .sort((a, b) => Number(b.me) - Number(a.me))
-    .map((x) => ({ id: x.id, name: x.name, me: x.me, owner: x.role === 'owner', devices: (x.devices ?? []).map((d) => d.name), canRemove: owner && !x.me }));
+    .map((x) => {
+      const r = rankOf(x);
+      const lower = !x.me && (owner || myRank > r);
+      return {
+        id: x.id, name: x.name, me: x.me, owner: x.role === 'owner', devices: (x.devices ?? []).map((d) => d.name),
+        badge: r === 3 ? 'owner' : r === 2 ? 'all' : r === 1 ? 'manager' : '',
+        perms: x.perms ?? [],
+        canRemove: lower && (owner || mine.perms.includes('kick') || myRank >= 2),
+        canPerms: lower && myRank >= 2 && x.role !== 'owner',
+        canAll: owner && !x.me && x.role !== 'owner',
+        canTransfer: owner && !x.me && x.role !== 'owner',
+      };
+    });
 }
 
 /** 팀 지우기 확인 창 — 팀 이름·팀원 수. 같은 이름 팀이 있으면 id 끝자리까지(같은 이름 팀이 둘이면 이름만으론 어느 팀인지 모른다) */

@@ -18,6 +18,8 @@ pub const READ: &[&str] = &[
     "folder_status", "harness_project", "memory_files_for",
     // 보관함(~/Documents/Chammo) 읽기
     "locker_peek", "locker_tree", "locker_versions", "locker_find", "locker_recent_shots", "locker_reveal",
+    // 보여 준 파일 끌기 — show 기록·보관함을 읽어 거른 뒤 끌기 세션만 메인 스레드로(shown_share)
+    "drag_native",
     // ~/.claude·~/.claude.json(링크면 어디로든)
     "accounts_view", "daemon_started_at", "daemon_stopped_recently", "claude_defaults_snapshot", "bypass_consent", "daemon_env_check",
     // 화면이 넘긴 아무 경로·설정에 적힌 경로

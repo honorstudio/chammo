@@ -47,7 +47,7 @@ export function TeamStart({ view: given, invite = '', makeNow = false, onDone, o
       <div className="tmx-lnk"><code>{link.link}</code>
         <IconButton label={copied ? tr('복사했어요', 'Copied') : tr('복사', 'Copy')} onClick={() => void navigator.clipboard?.writeText(link.link).then(() => setCopied(true), () => {})}><IconCopy /></IconButton>
       </div>
-      <span className="tmx-hint">{tr('슬랙·카톡으로 보내면 받는 사람이 눌러서 들어와요 · 24시간 · 한 사람만', 'Send it over Slack or chat — they click it to join · 24 hours · one person')}</span>
+      <span className="tmx-hint">{tr('슬랙·카톡으로 보내세요. 받은 사람이 누르면 들어와요. 24시간 안에 한 사람만 쓸 수 있어요', 'Send it over Slack or chat. Whoever clicks it joins. It works for one person within 24 hours.')}</span>
     </>
   );
   const errLine = err && <span className="tmx-hint" role="alert">{err}</span>;
@@ -106,7 +106,7 @@ export function TeamStart({ view: given, invite = '', makeNow = false, onDone, o
   const owner = v.role === 'owner';
   return (
     <div className="tmx-start">
-      {screen === 'already' && <span className="tmx-hint" role="status">{tr(`이 기기는 초대 코드로만 ${v.team} 팀에 들어와 있어서 다른 팀엔 못 들어가요 — 설정 > Chammo 계정에서 로그인하면 여러 팀`, `This device joined ${v.team} with an invite code only, so it can't join another team — sign in under Settings > Chammo account for more teams`)}</span>}
+      {screen === 'already' && <span className="tmx-hint" role="status">{tr(`이 기기는 초대 코드로 ${v.team} 팀에만 들어와 있어요. 다른 팀에도 들어가려면 설정 > Chammo 계정에서 로그인하세요`, `This device joined ${v.team} with an invite code only. To join other teams, sign in under Settings > Chammo account`)}</span>}
       <b>{tr(`${v.team} 초대 링크`, `${v.team} invite link`)}</b>
       {!owner && <span className="tmx-hint">{tr('초대 링크는 팀장 기기에서 만들어요', 'Only the team owner can make invite links')}</span>}
       <div className="tmx-row-a">

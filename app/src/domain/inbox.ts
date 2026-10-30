@@ -75,7 +75,7 @@ export function buildInbox(
     if (who) Object.assign(at, { project: who, where: '' });
     // 물음은 결론 첫 문장(lead) + 마지막 질문(text) — 앞에서 자른 답은 질문이 잘렸다(domain/activity askView)
     if (status === 'asks') out.push({ key: `ask:${s.id}:${ts}`, kind: 'ask', ...at, text: a.reply?.ask?.q || a.reply?.text || '', ...(a.reply?.ask?.lead ? { lead: a.reply.ask.lead } : {}), ts, target: s.id, toOrch: true });
-    if (status === 'blocked') out.push({ key: `blocked:${s.id}:${ts}`, kind: 'blocked', ...at, text: tr('확인창·선택지에서 멈춰 있어 — 열어서 골라줘', 'Waiting on a prompt or choice — open it and pick one'), ts, target: s.id });
+    if (status === 'blocked') out.push({ key: `blocked:${s.id}:${ts}`, kind: 'blocked', ...at, text: tr('확인창에서 멈춰 있어. 열어서 골라줘', 'Waiting on a prompt or choice — open it and pick one'), ts, target: s.id });
   }
 
   // 일마다 마지막 이벤트가 ask(참모가 scripts/task ask 로 올림)면 결정 대기

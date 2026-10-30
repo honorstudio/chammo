@@ -61,7 +61,7 @@ export function TopBar({ features, usage, usageAge, account, accounts, onSetting
       {load && <>
         <span className="sep" />
         <button type="button" className={`load-chip ${load.level} ${loadOn ? 'on' : ''}`} onClick={onLoad}
-          title={tr(`1분 부하 ${load.load1.toFixed(1)} / 코어 ${load.cores}개 · 스왑 ${load.swapGb.toFixed(1)}GB — 눌러서 세션별로 보기`, `Load ${load.load1.toFixed(1)} on ${load.cores} cores · swap ${load.swapGb.toFixed(1)}GB — click for a per-session view`)}>
+          title={tr(`부하 ${load.load1.toFixed(1)} (코어 ${load.cores}개) · 스왑 ${load.swapGb.toFixed(1)}GB. 누르면 세션별로 봐요`, `Load ${load.load1.toFixed(1)} on ${load.cores} cores · swap ${load.swapGb.toFixed(1)}GB. Click for a per-session view`)}>
           <span className="m-label">{tr('부하', 'Load')}</span>
           <b>{load.load1.toFixed(1)}</b>
           <span className="dim">/ {load.cores} · {tr('스왑', 'swap')} {load.swapGb.toFixed(1)}G</span>
@@ -77,7 +77,7 @@ export function TopBar({ features, usage, usageAge, account, accounts, onSetting
             ? (office ? tr('사무실 — 스페이스 칸이 사무실 (눌러서 스페이스로, ⌘4)', 'Office — the space shows the office (click for space, ⌘4)') : tr('사무실 — 스페이스 칸을 사무실로 (⌘4)', 'Office — show the office in the space (⌘4)'))
             : (office ? tr(`사무실 모드 켜짐 — ${assistant()} 화면이 픽셀 사무실로 (눌러서 끄기)`, `Office mode on — ${assistant()}'s screen is a pixel office (click to turn off)`) : tr(`사무실 모드 — ${assistant()} 화면을 픽셀 사무실로 (⌘4)`, `Office mode — show ${assistant()}'s screen as a pixel office (⌘4)`))}
             aria-label={tr('사무실', 'Office')} aria-pressed={office} onClick={onOffice}><IconOffice /></button>,
-          reader: <button key="reader" className={`voice ${reader ? 'on' : ''}`} title={reader ? tr('리더 패널 닫기 (⌘E)', 'Close reader panel (⌘E)') : tr('리더 패널 — 시안·PDF·문서 (⌘E)', 'Reader panel — designs, PDFs, docs (⌘E)')} aria-label={tr('리더 패널', 'Reader panel')} aria-pressed={reader} onClick={onReader}><IconReader /></button>,
+          reader: <button key="reader" className={`voice ${reader ? 'on' : ''}`} title={reader ? tr('리더 패널 닫기 (⌘E)', 'Close reader panel (⌘E)') : tr('리더 (⌘E)', 'Reader (⌘E)')} aria-label={tr('리더 패널', 'Reader panel')} aria-pressed={reader} onClick={onReader}><IconReader /></button>,
           // 기록·음성·도구·하니터·리뷰 — 터미널 뷰만(채팅 뷰는 왼쪽 참모 패널, domain/topbarMenu rail)
           replay: featureButton('replay', fp, 'voice'), voice: featureButton('voice', fp, 'voice'), tools: featureButton('tools', fp, 'voice'),
           harnitor: featureButton('harnitor', fp, 'voice'), review: featureButton('review', fp, 'voice'),
@@ -93,7 +93,7 @@ export function TopBar({ features, usage, usageAge, account, accounts, onSetting
           {/* 채팅 | 터미널 — 지금 뷰가 칠해진다. 두 뷰가 아예 달라져서 켜고 끄는 단추 대신 두 칸(2026-10-03 사용자) */}
           <span className="view-seg" role="group" aria-label={tr('보기', 'View')}>
             <button className={space ? 'on' : ''} aria-pressed={space} aria-label={tr('채팅 뷰', 'Chat view')} title={tr(`채팅 뷰 — 가운데 ${assistant()} 채팅, 오른쪽 스페이스`, `Chat view — ${assistant()} chat in the middle, space on the right`)} onClick={() => onView(true)}><IconSpace /></button>
-            <button className={space ? '' : 'on'} aria-pressed={!space} aria-label={tr('터미널 뷰', 'Terminal view')} title={tr('터미널 뷰 — 터미널·리더·작업 패널', 'Terminal view — terminals, reader, task panel')} onClick={() => onView(false)}><IconTerminal /></button>
+            <button className={space ? '' : 'on'} aria-pressed={!space} aria-label={tr('터미널 뷰', 'Terminal view')} title={tr('터미널 뷰', 'Terminal view')} onClick={() => onView(false)}><IconTerminal /></button>
           </span>
           {after.map((id) => item[id])}
         </>;

@@ -224,7 +224,7 @@ function OpenDetail({ pr, data, now, session, named, onOpenSession }: { pr: Revi
       </div>
       {asking && session && (
         <div className="rv-ask">
-          <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={tr(`${session.name || session.project} 에 보낼 말 — 앞에 "${pr.folder} #${pr.number} 수정 요청:" 이 붙는다`, `Message to ${session.name || session.project} — prefixed with "${pr.folder} #${pr.number} change request:"`)} />
+          <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={tr(`${session.name || session.project}에 보낼 말. 앞에 "${pr.folder} #${pr.number} 수정 요청:"이 붙어요`, `Message to ${session.name || session.project}. Prefixed with "${pr.folder} #${pr.number} change request:"`)} />
           <div className="rv-actions">
             <IconButton size="l" tone="pri" label={tr('보내기', 'Send')} title={tr('보내기 — 수정 요청을 그 세션에', 'Send the change request to that session')} disabled={!text.trim() || doing || !!blocked} onClick={() => void act(tr('보내기', 'Send'), () => data.requestFix(pr, session.id, session.name || session.project, text.trim())).then(() => { setText(''); setAsking(false); })}><IconSend /></IconButton>
             <span className="dim">{blocked ?? tr('보내면 작업 패널에 시킨 일로 남는다', 'Sending logs it as a task in the task panel')}</span>
@@ -276,7 +276,7 @@ function MergedDetail({ m, data }: { m: MergedPr; data: ReviewData }) {
     <div className="rv-body">
       <div className="dim rv-meta">{m.folder} #{m.number} · {tr(`${hm(m.mergedAt)} 머지됨`, `merged ${hm(m.mergedAt)}`)}</div>
       <h2 className="rv-title">{m.title}</h2>
-      <div className="rv-sum"><SumLine k={tr('되돌리기', 'Revert')} v={tr('revert PR 을 만들기만 한다 — 머지는 안 한다. 만든 PR 은 목록에 올라오니 보고 넣어줘', 'Only opens a revert PR — it does not merge. The new PR shows up in the list; check it and merge')} /></div>
+      <div className="rv-sum"><SumLine k={tr('되돌리기', 'Revert')} v={tr('revert PR만 만들어요. 머지는 안 해요. 목록에 올라온 PR을 보고 직접 머지하세요', 'Only opens a revert PR. It does not merge. The new PR shows up in the list; check it and merge')} /></div>
       <div className="rv-actions">
         {made ? (
           <button className="btn" onClick={() => void openTarget('url', made.url)}>{tr(`revert PR #${made.number} 열기`, `Open revert PR #${made.number}`)}</button>
