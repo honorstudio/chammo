@@ -67,6 +67,8 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
   const readErr = useRef(false);
   /** 읽는 중 — 3초 폴링이 읽는 중에 또 부르지 않게 */
   const busyLoad = useRef(false);
+  /** 받아 둔 글만 먼저 그렸다(나머지는 Rust 가 뒤에서 받는 중) — 다음 폴링은 판 번호와 상관없이 새로 */
+  const partial = useRef(false);
   /** seen = 본 판(null = 꼭 새로) — 그대로면 아무것도 안 바꾼다. 읽기 실패는 아는 글판 둔 채 문구만 */
   const load = useCallback((seen: number | null) => {
     busyLoad.current = true;
@@ -75,6 +77,7 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
       if (!n) return;
       boardMemo.put(teamId, n);
       rev.current = n.rev;
+      partial.current = !!n.loading;
       setB(n);
       if (readErr.current) { readErr.current = false; setErr(''); }
     }, (e: unknown) => { if (seen === null) { readErr.current = true; setErr(postErr('read', String(e))); } }).finally(() => { busyLoad.current = false; });
@@ -88,7 +91,7 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
     rev.current = m?.v.rev ?? 0;
     load(m && !needFetch(m, 0) ? m.v.rev : null);
     // 보관함 바뀜 알림(소켓 {t:"locker"})으로 판이 오르면 다시 — 프로필판과 같은 판 번호
-    return every(() => { if (!busyLoad.current) load(rev.current); }, 3_000);
+    return every(() => { if (!busyLoad.current) load(partial.current ? null : rev.current); }, 3_000);
   }, [teamId, load]);
 
   // 판 — 글판과 같은 판 번호(보관함 바뀜)로 다시 읽는다. 읽기 실패는 판 없이 글 목록 그대로(문구는 글판 몫)

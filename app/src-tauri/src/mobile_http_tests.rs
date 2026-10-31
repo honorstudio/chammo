@@ -41,6 +41,8 @@ pub(crate) struct Fake {
     gacha_slow: Duration,
     /// 팀 길마다 그때 사람 몫(team_relay::as_human)이었나 — 폰에서 누른 쓰기는 배경 몫에 안 막혀야
     human: Mutex<Vec<String>>,
+    /// 그림 바꾸기(sips·qlmanage)가 없다 — 윈도우(공개 이슈 #15)
+    no_convert: bool,
 }
 
 impl Fake {
@@ -369,10 +371,16 @@ impl Backend for Fake {
     }
     fn ql_thumb(&self, path: &Path, size: u32) -> Option<Vec<u8>> {
         self.log(format!("ql {} {size}", path.extension()?.to_string_lossy()));
+        if self.no_convert {
+            return None;
+        }
         Some(b"\xFF\xD8\xFFql".to_vec())
     }
     fn jpeg(&self, path: &Path, max: Option<u32>) -> Option<Vec<u8>> {
         self.log(format!("jpeg {} {max:?}", path.file_name()?.to_string_lossy()));
+        if self.no_convert {
+            return None;
+        }
         Some(b"\xFF\xD8\xFFjpeg".to_vec())
     }
     fn sessions_all(&self) -> Result<String, String> {
@@ -567,6 +575,46 @@ fn enc(p: &str) -> String {
 
 fn ctype(r: &Resp) -> String {
     r.headers.iter().find(|(k, _)| *k == "Content-Type").map(|(_, v)| v.clone()).unwrap_or_default()
+}
+
+#[test]
+fn 윈도우_show_기록은_폰에_슬래시_경로로() {
+    // 폰은 경로를 / 로 자르고(이름) / 로 이어 붙인다 — 윈도우 show 기록(C:\…)을 그대로 주면 이름이 경로 통째로 나오고 묻는 경로가 어긋났다(공개 이슈 #15)
+    let line = r#"{"ts":"t","path":"C:\\Users\\Me\\Desktop\\a.png","cwd":"C:\\Users\\Me"}"#;
+    let v: serde_json::Value = serde_json::from_str(&super::phone_show_line(line)).unwrap();
+    assert_eq!(v["path"], "C:/Users/Me/Desktop/a.png");
+    assert_eq!(v["ts"], "t");
+    // 맥·웹 주소는 글자 그대로
+    let mac = r#"{"ts":"t","path":"/Users/me/a.png"}"#;
+    assert_eq!(super::phone_show_line(mac), mac);
+    let web = r#"{"ts":"t","path":"https://example.com/x"}"#;
+    assert_eq!(super::phone_show_line(web), web);
+}
+
+#[test]
+fn 그림_바꾸기가_없으면_원본_그림을_준다() {
+    // 윈도우엔 sips·qlmanage 가 없어 폰 썸네일·보기용이 늘 502 였다 — 폰에 그림이 하나도 안 떴다(공개 이슈 #15).
+    // 폰이 그릴 수 있는 그림(png·jpg·gif·webp)은 원본 그대로, 못 그리는 HEIC·첫 장(QuickLook)은 그대로 실패
+    let d = tmp("noconv");
+    let png = d.join("a.png");
+    let body = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\x0f\0\0\0\x0f\0".to_vec();
+    std::fs::write(&png, &body).unwrap();
+    let heic = d.join("b.heic");
+    std::fs::write(&heic, b"\0\0\0\x18ftypheic").unwrap();
+    let pdf = d.join("c.pdf");
+    std::fs::write(&pdf, b"%PDF-1.4").unwrap();
+    let show: String = [&png, &heic, &pdf].iter().map(|p| format!("{{\"path\":\"{}\"}}\n", p.display())).collect();
+    let fake = || Fake { show: show.clone(), data: d.join("data"), no_convert: true, ..Default::default() };
+    let file = |p: &Path, extra: &str| with_cookie(get(&format!("/api/file?path={}{extra}", enc(&p.to_string_lossy()))));
+    for extra in ["&thumb=1", "&thumb=1&size=720", "&view=1"] {
+        let (s, f, r) = run_with(file(&png, extra), fake());
+        assert_eq!((s, ctype(&r)), (200, "image/png".to_string()), "{extra}");
+        assert_eq!(r.body, body, "{extra}");
+        assert_eq!(f.calls().len(), 1, "바꾸기를 한 번 해 보고 나서 — {extra}");
+        assert!(r.headers.iter().any(|(k, v)| *k == "X-Image-Size" && v == "3840x3840"), "{extra}");
+    }
+    assert_eq!(run_with(file(&heic, "&thumb=1"), fake()).0, 502);
+    assert_eq!(run_with(file(&pdf, "&thumb=1"), fake()).0, 502);
 }
 
 #[test]

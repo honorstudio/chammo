@@ -38,8 +38,8 @@ describe('폰 말풍선 참조', () => {
   it('내 말·참모 말풍선을 길게 누르면 참조·복사(글자 메뉴), 참조는 이 참모 입력칸에 #chat', () => {
     expect(list).toMatch(/<Mine text=\{it\.text\} images=\{it\.images\} press=\{held\} \/>/);
     expect(list).toMatch(/className="m-bubble m-ai m-md"[^\n]*\{\.\.\.held\}/);
-    expect(list).toMatch(/>참조<\/button>/);
-    expect(list).toMatch(/>복사<\/button>/);
+    expect(list).toMatch(/>\{tr\('참조', '[^']+'\)\}<\/button>/);
+    expect(list).toMatch(/>\{tr\('복사', 'Copy'\)\}<\/button>/);
     expect(mobileApp).toMatch(/onRef=\{\(who, text\) => askRef\(orch\.id, \{ kind: 'chat', who, text \}\)\}/);
   });
   it('입력칸은 참모 id(draftKey)로 받고, 보낼 땐 데스크톱과 같은 withRefs', () => {

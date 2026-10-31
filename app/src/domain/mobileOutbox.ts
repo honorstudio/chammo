@@ -1,6 +1,6 @@
 // 폰 보낼 함·쓰던 글 — 참모를 바꾸면 채팅 화면이 새로 그려져(OrchSpace key) 컴포넌트 안에 두던 보내는 중 말풍선·쓰던 글이 날아갔다(2026-10-03 사용자).
 // 그래서 저장소(localStorage)에 둔다. 화면·통신 없음 — 저장소는 받아서 쓰고, 막혀 있으면(개인 정보 보호 모드) 조용히 빈 값
-import { josa, machine } from '../i18n';
+import { josa, machine, tr } from '../i18n';
 import { parseChat, pendingLeft, type ChatItem, type ChatRef } from './chat';
 import { newPending } from './chatQueue';
 
@@ -102,7 +102,7 @@ export const dueForCheck = (m: OutMsg, now: number) =>
  *  모름(맥이 안 받음·치다 꺼짐)은 looked(그 말 보낸 때부터 대화 기록을 다 봤음 — 꼬리가 덮거나 꼬리 앞을 찾아봄)일 때만 실패로 — 아직이면 기다린다.
  *  기록을 안 보고 바로 실패로 바꾸니 들어간 말이 '못 받았어요'로 남았다(2026-10-11 사용자 폰) */
 export function applyStatus(list: OutMsg[], id: string, state: string, error: string | undefined, now: number, looked: boolean): OutMsg[] {
-  if (state === 'failed' || (state === 'unknown' && looked)) return markOut(list, id, 'failed', state === 'failed' ? error || '못 쳤어요' : `${josa(machine(), '이', '가')} 이 말을 못 받았어요`);
+  if (state === 'failed' || (state === 'unknown' && looked)) return markOut(list, id, 'failed', state === 'failed' ? error || tr('못 쳤어요', 'Could not type it') : tr(`${josa(machine(), '이', '가')} 이 말을 못 받았어요`, `The ${machine()} did not get this message`));
   return list.map((m) => (m.id === id ? { ...m, checked: now } : m));
 }
 

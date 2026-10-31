@@ -1,6 +1,7 @@
 // 예약 판(시안 A4) — 공간머리 예약 버튼으로 들어온다. 줄을 누르면 펼쳐서 [지금 실행] [일시정지·다시 켜기] [지침서].
 // 지금 실행은 한 번 더 눌러야 돈다(데스크톱 지우기처럼, 2026-10-02 참모-2 결정 ④). 클라우드 예약은 목록만(실행은 claude.ai)
 import { useEffect, useState } from 'react';
+import { tr } from '../../i18n';
 import { routineDo, routinesList } from '../../data/web';
 import { groupRoutines, isCloud, parseRoutines, routineItem, routineSummary, type Routine } from '../../domain/routine';
 import { IconBack, IconNote } from '../Icons';
@@ -47,10 +48,10 @@ export function RoutineBoard({ sessions, onBack }: { sessions: Session[]; onBack
     setMsg(null);
     try {
       await routineDo(r.name, action);
-      setMsg({ text: action === 'run' ? `${r.name} 시작했어요` : action === 'pause' ? `${r.name} 일시정지` : `${r.name} 다시 켬`, error: false });
+      setMsg({ text: action === 'run' ? tr(`${r.name} 시작했어요`, `${r.name} started`) : action === 'pause' ? tr(`${r.name} 일시정지`, `${r.name} paused`) : tr(`${r.name} 다시 켬`, `${r.name} turned back on`), error: false });
       setTick((t) => t + 1);
     } catch (e) {
-      setMsg({ text: `못 했어요: ${(e as Error).message}`, error: true });
+      setMsg({ text: tr(`못 했어요: ${(e as Error).message}`, `Couldn't do that: ${(e as Error).message}`), error: true });
     } finally {
       setBusy(null);
     }
@@ -60,10 +61,10 @@ export function RoutineBoard({ sessions, onBack }: { sessions: Session[]; onBack
     <div className="m-dash">
       <header className="m-dash-head">
         <div className="m-dash-row">
-          <button type="button" className="m-rt-btn m-ico" onClick={onBack} aria-label="대시보드로" title="대시보드로"><IconBack /></button>
-          <div className="m-dash-title">예약</div>
+          <button type="button" className="m-rt-btn m-ico" onClick={onBack} aria-label={tr('대시보드로', 'Back to dashboard')} title={tr('대시보드로', 'Back to dashboard')}><IconBack /></button>
+          <div className="m-dash-title">{tr('예약', 'Scheduled')}</div>
         </div>
-        <div className="m-sm m-rt-sum">{raw === null ? (err ? '예약 목록을 못 읽었어요' : '불러오는 중…') : routineSummary(routines, now)}</div>
+        <div className="m-sm m-rt-sum">{raw === null ? (err ? tr('예약 목록을 못 읽었어요', "Couldn't read the schedule list") : tr('불러오는 중…', 'Loading…')) : routineSummary(routines, now)}</div>
       </header>
       {err && <div className="m-error" role="status">{err}</div>}
       {msg && <Notice text={msg.text} error={msg.error} onClose={() => setMsg(null)} />}
@@ -75,33 +76,33 @@ export function RoutineBoard({ sessions, onBack }: { sessions: Session[]; onBack
               <span className="m-rt-mid">
                 <b>{r.name}</b>
                 <span>{line}</span>
-                {r.last?.note && <span className="m-muted">지난번: {r.last.note}</span>}
+                {r.last?.note && <span className="m-muted">{tr('지난번', 'Last run')}: {r.last.note}</span>}
               </span>
               <span className="m-muted m-sm">{status}</span>
             </button>
             {openName === r.name && (
               <div className="m-rt-acts">
                 {isCloud(r) ? (
-                  <span className="m-muted m-sm">클라우드 예약 — 실행·일시정지는 claude.ai 에서</span>
+                  <span className="m-muted m-sm">{tr('클라우드 예약 — 실행·일시정지는 claude.ai 에서', 'Cloud schedule — run or pause it on claude.ai')}</span>
                 ) : (
                   <>
                     <button type="button" className={armed === r.name ? 'm-send' : 'm-btn'} disabled={busy === r.name} onClick={() => void act(r, 'run')}>
-                      {armed === r.name ? '한 번 더 누르면 실행' : '지금 실행'}
+                      {armed === r.name ? tr('한 번 더 누르면 실행', 'Tap again to run') : tr('지금 실행', 'Run now')}
                     </button>
                     <button type="button" className="m-btn" disabled={busy === r.name} onClick={() => void act(r, r.enabled ? 'pause' : 'resume')}>
-                      {r.enabled ? '일시정지' : '다시 켜기'}
+                      {r.enabled ? tr('일시정지', 'Pause') : tr('다시 켜기', 'Turn back on')}
                     </button>
-                    <button type="button" className="m-icon" onClick={() => setDoc(r)} aria-label={`${r.name} 지침서`} title="지침서"><IconNote /></button>
+                    <button type="button" className="m-icon" onClick={() => setDoc(r)} aria-label={tr(`${r.name} 지침서`, `${r.name} instructions`)} title={tr('지침서', 'Instructions')}><IconNote /></button>
                   </>
                 )}
               </div>
             )}
           </div>
         ))}
-        {raw !== null && routines.length > 0 && active.length === 0 && <p className="m-muted m-sm">걸린 예약이 없어요 — 다 끝났어요</p>}
-        {done.length > 0 && <div className="m-sect">끝난 예약 {done.length}개</div>}
+        {raw !== null && routines.length > 0 && active.length === 0 && <p className="m-muted m-sm">{tr('걸린 예약이 없어요 — 다 끝났어요', 'Nothing scheduled — all done')}</p>}
+        {done.length > 0 && <div className="m-sect">{tr(`끝난 예약 ${done.length}개`, `${done.length} finished`)}</div>}
       </div>
-      {doc && <FileView path={doc.instructions} title={`${doc.name} 지침서`} onClose={() => setDoc(null)} />}
+      {doc && <FileView path={doc.instructions} title={tr(`${doc.name} 지침서`, `${doc.name} instructions`)} onClose={() => setDoc(null)} />}
     </div>
   );
 }

@@ -29,7 +29,7 @@ pub fn kind_of(path: &str, resolved: &str) -> &'static str {
 }
 
 /// "2.1.302"·"v2.1.302" 같은 낱말이면 번호만
-fn ver_token(t: &str) -> Option<String> {
+pub(crate) fn ver_token(t: &str) -> Option<String> {
     let t = t.trim_start_matches('v');
     let p: Vec<&str> = t.split('.').collect();
     (p.len() == 3 && p.iter().all(|x| !x.is_empty() && x.bytes().all(|b| b.is_ascii_digit()))).then(|| t.to_string())

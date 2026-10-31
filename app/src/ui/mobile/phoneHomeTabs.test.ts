@@ -6,7 +6,7 @@ import css from './mobile.css?raw';
 // 켜고 끄는 게 아니라 자리를 옮기는 것 → 탭 모양(데스크톱 탭 줄 맨 왼쪽 고정 탭 홈·보관함과 같은 말)
 describe('폰 홈 | 보관함 = 탭', () => {
   it('알약(m-seg) 대신 탭 줄', () => {
-    expect(dash).toMatch(/className="m-dash-tabs" role="tablist" aria-label="홈·보관함"/);
+    expect(dash).toMatch(/className="m-dash-tabs" role="tablist" aria-label=\{tr\('홈·보관함', 'Home and locker'\)\}/);
     expect(dash).not.toMatch(/m-seg m-dash-seg/);
   });
   it('탭 모양 — 아래 선 위 글자, 고른 탭은 굵게 + 아래 굵은 밑줄(알약 면 없음), 누르는 자리 44', () => {

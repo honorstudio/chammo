@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { swipeAxis, swipeReveal, swipeSettle, swipeX } from '../../domain/swipe';
 import { dragStale } from '../../domain/sheetGuard';
+import { tr } from '../../i18n';
 
 /** icon 이 있으면 아이콘만(aria-label·title = label) */
 export type SwipeAction = { label: string; icon?: ReactNode; danger?: boolean; tone?: 'pin'; onPress: () => void };
@@ -104,7 +105,7 @@ export function SwipeRow({ id, openId, setOpenId, actions, start = [], className
   const rv = swipeReveal(x, width, startW);
   return (
     <div ref={row} className={`m-swipe${x < 0 ? ' m-show-end' : x > 0 ? ' m-show-start' : ''} ${className ?? ''}`} data-swipe={id} onContextMenu={onMenu ? (e) => { e.preventDefault(); onMenu(); } : undefined}>
-      {onMenu && <button type="button" className="m-sr" onClick={onMenu}>{menuLabel ?? '메뉴'}</button>}
+      {onMenu && <button type="button" className="m-sr" onClick={onMenu}>{menuLabel ?? tr('메뉴', 'Menu')}</button>}
       {start.length > 0 && <div className="m-swipe-acts m-swipe-start" style={{ width: startW, clipPath: `inset(0 ${startW - rv.start}px 0 0)` }} aria-hidden={!open || x <= 0}>{start.map((a) => btn(a, 'start'))}</div>}
       <div className="m-swipe-acts" style={{ width, clipPath: `inset(0 0 0 ${width - rv.end}px)` }} aria-hidden={!open || x >= 0}>{actions.map((a) => btn(a, 'end'))}</div>
       <div ref={front} className="m-swipe-front" style={{ transform: `translateX(${x}px)`, transition: drag ? 'none' : undefined }}

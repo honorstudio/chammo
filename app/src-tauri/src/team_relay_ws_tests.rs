@@ -486,9 +486,9 @@ fn live_운영_서버_왕복() {
 #[test]
 fn 새_방이_생기면_이름을_바로_다시_받는다() {
     let r = |id: &str| crate::team_relay::Room { id: id.into(), kind: "dm".into(), peer: "m2".into(), team: "t1".into(), ..Default::default() };
-    assert!(names_due(&["a".into()], &[r("a"), r("b")]));
-    assert!(!names_due(&["a".into(), "b".into()], &[r("a"), r("b")]));
-    assert!(!names_due(&["a".into()], &[]));
+    assert_eq!(new_room_teams(&["a".into()], &[r("a"), r("b")]).into_iter().collect::<Vec<_>>(), vec!["t1".to_string()]);
+    assert!(new_room_teams(&["a".into(), "b".into()], &[r("a"), r("b")]).is_empty());
+    assert!(new_room_teams(&["a".into()], &[]).is_empty());
 }
 
 #[test]
@@ -556,4 +556,51 @@ fn 건네받은_지난_말은_같은_자리에_기록만_하고_참모에겐_안
     assert!(inbox.contains("지난 회의록") && inbox.contains("\"note\":\"late\"") && inbox.contains("\"seq\":2"), "{inbox}");
     assert_eq!(crate::team_relay_inbox::last_seen(&d, "r1"), 4, "받은 자리(seq)는 앞으로만");
     let _ = r.tx.send(Cmd::Stop);
+}
+
+#[test]
+fn 팀_바뀜_알림은_2초_묶어서_방_찾기를_한_번만() {
+    let _ports = crate::test_ports::lock();
+    // 10-31 실측: 팀 바뀜 하나(권한·초대)마다 팀의 모든 기기가 명부·내 계정·기기·사슬을 7요청씩 — 몰려오면 그만큼 또
+    let d = dir("changed-batch");
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    seed(&d, l.local_addr().unwrap().port());
+    let (tx, rx) = mpsc::channel();
+    let (gtx, _got) = mpsc::channel();
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let c2 = calls.clone();
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        let disc: Discover = Box::new(move || {
+            c2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        });
+        Loop::new(d2, keys(), Box::new(move |t: String| { let _ = gtx.send(t); }), rx).with_tick(Duration::from_millis(20)).with_discover(disc).with_opener(opened()).run();
+    });
+    let (mut ws, _) = accept(&l, vec![]);
+    std::thread::sleep(Duration::from_millis(300));
+    let start = calls.load(std::sync::atomic::Ordering::SeqCst);
+    for _ in 0..3 {
+        ws.send(tungstenite::Message::text(json!({ "t": "team_changed", "team": "t1" }).to_string())).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    std::thread::sleep(Duration::from_millis(900));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), start, "2초 안엔 안 받는다(더 올 수 있다)");
+    std::thread::sleep(Duration::from_millis(1_800));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), start + 1, "세 번 온 알림을 한 번에");
+    let _ = tx.send(Cmd::Stop);
+}
+
+#[test]
+fn 팀_바뀜엔_그_팀_명부만_5분_주기엔_전부와_내_계정까지() {
+    let teams = vec!["t1".to_string(), "t2".to_string()];
+    let set = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<std::collections::BTreeSet<String>>();
+    assert_eq!(refresh_plan(&teams, &set(&["t1"]), &set(&[]), false), (vec!["t1".to_string()], false));
+    assert_eq!(refresh_plan(&teams, &set(&[]), &set(&["t2"]), false), (vec!["t2".to_string()], false), "새 방이 생긴 팀만");
+    assert_eq!(refresh_plan(&teams, &set(&[""]), &set(&[]), false), (teams.clone(), false), "팀을 안 알려 준 옛 알림이면 모든 팀 명부(내 계정은 아님)");
+    assert_eq!(refresh_plan(&teams, &set(&["t1"]), &set(&[]), true), (teams.clone(), true));
+    assert_eq!(refresh_plan(&teams, &set(&[]), &set(&[]), false), (vec![], false), "바뀐 게 없으면 방 목록만");
+    // 10-31 리뷰: 내 다른 기기에서 들어간 새 팀(이 기기는 아직 모름) — 내 계정을 다시 받아야 팀이 생긴다, 5분을 안 기다린다
+    assert_eq!(refresh_plan(&teams, &set(&["t9"]), &set(&[]), false), (vec!["t9".to_string()], true), "모르는 팀 바뀜이면 내 계정도");
+    assert_eq!(refresh_plan(&teams, &set(&[]), &set(&["t9"]), false), (vec!["t9".to_string()], true), "모르는 팀 방이 생겨도");
 }

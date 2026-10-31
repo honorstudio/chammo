@@ -39,7 +39,7 @@ const innerOf = (el: HTMLElement) => {
 function ModeBody({ name, full = false }: { name: string; full?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   const drafts = useRef<Drafts>(new Map()).current;
-  const [v, setV] = useState<View>({ note: '불러오는 중', tree: null });
+  const [v, setV] = useState<View>({ note: tr('불러오는 중', 'Loading'), tree: null });
   const kick = useRef<() => void>(() => {});
   // 폰 화면 테마를 모드에 넘긴다 — 바뀌면 다시 받는다(#4)
   const scheme = useScheme();
@@ -58,9 +58,9 @@ function ModeBody({ name, full = false }: { name: string; full?: boolean }) {
       readModeView(name, c.columns, c.rows, scheme, ctl.signal).then((r) => {
         if (!alive) return;
         const st = r.state;
-        const note = st.unsupported ? '이 Claude Code 판에선 모드를 못 그려요' : st.error ? `모드가 멈췄어 — ${machine()}에서 다시 켜 줘` : !st.ready ? '모드 켜는 중' : null;
+        const note = st.unsupported ? tr('이 Claude Code 판에선 모드를 못 그려요', "This Claude Code version can't draw modes") : st.error ? tr(`모드가 멈췄어 — ${machine()}에서 다시 켜 줘`, `The mode stopped — turn it back on from the ${machine()}`) : !st.ready ? tr('모드 켜는 중', 'Starting the mode') : null;
         setV({ note, tree: r.tree ? normalize(r.tree) : null });
-      }, () => { if (alive) setV((x) => (x.tree ? x : { note: `${machine()}에 못 닿았어요`, tree: null })); })
+      }, () => { if (alive) setV((x) => (x.tree ? x : { note: tr(`${machine()}에 못 닿았어요`, `Can't reach the ${machine()}`), tree: null })); })
         .finally(() => { if (alive) timer = window.setTimeout(load, EVERY); });
     };
     kick.current = load;
@@ -96,7 +96,7 @@ function PhoneMore({ items }: { items: { label: string; run: () => void; warn?: 
   useEffect(() => (open ? closeOnOutside(window, (t) => !!box.current && t instanceof window.Node && box.current.contains(t), () => setOpen(false)) : undefined), [open]);
   return (
     <span className="m-mode-more" ref={box}>
-      <IconBtn label="더보기" onClick={() => setOpen((o) => !o)}><IconMore /></IconBtn>
+      <IconBtn label={tr('더보기', 'More')} onClick={() => setOpen((o) => !o)}><IconMore /></IconBtn>
       {open && (
         <div className="m-mode-menu" role="menu">
           {items.map((it) => <button key={it.label} type="button" role="menuitem" className={it.warn ? 'warn' : undefined} onClick={() => { setOpen(false); it.run(); }}>{it.label}</button>)}
@@ -113,7 +113,7 @@ function RowArt({ name }: { name: string }) {
 }
 
 const elsewhereText = (e: NonNullable<PickItem['elsewhere']>) =>
-  e.where === 'dash' && e.dash ? `${seenName(e.dash)} 홈에 켜짐` : e.where === 'panel' ? '패널에 켜짐' : e.where === 'window' ? '따로 창에 켜짐' : '다른 자리에 켜짐';
+  e.where === 'dash' && e.dash ? tr(`${seenName(e.dash)} 홈에 켜짐`, `On ${seenName(e.dash)}'s home`) : e.where === 'panel' ? tr('패널에 켜짐', 'On in the panel') : e.where === 'window' ? tr('따로 창에 켜짐', 'On in a window') : tr('다른 자리에 켜짐', 'On elsewhere');
 
 /** 고르기 목록(데스크톱 ModePick 과 같은 것) — 줄을 눌러 체크 → 켜기(차례로) · 체크 빼면 이 홈에서 끄기. 데스크톱 앱이 켜고 끈다.
  *  줄 끝 단추 = 지우기(기본 모드는 숨기기, 내가 등록한 것은 제거 — 원본 폴더 휴지통·데이터 폴더 모드는 데스크톱 관리에서) + 되돌리기 토스트 */
@@ -138,7 +138,7 @@ function PhonePick({ rows, keys, dash, onDone, onAsk, onChange }: { rows: PhoneM
     setBusy(true);
     void modeRemove(it.name).then((r) => {
       window.clearTimeout(toastT.current);
-      setToast({ text: `${it.title} ${r.kind === 'hidden' ? '숨겼어' : '제거했어'}`, undo: r.undo ? () => undo(it.name) : undefined });
+      setToast({ text: r.kind === 'hidden' ? tr(`${it.title} 숨겼어`, `${it.title} hidden`) : tr(`${it.title} 제거했어`, `${it.title} removed`), undo: r.undo ? () => undo(it.name) : undefined });
       toastT.current = window.setTimeout(() => setToast(null), 5000);
       onChange();
     }, (e) => setFail(errOf(e))).finally(() => setBusy(false));
@@ -167,24 +167,24 @@ function PhonePick({ rows, keys, dash, onDone, onAsk, onChange }: { rows: PhoneM
           <span className="m-mode-rowtext"><b>{it.title}</b>{it.elsewhere && <small>{elsewhereText(it.elsewhere)}</small>}</span>
           <span className="m-mode-check" aria-hidden="true">{on && <IconCheck />}</span>
         </button>
-        {way ? <IconBtn label={`${it.title} ${way === 'hide' ? '숨기기' : '제거'}`} disabled={busy} onClick={() => remove(it)}>{way === 'hide' ? <IconHide /> : <IconTrash />}</IconBtn> : <span className="m-mode-gap" aria-hidden="true" />}
+        {way ? <IconBtn label={way === 'hide' ? tr(`${it.title} 숨기기`, `Hide ${it.title}`) : tr(`${it.title} 제거`, `Remove ${it.title}`)} disabled={busy} onClick={() => remove(it)}>{way === 'hide' ? <IconHide /> : <IconTrash />}</IconBtn> : <span className="m-mode-gap" aria-hidden="true" />}
       </div>
     );
   });
   return (
     <div className="m-mode-pick">
-      {g.own.length > 0 && <><h4>내가 만든 것</h4>{list(g.own)}<h4>참모 모드</h4></>}
+      {g.own.length > 0 && <><h4>{tr('내가 만든 것', 'Made by me')}</h4>{list(g.own)}<h4>{tr('참모 모드', 'Chammo modes')}</h4></>}
       {list(g.examples)}
       <div className="m-mode-say">
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="어떤 화면이 필요한지 말해 보세요" aria-label="만들 모드 말하기"
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={tr('어떤 화면이 필요한지 말해 보세요', 'Say what kind of screen you need')} aria-label={tr('만들 모드 말하기', 'Describe a mode to build')}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) ask(); }} />
-        <IconBtn label="참모에게 보내기" onClick={ask} disabled={!text.trim()}><IconSend /></IconBtn>
+        <IconBtn label={tr('참모에게 보내기', 'Send to your assistant')} onClick={ask} disabled={!text.trim()}><IconSend /></IconBtn>
       </div>
       <button type="button" className="m-btn m-mode-go" disabled={busy || !n} onClick={apply}>
-        {diff.open.length && diff.close.length ? '적용' : diff.close.length ? '끄기' : '켜기'}{n > 1 ? ` ${n}` : ''}
+        {diff.open.length && diff.close.length ? tr('적용', 'Apply') : diff.close.length ? tr('끄기', 'Turn off') : tr('켜기', 'Turn on')}{n > 1 ? ` ${n}` : ''}
       </button>
-      {fail && <p className="m-mode-err" role="alert">못 바꿨어 — {fail}</p>}
-      {toast && <div className="m-mode-toast" role="status"><span>{toast.text}</span>{toast.undo && <button type="button" onClick={toast.undo}>되돌리기</button>}</div>}
+      {fail && <p className="m-mode-err" role="alert">{tr('못 바꿨어 — ', "Couldn't change — ")}{fail}</p>}
+      {toast && <div className="m-mode-toast" role="status"><span>{toast.text}</span>{toast.undo && <button type="button" onClick={toast.undo}>{tr('되돌리기', 'Undo')}</button>}</div>}
     </div>
   );
 }
@@ -200,8 +200,8 @@ export function PhoneModes({ keys, dash, onAsk }: { keys: string[]; dash: string
   const cur = shown.find((m) => m.name === pick) ?? shown[0];
   if (!cur) {
     return (
-      <section className="m-mode-try" aria-label="모드 고르기">
-        <b>내 화면 자리</b>
+      <section className="m-mode-try" aria-label={tr('모드 고르기', 'Pick modes')}>
+        <b>{tr('내 화면 자리', 'My screen')}</b>
         <PhonePick rows={rows} keys={keys} dash={dash} onDone={reload} onAsk={onAsk} onChange={reload} />
       </section>
     );
@@ -209,17 +209,17 @@ export function PhoneModes({ keys, dash, onAsk }: { keys: string[]; dash: string
   // 이 홈에서 끄기 — 그 모드가 켜진 홈 이름(목록의 dash)을 같이 보내 맥이 그 홈에 켜진 것만 끈다
   const off = () => { setOffErr(null); void modeClose(cur.name, cur.dash ?? dash).then(reload, (e) => setOffErr(e instanceof Error ? e.message : String(e))); };
   return (
-    <section className="m-mode" aria-label="모드">
+    <section className="m-mode" aria-label={tr('모드', 'Mode')}>
       <div className="m-mode-head">
         <div className="m-mode-pills" role="tablist">
           {shown.length > 1 ? shown.map((m) => (
             <button key={m.name} type="button" role="tab" aria-selected={m.name === cur.name} className={m.name === cur.name ? 'm-on' : ''} onClick={() => setPick(m.name)}>{m.title}</button>
           )) : <b>{cur.title}</b>}
         </div>
-        <IconBtn label="꽉 채워 보기" onClick={() => setFull(true)}><IconMaximize /></IconBtn>
-        <PhoneMore items={[{ label: '모드 고르기', run: () => setSheet(true) }, { label: '이 홈에서 끄기', run: off, warn: true }]} />
+        <IconBtn label={tr('꽉 채워 보기', 'Full screen')} onClick={() => setFull(true)}><IconMaximize /></IconBtn>
+        <PhoneMore items={[{ label: tr('모드 고르기', 'Pick modes'), run: () => setSheet(true) }, { label: tr('이 홈에서 끄기', 'Turn off on this home'), run: off, warn: true }]} />
       </div>
-      {offErr && <p className="m-mode-err" role="alert">못 껐어 — {offErr}</p>}
+      {offErr && <p className="m-mode-err" role="alert">{tr('못 껐어 — ', "Couldn't turn off — ")}{offErr}</p>}
       <ModeBody key={cur.name} name={cur.name} />
       {full && (
         <BottomSheet label={cur.title} kind="full" title={cur.title} onClose={() => setFull(false)}>
@@ -227,7 +227,7 @@ export function PhoneModes({ keys, dash, onAsk }: { keys: string[]; dash: string
         </BottomSheet>
       )}
       {sheet && (
-        <BottomSheet label="모드 고르기" title="모드" onClose={() => setSheet(false)}>
+        <BottomSheet label={tr('모드 고르기', 'Pick modes')} title={tr('모드', 'Modes')} onClose={() => setSheet(false)}>
           <PhonePick rows={rows} keys={keys} dash={dash} onDone={() => { setSheet(false); reload(); }} onAsk={onAsk} onChange={reload} />
         </BottomSheet>
       )}

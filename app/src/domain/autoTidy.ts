@@ -2,6 +2,7 @@
 // 사람이 세션 끄기를 배우지 않아도 되게, 끝난 팀 세션을 앱이 알아채서 맡긴 참모 입력칸에 [앱] 한 줄을 넣는다 → 참모가 starter·roadmap 갱신 → claude stop → 끝난 워크트리 정리.
 // 정리 대상: ① 맡긴 일이 다 done + 마지막 움직임에서 2시간(진행 칸 GOAL_IDLE_MS 와 같은 2시간) ② 맡긴 기록이 없는 세션이 24시간 조용.
 // 빼는 것: 안 닫힌 일·task wait·결정 대기(ask·직접 답하기 카드)·커밋 안 한 변경·main 에 안 들어간 커밋·선택지 창·사람 답 기다림·사람이 2시간 안에 친 입력
+import { capLine, type GitHead } from './progressHint';
 import { tr } from '../i18n';
 import type { Activity } from './activity';
 import { sendsTo } from './lostTriage';
@@ -14,7 +15,7 @@ export const TIDY_LOOSE_MS = 24 * 3600_000;
 export const TIDY_HUMAN_MS = 2 * 3600_000;
 
 /** 세션 폴더 git — dirty 커밋 안 한 변경, unmerged 기본 가지(main)에 안 들어간 커밋. git 이 아닌 폴더는 둘 다 false(Rust tidy_git) */
-export type TidyGit = { dirty: boolean; unmerged: boolean };
+export type TidyGit = { dirty: boolean; unmerged: boolean } & Partial<GitHead>;
 /** git 을 아직 안 봤으면 undefined — 판정은 하고 needGit 으로 알린다(git 은 후보만 본다) */
 export type TidyCand = { session: Session; activity?: Activity; git?: TidyGit };
 export type TidyReason = 'done' | 'quiet';
@@ -85,8 +86,8 @@ export function pickTidy(
 /** 도우미(HQ 안에서 띄운 세션)·예약(routine-<이름>) 세션 — starter 가 없어서 갱신 없이 바로 끈다 */
 export const tidyLight = (s: Session, helpers: readonly Session[]) => s.name.startsWith('routine-') || helpers.some((h) => h.id === s.id);
 
-/** 참모 입력칸에 넣을 한 줄(Enter 로 보내져서 줄바꿈 없이) — 재시작으로 꺼진 세션 줄과 같은 모양. light = 도우미·예약(tidyLight) */
-export function tidyText(s: Session, reason: TidyReason, light = false): string {
+/** 참모 입력칸에 넣을 한 줄(Enter 로 보내져서 줄바꿈 없이) — 재시작으로 꺼진 세션 줄과 같은 모양. light = 도우미·예약(tidyLight), hint = 어디까지 했나(domain/progressHint) */
+export function tidyText(s: Session, reason: TidyReason, light = false, hint = ''): string {
   const name = s.name || s.project || s.cwd.split('/').filter(Boolean).pop() || s.id;
   const ws = s.workspace ? tr(` · 워크트리 ${s.workspace}`, ` · worktree ${s.workspace}`) : '';
   const why = reason === 'done'
@@ -95,5 +96,5 @@ export function tidyText(s: Session, reason: TidyReason, light = false): string 
   const todo = light
     ? tr('도우미·예약 세션이라 starter·roadmap 갱신 없이 바로 끄기', "a helper/routine session, so just stop it (no starter/roadmap update)")
     : tr('starter·roadmap 갱신시키고 끄고, 끝난 워크트리는 정리', 'Have it update starter/roadmap, stop it, and clean up a finished worktree');
-  return tr(`[앱] 정리할 세션: ${name}(${s.id})${ws} — ${why}. ${todo}`, `[app] Session to tidy: ${name} (${s.id})${ws} — ${why}. ${todo}`);
+  return capLine(tr(`[앱] 정리할 세션: ${name}(${s.id})${ws} — ${why}${hint}. ${todo}`, `[app] Session to tidy: ${name} (${s.id})${ws} — ${why}${hint}. ${todo}`));
 }

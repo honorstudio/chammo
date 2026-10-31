@@ -308,6 +308,41 @@ impl TeamState {
 /// HTTP 한 번 — (응답 코드, 몸통)
 pub trait Http {
     fn send(&self, method: &str, url: &str, headers: &[(String, String)], body: &[u8]) -> Result<(u16, String), String>;
+    /// 같이 받기용 사본(스레드마다 하나) — 진짜 클라이언트만 준다. 없으면(시험 가짜) 차례로
+    fn fork(&self) -> Option<Box<dyn Http + Send>> {
+        None
+    }
+}
+
+/// 같이 받기 최대 수 — 중계 nonce 창(열쇠마다 10분 300개) 안에서 한 번에 6개
+pub(crate) const PAR: usize = 6;
+
+/// items 마다 f(사본, item) — http 가 사본을 2개 넘게 주면 최대 max 개 스레드가 같이, 아니면 차례로. 돌려주는 순서는 items 순서
+/// (10-31 팀 홈 첫 열기: 글 30개 본문을 하나씩 차례로 받아 운영 ≈ 8초)
+pub(crate) fn par_map<T: Sync, R: Send>(http: &dyn Http, items: &[T], max: usize, f: impl Fn(&dyn Http, &T) -> R + Sync) -> Vec<R> {
+    let forks: Vec<Box<dyn Http + Send>> = (0..max.min(items.len())).map_while(|_| http.fork()).collect();
+    if forks.len() < 2 {
+        return items.iter().map(|t| f(http, t)).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let out: Vec<Mutex<Option<R>>> = items.iter().map(|_| Mutex::new(None)).collect();
+    // 사람 동작 표시(HUMAN)는 스레드마다 따로 — 새 스레드에도 넘긴다(10-31 리뷰: 글 지우기 안의 본문 받기가 배경 몫에 막혔다)
+    let human = human_now();
+    std::thread::scope(|s| {
+        for h in forks {
+            let (next, out, f) = (&next, &out, &f);
+            s.spawn(move || {
+                HUMAN.with(|c| c.set(human));
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let Some(t) = items.get(i) else { break };
+                    let r = f(h.as_ref(), t);
+                    *out[i].lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
+                }
+            });
+        }
+    });
+    out.into_iter().map(|m| m.into_inner().unwrap_or_else(|e| e.into_inner()).expect("모든 칸을 채운다")).collect()
 }
 
 /// curl 부르기 준비 — (프로그램, 인자, 머리 파일). 서명·nonce 머리는 600 임시 파일(-H @파일)로 — 프로세스 인자(ps)엔 안 보이게(보안 검토 3-D).
@@ -347,7 +382,7 @@ pub(crate) fn trace(method: &str, url: &str, began: std::time::Instant, code: u1
     let Some(file) = std::env::var_os("CHAMMO_NET_TRACE").filter(|f| !f.is_empty()) else { return };
     let ms = began.elapsed().as_millis() as u64;
     let path = url.split_once("://").map_or(url, |(_, r)| r.find('/').map_or("/", |i| &r[i..]));
-    let line = json!({ "start": now_ms().saturating_sub(ms), "ms": ms, "method": method, "path": path.split('?').next().unwrap_or(""), "code": code, "bytes": bytes, "human": human_now(), "thread": format!("{:?}", std::thread::current().id()) });
+    let line = json!({ "start": now_ms().saturating_sub(ms), "ms": ms, "method": method, "path": path.split('?').next().unwrap_or(""), "code": code, "bytes": bytes, "human": human_now(), "thread": format!("{:?}", std::thread::current().id()), "main": is_main() });
     trace_line(&file, &line);
 }
 
@@ -360,10 +395,37 @@ fn trace_local(method: &str, path: &str) {
     trace_line(&file, &json!({ "start": now_ms(), "ms": 0, "method": method, "path": path.split('?').next().unwrap_or(""), "code": 429, "local": true, "human": false }));
 }
 
+/// perf-bench — 망 밖 일(키체인 읽기·사슬/명부 검증)도 같은 파일에 한 줄(kind·what·걸린 ms·스레드). 디버그·시험 빌드만
+pub(crate) fn trace_ev(kind: &str, what: &str, began: std::time::Instant) {
+    if !cfg!(debug_assertions) && !cfg!(test) {
+        return;
+    }
+    let Some(file) = std::env::var_os("CHAMMO_NET_TRACE").filter(|f| !f.is_empty()) else { return };
+    let ms = began.elapsed().as_micros() as f64 / 1000.0;
+    let line = json!({ "start": now_ms().saturating_sub(ms as u64), "ms": ms, "kind": kind, "what": what, "thread": format!("{:?}", std::thread::current().id()), "main": is_main() });
+    trace_line(&file, &line);
+}
+
+/// 메인 스레드인가 — 맥은 pthread_main_np, 그 밖은 스레드 이름 "main"
+fn is_main() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn pthread_main_np() -> i32;
+        }
+        unsafe { pthread_main_np() == 1 }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        std::thread::current().name() == Some("main")
+    }
+}
+
 fn trace_line(file: &std::ffi::OsStr, line: &Value) {
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file) {
         use std::io::Write;
-        let _ = writeln!(f, "{line}");
+        // 한 줄을 한 번에(append 한 번) — writeln! 은 나눠 써서 같이 받기 스레드끼리 줄이 섞였다
+        let _ = f.write_all(format!("{line}\n").as_bytes());
     }
 }
 
@@ -436,6 +498,10 @@ pub(crate) fn pooled_send(method: &str, url: &str, headers: &[(String, String)],
 pub struct Curl;
 
 impl Http for Curl {
+    fn fork(&self) -> Option<Box<dyn Http + Send>> {
+        Some(Box::new(Curl))
+    }
+
     fn send(&self, method: &str, url: &str, headers: &[(String, String)], body: &[u8]) -> Result<(u16, String), String> {
         use std::io::Write;
         let began = std::time::Instant::now();
@@ -658,6 +724,7 @@ pub(crate) fn take(key: &str, ts: u64, method: &str, path: &str) -> bool {
     let human = human_now();
     let ok = spend(key, ts, human);
     if let Some(line) = tally(key, ts, method, path, human, ok) {
+        alert(key, "bg-cap", line.split_once("경로별: ").map_or(line.clone(), |(_, t)| t.to_string()));
         // cargo test 는 데이터 폴더를 안 줘 진짜 notify.log 에 쓴다 — 시험에선 tally 가 돌려준 줄만 본다
         #[cfg(not(test))]
         crate::claude::log_out("team", &line);
@@ -670,9 +737,64 @@ pub(crate) fn take(key: &str, ts: u64, method: &str, path: &str) -> bool {
     ok
 }
 
+// ── 예산 넘침 알림(10-31 사용자 '사람이 캡처를 보내기 전에 알아채게') — 배경이 칸 몫을 처음 넘은 때·사람 동작이 서버 429 를 받은 때.
+//    메모리에만 쌓고 앱 화면(perf_alerts)이 1분마다 가져가 '참모 앱' 담당 참모 입력칸에 [앱] 한 줄로(같은 원인 하루 한 번은 화면이 거른다) ──
+
+static ALERTS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
+
+fn alert(key: &str, kind: &str, detail: String) {
+    let mut a = ALERTS.lock().unwrap_or_else(|e| e.into_inner());
+    if a.len() < 50 {
+        a.push((key.to_string(), json!({ "kind": kind, "detail": detail, "at": now_ms() })));
+    }
+}
+
+/// 쌓인 알림을 가져간다(앱 화면 — 메모리만)
+pub(crate) fn take_alerts() -> Vec<Value> {
+    std::mem::take(&mut *ALERTS.lock().unwrap_or_else(|e| e.into_inner())).into_iter().map(|(_, v)| v).collect()
+}
+
+#[cfg(test)]
+pub(crate) fn take_alerts_for(key: &str) -> Vec<Value> {
+    let mut a = ALERTS.lock().unwrap_or_else(|e| e.into_inner());
+    let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut *a).into_iter().partition(|(k, _)| k == key);
+    *a = rest;
+    mine.into_iter().map(|(_, v)| v).collect()
+}
+
+/// 시험 — 시각을 정해 서명 하나를 센다
+#[cfg(test)]
+pub(crate) fn take_at(key: &str, ts: u64, method: &str, path: &str) -> bool {
+    take(key, ts, method, path)
+}
+
 /// 이 칸에 쓴 서명 수(시험·진단)
 pub(crate) fn spent(key: &str, now_ms: u64) -> u32 {
     SPENT.lock().unwrap_or_else(|e| e.into_inner()).get(key).filter(|e| e.0 == now_ms / BUCKET_MS).map_or(0, |e| e.1)
+}
+
+// ── 401 물러서기(10-31 운영 24시간: 요청의 약 절반이 401 — 서버가 모르는 기기가 허용 기다림 화면에서 2초마다 두드렸다).
+//    기기 서명 요청이 401 이면 그 열쇠의 배경 요청은 2초 → 4초 → … → 5분 동안 서버에 안 가고 같은 401. 사람 동작은 늘 간다. 401 이 아닌 답이 오면 풀린다 ──
+
+static DENIED: Mutex<std::collections::BTreeMap<String, (u32, std::time::Instant)>> = Mutex::new(std::collections::BTreeMap::new());
+
+/// n 번째 연이은 401 뒤 기다릴 시간 — 2초부터 두 배씩, 5분까지
+pub(crate) fn denied_wait(n: u32) -> std::time::Duration {
+    std::time::Duration::from_secs((2u64 << n.saturating_sub(1).min(16)).min(300))
+}
+
+fn denied_now(key: &str, now: std::time::Instant) -> bool {
+    DENIED.lock().unwrap_or_else(|e| e.into_inner()).get(key).is_some_and(|(_, until)| now < *until)
+}
+
+fn note_denied(key: &str, code: u16, now: std::time::Instant) {
+    let mut m = DENIED.lock().unwrap_or_else(|e| e.into_inner());
+    if code == 401 {
+        let n = m.get(key).map_or(0, |e| e.0) + 1;
+        m.insert(key.to_string(), (n, now + denied_wait(n)));
+    } else {
+        m.remove(key);
+    }
 }
 
 /// 서명한 요청. device = 등록된 기기 id(없으면 공개 열쇠 머리 — 팀 만들기·들어오기)
@@ -688,23 +810,63 @@ pub(crate) fn call(http: &dyn Http, server: &str, k: &DeviceKeys, device: Option
     if !human && slow_left(&k.public(), std::time::Instant::now()).is_some() {
         return Ok((429, json!({ "error": "slow_down", "local": true })));
     }
-    let ts = now_ms();
-    if !take(&k.public(), ts, method, path) {
-        return Ok((429, json!({ "error": "slow_down", "local": true, "budget": true })));
+    if !human && device.is_some() && denied_now(&k.public(), std::time::Instant::now()) {
+        return Ok((401, json!({ "error": "unauthorized", "local": true })));
     }
     let raw = body.map(|b| b.to_string()).unwrap_or_default();
-    let s = k.sign_request(method, path, raw.as_bytes(), ts, &keys::new_nonce()?);
-    let mut h = vec![("X-Chammo-Ts".to_string(), s.ts), ("X-Chammo-Nonce".to_string(), s.nonce), ("X-Chammo-Sig".to_string(), s.sig)];
-    h.push(match device {
-        Some(d) => ("X-Chammo-Device".into(), d.into()),
-        None => ("X-Chammo-Key".into(), k.public()),
-    });
-    let (code, text) = http.send(method, &format!("{server}{path}"), &h, raw.as_bytes())?;
-    let v = serde_json::from_str(&text).unwrap_or(Value::Null);
-    if code == 429 && v["error"] == "slow_down" {
-        slow_down(&k.public(), &v, std::time::Instant::now());
+    let mut again = human;
+    loop {
+        let ts = now_ms();
+        if !take(&k.public(), ts, method, path) {
+            return Ok((429, json!({ "error": "slow_down", "local": true, "budget": true })));
+        }
+        let s = k.sign_request(method, path, raw.as_bytes(), ts, &keys::new_nonce()?);
+        let mut h = vec![("X-Chammo-Ts".to_string(), s.ts), ("X-Chammo-Nonce".to_string(), s.nonce), ("X-Chammo-Sig".to_string(), s.sig)];
+        h.push(match device {
+            Some(d) => ("X-Chammo-Device".into(), d.into()),
+            None => ("X-Chammo-Key".into(), k.public()),
+        });
+        let (code, text) = http.send(method, &format!("{server}{path}"), &h, raw.as_bytes())?;
+        let v = serde_json::from_str(&text).unwrap_or(Value::Null);
+        if device.is_some() {
+            note_denied(&k.public(), code, std::time::Instant::now());
+        }
+        if code == 429 && v["error"] == "slow_down" {
+            slow_down(&k.public(), &v, std::time::Instant::now());
+            if human {
+                alert(&k.public(), "human-429", format!("{method} {}", path_shape(path)));
+            }
+            // 사람이 누른 것 — 서버 몫(10분 칸)이 1분 안에 넘어가면 그때 한 번 저절로 다시(10-30 팀 홈 꾸미기 [완료]가 서버 429)
+            // 시험은 벽시계가 칸 끝에 걸리면 갈려서 시계를 따로(RETRY_TS, 기본 0 = 칸 맨 앞 → 안 기다림)
+            #[cfg(test)]
+            let ts = RETRY_TS.with(|t| t.get());
+            if let Some(w) = again.then(|| human_retry_wait(ts)).flatten() {
+                again = false;
+                #[cfg(not(test))]
+                std::thread::sleep(w);
+                #[cfg(test)]
+                let _ = w;
+                continue;
+            }
+        }
+        return Ok((code, v));
     }
-    Ok((code, v))
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static RETRY_TS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// 사람 동작이 서버 429 를 받은 때(ts) — 서버 몫은 10분 칸(BUCKET_MS)마다 새로 차서, 칸이 1분 안에 넘어가면 넘어간 뒤까지 기다릴 시간. 더 멀면 None(그대로 실패)
+pub(crate) fn human_retry_wait(ts_ms: u64) -> Option<std::time::Duration> {
+    let left = BUCKET_MS - ts_ms % BUCKET_MS;
+    (left <= 60_000).then(|| std::time::Duration::from_millis(left + 500))
+}
+
+/// 서버가 준 답인가 — 쉬는 중·물러서는 동안 call 이 서버에 안 가고 만든 답(local)이 아니다. 끊김 판정은 서버 답 401 로만(10-31 리뷰)
+pub(crate) fn from_server(v: &Value) -> bool {
+    v["local"] != true
 }
 
 /// 서버가 이 기기를 모를 때 열쇠 머리로 서명해 묻는 없는 길 — 서버는 등록된 열쇠면 401, 모르는 열쇠면 서명·시계를 통과해 404(chammo-relay index.ts)
@@ -714,17 +876,50 @@ pub(crate) const GONE: &str = "이 기기는 중계 서버에서 끊겼어(다�
 
 /// 기기 서명이 401 을 받은 뒤 — 서버가 이 열쇠를 아예 모르면(대기 중 거절로 지운 기기 등) 끊긴 기기로 적는다.
 /// 401 은 시계가 5분 넘게 틀려도 와서 그것만으론 못 가린다 — 404 가 와야 시계도 맞고 기기도 없는 것(10-28 윈도우 실측). 적었으면 true
+/// 끊긴(revoked) 기기는 서버에 줄이 남아 열쇠 확인이 404 가 아니라 401 — 그땐 시계를 따로 본다(Cloudflare /cdn-cgi/trace 의 ts, 서명 없음).
+/// 시계가 1분 안으로 맞으면 시계 탓이 아니라 끊긴 기기다. 열쇠 확인은 열쇠마다 5분에 한 번(물러서는 동안 확인 요청이 쌓이지 않게)
 pub(crate) fn mark_if_gone(dir: &Path, http: &dyn Http, st: &TeamState, k: &DeviceKeys) -> bool {
+    static PROBED: Mutex<std::collections::BTreeMap<String, std::time::Instant>> = Mutex::new(std::collections::BTreeMap::new());
     if st.revoked {
         return true;
     }
-    if !matches!(call(http, &st.server, k, None, "GET", KEY_PROBE, None), Ok((404, _))) {
+    {
+        let mut p = PROBED.lock().unwrap_or_else(|e| e.into_inner());
+        let now = std::time::Instant::now();
+        if p.get(&k.public()).is_some_and(|t| now.duration_since(*t) < std::time::Duration::from_secs(300)) {
+            return false;
+        }
+        p.insert(k.public(), now);
+    }
+    let gone = match call(http, &st.server, k, None, "GET", KEY_PROBE, None) {
+        Ok((404, _)) => true,
+        // 401 = 서버가 이 열쇠를 안다 — 멀쩡한 기기도 끊긴 기기도 같은 답이라 그것만으론 증거가 아니다(10-31 리뷰).
+        // 물러서기를 풀고 기기 서명으로 한 번 더 진짜로 물어 또 401 이고 서버 시계가 1분 안으로 맞을 때만 끊김(한 번 튄 401·막 고쳐진 시계를 거른다)
+        Ok((401, _)) => {
+            DENIED.lock().unwrap_or_else(|e| e.into_inner()).remove(&k.public());
+            matches!(call(http, &st.server, k, Some(&st.device_id), "GET", "/v0/me/self", None), Ok((401, ref v)) if from_server(v))
+                && server_clock_ms(http, &st.server).is_some_and(|t| t.abs_diff(now_ms()) < 60_000)
+        }
+        _ => false,
+    };
+    if !gone {
         return false;
     }
     // cargo test 는 데이터 폴더를 안 줘 진짜 notify.log 에 썼다 — 10-30 그 줄을 보고 사용자 기기가 끊긴 줄 알 뻔했다
     #[cfg(not(test))]
     crate::claude::log_out("team", "중계 서버가 이 기기를 몰라 — 끊긴 기기로 적음(다시 로그인)");
     mutate_if(dir, &st.device_id, |s| s.revoked = true).is_ok()
+}
+
+/// 서버 시계(epoch ms) — Cloudflare 가 모든 영역에 주는 /cdn-cgi/trace 의 ts= 줄. 없으면(로컬 중계 등) None
+fn server_clock_ms(http: &dyn Http, server: &str) -> Option<u64> {
+    let server = server_ok(server)?;
+    let (code, text) = http.send("GET", &format!("{server}/cdn-cgi/trace"), &[], b"").ok()?;
+    if code != 200 {
+        return None;
+    }
+    let ts: f64 = text.lines().find_map(|l| l.strip_prefix("ts="))?.trim().parse().ok()?;
+    (ts > 0.0).then(|| (ts * 1000.0) as u64)
 }
 
 /// 서버 오류 → 사람이 읽는 이유
@@ -1046,7 +1241,7 @@ pub fn sync_rooms(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<TeamSta
     }
     let k = device_keys(kc, &st)?;
     let (code, v) = call(http, &st.server, &k, Some(&st.device_id), "GET", "/v0/me/rooms", None)?;
-    if code == 401 && mark_if_gone(dir, http, &st, &k) {
+    if code == 401 && from_server(&v) && mark_if_gone(dir, http, &st, &k) {
         return Err(GONE.into());
     }
     if code != 200 {
@@ -1086,16 +1281,33 @@ pub fn sync_rooms(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<TeamSta
     mutate_if(dir, &st.device_id, |s| s.rooms = rooms)
 }
 
+/// 명부 고리를 실은 쓰기 — 확인해 둔 명부 끝으로 먼저 보내고, 서버가 409 stale_head(그새 명부가 늘었다)면 명부를 새로 받아 한 번 더.
+/// body(link) = 보낼 몸통(고리가 없으면 None — 명부 없는 옛 팀)
+fn with_link(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, f: Value, send: impl Fn(Option<Value>) -> Result<(u16, Value), String>) -> Result<(u16, Value), String> {
+    let mut l = crate::e2e_team::link_for(dir, kc, http, team, f.clone())?;
+    let mut r = send(l.clone())?;
+    if r.0 == 409 && r.1["error"] == "stale_head" {
+        l = crate::e2e_team::link_fresh(dir, kc, http, team, f)?;
+        r = send(l.clone())?;
+    }
+    // 받아들여진 내 고리는 기억한 명부 끝에 — 다음 쓰기가 409 를 안 맞게
+    if (200..300).contains(&r.0) {
+        if let Some(l) = &l {
+            crate::e2e_team::remember(dir, team, l);
+        }
+    }
+    Ok(r)
+}
+
 /// 고른 팀에서 나가기 — 마지막 팀장이면 서버가 409. 나가면 그 팀과 그 팀 방을 이 기기에서도 지운다
 pub fn leave(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) -> Result<TeamState, String> {
     let st = load_state(dir);
     let t = st.team(team)?.clone();
     let k = device_keys(kc, &st)?;
-    let body = match crate::e2e_team::link_for(dir, kc, http, &t.id, json!({ "kind": "leave", "member": t.member_id }))? {
-        Some(link) => json!({ "link": link }),
-        None => json!({}),
-    };
-    let (code, v) = call(http, &st.server, &k, Some(&st.device_id), "POST", &format!("/v0/teams/{}/leave", t.id), Some(&body))?;
+    let (code, v) = with_link(dir, kc, http, &t.id, json!({ "kind": "leave", "member": t.member_id }), |link| {
+        let body = link.map_or_else(|| json!({}), |l| json!({ "link": l }));
+        call(http, &st.server, &k, Some(&st.device_id), "POST", &format!("/v0/teams/{}/leave", t.id), Some(&body))
+    })?;
     if code != 200 {
         return Err(why(code, &v));
     }
@@ -1129,11 +1341,10 @@ pub fn remove_member(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, wh
         return Err("나 자신은 빼기 대신 나가기(scripts/team leave)".into());
     }
     let k = device_keys(kc, &st)?;
-    let body = match crate::e2e_team::link_for(dir, kc, http, &t.id, json!({ "kind": "remove", "member": m.id }))? {
-        Some(link) => json!({ "link": link }),
-        None => json!({}),
-    };
-    let (code, v) = call(http, &st.server, &k, Some(&st.device_id), "POST", &format!("/v0/teams/{}/members/{}/remove", t.id, m.id), Some(&body))?;
+    let (code, v) = with_link(dir, kc, http, &t.id, json!({ "kind": "remove", "member": m.id }), |link| {
+        let body = link.map_or_else(|| json!({}), |l| json!({ "link": l }));
+        call(http, &st.server, &k, Some(&st.device_id), "POST", &format!("/v0/teams/{}/members/{}/remove", t.id, m.id), Some(&body))
+    })?;
     if code != 200 {
         return Err(why(code, &v));
     }
@@ -1147,11 +1358,13 @@ pub fn set_role(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, who: &s
     }
     let (st, t, m) = member_in(dir, kc, http, team, who)?;
     let k = device_keys(kc, &st)?;
-    let mut body = json!({ "role": role });
-    if let Some(link) = crate::e2e_team::link_for(dir, kc, http, &t.id, json!({ "kind": "role", "member": m.id, "role": role }))? {
-        body["link"] = link;
-    }
-    let (code, v) = call(http, &st.server, &k, Some(&st.device_id), "POST", &format!("/v0/teams/{}/members/{}/role", t.id, m.id), Some(&body))?;
+    let (code, v) = with_link(dir, kc, http, &t.id, json!({ "kind": "role", "member": m.id, "role": role }), |link| {
+        let mut body = json!({ "role": role });
+        if let Some(l) = link {
+            body["link"] = l;
+        }
+        call(http, &st.server, &k, Some(&st.device_id), "POST", &format!("/v0/teams/{}/members/{}/role", t.id, m.id), Some(&body))
+    })?;
     if code != 200 {
         return Err(why(code, &v));
     }
@@ -1189,10 +1402,13 @@ pub fn set_perms(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, who: &
         f["perms"] = json!(p);
         body["perms"] = json!(p);
     }
-    if let Some(link) = crate::e2e_team::link_for(dir, kc, http, &t.id, f)? {
-        body["link"] = link;
-    }
-    let (code, v) = call(http, &st.server, &k, Some(&st.device_id), "POST", &format!("/v0/teams/{}/members/{}/role", t.id, m.id), Some(&body))?;
+    let (code, v) = with_link(dir, kc, http, &t.id, f, |link| {
+        let mut body = body.clone();
+        if let Some(l) = link {
+            body["link"] = l;
+        }
+        call(http, &st.server, &k, Some(&st.device_id), "POST", &format!("/v0/teams/{}/members/{}/role", t.id, m.id), Some(&body))
+    })?;
     if code != 200 {
         return Err(why(code, &v));
     }
@@ -1203,8 +1419,9 @@ pub fn set_perms(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, who: &
 pub fn transfer_owner(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, who: &str) -> Result<TeamState, String> {
     let (st, t, m) = member_in(dir, kc, http, team, who)?;
     let k = device_keys(kc, &st)?;
-    let link = crate::e2e_team::link_for(dir, kc, http, &t.id, json!({ "kind": "role", "member": m.id, "role": "owner", "from": t.member_id }))?;
-    let (code, v) = call(http, &st.server, &k, Some(&st.device_id), "POST", &format!("/v0/teams/{}/transfer", t.id), Some(&json!({ "member": m.id, "link": link })))?;
+    let (code, v) = with_link(dir, kc, http, &t.id, json!({ "kind": "role", "member": m.id, "role": "owner", "from": t.member_id }), |link| {
+        call(http, &st.server, &k, Some(&st.device_id), "POST", &format!("/v0/teams/{}/transfer", t.id), Some(&json!({ "member": m.id, "link": link })))
+    })?;
     if code == 400 && v["error"] == "roles_off" {
         // 옛 서버(스위치 꺼짐) — 받는 사람을 팀장으로 올린 뒤 나는 팀원으로 내려온다(팀장이 둘로 남지 않게, 손 시험 ⑤ 10-30)
         set_role(dir, kc, http, team, &m.id, "owner")?;
@@ -1241,6 +1458,7 @@ pub const LAST_SERVER_FILE: &str = "last-server.txt";
 
 pub fn forget_local(dir: &Path, kc: &dyn Store) -> Result<String, String> {
     crate::team_relay_ws::stop();
+    keys::forget_all();
     let st = load_state(dir);
     if let Some(s) = server_ok(&st.server) {
         let _ = std::fs::write(dir.join(LAST_SERVER_FILE), s);

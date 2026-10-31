@@ -16,6 +16,8 @@ pub fn allowed_files(show_log: &str, routines_json: &str, data_dir: &Path, hq_di
     let mut v: Vec<String> = Vec::new();
     for line in show_log.lines() {
         if let Some(p) = serde_json::from_str::<serde_json::Value>(line).ok().and_then(|r| r["path"].as_str().map(str::to_string)) {
+            // 폰은 / 로 바꾼 모양(fwd)으로 묻는다(phone_show_line) — 윈도우는 그 모양도(공개 이슈 #15). 맥은 같은 글이라 아래서 하나로
+            v.push(crate::config::fwd(&p));
             v.push(p);
         }
     }

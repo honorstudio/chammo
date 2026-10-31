@@ -26,7 +26,8 @@ type Cache = { at: number; key: string; events: TamaEvent[] };
 /** 위젯 보임·위젯이 남긴 요청(먹이 등)을 묻는 주기 */
 export const WIDGET_POLL_MS = 1000;
 
-export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEvent[], routines: Routine[], orchs: Session[], onRequest: (kind: string) => void, prs: Reviewed[] | null = null) {
+/** widget = 다마고치 기능이 켜져 있나 — 꺼져 있으면 위젯 창 보임·요청을 안 묻는다(10-31: 꺼도 초당 두 번 물었다) */
+export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEvent[], routines: Routine[], orchs: Session[], onRequest: (kind: string) => void, prs: Reviewed[] | null = null, widget = true) {
   const [file, setFile] = useState<TamaFile | null>(null);
   // 먹이 사건(커밋·PR·CI·시킨 일) + 일한 시간 칸 — 머지 가챠 코인도 같은 사건으로 센다(useGacha)
   const [feed, setFeed] = useState<TamaEvent[]>([]);
@@ -114,6 +115,7 @@ export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEven
   // (3초 간격이면 숨기기 누르고 상단 바에 뜨기까지 최대 3초 걸렸다 — 2026-09-27 사용자). 창 보임 여부만 묻는 가벼운 호출
   // 300ms 가 앱 IPC 의 40% 라 1초로(2026-10-11 사용자 승인). 위젯 창은 앱이 뒤에 있어도 떠 있어서 보임에 따라 늦추지 않는다
   useEffect(() => {
+    if (!widget) return;
     const poll = () => {
       void tamaWidget().then(setWidgetShown).catch(() => {});
       void tamaRequest().then((k) => k && latest.current.onRequest(k)).catch(() => {});
@@ -121,7 +123,7 @@ export function useTama(env: AppEnv | null, sessions: Session[], tasks: TaskEven
     poll();
     const t = setInterval(poll, WIDGET_POLL_MS);
     return () => clearInterval(t);
-  }, []);
+  }, [widget]);
 
   const showWidget = () => void tamaWidget(true).then(setWidgetShown).catch(() => {});
   /** 사람 조작(보관함·처음부터 등): 파일을 새로 읽어 바꾸고 바로 쓴다. null 이면 못 함(보관함 꽉 참 등) */

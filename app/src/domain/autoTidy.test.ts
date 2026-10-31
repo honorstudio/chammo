@@ -138,6 +138,10 @@ describe('tidyText — 참모 입력칸 한 줄', () => {
     expect(tidyText(s('x', { workspace: 'feat-a' }), 'quiet')).toContain('워크트리 feat-a');
     expect(t).not.toContain('\n');
   });
+  it('어디까지 했나(대화 끝·git)를 이유 뒤에 붙인다', () => {
+    const t = tidyText(s('shop', { id: 'ab12cd34' }), 'done', false, ' · git main@ab12cd3');
+    expect(t).toBe('[앱] 정리할 세션: shop(ab12cd34) — 맡긴 일 다 끝남·2시간 조용 · git main@ab12cd3. starter·roadmap 갱신시키고 끄고, 끝난 워크트리는 정리');
+  });
   // 0.4.1 2차 검증: 도우미·예약 세션은 starter 가 없다 — 갱신 시키면 HQ 에 docs/starter.md 를 만들 수 있다
   it('도우미·예약 세션이면 갱신 없이 바로 끄기', () => {
     const t = tidyText(s('sns-post', { id: 'ab12cd34' }), 'done', true);

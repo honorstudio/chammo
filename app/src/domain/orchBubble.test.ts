@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BADGE, DESK_PAD, POP_MS, anchorOf, badgeCounts, bubbleFace, deskPop, deskStage, stageBox, FAN_LEAVE_MS, FAN_OUT_MS, fanKeep, fanPlan, fanPoints, fanRings, fanSide, isDrag, padRect, farEdges, fitPopSize, placeOf, popLayout, resizedPop,  popOrigin, popPlace, popSteps, readAnchor, readSpot, screenPlace, screenSave, type Screen } from './orchBubble';
+import { BADGE, DESK_PAD, POP_MS, anchorOf, openKeep, badgeCounts, bubbleFace, deskPop, deskStage, stageBox, FAN_LEAVE_MS, FAN_OUT_MS, fanKeep, fanPlan, fanPoints, fanRings, fanSide, isDrag, padRect, farEdges, fitPopSize, placeOf, popLayout, resizedPop,  popOrigin, popPlace, popSteps, readAnchor, readSpot, screenPlace, screenSave, type Screen } from './orchBubble';
 
 const box = { x: 0, y: 0, w: 1200, h: 800 };
 
@@ -387,5 +387,30 @@ describe('부채 머물기 — 시간보다 자리(10-28 밤 사용자 "마우�
     expect(FAN_LEAVE_MS).toBeLessThanOrEqual(350);
     expect(FAN_OUT_MS).toBeGreaterThanOrEqual(180);
     expect(FAN_OUT_MS).toBeLessThanOrEqual(260); // 엇갈림 포함 끝까지
+  });
+});
+
+describe('열린 대화창째 배지를 끌어 옮긴다 — 놓으면 배지가 있는 화면 안으로 통째로(10-31 사용자 "옮겨지게 해 줘")', () => {
+  const mac: Screen = { id: 'mac', x: 0, y: 25, w: 1512, h: 887 };
+  const ext: Screen = { id: 'ext', x: 1512, y: -200, w: 2560, h: 1440 };
+  const box = { x: 362, y: 470 }; // 창 안 배지 상자 자리(대화창 오른쪽 아래)
+  it('화면 안에 놓으면 그대로(null)', () => {
+    expect(openKeep({ x: 300, y: 100, w: 460, h: 568 }, box, [mac, ext], 88)).toBeNull();
+  });
+  it('오른쪽 아래로 삐져나가면 그만큼만 당긴다 — 배지·대화창 사이 자리는 창째 옮겨서 그대로', () => {
+    expect(openKeep({ x: 1100, y: 400, w: 460, h: 568 }, box, [mac], 88)).toEqual({ x: 1512 - 460, y: 25 + 887 - 568 });
+  });
+  it('위·왼쪽으로 나가면(메뉴줄 밑으로) 작업 영역 끝에 붙인다', () => {
+    expect(openKeep({ x: -40, y: 0, w: 460, h: 568 }, box, [mac], 88)).toEqual({ x: 0, y: 25 });
+  });
+  it('두 화면에 걸치면 배지 가운데가 있는 화면 안으로 — 대화창이 옆 모니터에 걸쳐 남지 않게', () => {
+    // 배지 상자 = (1460+362, 300+470) → 옆 모니터. 창 왼쪽이 맥북에 걸쳐 있다
+    expect(openKeep({ x: 1460, y: 300, w: 460, h: 568 }, box, [mac, ext], 88)).toEqual({ x: 1512, y: 300 });
+  });
+  it('창이 화면보다 크면 왼쪽·위 끝에 맞춘다', () => {
+    expect(openKeep({ x: 50, y: 50, w: 1600, h: 900 }, box, [mac], 88)).toEqual({ x: 0, y: 25 });
+  });
+  it('모니터를 모르면 그대로', () => {
+    expect(openKeep({ x: -999, y: -999, w: 460, h: 568 }, box, [], 88)).toBeNull();
   });
 });

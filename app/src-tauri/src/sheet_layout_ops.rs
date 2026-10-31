@@ -12,7 +12,7 @@ fn plain(xml: &str) -> Result<(), String> {
     if xml.contains("<sheetData") && xml.contains("</worksheet>") {
         Ok(())
     } else {
-        Err("이 시트 모양(접두어 붙은 XML)은 아직 못 고쳐 / this sheet's XML form (prefixed) can't be edited yet".into())
+        Err(crate::i18n::tr("이 시트 모양(접두어 붙은 XML)은 아직 못 고쳐", "This sheet's XML form (prefixed) can't be edited yet").into())
     }
 }
 

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { readFileText } from '../../data/web';
 import { fileError, fileKind } from '../../domain/phoneFile';
-import { machine } from '../../i18n';
+import { machine, tr } from '../../i18n';
 import type { ShowAt } from '../../domain/showAt';
 import { useBlobUrl } from './useBlobUrl';
 import { ImageViewer } from './ImageViewer';
@@ -15,7 +15,7 @@ import { ShareButton } from './ShareButton';
 import { BottomSheet } from './kit';
 
 // 붙은 컴퓨터(맥·PC)는 env 를 받은 뒤에 정해져서 모듈 상수가 아니라 부를 때 만든다
-const why = (): Record<string, string> => ({ 'secret inside': `글 속에 키가 보여서 폰엔 안 보여 줘요 — ${machine()}에서 열어 주세요`, 'not allowed': '폰에서 열 수 없는 파일이에요', 'file too large': `너무 커서 폰에선 못 열어요 — ${machine()}에서` });
+const why = (): Record<string, string> => ({ 'secret inside': tr(`글 속에 키가 보여서 폰엔 안 보여 줘요 — ${machine()}에서 열어 주세요`, `There is a key inside this text, so it is hidden on the phone — open it on the ${machine()}`), 'not allowed': tr('폰에서 열 수 없는 파일이에요', "This file can't be opened on the phone"), 'file too large': tr(`너무 커서 폰에선 못 열어요 — ${machine()}에서`, `Too big to open on the phone — use the ${machine()}`) });
 
 export function FileView({ path, title, at, orch, onClose }: { path: string; title: string; at?: ShowAt; orch?: string; onClose: () => void }) {
   const data = path.startsWith('data:image/');
@@ -44,7 +44,7 @@ function TextView({ path, data, kind, title, at, onClose }: { path: string; data
         {text !== null && (kind === 'md' ? <MdDoc path={path} text={text} at={at} />
           : kind === 'csv' ? <CsvTable text={text} tab={/\.tsv$/i.test(path)} />
           : <CodeText text={text} json={kind === 'json'} at={at} />)}
-        {text === null && !err && !data && <p className="m-muted">여는 중…</p>}
+        {text === null && !err && !data && <p className="m-muted">{tr('여는 중…', 'Opening…')}</p>}
         {err && <p className={err.gone ? 'm-muted' : 'm-error'}>{err.text}</p>}
       </div>
     </BottomSheet>

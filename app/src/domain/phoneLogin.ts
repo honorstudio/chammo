@@ -1,5 +1,6 @@
 // 폰 로그인 카드·시트 — 맥 /api/login 답(login.rs phone_view: 화면이 적은 판단 login.json + 폰 로그인 흐름) 해석.
 // 흐름: [로그인] → 맥이 pty 로 claude auth login → 주소를 폰에서 열어 로그인 → 페이지가 보여 준 코드를 입력칸에 → 맥이 pty 에 한 줄
+import { machine, tr } from '../i18n';
 import { readKeep, readTermsCards, type LoginNeed, type TermsCard } from './login';
 
 export type FlowState = 'idle' | 'starting' | 'waiting' | 'checking' | 'done' | 'failed';
@@ -36,14 +37,14 @@ export const showCard = (v: PhoneLogin): boolean => v.need !== null || v.flow.st
 
 export function flowText(f: Flow): string {
   switch (f.state) {
-    case 'starting': return '맥에서 로그인을 준비하는 중…';
-    case 'waiting': return '로그인 페이지에서 로그인하면 코드가 나와요. 그 코드를 아래에 붙여 넣어 주세요.';
-    case 'checking': return '확인하는 중…';
-    case 'done': return '로그인됐어요. 멈춘 세션은 맥이 이어서 하게 해요.';
+    case 'starting': return tr('맥에서 로그인을 준비하는 중…', `Getting login ready on the ${machine()}…`);
+    case 'waiting': return tr('로그인 페이지에서 로그인하면 코드가 나와요. 그 코드를 아래에 붙여 넣어 주세요.', 'Log in on the login page and it shows a code. Paste that code below.');
+    case 'checking': return tr('확인하는 중…', 'Checking…');
+    case 'done': return tr('로그인됐어요. 멈춘 세션은 맥이 이어서 하게 해요.', `Logged in. The ${machine()} will resume stopped sessions.`);
     case 'failed':
-      if (f.error === 'code') return '코드가 맞지 않았어요. 다시 시작해 주세요.';
-      if (f.error === 'timeout') return '10분이 지나 접었어요. 다시 시작해 주세요.';
-      return '맥에서 로그인을 못 띄웠어요. 다시 시작해 주세요.';
+      if (f.error === 'code') return tr('코드가 맞지 않았어요. 다시 시작해 주세요.', 'The code was wrong. Please start again.');
+      if (f.error === 'timeout') return tr('10분이 지나 접었어요. 다시 시작해 주세요.', 'Timed out after 10 minutes. Please start again.');
+      return tr('맥에서 로그인을 못 띄웠어요. 다시 시작해 주세요.', `Could not start login on the ${machine()}. Please start again.`);
     default: return '';
   }
 }

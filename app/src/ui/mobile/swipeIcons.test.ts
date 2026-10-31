@@ -5,7 +5,7 @@ import picker from './OrchPicker.tsx?raw';
 import wake from './OrchWake.tsx?raw';
 import swipe from './SwipeRow.tsx?raw';
 
-const actionsOf = (src: string) => [...src.matchAll(/\{ label: '([^']+)'[^}]*\}/g)].map((m) => ({ label: m[1]!, body: m[0] }));
+const actionsOf = (src: string) => [...src.matchAll(/\{ label: tr\('([^']+)'[^}]*\}/g)].map((m) => ({ label: m[1]!, body: m[0] }));
 
 describe('밀기 버튼 아이콘', () => {
   it('켜진 줄·꺼진 줄의 밀기 버튼은 모두 아이콘이 있다', () => {
@@ -18,7 +18,7 @@ describe('밀기 버튼 아이콘', () => {
     expect(swipe).toMatch(/title=\{a\.icon \? a\.label/);
   });
   it('제거는 누르면 바로 지우지 않고 글자 확인 카드를 띄운다', () => {
-    expect(picker).toMatch(/label: '제거'[^}]*setRemoving\(/);
-    expect(picker).toMatch(/<RowConfirm [^>]*label="제거 확인"/); // 확인 줄은 그 줄 자리(RowConfirm, role=alertdialog)
+    expect(picker).toMatch(/label: tr\('제거', 'Remove'\)[^}]*setRemoving\(/);
+    expect(picker).toMatch(/<RowConfirm [^>]*label=\{tr\('제거 확인', 'Confirm removal'\)\}/); // 확인 줄은 그 줄 자리(RowConfirm, role=alertdialog)
   });
 });

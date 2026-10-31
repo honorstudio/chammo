@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CalApi } from '../../data/teamCalApi';
 import { calPutOk, type CalData, type CalItem, type CalSnap } from '../../domain/teamCal';
 import { syncGate } from '../../domain/teamCalSync';
+import { every } from '../poll';
 
 const memo = new Map<string, CalSnap>();
 /** 홈 블록·캘린더 탭이 같이 떠 있어도 팀마다 따라잡기 하나, 실패하면 물러서기 */
@@ -41,7 +42,8 @@ export function useTeamCal(team: string, api: CalApi) {
       }
       await sync();
     })();
-    const fast = setInterval(async () => {
+    // 앱 창이 안 보이면 5배 늦게(ui/poll every — 10-31: 가시성을 안 보고 1초마다 돌았다)
+    const fast = every(async () => {
       const p = await api.poll(team).catch(() => null);
       if (!live || !p) return;
       if (p.stale) void sync();
@@ -50,8 +52,8 @@ export function useTeamCal(team: string, api: CalApi) {
         if (live && c) take(c);
       }
     }, 1000);
-    const slow = setInterval(() => void sync(), SLOW_SYNC);
-    return () => { live = false; clearInterval(fast); clearInterval(slow); };
+    const slow = every(() => void sync(), SLOW_SYNC);
+    return () => { live = false; fast(); slow(); };
   }, [team, api, take]);
 
   /** 쓰기 — 누른 즉시 화면에(옅게), 서버가 받으면 진하게. 실패면 되돌린다. 남의 고침을 덮었으면 그 한 줄을 돌려준다 */

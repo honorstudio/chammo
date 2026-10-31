@@ -2,6 +2,7 @@
 // 앱은 하위 세션 질문을 사용자에게 직접 안 띄운다(참모 몫). 그런데 참모는 그 창을 못 봐서, 사용자가 말풍선을 눌러 봐야 알았다.
 // 선택지 창에서 GRACE_MS 넘게 멈춘 하위 세션을 참모 입력칸에 한 줄로 알린다 → 참모가 scripts/choice 로 읽고 답하거나 사용자에게 묻는다
 import { tr } from '../i18n';
+import { capLine, maskSecrets, progressHint, type GitHead } from './progressHint';
 import type { Activity } from './activity';
 import type { Session } from './session';
 import type { TaskCard, TaskEvent } from './tasks';
@@ -216,14 +217,55 @@ export function nextQuietForward(
   return undefined;
 }
 
-/** 참모 입력칸에 들어갈 한 줄 */
-export function quietForwardText(s: Session, a: Activity, t: TaskCard, now: number): string {
+/** 참모 입력칸에 들어갈 한 줄 — 오래 조용 중 '대답 없음'(턴을 끝내고 보고 없이 쉼). g = 세션 폴더 git(어디까지, domain/progressHint) */
+export function quietForwardText(s: Session, a: Activity, t: TaskCard, now: number, g?: Partial<GitHead>): string {
   const mins = Math.max(1, Math.round((now - Date.parse(a.reply!.ts)) / 60_000));
-  const q = lastWords(a);
-  return tr(
-    `[앱] ${whereOf(s)} 세션(${s.id})이 ${mins}분째 보고 없이 쉬어 — 맡긴 일 "${t.title}"(${t.id})이 안 닫혔어. 마지막 말: "${q}" — 끝났으면 scripts/task reply·done, 이어서 할 게 있으면 다음 지시를`,
-    `[app] ${whereOf(s)} session (${s.id}) has been idle for ${mins} min without reporting — task "${t.title}" (${t.id}) is still open. Last words: "${q}" — if it's finished, scripts/task reply/done; otherwise send the next instruction`,
-  );
+  const q = maskSecrets(lastWords(a));
+  const at = progressHint(a, g, { said: false });
+  return capLine(tr(
+    `[앱] 대답 없음 — ${whereOf(s)} 세션(${s.id})이 ${mins}분째 보고 없이 쉬어. 맡긴 일 "${t.title}"(${t.id})이 안 닫혔어. 마지막 말: "${q}"${at} — 끝났으면 scripts/task reply·done, 이어서 할 게 있으면 다음 지시를`,
+    `[app] No reply — ${whereOf(s)} session (${s.id}) has been idle for ${mins} min without reporting. Task "${t.title}" (${t.id}) is still open. Last words: "${q}"${at} — if it's finished, scripts/task reply/done; otherwise send the next instruction`,
+  ));
+}
+
+/** 오래 조용 중 '명령 오래 걸림' — 도구 하나가 이만큼 끝나지 않음(남의 에이전트가 조용 450초와 도구 1,200초를 나눠 본 것을 따름, 2026-10-31) */
+export const SLOW_MS = 20 * 60_000;
+/** 같은 도구 호출은 한 번만 */
+export const slowKeyOf = (c: AskCand) => `${c.session.id}:s:${c.activity.tool?.ts ?? ''}`;
+
+/** 일하는 중인데 마지막 도구 뒤로 대화 줄이 하나도 없이 SLOW_MS 가 지난 세션 — 안 닫힌 일이 있을 때만(대답 없음과 같은 조건: 맡긴 참모·보는 중·이미 넘김) */
+export function nextSlowForward(
+  cands: AskCand[],
+  openTask: (s: Session) => TaskCard | undefined,
+  orch: Session | undefined | ((s: Session) => Session | undefined),
+  done: ReadonlySet<string>,
+  now: number,
+  watching: (s: Session) => boolean,
+): { cand: AskCand; task: TaskCard } | undefined {
+  const toOf = typeof orch === 'function' ? orch : () => orch;
+  for (const c of cands) {
+    const { session: s, activity: a } = c;
+    const tool = a.tool;
+    if (s.kind !== 'background' || s.state !== 'working' || !tool) continue;
+    if (a.lastAt && a.lastAt > tool.ts) continue; // 도구 뒤에 결과·새 줄이 왔다 — 그 도구는 끝났다
+    const at = Date.parse(tool.ts);
+    if (!(at > s.startedAt) || now - at < SLOW_MS || now - at > ASK_MAX_AGE) continue;
+    const t = openTask(s);
+    if (!t || tool.ts < t.sentAt) continue;
+    const to = toOf(s);
+    if (!to || to.state === 'blocked' || done.has(slowKeyOf(c)) || watching(s)) continue;
+    return { cand: c, task: t };
+  }
+  return undefined;
+}
+
+export function slowForwardText(s: Session, a: Activity, t: TaskCard, now: number, g?: Partial<GitHead>): string {
+  const mins = Math.max(1, Math.round((now - Date.parse(a.tool!.ts)) / 60_000));
+  const at = progressHint(a, g, { said: false });
+  return capLine(tr(
+    `[앱] 명령 오래 걸림 — ${whereOf(s)} 세션(${s.id})이 명령 하나를 ${mins}분째 돌리는 중. 맡긴 일 "${t.title}"(${t.id})${at} — 멈춘 것 같으면 그 세션에 물어보고, 원래 오래 걸리는 일이면 scripts/task wait 로 남겨`,
+    `[app] Slow command — ${whereOf(s)} session (${s.id}) has been running one command for ${mins} min. Task "${t.title}" (${t.id})${at} — if it looks stuck, ask that session; if it is meant to take long, record it with scripts/task wait`,
+  ));
 }
 
 /** 넘기기(입력칸에 넣기)가 실패했을 때 또 해 볼까 — 세 번째 실패부터 그만. 윈도우에서 매번 실패해 40초마다 끝없이 다시 보냈다(2026-09-30) */

@@ -19,6 +19,7 @@ import { shrinkImage } from './shrink';
 import { useBlobUrl } from './useBlobUrl';
 import { AvatarRing } from './kit';
 import { useSpeakLevel } from './usePhoneSpeaker';
+import { tr } from '../../i18n';
 
 type Props = {
   /** 참모 프사(OrchAvatar 자리) */
@@ -125,7 +126,7 @@ export function Composer({ avatar, orchName, waiting, placeholder, draftKey, max
       setFiles((p) => [...p, ...added]);
       setDraft((d) => `${d}${d && !/\s$/.test(d) ? ' ' : ''}${added.map((a) => a.label).join(' ')} `);
     } catch (e) {
-      setErr(`못 올렸어요: ${(e as Error).message}`);
+      setErr(tr(`못 올렸어요: ${(e as Error).message}`, `Couldn't upload: ${(e as Error).message}`));
     } finally {
       setUploading(false);
       if (file.current) file.current.value = '';
@@ -158,8 +159,8 @@ export function Composer({ avatar, orchName, waiting, placeholder, draftKey, max
   const other = !!speaker?.onGo;
   const orchBtn = (key: string) => (
     <button key={key} ref={setBtn} type="button" className={`m-cbtn m-corch${cin}${speaker ? ' m-speak' : ''}`} style={speaker?.style} onClick={speaker?.onGo ?? onChip}
-      aria-label={other && speaker ? `${speaker.name} 말하는 중 — ${speaker.name}에게 가기` : `${orchName}${speaker ? ' 말하는 중' : ''}${busy ? ' 일하는 중' : ''}${ctxPct !== undefined ? `, 컨텍스트 ${Math.round(ctxPct)}%` : ''} — 참모 바꾸기${waiting > 0 ? `, 답을 기다리는 참모 ${waiting}` : ''}`}
-      title={other && speaker ? `${speaker.name}에게 가기` : '참모 바꾸기'}>
+      aria-label={other && speaker ? tr(`${speaker.name} 말하는 중 — ${speaker.name}에게 가기`, `${speaker.name} is speaking — go to ${speaker.name}`) : `${orchName}${speaker ? tr(' 말하는 중', ' speaking') : ''}${busy ? tr(' 일하는 중', ' working') : ''}${ctxPct !== undefined ? tr(`, 컨텍스트 ${Math.round(ctxPct)}%`, `, context ${Math.round(ctxPct)}%`) : ''} — ${tr('참모 바꾸기', 'Switch assistant')}${waiting > 0 ? tr(`, 답을 기다리는 참모 ${waiting}`, `, ${waiting} waiting for an answer`) : ''}`}
+      title={other && speaker ? tr(`${speaker.name}에게 가기`, `Go to ${speaker.name}`) : tr('참모 바꾸기', 'Switch assistant')}>
       <AvatarRing pct={other ? undefined : ctxPct} dot={busy && !other ? 'st-work' : undefined} size={40}><span key={speaker?.id ?? 'own'} className={`m-cdot${swapped.current ? ' m-cin' : ''}`}>{speaker?.avatar ?? avatar}</span></AvatarRing>
       {waiting > 0 && <span className="m-wait-n">{waiting}</span>}
     </button>
@@ -174,34 +175,34 @@ export function Composer({ avatar, orchName, waiting, placeholder, draftKey, max
               <span key={r.label} className="m-att m-att-ref" title={r.text}>
                 <span className="m-att-label">{r.label}</span>
                 <span className="m-att-q">{r.text.replace(/\s+/g, ' ')}</span>
-                <button type="button" className="m-att-x" onClick={() => dropRef(r.label)} aria-label={`${r.label} 빼기`} title="빼기"><IconClose /></button>
+                <button type="button" className="m-att-x" onClick={() => dropRef(r.label)} aria-label={tr(`${r.label} 빼기`, `Remove ${r.label}`)} title={tr('빼기', 'Remove')}><IconClose /></button>
               </span>
             ))}
             {files.map((f) => (
               <span key={f.path} className="m-att">
-                {f.image ? <AttPic a={f} /> : <span className="m-att-file">{f.name.split('.').pop()?.toUpperCase().slice(0, 4) || '파일'}</span>}
+                {f.image ? <AttPic a={f} /> : <span className="m-att-file">{f.name.split('.').pop()?.toUpperCase().slice(0, 4) || tr('파일', 'File')}</span>}
                 <span className="m-att-label">{f.label}</span>
-                <button type="button" className="m-att-x" onClick={() => remove(f)} aria-label={`${f.label} ${f.name} 빼기`} title="빼기"><IconClose /></button>
+                <button type="button" className="m-att-x" onClick={() => remove(f)} aria-label={tr(`${f.label} ${f.name} 빼기`, `Remove ${f.label} ${f.name}`)} title={tr('빼기', 'Remove')}><IconClose /></button>
               </span>
             ))}
           </div>
         )}
         <textarea ref={box} value={draft} rows={1} placeholder={placeholder} onFocus={onFocus} onChange={(e) => setDraft(e.target.value)} />
         <div className="m-crow">
-          <button type="button" className="m-cbtn" disabled={uploading} onClick={() => file.current?.click()} aria-label={uploading ? '올리는 중' : '그림·파일 붙이기'} title="붙이기">
+          <button type="button" className="m-cbtn" disabled={uploading} onClick={() => file.current?.click()} aria-label={uploading ? tr('올리는 중', 'Uploading') : tr('그림·파일 붙이기', 'Attach image or file')} title={tr('붙이기', 'Attach')}>
             <span className="m-cdot"><IconPlus /></span>
           </button>
           <input ref={file} type="file" accept="image/*,.pdf,.txt,.md,.csv,.json,.zip,application/pdf,text/plain,text/markdown,text/csv,application/json,application/zip" multiple hidden onChange={(e) => void pick(e.target.files)} />
           {chip}
           {slots.stop && (
-            <button type="button" className="m-cbtn m-cstop-sm" disabled={stopping} onClick={onStop} aria-label={`${orchName} 하던 일 멈추기`} title="멈춤">
+            <button type="button" className="m-cbtn m-cstop-sm" disabled={stopping} onClick={onStop} aria-label={tr(`${orchName} 하던 일 멈추기`, `Stop what ${orchName} is doing`)} title={tr('멈춤', 'Stop')}>
               <span className="m-cdot"><IconStop /></span>
             </button>
           )}
           <span className="m-crow-sp" />
           {slots.left === 'voice' ? <span key="voice" className={`m-cslot${cin}`}>{voice}</span> : orchBtn('orch-l')}
           {slots.corner === 'send' ? (
-            <button key="go" type="submit" className={`m-cbtn m-cgo${cin}`} disabled={uploading} aria-label="보내기" title="보내기">
+            <button key="go" type="submit" className={`m-cbtn m-cgo${cin}`} disabled={uploading} aria-label={tr('보내기', 'Send')} title={tr('보내기', 'Send')}>
               <span className="m-cdot"><IconArrowUp /></span>
             </button>
           ) : orchBtn('orch-c')}

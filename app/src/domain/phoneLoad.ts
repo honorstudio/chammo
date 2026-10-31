@@ -1,5 +1,6 @@
 // 폰에서 맥 부하 보기(사용자 2026-10-05 "PC 안 보면 왜 느린지 모르겠다") — 맥이 /api/load 로 주는 것을 머리줄 칩·시트로.
 // 재료는 맥 앱이 잴 때마다 적는 load.json(domain/load summarize)과 scripts/slot 자리 파일. 보기만 — 끄기는 데스크톱 부하 화면에서
+import { machine, tr } from '../i18n';
 type Level = 'ok' | 'warn' | 'high';
 type Summary = { at: string; cores: number; load1: number; swapUsedGb: number; level: Level; sessions: { name: string; project: string; cpu: number; mem: string; top: string[] }[]; rest?: { cpu: number; top: string[] } };
 
@@ -22,10 +23,10 @@ export type PhoneLoad = {
   why: string;
 };
 
-const LABEL: Record<Level, string> = { ok: '보통', warn: '바쁨', high: '과부하' };
+const LABEL: Record<Level, string> = { ok: tr('보통', 'Normal'), warn: tr('바쁨', 'Busy'), high: tr('과부하', 'Overloaded') };
 const SLOTS = ['build', 'ios', 'galaxy'];
 const STALE_SEC = 90;
-const STATE: Record<SlotState, string> = { busy: '바쁨', idle: '쉬는 중', gone: '세션 없음' };
+const STATE: Record<SlotState, string> = { busy: tr('바쁨', 'Busy'), idle: tr('쉬는 중', 'Idle'), gone: tr('세션 없음', 'No session') };
 
 /** "Gradle 16% 196MB" → "Gradle" */
 const labelOf = (line: string) => line.replace(/\s+\d+%\s+\S+$/, '');
@@ -34,13 +35,13 @@ const whatOf = (top: string[], project: string) => top.map(labelOf).find((l) => 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 function whyOf(s: Summary, sessions: PhoneLoadSession[]): string {
-  if (s.level === 'ok') return '여유 있어요';
+  if (s.level === 'ok') return tr('여유 있어요', 'Plenty of headroom');
   const top = sessions[0];
   const rest = s.rest && s.rest.top[0] ? s.rest : null;
-  if (rest && rest.cpu > (top?.cpu ?? 0) && rest.cpu >= 50) return `세션 밖 ${labelOf(rest.top[0]!)} — CPU ${rest.cpu}%`;
+  if (rest && rest.cpu > (top?.cpu ?? 0) && rest.cpu >= 50) return tr(`세션 밖 ${labelOf(rest.top[0]!)} — CPU ${rest.cpu}%`, `Outside sessions: ${labelOf(rest.top[0]!)} — CPU ${rest.cpu}%`);
   if (top && top.cpu >= 50) return `${top.name}${top.what ? ` · ${top.what}` : ''} — CPU ${top.cpu}%`;
-  if (s.swapUsedGb >= 4) return `스왑 ${s.swapUsedGb}G — 메모리가 모자라요`;
-  return top ? `${top.name} — CPU ${top.cpu}%` : '큰 원인을 못 찾았어요';
+  if (s.swapUsedGb >= 4) return tr(`스왑 ${s.swapUsedGb}G — 메모리가 모자라요`, `Swap ${s.swapUsedGb}G — low on memory`);
+  return top ? `${top.name} — CPU ${top.cpu}%` : tr('큰 원인을 못 찾았어요', 'No clear cause found');
 }
 
 export function readPhoneLoad(text: string): PhoneLoad | null {
@@ -61,7 +62,7 @@ export function readPhoneLoad(text: string): PhoneLoad | null {
   });
   const s = v.load;
   if (!s || num(s.load1) === null || num(s.cores) === null) {
-    return { level: 'unknown', label: '모름', load1: 0, cores: 0, swapGb: 0, ageSec: null, stale: true, sessions: [], slots, why: '맥 앱이 아직 부하를 안 쟀어요' };
+    return { level: 'unknown', label: tr('모름', 'Unknown'), load1: 0, cores: 0, swapGb: 0, ageSec: null, stale: true, sessions: [], slots, why: tr('맥 앱이 아직 부하를 안 쟀어요', `The ${machine()} app has not measured the load yet`) };
   }
   const at = Date.parse(s.at) / 1000;
   const ageSec = Number.isFinite(at) ? Math.max(0, Math.round(now - at)) : null;
@@ -85,11 +86,11 @@ export function readPhoneLoad(text: string): PhoneLoad | null {
 export function loadChip(v: PhoneLoad | null): { cls: string; text: string; aria: string } | null {
   if (!v || v.level === 'unknown') return null;
   const text = v.load1 >= 10 ? String(Math.round(v.load1)) : v.load1.toFixed(1);
-  return { cls: v.stale ? 'ld-unknown' : `ld-${v.level}`, text, aria: `맥 부하 ${v.stale ? '(오래된 값) ' : ''}${v.label} — ${text}, 코어 ${v.cores}개` };
+  return { cls: v.stale ? 'ld-unknown' : `ld-${v.level}`, text, aria: tr(`맥 부하 ${v.stale ? '(오래된 값) ' : ''}${v.label} — ${text}, 코어 ${v.cores}개`, `${machine()} load ${v.stale ? '(stale) ' : ''}${v.label} — ${text}, ${v.cores} cores`) };
 }
 
 /** 부하 시트 자리 줄 글 — 주인 · 바쁨/쉬는 중/세션 없음 · 몇 분 · 쥔 세션. 줄이 좁아 말줄임되니 긴 세션 이름을 맨 뒤에 */
 export function slotLine(s: PhoneSlot): string {
-  if (!s.owner) return '비어 있음';
-  return [s.owner, s.state && STATE[s.state], `${s.min}분`, s.over && '시간 넘음', s.who].filter(Boolean).join(' · ');
+  if (!s.owner) return tr('비어 있음', 'Empty');
+  return [s.owner, s.state && STATE[s.state], tr(`${s.min}분`, `${s.min} min`), s.over && tr('시간 넘음', 'Over time'), s.who].filter(Boolean).join(' · ');
 }

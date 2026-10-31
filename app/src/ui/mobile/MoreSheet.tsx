@@ -3,6 +3,7 @@
 import type { Push } from './usePush';
 import { IconChevron } from '../Icons';
 import { BottomSheet } from './kit';
+import { tr } from '../../i18n';
 
 type Props = {
   /** 일하거나 묻는 하위 세션 수 */
@@ -27,20 +28,20 @@ export function MoreSheet({ busy, routines, left, push, onSessions, onRoutines, 
     </button>
   );
   return (
-    <BottomSheet label="더보기" title="더보기" onClose={onClose}>
+    <BottomSheet label={tr('더보기', 'More')} title={tr('더보기', 'More')} onClose={onClose}>
       <div className="m-mo-list">
-        {row('세션', `세션${busy ? ` — 일하거나 묻는 세션 ${busy}` : ''}`, busy > 0 ? <span className="m-mo-n">{busy}</span> : null, onSessions)}
-        {row('예약', `예약${routines ? ` — 도는 중 ${routines}` : ''}`, routines > 0 ? `${routines}개 도는 중` : null, onRoutines)}
-        {left !== null && row('계정', `계정 — 남은 양 ${left}%`, `${left}% 남음`, onAccount)}
+        {row(tr('세션', 'Sessions'), tr(`세션${busy ? ` — 일하거나 묻는 세션 ${busy}` : ''}`, `Sessions${busy ? ` — ${busy} working or asking` : ''}`), busy > 0 ? <span className="m-mo-n">{busy}</span> : null, onSessions)}
+        {row(tr('예약', 'Scheduled'), tr(`예약${routines ? ` — 도는 중 ${routines}` : ''}`, `Scheduled${routines ? ` — ${routines} running` : ''}`), routines > 0 ? tr(`${routines}개 도는 중`, `${routines} running`) : null, onRoutines)}
+        {left !== null && row(tr('계정', 'Account'), tr(`계정 — 남은 양 ${left}%`, `Account — ${left}% left`), tr(`${left}% 남음`, `${left}% left`), onAccount)}
       </div>
       <div className="m-mo-list">
         {push.can === 'unsupported' ? (
-          <div className="m-mo-row m-mo-static"><b>폰 알림</b><span className="m-mo-right">이 브라우저는 못 받아요</span></div>
+          <div className="m-mo-row m-mo-static"><b>{tr('폰 알림', 'Phone notifications')}</b><span className="m-mo-right">{tr('이 브라우저는 못 받아요', "This browser can't receive them")}</span></div>
         ) : (
           <button type="button" role="switch" aria-checked={push.on} className="m-mo-row" disabled={push.busy}
             onClick={() => { if (push.on || push.can !== 'ok') onClose(); onPush(); }}
-            aria-label={push.on ? '폰 알림 켜짐 — 끄기' : '폰 알림 꺼짐 — 켜기'}>
-            <b>폰 알림</b><span className="m-mo-right">{push.on ? '켜짐' : '꺼짐'}</span>
+            aria-label={push.on ? tr('폰 알림 켜짐 — 끄기', 'Phone notifications on — turn off') : tr('폰 알림 꺼짐 — 켜기', 'Phone notifications off — turn on')}>
+            <b>{tr('폰 알림', 'Phone notifications')}</b><span className="m-mo-right">{push.on ? tr('켜짐', 'On') : tr('꺼짐', 'Off')}</span>
             <span className={push.on ? 'm-toggle m-on' : 'm-toggle'} aria-hidden="true"><i /></span>
           </button>
         )}

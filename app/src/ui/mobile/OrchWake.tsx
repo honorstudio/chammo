@@ -110,10 +110,10 @@ function OffRow({ r, orchs, busy, disabled, onPress }: { r: HomeRow; orchs: Sess
   const nm = phoneName(s.name, orchs);
   // 작은 한 줄(시안 phone-dash O1) — 프사·이름·마지막 때. 누르면 깨우기 확인(▶ 글자 없이), 하던 일은 길게 눌러 메뉴
   return (
-    <button type="button" className="m-offrow" disabled={disabled} onClick={onPress} aria-label={`${nm} — 꺼져 있음, 깨우기`}>
+    <button type="button" className="m-offrow" disabled={disabled} onClick={onPress} aria-label={tr(`${nm} — 꺼져 있음, 깨우기`, `${nm} — off, wake up`)}>
       <OrchAvatar name={s.name} label={nm} size={28} state={busy ? 'rest' : 'off'} color={bodyColor(saved, s.name, orchColor(s.name))} />
       <span className="m-offrow-name">{nm}</span>
-      <span className="m-offrow-when">{busy ? '켜는 중…' : whenLabel(r.lastAt, Date.now())}</span>
+      <span className="m-offrow-when">{busy ? tr('켜는 중…', 'Starting…') : whenLabel(r.lastAt, Date.now())}</span>
     </button>
   );
 }
@@ -126,22 +126,22 @@ export function OffOrchList({ rows, orchs, wake, swipe }: { rows: HomeRow[]; orc
   const nmOf = (r: HomeRow) => phoneName(r.off!.name, orchs);
   return (
     <>
-      <div className="m-sect">꺼져 있음 {rows.length}</div>
+      <div className="m-sect">{tr(`꺼져 있음 ${rows.length}`, `Off ${rows.length}`)}</div>
       <div className="m-offlist">
         {rows.map((r) => {
           // 확인은 그 줄 자리에(2026-10-23 사용자 — 머리 아래 칸은 아래 줄에서 안 보였다): 제거는 시트가, 깨우기는 여기서
           const confirm = swipe?.confirm?.(r);
           if (confirm) return confirm;
           if (ask?.key === r.key) return (
-            <RowConfirm key={r.key} label="깨우기 확인" q={`${nmOf(r)} 깨울까요?`} note={r.doing || '하던 대화 그대로 이어서 켜요.'} ok="깨우기"
+            <RowConfirm key={r.key} label={tr('깨우기 확인', 'Confirm wake up')} q={tr(`${nmOf(r)} 깨울까요?`, `Wake up ${nmOf(r)}?`)} note={r.doing || tr('하던 대화 그대로 이어서 켜요.', 'Picks up the same conversation where it left off.')} ok={tr('깨우기', 'Wake up')}
               busy={!!wake.starting || !!wake.making} onOk={() => { setAsk(null); void wake.wake(r); }} onCancel={() => setAsk(null)} />
           );
           const row = <OffRow key={r.key} r={r} orchs={orchs} busy={wake.starting === r.off!.sessionId} disabled={!!wake.starting || !!wake.making} onPress={() => setAsk(r)} />;
           if (!swipe) return row;
           return (
-            <SwipeRow key={r.key} id={`off:${r.off!.id}`} openId={swipe.openId} setOpenId={swipe.setOpenId} onMenu={swipe.onMenu ? () => swipe.onMenu!(r) : undefined} menuLabel={`${nmOf(r)} 메뉴`} actions={[
-              { label: '깨우기', icon: <IconResume />, onPress: () => void wake.wake(r) },
-              { label: '제거', icon: <IconTrash />, danger: true, onPress: () => swipe.onRemove(r) },
+            <SwipeRow key={r.key} id={`off:${r.off!.id}`} openId={swipe.openId} setOpenId={swipe.setOpenId} onMenu={swipe.onMenu ? () => swipe.onMenu!(r) : undefined} menuLabel={tr(`${nmOf(r)} 메뉴`, `${nmOf(r)} menu`)} actions={[
+              { label: tr('깨우기', 'Wake up'), icon: <IconResume />, onPress: () => void wake.wake(r) },
+              { label: tr('제거', 'Remove'), icon: <IconTrash />, danger: true, onPress: () => swipe.onRemove(r) },
             ]}>{row}</SwipeRow>
           );
         })}
@@ -165,13 +165,13 @@ export function NewOrchForm({ title, taken, wake, onDone }: { title: string; tak
   };
   return (
     <form className="m-new" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-      <label className="m-sect" htmlFor="m-new-nick">새 {title} 이름</label>
-      <input id="m-new-nick" className="m-new-input" value={v} maxLength={24} autoFocus enterKeyHint="done" placeholder="부를 이름 — 예: 뽀삐, 개발" onChange={(e) => setV(e.target.value)} />
+      <label className="m-sect" htmlFor="m-new-nick">{tr(`새 ${title} 이름`, `New ${title} name`)}</label>
+      <input id="m-new-nick" className="m-new-input" value={v} maxLength={24} autoFocus enterKeyHint="done" placeholder={tr('부를 이름 — 예: 뽀삐, 개발', 'A name — e.g. Poppy, Dev')} onChange={(e) => setV(e.target.value)} />
       {problem && <div className="m-error">{problem}</div>}
       <PhoneRoleField value={role} onChange={setRole} />
       <div className="m-new-row">
-        <button type="button" className="m-btn" onClick={onDone}>취소</button>
-        <button type="submit" className="m-send" disabled={!v.trim() || !!problem || sending}>만들기</button>
+        <button type="button" className="m-btn" onClick={onDone}>{tr('취소', 'Cancel')}</button>
+        <button type="submit" className="m-send" disabled={!v.trim() || !!problem || sending}>{tr('만들기', 'Create')}</button>
       </div>
     </form>
   );
@@ -181,7 +181,7 @@ export function NewOrchForm({ title, taken, wake, onDone }: { title: string; tak
 export function PhoneRoleField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
     <>
-      <input className="m-new-input" value={value} maxLength={80} enterKeyHint="done" aria-label="맡은 일" placeholder="맡은 일(비워도 돼요)" onChange={(e) => onChange(e.target.value)} />
+      <input className="m-new-input" value={value} maxLength={80} enterKeyHint="done" aria-label={tr('맡은 일', 'What it handles')} placeholder={tr('맡은 일(비워도 돼요)', 'What it handles (optional)')} onChange={(e) => onChange(e.target.value)} />
       <div className="m-chips">
         {roleChips().map((c) => <button key={c} type="button" className={value.trim() === c ? 'm-chip m-on' : 'm-chip'} onClick={() => onChange(c)}>{c}</button>)}
       </div>

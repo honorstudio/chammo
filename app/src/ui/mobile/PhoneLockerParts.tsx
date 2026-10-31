@@ -5,6 +5,7 @@ import { FileThumb } from './FileThumb';
 import { lockerMkdir, lockerNewDoc, lockerWrite, readFileText } from '../../data/web';
 import { IconFolder, IconFolderPlus } from '../Icons';
 import { BottomSheet } from './kit';
+import { tr } from '../../i18n';
 
 /** 길게 누른 것 — 경로(기록·폴더 안 파일), 폴더 안 바로가기면 그 자리 rel */
 export type Held = { path: string; name: string; rel?: string; link?: boolean };
@@ -27,7 +28,7 @@ export function usePress(onOpen: () => void, onHold: () => void) {
 
 export function Item({ h, view, meta, filed, isNew, onOpen, onHold }: { h: Held; view: LockerViewMode; meta: string; filed: string; isNew?: boolean; onOpen: () => void; onHold: () => void }) {
   const press = usePress(onOpen, onHold);
-  const nm = <span className="m-lk-nm">{isNew && <i className="m-lk-new" aria-label="새 것" />}{h.name}</span>;
+  const nm = <span className="m-lk-nm">{isNew && <i className="m-lk-new" aria-label={tr('새 것', 'New')} />}{h.name}</span>;
   if (view === 'list') return (
     <button type="button" className="m-lk-row" {...press}>
       <span className="m-lk-rthumb"><FileThumb path={h.path} /></span>
@@ -52,9 +53,9 @@ export function ItemMenu({ h, onClose, onOpen, onAlias, onUnalias }: { h: Held; 
     <BottomSheet label={h.name} kind="card" title={h.name} armMs={450} onClose={onClose}>
       {({ close, armed }) => (
         <>
-          <button type="button" className="m-menu-item" onClick={() => { if (armed) { close(); onOpen(); } }}>열기</button>
-          {!h.rel && <button type="button" className="m-menu-item" onClick={() => { if (armed) { close(); onAlias(); } }}>폴더에 바로가기</button>}
-          {onUnalias && <button type="button" className="m-menu-item" onClick={() => { if (armed) { close(); onUnalias(); } }}>바로가기 빼기</button>}
+          <button type="button" className="m-menu-item" onClick={() => { if (armed) { close(); onOpen(); } }}>{tr('열기', 'Open')}</button>
+          {!h.rel && <button type="button" className="m-menu-item" onClick={() => { if (armed) { close(); onAlias(); } }}>{tr('폴더에 바로가기', 'Add shortcut to folder')}</button>}
+          {onUnalias && <button type="button" className="m-menu-item" onClick={() => { if (armed) { close(); onUnalias(); } }}>{tr('바로가기 빼기', 'Remove shortcut')}</button>}
         </>
       )}
     </BottomSheet>
@@ -64,11 +65,11 @@ export function ItemMenu({ h, onClose, onOpen, onAlias, onUnalias }: { h: Held; 
 /** 어느 폴더에 — 내 폴더(여러 층은 들여쓰기) + 끝 = 새 폴더 */
 export function FolderPick({ folders, onClose, onPick, onNew }: { folders: { rel: string; name: string; depth: number }[]; onClose: () => void; onPick: (rel: string) => void; onNew: () => void }) {
   return (
-    <BottomSheet label="어느 폴더에" title="어느 폴더에" onClose={onClose}>
+    <BottomSheet label={tr('어느 폴더에', 'Which folder?')} title={tr('어느 폴더에', 'Which folder?')} onClose={onClose}>
       {folders.map((f) => (
         <button key={f.rel} type="button" className="m-menu-item m-lk-prow" style={{ paddingLeft: 16 + f.depth * 18 }} onClick={() => onPick(f.rel)}><IconFolder /><b>{f.name}</b></button>
       ))}
-      <button type="button" className="m-menu-item m-lk-prow" onClick={onNew}><IconFolderPlus /><b>새 폴더</b></button>
+      <button type="button" className="m-menu-item m-lk-prow" onClick={onNew}><IconFolderPlus /><b>{tr('새 폴더', 'New folder')}</b></button>
     </BottomSheet>
   );
 }
@@ -83,12 +84,12 @@ export function AddSheet({ where, onClose, onDoc, onFiles }: { where: string; on
     el.click();
   };
   return (
-    <BottomSheet label={`${where}에`} kind="card" title={`${where}에`} onClose={onClose}>
+    <BottomSheet label={tr(`${where}에`, `In ${where}`)} kind="card" title={tr(`${where}에`, `In ${where}`)} onClose={onClose}>
       {({ close }) => (
         <>
-          <button type="button" className="m-menu-item" onClick={() => { close(); onDoc(); }}>새 문서</button>
-          <button type="button" className="m-menu-item" onClick={() => pick(photo.current, close)}>사진 올리기</button>
-          <button type="button" className="m-menu-item" onClick={() => pick(file.current, close)}>파일 올리기</button>
+          <button type="button" className="m-menu-item" onClick={() => { close(); onDoc(); }}>{tr('새 문서', 'New document')}</button>
+          <button type="button" className="m-menu-item" onClick={() => pick(photo.current, close)}>{tr('사진 올리기', 'Upload photo')}</button>
+          <button type="button" className="m-menu-item" onClick={() => pick(file.current, close)}>{tr('파일 올리기', 'Upload file')}</button>
           <input ref={photo} type="file" accept="image/*" multiple hidden />
           <input ref={file} type="file" accept="image/*,.pdf,.md,.txt,.csv,.json,.zip" multiple hidden />
         </>
@@ -108,18 +109,18 @@ export function NameSheet({ owner, kind, parent, onClose, onMade, onError }: { o
     try {
       onMade(kind === 'doc' ? (await lockerNewDoc(owner, parent, name)).path : (await lockerMkdir(owner, parent, name)).rel);
     } catch (e) {
-      onError(`못 만들었어요 — ${(e as Error).message}`);
+      onError(tr(`못 만들었어요 — ${(e as Error).message}`, `Couldn't create — ${(e as Error).message}`));
       setBusy(false);
     }
   };
-  const label = kind === 'doc' ? '새 문서' : '새 폴더';
+  const label = kind === 'doc' ? tr('새 문서', 'New document') : tr('새 폴더', 'New folder');
   return (
     <BottomSheet label={label} title={label} onClose={onClose}>
       <form className="m-new m-lk-name" onSubmit={(e) => { e.preventDefault(); void go(); }}>
-        <input autoFocus value={v} onChange={(e) => setV(e.target.value)} placeholder={kind === 'doc' ? '제목' : '폴더 이름'} aria-label={kind === 'doc' ? '제목' : '폴더 이름'} maxLength={80} />
+        <input autoFocus value={v} onChange={(e) => setV(e.target.value)} placeholder={kind === 'doc' ? tr('제목', 'Title') : tr('폴더 이름', 'Folder name')} aria-label={kind === 'doc' ? tr('제목', 'Title') : tr('폴더 이름', 'Folder name')} maxLength={80} />
         <div className="m-new-row">
-          <button type="button" className="m-btn" onClick={onClose}>취소</button>
-          <button type="submit" className="m-send" disabled={!v.trim() || busy}>만들기</button>
+          <button type="button" className="m-btn" onClick={onClose}>{tr('취소', 'Cancel')}</button>
+          <button type="submit" className="m-send" disabled={!v.trim() || busy}>{tr('만들기', 'Create')}</button>
         </div>
       </form>
     </BottomSheet>
@@ -153,9 +154,9 @@ export function MdEditor({ owner, path, onClose }: { owner: string; path: string
   const title = (text ?? '').split('\n').find((l) => l.trim())?.replace(/^#+\s*/, '') || path.slice(path.lastIndexOf('/') + 1);
   return (
     <BottomSheet label={title} kind="full" title={title} titleClass="m-view-title" onClose={close}
-      actions={<span className={`m-lk-saved ${st}`} role="status">{st === 'saving' ? '저장 중' : st === 'saved' ? '저장됨' : st === 'error' ? '못 저장했어요' : st === 'outside' ? '컴퓨터에서 그새 바뀌었어요 — 닫고 다시 열어 주세요' : ''}</span>}>
-      {text === null ? <p className="m-muted m-sm m-lk-edpad">불러오는 중</p> : (
-        <textarea className="m-lk-ed" value={text} onChange={(e) => change(e.target.value)} aria-label="문서 내용" autoFocus spellCheck={false} />
+      actions={<span className={`m-lk-saved ${st}`} role="status">{st === 'saving' ? tr('저장 중', 'Saving') : st === 'saved' ? tr('저장됨', 'Saved') : st === 'error' ? tr('못 저장했어요', 'Couldn\'t save') : st === 'outside' ? tr('컴퓨터에서 그새 바뀌었어요 — 닫고 다시 열어 주세요', 'Changed on your computer in the meantime — close and reopen') : ''}</span>}>
+      {text === null ? <p className="m-muted m-sm m-lk-edpad">{tr('불러오는 중', 'Loading')}</p> : (
+        <textarea className="m-lk-ed" value={text} onChange={(e) => change(e.target.value)} aria-label={tr('문서 내용', 'Document content')} autoFocus spellCheck={false} />
       )}
     </BottomSheet>
   );

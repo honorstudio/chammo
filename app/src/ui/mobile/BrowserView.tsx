@@ -4,6 +4,7 @@
 // '돌려주기'(세션이 부른 거면 '다 했어')를 누르면 세션이 사람이 한 일 꼬리표를 받고 이어 간다. 친 글은 어디에도 안 남긴다
 // 화면을 못 받으면(크롬 꺼짐·붙기 실패·폰이 못 받음) 이유 한 줄 + 다시 시도(2026-10-09 — 예전엔 실패를 삼켜 '화면 받는 중'에 이유 없이 멈췄다)
 import { useEffect, useRef, useState } from 'react';
+import { tr } from '../../i18n';
 import { browserFrame, browserInput, browserRetry, browserTakeover } from '../../data/web';
 import { controlOf, phoneTrouble, takeoverLine, unpackFrame, type Live } from '../../domain/agentBrowser';
 import { phoneGesture, phoneKey, pointIn, type InputEv } from '../../domain/agentInput';
@@ -71,41 +72,41 @@ export function BrowserView({ live }: { live: Live }) {
   const troubleLine = trouble && (
     <div className="m-br-trouble" role="status">
       <span>{trouble.text}</span>
-      <button type="button" className="m-plain" onClick={retry} aria-label="다시 시도" title="다시 시도"><IconRefresh /></button>
+      <button type="button" className="m-plain" onClick={retry} aria-label={tr('다시 시도', 'Try again')} title={tr('다시 시도', 'Try again')}><IconRefresh /></button>
     </div>
   );
 
-  const fail = (e: unknown) => setErr(e instanceof Error && e.message ? e.message : '못 했어 — 브라우저가 바뀌었을 수 있어');
+  const fail = (e: unknown) => setErr(e instanceof Error && e.message ? e.message : tr('못 했어 — 브라우저가 바뀌었을 수 있어', "Couldn't do that — the browser may have changed"));
   const take = () => { setErr(''); void browserTakeover(live.profile, live.sessionPid, true).then(() => { setWant(true); setBig(true); }, fail); };
   const give = () => { setErr(''); void browserTakeover(live.profile, live.sessionPid, false).then(() => setWant(false), fail); };
   const send = (events: InputEv[]) => void browserInput(live.profile, live.sessionPid, events).catch(fail);
 
-  const status = live.ask ? `세션이 불러요 — ${live.ask.reason}` : ctl === 'mine' ? takeoverLine({ ...live, takeover: live.takeover ?? { by: 'phone', at: Date.now() } }) : null;
+  const status = live.ask ? tr(`세션이 불러요 — ${live.ask.reason}`, `The session is asking for you — ${live.ask.reason}`) : ctl === 'mine' ? takeoverLine({ ...live, takeover: live.takeover ?? { by: 'phone', at: Date.now() } }) : null;
   const action = live.ask
-    ? <button type="button" className="m-btn m-br-act" onClick={give}>다 했어</button>
+    ? <button type="button" className="m-btn m-br-act" onClick={give}>{tr('다 했어', 'Done')}</button>
     : ctl === 'mine'
-      ? <button type="button" className="m-btn m-br-act" onClick={give}>돌려주기</button>
-      : <button type="button" className="m-btn" onClick={take}>개입</button>;
+      ? <button type="button" className="m-btn m-br-act" onClick={give}>{tr('돌려주기', 'Hand back')}</button>
+      : <button type="button" className="m-btn" onClick={take}>{tr('개입', 'Take over')}</button>;
 
   return (
     <div className="m-br">
-      <button type="button" className="m-br-shot" onClick={() => setBig(true)} aria-label="브라우저 화면 크게">
-        {src ? <img src={src} alt={live.title || '세션 브라우저 화면'} className={trouble ? 'm-br-stale' : undefined} /> : !trouble && <span className="m-muted m-sm">화면 받는 중…</span>}
+      <button type="button" className="m-br-shot" onClick={() => setBig(true)} aria-label={tr('브라우저 화면 크게', 'Enlarge browser view')}>
+        {src ? <img src={src} alt={live.title || tr('세션 브라우저 화면', 'Session browser view')} className={trouble ? 'm-br-stale' : undefined} /> : !trouble && <span className="m-muted m-sm">{tr('화면 받는 중…', 'Loading the view…')}</span>}
       </button>
       {troubleLine}
       {big && (
-        <BottomSheet kind="full" label="세션 브라우저 화면" onClose={() => setBig(false)} head={
+        <BottomSheet kind="full" label={tr('세션 브라우저 화면', 'Session browser view')} onClose={() => setBig(false)} head={
           <div className="m-picker-head">
             <b className="m-view-title">{live.title || host(live.url)}</b>
             {action}
-            <IconBtn label="닫기" onClick={() => setBig(false)}><IconClose /></IconBtn>
+            <IconBtn label={tr('닫기', 'Close')} onClick={() => setBig(false)}><IconClose /></IconBtn>
           </div>}>
           {status && <div className={`m-br-status ${live.ask ? 'm-br-ask' : ''}`} role="status">{status}</div>}
           {err && <div className="m-br-err" role="alert">{err}</div>}
           {troubleLine}
           {ctl === 'view'
-            ? <div className="m-view-body">{src && <ZoomBox><img src={src} alt={live.title || '세션 브라우저 화면'} /></ZoomBox>}</div>
-            : <Control src={src} alt={live.title || '세션 브라우저 화면'} send={send} />}
+            ? <div className="m-view-body">{src && <ZoomBox><img src={src} alt={live.title || tr('세션 브라우저 화면', 'Session browser view')} /></ZoomBox>}</div>
+            : <Control src={src} alt={live.title || tr('세션 브라우저 화면', 'Session browser view')} send={send} />}
         </BottomSheet>
       )}
       <div className="m-br-line">
@@ -142,14 +143,14 @@ function Control({ src, alt, send }: { src: string; alt: string; send: (ev: Inpu
           start.current = null;
           if (s) send(phoneGesture(s.p, e.clientX - s.x, e.clientY - s.y, s.scale));
         }}>
-        {src ? <img ref={img} src={src} alt={alt} draggable={false} /> : <span className="m-muted m-sm">화면 받는 중…</span>}
+        {src ? <img ref={img} src={src} alt={alt} draggable={false} /> : <span className="m-muted m-sm">{tr('화면 받는 중…', 'Loading the view…')}</span>}
       </div>
       <form className="m-br-type" onSubmit={(e) => { e.preventDefault(); submit(); }}>
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="누른 칸에 넣을 글" aria-label="브라우저에 넣을 글"
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={tr('누른 칸에 넣을 글', 'Text for the tapped field')} aria-label={tr('브라우저에 넣을 글', 'Text to type in the browser')}
           autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} enterKeyHint="send" />
-        <button type="submit" className="m-plain" aria-label="글 넣기" title="글 넣기" disabled={!text}><IconSend /></button>
+        <button type="submit" className="m-plain" aria-label={tr('글 넣기', 'Type text')} title={tr('글 넣기', 'Type text')} disabled={!text}><IconSend /></button>
         <button type="button" className="m-plain" aria-label="Enter" title="Enter" onClick={() => send(phoneKey('Enter'))}><IconEnter /></button>
-        <button type="button" className="m-plain" aria-label="지우기" title="지우기" onClick={() => send(phoneKey('Backspace'))}><IconBackspace /></button>
+        <button type="button" className="m-plain" aria-label={tr('지우기', 'Clear')} title={tr('지우기', 'Clear')} onClick={() => send(phoneKey('Backspace'))}><IconBackspace /></button>
       </form>
     </>
   );

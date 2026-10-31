@@ -8,7 +8,7 @@ import { flowText, readPhoneLogin, showCard, type PhoneLogin } from '../../domai
 import { IconClose, IconSend } from '../Icons';
 import { BottomSheet, useSheet } from './kit';
 import { useMemoPoll } from './usePoll';
-import { machine } from '../../i18n';
+import { machine, tr } from '../../i18n';
 
 export function PhoneLoginCard() {
   const [text, , kick] = useMemoPoll('login', readLogin, 15_000, '');
@@ -22,10 +22,10 @@ export function PhoneLoginCard() {
       <PhoneTermsCards cards={terms} onDone={kick} />
       <div className="m-login" role="alert">
         <div className="m-login-mid">
-          <b>{t?.title ?? 'Claude 로그인이 풀렸어요'}</b>
-          <span>{t?.where ?? '로그인하는 중'}</span>
+          <b>{t?.title ?? tr('Claude 로그인이 풀렸어요', 'Claude has signed out')}</b>
+          <span>{t?.where ?? tr('로그인하는 중', 'Signing in')}</span>
         </div>
-        <button type="button" className="m-btn m-login-btn" onClick={() => setOpen(true)}>로그인</button>
+        <button type="button" className="m-btn m-login-btn" onClick={() => setOpen(true)}>{tr('로그인', 'Sign in')}</button>
       </div>
       {open && <LoginSheet first={v} onClose={() => { setOpen(false); kick(); }} />}
     </>
@@ -39,7 +39,7 @@ function PhoneTermsCards({ cards, onDone }: { cards: TermsCard[]; onDone: () => 
   const retry = () => {
     setBusy(true);
     setErr(null);
-    loginTermsRetry().then(onDone, () => setErr(`${machine()}에 못 닿았어요. 다시 해 주세요`)).finally(() => setBusy(false));
+    loginTermsRetry().then(onDone, () => setErr(tr(`${machine()}에 못 닿았어요. 다시 해 주세요`, `Couldn't reach your ${machine()}. Please try again`))).finally(() => setBusy(false));
   };
   return <>{cards.map((c) => {
     const t = termsText(c);
@@ -50,8 +50,8 @@ function PhoneTermsCards({ cards, onDone }: { cards: TermsCard[]; onDone: () => 
           <span>{err ?? t.where}</span>
         </div>
         <div className="m-terms-acts">
-          <a className="m-btn m-login-btn" href="https://claude.ai" target="_blank" rel="noopener noreferrer">claude.ai 열기</a>
-          <button type="button" className="m-btn m-login-btn" disabled={busy} onClick={retry}>다시 시도</button>
+          <a className="m-btn m-login-btn" href="https://claude.ai" target="_blank" rel="noopener noreferrer">{tr('claude.ai 열기', 'Open claude.ai')}</a>
+          <button type="button" className="m-btn m-login-btn" disabled={busy} onClick={retry}>{tr('다시 시도', 'Try again')}</button>
         </div>
       </div>
     );
@@ -76,7 +76,7 @@ function LoginSheet({ first, onClose }: { first: PhoneLogin; onClose: () => void
       const st = await f();
       setV((p) => readPhoneLogin(JSON.stringify({ need: p.need, flow: st })));
     } catch (e: unknown) {
-      setErr(String(e).includes('429') ? '잠깐 뒤에 다시 눌러 주세요' : `${machine()}에 못 닿았어요. 다시 해 주세요`);
+      setErr(String(e).includes('429') ? tr('잠깐 뒤에 다시 눌러 주세요', 'Please wait a moment and tap again') : tr(`${machine()}에 못 닿았어요. 다시 해 주세요`, `Couldn't reach your ${machine()}. Please try again`));
     } finally {
       setBusy(false);
     }
@@ -86,19 +86,19 @@ function LoginSheet({ first, onClose }: { first: PhoneLogin; onClose: () => void
   const clean = code.trim();
   const send = () => { if (clean) void act(() => loginCode(clean)).then(() => setCode('')); };
   return (
-    <BottomSheet label="Claude 로그인" title="Claude 로그인" onClose={onClose} bodyClass="m-picker-list m-login-steps">
+    <BottomSheet label={tr('Claude 로그인', 'Claude sign-in')} title={tr('Claude 로그인', 'Claude sign-in')} onClose={onClose} bodyClass="m-picker-list m-login-steps">
       {f.state !== 'idle' && <p className="m-sm">{flowText(f)}</p>}
       {fresh && f.state !== 'done' && (
-        <button type="button" className="m-send m-login-go" disabled={busy} onClick={() => void act(loginStart)}>{f.state === 'failed' ? '다시 시작' : '로그인 시작'}</button>
+        <button type="button" className="m-send m-login-go" disabled={busy} onClick={() => void act(loginStart)}>{f.state === 'failed' ? tr('다시 시작', 'Start again') : tr('로그인 시작', 'Start sign-in')}</button>
       )}
-      {f.state === 'starting' && <p className="m-muted m-sm">몇 초 걸려요</p>}
+      {f.state === 'starting' && <p className="m-muted m-sm">{tr('몇 초 걸려요', 'This takes a few seconds')}</p>}
       {f.state === 'waiting' && f.url && (
         <>
-          <a className="m-send m-login-go" href={f.url} target="_blank" rel="noopener noreferrer">로그인 페이지 열기</a>
+          <a className="m-send m-login-go" href={f.url} target="_blank" rel="noopener noreferrer">{tr('로그인 페이지 열기', 'Open the sign-in page')}</a>
           <div className="m-login-code">
             <input className="m-new-input" value={code} autoComplete="one-time-code" autoCapitalize="off" autoCorrect="off" spellCheck={false} enterKeyHint="send"
-              aria-label="로그인 코드" placeholder="코드 붙여 넣기" maxLength={512} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) send(); }} />
-            <button type="button" className="m-icon m-login-send" disabled={busy || !clean} onClick={send} aria-label="코드 보내기" title="보내기"><IconSend /></button>
+              aria-label={tr('로그인 코드', 'Sign-in code')} placeholder={tr('코드 붙여 넣기', 'Paste the code')} maxLength={512} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) send(); }} />
+            <button type="button" className="m-icon m-login-send" disabled={busy || !clean} onClick={send} aria-label={tr('코드 보내기', 'Send code')} title={tr('보내기', 'Send')}><IconSend /></button>
           </div>
         </>
       )}
@@ -111,5 +111,5 @@ function LoginSheet({ first, onClose }: { first: PhoneLogin; onClose: () => void
 /** 로그인 그만 — 멈춘 뒤 시트를 내려 닫는다(공용 시트의 닫기) */
 function StopLogin({ disabled, onStop }: { disabled: boolean; onStop: () => Promise<void> }) {
   const { close } = useSheet();
-  return <button type="button" className="m-icon m-login-stop" disabled={disabled} onClick={() => void onStop().then(close)} aria-label="로그인 그만" title="그만"><IconClose /></button>;
+  return <button type="button" className="m-icon m-login-stop" disabled={disabled} onClick={() => void onStop().then(close)} aria-label={tr('로그인 그만', 'Stop signing in')} title={tr('그만', 'Stop')}><IconClose /></button>;
 }

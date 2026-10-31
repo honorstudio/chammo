@@ -6,6 +6,7 @@ import type { Activity } from './activity';
 import type { SnapSession } from './revive';
 import type { TaskEvent } from './tasks';
 import fixture from './paths.fixture.json';
+import { LINE_MAX } from './progressHint';
 
 const lost = (name: string, sid: string, over: Partial<SnapSession> = {}): SnapSession => ({ sessionId: sid, name, cwd: `/dev/${name}`, id: sid.slice(0, 8), ...over });
 const send = (task: string, target: string, from: string, ts: string, title = '일'): TaskEvent => ({ ts, type: 'send', task, target, from, title });
@@ -174,6 +175,14 @@ describe('planNotices — 안 끝난 꺼진 세션을 받을 참모', () => {
 describe('restartNotice — 참모 입력칸에 넣을 한 줄', () => {
   it('하나면 정한 문구 그대로', () => {
     expect(restartNotice([{ s: a, doing: '할 일 API 만들기' }])).toBe('[앱] 재시작으로 꺼진 세션: todo-api(aaaa1111) — 하던 일 할 일 API 만들기. 이어서 켜려면 claude respawn aaaa1111, 끝난 거면 그냥 둬');
+  });
+  it('어디까지 했나(대화 끝·git)를 하던 일 뒤에 붙인다', () => {
+    expect(restartNotice([{ s: a, doing: 'API', at: ' · 어디까지: "빌드 돌릴게." · git feat/api@ab12cd3 (커밋 안 한 변경 2)' }]))
+      .toBe('[앱] 재시작으로 꺼진 세션: todo-api(aaaa1111) — 하던 일 API · 어디까지: "빌드 돌릴게." · git feat/api@ab12cd3 (커밋 안 한 변경 2). 이어서 켜려면 claude respawn aaaa1111, 끝난 거면 그냥 둬');
+  });
+  it('여럿이어도 한 줄 상한을 넘지 않는다', () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ s: lost(`p${i}`, `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`), doing: '일', at: ' · ' + '가'.repeat(140) }));
+    expect([...restartNotice(many)].length).toBeLessThanOrEqual(LINE_MAX);
   });
   it('하던 일을 모르면 그 칸을 뺀다', () => {
     expect(restartNotice([{ s: a }])).toBe('[앱] 재시작으로 꺼진 세션: todo-api(aaaa1111). 이어서 켜려면 claude respawn aaaa1111, 끝난 거면 그냥 둬');

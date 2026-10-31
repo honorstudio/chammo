@@ -127,6 +127,8 @@ pub struct Board {
     pub pinned: String,
     /// 나는 팀장인가(고정 단추)
     pub owner: bool,
+    /// 아직 받는 중인 글 수 — 받아 둔 글부터 먼저 그렸다(화면은 곧 다시 읽는다)
+    pub loading: usize,
 }
 
 struct Ctx {
@@ -138,11 +140,38 @@ struct Ctx {
 
 /// 목록만 — 나중에 든 사람 몫 봉투 더하기(ShareJob)는 기다리지 않는다(10-26 실측: 누가 든 뒤 첫 팀 홈이 요청 23개·약 10.7초를 기다렸다)
 fn read(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) -> Result<(Ctx, Vec<(Item, Doc)>, locker::ShareJob), String> {
+    read_first(dir, kc, http, team, false).map(|(c, d, j, _)| (c, d, j))
+}
+
+/// first = 받아 둔 글부터 먼저 그려도 되나(팀 홈 글판) — 그러면 못 받은 글은 뒤에서 같이 받고 그 수를 돌려준다.
+/// 글 본문은 한 번에 같이 받는다(team_profile::bytes_many — 10-31: 글 30개를 하나씩 차례로 받아 운영 ≈ 8초)
+fn read_first(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, first: bool) -> Result<(Ctx, Vec<(Item, Doc)>, locker::ShareJob, usize), String> {
     let t = team_relay::load_state(dir).team(team).cloned()?;
     let owners = team_owners::holders(dir, kc, http, &t.id, "posts");
     let (v, job) = locker::list_split(dir, kc, http, &t.id)?;
-    let docs = v.items.iter().filter(|i| i.kind == "post" && usable(i)).filter_map(|i| team_profile::bytes_of(dir, kc, http, &t.id, &i.id).ok().and_then(|b| decode(&b).ok()).map(|d| (i.clone(), d))).collect();
-    Ok((Ctx { t, owners, v }, docs, job))
+    let (docs, loading) = {
+        let posts: Vec<&Item> = v.items.iter().filter(|i| i.kind == "post" && usable(i)).collect();
+        let (have, need): (Vec<&Item>, Vec<&Item>) = posts.iter().partition(|i| team_profile::cached(dir, &i.id));
+        let later = first && first_paint(have.len(), need.len()) && http.fork().is_some();
+        let take = if later { have } else { posts };
+        if later {
+            let (d, team, ids) = (dir.to_path_buf(), t.id.clone(), need.iter().map(|i| i.id.clone()).collect::<Vec<_>>());
+            if let Some(h) = http.fork() {
+                std::thread::spawn(move || {
+                    let _ = team_profile::bytes_many(&d, &crate::team_relay_keys::store(), h.as_ref(), &team, &ids);
+                });
+            }
+        }
+        let ids: Vec<String> = take.iter().map(|i| i.id.clone()).collect();
+        let docs: Vec<(Item, Doc)> = take.iter().zip(team_profile::bytes_many(dir, kc, http, &t.id, &ids)).filter_map(|(i, b)| b.ok().and_then(|b| decode(&b).ok()).map(|d| ((*i).clone(), d))).collect();
+        (docs, if later { need.len() } else { 0 })
+    };
+    Ok((Ctx { t, owners, v }, docs, job, loading))
+}
+
+/// 받아 둔 글부터 먼저 그릴까 — 그릴 게 있고, 못 받은 게 같이 받기 한 번(PAR)보다 많을 때
+pub(crate) fn first_paint(cached: usize, missing: usize) -> bool {
+    cached > 0 && missing > team_relay::PAR
 }
 
 fn now_ms() -> u64 {
@@ -151,10 +180,10 @@ fn now_ms() -> u64 {
 
 /// 팀 홈 글판 + 봉투 더하기 일 — 부르는 쪽(화면·폰 명령)은 글판을 먼저 돌려주고 일은 job.spawn() 으로(팀 보관함 화면과 같은 길)
 pub fn board_split(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) -> Result<(Board, locker::ShareJob), String> {
-    let (c, docs, job) = read(dir, kc, http, team)?;
+    let (c, docs, job, loading) = read_first(dir, kc, http, team, true)?;
     let pairs: Vec<(&Item, Doc)> = docs.iter().map(|(i, d)| (i, d.clone())).collect();
     let (posts, pinned) = fold(&pairs, &c.owners, &c.t.member_id);
-    Ok((Board { team: c.t.id.clone(), rev: c.v.rev, posts, pinned, owner: team_owners::has(&c.owners, &c.t.member_id) }, job))
+    Ok((Board { team: c.t.id.clone(), rev: c.v.rev, posts, pinned, owner: team_owners::has(&c.owners, &c.t.member_id), loading }, job))
 }
 
 /// 글 쓰기·고치기(origin = 고칠 글 id) — 고치기는 글쓴이만. 돌려주는 건 글 id + 봉투 더하기 일(쓰기·고정·지우기 모두 — 부르는 쪽이 spawn)

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { mediaTicket, openOnMac, sheetBook, wordHtml } from '../../data/web';
 import { isSheet } from '../../domain/reader';
 import { askBeforePlay, fileError, sizeLabel, wordDoc } from '../../domain/phoneFile';
-import { machine } from '../../i18n';
+import { machine, tr } from '../../i18n';
 import { IconPlay } from '../Icons';
 import { wordDocToHtml } from '../md';
 import { useBlobUrl } from './useBlobUrl';
@@ -18,7 +18,7 @@ function OpenOnMac({ path }: { path: string }) {
   const go = () => { setSt('busy'); openOnMac(path).then(() => setSt('done'), () => setSt('fail')); };
   return (
     <button type="button" className="m-btn m-open-mac" disabled={st === 'busy'} onClick={go}>
-      {st === 'done' ? `${machine()}에서 열었어요` : st === 'fail' ? '못 열었어요 — 다시' : `${machine()}에서 열기`}
+      {st === 'done' ? tr(`${machine()}에서 열었어요`, `Opened on the ${machine()}`) : st === 'fail' ? tr('못 열었어요 — 다시', "Couldn't open — try again") : tr(`${machine()}에서 열기`, `Open on the ${machine()}`)}
     </button>
   );
 }
@@ -32,12 +32,12 @@ export function OfficeSheet({ path, title, onClose }: { path: string; title: str
   const word = wordDoc(path);
   const [html, setHtml] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { if (word) wordHtml(path).then(setHtml, (e: unknown) => setErr((e as Error).message === 'secret inside' ? '글 속에 키가 보여서 폰엔 안 보여 줘요' : '글로 못 바꿨어요')); }, [path, word]);
+  useEffect(() => { if (word) wordHtml(path).then(setHtml, (e: unknown) => setErr((e as Error).message === 'secret inside' ? tr('글 속에 키가 보여서 폰엔 안 보여 줘요', 'There is a key inside this text, so it is hidden on the phone') : tr('글로 못 바꿨어요', "Couldn't convert it to text"))); }, [path, word]);
   const safe = useMemo(() => (html === null ? null : wordDocToHtml(html)), [html]);
   // 엑셀은 읽기 전용 표로(맥에서 고친다)
   const sheet = isSheet(path);
   const [book, setBook] = useState<Awaited<ReturnType<typeof sheetBook>> | null>(null);
-  useEffect(() => { if (sheet) sheetBook(path).then(setBook, (e: unknown) => setErr((e as Error).message === 'secret inside' ? '칸에 키가 보여서 폰엔 안 보여 줘요' : '표로 못 읽었어요')); }, [path, sheet]);
+  useEffect(() => { if (sheet) sheetBook(path).then(setBook, (e: unknown) => setErr((e as Error).message === 'secret inside' ? tr('칸에 키가 보여서 폰엔 안 보여 줘요', 'There is a key inside a cell, so it is hidden on the phone') : tr('표로 못 읽었어요', "Couldn't read it as a sheet"))); }, [path, sheet]);
   // 워드·엑셀이 아니거나 글·표로 못 바꿨으면 첫 장 그림
   const pic = useBlobUrl((!word && !sheet) || err ? path : null, true, 1600);
   return (
@@ -45,12 +45,12 @@ export function OfficeSheet({ path, title, onClose }: { path: string; title: str
       <div className="m-view-body">
         {safe !== null && <div className="m-doc m-md m-word" dangerouslySetInnerHTML={{ __html: safe }} />}
         {book && <SheetTable book={book} />}
-        {((!word && !sheet) || err) && (pic ? <img className="m-office-pic" src={pic} alt={`${title} 첫 장`} /> : <p className="m-muted">첫 장 받는 중…</p>)}
-        {err && <p className="m-muted m-sm">{err} — 첫 장만 보여 줘요</p>}
-        {(word ? safe === null : sheet && !book) && !err && <p className="m-muted">여는 중…</p>}
+        {((!word && !sheet) || err) && (pic ? <img className="m-office-pic" src={pic} alt={tr(`${title} 첫 장`, `${title} first page`)} /> : <p className="m-muted">{tr('첫 장 받는 중…', 'Getting the first page…')}</p>)}
+        {err && <p className="m-muted m-sm">{err} — {tr('첫 장만 보여 줘요', 'showing the first page only')}</p>}
+        {(word ? safe === null : sheet && !book) && !err && <p className="m-muted">{tr('여는 중…', 'Opening…')}</p>}
         <div className="m-office-foot">
-          {!word && !sheet && <span className="m-muted m-sm">폰에선 첫 장만 보여 줘요</span>}
-          {sheet && book && <span className="m-muted m-sm">폰에선 보기만 — 고치기는 {machine()} 스페이스에서</span>}
+          {!word && !sheet && <span className="m-muted m-sm">{tr('폰에선 첫 장만 보여 줘요', 'The phone shows the first page only')}</span>}
+          {sheet && book && <span className="m-muted m-sm">{tr(`폰에선 보기만 — 고치기는 ${machine()} 스페이스에서`, `View only on the phone — edit in Space on the ${machine()}`)}</span>}
           <OpenOnMac path={path} />
         </div>
       </div>
@@ -62,20 +62,20 @@ export function VideoSheet({ path, title, onClose }: { path: string; title: stri
   const [t, setT] = useState<{ url: string; size: number } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
-  useEffect(() => { mediaTicket(path).then((r) => { setT(r); setOk(!askBeforePlay(r.size)); }, (e: unknown) => setErr(fileError((e as Error).message).gone ? '지워졌어요' : '영상을 못 열었어요')); }, [path]);
+  useEffect(() => { mediaTicket(path).then((r) => { setT(r); setOk(!askBeforePlay(r.size)); }, (e: unknown) => setErr(fileError((e as Error).message).gone ? tr('지워졌어요', 'It was deleted') : tr('영상을 못 열었어요', "Couldn't open the video"))); }, [path]);
   return (
     <View path={path} title={title} video onClose={onClose}>
       <div className="m-view-body">
         {t && ok && <video className="m-video-el" src={t.url} controls playsInline preload="metadata" />}
         {t && !ok && (
           <div className="m-confirm">
-            <div>영상이 {sizeLabel(t.size)}예요. LTE 면 그만큼 데이터가 나가요 — 재생할까요?</div>
+            <div>{tr(`영상이 ${sizeLabel(t.size)}예요. LTE 면 그만큼 데이터가 나가요 — 재생할까요?`, `This video is ${sizeLabel(t.size)}. On LTE that much data is used — play it?`)}</div>
             <div className="m-new-row">
-              <button type="button" className="m-send m-send-ico" onClick={() => setOk(true)} aria-label="재생" title="재생"><IconPlay /></button>
+              <button type="button" className="m-send m-send-ico" onClick={() => setOk(true)} aria-label={tr('재생', 'Play')} title={tr('재생', 'Play')}><IconPlay /></button>
             </div>
           </div>
         )}
-        {!t && !err && <p className="m-muted">여는 중…</p>}
+        {!t && !err && <p className="m-muted">{tr('여는 중…', 'Opening…')}</p>}
         {err && <p className="m-error">{err}</p>}
         <div className="m-office-foot"><OpenOnMac path={path} /></div>
       </div>

@@ -2,7 +2,8 @@
 import { tr } from '../i18n';
 
 export type Post = { id: string; file: string; title: string; body: string; by: string; created: number; edited: number; mine: boolean };
-export type PostBoard = { team: string; rev: number; posts: Post[]; pinned: string; owner: boolean };
+/** loading = 아직 받는 중인 글 수(받아 둔 글부터 먼저 그렸다 — 곧 다시 읽는다) */
+export type PostBoard = { team: string; rev: number; posts: Post[]; pinned: string; owner: boolean; loading?: number };
 /** 팀 홈 글 길 — 데스크톱(Tauri 명령)·폰(맥 폰 서버)이 같은 TeamHome 을 쓴다.
  *  board: seen = 본 판(null = 꼭 새로) — 그대로면 {same}. write: 글 id(pin = 폰은 올리며 고정, 데스크톱은 pin 으로 따로).
  *  edit·pin·remove 가 없으면 그 단추를 안 그린다(폰 — 고치기·고정 바꾸기·지우기는 데스크톱에서) */

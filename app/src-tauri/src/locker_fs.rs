@@ -1144,10 +1144,15 @@ fn phone_entries(dir: &Path, home: &Path) -> Vec<Entry> {
 
 /// 폰 보관함 — 폰 화면이 받던 모양({items, hidden, folders}) 그대로, 진짜 폴더에서 만든다. 주인 = 참모 폴더 이름, 폴더 = 참모 폴더 안 자리(맨 위면 없음),
 /// 별칭 줄의 path 는 가리키는 진짜 파일
+/// 폰에 내보내는 경로 — 윈도우는 / 로(fwd). 폰은 dirs[주인] + '/' + rel 로 여는 경로를 만들어 허용 집합과 글자로 맞춘다(공개 이슈 #15)
+pub fn phone_path(p: &Path) -> String {
+    crate::config::fwd(&p.to_string_lossy())
+}
+
 pub fn phone_view(root: &Path, home: &Path) -> serde_json::Value {
     let (mut items, mut folders, mut dirs, mut ids) = (Vec::new(), Vec::new(), serde_json::Map::new(), serde_json::Map::new());
     for (name, dir) in owners(root) {
-        dirs.insert(name.clone(), serde_json::Value::String(dir.to_string_lossy().into_owned()));
+        dirs.insert(name.clone(), serde_json::Value::String(phone_path(&dir)));
         // 주인 id(.chammo) — 폰 팀 탭이 팀 폴더를 이름이 아니라 id(team-<팀>)로 고른다
         if let Some(id) = id_of(&dir) {
             ids.insert(name.clone(), serde_json::Value::String(id));
@@ -1171,7 +1176,7 @@ pub fn phone_view(root: &Path, home: &Path) -> serde_json::Value {
             let at = dir.join(&e.rel);
             let path = if (e.link.is_some() && !e.gone) || e.ro { canon(&at) } else { at };
             items.push(serde_json::json!({
-                "owner": name, "path": path.to_string_lossy(), "rel": e.rel, "copy": e.link.is_none(), "by": "me", "ts": iso(e.mtime),
+                "owner": name, "path": phone_path(&path), "rel": e.rel, "copy": e.link.is_none(), "by": "me", "ts": iso(e.mtime),
                 "folder": folder, "name": null, "gone": e.gone, "mtime": e.mtime, "size": e.size,
             }));
             if e.ro {
@@ -1246,7 +1251,7 @@ pub fn phone_paths(root: &Path, home: &Path) -> Vec<String> {
     for (_, dir) in owners(root) {
         for e in phone_entries(&dir, home).into_iter().filter(|e| !e.dir && !e.gone) {
             let p = dir.join(&e.rel);
-            v.push(if e.link.is_some() || e.ro { canon(&p) } else { p }.to_string_lossy().into_owned());
+            v.push(phone_path(&if e.link.is_some() || e.ro { canon(&p) } else { p }));
         }
     }
     v

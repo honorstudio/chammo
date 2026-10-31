@@ -218,3 +218,16 @@ fn 약관_다시_시도_시각은_파일_하나() {
     assert_eq!(terms_retry_read(&dir), None);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn claude_가_안_돌면_로그인이_아니라_설치_문제() {
+    // 로그인 됨이면 claude 를 또 띄우지 않는다
+    assert_eq!(probe_auth(Some(true), || panic!("안 불러야")), (Some(true), false));
+    // auth status false 인데 --version 도 안 됨(npm 바로가기 대상 없음) → 로그인은 모름, claude 없음
+    assert_eq!(probe_auth(Some(false), || Some(false)), (None, true));
+    assert_eq!(probe_auth(None, || Some(false)), (None, true));
+    // 진짜 로그아웃 — claude 는 돈다
+    assert_eq!(probe_auth(Some(false), || Some(true)), (Some(false), false));
+    // --version 이 시간 초과(바쁨) — '없음'으로 치지 않고 원래 답 그대로
+    assert_eq!(probe_auth(Some(false), || None), (Some(false), false));
+}

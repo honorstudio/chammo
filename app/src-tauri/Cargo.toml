@@ -1,6 +1,6 @@
 [package]
 name = "honor-orchestrator"
-version = "0.4.5"
+version = "0.4.6"
 edition = "2021"
 license = "AGPL-3.0-only"
 
@@ -68,7 +68,7 @@ tauri-winrt-notification = "0.7"
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 # 다른 기기 참모 짝 열쇠 — 자격 증명 관리자(wincred.rs) · 팀 초대 클립보드 읽기(team_ui.rs). 이미 락에 있던 판(tokio·mio 가 쓰는 0.61)에 기능만 더한다
 # 세션 브라우저 칸 네이티브 층(browser_pane_win.rs) — 자식 창·GDI 그리기·GDI+ JPEG 풀기(윈도우 기본, 새 크레이트 없이)
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_UI_Shell", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Graphics_GdiPlus", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_LibraryLoader"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_UI_Shell", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Graphics_GdiPlus", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_LibraryLoader", "Win32_Globalization"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

@@ -508,6 +508,23 @@ fn rules_match_shared_fixture() {
 // ── 폰 ──
 
 #[test]
+fn 폰에_내보내는_보관함_경로는_슬래시로() {
+    // 폰은 dirs[주인] + '/' + rel 로 여는 경로를 만든다 — 윈도우 join(C:\…\주인\a/b.md)을 그대로 주면 그 경로가 허용 집합에 없어 403,
+    // 보관함이 안 열렸다(공개 이슈 #15). 맥 경로는 그대로
+    assert_eq!(phone_path(Path::new("C:\\Users\\Me\\Documents\\Chammo\\참모\\a/b.md")), "C:/Users/Me/Documents/Chammo/참모/a/b.md");
+    assert_eq!(phone_path(Path::new("/Users/me/Documents/Chammo/참모/a/b.md")), "/Users/me/Documents/Chammo/참모/a/b.md");
+    let w = W::new("phone-fwd");
+    let d = owner(&w);
+    mkdir(&d, "", "10월").unwrap();
+    put(&d.join("10월/보고서.pdf"), "p");
+    let v = phone_view(&w.root, &w.home);
+    let dir = v["dirs"]["운영"].as_str().unwrap().to_string();
+    let it = v["items"].as_array().unwrap().iter().find(|i| i["rel"] == "10월/보고서.pdf").unwrap().clone();
+    assert_eq!(it["path"].as_str().unwrap(), format!("{dir}/10월/보고서.pdf"), "폰이 만드는 경로와 같은 글자");
+    assert!(phone_paths(&w.root, &w.home).contains(&format!("{dir}/10월/보고서.pdf")));
+}
+
+#[test]
 fn phone_view_lists_every_owner_in_old_shape() {
     let w = W::new("phone");
     let d = owner(&w);

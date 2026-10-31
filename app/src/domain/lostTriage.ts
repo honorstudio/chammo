@@ -7,6 +7,7 @@ import type { Activity } from './activity';
 import { forwardTo } from './forwardQuestion';
 import type { LiveSnap, SnapSession } from './revive';
 import { samePath } from './paths';
+import { capLine } from './progressHint';
 import { classifyWorkspace, orchestratorLike, type Session } from './session';
 import type { TaskEvent } from './tasks';
 
@@ -123,22 +124,24 @@ const nameOf = (s: SnapSession) => s.name || s.cwd.split('/').filter(Boolean).po
 const hasShort = (s: SnapSession) => !!s.id && SHORT.test(s.id);
 const resumeCmd = (s: SnapSession) => (hasShort(s) ? `claude respawn ${s.id}` : `cd "${s.cwd}" && claude --bg --dangerously-skip-permissions --resume ${s.sessionId}`);
 
-/** 참모 입력칸에 넣을 한 줄(Enter 로 보내져서 줄바꿈 없이) */
-export function restartNotice(items: { s: SnapSession; doing?: string }[]): string {
-  const item = ({ s, doing }: { s: SnapSession; doing?: string }, cmd: boolean) =>
-    `${nameOf(s)}(${hasShort(s) ? s.id : s.sessionId.slice(0, 8)})${doing ? tr(` — 하던 일 ${doing}`, ` — was doing ${doing}`) : ''}${cmd ? ` [${resumeCmd(s)}]` : ''}`;
+/** 참모 입력칸에 넣을 한 줄(Enter 로 보내져서 줄바꿈 없이, capLine 상한). at = 어디까지 했나(domain/progressHint — 대화 끝·git) */
+export function restartNotice(items: { s: SnapSession; doing?: string; at?: string }[]): string {
+  type It = { s: SnapSession; doing?: string; at?: string };
+  const item = ({ s, doing, at }: It, cmd: boolean) =>
+    `${nameOf(s)}(${hasShort(s) ? s.id : s.sessionId.slice(0, 8)})${doing ? tr(` — 하던 일 ${doing}`, ` — was doing ${doing}`) : ''}${at ?? ''}${cmd ? ` [${resumeCmd(s)}]` : ''}`;
   if (items.length === 1) {
     const one = items[0]!;
-    return tr(
+    return capLine(tr(
       `[앱] 재시작으로 꺼진 세션: ${item(one, false)}. 이어서 켜려면 ${resumeCmd(one.s)}, 끝난 거면 그냥 둬`,
       `[app] Session stopped by a restart: ${item(one, false)}. To resume: ${resumeCmd(one.s)}; if it was finished, leave it`,
-    );
+    ));
   }
-  const list = items.map((x) => item(x, !hasShort(x.s))).join(' · ');
-  return tr(
+  // 여럿이면 끝 안내가 잘리지 않게 목록 쪽을 먼저 줄인다 — 어디까지는 하나당 120자
+  const list = capLine(items.map((x) => item({ ...x, at: x.at && capLine(x.at, 120) }, !hasShort(x.s))).join(' · '), 760);
+  return capLine(tr(
     `[앱] 재시작으로 꺼진 세션 ${items.length}개: ${list}. 이어서 켜려면 claude respawn <짧은 번호>, 끝난 거면 그냥 둬`,
     `[app] ${items.length} sessions stopped by a restart: ${list}. To resume: claude respawn <short id>; if one was finished, leave it`,
-  );
+  ));
 }
 
 /** 꺼진 목록에서 뺀다 — 끝나서 뺄 때도, 참모에게 알렸을 때도(같은 알림 두 번 안 가게 기록부터 지운다) */

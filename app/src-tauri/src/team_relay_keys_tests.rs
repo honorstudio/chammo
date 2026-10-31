@@ -120,3 +120,67 @@ fn 시험에선_로그인_키체인을_안_연다() {
     assert!(!p.contains("login.keychain"), "{p}");
     assert!(!std::path::Path::new(&p).exists(), "없는 파일이라 읽기는 창 없이 실패");
 }
+
+// ── 열쇠 메모리(10-31 실측: 키체인을 중계 요청마다 읽었다 — 팀 홈 첫 열기 34번·칩 하나 12번, 사용자 승인 '프로세스 메모리에만') ──
+
+/// 키체인을 몇 번 읽었나 세는 저장소
+#[derive(Default)]
+struct Counting {
+    inner: Fake,
+    gets: std::cell::Cell<usize>,
+}
+impl crate::accounts_store::Store for Counting {
+    fn get(&self, s: &str, a: &str) -> Result<Option<crate::accounts_store::Secret>, crate::accounts_store::StoreError> {
+        self.gets.set(self.gets.get() + 1);
+        self.inner.get(s, a)
+    }
+    fn set(&self, s: &str, a: &str, v: &crate::accounts_store::Secret) -> Result<(), crate::accounts_store::StoreError> {
+        self.inner.set(s, a, v)
+    }
+    fn remove(&self, s: &str, a: &str) -> Result<(), crate::accounts_store::StoreError> {
+        self.inner.remove(s, a)
+    }
+}
+
+#[test]
+fn 열쇠는_한_번_읽으면_메모리에서_다시_키체인을_안_읽는다() {
+    let kc = Counting::default();
+    let (k, account) = create(&kc).unwrap();
+    let n = kc.gets.get();
+    for _ in 0..5 {
+        assert_eq!(load(&kc, &account).unwrap().unwrap().public(), k.public());
+    }
+    assert_eq!(kc.gets.get(), n, "만들 때 되읽은 뒤로는 키체인에 안 간다");
+}
+
+#[test]
+fn 열쇠를_지우면_메모리에서도_버린다() {
+    let kc = Counting::default();
+    let (_, account) = create(&kc).unwrap();
+    remove(&kc, &account).unwrap();
+    assert!(load(&kc, &account).unwrap().is_none(), "지운 열쇠를 메모리에서 꺼내 주지 않는다");
+    let (_, a2) = create(&kc).unwrap();
+    forget_all();
+    let n = kc.gets.get();
+    assert!(load(&kc, &a2).unwrap().is_some());
+    assert_eq!(kc.gets.get(), n + 1, "다 버린 뒤엔 키체인에서 다시");
+}
+
+#[test]
+fn 메모리에_둔_열쇠는_디스크·기록에_안_남는다() {
+    let d = std::env::temp_dir().join(format!("chammo-keymemo-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let kc = Counting::default();
+    let (k, account) = create(&kc).unwrap();
+    let secret = k.to_secret().expose().to_string();
+    let _ = load(&kc, &account).unwrap();
+    assert!(!format!("{k:?}").contains(&secret), "Debug 에 씨앗이 없다");
+    let mut found = vec![];
+    for e in std::fs::read_dir(&d).unwrap().flatten() {
+        if std::fs::read_to_string(e.path()).unwrap_or_default().contains(&secret) {
+            found.push(e.path());
+        }
+    }
+    assert!(found.is_empty(), "{found:?}");
+}

@@ -2,6 +2,7 @@
 // 아이콘은 직접 그린 SVG(Icons.tsx)만, 색은 mobile.css 토큰. 왼쪽 색 띠 없음
 import type { CSSProperties, ReactNode } from 'react';
 import { IconClose } from '../Icons';
+import { tr } from '../../i18n';
 
 /** 프사 둘레 고리 = 컨텍스트 %(80% 넘으면 빨강) + 오른쪽 아래 상태 점(st-work·st-wait·st-done) */
 /** color = 그 참모 색(없으면 지금 참모 색 --orch-solid) */
@@ -38,7 +39,7 @@ export function SheetHead({ title, titleClass, onClose, closeDisabled, children 
       <b className={titleClass}>{title}</b>
       <span className="m-head-btns">
         {children}
-        <IconBtn label="닫기" onClick={onClose} disabled={closeDisabled}><IconClose /></IconBtn>
+        <IconBtn label={tr('닫기', 'Close')} onClick={onClose} disabled={closeDisabled}><IconClose /></IconBtn>
       </span>
     </div>
   );

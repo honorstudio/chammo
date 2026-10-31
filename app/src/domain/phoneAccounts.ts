@@ -1,6 +1,6 @@
 // 폰 계정 시트 — 맥 /api/accounts(Rust accounts_cmd::PhoneView: 이름·요금제·사용량·쉬는 때, 이메일·토큰 없음)를 읽어 줄로.
 // 막대·쉬는 판단은 데스크톱 계정 팝오버(domain/accounts popRows)와 같은 것을 쓴다
-import { machine } from '../i18n';
+import { machine, tr } from '../i18n';
 import { accountError, allOut, popRows, usageOf, weekText, type AccountsView } from './accounts';
 import { usageText } from './mobile';
 import { parseUsage } from './usage';
@@ -54,32 +54,32 @@ export function phoneAccountRows(v: PhoneAccounts, now: number): PhoneAccountRow
     const five = sl?.five && sl.five.resetsAt > now ? sl.five : null;
     const week = sl?.week && sl.week.resetsAt > now ? sl.week : null;
     const soon = r.left == null ? null : five && r.five === r.left ? fmtUntil(five.resetsAt, now) : week ? weekText(week.resetsAt) : null;
-    return { id: r.id, name: r.name, on: r.on, pinned: r.pinned, pinHint: r.pinHint, five: r.five, week: r.week, left: r.left, soon, note: r.note, plan: v.accounts[i]!.plan, rest: st.kind === 'ok' ? null : st.kind === 'auth' ? '로그인 필요' : st.kind === 'terms' ? '약관 동의 필요' : `${fmtUntil(st.until, now)}까지 쉬는 중` };
+    return { id: r.id, name: r.name, on: r.on, pinned: r.pinned, pinHint: r.pinHint, five: r.five, week: r.week, left: r.left, soon, note: r.note, plan: v.accounts[i]!.plan, rest: st.kind === 'ok' ? null : st.kind === 'auth' ? tr('로그인 필요', 'Login needed') : st.kind === 'terms' ? tr('약관 동의 필요', 'Terms to accept') : tr(`${fmtUntil(st.until, now)}까지 쉬는 중`, `Resting until ${fmtUntil(st.until, now)}`) };
   });
 }
 
 /** 바꾸기 확인 — 데스크톱 설정 '계정' 칸 안내와 같은 말 */
 export function confirmText(r: PhoneAccountRow, autoOn: boolean): { title: string; lines: string[] } {
-  const lines = ['돌고 있는 세션도 다음 요청부터 이 계정을 써요. 하던 일은 안 끊겨요.', 'MCP 로그인은 그대로예요.'];
-  if (autoOn) lines.push('이 계정에 고정돼요 — 다 쓰면(99%·한도 걸림) 그때 자동 전환이 넘겨요.');
-  if (r.rest) lines.push(`이 계정은 ${r.rest}이라 바로 다시 넘어갈 수 있어요.`);
-  return { title: `${r.name || '이름 없는'} 계정으로 바꿀까요?`, lines };
+  const lines = [tr('돌고 있는 세션도 다음 요청부터 이 계정을 써요. 하던 일은 안 끊겨요.', 'Running sessions use this account from their next request. Work in progress is not interrupted.'), tr('MCP 로그인은 그대로예요.', 'MCP logins stay as they are.')];
+  if (autoOn) lines.push(tr('이 계정에 고정돼요 — 다 쓰면(99%·한도 걸림) 그때 자동 전환이 넘겨요.', 'Pinned to this account — auto switch moves on once it runs out (99% or limit hit).'));
+  if (r.rest) lines.push(tr(`이 계정은 ${r.rest}이라 바로 다시 넘어갈 수 있어요.`, `This account: ${r.rest}, so it may switch away again right away.`));
+  return { title: tr(`${r.name || '이름 없는'} 계정으로 바꿀까요?`, `Switch to ${r.name || 'the unnamed'} account?`), lines };
 }
 
 /** 머리줄에 붙는 지금 계정 이름 — 칸이 하나도 없으면 null(계정 기능을 안 쓰는 맥) */
 export function accountHead(v: PhoneAccounts | null): string | null {
   if (!v || !v.accounts.length) return null;
   const a = v.accounts.find((x) => x.id === v.active);
-  if (a) return a.name || a.plan || '이름 없음';
-  return v.liveName ?? '로그인 없음';
+  if (a) return a.name || a.plan || tr('이름 없음', 'No name');
+  return v.liveName ?? tr('로그인 없음', 'Not logged in');
 }
 
 /** 서버 오류 글 → 폰 글. 폰은 맥 키체인 창을 안 띄우니(허용 필요 = locked) 맥 앞에서 한 번 하라고 */
 export function phoneAccountError(msg: string): string {
   const m = msg.trim();
-  if (m === 'too soon') return '방금 바꾸는 중이었어요 — 잠깐 뒤에 다시 눌러 주세요';
-  if (m === 'locked' || m === 'denied') return machine() === 'PC' ? '자격 증명을 못 읽었어요 — PC 앞에서 한 번 바꿔 주세요' : `${machine()} 키체인이 잠겼거나 허용이 필요해요 — ${machine()} 앞에서 한 번 바꿔 주세요`;
-  if (m === 'unsupported') return `이 ${machine()} 앱은 폰 계정 바꾸기를 아직 몰라요 — ${machine()} 앱을 새로 깔아 주세요`;
+  if (m === 'too soon') return tr('방금 바꾸는 중이었어요 — 잠깐 뒤에 다시 눌러 주세요', 'A switch was just in progress — try again in a moment');
+  if (m === 'locked' || m === 'denied') return machine() === 'PC' ? tr('자격 증명을 못 읽었어요 — PC 앞에서 한 번 바꿔 주세요', 'Could not read the credentials — switch once at the PC') : tr(`${machine()} 키체인이 잠겼거나 허용이 필요해요 — ${machine()} 앞에서 한 번 바꿔 주세요`, `The ${machine()} keychain is locked or needs permission — switch once at the ${machine()}`);
+  if (m === 'unsupported') return tr(`이 ${machine()} 앱은 폰 계정 바꾸기를 아직 몰라요 — ${machine()} 앱을 새로 깔아 주세요`, `This ${machine()} app does not support switching accounts from the phone yet — reinstall the ${machine()} app`);
   return accountError(m);
 }
 
@@ -88,7 +88,7 @@ export function phoneAccountError(msg: string): string {
 export function headUsage(v: PhoneAccounts | null, statusJson: string, now: number): string {
   const u = v ? usageOf(asView(v), now)?.usage : undefined;
   if (!u) return usageText(statusJson, now);
-  return [u.five ? `5시간 ${u.five.left}%` : '', u.week ? `주 ${u.week.left}%` : ''].filter(Boolean).join(' · ');
+  return [u.five ? tr(`5시간 ${u.five.left}%`, `5h ${u.five.left}%`) : '', u.week ? tr(`주 ${u.week.left}%`, `Week ${u.week.left}%`) : ''].filter(Boolean).join(' · ');
 }
 
 /** 머리줄 계정 고리 숫자(시안 phone-dash H2) — 5시간·주 남은 % 중 적은 쪽 하나. 값을 고르는 곳은 headUsage 와 같다(지금 칸 계정 값, 없으면 상태줄) */

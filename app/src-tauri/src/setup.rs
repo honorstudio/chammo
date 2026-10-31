@@ -3,6 +3,7 @@
 use serde::Serialize;
 use std::process::Output;
 use std::time::Duration;
+pub use crate::win_bin::{bin_ok, shim_targets, target_ok};
 
 /// claude 를 찾는 순서: 공식 설치본(~/.local/bin) → 앱이 받아 둔 대화형 셸 PATH → brew(Apple 칩·인텔) 자리.
 /// 공식 설치본이 먼저인 건 PATH 앞쪽에 옛 brew claude 가 있을 수 있어서(claude.rs resolve_claude_bin)
@@ -22,6 +23,11 @@ pub fn pick_bin_for(name: &str, home: &str, path_env: &str, win: bool, exists: i
             for n in &names {
                 cands.push(format!("{}\\{n}", d.trim_end_matches(['\\', '/'])));
             }
+        }
+        if name == "claude" {
+            // 앱 PATH 가 낡았어도(켠 뒤 깐 것·레지스트리에만 있는 것) winget·npm 기본 자리는 본다
+            cands.push(format!("{home}\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe"));
+            cands.push(format!("{home}\\AppData\\Roaming\\npm\\claude.cmd"));
         }
         return cands.into_iter().find(|c| exists(c));
     }
@@ -88,7 +94,7 @@ pub(crate) fn run_for(bin: &str, args: &[&str], secs: u64) -> Option<Output> {
 }
 
 fn text(o: &Output) -> String {
-    format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))
+    format!("{}{}", crate::platform::out_text(&o.stdout), crate::platform::out_text(&o.stderr))
 }
 
 #[derive(Serialize, Debug, Default)]
@@ -114,7 +120,21 @@ pub struct EnvCheck {
 
 pub fn find(name: &str) -> Option<String> {
     let path = std::env::var("PATH").unwrap_or_default();
-    pick_bin(name, &crate::config::home(), &path, |p| std::path::Path::new(p).is_file())
+    pick_bin(name, &crate::config::home(), &path, |p| bin_ok(p, |q| std::path::Path::new(q).is_file(), target_ok, |q| std::fs::read_to_string(q).ok()))
+}
+
+/// `claude --version` 출력에 판 번호(2.1.316)가 있나 — 없으면 claude 가 그 자리에서 돌지 않는 것(로그인과 무관)
+pub fn version_ok(out: &str) -> bool {
+    out.split_whitespace().any(|t| crate::claude_src::ver_token(t).is_some())
+}
+
+/// claude 가 돌긴 하나 — 못 띄움·판 번호 없음 = Some(false), 시간 초과 = 모름(None, 바쁜 맥에서 '없음'으로 치지 않게)
+pub fn claude_runs(bin: &str) -> Option<bool> {
+    match crate::platform::run_capped(crate::platform::command(bin).arg("--version"), Duration::from_secs(10)) {
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => None,
+        Err(_) => Some(false),
+        Ok(o) => Some(version_ok(&String::from_utf8_lossy(&o.stdout))),
+    }
 }
 
 /// `claude auth status` — 모르면 None(못 돌림·10초 넘음). 로그인 풀림 감시(login.rs)가 부른다
@@ -134,7 +154,12 @@ pub fn check() -> EnvCheck {
             c.claude_version = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string();
             crate::usage_counts::record_cc(&c.claude_version); // 익명 사용 통계 — 판 번호 글자만
         }
-        c.logged_in = run_for(&bin, &["auth", "status"], 10).map(|o| parse_auth_status(&text(&o))).unwrap_or(false);
+        if !version_ok(&c.claude_version) && claude_runs(&bin) == Some(false) {
+            // 자리는 있는데 안 돈다(npm 바로가기 대상 없음 등) — 설치 안 됨으로 보여 '설치' 줄이 뜨게
+            c.claude_path = None;
+        } else {
+            c.logged_in = run_for(&bin, &["auth", "status"], 10).map(|o| parse_auth_status(&text(&o))).unwrap_or(false);
+        }
     }
     c.clt = crate::claude::clt_ready();
     c.python = crate::platform::python_ready(true);
@@ -410,6 +435,62 @@ mod tests {
         assert_eq!(local.as_deref(), Some(r"C:\Users\a\.local\bin\claude.exe"));
         let npm = pick_bin_for("gh", r"C:\Users\a", r"C:\x\npm", true, |p| p == r"C:\x\npm\gh.cmd");
         assert_eq!(npm.as_deref(), Some(r"C:\x\npm\gh.cmd"));
+    }
+
+    // 윈도우 시험 PC 에서 npm install -g --ignore-scripts 로 만든 바로가기 그대로(2026-10-31)
+    const NPM_SHIM: &str = "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe\"   %*\r\n";
+
+    #[test]
+    fn npm_바로가기가_가리키는_파일() {
+        let npm = r"C:\Users\a\AppData\Roaming\npm";
+        assert_eq!(shim_targets(NPM_SHIM, npm), vec![format!(r"{npm}\node_modules\@anthropic-ai\claude-code\bin\claude.exe")]);
+        // 옛 node 바로가기 — node.exe 는 없어도 PATH 의 node 로 돈다, 봐야 할 건 cli.js
+        let old = "IF EXIST \"%dp0%\\node.exe\" (\r\n  SET \"_prog=%dp0%\\node.exe\"\r\n)\r\nendLocal & \"%_prog%\"  \"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js\" %*\r\n";
+        assert_eq!(shim_targets(old, npm), vec![format!(r"{npm}\node_modules\@anthropic-ai\claude-code\cli.js")]);
+        assert_eq!(shim_targets("\"%~dp0\\x\\y.exe\" %*", r"C:\n\"), vec![r"C:\n\x\y.exe".to_string()]);
+        assert!(shim_targets("@echo off\r\nclaude.exe %*", npm).is_empty());
+    }
+
+    #[test]
+    fn 대상이_사라진_npm_바로가기는_건너뛴다() {
+        // 사용자 PC(2026-10-31): npm 바로가기는 있는데 bin\claude.exe 가 없다 → cmd 가 'not recognized' 로 끝나 로그인 풀림으로 보였다
+        let home = r"C:\Users\a";
+        let npm = format!(r"{home}\AppData\Roaming\npm");
+        let links = format!(r"{home}\AppData\Local\Microsoft\WinGet\Links");
+        let path = format!("{npm};{links}");
+        let shim = format!(r"{npm}\claude.cmd");
+        let target = format!(r"{npm}\node_modules\@anthropic-ai\claude-code\bin\claude.exe");
+        let winget = format!(r"{links}\claude.exe");
+        let read = |p: &str| (p == shim).then(|| NPM_SHIM.to_string());
+        let files = |have: Vec<String>| move |p: &str| have.iter().any(|h| h == p);
+        // 대상이 있으면 npm 그대로
+        let has = files(vec![shim.clone(), target.clone(), winget.clone()]);
+        assert_eq!(pick_bin_for("claude", home, &path, true, |p| bin_ok(p, &has, &has, read)).as_deref(), Some(shim.as_str()));
+        // 대상이 없으면 다음 자리(winget)
+        let has = files(vec![shim.clone(), winget.clone()]);
+        assert_eq!(pick_bin_for("claude", home, &path, true, |p| bin_ok(p, &has, &has, read)).as_deref(), Some(winget.as_str()));
+        // 아무것도 없으면 없음 — 망가진 바로가기를 '설치됨'으로 치지 않는다
+        let has = files(vec![shim.clone()]);
+        assert_eq!(pick_bin_for("claude", home, &path, true, |p| bin_ok(p, &has, &has, read)), None);
+    }
+
+    #[test]
+    fn 앱_path_가_낡아도_winget_npm_자리는_본다() {
+        let home = r"C:\Users\a";
+        let w = format!(r"{home}\AppData\Local\Microsoft\WinGet\Links\claude.exe");
+        assert_eq!(pick_bin_for("claude", home, r"C:\Windows\system32", true, |p| p == w).as_deref(), Some(w.as_str()));
+        let n = format!(r"{home}\AppData\Roaming\npm\claude.cmd");
+        assert_eq!(pick_bin_for("claude", home, "", true, |p| p == n).as_deref(), Some(n.as_str()));
+        // claude 만 — gh 는 이 자리를 안 본다
+        assert_eq!(pick_bin_for("gh", home, "", true, |p| p.ends_with(r"\gh.exe")), None);
+    }
+
+    #[test]
+    fn 판_번호가_나와야_claude_가_도는_것() {
+        assert!(version_ok("2.1.316 (Claude Code)\n"));
+        assert!(!version_ok(""));
+        assert!(!version_ok("'\"C:\\x\\claude.exe\"' is not recognized as an internal or external command,\r\noperable program or batch file.\r\n"));
+        assert!(!version_ok("Error: claude native binary not installed.\n"));
     }
 
 }

@@ -22,6 +22,7 @@ import type { AgentList, AgentShown } from '../../domain/teamAgent';
 import './team.css';
 import './profile.css';
 import { seenName } from '../../domain/session';
+import { inOrder, nextPerms, shownPerms } from '../../domain/permChips';
 
 type Ask = { kind: 'leave' } | { kind: 'delete' } | { kind: 'remove'; id: string; name: string } | { kind: 'transfer'; id: string; name: string };
 
@@ -62,6 +63,10 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
   const [more, setMore] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   // 권한 칩을 연 줄(relay ADR 0014) — 칩을 누르면 바로 저장
   const [permsOf, setPermsOf] = useState<string | null>(null);
+  // 저장 중인 칩 — 사람 id → 누른 권한(서버 답이 오면 지운다)
+  const [pend, setPend] = useState<Record<string, string[]>>({});
+  // 칩 저장은 누른 차례대로 하나씩 — 늦게 온 앞 답이 뒤 줄 칩을 옛 값으로 덮지 않게(10-31 리뷰)
+  const [saveInOrder] = useState(inOrder);
   const [mine, setMine] = useState<At | null>(null);
   // 팀 참모 고치기(ADR 0017) — 같은 창이 두 칸으로 넓어진다(시안 design-v2 섞음 1). agentsKey 는 저장 뒤 목록 다시 받기
   const [agentEdit, setAgentEdit] = useState<{ a: AgentShown | null; list: AgentList } | null>(null);
@@ -174,16 +179,20 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
               {sub && <span>{sub}</span>}
             </>
           );
-          // 칩 하나 누르기 — 전체는 혼자, 나머지는 켜고 끄기. 다 끄면 팀원으로
+          // 칩 하나 누르기 — 누르는 즉시 칩을 바꾸고(낙관적) 서버는 뒤에서. 저장 중엔 그 줄 칩만 잠그고, 실패면 되돌리고 한 줄(10-31 사용자 승인 —
+          // 서버 3요청을 다 기다리며 모든 단추를 잠갔다, 운영 ≈ 0.75초)
+          const perms = shownPerms(r.perms, pend[r.id]);
           const toggle = (key: string) => {
-            const next = key === 'all' ? (r.perms.includes('all') ? [] : ['all']) : r.perms.includes(key) ? r.perms.filter((x) => x !== key) : [...r.perms.filter((x) => x !== 'all'), key];
-            run(teamSetPerms(view.teamId, r.id, next), got);
+            const next = nextPerms(perms, key);
+            setErr(null);
+            setPend((p) => ({ ...p, [r.id]: next }));
+            void saveInOrder(() => teamSetPerms(view.teamId, r.id, next)).then(got, (e: unknown) => setErr(String(e))).finally(() => setPend((p) => { const n = { ...p }; delete n[r.id]; return n; }));
           };
           const chips = permsOf === r.id && r.canPerms && (
             <li className="tmp-perm" role="group" aria-label={tr(`${l.name} 권한`, `${l.name} permissions`)}>
               {PERM_CHIPS.map((c) => (
-                <button key={c.key} className={`tmp-chip${r.perms.includes(c.key) ? ' on' : ''}`} aria-pressed={r.perms.includes(c.key)}
-                  disabled={busy || (c.key === 'all' && !r.canAll)} onClick={() => toggle(c.key)}>{tr(c.ko, c.en)}</button>
+                <button key={c.key} className={`tmp-chip${perms.includes(c.key) ? ' on' : ''}`} aria-pressed={perms.includes(c.key)}
+                  disabled={pend[r.id] !== undefined || (c.key === 'all' && !r.canAll)} onClick={() => toggle(c.key)}>{tr(c.ko, c.en)}</button>
               ))}
             </li>
           );

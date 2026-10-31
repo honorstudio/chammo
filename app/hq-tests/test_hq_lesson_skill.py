@@ -265,11 +265,16 @@ class Flow(Harness):
         tid = self.propose()
         self.answer(tid, 'ㄱㄱ')
         self.run_task('lesson-promote', tid)
+        # 지시 제목이 교훈과 안 겹치면 스킬 이름 한 줄만 — 묶은 줄도 남은 줄도 통째로는 안 붙는다(교훈 예산, 공개판은 남은 줄이 붙어도 묶은 줄은 안 붙는다)
         _, _, err = self.run_task('send', 'proj', '버튼 색 바꾸기')
         self.assertNotIn(LESSONS[0], err)
-        self.assertIn(LESSONS[2], err)
         self.assertIn('lesson-tauri-dev', err)
         self.assertIn('SKILL.md', err)
+        # 낱말이 겹치면 그 교훈 줄이 붙는다(묶은 줄은 스킬로 갔으니 여전히 안 붙는다)
+        _, _, err = self.run_task('send', 'proj', 'head_check 목록 점검')
+        self.assertIn(LESSONS[2], err)
+        self.assertNotIn(LESSONS[0], err)
+        self.assertIn('lesson-tauri-dev', err)
 
     def test_승격_사이에_교훈이_바뀌어도_글로_찾는다(self):
         tid = self.propose(lines='2')
@@ -479,7 +484,7 @@ class Flow(Harness):
         kept = os.path.join(self.task.LESSONS, '_archive', 'skills', 'proj')
         self.assertTrue(any(n.startswith('lesson-tauri-dev') for n in os.listdir(kept)))
         self.assertIn(LESSONS[0], read(os.path.join(self.root, 'CLAUDE.local.md')))
-        _, _, err = self.run_task('send', 'proj', '버튼 색 바꾸기')
+        _, _, err = self.run_task('send', 'proj', '개발판 vite 1420 끄기')   # 되돌린 줄과 낱말이 겹치는 지시
         self.assertIn(LESSONS[0], err)
         self.assertNotIn('lesson-tauri-dev', err)
 
@@ -599,13 +604,18 @@ class GlobalFlow(Harness):
 
     def test_공통_스킬은_모든_프로젝트_지시에_한_줄로_붙고_묶은_줄은_안_붙는다(self):
         self.cgroup()
-        _, _, err = self.run_task('send', 'proj', '버튼 색 바꾸기')
+        _, _, err = self.run_task('send', 'proj', '버튼 색 바꾸기')   # 안 겹치는 지시도 스킬 이름은 한 줄로 붙는다
         self.assertNotIn(COMMON_LINES[0], err)
-        self.assertIn(COMMON_LINES[3], err)              # 남은 공통 줄은 그대로
         skill = [l for l in err.splitlines() if 'lesson-common-shell' in l]
         self.assertEqual(len(skill), 1)
         self.assertIn(os.path.join(self.gskills), skill[0])
         self.assertIn('SKILL.md', skill[0])
+        # 낱말이 겹치는 지시 — 스킬 설명이 따라붙고, 남은 공통 줄 중 겹치는 것도 그대로 붙는다
+        _, _, err = self.run_task('send', 'proj', 'zsh heredoc 점검 · 헤드리스 크롬 스크롤 막대')
+        self.assertNotIn(COMMON_LINES[0], err)
+        self.assertIn(COMMON_LINES[3], err)
+        skill = [l for l in err.splitlines() if 'lesson-common-shell' in l]
+        self.assertEqual(len(skill), 1)
         self.assertIn('셸·zsh', skill[0])
 
     def test_공통_안내는_다른_교훈을_적어도_첫_줄에_그대로_하나만(self):
@@ -649,7 +659,7 @@ class GlobalFlow(Harness):
         kept = os.path.join(self.task.LESSONS, '_archive', 'skills', '_common')
         self.assertTrue(any(n.startswith('lesson-common-shell') for n in os.listdir(kept)))
         self.assertNotIn('교훈 스킬', read(os.path.join(self.task.LESSONS, '_common.md')))
-        _, _, serr = self.run_task('send', 'proj', 'x')
+        _, _, serr = self.run_task('send', 'proj', 'heredoc ls 별칭 120초')   # 되돌린 줄과 낱말이 겹치는 지시
         self.assertIn(COMMON_LINES[0], serr)
         self.assertNotIn('lesson-common-shell', serr)
 
@@ -762,8 +772,12 @@ class PrivateGlobalFlow(GlobalFlow, unittest.TestCase):
         _, _, err = self.run_task('send', app, '빌드해 줘')
         self.assertTrue([l for l in err.splitlines() if 'lesson-app-build' in l])
         self.assertNotIn(APP_LINES[0], err)
+        _, _, err = self.run_task('send', app, 'expo export 정적 빌드 점검')   # 남은 앱 공통 줄과 낱말이 겹치는 지시
+        self.assertTrue([l for l in err.splitlines() if 'lesson-app-build' in l])
+        self.assertNotIn(APP_LINES[0], err)
         self.assertIn(APP_LINES[3], err)
-        _, _, err = self.run_task('send', 'proj', '버튼 색')
+        # 폰 앱이 아닌 프로젝트엔 낱말이 겹쳐도 앱 공통은 안 붙는다
+        _, _, err = self.run_task('send', 'proj', 'expo export 정적 빌드 점검')
         self.assertNotIn('lesson-app-build', err)
         self.assertNotIn(APP_LINES[3], err)
 

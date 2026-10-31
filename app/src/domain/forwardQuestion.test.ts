@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ASK_GRACE_MS, askForwardText, askKeyOf, askTextKeyOf, forwardText, GRACE_MS, nextAskForward, nextForward, nextQuietForward, openTaskOf, QUIET_GRACE_MS, quietForwardText, quietKeyOf, retryAfterFail, toldOrch, type AskCand } from './forwardQuestion';
+import { ASK_GRACE_MS, askForwardText, askKeyOf, askTextKeyOf, forwardText, GRACE_MS, nextAskForward, nextForward, nextQuietForward, openTaskOf, QUIET_GRACE_MS, quietForwardText, quietKeyOf, retryAfterFail, nextSlowForward, SLOW_MS, slowForwardText, slowKeyOf, toldOrch, type AskCand } from './forwardQuestion';
 import type { TaskCard } from './tasks';
 import type { Activity } from './activity';
 import type { Session } from './session';
@@ -298,6 +298,53 @@ describe('nextQuietForward — 안 닫은 일 + 말없이 쉬는 세션', () => 
     expect(t).toContain('로그인 버튼 고치기');
     expect(t).toContain('고쳤어. 커밋 a1b2c3d.');
     expect(t).toContain('scripts/task');
+    expect(t).toContain('대답 없음');
+  });
+  it('git 가지@해시를 붙인다(마지막 말은 이미 있어 안 겹친다)', () => {
+    const t = quietForwardText(cand().session, act(), task(), later, { branch: 'fix/login', sha: 'a1b2c3d', changed: 1 });
+    expect(t).toContain('git fix/login@a1b2c3d (커밋 안 한 변경 1)');
+    expect(t.match(/고쳤어/g)).toHaveLength(1);
+  });
+});
+
+describe('nextSlowForward — 명령 하나가 오래 걸림(도구 실행 중)', () => {
+  const T0 = Date.parse('2026-10-11T01:00:00Z');
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const task = (over: Partial<TaskCard> = {}): TaskCard => ({ id: '1011-0950-ab12', target: 'acme', title: '빌드 고치기', status: 'sent', sentAt: iso(T0 - 30 * 60_000), updatedAt: iso(T0 - 30 * 60_000), ...over });
+  const act = (over: Partial<Activity> = {}): Activity => ({
+    prompt: { ts: iso(T0 - 30 * 60_000), text: '빌드 고쳐' },
+    reply: { ts: iso(T0 - 1000), text: '빌드 돌릴게.', midTurn: true },
+    tool: { name: 'Bash', target: 'pnpm build', ts: iso(T0) },
+    lastAt: iso(T0),
+    ...over,
+  });
+  const cand = (a: Activity = act(), over: Partial<Session> = {}): AskCand => ({ session: s('acme', { state: 'working', startedAt: T0 - 3600_000, ...over }), activity: a });
+  const open = (t?: TaskCard) => () => (t?.status === 'sent' ? t : undefined);
+  const later = T0 + SLOW_MS;
+
+  it('도구 하나가 20분 넘게 끝나지 않으면 그 일과 함께 넘긴다', () => {
+    expect(nextSlowForward([cand()], open(task()), orch, new Set(), T0 + 60_000, never)).toBeUndefined();
+    expect(nextSlowForward([cand()], open(task()), orch, new Set(), later, never)).toMatchObject({ cand: { session: { id: 'acme' } }, task: { id: '1011-0950-ab12' } });
+  });
+  it('넘기지 않는 것 — 쉬는 세션·도구 뒤 새 줄·일 없음·일보다 옛 도구·이미 넘김·보는 중', () => {
+    let n = 0;
+    const no = (c: AskCand, t: TaskCard | null = task(), done = new Set<string>(), watching = never) => expect(nextSlowForward([c], open(t ?? undefined), orch, done, later, watching), `경우 ${++n}`).toBeUndefined();
+    no(cand(act(), { state: 'idle' }));
+    no(cand(act({ lastAt: iso(T0 + 5 * 60_000) })));
+    no(cand(act({ tool: undefined })));
+    no(cand(), null);
+    no(cand(), task({ sentAt: iso(T0 + 1000) }));
+    no(cand(), task(), new Set([slowKeyOf(cand())]));
+    no(cand(), task(), new Set(), () => true);
+  });
+  it('참모에게 보낼 한 줄 — 명령 오래 걸림·몇 분째·하던 도구·git', () => {
+    const t = slowForwardText(cand().session, act(), task(), later, { branch: 'fix/build', sha: 'a1b2c3d', changed: 3 });
+    expect(t).toContain('명령 오래 걸림');
+    expect(t).toContain('20분째');
+    expect(t).toContain('Bash pnpm build');
+    expect(t).toContain('빌드 고치기');
+    expect(t).toContain('git fix/build@a1b2c3d (커밋 안 한 변경 3)');
+    expect(t).not.toContain('\n');
   });
 });
 

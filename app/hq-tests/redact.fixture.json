@@ -1,0 +1,149 @@
+{
+ "_": "비밀 거름 같은 사례 묶음 — 앱 메신저 회신 가림(src-tauri messenger_text.rs redact)과 지난 대화 색인(hq-template scripts/recall redact)이 같은 답을 내는지 양쪽 시험이 읽는다. 경로는 넣지 않는다(메신저만 경로를 가린다). 규칙을 고치면 여기에 줄을 더하고 양쪽을 같이 고친다",
+ "cases": [
+  {
+   "in": "- 비밀번호: `qpmzk5170`",
+   "out": "- 비밀번호: `[가림]`"
+  },
+  {
+   "in": "**비밀번호:** qpmzk5170",
+   "out": "**비밀번호:** [가림]"
+  },
+  {
+   "in": "**password**: `qpmzk5170` 다음",
+   "out": "**password**: `[가림]` 다음"
+  },
+  {
+   "in": "ID : shop / PW : `qpmzk5170!`",
+   "out": "ID : shop / PW : `[가림]`"
+  },
+  {
+   "in": "PW : qpmzk5170~~",
+   "out": "PW : [가림]"
+  },
+  {
+   "in": "pw:qpmzk5170",
+   "out": "pw:[가림]"
+  },
+  {
+   "in": "- 아이디: shop\n- 비밀번호: `Winter2026!`\n- 로그인 주소: https://shop.example.com/login",
+   "out": "- 아이디: shop\n- 비밀번호: `[가림]`\n- 로그인 주소: https://shop.example.com/login"
+  },
+  {
+   "in": "password: hunter2",
+   "out": "password: [가림]"
+  },
+  {
+   "in": "비밀번호: 1234abcd",
+   "out": "비밀번호: [가림]"
+  },
+  {
+   "in": "DB_PASSWORD=\"Winter2026!\"",
+   "out": "DB_PASSWORD=\"[가림]\""
+  },
+  {
+   "in": "{\"password\": \"Winter2026\"}",
+   "out": "{\"password\": \"[가림]\"}"
+  },
+  {
+   "in": "password: P@ss!w0rd#xyz 다음",
+   "out": "password: [가림] 다음"
+  },
+  {
+   "in": "api_key:abc123def456",
+   "out": "api_key:[가림]"
+  },
+  {
+   "in": "token=zzz",
+   "out": "token=[가림]"
+  },
+  {
+   "in": "https://x.com/cb?code=abc123&state=ok&token=zzz",
+   "out": "https://x.com/cb?code=[가림]&state=ok&token=[가림]"
+  },
+  {
+   "in": "DATABASE_URL=postgresql://postgres:MyS3cretPw@db.x.example.co:5432/postgres",
+   "out": "DATABASE_URL=postgresql://postgres:[가림]@db.x.example.co:5432/postgres"
+  },
+  {
+   "in": "AWS AKIAIOSFODNN7EXAMPLE",
+   "out": "AWS [가림]"
+  },
+  {
+   "in": "앞\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n뒤",
+   "out": "앞\n[가림]\n뒤"
+  },
+  {
+   "in": "PR #412 머지했어 — CI 초록, 테스트 1,203개",
+   "out": "PR #412 머지했어 — CI 초록, 테스트 1,203개"
+  },
+  {
+   "in": "커밋 3e9a07c1 위에 쌓았어",
+   "out": "커밋 3e9a07c1 위에 쌓았어"
+  },
+  {
+   "in": "토큰은 키체인에 넣었어",
+   "out": "토큰은 키체인에 넣었어"
+  },
+  {
+   "in": "비밀번호는 CLAUDE.local.md 칸에 있어",
+   "out": "비밀번호는 CLAUDE.local.md 칸에 있어"
+  },
+  {
+   "in": "**결과**: 통과 `npm test`",
+   "out": "**결과**: 통과 `npm test`"
+  },
+  {
+   "in": "MessengerSection.tsx:264 를 봐",
+   "out": "MessengerSection.tsx:264 를 봐"
+  },
+  {
+   "in": "https://github.com/example/shop/pull/12",
+   "out": "https://github.com/example/shop/pull/12"
+  },
+  {
+   "in": "가격은 US$25, 내일 09:00 배포",
+   "out": "가격은 US$25, 내일 09:00 배포"
+  },
+  {
+   "in": "세션 7c0e1a2b-3c4d-4e5f-8a9b-0c1d2e3f4a5b 이 끝났어",
+   "out": "세션 7c0e1a2b-3c4d-4e5f-8a9b-0c1d2e3f4a5b 이 끝났어"
+  },
+  {
+   "in": "`SignupForm token={token}` 을 붙여",
+   "out": "`SignupForm token={token}` 을 붙여"
+  },
+  {
+   "in": "패스워드: Winter2026!",
+   "out": "패스워드: [가림]"
+  },
+  {
+   "in": "패스워드 : `Winter2026!`",
+   "out": "패스워드 : `[가림]`"
+  },
+  {
+   "in": "| 비밀번호 | Winter2026! |",
+   "out": "| 비밀번호 | [가림] |"
+  },
+  {
+   "in": "| **password** | `qpmzk5170` |",
+   "out": "| **password** | `[가림]` |"
+  },
+  {
+   "in": "| 아이디 | shop |\n| 패스워드 | qpmzk5170 |",
+   "out": "| 아이디 | shop |\n| 패스워드 | [가림] |"
+  },
+  {
+   "in": "| 항목 | 결과 |",
+   "out": "| 항목 | 결과 |"
+  },
+  {
+   "in": "| 이름 | 비밀번호 |",
+   "out": "| 이름 | 비밀번호 |"
+  },
+  {
+   "in": "빌드 | 시험 | 배포",
+   "out": "빌드 | 시험 | 배포"
+  }
+ ]
+}

@@ -177,3 +177,82 @@ fn 팀장_넘기기는_from_을_실어_보내고_옛_서버면_예전_팀장_올
     // '넘기기'라서 나는 내려온다 — 팀장이 둘로 남지 않게(손 시험 ⑤, 10-30)
     assert_eq!(sent(&r, "/v0/teams/t1/members/m1/role")["role"], "member");
 }
+
+/// 요청 하나(POST path) 앞에 GET log 가 몇 번 갔나 — from 번째 요청부터
+fn logs_before(r: &FakeRelay, from: usize, post: &str) -> usize {
+    let seen = r.seen.borrow();
+    let tail = &seen[from..];
+    let at = tail.iter().position(|(m, p, _, _)| m == "POST" && p == post).expect("보냈다");
+    tail[..at].iter().filter(|(m, p, _, _)| m == "GET" && p == "/v0/teams/t1/log").count()
+}
+
+#[test]
+fn 쓰기_전_명부는_확인해_둔_끝으로_서버가_다르다_하면_새로_받아_한_번_더() {
+    // 10-31 실측: 권한 칩 하나에 GET log → POST role → GET members 를 차례로(운영 ≈ 0.75초) — 쓰기 전 GET log 는 확인해 둔 명부로 갈음
+    let r = FakeRelay::default();
+    let (od, okc) = with_log("tip", &r);
+    crate::e2e_state::mutate(&od, |s| {
+        s.rosters.insert("t1".into(), posted(&r));
+    })
+    .unwrap();
+    let post = "/v0/teams/t1/members/m2/role";
+    let n = r.seen.borrow().len();
+    r.answer(post, 200, r#"{"ok":true}"#);
+    crate::team_relay::set_perms(&od, &okc, &r, "t1", "철수", &["invite".into()]).unwrap();
+    assert_eq!(logs_before(&r, n, post), 0, "쓰기 전에 명부를 다시 안 받는다");
+    // 서버 명부가 그새 늘었다 — 409 stale_head 면 명부를 새로 받아 한 번 더
+    let n = r.seen.borrow().len();
+    r.answer(post, 409, r#"{"error":"stale_head"}"#);
+    r.answer(post, 200, r#"{"ok":true}"#);
+    crate::team_relay::set_perms(&od, &okc, &r, "t1", "철수", &["kick".into()]).unwrap();
+    let posts = r.seen.borrow()[n..].iter().filter(|(m, p, _, _)| m == "POST" && p == post).count();
+    assert_eq!(posts, 2, "한 번 더 보냈다");
+    assert_eq!(sent(&r, post)["perms"], json!(["kick"]));
+}
+
+#[test]
+fn 초대_고리도_확인해_둔_명부_끝으로_다르면_새로_받아_한_번_더() {
+    let r = FakeRelay::default();
+    let (od, okc) = with_log("tip-inv", &r);
+    crate::e2e_state::mutate(&od, |s| {
+        s.rosters.insert("t1".into(), posted(&r));
+    })
+    .unwrap();
+    let n = r.seen.borrow().len();
+    r.answer("/v0/teams/t1/log", 201, "{}");
+    after_invite(&od, &okc, &r, "t1", "code-1", 1).unwrap();
+    assert_eq!(logs_before(&r, n, "/v0/teams/t1/log"), 0, "초대 고리 전에 명부를 다시 안 받는다");
+    let n = r.seen.borrow().len();
+    // 가짜 중계의 줄 선 답은 방법을 안 가린다 — POST 409 → GET log(명부) → POST 201 차례로
+    r.answer("/v0/teams/t1/log", 409, r#"{"error":"stale_head"}"#);
+    r.answer("/v0/teams/t1/log", 200, &json!({ "links": posted(&r) }).to_string());
+    r.answer("/v0/teams/t1/log", 201, "{}");
+    after_invite(&od, &okc, &r, "t1", "code-2", 1).unwrap();
+    let posts = r.seen.borrow()[n..].iter().filter(|(m, p, _, _)| m == "POST" && p == "/v0/teams/t1/log").count();
+    assert_eq!(posts, 2, "409 면 새로 받아 한 번 더");
+}
+
+#[test]
+fn 내가_쓴_고리가_받아들여지면_기억한_명부_끝에_붙여_다음_쓰기도_명부를_안_받는다() {
+    // 10-31 고친 판 실측: 칩 다음 초대가 매번 409 → GET log → 한 번 더(요청 3 → 4) — 내 고리를 기억한 명부에 안 붙였다
+    let r = FakeRelay::default();
+    let (od, okc) = with_log("tip-chain", &r);
+    crate::e2e_state::mutate(&od, |s| {
+        s.rosters.insert("t1".into(), posted(&r));
+    })
+    .unwrap();
+    let n = r.seen.borrow().len();
+    r.answer("/v0/teams/t1/members/m2/role", 200, r#"{"ok":true}"#);
+    crate::team_relay::set_perms(&od, &okc, &r, "t1", "철수", &["invite".into()]).unwrap();
+    r.answer("/v0/teams/t1/log", 201, "{}");
+    after_invite(&od, &okc, &r, "t1", "code-9", 1).unwrap();
+    r.answer("/v0/teams/t1/members/m2/role", 200, r#"{"ok":true}"#);
+    crate::team_relay::set_perms(&od, &okc, &r, "t1", "철수", &[]).unwrap();
+    let seen = r.seen.borrow();
+    let logs = seen[n..].iter().filter(|(m, p, _, _)| m == "GET" && p == "/v0/teams/t1/log").count();
+    assert_eq!(logs, 0, "쓰기 셋 동안 명부를 다시 안 받는다");
+    let roster = crate::e2e_state::load(&od).rosters["t1"].clone();
+    assert_eq!(roster.len(), 4, "첫 고리 + 내가 쓴 셋(권한·초대·권한) — 서버가 그 고리들로 명부를 늘렸다");
+    let rs: Vec<u64> = roster.iter().map(|l| l.seq).collect();
+    assert_eq!(rs, (0..rs.len() as u64).collect::<Vec<_>>(), "seq 가 이어진다");
+}

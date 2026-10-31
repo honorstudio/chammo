@@ -5,6 +5,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { noticeCloseMs } from '../../domain/notice';
 import { IconClose } from '../Icons';
 import { SheetPortal } from './kit';
+import { tr } from '../../i18n';
 
 export type NoticeMsg = { text: string; error: boolean };
 
@@ -20,10 +21,10 @@ export function Notice({ text, error, onClose, children }: NoticeMsg & { onClose
   return (
     <SheetPortal>
       <div className="m-notice-wrap">
-        <button type="button" className="m-notice-back" aria-label="닫기" tabIndex={-1} onClick={onClose} />
-        <div className={error ? 'm-notice m-notice-err' : 'm-notice'} role={error ? 'alertdialog' : 'dialog'} aria-modal="true" aria-label={error ? '오류' : '알림'}>
+        <button type="button" className="m-notice-back" aria-label={tr('닫기', 'Close')} tabIndex={-1} onClick={onClose} />
+        <div className={error ? 'm-notice m-notice-err' : 'm-notice'} role={error ? 'alertdialog' : 'dialog'} aria-modal="true" aria-label={error ? tr('오류', 'Error') : tr('알림', 'Notice')}>
           <div className="m-notice-text" role={error ? 'alert' : 'status'}>{text}</div>
-          <button type="button" className="m-notice-x" onClick={onClose} aria-label="닫기" title="닫기"><IconClose /></button>
+          <button type="button" className="m-notice-x" onClick={onClose} aria-label={tr('닫기', 'Close')} title={tr('닫기', 'Close')}><IconClose /></button>
           {children}
         </div>
       </div>

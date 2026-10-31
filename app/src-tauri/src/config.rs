@@ -362,6 +362,7 @@ pub fn reload_config() -> Config {
 pub fn write_config<R: tauri::Runtime>(app: tauri::AppHandle<R>, config: Config) -> Result<(), String> {
     let was = current().features.computer_use;
     let basics_was = current().features.craft_basics;
+    let lang_changed = current().language != config.language;
     write_file(&config)?;
     #[cfg(target_os = "macos")]
     {
@@ -379,6 +380,11 @@ pub fn write_config<R: tauri::Runtime>(app: tauri::AppHandle<R>, config: Config)
     // 기본 참모 앱 미리 받기를 다시 켰다 — 사람이 지운 기본 앱도 다시 받는다(craft_basics.rs)
     if basics_on {
         crate::craft_basics::reset_now();
+    }
+    // 언어를 바꿨으면 HQ 안내문·스킬도 그 언어로 바로 — 켤 때만 다시 깔면 다음 실행까지 옛 언어로 실렸다(공개 이슈 #16).
+    // HQ 는 사용자 폴더라 뒤 스레드에서(메인 스레드가 느린 디스크·권한 창에 굳지 않게, offmain_scan)
+    if lang_changed {
+        std::thread::spawn(crate::hq::refresh_app_hq);
     }
     // 화면 조종 — 바꿨으면 모든 프로젝트에 넣거나 빼고, 켜 둔 채 저장이면 새로 생긴 프로젝트(따로 둔 폴더 추가 등)에만
     std::thread::spawn(move || {

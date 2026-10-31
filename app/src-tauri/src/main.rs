@@ -187,6 +187,7 @@ mod quit;
 mod review;
 mod setup;
 mod win_path;
+mod win_bin;
 mod sheet;
 mod sheet_book;
 mod sheet_cmd;
@@ -216,7 +217,6 @@ mod usage_ping;
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder};
 use tauri::Manager;
-use std::path::Path;
 
 /// 앱 메뉴(과 앱 전체 키 감시)의 동작을 창으로 넘긴다. 떼어 낸 리더 창을 보고 있으면 탭 키(⌘W 탭 닫기·Ctrl+Tab)는 그 창으로,
 /// 나머지는 메인 창 웹뷰의 window.__menu('<id>') 로 (권한 파일 없이 되는 eval)
@@ -702,13 +702,7 @@ fn main() {
             craft_basics::start();
             // 익명 사용 신호 — 공개판·진짜 데이터 폴더·설정 켬일 때만 하루 한 번(usage_ping.rs)
             usage_ping::start(app.config().identifier.clone(), app.package_info().name.clone(), app.package_info().version.to_string());
-            if !config::data_dir().ends_with(".honor-orchestrator") {
-                let hq_dir = config::hq_dir(&config::home(), &config::current(), |k| std::env::var(k).ok());
-                if Path::new(&hq_dir).join("scripts/task").is_file() {
-                    let _ = hq::refresh(Path::new(&hq_dir));
-                    let _ = hq::pin_data_dir(Path::new(&hq_dir), &config::data_dir().to_string_lossy());
-                }
-            }
+            hq::refresh_app_hq();
             #[cfg(debug_assertions)]
             drop::fake_from_env(app.handle());
             debug::eval_from_env(app.handle());
@@ -1149,6 +1143,8 @@ fn main() {
             review::pr_revert,
             review::write_review_state,
             debug::debug_dump,
+            debug::perf_ping,
+            debug::perf_alerts,
             reader::reader_state,
             reader::reader_select_all,
             reader::reader_close,

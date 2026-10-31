@@ -42,10 +42,12 @@ async function unblock(id?: string) {
   } catch { /* 계정 칸이 없거나 저장 실패 — 다음 다시 시도에 */ }
 }
 
-export function useLogin(acts: SessionActivity[], accounts: AccountsView | null, voice: boolean): { need: LoginNeed | null; terms: TermsCard[]; retryTerms: (id?: string) => void; closeTerms: (c: TermsCard) => void } {
+export function useLogin(acts: SessionActivity[], accounts: AccountsView | null, voice: boolean): { need: LoginNeed | null; terms: TermsCard[]; retryTerms: (id?: string) => void; closeTerms: (c: TermsCard) => void; missing: boolean } {
   const mem = useRef(emptyLogin());
   const probe = useRef<{ loggedIn: boolean | null; credAt: number | null; at: number; falses: number; termsRetryAt: number | null }>({ loggedIn: null, credAt: null, at: 0, falses: 0, termsRetryAt: null });
   const [need, setNeed] = useState<LoginNeed | null>(null);
+  /** claude 가 그 자리에서 안 돈다(Rust probe_auth) — 로그인 카드 대신 다시 설치 카드 */
+  const [missing, setMissing] = useState(false);
   const [terms, setTerms] = useState<TermsCard[]>([]);
   /** 이 화면에서 누른 다시 시도 — 재기를 기다리지 않고 바로 카드를 내린다 */
   const [localRetry, setLocalRetry] = useState<number | null>(null);
@@ -68,7 +70,7 @@ export function useLogin(acts: SessionActivity[], accounts: AccountsView | null,
 
   const stalled = stalledOf(acts.map((a) => ({ session: a.session, activity: a.activity })));
   // 한 번 false 를 봤으면(아직 모름) 빨리 다시 잰다 — 두 번째로 확인
-  const hot = stalled.length > 0 || need !== null || probe.current.falses > 0;
+  const hot = stalled.length > 0 || need !== null || probe.current.falses > 0 || missing; // 다시 설치 뒤 카드가 빨리 내려가게
 
   // 재기 — 멈춘 세션이 생기면 바로 한 번, 그 뒤 15초마다
   useEffect(() => {
@@ -78,6 +80,7 @@ export function useLogin(acts: SessionActivity[], accounts: AccountsView | null,
       if (!alive) return;
       const seen = loggedOutSeen(probe.current.falses, p.loggedIn);
       probe.current = { credAt: p.credAt, loggedIn: seen.loggedIn, falses: seen.falses, at: Date.now(), termsRetryAt: p.termsRetryAt ?? null };
+      setMissing(!!p.claudeMissing);
       setTick((t) => t + 1);
     };
     void once();
@@ -179,5 +182,5 @@ export function useLogin(acts: SessionActivity[], accounts: AccountsView | null,
     window.setTimeout(() => setTick((t) => t + 1), SETTLE_MS + 200); // 이어서는 누른 뒤 SETTLE_MS — 다음 재기(15초)까지 안 기다리게
   };
   const closeTerms = (c: TermsCard) => setClosed((p) => new Set([...p, termsKey(c)]));
-  return { need, terms: terms.filter((c) => !closed.has(termsKey(c))), retryTerms, closeTerms };
+  return { need, terms: terms.filter((c) => !closed.has(termsKey(c))), retryTerms, closeTerms, missing };
 }

@@ -346,6 +346,7 @@ fn 로그아웃은_끊긴_줄_아는_기기만_401_에도_지우고_망이_안_�
     let (d, kc, r) = logged("logout-401");
     r.answer(&format!("/v0/me/devices/{D7}/revoke"), 401, r#"{"error":"unauthorized"}"#);
     r.answer(crate::team_relay::KEY_PROBE, 401, r#"{"error":"unauthorized"}"#); // 서버가 이 열쇠를 안다(또는 시계가 틀림)
+    r.answer("/v0/me/self", 401, r#"{"error":"unauthorized"}"#); // 다시 물어도 401 — 시계(trace)를 모르니 끊김으로 안 적는다
     assert!(logout(&d, &kc, &r).unwrap_err().contains("forget"));
     assert!(d.join(crate::team_relay::STATE_FILE).exists() && !kc.items.borrow().is_empty(), "서버엔 살아 있을 수 있어 남긴다");
     crate::team_relay::mutate(&d, |s| s.revoked = true).unwrap();
@@ -636,6 +637,7 @@ fn 한_번_로그인하면_다시_켜도_망_오류에도_유지된다() {
     assert!(refresh_me(&d, &kc, &r).is_err());
     r.answer("/v0/me", 401, r#"{"error":"unauthorized"}"#);
     r.answer(crate::team_relay::KEY_PROBE, 401, r#"{"error":"unauthorized"}"#); // 서버가 이 열쇠를 안다 — 시계 탓일 수 있다
+    r.answer("/v0/me/self", 401, r#"{"error":"unauthorized"}"#);
     assert!(refresh_me(&d, &kc, &r).is_err());
     let st = crate::team_relay::load_state(&d);
     assert!(st.account.is_some() && !st.revoked, "로그인 유지");

@@ -4,12 +4,13 @@ import { useRef, useState } from 'react';
 import { dlTicket } from '../../data/web';
 import { fileType, sharePlan } from '../../domain/phoneShare';
 import { IconShare } from '../Icons';
+import { tr } from '../../i18n';
 
 type St = { k: 'idle' } | { k: 'busy'; pct: number | null } | { k: 'ready' } | { k: 'fail'; why: string };
 
 async function fetchFile(url: string, name: string, mime: string, size: number, onPct: (p: number) => void): Promise<File> {
   const r = await fetch(url);
-  if (!r.ok) throw new Error(r.status === 403 ? '폰에 내보낼 수 없는 파일이에요' : r.status === 413 ? '너무 커요' : `못 받았어요(${r.status})`);
+  if (!r.ok) throw new Error(r.status === 403 ? tr('폰에 내보낼 수 없는 파일이에요', "This file can't be sent to the phone") : r.status === 413 ? tr('너무 커요', 'Too large') : tr(`못 받았어요(${r.status})`, `Download failed (${r.status})`));
   const parts: BlobPart[] = [];
   const rd = r.body?.getReader();
   if (rd) {
@@ -47,7 +48,7 @@ export function ShareButton({ path, cls = 'm-rt-btn m-ico' }: { path: string; cl
       const n = (e as Error).name;
       if (n === 'AbortError') { ready.current = null; setSt({ k: 'idle' }); return; } // 사람이 닫음
       if (n === 'NotAllowedError') { setSt({ k: 'ready' }); return; } // 누른 순간이 지남 — 받은 파일로 한 번 더
-      setSt({ k: 'fail', why: '공유를 못 열었어요' });
+      setSt({ k: 'fail', why: tr('공유를 못 열었어요', "Couldn't open sharing") });
     }
   };
   const go = async () => {
@@ -64,14 +65,14 @@ export function ShareButton({ path, cls = 'm-rt-btn m-ico' }: { path: string; cl
       setSt({ k: 'idle' }); // 공유 시트가 뜨는 동안은 받는 중 글을 치운다
       await share(f);
     } catch (e) {
-      setSt({ k: 'fail', why: (e as Error).message || '못 받았어요' });
+      setSt({ k: 'fail', why: (e as Error).message || tr('못 받았어요', 'Download failed') });
     }
   };
-  const say = st.k === 'busy' ? `받는 중${st.pct !== null ? ` ${st.pct}%` : '…'}` : st.k === 'ready' ? '받았어요 — 한 번 더 누르기' : st.k === 'fail' ? st.why : '';
+  const say = st.k === 'busy' ? tr(`받는 중${st.pct !== null ? ` ${st.pct}%` : '…'}`, `Downloading${st.pct !== null ? ` ${st.pct}%` : '…'}`) : st.k === 'ready' ? tr('받았어요 — 한 번 더 누르기', 'Got it — tap once more') : st.k === 'fail' ? st.why : '';
   return (
     <>
       {say && <span className={`m-share-st ${st.k}`} role="status">{say}</span>}
-      <button type="button" className={cls} onClick={() => void go()} disabled={st.k === 'busy'} aria-label="폰으로 받기" title="폰으로 받기"><IconShare /></button>
+      <button type="button" className={cls} onClick={() => void go()} disabled={st.k === 'busy'} aria-label={tr('폰으로 받기', 'Save to phone')} title={tr('폰으로 받기', 'Save to phone')}><IconShare /></button>
     </>
   );
 }

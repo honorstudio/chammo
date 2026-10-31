@@ -24,9 +24,9 @@ describe('폰 스크롤 칸 가장자리', () => {
       expect(src).not.toMatch(/>닫기<\/button>/);
     }
     // 공용 조각(kit) — IconBtn 이 aria-label·title 을 붙이고, SheetHead 의 닫기는 IconBtn + IconClose
-    expect(peekSrc).toMatch(/<IconBtn label="닫기"[^>]*><IconClose \/>/);
+    expect(peekSrc).toMatch(/<IconBtn label=\{tr\('닫기', 'Close'\)\}[^>]*><IconClose \/>/);
     expect(pickerSrc).toMatch(/<SheetHead [^>]*onClose=|<BottomSheet[^>]*\stitle=/); // 공용 시트에 title 을 주면 그 안 SheetHead
     expect(kitSrc).toMatch(/aria-label=\{label\} title=\{label\}/);
-    expect(kitSrc).toMatch(/<IconBtn label="닫기"[^>]*><IconClose \/><\/IconBtn>/);
+    expect(kitSrc).toMatch(/<IconBtn label=\{tr\('닫기', 'Close'\)\}[^>]*><IconClose \/><\/IconBtn>/);
   });
 });

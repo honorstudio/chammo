@@ -1,6 +1,8 @@
 // 최근 스크린샷 — 입력칸 # 고르기·채팅 첨부 단추 맨 위에 몇 장 띄운다(Rust locker_link::recent_shots).
 // 여기는 그 목록을 다른 후보 목록과 합치는 판단만(시험: lockerShots.test.ts). 화면 연결은 # 고르기가 머지된 뒤
 
+import { tr } from '../i18n';
+
 /** Rust locker_link::Shot — path 는 진짜 파일(홈 안), name 은 한글을 합쳐 쓴 이름, mtime 은 ms */
 export type Shot = { path: string; name: string; mtime?: number | null };
 
@@ -15,10 +17,10 @@ export function shotsFirst<T extends { path: string }>(shots: Shot[], rest: T[],
 export function agoText(mtime: number | null | undefined, now: number): string {
   if (!mtime || mtime > now) return '';
   const m = Math.floor((now - mtime) / 60000);
-  if (m < 1) return '방금';
-  if (m < 60) return `${m}분 전`;
+  if (m < 1) return tr('방금', 'Just now');
+  if (m < 60) return tr(`${m}분 전`, `${m} min ago`);
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}시간 전`;
+  if (h < 24) return tr(`${h}시간 전`, `${h} h ago`);
   const d = new Date(mtime);
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }

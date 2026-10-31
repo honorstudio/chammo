@@ -110,8 +110,12 @@ export function linkNotice(o: { link: LinkState | undefined; phase?: AttachPhase
   }
 }
 
+/** claude 를 못 찾아 세션 목록이 안 올 때 띠 — 다시 설치는 결정 대기함 카드에서 */
+export const missingBand = () => tr('Claude Code를 못 찾아서 세션 목록을 못 읽어요. 결정 대기함 카드에서 다시 설치해 주세요.', "Can't read sessions because Claude Code is missing. Reinstall it from the card in Decisions.");
+
 /** 세션 목록 실패 띠 — null 이면 아직 안 띄운다. fails = 이어진 실패 수. 시간 초과는 한 번으론 안 띄우고, 이어지면 원문 대신 사람 말로 */
-export function listErrorText(err: string, fails: number, busy: Busy): string | null {
+export function listErrorText(err: string, fails: number, busy: Busy, missing = false): string | null {
+  if (missing) return missingBand(); // claude 를 못 찾는 중(ui/useLogin) — 깨진 cmd 원문 대신
   if (!/timed out/i.test(err)) return tr(`세션 목록 실패: ${err}`, `Could not list sessions: ${err}`);
   if (fails < 2) return null;
   return busy === 'ok'

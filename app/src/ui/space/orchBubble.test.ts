@@ -250,12 +250,12 @@ describe('열린 동안 배지는 제자리, 대화창은 끌어 옮긴다(10-28
   const desk = src('./DeskBubble.tsx');
   it('열린 대화창 옆에 배지가 남고, 누르면 접힌다', () => {
     expect(desk).toContain('{lay.badge && (');
-    expect(desk).toMatch(/aria-label=\{tr\(`\$\{who\.label\} 대화창 접기`[\s\S]{0,300}onClick=\{\(\) => void openPop\(false\)\}/);
+    expect(desk).toMatch(/aria-label=\{tr\(`\$\{who\.label\} 대화창 접기`[\s\S]{0,400}onClick=\{\(\) => \{ if \(!pressed\(\)\) void openPop\(false\); \}\}/);
     expect(css).toMatch(/\.obd-open\.a-from \.obd-wrap, \.obd-open\.a-gone \.obd-wrap \{ visibility: hidden; \}/); // 창 크기가 바뀌는 동안은 안 보이게
   });
   it('대화창 머리 빈 곳을 끌면 맥 창 끌기(단추 위는 아님) — 놓으면 같이 옮겨진 배지 자리를 기억', () => {
     expect(desk).toMatch(/className="obb-head obd-head"[^>]*onPointerDown=\{\(e\) => \{ if \(e\.button === 0 && !\(e\.target as Element\)\.closest\('button'\)\) \{ draggedRef\.current = true; void invoke\('bubble_drag'\)/);
-    expect(desk).toContain('const b = openRef.current ? { x: s.win.x + layRef.current.box.x, y: s.win.y + layRef.current.box.y } : { x: s.win.x + boxOffRef.current.x, y: s.win.y + boxOffRef.current.y };');
+    expect(desk).toContain('const b = openRef.current ? { x: w0.x + layRef.current.box.x, y: w0.y + layRef.current.box.y } : { x: w0.x + boxOffRef.current.x, y: w0.y + boxOffRef.current.y };');
   });
 });
 
@@ -296,13 +296,13 @@ describe('누르기 = 대화창, 올리기 = 부채, 끌기 = 옮기기 — 비�
   it('누를 때 부채를 접지 않는다(꾹 누르면 부채·누르는 순간 창 크기 바뀜 없음) — 누르고 놓으면 대화창, 5px 넘게 움직이면 끌기', () => {
     expect(desk).not.toMatch(/onPointerDown=\{\(e\) => \{ if \(e\.button === 0\) \{ hover\.close\(\)/);
     expect(desk).toContain('isDrag(e.screenX - p.x, e.screenY - p.y)');
-    expect(desk).toMatch(/onClick=\{\(\) => \{ const p = press\.current; press\.current = null; if \(!p\?\.dragged\) void openPop\(true\); \}\}/);
+    expect(desk).toMatch(/onClick=\{\(\) => \{ if \(!pressed\(\)\) void openPop\(true\); \}\}/);
   });
   it('끄는 동안엔 제자리 확인(3초)·부채 크기 바꾸기·올림이 끼어들지 않는다 — 놓은 뒤 배지 상자 자리를 기억하고 배지로', () => {
     expect(desk).toContain('draggingRef.current = true;');
     expect(desk).toMatch(/setInterval\(\(\) => \{ if \(!draggingRef\.current && !openRef\.current/);
     expect(desk).toContain('const fan = hover.on && !dragging;');
-    expect(desk).toContain(': { x: s.win.x + boxOffRef.current.x, y: s.win.y + boxOffRef.current.y };'); // 부채·배너로 넓은 창을 끌어도 배지 상자 자리
+    expect(desk).toContain(': { x: w0.x + boxOffRef.current.x, y: w0.y + boxOffRef.current.y };'); // 부채·배너로 넓은 창을 끌어도 배지 상자 자리
   });
   it('받는 자리만 클릭을 받고 투명 여백은 바탕으로 — 배지 원·배너·대화창(열린 동안 배지도), 부채가 펴진 동안은 창 전체', () => {
     expect(desk).toContain("void invoke('bubble_hot', hits).catch(() => {});");
@@ -487,5 +487,39 @@ describe('v3 N 모양(BubbleFan) — 사용자 10-28 "이게 맞는 듯"', () =>
   it('묻는 참모 테두리 물결은 멈춤 목록에, 바탕 배지가 그린다', () => {
     expect(paused).toContain('.obb-ring.r-ask');
     expect(src('./DeskBubble.tsx')).toContain('<BadgeCore face={me} node={avatar(who, 44)} orchs={fanOrchs} />');
+  });
+});
+
+describe('열린 동안 배지를 끌면 대화창째 옮긴다(10-31 사용자 "대화창 떠 있을 때 배지가 손 모양인데 안 끌림")', () => {
+  const desk = src('./DeskBubble.tsx');
+  const openBadge = desk.slice(desk.indexOf('{lay.badge && ('), desk.indexOf('<div className={`obd-pop'));
+  it('열린 배지도 닫힌 배지와 같은 누르기 길 — 5px 넘게 움직이면 창 끌기, 짧게 누르면 접기', () => {
+    expect(openBadge).toContain('onPointerDown={grab}');
+    expect(openBadge).toContain('onPointerMove={drag}');
+    expect(openBadge).toMatch(/onClick=\{\(\) => \{ if \(!pressed\(\)\) void openPop\(false\); \}\}/);
+    expect(desk).toMatch(/const drag = \(e: React\.PointerEvent\) => \{[\s\S]{0,200}isDrag\(e\.screenX - p\.x, e\.screenY - p\.y\)[\s\S]{0,300}void invoke\('bubble_drag'\)/);
+  });
+  it('닫힌 배지도 같은 손잡이 함수를 쓴다(두 길이 어긋나지 않게)', () => {
+    const closed = desk.slice(desk.indexOf('obb-badge obd-badge${back'), desk.indexOf('{fanShown && <span'));
+    expect(closed).toContain('onPointerDown={grab}');
+    expect(closed).toContain('onPointerMove={drag}');
+    expect(closed).toMatch(/onClick=\{\(\) => \{ if \(!pressed\(\)\) void openPop\(true\); \}\}/);
+  });
+  it('놓으면 열린 창이 배지 화면 밖으로 나간 만큼 통째로 당기고(openKeep), 당긴 자리로 배지 자리를 기억', () => {
+    expect(desk).toContain('const to = openRef.current ? openKeep(s.win, layRef.current.box, s.screens, DESK) : null;');
+    expect(desk).toContain('if (to) await place({ ...s.win, ...to }, true, layRef.current.badge ? 0 : 14);');
+    expect(desk).toContain('const w0 = to ? { ...s.win, ...to } : s.win;');
+  });
+  it('커서 — 끌 수 있는 배지는 손(grab), 끄는 중엔 잡은 손(grabbing)', () => {
+    expect(css).toMatch(/\.obb-badge \{[^}]*cursor: grab;/);
+    expect(css).toContain('.obb-badge.obb-drag { cursor: grabbing; }');
+    expect(desk).toContain("${dragging ? ' obb-drag' : ''}");
+    expect(openBadge).toContain("${dragging ? ' obb-drag' : ''}");
+  });
+  it('윈도우 — 열린 동안 받는 자리(hot)에 배지 원이 들어 있어 원 위 누름이 창에 온다(밖은 바탕으로)', () => {
+    expect(desk).toContain('const badgeAt: [number, number, number, number] = open ? [lay.box.x + BX, lay.box.y + BY, 52, 52]');
+    expect(desk).toContain('{ hot: [[lay.pop.x, lay.pop.y, lay.pop.w, lay.pop.h], ...(lay.badge ? [badgeAt] : [])], hover: [] }');
+    expect(openBadge).toContain('style={{ left: lay.box.x, top: lay.box.y, width: DESK, height: DESK }}');
+    expect(openBadge).toContain('style={{ left: BX, top: BY,');
   });
 });

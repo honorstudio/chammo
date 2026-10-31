@@ -20,7 +20,8 @@ Chammo 작업 기록 — 다른 세션에 시킨 일을 남기면 앱 오른쪽 
                                             / 다른 참모에게 넘길 때 — 넘김 번호. 받은 참모가 send --from-handover h-… 로 쪼갠 일이 내 진행 칸에 이어진다
   scripts/task handover-done <h-…> "<result>"  -> the handed job is done (either side) / 넘긴 큰 일을 끝낸다
   scripts/task reply  <task id> "<summary of the reply>"               -> 'Lesson: …' / '교훈: …' lines become project lessons
-  scripts/task done   <task id> "<result, one line>"
+  scripts/task done   <task id> "<result, one line + proof>" [--no-proof "<reason>"]
+                     → no proof (PR number, commit hash, URL, status code, file path, before→after numbers): not recorded, exit code 5 — asked once only, a second try on the same task is kept with a warning
   scripts/task note   <task id> "<progress note>"
   scripts/task ask    <task id> "<what the user must decide>"          -> shows in the app's decision inbox
                                          (a job handed to you — h-… or split from one — exits 4 instead: ask whoever handed it, by SendMessage)
@@ -526,6 +527,38 @@ def retries(tid):
 PROOF = re.compile(r'#\d+|https?://|\b[0-9a-f]{7,40}\b|\.(log|png|jpg|md|json|txt)\b|/|\b(PR|HTTP|200|CI|passed|green|verified)\b|확인|초록|통과')
 # 취소·안 함으로 닫는 일엔 증거가 있을 수 없다 — 짚으면 참모가 막힌 줄 알고 사용자에게 기록 도구 얘기를 했다(2026-10-22 윈도우 QA 2차)
 CANCELLED = re.compile(r'취소|보내지 (않|말)|안 보냈|안 하기로|하지 않기로|그만두|\b(cancel(l?ed)?|not sent|declined)\b', re.I)
+# 숫자 전후(15→14)·결과 크기·응답 코드(GET 404·250 OK)·시험 개수·해시 대조도 확인한 흔적이다 — 실제 done 표본에서 경로·PR 없이 끝난 확인 줄들(2026-10-31)
+PROOF_MORE = re.compile(r'\d[^\n→]{0,8}?(?:→|->)\s*\d|\d(?:\.\d+)?\s*(?:KB|MB|GB)\b|\b(?:GET|POST|PUT|PATCH|DELETE|HEAD)\s*[1-5]\d\d\b|\b[1-5]\d\d\s+(?:OK|Created|Not Found)\b'
+                        r'|\b(?:201|204|301|302|401|403|404|500|502|503)\b|(?:실패|오류|에러|거부|fail(?:ed|ures?)?)\s*0\b|ok:\s*true|체크섬|SHA256|checksum|\bresolved\b'
+                        r'|\bv?\d+\.\d+\.\d+\b|\bv[0-9a-f]{7,40}\b|[\w.+-]+@[\w-]+\.\w+|\.(?:ai|pdf|zip|mjs|js|ts|tsx|py|rs|env|html|csv|xlsx|dmg|exe|mp4|mov)\b'
+                        r'|\b(?:vitest|jest|pytest|unittest|cargo test)\b\D{0,12}\d|\d+\s*(?:passed|tests?)\b|일치|\bmatch(?:es|ed)?\b', re.I)
+# 일이 아니라 기록만 닫는 것·사람이 정한 것·읽기만 한 일 — 증거가 있을 수 없다(취소와 같은 이유로 묻지 않는다)
+CLOSED = re.compile(r'^정리\s*[(—:]|끝난 걸로 정리|기록 정리|닫기만|닫는 걸 빠뜨|넘김 기록|중복 기록|잘못 기록|흡수|이어받|재부팅 뒤 정리|읽기만|변경 없음|변경 0|수정 파일 0|남은 일 없음|회신 없음'
+                    r'|(?:사용자|사람|user)[^\n]{0,25}?(?:확정|결정|골랐|고름|선택|채택|승인|\bOK\b|지시|피드백)|\b[A-Z]\d?\s*안?\)?\s*(?:확정|채택|선택|결정)|\b(?:read[- ]only|no changes)\b', re.I)
+
+
+def proof_kind(note):
+    """done 글에 무엇이 증거로 잡혔나 — 'proof'·'closed'·'cancel', 없으면 ''(순수 함수, 시험이 실제 표본으로 오탐률을 잰다)"""
+    if PROOF.search(note) or PROOF_MORE.search(note):
+        return 'proof'
+    if CANCELLED.search(note):
+        return 'cancel'
+    if CLOSED.search(note):
+        return 'closed'
+    return ''
+
+
+def proof_gate(tid, note):
+    """done 증거 관문 — 증거가 없으면 남기지 않고 한 번 되묻는다(종료 코드 5). 같은 일 두 번째면 경고만 하고 남긴다(끈질기게 막지 않게 1번만)"""
+    if proof_kind(note):
+        return None
+    if any(e.get('task') == tid and e.get('proof_ask') for e in read_events()):
+        print(T('증거 없이 남김 — 되묻기는 한 번만. 다음엔 확인한 것을 같이 적어 줘', 'Recorded without proof — asked once only. Next time add what you checked'), file=sys.stderr)
+        return None
+    append({'ts': now(), 'type': 'note', 'task': tid, 'note': T('증거 없는 done — 한 번 되물음', 'done without proof — asked once'), 'proof_ask': 1})
+    print(T('done 안 남겼어 — 결과에 확인한 증거가 없어(PR 번호·커밋 해시·주소·응답 코드·파일 경로·숫자 전후). 증거 한 줄 넣어 바로 다시 부르거나, 증거가 있을 수 없는 일이면 끝에 --no-proof \'<이유>\' — 사용자에게 알릴 일 아님',
+                'done not recorded — the result has no proof you checked (PR number, commit hash, URL, status code, file path, before→after numbers). Call again with one proof line, or if there can be none add --no-proof \'<reason>\' at the end — nothing to tell the user'), file=sys.stderr)
+    return 5
 
 
 def _project_rule():
@@ -1058,6 +1091,14 @@ def main(a):
     if not a or a[0] in ('-h', '--help'):
         print(__doc__); return 0
     cmd = a[0]
+    no_proof = None
+    if cmd == 'done' and '--no-proof' in a:
+        k = a.index('--no-proof')
+        no_proof = a[k + 1].strip() if k + 1 < len(a) else ''
+        a = a[:k] + a[k + 2:]
+        if not no_proof:
+            print(T('--no-proof 엔 이유를 붙여 줘 — 왜 증거가 있을 수 없나 한 줄', '--no-proof needs a reason — one line on why there can be no proof'), file=sys.stderr)
+            return 2
     me = os.environ.get('CLAUDE_CODE_SESSION_ID')
     goal = total = None
     hid = None
@@ -1233,15 +1274,18 @@ def main(a):
             print(T(f'교훈 {len(found)}줄을 어느 프로젝트에 적을지 몰라(세션 {target or "?"} 을 목록에서 못 찾음) — scripts/task lesson <프로젝트> "<교훈>" 으로 직접 적어: ',
                     f"Don't know which project gets these {len(found)} lesson(s) (session {target or '?'} not in the list) — record them with scripts/task lesson <project> \"<lesson>\": ")
                   + ' / '.join(found), file=sys.stderr)
-    if cmd == 'done' and len(a) >= 3 and not PROOF.search(a[2]) and not CANCELLED.search(a[2]):
-        print(T('done 에 증거가 없어 — "했다"만으론 몰라. PR 번호·주소·응답 코드·로그 중 하나를 확인해 적어 줘(이번 기록은 남김)',
-                'No proof in this done note — "did it" alone does not tell. Check and add one of: PR number, URL, status code, log (this entry is kept)'), file=sys.stderr)
+    if cmd == 'done' and len(a) >= 3 and no_proof is None:
+        stop = proof_gate(a[1], a[2])
+        if stop is not None:
+            return stop
     if cmd == 'ask' and len(a) >= 3:
         handed, agents = handed_check(a[1], a[2])
         if handed:
             return handed_stop(handed, agents)
     if cmd in ('reply', 'done', 'note', 'ask', 'answer') and len(a) >= 3:
         ev = {'ts': now(), 'type': cmd, 'task': a[1], 'note': a[2]}
+        if no_proof:
+            ev['noProof'] = no_proof
         if cmd == 'ask' and me:
             ev['to'] = me
         append(ev)

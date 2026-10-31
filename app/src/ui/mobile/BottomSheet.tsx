@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { modalModel } from '../../domain/sheetGuard';
 import { useSheetDrag } from './useSheetDrag';
 import { SheetHead } from './kit';
+import { tr } from '../../i18n';
 
 type Host = { el: HTMLElement | null; kb: boolean };
 const HostCtx = createContext<Host>({ el: null, kb: false });
@@ -100,7 +101,7 @@ export function BottomSheet({ label, kind = 'sheet', onClose, title, titleClass,
   // 카드는 바닥에서 떠 있어(여백 8px + 홈 바) 제 높이만큼 내리면 윗 끝이 보인다 — 조금 더
   const y = shown ? `${drag ?? 0}px` : kind === 'card' ? 'calc(100% + 56px)' : '100%';
   const move = kind === 'full' ? undefined : { transform: `translateY(${y})`, transition: drag === null ? undefined : 'none' };
-  const back = <button type="button" className={shown ? 'm-pick-back m-on' : 'm-pick-back'} aria-label="닫기" onClick={() => { if (armed) close(); }} />;
+  const back = <button type="button" className={shown ? 'm-pick-back m-on' : 'm-pick-back'} aria-label={tr('닫기', 'Close')} onClick={() => { if (armed) close(); }} />;
   const sheetHead = head ?? (title !== undefined && <SheetHead title={title} titleClass={titleClass} onClose={close} closeDisabled={closeDisabled}>{actions}</SheetHead>);
 
   const node = kind === 'full' ? (

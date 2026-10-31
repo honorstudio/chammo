@@ -8,6 +8,7 @@ import { appendChat, parseChat, type ChatItem } from '../../domain/chat';
 import { orchAsk } from '../../domain/mobile';
 import type { Session } from '../../domain/session';
 import { orchLine } from './peek';
+import { tr } from '../../i18n';
 
 type Ask = ReturnType<typeof orchAsk>;
 
@@ -23,7 +24,7 @@ export function useOrchAsks(orchs: Session[]): { asks: Record<string, Ask>; line
       const out: Record<string, Ask> = {};
       const ln: Record<string, string> = {};
       for (const o of live.current) {
-        if (!o.sessionId || o.state === 'working') { out[o.id] = null; ln[o.id] = o.state === 'working' ? '일하는 중' : ''; continue; }
+        if (!o.sessionId || o.state === 'working') { out[o.id] = null; ln[o.id] = o.state === 'working' ? tr('일하는 중', 'Working') : ''; continue; }
         try {
           const had = mem.current.get(o.sessionId);
           const c = await peekTranscript(o.sessionId, had?.next);

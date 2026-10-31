@@ -6,6 +6,7 @@ import type { AlertRow } from '../../domain/phoneAlerts';
 import { agoText } from '../../domain/lockerShots';
 import { IconChevron } from '../Icons';
 import { BottomSheet } from './kit';
+import { tr } from '../../i18n';
 
 type Props = {
   /** 답 기다림 카드들(없으면 null) */
@@ -21,19 +22,19 @@ type Props = {
 export function AlertsSheet({ waiting, rows, nameOf, onOpen, onClose }: Props) {
   const now = Date.now();
   return (
-    <BottomSheet label="알림" title="알림" onClose={onClose}>
+    <BottomSheet label={tr('알림', 'Notifications')} title={tr('알림', 'Notifications')} onClose={onClose}>
       {waiting && (
         <>
-          <div className="m-al-sec">답 기다림</div>
+          <div className="m-al-sec">{tr('답 기다림', 'Waiting for your answer')}</div>
           <div className="m-al-wait">{waiting}</div>
         </>
       )}
-      <div className="m-al-sec">최근</div>
+      <div className="m-al-sec">{tr('최근', 'Recent')}</div>
       {rows.length ? (
         <div className="m-mo-list">
           {rows.map((r) => (
             <button key={r.key} type="button" className="m-mo-row m-al-row" onClick={() => { onClose(); onOpen(r); }}
-              aria-label={`${nameOf(r.target)} — ${r.kind === 'ask' ? '물음' : '끝남'} — ${r.line}`}>
+              aria-label={`${nameOf(r.target)} — ${r.kind === 'ask' ? tr('물음', 'Question') : tr('끝남', 'Done')} — ${r.line}`}>
               {r.kind === 'ask' && <i className="m-al-dot" aria-hidden="true" />}
               <span className="m-al-txt"><b>{nameOf(r.target)}</b><span>{r.line}</span></span>
               <span className="m-al-ago">{agoText(r.at, now)}</span>
@@ -42,7 +43,7 @@ export function AlertsSheet({ waiting, rows, nameOf, onOpen, onClose }: Props) {
           ))}
         </div>
       ) : (
-        <p className="m-muted m-sm m-al-empty">최근 3일 맡긴 일 소식이 없어요</p>
+        <p className="m-muted m-sm m-al-empty">{tr('최근 3일 맡긴 일 소식이 없어요', 'No updates on assigned work in the last 3 days')}</p>
       )}
     </BottomSheet>
   );

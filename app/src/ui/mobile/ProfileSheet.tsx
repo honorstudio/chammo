@@ -2,6 +2,7 @@
 // 이름은 길게 누르기 메뉴와 같은 길(/api/rename → 맥이 쉬는 때 /rename), 번호(참모-N)는 그대로라 배정이 안 바뀐다.
 // 모양·목소리는 /api/avatar → 데스크톱 프로필 창과 같은 Rust avatar::save_in. 그림은 폰에서 못 올린다 — 그림 프로필이면 '그림' 칸으로 그대로 둔다
 import { useState } from 'react';
+import { tr } from '../../i18n';
 import { nickChange, splitOrchName } from '../../domain/orchLabel';
 import { avatarKey, defaultVoice, EYES, EYES_LABEL, ORCH_COLORS, resolveAvatar, SHAPE_LABEL, SHAPES, VOICES, type Avatar, type Voice } from '../../domain/avatar';
 import { profileDraft, profileToSave, type ProfileDraft } from '../../domain/phoneProfile';
@@ -32,7 +33,7 @@ export function ProfileSheet({ orch, orchs, voiceBase, onClose }: { orch: Sessio
   const run = async (job: () => Promise<void>) => {
     setBusy(true);
     setErr(null);
-    try { await job(); onClose(); } catch (e) { setErr(`못 바꿨어요: ${(e as Error).message}`); } finally { setBusy(false); }
+    try { await job(); onClose(); } catch (e) { setErr(tr(`못 바꿨어요: ${(e as Error).message}`, `Couldn't change it: ${(e as Error).message}`)); } finally { setBusy(false); }
   };
   const save = () => run(async () => {
     const a = profileToSave(start, d);
@@ -43,14 +44,14 @@ export function ProfileSheet({ orch, orchs, voiceBase, onClose }: { orch: Sessio
   const reset = () => run(async () => { await saveOrchAvatar(orch.id, null); applyRemoved(key); });
 
   return (
-    <BottomSheet kind="card" label={`${name} 프로필`} title={`${name} 프로필`} className="m-prof" onClose={onClose}>
+    <BottomSheet kind="card" label={tr(`${name} 프로필`, `${name} profile`)} title={tr(`${name} 프로필`, `${name} profile`)} className="m-prof" onClose={onClose}>
       <div className="m-prof-av">{av(preview, 72)}</div>
       <form className="m-new m-prof-form" onSubmit={(e) => { e.preventDefault(); void save(); }}>
-        <input className="m-new-input" value={v} maxLength={24} enterKeyHint="done" aria-label="이름" placeholder="비우면 처음 이름으로" onChange={(e) => setV(e.target.value)} />
-        <div className="m-prof-lbl" id="m-prof-shape">모양</div>
+        <input className="m-new-input" value={v} maxLength={24} enterKeyHint="done" aria-label={tr('이름', 'Name')} placeholder={tr('비우면 처음 이름으로', 'Leave empty for the original name')} onChange={(e) => setV(e.target.value)} />
+        <div className="m-prof-lbl" id="m-prof-shape">{tr('모양', 'Shape')}</div>
         <div className="m-prof-row" role="radiogroup" aria-labelledby="m-prof-shape">
           {start.kind === 'image' && (
-            <button type="button" role="radio" aria-checked={d.kind === 'image'} aria-label="올린 그림 그대로" className={`m-prof-opt${d.kind === 'image' ? ' m-on' : ''}`} onClick={() => setD({ ...d, kind: 'image' })}>{av(start, 30)}</button>
+            <button type="button" role="radio" aria-checked={d.kind === 'image'} aria-label={tr('올린 그림 그대로', 'Keep uploaded image')} className={`m-prof-opt${d.kind === 'image' ? ' m-on' : ''}`} onClick={() => setD({ ...d, kind: 'image' })}>{av(start, 30)}</button>
           )}
           {SHAPES.map((s) => (
             <button key={s} type="button" role="radio" aria-checked={d.kind === 'preset' && d.preset.shape === s} aria-label={SHAPE_LABEL[s]()} className={`m-prof-opt${d.kind === 'preset' && d.preset.shape === s ? ' m-on' : ''}`} onClick={() => pick({ shape: s })}>
@@ -60,7 +61,7 @@ export function ProfileSheet({ orch, orchs, voiceBase, onClose }: { orch: Sessio
         </div>
         {d.kind === 'preset' && (
           <>
-            <div className="m-prof-lbl" id="m-prof-eyes">눈</div>
+            <div className="m-prof-lbl" id="m-prof-eyes">{tr('눈', 'Eyes')}</div>
             <div className="m-prof-row" role="radiogroup" aria-labelledby="m-prof-eyes">
               {EYES.map((e) => (
                 <button key={e} type="button" role="radio" aria-checked={d.preset.eyes === e} aria-label={EYES_LABEL[e]()} className={`m-prof-opt${d.preset.eyes === e ? ' m-on' : ''}`} onClick={() => pick({ eyes: e })}>
@@ -68,20 +69,20 @@ export function ProfileSheet({ orch, orchs, voiceBase, onClose }: { orch: Sessio
                 </button>
               ))}
             </div>
-            <div className="m-prof-lbl" id="m-prof-color">색</div>
+            <div className="m-prof-lbl" id="m-prof-color">{tr('색', 'Color')}</div>
             <div className="m-prof-row" role="radiogroup" aria-labelledby="m-prof-color">
               {ORCH_COLORS.map((c, i) => (
-                <button key={c} type="button" role="radio" aria-checked={d.preset.color === c} aria-label={`색 ${i + 1}`} className={`m-prof-sw${d.preset.color === c ? ' m-on' : ''}`} onClick={() => pick({ color: c })}><i style={{ background: c }} /></button>
+                <button key={c} type="button" role="radio" aria-checked={d.preset.color === c} aria-label={tr(`색 ${i + 1}`, `Color ${i + 1}`)} className={`m-prof-sw${d.preset.color === c ? ' m-on' : ''}`} onClick={() => pick({ color: c })}><i style={{ background: c }} /></button>
               ))}
-              <button type="button" role="radio" aria-checked={d.preset.color === null} className={`m-prof-chip${d.preset.color === null ? ' m-on' : ''}`} onClick={() => pick({ color: null })}>순서대로</button>
+              <button type="button" role="radio" aria-checked={d.preset.color === null} className={`m-prof-chip${d.preset.color === null ? ' m-on' : ''}`} onClick={() => pick({ color: null })}>{tr('순서대로', 'By order')}</button>
             </div>
           </>
         )}
         {base && (
           <>
-            <div className="m-prof-lbl" id="m-prof-voice">목소리</div>
+            <div className="m-prof-lbl" id="m-prof-voice">{tr('목소리', 'Voice')}</div>
             <div className="m-prof-row" role="radiogroup" aria-labelledby="m-prof-voice">
-              <button type="button" role="radio" aria-checked={d.voice === null} className={`m-prof-chip${d.voice === null ? ' m-on' : ''}`} onClick={() => setD({ ...d, voice: null })}>기본 {def}</button>
+              <button type="button" role="radio" aria-checked={d.voice === null} className={`m-prof-chip${d.voice === null ? ' m-on' : ''}`} onClick={() => setD({ ...d, voice: null })}>{tr('기본', 'Default')} {def}</button>
               {VOICES.map((x: Voice) => (
                 <button key={x} type="button" role="radio" aria-checked={d.voice === x} className={`m-prof-chip${d.voice === x ? ' m-on' : ''}`} onClick={() => setD({ ...d, voice: x })}>{x}</button>
               ))}
@@ -90,9 +91,9 @@ export function ProfileSheet({ orch, orchs, voiceBase, onClose }: { orch: Sessio
         )}
         {err && <div className="m-error">{err}</div>}
         <div className="m-new-row">
-          {saved.has(key) && <button type="button" className="m-btn m-prof-reset" disabled={busy} onClick={() => void reset()}>처음대로</button>}
-          <button type="button" className="m-btn" onClick={onClose}>취소</button>
-          <button type="submit" className="m-send" disabled={busy}>저장</button>
+          {saved.has(key) && <button type="button" className="m-btn m-prof-reset" disabled={busy} onClick={() => void reset()}>{tr('처음대로', 'Reset')}</button>}
+          <button type="button" className="m-btn" onClick={onClose}>{tr('취소', 'Cancel')}</button>
+          <button type="submit" className="m-send" disabled={busy}>{tr('저장', 'Save')}</button>
         </div>
       </form>
     </BottomSheet>

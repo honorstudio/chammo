@@ -1,0 +1,523 @@
+#!/bin/sh
+''':'
+# sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
+':'''
+__doc__ = """Search past conversations — every Claude Code session on this computer (assistants, project sessions, sub-agents).
+지난 대화 검색 — 이 컴퓨터의 Claude Code 대화 전부(참모·프로젝트 세션·분신).
+
+  scripts/recall "<words>" [--project <name>] [--since 7d|12h|10/01|2026-10-01] [--limit 20]
+  scripts/recall --open <id> [--around 3]     the messages around one hit
+  scripts/recall --index                      only update the index (prints time and size)
+
+Only the words people and Claude wrote are indexed — no tool output, no thinking, no attachments.
+Secrets (keys, tokens, passwords) are masked before they reach the index. Every word must appear (AND);
+Korean and partial words match. The index updates itself on every search (only files that changed).
+
+Index: <data folder>/recall.db (owner-only). Source: $CLAUDE_CONFIG_DIR/projects or ~/.claude/projects
+"""
+import glob, json, os, re, sys, time
+
+
+def data_dir(home=None, env=None, exists=os.path.isdir):
+    """Data folder — same rule as the app: $CHAMMO_HOME -> ~/.chammo (-> ~/.honor-orchestrator for old installs)"""
+    home = home or os.path.expanduser('~')
+    env = os.environ.get('CHAMMO_HOME', '') if env is None else env
+    if env.strip():
+        return os.path.expanduser(env.strip())
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not exists(new) and exists(old) else new
+
+
+# ── 비밀 거름 — 앱 메신저 회신 가림(src-tauri messenger_text.rs redact)과 같은 규칙. 경로 가림만 뺐다:
+#    색인은 이 기기 데이터 폴더에만 있고, 경로는 찾을 거리다. 규칙을 고치면 양쪽을 같이 고치고 hq-tests/redact.fixture.json 에 줄을 더한다
+
+HIDDEN = '[가림]'
+KEYWORDS = ('password', 'passwd', 'passphrase', 'pwd', 'secret', 'token', 'apikey', 'api_key', 'api-key', 'access_key',
+            'private_key', 'client_secret', '비밀번호', '비번', '암호', '토큰', '시크릿', '키값', 'pw', '패스워드')  # pw — 실제 대화의 'PW : 값' 이 샜다(10-31)
+PREFIXES = ('sk-', 'sk_live_', 'sk_test_', 'rk_live_', 'pk_live_', 'ghp_', 'gho_', 'ghs_', 'github_pat_', 'xoxb-', 'xoxp-',
+            'xapp-', 'glpat-', 'AKIA', 'AIza', 'npm_')
+WEBHOOKS = ('hooks.slack.com/', 'discord.com/api/webhooks/', 'discordapp.com/api/webhooks/')
+WORD = re.compile(r'[\w\-./+=:~%&?@#\\]+')
+# 비밀이 들어 있을 수 있는 줄 — 13자 넘는 키 글자 덩어리(가장 짧은 접두사 키도 13자부터)나 열쇠 구분자·주소. 없으면 거름을 건너뛴다
+MAYBE = re.compile(r'[A-Za-z0-9_\-+=.]{13,}|[:=/：|]|PRIVATE KEY')
+UUID = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+
+
+def _key_char(c):
+    return c.isascii() and (c.isalnum() or c in '_-+=')
+
+
+def looks_secret(w):
+    """키·토큰처럼 생긴 낱말인가"""
+    w = w.rstrip('.,:;)!?')
+    if UUID.match(w):
+        return False  # 세션·대화 id — 비밀이 아니다
+    a, sep, b = w.partition(':')
+    if sep and 6 <= len(a) <= 12 and a.isascii() and a.isdigit() and len(b) >= 30 and all(map(_key_char, b)):
+        return True  # 텔레그램 봇 토큰 123456:AA…
+    if any(w.startswith(p) and len(w) >= len(p) + 10 and all(_key_char(c) or c == '.' for c in w) for p in PREFIXES):
+        return True
+    if w.startswith('eyJ') and w.count('.') == 2 and len(w) >= 30:
+        return True  # JWT
+    if not all(map(_key_char, w)):
+        return False
+    d = any(c.isdigit() for c in w)
+    lo, up = any(c.islower() for c in w), any(c.isupper() for c in w)
+    return (len(w) >= 32 and d and (lo or up)) or (len(w) >= 24 and d and lo and up and '-' not in w)
+
+
+def _secret_key(k):
+    """값이 비밀일 열쇠 이름(소문자) — …password·…token·…_key·…dsn 등"""
+    return k.endswith(KEYWORDS) or k.endswith(('key', 'dsn', 'pass')) or k in ('sig', 'signature', 'auth', 'code', 'access_token', 'refresh_token')
+
+
+# 따옴표 — 백틱·마크다운 굵게(**)도: 실제 대화에서 "- 비밀번호: `값`" 이 샜다(10-31)
+QUOTES = '"\'`*'
+
+
+def _after_keyword(before):
+    """바로 앞이 "비밀번호:"·"token =" 처럼 열쇠 이름 + 구분자인가(구분자 없는 "토큰은 …" 은 말이라 안 가린다).
+    마크다운 표 칸 "| 비밀번호 |" 도 — 열쇠 이름이 양쪽 | 사이에 혼자 있을 때만"""
+    b = before.rstrip().rstrip(QUOTES).rstrip()
+    if b.endswith('|'):
+        _, sep, k = b[:-1].rpartition('|')
+        return bool(sep) and _secret_key(k.strip().strip(QUOTES).lower())
+    if not b.endswith((':', '=', '：')):
+        return False
+    return _secret_key(b[:-1].rstrip().rstrip(QUOTES).lower())
+
+
+def _mask_userinfo(w):
+    """scheme://사용자:비번@호스트 — 비번(없으면 사용자 칸 통째)을 가린다"""
+    i = w.find('://')
+    if i < 0:
+        return None
+    i += 3
+    rest = w[i:]
+    auth = re.split(r'[/?#]', rest, maxsplit=1)[0]
+    at = auth.rfind('@')
+    if at < 0:
+        return None
+    user, sep, _ = auth[:at].partition(':')
+    return w[:i] + (f'{user}:{HIDDEN}' if sep else HIDDEN) + rest[at:]
+
+
+def _mask_segments(w):
+    """주소·경로 조각 중 키처럼 생긴 것(…/bot123:AA…/getMe 의 봇 토큰 등)"""
+    if '/' not in w:
+        return None
+    parts = [HIDDEN if looks_secret(s) or (s.startswith('bot') and looks_secret(s[3:])) else s for s in w.split('/')]
+    out = '/'.join(parts)
+    return out if out != w else None
+
+
+def _mask_pairs(w):
+    """a=b&c=d 안에서 열쇠 이름이 비밀 같은 값만 가림"""
+    low = w.lower()
+    if '=' not in w and not any(f'{k}:' in low for k in KEYWORDS):
+        return None
+    out, changed = [], False
+    for seg in re.findall(r'[^&?]*[&?]|[^&?]+$', w):
+        m = re.search(r'[=:]', seg)
+        body = seg.rstrip('&?')
+        if m and 0 < m.start() and m.start() + 1 < len(body):
+            i = m.start()
+            k = re.split(r'[?/&]', seg[:i].lower())[-1]
+            v = seg[i + 1:].rstrip('&?')
+            if _secret_key(k) or v.startswith('eyJ') or looks_secret(v):
+                out.append(seg[:i + 1] + HIDDEN + seg[len(body):])
+                changed = True
+                continue
+        out.append(seg)
+    return ''.join(out) if changed else None
+
+
+def _ends(c):
+    return c.isspace() or c in '"\'`,}])'
+
+
+def _redact_line(line):
+    if not MAYBE.search(line):
+        return line
+    out, tail, pos, n = [], '', 0, len(line)
+
+    def put(s):
+        nonlocal tail
+        out.append(s)
+        tail = (tail + s)[-80:]  # 열쇠 이름 검사는 끝 몇십 자만 본다
+
+    while pos < n:
+        m = WORD.search(line, pos)
+        if not m:
+            put(line[pos:])
+            break
+        put(line[pos:m.start()])
+        w, pos = m.group(0), m.end()
+        after_key = _after_keyword(tail)
+        if after_key or looks_secret(w):
+            put(HIDDEN)
+            if after_key and pos < n and not _ends(line[pos]):
+                while pos < n and not _ends(line[pos]):
+                    pos += 1  # '비밀번호:' 뒤 — 빈칸·따옴표까지 이어지는 글자(P@ss!w0rd 의 !w0rd)도 삼킨다
+            continue
+        hook = next((w[:w.find(h) + len(h)] + HIDDEN for h in WEBHOOKS if h in w), None)
+        if hook:
+            put(hook)
+            continue
+        for f in (_mask_userinfo, _mask_segments, _mask_pairs):
+            w = f(w) or w
+        put(w)
+    return ''.join(out)
+
+
+def redact(text):
+    """키·토큰·비번처럼 생긴 것과 개인 키 덩어리를 가린다"""
+    out, pem = [], False
+    for line in text.split('\n'):
+        if '-----BEGIN' in line and 'PRIVATE KEY' in line:
+            pem = '-----END' not in line
+            out.append(HIDDEN)
+        elif pem:
+            pem = '-----END' not in line
+        else:
+            out.append(_redact_line(line))
+    return '\n'.join(out)
+
+
+# ── 대화 기록 읽기 ──
+
+REMINDER = re.compile(r'<system-reminder>.*?</system-reminder>', re.S)
+MAX_TEXT = 20000  # 한 메시지에서 색인하는 글자 수 — 붙여 넣은 긴 로그가 색인을 불리지 않게
+ISO = re.compile(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d')
+NEEDLES = (b'"user"', b'"assistant"', b'queued_command', b'custom-title', b'agent-name')
+
+
+def _clean(t):
+    return REMINDER.sub('', t or '').strip()[:MAX_TEXT]
+
+
+def extract(raw):
+    """대화 기록 한 줄 → 색인할 글 {uuid, ts, role, text, cwd} · 세션 이름 {name} · 아니면 None.
+    사람·클로드가 쓴 글만 — 도구 호출·결과·생각·메타·시스템 알림은 뺀다"""
+    if not any(n in raw for n in NEEDLES):
+        return None  # 기록 대부분(요청 사본·파일 스냅숏 등)은 풀지 않고 넘긴다
+    try:
+        d = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(d, dict):
+        return None
+    t = d.get('type')
+    if t in ('custom-title', 'agent-name'):
+        name = d.get('customTitle') or d.get('agentName')
+        return {'name': name} if isinstance(name, str) and name.strip() else None
+    if t == 'attachment':
+        a = d.get('attachment') or {}
+        if a.get('type') != 'queued_command' or not isinstance(a.get('prompt'), str):
+            return None
+        role, text = 'user', _clean(a['prompt'])  # 일하는 중에 끼어든 사람 말
+    elif t in ('user', 'assistant') and not d.get('isMeta'):
+        c = (d.get('message') or {}).get('content')
+        if isinstance(c, str):
+            text = _clean(c)
+        elif isinstance(c, list):
+            text = _clean('\n'.join(_clean(b.get('text')) for b in c if isinstance(b, dict) and b.get('type') == 'text' and _clean(b.get('text'))))
+        else:
+            return None
+        role = t
+    else:
+        return None
+    if not text:
+        return None
+    ts = d.get('timestamp') or ''
+    ts = ts[:19] + 'Z' if isinstance(ts, str) and ISO.match(ts) else str(ts)
+    return {'uuid': d.get('uuid') or '', 'ts': ts, 'role': role, 'text': text, 'cwd': d.get('cwd') or ''}
+
+
+def project_of(cwd):
+    """폴더 → 프로젝트 이름(워크트리면 그 저장소)"""
+    p = (cwd or '').replace('\\', '/').rstrip('/')
+    p = p.split('/.claude/worktrees/')[0]
+    return p.rsplit('/', 1)[-1] if p else ''
+
+
+def parse_since(s, now=None):
+    """7d·12h·10/01·2026-10-01 → 그때부터(UTC ISO)"""
+    import datetime
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    s = (s or '').strip()
+    m = re.fullmatch(r'(\d+)([dh])', s)
+    if m:
+        at = now - datetime.timedelta(**{'days' if m.group(2) == 'd' else 'hours': int(m.group(1))})
+    else:
+        m = re.fullmatch(r'(?:(\d{4})-)?(\d{1,2})[/-](\d{1,2})', s)
+        if not m:
+            raise ValueError(s)
+        local = now.astimezone()
+        y = int(m.group(1) or local.year)
+        at = local.replace(year=y, month=int(m.group(2)), day=int(m.group(3)), hour=0, minute=0, second=0, microsecond=0)
+        if not m.group(1) and at > local:
+            at = at.replace(year=y - 1)  # 연도 없는 날짜가 앞날이면 작년
+    return at.astimezone(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+# ── 색인 ──
+
+SCHEMA = """
+create table if not exists files(path text primary key, size integer, mtime real, off integer, name text, project text, sid text);
+create table if not exists msgs(id integer primary key, uuid text unique, path text, sid text, ts text, role text, pos integer);
+create index if not exists msgs_path on msgs(path, pos);
+create virtual table if not exists body using fts5(text, tokenize='trigram');
+"""
+# 색인 판 — 거름(redact)·뽑는 규칙을 고치면 올린다. 판이 다르면 색인을 통째로 다시 만든다(옛 거름으로 들어간 글엔 새 거름이 못 닿는다)
+VERSION = 1
+
+
+def projects_root():
+    base = os.environ.get('CLAUDE_CONFIG_DIR', '').strip() or os.path.join(os.path.expanduser('~'), '.claude')
+    return os.path.join(os.path.expanduser(base), 'projects')
+
+
+def db_path(data=None):
+    return os.path.join(data or data_dir(), 'recall.db')
+
+
+def connect(db):
+    import sqlite3
+    os.makedirs(os.path.dirname(db) or '.', exist_ok=True)
+    if not os.path.exists(db):
+        os.close(os.open(db, os.O_CREAT | os.O_WRONLY, 0o600))
+    os.chmod(db, 0o600)
+    con = sqlite3.connect(db, timeout=60)
+    con.execute('pragma secure_delete=on')  # 지운 행(사라진 대화)이 파일 빈 칸에 남지 않게
+    if con.execute('pragma user_version').fetchone()[0] != VERSION:
+        con.executescript('drop table if exists body; drop table if exists msgs; drop table if exists files;')
+        con.execute('vacuum')
+        con.execute(f'pragma user_version = {VERSION}')
+    con.executescript(SCHEMA)
+    return con
+
+
+def transcripts(root):
+    out = []
+    for pat in ('*/*.jsonl', '*/*/subagents/*.jsonl'):
+        out += glob.glob(os.path.join(root, pat))
+    return sorted(out)
+
+
+def _sid_of(path):
+    parts = path.replace('\\', '/').split('/')
+    return parts[-3] if len(parts) >= 3 and parts[-2] == 'subagents' else os.path.basename(path)[:-len('.jsonl')]
+
+
+def _drop(con, path):
+    con.execute('delete from body where rowid in (select id from msgs where path = ?)', (path,))
+    con.execute('delete from msgs where path = ?', (path,))
+
+
+def update(db, root=None):
+    """바뀐 대화 파일만 다시 읽는다 — 늘어난 파일은 읽은 자리부터, 줄었거나 바뀐 파일은 처음부터, 없어진 파일은 뺀다"""
+    root = root or projects_root()
+    t0 = time.time()
+    old = os.umask(0o077)  # 저널 파일도 주인만
+    try:
+        con = connect(db)
+        known = {r[0]: r[1:] for r in con.execute('select path, size, mtime, off, name, project from files')}
+        paths = transcripts(root)
+        for gone in set(known) - set(paths):
+            _drop(con, gone)
+            con.execute('delete from files where path = ?', (gone,))
+        con.commit()
+        read = added = 0
+        for p in paths:
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            row = known.get(p)
+            if row and row[0] == st.st_size and row[1] == st.st_mtime:
+                continue
+            # 읽은 자리까지 그대로면 이어서 — 읽는 사이 자란 파일은 읽은 자리가 재 둔 크기보다 크다. 줄었을 때만 처음부터
+            start = row[2] if row and st.st_size >= row[2] else 0
+            name, project = (row[3], row[4]) if row and start else ('', '')
+            if row and not start:
+                _drop(con, p)
+            sid, pos = _sid_of(p), start
+            with open(p, 'rb') as f:  # 줄씩 — 수백 MB 파일을 통째로 올리지 않는다
+                f.seek(start)
+                for line in f:
+                    if not line.endswith(b'\n'):
+                        break  # 덜 쓴 마지막 줄은 다음에
+                    r = extract(line)
+                    if r and 'name' in r:
+                        name = r['name']
+                    elif r:
+                        project = project or project_of(r['cwd'])
+                        cur = con.execute('insert or ignore into msgs(uuid, path, sid, ts, role, pos) values(?,?,?,?,?,?)',
+                                          (r['uuid'] or f'{p}:{pos}', p, sid, r['ts'], r['role'], pos))
+                        if cur.rowcount:
+                            con.execute('insert into body(rowid, text) values(?, ?)', (cur.lastrowid, redact(r['text'])))
+                            added += 1
+                    pos += len(line)
+            con.execute('insert or replace into files(path, size, mtime, off, name, project, sid) values(?,?,?,?,?,?,?)',
+                        (p, st.st_size, st.st_mtime, pos, name, project, sid))
+            con.commit()
+            read += 1
+        con.close()
+    finally:
+        os.umask(old)
+    return {'files': len(paths), 'read': read, 'added': added, 'secs': round(time.time() - t0, 1), 'bytes': os.path.getsize(db)}
+
+
+# ── 찾기 ──
+
+NAME_SQL = "coalesce(nullif(f.name, ''), (select g.name from files g where g.sid = f.sid and g.name != '' limit 1), '')"
+
+
+def _lines(text, terms):
+    """찾은 줄과 앞뒤 한 줄씩"""
+    ls = [l for l in text.split('\n') if l.strip()]
+    low = [t.lower() for t in terms]
+    i = next((k for k, l in enumerate(ls) if any(t in l.lower() for t in low)), 0)
+    return [l.strip()[:200] for l in ls[max(0, i - 1):i + 2]], min(i, 1)
+
+
+def search(db, query, project=None, since=None, limit=20):
+    terms = query.split()
+    if not terms or not os.path.exists(db):
+        return []
+    long_ = [t for t in terms if len(t) >= 3]  # trigram 은 세 글자부터 — 짧은 낱말은 LIKE 로
+    where, args = [], []
+    if long_:
+        where.append('body match ?')
+        args.append(' '.join('"' + t.replace('"', '""') + '"' for t in long_))
+    for t in terms:
+        if len(t) < 3:
+            where.append("body.text like ? escape '\\'")
+            args.append('%' + re.sub(r'([\\%_])', r'\\\1', t) + '%')
+    if project:
+        where.append('f.project like ?')
+        args.append(f'%{project}%')
+    if since:
+        where.append('m.ts >= ?')
+        args.append(since)
+    sql = (f'select m.id, m.uuid, m.ts, m.role, m.path, f.project, {NAME_SQL}, m.sid, body.text from body '
+           'join msgs m on m.id = body.rowid join files f on f.path = m.path '
+           f'where {" and ".join(where)} order by m.ts desc, m.id desc limit ?')
+    con = connect(db)
+    try:
+        rows = con.execute(sql, args + [int(limit)]).fetchall()
+    finally:
+        con.close()
+    out = []
+    for id_, uuid, ts, role, path, proj, name, sid, text in rows:
+        lines, at = _lines(text, terms)
+        out.append({'id': id_, 'uuid': uuid, 'ts': ts, 'role': role, 'project': proj, 'name': name, 'sid': sid,
+                    'sub': '/subagents/' in path.replace('\\', '/'), 'lines': lines, 'at': at})
+    return out
+
+
+def around(db, id_, n=3):
+    """찾은 메시지 앞뒤 n개(같은 대화 파일 안)"""
+    if not os.path.exists(db):
+        return []
+    con = connect(db)
+    try:
+        hit = con.execute('select path, pos from msgs where id = ?', (id_,)).fetchone()
+        if not hit:
+            return []
+        q = 'select m.id, m.uuid, m.ts, m.role, body.text from msgs m join body on body.rowid = m.id where m.path = ? and m.pos {} ? order by m.pos {} limit ?'
+        before = con.execute(q.format('<', 'desc'), (hit[0], hit[1], n)).fetchall()
+        here = con.execute(q.format('=', 'asc'), (hit[0], hit[1], 1)).fetchall()
+        after = con.execute(q.format('>', 'asc'), (hit[0], hit[1], n)).fetchall()
+    finally:
+        con.close()
+    return [{'id': r[0], 'uuid': r[1], 'ts': r[2], 'role': r[3], 'text': r[4], 'hit': r[0] == id_} for r in before[::-1] + here + after]
+
+
+# ── 명령줄 ──
+
+def lang(d=None):
+    try:
+        with open(os.path.join(d or data_dir(), 'config.json'), encoding='utf-8') as f:
+            return 'en' if json.load(f).get('language') == 'en' else 'ko'
+    except (OSError, ValueError):
+        return 'ko'
+
+
+def when(ts):
+    import datetime
+    try:
+        t = datetime.datetime.strptime(ts, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc).astimezone()
+    except ValueError:
+        return ts
+    return t.strftime('%m/%d %H:%M' if t.year == datetime.datetime.now().year else '%Y-%m-%d %H:%M')
+
+
+def main(argv):
+    import argparse
+    ap = argparse.ArgumentParser(prog='recall', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('words', nargs='*')
+    ap.add_argument('--project')
+    ap.add_argument('--since')
+    ap.add_argument('--limit', type=int, default=20)
+    ap.add_argument('--open', type=int, metavar='ID')
+    ap.add_argument('--around', type=int, default=3)
+    ap.add_argument('--index', action='store_true')
+    a = ap.parse_args(argv)
+    en = lang() == 'en'
+    tr = lambda ko, e: e if en else ko
+    db = db_path()
+    if a.open is not None:
+        rows = around(db, a.open, a.around)
+        if not rows:
+            print(tr(f'#{a.open} 이 없어 — 먼저 찾기로 번호를 받아', f'#{a.open} not found — search first to get an id'), file=sys.stderr)
+            return 1
+        for r in rows:
+            who = tr('사람', 'user') if r['role'] == 'user' else tr('클로드', 'claude')
+            text = r['text'] if r['hit'] else r['text'][:1500] + ('…' if len(r['text']) > 1500 else '')
+            print(f"{'>>' if r['hit'] else '  '} #{r['id']}  {when(r['ts'])}  {who}\n{text}\n")
+        return 0
+    if not a.words and not a.index:
+        ap.print_help()
+        return 2
+    try:
+        since = parse_since(a.since) if a.since else None
+    except ValueError:
+        print(tr('--since 는 7d · 12h · 10/01 · 2026-10-01 모양', '--since takes 7d, 12h, 10/01 or 2026-10-01'), file=sys.stderr)
+        return 2
+    import sqlite3
+    first = not os.path.exists(db)
+    if first:
+        print(tr('처음 색인하는 중 — 대화가 많으면 몇 분 걸려', 'Building the index for the first time — a few minutes with many conversations'), file=sys.stderr)
+    try:
+        st = update(db)
+    except sqlite3.OperationalError as e:
+        if 'fts5' in str(e) or 'trigram' in str(e):
+            print(tr('이 파이썬의 sqlite 에 FTS5 trigram 이 없어(sqlite 3.34 이상 필요) — 파이썬을 새로 깔아 줘', "This Python's sqlite has no FTS5 trigram (needs sqlite 3.34+) — install a newer Python"), file=sys.stderr)
+            return 2
+        raise
+    if a.index:
+        print(tr(f"대화 파일 {st['files']}개 · 다시 읽음 {st['read']} · 새 메시지 {st['added']} · {st['secs']}초 · 색인 {st['bytes'] / 1e6:.1f}MB",
+                 f"{st['files']} conversation files · re-read {st['read']} · new messages {st['added']} · {st['secs']}s · index {st['bytes'] / 1e6:.1f} MB"))
+        if not a.words:
+            return 0
+    hits = search(db, ' '.join(a.words), a.project, since, a.limit)
+    if not hits:
+        print(tr('못 찾았어 — 낱말을 줄이거나 --since·--project 를 빼 봐', 'Nothing found — try fewer words or drop --since/--project'), file=sys.stderr)
+        return 1
+    for h in hits:
+        who = tr('사람', 'user') if h['role'] == 'user' else tr('클로드', 'claude')
+        where = ' · '.join(x for x in (h['project'], h['name'], tr('분신', 'sub-agent') if h['sub'] else '', h['sid'][:8]) if x)
+        print(f"#{h['id']}  {when(h['ts'])}  {where}  ({who})")
+        for i, l in enumerate(h['lines']):
+            print(f"  {'>' if i == h['at'] else ' '} {l}")
+    print(tr(f'앞뒤 보기: scripts/recall --open <번호>', 'Read around a hit: scripts/recall --open <id>'))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

@@ -106,16 +106,30 @@ export const setMode = (bs: HomeBlock[], id: string, mode: string) => bs.map((b)
 export const homeSame = (a: Home, b: Home) => JSON.stringify({ ...a, at: 0 }) === JSON.stringify({ ...b, at: 0 });
 
 type Rect = { x: number; y: number; w: number; h: number };
-/** 끌어 놓을 자리 — 읽는 순서로 블록을 지났는지. 블록 위 틈이면 그 앞, 블록 안이면 전체 폭은 세로 가운데·반 폭은 가로 가운데로 가른다 */
-export function dropAt(rects: Rect[], px: number, py: number): number {
-  const widest = Math.max(0, ...rects.map((r) => r.w));
-  for (let i = 0; i < rects.length; i++) {
-    const r = rects[i]!;
-    if (py < r.y) return i;
-    if (py > r.y + r.h) continue;
-    if (r.w >= widest * 0.75 ? py < r.y + r.h / 2 : px < r.x + r.w / 2) return i;
+export type DropLine = { to: number; line: Rect | null };
+const LINE = 4;
+/** 노션식 끌기(10-31) — 끄는 동안 판은 그대로 두고 포인터 아래 블록(틈이면 가장 가까운 블록)의 앞·뒤를 고른다.
+ *  반 폭 = 왼쪽 반이면 앞·오른쪽 반이면 뒤(세로줄), 전체 폭 = 위 반이면 위·아래 반이면 아래(판 폭 가로줄), 모든 블록 아래·위 = 끝·앞.
+ *  to 는 moveBlock 의 to, 제자리(바로 앞·뒤)면 line = null. 자리·줄은 같은 기준(판 안 좌표) */
+export function dropLine(rects: Rect[], from: number, px: number, py: number, gap: { x: number; y: number }): DropLine {
+  if (!rects.length) return { to: 0, line: null };
+  const left = Math.min(...rects.map((r) => r.x)), right = Math.max(...rects.map((r) => r.x + r.w));
+  const top = Math.min(...rects.map((r) => r.y)), bottom = Math.max(...rects.map((r) => r.y + r.h));
+  const across = (y: number) => ({ x: left, y: y - LINE / 2, w: right - left, h: LINE });
+  const done = (to: number, line: Rect) => ({ to, line: to === from || to === from + 1 ? null : line });
+  if (py > bottom) return done(rects.length, across(bottom + gap.y / 2));
+  if (py < top) return done(0, across(top - gap.y / 2));
+  const dist = (r: Rect) => Math.hypot(Math.max(r.x - px, 0, px - r.x - r.w), Math.max(r.y - py, 0, py - r.y - r.h));
+  let j = 0;
+  rects.forEach((r, i) => { if (dist(r) < dist(rects[j]!)) j = i; });
+  const r = rects[j]!;
+  const widest = Math.max(...rects.map((q) => q.w));
+  if (r.w >= widest * 0.75) {
+    const below = py > r.y + r.h / 2;
+    return done(below ? j + 1 : j, across(below ? r.y + r.h + gap.y / 2 : r.y - gap.y / 2));
   }
-  return rects.length;
+  const after = px > r.x + r.w / 2;
+  return done(after ? j + 1 : j, { x: (after ? r.x + r.w + gap.x / 2 : r.x - gap.x / 2) - LINE / 2, y: r.y, w: LINE, h: r.h });
 }
 
 /** 링크 한 줄 문제(빈 글 = 괜찮음) — http·https 만(누르는 사람 기기에서 열린다) */

@@ -34,6 +34,7 @@ import { TEAM_DROP_EVENT } from './teamDrop';
 import { SortButton } from '../SortButton';
 import '../space/locker.css';
 import './team.css';
+import { every } from '../poll';
 
 /** 이 기기 팀 폴더 주인 id — 폰 팀 보관함(PhoneTeam)이 같은 id 로 고른다 */
 export const teamOwner = (teamId: string, team: string) => ({ id: `team-${teamId}`, name: team });
@@ -148,8 +149,8 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
       }, () => {});
     };
     tick();
-    const t = window.setInterval(tick, 2000);
-    return () => window.clearInterval(t);
+    // 앱 창이 안 보이면 5배 늦게(ui/poll every — 10-31: 가시성을 안 보고 2초마다 돌았다)
+    return every(tick, 2000);
   }, [teamId, load]);
 
   /** 바꾸기 하나 — 누르자마자 화면에 얹고(기다리는 일), 같은 열쇠가 기다리는 중이면 안 보낸다(연타 한 번만).

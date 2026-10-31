@@ -9,7 +9,7 @@ import { listSessionsRaw, readCtx } from '../../data/tauri';
 import { promptInput } from '../../domain/chat';
 import { parseCtx, type Ctx } from '../../domain/ctx';
 import { agentState } from '../../domain/session';
-import { DESK_PAD, POP_MS, deskPop, deskStage, fanKeep, fanPlan, farEdges, fitPopSize, resizedPop, type Far, isDrag, popLayout, popSteps, readSpot, screenPlace, screenSave, stageBox, type PopAnim, type Pt, type Rect, type Screen } from '../../domain/orchBubble';
+import { DESK_PAD, POP_MS, deskPop, openKeep, deskStage, fanKeep, fanPlan, farEdges, fitPopSize, resizedPop, type Far, isDrag, popLayout, popSteps, readSpot, screenPlace, screenSave, stageBox, type PopAnim, type Pt, type Rect, type Screen } from '../../domain/orchBubble';
 import { BadgeCore, BubbleFan, useHoverFan, type FanOrch } from './BubbleFan';
 import { shownName } from '../../domain/orchLabel';
 import { orchVars } from '../../domain/orchTheme';
@@ -152,9 +152,13 @@ export function DeskBubble() {
         if (!draggedRef.current) return; // 앱이 놓은 자리(bubble_place)도 옮김 사건이 온다 — 사람이 끈 것만 기억
         draggedRef.current = false;
         // 끝에 걸쳐 놓았으면 저장은 끝까지만(비율 0~1) — 배지는 놓자마자 화면 안으로 다 보이게 당긴다(대화창은 접을 때)
-        void screensNow().then((s) => {
+        void screensNow().then(async (s) => {
           if (!s.win) return;
-          const b = openRef.current ? { x: s.win.x + layRef.current.box.x, y: s.win.y + layRef.current.box.y } : { x: s.win.x + boxOffRef.current.x, y: s.win.y + boxOffRef.current.y };
+          // 열린 대화창째 끌었으면 배지 화면 밖으로 나간 만큼 창째 당긴다(배지·대화창 사이 자리는 그대로) — 이 옮김 사건은 위에서 draggedRef 를 내려 안 센다
+          const to = openRef.current ? openKeep(s.win, layRef.current.box, s.screens, DESK) : null;
+          if (to) await place({ ...s.win, ...to }, true, layRef.current.badge ? 0 : 14);
+          const w0 = to ? { ...s.win, ...to } : s.win;
+          const b = openRef.current ? { x: w0.x + layRef.current.box.x, y: w0.y + layRef.current.box.y } : { x: w0.x + boxOffRef.current.x, y: w0.y + boxOffRef.current.y };
           write(SPOT_KEY, JSON.stringify(screenSave({ x: b.x, y: b.y }, s.screens, DESK)));
           draggingRef.current = false;
           setDragging(false);
@@ -252,6 +256,19 @@ export function DeskBubble() {
   };
   // 부채 — 올리면 무대 창 안 화면 가운데 쪽으로 펼치기만 한다(창 크기·자리는 그대로 — 바꾸면 창과 웹뷰가 한 프레임 어긋나 배지가 튀었다, 10-28 사용자)
   const press = useRef<{ x: number; y: number; dragged: boolean } | null>(null);
+  // 배지 누르기 — 닫힌 배지·열린 배지 같은 길: 5px 넘게 움직이면 창 끌기(열린 동안은 대화창째 옮겨진다), 아니면 click 이 열기·접기
+  const grab = (e: React.PointerEvent) => { if (e.button === 0) press.current = { x: e.screenX, y: e.screenY, dragged: false }; };
+  const drag = (e: React.PointerEvent) => {
+    const p = press.current;
+    if (!p || p.dragged || !(e.buttons & 1) || !isDrag(e.screenX - p.x, e.screenY - p.y)) return;
+    p.dragged = true;
+    draggedRef.current = true;
+    draggingRef.current = true;
+    setDragging(true); // 부채·배너는 숨기되 창 크기는 그대로(끄는 창을 바꾸지 않는다)
+    void invoke('bubble_drag'); // 맥·윈도우 창 끌기 그대로 — 놓으면 __bubbleMoved
+  };
+  // 열기·접기는 click 으로 — 창 끌기(bubble_drag)를 하면 놓음이 맥·윈도우 끌기에 먹혀 click 이 안 온다. 접근성 누르기(AXPress)도 click 만 보낸다. 끈 뒤 click 이면 true
+  const pressed = () => { const p = press.current; press.current = null; return !!p?.dragged; };
   // 크기 손잡이 — 끄는 동안 맥 창을 그 크기로 다시 놓고(자리는 배지 쪽 모서리 그대로), 놓으면 보통 크기로 기억
   const grip = useRef<{ x: number; y: number; size: { w: number; h: number }; far: Far; axis: 'x' | 'y' | 'xy'; b: Rect; screens: Screen[]; busy: boolean } | null>(null);
   const startGrip = async (e: React.PointerEvent, axis: 'x' | 'y' | 'xy') => {
@@ -375,21 +392,11 @@ export function DeskBubble() {
   if (!open) {
     return (
       <div className={`obd-wrap${hide ? ' hide' : ''}`} style={{ inset: DESK_PAD }} onPointerMove={(e) => { if (!draggingRef.current) hover.move({ x: e.clientX, y: e.clientY }); }} onPointerLeave={() => hover.move(null)}>
-      <button type="button" className={`obb-badge obd-badge${back ? ' obd-back' : ''}`} style={{ left: off.x, top: off.y, ...orchVars(who.color) } as React.CSSProperties}
+      <button type="button" className={`obb-badge obd-badge${back ? ' obd-back' : ''}${dragging ? ' obb-drag' : ''}`} style={{ left: off.x, top: off.y, ...orchVars(who.color) } as React.CSSProperties}
         aria-label={tr(`${who.label} 대화창 열기`, `Open ${who.label} chat`)} title={tr(`${who.label} — 누르면 대화, 끌면 옮기기`, `${who.label} — click to chat, drag to move`)}
         onPointerEnter={hover.enter} onPointerLeave={hover.leave}
-        onPointerDown={(e) => { if (e.button === 0) press.current = { x: e.screenX, y: e.screenY, dragged: false }; }}
-        onPointerMove={(e) => {
-          const p = press.current;
-          if (!p || p.dragged || !(e.buttons & 1) || !isDrag(e.screenX - p.x, e.screenY - p.y)) return;
-          p.dragged = true;
-          draggedRef.current = true;
-          draggingRef.current = true;
-          setDragging(true); // 부채·배너는 숨기되 창 크기는 그대로(끄는 창을 바꾸지 않는다)
-          void invoke('bubble_drag'); // 맥·윈도우 창 끌기 그대로 — 놓으면 __bubbleMoved
-        }}
-        // 열기는 click 으로 — 창 끌기(bubble_drag)를 하면 놓음이 맥·윈도우 끌기에 먹혀 click 이 안 온다. 접근성 누르기(AXPress)도 click 만 보낸다
-        onClick={() => { const p = press.current; press.current = null; if (!p?.dragged) void openPop(true); }}
+        onPointerDown={grab} onPointerMove={drag}
+        onClick={() => { if (!pressed()) void openPop(true); }}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void openPop(true); } }}>
         <BadgeCore face={me} node={avatar(who, 44)} orchs={fanOrchs} />
       </button>
@@ -413,9 +420,10 @@ export function DeskBubble() {
       {tip && <span className="obd-tip" style={{ left: tip.x, top: tip.y }}>{tip.text}</span>}
       {lay.badge && (
         <div className="obd-wrap" style={{ left: lay.box.x, top: lay.box.y, width: DESK, height: DESK }}>
-          <button type="button" className="obb-badge obd-badge obd-back" style={{ left: BX, top: BY, ...orchVars(who.color) } as React.CSSProperties}
-            aria-label={tr(`${who.label} 대화창 접기`, `Collapse ${who.label} chat`)} title={tr(`${who.label} — 누르면 접기`, `${who.label} — click to collapse`)}
-            onClick={() => void openPop(false)}>
+          <button type="button" className={`obb-badge obd-badge obd-back${dragging ? ' obb-drag' : ''}`} style={{ left: BX, top: BY, ...orchVars(who.color) } as React.CSSProperties}
+            aria-label={tr(`${who.label} 대화창 접기`, `Collapse ${who.label} chat`)} title={tr(`${who.label} — 누르면 접기, 끌면 대화창째 옮기기`, `${who.label} — click to collapse, drag to move with the chat`)}
+            onPointerDown={grab} onPointerMove={drag}
+            onClick={() => { if (!pressed()) void openPop(false); }}>
             <BadgeCore face={me} node={avatar(who, 44)} orchs={fanOrchs} />
           </button>
         </div>

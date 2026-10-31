@@ -10,12 +10,12 @@ import { sendPreview } from '../../domain/sendPreview';
 import { IconClose, IconSend } from '../Icons';
 import { HTML_SANDBOX } from './htmlFrame';
 import { fileError } from '../../domain/phoneFile';
-import { machine } from '../../i18n';
+import { machine, tr } from '../../i18n';
 import { ShareButton } from './ShareButton';
 import { BottomSheet } from './kit';
 
 type Cur = { title: string; total: number; done: number; text: string };
-const why = (): Record<string, string> => ({ 'secret inside': `시안 속에 키가 보여서 폰엔 안 보여 줘요 — ${machine()}에서 열어 주세요`, 'not allowed': '폰에서 열 수 없는 시안이에요', 'file too large': `시안이 10MB 를 넘어 폰에선 못 열어요 — ${machine()}에서` });
+const why = (): Record<string, string> => ({ 'secret inside': tr(`시안 속에 키가 보여서 폰엔 안 보여 줘요 — ${machine()}에서 열어 주세요`, `There is a key inside this draft, so it is hidden on the phone — open it on the ${machine()}`), 'not allowed': tr('폰에서 열 수 없는 시안이에요', "This draft can't be opened on the phone"), 'file too large': tr(`시안이 10MB 를 넘어 폰에선 못 열어요 — ${machine()}에서`, `This draft is over 10 MB, so it can't be opened on the phone — use the ${machine()}`) });
 
 export default function HtmlSheet({ path, title, orch, onClose }: { path: string; title: string; orch?: string; onClose: () => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
@@ -128,49 +128,49 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
         {cur && <span className="m-pdf-no">{cur.done} / {cur.total}</span>}
         {cur && orch && (() => {
           const st = curSendState(phase, sentText, cur.text);
-          const say = { idle: '', sending: '보내는 중…', sent: '보냈어요', fail: '못 보냈어요' }[st];
+          const say = { idle: '', sending: tr('보내는 중…', 'Sending…'), sent: tr('보냈어요', 'Sent'), fail: tr('못 보냈어요', "Couldn't send") }[st];
           return (
             <>
               {say && <span className={`m-cur-st ${st}`} role="status">{say}</span>}
               <button type="button" className={`m-rt-btn m-ico m-cur-send ${st}`} disabled={!canCurSend(st)} onClick={() => void send(cur.text)}
-                aria-label={st === 'sent' ? '참모에게 보냈어요' : st === 'fail' ? '다시 보내기' : '검토 결과 참모에게 보내기'} title={st === 'sent' ? '이 결과는 보냈어요' : st === 'fail' ? '못 보냄 — 다시 누르기' : '참모에게 보내기'}><IconSend /></button>
+                aria-label={st === 'sent' ? tr('참모에게 보냈어요', 'Sent to your assistant') : st === 'fail' ? tr('다시 보내기', 'Send again') : tr('검토 결과 참모에게 보내기', 'Send review to your assistant')} title={st === 'sent' ? tr('이 결과는 보냈어요', 'This result was sent') : st === 'fail' ? tr('못 보냄 — 다시 누르기', "Couldn't send — tap to retry") : tr('참모에게 보내기', 'Send to your assistant')}><IconSend /></button>
             </>
           );
         })()}
         <ShareButton path={path} />
-        <button type="button" className="m-rt-btn m-ico" onClick={onClose} aria-label="닫기" title="닫기"><IconClose /></button>
+        <button type="button" className="m-rt-btn m-ico" onClick={onClose} aria-label={tr('닫기', 'Close')} title={tr('닫기', 'Close')}><IconClose /></button>
       </div>}>
       {ask !== null && (() => {
         const p = sendPreview(ask);
         const answer = (go: boolean) => {
           setAsk(null);
-          if (!go) { post({ hodoc: 'curation-sent', ok: false, error: '취소했어요' }); return; }
+          if (!go) { post({ hodoc: 'curation-sent', ok: false, error: tr('취소했어요', 'Canceled') }); return; }
           void send(ask).then((ok) => post({ hodoc: 'curation-sent', ok }));
         };
         return (
-          <div className="m-confirm m-send-ask" role="alertdialog" aria-label="참모에게 보낼까요">
-            <div>시안이 이 글을 참모에게 보내자고 해요 — 보낼까요? ({p.chars}자)</div>
+          <div className="m-confirm m-send-ask" role="alertdialog" aria-label={tr('참모에게 보낼까요', 'Send to your assistant?')}>
+            <div>{tr(`시안이 이 글을 참모에게 보내자고 해요 — 보낼까요? (${p.chars}자)`, `This draft wants to send this text to your assistant — send it? (${p.chars} chars)`)}</div>
             <pre className="m-send-peek">{p.lines.join('\n')}{p.more ? '\n…' : ''}</pre>
             <div className="m-new-row">
-              <button type="button" className="m-btn" onClick={() => answer(false)}>취소</button>
-              <button type="button" className="m-send" onClick={() => answer(true)}>보내기</button>
+              <button type="button" className="m-btn" onClick={() => answer(false)}>{tr('취소', 'Cancel')}</button>
+              <button type="button" className="m-send" onClick={() => answer(true)}>{tr('보내기', 'Send')}</button>
             </div>
           </div>
         );
       })()}
       {/* 블록 메모 — 공용 아래 시트(키보드가 뜨면 시트가 키보드 위에 붙는다) */}
       {note && (
-        <BottomSheet label={`${note.k} 메모`} title={note.k} titleClass="m-view-title" onClose={() => setNote(null)}>
+        <BottomSheet label={tr(`${note.k} 메모`, `${note.k} note`)} title={note.k} titleClass="m-view-title" onClose={() => setNote(null)}>
           <form className="m-note-form" onSubmit={(e) => { e.preventDefault(); post({ hodoc: 'cur-cmd', cmd: 'note', k: note.k, text: note.text }); setNote(null); }}>
-            <textarea className="m-note-ta" autoFocus value={note.text} placeholder="왜 그렇게 생각하는지 / 어떻게 바꿨으면 하는지"
+            <textarea className="m-note-ta" autoFocus value={note.text} placeholder={tr('왜 그렇게 생각하는지 / 어떻게 바꿨으면 하는지', 'Why you think so / how you would change it')}
               onChange={(e) => setNote({ k: note.k, text: e.target.value })} />
-            <div className="m-new-row"><button type="submit" className="m-send">저장</button></div>
+            <div className="m-new-row"><button type="submit" className="m-send">{tr('저장', 'Save')}</button></div>
           </form>
         </BottomSheet>
       )}
       <div className={cur ? 'm-html-body m-html-cur' : 'm-html-body'} ref={wrap}>
         {err && <p className={`${err.gone ? 'm-muted' : 'm-error'} m-pad`}>{err.text}</p>}
-        {!url && !err && <p className="m-muted m-pad">여는 중…</p>}
+        {!url && !err && <p className="m-muted m-pad">{tr('여는 중…', 'Opening…')}</p>}
         {url && (
           <div className="m-html-sizer" style={fw && fh ? { width: fw * k, height: fh * k } : undefined}>
             <iframe ref={frame} title={title} src={url} sandbox={HTML_SANDBOX}

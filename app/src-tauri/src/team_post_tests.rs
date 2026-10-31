@@ -118,3 +118,19 @@ fn 글판·쓰기·고정·지우기는_봉투_더하기_일을_버리지_않는
     let post = mobile.split("fn team_post(").nth(1).unwrap().split("\n    fn ").next().unwrap();
     assert!(post.matches(".spawn()").count() >= 2, "폰 새 글·고정도");
 }
+
+#[test]
+fn 못_받은_글이_많고_받아_둔_글이_있으면_받아_둔_것부터_그린다() {
+    // 10-31: 글 30개를 다 받은 뒤에야 그렸다(운영 ≈ 8초). 받아 둔 글이 하나도 없으면(새 기기) 기다릴 수밖에 없다
+    assert!(first_paint(10, 7), "받아 둔 10 · 못 받은 7 → 먼저 그림");
+    assert!(!first_paint(10, 3), "못 받은 게 같이 받기 한 번(6) 안이면 기다려도 금방");
+    assert!(!first_paint(0, 30), "새 기기 — 그릴 게 없다");
+}
+
+#[test]
+fn 팀_홈_글은_한_번에_같이_받는다() {
+    let code = include_str!("team_post.rs");
+    let read = &code[code.find("fn read_first(").unwrap()..];
+    let read = &read[..read.find("\n}\n").unwrap()];
+    assert!(read.contains("bytes_many("), "글 본문을 하나씩(bytes_of) 차례로 받지 않는다");
+}

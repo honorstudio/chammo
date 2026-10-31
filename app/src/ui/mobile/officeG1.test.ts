@@ -43,10 +43,10 @@ describe('방 위 칩 — 뽑기·스킨은 아이콘', () => {
     expect(icons).toMatch(/shapeRendering="crispEdges"/);
   });
   it('칩은 아이콘 + 이름표(aria-label·title), 세션 칩은 글자 + 개수 그대로', () => {
-    expect(office).toMatch(/\['gacha', '뽑기', <IconGacha \/>\]/);
-    expect(office).toMatch(/\['skin', '스킨', <IconSkin \/>\]/);
+    expect(office).toMatch(/\['gacha', tr\('뽑기', 'Gacha'\), <IconGacha \/>\]/);
+    expect(office).toMatch(/\['skin', tr\('스킨', 'Skins'\), <IconSkin \/>\]/);
     expect(office).toMatch(/aria-label=\{name\} title=\{name\}/);
-    expect(office).toMatch(/\['sessions', '세션', null\]/);
+    expect(office).toMatch(/\['sessions', tr\('세션', 'Sessions'\), null\]/);
   });
 });
 
@@ -61,9 +61,9 @@ describe('G1 인벤토리 가방', () => {
     expect(rule('.m-g1-cell.r-전설')).toMatch(/animation:\s*m-g-shine/);
   });
   it("바닥 줄 — 되돌리기는 아이콘(이름표), '장착'은 큰 글자 단추", () => {
-    expect(gacha).toMatch(/aria-label="되돌리기" title="되돌리기"><IconReplay \/>/);
+    expect(gacha).toMatch(/aria-label=\{tr\('되돌리기', 'Undo'\)\} title=\{tr\('되돌리기', 'Undo'\)\}><IconReplay \/>/);
     expect(gacha).toMatch(/className="m-g-equip"/);
-    expect(gacha).toContain("'장착'");
+    expect(gacha).toContain("tr('장착', 'Equip')");
   });
   it('장착이 되면 사무실에 알려 방에 반짝(장착! + 도트 별)', () => {
     expect(gacha).toMatch(/onEquipped\?\.\(\)/);

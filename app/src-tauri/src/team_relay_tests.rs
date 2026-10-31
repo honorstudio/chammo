@@ -644,3 +644,185 @@ fn 배경이_처음_막힌_때_경로별_셈_한_줄만() {
     assert_eq!(tally(key, t, "GET", "/v0/teams/abc123/posts", false, false), None, "칸마다 한 번");
     assert!(tally(key, t + BUCKET_MS, "GET", "/v0/me", false, false).unwrap().contains("막힘 GET /v0/me 1"), "다음 칸은 새로 센다");
 }
+
+// ── 401 물러서기(10-31 운영 24시간: 요청의 약 절반이 401 — 서버가 모르는 기기가 허용 기다림 화면에서 2초마다 두드렸다) ──
+
+#[test]
+fn 기기_서명이_401_을_받으면_배경_요청은_물러서고_사람_동작은_간다() {
+    let (d, kc, r) = logged_in("deny-back");
+    r.devices.borrow_mut().clear(); // 서버가 이 기기를 모른다 → 기기 머리 요청은 401
+    let st = load_state(&d);
+    let k = device_keys(&kc, &st).unwrap();
+    let n0 = r.seen.borrow().len();
+    for _ in 0..5 {
+        assert_eq!(call(&r, &st.server, &k, Some(&st.device_id), "GET", "/v0/me/self", None).unwrap().0, 401);
+    }
+    assert_eq!(r.seen.borrow().len() - n0, 1, "첫 401 뒤 물러서는 동안은 서버에 안 간다");
+    assert_eq!(as_human(|| call(&r, &st.server, &k, Some(&st.device_id), "GET", "/v0/me/self", None)).unwrap().0, 401);
+    assert_eq!(r.seen.borrow().len() - n0, 2, "사람이 누른 건 물러서기를 안 탄다");
+}
+
+#[test]
+fn 물러서기는_2초부터_두_배씩_5분까지() {
+    let s = |n| denied_wait(n).as_secs();
+    assert_eq!((s(1), s(2), s(3), s(4)), (2, 4, 8, 16));
+    assert_eq!((s(9), s(30)), (300, 300));
+}
+
+#[test]
+fn 물러서던_열쇠도_서버가_받아_주면_바로_풀린다() {
+    let (d, kc, r) = logged_in("deny-ok");
+    let st = load_state(&d);
+    let k = device_keys(&kc, &st).unwrap();
+    let keep = r.devices.borrow().clone();
+    r.devices.borrow_mut().clear();
+    assert_eq!(call(&r, &st.server, &k, Some(&st.device_id), "GET", "/v0/me/self", None).unwrap().0, 401);
+    *r.devices.borrow_mut() = keep;
+    r.answer("/v0/me/self", 200, "{}");
+    assert_eq!(as_human(|| call(&r, &st.server, &k, Some(&st.device_id), "GET", "/v0/me/self", None)).unwrap().0, 200);
+    r.answer("/v0/me/self", 200, "{}");
+    let n0 = r.seen.borrow().len();
+    assert_eq!(call(&r, &st.server, &k, Some(&st.device_id), "GET", "/v0/me/self", None).unwrap().0, 200);
+    assert_eq!(r.seen.borrow().len() - n0, 1, "받아 준 뒤엔 배경도 바로 간다");
+}
+
+#[test]
+fn 열쇠를_서버가_알고_시계가_맞으면_끊긴_기기로_적는다() {
+    // 끊긴(revoked) 기기는 줄이 남아 열쇠 확인이 404 가 아니라 401 — 시계(Cloudflare /cdn-cgi/trace ts)가 맞으면 시계 탓이 아니다
+    let (d, kc, r) = logged_in("gone-revoked");
+    r.devices.borrow_mut().clear();
+    r.answer(KEY_PROBE, 401, r#"{"error":"unauthorized"}"#);
+    r.answer("/cdn-cgi/trace", 200, &format!("fl=1\nh=relay.test\nts={}.123\nvisit_scheme=https\n", now_ms() / 1000));
+    let e = sync_rooms(&d, &kc, &r).unwrap_err();
+    assert!(e.contains("다시 로그인"), "{e}");
+    assert!(load_state(&d).revoked);
+}
+
+#[test]
+fn 멀쩡한_기기가_401_을_한_번_받고_열쇠_확인도_401_이어도_다시_물어_보고_끊김으로_안_적는다() {
+    // 10-31 리뷰: 열쇠 확인은 등록된 열쇠면 멀쩡한 기기에도 늘 401(chammo-relay index.ts) — 그것과 시계만으로 끊김을 적으면 멀쩡한 기기가 '다시 로그인'에 빠진다
+    let (d, kc, r) = logged_in("gone-once");
+    r.answer("/v0/me/rooms", 401, r#"{"error":"unauthorized"}"#); // 한 번만 튄 401(기기 줄은 그대로)
+    r.answer(KEY_PROBE, 401, r#"{"error":"unauthorized"}"#);
+    r.answer("/cdn-cgi/trace", 200, &format!("ts={}.5\n", now_ms() / 1000));
+    r.answer("/v0/me/self", 200, "{}");
+    let _ = sync_rooms(&d, &kc, &r);
+    assert!(!load_state(&d).revoked, "기기 서명으로 다시 물어 200 이면 끊김이 아니다");
+}
+
+#[test]
+fn 물러서는_동안의_가짜_401_로는_열쇠_확인도_끊김도_없다() {
+    // 10-31 리뷰: 물러서기(DENIED) 중 배경 요청이 받는 401 은 서버 답이 아니다 — 그걸로 끊김을 가리면 시계가 막 고쳐진 멀쩡한 기기가 끊긴다
+    let (d, kc, r) = logged_in("gone-local");
+    let st = load_state(&d);
+    let k = device_keys(&kc, &st).unwrap();
+    note_denied(&k.public(), 401, std::time::Instant::now());
+    r.answer(KEY_PROBE, 401, r#"{"error":"unauthorized"}"#);
+    r.answer("/cdn-cgi/trace", 200, &format!("ts={}.5\n", now_ms() / 1000));
+    r.answer("/v0/me/self", 401, r#"{"error":"unauthorized"}"#);
+    assert!(sync_rooms(&d, &kc, &r).is_err());
+    assert!(!load_state(&d).revoked);
+    assert_eq!(r.seen.borrow().iter().filter(|(_, p, _, _)| p == KEY_PROBE).count(), 0, "가짜 401 로는 열쇠 확인도 안 보낸다");
+}
+
+#[test]
+fn 시계가_틀렸거나_시계를_모르면_끊긴_기기로_안_적고_확인도_5분에_한_번() {
+    for (tag, trace) in [("gone-skew", Some(now_ms() / 1000 - 600)), ("gone-notrace", None)] {
+        let (d, kc, r) = logged_in(tag);
+        r.devices.borrow_mut().clear();
+        r.answer(KEY_PROBE, 401, r#"{"error":"unauthorized"}"#);
+        if let Some(ts) = trace {
+            r.answer("/cdn-cgi/trace", 200, &format!("ts={ts}.5\n"));
+        }
+        assert!(sync_rooms(&d, &kc, &r).unwrap_err().contains("시계"), "{tag}");
+        assert!(!load_state(&d).revoked, "{tag}");
+        let probes = || r.seen.borrow().iter().filter(|(_, p, _, _)| p == KEY_PROBE).count();
+        assert_eq!(probes(), 1, "{tag}");
+        let _ = sync_rooms(&d, &kc, &r);
+        assert_eq!(probes(), 1, "{tag}: 열쇠 확인은 5분에 한 번");
+    }
+}
+
+// ── 같이 받기(10-31 팀 홈 첫 열기: 글 30개 본문을 하나씩 차례로 → 운영 ≈ 8초) ──
+
+/// 사본을 주는 가짜 — 동시에 몇 개가 도는지 센다
+struct Par {
+    now: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    max: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    forks: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+impl Http for Par {
+    fn send(&self, _: &str, url: &str, _: &[(String, String)], _: &[u8]) -> Result<(u16, String), String> {
+        use std::sync::atomic::Ordering::SeqCst;
+        let n = self.now.fetch_add(1, SeqCst) + 1;
+        self.max.fetch_max(n, SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        self.now.fetch_sub(1, SeqCst);
+        Ok((200, url.to_string()))
+    }
+    fn fork(&self) -> Option<Box<dyn Http + Send>> {
+        self.forks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Some(Box::new(Par { now: self.now.clone(), max: self.max.clone(), forks: self.forks.clone() }))
+    }
+}
+
+#[test]
+fn 사본을_주는_클라이언트면_최대_6개씩_같이_받고_순서는_그대로() {
+    let p = Par { now: Default::default(), max: Default::default(), forks: Default::default() };
+    let items: Vec<String> = (0..20).map(|i| format!("/f{i}")).collect();
+    let t = std::time::Instant::now();
+    let got = par_map(&p, &items, PAR, |h, it| h.send("GET", it, &[], b"").unwrap().1);
+    assert_eq!(got, items, "돌려주는 순서는 넣은 순서");
+    let max = p.max.load(std::sync::atomic::Ordering::SeqCst);
+    assert!((2..=PAR).contains(&max), "같이 돈 수 {max}");
+    assert!(t.elapsed() < std::time::Duration::from_millis(20 * 30 / 2), "차례로(600ms)보다 빨라야 {:?}", t.elapsed());
+}
+
+#[test]
+fn 사람_동작_안에서_같이_받으면_스레드에서도_사람_동작이다() {
+    // 10-31 리뷰: HUMAN 은 스레드마다 따로라 같이 받기 스레드에선 배경으로 세어 — 글 지우기 안의 본문 받기가 배경 몫에 막혔다
+    let p = Par { now: Default::default(), max: Default::default(), forks: Default::default() };
+    let items: Vec<u8> = (0..12).collect();
+    assert!(as_human(|| par_map(&p, &items, PAR, |_, _| human_now())).iter().all(|h| *h), "사람 동작 안이면 모든 칸이 사람");
+    assert!(par_map(&p, &items, PAR, |_, _| human_now()).iter().all(|h| !*h), "배경이면 배경 그대로");
+}
+
+#[test]
+fn 사본이_없는_클라이언트_시험_가짜는_차례로() {
+    let r = FakeRelay::default();
+    r.always("GET", "/x", 200, "{}");
+    let items = vec!["/x".to_string(); 3];
+    let got = par_map(&r, &items, PAR, |h, it| h.send("GET", &format!("{SERVER}{it}"), &[], b"").map(|x| x.0));
+    assert_eq!(got.len(), 3);
+}
+
+// ── 예산 넘침 알림(10-31 사용자: 사람이 캡처를 보내기 전에 알아채게) — 앱 화면이 받아 '참모 앱' 담당 참모 입력칸에 [앱] 한 줄 ──
+
+#[test]
+fn 배경_몫을_처음_넘으면_알림_하나_경로별_셈과_같이() {
+    let key = "alert-bg-key";
+    let t = 11 * BUCKET_MS + 7;
+    for _ in 0..BG_CAP {
+        assert!(take_at(key, t, "GET", "/v0/teams/abc1/heads"));
+    }
+    assert!(!take_at(key, t, "GET", "/v0/teams/abc1/heads"), "몫을 넘으면 막힌다");
+    let _ = take_at(key, t, "GET", "/v0/teams/abc1/heads");
+    let a = take_alerts_for(key);
+    assert_eq!(a.len(), 1, "칸마다 한 번: {a:?}");
+    assert_eq!(a[0]["kind"], "bg-cap");
+    assert!(a[0]["detail"].as_str().unwrap().contains("GET /v0/teams/*/heads 200"), "{a:?}");
+    assert!(a[0].get("key").is_none(), "열쇠는 밖으로 안 낸다");
+}
+
+#[test]
+fn 사람_동작이_서버_429_를_받으면_알림() {
+    let (d, kc, r) = logged_in("alert-429");
+    let st = load_state(&d);
+    let k = device_keys(&kc, &st).unwrap();
+    r.answer("/v0/teams/t1/rooms", 429, r#"{"error":"slow_down","retryAfter":60}"#);
+    let (code, _) = as_human(|| call(&r, &st.server, &k, Some(&st.device_id), "POST", "/v0/teams/t1/rooms", Some(&serde_json::json!({})))).unwrap();
+    assert_eq!(code, 429);
+    let a = take_alerts_for(&k.public());
+    assert_eq!(a.len(), 1, "{a:?}");
+    assert_eq!((a[0]["kind"].as_str(), a[0]["detail"].as_str()), (Some("human-429"), Some("POST /v0/teams/*/rooms")));
+}

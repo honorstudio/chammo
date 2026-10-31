@@ -25,7 +25,7 @@ import { BottomSheet, SheetHostProvider } from './BottomSheet';
 import { IconBtn } from './kit';
 import { BetaTag } from '../kit/BetaTag';
 import { PhoneTeamLocker } from './PhoneTeamLocker';
-import { machine } from '../../i18n';
+import { machine, tr } from '../../i18n';
 import '../team/team.css';
 import { seenName } from '../../domain/session';
 import { AgentsSection } from '../team/TeamAgents';
@@ -173,7 +173,7 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
           ? <TeamAgentEdit team={view.teamId} list={agentPage.edit.list} editing={agentPage.edit.a} people={view.members.map((m) => m.name)} rooms={rooms} api={agentEdit}
               onBack={() => setAgentPage((p) => p && { key: p.key })} onSaved={() => setAgentPage((p) => ({ key: (p?.key ?? 0) + 1 }))} />
           : <>
-              <header className="m-team-head"><IconBtn label="뒤로" onClick={() => setAgentPage(null)}><IconBack /></IconBtn><b>팀 참모</b></header>
+              <header className="m-team-head"><IconBtn label={tr('뒤로', 'Back')} onClick={() => setAgentPage(null)}><IconBack /></IconBtn><b>{tr('팀 참모', 'Team agents')}</b></header>
               <div className="m-team-body m-agents"><AgentsSection key={agentPage.key} team={view.teamId} load={api.agents} onEdit={(a, list) => setAgentPage((p) => ({ key: p?.key ?? 0, edit: { a, list } }))} /></div>
             </>}
       </div>
@@ -200,22 +200,22 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
     <SheetHostProvider kb={kb}>
     <div className="m-team">
       <header className="m-team-head">
-        <button className="m-team-switch" onClick={() => setSheet(true)} aria-label="팀 바꾸기·만들기·초대">
-          {view?.joined ? <><TeamMarkIcon name={view.team} size={30} img={profiles.board?.teamIcon || undefined} /><b>{view.team}</b></> : <b>팀</b>}
+        <button className="m-team-switch" onClick={() => setSheet(true)} aria-label={tr('팀 바꾸기·만들기·초대', 'Switch, create or invite to a team')}>
+          {view?.joined ? <><TeamMarkIcon name={view.team} size={30} img={profiles.board?.teamIcon || undefined} /><b>{view.team}</b></> : <b>{tr('팀', 'Team')}</b>}
           <IconChevronDown />
         </button>
         <BetaTag className="m-team-beta" />
       </header>
       {view?.joined && (
         <div className="m-seg" role="tablist">
-          <button role="tab" aria-selected={seg === 'chat'} className={seg === 'chat' ? 'on' : ''} onClick={() => setSeg('chat')}>대화</button>
-          <button role="tab" aria-selected={seg === 'home'} className={seg === 'home' ? 'on' : ''} onClick={() => setSeg('home')}>팀 홈</button>
-          <button role="tab" aria-selected={seg === 'cal'} className={seg === 'cal' ? 'on' : ''} onClick={() => setSeg('cal')}>캘린더</button>
-          <button role="tab" aria-selected={seg === 'locker'} className={seg === 'locker' ? 'on' : ''} onClick={() => setSeg('locker')}>보관함</button>
+          <button role="tab" aria-selected={seg === 'chat'} className={seg === 'chat' ? 'on' : ''} onClick={() => setSeg('chat')}>{tr('대화', 'Chats')}</button>
+          <button role="tab" aria-selected={seg === 'home'} className={seg === 'home' ? 'on' : ''} onClick={() => setSeg('home')}>{tr('팀 홈', 'Team home')}</button>
+          <button role="tab" aria-selected={seg === 'cal'} className={seg === 'cal' ? 'on' : ''} onClick={() => setSeg('cal')}>{tr('캘린더', 'Calendar')}</button>
+          <button role="tab" aria-selected={seg === 'locker'} className={seg === 'locker' ? 'on' : ''} onClick={() => setSeg('locker')}>{tr('보관함', 'Locker')}</button>
         </div>
       )}
       <div className="m-team-body">
-        {!view?.joined ? <div className="tmx-none">{`아직 팀이 없어요 — 위 팀 이름을 눌러 만들거나, ${machine()} 설정 > 계정에서 Chammo 계정에 로그인해요`}</div>
+        {!view?.joined ? <div className="tmx-none">{tr(`아직 팀이 없어요 — 위 팀 이름을 눌러 만들거나, ${machine()} 설정 > 계정에서 Chammo 계정에 로그인해요`, `No team yet — tap the team name above to create one, or sign in to your Chammo account in ${machine()} Settings > Account`)}</div>
           : seg === 'chat' ? <div className="tmx-list"><TeamList convos={cs} rooms={t.rs} sel={null} onPick={(c: Convo) => setSel(c.key)} /></div>
           : seg === 'home' ? <div className="m-team-home"><TeamHome teamId={view.teamId} team={view.team} members={view.members} icon={profiles.board?.teamIcon || undefined} api={posts} Dialog={HomeSheet} homeApi={homeApi} sources={homeSources} phone
               calBlock={(_b, editing) => <CalBlock teamId={view.teamId} wide={false} editing={editing} api={api.cal} onOpen={() => setSeg('cal')} />} /></div>
@@ -238,27 +238,27 @@ function TeamSheet({ api, t, onClose, onAgents }: { api: TeamPhoneApi; t: Return
   const [making, setMaking] = useState(false);
   const [name, setName] = useState('');
   const [copied, setCopied] = useState(false);
-  useEffect(() => { if (view?.joined && view.role === 'owner') void api.invite().then((l) => setLink(l.link), (e: unknown) => setErr({ msg: '초대 링크를 못 만들었어요', raw: String(e) })); }, [api, view?.joined, view?.role]);
+  useEffect(() => { if (view?.joined && view.role === 'owner') void api.invite().then((l) => setLink(l.link), (e: unknown) => setErr({ msg: tr('초대 링크를 못 만들었어요', "Couldn't make the invite link"), raw: String(e) })); }, [api, view?.joined, view?.role]);
   return (
-    <BottomSheet label="팀" title="팀" onClose={onClose}>
+    <BottomSheet label={tr('팀', 'Team')} title={tr('팀', 'Team')} onClose={onClose}>
       <div className="m-team-sheet">
         {view?.joined && (
-          <div className="m-ts-row on"><TeamMarkIcon name={view.team} size={36} /><span className="tmx-tx"><b>{view.team}</b><span>사람 {view.members.length}</span></span><i className="m-ts-ck"><IconCheck /></i></div>
+          <div className="m-ts-row on"><TeamMarkIcon name={view.team} size={36} /><span className="tmx-tx"><b>{view.team}</b><span>{tr(`사람 ${view.members.length}`, `${view.members.length} people`)}</span></span><i className="m-ts-ck"><IconCheck /></i></div>
         )}
         {!view?.joined && (making
-          ? <div className="m-ts-make"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="팀 이름" aria-label="팀 이름" autoFocus />
-              <button className="tmx-btn pri" disabled={!name.trim()} onClick={() => void api.create(name).then(() => { t.refresh(); onClose(); }, (e: unknown) => setErr({ msg: '팀을 못 만들었어요', raw: String(e) }))}>만들기</button></div>
-          : <button className="m-ts-act" onClick={() => setMaking(true)}>팀 만들기</button>)}
-        {view?.joined && <button className="m-ts-act" onClick={onAgents}>팀 참모</button>}
-        {view?.joined && <span className="m-ts-sec">{view.team} 초대 링크</span>}
-        {view?.joined && view.role !== 'owner' && <span className="tmx-hint">초대 링크는 팀장 기기에서 만들어요</span>}
+          ? <div className="m-ts-make"><input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('팀 이름', 'Team name')} aria-label={tr('팀 이름', 'Team name')} autoFocus />
+              <button className="tmx-btn pri" disabled={!name.trim()} onClick={() => void api.create(name).then(() => { t.refresh(); onClose(); }, (e: unknown) => setErr({ msg: tr('팀을 못 만들었어요', "Couldn't create the team"), raw: String(e) }))}>{tr('만들기', 'Create')}</button></div>
+          : <button className="m-ts-act" onClick={() => setMaking(true)}>{tr('팀 만들기', 'Make a team')}</button>)}
+        {view?.joined && <button className="m-ts-act" onClick={onAgents}>{tr('팀 참모', 'Team agents')}</button>}
+        {view?.joined && <span className="m-ts-sec">{tr(`${view.team} 초대 링크`, `${view.team} invite link`)}</span>}
+        {view?.joined && view.role !== 'owner' && <span className="tmx-hint">{tr('초대 링크는 팀장 기기에서 만들어요', 'Only the team owner can make invite links')}</span>}
         {link && (
           <>
             <div className="tmx-lnk"><code>{link}</code>
-              <IconBtn label={copied ? '복사했어요' : '복사'} onClick={() => void navigator.clipboard?.writeText(link).then(() => setCopied(true), () => {})}><IconCopy /></IconBtn>
-              {'share' in navigator && <IconBtn label="공유" onClick={() => void navigator.share({ text: link }).catch(() => {})}><IconShare /></IconBtn>}
+              <IconBtn label={copied ? tr('복사했어요', 'Copied') : tr('복사', 'Copy')} onClick={() => void navigator.clipboard?.writeText(link).then(() => setCopied(true), () => {})}><IconCopy /></IconBtn>
+              {'share' in navigator && <IconBtn label={tr('공유', 'Share')} onClick={() => void navigator.share({ text: link }).catch(() => {})}><IconShare /></IconBtn>}
             </div>
-            <span className="tmx-hint">24시간 · 한 사람만 들어와요</span>
+            <span className="tmx-hint">{tr('24시간 · 한 사람만 들어와요', '24 hours · one person can join')}</span>
           </>
         )}
         {err && <span className="tmx-hint" role="alert" title={err.raw}>{err.msg}</span>}

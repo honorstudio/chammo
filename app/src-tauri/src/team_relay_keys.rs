@@ -32,6 +32,11 @@ pub struct Signed {
 }
 
 impl DeviceKeys {
+    /// 같은 열쇠 하나 더(메모리 기억용) — Clone 은 안 단다(아무 데서나 비밀 사본이 퍼지지 않게)
+    fn copy(&self) -> Self {
+        Self::from_seeds(self.sign.to_bytes(), self.dh.to_bytes())
+    }
+
     pub fn from_seeds(ed: [u8; 32], x: [u8; 32]) -> Self {
         DeviceKeys { sign: SigningKey::from_bytes(&ed), dh: StaticSecret::from(x) }
     }
@@ -151,11 +156,45 @@ pub fn account_of(public: &str) -> String {
     format!("dev-{public}")
 }
 
+// ── 열쇠 메모리 — 읽은 기기 열쇠는 이 프로세스 메모리에만 둔다(10-31 실측: 중계 요청마다 키체인을 읽어 팀 홈 첫 열기 34번·칩 하나 12번,
+//    사용자 승인). 디스크·기록엔 안 쓴다. 칸 이름이 공개 열쇠로 지은 것(account_of)이라 같은 이름 = 같은 열쇠 — 지우기·새로 넣기·로그아웃에서 버린다 ──
+
+static MEMO: std::sync::Mutex<std::collections::BTreeMap<String, DeviceKeys>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// 시험은 실마다 가짜 키체인이 따로라 기억도 실마다
+fn memo_key(account: &str) -> String {
+    if cfg!(test) { format!("{account}#{:?}", std::thread::current().id()) } else { account.to_string() }
+}
+
+fn memo_get(account: &str) -> Option<DeviceKeys> {
+    MEMO.lock().unwrap_or_else(|e| e.into_inner()).get(&memo_key(account)).map(DeviceKeys::copy)
+}
+
+fn memo_put(account: &str, k: &DeviceKeys) {
+    MEMO.lock().unwrap_or_else(|e| e.into_inner()).insert(memo_key(account), k.copy());
+}
+
+fn forget(account: &str) {
+    MEMO.lock().unwrap_or_else(|e| e.into_inner()).remove(&memo_key(account));
+}
+
+/// 기억한 열쇠를 다 버린다 — 로그아웃·이 기기 잊기
+pub fn forget_all() {
+    MEMO.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
 /// 없으면 None. 칸은 있는데 못 읽는 값이면 오류 — 빈 것처럼 넘기면 새 열쇠로 덮어 등록된 신원을 잃는다
 pub fn load(st: &dyn Store, account: &str) -> Result<Option<DeviceKeys>, String> {
+    if let Some(k) = memo_get(account) {
+        return Ok(Some(k));
+    }
     match st.get(SERVICE, account) {
         Ok(None) => Ok(None),
-        Ok(Some(s)) => DeviceKeys::from_secret(&s).map(Some).ok_or_else(|| "팀 기기 열쇠 칸이 깨졌어요".to_string()),
+        Ok(Some(s)) => {
+            let k = DeviceKeys::from_secret(&s).ok_or_else(|| "팀 기기 열쇠 칸이 깨졌어요".to_string())?;
+            memo_put(account, &k);
+            Ok(Some(k))
+        }
         Err(e) => Err(store_word(&e)),
     }
 }
@@ -164,6 +203,7 @@ pub fn load(st: &dyn Store, account: &str) -> Result<Option<DeviceKeys>, String>
 pub fn create(st: &dyn Store) -> Result<(DeviceKeys, String), String> {
     let k = DeviceKeys::generate()?;
     let account = account_of(&k.public());
+    forget(&account);
     st.set(SERVICE, &account, &k.to_secret()).map_err(|e| store_word(&e))?;
     match load(st, &account)? {
         Some(back) if back.public() == k.public() => Ok((k, account)),
@@ -172,6 +212,7 @@ pub fn create(st: &dyn Store) -> Result<(DeviceKeys, String), String> {
 }
 
 pub fn remove(st: &dyn Store, account: &str) -> Result<(), String> {
+    forget(account);
     st.remove(SERVICE, account).map_err(|e| store_word(&e))
 }
 

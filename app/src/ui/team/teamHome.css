@@ -75,16 +75,22 @@ button.hb-row:hover, a.hb-row:hover { background: var(--hover); }
 .hb-editbar .tmx-btn.pri { background: #fff; color: #1d1d20; }
 .hb.editing .hb-body { background-color: var(--panel); background-image: radial-gradient(circle, var(--line-strong) 1px, transparent 1.2px); background-size: 14px 14px; padding-top: 22px; }
 .hb.editing .hb-grid { row-gap: 22px; }
-.hb.editing .hb-b { outline: 1.5px dashed var(--line-strong); outline-offset: -1px; border-color: transparent; }
+.hb.editing .hb-b { outline: 1.5px dashed var(--line-strong); outline-offset: -1px; border-color: transparent; padding-left: 30px; }
 .hb.editing .hb-b > :not(.hb-grip):not(.hb-ctl) { pointer-events: none; }
-.hb-grip { position: absolute; left: 50%; top: -11px; transform: translateX(-50%); z-index: calc(var(--z-base) + 3); width: 34px; height: 20px; border-radius: 6px; border: 0; padding: 0; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); color: var(--text-3); display: flex; align-items: center; justify-content: center; cursor: grab; touch-action: none; }
-.hb-grip svg { width: 13px; height: 13px; }
+/* 손잡이 ⋮⋮ — 블록 왼쪽 위(노션식, 10-31). 꾸미는 동안 블록 왼쪽에 30px 자리를 비워 둔다 */
+.hb-grip { position: absolute; left: 6px; top: 9px; z-index: calc(var(--z-base) + 3); width: 20px; height: 28px; border-radius: 6px; border: 0; padding: 0; background: none; color: var(--text-3); display: flex; align-items: center; justify-content: center; cursor: grab; touch-action: none; }
+.hb-grip:hover { background: var(--hover); color: var(--text-2); }
+.hb-grip svg { width: 15px; height: 15px; }
 .hb-grip:focus-visible { box-shadow: 0 0 0 2px var(--tc); outline: none; }
 .hb-ctl { position: absolute; top: -12px; right: 10px; z-index: calc(var(--z-base) + 3); display: flex; align-items: center; gap: 4px; }
 .hb-ctl .kit-ib { background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
 .hb-ctl select { height: 24px; font: inherit; font-size: 11.5px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); max-width: 160px; }
-.hb-b.lift { z-index: calc(var(--z-base) + 6); box-shadow: 0 14px 30px rgba(0, 0, 0, .18), 0 0 0 1.5px var(--tc); outline: none; cursor: grabbing; }
-.hb-drop { min-height: 64px; border-radius: 12px; border: 1.5px dashed var(--tc); background: color-mix(in srgb, var(--tc) 7%, transparent); }
+/* 끄는 동안 — 판은 그대로, 잡은 블록은 흐리게, 놓일 자리는 팀 색 굵은 줄, 블록 이름표가 포인터를 따라온다 */
+.hb-grid, .hb-prows { position: relative; }
+.hb-grid.dragging { cursor: grabbing; }
+.hb-b.ghost, .hb-prow.ghost { opacity: .35; }
+.hb-line { position: absolute; z-index: calc(var(--z-base) + 6); border-radius: 2px; background: var(--tc); pointer-events: none; }
+.hb-tag { position: absolute; z-index: calc(var(--z-base) + 7); padding: 3px 9px; border-radius: 7px; background: var(--tc); color: #fff; font-size: 11.5px; font-weight: 600; white-space: nowrap; pointer-events: none; box-shadow: 0 6px 16px rgba(0, 0, 0, .18); }
 .hb-add { min-height: 56px; border-radius: 12px; border: 1.5px dashed var(--line-strong); background: none; color: var(--text-2); display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .hb-add:hover { background: var(--hover); }
 .hb-add svg { width: 18px; height: 18px; }
@@ -126,7 +132,6 @@ button.hb-row:hover, a.hb-row:hover { background: var(--hover); }
 .hb-prow .hb-pgrip { width: 44px; height: 44px; border: 0; background: none; color: var(--text-3); display: flex; align-items: center; justify-content: center; touch-action: none; cursor: grab; }
 .hb-prow .hb-pgrip svg { width: 16px; height: 16px; }
 .hb-prow .kit-ib { width: 44px; height: 44px; }
-.hb-prow.lift { box-shadow: 0 12px 26px rgba(0, 0, 0, .18), 0 0 0 1.5px var(--tc); position: relative; z-index: calc(var(--z-base) + 4); }
 /* 폰 — 손가락 44px(머리 아이콘·블록 연필) */
 .hb.phone .hb-head .kit-ib, .hb.phone .hb-editbar .kit-ib { width: 44px; height: 44px; }
 .hb.phone .hb-bh .kit-ib { width: 44px; height: 44px; margin: -10px -10px -10px 0; }

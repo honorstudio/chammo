@@ -19,6 +19,20 @@ let winKeys = IS_WIN;
 export const setWinKeys = (w: boolean) => { winKeys = w; };
 export const tr = (ko: string, en: string): string => fileManagerLabel(keyLabel(lang === 'en' ? en : ko, winKeys), winKeys);
 
+/** 'English / 한국어' 한 쌍 — 앞은 ^·': '·' — '·여는 괄호 뒤에서 시작하고(한글·빗금 없음), 뒤는 한글이 든 글로 ' — '·' ('·닫는 괄호 앞에서 끝난다 */
+const PAIR = /(^|: | — |[([<])((?:(?!: | — )[^가-힣/()[\]<>])+?) \/ ((?:(?! — | \()[^)\]>])*?[가-힣](?:(?! — | \()[^)\]>])*?)(?= — | \(|[)\]>]|$)/gu;
+
+/** 스크립트(scripts/craft 등)가 참모와 사람 둘 다 읽게 내는 'English / 한국어' 이중 문구 → 사람 화면엔 설정 언어 하나로(공개 이슈 #16).
+ *  참모가 읽는 스크립트 출력은 그대로 두고, 그 글을 화면에 띄우는 자리에서만 거친다. 한 언어 글은 그대로 */
+export function oneLang(text: string, l: Lang = lang): string {
+  return text.replace(PAIR, (_m, pre: string, en: string, ko: string) => {
+    if (l !== 'en') return pre + ko;
+    // 'unknown app / 모르는 앱: foo' — 한국어 반쪽 끝에만 붙은 값(foo)은 영어에도
+    const tail = ko.match(/: ([^가-힣]+)$/);
+    return pre + en + (tail ? `: ${tail[1]}` : '');
+  });
+}
+
 /** 처음 켤 때 — 저장된 언어가 있으면 그것, 없으면 시스템 언어가 한국어일 때만 ko */
 export function pickLang(saved: string | null, system: string): Lang {
   if (saved === 'ko' || saved === 'en') return saved;

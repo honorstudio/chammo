@@ -4,11 +4,11 @@ import { useEffect } from 'react';
 import { readLoad } from '../../data/web';
 import { fmtDur } from '../../domain/load';
 import { readPhoneLoad, slotLine } from '../../domain/phoneLoad';
-import { machine } from '../../i18n';
+import { machine, tr } from '../../i18n';
 import { BottomSheet } from './kit';
 import { seenName } from '../../domain/session';
 
-const SLOT_NAME: Record<string, string> = { build: '빌드', ios: 'iOS 시뮬레이터', galaxy: '갤럭시' };
+const SLOT_NAME: Record<string, string> = { build: tr('빌드', 'Build'), ios: tr('iOS 시뮬레이터', 'iOS simulator'), galaxy: tr('갤럭시', 'Galaxy') };
 
 type Props = { text: string; onChanged: (text: string) => void; onClose: () => void };
 
@@ -23,24 +23,24 @@ export function LoadSheet({ text, onChanged, onClose }: Props) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <BottomSheet label={`${machine()} 부하`} title={`${machine()} 부하`} onClose={onClose}>
-      {!v && <p className="m-muted m-sm">{text ? '부하를 못 읽었어요' : '불러오는 중…'}</p>}
+    <BottomSheet label={tr(`${machine()} 부하`, `${machine()} load`)} title={tr(`${machine()} 부하`, `${machine()} load`)} onClose={onClose}>
+      {!v && <p className="m-muted m-sm">{text ? tr('부하를 못 읽었어요', 'Couldn\'t read the load') : tr('불러오는 중…', 'Loading…')}</p>}
       {v && v.level !== 'unknown' && (
         <div className={`m-load-now ld-${v.stale ? 'unknown' : v.level}`}>
           <div className="m-load-big">
             <span className="m-load-dot" aria-hidden="true" />
             <b>{v.label}</b>
             <span className="m-load-num">{v.load1 >= 10 ? Math.round(v.load1) : v.load1.toFixed(1)}<small> / {v.cores}</small></span>
-            {v.swapGb > 0 && <span className="m-load-num">스왑 {v.swapGb}G</span>}
+            {v.swapGb > 0 && <span className="m-load-num">{tr('스왑', 'Swap')} {v.swapGb}G</span>}
           </div>
           <div className="m-load-why">{v.why}</div>
-          {v.stale && v.ageSec !== null && <div className="m-muted m-sm">{fmtDur(v.ageSec)} 전 값 — {machine()} 앱이 안 재고 있어요</div>}
+          {v.stale && v.ageSec !== null && <div className="m-muted m-sm">{tr(`${fmtDur(v.ageSec)} 전 값 — ${machine()} 앱이 안 재고 있어요`, `Value from ${fmtDur(v.ageSec)} ago — the ${machine()} app isn't measuring`)}</div>}
         </div>
       )}
       {v && v.level === 'unknown' && <p className="m-muted m-sm">{v.why}</p>}
       {v && v.sessions.length > 0 && (
-        <section className="m-load-list" aria-label="세션별">
-          <div className="m-sect">세션</div>
+        <section className="m-load-list" aria-label={tr('세션별', 'By session')}>
+          <div className="m-sect">{tr('세션', 'Sessions')}</div>
           {v.sessions.map((s) => (
             <div key={`${s.name}/${s.project}`} className="m-load-row">
               <span className="m-load-name"><b>{seenName(s.name)}</b><span>{s.what ? `${s.project} · ${s.what}` : s.project}</span></span>
@@ -51,8 +51,8 @@ export function LoadSheet({ text, onChanged, onClose }: Props) {
         </section>
       )}
       {v && (
-        <section className="m-load-list" aria-label="자리">
-          <div className="m-sect">자리</div>
+        <section className="m-load-list" aria-label={tr('자리', 'Slots')}>
+          <div className="m-sect">{tr('자리', 'Slots')}</div>
           {v.slots.map((s) => (
             <div key={s.name} className="m-load-row">
               <span className="m-load-name"><b>{SLOT_NAME[s.name] ?? s.name}</b></span>

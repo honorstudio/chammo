@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { askNote, foldNote } from '../../domain/askNote';
 import { IconChevron } from '../Icons';
+import { tr } from '../../i18n';
 
 export function WaitNote({ q }: { q: string }) {
   const [open, setOpen] = useState(false);
@@ -13,7 +14,7 @@ export function WaitNote({ q }: { q: string }) {
       <div className="m-ask-q">{n.head}</div>
       {f.body.length > 0 && <div className="m-wnote-body">{f.body.map((l, i) => <div key={i}>{l}</div>)}</div>}
       {f.more && (
-        <button type="button" className="m-ask-more" aria-expanded={open} aria-label={open ? '접기' : '더 보기'} title={open ? '접기' : '더 보기'} onClick={() => setOpen(!open)}>
+        <button type="button" className="m-ask-more" aria-expanded={open} aria-label={open ? tr('접기', 'Collapse') : tr('더 보기', 'Show more')} title={open ? tr('접기', 'Collapse') : tr('더 보기', 'Show more')} onClick={() => setOpen(!open)}>
           <IconChevron />
         </button>
       )}

@@ -24,6 +24,7 @@ class SkillHint(unittest.TestCase):
             'hq-folders': 'claude --bg 가 Operation not permitted 로 실패했어',
             'hq-app': '음성 모드 켜 줘',
             'hq-craft': '이 사진 좀 밝게 보정해 줘',
+            'hq-recall': '예전에 워크트리 지울 때 어떻게 했더라',
         }
         for skill, prompt in cases.items():
             out = hint(prompt)

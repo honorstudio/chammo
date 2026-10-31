@@ -125,7 +125,16 @@ export function deskPop(win: Rect, screens: Screen[], size: { w: number; h: numb
   return s ? popPlace(win, s, size, big) : null;
 }
 
-/** 바탕 배지 창 여백 — 자리 계산(놓기·작업 영역 당김·누름)은 배지 상자 그대로, 맥 창만 네 방향으로 이만큼 넓혀 물결 고리·그림자가 창 끝에서 안 잘리게(10-28 사용자 캡처 "위가 납작") */
+/** 열린 대화창째 배지를 끌어 놓은 창(win, box = 창 안 배지 상자) — 배지 가운데가 있는 화면 밖으로 나간 만큼 창째 당긴 왼쪽 위(배지·대화창 사이 자리는 그대로). 안이면 null */
+export function openKeep(win: Rect, box: Pt, screens: Screen[], size = BADGE): Pt | null {
+  const at = screenSave({ x: win.x + box.x, y: win.y + box.y }, screens, size).screen;
+  const s = screens.find((x) => x.id === at);
+  if (!s) return null;
+  const x = Math.max(s.x, Math.min(win.x, s.x + s.w - win.w)), y = Math.max(s.y, Math.min(win.y, s.y + s.h - win.h));
+  return x === win.x && y === win.y ? null : { x, y };
+}
+
+/** 바탕 배지 창 여백 —자리 계산(놓기·작업 영역 당김·누름)은 배지 상자 그대로, 맥 창만 네 방향으로 이만큼 넓혀 물결 고리·그림자가 창 끝에서 안 잘리게(10-28 사용자 캡처 "위가 납작") */
 export const DESK_PAD = 10;
 /** 상자 → 넓힌 창(m 이 음수면 넓힌 창 → 상자) */
 export const padRect = (r: Rect, m = DESK_PAD): Rect => ({ x: r.x - m, y: r.y - m, w: r.w + m * 2, h: r.h + m * 2 });

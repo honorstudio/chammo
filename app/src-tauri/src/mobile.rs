@@ -1152,7 +1152,7 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     }
     fn spawn(&self, cwd: &str, name: &str) -> Result<String, String> {
         // 데스크톱 새 참모와 같은 첫 지시(자기소개, domain/orchIntro — 글이 같은지 orchIntro.test 가 대조) — 질문으로 끝나면 결정 대기로 뜬다
-        let prompt = crate::i18n::tr("[앱] 안녕! 네 이름과 맡은 일로 2~3줄 자기소개해 줘 — 누구고, 뭘 맡았고, 이런 걸 시키면 된다는 예 하나. 영어 직함 없이 우리말로, 도구는 쓰지 말고, 질문으로 끝내지 마.", "[앱] Hi! Introduce yourself in 2-3 lines from your name and role — who you are, what you handle, and one example of what to ask you. Don't use tools, and don't end with a question.");
+        let prompt = crate::i18n::tr("[앱] 안녕! 네 이름과 맡은 일로 2~3줄 자기소개해 줘 — 누구고, 뭘 맡았고, 이런 걸 시키면 된다는 예 하나. 영어 직함 없이 우리말로, 도구는 쓰지 말고, 질문으로 끝내지 마.", "[앱] Hi! Introduce yourself in 2-3 lines from your name and role — who you are, what you handle, and one example of what to ask you. Write in English, don't use tools, and don't end with a question.");
         crate::claude::spawn_blocking(cwd, name, prompt)
     }
     fn push_key(&self) -> Result<String, String> {
@@ -1466,10 +1466,18 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         let (d, kc) = (crate::config::data_dir(), crate::team_relay_keys::store());
         let s = match (fresh, crate::team_app_store::load(d, &kc, team, crate::team_app::APP_CAL)) {
             (false, Some(s)) => s,
-            _ => {
-                let (s, share) = crate::team_app_store::sync(d, &kc, &crate::team_relay::Curl, team, crate::team_app::APP_CAL)?;
-                share.spawn();
-                s
+            // 폰에 그릴 게 없어 처음 받는 것 — 사람이 화면을 연 것으로 친다(배경 몫에 막혀 빈 화면이 되지 않게)
+            (_, cached) => {
+                let go = || crate::team_app_store::sync(d, &kc, &crate::team_relay::Curl, team, crate::team_app::APP_CAL);
+                match (if cached.is_none() { crate::team_relay::as_human(go) } else { go() }, cached) {
+                    (Ok((s, share)), _) => {
+                        share.spawn();
+                        s
+                    }
+                    // 새로 받기가 쉬라는 답에 막혔다 — 가진 걸로 그리고 다음 poll 이 다시 받는다
+                    (Err(e), Some(s)) if e == crate::team_relay::SLOW_DOWN => s,
+                    (Err(e), _) => return Err(e),
+                }
             }
         };
         serde_json::to_value(s).map_err(|e| e.to_string())

@@ -1,6 +1,8 @@
 // 폰 '주고받은 파일' 보기 — 종류 가르기·웹 주소 카드·CSV 표·JSON 들여쓰기·md 속 그림 경로. 화면·통신 없음
 // (전략 표 3·5번, docs/plans/2026-10-03-phone-files.md)
 
+import { tr } from '../i18n';
+
 export type PhoneKind = 'image' | 'pdf' | 'md' | 'html' | 'json' | 'csv' | 'code' | 'text' | 'web' | 'office' | 'video';
 
 const CODE = /\.(ts|tsx|js|jsx|mjs|py|rs|sh|swift|kt|css|sql|yaml|yml|toml)$/i;
@@ -21,8 +23,8 @@ export function fileKind(path: string): PhoneKind {
 
 /** 파일을 못 열었을 때 한 줄 — 없는 파일(404, 워크트리를 닫아 본 폴더에서도 못 찾은 것 등)은 오류가 아니라 지워졌다고 */
 export function fileError(m: string, why: Record<string, string> = {}): { text: string; gone: boolean } {
-  if (m === 'not found') return { text: '지워졌어요', gone: true };
-  return { text: why[m] ?? `못 열었어요: ${m}`, gone: false };
+  if (m === 'not found') return { text: tr('지워졌어요', 'Deleted'), gone: true };
+  return { text: why[m] ?? tr(`못 열었어요: ${m}`, `Could not open: ${m}`), gone: false };
 }
 
 /** 웹 주소 카드 — 도메인(www. 뺌)과 그 뒤. 주소가 아니면 null */

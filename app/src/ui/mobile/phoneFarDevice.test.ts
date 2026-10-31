@@ -35,7 +35,7 @@ describe('폰 기기 줄 — 이 컴퓨터 이름', () => {
   });
   it('보는 중 줄의 돌아가기는 글 대신 끝내기 아이콘 + 어디로 가는지 이름표', () => {
     const back = far.split('\n').find((l) => l.includes('className="m-far-back"')) ?? '';
-    expect(back).toContain("aria-label={`${josa(selfDevice(self), '으로', '로')} 돌아가기`}");
+    expect(back).toContain("aria-label={tr(`${josa(selfDevice(self), '으로', '로')} 돌아가기`, `Back to ${selfDevice(self)}`)}");
     expect(back).toContain('<IconClose />');
     expect(back).not.toContain('`이 ${machine()}`');
   });

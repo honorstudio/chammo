@@ -91,7 +91,7 @@ export function orchTasks(events: TaskEvent[], sessions: Session[], orchId: stri
 
 /** 펼친 줄 머리표 — 판단이 있으면 세션판 칩(subTag), 없으면 일 기록으로 */
 export const cardTag = (c: FoldCard): { cls: string; text: string } => (c.live ? subTag(c.live)
-  : c.status === 'needsInput' ? { cls: 't-wait', text: '물음' } : c.status === 'working' ? { cls: 't-work', text: '일함' } : c.status === 'done' ? { cls: 't-done', text: '끝' } : { cls: 't-off', text: '대기' });
+  : c.status === 'needsInput' ? { cls: 't-wait', text: tr('물음', 'Asking') } : c.status === 'working' ? { cls: 't-work', text: tr('일함', 'Working') } : c.status === 'done' ? { cls: 't-done', text: tr('끝', 'Done') } : { cls: 't-off', text: tr('대기', 'Waiting') });
 
 /** 그 참모가 잡고 있는 세션 id(마지막으로 일을 보낸 참모가 잡는다) — 파일 카드에 그 세션들이 보여 준 파일도 모은다 */
 export function heldIds(events: TaskEvent[], sessions: Session[], orchId: string, now: number): string[] {
@@ -106,7 +106,7 @@ export function heldIds(events: TaskEvent[], sessions: Session[], orchId: string
 /** 사용량 칩 — "5시간 62% · 주 40%"(남은 %) */
 export function usageText(json: string, now: number): string {
   const u = parseUsage(json, now);
-  return [u.five ? `5시간 ${u.five.left}%` : '', u.week ? `주 ${u.week.left}%` : ''].filter(Boolean).join(' · ');
+  return [u.five ? tr(`5시간 ${u.five.left}%`, `5h ${u.five.left}%`) : '', u.week ? tr(`주 ${u.week.left}%`, `Week ${u.week.left}%`) : ''].filter(Boolean).join(' · ');
 }
 
 /** 그 참모가 사용자에게 묻고 멈췄나 — 마지막 말이 묻는 답(asksUser)이고 일하는 중이 아니면 결론·질문(askView, 결정 대기함과 같은 판단) */
@@ -128,7 +128,7 @@ export function waitingList(orchs: Session[], asks: Record<string, { ts: string;
   for (const o of orchs) {
     const a = asks[o.id];
     if (a && !handedTurn(a.woke, o.name, events, now)) out.push({ orch: o.id, name: o.name, kind: 'ask', ts: a.ts, q: a.q, ...(a.lead ? { lead: a.lead } : {}) });
-    if (o.state === 'blocked') out.push({ orch: o.id, name: o.name, kind: 'blocked', ts: '', q: `확인창·선택지에서 멈춰 있어요 — ${machine()}에서 열어 골라 주세요` });
+    if (o.state === 'blocked') out.push({ orch: o.id, name: o.name, kind: 'blocked', ts: '', q: tr(`확인창·선택지에서 멈춰 있어요 — ${machine()}에서 열어 골라 주세요`, `Stopped at a confirmation or choice — open it on the ${machine()} and pick`) });
   }
   const last = new Map<string, TaskEvent>();
   for (const e of events) if (e.type !== 'send') last.set(e.task, e);
@@ -386,7 +386,7 @@ const rank = (x: Session) => RANK[x.state] ?? 2;
 /** 폰 세션 화면 — 참모는 빼고 프로젝트별(HQ 도우미는 '도우미'). 묻는·일하는 세션이 있는 프로젝트가 위, 안에서도 물음 → 일함 → 쉼 */
 export function sessionBoard(sessions: Session[], hqDir: string): { name: string; sessions: Session[] }[] {
   const g = groupByProject(sessions, hqDir);
-  const groups = [...g.projects, ...(g.helpers.length ? [{ name: '도우미', sessions: g.helpers }] : [])]
+  const groups = [...g.projects, ...(g.helpers.length ? [{ name: tr('도우미', 'Helpers'), sessions: g.helpers }] : [])]
     .map((p) => ({ name: p.name, sessions: [...p.sessions].sort((a, b) => rank(a) - rank(b)) }))
     .filter((p) => p.sessions.length);
   const top = (p: { sessions: Session[] }) => Math.min(...p.sessions.map(rank));
@@ -396,14 +396,14 @@ export function sessionBoard(sessions: Session[], hqDir: string): { name: string
 /** 폰 세션판 칩 — 데스크톱 statusWord 를 폰 칩 길이로(같은 판단, 2026-10-11) */
 export function subTag(st: ActivityStatus): { cls: 't-work' | 't-wait' | 't-done'; text: string } {
   switch (st) {
-    case 'working': return { cls: 't-work', text: '일함' };
+    case 'working': return { cls: 't-work', text: tr('일함', 'Working') };
     case 'asks':
-    case 'blocked': return { cls: 't-wait', text: '물음' };
-    case 'login': return { cls: 't-wait', text: '로그인' };
-    case 'bgwait': return { cls: 't-done', text: '배경 일' }; // 안 급함 — 데스크톱 '기다림'은 확인창(blocked)이라 같은 말이면 뜻이 반대(L9)
-    case 'done': return { cls: 't-done', text: '답함' };
-    case 'unknown': return { cls: 't-done', text: '모름' };
-    default: return { cls: 't-done', text: '쉼' };
+    case 'blocked': return { cls: 't-wait', text: tr('물음', 'Asking') };
+    case 'login': return { cls: 't-wait', text: tr('로그인', 'Login') };
+    case 'bgwait': return { cls: 't-done', text: tr('배경 일', 'Background') }; // 안 급함 — 데스크톱 '기다림'은 확인창(blocked)이라 같은 말이면 뜻이 반대(L9)
+    case 'done': return { cls: 't-done', text: tr('답함', 'Replied') };
+    case 'unknown': return { cls: 't-done', text: tr('모름', 'Unknown') };
+    default: return { cls: 't-done', text: tr('쉼', 'Idle') };
   }
 }
 
@@ -472,8 +472,8 @@ export type OrchMenuKey = 'rename' | 'role' | 'pin' | 'unpin' | 'sleep' | 'wake'
 /** 참모 줄 길게 누르기 메뉴 — 밀기 동작(고정·재우기·깨우기·제거)을 다 모으고 이름 바꾸기를 더한다(입력이 필요한 건 밀기가 아니라 메뉴, iOS 관례).
  *  이름은 켜진 참모만(/rename 은 살아 있는 세션에), 고정은 대화 id 가 있을 때. 제거는 빨강(누르면 경고) */
 export function orchMenu(o: { live: boolean; pinned: boolean; canPin: boolean }): { key: OrchMenuKey; label: string; danger?: boolean }[] {
-  const pin = o.canPin ? [o.pinned ? { key: 'unpin' as const, label: '고정 풀기' } : { key: 'pin' as const, label: '맨 위에 고정' }] : [];
+  const pin = o.canPin ? [o.pinned ? { key: 'unpin' as const, label: tr('고정 풀기', 'Unpin') } : { key: 'pin' as const, label: tr('맨 위에 고정', 'Pin to top') }] : [];
   return o.live
-    ? [{ key: 'rename', label: '이름 바꾸기' }, { key: 'role', label: '맡은 일' }, ...pin, { key: 'sleep', label: '재우기' }, { key: 'remove', label: '제거', danger: true }]
-    : [{ key: 'wake', label: '깨우기' }, ...pin, { key: 'remove', label: '제거', danger: true }];
+    ? [{ key: 'rename', label: tr('이름 바꾸기', 'Rename') }, { key: 'role', label: tr('맡은 일', 'Role') }, ...pin, { key: 'sleep', label: tr('재우기', 'Sleep') }, { key: 'remove', label: tr('제거', 'Remove'), danger: true }]
+    : [{ key: 'wake', label: tr('깨우기', 'Wake') }, ...pin, { key: 'remove', label: tr('제거', 'Remove'), danger: true }];
 }

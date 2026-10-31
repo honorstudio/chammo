@@ -6,6 +6,7 @@ import { newPairCode } from '../../data/web';
 import { groupCode } from '../../domain/mobileAuth';
 import { IconCopy } from '../Icons';
 import { isStandalone } from './standalone';
+import { tr } from '../../i18n';
 
 export function HomeAppLink() {
   const [got, setGot] = useState<{ code: string; copied: boolean } | null>(null);
@@ -27,7 +28,7 @@ export function HomeAppLink() {
       setGot({ code: (await p).code, copied });
     } catch (e) {
       const m = (e as Error).message;
-      setErr(m === 'too soon' ? '10초 뒤에 다시 눌러 주세요' : `코드를 못 받았어요: ${m}`);
+      setErr(m === 'too soon' ? tr('10초 뒤에 다시 눌러 주세요', 'Tap again in 10 seconds') : tr(`코드를 못 받았어요: ${m}`, `Couldn't get a code: ${m}`));
     } finally {
       setBusy(false);
     }
@@ -35,13 +36,13 @@ export function HomeAppLink() {
   const copy = () => { if (got) void navigator.clipboard?.writeText(got.code).then(() => setGot({ ...got, copied: true }), () => {}); };
   return (
     <div className="m-homeapp">
-      {!got && <button type="button" className="m-btn" disabled={busy} onClick={() => void make()}>홈 화면 앱 연결</button>}
+      {!got && <button type="button" className="m-btn" disabled={busy} onClick={() => void make()}>{tr('홈 화면 앱 연결', 'Connect home-screen app')}</button>}
       {got && (
         <>
-          <div className="m-sm">{got.copied ? '연결 코드를 복사했어요.' : '연결 코드예요.'} 홈 화면의 참모 앱을 열고 '붙여넣기로 연결'을 눌러 주세요 — 10분 안에 한 번</div>
+          <div className="m-sm">{got.copied ? tr('연결 코드를 복사했어요.', 'Connect code copied.') : tr('연결 코드예요.', 'Here is the connect code.')} {tr("홈 화면의 참모 앱을 열고 '붙여넣기로 연결'을 눌러 주세요 — 10분 안에 한 번", "Open the Chammo app on your home screen and tap 'Connect by pasting' — once, within 10 minutes")}</div>
           <div className="m-code-row">
             <code className="m-code">{groupCode(got.code)}</code>
-            <button type="button" className="m-icon" onClick={copy} aria-label="코드 복사" title="코드 복사"><IconCopy /></button>
+            <button type="button" className="m-icon" onClick={copy} aria-label={tr('코드 복사', 'Copy code')} title={tr('코드 복사', 'Copy code')}><IconCopy /></button>
           </div>
         </>
       )}

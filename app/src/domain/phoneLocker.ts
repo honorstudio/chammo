@@ -1,6 +1,6 @@
 // 폰 홈·보관함 v1(docs/design-drafts/phone-home, 사용자 10/11 "추천대로") — 폰이 데스크톱 보관함 v2 와 같은 판단을 쓰게 잇는 것.
 // 폰 서버 phone_view(줄마다 rel·참모 폴더 dirs)를 데스크톱 나무(LkTree)로 바꾸면 기록(lockerLog)·폴더(kidsOf)·보기(defaultView)를 그대로 쓴다
-import { josa } from '../i18n';
+import { josa, tr } from '../i18n';
 import type { Activity } from './activity';
 import { dotKind, worstDot, type DotKind } from './dot';
 import { projectsOf, type LockerView } from './locker';
@@ -66,4 +66,4 @@ export function peekLines(a: Activity): { who: 'me' | 'tool' | 'ai'; text: strin
 }
 
 /** 보관함 줄 '누가 보여 줌' — 참모 이름은 사용자가 정해서 조사를 받침으로 고른다('참모이 보여 줌'이 떴다, QA 2차). 세션은 조사 없이 */
-export const shownBy = (who: string) => (who.endsWith('세션') ? `${who} 보여 줌` : `${josa(who, '이', '가')} 보여 줌`);
+export const shownBy = (who: string) => (who.endsWith('세션') ? tr(`${who} 보여 줌`, `Shown by ${who}`) : tr(`${josa(who, '이', '가')} 보여 줌`, `Shown by ${who}`));

@@ -9,7 +9,8 @@ import { titleOf } from '../../domain/reader';
 import { FileView } from './FileView';
 import type { Live } from '../../domain/agentBrowser';
 import type { Ctx } from '../../domain/ctx';
-import { josa, machine, setAssistant, setHostWin } from '../../i18n';
+import { getLang, josa, machine, setAssistant, setHostWin, tr } from '../../i18n';
+import { langChanged } from './phoneLang';
 import { ctxFromAgents, nextAfterStop, phoneName, routineOrch, shownWaiting, waitingList, type Snap, type WaitSent, type Waiting } from '../../domain/mobile';
 import { useWaitSent } from './waitSent';
 import { parseTaskLog, type TaskEvent } from '../../domain/tasks';
@@ -138,7 +139,7 @@ function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask,
         : view === 'sessions'
         ? <SessionsBoard sessions={sessions} hqDir={env.hqDir} ctx={ctx} lives={lives} onBack={() => setView('dash')} />
         : view === 'office'
-        ? <Suspense fallback={<p className="m-center">사무실 여는 중…</p>}>
+        ? <Suspense fallback={<p className="m-center">{tr('사무실 여는 중…', 'Opening the office…')}</p>}>
             <PhoneOffice sessions={sessions} orchs={orchs} hqDir={env.hqDir} lives={lives} onBack={() => setView('dash')} current={orch.id}
               onTalk={(id) => { if (id !== orch.id) talkTo(id); }} onWide={setWide} />
           </Suspense>
@@ -150,9 +151,9 @@ function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask,
         onSnap={setSnap}
         vh={vp.h}
         kb={vp.kb}
-        peekLine={askingN ? `${josa(askName, '이', '가')} 네 답을 기다려${askingN > 1 ? ` 외 ${askingN - 1}개` : ''}` : chat.live.busy ? `일하는 중 · ${chat.live.line || '생각 중…'}` : lastLine(chat.items)}
+        peekLine={askingN ? tr(`${josa(askName, '이', '가')} 네 답을 기다려${askingN > 1 ? ` 외 ${askingN - 1}개` : ''}`, `${askName} is waiting for your answer${askingN > 1 ? ` +${askingN - 1} more` : ''}`) : chat.live.busy ? tr(`일하는 중 · ${chat.live.line || '생각 중…'}`, `Working · ${chat.live.line || 'Thinking…'}`) : lastLine(chat.items)}
         composer={
-          <Composer avatar={<MAvatar orch={orch} orchs={orchs} size={28} asking={waiting.some((w) => w.orch === orch.id)} />} orchName={nm} waiting={new Set(waiting.map((w) => w.orch)).size} placeholder={`${nm}에게`} maxInputH={inputMax(vp.h)} ctxPct={orch.sessionId ? ctx[orch.sessionId]?.used : undefined} busy={chat.live.busy} stopping={chat.stopping} onStop={() => void chat.stop()}
+          <Composer avatar={<MAvatar orch={orch} orchs={orchs} size={28} asking={waiting.some((w) => w.orch === orch.id)} />} orchName={nm} waiting={new Set(waiting.map((w) => w.orch)).size} placeholder={tr(`${nm}에게`, `Message ${nm}`)} maxInputH={inputMax(vp.h)} ctxPct={orch.sessionId ? ctx[orch.sessionId]?.used : undefined} busy={chat.live.busy} stopping={chat.stopping} onStop={() => void chat.stop()}
             draftKey={orch.id} onChip={() => setPicker(true)} onFocus={() => snap === 'peek' && setSnap('half')} send={chat.send}
             chip={<ModelChipRow orchId={orch.id} info={orch.sessionId ? ctx[orch.sessionId] : undefined} />} voice={<VoiceMode />}
             speaker={spk ? { id: spk.id, avatar: <MAvatar orch={spk} orchs={orchs} size={28} />, name: nicks.nameOf(spk), style: orchVars(spkColor) as React.CSSProperties, onGo: speakerTap(orch.id, spk.id) === 'go' ? () => onPick(spk.id) : undefined } : undefined} />
@@ -187,12 +188,12 @@ function WakeHome({ env, orchs, wake }: { env: MobileEnv; orchs: Session[]; wake
     <div className="m-home">
       <BrandMark size={64} className="m-brand" />
       <h1>{env.assistantName}</h1>
-      <p className="m-muted">떠 있는 {josa(env.assistantName, '이', '가')} 없어요. 꺼진 {josa(env.assistantName, '을', '를')} 누르면 그 대화 그대로 켜요</p>
+      <p className="m-muted">{tr(`떠 있는 ${josa(env.assistantName, '이', '가')} 없어요. 꺼진 ${josa(env.assistantName, '을', '를')} 누르면 그 대화 그대로 켜요`, `No ${env.assistantName} is running. Tap one that is off to resume its conversation.`)}</p>
       <WakeNotice wake={wake} />
       <PhoneLoginCard />
       {naming
         ? <NewOrchForm title={env.assistantName} taken={taken} wake={wake} onDone={() => setNaming(false)} />
-        : <button type="button" className="m-send" disabled={!!wake.making || !!wake.starting} onClick={() => setNaming(true)}>{wake.making ? `${phoneName(wake.making, orchs)} 만드는 중…` : `새 ${env.assistantName} 만들기`}</button>}
+        : <button type="button" className="m-send" disabled={!!wake.making || !!wake.starting} onClick={() => setNaming(true)}>{wake.making ? tr(`${phoneName(wake.making, orchs)} 만드는 중…`, `Creating ${phoneName(wake.making, orchs)}…`) : tr(`새 ${env.assistantName} 만들기`, `Create new ${env.assistantName}`)}</button>}
       <OffOrchList rows={off} orchs={orchs} wake={wake} />
     </div>
   );
@@ -287,7 +288,11 @@ export function MobileApp() {
     if (e) { setAssistant(e.assistantName); setHostWin(envIsWin(e)); }
     let got = false; // 한 번이라도 받았나 — 받기 전엔 BOOT_LIMIT_MS 에 끊고 '못 닿음'(맥이 꺼져 매달려도 모찌만 20초 안 보이게)
     let lastRaw: string | null = null;
-    const takeEnv = (v: MobileEnv) => { e = v; setAssistant(v.assistantName); setHostWin(envIsWin(v)); keepEnv(v); };
+    const takeEnv = (v: MobileEnv) => {
+      e = v; setAssistant(v.assistantName); setHostWin(envIsWin(v)); keepEnv(v);
+      // 컴퓨터 설정 언어가 지금 화면과 다르면(처음 붙음·설정에서 바꿈) 저장한 맥 정보로 다시 연다 — 표까지 그 언어로(phoneLang)
+      if (langChanged(v.language, getLang())) location.reload();
+    };
     const show = (env: MobileEnv, raw: string) => {
       lastRaw = raw;
       const all = parseAgents(raw, env.devRoot, env.extraProjects);
@@ -318,7 +323,7 @@ export function MobileApp() {
           takeEnv(v);
           return { ok: true, env: v, raw };
         } catch (err) {
-          return { ok: false, err: lim.late() ? new Error(`${josa(machine(), '이', '가')} ${BOOT_LIMIT_MS / 1000}초 넘게 답이 없어요`) : err };
+          return { ok: false, err: lim.late() ? new Error(tr(`${josa(machine(), '이', '가')} ${BOOT_LIMIT_MS / 1000}초 넘게 답이 없어요`, `The ${machine()} hasn't answered in ${BOOT_LIMIT_MS / 1000} seconds`)) : err };
         }
       },
       apply: (g) => {
@@ -391,8 +396,8 @@ export function MobileApp() {
     return cover(
       <div className="m-center m-unreach">
         <BrandMark size={64} className="m-brand" />
-        <p>{error ? `${machine()}에 못 닿았어요: ${error}` : ''}</p>
-        <button type="button" className={retrying ? 'm-icon m-retrying' : 'm-icon'} disabled={retrying} onClick={retry} aria-label="다시 시도" title="다시 시도"><IconRefresh /></button>
+        <p>{error ? tr(`${machine()}에 못 닿았어요: ${error}`, `Can't reach the ${machine()}: ${error}`) : ''}</p>
+        <button type="button" className={retrying ? 'm-icon m-retrying' : 'm-icon'} disabled={retrying} onClick={retry} aria-label={tr('다시 시도', 'Try again')} title={tr('다시 시도', 'Try again')}><IconRefresh /></button>
       </div>,
     );
   }
@@ -418,9 +423,9 @@ export function MobileApp() {
             view={view} setView={setView} onPick={go} onTalk={talkTo} onStopped={stopped} wake={wake} lives={lives} push={push} jump={jump} />}
       </div>
       {!vp.kb && (
-        <nav ref={tabBar} className="m-tabbar" role="tablist" aria-label="화면">
+        <nav ref={tabBar} className="m-tabbar" role="tablist" aria-label={tr('화면', 'Screens')}>
           <button role="tab" aria-selected={tab === 'orch'} className={tab === 'orch' ? 'on' : ''} onClick={() => setTab('orch')}>{env.assistantName}</button>
-          <button role="tab" aria-selected={tab === 'team'} className={tab === 'team' ? 'on' : ''} onClick={() => setTab('team')}>팀{team.unread > 0 && <i className="tmx-ur in">{team.unread > 99 ? '99+' : team.unread}</i>}</button>
+          <button role="tab" aria-selected={tab === 'team'} className={tab === 'team' ? 'on' : ''} onClick={() => setTab('team')}>{tr('팀', 'Team')}{team.unread > 0 && <i className="tmx-ur in">{team.unread > 99 ? '99+' : team.unread}</i>}</button>
         </nav>
       )}
     </div>,

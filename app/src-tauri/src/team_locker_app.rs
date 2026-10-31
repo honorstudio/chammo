@@ -96,10 +96,12 @@ fn forget_listing(path: &str) {
 
 impl Net for RelayNet<'_> {
     fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value), String> {
-        if method != "GET" {
+        let r = relay::call(self.http, &self.server, self.keys, Some(&self.device), method, path, body);
+        // 거절된 쓰기(4xx·5xx)는 아무것도 안 바꿨다 — 기억을 지우면 거절된 봉투 더하기마다 목록을 또 받았다(10-30 진단 GET /locker 48)
+        if method != "GET" && !matches!(r, Ok((c, _)) if c >= 400) {
             forget_listing(path);
         }
-        relay::call(self.http, &self.server, self.keys, Some(&self.device), method, path, body)
+        r
     }
 
     fn put(&self, path: &str, bytes: &[u8]) -> Result<u16, String> {
@@ -293,6 +295,9 @@ pub(crate) fn list_at(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, n
     Ok(v)
 }
 
+/// 봉투 더하기 한 번에 올리는 POST 상한 — 파일 50+ 에 새 기기가 들어도 한 번에 몰아 올리지 않고 다음 목록에서 이어서
+pub(crate) const MAX_SHARE_POSTS: usize = 20;
+
 /// 나중에 든 사람 몫 봉투 더하기 — 목록을 보여 준 뒤 뒤에서(방마다 받는 사람 셈이 중계를 여러 번 부른다)
 #[must_use = "버리면 나중에 든 사람이 그 파일을 못 연다 — spawn() 으로 뒤 스레드에"]
 pub struct ShareJob {
@@ -317,11 +322,18 @@ impl ShareJob {
             return 0;
         }
         let Ok((st, k)) = ctx(dir, kc) else { return 0 };
+        // 한 팀에 한 번에 하나 — 화면마다 뒤 스레드로 띄워 같은 봉투를 겹쳐 올리지 않게
+        let Some(_one) = Sharing::take(&self.team) else { return 0 };
         let pairs: Vec<_> = self.opened.iter().map(|(f, o)| (f, o)).collect();
-        // 먼저 캐시한 사람 목록으로 모자란 봉투가 있나만 본다 — 없으면 중계를 안 부른다(10-26 사고: 목록마다 명부·사슬을 새로 받았다)
+        let tkey = format!("{}|{}", dir.display(), self.team);
+        let tried = tried_now(&tkey, now);
+        let skip = |f: &RemoteFile, d: &str| tried.skip(f, d);
+        // 먼저 캐시한 사람 목록으로 모자란 봉투가 있나만 본다 — 없으면 중계를 안 부른다(10-26 사고: 목록마다 명부·사슬을 새로 받았다).
+        // 이미 올렸거나 서버가 거절한 (파일, 기기)는 모자란 걸로 안 친다(10-30 사고: 거절된 봉투 때문에 목록마다 사람·방을 새로 받고 다시 올렸다)
         let Ok((cached, _)) = people_cached(dir, kc, http, &st, &self.team, false, now) else { return 0 };
         let room_cached = |room: &str| room_people(dir, kc, http, &self.team, room, false, now);
-        if !core::missing_any(&pairs, &cached.recipients, &room_cached) {
+        if !core::missing_any(&pairs, &cached.recipients, &room_cached, &skip) {
+            tried.echo(&tkey, &pairs, &cached.recipients, &room_cached);
             return 0;
         }
         // 더할 땐 받는 사람을 새로 — 캐시로 하면 그새 빠진 사람 기기에도 열쇠를 더해 줄 수 있다(뒤 스레드라 느려도 된다)
@@ -330,8 +342,86 @@ impl ShareJob {
         // 방마다 이번 일에서 한 번만 새로(같은 방 파일이 여럿이어도)
         let fetched = RefCell::new(std::collections::BTreeSet::new());
         let want_room = |room: &str| room_people(dir, kc, http, &self.team, room, fetched.borrow_mut().insert(room.to_string()), now);
-        core::share_keys(&net, &self.team, &pairs, &p.recipients, &want_room)
+        let out = core::share_keys(&net, &self.team, &pairs, &p.recipients, &want_room, &skip, MAX_SHARE_POSTS);
+        remember_tried(&tkey, &out, now);
+        out.added
     }
+}
+
+/// 한 팀 봉투 더하기는 한 번에 하나
+struct Sharing(String);
+static SHARING: Mutex<std::collections::BTreeSet<String>> = Mutex::new(std::collections::BTreeSet::new());
+impl Sharing {
+    fn take(team: &str) -> Option<Sharing> {
+        SHARING.lock().unwrap_or_else(|e| e.into_inner()).insert(team.to_string()).then(|| Sharing(team.to_string()))
+    }
+}
+impl Drop for Sharing {
+    fn drop(&mut self) {
+        SHARING.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.0);
+    }
+}
+
+// ── 봉투 더하기 기억(10-30 진단: POST …/keys 10분 154번) — 서버가 받는 기기로 안 친 (방, 기기)·못 더한 (파일, 기기)·이미 올린 (파일, 기기)는
+//    30분 다시 안 올린다. 팀이 바뀌면(forget_people) 지운다 — 그새 그 사람이 다시 들었을 수 있다 ──
+
+#[derive(Clone, Default)]
+struct Tried {
+    at: Option<std::time::Instant>,
+    bad_devices: std::collections::BTreeSet<(String, String)>,
+    pairs: std::collections::BTreeSet<(String, String)>,
+    sent: std::collections::BTreeSet<(String, String)>,
+    /// 올렸는데 목록 have 에 안 보인다는 줄을 남겼나(30분에 한 번)
+    told: bool,
+}
+
+const TRIED_FOR: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// (데이터 폴더|팀) → 기억 — 한 프로세스에 시험 기기 둘이 떠도 안 섞이게
+static TRIED: Mutex<BTreeMap<String, Tried>> = Mutex::new(BTreeMap::new());
+
+fn tried_now(team: &str, now: std::time::Instant) -> Tried {
+    let mut m = TRIED.lock().unwrap_or_else(|e| e.into_inner());
+    let stale = m.get(team).and_then(|t| t.at).is_some_and(|at| now.saturating_duration_since(at) >= TRIED_FOR);
+    if stale {
+        m.remove(team);
+    }
+    m.get(team).cloned().unwrap_or_default()
+}
+
+impl Tried {
+    fn skip(&self, f: &RemoteFile, d: &str) -> bool {
+        let pair = (f.id.clone(), d.to_string());
+        self.bad_devices.contains(&(f.room.clone().unwrap_or_default(), d.to_string())) || self.pairs.contains(&pair) || self.sent.contains(&pair)
+    }
+
+    /// 200 을 받았는데 목록 have 에 그 기기가 아직 없다 — 다시 올리지 않고 이유를 한 줄(서버가 다른 기기 id 로 적었거나 목록이 묵음)
+    fn echo(&self, team: &str, pairs: &[(&RemoteFile, &core::Opened)], want: &[crate::e2e_envelope::Recipient], want_room: &dyn Fn(&str) -> Vec<crate::e2e_envelope::Recipient>) {
+        if self.told || self.sent.is_empty() {
+            return;
+        }
+        let only_sent = |f: &RemoteFile, d: &str| !self.sent.contains(&(f.id.clone(), d.to_string()));
+        let n = pairs.iter().filter(|(f, o)| core::missing_any(&[(*f, *o)], want, want_room, &only_sent)).count();
+        if n == 0 {
+            return;
+        }
+        if let Some(t) = TRIED.lock().unwrap_or_else(|e| e.into_inner()).get_mut(team) {
+            t.told = true;
+        }
+        #[cfg(not(test))]
+        crate::claude::log_out("team", &format!("봉투를 올렸는데(200) 목록 have 에 아직 안 보여 — 파일 {n}개, 30분 동안 다시 안 올림"));
+    }
+}
+
+fn remember_tried(team: &str, out: &core::Shared, now: std::time::Instant) {
+    if out.sent.is_empty() && out.bad_devices.is_empty() && out.bad_files.is_empty() {
+        return;
+    }
+    let mut m = TRIED.lock().unwrap_or_else(|e| e.into_inner());
+    let t = m.entry(team.to_string()).or_default();
+    t.at.get_or_insert(now);
+    t.bad_devices.extend(out.bad_devices.iter().cloned());
+    t.pairs.extend(out.bad_files.iter().cloned());
+    t.sent.extend(out.sent.iter().cloned());
 }
 
 /// 목록만(봉투 더하기는 ShareJob 으로 따로) — 화면 명령은 이걸 부르고 job 은 뒤 스레드로. 다 풀면 기기 봉한 마지막 목록도 새로
@@ -373,16 +463,9 @@ fn list_split_net(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, k
     let net = RelayNet { http, server: st.server.clone(), device: st.device_id.clone(), keys: k };
     let l = listing(dir, &net, &team, now)?;
     lap("list", &mut timing);
-    let me = Me { keys: k, device: &st.device_id };
-    let (mut p, mut skipped) = people_cached(dir, kc, http, &st, &team, false, now)?;
-    lap("people", &mut timing);
-    let mut res: Vec<_> = l.files.iter().map(|f| core::open_file(&me, &p, &team, f)).collect();
     // 모르는 서명 기기(새 사람·새 기기)가 보이면 사람 목록을 새로 받아 한 번 더
-    if res.iter().any(|o| o.as_ref().is_err_and(|e| stale_people(e))) {
-        (p, skipped) = people_cached(dir, kc, http, &st, &team, true, now)?;
-        res = l.files.iter().map(|f| core::open_file(&me, &p, &team, f)).collect();
-        lap("people_again", &mut timing);
-    }
+    let (p, skipped, res) = open_all(dir, kc, http, st, k, &team, &l.files, false, now)?;
+    lap("people", &mut timing);
     let mut items = vec![];
     let mut opened = vec![];
     for (f, o) in l.files.into_iter().zip(res) {
@@ -478,6 +561,9 @@ pub fn forget_people(team: &str) {
     FAILS.lock().unwrap_or_else(|e| e.into_inner()).retain(|t, _| !all && t != team);
     let end = format!("|{team}");
     APP_KEYS.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| !all && !k.ends_with(&end));
+    TRIED.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| !all && !k.ends_with(&end));
+    UNTRUSTED.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| !all && !k.ends_with(&end));
+    crate::e2e_state::forget_heads(team);
 }
 
 /// 대화 파일 받는 기기 — fresh 가 아니면 캐시(사람 목록과 같은 수명). 못 셈하면 빈 목록(그 방 파일은 이번엔 안 더한다)
@@ -539,6 +625,51 @@ fn people_cached(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, te
     let (p, s) = people(dir, kc, http, st, team)?;
     PEOPLE.lock().unwrap_or_else(|e| e.into_inner()).insert(team.to_string(), (now, p.clone(), s.clone()));
     Ok((p, s))
+}
+
+// ── 끝내 못 믿는 서명 기기(10-30 진단: 10분에 GET /heads 185) — 나간 사람·모르는 기기가 올린 파일은 사람 목록을 새로 받아도 못 연다.
+//    새로 받은 뒤에도 못 연 파일은 기억해, 목록을 부를 때마다(화면 2~3초) 사람 목록을 또 새로 받지 않는다. 사람 목록과 같은 수명, 같이 지운다 ──
+
+/// (데이터 폴더|팀) → (확인한 때, 새로 받은 뒤에도 못 연 파일 id)
+static UNTRUSTED: Mutex<BTreeMap<String, (std::time::Instant, std::collections::BTreeSet<String>)>> = Mutex::new(BTreeMap::new());
+
+fn untrusted_ids<'a>(files: &'a [RemoteFile], res: &'a [Result<core::Opened, String>]) -> impl Iterator<Item = &'a String> + 'a {
+    files.iter().zip(res).filter(|(_, o)| o.as_ref().is_err_and(|e| stale_people(e))).map(|(f, _)| &f.id)
+}
+
+/// 파일들을 연다 — 모르는 서명 기기가 보이면 사람 목록을 새로 받아 한 번 더. 새로 받은 뒤에도 못 열었던 파일뿐이면 다시 안 받는다
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn open_all(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, k: &DeviceKeys, team: &str, files: &[RemoteFile], fresh: bool, now: std::time::Instant) -> Result<(People, Vec<String>, Vec<Result<core::Opened, String>>), String> {
+    let me = Me { keys: k, device: &st.device_id };
+    let (mut p, mut skipped) = people_cached(dir, kc, http, st, team, fresh, now)?;
+    let mut res: Vec<_> = files.iter().map(|f| core::open_file(&me, &p, team, f)).collect();
+    let mut checked = fresh;
+    if !fresh {
+        let known = UNTRUSTED.lock().unwrap_or_else(|e| e.into_inner()).get(&format!("{}|{team}", dir.display())).filter(|(at, _)| people_fresh(now.saturating_duration_since(*at))).map(|(_, s)| s.clone()).unwrap_or_default();
+        if untrusted_ids(files, &res).any(|id| !known.contains(id)) {
+            // 기억한 팀 머리(배경 30초)도 버린다 — 묵은 머리면 남의 새 기기를 못 보고 그 파일이 '못 믿는 파일'로 굳는다(10-31 리뷰)
+            crate::e2e_state::forget_heads(team);
+            (p, skipped) = people_cached(dir, kc, http, st, team, true, now)?;
+            res = files.iter().map(|f| core::open_file(&me, &p, team, f)).collect();
+            checked = true;
+        }
+    }
+    if checked {
+        // 합친다 — 파일 하나만 연 길(find)이 다른 파일 기억을 지우면 다음 목록이 사람 목록을 또 받는다. 이번에 열린 건 뺀다
+        let mut m = UNTRUSTED.lock().unwrap_or_else(|e| e.into_inner());
+        let e = m.entry(format!("{}|{team}", dir.display())).or_insert((now, Default::default()));
+        if !people_fresh(now.saturating_duration_since(e.0)) {
+            *e = (now, Default::default());
+        }
+        for (f, o) in files.iter().zip(&res) {
+            if o.as_ref().is_err_and(|x| stale_people(x)) {
+                e.1.insert(f.id.clone());
+            } else {
+                e.1.remove(&f.id);
+            }
+        }
+    }
+    Ok((p, skipped, res))
 }
 
 // ── 마지막 목록 — 기기 열쇠로 봉해 데이터 폴더에(열자마자 보여 주고 뒤에서 새로, 10-26 사용자 "바로 떠 있어야") ──
@@ -645,14 +776,7 @@ fn fill_memo(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, k: &De
     }
     let net = RelayNet { http, server: st.server.clone(), device: st.device_id.clone(), keys: k };
     let l = core::fetch_list(&net, team)?;
-    let me = Me { keys: k, device: &st.device_id };
-    let now = std::time::Instant::now();
-    let mut p = people_cached(dir, kc, http, st, team, false, now)?.0;
-    let mut res: Vec<_> = l.files.iter().map(|f| core::open_file(&me, &p, team, f)).collect();
-    if res.iter().any(|o| o.as_ref().is_err_and(|e| stale_people(e))) {
-        p = people_cached(dir, kc, http, st, team, true, now)?.0;
-        res = l.files.iter().map(|f| core::open_file(&me, &p, team, f)).collect();
-    }
+    let (_, _, res) = open_all(dir, kc, http, st, k, team, &l.files, false, std::time::Instant::now())?;
     let opened: Vec<_> = l.files.into_iter().zip(res).filter_map(|(f, o)| o.ok().map(|o| (f, o))).collect();
     remember(team, l.rev, &opened);
     Ok(opened.into_iter().find(|(f, _)| f.id == id))
@@ -674,11 +798,8 @@ fn find(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str) -> Re
     // 기억에 없다 = 목록에 없거나 못 여는 파일 — 그 이유를 말하려고 예전 길로 한 번 더
     let net = RelayNet { http, server: st.server.clone(), device: st.device_id.clone(), keys: &k };
     let f = core::fetch_list(&net, &team)?.files.into_iter().find(|f| f.id == id).ok_or("그 파일이 없어(지워졌거나 볼 수 없는 방)")?;
-    let me = Me { keys: &k, device: &st.device_id };
-    let o = match core::open_file(&me, &people_cached(dir, kc, http, &st, &team, false, std::time::Instant::now())?.0, &team, &f) {
-        Err(e) if stale_people(&e) => core::open_file(&me, &people_cached(dir, kc, http, &st, &team, true, std::time::Instant::now())?.0, &team, &f)?,
-        o => o?,
-    };
+    let (_, _, mut res) = open_all(dir, kc, http, &st, &k, &team, std::slice::from_ref(&f), false, std::time::Instant::now())?;
+    let o = res.pop().ok_or("그 파일이 없어")??;
     Ok((st, k, team, f, o))
 }
 
@@ -934,13 +1055,7 @@ fn opened_all(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, fresh: bo
     let (team, _) = team_of(&st, team)?;
     let net = RelayNet { http, server: st.server.clone(), device: st.device_id.clone(), keys: &k };
     let files = core::fetch_list(&net, &team)?.files;
-    let me = Me { keys: &k, device: &st.device_id };
-    let (mut p, _) = people_cached(dir, kc, http, &st, &team, fresh, std::time::Instant::now())?;
-    let mut res: Vec<_> = files.iter().map(|f| core::open_file(&me, &p, &team, f)).collect();
-    if !fresh && res.iter().any(|o| o.as_ref().is_err_and(|e| stale_people(e))) {
-        p = people_cached(dir, kc, http, &st, &team, true, std::time::Instant::now())?.0;
-        res = files.iter().map(|f| core::open_file(&me, &p, &team, f)).collect();
-    }
+    let (p, _, res) = open_all(dir, kc, http, &st, &k, &team, &files, fresh, std::time::Instant::now())?;
     let opened = files.into_iter().zip(res).filter_map(|(f, o)| o.ok().map(|o| (f, o))).collect();
     Ok((st, k, team, opened, p))
 }
@@ -973,10 +1088,23 @@ pub fn folder(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, from: &st
 /// 평문 바이트로 받기(프로필 사진 같은 작은 것) — 16MiB 까지
 pub fn get_bytes(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str) -> Result<Vec<u8>, String> {
     let (st, k, team, f, o) = find(dir, kc, http, team, id)?;
+    download(http, &st, &k, &team, &f, &o)
+}
+
+/// 여러 파일을 평문 바이트로 — 열쇠·봉투 풀기(키체인)는 이 스레드에서, 조각 받기만 같이(relay::par_map). 돌려주는 순서는 ids 순서
+pub fn get_many(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, ids: &[String]) -> Vec<Result<Vec<u8>, String>> {
+    let found: Vec<_> = ids.iter().map(|id| find(dir, kc, http, team, id)).collect();
+    relay::par_map(http, &found, relay::PAR, |h, x| match x {
+        Ok((st, k, team, f, o)) => download(h, st, k, team, f, o),
+        Err(e) => Err(e.clone()),
+    })
+}
+
+fn download(http: &dyn Http, st: &TeamState, k: &DeviceKeys, team: &str, f: &RemoteFile, o: &core::Opened) -> Result<Vec<u8>, String> {
     if o.meta.size > 16 * 1024 * 1024 {
         return Err("너무 커서 바이트로는 못 받아 — fetch 로".into());
     }
-    let net = RelayNet { http, server: st.server.clone(), device: st.device_id.clone(), keys: &k };
+    let net = RelayNet { http, server: st.server.clone(), device: st.device_id.clone(), keys: k };
     let mut out = Vec::with_capacity(o.meta.size as usize);
     for i in 0..f.parts {
         let (c, ct) = net.get(&format!("/v0/teams/{team}/locker/files/{}/parts/{i}", f.id))?;

@@ -1,5 +1,6 @@
 // 하위 세션 대화 보기 — 읽기만(지시는 참모에게). 바닥 전체를 덮는다(FileView 와 같은 틀). 대화는 이어 읽기, 일하는 중이면 한 줄
 import { useEffect, useMemo, useState } from 'react';
+import { tr } from '../../i18n';
 import { readTranscript } from '../../data/web';
 import { liveOf, type Live } from '../../domain/agentBrowser';
 import { liveWork, subStatus, subTag } from '../../domain/mobile';
@@ -33,17 +34,17 @@ export function SessionPeek({ s, tag: given, lives, onClose }: { s: Session; tag
   const tag = given ?? subTag(subStatus(s, tails, now));
   const name = shownName(s.name) || s.project;
   return (
-    <BottomSheet kind="full" label={`${name} 대화`} onClose={onClose} head={
+    <BottomSheet kind="full" label={tr(`${name} 대화`, `${name} conversation`)} onClose={onClose} head={
       <div className="m-picker-head">
         <span className="m-peek-head">
           <b className="m-view-title">{name}</b>
           <span className={`st-tag ${tag.cls}`}>{tag.text}</span>
         </span>
-        <IconBtn label="닫기" onClick={onClose}><IconClose /></IconBtn>
+        <IconBtn label={tr('닫기', 'Close')} onClick={onClose}><IconClose /></IconBtn>
       </div>}>
-      <div className="m-muted m-sm m-peek-sub">{s.project}{s.workspace ? ` · ${s.workspace}` : ''} · 보기만 — 지시는 참모에게</div>
+      <div className="m-muted m-sm m-peek-sub">{s.project}{s.workspace ? ` · ${s.workspace}` : ''} · {tr('보기만 — 지시는 참모에게', 'View only — give instructions to your assistant')}</div>
       {br && <div className="m-peek-br"><BrowserView live={br} /></div>}
-      {s.sessionId ? <MessageList items={items} earlier={earlier} loading={!chatLoaded(s.sessionId)} stale={stale} out={[]} onRetry={noop} onDrop={noop} live={stale ? undefined : live} /> : <p className="m-muted m-peek-sub">대화 기록이 없어요</p>}
+      {s.sessionId ? <MessageList items={items} earlier={earlier} loading={!chatLoaded(s.sessionId)} stale={stale} out={[]} onRetry={noop} onDrop={noop} live={stale ? undefined : live} /> : <p className="m-muted m-peek-sub">{tr('대화 기록이 없어요', 'No conversation yet')}</p>}
     </BottomSheet>
   );
 }

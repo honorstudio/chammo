@@ -57,7 +57,13 @@ const onLinkEl = (e: React.MouseEvent) => !!(e.target as HTMLElement).closest('a
 /** 내 참모에게 — name = 고르기 목록이 없을 때(폰) 넘길 참모, send(글, 고른 참모 세션 id) — 길은 Rust team_handoff 하나 */
 export type Handoff = { name: string; send: (text: string, to?: string) => Promise<void> };
 
-export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded, onSent, handoff, detach, onFiles, focused = true, say = teamHumanSay, viewing = teamViewing, back, safety, held, phone, people, onEditRoom, seed = '', onSeeded, teamId = '', members = [], reads, drafts = teamDrafts, files = { attach: teamFileAttach, open: teamFileOpen, save: teamFileSave, pick: teamPickFiles, clip: teamClipFiles }, thumb = teamFileThumb, agentsApi = { cached: teamAgentsCached, fresh: teamAgents, confirm: teamAgentConfirm, usage: teamAgentUsage } }: {
+// 기본값은 모듈 상수로 — 매개변수 자리에 { … }·[] 를 쓰면 그릴 때마다 새 값이라 그걸 의존성에 둔 훅이 매번 다시 돈다
+// (10-31: agentsApi 가 그래서 팀챗을 열면 team_agents 를 초당 10번씩 끝없이 불렀다 — stableDeps.test.ts)
+const FILES = { attach: teamFileAttach, open: teamFileOpen, save: teamFileSave, pick: teamPickFiles, clip: teamClipFiles };
+const AGENTS = { cached: teamAgentsCached, fresh: teamAgents, confirm: teamAgentConfirm, usage: teamAgentUsage };
+const NO_MEMBERS: never[] = [];
+
+export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded, onSent, handoff, detach, onFiles, focused = true, say = teamHumanSay, viewing = teamViewing, back, safety, held, phone, people, onEditRoom, seed = '', onSeeded, teamId = '', members = NO_MEMBERS, reads, drafts = teamDrafts, files = FILES, thumb = teamFileThumb, agentsApi = AGENTS }: {
   convo: Convo;
   items: TeamItem[];
   team: string;

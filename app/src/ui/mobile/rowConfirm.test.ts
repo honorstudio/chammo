@@ -48,8 +48,8 @@ describe('참모 바꾸기 시트 — 확인이 맨 위가 아니라 그 줄 자
   it('켜진 줄: 민 그 줄이 재우기·제거 확인 줄로 바뀐다', () => {
     expect(picker).toMatch(/sleeping\?\.id === s\.id/);
     expect(picker).toMatch(/removing\?\.id === s\.id/);
-    expect(picker).toMatch(/<RowConfirm [^>]*label="재우기 확인"/);
-    expect(picker).toMatch(/<RowConfirm [^>]*label="제거 확인"[^>]*danger/);
+    expect(picker).toMatch(/<RowConfirm [^>]*label=\{tr\('재우기 확인', 'Confirm sleep'\)\}/);
+    expect(picker).toMatch(/<RowConfirm [^>]*label=\{tr\('제거 확인', 'Confirm removal'\)\}[^>]*danger/);
   });
   it("재우면 그 줄은 '꺼져 있음'으로 — 15초 받기를 안 기다리고 바로 다시 받는다", () => {
     expect(picker).toMatch(/await stopOrch\(sleeping\.id\);\s*onStopped\(sleeping\.id\);\s*refreshOff\(\);/);

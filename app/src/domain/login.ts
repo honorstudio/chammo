@@ -212,12 +212,23 @@ export function loggedOutSeen(falses: number, v: boolean | null): { falses: numb
 }
 
 /** Rust login_probe 답 — 모양이 깨졌으면 모름 */
-export function readProbe(v: unknown): { loggedIn: boolean | null; credAt: number | null; termsRetryAt?: number } {
-  const o = (v && typeof v === 'object' ? v : {}) as { loggedIn?: unknown; credAt?: unknown; termsRetryAt?: unknown };
+export function readProbe(v: unknown): { loggedIn: boolean | null; credAt: number | null; termsRetryAt?: number; claudeMissing?: true } {
+  const o = (v && typeof v === 'object' ? v : {}) as { loggedIn?: unknown; credAt?: unknown; termsRetryAt?: unknown; claudeMissing?: unknown };
+  // claude 가 안 돌면(Rust probe_auth) 로그인은 모른다 — 로그인 카드 대신 다시 설치 카드
+  const missing = o.claudeMissing === true;
   return {
-    loggedIn: typeof o.loggedIn === 'boolean' ? o.loggedIn : null,
+    loggedIn: !missing && typeof o.loggedIn === 'boolean' ? o.loggedIn : null,
     credAt: typeof o.credAt === 'number' && Number.isFinite(o.credAt) ? o.credAt : null,
     ...(typeof o.termsRetryAt === 'number' && Number.isFinite(o.termsRetryAt) ? { termsRetryAt: o.termsRetryAt } : {}),
+    ...(missing ? { claudeMissing: true as const } : {}),
+  };
+}
+
+/** claude 없음 카드 글(ui/LoginCard ClaudeMissingCard) — 로그인 풀림과 따로(2026-10-31 윈도우 사용자 PC) */
+export function missingText(): { title: string; where: string } {
+  return {
+    title: tr('Claude Code를 못 찾았어요', 'Claude Code not found'),
+    where: tr('설치가 끊기거나 망가졌어요. 누르면 다시 설치해요.', 'The install is missing or broken. Press to reinstall.'),
   };
 }
 

@@ -196,6 +196,8 @@ Chammo runs on your computer. From 0.4.2 it needs a Chammo account sign-in, so i
 
 Claude accounts (switching between several sign-ins) stay on this computer and never go online — the Keychain on the Mac, Credential Manager on Windows; on Windows the current sign-in file is copied once to `%USERPROFILE%\.claude\.credentials.json.chammo-backup` before each switch (a plain-text file with the same permissions as the original).
 
+Finding past conversations: when the assistant looks up a past conversation (`scripts/recall`), it indexes all of this computer's Claude Code conversation history (`~/.claude/projects`, including terminal sessions you opened yourself outside Chammo) into `recall.db` in the data folder. It is created the first time you search without asking, and each search adds only the files that changed; the index holds only what you and Claude wrote (no tool output, thinking, or attachments), and secrets such as keys, tokens, and passwords are masked before they enter the index. The file is readable only by its owner (permission 600) and never leaves the computer over the internet; to remove it, delete `recall.db` (it is rebuilt the next time you search).
+
 Details for the Chammo account and messenger: [Privacy Policy](https://chammo.app/privacy) · [Terms](https://chammo.app/terms).
 
 ## Status and limitations

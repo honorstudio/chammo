@@ -203,8 +203,8 @@
 .lk-tabs-scroll.fade-r { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); }
 .lk-tabs-scroll.fade-l.fade-r { -webkit-mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent); mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent); }
 .lk-tab { all: unset; box-sizing: border-box; cursor: pointer; height: 31px; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 12px; border-radius: 8px 8px 0 0; font-size: 12.5px; color: var(--text-2); white-space: nowrap; max-width: 220px; }
-.lk-tab.home, .lk-tab.folder { position: relative; flex: none; padding: 0 11px; }
-.lk-tab.home.on svg, .lk-tab.folder.on svg { color: var(--text); }
+.lk-tab.home, .lk-tab.folder, .lk-tab.cal { position: relative; flex: none; padding: 0 11px; }
+.lk-tab.home.on svg, .lk-tab.folder.on svg, .lk-tab.cal.on svg { color: var(--text); }
 .lk-tab .lk-newdot { position: absolute; top: 6px; right: 6px; }
 /* Craft 독 — 앱 아이콘 하나씩(글자 없이), 모서리 점 = 상태 */
 .lk-tab.dock { position: relative; flex: none; padding: 0 8px; }

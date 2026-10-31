@@ -72,7 +72,7 @@ fn claude_out(cmd: &mut std::process::Command, limit: std::time::Duration) -> Re
 fn run(args: &[&str]) -> Result<String, String> {
     let out = claude_out(crate::platform::command(claude_bin()).args(args), CLAUDE_LIMIT)?;
     if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        return Err(crate::platform::out_text(&out.stderr).trim().to_string());
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
@@ -148,7 +148,7 @@ pub fn shared_fetch(cell: &std::sync::Mutex<Option<(std::time::Instant, String)>
 pub fn agents_json() -> Result<String, String> {
     shared_fetch(&AGENTS, AGENTS_TTL, std::time::Instant::now(), || {
         let out = crate::platform::run_capped(crate::platform::command(claude_bin()).args(["agents", "--json"]), std::time::Duration::from_secs(10)).map_err(|e| e.to_string())?;
-        if out.status.success() { Ok(String::from_utf8_lossy(&out.stdout).into_owned()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_string()) }
+        if out.status.success() { Ok(String::from_utf8_lossy(&out.stdout).into_owned()) } else { Err(crate::platform::out_text(&out.stderr).trim().to_string()) }
     })
 }
 
@@ -188,7 +188,7 @@ pub fn spawn_blocking(cwd: &str, name: &str, prompt: &str) -> Result<String, Str
     let out = claude_out(crate::platform::command(claude_bin()).current_dir(cwd).args(spawn_args(name, prompt)), CLAUDE_LIMIT)?;
     forget_agents();
     if !out.status.success() {
-        return Err(crate::access::explain_spawn_error(String::from_utf8_lossy(&out.stderr).trim(), cwd));
+        return Err(crate::access::explain_spawn_error(crate::platform::out_text(&out.stderr).trim(), cwd));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }

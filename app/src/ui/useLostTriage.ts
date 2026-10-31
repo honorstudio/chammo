@@ -3,10 +3,11 @@
 // 같은 알림을 두 번 안 보내게 기록(live.json)에서 먼저 지우고 보낸다 — 못 보내면 꺼진 목록에 되돌리고 30초·60초 뒤 다시, 세 번 실패하면 이번 실행에선 그만두고
 // 사람에게 맥 알림 한 번(참모가 있으면 홈이 안 보여 아무도 몰랐다). 목록엔 남아 다음 실행에 다시
 import { useEffect, useRef, useState } from 'react';
-import { listSessionsAllRaw, readTranscriptTails, sendToSession } from '../data/tauri';
+import { listSessionsAllRaw, readTranscriptTails, sendToSession, tidyGit } from '../data/tauri';
 import { tr } from '../i18n';
 import { notifyOnce } from './notifier';
 import { summarizeTranscript } from '../domain/activity';
+import { HINT_MAX, progressHint } from '../domain/progressHint';
 import { forgetLost, lastDoing, planNotices, restartNotice, triageLost } from '../domain/lostTriage';
 import type { LiveSnap, SnapSession } from '../domain/revive';
 import { seenName, type Session } from '../domain/session';
@@ -73,7 +74,10 @@ export function useLostTriage(o: {
           const ids = go.map((x) => x.sessionId);
           await c.update((s) => forgetLost(s, ids)); // 기록부터 — 보낸 뒤 쓰다 실패하면 다음 폴링에 또 보낸다
           try {
-            await sendToSession(n.to.id, restartNotice(go.map((x) => ({ s: x, doing: lastDoing(x, c.events, activity[x.sessionId]) }))));
+            // 어디까지 했나 — 대화 끝·git(못 읽으면 빼고 보낸다)
+            const heads = new Map((await tidyGit([...new Set(go.map((x) => x.cwd))]).catch(() => [])).map((g) => [g.dir, g]));
+            const max = go.length > 1 ? 120 : HINT_MAX;
+            await sendToSession(n.to.id, restartNotice(go.map((x) => ({ s: x, doing: lastDoing(x, c.events, activity[x.sessionId]), at: progressHint(activity[x.sessionId], heads.get(x.cwd), { max }) }))));
           } catch {
             // 참모를 막 켠 순간엔 화면이 아직 안 떠 실패하기 쉽다 — 바로 말고 간격을 두고
             const k = Math.max(...ids.map((id) => (fails.current.get(id) ?? 0) + 1));

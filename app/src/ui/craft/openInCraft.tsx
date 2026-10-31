@@ -3,7 +3,7 @@
 // 묻는 창은 창마다 하나(CraftOpenAsk) — 부르는 쪽(팀 보관함·대화 파일·채팅 칩·미리보기 머리)은 openInCraft 만 부른다
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
-import { tr } from '../../i18n';
+import { oneLang, tr } from '../../i18n';
 import { craftErr, tileUnavailable, type DrawerRow } from '../../domain/craftDrawer';
 import { craftFor, craftName, installAsk, openWithLabel } from '../../domain/craftOpen';
 import type { DockItem } from '../../domain/craftDock';
@@ -16,7 +16,7 @@ const ASK = 'craft-open-ask';
 const ERR = 'craft-open-err';
 
 /** 못 연 까닭을 창 아래 한 줄로 — 오류를 받을 자리가 없는 부르는 쪽(채팅 칩) */
-export const sayCraftErr = (e: unknown) => void window.dispatchEvent(new CustomEvent<string>(ERR, { detail: e instanceof Error ? e.message : String(e) }));
+export const sayCraftErr = (e: unknown) => void window.dispatchEvent(new CustomEvent<string>(ERR, { detail: oneLang(e instanceof Error ? e.message : String(e)) }));
 type Ask = { path: string; app: string; name: string; size: number | null };
 
 const open = (app: string, path: string) => invoke<void>('craft_open_file', { app, path }).catch((e: unknown) => { throw new Error(craftErr(e).text); });

@@ -1,6 +1,7 @@
 // 말풍선 목록 — parseChat 결과를 그리는 얇은 목록(데스크톱 ChatView 는 tauri 의존이라 통째로 못 쓴다)
 // 내 말·참모 말풍선을 길게 누르면 '참조'(입력칸에 #chat1, 데스크톱과 같은 인용 블록)·'복사'(2026-10-23 사용자 — 글을 복사해 붙이고 있었다)
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { tr } from '../../i18n';
 import { splitRefs, stripMarks, type ChatItem } from '../../domain/chat';
 import { bubbleWho } from '../../domain/refChips';
 import { BottomSheet } from './kit';
@@ -33,7 +34,7 @@ function Thumb({ att }: { att: PhoneAtt }) {
   const [big, setBig] = useState(false);
   if (!att.image) return <span className="m-pic-file">{att.label} {att.path.split('.').pop()?.toUpperCase()}</span>;
   return (
-    <button type="button" className={big ? 'm-pic m-big' : 'm-pic'} onClick={() => setBig((b) => !b)} aria-label={`${att.label} ${big ? '작게' : '크게'}`}>
+    <button type="button" className={big ? 'm-pic m-big' : 'm-pic'} onClick={() => setBig((b) => !b)} aria-label={`${att.label} ${big ? tr('작게', 'Shrink') : tr('크게', 'Enlarge')}`}>
       {url ? <img src={url} alt="" /> : <span className="m-pic-wait" />}
       <em>{att.label}</em>
     </button>
@@ -85,9 +86,9 @@ function Outgoing({ m, onRetry, onDrop }: { m: OutMsg; onRetry: (id: string) => 
     <div className="m-out-failed">
       <Mine text={m.text} />
       <div className="m-out-row">
-        <span className="m-out-why">못 보냈어요{m.error ? ` · ${m.error}` : ''}</span>
-        <button type="button" className="m-icon" onClick={() => onRetry(m.id)} aria-label="다시 보내기" title="다시 보내기"><IconRefresh /></button>
-        <button type="button" className="m-icon" onClick={() => onDrop(m.id)} aria-label="이 말 지우기" title="지우기"><IconClose /></button>
+        <span className="m-out-why">{tr('못 보냈어요', "Couldn't send")}{m.error ? ` · ${m.error}` : ''}</span>
+        <button type="button" className="m-icon" onClick={() => onRetry(m.id)} aria-label={tr('다시 보내기', 'Send again')} title={tr('다시 보내기', 'Send again')}><IconRefresh /></button>
+        <button type="button" className="m-icon" onClick={() => onDrop(m.id)} aria-label={tr('이 말 지우기', 'Delete this message')} title={tr('지우기', 'Delete')}><IconClose /></button>
       </div>
     </div>
   );
@@ -100,7 +101,7 @@ function Bubble({ it, onHold }: { it: ChatItem; onHold?: Hold }) {
   if (it.kind === 'user') return <Mine text={it.text} images={it.images} press={held} />;
   // 답은 마크다운으로 — DOMPurify 를 거친 HTML 만(ui/md.ts), 링크는 새 탭
   if (it.kind === 'assistant') return <div className="m-bubble m-ai m-md" dangerouslySetInnerHTML={{ __html: md(it.text) }} {...held} />;
-  if (it.kind === 'tools') return <div className="m-tools">{it.tools.length === 1 ? `${it.tools[0]!.name} ${it.tools[0]!.target}` : `도구 ${it.tools.length}번`}</div>;
+  if (it.kind === 'tools') return <div className="m-tools">{it.tools.length === 1 ? `${it.tools[0]!.name} ${it.tools[0]!.target}` : tr(`도구 ${it.tools.length}번`, `${it.tools.length} tool calls`)}</div>;
   if (it.kind === 'relay') return <div className="m-relay"><b>{it.session ? phoneName(it.from, []) : it.from}</b> {it.text}</div>;
   return <div className="m-note">{it.text}</div>;
 }
@@ -108,11 +109,11 @@ function Bubble({ it, onHold }: { it: ChatItem; onHold?: Hold }) {
 /** ask = 지금 참모가 사용자에게 묻고 멈춘 것 — 대화 끝에 카드로(답은 아래 입력칸에) */
 /** 일하는 중 한 줄 — 데스크톱 채팅의 '작업 중 · 도구'(liveWork). 점 세 개가 차례로 깜빡인다(동작 줄이기면 멈춤) */
 function LiveRow({ live }: { live: LiveState }) {
-  const parts = [live.tools ? `도구 ${live.tools}번` : '', live.secs >= 3 ? (live.secs < 60 ? `${live.secs}초` : `${Math.floor(live.secs / 60)}분 ${live.secs % 60}초`) : ''].filter(Boolean);
+  const parts = [live.tools ? tr(`도구 ${live.tools}번`, `${live.tools} tool calls`) : '', live.secs >= 3 ? (live.secs < 60 ? tr(`${live.secs}초`, `${live.secs}s`) : tr(`${Math.floor(live.secs / 60)}분 ${live.secs % 60}초`, `${Math.floor(live.secs / 60)}m ${live.secs % 60}s`)) : ''].filter(Boolean);
   return (
     <div className="m-live" role="status" aria-live="polite">
       <span className="m-live-dots" aria-hidden><i /><i /><i /></span>
-      <span className="m-live-line">{live.line || '생각 중…'}</span>
+      <span className="m-live-line">{live.line || tr('생각 중…', 'Thinking…')}</span>
       {parts.length > 0 && <span className="m-live-meta">{parts.join(' · ')}</span>}
     </div>
   );
@@ -201,19 +202,19 @@ export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earli
   return (
     <div ref={log} className={stale ? 'm-log m-stale' : 'm-log'}>
       {earlier && (items.length <= shown) && (earlier.loading
-        ? <div className="m-older-spin" role="status" aria-label="앞 대화 불러오는 중"><span className="m-live-dots" aria-hidden><i /><i /><i /></span></div>
-        : earlier.done && <div className="m-note m-older">대화 처음이에요</div>)}
+        ? <div className="m-older-spin" role="status" aria-label={tr('앞 대화 불러오는 중', 'Loading earlier messages')}><span className="m-live-dots" aria-hidden><i /><i /><i /></span></div>
+        : earlier.done && <div className="m-note m-older">{tr('대화 처음이에요', 'Start of the conversation')}</div>)}
       {interleave([...(earlier?.items ?? []).map((it, i) => ({ it, ts: it.ts, k: `o-${it.id}-${i}` })), ...items.slice(-shown).map((it, i) => ({ it, ts: it.ts, k: `${it.id}-${i}` }))],
         (files ?? []).map((f) => ({ ...f, clip: true }))).map((x) => ('item' in x
         ? <Bubble key={x.item.k} it={x.item.it} onHold={onRef ? (w, t) => setHeld({ who: w, text: t }) : undefined} />
         : <ChatFileCard key={x.extra.key} f={x.extra} onOpen={(f) => onOpenFile?.(f)} />))}
-      {loading && !items.length && <div className="m-note m-older">대화 불러오는 중…</div>}
+      {loading && !items.length && <div className="m-note m-older">{tr('대화 불러오는 중…', 'Loading the conversation…')}</div>}
       {out.map((m) => <Outgoing key={m.id} m={m} onRetry={onRetry} onDrop={onDrop} />)}
       {live?.busy && <LiveRow live={live} />}
-      {stale && <div className="m-resync" role="status" aria-label="최신 대화 받는 중"><span className="m-spin" aria-hidden /></div>}
+      {stale && <div className="m-resync" role="status" aria-label={tr('최신 대화 받는 중', 'Getting the latest messages')}><span className="m-spin" aria-hidden /></div>}
       {ask && out.length === 0 && !live?.busy && !stale && (
         <div className="m-ask">
-          <div className="m-ask-label">{who}답을 기다려요</div>
+          <div className="m-ask-label">{who}{tr('답을 기다려요', 'Waiting for your reply')}</div>
           {ask.lead && <div className="m-muted m-sm">{ask.lead}</div>}
           <div className="m-ask-q">{ask.q}</div>
         </div>
@@ -222,15 +223,15 @@ export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earli
         <BottomSheet label={held.who} kind="card" title={held.who} armMs={450} onClose={() => setHeld(null)}>
           {({ close, armed }) => (
             <>
-              <button type="button" className="m-menu-item" onClick={() => { if (armed) { close(); onRef(held.who, held.text); } }}>참조</button>
-              <button type="button" className="m-menu-item" onClick={() => { if (armed) { close(); copyText(held.text); } }}>복사</button>
+              <button type="button" className="m-menu-item" onClick={() => { if (armed) { close(); onRef(held.who, held.text); } }}>{tr('참조', 'Reference')}</button>
+              <button type="button" className="m-menu-item" onClick={() => { if (armed) { close(); copyText(held.text); } }}>{tr('복사', 'Copy')}</button>
             </>
           )}
         </BottomSheet>
       )}
       {away && (
         <div className="m-jump-at">
-          <button type="button" className="m-jump" onClick={jump} aria-label={dot ? '맨 아래로 · 새 답' : '맨 아래로'} title="맨 아래로">
+          <button type="button" className="m-jump" onClick={jump} aria-label={dot ? tr('맨 아래로 · 새 답', 'Jump to bottom · new reply') : tr('맨 아래로', 'Jump to bottom')} title={tr('맨 아래로', 'Jump to bottom')}>
             <IconChevronDown />
             {dot && <span className="m-jump-dot" aria-hidden />}
           </button>

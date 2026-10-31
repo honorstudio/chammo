@@ -232,11 +232,33 @@ fn head_of(v: &Value) -> Option<(u64, String)> {
     Some((v["seq"].as_u64()?, v["hash"].as_str()?.to_string()))
 }
 
+/// 받은 팀 머리 30초 기억 — 배경이 같은 팀 머리를 몇 초마다 따로 받지 않게(10-30 진단: 10분 185번). 같은 때 여럿이 부르면 한 번만 받고 나눠 쓴다.
+/// 사람 동작(보내기·올리기)은 늘 새로 — 그 사람이 막 들인 기기까지 받게. 팀이 바뀜(team_changed)·내 기기 허용·빼기(device_resolved)는 forget_heads
+static HEADS: Mutex<BTreeMap<String, (std::time::Instant, Heads)>> = Mutex::new(BTreeMap::new());
+static HEADS_GATE: Mutex<BTreeMap<String, std::sync::Arc<Mutex<()>>>> = Mutex::new(BTreeMap::new());
+pub(crate) const HEADS_FOR: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// 기억한 팀 머리를 버린다(빈 팀 = 전부). 줄 세우기 칸도 — 아무도 안 쥔 것만(받는 중인 칸을 버리면 같은 때 둘이 받는다, 10-31 리뷰: 안 지워져 계속 늘었다)
+pub(crate) fn forget_heads(team: &str) {
+    let end = format!("|{team}");
+    let keep = |k: &String| !team.is_empty() && !k.ends_with(&end);
+    HEADS.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| keep(k));
+    HEADS_GATE.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, g| keep(k) || std::sync::Arc::strong_count(g) > 1);
+}
+
 /// 팀 머리 — 옛 중계·망 실패·모양이 틀리면 None(그땐 예전처럼 하나씩 받는다)
 pub(crate) fn heads(kc: &dyn Store, http: &dyn Http, st: &TeamState, team: &str) -> Option<Heads> {
     let key = heads_key(&st.server);
     if NO_HEADS.lock().unwrap_or_else(|e| e.into_inner()).get(&key).is_some_and(|t| t.elapsed() < NO_HEADS_FOR) {
         return None;
+    }
+    let memo = format!("{key}|{}|{team}", st.device_id);
+    let gate = HEADS_GATE.lock().unwrap_or_else(|e| e.into_inner()).entry(memo.clone()).or_default().clone();
+    let _one = gate.lock().unwrap_or_else(|e| e.into_inner());
+    if !relay::human_now() {
+        if let Some((_, h)) = HEADS.lock().unwrap_or_else(|e| e.into_inner()).get(&memo).filter(|(at, _)| at.elapsed() < HEADS_FOR) {
+            return Some(h.clone());
+        }
     }
     let k = relay::device_keys(kc, st).ok()?;
     let (code, v) = relay::call(http, &st.server, &k, Some(&st.device_id), "GET", &format!("/v0/teams/{team}/heads"), None).ok()?;
@@ -248,7 +270,9 @@ pub(crate) fn heads(kc: &dyn Store, http: &dyn Http, st: &TeamState, team: &str)
         return None;
     }
     let chains = v["chains"].as_object()?.iter().map(|(a, h)| (a.clone(), head_of(h))).collect();
-    Some(Heads { log: head_of(&v["log"]), chains })
+    let h = Heads { log: head_of(&v["log"]), chains };
+    HEADS.lock().unwrap_or_else(|e| e.into_inner()).insert(memo, (std::time::Instant::now(), h.clone()));
+    Some(h)
 }
 
 /// 사슬을 새로 — 머리가 캐시한 사슬 끝과 같으면 캐시로(요청 없음). 머리가 없거나 다르면 chain_of(refresh).

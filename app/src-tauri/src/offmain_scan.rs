@@ -262,6 +262,8 @@ const MAIN_OK: &[&str] = &[
     "config::data_dir", "config::data_file", "config::current", "config::write_file",
     // 기록 줄(notify.log·task-events.jsonl 등 <데이터>/…)
     "claude::log_out", "claude::append_task_event", "debug::append_capped", "debug::debug_dump",
+    // 실측 기록 줄(디버그·시험 빌드에서 CHAMMO_NET_TRACE 를 준 때만 — perf-bench 작업 폴더)
+    "team_relay::trace_line",
     "claude::ime_debug_mode", "claude::ime_log", "claude::log_auto_allow", "claude::read_auto_allow", "claude::read_ctx",
     "claude::read_live_snap", "claude::read_say", "claude::read_usage", "claude::read_usage_at", "claude::write_view", "claude::write_voice_mode",
     "pty::log_write", "usage_counts::load", "usage_counts::save",

@@ -25,22 +25,56 @@ fn tlink(k: &DeviceKeys, st: &TeamState, team: &str, seq: u64, prev: &str, f: Va
 
 /// 명부 머리(다음 seq, prev). 명부가 없는 팀은 None
 fn head(st: &TeamState, k: &DeviceKeys, http: &dyn Http, team: &str) -> Result<Option<(u64, String)>, String> {
+    Ok(fetch_log(st, k, http, team)?.last().map(|l| (l.seq + 1, team_hash(l))))
+}
+
+fn fetch_log(st: &TeamState, k: &DeviceKeys, http: &dyn Http, team: &str) -> Result<Vec<TLink>, String> {
     let (code, v) = relay::call(http, &st.server, k, Some(&st.device_id), "GET", &format!("/v0/teams/{team}/log"), None)?;
     if code != 200 {
         return Err(relay::why(code, &v));
     }
-    let links: Vec<TLink> = serde_json::from_value(v["links"].clone()).map_err(|e| e.to_string())?;
-    Ok(links.last().map(|l| (l.seq + 1, team_hash(l))))
+    serde_json::from_value(v["links"].clone()).map_err(|e| e.to_string())
+}
+
+// ── 기억한 명부 끝 이어 가기(10-31) — 확인해 둔 명부(디스크) 끝으로 쓰니, 내가 쓴 고리가 받아들여지면 그 끝에 붙인다(안 붙이면 다음 쓰기가 늘 409).
+//    새로 받은 명부는 기억한 명부를 그대로 앞에 둔 것만 받아 둔다(앞을 바꾼 명부는 안 받는다 — 쓸 때 roster_with 가 다시 검증한다) ──
+
+/// 서버가 받아들인 내 고리(link_for 가 만든 값) — 기억한 명부 끝 바로 다음이면 붙인다
+pub fn remember(dir: &Path, team: &str, link: &Value) {
+    let Ok(l) = serde_json::from_value::<TLink>(link.clone()) else { return };
+    let prev = serde_json::from_str::<Value>(&l.body).ok().and_then(|b| b["prev"].as_str().map(String::from)).unwrap_or_default();
+    let _ = crate::e2e_state::mutate(dir, |s| {
+        if let Some(c) = s.rosters.get_mut(team) {
+            if c.last().is_some_and(|t| t.seq + 1 == l.seq && team_hash(t) == prev) {
+                c.push(l);
+            }
+        }
+    });
+}
+
+/// 새로 받은 명부가 기억한 명부를 앞에 그대로 두고 늘었으면 받아 둔다
+fn extend_cached(dir: &Path, team: &str, links: &[TLink]) {
+    let _ = crate::e2e_state::mutate(dir, |s| {
+        if let Some(c) = s.rosters.get_mut(team) {
+            if links.len() > c.len() && links[..c.len()].iter().zip(c.iter()).all(|(a, b)| a.seq == b.seq && team_hash(a) == team_hash(b)) {
+                *c = links.to_vec();
+            }
+        }
+    });
 }
 
 /// 고리 올리기 — 올렸으면 true, 이 기기가 사슬 밖이라 고리 없이 갔으면 false
 fn post(st: &TeamState, k: &DeviceKeys, http: &dyn Http, team: &str, l: &TLink) -> Result<bool, String> {
     let (code, v) = relay::call(http, &st.server, k, Some(&st.device_id), "POST", &format!("/v0/teams/{team}/log"), Some(&json!({ "link": l })))?;
+    posted(code, &v)
+}
+
+fn posted(code: u16, v: &Value) -> Result<bool, String> {
     match code {
         201 => Ok(true),
         // 이 기기가 아직 사슬 밖 — 고리 없이(전환기)
         403 if v["error"] == "not_in_chain" => Ok(false),
-        _ => Err(relay::why(code, &v)),
+        _ => Err(relay::why(code, v)),
     }
 }
 
@@ -78,10 +112,31 @@ pub fn after_create(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, mem
 
 /// 초대를 만든 뒤 — 초대 코드에서 끌어낸 공개 열쇠를 팀장이 서명(서버는 코드 해시만 가진다)
 pub fn after_invite(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, code: &str, expires: u64) -> Result<(), String> {
-    let Some((st, k)) = ctx(dir, kc)? else { return Ok(()) };
-    let Some((seq, prev)) = head(&st, &k, http, team)? else { return Ok(()) };
     let inv = B64.encode(SigningKey::from_bytes(&invite_seed(code)).verifying_key().as_bytes());
-    post(&st, &k, http, team, &tlink(&k, &st, team, seq, &prev, json!({ "kind": "invite", "invPub": inv, "role": "member", "expires": expires }))).map(|_| ())
+    let f = json!({ "kind": "invite", "invPub": inv, "role": "member", "expires": expires });
+    // 확인해 둔 명부 끝으로 먼저, 서버가 그새 늘었다(409 stale_head)면 새로 받아 한 번 더 — link_for 와 같은 길
+    let send = |l: Option<Value>| -> Result<Option<(u16, Value)>, String> {
+        let (Some(l), Some((st, k))) = (l, ctx(dir, kc)?) else { return Ok(None) };
+        relay::call(http, &st.server, &k, Some(&st.device_id), "POST", &format!("/v0/teams/{team}/log"), Some(&json!({ "link": l }))).map(Some)
+    };
+    let mut l = link_for(dir, kc, http, team, f.clone())?;
+    let mut r = send(l.clone())?;
+    if r.as_ref().is_some_and(|(c, v)| *c == 409 && v["error"] == "stale_head") {
+        l = link_fresh(dir, kc, http, team, f)?;
+        r = send(l.clone())?;
+    }
+    match r {
+        Some((c, v)) => {
+            let ok = posted(c, &v)?;
+            if ok {
+                if let Some(l) = &l {
+                    remember(dir, team, l);
+                }
+            }
+            Ok(())
+        }
+        None => Ok(()),
+    }
 }
 
 /// 초대로 들어온 뒤 — 내 사슬 기기 서명 + 초대 코드 열쇠 서명(sig2)
@@ -98,8 +153,29 @@ pub fn after_join(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, code:
 
 /// 역할·빼기·나가기 요청에 실을 고리 — 명부가 없는 팀은 None(예전처럼 고리 없이)
 pub fn link_for(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, f: Value) -> Result<Option<Value>, String> {
+    link_at(dir, kc, http, team, f, false)
+}
+
+/// link_for 인데 명부 끝을 서버에서 새로 — 서버가 409 stale_head(그새 명부가 늘었다)라 한 뒤 한 번 더 보낼 때
+pub fn link_fresh(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, f: Value) -> Result<Option<Value>, String> {
+    link_at(dir, kc, http, team, f, true)
+}
+
+/// 명부 끝 — 확인해 둔 명부(디스크, roster_with 가 검증해 적은 것)가 있으면 망 없이 그 끝으로. 틀렸으면 서버가 409 stale_head 로 거절한다
+/// (10-31 실측: 권한 칩·초대마다 쓰기 전에 GET log 로 명부 전체를 받았다)
+fn link_at(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, f: Value, fresh: bool) -> Result<Option<Value>, String> {
     let Some((st, k)) = ctx(dir, kc)? else { return Ok(None) };
-    let Some((seq, prev)) = head(&st, &k, http, team)? else { return Ok(None) };
+    let tip = if fresh { None } else { crate::e2e_state::load(dir).rosters.get(team).and_then(|c| c.last().map(|l| (l.seq + 1, team_hash(l)))) };
+    let Some((seq, prev)) = (match tip {
+        Some(t) => Some(t),
+        None => {
+            let links = fetch_log(&st, &k, http, team)?;
+            extend_cached(dir, team, &links);
+            links.last().map(|l| (l.seq + 1, team_hash(l)))
+        }
+    }) else {
+        return Ok(None);
+    };
     Ok(Some(serde_json::to_value(tlink(&k, &st, team, seq, &prev, f)).map_err(|e| e.to_string())?))
 }
 

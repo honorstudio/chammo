@@ -2,9 +2,11 @@
 // 꾸미기는 팀장만, 완료 때 판 한 장으로 팀에 보인다(그 전엔 이 기기 메모리). 폰은 한 줄 쌓기, 폰 꾸미기는 이름 줄로 순서·더하기·빼기만
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import {
-  addBlock, blankHome, BLOCKS, BLURB_MAX, canAdd, changedLine, COVER, coverCrop, dropAt, fromTemplate, homeSame, moveBlock, removeBlock, setMode, setWidth, specOf, TEAM_COLORS, teamColor, TEMPLATES,
-  type BlockKind, type Home, type HomeApi, type HomeBlock, type HomeBoard as Board, type TemplateKey,
+  addBlock, blankHome, BLOCKS, BLURB_MAX, canAdd, changedLine, COVER, coverCrop, dropLine, fromTemplate, homeSame, moveBlock, removeBlock, setMode, setWidth, specOf, TEAM_COLORS, teamColor, TEMPLATES,
+  type BlockKind, type DropLine, type Home, type HomeApi, type HomeBlock, type HomeBoard as Board, type TemplateKey,
 } from '../../domain/teamHome';
+import { edgeScroll } from '../../domain/lockerSelect';
+import { lostRelease } from '../space/dragEnd';
 import { tr } from '../../i18n';
 import { IconCamera, IconClose, IconDashboard, IconGrip, IconPencil, IconPlus, IconTrash, IconUndo, IconWidthNarrow, IconWidthWide } from '../Icons';
 import { IconButton } from '../kit/IconButton';
@@ -15,7 +17,15 @@ import type { HomeDialog } from './TeamHome';
 import './teamHome.css';
 
 export type ModeChoice = { name: string; title: string };
-type Drag = { id: string; sx: number; sy: number; dx: number; dy: number; to: number; rects: { x: number; y: number; w: number; h: number }[] };
+/** 끌기 — rects·포인터(gx, gy)는 판(격자) 안 좌표라 칸이 스크롤돼도 그대로 맞는다. live = 5px 넘게 움직였다(그 전엔 그냥 누름) */
+type Drag = DropLine & { id: string; from: number; sx: number; sy: number; px: number; py: number; gx: number; gy: number; live: boolean;
+  rects: { x: number; y: number; w: number; h: number }[]; gap: { x: number; y: number }; wrap: HTMLElement; box: HTMLElement | null };
+
+/** 판을 스크롤하는 칸 — 끌기 중 가장자리 저절로 스크롤 */
+const scroller = (el: HTMLElement | null) => {
+  for (let p = el?.parentElement; p; p = p.parentElement) if (/(auto|scroll)/.test(getComputedStyle(p).overflowY)) return p;
+  return null;
+};
 
 /** 그림 → 가운데 3:1 1200×400 webp data URL */
 const toCover = (src: string) => new Promise<string>((ok, no) => {
@@ -92,6 +102,11 @@ export function HomeBoard({ teamId, team, icon, people, board, phone, api, rende
   const [draft, setDraft] = useState<Home | null>(null);
   const [past, setPast] = useState<Home[]>([]);
   const [drag, setDrag] = useState<Drag | null>(null);
+  // 사건 처리기는 그린 때의 값이 아니라 지금 값을 본다 — 다시 그리기 전에 온 뗌이 옛 자리(움직임 0)로 끝나지 않게
+  const dragRef = useRef<Drag | null>(null);
+  const raf = useRef(0);
+  // 놓음 신호를 놓쳤을 때(창 밖에서 뗌) — buttons 0 움직임 뒤 pointerup 을 잠깐 기다리고 안 오면 그만둔다(맥 WebKit, ui/space/dragEnd)
+  const lost = useRef(lostRelease(() => stop()));
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -110,7 +125,7 @@ export function HomeBoard({ teamId, team, icon, people, board, phone, api, rende
   const begin = (h: Home) => { setDraft(h); setPast([]); setPreview(null); setErr(''); };
   const commit = (next: Home) => { if (!draft) return; setPast((p) => [...p, draft].slice(-30)); setDraft(next); };
   const blocks = (f: (bs: HomeBlock[]) => HomeBlock[]) => draft && commit({ ...draft, blocks: f(draft.blocks) });
-  const leave = () => { setDraft(null); setPast([]); setDrag(null); setAdding(false); setPreview(null); setQuit(false); };
+  const leave = () => { setDraft(null); setPast([]); stop(); setAdding(false); setPreview(null); setQuit(false); };
   const dirty = !!draft && !(saved ? homeSame(draft, saved) : false);
   const finish = () => {
     if (!draft) return;
@@ -124,15 +139,41 @@ export function HomeBoard({ teamId, team, icon, people, board, phone, api, rende
     void toCover(src).then(async (url) => { const id = await api.cover!(teamId, url); setPreview(url); commit({ ...draft, cover: id }); }).catch((e: unknown) => setErr(String(e))).finally(() => setBusy(false));
   });
 
-  // 끌기 — 처음 자리(rects)로 놓을 자리를 센다(자리 비켜남으로 바뀐 자리를 다시 재지 않는다)
-  const down = (e: PointerEvent, id: string) => {
-    if (!draft || e.button !== 0) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    const rects = draft.blocks.map((b) => { const r = tiles.current.get(b.id)?.getBoundingClientRect(); return r ? { x: r.left, y: r.top, w: r.width, h: r.height } : { x: 0, y: 0, w: 0, h: 0 }; });
-    setDrag({ id, sx: e.clientX, sy: e.clientY, dx: 0, dy: 0, to: draft.blocks.findIndex((b) => b.id === id), rects });
+  // 끌기(노션식, 10-31 사용자) — 끄는 동안 판은 그대로, 잡은 블록은 흐리게, 이름표가 포인터를 따라오고 놓일 자리는 굵은 줄. 놓는 순간 옮긴다
+  const grid = useRef<HTMLDivElement>(null);
+  const show = (d: Drag | null) => { dragRef.current = d; setDrag(d); };
+  const stop = () => { cancelAnimationFrame(raf.current); lost.current.stop(); show(null); };
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
+  const follow = (d: Drag, px: number, py: number) => {
+    const live = d.live || Math.hypot(px - d.sx, py - d.sy) >= 5;
+    if (!live) return;
+    const w = d.wrap.getBoundingClientRect();
+    const gx = px - w.left, gy = py - w.top;
+    show({ ...d, px, py, gx, gy, live, ...dropLine(d.rects, d.from, gx, gy, d.gap) });
   };
-  const move = (e: PointerEvent) => drag && setDrag({ ...drag, dx: e.clientX - drag.sx, dy: e.clientY - drag.sy, to: dropAt(drag.rects, e.clientX, e.clientY) });
-  const up = () => { if (!drag) return; const d = drag; setDrag(null); if (d.dx || d.dy) blocks((bs) => moveBlock(bs, d.id, d.to)); };
+  const tick = () => {
+    const d = dragRef.current;
+    if (!d) return;
+    const r = d.box?.getBoundingClientRect();
+    const s = r ? edgeScroll(d.py, r.top, r.bottom) : 0;
+    if (s && d.box && d.live) { const before = d.box.scrollTop; d.box.scrollTop += s; if (d.box.scrollTop !== before) follow(d, d.px, d.py); }
+    raf.current = requestAnimationFrame(tick);
+  };
+  const down = (e: PointerEvent, id: string) => {
+    const wrap = grid.current;
+    if (!draft || !wrap || e.button !== 0) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const w = wrap.getBoundingClientRect();
+    const rects = draft.blocks.map((b) => { const r = tiles.current.get(b.id)?.getBoundingClientRect(); return r ? { x: r.left - w.left, y: r.top - w.top, w: r.width, h: r.height } : { x: 0, y: 0, w: 0, h: 0 }; });
+    const cs = getComputedStyle(wrap);
+    const gap = { x: parseFloat(cs.columnGap) || 0, y: parseFloat(cs.rowGap) || 0 };
+    const from = draft.blocks.findIndex((b) => b.id === id);
+    show({ id, from, sx: e.clientX, sy: e.clientY, px: e.clientX, py: e.clientY, gx: e.clientX - w.left, gy: e.clientY - w.top, live: false, to: from, line: null, rects, gap, wrap, box: scroller(wrap) });
+    cancelAnimationFrame(raf.current);
+    raf.current = requestAnimationFrame(tick);
+  };
+  const move = (e: PointerEvent) => { const d = dragRef.current; if (!d) return; lost.current.move(e.buttons); follow(d, e.clientX, e.clientY); };
+  const up = () => { const d = dragRef.current; if (!d) return; stop(); if (d.live && d.line) blocks((bs) => moveBlock(bs, d.id, d.to)); };
   const key = (e: KeyboardEvent, id: string, i: number) => {
     const to = e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? i - 1 : e.key === 'ArrowDown' || e.key === 'ArrowRight' ? i + 2 : null;
     if (to === null || !draft || to < 0 || to > draft.blocks.length) return;
@@ -140,12 +181,17 @@ export function HomeBoard({ teamId, team, icon, people, board, phone, api, rende
     focusId.current = id;
     blocks((bs) => moveBlock(bs, id, to));
   };
-  const from = drag && draft ? draft.blocks.findIndex((b) => b.id === drag.id) : -1;
-  const gapAt = drag && drag.to !== from && drag.to !== from + 1 ? drag.to : -1;
+  const live = drag?.live ? drag : null;
+  const dragBits = live && draft && (
+    <>
+      {live.line && <div className="hb-line" style={{ left: live.line.x, top: live.line.y, width: live.line.w, height: live.line.h }} />}
+      <div className="hb-tag" style={{ left: live.gx + 14, top: live.gy + 10 }}>{specOf(draft.blocks[live.from]?.k ?? 'pin').name()}</div>
+    </>
+  );
   const ref = (id: string) => (el: HTMLElement | null) => { if (el) tiles.current.set(id, el); else tiles.current.delete(id); };
   const grip = (b: HomeBlock, i: number, cls: string) => (
     <button className={cls} aria-label={tr(`${specOf(b.k).name()} 옮기기 — 끌거나 화살표 키`, `Move ${specOf(b.k).name()} — drag or arrow keys`)}
-      onPointerDown={(e) => down(e, b.id)} onPointerMove={move} onPointerUp={up} onPointerCancel={() => setDrag(null)} onKeyDown={(e) => key(e, b.id, i)}><IconGrip /></button>
+      onPointerDown={(e) => down(e, b.id)} onPointerMove={move} onPointerUp={up} onPointerCancel={stop} onKeyDown={(e) => key(e, b.id, i)}><IconGrip /></button>
   );
   const add = (k: BlockKind) => { blocks((bs) => addBlock(bs, k)); setAdding(false); };
 
@@ -195,27 +241,24 @@ export function HomeBoard({ teamId, team, icon, people, board, phone, api, rende
           </div>
         )}
         {draft && phone && (
-          <div className="hb-prows">
+          <div className="hb-prows" ref={grid}>
             {draft.blocks.map((b, i) => (
               <div key={b.id}>
-                {gapAt === i && <div className="hb-drop" />}
-                <div ref={ref(b.id)} className={`hb-prow ${drag?.id === b.id ? 'lift' : ''}`} style={drag?.id === b.id ? { transform: `translateY(${drag.dy}px)` } : undefined}>
+                <div ref={ref(b.id)} className={`hb-prow ${live?.id === b.id ? 'ghost' : ''}`}>
                   <b>{specOf(b.k).name()}</b>{b.w === 'half' && <span>{tr('반', 'Half')}</span>}
                   <IconButton label={tr('빼기', 'Remove')} onClick={() => blocks((bs) => removeBlock(bs, b.id))}><IconTrash /></IconButton>
                   {grip(b, i, 'hb-pgrip')}
                 </div>
               </div>
             ))}
-            {gapAt === draft.blocks.length && <div className="hb-drop" />}
+            {dragBits}
             <button className="hb-add" aria-label={tr('블록 더하기', 'Add a block')} onClick={() => setAdding(true)}><IconPlus /></button>
           </div>
         )}
         {draft && !phone && (
-          <div className="hb-grid">
-            {draft.blocks.flatMap((b, i) => [
-              ...(gapAt === i ? [<div key="gap" className={`hb-drop ${drag && draft.blocks[from]?.w === 'full' ? 'full' : ''}`} />] : []),
-              <div key={b.id} ref={ref(b.id)} className={`hb-b ${b.k} ${b.w === 'full' ? 'full' : ''} ${drag?.id === b.id ? 'lift' : ''}`}
-                style={drag?.id === b.id ? { transform: `translate(${drag.dx}px, ${drag.dy}px)` } : undefined}>
+          <div className={`hb-grid ${live ? 'dragging' : ''}`} ref={grid}>
+            {draft.blocks.map((b, i) => (
+              <div key={b.id} ref={ref(b.id)} className={`hb-b ${b.k} ${b.w === 'full' ? 'full' : ''} ${live?.id === b.id ? 'ghost' : ''}`}>
                 {grip(b, i, 'hb-grip')}
                 <div className="hb-ctl">
                   {b.k === 'mode' && modeChoices && (
@@ -230,9 +273,9 @@ export function HomeBoard({ teamId, team, icon, people, board, phone, api, rende
                   <IconButton size="s" label={tr('빼기', 'Remove')} onClick={() => blocks((bs) => removeBlock(bs, b.id))}><IconTrash /></IconButton>
                 </div>
                 {renderBlock(b, true)}
-              </div>,
-            ])}
-            {gapAt === draft.blocks.length && <div className="hb-drop full" />}
+              </div>
+            ))}
+            {dragBits}
             <button className="hb-add full" aria-label={tr('블록 더하기', 'Add a block')} onClick={() => setAdding(true)}><IconPlus /></button>
           </div>
         )}

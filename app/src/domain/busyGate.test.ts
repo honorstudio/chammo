@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { attachTurns, BOOT_GRACE, busyOf, linkNotice, listErrorText, reattachEvery, SLOW_LINK_MS, slowLinks, TURN_MAX } from './busyGate';
+import { attachTurns, BOOT_GRACE, busyOf, linkNotice, listErrorText, missingBand, reattachEvery, SLOW_LINK_MS, slowLinks, TURN_MAX } from './busyGate';
 import grid from '../ui/SessionGrid.tsx?raw';
 import { REATTACH_POLL } from './attachExit';
 
@@ -157,6 +157,13 @@ describe('listErrorText — 세션 목록 실패 띠', () => {
   });
   it('시간 초과가 아닌 실패(옛 claude·로그인 풀림)는 바로, 원문 그대로', () => {
     expect(listErrorText('error: unknown option --json', 1, 'ok')).toContain('unknown option');
+  });
+  it('claude 를 못 찾는 중이면 깨진 원문 대신 다시 설치 안내 — 시간 초과여도 바로', () => {
+    const raw = '\'"C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"\'\ufffd\ufffd(\ufffd\ufffd)';
+    const s = listErrorText(raw, 1, 'ok', true)!;
+    expect(s).toBe(missingBand());
+    expect(s).not.toContain('claude.exe');
+    expect(listErrorText('command timed out', 1, 'busy', true)).toBe(missingBand());
   });
 });
 

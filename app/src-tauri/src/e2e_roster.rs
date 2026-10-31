@@ -161,6 +161,13 @@ pub fn verify_from(team: &str, links: &[TLink], chains: &BTreeMap<String, Chain>
 /// 두 겹 검증 — loose(바뀐 계정은 지금 사슬)로 구조와 '틀림'을, trusted(바뀐 계정은 핀 머리까지)로 확인됨 표시를.
 /// loose 에 없는 서명이면 지금처럼 Bad(경보). loose 는 trusted 의 모든 계정을 갖고 있어야 한다(같은 계정은 trusted 가 앞부분)
 pub fn verify_two(team: &str, links: &[TLink], trusted: &BTreeMap<String, Chain>, loose: &BTreeMap<String, Chain>, pinned: Option<u64>) -> Result<Roster, RosterErr> {
+    let began = std::time::Instant::now();
+    let r = verify_links(team, links, trusted, loose, pinned);
+    crate::team_relay::trace_ev("verify-roster", &links.len().to_string(), began);
+    r
+}
+
+fn verify_links(team: &str, links: &[TLink], trusted: &BTreeMap<String, Chain>, loose: &BTreeMap<String, Chain>, pinned: Option<u64>) -> Result<Roster, RosterErr> {
     let mut r = Roster { team: team.into(), ..Default::default() };
     let mut invites: BTreeMap<String, (bool, bool)> = BTreeMap::new(); // 초대 열쇠 → (이미 썼나, 확인된 팀장이 냈나)
     for (i, l) in links.iter().enumerate() {

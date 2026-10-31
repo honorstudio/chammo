@@ -29,6 +29,16 @@ fn 허용_집합은_보여준_파일_지침서_starter() {
 }
 
 #[test]
+fn 윈도우_보여준_파일은_폰이_묻는_슬래시_모양도_허용() {
+    // 폰은 / 로 바꾼 경로(fwd)로 묻는다 — show 기록의 C:\… 만 허용하면 폰에서 연 그림·파일이 늘 403(공개 이슈 #15)
+    let v = allowed_files("{\"path\":\"C:\\\\Users\\\\Me\\\\Desktop\\\\a.png\"}\n", "[]", Path::new("/data"), "");
+    assert!(v.iter().any(|p| p == "C:\\Users\\Me\\Desktop\\a.png"), "{v:?}");
+    assert!(v.iter().any(|p| p == "C:/Users/Me/Desktop/a.png"), "{v:?}");
+    // 맥은 한 줄 그대로
+    assert_eq!(allowed_files("{\"path\":\"/Users/me/a.png\"}\n", "[]", Path::new("/data"), ""), vec!["/Users/me/a.png"]);
+}
+
+#[test]
 fn 윈도우_hq_starter_는_폰이_묻는_슬래시_모양으로() {
     // 폰은 env.hqDir(fwd) + '/docs/starter.md' 로 묻는다 — 허용 집합은 글자 그대로 비교라 윈도우 join(역슬래시)·섞인 HQ 로는 늘 403 이었다(2026-10-05)
     let v = allowed_files("", "[]", Path::new("/data"), "C:\\Users\\Me/.chammo/hq");

@@ -1,5 +1,6 @@
 //! 세션 자동 정리(domain/autoTidy)가 끄기 전에 보는 세션 폴더 git — 커밋 안 한 변경, 기본 가지(main)에 안 들어간 커밋.
 //! 둘 중 하나라도 있으면 그 세션은 정리 대상에서 빠진다. git 이 아닌 폴더는 둘 다 false(지킬 게 없다)
+//! 가지·짧은 해시·커밋 안 한 변경 수는 [앱] 줄의 '어디까지 했나'(domain/progressHint) — git 이 아니면 빈 글·0
 
 use serde::Serialize;
 use std::path::Path;
@@ -10,6 +11,9 @@ pub struct TidyGit {
     pub dir: String,
     pub dirty: bool,
     pub unmerged: bool,
+    pub branch: String,
+    pub sha: String,
+    pub changed: u32,
 }
 
 /// 기본 가지 — 로컬 main → master → origin/HEAD 가 가리키는 것. 못 찾으면 None(그럼 '안 들어간 커밋'을 못 잰다 → unmerged 로 본다)
@@ -29,9 +33,11 @@ pub fn check(dir: &Path) -> TidyGit {
     let d = dir.to_string_lossy().to_string();
     // 워크트리는 .git 이 파일이라 exists 로 본다 — 안쪽 하위 폴더도 git 저장소면 rev-parse 가 답한다
     if git(dir, &["rev-parse", "--is-inside-work-tree"]) != "true" {
-        return TidyGit { dir: d, dirty: false, unmerged: false };
+        return TidyGit { dir: d, dirty: false, unmerged: false, branch: String::new(), sha: String::new(), changed: 0 };
     }
-    let dirty = !git(dir, &["status", "--porcelain", "--untracked-files=normal"]).is_empty();
+    let porcelain = git(dir, &["status", "--porcelain", "--untracked-files=normal"]);
+    let changed = porcelain.lines().filter(|l| !l.trim().is_empty()).count() as u32;
+    let dirty = changed > 0;
     let head = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
     let unmerged = match base_branch(dir) {
         Some(b) if head == b || head == b.trim_start_matches("origin/") => false,
@@ -43,7 +49,8 @@ pub fn check(dir: &Path) -> TidyGit {
         }
         None => true,
     };
-    TidyGit { dir: d, dirty, unmerged }
+    let sha = git(dir, &["rev-parse", "--short", "HEAD"]);
+    TidyGit { dir: d, dirty, unmerged, branch: head, sha, changed }
 }
 
 #[tauri::command]
@@ -67,15 +74,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         // git 이 아닌 폴더 — 지킬 게 없다
-        assert_eq!(check(&root), TidyGit { dir: root.to_string_lossy().into(), dirty: false, unmerged: false });
+        assert_eq!(check(&root), TidyGit { dir: root.to_string_lossy().into(), dirty: false, unmerged: false, branch: String::new(), sha: String::new(), changed: 0 });
         sh(&root, &["init", "-q", "-b", "main"]);
         std::fs::write(root.join("a.txt"), "a").unwrap();
         sh(&root, &["add", "."]);
         sh(&root, &["commit", "-qm", "a"]);
         let c = check(&root);
         assert!(!c.dirty && !c.unmerged, "main 깨끗함: {c:?}");
+        assert_eq!((c.branch.as_str(), c.sha.len() >= 7, c.changed), ("main", true, 0), "가지@짧은 해시: {c:?}");
         std::fs::write(root.join("b.txt"), "b").unwrap();
-        assert!(check(&root).dirty, "새 파일 = 커밋 안 한 변경");
+        std::fs::write(root.join("c.txt"), "c").unwrap();
+        let c = check(&root);
+        assert!(c.dirty && c.changed == 2, "새 파일 둘 = 커밋 안 한 변경 2: {c:?}");
+        std::fs::remove_file(root.join("c.txt")).unwrap();
         sh(&root, &["checkout", "-qb", "feature/x"]);
         sh(&root, &["add", "."]);
         sh(&root, &["commit", "-qm", "b"]);

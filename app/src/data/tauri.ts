@@ -188,8 +188,8 @@ export const readTranscriptTails = (sessionIds: string[], tail?: number) =>
 /** 깨운 말이 꼬리 밖일 때 다시 읽는 길이 — 그림 읽기 몇 번이면 256KB 가 2분 치였다(10-28 디자인 담당). 말 안 건 참모 답 하나에 한 번만 */
 export const DEEP_TAIL = 8 * 1024 * 1024;
 
-/** 세션 폴더 git — 커밋 안 한 변경·main 에 안 들어간 커밋(세션 자동 정리, Rust tidy_git) */
-export const tidyGit = (dirs: string[]) => invoke<{ dir: string; dirty: boolean; unmerged: boolean }[]>('tidy_git', { dirs });
+/** 세션 폴더 git — 커밋 안 한 변경·main 에 안 들어간 커밋(세션 자동 정리), 가지·짧은 해시·변경 수([앱] 줄 어디까지, Rust tidy_git) */
+export const tidyGit = (dirs: string[]) => invoke<{ dir: string; dirty: boolean; unmerged: boolean; branch: string; sha: string; changed: number }[]>('tidy_git', { dirs });
 
 /** dev 아래 프로젝트들의 CLAUDE.md·starter 상태 */
 export const projectScan = (devRoot: string) => invoke<import('../domain/status').ProjectDoc[]>('project_scan', { devRoot });

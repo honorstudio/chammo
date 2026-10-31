@@ -9,6 +9,7 @@ import { readTranscriptBefore, sendStatus, sendTextToSession } from '../../data/
 import { chatStart } from '../space/useChatItems';
 import type { ChatItem } from '../../domain/chat';
 import { addOut, applyStatus, beforeTail, dueForCheck, findEarlier, markOut, newOut, readOutbox, settleOut, writeOutbox, type OutMsg, type Store } from '../../domain/mobileOutbox';
+import { tr } from '../../i18n';
 
 export const storage = (): Store | null => { try { return localStorage; } catch { return null; } };
 
@@ -28,7 +29,7 @@ const RESEND_MS = 3000;
 
 async function deliver(id: string, again = false): Promise<{ ok: boolean; error?: string }> {
   const m = list.find((x) => x.id === id);
-  if (!m) return { ok: false, error: '보낼 말이 없어요' };
+  if (!m) return { ok: false, error: tr('보낼 말이 없어요', 'Nothing to send') };
   try {
     await sendTextToSession(m.session, m.text, m.id);
     set(markOut(list, id, 'sent'));

@@ -263,9 +263,65 @@ fn 나중에_든_사람은_봉투가_없다가_봉투_더하기로_연다() {
     let nb = w.net("dB");
     let f = find(&nb, &r.id);
     let o = open_file(&Me { keys: &w.b, device: "dB" }, &w.people, "t1", &f).unwrap();
-    assert_eq!(share_keys(&nb, "t1", &[(&f, &o)], &w.people.recipients, &|_| vec![]), 1);
-    assert_eq!(share_keys(&nb, "t1", &[(&find(&nb, &r.id), &o)], &w.people.recipients, &|_| vec![]), 0, "이미 있는 기기는 다시 안 봉한다");
+    assert_eq!(share_keys(&nb, "t1", &[(&f, &o)], &w.people.recipients, &|_| vec![], &|_, _| false, 20).added, 1);
+    assert_eq!(share_keys(&nb, "t1", &[(&find(&nb, &r.id), &o)], &w.people.recipients, &|_| vec![], &|_, _| false, 20).added, 0, "이미 있는 기기는 다시 안 봉한다");
     assert_eq!(open_file(&cme, &w.people, "t1", &find(&nc, &r.id)).unwrap().meta.name, "a.txt");
+}
+
+/// 서버 keysOk 흉내 — 봉투 묶음에 받는 기기로 안 치는 기기(bad)가 하나라도 있으면 통째로 400
+struct Refuse<'a> {
+    net: &'a FakeNet,
+    bad: &'a str,
+    posts: RefCell<usize>,
+}
+impl Net for Refuse<'_> {
+    fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value), String> {
+        if method == "POST" && path.ends_with("/keys") {
+            *self.posts.borrow_mut() += 1;
+            if body.unwrap()["keys"].as_array().unwrap().iter().any(|k| k["d"] == self.bad) {
+                return Ok((400, json!({ "error": "bad_keys" })));
+            }
+        }
+        self.net.call(method, path, body)
+    }
+    fn put(&self, path: &str, b: &[u8]) -> Result<u16, String> {
+        self.net.put(path, b)
+    }
+    fn get(&self, path: &str) -> Result<(u16, Vec<u8>), String> {
+        self.net.get(path)
+    }
+}
+
+#[test]
+fn 봉투_묶음이_400_이면_기기_하나씩_올려_거절된_기기만_가린다() {
+    // 10-30 진단 — 나간 사람 기기(dX) 하나가 섞인 묶음이 통째로 400 이라 철수(dC)도 못 받고, 목록마다 같은 묶음을 다시 올렸다
+    let w = world();
+    let dir = tmp("refuse");
+    let a = write(&dir, "a.txt", b"one");
+    let b = write(&dir, "b.txt", b"two");
+    let ra = upload(&w.net("dA"), &Me { keys: &w.a, device: "dA" }, &w.people.recipients, "t1", "", "file", "", &a, "a.txt", &mut |_, _| {}).unwrap();
+    let rb = upload(&w.net("dA"), &Me { keys: &w.a, device: "dA" }, &w.people.recipients, "t1", "", "file", "", &b, "b.txt", &mut |_, _| {}).unwrap();
+    let mut want = w.people.recipients.clone();
+    want.push(rcp("dC", &w.c));
+    want.push(rcp("dX", &keys(9)));
+    let na = w.net("dA");
+    let me = Me { keys: &w.a, device: "dA" };
+    let (fa, fb) = (find(&na, &ra.id), find(&na, &rb.id));
+    let (oa, ob) = (open_file(&me, &w.people, "t1", &fa).unwrap(), open_file(&me, &w.people, "t1", &fb).unwrap());
+    let net = Refuse { net: &na, bad: "dX", posts: RefCell::new(0) };
+    let s = share_keys(&net, "t1", &[(&fa, &oa), (&fb, &ob)], &want, &|_| vec![], &|_, _| false, 20);
+    assert_eq!(s.added, 2, "철수 몫은 두 파일 다 {s:?}");
+    assert_eq!(s.bad_devices, vec![(String::new(), "dX".to_string())]);
+    assert_eq!(*net.posts.borrow(), 4, "a: 묶음 400 → dC·dX 하나씩, b: dX 는 이미 거절돼 dC 만 {s:?}");
+    assert!(!s.stopped);
+    // 거절·보낸 것을 skip 으로 넘기면 다음엔 안 올린다
+    let skip = |f: &RemoteFile, d: &str| d == "dX" || s.sent.iter().any(|(i, x)| *i == f.id && x == d);
+    assert!(!missing_any(&[(&fa, &oa), (&fb, &ob)], &want, &|_| vec![], &skip));
+    // 상한 — 한 번에 max_posts 번까지만, 남으면 stopped
+    let net2 = Refuse { net: &na, bad: "zz", posts: RefCell::new(0) };
+    want.push(rcp("dD", &keys(8)));
+    let s2 = share_keys(&net2, "t1", &[(&find(&na, &ra.id), &oa), (&find(&na, &rb.id), &ob)], &want, &|_| vec![], &|_, d| d == "dX", 1);
+    assert_eq!((*net2.posts.borrow(), s2.stopped), (1, true));
 }
 
 #[test]

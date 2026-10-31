@@ -277,6 +277,10 @@ pub fn my_number(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<Option<u
     let k = relay::device_keys(kc, &st)?;
     let acc = st.account.as_ref().map(|a| a.id.clone()).ok_or("로그인 전이야")?;
     let (code, v) = relay::call(http, &st.server, &k, Some(&st.device_id), "GET", "/v0/me/self", None)?;
+    // 서버가 이 기기를 지웠거나 끊었다 — 숫자를 영영 못 받으니 다시 로그인 문으로(그 화면이 2초마다 묻던 것도 같이 멈춘다)
+    if code == 401 && relay::from_server(&v) && relay::mark_if_gone(dir, http, &st, &k) {
+        return Err(relay::GONE.into());
+    }
     if code != 200 {
         return Err(relay::why(code, &v));
     }

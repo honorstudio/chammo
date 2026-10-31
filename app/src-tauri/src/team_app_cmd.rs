@@ -15,11 +15,15 @@ pub async fn team_cal_cached(window: tauri::WebviewWindow, team: String) -> Resu
     bg_job(move |d, kc, _| Ok(store::load(d, kc, &team, APP_CAL))).await
 }
 
-/// 따라잡기 — 본 판 뒤 기록만(처음은 통째). 나중에 든 사람 몫 열쇠 봉투는 뒤에서
+/// 따라잡기 — 본 판 뒤 기록만(처음은 통째). 나중에 든 사람 몫 열쇠 봉투는 뒤에서.
+/// 이 기기에 그릴 게 아무것도 없으면(처음 여는 것) 사람이 화면을 연 것으로 친다 — 배경 몫에 막혀 빈 화면에 '잠시 쉬래요'만 뜨지 않게(10-30 사용자 캡처)
 #[tauri::command]
 pub async fn team_cal(window: tauri::WebviewWindow, team: String) -> Result<Snap, String> {
     ui_only(&window)?;
-    let (s, share) = bg_job(move |d, kc, h| store::sync(d, kc, h, &team, APP_CAL)).await?;
+    let t = team.clone();
+    let first = bg_job(move |d, kc, _| Ok(store::load(d, kc, &t, APP_CAL).is_none())).await?;
+    let go = move |d: &std::path::Path, kc: &dyn crate::accounts_store::Store, h: &dyn crate::team_relay::Http| store::sync(d, kc, h, &team, APP_CAL);
+    let (s, share) = if first { human_job(go).await? } else { bg_job(go).await? };
     share.spawn();
     Ok(s)
 }

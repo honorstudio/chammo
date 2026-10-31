@@ -8,6 +8,7 @@ import { fileError } from '../../domain/phoneFile';
 import { clampIn, fitContain, longFit, maxZoom, needOriginal, realScale, zoomAt } from '../../domain/zoom';
 import { IconClose } from '../Icons';
 import { ShareButton } from './ShareButton';
+import { tr } from '../../i18n';
 
 type View = { s: number; x: number; y: number };
 type Pt = { x: number; y: number };
@@ -120,13 +121,13 @@ export function ImageViewer({ path, title, onClose }: { path: string; title: str
       <div className="m-iv-head">
         <b className="m-iv-title">{title}</b>
         <ShareButton path={path} cls="m-icon m-iv-x" />
-        <button type="button" className="m-icon m-iv-x" onClick={onClose} aria-label="닫기" title="닫기"><IconClose /></button>
+        <button type="button" className="m-icon m-iv-x" onClick={onClose} aria-label={tr('닫기', 'Close')} title={tr('닫기', 'Close')}><IconClose /></button>
       </div>
       <div ref={stage} data-zoom className="m-iv-stage" onTouchStart={start} onTouchMove={move} onTouchEnd={end} onTouchCancel={end}>
         {img && fit && (
           <img src={img.url} alt={title} draggable={false} style={{ width: fit.w, height: fit.h, transform: `translate(${v.x}px, ${v.y + drop}px) scale(${v.s})` }} />
         )}
-        {!img && !err && <div className="m-iv-wait" aria-label="그림 받는 중"><span className="m-live-dots" aria-hidden><i /><i /><i /></span></div>}
+        {!img && !err && <div className="m-iv-wait" aria-label={tr('그림 받는 중', 'Loading image')}><span className="m-live-dots" aria-hidden><i /><i /><i /></span></div>}
         {err && <p className={err.gone ? 'm-muted' : 'm-error'}>{err.text}</p>}
       </div>
     </div>

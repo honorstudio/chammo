@@ -6,6 +6,7 @@ import { autoResubscribe, b64urlBytes, pushError, pushSupport, type PushSupport 
 import { isStandalone } from './standalone';
 import { readLink } from '../../phone-web/link';
 import { relayPushKey, relayPushSubscribe, relayPushUnsubscribe } from '../../phone-web/relayPush';
+import { tr } from '../../i18n';
 
 // 중계 길 폰은 중계 VAPID 열쇠로 구독하고 중계에 맡긴다(본문 없는 '새 메시지', ADR 0013) — 컴퓨터 열쇠와 한 워커에 같이 못 건다
 const relay = readLink();
@@ -71,7 +72,7 @@ export function usePush() {
     setBusy(true);
     setError(null);
     try {
-      if ((await Notification.requestPermission()) !== 'granted') { setCan(support()); throw new Error('알림을 허락해야 받을 수 있어요'); }
+      if ((await Notification.requestPermission()) !== 'granted') { setCan(support()); throw new Error(tr('알림을 허락해야 받을 수 있어요', 'Allow notifications to receive them')); }
       await subscribeNow(await navigator.serviceWorker.ready);
       setUserOff(false);
       setOn(true);

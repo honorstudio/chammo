@@ -121,6 +121,8 @@ pub struct Loop {
     st: TeamState,
     discover: Option<Discover>,
     last_discover: Option<Instant>,
+    /// 팀 바뀜 알림을 처음 받은 때 — CHANGE_BATCH 뒤 방 찾기를 한 번
+    changed_at: Option<Instant>,
     #[cfg(test)]
     opener: Option<Opener>,
     /// 멤버마다 1분 안에 넘긴 시각 — 남이 말을 쏟아부어 내 참모 입력칸을 덮지 못하게(peer PER_MIN 과 같은 상한)
@@ -146,7 +148,7 @@ const SELF_RENUDGE: Duration = Duration::from_secs(60);
 impl Loop {
     pub fn new(dir: PathBuf, keys: DeviceKeys, sink: Sink, rx: Receiver<Cmd>) -> Loop {
         let st = team_relay::load_state(&dir);
-        Loop { dir, keys, sink, rx, tick: Duration::from_millis(200), conns: HashMap::new(), retry: HashMap::new(), pending: HashMap::new(), st, discover: None, last_discover: None, rate: HashMap::new(), held: inbox::RateHold::default(), rate_window: 60_000, revoked: false, reads: Default::default(), self_was_up: false, self_nudged: None, dropped: HashMap::new(), #[cfg(test)] opener: None }
+        Loop { dir, keys, sink, rx, tick: Duration::from_millis(200), conns: HashMap::new(), retry: HashMap::new(), pending: HashMap::new(), st, discover: None, last_discover: None, changed_at: None, rate: HashMap::new(), held: inbox::RateHold::default(), rate_window: 60_000, revoked: false, reads: Default::default(), self_was_up: false, self_nudged: None, dropped: HashMap::new(), #[cfg(test)] opener: None }
     }
 
     #[cfg(test)]
@@ -173,6 +175,11 @@ impl Loop {
         // 끊긴 기기는 서버가 401 만 준다 — 1분마다 두드리지 않는다
         let self_up = self.st.rooms.iter().any(|r| r.kind == "self" && self.conns.contains_key(&r.id));
         SELF_LIVE.store(self_up && !self.revoked, std::sync::atomic::Ordering::SeqCst);
+        if self.changed_at.is_some_and(|t| t.elapsed() >= CHANGE_BATCH) {
+            self.changed_at = None;
+            NAMES_NOW.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.last_discover = None;
+        }
         if self.revoked || self.last_discover.is_some_and(|t| t.elapsed() < discover_every(self_up)) {
             return;
         }
@@ -385,6 +392,8 @@ impl Loop {
             // 허용·거절·빼기 — 사슬이 바뀌었을 수 있어 방 찾기(ensure·건네주기)를 바로 돌린다
             "device_resolved" => {
                 crate::device_cards::nudge();
+                // 내 사슬이 바뀌었을 수 있다 — 기억한 팀 머리로 옛 사슬을 쓰지 않게
+                crate::e2e_state::forget_heads("");
                 self.last_discover = None;
             }
             // 팀 보관함 바뀜(chammo-relay ADR 0009) — 판 번호만, 화면이 목록을 다시 받는다
@@ -393,8 +402,8 @@ impl Loop {
             "app" => crate::team_app_store::push(&self.dir, v),
             // 팀이 바뀜(합류·나감·새 방·방 바뀜, chammo-relay team-rooms) — 내용은 안 믿고 방 목록·사람을 바로 다시 받는다(qa-invite 원인 2·첫 DM 60초)
             "team_changed" => {
-                NAMES_NOW.store(true, std::sync::atomic::Ordering::SeqCst);
-                self.last_discover = None;
+                CHANGED.lock().unwrap_or_else(|e| e.into_inner()).insert(v["team"].as_str().unwrap_or("").to_string());
+                self.changed_at.get_or_insert_with(Instant::now);
                 // 사람이 들고 났다 — 보관함 받는 사람·서명 기기를 다음 목록에서 새로
                 crate::team_locker_app::forget_people(v["team"].as_str().unwrap_or(""));
             }
@@ -622,25 +631,31 @@ pub fn ensure(dir: &Path) {
         // 이름표에 쓸 기기·멤버 이름은 5분마다 — 새 방이 생겼으면 바로(새 사람의 첫 말이 '?' 이름으로 기록·알림되던 것, 10-23 실측)
         let st = team_relay::load_state(&dd);
         let pushed = NAMES_NOW.swap(false, std::sync::atomic::Ordering::SeqCst);
-        if pushed || names_due(&before, &st.rooms) {
-            names_at = None;
-        }
+        let changed: std::collections::BTreeSet<String> = std::mem::take(&mut *CHANGED.lock().unwrap_or_else(|e| e.into_inner()));
+        let new_rooms = new_room_teams(&before, &st.rooms);
         // 기기 만든 때를 아직 모르면(로그인 직후 받기 실패) 5분을 기다리지 않고 다시 — 그동안 받은 말은 안 넘긴다
         let age_unknown = st.account.is_some() && st.device_created_at == 0;
-        if age_unknown || names_at.is_none_or(|t| t.elapsed() > Duration::from_secs(300)) {
+        let due = age_unknown || names_at.is_none_or(|t| t.elapsed() > Duration::from_secs(300));
+        if due {
             names_at = Some(Instant::now());
-            for t in &st.teams {
-                let _ = team_relay::refresh_members(&dd, &kc, &team_relay::Curl, &t.id);
+        }
+        let teams: Vec<String> = st.teams.iter().map(|t| t.id.clone()).collect();
+        let (refresh, me) = refresh_plan(&teams, &changed, &new_rooms, due);
+        let me = me && st.account.is_some();
+        // 내 계정 먼저 — 모르던 팀이 생겨야 그 팀 명부를 받는다
+        if me {
+            let _ = crate::team_account::refresh_me(&dd, &kc, &team_relay::Curl);
+        }
+        for t in &refresh {
+            let _ = team_relay::refresh_members(&dd, &kc, &team_relay::Curl, t);
+        }
+        if me {
+            // 종단 암호 준비(chammo-relay ADR 0007) — 받는 열쇠 올리기·사슬 시작. 실패해도 평문 전환기라 메신저는 돈다
+            if let Err(e) = crate::e2e_flow::ensure(&dd, &kc, &team_relay::Curl) {
+                log(&format!("종단 암호 준비 실패: {e}"));
             }
-            if st.account.is_some() {
-                let _ = crate::team_account::refresh_me(&dd, &kc, &team_relay::Curl);
-                // 종단 암호 준비(chammo-relay ADR 0007) — 받는 열쇠 올리기·사슬 시작. 실패해도 평문 전환기라 메신저는 돈다
-                if let Err(e) = crate::e2e_flow::ensure(&dd, &kc, &team_relay::Curl) {
-                    log(&format!("종단 암호 준비 실패: {e}"));
-                }
-                // 숫자로 막 들인 내 기기가 있으면 지난 말 열쇠를 저절로 건넨다(relay ADR 0007 R10, 뒤에서)
-                crate::e2e_handover::kick(&dd);
-            }
+            // 숫자로 막 들인 내 기기가 있으면 지난 말 열쇠를 저절로 건넨다(relay ADR 0007 R10, 뒤에서)
+            crate::e2e_handover::kick(&dd);
         }
         if pushed {
             crate::team_alert::poke_state();
@@ -651,9 +666,30 @@ pub fn ensure(dir: &Path) {
     *g = Some(tx);
 }
 
-/// 방 목록에 새 방이 생겼나 — 그러면 멤버·기기 이름을 바로 다시 받는다
-pub fn names_due(before: &[String], now: &[team_relay::Room]) -> bool {
-    now.iter().any(|r| !before.contains(&r.id))
+/// 무엇을 다시 받나 — (명부를 다시 받을 팀, 내 계정·기기·사슬도). 5분 주기(due) = 모든 팀 + 내 계정.
+/// 팀 바뀜 알림(changed)·새 방이 생긴 팀(new_rooms)만이면 그 팀 명부만 — 10-31 실측: 바뀜 하나에 팀의 모든 기기가 7요청씩.
+/// 팀을 안 알려 준 옛 알림("")이면 모든 팀 명부(내 계정은 주기 때). 이 기기가 아직 모르는 팀(내 다른 기기에서 들어감)이면
+/// 내 계정을 먼저 다시 받아 팀을 만들고 그 팀 명부까지(10-31 리뷰: 5분 주기까지 팀이 안 보였다)
+pub(crate) fn refresh_plan(teams: &[String], changed: &std::collections::BTreeSet<String>, new_rooms: &std::collections::BTreeSet<String>, due: bool) -> (Vec<String>, bool) {
+    if due || changed.contains("") {
+        return (teams.to_vec(), due);
+    }
+    let mut out: Vec<String> = teams.iter().filter(|t| changed.contains(*t) || new_rooms.contains(*t)).cloned().collect();
+    let unknown: Vec<String> = changed.iter().chain(new_rooms).filter(|t| !t.is_empty() && !teams.contains(t)).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    let me = !unknown.is_empty();
+    out.extend(unknown);
+    (out, me)
+}
+
+/// 팀 바뀜 알림을 모으는 시간 — 권한·초대·이름이 몰려오면 한 번에(10-31)
+pub(crate) const CHANGE_BATCH: Duration = Duration::from_secs(2);
+
+/// 받은 팀 바뀜 알림의 팀 — 다음 방 찾기가 그 팀 명부만 다시 받는다
+static CHANGED: std::sync::Mutex<std::collections::BTreeSet<String>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// 방 목록에 새로 생긴 방의 팀 — 그 팀 멤버·기기 이름을 바로 다시 받는다(새 사람의 첫 말이 '?' 이름으로 기록·알림되던 것, 10-23)
+pub fn new_room_teams(before: &[String], now: &[team_relay::Room]) -> std::collections::BTreeSet<String> {
+    now.iter().filter(|r| !before.contains(&r.id) && !r.team.is_empty()).map(|r| r.team.clone()).collect()
 }
 
 /// 선택지·권한 창에 멈춘 참모를 기다리는 최대 시간 — 넘으면 기록에만(뒤 말도 이 줄 뒤에 선다)

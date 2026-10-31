@@ -34,8 +34,8 @@ describe('폰 머리 줄 — B 더보기', () => {
 
 describe('더보기 시트', () => {
   it('세션 수·예약·계정·폰 알림 토글', () => {
-    for (const k of ['세션', '예약', '계정']) expect(more).toContain(`row('${k}'`);
-    expect(more).toContain('<b>폰 알림</b>');
+    for (const k of ['세션', '예약', '계정']) expect(more).toContain(`row(tr('${k}'`);
+    expect(more).toContain("<b>{tr('폰 알림', ");
     expect(more).toMatch(/role="switch" aria-checked=\{push\.on\}/);
   });
   it('공용 시트(kit BottomSheet)로', () => expect(more).toMatch(/from '\.\/kit'/));

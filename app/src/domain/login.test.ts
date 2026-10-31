@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionState } from './session';
 import { TERMS_GRACE_MS } from './accountAuto';
-import { loggedOutSeen, emptyLogin, loginStep, needText, readKeep, readProbe, routineSessions, routineStalls, stalledOf, termsCards, termsKey, termsText, type LoginInput } from './login';
+import { loggedOutSeen, emptyLogin, loginStep, missingText, needText, readKeep, readProbe, routineSessions, routineStalls, stalledOf, termsCards, termsKey, termsText, type LoginInput } from './login';
 
 const T0 = Date.parse('2026-10-06T00:30:22Z');
 const s = (session: string, ts: number, kind: 'background' | 'interactive' = 'background') => ({ session, name: session, ts, kind });
@@ -186,6 +186,17 @@ describe('readProbe — Rust login_probe 답', () => {
   it('약관 다시 시도 시각(termsRetryAt)은 숫자일 때만', () => {
     expect(readProbe({ loggedIn: true, credAt: 1, termsRetryAt: 7 })).toEqual({ loggedIn: true, credAt: 1, termsRetryAt: 7 });
     expect(readProbe({ loggedIn: true, credAt: 1, termsRetryAt: null })).toEqual({ loggedIn: true, credAt: 1 });
+  });  // 2026-10-31 윈도우 사용자 PC: npm 바로가기 대상(bin\claude.exe)이 사라져 auth status 가 cmd 오류로 끝났는데 로그인 카드가 떴다
+  it('claude 없음(claudeMissing)은 true 일 때만 싣고, 그땐 로그인은 모름', () => {
+    expect(readProbe({ loggedIn: null, credAt: null, claudeMissing: true })).toEqual({ loggedIn: null, credAt: null, claudeMissing: true });
+    expect(readProbe({ loggedIn: true, credAt: 1, claudeMissing: false })).toEqual({ loggedIn: true, credAt: 1 });
+    expect(readProbe({ loggedIn: false, credAt: 1, claudeMissing: true })).toEqual({ loggedIn: null, credAt: 1, claudeMissing: true });
+  });
+  it('claude 없음 카드 글 — 제목·설명이 로그인 카드와 다르다', () => {
+    const t = missingText();
+    expect(t.title).toBeTruthy();
+    expect(t.where).toBeTruthy();
+    expect(t.title).not.toBe(needText({ since: 0, sessions: [], machine: true }).title);
   });
 });
 

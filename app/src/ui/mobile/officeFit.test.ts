@@ -70,7 +70,7 @@ describe('사무실 한 화면(B)', () => {
   });
   it('참모 줄은 얼굴만, 지금 말하는 참모만 이름(이름은 aria-label·title 에)', () => {
     expect(src).toMatch(/\{d\.id === current && <span>\{d\.label\}<\/span>\}/);
-    expect(src).toMatch(/aria-label=\{`\$\{d\.label\}에게 말하기`\} title=\{d\.label\}/);
+    expect(src).toMatch(/aria-label=\{tr\(`\$\{d\.label\}에게 말하기`, `Talk to \$\{d\.label\}`\)\} title=\{d\.label\}/);
   });
   it("스킨 '장착'·되돌리기 줄은 시트 바닥에 붙는다(G1 — 뽑기·스킨이 열리면 채팅창이 숨어 작은 폰도 칸이 넉넉)", () => {
     expect(rule('.m-g-foot')).toMatch(/position:\s*sticky/);

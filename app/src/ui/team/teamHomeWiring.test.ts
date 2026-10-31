@@ -8,6 +8,7 @@ import teamMode from './useTeamMode.tsx?raw';
 import phone from '../mobile/PhoneTeam.tsx?raw';
 import web from '../../data/web.ts?raw';
 import api from '../../data/teamHomeApi.ts?raw';
+import teamCss from './team.css?raw';
 
 describe('팀 홈 판 배선', () => {
   it('꾸미기 아이콘은 팀장에게만, 판이 없으면 팀장만 템플릿 셋(팀원은 글 목록 그대로)', () => {
@@ -29,6 +30,17 @@ describe('팀 홈 판 배선', () => {
   it('끌기는 손잡이에서만(포인터 + 화살표 키), 꾸미는 동안 블록 안은 안 눌린다', () => {
     expect(board).toContain('onPointerDown={(e) => down(e, b.id)}');
     expect(board).toContain('onKeyDown={(e) => key(e, b.id, i)}');
+    // 노션식(10-31 사용자 '노션식 ㄱ') — 끄는 동안 판은 그대로(블록을 옮겨 그리지 않음), 잡은 블록 흐리게, 놓일 자리는 굵은 줄, 놓는 순간 옮긴다
+    expect(board).toContain('...dropLine(d.rects, d.from, gx, gy, d.gap)');
+    expect(board).toContain("${live?.id === b.id ? 'ghost' : ''}");
+    expect(board).not.toContain('translate(');
+    expect(board).toContain('if (d.live && d.line) blocks((bs) => moveBlock(bs, d.id, d.to));');
+  });
+  it('판 칸은 스크롤된다 — 같은 칸에 붙은 lk-doc-body(overflow hidden)가 앱 CSS 순서로 뒤에 와도, 끌기 중 가장자리면 저절로', () => {
+    // 하네스는 locker.css 를 먼저 불러 스크롤됐고 앱 묶음은 lk-doc-body 가 뒤라 숨김이 이겼다(10-30 사용자 '꾸미는 중 넘치면 스크롤 안 됨')
+    expect(teamCss).toContain('.lk-doc-body.tmh { overflow-y: auto; }');
+    expect(teamCss).toContain('.tmh > .hb { flex-shrink: 0; }');
+    expect(board).toContain('edgeScroll(');
   });
   it('데스크톱은 TeamHomeDesktop(모드 칸) — 폰은 판 길을 맥 폰 서버로, 모드 칸 없이', () => {
     expect(teamMode).toContain('home={<TeamHomeDesktop ');
@@ -48,5 +60,12 @@ describe('팀 홈 판 배선', () => {
     expect(modeBlock).toContain("st === 'heavy'");
     expect(modeBlock).toContain("if (st !== 'start' || asked.current === mode) return;");
     expect(modeBlock).toContain("place: 'dash', dash: `team:${teamId}`");
+  });
+});
+
+describe('팀 홈 글 먼저 그리기(10-31)', () => {
+  it('받는 중인 글(loading)이 있으면 다음 3초 폴링은 판 번호와 상관없이 새로 읽는다', () => {
+    expect(home).toMatch(/partial\.current = !!n\.loading/);
+    expect(home).toMatch(/load\(partial\.current \? null : rev\.current\)/);
   });
 });

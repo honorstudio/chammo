@@ -54,6 +54,17 @@ impl Http for FakeRelay {
             f(&path);
         }
         self.seen.borrow_mut().push((method.into(), path.clone(), headers.to_vec(), String::from_utf8_lossy(body).into()));
+        // Cloudflare 가 주는 서명 없는 길(/cdn-cgi/trace — 시계 확인) — 준비한 답이 없으면 로컬 중계처럼 404
+        if path.starts_with("/cdn-cgi/") {
+            let mut a = self.answers.borrow_mut();
+            return Ok(match a.iter().position(|(p, _, _)| path.ends_with(p.as_str())) {
+                Some(i) => {
+                    let (_, st, b) = a.remove(i);
+                    (st, b)
+                }
+                None => (404, String::new()),
+            });
+        }
         if !self.verify(method, &path, headers, body) {
             return Ok((401, r#"{"error":"unauthorized"}"#.into()));
         }

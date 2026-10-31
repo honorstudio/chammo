@@ -83,6 +83,13 @@ fn e2e_ok(s: &str) -> bool {
 
 /// 사슬 전체를 처음부터 검증한다 — 한 고리라도 틀리면 통째로 거절(부분 신뢰 없음)
 pub fn verify(account: &str, links: &[Link]) -> Result<Chain, ChainErr> {
+    let began = std::time::Instant::now();
+    let r = verify_links(account, links);
+    crate::team_relay::trace_ev("verify-chain", &links.len().to_string(), began);
+    r
+}
+
+fn verify_links(account: &str, links: &[Link]) -> Result<Chain, ChainErr> {
     let mut c = Chain { account: account.into(), ..Default::default() };
     for (i, l) in links.iter().enumerate() {
         let n = i as u64;

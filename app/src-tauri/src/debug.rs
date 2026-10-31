@@ -13,8 +13,20 @@ pub fn eval_from_env<R: Runtime>(app: &tauri::AppHandle<R>) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(12));
         loop {
-            if let (Ok(js), Some(w)) = (std::fs::read_to_string(&path), app.get_webview_window("main")) {
-                let _ = w.eval(js);
+            // perf-bench — 창이 가려져도 웹뷰를 '보이는 중'으로(가림 감지 끄기). 가려지면 타이머가 16ms → 1초 단위로 묶여 실측이 부푼다(10-31)
+            if std::env::var("CHAMMO_PERF_VISIBLE").is_ok() {
+                for (_, w) in app.webview_windows() {
+                    keep_visible(&w);
+                }
+            }
+            if let Ok(js) = std::fs::read_to_string(&path) {
+                // 메인 창 + (CHAMMO_DEBUG_ALL_WINDOWS 면) 모든 창 — 팀 창·따로 창 실측(perf-bench). JS 가 window.__TAURI_INTERNALS__.metadata 로 창을 가린다
+                let all = std::env::var("CHAMMO_DEBUG_ALL_WINDOWS").is_ok();
+                for (label, w) in app.webview_windows() {
+                    if all || label == "main" {
+                        let _ = w.eval(js.clone());
+                    }
+                }
             }
             if std::env::var("HONOR_ORCH_DEBUG_REPEAT").is_err() {
                 break;
@@ -22,6 +34,44 @@ pub fn eval_from_env<R: Runtime>(app: &tauri::AppHandle<R>) {
             std::thread::sleep(std::time::Duration::from_secs(3));
         }
     });
+}
+
+/// perf-bench 메인 스레드 맥박 — 아무것도 안 하는 동기 명령. 화면이 자주 불러 답이 늦게 오면 그동안 메인 스레드가 막힌 것
+#[tauri::command]
+pub fn perf_ping() -> u8 {
+    0
+}
+
+/// 웹뷰 가림 감지 끄기(WebKit 사설 API — 디버그 빌드의 실측에서만 부른다). 없으면 그냥 지나간다
+#[cfg(target_os = "macos")]
+fn keep_visible<R: Runtime>(w: &tauri::WebviewWindow<R>) {
+    let _ = w.with_webview(|wv| unsafe {
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+        let v = wv.inner() as *mut AnyObject;
+        if v.is_null() {
+            return;
+        }
+        let sel = objc2::sel!(_setWindowOcclusionDetectionEnabled:);
+        let ok: bool = msg_send![v, respondsToSelector: sel];
+        if ok {
+            let _: () = msg_send![v, _setWindowOcclusionDetectionEnabled: false];
+        }
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keep_visible<R: Runtime>(_: &tauri::WebviewWindow<R>) {}
+
+/// 팀 성능 예산 넘침 알림(메모리만 — team_relay::take_alerts) — 앱 화면이 1분마다 가져가 참모 입력칸에 [앱] 한 줄로. 릴리스에서도 돈다.
+/// 개인판(데이터 폴더 .honor-orchestrator)에서만 넘긴다 — 알림 줄이 개발자 스킬(perf-budget)을 시켜서 공개판 사용자 참모에겐 버린다(0.4.6 2차 검증)
+#[tauri::command]
+pub fn perf_alerts() -> Vec<serde_json::Value> {
+    alerts_for(&crate::config::data_dir(), crate::team_relay::take_alerts())
+}
+
+fn alerts_for(data: &std::path::Path, list: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    if crate::hq::personal_data(data) { list } else { Vec::new() }
 }
 
 #[tauri::command]
@@ -144,6 +194,19 @@ mod pick_log_tests {
 }
 
 #[cfg(test)]
+mod perf_alert_tests {
+    use super::alerts_for;
+    #[test]
+    fn 성능_알림은_개인판_데이터_폴더에서만_넘긴다() {
+        let a = vec![serde_json::json!({"kind": "bg-cap"})];
+        assert_eq!(alerts_for(std::path::Path::new("/h/.honor-orchestrator"), a.clone()).len(), 1);
+        // 공개판 사용자 참모에겐 없는 개발자 스킬을 시키는 줄이라 버린다(0.4.6 2차 검증)
+        assert!(alerts_for(std::path::Path::new("/h/.chammo"), a.clone()).is_empty());
+        assert!(alerts_for(std::path::Path::new("C:\\chammo-qa\\data"), a).is_empty());
+    }
+}
+
+#[cfg(test)]
 mod aside_tests {
     use super::aside_spot;
     #[test]
@@ -169,3 +232,7 @@ mod aside_tests {
         assert!(x > 2940 && at.is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "perf_seed_live_tests.rs"]
+mod perf_seed;

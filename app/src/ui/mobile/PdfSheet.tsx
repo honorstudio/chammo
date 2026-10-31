@@ -5,6 +5,7 @@ import { fileBytes } from '../../data/web';
 import type { ShowAt } from '../../domain/showAt';
 import { ShareButton } from './ShareButton';
 import { BottomSheet } from './kit';
+import { tr } from '../../i18n';
 
 const PdfView = lazy(() => import('../reader/PdfView'));
 const MIN = 100, MAX = 400;
@@ -75,7 +76,7 @@ export default function PdfSheet({ path, title, at, onClose }: { path: string; t
     <BottomSheet kind="full" className="m-pdf" label={title} title={title} titleClass="m-view-title" onClose={onClose}
       actions={<>{page.of > 0 && <span className="m-pdf-no">{page.n} / {page.of}</span>}<ShareButton path={path} /></>}>
       <div className="m-pdf-body" ref={wrap}>
-        <Suspense fallback={<p className="m-muted m-pad">여는 중…</p>}>
+        <Suspense fallback={<p className="m-muted m-pad">{tr('여는 중…', 'Opening…')}</p>}>
           <PdfView path={path} zoom={zoom} at={at} atKey={path} load={fileBytes} />
         </Suspense>
       </div>

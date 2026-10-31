@@ -72,9 +72,13 @@ pub fn card_message(ask: &Value, who: &str) -> (String, Option<Value>) {
 
 // ── 회신 가림·나눔 ──────────────────────────────────────────
 
-const KEYWORDS: [&str; 18] = [
-    "password", "passwd", "passphrase", "pwd", "secret", "token", "apikey", "api_key", "api-key", "access_key", "private_key", "client_secret", "비밀번호", "비번", "암호", "토큰", "시크릿", "키값",
+// pw — 'ID : x / PW : 값' 꼴(10-31 지난 대화 색인 실측에서 샜다). 같은 사례 묶음 hq-tests/redact.fixture.json 을 scripts/recall 도 읽는다
+// 패스워드 — '패스워드: 값'·표 칸이 그대로 남았다(10-31 리뷰)
+const KEYWORDS: [&str; 20] = [
+    "password", "passwd", "passphrase", "pwd", "secret", "token", "apikey", "api_key", "api-key", "access_key", "private_key", "client_secret", "비밀번호", "비번", "암호", "토큰", "시크릿", "키값", "pw", "패스워드",
 ];
+/// 열쇠 이름·값을 감싸는 따옴표 — 마크다운 답의 백틱 값(`- 비밀번호: \`값\``)·굵게(`**비밀번호:**`)도
+const QUOTES: [char; 4] = ['"', '\'', '`', '*'];
 const PREFIXES: [&str; 16] = ["sk-", "sk_live_", "sk_test_", "rk_live_", "pk_live_", "ghp_", "gho_", "ghs_", "github_pat_", "xoxb-", "xoxp-", "xapp-", "glpat-", "AKIA", "AIza", "npm_"];
 
 /// 키·토큰처럼 생긴 낱말인가
@@ -113,12 +117,15 @@ fn word_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | '+' | '=' | ':' | '~' | '%' | '&' | '?' | '@' | '#' | '\\')
 }
 
-/// 바로 앞이 "비밀번호:"·"token =" 처럼 열쇠 이름 + 구분자인가(구분자 없는 "토큰은 …" 은 말이라 안 가린다)
+/// 바로 앞이 "비밀번호:"·"token =" 처럼 열쇠 이름 + 구분자인가(구분자 없는 "토큰은 …" 은 말이라 안 가린다).
+/// 마크다운 표 칸 "| 비밀번호 |" 도 — 열쇠 이름이 양쪽 | 사이에 혼자 있을 때만
 fn ends_with_keyword(before: &str) -> bool {
-    let quotes = ['"', '\''];
-    let b = before.trim_end().trim_end_matches(quotes).trim_end(); // DB_PASSWORD="…", {"password": "…"}
+    let b = before.trim_end().trim_end_matches(QUOTES).trim_end(); // DB_PASSWORD="…", {"password": "…"}, **비밀번호:** `…`
+    if let Some(cell) = b.strip_suffix('|') {
+        return cell.rsplit_once('|').is_some_and(|(_, k)| secret_key(&k.trim().trim_matches(QUOTES).to_lowercase()));
+    }
     let Some(b) = b.strip_suffix([':', '=', '：']) else { return false };
-    secret_key(&b.trim_end().trim_end_matches(quotes).to_lowercase())
+    secret_key(&b.trim_end().trim_end_matches(QUOTES).to_lowercase())
 }
 
 /// 값이 비밀일 열쇠 이름(소문자) — …password·…token·…_key·…dsn 등
@@ -243,7 +250,7 @@ fn redact_line(line: &str, data_dir: &str, home: &str) -> String {
         out.push_str(&w);
         false
     };
-    let ends = |c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | '}' | ']' | ')');
+    let ends = |c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '`' | ',' | '}' | ']' | ')');
     let mut swallow = false;
     for c in line.chars() {
         if swallow {

@@ -36,7 +36,7 @@ describe('부팅 폭주 — 화면이 판단에 이어져 있다', () => {
     expect(grid).toMatch(/HOLD_MAX/);
   });
   it('App: 목록 실패는 listErrorText 로(시간 초과 한 번은 조용히), 바쁘면 목록을 10초에 한 번', () => {
-    expect(app).toMatch(/listErrorText\(String\(e\), listFails\.current, busyNow\(\)\)/);
+    expect(app).toMatch(/listErrorText\(String\(e\), listFails\.current, busyNow\(\), missingRef\.current\)/);
     expect(app).toMatch(/busyNow\(\) !== 'ok' && Date\.now\(\) - polledAt < BUSY_POLL/);
   });
   it('부하 주기가 바쁨을 넣고, 참모 다시 켜기는 바쁘면 늦춘다', () => {

@@ -448,34 +448,74 @@ pub fn download(net: &dyn Net, team: &str, f: &RemoteFile, o: &Opened, dir: &Pat
     Ok(at)
 }
 
-/// 봉투 더하기 — 내가 연 파일 중 받는 목록(want)에 있는데 서버에 봉투가 없는 기기 몫을 봉해 올린다. 더한 봉투 수
-/// 이 파일에 아직 봉투가 없는 받을 기기 — 팀 보관함은 want_team, 대화 파일은 그 방 사람(want_room)
-fn missing(f: &RemoteFile, want_team: &[Recipient], want_room: &dyn Fn(&str) -> Vec<Recipient>) -> Vec<Recipient> {
+/// 봉투 더하기 — 내가 연 파일 중 받는 목록(want)에 있는데 서버에 봉투가 없는 기기 몫을 봉해 올린다
+/// 이 파일에 아직 봉투가 없는 받을 기기 — 팀 보관함은 want_team, 대화 파일은 그 방 사람(want_room). skip(파일, 기기) = 이미 올렸거나 서버가 거절한 것
+fn missing(f: &RemoteFile, want_team: &[Recipient], want_room: &dyn Fn(&str) -> Vec<Recipient>, skip: &dyn Fn(&RemoteFile, &str) -> bool) -> Vec<Recipient> {
     let room = f.room.as_deref().unwrap_or("");
     let want = if room.is_empty() { want_team.to_vec() } else { want_room(room) };
     let have: BTreeSet<&str> = f.have.iter().map(String::as_str).collect();
-    want.into_iter().filter(|r| !have.contains(r.device.as_str())).collect()
+    want.into_iter().filter(|r| !have.contains(r.device.as_str()) && !skip(f, &r.device)).collect()
 }
 
 /// 더할 봉투가 하나라도 있나 — 중계를 안 부르고 본다(받는 사람을 새로 받을지 정할 때)
-pub fn missing_any(opened: &[(&RemoteFile, &Opened)], want_team: &[Recipient], want_room: &dyn Fn(&str) -> Vec<Recipient>) -> bool {
-    opened.iter().any(|(f, _)| !missing(f, want_team, want_room).is_empty())
+pub fn missing_any(opened: &[(&RemoteFile, &Opened)], want_team: &[Recipient], want_room: &dyn Fn(&str) -> Vec<Recipient>, skip: &dyn Fn(&RemoteFile, &str) -> bool) -> bool {
+    opened.iter().any(|(f, _)| !missing(f, want_team, want_room, skip).is_empty())
 }
 
-pub fn share_keys(net: &dyn Net, team: &str, opened: &[(&RemoteFile, &Opened)], want_team: &[Recipient], want_room: &dyn Fn(&str) -> Vec<Recipient>) -> usize {
-    let mut n = 0;
+/// 봉투 더하기 결과 — 서버는 봉투 묶음에 받는 기기로 안 치는 기기(나간 사람·끊긴 기기·폰)가 하나라도 있으면 통째로 400 이라,
+/// 여럿 묶음이 400 이면 기기 하나씩 다시 올려 거절된 기기를 가린다(10-30 진단: 거절된 묶음을 목록마다 다시 올려 10분 154번)
+#[derive(Debug, Default)]
+pub struct Shared {
+    pub added: usize,
+    /// 서버가 받은 (파일, 기기)
+    pub sent: Vec<(String, String)>,
+    /// 서버가 받는 기기로 안 친 (방, 기기) — 400 bad_keys 를 혼자 받았다
+    pub bad_devices: Vec<(String, String)>,
+    /// 그 파일엔 못 더한 (파일, 기기) — 없거나 못 보는 파일(403·404 등)
+    pub bad_files: Vec<(String, String)>,
+    /// 쉬라는 답(429)·망 실패로 멈췄다 — 기억하지 않고 다음에 다시
+    pub stopped: bool,
+}
+
+pub fn share_keys(net: &dyn Net, team: &str, opened: &[(&RemoteFile, &Opened)], want_team: &[Recipient], want_room: &dyn Fn(&str) -> Vec<Recipient>, skip: &dyn Fn(&RemoteFile, &str) -> bool, max_posts: usize) -> Shared {
+    let mut out = Shared::default();
+    let mut posts = 0;
     for (f, o) in opened {
         let room = f.room.as_deref().unwrap_or("");
-        let missing = missing(f, want_team, want_room);
+        let gone = |d: &str, out: &Shared| out.bad_devices.iter().any(|(r, x)| r == room && x == d);
+        let missing: Vec<_> = missing(f, want_team, want_room, skip).into_iter().filter(|r| !gone(&r.device, &out)).collect();
         if missing.is_empty() {
             continue;
         }
-        let Ok(keys) = seal_keys(&o.k, team, room, &f.id, &missing) else { continue };
-        if let Ok((200, _)) = net.call("POST", &format!("/v0/teams/{team}/locker/files/{}/keys", f.id), Some(&json!({ "keys": keys }))) {
-            n += keys.len();
+        // 묶음 한 번, 400 이면 기기 하나씩
+        let mut tries = vec![missing.clone()];
+        while let Some(batch) = tries.pop() {
+            let batch: Vec<_> = batch.into_iter().filter(|r| !gone(&r.device, &out)).collect();
+            if batch.is_empty() {
+                continue;
+            }
+            if posts >= max_posts {
+                out.stopped = true;
+                return out;
+            }
+            let Ok(keys) = seal_keys(&o.k, team, room, &f.id, &batch) else { break };
+            posts += 1;
+            match net.call("POST", &format!("/v0/teams/{team}/locker/files/{}/keys", f.id), Some(&json!({ "keys": keys }))) {
+                Ok((200, _)) => {
+                    out.added += keys.len();
+                    out.sent.extend(batch.iter().map(|r| (f.id.clone(), r.device.clone())));
+                }
+                Ok((400, _)) if batch.len() > 1 => tries.extend(batch.into_iter().rev().map(|r| vec![r])),
+                Ok((400, _)) => out.bad_devices.extend(batch.into_iter().map(|r| (room.to_string(), r.device))),
+                Ok((429, _)) | Err(_) => {
+                    out.stopped = true;
+                    return out;
+                }
+                Ok(_) => out.bad_files.extend(batch.into_iter().map(|r| (f.id.clone(), r.device))),
+            }
         }
     }
-    n
+    out
 }
 
 /// 이름 바꾸기·폴더 옮기기 — 같은 k 로 새 meta, 이 기기 서명. None 이면 그대로

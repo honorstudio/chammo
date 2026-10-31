@@ -10,12 +10,20 @@ import './e2e.css';
 export function NumberWait({ children }: { children?: ReactNode }) {
   const [n, setN] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  // 안 보이는 창에선 안 묻고(보이면 바로 한 번), 끊긴 기기('다시 로그인')라는 답이면 그만 묻는다 — 로그인 문이 '다시 로그인'으로 바뀐다
+  // (10-31 운영: 서버가 모르는 기기가 이 화면에서 2초마다 401 을 받아 하루 내내 두드림)
   useEffect(() => {
     let live = true;
-    const look = () => void invoke<number | null>('e2e_self_number').then((x) => live && setN(x ?? null), () => {});
+    let stop = false;
+    const look = () => {
+      if (stop || document.hidden) return;
+      void invoke<number | null>('e2e_self_number').then((x) => live && setN(x ?? null), (e: unknown) => { if (/다시 로그인/.test(String(e))) stop = true; });
+    };
     look();
     const t = window.setInterval(look, 2000);
-    return () => { live = false; window.clearInterval(t); };
+    const shown = () => { if (!document.hidden) look(); };
+    document.addEventListener('visibilitychange', shown);
+    return () => { live = false; window.clearInterval(t); document.removeEventListener('visibilitychange', shown); };
   }, []);
   const renew = (e: React.MouseEvent) => {
     if (!e.isTrusted || busy) return;

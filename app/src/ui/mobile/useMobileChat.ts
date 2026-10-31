@@ -6,6 +6,7 @@ import type { Session } from '../../domain/session';
 import { chatLoaded, useChatItems, useChatStale } from '../space/useChatItems';
 import { useEarlier } from './useEarlier';
 import { useOutbox } from './outbox';
+import { tr } from '../../i18n';
 
 /** 일하는 중엔 대화 꼬리를 이만큼마다(이어 읽기라 바뀐 줄만 온다) — 화면이 보일 때만 */
 const LIVE_MS = 800;
@@ -51,7 +52,7 @@ export function useMobileChat(session: Session, everyMs: number, stateAt: number
     try {
       await interruptSession(session.id); // 이미 쉬는 중·연타는 조용히
     } catch (e) {
-      setError(`못 멈췄어요: ${(e as Error).message}`);
+      setError(tr(`못 멈췄어요: ${(e as Error).message}`, `Couldn't stop: ${(e as Error).message}`));
     } finally {
       window.setTimeout(() => setStopping(false), 2000);
     }

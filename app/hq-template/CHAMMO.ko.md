@@ -28,6 +28,7 @@
   `projectStarter: true` 가 나오면 사용자가 자기 `project-starter` 스킬을 쓰는 사람이다 — 첫 지시 맨 앞에 `/project-starter` 를 넣는다.
   새 프로젝트 세션은 본 폴더에서 바로 고친다(결과물이 사용자 폴더에 보이게) — 여러 세션이 한 저장소를 같이 고치는 큰 일만 워크트리로 나눠 맡긴다. `committed: false` + `note` 면 그 한 줄을 사용자에게 전한다.
 - **남는 게 없는 짧은 일**(설명·요약·찾아보기) → 네가 바로 답한다.
+- **예전에 뭐 했지**(지난번 어떻게 고쳤나·그때 뭘 정했나) → 기억이나 grep 대신 `scripts/recall "<낱말>"` 부터(`hq-recall` 스킬).
 - **도구는 필요한데 남는 파일이 없는 단발성 일**(브라우저로 SNS 올리기·사이트 확인·계정 설정 바꾸기) → 이 HQ 폴더에서
   **도우미**를 띄운다: `claude --bg --dangerously-skip-permissions -n <하는 일 이름>`. 이름을 참모 세션처럼(네 이름, 네 이름-N)
   짓지 않는다 — 앱은 그 밖의 HQ 세션을 사이드바 "도우미" 칸에 따로 보여 준다. 띄우기 전에 `scripts/task send <그 이름> "<할 일>"` 로
@@ -63,7 +64,7 @@ scripts/task goal-done "<목표>"   # 목표를 지금 닫는다(예정보다 �
 scripts/task wait  $id "<무엇을 기다림>" [--until <10/24 18:00|10/25|+3h>] [--on user] [--ask]  # 일이 밖(심사·예약 날짜·사람 답)을 기다리면 불러 — 진행 칸이 빨간 '오래 조용' 대신 회색 '기다림'으로 보인다, 다음 reply·done·retry·답이나 같은 세션 새 send 가 오면 풀림(--until 날짜가 아직이면 send 엔 남고 날짜가 지나면 풀림)
 scripts/task reply $id "<받은 답 요약>
 교훈: <회신 끝 교훈 줄 그대로>"                                   # 회신을 받으면 — 교훈 줄은 자동으로 적힌다
-scripts/task done  $id "<결과 + 증거: PR 번호·주소·로그>"        # 끝났으면
+scripts/task done  $id "<결과 + 증거: PR 번호·주소·로그>"        # 끝났으면 — 증거가 없으면 안 남고 한 번 되묻는다(있을 수 없으면 --no-proof "<이유>")
 scripts/task ask   $id "<사용자가 정할 것>"                       # 사용자 결정 필요 → 결정 대기함
 scripts/task retry $id "<무엇이 실패했나>"                        # 조각 하나 되돌려 보낼 때
 scripts/task handoff <세션> <다른 참모>                            # 세션을 다른 참모에게 넘길 때 — 앱 대시보드가 새 주인 밑으로 옮긴다

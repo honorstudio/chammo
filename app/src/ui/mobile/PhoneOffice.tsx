@@ -25,12 +25,13 @@ import { GachaTab, PlayOverlay, SkinTab, startShow, usePhoneGacha, useSkinPick, 
 import { SessionPeek } from './SessionPeek';
 import { useMemoPoll } from './usePoll';
 import { useSubTails } from './useSubTails';
+import { tr } from '../../i18n';
 
 const dark = () => typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches;
 
 type Sheet = 'sessions' | 'gacha' | 'skin';
 // 칩 — 뽑기·스킨은 도트 아이콘(이름은 aria-label·title, 10-24 사용자 "뽑기랑 스킨 아이콘화"), 세션은 개수·사람 필요 점이 붙어 글자 그대로
-const SHEETS: [Sheet, string, ReactNode][] = [['sessions', '세션', null], ['gacha', '뽑기', <IconGacha />], ['skin', '스킨', <IconSkin />]];
+const SHEETS: [Sheet, string, ReactNode][] = [['sessions', tr('세션', 'Sessions'), null], ['gacha', tr('뽑기', 'Gacha'), <IconGacha />], ['skin', tr('스킨', 'Skins'), <IconSkin />]];
 /** 열린 반 시트 — 참모를 바꾸면 화면이 그 참모 것으로 다시 그려져(MobileApp OrchSpace key) 여기 남겨 둔다(열린 채 참모를 바꿔도 그대로) */
 let keepOpen: Sheet | null = null;
 
@@ -113,12 +114,12 @@ export default function PhoneOffice({ sessions, orchs, hqDir, lives, onBack, cur
     <div className={wide ? 'm-dash m-office m-wide' : 'm-dash m-office'}>
       <header className="m-dash-head">
         <div className="m-dash-row">
-          <button type="button" className="m-rt-btn m-ico" onClick={() => { keepOpen = null; onBack(); }} aria-label="대시보드로" title="대시보드로"><IconBack /></button>
-          <div className="m-dash-title">사무실</div>
+          <button type="button" className="m-rt-btn m-ico" onClick={() => { keepOpen = null; onBack(); }} aria-label={tr('대시보드로', 'Back to dashboard')} title={tr('대시보드로', 'Back to dashboard')}><IconBack /></button>
+          <div className="m-dash-title">{tr('사무실', 'Office')}</div>
         </div>
       </header>
       <div className={open ? 'm-office-stage m-open' : 'm-office-stage'} style={{ background: sk.bg }}>
-        <div className="m-office-chips" role="group" aria-label="사무실 칸">
+        <div className="m-office-chips" role="group" aria-label={tr('사무실 칸', 'Office panels')}>
           {SHEETS.map(([k, name, icon]) => (
             <button key={k} type="button" aria-expanded={open === k} className={`${icon ? 'm-ico-chip' : ''}${open === k ? ' m-on' : ''}`} onClick={() => setOpen(open === k ? null : k)} aria-label={name} title={name}>
               {icon ?? name}
@@ -132,18 +133,18 @@ export default function PhoneOffice({ sessions, orchs, hqDir, lives, onBack, cur
             coins={g.view ? g.view.coins : undefined} onGacha={g.view ? () => setOpen('gacha') : undefined} />
           {open === 'skin' && g.view && (
             <>
-              <button type="button" className="m-rt-btn m-ico m-room-arrow m-left" onClick={() => pick.step(-1)} aria-label="앞 스킨 입혀 보기" title="앞"><IconChevron /></button>
-              <button type="button" className="m-rt-btn m-ico m-room-arrow m-right" onClick={() => pick.step(1)} aria-label="다음 스킨 입혀 보기" title="다음"><IconChevron /></button>
-              {preview && <span className="m-room-try">입혀 보는 중</span>}
+              <button type="button" className="m-rt-btn m-ico m-room-arrow m-left" onClick={() => pick.step(-1)} aria-label={tr('앞 스킨 입혀 보기', 'Try previous skin')} title={tr('앞', 'Previous')}><IconChevron /></button>
+              <button type="button" className="m-rt-btn m-ico m-room-arrow m-right" onClick={() => pick.step(1)} aria-label={tr('다음 스킨 입혀 보기', 'Try next skin')} title={tr('다음', 'Next')}><IconChevron /></button>
+              {preview && <span className="m-room-try">{tr('입혀 보는 중', 'Trying on')}</span>}
             </>
           )}
           {playing && <PlayOverlay show={show} ten={playing === 10} />}
         </div>
         {/* 참모 줄 — 얼굴만, 지금 말하는 참모만 이름(시안 P). 시트가 열려도 시트 위에 남는다 */}
         {talk.length > 1 && (
-          <div className="m-talk" role="tablist" aria-label="말 걸 참모">
+          <div className="m-talk" role="tablist" aria-label={tr('말 걸 참모', 'Assistant to talk to')}>
             {talk.map((d) => (
-              <button key={d.id} type="button" role="tab" aria-selected={d.id === current} className={d.id === current ? 'm-on' : ''} onClick={() => tap(d.id)} aria-label={`${d.label}에게 말하기`} title={d.label}>
+              <button key={d.id} type="button" role="tab" aria-selected={d.id === current} className={d.id === current ? 'm-on' : ''} onClick={() => tap(d.id)} aria-label={tr(`${d.label}에게 말하기`, `Talk to ${d.label}`)} title={d.label}>
                 <Face spr={d.spr} fill={sk.pets[d.color % sk.pets.length]!} sk={sk} />
                 {d.id === current && <span>{d.label}</span>}
                 {(d.human !== undefined || d.st === 'asks') && <i className="m-talk-dot" aria-hidden />}
@@ -158,7 +159,7 @@ export default function PhoneOffice({ sessions, orchs, hqDir, lives, onBack, cur
             <div ref={panel} className="m-office-panel">
               {open === 'gacha' && <GachaTab g={g} playing={!!playing} result={result} onPull={(n) => void pull(n)} />}
               {open === 'skin' && <SkinTab g={g} p={pick} dark={dark()} onEquipped={() => setEquipAt(Date.now())} />}
-              {open === 'sessions' && list.length === 0 && rest.length === 0 && <p className="m-muted m-sm m-office-empty">지금 일하는 세션 없음</p>}
+              {open === 'sessions' && list.length === 0 && rest.length === 0 && <p className="m-muted m-sm m-office-empty">{tr('지금 일하는 세션 없음', 'No sessions working right now')}</p>}
               {open === 'sessions' && <div className="m-office-list">
                 {list.map((d) => {
                   const line = dockLine(d.status ?? 'idle', d.act, d.doing, d.human);
@@ -171,11 +172,11 @@ export default function PhoneOffice({ sessions, orchs, hqDir, lives, onBack, cur
                         <span><b>{d.label}</b><em className={human ? 'v-hum' : d.st === 'asks' ? 'v-ask' : d.st === 'working' ? 'v-work' : 'v-rest'}>{line.verb}</em></span>
                         {text && <small>{text}</small>}
                       </span>
-                      <button type="button" className={d.id === picked ? 'm-rt-btn m-ico m-office-go m-on' : 'm-rt-btn m-ico m-office-go'} onClick={() => openPeek(d.id)} aria-label={`${d.label} 대화로`} title="대화로"><IconChat /></button>
+                      <button type="button" className={d.id === picked ? 'm-rt-btn m-ico m-office-go m-on' : 'm-rt-btn m-ico m-office-go'} onClick={() => openPeek(d.id)} aria-label={tr(`${d.label} 대화로`, `Open ${d.label} chat`)} title={tr('대화로', 'Open chat')}><IconChat /></button>
                     </div>
                   );
                 })}
-                {rest.length > 0 && <p className="m-muted m-sm m-office-rest">쉬는 중 {rest.length} — {rest.map((d) => d.label).join(' · ')}</p>}
+                {rest.length > 0 && <p className="m-muted m-sm m-office-rest">{tr(`쉬는 중 ${rest.length}`, `Idle ${rest.length}`)} — {rest.map((d) => d.label).join(' · ')}</p>}
               </div>}
             </div>
           </div>

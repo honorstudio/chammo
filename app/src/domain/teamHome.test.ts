@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BLOCKS_MAX, addBlock, blankContent, canAdd, changedLine, dropAt, fromTemplate, goalFix, homeColor, homeSame, linkProblem, moveBlock, postPlaces, removeBlock, setWidth, teamColor, TEMPLATES, TEAM_COLORS,
+  BLOCKS_MAX, addBlock, blankContent, canAdd, changedLine, dropLine, fromTemplate, goalFix, homeColor, homeSame, linkProblem, moveBlock, postPlaces, removeBlock, setWidth, teamColor, TEMPLATES, TEAM_COLORS,
   type Home, type HomeBlock,
 } from './teamHome';
 
@@ -71,23 +71,45 @@ describe('꾸미기 동작', () => {
   });
 });
 
-describe('끌어 놓을 자리 — 2열 격자에서 읽는 순서(위→아래, 왼→오)', () => {
-  // [a 전체] / [b 반][c 반] / [d 전체]
+describe('끌어 놓을 자리 — 노션식 줄(10-31 사용자 "노션식 ㄱ"): 끄는 동안 판은 그대로, 포인터 아래 블록의 앞·뒤에 굵은 줄', () => {
+  // [a 전체] / [b 반][c 반] / [d 전체] — 틈 가로 12·세로 20, 줄 두께 4
   const rects = [
     { x: 0, y: 0, w: 600, h: 100 },
     { x: 0, y: 120, w: 290, h: 100 },
     { x: 310, y: 120, w: 290, h: 100 },
     { x: 0, y: 240, w: 600, h: 100 },
   ];
-  it('블록 가운데보다 앞이면 그 앞, 뒤면 다음 자리', () => {
-    expect(dropAt(rects, 300, 10)).toBe(0);
-    expect(dropAt(rects, 300, 90)).toBe(1);
-    expect(dropAt(rects, 100, 170)).toBe(1); // b 왼쪽 위
-    expect(dropAt(rects, 200, 170)).toBe(2); // b 가운데 지나 — c 앞
-    expect(dropAt(rects, 500, 170)).toBe(3); // c 가운데 지나
-    expect(dropAt(rects, 300, 400)).toBe(4); // 맨 아래 밖
-    expect(dropAt([], 0, 0)).toBe(0);
+  const gap = { x: 12, y: 20 };
+  const ids = [b('a', 'pin', 'full'), b('b', 'members'), b('c', 'files'), b('d', 'posts', 'full')];
+  const after = (from: number, px: number, py: number) => moveBlock(ids, ids[from]!.id, dropLine(rects, from, px, py, gap).to).map((x) => x.id).join('');
+  it('반 폭 블록 = 왼쪽 반이면 그 앞(왼쪽 세로줄), 오른쪽 반이면 그 뒤(오른쪽 세로줄)', () => {
+    expect(dropLine(rects, 3, 100, 170, gap)).toEqual({ to: 1, line: { x: -8, y: 120, w: 4, h: 100 } });
+    expect(after(3, 100, 170)).toBe('adbc');
+    expect(dropLine(rects, 3, 200, 170, gap)).toEqual({ to: 2, line: { x: 294, y: 120, w: 4, h: 100 } });
+    expect(after(1, 500, 170)).toBe('acbd');
+    expect(dropLine(rects, 1, 500, 170, gap).line).toEqual({ x: 604, y: 120, w: 4, h: 100 });
   });
+  it('전체 폭 블록 = 위 반이면 그 위, 아래 반이면 그 아래(판 폭 가로줄)', () => {
+    expect(dropLine(rects, 3, 300, 20, gap)).toEqual({ to: 0, line: { x: 0, y: -12, w: 600, h: 4 } });
+    expect(dropLine(rects, 0, 300, 320, gap)).toEqual({ to: 4, line: { x: 0, y: 348, w: 600, h: 4 } });
+    expect(after(0, 300, 320)).toBe('bcda');
+  });
+  it('제자리(바로 앞·뒤)면 줄 없음 — 놓아도 그대로', () => {
+    expect(dropLine(rects, 1, 100, 170, gap).line).toBeNull();
+    expect(dropLine(rects, 1, 200, 170, gap).line).toBeNull();
+    expect(dropLine(rects, 2, 100, 170, gap)).toEqual({ to: 1, line: { x: -8, y: 120, w: 4, h: 100 } });
+    expect(dropLine(rects, 2, 200, 170, gap).line).toBeNull(); // b 뒤 = c 자리 그대로
+  });
+  it('모든 블록 아래면 맨 끝(마지막 아래 가로줄), 위면 맨 앞', () => {
+    expect(dropLine(rects, 1, 300, 500, gap)).toEqual({ to: 4, line: { x: 0, y: 348, w: 600, h: 4 } });
+    expect(dropLine(rects, 3, 300, 500, gap).line).toBeNull();
+    expect(dropLine(rects, 2, 300, -60, gap)).toEqual({ to: 0, line: { x: 0, y: -12, w: 600, h: 4 } });
+  });
+  it('틈 위면 가장 가까운 블록으로 센다(줄이 사라지며 떨지 않게)', () => {
+    expect(dropLine(rects, 3, 300, 170, gap).to).toBe(2); // b·c 사이 세로 틈 → b 오른쪽 반
+    expect(dropLine(rects, 0, 500, 230, gap).to).toBe(3); // c 아래 틈(c·d 같은 거리 = 앞 블록) → c 오른쪽 반
+  });
+  it('빈 판', () => expect(dropLine([], 0, 0, 0, gap)).toEqual({ to: 0, line: null }));
 });
 
 describe('블록 내용 검사', () => {

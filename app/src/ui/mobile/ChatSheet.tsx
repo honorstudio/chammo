@@ -9,6 +9,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { PEEK_H, type Snap } from '../../domain/mobile';
 import { chatModel, logShown } from '../../domain/sheetGuard';
 import { useSheetDrag } from './useSheetDrag';
+import { tr } from '../../i18n';
 
 type Props = { snap: Snap; onSnap: (s: Snap) => void; peekLine: string; vh: number; kb: boolean; children: ReactNode; composer: ReactNode;
   /** 잠깐 숨김(폰 사무실 뽑기·스킨 시트가 열린 동안) — 빼지 않아서 입력 중 글·시트 자리·잰 높이가 그대로 */ hidden?: boolean };
@@ -65,7 +66,7 @@ export function ChatSheet({ snap, onSnap, peekLine, vh, kb, children, composer, 
     <section ref={setSheet} className={`m-sheet m-snap-${snap}${kb ? ' m-kb' : ''}${drag !== null ? ' m-drag' : ''}${hidden ? ' m-hide' : ''}`} aria-hidden={hidden || undefined} style={{ top, transition: drag === null ? 'top .34s cubic-bezier(.22, 1.25, .36, 1)' : 'none' }}>
       <div ref={grab} className="m-grab" data-grab {...grabProps}>
         <div className="m-handle" />
-        {snap === 'peek' && <div className="m-peek">{peekLine || '아직 대화가 없어요'}</div>}
+        {snap === 'peek' && <div className="m-peek">{peekLine || tr('아직 대화가 없어요', 'No conversation yet')}</div>}
       </div>
       {logShown(snap, drag !== null) && children}
       <div ref={comp} className="m-comp-wrap">{composer}</div>

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { craftErr, DRAWER_MEMO_KEY, drawerMemo, drawerView, mergeRows, NO_PYTHON, prefetchingAny, licenseLine, licenseRows, parseNotices, sizeText, splitRows, tileCorner, tileIcon, tileLetter, tileLoading, tileTitle, tileUnavailable, usedLine, usedTotal, type DrawerRow } from './craftDrawer';
+import { setLang } from '../i18n';
 
 const row = (o: Partial<DrawerRow> = {}): DrawerRow => ({ app: 'gridcraft', name: 'GridCraft', what: 'spreadsheets / 표 계산', installed: null, mine: false, size: 0, used: null, latest: '0.7.0', dmgSize: 24580153, icon: '', origName: 'GridCraft', repo: 'github.com/storytold/gridcraft', basedOn: null, chammo: false, ...o });
 
@@ -11,8 +12,8 @@ describe('앱 서랍', () => {
   });
 
   it('올렸을 때 — 깔린 건 판·크기·마지막 사용, 안 깐 건 받을 크기', () => {
-    expect(tileTitle(row({ installed: '0.7.0', size: 79 * 1024 * 1024, used: '2026-10-15' }))).toBe('GridCraft · spreadsheets / 표 계산 · 0.7.0 · 79MB · 마지막 사용 2026-10-15');
-    expect(tileTitle(row())).toBe('GridCraft · spreadsheets / 표 계산 · 0.7.0 · 받기 23MB');
+    expect(tileTitle(row({ installed: '0.7.0', size: 79 * 1024 * 1024, used: '2026-10-15' }))).toBe('GridCraft · 표 계산 · 0.7.0 · 79MB · 마지막 사용 2026-10-15');
+    expect(tileTitle(row())).toBe('GridCraft · 표 계산 · 0.7.0 · 받기 23MB');
     expect(tileTitle(row({ installed: '0.6.0', latest: '0.7.0', newer: true }))).toContain('새 판 0.7.0');
     // 깐 판이 더 새것(받아 둔 확인이 묵음·개발판)이면 '새 판'이 아니다 — 판 비교는 scripts/craft 가 숫자로(newer)
     expect(tileTitle(row({ installed: '0.13.5', latest: '0.13.1', newer: false }))).not.toContain('새 판');
@@ -44,14 +45,18 @@ describe('앱 서랍', () => {
 
 describe('받을 수 없는 칸(10/19 공개 릴리스를 못 받을 때)', () => {
   const why = 'crafts-2026.10.19: could not get the Chammo apps release / 참모 앱 공개 릴리스를 못 받음 — HTTP Error 404: Not Found';
-  it('안 깐 칸만 받을 수 없음 — 까닭 한 줄', () => {
-    expect(tileUnavailable(row({ latest: null, unavailable: why }))).toBe(why);
+  const ko = 'crafts-2026.10.19: 참모 앱 공개 릴리스를 못 받음 — HTTP Error 404: Not Found';
+  it('안 깐 칸만 받을 수 없음 — 까닭 한 줄(설정 언어 하나로, 공개 이슈 #16)', () => {
+    expect(tileUnavailable(row({ latest: null, unavailable: why }))).toBe(ko);
+    setLang('en');
+    expect(tileUnavailable(row({ latest: null, unavailable: why }))).toBe('crafts-2026.10.19: could not get the Chammo apps release — HTTP Error 404: Not Found');
+    setLang('ko');
     expect(tileUnavailable(row({ installed: '0.8.1', latest: null, unavailable: why }))).toBeNull();
     expect(tileUnavailable(row())).toBeNull();
     expect(tileUnavailable(row({ unavailable: undefined }))).toBeNull();
   });
   it('올리면 받을 수 없음과 까닭', () => {
-    expect(tileTitle(row({ latest: null, dmgSize: null, unavailable: why }))).toBe(`GridCraft · spreadsheets / 표 계산 · 받을 수 없음 — ${why}`);
+    expect(tileTitle(row({ latest: null, dmgSize: null, unavailable: why }))).toBe(`GridCraft · 표 계산 · 받을 수 없음 — ${ko}`);
   });
 });
 

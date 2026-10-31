@@ -2,6 +2,7 @@
 // 1분마다 본다(일·세션 목록은 3초마다 오지만 2시간·24시간 판정이라 촘촘할 필요가 없다). git 은 다른 조건을 다 통과한 후보 폴더만 본다
 import { useEffect, useRef } from 'react';
 import { sendToSession, tidyGit } from '../data/tauri';
+import { progressHint } from '../domain/progressHint';
 import { pickTidy, tidyKey, tidyLight, tidyText, tidyVerdict, type TidyCand } from '../domain/autoTidy';
 import { forwardTo, retryAfterFail, type AskCand } from '../domain/forwardQuestion';
 import type { Session } from '../domain/session';
@@ -71,7 +72,7 @@ export function useAutoTidy(o: In) {
         const key = tidyKey(p.cand.session, p.verdict.since);
         seen.current!.add(key); // 넣는 동안 다시 안 잡게 — 못 넣으면 뺀다(세 번까지)
         saveSeen(seen.current!);
-        await sendToSession(p.to.id, tidyText(p.cand.session, p.verdict.reason, tidyLight(p.cand.session, x.helpers))).catch(() => {
+        await sendToSession(p.to.id, tidyText(p.cand.session, p.verdict.reason, tidyLight(p.cand.session, x.helpers), progressHint(p.cand.activity, p.cand.git))).catch(() => {
           if (retryAfterFail(fails.current, key)) { seen.current!.delete(key); saveSeen(seen.current!); }
         });
       } catch {

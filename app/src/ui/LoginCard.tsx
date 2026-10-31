@@ -2,7 +2,7 @@
 // 로그인이 끝나면 ui/useLogin 이 로그인 칸 고친 시각을 보고 멈춘 세션에 이어서를 보내고 카드는 저절로 내려간다
 import { useState } from 'react';
 import { openTarget } from '../data/tauri';
-import { needText, termsText, type LoginNeed, type TermsCard } from '../domain/login';
+import { missingText, needText, termsText, type LoginNeed, type TermsCard } from '../domain/login';
 import { setupCommand } from '../domain/setup';
 import { tr } from '../i18n';
 import { IconClose, IconRefresh } from './Icons';
@@ -23,6 +23,29 @@ export function LoginCard({ need, claude, fontSize }: { need: LoginNeed; claude?
         <div className="login-card-term">
           <TerminalPane key="login-card" command={setupCommand('login', { claude }, tr('끝났어요. 멈춘 세션은 저절로 이어서 해요.', 'Done. Stopped sessions will continue on their own.'))}
             title={tr('Claude 로그인', 'Claude sign-in')} subtitle={tr('브라우저에서 로그인하고 돌아오세요', 'Sign in in the browser, then come back')} fontSize={fontSize} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** claude 를 못 찾음 카드 — 실행 파일이 사라졌거나 망가졌다(로그인 문제 아님). [다시 설치] = 카드 안 터미널에서 공식 설치(설정 마법사와 같은 명령).
+ *  claude 가 다시 돌면 ui/useLogin 재기가 보고 카드는 저절로 내려간다 */
+export function ClaudeMissingCard({ fontSize }: { fontSize: number }) {
+  const [open, setOpen] = useState(false);
+  const t = missingText();
+  return (
+    <div className="login-card" role="alert">
+      <div className="login-card-top">
+        <b>{t.title}</b>
+        {!open && <button className="btn pri login-card-btn" onClick={() => setOpen(true)}>{tr('다시 설치', 'Reinstall')}</button>}
+        {open && <button className="ib" title={tr('터미널 닫기', 'Close terminal')} aria-label={tr('닫기', 'Close')} onClick={() => setOpen(false)}><IconClose /></button>}
+      </div>
+      <div className="login-card-where">{t.where}</div>
+      {open && (
+        <div className="login-card-term">
+          <TerminalPane key="claude-missing" command={setupCommand('install', {}, tr('끝났어요. 세션 목록이 저절로 돌아와요.', 'Done. Your session list will come back on its own.'))}
+            title={tr('Claude Code 설치', 'Install Claude Code')} subtitle={tr('설치가 끝날 때까지 기다려 주세요.', 'Please wait until it finishes.')} fontSize={fontSize} />
         </div>
       )}
     </div>

@@ -20,7 +20,7 @@ import { orchSort } from '../../domain/orchOrder';
 import { useMemoPoll } from './usePoll';
 import { SwipeRow } from './SwipeRow';
 import { RowConfirm } from './RowConfirm';
-import { josa, machine } from '../../i18n';
+import { josa, machine, tr } from '../../i18n';
 import { useOutbox } from './outbox';
 import { MAvatar } from './MAvatar';
 import { WaitNote } from './WaitNote';
@@ -47,7 +47,7 @@ function WaitReply({ w, name, sent }: { w: Waiting; name: string; sent: WaitSent
   const mine = sent[key];
   const [v, setV] = useState(mine?.fail ? mine.a : '');
   if (w.kind === 'blocked') return null;
-  if (mine && !mine.fail) return <div className="m-muted m-sm">{name}에게 보냈어요</div>;
+  if (mine && !mine.fail) return <div className="m-muted m-sm">{tr(`${name}에게 보냈어요`, `Sent to ${name}`)}</div>;
   const answers = askNote(w.q).answers;
   const send = (raw: string) => {
     const t = waitAnswer(w, raw);
@@ -61,11 +61,11 @@ function WaitReply({ w, name, sent }: { w: Waiting; name: string; sent: WaitSent
   };
   return (
     <>
-      {mine?.fail && <div className="m-error">못 보냈어요 — 다시 눌러 주세요</div>}
+      {mine?.fail && <div className="m-error">{tr('못 보냈어요 — 다시 눌러 주세요', "Couldn't send — tap to try again")}</div>}
       {answers.length > 0 && <div className="m-quick">{answers.map((a) => <button key={a} type="button" onClick={() => send(a)}>{a}</button>)}</div>}
       <form className="m-wait-reply" onSubmit={(e) => { e.preventDefault(); send(v); }}>
-        <input value={v} onChange={(e) => setV(e.target.value)} placeholder="여기서 바로 답하기" enterKeyHint="send" aria-label={`${name}에게 답하기`} />
-        <button type="submit" className="m-wait-go" disabled={!v.trim()} aria-label="보내기" title="보내기"><span className="m-cdot"><IconArrowUp /></span></button>
+        <input value={v} onChange={(e) => setV(e.target.value)} placeholder={tr('여기서 바로 답하기', 'Reply here')} enterKeyHint="send" aria-label={tr(`${name}에게 답하기`, `Reply to ${name}`)} />
+        <button type="submit" className="m-wait-go" disabled={!v.trim()} aria-label={tr('보내기', 'Send')} title={tr('보내기', 'Send')}><span className="m-cdot"><IconArrowUp /></span></button>
       </form>
     </>
   );
@@ -87,7 +87,7 @@ export function WaitCard({ w, orchs, sent, onPick, card }: { w: Waiting; orchs: 
   return (
     <div className={card ? 'm-wait-card m-jumped' : 'm-wait-card'} data-card={card} style={orchVars(bodyColor(saved, w.name, orchColor(w.name))) as React.CSSProperties}>
       {onPick
-        ? <button type="button" className="m-wait-top" onClick={() => onPick(w.orch)} aria-label={`${josa(n, '으로', '로')} 가기`} title={`${josa(n, '으로', '로')} 가기`}>{head}<IconChevron /></button>
+        ? <button type="button" className="m-wait-top" onClick={() => onPick(w.orch)} aria-label={tr(`${josa(n, '으로', '로')} 가기`, `Go to ${n}`)} title={tr(`${josa(n, '으로', '로')} 가기`, `Go to ${n}`)}>{head}<IconChevron /></button>
         : <div className="m-wait-top">{head}</div>}
       {w.lead && <div className="m-muted m-sm">{w.lead}</div>}
       <WaitNote q={w.q} />
@@ -143,7 +143,7 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
       setRemoving(null);
     } catch (e) {
       const m = (e as Error).message;
-      setRemoveErr(m === 'too soon' ? '방금 눌렀어요 — 10초 뒤에 다시' : `못 지웠어요: ${m}`);
+      setRemoveErr(m === 'too soon' ? tr('방금 눌렀어요 — 10초 뒤에 다시', 'You just tapped — try again in 10 seconds') : tr(`못 지웠어요: ${m}`, `Couldn't remove: ${m}`));
     } finally {
       setRemoveBusy(false);
     }
@@ -163,31 +163,31 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
       setSleeping(null);
     } catch (e) {
       const m = (e as Error).message;
-      setSleepErr(m === 'too soon' ? '방금 눌렀어요 — 10초 뒤에 다시' : `못 재웠어요: ${m}`);
+      setSleepErr(m === 'too soon' ? tr('방금 눌렀어요 — 10초 뒤에 다시', 'You just tapped — try again in 10 seconds') : tr(`못 재웠어요: ${m}`, `Couldn't put to sleep: ${m}`));
     } finally {
       setSleepBusy(false);
     }
   };
   // 제거 확인 줄 — 켜진 줄·꺼진 줄 둘 다 그 줄 자리에(컴포넌트 말고 조각 — 그리기마다 새로 붙으면 다시 굴러간다)
   const removeConfirm = (key: string) => removing && (
-    <RowConfirm key={key} label="제거 확인" q={`${josa(removing.name, '을', '를')} 목록에서 제거할까요?`} note={`대화 기록 파일은 ${machine()}에 남지만, 여기서 다시 깨울 수는 없어요.`}
-      warn={removing.working ? '지금 일하는 중이라 하던 게 끊겨요.' : undefined} err={removeErr} ok="제거" danger busy={removeBusy}
+    <RowConfirm key={key} label={tr('제거 확인', 'Confirm removal')} q={tr(`${josa(removing.name, '을', '를')} 목록에서 제거할까요?`, `Remove ${removing.name} from the list?`)} note={tr(`대화 기록 파일은 ${machine()}에 남지만, 여기서 다시 깨울 수는 없어요.`, `The conversation file stays on the ${machine()}, but you can't wake it again from here.`)}
+      warn={removing.working ? tr('지금 일하는 중이라 하던 게 끊겨요.', "It's working right now, so its current task will be cut off.") : undefined} err={removeErr} ok={tr('제거', 'Remove')} danger busy={removeBusy}
       onOk={() => void doRemove()} onCancel={() => setRemoving(null)} />
   );
   const [naming, setNaming] = useState(false);
   const taken = [...orchs, ...off.map((r) => r.off!)].map((s) => phoneName(s.name, orchs));
   return (
     <>
-      <BottomSheet label={`${title} 바꾸기`} title={`${title} 바꾸기`} onClose={onClose}
-        actions={<IconBtn label={`새 ${title}`} onClick={() => setNaming(true)} disabled={naming}><IconPlus /></IconBtn>}>
+      <BottomSheet label={tr(`${title} 바꾸기`, `Switch ${title}`)} title={tr(`${title} 바꾸기`, `Switch ${title}`)} onClose={onClose}
+        actions={<IconBtn label={tr(`새 ${title}`, `New ${title}`)} onClick={() => setNaming(true)} disabled={naming}><IconPlus /></IconBtn>}>
       {/* 다른 기기(peer-panel) — 짝지은 기기가 있을 때만 맨 위 알약 줄 */}
       {far && <FarPills devices={far.devices} cur={null} self={env.deviceName} onPick={(d) => { if (d) far.onPick(d); }} />}
       {naming && <NewOrchForm title={title} taken={taken} wake={wake} onDone={() => setNaming(false)} />}
       <WakeNotice wake={wake} />
-      {wake.making && <div className="m-orch m-off" aria-busy="true"><span className="m-orch-text"><span className="m-orch-top"><span className="m-orch-name">{phoneName(wake.making, orchs)}</span><span className="m-muted m-sm">만드는 중…</span></span></span></div>}
+      {wake.making && <div className="m-orch m-off" aria-busy="true"><span className="m-orch-text"><span className="m-orch-top"><span className="m-orch-name">{phoneName(wake.making, orchs)}</span><span className="m-muted m-sm">{tr('만드는 중…', 'Creating…')}</span></span></span></div>}
       {waiting.length > 0 && (
         <>
-          <div className="m-sect">답을 기다림 {waiting.length}</div>
+          <div className="m-sect">{tr(`답을 기다림 ${waiting.length}`, `Waiting for your answer ${waiting.length}`)}</div>
           {waiting.map((w) => <WaitCard key={waitKey(w)} w={w} orchs={orchs} sent={sent} onPick={onPick} />)}
           <div className="m-sect">{title}</div>
         </>
@@ -201,21 +201,21 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
         const slot = lineSlot(lines[s.id]);
         // 민 그 줄 자리에서 확인 — 맨 위 칸은 아래 줄을 밀었을 때 안 보였다(2026-10-23 사용자)
         if (sleeping?.id === s.id) return (
-          <RowConfirm key={s.id} label="재우기 확인" q={`${nameOf(s)} 재울까요?`} note="대화는 남아서 '꺼져 있음'에서 다시 깨울 수 있어요."
-            warn={s.state === 'working' ? '지금 일하는 중이라 하던 게 끊겨요.' : undefined} err={sleepErr} ok="재우기" busy={sleepBusy}
+          <RowConfirm key={s.id} label={tr('재우기 확인', 'Confirm sleep')} q={tr(`${nameOf(s)} 재울까요?`, `Put ${nameOf(s)} to sleep?`)} note={tr("대화는 남아서 '꺼져 있음'에서 다시 깨울 수 있어요.", "The conversation is kept — you can wake it again from 'Off'.")}
+            warn={s.state === 'working' ? tr('지금 일하는 중이라 하던 게 끊겨요.', "It's working right now, so its current task will be cut off.") : undefined} err={sleepErr} ok={tr('재우기', 'Sleep')} busy={sleepBusy}
             onOk={() => void doSleep()} onCancel={() => setSleeping(null)} />
         );
         if (removing?.id === s.id) return removeConfirm(s.id);
         return (
-          <SwipeRow key={s.id} id={s.id} openId={openId} setOpenId={setOpenId} onMenu={() => setMenu({ kind: 'live', s })} menuLabel={`${nameOf(s)} 메뉴`} actions={[
-            { label: '재우기', icon: <IconPower />, onPress: () => { setSleepErr(null); setSleeping(s); } },
-            { label: '제거', icon: <IconTrash />, danger: true, onPress: () => { setRemoveErr(null); setRemoving({ id: s.id, name: nameOf(s), live: true, working: s.state === 'working' }); } },
+          <SwipeRow key={s.id} id={s.id} openId={openId} setOpenId={setOpenId} onMenu={() => setMenu({ kind: 'live', s })} menuLabel={tr(`${nameOf(s)} 메뉴`, `${nameOf(s)} menu`)} actions={[
+            { label: tr('재우기', 'Sleep'), icon: <IconPower />, onPress: () => { setSleepErr(null); setSleeping(s); } },
+            { label: tr('제거', 'Remove'), icon: <IconTrash />, danger: true, onPress: () => { setRemoveErr(null); setRemoving({ id: s.id, name: nameOf(s), live: true, working: s.state === 'working' }); } },
           ]} start={s.sessionId ? [pinned
-            ? { label: '고정 풀기', icon: <IconPinOff />, tone: 'pin', onPress: () => togglePin(s.sessionId!, false) }
-            : { label: '고정', icon: <IconPin />, tone: 'pin', onPress: () => togglePin(s.sessionId!, true) }] : []}>
+            ? { label: tr('고정 풀기', 'Unpin'), icon: <IconPinOff />, tone: 'pin', onPress: () => togglePin(s.sessionId!, false) }
+            : { label: tr('고정', 'Pin'), icon: <IconPin />, tone: 'pin', onPress: () => togglePin(s.sessionId!, true) }] : []}>
           <button type="button" className={`m-orch${s.id === current ? ' m-cur' : ''}${asking ? ' m-asking' : ''}`} onClick={() => onPick(s.id)}
             style={asking ? orchVars(bodyColor(saved, s.name, orchColor(s.name))) as React.CSSProperties : undefined}
-            aria-label={`${nameOf(s)} — ${dot.label}${used !== undefined ? `, 컨텍스트 ${Math.round(used)}%` : ''}${pinned ? ', 고정' : ''}`}>
+            aria-label={`${nameOf(s)} — ${dot.label}${used !== undefined ? tr(`, 컨텍스트 ${Math.round(used)}%`, `, context ${Math.round(used)}%`) : ''}${pinned ? tr(', 고정', ', pinned') : ''}`}>
             <AvatarRing pct={used} dot={dot.cls} dotLabel={dot.label} color={bodyColor(saved, s.name, orchColor(s.name))}><MAvatar orch={s} orchs={orchs} size={34} asking={asking} /></AvatarRing>
             <span className="m-orch-text">
               <span className="m-orch-top">
@@ -228,7 +228,7 @@ export function OrchPicker({ title, env, wake, onStopped, orchs, current, ctx, w
           </SwipeRow>
         );
       })}
-      {orchs.length === 0 && <p className="m-muted">떠 있는 {title} 세션이 없어요</p>}
+      {orchs.length === 0 && <p className="m-muted">{tr(`떠 있는 ${title} 세션이 없어요`, `No ${title} sessions running`)}</p>}
       <OffOrchList rows={off.filter((r) => !removedOff.has(r.off!.id))} orchs={orchs} wake={wake}
         swipe={{ openId, setOpenId, onMenu: (r) => setMenu({ kind: 'off', r }), onRemove: (r) => { setRemoveErr(null); setRemoving({ id: r.off!.id, name: phoneName(r.off!.name, orchs), live: false, working: false }); },
           confirm: (r) => removing?.id === r.off!.id ? removeConfirm(r.key) : null }} />

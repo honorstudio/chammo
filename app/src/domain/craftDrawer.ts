@@ -1,6 +1,6 @@
 // 앱 서랍(2026-10-17 사용자 '앱 서랍' — v3 덱 1, 런치패드처럼 아이콘 격자) — 13개 Craft 앱: 깔린 것·깔 수 있는 것.
 // 아이콘 아래 이름 한 줄, 판·크기·마지막 사용은 마우스를 올리면(title). 안 깐 앱은 흐리게 + '받기'
-import { tr } from '../i18n';
+import { oneLang, tr } from '../i18n';
 
 export type DrawerRow = {
   app: string; name: string; what: string; installed: string | null; mine: boolean; size: number; used: string | null;
@@ -25,7 +25,8 @@ export function craftErr(e: unknown): { python: boolean; text: string } {
   const t = (e instanceof Error ? e.message : String(e ?? '')).trim();
   if (t === NO_PYTHON) return { python: true, text: tr('참모 앱을 쓰려면 파이썬 3 이 필요해요', 'Chammo apps need Python 3') };
   // 빈 오류(종료 코드만)면 서랍이 오류 줄도 목록도 없이 자리표시에 멈췄다(10-28) — 한 줄은 꼭
-  return { python: false, text: t || tr('앱 목록을 못 읽었어요', 'Could not read the app list') };
+  // scripts/craft 오류는 'English / 한국어' 이중 문구 — 사람 화면엔 설정 언어 하나로(공개 이슈 #16)
+  return { python: false, text: oneLang(t) || tr('앱 목록을 못 읽었어요', 'Could not read the app list') };
 }
 
 /** 서랍 기억(10-28 사용자 '계속 로딩해야 할 이유가 있나') — 칸을 떠나면 서랍이 지워져 열 때마다 scripts/craft 를 새로 띄우고 기다렸다.
@@ -84,7 +85,7 @@ export const usedLine = (n: number, win: boolean) => {
 
 /** 올렸을 때 글 — 깔린 것: 판·크기·마지막 사용, 새 판이 있으면 알림 / 깔 수 있는 것: 판·받을 크기 */
 export function tileTitle(r: DrawerRow): string {
-  const parts = [r.name, r.what, r.basic ? tr('기본 앱', 'basic app') : ''];
+  const parts = [r.name, oneLang(r.what), r.basic ? tr('기본 앱', 'basic app') : ''];
   if (r.prefetching) parts.push(tr('미리 받는 중', 'installing ahead'));
   if (r.installed) {
     parts.push(r.installed);
@@ -92,7 +93,7 @@ export function tileTitle(r: DrawerRow): string {
     parts.push(r.used ? tr(`마지막 사용 ${r.used}`, `last used ${r.used}`) : tr('아직 안 씀', 'not used yet'));
     if (r.newer && r.latest) parts.push(tr(`새 판 ${r.latest}`, `new ${r.latest}`));
   } else if (tileUnavailable(r)) {
-    parts.push(tr(`받을 수 없음 — ${r.unavailable}`, `unavailable — ${r.unavailable}`));
+    parts.push(tr(`받을 수 없음 — ${oneLang(r.unavailable ?? '')}`, `unavailable — ${oneLang(r.unavailable ?? '')}`));
   } else {
     if (r.latest) parts.push(r.latest);
     if (r.dmgSize) parts.push(tr(`받기 ${sizeText(r.dmgSize)}`, `download ${sizeText(r.dmgSize)}`));
@@ -104,7 +105,7 @@ export function tileTitle(r: DrawerRow): string {
 export const prefetchingAny = (rows: DrawerRow[]): boolean => rows.some((r) => r.prefetching);
 
 /** 받을 수 없는 칸이면 그 까닭(깔린 앱은 그대로 쓰니 null) */
-export const tileUnavailable = (r: DrawerRow): string | null => (!r.installed && r.unavailable) || null;
+export const tileUnavailable = (r: DrawerRow): string | null => (!r.installed && r.unavailable && oneLang(r.unavailable)) || null;
 
 /** 아이콘 — 받은 그림, 못 구했으면 참모 포토는 Chammo 아이콘(우리 앱이라), 나머지는 빈 칸(첫 글자 판) */
 export const tileIcon = (r: DrawerRow) => r.icon || (r.app === 'photocraft' ? '/assets/icon-192.png' : '');

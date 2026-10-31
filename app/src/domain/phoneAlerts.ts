@@ -1,5 +1,6 @@
 // 폰 종 = 알림 보기(시안 docs/design-drafts/phone-nav v1 N, 2026-10-24) — '최근' 칸.
 // 폰엔 받은 알림 기록이 따로 없어서, 이 참모가 맡긴 일의 끝남·물음을 작업 기록(tasks)에서 만든다
+import { tr } from '../i18n';
 import type { TaskEvent } from './tasks';
 
 export type AlertRow = { key: string; task: string; kind: 'done' | 'ask'; target: string; line: string; at: number };
@@ -17,8 +18,8 @@ export function recentAlerts(events: TaskEvent[], orchId: string, now: number): 
     const s = sent.get(e.task);
     const at = Date.parse(e.ts);
     if (!s || !(now - at < DAYS * 86_400_000)) return;
-    const title = s.title ?? '맡긴 일';
-    const line = e.type === 'done' ? `${title} 끝남${e.note ? ` — ${e.note}` : ''}` : (e.note || title);
+    const title = s.title ?? tr('맡긴 일', 'Task');
+    const line = e.type === 'done' ? tr(`${title} 끝남${e.note ? ` — ${e.note}` : ''}`, `${title} done${e.note ? ` — ${e.note}` : ''}`) : (e.note || title);
     rows.push({ key: `${e.task}:${e.type}:${i}`, task: e.task, kind: e.type, target: s.target ?? '', line, at });
   });
   return rows.sort((a, b) => b.at - a.at).slice(0, MAX);

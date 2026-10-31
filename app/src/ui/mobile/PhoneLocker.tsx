@@ -3,6 +3,7 @@
 // 기록 → 폴더는 끌기 대신 길게 누르기 메뉴 → 폴더 고르기 → 바로가기(기록은 그대로 '→ 자료') + 되돌리기. + = 새 문서·사진·파일(새 엑셀은 데스크톱).
 // 폰이 쓰는 건 그 참모 보관함 안에만(서버가 다시 거른다). 옮기기·이름 바꾸기·지우기는 데스크톱
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { tr } from '../../i18n';
 import { lockerAlias, lockerUnalias } from '../../data/web';
 import type { LockerView } from '../../domain/locker';
 import { defaultView, logDays, lockerLog, type LockerViewMode, type LogItem } from '../../domain/lockerLog';
@@ -62,28 +63,28 @@ export function PhoneLocker({ owner, view: lv, shown, projects, chips, whoOf, on
       const r = await lockerAlias(owner, openPathOf(h.path, tree), folder);
       onReload();
       const rel = relOf(r.path);
-      say(`${baseName(folder)}에 바로가기 넣음`, rel ? () => void lockerUnalias(owner, rel).then(() => { setToast(null); onReload(); }, () => say('못 되돌렸어요')) : undefined);
+      say(tr(`${baseName(folder)}에 바로가기 넣음`, `Shortcut added to ${baseName(folder)}`), rel ? () => void lockerUnalias(owner, rel).then(() => { setToast(null); onReload(); }, () => say(tr('못 되돌렸어요', "Couldn't undo"))) : undefined);
     } catch (e) {
-      say(`못 넣었어요 — ${(e as Error).message}`);
+      say(tr(`못 넣었어요 — ${(e as Error).message}`, `Couldn't add — ${(e as Error).message}`));
     }
   };
-  const unalias = (h: Held) => { if (h.rel) void lockerUnalias(owner, h.rel).then(onReload, (e) => say(`못 뺐어요 — ${(e as Error).message}`)); };
+  const unalias = (h: Held) => { if (h.rel) void lockerUnalias(owner, h.rel).then(onReload, (e) => say(tr(`못 뺐어요 — ${(e as Error).message}`, `Couldn't remove — ${(e as Error).message}`))); };
 
   const seg = (
-    <span className="m-lk-seg" role="tablist" aria-label="보기">
-      <button type="button" role="tab" aria-selected={mode === 'card'} className={mode === 'card' ? 'm-on' : ''} onClick={() => setMode('card')} aria-label="카드로 보기" title="카드로 보기"><IconDashboard /></button>
-      <button type="button" role="tab" aria-selected={mode === 'list'} className={mode === 'list' ? 'm-on' : ''} onClick={() => setMode('list')} aria-label="목록으로 보기" title="목록으로 보기"><IconList /></button>
+    <span className="m-lk-seg" role="tablist" aria-label={tr('보기', 'View')}>
+      <button type="button" role="tab" aria-selected={mode === 'card'} className={mode === 'card' ? 'm-on' : ''} onClick={() => setMode('card')} aria-label={tr('카드로 보기', 'Card view')} title={tr('카드로 보기', 'Card view')}><IconDashboard /></button>
+      <button type="button" role="tab" aria-selected={mode === 'list'} className={mode === 'list' ? 'm-on' : ''} onClick={() => setMode('list')} aria-label={tr('목록으로 보기', 'List view')} title={tr('목록으로 보기', 'List view')}><IconList /></button>
     </span>
   );
   // 연결 폴더(맥 폴더의 바로가기)는 폰에선 읽기만 — 새로 만들기·올리기 없음
-  const tools = (title: ReactNode, ro = false) => <div className="m-lk-tools">{title}{!ro && <IconBtn label="새로 만들기·올리기" onClick={() => setAdding(true)}><IconPlus /></IconBtn>}{seg}</div>;
+  const tools = (title: ReactNode, ro = false) => <div className="m-lk-tools">{title}{!ro && <IconBtn label={tr('새로 만들기·올리기', 'New or upload')} onClick={() => setAdding(true)}><IconPlus /></IconBtn>}{seg}</div>;
   const filedWord = (it: LogItem) => (it.filed.length ? `→ ${it.filed.map((f) => baseName(f)).join(', ')}` : '');
   const metaOf = (it: LogItem) => {
     const w = whoOf(it.by);
     const what = it.act === 'shown' && it.by !== 'me' ? shownBy(w) : w;
     return [what, hm(it.ts)].filter(Boolean).join(' · ');
   };
-  const logView = (items: LogItem[]) => (items.length === 0 ? <p className="m-muted m-sm">아직 주고받은 파일이 없어요</p> : logDays(items).map((g) => (
+  const logView = (items: LogItem[]) => (items.length === 0 ? <p className="m-muted m-sm">{tr('아직 주고받은 파일이 없어요', 'No files yet')}</p> : logDays(items).map((g) => (
     <section key={g.label}>
       <div className="m-sect">{g.label}</div>
       <div className={mode === 'card' ? 'm-files' : 'm-lk-list'}>
@@ -106,14 +107,14 @@ export function PhoneLocker({ owner, view: lv, shown, projects, chips, whoOf, on
     const files = kids.filter((e) => !e.dir);
     body = (
       <>
-        {tools(<><IconBtn label="뒤로" onClick={() => setPlace(up ? { kind: 'dir', rel: up } : { kind: 'root' })}><IconBack /></IconBtn><b className="m-lk-title">{baseName(place.rel)}</b></>, readOnlyAt(tree.entries, place.rel))}
+        {tools(<><IconBtn label={tr('뒤로', 'Back')} onClick={() => setPlace(up ? { kind: 'dir', rel: up } : { kind: 'root' })}><IconBack /></IconBtn><b className="m-lk-title">{baseName(place.rel)}</b></>, readOnlyAt(tree.entries, place.rel))}
         {kids.some((e) => e.dir) && <div className="m-lk-folds">{kids.filter((e) => e.dir).map(folderCard)}</div>}
-        {files.length === 0 ? <p className="m-muted m-sm">비어 있어요 — 기록에서 길게 눌러 바로가기를 넣거나 + 로 만들어요</p> : (
+        {files.length === 0 ? <p className="m-muted m-sm">{tr('비어 있어요 — 기록에서 길게 눌러 바로가기를 넣거나 + 로 만들어요', 'Empty — long-press an item in the log to add a shortcut, or tap + to create one')}</p> : (
           <div className={mode === 'card' ? 'm-files' : 'm-lk-list'}>
             {files.map((e) => {
               const path = `${tree.dir}/${e.rel}`;
               const h: Held = { path, name: e.name, rel: e.rel, link: !!e.link && !e.ro };
-              return <Item key={e.rel} h={h} view={mode} meta={[e.link && !e.ro ? '바로가기' : '', e.mtime ? hm(new Date(e.mtime).toISOString()) : ''].filter(Boolean).join(' · ')} filed="" onOpen={() => open(path, e.name)} onHold={() => setHeld(h)} />;
+              return <Item key={e.rel} h={h} view={mode} meta={[e.link && !e.ro ? tr('바로가기', 'Shortcut') : '', e.mtime ? hm(new Date(e.mtime).toISOString()) : ''].filter(Boolean).join(' · ')} filed="" onOpen={() => open(path, e.name)} onHold={() => setHeld(h)} />;
             })}
           </div>
         )}
@@ -132,12 +133,12 @@ export function PhoneLocker({ owner, view: lv, shown, projects, chips, whoOf, on
     body = (
       <>
         {tools(<span className="m-lk-sp" />)}
-        <div className="m-chips m-lk-chips">{onChips.map(chip)}<button type="button" className="m-chip m-lk-more" onClick={() => setAllOpen(true)}>모든 프로젝트</button></div>
+        <div className="m-chips m-lk-chips">{onChips.map(chip)}<button type="button" className="m-chip m-lk-more" onClick={() => setAllOpen(true)}>{tr('모든 프로젝트', 'All projects')}</button></div>
         {cur && <div className="m-lk-phead"><span className={`st-dot ${dotClass(cur.dot)}`} aria-hidden="true" /><b>{cur.name}</b></div>}
         {!cur && (
           <>
-            <div className="m-sect">내 폴더</div>
-            <div className="m-lk-folds">{tops.map(folderCard)}<button type="button" className="m-lk-fold m-lk-addf" aria-label="새 폴더" title="새 폴더" onClick={() => setNaming({ kind: 'folder', parent: '' })}><IconFolderPlus /></button></div>
+            <div className="m-sect">{tr('내 폴더', 'My folders')}</div>
+            <div className="m-lk-folds">{tops.map(folderCard)}<button type="button" className="m-lk-fold m-lk-addf" aria-label={tr('새 폴더', 'New folder')} title={tr('새 폴더', 'New folder')} onClick={() => setNaming({ kind: 'folder', parent: '' })}><IconFolderPlus /></button></div>
           </>
         )}
         {logView(items)}
@@ -148,17 +149,17 @@ export function PhoneLocker({ owner, view: lv, shown, projects, chips, whoOf, on
   return (
     <div className="m-lk">
       {body}
-      {toast && <div className="m-lk-toast" role="status">{toast.text}{toast.undo && <button type="button" onClick={toast.undo}>되돌리기</button>}</div>}
+      {toast && <div className="m-lk-toast" role="status">{toast.text}{toast.undo && <button type="button" onClick={toast.undo}>{tr('되돌리기', 'Undo')}</button>}</div>}
       {held && <ItemMenu h={held} onClose={() => setHeld(null)} onOpen={() => open(held.path, held.name)} onAlias={() => setPicking(held)} onUnalias={held.link ? () => unalias(held) : undefined} />}
       {picking && <FolderPick folders={userFolders(tree.entries)} onClose={() => setPicking(null)} onPick={(rel) => void alias(picking, rel)} onNew={() => { setNaming({ kind: 'folder', parent: '', then: picking }); setPicking(null); }} />}
-      {adding && <AddSheet where={folderRel ? baseName(folderRel) : '보관함'} onClose={() => setAdding(false)} onDoc={() => setNaming({ kind: 'doc', parent: folderRel })}
-        onFiles={(fl) => void onUpload(fl).then(async (paths) => { if (folderRel) await Promise.allSettled(paths.map((p) => lockerAlias(owner, p, folderRel))); onReload(); }, (e) => say(`못 올렸어요 — ${(e as Error).message}`))} />}
+      {adding && <AddSheet where={folderRel ? baseName(folderRel) : tr('보관함', 'Locker')} onClose={() => setAdding(false)} onDoc={() => setNaming({ kind: 'doc', parent: folderRel })}
+        onFiles={(fl) => void onUpload(fl).then(async (paths) => { if (folderRel) await Promise.allSettled(paths.map((p) => lockerAlias(owner, p, folderRel))); onReload(); }, (e) => say(tr(`못 올렸어요 — ${(e as Error).message}`, `Couldn't upload — ${(e as Error).message}`)))} />}
       {naming && <NameSheet owner={owner} kind={naming.kind} parent={naming.parent} onClose={() => setNaming(null)}
         onMade={(made) => { setNaming(null); onReload(); if (naming.kind === 'doc') setEditing(made); else if (naming.then) void alias(naming.then, made); }} onError={(m) => say(m)} />}
       {editing && <MdEditor owner={owner} path={editing} onClose={() => { setEditing(null); onReload(); }} />}
       {allOpen && (
-        <BottomSheet label="모든 프로젝트" title="모든 프로젝트" onClose={() => setAllOpen(false)}>
-          {chips.all.length === 0 ? <p className="m-muted m-sm">떠 있는 프로젝트가 없어요</p> : chips.all.map((c) => (
+        <BottomSheet label={tr('모든 프로젝트', 'All projects')} title={tr('모든 프로젝트', 'All projects')} onClose={() => setAllOpen(false)}>
+          {chips.all.length === 0 ? <p className="m-muted m-sm">{tr('떠 있는 프로젝트가 없어요', 'No active projects')}</p> : chips.all.map((c) => (
             <button key={c.root} type="button" className="m-menu-item m-lk-allrow" onClick={() => { setAllOpen(false); setPlace({ kind: 'root', project: c.root }); }}>
               <span className={`st-dot ${dotClass(c.dot)}`} aria-hidden="true" /><b>{c.name}</b>
             </button>

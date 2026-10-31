@@ -2,6 +2,7 @@
 import { stripMarks, type ChatItem } from '../../domain/chat';
 import { toolLine } from '../../domain/mobile';
 import { mdParse } from '../md';
+import { tr } from '../../i18n';
 
 const BLOCK = /<\/?(p|li|ul|ol|h[1-6]|blockquote|pre|tr|td|th|table|thead|tbody|hr|br)\b[^>]*>/gi;
 const ENTITY: Record<string, string> = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" };
@@ -28,7 +29,7 @@ export function orchLine(items: ChatItem[], state: string): string {
   if (state === 'working') {
     const tail = items[items.length - 1];
     const t = tail?.kind === 'tools' ? tail.tools[tail.tools.length - 1] : undefined;
-    return t ? `일하는 중 · ${toolLine(t)}` : '일하는 중';
+    return t ? tr(`일하는 중 · ${toolLine(t)}`, `Working · ${toolLine(t)}`) : tr('일하는 중', 'Working');
   }
   return lastLine(items);
 }

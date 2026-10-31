@@ -193,6 +193,29 @@ pub(crate) fn bytes_of(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, 
     Ok(b)
 }
 
+/// 여럿 — 받아 둔 것은 데이터 폴더에서, 못 받은 것만 같이 받는다(locker::get_many). 돌려주는 순서는 ids 순서
+pub(crate) fn bytes_many(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, ids: &[String]) -> Vec<Result<Vec<u8>, String>> {
+    let mut out: Vec<Option<Result<Vec<u8>, String>>> = ids.iter().map(|id| if file_id_ok(id) { std::fs::read(cache_dir(dir).join(id)).ok().map(Ok) } else { Some(Err("파일 id 모양이 아니야".into())) }).collect();
+    let missing: Vec<String> = ids.iter().zip(&out).filter(|(_, o)| o.is_none()).map(|(id, _)| id.clone()).collect();
+    let mut got = locker::get_many(dir, kc, http, team, &missing).into_iter();
+    let _ = std::fs::create_dir_all(cache_dir(dir));
+    for (id, o) in ids.iter().zip(out.iter_mut()) {
+        if o.is_none() {
+            let r = got.next().unwrap_or_else(|| Err("못 받았어".into()));
+            if let Ok(b) = &r {
+                let _ = std::fs::write(cache_dir(dir).join(id), b);
+            }
+            *o = Some(r);
+        }
+    }
+    out.into_iter().map(|o| o.unwrap_or_else(|| Err("못 받았어".into()))).collect()
+}
+
+/// 받아 둔 것인가(망 없음)
+pub(crate) fn cached(dir: &Path, id: &str) -> bool {
+    file_id_ok(id) && cache_dir(dir).join(id).is_file()
+}
+
 /// 팀 하나의 프로필 이름 — 봉해 둔 마지막 보관함 목록과 이미 푼 프로필만 읽는다(scripts/team 이 망을 기다리지 않게).
 /// 앱이 팀 화면을 그릴 때마다 채운다 — 아직 못 푼 사람은 명부 이름만 쓴다
 pub fn cached_names(dir: &Path, kc: &dyn Store, team: &str) -> BTreeMap<String, String> {

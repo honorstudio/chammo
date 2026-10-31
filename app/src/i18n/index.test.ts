@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { assistant, getLang, josa, machine, pickLang, setAssistant, setLang, setWinKeys, tr } from './index';
+import { assistant, getLang, josa, machine, oneLang, pickLang, setAssistant, setLang, setWinKeys, tr } from './index';
 
 afterEach(() => { setLang('ko'); setAssistant(null); });
 
@@ -61,5 +61,40 @@ describe('machine — 이 컴퓨터를 부르는 말(윈도우에 맥 문구가 
     setLang('ko');
     expect(josa(machine(false), '이', '가')).toBe('맥이');
     expect(josa(machine(true), '이', '가')).toBe('PC가');
+  });
+});
+
+describe('oneLang — 스크립트가 내는 \'English / 한국어\' 이중 문구를 사람 화면엔 설정 언어 하나로(공개 이슈 #16)', () => {
+  const rel = 'crafts-2026.10.19: could not get the Chammo apps release / 참모 앱 공개 릴리스를 못 받음 — HTTP Error 404: Not Found';
+  it('재현: 앱 서랍 까닭 줄', () => {
+    expect(oneLang(rel, 'en')).toBe('crafts-2026.10.19: could not get the Chammo apps release — HTTP Error 404: Not Found');
+    expect(oneLang(rel, 'ko')).toBe('crafts-2026.10.19: 참모 앱 공개 릴리스를 못 받음 — HTTP Error 404: Not Found');
+  });
+  it('scripts/craft 오류 모양들', () => {
+    const cases: [string, string, string][] = [
+      ['unknown app / 모르는 앱: foo — photocraft, gridcraft', 'unknown app: foo — photocraft, gridcraft', '모르는 앱: foo — photocraft, gridcraft'],
+      ['PhotoCraft: up to 3 per app / 한 앱에 3개까지', 'PhotoCraft: up to 3 per app', 'PhotoCraft: 한 앱에 3개까지'],
+      ['PhotoCraft: no public release yet / 아직 공개 릴리스 없음 — CHAMMO_CRAFT_LOCAL=<DMG folder / DMG 폴더>',
+        'PhotoCraft: no public release yet — CHAMMO_CRAFT_LOCAL=<DMG folder>', 'PhotoCraft: 아직 공개 릴리스 없음 — CHAMMO_CRAFT_LOCAL=<DMG 폴더>'],
+      ['SHA-256 mismatch / 체크섬이 안 맞음 (a.zip: 1… ≠ 2…) — thrown away', 'SHA-256 mismatch (a.zip: 1… ≠ 2…) — thrown away', '체크섬이 안 맞음 (a.zip: 1… ≠ 2…) — thrown away'],
+      ['GridCraft is not open / 안 띄움 — scripts/craft open gridcraft --native', 'GridCraft is not open — scripts/craft open gridcraft --native', '안 띄움 — scripts/craft open gridcraft --native'],
+      ['pdfcraft: PDF / PDF 읽기·편집', 'pdfcraft: PDF', 'pdfcraft: PDF 읽기·편집'],
+    ];
+    for (const [t, en, ko] of cases) {
+      expect(oneLang(t, 'en'), t).toBe(en);
+      expect(oneLang(t, 'ko'), t).toBe(ko);
+    }
+  });
+  it('한 언어 글·빗금이 그냥 쓰인 글은 그대로', () => {
+    for (const t of ['HTTP Error 404', '파일을 못 읽었어요', 'a / b', 'and/or 한글', '경로: /Users/me/a / b', '']) {
+      expect(oneLang(t, 'en')).toBe(t);
+      expect(oneLang(t, 'ko')).toBe(t);
+    }
+  });
+  it('언어를 안 주면 지금 언어', () => {
+    setLang('en');
+    expect(oneLang(rel)).toContain('could not get');
+    setLang('ko');
+    expect(oneLang(rel)).toContain('못 받음');
   });
 });

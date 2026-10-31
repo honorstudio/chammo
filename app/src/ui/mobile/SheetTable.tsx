@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react';
 import { colName, type SheetBook, type SheetData } from '../../domain/sheetBook';
 import { phoneGrid } from '../../domain/sheetPhone';
-import { machine } from '../../i18n';
+import { machine, tr } from '../../i18n';
 
 type Book = SheetBook & { sheets: (SheetData & { cut?: number })[] };
 
@@ -11,7 +11,7 @@ export function SheetTable({ book }: { book: Book }) {
   const [at, setAt] = useState(visible[0]?.i ?? 0);
   const sheet = book.sheets[at];
   const grid = useMemo(() => (sheet ? phoneGrid(sheet, book.styles.cell) : null), [sheet, book]);
-  if (!sheet || !grid) return <p className="m-muted">빈 통합 문서예요</p>;
+  if (!sheet || !grid) return <p className="m-muted">{tr('빈 통합 문서예요', 'This workbook is empty')}</p>;
   return (
     <div className="m-xlsx">
       {visible.length > 1 && (
@@ -34,9 +34,9 @@ export function SheetTable({ book }: { book: Book }) {
             </tbody>
           </table>
         </div>
-      ) : <p className="m-muted">빈 시트예요</p>}
-      {(sheet.cut ?? 0) > 0 && <p className="m-muted m-sm">앞 2,000행만 보여 줘요 — 나머지 {sheet.cut!.toLocaleString('ko-KR')}행은 {machine()}에서</p>}
-      {sheet.charts > 0 && <p className="m-muted m-sm">차트 {sheet.charts}개는 {machine()}에서 봐요</p>}
+      ) : <p className="m-muted">{tr('빈 시트예요', 'This sheet is empty')}</p>}
+      {(sheet.cut ?? 0) > 0 && <p className="m-muted m-sm">{tr(`앞 2,000행만 보여 줘요 — 나머지 ${sheet.cut!.toLocaleString('ko-KR')}행은 ${machine()}에서`, `Showing the first 2,000 rows — the other ${sheet.cut!.toLocaleString('en-US')} rows are on your ${machine()}`)}</p>}
+      {sheet.charts > 0 && <p className="m-muted m-sm">{tr(`차트 ${sheet.charts}개는 ${machine()}에서 봐요`, `View the ${sheet.charts} chart(s) on your ${machine()}`)}</p>}
     </div>
   );
 }

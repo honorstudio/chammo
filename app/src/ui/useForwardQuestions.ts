@@ -2,9 +2,10 @@
 // sessions 는 3초마다 새로 와서 이 효과도 그때마다 돈다(30초 유예를 따로 재지 않아도 된다)
 // 2026-09-30: 질문으로 턴을 끝내고 기다리는 하위 세션도(선택지 창이 아닌 것) — 그 턴에 참모에게 말을 안 했을 때만
 // 2026-10-11: 맡긴 일이 안 닫혔는데 보고 없이 10분 넘게 쉬는 하위 세션도(조사 2번)
+// 2026-10-31: 오래 조용을 '대답 없음'(쉼)과 '명령 오래 걸림'(도구 하나가 20분 넘게)으로 나누고, 둘 다 git 가지@해시를 붙인다
 import { useEffect, useRef } from 'react';
-import { readTranscriptTails, sendToSession } from '../data/tauri';
-import { askForwardText, askKeyOf, askTextKeyOf, forwardText, forwardTo, inputWaitText, nextAskForward, nextForward, nextQuietForward, openTaskOf, quietForwardText, quietKeyOf, retryAfterFail, toldOrch, turnStart, type AskCand, type AskTrack } from '../domain/forwardQuestion';
+import { readTranscriptTails, sendToSession, tidyGit } from '../data/tauri';
+import { askForwardText, askKeyOf, askTextKeyOf, forwardText, forwardTo, inputWaitText, nextAskForward, nextForward, nextQuietForward, nextSlowForward, openTaskOf, quietForwardText, quietKeyOf, retryAfterFail, slowForwardText, slowKeyOf, toldOrch, turnStart, type AskCand, type AskTrack } from '../domain/forwardQuestion';
 import type { TaskCard, TaskEvent } from '../domain/tasks';
 import type { Session } from '../domain/session';
 
@@ -69,11 +70,14 @@ export function useForwardQuestions(subs: Session[], orch: Session | undefined, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subs, orch, events, orchs]);
 
-  /** 안 닫은 일 + 말없이 쉼 — 같은 일은 한 번만(done 에 열쇠), 그 턴에 참모에게 이미 말했으면 안 넣는다 */
+  /** 안 닫은 일 + 말없이 쉼(대답 없음) — 같은 일은 한 번만(done 에 열쇠), 그 턴에 참모에게 이미 말했으면 안 넣는다. 없으면 명령 오래 걸림 */
   function quiet(toOf: (s: Session) => Session | undefined) {
     const q = nextQuietForward(asks, openTaskOf(cards, sessions), toOf, done.current!, Date.now(), watching);
     const to = q && toOf(q.cand.session);
-    if (!q || !to) return;
+    if (!q || !to) {
+      slow(toOf);
+      return;
+    }
     const key = quietKeyOf(q.cand, q.task);
     done.current!.add(key);
     saveDone(done.current!);
@@ -82,9 +86,27 @@ export function useForwardQuestions(subs: Session[], orch: Session | undefined, 
     void readTranscriptTails(orchSids)
       .then((tails) => {
         if (toldOrch(Object.values(tails).join('\n'), q.cand.session.name, since)) return;
-        return sendToSession(to.id, quietForwardText(q.cand.session, q.cand.activity, q.task, Date.now()));
+        return gitOf(q.cand.session).then((g) => sendToSession(to.id, quietForwardText(q.cand.session, q.cand.activity, q.task, Date.now(), g)));
       })
       .catch(() => { if (retryAfterFail(fails.current, key)) { done.current?.delete(key); saveDone(done.current!); } })
       .finally(() => { busy.current = false; });
   }
+
+  /** 일하는 중인데 도구 하나가 오래 안 끝남 — 같은 도구 호출은 한 번만 */
+  function slow(toOf: (s: Session) => Session | undefined) {
+    const q = nextSlowForward(asks, openTaskOf(cards, sessions), toOf, done.current!, Date.now(), watching);
+    const to = q && toOf(q.cand.session);
+    if (!q || !to) return;
+    const key = slowKeyOf(q.cand);
+    done.current!.add(key);
+    saveDone(done.current!);
+    busy.current = true;
+    void gitOf(q.cand.session)
+      .then((g) => sendToSession(to.id, slowForwardText(q.cand.session, q.cand.activity, q.task, Date.now(), g)))
+      .catch(() => { if (retryAfterFail(fails.current, key)) { done.current?.delete(key); saveDone(done.current!); } })
+      .finally(() => { busy.current = false; });
+  }
 }
+
+/** 세션 폴더 git 가지@해시 — 못 읽으면 없이 보낸다 */
+const gitOf = (s: Session) => tidyGit([s.cwd]).then((r) => r[0], () => undefined);

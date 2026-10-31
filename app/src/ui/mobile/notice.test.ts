@@ -26,7 +26,7 @@ describe('알림 모달 닫힘 때', () => {
 describe('알림 모달 모양', () => {
   it('닫기 아이콘(이름 달림)·바깥 누름·화면 전체 위(포털)', () => {
     expect(notice).toMatch(/<IconClose \/>/);
-    expect(notice).toMatch(/aria-label="닫기"/);
+    expect(notice).toMatch(/aria-label=\{tr\('닫기', 'Close'\)\}/);
     expect(notice).toMatch(/m-notice-back/);
     expect(notice).toMatch(/<SheetPortal>/); // 공용 시트 자리(틀 안) — 시트 transform 에 안 갇힌다
   });

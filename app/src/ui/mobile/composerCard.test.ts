@@ -50,7 +50,7 @@ describe('오른쪽 아래 참모 프사', () => {
 
 describe('일하는 중·쓰는 중에도 참모 바꾸기(2026-10-11 사용자 — 일하는 참모에서 못 돌아왔다)', () => {
   it('멈춤은 오른쪽 아래가 아니라 일하는 중일 때만 뜨는 따로 한 칸(44px, 이름 "하던 일 멈추기")', () => {
-    expect(src).toMatch(/slots\.stop && \(?\s*<button[^>]*className="m-cbtn m-cstop-sm"[^>]*aria-label=\{`\$\{orchName\} 하던 일 멈추기`\}/);
+    expect(src).toMatch(/slots\.stop && \(?\s*<button[^>]*className="m-cbtn m-cstop-sm"[^>]*aria-label=\{tr\(`\$\{orchName\} 하던 일 멈추기`/);
     expect(rule('.m-cstop-sm > .m-cdot')).toMatch(/width\s*:\s*28px/);
   });
   it('참모 프사 둘레 = 그 참모 컨텍스트 고리(숫자 없음, 80% 넘으면 빨강), 일하는 중이면 고리 + 파란 점(시안 v2 A, 2026-10-11 사용자)', () => {

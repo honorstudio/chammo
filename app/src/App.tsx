@@ -8,7 +8,7 @@ import { accountsApi, readUsage, setOrchLegacy, todayCommits, type RepoToday, se
 import { ACCOUNTS_CHANGED, topLabel, usageOf, type AccountsView } from './domain/accounts';
 import { useAccountAuto } from './ui/useAccountAuto';
 import { useLogin } from './ui/useLogin';
-import { LoginCard, TermsCards } from './ui/LoginCard';
+import { ClaudeMissingCard, LoginCard, TermsCards } from './ui/LoginCard';
 import { useBrowserNeeds } from './ui/BrowserAttach';
 import { dayStart, parseUsage, TODAY_COMMITS_MS, type Usage } from './domain/usage';
 import { FeatureRow, type FeatureProps } from './ui/FeatureButtons';
@@ -175,6 +175,7 @@ import { bumpUsage, gachaPhoneReply, rebuildMenu, writeConfig, writeOffice } fro
 import { useSpeakGlowPoll } from './ui/speakGlow';
 import { attachCommand } from './domain/termCommand';
 import { chatViewOf, type ChatView } from './domain/space';
+import { usePerfAlerts } from './ui/usePerfAlerts';
 
 /** 앱을 켠 때 — 이전 결정은 알림으로 다시 안 띄운다(domain/inbox bornAfter) */
 const APP_STARTED = Date.now();
@@ -318,6 +319,8 @@ export default function App() {
   // 목록 읽기가 낸 오류만 목록 읽기가 지운다 — 예전엔 폴링이 성공할 때마다 지워서 참모 띄우기 실패 같은 오류가 몇 초 만에 사라졌다(2026-10-03 QA 2번)
   const listFailed = useRef(false);
   const listFails = useRef(0);
+  /** claude 를 못 찾는 중(useLogin) — 목록 실패 띠를 다시 설치 안내로 */
+  const missingRef = useRef(false);
   // 세션 목록을 마지막으로 받은 때 — 한동안 안 오면 옛 상태를 믿지 않고 '모름'(domain/status LIST_STALE_MS)
   const listAt = useRef<number | undefined>(undefined);
   const [selected, setSelected] = useState<Selection>({ kind: 'orchestrator' });
@@ -680,7 +683,7 @@ export default function App() {
       // 옛 claude(--json 없음)나 로그인 풀림이 여기로 온다 — 숨기지 않고 배너로. 시간 초과는 한 번으론 안 띄우고 이어지면 사람 말로(domain/busyGate) —
       // 부팅 직후 'command timed out' 띠만 떠서 무슨 일인지 몰랐다(2026-10-26). 실패해도 세션 목록은 그대로 둔다(꺼진 걸로 안 친다)
       listFails.current += 1;
-      const text = listErrorText(String(e), listFails.current, busyNow());
+      const text = listErrorText(String(e), listFails.current, busyNow(), missingRef.current);
       if (text) { listFailed.current = true; setError(text); }
     }
   }, [env]);
@@ -872,7 +875,7 @@ export default function App() {
   // 다마고치: 1분마다 작업 기록을 먹여 tama.json 에 쓴다(위젯 창은 읽기만)
   const openPetRef = useRef(() => {});
   const [petModal, setPetModal] = useState(false);
-  const tama = useTama(env, sessions, taskEvents, routines, navOrchs, (k) => { if (k === 'dex' || k === 'pet') openPetRef.current(); }, review.scannedAt ? review.open : null);
+  const tama = useTama(env, sessions, taskEvents, routines, navOrchs, (k) => { if (k === 'dex' || k === 'pet') openPetRef.current(); }, review.scannedAt ? review.open : null, features.tama);
   // 펫 = 참모가 키운다(시안 tama-v2 B) — 더보기·도감은 돌보는 참모(마지막으로 먹인 참모) 대시보드의 펫 탭
   const petWho = (id: string) => { const o = navOrchs.find((x) => x.id === id); return o ? { name: o.name, color: orchColor(o.name) } : null; };
   // 펫 탭 코인 = 사무실과 같은 상점 창(뽑기·도감·스킨) — 펫 탭에서 뽑아도 뽑은 걸 바로 본다
@@ -932,6 +935,13 @@ export default function App() {
   // 로그인 풀림 — 멈춘 세션들 + 맥 로그인을 '로그인 필요' 하나로, 고쳐진 걸 본 뒤 이어서(domain/login). 카드는 결정 대기함 맨 위
   const routineActs: SessionActivity[] = routineStalls(routineSess, activity).map(({ session: s, activity: a }) => ({ session: s, activity: a, status: activityStatus(s.state, a, now) }));
   const login = useLogin([...allActs, ...sideActs, ...routineActs], accounts, voice && features.voice);
+  missingRef.current = login.missing;
+  // claude 가 다시 보이면(다시 설치) 앱 환경을 새로 읽는다 — 터미널 칸·로그인 카드가 옛 claude 자리를 쥐고 있지 않게, 목록도 바로
+  const wasMissing = useRef(false);
+  useEffect(() => {
+    if (wasMissing.current && !login.missing) { void getAppEnv().then(setEnv).catch(() => {}); refresh(); }
+    wasMissing.current = login.missing;
+  }, [login.missing]);
   // 이 프로젝트 브라우저가 없는데 브라우저 일을 받았다 — 결정 대기함 [연결] 카드(task send·scripts/app browser need, GitHub #2)
   const browserNeeds = useBrowserNeeds((dir) => sessions.filter((x) => x.cwd === dir || x.cwd.startsWith(`${dir}/`)).length);
   // 모달을 안 보는 동안 세션 크롬에 뜬 크롬 자체 창(패스키·권한 등) — 결정 대기함 카드(누르면 모달 + 작게 꺼내기, AgentAskHost 가 채운다)
@@ -1146,6 +1156,8 @@ export default function App() {
     front: groups.orchestrator, orchs: groups.orchestrators, sessions, heir: heirOf });
   // 오래 멈춘 목표 — 같은 스위치, 그 목표를 맡긴 참모 입력칸에 한 줄(domain/goalStall)
   useGoalStall({ on: features.autoTidy, orchs: groups.orchestrators, events: taskEvents, sessions });
+  // 팀 성능 예산 넘침 — Rust 가 쌓은 알림(배경 몫 넘김·사람 동작 429)을 앱 업데이트 맡은 참모에게 [앱] 한 줄(domain/perfAlert · 10-31 사용자)
+  usePerfAlerts({ orchs: groups.orchestrators, roles: orchRoles });
   const inbox = buildInbox(allActs, taskEvents, new Set(dismissed), sessions, (s) => orchIds.has(s.id), (s) => orchDisplay(s) || assistant()).filter((i) => !(i.kind === 'blocked' && picking.has(i.target ?? '')));
   // 새 결정이 생기면: 종 아래 드롭다운이 저절로 펼쳐짐 + macOS 알림. 개수는 상단 바 종·Dock 뱃지
   // 직접 답하기 카드도 결정 대기함에 — 새로 기다리는 카드가 생기면 드롭다운도 펼친다(어느 화면·탭을 보든 보이게)
@@ -1182,7 +1194,7 @@ export default function App() {
   const prevLogin = useRef<number | null>(null);
   const prevTerms = useRef('');
   /** 로그인 카드 + 약관 카드(계정마다) */
-  const loginCount = (login.need ? 1 : 0) + login.terms.length;
+  const loginCount = (login.need ? 1 : 0) + (login.missing ? 1 : 0) + login.terms.length;
   const prevBrowser = useRef('');
   useEffect(() => {
     const prev = prevInbox.current;
@@ -2076,7 +2088,7 @@ export default function App() {
       return <ToolsFloat root={groups.orchestrators[0]?.cwd || env?.orchestratorCwd || roots[0]?.root || ''} roots={roots} sessions={sessions}
         computerUse={{ all: features.computerUse, setAll: (on) => saveFeature('computerUse', on) }} onClose={() => setToolsFloat(false)} />;
     })()}
-    <InboxPopover open={inboxOpen} onClose={() => setInboxOpen(false)} items={inbox} direct={direct.inboxNode || remote.node ? <>{direct.inboxNode}{remote.node}</> : null} directCount={direct.inboxCards.length + remote.cards.length} blockedWhy={(it) => replyBlocked(it, sessions)} onReply={replyItem} onOpen={openTarget} onDismiss={dismissItem} login={loginCount ? <>{login.need && <LoginCard need={login.need} claude={bin} fontSize={fontSize} />}<TermsCards cards={login.terms} onRetry={login.retryTerms} onClose={login.closeTerms} /></> : undefined} loginCount={loginCount} browser={browserNeeds.node || popupCards.length || askList.length ? <>{browserNeeds.node}<AskCards asks={askList} nameOf={(l) => askName(l, allSessions)} /><PopupCards lives={popupCards} nameOf={(l) => askName(l, allSessions)} /></> : undefined} browserCount={browserCount} />
+    <InboxPopover open={inboxOpen} onClose={() => setInboxOpen(false)} items={inbox} direct={direct.inboxNode || remote.node ? <>{direct.inboxNode}{remote.node}</> : null} directCount={direct.inboxCards.length + remote.cards.length} blockedWhy={(it) => replyBlocked(it, sessions)} onReply={replyItem} onOpen={openTarget} onDismiss={dismissItem} login={loginCount ? <>{login.missing && <ClaudeMissingCard fontSize={fontSize} />}{login.need && <LoginCard need={login.need} claude={bin} fontSize={fontSize} />}<TermsCards cards={login.terms} onRetry={login.retryTerms} onClose={login.closeTerms} /></> : undefined} loginCount={loginCount} browser={browserNeeds.node || popupCards.length || askList.length ? <>{browserNeeds.node}<AskCards asks={askList} nameOf={(l) => askName(l, allSessions)} /><PopupCards lives={popupCards} nameOf={(l) => askName(l, allSessions)} /></> : undefined} browserCount={browserCount} />
     </div>
     </OrchActionsProvider>
   );

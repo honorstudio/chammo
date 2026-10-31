@@ -902,3 +902,25 @@ fn 캐시_명부에_없는_새_사람_말은_한_번_새로_받아_열고_지어
     }
     assert_eq!(logs(), 2, "지어낸 보낸 이로 명부 요청을 쏟게 하지 못한다");
 }
+
+#[test]
+fn 팀_머리를_버리면_아무도_안_쥔_줄_세우기_칸도_버린다() {
+    // 10-31 리뷰: HEADS_GATE 는 서버|기기|팀마다 칸이 생기고 안 지워졌다(로그아웃·팀 들고 남이 쌓이면 계속 는다)
+    let key = |t: &str| format!("https://gate.test#{:?}|d1|{t}", std::thread::current().id());
+    let held = std::sync::Arc::new(Mutex::new(()));
+    {
+        let mut g = HEADS_GATE.lock().unwrap();
+        g.insert(key("tg1"), Default::default());
+        g.insert(key("tg2"), held.clone());
+        g.insert(key("tg3"), Default::default());
+    }
+    forget_heads("tg1");
+    let has = |t: &str| HEADS_GATE.lock().unwrap().contains_key(&key(t));
+    assert!(!has("tg1") && has("tg3"), "그 팀 칸만");
+    forget_heads("tg2");
+    assert!(has("tg2"), "누가 쥔 칸(받는 중)은 남긴다 — 같은 때 둘이 받지 않게");
+    drop(held);
+    forget_heads("tg2");
+    forget_heads("tg3");
+    assert!(!has("tg2") && !has("tg3"));
+}

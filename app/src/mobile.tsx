@@ -1,6 +1,8 @@
 // 폰(모바일 웹) 진입점 — 맥 앱 모바일 서버가 테일스케일로 내보낸다. Tauri 없이 data/web.ts 로 /api 를 부른다
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+// 언어는 화면 모듈보다 먼저 — 모듈 맨 위 tr() 표가 붙은 컴퓨터 설정 언어로 평가되게(ui/mobile/phoneLang, 공개 이슈 #16)
+import './ui/mobile/phoneLang';
 import { MobileApp } from './ui/mobile/MobileApp';
 import { ErrorBoundary } from './ui/ErrorBoundary';
 import { PairHelp } from './ui/mobile/PairHelp';

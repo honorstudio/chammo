@@ -47,10 +47,10 @@ import { usePendingNicks } from './pendingNicks';
 import { useSubTails } from './useSubTails';
 import { useMemoPoll } from './usePoll';
 import { Notice } from './Notice';
-import { machine } from '../../i18n';
+import { machine, tr } from '../../i18n';
 import { HomeProgress } from '../GoalProgress';
 
-const baseName = (p: string) => (p.startsWith('data:') ? '붙인 그림' : p.split('/').pop() ?? p);
+const baseName = (p: string) => (p.startsWith('data:') ? tr('붙인 그림', 'Pasted image') : p.split('/').pop() ?? p);
 /** 위 칸 = 한 칸 목록(시안 docs/design-drafts/phone-tabs v2 A, 2026-10-11 사용자 — 탭 숫자 '일 6 · 할 일 6 · 결정 2'는 뜻을 몰랐다).
  *  사용자가 묻는 순서로: 나한테 필요(참모 색 옅은 면, 있을 때만) → 도는 일(점·이름·한 줄 3개 +N) · 오늘 끝남 한 줄 → 다음 할 일 문서 줄.
  *  늘 보이는 칸이라 하위 세션 꼬리(useSubTails, 15초)로 세션판·데스크톱과 같은 판단을 넣는다 */
@@ -75,7 +75,7 @@ function TopList({ orch, events, sessions, waiting, direct, todo, onPeek, onPick
     <div className="m-top">
       <HomeProgress orch={orch} events={events} sessions={sessions} />
       {l.need.length > 0 && (
-        <div className="m-need" role="list" aria-label="나한테 필요">
+        <div className="m-need" role="list" aria-label={tr('나한테 필요', 'Needs you')}>
           {l.need.map((r) => (
             <button key={r.key} type="button" role="listitem" className="m-lrow" onClick={() => open(r)} aria-label={`${r.name} — ${r.line}`}>
               <span className="m-ask-dot" aria-hidden="true" /><b>{r.name}</b><span className="m-lrow-line">{r.line}</span><IconChevron />
@@ -90,13 +90,13 @@ function TopList({ orch, events, sessions, waiting, direct, todo, onPeek, onPick
             const lines = on ? linesOf(r.target) : [];
             return (
               <div key={r.key} className={on ? 'm-srow m-on' : 'm-srow'}>
-                <button type="button" className="m-lrow" onClick={() => setOpen(on ? null : r.key)} aria-expanded={on} aria-label={`${r.name} — ${r.dot === 'st-work' ? '일하는 중' : '쉬는 중'} · ${on ? '접기' : '펼치기'}`}>
+                <button type="button" className="m-lrow" onClick={() => setOpen(on ? null : r.key)} aria-expanded={on} aria-label={`${r.name} — ${r.dot === 'st-work' ? tr('일하는 중', 'Working') : tr('쉬는 중', 'Idle')} · ${on ? tr('접기', 'Collapse') : tr('펼치기', 'Expand')}`}>
                   <span className={`st-dot ${r.dot}`} aria-hidden="true" /><b>{r.name}</b><span className="m-lrow-line">{r.line}</span><IconChevron />
                 </button>
                 {on && (
                   <div className="m-speek">
-                    {lines.length ? lines.map((x, i) => <div key={i} className={`m-speek-l w-${x.who}`}>{x.text}</div>) : <div className="m-speek-l w-tool">아직 읽은 대화가 없어요</div>}
-                    <button type="button" className="m-btn m-speek-go" onClick={() => peek(r.target)}>대화 보기</button>
+                    {lines.length ? lines.map((x, i) => <div key={i} className={`m-speek-l w-${x.who}`}>{x.text}</div>) : <div className="m-speek-l w-tool">{tr('아직 읽은 대화가 없어요', 'No messages read yet')}</div>}
+                    <button type="button" className="m-btn m-speek-go" onClick={() => peek(r.target)}>{tr('대화 보기', 'View chat')}</button>
                   </div>
                 )}
               </div>
@@ -104,15 +104,15 @@ function TopList({ orch, events, sessions, waiting, direct, todo, onPeek, onPick
           })}
           {l.more > 0 && <div className="m-lmore">+{l.more}</div>}
           {l.done.n > 0 && (
-            <div className="m-ldone"><span className="st-dot st-done" aria-hidden="true" /><span className="m-lrow-line">오늘 끝남 {l.done.n} · {l.done.names.join(', ')}{l.done.n > 2 ? ` +${l.done.n - 2}` : ''}</span></div>
+            <div className="m-ldone"><span className="st-dot st-done" aria-hidden="true" /><span className="m-lrow-line">{tr('오늘 끝남', 'Done today')} {l.done.n} · {l.done.names.join(', ')}{l.done.n > 2 ? ` +${l.done.n - 2}` : ''}</span></div>
           )}
         </div>
       )}
-      {empty && <p className="m-muted m-sm">아직 시킨 일이 없어요</p>}
+      {empty && <p className="m-muted m-sm">{tr('아직 시킨 일이 없어요', 'Nothing assigned yet')}</p>}
       {modes}
       {(todo.todo > 0 || todo.decisions > 0) && (
-        <button type="button" className="m-lnext m-todo" onClick={onTodo} aria-label={`할 일 ${todo.todo} · 최근 결정 ${todo.decisions} — 문서 보기`}>
-          <span>할 일 <b>{todo.todo}</b></span><i aria-hidden="true" /><span>최근 결정 <b>{todo.decisions}</b></span><IconChevron />
+        <button type="button" className="m-lnext m-todo" onClick={onTodo} aria-label={tr(`할 일 ${todo.todo} · 최근 결정 ${todo.decisions} — 문서 보기`, `To do ${todo.todo} · Recent decisions ${todo.decisions} — view document`)}>
+          <span>{tr('할 일', 'To do')} <b>{todo.todo}</b></span><i aria-hidden="true" /><span>{tr('최근 결정', 'Recent decisions')} <b>{todo.decisions}</b></span><IconChevron />
         </button>
       )}
     </div>
@@ -168,7 +168,7 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
   const [pushHint, setPushHint] = useState<string | null>(null);
   // 켜진 알림을 끄려면 바로 끄지 않고 묻는다 — 상태 표시로 보고 눌렀다가 꺼졌다(2026-10-03 18:54). 이제 더보기 시트 토글에서(종은 알림 보기)
   const [askOff, setAskOff] = useState(false);
-  const bell = () => (push.can !== 'ok' ? setPushHint(PUSH_HINT[push.can] ?? '이 브라우저는 알림을 못 받아요') : push.on ? setAskOff(true) : push.enable());
+  const bell = () => (push.can !== 'ok' ? setPushHint(PUSH_HINT[push.can] ?? tr('이 브라우저는 알림을 못 받아요', 'This browser can\'t receive notifications')) : push.on ? setAskOff(true) : push.enable());
   const myBrowser = liveOf(orch, lives);
   // HQ starter 의 할 일·최근 결정 — 30초마다(서버 허용 집합에 HQ starter 가 있다)
   const [starter] = useMemoPoll(`starter:${hqDir}`, () => readFileText(`${hqDir}/docs/starter.md`).catch(() => ''), 30_000, '', [hqDir]);
@@ -207,9 +207,9 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
   const projects = useMemo(() => projectsOf(sessions.map((s) => s.cwd), hqDir), [sessions, hqDir]);
   const chips = useMemo(() => phoneChips(sessions, held, hqDir, (s) => (s.state === 'working' ? 'working' : s.state === 'blocked' ? 'blocked' : 'idle')), [sessions, held, hqDir]);
   const who = (by: string) => {
-    if (by === 'me') return '나';
+    if (by === 'me') return tr('나', 'Me');
     const s = sessions.find((x) => x.id === by);
-    return orchs.some((o) => o.id === by) ? phoneName(s?.name ?? by, orchs) : `${s?.name ?? by} 세션`;
+    return orchs.some((o) => o.id === by) ? phoneName(s?.name ?? by, orchs) : tr(`${s?.name ?? by} 세션`, `${s?.name ?? by} session`);
   };
   const upload = async (list: FileList) => {
     const out: string[] = [];
@@ -227,7 +227,7 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
   const myWait = waiting.filter((w) => w.orch === orch.id);
   const myCards = direct.filter(needsAnswer);
   const bellN = alertCount(myWait.length, myCards.length);
-  const bellLabel = `알림${bellN > 0 ? ` — 답 기다림 ${bellN}` : ''}`;
+  const bellLabel = tr(`알림${bellN > 0 ? ` — 답 기다림 ${bellN}` : ''}`, `Notifications${bellN > 0 ? ` — ${bellN} waiting for your reply` : ''}`);
   const alertRows = useMemo(() => (alertsOpen ? recentAlerts(events, orch.id, Date.now()) : []), [alertsOpen, events, orch.id]);
 
   return (
@@ -237,32 +237,32 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
             오른쪽 = 고리·종·사무실·더보기(시안 phone-nav v1 B, 2026-10-24) — 이름은 두 줄까지 */}
         <div className="m-dash-row">
           <button type="button" className="m-dash-av" onClick={() => setProfile(true)}
-            aria-label={`${title} 프로필`} title="프로필">
+            aria-label={tr(`${title} 프로필`, `${title} profile`)} title={tr('프로필', 'Profile')}>
             <MAvatar orch={orch} orchs={orchs} size={36} asking={asking} />
           </button>
           <div className="m-dash-tt">
             <div className="m-dash-title m-dash-title2">{title}</div>
             {chip && (
-              <button type="button" className={`m-load-chip m-load-sub ${chip.cls}`} onClick={() => setLoadOpen(true)} aria-label={`${chip.aria} — 부하 보기`} title={`${machine()} 부하`}>
+              <button type="button" className={`m-load-chip m-load-sub ${chip.cls}`} onClick={() => setLoadOpen(true)} aria-label={tr(`${chip.aria} — 부하 보기`, `${chip.aria} — view load`)} title={tr(`${machine()} 부하`, `${machine()} load`)}>
                 <span className="m-load-pill"><span className="m-load-dot" aria-hidden="true" />{chip.text}</span>
               </button>
             )}
           </div>
           {left !== null && (
-            <button type="button" className="m-acct-ring" onClick={() => setAcctOpen(true)} aria-label={`계정${head ? ` ${head}` : ''} — 남은 양 ${left}%${usageLine ? ` (${usageLine})` : ''} — 계정 보기`} title={head ?? '계정'}>
+            <button type="button" className="m-acct-ring" onClick={() => setAcctOpen(true)} aria-label={tr(`계정${head ? ` ${head}` : ''} — 남은 양 ${left}%${usageLine ? ` (${usageLine})` : ''} — 계정 보기`, `Account${head ? ` ${head}` : ''} — ${left}% left${usageLine ? ` (${usageLine})` : ''} — view account`)} title={head ?? tr('계정', 'Account')}>
               <UsageRing left={left} level={usageLevel(left)} />
             </button>
           )}
           {/* 종 = 알림 보기(시안 phone-nav v1 N, 2026-10-24) — 켜고 끄기는 더보기 안. 숫자 = 내 답을 기다리는 것 */}
-          <button type="button" className="m-rt-btn m-ico m-bell" onClick={() => setAlertsOpen(true)} aria-label={bellLabel} title="알림">
+          <button type="button" className="m-rt-btn m-ico m-bell" onClick={() => setAlertsOpen(true)} aria-label={bellLabel} title={tr('알림', 'Notifications')}>
             <IconBell />{bellN > 0 && <span className="m-rt-n">{bellN}</span>}
           </button>
-          <button type="button" className="m-rt-btn m-ico" onClick={onOffice} aria-label={`사무실${officeDot ? ' — 기다리는 세션 있음' : ''}`} title="사무실">
+          <button type="button" className="m-rt-btn m-ico" onClick={onOffice} aria-label={tr(`사무실${officeDot ? ' — 기다리는 세션 있음' : ''}`, `Office${officeDot ? ' — a session is waiting' : ''}`)} title={tr('사무실', 'Office')}>
             <IconOffice />{officeDot && <span className="m-rt-dot" aria-hidden="true" />}
           </button>
           {/* 더보기 = 세션·예약·계정·폰 알림(시안 phone-nav v1 B) — 줄마다 숫자는 시트 안, 단추엔 점 하나 */}
-          <button type="button" className="m-rt-btn m-ico" onClick={() => setMoreOpen(true)} title="더보기"
-            aria-label={`더보기${busySubs > 0 ? ` — 일하거나 묻는 세션 ${busySubs}` : ''}${routinesRunning > 0 ? ` — 도는 예약 ${routinesRunning}` : ''}`}>
+          <button type="button" className="m-rt-btn m-ico" onClick={() => setMoreOpen(true)} title={tr('더보기', 'More')}
+            aria-label={tr(`더보기${busySubs > 0 ? ` — 일하거나 묻는 세션 ${busySubs}` : ''}${routinesRunning > 0 ? ` — 도는 예약 ${routinesRunning}` : ''}`, `More${busySubs > 0 ? ` — ${busySubs} sessions working or asking` : ''}${routinesRunning > 0 ? ` — ${routinesRunning} scheduled running` : ''}`)}>
             <IconMore />{(busySubs > 0 || routinesRunning > 0) && <span className="m-rt-dot" aria-hidden="true" />}
           </button>
         </div>
@@ -275,20 +275,20 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
         </Notice>
       )}
       {askOff && (
-        <div className="m-confirm" role="alertdialog" aria-label="폰 알림 끄기 확인">
-          <div>폰 알림을 끌까요? 참모가 물어도 폰에 안 와요.</div>
+        <div className="m-confirm" role="alertdialog" aria-label={tr('폰 알림 끄기 확인', 'Confirm turning off phone notifications')}>
+          <div>{tr('폰 알림을 끌까요? 참모가 물어도 폰에 안 와요.', 'Turn off phone notifications? You won\'t get asked on your phone.')}</div>
           <div className="m-new-row">
-            <button type="button" className="m-btn" onClick={() => setAskOff(false)}>취소</button>
-            <button type="button" className="m-send" onClick={() => { setAskOff(false); push.disable(); }}>끄기</button>
+            <button type="button" className="m-btn" onClick={() => setAskOff(false)}>{tr('취소', 'Cancel')}</button>
+            <button type="button" className="m-send" onClick={() => { setAskOff(false); push.disable(); }}>{tr('끄기', 'Turn off')}</button>
           </div>
         </div>
       )}
 
       {myBrowser && <BrowserView live={myBrowser} />}
 
-      <div className="m-dash-tabs" role="tablist" aria-label="홈·보관함">
-        <button type="button" role="tab" aria-selected={tab === 'home'} className={tab === 'home' ? 'm-on' : ''} onClick={() => setTab('home')}>홈</button>
-        <button type="button" role="tab" aria-selected={tab === 'locker'} className={tab === 'locker' ? 'm-on' : ''} onClick={() => setTab('locker')}>보관함</button>
+      <div className="m-dash-tabs" role="tablist" aria-label={tr('홈·보관함', 'Home and locker')}>
+        <button type="button" role="tab" aria-selected={tab === 'home'} className={tab === 'home' ? 'm-on' : ''} onClick={() => setTab('home')}>{tr('홈', 'Home')}</button>
+        <button type="button" role="tab" aria-selected={tab === 'locker'} className={tab === 'locker' ? 'm-on' : ''} onClick={() => setTab('locker')}>{tr('보관함', 'Locker')}</button>
       </div>
 
       {tab === 'home' ? (
@@ -309,7 +309,7 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
       {loadOpen && <LoadSheet text={loadNow ?? loadText} onChanged={setLoadNow} onClose={() => setLoadOpen(false)} />}
       {profile && <ProfileSheet orch={orch} orchs={orchs} voiceBase={voiceBase} onClose={() => setProfile(false)} />}
       {peek && <SessionPeek s={peek} lives={lives} onClose={() => setPeek(null)} />}
-      {todoOpen && <FileView path={`${hqDir}/docs/starter.md`} title="다음 할 일" at={TODO_AT} onClose={() => setTodoOpen(false)} />}
+      {todoOpen && <FileView path={`${hqDir}/docs/starter.md`} title={tr('다음 할 일', 'Next to do')} at={TODO_AT} onClose={() => setTodoOpen(false)} />}
       {view && <FileView path={view.path} title={view.name ?? baseName(view.path)} at={view.at} orch={orch.id} onClose={() => setView(null)} />}
     </div>
   );

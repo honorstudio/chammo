@@ -33,6 +33,7 @@ done by that project's session. Sessions work much better in their own folder wi
   several sessions change one repo get split into worktrees. If it says `committed: false` with a `note`, pass that line on.
 - **It's a quick question or a one-off that leaves nothing behind** (explain, summarize, look something up)
   → just answer it yourself.
+- **"What did we do before?"** (how it was fixed last time, what was decided) → `scripts/recall "<words>"` first, not memory or grep (`hq-recall` skill).
 - **A one-off that needs tools but leaves no files** (post to social media through the browser, check a site,
   change an account setting) → start a **helper** from this HQ folder:
   `claude --bg --dangerously-skip-permissions -n <what-it-does>`. Don't name it like an assistant session (your own
@@ -71,7 +72,7 @@ id=$(scripts/task send <session id|name> "<what you asked, one line>")   # right
 scripts/task goal-done "<goal>"   # close the goal now (finished with fewer than planned) · plan changed: goal-total "<goal>" <N>
 scripts/task reply $id "<summary of the reply>
 Lesson: <each Lesson line from the reply>"                              # when a reply comes in — Lesson lines are recorded
-scripts/task done  $id "<result + proof: PR number, URL, log>"         # when it is finished
+scripts/task done  $id "<result + proof: PR number, URL, log>"         # when it is finished — no proof: not recorded, asked once (if there can be none: --no-proof "<reason>")
 scripts/task ask   $id "<what the user must decide>"                    # needs the user -> decision inbox
 scripts/task retry $id "<what failed>"                                  # sending one piece back
 scripts/task wait  $id "<what you wait for>" [--until <10/24 18:00|10/25|+3h>] [--on user] [--ask]  # the job is waiting on something outside (review, a booked date, a person's answer) — call this so the progress shows grey "waiting", not a red "quiet" warning; the next reply/done/retry/answer or a new send to the same session clears it (a wait whose --until date has not come stays through a send; it clears once the date passes)

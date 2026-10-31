@@ -224,11 +224,14 @@ mod mac {
 
     impl Store for Keychain {
         fn get(&self, service: &str, account: &str) -> Result<Option<Secret>, StoreError> {
+            let began = std::time::Instant::now();
             let (kc, _quiet) = self.open()?; // 시험 키체인이면 여기서 잠금이 풀린다 — security 명령도 창 없이
             if self.via_cli(service) {
                 return self.cli_get(service, account);
             }
-            Keychain::read(&kc, service, account)
+            let r = Keychain::read(&kc, service, account);
+            crate::team_relay::trace_ev("keychain", service, began);
+            r
         }
 
         /// 있으면 그 자리에서 값만 바꾼다(남이 만든 칸의 허용 목록을 그대로 두려고 — 지우고 새로 만들면 Claude Code 가 못 읽는다)

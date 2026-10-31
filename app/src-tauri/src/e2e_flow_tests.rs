@@ -660,3 +660,16 @@ fn 되찾기_취소는_서버에_보내고_기다림을_지운다() {
     recover_cancel(&d, &kc, &r).unwrap();
     assert!(crate::team_relay::load_state(&d).recover.is_none());
 }
+
+#[test]
+fn 허용_기다림_숫자를_묻다_401_이면_끊긴_기기인지_보고_다시_로그인으로() {
+    // 10-31 운영: 허용 기다림 화면(NumberWait)이 2초마다 /v0/me/self — 서버가 지운 기기는 401 을 끝없이 받았다
+    let r = FakeRelay::default();
+    let (d, kc, _) = device("num-gone", "dn", &r, true);
+    r.devices.borrow_mut().clear();
+    r.answer(crate::team_relay::KEY_PROBE, 404, r#"{"error":"not_found"}"#);
+    let e = my_number(&d, &kc, &r).unwrap_err();
+    assert!(e.contains("다시 로그인"), "{e}");
+    assert!(relay::load_state(&d).revoked);
+    assert_eq!(self_step(&d), "relogin", "로그인 문이 '다시 로그인'으로 바뀌어 숫자 기다림(폴링)이 내려간다");
+}

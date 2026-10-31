@@ -3,7 +3,7 @@
 // 지우기는 우리가 깐 것만(마우스 올리면 휴지통 · 오른쪽 클릭), 한 번 묻고. 연 앱은 독 규칙대로 탭 줄에 붙는다
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
-import { josa, tr } from '../../i18n';
+import { josa, oneLang, tr } from '../../i18n';
 import { craftBase } from '../../domain/craftTab';
 import type { DrawerOpen } from '../../domain/craftDock';
 import { BROWSER_ICON, craftErr, drawerMemo, drawerView, mergeRows, NO_PYTHON, prefetchingAny, sizeText, splitRows, tileCorner, tileIcon, tileLetter, tileLoading, tileTitle, tileUnavailable, usedLine, usedTotal, type DrawerRow } from '../../domain/craftDrawer';
@@ -164,7 +164,7 @@ export function CraftDrawer({ running: keys, all = keys, open, openMenu, browser
           <button className="cd-btn pri" onClick={() => { setPyTried(true); openSetup('python'); }}>{tr('설치하기', 'Install')}</button>
         </div>
       )}
-      {err && <div className="cd-err"><span>{err}</span><button className="ib" aria-label={retryLabel} title={retryLabel} onClick={() => load()}><IconRefresh /></button></div>}
+      {err && <div className="cd-err"><span>{oneLang(err)}</span><button className="ib" aria-label={retryLabel} title={retryLabel} onClick={() => load()}><IconRefresh /></button></div>}
       {view === 'skeleton' && !needPy && <div className="cd-grid" aria-label={tr('앱 목록 받는 중', 'Loading apps')}>{Array.from({ length: 13 }, (_, k) => skTile(`sk${k}`))}</div>}
       {split && (
         <>

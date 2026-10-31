@@ -26,6 +26,20 @@ pub struct Probe {
     pub cred_at: Option<i64>,
     /// 약관 카드 [다시 시도]를 마지막으로 누른 시각(ms) — 데스크톱·폰 어디서 눌렀든(terms_retry_mark). 없으면 None
     pub terms_retry_at: Option<i64>,
+    /// claude 가 그 자리에서 안 돈다(파일 없음·npm 바로가기 대상 없음) — 로그인 카드 대신 '다시 설치' 카드
+    pub claude_missing: bool,
+}
+
+/// auth status 가 '로그인 됨'이 아니면 claude 가 도는지부터 본다 — 안 돌면 로그인은 모름 + claude 없음.
+/// 윈도우 npm 바로가기의 대상이 사라지면 auth status 가 cmd 오류 글로 끝나 false 로 읽혀 로그인 카드가 떴다(2026-10-31 사용자 PC)
+pub fn probe_auth(auth: Option<bool>, runs: impl FnOnce() -> Option<bool>) -> (Option<bool>, bool) {
+    if auth == Some(true) {
+        return (auth, false);
+    }
+    match runs() {
+        Some(false) => (None, true),
+        _ => (auth, false),
+    }
 }
 
 /// `security find-generic-password -s …`(값 없이 속성만) 출력의 mdat → ms. 예: `"mdat"<timedate>=0x3230… "20261005204344Z\000"`
@@ -136,10 +150,10 @@ pub fn login_at() -> Option<i64> {
 /// 맥 로그인 상태 — 화면이 로그인 오류로 멈춘 세션을 볼 때 15초마다, 아니면 드물게 부른다
 #[tauri::command]
 pub async fn login_probe() -> Probe {
-    tauri::async_runtime::spawn_blocking(|| Probe {
-        logged_in: crate::setup::auth_status(&crate::claude::claude_bin()),
-        cred_at: login_at(),
-        terms_retry_at: terms_retry_read(crate::config::data_dir()),
+    tauri::async_runtime::spawn_blocking(|| {
+        let bin = crate::claude::claude_bin();
+        let (logged_in, claude_missing) = probe_auth(crate::setup::auth_status(&bin), || crate::setup::claude_runs(&bin));
+        Probe { logged_in, cred_at: login_at(), terms_retry_at: terms_retry_read(crate::config::data_dir()), claude_missing }
     })
         .await
         .unwrap_or_default()

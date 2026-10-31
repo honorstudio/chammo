@@ -774,6 +774,18 @@ pub fn with_ctx(sessions_json: &str, ctx_files: &[String]) -> String {
 /// 허용 집합 안의 파일 하나. thumb 면 그림을 긴 변 480px JPEG 로
 /// 폰에 넘길 보여 준 목록 — 폰에 내보낼 수 있는 파일(shareable)과 웹 주소 줄만. 줄째 넘기면 CLAUDE.local.md 를 짚은
 /// find 글(계정 줄)까지 폰에 갔다(2026-10-03)
+/// show 기록 한 줄을 폰 모양으로 — 윈도우 경로만 / 로(fwd), 나머지 줄은 글자 그대로(공개 이슈 #15)
+fn phone_show_line(line: &str) -> std::borrow::Cow<'_, str> {
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(line) else { return line.into() };
+    let Some(p) = v["path"].as_str() else { return line.into() };
+    let f = crate::config::fwd(p);
+    if f == p {
+        return line.into();
+    }
+    v["path"] = f.into();
+    v.to_string().into()
+}
+
 fn phone_show_log(be: &dyn Backend) -> String {
     let rules = mobile_files::Rules { data_dir: be.data_dir(), hq_dir: be.hq_dir(), home: PathBuf::from(crate::platform::home()) };
     let mut out = String::new();
@@ -782,7 +794,7 @@ fn phone_show_log(be: &dyn Backend) -> String {
         let Some(p) = v["path"].as_str() else { continue };
         let web = (p.starts_with("https://") || p.starts_with("http://")) && !p.chars().any(|c| c.is_whitespace() || c.is_control());
         if web || (Path::new(p).is_absolute() && mobile_files::shareable(Path::new(p), &rules)) {
-            out.push_str(line);
+            out.push_str(&phone_show_line(line));
             out.push('\n');
         }
     }
@@ -1322,9 +1334,11 @@ fn file_resp(req: &Req, be: &dyn Backend) -> Resp {
         let tmp = std::env::temp_dir().join(format!("chammo-mobile-src-{}-{nanos}.{ext}", std::process::id()));
         let out = mobile_files::write_private_tmp(&tmp, &bytes).ok().and_then(|_| if ql { be.ql_thumb(&tmp, size) } else { be.jpeg(&tmp, max) });
         let _ = std::fs::remove_file(&tmp);
-        match out {
-            Some(b) => Resp::new(200, "image/jpeg", b),
-            None => return Resp::text(502, "convert failed"),
+        match (out, &kind) {
+            (Some(b), _) => Resp::new(200, "image/jpeg", b),
+            // 바꾸기가 없다(윈도우엔 sips 가 없다, 공개 이슈 #15) — 폰이 그릴 수 있는 그림이면 원본 그대로(원본 상한까지)
+            (None, Kind::Image(ct)) if !ql && bytes.len() as u64 <= mobile_files::MAX_BIN_FILE => Resp::new(200, ct, bytes),
+            (None, _) => return Resp::text(502, "convert failed"),
         }
     } else {
         let ct = match kind {

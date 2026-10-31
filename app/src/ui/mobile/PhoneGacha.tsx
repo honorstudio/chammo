@@ -5,7 +5,7 @@ import { CATALOG, itemOf, PITY, PRICE, PRICE_TEN, rarityLabel, type EquipKind, t
 import { withLounge } from '../../domain/office';
 import { makeGachaSender, parseView, PHONE_SLOTS, shortName, slotList, type PhoneGachaView, type PhoneReply, type Preview, type SendBody, type SlotFilter } from '../../domain/phoneGacha';
 import { gachaRequest, readGachaView } from '../../data/web';
-import { machine } from '../../i18n';
+import { machine, tr } from '../../i18n';
 import { IconCheck, IconReplay, IconSkip } from '../Icons';
 import { DECO_SLOTS, SAMPLE } from '../gacha/DecoView';
 import { HowToEarn, ItemIcon } from '../gacha/GachaPage';
@@ -15,8 +15,8 @@ import { Stars } from '../gacha/Stars';
 import { drawRoom, roomSize } from '../office/draw';
 import { skinOf } from '../office/skins';
 
-const why = (w: string) => ({ short: '코인이 모자라', 'not-owned': '아직 안 가진 거야', unknown: '모르는 아이템이야', off: `${machine()}에서 뽑기가 꺼져 있어` } as Record<string, string>)[w] ?? w;
-const noAnswer = () => `${machine()}이 답이 없어 — 잠깐 뒤에 다시`;
+const why = (w: string) => ({ short: tr('코인이 모자라', 'Not enough coins'), 'not-owned': tr('아직 안 가진 거야', "You don't own that yet"), unknown: tr('모르는 아이템이야', 'Unknown item'), off: tr(`${machine()}에서 뽑기가 꺼져 있어`, `Gacha is turned off on the ${machine()}`) } as Record<string, string>)[w] ?? w;
+const noAnswer = () => tr(`${machine()}이 답이 없어 — 잠깐 뒤에 다시`, `The ${machine()} isn't answering — try again in a moment`);
 const makeRid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`.padEnd(8, '0');
 
 /** 폰 뽑기 상태 — 보기는 30초마다·요청 뒤 바로, 요청은 실패하면 같은 요청 id 로 다시(코인 두 번 안 빠짐) */
@@ -29,7 +29,7 @@ export function usePhoneGacha() {
   /** 맥이 답을 안 할 때 — 단추를 잠깐 흐리게(10초 뒤 다시 누르면 같은 요청 id 로) */
   const [stalled, setStalled] = useState(false);
   useEffect(() => { if (!stalled) return; const t = setTimeout(() => setStalled(false), 10_000); return () => clearTimeout(t); }, [stalled]);
-  const load = useCallback(() => readGachaView().then((t) => { setView(parseView(t)); setErr(null); }, () => setErr(`${machine()}에 못 닿았어`)), []);
+  const load = useCallback(() => readGachaView().then((t) => { setView(parseView(t)); setErr(null); }, () => setErr(tr(`${machine()}에 못 닿았어`, `Can't reach the ${machine()}`))), []);
   useEffect(() => {
     void load();
     const id = setInterval(() => void load(), 30_000);
@@ -59,7 +59,7 @@ export function PlayOverlay({ show, ten }: { show: MutableRefObject<Show | null>
   return (
     <div className="m-gacha-over" onClick={skip}>
       <MachineCanvas show={show} className={ten ? 'm-gacha-cv ten' : 'm-gacha-cv'} />
-      <button type="button" className="m-rt-btn m-ico m-gacha-skip" onClick={(e) => { e.stopPropagation(); skip(); }} aria-label="건너뛰기" title="건너뛰기"><IconSkip /></button>
+      <button type="button" className="m-rt-btn m-ico m-gacha-skip" onClick={(e) => { e.stopPropagation(); skip(); }} aria-label={tr('건너뛰기', 'Skip')} title={tr('건너뛰기', 'Skip')}><IconSkip /></button>
     </div>
   );
 }
@@ -84,8 +84,8 @@ function ResultCard({ res, g }: { res: Result; g: PhoneGachaState }) {
         {r.dup ? <Stars count={owned(r.id)} up={r.up} /> : <span className="m-gacha-new">NEW</span>}
         <span className="m-grow" />
         {slot && (worn
-          ? <span className="m-gacha-worn"><IconCheck />입힘</span>
-          : <button type="button" className="m-gacha-wear" onClick={() => void g.equip(slot, r.id)}>지금 입히기</button>)}
+          ? <span className="m-gacha-worn"><IconCheck />{tr('입힘', 'Worn')}</span>
+          : <button type="button" className="m-gacha-wear" onClick={() => void g.equip(slot, r.id)}>{tr('지금 입히기', 'Wear now')}</button>)}
       </div>
     );
   }
@@ -93,7 +93,7 @@ function ResultCard({ res, g }: { res: Result; g: PhoneGachaState }) {
   const order = [...res.rs].sort((a, b) => RANK[b.rarity] - RANK[a.rarity]);
   return (
     <div className="m-gacha-ten">
-      <div className="m-gacha-sum">새것 {fresh} · 별 {up} · 코인 +{back}</div>
+      <div className="m-gacha-sum">{tr(`새것 ${fresh} · 별 ${up} · 코인 +${back}`, `New ${fresh} · Stars ${up} · Coins +${back}`)}</div>
       <ul className="m-gacha-tenl">
         {order.map((r, i) => (
           <li key={i} className={`r-${r.rarity}`}>
@@ -112,24 +112,24 @@ const RANK: Record<Rarity, number> = { 흔함: 0, 보통: 1, 희귀: 2, 전설: 
 export function GachaTab({ g, playing, result, onPull }: { g: PhoneGachaState; playing: boolean; result: Result | null; onPull: (n: 1 | 10) => void }) {
   const idle = useRef<Show | null>(null);
   const v = g.view;
-  if (!v) return <p className="m-muted m-sm m-gacha-wait">{g.err ?? `${machine()}에서 뽑기 상태를 받는 중…`}</p>;
+  if (!v) return <p className="m-muted m-sm m-gacha-wait">{g.err ?? tr(`${machine()}에서 뽑기 상태를 받는 중…`, `Getting gacha status from the ${machine()}…`)}</p>;
   const short = v.coins < PRICE;
-  const price = (cost: number) => (v.coins >= cost ? `코인 ${cost}` : `코인 ${cost - v.coins} 모자라`);
+  const price = (cost: number) => (v.coins >= cost ? tr(`코인 ${cost}`, `${cost} coins`) : tr(`코인 ${cost - v.coins} 모자라`, `${cost - v.coins} coins short`));
   return (
     <div className="m-gacha">
       {result && !playing && <ResultCard res={result} g={g} />}
       {short ? (
         <>
-          <div className="m-gacha-next"><span>다음 뽑기까지</span><div className="m-gacha-bar"><i style={{ width: `${(v.coins / PRICE) * 100}%` }} /></div><b>코인 {PRICE - v.coins}</b></div>
+          <div className="m-gacha-next"><span>{tr('다음 뽑기까지', 'Until next pull')}</span><div className="m-gacha-bar"><i style={{ width: `${(v.coins / PRICE) * 100}%` }} /></div><b>{tr(`코인 ${PRICE - v.coins}`, `${PRICE - v.coins} coins`)}</b></div>
           <div className="m-gacha-how"><HowToEarn open /></div>
         </>
       ) : (
         <div className="m-gacha-split">
           <MachineCanvas show={idle} className="m-gacha-mini" />
           <div className="m-gacha-side">
-            <div className="m-gacha-pity"><span>전설까지</span><div className="m-gacha-bar"><i style={{ width: `${(v.pity / PITY) * 100}%` }} /></div><span>{v.pity} / {PITY}</span></div>
-            <button type="button" className="m-gacha-btn" disabled={playing || g.stalled || v.coins < PRICE} onClick={() => onPull(1)}>1번 뽑기<small>{price(PRICE)}</small></button>
-            <button type="button" className="m-gacha-btn ten" disabled={playing || g.stalled || v.coins < PRICE_TEN} onClick={() => onPull(10)}>10번 뽑기<small>{v.coins >= PRICE_TEN ? `코인 ${PRICE_TEN} · 희귀 이상 1개` : price(PRICE_TEN)}</small></button>
+            <div className="m-gacha-pity"><span>{tr('전설까지', 'Until legendary')}</span><div className="m-gacha-bar"><i style={{ width: `${(v.pity / PITY) * 100}%` }} /></div><span>{v.pity} / {PITY}</span></div>
+            <button type="button" className="m-gacha-btn" disabled={playing || g.stalled || v.coins < PRICE} onClick={() => onPull(1)}>{tr('1번 뽑기', 'Pull once')}<small>{price(PRICE)}</small></button>
+            <button type="button" className="m-gacha-btn ten" disabled={playing || g.stalled || v.coins < PRICE_TEN} onClick={() => onPull(10)}>{tr('10번 뽑기', 'Pull 10 times')}<small>{v.coins >= PRICE_TEN ? tr(`코인 ${PRICE_TEN} · 희귀 이상 1개`, `${PRICE_TEN} coins · 1 rare or better`) : price(PRICE_TEN)}</small></button>
           </div>
         </div>
       )}
@@ -199,25 +199,25 @@ function SlotPic({ k, v }: { k: EquipKind; v: PhoneGachaView }) {
  *  고르면 방에 바로 입혀 보고 바닥 줄 '장착'. 장착되면 onEquipped(방에 반짝) */
 export function SkinTab({ g, p, dark, onEquipped }: { g: PhoneGachaState; p: SkinPick; dark: boolean; onEquipped?: () => void }) {
   const v = g.view;
-  if (!v) return <p className="m-muted m-sm m-gacha-wait">{g.err ?? `${machine()}에서 가진 것을 받는 중…`}</p>;
+  if (!v) return <p className="m-muted m-sm m-gacha-wait">{g.err ?? tr(`${machine()}에서 가진 것을 받는 중…`, `Getting your items from the ${machine()}…`)}</p>;
   const id = p.shown;
   const it = id && id !== 'skin.wood' ? itemOf(id) : undefined;
   const fresh = new Set(v.fresh);
   const worn = v.equip[p.slot] ?? baseOf(p.slot);
   const changed = !!p.preview && p.preview.slot === p.slot;
   const apply = async () => { if (!p.preview) return; const r = await g.equip(p.preview.slot, p.preview.id); if (r?.ok) { p.setPreview(null); onEquipped?.(); } };
-  const label = (e: string | null) => (e === 'skin.wood' ? '나무' : e ? shortName(e) || e : '없음');
+  const label = (e: string | null) => (e === 'skin.wood' ? tr('나무', 'Wood') : e ? shortName(e) || e : tr('없음', 'None'));
   return (
     <div className="m-g1">
-      <div className="m-g1-slots" role="tablist" aria-label="꾸밀 자리">
+      <div className="m-g1-slots" role="tablist" aria-label={tr('꾸밀 자리', 'Slot to decorate')}>
         {PHONE_SLOTS.map((k) => (
           <button key={k} type="button" role="tab" aria-selected={k === p.slot} className={k === p.slot ? 'm-g1-slot m-on' : 'm-g1-slot'} onClick={() => p.setSlot(k)} aria-label={SLOT_NAME.get(k)} title={SLOT_NAME.get(k)}>
             <SlotPic k={k} v={v} />
           </button>
         ))}
       </div>
-      <div className="m-g1-sub"><b>{SLOT_NAME.get(p.slot)}</b><span>{p.entries.length}칸</span></div>
-      {p.entries.length === 0 && <p className="m-muted m-sm m-g1-none">아직 없어 — 뽑기에서 나와</p>}
+      <div className="m-g1-sub"><b>{SLOT_NAME.get(p.slot)}</b><span>{tr(`${p.entries.length}칸`, `${p.entries.length} items`)}</span></div>
+      {p.entries.length === 0 && <p className="m-muted m-sm m-g1-none">{tr('아직 없어 — 뽑기에서 나와', 'None yet — they drop from gacha')}</p>}
       <div className="m-g1-grid">
         {p.entries.map((e) => {
           const r = e && e !== 'skin.wood' ? itemOf(e)?.rarity : undefined;
@@ -235,10 +235,10 @@ export function SkinTab({ g, p, dark, onEquipped }: { g: PhoneGachaState; p: Ski
           <b>{label(id)}</b>
           {it && <em className={`m-g-r r-${it.rarity}`}>{rarityLabel(it.rarity)}</em>}
           {id && <Stars count={v.owned[id] ?? 0} />}
-          {id === 'skin.wood' && dark && <small>밤엔 네온</small>}
+          {id === 'skin.wood' && dark && <small>{tr('밤엔 네온', 'Neon at night')}</small>}
         </span>
-        <button type="button" className="m-g-undo" disabled={!changed} onClick={() => p.setPreview(null)} aria-label="되돌리기" title="되돌리기"><IconReplay /></button>
-        <button type="button" className="m-g-equip" disabled={!changed || g.stalled} onClick={() => void apply()}>{changed ? '장착' : '장착 중'}</button>
+        <button type="button" className="m-g-undo" disabled={!changed} onClick={() => p.setPreview(null)} aria-label={tr('되돌리기', 'Undo')} title={tr('되돌리기', 'Undo')}><IconReplay /></button>
+        <button type="button" className="m-g-equip" disabled={!changed || g.stalled} onClick={() => void apply()}>{changed ? tr('장착', 'Equip') : tr('장착 중', 'Equipped')}</button>
       </div>
       {g.err && <p className="m-gacha-err">{g.err}</p>}
     </div>

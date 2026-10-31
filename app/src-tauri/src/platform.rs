@@ -582,6 +582,8 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     c
 }
 
+pub use crate::win_bin::out_text;
+
 /// curl — 맥은 기본 경로 그대로, 윈도우는 시스템 curl.exe(윈도우 10 1803+, PATH 의 System32)
 pub fn curl() -> &'static str {
     if cfg!(target_os = "macos") { "/usr/bin/curl" } else { "curl" }
@@ -650,6 +652,16 @@ pub fn raise_nofile() {}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn 출력_글은_utf8_이면_그대로() {
+        assert_eq!(super::out_text("claude 2.1.316 · 한글".as_bytes()), "claude 2.1.316 · 한글");
+        // UTF-8 이 아니어도 죽지 않는다(맥은 깨진 글자로, 윈도우는 OEM 코드 페이지로)
+        assert!(super::out_text(&[0xc0, 0xba, 0x28, 0xb4, 0xc2, 0x29]).contains('('));
+        // UTF-8 이 끝에서 잘렸을 뿐이면 앞 글은 그대로(윈도우에서도 코드 페이지로 다시 읽지 않는다)
+        let cut = &"로그인 됨".as_bytes()[..12];
+        assert!(super::out_text(cut).starts_with("로그인 "));
+    }
+
     // 서랍이 오류 원문 대신 설치 안내로 바꾸는 표시 — 웹(domain/craftDrawer)과 같은 글이어야 한다
     #[test]
     fn 파이썬_없음_표시는_웹과_같은_글이고_맥은_늘_있음() {

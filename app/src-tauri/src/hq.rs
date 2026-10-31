@@ -34,6 +34,8 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "scripts/choice", body: include_str!("../../hq-template/scripts/choice"), exec: true },
     TemplateFile { path: "scripts/skill-hint", body: include_str!("../../hq-template/scripts/skill-hint"), exec: true },
     TemplateFile { path: "scripts/locker", body: include_str!("../../hq-template/scripts/locker"), exec: true },
+    // 지난 대화 검색 — <데이터>/recall.db(FTS5 trigram), 비밀 모양은 색인 전에 가린다. 앱은 안 거친다
+    TemplateFile { path: "scripts/recall", body: include_str!("../../hq-template/scripts/recall"), exec: true },
     // Craft 앱(ArtCraft 오픈소스): 웹판 받기·SHA 대조·127.0.0.1 서빙·주소 미리보기 + 맥 앱을 조작 채널로 띄워 참모가 명령으로 — 앱은 안 거친다
     TemplateFile { path: "scripts/craft", body: include_str!("../../hq-template/scripts/craft"), exec: true },
     TemplateFile { path: "scripts/craft_win.py", body: include_str!("../../hq-template/scripts/craft_win.py"), exec: false },
@@ -51,6 +53,7 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: ".claude/skills/hq-app/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-app/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-craft/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-craft/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-login/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-login/SKILL.md"), exec: false },
+    TemplateFile { path: ".claude/skills/hq-recall/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-recall/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-mode-kit/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-mode-kit/kit.tsx", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/kit.tsx"), exec: false },
     TemplateFile { path: ".claude/skills/hq-mode-kit/kit-svg.ts", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/kit-svg.ts"), exec: false },
@@ -66,8 +69,12 @@ pub struct HqReport {
     pub kept: Vec<String>,
 }
 
-/// dir 에 템플릿을 푼다. overwrite 가 false 면 있는 파일은 그대로
+/// dir 에 템플릿을 푼다. overwrite 가 false 면 있는 파일은 그대로 — 안내문·스킬은 지금 설정 언어로
 pub fn install(dir: &Path, overwrite: bool) -> std::io::Result<HqReport> {
+    install_in(dir, overwrite, &crate::config::current().language)
+}
+
+pub fn install_in(dir: &Path, overwrite: bool, lang: &str) -> std::io::Result<HqReport> {
     let mut report = HqReport::default();
     std::fs::create_dir_all(dir)?;
     for f in TEMPLATE {
@@ -79,7 +86,7 @@ pub fn install(dir: &Path, overwrite: bool) -> std::io::Result<HqReport> {
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&dest, body_for(f))?;
+        std::fs::write(&dest, body_for(f, lang))?;
         #[cfg(unix)]
         if f.exec {
             use std::os::unix::fs::PermissionsExt;
@@ -90,9 +97,48 @@ pub fn install(dir: &Path, overwrite: bool) -> std::io::Result<HqReport> {
     Ok(report)
 }
 
-/// 깔 글 — 윈도우면 안내문(CHAMMO.md)의 맥 단축키 표기(⌘J)를 윈도우 키로. 참모가 그대로 읽고 말한다
-fn body_for(f: &TemplateFile) -> String {
-    if cfg!(windows) && (f.path.starts_with("CHAMMO") || f.path.starts_with(".claude/skills/hq-")) { crate::platform::win_keys(f.body) } else { f.body.to_string() }
+/// 깔 글 — 설정 언어로 고르고(localize), 윈도우면 안내문(CHAMMO.md)의 맥 단축키 표기(⌘J)를 윈도우 키로. 참모가 그대로 읽고 말한다
+fn body_for(f: &TemplateFile, lang: &str) -> String {
+    let body = localize(f.path, f.body, lang);
+    if cfg!(windows) && (f.path.starts_with("CHAMMO") || f.path.starts_with(".claude/skills/hq-")) { crate::platform::win_keys(&body) } else { body }
+}
+
+/// 영어 설정이면 HQ 에 영어만 — CHAMMO.md 끝의 @CHAMMO.ko.md 를 빼고, hq-* 스킬은 `# English` 아래 절과 설명의 영어 반쪽만.
+/// 한글 절반이 같이 실리면 영어로 고른 사용자에게도 참모가 한국어로 말했다(공개 이슈 #16, 윈도우 0.4.5). 한국어는 그대로(두 언어)
+fn localize(path: &str, body: &str, lang: &str) -> String {
+    if lang != "en" {
+        return body.to_string();
+    }
+    if path == "CHAMMO.md" {
+        let kept: Vec<&str> = body.lines().filter(|l| l.trim() != "@CHAMMO.ko.md").collect();
+        let mut out = kept.join("\n").trim_end().trim_end_matches("---").trim_end().to_string();
+        out.push('\n');
+        return out;
+    }
+    if path.starts_with(".claude/skills/hq-") && path.ends_with("/SKILL.md") {
+        return english_skill(body).unwrap_or_else(|| body.to_string());
+    }
+    body.to_string()
+}
+
+/// 두 언어 스킬 → 영어만. 모양(머리 · `# English` 줄)이 다르면 None(그대로 깐다 — 테스트가 모든 hq-* 스킬을 잡는다)
+fn english_skill(body: &str) -> Option<String> {
+    let rest = body.strip_prefix("---\n")?;
+    let end = rest.find("\n---\n")?;
+    let head: Vec<String> = rest[..end]
+        .lines()
+        .map(|l| match l.strip_prefix("description: ") {
+            // 설명은 '한글. English' 순서 — 마지막 한글 글자 뒤가 영어 반쪽
+            Some(d) => {
+                let cut = d.char_indices().filter(|(_, c)| ('가'..='힣').contains(c)).map(|(i, c)| i + c.len_utf8()).last().unwrap_or(0);
+                let en = d[cut..].trim_start_matches(|c: char| !c.is_ascii_alphanumeric() && c != '"');
+                format!("description: {}", if en.is_empty() { d } else { en })
+            }
+            None => l.to_string(),
+        })
+        .collect();
+    let en = rest[end..].split_once("\n# English\n")?.1.trim_start();
+    Some(format!("---\n{}\n---\n\n<!-- Rewritten by Chammo on every start — do not edit. -->\n\n{en}", head.join("\n")))
 }
 
 /// HQ 세션의 도구가 앱과 같은 데이터 폴더를 쓰게 .claude/settings.json 의 env.CHAMMO_HOME 에 적는다.
@@ -161,6 +207,11 @@ const OLD_TEMPLATE_HEAD: &str = "# Chammo HQ — chief-of-staff session";
 /// 이미 깐 HQ 도 새 기능을 받게 — 앱이 켤 때마다. 앱 몫(CHAMMO.md·CHAMMO.ko.md·scripts/*·.claude/skills/hq-*)은 새로 쓰고,
 /// 사용자 몫(CLAUDE.md)은 `@CHAMMO.md` 한 줄만 보장한다(옛 템플릿 그대로면 새 짧은 파일로). 아이맥 HQ 가 새 스크립트를 못 받았다
 pub fn refresh(dir: &Path) -> std::io::Result<()> {
+    refresh_in(dir, &crate::config::current().language)
+}
+
+/// refresh — 언어를 정해서(설정에서 언어를 바꾸면 바로 다시 깐다, 테스트)
+pub fn refresh_in(dir: &Path, lang: &str) -> std::io::Result<()> {
     for f in TEMPLATE {
         let app_owned = f.path.starts_with("CHAMMO") || f.path.starts_with("scripts/") || f.path.starts_with(".claude/skills/hq-");
         let dest = dir.join(f.path);
@@ -172,7 +223,7 @@ pub fn refresh(dir: &Path) -> std::io::Result<()> {
                 Err(_) => continue,
             };
             if cur.is_empty() || cur.starts_with(OLD_TEMPLATE_HEAD) {
-                write_replace(&dest, &body_for(f))?;
+                write_replace(&dest, &body_for(f, lang))?;
             } else if !cur.contains("@CHAMMO.md") {
                 write_replace(&dest, &format!("{}\n\n@CHAMMO.md\n", cur.trim_end()))?;
             }
@@ -184,7 +235,7 @@ pub fn refresh(dir: &Path) -> std::io::Result<()> {
         if let Some(p) = dest.parent() {
             std::fs::create_dir_all(p)?;
         }
-        std::fs::write(&dest, body_for(f))?;
+        std::fs::write(&dest, body_for(f, lang))?;
         #[cfg(unix)]
         if f.exec {
             use std::os::unix::fs::PermissionsExt;
@@ -192,6 +243,24 @@ pub fn refresh(dir: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// 개인판 데이터 폴더(옛 이름 .honor-orchestrator)인가 — 개발자 쪽 동작(HQ 그대로 두기·성능 알림)을 가른다
+pub fn personal_data(data: &Path) -> bool {
+    data.ends_with(".honor-orchestrator")
+}
+
+/// 앱의 HQ 를 새로 깐다 — 켤 때·설정에서 언어를 바꿀 때. 개인 HQ(옛 데이터 폴더 이름)는 그 저장소가 직접 관리해서 건드리지 않는다
+pub fn refresh_app_hq() {
+    let data = crate::config::data_dir();
+    if personal_data(&data) {
+        return;
+    }
+    let hq_dir = crate::config::hq_dir(&crate::config::home(), &crate::config::current(), |k| std::env::var(k).ok());
+    if Path::new(&hq_dir).join("scripts/task").is_file() {
+        let _ = refresh(Path::new(&hq_dir));
+        let _ = pin_data_dir(Path::new(&hq_dir), &data.to_string_lossy());
+    }
 }
 
 /// 앱이 켤 때 데이터 폴더에 푸는 상태줄 스크립트 자리
@@ -398,6 +467,43 @@ mod tests {
         }
         assert_ne!(std::fs::read_to_string(d.join("scripts/task")).unwrap(), "옛 스크립트");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    fn has_hangul(t: &str) -> bool {
+        t.chars().any(|c| ('가'..='힣').contains(&c))
+    }
+
+    #[test]
+    fn 재현_영어_설정이면_hq_에_영어_안내만_깐다() {
+        // 공개 이슈 #16 — 영어로 골라도 CHAMMO.md 끝 @CHAMMO.ko.md 와 한글 먼저인 hq-* 스킬이 실려 참모가 한국어로 말했다
+        let d = temp("en");
+        install_in(&d, false, "en").unwrap();
+        let main = std::fs::read_to_string(d.join("CHAMMO.md")).unwrap();
+        assert!(!main.contains("CHAMMO.ko.md"), "영어면 한글 절반을 안 불러온다");
+        assert!(main.starts_with("# Chammo HQ — chief-of-staff session"));
+        for f in TEMPLATE.iter().filter(|f| f.path.ends_with("SKILL.md")) {
+            let t = std::fs::read_to_string(d.join(f.path)).unwrap();
+            let name = f.path.split('/').nth(2).unwrap();
+            assert!(t.starts_with(&format!("---\nname: {name}\ndescription: ")), "{name} 머리");
+            let desc = t.lines().nth(2).unwrap().trim_start_matches("description: ");
+            assert!(!has_hangul(desc) && desc.len() > 40 && desc.starts_with(|c: char| c.is_ascii_uppercase()), "{name} 설명: {desc}");
+            assert!(!t.contains("\n# 한국어") && !t.contains("\n# English\n"), "{name} 영어 절만");
+            assert!(t.split("\n---\n").nth(1).is_some_and(|b| b.len() > 1000), "{name} 본문이 남는다");
+            // 영어 절에 남는 한글은 예시 이름(팀 보관함 폴더·[앱] 줄)뿐 — 한글 줄이 몇 개를 넘으면 절 나누기가 틀린 것
+            let ko = t.lines().filter(|l| has_hangul(l)).count();
+            assert!(ko <= 3, "{name} 한글 줄 {ko}");
+        }
+        // 한국어 설정은 그대로 — 한글 절반을 이어 읽고 스킬은 두 언어
+        let k = temp("ko");
+        install_in(&k, false, "ko").unwrap();
+        assert!(std::fs::read_to_string(k.join("CHAMMO.md")).unwrap().contains("@CHAMMO.ko.md"));
+        let skill = std::fs::read_to_string(k.join(".claude/skills/hq-login/SKILL.md")).unwrap();
+        assert!(skill.contains("## Claude 로그인이 풀렸을 때") && skill.contains("## When Claude sign-in expires"));
+        // 언어를 바꾸면 다음 갱신에 따라 바뀐다
+        refresh_in(&k, "en").unwrap();
+        assert!(!std::fs::read_to_string(k.join("CHAMMO.md")).unwrap().contains("CHAMMO.ko.md"));
+        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_dir_all(&k);
     }
 
     #[test]

@@ -189,7 +189,9 @@ function useDevices() {
   return { phones, peers };
 }
 
-export function HomeDash({ go, orchs, nameOf, roleOf, colorOf, lines, statusOf, off, starting, onResume, events, sessions, projects = [], asks, onAsks, running, usage, load, review = 0, office, say }: {
+const NO_PROJECTS: never[] = []; // 기본값은 모듈 상수로 — [] 는 그릴 때마다 새 배열이라 useMemo 가 매번 다시 돈다(stableDeps.test.ts)
+
+export function HomeDash({ go, orchs, nameOf, roleOf, colorOf, lines, statusOf, off, starting, onResume, events, sessions, projects = NO_PROJECTS, asks, onAsks, running, usage, load, review = 0, office, say }: {
   go: HomeGo;
   orchs: Session[];
   nameOf: (s: { id: string; name: string }) => string;

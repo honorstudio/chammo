@@ -47,8 +47,8 @@ export function parseOffice(raw: string): OfficeShape {
 }
 
 // 키·토큰처럼 생긴 것 — 폰 서버 secret_in·메신저 looks_secret 과 같은 축(접두사·낱말·긴 섞인 덩어리)
-const SECRET_WORD = /password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|비밀번호|비번|암호|토큰|시크릿/i;
-const SECRET_PREFIX = /(?:^|[^A-Za-z0-9])(?:sk-|sk_live_|sk_test_|rk_live_|ghp_|gho_|ghs_|github_pat_|glpat-|xox[abps]-|xapp-|AKIA|AIza|npm_|sb_secret_|eyJ)[A-Za-z0-9_\-.]{10,}/;
+export const SECRET_WORD = /password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|비밀번호|비번|암호|토큰|시크릿/i;
+export const SECRET_PREFIX = /(?:^|[^A-Za-z0-9])(?:sk-|sk_live_|sk_test_|rk_live_|ghp_|gho_|ghs_|github_pat_|glpat-|xox[abps]-|xapp-|AKIA|AIza|npm_|sb_secret_|eyJ)[A-Za-z0-9_\-.]{10,}/;
 const LONG_MIX = /[A-Za-z0-9_\-+/=]{32,}/g;
 const looksSecret = (t: string) => SECRET_WORD.test(t) || SECRET_PREFIX.test(t) || (t.match(LONG_MIX) ?? []).some((w) => /\d/.test(w) && /[a-z]/.test(w) && /[A-Z]/.test(w));
 

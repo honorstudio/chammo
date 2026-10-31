@@ -8,5 +8,5 @@ import { tr } from '../i18n';
 export const orchIntro = (): string =>
   tr(
     '[앱] 안녕! 네 이름과 맡은 일로 2~3줄 자기소개해 줘 — 누구고, 뭘 맡았고, 이런 걸 시키면 된다는 예 하나. 영어 직함 없이 우리말로, 도구는 쓰지 말고, 질문으로 끝내지 마.',
-    "[앱] Hi! Introduce yourself in 2-3 lines from your name and role — who you are, what you handle, and one example of what to ask you. Don't use tools, and don't end with a question.",
+    "[앱] Hi! Introduce yourself in 2-3 lines from your name and role — who you are, what you handle, and one example of what to ask you. Write in English, don't use tools, and don't end with a question.",
   );

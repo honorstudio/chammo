@@ -81,7 +81,7 @@ fn 데이터_폴더_밖_절대_경로는_파일_이름만() {
 fn 보통_글은_그대로() {
     for s in [
         "PR #412 머지했어 — CI 초록, 테스트 1,203개",
-        "커밋 56b178ab 위에 쌓았어",
+        "커밋 3e9a07c1 위에 쌓았어",
         "토큰은 키체인에 넣었어",
         "MessengerSection.tsx:264 를 봐",
         "https://github.com/honorstudio/chammo/pull/12",
@@ -161,6 +161,19 @@ fn 리뷰가_찾은_새는_모양도_가린다() {
     assert!(r("password: P@ss!w0rd#xyz 다음").ends_with(" 다음"), "빈칸 뒤 글은 남긴다");
     assert!(r("git clone https://ghp_abcdefghijklmnopqrstuvwxyz0123456789@github.com/x/y").contains("@github.com/x/y"));
     assert!(r("DATABASE_URL=postgresql://postgres:MyS3cretPw@db.x.supabase.co:5432/postgres").contains("postgres:"));
+}
+
+#[test]
+fn 지난_대화_검색_거름과_같은_사례_묶음() {
+    // hq-tests/redact.fixture.json — scripts/recall(파이썬) 거름도 같은 파일로 같은 답을 시험한다.
+    // 마크다운 답의 백틱 값·굵게 열쇠·'PW : 값' 이 빠지던 것(10-31 recall 색인 실측에서 실제 값이 샜다)
+    let doc: serde_json::Value = serde_json::from_str(include_str!("../../hq-tests/redact.fixture.json")).unwrap();
+    let cases = doc["cases"].as_array().unwrap();
+    assert!(cases.len() > 20);
+    for c in cases {
+        let (input, want) = (c["in"].as_str().unwrap(), c["out"].as_str().unwrap().replace("[가림]", HIDDEN));
+        assert_eq!(r(input), want, "{input}");
+    }
 }
 
 #[test]

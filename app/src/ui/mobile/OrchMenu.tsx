@@ -6,6 +6,7 @@ import { cleanRole } from '../../domain/orchRoles';
 import { PhoneRoleField } from './OrchWake';
 import { orchMenu, type OrchMenuKey } from '../../domain/mobile';
 import { BottomSheet } from './kit';
+import { tr } from '../../i18n';
 
 export function OrchMenu({ title, live, pinned, canPin, nick, role, onPick, onRename, onRole, onClose }: {
   title: string; live: boolean; pinned: boolean; canPin: boolean; nick: string; role: string;
@@ -20,23 +21,23 @@ export function OrchMenu({ title, live, pinned, canPin, nick, role, onPick, onRe
   const save = async () => {
     setBusy(true);
     setErr(null);
-    try { await onRename(cleanLabel(v) ?? ''); onClose(); } catch (e) { setErr(`못 바꿨어요: ${(e as Error).message}`); } finally { setBusy(false); }
+    try { await onRename(cleanLabel(v) ?? ''); onClose(); } catch (e) { setErr(tr(`못 바꿨어요: ${(e as Error).message}`, `Couldn't change it: ${(e as Error).message}`)); } finally { setBusy(false); }
   };
   const saveRole = async () => {
     setBusy(true);
     setErr(null);
-    try { await onRole(cleanRole(r)); onClose(); } catch (e) { setErr(`못 바꿨어요: ${(e as Error).message}`); } finally { setBusy(false); }
+    try { await onRole(cleanRole(r)); onClose(); } catch (e) { setErr(tr(`못 바꿨어요: ${(e as Error).message}`, `Couldn't change it: ${(e as Error).message}`)); } finally { setBusy(false); }
   };
   return (
     // 길게 눌러 뜨면 손가락 밑에 항목이 놓여, 손을 떼는 순간 그 항목이 눌렸다(시뮬레이터 실측 — '재우기' 확인이 바로 뜸) — 뜬 뒤 잠깐(armMs)은 안 받는다
-    <BottomSheet kind="card" label={`${title} 메뉴`} title={title} onClose={onClose} armMs={450}>
+    <BottomSheet kind="card" label={tr(`${title} 메뉴`, `${title} menu`)} title={title} onClose={onClose} armMs={450}>
       {({ armed }) => naming ? (
         <form className="m-new" onSubmit={(e) => { e.preventDefault(); void save(); }}>
-          <input className="m-new-input" value={v} maxLength={24} autoFocus enterKeyHint="done" aria-label="새 이름" placeholder="비우면 처음 이름으로" onChange={(e) => setV(e.target.value)} />
+          <input className="m-new-input" value={v} maxLength={24} autoFocus enterKeyHint="done" aria-label={tr('새 이름', 'New name')} placeholder={tr('비우면 처음 이름으로', 'Leave empty to use the original name')} onChange={(e) => setV(e.target.value)} />
           {err && <div className="m-error">{err}</div>}
           <div className="m-new-row">
-            <button type="button" className="m-btn" onClick={() => setNaming(false)}>취소</button>
-            <button type="submit" className="m-send" disabled={busy}>저장</button>
+            <button type="button" className="m-btn" onClick={() => setNaming(false)}>{tr('취소', 'Cancel')}</button>
+            <button type="submit" className="m-send" disabled={busy}>{tr('저장', 'Save')}</button>
           </div>
         </form>
       ) : roling ? (
@@ -44,8 +45,8 @@ export function OrchMenu({ title, live, pinned, canPin, nick, role, onPick, onRe
           <PhoneRoleField value={r} onChange={setR} />
           {err && <div className="m-error">{err}</div>}
           <div className="m-new-row">
-            <button type="button" className="m-btn" onClick={() => setRoling(false)}>취소</button>
-            <button type="submit" className="m-send" disabled={busy}>저장</button>
+            <button type="button" className="m-btn" onClick={() => setRoling(false)}>{tr('취소', 'Cancel')}</button>
+            <button type="submit" className="m-send" disabled={busy}>{tr('저장', 'Save')}</button>
           </div>
         </form>
       ) : (

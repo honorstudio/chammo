@@ -61,6 +61,8 @@ struct World {
     r: FakeRelay,
     team: String,
     file: Value,
+    /// 목록에 같이 나갈 파일(못 믿는 기기가 올린 것·봉투가 모자란 것)
+    extra: RefCell<Vec<Value>>,
     rev: RefCell<u64>,
 }
 
@@ -105,7 +107,7 @@ impl World {
         let file = json!({ "id": b["id"], "room": null, "kind": "file", "state": "live", "size": b["size"], "parts": b["parts"], "kh": b["kh"], "sig": b["sig"],
             "meta": b["meta"], "metaBy": "d1", "metaSig": b["metaSig"], "by": { "member": "m1", "device": "d1" }, "createdAt": 1, "updatedAt": 1,
             "key": { "enc": mine_key["enc"], "w": mine_key["w"] }, "have": ["d1", "p1"] });
-        let w = World { d, kc, r, team, file, rev: RefCell::new(0) };
+        let w = World { d, kc, r, team, file, extra: RefCell::new(vec![]), rev: RefCell::new(0) };
         w.set_rev(1);
         w
     }
@@ -116,7 +118,8 @@ impl World {
         let path = format!("/v0/teams/{}/locker", self.team);
         let mut a = self.r.always.borrow_mut();
         a.retain(|(_, p, _, _)| *p != path);
-        a.push(("GET".into(), path, 200, json!({ "rev": rev, "usage": { "used": 5, "reserved": 0, "seats": 2, "limit": 10 }, "files": [self.file] }).to_string()));
+        let files: Vec<Value> = std::iter::once(self.file.clone()).chain(self.extra.borrow().iter().cloned()).collect();
+        a.push(("GET".into(), path, 200, json!({ "rev": rev, "usage": { "used": 5, "reserved": 0, "seats": 2, "limit": 10 }, "files": files }).to_string()));
     }
 
     fn bump(&self) {
@@ -398,12 +401,21 @@ fn 팀_머리가_캐시와_같으면_사슬과_명부를_다시_안_받는다() 
     people_cached(&w.d, &w.kc, &w.r, &st, &w.team, true, now).unwrap();
     let second = w.by_path();
     let diff = |k: &str| second.get(k).copied().unwrap_or(0) - first.get(k).copied().unwrap_or(0);
-    assert_eq!((diff("GET /v0/teams/:t/heads"), diff("GET /v0/accounts/a1/chain"), diff("GET /v0/accounts/a2/chain"), diff("GET /v0/teams/:t/log")), (1, 0, 0, 0), "머리 하나로 끝 {second:?}");
+    assert_eq!((diff("GET /v0/teams/:t/heads"), diff("GET /v0/accounts/a1/chain"), diff("GET /v0/accounts/a2/chain"), diff("GET /v0/teams/:t/log")), (0, 0, 0, 0), "30초 안엔 받은 머리로 — 요청 없음 {second:?}");
+    // 30초가 지났다(기억 버림) — 머리 하나로 끝
+    crate::e2e_state::forget_heads(&w.team);
+    people_cached(&w.d, &w.kc, &w.r, &st, &w.team, true, now).unwrap();
+    let again = w.by_path();
+    let diff = |k: &str| again.get(k).copied().unwrap_or(0) - second.get(k).copied().unwrap_or(0);
+    assert_eq!((diff("GET /v0/teams/:t/heads"), diff("GET /v0/accounts/a1/chain"), diff("GET /v0/accounts/a2/chain"), diff("GET /v0/teams/:t/log")), (1, 0, 0, 0), "머리 하나로 끝 {again:?}");
+    let second = again;
     // 철수가 기기를 들였다(머리가 다르다) — 철수 사슬만 새로
     let mut h = heads_now(&w);
     h["chains"]["a2"]["seq"] = json!(1);
     w.r.always.borrow_mut().retain(|(_, p, _, _)| *p != path);
     w.r.always("GET", &path, 200, &h.to_string());
+    // 배경은 받은 머리를 30초 기억한다 — 지난 기억을 버리고(30초 뒤처럼) 다시
+    crate::e2e_state::forget_heads(&w.team);
     people_cached(&w.d, &w.kc, &w.r, &st, &w.team, true, now).unwrap();
     let third = w.by_path();
     assert_eq!(third["GET /v0/accounts/a2/chain"] - second["GET /v0/accounts/a2/chain"], 1, "바뀐 사람 사슬은 새로 {third:?}");
@@ -509,4 +521,156 @@ fn 팀_앱_열쇠는_기억해_두고_보관함_목록을_매번_안_받는다()
     let _ = app_keys_at(&w.d, &w.kc, &w.r, &w.team, false, base + Duration::from_secs(180 + 11 * 60)).unwrap();
     assert_eq!(lists(&w), 4, "10분 지나면 새로 {:?}", w.by_path());
     forget_people(&w.team);
+}
+
+// ── 배경 몫 근본(10-30 23:51 사용자 '팀 일정을 못 불러왔어요 — 잠시 쉬래요'). 진단 줄: 10분에 GET /heads 185·149, POST …/keys 154, GET /locker 48 ──
+
+/// 목록에 파일 한 줄 더 — by 기기가 봉해 올린 것, to 기기 몫 봉투, have = 서버가 가졌다는 기기
+fn sealed(w: &World, by: &DeviceKeys, by_dev: &str, by_member: &str, to_extra: Vec<Recipient>, have: &[&str]) -> Value {
+    let k = relay::device_keys(&w.kc, &relay::load_state(&w.d)).unwrap();
+    let src = w.d.join("메모.txt");
+    std::fs::write(&src, b"memo").unwrap();
+    let mut to = vec![Recipient { device: "d1".into(), e2e: k.e2e_public() }];
+    to.extend(to_extra);
+    let cap = Capture::default();
+    core::upload(&cap, &Me { keys: by, device: by_dev }, &to, &w.team, "", "file", "", &src, "메모.txt", &mut |_, _| {}).unwrap();
+    let b = cap.0.into_inner();
+    let mine = b["keys"].as_array().unwrap().iter().find(|x| x["d"] == "d1").unwrap().clone();
+    json!({ "id": b["id"], "room": null, "kind": "file", "state": "live", "size": b["size"], "parts": b["parts"], "kh": b["kh"], "sig": b["sig"],
+        "meta": b["meta"], "metaBy": by_dev, "metaSig": b["metaSig"], "by": { "member": by_member, "device": by_dev }, "createdAt": 2, "updatedAt": 2,
+        "key": { "enc": mine["enc"], "w": mine["w"] }, "have": have })
+}
+
+/// 사용자 맥 모양 — 진짜 중계처럼 /heads 가 있고, 소켓이 알린 판이 목록 판보다 앞서 화면 셋이 2~3초마다 목록을 다시 부른다
+fn busy_world(tag: &str) -> World {
+    let w = World::new(tag, false);
+    w.r.always("GET", &format!("/v0/teams/{}/heads", w.team), 200, &heads_now(&w).to_string());
+    w
+}
+
+fn heads(w: &World) -> usize {
+    w.by_path().get("GET /v0/teams/:t/heads").copied().unwrap_or(0)
+}
+
+fn posts(w: &World) -> usize {
+    w.by_path().iter().filter(|(k, _)| k.starts_with("POST ") && k.ends_with("/keys")).map(|(_, n)| n).sum()
+}
+
+#[test]
+fn 못_믿는_기기가_올린_파일이_있어도_목록마다_사람_목록을_새로_안_받는다() {
+    // 나간 사람·모르는 기기(x9)가 올린 파일 — 사람 목록을 새로 받아도 끝내 못 연다. 예전엔 목록을 부를 때마다(2~3초) 새로 받아 /heads 가 3초마다
+    let w = busy_world("stranger");
+    let x9 = DeviceKeys::from_seeds([7; 32], [107; 32]);
+    w.extra.borrow_mut().push(sealed(&w, &x9, "x9", "m3", vec![Recipient { device: "x9".into(), e2e: x9.e2e_public() }], &["d1", "x9"]));
+    w.set_rev(1);
+    nudge(&w.team, 99);
+    let n = run(&w, 600, 0);
+    eprintln!("못 믿는 파일 10분: {n}번 {:?}", w.by_path());
+    assert!(heads(&w) <= 3, "10분에 /heads {}번 {:?}", heads(&w), w.by_path());
+    assert!(n < 50, "아무것도 안 하는 10분에 배경 {n}번 {:?}", w.by_path());
+    // 파일 하나 열기(find)가 다른 못 믿는 파일 기억을 지우지 않는다
+    let id = w.file["id"].as_str().unwrap().to_string();
+    forget(&w.team);
+    let h = heads(&w);
+    find(&w.d, &w.kc, &w.r, &w.team, &id).unwrap();
+    let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, Instant::now());
+    assert_eq!(heads(&w), h, "기억한 못 믿는 파일이라 사람 목록을 또 안 받는다 {:?}", w.by_path());
+    // 팀이 바뀌면(team_changed) 다시 한 번은 새로 — 그새 그 사람을 믿게 됐을 수 있다
+    let before = heads(&w);
+    forget_people(&w.team);
+    let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, Instant::now() + Duration::from_secs(700));
+    assert!(heads(&w) > before, "팀이 바뀌면 사람을 새로 {:?}", w.by_path());
+}
+
+#[test]
+fn 남의_새_기기가_올린_파일을_묵은_팀_머리로_못_믿는다고_굳히지_않는다() {
+    // 10-31 리뷰: 배경 heads 는 30초 기억 — 모르는 서명 기기를 보고 사람 목록을 새로 받을 때 묵은 머리를 쓰면 철수의 새 기기(p2)를 못 보고,
+    // 그 파일이 '못 믿는 파일'로 굳어 사람 목록 수명(10분) 동안 안 열린다. 남의 사슬이 늘어도 중계는 team_changed 를 안 보낸다
+    let w = busy_world("newdev");
+    forget(&w.team);
+    forget_people(&w.team);
+    let base = Instant::now();
+    let _ = list_split_at(&w.d, &w.kc, &w.r, &w.team, base).unwrap(); // 철수 사슬(p1)·팀 머리를 기억
+    let peer = DeviceKeys::from_seeds([3; 32], [103; 32]);
+    let p2 = DeviceKeys::from_seeds([4; 32], [104; 32]);
+    let g = chain_link("a2", &peer, "p1");
+    let body = json!({ "v": 1, "account": "a2", "seq": 1, "prev": crate::e2e_chain::link_hash(&g.body, &g.sig), "by": "p1", "kind": "add", "device": "p2", "edPub": p2.public(), "e2ePub": p2.e2e_public(), "selfSig": p2.e2e_key_sig() }).to_string();
+    let add = Link { seq: 1, sig: peer.sign(&format!("chammo-chain/1\n{body}")), body };
+    {
+        let mut a = w.r.always.borrow_mut();
+        a.retain(|(_, p, _, _)| p != "/v0/accounts/a2/chain");
+        a.push(("GET".into(), "/v0/accounts/a2/chain".into(), 200, json!({ "links": [g, add] }).to_string()));
+    }
+    let hp = format!("/v0/teams/{}/heads", w.team);
+    let h = heads_now(&w).to_string();
+    w.r.always.borrow_mut().retain(|(_, p, _, _)| *p != hp);
+    w.r.always("GET", &hp, 200, &h);
+    w.extra.borrow_mut().push(sealed(&w, &p2, "p2", "m2", vec![Recipient { device: "p2".into(), e2e: p2.e2e_public() }], &["d1", "p2"]));
+    w.bump();
+    let (v, _) = list_split_at(&w.d, &w.kc, &w.r, &w.team, base + Duration::from_secs(5)).unwrap();
+    assert!(v.items.iter().all(|i| i.why.is_empty()), "철수 새 기기 파일도 열린다 {:?}", v.items.iter().map(|i| (&i.by, &i.why)).collect::<Vec<_>>());
+    forget(&w.team);
+    forget_people(&w.team);
+}
+
+#[test]
+fn 서버가_봉투를_거절하면_같은_파일_같은_기기에_다시_안_올린다() {
+    // 철수 기기(p1) 몫 봉투가 없는 파일 — 서버는 p1 을 받는 기기로 안 쳐 준다(나간 사람·끊긴 기기·폰). 예전엔 목록마다 다시 올렸다(10분 154번)
+    let w = busy_world("refused");
+    let k = relay::device_keys(&w.kc, &relay::load_state(&w.d)).unwrap();
+    for _ in 0..5 {
+        w.extra.borrow_mut().push(sealed(&w, &k, "d1", "m1", vec![], &["d1"]));
+    }
+    w.set_rev(1);
+    w.r.always("POST", "/keys", 400, r#"{"error":"bad_keys"}"#);
+    nudge(&w.team, 99);
+    let n = run(&w, 600, 0);
+    eprintln!("봉투 거절 10분: {n}번 {:?}", w.by_path());
+    assert!(posts(&w) <= 1, "같은 기기 봉투를 10분에 {}번 {:?}", posts(&w), w.by_path());
+    assert!(heads(&w) <= 4, "10분에 /heads {}번 {:?}", heads(&w), w.by_path());
+    assert!(lists(&w) <= 31, "거절된 POST 가 목록 기억을 지웠다: 목록 {}번 {:?}", lists(&w), w.by_path());
+    assert!(n < 50, "아무것도 안 하는 10분에 배경 {n}번 {:?}", w.by_path());
+}
+
+#[test]
+fn 봉투를_더하는_한_번에_올리는_수는_상한까지() {
+    // 파일 50+ 에 새 기기 하나 — 한 번에 다 올리지 않고 상한만큼, 나머지는 다음 목록에서
+    let w = busy_world("cap");
+    let k = relay::device_keys(&w.kc, &relay::load_state(&w.d)).unwrap();
+    for _ in 0..60 {
+        w.extra.borrow_mut().push(sealed(&w, &k, "d1", "m1", vec![], &["d1"]));
+    }
+    w.set_rev(1);
+    w.r.always("POST", "/keys", 200, "{}");
+    let now = Instant::now();
+    let (_, job) = list_split_at(&w.d, &w.kc, &w.r, &w.team, now).unwrap();
+    let added = job.run_at(&w.d, &w.kc, &w.r, now);
+    assert_eq!(posts(&w), MAX_SHARE_POSTS, "한 번에 {}번 {:?}", posts(&w), w.by_path());
+    assert_eq!(added, MAX_SHARE_POSTS, "p1 몫 하나씩");
+}
+
+#[test]
+fn 사람_동작이_서버_429_를_받으면_칸이_곧_넘어갈_때만_한_번_다시() {
+    // 10-30 23:59 팀 홈 꾸미기 [완료] — 배경 폭주가 서버 칸(열쇠당 10분 300)까지 채워 사람 몫도 서버 429
+    assert_eq!(relay::human_retry_wait(0), None, "칸 맨 앞 — 10분 기다릴 순 없다");
+    assert_eq!(relay::human_retry_wait(relay::BUCKET_MS - 20_000), Some(Duration::from_millis(20_500)));
+    assert_eq!(relay::human_retry_wait(relay::BUCKET_MS - 61_000), None);
+    let w = World::new("human429", false);
+    w.r.answer("/v0/me/rooms", 429, r#"{"error":"slow_down"}"#);
+    w.r.answer("/v0/me/rooms", 429, r#"{"error":"slow_down"}"#);
+    relay::RETRY_TS.with(|t| t.set(relay::BUCKET_MS - 5_000));
+    let n = w.count();
+    assert!(relay::as_human(|| relay::sync_rooms(&w.d, &w.kc, &w.r)).is_err(), "다시 해도 429 면 실패");
+    assert_eq!(w.count(), n + 2, "한 번만 다시 {:?}", w.by_path());
+    relay::RETRY_TS.with(|t| t.set(0));
+    w.r.answer("/v0/me/rooms", 429, r#"{"error":"slow_down"}"#);
+    let n = w.count();
+    assert!(relay::as_human(|| relay::sync_rooms(&w.d, &w.kc, &w.r)).is_err());
+    assert_eq!(w.count(), n + 1, "칸이 멀면 안 기다리고 바로 실패");
+    // 배경은 다시 안 한다(쉬는 동안 아예 안 나간다)
+    relay::RETRY_TS.with(|t| t.set(relay::BUCKET_MS - 5_000));
+    let n = w.count();
+    assert!(relay::sync_rooms(&w.d, &w.kc, &w.r).is_err());
+    assert_eq!(w.count(), n, "배경은 쉬는 중");
+    relay::RETRY_TS.with(|t| t.set(0));
 }

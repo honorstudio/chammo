@@ -53,7 +53,7 @@ LICENSE-APACHE and NOTICE beside it, and is served on 127.0.0.1 only. The space 
 which can't call the app or read your files (only the browser's own open/save dialogs).
 The web build has no autosave — save or download before closing.
 """
-import contextlib, hashlib, http.server, io, json, os, re, shutil, signal, socket, subprocess, sys, tempfile, time, urllib.error, urllib.request, zipfile
+import contextlib, hashlib, http.server, io, json, locale, os, re, shutil, signal, socket, ssl, subprocess, sys, tempfile, time, urllib.error, urllib.request, zipfile
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import craft_win  # 윈도우 길(설치·띄우기·지우기 — 참모 앱 portable zip). 맥 길은 이 파일 그대로
 IS_WIN = sys.platform == 'win32'
@@ -122,7 +122,40 @@ def fetch(url, timeout=120):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read()
     except (urllib.error.URLError, OSError) as e:
-        raise FetchError(f'{url} — {e}') from e
+        if not _verify_failed(e):
+            raise FetchError(f'{url} — {e}') from e
+        return _fetch_again(req, url, timeout, e)
+
+
+def _verify_failed(e):
+    return isinstance(e, ssl.SSLCertVerificationError) or isinstance(getattr(e, 'reason', None), ssl.SSLCertVerificationError)
+
+
+def _fetch_again(req, url, timeout, first):
+    """인증서 확인 실패 — 윈도우는 루트를 처음 쓸 때 CryptoAPI(Schannel)가 받아 저장소에 넣는데 파이썬은 읽기만 해서,
+    아직 안 받은 루트(GitHub 의 USERTrust ECC)면 실패했다가 나중엔 된다(공개 이슈 #14). certifi 가 있으면 그 묶음으로,
+    없으면 윈도우 curl.exe(Schannel — 루트 받기가 같이 일어난다)로 한 번 더. 확인을 끄는 길은 없다"""
+    try:
+        import certifi
+    except ImportError:
+        certifi = None
+    if certifi:
+        try:
+            with urllib.request.urlopen(req, timeout=timeout, context=ssl.create_default_context(cafile=certifi.where())) as r:
+                return r.read()
+        except (urllib.error.URLError, OSError) as e:
+            raise FetchError(f'{url} — {first}; certifi: {e}') from e
+    if not IS_WIN:
+        raise FetchError(f'{url} — {first}') from first
+    try:
+        p = subprocess.run(['curl.exe', '-fsSL', '--max-time', str(int(timeout)), '-A', 'Chammo-craft', url],
+                           capture_output=True, creationflags=0x08000000)  # CREATE_NO_WINDOW
+    except OSError as e:
+        raise FetchError(f'{url} — {first}; curl.exe: {e}') from first
+    if p.returncode:
+        err = p.stderr.decode(getattr(locale, 'getencoding', locale.getpreferredencoding)(), errors='replace')  # 한글 윈도우 curl 은 cp949 로 쓴다
+        raise FetchError(f'{url} — {first}; curl.exe: {err.strip() or p.returncode}') from first
+    return p.stdout
 
 
 def app_key(name):
