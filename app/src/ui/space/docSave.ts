@@ -18,9 +18,12 @@ export type DocSession = {
   blocked: boolean;
   /** 쓰는 중 — 감시가 내 쓰기를 바깥 변경으로 읽지 않게 */
   writing: boolean;
-  /** 편집기가 열려 있는 동안만 — 밖에서 바뀌어 거절됨 / 파일이 없어짐 */
+  /** 편집기가 열려 있는 동안만 — 밖에서 바뀌어 거절됨 / 파일이 없어짐 / 파일은 있는데 못 씀(다른 앱이 쥠·읽기 전용) */
   onOutside?: () => void;
   onGone?: () => void;
+  onFail?: () => void;
+  /** 썼다 — 못 씀 띠를 내린다(다시 저장이 될 때까지 띠가 깜빡이지 않게) */
+  onSaved?: () => void;
 };
 
 export const newSession = (path: string, text: string): DocSession => ({ path, base: { text, stamp: null, ver: 1 }, blocked: false, writing: false });
@@ -62,13 +65,17 @@ async function flush(s: DocSession, md: string) {
     const stamp = await invoke<string>('write_doc_text', { path: s.path, text: md, expected: s.base.text });
     setBase(s, md, stamp);
     lastSaved.set(s.path, md);
+    s.onSaved?.();
     const diff = mdDiff(before, md);
     if (diff.added.length || diff.removed.length) void invoke('space_log_append', { line: JSON.stringify({ ts: new Date().toISOString(), who: 'user', kind: 'edit', path: s.path, ...diff }) }).catch(() => {});
   } catch (e) {
     const outside = String(e).includes(OUTSIDE);
     // 못 쓴 내 판은 history 에 — 파일이 없어졌거나, 편집기가 닫힌 뒤(문서를 떠난 직후) 늦게 거절돼 합칠 편집기가 없을 때(잃지 않게)
     if (!outside || !s.onOutside) void invoke('keep_doc_version', { path: s.path, text: md }).catch(() => {});
-    (outside ? s.onOutside : s.onGone)?.();
+    if (outside) s.onOutside?.();
+    // 없어졌는지는 파일에 물어본다 — 쓰기 실패를 다 '지워졌어요'로 말해 윈도우 잠금·읽기 전용에서도 파일이 없어진 줄 알았다(11-01 QA H10)
+    else if (await invoke<string>('doc_stamp', { path: s.path }).then(() => true, () => false)) s.onFail?.();
+    else s.onGone?.();
   } finally {
     s.writing = false;
   }

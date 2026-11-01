@@ -15,7 +15,7 @@ describe('dockLine — 사무실 아래 현황판 한 줄', () => {
     expect(dockLine('done', undefined, undefined).verb).toBe('답함');
     expect(dockLine('idle', undefined, undefined).verb).toBe('쉼'); // 메뉴와 같은 말(statusWord) — 예전 '대기'
     expect(dockLine('stale', undefined, undefined).verb).toBe('잠듦');
-    expect(dockLine('blocked', undefined, undefined).verb).toBe('기다림'); // 사무실 짓은 물어봄과 같지만 말은 메뉴처럼
+    expect(dockLine('blocked', undefined, undefined).verb).toBe('확인 대기'); // 사무실 짓은 물어봄과 같지만 말은 메뉴처럼
   });
 });
 

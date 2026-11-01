@@ -7,7 +7,7 @@ import { teamIconSet } from '../../data/teamProfileApi';
 import type { SafetyPerson } from '../../domain/e2eSafety';
 import { personColor } from '../../domain/teamChat';
 import { lookOf, statusLine } from '../../domain/teamProfile';
-import { canDeleteTeam, deleteAsk, leaveNote, memberRows, menuFor, PERM_CHIPS, switchTargets } from '../../domain/teamSettings';
+import { canDeleteTeam, canDo, deleteAsk, leaveNote, memberRows, menuFor, PERM_CHIPS, switchTargets } from '../../domain/teamSettings';
 import { tr } from '../../i18n';
 import { IconClose, IconCopy, IconMore, IconPencil } from '../Icons';
 import { IconButton } from '../kit/IconButton';
@@ -41,7 +41,7 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
   const owner = view.role === 'owner';
   // 매니저 권한(relay ADR 0014) — 팀 이름·아이콘은 look, 초대는 invite(서버가 다시 본다)
   const myPerms = view.members.find((m) => m.me)?.perms ?? [];
-  const can = (item: string) => owner || myPerms.includes('all') || myPerms.includes(item);
+  const can = (item: string) => canDo(view, item);
   const canLook = can('look');
   const canInvite = can('invite');
   const [name, setName] = useState(view.team);
@@ -212,7 +212,7 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
         })}
       </ul>
       {numberOf && sp(numberOf) && <SafetyPanel p={sp(numberOf)!} teamName={view.team} onDone={() => { setNumberOf(null); loadSafety(); }} />}
-      {!canInvite && <span className="tmx-hint">{tr('초대 링크는 팀장이 만들어요', 'Only a team owner can make invite links')}</span>}
+      {!canInvite && <span className="tmx-hint">{tr('초대 링크는 팀장이나 초대 권한을 받은 사람이 만들어요', 'Only a team owner or someone with the Invite permission can make invite links.')}</span>}
 
       <span className="tmx-fl">{tr('요금제 · 사용량', 'Plan · usage')}</span>
       <div className="tmp-slot">{tr('곧 들어와요', 'Coming soon')}</div>
@@ -240,7 +240,7 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
 }
 
 /** 팀 아이콘 메뉴(왼쪽·오른쪽 누르기) — 메신저 창과 데스크톱 띠가 같은 줄. 팀이 둘 이상이면 끝에 '○○ 팀으로 바꾸기'(QA 6) */
-export function teamMenu(view: { joined: boolean; teamId?: string; teams?: { id: string; name: string }[] } | null, go: (p: 'start' | 'link' | 'settings') => void, switchTo?: (team: string) => void): MenuItem[] {
+export function teamMenu(view: { joined: boolean; teamId?: string; role?: string; members?: { me: boolean; perms?: string[] }[]; teams?: { id: string; name: string }[] } | null, go: (p: 'start' | 'link' | 'settings') => void, switchTo?: (team: string) => void): MenuItem[] {
   const base: MenuItem[] = menuFor(view).map((k) => (k === 'invite' ? { label: tr('팀 초대', 'Invite to team'), run: () => go('link') } : k === 'settings' ? { label: tr('팀 설정', 'Team settings'), run: () => go('settings') } : { label: tr('팀 만들기', 'Make a team'), run: () => go('start') }));
   const others = view?.joined && switchTo ? switchTargets({ teamId: view.teamId ?? '', teams: view.teams }) : [];
   return [...base, ...others.map((t) => ({ label: tr(`${t.label} 팀으로 바꾸기`, `Switch to ${t.label}`), run: () => switchTo!(t.id) }))];

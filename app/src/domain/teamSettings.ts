@@ -3,9 +3,18 @@ import { tr } from '../i18n';
 
 type Member = { id: string; name: string; role: string; perms?: string[]; me: boolean; devices?: { id: string; name: string }[] };
 
-/** 팀 아이콘(왼쪽·오른쪽 누르기) 메뉴 */
-export function menuFor(v: { joined: boolean } | null): ('invite' | 'settings' | 'make')[] {
-  return v?.joined ? ['invite', 'settings'] : ['make'];
+/** 내가 그 일을 할 수 있나 — 팀장·전체 권한·그 권한 칩(relay ADR 0014). 팀 설정·메뉴·초대 창이 이 하나로 본다(11-01 QA M2: 화면마다 달랐다). 서버가 다시 본다 */
+export function canDo(v: { role?: string; members?: { me: boolean; perms?: string[] }[] } | null, item: string): boolean {
+  if (!v) return false;
+  if (v.role === 'owner') return true;
+  const p = v.members?.find((x) => x.me)?.perms ?? [];
+  return p.includes('all') || p.includes(item);
+}
+
+/** 팀 아이콘(왼쪽·오른쪽 누르기) 메뉴 — 팀 초대는 초대할 수 있을 때만 */
+export function menuFor(v: { joined: boolean; role?: string; members?: { me: boolean; perms?: string[] }[] } | null): ('invite' | 'settings' | 'make')[] {
+  if (!v?.joined) return ['make'];
+  return canDo(v, 'invite') ? ['invite', 'settings'] : ['settings'];
 }
 
 export type MemberRow = {

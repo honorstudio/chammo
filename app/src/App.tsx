@@ -26,7 +26,8 @@ import { CraftOpenAsk } from './ui/craft/openInCraft';
 import { LicensesDialog } from './ui/LicensesDialog';
 import { RoutinePage } from './ui/RoutinePage';
 import { isCloud, parseRoutines, routineItem, routineState, type Routine } from './domain/routine';
-import { shouldShowTour } from './domain/tour';
+import { shouldShowTour, tourVisible } from './domain/tour';
+import type { Gate } from './domain/loginGate';
 import { useTama } from './ui/tama/useTama';
 import { PetView } from './ui/tama/PetView';
 import { PetModal } from './ui/tama/PetModal';
@@ -47,8 +48,8 @@ import { OPEN_SETUP, SPACE_NAV, spaceCmd } from './ui/space/navSignal';
 import type { SetupStart } from './domain/settingsTabs';
 import { LoginGate } from './ui/LoginGate';
 import { picking } from './ui/chat/modelPickRun';
-import { appUpdateInstall, openTarget as openLink } from './data/tauri';
-import { installNote, runInstall, type Phase as InstallPhase } from './domain/appInstall';
+import { appUpdateInstall, appUpdateLeftover, openTarget as openLink } from './data/tauri';
+import { afterLeftover, installNote, leftoverNote, runInstall, type Phase as InstallPhase } from './domain/appInstall';
 import { assistant, getLang, josa, tr } from './i18n';
 import { getAppEnv, listSessionsAllRaw, listSessionsRaw, readSay, writeVoiceMode, speak, projectScan, readTasksSince, readTranscriptTails, DEEP_TAIL, spawnSession, type AppEnv } from './data/tauri';
 import { freshReplies, heldTarget, parseSay, pickSay, routeReply, takeHeld, talkedTo, voiceTurn, type ReplySeen, type VoiceHeld } from './domain/voice';
@@ -164,6 +165,8 @@ import { useDaemonEnv } from './ui/useDaemonEnv';
 import { useAskWake } from './ui/useAskWake';
 import { useCraftHandback } from './ui/useCraftHandback';
 import { bornAfter, buildInbox, decideNote, findTarget, freshItems, popoverOpen, replyBlocked, type InboxItem } from './domain/inbox';
+import { replyInbox } from './domain/inboxReply';
+import { foldTails } from './domain/tailFold';
 import { InboxPopover, InboxRow } from './ui/Inbox';
 import { ctxAlerts, parseCtx, type Ctx } from './domain/ctx';
 import { useReview } from './ui/useReview';
@@ -243,6 +246,8 @@ export default function App() {
   // 세션 브라우저 상태(사람 부름 감지용) — 스페이스 밖 화면에서도
   const agentLives = useAgentLives();
   const [tourOpen, setTourOpen] = useState(false);
+  // 로그인 문 상태 — 둘러보기는 문이 닫힌 뒤에(2026-11-01 ux-start H1). null = 아직 못 읽음
+  const [loginGate, setLoginGate] = useState<Gate | null>(null);
   useEffect(() => {
     if (config && shouldShowTour({ setupDone: config.setupDone, seen: load('tourSeen', false) })) setTourOpen(true);
   }, [config?.setupDone]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -373,6 +378,8 @@ export default function App() {
   const [updDismissed, setUpdDismissed] = useState<string | null>(() => load('updateDismissed', null));
   // 앱 자동 업데이트 단계(ADR 0005) — 받는 중·설치 중엔 띠를 못 닫는다
   const [appInstall, setAppInstall] = useState<InstallPhase>({ kind: 'idle' });
+  // 지난 업데이트가 안 끝났나(윈도우는 설치기가 실패해도 앱이 이미 꺼져 있었다) — 켤 때 한 번
+  useEffect(() => { void appUpdateLeftover().then((v) => setAppInstall((p) => afterLeftover(p, v)), () => {}); }, []);
   useEffect(() => save('updateDismissed', updDismissed), [updDismissed]);
   useEffect(() => save('claudeVersionDismissed', verDismissed), [verDismissed]);
   // 프로젝트 폴더 읽기·같은 앱 여러 벌(이슈 #1) — 폴더 띠는 닫아도 다음에 켜면 다시(고쳐질 때까지), 여러 벌은 같은 상태면 안 띄운다
@@ -716,13 +723,17 @@ export default function App() {
   // 패널을 닫아도 읽는다 — 결정 대기·알림이 이걸로 판단하는데, 닫으면 안 읽어서 결정을 놓쳤다(2026-09-27 사용자). 명령은 뒤에서 돌아 화면은 안 막는다
   // 예약 폴더에서 뜬 세션 — 앱 목록 밖이지만 진짜 로그인 풀림이면 로그인 카드에 넣으려고 기록은 같이 읽는다(roadmap 137행 ①)
   const routineSess = useMemo(() => routineSessions(allSessions, env?.dataDir ?? ''), [allSessions, env?.dataDir]);
+  // 바뀐 꼬리만 다시 풀고, 하나도 안 바뀌면 상태를 안 넣는다 — 10초마다 App 전체가 다시 그려졌다(domain/tailFold, ux-daily M9)
+  const tailFold = useRef<{ raws: Record<string, string>; sums: Record<string, Activity> }>({ raws: {}, sums: {} });
   useEffect(() => {
     const tick = async () => {
       const ids = [...sessions, ...routineSess].map((s) => s.sessionId).filter((x): x is string => !!x);
       if (!ids.length) return;
       try {
         const tails = await readTranscriptTails(ids);
-        setActivity(Object.fromEntries(Object.entries(tails).map(([k, v]) => [k, summarizeTranscript(v)])));
+        const f = foldTails(tailFold.current.raws, tailFold.current.sums, tails, summarizeTranscript);
+        tailFold.current = f;
+        if (f.changed) setActivity(f.sums);
       } catch {
         // 현황은 보조 정보 — 못 읽어도 나머지 화면은 그대로 쓴다
       }
@@ -1219,23 +1230,21 @@ export default function App() {
   }, [inboxKeys]);
   const answerTask = (item: InboxItem, note: string) =>
     item.taskId ? appendTaskEvent({ ts: new Date().toISOString(), type: 'answer', task: item.taskId, note }).then(() => refresh()) : Promise.resolve();
+  // 작업 기록 쓰기 실패 — 단추를 눌러도 아무 일 없어 보였다(2026-11-01 ux-daily M8)
+  const recordFail = (e: unknown) => setError(`${tr('끝난 걸로 못 적었어. 다시 눌러 봐', "Couldn't save that. Try again")}: ${e instanceof Error ? e.message : String(e)}`);
   const dismissItem = (item: InboxItem) => {
-    if (item.taskId) void answerTask(item, tr('처리함', 'Handled'));
+    if (item.taskId) void answerTask(item, tr('처리함', 'Handled')).catch(recordFail);
     else setDismissed((d) => [...d, item.key]);
   };
-  const replyItem = async (item: InboxItem, text: string) => {
-    // 보내기 직전에 한 번 더 — 그 사이 선택지·권한 창이 떴을 수 있다
-    const why = replyBlocked(item, sessions);
-    if (why) { setError(`${item.project}: ${why}`); return; }
-    const s = findTarget(sessions, item.target)!;
-    try {
-      await sendToSession(s.id, text);
-      if (item.taskId) await answerTask(item, text);
-      else setDismissed((d) => [...d, item.key]);
-    } catch (e: unknown) {
-      setError(tr(`${item.project} 답장 실패: ${String(e)}`, `Reply to ${item.project} failed: ${String(e)}`));
-    }
-  };
+  // 보내기 직전에 한 번 더 막힘(그 사이 선택지·권한 창)·아직 기다리나(폰이 먼저 답했나)를 보고 친다. 실패는 던진다 — 줄이 글을 남기고 까닭을 띄운다(domain/inboxReply)
+  const replyItem = (item: InboxItem, text: string) => replyInbox({
+    why: replyBlocked(item, sessions),
+    taskId: item.taskId,
+    waiting: (task) => invoke<boolean>('task_waiting', { task }),
+    send: () => sendToSession(findTarget(sessions, item.target)!.id, text),
+    record: () => answerTask(item, text),
+    dismiss: () => setDismissed((d) => [...d, item.key]),
+  });
 
   // 무인 기계(설정 autoRevive) — 재시작으로 꺼진 세션을 사람 없이 이어서 켠다. 참모를 새로 띄우지는 않는다(2026-10-03 사용자 — 없으면 오케스트레이터 홈)
   // 2026-10-01 아이맥 재부팅: 앱은 떴는데 세션이 다 꺼진 채 "다시 켜기" 버튼만 떠 있었다(domain/revive autoRestore)
@@ -1354,10 +1363,10 @@ export default function App() {
     const ts = new Date().toISOString();
     // 한 줄씩 차례로 — 같은 파일에 동시에 덧붙이지 않게
     const note = tr('정리 — 같은 세션에 새 일이 가서 넘어감(끝 기록 없음)', 'Tidied — a newer task went to the same session');
-    void cs.reduce((p, c) => p.then(() => appendTaskEvent({ ts, type: 'done', task: c.id, note })), Promise.resolve()).then(() => refresh());
+    void cs.reduce((p, c) => p.then(() => appendTaskEvent({ ts, type: 'done', task: c.id, note })), Promise.resolve()).catch(recordFail).then(() => refresh());
   };
   const finishOrphan = (c: TaskCard) =>
-    void appendTaskEvent({ ts: new Date().toISOString(), type: 'done', task: c.id, note: tr('세션 없음 — 끝난 걸로 정리', 'No session — marked as finished') }).then(() => refresh());
+    void appendTaskEvent({ ts: new Date().toISOString(), type: 'done', task: c.id, note: tr('세션 없음 — 끝난 걸로 정리', 'No session — marked as finished') }).then(() => refresh(), recordFail);
 
   // 부하 모니터 — Chammo 세션(프로젝트·HQ·루틴)과 그 밖 Claude 세션을 나눠 준다. 부하 화면을 열면 더 자주 잰다
   const loadMine = [...sessions, ...allSessions.filter((s) => s.name.startsWith('routine-') && !sessions.some((x) => x.id === s.id))];
@@ -1365,7 +1374,8 @@ export default function App() {
   const loadMon = useLoad(loadMine, loadOthers, selected.kind === 'load');
   const openTarget = (target: string) => {
     const s = findTarget(sessions, target);
-    if (!s) return;
+    // 꺼진 세션 줄 — 누르면 아무 일 없었다(ux-daily M8). 할 수 있는 건 줄의 '이어서 켜기'·'끝난 걸로'
+    if (!s) { setError(tr('세션이 꺼져 있어. 이어서 켜거나 끝난 걸로 해 줘', 'Session is off. Resume it or mark it done')); return; }
     teamMode.leave(); // 팀 모드면 그 세션이 팀 대화·팀 스페이스 밑에 가려진다(10-26 사용자 — 종 카드 열기가 안 먹었다)
     // 참모(들)는 프로젝트가 아니라 참모 화면에, 도우미는 도우미 화면에 있다
     const orch = groups.orchestrators.some((o) => o.id === s.id);
@@ -1952,8 +1962,8 @@ export default function App() {
     {/* 로그인 필수(10-24) — 계정에 로그인 안 된 기기는 앱 위를 덮는다. 첫 실행 안내가 끝난 뒤에 */}
     {/* 팀 만들기·초대 팝업 — 띠 + 메뉴, 그리고 초대 링크(chammo://join)로 앱이 열렸을 때 어느 화면에서든(ADR 0015). 로그인 화면이 덮으면 그 뒤에 */}
     {teamMode.pop}
-    {config && !settingsOpen && <LoginGate />}
-    {tourOpen && <Tour none={navOrchs.length + offOrchList.length === 0} onClose={closeTour} />}
+    {config && !settingsOpen && <LoginGate onGate={setLoginGate} />}
+    {tourVisible(tourOpen, loginGate) && <Tour none={navOrchs.length + offOrchList.length === 0} onClose={closeTour} />}
     {petModal && features.tama && <PetModal onClose={() => setPetModal(false)}>{petNode(petWho)}</PetModal>}
     {/* 세션 브라우저가 사람을 부르면(browser_ask_human) 어느 화면에서든 크게 띄우고 알린다 */}
     <AgentAskHost lives={agentLives} nameOf={(l) => askName(l, allSessions)} notify={(profile, reason, name, l) => {
@@ -1974,7 +1984,7 @@ export default function App() {
         }} />
       );
     })()}
-    <TopBar claude={bin} fontSize={fontSize} load={loadMon.sys ? { level: level(loadMon.sys), load1: loadMon.sys.load1, cores: loadMon.sys.cores, swapGb: loadMon.sys.swapUsedMb / 1024 } : undefined} loadOn={selected.kind === 'load'} onLoad={() => setSelected({ kind: 'load' })} features={features} usage={barUsage} usageAge={acctUsage?.age ?? null} account={topLabel(accounts)} accounts={accounts} onSettings={() => setSettingsOpen(true)} today={today} tama={{ file: tama.file, widgetShown: tama.widgetShown, onToggle: () => widgetToggleRef.current() }} replayOn={spaceShown ? replayOpen : selected.kind === 'replay'} onReplay={() => replayRef.current('toggle')} reader={readerOpen} onReader={() => setReaderOpen((o) => !o)} office={space ? spaceOffice : office} onOffice={() => { if (space) { setSelected({ kind: 'orchestrator' }); setOfficeReq(spaceShown ? 'toggle' : 'open'); return; } setOffice(!office); setSelected({ kind: 'orchestrator' }); }} space={space} onView={(chat) => { setSpace(chat); setSelected({ kind: 'orchestrator' }); }} inboxCount={inbox.length + direct.inboxCards.length + remote.cards.length + loginCount + browserCount} onInbox={() => setInboxOpen((o) => !o)} harnitor={harnitorFloat || (spaceShown && harnitorOpen)} onHarnitor={() => harnitorRef.current('toggle')} tools={spaceShown ? toolsOpen : toolsFloat} onTools={() => toolsRef.current('toggle')} review={{ on: spaceShown ? reviewOpen : selected.kind === 'review', confirm: reviewConfirm }} onReview={() => reviewRef.current('toggle')} voice={voice} onVoice={() => turnVoice(!voice)} />
+    <TopBar fresh={navOrchs.length + offOrchList.length === 0} claude={bin} fontSize={fontSize} load={loadMon.sys ? { level: level(loadMon.sys), load1: loadMon.sys.load1, cores: loadMon.sys.cores, swapGb: loadMon.sys.swapUsedMb / 1024 } : undefined} loadOn={selected.kind === 'load'} onLoad={() => setSelected({ kind: 'load' })} features={features} usage={barUsage} usageAge={acctUsage?.age ?? null} account={topLabel(accounts)} accounts={accounts} onSettings={() => setSettingsOpen(true)} today={today} tama={{ file: tama.file, widgetShown: tama.widgetShown, onToggle: () => widgetToggleRef.current() }} replayOn={spaceShown ? replayOpen : selected.kind === 'replay'} onReplay={() => replayRef.current('toggle')} reader={readerOpen} onReader={() => setReaderOpen((o) => !o)} office={space ? spaceOffice : office} onOffice={() => { if (space) { setSelected({ kind: 'orchestrator' }); setOfficeReq(spaceShown ? 'toggle' : 'open'); return; } setOffice(!office); setSelected({ kind: 'orchestrator' }); }} space={space} onView={(chat) => { setSpace(chat); setSelected({ kind: 'orchestrator' }); }} inboxCount={inbox.length + direct.inboxCards.length + remote.cards.length + loginCount + browserCount} onInbox={() => setInboxOpen((o) => !o)} harnitor={harnitorFloat || (spaceShown && harnitorOpen)} onHarnitor={() => harnitorRef.current('toggle')} tools={spaceShown ? toolsOpen : toolsFloat} onTools={() => toolsRef.current('toggle')} review={{ on: spaceShown ? reviewOpen : selected.kind === 'review', confirm: reviewConfirm }} onReview={() => reviewRef.current('toggle')} voice={voice} onVoice={() => turnVoice(!voice)} />
     <div className="app">
       {/* 채팅 뷰에선 세션 사이드바 대신 스페이스 메뉴(오케스트레이터·프로젝트 세션)가 ⌘B 자리 — 2026-09-30 사용자 */}
       {sidebarOpen && !spaceShown && <Sidebar
@@ -2021,7 +2031,9 @@ export default function App() {
               </>
             ) : (
               <>
-                <span>{tr(`Chammo ${updates.app.version} 이 나왔어요 (지금 ${updates.appNow}). 업데이트하면 새 기능·고침이 들어가요.`, `Chammo ${updates.app.version} is out (you have ${updates.appNow}). Update to get the new features and fixes.`)}</span>
+                <span>{appInstall.kind === 'leftover'
+                  ? tr(...leftoverNote(updates.app.version, updates.appNow))
+                  : tr(`Chammo ${updates.app.version} 이 나왔어요 (지금 ${updates.appNow}). 업데이트하면 새 기능·고침이 들어가요.`, `Chammo ${updates.app.version} is out (you have ${updates.appNow}). Update to get the new features and fixes.`)}</span>
                 <IconButton size="l" tone="pri" label={tr('업데이트', 'Update')} title={tr(`업데이트 — Chammo ${updates.app.version} 받아서 설치하고 다시 켜기`, `Update — download Chammo ${updates.app.version}, install and restart`)} onClick={() => { const url = updates.app!.url; void runInstall(appUpdateInstall, setAppInstall, () => openLink('url', url)); }}><IconUpdate /></IconButton>
               </>
             )}

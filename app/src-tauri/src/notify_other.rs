@@ -1,9 +1,7 @@
-//! 맥 밖(윈도우 등)의 알림 — 맥 알림(notify_mac)과 같은 명령 이름. 윈도우는 토스트(tauri-winrt-notification),
+//! 맥 밖(윈도우 등)의 알림 — 맥 알림(notify_mac)과 같은 명령 이름. 윈도우는 직접 만든 WinRT 토스트(누르면 chammo://notify 를 연다 — deep_link),
 //! 누르면 메인 창을 앞으로 가져오고 window.__notifyClick('<갈 곳>') 을 부른다(맥과 같다). 그 밖은 "없음"
 use std::sync::OnceLock;
 use tauri::AppHandle;
-#[cfg(windows)]
-use tauri::Manager;
 
 static APP: OnceLock<AppHandle> = OnceLock::new();
 
@@ -12,32 +10,22 @@ pub fn init(app: &AppHandle) {
     let _ = APP.set(app.clone());
 }
 
-/// 보낸다. 못 보내면 false
+/// 보낸다. 못 보내면 false. 누르면(띄운 토스트·알림 센터 모두) chammo://notify?go=<target> 이 열린다 → single-instance 로 떠 있는 앱이
+/// 창을 띄우고 window.__notifyClick 을 부른다(deep_link). 예전엔 프로세스 안 콜백(on_activated)만이라 알림 센터에서 누르면 트레이로 숨은 앱이 안 떴다(2026-11-01 시험판)
 #[cfg(windows)]
 pub fn send(title: &str, body: &str, target: &str) -> bool {
-    use tauri_winrt_notification::Toast;
+    use windows::core::HSTRING;
+    use windows::Data::Xml::Dom::XmlDocument;
+    use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
     let Some(app) = APP.get() else { return false };
     let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_string_lossy().into_owned())).unwrap_or_default();
-    let id = crate::platform::toast_app_id(&exe_dir, &app.config().identifier, Toast::POWERSHELL_APP_ID);
-    let (a, target) = (app.clone(), target.to_string());
-    let res = Toast::new(&id)
-        .title(title)
-        .text1(body)
-        .on_activated(move |_| {
-            crate::claude::log_out("notify-click", &target);
-            let (a2, t) = (a.clone(), target.clone());
-            let _ = a.run_on_main_thread(move || {
-                if let Some(w) = a2.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.unminimize();
-                    let _ = w.set_focus();
-                    let arg = serde_json::to_string(&t).unwrap_or_default();
-                    let _ = w.eval(format!("window.__notifyClick && window.__notifyClick({arg})"));
-                }
-            });
-            Ok(())
-        })
-        .show();
+    let id = crate::platform::toast_app_id(&exe_dir, &app.config().identifier, tauri_winrt_notification::Toast::POWERSHELL_APP_ID);
+    let res = (|| -> windows::core::Result<()> {
+        let xml = XmlDocument::new()?;
+        xml.LoadXml(&HSTRING::from(crate::deep_link::toast_xml(title, body, target)))?;
+        let toast = ToastNotification::CreateToastNotification(&xml)?;
+        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(id.as_str()))?.Show(&toast)
+    })();
     if let Err(e) = &res {
         crate::claude::log_out("notify-fail", &e.to_string());
     }

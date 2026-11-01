@@ -359,7 +359,7 @@ describe('대화창 = 메인 참모 채팅과 같은 ChatView 그대로(10-28 �
   });
   it('터미널 손잡이는 그 세션에 키를 넣는 같은 길 — 멈춤 Esc·그림 Ctrl+V·선택지 키, 선택지 화면은 물을 때만 읽는다', () => {
     expect(desk).toContain("const stop = async () => {");
-    expect(desk).toContain("pasteImage={() => void keys(['\\x16'])}");
+    expect(desk).toContain("pasteImage={() => void keys([imagePasteKey(IS_WIN)])}"); // 맥 Ctrl+V·윈도우 Alt+V(ux-daily H1)
     expect(desk).toContain('rawKeys={(seq) => keys(seq)}');
     expect(desk).toContain("screen={state === 'blocked' ? () => scr.current : undefined}");
     expect(desk).toContain("invoke<string>('bubble_screen', { id: chatId })");

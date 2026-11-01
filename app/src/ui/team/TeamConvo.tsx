@@ -63,7 +63,7 @@ const FILES = { attach: teamFileAttach, open: teamFileOpen, save: teamFileSave, 
 const AGENTS = { cached: teamAgentsCached, fresh: teamAgents, confirm: teamAgentConfirm, usage: teamAgentUsage };
 const NO_MEMBERS: never[] = [];
 
-export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded, onSent, handoff, detach, onFiles, focused = true, say = teamHumanSay, viewing = teamViewing, back, safety, held, phone, people, onEditRoom, seed = '', onSeeded, teamId = '', members = NO_MEMBERS, reads, drafts = teamDrafts, files = FILES, thumb = teamFileThumb, agentsApi = AGENTS }: {
+export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded, onSent, handoff, detach, onFiles, focused = true, say = teamHumanSay, viewing = teamViewing, back, safety, held, phone, people, onEditRoom, seed = '', onSeeded, teamId = '', members = NO_MEMBERS, reads, drafts = teamDrafts, files = FILES, thumb = teamFileThumb, agentsApi = AGENTS, viewImage }: {
   convo: Convo;
   items: TeamItem[];
   team: string;
@@ -114,6 +114,8 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
   thumb?: (team: string, id: string, name: string, size: number) => Promise<string | null>;
   /** 팀 참모(ADR 0017) 길 — 시험·폰이 바꿔 끼운다. 폰은 아직 없음(null) */
   agentsApi?: { cached: typeof teamAgentsCached; fresh: typeof teamAgents; confirm: typeof teamAgentConfirm; usage: typeof teamAgentUsage } | null;
+  /** 폰 — 그림 칸을 누르면 화면 가득 보기(11-01 사용자). 데스크톱은 스페이스에서 연다(openFile) */
+  viewImage?: (f: TeamFile) => void;
 }) {
   const group = convo.kind === 'group';
   const { board } = useContext(ProfilesCtx);
@@ -442,7 +444,7 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
           const canReact = rich && (l.kind === 'bubble' || l.kind === 'agent');
           const add = canReact && <ReactAdd mine={rs.filter((r: { mine: boolean }) => r.mine).map((r: { mark: string }) => r.mark)} onPick={(k, on) => react(it.seq, k, on)} />;
           const chips = <Reacts list={rs} onToggle={canReact ? (k, on) => react(it.seq, k, on) : undefined} />;
-          const fs = it.files?.length ? <FileBubbles files={it.files} me={l.kind === 'bubble' && l.side === 'me'} onOpen={rich ? (f) => openFile(f) : undefined} onMenu={rich ? onFileMenu : undefined} thumb={thumbOf} /> : null;
+          const fs = it.files?.length ? <FileBubbles files={it.files} me={l.kind === 'bubble' && l.side === 'me'} onOpen={rich ? (f) => openFile(f) : viewImage} onlyPics={!rich} onMenu={rich ? onFileMenu : undefined} thumb={thumbOf} /> : null;
           const hl = l.kind !== 'blocked' && l.kind !== 'e2e' && !(l.kind === 'bubble' && l.side === 'me') && mentionsMe(it.body, myName);
           const rd = <ReadLeft n={unread.get(it.seq) ?? 0} />;
           return (

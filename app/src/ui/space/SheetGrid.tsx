@@ -25,7 +25,7 @@ interface Box { x: number; y: number; w: number; h: number }
 interface Cursor extends Box { text: string; who: SheetWho | null; on: boolean; ms: number }
 const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 /** 페이지가 표에 시키는 것 — 충돌 띠의 '내 판으로 저장' */
-export interface SheetControl { keepMine: () => Promise<void> }
+export interface SheetControl { keepMine: () => Promise<void>; /** 저장 실패 뒤 다시 시도 — 못 쓴 고침은 기록에 그대로 있다 */ retry: () => void }
 
 /** 바깥 판 위에 얹을 고침 — 사용자 고침 + 참모 칸 쓰기(표가 스스로 한 칸 쓰기·수식 다시 계산 결과는 뺀다, domain/sheetLog keptOnMerge) */
 const mineOnly = keptOnMerge;
@@ -271,6 +271,7 @@ export default function SheetGrid({ path, book, stamp, onStatus, onSaved, onRelo
       }
     };
     if (control) control.current = {
+      retry: () => { if (state === 'error') void save(); },
       // 충돌에서 '내 판으로 저장' — 지금 파일 위에 내 고침을 쓴다(덮이는 바깥 판은 저장 전 history 에 남는다)
       keepMine: async () => {
         const now = await invoke<string>('doc_stamp', { path });

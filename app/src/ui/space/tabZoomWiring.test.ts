@@ -73,7 +73,7 @@ describe('탭 확대 — 각 페이지가 배율을 그린다', () => {
   });
   it('그림·html·pdf·오피스·글 미리보기(FileTab)는 배율을 받는다 — 그림은 실제 픽셀 기준, 맞춤(0)은 창 안에', () => {
     expect(file).toMatch(/<HtmlFrame className="rd-frame" src=\{docUrl\(path\)\} zoom=\{zoom\}/);
-    expect(file).toMatch(/<PdfView path=\{path\} zoom=\{zoom\} \/>/);
+    expect(file).toMatch(/<PdfView path=\{path\} zoom=\{zoom\} at=\{focus\?\.at\} atKey=\{focus\?\.key\} \/>/);
     expect(file).toMatch(/<OfficeDoc f=\{at\} zoom=\{zoom\}/);
     // 맞춤은 칸에 맞게(작은 그림은 키움) — 폭은 imageWidth(자연 폭, 배율, 맞춤 배율), 맞춤일 때만 fit(넘침 숨김) 클래스
     expect(file).toMatch(/const \{ natural, fit, onLoad \} = useImageFit\(imgBox\)/);
@@ -95,9 +95,8 @@ describe('탭 확대 — 머리 단추', () => {
 });
 
 describe('탭 확대 — 안내 글', () => {
-  it('둘러보기·README·hq-app 스킬에 ⌘+ ⌘- ⌘0 ⌘9 확대', () => {
-    expect(tour).toMatch(/⌘\+ · ⌘- · ⌘0/);
-    expect(tour).toMatch(/⌘9 는 맞춤/); // ⌘9 는 채팅 탭 줄에 한 번만(2026-10-22 QA 22)
+  it('README·hq-app 스킬에 ⌘+ ⌘- ⌘0 ⌘9 확대', () => {
+    // 2026-11-01 ux-start M5 — 둘러보기는 키 셋(⌘, ⌘/ ⌘1~⌘9)만, 키 표는 README·hq-app 스킬에
     for (const d of [readmeKo, readmeEn, skill]) expect(d).toMatch(/⌘9/);
   });
 });

@@ -535,17 +535,18 @@ fn drain(dir: &Path) {
     }
 }
 
-/// 컴퓨터 일(참모 답·카드)이 생겼을 때 — 중계로 짝지은 폰마다 본문 없는 푸시를 부탁한다(서버가 10초에 한 번으로 묶는다)
-pub fn notify_phones(dir: &PathBuf, relays: Vec<String>) {
-    if relays.is_empty() {
+/// 컴퓨터 일(참모 답·카드)이 생겼을 때 — 중계로 짝지은 폰마다 푸시를 부탁한다(서버가 10초에 한 번으로 묶는다)
+/// asks = push::relay_notify_body 가 만든 부탁({to} 또는 {to, body, sub}) — 배경 몫(BG_CAP)은 team_relay::call 이 센다
+pub fn notify_phones(dir: &PathBuf, asks: Vec<Value>) {
+    if asks.is_empty() {
         return;
     }
     let dir = dir.clone();
     std::thread::spawn(move || {
         let Some((st, _)) = wanted(&dir) else { return };
         let Ok(keys) = team_relay::device_keys(&crate::team_relay_keys::store(), &st) else { return };
-        for to in relays {
-            if let Err(e) = team_relay::call(&team_relay::Curl, &st.server, &keys, Some(&st.device_id), "POST", "/v0/push/notify", Some(&json!({ "to": to }))) {
+        for ask in asks {
+            if let Err(e) = team_relay::call(&team_relay::Curl, &st.server, &keys, Some(&st.device_id), "POST", "/v0/push/notify", Some(&ask)) {
                 log(&format!("푸시 부탁 실패 — {e}"));
             }
         }

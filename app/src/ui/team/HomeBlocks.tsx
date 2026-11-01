@@ -21,6 +21,7 @@ export type BlockData = {
   /** 팀챗 입력칸에 한 줄(@이름) — 없으면 참모 블록은 누를 수 없다 */
   onTalk?: (text: string) => void;
   openFile?: (i: LockerItem) => void;
+  canOpen?: (i: LockerItem) => boolean;
   openUrl: (url: string) => void;
   saveContent: (block: string, c: ContentDraft) => Promise<unknown>;
   nameOf: (member: string) => string;
@@ -70,7 +71,7 @@ function Files({ d, n }: { d: BlockData; n: number }) {
     <div className="hb-rows">
       {list.map((i) => {
         const inner = <><span className="hb-ext" aria-hidden="true">{extOf(i.name)}</span><span className="hb-tx"><b>{i.name}</b><span>{[d.nameOf(i.byMember), whenText(i.at)].filter(Boolean).join(' · ')}</span></span></>;
-        return d.openFile ? <button key={i.id} className="hb-row" onClick={() => d.openFile!(i)}>{inner}</button> : <div key={i.id} className="hb-row">{inner}</div>;
+        return d.openFile && (d.canOpen?.(i) ?? true) ? <button key={i.id} className="hb-row" onClick={() => d.openFile!(i)}>{inner}</button> : <div key={i.id} className="hb-row">{inner}</div>;
       })}
     </div>
   );

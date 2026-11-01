@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { TtsField } from './TtsField';
-import { appVersion, browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, projectAccess, notifyOpenSettings, notifyRequest, notifyStatus, axTrusted, screenTrusted, askPermission, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
-import { addExtraProject, canNext, nextWhy, trustExitNote, parseClaudeVersion, setupCommand, setupReady, tildify, notifyRow, axRow, browserRow, browserChecklist, ghRow, gitStillMissing, versionFit, WIZARD, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
+import { setGitIdentity, appVersion, browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, projectAccess, notifyOpenSettings, notifyRequest, notifyStatus, axTrusted, screenTrusted, askPermission, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
+import { addExtraProject, claudeSignedInText, firstRunName, readyAccountNote, canNext, nextWhy, trustExitNote, parseClaudeVersion, setupCommand, setupReady, winSetupNotes, tildify, notifyRow, axRow, browserRow, browserChecklist, ghRow, gitIdentityRow, gitIdentityError, installState, loginRow, GET_URL, setupFailed, versionFit, WIZARD, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
 import type { Animation, FeatureSwitch } from '../domain/config';
 import { firstTab, settingsEscCloses, settingsTabs, tabOf, type SettingsTab, type SetupStart } from '../domain/settingsTabs';
 import { BRAND } from '../domain/avatar';
@@ -117,10 +117,34 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
   const [draft, setDraft] = useState<Config>(config);
   const set = <K extends keyof Config>(k: K, v: Config[K]) => setDraft((d) => ({ ...d, [k]: v }));
   const [check, setCheck] = useState<EnvCheck | null>(null);
+  /** git 이름·메일 입력(점검 줄) — 저장된 값이 있으면 그걸로 채운다(win-first M1) */
+  const [gitIn, setGitIn] = useState({ name: '', email: '' });
+  const [gitErr, setGitErr] = useState<string | null>(null);
+  const [gitBusy, setGitBusy] = useState(false);
+  useEffect(() => {
+    if (check?.gitName !== undefined) setGitIn((g) => ({ name: g.name || check.gitName || '', email: g.email || check.gitEmail || '' }));
+  }, [check?.gitName, check?.gitEmail]); // eslint-disable-line react-hooks/exhaustive-deps
+  const saveGit = async () => {
+    const bad = gitIdentityError(gitIn.name, gitIn.email);
+    if (bad) { setGitErr(bad === 'name' ? tr('이름을 적어 주세요.', 'Enter a name.') : tr('메일 주소 모양이 아니에요.', 'That does not look like an email address.')); return; }
+    setGitBusy(true);
+    setGitErr(null);
+    try {
+      await setGitIdentity(gitIn.name, gitIn.email);
+      await recheck();
+    } catch (e: unknown) {
+      setGitErr(`${tr('저장하지 못했어요.', 'Could not save.')} ${String(e)}`);
+    } finally {
+      setGitBusy(false);
+    }
+  };
   const [checking, setChecking] = useState(false);
   const [task, setTask] = useState<SetupTask | null>(start ?? null);
   /** 윈도우 git·파이썬 설치를 한 번이라도 돌렸나 — 그 뒤에도 ✕ 면 껐다 켜기 안내 */
   const [tried, setTried] = useState<SetupTask[]>(start ? [start] : []);
+  // 윈도우 git·파이썬 — 설치 터미널이 실패로 끝난 것, 사람이 '나중에 하기'로 넘긴 것(회사 PC, win-env H3)
+  const [failed, setFailed] = useState<SetupTask[]>([]);
+  const [skipped, setSkipped] = useState<SetupTask[]>([]);
   const [dev, setDev] = useState<FolderStatus | null>(null);
   const [hq, setHq] = useState<FolderStatus | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -196,7 +220,8 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
       else if (!r.note) set('extraProjects', r.list);
     } catch (e) { setError(String(e)); }
   };
-  const defaultName = tr('참모', 'Chammo');
+  // 새 영어 설치는 앱 이름과 다른 기본 이름(Assistant) — 마칠 때 적는다(ux-start M2). 이미 쓰는 사람은 그대로
+  const defaultName = (firstRun && firstRunName('', draft.language)) || tr('참모', 'Chammo');
   const name = draft.assistantName.trim() || defaultName;
 
   const recheck = useCallback(() => {
@@ -290,8 +315,8 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
   };
 
   const doneLine = tr('끝났어요. 위의 "다시 확인"을 누르거나 잠깐 기다려 주세요.', 'Done. Press "Check again" above, or wait a moment.');
-  const run = (t: SetupTask) => { setTried((d) => (d.includes(t) ? d : [...d, t])); setTask(t); };
-  const ready = setupReady(check);
+  const run = (t: SetupTask) => { setTried((d) => (d.includes(t) ? d : [...d, t])); setFailed((d) => d.filter((x) => x !== t)); setSkipped((d) => d.filter((x) => x !== t)); setTask(t); };
+  const ready = setupReady(check, skipped);
   const fit = check?.claudeVersion ? versionFit(check.claudeVersion) : 'unknown';
   const ver = parseClaudeVersion(check?.claudeVersion ?? '')?.join('.') ?? check?.claudeVersion;
 
@@ -327,7 +352,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
         await makeDir(draft.devRoot);
         if (!(await folderStatus(draft.hqDir)).hqReady) await createHq(draft.hqDir, false, [draft.devRoot, ...(draft.extraProjects ?? [])]);
       }
-      const next = { ...draft, setupDone: true };
+      const next = { ...draft, ...(firstRun ? { assistantName: firstRunName(draft.assistantName, draft.language) } : {}), setupDone: true };
       await writeConfig(next);
       mirror(next);
       await rebuildMenu().catch(() => {}); // 메뉴가 옛 글자로 남아도 다음에 켜면 바뀐다
@@ -338,11 +363,8 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
     }
   };
 
-  // 윈도우 winget 업데이트 터미널에 찍는 두 줄 — {0} = 돌고 있는 claude 수
-  const winNotes = {
-    busy: tr('Claude 가 {0}개 돌고 있어요(세션). 업데이트는 하지만 그 세션들은 다시 켜기 전까지 옛 버전이에요.', 'Claude is running ({0}, your sessions). Updating anyway — those sessions keep the old version until restarted.'),
-    back: tr('업데이트 실패, 이전 판으로 되돌렸어요.', 'Update failed — restored the previous version.'),
-  };
+  // 윈도우 설치·업데이트 터미널 안내 줄 — 'Claude 다시 설치' 카드와 같은 묶음(domain/setup winSetupNotes)
+  const winNotes = winSetupNotes();
   const claudeRow = !check ? null : check.claudePath ? (
     fit === 'old' ? (
       <Row state="need" title="Claude Code" text={tr(`설치돼 있지만 옛 버전이에요(${ver}). 2.1.280 이상이 필요해요. 누르면 아래 터미널에서 최신으로 올려요.`, `Installed, but old (${ver}). Chammo needs 2.1.280 or later. The button updates it to the latest in the terminal below.`)}>
@@ -354,7 +376,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
         : tr(`설치돼 있어요 (${ver || check.claudePath}).`, `Installed (${ver || check.claudePath}).`)} />
     )
   ) : (
-    <Row state="need" title="Claude Code" text={tr('아직 없어요. 버튼을 누르면 아래 터미널에서 공식 설치 스크립트를 돌려요. 1~2분이면 끝나요.', 'Not installed yet. The button runs the official install script in the terminal below — it takes a minute or two.')}>
+    <Row state="need" title="Claude Code" text={tr('아직 없어요. 버튼을 누르면 아래 터미널에서 공식 설치 스크립트를 돌려요. 망에 따라 몇 분 이상 걸릴 수 있어요.', 'Not installed yet. The button runs the official install script in the terminal below. It can take several minutes or more depending on your network.')}>
       <button className="btn pri" onClick={() => run('install')}>{tr('설치하기', 'Install')}</button>
     </Row>
   );
@@ -374,31 +396,62 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
           {langSeg}
         </section>
   );
+  // 윈도우 git·파이썬 줄 — 설치 실패·winget 없음·찾기 실패를 갈라 말하고, 받기 링크·나중에 하기(회사 PC)를 준다(win-env H3)
+  const winToolRow = (t: 'clt' | 'python', ok: boolean) => {
+    const title = t === 'clt' ? 'git' : tr('파이썬 3', 'Python 3');
+    if (ok) return <Row state="ok" title={title} text={tr('있어요.', 'Installed.')} />;
+    const install = <button className="btn pri" onClick={() => run(t)}>{tr('설치하기', 'Install')}</button>;
+    if (skipped.includes(t)) return (
+      <Row state="opt" title={title} text={t === 'clt'
+        ? tr('git 없이 다음으로 넘어가요. 세션이 저장소나 커밋 같은 git이 필요한 일에서 멈출 수 있어요. 나중에 설정에서 다시 설치할 수 있어요.', 'Continuing without git. Sessions may get stuck on tasks that need it, like repositories and commits. You can install it later in Settings.')
+        : tr('파이썬 없이 다음으로 넘어가요. 참모 도구(작업 기록·예약)와 Craft 앱을 쓸 수 없어요. 나중에 설정에서 다시 설치할 수 있어요.', "Continuing without Python. Chammo's tools (task records, schedules) and the Craft apps won't work. You can install it later in Settings.")}>{install}</Row>
+    );
+    const st = installState({ win: true, tried: tried.includes(t), running: task === t, ok, failed: failed.includes(t), winget: check?.winget });
+    const get = <button className="btn" onClick={() => void openTarget('url', GET_URL[t]).catch(() => {})}>{tr('받기', 'Get')}</button>;
+    const skip = <button className="btn" onClick={() => setSkipped((d) => [...d, t])}>{tr('나중에 하기', 'Skip for now')}</button>;
+    const name = t === 'clt' ? 'git' : tr('파이썬', 'Python');
+    const text = st === 'noWinget'
+      ? (t === 'clt'
+        ? tr("이 PC에는 winget이 없어서 git을 자동으로 설치할 수 없어요. '받기'를 눌러 git 공식 사이트에서 직접 설치한 뒤, '다시 확인'을 눌러 주세요.", 'This PC doesn\'t have winget, so git can\'t be installed automatically. Press "Get" to download it from the official git site, install it, then press "Check again".')
+        : tr("이 PC에는 winget이 없어서 파이썬을 자동으로 설치할 수 없어요. '받기'를 눌러 파이썬 공식 사이트에서 직접 설치한 뒤, '다시 확인'을 눌러 주세요.", 'This PC doesn\'t have winget, so Python can\'t be installed automatically. Press "Get" to download it from the official Python site, install it, then press "Check again".'))
+      : st === 'failed'
+        ? tr(`${name} 설치가 끝나지 않았어요(취소했거나 관리자 권한이 없을 수 있어요). 아래 터미널 내용을 확인해 주세요. 관리자 권한이 없으면 '받기'로 공식 사이트에서 '나만 쓰기(이 사용자만)'를 골라 설치할 수 있어요.`, `${name} installation didn't finish (it may have been canceled, or you may lack admin rights). Check the terminal below. Without admin rights, press "Get" and choose "Install just for me" (this user only) on the official site.`)
+        : st === 'notFound'
+          ? (t === 'clt' ? tr('git은 있는데 Chammo가 못 찾아요. Chammo를 완전히 껐다 켜 주세요.', 'git is installed but Chammo can\'t find it. Quit Chammo completely and open it again.') : tr('파이썬은 있는데 Chammo가 못 찾아요. Chammo를 완전히 껐다 켜 주세요.', 'Python is installed but Chammo can\'t find it. Quit Chammo completely and open it again.'))
+          : (t === 'clt' ? tr('git 이 필요해요. 누르면 winget 으로 설치해요 — 몇 분 걸려요.', 'git is required. The button installs it with winget — it takes a few minutes.') : tr('참모 도구와 앱에 파이썬 3이 필요해요. 누르면 winget으로 설치해요. 몇 분 걸려요.', 'Python 3 is required by the assistant tools and Chammo apps. The button installs it with winget. It takes a few minutes.'));
+    return <Row state="need" title={title} text={text}>{st !== 'noWinget' && install}{st !== 'need' && get}{st !== 'need' && skip}</Row>;
+  };
   const recheckBtn = <button className="btn" disabled={checking} onClick={() => void recheck()}>{checking ? tr('확인하는 중…', 'Checking…') : tr('다시 확인', 'Check again')}</button>;
   const checkBody = (
         <>
           {!check ? <div className="su-hint">{tr('필요한 도구가 있는지 보고 있어요…', 'Looking for the tools Chammo needs…')}</div> : (
             <div className="su-rows">
               {claudeRow}
-              {check.claudePath && (check.loggedIn
-                ? <Row state="ok" title={tr('Claude 로그인', 'Claude sign-in')} text={tr('로그인돼 있어요. Chammo 는 이 로그인을 그대로 써요.', 'Signed in. Chammo uses this sign-in as is.')} />
-                : <Row state="need" title={tr('Claude 로그인', 'Claude sign-in')} text={tr('로그인이 필요해요. 버튼을 누르면 브라우저가 열려요 — 로그인하고 돌아오면 돼요.', 'You need to sign in. The button opens your browser — sign in and come back.')}>
-                    <button className="btn pri" onClick={() => run('login')}>{tr('로그인하기', 'Sign in')}</button>
-                  </Row>)}
-              {check.clt
-                ? <Row state="ok" title={IS_WIN ? 'git' : tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={tr('있어요.', 'Installed.')} />
-                : <Row state="need" title={IS_WIN ? 'git' : tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={IS_WIN ? (gitStillMissing({ win: IS_WIN, tried: tried.includes('clt'), running: task === 'clt', ok: check.clt })
-                    ? tr('git은 있는데 Chammo가 못 찾아요. Chammo를 완전히 껐다 켜 주세요.', 'git is installed but Chammo can\'t find it. Quit Chammo completely and open it again.')
-                    : tr('git 이 필요해요. 누르면 winget 으로 설치해요 — 몇 분 걸려요.', 'git is required. The button installs it with winget — it takes a few minutes.')) : tr('git 이 들어 있는 Apple 도구예요. 누르면 macOS 설치 창이 떠요 — 설치에 몇 분 걸려요.', "Apple's tools that include git. The button opens the macOS installer — it takes a few minutes.")}>
+              {check.claudePath && (loginRow(check) === 'ok'
+                ? <Row state="ok" title={tr('Claude 로그인', 'Claude sign-in')} text={claudeSignedInText()} />
+                : loginRow(check) === 'unknown'
+                  ? <Row state="need" title={tr('Claude 로그인', 'Claude sign-in')} text={tr("로그인 여부를 확인하지 못했어요. PC가 느리거나 바쁜 것 같아요 — 로그인이 풀린 건 아닐 수 있으니, 위의 '다시 확인'을 눌러 주세요.", 'Couldn\'t check your sign-in. Your PC may be slow or busy, so you might still be signed in. Press "Check again" above.')} />
+                  : <Row state="need" title={tr('Claude 로그인', 'Claude sign-in')} text={tr('로그인이 필요해요. 버튼을 누르면 브라우저가 열려요 — 로그인하고 돌아오면 돼요.', 'You need to sign in. The button opens your browser — sign in and come back.')}>
+                      <button className="btn pri" onClick={() => run('login')}>{tr('로그인하기', 'Sign in')}</button>
+                    </Row>)}
+              {IS_WIN ? winToolRow('clt', check.clt) : check.clt
+                ? <Row state="ok" title={tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={tr('있어요.', 'Installed.')} />
+                : <Row state="need" title={tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={tr('git 이 들어 있는 Apple 도구예요. 누르면 macOS 설치 창이 떠요 — 설치에 몇 분 걸려요.', "Apple's tools that include git. The button opens the macOS installer — it takes a few minutes.")}>
                     <button className="btn pri" onClick={() => run('clt')}>{tr('설치하기', 'Install')}</button>
                   </Row>}
-              {IS_WIN && (check.python !== false
-                ? <Row state="ok" title={tr('파이썬 3', 'Python 3')} text={tr('있어요.', 'Installed.')} />
-                : <Row state="need" title={tr('파이썬 3', 'Python 3')} text={gitStillMissing({ win: IS_WIN, tried: tried.includes('python'), running: task === 'python', ok: false })
-                    ? tr('파이썬은 있는데 Chammo가 못 찾아요. Chammo를 완전히 껐다 켜 주세요.', 'Python is installed but Chammo can\'t find it. Quit Chammo completely and open it again.')
-                    : tr('참모 도구와 앱에 파이썬 3이 필요해요. 누르면 winget으로 설치해요. 몇 분 걸려요.', 'Python 3 is required by the assistant tools and Chammo apps. The button installs it with winget. It takes a few minutes.')}>
-                    <button className="btn pri" onClick={() => run('python')}>{tr('설치하기', 'Install')}</button>
-                  </Row>)}
+              {IS_WIN && winToolRow('python', check.python !== false)}
+              {gitIdentityRow(check) === 'ok' && <Row state="ok" title={tr('git 이름·메일', 'Git name and email')} text={`${check.gitName} · ${check.gitEmail}`} />}
+              {gitIdentityRow(check) === 'need' && (
+                <>
+                  <Row state="need" title={tr('git 이름·메일', 'Git name and email')} text={tr('프로젝트마다 저장 기록(커밋)에 남길 이름과 메일이 필요해요. 이 컴퓨터에 한 번만 적으면 돼요. 공개 저장소에 올리면 다른 사람도 볼 수 있어요.', 'Each project needs a name and email to record with its commits. You only enter them once on this computer. Anyone can see them if you push to a public repository.')} />
+                  <form className="su-control su-inline su-git-id" onSubmit={(e) => { e.preventDefault(); void saveGit(); }}>
+                    <input value={gitIn.name} placeholder={tr('이름', 'Name')} aria-label={tr('이름', 'Name')} autoComplete="name" spellCheck={false} onChange={(e) => setGitIn((g) => ({ ...g, name: e.target.value }))} />
+                    <input value={gitIn.email} placeholder={tr('메일', 'Email')} aria-label={tr('메일', 'Email')} type="email" autoComplete="email" spellCheck={false} onChange={(e) => setGitIn((g) => ({ ...g, email: e.target.value }))} />
+                    <button type="submit" className="btn pri" disabled={gitBusy}>{tr('저장', 'Save')}</button>
+                  </form>
+                  {gitErr && <div className="su-error su-git-id">{gitErr}</div>}
+                </>
+              )}
               {ghRow(check) === 'ok'
                 ? <Row state="ok" title={tr('GitHub CLI (선택)', 'GitHub CLI (optional)')} text={tr(`${check.ghUser} 로 로그인돼 있어요.`, `Signed in as ${check.ghUser}.`)} />
                 : ghRow(check) !== 'install'
@@ -416,10 +469,11 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
                 key={task}
                 autoFocus
                 command={setupCommand(task, { claude: check?.claudePath, gh: check?.ghPath }, doneLine, undefined, undefined, winNotes)}
-                title={task === 'install' ? tr('Claude Code 설치', 'Installing Claude Code') : task === 'update' ? tr('Claude Code 업데이트', 'Updating Claude Code') : task === 'login' ? tr('Claude 로그인', 'Claude sign-in') : task === 'clt' ? tr('명령줄 도구 설치', 'Installing Command Line Tools') : task === 'python' ? tr('파이썬 3 설치', 'Installing Python 3') : tr('GitHub 로그인', 'GitHub sign-in')}
+                title={task === 'install' ? tr('Claude Code 설치', 'Installing Claude Code') : task === 'update' ? tr('Claude Code 업데이트', 'Updating Claude Code') : task === 'login' ? tr('Claude 로그인', 'Claude sign-in') : task === 'clt' ? (IS_WIN ? tr('git 설치', 'Installing git') : tr('명령줄 도구 설치', 'Installing Command Line Tools')) : task === 'python' ? tr('파이썬 3 설치', 'Installing Python 3') : tr('GitHub 로그인', 'GitHub sign-in')}
                 subtitle={tr('이 창에 바로 입력할 수 있어요', 'You can type in this window')}
                 fontSize={fontSize}
                 controls={<IconButton label={tr('닫기', 'Close')} onClick={() => { setTask(null); void recheck(); }}><IconClose /></IconButton>}
+                onExit={(screen) => { if (setupFailed(screen)) setFailed((d) => (d.includes(task) ? d : [...d, task])); }}
               />
             </div>
           )}
@@ -472,7 +526,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
           </div>
   );
   const hqField = (
-          <Field label={tr('HQ 폴더', 'HQ folder')} hint={hq?.hqReady
+          <Field label={tr('참모 작업 폴더', 'Assistant workspace folder')} hint={hq?.hqReady
             ? tr(`준비됐어요. ${name}가 여기서 일해요.`, `Ready. ${name} works from here.`)
             : <>{tr(`${name}가 일하는 폴더예요. 안내문(CLAUDE.md)과 도구(scripts)를 넣어 만들어요.`, `The folder ${name} works from. It gets a guide (CLAUDE.md) and tools (scripts).`)} <button type="button" className="btn su-mini" onClick={() => void makeHq()}>{tr('HQ 만들기', 'Create HQ')}</button></>}>
             {pick('hqDir', tr('HQ로 쓸 폴더를 골라 주세요. 새 폴더를 만들어도 돼요', 'Choose a folder for HQ. You can make a new one here'))}
@@ -522,7 +576,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
           <div className="su-rows su-trust">
             <div className="su-hint">{tr('Claude Code는 처음 보는 폴더에서 일하기 전에 "이 폴더를 믿나요?"를 한 번 물어요. 폴더 두 개를 한 번씩 믿어 주세요. 프로젝트 폴더를 믿으면 안의 프로젝트는 다시 안 물어요.', 'Before working in a new folder, Claude Code asks once whether you trust it. Trust these two folders once. Trusting the projects folder covers every project inside it.')}</div>
             {(['dev', 'hq'] as const).map((w) => (
-              <Row key={w} state={trust[w] ? 'ok' : 'need'} title={w === 'dev' ? tr('프로젝트 폴더 믿기', 'Trust the projects folder') : tr('HQ 폴더 믿기', 'Trust the HQ folder')}
+              <Row key={w} state={trust[w] ? 'ok' : 'need'} title={w === 'dev' ? tr('프로젝트 폴더 믿기', 'Trust the projects folder') : tr('참모 작업 폴더 믿기', 'Trust the assistant workspace folder')}
                 text={trust[w] ? tr('믿는 폴더예요.', 'Trusted.') : tr('누르면 아래에 터미널이 열려요. 질문이 나오면 ↓로 "Yes, I trust this folder"를 골라 Enter. 창은 저절로 닫혀요.', 'The button opens a terminal below. When asked, press ↓ to pick "Yes, I trust this folder", then Enter. The window closes by itself.')}>
                 {!trust[w] && <button className="btn pri" disabled={!!trusting} onClick={() => void startTrust(w)}>{tr('믿기', 'Trust')}</button>}
               </Row>
@@ -546,7 +600,10 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
   const basicsSec = (
         <section className="su-sec">
           <h2>{tr('기본 설정', 'Basics')}</h2>
-          {nameField}{devField}{extrasField}{hqField}{githubField}{ttsField}{talkField}{memoField}{trustBlock}
+          {/* 첫 실행엔 프로젝트 폴더 + 바로 아래 믿기만 — 참모 작업 폴더는 접힌 자세히, 나머지 칸은 설정 탭에(2026-11-01 ux-start M4, 문구 소넷) */}
+          {devField}{trustBlock}
+          <details className="su-more"><summary>{tr('자세히', 'Details')}</summary>{hqField}</details>
+          <p className="su-hint">{tr('참모 이름, 음성, 말하기 키, 메모 폴더, GitHub 아이디는 나중에 설정에서 바꿀 수 있어요.', 'You can change the assistant name, voice, push-to-talk key, notes folder, and GitHub username later in Settings.')}</p>
         </section>
   );
   const notifyBlock = (() => {
@@ -648,8 +705,9 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
   const featSec = (
         <section className="su-sec">
           <h2>{tr('기능', 'Features')}</h2>
-          <p className="su-hint">{tr('꺼 두면 그 버튼과 메뉴가 숨어요. 언제든 여기서 다시 켤 수 있어요.', 'Turned-off features hide their buttons and menus. You can turn them back on here any time.')}</p>
-          {notifyBlock}{axBlock}{screenBlock}{browserBlock}{featGrid}{animField}
+          {/* 첫 실행엔 두 줄만 — 체크 13칸·권한·애니메이션은 설정 탭에(2026-11-01 ux-start M3, 문구 소넷) */}
+          {notifyBlock}{browserBlock}
+          <p className="su-hint">{tr('지금은 알림과 브라우저 자동화만 골라요. 나머지 기능은 나중에 설정 > 기능에서 켤 수 있어요.', 'For now, just choose notifications and browser automation. You can turn on the other features later in Settings > Features.')}</p>
         </section>
   );
   // 마지막 단계 — 고른 것 한눈에
@@ -659,14 +717,15 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
           {/* HQ 는 3단계 '믿기'에서 이미 만들어졌으면 또 만든다고 하지 않는다(윈도우 QA 31), 예는 '새로 만들어 줘' 꼴 — 새 프로젝트 폴더는 비어 있다(QA 11) */}
           <p className="su-hint">{hq?.hqReady
             ? tr(`시작하기를 누르면 첫 화면이 떠요. '새 ${name} 만들기'를 눌러 말을 걸어 보세요. 예: "할 일 목록 웹페이지 하나 만들어 줘"`, `Press Get started for the first screen. Press 'Create a new ${name}' and talk to it. For example: "make me a simple to-do list web page"`)
-            : tr(`시작하기를 누르면 HQ 폴더를 만들어요. 첫 화면에서 '새 ${name} 만들기'를 눌러 말을 걸어 보세요. 예: "할 일 목록 웹페이지 하나 만들어 줘"`, `Press Get started to create the HQ folder. On the first screen, press 'Create a new ${name}' and talk to it. For example: "make me a simple to-do list web page"`)}</p>
+            : tr(`시작하기를 누르면 참모 작업 폴더를 만들어요. 첫 화면에서 '새 ${name} 만들기'를 눌러 말을 걸어 보세요. 예: "할 일 목록 웹페이지 하나 만들어 줘"`, `Press Get started to create the assistant workspace folder. On the first screen, press 'Create a new ${name}' and talk to it. For example: "make me a simple to-do list web page"`)}</p>
+          <p className="su-hint">{readyAccountNote()}</p>
           <p className="su-hint">{tr(`${name}와 세션은 확인 없이 명령을 실행해요. 처음 띄울 때 한 번 동의를 받아요.`, `${name} and its sessions run commands without asking. You will be asked to agree once when the first one starts.`)}</p>
           {/* 첫 실행 한 줄 알림 — 이 단계를 지나야(setupDone) 사용 신호가 나간다(usage_ping.rs) */}
           {draft.features.usagePing && <p className="su-hint">{tr('하루 한 번 익명 사용 통계를 보내요. 어떤 기능을 몇 대가 쓰는지 개수만 보내고, 대화·파일은 안 보내요. 설정 > 기능에서 끌 수 있어요.', 'Once a day Chammo sends anonymous usage statistics: counts only, never chats or files. Turn it off in Settings > Features.')}</p>}
           <dl className="su-sum">
             <dt>{tr('참모 이름', 'Assistant')}</dt><dd>{name}</dd>
             <dt>{tr('프로젝트 폴더', 'Projects')}</dt><dd>{draft.devRoot}</dd>
-            <dt>{tr('HQ 폴더', 'HQ')}</dt><dd>{draft.hqDir}</dd>
+            <dt>{tr('참모 작업 폴더', 'Workspace')}</dt><dd>{draft.hqDir}</dd>
             <dt>{tr('음성', 'Speech')}</dt><dd>{IS_WIN && /^(say( -v \S+)?)?$/.test(draft.ttsCommand.trim()) ? tr('Windows 목소리', 'Windows voice') : draft.ttsCommand || 'say'}</dd>
           </dl>
         </section>
@@ -764,7 +823,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
           <div>
             <BrandMark size={64} className="su-brand" />
             <h1>{tr('Chammo 에 오신 걸 환영해요', 'Welcome to Chammo')}</h1>
-            <p>{step === 'welcome' ? tr('Chammo 는 Claude Code 세션들을 굴리는 참모예요. 결정은 당신이, 일은 참모가. 다섯 단계면 끝나요.', 'Chammo is a chief of staff that runs your Claude Code sessions. You make the calls; it runs the team. Five short steps and you are in.') : tr(`${at + 1} / ${WIZARD.length} 단계`, `Step ${at + 1} of ${WIZARD.length}`)}</p>
+            <p>{step === 'welcome' ? tr('Chammo 는 Claude Code 세션들을 굴리는 참모예요. 결정은 당신이, 일은 참모가. 다섯 단계면 끝나요.', "Chammo is an app that runs your Claude Code sessions through an assistant. You make the calls; your assistant handles the work. Five short steps and you're in.") : tr(`${at + 1} / ${WIZARD.length} 단계`, `Step ${at + 1} of ${WIZARD.length}`)}</p>
           </div>
         </header>
         <ol className="su-steps" aria-label={tr('진행', 'Progress')}>
@@ -777,13 +836,13 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
           {note && <div className="su-note">{note}</div>}
           {error && <div className="su-error">{error}</div>}
           {/* 다음이 꺼진 까닭은 단추 바로 위에 — 점검 단계는 점검 결과가 온 뒤에만 */}
-          {(step !== 'check' || check) && nextWhy(step, check, trust, devAccess, IS_WIN) && <div className="su-hint">{nextWhy(step, check, trust, devAccess, IS_WIN)}</div>}
+          {(step !== 'check' || check) && nextWhy(step, check, trust, devAccess, IS_WIN, skipped) && <div className="su-hint">{nextWhy(step, check, trust, devAccess, IS_WIN, skipped)}</div>}
           <div className="su-nav">
             {at > 0 && <IconButton size="l" tone="line" className="su-nav-ib" label={tr('뒤로', 'Back')} disabled={busy} onClick={() => setStep(WIZARD[at - 1]!)}><IconBack /></IconButton>}
             <span className="grow" />
             {step === 'ready'
               ? <button className="btn pri su-go" disabled={busy || !ready} onClick={() => void finish()}>{busy ? tr('준비하는 중…', 'Getting ready…') : tr('시작하기', 'Get started')}</button>
-              : <IconButton size="l" tone="pri" className="su-nav-ib" label={tr('다음', 'Next')} disabled={!canNext(step, check, trust, devAccess)} onClick={() => setStep(WIZARD[at + 1]!)}><IconNext /></IconButton>}
+              : <IconButton size="l" tone="pri" className="su-nav-ib" label={tr('다음', 'Next')} disabled={!canNext(step, check, trust, devAccess, skipped)} onClick={() => setStep(WIZARD[at + 1]!)}><IconNext /></IconButton>}
           </div>
         </footer>
       </div>

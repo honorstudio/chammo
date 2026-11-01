@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fwd, samePath } from './paths';
+import { docRel, fwd, samePath } from './paths';
 import fixture from './paths.fixture.json';
 
 describe('윈도우 경로를 한 모양으로 — 앱은 C:\\Users\\me/.chammo/hq, claude agents 는 C:\\Users\\me\\.chammo\\hq 라 참모 세션을 못 알아봤다(윈도우 5단계)', () => {
@@ -38,5 +38,18 @@ describe('경로 같은가 판단은 한 벌 — 공용 표(paths.fixture.json, 
   it.each(fixture.cases as [string, string, boolean][])('%s ~ %s → %s', (a, b, same) => {
     expect(samePath(a, b)).toBe(same);
     expect(samePath(b, a)).toBe(same);
+  });
+});
+
+describe('docRel — 문서 속 상대 링크를 문서 폴더 기준 절대 경로로', () => {
+  it('맥 경로', () => {
+    expect(docRel('/Users/me/dev/a/docs', 'img/x.png')).toBe('/Users/me/dev/a/docs/img/x.png');
+    expect(docRel('/Users/me/dev/a/docs', '../README.md')).toBe('/Users/me/dev/a/README.md');
+    expect(docRel('/Users/me/dev/a/docs', '/abs/y.md')).toBe('/abs/y.md');
+  });
+  it('윈도우 경로 — 역슬래시여도, 앞에 / 를 붙이지 않는다(2026-11-01 win-text M2)', () => {
+    expect(docRel('C:/Users/me/dev/a/docs', 'img/x.png')).toBe('C:/Users/me/dev/a/docs/img/x.png');
+    expect(docRel('C:\\Users\\me\\dev\\a\\docs', '../README.md')).toBe('C:/Users/me/dev/a/README.md');
+    expect(docRel('C:/Users/홍 길동/docs', '그림%20하나.png')).toBe('C:/Users/홍 길동/docs/그림 하나.png');
   });
 });

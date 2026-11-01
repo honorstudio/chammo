@@ -73,7 +73,7 @@ function TopList({ orch, events, sessions, waiting, direct, todo, onPeek, onPick
   const linesOf = (target: string) => { const sid = findTarget(sessions, target)?.sessionId; return sid && tails[sid] ? peekLines(summarizeTranscript(tails[sid]!)) : []; };
   return (
     <div className="m-top">
-      <HomeProgress orch={orch} events={events} sessions={sessions} />
+      <HomeProgress orch={orch} events={events} sessions={sessions} statusOf={(s) => subStatus(s, tails, now)} />
       {l.need.length > 0 && (
         <div className="m-need" role="list" aria-label={tr('나한테 필요', 'Needs you')}>
           {l.need.map((r) => (

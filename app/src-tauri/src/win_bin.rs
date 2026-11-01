@@ -22,11 +22,30 @@ pub fn bin_ok(p: &str, exists: impl Fn(&str) -> bool, target_ok: impl Fn(&str) -
     if !exists(p) {
         return false;
     }
-    if !p.to_ascii_lowercase().ends_with(".cmd") {
+    let low = p.to_ascii_lowercase();
+    // 실행 파일은 'MZ' 로 시작해야 — 글자로 된 claude.exe 를 고르면 윈도우가 '지원되지 않는 16비트 응용 프로그램' 창을
+    // 세션 목록을 읽을 때마다(15초에 두 번) 띄웠다(2026-11-01 win-first M4). target_ok 가 윈도우에서만 머리를 본다
+    if low.ends_with(".exe") {
+        return target_ok(p);
+    }
+    if !low.ends_with(".cmd") {
         return true;
     }
     let dir = p.rsplit_once(['\\', '/']).map(|(d, _)| d).unwrap_or("");
     read(p).map_or(true, |text| shim_targets(&text, dir).iter().all(|t| target_ok(t)))
+}
+
+/// npm 바로가기(.cmd)가 부르는 게 실행 파일(.exe) 하나뿐이고 멀쩡하면 그 경로 — 바로가기 대신 이걸 띄운다.
+/// 옛 판(node 로 cli.js)·못 읽음·대상 깨짐이면 None(바로가기 그대로 — 깨진 건 찾기가 이미 건너뛴다)
+pub fn shim_exe(p: &str, read: impl Fn(&str) -> Option<String>, target_ok: impl Fn(&str) -> bool) -> Option<String> {
+    if !p.to_ascii_lowercase().ends_with(".cmd") {
+        return None;
+    }
+    let dir = p.rsplit_once(['\\', '/']).map(|(d, _)| d).unwrap_or("");
+    match shim_targets(&read(p)?, dir).as_slice() {
+        [one] if one.to_ascii_lowercase().ends_with(".exe") && target_ok(one) => Some(one.clone()),
+        _ => None,
+    }
 }
 
 /// npm 바로가기 글에서 "%dp0%\…"·"%~dp0…" 로 부르는 파일들(node.exe 는 빼고 — 없으면 PATH 의 node 를 쓴다) → dir 기준 절대 경로

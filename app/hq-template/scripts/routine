@@ -35,6 +35,9 @@ Cloud routines live in <data>/cloud-routines.json ([{name, schedule, url, note}]
 run/pause/resume/remove refuse them (do that on claude.ai).
 """
 import datetime, json, os, plistlib, re, shutil, subprocess, sys, time
+for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — PYTHONUTF8 없이 떠도(데몬 env 세션·작업 스케줄러) 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
+    if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
+        _io.reconfigure(encoding='utf-8', errors='replace')
 try:
     import resource
 except ImportError:  # 윈도우
@@ -377,6 +380,53 @@ def cloud_remove(name, data=None):
     return {'removed': name, 'kind': 'cloud'}
 
 
+def find_claude(home=None, path=None, win=None, isfile=os.path.isfile, read=None):
+    """claude 찾기 — 앱(setup::find)과 같은 순서: 공식 설치본(~/.local/bin) → PATH → (맥) brew 자리 · (윈도우) winget·npm 기본 자리.
+    윈도우 npm 바로가기(claude.cmd)는 부르는 진짜 exe 로 — 바로가기로 띄우면 cmd 가 인자를 다시 읽어 따옴표·여러 줄이 깨지고,
+    대상이 빠진 바로가기(10-31 사용자 PC)와 옆의 확장자 없는 sh 글은 건너뛴다. task·choice·routine·orch-roster 가 같은 글(test_hq_claude_find). 못 찾으면 None"""
+    win = (os.name == 'nt') if win is None else win
+    home = os.path.expanduser('~') if home is None else home
+    path = os.environ.get('PATH', '') if path is None else path
+    if not win:
+        cands = [os.path.join(home, '.local/bin/claude')] + [os.path.join(d, 'claude') for d in path.split(':') if d]
+        return next((c for c in cands + ['/opt/homebrew/bin/claude', '/usr/local/bin/claude'] if isfile(c)), None)
+
+    def text_of(p):
+        try:
+            with open(p, encoding='utf-8', errors='replace') as f:
+                return f.read()
+        except OSError:
+            return None
+    read = read or text_of
+    cands = [home + r'\.local\bin\claude.exe']
+    for d in (x.strip().rstrip('\\/') for x in path.split(';')):
+        if d:
+            cands += [d + r'\claude.exe', d + r'\claude.cmd']
+    cands += [home + r'\AppData\Local\Microsoft\WinGet\Links\claude.exe', home + r'\AppData\Roaming\npm\claude.cmd']
+    for c in cands:
+        if not isfile(c):
+            continue
+        text = read(c) if c.lower().endswith('.cmd') else None
+        if text is None:
+            return c
+        base = c.rsplit('\\', 1)[0]
+        targets = [base + '\\' + t.lstrip('\\/') for t in re.findall(r'"%(?:dp0%|~dp0)([^"]*)"', text)
+                   if t.strip('\\/') and not t.lower().endswith('node.exe')]
+        if not targets:
+            return c
+        if all(isfile(t) for t in targets):
+            return targets[0] if len(targets) == 1 and targets[0].lower().endswith('.exe') else c
+    return None
+
+
+def claude_of(stored, win=None, isfile=os.path.isfile, find=None):
+    """예약에 적어 둔 claude — 윈도우에서 그게 바로가기(.cmd)거나 없어졌으면 다시 찾는다. 만들 때 깨진 npm 바로가기를 적었으면
+    '다시 설치'로 고친 뒤에도 그걸 불렀다(qa-1101 win-env H2). 맥은 적어 둔 그대로"""
+    win = (os.name == 'nt') if win is None else win
+    if not win or (stored and isfile(stored) and not stored.lower().endswith('.cmd')):
+        return stored
+    return (find or find_claude)() or stored
+
 def _load(name, data):
     d, cfg_path, _, _ = _paths(name, data)
     if not os.path.isfile(cfg_path):
@@ -385,7 +435,10 @@ def _load(name, data):
                              f'(`routine cloud remove {name}` only drops it from this list)')
         raise ValueError(f'no routine named {name!r}')
     with open(cfg_path, encoding='utf-8') as f:
-        return json.load(f)
+        cfg = json.load(f)
+    if isinstance(cfg, dict) and cfg.get('claude'):
+        cfg['claude'] = claude_of(cfg['claude'])
+    return cfg
 
 
 def _save(cfg, data):
@@ -843,7 +896,7 @@ def _tidy(name, data, now, agents, run):
     here = any(isinstance(a, dict) and a.get('id') == sid for a in agents[cfg['claude']])
     if here:
         try:
-            run([cfg['claude'], 'stop', sid], capture_output=True, text=True, timeout=CLAUDE_TIMEOUT, **NOWIN)
+            run([cfg['claude'], 'stop', sid], capture_output=True, text=True, timeout=CLAUDE_TIMEOUT, **claude_txt())
         except (OSError, subprocess.TimeoutExpired):
             return None  # 다음 tick 이 다시 본다
     with open(mark, 'w', encoding='utf-8') as f:
@@ -943,6 +996,10 @@ def watch(name, data, now, agents, home, run=subprocess.run, sleep=time.sleep, s
 TASK = 'Chammo\\'
 WIN_DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']  # launchd Weekday 0=일
 NOWIN = {'creationflags': 0x08000000} if os.name == 'nt' else {}  # 윈도우: claude 를 띄울 때 콘솔 창이 번쩍이지 않게
+# claude 출력은 UTF-8 — 작업 스케줄러가 깨운 pythonw 엔 PYTHONUTF8 이 없어 text=True 가 cp949 로 읽고 'backgrounded · id' 의 · 를 '쨌'으로 바꿔
+# 세션 번호를 못 잡았다(2026-11-01 win-text H2). 깨진 글자는 바꿔 넣고 계속 — 예외로 죽지 않게
+def claude_txt():
+    return {**NOWIN, 'encoding': 'utf-8', 'errors': 'replace'}
 # schtasks 는 윈도우 콘솔 인코딩(cp949)으로 답한다 — UTF-8 로 읽으면 읽기 스레드가 UnicodeDecodeError 로 죽었다
 SCHT = {**NOWIN, 'encoding': 'oem', 'errors': 'replace'} if os.name == 'nt' else {}
 
@@ -1027,7 +1084,7 @@ def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run
             f.write(f'# Routine: {name}\n\nSchedule: {schedule}\n\n## Each run\n\n{what}\n\n'
                     '## Done means\n\n(What must be true at the end of a good run.)\n\n'
                     '## Report\n\nOne line: what you did and anything the user must look at.\n')
-    claude = claude or shutil.which('claude') or os.path.join(home, '.local/bin/claude')
+    claude = claude or find_claude(home) or os.path.join(home, '.local/bin/claude')
     cfg = {'name': name, 'schedule': schedule, 'cwd': cwd if cwd else os.path.normpath(d),  # 윈도우는 C:/…\\routines\\x 처럼 섞였다
            'claude': claude, 'enabled': True, 'created': datetime.date.today().isoformat()}
     _save(cfg, data)
@@ -1046,11 +1103,16 @@ def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run
     return {**out, 'skipped': skipped} if skipped else out
 
 
-def _agents(claude, run, timeout=CLAUDE_TIMEOUT):
+def _agents(claude, run, timeout=CLAUDE_TIMEOUT, note=None):
+    """떠 있는 세션 목록 — 못 읽으면 빈 목록. note 가 있으면 못 읽은 이유를 넘긴다(조용히 빈 목록이면 '떠 있는 세션 없음'과 구별이 안 됐다, win-text H2)"""
     try:
-        r = run([claude, 'agents', '--json'], capture_output=True, text=True, timeout=timeout, **NOWIN)
+        r = run([claude, 'agents', '--json'], capture_output=True, text=True, timeout=timeout, **claude_txt())
         return json.loads(r.stdout or '[]')
-    except (ValueError, subprocess.TimeoutExpired):
+    except ValueError as e:
+        if note:
+            note(f'claude agents --json unreadable: {e}'[:200])
+        return []
+    except subprocess.TimeoutExpired:
         return []
 
 
@@ -1184,7 +1246,8 @@ def _run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, hom
                 _finish(cfg, data, home or os.path.expanduser('~'), run, uid, os.name == 'nt' if win is None else win)
             return {'skipped': 'not due'}
     session = f'routine-{name}'
-    mine = [a for a in _agents(cfg['claude'], run) if a.get('name') == session]
+    problems = []  # 세션 목록을 못 읽은 이유 — 시작 줄에 남긴다
+    mine = [a for a in _agents(cfg['claude'], run, note=problems.append) if a.get('name') == session]
     # 답은 끝났고 뒤 작업(Monitor·개발 서버)만 남은 세션은 state done + status busy — 앱 toState 처럼 끝난 것으로 본다.
     # 보고(report)까지 한 회차 세션도 끝난 것 — busy 로 남아도 다음 회차를 막지 않는다(2026-10-28 아이맥 매일 예약)
     done = _reported(_runs(name, data))
@@ -1193,16 +1256,18 @@ def _run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, hom
         return {'skipped': 'still running'}
     for a in mine:
         try:
-            run([cfg['claude'], 'rm', a['id']], capture_output=True, text=True, timeout=CLAUDE_TIMEOUT, **NOWIN)
+            run([cfg['claude'], 'rm', a['id']], capture_output=True, text=True, timeout=CLAUDE_TIMEOUT, **claude_txt())
         except subprocess.TimeoutExpired:
             pass  # 못 치웠다 — 아래 old 로 '이번에 뜬 세션'과 가른다
     old = {a.get('id') for a in mine}  # 치운 지난 세션 — rm 이 실패해 남아 있어도 '이번에 뜬 세션'으로 세지 않는다
     _, _, md, _ = _paths(name, data)
     tool = os.path.join(data, 'tools', 'routine')
     me = tool if os.path.isfile(tool) else os.path.realpath(__file__)
-    prompt = (f'You are the routine "{name}". Do ONE run now, exactly as the instructions in {md} say '
+    # 큰따옴표·<>·& 를 안 쓴다 — npm 판 claude 는 claude.cmd 라 cmd 가 이 글을 한 번 더 읽는다. 파이썬은 안쪽 " 를 \" 로만 싸서 cmd 가 따옴표를 뒤집고
+    # <one-line result> 를 입력 돌리기로 읽어 예약이 매번 못 떴다(2026-11-01 win-text H3). 작은따옴표는 cmd 에선 글자, bash 에선 따옴표
+    prompt = (f'You are the routine {name}. Do ONE run now, exactly as the instructions in {md} say '
               f'(read them first). Nobody is watching: do not ask questions. When you finish, run: '
-              f'sh "{me}" report {name} ok "<one-line result>" — or `fail` with the reason if you could not finish.')
+              f"sh '{me}' report {name} ok 'your one-line result' — or fail instead of ok, with the reason, if you could not finish.")
     raise_open_files()
     home = home or os.path.expanduser('~')
     own = os.path.normpath(cfg['cwd']) == os.path.normpath(_paths(name, data)[0])  # --in 없이 만든 예약 — 자기 폴더에서 뜬다
@@ -1221,7 +1286,7 @@ def _run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, hom
                 pass  # 못 적어도 띄워는 본다 — 실패하면 아래서 이유가 남는다
         try:
             r = run([cfg['claude'], '--bg', '--dangerously-skip-permissions', '-n', session, prompt], cwd=cfg['cwd'],
-                    capture_output=True, text=True, env=dict(os.environ, CHAMMO_HOME=data), timeout=SPAWN_TIMEOUT, **NOWIN)
+                    capture_output=True, text=True, env=dict(os.environ, CHAMMO_HOME=data), timeout=SPAWN_TIMEOUT, **claude_txt())
         except subprocess.TimeoutExpired:  # 멈춘 건 다시 해도 또 멈춘다 — 실패로 남기고 따라잡기(CATCHUP_MIN 뒤)에 맡긴다
             r = type('R', (), {'returncode': None, 'stdout': '', 'stderr': f'claude --bg did not answer in {SPAWN_TIMEOUT}s'})()
             sid = None
@@ -1235,12 +1300,12 @@ def _run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, hom
             _log(name, data, now=now, event='retry', reason='workspace not trusted — re-wrote trust, retrying once')
             continue
         why = _transient(said)
-        if not why or any(a.get('name') == session and a.get('id') not in old for a in _agents(cfg['claude'], run)):
+        if not why or any(a.get('name') == session and a.get('id') not in old for a in _agents(cfg['claude'], run, note=problems.append)):
             break  # 다시 해도 같은 오류거나, 답만 못 읽었고 세션은 떴다 — 또 띄우면 같은 이름이 둘
         _log(name, data, now=now, event='retry', reason=f'start failed ({why}) — waiting {RETRY_WAIT}s, retrying once')
         sleep(RETRY_WAIT)
     _log(name, data, now=now, event='start', session=sid, scheduled=scheduled, **({'catchup': True} if catchup else {}),
-         error=None if sid else (r.stderr or r.stdout or '').strip()[:300])
+         **({'agents': problems[0]} if problems else {}), error=None if sid else (r.stderr or r.stdout or '').strip()[:300])
     return {'session': sid}
 
 
@@ -1302,7 +1367,7 @@ def _stop_sessions(name, mine, own, claude, run):
     stopped, left = [], []
     for sid in targets:
         try:
-            r = run([claude, 'rm', sid], capture_output=True, text=True, timeout=REMOVE_TIMEOUT, **NOWIN)
+            r = run([claude, 'rm', sid], capture_output=True, text=True, timeout=REMOVE_TIMEOUT, **claude_txt())
             (stopped if r.returncode == 0 else left).append(sid)
         except (OSError, subprocess.TimeoutExpired):
             left.append(sid)
@@ -1330,7 +1395,7 @@ def remove(name, data=None, home=None, run=subprocess.run, uid=None, win=None):
     else:
         _legacy_out(name, home, run, uid)
     shutil.rmtree(_paths(name, data)[0], ignore_errors=True)
-    claude = cfg.get('claude') or shutil.which('claude') or os.path.join(home, '.local/bin/claude')
+    claude = claude_of(cfg.get('claude')) or os.path.join(home, '.local/bin/claude')
     stopped, left = _stop_sessions(name, mine, own, claude, run)
     return {'removed': name, 'stopped': stopped, **({'left': left} if left else {})}
 

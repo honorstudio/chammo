@@ -188,6 +188,8 @@ mod review;
 mod setup;
 mod win_path;
 mod win_bin;
+mod win_job;
+mod tray;
 mod sheet;
 mod sheet_book;
 mod sheet_cmd;
@@ -538,6 +540,8 @@ fn forbidden() -> tauri::http::Response<Vec<u8>> {
 }
 
 fn main() {
+    // 윈도우 하드 오류 창(16비트 응용 프로그램 등)을 끈다 — 예약 tick·자식 claude 까지 물려받게 맨 먼저(platform::quiet_hard_errors)
+    platform::quiet_hard_errors();
     // 파일 한도 256(launchd 기본)을 올린다 — 앱·예약 tick·띄우는 claude 가 다 물려받는다(10-04 Too many open files)
     platform::raise_nofile();
     // launchd 의 예약 깨우기 — 창·트레이·단일 실행 잠금보다 먼저 갈라서 끝낸다(안 그러면 1분마다 앱이 뜬다)
@@ -563,12 +567,10 @@ fn main() {
     // 윈도우: chammo:// 를 누르거나 앱을 또 켜면 새 프로세스가 뜬다 — 떠 있는 앱으로 넘기고 끈다(맨 먼저 등록, ADR 0015)
     #[cfg(windows)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-        if argv.iter().any(|a| deep_link::invite_from_url(a).is_some()) {
+        if argv.iter().any(|a| deep_link::wanted(a)) {
             deep_link::handle(app, argv);
-        } else if let Some(w) = app.get_webview_window("main") {
-            let _ = w.unminimize();
-            let _ = w.show();
-            let _ = w.set_focus();
+        } else {
+            tray::show_main(app); // 트레이로 숨어 있어도 다시 보이게(붙은 칸까지)
         }
     }));
     updater::attach(builder, &ctx)
@@ -607,6 +609,11 @@ fn main() {
         })
         .setup(|app| {
             wizard_menu(app.handle());
+            // 윈도우 알림 영역 아이콘 — 메인 창 X 는 여기로 숨는다
+            #[cfg(windows)]
+            if let Err(e) = tray::setup(app.handle()) {
+                claude::log_out("tray", &format!("tray setup failed: {e}"));
+            }
             // 팀 초대 딥링크(chammo://join) — 꺼져 있다 켜진 거면 켠 주소, 떠 있으면 이벤트로(ADR 0015)
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
@@ -841,6 +848,8 @@ fn main() {
             team_window::team_window_close,
             team_window::team_window_state,
             team_cmd::team_login,
+            team_cmd::team_login_cancel,
+            team_cmd::team_login_reopen,
             team_cmd::team_account_refresh,
             team_cmd::team_device_rename,
             team_cmd::team_device_revoke,
@@ -906,10 +915,12 @@ fn main() {
             hq::folder_status,
             hq::make_dir,
             setup::check_env,
+            setup::set_git_identity,
             claude_src::claude_source,
             setup::app_version,
             updater::app_update_check,
             updater::app_update_install,
+            updater::app_update_leftover,
             debug::pick_log,
             debug::space_trace,
             slash::slash_commands,
@@ -1134,6 +1145,7 @@ fn main() {
             tts::tts_warm,
             origin::session_origins,
             claude::append_task_event,
+            mobile_http::task_waiting,
             claude::clipboard_write,
             review::repo_map,
             review::pr_search,
@@ -1226,12 +1238,16 @@ fn main() {
             // 앱 창 중 하나라도 앞인지 → 메인·다마고치 웹뷰의 window.__appFocus(ui/attention) — 안 보면 참모 프사를 멈춘다(2026-10-04 mac-perf).
             // 메인 웹뷰 blur 만 보면 앱 안 리더 창으로 옮겨도 '맨 앞 아님'이 된다
             tauri::WindowEvent::Focused(_) => app_focus_changed(window.app_handle()),
-            // 맥은 창만 숨긴다(독에서 다시 연다). 윈도우는 숨기면 못 찾으니 메인 창을 닫으면 앱을 끈다(세션은 계속)
+            // 맥은 창만 숨긴다(독에서 다시 연다). 윈도우는 아래 — 트레이로 숨긴다
             tauri::WindowEvent::CloseRequested { api, .. } if cfg!(target_os = "macos") => {
                 api.prevent_close();
                 let _ = window.hide();
             }
-            tauri::WindowEvent::CloseRequested { .. } if window.label() == "main" => window.app_handle().exit(0),
+            // 윈도우 메인 창 X = 알림 영역(트레이)으로 숨기기 — 예전엔 앱을 꺼서 폰 연결·카드 토스트·팀 말 받기가 조용히 끊겼다(2026-11-01). 끄기는 트레이 메뉴 '끝내기'
+            tauri::WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
+                api.prevent_close();
+                tray::hide_main(window);
+            }
             // 파일 끌어다 놓기 → 그 창 웹뷰의 window.__drop — 메인 창(ui/fileDrop.ts)·메신저 따로 창(ui/team/teamDrop.ts, 메인만 넘겨서 따로 창엔 안 붙었다 10-26)
             tauri::WindowEvent::DragDrop(e) if window.label() == "main" || window.label() == orch_bubble::LABEL || team_window::is_team_window(window.label()) => drop::forward(window, e),
             // 리더 창에 파일을 놓으면 탭으로 연다
@@ -1245,26 +1261,7 @@ fn main() {
         .run(|app, event| {
             // 앱이 꺼질 때 말하던 음성도 같이 끈다 — 앱을 바꿔 넣어도 옛 앱이 띄운 음성이 계속 돌았다(2026-09-28)
             if let tauri::RunEvent::Exit = event {
-                // 가상 모니터를 지우기 전에 세션 크롬을 가린다 — 안 그러면 어느 화면도 아닌 곳에 남거나 사용자 화면으로 튈 수 있다
-                // 단계마다 0.3초 넘게 걸리면 notify.log 에 — 끌 때 무엇이 붙잡는지 실사용 앱에서 보려고(2026-10-19 독 종료 QA)
-                let step = |name: &str, f: &dyn Fn()| {
-                    let t = std::time::Instant::now();
-                    f();
-                    let ms = t.elapsed().as_millis();
-                    if ms >= 300 {
-                        claude::log_out("quit", &format!("exit step {name} {ms}ms"));
-                    }
-                };
-                step("hide browsers", &agent_browser::hide_all);
-                step("agents screen", &vdisplay::stop);
-                step("craft save", &craft_screen::close_apps_on_exit);
-                step("craft screen", &craft_screen::stop);
-                step("voice", &claude::stop_speaking);
-                // 모드 호스트를 남기지 않는다
-                step("modes", &modes_host::shutdown);
-                // 모바일 서버·테일스케일 serve 정리
-                step("mobile", &mobile::shutdown);
-                step("messenger", &messenger_cmd::shutdown);
+                exit_cleanup();
             }
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
@@ -1277,6 +1274,35 @@ fn main() {
                 }
             }
         });
+}
+
+/// 앱이 꺼질 때 정리 — 평소 종료(RunEvent::Exit)와 윈도우 업데이트(설치기를 띄우고 바로 std::process::exit, updater.rs on_before_exit)가 같이 부른다.
+/// 한 번만 돈다
+pub(crate) fn exit_cleanup() {
+    static DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if DONE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    // 가상 모니터를 지우기 전에 세션 크롬을 가린다 — 안 그러면 어느 화면도 아닌 곳에 남거나 사용자 화면으로 튈 수 있다
+    // 단계마다 0.3초 넘게 걸리면 notify.log 에 — 끌 때 무엇이 붙잡는지 실사용 앱에서 보려고(2026-10-19 독 종료 QA)
+    let step = |name: &str, f: &dyn Fn()| {
+        let t = std::time::Instant::now();
+        f();
+        let ms = t.elapsed().as_millis();
+        if ms >= 300 {
+            claude::log_out("quit", &format!("exit step {name} {ms}ms"));
+        }
+    };
+    step("hide browsers", &agent_browser::hide_all);
+    step("agents screen", &vdisplay::stop);
+    step("craft save", &craft_screen::close_apps_on_exit);
+    step("craft screen", &craft_screen::stop);
+    step("voice", &claude::stop_speaking);
+    // 모드 호스트를 남기지 않는다
+    step("modes", &modes_host::shutdown);
+    // 모바일 서버·테일스케일 serve 정리
+    step("mobile", &mobile::shutdown);
+    step("messenger", &messenger_cmd::shutdown);
 }
 
 #[cfg(test)]

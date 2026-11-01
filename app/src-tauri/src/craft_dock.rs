@@ -190,15 +190,55 @@ pub fn craft_show<R: tauri::Runtime>(handle: tauri::AppHandle<R>, app: String) -
     crate::craft_window::show_in_space(&handle, &app, "")
 }
 
-/// 최근 문서 열기 — scripts/craft open <앱> --native <파일>(떠 있으면 그 앱에서 연다). async = 파이썬 판정을 메인 스레드 밖에서
-#[tauri::command(async)]
-pub fn craft_open_file<R: tauri::Runtime>(window: tauri::WebviewWindow<R>, app: String, path: String) -> Result<(), String> {
-    crate::craft_window::display_name(&app).ok_or("unknown app")?;
-    crate::platform::need_python()?;
-    unhide(&app);
-    // 메신저 따로 창에서 눌렀으면 돌아오는 'open' 줄이 그 창 옆 따로 창으로(craft_window asker)
-    crate::craft_window::ask_from(&app, window.label());
-    crate::craft_window::craft_cmd().args(["open", &crate::craft_window::arg(&app), "--native", &path]).spawn().map(|_| ()).map_err(|e| e.to_string())
+/// 최근 문서 열기 — scripts/craft open <앱> --native <파일>(떠 있으면 그 앱에서 연다). 파이썬 판정·스크립트 기다리기는 막는 일이라 spawn_blocking 에서
+#[tauri::command]
+pub async fn craft_open_file<R: tauri::Runtime>(window: tauri::WebviewWindow<R>, app: String, path: String) -> Result<(), String> {
+    let label = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::craft_window::display_name(&app).ok_or("unknown app")?;
+        crate::platform::need_python()?;
+        unhide(&app);
+        // 메신저 따로 창에서 눌렀으면 돌아오는 'open' 줄이 그 창 옆 따로 창으로(craft_window asker)
+        crate::craft_window::ask_from(&app, &label);
+        let mut c = crate::craft_window::craft_cmd();
+        c.args(["open", &crate::craft_window::arg(&app), "--native", &path]);
+        run_open(c, OPEN_WAIT)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 열기 스크립트를 기다리는 한도 — 처음 설치(수백 MB 받기·공증 확인)까지. 넘으면 실패로 치지 않는다(화면은 독에 뜨면 걷는다)
+const OPEN_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// scripts/craft open 을 끝날 때까지(최대 limit) 기다려, 실패면 마지막 까닭 줄을 돌려준다 — 띄우고 잊어서 윈도우판 없음·받기 실패·체크섬이
+/// '여는 중' 3분 뒤 아무 말 없이 사라졌다(11-01 QA H13). 오류 출력은 파이프 대신 파일로 — 띄운 앱이 파이프를 물려받으면 그 앱이 끝날 때까지 못 읽는다
+pub fn run_open(mut c: std::process::Command, limit: std::time::Duration) -> Result<(), String> {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let log = std::env::temp_dir().join(format!("chammo-craft-open-{}-{}.log", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    let err = std::fs::File::create(&log).map_err(|e| e.to_string())?;
+    let mut child = c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(err).spawn().map_err(|e| e.to_string())?;
+    let began = std::time::Instant::now();
+    let st = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) if began.elapsed() < limit => std::thread::sleep(std::time::Duration::from_millis(100)),
+            // 아직 도는 중(긴 설치) — 그대로 두고 화면이 독을 보고 걷는다. 로그 파일은 그 스크립트가 쥐고 있으니 남긴다(임시 폴더)
+            Ok(None) => return Ok(()),
+            Err(e) => return Err(e.to_string()),
+        }
+    };
+    let text = std::fs::read(&log).map(|b| crate::platform::out_text(&b)).unwrap_or_default();
+    let _ = std::fs::remove_file(&log);
+    if st.success() { Ok(()) } else { Err(open_fail(&text, st.code())) }
+}
+
+/// 열기 실패 까닭 — 마지막 글 줄(CraftError 는 'craft: ' 를 뗀다, 파이썬 traceback 은 마지막 예외 줄). 비면 종료 코드
+pub fn open_fail(stderr: &str, code: Option<i32>) -> String {
+    match stderr.lines().map(str::trim).filter(|l| !l.is_empty()).last() {
+        Some(l) => l.strip_prefix("craft: ").unwrap_or(l).to_string(),
+        None => format!("scripts/craft open {} ({})", crate::i18n::tr("실패", "failed"), code.map_or_else(|| "signal".to_string(), |c| c.to_string())),
+    }
 }
 
 /// 앱 서랍 줄(scripts/craft list --json) — 아이콘 자리를 PNG data URL 로 바꿔 웹에 그대로. 깨진 출력은 빈 목록이 아니라 오류로
@@ -257,14 +297,21 @@ pub async fn craft_apps(refresh: bool, fast: Option<bool>) -> Result<Vec<serde_j
 }
 
 /// 서랍에서 앱 누르기 — 깔린 앱은 열고, 안 깐 앱은 처음 한 번 설치(체크섬·번들 id·애플 공증) 뒤 연다. 열리면 독 규칙대로 탭 줄에 붙는다
-#[tauri::command(async)]
-pub fn craft_launch(app: String, key: Option<String>) -> Result<(), String> {
-    crate::craft_window::display_name(&app).ok_or("unknown app")?;
-    // 대리 실행기는 띄우기엔 성공하고 바로 죽어서 오류 없이 '여는 중'만 3분 남았다 — 띄우기 전에 가른다.
-    // 파이썬이 없으면 판정이 프로세스·reg 를 띄워서 메인 스레드에서 돌면 화면이 굳는다 — command(async)
-    crate::platform::need_python()?;
-    unhide(key.as_deref().unwrap_or(&app));
-    crate::craft_window::craft_cmd().args(launch_args(&app, key.as_deref())).spawn().map(|_| ()).map_err(|e| e.to_string())
+#[tauri::command]
+pub async fn craft_launch(app: String, key: Option<String>) -> Result<(), String> {
+    // 스크립트를 끝까지 기다린다(실패 까닭을 돌려주려고) — 비동기 일꾼을 쥐고 기다리면 다른 명령이 밀려서 spawn_blocking
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::craft_window::display_name(&app).ok_or("unknown app")?;
+        // 대리 실행기는 띄우기엔 성공하고 바로 죽어서 오류 없이 '여는 중'만 3분 남았다 — 띄우기 전에 가른다.
+        // 파이썬이 없으면 판정이 프로세스·reg 를 띄워서 메인 스레드에서 돌면 화면이 굳는다
+        crate::platform::need_python()?;
+        unhide(key.as_deref().unwrap_or(&app));
+        let mut c = crate::craft_window::craft_cmd();
+        c.args(launch_args(&app, key.as_deref()));
+        run_open(c, OPEN_WAIT)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 서랍 열기 인자 — key(그 앱의 빈 자리 인스턴스, 웹이 고른다)가 있으면 그 인스턴스만(첫 번째는 '-1'), 없거나 다른 앱이면 앱째.
@@ -425,6 +472,32 @@ mod tests {
         let e = list_fail("  ", Some(3));
         assert!(e.contains("scripts/craft list") && e.contains('3'), "{e}");
         assert!(!list_fail("", None).is_empty());
+    }
+
+    #[test]
+    fn 열기_실패는_스크립트_마지막_까닭_줄을_돌려준다() {
+        // 11-01 QA H13: 띄우고 잊어서 윈도우판 없음·받기 실패가 '여는 중' 3분 뒤 아무 말 없이 사라졌다
+        assert_eq!(open_fail("PhotoCraft: installing…\ncraft: no Windows build yet / 윈도우판 아직 없음\n", Some(1)), "no Windows build yet / 윈도우판 아직 없음");
+        assert_eq!(open_fail("Traceback (most recent call last):\n  File x\nPermissionError: [Errno 13] denied\n", Some(1)), "PermissionError: [Errno 13] denied");
+        assert!(!open_fail("", Some(2)).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn 열기는_끝날_때까지_기다려_실패면_까닭을_돌려주고_오래_걸리면_그대로_둔다() {
+        let sh = |script: &str| {
+            let mut c = crate::platform::command("/bin/sh");
+            c.args(["-c", script]);
+            c
+        };
+        assert_eq!(run_open(sh("echo 'craft: boom / 터짐' >&2; exit 1"), std::time::Duration::from_secs(5)).unwrap_err(), "boom / 터짐");
+        assert!(run_open(sh("echo ok; exit 0"), std::time::Duration::from_secs(5)).is_ok());
+        // 띄운 앱(손자)이 오류 출력을 물려받아도 스크립트가 끝나면 바로 돌아온다
+        let t = std::time::Instant::now();
+        assert!(run_open(sh("(sleep 3 &) ; exit 0"), std::time::Duration::from_secs(5)).is_ok());
+        assert!(t.elapsed() < std::time::Duration::from_secs(2), "{:?}", t.elapsed());
+        // 한도를 넘기면 실패로 치지 않는다(설치가 길다 — 화면은 독을 보고 걷는다)
+        assert!(run_open(sh("sleep 2"), std::time::Duration::from_millis(300)).is_ok());
     }
 
     #[test]

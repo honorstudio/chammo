@@ -8,7 +8,7 @@ import { dropSig } from './orchLabel';
 export type ChatTool = { name: string; target: string };
 export type ChatItem =
   | { kind: 'user'; id: string; ts: string; text: string; /** 붙인 그림(data URL) — 말풍선 썸네일 */ images?: string[] }
-  | { kind: 'assistant'; id: string; ts: string; text: string }
+  | { kind: 'assistant'; id: string; ts: string; text: string; /** 턴 끝 답(stop_reason end_turn) — 아니면 턴 중간 글(이어서 도구·생각) */ end?: true }
   | { kind: 'tools'; id: string; ts: string; tools: ChatTool[] }
   /** 슬래시 명령 — 말풍선 대신 작은 줄. out = 명령 결과(/context·/cost 등, 색 코드 뺀 글) */
   | { kind: 'note'; id: string; ts: string; text: string; out?: string }
@@ -16,7 +16,7 @@ export type ChatItem =
   | { kind: 'relay'; id: string; ts: string; from: string; text: string; /** from = 보낸 세션의 진짜 이름 — 화면엔 seenName 으로 */ session?: true };
 
 type Block = { type?: string; text?: string; name?: string; input?: Record<string, unknown>; source?: { type?: string; media_type?: string; data?: string } };
-type Rec = { type?: string; subtype?: string; content?: unknown; uuid?: string; parentUuid?: string | null; timestamp?: string; isMeta?: boolean; isSidechain?: boolean; isCompactSummary?: boolean; message?: { content?: unknown };
+type Rec = { type?: string; subtype?: string; content?: unknown; uuid?: string; parentUuid?: string | null; timestamp?: string; isMeta?: boolean; isSidechain?: boolean; isCompactSummary?: boolean; message?: { content?: unknown; stop_reason?: string | null };
   /** 일하는 중에 끼어든 메시지는 user 줄이 아니라 queued_command 첨부로 남는다(2026-09-30 실측) */
   attachment?: { type?: string; prompt?: unknown; origin?: { kind?: string } } };
 
@@ -153,7 +153,7 @@ function itemsOf(r: Rec): (ChatItem | Out)[] {
   if (r.type === 'assistant') {
     const out: ChatItem[] = [];
     for (const b of blocks(r.message?.content)) {
-      if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) out.push({ kind: 'assistant', id, ts, text: b.text.trim() });
+      if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) out.push({ kind: 'assistant', id, ts, text: b.text.trim(), ...(r.message?.stop_reason && r.message.stop_reason !== 'tool_use' ? { end: true as const } : {}) /* end_turn·stop_sequence·max_tokens — 실측 글 줄은 end_turn 1805·tool_use 203·stop_sequence 8 */ });
       else if (b.type === 'tool_use' && b.name) out.push({ kind: 'tools', id, ts, tools: [{ name: b.name, target: chatTarget(b.input) }] });
     }
     return out;
@@ -171,7 +171,7 @@ function push(list: ChatItem[], it: ChatItem | Out) {
     return;
   }
   if (last?.kind === 'tools' && it.kind === 'tools') list[list.length - 1] = { ...last, tools: [...last.tools, ...it.tools] };
-  else if (last?.kind === 'assistant' && it.kind === 'assistant') list[list.length - 1] = { ...last, text: `${last.text}\n\n${it.text}` };
+  else if (last?.kind === 'assistant' && it.kind === 'assistant') { const { end: _, ...head } = last; list[list.length - 1] = { ...head, text: `${last.text}\n\n${it.text}`, ...(it.end ? { end: true as const } : {}) }; } // 턴 끝은 뒤 조각이 정한다
   else list.push(it);
 }
 
@@ -324,7 +324,8 @@ export function stuckInInput(pending: string[], input: string): string | null {
   return pending.find((p) => !p.trimStart().startsWith('/') && sq(p) === n) ?? null;
 }
 
-/** 작업 중 = 세션이 working 이고 마지막이 답이 아님. 백그라운드 job 참모는 쉬어도 working 으로 나와서 마지막 항목으로 가른다 */
+/** 작업 중 = 세션이 working 이고 턴 끝 답(end_turn)으로 안 끝남. 백그라운드 job 참모는 쉬어도 working 으로 나와서 마지막 항목으로 가른다.
+ *  턴 중간 글("확인해 볼게" 뒤 생각·도구)은 작업 중 — 답이면 다 끝으로 봐서 스피너·멈춤 단추가 사라졌다(2026-11-01 ux-daily M10) */
 /** 채팅 칸에서 누른 Esc 가 참모의 지금 턴을 멈추나 — CLI 처럼 한 번(2026-10-15 사용자). 일하는 중일 때만: 쉴 때 Esc 두 번은 Claude 의 되감기 창·입력칸 지우기다.
  *  한글 조합 중·채팅 위에 뜬 것(멘션·/ 목록·메모리·모델 칩·선택지 창·미리보기 모달)·이미 다른 데서 받은 Esc 는 그쪽이 먼저.
  *  시안 검토 탭이 떠 있으면 입력칸 밖 Esc 는 검토 닫기다(domain/curation reviewEscCloses) — 입력칸 Esc 는 검토가 안 받는다 */
@@ -334,7 +335,7 @@ export function chatEscStops(o: { key: string; composing: boolean; prevented: bo
   return o.inInput || !o.review;
 }
 
-export const chatBusy = (state: string, items: ChatItem[]) => state === 'working' && items[items.length - 1]?.kind !== 'assistant';
+export const chatBusy = (state: string, items: ChatItem[]) => { const t = items[items.length - 1]; return state === 'working' && !(t?.kind === 'assistant' && t.end); };
 
 /** 입력칸 오른쪽 버튼 — 보내기는 쓴 글(또는 터미널 입력칸 글)이 있을 때만 칠하고, 일하는 중에 칸이 비면 옆에 '멈춤'.
  *  일하는 중에 글이 있으면 보내기만(Enter 는 줄 섰다가 중간에 들어간다) — 2026-10-02 보내기 버튼 시안 방향 2 */

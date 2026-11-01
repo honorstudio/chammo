@@ -529,7 +529,7 @@ impl Http for Curl {
         let (body, code) = text.rsplit_once('\n').unwrap_or(("", &text));
         trace(method, url, began, code.trim().parse().unwrap_or(0), body.len());
         match code.trim().parse::<u16>() {
-            Ok(0) | Err(_) => Err(format!("중계 서버에 못 닿았어요: {}", String::from_utf8_lossy(&out.stderr).trim())),
+            Ok(0) | Err(_) => Err(format!("중계 서버에 못 닿았어요: {}", crate::platform::out_text(&out.stderr).trim())),
             Ok(c) => Ok((c, body.to_string())),
         }
     }
@@ -879,11 +879,21 @@ pub(crate) const GONE: &str = "이 기기는 중계 서버에서 끊겼어(다�
 /// 끊긴(revoked) 기기는 서버에 줄이 남아 열쇠 확인이 404 가 아니라 401 — 그땐 시계를 따로 본다(Cloudflare /cdn-cgi/trace 의 ts, 서명 없음).
 /// 시계가 1분 안으로 맞으면 시계 탓이 아니라 끊긴 기기다. 열쇠 확인은 열쇠마다 5분에 한 번(물러서는 동안 확인 요청이 쌓이지 않게)
 pub(crate) fn mark_if_gone(dir: &Path, http: &dyn Http, st: &TeamState, k: &DeviceKeys) -> bool {
+    mark_if_gone_with(dir, http, st, k, true)
+}
+
+/// 사람이 누른 로그아웃·취소 — 5분 쉬기 없이 지금 다시 확인한다. 게이트가 시계가 틀린 동안 확인을 한 번 써 버리면
+/// 시계를 고치고 바로 누른 로그아웃이 쉬기에 걸려 '끊김 아님'으로 끝났다(11-01 QA H2)
+pub(crate) fn mark_if_gone_now(dir: &Path, http: &dyn Http, st: &TeamState, k: &DeviceKeys) -> bool {
+    mark_if_gone_with(dir, http, st, k, false)
+}
+
+fn mark_if_gone_with(dir: &Path, http: &dyn Http, st: &TeamState, k: &DeviceKeys, throttle: bool) -> bool {
     static PROBED: Mutex<std::collections::BTreeMap<String, std::time::Instant>> = Mutex::new(std::collections::BTreeMap::new());
     if st.revoked {
         return true;
     }
-    {
+    if throttle {
         let mut p = PROBED.lock().unwrap_or_else(|e| e.into_inner());
         let now = std::time::Instant::now();
         if p.get(&k.public()).is_some_and(|t| now.duration_since(*t) < std::time::Duration::from_secs(300)) {
@@ -909,6 +919,35 @@ pub(crate) fn mark_if_gone(dir: &Path, http: &dyn Http, st: &TeamState, k: &Devi
     #[cfg(not(test))]
     crate::claude::log_out("team", "중계 서버가 이 기기를 몰라 — 끊긴 기기로 적음(다시 로그인)");
     mutate_if(dir, &st.device_id, |s| s.revoked = true).is_ok()
+}
+
+/// 이 정도 넘게 틀리면 서버가 서명을 거절한다(서버 창 5분 — 오가는 시간을 빼고 조금 일찍)
+pub(crate) const CLOCK_SLACK_MS: i64 = 4 * 60_000;
+
+/// 화면이 판단하는 오류 이름 — 글 맨 앞 `[이름]`(시계는 `[clock:<분>]`). 문구(한국어)는 참모가 읽고, 화면은 이름을 보고 자기 말(tr)로 바꾼다.
+/// 문구를 정규식으로 보면 번역·다듬기에서 조용히 깨진다(11-01 QA — domain/loginGate gateErr)
+pub(crate) const TAG_OFFLINE: &str = "[offline]";
+pub(crate) const TAG_ALREADY: &str = "[already]";
+
+/// 이 기기 시계 - 서버 시계(ms, 이 기기가 빠르면 +). 서버 시계를 못 읽으면 None
+pub(crate) fn clock_skew_ms(http: &dyn Http, server: &str) -> Option<i64> {
+    server_clock_ms(http, server).map(|t| now_ms() as i64 - t as i64)
+}
+
+/// 시계 탓 거절 — 분은 반올림, 앞에 `[clock:<분>]`
+pub(crate) fn clock_err(skew_ms: i64) -> String {
+    let min = (skew_ms as f64 / 60_000.0).round() as i64;
+    format!("[clock:{min}] 이 기기 시계가 중계 서버와 {}분 달라서 서명이 거절됐어 — 시간 자동 맞추기를 켜고 다시 해 줘", min.abs())
+}
+
+/// 서명한 요청이 401 이면 시계부터 재 본다 — 시계가 틀렸으면 그 말(clock_err), 아니면 why
+pub(crate) fn why_signed(http: &dyn Http, server: &str, code: u16, v: &Value) -> String {
+    if code == 401 {
+        if let Some(d) = clock_skew_ms(http, server).filter(|d| d.abs() > CLOCK_SLACK_MS) {
+            return clock_err(d);
+        }
+    }
+    why(code, v)
 }
 
 /// 서버 시계(epoch ms) — Cloudflare 가 모든 영역에 주는 /cdn-cgi/trace 의 ts= 줄. 없으면(로컬 중계 등) None
@@ -1154,7 +1193,9 @@ pub fn refresh_members(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) 
         return Err(why(code, &v));
     }
     let members: Vec<Member> = serde_json::from_value(v["members"].clone()).unwrap_or_default();
-    mutate_if(dir, &st.device_id, |s| s.put_team(TeamEntry { members, ..t }))
+    // 남이 내 역할을 바꿔도(팀장 넘기기·내려가기) 내 기록이 따라가게 — 명단 속 내 줄이 기준(11-01 QA H1)
+    let role = members.iter().find(|m| m.id == t.member_id && !m.role.is_empty()).map(|m| m.role.clone()).unwrap_or_else(|| t.role.clone());
+    mutate_if(dir, &st.device_id, |s| s.put_team(TeamEntry { members, role, ..t }))
 }
 
 /// 사람 이름표 — 프로필 이름이 있고 명부(계정) 이름과 다르면 '프로필 이름(계정 이름)', 아니면 계정 이름. 앱 화면은 프로필 이름을 쓴다(domain/teamProfile lookOf)

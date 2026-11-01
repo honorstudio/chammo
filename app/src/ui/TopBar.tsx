@@ -9,6 +9,7 @@ import { IconBell, IconOffice, IconReader, IconSpace, IconTerminal } from './Ico
 import { featureButton, type FeatureProps } from './FeatureButtons';
 import { barItems, type BarItem } from '../domain/topbarMenu';
 import { assistant, tr } from '../i18n';
+import { loadChipShown } from '../domain/load';
 import { ageText, allOut, type AccountsView } from '../domain/accounts';
 import { AccountPopover } from './AccountPopover';
 import { Badge } from './kit/Badge';
@@ -30,7 +31,7 @@ function Meter({ label, l, age }: { label: string; l?: Limit; age?: number | nul
 /** 앱 맨 위: Claude 사용 한도 · 오늘 커밋 · (오른쪽) 다마고치 자리 */
 type TamaProps = { file: TamaFile | null; widgetShown: boolean; onToggle: () => void };
 
-export function TopBar({ features, usage, usageAge, account, accounts, onSettings, today, tama, inboxCount, onInbox, harnitor, onHarnitor, tools, onTools, review, onReview, voice, onVoice, replayOn, onReplay, office, onOffice, space, onView, reader, onReader, load, onLoad, loadOn, claude, fontSize }: { /** 계정 팝오버 '로그인해서 바꾸기' 터미널 — claude 경로·글자 크기 */ claude?: string | null; fontSize: number; load?: { level: 'ok' | 'warn' | 'high'; load1: number; cores: number; swapGb: number }; onLoad: () => void; loadOn: boolean; features: Features; usage: Usage; usageAge?: number | null; account: { name: string; title: string; known: boolean } | null; accounts: AccountsView | null; onSettings: () => void; today: RepoToday[]; tama: TamaProps; inboxCount: number; onInbox: () => void; harnitor: boolean; onHarnitor: () => void; /** 도구 화면이 지금 탭에 떠 있나 */ tools: boolean; onTools: () => void; /** 리뷰 — on = 리뷰 화면이 떠 있나, confirm = 머지 전에 사람이 볼 PR 수 */ review: { on: boolean; confirm: number }; onReview: () => void; voice: boolean; onVoice: () => void; replayOn: boolean; onReplay: () => void; office: boolean; onOffice: () => void; /** 지금 뷰가 채팅 뷰인가 */ space: boolean; onView: (chat: boolean) => void; reader: boolean; onReader: () => void }) {
+export function TopBar({ features, usage, usageAge, account, accounts, onSettings, today, tama, inboxCount, onInbox, harnitor, onHarnitor, tools, onTools, review, onReview, voice, onVoice, replayOn, onReplay, office, onOffice, space, onView, reader, onReader, load, onLoad, loadOn, claude, fontSize, fresh = false }: { /** 참모가 하나도 없음(첫 날) — 한도·커밋 숫자를 숨긴다(ux-start M6) */ fresh?: boolean; /** 계정 팝오버 '로그인해서 바꾸기' 터미널 — claude 경로·글자 크기 */ claude?: string | null; fontSize: number; load?: { level: 'ok' | 'warn' | 'high'; load1: number; cores: number; swapGb: number }; onLoad: () => void; loadOn: boolean; features: Features; usage: Usage; usageAge?: number | null; account: { name: string; title: string; known: boolean } | null; accounts: AccountsView | null; onSettings: () => void; today: RepoToday[]; tama: TamaProps; inboxCount: number; onInbox: () => void; harnitor: boolean; onHarnitor: () => void; /** 도구 화면이 지금 탭에 떠 있나 */ tools: boolean; onTools: () => void; /** 리뷰 — on = 리뷰 화면이 떠 있나, confirm = 머지 전에 사람이 볼 PR 수 */ review: { on: boolean; confirm: number }; onReview: () => void; voice: boolean; onVoice: () => void; replayOn: boolean; onReplay: () => void; office: boolean; onOffice: () => void; /** 지금 뷰가 채팅 뷰인가 */ space: boolean; onView: (chat: boolean) => void; reader: boolean; onReader: () => void }) {
   const commits = today.reduce((n, r) => n + r.commits, 0);
   const added = today.reduce((n, r) => n + r.added, 0);
   const deleted = today.reduce((n, r) => n + r.deleted, 0);
@@ -40,14 +41,19 @@ export function TopBar({ features, usage, usageAge, account, accounts, onSetting
   const out = allOut(accounts, Date.now());
   return (
     <header className="topbar">
+      {/* 첫 날(참모 0명)엔 한도·커밋 숫자를 숨기고, 한도엔 무엇인지 이름(2026-11-01 ux-start M6) */}
+      {!fresh && <>
+      <span className="m-label">{tr('Claude 한도', 'Claude limit')}</span>
       <Meter label={tr('5시간', '5h')} l={usage.five} age={usageAge} />
       <Meter label={tr('주간', 'Week')} l={usage.week} age={usageAge} />
+      </>}
       {account && <button ref={chip} type="button" className={`acct-chip ${account.known ? '' : 'unknown'} ${pop ? 'on' : ''}`} title={[account.title, out].filter(Boolean).join(' — ')}
         aria-haspopup="dialog" aria-expanded={!!pop} onClick={(e) => setPop(pop ? null : e.currentTarget.getBoundingClientRect())}>
         <b>{account.name}</b>
         {out && <span className="dim">{tr('다 소진', 'All used')}</span>}
       </button>}
       {pop && accounts && <AccountPopover view={accounts} anchor={pop} chip={chip} claude={claude} fontSize={fontSize} onClose={() => setPop(null)} onSettings={() => { setPop(null); onSettings(); }} />}
+      {!fresh && <>
       <span className="sep" />
       <span className="today" title={detail || tr('오늘(새벽 5시부터) 커밋 없음', 'No commits today (since 5 AM)')}>
         <span className="m-label">{tr('오늘 커밋', 'Commits today')}</span>
@@ -58,13 +64,13 @@ export function TopBar({ features, usage, usageAge, account, accounts, onSetting
           </span>
         )}
       </span>
-      {load && <>
-        <span className="sep" />
+      </>}
+      {load && loadChipShown(load.level, !!loadOn) && <>
+        {(!fresh || account) && <span className="sep" />}
         <button type="button" className={`load-chip ${load.level} ${loadOn ? 'on' : ''}`} onClick={onLoad}
-          title={tr(`부하 ${load.load1.toFixed(1)} (코어 ${load.cores}개) · 스왑 ${load.swapGb.toFixed(1)}GB. 누르면 세션별로 봐요`, `Load ${load.load1.toFixed(1)} on ${load.cores} cores · swap ${load.swapGb.toFixed(1)}GB. Click for a per-session view`)}>
-          <span className="m-label">{tr('부하', 'Load')}</span>
-          <b>{load.load1.toFixed(1)}</b>
-          <span className="dim">/ {load.cores} · {tr('스왑', 'swap')} {load.swapGb.toFixed(1)}G</span>
+          title={tr(`부하 ${load.load1.toFixed(1)} (코어 ${load.cores}개) · 스왑 ${load.swapGb.toFixed(1)}GB · 누르면 세션별 부하`, `Load ${load.load1.toFixed(1)} on ${load.cores} cores · swap ${load.swapGb.toFixed(1)}GB · click for load per session`)}>
+          {/* 부하 화면을 보는 중이라 보통 부하여도 떠 있으면 '부하'만 */}
+          <b>{load.level === 'high' ? tr('부하 높음', 'High load') : tr('부하', 'Load')}</b>
         </button>
       </>}
       <span className="grow" />

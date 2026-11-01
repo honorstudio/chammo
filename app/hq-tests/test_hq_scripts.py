@@ -156,6 +156,25 @@ class Show(unittest.TestCase):
             self.assertEqual(show.resolve('a.md', cwd=home, home=home), os.path.join(home, 'a.md'))
             self.assertIsNone(show.resolve('../secret.txt', cwd=home, home=home))
 
+    def test_홈_밖이어도_설정한_프로젝트_폴더_안은_연다(self):
+        # 윈도우는 D:\dev 처럼 홈 밖에 프로젝트를 둔다 — 첫 일 결과를 '앱에서 못 열어'라고 했다(2026-11-01 win-first H2)
+        with tempfile.TemporaryDirectory() as d:
+            d = os.path.realpath(d)
+            home, data, dev, extra = (os.path.join(d, x) for x in ('home', 'data', 'dev', 'extra'))
+            for x in (home, data, os.path.join(dev, 'todo'), extra):
+                os.makedirs(x)
+            open(os.path.join(dev, 'todo', 'index.html'), 'w').write('<p>')
+            open(os.path.join(extra, 'b.md'), 'w').write('# b')
+            open(os.path.join(d, 'secret.txt'), 'w').write('x')
+            json.dump({'devRoot': dev, 'extraProjects': [extra, '/']}, open(os.path.join(data, 'config.json'), 'w'))
+            roots = show.user_roots(data, home)
+            self.assertEqual(roots, [home, dev, extra])  # 맨 위('/'·'D:\\')는 통째로 열리니 안 받는다
+            self.assertEqual(show.resolve('todo/index.html', cwd=dev, home=home, roots=roots), os.path.join(dev, 'todo', 'index.html'))
+            self.assertEqual(show.resolve(os.path.join(extra, 'b.md'), home=home, roots=roots), os.path.join(extra, 'b.md'))
+            self.assertIsNone(show.resolve('../secret.txt', cwd=dev, home=home, roots=roots))
+            # 설정이 없거나 깨져도 홈만
+            self.assertEqual(show.user_roots(os.path.join(d, 'none'), home), [home])
+
 
 class VoiceHint(unittest.TestCase):
     def hint(self, files):
@@ -222,6 +241,12 @@ class ShowPoint(unittest.TestCase):
         r = show.record('/h/a.md', {'CLAUDE_JOB_DIR': '/h/.claude/jobs/abcd1234'}, '/h/p', 't', {'page': 2})
         self.assertEqual(r, {'ts': 't', 'path': '/h/a.md', 'from': 'abcd1234', 'cwd': '/h/p', 'at': {'page': 2}})
 
+    def test_윈도우_경로는_슬래시로_적는다(self):
+        # 웹·폰은 / 로 문서 폴더를 구한다 — C:\…\a.md 그대로 적으면 그림·상대 링크가 깨지고 이름 대신 전체 경로가 떴다(2026-11-01 win-text M2)
+        r = show.record('C:\\Users\\me\\dev\\shop\\docs\\a.md', {}, 'c:\\Users\\me\\dev\\shop', 't')
+        self.assertEqual((r['path'], r['cwd']), ('C:/Users/me/dev/shop/docs/a.md', 'C:/Users/me/dev/shop'))
+        self.assertEqual(show.record('/h/x\\y.md', {}, '/h', 't')['path'], '/h/x\\y.md', '맥 경로는 그대로')
+
     def test_web_url(self):
         self.assertEqual(show.web_url('http://localhost:3000'), 'http://localhost:3000')
         self.assertIsNone(show.web_url('file:///etc/passwd'))
@@ -269,6 +294,34 @@ class Windows(unittest.TestCase):
                     if "'wb'" in call or "'rb'" in call or 'os.open' in line[max(0, m.start() - 3):m.start() + 5]:
                         continue
                     self.assertIn('encoding=', call, f'{p.name}:{i} {call}')
+
+
+class Utf8Io(unittest.TestCase):
+    """윈도우 파이썬 기본 입출력은 cp949 — 데몬 env 로 뜬 프로젝트 세션엔 PYTHONUTF8 이 없어 direct ask 가 카드를 띄운 뒤 '—' 를 못 써 죽었다(2026-11-01 win-text H1).
+    맥에선 PYTHONIOENCODING=cp949 로 같은 상태를 만든다"""
+    PY = [p for p in SCRIPTS.iterdir() if p.is_file() and p.suffix not in ('.py', '.sh')]
+
+    def cp949(self, d, **extra):
+        return {**os.environ, 'CHAMMO_HOME': d, 'PYTHONIOENCODING': 'cp949', 'PYTHONUTF8': '0', **extra}
+
+    def test_모든_도구가_입출력을_utf8_로_맞춘다(self):
+        for p in self.PY:
+            self.assertTrue("_io.reconfigure(encoding='utf-8', errors='replace')" in p.read_text(encoding='utf-8'), p.name)
+
+    def test_cp949_에서도_direct_ask_가_카드를_띄우고_끝까지_말한다(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = self.cp949(d, CLAUDE_JOB_DIR=os.path.join(d, 'job1'), CHAMMO_DIRECT_WAIT='0')
+            r = subprocess.run(['sh', str(SCRIPTS / 'direct'), 'ask', '결제해도 돼?', '--kind', 'other'], env=env, capture_output=True, timeout=30)
+            self.assertEqual(r.returncode, 0, r.stderr.decode('utf-8', 'replace'))
+            self.assertIn('(id ', r.stdout.decode('utf-8'))
+
+    def test_cp949_에서도_상태줄이_한글_경로를_읽는다(self):
+        with tempfile.TemporaryDirectory() as d:
+            raw = json.dumps({'session_id': 'abc123', 'cwd': 'C:\\Users\\홍길동\\쇼핑몰', 'model': {'display_name': 'Opus — 5'},
+                              'context_window': {'used_percentage': 42}}, ensure_ascii=False).encode('utf-8')
+            r = subprocess.run(['sh', str(SCRIPTS / 'statusline')], input=raw, env=self.cp949(d, HOME=d), capture_output=True, timeout=30)
+            self.assertEqual(r.returncode, 0, r.stderr.decode('utf-8', 'replace'))
+            self.assertTrue(os.listdir(os.path.join(d, 'ctx')), '대화 % 기록')
 
 
 class Launcher(unittest.TestCase):

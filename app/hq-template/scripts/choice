@@ -19,6 +19,9 @@ Answer easy-to-undo ones (wording, color, layout) with the recommended option; a
 On a Mac it reads the session's screen before every key and checks the review screen before submitting.
 """
 import glob, json, os, re, shutil, signal, subprocess, sys, time, unicodedata
+for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — PYTHONUTF8 없이 떠도(데몬 env 세션·작업 스케줄러) 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
+    if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
+        _io.reconfigure(encoding='utf-8', errors='replace')
 
 
 def data_dir(home=None, env=None, exists=os.path.isdir):
@@ -47,9 +50,47 @@ def T(ko, en):
 DOWN, UP, RIGHT, LEFT, ENTER, CTRL_U = '\x1b[B', '\x1b[A', '\x1b[C', '\x1b[D', '\r', '\x15'
 
 
+def find_claude(home=None, path=None, win=None, isfile=os.path.isfile, read=None):
+    """claude 찾기 — 앱(setup::find)과 같은 순서: 공식 설치본(~/.local/bin) → PATH → (맥) brew 자리 · (윈도우) winget·npm 기본 자리.
+    윈도우 npm 바로가기(claude.cmd)는 부르는 진짜 exe 로 — 바로가기로 띄우면 cmd 가 인자를 다시 읽어 따옴표·여러 줄이 깨지고,
+    대상이 빠진 바로가기(10-31 사용자 PC)와 옆의 확장자 없는 sh 글은 건너뛴다. task·choice·routine·orch-roster 가 같은 글(test_hq_claude_find). 못 찾으면 None"""
+    win = (os.name == 'nt') if win is None else win
+    home = os.path.expanduser('~') if home is None else home
+    path = os.environ.get('PATH', '') if path is None else path
+    if not win:
+        cands = [os.path.join(home, '.local/bin/claude')] + [os.path.join(d, 'claude') for d in path.split(':') if d]
+        return next((c for c in cands + ['/opt/homebrew/bin/claude', '/usr/local/bin/claude'] if isfile(c)), None)
+
+    def text_of(p):
+        try:
+            with open(p, encoding='utf-8', errors='replace') as f:
+                return f.read()
+        except OSError:
+            return None
+    read = read or text_of
+    cands = [home + r'\.local\bin\claude.exe']
+    for d in (x.strip().rstrip('\\/') for x in path.split(';')):
+        if d:
+            cands += [d + r'\claude.exe', d + r'\claude.cmd']
+    cands += [home + r'\AppData\Local\Microsoft\WinGet\Links\claude.exe', home + r'\AppData\Roaming\npm\claude.cmd']
+    for c in cands:
+        if not isfile(c):
+            continue
+        text = read(c) if c.lower().endswith('.cmd') else None
+        if text is None:
+            return c
+        base = c.rsplit('\\', 1)[0]
+        targets = [base + '\\' + t.lstrip('\\/') for t in re.findall(r'"%(?:dp0%|~dp0)([^"]*)"', text)
+                   if t.strip('\\/') and not t.lower().endswith('node.exe')]
+        if not targets:
+            return c
+        if all(isfile(t) for t in targets):
+            return targets[0] if len(targets) == 1 and targets[0].lower().endswith('.exe') else c
+    return None
+
+
 def claude_bin():
-    local = os.path.expanduser('~/.local/bin/claude')
-    return local if os.path.exists(local) else (shutil.which('claude') or 'claude')
+    return find_claude() or 'claude'
 
 
 def agent(sid):

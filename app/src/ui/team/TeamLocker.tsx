@@ -9,7 +9,7 @@
 // room 을 주면 '대화 파일 보기' — 그 DM·팀챗에 붙인 파일만(팀 보관함엔 안 섞는다, 10-28 사용자 "디엠은 그 사용자랑만"). 폴더 칩은 놓으면 복사하는 자리로만
 import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
-import { allFolders, folderFiles, crumbsOf, dirId, dirOfId, kidFolders, moveTargets, parentOf, renamedPath, dropPlan, lockerUps, extOf, thumbKind, TEAM_LOCKER_DROP, TEAM_LOCKER_MOVE, TEAM_LOCKER_OUT, fmtBytes, inPlace, inRoom, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerSort, type LockerUpload, type LockerView } from '../../domain/teamLocker';
+import { allFolders, canPurge, othersOf, folderFiles, crumbsOf, dirId, dirOfId, kidFolders, moveTargets, parentOf, renamedPath, dropPlan, lockerUps, extOf, thumbKind, TEAM_LOCKER_DROP, TEAM_LOCKER_MOVE, TEAM_LOCKER_OUT, fmtBytes, inPlace, inRoom, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerSort, type LockerUpload, type LockerView } from '../../domain/teamLocker';
 import { failText, opKey, withPending, type LockerOp } from '../../domain/teamLockerPending';
 import { needFetch, placeMemo, teamViewMemo } from '../../domain/teamViewMemo';
 import { opensOnClick } from '../../domain/ctxMenu';
@@ -67,7 +67,12 @@ function Thumb({ team, item }: { team: string; item: LockerItem }) {
   return <span className="tlk-thumb"><span className="tmx-ext">{extOf(item.name) || tr('파일', 'file')}</span></span>;
 }
 
-export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tail, icon, room }: {
+/** 남의 파일 하나 확인 글 — 누가 올렸나와 무엇이 바뀌나 */
+const otherOne = (i: LockerItem, what: 'trash' | 'rename') => what === 'trash'
+  ? tr(`'${i.name}' 파일은 ${i.by || '다른 사람'}님이 올렸어요. 휴지통으로 옮기면 팀 모두의 보관함에서 사라져요. 30일 안에는 되살릴 수 있어요.`, `'${i.name}' was uploaded by ${i.by || 'someone else'}. Moving it to the trash removes it for everyone on the team. You can restore it within 30 days.`)
+  : tr(`'${i.name}' 파일은 ${i.by || '다른 사람'}님이 올렸어요. 이름을 바꾸면 팀 모두에게 바뀐 이름으로 보여요.`, `'${i.name}' was uploaded by ${i.by || 'someone else'}. Renaming it changes the name for everyone on the team.`);
+
+export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tail, icon, room, canFiles = false }: {
   teamId: string;
   team: string;
   people: number;
@@ -81,6 +86,8 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
   icon?: string;
   /** 대화 파일 보기 — 그 방(DM·팀챗) 파일만. name = 머리 이름(상대·팀챗 이름) */
   room?: { id: string; name: string };
+  /** 남의 파일 영구 지우기 권한(팀장·'파일 정리') — 없으면 남의 파일엔 영구 지우기를 안 보인다 */
+  canFiles?: boolean;
 }) {
   const [v, setV] = useState<LockerView | null>(null);
   const [err, setErr] = useState('');
@@ -100,6 +107,8 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
   const [rmFolder, setRmFolder] = useState<{ keys: string[]; n: number } | null>(null);
   const [naming, setNaming] = useState<{ id: string; what: 'name' | 'folder'; value: string } | null>(null);
   const [purge, setPurge] = useState<LockerItem | null>(null);
+  /** 남이 올린 파일을 휴지통·이름 바꾸기 전에 한 번(11-01 QA M3 — 서버는 아무 팀원에게나 허용한다) */
+  const [askOther, setAskOther] = useState<{ body: string; ok: string; go: () => void } | null>(null);
   const [note, setNote] = useState('');
   /** 누른 뒤 풀어 여는 중인 파일 id — 그 줄에 '여는 중'(10-26 사용자 "누르면 바로 안 열린다") */
   const [opening, setOpening] = useState<Set<string>>(() => new Set());
@@ -280,6 +289,14 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
   const trashMany = (ids: string[]) => { const went = ids.filter((id) => verb(id, 'trash')); if (went.length) setUndone(went); pick.end(); };
   /** 고른 것 휴지통 — 파일은 바로(되돌리기 줄), 안에 파일이 든 폴더는 한 번 묻는다(빈 폴더는 바로) */
   const trashPicked = () => {
+    const others = othersOf(picked);
+    if (!others.length) { trashPickedNow(); return; }
+    setAskOther({
+      body: others.length === 1 && picked.length === 1 ? otherOne(others[0]!, 'trash') : tr(`고른 파일 중 ${others.length}개는 다른 사람이 올렸어요(${[...new Set(others.map((i) => i.by))].join(', ')}). 휴지통으로 옮기면 팀 모두의 보관함에서 사라져요. 30일 안에는 되살릴 수 있어요.`, `${others.length} of the selected files were uploaded by someone else (${[...new Set(others.map((i) => i.by))].join(', ')}). Moving them to the trash removes them for everyone on the team. You can restore them within 30 days.`),
+      ok: tr('휴지통으로 옮기기', 'Move to trash'), go: trashPickedNow,
+    });
+  };
+  const trashPickedNow = () => {
     const full = pickedDirs.filter((f) => f.n > 0);
     pickedDirs.filter((f) => f.n === 0).forEach((f) => removeFolder(f.key));
     if (full.length) setRmFolder({ keys: full.map((f) => f.key), n: full.reduce((a, f) => a + f.n, 0) });
@@ -363,7 +380,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
   const menuFor = (i: LockerItem): MenuItem[] => trash
     ? [
       { label: tr('되살리기', 'Restore'), run: () => verb(i.id, 'restore') },
-      { label: tr('영구 지우기…', 'Delete forever…'), danger: true, sep: true, run: () => setPurge(i) },
+      ...(canPurge(i, canFiles) ? [{ label: tr('영구 지우기…', 'Delete forever…'), danger: true, sep: true, run: () => setPurge(i) }] : []),
     ]
     : [
       ...(i.why ? [] : [
@@ -372,7 +389,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
         { label: tr('다른 앱으로 열기', 'Open with default app'), run: () => open(i, true) },
         giveMenu(roster, (o) => give([i.id], o)),
         { label: tr('이 기기에 저장', 'Save to this Mac'), run: () => save(i) },
-        { label: tr('이름 바꾸기', 'Rename'), sep: true, run: () => setNaming({ id: i.id, what: 'name', value: i.name }) },
+        { label: tr('이름 바꾸기', 'Rename'), sep: true, run: () => { const go = () => setNaming({ id: i.id, what: 'name', value: i.name }); if (i.mine) go(); else setAskOther({ body: otherOne(i, 'rename'), ok: tr('이름 바꾸기', 'Rename'), go }); } },
         ...(i.room ? (all.length ? [{
           label: tr('팀 보관함 폴더로 복사', 'Copy to a team folder'),
           sub: () => copyItems([i.id]),
@@ -384,7 +401,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
           ],
         }]),
       ]),
-      { label: tr('휴지통으로', 'Move to trash'), sep: true, danger: true, run: () => verb(i.id, 'trash') },
+      { label: tr('휴지통으로', 'Move to trash'), sep: true, danger: true, run: () => { const go = () => { verb(i.id, 'trash'); }; if (i.mine) go(); else setAskOther({ body: otherOne(i, 'trash'), ok: tr('휴지통으로 옮기기', 'Move to trash'), go }); } },
     ];
   /** 여럿 고른 채 — 옮기기·휴지통(휴지통 안이면 되살리기) */
   const batchItems = (): MenuItem[] => {
@@ -606,6 +623,10 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
         <Confirm danger title={tr('폴더 지우기', 'Delete folder')} body={tr(`${rmFolder.keys.map((k) => `'${k.split('/').pop()}'`).join(', ')} 안 파일 ${rmFolder.n}개(안쪽 폴더까지)를 휴지통으로 옮기고 폴더를 지워요. 30일 안에 휴지통에서 되살릴 수 있어요.`, `Moves ${rmFolder.n} file(s) inside (including subfolders) to the trash and removes the folder. You can restore them from the trash within 30 days.`)}
           ok={tr('휴지통으로 옮기기', 'Move to trash')} onCancel={() => setRmFolder(null)}
           onOk={() => { const f = rmFolder; setRmFolder(null); f.keys.forEach(removeFolder); pick.end(); }} />
+      )}
+      {askOther && (
+        <Confirm danger title={tr('다른 사람이 올린 파일이에요', 'Uploaded by someone else')} body={askOther.body}
+          ok={askOther.ok} onCancel={() => setAskOther(null)} onOk={() => { const a = askOther; setAskOther(null); a.go(); }} />
       )}
       {purge && (
         <Confirm danger title={tr('영구 지우기', 'Delete forever')} body={tr(`'${purge.name || '잠긴 파일'}' 을(를) 팀 모두에게서 지워요. 되돌릴 수 없어요.`, `Deletes '${purge.name || 'locked file'}' for the whole team. This can't be undone.`)}

@@ -450,6 +450,28 @@ fn give_moves_home_to_project_and_leaves_link() {
     assert!(!to.exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn 원본을_못_치우면_복사본을_남기지_않는다() {
+    // 윈도우는 엑셀·한글로 연 파일을 옮길 수 없다(공유 잠금) — 복사 뒤 치우기가 실패해 프로젝트에 복사본만 남아 '두 벌'이 됐다(2026-11-01 win-text M7).
+    // 맥에선 보관함 폴더를 읽기 전용으로 만들어 같은 실패(치우기 rename)를 낸다
+    use std::os::unix::fs::PermissionsExt;
+    let w = W::new("give-locked");
+    let d = owner(&w);
+    let proj = w.home.join("Desktop/dev/shop-video");
+    std::fs::create_dir_all(&proj).unwrap();
+    put(&w.home.join("Downloads/견적.xlsx"), "표");
+    let a = add(&w.ctx(), &d, "", &w.home.join("Downloads/견적.xlsx")).unwrap();
+    let dir = a.path.parent().unwrap().to_path_buf();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let r = give(&w.ctx(), &a.path, &proj);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let e = r.unwrap_err();
+    assert!(e.contains("열려") || e.contains("open"), "{e}");
+    assert!(!proj.join("assets/보관함/견적.xlsx").exists(), "복사본을 지운다");
+    assert_eq!(std::fs::read_to_string(&a.path).unwrap(), "표", "원본 그대로");
+}
+
 #[test]
 fn 이사_중_치워_둔_원본은_바로가기_대신_복사가_지우지_않는다() {
     // 윈도우(바로가기 권한 없음)에서 link 는 copy_verified(to, file) 로 떨어진다 — 그 조각 이름이 치워 둔 원본 이름과 같아서

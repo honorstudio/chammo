@@ -221,7 +221,7 @@ describe('상태 말 하나로 — 메뉴·대시보드·사무실이 같은 판
     expect(sessionStatus({ state: 'idle' })).toBe('unknown');
   });
   it('말은 한 표 — 같은 상태면 어디서나 같은 말', () => {
-    expect(['working', 'asks', 'blocked', 'done', 'idle', 'stale'].map((x) => statusWord(x as never))).toEqual(['일하는 중', '물어봄', '기다림', '답함', '쉼', '잠듦']);
+    expect(['working', 'asks', 'blocked', 'done', 'idle', 'stale'].map((x) => statusWord(x as never))).toEqual(['일하는 중', '물어봄', '확인 대기', '답함', '쉼', '잠듦']);
   });
   it('표시 색 갈래 — 일함(도는 고리)·물음(노란 점)·나머지(없음)', () => {
     expect(statusTone('working')).toBe('run');

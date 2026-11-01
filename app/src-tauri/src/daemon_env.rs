@@ -8,8 +8,9 @@ use std::path::Path;
 
 const MARK: &str = "app-alive.json";
 
-/// 사용자 설정 글에 env.CHAMMO_HOME 을 넣은 새 글 — 이미 같으면 None. 깨졌거나 객체가 아니면 Err(사람 설정을 갈아 쓰지 않는다)
-pub fn pinned(text: &str, data: &str) -> Result<Option<String>, String> {
+/// 사용자 설정 글에 env.CHAMMO_HOME 을 넣은 새 글 — 이미 같으면 None. 깨졌거나 객체가 아니면 Err(사람 설정을 갈아 쓰지 않는다).
+/// win = 윈도우면 env.PYTHONUTF8=1 도(없을 때만) — 세션의 파이썬 도구(scripts/direct·statusline)가 cp949 로 읽고 쓰다 죽었다(2026-11-01 win-text H1)
+pub fn pinned(text: &str, data: &str, win: bool) -> Result<Option<String>, String> {
     let mut v: serde_json::Value = if text.trim().is_empty() { serde_json::json!({}) } else { serde_json::from_str(text).map_err(|e| format!("settings.json is not valid JSON: {e}"))? };
     let obj = v.as_object_mut().ok_or("settings.json is not a JSON object")?;
     let want = serde_json::Value::String(data.replace('\\', "/"));
@@ -17,10 +18,19 @@ pub fn pinned(text: &str, data: &str) -> Result<Option<String>, String> {
     if !env.is_object() {
         return Err("settings.json env is not an object".into());
     }
-    if env.get("CHAMMO_HOME") == Some(&want) {
+    let env = env.as_object_mut().expect("방금 객체인 걸 봤다");
+    let mut changed = false;
+    if env.get("CHAMMO_HOME") != Some(&want) {
+        env.insert("CHAMMO_HOME".into(), want);
+        changed = true;
+    }
+    if win && !env.contains_key("PYTHONUTF8") {
+        env.insert("PYTHONUTF8".into(), serde_json::Value::String("1".into()));
+        changed = true;
+    }
+    if !changed {
         return Ok(None);
     }
-    env.as_object_mut().expect("방금 객체인 걸 봤다").insert("CHAMMO_HOME".into(), want);
     Ok(Some(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())? + "\n"))
 }
 
@@ -37,9 +47,9 @@ pub fn pin_user_settings() {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return crate::claude::log_out("daemon-env", &format!("pin skipped: {e}")),
     };
-    match pinned(&text, &data.to_string_lossy()) {
+    match pinned(&text, &data.to_string_lossy(), cfg!(windows)) {
         Ok(Some(t)) => match crate::accounts::write_atomic(&p, &t) {
-            Ok(()) => crate::claude::log_out("daemon-env", "pinned CHAMMO_HOME in user settings"),
+            Ok(()) => crate::claude::log_out("daemon-env", "pinned CHAMMO_HOME (and PYTHONUTF8 on windows) in user settings"),
             Err(e) => crate::claude::log_out("daemon-env", &format!("pin failed: {e:?}")),
         },
         Ok(None) => {}
@@ -131,7 +141,7 @@ mod tests {
 
     #[test]
     fn 사용자_설정에_데이터_폴더를_적고_다른_칸은_그대로() {
-        let t = pinned(r#"{"model":"opus","env":{"A":"1"},"z":true}"#, "/Users/me/.chammo").unwrap().unwrap();
+        let t = pinned(r#"{"model":"opus","env":{"A":"1"},"z":true}"#, "/Users/me/.chammo", false).unwrap().unwrap();
         let v: serde_json::Value = serde_json::from_str(&t).unwrap();
         assert_eq!(v["env"]["CHAMMO_HOME"], "/Users/me/.chammo");
         assert_eq!(v["env"]["A"], "1");
@@ -141,17 +151,28 @@ mod tests {
 
     #[test]
     fn 같으면_안_쓰고_없거나_다르면_쓴다() {
-        assert_eq!(pinned(r#"{"env":{"CHAMMO_HOME":"/d"}}"#, "/d").unwrap(), None);
-        assert!(pinned(r#"{"env":{"CHAMMO_HOME":"/Users/me/.chammo-soak"}}"#, "/d").unwrap().unwrap().contains("\"/d\""), "시험 값이 박혀 있으면 고친다");
-        assert!(pinned("", "/d").unwrap().unwrap().contains("\"CHAMMO_HOME\": \"/d\""), "파일 없음 → 새로");
-        assert!(pinned("{}", r"C:\Users\me\.chammo").unwrap().unwrap().contains("C:/Users/me/.chammo"), "윈도우는 / 로");
+        assert_eq!(pinned(r#"{"env":{"CHAMMO_HOME":"/d"}}"#, "/d", false).unwrap(), None);
+        assert!(pinned(r#"{"env":{"CHAMMO_HOME":"/Users/me/.chammo-soak"}}"#, "/d", false).unwrap().unwrap().contains("\"/d\""), "시험 값이 박혀 있으면 고친다");
+        assert!(pinned("", "/d", false).unwrap().unwrap().contains("\"CHAMMO_HOME\": \"/d\""), "파일 없음 → 새로");
+        assert!(pinned("{}", r"C:\Users\me\.chammo", true).unwrap().unwrap().contains("C:/Users/me/.chammo"), "윈도우는 / 로");
+    }
+
+    #[test]
+    fn 윈도우는_파이썬_utf8_도_고정하고_사람이_정한_값은_둔다() {
+        // 세션은 데몬 env 로 떠서 PYTHONUTF8 이 없으면 scripts/direct·statusline 이 cp949 로 읽고 쓰다 죽었다(2026-11-01 win-text H1)
+        let t = pinned(r#"{"env":{"CHAMMO_HOME":"C:/d"}}"#, "C:/d", true).unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_str(&t).unwrap();
+        assert_eq!(v["env"]["PYTHONUTF8"], "1");
+        assert_eq!(pinned(r#"{"env":{"CHAMMO_HOME":"C:/d","PYTHONUTF8":"1"}}"#, "C:/d", true).unwrap(), None, "다 맞으면 안 쓴다");
+        assert_eq!(pinned(r#"{"env":{"CHAMMO_HOME":"C:/d","PYTHONUTF8":"0"}}"#, "C:/d", true).unwrap(), None, "사람이 끈 값은 안 바꾼다");
+        assert!(!pinned("{}", "/d", false).unwrap().unwrap().contains("PYTHONUTF8"), "맥은 원래 UTF-8 — 안 적는다");
     }
 
     #[test]
     fn 깨진_설정은_안_건드린다() {
-        assert!(pinned("{ \"model\": ", "/d").is_err());
-        assert!(pinned("[1]", "/d").is_err());
-        assert!(pinned(r#"{"env":"x"}"#, "/d").is_err());
+        assert!(pinned("{ \"model\": ", "/d", false).is_err());
+        assert!(pinned("[1]", "/d", false).is_err());
+        assert!(pinned(r#"{"env":"x"}"#, "/d", false).is_err());
     }
 
     #[test]

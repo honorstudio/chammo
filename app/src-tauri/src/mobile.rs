@@ -1145,7 +1145,7 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     }
     fn sessions_all(&self) -> Result<String, String> {
         let out = crate::platform::run_capped(crate::platform::command(crate::claude::claude_bin()).args(["agents", "--json", "--all"]), Duration::from_secs(10)).map_err(|e| e.to_string())?;
-        if out.status.success() { Ok(String::from_utf8_lossy(&out.stdout).into_owned()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_string()) }
+        if out.status.success() { Ok(String::from_utf8_lossy(&out.stdout).into_owned()) } else { Err(crate::platform::out_text(&out.stderr).trim().to_string()) }
     }
     fn resume(&self, cwd: &str, session_id: &str, id: &str) -> Result<String, String> {
         crate::claude::resume_blocking(cwd, session_id, (!id.is_empty()).then_some(id))
@@ -1507,6 +1507,34 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
             _ => return Err("그림·PDF 만 썸네일".into()),
         };
         out.ok_or_else(|| "썸네일을 못 만들었어".into())
+    }
+    fn team_file_image(&self, team: &str, id: &str, view: bool) -> Result<crate::mobile_http::TeamImage, String> {
+        // 썸네일과 같은 peek — 풀린 파일은 데이터 폴더 안(600)이라 sips 가 바로 읽는다. 원본은 /api/file 과 같은 상한(MAX_BIN_FILE)
+        use crate::mobile_files::{self as mf, Kind};
+        let p = crate::team_locker_app::peek(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team, id)?;
+        let kind = mf::kind_of(&p);
+        let ct = match kind {
+            Kind::Image(ct) => ct,
+            Kind::Heic => "image/heic",
+            _ => return Err("그림만 크게 본다".into()),
+        };
+        let bytes = std::fs::read(&p).map_err(|e| e.to_string())?;
+        let dims = mf::image_dims(&bytes);
+        // 보기용은 /api/file view=1 과 같은 view_plan, HEIC 는 폰이 못 그리니 원본도 JPEG 로
+        let shrink = if view { mf::view_plan(&kind, bytes.len() as u64, dims).map(Some) } else { None }.or((kind == Kind::Heic).then_some(None));
+        if let Some(max) = shrink {
+            if let Some(b) = self.jpeg(&p, max) {
+                return Ok(crate::mobile_http::TeamImage { bytes: b, ctype: "image/jpeg", dims });
+            }
+            if kind == Kind::Heic {
+                return Err("그림을 못 바꿨어".into());
+            }
+            // 바꾸기가 없다(윈도우엔 sips 가 없다) — 폰이 그릴 수 있는 그림이면 원본 그대로(상한까지)
+        }
+        if bytes.len() as u64 > mf::MAX_BIN_FILE {
+            return Err("원본이 너무 커".into());
+        }
+        Ok(crate::mobile_http::TeamImage { bytes, ctype: ct, dims })
     }
     fn team_post(&self, team: &str, title: &str, body: &str, pin: bool) -> Result<serde_json::Value, String> {
         let (dir, kc, http) = (crate::config::data_dir(), crate::team_relay_keys::store(), crate::team_relay::Curl);

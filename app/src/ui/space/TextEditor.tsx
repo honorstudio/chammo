@@ -85,12 +85,15 @@ export default function TextEditor({ text, path }: { text: string; path: string 
     };
     s.onOutside = () => void tick();
     s.onGone = () => { gone.current = true; setState('gone'); };
+    // 못 씀(다른 앱이 쥠·읽기 전용) — 없어진 것과 같은 길로 다음 감시(1.5초)에 다시 저장한다, 띠만 다르게
+    s.onFail = () => { gone.current = true; setState((x) => (x === 'conflict' ? x : 'failed')); };
+    s.onSaved = () => setState((x) => (x === 'failed' ? 'ok' : x));
     tickRef.current = () => void tick();
     const t = window.setInterval(() => void tick(), EVERY);
     const focus = () => void tick();
     window.addEventListener('focus', focus);
     void tick();
-    return () => { s.onOutside = undefined; s.onGone = undefined; window.clearInterval(t); window.removeEventListener('focus', focus); };
+    return () => { s.onOutside = undefined; s.onGone = undefined; s.onFail = undefined; s.onSaved = undefined; window.clearInterval(t); window.removeEventListener('focus', focus); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const keepMine = async () => {
@@ -131,6 +134,11 @@ export default function TextEditor({ text, path }: { text: string; path: string 
       {state === 'gone' && (
         <div className="cv-doc-sync" role="alert">
           <span>{tr('파일이 지워졌거나 이름이 바뀌었어요. 여기서 고친 내용은 저장되지 않아요(마지막 내용은 기록에 남아요).', 'This file was deleted or renamed. Edits here are not saved (the last version is kept in history).')}</span>
+        </div>
+      )}
+      {state === 'failed' && (
+        <div className="cv-doc-sync" role="alert">
+          <span>{tr('이 파일을 저장하지 못했어요. 다른 프로그램이 파일을 쓰고 있거나 읽기 전용일 수 있으니, 그 프로그램을 닫아 주세요. 고친 내용은 그대로 있고 잠시 뒤 다시 저장해 볼게요.', "This file couldn't be saved. Another program may be using it, or it may be read-only, so please close that program. Your changes are still here, and we'll try saving again shortly.")}</span>
         </div>
       )}
       {state === 'unreadable' && (

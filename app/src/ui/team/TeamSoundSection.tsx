@@ -20,7 +20,8 @@ export function TeamSoundSection({ title }: { title: string }) {
     <section className="su-sec">
       <div className="su-sec-head"><h2>{title}</h2></div>
       <p className="su-hint">{tr('팀 메신저에 새 말이 오면 알림을 띄워요. 지금 보고 있는 대화엔 안 울려요.', 'Shows a notification for new team messages — not for the chat you are looking at.')}</p>
-      <div className="cfg-rows">
+      {/* 소리를 못 내는 OS(윈도우)는 Rust 가 빈 목록 — 줄을 숨긴다(11-01 QA M9) */}
+      {a.sounds.length > 0 && <div className="cfg-rows">
         <label className="cfg-row">
           <span className="cfg-rt"><b>{tr('알림음', 'Sound')}</b></span>
           <input type="checkbox" role="switch" className="cfg-sw" checked={s.sound} onChange={(e) => save(e.target.checked, s.name)} />
@@ -34,7 +35,7 @@ export function TeamSoundSection({ title }: { title: string }) {
             <IconButton tone="line" label={tr('미리 듣기', 'Preview')} disabled={!s.sound} onClick={() => void teamSoundTry(s.name)}><IconPlay /></IconButton>
           </span>
         </div>
-      </div>
+      </div>}
       {err && <p className="su-hint" role="alert">{err}</p>}
     </section>
   );

@@ -1,6 +1,6 @@
 [package]
 name = "honor-orchestrator"
-version = "0.4.6"
+version = "0.4.7"
 edition = "2021"
 license = "AGPL-3.0-only"
 
@@ -12,7 +12,7 @@ members = [".", "vendor/harnitor-core"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["devtools"] }
+tauri = { version = "2", features = ["devtools", "tray-icon"] }
 portable-pty = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
@@ -64,6 +64,8 @@ tauri-plugin-deep-link = "=2.4.10"
 # 윈도우는 chammo:// 를 누르면 새 프로세스가 뜬다 — 떠 있는 앱으로 넘기고 끈다(ADR 0015, deep-link 2.4.10 과 같은 줄)
 tauri-plugin-single-instance = "=2.4.5"
 tauri-winrt-notification = "0.7"
+# 토스트를 직접 만든다 — 누르면 chammo://notify 를 열어(protocol) 알림 센터에서 눌러도 숨은 앱이 뜨게. 위 크레이트가 쓰는 같은 판(락에 있는 0.61)에 기능만 더한다
+windows = { version = "0.61", features = ["UI_Notifications", "Data_Xml_Dom"] }
 # 부하 보기 — 윈도우엔 ps·sysctl 이 없다. 맥 ps 모양 글로 만들어 넘긴다(load.rs)
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 # 다른 기기 참모 짝 열쇠 — 자격 증명 관리자(wincred.rs) · 팀 초대 클립보드 읽기(team_ui.rs). 이미 락에 있던 판(tokio·mio 가 쓰는 0.61)에 기능만 더한다

@@ -32,13 +32,11 @@ describe('⌘` 홈 토글', () => {
     expect(view).toMatch(/if \(c === 'dashToggle'\) \{ setPick\(dashToggle\(pick, orch \? ownPick\(screens\.current\.get\(orch\.id\)\?\.pick, orch\.id, homeOf\(orch\)\) : ''\), 'home'\); return; \}/);
   });
   it('안내: 둘러보기 단축키 줄·미리보기 가득 단추·hq-app 스킬(한·영)', () => {
-    expect(tour).toMatch(/\[keyLabel\(tr\('⌘₩', '⌘`'\), IS_WIN\), tr\('홈 대시보드 \/ 보던 화면', 'Home dashboard \/ back'\)\]/);
-    expect(tour).toMatch(/\[keyLabel\(tr\('⌘⇧₩', '⌘⇧`'\), IS_WIN\), tr\('보고 있는 창 크게 \/ 되돌리기', 'Maximize \/ restore the focused pane'\)\]/);
-    expect(tour).toMatch(/⌘⇧₩ 로 크게 봤다가 되돌려요/);
-    expect(tour).toMatch(/⌘⇧` maximizes and restores a pane/);
+    // 2026-11-01 ux-start M5 — 둘러보기는 키 셋(⌘, ⌘/ ⌘1~⌘9)만, 키 표는 README·hq-app 스킬에
+    expect(tour).toMatch(/⌘\//);
     expect(preview).toMatch(/'원래 크기 \(⌘⇧`\)', 'Restore \(⌘⇧`\)'/);
     expect(preview).not.toMatch(/\(⌘`\)/);
-    expect(skill).toMatch(/⌘₩ 홈 대시보드 켜기\/보던 화면 · ⌘⇧₩ 보고 있는 창 크게\/되돌리기/);
+    expect(skill).toMatch(/⌘₩ 홈 대시보드 켜기\/보던 화면 · ⌘⇧₩ 보고 있는 창 크게\/되돌리기/); // 11-01 탭 되돌림 — 다시 홈
     expect(skill).toMatch(/⌘` home dashboard \/ back · ⌘⇧` maximize\/restore/);
   });
 });

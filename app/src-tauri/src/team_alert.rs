@@ -112,6 +112,14 @@ pub fn poke_state() {
 }
 
 static STATE_HOOK: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
+static GONE_HOOK: std::sync::OnceLock<Box<dyn Fn(&[String]) + Send + Sync>> = std::sync::OnceLock::new();
+
+/// 내 팀이 서버에서 없어졌다(빠짐·팀 지워짐, 계정 동기화가 찾음) — 한 번 알림. 시험엔 고리가 없어 아무것도 안 한다(11-01 QA M5)
+pub fn on_gone(names: &[String]) {
+    if let Some(f) = GONE_HOOK.get() {
+        f(names);
+    }
+}
 
 /// 앱이 뜰 때 한 번 — 창에 새 말을 알리고(다시 읽게), 알릴 말이면 알림·소리
 pub fn init<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
@@ -123,6 +131,12 @@ pub fn init<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 let _ = w.eval("window.__teamMsg && window.__teamMsg({ room: '', seq: 0, note: 'state' })");
             }
         }
+    }));
+    let _ = GONE_HOOK.set(Box::new(|names: &[String]| {
+        for n in names {
+            crate::claude::notify(crate::i18n::tr("팀에서 빠졌어요", "Removed from a team").into(), gone_body(n), None);
+        }
+        poke_state();
     }));
     let app = app.clone();
     let _ = HOOK.set(Box::new(move |rec: &Record| {
@@ -163,6 +177,16 @@ fn fire(a: &Alert, rec: &Record) {
     }
 }
 
+/// 팀에서 빠졌다는 알림 본문
+pub(crate) fn gone_body(team: &str) -> String {
+    if crate::i18n::is_en() { format!("You're no longer in {team}. An owner removed you or the team was deleted.") } else { format!("'{team}' 팀에서 빠졌어요. 팀장이 내보냈거나 팀이 지워졌어요.") }
+}
+
+/// 이 OS 에서 낼 수 있는 소리 — 맥만(afplay). 비면 설정 화면이 알림음 줄을 숨긴다(11-01 QA M9)
+pub fn sounds_here() -> &'static [&'static str] {
+    if cfg!(target_os = "macos") { SOUNDS } else { &[] }
+}
+
 /// 소리 한 번 — 맥은 afplay(목록 안 이름만), 다른 OS 는 아직 없다(roadmap)
 pub fn play(name: &str) {
     if !SOUNDS.contains(&name) {
@@ -187,7 +211,7 @@ pub fn team_alert_get(window: tauri::WebviewWindow) -> Result<serde_json::Value,
     if !crate::team_ui::ui_window(window.label()) {
         return Err("messenger windows only".into());
     }
-    Ok(serde_json::json!({ "settings": load(crate::config::data_dir()), "sounds": SOUNDS }))
+    Ok(serde_json::json!({ "settings": load(crate::config::data_dir()), "sounds": sounds_here() }))
 }
 
 /// 설정 > 알림음 — 메인 창만

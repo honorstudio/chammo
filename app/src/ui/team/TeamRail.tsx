@@ -6,7 +6,7 @@ import { teamMark } from '../../domain/teamChat';
 import { TeamMarkIcon } from './TeamFaces';
 import './team.css';
 
-export function TeamRail({ icon, team, color, chats, on, unread, wide, onTeam, onMenu }: {
+export function TeamRail({ icon, team, color, chats, on, unread, wide, onTeam, onMenu, others = [], onPickTeam }: {
   /** 팀 아이콘 그림(data URL, 팀 설정에서 팀장이 바꾼다) */
   icon?: string;
   team: string;
@@ -21,6 +21,9 @@ export function TeamRail({ icon, team, color, chats, on, unread, wide, onTeam, o
   onTeam: () => void;
   /** 팀 칸 오른쪽 누르기 — 팀 초대·팀 설정 메뉴(웹뷰 기본 메뉴 대신, 10-24) */
   onMenu?: (e: React.MouseEvent) => void;
+  /** 내 다른 팀 — 칸마다 팀 표만(이름은 aria-label·호버 카드), 안 읽은 수는 지금 팀과 같은 모양(11-01 QA: 우클릭 메뉴로만 갔다) */
+  others?: { id: string; name: string; unread: number }[];
+  onPickTeam?: (id: string) => void;
 }) {
   const sub = unread ? tr(`안 읽은 말 ${unread}`, `${unread} unread`) : tr(`대화 ${chats}`, `${chats} chats`);
   return (
@@ -32,6 +35,13 @@ export function TeamRail({ icon, team, color, chats, on, unread, wide, onTeam, o
         <span className="lk-av-pic"><TeamMarkIcon name={team} size={30} badge={unread} img={icon} /></span>
         {wide && <span className="lk-av-tx"><b>{team}</b><span>{sub}</span></span>}
       </button>
+      {others.map((t) => (
+        <button key={t.id} className="lk-av tmx tmx-rail-team tmx-rail-other" onClick={() => onPickTeam?.(t.id)}
+          aria-label={t.unread ? tr(`${t.name} — 안 읽은 말 ${t.unread}`, `${t.name} — ${t.unread} unread`) : t.name} data-tip={t.name} data-tip-sub={t.unread ? tr(`안 읽은 말 ${t.unread}`, `${t.unread} unread`) : undefined}
+          style={{ '--rail-on': teamMark(t.name).color } as React.CSSProperties}>
+          <span className="lk-av-pic"><TeamMarkIcon name={t.name} size={30} badge={t.unread} /></span>
+        </button>
+      ))}
     </>
   );
 }

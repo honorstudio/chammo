@@ -2,7 +2,8 @@
 // ⌘클릭 = 넣고 빼기, ⇧클릭 = 범위, 빈 곳 끌기 = 네모(⌘ = 넣고 빼기, 끝에 닿으면 저절로 스크롤), ⌘A = 보이는 것 전부(ui/selectAll), 빈 곳 클릭 = 풀기,
 // 우클릭 = 고른 묶음 밖이면 그 하나. 판단은 domain/lockerSelect, 여기는 사건·그리기만. 열쇠·순서는 화면이 준다(보이는 순서)
 import { useEffect, useRef, useState } from 'react';
-import { bandBox, bandHits, edgeScroll, NO_SEL, pickAll, pickBand, pickClick, pickKeep, pickOne, type Sel } from '../../domain/lockerSelect';
+import { bandBox, bandHits, bandStarts, edgeScroll, NO_SEL, pickAll, pickBand, pickClick, pickKeep, pickMods, pickOne, type Sel } from '../../domain/lockerSelect';
+import { IS_WIN } from '../../domain/reader';
 import { areaSelectAll } from '../selectAll';
 import { lostRelease } from './dragEnd';
 
@@ -28,7 +29,7 @@ export function usePick({ box, order, reset, skip, touch }: { box: React.RefObje
   });
   /** 카드·줄 누름 — ⌘·⇧ 누름을 고르기로 받았으면 true(그러면 열지 않는다). 그냥 누름 = 열기(고른 건 풀린다) */
   const press = (x: React.MouseEvent, key: string) => {
-    const n = pickClick(sel, order, key, { meta: x.metaKey, shift: x.shiftKey });
+    const n = pickClick(sel, order, key, pickMods(x, IS_WIN)); // 넣고 빼기 = 맥 ⌘·윈도우 Ctrl(ux-daily M21)
     if (!n) { if (sel.keys.length) end(); return false; }
     x.preventDefault(); setSel(n); touchRef.current?.();
     box.current?.focus({ preventScroll: true }); // 웹킷은 단추를 눌러도 포커스를 안 옮긴다 — 채팅 입력칸에 남으면 Backspace·Esc 가 여기 안 온다
@@ -42,9 +43,9 @@ export function usePick({ box, order, reset, skip, touch }: { box: React.RefObje
   // 빈 곳에서 끌기 = 네모 선택(⌘ = 넣고 빼기). 카드·줄·단추 위에서 시작하면 그쪽 끌기·누름. 안 움직이고 놓으면 = 빈 곳 클릭(풀기)
   const bandStart = (e: React.PointerEvent) => {
     const wrap = box.current;
-    if (!wrap || e.button !== 0 || e.ctrlKey || (e.target as HTMLElement).closest(skip)) return;
+    if (!wrap || e.button !== 0 || !bandStarts(e, IS_WIN) || (e.target as HTMLElement).closest(skip)) return;
     if (e.clientX > wrap.getBoundingClientRect().right - (wrap.offsetWidth - wrap.clientWidth)) return; // 스크롤 막대
-    const toggle = e.metaKey;
+    const toggle = pickMods(e, IS_WIN).meta;
     const base = toggle ? sel : NO_SEL;
     const at = (cx: number, cy: number) => { const r = wrap.getBoundingClientRect(); return { x: cx - r.left + wrap.scrollLeft, y: cy - r.top + wrap.scrollTop }; };
     const p0 = at(e.clientX, e.clientY);

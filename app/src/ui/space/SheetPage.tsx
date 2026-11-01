@@ -3,9 +3,9 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { docTitle } from '../../domain/spaceTree';
 import type { SheetBook } from '../../domain/sheetBook';
 import { craftErr } from '../../domain/craftDrawer';
-import type { LogEntry } from '../../domain/sheetLog';
+import { saveErrKind, type LogEntry } from '../../domain/sheetLog';
 import { tr } from '../../i18n';
-import { IconChevron, IconPin } from '../Icons';
+import { IconChevron, IconPin, IconRefresh } from '../Icons';
 import { SendToOrch, type OrchTo } from './SendToOrch';
 import { IconButton } from '../kit/IconButton';
 import type { SheetControl, SheetStatus, SheetView, SheetWho } from './SheetGrid';
@@ -59,7 +59,9 @@ export function SheetPage({ path, owner, where, onBack, tail, onAttach, attachTo
   const note = status.s === 'blocked' ? tr(`${status.d ?? '이 조작'}은 아직 원본에 저장할 수 없어요. ⌘Z로 되돌리거나 다시 열어 주세요`, `Can't save "${status.d ?? 'this'}" to the file yet. Undo (⌘Z) or reopen`)
     : status.s === 'conflict' ? tr(`다른 곳에서도 같은 부분을 고쳤어요(${status.d ?? ''}). 내가 고친 내용은 아직 저장 전이에요`, `It was also changed elsewhere (${status.d ?? ''}). Your edits are not written yet`)
     : status.s === 'gone' ? tr('파일이 없어졌거나 이름이 바뀌었어 — 고친 건 아직 안 썼어', 'The file was removed or renamed — your edits are not written')
-    : status.s === 'error' ? `${tr('저장 못 했어', "Couldn't save")} — ${status.d ?? ''}` : '';
+    : status.s === 'error' ? (saveErrKind(status.d) === 'busy'
+      ? tr("다른 프로그램에서 이 파일이 열려 있어서 저장하지 못했어요. 엑셀 같은 프로그램에서 파일을 닫고 '다시 시도'를 눌러 주세요. 고친 내용은 그대로 있어요.", 'This file is open in another program, such as Excel, so it couldn\'t be saved. Close the file there and select Try again. Your changes are still here.')
+      : `${tr('저장하지 못했어요. 고친 내용은 그대로 있으니 다시 시도해 주세요', "Couldn't save. Your changes are still here, so please try again")} — ${status.d ?? ''}`) : '';
   return (
     <div className="cv-doc cv-sheet">
       <div className="cv-doc-bar">
@@ -84,7 +86,8 @@ export function SheetPage({ path, owner, where, onBack, tail, onAttach, attachTo
               <button className="cv-btn" onClick={() => reopen()}>{tr('바깥 판 불러오기', 'Load their version')}</button>
               <button className="cv-btn" onClick={() => void control.current?.keepMine()}>{tr('내 판으로 저장', 'Save mine')}</button>
             </>
-          ) : status.s !== 'error' && status.s !== 'gone' && <button className="cv-btn" onClick={() => reopen()}>{tr('다시 열기', 'Reopen')}</button>}
+          ) : status.s === 'error' ? <IconButton label={tr('다시 시도', 'Try again')} onClick={() => control.current?.retry()}><IconRefresh /></IconButton>
+            : status.s !== 'gone' && <button className="cv-btn" onClick={() => reopen()}>{tr('다시 열기', 'Reopen')}</button>}
         </div>
       )}
       <div className="cv-sheet-body" style={zoom === 100 ? undefined : { zoom: zoom / 100 }}>

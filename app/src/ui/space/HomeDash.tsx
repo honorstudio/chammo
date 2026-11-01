@@ -222,7 +222,7 @@ export function HomeDash({ go, orchs, nameOf, roleOf, colorOf, lines, statusOf, 
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 60_000); return () => window.clearInterval(t); }, []);
-  const bars = useMemo(() => Object.fromEntries(orchs.map((o) => [o.id, goalBar({ events, sessions, orch: { id: o.id, name: o.name }, now, seen: new Set() })])), [orchs, events, sessions, now]);
+  const bars = useMemo(() => Object.fromEntries(orchs.map((o) => [o.id, goalBar({ events, sessions, orch: { id: o.id, name: o.name }, now, seen: new Set(), statusOf })])), [orchs, events, sessions, now]); // eslint-disable-line react-hooks/exhaustive-deps -- statusOf 는 lines 에서 나온다
   const d = homeDash({ orchs, bars, events, asks: asks.length, running, now });
   const tile = new Map(d.tiles.map((t) => [t.id, t]));
   const byId = new Map(orchs.map((o) => [o.id, o]));
@@ -350,7 +350,7 @@ export function HomeDash({ go, orchs, nameOf, roleOf, colorOf, lines, statusOf, 
             {orchs.filter((o) => bars[o.id]?.goals.length).map((o) => (
               <div key={o.id} className="hd-gpcell" data-pop={`gpc:${o.id}`}>
                 <button className="hd-gpwho" data-hpop="" data-pop={`gp:${o.id}`} onClick={() => flip({ kind: 'chat', id: o.id }, `gp:${o.id}`)}>{face(o, 18)}{nameOf(o)}</button>
-                <HomeProgress orch={{ id: o.id, name: o.name }} events={events} sessions={sessions} onAsk={(r) => askIn(o.id, r)} place="dash" />
+                <HomeProgress orch={{ id: o.id, name: o.name }} events={events} sessions={sessions} statusOf={statusOf} onAsk={(r) => askIn(o.id, r)} place="dash" />
               </div>
             ))}
           </section>

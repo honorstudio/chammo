@@ -20,7 +20,9 @@ describe('메신저 연결', () => {
   });
   it('띠 칸은 .lk-strip 바로 아래 형제(.lk-av.tmx) 팀 표 하나 — 고른 자리 이음이 그 칸을 찾고, 참모 순서 바꾸기는 그 칸을 뺀다', () => {
     expect(rail).not.toMatch(/<div className="tmx/);
-    expect(rail.match(/className=\{?[`"]lk-av tmx /g)?.length).toBe(1);
+    // 지금 팀 칸 하나 + 다른 팀 칸들(11-01 QA) — 다른 팀 칸은 .tmx 라 참모 순서 바꾸기에서 빠지고, 'on' 이 안 붙어 고른 자리 이음(.lk-av.on)은 지금 팀만 찾는다
+    expect(rail.match(/className=\{?[`"]lk-av tmx /g)?.length).toBe(2);
+    expect(rail).toContain('className="lk-av tmx tmx-rail-team tmx-rail-other"');
     expect(orchRail).toContain(":scope > .lk-av:not(.grp):not(.tmx)");
     expect(orchRail).toContain('{extra}');
   });
@@ -80,7 +82,7 @@ describe('보안 10-23: 넘기기 세 길은 team_handoff(거름 + 본문 없는
 
 describe('폰 팀 보관함', () => {
   it('참모 보관함(이름으로 고르던 팀 폴더)이 아니라 팀 id 로 중계 팀 보관함을 읽는다 — 같은 이름의 참모 폴더와 안 섞이게(10-28)', () => {
-    expect(phone).toContain('<PhoneTeamLocker api={api} teamId={view.teamId} />');
+    expect(phone).toContain('<PhoneTeamLocker api={api} teamId={view.teamId} onOpen=');
     expect(phone).not.toContain('readLocker');
   });
 });

@@ -118,6 +118,36 @@ class Lifecycle(unittest.TestCase):
         runs = [json.loads(l) for l in (self.data / 'routines/blog-daily/runs.jsonl').read_text().splitlines()]
         self.assertEqual((runs[-1]['event'], runs[-1]['session']), ('start', '1a2b3c4d'))
 
+    def test_claude_출력은_utf8_로_읽는다(self):
+        # 작업 스케줄러가 깨운 pythonw 엔 PYTHONUTF8 이 없어 'backgrounded · id' 의 · 가 cp949 '쨌'으로 읽혀 세션 번호를 못 잡았다(2026-11-01 win-text H2)
+        self.new(Calls())
+        seen = []
+
+        def run(argv, **kw):
+            seen.append((argv[1], kw.get('encoding'), kw.get('errors')))
+            return Calls()(argv, **kw)
+        rt.run_now('blog-daily', data=str(self.data), run=run)
+        self.assertTrue(seen)
+        for verb, enc, err in seen:
+            self.assertEqual((enc, err), ('utf-8', 'replace'), verb)
+
+    def test_세션_목록을_못_읽으면_시작_기록에_이유를_남긴다(self):
+        self.new(Calls())
+        rt.run_now('blog-daily', data=str(self.data), run=Calls(agents='쨌 not json'))
+        runs = [json.loads(l) for l in (self.data / 'routines/blog-daily/runs.jsonl').read_text().splitlines()]
+        self.assertEqual(runs[-1]['event'], 'start')
+        self.assertIn('claude agents', runs[-1].get('agents', ''))
+
+    def test_지시문은_cmd_가_오해할_글자가_없다(self):
+        # npm 판 claude 는 claude.cmd — 파이썬은 안쪽 " 를 \" 로만 싸서 cmd 가 따옴표를 뒤집고 <…> 를 입력 돌리기로 읽었다(win-text H3)
+        self.new(Calls())
+        calls = Calls()
+        rt.run_now('blog-daily', data=str(self.data), run=calls)
+        prompt = [c for c in calls.calls if '--bg' in c][0][-1]
+        for ch in '"<>|&^%\n':
+            self.assertNotIn(ch, prompt, repr(ch))
+        self.assertIn("report blog-daily ok '", prompt)
+
     def test_지난_실행이_아직_돌면_건너뛴다(self):
         self.new(Calls())
         busy = json.dumps([{'id': 'old1', 'name': 'routine-blog-daily', 'status': 'busy'}])

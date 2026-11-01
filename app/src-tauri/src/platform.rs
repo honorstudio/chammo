@@ -79,9 +79,17 @@ pub fn terminate(pid: i32) {
         unsafe { libc::kill(pid, libc::SIGTERM) };
     }
 }
+/// 윈도우는 강제(/F) — /F 없는 taskkill 은 창에 닫기 요청을 보내는 것이라 창 없는 콘솔 프로그램(claude.exe)은 안 꺼진다(2026-11-01 윈도우 시험 PC).
+/// 나무째(/T)는 아니다 — 그 세션을 연 터미널 창·셸은 사람 것이라 남긴다
 #[cfg(windows)]
 pub fn terminate(pid: i32) {
-    let _ = command("taskkill").args(["/PID", &pid.to_string()]).status();
+    if pid > 0 {
+        let _ = command("taskkill").args(terminate_args(pid)).status();
+    }
+}
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn terminate_args(pid: i32) -> [String; 3] {
+    ["/PID".into(), pid.to_string(), "/F".into()]
 }
 
 /// 자식까지 한 묶음으로 띄운다 — 나중에 묶음째 멈추려고(음성 읽기)
@@ -155,13 +163,15 @@ pub fn make_executable(p: &Path) {
 #[cfg(windows)]
 pub fn make_executable(_p: &Path) {}
 
-/// 홈 폴더 — HOME, 없으면 윈도우의 USERPROFILE. 윈도우엔 보통 HOME 이 없어 데이터 폴더가 "/.chammo" 처럼 잘못 잡혔다(윈도우판 2단계)
+/// 홈 폴더 — 맥 HOME, 윈도우 USERPROFILE(없을 때만 HOME). 윈도우엔 보통 HOME 이 없어 데이터 폴더가 "/.chammo" 처럼 잘못 잡혔다(윈도우판 2단계).
+/// 윈도우에서 HOME 이 먼저면 HOME 을 따로 둔 PC 에서 claude(Node·Bun)·공식 설치·파이썬(USERPROFILE)과 홈이 갈라졌다(qa-1101 win-env M1)
 pub fn home() -> String {
-    home_from(std::env::var("HOME").ok(), std::env::var("USERPROFILE").ok())
+    home_from(std::env::var("HOME").ok(), std::env::var("USERPROFILE").ok(), cfg!(windows))
 }
 
-fn home_from(home: Option<String>, profile: Option<String>) -> String {
-    home.filter(|h| !h.trim().is_empty()).or(profile.filter(|p| !p.trim().is_empty())).unwrap_or_default()
+fn home_from(home: Option<String>, profile: Option<String>, win: bool) -> String {
+    let (home, profile) = (home.filter(|h| !h.trim().is_empty()), profile.filter(|p| !p.trim().is_empty()));
+    if win { profile.or(home) } else { home.or(profile) }.unwrap_or_default()
 }
 
 /// 주소(hodoc://…)에서 꺼낸 경로 → 파일 경로. 윈도우 주소는 "/C:/Users/…" 로 와서 앞 "/" 를 뗀다
@@ -226,7 +236,7 @@ pub fn shell_command(command: &str) -> portable_pty::CommandBuilder {
     if n == 0 {
         // 터미널을 닫으면(믿기 확인 뒤 설정 화면이 닫는다) 끝의 자기 삭제 줄까지 못 가 파일이 남는다 → 지난 실행 것을 치운다
         for e in std::fs::read_dir(&tmp).into_iter().flatten().flatten() {
-            if stale_batch(&e.file_name().to_string_lossy(), std::process::id()) {
+            if stale_batch(&e.file_name().to_string_lossy(), std::process::id(), |p| pid_alive(p as i32)) {
                 let _ = std::fs::remove_file(e.path());
             }
         }
@@ -345,10 +355,24 @@ pub fn chrome_exe_candidates(env: impl Fn(&str) -> Option<String>) -> Vec<std::p
         .collect()
 }
 
+/// 파워셸 작은따옴표 문자열 — 안의 작은따옴표는 두 번. 파워셸은 굽은 작은따옴표(‘ ’ ‚ ‛)도 같은 따옴표로 읽어서
+/// 그것도 두 번 써야 문자열이 안 닫힌다(don’t 가 든 음성 글이 소리 없이 실패했다, 2026-11-01 win-text M6)
+pub fn ps_quote(s: &str) -> String {
+    let mut out = String::from("'");
+    for c in s.chars() {
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            out.push(c);
+        }
+        out.push(c);
+    }
+    out.push('\'');
+    out
+}
+
 /// 윈도우 폴더 고르기 창(파워셸 FolderBrowserDialog). 고른 경로를 UTF-8 로 한 줄, 취소면 빈 줄
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn folder_dialog_script(prompt: &str, start: Option<&str>) -> String {
-    let q = |s: &str| format!("'{}'", s.replace('\'', "''"));
+    let q = ps_quote;
     let start = start.map(|d| format!("$d.SelectedPath = {}; ", q(d))).unwrap_or_default();
     format!(
         "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; \
@@ -361,7 +385,7 @@ pub fn folder_dialog_script(prompt: &str, start: Option<&str>) -> String {
 /// 윈도우 파일 고르기 창(파워셸 OpenFileDialog) — 고른 경로를 UTF-8 로 한 줄에 하나, 취소면 빈 출력
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn file_dialog_script(prompt: &str, multiple: bool) -> String {
-    let q = |s: &str| format!("'{}'", s.replace('\'', "''"));
+    let q = ps_quote;
     format!(
         "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; \
          $d = New-Object System.Windows.Forms.OpenFileDialog; $d.Title = {}; $d.Multiselect = ${multiple}; \
@@ -464,6 +488,9 @@ fn run_capped_in(cmd: &mut Command, input: Option<Vec<u8>>, limit: std::time::Du
         cmd.process_group(0);
     }
     let mut child = cmd.spawn()?;
+    // 윈도우는 그룹이 없어 묶음(Job Object)에 넣는다 — 부모를 끝내도 자식이 안 끝나서 시간 초과 때 claude.cmd 의 node 가 남았다(2026-11-01)
+    #[cfg(windows)]
+    let tree = crate::win_job::Tree::adopt(&child);
     // 입력은 따로 스레드에서 넣고 닫는다 — 출력 파이프가 차서 서로 막히지 않게
     if let (Some(data), Some(mut w)) = (input, child.stdin.take()) {
         std::thread::spawn(move || {
@@ -500,6 +527,10 @@ fn run_capped_in(cmd: &mut Command, input: Option<Vec<u8>>, limit: std::time::Du
             #[cfg(unix)]
             unsafe {
                 libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
+            }
+            #[cfg(windows)]
+            if let Some(tree) = &tree {
+                tree.kill();
             }
             let _ = child.kill();
             let _ = child.wait();
@@ -589,12 +620,12 @@ pub fn curl() -> &'static str {
     if cfg!(target_os = "macos") { "/usr/bin/curl" } else { "curl" }
 }
 
-/// 지난 실행이 남긴 배치 파일인가(chammo-<다른 pid>-<n>.cmd)
+/// 지난 실행이 남긴 배치 파일인가(chammo-<다른 pid>-<n>.cmd, 그 pid 가 이제 없음) — 살아 있는 다른 판 Chammo 것은 남긴다
 #[cfg_attr(not(windows), allow(dead_code))]
-pub fn stale_batch(name: &str, pid: u32) -> bool {
+pub fn stale_batch(name: &str, pid: u32, alive: impl Fn(u32) -> bool) -> bool {
     let Some(rest) = name.strip_prefix("chammo-").and_then(|r| r.strip_suffix(".cmd")) else { return false };
     let Some((p, n)) = rest.split_once('-') else { return false };
-    p.parse::<u32>().is_ok_and(|p| p != pid) && n.parse::<u32>().is_ok()
+    p.parse::<u32>().is_ok_and(|p| p != pid && !alive(p)) && n.parse::<u32>().is_ok()
 }
 
 /// 배치 파일 내용 — UTF-8(chcp 65001, 한글 경로), 줄바꿈 CRLF, % 는 %% (배치에선 변수 표시), 끝나면 자기 파일을 지운다
@@ -650,8 +681,32 @@ pub fn raise_nofile() {
 #[cfg(not(unix))]
 pub fn raise_nofile() {}
 
+/// 윈도우 '하드 오류' 창 끄기 — 오류 모드 0(네이티브 앱 기본)이면 글자로 된 가짜 claude.exe 를 띄울 때 '지원되지 않는 16비트 응용 프로그램' 창이 뜨고
+/// 그 창을 닫을 때까지 띄우는 호출이 멈췄다. 세션 목록을 15초마다 읽어 창이 끝없이 쌓였다(2026-11-01 win-first M4, 시험 PC 에서 0 ↔ 0x8001 비교로 확인).
+/// SEM_FAILCRITICALERRORS(0x1)|SEM_NOOPENFILEERRORBOX(0x8000) — .NET 기본과 같다. 그러면 창 없이 '올바른 응용 프로그램이 아님' 오류로 바로 끝난다. 자식도 물려받는다
+#[cfg(windows)]
+pub fn quiet_hard_errors() {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetErrorMode(mode: u32) -> u32;
+    }
+    unsafe {
+        let old = SetErrorMode(0);
+        SetErrorMode(old | 0x0001 | 0x8000);
+    }
+}
+#[cfg(not(windows))]
+pub fn quiet_hard_errors() {}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn 파워셸_작은따옴표_문자열은_굽은_따옴표도_두_번() {
+        assert_eq!(super::ps_quote("it's"), "'it''s'");
+        assert_eq!(super::ps_quote("Don’t ‘q’"), "'Don’’t ‘‘q’’'");
+        assert_eq!(super::ps_quote("C:\\a b\\\"c\""), "'C:\\a b\\\"c\"'", "역슬래시·큰따옴표는 그대로");
+    }
+
     #[test]
     fn 출력_글은_utf8_이면_그대로() {
         assert_eq!(super::out_text("claude 2.1.316 · 한글".as_bytes()), "claude 2.1.316 · 한글");
@@ -726,6 +781,25 @@ mod tests {
         assert!(super::chrome_exe_candidates(|_| Some(String::new())).is_empty());
     }
     use super::*;
+
+    // 2026-11-01 윈도우 시험 PC: /F 없는 taskkill 은 창 없는 콘솔 프로그램(claude.exe)에 "/F 옵션을 사용하여 강제로 종료해야 합니다"로 실패해
+    // '터미널 세션 닫고 옮기기'가 윈도우에서 늘 10초 뒤 실패했다. 그 프로세스 하나만 강제로(/T 아님 — 터미널 창·셸은 남긴다)
+    // 2026-11-01 윈도우 시험 PC: 부모(cmd)를 TerminateProcess 해도 자식(ping·conhost)은 산다 — 시간 초과로 끊은 claude.cmd 마다 node 가 남았다.
+    // 윈도우는 띄우자마자 묶음(Job Object)에 넣고 시간 초과 땐 묶음째. 묶음 자체의 동작은 win_job.rs 시험(윈도우 프로브)이 본다
+    #[test]
+    fn 시간_초과는_윈도우도_손자까지_끊는다() {
+        let src = include_str!("platform.rs");
+        let body = &src[src.find("fn run_capped_in(").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let adopt = body.find("win_job::Tree::adopt(&child)").expect("띄운 뒤 묶음에 넣는다");
+        let kill = body.find("tree.kill()").expect("시간 초과 땐 묶음째 끊는다");
+        assert!(adopt < kill && kill < body.find("child.kill()").unwrap(), "묶음 끊기가 직계 끊기보다 먼저");
+    }
+
+    #[test]
+    fn 윈도우_끝내기는_강제지만_나무째는_아니다() {
+        assert_eq!(terminate_args(4321), ["/PID", "4321", "/F"]);
+    }
 
     #[cfg(unix)]
     #[test]
@@ -859,10 +933,14 @@ mod tests {
         // 여러 줄이 와도 줄바꿈은 CRLF 로
         assert!(batch_script("a\nb").contains("\r\na\r\nb\r\n"));
         assert!(batch_script("echo 100%").contains("\r\necho 100%%\r\n"));
-        assert!(stale_batch("chammo-1980-0.cmd", 2000));
-        assert!(!stale_batch("chammo-2000-3.cmd", 2000)); // 지금 실행 것은 둔다
-        assert!(!stale_batch("chammo-tts-warm.aiff", 2000));
-        assert!(!stale_batch("chammo-x-1.cmd", 2000));
+        let dead = |_: u32| false;
+        assert!(stale_batch("chammo-1980-0.cmd", 2000, dead));
+        assert!(!stale_batch("chammo-2000-3.cmd", 2000, dead)); // 지금 실행 것은 둔다
+        assert!(!stale_batch("chammo-tts-warm.aiff", 2000, dead));
+        assert!(!stale_batch("chammo-x-1.cmd", 2000, dead));
+        // 다른 판 Chammo(공개판 + 시험판·개발판 — single-instance 는 같은 판만 막는다)가 지금 돌리는 것은 둔다 — cmd 는 배치 파일을 줄마다 다시 읽어서
+        // 지우면 그 칸의 attach 가 끝난 뒤 '배치 파일을 찾을 수 없습니다'로 끝나거나 막 연 칸이 바로 끝났다(2026-11-01 점검)
+        assert!(!stale_batch("chammo-1980-0.cmd", 2000, |p| p == 1980));
     }
 
     #[test]
@@ -881,9 +959,19 @@ mod tests {
 
     #[test]
     fn 홈은_home_없으면_userprofile() {
-        assert_eq!(home_from(Some("/Users/a".into()), Some(r"C:\Users\a".into())), "/Users/a");
-        assert_eq!(home_from(None, Some(r"C:\Users\a".into())), r"C:\Users\a");
-        assert_eq!(home_from(Some("  ".into()), Some(r"C:\Users\a".into())), r"C:\Users\a");
-        assert_eq!(home_from(None, None), "");
+        assert_eq!(home_from(Some("/Users/a".into()), Some(r"C:\Users\a".into()), false), "/Users/a");
+        assert_eq!(home_from(None, Some(r"C:\Users\a".into()), false), r"C:\Users\a");
+        assert_eq!(home_from(Some("  ".into()), Some(r"C:\Users\a".into()), false), r"C:\Users\a");
+        assert_eq!(home_from(None, None, false), "");
+    }
+
+    // 재현(qa-1101 win-env M1): 윈도우에 HOME 이 따로 있으면(Emacs·ssh·회사 H:\) 앱은 HOME, claude(Node·Bun)·공식 설치·파이썬은 USERPROFILE —
+    // 믿음이 엉뚱한 .claude.json 에 적혀 세션마다 Workspace not trusted, 데이터 폴더도 scripts 와 갈라졌다
+    #[test]
+    fn 윈도우_홈은_userprofile_이_먼저() {
+        assert_eq!(home_from(Some(r"H:\".into()), Some(r"C:\Users\a".into()), true), r"C:\Users\a");
+        assert_eq!(home_from(Some(r"H:\".into()), None, true), r"H:\", "USERPROFILE 이 없을 때만 HOME");
+        assert_eq!(home_from(Some(r"H:\".into()), Some(" ".into()), true), r"H:\");
+        assert_eq!(home_from(None, None, true), "");
     }
 }

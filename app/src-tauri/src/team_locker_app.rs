@@ -59,7 +59,7 @@ impl Drop for Gone {
 fn code_of(out: &std::process::Output) -> Result<u16, String> {
     let text = String::from_utf8_lossy(&out.stdout);
     match text.rsplit('\n').next().unwrap_or("").trim().parse::<u16>() {
-        Ok(0) | Err(_) => Err(format!("중계 서버에 못 닿았어요: {}", String::from_utf8_lossy(&out.stderr).trim())),
+        Ok(0) | Err(_) => Err(format!("중계 서버에 못 닿았어요: {}", crate::platform::out_text(&out.stderr).trim())),
         Ok(c) => Ok(c),
     }
 }

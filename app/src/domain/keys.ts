@@ -69,4 +69,8 @@ export function fileManagerLabel(text: string, win: boolean): string {
 }
 
 /** 맥 ⌘ 자리 수정키(⌘Enter 끊고 보내기·⌘클릭 링크)가 눌렸나 — 윈도우는 Ctrl */
+/** 세션(Claude Code 입력칸)에 칠 그림 붙여넣기 키 — 맥 Ctrl+V, 윈도우 Alt+V(ESC v). Claude Code 기본 키가 windows 면 alt+v 뿐이라
+ *  늘 Ctrl+V 를 쳐서 윈도우에선 칩만 생기고 그림은 안 갔다(2.1.316 실행 파일 기본 키 표로 확인, 2026-11-01 ux-daily H1) */
+export const imagePasteKey = (win: boolean): string => (win ? '\x1bv' : '\x16');
+
 export const modKey = (e: { metaKey: boolean; ctrlKey: boolean }, win: boolean): boolean => (win ? e.ctrlKey : e.metaKey);

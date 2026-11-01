@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { FOLD_KEY, fitRows, readFold, toggleFold, writeFold, type Fold, type ProjRow, type ProjState } from '../../domain/homeProjects';
 import { whenLabel } from '../../domain/orchHome';
 import type { Session } from '../../domain/session';
+import { statusWord } from '../../domain/status';
 import { tr } from '../../i18n';
 import { IconChevron, IconChevronUp, IconMaximize } from '../Icons';
 import { tailLines, useChatItems } from './useChatItems';
@@ -14,7 +15,8 @@ export const PROW_H = 45;
 export const PMORE_H = 40;
 
 const WORD: Record<ProjState, () => string> = {
-  stop: () => tr('막힘', 'Blocked'), ask: () => tr('답 기다림', 'Needs you'), quiet: () => tr('오래 조용', 'Quiet'),
+  // stop = 세션이 답 없이 꺼짐 — 선택지 창 멈춤(확인 대기, ask + held)과 갈리게 '막힘' 대신(2026-11-01 ux-daily)
+  stop: () => tr('중단됨', 'Stopped early'), ask: () => tr('답 기다림', 'Needs you'), quiet: () => tr('오래 조용', 'Quiet'),
   run: () => tr('일하는 중', 'Working'), wait: () => tr('기다림', 'Waiting'), rest: () => tr('쉼', 'Idle'), done: () => tr('오늘 끝남', 'Done today'),
 };
 const Dot = ({ s }: { s: ProjState }) => <i className={`hd-d d-${s}`} aria-hidden="true" />;
@@ -106,7 +108,7 @@ export function HomeProjects({ rows, done, fold, onFold, fit, now, orchName, fac
                     {orch && <span className="hd-pnick">{orchName(orch)}</span>}
                     {sesName && <span className="hd-pses">{sesName}{r.sessions.length > 1 ? ` +${r.sessions.length - 1}` : ''}</span>}
                   </span>
-                  <em className={`hd-pst s-${r.state}`}>{WORD[r.state]()}</em>
+                  <em className={`hd-pst s-${r.state}`}>{r.held ? statusWord(r.held) : WORD[r.state]()}</em>
                   <span className="hd-pwhen">{when(r)}</span>
                   <span className="hd-pchev"><IconChevron /></span>
                 </button>

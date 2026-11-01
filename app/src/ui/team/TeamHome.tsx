@@ -196,7 +196,7 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
     </>
   );
   const data = { members, agents, files, content: hb?.content ?? {}, onTalk, openUrl: sources.openUrl, nameOf,
-    openFile: sources.openFile ? (i: LockerItem) => sources.openFile!(teamId, i) : undefined,
+    openFile: sources.openFile ? (i: LockerItem) => sources.openFile!(teamId, i) : undefined, canOpen: sources.canOpen,
     saveContent: (block: string, c: Parameters<HomeApi['content']>[2]) => homeApi.content(teamId, block, c).then(() => loadHome(null)) };
   const block = (x: HomeBlock, editing: boolean): React.ReactNode => {
     if (x.k === 'pin') return pinBox && !editing ? pinBox : <div className="hb-ph"><IconPin />{tr('고정 공지', 'Pinned notice')}{!editing && <span className="hb-s2">{tr(' · 팀장이 글을 고정하면 여기에', ' · Shows the post the owner pins')}</span>}</div>;
@@ -248,7 +248,7 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
         </Dialog>
       )}
       {rm && (
-        <Confirm danger title={tr('글 지우기', 'Delete post')} body={tr(`'${rm.title}' 을(를) 팀 홈에서 지워요. 30일 동안 팀 보관함 휴지통에 남아요.`, `Removes '${rm.title}' from the team home. It stays in the team locker trash for 30 days.`)}
+        <Confirm danger title={tr('글 지우기', 'Delete post')} body={tr(`'${rm.title}' 글을 팀 홈에서 지워요. 지우면 되살릴 수 없어요.`, `This removes '${rm.title}' from the team home. You can't get it back.`)}
           ok={tr('지우기', 'Delete')} onCancel={() => setRm(null)} onOk={() => { const p = rm; setRm(null); setOpen(null); if (api.remove) run(() => api.remove!(teamId, p.id)); }} />
       )}
     </div>

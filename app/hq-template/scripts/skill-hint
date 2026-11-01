@@ -11,6 +11,9 @@ telling the assistant to open that skill first. Nothing matched -> no output.
 스킬 환기 — 훅(voice-hint)이 매 지시(다른 세션 메시지 포함)마다 부른다. 상황별 안내를 늘 실리는 CHAMMO.md 에서 HQ 스킬(.claude/skills/hq-*)로 뺐다 —
 그 일의 낱말이 보이면 '먼저 ○○ 스킬을 열어' 한 줄. 안 걸리면 아무것도 안 낸다(2026-10-06). stdin = 훅 입력({"prompt": …})"""
 import json, os, re, select, sys
+for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — PYTHONUTF8 없이 떠도(데몬 env 세션·작업 스케줄러) 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
+    if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
+        _io.reconfigure(encoding='utf-8', errors='replace')
 
 MAX = 3
 # (스킬, 낱말, 한국어 이름, 영어 이름) — 좁게: 한 낱말로 거의 매번 걸리면 소음이다(harness-placement)

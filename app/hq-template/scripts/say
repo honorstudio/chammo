@@ -17,6 +17,9 @@ include any question the user must answer. When voice mode is off (<data folder>
 Log: <data folder>/say.jsonl — {ts, session (CLAUDE_CODE_SESSION_ID), text}
 """
 import datetime, json, os, sys
+for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — PYTHONUTF8 없이 떠도(데몬 env 세션·작업 스케줄러) 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
+    if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
+        _io.reconfigure(encoding='utf-8', errors='replace')
 
 
 def data_dir(home=None, env=None, exists=os.path.isdir):

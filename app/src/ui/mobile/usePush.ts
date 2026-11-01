@@ -8,11 +8,14 @@ import { readLink } from '../../phone-web/link';
 import { relayPushKey, relayPushSubscribe, relayPushUnsubscribe } from '../../phone-web/relayPush';
 import { tr } from '../../i18n';
 
-// 중계 길 폰은 중계 VAPID 열쇠로 구독하고 중계에 맡긴다(본문 없는 '새 메시지', ADR 0013) — 컴퓨터 열쇠와 한 워커에 같이 못 건다
+// 중계 길 폰은 중계 VAPID 열쇠로 구독하고 중계에 맡긴다(ADR 0013) — 컴퓨터 열쇠와 한 워커에 같이 못 건다.
+// 구독 열쇠(p256dh·auth)는 터널로 컴퓨터에만 알린다 — 컴퓨터가 그 열쇠로 본문을 봉하고 중계는 그대로 실어 온다(중계는 못 읽음, 2026-11-01).
+// 컴퓨터에 못 알려도 중계 구독은 살린다('새 메시지'라도 오게)
 const relay = readLink();
 const keyNow = () => (relay ? relayPushKey(relay) : getPushKey());
-const register = (s: PushSubscriptionJSON) => (relay ? relayPushSubscribe(relay, s) : pushSubscribe(s));
-const unregister = (endpoint: string) => (relay ? relayPushUnsubscribe(relay) : pushUnsubscribe(endpoint));
+export const register = (s: PushSubscriptionJSON) =>
+  relay ? Promise.all([relayPushSubscribe(relay, s), pushSubscribe(s).catch(() => {})]).then(() => undefined) : pushSubscribe(s);
+const unregister = (endpoint: string) => (relay ? Promise.all([relayPushUnsubscribe(relay), pushUnsubscribe(endpoint).catch(() => {})]).then(() => undefined) : pushUnsubscribe(endpoint));
 
 const support = (): PushSupport => {
   if (typeof navigator === 'undefined') return 'unsupported';

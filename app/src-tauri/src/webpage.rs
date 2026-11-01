@@ -105,9 +105,17 @@ fn content_origin<R: Runtime>(w: &tauri::WebviewWindow<R>, _vh: f64, scale: f64)
     w.inner_position().ok().map(|p| p.to_logical::<f64>(scale))
 }
 
+/// 앱이 트레이로 숨었나(윈도우 X) — 미리보기는 주인 창에 붙은 창이라 윈도우에선 주인이 숨어도 남아서 화면 밖으로 둔다
+static APP_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn app_hidden<R: Runtime>(app: &tauri::AppHandle<R>, hidden: bool) {
+    APP_HIDDEN.store(hidden, std::sync::atomic::Ordering::Relaxed);
+    follow(app);
+}
+
 /// 지금 기록된 부모·네모로 미리보기 창 자리를 맞춘다 — 칸이 바뀌거나(web_bounds) 부모 창이 움직이면(main.rs 창 이벤트)
 pub fn follow<R: Runtime>(app: &tauri::AppHandle<R>) {
-    let (parent, r, vh, away) = with_slot(|s| (s.parent.clone(), s.rect, s.vh, s.away));
+    let (parent, r, vh, away) = with_slot(|s| (s.parent.clone(), s.rect, s.vh, s.away || APP_HIDDEN.load(std::sync::atomic::Ordering::Relaxed)));
     let (Some(p), Some(wv)) = (app.get_webview_window(&parent), app.get_webview_window(LABEL)) else { return };
     if away {
         let _ = wv.set_position(tauri::LogicalPosition::new(AWAY, AWAY));

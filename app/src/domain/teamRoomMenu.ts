@@ -4,8 +4,9 @@
 
 export type RoomAct = 'edit' | 'leave' | 'delete' | 'hide';
 
-export const roomActs = (kind: string, canDelete: boolean): RoomAct[] =>
-  kind === 'group' ? ['edit', 'leave', ...(canDelete ? (['delete'] as const) : [])] : ['hide'];
+/** all = 그 팀 '전체' 팀챗 — 나가도 팀장 앱이 다시 넣어서 나가기를 안 준다(11-01 QA) */
+export const roomActs = (kind: string, canDelete: boolean, all = false): RoomAct[] =>
+  kind === 'group' ? ['edit', ...(all ? [] : (['leave'] as const)), ...(canDelete ? (['delete'] as const) : [])] : ['hide'];
 
 /** 숨긴 DM — 상대 멤버 id → 숨긴 때(ms) */
 export type HiddenDms = Record<string, number>;

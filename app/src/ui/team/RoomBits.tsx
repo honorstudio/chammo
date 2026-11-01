@@ -80,16 +80,17 @@ export function ReactAdd({ mine, onPick }: { mine: string[]; onPick: (mark: stri
 export type ThumbOf = { get: (f: TeamFile) => Promise<string | null>; forget?: (f: TeamFile) => void };
 
 /** 파일 풍선 — 그림은 썸네일 크게, PDF 는 첫 장을 아이콘 자리에, 그 밖은 아이콘(10-28 사용자 "썸네일 없이 빈 네모").
- *  이름·크기·자물쇠(종단 암호). 누르면 스페이스에서 연다(보관함과 같은 길), 오른쪽 클릭 = 다른 앱으로 열기·저장 */
-export function FileBubbles({ files, me, onOpen, onMenu, thumb }: { files: TeamFile[]; me?: boolean; onOpen?: (f: TeamFile) => void; onMenu?: (e: React.MouseEvent, f: TeamFile) => void; thumb?: ThumbOf }) {
+ *  이름·크기·자물쇠(종단 암호). 누르면 스페이스에서 연다(보관함과 같은 길), 오른쪽 클릭 = 다른 앱으로 열기·저장
+ *  onlyPics = 폰 — 그림 칸·첫 장이 뜬 PDF 칸만 눌러 크게 본다(다른 파일은 열 길이 없어 누를 수 있게 보이지 않는다, 11-01) */
+export function FileBubbles({ files, me, onOpen, onMenu, thumb, onlyPics }: { files: TeamFile[]; me?: boolean; onOpen?: (f: TeamFile) => void; onMenu?: (e: React.MouseEvent, f: TeamFile) => void; thumb?: ThumbOf; onlyPics?: boolean }) {
   return (
     <div className="tmx-files">
-      {files.map((f) => <FileBubble key={f.id} f={f} me={me} onOpen={onOpen} onMenu={onMenu} thumb={thumb} />)}
+      {files.map((f) => <FileBubble key={f.id} f={f} me={me} onOpen={onOpen} onMenu={onMenu} thumb={thumb} onlyPics={onlyPics} />)}
     </div>
   );
 }
 
-function FileBubble({ f, me, onOpen, onMenu, thumb }: { f: TeamFile; me?: boolean; onOpen?: (f: TeamFile) => void; onMenu?: (e: React.MouseEvent, f: TeamFile) => void; thumb?: ThumbOf }) {
+function FileBubble({ f, me, onOpen, onMenu, thumb, onlyPics }: { f: TeamFile; me?: boolean; onOpen?: (f: TeamFile) => void; onMenu?: (e: React.MouseEvent, f: TeamFile) => void; thumb?: ThumbOf; onlyPics?: boolean }) {
   const kind = thumb ? thumbKind(f.name, f.size) : null;
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
@@ -101,6 +102,7 @@ function FileBubble({ f, me, onOpen, onMenu, thumb }: { f: TeamFile; me?: boolea
   }, [f.id, f.team, kind]); // eslint-disable-line react-hooks/exhaustive-deps
   const forget = (x: TeamFile) => thumb?.forget?.(x);
   const pic = kind === 'image' && !!src;
+  const page = kind === 'pdf' && !!src; // 첫 장 썸네일이 뜬 PDF — 폰은 첫 장 크게 보기
   const img = src && <img src={src} alt="" draggable={false} onError={() => { forget(f); setSrc(null); }} />;
   const inner = (
     <>
@@ -112,7 +114,7 @@ function FileBubble({ f, me, onOpen, onMenu, thumb }: { f: TeamFile; me?: boolea
     </>
   );
   const cls = `tmx-file ${me ? 'me' : ''} ${pic ? 'has-pic' : ''}`;
-  return onOpen
+  return onOpen && (!onlyPics || pic || page)
     ? <button type="button" className={cls} title={tr(`${f.name} 열기`, `Open ${f.name}`)} onClick={(e) => { e.stopPropagation(); onOpen(f); }} onContextMenu={onMenu ? (e) => { e.preventDefault(); onMenu(e, f); } : undefined}>{inner}</button>
     : <div className={cls}>{inner}</div>;
 }

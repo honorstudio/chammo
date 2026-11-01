@@ -1,11 +1,15 @@
 // 팀 만들기·초대받기·초대 링크 만들기 팝업 — 데스크톱 띠 + 와 메신저 창 + 가 같이 쓴다. 화면 고르기는 domain/teamStart
 // 링크(chammo.app/join → chammo://join)로 앱이 열리면 invite 에 받은 초대가 채워져 온다 — 들어가기는 사람이 누른다(ADR 0015)
 // 계정 기기는 팀이 있어도 '초대받았어요'로 다른 팀에 들어간다(team_relay register 여러 팀). 계정 없는 옛 초대 기기만 팀 하나
+import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
+import { canDo } from '../../domain/teamSettings';
+import { LoginWait, loginCancelled } from '../LoginWait';
 import { teamClipInvite, teamCreate, teamInvite, teamJoin, teamLogin, type TeamView } from '../../data/teamApi';
 import { DEFAULT_RELAY } from '../../domain/teamAccount';
-import { startScreen } from '../../domain/teamStart';
+import { needStart, startScreen } from '../../domain/teamStart';
 import { tr } from '../../i18n';
+import { gateErrText } from '../../domain/loginGate';
 import { IconBack, IconCopy } from '../Icons';
 import { IconButton } from '../kit/IconButton';
 import './team.css';
@@ -24,7 +28,17 @@ export function TeamStart({ view: given, invite = '', makeNow = false, onDone, o
   const [copied, setCopied] = useState(false);
   useEffect(() => { if (invite) { setCode(invite); setFromClip(false); } }, [invite]);
   const screen = startScreen(view, { invite, wantJoin });
-  const autoLink = makeNow && screen === 'invite' && view?.role === 'owner';
+  // 계정을 아직 어느 기기에서도 시작 안 했으면 만들기·들어가기가 막힌다 — 그 자리에서 시작(ux-team H2). 로그인 문·설정 기기 관리와 같은 명령
+  const [step, setStep] = useState('');
+  const readStep = () => void invoke<string>('e2e_self_step').then(setStep, () => {});
+  useEffect(readStep, [view?.account]); // eslint-disable-line react-hooks/exhaustive-deps
+  const startBox = needStart(screen, step) && (
+    <div className="tmx-row-a">
+      <span className="tmx-hint">{tr('팀을 쓰려면 이 컴퓨터에서 먼저 시작해야 해요. 여기서 시작을 눌러 주세요.', 'To use teams, you need to start on this computer first. Press Start here.')}</span>
+      <button className="tmx-btn pri" disabled={busy} onClick={(e) => { if (e.nativeEvent.isTrusted && !busy) run(invoke('e2e_start_chain').then(readStep)); }}>{tr('여기서 시작', 'Start here')}</button>
+    </div>
+  );
+  const autoLink = makeNow && screen === 'invite' && canDo(view, 'invite');
   useEffect(() => {
     if (!autoLink) return;
     setBusy(true);
@@ -33,7 +47,7 @@ export function TeamStart({ view: given, invite = '', makeNow = false, onDone, o
   const run = (p: Promise<unknown>) => {
     setBusy(true);
     setErr(null);
-    void p.catch((e: unknown) => setErr(String(e))).finally(() => setBusy(false));
+    void p.catch((e: unknown) => { if (!loginCancelled(e)) setErr(gateErrText(String(e))); }).finally(() => setBusy(false));
   };
   const got = (v: TeamView) => { setFresh(v); onChanged?.(); };
   // 클립보드에 받은 초대 링크가 있으면 채운다(빈 칸일 때만)
@@ -68,6 +82,7 @@ export function TeamStart({ view: given, invite = '', makeNow = false, onDone, o
         <button className="tmx-btn pri" disabled={busy} onClick={() => run(teamLogin(view?.server ? '' : DEFAULT_RELAY).then(got))}>
           {busy ? tr('브라우저에서 로그인을 마쳐 주세요', 'Finish signing in in the browser') : tr('먼저 Chammo 계정에 로그인', 'Sign in to Chammo first')}
         </button>
+        {busy && <LoginWait />}
         {errLine}
       </div>
     );
@@ -76,6 +91,7 @@ export function TeamStart({ view: given, invite = '', makeNow = false, onDone, o
     return (
       <div className="tmx-start">
         <b>{tr('팀 만들기', 'Make a team')}</b>
+        {startBox}
         <span className="tmx-fl">{tr('팀 이름', 'Team name')}</span>
         <input value={name} onChange={(e) => setName(e.target.value)} aria-label={tr('팀 이름', 'Team name')} autoFocus />
         <div className="tmx-row-a">
@@ -90,6 +106,7 @@ export function TeamStart({ view: given, invite = '', makeNow = false, onDone, o
     return (
       <div className="tmx-start">
         <b>{tr('초대받은 팀에 들어가기', 'Join the team you were invited to')}</b>
+        {startBox}
         <span className="tmx-fl">{tr('받은 초대 링크(또는 코드)', 'Invite link you got (or code)')}</span>
         <input value={code} onChange={(e) => { setCode(e.target.value); setFromClip(false); }} placeholder="https://chammo.app/join#…" aria-label={tr('받은 초대 링크(또는 코드)', 'Invite link you got (or code)')} autoFocus={!code} />
         {fromClip && <span className="tmx-hint">{tr('복사해 둔 초대 링크를 채웠어요', 'Filled in the invite link you copied')}</span>}
@@ -103,12 +120,12 @@ export function TeamStart({ view: given, invite = '', makeNow = false, onDone, o
   }
   // invite·already — 팀이 있다
   const v = view as TeamView;
-  const owner = v.role === 'owner';
+  const owner = canDo(v, 'invite'); // 초대할 수 있나(팀장·초대 권한 매니저 — 11-01 QA M2)
   return (
     <div className="tmx-start">
       {screen === 'already' && <span className="tmx-hint" role="status">{tr(`이 기기는 초대 코드로 ${v.team} 팀에만 들어와 있어요. 다른 팀에도 들어가려면 설정 > Chammo 계정에서 로그인하세요`, `This device joined ${v.team} with an invite code only. To join other teams, sign in under Settings > Chammo account`)}</span>}
       <b>{tr(`${v.team} 초대 링크`, `${v.team} invite link`)}</b>
-      {!owner && <span className="tmx-hint">{tr('초대 링크는 팀장 기기에서 만들어요', 'Only the team owner can make invite links')}</span>}
+      {!owner && <span className="tmx-hint">{tr('초대 링크는 팀장이나 초대 권한을 받은 사람이 만들어요', 'Only a team owner or someone with the Invite permission can make invite links.')}</span>}
       <div className="tmx-row-a">
         {screen === 'invite' && v.account && <button className="tmx-btn" disabled={busy} onClick={openJoin}>{tr('초대받았어요', 'I got an invite')}</button>}
         {owner && !link && <button className="tmx-btn pri" disabled={busy} onClick={() => run(teamInvite().then(setLink))}>{tr('링크 만들기', 'Make a link')}</button>}

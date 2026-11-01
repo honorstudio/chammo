@@ -9,9 +9,9 @@ import { waitWord } from './GoalProgress';
 // 사용자 10-23: 진행 막대는 홈 진행 칸에만(데스크톱 스페이스 홈 + 폰 홈), 사라질 땐 반짝 → 접힘, 동작 줄이기면 페이드만
 describe('진행 칸 — 홈에만, 사라짐 효과', () => {
   it('데스크톱 홈 맨 위와 폰 홈 맨 위에 같은 진행 칸', () => {
-    expect(space).toMatch(/progress=\{<HomeProgress orch=\{lo\} events=\{events\} sessions=\{sessions\} readFill=\{sessionFill\} \/>\}/);
+    expect(space).toMatch(/progress=\{<HomeProgress orch=\{lo\} events=\{events\} sessions=\{sessions\} readFill=\{sessionFill\} statusOf=\{statusOf\} \/>\}/);
     expect(home).toMatch(/<div className="hm">\s*\{progress\}/);
-    expect(dash).toMatch(/<div className="m-top">\s*<HomeProgress orch=\{orch\} events=\{events\} sessions=\{sessions\} \/>/);
+    expect(dash).toMatch(/<div className="m-top">\s*<HomeProgress orch=\{orch\} events=\{events\} sessions=\{sessions\} statusOf=\{\(s\) => subStatus\(s, tails, now\)\} \/>/);
   });
   it('끝난 줄은 반짝인 뒤 접히고, 기타의 끝난 칸은 폭이 줄어 옆 칸이 당겨진다', () => {
     expect(css).toMatch(/\.gp-leave \{[^}]*animation: gp-fold/);

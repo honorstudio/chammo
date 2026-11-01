@@ -44,11 +44,14 @@ function useDpr(): number {
 
 /**
  * 두 번 누르기(누른 곳 = 기준점)와 마우스로 끌어서 이동 — 칸이 넘칠 때만 끌린다(맞춤은 넘치지 않는다). 터치는 브라우저 스크롤 그대로.
- * 칸이 나중에 생겨도(종류가 바뀜) 매 렌더 다시 붙인다
+ * 칸이 나중에 생겨도(종류가 바뀜) 매 렌더 다시 붙인다. 끌 수 있으면 칸에 can-pan, 끄는 중엔 panning.
+ * skip = 그 자리에서 시작한 끌기는 건드리지 않는다(PDF 글 층 — 글 고르기), onToggle 이 없으면 두 번 누르기는 그냥 둔다(PDF 는 낱말 고르기)
  */
-export function useImagePan(box: () => HTMLElement | null | undefined, onToggle: (at: Pt) => void) {
+export function useImagePan(box: () => HTMLElement | null | undefined, onToggle?: (at: Pt) => void, skip?: (target: Element) => boolean) {
   const cb = useRef(onToggle);
   cb.current = onToggle;
+  const sk = useRef(skip);
+  sk.current = skip;
   useEffect(() => {
     const el = box();
     if (!el) return;
@@ -56,13 +59,17 @@ export function useImagePan(box: () => HTMLElement | null | undefined, onToggle:
     const over = () => el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
     const down = (e: PointerEvent) => {
       if (e.button !== 0 || e.pointerType !== 'mouse' || !over()) return;
+      if (e.target instanceof Element && sk.current?.(e.target)) return;
       from = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop };
       el.setPointerCapture(e.pointerId);
       el.classList.add('panning');
       e.preventDefault(); // 그림을 끌어 놓기로 집지 않게
     };
     const move = (e: PointerEvent) => {
-      if (!from) return;
+      if (!from) {
+        if (e.pointerType === 'mouse') el.classList.toggle('can-pan', over());
+        return;
+      }
       const s = dragScroll(from, { x: e.clientX, y: e.clientY });
       el.scrollLeft = s.left;
       el.scrollTop = s.top;
@@ -73,7 +80,7 @@ export function useImagePan(box: () => HTMLElement | null | undefined, onToggle:
       el.classList.remove('panning');
       if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
     };
-    const dbl = (e: MouseEvent) => cb.current({ x: e.clientX, y: e.clientY });
+    const dbl = (e: MouseEvent) => cb.current?.({ x: e.clientX, y: e.clientY });
     el.addEventListener('pointerdown', down);
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
@@ -85,7 +92,7 @@ export function useImagePan(box: () => HTMLElement | null | undefined, onToggle:
       el.removeEventListener('pointerup', up);
       el.removeEventListener('pointercancel', up);
       el.removeEventListener('dblclick', dbl);
-      el.classList.remove('panning');
+      el.classList.remove('panning', 'can-pan');
     };
   });
 }

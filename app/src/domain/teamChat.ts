@@ -311,3 +311,9 @@ export function pasteName(d: Date): string {
 
 /** 맨 아래로 단추의 새 말 수 — 본 마지막 말(seen) 뒤에 온 말 */
 export const unseenCount = (seqs: readonly number[], seen: number) => seqs.filter((q) => q > seen).length;
+
+/** 다른 팀 안 읽은 수 — 그 팀 방(팀챗·DM) 전부의 받은 말 중 읽은 seq 뒤. 띠의 다른 팀 칸 표시(11-01 QA: 지금 팀만 셌다) */
+export function teamUnread(rooms: { id: string; kind: string; team?: string }[], items: TeamItem[], read: Record<string, number>, team: string): number {
+  const ids = new Set(rooms.filter((r) => r.team === team && r.kind !== 'self').map((r) => r.id));
+  return items.filter((it) => ids.has(it.room) && isLine(it) && incoming(it) && it.seq > (read[it.room] ?? 0)).length;
+}

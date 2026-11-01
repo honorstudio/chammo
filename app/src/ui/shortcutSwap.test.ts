@@ -57,6 +57,7 @@ describe('단축키 교체 — SpaceView 가 받아 한다', () => {
     expect(chat).toMatch(/useEffect\(\(\) => \{ drafts\.save\(draftKey\.current, \{ text: draft, refs \}\); \}, \[draft, refs\]\)/);
   });
   it('홈·보관함 탭 버튼은 단축키와 같은 함수를 부르고, 이름 옆에 단축키 안내(title)', () => {
+    // 탭은 아이콘 + 이름·단축키는 title(11-01 글자 탭 되돌림)
     expect(view).toMatch(/aria-label=\{tr\('홈', 'Home'\)\} title=\{`\$\{tr\('홈', 'Home'\)\} \$\{keyLabel\('⌘⇧H', IS_WIN\)\}`\}/);
     expect(view).toMatch(/aria-label=\{tr\('보관함', 'Locker'\)\} title=\{`\$\{tr\('보관함', 'Locker'\)\} \$\{keyLabel\('⌘⇧L', IS_WIN\)\}`\}/);
   });
@@ -76,10 +77,8 @@ describe('단축키 교체 — 메뉴·안내', () => {
     expect(mainRs).toMatch(/matches!\(id, "close_tab" \|/);
   });
   it('둘러보기·README·hq-app 스킬의 단축키 줄', () => {
+    // 2026-11-01 ux-start M5 — 둘러보기는 키 셋(⌘, ⌘/ ⌘1~⌘9)만, 키 표는 README·hq-app 스킬에
     expect(tour).not.toMatch(/'⌘T · ⌘W'/);
-    expect(tour).toMatch(/⌘W · ⌘T/);
-    expect(tour).toMatch(/⌘⇧T · ⌘⇧W/);
-    expect(tour).toMatch(/⌘⇧H · ⌘⇧L/);
     for (const doc of [readmeKo, readmeEn, skill]) {
       expect(doc).toMatch(/⌘W/);
       expect(doc).toMatch(/⌘⇧W/);

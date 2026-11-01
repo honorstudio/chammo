@@ -23,6 +23,9 @@ Files you only show go through `scripts/show`. The locker belongs to the assista
 파일마다 집은 하나, 나머지는 바로가기. add 는 어디서 왔나로 정한다(다운로드·데스크톱·스크린샷·채팅 첨부는 복사, 자리 잡은 곳·500MB 넘는 건 바로가기).
 give 는 프로젝트 세션에 넘기기 전에 — 파일이 <프로젝트>/assets/보관함/ 으로 이사하고 보관함엔 바로가기. 찍힌 새 경로를 메시지에 쓴다."""
 import json, os, shutil, sys
+for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — PYTHONUTF8 없이 떠도(데몬 env 세션·작업 스케줄러) 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
+    if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
+        _io.reconfigure(encoding='utf-8', errors='replace')
 
 BASE_FOLDER = '자료'  # 새 참모 폴더에 처음 한 번(앱 locker_fs::BASE_FOLDER 와 같은 이름)
 ID_FILE = '.chammo'
@@ -280,7 +283,12 @@ def give(f, project, home, data, root):
     copy_verified(f, to)
     # 치워 둘 이름은 copy_verified 의 조각 이름(.<이름><PART>)과 달라야 한다 — 같으면 바로가기 대신 복사하는 길이 치워 둔 원본을 지운다
     hold = os.path.join(os.path.dirname(f), '.' + os.path.basename(f) + '.held' + PART)
-    os.rename(f, hold)
+    try:
+        os.rename(f, hold)
+    except OSError as e:
+        # 윈도우는 오피스 앱이 연 파일을 못 옮긴다 — 방금 만든 복사본을 지워야 '두 벌'이 안 남는다(앱 locker_fs::give 와 같다, 2026-11-01 win-text M7)
+        os.remove(to)
+        raise ValueError(f'the file seems to be open in another app, so it was not moved — close it and try again / 파일이 다른 앱에 열려 있는 것 같아 이사 안 함 — 닫고 다시: {e}')
     try:
         linked = link(to, f)
     except OSError:

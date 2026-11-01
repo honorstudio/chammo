@@ -164,6 +164,10 @@ pub trait Backend: Send + Sync {
     fn team_file_thumb(&self, _team: &str, _id: &str, _size: u32) -> Result<Vec<u8>, String> {
         Err("not supported".into())
     }
+    /// 폰 대화 그림 크게 보기(11-01) — 이 맥이 풀어(팀 보관함 peek) view 면 보기용(view_plan), 아니면 원본. 그림이 아니면 Err
+    fn team_file_image(&self, _team: &str, _id: &str, _view: bool) -> Result<TeamImage, String> {
+        Err("not supported".into())
+    }
     /// 폰 팀 홈 새 글(고치기·지우기는 데스크톱) — pin 은 팀장만(Rust team_post::pin 이 다시 본다)
     fn team_post(&self, _team: &str, _title: &str, _body: &str, _pin: bool) -> Result<serde_json::Value, String> {
         Err("not supported".into())
@@ -359,6 +363,13 @@ pub trait Backend: Send + Sync {
 /// 이 서버 하나의 문지기 — 짝지은 기기들·받아 줄 주소(Host 헤더 값: "100.x.y.z:47123" 등)·쓰기를 받아 줄 출처(Origin).
 /// 인증은 Authorization: Bearer <기기 토큰> 만 — 쿠키는 포트를 안 가려 같은 호스트의 다른 포트 서버(vite·Metro)로 샌다(2026-10-02 재검토).
 /// 폰은 토큰을 localStorage(출처 = 스킴+호스트+포트)에 둔다
+/// 폰 크게 보기용 팀 그림 — dims = 원본 크기(폰이 1:1 배율·원본 더 받기를 정한다)
+pub struct TeamImage {
+    pub bytes: Vec<u8>,
+    pub ctype: &'static str,
+    pub dims: Option<(u32, u32)>,
+}
+
 pub struct Gate {
     /// 짝지은 기기(토큰 해시) — 설정에서 끊으면 바로 막힌다
     pub devices: std::sync::Arc<crate::mobile_pair::Devices>,
@@ -517,6 +528,18 @@ fn task_answer_state(log: &str, task: &str, note: &str, now_ms: i64) -> AnswerSt
     } else {
         AnswerState::No
     }
+}
+
+/// 그 일이 지금 답을 기다리나(폰 /api/task-answer 와 같은 판단) — 데스크톱 결정 대기함이 치기 전에 본다.
+/// 폰에서 먼저 답한 결정을 갱신 전 데스크톱이 또 쳐서 같은 답이 두 번 갔다(2026-11-01 ux-daily M16)
+pub(crate) fn task_waiting_in(log: &str, task: &str) -> bool {
+    matches!(task_answer_state(log, task, "", 0), AnswerState::Waiting)
+}
+
+/// 작업 기록(수천 줄)을 읽으니 뒤 스레드에서 — 동기 명령은 메인 스레드라 화면이 멈춘다(offmain_scan)
+#[tauri::command]
+pub async fn task_waiting(task: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || task_waiting_in(&crate::claude::read_tasks(), &task)).await.unwrap_or(false)
 }
 
 fn is_routine_name(s: &str) -> bool {
@@ -1190,6 +1213,11 @@ fn team_id_ok(t: &str) -> bool {
     !t.is_empty() && t.len() <= 80 && t.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
 }
 
+/// 팀 파일 길(썸네일·크게 보기) — 팀·파일 id 는 모양만, 나머지(방 열쇠)는 맥 팀 보관함이 본다
+fn team_file_ok(team: &str, id: &str) -> bool {
+    team_id_ok(team) && !id.is_empty() && id.len() <= 128 && id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+}
+
 /// 폰에서 사람이 친 말 → 짝지은 기기 참모(사람 길). cid·ts 는 이 기기가 붙인다(몸통에 실어 오면 400)
 fn phone_peer_say(req: &Req, be: &dyn Backend) -> Resp {
     #[derive(serde::Deserialize)]
@@ -1602,7 +1630,7 @@ struct ModeNameBody {
 
 /// 폰 홈·보관함 v1 에 더한 쓰기 길 — 같은 출처 문지기·head_check 몸통 목록·405 가 이 목록 하나를 본다
 const PHONE_POSTS: &[&str] = &["/api/device-number", "/api/login-terms-retry", "/api/gacha", "/api/peer-human-say", "/api/team-say", "/api/team-read", "/api/team-invite", "/api/team-create", "/api/team-handoff", "/api/team-post", "/api/team-agent-confirm", "/api/team-agent-save", "/api/team-agent-remove", "/api/team-agent-try", "/api/team-home-save", "/api/team-home-content", "/api/team-cal-put", "/api/team-locker-op", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
-const PHONE_GETS: &[&str] = &["/api/gacha", "/api/office", "/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team", "/api/team-profiles", "/api/team-posts", "/api/team-home", "/api/team-cal", "/api/team-cal-poll", "/api/team-agents", "/api/team-agent-usage", "/api/team-agent-refs", "/api/team-file-thumb", "/api/team-locker", "/api/team-locker-put"];
+const PHONE_GETS: &[&str] = &["/api/gacha", "/api/office", "/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team", "/api/team-profiles", "/api/team-posts", "/api/team-home", "/api/team-cal", "/api/team-cal-poll", "/api/team-agents", "/api/team-agent-usage", "/api/team-agent-refs", "/api/team-file-thumb", "/api/team-file-image", "/api/team-locker", "/api/team-locker-put"];
 /// 폰 md 글 칸 저장만 몸통을 크게(글 512KB + JSON)
 const MAX_WRITE_BODY: usize = crate::locker_fs::MAX_PHONE_MD + 64 * 1024;
 
@@ -1887,26 +1915,102 @@ fn html_url(t: &str, path: &str) -> String {
 }
 
 /// 시안 곁 파일(그림·스타일·글꼴·스크립트) — 표의 html 폴더 안만(mobile_files::html_asset), 글 속 비밀은 안 낸다
-fn html_asset_resp(html: &str, rel: &str, be: &dyn Backend) -> Resp {
+fn html_asset_bytes(html: &str, rel: &str, be: &dyn Backend) -> Result<(&'static str, Vec<u8>), Resp> {
     let rules = mobile_files::Rules { data_dir: be.data_dir(), hq_dir: be.hq_dir(), home: PathBuf::from(crate::platform::home()) };
     let real = match mobile_files::html_asset(Path::new(html), rel, &rules) {
         Pick::Ok(p) => p,
-        Pick::Forbidden => return Resp::text(403, "not allowed"),
-        Pick::NotFound => return Resp::text(404, "not found"),
+        Pick::Forbidden => return Err(Resp::text(403, "not allowed")),
+        Pick::NotFound => return Err(Resp::text(404, "not found")),
     };
     let ctype = mobile_files::asset_type(&real).unwrap_or("application/octet-stream");
     let bytes = match mobile_files::read_verified(&real.to_string_lossy(), MAX_HTML_FILE) {
         Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => return Resp::text(413, "file too large"),
-        Err(_) => return Resp::text(403, "not allowed"),
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => return Err(Resp::text(413, "file too large")),
+        Err(_) => return Err(Resp::text(403, "not allowed")),
     };
     // 글 속 비밀 검사는 글 파일만(css·js·글꼴) — 그림 바이트는 글이 아니다, svg 는 글이라 본다
     if (!ctype.starts_with("image/") || ctype.starts_with("image/svg")) && mobile_files::secret_in(&bytes) {
-        return Resp::text(403, "secret inside");
+        return Err(Resp::text(403, "secret inside"));
     }
-    let mut r = Resp::new(200, ctype, bytes);
+    Ok((ctype, bytes))
+}
+
+fn html_asset_resp(html: &str, rel: &str, be: &dyn Backend) -> Resp {
+    let mut r = match html_asset_bytes(html, rel, be) {
+        Ok((ctype, bytes)) => Resp::new(200, ctype, bytes),
+        Err(r) => r,
+    };
     r.headers.push(("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'".into()));
     r
+}
+
+/// 시안에 품을 그림 총량(base64 글자 수) — 넘는 그림은 상대 주소 그대로 둔다
+const INLINE_MAX: usize = 8 * 1024 * 1024;
+
+/// 상대 주소만(같은 폴더 곁 파일) — 절대·밖 주소(`/`·`#`·`:` 가 든 것)는 아니다. ?·# 꼬리는 떼고 퍼센트는 푼다
+fn inline_rel(v: &str) -> Option<String> {
+    let v = v.trim();
+    if v.is_empty() || v.starts_with('/') || v.starts_with('#') || v.contains(':') {
+        return None;
+    }
+    let cut = v.find(['?', '#']).map_or(v, |i| &v[..i]);
+    percent_encoding::percent_decode_str(cut).decode_utf8().ok().map(|c| c.into_owned())
+}
+
+/// 따옴표로 싼 값의 범위 — at 이 따옴표 자리
+fn quoted_span(h: &[u8], at: usize) -> Option<(usize, usize)> {
+    let q = *h.get(at)?;
+    if q != b'"' && q != b'\'' {
+        return None;
+    }
+    let end = h[at + 1..].iter().position(|&c| c == q)?;
+    Some((at + 1, at + 1 + end))
+}
+
+/// url( 뒤 값의 범위 — 따옴표가 있어도 없어도
+fn url_span(h: &[u8], mut at: usize) -> Option<(usize, usize)> {
+    while h.get(at).is_some_and(|c| c.is_ascii_whitespace()) {
+        at += 1;
+    }
+    if let Some(s) = quoted_span(h, at) {
+        return Some(s);
+    }
+    let end = h[at..].iter().position(|&c| c == b')' || c == b'"' || c == b'\'' || c == b'<')?;
+    (h[at + end] == b')').then_some((at, at + end))
+}
+
+/// 시안 속 상대 그림 주소(`src="…"`·`url(…)`)를 data: 로 품는다 — 중계 길 폰의 시안 칸은 불투명 출처라 그림 요청이 서비스 워커를 못 탄다.
+/// resolve 가 곁 파일 거름을 지난 그림만 준다(그림이 아니거나 못 받으면 그대로 둔다), 총량 budget(base64 글자 수)을 넘는 그림도 그대로
+fn inline_assets(html: &str, budget: usize, mut resolve: impl FnMut(&str) -> Option<(&'static str, Vec<u8>)>) -> String {
+    use base64::Engine;
+    let low = html.to_ascii_lowercase();
+    let h = low.as_bytes();
+    let (mut out, mut last, mut used, mut i) = (String::with_capacity(html.len()), 0, 0, 0);
+    while i < h.len() {
+        let span = if h[i..].starts_with(b"src=") && i > 0 && h[i - 1].is_ascii_whitespace() {
+            quoted_span(h, i + 4)
+        } else if h[i..].starts_with(b"url(") {
+            url_span(h, i + 4)
+        } else {
+            None
+        };
+        let Some((s, e)) = span else {
+            i += 1;
+            continue;
+        };
+        if let Some((ct, bytes)) = inline_rel(&html[s..e]).and_then(|rel| resolve(&rel)).filter(|(ct, _)| ct.starts_with("image/")) {
+            let len = bytes.len().div_ceil(3) * 4;
+            if used + len <= budget {
+                used += len;
+                out.push_str(&html[last..s]);
+                out.push_str(&format!("data:{ct};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)));
+                last = e;
+            }
+        }
+        i = e + 1;
+    }
+    out.push_str(&html[last..]);
+    out
 }
 
 fn html_page(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
@@ -1934,7 +2038,10 @@ fn html_page(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     if mobile_files::secret_in(&bytes) {
         return Resp::text(403, "secret inside");
     }
-    let mut r = Resp::new(200, "text/html; charset=utf-8", inject_shim(&String::from_utf8_lossy(&bytes)).into_bytes());
+    let text = String::from_utf8_lossy(&bytes);
+    // 중계 길 폰(?inline=1) — 같은 폴더 그림을 품어 한 번에(시안 칸이 그림을 따로 못 받는다)
+    let text = if req.param("inline") == Some("1") { inline_assets(&text, INLINE_MAX, |rel| html_asset_bytes(&path, rel, be).ok()) } else { text.into_owned() };
+    let mut r = Resp::new(200, "text/html; charset=utf-8", inject_shim(&text).into_bytes());
     r.headers.push(("Content-Security-Policy", "sandbox allow-scripts; default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; img-src 'self' https: data: blob:; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'".into()));
     r.headers.push(("X-Frame-Options", "SAMEORIGIN".into()));
     r
@@ -2137,7 +2244,12 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     }
     // html 시안 — 표가 열쇠(iframe 은 Bearer 를 못 싣는다)
     if req.path == "/api/html" || req.path.starts_with("/api/html/") {
-        return if is_get { html_page(req, gate, be) } else { Resp::text(405, "method not allowed") };
+        let mut r = if is_get { html_page(req, gate, be) } else { Resp::text(405, "method not allowed") };
+        // 오류까지 응답 CSP 로 가둔다 — 중계 길 폰은 시안 칸에 sandbox 속성을 못 단다(서비스 워커를 못 탄다)
+        if !r.headers.iter().any(|(n, _)| *n == "Content-Security-Policy") {
+            r.headers.push(("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'self'".into()));
+        }
+        return r;
     }
     if req.path == "/api/dl" {
         return if is_get { dl_page(req, gate, be) } else { Resp::text(405, "method not allowed") };
@@ -2964,12 +3076,30 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         // 대화 말풍선·대화 파일 썸네일(10-28 사용자 빈 네모) — 맥이 풀어 줄인 JPEG 만. 팀·파일 id 는 모양만 보고 나머지(방 열쇠)는 맥 팀 보관함이 본다
         ("GET", "/api/team-file-thumb") => {
             let (team, id) = (req.param("team").unwrap_or(""), req.param("id").unwrap_or(""));
-            if !team_id_ok(team) || id.is_empty() || id.len() > 128 || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_') {
+            if !team_file_ok(team, id) {
                 return Resp::text(400, "bad team or id");
             }
             match be.team_file_thumb(team, id, mobile_files::thumb_size(req.param("size"))) {
                 Ok(b) => {
                     let mut r = Resp::new(200, "image/jpeg", b);
+                    r.headers.push(("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'".into()));
+                    r
+                }
+                Err(e) => Resp::text(415, &e),
+            }
+        }
+        // 대화 그림 크게 보기(11-01 사용자 "눌러도 크게 안 보인다") — 보기용(view=1, 크거나 무거우면 JPEG 2560)·원본, 원본 크기는 X-Image-Size
+        ("GET", "/api/team-file-image") => {
+            let (team, id) = (req.param("team").unwrap_or(""), req.param("id").unwrap_or(""));
+            if !team_file_ok(team, id) {
+                return Resp::text(400, "bad team or id");
+            }
+            match be.team_file_image(team, id, req.param("view") == Some("1")) {
+                Ok(img) => {
+                    let mut r = Resp::new(200, img.ctype, img.bytes);
+                    if let Some((w, h)) = img.dims {
+                        r.headers.push(("X-Image-Size", format!("{w}x{h}")));
+                    }
                     r.headers.push(("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'".into()));
                     r
                 }

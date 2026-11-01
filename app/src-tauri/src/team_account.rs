@@ -122,11 +122,20 @@ fn respond(s: &mut TcpStream, status: &str) {
 }
 
 /// 루프백에서 내 loginId 의 결과 하나를 기다린다 → 마침 코드. 남의 loginId·다른 길은 400·404 로 돌려보내고 계속 기다린다
+#[cfg(test)]
 fn wait_result(l: &TcpListener, mine: &str, wait: Duration) -> Result<String, String> {
+    wait_until(l, mine, wait, &|| false)
+}
+
+/// wait_result + 사람이 취소하면(cancelled) 그 자리에서 끝(11-01 QA H3 — 탭을 닫으면 10분 갇혔다)
+fn wait_until(l: &TcpListener, mine: &str, wait: Duration, cancelled: &dyn Fn() -> bool) -> Result<String, String> {
     l.set_nonblocking(true).map_err(|e| e.to_string())?;
     let until = Instant::now() + wait;
     let mut hits = 0;
     while Instant::now() < until {
+        if cancelled() {
+            return Err(CANCELLED.into());
+        }
         match l.accept() {
             Ok((mut s, _)) => {
                 hits += 1;
@@ -164,6 +173,25 @@ fn wait_result(l: &TcpListener, mine: &str, wait: Duration) -> Result<String, St
 
 static BUSY: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
 
+/// 도는 로그인마다 (데이터 폴더, 연 로그인 주소, 취소 요청) — 화면의 '다시 열기'·'취소'가 본다(11-01 QA H3)
+static LIVE: std::sync::Mutex<Vec<(std::path::PathBuf, String, bool)>> = std::sync::Mutex::new(Vec::new());
+
+pub(crate) const CANCELLED: &str = "로그인을 취소했어요";
+
+fn live<T>(f: impl FnOnce(&mut Vec<(std::path::PathBuf, String, bool)>) -> T) -> T {
+    f(&mut LIVE.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+/// 이 데이터 폴더에서 도는 로그인을 멈춘다 — 멈출 게 있었으면 true. 브라우저 쪽은 그대로(그 탭에서 마쳐도 이제 안 받는다)
+pub fn cancel_login(dir: &Path) -> bool {
+    live(|v| v.iter_mut().find(|x| x.0 == dir).map(|x| x.2 = true).is_some())
+}
+
+/// 도는 로그인이 연 주소(우리 서버의 로그인 시작 주소) — 브라우저를 닫았을 때 다시 열기
+pub fn login_url(dir: &Path) -> Option<String> {
+    live(|v| v.iter().find(|x| x.0 == dir).map(|x| x.1.clone()).filter(|u| !u.is_empty()))
+}
+
 /// 이 데이터 폴더에서 로그인이 도는 동안 쥐는 표 — 화면·scripts/team 로그인이 겹치거나 그사이 팀 만들기가 끼면
 /// 나중 것이 team.json 의 열쇠를 덮어써 먼저 만든 열쇠가 키체인·서버 계정에 남았다(리뷰 10-23)
 pub(crate) struct LoginTurn(std::path::PathBuf);
@@ -171,6 +199,7 @@ pub(crate) struct LoginTurn(std::path::PathBuf);
 impl Drop for LoginTurn {
     fn drop(&mut self) {
         BUSY.lock().unwrap_or_else(|e| e.into_inner()).retain(|d| d != &self.0);
+        live(|v| v.retain(|x| x.0 != self.0));
     }
 }
 
@@ -180,6 +209,7 @@ pub(crate) fn login_turn(dir: &Path) -> Result<LoginTurn, String> {
         return Err("이 기기에서 로그인을 진행하고 있어요 — 열린 브라우저에서 마치거나, 10분 뒤 다시 해 주세요".into());
     }
     g.push(dir.to_path_buf());
+    live(|v| v.push((dir.to_path_buf(), String::new(), false)));
     Ok(LoginTurn(dir.to_path_buf()))
 }
 
@@ -206,7 +236,7 @@ pub fn login_with(dir: &Path, kc: &dyn Store, http: &dyn Http, opener: &dyn Open
     let st = relay::load_state(dir);
     if st.account.is_some() {
         // 밖(scripts/team login)에서 먼저 로그인한 때도 — 화면은 이 문구를 보면 상태를 다시 읽어 닫는다(QA 7)
-        return Err("이미 이 기기는 로그인돼 있어요 — 화면을 새로 볼게요. 다른 계정으로 바꾸려면 설정에서 로그아웃한 뒤에 해 주세요".into());
+        return Err(format!("{} 이미 이 기기는 로그인돼 있어요 — 화면을 새로 볼게요. 다른 계정으로 바꾸려면 설정에서 로그아웃한 뒤에 해 주세요", relay::TAG_ALREADY));
     }
     let device_name = device_name_ok(device_name).ok_or("기기 이름은 1~80자")?;
     let (server, k, created, device) = if st.registered() {
@@ -223,7 +253,9 @@ pub fn login_with(dir: &Path, kc: &dyn Store, http: &dyn Http, opener: &dyn Open
     };
     // 종단 암호 받는 열쇠·묶기 서명·봉인(chammo-relay ADR 0007) — nP 는 이 기기 e2e.json 에만
     let e2e = crate::e2e_flow::login_fields(dir, &k)?;
-    let done = run(http, opener, &server, &k, device.as_deref(), &device_name, &e2e, wait);
+    let here = |url: &str| live(|v| v.iter_mut().filter(|x| x.0 == dir).for_each(|x| x.1 = url.to_string()));
+    let stop = || live(|v| v.iter().any(|x| x.0 == dir && x.2));
+    let done = run(http, opener, &server, &k, device.as_deref(), &device_name, &e2e, wait, &here, &stop);
     let v = match done {
         Ok(v) => v,
         Err(e) => {
@@ -271,13 +303,14 @@ fn self_approved(dir: &Path, http: &dyn Http, st: &TeamState, k: &DeviceKeys) ->
 }
 
 /// begin → 브라우저 → 루프백 결과 → finish. 돌려주는 값 = finish 응답
-fn run(http: &dyn Http, opener: &dyn Opener, server: &str, k: &DeviceKeys, device: Option<&str>, device_name: &str, e2e: &Value, wait: Duration) -> Result<Value, String> {
+#[allow(clippy::too_many_arguments)]
+fn run(http: &dyn Http, opener: &dyn Opener, server: &str, k: &DeviceKeys, device: Option<&str>, device_name: &str, e2e: &Value, wait: Duration, opened: &dyn Fn(&str), cancelled: &dyn Fn() -> bool) -> Result<Value, String> {
     let l = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("로그인 받을 자리를 못 열었어: {e}"))?;
     let port = l.local_addr().map_err(|e| e.to_string())?.port();
     let return_to = format!("http://127.0.0.1:{port}{RETURN_PATH}");
-    let (code, v) = relay::call(http, server, k, device, "POST", "/v0/auth/google/begin", Some(&json!({ "returnTo": return_to })))?;
+    let (code, v) = relay::call(http, server, k, device, "POST", "/v0/auth/google/begin", Some(&json!({ "returnTo": return_to }))).map_err(offline)?;
     if code != 201 {
-        return Err(relay::why(code, &v));
+        return Err(login_fail(http, server, code, &v));
     }
     let login = v["loginId"].as_str().unwrap_or("");
     let url = v["url"].as_str().unwrap_or("");
@@ -285,21 +318,33 @@ fn run(http: &dyn Http, opener: &dyn Opener, server: &str, k: &DeviceKeys, devic
     if !uuid_ok(login) || url != format!("{server}/auth/google/start?login={login}") {
         return Err("중계 서버가 이상한 로그인 주소를 줬어 — 열지 않았어".into());
     }
+    opened(url);
     opener.open(url)?;
-    let code = wait_result(&l, login, wait)?;
+    let code = wait_until(&l, login, wait, cancelled)?;
     drop(l);
     let (st, v) = relay::call(http, server, k, device, "POST", "/v0/auth/google/finish", Some(&{
         let mut b = json!({ "loginId": login, "code": code, "deviceName": device_name, "kind": this_kind() });
         b.as_object_mut().expect("객체").extend(e2e.as_object().cloned().unwrap_or_default());
         b
-    }))?;
+    })).map_err(offline)?;
     match st {
         200 | 201 => Ok(v),
         409 => Err("이 기기는 다른 계정에 묶여 있어 — 로그아웃 뒤 다시".into()),
         403 if v["error"] == "key_rejected" => Err("이 기기는 다른 기기에서 거절됐어 — 24시간 뒤 다시 로그인할 수 있어".into()),
         429 => Err("계정에 허용을 기다리는 기기가 5개를 넘었어 — 다른 기기에서 먼저 허용하거나 거절해 줘".into()),
-        _ => Err(relay::why(st, &v)),
+        _ => Err(login_fail(http, server, st, &v)),
     }
+}
+
+/// 요청이 안 나갔거나 답이 안 옴 — 화면은 '일단 쓰기'를 보여 준다(domain/loginGate gateErr)
+fn offline(e: String) -> String {
+    format!("{} {e}", relay::TAG_OFFLINE)
+}
+
+/// 로그인 길의 서버 실패 — 5xx 는 서버 장애라 망 끊김과 같이(일단 쓰기), 401 은 시계부터(11-01 QA H1: 시계 틀린 PC 가 게이트에 갇혔다)
+fn login_fail(http: &dyn Http, server: &str, code: u16, v: &Value) -> String {
+    let why = relay::why_signed(http, server, code, v);
+    if code >= 500 { offline(why) } else { why }
 }
 
 /// 서버에 있는 내 계정·내 기기·내 팀(전부)을 받아 적는다
@@ -328,7 +373,8 @@ pub fn refresh_me(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<TeamSta
     let (code, devs) = relay::call(http, &st.server, &k, Some(&st.device_id), "GET", "/v0/me/devices", None)?;
     let devices: Vec<DeviceName> = if code == 200 { relay::device_rows(&devs["devices"]) } else { st.my_devices.clone() };
     let created = devs["devices"].as_array().and_then(|a| a.iter().find(|d| d["current"] == true)).and_then(|d| d["createdAt"].as_u64());
-    relay::mutate_if(dir, &st.device_id, |s| {
+    let mut gone = vec![];
+    let out = relay::mutate_if(dir, &st.device_id, |s| {
         if let Some(a) = me["account"].as_object() {
             let g = |k: &str| a.get(k).and_then(Value::as_str).unwrap_or("").to_string();
             s.account = Some(Account { id: g("id"), email: g("email"), name: g("name") });
@@ -341,6 +387,8 @@ pub fn refresh_me(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<TeamSta
         // 서버가 아는 내 팀 전부 — 멤버 목록·표시 이름은 이미 받은 것을 남기고, 서버에 없는 팀(나감·빠짐·지워짐)과 그 방은 지운다
         if let Some(list) = me["teams"].as_array() {
             let ids: Vec<String> = list.iter().filter_map(|t| t["teamId"].as_str().map(String::from)).collect();
+            // 내가 나간 팀은 나가기가 먼저 지워서 여기 안 걸린다 — 남은 건 빠졌거나 지워진 팀(11-01 QA M5)
+            gone = gone_teams(&s.teams, &ids);
             for gone in s.teams.iter().map(|t| t.id.clone()).filter(|id| !ids.contains(id)).collect::<Vec<_>>() {
                 s.drop_team(&gone);
             }
@@ -356,7 +404,16 @@ pub fn refresh_me(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<TeamSta
         if let Some(t) = created {
             s.device_created_at = t;
         }
-    })
+    });
+    if out.is_ok() && !gone.is_empty() {
+        crate::team_alert::on_gone(&gone);
+    }
+    out
+}
+
+/// 서버 목록에 없어진 내 팀 이름(없으면 id) — 알림용
+pub(crate) fn gone_teams(have: &[relay::TeamEntry], ids: &[String]) -> Vec<String> {
+    have.iter().filter(|t| !ids.contains(&t.id)).map(|t| if t.name.is_empty() { t.id.clone() } else { t.name.clone() }).collect()
 }
 
 /// 기기 id 는 서버 경로에 들어간다 — UUID 모양만
@@ -499,8 +556,16 @@ pub fn logout_with(dir: &Path, kc: &dyn Store, http: &dyn Http, with_link: bool)
         200 | 404 => {}
         // 401 은 시계가 5분 넘게 틀려도 온다 — 서버가 끊었다고 알린 기기(4001)만 '이미 끊김'으로 본다(리뷰 10-23)
         // 서버가 이 열쇠를 아예 모르면(404 확인) 시계 탓이 아니다 — 지워진 기기라 로컬만 지운다(10-28 윈도우)
-        401 if st.revoked || (relay::from_server(&v) && relay::device_keys(kc, &st).is_ok_and(|k| relay::mark_if_gone(dir, http, &st, &k))) => {}
-        401 => return Err("중계 서버가 이 기기 서명을 거절했어(시계가 틀렸거나 이미 끊김) — 다른 기기에서 끊긴 게 맞으면 scripts/team forget --yes".into()),
+        // 사람이 누른 것이라 쉬기 없이 지금 확인(mark_if_gone_now)
+        401 if st.revoked || (relay::from_server(&v) && relay::device_keys(kc, &st).is_ok_and(|k| relay::mark_if_gone_now(dir, http, &st, &k))) => {}
+        // 끊긴 게 아니면 시계부터 — 시계가 틀린 PC 가 로그인 취소·로그아웃을 눌러 CLI 명령 안내만 받고 게이트에 갇혔다(11-01 QA H2)
+        401 => {
+            return Err(match relay::clock_skew_ms(http, &st.server) {
+                Some(d) if d.abs() > relay::CLOCK_SLACK_MS => relay::clock_err(d),
+                _ if with_link => "중계 서버가 이 기기 서명을 거절했어 — 잠시 뒤 다시 해 줘. 계속 안 되면 다른 기기의 설정 > 기기 관리에서 이 기기를 빼 줘".into(),
+                _ => "중계 서버가 이 기기 서명을 거절했어(시계가 틀렸거나 이미 끊김) — 다른 기기에서 끊긴 게 맞으면 scripts/team forget --yes".into(),
+            })
+        }
         _ => return Err(relay::why(code, &v)),
     }
     relay::forget_local(dir, kc).map(|_| ())

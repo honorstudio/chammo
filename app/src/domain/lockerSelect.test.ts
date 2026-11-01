@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bandBox, bandHits, batchActs, trashKey, batchMenu, edgeScroll, NO_SEL, pickAll, pickBand, pickClick, pickKeep, pickOne, type Sel } from './lockerSelect';
+import { bandBox, bandHits, bandStarts, pickMods, batchActs, trashKey, batchMenu, edgeScroll, NO_SEL, pickAll, pickBand, pickClick, pickKeep, pickOne, type Sel } from './lockerSelect';
 
 const order = ['a', 'b', 'c', 'd', 'e'];
 const sel = (keys: string[], anchor: string | null = keys[keys.length - 1] ?? null): Sel => ({ keys, anchor });
@@ -151,5 +151,21 @@ describe('trashKey — 보관함에서 고른 채 Backspace·Delete·⌘⌫ = �
     expect(trashKey({ ...k, asking: true }, [file, file], 'dir')).toBeNull();
     expect(trashKey({ ...k, key: 'x' }, [file], 'dir')).toBeNull();
     expect(trashKey({ ...k, ctrl: true }, [file], 'dir')).toBeNull();
+  });
+});
+
+// 2026-11-01 ux-daily M21 — 윈도우에서 Ctrl+클릭이 넣고 빼기가 아니라 열기가 됐고, Ctrl+끌기는 네모가 아예 안 시작됐다
+describe('pickMods·bandStarts — 넣고 빼기 키는 맥 ⌘, 윈도우 Ctrl', () => {
+  const k = (o: Partial<{ metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }> = {}) => ({ metaKey: false, ctrlKey: false, shiftKey: false, ...o });
+  it('맥은 ⌘, 윈도우는 Ctrl 이 넣고 빼기', () => {
+    expect(pickMods(k({ metaKey: true }), false)).toEqual({ meta: true, shift: false });
+    expect(pickMods(k({ ctrlKey: true }), false)).toEqual({ meta: false, shift: false });
+    expect(pickMods(k({ ctrlKey: true }), true)).toEqual({ meta: true, shift: false });
+    expect(pickMods(k({ shiftKey: true }), true)).toEqual({ meta: false, shift: true });
+  });
+  it('네모 끌기 — 맥 Ctrl+누름은 우클릭이라 안 시작, 윈도우 Ctrl+끌기는 시작', () => {
+    expect(bandStarts(k({ ctrlKey: true }), false)).toBe(false);
+    expect(bandStarts(k({ ctrlKey: true }), true)).toBe(true);
+    expect(bandStarts(k(), false)).toBe(true);
   });
 });

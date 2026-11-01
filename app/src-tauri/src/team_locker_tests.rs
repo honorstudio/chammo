@@ -506,3 +506,26 @@ fn 폴더_지우기는_안쪽_폴더까지_휴지통으로_옆_폴더는_그대�
     let st = |id: &str| find(&nb, id).state;
     assert_eq!((st(&a), st(&c), st(&m), st(&d)), ("trash".into(), "trash".into(), "trash".into(), "live".into()));
 }
+
+/// 늘 같은 답 — 거절 문구 시험
+struct Always(u16, Value);
+impl Net for Always {
+    fn call(&self, _: &str, _: &str, _: Option<&Value>) -> Result<(u16, Value), String> {
+        Ok((self.0, self.1.clone()))
+    }
+    fn put(&self, _: &str, _: &[u8]) -> Result<u16, String> {
+        Ok(self.0)
+    }
+    fn get(&self, _: &str) -> Result<(u16, Vec<u8>), String> {
+        Ok((self.0, vec![]))
+    }
+}
+
+#[test]
+fn 남의_파일_영구_지우기_거절은_파일_이야기로() {
+    // 11-01 QA M3: "그 팀·방의 권한이 없어(초대·빼기·역할은 팀장이나…)" — 파일을 지우는데 초대·빼기 얘기가 나왔다
+    let e = act(&Always(403, json!({ "error": "forbidden" })), "t1", "f1", "purge").unwrap_err();
+    assert!(e.contains("올린 사람") && !e.contains("초대"), "{e}");
+    // 다른 거절은 그대로(서버 이유)
+    assert!(!act(&Always(403, json!({ "error": "forbidden" })), "t1", "f1", "trash").unwrap_err().contains("올린 사람"));
+}

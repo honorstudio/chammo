@@ -235,6 +235,12 @@ class StatusLine(unittest.TestCase):
             s = json.loads((dev / 'web-app/.claude/settings.local.json').read_text())
             self.assertEqual(s['statusLine'], {'type': 'command', 'command': str(data / 'tools/statusline')})
 
+    def test_상태줄_명령은_셸_낱말_하나로(self):
+        # Claude 는 상태줄을 셸(윈도우 Git Bash)로 돌린다 — 역슬래시는 먹히고 빈칸은 쪼개졌다(2026-11-01 win-text M1)
+        self.assertEqual(np.status_cmd(r'C:\Users\John Smith\.chammo\tools/statusline'), '"C:/Users/John Smith/.chammo/tools/statusline"')
+        self.assertEqual(np.status_cmd('/Users/me/.chammo/tools/statusline'), '/Users/me/.chammo/tools/statusline')
+        self.assertEqual(np.status_cmd('/a b/$x`y"z'), '"/a b/\\$x\\`y\\"z"')
+
     def test_스크립트가_없으면_상태줄만_뺀다(self):
         # 새 프로젝트는 격리 none 이 늘 들어가니(2026-10-21) 파일은 생기고 statusLine 칸만 없다
         with tempfile.TemporaryDirectory() as root:
@@ -300,3 +306,24 @@ class TrustOnWindows(unittest.TestCase):
             d = json.load(open(cj, encoding='utf-8'))
             self.assertTrue(d['projects']['C:/Users/a/dev/x']['hasTrustDialogAccepted'])
             self.assertFalse(os.path.exists(cj + '.chammo-tmp'))
+
+
+class FirstCommitNoAuthor(unittest.TestCase):
+    """git 이름·메일이 없는 새 PC — 참모가 사용자에게 git config 명령을 치라고 했다(2026-11-01 win-first M1). 이제 앱 설정 칸으로 보낸다"""
+
+    def test_작성자가_없으면_설정_도구_칸으로_안내(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as d:
+            empty = os.path.join(d, 'gitconfig')
+            open(empty, 'w').close()
+            env = {'GIT_CONFIG_GLOBAL': empty, 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_AUTHOR_NAME': '', 'GIT_AUTHOR_EMAIL': '', 'EMAIL': ''}
+            with unittest.mock.patch.dict(os.environ, env):
+                repo = os.path.join(d, 'p')
+                os.makedirs(repo)
+                subprocess.run(['git', 'init', '-q'], cwd=repo, check=True)
+                open(os.path.join(repo, 'a.md'), 'w').write('a')
+                for lang, where in (('ko', '설정'), ('en', 'Settings')):
+                    done, note = np.first_commit(repo, lang)
+                    self.assertFalse(done)
+                    self.assertIn(where, note)
+                    self.assertNotIn('git config --global user.name', note)

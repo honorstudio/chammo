@@ -25,6 +25,8 @@ import { IconDockIn, IconMaximize, IconMinimize, IconRestore } from '../Icons';
 import { IconButton } from '../kit/IconButton';
 import { useRoster } from '../team/teamGive';
 import { useFace } from './OrchBubble';
+import { imagePasteKey } from '../../domain/keys';
+import { IS_WIN } from '../../domain/reader';
 import './orchBubble.css';
 
 /** 바탕 배지 상자 — 배지 52(왼쪽 18·위 10) + 아래 숫자 알약 자리. 맥 창(무대)은 부채(FAN)·배너(PEEK)가 펼쳐질 자리를 화면 가운데 쪽으로 늘 품고(deskStage),
@@ -307,12 +309,13 @@ export function DeskBubble() {
   const term = useRef('');
   const keys = async (seq: string[]) => { if (chatId) await invoke('bubble_keys', { id: chatId, keys: seq }).catch((e: unknown) => setErr(String(e))); };
   const lastSent = useRef('');
-  const send = (body: string) => {
-    if (!chatId) return;
+  // 실패면 false — ChatView 가 친 글을 입력칸에 되살린다. 앞에 붙였던 끌어 놓은 경로도 되돌린다(2026-11-01 ux-daily M12)
+  const send = (body: string): Promise<boolean> => {
+    if (!chatId) return Promise.resolve(false);
     const text = term.current + body;
     term.current = '';
     lastSent.current = text;
-    void invoke('bubble_send', { id: chatId, text }).then(() => setErr(null), (e: unknown) => setErr(tr(`못 보냈어요 — ${String(e)}`, `Not sent — ${String(e)}`)));
+    return invoke('bubble_send', { id: chatId, text }).then(() => { setErr(null); return true; }, (e: unknown) => { term.current = text.slice(0, text.length - body.length) + term.current; setErr(tr(`못 보냈어요 — ${String(e)}`, `Not sent — ${String(e)}`)); return false; });
   };
   // 멈춤 — 막 보낸 말을 Esc 로 끊으면 Claude 가 그 말을 세션 입력칸에 되돌려 놓는다. 메인 칸은 화면을 읽어 다루지만
   // 대화창은 안 읽으니 다음 말 앞에 붙었다 — 한 번 읽어 보낸 말이 남았으면 세션 입력칸을 비우고(Ctrl+C) 대화창 입력칸으로 돌려 놓는다
@@ -459,7 +462,7 @@ export function DeskBubble() {
               <div className="pane headless" data-drop ref={paneRef}>
                 <ChatVoice.Provider value={voiceCtl}>
                 <ChatView key={who.id} sessionId={sid} state={state} send={send} cwd={cwd} ctx={sid ? ctxs[sid]?.used : undefined} modelInfo={sid ? ctxs[sid] : undefined} pickModel={pickModel}
-                  interrupt={() => void stop()} rawKeys={(seq) => keys(seq)} pasteImage={() => void keys(['\x16'])}
+                  interrupt={() => void stop()} rawKeys={(seq) => keys(seq)} pasteImage={() => void keys([imagePasteKey(IS_WIN)])}
                   onTerminal={() => void invoke('orch_bubble_main', { orch: who.id }).catch(() => {})}
                   screen={state === 'blocked' ? () => scr.current : undefined}
                   submitTerminal={submitTerminal} clearTerminal={() => { term.current = ''; }} sendQueuedNow={() => void stop()} typeOnly={(t) => { term.current += t; }}

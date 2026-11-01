@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fileManagerLabel, keyLabel, modKey, winToMac } from './keys';
+import { fileManagerLabel, keyLabel, modKey, winToMac, imagePasteKey } from './keys';
 import { shortcutFor } from './shortcuts';
 
 const k = (key: string, code: string, m: { ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean } = {}) => ({
@@ -135,5 +135,14 @@ describe('윈도우 숫자패드 Ctrl + / - / 0 도 글자 크기', () => {
     expect(shortcutFor(k('-', 'Minus', { ctrl: true }), true)).toEqual({ type: 'font', delta: -1 });
     expect(shortcutFor(k('+', 'NumpadAdd', { ctrl: true, alt: true }), true)).toBeNull();
     expect(winToMac(k('+', 'NumpadAdd', {}))).toBeNull(); // Ctrl 없으면 그냥 글자
+  });
+});
+
+// 2026-11-01 ux-daily H1 — 윈도우 채팅에 그림을 붙이면 칩·#img1 은 생기는데 Claude 엔 안 갔다. 앱이 늘 Ctrl+V(\x16)를 쳤는데
+// Claude Code 의 윈도우 그림 붙여넣기 키는 Alt+V 뿐(2.1.316 기본 키: windows||wsl ? "alt+v" : "ctrl+v", ctrl+v 는 wsl 만 더)
+describe('imagePasteKey — 세션에 칠 그림 붙여넣기 키', () => {
+  it('맥은 Ctrl+V, 윈도우는 Alt+V(ESC v)', () => {
+    expect(imagePasteKey(false)).toBe('\x16');
+    expect(imagePasteKey(true)).toBe('\x1bv');
   });
 });

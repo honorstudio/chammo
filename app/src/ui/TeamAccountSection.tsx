@@ -1,12 +1,14 @@
 // 설정 > 계정 > Chammo 계정(맨 위)(중계 서버 ADR 0004) — 구글로 로그인해 내 기기끼리 잇는다. 지금 앱 모양(su-sec·su-row)만, 메신저 본 화면은 4단계.
 // 로그인은 사람 브라우저에서(앱이 127.0.0.1 로 돌려받는다), 열쇠는 이 기기 키체인(chammo-team)에만. 끊기·로그아웃·계정 지우기는 서버에서 먼저
 import { useEffect, useState } from 'react';
+import { LoginWait, loginCancelled } from './LoginWait';
 import { teamAccountDelete, teamAccountRefresh, teamLogin, teamLogout, teamStatus, type TeamView } from '../data/teamApi';
 import { DEFAULT_RELAY, deleteConfirmOk, PRIVACY_URL, TERMS_URL } from '../domain/teamAccount';
 import { openTarget } from '../data/tauri';
 import { IconRefresh } from './Icons';
 import { IconButton } from './kit/IconButton';
 import { tr } from '../i18n';
+import { gateErrText } from '../domain/loginGate';
 
 /** onDevices = 기기 관리 탭으로(내 기기 목록). 이 기기 로그아웃은 여기에도 — 허용 대기·확인 중이면 기기 목록이 비어 거기 줄이 안 보였다(10-26 사용자 "로그아웃도 없고") */
 export function TeamAccountSection({ title, onDevices }: { title: string; onDevices?: () => void }) {
@@ -25,12 +27,12 @@ export function TeamAccountSection({ title, onDevices }: { title: string; onDevi
   const act = (f: () => Promise<TeamView>) => {
     setBusy(true);
     setErr(null);
-    void f().then((x) => { setV(x); setDeleting(false); setLeaving(false); setTyped(''); }, (e: unknown) => setErr(String(e))).finally(() => setBusy(false));
+    void f().then((x) => { setV(x); setDeleting(false); setLeaving(false); setTyped(''); }, (e: unknown) => setErr(gateErrText(String(e)))).finally(() => setBusy(false));
   };
   const login = () => {
     setWaiting(true);
     setErr(null);
-    void teamLogin(server.trim()).then(setV, (e: unknown) => setErr(String(e))).finally(() => setWaiting(false));
+    void teamLogin(server.trim()).then(setV, (e: unknown) => { if (!loginCancelled(e)) setErr(gateErrText(String(e))); }).finally(() => setWaiting(false));
   };
 
   const acc = v?.account ?? null;
@@ -50,7 +52,7 @@ export function TeamAccountSection({ title, onDevices }: { title: string; onDevi
             <button className="btn pri" disabled={busy || waiting || (!v?.server && !server.trim())} onClick={login}>{tr('구글로 로그인', 'Sign in with Google')}</button>
           </div>
           {!advanced && !v?.server && <div className="su-inline"><button className="peer-alt" onClick={() => setAdvanced(true)}>{tr('중계 서버 바꾸기', 'Change relay server')}</button></div>}
-          {waiting && <span className="su-hint">{tr('브라우저에서 로그인을 마쳐 주세요', 'Finish signing in in the browser')}</span>}
+          {waiting && <span className="su-hint">{tr('브라우저에서 로그인을 마쳐 주세요', 'Finish signing in in the browser')} <LoginWait /></span>}
         </>
       )}
       {acc && (

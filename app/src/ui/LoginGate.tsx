@@ -1,10 +1,11 @@
 // 로그인 필수(2026-10-24 사용자) — Chammo 계정에 로그인 안 된 기기는 앱을 켜면 먼저 이 화면. '나중에' 없음.
 // 중계에 못 닿을 때만 '일단 쓰기'(이번 실행만, 다음에 켜면 다시). 허용 대기 기기는 한 번 안내하고 쓰게 둔다(ADR 0014)
 import { invoke } from '@tauri-apps/api/core';
+import { LoginWait, loginCancelled } from './LoginWait';
 import { useEffect, useState } from 'react';
 import { teamLogin, teamLogout, teamStatus, type TeamView } from '../data/teamApi';
-import { alreadyIn, gateState, lookEvery, offlineError, watchGate } from '../domain/loginGate';
-import { tr } from '../i18n';
+import { alreadyIn, clockText, gateErr, gateErrText, gateState, laterFor, lookEvery, offlineError, watchGate, type Gate } from '../domain/loginGate';
+import { machine, tr } from '../i18n';
 import { BrandMark } from './avatar';
 import { IconRefresh } from './Icons';
 import { IconButton } from './kit/IconButton';
@@ -19,8 +20,13 @@ let startLater = false;
 let resetLater = false;
 let reloginLater = false;
 let recoverLater = false;
+let checkingLater = false;
+/** 첫 기기 질문 '나중에' — 계정(메일)별로 남긴다. 켤 때마다 다시 막았다(2026-11-01 ux-start M1). 시작은 설정 > 기기 관리 */
+const START_LATER_KEY = 'e2eStartLater';
+const savedLater = (): string | null => { try { return localStorage.getItem(START_LATER_KEY); } catch { return null; } };
 
-export function LoginGate() {
+/** onGate = 문 상태를 App 에(둘러보기는 문이 닫힌 뒤에 — ux-start H1). 상태를 못 읽었으면 null */
+export function LoginGate({ onGate }: { onGate?: (g: Gate | null) => void } = {}) {
   const [v, setV] = useState<TeamView | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -49,8 +55,13 @@ export function LoginGate() {
     const t = window.setInterval(look, lookEvery(watching));
     return () => window.clearInterval(t);
   }, [watching]);
-  const gate = codeDone ? 'code' : gateState(v, { offline, skipped, waitSeen, step, startLater, resetLater, reloginLater, recoverLater });
+  const later = startLater || laterFor(savedLater(), v?.account?.email);
+  const gate = codeDone ? 'code' : gateState(v, { offline, skipped, waitSeen, step, startLater: later, resetLater, reloginLater, recoverLater, checkingLater });
+  const known = v ? gate : null;
+  useEffect(() => { onGate?.(v ? gate : null); }, [known]); // eslint-disable-line react-hooks/exhaustive-deps
   if (gate === 'none') return null;
+  const ge = err ? gateErr(err) : null;
+  const clock = ge?.kind === 'clock' ? clockText(ge.min, machine() === 'PC') : null;
   const start = (e: React.MouseEvent) => {
     if (!e.isTrusted || busy) return; // 사람 클릭만
     setBusy(true);
@@ -73,7 +84,7 @@ export function LoginGate() {
     // 서버는 Rust 가 고른다 — 이 기기 team.json → 로그아웃 전에 쓰던 것 → 기본(QA 4: '처음부터'·첫 로그인이 기본 중계로 갔다)
     void teamLogin('').then(
       (x) => { setOffline(false); setV(x); },
-      (e: unknown) => { const m = String(e); if (alreadyIn(m)) { look(); return; } setOffline(offlineError(m)); setErr(m); },
+      (e: unknown) => { const m = String(e); if (alreadyIn(m)) { look(); return; } if (loginCancelled(m)) return; setOffline(offlineError(m)); setErr(m); },
     ).finally(() => setBusy(false));
   };
   return (
@@ -83,13 +94,14 @@ export function LoginGate() {
         {gate === 'start' ? (
           <>
             {/* 계정 기기 사슬 시작(chammo-relay ADR 0007 R8) — 서버 말만 믿고 스스로 시작하지 않는다. 사람이 '첫 기기'를 고른다 */}
-            <h1>{tr('이 기기가 이 계정의 첫 기기예요?', 'Is this the first device on this account?')}</h1>
-            <p>{tr('메신저는 종단 암호로만 써요. 이 기기에서 계정의 기기 묶음을 새로 시작해요. 쓰던 기기가 있으면 누르지 말고 그 기기에서 허용받으세요', 'Messages are end-to-end encrypted only. This starts your account\'s device group here. If you already use another device, don\'t press this; get approved on that device instead.')}</p>
+            <h1>{tr('이 컴퓨터에서 처음 시작할까요?', 'Is this your first time using Chammo?')}</h1>
+            <p>{tr('이 컴퓨터에서 Chammo를 처음 쓴다면 여기서 시작하면 돼요. 다른 기기에서 이미 쓰고 있다면 시작하지 말고, 그 기기에서 이 컴퓨터를 허용해 주세요. 시작해야 메신저를 쓸 수 있어요. 참모에게 일 맡기기는 시작하지 않아도 돼요.', "If this is your first time using Chammo, start here. If you already use it on another device, don't start. Approve this computer from that device instead. You need to start to use messaging, but not to give work to your assistant.")}</p>
             <div className="lg-acts">
-              <button className="btn pri su-go" disabled={busy} onClick={start}>{tr('첫 기기로 시작', 'Start as first device')}</button>
-              <button className="btn su-go" disabled={busy} onClick={() => { startLater = true; bump((n) => n + 1); }}>{tr('나중에', 'Later')}</button>
+              <button className="btn pri su-go" disabled={busy} onClick={start}>{tr('여기서 시작', 'Start here')}</button>
+              <button className="btn su-go" disabled={busy} onClick={() => { startLater = true; try { localStorage.setItem(START_LATER_KEY, v?.account?.email ?? ''); } catch { /* 이번 실행만 */ } bump((n) => n + 1); }}>{tr('나중에', 'Not now')}</button>
             </div>
-            {err && <div className="su-error">{err}</div>}
+            <p className="lg-note">{tr('나중에를 누르면 다시 묻지 않아요. 설정 > 기기 관리에서 언제든 시작할 수 있어요.', "If you choose Not now, we won't ask again. You can start any time in Settings > Devices.")}</p>
+            {err && <div className="su-error">{gateErrText(err)}</div>}
           </>
         ) : gate === 'reset' ? (
           <>
@@ -105,7 +117,7 @@ export function LoginGate() {
               <button className="btn pri su-go" disabled={busy} onClick={reset}>{tr('다시 시작', 'Start over')}</button>
               <button className="btn su-go" disabled={busy} onClick={() => { resetLater = true; bump((n) => n + 1); }}>{tr('나중에', 'Later')}</button>
             </div>
-            {err && <div className="su-error">{err}</div>}
+            {err && <div className="su-error">{gateErrText(err)}</div>}
           </>
         ) : gate === 'relogin' ? (
           <>
@@ -116,7 +128,7 @@ export function LoginGate() {
               <button className="btn pri su-go" disabled={busy} onClick={() => out(true)}>{tr('다시 로그인', 'Sign in again')}</button>
               <button className="btn su-go" disabled={busy} onClick={() => { reloginLater = true; bump((n) => n + 1); }}>{tr('나중에', 'Later')}</button>
             </div>
-            {err && <div className="su-error">{err}</div>}
+            {err && <div className="su-error">{gateErrText(err)}</div>}
           </>
         ) : gate === 'code' ? (
           <CodeEntry failed={step === 'failed'} onAgain={() => out(true)} onCancel={() => out(false)} onOk={() => setCodeDone(true)}
@@ -137,12 +149,23 @@ export function LoginGate() {
             </NumberWait>
             {/* 옛 기기를 잃었으면 — 계정 되찾기 갈래 ②(chammo-relay ADR 0007 R9) */}
             <button className="lg-link" onClick={() => setLost(true)}>{tr('허용해 줄 기기가 없어요', 'No device to approve this one')}</button>
-            {err && <div className="su-error">{err}</div>}
+            {err && <div className="su-error">{gateErrText(err)}</div>}
+          </>
+        ) : gate === 'checking' ? (
+          <>
+            <h1>{tr('확인하는 중', 'Checking this computer')}</h1>
+            <p>{tr('계정과 이 컴퓨터를 확인하고 있어요.', "Checking your account and this computer.")}</p>
+            <div className="lg-acts">
+              <button className="btn su-go" onClick={() => { checkingLater = true; bump((n) => n + 1); }}>{tr('기다리지 않고 계속 쓰기', 'Continue without waiting')}</button>
+            </div>
+            <p className="lg-note">{tr('확인이 끝나기 전엔 팀 메신저가 안 될 수 있어요.', 'Team messaging may not work until this check finishes.')}</p>
           </>
         ) : gate === 'offline' ? (
           <>
+            {/* 시계가 틀려 거절된 것도 이 화면 — 인터넷 탓으로 말하지 않고 시계 맞추는 길을(11-01 QA H1) */}
+            {clock ? <><h1>{clock.title}</h1><p>{clock.body}</p></> : <>
             <h1>{tr('지금은 연결이 안 돼요', "Can't connect right now")}</h1>
-            <p>{tr('Chammo 계정 서버에 닿지 않아요(인터넷이 끊겼거나 서버 장애). 다시 닿으면 로그인을 다시 권할게요.', "Can't reach the Chammo account server (offline or an outage). We'll ask again once it's reachable.")}</p>
+            <p>{tr('Chammo 계정 서버에 닿지 않아요(인터넷이 끊겼거나 서버 장애). 다시 닿으면 로그인을 다시 권할게요.', "Can't reach the Chammo account server (offline or an outage). We'll ask again once it's reachable.")}</p></>}
             <div className="lg-acts">
               <IconButton size="l" tone="pri" label={tr('다시 시도', 'Try again')} busy={busy} onClick={login}><IconRefresh /></IconButton>
               <button className="btn su-go" disabled={busy} onClick={() => { skipped = true; bump((n) => n + 1); }}>{tr('일단 쓰기', 'Use for now')}</button>
@@ -153,7 +176,8 @@ export function LoginGate() {
             <h1>{tr('Chammo 계정으로 시작해요', 'Start with your Chammo account')}</h1>
             <p>{tr('폰·다른 컴퓨터·메신저가 이 계정으로 연결돼요. 한 번 로그인하면 앱을 다시 켜도 유지돼요', 'Your phone, other computers and messenger connect through this account. Sign in once and it stays signed in.')}</p>
             <button className="btn pri su-go lg-go" disabled={busy} onClick={login}>{busy ? tr('브라우저에서 로그인을 마쳐 주세요', 'Finish signing in in the browser') : tr('구글로 로그인', 'Sign in with Google')}</button>
-            {err && <div className="su-error">{err}</div>}
+            {busy && <LoginWait />}
+            {err && <div className="su-error">{gateErrText(err)}</div>}
           </>
         )}
       </div>

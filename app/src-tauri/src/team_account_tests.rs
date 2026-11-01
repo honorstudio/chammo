@@ -202,6 +202,37 @@ fn 새_기기는_새_열쇠로_로그인하고_내_loginId_결과만_마친다()
 }
 
 #[test]
+fn 브라우저를_닫아도_로그인을_취소하면_바로_끝나고_다시_열_주소를_준다() {
+    // 11-01 QA H3: 탭을 닫으면 10분 동안 '브라우저에서 마쳐 주세요'만 — 취소도 다시 열기도 없었다
+    let _ports = crate::test_ports::lock();
+    let d = dir("cancel");
+    let kc = Fake::default();
+    let r = FakeRelay::default();
+    begin_ok(&r, L1);
+    let b = FakeBrowser::new(&r, &[]); // 브라우저가 아무것도 안 돌려줌(탭 닫음)
+    assert_eq!(login_url(&d), None);
+    assert!(!cancel_login(&d), "도는 로그인이 없으면 취소할 것도 없다");
+    let dd = d.clone();
+    let t = std::thread::spawn(move || {
+        let until = Instant::now() + Duration::from_secs(5);
+        while login_url(&dd).is_none() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let url = login_url(&dd);
+        (url, cancel_login(&dd))
+    });
+    let at = Instant::now();
+    let e = login_with(&d, &kc, &r, &b, SERVER, "맥북", Duration::from_secs(30)).unwrap_err();
+    let (url, cancelled) = t.join().unwrap();
+    assert_eq!(url.as_deref(), Some(format!("{SERVER}/auth/google/start?login={L1}").as_str()), "다시 열 주소 = 처음 연 주소");
+    assert!(cancelled && e.contains("취소"), "{e}");
+    assert!(at.elapsed() < Duration::from_secs(5), "10분 안 기다린다");
+    assert!(kc.items.borrow().is_empty(), "만든 열쇠 치움");
+    assert_eq!(login_url(&d), None, "끝나면 주소도 비운다");
+    assert!(login_turn(&d).is_ok(), "바로 다시 로그인할 수 있다");
+}
+
+#[test]
 fn 구글에서_실패하면_마치지_않고_새_열쇠를_치운다() {
     let _ports = crate::test_ports::lock();
     let d = dir("fail");
@@ -228,6 +259,62 @@ fn 서버가_준_주소가_우리_서버_로그인_주소가_아니면_브라우
         assert!(login_with(&d, &kc, &r, &b, SERVER, "맥북", Duration::from_secs(2)).is_err(), "{bad}");
         assert!(b.opened.borrow().is_empty(), "{bad}");
     }
+}
+
+/// 서버 시계를 이 기기보다 off_ms 늦게(= 이 기기가 off_ms 빠름) — Cloudflare /cdn-cgi/trace 의 ts= 줄
+fn trace_off(r: &FakeRelay, off_ms: i64) {
+    let ts = (crate::team_relay::now_ms() as i64 - off_ms) as f64 / 1000.0;
+    r.answer("/cdn-cgi/trace", 200, &format!("fl=1\nts={ts:.3}\nh=relay.test\n"));
+}
+
+#[test]
+fn 로그인_시작이_401_이고_이_기기_시계가_틀렸으면_시계를_말하고_일단_쓰기로() {
+    // 11-01 QA H1: 시계가 5분 넘게 틀린 PC — '서명 거절(시계 또는 끊김)'만 떠서 로그인 필수 화면에 갇혔다
+    let _ports = crate::test_ports::lock();
+    for (off, tag) in [(3 * 3_600_000, "[clock:180]"), (-7 * 60_000, "[clock:-7]")] {
+        let d = dir("clock-begin");
+        let r = FakeRelay::default();
+        r.answer("/v0/auth/google/begin", 401, r#"{"error":"unauthorized"}"#);
+        trace_off(&r, off);
+        let b = FakeBrowser::new(&r, &[]);
+        let e = login_with(&d, &Fake::default(), &r, &b, SERVER, "맥북", Duration::from_secs(1)).unwrap_err();
+        assert!(e.starts_with(tag), "{e}");
+        assert!(b.opened.borrow().is_empty());
+    }
+    // 시계가 맞으면 시계 탓으로 말하지 않는다
+    let d = dir("clock-begin-ok");
+    let r = FakeRelay::default();
+    r.answer("/v0/auth/google/begin", 401, r#"{"error":"unauthorized"}"#);
+    trace_off(&r, 20_000);
+    let e = login_with(&d, &Fake::default(), &r, &FakeBrowser::new(&r, &[]), SERVER, "맥북", Duration::from_secs(1)).unwrap_err();
+    assert!(!e.starts_with("[clock"), "{e}");
+}
+
+#[test]
+fn 로그인_길의_망_끊김·서버_장애는_오프라인_이름을_붙인다() {
+    // 화면(domain/loginGate gateErr)이 문구 대신 이름으로 '일단 쓰기'를 고른다
+    let _ports = crate::test_ports::lock();
+    struct Down;
+    impl Http for Down {
+        fn send(&self, _: &str, _: &str, _: &[(String, String)], _: &[u8]) -> Result<(u16, String), String> {
+            Err("중계 서버에 못 닿았어요: curl: (6) Could not resolve host".into())
+        }
+    }
+    let d = dir("offline-login");
+    let r = FakeRelay::default();
+    let e = login_with(&d, &Fake::default(), &Down, &FakeBrowser::new(&r, &[]), SERVER, "맥북", Duration::from_secs(1)).unwrap_err();
+    assert!(e.starts_with("[offline] "), "{e}");
+    let d = dir("down-login");
+    let r = FakeRelay::default();
+    r.answer("/v0/auth/google/begin", 503, "");
+    let e = login_with(&d, &Fake::default(), &r, &FakeBrowser::new(&r, &[]), SERVER, "맥북", Duration::from_secs(1)).unwrap_err();
+    assert!(e.starts_with("[offline] "), "{e}");
+    // 서버가 답한 거절은 오프라인이 아니다
+    let d = dir("reject-login");
+    let r = FakeRelay::default();
+    r.answer("/v0/auth/google/begin", 400, r#"{"error":"bad_request"}"#);
+    let e = login_with(&d, &Fake::default(), &r, &FakeBrowser::new(&r, &[]), SERVER, "맥북", Duration::from_secs(1)).unwrap_err();
+    assert!(!e.starts_with('['), "{e}");
 }
 
 #[test]
@@ -279,7 +366,7 @@ fn 이미_로그인한_기기는_또_로그인하지_않는다() {
     crate::team_relay::mutate(&d, |s| s.account = Some(crate::team_relay::Account { id: "a1".into(), ..Default::default() })).unwrap();
     let r = FakeRelay::default();
     let b = FakeBrowser::new(&r, &[]);
-    assert!(login_with(&d, &Fake::default(), &r, &b, SERVER, "맥북", Duration::from_secs(1)).is_err());
+    assert!(login_with(&d, &Fake::default(), &r, &b, SERVER, "맥북", Duration::from_secs(1)).unwrap_err().starts_with("[already] "), "화면은 이 이름을 보고 상태를 다시 읽는다");
     assert!(r.seen.borrow().is_empty());
 }
 
@@ -347,8 +434,14 @@ fn 로그아웃은_끊긴_줄_아는_기기만_401_에도_지우고_망이_안_�
     r.answer(&format!("/v0/me/devices/{D7}/revoke"), 401, r#"{"error":"unauthorized"}"#);
     r.answer(crate::team_relay::KEY_PROBE, 401, r#"{"error":"unauthorized"}"#); // 서버가 이 열쇠를 안다(또는 시계가 틀림)
     r.answer("/v0/me/self", 401, r#"{"error":"unauthorized"}"#); // 다시 물어도 401 — 시계(trace)를 모르니 끊김으로 안 적는다
-    assert!(logout(&d, &kc, &r).unwrap_err().contains("forget"));
+    let e = logout(&d, &kc, &r).unwrap_err();
+    assert!(!e.contains("scripts/team") && !e.contains("forget"), "사람 손 로그아웃에 CLI 명령을 안내하지 않는다(11-01 QA H2): {e}");
     assert!(d.join(crate::team_relay::STATE_FILE).exists() && !kc.items.borrow().is_empty(), "서버엔 살아 있을 수 있어 남긴다");
+    // 참모 길(scripts/team logout)은 그대로 forget 을 알려 준다
+    r.answer(&format!("/v0/me/devices/{D7}/revoke"), 401, r#"{"error":"unauthorized"}"#);
+    r.answer(crate::team_relay::KEY_PROBE, 401, r#"{"error":"unauthorized"}"#);
+    r.answer("/v0/me/self", 401, r#"{"error":"unauthorized"}"#);
+    assert!(logout_with(&d, &kc, &r, false).unwrap_err().contains("forget"));
     crate::team_relay::mutate(&d, |s| s.revoked = true).unwrap();
     r.answer(&format!("/v0/me/devices/{D7}/revoke"), 401, r#"{"error":"unauthorized"}"#);
     logout(&d, &kc, &r).unwrap();
@@ -362,6 +455,41 @@ fn 로그아웃은_끊긴_줄_아는_기기만_401_에도_지우고_망이_안_�
     let (d2, kc2, _r2) = logged("logout-down");
     assert!(logout(&d2, &kc2, &Down).is_err());
     assert!(d2.join(crate::team_relay::STATE_FILE).exists() && !kc2.items.borrow().is_empty(), "서버에서 안 끊겼으면 다시 할 수 있게 남긴다");
+}
+
+#[test]
+fn 시계가_틀린_기기의_로그아웃은_시계를_말하고_남긴다() {
+    // 11-01 QA H2: 시계가 틀린 PC 가 로그인 취소·로그아웃을 누르면 'scripts/team forget --yes' 만 떠서 게이트에 갇혔다
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("logout-clock");
+    r.answer(&format!("/v0/me/devices/{D7}/revoke"), 401, r#"{"error":"unauthorized"}"#);
+    r.answer(crate::team_relay::KEY_PROBE, 401, r#"{"error":"unauthorized"}"#);
+    r.answer("/v0/me/self", 401, r#"{"error":"unauthorized"}"#);
+    trace_off(&r, -2 * 3_600_000); // 끊김 확인이 재는 시계
+    trace_off(&r, -2 * 3_600_000); // 로그아웃이 재는 시계
+    let e = crate::team_relay::as_human(|| logout(&d, &kc, &r)).unwrap_err(); // 화면 로그아웃은 사람 길(human_job)
+    assert!(e.starts_with("[clock:-120]"), "{e}");
+    assert!(d.join(crate::team_relay::STATE_FILE).exists() && !kc.items.borrow().is_empty(), "시계만 고치면 제대로 끊을 수 있게 남긴다");
+}
+
+#[test]
+fn 사람_손_로그아웃은_쉬기_없이_끊김을_다시_확인한다() {
+    // 게이트가 시계 틀린 동안 끊김 확인을 써 버려도(5분 쉬기) 시계를 고치고 누른 로그아웃은 지금 확인해 끊긴 기기를 지운다
+    let _ports = crate::test_ports::lock();
+    let (d, kc, r) = logged("logout-now");
+    let st = crate::team_relay::load_state(&d);
+    let k = crate::team_relay::device_keys(&kc, &st).unwrap();
+    r.answer(crate::team_relay::KEY_PROBE, 401, r#"{"error":"unauthorized"}"#);
+    r.answer("/v0/me/self", 401, r#"{"error":"unauthorized"}"#);
+    trace_off(&r, -2 * 3_600_000);
+    assert!(!crate::team_relay::mark_if_gone(&d, &r, &st, &k), "시계가 틀린 동안엔 끊김으로 안 적는다");
+    // 시계를 고쳤다 — 서버는 이 기기를 끊어 두었다
+    r.answer(&format!("/v0/me/devices/{D7}/revoke"), 401, r#"{"error":"unauthorized"}"#);
+    r.answer(crate::team_relay::KEY_PROBE, 401, r#"{"error":"unauthorized"}"#);
+    r.answer("/v0/me/self", 401, r#"{"error":"unauthorized"}"#);
+    trace_off(&r, 0);
+    crate::team_relay::as_human(|| logout(&d, &kc, &r)).unwrap();
+    assert!(!d.join(crate::team_relay::STATE_FILE).exists() && kc.items.borrow().is_empty());
 }
 
 #[test]
@@ -799,4 +927,14 @@ fn 로그인_막힘_문구는_해요체_사람_말() {
     assert!(e.contains("이미 이 기기는 로그인돼 있어요"), "{e}");
     let _turn = login_turn(&d).unwrap();
     assert!(login_turn(&d).err().unwrap().contains("로그인을 진행하고 있어요"));
+}
+
+#[test]
+fn 서버에서_사라진_팀은_이름으로_알린다() {
+    // 11-01 QA M5: 쫓겨나거나 팀이 지워지면 조용히 목록에서 빠지고 팀 모드가 꺼졌다 — 아무 말이 없었다
+    let t = |id: &str, name: &str| relay::TeamEntry { id: id.into(), name: name.into(), ..Default::default() };
+    let have = [t("t1", "성능팀"), t("t2", "옆팀"), t("t3", "")];
+    let ids = vec!["t1".to_string()];
+    assert_eq!(gone_teams(&have, &ids), vec!["옆팀".to_string(), "t3".to_string()], "이름이 없으면 id");
+    assert!(gone_teams(&have, &["t1".into(), "t2".into(), "t3".into()]).is_empty());
 }

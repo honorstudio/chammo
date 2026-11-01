@@ -61,6 +61,8 @@ export async function pair(code: string, home = false): Promise<void> {
 
 /** 중계 길(테일스케일 없는 폰, ADR 0013)이면 터널로, 아니면 이 주소(컴퓨터 폰 서버)로. 터널도 같은 Response 를 준다 */
 const relay = readLink();
+/** 중계 입구로 붙은 폰인가 — 시안 칸 모양이 갈린다(htmlFrame) */
+export const viaRelay = (): boolean => !!relay;
 // 빠른 길 — 컴퓨터가 알려 준 테일넷 https 주소에 1.5초 안에 닿으면 그리로 직접(같은 토큰). 망 오류면 바로 터널로 돌아가고 1분 뒤 다시 본다
 const DIRECT_PROBE_MS = 1500;
 const DIRECT_RETRY_MS = 60_000;
@@ -226,6 +228,18 @@ export async function fileImage(path: string, original = false): Promise<{ url: 
   const m = /^(\d+)x(\d+)$/.exec(r.headers.get('X-Image-Size') ?? '');
   const url = URL.createObjectURL(await r.blob());
   return { url, w: m ? Number(m[1]) : 0, h: m ? Number(m[2]) : 0 };
+}
+/** 대화 그림 크게 보기(11-01) — 맥이 풀어 준 보기용(크거나 무거우면 JPEG 2560) 또는 원본. w·h = 원본 크기 */
+/** 폰 팀 파일 보기 받기(ImageViewer load) — 그림은 맥이 풀어 준 것(보기용·원본), PDF 는 첫 장 그림(썸네일 길 큰 판 1600 — 그림 길은 PDF 를 거절한다, 11-01) */
+export function teamFileView(team: string, id: string, kind: 'image' | 'pdf'): (original: boolean) => Promise<{ url: string; w: number; h: number }> {
+  if (kind === 'image') return (original) => teamFileImage(team, id, original);
+  return () => call(`/api/team-file-thumb?team=${encodeURIComponent(team)}&id=${encodeURIComponent(id)}&size=1600`).then((r) => r.blob()).then((b) => ({ url: URL.createObjectURL(b), w: 0, h: 0 }));
+}
+
+export async function teamFileImage(team: string, id: string, original = false): Promise<{ url: string; w: number; h: number }> {
+  const r = await call(`/api/team-file-image?team=${encodeURIComponent(team)}&id=${encodeURIComponent(id)}${original ? '' : '&view=1'}`);
+  const m = /^(\d+)x(\d+)$/.exec(r.headers.get('X-Image-Size') ?? '');
+  return { url: URL.createObjectURL(await r.blob()), w: m ? Number(m[1]) : 0, h: m ? Number(m[2]) : 0 };
 }
 export const readFileText = (path: string) => getText(fileUrl(path));
 /** html 시안 표 주소 — iframe 은 열쇠를 못 실어서 10분 사는 표로 연다(서버가 sandbox allow-scripts 로 낸다) */

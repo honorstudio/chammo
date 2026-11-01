@@ -4,7 +4,7 @@ import { SpaceShown } from './docKeep';
 import type { BlockNoteEditor } from '@blocknote/core';
 import { docTitle } from '../../domain/spaceTree';
 import { isPlainDoc } from '../../domain/reader';
-import { safeDecode } from '../../domain/mdLinks';
+import { docRel, fwd } from '../../domain/paths';
 import { tr } from '../../i18n';
 import { IconChevron, IconPin } from '../Icons';
 import { SendToOrch, type OrchTo } from './SendToOrch';
@@ -12,6 +12,7 @@ import { IconButton } from '../kit/IconButton';
 import { lastSaved } from './docSave';
 import { setBaseline } from './pending';
 import { SendFab } from './SendFab';
+import { ReadFail } from './ReadFail';
 import { FindBar } from './FindBar';
 import type { ShowAt } from '../../domain/showAt';
 import { flashWhenReady } from '../flash';
@@ -120,11 +121,9 @@ export function DocPage({ lead, tail, where, attachTo, path, title, owner, pinne
           const href = fileUrl ?? a?.getAttribute('href') ?? '';
           if ((!a && !fileUrl) || !href || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('#') || !onOpenPath) return;
           e.preventDefault(); e.stopPropagation();
-          const dir = path.replace(/\/[^/]*$/, '');
-          const abs = href.startsWith('/') ? safeDecode(href) : new URL(href, `file://${encodeURI(dir)}/`).pathname;
-          onOpenPath(safeDecode(abs));
+          onOpenPath(docRel(fwd(path).replace(/\/[^/]*$/, ''), href));
         }}>
-          {err ? <div className="cv-blank">{tr('못 읽었어', "Couldn't read it")} — {err}</div>
+          {err ? <ReadFail className="cv-blank" path={path} err={err} />
             : text == null ? <div className="cv-blank">{tr('여는 중', 'Opening')}</div>
             : (
               <Suspense fallback={<div className="cv-blank">{tr('편집기 여는 중', 'Opening the editor')}</div>}>

@@ -241,7 +241,9 @@ fn pick_in(requested: &str, allowed: &[String], rules: &Rules, shareable: fn(&Pa
 pub fn moved_from_worktree(p: &Path, home: &Path) -> Option<PathBuf> {
     use std::path::Component;
     let cs: Vec<Component> = p.components().collect();
-    let canonical = p.as_os_str() == cs.iter().collect::<PathBuf>().as_os_str();
+    let joined: PathBuf = cs.iter().collect();
+    // 윈도우 show 기록은 C:/… 로 적힌다(scripts/show fwd, win-text M2) — 모아 붙이면 \ 라 / 를 \ 로 바꿔 견준다
+    let canonical = p.as_os_str() == joined.as_os_str() || (cfg!(windows) && p.to_string_lossy().replace('/', "\\") == joined.to_string_lossy());
     if !p.is_absolute() || !canonical || cs.iter().any(|c| matches!(c, Component::ParentDir | Component::CurDir)) {
         return None;
     }

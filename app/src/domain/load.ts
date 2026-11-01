@@ -225,3 +225,7 @@ export function summarize(sys: SysLoad, r: LoadReport, at: Date): LoadSummary {
     modes: { count: r.modes.length, mem: fmtMem(r.modes.reduce((n, m) => n + m.rssKb, 0)) },
   };
 }
+
+/** 위 띠 부하 칩을 보일까 — 빨강(high)일 때만, 부하 화면을 보고 있으면 돌아갈 자리로 늘. 처음 쓰는 사람에게 '부하 70.5 / 10 · 스왑'이 늘 떠
+ *  경고처럼 보였다(2026-11-01 ux-start M6, 사용자 "부하 높음"으로 짧고 평범하게 — 숫자는 title) */
+export const loadChipShown = (lv: 'ok' | 'warn' | 'high', onPage: boolean): boolean => lv === 'high' || onPage;

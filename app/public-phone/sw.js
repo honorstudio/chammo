@@ -2,7 +2,8 @@
 // - / 열기: 받아 둔 컴퓨터 화면(터널로 받아 캐시한 껍데기)이 있으면 그것, 없으면 입구(망)
 // - /assets/*: 캐시 → 터널을 가진 창에 대신 받기 부탁 → 망(입구 아이콘). /api/*(iframe·소리·내려받기·껍데기 새 판 확인)는 늘 창에 부탁
 //   창이 터널로 컴퓨터에서 받아 온다 — 이 워커는 내용을 보관만 하고 중계에 직접 붙지 않는다
-// - 웹 푸시: 중계가 보내는 본문 없는 푸시 → '새 메시지' 한 줄(내용은 중계도 푸시 서비스도 모른다)
+// - 웹 푸시: 컴퓨터가 이 구독 열쇠로 봉한 본문(제목·한 줄·갈 곳)을 중계가 그대로 실어 온다 — 브라우저가 풀어 준 것을 띄운다.
+//   본문이 없으면(옛 컴퓨터·구독이 바뀜·간격) '새 메시지' 한 줄. 중계도 푸시 서비스도 내용을 모른다(2026-11-01, ADR 0013 결정 7)
 const UI = 'chammo-relay-ui';
 const SHELL = '/__shell';
 const ASK_MS = 20_000;
@@ -61,12 +62,19 @@ self.addEventListener('fetch', (e) => {
   if ((url.pathname === '/' && req.mode !== 'navigate') || url.pathname.startsWith('/api/')) return e.respondWith(viaWindow(req));
 });
 
+const str = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
 self.addEventListener('push', (e) => {
-  e.waitUntil(self.registration.showNotification('참모', { body: '새 메시지', icon: '/assets/icon-192.png', tag: 'chammo' }));
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch { /* 본문 없는 푸시 */ }
+  const title = str(d && d.title, 80);
+  const body = str(d && d.body, 120);
+  const target = typeof d?.target === 'string' && d.target.length <= 200 ? d.target : '';
+  if (!title && !body) return e.waitUntil(self.registration.showNotification('참모', { body: '새 메시지', icon: '/assets/icon-192.png', tag: 'chammo' }));
+  e.waitUntil(self.registration.showNotification(title || '참모', { body, icon: '/assets/icon-192.png', tag: target || 'chammo', data: { target } }));
 });
 
 // 알림을 누르면 — 열린 창이 있으면 앞으로 가져와 갈 곳을 알리고(받았다는 답을 기다린다), 답이 없으면(옛 판·멈춘 페이지) 그 창을 갈 곳 주소로 다시 연다.
-// 창이 없으면 새로 연다(?go=). 중계 푸시는 본문이 없어 갈 곳은 늘 latest — 앱이 컴퓨터에 마지막 알림 갈 곳을 묻는다(2026-10-23 결정 알림을 눌러도 보던 시트 그대로였다)
+// 창이 없으면 새로 연다(?go=). 본문 없는 푸시는 갈 곳이 없어 latest — 앱이 컴퓨터에 마지막 알림 갈 곳을 묻는다(2026-10-23 결정 알림을 눌러도 보던 시트 그대로였다)
 const GO_ACK_MS = 2000;
 const goUrl = (t) => `/?go=${encodeURIComponent(t)}`;
 function tell(w, target) {
@@ -87,5 +95,6 @@ async function openTarget(target) {
 }
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  e.waitUntil(openTarget('latest'));
+  const t = e.notification.data && e.notification.data.target;
+  e.waitUntil(openTarget(typeof t === 'string' && t ? t : 'latest'));
 });

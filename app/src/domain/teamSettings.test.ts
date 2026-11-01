@@ -1,12 +1,15 @@
 // 팀 설정(메신저 머리 톱니·팀 아이콘 메뉴) — 화면 판단(순수 함수)
 import { describe, expect, it } from 'vitest';
-import { canDeleteTeam, deleteAsk, leaveNote, memberRows, menuFor, PERM_CHIPS, quietContextMenu, switchTargets } from './teamSettings';
+import { canDeleteTeam, canDo, deleteAsk, leaveNote, memberRows, menuFor, PERM_CHIPS, quietContextMenu, switchTargets } from './teamSettings';
 
 const m = (id: string, role: string, me = false, devices: { id: string; name: string }[] = []) => ({ id, name: id, role, me, devices });
 
 describe('팀 아이콘 메뉴', () => {
-  it('팀이 있으면 팀 초대·팀 설정, 없으면 팀 만들기 하나', () => {
-    expect(menuFor({ joined: true })).toEqual(['invite', 'settings']);
+  it('팀이 있으면 팀 초대(권한 있을 때만)·팀 설정, 없으면 팀 만들기 하나', () => {
+    expect(menuFor({ joined: true, role: 'owner' })).toEqual(['invite', 'settings']);
+    // 11-01 QA M2: 팀원에게도 '팀 초대'를 보여 주고 열면 "팀장 기기에서 만들어요"뿐인 막다른 창이었다
+    expect(menuFor({ joined: true, role: 'member', members: [m('me', 'member', true)] })).toEqual(['settings']);
+    expect(menuFor({ joined: true, role: 'member', members: [{ ...m('me', 'member', true), perms: ['invite'] }] })).toEqual(['invite', 'settings']);
     expect(menuFor({ joined: false })).toEqual(['make']);
     expect(menuFor(null)).toEqual(['make']);
   });
@@ -82,5 +85,17 @@ describe('매니저 권한(relay ADR 0014)', () => {
   });
   it('권한 칩 차례·이름 — 전체 먼저', () => {
     expect(PERM_CHIPS.map((c) => c.key)).toEqual(['all', 'invite', 'kick', 'posts', 'look', 'files', 'agents']);
+  });
+});
+
+describe('권한 판단 하나(11-01 QA M2)', () => {
+  const me = (perms?: string[]) => ({ role: 'member', members: [{ ...m('a', 'member', true), perms }, m('b', 'owner')] });
+  it('팀장·전체 권한·그 권한 칩이면 된다 — 팀 설정·메뉴·초대 창이 같은 판단', () => {
+    expect(canDo({ role: 'owner', members: [] }, 'invite')).toBe(true);
+    expect(canDo(me(['all']), 'invite')).toBe(true);
+    expect(canDo(me(['invite']), 'invite')).toBe(true);
+    expect(canDo(me(['kick']), 'invite')).toBe(false);
+    expect(canDo(me(), 'invite')).toBe(false);
+    expect(canDo(null, 'invite')).toBe(false);
   });
 });

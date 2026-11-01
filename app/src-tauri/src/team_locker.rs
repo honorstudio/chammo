@@ -573,6 +573,10 @@ pub fn act(net: &dyn Net, team: &str, id: &str, verb: &str) -> Result<(), String
         return Err("모르는 일".into());
     }
     let (c, v) = net.call("POST", &format!("/v0/teams/{team}/locker/files/{id}/{verb}"), Some(&json!({})))?;
+    // 남의 파일 영구 지우기는 올린 사람·팀장·'파일 정리' 권한만(chammo-relay locker.ts purgeFile) — why() 의 일반 403(초대·빼기…) 대신 파일 이야기로(11-01 QA M3)
+    if verb == "purge" && c == 403 && v["error"] == "forbidden" {
+        return Err(crate::i18n::tr("올린 사람, 팀장, '파일 정리' 권한이 있는 사람만 남의 파일을 영구로 지울 수 있어요", "Only the uploader, a team owner, or someone with the Files permission can permanently delete someone else's file").into());
+    }
     ok(c, v, 200).map(|_| ())
 }
 

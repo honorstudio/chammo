@@ -313,13 +313,14 @@ pub(crate) fn file_lock(path: &std::path::Path) -> std::sync::Arc<std::sync::Mut
 pub(crate) fn save_locked(path: &std::path::Path, ops: &[crate::sheet_struct::Op], expected: &str, keep: impl Fn(&std::path::Path)) -> Result<String, String> {
     use crate::reader::{stamp_of, CHANGED_OUTSIDE};
     if stamp_of(path).as_deref() != Some(expected) { return Err(CHANGED_OUTSIDE.into()); }
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let bytes = std::fs::read(path).map_err(|e| crate::reader::save_io_err(&e))?;
     let out = crate::sheet_struct::apply_ops(&bytes, ops)?;
     crate::sheet_book::read_book(&out).map_err(|e| format!("저장본을 다시 못 읽어서 안 썼어: {e}"))?;
     keep(path);
     let tmp = crate::reader::tmp_beside(path);
-    std::fs::write(&tmp, &out).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, path).map_err(|e| { let _ = std::fs::remove_file(&tmp); e.to_string() })?;
+    std::fs::write(&tmp, &out).map_err(|e| crate::reader::save_io_err(&e))?;
+    // 엑셀이 연 파일은 위로 바꿔 끼우기가 32·5 로 거절된다 — 이름을 붙여 화면이 '닫고 다시 시도'를 띄우게
+    std::fs::rename(&tmp, path).map_err(|e| { let _ = std::fs::remove_file(&tmp); crate::reader::save_io_err(&e) })?;
     stamp_of(path).ok_or_else(|| "저장한 파일을 못 읽었어".into())
 }
 

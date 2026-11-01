@@ -71,6 +71,36 @@ fn 만들기·초대·들어오기_고리는_받는_쪽_명부_검증을_지난�
 }
 
 #[test]
+fn 들어오는_사이_명부가_늘면_새로_받아_한_번_더_올린다() {
+    // 11-01 QA H4: 링크를 몰아 보낸 날 둘이 같이 들어오면 409 stale_head — 한 번만 올려서 반쯤 들어간 채 막혔다(after_invite 처럼)
+    let r = FakeRelay::default();
+    let (od, okc, ok) = device("join-race-o", "o1", "a1", "m1", &r);
+    let (jd, jkc, jk) = device("join-race-j", "c1", "a2", "m2", &r);
+    r.answer("/v0/teams/t1/log", 201, "{}");
+    after_create(&od, &okc, &r, "t1", "m1", "사용자", "샘플팀").unwrap();
+    let old = posted(&r);
+    answer_log(&r, &old);
+    r.answer("/v0/teams/t1/log", 201, "{}");
+    after_invite(&od, &okc, &r, "t1", "CODE-XYZ", 99).unwrap();
+    let mid = posted(&r);
+    answer_log(&r, &mid);
+    r.answer("/v0/teams/t1/log", 201, "{}");
+    after_invite(&od, &okc, &r, "t1", "CODE-ABC", 99).unwrap();
+    let now = posted(&r);
+    // 들어오는 쪽은 옛 머리로 썼다가 409 → 새 명부로 한 번 더
+    answer_log(&r, &mid);
+    r.answer("/v0/teams/t1/log", 409, r#"{"error":"stale_head"}"#);
+    answer_log(&r, &now);
+    r.answer("/v0/teams/t1/log", 201, "{}");
+    after_join(&jd, &jkc, &r, "t1", "CODE-XYZ", "m2", "철수").unwrap();
+    let mut links = now.clone();
+    links.push(posted(&r).pop().unwrap());
+    let chains = BTreeMap::from([("a1".to_string(), chain("a1", &ok, "o1")), ("a2".to_string(), chain("a2", &jk, "c1"))]);
+    let roster = e2e_roster::verify("t1", &links, &chains).expect("명부 검증");
+    assert!(roster.active().any(|(m, _)| m == "m2"), "들어온 사람이 명부에");
+}
+
+#[test]
 fn 역할·빼기·나가기_고리는_명부가_있을_때만() {
     let r = FakeRelay::default();
     let (od, okc, _) = device("role", "o1", "a1", "m1", &r);
@@ -255,4 +285,26 @@ fn 내가_쓴_고리가_받아들여지면_기억한_명부_끝에_붙여_다음
     assert_eq!(roster.len(), 4, "첫 고리 + 내가 쓴 셋(권한·초대·권한) — 서버가 그 고리들로 명부를 늘렸다");
     let rs: Vec<u64> = roster.iter().map(|l| l.seq).collect();
     assert_eq!(rs, (0..rs.len() as u64).collect::<Vec<_>>(), "seq 가 이어진다");
+}
+
+#[test]
+fn 팀_만들기_들어가기가_막히면_이유대로_말한다_ux_start() {
+    // 2026-11-01 ux-team H2 — '종단 암호 준비 전이야 … (보내지 않았어)' 한 줄(반말·한글 고정)로 다 막았다
+    let ko = |a: bool, s: &str| not_ready_why(a, s, "ko");
+    assert!(ko(false, "").contains("로그인"));
+    assert!(ko(true, "start").contains("여기서 시작"));
+    assert!(ko(true, "checking").contains("확인"));
+    for s in ["need", "failed", "outside", ""] {
+        assert!(ko(true, s).contains("4자리"), "{s}");
+    }
+    for s in ["reset", "relogin", "recover-wait", "recover-ready"] {
+        assert!(!ko(true, s).contains("4자리") && !ko(true, s).contains("여기서 시작을"), "{s}");
+    }
+    for s in ["", "start", "checking", "need", "reset"] {
+        let m = ko(true, s);
+        assert!(m.ends_with("요."), "해요체: {m}");
+        assert!(!m.contains("보내지 않았어") && !m.contains("종단 암호"), "{m}");
+    }
+    assert!(not_ready_why(true, "start", "en").contains("Start here"));
+    assert!(!not_ready_why(false, "", "en").chars().any(|c| ('가'..='힣').contains(&c)), "영어 설정엔 영어");
 }

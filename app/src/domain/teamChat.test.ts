@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toMineText, atQuery, pasteName, pasteTakes, convos, dayLabel, fileSize, mentionList, mentionParts, mentionsMe, reactionsOf, roomConvos, sayTarget, PEOPLE_COLORS, personColor, handoffText, lineOf, markRead, previewOf, roomItems, teamMark, teamTarget, unreadTotal, type TeamItem, type TeamMember, type TeamRoom } from './teamChat';
+import { toMineText, atQuery, pasteName, pasteTakes, convos, dayLabel, fileSize, mentionList, mentionParts, mentionsMe, reactionsOf, roomConvos, sayTarget, PEOPLE_COLORS, personColor, handoffText, lineOf, markRead, previewOf, roomItems, teamMark, teamTarget, teamUnread, unreadTotal, type TeamItem, type TeamMember, type TeamRoom } from './teamChat';
 
 const it0 = (o: Partial<TeamItem>): TeamItem => ({ room: 'r1', seq: 1, member: 'm2', device: 'd2', person: '하린', origin: 'human', body: '안녕', at: 1000, deviceName: '아이맥', kind: 'team', note: 'delivered', ...o });
 const members: TeamMember[] = [
@@ -258,5 +258,19 @@ describe('맨 아래로 단추의 새 말 수 — 올려 읽는 사이 온 말',
     expect(unseenCount([3, 4, 7, 8], 4)).toBe(2);
     expect(unseenCount([3, 4], 4)).toBe(0);
     expect(unseenCount([], 0)).toBe(0);
+  });
+});
+
+describe('다른 팀 안 읽은 수(11-01 QA — 띠엔 지금 팀만 셌다)', () => {
+  it('그 팀 방(팀챗·DM)의 받은 말 중 읽은 뒤만 — 내 말·반응·내 기기끼리 방·다른 팀은 빼고', () => {
+    const rooms = [{ id: 'a', kind: 'group', team: 't2' }, { id: 'b', kind: 'dm', team: 't2' }, { id: 'c', kind: 'dm', team: 't1' }, { id: 's', kind: 'self', team: 't2' }];
+    const items = [
+      it0({ room: 'a', seq: 1 }), it0({ room: 'a', seq: 2 }), it0({ room: 'a', seq: 3, note: 'sent' }),
+      it0({ room: 'b', seq: 5 }), it0({ room: 'b', seq: 6, react: { seq: 5, mark: 'ok', on: true } }),
+      it0({ room: 'c', seq: 9 }), it0({ room: 's', seq: 4 }),
+    ];
+    expect(teamUnread(rooms, items, { a: 1 }, 't2')).toBe(2);
+    expect(teamUnread(rooms, items, { a: 2, b: 5 }, 't2')).toBe(0);
+    expect(teamUnread(rooms, items, {}, 't1')).toBe(1);
   });
 });

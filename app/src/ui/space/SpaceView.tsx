@@ -723,6 +723,8 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   }, [pick]);
   // 짚어 보여 주기 — 문서(md)를 열며 반짝일 곳. key 가 바뀌면 다시 반짝
   const [focus, setFocus] = useState<{ path: string; at: ShowAt; key: string } | null>(null);
+  // 파일마다 마지막 show 때 — 열린 탭이 이게 바뀌면 다시 읽는다(FileTab stamp, 2026-11-01 ux-daily)
+  const [showStamp, setShowStamp] = useState<Record<string, string>>({});
   const since = useRef(Date.now());
   now.current = { view: followed.view, pick, modal, sheet };
   // 스페이스가 바뀔 때마다 한 줄 — 종류만(경로·번호 없이). <데이터>/space-trace.log
@@ -750,6 +752,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
         setPick(`d:${f.path}`, 'show');
         docScroll.current.delete(scrollKey(now.current.view, `d:${f.path}`));
         setFocus(f.at ? { path: f.path, at: f.at, key: f.ts } : null);
+        setShowStamp((m) => ({ ...m, [f.path]: f.ts }));
       };
       if (f.by) curBy.current.set(f.path, f.by); // html 탭으로 먼저 열려 탭이 시안을 알아봐도 띄운 이가 남게
       if (/\.html?$/i.test(f.path)) void invoke<string>('read_doc_text', { path: f.path }).then((t) => (isCurationHtml(t) ? toCuration(f.path, f.by) : toTab()), toTab);
@@ -790,6 +793,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
     const q = show.path.startsWith('data:') ? { screen: { ...(sv ?? { pick: home0, sheet: [] }), modal: show }, hold: null } : queueShow(sv, holds.current.get(owner) ?? null, owner, home0, show);
     screens.current.set(owner, q.screen);
     if (q.hold) holds.current.set(owner, q.hold);
+    if (!show.path.startsWith('data:')) setShowStamp((m) => ({ ...m, [show.path]: show.ts })); // 그 탭에 가면 새 판으로
     const fname = show.path.startsWith('data:') ? '' : ` — ${show.path.split('/').pop()}`;
     if (o) setCurNote(tr(`${josa(oname(o), '이', '가')} 파일을 띄웠어${fname}`, `${oname(o)} opened a file${fname}`));
     if (/\.html?$/i.test(show.path)) void invoke<string>('read_doc_text', { path: show.path }).then((t) => { if (isCurationHtml(t)) queueReview(owner, show); }, () => {});
@@ -1097,7 +1101,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   ) : null);
   /** 가운데 파일 화면 — md·엑셀은 편집 페이지, 그 밖(그림·영상·html·pdf…)은 탭 안 미리보기 */
   const filePage = (path: string, opt: { onBack?: (upKey: string) => void; where?: string; keepFor?: string }) => (spacePage(path) ? docPage(path, { ...opt, tail: teamDl(path) }) : (
-    <FileTab key={path} path={path} where={opt.where ?? pathLine(path, lockerTree.dir, home ?? '')} onBig={() => setModal({ path, ts: new Date().toISOString(), by: '' })}
+    <FileTab key={path} path={path} focus={focus?.path === path ? focus : undefined} stamp={showStamp[path]} where={opt.where ?? pathLine(path, lockerTree.dir, home ?? '')} onBig={() => setModal({ path, ts: new Date().toISOString(), by: '' })}
       onCuration={(p) => { if (now.current.pick === `d:${p}`) toCuration(p); }} onAttach={attachOf(path)} attachTo={attachToOf(path)} zoom={zoomOf(path)} zoomUi={<>{zoomUi(path)}{teamDl(path)}</>} onZoom={(z, at) => zoomTo(path, z, at)} />
   ));
   /** 세션 칸 속 — 진짜 터미널(브라우저 쓰면 브라우저 화면 + 아래 터미널) + 보여 준 파일. 스페이스 세션 화면과 사무실 위 창이 같은 것 */
@@ -1559,7 +1563,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
             { label: tr('따로 창으로', 'Open in its own window'), run: () => void invoke('craft_move', { app: it.app, to: 'window' }).catch(() => {}) },
             { label: tr('맥 앱으로 꺼내기 — 저장하고 내 화면에 다시 열기', 'Pop out to the macOS app — save and reopen on my screen'), run: () => void invoke('craft_win_act', { app: it.app, act: 'eject' }).catch(() => {}) },
             { label: tr('끄기 — 바뀐 게 있으면 저장하고', 'Quit — saves first if anything changed'), run: () => void invoke('craft_win_act', { app: it.app, act: 'close' }).catch(() => {}) },
-            ...it.recent.map((f, i) => ({ label: recentLabel(f), sep: i === 0, run: () => void invoke('craft_open_file', { app: it.app, path: f }).catch(() => {}) })),
+            ...it.recent.map((f, i) => ({ label: recentLabel(f), sep: i === 0, run: () => void invoke('craft_open_file', { app: it.app, path: f }).catch(sayCraftErr) })), // 못 연 까닭을 아래 한 줄로(11-01 QA H13)
           ]) : undefined;
           return (
             <button key={`dock-${it.app}`} className={`lk-tab dock ${on ? 'on' : ''}`} aria-pressed={on} aria-label={title} title={title}
@@ -1749,7 +1753,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
     const lo = lockerOrch;
     const ls = lockerSide;
     main = lo && ls && place.kind === 'home' ? lockerFrame(lo, (
-      <>{lockerTabs(lo, ls.rootNew)}<HomeView key={lo.id} hint={homeHint(lo)} aside={homeAside(lo)} progress={<HomeProgress orch={lo} events={events} sessions={sessions} readFill={sessionFill} />}
+      <>{lockerTabs(lo, ls.rootNew)}<HomeView key={lo.id} hint={homeHint(lo)} aside={homeAside(lo)} progress={<HomeProgress orch={lo} events={events} sessions={sessions} readFill={sessionFill} statusOf={statusOf} />}
         modes={<ModeHome rows={modeRows} keys={[lo.name || '', lo.id, lo.sessionId || '']} dash={lo.name || lo.id}
           onAsk={(t) => { const text = tr(`홈에 모드 하나 만들어 줘 — ${t}`, `Make a mode for my home — ${t}`); window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id: lo.id, text } })); void sendTextToSession(lo.id, text); }} />} /></>
     )) : lo && ls && place.kind !== 'home' ? lockerFrame(lo, (

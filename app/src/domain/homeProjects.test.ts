@@ -56,7 +56,7 @@ describe('homeProjects — 홈에 올리는 프로젝트(활성 기준)', () => 
 });
 
 describe('homeProjects — 프로젝트 상태 = 가장 급한 하나', () => {
-  it('막힘(로그인·선택지 창) > 답 기다림 > 오래 조용 > 일하는 중 > 기다림 > 쉼', () => {
+  it('중단됨(세션 꺼짐) > 답 기다림 > 오래 조용 > 일하는 중 > 기다림 > 쉼', () => {
     const groups = [
       { name: 'p-run', sessions: [ses('r', 'p-run')] },
       { name: 'p-stop', sessions: [ses('s', 'p-stop')] },
@@ -67,12 +67,24 @@ describe('homeProjects — 프로젝트 상태 = 가장 급한 하나', () => {
     ];
     const events = [
       send('t1', 'k', 1), ev('ask', 't1', 0.5),
-      send('t2', 's', 1),
+      send('t2', 's', 1, { project: 'p-stop' }), // 세션 s 는 꺼졌다(목록에 없음)
       send('t3', 'q', 5),
       send('t4', 'w', 2), ev('wait', 't4', 1, { note: '심사' }),
     ];
-    const r = run({ groups, events, status: { r: 'working', s: 'blocked' } });
+    const r = run({ groups, events, status: { r: 'working' }, sessions: [...groups.flatMap((g) => g.sessions).filter((x) => x.id !== 's')] });
     expect(r.live.map((p) => [p.name, p.state])).toEqual([['p-stop', 'stop'], ['p-ask', 'ask'], ['p-quiet', 'quiet'], ['p-run', 'run'], ['p-wait', 'wait'], ['p-rest', 'rest']]);
+  });
+  // 2026-11-01 ux-daily H2 — 선택지 창에 멈춘 세션이 홈은 빨간 '막힘'(세션 꺼짐과 같은 칸), 진행 칸은 '쉬는 중'이었다
+  it('선택지·권한 창·로그인 멈춤은 답 기다림 + 까닭(held) — 일 칸도 같은 판단', () => {
+    const groups = [{ name: 'p-b', sessions: [ses('b', 'p-b')] }, { name: 'p-l', sessions: [ses('l', 'p-l')] }];
+    const r = run({ groups, events: [send('t1', 'b', 1)], status: { b: 'blocked', l: 'login' } });
+    expect(r.live.find((p) => p.name === 'p-b')).toMatchObject({ state: 'ask', held: 'blocked' });
+    expect(r.live.find((p) => p.name === 'p-b')!.tasks[0]).toMatchObject({ state: 'ask', held: 'blocked' });
+    expect(r.live.find((p) => p.name === 'p-l')).toMatchObject({ state: 'ask', held: 'login' });
+  });
+  it('같은 세션의 앞 일은 세션이 일해도 일하는 중이 아니다(진행 칸과 같게)', () => {
+    const r = run({ groups: [{ name: 'p', sessions: [ses('a', 'p', { state: 'working' })] }], events: [send('t1', 'a', 2), send('t2', 'a', 1)], status: { a: 'working' } });
+    expect(Object.fromEntries(r.live[0]!.tasks.map((t) => [t.task, t.state]))).toEqual({ t1: 'rest', t2: 'run' });
   });
   it('세션이 일하는 중이어도 물음이 걸린 일이 있으면 답 기다림', () => {
     const r = run({ groups: [{ name: 'p', sessions: [ses('a', 'p')] }], events: [send('t1', 'a', 1), ev('ask', 't1', 0.5)], status: { a: 'working' } });
@@ -106,7 +118,7 @@ describe('homeProjects — 프로젝트 상태 = 가장 급한 하나', () => {
   });
   it('줄의 맡긴 일 목록 — 급한 순, 끝난 건 뒤', () => {
     const r = run({ groups: [{ name: 'p', sessions: [ses('a', 'p', { state: 'working' })] }], events: [send('t1', 'a', 3), ev('done', 't1', 2.5), send('t2', 'a', 2), send('t3', 'a', 1), ev('ask', 't3', 0.5)], status: { a: 'working' } });
-    expect(r.live[0]!.tasks.map((t) => [t.task, t.state])).toEqual([['t3', 'ask'], ['t2', 'run'], ['t1', 'done']]);
+    expect(r.live[0]!.tasks.map((t) => [t.task, t.state])).toEqual([['t3', 'ask'], ['t2', 'rest'], ['t1', 'done']]); // t2 는 같은 세션의 앞 일 — 세션이 일해도 일하는 중이 아니다(ux-daily M5)
   });
 });
 

@@ -22,3 +22,8 @@ export function allRoomPlan(v: View): { make: string[] } | { room: string; add: 
   const add = others.filter((id) => !(all.members ?? []).includes(id));
   return add.length ? { room: all.id, add } : null;
 }
+
+/** 팀원 화면 — '전체'가 아직 없다(팀장 앱이 켜져야 만든다). 빈 팀챗 칸에 안내 한 줄(11-01 QA) */
+export function allRoomPending(v: View): boolean {
+  return v.joined && v.role !== 'owner' && v.members.some((m) => !m.me) && !v.rooms.some((r) => isAllRoom(r, v.teamId));
+}

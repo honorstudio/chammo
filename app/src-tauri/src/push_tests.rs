@@ -101,8 +101,8 @@ fn 끊긴_기기의_구독엔_안_보낸다() {
 
 #[test]
 fn 알림_문구는_제목과_짧은_한_줄() {
-    let p: serde_json::Value = serde_json::from_slice(&payload("참모 업데이트 답이 필요해", &format!("첫 줄 {}\n둘째 줄 비밀", "가".repeat(100)), "session:abc")).unwrap();
-    assert_eq!(p["title"], "참모 업데이트 답이 필요해");
+    let p: serde_json::Value = serde_json::from_slice(&payload("모모 답이 필요해", &format!("첫 줄 {}\n둘째 줄 비밀", "가".repeat(100)), "session:abc")).unwrap();
+    assert_eq!(p["title"], "모모 답이 필요해");
     let body = p["body"].as_str().unwrap();
     assert!(!body.contains('\n') && !body.contains("둘째"));
     assert!(body.chars().count() <= 61, "{}", body.chars().count());
@@ -164,4 +164,115 @@ fn 마지막_알림_갈_곳은_새_것으로_덮고_나이를_준다() {
     keep_last(&d, "", 70_000);
     assert_eq!(last_target(&d, 70_000)["target"], "");
     let _ = std::fs::remove_dir_all(&d);
+}
+
+// ── 중계 길 폰에 본문 싣기(2026-11-01 사용자 제보 — 잠금 화면에 '새 메시지'만, ADR 0013 결정 7 갱신) ──
+
+/// 폰(받는 쪽)이 하는 풀기 — RFC 8291 그대로. 시험에서만
+fn decrypt_as_phone(body: &[u8], ua_private: &[u8], auth: &[u8]) -> Vec<u8> {
+    let salt = &body[..16];
+    let idlen = body[20] as usize;
+    let as_pub = PublicKey::from_sec1_bytes(&body[21..21 + idlen]).unwrap();
+    let ct = &body[21 + idlen..];
+    let me = SecretKey::from_slice(ua_private).unwrap();
+    let ua_raw = me.public_key().to_encoded_point(false);
+    let shared = p256::ecdh::diffie_hellman(me.to_nonzero_scalar(), as_pub.as_affine());
+    let mut key_info = b"WebPush: info\0".to_vec();
+    key_info.extend_from_slice(ua_raw.as_bytes());
+    key_info.extend_from_slice(as_pub.to_encoded_point(false).as_bytes());
+    let ikm: [u8; 32] = expand(&Hkdf::<Sha256>::new(Some(auth), shared.raw_secret_bytes()), &key_info).unwrap();
+    let prk = Hkdf::<Sha256>::new(Some(salt), &ikm);
+    let cek: [u8; 16] = expand(&prk, b"Content-Encoding: aes128gcm\0").unwrap();
+    let nonce: [u8; 12] = expand(&prk, b"Content-Encoding: nonce\0").unwrap();
+    let mut rec = Aes128Gcm::new_from_slice(&cek).unwrap().decrypt(Nonce::from_slice(&nonce), ct).unwrap();
+    assert_eq!(rec.pop(), Some(2));
+    rec
+}
+
+fn phone_sub(device: &str, at: u64) -> (Sub, Vec<u8>, Vec<u8>) {
+    let ua = SecretKey::from_slice(&[7u8; 32]).unwrap();
+    let auth = vec![9u8; 16];
+    let s = Sub { device: device.into(), endpoint: format!("https://fcm.googleapis.com/fcm/send/{device}-{at}"), p256dh: URL.encode(ua.public_key().to_encoded_point(false).as_bytes()), auth: URL.encode(&auth), at };
+    (s, ua.to_bytes().to_vec(), auth)
+}
+
+#[test]
+fn 중계_폰엔_구독_열쇠로_봉한_본문과_구독_주소_해시를_싣는다() {
+    let (s, ua_private, auth) = phone_sub("ph01", 5);
+    let msg = payload("참모 답", "빌드 끝났어", "session:abc");
+    let v = relay_notify_body("relay-dev-1", Some(&s), &msg);
+    assert_eq!(v["to"], "relay-dev-1");
+    let body = URL.decode(v["body"].as_str().expect("본문 암호문")).unwrap();
+    assert_eq!(decrypt_as_phone(&body, &ua_private, &auth), msg);
+    // 중계는 자기가 가진 구독 주소의 해시와 같을 때만 싣는다 — 폰이 다시 구독해 열쇠가 바뀌었으면 '새 메시지'로
+    let h = URL.encode(<Sha256 as sha2::Digest>::digest(s.endpoint.as_bytes()));
+    assert_eq!(v["sub"], h.as_str());
+    // 평문 글자는 부탁 어디에도 없다
+    assert!(!v.to_string().contains("빌드"));
+}
+
+#[test]
+fn 구독_열쇠를_모르면_지금처럼_본문_없이() {
+    let v = relay_notify_body("relay-dev-1", None, b"{}");
+    assert_eq!(v, serde_json::json!({ "to": "relay-dev-1" }));
+    let (mut s, _, _) = phone_sub("ph01", 5);
+    s.p256dh = "망가진".into();
+    assert_eq!(relay_notify_body("relay-dev-1", Some(&s), b"{}"), serde_json::json!({ "to": "relay-dev-1" }));
+}
+
+#[test]
+fn 중계_폰은_가장_최근_구독을_쓰고_맥_열쇠로_직접_보내지_않는다() {
+    let (old, _, _) = phone_sub("ph01", 1);
+    let (new, _, _) = phone_sub("ph01", 9);
+    let (tail, _, _) = phone_sub("tail1", 3);
+    let list = vec![old, new.clone(), tail.clone()];
+    assert_eq!(latest_sub(&list, "ph01"), Some(&new));
+    assert_eq!(latest_sub(&list, "nope"), None);
+    // 중계 폰(ph01)의 구독은 중계 VAPID 로 걸린 것 — 맥 VAPID 로 보내면 푸시 서버가 403
+    let direct = direct_subs(&list, &["ph01".to_string(), "tail1".to_string()], &["ph01".to_string()]);
+    assert_eq!(direct, vec![tail]);
+}
+
+#[test]
+fn 잠금_화면_한_줄의_비밀번호는_가린다() {
+    let p: serde_json::Value = serde_json::from_slice(&payload("참모 답", "비밀번호: hunter2xyz 로 로그인했어", "")).unwrap();
+    let body = p["body"].as_str().unwrap();
+    assert!(!body.contains("hunter2xyz"), "{body}");
+    assert!(body.contains(crate::messenger_text::HIDDEN), "{body}");
+    let p: serde_json::Value = serde_json::from_slice(&payload(&format!("키 {}{}", "sk-", "ant-api03-abcdefghijklmnopqrstuvwxyz0123"), "ok", "")).unwrap();
+    assert!(!p["title"].as_str().unwrap().contains("abcdefghij"), "{}", p["title"]);
+}
+
+#[test]
+fn 중계_본문은_중계_상한_안에_들어간다() {
+    // 제목 80자·한 줄 60자를 다 채운 한글 + 긴 갈 곳 — 중계 PUSH_BODY_MAX(2048 바이트) 안
+    let (s, _, _) = phone_sub("ph01", 5);
+    let msg = payload(&"가".repeat(200), &"나".repeat(200), &format!("session:{}", "a".repeat(80)));
+    let v = relay_notify_body("r", Some(&s), &msg);
+    let n = URL.decode(v["body"].as_str().unwrap()).unwrap().len();
+    assert!(n <= RELAY_BODY_MAX, "{n}");
+}
+
+/// 중계 시험 벡터 — 이 컴퓨터가 만든 진짜 부탁(본문 암호문·구독 해시)과 폰 열쇠(JWK)를 E2E_OUT 에 쓴다.
+/// 중계 저장소 test/push-body-vectors.json 이 이걸로 만든 것 — 중계가 바이트 그대로 싣고 WebCrypto 로 풀리는지 본다.
+/// `E2E_OUT=… cargo test relay_body_vectors -- --ignored`
+#[test]
+#[ignore]
+fn relay_body_vectors() {
+    let out = std::env::var("E2E_OUT").expect("E2E_OUT");
+    let ua = SecretKey::from_slice(&rand::<32>().unwrap()).unwrap();
+    let pt = ua.public_key().to_encoded_point(false);
+    let auth = rand::<16>().unwrap();
+    let endpoint = "https://web.push.apple.com/vectors/relay-body";
+    let s = Sub { device: "ph01".into(), endpoint: endpoint.into(), p256dh: URL.encode(pt.as_bytes()), auth: URL.encode(auth), at: 1 };
+    let msg = payload("모모 — 답이 왔어", "빌드 끝났어, 비밀번호: hunter2xyz 는 가려져", "session:vector");
+    let ask = relay_notify_body("PHONE", Some(&s), &msg);
+    let v = serde_json::json!({
+        "endpoint": endpoint,
+        "jwk": { "kty": "EC", "crv": "P-256", "d": URL.encode(ua.to_bytes()), "x": URL.encode(pt.x().unwrap()), "y": URL.encode(pt.y().unwrap()) },
+        "auth": URL.encode(auth),
+        "ask": ask,
+        "plain": String::from_utf8(msg).unwrap(),
+    });
+    std::fs::write(out, serde_json::to_string_pretty(&v).unwrap()).unwrap();
 }

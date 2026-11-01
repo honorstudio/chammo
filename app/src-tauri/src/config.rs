@@ -118,7 +118,7 @@ pub struct Features {
     /// 익명 사용 통계 — 하루 한 번 무작위 설치 번호·판·OS·CPU·언어를 중계에 알린다(usage_ping.rs, 나라는 서버가 Cloudflare 로). 기본 켬, 설정 > 기능에서 끈다(2026-10-24 사용자)
     pub usage_ping: bool,
     /// 기본 참모 앱 미리 받기 — 첫 설정 뒤(쓰던 사람은 다음 켤 때) 표·PDF·슬라이드·문서·벡터를 뒤에서 깐다(craft_basics.rs → scripts/craft prefetch).
-    /// 기본 켬, 설정 > 기능에서 끈다. 나머지 8개는 쓸 때 설치(2026-10-26 사용자)
+    /// 기본 끔(2026-11-01 ux-start M3 — 1.5GB 를 첫 사용자가 모르고 받았다, 10-26 은 켬), 설정 > 기능에서 켠다. 나머지 8개는 쓸 때 설치
     pub craft_basics: bool,
     /// 떠 있는 참모 배지(OrchBubble — 앱 어느 화면에서든 누르면 참모 대화창, 시안 orch-bubble A). 기본 켬 — 앱(TS)만 읽지만 여기 없으면 저장 때 버려진다(2026-10-28 사용자)
     pub bubble: bool,
@@ -131,7 +131,7 @@ pub struct Features {
 
 impl Default for Features {
     fn default() -> Self {
-        Features { office: true, tama: true, gacha: true, review: true, voice: true, auto_revive: false, auto_tidy: true, agent_view: true, computer_use: false, usage_ping: true, craft_basics: true, bubble: true, bubble_desk: true, animation: "auto".into() }
+        Features { office: true, tama: true, gacha: true, review: true, voice: true, auto_revive: false, auto_tidy: true, agent_view: true, computer_use: false, usage_ping: true, craft_basics: false, bubble: true, bubble_desk: true, animation: "auto".into() }
     }
 }
 
@@ -317,7 +317,7 @@ pub fn say_for_windows(argv: Vec<String>) -> Vec<String> {
     if argv.first().map(String::as_str) != Some("say") || argv.len() < 2 {
         return argv;
     }
-    let q = |s: &str| format!("'{}'", s.replace('\'', "''"));
+    let q = crate::platform::ps_quote;
     let text = argv.last().unwrap();
     let voice = match (argv.get(1).map(String::as_str), argv.get(2)) {
         (Some("-v"), Some(v)) if argv.len() == 4 => format!("$s.SelectVoice({}); ", q(&v.replace('_', " "))),
@@ -605,6 +605,9 @@ mod tests {
         assert!(script.contains("Speak('안녕')"));
         // say 가 아니면 손대지 않는다
         assert_eq!(say_for_windows(vec!["C:/t/speak.exe".into(), "hi".into()]), ["C:/t/speak.exe", "hi"]);
+        // 파워셸은 굽은 작은따옴표(‘ ’ ‚ ‛)도 따옴표로 읽는다 — don’t 가 든 답에서 문자열이 닫혀 소리가 안 났다(2026-11-01 win-text M6)
+        let c = say_for_windows(vec!["say".into(), "I don’t ‘know’ ‚x‛".into()]);
+        assert!(crate::platform::decode_ps(&c[4]).contains("Speak('I don’’t ‘‘know’’ ‚‚x‛‛')"));
     }
 
     #[test]

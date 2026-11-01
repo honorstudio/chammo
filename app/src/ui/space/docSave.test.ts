@@ -41,7 +41,7 @@ describe('docSave — 알던 판일 때만 쓴다(밖에서 고친 줄을 덮지
   });
 
   it('파일이 지워졌거나 이름이 바뀌어 못 쓰면 gone — 못 쓴 판은 늘 history 로', async () => {
-    reply = (cmd) => { if (cmd === 'write_doc_text') throw 'No such file or directory'; };
+    reply = (cmd) => { if (cmd === 'write_doc_text' || cmd === 'doc_stamp') throw 'No such file or directory'; };
     const s = newSession(P, '# 옛\n');
     s.onOutside = vi.fn(); s.onGone = vi.fn();
     await saveNow(s, '# 새\n');
@@ -49,6 +49,23 @@ describe('docSave — 알던 판일 때만 쓴다(밖에서 고친 줄을 덮지
     expect(s.onOutside).not.toHaveBeenCalled();
     await saveNow(newSession(P, '# 옛\n'), '# 닫힌 뒤\n');
     expect(calls.filter((c) => c.cmd === 'keep_doc_version').map((c) => c.args.text)).toEqual(['# 새\n', '# 닫힌 뒤\n']);
+  });
+
+  it('파일은 있는데 못 쓰면(다른 앱이 쥠·읽기 전용) gone 이 아니라 fail — 지워졌다고 말하지 않는다(11-01 QA H10)', async () => {
+    reply = (cmd) => { if (cmd === 'write_doc_text') throw '다른 프로세스가 파일을 사용 중이기 때문에 프로세스가 액세스 할 수 없습니다. (os error 32)'; return cmd === 'doc_stamp' ? '1:1' : undefined; };
+    const s = newSession(P, '# 옛\n');
+    s.onOutside = vi.fn(); s.onGone = vi.fn(); s.onFail = vi.fn();
+    await saveNow(s, '# 새\n');
+    expect(s.onFail).toHaveBeenCalled();
+    expect(s.onGone).not.toHaveBeenCalled();
+    expect(s.onOutside).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.cmd === 'keep_doc_version' && c.args.text === '# 새\n'), '못 쓴 판은 history 로').toBe(true);
+    expect(lastSaved.has(P), '다시 저장할 수 있게 저장한 판으로 안 친다').toBe(false);
+    // 다시 저장이 되면 띠를 내리라고 알린다
+    reply = (cmd) => (cmd === 'write_doc_text' ? '2:2' : undefined);
+    s.onSaved = vi.fn();
+    await saveNow(s, '# 새\n');
+    expect(s.onSaved).toHaveBeenCalled();
   });
 
   it('충돌로 멈춘 문서는 안 쓴다', async () => {

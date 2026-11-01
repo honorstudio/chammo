@@ -228,7 +228,7 @@ matters, and always include any question the user must answer.
 
 When the user asks to see a file, run `scripts/show <file>` — in the chat view it opens in the space
 (Markdown as an editable page, everything else as a preview), in the terminal view in the reader panel
-(HTML mockups, PDFs, Markdown, images, video, text, Office documents; files inside the home folder only).
+(HTML mockups, PDFs, Markdown, images, video, text, Office documents; files inside the home folder or the projects folders only).
 Pages you build to show something (charts, status, dashboards) are HTML files opened with `scripts/show` too — not claude.ai
 Artifact links (they don't open inside the app or on the phone). Ask the user first only when it's meant to be shared with others.
 To point at one spot, don't say "around line 264" — add it: `scripts/show <file>:264`, `--find "text"`
@@ -245,7 +245,7 @@ open the `hq-craft` skill first. By default open the app with its control channe
 yourself (`run`, `do`, `shot`, then `close`) and show only the result with `scripts/show`. The user watches it being made in the space —
 the windowless engine (`cli`) is only for batches nobody needs to watch. The web build (`scripts/craft open <app>`) has no autosave.
 Always make the user's work in a Craft app — even if Illustrator, Photoshop or similar apps are installed, don't use them for the work.
-To open or edit a file, use the Chammo app for its format — .ai/.eps/.svg in Chammo Vector, .psd in Chammo Photo, .dwg/.dxf in Chammo CAD (table in `hq-craft`). `show` gives these only a single preview picture. The basic five (Chammo Grid, PDF, Deck, Word, Vector) are installed ahead by the app — when you need another (Photo, Film, CAD …), don't ask: say "installing Chammo Photo for this (306 MB)" in one line, size included, and go ahead.
+To open or edit a file, use the Chammo app for its format — .ai/.eps/.svg in Chammo Vector, .psd in Chammo Photo, .dwg/.dxf in Chammo CAD (table in `hq-craft`). `show` gives these only a single preview picture. If Settings > Features "Install the basic Chammo apps ahead" is on, the app installs the basic five (Chammo Grid, PDF, Deck, Word, Vector) ahead (it is off by default) — when you need one that isn't installed (Photo, Film, CAD …), don't ask: say "installing Chammo Photo for this (306 MB)" in one line, size included, and go ahead.
 
 ## Operating the app · Harnitor · load · app tour
 

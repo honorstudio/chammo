@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addDays, byDay, calPutOk, cleanDraft, draftOf, monthCells, occurrences, upcoming, weekDays, withDone, ymd,
+  addDays, byDay, calPutOk, cleanDraft, draftOf, monthCells, newEventDay, occurrences, shownSpan, upcoming, weekDays, withDone, ymd,
   type CalData, type CalItem, type CalSnap,
 } from './teamCal';
 
@@ -147,5 +147,27 @@ describe('팀 캘린더 — 팀을 바꾼 뒤 앞 팀 일정을 새 팀에 안 �
     expect(calPutOk(snapOf('tB', []), 'tB', null)).toBe(true);
     expect(calPutOk(null, 'tB', null)).toBe(true);
     expect(calPutOk(snapOf('tA', []), 'tB', null)).toBe(false);
+  });
+});
+
+describe('새 일정 날짜(11-01 사용자 "11월 3일을 고르고 + 를 눌러도 오늘로")', () => {
+  const today = '2026-11-01';
+  it('고른 날이 지금 보이는 칸 안이면 그날 — 오늘보다 먼저', () => {
+    expect(newEventDay('2026-11-03', shownSpan('list', '2026-11-03'), today)).toBe('2026-11-03'); // 폰 목록 줄에서 고름
+    expect(newEventDay('2026-11-20', shownSpan('month', '2026-11-01'), today)).toBe('2026-11-20');
+    expect(newEventDay('2026-11-05', shownSpan('week', '2026-11-03'), today)).toBe('2026-11-05');
+  });
+  it('아무것도 안 골랐으면 오늘(보이면)', () => {
+    expect(newEventDay(null, shownSpan('month', '2026-11-01'), today)).toBe(today);
+    expect(newEventDay(null, shownSpan('week', today), today)).toBe(today);
+  });
+  it('고른 날이 넘긴 화면 밖이고 오늘도 안 보이면 보이는 첫날 — 월은 그 달 1일, 주는 일요일', () => {
+    expect(newEventDay('2026-11-03', shownSpan('month', '2026-12-01'), today)).toBe('2026-12-01');
+    expect(newEventDay(null, shownSpan('week', '2026-11-12'), today)).toBe('2026-11-08');
+    expect(newEventDay(null, shownSpan('list', '2026-12-15'), today)).toBe('2026-12-15');
+  });
+  it('월 보기 칸은 그 달 날만 — 앞뒤 달 회색 칸(10/31)은 보이는 달이 아니다', () => {
+    expect(shownSpan('month', '2026-11-01')).toEqual({ from: '2026-11-01', to: '2026-11-30' });
+    expect(newEventDay('2026-10-31', shownSpan('month', '2026-11-01'), '2026-12-05')).toBe('2026-11-01');
   });
 });

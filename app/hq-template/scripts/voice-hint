@@ -50,6 +50,9 @@ sid=$(printf '%s' "$inp" | $PY -c 'import sys,json;print(json.load(sys.stdin).ge
 if [ -n "$sid" ] && [ -f "$d/mobile-sent.json" ]; then
   if $PY - "$d/mobile-sent.json" "$sid" <<'PY' 2>/dev/null
 import json, sys, time
+for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — PYTHONUTF8 없이 떠도(데몬 env 세션·작업 스케줄러) 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
+    if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
+        _io.reconfigure(encoding='utf-8', errors='replace')
 m = json.load(open(sys.argv[1], encoding="utf-8"))
 ok = sys.argv[2].startswith(m.get("id") or "-") and time.time() * 1000 - m.get("at", 0) < 60_000
 sys.exit(0 if ok else 1)

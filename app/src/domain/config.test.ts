@@ -35,8 +35,8 @@ describe('기능 켜기', () => {
     expect(featuresOf(null).computerUse).toBe(false);
     // 익명 사용 통계는 기본 켬 — 설정 > 기능에서 끈다(2026-10-24 사용자)
     expect(featuresOf(null).usagePing).toBe(true);
-    // 기본 참모 앱 다섯(표·PDF·슬라이드·문서·벡터) 미리 받기는 기본 켬 — 옛 설정 파일도(2026-10-26 사용자)
-    expect(featuresOf(null).craftBasics).toBe(true);
+    // 기본 참모 앱 다섯 미리 받기(1.5GB)는 기본 끔 — 첫 사용자가 모르고 받았다(2026-11-01 ux-start M3, 사용자 '추천대로'. 10-26 은 켬)
+    expect(featuresOf(null).craftBasics).toBe(false);
     expect(featuresOf({ features: { tama: false } })).toEqual({ ...ALL_ON, tama: false });
   });
 

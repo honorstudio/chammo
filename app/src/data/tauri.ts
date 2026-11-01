@@ -84,6 +84,8 @@ export const makeDir = (dir: string) => invoke<void>('make_dir', { dir });
 
 // ── 환경 점검(Rust setup.rs, 판단은 domain/setup.ts) ──
 export const checkEnv = () => invoke<import('../domain/setup').EnvCheck>('check_env');
+/** git 전역 이름·메일 저장 — 오류 'name'·'email' 은 틀린 칸, 그 밖은 git 이 낸 글 */
+export const setGitIdentity = (name: string, email: string) => invoke<void>('set_git_identity', { name, email });
 /** Claude Code 가 이 폴더(또는 위 폴더)를 믿나 — ~/.claude.json */
 export const claudeTrusted = (dir: string) => invoke<boolean>('claude_trusted', { dir });
 /** 프로젝트 폴더를 실제로 읽어 본다(dir 를 안 주면 저장된 devRoot — 잘 읽히면 그 아래 믿음도 챙긴다). 판단은 domain/access.ts */
@@ -337,6 +339,8 @@ export const appVersion = () => invoke<string>('app_version');
 export const claudeSource = (path: string) => invoke<import('../domain/updates').ClaudeSource>('claude_source', { path });
 /** latest.json(업데이터와 같은 곳)에 이 기기용 새 판이 있으면 그 번호, 없으면 null. 업데이터 없는 판(개인 앱)은 거절 'off' */
 export const appUpdateCheck = () => invoke<string | null>('app_update_check');
+/** 켤 때 한 번 — 지난 업데이트가 안 끝났으면 그 판 번호(읽으면 표시가 지워진다) */
+export const appUpdateLeftover = () => invoke<string | null>('app_update_leftover');
 /** 자동 업데이트(ADR 0005) — 받기·서명 확인·설치 뒤 Rust 가 앱을 다시 켠다. 안 되면 거절 글('off'·'none'·오류) */
 export const appUpdateInstall = (onStep: (s: AppInstallStep) => void) => {
   const ch = new Channel<AppInstallStep>();

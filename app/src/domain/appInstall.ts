@@ -8,7 +8,19 @@ export type Phase =
   | { kind: 'idle' }
   | { kind: 'get'; got: number; total: number | null }
   | { kind: 'install' }
-  | { kind: 'failed'; why: string };
+  | { kind: 'failed'; why: string }
+  /** 지난번 업데이트를 시작했는데 판이 그대로 — 윈도우는 설치기가 실패해도 앱이 이미 꺼져 있었다(Rust app_update_leftover) */
+  | { kind: 'leftover' };
+
+/** 켤 때 Rust 가 준 '안 끝난 업데이트' 판 번호로 — 그사이 사람이 업데이트를 눌러 다른 단계면 덮지 않는다 */
+export function afterLeftover(p: Phase, ver: string | null): Phase {
+  return ver && p.kind === 'idle' ? { kind: 'leftover' } : p;
+}
+
+/** 안 끝난 업데이트 띠 문구 [한글, 영어] */
+export function leftoverNote(ver: string, now: string): [string, string] {
+  return [`지난번 업데이트가 끝나지 않은 것 같아요. Chammo ${ver} 으로 다시 시도할 수 있어요 (지금 ${now}).`, `The last update doesn't seem to have finished. You can try again to get Chammo ${ver} (now on ${now}).`];
+}
 
 export function nextPhase(p: Phase, s: Step): Phase {
   if (s.kind === 'installing') return { kind: 'install' };

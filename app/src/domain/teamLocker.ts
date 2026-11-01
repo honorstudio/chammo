@@ -122,6 +122,15 @@ export function thumbKind(name: string, size: number): 'image' | 'pdf' | null {
   return null;
 }
 
+/** 폰에서 누르면 보는 팀 파일(11-01 팀 홈 최근 파일) — 맥이 풀어 주는 그림(/api/team-file-image: png·jpg·gif·webp·heic)은 image,
+ *  PDF 는 첫 장 그림(썸네일 길 1600)이라 pdf. 50MB 넘으면 맥이 안 풀고(peek), 못 여는 줄(why)도 뺀다. 그 밖(문서·엑셀·영상)은 폰에서 볼 길이 아직 없다 */
+const PHONE_PICS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif'];
+export function phoneView(f: { name: string; size: number; why?: string }): 'image' | 'pdf' | null {
+  if (f.why || f.size > 50 * 1024 * 1024) return null;
+  const ext = f.name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '';
+  return PHONE_PICS.includes(ext) ? 'image' : ext === 'pdf' ? 'pdf' : null;
+}
+
 export type DropPlan = { move: string[]; copy: string[]; stay: number; dirs: { from: string; to: string }[]; keep: string[] };
 /** 폴더(타일·경로 줄)에 놓은 것 가르기 — 팀 보관함 파일은 옮기고(이미 거기면 빼고), 폴더(dir:경로)는 그 안으로(자기 안·이미 거기면 빼고),
  *  대화 파일은 폴더로 복사(옮기면 대화에서 사라진다, 10-28 사용자). 대화 파일을 맨 위에 놓으면 복사할 폴더가 없다 — stay 로 세어 화면이 이유를 말한다.
@@ -174,3 +183,9 @@ export type LockerSort = SortState<(typeof SORTS)[number]>;
 export const readSort = (get: () => string | null): LockerSort => readSortOf(get, SORTS);
 /** 줄 정렬 — 같은 값이면 새것 먼저 */
 export const sortItems = (items: LockerItem[], s: LockerSort) => sortList(items, s, (i) => i);
+
+/** 영구 지우기를 보여 주나 — 서버(chammo-relay locker.ts purgeFile)는 올린 사람·팀장·'파일 정리' 권한만 받는다(11-01 QA M3: 메뉴는 늘 보이고 누르면 엉뚱한 거절) */
+export const canPurge = (i: Pick<LockerItem, 'mine'>, canFiles: boolean): boolean => i.mine || canFiles;
+
+/** 남이 올린 파일 — 휴지통·이름 바꾸기는 서버가 아무 팀원에게나 허용해서, 그 전에 한 번 묻는다(11-01 QA M3) */
+export const othersOf = <T extends Pick<LockerItem, 'mine'>>(items: T[]): T[] => items.filter((i) => !i.mine);

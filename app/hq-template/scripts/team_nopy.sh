@@ -65,6 +65,7 @@ people() {
 abs_path() {
   p=$1
   case $p in '~'|'~/'*) p="$HOME${p#\~}" ;; esac
+  case $p in -*) p="./$p" ;; esac  # '-' 로 시작하면 cd·dirname 이 옵션으로 읽는다(11-01)
   if [ -d "$p" ]; then a=$(cd "$p" && pwd -P)
   else
     d=$(dirname "$p")
@@ -84,6 +85,7 @@ h_me=0; h_team=0; h_name=0; h_add=0; h_remove=0; h_to=0
 quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 while [ $# -gt 0 ]; do
   case $1 in
+    --) shift; for a in "$@"; do rest="$rest $(quote "$a")"; done; break ;;
     --yes) yes=1 ;;
     --trash) trash=1 ;;
     --me|--server|--device|--team|--folder|--to|--with|--name|--add|--remove)

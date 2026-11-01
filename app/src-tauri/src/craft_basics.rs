@@ -84,9 +84,10 @@ mod tests {
     }
 
     #[test]
-    fn 기본값은_켬() {
-        assert!(crate::config::Features::default().craft_basics);
+    fn 기본값은_끔() {
+        // 1.5GB 를 첫 사용자가 모르고 받았다(2026-11-01 ux-start M3, 사용자 '추천대로' — 10-26 은 켬). 설정 > 기능에서 켠다
+        assert!(!crate::config::Features::default().craft_basics);
         let f: crate::config::Features = serde_json::from_str("{}").unwrap();
-        assert!(f.craft_basics, "옛 설정 파일(칸 없음)도 켬");
+        assert!(!f.craft_basics, "옛 설정 파일(칸 없음)도 끔");
     }
 }

@@ -3,7 +3,7 @@
 // 바꾸기·올리기도 데스크톱과 같은 길로 서버가 한다. 영구 지우기는 데스크톱 팀 보관함 휴지통에서만
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PhoneLockerOp, PhoneTeamLocker as View, PhoneTeamUps, TeamPhoneApi } from '../../data/web';
-import { baseOf, crumbsOf, extOf, fmtBytes, inPlace, kidFolders, moveTargets, parentOf, renamedPath, usageText, whenText, type LockerItem } from '../../domain/teamLocker';
+import { baseOf, crumbsOf, extOf, fmtBytes, inPlace, kidFolders, moveTargets, parentOf, phoneView, renamedPath, usageText, whenText, type LockerItem } from '../../domain/teamLocker';
 import { partsOf } from '../../domain/teamPhoneUp';
 import { teamViewMemo } from '../../domain/teamViewMemo';
 import { machine, tr } from '../../i18n';
@@ -29,7 +29,8 @@ type OpBody = PhoneLockerOp extends infer T ? (T extends unknown ? Omit<T, 'team
 const errText = (e: unknown) => String((e as Error)?.message ?? e).slice(0, 160);
 const nameOf = (i: LockerItem) => i.name || tr('열 수 없는 파일', 'Unreadable file');
 
-export function PhoneTeamLocker({ api, teamId }: { api: TeamPhoneApi; teamId: string }) {
+/** onOpen = 그림·PDF 줄을 누르면 크게 보기(PhoneTeam 의 보기 창) */
+export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; teamId: string; onOpen?: (i: LockerItem) => void }) {
   const [v, setV] = useState<View | null>(() => memo.get(teamId)?.v ?? null);
   const [ups, setUps] = useState<PhoneTeamUps['uploads']>([]);
   const [sending, setSending] = useState<{ key: string; name: string; sent: number; total: number }[]>([]);
@@ -126,7 +127,7 @@ export function PhoneTeamLocker({ api, teamId }: { api: TeamPhoneApi; teamId: st
         <div className="tmx-lk-rows m-team-lk">
           {!trash && sending.map((s) => <div key={s.key} className="tmx-lk-row tlk-up"><span className="tmx-ext">{extOf(s.name) || tr('파일', 'File')}</span><b>{s.name}</b><span className="d">{tr(`보내는 중 ${s.total ? Math.floor((s.sent / s.total) * 100) : 0}%`, `Sending ${s.total ? Math.floor((s.sent / s.total) * 100) : 0}%`)}</span></div>)}
           {!trash && ups.map((u, k) => <div key={`u${k}`} className="tmx-lk-row tlk-up"><span className="tmx-ext">{extOf(u.name) || tr('파일', 'File')}</span><b>{u.name}</b><span className="d">{u.error ? tr(`못 올렸어요 — ${u.error}`, `Couldn't upload — ${u.error}`) : tr(`올리는 중 ${u.total ? Math.floor((u.done / u.total) * 100) : 0}%`, `Uploading ${u.total ? Math.floor((u.done / u.total) * 100) : 0}%`)}</span></div>)}
-          {files.map((i) => <Row key={i.id} item={i} onMenu={() => setMenu({ kind: 'file', item: i })} />)}
+          {files.map((i) => <Row key={i.id} item={i} trash={trash} onOpen={onOpen} onMenu={() => setMenu({ kind: 'file', item: i })} />)}
         </div>
       )}
       {!here && <div className="tmx-none">{trash ? tr('휴지통이 비었어요', 'Trash is empty') : place ? tr('비어 있어요', 'Empty') : tr('팀 보관함이 비었어요 — 위 더하기로 사진·파일을 올려요', 'The team locker is empty — use the plus above to add photos and files')}</div>}
@@ -171,9 +172,10 @@ export function PhoneTeamLocker({ api, teamId }: { api: TeamPhoneApi; teamId: st
   );
 }
 
-/** 파일 한 줄 — 누르거나 길게 누르면 메뉴(폰에선 아직 팀 파일을 못 연다) */
-function Row({ item, onMenu }: { item: LockerItem; onMenu: () => void }) {
-  const press = usePress(onMenu, onMenu);
+/** 파일 한 줄 — 그림·PDF 는 누르면 크게 보기, 길게 누르면 메뉴. 볼 길이 없는 파일(문서·엑셀)·휴지통은 눌러도 메뉴 */
+function Row({ item, trash, onOpen, onMenu }: { item: LockerItem; trash: boolean; onOpen?: (i: LockerItem) => void; onMenu: () => void }) {
+  const open = !trash && onOpen && phoneView(item) ? () => onOpen(item) : onMenu;
+  const press = usePress(open, onMenu);
   const d = [fmtBytes(item.size), whenText(item.at), item.by].filter(Boolean).join(' · ');
   return (
     <button type="button" className={`tmx-lk-row ${item.why ? 'tlk-locked' : ''}`} title={item.why || undefined} {...press}>

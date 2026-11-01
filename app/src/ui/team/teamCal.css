@@ -47,6 +47,8 @@
 .tcal-day.out .tcal-dn { color: var(--text-dim); }
 .tcal-day.now { background: color-mix(in srgb, var(--c-blue) 4%, var(--surface)); }
 .tcal-day.now .tcal-dn span { background: var(--c-blue); color: #fff; border-radius: 9px; padding: 0 6px; font-weight: 700; }
+/* 누른 날(+ 새 일정이 그날로, 11-01) — 옅은 면만 */
+.tcal-day.on { background: color-mix(in srgb, var(--c-blue) 10%, var(--surface)); }
 
 /* 주 */
 .tcal-week { flex: 1; min-height: 0; display: flex; flex-direction: column; border-radius: 10px; border: 1px solid var(--line); overflow: hidden; }
@@ -55,6 +57,8 @@
 .tcal-wh > span { display: flex; flex-direction: column; align-items: center; padding: 5px 0; font-size: 11px; color: var(--text-3); }
 .tcal-wh b { font-size: 13px; color: var(--text); font-variant-numeric: tabular-nums; }
 .tcal-wh .now b { color: var(--c-blue); }
+.tcal-wh > span.on { background: color-mix(in srgb, var(--c-blue) 10%, var(--panel)); }
+.tcal-wcol.on { background-color: color-mix(in srgb, var(--c-blue) 5%, transparent); }
 .tcal-wall { border-bottom: 1px solid var(--line); max-height: 120px; overflow: auto; }
 .tcal-wall > div { display: flex; flex-direction: column; gap: 2px; padding: 3px; min-width: 0; border-left: 1px solid var(--line); }
 .tcal-wlab { font-size: 11px; color: var(--text-3); text-align: right; padding: 5px 6px 0 0; }

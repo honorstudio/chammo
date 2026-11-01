@@ -9,6 +9,7 @@ import { foldBlocks, type FoldBlock } from '../domain/goalFold';
 import { goalBar, goalRows, isEnded, type Cell, type CellState, type Goal, type Hand, type Wait } from '../domain/goalBar';
 import { whenLabel } from '../domain/orchHome';
 import type { Session } from '../domain/session';
+import { statusWord, type ActivityStatus } from '../domain/status';
 import type { TaskEvent } from '../domain/tasks';
 import { josa, tr } from '../i18n';
 import { isAttended, onAttention } from './attention';
@@ -35,7 +36,7 @@ export const waitWord = (w: Wait): string => {
 const stateWord = (c: Cell, now: number): string => {
   const m: Record<CellState, string> = {
     done: tr('끝', 'Done'), auto: tr('끝 · 앱이 닫음', 'Done · closed by app'),
-    ask: c.wait?.on === 'user' ? waitWord(c.wait) : tr('답 기다림', 'Needs you'), wait: c.wait ? waitWord(c.wait) : tr('기다림', 'Waiting'),
+    ask: c.held ? statusWord(c.held) : c.wait?.on === 'user' ? waitWord(c.wait) : tr('답 기다림', 'Needs you'), wait: c.wait ? waitWord(c.wait) : tr('기다림', 'Waiting'),
     run: c.fill !== undefined ? tr(`일하는 중 · 할 일 ${Math.round(c.fill * 100)}%`, `Working · ${Math.round(c.fill * 100)}%`) : tr('일하는 중', 'Working'),
     quiet: tr(`${Math.max(3, Math.floor((now - (c.at ?? now)) / 3600_000))}시간 조용`, `Quiet ${Math.max(3, Math.floor((now - (c.at ?? now)) / 3600_000))}h`),
     stop: tr('멈춤 · 세션 꺼짐', 'Stopped · session ended'), rest: tr('쉬는 중', 'Idle'), todo: '',
@@ -61,15 +62,17 @@ function AskBtn({ what, onClick }: { what: 'task' | 'goal'; onClick: () => void 
 const tone = (s: CellState) => (s === 'auto' ? 'done' : s === 'stop' ? 'quiet' : s);
 
 /** 이 참모 진행 — 세션 할 일 목록 비율(readFill)은 데스크톱만(폰은 길이 없어 흐름만) */
-export function useGoalBar({ orch, events, sessions, readFill }: {
+export function useGoalBar({ orch, events, sessions, readFill, statusOf }: {
   orch: { id: string; name: string }; events: TaskEvent[]; sessions: Session[];
+  /** 세션 판단 — 사이드바와 같은 말(선택지·권한 창·로그인 풀림 = 확인 대기·로그인 필요). 없으면 세션 목록 상태만 */
+  statusOf?: (s: Session) => ActivityStatus;
   readFill?: (sessionId: string) => Promise<number | undefined>;
 }) {
   const [seen, mark] = useGoalSeen();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 60_000); return () => window.clearInterval(t); }, []);
   const [fills, setFills] = useState<Record<string, number>>({});
-  const base = useMemo(() => goalBar({ events, sessions, orch, now, seen }), [events, sessions, orch.id, orch.name, now, seen]); // eslint-disable-line react-hooks/exhaustive-deps
+  const base = useMemo(() => goalBar({ events, sessions, orch, now, seen, statusOf }), [events, sessions, orch.id, orch.name, now, seen, statusOf ? sessions.map(statusOf).join() : '']); // eslint-disable-line react-hooks/exhaustive-deps
   // 일하는 중 칸의 세션들 — 15초마다 할 일 목록 비율
   const runIds = [...new Set(base.goals.flatMap((g) => g.cells.filter((c) => c.state === 'run' && !c.hand).map((c) => sessions.find((s) => s.id === c.target || s.name === c.target)?.sessionId).filter((x): x is string => !!x)))].join(',');
   useEffect(() => {
@@ -86,7 +89,7 @@ export function useGoalBar({ orch, events, sessions, readFill }: {
     return () => { alive = false; window.clearInterval(t); };
   }, [readFill, runIds]);
   const bar = useMemo(() => (Object.keys(fills).length
-    ? goalBar({ events, sessions, orch, now, seen, fill: (s) => (s.sessionId ? fills[s.sessionId] : undefined) })
+    ? goalBar({ events, sessions, orch, now, seen, statusOf, fill: (s) => (s.sessionId ? fills[s.sessionId] : undefined) })
     : base), [base, fills]); // eslint-disable-line react-hooks/exhaustive-deps
   return { bar, now, mark };
 }

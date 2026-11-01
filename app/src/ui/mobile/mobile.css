@@ -567,8 +567,7 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-pdf .m-picker-head { gap: 8px; }
 .m-pdf-no { margin-left: auto; font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .m-pdf-body { flex: 1; min-height: 0; display: flex; }
-.m-pdf .pdfv { align-items: flex-start; padding: 12px 10px calc(24px + env(safe-area-inset-bottom)); background: var(--panel); touch-action: pan-x pan-y; }
-.m-pdf .pdfv-page { margin: 0 auto; }
+.m-pdf .pdfv { padding: 12px 10px calc(24px + env(safe-area-inset-bottom)); background: var(--panel); touch-action: pan-x pan-y; }
 .m-pad { padding: 16px; }
 
 /* 폰 html 시안(전략 표 6번) — 넓은 시안은 줄여서 바깥 칸이 스크롤, 검토 시안은 껍데기가 칸 전체를 쓴다 */

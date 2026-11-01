@@ -12,3 +12,7 @@ export function startScreen(v: { joined: boolean; account: unknown } | null, o: 
   if (!v.account) return 'login';
   return o.invite || o.wantJoin ? 'join' : 'make';
 }
+
+/** 팀 만들기·들어가기 화면인데 계정을 아직 어느 기기에서도 시작 안 했나(e2e_self_step = start) — 그 자리에 '여기서 시작'(2026-11-01 ux-team H2:
+ *  첫 기기 질문에서 나중에를 고르면 시작할 길이 로그인 문뿐이라 팀이 '준비 전' 오류로만 막혔다) */
+export const needStart = (screen: StartScreen, step: string): boolean => (screen === 'make' || screen === 'join') && step === 'start';

@@ -99,7 +99,7 @@ export function statusWord(st: ActivityStatus): string {
   switch (st) {
     case 'working': return tr('일하는 중', 'Working');
     case 'asks': return tr('물어봄', 'Asking');
-    case 'blocked': return tr('기다림', 'Waiting');
+    case 'blocked': return tr('확인 대기', 'Needs input'); // 선택지·권한 창 — 진행 칸 회색 '기다림'(task wait, 밖을 기다림)과 갈리게(2026-11-01 ux-daily H2)
     case 'login': return tr('로그인 필요', 'Sign-in needed');
     case 'bgwait': return tr('백그라운드 기다림', 'Waiting on background');
     case 'unknown': return tr('모름', 'Unknown');
@@ -127,8 +127,13 @@ export function liveLine(st: ActivityStatus, a: Activity | undefined, now: numbe
     const since = a?.reply?.ts;
     return { status: 'wait', line: since ? `${statusWord(st)} · ${tr(`${mins(now, since)}분째`, `${mins(now, since)} min`)}` : statusWord(st) };
   }
+  if (st === 'login') return { status: 'ask', line: statusWord(st) }; // 사람 차례 — '쉼'이면 사이드바 '로그인 필요'와 갈렸다(ux-daily M2)
   return { status: 'wait', line: st === 'unknown' ? statusWord(st) : tr('쉼', 'Idle') };
 }
+
+/** 사람(또는 참모)이 손을 써야 풀리는 멈춤 — 선택지·권한 창, 로그인 풀림. 진행 칸·홈·사이드바가 이 판단 하나로 같은 낱말(statusWord)을 쓴다 */
+export type Held = 'blocked' | 'login';
+export const heldOf = (st: ActivityStatus | undefined): Held | undefined => (st === 'blocked' || st === 'login' ? st : undefined);
 
 /** 표시 갈래 — run = 도는 고리, ask = 노란 점, idle = 표시 없음 */
 export const statusTone = (st: ActivityStatus): 'run' | 'ask' | 'idle' => (st === 'working' ? 'run' : st === 'asks' || st === 'blocked' || st === 'login' ? 'ask' : 'idle');

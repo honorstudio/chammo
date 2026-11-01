@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { installNote, nextPhase, runInstall, type Phase, type Step } from './appInstall';
+import { installNote, nextPhase, runInstall, type Phase, type Step, afterLeftover, leftoverNote } from './appInstall';
 
 describe('nextPhase — 받기 단계', () => {
   it('받기 시작 → 조각을 더해 간다 → 설치', () => {
@@ -63,5 +63,22 @@ describe('runInstall — 버튼 하나로 받기·설치·다시 켜기, 안 되
     const phases: Phase[] = [];
     expect(await runInstall(async () => { throw new Error('net'); }, (p) => phases.push(p), async () => { throw new Error('x'); })).toBe(false);
     expect(phases.at(-1)).toEqual({ kind: 'failed', why: 'net' });
+  });
+});
+
+// 윈도우는 설치기가 실패해도 앱이 이미 꺼져 아무 말이 안 남았다 — 다음에 켤 때 Rust(app_update_leftover)가 판 번호를 주면 띠가 알린다(2026-11-01 점검)
+describe('leftover — 지난 업데이트가 안 끝남', () => {
+  it('판 번호가 오면 leftover 단계, 없으면 그대로', () => {
+    expect(afterLeftover({ kind: 'idle' }, '0.4.7')).toEqual({ kind: 'leftover' });
+    expect(afterLeftover({ kind: 'idle' }, null)).toEqual({ kind: 'idle' });
+    // 이미 다른 단계(누가 방금 업데이트를 눌렀다)면 덮지 않는다
+    expect(afterLeftover({ kind: 'get', got: 1, total: 2 }, '0.4.7')).toEqual({ kind: 'get', got: 1, total: 2 });
+  });
+  it('띠 문구 [한글, 영어]에 새 판·지금 판', () => {
+    const [ko, en] = leftoverNote('0.4.7', '0.4.6');
+    expect(ko).toContain('0.4.7');
+    expect(ko).toContain('0.4.6');
+    expect(en).toContain('0.4.7');
+    expect(en).toContain('0.4.6');
   });
 });

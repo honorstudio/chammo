@@ -95,6 +95,9 @@ describe('liveLine — 지금 하는 일 한 줄', () => {
     expect(liveLine('asks', { reply: { ts: at(2), text: '…', tail: '…어느 색으로 할까?' } }, NOW)).toEqual({ status: 'ask', line: '어느 색으로 할까?' });
     expect(liveLine('bgwait', { reply: { ts: at(4), text: '돌려 뒀어' } }, NOW)).toEqual({ status: 'wait', line: '백그라운드 기다림 · 4분째' });
     expect(liveLine('unknown', undefined, NOW)).toEqual({ status: 'wait', line: '모름' });
-    expect(liveLine('done', { reply: { ts: at(2), text: '끝났어' } }, NOW)).toEqual({ status: 'wait', line: '쉼' });
+    expect(liveLine('done', { reply: { ts: at(2), text: '끝났어' } }, NOW)).toEqual({ status: 'wait', line: '쉼' });  });
+  // 홈 대시보드 참모 줄 — 로그인 풀림이 노란 점 + '쉼'이었다(사이드바는 '로그인 필요', 2026-11-01 ux-daily M2)
+  it('로그인 풀림은 사람 차례 — 노란 점 + 로그인 필요', () => {
+    expect(liveLine('login', { reply: { ts: at(2), text: 'Please run /login' } }, NOW)).toEqual({ status: 'ask', line: '로그인 필요' });
   });
 });

@@ -22,6 +22,33 @@ pub fn attach<R: tauri::Runtime>(b: tauri::Builder<R>, ctx: &tauri::Context<R>) 
     if on { b.plugin(tauri_plugin_updater::Builder::new().build()) } else { b }
 }
 
+/// 업데이트를 시작하며 남기는 표시 — 받을 판 번호 한 줄. 깔리고 다시 켜지면 지운다
+fn pending_file() -> std::path::PathBuf {
+    crate::config::data_dir().join("update-pending")
+}
+
+/// 지난 업데이트가 안 끝났나 — 시작 표시가 있는데 지금 판이 그 판보다 낮으면 그 판 번호(윈도우는 설치기가 실패해도 앱이 이미 꺼져 아무 말이 없었다)
+pub fn leftover(pending: Option<&str>, current: &str) -> Option<String> {
+    let to = pending.map(str::trim).filter(|t| !t.is_empty())?;
+    let num = |v: &str| v.trim_start_matches('v').split('.').map(|x| x.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
+    (num(current) < num(to)).then(|| to.to_string())
+}
+
+/// 켤 때 한 번 — 지난 업데이트가 안 끝났으면 그 판 번호(띠가 '다시 해 볼까요'로 알린다). 표시는 읽고 지운다. 파일을 만지니 메인 스레드 밖에서(offmain_scan)
+#[tauri::command]
+pub async fn app_update_leftover(app: tauri::AppHandle) -> Option<String> {
+    let now = app.package_info().version.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let f = pending_file();
+        let pending = std::fs::read_to_string(&f).ok();
+        let _ = std::fs::remove_file(&f);
+        leftover(pending.as_deref(), &now)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Step {
@@ -52,7 +79,18 @@ pub async fn app_update_install(app: tauri::AppHandle, on_step: Channel<Step>) -
     if !ON.load(Ordering::Relaxed) {
         return Err("off".into());
     }
-    let up = app.updater().map_err(|e| e.to_string())?;
+    // 윈도우는 설치기를 띄우자마자 플러그인이 std::process::exit(0) 을 불러 RunEvent::Exit 가 안 온다 — 그 직전 고리(맥은 안 부른다)에서
+    // 평소 종료와 같은 정리와 성공 기록. 플러그인 기본 고리(cleanup_before_exit)는 이게 대신하니 끝에 같이 부른다
+    let h = app.clone();
+    let up = app
+        .updater_builder()
+        .on_before_exit(move || {
+            crate::usage_counts::record_update(None);
+            crate::exit_cleanup();
+            h.cleanup_before_exit();
+        })
+        .build()
+        .map_err(|e| e.to_string())?;
     let Some(u) = up.check().await.map_err(|e| {
         crate::usage_counts::record_crash("updater"); // 익명 사용 통계 — 종류 이름만
         e.to_string()
@@ -60,6 +98,7 @@ pub async fn app_update_install(app: tauri::AppHandle, on_step: Channel<Step>) -
     else {
         return Err("none".into());
     };
+    let _ = std::fs::write(pending_file(), &u.version);
     let mut first = true;
     let unpacking = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let unpack_mark = unpacking.clone();
@@ -78,6 +117,7 @@ pub async fn app_update_install(app: tauri::AppHandle, on_step: Channel<Step>) -
     )
     .await
     .map_err(|e| {
+        let _ = std::fs::remove_file(pending_file()); // 이 자리에서 실패를 바로 보여 준다 — 다음에 켤 때 또 알리지 않게
         // 익명 사용 통계 — 어느 단계에서 실패했나만(받기·풀기)
         crate::usage_counts::record_update(Some(if unpacking.load(Ordering::Relaxed) { "unpack" } else { "download" }));
         e.to_string()
@@ -95,6 +135,32 @@ mod tests {
 
     fn conf(s: &str) -> Value {
         serde_json::from_str(s).unwrap()
+    }
+
+    // 윈도우 업데이터는 설치기를 띄우자마자 std::process::exit(0) — RunEvent::Exit 가 안 와 앱 종료 정리(음성·Craft 저장·폰 serve·메신저)를
+    // 다 건너뛰었고 성공 기록도 안 남았다(2026-11-01 점검). 끄기 직전 고리에서 같은 정리 + 성공 기록
+    #[test]
+    fn 윈도우_업데이트_종료도_같은_정리를_한다() {
+        let up = include_str!("updater.rs");
+        let install = &up[up.find("pub async fn app_update_install").unwrap()..];
+        let install = &install[..install.find("\n}\n").unwrap()];
+        let hook = install.find(".on_before_exit(").expect("끄기 직전 고리");
+        assert!(hook < install.find("download_and_install").unwrap(), "설치에 쓰는 업데이터에 건다");
+        assert!(install.contains("crate::exit_cleanup()") && install.contains("record_update(None)") && install.contains("cleanup_before_exit()"));
+        let main = include_str!("main.rs");
+        let exit = &main[main.find("tauri::RunEvent::Exit = event").unwrap()..];
+        assert!(exit[..300].contains("exit_cleanup()"), "평소 종료도 같은 함수");
+    }
+
+    // 윈도우는 설치기가 실패해도(디스크·백신·창 닫음) 앱이 이미 꺼져 아무 말이 안 남았다 — 다음에 켤 때 판이 그대로면 띠로 알린다
+    #[test]
+    fn 끝나지_않은_업데이트는_판이_그대로일_때만() {
+        use super::leftover;
+        assert_eq!(leftover(Some("0.4.7"), "0.4.6"), Some("0.4.7".to_string()));
+        assert_eq!(leftover(Some("0.4.7"), "0.4.7"), None, "깔렸다");
+        assert_eq!(leftover(Some("0.4.7"), "0.4.8"), None, "그 뒤 손으로 더 새 판을 깔았다");
+        assert_eq!(leftover(None, "0.4.6"), None);
+        assert_eq!(leftover(Some(" "), "0.4.6"), None);
     }
 
     #[test]

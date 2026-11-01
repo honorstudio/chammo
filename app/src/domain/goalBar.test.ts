@@ -44,6 +44,41 @@ describe('cellState — 칸 상태 8가지(위에서 먼저 맞는 것)', () => 
   });
 });
 
+// 2026-11-01 ux-daily H2 — 선택지·권한 창·로그인 풀림으로 멈춘 세션이 사이드바는 '기다림', 진행 칸은 '쉬는 중'이었다
+describe('cellState — 세션 멈춤(선택지·권한 창·로그인)은 사람 차례', () => {
+  it('blocked·login 이면 ask — 일하는 중·쉬는 중이 아니다', () => {
+    expect(cellState(facts(), sess('web'), NOW, undefined, 'blocked')).toBe('ask');
+    expect(cellState(facts(), sess('web'), NOW, undefined, 'login')).toBe('ask');
+    expect(cellState(facts({ lastAt: NOW - 9 * H }), sess('web'), NOW, undefined, 'blocked')).toBe('ask'); // 오래돼도 조용이 아니다
+  });
+  it('끝(done)이 먼저, 판단을 안 주면 예전 그대로', () => {
+    expect(cellState(facts({ finished: true }), sess('web'), NOW, undefined, 'blocked')).toBe('done');
+    expect(cellState(facts(), sess('web'), NOW)).toBe('rest');
+    expect(cellState(facts(), sess('web'), NOW, undefined, 'done')).toBe('rest');
+  });
+});
+
+describe('goalBar — 세션 판단으로 칸 상태', () => {
+  it('멈춘 세션의 칸은 ask + 까닭(held) — 물음(task ask)에서 온 ask 엔 안 붙는다', () => {
+    const events = [send('a', 'web', 1), send('b', 'api', 1), { ts: at(0.5), type: 'ask', task: 'b' } as TaskEvent];
+    const statusOf = (x: Session) => (x.name === 'web' ? 'blocked' as const : 'login' as const);
+    const cells = goalBar({ events, sessions: [sess('web'), sess('api')], orch: ORCH, now: NOW, seen: new Set(), statusOf }).goals.flatMap((g) => g.cells);
+    expect(cells.find((c) => c.task === 'a')).toMatchObject({ state: 'ask', held: 'blocked' });
+    expect(cells.find((c) => c.task === 'b')!.held).toBeUndefined();
+  });
+  it('판단을 안 주면 세션 목록 상태(blocked)만으로도 ask', () => {
+    const cells = goalBar({ events: [send('a', 'web', 1)], sessions: [sess('web', { state: 'blocked' })], orch: ORCH, now: NOW, seen: new Set() }).goals.flatMap((g) => g.cells);
+    expect(cells[0]).toMatchObject({ state: 'ask', held: 'blocked' });
+  });
+  // ux-daily M5 — 작업 패널은 앞 일을 '끝 기록 없는 일'로 빼는데 진행 칸은 같은 세션 칸을 전부 '일하는 중'으로 칠했다
+  it('같은 세션에 새 일이 가면 앞 일은 세션 상태를 안 따른다 — 새 일만 일하는 중', () => {
+    const events = [send('a', 'web', 2), send('b', 'web', 1)];
+    const cells = goalBar({ events, sessions: [sess('web', { state: 'working' })], orch: ORCH, now: NOW, seen: new Set() }).goals.flatMap((g) => g.cells);
+    expect(cells.find((c) => c.task === 'a')!.state).toBe('rest');
+    expect(cells.find((c) => c.task === 'b')!.state).toBe('run');
+  });
+});
+
 describe('prResult — 끝난 조각에 붙는 결과 한 줄', () => {
   it('PR 번호·주소를 뽑는다', () => {
     expect(prResult('main 머지, PR #12·#13, 운영 https://acme-shop.example 200')).toBe('#12 · #13 · https://acme-shop.example');

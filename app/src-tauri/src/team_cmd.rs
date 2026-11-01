@@ -438,6 +438,22 @@ pub async fn team_login(window: tauri::WebviewWindow, server: String, device: St
     .await
 }
 
+/// 도는 구글 로그인 멈추기 — 브라우저 탭을 닫았을 때(11-01 QA H3). 멈출 게 없었으면 false
+#[tauri::command]
+pub fn team_login_cancel(window: tauri::WebviewWindow) -> Result<bool, String> {
+    main_only(&window)?;
+    Ok(crate::team_account::cancel_login(crate::config::data_dir()))
+}
+
+/// 도는 로그인의 브라우저 주소를 다시 연다 — 연 주소(우리 서버 로그인 시작 주소)만
+#[tauri::command]
+pub fn team_login_reopen(window: tauri::WebviewWindow) -> Result<(), String> {
+    use crate::team_account::Opener;
+    main_only(&window)?;
+    let url = crate::team_account::login_url(crate::config::data_dir()).ok_or("진행 중인 로그인이 없어요")?;
+    crate::team_account::SystemBrowser.open(&url)
+}
+
 /// 서버에서 계정·내 기기 다시 받기
 #[tauri::command]
 pub async fn team_account_refresh(window: tauri::WebviewWindow) -> Result<Value, String> {

@@ -212,14 +212,20 @@ fn in_team(tag: &str) -> (PathBuf, crate::accounts_store::fake::Fake, crate::tea
 #[test]
 fn 목록에서_본_파일을_다시_열면_중계에_안_묻는다() {
     let (d, kc, r) = in_team("memo-open");
-    remember("tV", 1, &[memo_file("f9", 77, 5, "회의록.txt")]);
+    // 팀 id 를 따로 — 목록 메모(remember)는 전역이라 "tV" 를 같이 쓰는 다른 시험이 병렬로 덮어써 가끔 깨졌다(11-01)
+    relay::mutate(&d, |s| {
+        s.teams = vec![relay::TeamEntry { id: "t-memo-open".into(), name: "ACME".into(), member_id: "m1".into(), role: "owner".into(), ..Default::default() }];
+        s.team_id = "t-memo-open".into();
+    })
+    .unwrap();
+    remember("t-memo-open", 1, &[memo_file("f9", 77, 5, "회의록.txt")]);
     // 전에 풀어 둔 평문 + 받은 자리 기록(같은 파일·같은 판이면 그대로 쓴다)
-    let vd = view_dir(&d, "tV").unwrap();
+    let vd = view_dir(&d, "t-memo-open").unwrap();
     std::fs::write(vd.join("회의록.txt"), b"hello").unwrap();
     let cache = json!({ format!("f9:77:{}", vd.display()): vd.join("회의록.txt").to_string_lossy() });
     std::fs::write(d.join(CACHE), cache.to_string()).unwrap();
-    assert_eq!(view(&d, &kc, &r, "tV", "f9").unwrap(), vd.join("회의록.txt"));
-    assert_eq!(peek(&d, &kc, &r, "tV", "f9").unwrap(), vd.join("회의록.txt"));
+    assert_eq!(view(&d, &kc, &r, "t-memo-open", "f9").unwrap(), vd.join("회의록.txt"));
+    assert_eq!(peek(&d, &kc, &r, "t-memo-open", "f9").unwrap(), vd.join("회의록.txt"));
     assert!(r.seen.borrow().is_empty(), "목록·사람 목록을 다시 받지 않는다: {:?}", r.seen.borrow().iter().map(|s| s.1.clone()).collect::<Vec<_>>());
 }
 

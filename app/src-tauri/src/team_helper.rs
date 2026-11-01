@@ -405,13 +405,14 @@ impl Gate {
 
 /// 도구 0(--tools "") · 사용자·프로젝트 설정·훅·CLAUDE.md 0(--setting-sources "") · MCP 0 · 기록 안 남김
 pub fn run_args(model: &str) -> Vec<String> {
-    run_args_with(model, "", &system_prompt())
+    run_args_with(model, "", "system.txt")
 }
 
-/// 팀 참모(ADR 0017) — tools 는 "" 또는 "WebSearch" 만(team_agent::tools_of), 시스템 프롬프트는 안전 규칙 + 역할
-pub fn run_args_with(model: &str, tools: &str, system: &str) -> Vec<String> {
+/// 팀 참모(ADR 0017) — tools 는 "" 또는 "WebSearch" 만(team_agent::tools_of), 시스템 프롬프트(안전 규칙 + 역할)는 파일 경로로.
+/// 여러 줄 글을 인자로 주면 윈도우 npm 판 claude(claude.cmd)는 Rust std 가 띄우기 전에 거절했다(배치 인자 \r\n, 2026-11-01 win-text H4)
+pub fn run_args_with(model: &str, tools: &str, system_file: &str) -> Vec<String> {
     let tools = if tools == "WebSearch" { "WebSearch" } else { "" };
-    ["-p", "--model", model, "--tools", tools, "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--output-format", "json", "--system-prompt", system]
+    ["-p", "--model", model, "--tools", tools, "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--output-format", "json", "--system-prompt-file", system_file]
         .iter()
         .map(|s| s.to_string())
         .collect()
@@ -616,14 +617,43 @@ pub fn try_agent(dir: &std::path::Path, team: &str, room: &str, def: crate::team
 /// 모델 설정 파일(<데이터>/team-helper.json) — 없으면 하이쿠
 pub const SETTINGS_FILE: &str = "team-helper.json";
 
+/// 시스템 프롬프트를 담은 임시 파일 — 부를 때마다 다른 이름(방 여럿이 같이 불러도 안 겹친다), 놓으면 지운다
+pub(crate) struct SystemFile(std::path::PathBuf);
+
+impl SystemFile {
+    pub(crate) fn write(work: &std::path::Path, text: &str) -> std::io::Result<SystemFile> {
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let p = work.join(format!("system-{}-{n}.txt", std::process::id()));
+        std::fs::write(&p, text)?;
+        Ok(SystemFile(p))
+    }
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for SystemFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// claude -p 한 번 — 빈 작업 폴더에서, 프롬프트는 표준 입력으로(ps·기록에 안 남게), 90초 넘으면 그룹째 끊는다. (결과, 쓴 토큰)
 pub(crate) fn run(dir: &std::path::Path, model: &str, tools: &str, system: &str, prompt: &str) -> (Outcome, u64) {
     let work = dir.join("team-helper").join("run");
     if std::fs::create_dir_all(&work).is_err() {
         return (Outcome::Fail, 0);
     }
+    let sys = match SystemFile::write(&work, system) {
+        Ok(f) => f,
+        Err(e) => {
+            crate::claude::log_out("team-helper", &format!("system prompt file: {e}"));
+            return (Outcome::Fail, 0);
+        }
+    };
     let mut cmd = crate::platform::command(crate::claude::claude_bin());
-    cmd.args(run_args_with(model, tools, system)).current_dir(&work);
+    cmd.args(run_args_with(model, tools, &sys.path().to_string_lossy())).current_dir(&work);
     match crate::platform::run_capped_input(&mut cmd, prompt.as_bytes(), RUN_LIMIT) {
         Ok(o) => {
             let out = String::from_utf8_lossy(&o.stdout);
@@ -631,7 +661,11 @@ pub(crate) fn run(dir: &std::path::Path, model: &str, tools: &str, system: &str,
             (if out.trim().is_empty() { classify(&String::from_utf8_lossy(&o.stderr)) } else { classify(&out) }, tokens)
         }
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut => (Outcome::Slow, 0),
-        Err(_) => (Outcome::Fail, 0),
+        Err(e) => {
+            // 못 띄움 — 이유를 남긴다(전엔 아무 데도 없어 '잠시 뒤 다시'만 되풀이됐다)
+            crate::claude::log_out("team-helper", &format!("claude -p did not start: {e}"));
+            (Outcome::Fail, 0)
+        }
     }
 }
 

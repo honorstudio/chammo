@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ShowAt } from '../../domain/showAt';
 import { tr } from '../../i18n';
 import { flashAt } from '../flash';
+import { useImagePan } from '../imageFit';
 import './pdf.css';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -47,6 +48,9 @@ export default function PdfView({ path, zoom = 100, at, atKey, load }: { path: s
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // 키운 PDF 를 마우스로 끌어 옮긴다 — 그림과 같은 손(2026-11-01 사용자 "좌우가 안 움직이고 위아래만"). 글자 위에서 시작하면 글 고르기로 둔다
+  useImagePan(() => box.current, undefined, (t) => !!t.closest('.textLayer span, .textLayer br'));
 
   // 한 페이지 폭 = 창 폭(여백 빼고)을 가장 넓은 페이지에 맞춘 뒤 확대
   const widest = size.reduce((m, p) => Math.max(m, p.w), 1);

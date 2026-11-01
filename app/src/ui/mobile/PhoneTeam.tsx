@@ -4,13 +4,15 @@
 // 대화를 누르면 화면 전체가 그 대화(데스크톱과 같은 대화 칸 — 풍선 = 사람, 얼굴 + 맨 글 = 참모). 보내기는 사람 말(이 칸의 진짜 누름 뒤 1.5초)
 // 읽기·쓰기는 TeamPhoneApi 하나로만 — 지금은 맥 폰 서버(/api/team*), 중계 직결이 생기면 그것만 바꾼다
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { teamThumbBlob, type TeamPhoneApi } from '../../data/web';
+import { teamFileView, teamThumbBlob, type TeamPhoneApi } from '../../data/web';
+import { phoneView } from '../../domain/teamLocker';
 import { keepBoard, namedConvos, type ProfileBoard } from '../../domain/teamProfile';
 import type { PostApi } from '../../domain/teamPosts';
 import type { HomeApi, HomeSources } from '../../domain/teamHome';
 import type { TeamFeed } from '../../data/teamApi';
 import { sendAllowed } from '../../domain/remoteChat';
-import { convos as buildConvos, roomConvos, markRead, unreadTotal, type Convo, type TeamItem } from '../../domain/teamChat';
+import { convos as buildConvos, roomConvos, markRead, unreadTotal, type Convo, type TeamFile, type TeamItem } from '../../domain/teamChat';
+import { ImageViewer } from './ImageViewer';
 import { mergedRead, pushRead } from '../../domain/teamReads';
 import { IconCheck, IconChevronDown, IconCopy, IconShare } from '../Icons';
 import { TeamConvo } from '../team/TeamConvo';
@@ -114,7 +116,15 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
     },
     edit: false,
   }), [api]);
-  // 팀 홈 판(ADR 0018) — 같은 판을 맥이 읽고 쓴다. 커버는 데스크톱만, 파일은 이름만(여는 건 보관함 칸)
+  // 팀 파일 크게 보기 — 대화 그림 칸(11-01)·팀 홈 최근 파일·보관함 줄(11-01 사용자 "팀 홈 최근 파일을 눌러도 아무 일이 없다").
+  // 그림은 맥이 풀어 준 것, PDF 는 첫 장. 문서·엑셀 등은 폰에서 볼 길이 아직 없어 누를 수 있게 그리지 않는다(phoneView)
+  const [zoom, setZoom] = useState<{ team: string; id: string; name: string; kind: 'image' | 'pdf' } | null>(null);
+  const openPic = useCallback((team: string, f: { id: string; name: string; size: number; why?: string }) => {
+    const kind = phoneView(f);
+    if (kind) setZoom({ team, id: f.id, name: f.name, kind });
+  }, []);
+  const viewer = zoom && <ImageViewer key={zoom.id} title={zoom.kind === 'pdf' ? tr(`${zoom.name} · 첫 장`, `${zoom.name} · page 1`) : zoom.name} onClose={() => setZoom(null)} load={teamFileView(zoom.team, zoom.id, zoom.kind)} />;
+  // 팀 홈 판(ADR 0018) — 같은 판을 맥이 읽고 쓴다. 커버는 데스크톱만. 최근 파일은 그림·PDF 만 눌러 본다
   const homeApi: HomeApi = useMemo(() => ({
     board: (team, seen) => api.home(team, seen ?? 0),
     save: (team, home) => api.homeSave(team, home),
@@ -123,8 +133,10 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
   const homeSources: HomeSources = useMemo(() => ({
     agents: (team) => api.agents(team).then((l) => l.agents),
     files: (team) => api.locker(team, 0).then((v) => ('items' in v ? v.items : [])),
+    openFile: (team, i) => openPic(team, i),
+    canOpen: (i) => !!phoneView(i),
     openUrl: (url) => { window.open(url, '_blank', 'noopener'); },
-  }), [api]);
+  }), [api, openPic]);
   const [seg, setSeg] = useState<'chat' | 'home' | 'cal' | 'locker'>('chat');
   const [sel, setSel] = useState<string | null>(null);
   // 폰 화면이 보일 때만 읽음(잠금·다른 앱으로 간 동안 온 말은 돌아와 보일 때 읽음)
@@ -187,8 +199,9 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
       <div className="m-team m-team-convo">
         <TeamConvo convo={cur} items={t.feed.items} team={view.team} myName={view.me} handed={handed} drafts={phoneDrafts} agentsApi={agentsApi} focused={shown} onRead={t.markRoom} reads={t.feed.reads} onSent={t.refresh} safety={t.feed.safety} held={t.feed.held} phone members={view.members}
           onHanded={(it: TeamItem, to: string) => setHanded((h) => { const n = { ...h, [`${it.room}:${it.seq}`]: to }; keep(HANDED_KEY, n); return n; })}
-          handoff={{ name: seenName(orch.name), send: (text) => api.handoff(orch.id, text).then(() => {}) }} say={say} viewing={() => {}} back={() => setSel(null)}
-          teamId={view.teamId} thumb={teamThumbBlob} />
+          handoff={{ name: seenName(orch.name), send: (text) => api.handoff(orch.id, text).then(() => {}) }} say={say} viewing={() => {}} back={() => { setZoom(null); setSel(null); }}
+          teamId={view.teamId} thumb={teamThumbBlob} viewImage={(f: TeamFile) => openPic(f.team || view.teamId, f)} />
+        {viewer}
       </div>
       </SheetHostProvider>
       </ProfilesCtx.Provider>
@@ -220,8 +233,9 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
           : seg === 'home' ? <div className="m-team-home"><TeamHome teamId={view.teamId} team={view.team} members={view.members} icon={profiles.board?.teamIcon || undefined} api={posts} Dialog={HomeSheet} homeApi={homeApi} sources={homeSources} phone
               calBlock={(_b, editing) => <CalBlock teamId={view.teamId} wide={false} editing={editing} api={api.cal} onOpen={() => setSeg('cal')} />} /></div>
           : seg === 'cal' ? <div className="m-team-cal"><TeamCal key={view.teamId} teamId={view.teamId} members={view.members} api={api.cal} Dialog={HomeSheet} phone /></div>
-          : <PhoneTeamLocker api={api} teamId={view.teamId} />}
+          : <PhoneTeamLocker api={api} teamId={view.teamId} onOpen={(i) => openPic(view.teamId, i)} />}
       </div>
+      {viewer}
       {sheet && <TeamSheet api={api} t={t} onClose={() => setSheet(false)} onAgents={() => { setSheet(false); setAgentPage({ key: 0 }); }} />}
     </div>
     </SheetHostProvider>

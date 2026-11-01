@@ -90,7 +90,27 @@ pub fn in_chain(dir: &Path, st: &TeamState) -> bool {
 /// 팀 만들기·들어오기 전에 — 이 기기가 내 계정 사슬에 들었나(R8 암호 전용)
 /// 계정 없는 옛 초대 기기도 막는다 — 봉투를 못 만들어 어차피 못 쓴다(R8, 5차 리뷰)
 pub fn ready(dir: &Path) -> Result<(), String> {
-    if in_chain(dir, &relay::load_state(dir)) { Ok(()) } else { Err(crate::e2e_state::NOT_READY.into()) }
+    let st = relay::load_state(dir);
+    if in_chain(dir, &st) {
+        return Ok(());
+    }
+    Err(not_ready_why(st.account.is_some(), crate::e2e_flow::self_step(dir), &crate::config::current().language).into())
+}
+
+/// 팀 만들기·들어가기가 막힌 까닭 — 사람이 할 일로(2026-11-01 ux-team H2: '종단 암호 준비 전이야 …(보내지 않았어)' 한 줄로 다 막았다,
+/// 반말·한글 고정·첫 기기 시작이 할 일인데 다른 말). step = e2e_flow::self_step. 문구 소넷
+pub(crate) fn not_ready_why(account: bool, step: &str, lang: &str) -> &'static str {
+    use crate::i18n::pick;
+    if !account {
+        return pick(lang, "Chammo 계정에 로그인하면 팀을 쓸 수 있어요.", "Sign in to your Chammo account to use teams.");
+    }
+    match step {
+        "start" => pick(lang, "이 계정은 아직 어느 기기에서도 시작하지 않았어요. 여기서 시작을 누르면 팀을 쓸 수 있어요.", "This account hasn't been started on any device yet. Press Start here to use teams."),
+        "checking" => pick(lang, "이 컴퓨터를 확인하고 있어요. 잠깐 뒤에 다시 눌러 주세요.", "We're still checking this computer. Please try again in a moment."),
+        // 허용 대기("" + pending)·4자리 넣기·틀림·사슬 밖 — 다른 내 기기의 허용과 4자리
+        "need" | "failed" | "outside" | "" => pick(lang, "이 컴퓨터가 다른 내 기기의 허용을 기다리고 있어요. 다른 기기에서 허용하고, 거기 뜬 4자리 숫자를 이 컴퓨터에 넣어 주세요.", "This computer is waiting for approval from your other device. Approve it there, then enter the 4-digit number shown on that device here."),
+        _ => pick(lang, "앱을 다시 켜면 뜨는 로그인 화면이나 설정 > 기기 관리의 안내를 먼저 마치면 팀을 쓸 수 있어요.", "Finish the steps on the sign-in screen that appears when you reopen the app, or in Settings > Devices, and then you can use teams."),
+    }
 }
 
 fn ctx(dir: &Path, kc: &dyn Store) -> Result<Option<(TeamState, DeviceKeys)>, String> {
@@ -142,13 +162,21 @@ pub fn after_invite(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, cod
 /// 초대로 들어온 뒤 — 내 사슬 기기 서명 + 초대 코드 열쇠 서명(sig2)
 pub fn after_join(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, code: &str, member: &str, display: &str) -> Result<(), String> {
     let Some((st, k)) = ctx(dir, kc)? else { return Ok(()) };
-    let Some((seq, prev)) = head(&st, &k, http, team)? else { return Ok(()) };
     let code_key = SigningKey::from_bytes(&invite_seed(code));
     let acc = st.account.as_ref().map(|a| a.id.clone()).unwrap_or_default();
     let inv = B64.encode(code_key.verifying_key().as_bytes());
-    let mut l = tlink(&k, &st, team, seq, &prev, json!({ "kind": "join", "invPub": inv, "member": member, "account": acc, "displayName": display }));
-    l.sig2 = Some(B64.encode(code_key.sign(format!("chammo-team/1\n{}", l.body).as_bytes()).to_bytes()));
-    post(&st, &k, http, team, &l).map(|_| ())
+    // 그새 명부가 늘었으면(409 stale_head — 같이 들어온 사람·팀장 초대) 머리를 새로 받아 한 번 더. 초대 코드는 이미 써서 다시 들어올 길이 없다(11-01 QA H4)
+    for last in [false, true] {
+        let Some((seq, prev)) = head(&st, &k, http, team)? else { return Ok(()) };
+        let mut l = tlink(&k, &st, team, seq, &prev, json!({ "kind": "join", "invPub": inv, "member": member, "account": acc, "displayName": display }));
+        l.sig2 = Some(B64.encode(code_key.sign(format!("chammo-team/1\n{}", l.body).as_bytes()).to_bytes()));
+        let (c, v) = relay::call(http, &st.server, &k, Some(&st.device_id), "POST", &format!("/v0/teams/{team}/log"), Some(&json!({ "link": l })))?;
+        if !last && c == 409 && v["error"] == "stale_head" {
+            continue;
+        }
+        return posted(c, &v).map(|_| ());
+    }
+    Ok(())
 }
 
 /// 역할·빼기·나가기 요청에 실을 고리 — 명부가 없는 팀은 None(예전처럼 고리 없이)

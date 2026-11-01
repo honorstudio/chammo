@@ -163,9 +163,37 @@ pub fn safe_path(url_path: &str, home: &Path) -> Option<PathBuf> {
     real.starts_with(crate::platform::clean_path(home.canonicalize().ok()?)).then_some(real)
 }
 
-/// hodoc 이 내줄 파일 — 홈 안 파일, 그리고 데이터 폴더가 홈 밖이어도 avatars/ 안 그림(프사)
-pub fn served_path(url_path: &str, home: &Path, avatars: &Path) -> Option<PathBuf> {
-    safe_path(url_path, home).or_else(|| {
+/// 사용자 파일로 열어도 되는 폴더 — 홈 + 설정의 프로젝트 폴더(devRoot)·따로 추가한 프로젝트. 윈도우는 D:\dev 처럼 홈 밖에 프로젝트를 둬서
+/// 첫 일 결과를 '앱에서 못 열어'라고 했다(2026-11-01 win-first H2). 맨 위(/·D:\)는 디스크 통째라 안 받는다. scripts/show user_roots 와 같은 규칙
+pub fn roots_from(home: &Path, dev_root: &str, extra: &[String], home_str: &str) -> Vec<PathBuf> {
+    let mut out = vec![home.to_path_buf()];
+    for c in std::iter::once(dev_root).chain(extra.iter().map(String::as_str)) {
+        if c.trim().is_empty() {
+            continue;
+        }
+        let Ok(real) = Path::new(&crate::config::expand(home_str, c.trim())).canonicalize() else { continue };
+        let real = crate::platform::clean_path(real);
+        if real.is_dir() && real.parent().is_some() && !out.contains(&real) {
+            out.push(real);
+        }
+    }
+    out
+}
+
+/// 지금 설정 기준 user 폴더들(roots_from)
+pub fn user_roots() -> Vec<PathBuf> {
+    let c = crate::config::current();
+    roots_from(&home(), &c.dev_root, &c.extra_projects, &crate::platform::home())
+}
+
+/// 홈·프로젝트 폴더 안의 실제 파일(safe_path 를 user_roots 마다)
+pub fn user_path(url_path: &str) -> Option<PathBuf> {
+    user_roots().iter().find_map(|r| safe_path(url_path, r))
+}
+
+/// hodoc 이 내줄 파일 — 홈·프로젝트 폴더(roots) 안 파일, 그리고 데이터 폴더가 홈 밖이어도 avatars/ 안 그림(프사)
+pub fn served_path(url_path: &str, roots: &[PathBuf], avatars: &Path) -> Option<PathBuf> {
+    roots.iter().find_map(|r| safe_path(url_path, r)).or_else(|| {
         let p = safe_path(url_path, avatars)?; // 링크·../ 를 푼 진짜 자리가 avatars 안
         mime_of(&p).starts_with("image/").then_some(p)
     })
@@ -303,8 +331,8 @@ fn part_response(path: &Path, mime: &str, range: &str) -> std::io::Result<Respon
 
 /// hodoc:// 요청 처리
 pub fn serve<R: Runtime>(_ctx: tauri::UriSchemeContext<'_, R>, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
-    let not_found = || Response::builder().status(404).header("Content-Type", "text/plain; charset=utf-8").body(tr("없는 파일이거나 홈 폴더 밖이야", "File not found or outside the home folder").as_bytes().to_vec()).unwrap();
-    let Some(path) = served_path(req.uri().path(), &home(), &crate::config::data_file("avatars")) else { return not_found() };
+    let not_found = || Response::builder().status(404).header("Content-Type", "text/plain; charset=utf-8").body(tr("없는 파일이거나 홈·프로젝트 폴더 밖이야.", "File not found, or outside the home and project folders.").as_bytes().to_vec()).unwrap();
+    let Some(path) = served_path(req.uri().path(), &user_roots(), &crate::config::data_file("avatars")) else { return not_found() };
     if let Some(range) = req.headers().get("range").and_then(|v| v.to_str().ok()) {
         return part_response(&path, mime_of(&path), range).unwrap_or_else(|_| not_found());
     }
@@ -318,7 +346,7 @@ pub fn serve<R: Runtime>(_ctx: tauri::UriSchemeContext<'_, R>, req: Request<Vec<
 pub fn open<R: Runtime>(app: &tauri::AppHandle<R>, paths: Vec<String>) {
     // http(s) 주소는 그대로(주소 미리보기 — webpage.rs), 파일은 홈 폴더 안만
     let ok: Vec<String> = paths.into_iter()
-        .filter_map(|p| if crate::webpage::parse_web_url(&p).is_some() { Some(p) } else { safe_path(&p, &home()).map(|p| p.to_string_lossy().into_owned()) })
+        .filter_map(|p| if crate::webpage::parse_web_url(&p).is_some() { Some(p) } else { user_path(&p).map(|p| p.to_string_lossy().into_owned()) })
         .collect();
     if ok.is_empty() {
         return;
@@ -358,8 +386,8 @@ pub fn reader_select_all(webview: tauri::Webview) {
 /// 리더 문서 속 경로 ⌘클릭 — 후보 가운데 실제로 있는 첫 파일(홈 안만)
 #[tauri::command]
 pub fn first_existing(paths: Vec<String>) -> Option<String> {
-    let home = home();
-    paths.into_iter().find(|p| safe_path(p, &home).is_some_and(|q| q.is_file()))
+    let roots = user_roots();
+    paths.into_iter().find(|p| roots.iter().any(|r| safe_path(p, r).is_some_and(|q| q.is_file())))
 }
 
 #[tauri::command]
@@ -514,7 +542,7 @@ pub async fn reader_drop(app: tauri::AppHandle, from: String, path: String, x: O
 
 /// 떼어 낸 창에 파일을 끌어다 놓았다 — 그 창의 탭으로
 pub fn add_to<R: Runtime>(app: &tauri::AppHandle<R>, sid: &str, paths: Vec<String>) {
-    let ok: Vec<String> = paths.into_iter().filter_map(|p| safe_path(&p, &home())).map(|p| p.to_string_lossy().into_owned()).collect();
+    let ok: Vec<String> = paths.into_iter().filter_map(|p| user_path(&p)).map(|p| p.to_string_lossy().into_owned()).collect();
     with_store(|s| s.add(sid, &ok));
     changed(app, sid);
 }
@@ -527,7 +555,7 @@ pub fn forget(label: &str) {
 /// 마크다운·글 파일 원문 (홈 폴더 안만)
 #[tauri::command]
 pub fn read_doc_text(path: String) -> Result<String, String> {
-    let p = safe_path(&path, &home()).ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
+    let p = user_path(&path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
     read_utf8(&p)
 }
 
@@ -541,6 +569,19 @@ fn read_utf8(p: &Path) -> Result<String, String> {
 /// 편집기가 알던 판과 지금 파일이 달라 저장하지 않았다 — 앞쪽(SpaceEditor)이 이 글로 알아보고 바깥 판을 합친다
 pub const CHANGED_OUTSIDE: &str = "CHANGED_OUTSIDE";
 
+/// 다른 앱이 파일을 쥐고 있어 못 썼다 — 앞쪽(표)이 이 이름을 보고 '그 앱에서 닫고 다시 시도'를 띄운다(11-01 QA H12)
+pub const FILE_BUSY: &str = "FILE_BUSY";
+
+/// 윈도우 공유 위반(32)·잠금 위반(33)·접근 거부(5 — 열린 파일 위로 바꿔 끼우기)인가. 맥의 같은 번호는 뜻이 달라 아니다
+pub fn busy_code(code: Option<i32>, win: bool) -> bool {
+    win && matches!(code, Some(5 | 32 | 33))
+}
+
+/// 저장 읽기·쓰기·바꿔 끼우기 실패 글 — 다른 앱이 쥔 것이면 맨 앞에 FILE_BUSY
+pub fn save_io_err(e: &std::io::Error) -> String {
+    if busy_code(e.raw_os_error(), cfg!(windows)) { format!("{FILE_BUSY} {e}") } else { e.to_string() }
+}
+
 /// 파일 도장(바뀐 시각 나노초:크기) — 열어 둔 문서를 밖이 고쳤나 가볍게 본다(글을 통째로 읽지 않게). 없으면 None
 pub fn stamp_of(p: &Path) -> Option<String> {
     let m = std::fs::metadata(p).ok()?;
@@ -551,7 +592,7 @@ pub fn stamp_of(p: &Path) -> Option<String> {
 /// 열어 둔 문서의 도장 — 지워졌거나 이름이 바뀌었으면 오류
 #[tauri::command]
 pub fn doc_stamp(path: String) -> Result<String, String> {
-    let p = safe_path(&path, &home()).ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
+    let p = user_path(&path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
     stamp_of(&p).ok_or_else(|| tr("파일을 못 읽었어", "Could not read the file").into())
 }
 
@@ -583,7 +624,7 @@ pub(crate) fn tmp_beside(p: &Path) -> std::path::PathBuf {
 /// 돌려주는 값 = 쓴 뒤 파일 도장
 #[tauri::command]
 pub fn write_doc_text(path: String, text: String, expected: Option<String>) -> Result<String, String> {
-    let p = safe_path(&path, &home()).ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
+    let p = user_path(&path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
     if !editable(&p) {
         return Err(tr("마크다운·글 파일만 고칠 수 있어", "Only Markdown and text files can be edited").into());
     }
@@ -596,12 +637,12 @@ pub fn write_doc_text(path: String, text: String, expected: Option<String>) -> R
 #[tauri::command]
 pub fn keep_doc_version(path: String, text: String, tag: Option<String>) -> Result<(), String> {
     // 파일이 지워졌거나 이름이 바뀐 뒤에도 남겨야 한다 — 그땐 폴더로 홈 안인지 보고 이름을 붙인다
-    let p = safe_path(&path, &home())
+    let p = user_path(&path)
         .or_else(|| {
             let q = Path::new(&path);
-            Some(safe_path(q.parent()?.to_str()?, &home())?.join(q.file_name()?))
+            Some(user_path(q.parent()?.to_str()?)?.join(q.file_name()?))
         })
-        .ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
+        .ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
     let dir = history_dir(&p).ok_or(tr("history 폴더를 못 만들었어", "Could not create the history folder"))?;
     // 분마다 한 장(같은 분이면 새 판으로 덮는다 — 파일이 없는 동안 칠 때마다 쌓이지 않게). 이름은 keep_history 와 같은 분 단위로 시작해
     // 오래된 것부터 지우는 정렬(이름 순)에서 제자리에 선다
@@ -659,7 +700,7 @@ pub fn keep_history_as(p: &Path, ext: &str) {
 /// 폴더 안 md 파일(바로 아래만) + 하위 폴더 이름들 안 md — 채팅 뷰 메뉴의 프로젝트 문서(docs/, docs/decisions/)·내 페이지. 홈 안만, 이름 순
 #[tauri::command]
 pub fn list_md(dir: String, subs: Vec<String>) -> Vec<String> {
-    let Some(base) = safe_path(&dir, &home()) else { return Vec::new() };
+    let Some(base) = user_path(&dir) else { return Vec::new() };
     let mut out = Vec::new();
     for d in std::iter::once(base.clone()).chain(subs.iter().map(|s| base.join(s))) {
         let Ok(rd) = std::fs::read_dir(&d) else { continue };
@@ -685,7 +726,7 @@ pub fn skip_entry(name: &str) -> bool {
 
 #[tauri::command]
 pub fn list_dir(dir: String) -> Vec<DirEntry> {
-    let Some(base) = safe_path(&dir, &home()) else { return Vec::new() };
+    let Some(base) = user_path(&dir) else { return Vec::new() };
     let Ok(rd) = std::fs::read_dir(&base) else { return Vec::new() };
     let mut v: Vec<DirEntry> = rd
         .flatten()
@@ -712,7 +753,7 @@ pub async fn office_html(path: String) -> Result<String, String> {
     if !cfg!(target_os = "macos") {
         return Err(mac_only_preview());
     }
-    let p = safe_path(&path, &home()).ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
+    let p = user_path(&path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
     tauri::async_runtime::spawn_blocking(move || {
         let out = crate::platform::command("/usr/bin/textutil").args(["-convert", "html", "-stdout"]).arg(&p).output().map_err(|e| e.to_string())?;
         if !out.status.success() { return Err(String::from_utf8_lossy(&out.stderr).into_owned()); }
@@ -725,7 +766,7 @@ pub async fn office_html(path: String) -> Result<String, String> {
 /// PDF 원본 바이트 — 미리보기(pdf.js)가 페이지를 직접 그려 페이지로 가고 글을 반짝인다(짚어 보여 주기). 홈 안만
 #[tauri::command]
 pub fn read_doc_bytes(path: String) -> Result<tauri::ipc::Response, String> {
-    let p = safe_path(&path, &home()).ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
+    let p = user_path(&path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
     std::fs::read(p).map(tauri::ipc::Response::new).map_err(|e| e.to_string())
 }
 
@@ -751,7 +792,7 @@ pub async fn page_doc(path: String) -> Result<String, String> {
     if !cfg!(target_os = "macos") {
         return Err(mac_only_preview());
     }
-    let p = safe_path(&path, &home()).ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
+    let p = user_path(&path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
     tauri::async_runtime::spawn_blocking(move || {
         let dir = page_doc_dir(&crate::config::data_file("page-doc"), &p);
         let find = || -> Option<PathBuf> {
@@ -846,7 +887,7 @@ pub async fn ql_thumb(path: String) -> Result<String, String> {
     if !cfg!(target_os = "macos") {
         return Err(mac_only_preview());
     }
-    let p = safe_path(&path, &home()).ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
+    let p = user_path(&path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
     tauri::async_runtime::spawn_blocking(move || {
         let dir = ql_dir(&crate::config::data_file("ql"), &p);
         let _ = std::fs::create_dir_all(&dir);
@@ -925,7 +966,7 @@ pub fn list_md_deep(dir: String) -> Vec<String> {
             if p.is_dir() { walk(&p, depth + 1, out); } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("md")) { out.push(p.to_string_lossy().into_owned()); }
         }
     }
-    let Some(base) = safe_path(&dir, &home()) else { return Vec::new() };
+    let Some(base) = user_path(&dir) else { return Vec::new() };
     let mut out = Vec::new();
     walk(&base, 0, &mut out);
     out.sort();
@@ -1014,7 +1055,7 @@ fn read_show_tail() -> String {
 /// 스페이스 편집기에 넣은 그림 — 문서 옆 assets/ 에 저장하고 문서 기준 상대 경로를 돌려준다(md 에 그대로 적힌다)
 #[tauri::command]
 pub fn save_asset(doc_path: String, name: String, bytes: Vec<u8>) -> Result<String, String> {
-    let doc = safe_path(&doc_path, &home()).ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
+    let doc = user_path(&doc_path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
     let dir = doc.parent().ok_or("no parent")?.join("assets");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let file = asset_name(&name, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
@@ -1026,7 +1067,7 @@ pub fn save_asset(doc_path: String, name: String, bytes: Vec<u8>) -> Result<Stri
 /// 앱 창이 파일 끌기를 먼저 가로채서 편집기(BlockNote)가 못 받았다(2026-10-01 사용자)
 #[tauri::command]
 pub fn copy_asset(doc_path: String, src: String) -> Result<String, String> {
-    let doc = safe_path(&doc_path, &home()).ok_or(tr("홈 폴더 밖이거나 없는 파일", "Outside the home folder or file not found"))?;
+    let doc = user_path(&doc_path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
     copy_asset_into(&doc, Path::new(&src), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0))
 }
 
@@ -1329,7 +1370,7 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(data.join("config.json"), av.join("몰래.png")).unwrap();
         let url = |p: &std::path::Path| p.to_string_lossy().into_owned();
-        let got = |p: &std::path::Path| super::served_path(&url(p), &home, &av).is_some();
+        let got = |p: &std::path::Path| super::served_path(&url(p), &[home.clone()], &av).is_some();
         assert!(got(&av.join("참모.png")), "홈 밖 데이터 폴더의 프사 그림");
         assert!(got(&home.join("a.md")), "홈 안 파일은 그대로");
         assert!(!got(&av.join("참모.json")), "avatars 안이라도 그림만");
@@ -1337,6 +1378,26 @@ mod tests {
         assert!(!got(&av.join("../config.json")), "../ 로 빠져나가기");
         #[cfg(unix)]
         assert!(!got(&av.join("몰래.png")), "그림 이름의 링크로 빠져나가기");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn 설정한_프로젝트_폴더는_홈_밖이어도_연다() {
+        // 윈도우는 D:\dev 처럼 홈 밖에 프로젝트를 둔다 — 첫 일 결과를 '앱에서 못 열어'라고 했다(2026-11-01 win-first H2). scripts/show user_roots 와 같은 규칙
+        let root = std::fs::canonicalize(std::env::temp_dir()).unwrap().join(format!("hodoc-roots-{}", std::process::id()));
+        let (home, dev, extra, av) = (root.join("home"), root.join("dev"), root.join("extra"), root.join("data/avatars"));
+        for d in [&home, &dev.join("todo"), &extra, &av] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(dev.join("todo/index.html"), "<p>").unwrap();
+        std::fs::write(root.join("secret.txt"), "x").unwrap();
+        let h = home.to_string_lossy().into_owned();
+        let roots = super::roots_from(&home, &dev.to_string_lossy(), &[extra.to_string_lossy().into_owned(), "/".into(), "~/없는폴더".into()], &h);
+        assert_eq!(roots, vec![home.clone(), dev.clone(), extra.clone()], "맨 위(/·D:\\)와 없는 폴더는 안 받는다");
+        let url = |p: &std::path::Path| p.to_string_lossy().into_owned();
+        assert!(super::served_path(&url(&dev.join("todo/index.html")), &roots, &av).is_some());
+        assert!(super::served_path(&url(&dev.join("../secret.txt")), &roots, &av).is_none());
+        assert!(super::served_path(&url(&dev.join("todo/index.html")), &[home.clone()], &av).is_none(), "홈만이면 그대로 막힘");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1509,6 +1570,18 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn 윈도우에서_다른_앱이_쥔_파일은_바쁨_이름을_붙인다() {
+        // 11-01 QA H12: 엑셀이 연 xlsx 를 표에서 고치면 'os error 32' 원문만 나오고 다시 시도 단추도 없었다
+        for code in [5, 32, 33] {
+            assert!(busy_code(Some(code), true), "{code}");
+            assert!(!busy_code(Some(code), false), "맥의 {code} 는 다른 뜻(권한 등) — {code}");
+        }
+        assert!(!busy_code(Some(2), true) && !busy_code(None, true));
+        let e = std::io::Error::from_raw_os_error(32);
+        assert_eq!(save_io_err(&e).starts_with(FILE_BUSY), cfg!(windows));
+    }
 
     #[test]
     fn decode_korean_and_space() {

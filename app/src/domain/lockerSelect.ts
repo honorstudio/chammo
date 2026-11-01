@@ -97,3 +97,9 @@ export function trashKey(e: { key: string; meta?: boolean; ctrl?: boolean; alt?:
 export function batchMenu(acts: BatchKey[]): BatchKey[][] {
   return [['send'], ['alias', 'move'], ['trash']].map((g) => g.filter((k) => acts.includes(k as BatchKey)) as BatchKey[]).filter((g) => g.length > 0);
 }
+
+type KeyMods = { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean };
+/** 누름의 고르기 키 — 넣고 빼기는 맥 ⌘·윈도우 Ctrl(domain/keys modKey 와 같은 규칙), 범위는 ⇧ */
+export const pickMods = (e: KeyMods, win: boolean): { meta: boolean; shift: boolean } => ({ meta: win ? e.ctrlKey : e.metaKey, shift: e.shiftKey });
+/** 빈 곳 끌기로 네모를 시작하나 — 맥 Ctrl+누름은 우클릭(메뉴)이라 빼고, 윈도우 Ctrl 은 넣고 빼기 끌기 */
+export const bandStarts = (e: KeyMods, win: boolean): boolean => win || !e.ctrlKey;

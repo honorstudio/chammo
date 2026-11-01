@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_ROOM, allRoomPlan } from './teamAllRoom';
+import { ALL_ROOM, allRoomPending, allRoomPlan } from './teamAllRoom';
 
 const m = (id: string, me = false, role = 'member') => ({ id, name: id, role, me });
 const view = (members: ReturnType<typeof m>[], rooms: { id: string; kind: string; name?: string; members?: string[] }[] = [], role = 'owner') =>
@@ -39,5 +39,14 @@ describe("'전체' 팀챗은 한 번만 — 실제 화면 목록 모양(with·te
   });
   it('여럿이면 먼저 온 하나에만 더한다', () => {
     expect(allRoomPlan({ ...real([{ id: 'r1', team: 't', with: ALL_ROOM, members: ['me'] }, { id: 'r2', team: 't', with: ALL_ROOM, members: ['me'] }]) })).toEqual({ room: 'r1', add: ['a'] });
+  });
+});
+
+describe("'전체'가 아직 없을 때 팀원 안내(11-01 QA — 팀장 앱이 꺼져 있으면 새 팀원은 빈 팀챗만 봤다)", () => {
+  it('팀원이고 다른 사람이 있는데 그 팀 전체가 없을 때만', () => {
+    expect(allRoomPending(view([m('a', true), m('b', false, 'owner')], [], 'member'))).toBe(true);
+    expect(allRoomPending(view([m('a', true), m('b', false, 'owner')], [{ id: 'r', kind: 'group', name: ALL_ROOM }], 'member'))).toBe(false);
+    expect(allRoomPending(view([m('a', true), m('b')], [], 'owner')), '팀장은 자기 앱이 만든다').toBe(false);
+    expect(allRoomPending(view([m('a', true)], [], 'member')), '혼자면 없다').toBe(false);
   });
 });

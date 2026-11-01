@@ -29,9 +29,79 @@ pub fn take() -> Option<String> {
     PENDING.lock().ok().and_then(|mut p| p.take())
 }
 
-/// 받은 주소들 — 초대면 메인 창을 앞으로 띄우고 화면에 넘긴다(화면이 아직이면 PENDING 에 두고 화면이 켤 때 가져감)
+/// 토스트를 누르면 여는 주소 — chammo://notify?go=<갈 곳(퍼센트 인코딩)>. 윈도우 토스트는 누름을 프로세스 안 콜백으로만 받아서
+/// 알림 센터에서 누른 것(띄운 토스트가 사라진 뒤)은 아무 데도 안 갔다 — 주소로 열면 셸 → 새 프로세스 → single-instance 로 떠 있는 앱에 온다
+pub fn notify_link(go: &str) -> String {
+    let mut out = String::from("chammo://notify?go=");
+    for b in go.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// 알림 주소 → 갈 곳. 아무 웹페이지나 만들 수 있는 주소라 좁게 — 300자 아래, 제어 문자 없음, 인코딩이 맞을 때만(화면은 앞으로 띄우고 그 자리로 옮기기만 한다)
+pub fn notify_target(url: &str) -> Option<String> {
+    let u = url.trim();
+    let raw = u.strip_prefix("chammo://notify?go=").or_else(|| u.strip_prefix("chammo://notify/?go="))?;
+    if raw.is_empty() || raw.len() > 900 {
+        return None;
+    }
+    let b = raw.as_bytes();
+    let mut bytes = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' {
+            let h = std::str::from_utf8(b.get(i + 1..i + 3)?).ok()?;
+            bytes.push(u8::from_str_radix(h, 16).ok()?);
+            i += 3;
+        } else {
+            bytes.push(b[i]);
+            i += 1;
+        }
+    }
+    let go = String::from_utf8(bytes).ok()?;
+    (go.chars().count() <= 300 && !go.chars().any(char::is_control)).then_some(go)
+}
+
+/// 윈도우 토스트 XML — 누르면(띄운 것·알림 센터 모두) 알림 주소를 연다
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn toast_xml(title: &str, body: &str, go: &str) -> String {
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;");
+    format!(
+        r#"<toast activationType="protocol" launch="{}"><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual></toast>"#,
+        esc(&notify_link(go)),
+        esc(title),
+        esc(body)
+    )
+}
+
+/// 알림 주소를 받았다 — 메인 창(트레이로 숨었어도)을 띄우고 그 자리로
+fn open_notify<R: tauri::Runtime>(app: &tauri::AppHandle<R>, go: &str) {
+    use tauri::Manager;
+    crate::claude::log_out("notify-click", go);
+    crate::tray::show_main(app);
+    if let Some(w) = app.get_webview_window("main") {
+        let arg = serde_json::to_string(go).unwrap_or_default();
+        let _ = w.eval(format!("window.__notifyClick && window.__notifyClick({arg})"));
+    }
+}
+
+/// 딥링크로 받을 주소인가(초대·알림) — single-instance 가 다른 인자(그냥 다시 켜기)와 가른다
+pub fn wanted(url: &str) -> bool {
+    invite_from_url(url).is_some() || notify_target(url).is_some()
+}
+
+/// 받은 주소들 — 알림이면 창을 띄워 그 자리로, 초대면 메인 창을 앞으로 띄우고 화면에 넘긴다(화면이 아직이면 PENDING 에 두고 화면이 켤 때 가져감)
 pub fn handle<R: tauri::Runtime>(app: &tauri::AppHandle<R>, urls: impl IntoIterator<Item = String>) {
     use tauri::Manager;
+    let urls: Vec<String> = urls.into_iter().collect();
+    if let Some(go) = urls.iter().find_map(|u| notify_target(u)) {
+        return open_notify(app, &go);
+    }
     let Some(inv) = urls.into_iter().find_map(|u| invite_from_url(&u)) else { return };
     if let Ok(mut p) = PENDING.lock() {
         *p = Some(inv.clone());
@@ -57,6 +127,37 @@ pub fn team_take_invite(window: tauri::WebviewWindow) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 2026-11-01 윈도우 시험판 실측: 트레이로 숨긴 채 알림 센터에서 토스트를 누르면 창이 안 떴다(띄운 토스트만 프로세스 안 콜백이 받았다).
+    // 토스트는 누르면 chammo://notify?go=<갈 곳> 를 연다 → single-instance 로 떠 있는 앱에 넘어온다
+    #[test]
+    fn 알림_주소는_갈_곳을_싣고_되읽는다() {
+        for go in ["inbox", "session:5e5e0a1b", "card:모모 · 시험 참모:c0de", "team:room-1"] {
+            let url = notify_link(go);
+            assert!(url.starts_with("chammo://notify?go="), "{url}");
+            assert!(url.is_ascii(), "주소는 ASCII 로: {url}");
+            assert_eq!(notify_target(&url).as_deref(), Some(go));
+        }
+        // 윈도우 셸이 넣는 빗금 모양(교훈: chammo://join?x → chammo://join/?x)
+        assert_eq!(notify_target("chammo://notify/?go=inbox").as_deref(), Some("inbox"));
+    }
+
+    #[test]
+    fn 알림_주소는_남이_만든_글이라_좁게_받는다() {
+        assert_eq!(notify_target("chammo://join?code=x"), None);
+        assert_eq!(notify_target("chammo://notify?go="), None);
+        assert_eq!(notify_target(&format!("chammo://notify?go={}", "a".repeat(400))), None, "너무 길다");
+        assert_eq!(notify_target("chammo://notify?go=a%0Ab"), None, "줄바꿈 같은 제어 문자");
+        assert_eq!(notify_target("chammo://notify?go=%ZZ"), None, "깨진 인코딩");
+    }
+
+    #[test]
+    fn 토스트_xml_은_누르면_주소를_열고_글자는_이스케이프() {
+        let x = toast_xml("참모 <확인>", "A & B \"C\"", "inbox");
+        assert!(x.contains(r#"activationType="protocol""#));
+        assert!(x.contains(&format!(r#"launch="{}""#, notify_link("inbox"))));
+        assert!(x.contains("참모 &lt;확인&gt;") && x.contains("A &amp; B &quot;C&quot;"));
+    }
 
     #[test]
     fn 초대_딥링크만_받고_https_링크로_다시_만든다() {

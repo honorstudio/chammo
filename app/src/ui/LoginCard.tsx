@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { openTarget } from '../data/tauri';
 import { missingText, needText, termsText, type LoginNeed, type TermsCard } from '../domain/login';
-import { setupCommand } from '../domain/setup';
+import { setupCommand, winSetupNotes } from '../domain/setup';
 import { tr } from '../i18n';
 import { IconClose, IconRefresh } from './Icons';
 import { TerminalPane } from './TerminalPane';
@@ -44,7 +44,7 @@ export function ClaudeMissingCard({ fontSize }: { fontSize: number }) {
       <div className="login-card-where">{t.where}</div>
       {open && (
         <div className="login-card-term">
-          <TerminalPane key="claude-missing" command={setupCommand('install', {}, tr('끝났어요. 세션 목록이 저절로 돌아와요.', 'Done. Your session list will come back on its own.'))}
+          <TerminalPane key="claude-missing" command={setupCommand('install', {}, tr('끝났어요. 세션 목록이 저절로 돌아와요.', 'Done. Your session list will come back on its own.'), undefined, undefined, winSetupNotes())}
             title={tr('Claude Code 설치', 'Install Claude Code')} subtitle={tr('설치가 끝날 때까지 기다려 주세요.', 'Please wait until it finishes.')} fontSize={fontSize} />
         </div>
       )}

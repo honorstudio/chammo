@@ -50,7 +50,7 @@ import chatSrc from '../ui/chat/RemoteChat.tsx?raw';
 import farSrc from '../ui/far/Far.tsx?raw';
 describe('원격 채팅 칸이 판 낮음을 말한다', () => {
   it('보내기 전 판으로 막고, 옛 판 거절 답도 같은 안내로', () => {
-    expect(chatSrc).toContain('if (sayTooOld(target.version)) { setErr(tooOld); return; }');
+    expect(chatSrc).toContain('if (sayTooOld(target.version)) { setErr(tooOld); return Promise.resolve(false); }');
     expect(chatSrc).toContain('oldSayError(String(e)) ? tooOld');
     expect(farSrc).toMatch(/version: status\?\.id === t\.dev/);
   });

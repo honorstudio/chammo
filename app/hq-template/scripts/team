@@ -59,6 +59,9 @@ The app must be running (it holds the device key and the connection). Answers co
 Exit: 0 ok · 1 failed · 2 usage.
 """
 import datetime, json, os, platform, socket, sys, time, uuid
+for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — PYTHONUTF8 없이 떠도(데몬 env 세션·작업 스케줄러) 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
+    if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
+        _io.reconfigure(encoding='utf-8', errors='replace')
 
 USAGE = 'usage: scripts/team teamchat(=room) list | teamchat new <name> --with <a,b> [--team <t>] | teamchat say <chat> - | teamchat read <chat> [<n>] | teamchat set <chat> [--name <n>] [--add <a,b>] [--remove <c>] | teamchat leave <chat> --yes | status | create <team> --me <name> [--server <url>] [--device <d>] | invite [--team <t>] | join <link|code> --me <name> [--server <url>] [--device <d>] | members [--team <t>] | say <person> <text|-> [--team <t>] | use <team> | leave [--team <t>] --yes | kick <person> [--team <t>] --yes | role <person> owner|member [--team <t>] --yes | inbox [<n>] | deliver-to <assistant> | forget --yes | logout --yes | locker ls|put <file…>|get <name|id>|rm <name|id> [--folder <f>] [--to <dir>] [--trash] [--team <t>] | login [--server <url>] [--device <d>] | devices [rename <device> <name> | remove <device> --yes] | self-say <text|->'
 
@@ -84,6 +87,10 @@ def parse(argv):
     rest, opts = [], {}
     i = 0
     while i < len(argv):
+        # -- 뒤는 모두 위치 인자 — '-' 로 시작하는 파일 id(base64url)를 옵션으로 안 읽게(11-01)
+        if argv[i] == '--':
+            rest.extend(argv[i + 1:])
+            break
         if argv[i] == '--yes':
             opts['yes'] = True
             i += 1

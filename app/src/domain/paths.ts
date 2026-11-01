@@ -1,5 +1,6 @@
 // 경로 모양 맞추기 — 앱 안의 비교(startsWith(`${root}/`)·split('/'))는 / 기준이다.
 // 윈도우 경로는 들어오는 입구(app_env·claude agents)에서 C:/… 로 바꿔 둔다. 윈도우도 / 경로를 그대로 받는다
+import { safeDecode } from './mdLinks';
 
 /** 윈도우 경로(C:\… · C:/…)만 / 로, 드라이브 글자는 대문자로. 맥 경로는 손대지 않는다 */
 export function fwd(p: string): string {
@@ -19,3 +20,11 @@ export const samePath = (a: string, b: string): boolean => pathKey(a) === pathKe
 /** 맥 정보(폰 /api/env·기억해 둔 것)의 경로를 앱과 같은 모양으로 — 데스크톱은 data/tauri.ts getAppEnv 가 같은 일을 한다 */
 export const fwdEnv = <T extends { devRoot: string; extraProjects: string[]; hqDir: string }>(e: T): T =>
   ({ ...e, devRoot: fwd(e.devRoot), extraProjects: e.extraProjects.map(fwd), hqDir: fwd(e.hqDir) });
+
+/** 문서 속 상대 링크·그림 → 문서 폴더(dir) 기준 절대 경로(풀어 쓴 글자). 윈도우는 C:\… 여도 C:/… 로, 앞에 / 를 안 붙인다 —
+ *  file:// 로 풀면 /C:/… 가 돼 같은 문서가 탭 둘로 열리고, 역슬래시 폴더면 Invalid URL 로 링크가 죽었다(2026-11-01 win-text M2) */
+export function docRel(dir: string, href: string): string {
+  if (href.startsWith('/')) return safeDecode(href);
+  const d = fwd(dir);
+  return safeDecode(new URL(href, `file://${encodeURI(d.startsWith('/') ? d : `/${d}`)}/`).pathname).replace(/^\/([A-Za-z]:\/)/, '$1');
+}

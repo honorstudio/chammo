@@ -9,6 +9,7 @@ import { mobileApi, type EntryQr } from '../data/tauri';
 import { directCards } from '../domain/directAsk';
 import { deviceCounts, deviceRows, pendingCardFor } from '../domain/myDevices';
 import { tr } from '../i18n';
+import { gateErrText } from '../domain/loginGate';
 import { IconChevronDown, IconChevronUp, IconClose, IconPencil, IconRefresh, IconUnlink } from './Icons';
 import { IconButton } from './kit/IconButton';
 import { BetaTag } from './kit/BetaTag';
@@ -54,7 +55,7 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
   const act = (f: () => Promise<unknown>) => {
     setBusy(true);
     setErr(null);
-    void f().then(() => { setRenaming(null); setRemoving(null); load(); }, (e: unknown) => setErr(String(e))).finally(() => setBusy(false));
+    void f().then(() => { setRenaming(null); setRemoving(null); load(); }, (e: unknown) => setErr(gateErrText(String(e)))).finally(() => setBusy(false));
   };
   const cards = useMemo(() => directCards(log, { alive: () => true, prompt: () => undefined, reply: () => undefined }), [log]);
   const acc = v?.account ?? null;
@@ -80,6 +81,13 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
             <p className="su-hint">{tr('Chammo 계정으로 로그인하면 컴퓨터와 폰이 한 목록에 모여요. 다른 기기도 같은 계정으로 로그인하세요', 'Sign in to your Chammo account and your computers and phones show up here. Sign in with the same account on each device.')}</p>
             <div className="su-inline"><button className="btn pri" onClick={onAccount}>{tr('Chammo 계정에 로그인', 'Sign in to Chammo account')}</button></div>
           </>
+        )}
+        {/* 첫 기기 질문에서 '나중에'를 고른 사람 — 여기서 시작(2026-11-01 ux-start M1). 사람 클릭만, 로그인 문의 '여기서 시작'과 같은 명령 */}
+        {acc && step === 'start' && (
+          <div className="su-row dev-row">
+            <span className="su-hint">{tr('이 계정은 아직 어느 기기에서도 시작하지 않았어요. 메신저를 쓰려면 이 컴퓨터에서 시작하세요.', "This account hasn't been started on any device yet. To use messaging, start it on this computer.")}</span>
+            <button className="btn pri" disabled={busy} onClick={(e) => { if (e.nativeEvent.isTrusted && !busy) act(() => invoke('e2e_start_chain')); }}>{tr('여기서 시작', 'Start here')}</button>
+          </div>
         )}
         {acc && (v?.pending || step === 'outside') && (
           <div className="dm-wait">

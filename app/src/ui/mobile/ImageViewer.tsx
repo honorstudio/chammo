@@ -8,6 +8,7 @@ import { fileError } from '../../domain/phoneFile';
 import { clampIn, fitContain, longFit, maxZoom, needOriginal, realScale, zoomAt } from '../../domain/zoom';
 import { IconClose } from '../Icons';
 import { ShareButton } from './ShareButton';
+import { SheetPortal } from './BottomSheet';
 import { tr } from '../../i18n';
 
 type View = { s: number; x: number; y: number };
@@ -15,7 +16,8 @@ type Pt = { x: number; y: number };
 const mid = (t: TouchList): Pt => ({ x: (t[0]!.clientX + t[1]!.clientX) / 2, y: (t[0]!.clientY + t[1]!.clientY) / 2 });
 const gap = (t: TouchList) => Math.hypot(t[0]!.clientX - t[1]!.clientX, t[0]!.clientY - t[1]!.clientY);
 
-export function ImageViewer({ path, title, onClose }: { path: string; title: string; onClose: () => void }) {
+/** path = 맥 파일(보여 준 것) · load = 다른 길(팀 대화 그림은 맥이 풀어 준 것, 11-01) — original 이면 원본 */
+export function ImageViewer({ path, title, onClose, load = (original: boolean) => fileImage(path!, original) }: { path?: string; title: string; onClose: () => void; load?: (original: boolean) => Promise<{ url: string; w: number; h: number }> }) {
   const stage = useRef<HTMLDivElement>(null);
   const [img, setImg] = useState<{ url: string; w: number; h: number; served: number; original: boolean } | null>(null);
   const [err, setErr] = useState<{ text: string; gone: boolean } | null>(null);
@@ -27,7 +29,7 @@ export function ImageViewer({ path, title, onClose }: { path: string; title: str
 
   useEffect(() => {
     let alive = true;
-    fileImage(path).then((r) => {
+    load(false).then((r) => {
       if (!alive) { URL.revokeObjectURL(r.url); return; }
       urls.current.push(r.url);
       const el = new Image();
@@ -35,7 +37,7 @@ export function ImageViewer({ path, title, onClose }: { path: string; title: str
       el.src = r.url;
     }, (e: unknown) => alive && setErr(fileError((e as Error).message)));
     return () => { alive = false; };
-  }, [path]);
+  }, [path, title]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useLayoutEffect(() => {
     const el = stage.current;
@@ -66,11 +68,11 @@ export function ImageViewer({ path, title, onClose }: { path: string; title: str
     if (!img || !fit || img.original || askedOriginal.current) return;
     if (!needOriginal(v.s, fit.w, dpr, img.served, img.w)) return;
     askedOriginal.current = true;
-    fileImage(path, true).then((r) => {
+    load(true).then((r) => {
       urls.current.push(r.url);
       setImg((p) => (p ? { ...p, url: r.url, served: p.w, original: true } : p));
     }, () => {});
-  }, [v.s, img, fit, dpr, path]);
+  }, [v.s, img, fit, dpr, path]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 손가락 — 두 손가락은 누른 곳 기준 확대, 한 손가락은 커졌으면 끌기·맞춤이면 아래로 쓸어 닫기, 두 번 톡은 1:1 ↔ 맞춤
   const g = useRef<{ v: View; d: number; c: Pt; p: Pt; moved: boolean } | null>(null);
@@ -116,11 +118,13 @@ export function ImageViewer({ path, title, onClose }: { path: string; title: str
     } else tap.current = now;
   };
 
+  // 시트 자리(없으면 body)로 — 팀 칸(.tmh) 같은 조상의 transform·position 에 갇히지 않게
   return (
+    <SheetPortal>
     <div className="m-iv" role="dialog" aria-label={title} style={{ background: `rgba(0, 0, 0, ${1 - Math.min(0.6, drop / 400)})` }}>
       <div className="m-iv-head">
         <b className="m-iv-title">{title}</b>
-        <ShareButton path={path} cls="m-icon m-iv-x" />
+        {path && <ShareButton path={path} cls="m-icon m-iv-x" />}
         <button type="button" className="m-icon m-iv-x" onClick={onClose} aria-label={tr('닫기', 'Close')} title={tr('닫기', 'Close')}><IconClose /></button>
       </div>
       <div ref={stage} data-zoom className="m-iv-stage" onTouchStart={start} onTouchMove={move} onTouchEnd={end} onTouchCancel={end}>
@@ -131,5 +135,6 @@ export function ImageViewer({ path, title, onClose }: { path: string; title: str
         {err && <p className={err.gone ? 'm-muted' : 'm-error'}>{err.text}</p>}
       </div>
     </div>
+    </SheetPortal>
   );
 }

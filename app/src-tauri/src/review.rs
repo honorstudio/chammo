@@ -10,7 +10,7 @@ fn gh(args: &[&str]) -> Result<String, String> {
     if o.status.success() {
         Ok(String::from_utf8_lossy(&o.stdout).into_owned())
     } else {
-        Err(String::from_utf8_lossy(&o.stderr).trim().to_string())
+        Err(crate::platform::out_text(&o.stderr).trim().to_string())
     }
 }
 

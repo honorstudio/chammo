@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { docUrl, isDocUrl, dropIndex, inStrip, kindOf, titleOf, pageDoc, pathOfDocUrl, docFileUrl, isSheet, spacePage, isPlainDoc } from './reader';
+import { docUrl, isDocUrl, dropIndex, inStrip, kindOf, titleOf, pageDoc, pathOfDocUrl, docFileUrl, isSheet, spacePage, isPlainDoc, notUtf8 } from './reader';
 import table from './editableExt.json';
 
 describe('kindOf — 확장자로 어떻게 보여줄지', () => {
@@ -156,5 +156,13 @@ describe('글 파일(.txt)도 탭 안에서 고친다 — Rust editable() 과 �
   it('표의 확장자는 전부 어느 한쪽 페이지로 열린다', () => {
     for (const e of table.md) expect(kindOf(`/a/x.${e}`)).toBe('md');
     for (const e of table.plain) { expect(isPlainDoc(`/a/x.${e}`)).toBe(true); expect(isPlainDoc(`/a/x.${e.toUpperCase()}`)).toBe(true); }
+  });
+});
+
+describe('UTF-8 이 아닌 글 파일(11-01 QA H11)', () => {
+  it('Rust NOT_UTF8 이면 사람 말 + 기본 앱으로 열기로 바꿀 자리', () => {
+    expect(notUtf8('NOT_UTF8')).toBe(true);
+    expect(notUtf8('Error: NOT_UTF8')).toBe(true);
+    expect(notUtf8('홈 폴더 밖이거나 없는 파일')).toBe(false);
   });
 });

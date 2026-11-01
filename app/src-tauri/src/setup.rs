@@ -3,7 +3,7 @@
 use serde::Serialize;
 use std::process::Output;
 use std::time::Duration;
-pub use crate::win_bin::{bin_ok, shim_targets, target_ok};
+pub use crate::win_bin::{bin_ok, shim_exe, shim_targets, target_ok};
 
 /// claude 를 찾는 순서: 공식 설치본(~/.local/bin) → 앱이 받아 둔 대화형 셸 PATH → brew(Apple 칩·인텔) 자리.
 /// 공식 설치본이 먼저인 건 PATH 앞쪽에 옛 brew claude 가 있을 수 있어서(claude.rs resolve_claude_bin)
@@ -15,7 +15,9 @@ pub fn pick_bin(name: &str, home: &str, path_env: &str, exists: impl Fn(&str) ->
 pub fn pick_bin_for(name: &str, home: &str, path_env: &str, win: bool, exists: impl Fn(&str) -> bool) -> Option<String> {
     let mut cands: Vec<String> = Vec::new();
     if win {
-        let names = [format!("{name}.exe"), format!("{name}.cmd"), name.to_string()];
+        // 확장자 없는 이름은 안 본다 — 윈도우는 그걸 못 띄운다. npm 이 .cmd 옆에 두는 sh 바로가기(claude)를 고르면 뒤에 멀쩡한
+        // winget claude 가 있어도 '설치 안 됨'이었다(2026-11-01 win-first L1·win-env L1)
+        let names = [format!("{name}.exe"), format!("{name}.cmd")];
         if name == "claude" {
             cands.push(format!("{home}\\.local\\bin\\claude.exe"));
         }
@@ -105,6 +107,8 @@ pub struct EnvCheck {
     /// `claude --version` 첫 줄(예: "2.1.283 (Claude Code)"). 판정은 프론트 domain/setup.ts
     pub claude_version: String,
     pub logged_in: bool,
+    /// 로그인 확인이 시간 안에 안 끝남(모름) — 화면은 '로그인 필요' 대신 '다시 확인'
+    pub login_unknown: bool,
     /// Xcode 명령줄 도구 — 없으면 /usr/bin/git 이 설치 안내 창만 띄우는 빈 껍데기다
     pub clt: bool,
     pub gh_path: Option<String>,
@@ -116,11 +120,55 @@ pub struct EnvCheck {
     pub claude_restored: Option<String>,
     /// 파이썬 3 — 윈도우의 scripts/*(참모 도구)·참모 앱·예약이 쓴다. 맥은 늘 true(명령줄 도구에 들어 있어 git 줄이 본다)
     pub python: bool,
+    /// 윈도우 winget 이 도나 — git·파이썬이 없을 때만 본다. 없으면(LTSC·스토어 막은 회사 PC) 설치 단추 대신 받기 링크(win-env H3)
+    pub winget: bool,
+    /// git 전역 이름·메일(git 이 있을 때만 잰다, 없으면 빈 글) — 새 PC 는 비어 새 프로젝트마다 첫 커밋을 못 했다(2026-11-01 win-first M1)
+    pub git_name: String,
+    pub git_email: String,
 }
 
+/// git 이름·메일 입력 검사 — 프론트 domain/setup gitIdentityError 와 같은 규칙. Err = 틀린 칸("name"·"email")
+pub fn git_identity_ok(name: &str, email: &str) -> Result<(String, String), &'static str> {
+    let (n, e) = (name.trim(), email.trim());
+    if n.is_empty() || n.chars().count() > 100 || n.chars().any(char::is_control) {
+        return Err("name");
+    }
+    let shape = e.split_once('@').is_some_and(|(l, d)| !l.is_empty() && !d.contains('@') && d.split_once('.').is_some_and(|(a, b)| !a.is_empty() && !b.is_empty() && !b.ends_with('.')));
+    if e.chars().count() > 200 || e.chars().any(|c| c.is_whitespace() || c.is_control()) || !shape {
+        return Err("email");
+    }
+    Ok((n.to_string(), e.to_string()))
+}
+
+fn git_global(key: &str) -> String {
+    run_for("git", &["config", "--global", "--get", key], 5).map(|o| crate::platform::out_text(&o.stdout).trim().to_string()).unwrap_or_default()
+}
+
+/// 점검 화면에서 git 이름·메일 저장 — `git config --global user.name/user.email`. 참모가 사용자에게 명령을 치라고 하지 않게(win-first M1)
+#[tauri::command]
+pub async fn set_git_identity(name: String, email: String) -> Result<(), String> {
+    let (n, e) = git_identity_ok(&name, &email).map_err(str::to_string)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::claude::clt_ready(); // 윈도우: 설치 직후면 git 이 레지스트리 PATH 에만 있다 — 다시 읽는다
+        for (k, v) in [("user.name", n), ("user.email", e)] {
+            let o = crate::platform::command("git").args(["config", "--global", k, &v]).output().map_err(|x| x.to_string())?;
+            if !o.status.success() {
+                return Err(text(&o).trim().to_string());
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|x| x.to_string())?
+}
+
+/// 실행 파일 찾기. 윈도우 npm 바로가기(.cmd)면 그게 부르는 진짜 exe 로 — 바로가기로 띄우면 cmd 가 인자를 한 번 더 읽어
+/// 여러 줄은 Rust 가 거절하고 따옴표·<>·& 는 깨진다(qa-1101 win-env H1)
 pub fn find(name: &str) -> Option<String> {
     let path = std::env::var("PATH").unwrap_or_default();
-    pick_bin(name, &crate::config::home(), &path, |p| bin_ok(p, |q| std::path::Path::new(q).is_file(), target_ok, |q| std::fs::read_to_string(q).ok()))
+    let read = |q: &str| std::fs::read_to_string(q).ok();
+    let p = pick_bin(name, &crate::config::home(), &path, |p| bin_ok(p, |q| std::path::Path::new(q).is_file(), target_ok, read))?;
+    Some(shim_exe(&p, read, target_ok).unwrap_or(p))
 }
 
 /// `claude --version` 출력에 판 번호(2.1.316)가 있나 — 없으면 claude 가 그 자리에서 돌지 않는 것(로그인과 무관)
@@ -158,11 +206,31 @@ pub fn check() -> EnvCheck {
             // 자리는 있는데 안 돈다(npm 바로가기 대상 없음 등) — 설치 안 됨으로 보여 '설치' 줄이 뜨게
             c.claude_path = None;
         } else {
-            c.logged_in = run_for(&bin, &["auth", "status"], 10).map(|o| parse_auth_status(&text(&o))).unwrap_or(false);
+            // 10초 안에 답이 없으면 '모름' — 느린 PC 첫 실행(백신 검사)에 '로그인이 필요해요'라고 잘못 말했다(qa-1101 win-env M2).
+            // 로그인 재기(login_probe)와 같은 규칙: 모름은 안 됨이 아니다
+            match auth_status(&bin) {
+                Some(v) => c.logged_in = v,
+                None => c.login_unknown = true,
+            }
         }
     }
     c.clt = crate::claude::clt_ready();
     c.python = crate::platform::python_ready(true);
+    if c.clt {
+        (c.git_name, c.git_email) = (git_global("user.name"), git_global("user.email"));
+    }
+    #[cfg(windows)]
+    if !c.clt || !c.python {
+        c.winget = run_for("winget", &["--version"], 10).is_some_and(|o| o.status.success());
+    }
+    // 앱이 이번에 PATH 를 고쳤으면(설치 뒤 다시 읽기·git/파이썬 자리) 떠 있는 데몬만 내린다 — 도는 세션은 그대로(--keep-workers),
+    // 다음 claude --bg 가 앱의 새 PATH 로 데몬을 다시 띄운다. 안 하면 설정은 ✓ 인데 새 세션 scripts 가 "python not found"(win-env M5)
+    if crate::win_path::take_changed() {
+        if let Some(bin) = c.claude_path.as_deref() {
+            let ok = run_for(bin, &["daemon", "stop", "--any", "--keep-workers"], 15).is_some_and(|o| o.status.success());
+            crate::claude::log_out("setup", &format!("PATH changed — daemon restart {}", if ok { "requested" } else { "skipped (none running or failed)" }));
+        }
+    }
     if let Some(gh) = c.gh_path.clone() {
         let gh = run_for(&gh, &["auth", "status", "--hostname", "github.com"], 8).map(|o| parse_gh(&text(&o))).unwrap_or_default();
         (c.gh_user, c.gh_stale) = (gh.user, gh.stale);
@@ -326,6 +394,17 @@ mod tests {
     }
 
     #[test]
+    fn git_이름_메일_검사() {
+        // 새 PC 는 git 이름·메일이 비어 새 프로젝트 첫 커밋을 못 했다(2026-11-01 win-first M1) — 프론트 gitIdentityError 와 같은 규칙
+        assert_eq!(super::git_identity_ok(" Kim ", " k@x.com "), Ok(("Kim".into(), "k@x.com".into())));
+        assert_eq!(super::git_identity_ok("  ", "k@x.com"), Err("name"));
+        assert_eq!(super::git_identity_ok("Ki\nm", "k@x.com"), Err("name"));
+        for bad in ["kx.com", "k@x", "k @x.com", "k@x.", "@x.com", "k@@x.com"] {
+            assert_eq!(super::git_identity_ok("Kim", bad), Err("email"), "{bad}");
+        }
+    }
+
+    #[test]
     fn 앱_버전은_세_자리() {
         let v = super::app_version();
         assert_eq!(v.split('.').count(), 3, "{v}");
@@ -472,6 +551,44 @@ mod tests {
         // 아무것도 없으면 없음 — 망가진 바로가기를 '설치됨'으로 치지 않는다
         let has = files(vec![shim.clone()]);
         assert_eq!(pick_bin_for("claude", home, &path, true, |p| bin_ok(p, &has, &has, read)), None);
+        // 재현(qa-1101 win-env L1): npm 은 claude·claude.cmd·claude.ps1 셋을 만든다 — .cmd 를 건너뛴 뒤 확장자 없는 sh 글을 잡았다
+        let has = files(vec![shim.clone(), format!(r"{npm}\claude"), format!(r"{npm}\claude.ps1")]);
+        assert_eq!(pick_bin_for("claude", home, &path, true, |p| bin_ok(p, &has, &has, read)), None, "윈도우에서 확장자 없는 파일은 실행 파일이 아니다");
+    }
+
+    // 재현(qa-1101 win-env H1 남은 것): 바로가기(.cmd)로 띄우면 cmd 가 인자를 한 번 더 읽는다 — 여러 줄은 Rust 가 거절, 따옴표·<>·& 는 cmd 가 깨뜨림.
+    // 부르는 게 실행 파일 하나면 그걸 바로 띄운다
+    #[test]
+    fn npm_바로가기는_진짜_exe_로_바꿔_띄운다() {
+        let npm = r"C:\Users\a\AppData\Roaming\npm";
+        let shim = format!(r"{npm}\claude.cmd");
+        let exe = format!(r"{npm}\node_modules\@anthropic-ai\claude-code\bin\claude.exe");
+        let read = |p: &str| (p == shim).then(|| NPM_SHIM.to_string());
+        assert_eq!(shim_exe(&shim, read, |p| p == exe).as_deref(), Some(exe.as_str()));
+        assert_eq!(shim_exe(&shim, read, |_| false), None, "대상이 깨졌으면 바꾸지 않는다(찾기가 이미 건너뜀)");
+        let old = "endLocal & \"%_prog%\"  \"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js\" %*\r\n";
+        assert_eq!(shim_exe(&shim, |_| Some(old.to_string()), |_| true), None, "node 로 도는 옛 판(cli.js)은 바로가기 그대로");
+        assert_eq!(shim_exe(&exe, read, |_| true), None, "exe 는 그대로");
+        assert_eq!(shim_exe(&shim, |_| None, |_| true), None, "못 읽으면 그대로");
+    }
+
+    #[test]
+    fn 실행_파일이_아닌_후보는_건너뛴다() {
+        // 2026-11-01 win-first M4: 글자로 된 claude.exe 를 고르면 윈도우가 '지원되지 않는 16비트 응용 프로그램' 창을 15초마다 띄웠다.
+        // L1: npm 의 확장자 없는 sh 바로가기(claude)를 고르면 뒤에 멀쩡한 winget claude 가 있어도 '설치 안 됨'이었다
+        let home = r"C:\Users\a";
+        let local = format!(r"{home}\.local\bin\claude.exe");
+        let npm = format!(r"{home}\AppData\Roaming\npm");
+        let links = format!(r"{home}\AppData\Local\Microsoft\WinGet\Links");
+        let path = format!("{npm};{links}");
+        let sh = format!(r"{npm}\claude");
+        let winget = format!(r"{links}\claude.exe");
+        let has = |p: &str| [local.as_str(), sh.as_str(), winget.as_str()].contains(&p);
+        let pe = |p: &str| has(p) && p != local; // .local\bin\claude.exe 는 'MZ' 로 시작 안 하는 글자 파일
+        let read = |_: &str| None;
+        assert_eq!(pick_bin_for("claude", home, &path, true, |p| bin_ok(p, &has, &pe, read)).as_deref(), Some(winget.as_str()));
+        // 맥은 확장자 없는 이름이 맞다
+        assert_eq!(pick_bin_for("claude", "/h", "/opt/bin", false, |p| p == "/opt/bin/claude").as_deref(), Some("/opt/bin/claude"));
     }
 
     #[test]

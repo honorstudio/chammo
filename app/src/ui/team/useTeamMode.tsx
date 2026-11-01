@@ -3,9 +3,10 @@
 // - 참모로 돌아가기 = 띠의 참모 프사(SpaceView 가 onLeave). 팀 탭 줄은 팀마다 기억한다(domain/teamSpace)
 // - 떼기 아이콘은 모니터가 둘 이상일 때만(모니터 하나면 뗀 창이 스페이스를 가린다 — 10-23 이렇게 정함)
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { canDo, switchTargets } from '../../domain/teamSettings';
 import { teamAllRoom, teamRoomSet, teamTakeInvite, teamUse, teamWindowClose, teamWindowOpen, teamWindowState } from '../../data/teamApi';
-import { ALL_ROOM, allRoomPlan } from '../../domain/teamAllRoom';
-import { convos as buildConvos, roomConvos, unreadTotal, windowKey, type Convo } from '../../domain/teamChat';
+import { ALL_ROOM, allRoomPending, allRoomPlan } from '../../domain/teamAllRoom';
+import { convos as buildConvos, roomConvos, teamUnread, unreadTotal, windowKey, type Convo } from '../../domain/teamChat';
 import { lookOf, namedConvos } from '../../domain/teamProfile';
 import { closeTeamTab, openTeamCraft, openTeamFile, pickTeamTab, roomFilesKey, teamTabsOf, type TeamTabs } from '../../domain/teamSpace';
 import { ReviseBar } from './ReviseBar';
@@ -220,10 +221,13 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
     rail: team ? (
       <ProfilesCtx.Provider value={profiles}><TeamRail icon={profiles.board?.teamIcon || undefined} team={team} color={tint} chats={cs.length} on={on} unread={unreadTotal(cs)} wide={o.wide}
         onTeam={() => setOn(true)}
-        onMenu={(e) => setMenu({ x: e.clientX, y: e.clientY })} /></ProfilesCtx.Provider>
+        onMenu={(e) => setMenu({ x: e.clientX, y: e.clientY })}
+        others={view?.joined ? switchTargets({ teamId: view.teamId, teams: view.teams }).map((t) => ({ id: t.id, name: t.label, unread: teamUnread(view.rooms, feed?.items ?? [], data.read, t.id) })) : []}
+        onPickTeam={(id) => void teamUse(id).then(() => { setSel(null); setOn(true); data.refresh(); }, () => {})} /></ProfilesCtx.Provider>
     ) : null,
     // 팀 만들기·초대 — 참모 띠 + 메뉴에서(띠 RA '+ 하나', 2026-10-24 사용자)
-    add: {
+    // 초대할 수 없는 팀원은 '+' 가 팀챗 만들기만(11-01 QA M2 — 팀 초대를 누르면 막다른 창이었다)
+    add: team && !canDo(view, 'invite') ? { label: tr('팀챗 만들기', 'New team chat'), open: () => setPop({ kind: 'room' }) } : {
       label: team ? tr('팀 초대', 'Invite to team') : tr('팀 만들기', 'Make a team'), open: () => setPop({}),
       room: team ? { label: tr('팀챗 만들기', 'New team chat'), open: () => setPop({ kind: 'room' }) } : undefined,
     },
@@ -238,7 +242,8 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
                 : canDetach && <IconButton label={tr('메신저 따로 창으로', 'Open the messenger in its own window')} onClick={() => toWindow()}><IconWindowOut /></IconButton>}
             </div>
             <div className="tmx-list"><TeamList convos={shownDms(people, roomMenu.hidden)} rooms={rooms} sel={cur?.key ?? null} onPick={pick} onMenu={roomMenu.open}
-              onInvite={view.role === 'owner' ? () => setPop({ kind: 'link' }) : undefined} onNewRoom={() => setPop({ kind: 'room' })} /></div>
+              onInvite={canDo(view, 'invite') ? () => setPop({ kind: 'link' }) : undefined} onNewRoom={() => setPop({ kind: 'room' })}
+              roomsHint={allRoomPending(view) ? tr("팀장 앱이 켜지면 '전체' 팀챗이 생겨요", "The 'Everyone' team chat appears once the owner's app is on.") : undefined} /></div>
             <MeCell me={lookOf(profiles.board, meId, view.me)} rosterName={view.me} sub={`${team} · ${view.role === 'owner' ? tr('팀장', 'owner') : tr('팀원', 'member')}`} onSaved={profiles.reload} />
           </div>
           <div className="tmc-main">
@@ -263,14 +268,14 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
           <TeamSpaceView tabs={tabs} tabName={tabName} revise={(p) => <ReviseBar key={p} path={p} team={view.teamId} me={view.me} />} onHide={onHide} onUnfold={fold ? showChat : undefined} onPick={(k) => setTabs((t) => pickTeamTab(t, k))} onClose={(p) => setTabs((t) => closeTeamTab(t, p))} file={file}
             onSettings={() => setPop({ kind: 'settings' })}
             roomName={(r) => cs.find((c) => c.room === r)?.name ?? tr('대화', 'Chat')}
-            roomFiles={(r) => <TeamLocker key={`room:${r}`} teamId={view.teamId} team={team} people={view.members.length} follow onFollow={() => {}} room={{ id: r, name: cs.find((c) => c.room === r)?.name ?? tr('대화', 'Chat') }}
+            roomFiles={(r) => <TeamLocker key={`room:${r}`} teamId={view.teamId} team={team} people={view.members.length} follow onFollow={() => {}} canFiles={canDo(view, 'files')} room={{ id: r, name: cs.find((c) => c.room === r)?.name ?? tr('대화', 'Chat') }}
               onOpen={(p, dir) => (dir ? void lockerApi.reveal(p) : setTabs((t) => openTeamFile(t, p)))} />}
             cal={<TeamCal key={view.teamId} teamId={view.teamId} members={view.members} />}
             home={<TeamHomeDesktop teamId={view.teamId} team={team} members={view.members} icon={profiles.board?.teamIcon || undefined}
               calBlock={(b, editing) => <CalBlock key={view.teamId} teamId={view.teamId} wide={b.w === 'full'} editing={editing} onOpen={() => setTabs((t) => pickTeamTab(t, 'cal'))} />}
               onTalk={(text) => { const c = rooms[0] ?? cur; if (!c) return; setSel(c.key); showChat(); setSeed((s) => ({ text, n: (s?.n ?? 0) + 1 })); }} />}
             // 팀 설정은 탭 줄 끝 톱니라 보관함 머리 끝 자리는 비운다(빈 조각 — 없으면 옛 '팀 따라가기' 단추가 나온다)
-            locker={<TeamLocker teamId={view.teamId} team={team} people={view.members.length} follow onFollow={() => {}} icon={profiles.board?.teamIcon || undefined}
+            locker={<TeamLocker teamId={view.teamId} team={team} people={view.members.length} follow onFollow={() => {}} canFiles={canDo(view, 'files')} icon={profiles.board?.teamIcon || undefined}
               onOpen={(p, dir) => (dir ? void lockerApi.reveal(p) : setTabs((t) => openTeamFile(t, p)))} tail={<></>} />} />
         </ProfilesCtx.Provider>
       ),

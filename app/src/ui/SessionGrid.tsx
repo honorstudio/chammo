@@ -22,6 +22,7 @@ import { ChatView } from './chat/ChatView';
 import { tr } from '../i18n';
 import { attachCommand } from '../domain/termCommand';
 import { IS_WIN } from '../domain/reader';
+import { imagePasteKey } from '../domain/keys';
 import { runModelPick, type PickResult, type PickWant } from './chat/modelPickRun';
 import { claudeDefaults, pickLog } from '../data/tauri';
 import { orchColor, useAvatars } from './avatar';
@@ -442,7 +443,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           onInputFocus={() => panes.current.get(id)?.claimPtt()}
                           screen={(back) => panes.current.get(id)?.screen(back)}
                           submitTerminal={(expect) => { const api = panes.current.get(id); if (api) void typing.push(id, enterTask(api, expect)); }}
-                          pasteImage={() => panes.current.get(id)?.raw('\x16')}
+                          pasteImage={() => panes.current.get(id)?.raw(imagePasteKey(IS_WIN))}
                           voiceStop={voiceStops[id] ?? 0}
                           paneId={id}
                           locker={chat ? { id, name: s.name || id } : undefined}

@@ -207,3 +207,16 @@ describe('참모 모드 호스트 — 모드 하나당 claude 프로세스 하�
     expect(r.modes).toEqual([{ name: '달력 · 할 일', cpu: 0.3, rssKb: 246000 }]);
   });
 });
+
+describe('위 띠 부하 칩은 높을 때만(2026-11-01 ux-start M6, 사용자 "부하 높음"으로 짧고 평범하게)', () => {
+  it('빨강(high)일 때만 보인다 — 보통·주의는 숨김', async () => {
+    const { loadChipShown } = await import('./load');
+    expect(loadChipShown('high', false)).toBe(true);
+    expect(loadChipShown('warn', false)).toBe(false);
+    expect(loadChipShown('ok', false)).toBe(false);
+  });
+  it('부하 화면을 보고 있으면 돌아갈 자리로 늘 보인다', async () => {
+    const { loadChipShown } = await import('./load');
+    expect(loadChipShown('ok', true)).toBe(true);
+  });
+});

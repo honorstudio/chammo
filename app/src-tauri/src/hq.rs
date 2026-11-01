@@ -168,7 +168,7 @@ pub fn pin_data_dir(dir: &Path, data_dir: &str) -> std::io::Result<()> {
     // 상태줄 — 상단 바 5시간·주간 사용량과 세션별 대화 %를 남기는 앱 스크립트(사용자 원래 상태줄은 그 안에서 그대로 돈다).
     // 예전엔 주인 개인 상태줄 스크립트만 이 파일을 써서 새 사용자에겐 사용량이 영영 안 떴다(아이맥 실측)
     // 명령은 bash 가 읽는다 — 윈도우 경로의 \ 는 이스케이프로 먹히니 / 로만(C:/Users/…, Git Bash 가 알아듣는다)
-    v["statusLine"] = serde_json::json!({ "type": "command", "command": statusline_path(Path::new(data_dir)).to_string_lossy().replace('\\', "/") });
+    v["statusLine"] = serde_json::json!({ "type": "command", "command": statusline_cmd(Path::new(data_dir)) });
     // 참모는 사용자에게 선택지 창(AskUserQuestion)을 띄우지 않는다 — 채팅 뷰엔 안 보여 터미널로 가야 했고,
     // 쉬운 건 스스로 정하고 중요한 것만 답 끝에 글로 묻는 게 참모 일이다(2026-10-01 사용자). 막으면 도구가 아예 빠진다(우회 모드에서도)
     if !v["permissions"].is_object() {
@@ -250,13 +250,26 @@ pub fn personal_data(data: &Path) -> bool {
     data.ends_with(".honor-orchestrator")
 }
 
+/// 설정은 끝났는데 HQ 가 없으면(지웠거나 옮김) 새로 깐다 — 없으면 '새 참모 만들기'가 "디렉터리 이름이 올바르지 않습니다(os error 267)"로
+/// 실패했다(2026-11-01 윈도우 시험판). 마법사 전에는 안 만든다(사람이 HQ 자리를 고른다). 깔았으면 true
+pub fn ensure_app_hq(dir: &Path, setup_done: bool) -> bool {
+    if !setup_done || dir.as_os_str().is_empty() || dir.join("scripts/task").is_file() {
+        return false;
+    }
+    install(dir, false).is_ok()
+}
+
 /// 앱의 HQ 를 새로 깐다 — 켤 때·설정에서 언어를 바꿀 때. 개인 HQ(옛 데이터 폴더 이름)는 그 저장소가 직접 관리해서 건드리지 않는다
 pub fn refresh_app_hq() {
     let data = crate::config::data_dir();
     if personal_data(&data) {
         return;
     }
-    let hq_dir = crate::config::hq_dir(&crate::config::home(), &crate::config::current(), |k| std::env::var(k).ok());
+    let c = crate::config::current();
+    let hq_dir = crate::config::hq_dir(&crate::config::home(), &c, |k| std::env::var(k).ok());
+    if ensure_app_hq(Path::new(&hq_dir), c.setup_done) {
+        crate::claude::log_out("hq", &format!("HQ was missing after setup — laid it again: {hq_dir}"));
+    }
     if Path::new(&hq_dir).join("scripts/task").is_file() {
         let _ = refresh(Path::new(&hq_dir));
         let _ = pin_data_dir(Path::new(&hq_dir), &data.to_string_lossy());
@@ -283,9 +296,31 @@ pub fn export_statusline(data: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// 우리 상태줄인가 — 어느 데이터 폴더든 `<데이터>/tools/statusline`(시험 폴더에서 붙은 옛 것도 지금 것으로 바꾼다)
+/// 상태줄 명령 글 — 셸(윈도우 Git Bash)이 읽는다: 경로는 / 로만(\U·\t 를 먹었다), 빈칸 같은 셸 글자가 있으면 큰따옴표로
+/// (C:/Users/John Smith/… 가 빈칸에서 쪼개져 상태줄·사용량이 안 떴다, 2026-11-01 win-text M1)
+pub fn statusline_cmd(data: &Path) -> String {
+    shell_word(&statusline_path(data).to_string_lossy().replace('\\', "/"))
+}
+
+/// 셸 낱말 하나로 — 안전한 글자뿐이면 그대로, 아니면 "…"(안의 \ " $ ` 앞엔 \)
+pub fn shell_word(s: &str) -> String {
+    if !s.is_empty() && s.chars().all(|c| !c.is_ascii() || c.is_ascii_alphanumeric() || "/._-:@%+=,~".contains(c)) {
+        return s.to_string();
+    }
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        if matches!(c, '\\' | '"' | '$' | '`') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
+}
+
+/// 우리 상태줄인가 — 어느 데이터 폴더든 `<데이터>/tools/statusline`(시험 폴더에서 붙은 옛 것도 지금 것으로 바꾼다). 따옴표 친 것도
 fn ours(cmd: &str) -> bool {
-    cmd.replace('\\', "/").ends_with("/tools/statusline")
+    cmd.trim().trim_matches('"').replace('\\', "/").ends_with("/tools/statusline")
 }
 
 /// 이 프로젝트에 settings.local.json 을 새로 만들어도 되나 — git 저장소가 아니거나 git 이 그 파일을 무시할 때만.
@@ -363,7 +398,7 @@ pub fn attach_statusline_all(data: &Path) -> usize {
         return 0;
     }
     let folders = with_worktrees(crate::project::dirs(&home, &c.dev_root, &c.extra_projects).into_iter().map(|(_, p)| p).collect());
-    let cmd = statusline_path(data).to_string_lossy().replace('\\', "/");
+    let cmd = statusline_cmd(data);
     attach_statusline_in(&folders, &cmd, may_create_local)
 }
 
@@ -435,6 +470,21 @@ pub fn make_dir(dir: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    // 2026-11-01 윈도우 시험판: 설정은 끝났는데 HQ 폴더가 없으면(지웠거나 옮김) 켤 때 새로 깔지 않아 '새 참모 만들기'가
+    // "디렉터리 이름이 올바르지 않습니다(os error 267)"로 실패했다 — 켤 때 다시 깐다
+    #[test]
+    fn 설정이_끝났는데_hq_가_없으면_켤_때_다시_깐다() {
+        let d = std::env::temp_dir().join(format!("chammo-hq-gone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        assert!(super::ensure_app_hq(&d, true), "설정 끝남 + 없음 → 깐다");
+        assert!(d.join("scripts/task").is_file() && d.join("CHAMMO.md").is_file());
+        assert!(!super::ensure_app_hq(&d, true), "이미 있으면 새로 깔지 않는다(새로 쓰기는 refresh 몫)");
+        let e = std::env::temp_dir().join(format!("chammo-hq-wizard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&e);
+        assert!(!super::ensure_app_hq(&e, false) && !e.exists(), "마법사 전에는 안 만든다(사람이 HQ 자리를 고른다)");
+        assert!(!super::ensure_app_hq(std::path::Path::new(""), true), "빈 경로는 아니다");
+        let _ = std::fs::remove_dir_all(&d);
+    }
     use super::*;
     use std::path::PathBuf;
 
@@ -585,6 +635,20 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join(".claude/settings.json")).unwrap()).unwrap();
         let deny: Vec<&str> = v["permissions"]["deny"].as_array().unwrap().iter().filter_map(|x| x.as_str()).collect();
         assert_eq!(deny, vec!["Bash(rm -rf /)", "AskUserQuestion"]); // 사용자 것은 그대로, 두 번 불러도 한 번만
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 상태줄_경로에_빈칸이_있으면_따옴표로() {
+        // Claude 는 상태줄 명령을 셸(윈도우 Git Bash)로 돌려 C:/Users/John Smith/… 가 빈칸에서 쪼개졌다(2026-11-01 win-text M1)
+        let d = temp("env-space");
+        install(&d, false).unwrap();
+        pin_data_dir(&d, r"C:\Users\John Smith\.chammo").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join(".claude/settings.json")).unwrap()).unwrap();
+        assert_eq!(v["statusLine"]["command"], "\"C:/Users/John Smith/.chammo/tools/statusline\"");
+        assert!(ours("\"C:/Users/John Smith/.chammo/tools/statusline\""), "따옴표 친 것도 우리 것");
+        assert_eq!(shell_word("/Users/me/.chammo/tools/statusline"), "/Users/me/.chammo/tools/statusline", "필요 없으면 그대로");
+        assert_eq!(shell_word("/a b/$x`y\"z"), "\"/a b/\\$x\\`y\\\"z\"");
         let _ = std::fs::remove_dir_all(&d);
     }
 

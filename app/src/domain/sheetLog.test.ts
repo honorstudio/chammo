@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blockedOf, cellState, compile, fromCalc, fromMutation, keptOnMerge, saveHeld, strandedOnClose, type CellState, type LogCtx } from './sheetLog';
+import { blockedOf, cellState, compile, fromCalc, fromMutation, keptOnMerge, saveErrKind, saveHeld, strandedOnClose, type CellState, type LogCtx } from './sheetLog';
 
 // 지어낸 시트 — s0 은 불러온 시트(부품 경로), 새 시트는 이름이 열쇠
 function ctx(cells: Record<string, CellState> = {}) {
@@ -111,5 +111,13 @@ describe('keptOnMerge — 바깥 판 위에 다시 얹을 고침(2026-10-21 리�
   it('참모 칸 쓰기는 남기고 표가 스스로 다시 계산한 칸만 뺀다', () => {
     const log = [cell({ r: 1 }), cell({ r: 2, calc: true, agent: true }), cell({ r: 3, calc: true })];
     expect(keptOnMerge(log).map((e) => (e.k === 'cell' ? e.r : -1))).toEqual([1, 2]);
+  });
+});
+
+describe('표 저장 실패 — 다른 앱이 쥔 파일은 따로(11-01 QA H12)', () => {
+  it('Rust FILE_BUSY 이름이 붙으면 busy, 그 밖은 other', () => {
+    expect(saveErrKind('FILE_BUSY 다른 프로세스가 파일을 사용 중이기 때문에… (os error 32)')).toBe('busy');
+    expect(saveErrKind('저장본을 다시 못 읽어서 안 썼어: x')).toBe('other');
+    expect(saveErrKind(undefined)).toBe('other');
   });
 });

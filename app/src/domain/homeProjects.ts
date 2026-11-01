@@ -3,7 +3,7 @@
 import { cellState, type CellFacts, type CellState } from './goalBar';
 import { findTarget } from './inbox';
 import type { Session } from './session';
-import type { ActivityStatus } from './status';
+import { heldOf, type ActivityStatus, type Held } from './status';
 import { workDayStart, type TaskEvent } from './tasks';
 
 const H = 3600_000;
@@ -12,14 +12,17 @@ const ACTIVE_MS = 24 * H;
 /** 상태를 셀 때 보는 send 범위 — 진행 칸과 같은 7일 */
 const WINDOW_MS = 7 * 24 * H;
 
-/** 막힘 · 답 기다림 · 오래 조용 · 일하는 중 · 기다림(밖) · 쉼 · 오늘 끝남 — 앞일수록 급하다 */
+/** 중단됨(세션이 답 없이 꺼짐) · 답 기다림(물음·세션 멈춤) · 오래 조용 · 일하는 중 · 기다림(밖) · 쉼 · 오늘 끝남 — 앞일수록 급하다 */
 export type ProjState = 'stop' | 'ask' | 'quiet' | 'run' | 'wait' | 'rest' | 'done';
 const ORDER: ProjState[] = ['stop', 'ask', 'quiet', 'run', 'wait', 'rest', 'done'];
 const rank = (s: ProjState) => ORDER.indexOf(s);
 
-export type ProjTask = { task: string; title: string; target: string; state: ProjState; at: number; orch?: string };
+/** held = ask 가 세션 멈춤(선택지·권한 창·로그인 풀림)에서 왔으면 그 까닭 — 말은 statusWord(held), 진행 칸과 같은 판단 */
+export type ProjTask = { task: string; title: string; target: string; state: ProjState; at: number; orch?: string; held?: Held };
 export type ProjRow = {
   name: string; state: ProjState;
+  /** 줄 상태가 세션 멈춤에서 왔으면 그 까닭 */
+  held?: Held;
   /** 지금 하는 일 한 줄 — 가장 급한 안 끝난 일의 제목(없으면 세션의 지금 줄) */
   line: string;
   /** 그 상태의 때 — 가장 급한 일의 마지막 기척(오늘 끝남은 끝난 때) */
@@ -34,7 +37,7 @@ export type ProjRow = {
 
 const fromCell = (c: CellState): ProjState => (c === 'done' || c === 'auto' ? 'done' : c === 'todo' ? 'rest' : c);
 const fromSession = (st: ActivityStatus): ProjState | null =>
-  st === 'blocked' || st === 'login' ? 'stop' : st === 'asks' ? 'ask' : st === 'working' ? 'run' : null;
+  heldOf(st) || st === 'asks' ? 'ask' : st === 'working' ? 'run' : null;
 
 /** groups = 프로젝트 묶음(session.groupByProject — 참모·도우미·예약 밖), sessions = 모든 세션(꺼진 일의 대상 찾기) */
 export function homeProjects(o: {
@@ -77,13 +80,21 @@ export function homeProjects(o: {
 
   const today = workDayStart(now);
   const byProject = new Map<string, { tasks: ProjTask[]; until?: number; sends: { orch: string; at: number }[] }>();
+  // 세션마다 가장 새 일만 세션의 지금 상태를 따른다(goalBar 와 같은 규칙, ux-daily M5)
+  const keyOf = (a: Acc) => findTarget(o.sessions, a.send.target)?.id ?? a.send.target ?? '';
+  const newest = new Map<string, Acc>();
+  for (const a of acc.values()) if (Date.parse(a.send.ts) >= Date.parse(newest.get(keyOf(a))?.send.ts ?? '1970-01-01')) newest.set(keyOf(a), a);
   for (const a of acc.values()) {
-    const s = findTarget(o.sessions, a.send.target);
+    const s0 = findTarget(o.sessions, a.send.target);
+    const latest = newest.get(keyOf(a)) === a;
+    const s = s0 && !latest ? { ...s0, state: 'idle' as const } : s0;
+    const st = latest && s0 ? o.statusOf(s0) : undefined;
     // 살아 있는 대상이 프로젝트 묶음 밖(참모·도우미)이면 프로젝트 일이 아니다
     if (s && !inGroup.has(s.id)) continue;
     const project = (s && inGroup.get(s.id)) ?? a.send.project;
     if (!project) continue;
-    const state = fromCell(cellState(a.f, s, now));
+    const state = fromCell(cellState(a.f, s, now, undefined, st));
+    const held = state === 'ask' && !(a.f.asks > a.f.answers) ? heldOf(st) : undefined;
     const live = a.f.wait && (a.f.wait.until === undefined || now < a.f.wait.until);
     const at = state === 'done' ? a.endAt ?? a.f.lastAt : a.f.lastAt;
     // 안 끝난 일은 24시간 안 기척·물음·기다림만, 끝난 일은 오늘 끝난 것만
@@ -91,7 +102,7 @@ export function homeProjects(o: {
     if (!keep) continue;
     const p = byProject.get(project) ?? { tasks: [], sends: [] };
     const orch = a.send.from && o.orchIds.includes(a.send.from) ? a.send.from : undefined;
-    p.tasks.push({ task: a.send.task, title: a.send.title ?? '', target: a.send.target ?? '', state, at, ...(orch ? { orch } : {}) });
+    p.tasks.push({ task: a.send.task, title: a.send.title ?? '', target: a.send.target ?? '', state, at, ...(orch ? { orch } : {}), ...(held ? { held } : {}) });
     if (orch) p.sends.push({ orch, at: Date.parse(a.send.ts) });
     if (state === 'wait' && a.f.wait?.until) p.until = Math.max(p.until ?? 0, a.f.wait.until);
     byProject.set(project, p);
@@ -107,10 +118,12 @@ export function homeProjects(o: {
     const state = [sesState, top?.state, sessions.length && !top ? 'rest' as const : undefined].filter((x): x is ProjState => !!x).sort((x, y) => rank(x) - rank(y))[0] ?? 'rest';
     const open = tasks.find((t) => t.state !== 'done');
     const working = sessions.find((s) => fromSession(o.statusOf(s)) === state);
+    // 까닭 — 줄 상태가 물음(task ask)이 아니라 세션 멈춤에서 왔을 때만(물음이 걸린 일이 있으면 그 말이 먼저)
+    const held = state === 'ask' && !tasks.some((t) => t.state === 'ask' && !t.held) ? (tasks.find((t) => t.held)?.held ?? sessions.map((s) => heldOf(o.statusOf(s))).find(Boolean)) : undefined;
     const line = open?.title || (working && o.lineOf?.(working)) || (state === 'done' ? top?.title : undefined) || '';
     const orchs = [...new Map([...p.sends].sort((x, y) => y.at - x.at).map((x) => [x.orch, x.orch])).keys()];
     const at = top ? (state === 'done' ? Math.max(...tasks.map((t) => t.at)) : top.at) : 0;
-    return { name, state, line, at, ...(state === 'wait' && p.until ? { until: p.until } : {}), orchs, sessions, tasks };
+    return { name, state, ...(held ? { held } : {}), line, at, ...(state === 'wait' && p.until ? { until: p.until } : {}), orchs, sessions, tasks };
   });
   const sort = (a: ProjRow, b: ProjRow) => rank(a.state) - rank(b.state) || b.at - a.at || a.name.localeCompare(b.name);
   return { live: rows.filter((r) => r.state !== 'done').sort(sort), done: rows.filter((r) => r.state === 'done').sort(sort) };

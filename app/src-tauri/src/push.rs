@@ -184,16 +184,50 @@ pub fn live_subs(list: &[Sub], devices: &[String]) -> Vec<Sub> {
     list.iter().filter(|s| devices.contains(&s.device)).cloned().collect()
 }
 
+/// 이 컴퓨터 VAPID 로 직접 보낼 구독 — 중계 길 폰(relayed)은 중계 VAPID 로 구독해서 빼야 한다(직접 보내면 푸시 서버 403)
+pub fn direct_subs(list: &[Sub], devices: &[String], relayed: &[String]) -> Vec<Sub> {
+    live_subs(list, devices).into_iter().filter(|s| !relayed.contains(&s.device)).collect()
+}
+
+/// 그 기기의 가장 최근 구독(폰이 다시 구독하면 주소·열쇠가 함께 바뀐다)
+pub fn latest_sub<'a>(list: &'a [Sub], device: &str) -> Option<&'a Sub> {
+    list.iter().filter(|s| s.device == device).max_by_key(|s| s.at)
+}
+
+/// 중계 /v0/push/notify 가 받는 암호문 상한(바이트) — 중계 PUSH_BODY_MAX 와 같은 값
+pub const RELAY_BODY_MAX: usize = 2048;
+
+/// 중계 길 폰 하나에 맡길 부탁(ADR 0013 결정 7, 2026-11-01 갱신) — 폰이 터널로 알려 준 구독 열쇠(p256dh·auth)로 봉한 본문과
+/// 구독 주소 해시(sub)를 싣는다. 중계는 auth 를 몰라 풀지도 지어내지도 못하고 그대로 실어 보낸다.
+/// 열쇠를 모르거나 못 봉하면 지금처럼 { to } 만 — 폰은 '새 메시지'
+pub fn relay_notify_body(to: &str, sub: Option<&Sub>, msg: &[u8]) -> serde_json::Value {
+    let sealed = sub.and_then(|s| {
+        let ua = URL.decode(&s.p256dh).ok()?;
+        let auth = URL.decode(&s.auth).ok()?;
+        let enc = encrypt(msg, &ua, &auth).ok().filter(|e| e.len() <= RELAY_BODY_MAX)?;
+        Some((URL.encode(enc), URL.encode(<Sha256 as sha2::Digest>::digest(s.endpoint.as_bytes()))))
+    });
+    match sealed {
+        Some((body, h)) => serde_json::json!({ "to": to, "body": body, "sub": h }),
+        None => serde_json::json!({ "to": to }),
+    }
+}
+
 /// 푸시 서버가 '그 구독 없다'고 하면 지운다
 pub fn gone(status: u16) -> bool {
     status == 404 || status == 410
 }
 
 /// 폰에 보일 것 — 제목 + 첫 줄 앞부분만(대화 내용·비밀은 최소로), 누르면 갈 곳(target = domain/notify noteTarget)
+/// 잠금 화면 미리보기에 뜨므로 비밀번호·키처럼 생긴 것은 자르기 전에 가린다(자르다 남은 앞부분이 보이지 않게)
 pub fn payload(title: &str, body: &str, target: &str) -> Vec<u8> {
+    let hide = |t: &str| crate::messenger_text::redact(t, "", "");
+    let title = hide(title);
     let line = body.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let line = hide(line);
+    let line = line.as_str();
     let line: String = if line.chars().count() > LINE_MAX { format!("{}…", line.chars().take(LINE_MAX).collect::<String>()) } else { line.to_string() };
-    serde_json::json!({ "title": title.chars().take(80).collect::<String>(), "body": line, "target": target }).to_string().into_bytes()
+    serde_json::json!({ "title": title.chars().take(80).collect::<String>(), "body": line, "target": if target.len() <= 200 { target } else { "" } }).to_string().into_bytes()
 }
 
 // ── 맥 쪽 저장·보내기 ────────────────────────────────────────
@@ -330,13 +364,16 @@ pub fn send_all(title: &str, body: &str, target: &str) {
     keep_last(&dir, target, now_ms());
     let pair = crate::mobile_pair::Devices::open(&dir);
     let devices: Vec<String> = pair.list().into_iter().map(|d| d.id).collect();
-    // 중계로 짝지은 폰은 중계 VAPID 로 구독해서 이 컴퓨터 열쇠로는 못 보낸다 — 중계에 본문 없는 푸시를 부탁한다(ADR 0013)
-    crate::phone_relay::notify_phones(&dir, devices.iter().filter_map(|id| pair.relay_of(id)).collect());
-    let subs = live_subs(&read_subs(&dir), &devices);
+    // 중계로 짝지은 폰은 중계 VAPID 로 구독해서 이 컴퓨터 열쇠로는 못 보낸다 — 중계에 부탁하되, 폰이 알려 준 구독 열쇠로 봉한 본문을 싣는다(ADR 0013)
+    let all = read_subs(&dir);
+    let msg = payload(title, body, target);
+    let relayed: Vec<(String, String)> = devices.iter().filter_map(|id| pair.relay_of(id).map(|r| (id.clone(), r))).collect();
+    crate::phone_relay::notify_phones(&dir, relayed.iter().map(|(id, r)| relay_notify_body(r, latest_sub(&all, id), &msg)).collect());
+    let relayed: Vec<String> = relayed.into_iter().map(|(id, _)| id).collect();
+    let subs = direct_subs(&all, &devices, &relayed);
     if subs.is_empty() {
         return;
     }
-    let msg = payload(title, body, target);
     std::thread::spawn(move || {
         let Ok(v) = vapid(&dir) else { return };
         for s in subs {

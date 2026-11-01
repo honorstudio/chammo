@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allFolders, folderFiles, crumbsOf, dirId, dropPlan, lockerUps, kidFolders, moveTargets, renamedPath, fmtBytes, inPlace, inRoom, thumbKind, isTeamCache, opensInSpace, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerUpload } from './teamLocker';
+import { allFolders, canPurge, othersOf, folderFiles, crumbsOf, dirId, dropPlan, lockerUps, kidFolders, moveTargets, renamedPath, fmtBytes, inPlace, inRoom, thumbKind, phoneView, isTeamCache, opensInSpace, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerUpload } from './teamLocker';
 
 const it0 = (o: Partial<LockerItem>): LockerItem => ({ id: 'x', name: 'a.pdf', size: 1, cipher: 17, at: 0, state: 'live', kind: 'file', room: '', folder: '', by: '사용자', byMember: 'm1', mine: false, why: '', deletedAt: null, ...o });
 
@@ -191,5 +191,37 @@ describe('folderFiles — 팀 폴더째 내 참모에게(2026-10-30)', () => {
   });
   it('맨 위(빈 글)는 폴더가 아니라 빈 목록', () => {
     expect(folderFiles(xs, '')).toEqual([]);
+  });
+});
+
+describe('남의 파일(11-01 QA M3)', () => {
+  it('영구 지우기는 내 파일이거나 파일 정리 권한일 때만 보인다 — 서버 purgeFile 과 같은 판단', () => {
+    expect(canPurge(it0({ mine: true }), false)).toBe(true);
+    expect(canPurge(it0({ mine: false }), false)).toBe(false);
+    expect(canPurge(it0({ mine: false }), true)).toBe(true);
+  });
+  it('휴지통·이름 바꾸기 전에 물을 남의 파일 — 올린 사람 이름과 함께', () => {
+    const xs = [it0({ id: 'a', mine: true }), it0({ id: 'b', by: '민아' }), it0({ id: 'c', by: '준호' })];
+    expect(othersOf(xs).map((i) => i.id)).toEqual(['b', 'c']);
+    expect(othersOf([xs[0]!])).toEqual([]);
+  });
+});
+
+describe('폰에서 누르면 보는 팀 파일(11-01 사용자 "팀 홈 최근 파일을 눌러도 안 열린다")', () => {
+  const MB = 1024 ** 2;
+  it('맥이 풀어 주는 그림(/api/team-file-image 가 받는 것) = image, PDF = pdf(첫 장)', () => {
+    for (const n of ['a.png', 'b.JPG', 'c.jpeg', 'd.gif', 'e.webp', 'IMG_1.HEIC', 'f.heif']) expect(phoneView({ name: n, size: MB }), n).toBe('image');
+    expect(phoneView({ name: '견적서.pdf', size: 2 * MB })).toBe('pdf');
+  });
+  it('맥이 그림으로 안 주는 것(svg·tiff)·문서·엑셀·영상·글은 볼 길이 없다 — null', () => {
+    for (const n of ['a.svg', 'b.tiff', '계약서.docx', '정산.xlsx', '발표.pptx', '영상.mp4', '메모.txt', '이름없음']) expect(phoneView({ name: n, size: MB }), n).toBeNull();
+  });
+  it('50MB 넘으면 맥이 안 푼다(peek) — null', () => {
+    expect(phoneView({ name: 'big.png', size: 50 * MB })).toBe('image');
+    expect(phoneView({ name: 'big.png', size: 50 * MB + 1 })).toBeNull();
+    expect(phoneView({ name: 'big.pdf', size: 51 * MB })).toBeNull();
+  });
+  it('못 여는 줄(why — 열쇠 없음 등)은 null', () => {
+    expect(phoneView(it0({ name: 'a.png', why: '열쇠 없음' }))).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 // 팀 만들기·초대받기 팝업(TeamStart) — 어느 화면을 보여 줄지(순수 함수). 링크로 앱이 열렸을 때(딥링크)도 같은 판단
 import { describe, expect, it } from 'vitest';
-import { startScreen } from './teamStart';
+import { needStart, startScreen } from './teamStart';
 
 const base = { joined: false, account: null as { email: string; name: string } | null };
 
@@ -29,5 +29,18 @@ describe('팀 시작 팝업 화면 고르기', () => {
     expect(startScreen(old, { invite: '', wantJoin: false })).toBe('invite');
     expect(startScreen(old, { invite: 'https://chammo.app/join#Ab', wantJoin: false })).toBe('already');
     expect(startScreen(old, { invite: '', wantJoin: true })).toBe('already');
+  });
+});
+
+describe("팀 팝업에서 계정을 아직 시작 안 했으면 '여기서 시작'(2026-11-01 ux-team H2)", () => {
+  it('만들기·들어가기 화면이고 단계가 start 면 보인다', () => {
+    expect(needStart('make', 'start')).toBe(true);
+    expect(needStart('join', 'start')).toBe(true);
+  });
+  it('다른 화면·다른 단계엔 안 보인다', () => {
+    expect(needStart('login', 'start')).toBe(false);
+    expect(needStart('invite', 'start')).toBe(false);
+    expect(needStart('make', '')).toBe(false);
+    expect(needStart('make', 'need')).toBe(false);
   });
 });

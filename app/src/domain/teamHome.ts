@@ -29,6 +29,8 @@ export type HomeSources = {
   /** fresh = 보관함 판이 올랐다(망으로 새로) */
   files: (team: string, fresh: boolean) => Promise<LockerItem[]>;
   openFile?: (team: string, i: LockerItem) => void;
+  /** 이 줄을 열 수 있나 — 없으면 다(데스크톱). 폰은 그림·PDF 만 */
+  canOpen?: (i: LockerItem) => boolean;
   openUrl: (url: string) => void;
 };
 

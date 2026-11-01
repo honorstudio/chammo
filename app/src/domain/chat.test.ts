@@ -194,12 +194,24 @@ describe('보내는 중·작업 중', () => {
     expect(stillPending(['테스트 돌려줘 ', '다음 거'], items)).toEqual(['다음 거']);
   });
 
-  it('작업 중 = 세션이 일하는 중이고 마지막이 답이 아닐 때(백그라운드 참모는 쉬어도 working 이라)', () => {
+  it('작업 중 = 세션이 일하는 중이고 턴 끝 답(end_turn)으로 안 끝났을 때(백그라운드 참모는 쉬어도 working 이라)', () => {
     const asked = parseChat(user('u1', '해줘'));
-    const answered = parseChat([user('u1', '해줘'), asst('a1', [text('했어')])].join('\n'));
+    const answered = parseChat([user('u1', '해줘'), asst('a1', [text('했어')], { message: { role: 'assistant', content: [text('했어')], stop_reason: 'end_turn' } })].join('\n'));
     expect(chatBusy('working', asked)).toBe(true);
     expect(chatBusy('working', answered)).toBe(false);
     expect(chatBusy('idle', asked)).toBe(false);
+  });
+  // 2026-11-01 ux-daily M10 — "확인해 볼게"처럼 글을 쓰고 이어서 생각·큰 Write 를 하는 동안 스피너·멈춤 단추가 사라져 끝난 것처럼 보였다
+  it('턴 중간 글(tool_use·아직 stop_reason 없음)로 끝나면 여전히 작업 중', () => {
+    const mid = parseChat([user('u1', '해줘'), asst('a1', [text('확인해 볼게')], { message: { role: 'assistant', content: [text('확인해 볼게')], stop_reason: 'tool_use' } })].join('\n'));
+    const streaming = parseChat([user('u1', '해줘'), asst('a1', [text('확인해 볼게')])].join('\n'));
+    expect(chatBusy('working', mid)).toBe(true);
+    expect(chatBusy('working', streaming)).toBe(true);
+    // 같은 말풍선으로 합쳐진 뒤 조각이 턴 끝이면 끝
+    const ended = parseChat([user('u1', '해줘'), asst('a1', [text('확인해 볼게')]), asst('a2', [text('끝났어')], { message: { role: 'assistant', content: [text('끝났어')], stop_reason: 'end_turn' } })].join('\n'));
+    expect(chatBusy('working', ended)).toBe(false);
+    const stopSeq = parseChat([user('u1', '해줘'), asst('a1', [text('끝')], { message: { role: 'assistant', content: [text('끝')], stop_reason: 'stop_sequence' } })].join('\n'));
+    expect(chatBusy('working', stopSeq)).toBe(false);
   });
 });
 

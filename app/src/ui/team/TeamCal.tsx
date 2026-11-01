@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { tr } from '../../i18n';
 import { desktopCal, type CalApi } from '../../data/teamCalApi';
 import {
-  addDays, byDay, lostLine, monthCells, newCalId, occurrences, skipDay, weekDays, withDone, ymd,
+  addDays, byDay, lostLine, monthCells, newCalId, newEventDay, occurrences, shownSpan, skipDay, weekDays, withDone, ymd,
   type CalData, type CalItem, type Occ,
 } from '../../domain/teamCal';
 import { stamp } from '../../domain/teamChat';
@@ -30,6 +30,7 @@ export function TeamCal({ teamId, members, api = desktopCal, phone, Dialog = Tea
   const today = ymd(new Date());
   const [view, setView] = useState<View>(phone ? 'list' : 'month');
   const [anchor, setAnchor] = useState(today);
+  const [picked, setPicked] = useState<string | null>(null); // 누른 날짜 — + 새 일정이 그날로(newEventDay)
   const [open, setOpen] = useState<Occ | null>(null);
   const [edit, setEdit] = useState<{ item: CalItem | null; day: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -117,7 +118,7 @@ export function TeamCal({ teamId, members, api = desktopCal, phone, Dialog = Tea
             </div>
           )}
         </span>
-        <IconButton size={phone ? 'l' : 's'} tone="pri" label={tr('일정 만들기', 'New event')} onClick={() => setEdit({ item: null, day: view === 'month' && anchor.slice(0, 7) !== today.slice(0, 7) ? anchor : today })}><IconPlus /></IconButton>
+        <IconButton size={phone ? 'l' : 's'} tone="pri" label={tr('일정 만들기', 'New event')} onClick={() => setEdit({ item: null, day: newEventDay(picked, shownSpan(view, anchor), today) })}><IconPlus /></IconButton>
       </div>
       {err && !snap && <div className="tcal-banner" role="alert">{tr('팀 일정을 못 불러왔어요 — ', "Couldn't load team events — ")}{err}</div>}
       {snap?.cached && <div className="tcal-banner soft">{tr('마지막으로 받은 일정이에요 — 새로 받는 중', 'Showing the last events — refreshing')}</div>}
@@ -128,7 +129,7 @@ export function TeamCal({ teamId, members, api = desktopCal, phone, Dialog = Tea
           {days.map((day) => {
             const list = cells.get(day) ?? [];
             return (
-              <div key={day} className={`tcal-day ${day.slice(0, 7) !== anchor.slice(0, 7) ? 'out' : ''} ${day === today ? 'now' : ''}`} onDoubleClick={() => setEdit({ item: null, day })}>
+              <div key={day} className={`tcal-day ${day.slice(0, 7) !== anchor.slice(0, 7) ? 'out' : ''} ${day === today ? 'now' : ''} ${day === picked ? 'on' : ''}`} onClick={() => setPicked(day)} onDoubleClick={() => setEdit({ item: null, day })}>
                 <div className="tcal-dn"><span>{Number(day.slice(8))}</span></div>
                 {list.slice(0, 3).map((o) => chip(o, false))}
                 {list.length > 3 && <button className="tcal-more" onClick={() => { setAnchor(day); setView('list'); }}>{tr(`+${list.length - 3}개`, `+${list.length - 3}`)}</button>}
@@ -140,14 +141,14 @@ export function TeamCal({ teamId, members, api = desktopCal, phone, Dialog = Tea
 
       {view === 'week' && (
         <div className="tcal-week">
-          <div className="tcal-wh"><span />{days.map((day, i) => <span key={day} className={day === today ? 'now' : ''}>{DOW()[i] ?? ''}<b>{Number(day.slice(8))}</b></span>)}</div>
+          <div className="tcal-wh"><span />{days.map((day, i) => <span key={day} className={`${day === today ? 'now' : ''} ${day === picked ? 'on' : ''}`} onClick={() => setPicked(day)}>{DOW()[i] ?? ''}<b>{Number(day.slice(8))}</b></span>)}</div>
           <div className="tcal-wall"><span className="tcal-wlab">{tr('종일', 'All day')}</span>
             {days.map((day) => <div key={day} onDoubleClick={() => setEdit({ item: null, day })}>{(cells.get(day) ?? []).filter((o) => o.allDay).map((o) => chip(o))}</div>)}
           </div>
           <div className="tcal-wgrid">
             <div className="tcal-wtimes">{HOURS.map((h) => <span key={h} style={{ height: HOUR_PX }}>{`${h}:00`}</span>)}</div>
             {days.map((day) => (
-              <div key={day} className="tcal-wcol" style={{ height: HOURS.length * HOUR_PX }} onDoubleClick={() => setEdit({ item: null, day })}>
+              <div key={day} className={`tcal-wcol ${day === picked ? 'on' : ''}`} style={{ height: HOURS.length * HOUR_PX }} onClick={() => setPicked(day)} onDoubleClick={() => setEdit({ item: null, day })}>
                 {(cells.get(day) ?? []).filter((o) => !o.allDay && o.day === day).map((o) => {
                   const s = new Date(o.startMs);
                   const top = Math.max(0, (s.getHours() + s.getMinutes() / 60 - HOURS[0]!) * HOUR_PX);
@@ -166,7 +167,7 @@ export function TeamCal({ teamId, members, api = desktopCal, phone, Dialog = Tea
           {weekDays(anchor).map((day, i) => {
             const dots = occurrences(items, day, addDays(day, 1), { hideDone }).slice(0, 3);
             return (
-              <button key={day} className={`${day === today ? 'now' : ''} ${day === anchor ? 'on' : ''}`} aria-pressed={day === anchor} onClick={() => setAnchor(day)}>
+              <button key={day} className={`${day === today ? 'now' : ''} ${day === anchor ? 'on' : ''}`} aria-pressed={day === anchor} onClick={() => { setAnchor(day); setPicked(day); }}>
                 {DOW()[i] ?? ''}<b>{Number(day.slice(8))}</b><em>{dots.map((o) => <i key={o.key} className={`l-${o.label}`} />)}</em>
               </button>
             );

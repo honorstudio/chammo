@@ -146,7 +146,7 @@ fn claude(cwd: Option<&Path>, args: &[String], limit: u64) -> Result<String, Str
     let out = crate::platform::run_capped(&mut c, Duration::from_secs(limit)).map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
     if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let err = crate::platform::out_text(&out.stderr).trim().to_string();
         return Err(if err.is_empty() { text.trim().to_string() } else { err });
     }
     Ok(text)

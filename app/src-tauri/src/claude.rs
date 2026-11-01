@@ -255,7 +255,7 @@ pub async fn adopt_session(pid: i32, session_id: String, cwd: String, name: Stri
         crate::trust::before_spawn(&cwd);
         let out = claude_out(crate::platform::command(claude_bin()).current_dir(&cwd).args(["--bg", "--dangerously-skip-permissions", "-n", &name, "--resume", &session_id]), CLAUDE_LIMIT)?;
         forget_agents(); // 넘겨받은 세션이 다음 목록에 바로 보이게
-        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        let text = format!("{}{}", crate::platform::out_text(&out.stdout), crate::platform::out_text(&out.stderr));
         if !out.status.success() {
             return Err(text.trim().to_string());
         }
@@ -279,7 +279,7 @@ pub async fn new_session(cwd: String, name: String, worktree: Option<String>) ->
         crate::computer_use::sweep_logged();
         let out = claude_out(crate::platform::command(claude_bin()).current_dir(&cwd).args(&args), CLAUDE_LIMIT)?;
         forget_agents(); // 새 세션이 바로 다음 목록에 — 2.5초 같이 쓰던 목록이면 띄움 자리표시가 사라진 뒤 3초쯤 비었다
-        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        let text = format!("{}{}", crate::platform::out_text(&out.stdout), crate::platform::out_text(&out.stderr));
         if !out.status.success() {
             return Err(crate::access::explain_spawn_error(text.trim(), &cwd));
         }
@@ -503,13 +503,10 @@ pub(crate) fn tail_len(tail: Option<u64>) -> u64 {
 /// 대화 기록 꼬리 tail 바이트씩 — 폰 서버는 더 짧게 읽는다(꺼진 참모가 하던 일 한 줄이면 된다)
 pub fn transcript_tails(session_ids: &[String], tail: u64) -> std::collections::HashMap<String, String> {
     use std::io::{Read, Seek, SeekFrom};
-    let home = crate::platform::home();
-    let dirs: Vec<_> = std::fs::read_dir(format!("{home}/.claude/projects"))
-        .map(|rd| rd.flatten().map(|e| e.path()).collect())
-        .unwrap_or_default();
     let mut out = std::collections::HashMap::new();
     for sid in session_ids {
-        let Some(path) = dirs.iter().map(|d| d.join(format!("{sid}.jsonl"))).find(|p| p.exists()) else { continue };
+        // 찾은 자리를 기억하는 길(transcript_path)로 — 10초마다 세션마다 모든 프로젝트 폴더를 뒤졌다(2026-11-01 ux-daily M9)
+        let Some(path) = transcript_path(sid) else { continue };
         let Ok(mut f) = std::fs::File::open(&path) else { continue };
         let len = f.metadata().map(|m| m.len()).unwrap_or(0);
         let _ = f.seek(SeekFrom::Start(len.saturating_sub(tail)));
@@ -1865,7 +1862,7 @@ fn resume_inner(cwd: &str, session_id: &str, id: Option<&str>, copy: bool) -> Re
     crate::browser_attach::reassert_for(cwd);
     resume_steps(session_id, id, copy, &mut |args| {
         let out = claude_out(crate::platform::command(claude_bin()).current_dir(cwd).args(args), CLAUDE_LIMIT)?;
-        Ok((out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))))
+        Ok((out.status.success(), format!("{}{}", crate::platform::out_text(&out.stdout), crate::platform::out_text(&out.stderr))))
     })
 }
 

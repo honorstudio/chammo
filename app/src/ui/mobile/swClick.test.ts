@@ -108,3 +108,34 @@ describe('중계 입구 서비스 워커 — 본문 없는 푸시라 갈 곳은 
     expect(w.navigate).not.toHaveBeenCalled();
   });
 });
+
+// 2026-11-01 사용자 제보: 잠금 화면이 '참모 / 새 메시지'뿐 — 컴퓨터가 구독 열쇠로 봉한 본문을 중계가 실어 오면 그 제목·한 줄을 띄운다
+describe('중계 입구 서비스 워커 — 봉한 본문이 오면 그대로 띄운다', () => {
+  it('본문(제목·한 줄·갈 곳)이 있으면 알림에 싣고, 누르면 그 갈 곳으로', async () => {
+    const sw = boot(relayRaw, []);
+    await sw.fire('push', { data: { json: () => ({ title: '모모 — 답이 왔어', body: '빌드 끝났어, 확인해 줘', target: 'session:o3' }) } });
+    expect(sw.shown[0]!.title).toBe('모모 — 답이 왔어');
+    expect(sw.shown[0]!.opts.body).toBe('빌드 끝났어, 확인해 줘');
+    expect(sw.shown[0]!.opts.data).toEqual({ target: 'session:o3' });
+    await sw.click('session:o3');
+    expect(sw.opened).toEqual(['/?go=session%3Ao3']);
+  });
+
+  it('본문이 없거나 못 읽으면 지금처럼 참모 / 새 메시지, 누르면 latest', async () => {
+    for (const data of [undefined, { json: () => { throw new Error('빈 몸통'); } }, { json: () => ({ title: 3, body: null }) }]) {
+      const sw = boot(relayRaw, []);
+      await sw.fire('push', { data });
+      expect([sw.shown[0]!.title, sw.shown[0]!.opts.body]).toEqual(['참모', '새 메시지']);
+      await sw.click(sw.shown[0]!.opts.data?.target || undefined);
+      expect(sw.opened).toEqual(['/?go=latest']);
+    }
+  });
+
+  it('제목·한 줄이 길면 자른다(잠금 화면 미리보기)', async () => {
+    const sw = boot(relayRaw, []);
+    await sw.fire('push', { data: { json: () => ({ title: '가'.repeat(300), body: '나'.repeat(300), target: 's'.repeat(500) }) } });
+    expect(sw.shown[0]!.title.length).toBeLessThanOrEqual(81);
+    expect(sw.shown[0]!.opts.body!.length).toBeLessThanOrEqual(121);
+    expect(sw.shown[0]!.opts.data?.target).toBe('');
+  });
+});

@@ -23,6 +23,8 @@ const PAGE_DOC = [...OFFICE, 'ppt', 'pptx', 'pps', 'ppsx', 'odp', 'key', 'xls', 
 export const pageDoc = (path: string) => PAGE_DOC.includes(path.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '');
 
 /** 미리보기 기다림 한도 — Rust 가 길마다 끊지만(그림 한 장 20초씩 두 길, page_doc 60초) 답이 아예 안 오면 '만드는 중'에 영영 멈췄다(2026-10-29 .ai) */
+/** 글 파일이 UTF-8 이 아니다(Rust reader::NOT_UTF8 — 엑셀이 내보낸 CSV·옛 메모장 EUC-KR·UTF-16) — 내부 코드 대신 사람 말 + 기본 앱으로 열기(11-01 QA H11) */
+export const notUtf8 = (e: string) => e.includes('NOT_UTF8');
 export const PREVIEW_WAIT_MS = 45_000;
 export const PAGE_DOC_WAIT_MS = 70_000;
 export function inTime<T>(p: Promise<T>, ms: number): Promise<T> {

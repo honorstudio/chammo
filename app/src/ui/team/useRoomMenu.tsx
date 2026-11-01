@@ -2,6 +2,7 @@
 // 이름·사람 = 팀챗 바꾸기 겹창(RoomCreate) 그대로, 나가기·지우기 = 글자 확인 창. 지우기는 만든 사람·팀장만 —
 // 팀장은 바로, 팀원은 메뉴를 열 때 명부로 만든 사람인지 본다(team_ui_room_info, 방마다 한 번)
 import { useRef, useState } from 'react';
+import { ALL_NAMES } from '../../domain/teamAllRoom';
 import { teamRoomDelete, teamRoomInfo, teamRoomLeave } from '../../data/teamApi';
 import type { Convo } from '../../domain/teamChat';
 import { hiddenKey, hideDm, roomActs, type HiddenDms, type RoomAct } from '../../domain/teamRoomMenu';
@@ -45,7 +46,7 @@ export function useRoomMenu(o: { teamId: string; owner: boolean; onEdit: (room: 
     delete: tr('지우기', 'Delete'),
     hide: tr('목록에서 숨기기', 'Hide from list'),
   };
-  const items = (c: Convo, ok: boolean): MenuItem[] => roomActs(c.kind ?? 'dm', ok).map((k) => ({
+  const items = (c: Convo, ok: boolean): MenuItem[] => roomActs(c.kind ?? 'dm', ok, ALL_NAMES.includes(c.name)).map((k) => ({
     label: label[k],
     danger: k === 'delete' || undefined,
     sep: k === 'leave' || undefined,

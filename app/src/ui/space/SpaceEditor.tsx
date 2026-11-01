@@ -35,6 +35,7 @@ import { useDocSync } from './docSync';
 import { parseMd } from './mdPipeline';
 import { saveSoon } from './docSave';
 import { tr } from '../../i18n';
+import { fwd } from '../../domain/paths';
 
 const dark = () => document.documentElement.dataset.theme === 'dark' || (document.documentElement.dataset.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
 
@@ -47,7 +48,7 @@ const dark = () => document.documentElement.dataset.theme === 'dark' || (documen
 export default function SpaceEditor({ md, docPath, onReady, onChange, onEditor, onNewSubpage }: { md: string; docPath: string; onReady: (normalized: string) => void; onChange: (md: string) => void; onEditor?: (ed: BlockNoteEditor | null) => void;
   /** "/페이지" — 하위 페이지를 만들고 그 파일 경로를 돌려준다(없으면 메뉴에 안 나옴) */
   onNewSubpage?: () => Promise<string> }) {
-  const dir = docPath.replace(/\/[^/]*$/, '');
+  const dir = fwd(docPath).replace(/\/[^/]*$/, ''); // 윈도우 C:\… 여도 / 로(win-text M2)
   const editor = useCreateBlockNote({
     schema,
     dictionary: ko,
@@ -185,6 +186,11 @@ export default function SpaceEditor({ md, docPath, onReady, onChange, onEditor, 
       {sync.state === 'gone' && (
         <div className="cv-doc-sync" role="alert">
           <span>{tr('파일이 지워졌거나 이름이 바뀌었어요. 여기서 고친 내용은 저장되지 않아요(마지막 내용은 기록에 남아요).', 'This file was deleted or renamed. Edits here are not saved (the last version is kept in history).')}</span>
+        </div>
+      )}
+      {sync.state === 'failed' && (
+        <div className="cv-doc-sync" role="alert">
+          <span>{tr('이 파일을 저장하지 못했어요. 다른 프로그램이 파일을 쓰고 있거나 읽기 전용일 수 있으니, 그 프로그램을 닫아 주세요. 고친 내용은 그대로 있고 잠시 뒤 다시 저장해 볼게요.', "This file couldn't be saved. Another program may be using it, or it may be read-only, so please close that program. Your changes are still here, and we'll try saving again shortly.")}</span>
         </div>
       )}
       {sync.state === 'unreadable' && (

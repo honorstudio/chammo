@@ -248,6 +248,21 @@ fn 멤버_목록은_기기_이름까지_받는다() {
 }
 
 #[test]
+fn 남이_내_역할을_바꾸면_멤버_목록을_받을_때_내_역할도_바뀐다() {
+    // 11-01 QA H1: 팀장을 넘겨받아도 화면은 '팀원'(view.role)이라 "초대 링크는 팀장이 만들어요"에 막혔다
+    let (d, kc, r) = joined("role-follow");
+    r.answer("/v0/teams/t1/members", 200, r#"{"members":[{"id":"m1","displayName":"지수","role":"member","devices":[]},{"id":"m2","displayName":"민아","role":"owner","devices":[]}]}"#);
+    let st = refresh_members(&d, &kc, &r, "").unwrap();
+    assert_eq!(st.role, "member", "팀장에서 내려가면 지금 팀 칸도");
+    assert_eq!(st.team("t1").unwrap().role, "member");
+    r.answer("/v0/teams/t1/members", 200, r#"{"members":[{"id":"m1","displayName":"지수","role":"owner","devices":[]}]}"#);
+    assert_eq!(refresh_members(&d, &kc, &r, "").unwrap().role, "owner", "넘겨받으면 팀장");
+    // 명단에 내 줄이 없으면(받기 이상) 역할은 그대로
+    r.answer("/v0/teams/t1/members", 200, r#"{"members":[{"id":"m2","displayName":"민아","role":"owner","devices":[]}]}"#);
+    assert_eq!(refresh_members(&d, &kc, &r, "").unwrap().role, "owner");
+}
+
+#[test]
 fn 내_방_목록으로_방을_찾고_내_기기끼리_방이_없으면_만든다() {
     // 서버 ADR 0004: 5분마다 멤버 전원과 DM 을 열던 것 대신 GET /v0/me/rooms
     let (d, kc, r) = logged_in("rooms");
@@ -347,8 +362,9 @@ fn 사슬_전_계정_기기는_팀을_만들지도_들어오지도_못한다() {
         s.account = Some(Account { id: "a1".into(), ..Default::default() });
     })
     .unwrap();
-    assert!(create(&d, &kc, &r, "", "팀", "지수", "맥북").unwrap_err().contains("준비 전"));
-    assert!(join(&d, &kc, &r, "", "CODE", "지수", "맥북").unwrap_err().contains("준비 전"));
+    // 막힌 까닭은 할 일로(11-01 ux-team H2) — 계정은 있고 확인(ensure) 전이면 '확인하고 있어요'
+    assert!(create(&d, &kc, &r, "", "팀", "지수", "맥북").unwrap_err().contains("확인하고 있어요"));
+    assert!(join(&d, &kc, &r, "", "CODE", "지수", "맥북").unwrap_err().contains("확인하고 있어요"));
     assert!(r.seen.borrow().is_empty(), "서버에 아무 요청도 안 간다");
 }
 
@@ -358,8 +374,8 @@ fn 계정_없는_옛_초대_기기는_팀을_만들지도_들어오지도_못한
     let d = dir("legacy-refused");
     let kc = Fake::default();
     let r = FakeRelay::default();
-    assert!(create(&d, &kc, &r, SERVER, "팀", "지수", "맥북").unwrap_err().contains("준비 전"));
-    assert!(join(&d, &kc, &r, SERVER, "CODE", "지수", "맥북").unwrap_err().contains("준비 전"));
+    assert!(create(&d, &kc, &r, SERVER, "팀", "지수", "맥북").unwrap_err().contains("계정에 로그인하면"));
+    assert!(join(&d, &kc, &r, SERVER, "CODE", "지수", "맥북").unwrap_err().contains("계정에 로그인하면"));
     assert!(r.seen.borrow().is_empty());
 }
 

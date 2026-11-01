@@ -135,6 +135,23 @@ class Cli(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(proj, 'assets', '보관함', '컷.png')), '프로젝트엔 안 남는다')
         self.assertEqual([x for x in os.listdir(self.mine) if x.startswith('.컷')], [], '치워 둔 원본·조각이 안 남는다')
 
+    def test_원본을_못_치우면_복사본을_남기지_않는다(self):
+        # 윈도우는 엑셀·한글로 연 파일을 못 옮긴다 — 복사 뒤 치우기가 실패해 프로젝트에 복사본만 남았다(2026-11-01 win-text M7). 맥은 읽기 전용 폴더로
+        put(os.path.join(self.home, 'Downloads', '견적.xlsx'), '표')
+        self.run_('add', 'Downloads/견적.xlsx')
+        at = os.path.join(self.mine, '견적.xlsx')
+        proj = os.path.join(self.home, 'Desktop', 'dev', 'shop-video')
+        os.makedirs(proj)
+        os.chmod(self.mine, 0o555)
+        try:
+            code, _, err = self.run_('give', at, proj)
+        finally:
+            os.chmod(self.mine, 0o755)
+        self.assertEqual(code, 1)
+        self.assertIn('open', err)
+        self.assertFalse(os.path.exists(os.path.join(proj, 'assets', '보관함', '견적.xlsx')), '복사본을 지운다')
+        self.assertEqual(pathlib.Path(at).read_text(encoding='utf-8'), '표')
+
     def test_이사와_되돌리기(self):
         put(os.path.join(self.home, 'Downloads', '컷.png'), 'img')
         self.run_('add', 'Downloads/컷.png')

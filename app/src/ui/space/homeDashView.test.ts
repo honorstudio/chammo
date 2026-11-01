@@ -162,7 +162,7 @@ describe('홈 진행 칸 말풍선 = 그 참모 미니 대화에 #참조', () =>
   const cell = dash.slice(dash.indexOf('<section className="hd-a-gp"'), dash.indexOf('</section>', dash.indexOf('<section className="hd-a-gp"')));
   it('진행 칸은 홈이 준 onAsk 로 — 미니 대화를 그 칸 아래 연다(대기열 askRef 아님)', () => {
     expect(cell).toMatch(/data-pop=\{`gpc:\$\{o\.id\}`\}/);
-    expect(cell).toMatch(/<HomeProgress orch=\{\{ id: o\.id, name: o\.name \}\} events=\{events\} sessions=\{sessions\} onAsk=\{\(r\) => askIn\(o\.id, r\)\} place=\"dash\" \/>/); // 접힘 기억은 홈 대시보드 자리 따로
+    expect(cell).toMatch(/<HomeProgress orch=\{\{ id: o\.id, name: o\.name \}\} events=\{events\} sessions=\{sessions\} statusOf=\{statusOf\} onAsk=\{\(r\) => askIn\(o\.id, r\)\} place=\"dash\" \/>/); // 접힘 기억은 홈 대시보드 자리 따로 · 세션 판단은 사이드바와 같은 것(ux-daily H2)
     const fn = dash.slice(dash.indexOf('const askIn = '), dash.indexOf('\n', dash.indexOf('const askIn = ')));
     expect(fn).toMatch(/setPop\(\{ kind: 'chat', id \}\)/); // 열려 있어도 닫지 않는다(flipPop 아님)
     expect(fn).toMatch(/setAt\(`gpc:\$\{id\}`\)/);

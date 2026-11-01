@@ -159,10 +159,26 @@ pub fn python_spots(get: impl Fn(&str) -> Option<String>, list: impl Fn(&str) ->
     found.into_iter().map(|(_, p)| p).collect()
 }
 
+/// 앱이 이번에 PATH 를 고쳤나 — 떠 있는 claude 데몬·세션은 옛 PATH 그대로라(win-env M5) 점검(setup::check)이 꺼내 데몬을 새로 띄운다
+static CHANGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn mark(f: &std::sync::atomic::AtomicBool) {
+    f.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn take(f: &std::sync::atomic::AtomicBool) -> bool {
+    f.swap(false, std::sync::atomic::Ordering::SeqCst)
+}
+
+/// 점검이 부른다 — 지난번 뒤로 PATH 를 고쳤으면 true(한 번만)
+pub fn take_changed() -> bool {
+    take(&CHANGED)
+}
+
 #[cfg(windows)]
 fn reg_value(key: &str, name: &str) -> Option<String> {
     let o = crate::setup::run_for("reg", &["query", key, "/v", name], 5)?;
-    parse_reg_value(&String::from_utf8_lossy(&o.stdout), name)
+    parse_reg_value(&crate::platform::out_text(&o.stdout), name) // reg.exe 는 파이프로 OEM 코드 페이지(CP949)를 낸다
 }
 
 /// 레지스트리 PATH(시스템·사용자)를 다시 읽어 앱 PATH 뒤에 없던 자리를 붙인다 — 점검·다시 확인마다(setup::check)
@@ -172,6 +188,7 @@ pub fn refresh() {
     let extra: Vec<String> = [MACHINE_ENV, USER_ENV].iter().filter_map(|k| reg_value(k, "Path")).map(|p| expand_vars(&p, env)).collect();
     if let Some(p) = merge_path(&std::env::var("PATH").unwrap_or_default(), &extra) {
         std::env::set_var("PATH", p);
+        mark(&CHANGED);
     }
 }
 
@@ -182,7 +199,7 @@ pub fn adopt_git() -> bool {
     let install = reg_value(GIT_FOR_WINDOWS, "InstallPath");
     let Some(exe) = git_spots(install.as_deref(), env).into_iter().find(|p| std::path::Path::new(p).is_file()) else { return false };
     match with_dir_first(&std::env::var("PATH").unwrap_or_default(), &exe) {
-        Some(p) => { std::env::set_var("PATH", p); true }
+        Some(p) => { std::env::set_var("PATH", p); mark(&CHANGED); true }
         None => false,
     }
 }
@@ -210,6 +227,7 @@ pub fn adopt_python() -> Option<String> {
     let exe = python_spots(env, list).into_iter().find(|p| std::path::Path::new(p).is_file())?;
     if let Some(p) = move_dir_first(&std::env::var("PATH").unwrap_or_default(), &exe) {
         std::env::set_var("PATH", p);
+        mark(&CHANGED);
     }
     Some(exe)
 }
@@ -352,6 +370,29 @@ mod tests {
         assert_eq!(find_python(true, || None, || {}, || Some(exe.clone()), |a| a[0] == exe), Some(vec![exe.clone()]));
         assert_eq!(find_python(true, || None, || {}, || Some(exe.clone()), |_| false), None, "망가진 설치는 없음");
         assert_eq!(find_python(true, || None, || {}, || None, |_| true), None);
+    }
+
+    // 재현(qa-1101 win-env M4, 윈도우 PC 실측): reg.exe 는 파이프로 OEM 코드 페이지(한글 윈도우 CP949)를 낸다 —
+    // `홍길동` = c8 ab b1 e6 b5 bf 를 UTF-8 로 읽어 `ȫ�浿` 가 PATH 에 붙었다. 윈도우에서만 도는 길이라 글로 지킨다
+    #[test]
+    fn reg_출력은_코드_페이지로_읽는다() {
+        let src = include_str!("win_path.rs");
+        let body = &src[src.find("fn reg_value").unwrap()..];
+        let body = &body[..body.find("\n}").unwrap()];
+        assert!(body.contains("out_text("), "reg 출력은 platform::out_text 로: {body}");
+        assert!(!body.contains("from_utf8_lossy"), "UTF-8 로 읽지 않는다: {body}");
+    }
+
+    // 재현(qa-1101 win-env M5): 앱이 PATH 를 고쳐도(설치 뒤 다시 읽기·흔한 자리 붙이기) 떠 있던 claude 데몬은 옛 PATH 라
+    // 설정은 git·파이썬 ✓ 인데 세션 scripts 는 "python not found" — 고쳤다는 표시를 한 번만 꺼내 점검이 데몬을 새로 띄우게 한다
+    #[test]
+    fn path_를_고쳤다는_표시는_한_번만_꺼낸다() {
+        let f = std::sync::atomic::AtomicBool::new(false);
+        assert!(!take(&f));
+        mark(&f);
+        mark(&f);
+        assert!(take(&f), "고쳤으면 true");
+        assert!(!take(&f), "꺼낸 뒤엔 다시 고칠 때까지 false");
     }
 
     #[test]

@@ -360,7 +360,7 @@ describe('liveWork — 폰 일하는 중 표시(데스크톱 chatBusy + 기록 �
   const T0 = Date.parse('2026-10-02T14:00:00Z');
   const at = (s: number) => new Date(T0 + s * 1000).toISOString();
   const user = (s: number, text = '해 줘'): ChatItem => ({ kind: 'user', id: `u${s}`, ts: at(s), text });
-  const ai = (s: number, text = '했어'): ChatItem => ({ kind: 'assistant', id: `a${s}`, ts: at(s), text });
+  const ai = (s: number, text = '했어'): ChatItem => ({ kind: 'assistant', id: `a${s}`, ts: at(s), text, end: true });
   const tools = (s: number, ...ts: [string, string][]): ChatItem => ({ kind: 'tools', id: `t${s}`, ts: at(s), tools: ts.map(([name, target]) => ({ name, target })) });
 
   it('세션이 working 이고 꼬리가 답이 아니면 — 마지막 도구 한 줄·이번 턴 도구 수·경과', () => {

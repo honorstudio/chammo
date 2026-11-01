@@ -171,6 +171,11 @@ impl Backend for Fake {
         self.log(format!("team_file_thumb {team} {id} {size}"));
         if id == "nope" { Err("그림이 아니야".into()) } else { Ok(b"\xFF\xD8\xFFteam".to_vec()) }
     }
+    fn team_file_image(&self, team: &str, id: &str, view: bool) -> Result<crate::mobile_http::TeamImage, String> {
+        self.log(format!("team_file_image {team} {id} {view}"));
+        if id == "nope" { return Err("그림이 아니야".into()); }
+        Ok(crate::mobile_http::TeamImage { bytes: b"\x89PNGteam".to_vec(), ctype: if view { "image/jpeg" } else { "image/png" }, dims: Some((3000, 2000)) })
+    }
     fn team_posts(&self, team: &str, seen: u64) -> Result<serde_json::Value, String> {
         self.log(format!("team_posts {team} {seen}"));
         Ok(serde_json::json!({ "team": team, "rev": 3, "posts": [], "pinned": "", "owner": false }))
@@ -2013,6 +2018,89 @@ fn html_시안이_상대_경로로_부르는_같은_폴더_그림은_같은_표�
     // 쓰기·머리만 아닌 방법은 거절
     assert_eq!(handle(&Req { method: "POST".into(), ..get(&format!("{base}/v2/now-locker.jpg")) }, &g, &f).status, 405);
     let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn html_중계_길은_inline_으로_같은_폴더_그림을_시안에_품어_준다() {
+    // 중계 입구(phone.chammo.app)에선 시안 칸이 서비스 워커를 못 탄다 — 시안 문서는 워커로 받아도 그 안 그림 요청(불투명 출처)은
+    // 입구 망으로 새서 404(2026-11-01 폰 흰 화면). 그래서 ?inline=1 이면 같은 폴더 그림을 data: 로 품어 한 번에 준다 — 곁 파일 거름 그대로
+    let d = tmp("htmlinline");
+    let drafts = d.join("drafts");
+    std::fs::create_dir_all(drafts.join("v2")).unwrap();
+    std::fs::create_dir_all(drafts.join("시안 3")).unwrap();
+    std::fs::create_dir_all(drafts.join(".hidden")).unwrap();
+    std::fs::create_dir_all(d.join("other")).unwrap();
+    let page = drafts.join("draft.html");
+    let html = concat!(
+        "<!doctype html><html><head><style>.a{background:url('v2/now-locker.jpg')}.b{background:url(v2/now-locker.jpg?x=1)}</style></head><body>",
+        "<img src=\"v2/now-locker.jpg\"><img src='%EC%8B%9C%EC%95%88%203/%EA%B1%B0%EC%9A%B8.png'><img src=\"시안 3/거울.png#f\">",
+        "<img src=\"../other/x.png\"><img src=\"api-key.png\"><img src=\"link.png\"><img src=\".hidden/a.png\"><img src=\"leak.svg\">",
+        "<img src=\"/abs.png\"><img src=\"https://e.com/a.png\"><img src=\"data:image/png;base64,AA\"><img src=\"missing.png\">",
+        "<script src=\"app.js\"></script><p data-src=\"v2/now-locker.jpg\">srcset</p></body></html>"
+    );
+    std::fs::write(&page, html).unwrap();
+    std::fs::write(drafts.join("v2/now-locker.jpg"), b"\xff\xd8\xffJPEG").unwrap();
+    std::fs::write(drafts.join("시안 3/거울.png"), b"\x89PNG").unwrap();
+    std::fs::write(drafts.join("api-key.png"), b"\x89PNG").unwrap();
+    std::fs::write(drafts.join(".hidden/a.png"), b"\x89PNG").unwrap();
+    std::fs::write(drafts.join("leak.svg"), format!("<svg><!-- {}{} --></svg>", "sk-", "proj-abcdefghijklmnopqrstuvwxyz012345")).unwrap();
+    std::fs::write(drafts.join("app.js"), "1").unwrap();
+    std::fs::write(d.join("other/x.png"), b"\x89PNG").unwrap();
+    std::os::unix::fs::symlink(d.join("other/x.png"), drafts.join("link.png")).unwrap();
+    let g = gate();
+    let f = Fake { show: format!("{{\"path\":\"{}\"}}\n", page.display()), data: d.join("data"), ..Default::default() };
+    let r = handle(&post("/api/html-ticket", &serde_json::json!({ "path": page.to_string_lossy() }).to_string()), &g, &f);
+    let url = serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["url"].as_str().unwrap().to_string();
+    // 그냥 주소는 그대로(테일넷 길은 곁 파일 주소로 받는다)
+    let plain = handle(&get(&url), &g, &f);
+    assert_eq!(plain.status, 200);
+    assert!(!String::from_utf8_lossy(&plain.body).contains("data:image/jpeg"));
+    let h = handle(&get(&format!("{url}?inline=1")), &g, &f);
+    assert_eq!(h.status, 200, "{}", String::from_utf8_lossy(&h.body));
+    let csp = h.headers.iter().find(|(n, _)| *n == "Content-Security-Policy").map(|(_, v)| v.clone()).unwrap_or_default();
+    assert!(csp.starts_with("sandbox allow-scripts;") && csp.contains("img-src 'self' https: data:"), "{csp}");
+    let b = String::from_utf8_lossy(&h.body).into_owned();
+    let jpg = "data:image/jpeg;base64,/9j/SlBFRw==";
+    let png = "data:image/png;base64,iVBORw==";
+    assert!(b.contains(&format!("<img src=\"{jpg}\">")), "{b}");
+    assert!(b.contains(&format!("url('{jpg}')")) && b.contains(&format!("url({jpg})")), "{b}");
+    assert_eq!(b.matches(png).count(), 2, "{b}");
+    // 거름에 걸린 것·밖 주소·없는 것·그림 아닌 것은 손대지 않는다
+    for keep in ["\"../other/x.png\"", "\"api-key.png\"", "\"link.png\"", "\".hidden/a.png\"", "\"leak.svg\"", "\"/abs.png\"", "\"https://e.com/a.png\"", "\"data:image/png;base64,AA\"", "\"missing.png\"", "src=\"app.js\"", "data-src=\"v2/now-locker.jpg\""] {
+        assert!(b.contains(keep), "{keep} 가 바뀌었다: {b}");
+    }
+    assert!(!b.contains("sk-proj"), "{b}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn html_품기는_총량_상한까지만() {
+    let mut n = 0;
+    let out = super::inline_assets("<img src=\"a.png\"><img src=\"b.png\"><img src=\"c.png\">", 10, |rel| {
+        n += 1;
+        Some(("image/png", rel.as_bytes().repeat(4)))
+    });
+    // 하나하나가 상한 10 을 넘으니 아무것도 안 품는다(넘는 그림은 상대 주소 그대로)
+    assert_eq!(out, "<img src=\"a.png\"><img src=\"b.png\"><img src=\"c.png\">");
+    let out = super::inline_assets("<img src=\"a.png\"><img src=\"b.png\">", 30, |_| Some(("image/png", vec![0u8; 12])));
+    assert_eq!(out.matches("data:image/png;base64,").count(), 1, "{out}");
+    assert!(n >= 1);
+}
+
+#[test]
+fn html_길_오류도_sandbox_csp를_단다() {
+    // 중계 길 폰은 시안 칸에 sandbox 속성을 못 단다(워커를 못 탄다) — 그 칸에 오는 답은 오류까지 응답 CSP 로 가둔다
+    let g = gate();
+    let f = Fake::default();
+    for p in ["/api/html/00112233445566778899aabbccddeeff/x.html", "/api/html/nope", "/api/html?t=00"] {
+        let r = handle(&get(p), &g, &f);
+        assert_eq!(r.status, 403, "{p}");
+        let csp = r.headers.iter().find(|(n, _)| *n == "Content-Security-Policy").map(|(_, v)| v.clone()).unwrap_or_default();
+        assert!(csp.starts_with("sandbox"), "{p} → {csp}");
+    }
+    let r = handle(&Req { method: "POST".into(), ..get("/api/html/00/x.html") }, &g, &f);
+    assert_eq!(r.status, 405);
+    assert!(r.headers.iter().any(|(n, v)| *n == "Content-Security-Policy" && v.starts_with("sandbox")));
 }
 
 /// 실측 — 진짜 큰 시안을 표 주소로, 느린 LTE 처럼(초당 HTML_PROBE_KBPS, 기본 128KB) 읽어 끝까지 오나·비밀 검사 시간.
@@ -4190,6 +4278,30 @@ fn tm_폰_대화_파일_썸네일은_짝지은_폰만_jpeg_만_받는다() {
 }
 
 #[test]
+fn tm_폰_대화_그림_크게_보기는_보기용_원본_둘_다_원본_크기를_알려_준다() {
+    // 11-01 사용자: 팀챗 그림을 눌러도 크게 안 보였다 — 폰엔 360 썸네일 길뿐. 크게 보기는 맥이 풀어 보기용(view=1)·원본을 준다
+    let g = peer_gate("tm000005");
+    let f = Fake::default();
+    let r = handle(&with_cookie(get("/api/team-file-image?team=t-1&id=AbC_d-9&view=1")), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(ctype(&r), "image/jpeg");
+    assert!(r.headers.iter().any(|(k, v)| *k == "X-Image-Size" && v == "3000x2000"), "1:1 배율·원본 더 받기를 정하게");
+    assert!(r.headers.iter().any(|(k, v)| *k == "Content-Security-Policy" && v.contains("sandbox")), "그림으로만");
+    let o = handle(&with_cookie(get("/api/team-file-image?team=t-1&id=AbC")), &g, &f);
+    assert_eq!((o.status, ctype(&o)), (200, "image/png".to_string()), "view 없으면 원본");
+    assert_eq!(handle(&with_cookie(get("/api/team-file-image?team=t-1&id=nope")), &g, &f).status, 415, "그림이 아니면 못 준다");
+    assert_eq!(f.calls()[..2], ["team_file_image t-1 AbC_d-9 true".to_string(), "team_file_image t-1 AbC false".to_string()]);
+    let p = "/api/team-file-image";
+    for q in ["", "?team=t-1", "?id=AbC", "?team=t-1&id=a%2Fb", "?team=a%2Fb&id=AbC", &format!("?team=t-1&id={}", "a".repeat(129))] {
+        assert_eq!(handle(&with_cookie(get(&format!("{p}{q}"))), &g, &f).status, 400, "{q}");
+    }
+    assert_eq!(handle(&as_peer(with_cookie(get(&format!("{p}?team=t-1&id=AbC")))), &g, &f).status, 403, "다른 기기 참모 열쇠로는 못 받는다");
+    assert_eq!(handle(&set(with_cookie(get(&format!("{p}?team=t-1&id=AbC"))), "authorization", None), &g, &f).status, 401);
+    assert_eq!(handle(&post(p, "{}"), &g, &f).status, 405);
+    assert_eq!(f.calls().len(), 3, "막힌 것은 뒤로 안 넘어간다");
+}
+
+#[test]
 fn tm_폰_팀_홈_글쓰기는_새_글만_짝지은_폰만_분당_상한() {
     let g = peer_gate("tm000005");
     let f = Fake::default();
@@ -4647,4 +4759,16 @@ fn 폰_팀_사람_몫은_POST_팀_길만() {
     assert!(!team_human_post("GET", "/api/team-locker"));
     assert!(!team_human_post("GET", "/api/team-posts"));
     assert!(!team_human_post("POST", "/api/send"));
+}
+
+/// 데스크톱 결정 대기함이 치기 전에 보는 판단 — 마지막 이벤트(send 빼고)가 물음일 때만(ux-daily M16)
+#[test]
+fn 데스크톱_결정_답은_아직_기다릴_때만() {
+    let t = "1101-1200-ab12";
+    let ask = format!(r#"{{"ts":"2026-11-01T03:00:00Z","type":"send","task":"{t}"}}
+{{"ts":"2026-11-01T03:01:00Z","type":"ask","task":"{t}","note":"A? B?"}}"#);
+    assert!(task_waiting_in(&ask, t));
+    let answered = format!("{ask}\n{{\"ts\":\"2026-11-01T03:02:00Z\",\"type\":\"answer\",\"task\":\"{t}\",\"note\":\"A\",\"by\":\"phone\"}}");
+    assert!(!task_waiting_in(&answered, t)); // 폰이 먼저 답했다 — 같은 답이어도 다시 치지 않는다
+    assert!(!task_waiting_in(&ask, "1101-1200-ffff")); // 없는 일
 }

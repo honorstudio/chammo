@@ -19,6 +19,9 @@ Prints JSON: {path, existed, written, projectStarter, trusted, browser, next}.
 With browser automation installed, a new project also gets its own logged-in browser profile (.mcp.json).
 """
 import datetime, json, os, re, shlex, shutil, subprocess, sys, time
+for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — PYTHONUTF8 없이 떠도(데몬 env 세션·작업 스케줄러) 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
+    if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
+        _io.reconfigure(encoding='utf-8', errors='replace')
 
 NAME = re.compile(r'^[a-z0-9][a-z0-9._-]{0,63}$')
 
@@ -132,6 +135,15 @@ def under_consent(data, path):
     return inside(root, os.path.realpath(path))
 
 
+def status_cmd(path):
+    """상태줄 명령 글 — 셸(윈도우 Git Bash)이 읽는다: 경로는 / 로만(역슬래시는 먹힌다), 셸 글자가 있으면 큰따옴표로(앱 hq::statusline_cmd 와 같다).
+    C:/Users/John Smith/… 가 빈칸에서 쪼개져 상태줄·사용량이 안 떴다(2026-11-01 win-text M1)"""
+    p = path.replace('\\', '/')
+    if p and all(not c.isascii() or c.isalnum() or c in '/._-:@%+=,~' for c in p):
+        return p
+    return '"' + ''.join('\\' + c if c in '\\"$`' else c for c in p) + '"'
+
+
 def local_settings(path, enable=(), statusline=None, isolation=None, env=None):
     """<프로젝트>/.claude/settings.local.json 에 합친다 — MCP 미리 승인, 앱 상태줄(사용량·대화 %), 백그라운드 세션 격리(isolation), 세션 env"""
     sl = os.path.join(path, '.claude/settings.local.json')
@@ -145,7 +157,7 @@ def local_settings(path, enable=(), statusline=None, isolation=None, env=None):
         if name not in servers:
             servers.append(name)
     if statusline:
-        s['statusLine'] = {'type': 'command', 'command': statusline}
+        s['statusLine'] = {'type': 'command', 'command': status_cmd(statusline)}
     if isolation:
         wt = s.get('worktree') if isinstance(s.get('worktree'), dict) else {}
         s['worktree'] = {**wt, 'bgIsolation': isolation}
@@ -170,8 +182,9 @@ def first_commit(path, lang):
     if git('rev-parse', '--verify', '-q', 'HEAD').returncode == 0:
         return False, ''
     if not (git('config', 'user.name').stdout.strip() and git('config', 'user.email').stdout.strip()):
-        return False, ('git 작성자(user.name·user.email)가 없어 첫 커밋을 안 했어 — 사용자에게 git config --global user.name·user.email 을 정해 달라고 해'
-                       if ko else 'No git author (user.name / user.email), so no first commit — ask the user to set git config --global user.name and user.email')
+        # 사용자에게 명령을 치라고 하지 않게 — 앱 설정 칸에서 적는다(2026-11-01 win-first M1, 새 PC 는 거의 다 비어 있다)
+        return False, ('git 이름·메일이 없어서 첫 커밋을 못 했어. 사용자에게 git config 를 치라고 하지 말고 Chammo 설정 > 도구 점검 탭의 git 이름·메일 칸에 적어 달라고 해. 적었다고 하면 그때 첫 커밋 해.'
+                       if ko else 'The first commit was not made because no git name and email are set. Do not ask the user to run git config. Ask them to enter these in Chammo Settings > Tools > Git name and email, then make the first commit once they say it is done.')
     for line in ('.claude/settings.local.json', '.mcp.json', '.claude/worktrees/', 'CLAUDE.local.md'):
         gitignore(path, line)
     git('add', '-A')

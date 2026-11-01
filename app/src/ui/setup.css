@@ -42,6 +42,9 @@
 .su-control input { flex: 1; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 13px; }
 .su-control input:focus { outline: none; border-color: var(--accent); }
 .su-inline { display: flex; gap: 8px; flex: 1; min-width: 0; }
+/* git 이름·메일 줄 입력 — 표시(점) 자리만큼 들여 줄 글과 맞춘다 */
+.su-git-id { padding: 0 0 10px 34px; }
+.su-git-id .btn { min-height: 36px; }
 .su-field > .su-hint { padding-left: 162px; }
 .su-hint { font-size: 12px; color: var(--text-3); line-height: 1.5; }
 .su-mini { height: 28px; padding: 0 10px; font-size: 12px; margin-left: 6px; }
@@ -209,6 +212,7 @@
 /* 코드로 잇기(대피로) — 연결 단추 옆 작은 글 단추 */
 .peer-alt { background: none; border: 0; padding: 0 4px; min-height: 32px; color: var(--text-2); font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; }
 .peer-alt:disabled { opacity: .5; cursor: default; }
+.lw-acts { display: inline-flex; gap: 4px; margin-left: 4px; }
 .peer-on { color: var(--tag-done-ink); }
 .peer-agents { flex: 1 0 100%; display: flex; flex-direction: column; gap: 2px; }
 /* 보관함 보여 주기 토글 — 줄 오른쪽에 고정(1 0 100% 였을 때 안 접히는 줄에서 글 칸을 0 폭으로 눌렀다, 10-24) */
@@ -237,6 +241,14 @@
 /* 다시 시작 화면 — 무엇이 바뀌는지 세 줄(계정 되찾기 갈래 ①) */
 .lg-list { margin: 0; padding: 12px 16px 12px 30px; text-align: left; color: var(--text-2); font-size: 13px; line-height: 1.6; background: var(--surface-2); border-radius: 10px; width: 100%; box-sizing: border-box; }
 /* 숫자 대기 아래 글자 링크 — 되찾기(갈래 ②)로. 눌리는 높이는 44px */
+.lg-box p.lg-note { font-size: 12px; color: var(--text-3); }
 .lg-link { min-height: 44px; padding: 0 12px; border: 0; background: none; color: var(--text-2); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .lg-link:focus-visible { outline: 2px solid var(--accent, #2a78d6); outline-offset: 2px; border-radius: 6px; }
 .lg-go { min-width: 240px; }
+/* 첫 설정 기본 단계 — 참모 작업 폴더 접힘(ux-start M4) */
+.su-more > summary { cursor: pointer; font-size: 13px; color: var(--text-2); min-height: 32px; display: flex; align-items: center; gap: 6px; list-style: none; }
+.su-more > summary::-webkit-details-marker { display: none; }
+/* 펼침 표시 — 직접 그린 꺾쇠(테두리 두 변) */
+.su-more > summary::before { content: ''; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .15s; }
+.su-more[open] > summary::before { transform: rotate(45deg); }
+.su-more[open] > summary { margin-bottom: 6px; }

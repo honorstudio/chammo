@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { alreadyIn, gateState, lookEvery, offlineError, watchGate } from './loginGate';
+import { alreadyIn, clockText, gateErr, gateErrText, gateState, laterFor, lookEvery, offlineError, skewTime, watchGate } from './loginGate';
 
 const v = (o: { account?: boolean; pending?: boolean } = {}) => ({ account: o.account ? { email: 'a@b.c', name: 'a' } : null, pending: !!o.pending });
 
@@ -49,8 +49,8 @@ describe('로그인 필수(10-24 사용자) — 앱을 켜면 계정 로그인�
     expect(gateState(v({ account: true }), { step: 'outside', waitSeen: true })).toBe('none');
     expect(watchGate(v({ account: true }), 'outside')).toBe(true);
   });
-  it('checking(ensure 전)은 문을 안 띄우고 정해질 때까지 다시 묻는다(1025 첫 기기 화면 안 뜸)', () => {
-    expect(gateState(v({ account: true }), { step: 'checking' })).toBe('none');
+  it('checking(ensure 전)은 정해질 때까지 다시 묻는다(1025 첫 기기 화면 안 뜸) — 그동안은 확인 중 화면(11-01, 아래)', () => {
+    expect(gateState(v({ account: true }), { step: 'checking' })).toBe('checking');
     expect(watchGate(v({ account: true }), 'checking')).toBe(true);
     expect(watchGate(v({ account: true }), '')).toBe(false);
     expect(watchGate(null, ''), '상태를 아직 못 읽음').toBe(true);
@@ -69,17 +69,40 @@ describe('로그인 필수(10-24 사용자) — 앱을 켜면 계정 로그인�
   });
   it('로그인 화면 동안에도 다시 묻는다 — 밖(scripts/team login)에서 로그인하면 닫히게(QA 7)', () => {
     expect(watchGate(v(), '')).toBe(true);
-    expect(alreadyIn('이미 이 기기는 로그인돼 있어요 — 화면을 새로 볼게요')).toBe(true);
+    expect(alreadyIn('[already] 이미 이 기기는 로그인돼 있어요 — 화면을 새로 볼게요')).toBe(true);
+    expect(alreadyIn('Already signed in on this device'), '문구가 바뀌어도(번역) 이름만 본다').toBe(false);
+    expect(alreadyIn('[already] This device is already signed in')).toBe(true);
     expect(alreadyIn('브라우저에서 로그인을 마치지 않았어요')).toBe(false);
   });
-  it('망 오류만 오프라인으로 본다(서버가 답한 거절은 아님)', () => {
-    expect(offlineError('curl: (6) Could not resolve host: relay.chammo.app')).toBe(true);
-    expect(offlineError('curl: (28) Operation timed out')).toBe(true);
-    expect(offlineError('curl: (7) Failed to connect')).toBe(true);
-    expect(offlineError('중계 서버에 못 닿았어요: '), 'Rust team_relay::Curl 이 내는 글').toBe(true);
+  it('망 끊김·서버 장애는 Rust 가 붙인 이름([offline])으로만 본다 — 문구 정규식은 번역·다듬기에서 조용히 깨진다(11-01 QA)', () => {
+    expect(offlineError('[offline] 중계 서버에 못 닿았어요: curl: (6) Could not resolve host: relay.chammo.app')).toBe(true);
+    expect(offlineError('[offline] 중계 서버 503 ')).toBe(true);
+    expect(offlineError('중계 서버에 못 닿았어요: curl: (7) Failed to connect'), '이름 없는 글은 오프라인으로 짐작하지 않는다').toBe(false);
     expect(offlineError('중계 서버가 이상한 로그인 주소를 줬어 — 열지 않았어')).toBe(false);
-    expect(offlineError('서버 503')).toBe(true);
     expect(offlineError('로그인을 기다리다 시간이 지났어')).toBe(false);
+  });
+  it('시계가 틀렸으면([clock:<분>]) 일단 쓰기를 보여 주고 시계를 맞추라고 한다(11-01 QA H1 — 게이트에 갇혔다)', () => {
+    expect(offlineError('[clock:180] 이 기기 시계가 중계 서버와 180분 달라서 서명이 거절됐어')).toBe(true);
+    expect(gateErr('[clock:-7] …')).toEqual({ kind: 'clock', min: -7, rest: '…' });
+    expect(gateErr('[clock:180] x').kind).toBe('clock');
+    expect(gateErr('[offline] 원문')).toEqual({ kind: 'offline', min: 0, rest: '원문' });
+    expect(gateErr('그 밖 원문')).toEqual({ kind: 'other', min: 0, rest: '그 밖 원문' });
+  });
+  it('시계 차이는 사람이 읽는 시간으로', () => {
+    expect(skewTime(7)).toBe('7분');
+    expect(skewTime(-180)).toBe('3시간');
+    expect(skewTime(90)).toBe('1시간 30분');
+  });
+  it('화면 한 줄 — 시계는 사람 말(빠름/느림), 이름표는 떼고, 그 밖은 원문 그대로', () => {
+    expect(gateErrText('[clock:180] 이 기기 시계가…')).toBe('시계가 3시간 빠르게 맞춰져 있어서 로그인할 수 없어요. 시간 자동 맞추기를 켜고 다시 시도해 주세요.');
+    expect(gateErrText('[clock:-7] …')).toContain('7분 느리게');
+    expect(gateErrText('[offline] 중계 서버에 못 닿았어요: x')).toBe('중계 서버에 못 닿았어요: x');
+    expect(gateErrText('그 밖 원문')).toBe('그 밖 원문');
+  });
+  it('시계 화면 본문은 맥·윈도우 메뉴 길을 따로', () => {
+    expect(clockText(180, false).body).toContain('시스템 설정 > 일반 > 날짜 및 시간');
+    expect(clockText(180, true).body).toContain('설정 > 시간 및 언어 > 날짜 및 시간');
+    expect(clockText(-30, true).body).toContain('30분 느리게');
   });
 });
 
@@ -90,5 +113,22 @@ describe('로그인된 뒤에도 가끔 다시 본다 — 서버가 이 기기�
   });
   it('끊긴 기기(Rust 단계 relogin)는 계정이 있어도 다시 로그인 문', () => {
     expect(gateState(v({ account: true }), { step: 'relogin' })).toBe('relogin');
+  });
+});
+
+describe("첫 기기 질문의 '나중에'는 그 계정엔 다시 묻지 않는다(2026-11-01 ux-start M1 — 켤 때마다 막혔다)", () => {
+  it('저장된 계정과 같으면 나중에로 친다', () => expect(laterFor('acc1', 'acc1')).toBe(true));
+  it('다른 계정으로 로그인하면 다시 묻는다', () => expect(laterFor('acc1', 'acc2')).toBe(false));
+  it('저장이 없거나 계정을 아직 모르면 묻는다', () => {
+    expect(laterFor(null, 'acc1')).toBe(false);
+    expect(laterFor('acc1', undefined)).toBe(false);
+    expect(laterFor('', '')).toBe(false);
+  });
+});
+
+describe('로그인 직후 확인 중(checking)에도 문을 닫지 않는다(2026-11-01 ux-team H2 — 문이 잠깐 닫혀 팀 팝업이 드러났다)', () => {
+  it('계정이 있고 단계가 checking 이면 확인 중 화면', () => expect(gateState(v({ account: true }), { step: 'checking' })).toBe('checking'));
+  it('기다리지 않고 계속 쓰기를 누르면 이번 실행은 닫는다(망이 막혀 확인이 안 끝나도 갇히지 않게)', () => {
+    expect(gateState(v({ account: true }), { step: 'checking', checkingLater: true })).toBe('none');
   });
 });

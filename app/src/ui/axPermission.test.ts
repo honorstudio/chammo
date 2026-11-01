@@ -32,7 +32,8 @@ describe('손쉬운 사용 — 묻는 창은 띄우지 않는다', () => {
   });
   it('줄 상태', () => {
     expect(axRow(true)).toEqual({ state: 'ok', action: null });
-    expect(axRow(false)).toEqual({ state: 'need', action: 'settings' });
+    // 꺼져 있어도 빨간 ✕ 가 아니라 선택(빈 동그라미) — '나중에 해도 돼요'인데 오류처럼 보였다(2026-11-01 ux-start M3)
+    expect(axRow(false)).toEqual({ state: 'opt', action: 'settings' });
   });
 });
 

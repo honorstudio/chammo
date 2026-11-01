@@ -103,3 +103,10 @@ fn 부름이_꺼져_사람에게만_온_남의_참모_말도_알린다() {
     // 10-28: 꺼짐(기본)에선 남의 참모 말이 내 참모에게 안 가고 사람에게만(note to-human) — 사람이 봐야 하니 울린다
     assert_eq!(decide(&rec("to-human", "agent"), &[], &Settings::default()).unwrap().title, "하린의 참모");
 }
+
+#[test]
+fn 소리를_못_내는_os_엔_고를_소리를_안_준다() {
+    // 11-01 QA M9: 윈도우는 play 가 아무것도 안 하는데 설정엔 켜기·고르기·미리 듣기가 다 보였다
+    assert_eq!(sounds_here().is_empty(), !cfg!(target_os = "macos"));
+    assert!(sounds_here().iter().all(|n| SOUNDS.contains(n)));
+}

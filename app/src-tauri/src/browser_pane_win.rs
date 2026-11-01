@@ -103,9 +103,28 @@ pub fn attach(parent: usize, profile: &str) -> Option<usize> {
     Some(h as usize)
 }
 
+/// 앱 창이 트레이로 숨었나 — 소유된 창은 주인이 숨어도(SW_HIDE) 안 숨어서 칸만 화면에 떠 있게 된다
+static OWNER_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 메인 스레드에서 — 앱 창을 숨기면 칸을 다 가리고, 다시 보이면 다음 place(0.5초마다)가 돌려놓는다
+pub fn owner_hidden(hidden: bool) {
+    OWNER_HIDDEN.store(hidden, std::sync::atomic::Ordering::Relaxed);
+    if hidden {
+        let all: Vec<usize> = panes(|m| {
+            m.values_mut().for_each(|p| p.visible = false);
+            m.keys().copied().collect()
+        });
+        for h in all {
+            unsafe {
+                ShowWindow(h as HWND, SW_HIDE);
+            }
+        }
+    }
+}
+
 /// 메인 스레드에서 — 칸 자리(앱 창 안쪽 물리 픽셀)·보임
 pub fn place(h: usize, r: [f64; 4], visible: bool) {
-    let show = visible && r[2] >= 40.0 && r[3] >= 40.0;
+    let show = visible && !OWNER_HIDDEN.load(std::sync::atomic::Ordering::Relaxed) && r[2] >= 40.0 && r[3] >= 40.0;
     let got = panes(|m| {
         m.get_mut(&h).map(|p| {
             p.visible = show;

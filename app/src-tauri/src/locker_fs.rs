@@ -1071,7 +1071,12 @@ pub fn give(ctx: &Ctx, file: &Path, project: &Path) -> Result<PathBuf, String> {
     copy_verified(file, &to)?;
     // 옛 자리를 잠깐 숨겨 두고 별칭을 놓는다 — 별칭이 안 되면 되돌린다
     let hold = held(file);
-    std::fs::rename(file, &hold).map_err(es)?;
+    if let Err(e) = std::fs::rename(file, &hold) {
+        // 윈도우는 오피스 앱이 연 파일을 못 옮긴다 — 방금 만든 복사본을 지워야 '두 벌'이 안 남는다(2026-11-01 win-text M7)
+        let _ = std::fs::remove_file(&to);
+        let why = es(e);
+        return Err(crate::i18n::tr(&format!("파일이 다른 앱에 열려 있는 것 같아 이사하지 않았어 — 닫고 다시 해 줘 ({why})"), &format!("The file seems to be open in another app, so it was not moved — close it and try again ({why})")).into());
+    }
     // 바로가기를 못 만들면(윈도우 권한 — link 가 복사로 떨어짐) 집이 둘이 되니 되돌린다
     match link(&to, file) {
         Ok(true) => {}

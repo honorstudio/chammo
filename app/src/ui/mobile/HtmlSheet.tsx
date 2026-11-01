@@ -2,13 +2,13 @@
 // 검토 시안(design·flow-curation 껍데기)이면 블록을 눌러 쓴다·애매·뺀다를 고르고, 표시는 맥 curation/ 에 바로 적히며, 위 보내기로 참모에게.
 // (전략 표 6번, 2026-10-03 사용자 "큐레이션 폰에서 누르기 예 + curation/ 에 남김")
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { curationSave, curationState, htmlTicket } from '../../data/web';
+import { curationSave, curationState, htmlTicket, viaRelay } from '../../data/web';
 import { canCurSend, curSendState, emptyStore, readCurSent, writeCurSent, type CurSend } from '../../domain/curation';
 import { sendOut, storage } from './outbox';
 import { draftFit, pinchZoom } from '../../domain/htmlFit';
 import { sendPreview } from '../../domain/sendPreview';
 import { IconClose, IconSend } from '../Icons';
-import { HTML_SANDBOX } from './htmlFrame';
+import { htmlFrame } from './htmlFrame';
 import { fileError } from '../../domain/phoneFile';
 import { machine, tr } from '../../i18n';
 import { ShareButton } from './ShareButton';
@@ -173,7 +173,7 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
         {!url && !err && <p className="m-muted m-pad">{tr('여는 중…', 'Opening…')}</p>}
         {url && (
           <div className="m-html-sizer" style={fw && fh ? { width: fw * k, height: fh * k } : undefined}>
-            <iframe ref={frame} title={title} src={url} sandbox={HTML_SANDBOX}
+            <iframe ref={frame} title={title} {...htmlFrame(url, viaRelay())}
               style={fw && fh ? { width: fw, height: fh, transform: `scale(${k})` } : undefined} />
           </div>
         )}

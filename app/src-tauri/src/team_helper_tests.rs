@@ -306,7 +306,30 @@ fn 팀_참모_도구는_없음_아니면_웹_검색만() {
     let j = b.iter().position(|x| x == "--tools").unwrap();
     assert_eq!(b[j + 1], "", "웹 검색 말고는 다 빈 도구");
     assert!(b.contains(&"--strict-mcp-config".to_string()) && b.contains(&"--no-session-persistence".to_string()));
-    assert_eq!(b.last().unwrap(), "S", "시스템 프롬프트는 맨 끝 값");
+    assert_eq!(b[b.len() - 2..], ["--system-prompt-file".to_string(), "S".to_string()], "시스템 프롬프트는 파일로 — 맨 끝 값이 그 경로");
+}
+
+#[test]
+fn 인자엔_줄바꿈이_없다_npm_판_claude_cmd_도_뜨게() {
+    // 윈도우 npm 판 claude 는 claude.cmd — Rust std 는 배치 파일 인자에 \r\n 이 있으면 띄우기 전에 거절해(InvalidInput)
+    // 팀 참모가 늘 '답을 만들지 못했어요'였다(2026-11-01 win-text H4). 여러 줄 시스템 프롬프트는 파일로 넘긴다
+    let a = run_args("haiku");
+    assert!(a.iter().all(|x| !x.contains('\n') && !x.contains('\r')), "{a:?}");
+    assert!(!a.contains(&"--system-prompt".to_string()));
+    assert!(system_prompt().contains('\n'), "시스템 프롬프트 자체는 여러 줄");
+}
+
+#[test]
+fn 시스템_프롬프트_파일은_쓰고_끝나면_지운다() {
+    let d = std::env::temp_dir().join(format!("chammo-sysfile-{}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    let path = {
+        let f = SystemFile::write(&d, "첫 줄\n둘째 \"줄\"").unwrap();
+        assert_eq!(std::fs::read_to_string(f.path()).unwrap(), "첫 줄\n둘째 \"줄\"");
+        f.path().to_path_buf()
+    };
+    assert!(!path.exists(), "다 쓰면 지운다");
+    std::fs::remove_dir_all(&d).unwrap();
 }
 
 // ── 실측(진짜 claude -p): cargo test --bin honor-orchestrator -- --ignored --exact team_helper::tests::live_team_agent_once --nocapture ──

@@ -69,3 +69,15 @@ describe('팀 캘린더 배선', () => {
     expect(css).not.toMatch(/inset\s+[2-9]px\s+0/);
   });
 });
+
+import calSrc from './TeamCal.tsx?raw';
+describe('+ 는 고른 날짜로(11-01 사용자)', () => {
+  it('+ 는 newEventDay(고른 날 → 오늘 → 보이는 첫날)로 — 전엔 월 보기 다른 달 말고는 늘 오늘', () => {
+    expect(calSrc).toContain('setEdit({ item: null, day: newEventDay(picked, shownSpan(view, anchor), today) })');
+  });
+  it('날짜를 고르는 곳 — 폰 주 줄·월 칸·주 머리/칸을 누르면 picked', () => {
+    expect(calSrc).toContain('onClick={() => { setAnchor(day); setPicked(day); }}');
+    expect(calSrc).toMatch(/className=\{`tcal-day [^`]*\$\{day === picked \? 'on' : ''\}`\} onClick=\{\(\) => setPicked\(day\)\}/);
+    expect(calSrc).toMatch(/tcal-wcol \$\{day === picked \? 'on' : ''\}`\}[^>]*onClick=\{\(\) => setPicked\(day\)\}/);
+  });
+});

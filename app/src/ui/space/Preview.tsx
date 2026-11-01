@@ -14,6 +14,7 @@ import { isTeamCache } from '../../domain/teamLocker';
 import { Confirm } from '../OrchDialogs';
 import { ExtraDoc, frameStyle, HtmlFrame, loadZoom, MdDoc, ZOOM_KEY } from '../reader/Reader';
 import { flashWhenReady } from '../flash';
+import { useImageBox } from './imageBox';
 import { fromFrame, isCurationHtml } from '../../domain/curation';
 import { webTitle } from '../../domain/webUrl';
 import { WebPage } from '../WebPage';
@@ -112,18 +113,7 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
     if (!at || md == null || (kind !== 'md' && kind !== 'text')) return;
     return flashWhenReady(() => content.current, at, md, kind === 'text');
   }, [f.ts, md == null]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [boxAt, setBoxAt] = useState<React.CSSProperties | null>(null);
-  useEffect(() => {
-    const b = at?.box;
-    const img = imgBox.current?.querySelector('img');
-    if (!b || !img) { setBoxAt(null); return; }
-    const place = () => setBoxAt({ left: img.offsetLeft + b[0] * img.offsetWidth, top: img.offsetTop + b[1] * img.offsetHeight, width: b[2] * img.offsetWidth, height: b[3] * img.offsetHeight });
-    place();
-    const ro = new ResizeObserver(place);
-    ro.observe(img);
-    const t = window.setTimeout(() => imgBox.current?.querySelector('.pv-box')?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' }), 150);
-    return () => { ro.disconnect(); window.clearTimeout(t); };
-  }, [f.ts, natural, zoom]); // eslint-disable-line react-hooks/exhaustive-deps
+  const boxAt = useImageBox(imgBox, at?.box, [f.ts, natural, zoom]);
   useLayoutEffect(() => applyAnchor(imgBox.current), [zoom]);
   const setZoomTo = (z: number) => {
     const next = withZoom(zooms, kind, z);

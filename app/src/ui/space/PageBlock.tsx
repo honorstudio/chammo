@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { createReactBlockSpec } from '@blocknote/react';
 import { createContext, useContext, useEffect, useState } from 'react';
 import { safeDecode } from '../../domain/mdLinks';
+import { docRel } from '../../domain/paths';
 
 /** 지금 문서 폴더 — 상대 경로를 풀 때 */
 export const DocDirContext = createContext('');
@@ -12,7 +13,7 @@ export const OPEN_PAGE = 'cv-open-page';
 /** 어떤 페이지 제목이 바뀌면(첫 줄 # 제목) — 블록 이름을 따라 바꾼다 */
 export const PAGE_TITLE = 'cv-page-title';
 
-const absOf = (dir: string, href: string) => (href.startsWith('/') ? safeDecode(href) : safeDecode(new URL(href, `file://${encodeURI(dir)}/`).pathname));
+const absOf = (dir: string, href: string) => docRel(dir, href);
 
 function PageLink({ href }: { href: string }) {
   const dir = useContext(DocDirContext);

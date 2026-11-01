@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { addExtraProject, parseClaudeVersion, setupCommand, setupReady, shq, versionFit, versionWarning, type EnvCheck, WIZARD, canNext, nextWhy, trustExitNote, tildify, notifyRow, browserRow, browserChecklist, ghRow, gitStillMissing } from './setup';
+import loginCardSrc from '../ui/LoginCard.tsx?raw';
+import { addExtraProject, parseClaudeVersion, setupCommand, winSetupNotes, setupReady, shq, versionFit, versionWarning, type EnvCheck, WIZARD, canNext, nextWhy, trustExitNote, tildify, notifyRow, browserRow, browserChecklist, ghRow, installState, loginRow, GET_URL, setupFailed, setupFailLine, gitIdentityRow, gitIdentityError, firstRunName, claudeSignedInText, readyAccountNote } from './setup';
 
 describe('Claude Code 버전', () => {
   it('버전 글자를 숫자로', () => {
@@ -42,6 +43,9 @@ describe('setupReady — 설정을 끝낼 수 있나', () => {
     expect(setupReady({ ...ok, python: true })).toBe(true);
     expect(setupReady(ok)).toBe(true);
     expect(canNext('check', { ...ok, python: false })).toBe(false);
+    // 회사 PC 가 '나중에 하기'로 넘겼으면 갈 수 있다(win-env H3)
+    expect(canNext('check', { ...ok, python: false, clt: false }, undefined, null, ['clt', 'python'])).toBe(true);
+    expect(nextWhy('check', { ...ok, python: false }, undefined, null, true, ['python'])).toBeNull();
   });
 });
 
@@ -52,11 +56,13 @@ describe('setupCommand — 설정 화면 터미널에서 돌릴 명령', () => {
   });
 
   it('설치·로그인·명령줄 도구·gh, 끝나면 안내 한 줄', () => {
-    expect(setupCommand('install', {}, '끝')).toBe("curl -fsSL https://claude.ai/install.sh | bash; echo; echo '끝'");
-    expect(setupCommand('login', { claude: '/h/.local/bin/claude' }, 'done')).toBe("'/h/.local/bin/claude' auth login; echo; echo 'done'");
-    expect(setupCommand('login', {}, 'd')).toBe("'claude' auth login; echo; echo 'd'");
-    expect(setupCommand('clt', {}, 'd')).toBe("xcode-select --install; echo; echo 'd'");
-    expect(setupCommand('ghLogin', { gh: '/opt/homebrew/bin/gh' }, 'd')).toBe("'/opt/homebrew/bin/gh' auth login; echo; echo 'd'");
+    // 끝 줄은 종료 코드로 가른다 — 실패해도 '끝났어요'라고 했다(2026-11-01 win-first M3)
+    const end = (ok: string) => `; r=$?; echo; if [ $r -eq 0 ]; then echo '${ok}'; else echo 'F'; fi`;
+    expect(setupCommand('install', {}, '끝', undefined, false, undefined, 'F')).toBe(`curl -fsSL https://claude.ai/install.sh | bash${end('끝')}`);
+    expect(setupCommand('login', { claude: '/h/.local/bin/claude' }, 'done', undefined, false, undefined, 'F')).toBe(`'/h/.local/bin/claude' auth login${end('done')}`);
+    expect(setupCommand('login', {}, 'd', undefined, false, undefined, 'F')).toBe(`'claude' auth login${end('d')}`);
+    expect(setupCommand('clt', {}, 'd', undefined, false, undefined, 'F')).toBe(`xcode-select --install${end('d')}`);
+    expect(setupCommand('ghLogin', { gh: '/opt/homebrew/bin/gh' }, 'd', undefined, false, undefined, 'F')).toBe(`'/opt/homebrew/bin/gh' auth login${end('d')}`);
   });
 });
 
@@ -194,15 +200,28 @@ describe('setupCommand — 윈도우(cmd /C 가 읽는 모양, 윈도우판)', (
     // 홈(C:\Users\a) + ~/.chammo/hq 가 합쳐져 \ 와 / 가 섞여 온다 — 윈도우 모양으로 맞춘다
     expect(setupCommand('trust', { claude: c }, '', 'C:\\Users\\a/.chammo/hq', true)).toBe(`cd /d "C:\\Users\\a\\.chammo\\hq" && "${c}"`);
   });
-  it('로그인: 큰따옴표 + 끝 안내는 & echo', () => {
-    expect(setupCommand('login', { claude: c }, '끝났어요 & 닫으세요', undefined, true)).toBe(`"${c}" auth login & echo. & echo 끝났어요 ^& 닫으세요`);
+  // 끝 안내는 종료 코드로 갈라 찍는다(&& 성공 / || 실패) — & 로 이으면 실패해도 '끝났어요'였다(2026-11-01 win-first M3). 괄호 안이라 ( ) 도 ^ 로
+  const end = (ok: string, fail = 'F') => ` && (echo.& echo ${ok}) || (echo.& echo ${fail})`;
+  it('로그인: 큰따옴표 + 끝 안내는 성공·실패로 갈라서', () => {
+    expect(setupCommand('login', { claude: c }, '끝났어요 & 닫으세요', undefined, true, undefined, '안 됐어요(위 글)')).toBe(`"${c}" auth login${end('끝났어요 ^& 닫으세요', '안 됐어요^(위 글^)')}`);
   });
   it('파이썬 3: winget 공식 패키지를 사용자 범위로 — py 런처도 이 사용자에게만(기본은 모든 사용자라 관리자 창이 뜬다), 사용자 PATH 앞에 붙는다, 끝 안내는 git 과 같은 모양', () => {
-    expect(setupCommand('python', {}, '끝', undefined, true)).toBe('winget install -e --id Python.Python.3.12 --scope user --custom "InstallLauncherAllUsers=0" --accept-source-agreements --accept-package-agreements & echo. & echo 끝');
-    expect(setupCommand('clt', {}, '끝', undefined, true)).toBe('winget install -e --id Git.Git & echo. & echo 끝');
+    expect(setupCommand('python', {}, '끝', undefined, true, undefined, 'F')).toBe(`winget install -e --id Python.Python.3.12 --scope user --custom "InstallLauncherAllUsers=0" --accept-source-agreements --accept-package-agreements${end('끝')}`);
+    expect(setupCommand('clt', {}, '끝', undefined, true, undefined, 'F')).toBe(`winget install -e --id Git.Git --scope user --accept-source-agreements --accept-package-agreements${end('끝')}`);
   });
-  it('설치: PowerShell 설치 스크립트', () => {
-    expect(setupCommand('install', {}, '끝', undefined, true)).toBe('powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex" & echo. & echo 끝');
+  it('설치: PowerShell 설치 스크립트(-EncodedCommand — 깨진 npm 판 치우기가 앞에 붙는다, 진행 표시 끔) + 받는 중 한 줄을 먼저(12분 빈 화면, 2026-11-01 win-first M2)', () => {
+    const notes = { busy: 'b', back: 'k', fetch: '받는 중 & 기다려' };
+    const cmd = setupCommand('install', {}, '끝', undefined, true, notes, 'F');
+    expect(cmd).toMatch(/^echo 받는 중 \^& 기다려 & powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand \S+ && \(echo\.& echo 끝\) \|\| \(echo\.& echo F\)$/);
+    expect(decode(cmd)).toContain("$ProgressPreference = 'SilentlyContinue'");
+  });
+  // 2026-11-01 윈도우 시험판 실측: 10-31 사고 때 사용자가 누른 'Claude 다시 설치' 카드(LoginCard)는 안내 줄 없이 불러 터미널이 1분 넘게 빈 채였다
+  // (마법사만 받는 중 한 줄을 넘겼다) — 두 곳이 같은 안내 묶음을 쓴다
+  it("윈도우 설치 안내 줄은 마법사와 '다시 설치' 카드가 같이 쓴다", () => {
+    const n = winSetupNotes();
+    expect(n.fetch?.trim()).toBeTruthy();
+    expect(setupCommand('install', {}, '끝', undefined, true, n, 'F')).toMatch(/^echo \S/);
+    expect(loginCardSrc).toMatch(/setupCommand\('install', \{\}, [^\n]*winSetupNotes\(\)/);
   });
   // -EncodedCommand 는 UTF-16LE base64 — 풀어서 본다
   const decode = (cmd: string) => {
@@ -215,7 +234,7 @@ describe('setupCommand — 윈도우(cmd /C 가 읽는 모양, 윈도우판)', (
   it('업데이트: winget 으로 깐 claude 면 winget upgrade(claude update 는 winget 것을 못 올린다, 2026-10-01 윈도우 PC 2.1.283)', () => {
     const cmd = setupCommand('update', { claude: c }, '끝', undefined, true);
     expect(cmd.startsWith('powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ')).toBe(true);
-    expect(cmd.endsWith(' & echo. & echo 끝')).toBe(true);
+    expect(cmd.endsWith(' && (echo.& echo 끝) || (echo.& echo ' + setupFailLine() + ')')).toBe(true);
     expect(decode(cmd)).toContain('winget upgrade -e --id Anthropic.ClaudeCode --accept-source-agreements --accept-package-agreements');
     // 링크 말고 실제 패키지 폴더 경로로 와도
     const real = 'C:\\Users\\a\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe';
@@ -296,21 +315,113 @@ describe('ghRow — GitHub CLI 줄', () => {
 
 describe('setupCommand — 맥 파이썬', () => {
   it('맥은 파이썬 줄이 없지만 부르면 명령줄 도구(python3 가 들어 있다)', () => {
-    expect(setupCommand('python', {}, '끝', undefined, false)).toBe("xcode-select --install; echo; echo '끝'");
+    expect(setupCommand('python', {}, '끝', undefined, false, undefined, 'F')).toBe("xcode-select --install; r=$?; echo; if [ $r -eq 0 ]; then echo '끝'; else echo 'F'; fi");
+  });
+  it('실패 줄을 화면에서 알아본다(설정 화면이 설치 실패를 가린다)', () => {
+    expect(setupFailed(`blah\n${setupFailLine()}\n`)).toBe(true);
+    expect(setupFailed('blah\n끝났어요\n')).toBe(false);
+    expect(setupFailed('')).toBe(false);
   });
 });
 
-describe('gitStillMissing — 윈도우에서 git 설치를 눌렀는데도 ✕ 면 껐다 켜기 안내(2026-10-21 새 윈도우 PC)', () => {
-  it('윈도우·설치를 한 번 돌렸고·설치 창이 닫혔는데 아직 없으면', () => {
-    expect(gitStillMissing({ win: true, tried: true, running: false, ok: false })).toBe(true);
+// qa-1101 win-env — 회사 PC·깨진 npm 판에서 설치가 틀린 말을 하던 것
+describe('윈도우 설치 — 깨진 npm 판·회사 PC(qa-1101 win-env H2·H3·M7)', () => {
+  const decode = (cmd: string) => {
+    const bin = atob(/-EncodedCommand (\S+)/.exec(cmd)?.[1] ?? '');
+    let out = '';
+    for (let i = 0; i < bin.length; i += 2) out += String.fromCharCode(bin.charCodeAt(i) | (bin.charCodeAt(i + 1) << 8));
+    return out;
+  };
+  it('재현 H2: 다시 설치는 공식 설치만 돌려 깨진 npm 바로가기가 PATH 에 남았다 — 대상 exe 가 없을 때만 npm 판을 먼저 지우고 공식 설치', () => {
+    const s = decode(setupCommand('install', {}, '', undefined, true));
+    expect(s).toContain("Join-Path $env:APPDATA 'npm'");
+    expect(s).toContain("'node_modules\\@anthropic-ai\\claude-code'");
+    expect(s).toContain("Join-Path $pkg 'bin\\claude.exe'");
+    expect(s).toMatch(/if \(\(Test-Path -LiteralPath \$shim\) -and -not \(Test-Path -LiteralPath \$exe\) -and -not \(Test-Path -LiteralPath \$js\)\)/);
+    expect(s).toContain('npm uninstall -g @anthropic-ai/claude-code');
+    expect(s).toContain("'claude', 'claude.cmd', 'claude.ps1'");
+    expect(s.indexOf('npm uninstall')).toBeLessThan(s.indexOf('irm https://claude.ai/install.ps1 | iex'));
   });
-  it('설치 중·안 눌러 봄·맥·이미 있음이면 안내 없음', () => {
-    expect(gitStillMissing({ win: true, tried: true, running: true, ok: false })).toBe(false);
-    expect(gitStillMissing({ win: true, tried: false, running: false, ok: false })).toBe(false);
-    expect(gitStillMissing({ win: false, tried: true, running: false, ok: false })).toBe(false);
-    expect(gitStillMissing({ win: true, tried: true, running: false, ok: true })).toBe(false);
+  it('M7: npm 판 업데이트는 도는 claude 수를 먼저 알리고, 실패하면 왜일 수 있는지 한 줄 — 종료 코드는 그대로', () => {
+    const npm = 'C:\\Users\\a\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe';
+    const s = decode(setupCommand('update', { claude: npm }, '', undefined, true));
+    expect(s).toContain('Get-Process -Name claude');
+    expect(s).toContain(`& '${npm}' update`);
+    expect(s).toMatch(/if \(\$code -ne 0\) \{ Write-Output /);
+    expect(s.trim().endsWith('exit $code')).toBe(true);
+    const shim = 'C:\\Users\\a\\AppData\\Roaming\\npm\\claude.cmd';
+    expect(decode(setupCommand('update', { claude: shim }, '', undefined, true))).toContain(`& '${shim}' update`);
+    // 공식 설치(.local\bin)는 그대로 한 줄
+    expect(setupCommand('update', { claude: 'C:\\Users\\a\\.local\\bin\\claude.exe' }, '', undefined, true)).toBe('"C:\\Users\\a\\.local\\bin\\claude.exe" update');
   });
-  it('파이썬 줄도 같은 판단 — 설치 창을 닫았는데 아직 못 찾으면 껐다 켜기', () => {
-    expect(gitStillMissing({ win: true, tried: true, running: false, ok: false })).toBe(true);
+  it('재현 H3: 설치가 실패해도 "깔렸는데 못 찾아요" 였다 — 실패·winget 없음·찾기 실패를 가른다', () => {
+    const base = { win: true, tried: true, running: false, ok: false, failed: false, winget: true };
+    expect(installState({ ...base, ok: true })).toBe('ok');
+    expect(installState({ ...base, failed: true })).toBe('failed');
+    expect(installState({ ...base })).toBe('notFound');
+    expect(installState({ ...base, tried: false })).toBe('need');
+    expect(installState({ ...base, running: true, failed: true })).toBe('need');
+    expect(installState({ ...base, winget: false, tried: false })).toBe('noWinget');
+    expect(installState({ ...base, winget: false, failed: true })).toBe('noWinget');
+    expect(installState({ ...base, win: false })).toBe('need');
   });
+  it('H3: 회사 PC 는 git·파이썬을 건너뛰고 다음으로 갈 수 있다 — Claude 설치·로그인은 그대로 필수', () => {
+    const c = { claudePath: 'C:\\x\\claude.exe', claudeVersion: '2.1.300 (Claude Code)', loggedIn: true, clt: false, ghPath: null, ghUser: null, ghStale: false, python: false };
+    expect(setupReady(c)).toBe(false);
+    expect(setupReady(c, ['clt'])).toBe(false);
+    expect(setupReady(c, ['clt', 'python'])).toBe(true);
+    expect(setupReady({ ...c, loggedIn: false }, ['clt', 'python'])).toBe(false);
+    expect(setupReady({ ...c, claudePath: null }, ['clt', 'python'])).toBe(false);
+  });
+  it('M2: 로그인 확인 시간 초과는 로그인 안 됨이 아니다', () => {
+    expect(loginRow({ loggedIn: true })).toBe('ok');
+    expect(loginRow({ loggedIn: false })).toBe('need');
+    expect(loginRow({ loggedIn: false, loginUnknown: true })).toBe('unknown');
+  });
+  it('받기 링크는 공식 사이트(https)', () => {
+    expect(GET_URL.clt).toBe('https://git-scm.com/download/win');
+    expect(GET_URL.python).toBe('https://www.python.org/downloads/windows/');
+  });
+});
+
+describe('git 이름·메일 — 새 PC 는 비어 있어 새 프로젝트마다 첫 커밋을 못 하고 참모가 사용자에게 git config 를 치라고 했다(2026-11-01 win-first M1)', () => {
+  const ok: EnvCheck = { claudePath: '/c', claudeVersion: '2.1.300 (Claude Code)', loggedIn: true, clt: true, ghPath: null, ghUser: null, ghStale: false, python: true };
+  it('git 이 있는데 이름·메일이 비면 다음으로 못 간다', () => {
+    expect(setupReady({ ...ok, gitName: 'Kim', gitEmail: 'k@x.com' })).toBe(true);
+    expect(setupReady({ ...ok, gitName: '', gitEmail: 'k@x.com' })).toBe(false);
+    expect(setupReady({ ...ok, gitName: 'Kim', gitEmail: '  ' })).toBe(false);
+    expect(gitIdentityRow({ ...ok, gitName: 'Kim', gitEmail: '' })).toBe('need');
+    expect(gitIdentityRow({ ...ok, gitName: 'Kim', gitEmail: 'k@x.com' })).toBe('ok');
+  });
+  it('git 이 없거나(그 줄이 따로 묻는다) 옛 점검 결과(칸 없음)면 이 줄은 막지 않는다', () => {
+    expect(gitIdentityRow({ ...ok, clt: false, gitName: '', gitEmail: '' })).toBe('hidden');
+    expect(gitIdentityRow(ok)).toBe('hidden');
+    expect(setupReady({ ...ok, clt: false, gitName: '', gitEmail: '' }, ['clt'])).toBe(true);
+  });
+  it('입력 검사 — 이름 빈칸·메일 모양', () => {
+    expect(gitIdentityError('Kim', 'k@x.com')).toBeNull();
+    expect(gitIdentityError('  ', 'k@x.com')).toBe('name');
+    expect(gitIdentityError('Kim', 'kx.com')).toBe('email');
+    expect(gitIdentityError('Kim', 'k@x')).toBe('email');
+    expect(gitIdentityError('Kim', 'k @x.com')).toBe('email');
+    expect(gitIdentityError('Kim', 'k@a.b.')).toBe('email');
+    expect(gitIdentityError('Ki\nm', 'k@x.com')).toBe('name');
+  });
+});
+
+describe('첫 설정이 계정 로그인을 예고한다(2026-11-01 ux-start H1)', () => {
+  it("Claude 로그인 줄은 'Chammo 가 이 로그인을 그대로 쓴다'고 하지 않는다 — 다음 화면에 Chammo 계정 로그인이 따로 있다", () => {
+    expect(claudeSignedInText()).not.toMatch(/Chammo 는 이 로그인을 그대로/);
+    expect(claudeSignedInText()).toContain('Chammo 계정');
+  });
+  it('준비 끝에 구글로 Chammo 계정에 로그인한다는 한 줄', () => {
+    expect(readyAccountNote()).toContain('구글');
+    expect(readyAccountNote()).toContain('Chammo 계정');
+  });
+});
+
+describe('새 영어 설치의 기본 참모 이름은 앱 이름과 다르게(2026-11-01 ux-start M2 — "Create a new Chammo")', () => {
+  it('영어 첫 설정에서 이름을 비우면 Assistant 로 적는다', () => expect(firstRunName('', 'en')).toBe('Assistant'));
+  it('한국어는 비워 둔다 — 기본 참모(앱 이름 Chammo 와 이미 다르다)', () => expect(firstRunName('  ', 'ko')).toBe(''));
+  it('적은 이름은 그대로(앞뒤 빈칸만 뗀다)', () => expect(firstRunName(' 두목 ', 'en')).toBe('두목'));
 });

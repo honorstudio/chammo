@@ -11,7 +11,7 @@ import { absorbOutside } from './pending';
 import { parseMd, writeMd } from './mdPipeline';
 import { useShownRef } from './docKeep';
 
-export type SyncState = 'ok' | 'conflict' | 'gone' | 'unreadable';
+export type SyncState = 'ok' | 'conflict' | 'gone' | 'failed' | 'unreadable';
 const EVERY = 1500;
 
 type Ed = BlockNoteEditor;
@@ -114,10 +114,13 @@ export function useDocSync(editor: Ed, path: string, md: string) {
     const ses = s.current;
     ses.onOutside = () => void tick();
     ses.onGone = () => { gone.current = true; setState('gone'); };
+    // 못 씀(다른 앱이 쥠·읽기 전용) — 없어진 것과 같은 길로 다음 감시(1.5초)에 다시 저장한다, 띠만 다르게
+    ses.onFail = () => { gone.current = true; setState((x) => (x === 'conflict' ? x : 'failed')); };
+    ses.onSaved = () => setState((x) => (x === 'failed' ? 'ok' : x));
     const t = window.setInterval(() => void tick(), EVERY);
     const focus = () => void tick();
     window.addEventListener('focus', focus);
-    return () => { ses.onOutside = undefined; ses.onGone = undefined; window.clearInterval(t); window.removeEventListener('focus', focus); };
+    return () => { ses.onOutside = undefined; ses.onGone = undefined; ses.onFail = undefined; ses.onSaved = undefined; window.clearInterval(t); window.removeEventListener('focus', focus); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {

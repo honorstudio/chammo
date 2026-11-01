@@ -163,6 +163,8 @@ export const blockedOf = (log: LogEntry[]) => [...new Set(log.filter((e) => e.k 
 
 /** 지금 저장을 시작하면 안 되나 — 충돌·막힘·없어짐이거나 고친 게 없거나, 앞 저장이 아직 도는 중.
  *  도는 중에 또 보내면 같은 옛 expected 로 두 쓰기가 같이 돌아 앞 고침이 파일에서 빠졌다(2026-10-21 리뷰) — 끝나면 남은 기록으로 다시 건다 */
+/** 표 저장 실패 갈래 — 다른 앱(엑셀 등)이 파일을 쥐고 있으면 Rust 가 FILE_BUSY 이름을 붙인다(reader::save_io_err, 11-01 QA H12) */
+export const saveErrKind = (d?: string): 'busy' | 'other' => (d?.startsWith('FILE_BUSY') ? 'busy' : 'other');
 export const saveHeld = (state: string, logLen: number) => state === 'conflict' || state === 'blocked' || state === 'gone' || state === 'saving' || !logLen;
 /** 닫을 때 안 쓴 고침이 그대로 버려지나 — 충돌·막힘·없어짐이면 save 가 안 돌아 기록 없이 사라졌다(md 문서는 history 에 내 판을 남기는데).
  *  그럴 땐 닫으면서 고친 칸 기록을 history 에 남긴다(2026-10-21 리뷰 ⑦-7). 저장 중이면 그 저장이 마저 쓴다 */

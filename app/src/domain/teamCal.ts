@@ -58,6 +58,21 @@ export const weekDays = (s: string) => {
 };
 
 /** 화면에 그릴 한 번(반복이면 그 회차) */
+/** 지금 보이는 날들(끝 포함) — 월은 그 달 날만(앞뒤 달 회색 칸 빼고), 주는 일~토, 목록은 고른 날부터 60일 */
+export function shownSpan(view: 'month' | 'week' | 'list', anchor: string): { from: string; to: string } {
+  if (view === 'week') { const w = weekDays(anchor); return { from: w[0]!, to: w[6]! }; }
+  if (view === 'list') return { from: anchor, to: addDays(anchor, 59) };
+  const d = new Date(anchor.replace(/-/g, '/'));
+  return { from: ymd(new Date(d.getFullYear(), d.getMonth(), 1)), to: ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0)) };
+}
+
+/** + 새 일정 날짜(11-01 사용자) — 고른 날이 보이는 칸 안이면 그날, 아니면 오늘(보이면), 오늘도 안 보이면 보이는 첫날 */
+export function newEventDay(picked: string | null, shown: { from: string; to: string }, today: string): string {
+  const inside = (d: string) => d >= shown.from && d <= shown.to;
+  if (picked && inside(picked)) return picked;
+  return inside(today) ? today : shown.from;
+}
+
 export type Occ = {
   id: string; key: string; day: string; endDay: string; startMs: number; endMs: number;
   allDay: boolean; title: string; label: Label; done: boolean; repeat: boolean; item: CalItem;

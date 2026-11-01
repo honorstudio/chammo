@@ -18,6 +18,10 @@ describe('파이썬 설치 흐름 연결', () => {
   });
   it('설정은 시작 작업을 설치 터미널로 바로 돌린다', () => {
     expect(setup).toMatch(/useState<SetupTask \| null>\(start \?\? null\)/);
-    expect(setup).toMatch(/run\('python'\)/);
+    // 윈도우 git·파이썬 줄은 한 함수(winToolRow)가 그린다 — 설치 단추는 run(t)
+    expect(setup).toMatch(/winToolRow\('python'/);
+    expect(setup).toMatch(/onClick=\{\(\) => run\(t\)\}/);
+    // 설치 터미널이 실패 꼬리로 끝나면 그 줄을 '설치가 끝나지 않았어요'로(win-env H3) — 전엔 실패도 '깔렸는데 못 찾아요'
+    expect(setup).toMatch(/onExit=\{\(screen\) => \{ if \(setupFailed\(screen\)\) setFailed/);
   });
 });

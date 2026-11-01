@@ -17,11 +17,14 @@ Point at a spot / 짚어 보여 주기 — options apply to the file right befor
 (PDF·slides: that page) and flashes it for a few seconds. --find works for any kind and beats --line.
 --box is an area inside an image as left,top,width,height ratios (0-1).
 
-Relative paths are resolved from the current folder. Missing files and files outside your home folder are
-refused (the app won't open them either). Log: <data folder>/show.jsonl — {ts, path}. The app checks it
+Relative paths are resolved from the current folder. Missing files and files outside your home folder and the
+projects folders in Chammo settings are refused (the app won't open them either). Log: <data folder>/show.jsonl — {ts, path}. The app checks it
 every 0.7 s while it is running.
 """
 import datetime, json, os, re, sys, urllib.parse
+for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — PYTHONUTF8 없이 떠도(데몬 env 세션·작업 스케줄러) 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
+    if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
+        _io.reconfigure(encoding='utf-8', errors='replace')
 
 
 def data_dir(home=None, env=None, exists=os.path.isdir):
@@ -66,10 +69,36 @@ def web_url(s):
     return s if host else None
 
 
-def resolve(p, cwd=None, home=HOME):
-    """Real absolute path, or None when missing or outside home"""
+def user_roots(ddir, home=HOME):
+    """Folders a file may come from — home, plus the projects folder (devRoot) and extra projects in Chammo settings.
+    On Windows projects often live outside home (D:\\dev) — the first job's result was refused (2026-11-01 win-first H2).
+    A drive/disk top (/, D:\\) would open the whole disk, so it is skipped. Same rule as the app (reader::user_roots)"""
+    roots = [home]
+    try:
+        with open(os.path.join(ddir, 'config.json'), encoding='utf-8') as f:
+            cfg = json.load(f)
+        cands = [cfg.get('devRoot')] + list(cfg.get('extraProjects') or [])
+    except Exception:
+        cands = []
+    for c in cands:
+        if not isinstance(c, str) or not c.strip():
+            continue
+        r = os.path.realpath(os.path.expanduser(c.strip()))
+        if os.path.isdir(r) and os.path.dirname(r) != r and r not in roots:
+            roots.append(r)
+    return roots
+
+
+def inside(real, root):
+    """real 이 root 안(또는 root 자체)인가 — 윈도우는 대소문자를 안 가린다"""
+    a, b = (os.path.normcase(real), os.path.normcase(root.rstrip('\\/') or root))
+    return a == b or a.startswith(b + os.sep)
+
+
+def resolve(p, cwd=None, home=HOME, roots=None):
+    """Real absolute path, or None when missing or outside home and the projects folders"""
     real = os.path.realpath(os.path.join(cwd or os.getcwd(), os.path.expanduser(p)))
-    if not os.path.isfile(real) or not (real == home or real.startswith(home + os.sep)):
+    if not os.path.isfile(real) or not any(inside(real, r) for r in (roots if roots is not None else [home])):
         return None
     return real
 
@@ -109,14 +138,19 @@ def parse_args(argv):
     return out
 
 
+def fwd(p):
+    """윈도우 경로(C:\\… · C:/…)만 / 로, 드라이브 글자는 대문자로 — 웹·폰은 / 로 문서 폴더를 구한다(앱 domain/paths fwd 와 같다, win-text M2)"""
+    return p[0].upper() + p[1:].replace('\\', '/') if re.match(r'^[A-Za-z]:[\\/]', p or '') else p
+
+
 def record(real, env, cwd, ts, at=None):
     """One show.jsonl line — who opened it (a background session's id = end of CLAUDE_JOB_DIR) and the folder,
     so the chat view can group files under the assistant/session that showed them"""
-    r = {'ts': ts, 'path': real}
+    r = {'ts': ts, 'path': fwd(real)}
     who = os.path.basename((env.get('CLAUDE_JOB_DIR') or '').rstrip('/'))
     if who:
         r['from'] = who
-    r['cwd'] = cwd
+    r['cwd'] = fwd(cwd)
     if at:
         r['at'] = at
     return r
@@ -136,10 +170,11 @@ def main(argv):
         print(__doc__, file=sys.stderr); return 2
     bad = 0
     os.makedirs(os.path.dirname(LOG), exist_ok=True)
+    roots = user_roots(os.path.dirname(LOG))
     for p, at in parse_args(argv):
-        real = web_url(p) or resolve(p)
+        real = web_url(p) or resolve(p, roots=roots)
         if not real:
-            print(f'cannot open (missing or outside home) / 못 띄움(없거나 홈 밖): {p}', file=sys.stderr); bad += 1; continue
+            print(f'cannot open (missing, or outside home and the projects folder) / 못 띄움(없거나 홈·프로젝트 폴더 밖): {p}', file=sys.stderr); bad += 1; continue
         with open(LOG, 'a', encoding='utf-8') as f:
             f.write(json.dumps(record(real, os.environ, os.getcwd(), datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), at), ensure_ascii=False) + '\n')
         print(f'{shown_where(os.path.dirname(LOG))}: {real}' + (f'  (spot / 짚음: {json.dumps(at, ensure_ascii=False)})' if at else ''))

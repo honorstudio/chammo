@@ -54,6 +54,9 @@ which can't call the app or read your files (only the browser's own open/save di
 The web build has no autosave — save or download before closing.
 """
 import contextlib, hashlib, http.server, io, json, locale, os, re, shutil, signal, socket, ssl, subprocess, sys, tempfile, time, urllib.error, urllib.request, zipfile
+for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — PYTHONUTF8 없이 떠도(데몬 env 세션·작업 스케줄러) 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
+    if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
+        _io.reconfigure(encoding='utf-8', errors='replace')
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import craft_win  # 윈도우 길(설치·띄우기·지우기 — 참모 앱 portable zip). 맥 길은 이 파일 그대로
 IS_WIN = sys.platform == 'win32'

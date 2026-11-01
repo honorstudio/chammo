@@ -10,6 +10,7 @@ import { tr } from '../i18n';
 import { findTarget } from './inbox';
 import { splitOrchName } from './orchLabel';
 import { seenName, type Session } from './session';
+import { heldOf, sessionStatus, type ActivityStatus, type Held } from './status';
 import type { TaskEvent } from './tasks';
 
 const H = 3600_000;
@@ -39,9 +40,11 @@ export const isEnded = (s: CellState) => s === 'done' || s === 'auto';
 const prsIn = (t: string) => [...t.matchAll(/#(\d{2,})/g)].map((m) => m[1]!);
 
 /** 칸 상태 — 위에서 먼저 맞는 것(README 계산 규칙). merged = 머지된 PR 번호 */
-export function cellState(f: CellFacts, s: Session | undefined, now: number, merged?: Set<string>): CellState {
+/** st = 그 세션 판단(activityStatus) — 선택지·권한 창·로그인 풀림이면 사람 차례(ask). 사이드바 '확인 대기'와 칸 '쉬는 중'이 갈렸다(2026-11-01 ux-daily H2) */
+export function cellState(f: CellFacts, s: Session | undefined, now: number, merged?: Set<string>, st?: ActivityStatus): CellState {
   if (f.finished) return 'done';
   if (f.asks > f.answers) return 'ask';
+  if (s && heldOf(st)) return 'ask';
   if ((f.replied || f.answers > 0) && (!s || s.finished)) return 'auto';
   if (f.replied && merged?.size && f.notes.some((n) => prsIn(n).some((p) => merged.has(p)))) return 'auto';
   if (f.wait && (f.wait.until === undefined || now < f.wait.until)) return 'wait';
@@ -74,6 +77,8 @@ export type Cell = {
   wait?: Wait;
   /** 일하는 중 칸 채움 0~1(세션 할 일 목록 끝난 비율) */
   fill?: number;
+  /** ask 가 세션 멈춤(선택지·권한 창·로그인 풀림)에서 왔으면 그 까닭 — 칸 말은 statusWord(held) */
+  held?: Held;
   /** 기다리기로 한 날짜(until)가 지났는데 그 뒤로 기척이 없으면 그 날짜 — 오래 멈춘 목표 알림(domain/goalStall) */
   overdue?: number;
   /** 끝난 이름표 없는 칸 — 사라짐 열쇠(봤음 기록) */
@@ -133,6 +138,8 @@ type Opts = {
   /** 세션 할 일 목록 끝난 비율 */
   fill?: (s: Session) => number | undefined;
   merged?: Set<string>;
+  /** 세션 판단(activityStatus) — 없으면 세션 목록 상태만(선택지 창 blocked 는 보이고 로그인 풀림은 못 본다) */
+  statusOf?: (s: Session) => ActivityStatus;
 };
 
 /** 목표 조각 전부(끝난 것·봤음 거르기 전). nested = 받은 참모 쪽을 셀 때 — 넘김은 한 단계만(A→B→A 가 안 돈다) */
@@ -203,15 +210,23 @@ function collect(o: Opts, nested: boolean) {
     return first?.project ?? '';
   }
 
+  // 세션마다 가장 새 일 — 같은 세션에 새 일이 가면 앞 일은 세션의 지금 상태(일하는 중·멈춤)를 안 따른다(작업 패널 '끝 기록 없는 일'과 같게, ux-daily M5)
+  const keyOf = (a: Acc) => findTarget(sessions, a.send.target)?.id ?? a.send.target ?? '';
+  const newest = new Map<string, Acc>();
+  for (const a of acc.values()) if (a.send.type === 'send' && Date.parse(a.send.ts) >= Date.parse(newest.get(keyOf(a))?.send.ts ?? '1970-01-01')) newest.set(keyOf(a), a);
   const rows = [...acc.values()].filter((a) => isMine(a.send.task)).map((a) => {
-    const s = findTarget(sessions, a.send.target);
-    const state = cellState(a.f, s, now, o.merged);
+    const s0 = findTarget(sessions, a.send.target);
+    const latest = a.send.type !== 'send' || newest.get(keyOf(a)) === a;
+    const st = latest && s0 ? (o.statusOf ?? sessionStatus)(s0) : undefined;
+    const s = s0 && !latest ? { ...s0, state: 'idle' as const } : s0;
+    const state = cellState(a.f, s, now, o.merged, st);
+    const held = state === 'ask' && !(a.f.asks > a.f.answers) ? heldOf(st) : undefined;
     const fill = state === 'run' && s && o.fill ? o.fill(s) : undefined;
     const w = a.f.wait;
     const live = w && (w.until === undefined || now < w.until) ? w : undefined; // until 이 지난 기다림은 칸에 안 단다
     const at = w?.until && !live ? Math.max(a.f.lastAt, w.until) : a.f.lastAt;
     const overdue = w?.until && !live && a.f.lastAt <= w.until ? w.until : undefined;
-    const cell: Cell = { task: a.send.task, title: a.send.title ?? '', target: a.send.target ?? '', state, at, ...(live ? { wait: live } : {}), ...(overdue ? { overdue } : {}), ...(fill !== undefined ? { fill } : {}) };
+    const cell: Cell = { task: a.send.task, title: a.send.title ?? '', target: a.send.target ?? '', state, at, ...(live ? { wait: live } : {}), ...(overdue ? { overdue } : {}), ...(fill !== undefined ? { fill } : {}), ...(held ? { held } : {}) };
     const project = a.send.type === 'handover' ? handCell(a, cell) : a.send.project ?? s?.project ?? '';
     if (isEnded(cell.state)) cell.endedAt ??= a.endAt ?? a.f.lastAt;
     return { a, cell, project };

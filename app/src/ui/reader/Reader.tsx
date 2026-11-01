@@ -18,11 +18,13 @@ import { addComment, setBaseline } from '../space/pending';
 import { SendFab } from '../space/SendFab';
 import { lastSaved } from '../space/docSave';
 import { WebPage } from '../WebPage';
+import { ReadFail } from '../space/ReadFail';
 import { applyAnchor, markAnchor, useWheelZoom } from '../zoomAnchor';
 import { useImageFit, useImagePan } from '../imageFit';
 import { imageWidth, toggleFitActual } from '../../domain/imageFit';
 import type { BlockNoteEditor } from '@blocknote/core';
 import { CraftOpenChip, PreviewFail } from '../craft/openInCraft';
+import { fwd } from '../../domain/paths';
 
 // 스페이스 편집기(BlockNote)는 고칠 때만 불러온다 — 보기만 할 땐 무게를 안 싣는다
 const SpaceEditor = lazy(() => import('../space/SpaceEditor'));
@@ -55,7 +57,7 @@ function wordAt(doc: Document, x: number, y: number): string {
  * 문서 폴더부터 위로 올라가며 찾아 연다(사용자 2026-09-28: 리더에서 링크·경로 ⌘클릭이 안 됐다)
  */
 function onDocClick(ev: React.MouseEvent<HTMLElement>, path: string) {
-  const dir = path.replace(/\/[^/]*$/, '');
+  const dir = fwd(path).replace(/\/[^/]*$/, ''); // 윈도우 C:\… 여도 / 로(win-text M2)
   const target = ev.target as Element | null;
   const a = target?.closest?.('a[href]');
   if (a) {
@@ -86,7 +88,7 @@ function onDocClick(ev: React.MouseEvent<HTMLElement>, path: string) {
  * 예전엔 스크립트를 끈 프레임에 넣었는데, 그러면 링크 클릭을 받을 수 없었다(WebKit 은 스크립트 꺼진 문서에서 부모가 단 클릭 처리도 안 돌린다)
  */
 export function MdDoc({ path, md, zoom = 100 }: { path: string; md: string; zoom?: number }) {
-  const dir = path.replace(/\/[^/]*$/, '');
+  const dir = fwd(path).replace(/\/[^/]*$/, ''); // 윈도우 C:\… 여도 / 로(win-text M2)
   const html = DOMPurify.sanitize(marked.parse(md, { async: false }) as string, { FORBID_TAGS: ['style', 'iframe', 'object', 'embed', 'form'] });
   // 그림의 상대 경로는 문서 폴더 기준 hodoc:// 로(리더가 홈 안 파일만 내준다)
   const withImgs = html.replace(/(<img\b[^>]*\bsrc=")([^"]+)"/gi, (_m, pre: string, src: string) => `${pre}${docFileUrl(src, dir)}"`);
@@ -210,7 +212,7 @@ function Doc({ path, nonce, zoom, editing, onImageToggle }: { path: string; nonc
   const imgBox = useRef<HTMLDivElement>(null);
   const { natural, fit, onLoad } = useImageFit(imgBox); // 그림 원래 폭(화면 픽셀)·맞춤 배율 — % 기준
   useImagePan(() => imgBox.current, (at) => onImageToggle?.(toggleFitActual(zoom, fit), at)); // 두 번 누르기 맞춤 ↔ 100%, 끌어서 이동
-  if (err) return <div className="rd-empty">{tr('못 읽었어', "Couldn't read it")} — {err}</div>;
+  if (err) return <ReadFail className="rd-empty" path={path} err={err} />;
   if (kind === 'web') return <WebPage key={nonce} url={path} />;
   // HTML 시안: 스크립트는 돌되 앱과 다른 불투명 출처(DOC_SANDBOX + hodoc 머리글 sandbox)에서 — 앱 기능·홈 파일에 못 닿는다(2026-10-06)
   if (kind === 'html') return <div className="rd-zoombox"><HtmlFrame key={nonce} className="rd-frame" zoom={zoom} src={docUrl(path)} record={path} /></div>;

@@ -38,6 +38,7 @@ type Props = {
 export function InboxRow({ item, onReply, onOpen, onDismiss, blockedWhy }: { item: InboxItem } & Pick<Props, 'onReply' | 'onOpen' | 'onDismiss' | 'blockedWhy'>) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [fail, setFail] = useState('');
   const [open, setOpen] = useState(false);
   const note = askNote(item.text);
   const fold = foldNote(note, open);
@@ -46,9 +47,13 @@ export function InboxRow({ item, onReply, onOpen, onDismiss, blockedWhy }: { ite
   const send = async (t = text.trim()) => {
     if (!t) return;
     setBusy(true);
+    setFail('');
     try {
       await onReply(item, t);
       setText('');
+    } catch (e: unknown) {
+      // 친 글은 남기고 그 줄에 까닭 — 실패를 삼켜 글만 지워졌다(2026-11-01 ux-daily M15)
+      setFail(tr(`답장 실패: ${e instanceof Error ? e.message : String(e)}`, `Reply failed: ${e instanceof Error ? e.message : String(e)}`));
     } finally {
       setBusy(false);
     }
@@ -90,6 +95,7 @@ export function InboxRow({ item, onReply, onOpen, onDismiss, blockedWhy }: { ite
         </div>
       )}
       {why && <div className="inbox-why">{why}</div>}
+      {fail && !why && <div className="inbox-why" role="alert">{fail}</div>}
       <div className="inbox-acts">
         {item.target && <button className="ib" title={tr('그 세션 열기', 'Open that session')} aria-label={tr('열기', 'Open')} onClick={() => onOpen(item.target!)}><IconOpen /></button>}
         <button className="ib" title={tr('처리함 — 목록에서 치우기', 'Done — remove from list')} aria-label={tr('처리함', 'Done')} onClick={() => onDismiss(item)}><IconCheck /></button>

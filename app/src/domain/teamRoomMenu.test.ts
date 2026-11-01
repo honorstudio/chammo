@@ -7,6 +7,9 @@ describe('팀챗·DM 우클릭 메뉴(10-26 사용자 "팀챗을 지울 수가 �
   it('팀챗 = 이름·사람 바꾸기·나가기, 지우기는 만든 사람·팀장만(맨 끝)', () => {
     expect(roomActs('group', false)).toEqual(['edit', 'leave']);
     expect(roomActs('group', true)).toEqual(['edit', 'leave', 'delete']);
+    // 11-01 QA: '전체'에서 나가면 팀장 앱이 다시 넣는데 확인 창은 "방 사람이 더해 줘야 해요" — 나가기를 안 준다
+    expect(roomActs('group', false, true)).toEqual(['edit']);
+    expect(roomActs('group', true, true)).toEqual(['edit', 'delete']);
   });
   it('DM 은 목록에서 숨기기만(DM 은 서버에서 못 지운다)', () => {
     expect(roomActs('dm', true)).toEqual(['hide']);
